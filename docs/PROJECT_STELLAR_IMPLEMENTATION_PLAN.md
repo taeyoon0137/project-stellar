@@ -21,7 +21,7 @@
 | 항목 | 상태 | 비고 |
 |---|---|---|
 | 소스 저장소 생성 | `[x]` 검증 완료 | 작업 `I.1.1`에서 재검증, `docs/status/repository-baseline.md` |
-| Git 초기화 및 기본 설정 | `[~]` 사용자 보고 완료 | 작업 `I.1.2`~`I.1.4`에서 재검증 |
+| Git 초기화 및 기본 설정 | `[x]` 검증 완료 | 작업 `I.1.2`~`I.1.4`에서 재검증 |
 | 기능 코드 | `[ ]` 미착수로 간주 | 저장소에서 확인되더라도 각 단계 검증 전에는 완료 처리 금지 |
 | CI·테스트·벤치마크 | `[ ]` 미착수로 간주 | 기준 스크립트부터 생성 |
 
@@ -114,7 +114,7 @@ tools/xtask/
 | I.1.2 | `[x]` | 현재 브랜치와 기본 remote를 기록합니다. 소스 저장소 브랜치 정책은 제품 프로젝트의 `main` 고정 정책과 구분해 기록합니다. Git 설정을 변경하지 않습니다. | `git branch --show-current`와 `git remote -v` 결과가 보고서에 있고 자격 증명 문자열이 없습니다. | I.1.1 |
 | I.1.3 | `[x]` | `.gitignore`를 검사하고 최소 항목 `target/`, `.DS_Store`, `.vs/`, `build/`, `DerivedData/`, IDE 사용자 설정, 로컬 진단·복구 데이터가 누락되면 추가합니다. | 각 항목에 대한 `git check-ignore -v` fixture가 통과하고 추적 대상 파일을 잘못 무시하지 않습니다. | I.1.1 |
 | I.1.4 | `[x]` | `.gitattributes`에 텍스트 정규화, 셸 스크립트 LF, PowerShell CRLF 허용 여부, 바이너리 fixture 속성을 명시합니다. Stellar 프로젝트용 merge driver는 아직 등록하지 않습니다. | `git check-attr -a -- <fixture>` 결과가 문서화된 규칙과 일치합니다. | I.1.1 |
-| I.1.5 | `[ ]` | 현재 파일 목록과 언어별 파일 수를 `docs/status/source-inventory.md`에 기록합니다. 자동 생성물과 vendored code를 별도 집계합니다. | 동일 커밋에서 스크립트를 두 번 실행했을 때 동일한 보고서가 생성됩니다. | I.1.1 |
+| I.1.5 | `[x]` | 현재 파일 목록과 언어별 파일 수를 `docs/status/source-inventory.md`에 기록합니다. 자동 생성물과 vendored code를 별도 집계합니다. | 동일 커밋에서 스크립트를 두 번 실행했을 때 동일한 보고서가 생성됩니다. | I.1.1 |
 
 ### I.2 작업 추적 규격
 
