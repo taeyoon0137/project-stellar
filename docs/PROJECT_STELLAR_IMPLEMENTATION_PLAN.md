@@ -2,7 +2,7 @@
 
 - 기준 아키텍처: `PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`
 - 기준일: 2026-06-23
-- 현재 상태: `I.1.1`~`I.1.5` 검증 완료. `I.1.6`~`I.1.9`는 구현·로컬 검증 완료 보고가 있으나 교정된 WBS·커밋 제목·보고서 반영 전이므로 `[~]`
+- 현재 상태: `I.1.1`~`I.1.9` DEV-MAC 검증 완료(이력 정합화·`Task(...)` 일원화 반영). 다음 작업은 `I.1.10`(Bootstrap CI). Windows·CI 증거는 미확보
 - 원자 작업 수: 950개
 - 구현 Phase 수: 28개 (`I`~`XXVIII`)
 - 초기 릴리스 범위: Phase `I`~`XVII`, G8 통과
@@ -29,11 +29,11 @@
 | 항목 | 상태 | 비고 |
 |---|---|---|
 | `I.1.1`~`I.1.5` | `[x]` 검증 완료 | 저장소·Git 설정·inventory 기준선 유지 |
-| 계획·검증 환경 계약 | `[~]` 완료 보고 | 기존 `e6432db`의 제목과 WBS를 `Task(I.1.6): ...`으로 교정해야 함 |
-| Rust 1.96.0 고정 | `[~]` DEV-MAC 검증 완료 보고 | 기존 `6446175`를 `Task(I.1.7): ...`으로 교정해야 함. Windows 검증 완료를 의미하지 않음 |
-| 최소 Cargo workspace·`tools/xtask` | `[~]` DEV-MAC 검증 완료 보고 | 기존 `0411b77`를 `Task(I.1.8): ...`으로 교정해야 함 |
-| `cargo xtask help` | `[~]` DEV-MAC 검증 완료 보고 | 기존 `9f4a1a6`을 `Task(I.1.9): ...`으로 교정해야 함 |
-| `.vscode/settings.json` 개인 오타 설정 | `[!]` 제거 대상 | 기존 `1f6a170 Chore: ...`는 drop. 프로젝트 필수 설정이면 별도 WBS를 먼저 추가 |
+| 계획·검증 환경 계약 (`I.1.6`) | `[x]` 검증 완료 | `Task(I.1.6)` 반영, `config/verification-environments.yaml` 생성, 이력 정합화 완료 |
+| Rust 1.96.0 고정 (`I.1.7`) | `[x]` DEV-MAC 검증 완료 | `Task(I.1.7)`. Windows 검증 완료를 의미하지 않음 |
+| 최소 Cargo workspace·`tools/xtask` (`I.1.8`) | `[x]` DEV-MAC 검증 완료 | `Task(I.1.8)` |
+| `cargo xtask help` (`I.1.9`) | `[x]` DEV-MAC 검증 완료 | `Task(I.1.9)` |
+| `.vscode/settings.json` 개인 오타 설정 | 제거 완료 | `I.1.6`에서 drop, `.vscode/settings.json` 삭제 |
 | Bootstrap CI | `[ ]` 미착수 | `CI-MAC`, `CI-WIN` 증거 없음 |
 | 기능 코드 | `[ ]` 미착수 | Phase II 이후 각 작업 검증 전 완료 처리 금지 |
 
@@ -166,7 +166,7 @@ tools/xtask/
 | I.1.6 | `[x]` | Phase I 계획과 검증 환경 계약을 이 문서 및 `config/verification-environments.yaml`에 반영합니다. 기존 `e6432db`를 `Task(I.1.6): 검증 환경 계약 및 Phase I 재구성`으로 reword합니다. 개인 오타 사전만 포함한 `1f6a170`은 drop하고 `.vscode/settings.json`을 제거합니다. 기존 I.1.1~I.1.5 commit은 보존합니다. | `[DEV-MAC]` `git log --format=%s d123376..HEAD`의 모든 제목이 Task 정규식과 일치하고 `Docs:`·`Chore:`·소문자 `task(`가 0건. 계획서 Phase는 모두 Roman numeral. working tree clean. | I.1.5 |
 | I.1.7 | `[x]` | `rust-toolchain.toml`만 사용해 Rust `1.96.0`, `profile = "minimal"`, components `rustfmt`, `clippy`를 고정합니다. `config/versions.yaml`은 만들지 않습니다. 기존 `6446175`를 `Task(I.1.7): Rust 도구체인 고정`으로 reword합니다. | `[DEV-MAC]` `rustup show active-toolchain`이 repo override `1.96.0`, `rustc -Vv`, `cargo -V`, `cargo fmt -V`, `cargo clippy -V` 종료 0. 보고서 `I.1.7.md`. Windows 완료 주장 금지. | I.1.6 |
 | I.1.8 | `[x]` | 루트 `Cargo.toml`에 resolver `2` 최소 workspace를 생성하고 member를 `tools/xtask` 하나로 고정합니다. package 이름은 `xtask`, 외부 dependency는 0개입니다. `Cargo.lock`을 생성·추적합니다. 기존 `0411b77`을 `Task(I.1.8): 최소 Cargo 워크스페이스와 xtask 크레이트`로 reword합니다. | `[DEV-MAC]` `cargo metadata --format-version 1 --no-deps` member가 `xtask` 하나, `cargo check -p xtask --locked` 종료 0, `Cargo.lock` tracked. | I.1.7 |
-| I.1.9 | `[~]` | `.cargo/config.toml`에 `xtask = "run --package xtask --"`를 추가하고 `tools/xtask/src/main.rs`에 `help`만 지원하는 router를 구현합니다. 인자 없음과 unknown command는 usage를 stderr에 출력하고 `64`로 종료합니다. 기존 `9f4a1a6`을 `Task(I.1.9): cargo xtask help 진입점`으로 reword합니다. | `[DEV-MAC]` `cargo xtask help`=`0`, `cargo xtask`=`64`, unknown=`64`; package fmt·clippy·test 종료 0. | I.1.8 |
+| I.1.9 | `[x]` | `.cargo/config.toml`에 `xtask = "run --package xtask --"`를 추가하고 `tools/xtask/src/main.rs`에 `help`만 지원하는 router를 구현합니다. 인자 없음과 unknown command는 usage를 stderr에 출력하고 `64`로 종료합니다. 기존 `9f4a1a6`을 `Task(I.1.9): cargo xtask help 진입점`으로 reword합니다. | `[DEV-MAC]` `cargo xtask help`=`0`, `cargo xtask`=`64`, unknown=`64`; package fmt·clippy·test 종료 0. | I.1.8 |
 | I.1.10 | `[ ]` | `.github/workflows/bootstrap.yml`에 `bootstrap-macos`와 `bootstrap-windows` job을 추가합니다. 각 job은 clean checkout에서 pinned toolchain 활성화, `rustc -Vv`, `cargo -V`, `cargo metadata`, `cargo check -p xtask --locked`, `cargo xtask help`, xtask fmt·clippy·test를 실행합니다. Windows job은 compile/headless 증거이며 Windows 11 UI·D3D12 증거로 표시하지 않습니다. | `[CI-MAC][CI-WIN]` 두 job 모두 동일 commit에서 성공하고 Rust release=`1.96.0`; job URL과 log artifact checksum이 `docs/task-reports/I.1.10.md`에 존재. | I.1.9 |
 
 ### I.2 작업 추적 데이터와 검증기
