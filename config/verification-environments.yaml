@@ -1,0 +1,62 @@
+# 검증 실행 환경 계약 (I.1.6).
+#
+# 각 WBS 작업의 required_environments는 아래 code 값만 사용합니다.
+# macOS 로컬 결과로 Windows 완료를 주장하지 않습니다(계획 1.2 규칙 16).
+environments:
+  - code: DEV-MAC
+    location: 개발자 macOS 26+ Apple silicon arm64
+    os: macos
+    arch: arm64
+    allows:
+      - 공통 Rust 개발 검사 (fmt, clippy, test)
+      - AppKit·Metal 로컬 build·debug
+      - macOS 수동 smoke
+    evidence: task report의 명령·종료 코드·로컬 로그 hash
+
+  - code: CI-MAC
+    location: 깨끗한 macOS arm64 hosted CI 또는 전용 self-hosted runner
+    os: macos
+    arch: arm64
+    allows:
+      - 재현 가능한 Rust/Xcode build
+      - 공통 golden fixture
+      - 비대화형 테스트
+    evidence: 최종 commit SHA에 연결된 CI check와 artifact
+
+  - code: CI-WIN
+    location: 깨끗한 Windows 11 x64 hosted CI
+    os: windows
+    arch: x64
+    allows:
+      - Rust x64 build·test
+      - C/C++·MSBuild
+      - WinUI compile
+      - headless unit·integration test
+    evidence: 최종 commit SHA에 연결된 CI check와 artifact
+
+  - code: LAB-WIN
+    location: Windows 11 x64 self-hosted 장비 또는 전용 VM (interactive desktop, D3D12)
+    os: windows
+    arch: x64
+    allows:
+      - WinUI 실행
+      - DPI·UI Automation
+      - Direct3D 12
+      - MSIX install·launch smoke
+    evidence: runner ID, OS/build, GPU adapter, 테스트 artifact
+
+  - code: REF-MAC
+    location: Apple M1 16GB 기준 장비
+    os: macos
+    arch: arm64
+    allows:
+      - macOS 성능·GPU 기준 게이트
+    evidence: 원시 benchmark와 환경 manifest
+
+  - code: REF-WIN
+    location: 6-core 16GB DX12 내장 GPU Windows 11 x64 기준 장비
+    os: windows
+    arch: x64
+    allows:
+      - Windows 성능·GPU 기준 게이트
+    evidence: 원시 benchmark와 환경 manifest

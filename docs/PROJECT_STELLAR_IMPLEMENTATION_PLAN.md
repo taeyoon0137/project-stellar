@@ -2,72 +2,113 @@
 
 - 기준 아키텍처: `PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`
 - 기준일: 2026-06-23
-- 현재 상태: 저장소 생성 및 Git 기본 설정 완료 보고, Phase I에서 재검증
-- 원자 작업 수: 933개
+- 현재 상태: `I.1.1`~`I.1.5` 검증 완료. `I.1.6`~`I.1.9`는 구현·로컬 검증 완료 보고가 있으나 교정된 WBS·커밋 제목·보고서 반영 전이므로 `[~]`
+- 원자 작업 수: 950개
 - 구현 Phase 수: 28개 (`I`~`XXVIII`)
 - 초기 릴리스 범위: Phase `I`~`XVII`, G8 통과
 - 로드맵 범위: Phase `XVIII`~`XXVIII`
+- 이 문서는 세부 실행 계획만 포함하며 전체 기술 아키텍처를 중복 수록하지 않음
+
+---
+
+## 개정 기록
+
+- **2026-06-23 — Rust 부트스트랩 순서 교정:** Phase I의 정책 검증기가 Rust `xtask`를 요구하면서 Rust 워크스페이스는 Phase II에 있던 순환 의존성을 제거했습니다. Rust 도구체인, 최소 Cargo 워크스페이스, `cargo xtask help`, 양 플랫폼 Bootstrap CI를 작업 추적 검증보다 먼저 배치했습니다.
+- **2026-06-23 — 검증 환경 책임 분리:** macOS 개발자가 Windows 검증을 로컬에서 대신하지 않도록 `DEV-MAC`, `CI-MAC`, `CI-WIN`, `LAB-WIN`, `REF-MAC`, `REF-WIN`의 책임과 증거 조건을 고정했습니다.
+- **2026-06-23 — 커밋 규칙 고정:** 모든 작업 커밋 제목은 예외 없이 `Task(<WBS-ID>): <작업명>`을 사용합니다. `Docs:`, `Chore:`, 소문자 `task(...)`와 임의 유지보수 prefix는 허용하지 않습니다.
+- **2026-06-23 — I.2.1 원자화:** `I.2.1`은 TaskStatus Rust 데이터 모델만 정의합니다. YAML 파싱, 레코드 검증, 그래프 검증, 증거 검증, 계획 동기화는 별도 WBS로 분리했습니다.
 
 ---
 
 ## 1. 원자적 구현·검증 실행 계획
 
-본 장의 작업 번호는 기존 문서 장 번호와 독립된 WBS 식별자입니다. 예를 들어 `II.1.1`은 작업 패키지 ID이며, 한 번의 에이전트 실행과 한 번의 커밋으로 끝내는 것을 원칙으로 합니다.
+본 장의 작업 번호는 기존 문서 장 번호와 독립된 WBS 식별자입니다. 예를 들어 `II.1.1`은 작업 패키지 ID입니다. 작업 하나는 한 번의 에이전트 실행, 한 개의 완료 보고서, 한 개의 `Task(...)` 커밋으로 끝내는 것을 원칙으로 합니다.
 
 ### 1.1 현재 상태
 
-사용자 보고를 기준으로 현재 완료된 범위는 다음뿐입니다.
-
 | 항목 | 상태 | 비고 |
 |---|---|---|
-| 소스 저장소 생성 | `[x]` 검증 완료 | 작업 `I.1.1`에서 재검증, `docs/status/repository-baseline.md` |
-| Git 초기화 및 기본 설정 | `[x]` 검증 완료 | 작업 `I.1.2`~`I.1.4`에서 재검증 |
-| 기능 코드 | `[ ]` 미착수로 간주 | 저장소에서 확인되더라도 각 단계 검증 전에는 완료 처리 금지 |
-| CI·테스트·벤치마크 | `[ ]` 미착수로 간주 | 기준 스크립트부터 생성 |
+| `I.1.1`~`I.1.5` | `[x]` 검증 완료 | 저장소·Git 설정·inventory 기준선 유지 |
+| 계획·검증 환경 계약 | `[~]` 완료 보고 | 기존 `e6432db`의 제목과 WBS를 `Task(I.1.6): ...`으로 교정해야 함 |
+| Rust 1.96.0 고정 | `[~]` DEV-MAC 검증 완료 보고 | 기존 `6446175`를 `Task(I.1.7): ...`으로 교정해야 함. Windows 검증 완료를 의미하지 않음 |
+| 최소 Cargo workspace·`tools/xtask` | `[~]` DEV-MAC 검증 완료 보고 | 기존 `0411b77`를 `Task(I.1.8): ...`으로 교정해야 함 |
+| `cargo xtask help` | `[~]` DEV-MAC 검증 완료 보고 | 기존 `9f4a1a6`을 `Task(I.1.9): ...`으로 교정해야 함 |
+| `.vscode/settings.json` 개인 오타 설정 | `[!]` 제거 대상 | 기존 `1f6a170 Chore: ...`는 drop. 프로젝트 필수 설정이면 별도 WBS를 먼저 추가 |
+| Bootstrap CI | `[ ]` 미착수 | `CI-MAC`, `CI-WIN` 증거 없음 |
+| 기능 코드 | `[ ]` 미착수 | Phase II 이후 각 작업 검증 전 완료 처리 금지 |
 
 상태 표기는 다음과 같습니다.
 
-- `[x]`: 검증 명령과 완료 기준까지 통과한 작업
-- `[~]`: 완료 보고는 있으나 검증되지 않은 작업
-- `[ ]`: 미착수 작업
-- `[!]`: 선행 조건 또는 외부 결정 때문에 차단된 작업
+- `[x]`: 작업에 지정된 모든 필수 환경의 검증 증거, 보고서, 올바른 커밋까지 존재
+- `[~]`: 구현 또는 일부 환경 검증은 끝났으나 필수 증거·보고서·커밋 중 하나 이상이 미완료
+- `[ ]`: 미착수
+- `[!]`: 선행 조건, 외부 장비, 사용자 결정 때문에 차단
+- `cancelled`: `planning/task-status.yaml`에서만 사용하며 표에서는 `[ ]`로 재사용하지 않음
 
 ### 1.2 원자적 작업 패키지 규칙
 
-모든 에이전트는 다음 규칙을 그대로 따릅니다.
-
 1. 한 번에 WBS 작업 하나만 수행합니다.
-2. 작업 행에 명시된 경로 밖의 파일은 수정하지 않습니다. 공통 잠금 파일이나 자동 생성 파일이 바뀌면 결과 보고서에 이유를 기록합니다.
-3. 공용 API, 파일 포맷, FFI 시그니처를 임의로 추가하지 않습니다. 필요한 API가 작업 지시에 없으면 구현하지 않고 차단 보고서를 남깁니다.
-4. 작업 시작 전 선행 작업이 모두 `[x]`인지 확인합니다. 아니면 코드를 수정하지 않습니다.
-5. 테스트를 먼저 추가하거나 기존 테스트가 실패하는 것을 확인한 뒤 구현합니다.
-6. 임시 `TODO`, `unimplemented!`, 빈 함수, 무조건 성공하는 테스트를 남기지 않습니다. 작업 범위상 의도적인 스텁은 이름에 `Stub`을 포함하고 테스트가 그 제한을 검증해야 합니다.
-7. 모든 오류 경로는 구조화된 오류 타입으로 반환합니다. 로그 문자열만 출력하고 성공으로 처리하지 않습니다.
-8. 성공 시 커밋 메시지는 `task(<WBS-ID>): <작업명>` 형식을 사용합니다.
-9. 실패 시 커밋하지 않고 `docs/task-reports/<WBS-ID>-blocked.md`만 작성합니다.
-10. 작업 완료 보고서는 `docs/task-reports/<WBS-ID>.md`에 다음을 기록합니다.
-    - 변경 파일 목록
-    - 실행한 명령
-    - 테스트 결과
-    - 남은 경고 수
-    - 성능 수치가 있으면 원시 결과 경로
-    - 작업 지시와 다른 점이 있으면 차이와 이유
-11. 작업 완료 후 최소 공통 검증을 실행합니다.
-    - Rust: `cargo fmt --all -- --check`
-    - Rust: `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-    - Rust: `cargo test --workspace --all-features`
-    - macOS 작업: 지정된 `xcodebuild` 명령
-    - Windows 작업: 지정된 `msbuild` 명령
-12. 한 작업에서 프로덕션 파일 5개 또는 테스트 파일 5개를 초과해야 하면 작업을 중단하고 분할 요청을 남깁니다.
-13. 종속성 추가는 `config/dependencies.yaml`에 승인된 항목만 허용합니다. 미등록 라이브러리를 임의로 추가하지 않습니다.
-14. 날짜·경로·난수·해시·직렬화 순서가 결과에 영향을 주는 테스트는 고정 입력을 사용합니다.
-15. 운영체제별 코드가 아닌 공통 코어 작업은 macOS와 Windows에서 동일한 결과가 나오는 fixture를 반드시 포함합니다.
+2. 작업 행에 명시된 경로 밖의 파일은 수정하지 않습니다. 자동 생성 파일이 바뀌면 보고서에 생성 원인과 명령을 기록합니다.
+3. 공용 API, 파일 포맷, FFI 시그니처, numeric registry를 작업 지시 없이 추가하지 않습니다.
+4. 선행 작업이 모두 `[x]`가 아니면 코드를 수정하지 않고 blocked 보고서만 작성합니다.
+5. 테스트 또는 재현 fixture를 먼저 추가하고 요구사항이 실패하는 것을 확인한 뒤 구현합니다. 단순 문서·설정 작업은 작업 행의 결정적 검증 명령을 먼저 정의합니다.
+6. `TODO`, `unimplemented!`, 빈 함수, 항상 성공하는 테스트를 남기지 않습니다. 의도적인 placeholder는 이름에 `Stub`을 포함하고 제한을 검증하는 테스트를 둡니다.
+7. 오류는 구조화된 타입 또는 명시된 종료 코드로 반환합니다. stderr 문자열만 남기고 성공 처리하지 않습니다.
+8. 성공 커밋 제목은 예외 없이 다음 정규식을 만족해야 합니다.
 
-### 1.3 공통 산출물 위치
+```regex
+^Task\([IVXLCDM]+\.[1-9][0-9]*\.[1-9][0-9]*\): .+$
+```
+
+9. `Docs:`, `Chore:`, `Fix:`, 소문자 `task(...)`, 승인되지 않은 prefix와 WBS 없는 커밋을 금지합니다. 병합 전 rebase 또는 squash로 모든 작업 커밋을 위 형식으로 정리합니다.
+10. 실패 시 기능 코드는 커밋하지 않고 `docs/task-reports/<WBS-ID>-blocked.md`만 작성합니다.
+11. 완료 보고서 `docs/task-reports/<WBS-ID>.md`에는 다음을 기록합니다.
+    - 변경 파일 목록
+    - 실행한 명령과 종료 코드
+    - 검증 환경 코드
+    - CI·LAB·REF 실행 URL 또는 artifact locator
+    - 테스트 결과와 남은 경고 수
+    - 성능 원시 결과 경로
+    - 작업 지시와 다른 점 및 이유
+12. 부트스트랩 단계에 존재하지 않는 도구를 완료 기준으로 요구하지 않습니다.
+    - `I.1.1`~`I.1.7`: 작업 행의 Git·shell·`rustup` 명령만 사용
+    - `I.1.8`: `cargo metadata`, `cargo check -p xtask --locked`까지 사용
+    - `I.1.9` 이후 Phase I: `cargo fmt -p xtask -- --check`, `cargo clippy -p xtask --all-targets -- -D warnings`, `cargo test -p xtask`
+    - `II.1.2` 완료 후: 전체 workspace `fmt`, `clippy`, `test`
+13. 한 작업에서 직접 작성하는 프로덕션 파일 5개 또는 테스트 파일 5개를 초과해야 하면 구현을 중단하고 하위 WBS 분할안을 작성합니다. 자동 생성 fixture와 lockfile은 집계에서 제외하되 보고서에는 기록합니다.
+14. 외부 의존성은 `config/dependencies.yaml` 승인 항목만 허용합니다. 해당 파일이 생기기 전에는 `I.2.3`의 단일 bootstrap 예외만 허용합니다.
+15. 날짜·경로·난수·해시·직렬화 순서가 결과에 영향을 주는 테스트는 고정 입력을 사용합니다.
+16. macOS 로컬 결과로 Windows 완료를 주장하지 않습니다. Windows 필수 작업은 `CI-WIN`, `LAB-WIN`, `REF-WIN` 중 작업에 지정된 환경 증거가 있어야 `[x]`가 됩니다.
+17. 공통 코어 작업의 로컬 구현은 `DEV-MAC`에서 완료할 수 있지만, 플랫폼 동등성은 별도 CI 또는 Gate 작업이 통과하기 전까지 제품 수준 보장으로 간주하지 않습니다.
+
+### 1.3 검증 환경 계약
+
+| 코드 | 실행 위치 | 허용하는 검증 | 허용하지 않는 주장 |
+|---|---|---|---|
+| `DEV-MAC` | 개발자의 macOS 26+ Apple silicon 장비 | 구현, Rust unit test, AppKit·Metal 로컬 smoke, 빠른 benchmark | Windows x64 빌드·WinUI·D3D12·Windows 성능 완료 |
+| `CI-MAC` | 깨끗한 macOS CI runner | clean checkout Rust test, macOS compile, 결정적 fixture | 물리 M1 기준 성능, 수동 UI·GPU 체감 |
+| `CI-WIN` | 깨끗한 Windows x64 hosted CI runner | Rust x64, MSBuild, WinUI compile, headless test | Windows 11 데스크톱 상호작용·실제 D3D12·DPI·성능 |
+| `LAB-WIN` | Windows 11 x64 interactive self-hosted 장비 | WinUI 실행, UI automation, DPI, D3D12 기능 검증 | 기준 하드웨어 성능 통과 |
+| `REF-MAC` | Apple M1·16GB·macOS 26+ 기준 장비 | macOS 성능 릴리스 게이트 | Windows 성능 |
+| `REF-WIN` | 2020년급 6코어·16GB·D3D12 iGPU·Windows 11 기준 장비 | Windows 성능 릴리스 게이트 | macOS 성능 |
+
+검증 적용 규칙:
+
+1. 작업 행에 `[DEV-MAC]`, `[CI-WIN]`처럼 환경이 명시되어 있으면 모두 필수입니다.
+2. 환경이 명시되지 않은 문서·모델·플랫폼 비종속 단일 작업의 기본 필수 환경은 `DEV-MAC`입니다.
+3. `CI-WIN`은 Windows 빌드와 비대화형 테스트 증거입니다. Windows 11 런타임·WinUI UI automation·D3D12 기능 검증은 `LAB-WIN`에서만 인정합니다.
+4. Apple silicon에서 실행하는 Windows ARM VM의 x64 에뮬레이션 결과는 `LAB-WIN` 또는 `REF-WIN` 증거로 인정하지 않습니다.
+5. 필수 환경이 준비되지 않으면 작업 상태는 `[!]` 또는 `[~]`이며, 구현자가 해당 환경을 모방해 `[x]`로 바꾸지 않습니다.
+6. CI 증거는 workflow run URL, job name, commit SHA, artifact checksum을 보고서에 기록합니다.
+7. LAB·REF 증거는 장비 프로필 ID, OS build, GPU/driver, 실행 artifact checksum과 원시 결과 경로를 기록합니다.
+
+### 1.4 공통 산출물 위치
 
 ```text
 config/
+├─ bootstrap-dependencies.yaml   # I.2.3~I.3.2 사이에서만 존재
 ├─ dependencies.yaml
+├─ verification-environments.yaml
 ├─ versions.yaml
 └─ performance-budgets.yaml
 
@@ -81,6 +122,11 @@ planning/
 ├─ task-status.yaml
 └─ milestones.yaml
 
+rust-toolchain.toml
+Cargo.toml
+Cargo.lock
+.cargo/config.toml
+
 crates/
 apps/
 tests/
@@ -88,79 +134,98 @@ benchmarks/
 tools/xtask/
 ```
 
-### 1.4 단계 완료 게이트
+### 1.5 단계 완료 게이트
 
-| 게이트 | 완료 조건 |
-|---|---|
-| G0 저장소 기준선 | Phase I 전 작업 통과, CI에서 빈 워크스페이스 검증 가능 |
-| G1 코어 실행 | Rust 코어와 양쪽 네이티브 셸이 FFI ping 호출 성공 |
-| G2 프로젝트 수명주기 | 새 프로젝트 생성·초기 커밋·열기·Clone 검증 통과 |
-| G3 영속 문서 | Frame 하나를 생성하고 저장·재실행·복구 가능 |
-| G4 편집 코어 | Command·Undo/Redo·선택 히스토리 통과 |
-| G5 디자인 모델 | 토큰·Binding·Component·View Variant가 결정론적으로 평가됨 |
-| G6 화면 표시 | 공통 Scene에서 Metal·D3D12가 허용 오차 내 동일 결과 생성 |
-| G7 Git MVP | Semantic Diff·부분 Stage·Commit·Push·Conflict 해결 통과 |
-| G8 초기 릴리스 | 성능·보안·복구·패키징 수용 기준 전부 통과 |
+| 게이트 | 완료 조건 | 필수 환경 |
+|---|---|---|
+| G0 저장소·검증 기준선 | Phase I 전체 완료. 고정 Rust, xtask-only workspace, TaskStatus 검증, 커밋·ADR·의존성 정책, 계획 동기화가 clean checkout에서 실행 가능 | `CI-MAC`, `CI-WIN` |
+| G1 코어 실행 | Rust 코어와 양쪽 네이티브 셸이 동일 ABI의 FFI ping 호출 성공 | `CI-MAC`, `CI-WIN`, `LAB-WIN` |
+| G2 프로젝트 수명주기 | 새 프로젝트 생성·초기 커밋·열기·Clone 검증 통과 | `CI-MAC`, `CI-WIN`, 플랫폼 UI 작업은 `LAB-WIN` |
+| G3 영속 문서 | Frame 하나를 생성하고 저장·재실행·복구 가능 | `CI-MAC`, `CI-WIN` |
+| G4 편집 코어 | Command·Undo/Redo·선택 히스토리 통과 | `CI-MAC`, `CI-WIN` |
+| G5 디자인 모델 | 토큰·Binding·Component·View Variant가 결정론적으로 평가됨 | `CI-MAC`, `CI-WIN` |
+| G6 화면 표시 | Metal·D3D12 결과가 허용 오차 내 동등 | `LAB-WIN`, macOS GPU 장비 |
+| G7 Git MVP | Semantic Diff·부분 Stage·Commit·Push·Conflict 해결 통과 | `CI-MAC`, `CI-WIN`, UI는 `LAB-WIN` |
+| G8 초기 릴리스 | 성능·보안·복구·패키징 수용 기준 전부 통과 | `REF-MAC`, `REF-WIN` 포함 |
 
 ---
 
-## Phase I. 저장소 기준선과 에이전트 실행 환경
+## Phase I. 저장소 기준선과 검증 도구 부트스트랩
 
-### I.1 현재 저장소 검증
+> **순서 불변조건:** `I.1.1`~`I.1.10`을 완료한 뒤 `I.2.*`를 시작합니다. `I.1.8` 전에는 Cargo workspace를 요구하지 않습니다. `I.1.9` 전에는 `cargo xtask`를 완료 기준으로 요구하지 않습니다. `II.1.2` 전에는 product workspace 전체 검증을 요구하지 않습니다.
 
-| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
-|---|---|---|---|---|
-| I.1.1 | `[x]` | 저장소 루트에서 `git rev-parse --show-toplevel`, `git status --porcelain=v2`, `git log -1 --format=%H`를 실행하고 결과를 `docs/status/repository-baseline.md`에 기록합니다. 파일에는 절대 경로 대신 저장소 상대 경로만 남깁니다. | 세 명령이 종료 코드 0이고 보고서에 루트, HEAD, dirty 여부가 존재합니다. | 없음 |
-| I.1.2 | `[x]` | 현재 브랜치와 기본 remote를 기록합니다. 소스 저장소 브랜치 정책은 제품 프로젝트의 `main` 고정 정책과 구분해 기록합니다. Git 설정을 변경하지 않습니다. | `git branch --show-current`와 `git remote -v` 결과가 보고서에 있고 자격 증명 문자열이 없습니다. | I.1.1 |
-| I.1.3 | `[x]` | `.gitignore`를 검사하고 최소 항목 `target/`, `.DS_Store`, `.vs/`, `build/`, `DerivedData/`, IDE 사용자 설정, 로컬 진단·복구 데이터가 누락되면 추가합니다. | 각 항목에 대한 `git check-ignore -v` fixture가 통과하고 추적 대상 파일을 잘못 무시하지 않습니다. | I.1.1 |
-| I.1.4 | `[x]` | `.gitattributes`에 텍스트 정규화, 셸 스크립트 LF, PowerShell CRLF 허용 여부, 바이너리 fixture 속성을 명시합니다. Stellar 프로젝트용 merge driver는 아직 등록하지 않습니다. | `git check-attr -a -- <fixture>` 결과가 문서화된 규칙과 일치합니다. | I.1.1 |
-| I.1.5 | `[x]` | 현재 파일 목록과 언어별 파일 수를 `docs/status/source-inventory.md`에 기록합니다. 자동 생성물과 vendored code를 별도 집계합니다. | 동일 커밋에서 스크립트를 두 번 실행했을 때 동일한 보고서가 생성됩니다. | I.1.1 |
-
-### I.2 작업 추적 규격
+### I.1 저장소 기준선, 이력 정합화와 Rust 부트스트랩
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| I.2.1 | `[ ]` | `planning/task-status.yaml` 스키마를 정의합니다. 필드는 `id`, `title`, `status`, `owner`, `depends_on`, `commit`, `report`, `verified_at`으로 고정합니다. | 중복 ID, 알 수 없는 상태, 존재하지 않는 선행 ID를 거부하는 검증 테스트가 통과합니다. | I.1.5 |
-| I.2.2 | `[ ]` | 본 문서의 모든 WBS ID를 `planning/task-status.yaml`에 `not_started`로 등록하고 사용자 보고 완료 항목은 `reported_done`으로 기록합니다. | 본 문서 WBS ID 집합과 YAML ID 집합이 정확히 일치하는 검사 스크립트가 통과합니다. | I.2.1 |
-| I.2.3 | `[ ]` | `docs/task-reports/TEMPLATE.md`를 생성합니다. 변경 파일, 명령, 테스트, 성능, 차이, 차단 항목 섹션을 고정합니다. | 빈 템플릿에 필수 헤더가 모두 있는지 테스트합니다. | I.2.1 |
-| I.2.4 | `[ ]` | `docs/task-reports/BLOCKED_TEMPLATE.md`를 생성합니다. 실패 선행조건, 재현 명령, 필요한 결정, 변경되지 않은 파일을 기록하게 합니다. | 필수 헤더 검사 통과. | I.2.1 |
-| I.2.5 | `[ ]` | PR 템플릿에 WBS ID, 변경 범위, 검증 명령, 파일 포맷 영향, 성능 영향, 보안 영향 체크를 추가합니다. | WBS ID가 없는 PR 본문 fixture를 검증 스크립트가 거부합니다. | I.2.1 |
-| I.2.6 | `[ ]` | 커밋 메시지 검사 스크립트를 추가해 `task(<ID>):` 형식 또는 승인된 유지보수 prefix만 허용합니다. | 올바른 3개 fixture는 통과하고 잘못된 3개 fixture는 실패합니다. | I.2.1 |
+| I.1.1 | `[x]` | 저장소 루트에서 `git rev-parse --show-toplevel`, `git status --porcelain=v2`, `git log -1 --format=%H`를 실행하고 결과를 `docs/status/repository-baseline.md`에 기록합니다. 절대 경로는 저장하지 않습니다. | `[DEV-MAC]` 세 명령 종료 코드 0, 보고서에 루트·HEAD·dirty 여부 존재. | 없음 |
+| I.1.2 | `[x]` | 현재 브랜치와 remote를 기록합니다. 소스 저장소 브랜치 정책과 Stellar가 생성하는 제품 프로젝트의 `main` 정책을 구분합니다. Git 설정은 변경하지 않습니다. | `[DEV-MAC]` `git branch --show-current`, `git remote -v` 결과가 보고서에 있고 자격 증명 문자열 없음. | I.1.1 |
+| I.1.3 | `[x]` | `.gitignore`를 검사하고 `target/`, `.DS_Store`, `.vs/`, `build/`, `DerivedData/`, IDE 사용자 설정, 로컬 진단·복구 데이터를 반영합니다. | `[DEV-MAC]` `git check-ignore -v` fixture 통과, 추적 대상 오탐 0. | I.1.1 |
+| I.1.4 | `[x]` | `.gitattributes`에 텍스트 정규화, shell LF, PowerShell 정책, binary fixture 속성을 명시합니다. Stellar merge driver는 등록하지 않습니다. | `[DEV-MAC]` `git check-attr -a -- <fixture>`가 문서화 규칙과 일치. | I.1.1 |
+| I.1.5 | `[x]` | 현재 파일 목록과 언어별 파일 수를 `docs/status/source-inventory.md`에 기록하고 자동 생성물·vendored code를 별도 집계합니다. | `[DEV-MAC]` 동일 commit에서 두 번 생성한 보고서가 byte-identical. | I.1.1 |
+| I.1.6 | `[x]` | Phase I 계획과 검증 환경 계약을 이 문서 및 `config/verification-environments.yaml`에 반영합니다. 기존 `e6432db`를 `Task(I.1.6): 검증 환경 계약 및 Phase I 재구성`으로 reword합니다. 개인 오타 사전만 포함한 `1f6a170`은 drop하고 `.vscode/settings.json`을 제거합니다. 기존 I.1.1~I.1.5 commit은 보존합니다. | `[DEV-MAC]` `git log --format=%s d123376..HEAD`의 모든 제목이 Task 정규식과 일치하고 `Docs:`·`Chore:`·소문자 `task(`가 0건. 계획서 Phase는 모두 Roman numeral. working tree clean. | I.1.5 |
+| I.1.7 | `[~]` | `rust-toolchain.toml`만 사용해 Rust `1.96.0`, `profile = "minimal"`, components `rustfmt`, `clippy`를 고정합니다. `config/versions.yaml`은 만들지 않습니다. 기존 `6446175`를 `Task(I.1.7): Rust 도구체인 고정`으로 reword합니다. | `[DEV-MAC]` `rustup show active-toolchain`이 repo override `1.96.0`, `rustc -Vv`, `cargo -V`, `cargo fmt -V`, `cargo clippy -V` 종료 0. 보고서 `I.1.7.md`. Windows 완료 주장 금지. | I.1.6 |
+| I.1.8 | `[~]` | 루트 `Cargo.toml`에 resolver `2` 최소 workspace를 생성하고 member를 `tools/xtask` 하나로 고정합니다. package 이름은 `xtask`, 외부 dependency는 0개입니다. `Cargo.lock`을 생성·추적합니다. 기존 `0411b77`을 `Task(I.1.8): 최소 Cargo 워크스페이스와 xtask 크레이트`로 reword합니다. | `[DEV-MAC]` `cargo metadata --format-version 1 --no-deps` member가 `xtask` 하나, `cargo check -p xtask --locked` 종료 0, `Cargo.lock` tracked. | I.1.7 |
+| I.1.9 | `[~]` | `.cargo/config.toml`에 `xtask = "run --package xtask --"`를 추가하고 `tools/xtask/src/main.rs`에 `help`만 지원하는 router를 구현합니다. 인자 없음과 unknown command는 usage를 stderr에 출력하고 `64`로 종료합니다. 기존 `9f4a1a6`을 `Task(I.1.9): cargo xtask help 진입점`으로 reword합니다. | `[DEV-MAC]` `cargo xtask help`=`0`, `cargo xtask`=`64`, unknown=`64`; package fmt·clippy·test 종료 0. | I.1.8 |
+| I.1.10 | `[ ]` | `.github/workflows/bootstrap.yml`에 `bootstrap-macos`와 `bootstrap-windows` job을 추가합니다. 각 job은 clean checkout에서 pinned toolchain 활성화, `rustc -Vv`, `cargo -V`, `cargo metadata`, `cargo check -p xtask --locked`, `cargo xtask help`, xtask fmt·clippy·test를 실행합니다. Windows job은 compile/headless 증거이며 Windows 11 UI·D3D12 증거로 표시하지 않습니다. | `[CI-MAC][CI-WIN]` 두 job 모두 동일 commit에서 성공하고 Rust release=`1.96.0`; job URL과 log artifact checksum이 `docs/task-reports/I.1.10.md`에 존재. | I.1.9 |
 
-### I.3 의존성과 버전 통제
-
-| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
-|---|---|---|---|---|
-| I.3.1 | `[ ]` | `config/versions.yaml`을 생성하고 Rust, Xcode, Swift, Windows SDK, Visual Studio, CMake가 아니라 실제 사용하는 도구만 기록할 수 있는 스키마를 만듭니다. 값은 정확한 버전 또는 범위 중 하나만 허용합니다. | 잘못된 중복·빈 버전을 거부합니다. | I.2.1 |
-| I.3.2 | `[ ]` | `config/dependencies.yaml`을 생성합니다. 필드는 이름, 생태계, 허용 라이선스, 승인 상태, 용도, 대체 금지 여부입니다. 초기에는 빈 승인 목록으로 시작합니다. | 미승인 의존성을 탐지하는 검사 fixture가 통과합니다. | I.3.1 |
-| I.3.3 | `[ ]` | 라이선스 허용 목록을 `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `ISC`, 별도 승인으로 구분합니다. GPL·AGPL·SSPL은 자동 거부합니다. | 각 라이선스 fixture의 허용·거부 결과가 기대와 일치합니다. | I.3.2 |
-| I.3.4 | `[ ]` | `docs/adr/TEMPLATE.md`를 생성하고 파일 포맷·공개 API·FFI·성능 예산 변경은 ADR 없이는 병합할 수 없다는 검사 규칙을 작성합니다. | 해당 경로 변경 fixture가 ADR 없이 실패하고 ADR 포함 시 통과합니다. | I.2.5 |
-
-### I.4 공통 검증 진입점
+### I.2 작업 추적 데이터와 검증기
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| I.4.1 | `[ ]` | `tools/xtask` Rust 바이너리 crate를 만들고 `cargo xtask help`가 동작하도록 최소 명령 라우터를 작성합니다. | `cargo xtask help` 종료 코드 0, 알려지지 않은 명령은 비영(非零) 종료. | I.3.2 |
-| I.4.2 | `[ ]` | `cargo xtask verify-task <ID>` 명령을 추가해 선행 상태, 보고서 존재, 커밋 형식, 공통 검사 결과 파일을 확인합니다. 실제 빌드는 아직 호출하지 않습니다. | 성공·선행 누락·보고서 누락 fixture가 각각 기대한 종료 코드 반환. | I.4.1, I.2.2 |
-| I.4.3 | `[ ]` | `cargo xtask sync-plan` 명령을 추가해 본 문서 WBS ID와 `task-status.yaml`을 비교만 하고 자동 수정하지 않게 합니다. | 누락 ID와 중복 ID를 정확히 보고합니다. | I.4.1, I.2.2 |
-| I.4.4 | `[ ]` | CI에 `plan-consistency` 작업을 추가해 `sync-plan --check`, 커밋 메시지, 의존성 정책 검사를 실행합니다. | 의도적으로 깨진 fixture 브랜치에서 CI가 실패하는 것을 확인합니다. | I.4.2, I.4.3 |
+| I.2.1 | `[ ]` | `tools/xtask/src/task_status/model.rs`에 `TaskStatusRecord`, `TaskState`, `VerificationEnvironment`, `VerificationEvidence` 데이터 모델만 정의합니다. 필드는 `id`, `title`, `status`, `owner`, `depends_on`, `required_environments`, `evidence`, `commit`, `report`, `verified_at`입니다. YAML 파싱과 파일 I/O는 구현하지 않습니다. | `[DEV-MAC]` 생성자·enum unit test 통과. 모듈에서 filesystem/YAML parser import 0. | I.1.10 |
+| I.2.2 | `[ ]` | `tools/xtask/src/task_status/wbs_id.rs`에 Roman Phase와 두 개의 decimal 하위 번호를 갖는 `WbsId` parser·Display·Ord를 구현합니다. `0`, 음수, suffix, 두 단계·네 단계 ID는 거부합니다. | `[DEV-MAC]` 정상 `I.1.1`, `XXVIII.3.3` 통과; `1.1.1`, `I.0.1`, `I.1`, `I.1.1.1`, `I.01.1` 실패. | I.2.1 |
+| I.2.3 | `[ ]` | Phase I parser의 유일한 bootstrap dependency로 `yaml-rust2 = "=0.11.0"`을 승인합니다. `config/bootstrap-dependencies.yaml`에 crate, exact version, license `MIT OR Apache-2.0`, 사용 범위 `Phase I YAML event parsing only`, 제거 시점 `I.3.2`를 기록하고 `tools/xtask/Cargo.toml`에 추가합니다. 다른 crate는 추가하지 않습니다. | `[DEV-MAC]` `cargo tree -p xtask`에 직접 dependency `yaml-rust2 v0.11.0` 하나만 추가되고 lockfile 갱신 이유가 보고서에 기록. | I.2.2 |
+| I.2.4 | `[ ]` | `tools/xtask/src/yaml/restricted_loader.rs`에 yaml-rust2 event 기반 loader를 작성합니다. 단일 document와 mapping/sequence/scalar만 허용하고 anchor, alias, custom tag, merge key, 다중 document를 위치 포함 오류로 거부합니다. TaskStatus 필드 해석은 하지 않습니다. | `[DEV-MAC]` 허용 syntax fixture 통과; 금지 syntax 각 1개 fixture가 고유 오류 코드와 line/column을 반환. | I.2.3 |
+| I.2.5 | `[ ]` | `tools/xtask/src/task_status/decode.rs`에 restricted YAML value를 `TaskStatusRecord` raw field 구조로 변환하는 decoder를 구현합니다. top-level은 `tasks` sequence 하나만 허용하고 unknown key·duplicate key·잘못된 scalar/sequence 형식을 거부합니다. 상태 규칙과 선행 graph는 검사하지 않습니다. | `[DEV-MAC]` 필드별 정상 fixture와 unknown·duplicate·type mismatch fixture 통과. | I.2.4 |
+| I.2.6 | `[ ]` | `tools/xtask/src/task_status/validate_record.rs`에 단일 record 필수값과 nullable 규칙을 구현합니다. 빈 title, 빈 required environment, 중복 environment, 잘못된 report 상대 경로, commit SHA 형식 오류를 거부합니다. 다른 record 존재 여부는 검사하지 않습니다. | `[DEV-MAC]` 각 필드 오류를 하나씩 가진 table-driven test 통과. | I.2.5 |
+| I.2.7 | `[ ]` | `tools/xtask/src/task_status/validate_collection.rs`에 task ID 중복, 허용하지 않는 상태, title mismatch 기본 검사를 구현합니다. 허용 상태는 `not_started`, `in_progress`, `reported_done`, `verified`, `blocked`, `cancelled`입니다. | `[DEV-MAC]` duplicate ID·unknown status fixture 실패, 정상 collection 통과. | I.2.6 |
+| I.2.8 | `[ ]` | `tools/xtask/src/task_status/validate_graph.rs`에 `depends_on` 대상 존재, self dependency, 중복 edge, cycle 검사를 구현합니다. 범위 표기와 Phase/Gate 문자열은 ledger의 exact dependency로 허용하지 않습니다. | `[DEV-MAC]` missing·self·duplicate·2-node/10-node cycle fixture 실패, DAG 통과. | I.2.7 |
+| I.2.9 | `[ ]` | `tools/xtask/src/task_status/validate_evidence.rs`에 상태별 증거 규칙을 구현합니다. `verified`는 commit·report·verified_at과 모든 required environment evidence가 필요하고, `reported_done`은 report가 필요하며, `not_started`는 commit·report·evidence가 없어야 합니다. | `[DEV-MAC]` 환경 1개 누락, report 누락, 과도한 not_started evidence fixture 실패. | I.2.7 |
+| I.2.10 | `[ ]` | `tools/xtask/src/plan/markdown_wbs.rs`에 Markdown table 행에서 WBS ID·title·status·선행 exact ID를 추출하는 parser를 구현합니다. fenced code, prose 예시, range 표기는 WBS 정의로 세지 않습니다. | `[DEV-MAC]` 실제 계획서에서 ID를 중복 없이 추출하고 code fence 속 가짜 ID fixture를 무시. | I.2.2 |
+| I.2.11 | `[ ]` | `tools/xtask/src/task_status/write.rs`에 deterministic ledger writer를 구현합니다. key 순서, 2-space indent, LF, final newline, task ID 정렬을 고정하고 주석은 생성하지 않습니다. | `[DEV-MAC]` 동일 collection 100회 출력 byte-identical, parse→write→parse 의미 동일. | I.2.5 |
+| I.2.12 | `[ ]` | 계획서 WBS 추출 결과로 `planning/task-status.yaml`을 생성합니다. `I.1.1`~`I.1.5`는 `verified`, `I.1.6`~`I.1.9`는 현재 교정 전이면 `reported_done`, 나머지는 `not_started`로 기록합니다. 각 record의 required environment는 작업 행과 Gate 규칙을 반영합니다. 수작업 복사 대신 I.2.10·I.2.11 library를 호출하는 일회성 subcommand를 사용합니다. | `[DEV-MAC]` 계획 ID 집합과 ledger ID 집합 동일, decoder·record·collection·graph·evidence validator 모두 통과. | I.2.8, I.2.9, I.2.10, I.2.11 |
+| I.2.13 | `[ ]` | `docs/task-reports/TEMPLATE.md`를 생성합니다. WBS, 변경 파일, 명령·종료 코드, 환경·증거, 테스트, 성능, 차이, 남은 위험 섹션을 고정합니다. | `[DEV-MAC]` template fixture에 필수 heading이 정확히 한 번씩 존재. | I.2.1 |
+| I.2.14 | `[ ]` | `docs/task-reports/BLOCKED_TEMPLATE.md`를 생성합니다. 실패 선행조건, 재현 명령, 필요한 결정·환경, 변경되지 않은 파일, 재개 조건을 고정합니다. | `[DEV-MAC]` 필수 heading fixture 통과. | I.2.13 |
+| I.2.15 | `[ ]` | `tools/xtask/src/task_report/validate.rs`에 완료·blocked 보고서 validator를 구현합니다. template heading, WBS 일치, 검증 환경, 명령 종료 코드, artifact locator 형식을 검사합니다. | `[DEV-MAC]` heading·WBS·evidence를 하나씩 제거한 fixture가 실패. | I.2.13, I.2.14 |
+| I.2.16 | `[ ]` | `.github/pull_request_template.md`에 WBS ID, 변경 경로, 명령·환경 증거, 파일 포맷·성능·보안 영향, 보고서 링크를 추가합니다. validator는 별도 함수로 구현하고 WBS 없는 body를 거부합니다. | `[DEV-MAC]` 정상 body 2개 통과, WBS·증거·보고서 각각 누락 fixture 실패. | I.2.15 |
+| I.2.17 | `[ ]` | `tools/xtask/src/commit_message.rs`에 exact commit subject validator를 구현합니다. 허용 형식은 `Task(<WBS-ID>): <비어 있지 않은 제목>` 하나뿐입니다. merge·revert·Docs·Chore·소문자 task 예외를 만들지 않습니다. | `[DEV-MAC]` 올바른 Roman ID 3개 통과; lowercase, Arabic Phase, Docs, Chore, 빈 제목, malformed ID fixture 실패. | I.2.2 |
 
-**Phase I 완료 조건:** `0.*` 작업 전체가 `[x]`이고 G0를 통과합니다.
+### I.3 버전·의존성·ADR 정책
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| I.3.1 | `[ ]` | `config/versions.yaml`과 validator를 생성합니다. Rust는 `exact: 1.96.0`만 허용하고 `rust-toolchain.toml`과 일치해야 합니다. 다른 도구는 실제 사용이 시작된 항목만 기록하며 `exact` 또는 `range` 중 하나만 허용합니다. | `[DEV-MAC]` duplicate·empty·exact/range 동시·Rust mismatch fixture 실패. | I.2.4, I.1.7 |
+| I.3.2 | `[ ]` | `config/dependencies.yaml`과 validator를 생성합니다. `yaml-rust2 0.11.0` bootstrap 승인을 정식 항목으로 이전한 뒤 `config/bootstrap-dependencies.yaml`을 삭제합니다. 필드는 name, ecosystem, exact version, license, approval, purpose, replaceable입니다. 미등록 direct dependency를 거부합니다. | `[DEV-MAC]` `cargo metadata` direct dependency 집합과 승인 목록 일치, bootstrap file 없음, unknown dependency fixture 실패. | I.3.1, I.2.3 |
+| I.3.3 | `[ ]` | dependency validator에 license policy를 추가합니다. 자동 허용은 MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC; GPL·AGPL·SSPL은 자동 거부; 그 밖은 `separate_approval: true`가 필요합니다. | `[DEV-MAC]` 허용·거부·별도 승인 fixture 통과. | I.3.2 |
+| I.3.4 | `[ ]` | `docs/adr/TEMPLATE.md`를 생성합니다. Status, Context, Decision, Alternatives, Consequences, Compatibility, Performance, Security, Migration 섹션을 고정합니다. | `[DEV-MAC]` heading fixture 통과. | I.2.13 |
+| I.3.5 | `[ ]` | `tools/xtask/src/adr_policy.rs`에 보호 경로 정책을 구현합니다. storage format, public API, FFI, numeric registry, performance budget 변경은 같은 diff에 새·수정 ADR이 없으면 실패합니다. | `[DEV-MAC]` 보호 경로만 변경 fixture 실패, ADR 동반 fixture 통과, docs-only 오탐 0. | I.3.4 |
+
+### I.4 공통 검증 명령과 G0 CI
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| I.4.1 | `[ ]` | 기존 `help` router를 모듈형 command registry로 확장하고 `validate-task-status`, `validate-task-report`, `validate-pr-body`, `validate-commit-message`, `validate-versions`, `validate-dependencies`, `validate-adr`를 연결합니다. 성공 `0`, 입력 오류 `64`, 정책 위반 `65`, 내부 오류 `70`을 사용합니다. | `[DEV-MAC]` help snapshot에 각 명령 1회, 정상·정책 위반 fixture의 종료 코드 일치, xtask fmt·clippy·test 통과. | I.2.12, I.2.15, I.2.16, I.2.17, I.3.3, I.3.5 |
+| I.4.2 | `[ ]` | `cargo xtask verify-task <ID>`를 구현합니다. ledger 선행 상태, 상태별 필수 필드, report, commit subject, required environment evidence를 확인합니다. `II.1.2` 전에는 product workspace build 결과를 요구하지 않습니다. | `[DEV-MAC]` success·missing dependency·missing report·missing CI-WIN evidence·premature workspace requirement fixture가 기대 코드 반환. | I.4.1 |
+| I.4.3 | `[ ]` | `cargo xtask sync-plan --check`를 구현합니다. 계획 WBS와 ledger의 누락·추가·중복·title·depends_on 차이를 보고하며 파일을 수정하지 않습니다. | `[DEV-MAC]` 각 drift fixture를 정확히 보고하고 실제 계획서에서는 종료 0. | I.2.10, I.2.12, I.4.1 |
+| I.4.4 | `[ ]` | Bootstrap CI의 macOS·Windows job에 `sync-plan --check`, 모든 Phase I validator, xtask fmt·clippy·test를 추가합니다. commit subject 검사는 기준 commit 이후 모든 non-merge commit을 검사하며 예외 prefix는 없습니다. | `[CI-MAC][CI-WIN]` clean branch 성공. task ledger, commit subject, dependency, ADR 정책을 각각 하나씩 깨뜨린 fixture branch에서 해당 job 실패. | I.4.2, I.4.3 |
+
+**Phase I 완료 조건:** `I.*` 전체가 `[x]`이고 G0를 통과합니다. `I.1.6`~`I.1.9`의 현재 `[~]`는 교정된 `Task(...)` 이력과 보고서가 반영된 뒤에만 `[x]`로 변경합니다.
 
 ---
 
 ## Phase II. Rust 런타임, 모노레포와 네이티브 셸 골격
 
-### II.1 Rust 도구체인과 워크스페이스
+### II.1 Rust 도구체인과 제품 워크스페이스
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| II.1.1 | `[ ]` | 실행 환경의 최신 설치 가능한 Rust stable을 조회하고 양쪽 대상 CI에서 동일 버전이 설치되는지 확인한 뒤 정확한 버전을 `rust-toolchain.toml`과 `config/versions.yaml`에 고정합니다. `rustfmt`, `clippy`를 포함합니다. | macOS arm64와 Windows x64 CI에서 `rustc --version`이 완전히 동일합니다. | G0 |
-| II.1.2 | `[ ]` | 루트 `Cargo.toml`에 resolver v2 워크스페이스를 만들고 release/debug 프로필, 공통 package metadata, workspace lint를 선언합니다. 아직 기능 crate는 추가하지 않습니다. | 빈 워크스페이스에서 `cargo metadata --no-deps`와 `cargo check` 통과. | II.1.1 |
+| II.1.1 | `[ ]` | Phase I에서 고정한 Rust `1.96.0`을 제품 코어 공식 baseline으로 승격합니다. `docs/adr/ADR-0001-rust-toolchain.md`에 변경 절차, MSRV 정책, 업그레이드 전용 WBS 요구사항을 기록합니다. 버전을 자동 변경하지 않습니다. | `[CI-MAC][CI-WIN]` `rustc -Vv`의 release와 commit-hash가 동일하고 ADR heading·결정이 검증됩니다. | G0 |
+| II.1.2 | `[ ]` | I.1.8의 xtask-only workspace를 제품 workspace로 확장합니다. member는 여전히 `tools/xtask` 하나로 두고 root `Cargo.toml`에 resolver v2, debug/release profile, workspace package metadata, workspace lint를 추가합니다. 기능 crate는 추가하지 않습니다. | `[DEV-MAC][CI-MAC][CI-WIN]` `cargo metadata --no-deps`, workspace fmt·clippy·test 통과, member=`xtask` 하나. | II.1.1 |
 | II.1.3 | `[ ]` | panic 정책을 정의합니다. 앱 라이브러리 release는 `panic=abort`, 테스트는 unwind를 사용하고 FFI 경계에서 panic이 넘어가지 않도록 정책 문서를 추가합니다. | release profile 검사와 panic fixture 테스트 통과. | II.1.2 |
-| II.1.4 | `[ ]` | workspace 공통 lint에 unsafe 사용은 `unsafe_op_in_unsafe_fn` 경고가 아니라 오류가 되게 하고, 공개 API missing docs는 초기에는 경고로 둡니다. | 의도적인 unsafe fixture가 설명 주석 없이는 실패합니다. | II.1.2 |
-| II.1.5 | `[ ]` | 재현 가능한 빌드를 위해 `Cargo.lock`을 Git 추적 대상으로 확정하고 CI에서 `--locked`를 사용하게 합니다. | lockfile 변경 없이 `cargo check --locked` 통과, lockfile 누락 fixture 실패. | II.1.2 |
-| II.1.6 | `[ ]` | `cargo xtask check-core`를 구현해 fmt, clippy, test, doc test를 고정 순서로 실행합니다. 첫 실패에서 종료하고 명령별 로그를 `target/xtask-logs/`에 저장합니다. | 각 하위 명령 실패 fixture에서 정확한 실패 코드와 로그 생성. | II.1.2, I.4.1 |
+| II.1.4 | `[ ]` | workspace 공통 lint에 `unsafe_op_in_unsafe_fn`을 오류로 설정하고 공개 API missing docs는 초기에는 경고로 둡니다. | 의도적 unsafe fixture가 설명·명시 블록 없이 실패. | II.1.2 |
+| II.1.5 | `[ ]` | I.1.8에서 생성한 `Cargo.lock`을 제품 workspace의 단일 lockfile로 유지하고 모든 CI Rust 명령에 `--locked`를 적용합니다. dependency-update WBS 외 lockfile drift를 금지합니다. | lockfile 변경 없이 `cargo check --workspace --locked` 통과, 누락·무단 drift fixture 실패. | II.1.2 |
+| II.1.6 | `[ ]` | `cargo xtask check-core`를 구현해 전체 workspace fmt, clippy, test, doc test를 고정 순서로 실행하고 첫 실패에서 종료합니다. 명령별 로그를 `target/xtask-logs/`에 저장하며 Phase I xtask-only 검사와 혼합하지 않습니다. | 각 하위 명령 실패 fixture에서 정확한 실패 코드·로그 생성, 성공 시 네 단계 모두 실행. | II.1.2, I.4.1 |
 
 ### II.2 공통 crate 골격
 
@@ -365,7 +430,7 @@ tools/xtask/
 | V.1.2 | `[ ]` | `storage`에 canonical encoder를 구현합니다. map 입력 순서와 무관하게 key order로 기록합니다. | 동일 값의 삽입 순서를 바꾼 1,000 fixture가 동일 bytes. | V.1.1 |
 | V.1.3 | `[ ]` | canonical decoder를 구현하고 length overflow, duplicate key, unknown mandatory tag를 거부합니다. | malformed corpus 전부 panic 없이 오류 반환. | V.1.2 |
 | V.1.4 | `[ ]` | 저장 float가 NaN·Infinity·negative zero를 포함하면 encoder가 거부 또는 정규화하도록 core 규칙과 일치시킵니다. | primitive golden bytes 일치. | V.1.2, III.3.1 |
-| V.1.5 | `[ ]` | content hash 알고리즘을 ADR로 고정하고 `ContentHash` newtype과 문자열 형식을 구현합니다. 알고리즘 이름을 hash 값에 포함합니다. | hash test vector와 문자열 parse round-trip 통과. | I.3.4, ADR 승인 |
+| V.1.5 | `[ ]` | content hash 알고리즘을 ADR로 고정하고 `ContentHash` newtype과 문자열 형식을 구현합니다. 알고리즘 이름을 hash 값에 포함합니다. | hash test vector와 문자열 parse round-trip 통과. | I.3.5, ADR 승인 |
 
 ### V.2 Chunk envelope와 저장소
 
@@ -1690,23 +1755,29 @@ tools/xtask/
 
 ### XVII.3 첫 착수 Queue
 
-현재 상태에서는 다음 순서로 시작합니다.
+현재 상태에서는 아래 순서를 바꾸지 않습니다.
 
-1. `I.1.1` 저장소 baseline 기록
-2. `I.1.2` Git 상태 기록
-3. `I.1.3` `.gitignore` 검증
-4. `I.1.4` `.gitattributes` 검증
-5. `I.1.5` source inventory
-6. `I.2.1` task status schema
-7. `I.2.3` task report template
-8. `I.3.1` version schema
-9. `I.3.2` dependency policy
-10. `I.4.1` xtask 골격
-11. `II.1.1` Rust toolchain pin
-12. `II.1.2` Cargo workspace
-13. 이후 W1 순서
+1. `I.1.6` 현재 계획·환경 계약을 기준으로 history reword/drop 수행
+2. `I.1.7` Rust 도구체인 commit·보고서 ID 교정
+3. `I.1.8` 최소 workspace commit·보고서 ID 교정
+4. `I.1.9` xtask help commit·보고서 ID 교정
+5. `I.1.10` macOS·Windows Bootstrap CI
+6. `I.2.1` TaskStatus Rust 데이터 모델
+7. `I.2.2` WBS ID 타입
+8. `I.2.3` yaml-rust2 bootstrap 승인
+9. `I.2.4` restricted YAML event loader
+10. `I.2.5` TaskStatus YAML decoder
+11. `I.2.6`~`I.2.9` record·collection·graph·evidence validator
+12. `I.2.10`~`I.2.12` 계획 추출·ledger writer·ledger 생성
+13. `I.2.13`~`I.2.17` 보고서·PR·commit validator
+14. `I.3.1`~`I.3.5` 버전·dependency·ADR 정책
+15. `I.4.1`~`I.4.4` 공통 명령과 G0 CI
+16. `II.1.1` 제품 Rust baseline 승격
+17. `II.1.2` 제품 workspace 확장
+18. 이후 Wave W1
 
-첫 Queue를 완료하기 전에는 문서 모델, 렌더러 또는 Git 기능 구현을 시작하지 않습니다.
+`I.1.10`과 `I.4.4`의 `CI-WIN` 증거가 없으면 Phase I 및 G0를 완료 처리하지 않습니다. 첫 Queue 완료 전에는 document model, renderer, Git 기능 구현을 시작하지 않습니다.
+
 
 ---
 
