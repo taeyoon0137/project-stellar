@@ -1,0 +1,70 @@
+name: bootstrap
+
+# Phase I 부트스트랩 게이트.
+# 고정 Rust toolchain에서 xtask 검증만 실행합니다.
+# production crate build나 앱 build는 포함하지 않습니다.
+# Windows job은 compile/headless 증거이며 Windows 11 UI·D3D12 증거가 아닙니다.
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: bootstrap-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap-macos:
+    name: bootstrap (CI-MAC)
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Activate pinned toolchain
+        run: rustup show
+      - name: rustc -Vv
+        run: rustc -Vv
+      - name: cargo -V
+        run: cargo -V
+      - name: cargo metadata
+        run: cargo metadata --no-deps --format-version 1
+      - name: cargo check (locked)
+        run: cargo check -p xtask --locked
+      - name: cargo xtask help
+        run: cargo xtask help
+      - name: format check
+        run: cargo fmt -p xtask -- --check
+      - name: clippy
+        run: cargo clippy -p xtask --all-targets -- -D warnings
+      - name: test
+        run: cargo test -p xtask --locked
+
+  bootstrap-windows:
+    name: bootstrap (CI-WIN)
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Activate pinned toolchain
+        run: rustup show
+      - name: rustc -Vv
+        run: rustc -Vv
+      - name: cargo -V
+        run: cargo -V
+      - name: cargo metadata
+        run: cargo metadata --no-deps --format-version 1
+      - name: cargo check (locked)
+        run: cargo check -p xtask --locked
+      - name: cargo xtask help
+        run: cargo xtask help
+      - name: format check
+        run: cargo fmt -p xtask -- --check
+      - name: clippy
+        run: cargo clippy -p xtask --all-targets -- -D warnings
+      - name: test
+        run: cargo test -p xtask --locked
