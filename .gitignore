@@ -16,6 +16,9 @@ xcuserdata/
 *.suo
 .vs/
 
+# CMake / generic out-of-source build output
+build/
+
 # Generated README hero source images (add your own under resources/)
 # (kept intentionally empty so contributors can add hero.png locally)
 
@@ -32,3 +35,9 @@ ehthumbs.db
 # Logs and temporary files
 *.log
 *.tmp
+
+# Stellar local project data (product project; never tracked here)
+# .stellar/cache/ is Git-excluded per architecture §19. Recovery snapshots are
+# stored outside the project folder (OS Application Support / App Data), so they
+# do not appear in this repository and need no pattern.
+.stellar/cache/
