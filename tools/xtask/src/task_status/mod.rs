@@ -2,4 +2,5 @@
 
 pub mod decode;
 pub mod model;
+pub mod validate_record;
 pub mod wbs_id;
