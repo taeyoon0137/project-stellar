@@ -3,5 +3,6 @@
 pub mod decode;
 pub mod model;
 pub mod validate_collection;
+pub mod validate_graph;
 pub mod validate_record;
 pub mod wbs_id;
