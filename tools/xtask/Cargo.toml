@@ -4,5 +4,6 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
-# 부트스트랩 단계에서는 외부 의존성을 두지 않습니다(I.2.3에서 yaml-rust2 1개만 추가 예정).
+# 부트스트랩 한정 의존성. config/bootstrap-dependencies.yaml 참조(I.3.2에서 이전·삭제).
 [dependencies]
+yaml-rust2 = "=0.11.0"
