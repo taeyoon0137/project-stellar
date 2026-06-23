@@ -1,8 +1,10 @@
 #!/bin/sh
 #
-# commit-msg 훅: 커밋 메시지 제목을 "<Prefix>: <제목>" 형식으로 강제합니다.
-#   - Prefix(영문): Feat | Docs | Refactor | Fix | Chore | Test
-#   - 제목: 한국어 권장. 비어 있으면 안 됩니다.
+# commit-msg 훅: 커밋 메시지 제목 형식을 강제합니다.
+#   - 구현 작업: Task(<WBS-ID>): <제목>   (예: Task(I.1.1): 저장소 기준선 검증)
+#   - 유지보수:  <Prefix>: <제목>          (Prefix: Feat | Docs | Refactor | Fix | Chore | Test)
+#   - Task와 Prefix는 영문, 제목은 한국어 권장. 제목은 비어 있으면 안 됩니다.
+#   - WBS-ID는 로마 숫자 Phase 번호와 점으로 구분한 번호입니다(예: I, I.1, I.1.1).
 #
 # 활성화: git config core.hooksPath .githooks
 
@@ -19,16 +21,17 @@ esac
 # 주석(#)과 빈 줄을 제외한 첫 줄을 제목으로 사용합니다.
 subject=$(grep -vE '^[[:space:]]*#' "$commit_msg_file" | grep -m1 -vE '^[[:space:]]*$')
 
-if printf '%s\n' "$subject" | grep -qE '^(Feat|Docs|Refactor|Fix|Chore|Test): .+'; then
+if printf '%s\n' "$subject" | grep -qE '^(Task\([IVXLCDM]+(\.[0-9]+)*\)|Feat|Docs|Refactor|Fix|Chore|Test): .+'; then
   exit 0
 fi
 
 {
   echo "✖ 커밋 메시지 형식 오류"
   echo
-  echo "형식: <Prefix>: <제목>   (Prefix는 영문, 제목은 한국어)"
-  echo "Prefix: Feat | Docs | Refactor | Fix | Chore | Test"
-  echo "예:     Docs: 기술 아키텍처 정의서 추가"
+  echo "허용 형식 (Task와 Prefix는 영문, 제목은 한국어):"
+  echo "  - 구현 작업: Task(<WBS-ID>): <제목>   예: Task(I.1.1): 저장소 기준선 검증"
+  echo "  - 유지보수:  <Prefix>: <제목>          예: Docs: 기술 아키텍처 정의서 추가"
+  echo "  Prefix: Feat | Docs | Refactor | Fix | Chore | Test"
   echo
   echo "입력한 제목: ${subject}"
 } >&2

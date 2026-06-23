@@ -18,7 +18,7 @@
 </p>
 
 <h1 align="center">Project Stellar</h1>
-<p align="center">폴더와 실제 Git 저장소를 원본으로 사용하는 고성능 UI 디자인 소프트웨어</p>
+<p align="center">Stellar. Light, left behind.</p>
 
 <p align="center">
   <a href="./docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md"><img src="https://img.shields.io/badge/status-architecture%20baseline-4D24E2" alt="status: architecture baseline" /></a>
@@ -29,11 +29,11 @@
   <a href="https://learn.microsoft.com/windows/apps/winui/"><img src="https://img.shields.io/badge/C%2B%2B%2FWinRT-%2300599C?logo=cplusplus&logoColor=%23FFFFFF" alt="C++/WinRT" /></a>
 </p>
 
-- [🧭 역할](#role)
-- [🚀 시작하기](#getting-started)
-- [📚 문서](#docs)
-- [🛠️ 스크립트](#scripts)
-- [🗂️ 저장소 구성](#repository-structure)
+- [🧭 역할](#-역할)
+- [🚀 시작하기](#-시작하기)
+- [📚 문서](#-문서)
+- [🛠️ 스크립트](#️-스크립트)
+- [🗂️ 저장소 구성](#️-저장소-구성)
 
 <a id="role"></a>
 
@@ -61,7 +61,7 @@ Project Stellar는 폴더와 실제 Git 저장소를 원본으로 사용하는 �
 
 ## 🚀 시작하기
 
-현재 저장소는 아키텍처 기준선(Architecture Baseline) 단계입니다. 구현 코드(Rust 코어, 네이티브 셸, 렌더러)는 아직 포함되어 있지 않으며, 기술 기준은 [`docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`](./docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md)에 정의되어 있습니다.
+현재 저장소는 아키텍처 기준선(Architecture Baseline) 단계입니다. 구현 코드(Rust 코어, 네이티브 셸, 렌더러)는 아직 포함되어 있지 않습니다. 기술 기준은 [`docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`](./docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md)에, 단계별 구현·검증 계획은 [`docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`](./docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md)에 정의되어 있습니다.
 
 현재 단계에서 사용할 수 있는 명령은 README 재생성입니다.
 
@@ -82,6 +82,7 @@ git config core.hooksPath .githooks
 ## 📚 문서
 
 - [`docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`](./docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md): 제품 정의, 아키텍처 원칙, 성능 계약, 문서 모델, 파일 포맷, Git 동작, 로드맵을 담은 기술 기준 문서입니다. 구현 판단의 1차 기준입니다.
+- [`docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`](./docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md): 아키텍처 기준 문서를 원자적 작업 패키지(WBS)로 분해한 구현·검증 실행 계획입니다. 28개 Phase(I~XXVIII), 933개 작업, 단계 완료 게이트(G0~G8)를 정의하며 초기 릴리스 범위는 Phase I~XVII(G8)입니다.
 
 <a id="scripts"></a>
 
@@ -93,8 +94,8 @@ git config core.hooksPath .githooks
   placeholder, 경로, 섹션 구조가 바뀌면 생성 스크립트도 함께 갱신합니다.
 -->
 
-| 명령 | 설명 |
-| :--- | :--- |
+| 명령                         | 설명                                                                                                                            |
+| :--------------------------- | :------------------------------------------------------------------------------------------------------------------------------ |
 | `./scripts/readme_update.sh` | `resources/README.preset.md`와 `resources/readme-hero.preset.svg`에서 `README.md`와 `resources/readme-hero.svg`를 재생성합니다. |
 
 <a id="repository-structure"></a>
@@ -106,6 +107,7 @@ project-stellar
 ├── .githooks/
 │   └── commit-msg              # 커밋 메시지 형식 검사 훅
 ├── docs/
+│   ├── PROJECT_STELLAR_IMPLEMENTATION_PLAN.md     # 원자적 구현·검증 실행 계획 (WBS)
 │   └── PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md  # 기술 아키텍처 기준 문서
 ├── resources/
 │   ├── README.preset.md        # README 생성 원본 (source of truth)
