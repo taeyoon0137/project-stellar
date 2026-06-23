@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# commit-msg 훅: 커밋 메시지 제목을 "<Prefix>: <제목>" 형식으로 강제합니다.
+#   - Prefix(영문): Feat | Docs | Refactor | Fix | Chore | Test
+#   - 제목: 한국어 권장. 비어 있으면 안 됩니다.
+#
+# 활성화: git config core.hooksPath .githooks
+
+commit_msg_file="$1"
+
+# 머지/리버트/자동 생성(fixup!, squash!) 커밋은 형식 검사를 건너뜁니다.
+first_line=$(sed -n '1p' "$commit_msg_file")
+case "$first_line" in
+  "Merge "*|"Revert "*|fixup!*|squash!*)
+    exit 0
+    ;;
+esac
+
+# 주석(#)과 빈 줄을 제외한 첫 줄을 제목으로 사용합니다.
+subject=$(grep -vE '^[[:space:]]*#' "$commit_msg_file" | grep -m1 -vE '^[[:space:]]*$')
+
+if printf '%s\n' "$subject" | grep -qE '^(Feat|Docs|Refactor|Fix|Chore|Test): .+'; then
+  exit 0
+fi
+
+{
+  echo "✖ 커밋 메시지 형식 오류"
+  echo
+  echo "형식: <Prefix>: <제목>   (Prefix는 영문, 제목은 한국어)"
+  echo "Prefix: Feat | Docs | Refactor | Fix | Chore | Test"
+  echo "예:     Docs: 기술 아키텍처 정의서 추가"
+  echo
+  echo "입력한 제목: ${subject}"
+} >&2
+
+exit 1

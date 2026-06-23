@@ -1,0 +1,34 @@
+# Rust
+/target/
+**/target/
+
+# Swift / Xcode (macOS shell)
+.build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+
+# C++ / Visual Studio (Windows shell)
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+.vs/
+
+# Generated README hero source images (add your own under resources/)
+# (kept intentionally empty so contributors can add hero.png locally)
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# Editor
+.idea/
+
+# Logs and temporary files
+*.log
+*.tmp
