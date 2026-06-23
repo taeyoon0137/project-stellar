@@ -1,0 +1,6 @@
+# 최소 워크스페이스 (I.1.8).
+# member는 tools/xtask 하나뿐입니다. 제품 crate, release/debug 프로필, 공통 lint는
+# Phase II(II.1.2)에서 제품 workspace로 확장할 때 추가합니다.
+[workspace]
+resolver = "2"
+members = ["tools/xtask"]
