@@ -4,8 +4,26 @@
 # Shell scripts must stay LF
 *.sh text eol=lf
 
+# PowerShell scripts use CRLF on Windows
+*.ps1 text eol=crlf
+*.psm1 text eol=crlf
+*.psd1 text eol=crlf
+
 # Binary assets
 *.png binary
 *.jpg binary
 *.jpeg binary
 *.ico binary
+
+# Binary fixtures and deterministic content (no eol normalization, no text diff)
+*.starchunk binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+
+# Stellar product-project merge driver is intentionally NOT registered yet;
+# it will be added in the Git Semantic Merge phase.
+# .stargen (generation manifest) / .stellarref attributes are deferred to the
+# storage/file-format phase where the on-disk format is defined; until then the
+# `* text=auto` default applies and Git auto-detects binary content.
