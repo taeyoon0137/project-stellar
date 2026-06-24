@@ -54,9 +54,11 @@ jobs:
           cargo xtask validate-dependencies
           cargo xtask validate-crate-graph
       - name: commit subjects since base
+        if: github.event_name == 'pull_request'
         shell: bash
         run: ./scripts/ci/check-commit-subjects.sh
       - name: adr policy on changed paths
+        if: github.event_name == 'pull_request'
         shell: bash
         run: ./scripts/ci/check-adr-policy.sh
 
@@ -95,8 +97,10 @@ jobs:
           cargo xtask validate-dependencies
           cargo xtask validate-crate-graph
       - name: commit subjects since base
+        if: github.event_name == 'pull_request'
         shell: bash
         run: ./scripts/ci/check-commit-subjects.sh
       - name: adr policy on changed paths
+        if: github.event_name == 'pull_request'
         shell: bash
         run: ./scripts/ci/check-adr-policy.sh
