@@ -236,7 +236,7 @@ tools/xtask/
 | II.2.3 | `[x]` | `crates/expressions`, `crates/bindings`, `crates/layout`, `crates/text` 골격을 생성합니다. 모두 `core-types`만 직접 의존하게 시작합니다. | 각 crate 단독 `cargo test` 통과. | II.2.1 |
 | II.2.4 | `[x]` | `crates/scene`, `crates/renderer-core`, `crates/renderer-metal`, `crates/renderer-d3d12` 골격을 생성합니다. 플랫폼 backend는 공통 backend를 역참조하지 않게 합니다. | target별 feature 없이 공통 플랫폼에서 platform backend crate가 빌드 대상에서 제외됩니다. | II.2.1 |
 | II.2.5 | `[x]` | `crates/storage`, `crates/project`, `crates/assets`, `crates/dependencies` 골격을 생성합니다. | 의존 방향 문서와 `cargo tree` 검사 통과. | II.2.1 |
-| II.2.6 | `[ ]` | `crates/semantic-diff`, `crates/semantic-merge`, `crates/git-porcelain` 골격을 생성합니다. Git crate는 document를 직접 수정하지 않고 snapshot 인터페이스만 의존하도록 빈 trait를 둡니다. | 컴파일 및 의존성 검사 통과. | II.2.2, II.2.5 |
+| II.2.6 | `[x]` | `crates/semantic-diff`, `crates/semantic-merge`, `crates/git-porcelain` 골격을 생성합니다. Git crate는 document를 직접 수정하지 않고 snapshot 인터페이스만 의존하도록 빈 trait를 둡니다. | 컴파일 및 의존성 검사 통과. | II.2.2, II.2.5 |
 | II.2.7 | `[ ]` | `crates/target-profile`, `crates/accessibility`, `crates/diagnostics`, `crates/ffi` 골격을 생성합니다. | workspace 전체 check 통과. | II.2.1 |
 | II.2.8 | `[ ]` | `docs/architecture/crate-dependency-graph.md`에 허용 의존 방향을 Mermaid와 표로 기록하고 CI에서 금지 edge를 검사합니다. | 의도적으로 역방향 edge를 넣은 fixture가 실패합니다. | II.2.2~II.2.7 |
 

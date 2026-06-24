@@ -1,0 +1,12 @@
+[package]
+name = "stellar-semantic-merge"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+stellar-semantic-diff = { path = "../semantic-diff" }
+
+[lints]
+workspace = true

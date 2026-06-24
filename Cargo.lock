@@ -94,6 +94,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-git-porcelain"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
 name = "stellar-history"
 version = "0.0.0"
 dependencies = [
@@ -143,6 +150,21 @@ name = "stellar-scene"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
+]
+
+[[package]]
+name = "stellar-semantic-diff"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+ "stellar-document",
+]
+
+[[package]]
+name = "stellar-semantic-merge"
+version = "0.0.0"
+dependencies = [
+ "stellar-semantic-diff",
 ]
 
 [[package]]
