@@ -1,0 +1,12 @@
+[package]
+name = "stellar-renderer-d3d12"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+stellar-renderer-core = { path = "../renderer-core" }
+
+[lints]
+workspace = true

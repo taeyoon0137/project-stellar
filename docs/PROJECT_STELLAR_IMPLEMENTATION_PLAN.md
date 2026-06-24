@@ -234,7 +234,7 @@ tools/xtask/
 | II.2.1 | `[x]` | `crates/core-types`를 생성하고 공개 모듈만 선언합니다. 구현은 없습니다. | `cargo test -p stellar-core-types` 통과, 금지된 외부 의존성 없음. | II.1.5 |
 | II.2.2 | `[x]` | `crates/document`, `crates/commands`, `crates/history`를 각각 생성하고 의존 방향을 `history -> commands -> document -> core-types`로 고정합니다. 역방향 의존은 금지합니다. | `cargo tree` 검사에서 순환·역방향 의존 없음. | II.2.1 |
 | II.2.3 | `[x]` | `crates/expressions`, `crates/bindings`, `crates/layout`, `crates/text` 골격을 생성합니다. 모두 `core-types`만 직접 의존하게 시작합니다. | 각 crate 단독 `cargo test` 통과. | II.2.1 |
-| II.2.4 | `[ ]` | `crates/scene`, `crates/renderer-core`, `crates/renderer-metal`, `crates/renderer-d3d12` 골격을 생성합니다. 플랫폼 backend는 공통 backend를 역참조하지 않게 합니다. | target별 feature 없이 공통 플랫폼에서 platform backend crate가 빌드 대상에서 제외됩니다. | II.2.1 |
+| II.2.4 | `[x]` | `crates/scene`, `crates/renderer-core`, `crates/renderer-metal`, `crates/renderer-d3d12` 골격을 생성합니다. 플랫폼 backend는 공통 backend를 역참조하지 않게 합니다. | target별 feature 없이 공통 플랫폼에서 platform backend crate가 빌드 대상에서 제외됩니다. | II.2.1 |
 | II.2.5 | `[ ]` | `crates/storage`, `crates/project`, `crates/assets`, `crates/dependencies` 골격을 생성합니다. | 의존 방향 문서와 `cargo tree` 검사 통과. | II.2.1 |
 | II.2.6 | `[ ]` | `crates/semantic-diff`, `crates/semantic-merge`, `crates/git-porcelain` 골격을 생성합니다. Git crate는 document를 직접 수정하지 않고 snapshot 인터페이스만 의존하도록 빈 trait를 둡니다. | 컴파일 및 의존성 검사 통과. | II.2.2, II.2.5 |
 | II.2.7 | `[ ]` | `crates/target-profile`, `crates/accessibility`, `crates/diagnostics`, `crates/ffi` 골격을 생성합니다. | workspace 전체 check 통과. | II.2.1 |

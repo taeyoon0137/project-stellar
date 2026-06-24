@@ -94,6 +94,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-renderer-core"
+version = "0.0.0"
+dependencies = [
+ "stellar-scene",
+]
+
+[[package]]
+name = "stellar-renderer-d3d12"
+version = "0.0.0"
+dependencies = [
+ "stellar-renderer-core",
+]
+
+[[package]]
+name = "stellar-renderer-metal"
+version = "0.0.0"
+dependencies = [
+ "stellar-renderer-core",
+]
+
+[[package]]
+name = "stellar-scene"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
 name = "stellar-text"
 version = "0.0.0"
 dependencies = [
