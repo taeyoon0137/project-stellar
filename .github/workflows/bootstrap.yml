@@ -1,7 +1,7 @@
 name: bootstrap
 
-# Phase I 부트스트랩 게이트.
-# 고정 Rust toolchain에서 xtask 검증만 실행합니다.
+# Phase I 부트스트랩 게이트(G0).
+# 고정 Rust toolchain에서 xtask 검증과 Phase I 정책 검사를 실행합니다.
 # production crate build나 앱 build는 포함하지 않습니다.
 # Windows job은 compile/headless 증거이며 Windows 11 UI·D3D12 증거가 아닙니다.
 
@@ -25,6 +25,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Activate pinned toolchain
         run: rustup show
       - name: rustc -Vv
@@ -43,6 +45,19 @@ jobs:
         run: cargo clippy -p xtask --all-targets -- -D warnings
       - name: test
         run: cargo test -p xtask --locked
+      - name: plan-consistency
+        shell: bash
+        run: |
+          cargo xtask sync-plan --check
+          cargo xtask validate-task-status
+          cargo xtask validate-versions
+          cargo xtask validate-dependencies
+      - name: commit subjects since base
+        shell: bash
+        run: ./scripts/ci/check-commit-subjects.sh
+      - name: adr policy on changed paths
+        shell: bash
+        run: ./scripts/ci/check-adr-policy.sh
 
   bootstrap-windows:
     name: bootstrap (CI-WIN)
@@ -50,6 +65,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Activate pinned toolchain
         run: rustup show
       - name: rustc -Vv
@@ -68,3 +85,16 @@ jobs:
         run: cargo clippy -p xtask --all-targets -- -D warnings
       - name: test
         run: cargo test -p xtask --locked
+      - name: plan-consistency
+        shell: bash
+        run: |
+          cargo xtask sync-plan --check
+          cargo xtask validate-task-status
+          cargo xtask validate-versions
+          cargo xtask validate-dependencies
+      - name: commit subjects since base
+        shell: bash
+        run: ./scripts/ci/check-commit-subjects.sh
+      - name: adr policy on changed paths
+        shell: bash
+        run: ./scripts/ci/check-adr-policy.sh
