@@ -1,0 +1,12 @@
+# 승인된 직접 의존성 목록 (I.3.2).
+#
+# 모든 direct dependency는 여기에 등록되어야 합니다.
+# 필드: name, ecosystem, version, license, approval, purpose, replaceable.
+dependencies:
+  - name: yaml-rust2
+    ecosystem: cargo
+    version: "0.11.0"
+    license: "MIT OR Apache-2.0"
+    approval: approved
+    purpose: "Phase I 제한 YAML 파싱"
+    replaceable: true
