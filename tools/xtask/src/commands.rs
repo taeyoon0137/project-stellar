@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::Command;
 
 use crate::adr_policy::check_adr_policy;
+use crate::check_core::run_check_core;
 use crate::commit_message::validate_commit_subject;
 use crate::dependencies::validate_dependencies;
 use crate::pr_body::validate_pr_body;
@@ -25,7 +26,7 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 11] = [
+pub const COMMANDS: [&str; 12] = [
     "help",
     "generate-ledger",
     "validate-task-status",
@@ -37,6 +38,7 @@ pub const COMMANDS: [&str; 11] = [
     "validate-adr",
     "verify-task",
     "sync-plan",
+    "check-core",
 ];
 
 /// 사용법 문자열. 각 명령이 정확히 한 번 나타납니다.
@@ -78,6 +80,13 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         "validate-adr" => cmd_validate_adr(rest),
         "verify-task" => cmd_verify_task(repo_root, rest),
         "sync-plan" => cmd_sync_plan(repo_root),
+        "check-core" => match run_check_core(repo_root) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                eprintln!("check-core 실패: {}", e.message);
+                Err(e.code)
+            }
+        },
         other => {
             eprintln!("알 수 없는 명령: {other}");
             eprint!("{}", usage());

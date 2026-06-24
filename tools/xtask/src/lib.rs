@@ -5,6 +5,7 @@
 //! binary(`main.rs`)는 이 라이브러리의 명령을 호출합니다(I.4.1 이후).
 
 pub mod adr_policy;
+pub mod check_core;
 pub mod commands;
 pub mod commit_message;
 pub mod dependencies;
