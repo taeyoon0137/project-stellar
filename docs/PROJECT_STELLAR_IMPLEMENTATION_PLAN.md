@@ -206,7 +206,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | I.4.1 | `[x]` | 기존 `help` router를 모듈형 command registry로 확장하고 `validate-task-status`, `validate-task-report`, `validate-pr-body`, `validate-commit-message`, `validate-versions`, `validate-dependencies`, `validate-adr`를 연결합니다. 성공 `0`, 입력 오류 `64`, 정책 위반 `65`, 내부 오류 `70`을 사용합니다. | `[DEV-MAC]` help snapshot에 각 명령 1회, 정상·정책 위반 fixture의 종료 코드 일치, xtask fmt·clippy·test 통과. | I.2.12, I.2.15, I.2.16, I.2.17, I.3.3, I.3.5 |
-| I.4.2 | `[ ]` | `cargo xtask verify-task <ID>`를 구현합니다. ledger 선행 상태, 상태별 필수 필드, report, commit subject, required environment evidence를 확인합니다. `II.1.2` 전에는 product workspace build 결과를 요구하지 않습니다. | `[DEV-MAC]` success·missing dependency·missing report·missing CI-WIN evidence·premature workspace requirement fixture가 기대 코드 반환. | I.4.1 |
+| I.4.2 | `[x]` | `cargo xtask verify-task <ID>`를 구현합니다. ledger 선행 상태, 상태별 필수 필드, report, commit subject, required environment evidence를 확인합니다. `II.1.2` 전에는 product workspace build 결과를 요구하지 않습니다. | `[DEV-MAC]` success·missing dependency·missing report·missing CI-WIN evidence·premature workspace requirement fixture가 기대 코드 반환. | I.4.1 |
 | I.4.3 | `[ ]` | `cargo xtask sync-plan --check`를 구현합니다. 계획 WBS와 ledger의 누락·추가·중복·title·depends_on 차이를 보고하며 파일을 수정하지 않습니다. | `[DEV-MAC]` 각 drift fixture를 정확히 보고하고 실제 계획서에서는 종료 0. | I.2.10, I.2.12, I.4.1 |
 | I.4.4 | `[ ]` | Bootstrap CI의 macOS·Windows job에 `sync-plan --check`, 모든 Phase I validator, xtask fmt·clippy·test를 추가합니다. commit subject 검사는 기준 commit 이후 모든 non-merge commit을 검사하며 예외 prefix는 없습니다. | `[CI-MAC][CI-WIN]` clean branch 성공. task ledger, commit subject, dependency, ADR 정책을 각각 하나씩 깨뜨린 fixture branch에서 해당 job 실패. | I.4.2, I.4.3 |
 

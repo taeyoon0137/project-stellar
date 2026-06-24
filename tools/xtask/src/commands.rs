@@ -13,6 +13,8 @@ use crate::pr_body::validate_pr_body;
 use crate::task_report::validate::{validate_report, ReportKind};
 use crate::task_status::decode::decode_collection;
 use crate::task_status::generate::{generate_ledger_file, validate_all};
+use crate::task_status::model::TaskState;
+use crate::task_status::verify::verify_task;
 use crate::versions::validate_versions;
 use crate::yaml::restricted_loader::load_restricted;
 
@@ -22,7 +24,7 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 9] = [
+pub const COMMANDS: [&str; 10] = [
     "help",
     "generate-ledger",
     "validate-task-status",
@@ -32,6 +34,7 @@ pub const COMMANDS: [&str; 9] = [
     "validate-versions",
     "validate-dependencies",
     "validate-adr",
+    "verify-task",
 ];
 
 /// 사용법 문자열. 각 명령이 정확히 한 번 나타납니다.
@@ -71,6 +74,7 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         "validate-versions" => cmd_validate_versions(repo_root),
         "validate-dependencies" => cmd_validate_dependencies(repo_root),
         "validate-adr" => cmd_validate_adr(rest),
+        "verify-task" => cmd_verify_task(repo_root, rest),
         other => {
             eprintln!("알 수 없는 명령: {other}");
             eprint!("{}", usage());
@@ -227,6 +231,38 @@ fn cmd_validate_adr(rest: &[String]) -> Result<(), i32> {
             &errors
                 .iter()
                 .map(|e| e.code.to_string())
+                .collect::<Vec<_>>(),
+        ))
+    }
+}
+
+fn cmd_verify_task(repo_root: &Path, rest: &[String]) -> Result<(), i32> {
+    let Some(id) = rest.first() else {
+        return Err(usage_err("사용법: verify-task <WBS-ID>"));
+    };
+    let content = read(repo_root, "planning/task-status.yaml")?;
+    let value = load_restricted(&content)
+        .map_err(|e| policy_err(&[format!("loader/{}", e.kind.code())]))?;
+    let records =
+        decode_collection(&value).map_err(|e| policy_err(&[format!("decode/{}", e.code)]))?;
+
+    let report_exists = records
+        .iter()
+        .find(|r| &r.id == id)
+        .and_then(|r| r.report.as_ref())
+        .is_some_and(|rel| repo_root.join(rel).is_file());
+    let workspace_ready = records
+        .iter()
+        .any(|r| r.id == "II.1.2" && r.status == TaskState::Verified);
+
+    let problems = verify_task(&records, id, report_exists, workspace_ready);
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(policy_err(
+            &problems
+                .iter()
+                .map(|p| p.code.to_string())
                 .collect::<Vec<_>>(),
         ))
     }
