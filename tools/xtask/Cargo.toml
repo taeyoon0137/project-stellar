@@ -7,3 +7,6 @@ publish = false
 # 부트스트랩 한정 의존성. config/bootstrap-dependencies.yaml 참조(I.3.2에서 이전·삭제).
 [dependencies]
 yaml-rust2 = "=0.11.0"
+
+[lints]
+workspace = true

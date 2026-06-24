@@ -1,6 +1,24 @@
-# 최소 워크스페이스 (I.1.8).
-# member는 tools/xtask 하나뿐입니다. 제품 crate, release/debug 프로필, 공통 lint는
-# Phase II(II.1.2)에서 제품 workspace로 확장할 때 추가합니다.
+# 제품 workspace (II.1.2).
+# 현재 member는 tools/xtask 하나뿐입니다. 기능 crate는 Phase II.2에서 추가합니다.
 [workspace]
 resolver = "2"
 members = ["tools/xtask"]
+
+# 공통 package metadata. member는 `<field>.workspace = true`로 상속할 수 있습니다.
+[workspace.package]
+edition = "2021"
+rust-version = "1.96.0"
+repository = "https://github.com/taeyoon0137/project-stellar"
+
+# 공통 lint. member는 `[lints] workspace = true`로 적용합니다.
+# unsafe 관련 강화는 II.1.4에서 추가합니다.
+[workspace.lints.rust]
+unused = "warn"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.release]
+opt-level = 3
+debug = false
