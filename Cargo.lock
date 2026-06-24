@@ -48,8 +48,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-commands"
+version = "0.0.0"
+dependencies = [
+ "stellar-document",
+]
+
+[[package]]
 name = "stellar-core-types"
 version = "0.0.0"
+
+[[package]]
+name = "stellar-document"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
+name = "stellar-history"
+version = "0.0.0"
+dependencies = [
+ "stellar-commands",
+]
 
 [[package]]
 name = "xtask"
