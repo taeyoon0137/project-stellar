@@ -268,7 +268,7 @@ tasks:
     verified_at: "2026-06-24T03:49:27+09:00"
   - id: "I.2.12"
     title: "계획서 WBS 추출 결과로 `planning/task-status.yaml`을 생성합니다. `I.1.1`~`I.1.5`는 `verified`, `I.1.6`~`I.1.9`는 현재 교정 전이면 `reported_done`, 나머지는 `not_started`로 기록합니다. 각 record의 required environment는 작업 행과 Gate 규칙을 반영합니다. 수작업 복사 대신 I.2.10·I.2.11 library를 호출하는 일회성 subcommand를 사용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.8"
       - "I.2.9"
@@ -276,82 +276,148 @@ tasks:
       - "I.2.11"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.2.12.md"
+    commit: "a562f23aef2dcd984936c1ca6e2bcff1451913e3"
+    report: "docs/task-reports/I.2.12.md"
+    verified_at: "2026-06-24T11:03:37+09:00"
   - id: "I.2.13"
     title: "`docs/task-reports/TEMPLATE.md`를 생성합니다. WBS, 변경 파일, 명령·종료 코드, 환경·증거, 테스트, 성능, 차이, 남은 위험 섹션을 고정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.2.13.md"
+    commit: "3be9e5ee38ad51d0855dbb85132622fa85fce6e4"
+    report: "docs/task-reports/I.2.13.md"
+    verified_at: "2026-06-24T11:05:30+09:00"
   - id: "I.2.14"
     title: "`docs/task-reports/BLOCKED_TEMPLATE.md`를 생성합니다. 실패 선행조건, 재현 명령, 필요한 결정·환경, 변경되지 않은 파일, 재개 조건을 고정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.13"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.2.14.md"
+    commit: "61ecf0aa21f0f2a26b07cdc9200e4553fccdcc57"
+    report: "docs/task-reports/I.2.14.md"
+    verified_at: "2026-06-24T11:05:54+09:00"
   - id: "I.2.15"
     title: "`tools/xtask/src/task_report/validate.rs`에 완료·blocked 보고서 validator를 구현합니다. template heading, WBS 일치, 검증 환경, 명령 종료 코드, artifact locator 형식을 검사합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.13"
       - "I.2.14"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.2.15.md"
+    commit: "ce5e71f3580f8f158b401ebaee8ae88645183a36"
+    report: "docs/task-reports/I.2.15.md"
+    verified_at: "2026-06-24T11:07:23+09:00"
   - id: "I.2.16"
     title: "`.github/pull_request_template.md`에 WBS ID, 변경 경로, 명령·환경 증거, 파일 포맷·성능·보안 영향, 보고서 링크를 추가합니다. validator는 별도 함수로 구현하고 WBS 없는 body를 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.15"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.2.16.md"
+    commit: "4eb0d66af1b923f825549a0ec204d3fbc22344c7"
+    report: "docs/task-reports/I.2.16.md"
+    verified_at: "2026-06-24T11:08:33+09:00"
   - id: "I.2.17"
     title: "`tools/xtask/src/commit_message.rs`에 exact commit subject validator를 구현합니다. 허용 형식은 `Task(<WBS-ID>): <비어 있지 않은 제목>` 하나뿐입니다. merge·revert·Docs·Chore·소문자 task 예외를 만들지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.2.17.md"
+    commit: "e1162d95b0f3068c45cd63736ea68f76b28ee316"
+    report: "docs/task-reports/I.2.17.md"
+    verified_at: "2026-06-24T11:09:47+09:00"
   - id: "I.3.1"
     title: "`config/versions.yaml`과 validator를 생성합니다. Rust는 `exact: 1.96.0`만 허용하고 `rust-toolchain.toml`과 일치해야 합니다. 다른 도구는 실제 사용이 시작된 항목만 기록하며 `exact` 또는 `range` 중 하나만 허용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.4"
       - "I.1.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.3.1.md"
+    commit: "f6aaa3296b75612dcafd4fd20696b3b960835e98"
+    report: "docs/task-reports/I.3.1.md"
+    verified_at: "2026-06-24T11:11:08+09:00"
   - id: "I.3.2"
     title: "`config/dependencies.yaml`과 validator를 생성합니다. `yaml-rust2 0.11.0` bootstrap 승인을 정식 항목으로 이전한 뒤 `config/bootstrap-dependencies.yaml`을 삭제합니다. 필드는 name, ecosystem, exact version, license, approval, purpose, replaceable입니다. 미등록 direct dependency를 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.3.1"
       - "I.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.3.2.md"
+    commit: "7920480cc8a742fd62ef9227b7ec39cff2e86e0c"
+    report: "docs/task-reports/I.3.2.md"
+    verified_at: "2026-06-24T11:13:44+09:00"
   - id: "I.3.3"
     title: "dependency validator에 license policy를 추가합니다. 자동 허용은 MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC; GPL·AGPL·SSPL은 자동 거부; 그 밖은 `separate_approval: true`가 필요합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.3.3.md"
+    commit: "3d3d56895897b3b442cd845530821e4b78f1645b"
+    report: "docs/task-reports/I.3.3.md"
+    verified_at: "2026-06-24T11:16:39+09:00"
   - id: "I.3.4"
     title: "`docs/adr/TEMPLATE.md`를 생성합니다. Status, Context, Decision, Alternatives, Consequences, Compatibility, Performance, Security, Migration 섹션을 고정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.13"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.3.4.md"
+    commit: "6e8088c7c93848b80f1e1803eb1875e0af6f6ddc"
+    report: "docs/task-reports/I.3.4.md"
+    verified_at: "2026-06-24T11:17:12+09:00"
   - id: "I.3.5"
     title: "`tools/xtask/src/adr_policy.rs`에 보호 경로 정책을 구현합니다. storage format, public API, FFI, numeric registry, performance budget 변경은 같은 diff에 새·수정 ADR이 없으면 실패합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.3.5.md"
+    commit: "25ad96f86a8edf4ea47d95fc8a3897a399ad4087"
+    report: "docs/task-reports/I.3.5.md"
+    verified_at: "2026-06-24T11:18:27+09:00"
   - id: "I.4.1"
     title: "기존 `help` router를 모듈형 command registry로 확장하고 `validate-task-status`, `validate-task-report`, `validate-pr-body`, `validate-commit-message`, `validate-versions`, `validate-dependencies`, `validate-adr`를 연결합니다. 성공 `0`, 입력 오류 `64`, 정책 위반 `65`, 내부 오류 `70`을 사용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.12"
       - "I.2.15"
@@ -361,31 +427,50 @@ tasks:
       - "I.3.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.4.1.md"
+    commit: "f59e1781a32f9d1850a3eefd9da25c899b3a7a63"
+    report: "docs/task-reports/I.4.1.md"
+    verified_at: "2026-06-24T11:21:15+09:00"
   - id: "I.4.2"
     title: "`cargo xtask verify-task <ID>`를 구현합니다. ledger 선행 상태, 상태별 필수 필드, report, commit subject, required environment evidence를 확인합니다. `II.1.2` 전에는 product workspace build 결과를 요구하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.4.2.md"
+    commit: "4e9c17fcdca0f943434a1580cc978beb9c28b94b"
+    report: "docs/task-reports/I.4.2.md"
+    verified_at: "2026-06-24T11:23:42+09:00"
   - id: "I.4.3"
     title: "`cargo xtask sync-plan --check`를 구현합니다. 계획 WBS와 ledger의 누락·추가·중복·title·depends_on 차이를 보고하며 파일을 수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.2.10"
       - "I.2.12"
       - "I.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/I.4.3.md"
+    commit: "ffe25503abf17e9008c00a8e4c2ecb820283851c"
+    report: "docs/task-reports/I.4.3.md"
+    verified_at: "2026-06-24T11:26:06+09:00"
   - id: "I.4.4"
     title: "Bootstrap CI의 macOS·Windows job에 `sync-plan --check`, 모든 Phase I validator, xtask fmt·clippy·test를 추가합니다. commit subject 검사는 기준 commit 이후 모든 non-merge commit을 검사하며 예외 prefix는 없습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "I.4.2"
       - "I.4.3"
     required_environments:
       - CI-MAC
       - CI-WIN
+    report: "docs/task-reports/I.4.4.md"
   - id: "II.1.1"
     title: "Phase I에서 고정한 Rust `1.96.0`을 제품 코어 공식 baseline으로 승격합니다. `docs/adr/ADR-0001-rust-toolchain.md`에 변경 절차, MSRV 정책, 업그레이드 전용 WBS 요구사항을 기록합니다. 버전을 자동 변경하지 않습니다."
     status: not_started
