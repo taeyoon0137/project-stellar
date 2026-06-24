@@ -1,0 +1,6 @@
+# 도구 버전 manifest (I.3.1).
+#
+# Rust는 정확한 버전(exact)만 허용하며 rust-toolchain.toml의 channel과 일치해야 합니다.
+# 그 밖의 도구는 실제 사용이 시작된 항목만 기록하고 exact 또는 range 중 하나만 둡니다.
+rust:
+  exact: "1.96.0"

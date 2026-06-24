@@ -8,4 +8,5 @@ pub mod plan;
 pub mod pr_body;
 pub mod task_report;
 pub mod task_status;
+pub mod versions;
 pub mod yaml;
