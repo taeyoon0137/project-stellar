@@ -188,7 +188,7 @@ tools/xtask/
 | I.2.13 | `[x]` | `docs/task-reports/TEMPLATE.md`를 생성합니다. WBS, 변경 파일, 명령·종료 코드, 환경·증거, 테스트, 성능, 차이, 남은 위험 섹션을 고정합니다. | `[DEV-MAC]` template fixture에 필수 heading이 정확히 한 번씩 존재. | I.2.1 |
 | I.2.14 | `[x]` | `docs/task-reports/BLOCKED_TEMPLATE.md`를 생성합니다. 실패 선행조건, 재현 명령, 필요한 결정·환경, 변경되지 않은 파일, 재개 조건을 고정합니다. | `[DEV-MAC]` 필수 heading fixture 통과. | I.2.13 |
 | I.2.15 | `[x]` | `tools/xtask/src/task_report/validate.rs`에 완료·blocked 보고서 validator를 구현합니다. template heading, WBS 일치, 검증 환경, 명령 종료 코드, artifact locator 형식을 검사합니다. | `[DEV-MAC]` heading·WBS·evidence를 하나씩 제거한 fixture가 실패. | I.2.13, I.2.14 |
-| I.2.16 | `[ ]` | `.github/pull_request_template.md`에 WBS ID, 변경 경로, 명령·환경 증거, 파일 포맷·성능·보안 영향, 보고서 링크를 추가합니다. validator는 별도 함수로 구현하고 WBS 없는 body를 거부합니다. | `[DEV-MAC]` 정상 body 2개 통과, WBS·증거·보고서 각각 누락 fixture 실패. | I.2.15 |
+| I.2.16 | `[x]` | `.github/pull_request_template.md`에 WBS ID, 변경 경로, 명령·환경 증거, 파일 포맷·성능·보안 영향, 보고서 링크를 추가합니다. validator는 별도 함수로 구현하고 WBS 없는 body를 거부합니다. | `[DEV-MAC]` 정상 body 2개 통과, WBS·증거·보고서 각각 누락 fixture 실패. | I.2.15 |
 | I.2.17 | `[ ]` | `tools/xtask/src/commit_message.rs`에 exact commit subject validator를 구현합니다. 허용 형식은 `Task(<WBS-ID>): <비어 있지 않은 제목>` 하나뿐입니다. merge·revert·Docs·Chore·소문자 task 예외를 만들지 않습니다. | `[DEV-MAC]` 올바른 Roman ID 3개 통과; lowercase, Arabic Phase, Docs, Chore, 빈 제목, malformed ID fixture 실패. | I.2.2 |
 
 ### I.3 버전·의존성·ADR 정책
