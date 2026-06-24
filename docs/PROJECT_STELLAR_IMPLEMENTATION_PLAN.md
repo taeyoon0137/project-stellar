@@ -244,7 +244,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| II.3.1 | `[ ]` | `core-types`에 `ErrorCode` enum과 `StellarError { code, message, context }`를 정의합니다. 사용자 문자열과 개발자 context를 분리합니다. | 직렬화 round-trip과 안정적인 numeric code golden test 통과. | II.2.1 |
+| II.3.1 | `[x]` | `core-types`에 `ErrorCode` enum과 `StellarError { code, message, context }`를 정의합니다. 사용자 문자열과 개발자 context를 분리합니다. | 직렬화 round-trip과 안정적인 numeric code golden test 통과. | II.2.1 |
 | II.3.2 | `[ ]` | `diagnostics`에 구조화 로그 이벤트 타입을 정의합니다. 프로젝트 내용·텍스트·경로를 기본 필드에 넣을 수 없도록 별도 민감 타입을 둡니다. | 민감 타입을 일반 telemetry event에 넣으면 컴파일 실패하는 UI test 또는 compile-fail test 통과. | II.3.1, II.2.7 |
 | II.3.3 | `[ ]` | 단조 시계를 추상화한 `MonotonicClock` trait와 테스트용 `ManualClock`을 추가합니다. 시스템 wall clock은 성능·히스토리 순서에 사용하지 않습니다. | ManualClock으로 동일 입력이 동일 duration을 생성합니다. | II.2.1 |
 | II.3.4 | `[ ]` | `DocumentRevision`, `SceneRevision`, `StorageGeneration`을 서로 다른 newtype으로 추가해 혼용을 컴파일 단계에서 막습니다. | 서로 다른 revision 비교·대입 compile-fail test 통과. | II.2.1 |

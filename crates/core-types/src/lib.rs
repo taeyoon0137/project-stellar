@@ -6,7 +6,7 @@
 pub mod ids {}
 
 /// 구조화 오류 타입 (II.3.1).
-pub mod error {}
+pub mod error;
 
 /// 타입드 값과 기하 (III.3).
 pub mod value {}
