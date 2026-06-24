@@ -15,4 +15,4 @@ pub mod value {}
 pub mod clock;
 
 /// revision newtype (II.3.4).
-pub mod revision {}
+pub mod revision;
