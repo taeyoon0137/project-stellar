@@ -48,6 +48,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-assets"
+version = "0.0.0"
+dependencies = [
+ "stellar-storage",
+]
+
+[[package]]
 name = "stellar-bindings"
 version = "0.0.0"
 dependencies = [
@@ -64,6 +71,13 @@ dependencies = [
 [[package]]
 name = "stellar-core-types"
 version = "0.0.0"
+
+[[package]]
+name = "stellar-dependencies"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
 
 [[package]]
 name = "stellar-document"
@@ -94,6 +108,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-project"
+version = "0.0.0"
+dependencies = [
+ "stellar-assets",
+ "stellar-dependencies",
+ "stellar-document",
+ "stellar-storage",
+]
+
+[[package]]
 name = "stellar-renderer-core"
 version = "0.0.0"
 dependencies = [
@@ -116,6 +140,13 @@ dependencies = [
 
 [[package]]
 name = "stellar-scene"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
+name = "stellar-storage"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",

@@ -1,0 +1,12 @@
+[package]
+name = "stellar-assets"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+stellar-storage = { path = "../storage" }
+
+[lints]
+workspace = true
