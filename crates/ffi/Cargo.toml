@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+[lib]
+# C 테스트·네이티브 셸 링크용 staticlib와 일반 lib를 함께 생성합니다.
+crate-type = ["lib", "staticlib"]
+
 [dependencies]
 stellar-core-types = { path = "../core-types" }
 
