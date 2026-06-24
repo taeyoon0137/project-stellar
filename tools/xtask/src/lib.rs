@@ -8,6 +8,7 @@ pub mod adr_policy;
 pub mod check_core;
 pub mod commands;
 pub mod commit_message;
+pub mod crate_graph;
 pub mod dependencies;
 pub mod plan;
 pub mod pr_body;

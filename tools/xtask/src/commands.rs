@@ -9,6 +9,7 @@ use std::process::Command;
 use crate::adr_policy::check_adr_policy;
 use crate::check_core::run_check_core;
 use crate::commit_message::validate_commit_subject;
+use crate::crate_graph::check_crate_graph;
 use crate::dependencies::validate_dependencies;
 use crate::pr_body::validate_pr_body;
 use crate::sync::sync_plan;
@@ -26,7 +27,7 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 12] = [
+pub const COMMANDS: [&str; 13] = [
     "help",
     "generate-ledger",
     "validate-task-status",
@@ -39,6 +40,7 @@ pub const COMMANDS: [&str; 12] = [
     "verify-task",
     "sync-plan",
     "check-core",
+    "validate-crate-graph",
 ];
 
 /// 사용법 문자열. 각 명령이 정확히 한 번 나타납니다.
@@ -87,6 +89,7 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
                 Err(e.code)
             }
         },
+        "validate-crate-graph" => cmd_validate_crate_graph(repo_root),
         other => {
             eprintln!("알 수 없는 명령: {other}");
             eprint!("{}", usage());
@@ -298,6 +301,70 @@ fn cmd_sync_plan(repo_root: &Path) -> Result<(), i32> {
                 .collect::<Vec<_>>(),
         ))
     }
+}
+
+fn cmd_validate_crate_graph(repo_root: &Path) -> Result<(), i32> {
+    let edges = read_crate_edges(repo_root)?;
+    let violations = check_crate_graph(&edges);
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(policy_err(
+            &violations
+                .iter()
+                .map(|v| v.message.clone())
+                .collect::<Vec<_>>(),
+        ))
+    }
+}
+
+/// `crates/*/Cargo.toml`에서 내부(stellar-*) 직접 의존 edge를 추출합니다.
+fn read_crate_edges(repo_root: &Path) -> Result<Vec<(String, String)>, i32> {
+    let dir = repo_root.join("crates");
+    let entries = std::fs::read_dir(&dir).map_err(|_| usage_err("crates 디렉터리 없음"))?;
+    let mut edges = Vec::new();
+    for entry in entries.flatten() {
+        let manifest_path = entry.path().join("Cargo.toml");
+        if !manifest_path.is_file() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&manifest_path).map_err(|_| EXIT_INTERNAL)?;
+        let Some(name) = manifest_package_name(&text) else {
+            continue;
+        };
+        for dep in manifest_internal_deps(&text) {
+            edges.push((name.clone(), dep));
+        }
+    }
+    Ok(edges)
+}
+
+fn manifest_package_name(text: &str) -> Option<String> {
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("name = ") {
+            return Some(rest.trim().trim_matches('"').to_string());
+        }
+    }
+    None
+}
+
+fn manifest_internal_deps(text: &str) -> Vec<String> {
+    let Some(after) = text.split("[dependencies]").nth(1) else {
+        return Vec::new();
+    };
+    let section = after.split("\n[").next().unwrap_or(after);
+    section
+        .lines()
+        .filter_map(|line| {
+            let key = line.split('=').next()?.trim();
+            if key.starts_with("stellar-") {
+                Some(key.to_string())
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 /// `cargo tree`로 xtask의 직접 의존성 이름을 수집합니다.

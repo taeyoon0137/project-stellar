@@ -52,6 +52,7 @@ jobs:
           cargo xtask validate-task-status
           cargo xtask validate-versions
           cargo xtask validate-dependencies
+          cargo xtask validate-crate-graph
       - name: commit subjects since base
         shell: bash
         run: ./scripts/ci/check-commit-subjects.sh
@@ -92,6 +93,7 @@ jobs:
           cargo xtask validate-task-status
           cargo xtask validate-versions
           cargo xtask validate-dependencies
+          cargo xtask validate-crate-graph
       - name: commit subjects since base
         shell: bash
         run: ./scripts/ci/check-commit-subjects.sh
