@@ -42,7 +42,7 @@ jobs:
       - name: format check
         run: cargo fmt -p xtask -- --check
       - name: clippy
-        run: cargo clippy -p xtask --all-targets -- -D warnings
+        run: cargo clippy -p xtask --all-targets --locked -- -D warnings
       - name: test
         run: cargo test -p xtask --locked
       - name: plan-consistency
@@ -82,7 +82,7 @@ jobs:
       - name: format check
         run: cargo fmt -p xtask -- --check
       - name: clippy
-        run: cargo clippy -p xtask --all-targets -- -D warnings
+        run: cargo clippy -p xtask --all-targets --locked -- -D warnings
       - name: test
         run: cargo test -p xtask --locked
       - name: plan-consistency
