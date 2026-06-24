@@ -1,0 +1,12 @@
+[package]
+name = "stellar-core-types"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# core-types는 외부 의존성을 두지 않습니다(표준 라이브러리만).
+[dependencies]
+
+[lints]
+workspace = true

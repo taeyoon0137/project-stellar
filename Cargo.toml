@@ -2,7 +2,7 @@
 # 현재 member는 tools/xtask 하나뿐입니다. 기능 crate는 Phase II.2에서 추가합니다.
 [workspace]
 resolver = "2"
-members = ["tools/xtask"]
+members = ["tools/xtask", "crates/core-types"]
 
 # 공통 package metadata. member는 `<field>.workspace = true`로 상속할 수 있습니다.
 [workspace.package]

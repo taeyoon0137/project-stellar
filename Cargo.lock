@@ -48,6 +48,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-core-types"
+version = "0.0.0"
+
+[[package]]
 name = "xtask"
 version = "0.0.0"
 dependencies = [
