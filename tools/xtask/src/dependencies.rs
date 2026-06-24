@@ -31,9 +31,10 @@ pub struct DepEntry {
     pub approval: String,
     pub purpose: String,
     pub replaceable: bool,
+    pub separate_approval: bool,
 }
 
-const FIELDS: [&str; 7] = [
+const FIELDS: [&str; 8] = [
     "name",
     "ecosystem",
     "version",
@@ -41,7 +42,13 @@ const FIELDS: [&str; 7] = [
     "approval",
     "purpose",
     "replaceable",
+    "separate_approval",
 ];
+
+/// 자동 허용 라이선스(SPDX).
+const AUTO_ALLOW: [&str; 5] = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC"];
+/// 자동 거부 라이선스 prefix.
+const AUTO_REJECT_PREFIX: [&str; 3] = ["GPL", "AGPL", "SSPL"];
 
 /// dependencies.yaml을 파싱합니다.
 pub fn parse_dependencies(content: &str) -> Result<Vec<DepEntry>, DependencyError> {
@@ -139,6 +146,16 @@ fn parse_entry(value: &YamlValue) -> Result<DepEntry, DependencyError> {
             format!("approval 값이 잘못됨: {approval}"),
         ));
     }
+    let separate_approval = match get("separate_approval").as_deref() {
+        None | Some("false") => false,
+        Some("true") => true,
+        Some(other) => {
+            return Err(DependencyError::new(
+                "invalid-separate-approval",
+                format!("separate_approval는 true/false여야 합니다: {other}"),
+            ))
+        }
+    };
 
     Ok(DepEntry {
         name,
@@ -148,7 +165,34 @@ fn parse_entry(value: &YamlValue) -> Result<DepEntry, DependencyError> {
         approval,
         purpose,
         replaceable,
+        separate_approval,
     })
+}
+
+/// 라이선스 정책을 평가합니다. 위반 시 오류 코드를 반환합니다.
+fn evaluate_license(license: &str, separate_approval: bool) -> Option<&'static str> {
+    let tokens: Vec<&str> = license
+        .split(['/', '(', ')'])
+        .flat_map(str::split_whitespace)
+        .filter(|t| !matches!(*t, "OR" | "AND" | "WITH"))
+        .collect();
+    if tokens.is_empty() {
+        return Some("empty-license");
+    }
+    if tokens
+        .iter()
+        .any(|t| AUTO_REJECT_PREFIX.iter().any(|p| t.starts_with(p)))
+    {
+        return Some("rejected-license");
+    }
+    if tokens.iter().all(|t| AUTO_ALLOW.contains(t)) {
+        return None;
+    }
+    if separate_approval {
+        None
+    } else {
+        Some("license-needs-approval")
+    }
 }
 
 /// dependencies.yaml과 cargo direct dependency 이름을 비교 검증합니다(빈 Vec = 통과).
@@ -178,6 +222,15 @@ pub fn validate_dependencies(content: &str, direct_dep_names: &[&str]) -> Vec<De
             errors.push(DependencyError::new(
                 "unused-approval",
                 format!("승인되었으나 사용되지 않는 의존성: {name}"),
+            ));
+        }
+    }
+
+    for entry in &entries {
+        if let Some(code) = evaluate_license(&entry.license, entry.separate_approval) {
+            errors.push(DependencyError::new(
+                code,
+                format!("{}: 라이선스 정책 위반({})", entry.name, entry.license),
             ));
         }
     }
@@ -216,6 +269,32 @@ mod tests {
     fn missing_field_fails() {
         let yaml = "dependencies:\n  - name: x\n    ecosystem: cargo\n";
         assert_eq!(parse_dependencies(yaml).unwrap_err().code, "missing-field");
+    }
+
+    #[test]
+    fn license_policy_allow_reject_separate_approval() {
+        assert_eq!(evaluate_license("MIT", false), None);
+        assert_eq!(evaluate_license("MIT OR Apache-2.0", false), None);
+        assert_eq!(evaluate_license("GPL-3.0", false), Some("rejected-license"));
+        assert_eq!(
+            evaluate_license("AGPL-3.0-only", false),
+            Some("rejected-license")
+        );
+        assert_eq!(
+            evaluate_license("Custom-1.0", false),
+            Some("license-needs-approval")
+        );
+        assert_eq!(evaluate_license("Custom-1.0", true), None);
+    }
+
+    #[test]
+    fn rejected_license_entry_fails_validation() {
+        let yaml = "dependencies:\n  - name: bad\n    ecosystem: cargo\n    version: \"1.0\"\n    license: \"GPL-3.0\"\n    approval: approved\n    purpose: \"x\"\n    replaceable: true\n";
+        let codes: Vec<&str> = validate_dependencies(yaml, &["bad"])
+            .iter()
+            .map(|e| e.code)
+            .collect();
+        assert!(codes.contains(&"rejected-license"));
     }
 
     #[test]

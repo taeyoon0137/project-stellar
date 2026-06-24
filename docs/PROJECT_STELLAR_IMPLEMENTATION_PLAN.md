@@ -197,7 +197,7 @@ tools/xtask/
 |---|---|---|---|---|
 | I.3.1 | `[x]` | `config/versions.yaml`과 validator를 생성합니다. Rust는 `exact: 1.96.0`만 허용하고 `rust-toolchain.toml`과 일치해야 합니다. 다른 도구는 실제 사용이 시작된 항목만 기록하며 `exact` 또는 `range` 중 하나만 허용합니다. | `[DEV-MAC]` duplicate·empty·exact/range 동시·Rust mismatch fixture 실패. | I.2.4, I.1.7 |
 | I.3.2 | `[x]` | `config/dependencies.yaml`과 validator를 생성합니다. `yaml-rust2 0.11.0` bootstrap 승인을 정식 항목으로 이전한 뒤 `config/bootstrap-dependencies.yaml`을 삭제합니다. 필드는 name, ecosystem, exact version, license, approval, purpose, replaceable입니다. 미등록 direct dependency를 거부합니다. | `[DEV-MAC]` `cargo metadata` direct dependency 집합과 승인 목록 일치, bootstrap file 없음, unknown dependency fixture 실패. | I.3.1, I.2.3 |
-| I.3.3 | `[ ]` | dependency validator에 license policy를 추가합니다. 자동 허용은 MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC; GPL·AGPL·SSPL은 자동 거부; 그 밖은 `separate_approval: true`가 필요합니다. | `[DEV-MAC]` 허용·거부·별도 승인 fixture 통과. | I.3.2 |
+| I.3.3 | `[x]` | dependency validator에 license policy를 추가합니다. 자동 허용은 MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC; GPL·AGPL·SSPL은 자동 거부; 그 밖은 `separate_approval: true`가 필요합니다. | `[DEV-MAC]` 허용·거부·별도 승인 fixture 통과. | I.3.2 |
 | I.3.4 | `[ ]` | `docs/adr/TEMPLATE.md`를 생성합니다. Status, Context, Decision, Alternatives, Consequences, Compatibility, Performance, Security, Migration 섹션을 고정합니다. | `[DEV-MAC]` heading fixture 통과. | I.2.13 |
 | I.3.5 | `[ ]` | `tools/xtask/src/adr_policy.rs`에 보호 경로 정책을 구현합니다. storage format, public API, FFI, numeric registry, performance budget 변경은 같은 diff에 새·수정 ADR이 없으면 실패합니다. | `[DEV-MAC]` 보호 경로만 변경 fixture 실패, ADR 동반 fixture 통과, docs-only 오탐 0. | I.3.4 |
 
