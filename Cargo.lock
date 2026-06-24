@@ -48,6 +48,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-bindings"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
 name = "stellar-commands"
 version = "0.0.0"
 dependencies = [
@@ -66,10 +73,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-expressions"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
 name = "stellar-history"
 version = "0.0.0"
 dependencies = [
  "stellar-commands",
+]
+
+[[package]]
+name = "stellar-layout"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
+name = "stellar-text"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
 ]
 
 [[package]]
