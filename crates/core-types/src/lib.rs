@@ -12,7 +12,7 @@ pub mod error;
 pub mod value {}
 
 /// 단조 시계 추상화 (II.3.3).
-pub mod clock {}
+pub mod clock;
 
 /// revision newtype (II.3.4).
 pub mod revision {}
