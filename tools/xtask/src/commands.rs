@@ -10,6 +10,7 @@ use crate::adr_policy::check_adr_policy;
 use crate::commit_message::validate_commit_subject;
 use crate::dependencies::validate_dependencies;
 use crate::pr_body::validate_pr_body;
+use crate::sync::sync_plan;
 use crate::task_report::validate::{validate_report, ReportKind};
 use crate::task_status::decode::decode_collection;
 use crate::task_status::generate::{generate_ledger_file, validate_all};
@@ -24,7 +25,7 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 10] = [
+pub const COMMANDS: [&str; 11] = [
     "help",
     "generate-ledger",
     "validate-task-status",
@@ -35,6 +36,7 @@ pub const COMMANDS: [&str; 10] = [
     "validate-dependencies",
     "validate-adr",
     "verify-task",
+    "sync-plan",
 ];
 
 /// 사용법 문자열. 각 명령이 정확히 한 번 나타납니다.
@@ -75,6 +77,7 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         "validate-dependencies" => cmd_validate_dependencies(repo_root),
         "validate-adr" => cmd_validate_adr(rest),
         "verify-task" => cmd_verify_task(repo_root, rest),
+        "sync-plan" => cmd_sync_plan(repo_root),
         other => {
             eprintln!("알 수 없는 명령: {other}");
             eprint!("{}", usage());
@@ -256,6 +259,26 @@ fn cmd_verify_task(repo_root: &Path, rest: &[String]) -> Result<(), i32> {
         .any(|r| r.id == "II.1.2" && r.status == TaskState::Verified);
 
     let problems = verify_task(&records, id, report_exists, workspace_ready);
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(policy_err(
+            &problems
+                .iter()
+                .map(|p| p.code.to_string())
+                .collect::<Vec<_>>(),
+        ))
+    }
+}
+
+fn cmd_sync_plan(repo_root: &Path) -> Result<(), i32> {
+    let plan = read(repo_root, "docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md")?;
+    let ledger_yaml = read(repo_root, "planning/task-status.yaml")?;
+    let value = load_restricted(&ledger_yaml)
+        .map_err(|e| policy_err(&[format!("loader/{}", e.kind.code())]))?;
+    let records =
+        decode_collection(&value).map_err(|e| policy_err(&[format!("decode/{}", e.code)]))?;
+    let problems = sync_plan(&plan, &records);
     if problems.is_empty() {
         Ok(())
     } else {

@@ -9,6 +9,7 @@ pub mod commit_message;
 pub mod dependencies;
 pub mod plan;
 pub mod pr_body;
+pub mod sync;
 pub mod task_report;
 pub mod task_status;
 pub mod versions;
