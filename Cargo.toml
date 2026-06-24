@@ -11,9 +11,14 @@ rust-version = "1.96.0"
 repository = "https://github.com/taeyoon0137/project-stellar"
 
 # 공통 lint. member는 `[lints] workspace = true`로 적용합니다.
-# unsafe 관련 강화는 II.1.4에서 추가합니다.
 [workspace.lints.rust]
-unused = "warn"
+# lint 그룹은 개별 lint보다 낮은 priority여야 합니다.
+unused = { level = "warn", priority = -1 }
+# unsafe fn 내부의 unsafe 연산은 명시적 unsafe 블록을 요구합니다(II.1.4).
+unsafe_op_in_unsafe_fn = "deny"
+# 공개 API 문서 누락은 초기에는 경고로 둡니다(II.1.4).
+# 내부 도구 crate(xtask)는 공개 API가 아니므로 crate 수준에서 allow 합니다.
+missing_docs = "warn"
 
 [profile.dev]
 opt-level = 0

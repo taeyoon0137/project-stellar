@@ -223,7 +223,7 @@ tools/xtask/
 | II.1.1 | `[~]` | Phase I에서 고정한 Rust `1.96.0`을 제품 코어 공식 baseline으로 승격합니다. `docs/adr/ADR-0001-rust-toolchain.md`에 변경 절차, MSRV 정책, 업그레이드 전용 WBS 요구사항을 기록합니다. 버전을 자동 변경하지 않습니다. | `[CI-MAC][CI-WIN]` `rustc -Vv`의 release와 commit-hash가 동일하고 ADR heading·결정이 검증됩니다. | G0 |
 | II.1.2 | `[~]` | I.1.8의 xtask-only workspace를 제품 workspace로 확장합니다. member는 여전히 `tools/xtask` 하나로 두고 root `Cargo.toml`에 resolver v2, debug/release profile, workspace package metadata, workspace lint를 추가합니다. 기능 crate는 추가하지 않습니다. | `[DEV-MAC][CI-MAC][CI-WIN]` `cargo metadata --no-deps`, workspace fmt·clippy·test 통과, member=`xtask` 하나. | II.1.1 |
 | II.1.3 | `[x]` | panic 정책을 정의합니다. 앱 라이브러리 release는 `panic=abort`, 테스트는 unwind를 사용하고 FFI 경계에서 panic이 넘어가지 않도록 정책 문서를 추가합니다. | release profile 검사와 panic fixture 테스트 통과. | II.1.2 |
-| II.1.4 | `[ ]` | workspace 공통 lint에 `unsafe_op_in_unsafe_fn`을 오류로 설정하고 공개 API missing docs는 초기에는 경고로 둡니다. | 의도적 unsafe fixture가 설명·명시 블록 없이 실패. | II.1.2 |
+| II.1.4 | `[x]` | workspace 공통 lint에 `unsafe_op_in_unsafe_fn`을 오류로 설정하고 공개 API missing docs는 초기에는 경고로 둡니다. | 의도적 unsafe fixture가 설명·명시 블록 없이 실패. | II.1.2 |
 | II.1.5 | `[ ]` | I.1.8에서 생성한 `Cargo.lock`을 제품 workspace의 단일 lockfile로 유지하고 모든 CI Rust 명령에 `--locked`를 적용합니다. dependency-update WBS 외 lockfile drift를 금지합니다. | lockfile 변경 없이 `cargo check --workspace --locked` 통과, 누락·무단 drift fixture 실패. | II.1.2 |
 | II.1.6 | `[ ]` | `cargo xtask check-core`를 구현해 전체 workspace fmt, clippy, test, doc test를 고정 순서로 실행하고 첫 실패에서 종료합니다. 명령별 로그를 `target/xtask-logs/`에 저장하며 Phase I xtask-only 검사와 혼합하지 않습니다. | 각 하위 명령 실패 fixture에서 정확한 실패 코드·로그 생성, 성공 시 네 단계 모두 실행. | II.1.2, I.4.1 |
 

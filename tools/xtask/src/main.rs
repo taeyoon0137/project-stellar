@@ -1,6 +1,7 @@
 // xtask — Project Stellar task runner.
-//
 // 명령 디스패치는 xtask 라이브러리의 command registry(commands::run)에 위임합니다.
+// 내부 도구 crate이며 공개 API가 아니므로 missing_docs는 allow 합니다(II.1.4).
+#![allow(missing_docs)]
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;

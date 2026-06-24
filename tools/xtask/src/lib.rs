@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // 내부 도구 crate: 공개 API 아님 (II.1.4)
 //! xtask library — Project Stellar 검증 도구 모듈.
 //!
 //! 부트스트랩 단계의 작업 추적·정책 검증 로직을 모듈로 노출합니다.
