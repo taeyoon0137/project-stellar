@@ -48,6 +48,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-accessibility"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
 name = "stellar-assets"
 version = "0.0.0"
 dependencies = [
@@ -80,6 +87,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-diagnostics"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
 name = "stellar-document"
 version = "0.0.0"
 dependencies = [
@@ -88,6 +102,13 @@ dependencies = [
 
 [[package]]
 name = "stellar-expressions"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
+name = "stellar-ffi"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
@@ -169,6 +190,13 @@ dependencies = [
 
 [[package]]
 name = "stellar-storage"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
+name = "stellar-target-profile"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
