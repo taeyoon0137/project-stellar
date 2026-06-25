@@ -43,3 +43,8 @@
 ## 작업 지시와 다른 점
 
 - 없음.
+
+## CI 증거 (승격)
+
+- 런 `28084248458`에서 `CI-MAC`·`CI-WIN` 모두 `cargo metadata`·workspace fmt/clippy/test 통과. `member=xtask` 단일은 II.1.2 커밋(`193630d`)과 II.1.6 그린 런(`79957f6`, 당시 member=xtask)에서 확인.
+- 상태 `[~]` → `[x]` 승격.

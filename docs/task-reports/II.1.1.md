@@ -40,3 +40,8 @@
 ## 작업 지시와 다른 점
 
 - 없음.
+
+## CI 증거 (승격)
+
+- 런 `28084248458`에서 `CI-MAC`·`CI-WIN`의 `rustc -Vv`가 release `1.96.0`, commit-hash `ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96`로 완전히 동일. ADR-0001 존재·heading 검증 완료.
+- 상태 `[~]` → `[x]` 승격.

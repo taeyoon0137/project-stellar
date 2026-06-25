@@ -116,13 +116,20 @@ tasks:
     verified_at: "2026-06-24T03:01:57+09:00"
   - id: "I.1.10"
     title: "`.github/workflows/bootstrap.yml`에 `bootstrap-macos`와 `bootstrap-windows` job을 추가합니다. 각 job은 clean checkout에서 pinned toolchain 활성화, `rustc -Vv`, `cargo -V`, `cargo metadata`, `cargo check -p xtask --locked`, `cargo xtask help`, xtask fmt·clippy·test를 실행합니다. Windows job은 compile/headless 증거이며 Windows 11 UI·D3D12 증거로 표시하지 않습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "I.1.9"
     required_environments:
       - CI-MAC
       - CI-WIN
+    evidence:
+      - environment: CI-MAC
+        locator: "docs/task-reports/I.1.10.md"
+      - environment: CI-WIN
+        locator: "docs/task-reports/I.1.10.md"
+    commit: "1224d4c8a81505a715d7b418f40b1d5ebbd5acce"
     report: "docs/task-reports/I.1.10.md"
+    verified_at: "2026-06-24T03:09:12+09:00"
   - id: "I.2.1"
     title: "`tools/xtask/src/task_status/model.rs`에 `TaskStatusRecord`, `TaskState`, `VerificationEnvironment`, `VerificationEvidence` 데이터 모델만 정의합니다. 필드는 `id`, `title`, `status`, `owner`, `depends_on`, `required_environments`, `evidence`, `commit`, `report`, `verified_at`입니다. YAML 파싱과 파일 I/O는 구현하지 않습니다."
     status: verified
@@ -463,150 +470,277 @@ tasks:
     verified_at: "2026-06-24T11:26:06+09:00"
   - id: "I.4.4"
     title: "Bootstrap CI의 macOS·Windows job에 `sync-plan --check`, 모든 Phase I validator, xtask fmt·clippy·test를 추가합니다. commit subject 검사는 기준 commit 이후 모든 non-merge commit을 검사하며 예외 prefix는 없습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "I.4.2"
       - "I.4.3"
     required_environments:
       - CI-MAC
       - CI-WIN
+    evidence:
+      - environment: CI-MAC
+        locator: "docs/task-reports/I.4.4.md"
+      - environment: CI-WIN
+        locator: "docs/task-reports/I.4.4.md"
+    commit: "b287f803cf14dde13be2cc9bf1c93b035fef82a6"
     report: "docs/task-reports/I.4.4.md"
+    verified_at: "2026-06-24T11:28:46+09:00"
   - id: "II.1.1"
     title: "Phase I에서 고정한 Rust `1.96.0`을 제품 코어 공식 baseline으로 승격합니다. `docs/adr/ADR-0001-rust-toolchain.md`에 변경 절차, MSRV 정책, 업그레이드 전용 WBS 요구사항을 기록합니다. 버전을 자동 변경하지 않습니다."
-    status: not_started
+    status: verified
     required_environments:
       - CI-MAC
       - CI-WIN
+    evidence:
+      - environment: CI-MAC
+        locator: "docs/task-reports/II.1.1.md"
+      - environment: CI-WIN
+        locator: "docs/task-reports/II.1.1.md"
+    commit: "20452149032d0c829d225efd97bc97393ec68682"
+    report: "docs/task-reports/II.1.1.md"
+    verified_at: "2026-06-24T11:50:24+09:00"
   - id: "II.1.2"
     title: "I.1.8의 xtask-only workspace를 제품 workspace로 확장합니다. member는 여전히 `tools/xtask` 하나로 두고 root `Cargo.toml`에 resolver v2, debug/release profile, workspace package metadata, workspace lint를 추가합니다. 기능 crate는 추가하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.1.1"
     required_environments:
       - DEV-MAC
       - CI-MAC
       - CI-WIN
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.1.2.md"
+      - environment: CI-MAC
+        locator: "docs/task-reports/II.1.2.md"
+      - environment: CI-WIN
+        locator: "docs/task-reports/II.1.2.md"
+    commit: "193630d7c5bb31dd46c18315399f021b313b3fdf"
+    report: "docs/task-reports/II.1.2.md"
+    verified_at: "2026-06-24T11:52:15+09:00"
   - id: "II.1.3"
     title: "panic 정책을 정의합니다. 앱 라이브러리 release는 `panic=abort`, 테스트는 unwind를 사용하고 FFI 경계에서 panic이 넘어가지 않도록 정책 문서를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.1.3.md"
+    commit: "4789c2135f85e84f52f8cf63fe852464268f35b7"
+    report: "docs/task-reports/II.1.3.md"
+    verified_at: "2026-06-24T11:53:58+09:00"
   - id: "II.1.4"
     title: "workspace 공통 lint에 `unsafe_op_in_unsafe_fn`을 오류로 설정하고 공개 API missing docs는 초기에는 경고로 둡니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.1.4.md"
+    commit: "ae289f5bf42feffb1b8effae87f81464c6d669f9"
+    report: "docs/task-reports/II.1.4.md"
+    verified_at: "2026-06-24T11:58:33+09:00"
   - id: "II.1.5"
     title: "I.1.8에서 생성한 `Cargo.lock`을 제품 workspace의 단일 lockfile로 유지하고 모든 CI Rust 명령에 `--locked`를 적용합니다. dependency-update WBS 외 lockfile drift를 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.1.5.md"
+    commit: "0ac39e80b1fd80cc1f6f2420cd025c716e810e7a"
+    report: "docs/task-reports/II.1.5.md"
+    verified_at: "2026-06-24T11:59:58+09:00"
   - id: "II.1.6"
     title: "`cargo xtask check-core`를 구현해 전체 workspace fmt, clippy, test, doc test를 고정 순서로 실행하고 첫 실패에서 종료합니다. 명령별 로그를 `target/xtask-logs/`에 저장하며 Phase I xtask-only 검사와 혼합하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.1.2"
       - "I.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.1.6.md"
+    commit: "79957f6919f02d32618d042dd45ab835d27ab14c"
+    report: "docs/task-reports/II.1.6.md"
+    verified_at: "2026-06-24T12:02:35+09:00"
   - id: "II.2.1"
     title: "`crates/core-types`를 생성하고 공개 모듈만 선언합니다. 구현은 없습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.2.1.md"
+    commit: "a6eae7509c83238f87d3e378a8807fc42c9d875e"
+    report: "docs/task-reports/II.2.1.md"
+    verified_at: "2026-06-24T16:20:24+09:00"
   - id: "II.2.2"
     title: "`crates/document`, `crates/commands`, `crates/history`를 각각 생성하고 의존 방향을 `history -> commands -> document -> core-types`로 고정합니다. 역방향 의존은 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.2.2.md"
+    commit: "9e99f2d98ddc502a97f2747022706741e2da6076"
+    report: "docs/task-reports/II.2.2.md"
+    verified_at: "2026-06-24T16:21:24+09:00"
   - id: "II.2.3"
     title: "`crates/expressions`, `crates/bindings`, `crates/layout`, `crates/text` 골격을 생성합니다. 모두 `core-types`만 직접 의존하게 시작합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.2.3.md"
+    commit: "2fd30e6420b21dc19374cb411fdcc5db7537aa7d"
+    report: "docs/task-reports/II.2.3.md"
+    verified_at: "2026-06-24T16:22:09+09:00"
   - id: "II.2.4"
     title: "`crates/scene`, `crates/renderer-core`, `crates/renderer-metal`, `crates/renderer-d3d12` 골격을 생성합니다. 플랫폼 backend는 공통 backend를 역참조하지 않게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.2.4.md"
+    commit: "fa16a6613ef5b86dcccd0efa28b0a2ad56e44883"
+    report: "docs/task-reports/II.2.4.md"
+    verified_at: "2026-06-24T16:24:13+09:00"
   - id: "II.2.5"
     title: "`crates/storage`, `crates/project`, `crates/assets`, `crates/dependencies` 골격을 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.2.5.md"
+    commit: "45b466617b07367fa769db65574e8f98ff985e22"
+    report: "docs/task-reports/II.2.5.md"
+    verified_at: "2026-06-24T16:25:03+09:00"
   - id: "II.2.6"
     title: "`crates/semantic-diff`, `crates/semantic-merge`, `crates/git-porcelain` 골격을 생성합니다. Git crate는 document를 직접 수정하지 않고 snapshot 인터페이스만 의존하도록 빈 trait를 둡니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.2"
       - "II.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.2.6.md"
+    commit: "697f27f97e5e5a53d3883e9dd07782f57696c1c1"
+    report: "docs/task-reports/II.2.6.md"
+    verified_at: "2026-06-24T16:26:05+09:00"
   - id: "II.2.7"
     title: "`crates/target-profile`, `crates/accessibility`, `crates/diagnostics`, `crates/ffi` 골격을 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.2.7.md"
+    commit: "6bfa4e182850511b0d72095d79399f0fa4f9eb0f"
+    report: "docs/task-reports/II.2.7.md"
+    verified_at: "2026-06-24T16:26:46+09:00"
   - id: "II.2.8"
     title: "`docs/architecture/crate-dependency-graph.md`에 허용 의존 방향을 Mermaid와 표로 기록하고 CI에서 금지 edge를 검사합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.2.8.md"
+    commit: "e4c8ef276b4f7245dc81e84819b5e0144b375453"
+    report: "docs/task-reports/II.2.8.md"
+    verified_at: "2026-06-24T16:30:25+09:00"
   - id: "II.3.1"
     title: "`core-types`에 `ErrorCode` enum과 `StellarError { code, message, context }`를 정의합니다. 사용자 문자열과 개발자 context를 분리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.3.1.md"
+    commit: "64c7ee481713f66749758844c0379704c7a219c6"
+    report: "docs/task-reports/II.3.1.md"
+    verified_at: "2026-06-24T16:31:50+09:00"
   - id: "II.3.2"
     title: "`diagnostics`에 구조화 로그 이벤트 타입을 정의합니다. 프로젝트 내용·텍스트·경로를 기본 필드에 넣을 수 없도록 별도 민감 타입을 둡니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.3.1"
       - "II.2.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.3.2.md"
+    commit: "63d459aa8eee2637693c73dfd0db950d75e12dff"
+    report: "docs/task-reports/II.3.2.md"
+    verified_at: "2026-06-24T16:33:41+09:00"
   - id: "II.3.3"
     title: "단조 시계를 추상화한 `MonotonicClock` trait와 테스트용 `ManualClock`을 추가합니다. 시스템 wall clock은 성능·히스토리 순서에 사용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.3.3.md"
+    commit: "b9812b31a235c03c1da671c87307891e0d452eec"
+    report: "docs/task-reports/II.3.3.md"
+    verified_at: "2026-06-24T16:34:39+09:00"
   - id: "II.3.4"
     title: "`DocumentRevision`, `SceneRevision`, `StorageGeneration`을 서로 다른 newtype으로 추가해 혼용을 컴파일 단계에서 막습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.3.4.md"
+    commit: "92d1ffbf788bfefae5f2076ffa25342588eeb1f8"
+    report: "docs/task-reports/II.3.4.md"
+    verified_at: "2026-06-24T16:35:51+09:00"
   - id: "II.4.1"
     title: "`ffi` crate에 `stellar_runtime_create`, `stellar_runtime_destroy`, `stellar_runtime_version` C ABI를 추가합니다. handle은 opaque pointer가 아니라 정수형 registry handle로 노출합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.2.7"
       - "II.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.4.1.md"
+    commit: "aadc6e1aea3e3c4530b2d47c16881bcbae037c0a"
+    report: "docs/task-reports/II.4.1.md"
+    verified_at: "2026-06-24T16:39:57+09:00"
   - id: "II.4.2"
     title: "모든 FFI 함수가 `StellarStatus`를 반환하고 오류 세부 정보는 호출별 `stellar_last_error(handle)`로 읽게 합니다. 전역 last error는 금지합니다."
     status: not_started
