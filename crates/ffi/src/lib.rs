@@ -3,8 +3,10 @@
 //! runtime handle은 opaque pointer가 아니라 정수형 registry handle로 노출합니다(0=무효).
 //! 모든 작업 함수는 [`StellarStatus`]를 반환하고, 오류 세부는 전역이 아니라
 //! handle별 `stellar_last_error`로 읽습니다.
+//! 모든 FFI 경계는 [`ffi_guard`]로 감싸 panic이 경계를 넘지 않고 `InternalPanic`으로 변환됩니다.
 
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, OnceLock};
 
 /// 버전 문자열(NUL 종료에 의존하지 않는 바이트 시퀀스).
@@ -28,6 +30,8 @@ pub enum StellarStatus {
     Internal = 5,
     /// 입력 바이트가 유효한 UTF-8이 아님.
     InvalidUtf8 = 6,
+    /// FFI 경계에서 잡힌 panic.
+    InternalPanic = 7,
 }
 
 /// registry에 등록되는 runtime 인스턴스. last error는 handle별로 보관합니다.
@@ -51,6 +55,14 @@ fn registry() -> &'static Mutex<RegistryInner> {
     })
 }
 
+/// FFI 경계 guard: panic을 catch해 `InternalPanic`으로 변환합니다(프로세스 종료 방지).
+fn ffi_guard<F: FnOnce() -> StellarStatus>(body: F) -> StellarStatus {
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(status) => status,
+        Err(_) => StellarStatus::InternalPanic,
+    }
+}
+
 /// `out` 포인터가 null이 아니면 값을 씁니다.
 ///
 /// # Safety
@@ -67,36 +79,40 @@ unsafe fn write_len(out: *mut usize, value: usize) {
 /// `out_handle`은 `u64` 쓰기가 유효한 포인터여야 합니다.
 #[no_mangle]
 pub unsafe extern "C" fn stellar_runtime_create(out_handle: *mut u64) -> StellarStatus {
-    if out_handle.is_null() {
-        return StellarStatus::NullPointer;
-    }
-    let Ok(mut reg) = registry().lock() else {
-        return StellarStatus::Internal;
-    };
-    let handle = reg.next;
-    reg.next = reg.next.wrapping_add(1);
-    reg.live.insert(
-        handle,
-        Runtime {
-            last_error: None,
-            label: None,
-        },
-    );
-    unsafe { *out_handle = handle };
-    StellarStatus::Ok
+    ffi_guard(move || {
+        if out_handle.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let handle = reg.next;
+        reg.next = reg.next.wrapping_add(1);
+        reg.live.insert(
+            handle,
+            Runtime {
+                last_error: None,
+                label: None,
+            },
+        );
+        unsafe { *out_handle = handle };
+        StellarStatus::Ok
+    })
 }
 
 /// runtime을 파괴합니다. 알 수 없는 handle은 `InvalidHandle`(double free 방지).
 #[no_mangle]
 pub extern "C" fn stellar_runtime_destroy(handle: u64) -> StellarStatus {
-    let Ok(mut reg) = registry().lock() else {
-        return StellarStatus::Internal;
-    };
-    if reg.live.remove(&handle).is_some() {
-        StellarStatus::Ok
-    } else {
-        StellarStatus::InvalidHandle
-    }
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        if reg.live.remove(&handle).is_some() {
+            StellarStatus::Ok
+        } else {
+            StellarStatus::InvalidHandle
+        }
+    })
 }
 
 /// 버전 문자열을 호출자 buffer에 UTF-8로 씁니다. `buf`가 null이면 필요한 길이만 보고합니다.
@@ -112,29 +128,31 @@ pub unsafe extern "C" fn stellar_runtime_version(
     buf_len: usize,
     out_written: *mut usize,
 ) -> StellarStatus {
-    let bytes = VERSION.as_bytes();
-    let Ok(mut reg) = registry().lock() else {
-        return StellarStatus::Internal;
-    };
-    let Some(rt) = reg.live.get_mut(&handle) else {
-        return StellarStatus::InvalidHandle;
-    };
-    if buf.is_null() {
+    ffi_guard(move || {
+        let bytes = VERSION.as_bytes();
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        if buf.is_null() {
+            unsafe { write_len(out_written, bytes.len()) };
+            return StellarStatus::Ok;
+        }
+        if buf_len < bytes.len() {
+            rt.last_error = Some((
+                StellarStatus::BufferTooSmall,
+                format!("version needs {} bytes, buffer {}", bytes.len(), buf_len),
+            ));
+            return StellarStatus::BufferTooSmall;
+        }
+        let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
+        out[..bytes.len()].copy_from_slice(bytes);
         unsafe { write_len(out_written, bytes.len()) };
-        return StellarStatus::Ok;
-    }
-    if buf_len < bytes.len() {
-        rt.last_error = Some((
-            StellarStatus::BufferTooSmall,
-            format!("version needs {} bytes, buffer {}", bytes.len(), buf_len),
-        ));
-        return StellarStatus::BufferTooSmall;
-    }
-    let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
-    out[..bytes.len()].copy_from_slice(bytes);
-    unsafe { write_len(out_written, bytes.len()) };
-    rt.last_error = None;
-    StellarStatus::Ok
+        rt.last_error = None;
+        StellarStatus::Ok
+    })
 }
 
 /// 해당 handle의 마지막 오류 메시지를 호출자 buffer에 씁니다.
@@ -150,28 +168,30 @@ pub unsafe extern "C" fn stellar_last_error(
     buf_len: usize,
     out_written: *mut usize,
 ) -> StellarStatus {
-    let Ok(reg) = registry().lock() else {
-        return StellarStatus::Internal;
-    };
-    let Some(rt) = reg.live.get(&handle) else {
-        return StellarStatus::InvalidHandle;
-    };
-    let Some((_code, message)) = &rt.last_error else {
-        unsafe { write_len(out_written, 0) };
-        return StellarStatus::NoError;
-    };
-    let bytes = message.as_bytes();
-    if buf.is_null() {
+    ffi_guard(move || {
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some((_code, message)) = &rt.last_error else {
+            unsafe { write_len(out_written, 0) };
+            return StellarStatus::NoError;
+        };
+        let bytes = message.as_bytes();
+        if buf.is_null() {
+            unsafe { write_len(out_written, bytes.len()) };
+            return StellarStatus::Ok;
+        }
+        if buf_len < bytes.len() {
+            return StellarStatus::BufferTooSmall;
+        }
+        let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
+        out[..bytes.len()].copy_from_slice(bytes);
         unsafe { write_len(out_written, bytes.len()) };
-        return StellarStatus::Ok;
-    }
-    if buf_len < bytes.len() {
-        return StellarStatus::BufferTooSmall;
-    }
-    let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
-    out[..bytes.len()].copy_from_slice(bytes);
-    unsafe { write_len(out_written, bytes.len()) };
-    StellarStatus::Ok
+        StellarStatus::Ok
+    })
 }
 
 /// FFI 입력 문자열 규칙: UTF-8 byte 포인터 + length. NUL 종료에 의존하지 않습니다.
@@ -205,22 +225,24 @@ pub unsafe extern "C" fn stellar_runtime_set_label(
     ptr: *const u8,
     len: usize,
 ) -> StellarStatus {
-    let Ok(mut reg) = registry().lock() else {
-        return StellarStatus::Internal;
-    };
-    let Some(rt) = reg.live.get_mut(&handle) else {
-        return StellarStatus::InvalidHandle;
-    };
-    match unsafe { decode_utf8_owned(ptr, len) } {
-        Ok(label) => {
-            rt.label = Some(label);
-            StellarStatus::Ok
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        match unsafe { decode_utf8_owned(ptr, len) } {
+            Ok(label) => {
+                rt.label = Some(label);
+                StellarStatus::Ok
+            }
+            Err(status) => {
+                rt.last_error = Some((status, "invalid label bytes".to_string()));
+                status
+            }
         }
-        Err(status) => {
-            rt.last_error = Some((status, "invalid label bytes".to_string()));
-            status
-        }
-    }
+    })
 }
 
 /// handle의 label을 호출자 buffer에 UTF-8 바이트로 씁니다(출력은 caller buffer).
@@ -234,33 +256,38 @@ pub unsafe extern "C" fn stellar_runtime_label(
     buf_len: usize,
     out_written: *mut usize,
 ) -> StellarStatus {
-    let Ok(reg) = registry().lock() else {
-        return StellarStatus::Internal;
-    };
-    let Some(rt) = reg.live.get(&handle) else {
-        return StellarStatus::InvalidHandle;
-    };
-    let bytes = rt.label.as_deref().unwrap_or("").as_bytes();
-    if buf.is_null() {
+    ffi_guard(move || {
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let bytes = rt.label.as_deref().unwrap_or("").as_bytes();
+        if buf.is_null() {
+            unsafe { write_len(out_written, bytes.len()) };
+            return StellarStatus::Ok;
+        }
+        if buf_len < bytes.len() {
+            return StellarStatus::BufferTooSmall;
+        }
+        let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
+        out[..bytes.len()].copy_from_slice(bytes);
         unsafe { write_len(out_written, bytes.len()) };
-        return StellarStatus::Ok;
-    }
-    if buf_len < bytes.len() {
-        return StellarStatus::BufferTooSmall;
-    }
-    let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
-    out[..bytes.len()].copy_from_slice(bytes);
-    unsafe { write_len(out_written, bytes.len()) };
-    StellarStatus::Ok
+        StellarStatus::Ok
+    })
 }
 
 /// 현재 살아 있는 runtime handle 수(누수 검증용 진단 helper).
 #[no_mangle]
 pub extern "C" fn stellar_runtime_live_count() -> u64 {
-    registry()
-        .lock()
-        .map(|reg| reg.live.len() as u64)
-        .unwrap_or(u64::MAX)
+    catch_unwind(|| {
+        registry()
+            .lock()
+            .map(|reg| reg.live.len() as u64)
+            .unwrap_or(u64::MAX)
+    })
+    .unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
@@ -383,5 +410,33 @@ mod tests {
             StellarStatus::InvalidUtf8
         );
         assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn ffi_guard_converts_panic_to_status() {
+        // 테스트 전용 panic이 경계를 넘지 않고 InternalPanic으로 변환됨(프로세스 생존).
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {})); // 패닉 메시지 출력 억제
+        let status = ffi_guard(|| panic!("forced panic for test"));
+        std::panic::set_hook(prev);
+        assert_eq!(status, StellarStatus::InternalPanic);
+    }
+
+    #[test]
+    fn operations_do_not_panic_on_edge_inputs() {
+        // release abort 정책에서도 정상 경로는 panic 없이 상태를 반환합니다.
+        let mut written = 0usize;
+        assert_eq!(
+            stellar_runtime_destroy(999_999),
+            StellarStatus::InvalidHandle
+        );
+        assert_eq!(
+            unsafe { stellar_runtime_version(999_999, std::ptr::null_mut(), 0, &mut written) },
+            StellarStatus::InvalidHandle
+        );
+        assert_eq!(
+            unsafe { stellar_last_error(999_999, std::ptr::null_mut(), 0, &mut written) },
+            StellarStatus::InvalidHandle
+        );
     }
 }
