@@ -257,7 +257,7 @@ tools/xtask/
 | II.4.2 | `[x]` | 모든 FFI 함수가 `StellarStatus`를 반환하고 오류 세부 정보는 호출별 `stellar_last_error(handle)`로 읽게 합니다. 전역 last error는 금지합니다. | 두 handle에서 동시에 오류를 만들었을 때 서로 섞이지 않습니다. | II.4.1 |
 | II.4.3 | `[x]` | FFI 문자열은 UTF-8 pointer+length 입력, 호출자 제공 buffer 출력 규칙으로 고정합니다. NUL 종료 의존을 금지합니다. | embedded NUL, 빈 문자열, 잘못된 UTF-8 fixture 처리 테스트 통과. | II.4.2 |
 | II.4.4 | `[x]` | FFI 경계에 `catch_unwind`를 적용하고 panic을 `InternalPanic` 오류 코드로 변환합니다. release abort 정책에서는 panic을 발생시키는 프로덕션 경로가 없음을 별도 테스트합니다. | 테스트 전용 panic 함수가 프로세스를 죽이지 않고 오류로 변환됩니다. | II.4.2, II.1.3 |
-| II.4.5 | `[ ]` | Core→Shell 이벤트 큐 인터페이스를 정의합니다. 이벤트는 pull 방식 `stellar_runtime_poll_event`로 읽고 callback 재진입을 금지합니다. | 빈 큐, 단일 이벤트, 여러 이벤트, buffer 부족 테스트 통과. | II.4.2 |
+| II.4.5 | `[x]` | Core→Shell 이벤트 큐 인터페이스를 정의합니다. 이벤트는 pull 방식 `stellar_runtime_poll_event`로 읽고 callback 재진입을 금지합니다. | 빈 큐, 단일 이벤트, 여러 이벤트, buffer 부족 테스트 통과. | II.4.2 |
 | II.4.6 | `[ ]` | C header를 자동 생성하거나 고정 템플릿에서 생성하는 `cargo xtask generate-ffi-header`를 추가하고 생성물 drift를 CI에서 검사합니다. | 재생성 후 Git diff가 없어야 합니다. | II.4.1~II.4.5 |
 
 ### II.5 macOS 셸 골격

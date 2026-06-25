@@ -5,7 +5,7 @@
 //! handle별 `stellar_last_error`로 읽습니다.
 //! 모든 FFI 경계는 [`ffi_guard`]로 감싸 panic이 경계를 넘지 않고 `InternalPanic`으로 변환됩니다.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, OnceLock};
 
@@ -38,6 +38,7 @@ pub enum StellarStatus {
 struct Runtime {
     last_error: Option<(StellarStatus, String)>,
     label: Option<String>,
+    events: VecDeque<(u32, Vec<u8>)>,
 }
 
 struct RegistryInner {
@@ -93,6 +94,7 @@ pub unsafe extern "C" fn stellar_runtime_create(out_handle: *mut u64) -> Stellar
             Runtime {
                 last_error: None,
                 label: None,
+                events: VecDeque::new(),
             },
         );
         unsafe { *out_handle = handle };
@@ -278,6 +280,72 @@ pub unsafe extern "C" fn stellar_runtime_label(
     })
 }
 
+/// Core→Shell 이벤트를 handle 큐에 넣습니다(코어 내부용 Rust API).
+///
+/// 이벤트는 pull 방식 [`stellar_runtime_poll_event`]로만 읽으며, callback이 없으므로
+/// 재진입이 발생하지 않습니다.
+pub fn enqueue_event(handle: u64, kind: u32, payload: &[u8]) -> StellarStatus {
+    let Ok(mut reg) = registry().lock() else {
+        return StellarStatus::Internal;
+    };
+    let Some(rt) = reg.live.get_mut(&handle) else {
+        return StellarStatus::InvalidHandle;
+    };
+    rt.events.push_back((kind, payload.to_vec()));
+    StellarStatus::Ok
+}
+
+/// 큐에서 다음 이벤트를 pull 방식으로 읽습니다(FIFO). callback을 호출하지 않습니다.
+///
+/// 빈 큐는 `NoError`. `buf`가 null이면 다음 이벤트의 kind·필요 길이만 보고하고 pop하지 않습니다.
+/// buffer가 작으면 `BufferTooSmall`(pop하지 않음). 성공 시 이벤트를 pop합니다.
+///
+/// # Safety
+/// `out_kind`/`out_written`은 null이거나 유효한 포인터, `buf`는 null이거나 `buf_len` 쓰기가 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_runtime_poll_event(
+    handle: u64,
+    out_kind: *mut u32,
+    buf: *mut u8,
+    buf_len: usize,
+    out_written: *mut usize,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some((front_kind, front_payload)) = rt.events.front() else {
+            unsafe { write_len(out_written, 0) };
+            return StellarStatus::NoError;
+        };
+        let kind = *front_kind;
+        let need = front_payload.len();
+
+        if buf.is_null() {
+            if !out_kind.is_null() {
+                unsafe { *out_kind = kind };
+            }
+            unsafe { write_len(out_written, need) };
+            return StellarStatus::Ok;
+        }
+        if buf_len < need {
+            return StellarStatus::BufferTooSmall;
+        }
+
+        let (kind, payload) = rt.events.pop_front().expect("front exists");
+        if !out_kind.is_null() {
+            unsafe { *out_kind = kind };
+        }
+        let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
+        out[..payload.len()].copy_from_slice(&payload);
+        unsafe { write_len(out_written, payload.len()) };
+        StellarStatus::Ok
+    })
+}
+
 /// 현재 살아 있는 runtime handle 수(누수 검증용 진단 helper).
 #[no_mangle]
 pub extern "C" fn stellar_runtime_live_count() -> u64 {
@@ -438,5 +506,87 @@ mod tests {
             unsafe { stellar_last_error(999_999, std::ptr::null_mut(), 0, &mut written) },
             StellarStatus::InvalidHandle
         );
+    }
+
+    #[test]
+    fn poll_event_empty_single_multiple() {
+        let h = create();
+        let mut kind = 0u32;
+        let mut written = 0usize;
+        let mut buf = [0u8; 16];
+
+        // 빈 큐 → NoError
+        assert_eq!(
+            unsafe {
+                stellar_runtime_poll_event(h, &mut kind, buf.as_mut_ptr(), buf.len(), &mut written)
+            },
+            StellarStatus::NoError
+        );
+
+        // 단일 이벤트
+        assert_eq!(enqueue_event(h, 7, b"x"), StellarStatus::Ok);
+        let s = unsafe {
+            stellar_runtime_poll_event(h, &mut kind, buf.as_mut_ptr(), buf.len(), &mut written)
+        };
+        assert_eq!(s, StellarStatus::Ok);
+        assert_eq!(kind, 7);
+        assert_eq!(&buf[..written], b"x");
+
+        // 비워진 뒤 다시 NoError
+        assert_eq!(
+            unsafe {
+                stellar_runtime_poll_event(h, &mut kind, buf.as_mut_ptr(), buf.len(), &mut written)
+            },
+            StellarStatus::NoError
+        );
+
+        // 여러 이벤트 FIFO
+        enqueue_event(h, 1, b"a");
+        enqueue_event(h, 2, b"bb");
+        enqueue_event(h, 3, b"ccc");
+        for (expect_kind, expect_payload) in [
+            (1u32, b"a".as_slice()),
+            (2, b"bb".as_slice()),
+            (3, b"ccc".as_slice()),
+        ] {
+            let s = unsafe {
+                stellar_runtime_poll_event(h, &mut kind, buf.as_mut_ptr(), buf.len(), &mut written)
+            };
+            assert_eq!(s, StellarStatus::Ok);
+            assert_eq!(kind, expect_kind);
+            assert_eq!(&buf[..written], expect_payload);
+        }
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn poll_event_buffer_too_small_keeps_event() {
+        let h = create();
+        assert_eq!(enqueue_event(h, 9, b"hello"), StellarStatus::Ok);
+        let mut kind = 0u32;
+        let mut written = 0usize;
+        let mut small = [0u8; 2];
+        // 작은 buffer → BufferTooSmall(이벤트 보존)
+        assert_eq!(
+            unsafe {
+                stellar_runtime_poll_event(
+                    h,
+                    &mut kind,
+                    small.as_mut_ptr(),
+                    small.len(),
+                    &mut written,
+                )
+            },
+            StellarStatus::BufferTooSmall
+        );
+        // 충분한 buffer → Ok
+        let mut buf = [0u8; 8];
+        let s = unsafe {
+            stellar_runtime_poll_event(h, &mut kind, buf.as_mut_ptr(), buf.len(), &mut written)
+        };
+        assert_eq!(s, StellarStatus::Ok);
+        assert_eq!(kind, 9);
+        assert_eq!(&buf[..written], b"hello");
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
     }
 }
