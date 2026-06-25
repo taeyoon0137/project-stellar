@@ -26,11 +26,14 @@ pub enum StellarStatus {
     NoError = 4,
     /// 내부 오류(예: 잠금 실패).
     Internal = 5,
+    /// 입력 바이트가 유효한 UTF-8이 아님.
+    InvalidUtf8 = 6,
 }
 
 /// registry에 등록되는 runtime 인스턴스. last error는 handle별로 보관합니다.
 struct Runtime {
     last_error: Option<(StellarStatus, String)>,
+    label: Option<String>,
 }
 
 struct RegistryInner {
@@ -72,7 +75,13 @@ pub unsafe extern "C" fn stellar_runtime_create(out_handle: *mut u64) -> Stellar
     };
     let handle = reg.next;
     reg.next = reg.next.wrapping_add(1);
-    reg.live.insert(handle, Runtime { last_error: None });
+    reg.live.insert(
+        handle,
+        Runtime {
+            last_error: None,
+            label: None,
+        },
+    );
     unsafe { *out_handle = handle };
     StellarStatus::Ok
 }
@@ -152,6 +161,86 @@ pub unsafe extern "C" fn stellar_last_error(
         return StellarStatus::NoError;
     };
     let bytes = message.as_bytes();
+    if buf.is_null() {
+        unsafe { write_len(out_written, bytes.len()) };
+        return StellarStatus::Ok;
+    }
+    if buf_len < bytes.len() {
+        return StellarStatus::BufferTooSmall;
+    }
+    let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
+    out[..bytes.len()].copy_from_slice(bytes);
+    unsafe { write_len(out_written, bytes.len()) };
+    StellarStatus::Ok
+}
+
+/// FFI 입력 문자열 규칙: UTF-8 byte 포인터 + length. NUL 종료에 의존하지 않습니다.
+///
+/// `len`이 0이면 빈 문자열(ptr 무시). 유효하지 않은 UTF-8이면 `InvalidUtf8`,
+/// `len > 0`인데 ptr이 null이면 `NullPointer`.
+///
+/// # Safety
+/// `len > 0`이면 `ptr`은 `len` 바이트 읽기가 유효한 포인터여야 합니다.
+unsafe fn decode_utf8_owned(ptr: *const u8, len: usize) -> Result<String, StellarStatus> {
+    if len == 0 {
+        return Ok(String::new());
+    }
+    if ptr.is_null() {
+        return Err(StellarStatus::NullPointer);
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok(text.to_string()),
+        Err(_) => Err(StellarStatus::InvalidUtf8),
+    }
+}
+
+/// handle에 UTF-8 label을 설정합니다(입력은 ptr+len, NUL 종료 비의존).
+///
+/// # Safety
+/// `len > 0`이면 `ptr`은 `len` 바이트 읽기가 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_runtime_set_label(
+    handle: u64,
+    ptr: *const u8,
+    len: usize,
+) -> StellarStatus {
+    let Ok(mut reg) = registry().lock() else {
+        return StellarStatus::Internal;
+    };
+    let Some(rt) = reg.live.get_mut(&handle) else {
+        return StellarStatus::InvalidHandle;
+    };
+    match unsafe { decode_utf8_owned(ptr, len) } {
+        Ok(label) => {
+            rt.label = Some(label);
+            StellarStatus::Ok
+        }
+        Err(status) => {
+            rt.last_error = Some((status, "invalid label bytes".to_string()));
+            status
+        }
+    }
+}
+
+/// handle의 label을 호출자 buffer에 UTF-8 바이트로 씁니다(출력은 caller buffer).
+///
+/// # Safety
+/// `buf`는 null이거나 `buf_len` 바이트 쓰기가 유효해야 하고, `out_written`은 null이거나 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_runtime_label(
+    handle: u64,
+    buf: *mut u8,
+    buf_len: usize,
+    out_written: *mut usize,
+) -> StellarStatus {
+    let Ok(reg) = registry().lock() else {
+        return StellarStatus::Internal;
+    };
+    let Some(rt) = reg.live.get(&handle) else {
+        return StellarStatus::InvalidHandle;
+    };
+    let bytes = rt.label.as_deref().unwrap_or("").as_bytes();
     if buf.is_null() {
         unsafe { write_len(out_written, bytes.len()) };
         return StellarStatus::Ok;
@@ -251,5 +340,48 @@ mod tests {
 
         assert_eq!(stellar_runtime_destroy(h1), StellarStatus::Ok);
         assert_eq!(stellar_runtime_destroy(h2), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn label_uses_ptr_len_not_nul_termination() {
+        let h = create();
+        // 중간 NUL이 있어도 len 기반으로 보존됩니다(NUL 종료 비의존).
+        let input = b"ab\0cd";
+        assert_eq!(
+            unsafe { stellar_runtime_set_label(h, input.as_ptr(), input.len()) },
+            StellarStatus::Ok
+        );
+        let mut buf = [0u8; 16];
+        let mut written = 0usize;
+        let r = unsafe { stellar_runtime_label(h, buf.as_mut_ptr(), buf.len(), &mut written) };
+        assert_eq!(r, StellarStatus::Ok);
+        assert_eq!(written, 5);
+        assert_eq!(&buf[..written], input);
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn empty_label_is_ok() {
+        let h = create();
+        assert_eq!(
+            unsafe { stellar_runtime_set_label(h, std::ptr::null(), 0) },
+            StellarStatus::Ok
+        );
+        let mut written = 7usize;
+        let r = unsafe { stellar_runtime_label(h, std::ptr::null_mut(), 0, &mut written) };
+        assert_eq!(r, StellarStatus::Ok);
+        assert_eq!(written, 0);
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn invalid_utf8_label_is_rejected() {
+        let h = create();
+        let bad = [0xFFu8, 0xFE];
+        assert_eq!(
+            unsafe { stellar_runtime_set_label(h, bad.as_ptr(), bad.len()) },
+            StellarStatus::InvalidUtf8
+        );
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
     }
 }
