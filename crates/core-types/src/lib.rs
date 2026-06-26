@@ -26,6 +26,9 @@ pub mod gradient;
 /// 그림자와 blur parameter (III.4.4).
 pub mod shadow;
 
+/// 자식 순서 키 (III.5).
+pub mod order_key;
+
 /// TypedValue tagged union (III.3.5).
 pub mod typed_value;
 
