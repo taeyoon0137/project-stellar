@@ -2,10 +2,16 @@ import AppKit
 
 // StellarMac 진입점.
 
-// smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다.
-// 앱이 Rust 코어와 정상 링크/호출되는지 CI에서 종료 코드로 검증하기 위한 경로입니다.
+// lifecycle 검사 모드: 코어 runtime create/destroy가 1:1인지 headless로 검증하고 종료(II.5.3).
+if CommandLine.arguments.contains("--lifecycle-check") {
+    exit(LifecycleCheck.run() ? 0 : 1)
+}
+
+// smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다(II.5.2).
 if CommandLine.arguments.contains("--smoke") {
-    if let version = CoreRuntime.version() {
+    let host = RuntimeHost()
+    defer { host.shutdown() }
+    if let version = host.version() {
         print("stellar core version: \(version)")
         exit(0)
     }

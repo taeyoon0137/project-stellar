@@ -1,30 +1,29 @@
 import AppKit
 
-/// macOS 셸의 최소 application delegate.
+/// macOS 셸의 application delegate(II.5.3).
 ///
-/// II.5.1 단계에서는 창 하나와 AppKit 캔버스 placeholder만 띄웁니다.
-/// runtime lifecycle(create/destroy)과 window controller 분리는 II.5.3에서 확장합니다.
+/// 코어 runtime은 `RuntimeHost`가 소유합니다. 시작 시 1회 생성하고,
+/// 마지막 창이 닫혀 앱이 종료될 때 `applicationWillTerminate`에서 정확히 1회 파괴합니다.
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var window: NSWindow?
+    private let runtimeHost = RuntimeHost()
+    private var windowController: CanvasWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 시작 시 FFI로 코어 버전을 읽어 로그에 기록(II.5.2).
-        NSLog("stellar core version: %@", CoreRuntime.version() ?? "<unavailable>")
+        NSLog("stellar core version: %@", runtimeHost.version() ?? "<unavailable>")
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 960, height: 600),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Stellar"
-        window.contentView = CanvasView(frame: NSRect(x: 0, y: 0, width: 960, height: 600))
-        window.center()
-        window.makeKeyAndOrderFront(nil)
-        self.window = window
+        let controller = CanvasWindowController()
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        windowController = controller
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // 종료 시 runtime을 정확히 1회 파괴(중복 호출은 RuntimeHost가 무시).
+        runtimeHost.shutdown()
     }
 }

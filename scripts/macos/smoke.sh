@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# macOS 셸 smoke test (II.5.2).
-# StellarMac 앱을 Debug로 빌드하고 --smoke 모드로 실행해
-# FFI로 코어 버전을 읽고 종료 코드 0을 확인합니다.
+# macOS 셸 smoke/lifecycle test (II.5.2, II.5.3).
+# StellarMac 앱을 Debug로 빌드한 뒤:
+#  - --smoke: FFI로 코어 버전을 읽고 종료 코드 0
+#  - --lifecycle-check: runtime create/destroy가 1:1인지 확인하고 종료 코드 0
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -27,12 +28,15 @@ xcodebuild \
   build
 
 APP="$DERIVED/Build/Products/Debug/StellarMac.app/Contents/MacOS/StellarMac"
+
 OUTPUT="$("$APP" --smoke)"
 echo "$OUTPUT"
-
 if ! printf '%s\n' "$OUTPUT" | grep -q "stellar core version:"; then
   echo "smoke 실패: 버전 문자열을 읽지 못했습니다." >&2
   exit 1
 fi
+
+# lifecycle: create/destroy 1:1 (set -e가 비0 종료를 실패로 처리).
+"$APP" --lifecycle-check
 
 echo "smoke OK"
