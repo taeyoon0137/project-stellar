@@ -118,6 +118,11 @@ macro_rules! define_unit {
             pub const fn raw(&self) -> FiniteF32 {
                 self.0
             }
+
+            /// 이미 검증된 `FiniteF32`로부터 만듭니다(재검증 없음).
+            pub const fn from_raw(raw: FiniteF32) -> $name {
+                $name(raw)
+            }
         }
 
         impl std::ops::Add for $name {

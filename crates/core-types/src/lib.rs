@@ -17,6 +17,9 @@ pub mod reference;
 /// 타입드 값과 기하 (III.3).
 pub mod value;
 
+/// TypedValue tagged union (III.3.5).
+pub mod typed_value;
+
 /// 문자열 값과 정규화 경계 (III.3.4).
 pub mod text;
 
