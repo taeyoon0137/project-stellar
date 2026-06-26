@@ -10,6 +10,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use crate::clock::MonotonicClock;
+
 /// 128비트 안정 식별자(UUIDv7 레이아웃).
 ///
 /// 정렬은 바이트 순서를 따르며, timestamp가 최상위라 시간 순으로 정렬됩니다.
@@ -163,9 +165,54 @@ impl FromStr for StableId {
     }
 }
 
+/// 결정적 PRNG(SplitMix64). 같은 seed면 항상 같은 수열을 생성합니다.
+struct SplitMix64 {
+    state: u64,
+}
+
+impl SplitMix64 {
+    fn new(seed: u64) -> SplitMix64 {
+        SplitMix64 { state: seed }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.state = self.state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+}
+
+/// 테스트용 결정적 `StableId` 생성기(III.1.2).
+///
+/// timestamp는 주입된 [`MonotonicClock`]에서, random 필드는 seed 기반 PRNG에서 가져옵니다.
+/// 같은 seed와 같은 수동 시각 수열이면 항상 동일한 ID 시퀀스를 생성합니다.
+pub struct StableIdGenerator {
+    rng: SplitMix64,
+}
+
+impl StableIdGenerator {
+    /// seed로 생성기를 만듭니다.
+    pub fn new(seed: u64) -> StableIdGenerator {
+        StableIdGenerator {
+            rng: SplitMix64::new(seed),
+        }
+    }
+
+    /// 주어진 시계의 현재 시각(ms = nanos / 1_000_000)으로 다음 `StableId`를 생성합니다.
+    pub fn next_id<C: MonotonicClock>(&mut self, clock: &C) -> StableId {
+        let unix_ts_ms = clock.now_nanos() / 1_000_000;
+        let rand_a = (self.rng.next_u64() & 0x0FFF) as u16;
+        let rand_b = self.rng.next_u64();
+        StableId::new_v7(unix_ts_ms, rand_a, rand_b)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::ManualClock;
 
     #[test]
     fn binary_round_trip() {
@@ -239,6 +286,52 @@ mod tests {
             "0123456789abcdef0123456789abcdef0123".parse::<StableId>(),
             Err(ParseStableIdError::Format)
         );
+    }
+
+    fn run_sequence(seed: u64) -> Vec<String> {
+        // 1_700_000_000_000 ms를 nanoseconds로 시작.
+        let mut clock = ManualClock::new(1_700_000_000_000u64 * 1_000_000);
+        let mut generator = StableIdGenerator::new(seed);
+        let mut out = Vec::new();
+        for _ in 0..5 {
+            out.push(generator.next_id(&clock).to_string());
+            clock.advance(1_000_000); // +1ms
+        }
+        out
+    }
+
+    #[test]
+    fn golden_sequence_is_stable() {
+        let expected = [
+            "018bcfe5-6800-7e95-a8ef-e333b266f103",
+            "018bcfe5-6801-7f52-981c-e1ff0e4ae394",
+            "018bcfe5-6802-73f2-9e44-31fa3c80db06",
+            "018bcfe5-6803-7d5d-8cf6-35ee9e9e2fa4",
+            "018bcfe5-6804-7dd5-9e54-d738297f77ae",
+        ];
+        assert_eq!(run_sequence(42), expected);
+    }
+
+    #[test]
+    fn same_seed_and_time_is_deterministic() {
+        assert_eq!(run_sequence(42), run_sequence(42));
+    }
+
+    #[test]
+    fn different_seed_differs() {
+        assert_ne!(run_sequence(42), run_sequence(43));
+    }
+
+    #[test]
+    fn generated_ids_are_v7_and_time_ordered() {
+        let mut clock = ManualClock::new(1_700_000_000_000u64 * 1_000_000);
+        let mut generator = StableIdGenerator::new(7);
+        let first = generator.next_id(&clock);
+        clock.advance(5 * 1_000_000);
+        let second = generator.next_id(&clock);
+        assert_eq!(first.version(), 7);
+        assert_eq!(first.variant(), 0b10);
+        assert!(first < second);
     }
 
     #[test]
