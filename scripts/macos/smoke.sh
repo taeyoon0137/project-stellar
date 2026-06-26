@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# macOS 셸 smoke/lifecycle test (II.5.2, II.5.3).
+# macOS 셸 smoke/lifecycle/canvas test (II.5.2, II.5.3, II.5.4).
 # StellarMac 앱을 Debug로 빌드한 뒤:
 #  - --smoke: FFI로 코어 버전을 읽고 종료 코드 0
 #  - --lifecycle-check: runtime create/destroy가 1:1인지 확인하고 종료 코드 0
+#  - --canvas-check: drawable pixel == point × scale 및 코어 round-trip 확인
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -38,5 +39,8 @@ fi
 
 # lifecycle: create/destroy 1:1 (set -e가 비0 종료를 실패로 처리).
 "$APP" --lifecycle-check
+
+# canvas: drawable pixel == point × scale + 코어 round-trip.
+"$APP" --canvas-check
 
 echo "smoke OK"

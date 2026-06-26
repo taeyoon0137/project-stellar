@@ -12,7 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // 시작 시 FFI로 코어 버전을 읽어 로그에 기록(II.5.2).
         NSLog("stellar core version: %@", runtimeHost.version() ?? "<unavailable>")
 
-        let controller = CanvasWindowController()
+        let controller = CanvasWindowController(
+            runtimeHandle: runtimeHost.created ? runtimeHost.handle : nil
+        )
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
         windowController = controller

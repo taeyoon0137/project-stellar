@@ -34,11 +34,20 @@ pub enum StellarStatus {
     InternalPanic = 7,
 }
 
+/// 셸이 전달한 drawable(backing) 픽셀 크기와 backing scale.
+#[derive(Debug, Clone, Copy)]
+struct Drawable {
+    pixel_width: u32,
+    pixel_height: u32,
+    scale: f64,
+}
+
 /// registry에 등록되는 runtime 인스턴스. last error는 handle별로 보관합니다.
 struct Runtime {
     last_error: Option<(StellarStatus, String)>,
     label: Option<String>,
     events: VecDeque<(u32, Vec<u8>)>,
+    drawable: Option<Drawable>,
 }
 
 struct RegistryInner {
@@ -95,6 +104,7 @@ pub unsafe extern "C" fn stellar_runtime_create(out_handle: *mut u64) -> Stellar
                 last_error: None,
                 label: None,
                 events: VecDeque::new(),
+                drawable: None,
             },
         );
         unsafe { *out_handle = handle };
@@ -346,6 +356,69 @@ pub unsafe extern "C" fn stellar_runtime_poll_event(
     })
 }
 
+/// 셸이 계산한 drawable(backing) 픽셀 크기와 backing scale을 코어에 전달합니다.
+///
+/// 렌더링은 하지 않고 값만 보관합니다(II.5.4 — 전달 구조만). 픽셀 크기는 셸에서
+/// `point 크기 × backing scale`로 계산해 넘깁니다.
+#[no_mangle]
+pub extern "C" fn stellar_runtime_set_drawable_size(
+    handle: u64,
+    pixel_width: u32,
+    pixel_height: u32,
+    scale: f64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        rt.drawable = Some(Drawable {
+            pixel_width,
+            pixel_height,
+            scale,
+        });
+        StellarStatus::Ok
+    })
+}
+
+/// 마지막으로 전달된 drawable 픽셀 크기와 scale을 읽습니다(검증·진단용).
+///
+/// 아직 설정되지 않았으면 `NoError`. 각 out 포인터는 null이면 무시합니다.
+///
+/// # Safety
+/// `out_pixel_width`/`out_pixel_height`/`out_scale`은 null이거나 각각 유효한 쓰기 포인터여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_runtime_drawable_size(
+    handle: u64,
+    out_pixel_width: *mut u32,
+    out_pixel_height: *mut u32,
+    out_scale: *mut f64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(drawable) = rt.drawable else {
+            return StellarStatus::NoError;
+        };
+        if !out_pixel_width.is_null() {
+            unsafe { *out_pixel_width = drawable.pixel_width };
+        }
+        if !out_pixel_height.is_null() {
+            unsafe { *out_pixel_height = drawable.pixel_height };
+        }
+        if !out_scale.is_null() {
+            unsafe { *out_scale = drawable.scale };
+        }
+        StellarStatus::Ok
+    })
+}
+
 /// 현재 살아 있는 runtime handle 수(누수 검증용 진단 helper).
 #[no_mangle]
 pub extern "C" fn stellar_runtime_live_count() -> u64 {
@@ -556,6 +629,51 @@ mod tests {
             assert_eq!(kind, expect_kind);
             assert_eq!(&buf[..written], expect_payload);
         }
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn drawable_size_round_trip() {
+        let h = create();
+        // 설정 전에는 NoError.
+        let mut w = 0u32;
+        let mut ht = 0u32;
+        let mut scale = 0.0f64;
+        assert_eq!(
+            unsafe { stellar_runtime_drawable_size(h, &mut w, &mut ht, &mut scale) },
+            StellarStatus::NoError
+        );
+
+        // point 800x600 @ scale 2.0 → pixel 1600x1200.
+        assert_eq!(
+            stellar_runtime_set_drawable_size(h, 1600, 1200, 2.0),
+            StellarStatus::Ok
+        );
+        assert_eq!(
+            unsafe { stellar_runtime_drawable_size(h, &mut w, &mut ht, &mut scale) },
+            StellarStatus::Ok
+        );
+        assert_eq!((w, ht), (1600, 1200));
+        assert_eq!(scale, 2.0);
+
+        // null out 포인터는 무시(상태만 Ok).
+        assert_eq!(
+            unsafe {
+                stellar_runtime_drawable_size(
+                    h,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                )
+            },
+            StellarStatus::Ok
+        );
+
+        // 알 수 없는 handle.
+        assert_eq!(
+            stellar_runtime_set_drawable_size(999_999, 1, 1, 1.0),
+            StellarStatus::InvalidHandle
+        );
         assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
     }
 

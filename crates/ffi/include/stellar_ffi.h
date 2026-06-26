@@ -46,6 +46,12 @@ StellarStatus stellar_runtime_label(uint64_t handle, uint8_t *buf, size_t buf_le
 /* 이벤트 큐에서 다음 이벤트를 pull 방식으로 읽습니다(FIFO, 빈 큐는 STELLAR_NO_ERROR). */
 StellarStatus stellar_runtime_poll_event(uint64_t handle, uint32_t *out_kind, uint8_t *buf, size_t buf_len, size_t *out_written);
 
+/* 셸이 계산한 drawable(backing) 픽셀 크기와 backing scale을 코어에 전달합니다. */
+StellarStatus stellar_runtime_set_drawable_size(uint64_t handle, uint32_t pixel_width, uint32_t pixel_height, double scale);
+
+/* 마지막으로 전달된 drawable 픽셀 크기와 scale을 읽습니다(미설정 시 STELLAR_NO_ERROR). */
+StellarStatus stellar_runtime_drawable_size(uint64_t handle, uint32_t *out_pixel_width, uint32_t *out_pixel_height, double *out_scale);
+
 /* 살아 있는 runtime handle 수(진단용). */
 uint64_t stellar_runtime_live_count(void);
 
