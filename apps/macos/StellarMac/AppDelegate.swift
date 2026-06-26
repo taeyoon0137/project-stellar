@@ -8,6 +8,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // 시작 시 FFI로 코어 버전을 읽어 로그에 기록(II.5.2).
+        NSLog("stellar core version: %@", CoreRuntime.version() ?? "<unavailable>")
+
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 960, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
