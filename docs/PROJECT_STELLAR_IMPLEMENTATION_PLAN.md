@@ -264,7 +264,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| II.5.1 | `[ ]` | `apps/macos`에 macOS 26, arm64 전용 AppKit 앱 프로젝트를 생성합니다. SwiftUI는 앱 설정 화면용 placeholder target만 두고 캔버스는 AppKit view로 둡니다. | `xcodebuild -project ... -scheme StellarMac -configuration Debug CODE_SIGNING_ALLOWED=NO build` 통과. | II.4.6 |
+| II.5.1 | `[x]` | `apps/macos`에 macOS 26, arm64 전용 AppKit 앱 프로젝트를 생성합니다. SwiftUI는 앱 설정 화면용 placeholder target만 두고 캔버스는 AppKit view로 둡니다. | `xcodebuild -project ... -scheme StellarMac -configuration Debug CODE_SIGNING_ALLOWED=NO build` 통과. | II.4.6 |
 | II.5.2 | `[ ]` | Rust static 또는 dynamic library를 Debug 빌드에 연결하고 앱 시작 시 `stellar_runtime_version`을 호출해 로그에 기록합니다. | 앱 smoke test가 FFI 버전 문자열을 읽고 종료 코드 0. | II.5.1 |
 | II.5.3 | `[ ]` | `NSApplicationDelegate`와 빈 `NSWindowController`를 추가합니다. 창 닫기·앱 종료 시 runtime destroy가 정확히 한 번 호출되게 합니다. | lifecycle UI test에서 create/destroy count가 1:1입니다. | II.5.2 |
 | II.5.4 | `[ ]` | 최소 `NSView` CanvasHost를 추가하고 backing scale과 drawable size 변경 이벤트를 Rust core에 전달하는 구조만 만듭니다. 렌더링은 하지 않습니다. | resize fixture에서 pixel size가 point size×scale과 일치합니다. | II.5.3 |
