@@ -7,6 +7,7 @@
 //! 생성기는 timestamp와 random 필드를 명시 입력으로 받습니다(시계·엔트로피를 주입할 수
 //! 있도록). 결정적 생성기는 [`crate::ids`] 후속 작업(III.1.2)에서 이 생성자를 사용합니다.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -271,6 +272,92 @@ impl RuntimeEntityAllocator {
     }
 }
 
+/// `IdRegistry` 삽입 오류(III.1.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistryError {
+    /// 같은 `StableId`가 이미 등록되어 있음.
+    DuplicateStableId,
+    /// 같은 `RuntimeEntityId`가 이미 등록되어 있음.
+    DuplicateRuntimeId,
+}
+
+impl fmt::Display for RegistryError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RegistryError::DuplicateStableId => f.write_str("StableId가 이미 등록되어 있습니다"),
+            RegistryError::DuplicateRuntimeId => {
+                f.write_str("RuntimeEntityId가 이미 등록되어 있습니다")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RegistryError {}
+
+/// `StableId ↔ RuntimeEntityId` 양방향 registry(III.1.4).
+///
+/// 두 방향 lookup을 제공하고, 두 맵의 일관성을 유지합니다. 같은 `StableId`(또는
+/// 같은 `RuntimeEntityId`) 중복 삽입은 오류입니다. 삭제 후 같은 `StableId` 재삽입은 허용됩니다.
+#[derive(Debug, Default)]
+pub struct IdRegistry {
+    by_stable: HashMap<StableId, RuntimeEntityId>,
+    by_runtime: HashMap<RuntimeEntityId, StableId>,
+}
+
+impl IdRegistry {
+    /// 빈 registry를 만듭니다.
+    pub fn new() -> IdRegistry {
+        IdRegistry {
+            by_stable: HashMap::new(),
+            by_runtime: HashMap::new(),
+        }
+    }
+
+    /// 매핑을 추가합니다. 어느 한쪽이라도 이미 등록되어 있으면 오류이며, 이때 registry는 변경되지 않습니다.
+    pub fn insert(
+        &mut self,
+        stable: StableId,
+        runtime: RuntimeEntityId,
+    ) -> Result<(), RegistryError> {
+        if self.by_stable.contains_key(&stable) {
+            return Err(RegistryError::DuplicateStableId);
+        }
+        if self.by_runtime.contains_key(&runtime) {
+            return Err(RegistryError::DuplicateRuntimeId);
+        }
+        self.by_stable.insert(stable, runtime);
+        self.by_runtime.insert(runtime, stable);
+        Ok(())
+    }
+
+    /// `StableId`로 `RuntimeEntityId`를 조회합니다.
+    pub fn runtime_for(&self, stable: StableId) -> Option<RuntimeEntityId> {
+        self.by_stable.get(&stable).copied()
+    }
+
+    /// `RuntimeEntityId`로 `StableId`를 조회합니다.
+    pub fn stable_for(&self, runtime: RuntimeEntityId) -> Option<StableId> {
+        self.by_runtime.get(&runtime).copied()
+    }
+
+    /// `StableId` 매핑을 제거하고 연결됐던 `RuntimeEntityId`를 반환합니다(양방향 제거).
+    pub fn remove_by_stable(&mut self, stable: StableId) -> Option<RuntimeEntityId> {
+        let runtime = self.by_stable.remove(&stable)?;
+        self.by_runtime.remove(&runtime);
+        Some(runtime)
+    }
+
+    /// 등록된 매핑 수.
+    pub fn len(&self) -> usize {
+        self.by_stable.len()
+    }
+
+    /// 비어 있는지 여부.
+    pub fn is_empty(&self) -> bool {
+        self.by_stable.is_empty()
+    }
+}
+
 /// `RuntimeEntityId`의 slot/generation은 crate 외부에서 접근할 수 없습니다(컴파일 실패).
 ///
 /// ```compile_fail
@@ -428,6 +515,49 @@ mod tests {
         assert_ne!(c.generation, a.generation);
         assert!(alloc.is_live(c));
         assert!(!alloc.is_live(a));
+    }
+
+    #[test]
+    fn registry_insert_lookup_remove_reinsert_duplicate() {
+        let mut alloc = RuntimeEntityAllocator::new();
+        let mut registry = IdRegistry::new();
+
+        let s1 = StableId::new_v7(1000, 1, 1);
+        let s2 = StableId::new_v7(2000, 2, 2);
+        let r1 = alloc.allocate();
+        let r2 = alloc.allocate();
+
+        // 삽입 + 양방향 lookup.
+        assert!(registry.insert(s1, r1).is_ok());
+        assert!(registry.insert(s2, r2).is_ok());
+        assert_eq!(registry.runtime_for(s1), Some(r1));
+        assert_eq!(registry.stable_for(r2), Some(s2));
+        assert_eq!(registry.len(), 2);
+
+        // 중복 StableId 삽입은 오류(registry 불변).
+        let r3 = alloc.allocate();
+        assert_eq!(
+            registry.insert(s1, r3),
+            Err(RegistryError::DuplicateStableId)
+        );
+        // 중복 RuntimeEntityId 삽입도 오류.
+        let s3 = StableId::new_v7(3000, 3, 3);
+        assert_eq!(
+            registry.insert(s3, r1),
+            Err(RegistryError::DuplicateRuntimeId)
+        );
+        assert_eq!(registry.len(), 2);
+
+        // 삭제 → 양방향 제거.
+        assert_eq!(registry.remove_by_stable(s1), Some(r1));
+        assert_eq!(registry.runtime_for(s1), None);
+        assert_eq!(registry.stable_for(r1), None);
+        assert_eq!(registry.len(), 1);
+
+        // 같은 StableId를 새 RuntimeEntityId로 재삽입.
+        assert!(registry.insert(s1, r3).is_ok());
+        assert_eq!(registry.runtime_for(s1), Some(r3));
+        assert_eq!(registry.len(), 2);
     }
 
     #[test]
