@@ -116,7 +116,9 @@ impl fmt::Display for ParseStableIdError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ParseStableIdError::Length => f.write_str("StableId 문자열 길이는 36이어야 합니다"),
-            ParseStableIdError::Format => f.write_str("StableId 문자열 형식이 표준 UUID가 아닙니다"),
+            ParseStableIdError::Format => {
+                f.write_str("StableId 문자열 형식이 표준 UUID가 아닙니다")
+            }
         }
     }
 }
@@ -248,7 +250,10 @@ impl RuntimeEntityAllocator {
         } else {
             let slot = self.generations.len() as u32;
             self.generations.push(0);
-            RuntimeEntityId { slot, generation: 0 }
+            RuntimeEntityId {
+                slot,
+                generation: 0,
+            }
         }
     }
 
