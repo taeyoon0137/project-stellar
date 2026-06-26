@@ -209,6 +209,79 @@ impl StableIdGenerator {
     }
 }
 
+/// 런타임 전용 엔티티 핸들(III.1.3).
+///
+/// `slot`/`generation`은 crate 내부에서만 접근 가능합니다(`pub(crate)`). 저장(persist)과
+/// FFI 경계에는 노출되지 않습니다 — 외부에서는 불투명 핸들로만 다룹니다. 직렬화하지 않습니다.
+///
+/// slot이 재사용되면 generation이 증가하므로, 삭제된 핸들(옛 generation)로는 lookup이 실패합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RuntimeEntityId {
+    pub(crate) slot: u32,
+    pub(crate) generation: u32,
+}
+
+/// `RuntimeEntityId`의 slot/generation 할당기(generational index).
+///
+/// `deallocate` 시 해당 slot의 generation을 올려 옛 핸들을 무효화하고, slot을 재사용 풀에 넣습니다.
+#[derive(Debug, Default)]
+pub struct RuntimeEntityAllocator {
+    generations: Vec<u32>,
+    free: Vec<u32>,
+}
+
+impl RuntimeEntityAllocator {
+    /// 빈 할당기를 만듭니다.
+    pub fn new() -> RuntimeEntityAllocator {
+        RuntimeEntityAllocator {
+            generations: Vec::new(),
+            free: Vec::new(),
+        }
+    }
+
+    /// 새 핸들을 할당합니다. 재사용 가능한 slot이 있으면 그 slot을(증가된 generation으로) 씁니다.
+    pub fn allocate(&mut self) -> RuntimeEntityId {
+        if let Some(slot) = self.free.pop() {
+            let generation = self.generations[slot as usize];
+            RuntimeEntityId { slot, generation }
+        } else {
+            let slot = self.generations.len() as u32;
+            self.generations.push(0);
+            RuntimeEntityId { slot, generation: 0 }
+        }
+    }
+
+    /// 핸들이 현재 살아 있는지(generation 일치) 확인합니다.
+    pub fn is_live(&self, id: RuntimeEntityId) -> bool {
+        self.generations.get(id.slot as usize) == Some(&id.generation)
+            && !self.free.contains(&id.slot)
+    }
+
+    /// 핸들을 해제합니다. generation을 올려 옛 핸들을 무효화하고 slot을 재사용 풀에 넣습니다.
+    ///
+    /// 이미 죽은 핸들이면 아무 것도 하지 않고 `false`를 반환합니다.
+    pub fn deallocate(&mut self, id: RuntimeEntityId) -> bool {
+        if !self.is_live(id) {
+            return false;
+        }
+        let slot = id.slot as usize;
+        self.generations[slot] = self.generations[slot].wrapping_add(1);
+        self.free.push(id.slot);
+        true
+    }
+}
+
+/// `RuntimeEntityId`의 slot/generation은 crate 외부에서 접근할 수 없습니다(컴파일 실패).
+///
+/// ```compile_fail
+/// use stellar_core_types::ids::RuntimeEntityAllocator;
+/// let mut alloc = RuntimeEntityAllocator::new();
+/// let id = alloc.allocate();
+/// let _ = id.slot; // pub(crate) 필드 — 외부 접근 불가
+/// ```
+#[cfg(doctest)]
+struct RuntimeEntityIdVisibilityDocs;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,6 +405,40 @@ mod tests {
         assert_eq!(first.version(), 7);
         assert_eq!(first.variant(), 0b10);
         assert!(first < second);
+    }
+
+    #[test]
+    fn reused_slot_invalidates_old_generation() {
+        let mut alloc = RuntimeEntityAllocator::new();
+        let a = alloc.allocate();
+        let b = alloc.allocate();
+        assert!(alloc.is_live(a));
+        assert!(alloc.is_live(b));
+        assert_ne!(a.slot, b.slot);
+
+        // a 해제 → 옛 핸들 무효.
+        assert!(alloc.deallocate(a));
+        assert!(!alloc.is_live(a));
+        // 중복 해제는 실패.
+        assert!(!alloc.deallocate(a));
+
+        // 같은 slot 재사용 → generation 증가, 옛 핸들 lookup 실패, 새 핸들만 live.
+        let c = alloc.allocate();
+        assert_eq!(c.slot, a.slot);
+        assert_ne!(c.generation, a.generation);
+        assert!(alloc.is_live(c));
+        assert!(!alloc.is_live(a));
+    }
+
+    #[test]
+    fn fresh_slots_are_sequential() {
+        let mut alloc = RuntimeEntityAllocator::new();
+        let a = alloc.allocate();
+        let b = alloc.allocate();
+        assert_eq!(a.slot, 0);
+        assert_eq!(b.slot, 1);
+        assert_eq!(a.generation, 0);
+        assert_eq!(b.generation, 0);
     }
 
     #[test]
