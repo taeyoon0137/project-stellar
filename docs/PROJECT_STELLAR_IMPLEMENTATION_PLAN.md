@@ -300,7 +300,7 @@ tools/xtask/
 | III.1.2 | `[x]` | 테스트용 결정적 `StableIdGenerator`를 구현합니다. seed와 수동 시각이 같으면 동일 ID 시퀀스를 생성합니다. | golden sequence test 통과. | III.1.1, II.3.3 |
 | III.1.3 | `[x]` | `RuntimeEntityId { slot, generation }`을 추가하고 저장·FFI에 노출되지 않게 visibility를 제한합니다. | 삭제 후 slot 재사용 시 이전 generation lookup 실패. | III.1.1 |
 | III.1.4 | `[x]` | `StableId ↔ RuntimeEntityId` 양방향 registry를 구현합니다. duplicate StableId 삽입은 오류입니다. | 삽입·삭제·재삽입·중복 fixture 통과. | III.1.3 |
-| III.1.5 | `[ ]` | 복제용 `IdRemapTable`을 추가해 하위 그래프 StableId 전체를 새 ID로 바꾸고 내부 참조를 재매핑합니다. | 외부 참조는 유지되고 내부 참조만 새 ID를 가리키는 fixture 통과. | III.1.2, III.1.4 |
+| III.1.5 | `[x]` | 복제용 `IdRemapTable`을 추가해 하위 그래프 StableId 전체를 새 ID로 바꾸고 내부 참조를 재매핑합니다. | 외부 참조는 유지되고 내부 참조만 새 ID를 가리키는 fixture 통과. | III.1.2, III.1.4 |
 
 ### III.2 PropertyPath와 참조
 

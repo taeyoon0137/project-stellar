@@ -358,6 +358,63 @@ impl IdRegistry {
     }
 }
 
+/// 하위 그래프 복제용 id 재매핑 테이블(III.1.5).
+///
+/// 복제 대상(하위 그래프)에 속한 old `StableId`마다 새 `StableId`를 등록합니다.
+/// 참조를 재매핑할 때 테이블에 있는 id(내부 참조)는 새 id로 바꾸고, 없는 id(외부 참조)는
+/// 원본을 그대로 둡니다.
+#[derive(Debug, Default, Clone)]
+pub struct IdRemapTable {
+    map: HashMap<StableId, StableId>,
+}
+
+impl IdRemapTable {
+    /// 빈 테이블을 만듭니다.
+    pub fn new() -> IdRemapTable {
+        IdRemapTable {
+            map: HashMap::new(),
+        }
+    }
+
+    /// old id에 새 id를 등록합니다(직접 지정).
+    pub fn insert(&mut self, old: StableId, new: StableId) {
+        self.map.insert(old, new);
+    }
+
+    /// 주어진 old id들에 generator로 새 id를 생성·등록한 테이블을 만듭니다.
+    pub fn clone_ids<C: MonotonicClock>(
+        olds: &[StableId],
+        generator: &mut StableIdGenerator,
+        clock: &C,
+    ) -> IdRemapTable {
+        let mut map = HashMap::with_capacity(olds.len());
+        for &old in olds {
+            map.insert(old, generator.next_id(clock));
+        }
+        IdRemapTable { map }
+    }
+
+    /// old id에 대응하는 새 id(등록돼 있으면).
+    pub fn mapped(&self, old: StableId) -> Option<StableId> {
+        self.map.get(&old).copied()
+    }
+
+    /// 참조를 재매핑합니다: 내부 참조면 새 id, 외부 참조면 원본을 그대로 반환합니다.
+    pub fn remap(&self, id: StableId) -> StableId {
+        self.map.get(&id).copied().unwrap_or(id)
+    }
+
+    /// 등록 수.
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// 비어 있는지 여부.
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
+
 /// `RuntimeEntityId`의 slot/generation은 crate 외부에서 접근할 수 없습니다(컴파일 실패).
 ///
 /// ```compile_fail
@@ -558,6 +615,44 @@ mod tests {
         assert!(registry.insert(s1, r3).is_ok());
         assert_eq!(registry.runtime_for(s1), Some(r3));
         assert_eq!(registry.len(), 2);
+    }
+
+    #[test]
+    fn remap_table_internal_new_external_kept() {
+        let clock = ManualClock::new(1_700_000_000_000u64 * 1_000_000);
+        let mut generator = StableIdGenerator::new(99);
+
+        // 하위 그래프 노드 a, b. 외부 노드 x.
+        let a = StableId::new_v7(1, 0, 1);
+        let b = StableId::new_v7(2, 0, 2);
+        let x = StableId::new_v7(3, 0, 3);
+
+        let table = IdRemapTable::clone_ids(&[a, b], &mut generator, &clock);
+        assert_eq!(table.len(), 2);
+
+        let a2 = table.mapped(a).expect("a mapped");
+        let b2 = table.mapped(b).expect("b mapped");
+        assert_ne!(a2, a);
+        assert_ne!(b2, b);
+        assert_ne!(a2, b2);
+
+        // 내부 참조(a, b)는 새 id로 재매핑.
+        assert_eq!(table.remap(a), a2);
+        assert_eq!(table.remap(b), b2);
+        // 외부 참조(x)는 그대로 유지.
+        assert_eq!(table.remap(x), x);
+        assert_eq!(table.mapped(x), None);
+    }
+
+    #[test]
+    fn remap_table_manual_insert() {
+        let mut table = IdRemapTable::new();
+        assert!(table.is_empty());
+        let old = StableId::new_v7(10, 0, 0);
+        let new = StableId::new_v7(20, 0, 0);
+        table.insert(old, new);
+        assert_eq!(table.remap(old), new);
+        assert_eq!(table.len(), 1);
     }
 
     #[test]
