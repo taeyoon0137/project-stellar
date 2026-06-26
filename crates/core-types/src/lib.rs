@@ -15,7 +15,7 @@ pub mod property;
 pub mod reference;
 
 /// 타입드 값과 기하 (III.3).
-pub mod value {}
+pub mod value;
 
 /// 단조 시계 추상화 (II.3.3).
 pub mod clock;
