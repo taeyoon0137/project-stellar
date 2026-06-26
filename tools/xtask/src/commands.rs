@@ -11,6 +11,7 @@ use crate::check_core::run_check_core;
 use crate::commit_message::validate_commit_subject;
 use crate::crate_graph::check_crate_graph;
 use crate::dependencies::validate_dependencies;
+use crate::ffi_header::generate_header;
 use crate::pr_body::validate_pr_body;
 use crate::sync::sync_plan;
 use crate::task_report::validate::{validate_report, ReportKind};
@@ -27,9 +28,10 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 13] = [
+pub const COMMANDS: [&str; 14] = [
     "help",
     "generate-ledger",
+    "generate-ffi-header",
     "validate-task-status",
     "validate-task-report",
     "validate-pr-body",
@@ -73,6 +75,7 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         "generate-ledger" => generate_ledger_file(repo_root)
             .map(|count| println!("planning/task-status.yaml 생성 완료: {count} tasks"))
             .map_err(|e| internal(&e)),
+        "generate-ffi-header" => cmd_generate_ffi_header(repo_root, rest),
         "validate-task-status" => cmd_validate_task_status(repo_root, rest),
         "validate-task-report" => cmd_validate_task_report(repo_root, rest),
         "validate-pr-body" => cmd_validate_pr_body(repo_root, rest),
@@ -315,6 +318,31 @@ fn cmd_validate_crate_graph(repo_root: &Path) -> Result<(), i32> {
                 .map(|v| v.message.clone())
                 .collect::<Vec<_>>(),
         ))
+    }
+}
+
+fn cmd_generate_ffi_header(repo_root: &Path, rest: &[String]) -> Result<(), i32> {
+    let path = crate::ffi_header::HEADER_PATH;
+    let check = rest.iter().any(|a| a == "--check");
+    if check {
+        match generate_header(repo_root, true) {
+            Ok(true) => {
+                println!("FFI 헤더 drift 없음: {path}");
+                Ok(())
+            }
+            Ok(false) => Err(policy_err(&[format!(
+                "FFI 헤더 drift: {path}가 템플릿과 다릅니다. `cargo xtask generate-ffi-header`로 재생성하세요."
+            )])),
+            Err(e) => Err(policy_err(&[format!("FFI 헤더 drift: {e}")])),
+        }
+    } else {
+        match generate_header(repo_root, false) {
+            Ok(_) => {
+                println!("FFI 헤더 생성 완료: {path}");
+                Ok(())
+            }
+            Err(e) => Err(internal(&e)),
+        }
     }
 }
 

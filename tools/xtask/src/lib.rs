@@ -10,6 +10,7 @@ pub mod commands;
 pub mod commit_message;
 pub mod crate_graph;
 pub mod dependencies;
+pub mod ffi_header;
 pub mod plan;
 pub mod pr_body;
 pub mod sync;

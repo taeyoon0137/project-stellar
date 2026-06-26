@@ -53,6 +53,11 @@ jobs:
           cargo xtask validate-versions
           cargo xtask validate-dependencies
           cargo xtask validate-crate-graph
+      - name: ffi-header drift
+        shell: bash
+        run: |
+          cargo run -p xtask --locked -- generate-ffi-header
+          git diff --exit-code -- crates/ffi/include/stellar_ffi.h
       - name: commit subjects since base
         if: github.event_name == 'pull_request'
         shell: bash
@@ -96,6 +101,11 @@ jobs:
           cargo xtask validate-versions
           cargo xtask validate-dependencies
           cargo xtask validate-crate-graph
+      - name: ffi-header drift
+        shell: bash
+        run: |
+          cargo run -p xtask --locked -- generate-ffi-header
+          git diff --exit-code -- crates/ffi/include/stellar_ffi.h
       - name: commit subjects since base
         if: github.event_name == 'pull_request'
         shell: bash
