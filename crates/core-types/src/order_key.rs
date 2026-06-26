@@ -10,6 +10,8 @@
 
 use std::fmt;
 
+use crate::ids::StableId;
+
 /// `OrderKey` 생성·검증 오류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderKeyError {
@@ -73,6 +75,57 @@ impl OrderKey {
     pub fn needs_rebalance(&self) -> bool {
         self.0.len() > Self::REBALANCE_THRESHOLD
     }
+
+    /// `(0, 1)` 구간에 균등 분포한 `count`개의 키를 오름차순으로 생성합니다(III.5.3).
+    ///
+    /// 키 `i`는 소수 `(i+1)/(count+1)`의 base-256 전개를 정규화한 값입니다. 결정론적이고
+    /// strictly increasing이며, 재균형에 쓰기 좋게 짧습니다(난수 미사용). `count == 0`이면 빈
+    /// 목록입니다.
+    pub fn evenly_spaced(count: usize) -> Vec<OrderKey> {
+        if count == 0 {
+            return Vec::new();
+        }
+        let den = count as u128 + 1;
+        // den보다 큰 최소 256^d. 자릿수 d로 균등 분할 키를 표현합니다.
+        let mut d = 1usize;
+        let mut pow = 256u128;
+        while pow <= den {
+            pow *= 256;
+            d += 1;
+        }
+        (0..count)
+            .map(|i| {
+                // m = floor((i+1) * 256^d / (count+1)). 1 <= m < 256^d, strictly increasing.
+                let m = ((i as u128 + 1) * pow) / den;
+                let mut bytes = Vec::with_capacity(d);
+                for shift in (0..d).rev() {
+                    bytes.push(((m >> (8 * shift)) & 0xFF) as u8);
+                }
+                // 후행 0 제거(정규형). m >= 1이라 비어 있지 않습니다.
+                while bytes.last() == Some(&0) {
+                    bytes.pop();
+                }
+                OrderKey(bytes)
+            })
+            .collect()
+    }
+}
+
+/// 부모 단위 재균형(III.5.3).
+///
+/// 자식들을 현재 시각 순서(현재 키, 동일 키는 `StableId` tie-break)로 정렬한 뒤, 균등 분포
+/// 키를 그 순서대로 재배치합니다. 따라서 **시각 순서(= `StableId` 순서)를 보존**하며,
+/// 결정론적이라 같은 입력에 두 번 실행해도 동일한 결과를 만듭니다. 각 자식의 새 키
+/// `(StableId, OrderKey)`를 시각 순서대로 반환합니다.
+pub fn rebalance(children: &[(OrderKey, StableId)]) -> Vec<(StableId, OrderKey)> {
+    let mut ordered = children.to_vec();
+    ordered.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let keys = OrderKey::evenly_spaced(ordered.len());
+    ordered
+        .into_iter()
+        .zip(keys)
+        .map(|((_, id), key)| (id, key))
+        .collect()
 }
 
 /// `lower`(빈 슬라이스=0.0)와 `upper`(`None`=1.0) 소수 사이의 결정론적 중간값 byte열.
@@ -285,5 +338,96 @@ mod tests {
         }
 
         assert_eq!(set.len(), 1_000_000);
+    }
+
+    // --- III.5.3 재균형 ---
+
+    #[test]
+    fn evenly_spaced_strictly_increasing_and_canonical() {
+        for count in [1usize, 2, 5, 255, 256, 1000] {
+            let keys = OrderKey::evenly_spaced(count);
+            assert_eq!(keys.len(), count, "count={count}");
+            for w in keys.windows(2) {
+                assert!(w[0] < w[1], "count={count}: {:?} !< {:?}", w[0], w[1]);
+            }
+            for k in &keys {
+                assert!(!k.as_bytes().is_empty());
+                assert_ne!(k.as_bytes().last(), Some(&0), "후행 0");
+                assert!(!k.needs_rebalance(), "재균형 키는 임계 길이 이하여야 함");
+            }
+        }
+        assert!(OrderKey::evenly_spaced(0).is_empty());
+    }
+
+    /// 길고 뒤섞인 키를 가진 자식 fixture.
+    fn long_keyed_children() -> Vec<(OrderKey, StableId)> {
+        vec![
+            (
+                OrderKey::from_bytes(vec![0x80; 20]).unwrap(),
+                StableId::new_v7(3, 0, 3),
+            ),
+            (
+                OrderKey::from_bytes(vec![0x10]).unwrap(),
+                StableId::new_v7(1, 0, 1),
+            ),
+            (
+                OrderKey::from_bytes(vec![0x40, 0x05]).unwrap(),
+                StableId::new_v7(2, 0, 2),
+            ),
+            (
+                OrderKey::from_bytes(vec![0x80; 18]).unwrap(),
+                StableId::new_v7(4, 0, 4),
+            ),
+        ]
+    }
+
+    #[test]
+    fn rebalance_preserves_stable_id_order_and_shortens() {
+        let children = long_keyed_children();
+
+        // 재균형 전 시각 순서(현재 키, StableId tie-break) 기준 StableId 나열.
+        let mut before = children.clone();
+        before.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        let before_ids: Vec<StableId> = before.iter().map(|c| c.1).collect();
+
+        let rebalanced = rebalance(&children);
+        let after_ids: Vec<StableId> = rebalanced.iter().map(|c| c.0).collect();
+        assert_eq!(after_ids, before_ids, "재균형 전후 StableId 순서 동일");
+
+        // 새 키는 strictly increasing이고 임계 길이 이하(길이 회복).
+        for w in rebalanced.windows(2) {
+            assert!(w[0].1 < w[1].1, "새 키 단조 증가");
+        }
+        for (_, key) in &rebalanced {
+            assert!(!key.needs_rebalance(), "재균형 후 길이 회복");
+        }
+    }
+
+    #[test]
+    fn rebalance_is_deterministic() {
+        let children = long_keyed_children();
+        assert_eq!(rebalance(&children), rebalance(&children));
+    }
+
+    #[test]
+    fn rebalance_twice_same_result() {
+        let children = long_keyed_children();
+        let once = rebalance(&children);
+        // 재균형 결과를 다시 자식 형태로 만들어 한 번 더 재균형.
+        let as_children: Vec<(OrderKey, StableId)> =
+            once.iter().map(|(id, key)| (key.clone(), *id)).collect();
+        let twice = rebalance(&as_children);
+        assert_eq!(once, twice, "두 번 실행 시 동일 결과");
+    }
+
+    #[test]
+    fn rebalance_empty_and_single() {
+        assert!(rebalance(&[]).is_empty());
+        let one = rebalance(&[(
+            OrderKey::from_bytes(vec![0x80; 30]).unwrap(),
+            StableId::new_v7(7, 0, 7),
+        )]);
+        assert_eq!(one.len(), 1);
+        assert!(!one[0].1.needs_rebalance());
     }
 }
