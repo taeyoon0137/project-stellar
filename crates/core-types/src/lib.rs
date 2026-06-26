@@ -17,6 +17,9 @@ pub mod reference;
 /// 타입드 값과 기하 (III.3).
 pub mod value;
 
+/// 색상과 색공간 (III.4.1).
+pub mod color;
+
 /// TypedValue tagged union (III.3.5).
 pub mod typed_value;
 

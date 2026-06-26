@@ -5,13 +5,15 @@
 //! 모든 variant는 [`TypedValue::to_bytes`] ↔ [`TypedValue::from_bytes`]로 정확히 round-trip
 //! 합니다.
 //!
-//! 일부 payload 타입은 아직 정식 정의되지 않았습니다(`Color` III.4.1, `Gradient` III.4.3,
-//! `Shadow` III.4.4, `Typography` VI.7.2/X.8.1). III.3.5에서는 이들의 **tag 위치와
-//! round-trip envelope만** 고정하고, 구체 구조는 해당 후속 작업이 채웁니다. 그때까지는
-//! 불투명(opaque) byte payload placeholder로 둡니다([`ColorValue`] 등).
+//! 일부 payload 타입은 아직 정식 정의되지 않았습니다(`Gradient` III.4.3, `Shadow` III.4.4,
+//! `Typography` VI.7.2/X.8.1). III.3.5에서는 이들의 **tag 위치와 round-trip envelope만**
+//! 고정하고, 구체 구조는 해당 후속 작업이 채웁니다. 그때까지는 불투명(opaque) byte payload
+//! placeholder로 둡니다([`GradientValue`] 등). `Color`는 III.4.1에서 정식 타입([`Color`])으로
+//! 교체되었습니다(tag `0x09` 유지).
 
 use std::fmt;
 
+use crate::color::{Color, ColorError};
 use crate::ids::StableId;
 use crate::value::{Angle, Duration, FiniteF32, Length, Percentage};
 
@@ -86,10 +88,6 @@ macro_rules! define_opaque_placeholder {
 }
 
 define_opaque_placeholder!(
-    ColorValue,
-    "색상 값 placeholder. 정식 정의는 III.4.1(`ColorSpace` + 비연관 알파). 현재는 tag와 round-trip만 고정."
-);
-define_opaque_placeholder!(
     GradientValue,
     "그라디언트 값 placeholder. 정식 정의는 III.4.3(stop·position). 현재는 tag와 round-trip만 고정."
 );
@@ -124,8 +122,8 @@ pub enum TypedValue {
     Angle(Angle),
     /// 지속 시간.
     Duration(Duration),
-    /// 색상(placeholder, III.4.1).
-    Color(ColorValue),
+    /// 색상(III.4.1).
+    Color(Color),
     /// 그라디언트(placeholder, III.4.3).
     Gradient(GradientValue),
     /// 그림자(placeholder, III.4.4).
@@ -194,7 +192,7 @@ impl TypedValue {
             TypedValue::Percentage(v) => out.extend_from_slice(&v.raw().to_le_bytes()),
             TypedValue::Angle(v) => out.extend_from_slice(&v.raw().to_le_bytes()),
             TypedValue::Duration(v) => out.extend_from_slice(&v.raw().to_le_bytes()),
-            TypedValue::Color(v) => write_len_prefixed(&mut out, v.as_bytes()),
+            TypedValue::Color(c) => out.extend_from_slice(&c.to_bytes()),
             TypedValue::Gradient(v) => write_len_prefixed(&mut out, v.as_bytes()),
             TypedValue::Shadow(v) => write_len_prefixed(&mut out, v.as_bytes()),
             TypedValue::Typography(v) => write_len_prefixed(&mut out, v.as_bytes()),
@@ -232,7 +230,11 @@ impl TypedValue {
             TypedValue::TAG_DURATION => {
                 TypedValue::Duration(Duration::from_raw(reader.take_finite()?))
             }
-            TypedValue::TAG_COLOR => TypedValue::Color(ColorValue::new(reader.take_blob()?)),
+            TypedValue::TAG_COLOR => {
+                let color =
+                    Color::from_bytes(reader.take_array()?).map_err(ValueDecodeError::Color)?;
+                TypedValue::Color(color)
+            }
             TypedValue::TAG_GRADIENT => {
                 TypedValue::Gradient(GradientValue::new(reader.take_blob()?))
             }
@@ -241,7 +243,7 @@ impl TypedValue {
                 TypedValue::Typography(TypographyValue::new(reader.take_blob()?))
             }
             TypedValue::TAG_RESOURCE_REF => {
-                let id = StableId::from_bytes(reader.take_array16()?);
+                let id = StableId::from_bytes(reader.take_array()?);
                 TypedValue::ResourceRef(ResourceRef::new(id))
             }
             other => return Err(ValueDecodeError::UnknownTag(other)),
@@ -274,6 +276,8 @@ pub enum ValueDecodeError {
     InvalidUtf8,
     /// Boolean payload가 `0`/`1`이 아님.
     InvalidBool(u8),
+    /// 색상 payload 디코드 실패(III.4.1).
+    Color(ColorError),
 }
 
 impl fmt::Display for ValueDecodeError {
@@ -288,6 +292,7 @@ impl fmt::Display for ValueDecodeError {
             ValueDecodeError::InvalidBool(byte) => {
                 write!(f, "Boolean payload가 0/1이 아님: 0x{byte:02X}")
             }
+            ValueDecodeError::Color(err) => write!(f, "색상 payload 디코드 실패: {err}"),
         }
     }
 }
@@ -324,9 +329,9 @@ impl<'a> Reader<'a> {
         Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
     }
 
-    fn take_array16(&mut self) -> Result<[u8; 16], ValueDecodeError> {
-        let b = self.take(16)?;
-        let mut out = [0u8; 16];
+    fn take_array<const N: usize>(&mut self) -> Result<[u8; N], ValueDecodeError> {
+        let b = self.take(N)?;
+        let mut out = [0u8; N];
         out.copy_from_slice(b);
         Ok(out)
     }
@@ -364,6 +369,7 @@ impl<'a> Reader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::color::ColorSpace;
 
     /// 모든 variant를 대표하는 fixture 목록.
     fn sample_values() -> Vec<TypedValue> {
@@ -378,7 +384,7 @@ mod tests {
             TypedValue::Percentage(Percentage::new(50.0).unwrap()),
             TypedValue::Angle(Angle::new(90.0).unwrap()),
             TypedValue::Duration(Duration::new(0.0).unwrap()),
-            TypedValue::Color(ColorValue::from_slice(&[1, 2, 3, 4])),
+            TypedValue::Color(Color::new(ColorSpace::DisplayP3, 0.1, 0.2, 0.3, 0.5).unwrap()),
             TypedValue::Gradient(GradientValue::from_slice(&[])),
             TypedValue::Shadow(ShadowValue::from_slice(&[9, 8, 7])),
             TypedValue::Typography(TypographyValue::from_slice(&[0xFF])),
@@ -409,7 +415,10 @@ mod tests {
             (0x06, TypedValue::Percentage(Percentage::new(0.0).unwrap())),
             (0x07, TypedValue::Angle(Angle::new(0.0).unwrap())),
             (0x08, TypedValue::Duration(Duration::new(0.0).unwrap())),
-            (0x09, TypedValue::Color(ColorValue::default())),
+            (
+                0x09,
+                TypedValue::Color(Color::new(ColorSpace::Srgb, 0.0, 0.0, 0.0, 1.0).unwrap()),
+            ),
             (0x0A, TypedValue::Gradient(GradientValue::default())),
             (0x0B, TypedValue::Shadow(ShadowValue::default())),
             (0x0C, TypedValue::Typography(TypographyValue::default())),
@@ -533,11 +542,35 @@ mod tests {
     #[test]
     fn opaque_placeholder_preserves_bytes() {
         let payload = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        let value = TypedValue::Color(ColorValue::new(payload.clone()));
+        let value = TypedValue::Gradient(GradientValue::new(payload.clone()));
         let decoded = TypedValue::from_bytes(&value.to_bytes()).unwrap();
         match decoded {
-            TypedValue::Color(c) => assert_eq!(c.as_bytes(), payload.as_slice()),
+            TypedValue::Gradient(g) => assert_eq!(g.as_bytes(), payload.as_slice()),
             other => panic!("예상과 다른 variant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn color_variant_round_trips_with_real_type() {
+        let color = Color::new(ColorSpace::DisplayP3, 1.0, 0.0, 0.25, 0.5).unwrap();
+        let value = TypedValue::Color(color);
+        let bytes = value.to_bytes();
+        // tag 0x09 + Color 17바이트 = 18바이트.
+        assert_eq!(bytes.len(), 1 + Color::BYTE_LEN);
+        assert_eq!(bytes[0], 0x09);
+        assert_eq!(TypedValue::from_bytes(&bytes).unwrap(), value);
+    }
+
+    #[test]
+    fn color_variant_rejects_invalid_payload() {
+        // tag 0x09 + 미지 색공간 tag(0x00) + 0으로 채운 16바이트.
+        let mut bytes = vec![0x09, 0x00];
+        bytes.extend_from_slice(&[0u8; 16]);
+        assert_eq!(
+            TypedValue::from_bytes(&bytes),
+            Err(ValueDecodeError::Color(
+                crate::color::ColorError::UnknownColorSpace(0x00)
+            ))
+        );
     }
 }
