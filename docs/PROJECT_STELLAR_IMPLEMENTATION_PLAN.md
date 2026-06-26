@@ -317,7 +317,7 @@ tools/xtask/
 |---|---|---|---|---|
 | III.3.1 | `[x]` | `FiniteF32` 또는 동등 타입을 구현해 NaN·±Infinity를 생성·직렬화 단계에서 거부합니다. `-0.0`은 `0.0`으로 정규화합니다. | 모든 특수 float fixture 통과. | G1 |
 | III.3.2 | `[x]` | `Length`, `Percentage`, `Angle`, `Duration`, `Scalar`를 별도 newtype으로 구현합니다. | 잘못된 단위 산술 compile-fail test 통과. | III.3.1 |
-| III.3.3 | `[ ]` | `Vec2`, `Size2`, `Rect`, `Insets`, `Transform2D`를 finite 값만 허용하도록 구현합니다. | 역행렬 가능·불가능, 빈 rect, 음수 크기 정책 테스트 통과. | III.3.1 |
+| III.3.3 | `[x]` | `Vec2`, `Size2`, `Rect`, `Insets`, `Transform2D`를 finite 값만 허용하도록 구현합니다. | 역행렬 가능·불가능, 빈 rect, 음수 크기 정책 테스트 통과. | III.3.1 |
 | III.3.4 | `[ ]` | 문자열 값은 UTF-8을 사용하고 저장 전 Unicode NFC 정규화를 선택적으로 적용할 위치를 분리합니다. 사용자 텍스트 자체는 정규화하지 않고 식별자·파일 경로만 정규화합니다. | 사용자 텍스트 보존과 경로 정규화 fixture 모두 통과. | G1 |
 | III.3.5 | `[ ]` | `TypedValue` tagged union에 Boolean, Number, String, Enum, Length, Percentage, Angle, Duration, Color, Gradient, Shadow, Typography, ResourceRef를 정의합니다. | 모든 variant binary round-trip과 type tag 안정성 golden test 통과. | III.3.2, III.3.4 |
 
