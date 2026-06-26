@@ -296,7 +296,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| III.1.1 | `[ ]` | `core-types`에 128비트 `StableId`를 구현하고 UUIDv7 생성과 16바이트 직렬화를 제공합니다. 문자열 형식은 표준 소문자 hyphen UUID로 고정합니다. | RFC 형식, 시간 순 정렬, binary/string round-trip 테스트 통과. | G1 |
+| III.1.1 | `[x]` | `core-types`에 128비트 `StableId`를 구현하고 UUIDv7 생성과 16바이트 직렬화를 제공합니다. 문자열 형식은 표준 소문자 hyphen UUID로 고정합니다. | RFC 형식, 시간 순 정렬, binary/string round-trip 테스트 통과. | G1 |
 | III.1.2 | `[ ]` | 테스트용 결정적 `StableIdGenerator`를 구현합니다. seed와 수동 시각이 같으면 동일 ID 시퀀스를 생성합니다. | golden sequence test 통과. | III.1.1, II.3.3 |
 | III.1.3 | `[ ]` | `RuntimeEntityId { slot, generation }`을 추가하고 저장·FFI에 노출되지 않게 visibility를 제한합니다. | 삭제 후 slot 재사용 시 이전 generation lookup 실패. | III.1.1 |
 | III.1.4 | `[ ]` | `StableId ↔ RuntimeEntityId` 양방향 registry를 구현합니다. duplicate StableId 삽입은 오류입니다. | 삽입·삭제·재삽입·중복 fixture 통과. | III.1.3 |

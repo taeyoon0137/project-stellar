@@ -1,0 +1,251 @@
+//! 안정 식별자 `StableId` (III.1.1).
+//!
+//! `StableId`는 128비트 식별자로, UUIDv7(RFC 9562) 레이아웃을 사용합니다.
+//! 상위 48비트가 millisecond timestamp라서 바이트 사전식 정렬이 곧 시간 순 정렬입니다.
+//! 직렬화는 16바이트(big-endian)와 표준 소문자 hyphen UUID 문자열을 제공합니다.
+//!
+//! 생성기는 timestamp와 random 필드를 명시 입력으로 받습니다(시계·엔트로피를 주입할 수
+//! 있도록). 결정적 생성기는 [`crate::ids`] 후속 작업(III.1.2)에서 이 생성자를 사용합니다.
+
+use std::fmt;
+use std::str::FromStr;
+
+/// 128비트 안정 식별자(UUIDv7 레이아웃).
+///
+/// 정렬은 바이트 순서를 따르며, timestamp가 최상위라 시간 순으로 정렬됩니다.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct StableId([u8; 16]);
+
+impl StableId {
+    /// 모든 바이트가 0인 nil 식별자.
+    pub const NIL: StableId = StableId([0u8; 16]);
+
+    /// 16바이트(big-endian)로부터 구성합니다.
+    pub const fn from_bytes(bytes: [u8; 16]) -> StableId {
+        StableId(bytes)
+    }
+
+    /// 16바이트(big-endian) 표현을 반환합니다.
+    pub const fn to_bytes(&self) -> [u8; 16] {
+        self.0
+    }
+
+    /// UUIDv7을 생성합니다.
+    ///
+    /// `unix_ts_ms`는 하위 48비트만 사용하고, `rand_a`는 하위 12비트, `rand_b`는 하위 62비트만
+    /// 사용합니다. version(7)과 variant(0b10) 비트는 항상 RFC 9562에 맞게 설정됩니다.
+    pub fn new_v7(unix_ts_ms: u64, rand_a: u16, rand_b: u64) -> StableId {
+        let ts = unix_ts_ms & 0x0000_FFFF_FFFF_FFFF;
+        let ra = rand_a & 0x0FFF;
+        let rb = rand_b & 0x3FFF_FFFF_FFFF_FFFF;
+
+        let mut bytes = [0u8; 16];
+        bytes[0] = (ts >> 40) as u8;
+        bytes[1] = (ts >> 32) as u8;
+        bytes[2] = (ts >> 24) as u8;
+        bytes[3] = (ts >> 16) as u8;
+        bytes[4] = (ts >> 8) as u8;
+        bytes[5] = ts as u8;
+        // version 7 (상위 nibble) + rand_a 상위 4비트.
+        bytes[6] = 0x70 | ((ra >> 8) as u8 & 0x0F);
+        bytes[7] = (ra & 0xFF) as u8;
+        // variant 0b10 (상위 2비트) + rand_b 상위 6비트.
+        bytes[8] = 0x80 | ((rb >> 56) as u8 & 0x3F);
+        bytes[9] = (rb >> 48) as u8;
+        bytes[10] = (rb >> 40) as u8;
+        bytes[11] = (rb >> 32) as u8;
+        bytes[12] = (rb >> 24) as u8;
+        bytes[13] = (rb >> 16) as u8;
+        bytes[14] = (rb >> 8) as u8;
+        bytes[15] = rb as u8;
+        StableId(bytes)
+    }
+
+    /// UUID version nibble(v7이면 7).
+    pub const fn version(&self) -> u8 {
+        self.0[6] >> 4
+    }
+
+    /// UUID variant(RFC 9562이면 0b10 = 2).
+    pub const fn variant(&self) -> u8 {
+        self.0[8] >> 6
+    }
+
+    /// 상위 48비트 timestamp(milliseconds).
+    pub const fn timestamp_ms(&self) -> u64 {
+        ((self.0[0] as u64) << 40)
+            | ((self.0[1] as u64) << 32)
+            | ((self.0[2] as u64) << 24)
+            | ((self.0[3] as u64) << 16)
+            | ((self.0[4] as u64) << 8)
+            | (self.0[5] as u64)
+    }
+}
+
+impl fmt::Display for StableId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let b = &self.0;
+        write!(
+            f,
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13],
+            b[14], b[15]
+        )
+    }
+}
+
+impl fmt::Debug for StableId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "StableId({self})")
+    }
+}
+
+/// `StableId` 문자열 파싱 오류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseStableIdError {
+    /// 길이가 36자가 아님.
+    Length,
+    /// hyphen 위치가 표준과 다르거나 hex 문자가 아님.
+    Format,
+}
+
+impl fmt::Display for ParseStableIdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseStableIdError::Length => f.write_str("StableId 문자열 길이는 36이어야 합니다"),
+            ParseStableIdError::Format => f.write_str("StableId 문자열 형식이 표준 UUID가 아닙니다"),
+        }
+    }
+}
+
+impl std::error::Error for ParseStableIdError {}
+
+fn hex_value(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
+impl FromStr for StableId {
+    type Err = ParseStableIdError;
+
+    /// 표준 hyphen UUID(대소문자 무관)를 파싱합니다. 출력은 항상 소문자입니다.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let bytes = s.as_bytes();
+        if bytes.len() != 36 {
+            return Err(ParseStableIdError::Length);
+        }
+        if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
+            return Err(ParseStableIdError::Format);
+        }
+
+        let mut out = [0u8; 16];
+        let mut out_idx = 0;
+        let mut high: Option<u8> = None;
+        for (i, &c) in bytes.iter().enumerate() {
+            if i == 8 || i == 13 || i == 18 || i == 23 {
+                continue;
+            }
+            let nibble = hex_value(c).ok_or(ParseStableIdError::Format)?;
+            match high {
+                None => high = Some(nibble),
+                Some(h) => {
+                    out[out_idx] = (h << 4) | nibble;
+                    out_idx += 1;
+                    high = None;
+                }
+            }
+        }
+        Ok(StableId(out))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binary_round_trip() {
+        let bytes = [
+            0x01, 0x8f, 0x2a, 0x3b, 0x4c, 0x5d, 0x7e, 0x6f, 0x80, 0x11, 0x22, 0x33, 0x44, 0x55,
+            0x66, 0x77,
+        ];
+        let id = StableId::from_bytes(bytes);
+        assert_eq!(id.to_bytes(), bytes);
+        assert_eq!(StableId::from_bytes(id.to_bytes()), id);
+    }
+
+    #[test]
+    fn string_round_trip() {
+        let id = StableId::new_v7(0x0192_3c4d_5e6f, 0x0abc, 0x0123_4567_89ab_cdef);
+        let text = id.to_string();
+        let parsed: StableId = text.parse().expect("parse");
+        assert_eq!(parsed, id);
+        // 출력은 소문자이고 다시 같은 문자열을 만든다.
+        assert_eq!(parsed.to_string(), text);
+    }
+
+    #[test]
+    fn rfc_format_version_and_variant() {
+        let id = StableId::new_v7(0x0192_3c4d_5e6f, 0xFFFF, u64::MAX);
+        assert_eq!(id.version(), 7);
+        assert_eq!(id.variant(), 0b10);
+
+        let text = id.to_string();
+        assert_eq!(text.len(), 36);
+        let chars: Vec<char> = text.chars().collect();
+        assert_eq!(chars[8], '-');
+        assert_eq!(chars[13], '-');
+        assert_eq!(chars[18], '-');
+        assert_eq!(chars[23], '-');
+        // version nibble은 14번째 문자(그룹 3 시작), variant nibble은 19번째 문자(그룹 4 시작).
+        assert_eq!(chars[14], '7');
+        assert!(matches!(chars[19], '8' | '9' | 'a' | 'b'));
+    }
+
+    #[test]
+    fn timestamp_is_preserved_and_masked() {
+        let id = StableId::new_v7(0x0192_3c4d_5e6f, 0, 0);
+        assert_eq!(id.timestamp_ms(), 0x0192_3c4d_5e6f);
+        // 48비트를 초과하는 timestamp는 마스킹됩니다.
+        let over = StableId::new_v7(0xFFFF_FFFF_FFFF_FFFF, 0, 0);
+        assert_eq!(over.timestamp_ms(), 0x0000_FFFF_FFFF_FFFF);
+    }
+
+    #[test]
+    fn sorts_in_time_order() {
+        let earlier = StableId::new_v7(1000, 0xFFF, u64::MAX);
+        let later = StableId::new_v7(2000, 0, 0);
+        // timestamp가 최상위라, rand가 작아도 더 늦은 timestamp가 더 큼.
+        assert!(earlier < later);
+
+        let mut ids = [later, earlier];
+        ids.sort();
+        assert_eq!(ids, [earlier, later]);
+    }
+
+    #[test]
+    fn parse_rejects_bad_input() {
+        assert_eq!("".parse::<StableId>(), Err(ParseStableIdError::Length));
+        assert_eq!(
+            "zzzzzzzz-zzzz-zzzz-zzzz-zzzzzzzzzzzz".parse::<StableId>(),
+            Err(ParseStableIdError::Format)
+        );
+        // 길이는 36이지만 hyphen이 없음(위치 불일치).
+        assert_eq!(
+            "0123456789abcdef0123456789abcdef0123".parse::<StableId>(),
+            Err(ParseStableIdError::Format)
+        );
+    }
+
+    #[test]
+    fn parse_accepts_uppercase() {
+        let id = StableId::new_v7(0x0192_3c4d_5e6f, 0x0abc, 0x0123_4567_89ab_cdef);
+        let upper = id.to_string().to_uppercase();
+        let parsed: StableId = upper.parse().expect("parse uppercase");
+        assert_eq!(parsed, id);
+    }
+}
