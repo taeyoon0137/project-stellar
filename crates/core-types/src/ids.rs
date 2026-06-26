@@ -263,6 +263,20 @@ impl RuntimeEntityAllocator {
             && !self.free.contains(&id.slot)
     }
 
+    /// 살아 있는 핸들이면 storage 인덱스(slot)를, 죽은(stale) 핸들이면 `None`을 반환합니다.
+    ///
+    /// generation 일치 검사만 수행하는 O(1) 접근자입니다(해제 시 generation을 올리므로 옛
+    /// 핸들의 generation은 절대 일치하지 않습니다). 반환한 slot은 **in-process storage 인덱싱**
+    /// 용도이며 직렬화·FFI에 노출하지 않습니다. generation은 노출하지 않습니다. arena/SoA
+    /// column이 이 인덱스로 자료를 찾습니다(III.6).
+    pub fn live_slot(&self, id: RuntimeEntityId) -> Option<usize> {
+        if self.generations.get(id.slot as usize) == Some(&id.generation) {
+            Some(id.slot as usize)
+        } else {
+            None
+        }
+    }
+
     /// 핸들을 해제합니다. generation을 올려 옛 핸들을 무효화하고 slot을 재사용 풀에 넣습니다.
     ///
     /// 이미 죽은 핸들이면 아무 것도 하지 않고 `false`를 반환합니다.
@@ -577,6 +591,25 @@ mod tests {
         assert_ne!(c.generation, a.generation);
         assert!(alloc.is_live(c));
         assert!(!alloc.is_live(a));
+    }
+
+    #[test]
+    fn live_slot_returns_index_for_live_and_none_for_stale() {
+        let mut alloc = RuntimeEntityAllocator::new();
+        let a = alloc.allocate();
+        let b = alloc.allocate();
+        // live 핸들은 서로 다른 slot 인덱스를 반환.
+        assert_eq!(alloc.live_slot(a), Some(0));
+        assert_eq!(alloc.live_slot(b), Some(1));
+
+        // a 해제 → stale, live_slot None.
+        alloc.deallocate(a);
+        assert_eq!(alloc.live_slot(a), None);
+
+        // slot 0 재사용 → 새 핸들은 같은 인덱스, 옛 핸들은 여전히 None(generation 불일치).
+        let c = alloc.allocate();
+        assert_eq!(alloc.live_slot(c), Some(0));
+        assert_eq!(alloc.live_slot(a), None);
     }
 
     #[test]
