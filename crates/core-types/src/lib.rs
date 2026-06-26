@@ -17,6 +17,9 @@ pub mod reference;
 /// 타입드 값과 기하 (III.3).
 pub mod value;
 
+/// 문자열 값과 정규화 경계 (III.3.4).
+pub mod text;
+
 /// 단조 시계 추상화 (II.3.3).
 pub mod clock;
 
