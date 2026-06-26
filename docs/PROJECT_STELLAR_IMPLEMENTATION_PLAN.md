@@ -326,7 +326,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | III.4.1 | `[x]` | `ColorSpace`에 sRGB와 DisplayP3를 정의하고 색상은 비연관 알파(unassociated alpha)로 저장합니다. | alpha 0·1, gamut edge fixture round-trip 통과. | III.3.1 |
-| III.4.2 | `[ ]` | 선형 색공간 변환 함수를 정의하고 sRGB/P3 encode/decode reference fixture를 추가합니다. | 허용 오차가 `config/performance-budgets.yaml`의 색상 기준 이하. | III.4.1 |
+| III.4.2 | `[x]` | 선형 색공간 변환 함수를 정의하고 sRGB/P3 encode/decode reference fixture를 추가합니다. | 허용 오차가 `config/performance-budgets.yaml`의 색상 기준 이하. | III.4.1 |
 | III.4.3 | `[ ]` | Gradient stop을 안정 ID, position, color로 정의하고 position 정렬은 저장 순서와 시각 순서를 분리합니다. | 동일 position stop의 안정 순서 fixture 통과. | III.1.1, III.4.1 |
 | III.4.4 | `[ ]` | Shadow와 blur parameter 타입을 정의하고 음수·비정상 radius를 거부합니다. | 경계값 테스트 통과. | III.3.1, III.4.1 |
 

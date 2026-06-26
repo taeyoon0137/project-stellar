@@ -151,6 +151,60 @@ fn read_channel(slice: &[u8]) -> Result<f32, ColorError> {
         .map_err(|_| ColorError::NonFiniteChannel)
 }
 
+// --- 선형 transfer 함수 (III.4.2, ADR-0002) ---
+//
+// IEC 61966-2-1 sRGB 곡선. sRGB와 Display P3가 동일한 곡선을 공유합니다(차이는
+// primaries이며 본 함수 범위 밖). 정확도 예산은 `config/performance-budgets.yaml`의
+// `color.transfer_abs_tolerance`에 기록되어 있습니다.
+
+/// encoded→linear 분기 임계값.
+const SRGB_ENCODED_THRESHOLD: f32 = 0.04045;
+/// linear→encoded 분기 임계값.
+const SRGB_LINEAR_THRESHOLD: f32 = 0.0031308;
+/// 선형 구간 기울기.
+const SRGB_LINEAR_SLOPE: f32 = 12.92;
+/// 감마 구간 오프셋.
+const SRGB_OFFSET: f32 = 0.055;
+/// 감마 지수.
+const SRGB_GAMMA: f32 = 2.4;
+
+/// 인코딩된(감마) 채널 값을 선형광 값으로 변환합니다(EOTF/decode).
+pub fn srgb_decode(encoded: f32) -> f32 {
+    if encoded <= SRGB_ENCODED_THRESHOLD {
+        encoded / SRGB_LINEAR_SLOPE
+    } else {
+        ((encoded + SRGB_OFFSET) / (1.0 + SRGB_OFFSET)).powf(SRGB_GAMMA)
+    }
+}
+
+/// 선형광 채널 값을 인코딩된(감마) 값으로 변환합니다(OETF/encode).
+pub fn srgb_encode(linear: f32) -> f32 {
+    if linear <= SRGB_LINEAR_THRESHOLD {
+        linear * SRGB_LINEAR_SLOPE
+    } else {
+        (1.0 + SRGB_OFFSET) * linear.powf(1.0 / SRGB_GAMMA) - SRGB_OFFSET
+    }
+}
+
+impl ColorSpace {
+    /// 이 색공간의 인코딩된 채널을 선형광으로 변환합니다(decode).
+    ///
+    /// sRGB와 Display P3는 동일한 sRGB transfer 곡선을 사용합니다(차이는 primaries이며
+    /// 본 함수 범위 밖, ADR-0002).
+    pub fn decode_channel(self, encoded: f32) -> f32 {
+        match self {
+            ColorSpace::Srgb | ColorSpace::DisplayP3 => srgb_decode(encoded),
+        }
+    }
+
+    /// 이 색공간의 선형광 채널을 인코딩된 값으로 변환합니다(encode).
+    pub fn encode_channel(self, linear: f32) -> f32 {
+        match self {
+            ColorSpace::Srgb | ColorSpace::DisplayP3 => srgb_encode(linear),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,5 +316,89 @@ mod tests {
         // -0.0 채널은 +0.0으로 정규화(FiniteF32 계약).
         let c = Color::new(ColorSpace::Srgb, -0.0, 0.0, 0.0, 0.0).unwrap();
         assert_eq!(c.r().to_bits(), 0u32);
+    }
+
+    // --- 선형 transfer 함수 (III.4.2, ADR-0002) ---
+
+    /// `config/performance-budgets.yaml`에서 색상 허용 오차 예산을 읽습니다.
+    /// core-types는 std 전용이라 YAML 의존성을 두지 않고 해당 키 줄만 파싱합니다.
+    fn transfer_abs_tolerance() -> f32 {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../config/performance-budgets.yaml"
+        );
+        let text = std::fs::read_to_string(path).expect("performance-budgets.yaml 읽기");
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("transfer_abs_tolerance:") {
+                return rest.trim().parse().expect("tolerance 파싱");
+            }
+        }
+        panic!("color.transfer_abs_tolerance 키를 찾지 못함");
+    }
+
+    #[test]
+    fn srgb_transfer_reference_fixtures_within_budget() {
+        let tol = transfer_abs_tolerance();
+        // (encoded, linear) reference 쌍. 임계점과 0.5 표준 값 포함.
+        let pairs = [
+            (0.0f32, 0.0f32),
+            (1.0, 1.0),
+            (0.04045, 0.0031308), // encoded↔linear 분기 임계점.
+            (0.5, 0.21404114),    // sRGB 0.5의 표준 선형 값.
+            (0.7353569, 0.5),     // 선형 0.5의 표준 인코딩 값.
+        ];
+        for (encoded, linear) in pairs {
+            assert!(
+                (srgb_decode(encoded) - linear).abs() <= tol,
+                "decode({encoded}) = {} (기대 {linear})",
+                srgb_decode(encoded)
+            );
+            assert!(
+                (srgb_encode(linear) - encoded).abs() <= tol,
+                "encode({linear}) = {} (기대 {encoded})",
+                srgb_encode(linear)
+            );
+        }
+    }
+
+    #[test]
+    fn srgb_round_trip_within_budget() {
+        let tol = transfer_abs_tolerance();
+        // [0,1]을 256단계로 훑어 encode∘decode가 항등에 가까운지(예산 이하) 확인.
+        for i in 0..=256 {
+            let encoded = i as f32 / 256.0;
+            let back = srgb_encode(srgb_decode(encoded));
+            assert!(
+                (back - encoded).abs() <= tol,
+                "round-trip({encoded}) = {back}"
+            );
+        }
+    }
+
+    #[test]
+    fn srgb_and_p3_share_transfer_curve() {
+        // 두 색공간은 동일한 transfer 곡선을 공유합니다(ADR-0002).
+        for x in [0.0f32, 0.018, 0.04045, 0.25, 0.5, 0.9, 1.0] {
+            assert_eq!(
+                ColorSpace::Srgb.decode_channel(x),
+                ColorSpace::DisplayP3.decode_channel(x)
+            );
+            assert_eq!(
+                ColorSpace::Srgb.encode_channel(x),
+                ColorSpace::DisplayP3.encode_channel(x)
+            );
+        }
+        // 색공간 메서드와 standalone 함수가 일치.
+        assert_eq!(ColorSpace::Srgb.decode_channel(0.5), srgb_decode(0.5));
+        assert_eq!(ColorSpace::DisplayP3.encode_channel(0.5), srgb_encode(0.5));
+    }
+
+    #[test]
+    fn budget_file_value_is_within_expected_ceiling() {
+        // 예산이 8-bit 양자화 간격보다 작은지(의미 있는 상한인지) 확인.
+        let tol = transfer_abs_tolerance();
+        assert!(tol > 0.0);
+        assert!(tol <= 1.0 / 255.0);
     }
 }
