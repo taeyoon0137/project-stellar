@@ -282,7 +282,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| II.7.1 | `[ ]` | macOS arm64 CI job에 Rust core, FFI header drift, Xcode Debug build를 연결합니다. | clean runner에서 성공. | II.5.4 |
+| II.7.1 | `[~]` | macOS arm64 CI job에 Rust core, FFI header drift, Xcode Debug build를 연결합니다. | clean runner에서 성공. | II.5.4 |
 | II.7.2 | `[ ]` | Windows x64 CI job에 Rust core, FFI header drift, MSBuild Debug build를 연결합니다. | clean runner에서 성공. | II.6.4 |
 | II.7.3 | `[ ]` | 양 플랫폼 smoke artifact가 같은 core version과 ABI version을 보고하는 검사를 추가합니다. | 버전 mismatch fixture에서 CI 실패. | II.7.1, II.7.2 |
 

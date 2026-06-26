@@ -67,6 +67,33 @@ jobs:
         shell: bash
         run: ./scripts/ci/check-adr-policy.sh
 
+  macos-shell:
+    # G1 macOS 빌드 게이트(II.7.1): Rust core + FFI header drift + Xcode Debug build를
+    # arm64 macOS 러너 하나에서 연결합니다. Xcode/SDK가 deployment target(macOS 26)을
+    # 지원해야 통과합니다(현 GitHub-hosted 러너에 macOS 26 SDK가 없으면 Xcode 단계가 실패).
+    name: macOS shell build (CI-MAC)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Xcode and SDKs
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i macos || true
+      - name: Activate pinned toolchain
+        run: rustup show
+      - name: Build Rust core (staticlib)
+        run: cargo build -p stellar-ffi --locked
+      - name: FFI header drift
+        shell: bash
+        run: |
+          cargo run -p xtask --locked -- generate-ffi-header
+          git diff --exit-code -- crates/ffi/include/stellar_ffi.h
+      - name: Xcode Debug build + smoke
+        run: ./scripts/macos/smoke.sh
+
   bootstrap-windows:
     name: bootstrap (CI-WIN)
     runs-on: windows-2022
