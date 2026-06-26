@@ -5,17 +5,18 @@
 //! 모든 variant는 [`TypedValue::to_bytes`] ↔ [`TypedValue::from_bytes`]로 정확히 round-trip
 //! 합니다.
 //!
-//! 일부 payload 타입은 아직 정식 정의되지 않았습니다(`Shadow` III.4.4, `Typography`
-//! VI.7.2/X.8.1). III.3.5에서는 이들의 **tag 위치와 round-trip envelope만** 고정하고, 구체
-//! 구조는 해당 후속 작업이 채웁니다. 그때까지는 불투명(opaque) byte payload placeholder로
-//! 둡니다([`ShadowValue`] 등). `Color`(III.4.1)·`Gradient`(III.4.3)는 정식 타입으로 교체되었으며
-//! type tag(`0x09`/`0x0A`)는 유지됩니다.
+//! `Typography`만 아직 정식 정의되지 않았습니다(VI.7.2/X.8.1). III.3.5에서는 그 **tag 위치와
+//! round-trip envelope만** 고정하고, 구체 구조는 후속 작업이 채웁니다. 그때까지는 불투명
+//! (opaque) byte payload placeholder([`TypographyValue`])로 둡니다. `Color`(III.4.1)·
+//! `Gradient`(III.4.3)·`Shadow`(III.4.4)는 정식 타입으로 교체되었으며 type tag
+//! (`0x09`/`0x0A`/`0x0B`)는 유지됩니다.
 
 use std::fmt;
 
 use crate::color::{Color, ColorError};
 use crate::gradient::{Gradient, GradientError};
 use crate::ids::StableId;
+use crate::shadow::{Shadow, ShadowError};
 use crate::value::{Angle, Duration, FiniteF32, Length, Percentage};
 
 /// 리소스 참조 값. resource(컴포넌트·토큰 외 자원)를 `StableId`로 가리킵니다.
@@ -89,10 +90,6 @@ macro_rules! define_opaque_placeholder {
 }
 
 define_opaque_placeholder!(
-    ShadowValue,
-    "그림자 값 placeholder. 정식 정의는 III.4.4(radius·blur). 현재는 tag와 round-trip만 고정."
-);
-define_opaque_placeholder!(
     TypographyValue,
     "타이포그래피 값 placeholder. 정식 정의는 VI.7.2/X.8.1. 현재는 tag와 round-trip만 고정."
 );
@@ -123,8 +120,8 @@ pub enum TypedValue {
     Color(Color),
     /// 그라디언트(III.4.3).
     Gradient(Gradient),
-    /// 그림자(placeholder, III.4.4).
-    Shadow(ShadowValue),
+    /// 그림자(III.4.4).
+    Shadow(Shadow),
     /// 타이포그래피(placeholder, VI.7.2/X.8.1).
     Typography(TypographyValue),
     /// 리소스 참조.
@@ -191,7 +188,7 @@ impl TypedValue {
             TypedValue::Duration(v) => out.extend_from_slice(&v.raw().to_le_bytes()),
             TypedValue::Color(c) => out.extend_from_slice(&c.to_bytes()),
             TypedValue::Gradient(g) => write_len_prefixed(&mut out, &g.to_bytes()),
-            TypedValue::Shadow(v) => write_len_prefixed(&mut out, v.as_bytes()),
+            TypedValue::Shadow(s) => out.extend_from_slice(&s.to_bytes()),
             TypedValue::Typography(v) => write_len_prefixed(&mut out, v.as_bytes()),
             TypedValue::ResourceRef(r) => out.extend_from_slice(&r.id().to_bytes()),
         }
@@ -237,7 +234,11 @@ impl TypedValue {
                 let gradient = Gradient::from_bytes(&blob).map_err(ValueDecodeError::Gradient)?;
                 TypedValue::Gradient(gradient)
             }
-            TypedValue::TAG_SHADOW => TypedValue::Shadow(ShadowValue::new(reader.take_blob()?)),
+            TypedValue::TAG_SHADOW => {
+                let shadow =
+                    Shadow::from_bytes(reader.take_array()?).map_err(ValueDecodeError::Shadow)?;
+                TypedValue::Shadow(shadow)
+            }
             TypedValue::TAG_TYPOGRAPHY => {
                 TypedValue::Typography(TypographyValue::new(reader.take_blob()?))
             }
@@ -279,6 +280,8 @@ pub enum ValueDecodeError {
     Color(ColorError),
     /// 그라디언트 payload 디코드 실패(III.4.3).
     Gradient(GradientError),
+    /// 그림자 payload 디코드 실패(III.4.4).
+    Shadow(ShadowError),
 }
 
 impl fmt::Display for ValueDecodeError {
@@ -295,6 +298,7 @@ impl fmt::Display for ValueDecodeError {
             }
             ValueDecodeError::Color(err) => write!(f, "색상 payload 디코드 실패: {err}"),
             ValueDecodeError::Gradient(err) => write!(f, "그라디언트 payload 디코드 실패: {err}"),
+            ValueDecodeError::Shadow(err) => write!(f, "그림자 payload 디코드 실패: {err}"),
         }
     }
 }
@@ -373,6 +377,8 @@ mod tests {
     use super::*;
     use crate::color::ColorSpace;
     use crate::gradient::GradientStop;
+    use crate::shadow::{BlurRadius, Shadow};
+    use crate::value::Vec2;
 
     /// 모든 variant를 대표하는 fixture 목록.
     fn sample_values() -> Vec<TypedValue> {
@@ -403,7 +409,11 @@ mod tests {
                 .unwrap(),
             ])),
             TypedValue::Gradient(Gradient::default()),
-            TypedValue::Shadow(ShadowValue::from_slice(&[9, 8, 7])),
+            TypedValue::Shadow(Shadow::new(
+                Vec2::new(-2.0, 4.0).unwrap(),
+                BlurRadius::new(6.0).unwrap(),
+                Color::new(ColorSpace::Srgb, 0.0, 0.0, 0.0, 0.5).unwrap(),
+            )),
             TypedValue::Typography(TypographyValue::from_slice(&[0xFF])),
             TypedValue::ResourceRef(ResourceRef::new(StableId::new_v7(1234, 5, 6))),
         ]
@@ -437,7 +447,14 @@ mod tests {
                 TypedValue::Color(Color::new(ColorSpace::Srgb, 0.0, 0.0, 0.0, 1.0).unwrap()),
             ),
             (0x0A, TypedValue::Gradient(Gradient::default())),
-            (0x0B, TypedValue::Shadow(ShadowValue::default())),
+            (
+                0x0B,
+                TypedValue::Shadow(Shadow::new(
+                    Vec2::ZERO,
+                    BlurRadius::ZERO,
+                    Color::new(ColorSpace::Srgb, 0.0, 0.0, 0.0, 1.0).unwrap(),
+                )),
+            ),
             (0x0C, TypedValue::Typography(TypographyValue::default())),
             (
                 0x0D,
@@ -559,10 +576,10 @@ mod tests {
     #[test]
     fn opaque_placeholder_preserves_bytes() {
         let payload = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        let value = TypedValue::Shadow(ShadowValue::new(payload.clone()));
+        let value = TypedValue::Typography(TypographyValue::new(payload.clone()));
         let decoded = TypedValue::from_bytes(&value.to_bytes()).unwrap();
         match decoded {
-            TypedValue::Shadow(s) => assert_eq!(s.as_bytes(), payload.as_slice()),
+            TypedValue::Typography(t) => assert_eq!(t.as_bytes(), payload.as_slice()),
             other => panic!("예상과 다른 variant: {other:?}"),
         }
     }
@@ -600,6 +617,25 @@ mod tests {
             Err(ValueDecodeError::Gradient(
                 crate::gradient::GradientError::Truncated
             ))
+        );
+    }
+
+    #[test]
+    fn shadow_variant_rejects_negative_blur() {
+        // 정상 그림자 직렬화 후 blur 바이트를 음수로 바꾸면 디코드가 거부.
+        let shadow = Shadow::new(
+            Vec2::ZERO,
+            BlurRadius::new(2.0).unwrap(),
+            Color::new(ColorSpace::Srgb, 0.0, 0.0, 0.0, 1.0).unwrap(),
+        );
+        let mut bytes = TypedValue::Shadow(shadow).to_bytes();
+        // tag(1) + offset(8) 다음의 blur(4바이트)를 음수로 덮어씀.
+        bytes[9..13].copy_from_slice(&(-2.0f32).to_le_bytes());
+        assert_eq!(
+            TypedValue::from_bytes(&bytes),
+            Err(ValueDecodeError::Shadow(crate::shadow::ShadowError::Blur(
+                crate::shadow::BlurError::Negative
+            )))
         );
     }
 }

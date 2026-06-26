@@ -171,7 +171,9 @@ define_unit!(Scalar, "무차원 스칼라. 같은 단위끼리만 산술 가능.
 struct UnitCompileFailDocs;
 
 /// 2D 벡터(finite 전용). (III.3.3)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// 성분이 [`FiniteF32`](전순서)라 `(x, y)` 사전식 전순서를 파생합니다(canonical 비교용).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Vec2 {
     x: FiniteF32,
     y: FiniteF32,
