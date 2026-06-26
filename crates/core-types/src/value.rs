@@ -84,6 +84,87 @@ impl Hash for FiniteF32 {
     }
 }
 
+/// 유한 산술 결과를 유한 범위로 saturate합니다. finite±finite는 NaN이 될 수 없고
+/// 오버플로 시 ±무한대만 가능하므로, 그 경우 `f32::MAX`/`f32::MIN`으로 고정합니다.
+fn saturating_finite(value: f32) -> FiniteF32 {
+    if value.is_finite() {
+        FiniteF32::new(value).expect("finite")
+    } else if value > 0.0 {
+        FiniteF32::new(f32::MAX).expect("finite")
+    } else {
+        FiniteF32::new(f32::MIN).expect("finite")
+    }
+}
+
+/// 단위 newtype을 정의합니다. 같은 단위끼리만 `Add`/`Sub`가 가능합니다(III.3.2).
+macro_rules! define_unit {
+    ($name:ident, $doc:literal) => {
+        #[doc = $doc]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub struct $name(FiniteF32);
+
+        impl $name {
+            /// 유한 값으로부터 생성합니다(비유한 값은 거부, `-0.0`은 `0.0`으로 정규화).
+            pub fn new(value: f32) -> Result<$name, NonFiniteError> {
+                Ok($name(FiniteF32::new(value)?))
+            }
+
+            /// 내부 `f32` 값.
+            pub const fn get(&self) -> f32 {
+                self.0.get()
+            }
+
+            /// 내부 `FiniteF32`.
+            pub const fn raw(&self) -> FiniteF32 {
+                self.0
+            }
+        }
+
+        impl std::ops::Add for $name {
+            type Output = $name;
+
+            /// 같은 단위끼리 더합니다. 오버플로(±무한대)는 유한 범위로 saturate합니다.
+            fn add(self, rhs: $name) -> $name {
+                $name(saturating_finite(self.0.get() + rhs.0.get()))
+            }
+        }
+
+        impl std::ops::Sub for $name {
+            type Output = $name;
+
+            /// 같은 단위끼리 뺍니다. 오버플로(±무한대)는 유한 범위로 saturate합니다.
+            fn sub(self, rhs: $name) -> $name {
+                $name(saturating_finite(self.0.get() - rhs.0.get()))
+            }
+        }
+    };
+}
+
+define_unit!(Length, "길이(논리 픽셀 등). 같은 단위끼리만 산술 가능.");
+define_unit!(Percentage, "백분율. 같은 단위끼리만 산술 가능.");
+define_unit!(Angle, "각도. 같은 단위끼리만 산술 가능.");
+define_unit!(Duration, "지속 시간. 같은 단위끼리만 산술 가능.");
+define_unit!(Scalar, "무차원 스칼라. 같은 단위끼리만 산술 가능.");
+
+/// 서로 다른 단위는 더할 수 없습니다(컴파일 실패).
+///
+/// ```compile_fail
+/// use stellar_core_types::value::{Length, Percentage};
+/// let l = Length::new(1.0).unwrap();
+/// let p = Percentage::new(1.0).unwrap();
+/// let _ = l + p;
+/// ```
+///
+/// 서로 다른 단위는 대입할 수 없습니다(컴파일 실패).
+///
+/// ```compile_fail
+/// use stellar_core_types::value::{Length, Angle};
+/// let l = Length::new(1.0).unwrap();
+/// let _a: Angle = l;
+/// ```
+#[cfg(doctest)]
+struct UnitCompileFailDocs;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,6 +209,35 @@ mod tests {
         let mut v = [c, a, b];
         v.sort();
         assert_eq!(v, [a, b, c]);
+    }
+
+    #[test]
+    fn units_same_unit_arithmetic() {
+        let a = Length::new(10.0).unwrap();
+        let b = Length::new(2.5).unwrap();
+        assert_eq!((a + b).get(), 12.5);
+        assert_eq!((a - b).get(), 7.5);
+        assert_eq!(Angle::new(90.0).unwrap().get(), 90.0);
+        assert_eq!(
+            Percentage::new(50.0).unwrap().raw(),
+            FiniteF32::new(50.0).unwrap()
+        );
+    }
+
+    #[test]
+    fn units_reject_nonfinite() {
+        assert_eq!(Length::new(f32::NAN), Err(NonFiniteError));
+        assert_eq!(Duration::new(f32::INFINITY), Err(NonFiniteError));
+        assert_eq!(Scalar::new(-0.0).unwrap().get(), 0.0);
+    }
+
+    #[test]
+    fn units_saturate_on_overflow() {
+        let big = Length::new(f32::MAX).unwrap();
+        // MAX + MAX → +무한대를 유한 범위로 saturate.
+        let sum = big + big;
+        assert!(sum.get().is_finite());
+        assert_eq!(sum.get(), f32::MAX);
     }
 
     #[test]
