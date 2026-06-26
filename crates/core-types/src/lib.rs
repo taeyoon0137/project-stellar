@@ -20,6 +20,9 @@ pub mod value;
 /// 색상과 색공간 (III.4.1).
 pub mod color;
 
+/// 그라디언트와 stop (III.4.3).
+pub mod gradient;
+
 /// TypedValue tagged union (III.3.5).
 pub mod typed_value;
 
