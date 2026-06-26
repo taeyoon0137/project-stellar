@@ -8,8 +8,11 @@ pub mod ids;
 /// 구조화 오류 타입 (II.3.1).
 pub mod error;
 
-/// PropertyKey·PropertyPath·참조 (III.2).
+/// PropertyKey·PropertyPath (III.2).
 pub mod property;
+
+/// 강한 타입 참조와 미해결 참조 (III.2.3, III.2.4).
+pub mod reference;
 
 /// 타입드 값과 기하 (III.3).
 pub mod value {}

@@ -308,7 +308,7 @@ tools/xtask/
 |---|---|---|---|---|
 | III.2.1 | `[x]` | `PropertyKey`를 문자열이 아닌 고정 numeric ID로 정의하고 사람이 읽는 이름과 별도 registry를 둡니다. | 이름 변경 후 numeric key가 유지되는 golden test 통과. | III.1.1 |
 | III.2.2 | `[x]` | `PropertyPath`를 `StableId + Vec<PropertyKey> + optional index/key segment`로 정의합니다. 경로는 canonical 비교·정렬이 가능해야 합니다. | 동일 의미 경로가 동일 bytes로 직렬화됩니다. | III.2.1 |
-| III.2.3 | `[ ]` | 강한 타입 참조 `NodeRef`, `TokenRef`, `ComponentRef`, `AssetRef`를 분리합니다. 서로 암묵 변환을 금지합니다. | 잘못된 참조 대입 compile-fail test 통과. | III.1.1 |
+| III.2.3 | `[x]` | 강한 타입 참조 `NodeRef`, `TokenRef`, `ComponentRef`, `AssetRef`를 분리합니다. 서로 암묵 변환을 금지합니다. | 잘못된 참조 대입 compile-fail test 통과. | III.1.1 |
 | III.2.4 | `[ ]` | dangling reference를 표현하는 `UnresolvedRef`를 추가하고 원래 ID·예상 타입·발견 위치를 보존합니다. | resolve 실패 후 정보 손실 없는 round-trip 통과. | III.2.3 |
 
 ### III.3 기본 값과 단위 타입
