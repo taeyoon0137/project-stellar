@@ -337,7 +337,7 @@ tools/xtask/
 | III.5.1 | `[x]` | `OrderKey` 요구사항 fixture를 먼저 작성합니다. 앞·뒤·사이 삽입, 서로 다른 브랜치 동시 삽입, 결정론적 정렬, 키 길이 상한을 검증합니다. 구현은 하지 않습니다. | fixture가 현재 미구현으로 실패하고 요구사항 문서가 존재합니다. | III.1.1 |
 | III.5.2 | `[x]` | 승인된 OrderKey 알고리즘을 `core-types`에 구현합니다. 키는 비교 가능한 byte sequence이며 생성에 난수를 사용하지 않습니다. | 100만 회 임의 삽입 property test에서 중복·순서 역전 없음. | III.5.1, ADR 승인 |
 | III.5.3 | `[x]` | 키가 임계 길이를 넘을 때 부모 단위 재균형 함수를 구현합니다. 재균형은 의미 순서를 바꾸지 않습니다. | 재균형 전후 StableId 순서 동일, 두 번 실행 시 동일 결과. | III.5.2 |
-| III.5.4 | `[ ]` | Semantic Merge에서 독립 삽입이 충돌 없이 합쳐지는 OrderKey fixture를 추가합니다. merge 구현 전에는 fixture data만 만듭니다. | fixture 스키마 검증 통과. | III.5.2 |
+| III.5.4 | `[x]` | Semantic Merge에서 독립 삽입이 충돌 없이 합쳐지는 OrderKey fixture를 추가합니다. merge 구현 전에는 fixture data만 만듭니다. | fixture 스키마 검증 통과. | III.5.2 |
 
 ### III.6 Arena와 SoA 기초
 

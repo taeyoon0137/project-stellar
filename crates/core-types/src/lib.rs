@@ -29,6 +29,9 @@ pub mod shadow;
 /// 자식 순서 키 (III.5).
 pub mod order_key;
 
+/// OrderKey Semantic Merge fixture (III.5.4).
+pub mod order_key_merge_fixtures;
+
 /// TypedValue tagged union (III.3.5).
 pub mod typed_value;
 
