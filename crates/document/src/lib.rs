@@ -4,3 +4,6 @@
 
 /// Generational arena (III.6.1).
 pub mod arena;
+
+/// 공통 node 필드의 SoA 저장 (III.6.2).
+pub mod node_columns;
