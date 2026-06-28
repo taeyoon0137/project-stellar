@@ -357,7 +357,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| IV.1.1 | `[ ]` | `project` crate에 `stellar.yaml` 데이터 구조를 정의합니다. 필수 필드는 format/schema version, project id/name, target profiles, dependencies입니다. | 최소·전체 예제 round-trip 통과. | Phase III |
+| IV.1.1 | `[x]` | `project` crate에 `stellar.yaml` 데이터 구조를 정의합니다. 필수 필드는 format/schema version, project id/name, target profiles, dependencies입니다. | 최소·전체 예제 round-trip 통과. | Phase III |
 | IV.1.2 | `[ ]` | YAML 파서를 래핑해 다중 문서, custom tag, anchor, alias, merge key를 거부합니다. | 각 금지 문법 fixture가 명확한 오류 코드로 실패. | IV.1.1 |
 | IV.1.3 | `[ ]` | 중복 mapping key를 위치 정보와 함께 거부합니다. parser가 마지막 값을 덮어쓰는 동작은 금지합니다. | top-level·nested duplicate fixture 실패. | IV.1.2 |
 | IV.1.4 | `[ ]` | scalar 암묵 타입 추론을 제한합니다. 날짜·yes/no·leading zero 숫자는 문자열로만 허용하거나 명시 오류 처리합니다. | YAML 1.1 혼동 fixture가 기대 타입으로 처리됩니다. | IV.1.2 |
