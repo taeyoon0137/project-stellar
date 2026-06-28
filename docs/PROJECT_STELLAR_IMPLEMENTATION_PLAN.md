@@ -345,7 +345,7 @@ tools/xtask/
 |---|---|---|---|---|
 | III.6.1 | `[x]` | `document`에 generational arena wrapper를 추가합니다. 개별 node box allocation을 공개 API에서 금지합니다. | 100만 insert/remove stress test에서 stale handle 접근이 모두 실패합니다. | III.1.3 |
 | III.6.2 | `[x]` | 공통 node 필드를 SoA column으로 저장하는 최소 `NodeColumns`를 구현합니다. 종류별 payload는 아직 없습니다. | 삽입·삭제 후 모든 column 길이 일치 invariant test 통과. | III.6.1 |
-| III.6.3 | `[ ]` | `DocumentSnapshotView` 읽기 전용 인터페이스를 추가하고 mutable arena reference를 외부 crate에 노출하지 않습니다. | 외부 crate에서 직접 mutate compile-fail test 통과. | III.6.2 |
+| III.6.3 | `[x]` | `DocumentSnapshotView` 읽기 전용 인터페이스를 추가하고 mutable arena reference를 외부 crate에 노출하지 않습니다. | 외부 crate에서 직접 mutate compile-fail test 통과. | III.6.2 |
 
 **Phase III 완료 조건:** 모든 코어 primitive가 결정론적 round-trip과 compile-fail 타입 안전성 테스트를 통과합니다.
 

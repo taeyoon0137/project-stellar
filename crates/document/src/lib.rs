@@ -7,3 +7,6 @@ pub mod arena;
 
 /// 공통 node 필드의 SoA 저장 (III.6.2).
 pub mod node_columns;
+
+/// 문서 소유자와 읽기 전용 스냅샷 view (III.6.3).
+pub mod snapshot;
