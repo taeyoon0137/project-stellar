@@ -11,5 +11,8 @@ pub mod version;
 /// 보안 Git 실행기 (IV.3.3).
 pub mod runner;
 
+/// Git 명령 결과 (IV.3.4).
+pub mod command;
+
 /// Stellar 프로젝트 snapshot 인터페이스(골격용 빈 trait).
 pub trait SnapshotSource {}
