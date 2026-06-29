@@ -5,5 +5,8 @@
 /// Git executable 탐색 (IV.3.1).
 pub mod discovery;
 
+/// Git 버전 probe (IV.3.2).
+pub mod version;
+
 /// Stellar 프로젝트 snapshot 인터페이스(골격용 빈 trait).
 pub trait SnapshotSource {}

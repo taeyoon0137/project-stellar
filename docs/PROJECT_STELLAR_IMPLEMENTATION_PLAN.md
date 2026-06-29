@@ -379,7 +379,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | IV.3.1 | `[x]` | `git-porcelain`에 Git executable 탐색 순서를 구현합니다: 사용자 지정 절대 경로, 알려진 시스템 경로, PATH. shell을 거치지 않습니다. | 경로 우선순위 fixture 통과. | Phase II |
-| IV.3.2 | `[ ]` | `git --version`을 실행해 semantic version을 파싱하고 raw output도 보존합니다. 최소 버전은 아직 강제하지 않습니다. | Git 정상·없음·잘못된 executable fixture 처리. | IV.3.1 |
+| IV.3.2 | `[x]` | `git --version`을 실행해 semantic version을 파싱하고 raw output도 보존합니다. 최소 버전은 아직 강제하지 않습니다. | Git 정상·없음·잘못된 executable fixture 처리. | IV.3.1 |
 | IV.3.3 | `[ ]` | 모든 Git 실행에 argv 배열, cwd, 환경 allowlist, timeout, stdout/stderr byte capture를 사용하는 `GitRunner`를 구현합니다. | shell metacharacter가 명령으로 해석되지 않는 보안 테스트 통과. | IV.3.1 |
 | IV.3.4 | `[ ]` | Git exit code, stdout, stderr를 보존한 `GitCommandResult`를 정의하고 비영 종료를 자동 문자열 성공으로 바꾸지 않습니다. | known failing command fixture 통과. | IV.3.3 |
 | IV.3.5 | `[ ]` | `GitInstallationState`를 Available, Missing, UnsupportedVersion, InstallInProgress, ReprobeRequired로 정의합니다. | state transition fixture 통과. | IV.3.2 |
