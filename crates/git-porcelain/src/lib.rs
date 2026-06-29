@@ -20,5 +20,8 @@ pub mod install_state;
 /// macOS Git 설치 어댑터 (IV.3.6).
 pub mod install_macos;
 
+/// Windows Git 설치 어댑터 (IV.3.7).
+pub mod install_windows;
+
 /// Stellar 프로젝트 snapshot 인터페이스(골격용 빈 trait).
 pub trait SnapshotSource {}
