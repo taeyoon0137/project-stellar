@@ -404,7 +404,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | IV.5.1 | `[x]` | 경로 선택 후 root 검증, YAML parse, Git root 확인만 수행하는 `ProjectProbe`를 구현합니다. 문서 청크는 아직 읽지 않습니다. | 정상·손상 YAML·Git 불일치 fixture 결과 정확. | IV.2.2, IV.1.7 |
-| IV.5.2 | `[ ]` | 프로젝트 신뢰 상태를 OS 사용자 데이터 영역에 `ProjectIdentity` 기준으로 저장하는 인터페이스를 정의합니다. 실제 UI는 나중에 연결합니다. | root rename·symlink alias 정책 fixture 통과. | IV.2.3 |
+| IV.5.2 | `[x]` | 프로젝트 신뢰 상태를 OS 사용자 데이터 영역에 `ProjectIdentity` 기준으로 저장하는 인터페이스를 정의합니다. 실제 UI는 나중에 연결합니다. | root rename·symlink alias 정책 fixture 통과. | IV.2.3 |
 | IV.5.3 | `[ ]` | 신뢰되지 않은 프로젝트 probe는 문서 메타데이터만 읽고 Git 실행, 외부 symlink 대상, 필터 실행을 하지 않게 합니다. | 악성 fixture가 외부 프로세스를 실행하지 않습니다. | IV.5.1, IV.5.2 |
 
 ### IV.6 Clone 후 열기

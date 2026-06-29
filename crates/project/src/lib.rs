@@ -29,3 +29,6 @@ pub mod scaffold;
 
 /// 프로젝트 열기 probe (IV.5.1).
 pub mod probe;
+
+/// 프로젝트 신뢰 상태 (IV.5.2).
+pub mod trust;
