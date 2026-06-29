@@ -413,7 +413,7 @@ tools/xtask/
 |---|---|---|---|---|
 | IV.6.1 | `[x]` | clone request에 URL, parent, folder name을 정의하고 Git URL을 로그·telemetry에서 민감값으로 취급합니다. | 보고서와 로그에 URL 원문이 노출되지 않는 테스트 통과. | IV.3.4, II.3.2 |
 | IV.6.2 | `[x]` | 임시 폴더로 `git clone -- <url> <temp>`를 실행하고 성공 후 최종 폴더로 rename합니다. | clone 실패·취소 시 최종 폴더가 존재하지 않습니다. | IV.6.1 |
-| IV.6.3 | `[ ]` | clone 결과에 `stellar.yaml`이 없으면 열기를 거부하고 clone 결과 보존·삭제 선택은 호출자에게 상태로 반환합니다. 자동 변환은 금지합니다. | 일반 repo fixture에서 `NotAStellarProject`. | IV.6.2, IV.5.1 |
+| IV.6.3 | `[x]` | clone 결과에 `stellar.yaml`이 없으면 열기를 거부하고 clone 결과 보존·삭제 선택은 호출자에게 상태로 반환합니다. 자동 변환은 금지합니다. | 일반 repo fixture에서 `NotAStellarProject`. | IV.6.2, IV.5.1 |
 | IV.6.4 | `[ ]` | valid Stellar repo는 `ProjectProbe`를 통과한 뒤에만 성공으로 반환합니다. | corrupt manifest clone fixture 실패. | IV.6.3 |
 
 **Phase IV 완료 조건:** 새 프로젝트 생성, 자동 최초 커밋, 기존 프로젝트 probe, clone-open 통합 테스트 통과. G2는 저장 엔진 완료 후 최종 통과 처리합니다.

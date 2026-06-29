@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use stellar_git_porcelain::repo::{git_clone, RepoError};
 use stellar_git_porcelain::runner::GitRunner;
 
+use crate::root::MANIFEST_FILE;
+
 /// 로그·보고서에 원문을 노출하지 않는 Git URL.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SensitiveUrl(String);
@@ -146,6 +148,41 @@ fn unique_temp(parent: &Path) -> PathBuf {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     parent.join(format!(".stellar-clone-tmp-{}-{n}", std::process::id()))
+}
+
+/// clone 후 열기 분류 결과.
+#[derive(Debug)]
+pub enum ClonedProject {
+    /// `stellar.yaml`이 있는 Stellar 프로젝트 후보(검증은 IV.6.4).
+    StellarProject {
+        /// clone된 경로.
+        path: PathBuf,
+    },
+    /// `stellar.yaml`이 없어 Stellar 프로젝트가 아님(IV.6.3). clone 결과는 **보존**되며,
+    /// 보존·삭제 선택은 호출자 몫입니다(자동 변환·삭제 없음).
+    NotAStellarProject {
+        /// clone된(보존된) 경로.
+        path: PathBuf,
+    },
+}
+
+/// clone한 뒤 열기를 분류합니다(IV.6.3).
+///
+/// clone 결과에 `stellar.yaml`이 없으면 열기를 거부하고 `NotAStellarProject`를 반환합니다
+/// (clone 결과 **보존**, 보존·삭제는 호출자가 선택; **자동 변환 금지**). `stellar.yaml`이 있으면
+/// `StellarProject` 후보로 반환합니다(매니페스트 검증은 IV.6.4).
+pub fn clone_and_open(
+    request: &CloneRequest,
+    runner: &GitRunner,
+) -> Result<ClonedProject, CloneError> {
+    let path = clone_project(request, runner)?;
+
+    // 자동 변환 금지: stellar.yaml이 없으면 상태로 반환하고 결과를 보존.
+    if path.join(MANIFEST_FILE).is_file() {
+        Ok(ClonedProject::StellarProject { path })
+    } else {
+        Ok(ClonedProject::NotAStellarProject { path })
+    }
 }
 
 #[cfg(test)]
@@ -321,6 +358,37 @@ mod git_clone_tests {
         // 최종 폴더 없음, 임시 폴더도 정리됨(부모 비어 있음).
         assert!(!parent.join("cloned").exists());
         assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn clone_plain_repo_is_not_a_stellar_project_and_preserved() {
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let runner = hermetic_runner(git);
+        let work = temp_dir();
+        // 일반 repo(stellar.yaml 없음).
+        let source = work.join("source");
+        make_source_repo(&runner, &source);
+        let parent = work.join("dest-parent");
+        std::fs::create_dir_all(&parent).unwrap();
+
+        let req = CloneRequest {
+            url: SensitiveUrl::new(source.to_string_lossy().into_owned()),
+            parent_dir: parent.clone(),
+            folder_name: "cloned".to_string(),
+        };
+        match clone_and_open(&req, &runner).unwrap() {
+            ClonedProject::NotAStellarProject { path } => {
+                // clone 결과 보존(자동 삭제·변환 없음).
+                assert!(path.exists());
+                assert!(path.join("file.txt").is_file());
+                assert!(!path.join("stellar.yaml").exists());
+            }
+            other => panic!("예상과 다른 결과: {other:?}"),
+        }
 
         let _ = std::fs::remove_dir_all(&work);
     }
