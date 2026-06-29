@@ -385,7 +385,7 @@ tools/xtask/
 | IV.3.5 | `[x]` | `GitInstallationState`를 Available, Missing, UnsupportedVersion, InstallInProgress, ReprobeRequired로 정의합니다. | state transition fixture 통과. | IV.3.2 |
 | IV.3.6 | `[x]` | macOS에서 사용자가 설치를 승인한 경우에만 `xcode-select --install`을 시작하는 shell adapter를 구현합니다. 자동 관리자 권한 상승과 무승인 설치는 금지합니다. | 승인 없음 process spawn 0, 승인 시 설치 요청 호출. | IV.3.5, II.5.3 |
 | IV.3.7 | `[x]` | Windows에서 사용자가 승인한 경우 `winget install --id Git.Git -e --source winget`을 argv 방식으로 실행하고 WinGet 미존재 시 수동 설치 안내 상태를 반환합니다. | 승인·미승인·winget 없음 fixture 통과. | IV.3.5, II.6.3 |
-| IV.3.8 | `[ ]` | 설치 프로세스 종료 후 Git executable을 다시 탐지하고 version/capability probe를 재실행합니다. 앱 재시작을 필수로 요구하지 않습니다. | mock install 후 Available 전환. | IV.3.6, IV.3.7 |
+| IV.3.8 | `[x]` | 설치 프로세스 종료 후 Git executable을 다시 탐지하고 version/capability probe를 재실행합니다. 앱 재시작을 필수로 요구하지 않습니다. | mock install 후 Available 전환. | IV.3.6, IV.3.7 |
 
 ### IV.4 새 프로젝트 생성
 
