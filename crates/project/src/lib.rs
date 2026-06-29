@@ -23,3 +23,6 @@ pub mod create;
 
 /// 폴더 생성 트랜잭션 (IV.4.2).
 pub mod fs_transaction;
+
+/// 기본 프로젝트 scaffold 생성 (IV.4.3).
+pub mod scaffold;
