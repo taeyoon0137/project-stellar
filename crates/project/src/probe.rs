@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use crate::manifest::{Manifest, ManifestError};
 use crate::root::{validate_project_root, GitLink, RootError, MANIFEST_FILE};
+use crate::trust::TrustStatus;
 use crate::yaml::{load_restricted, LoaderError};
 
 /// probe 성공 결과(문서는 아직 로드하지 않음).
@@ -71,6 +72,62 @@ pub fn probe_project(path: &Path) -> Result<ProjectProbe, ProbeError> {
         git_link,
         manifest,
     })
+}
+
+/// 신뢰 인식 probe 실패.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SafeProbeError {
+    /// 기본 probe 오류.
+    Probe(ProbeError),
+    /// 비신뢰 프로젝트에서 따르지 않는 symlink(외부 대상 가능).
+    UntrustedSymlinkRefused {
+        /// 거부한 경로.
+        path: PathBuf,
+    },
+}
+
+impl std::fmt::Display for SafeProbeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SafeProbeError::Probe(e) => write!(f, "{e}"),
+            SafeProbeError::UntrustedSymlinkRefused { path } => {
+                write!(f, "비신뢰 프로젝트의 symlink를 따르지 않습니다: {path:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SafeProbeError {}
+
+/// 신뢰 상태를 고려한 안전 probe (IV.5.3).
+///
+/// **신뢰되지 않은** 프로젝트는 **문서 메타데이터(`stellar.yaml`)만** 읽습니다. 다음을 하지
+/// 않습니다:
+/// - **Git 실행 안 함**: `.git`은 존재만 확인하고 git 프로세스를 실행하지 않습니다(외부 프로세스
+///   미실행).
+/// - **외부 symlink 미추종**: `stellar.yaml`이 symlink면 따르지 않고 거부합니다(외부 파일 노출
+///   방지).
+/// - **필터 미실행**: clean/smudge 등 어떤 필터도 실행하지 않습니다(git 미실행이므로 구조적으로
+///   불가능).
+pub fn safe_probe(path: &Path, trust: TrustStatus) -> Result<ProjectProbe, SafeProbeError> {
+    if trust == TrustStatus::NotTrusted {
+        // 외부 symlink 거부: 매니페스트가 symlink면 따르지 않음.
+        let manifest_path = path.join(MANIFEST_FILE);
+        if is_symlink(&manifest_path) {
+            return Err(SafeProbeError::UntrustedSymlinkRefused {
+                path: manifest_path,
+            });
+        }
+    }
+    // 메타데이터 전용 probe(git 실행·필터 없음).
+    probe_project(path).map_err(SafeProbeError::Probe)
+}
+
+/// 경로가 symlink인지(대상을 따르지 않고) 확인합니다.
+fn is_symlink(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -174,6 +231,61 @@ mod tests {
         assert_eq!(
             probe_project(&dir.path),
             Err(ProbeError::Root(RootError::MissingManifest))
+        );
+    }
+
+    // --- IV.5.3: 비신뢰 probe 안전 제약 ---
+
+    #[test]
+    fn untrusted_normal_project_reads_metadata_only() {
+        let dir = TempDir::new();
+        write_manifest(&dir.path, &write_canonical(&sample_manifest().to_yaml()));
+        make_git_dir(&dir.path);
+        // 비신뢰여도 정상 매니페스트는 메타데이터를 읽음.
+        let probe = safe_probe(&dir.path, TrustStatus::NotTrusted).unwrap();
+        assert_eq!(probe.manifest, sample_manifest());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_refuses_symlinked_manifest() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new();
+        make_git_dir(&dir.path);
+        // 외부 파일을 가리키는 stellar.yaml symlink(악성).
+        let external = dir.path.join("external-secret.yaml");
+        std::fs::write(&external, "schema_version: 1\n").unwrap();
+        symlink(&external, dir.path.join(MANIFEST_FILE)).unwrap();
+
+        // 비신뢰 → symlink를 따르지 않고 거부.
+        assert!(matches!(
+            safe_probe(&dir.path, TrustStatus::NotTrusted),
+            Err(SafeProbeError::UntrustedSymlinkRefused { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn malicious_fixture_does_not_run_external_process() {
+        // .git/config에 fsmonitor로 marker 생성을 심어, git이 실행되면 marker가 생김.
+        // safe_probe(비신뢰)는 git을 실행하지 않으므로 marker가 생기지 않아야 함.
+        let dir = TempDir::new();
+        write_manifest(&dir.path, &write_canonical(&sample_manifest().to_yaml()));
+        let git = dir.path.join(".git");
+        std::fs::create_dir_all(&git).unwrap();
+        let marker = dir.path.join("PWNED_BY_GIT");
+        std::fs::write(
+            git.join("config"),
+            format!("[core]\n\tfsmonitor = touch {}\n", marker.to_string_lossy()),
+        )
+        .unwrap();
+
+        let probe = safe_probe(&dir.path, TrustStatus::NotTrusted).unwrap();
+        assert_eq!(probe.manifest, sample_manifest());
+        // 외부 프로세스(fsmonitor)가 실행되지 않아 marker가 없음.
+        assert!(
+            !marker.exists(),
+            "비신뢰 probe가 git/외부 프로세스를 실행함(보안 결함)"
         );
     }
 }
