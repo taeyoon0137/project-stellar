@@ -67,6 +67,7 @@ impl std::error::Error for GitRunError {}
 pub struct GitRunner {
     git_path: PathBuf,
     env_allowlist: Vec<OsString>,
+    env_overrides: Vec<(OsString, OsString)>,
     timeout: Duration,
 }
 
@@ -76,8 +77,16 @@ impl GitRunner {
         GitRunner {
             git_path,
             env_allowlist,
+            env_overrides: Vec::new(),
             timeout,
         }
+    }
+
+    /// 자식에 설정할 명시적 환경 변수(allowlist 이후 적용). Git 동작 제어(`GIT_CONFIG_GLOBAL`,
+    /// `GIT_TERMINAL_PROMPT=0` 등)에 사용합니다. `env_clear` 기반 보안은 유지됩니다.
+    pub fn with_env_overrides(mut self, overrides: Vec<(OsString, OsString)>) -> GitRunner {
+        self.env_overrides = overrides;
+        self
     }
 
     /// 주어진 argv와 cwd로 Git을 실행합니다(shell 미사용). stdout/stderr를 캡처합니다.
@@ -96,6 +105,10 @@ impl GitRunner {
             if let Some(value) = std::env::var_os(name) {
                 command.env(name, value);
             }
+        }
+        // 명시적 override(allowlist 이후 적용).
+        for (key, value) in &self.env_overrides {
+            command.env(key, value);
         }
 
         let mut child = command
@@ -224,6 +237,27 @@ mod tests {
                 "shell 주입으로 {name} 생성됨(보안 결함)"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn env_overrides_are_applied_to_child() {
+        let dir = TempDir::new();
+        let runner = GitRunner::new(
+            PathBuf::from("/usr/bin/env"),
+            Vec::new(),
+            Duration::from_millis(5_000),
+        )
+        .with_env_overrides(vec![(
+            OsString::from("STELLAR_OVERRIDE"),
+            OsString::from("overridden"),
+        )]);
+        let out = runner.run(&[], &dir.path).unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains("STELLAR_OVERRIDE=overridden"),
+            "override 미적용: {stdout}"
+        );
     }
 
     #[cfg(unix)]

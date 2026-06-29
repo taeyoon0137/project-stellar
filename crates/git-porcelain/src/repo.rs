@@ -68,6 +68,93 @@ pub fn git_init_main(
     Ok(())
 }
 
+/// 사용자 identity(`user.name`/`user.email`) 존재 상태.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdentityStatus {
+    /// 이름·이메일 모두 있음.
+    Present,
+    /// 일부 누락.
+    Missing {
+        /// `user.name` 누락.
+        name_missing: bool,
+        /// `user.email` 누락.
+        email_missing: bool,
+    },
+}
+
+/// staging 후 커밋 준비 상태.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitReadiness {
+    /// 커밋 진행 가능.
+    Ready,
+    /// identity 누락으로 커밋 단계 중단(파일은 그대로 둠).
+    HaltedMissingIdentity {
+        /// `user.name` 누락.
+        name_missing: bool,
+        /// `user.email` 누락.
+        email_missing: bool,
+    },
+}
+
+/// `git add --all`로 모든 변경을 stage 합니다.
+pub fn git_add_all(runner: &GitRunner, dir: &Path) -> Result<(), RepoError> {
+    let output = runner
+        .run(&argv(["add", "--all"]), dir)
+        .map_err(RepoError::Run)?;
+    GitCommandResult::from(output)
+        .require_success()
+        .map_err(RepoError::Git)?;
+    Ok(())
+}
+
+/// `user.name`/`user.email`(유효 config) 존재를 검사합니다.
+pub fn check_user_identity(runner: &GitRunner, dir: &Path) -> Result<IdentityStatus, RepoError> {
+    let name_missing = !config_value_present(runner, dir, "user.name")?;
+    let email_missing = !config_value_present(runner, dir, "user.email")?;
+    if name_missing || email_missing {
+        Ok(IdentityStatus::Missing {
+            name_missing,
+            email_missing,
+        })
+    } else {
+        Ok(IdentityStatus::Present)
+    }
+}
+
+/// `git config <key>`가 비어 있지 않은 값을 반환하는지 확인합니다.
+fn config_value_present(runner: &GitRunner, dir: &Path, key: &str) -> Result<bool, RepoError> {
+    let output = runner
+        .run(&argv(["config", key]), dir)
+        .map_err(RepoError::Run)?;
+    // 키가 없으면 git config는 비영 종료(코드 1). 그 경우 누락으로 봅니다(오류 아님).
+    if output.exit_code == Some(0) {
+        Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty())
+    } else {
+        Ok(false)
+    }
+}
+
+/// 기본 파일을 `git add --all` 한 뒤 identity를 검사해 커밋 준비 상태를 반환합니다.
+///
+/// identity가 누락되면 **파일은 그대로 두고**(롤백하지 않음) `HaltedMissingIdentity`를
+/// 반환합니다. 실제 커밋(IV.4.6)은 `Ready`일 때만 진행합니다.
+pub fn stage_and_check_identity(
+    runner: &GitRunner,
+    dir: &Path,
+) -> Result<CommitReadiness, RepoError> {
+    git_add_all(runner, dir)?;
+    match check_user_identity(runner, dir)? {
+        IdentityStatus::Present => Ok(CommitReadiness::Ready),
+        IdentityStatus::Missing {
+            name_missing,
+            email_missing,
+        } => Ok(CommitReadiness::HaltedMissingIdentity {
+            name_missing,
+            email_missing,
+        }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +226,68 @@ mod tests {
         );
         // Git을 실행하지 않았으므로 .git이 생기지 않음.
         assert!(!dir.join(".git").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 머신 global/system config와 무관하게 동작하도록 GIT_CONFIG_*를 비웁니다.
+    #[cfg(unix)]
+    fn hermetic_runner(git: PathBuf) -> GitRunner {
+        git_runner(git).with_env_overrides(vec![
+            (
+                OsString::from("GIT_CONFIG_GLOBAL"),
+                OsString::from("/dev/null"),
+            ),
+            (
+                OsString::from("GIT_CONFIG_SYSTEM"),
+                OsString::from("/dev/null"),
+            ),
+        ])
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn identity_present_is_ready_and_keeps_files() {
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let dir = temp_dir();
+        let runner = hermetic_runner(git);
+        runner.run(&argv(["init"]), &dir).unwrap();
+        // 로컬 identity 설정.
+        runner
+            .run(&argv(["config", "user.name", "Test User"]), &dir)
+            .unwrap();
+        runner
+            .run(&argv(["config", "user.email", "test@example.com"]), &dir)
+            .unwrap();
+        std::fs::write(dir.join("stellar.yaml"), b"schema_version: 1\n").unwrap();
+
+        let readiness = stage_and_check_identity(&runner, &dir).unwrap();
+        assert_eq!(readiness, CommitReadiness::Ready);
+        // add는 파일을 지우지 않음.
+        assert!(dir.join("stellar.yaml").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn identity_missing_halts_but_keeps_files() {
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let dir = temp_dir();
+        // identity를 설정하지 않고 hermetic(전역/시스템 config 비움) → 누락.
+        let runner = hermetic_runner(git);
+        runner.run(&argv(["init"]), &dir).unwrap();
+        std::fs::write(dir.join("stellar.yaml"), b"schema_version: 1\n").unwrap();
+
+        let readiness = stage_and_check_identity(&runner, &dir).unwrap();
+        assert!(
+            matches!(readiness, CommitReadiness::HaltedMissingIdentity { .. }),
+            "identity 누락인데 중단되지 않음: {readiness:?}"
+        );
+        // 중단해도 파일은 남음.
+        assert!(dir.join("stellar.yaml").is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
