@@ -14,5 +14,8 @@ pub mod runner;
 /// Git 명령 결과 (IV.3.4).
 pub mod command;
 
+/// Git 설치 상태 머신 (IV.3.5).
+pub mod install_state;
+
 /// Stellar 프로젝트 snapshot 인터페이스(골격용 빈 trait).
 pub trait SnapshotSource {}
