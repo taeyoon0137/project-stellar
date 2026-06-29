@@ -2,10 +2,10 @@
 //!
 //! `yaml-rust2` event API를 감싸 단일 document의 매핑/시퀀스/스칼라만 허용합니다. anchor,
 //! alias, custom tag(core schema·verbatim 포함), merge key(`<<`), 비스칼라(복합) 매핑 키,
-//! 다중 document를 위치(line/column)를 포함한 고유 오류로 거부합니다. 스칼라는 암시적 타입
-//! 추론 없이 문자열로 보존합니다(IV.1.4).
+//! 중복 매핑 키, 다중 document를 위치(line/column)를 포함한 고유 오류로 거부합니다. 스칼라는
+//! 암시적 타입 추론 없이 문자열로 보존합니다(IV.1.4).
 //!
-//! 중복 키 거부는 IV.1.3에서 추가합니다.
+//! 중복 키는 같은 매핑 안에서만 판정하며, 마지막 값으로 덮어쓰지 않고 거부합니다(IV.1.3).
 
 use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
 use yaml_rust2::scanner::Marker;
@@ -25,6 +25,8 @@ pub enum LoaderErrorKind {
     MergeKey,
     /// 비스칼라(복합) 매핑 키.
     NonScalarKey,
+    /// 중복 매핑 키.
+    DuplicateKey,
     /// 다중 document.
     MultipleDocuments,
     /// 빈 document.
@@ -42,6 +44,7 @@ impl LoaderErrorKind {
             LoaderErrorKind::CustomTag => "custom-tag",
             LoaderErrorKind::MergeKey => "merge-key",
             LoaderErrorKind::NonScalarKey => "non-scalar-key",
+            LoaderErrorKind::DuplicateKey => "duplicate-key",
             LoaderErrorKind::MultipleDocuments => "multiple-documents",
             LoaderErrorKind::EmptyDocument => "empty-document",
             LoaderErrorKind::Parse => "parse",
@@ -129,11 +132,17 @@ impl RestrictedReceiver {
             Some(Container::Mapping { pairs, pending_key }) => {
                 if pending_key.is_none() {
                     // 키 위치: 스칼라만 허용. `<<`는 merge key로 거부, 시퀀스·매핑 복합 키도 거부.
+                    // 같은 매핑 안의 중복 키는 거부합니다(마지막 값 덮어쓰기 금지).
                     match &value {
                         YamlValue::Scalar(key) if key == "<<" => {
                             return Err(LoaderErrorKind::MergeKey)
                         }
-                        YamlValue::Scalar(_) => *pending_key = Some(value),
+                        YamlValue::Scalar(_) => {
+                            if pairs.iter().any(|(existing, _)| existing == &value) {
+                                return Err(LoaderErrorKind::DuplicateKey);
+                            }
+                            *pending_key = Some(value);
+                        }
                         _ => return Err(LoaderErrorKind::NonScalarKey),
                     }
                 } else {
@@ -150,6 +159,7 @@ impl RestrictedReceiver {
             let message = match kind {
                 LoaderErrorKind::MergeKey => "merge key(<<)는 허용되지 않습니다",
                 LoaderErrorKind::NonScalarKey => "매핑 키는 스칼라만 허용됩니다",
+                LoaderErrorKind::DuplicateKey => "중복 매핑 키는 허용되지 않습니다",
                 _ => "허용되지 않는 구조입니다",
             };
             self.set_error(kind, mark, message);
@@ -378,6 +388,49 @@ mod tests {
     fn rejects_document_end_marker_multidoc() {
         // `...` 뒤에 새 document가 오면 다중 document로 거부.
         assert_eq!(err("a: 1\n...\nb: 2\n").kind.code(), "multiple-documents");
+    }
+
+    #[test]
+    fn rejects_top_level_duplicate_key() {
+        // 마지막 값 덮어쓰기 금지: 중복 키는 거부.
+        let e = err("a: 1\na: 2\n");
+        assert_eq!(e.kind.code(), "duplicate-key");
+        // 두 번째 키 위치를 가리킴.
+        assert_eq!(e.line, 2);
+    }
+
+    #[test]
+    fn rejects_nested_duplicate_key() {
+        let e = err("m:\n  x: 1\n  x: 2\n");
+        assert_eq!(e.kind.code(), "duplicate-key");
+        assert_eq!(e.line, 3);
+    }
+
+    #[test]
+    fn rejects_flow_duplicate_key() {
+        assert_eq!(err("{a: 1, a: 2}\n").kind.code(), "duplicate-key");
+    }
+
+    #[test]
+    fn rejects_quoted_and_plain_same_key() {
+        // 따옴표 여부와 무관하게 같은 스칼라 키면 중복.
+        assert_eq!(err("a: 1\n\"a\": 2\n").kind.code(), "duplicate-key");
+    }
+
+    #[test]
+    fn allows_same_key_in_different_mappings() {
+        // 서로 다른 매핑(스코프)의 동일 키는 중복이 아님.
+        let v = load_restricted("a:\n  x: 1\nb:\n  x: 2\n").unwrap();
+        assert_eq!(
+            v.get("a").unwrap().get("x").and_then(YamlValue::as_scalar),
+            Some("1")
+        );
+        assert_eq!(
+            v.get("b").unwrap().get("x").and_then(YamlValue::as_scalar),
+            Some("2")
+        );
+        // 시퀀스 안의 두 매핑이 같은 키를 가져도 각자 독립.
+        assert!(load_restricted("- k: 1\n- k: 2\n").is_ok());
     }
 
     #[test]
