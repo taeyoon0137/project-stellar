@@ -11,3 +11,6 @@ pub mod lock;
 
 /// 플랫폼 공통 폴더 이름 검증기 (IV.2.1).
 pub mod folder_name;
+
+/// 프로젝트 root 검증기 (IV.2.2).
+pub mod root;
