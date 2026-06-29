@@ -143,6 +143,7 @@ dependencies = [
  "stellar-dependencies",
  "stellar-document",
  "stellar-storage",
+ "yaml-rust2",
 ]
 
 [[package]]
