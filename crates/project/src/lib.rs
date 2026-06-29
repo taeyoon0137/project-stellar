@@ -20,3 +20,6 @@ pub mod identity;
 
 /// 새 프로젝트 생성 요청과 사전 검증 (IV.4.1).
 pub mod create;
+
+/// 폴더 생성 트랜잭션 (IV.4.2).
+pub mod fs_transaction;
