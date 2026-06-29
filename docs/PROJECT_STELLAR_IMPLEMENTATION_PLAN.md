@@ -391,7 +391,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| IV.4.1 | `[ ]` | `ProjectCreateRequest { parent_dir, folder_name, project_name }`를 정의하고 사전 검증만 수행하는 함수부터 구현합니다. | 존재하는 경로·금지 이름·권한 없음 fixture 실패. | IV.2.1, IV.3.2 |
+| IV.4.1 | `[x]` | `ProjectCreateRequest { parent_dir, folder_name, project_name }`를 정의하고 사전 검증만 수행하는 함수부터 구현합니다. | 존재하는 경로·금지 이름·권한 없음 fixture 실패. | IV.2.1, IV.3.2 |
 | IV.4.2 | `[ ]` | 검증 후 새 폴더를 생성하고 실패 시 생성한 빈 폴더를 제거하는 filesystem transaction helper를 구현합니다. | 각 단계 fault injection에서 원래 parent가 오염되지 않습니다. | IV.4.1 |
 | IV.4.3 | `[ ]` | 기본 `stellar.yaml`, 빈 `stellar.lock.yaml`, `.gitignore`, `.gitattributes`, `design/`, `assets/`를 임시 staging directory에 생성합니다. | golden scaffold와 byte-identical. | IV.1.5, IV.1.7, IV.4.2 |
 | IV.4.4 | `[ ]` | 새 폴더에서 `git init -b main`을 시스템 Git으로 실행합니다. Git이 `-b`를 지원하지 않으면 지원 오류를 내고 대체 명령을 추측하지 않습니다. | branch가 정확히 `main`. | IV.3.4, IV.4.3 |
