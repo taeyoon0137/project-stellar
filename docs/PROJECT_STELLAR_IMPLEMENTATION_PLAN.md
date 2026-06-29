@@ -394,7 +394,7 @@ tools/xtask/
 | IV.4.1 | `[x]` | `ProjectCreateRequest { parent_dir, folder_name, project_name }`를 정의하고 사전 검증만 수행하는 함수부터 구현합니다. | 존재하는 경로·금지 이름·권한 없음 fixture 실패. | IV.2.1, IV.3.2 |
 | IV.4.2 | `[x]` | 검증 후 새 폴더를 생성하고 실패 시 생성한 빈 폴더를 제거하는 filesystem transaction helper를 구현합니다. | 각 단계 fault injection에서 원래 parent가 오염되지 않습니다. | IV.4.1 |
 | IV.4.3 | `[x]` | 기본 `stellar.yaml`, 빈 `stellar.lock.yaml`, `.gitignore`, `.gitattributes`, `design/`, `assets/`를 임시 staging directory에 생성합니다. | golden scaffold와 byte-identical. | IV.1.5, IV.1.7, IV.4.2 |
-| IV.4.4 | `[ ]` | 새 폴더에서 `git init -b main`을 시스템 Git으로 실행합니다. Git이 `-b`를 지원하지 않으면 지원 오류를 내고 대체 명령을 추측하지 않습니다. | branch가 정확히 `main`. | IV.3.4, IV.4.3 |
+| IV.4.4 | `[x]` | 새 폴더에서 `git init -b main`을 시스템 Git으로 실행합니다. Git이 `-b`를 지원하지 않으면 지원 오류를 내고 대체 명령을 추측하지 않습니다. | branch가 정확히 `main`. | IV.3.4, IV.4.3 |
 | IV.4.5 | `[ ]` | 기본 파일을 `git add --all`하고 user.name/email 존재를 검사합니다. 누락 시 파일은 남기되 커밋 단계에서 중단 상태를 반환합니다. | identity 있음·없음 fixture 결과 정확. | IV.4.4 |
 | IV.4.6 | `[ ]` | 커밋 메시지 `New Stellar project initialized`로 최초 커밋을 생성합니다. | `git log -1 --format=%B`가 정확히 일치하고 working tree clean. | IV.4.5 |
 | IV.4.7 | `[ ]` | 생성 중 Git init 이전 실패와 이후 실패의 rollback 정책을 구현합니다. Git repo 생성 후 commit 실패는 폴더를 삭제하지 않고 `InitializationIncomplete`로 반환합니다. | fault injection 단계별 기대 상태 통과. | IV.4.2~IV.4.6 |

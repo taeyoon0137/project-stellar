@@ -26,5 +26,8 @@ pub mod install_windows;
 /// 설치 후 재탐지·재probe (IV.3.8).
 pub mod reprobe;
 
+/// 저장소 porcelain 연산 (IV.4.4~).
+pub mod repo;
+
 /// Stellar 프로젝트 snapshot 인터페이스(골격용 빈 trait).
 pub trait SnapshotSource {}
