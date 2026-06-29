@@ -134,6 +134,25 @@ fn config_value_present(runner: &GitRunner, dir: &Path, key: &str) -> Result<boo
     }
 }
 
+/// 최초 커밋 메시지(고정).
+pub const INITIAL_COMMIT_MESSAGE: &str = "New Stellar project initialized";
+
+/// 주어진 메시지로 커밋합니다(argv). identity는 호출 전에 보장되어야 합니다.
+pub fn git_commit(runner: &GitRunner, dir: &Path, message: &str) -> Result<(), RepoError> {
+    let output = runner
+        .run(&argv(["commit", "-m", message]), dir)
+        .map_err(RepoError::Run)?;
+    GitCommandResult::from(output)
+        .require_success()
+        .map_err(RepoError::Git)?;
+    Ok(())
+}
+
+/// 최초 커밋([`INITIAL_COMMIT_MESSAGE`])을 생성합니다.
+pub fn create_initial_commit(runner: &GitRunner, dir: &Path) -> Result<(), RepoError> {
+    git_commit(runner, dir, INITIAL_COMMIT_MESSAGE)
+}
+
 /// 기본 파일을 `git add --all` 한 뒤 identity를 검사해 커밋 준비 상태를 반환합니다.
 ///
 /// identity가 누락되면 **파일은 그대로 두고**(롤백하지 않음) `HaltedMissingIdentity`를
@@ -288,6 +307,44 @@ mod tests {
         );
         // 중단해도 파일은 남음.
         assert!(dir.join("stellar.yaml").is_file());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn initial_commit_has_exact_message_and_clean_tree() {
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let dir = temp_dir();
+        let runner = hermetic_runner(git);
+        runner.run(&argv(["init"]), &dir).unwrap();
+        runner
+            .run(&argv(["config", "user.name", "Test User"]), &dir)
+            .unwrap();
+        runner
+            .run(&argv(["config", "user.email", "test@example.com"]), &dir)
+            .unwrap();
+        std::fs::write(dir.join("stellar.yaml"), b"schema_version: 1\n").unwrap();
+
+        git_add_all(&runner, &dir).unwrap();
+        create_initial_commit(&runner, &dir).unwrap();
+
+        // git log -1 --format=%B가 정확히 메시지와 일치.
+        let log = runner
+            .run(&argv(["log", "-1", "--format=%B"]), &dir)
+            .unwrap();
+        let body = String::from_utf8_lossy(&log.stdout);
+        assert_eq!(body.trim_end(), INITIAL_COMMIT_MESSAGE);
+
+        // working tree clean.
+        let status = runner.run(&argv(["status", "--porcelain"]), &dir).unwrap();
+        assert!(
+            status.stdout.is_empty(),
+            "working tree가 깨끗하지 않음: {}",
+            String::from_utf8_lossy(&status.stdout)
+        );
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
