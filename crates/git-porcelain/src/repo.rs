@@ -4,6 +4,7 @@
 //! `-b`는 Git 2.28+에서만 지원하므로, 구버전에서는 **대체 명령을 추측하지 않고** 지원 오류를
 //! 반환합니다.
 
+use std::ffi::OsString;
 use std::path::Path;
 
 use crate::command::{GitCommandFailure, GitCommandResult};
@@ -132,6 +133,24 @@ fn config_value_present(runner: &GitRunner, dir: &Path, key: &str) -> Result<boo
     } else {
         Ok(false)
     }
+}
+
+/// `git clone -- <url> <dest>`를 실행합니다(argv, shell 없음).
+///
+/// `--`로 URL이 플래그로 해석되지 않게 하고, `dest`를 명시합니다. cwd는 `dest`의 부모입니다.
+pub fn git_clone(runner: &GitRunner, url: &str, dest: &Path) -> Result<(), RepoError> {
+    let cwd = dest.parent().unwrap_or(dest);
+    let args = vec![
+        OsString::from("clone"),
+        OsString::from("--"),
+        OsString::from(url),
+        dest.as_os_str().to_os_string(),
+    ];
+    let output = runner.run(&args, cwd).map_err(RepoError::Run)?;
+    GitCommandResult::from(output)
+        .require_success()
+        .map_err(RepoError::Git)?;
+    Ok(())
 }
 
 /// 최초 커밋 메시지(고정).
