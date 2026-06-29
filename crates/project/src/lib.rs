@@ -8,3 +8,6 @@ pub mod manifest;
 
 /// `stellar.lock.yaml` 잠금 파일 데이터 모델 (IV.1.6).
 pub mod lock;
+
+/// 플랫폼 공통 폴더 이름 검증기 (IV.2.1).
+pub mod folder_name;
