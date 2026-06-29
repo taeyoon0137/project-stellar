@@ -4,8 +4,9 @@
 //! 또는 gitfile)가 모두 있어야 합니다. `.git`이 상위 경로에만 있는 하위 폴더는 root가 아닙니다
 //! (이 검증기는 상위로 거슬러 올라가지 않습니다).
 //!
-//! 본 검증기는 **존재 여부와 동일 경로**만 확인합니다. `stellar.yaml` 내용 파싱은 IV.5,
-//! Git repo지만 매니페스트가 없는 경우의 사용자 거부는 IV.2.4가 담당합니다.
+//! 본 검증기는 **존재 여부와 동일 경로**만 확인합니다. `stellar.yaml` 내용 파싱은 IV.5가
+//! 담당합니다. 일반 Git repo지만 매니페스트가 없는 경우의 사용자 안내 거부는
+//! [`classify_project_open`](IV.2.4)이 담당합니다.
 
 use std::path::Path;
 
@@ -60,6 +61,51 @@ pub fn validate_project_root(path: &Path) -> Result<GitLink, RootError> {
         Ok(GitLink::GitFile)
     } else {
         Err(RootError::MissingGit)
+    }
+}
+
+/// 프로젝트 열기 분류 거부 사유 (IV.2.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpenError {
+    /// `.git`은 있지만 `stellar.yaml`이 없음 → Stellar 프로젝트가 아님(자동 변환 안 함).
+    NotAStellarProject,
+    /// `.git`이 없어 Git 저장소가 아님.
+    NotARepository,
+}
+
+impl std::fmt::Display for OpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OpenError::NotAStellarProject => f.write_str(
+                "Git 저장소이지만 stellar.yaml이 없어 Stellar 프로젝트가 아닙니다. \
+                 자동 변환은 지원하지 않습니다.",
+            ),
+            OpenError::NotARepository => f.write_str(".git이 없어 Git 저장소가 아닙니다."),
+        }
+    }
+}
+
+impl std::error::Error for OpenError {}
+
+/// 경로를 Stellar 프로젝트로 열 수 있는지 분류합니다(IV.2.4).
+///
+/// 유효하면 [`GitLink`]를, 일반 Git repo지만 매니페스트가 없으면 [`OpenError::NotAStellarProject`],
+/// Git repo가 아니면 [`OpenError::NotARepository`]를 반환합니다. **자동 변환을 하지 않습니다**
+/// (파일을 만들거나 고치지 않음).
+pub fn classify_project_open(path: &Path) -> Result<GitLink, OpenError> {
+    let manifest = path.join(MANIFEST_FILE).is_file();
+    let git = path.join(GIT_LINK);
+    let git_kind = if git.is_dir() {
+        Some(GitLink::Directory)
+    } else if git.is_file() {
+        Some(GitLink::GitFile)
+    } else {
+        None
+    };
+    match (manifest, git_kind) {
+        (true, Some(kind)) => Ok(kind),
+        (false, Some(_)) => Err(OpenError::NotAStellarProject),
+        (_, None) => Err(OpenError::NotARepository),
     }
 }
 
@@ -164,5 +210,58 @@ mod tests {
             validate_project_root(&dir.path),
             Err(RootError::MissingManifest)
         );
+    }
+
+    // --- IV.2.4: 열기 분류 ---
+
+    #[test]
+    fn git_repo_without_manifest_is_not_a_stellar_project() {
+        // 일반 Git repo(.git 디렉터리)이지만 stellar.yaml 없음.
+        let dir = TempDir::new();
+        std::fs::create_dir_all(dir.child(GIT_LINK)).unwrap();
+        assert_eq!(
+            classify_project_open(&dir.path),
+            Err(OpenError::NotAStellarProject)
+        );
+        // gitfile(worktree)인 경우에도 동일.
+        let dir2 = TempDir::new();
+        write_file(dir2.child(GIT_LINK), "gitdir: /repo/.git\n");
+        assert_eq!(
+            classify_project_open(&dir2.path),
+            Err(OpenError::NotAStellarProject)
+        );
+    }
+
+    #[test]
+    fn valid_stellar_project_classifies_ok() {
+        let dir = TempDir::new();
+        write_file(dir.child(MANIFEST_FILE), "schema_version: 1\n");
+        std::fs::create_dir_all(dir.child(GIT_LINK)).unwrap();
+        assert_eq!(classify_project_open(&dir.path), Ok(GitLink::Directory));
+    }
+
+    #[test]
+    fn non_repository_is_classified_as_not_a_repository() {
+        // .git 없음(매니페스트 유무 무관).
+        let empty = TempDir::new();
+        assert_eq!(
+            classify_project_open(&empty.path),
+            Err(OpenError::NotARepository)
+        );
+        let manifest_only = TempDir::new();
+        write_file(manifest_only.child(MANIFEST_FILE), "schema_version: 1\n");
+        assert_eq!(
+            classify_project_open(&manifest_only.path),
+            Err(OpenError::NotARepository)
+        );
+    }
+
+    #[test]
+    fn classify_does_not_create_manifest() {
+        // 자동 변환 없음: 분류 후에도 stellar.yaml이 생기지 않음.
+        let dir = TempDir::new();
+        std::fs::create_dir_all(dir.child(GIT_LINK)).unwrap();
+        let _ = classify_project_open(&dir.path);
+        assert!(!dir.child(MANIFEST_FILE).exists());
     }
 }

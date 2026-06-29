@@ -372,7 +372,7 @@ tools/xtask/
 | IV.2.1 | `[x]` | 플랫폼 공통 폴더 이름 검증기를 구현합니다. Windows 예약 문자·이름, trailing space/dot, 대소문자 충돌, 길이 정책을 적용합니다. | 각 예약 이름과 Unicode NFC fixture 통과. | III.3.4 |
 | IV.2.2 | `[x]` | 프로젝트 root는 `stellar.yaml`과 `.git` directory 또는 gitfile이 같은 경로에 있어야 한다는 검증기를 구현합니다. | 정상 repo, linked worktree, 상위 `.git`만 있는 하위 폴더 fixture 결과가 정확합니다. | IV.1.1 |
 | IV.2.3 | `[x]` | `ProjectIdentity`를 project StableId와 canonical root path의 조합으로 생성합니다. symlink 경로와 실제 경로 중복 open 판정을 위한 canonical target도 별도 저장합니다. | 같은 target의 두 symlink 경로가 동일 identity target으로 판정됩니다. | III.1.1, IV.2.1 |
-| IV.2.4 | `[ ]` | 일반 Git repo지만 `stellar.yaml`이 없는 경우 `NotAStellarProject`로 거부합니다. 자동 변환 코드는 만들지 않습니다. | fixture repo가 정확한 안내 오류를 반환합니다. | IV.2.2 |
+| IV.2.4 | `[x]` | 일반 Git repo지만 `stellar.yaml`이 없는 경우 `NotAStellarProject`로 거부합니다. 자동 변환 코드는 만들지 않습니다. | fixture repo가 정확한 안내 오류를 반환합니다. | IV.2.2 |
 
 ### IV.3 시스템 Git 탐지 기초
 
