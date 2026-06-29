@@ -362,7 +362,7 @@ tools/xtask/
 | IV.1.3 | `[x]` | 중복 mapping key를 위치 정보와 함께 거부합니다. parser가 마지막 값을 덮어쓰는 동작은 금지합니다. | top-level·nested duplicate fixture 실패. | IV.1.2 |
 | IV.1.4 | `[x]` | scalar 암묵 타입 추론을 제한합니다. 날짜·yes/no·leading zero 숫자는 문자열로만 허용하거나 명시 오류 처리합니다. | YAML 1.1 혼동 fixture가 기대 타입으로 처리됩니다. | IV.1.2 |
 | IV.1.5 | `[x]` | canonical YAML writer를 구현합니다. 키 순서, 들여쓰기 2칸, LF, 마지막 newline을 고정합니다. 주석 보존은 지원하지 않습니다. | 동일 모델을 100회 기록해 byte-identical. | IV.1.1 |
-| IV.1.6 | `[ ]` | `stellar.lock.yaml` 모델을 별도로 정의합니다. resolved dependency는 logical ID, source, exact commit, content hash, schema version, dependency path를 포함합니다. | 다중 버전 동일 라이브러리 fixture round-trip 통과. | IV.1.1 |
+| IV.1.6 | `[x]` | `stellar.lock.yaml` 모델을 별도로 정의합니다. resolved dependency는 logical ID, source, exact commit, content hash, schema version, dependency path를 포함합니다. | 다중 버전 동일 라이브러리 fixture round-trip 통과. | IV.1.1 |
 | IV.1.7 | `[ ]` | lock writer는 사용자 편집 필드를 받지 않고 전부 resolver 결과에서 생성되게 합니다. | 임의 unknown field가 있는 lockfile을 거부하고 원본을 수정하지 않습니다. | IV.1.6 |
 
 ### IV.2 프로젝트 루트 검증
