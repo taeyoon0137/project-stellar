@@ -8,5 +8,8 @@ pub mod discovery;
 /// Git 버전 probe (IV.3.2).
 pub mod version;
 
+/// 보안 Git 실행기 (IV.3.3).
+pub mod runner;
+
 /// Stellar 프로젝트 snapshot 인터페이스(골격용 빈 trait).
 pub trait SnapshotSource {}
