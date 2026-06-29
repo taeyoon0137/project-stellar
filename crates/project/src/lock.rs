@@ -100,6 +100,14 @@ impl Lockfile {
         ])
     }
 
+    /// 잠금 파일을 canonical 텍스트로 기록합니다.
+    ///
+    /// 입력은 resolver 결과를 담은 [`Lockfile`]뿐이며, 사용자 편집 필드를 받는 경로가 없습니다.
+    /// 고정 필드 모델만 직렬화하므로 알려진 필드 외에는 기록될 수 없습니다(IV.1.7).
+    pub fn write(&self) -> String {
+        crate::yaml::write_canonical(&self.to_yaml())
+    }
+
     /// [`YamlValue`] 트리에서 잠금 파일을 만듭니다. 알 수 없는 키·타입 불일치를 거부합니다.
     pub fn from_yaml(value: &YamlValue) -> Result<Lockfile, LockError> {
         let top = mapping_of(value, "<root>")?;
@@ -408,6 +416,64 @@ mod tests {
             Lockfile::from_yaml(&yaml),
             Err(LockError::InvalidSchemaVersion { .. })
         ));
+    }
+
+    #[test]
+    fn writer_emits_only_resolver_fields() {
+        // 생성된 잠금 파일은 모델의 고정 필드만 포함합니다(사용자 편집 필드 없음).
+        let text = multi_version_lock().write();
+        let value = load_restricted(&text).unwrap();
+
+        let top_keys: Vec<&str> = value
+            .as_mapping()
+            .unwrap()
+            .iter()
+            .filter_map(|(k, _)| k.as_scalar())
+            .collect();
+        assert_eq!(top_keys, vec!["schema_version", "resolved"]);
+
+        for entry in value.get("resolved").unwrap().as_sequence().unwrap() {
+            let entry_keys: Vec<&str> = entry
+                .as_mapping()
+                .unwrap()
+                .iter()
+                .filter_map(|(k, _)| k.as_scalar())
+                .collect();
+            assert_eq!(
+                entry_keys,
+                vec![
+                    "logical_id",
+                    "source",
+                    "exact_commit",
+                    "content_hash",
+                    "schema_version",
+                    "dependency_path",
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn write_is_canonical_and_idempotent_regeneration() {
+        // resolver 결과 → 텍스트 → 모델 → 텍스트가 byte-identical(canonical 재생성).
+        let lock = multi_version_lock();
+        let text1 = lock.write();
+        let reloaded = Lockfile::from_yaml(&load_restricted(&text1).unwrap()).unwrap();
+        let text2 = reloaded.write();
+        assert_eq!(text1, text2);
+    }
+
+    #[test]
+    fn rejects_unknown_field_lockfile_without_modifying_input() {
+        // 임의 unknown field가 있는 잠금 파일은 거부하고(자동 정리·재작성 없음) 원본을 수정하지 않음.
+        let text = "schema_version: 1\nresolved: []\nextra_field: hacked\n";
+        let value = load_restricted(text).unwrap();
+        let before = value.clone();
+
+        let result = Lockfile::from_yaml(&value);
+        assert!(matches!(result, Err(LockError::UnknownKey { .. })));
+        // from_yaml은 입력을 읽기만 하므로 원본 트리가 그대로 유지됨.
+        assert_eq!(value, before);
     }
 
     #[test]
