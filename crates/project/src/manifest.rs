@@ -257,18 +257,11 @@ fn reject_unknown_keys(
 
 fn parse_schema_version(value: &YamlValue) -> Result<u32, ManifestError> {
     let text = expect_scalar(value, "schema_version")?;
-    // 음이 아닌 정수만 허용(부호·소수점·공백 거부). leading zero(`01`)도 거부하되 `0`은 허용.
-    let all_digits = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
-    let leading_zero = text.len() > 1 && text.starts_with('0');
-    if !all_digits || leading_zero {
-        return Err(ManifestError::InvalidSchemaVersion {
-            value: text.to_string(),
-        });
-    }
-    text.parse::<u32>()
-        .map_err(|_| ManifestError::InvalidSchemaVersion {
-            value: text.to_string(),
-        })
+    // 엄격 정수 해석(IV.1.4): 암묵 타입 추론 없이 canonical base-10만 허용.
+    // 부호·소수점·공백·leading-zero(`01`)·진법 접두·`yes` 등은 거부(`0`은 허용).
+    crate::yaml::scalar::parse_u32(text).ok_or_else(|| ManifestError::InvalidSchemaVersion {
+        value: text.to_string(),
+    })
 }
 
 fn parse_project(value: &YamlValue) -> Result<ProjectMeta, ManifestError> {
@@ -511,6 +504,41 @@ mod tests {
                     YamlValue::Mapping(vec![]),
                 ),
             ]);
+            assert!(
+                matches!(
+                    Manifest::from_yaml(&value),
+                    Err(ManifestError::InvalidSchemaVersion { .. })
+                ),
+                "bad={bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn yaml_1_1_confusables_preserved_as_strings_end_to_end() {
+        // 암시적 타입 추론 없음(IV.1.4): yes/날짜/8진수-혼동/on을 문자열로 보존.
+        let text = "schema_version: 1\n\
+                    project:\n  id: yes\n  name: 2020-01-01\n\
+                    target_profiles:\n  - id: 010\n    platform: on\n\
+                    dependencies: {}\n";
+        let value = crate::yaml::load_restricted(text).unwrap();
+        let manifest = Manifest::from_yaml(&value).unwrap();
+        assert_eq!(manifest.project.id, "yes"); // 불리언 아님
+        assert_eq!(manifest.project.name, "2020-01-01"); // 날짜 아님
+        assert_eq!(manifest.target_profiles[0].id, "010"); // 8진수/정수 아님(원문 보존)
+        assert_eq!(manifest.target_profiles[0].platform, "on"); // 불리언 아님
+    }
+
+    #[test]
+    fn schema_version_rejects_yaml_1_1_confusables_end_to_end() {
+        for bad in ["yes", "01", "0x1", "1_0", "true", "1.0"] {
+            let text = format!(
+                "schema_version: {bad}\n\
+                 project:\n  id: x\n  name: y\n\
+                 target_profiles: []\n\
+                 dependencies: {{}}\n"
+            );
+            let value = crate::yaml::load_restricted(&text).unwrap();
             assert!(
                 matches!(
                     Manifest::from_yaml(&value),
