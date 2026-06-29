@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use stellar_git_porcelain::repo::{git_clone, RepoError};
 use stellar_git_porcelain::runner::GitRunner;
 
+use crate::probe::{probe_project, ProbeError, ProjectProbe};
 use crate::root::MANIFEST_FILE;
 
 /// 로그·보고서에 원문을 노출하지 않는 Git URL.
@@ -100,6 +101,8 @@ pub enum CloneError {
         /// io 오류 종류.
         kind: std::io::ErrorKind,
     },
+    /// clone된 Stellar repo의 ProjectProbe 실패(손상 매니페스트 등, IV.6.4).
+    Probe(ProbeError),
 }
 
 impl fmt::Display for CloneError {
@@ -108,6 +111,7 @@ impl fmt::Display for CloneError {
             CloneError::TargetExists => f.write_str("대상 경로가 이미 존재합니다"),
             CloneError::Clone(e) => write!(f, "git clone 실패: {e}"),
             CloneError::Rename { kind } => write!(f, "최종 폴더 rename 실패: {kind:?}"),
+            CloneError::Probe(e) => write!(f, "clone된 프로젝트 probe 실패: {e}"),
         }
     }
 }
@@ -153,10 +157,12 @@ fn unique_temp(parent: &Path) -> PathBuf {
 /// clone 후 열기 분류 결과.
 #[derive(Debug)]
 pub enum ClonedProject {
-    /// `stellar.yaml`이 있는 Stellar 프로젝트 후보(검증은 IV.6.4).
+    /// 유효한 Stellar 프로젝트(ProjectProbe 통과, IV.6.4).
     StellarProject {
         /// clone된 경로.
         path: PathBuf,
+        /// probe 결과(매니페스트 포함).
+        probe: ProjectProbe,
     },
     /// `stellar.yaml`이 없어 Stellar 프로젝트가 아님(IV.6.3). clone 결과는 **보존**되며,
     /// 보존·삭제 선택은 호출자 몫입니다(자동 변환·삭제 없음).
@@ -166,11 +172,12 @@ pub enum ClonedProject {
     },
 }
 
-/// clone한 뒤 열기를 분류합니다(IV.6.3).
+/// clone한 뒤 열기를 분류합니다(IV.6.3·IV.6.4).
 ///
-/// clone 결과에 `stellar.yaml`이 없으면 열기를 거부하고 `NotAStellarProject`를 반환합니다
-/// (clone 결과 **보존**, 보존·삭제는 호출자가 선택; **자동 변환 금지**). `stellar.yaml`이 있으면
-/// `StellarProject` 후보로 반환합니다(매니페스트 검증은 IV.6.4).
+/// - clone 결과에 `stellar.yaml`이 없으면 열기를 거부하고 `NotAStellarProject`를 반환합니다
+///   (clone 결과 **보존**, 보존·삭제는 호출자가 선택; **자동 변환 금지**).
+/// - `stellar.yaml`이 있으면 [`probe_project`](IV.5.1)를 **통과해야만** `StellarProject`로
+///   반환합니다. 손상 매니페스트는 `CloneError::Probe`로 실패합니다(IV.6.4).
 pub fn clone_and_open(
     request: &CloneRequest,
     runner: &GitRunner,
@@ -178,10 +185,14 @@ pub fn clone_and_open(
     let path = clone_project(request, runner)?;
 
     // 자동 변환 금지: stellar.yaml이 없으면 상태로 반환하고 결과를 보존.
-    if path.join(MANIFEST_FILE).is_file() {
-        Ok(ClonedProject::StellarProject { path })
-    } else {
-        Ok(ClonedProject::NotAStellarProject { path })
+    if !path.join(MANIFEST_FILE).is_file() {
+        return Ok(ClonedProject::NotAStellarProject { path });
+    }
+
+    // 유효 Stellar repo는 ProjectProbe 통과 후에만 성공(IV.6.4).
+    match probe_project(&path) {
+        Ok(probe) => Ok(ClonedProject::StellarProject { path, probe }),
+        Err(e) => Err(CloneError::Probe(e)),
     }
 }
 
@@ -389,6 +400,87 @@ mod git_clone_tests {
             }
             other => panic!("예상과 다른 결과: {other:?}"),
         }
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    fn make_stellar_source_repo(runner: &GitRunner, dir: &Path, manifest_text: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        runner.run(&argv(["init"]), dir).unwrap();
+        runner
+            .run(&argv(["config", "user.name", "Test"]), dir)
+            .unwrap();
+        runner
+            .run(&argv(["config", "user.email", "t@e"]), dir)
+            .unwrap();
+        std::fs::write(dir.join("stellar.yaml"), manifest_text).unwrap();
+        runner.run(&argv(["add", "--all"]), dir).unwrap();
+        runner.run(&argv(["commit", "-m", "init"]), dir).unwrap();
+    }
+
+    fn valid_manifest_text() -> String {
+        use crate::manifest::{Manifest, ProjectMeta, CURRENT_SCHEMA_VERSION};
+        use crate::yaml::write_canonical;
+        let manifest = Manifest {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            project: ProjectMeta {
+                id: "0195c530-3acd-7bc1-8414-c213f61cb965".to_string(),
+                name: "Cloned Project".to_string(),
+            },
+            target_profiles: Vec::new(),
+            dependencies: Vec::new(),
+        };
+        write_canonical(&manifest.to_yaml())
+    }
+
+    #[test]
+    fn valid_stellar_repo_passes_probe() {
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let runner = hermetic_runner(git);
+        let work = temp_dir();
+        let source = work.join("source");
+        make_stellar_source_repo(&runner, &source, &valid_manifest_text());
+        let parent = work.join("dest-parent");
+        std::fs::create_dir_all(&parent).unwrap();
+
+        let req = CloneRequest {
+            url: SensitiveUrl::new(source.to_string_lossy().into_owned()),
+            parent_dir: parent.clone(),
+            folder_name: "cloned".to_string(),
+        };
+        match clone_and_open(&req, &runner).unwrap() {
+            ClonedProject::StellarProject { path, probe } => {
+                assert!(path.join("stellar.yaml").is_file());
+                assert_eq!(probe.manifest.project.name, "Cloned Project");
+            }
+            other => panic!("예상과 다른 결과: {other:?}"),
+        }
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn corrupt_manifest_clone_fails_probe() {
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let runner = hermetic_runner(git);
+        let work = temp_dir();
+        let source = work.join("source");
+        // anchor가 든 손상 stellar.yaml.
+        make_stellar_source_repo(&runner, &source, "schema_version: &a 1\nproject: *a\n");
+        let parent = work.join("dest-parent");
+        std::fs::create_dir_all(&parent).unwrap();
+
+        let req = CloneRequest {
+            url: SensitiveUrl::new(source.to_string_lossy().into_owned()),
+            parent_dir: parent.clone(),
+            folder_name: "cloned".to_string(),
+        };
+        let result = clone_and_open(&req, &runner);
+        assert!(matches!(result, Err(CloneError::Probe(_))), "{result:?}");
 
         let _ = std::fs::remove_dir_all(&work);
     }
