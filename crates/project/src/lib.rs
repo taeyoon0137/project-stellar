@@ -32,3 +32,6 @@ pub mod probe;
 
 /// 프로젝트 신뢰 상태 (IV.5.2).
 pub mod trust;
+
+/// 프로젝트 clone 요청과 민감 URL (IV.6.1).
+pub mod clone;
