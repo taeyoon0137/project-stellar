@@ -140,6 +140,7 @@ name = "stellar-project"
 version = "0.0.0"
 dependencies = [
  "stellar-assets",
+ "stellar-core-types",
  "stellar-dependencies",
  "stellar-document",
  "stellar-storage",

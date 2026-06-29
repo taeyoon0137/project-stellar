@@ -14,3 +14,6 @@ pub mod folder_name;
 
 /// 프로젝트 root 검증기 (IV.2.2).
 pub mod root;
+
+/// 프로젝트 식별 (IV.2.3).
+pub mod identity;

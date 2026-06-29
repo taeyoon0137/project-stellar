@@ -43,6 +43,7 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         (
             "stellar-project",
             &[
+                core,
                 "stellar-document",
                 "stellar-storage",
                 "stellar-assets",
