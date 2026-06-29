@@ -11,6 +11,7 @@ stellar-document = { path = "../document" }
 stellar-storage = { path = "../storage" }
 stellar-assets = { path = "../assets" }
 stellar-dependencies = { path = "../dependencies" }
+stellar-git-porcelain = { path = "../git-porcelain" }
 # 제한 YAML 매니페스트 파싱(IV.1.2). config/dependencies.yaml 승인 항목.
 yaml-rust2 = "=0.11.0"
 

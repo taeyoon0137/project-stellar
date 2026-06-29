@@ -397,7 +397,7 @@ tools/xtask/
 | IV.4.4 | `[x]` | 새 폴더에서 `git init -b main`을 시스템 Git으로 실행합니다. Git이 `-b`를 지원하지 않으면 지원 오류를 내고 대체 명령을 추측하지 않습니다. | branch가 정확히 `main`. | IV.3.4, IV.4.3 |
 | IV.4.5 | `[x]` | 기본 파일을 `git add --all`하고 user.name/email 존재를 검사합니다. 누락 시 파일은 남기되 커밋 단계에서 중단 상태를 반환합니다. | identity 있음·없음 fixture 결과 정확. | IV.4.4 |
 | IV.4.6 | `[x]` | 커밋 메시지 `New Stellar project initialized`로 최초 커밋을 생성합니다. | `git log -1 --format=%B`가 정확히 일치하고 working tree clean. | IV.4.5 |
-| IV.4.7 | `[ ]` | 생성 중 Git init 이전 실패와 이후 실패의 rollback 정책을 구현합니다. Git repo 생성 후 commit 실패는 폴더를 삭제하지 않고 `InitializationIncomplete`로 반환합니다. | fault injection 단계별 기대 상태 통과. | IV.4.2~IV.4.6 |
+| IV.4.7 | `[x]` | 생성 중 Git init 이전 실패와 이후 실패의 rollback 정책을 구현합니다. Git repo 생성 후 commit 실패는 폴더를 삭제하지 않고 `InitializationIncomplete`로 반환합니다. | fault injection 단계별 기대 상태 통과. | IV.4.2~IV.4.6 |
 
 ### IV.5 프로젝트 열기
 

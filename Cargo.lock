@@ -143,6 +143,7 @@ dependencies = [
  "stellar-core-types",
  "stellar-dependencies",
  "stellar-document",
+ "stellar-git-porcelain",
  "stellar-storage",
  "yaml-rust2",
 ]

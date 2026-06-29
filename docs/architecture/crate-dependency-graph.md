@@ -23,7 +23,7 @@
 | `stellar-storage` | core-types |
 | `stellar-assets` | storage |
 | `stellar-dependencies` | core-types |
-| `stellar-project` | core-types, document, storage, assets, dependencies |
+| `stellar-project` | core-types, document, storage, assets, dependencies, git-porcelain |
 | `stellar-semantic-diff` | document, core-types |
 | `stellar-semantic-merge` | semantic-diff |
 | `stellar-git-porcelain` | core-types |

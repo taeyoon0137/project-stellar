@@ -7,7 +7,13 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use stellar_git_porcelain::repo::{self, CommitReadiness, RepoError};
+use stellar_git_porcelain::runner::GitRunner;
+use stellar_git_porcelain::version::GitVersion;
+
 use crate::folder_name::{validate_folder_name, FolderNameError};
+use crate::fs_transaction::DirTransaction;
+use crate::scaffold::write_default_scaffold;
 
 /// 새 프로젝트 생성 요청.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +86,130 @@ pub fn validate_create_request(
     Ok(())
 }
 
+/// git init 이후 단계 실패 사유(폴더는 유지됨).
+#[derive(Debug)]
+pub enum IncompleteReason {
+    /// user.name/email 누락으로 커밋 중단.
+    MissingIdentity {
+        /// `user.name` 누락.
+        name_missing: bool,
+        /// `user.email` 누락.
+        email_missing: bool,
+    },
+    /// `git add` 단계 실패.
+    AddFailed(RepoError),
+    /// 커밋 단계 실패.
+    CommitFailed(RepoError),
+}
+
+/// 프로젝트 생성 결과.
+#[derive(Debug)]
+pub enum ProjectCreated {
+    /// 생성 완료(최초 커밋까지).
+    Created {
+        /// 생성된 프로젝트 경로.
+        path: PathBuf,
+    },
+    /// git repo는 생성됐으나 이후 단계 실패 — **폴더를 삭제하지 않음**.
+    InitializationIncomplete {
+        /// 생성된(불완전) 프로젝트 경로.
+        path: PathBuf,
+        /// 실패 사유.
+        reason: IncompleteReason,
+    },
+}
+
+/// git init **이전/at** 실패(폴더가 롤백되어 제거됨).
+#[derive(Debug)]
+pub enum ProjectCreateError {
+    /// 사전 검증 실패(아무 것도 생성되지 않음).
+    Validation(CreateValidationError),
+    /// 폴더 생성·scaffold io 오류(롤백됨).
+    Io(std::io::ErrorKind),
+    /// git init 실패(롤백됨).
+    GitInit(RepoError),
+}
+
+impl std::fmt::Display for ProjectCreateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProjectCreateError::Validation(e) => write!(f, "사전 검증 실패: {e}"),
+            ProjectCreateError::Io(kind) => write!(f, "파일시스템 오류(롤백됨): {kind:?}"),
+            ProjectCreateError::GitInit(e) => write!(f, "git init 실패(롤백됨): {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectCreateError {}
+
+/// 새 프로젝트를 생성합니다(검증 → 폴더 → scaffold → git init → add → 커밋).
+///
+/// **rollback 정책**(IV.4.7):
+/// - git init **이전/at** 실패(검증·scaffold·init)는 생성한 폴더를 롤백해 제거하고 `Err`를
+///   반환합니다.
+/// - git init **이후** 실패(add·identity·commit)는 폴더를 **삭제하지 않고**
+///   `Ok(InitializationIncomplete)`를 반환합니다(사용자가 복구 가능).
+pub fn create_project(
+    request: &ProjectCreateRequest,
+    project_id: &str,
+    runner: &GitRunner,
+    version: &GitVersion,
+) -> Result<ProjectCreated, ProjectCreateError> {
+    validate_create_request(request).map_err(ProjectCreateError::Validation)?;
+
+    // 폴더 생성 트랜잭션(commit 전 드롭되면 롤백).
+    let tx = DirTransaction::create(&request.target_path())
+        .map_err(|e| ProjectCreateError::Io(e.kind()))?;
+
+    // scaffold(pre-init): 실패 시 tx 드롭 → 롤백.
+    if let Err(e) = write_default_scaffold(tx.path(), &request.project_name, project_id) {
+        return Err(ProjectCreateError::Io(e.kind()));
+    }
+
+    // git init(at-init): 실패 시 tx 드롭 → 롤백.
+    if let Err(e) = repo::git_init_main(runner, version, tx.path()) {
+        return Err(ProjectCreateError::GitInit(e));
+    }
+
+    // git init 성공 → 이후 실패는 폴더를 유지. 롤백 취소.
+    let path = tx.path().to_path_buf();
+    tx.commit();
+
+    // post-init: add + identity 검사.
+    let readiness = match repo::stage_and_check_identity(runner, &path) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(ProjectCreated::InitializationIncomplete {
+                path,
+                reason: IncompleteReason::AddFailed(e),
+            });
+        }
+    };
+    if let CommitReadiness::HaltedMissingIdentity {
+        name_missing,
+        email_missing,
+    } = readiness
+    {
+        return Ok(ProjectCreated::InitializationIncomplete {
+            path,
+            reason: IncompleteReason::MissingIdentity {
+                name_missing,
+                email_missing,
+            },
+        });
+    }
+
+    // 커밋(post-init): 실패해도 폴더 유지.
+    if let Err(e) = repo::create_initial_commit(runner, &path) {
+        return Ok(ProjectCreated::InitializationIncomplete {
+            path,
+            reason: IncompleteReason::CommitFailed(e),
+        });
+    }
+
+    Ok(ProjectCreated::Created { path })
+}
+
 /// 디렉터리 쓰기 권한을 임시 probe 파일로 확인합니다(즉시 삭제).
 fn is_writable(dir: &Path) -> bool {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -98,6 +228,12 @@ fn is_writable(dir: &Path) -> bool {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+    use stellar_git_porcelain::discovery::{discover_git, GitDiscoveryConfig};
+    use stellar_git_porcelain::runner::argv;
+    use stellar_git_porcelain::version::probe_git_version;
+
+    const ID: &str = "0195c530-3acd-7bc1-8414-c213f61cb965";
 
     struct TempDir {
         path: PathBuf,
@@ -218,5 +354,122 @@ mod tests {
             assert_eq!(result, Err(CreateValidationError::ParentNotWritable));
         }
         // 쓰기가 막히지 않은 환경(root 등)에서는 권한 검증을 건너뜁니다.
+    }
+
+    // --- IV.4.7: rollback 정책 fault injection ---
+
+    #[test]
+    fn git_init_failure_before_commit_rolls_back_folder() {
+        // 잘못된 git 경로 → git init 실패(at-init) → 폴더 롤백 제거.
+        let dir = TempDir::new();
+        let req = request(&dir.path, "proj");
+        let runner = GitRunner::new(
+            PathBuf::from("/nonexistent/git"),
+            Vec::new(),
+            Duration::from_secs(5),
+        );
+        let version = GitVersion {
+            major: 2,
+            minor: 39,
+            patch: 0,
+            raw: "git version 2.39.0".to_string(),
+        };
+        let result = create_project(&req, ID, &runner, &version);
+        assert!(matches!(result, Err(ProjectCreateError::GitInit(_))));
+        // 폴더가 롤백되어 제거되고 부모가 깨끗.
+        assert!(!req.target_path().exists());
+        assert_eq!(std::fs::read_dir(&dir.path).unwrap().count(), 0);
+    }
+
+    #[cfg(unix)]
+    fn hermetic_overrides(
+        global: std::ffi::OsString,
+    ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        vec![
+            (std::ffi::OsString::from("GIT_CONFIG_GLOBAL"), global),
+            (
+                std::ffi::OsString::from("GIT_CONFIG_SYSTEM"),
+                std::ffi::OsString::from("/dev/null"),
+            ),
+        ]
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn missing_identity_after_init_keeps_folder_as_incomplete() {
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let version = probe_git_version(&git).unwrap();
+        if (version.major, version.minor) < (2, 28) {
+            return;
+        }
+        let dir = TempDir::new();
+        let req = request(&dir.path, "proj");
+        // identity 없음(hermetic) → git init은 성공하지만 커밋 단계 중단.
+        let runner = GitRunner::new(
+            git,
+            vec![std::ffi::OsString::from("PATH")],
+            Duration::from_secs(30),
+        )
+        .with_env_overrides(hermetic_overrides(std::ffi::OsString::from("/dev/null")));
+
+        let result = create_project(&req, ID, &runner, &version).unwrap();
+        match result {
+            ProjectCreated::InitializationIncomplete {
+                path,
+                reason: IncompleteReason::MissingIdentity { .. },
+            } => {
+                // 폴더는 유지(삭제하지 않음), git repo는 생성됨.
+                assert!(path.exists());
+                assert!(path.join("stellar.yaml").is_file());
+                assert!(path.join(".git").exists());
+            }
+            other => panic!("예상과 다른 결과: {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_project_succeeds_with_identity_and_clean_tree() {
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let version = probe_git_version(&git).unwrap();
+        if (version.major, version.minor) < (2, 28) {
+            return;
+        }
+        let dir = TempDir::new();
+        // identity가 든 gitconfig를 부모에 두고 GIT_CONFIG_GLOBAL로 지정.
+        let config = dir.path.join("gitconfig");
+        std::fs::write(
+            &config,
+            "[user]\n\tname = Test User\n\temail = test@example.com\n",
+        )
+        .unwrap();
+        let req = request(&dir.path, "proj");
+        let runner = GitRunner::new(
+            git,
+            vec![std::ffi::OsString::from("PATH")],
+            Duration::from_secs(30),
+        )
+        .with_env_overrides(hermetic_overrides(config.into_os_string()));
+
+        let result = create_project(&req, ID, &runner, &version).unwrap();
+        match result {
+            ProjectCreated::Created { path } => {
+                assert!(path.join("stellar.yaml").is_file());
+                assert!(path.join("stellar.lock.yaml").is_file());
+                assert!(path.join(".git").exists());
+                // working tree clean.
+                let status = runner.run(&argv(["status", "--porcelain"]), &path).unwrap();
+                assert!(
+                    status.stdout.is_empty(),
+                    "tree dirty: {}",
+                    String::from_utf8_lossy(&status.stdout)
+                );
+            }
+            other => panic!("예상과 다른 결과: {other:?}"),
+        }
     }
 }
