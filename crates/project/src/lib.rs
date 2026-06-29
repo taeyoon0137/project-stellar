@@ -26,3 +26,6 @@ pub mod fs_transaction;
 
 /// 기본 프로젝트 scaffold 생성 (IV.4.3).
 pub mod scaffold;
+
+/// 프로젝트 열기 probe (IV.5.1).
+pub mod probe;
