@@ -13,6 +13,7 @@ pub mod dependencies;
 pub mod ffi_header;
 pub mod plan;
 pub mod pr_body;
+pub mod storage_fixtures;
 pub mod sync;
 pub mod task_report;
 pub mod task_status;

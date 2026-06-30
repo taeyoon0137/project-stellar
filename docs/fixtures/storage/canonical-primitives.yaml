@@ -1,0 +1,96 @@
+# 저장 primitive canonical golden bytes (V.1.1).
+#
+# 각 항목: name, type, value, bytes(소문자 16진수, little-endian, 짝수 길이).
+# 규칙은 docs/architecture/storage-canonical-primitives.md 참조.
+# 스키마 검사: cargo xtask validate-storage-fixtures
+# encoder(V.1.2)·float 정책(V.1.4)은 이 golden bytes와 일치해야 합니다.
+
+primitives:
+  - name: u8_zero
+    type: u8
+    value: "0"
+    bytes: "00"
+  - name: u8_max
+    type: u8
+    value: "255"
+    bytes: "ff"
+  - name: u16_one
+    type: u16
+    value: "1"
+    bytes: "0100"
+  - name: u16_258
+    type: u16
+    value: "258"
+    bytes: "0201"
+  - name: u32_one
+    type: u32
+    value: "1"
+    bytes: "01000000"
+  - name: u32_256
+    type: u32
+    value: "256"
+    bytes: "00010000"
+  - name: u64_one
+    type: u64
+    value: "1"
+    bytes: "0100000000000000"
+  - name: i8_neg_one
+    type: i8
+    value: "-1"
+    bytes: "ff"
+  - name: i16_neg_one
+    type: i16
+    value: "-1"
+    bytes: "ffff"
+  - name: i32_neg_one
+    type: i32
+    value: "-1"
+    bytes: "ffffffff"
+  - name: i32_neg_256
+    type: i32
+    value: "-256"
+    bytes: "00ffffff"
+  - name: i64_neg_one
+    type: i64
+    value: "-1"
+    bytes: "ffffffffffffffff"
+  - name: bool_true
+    type: bool
+    value: "true"
+    bytes: "01"
+  - name: bool_false
+    type: bool
+    value: "false"
+    bytes: "00"
+  - name: f32_one
+    type: f32
+    value: "1.0"
+    bytes: "0000803f"
+  - name: f32_zero
+    type: f32
+    value: "0.0"
+    bytes: "00000000"
+  - name: f32_neg_two
+    type: f32
+    value: "-2.0"
+    bytes: "000000c0"
+  - name: f64_one
+    type: f64
+    value: "1.0"
+    bytes: "000000000000f03f"
+  - name: f64_zero
+    type: f64
+    value: "0.0"
+    bytes: "0000000000000000"
+  - name: string_empty
+    type: string
+    value: ""
+    bytes: "00000000"
+  - name: string_hi
+    type: string
+    value: "hi"
+    bytes: "020000006869"
+  - name: string_e_acute
+    type: string
+    value: "é"
+    bytes: "02000000c3a9"

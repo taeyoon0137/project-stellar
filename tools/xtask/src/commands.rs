@@ -13,6 +13,7 @@ use crate::crate_graph::check_crate_graph;
 use crate::dependencies::validate_dependencies;
 use crate::ffi_header::generate_header;
 use crate::pr_body::validate_pr_body;
+use crate::storage_fixtures::check_canonical_primitives;
 use crate::sync::sync_plan;
 use crate::task_report::validate::{validate_report, ReportKind};
 use crate::task_status::decode::decode_collection;
@@ -28,7 +29,7 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 14] = [
+pub const COMMANDS: [&str; 15] = [
     "help",
     "generate-ledger",
     "generate-ffi-header",
@@ -43,6 +44,7 @@ pub const COMMANDS: [&str; 14] = [
     "sync-plan",
     "check-core",
     "validate-crate-graph",
+    "validate-storage-fixtures",
 ];
 
 /// 사용법 문자열. 각 명령이 정확히 한 번 나타납니다.
@@ -93,6 +95,7 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
             }
         },
         "validate-crate-graph" => cmd_validate_crate_graph(repo_root),
+        "validate-storage-fixtures" => cmd_validate_storage_fixtures(repo_root),
         other => {
             eprintln!("알 수 없는 명령: {other}");
             eprint!("{}", usage());
@@ -227,6 +230,21 @@ fn cmd_validate_dependencies(repo_root: &Path) -> Result<(), i32> {
     let names = direct_dependencies(repo_root)?;
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let errors = validate_dependencies(&content, &refs);
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(policy_err(
+            &errors
+                .iter()
+                .map(|e| e.code.to_string())
+                .collect::<Vec<_>>(),
+        ))
+    }
+}
+
+fn cmd_validate_storage_fixtures(repo_root: &Path) -> Result<(), i32> {
+    let content = read(repo_root, "docs/fixtures/storage/canonical-primitives.yaml")?;
+    let errors = check_canonical_primitives(&content);
     if errors.is_empty() {
         Ok(())
     } else {
