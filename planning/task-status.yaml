@@ -743,66 +743,120 @@ tasks:
     verified_at: "2026-06-24T16:39:57+09:00"
   - id: "II.4.2"
     title: "모든 FFI 함수가 `StellarStatus`를 반환하고 오류 세부 정보는 호출별 `stellar_last_error(handle)`로 읽게 합니다. 전역 last error는 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.4.2.md"
+    commit: "56847ee5d749161054b8dbb0de3f1202937d6935"
+    report: "docs/task-reports/II.4.2.md"
+    verified_at: "2026-06-25T13:36:48+09:00"
   - id: "II.4.3"
     title: "FFI 문자열은 UTF-8 pointer+length 입력, 호출자 제공 buffer 출력 규칙으로 고정합니다. NUL 종료 의존을 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.4.3.md"
+    commit: "c5ec428467016d481748ff7346384ee85eaa8840"
+    report: "docs/task-reports/II.4.3.md"
+    verified_at: "2026-06-25T13:40:53+09:00"
   - id: "II.4.4"
     title: "FFI 경계에 `catch_unwind`를 적용하고 panic을 `InternalPanic` 오류 코드로 변환합니다. release abort 정책에서는 panic을 발생시키는 프로덕션 경로가 없음을 별도 테스트합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.4.2"
       - "II.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.4.4.md"
+    commit: "b07b2c2e79f295ef1ebce4fc46623178806bd5b5"
+    report: "docs/task-reports/II.4.4.md"
+    verified_at: "2026-06-25T13:44:11+09:00"
   - id: "II.4.5"
     title: "Core→Shell 이벤트 큐 인터페이스를 정의합니다. 이벤트는 pull 방식 `stellar_runtime_poll_event`로 읽고 callback 재진입을 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.4.5.md"
+    commit: "e5584a1270b7ce3ac419da5bdc1d0b7d19b0c0fb"
+    report: "docs/task-reports/II.4.5.md"
+    verified_at: "2026-06-25T15:37:36+09:00"
   - id: "II.4.6"
     title: "C header를 자동 생성하거나 고정 템플릿에서 생성하는 `cargo xtask generate-ffi-header`를 추가하고 생성물 drift를 CI에서 검사합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.4.6.md"
+    commit: "ce9b66af5c3e9ac213583ee30831505393c0e399"
+    report: "docs/task-reports/II.4.6.md"
+    verified_at: "2026-06-26T11:03:29+09:00"
   - id: "II.5.1"
     title: "`apps/macos`에 macOS 26, arm64 전용 AppKit 앱 프로젝트를 생성합니다. SwiftUI는 앱 설정 화면용 placeholder target만 두고 캔버스는 AppKit view로 둡니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.4.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.5.1.md"
+    commit: "d3f340694ebdfff5ca516603ee38e195957504e2"
+    report: "docs/task-reports/II.5.1.md"
+    verified_at: "2026-06-26T12:12:40+09:00"
   - id: "II.5.2"
     title: "Rust static 또는 dynamic library를 Debug 빌드에 연결하고 앱 시작 시 `stellar_runtime_version`을 호출해 로그에 기록합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.5.2.md"
+    commit: "26cd5a123b914386a4ca01cb8436f12176fb6213"
+    report: "docs/task-reports/II.5.2.md"
+    verified_at: "2026-06-26T12:17:09+09:00"
   - id: "II.5.3"
     title: "`NSApplicationDelegate`와 빈 `NSWindowController`를 추가합니다. 창 닫기·앱 종료 시 runtime destroy가 정확히 한 번 호출되게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.5.3.md"
+    commit: "c465c5fbf1991fe7c7b197ef6a3f5749fe4d69c9"
+    report: "docs/task-reports/II.5.3.md"
+    verified_at: "2026-06-26T12:19:56+09:00"
   - id: "II.5.4"
     title: "최소 `NSView` CanvasHost를 추가하고 backing scale과 drawable size 변경 이벤트를 Rust core에 전달하는 구조만 만듭니다. 렌더링은 하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.5.4.md"
+    commit: "1a6c5ef468f8fc3763f7cf66a65bf77df86b2553"
+    report: "docs/task-reports/II.5.4.md"
+    verified_at: "2026-06-26T12:24:49+09:00"
   - id: "II.6.1"
     title: "`apps/windows`에 Windows 11 x64, C++/WinRT, WinUI 3 앱 솔루션을 생성합니다. ARM64 configuration은 만들지 않습니다."
     status: not_started
@@ -833,11 +887,17 @@ tasks:
       - DEV-MAC
   - id: "II.7.1"
     title: "macOS arm64 CI job에 Rust core, FFI header drift, Xcode Debug build를 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/II.7.1.md"
+    commit: "b133b44e405201d15be55c78dd02f69df80e559c"
+    report: "docs/task-reports/II.7.1.md"
+    verified_at: "2026-06-26T12:39:30+09:00"
   - id: "II.7.2"
     title: "Windows x64 CI job에 Rust core, FFI header drift, MSBuild Debug build를 연결합니다."
     status: not_started
@@ -855,420 +915,774 @@ tasks:
       - DEV-MAC
   - id: "III.1.1"
     title: "`core-types`에 128비트 `StableId`를 구현하고 UUIDv7 생성과 16바이트 직렬화를 제공합니다. 문자열 형식은 표준 소문자 hyphen UUID로 고정합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.1.1.md"
+    commit: "4aea0914534ad2dde8f464b718965f08688a7208"
+    report: "docs/task-reports/III.1.1.md"
+    verified_at: "2026-06-26T12:46:24+09:00"
   - id: "III.1.2"
     title: "테스트용 결정적 `StableIdGenerator`를 구현합니다. seed와 수동 시각이 같으면 동일 ID 시퀀스를 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
       - "II.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.1.2.md"
+    commit: "06db4e4fa27661ff615fcdba121df2980ec6d64f"
+    report: "docs/task-reports/III.1.2.md"
+    verified_at: "2026-06-26T12:48:31+09:00"
   - id: "III.1.3"
     title: "`RuntimeEntityId { slot, generation }`을 추가하고 저장·FFI에 노출되지 않게 visibility를 제한합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.1.3.md"
+    commit: "3f9c532f2865c9fa8cbb2b2b2beecffdc4834da2"
+    report: "docs/task-reports/III.1.3.md"
+    verified_at: "2026-06-26T12:50:37+09:00"
   - id: "III.1.4"
     title: "`StableId ↔ RuntimeEntityId` 양방향 registry를 구현합니다. duplicate StableId 삽입은 오류입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.1.4.md"
+    commit: "8ead9f680b81d1122c4a477da7c94a54faaaf3c5"
+    report: "docs/task-reports/III.1.4.md"
+    verified_at: "2026-06-26T12:52:10+09:00"
   - id: "III.1.5"
     title: "복제용 `IdRemapTable`을 추가해 하위 그래프 StableId 전체를 새 ID로 바꾸고 내부 참조를 재매핑합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.2"
       - "III.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.1.5.md"
+    commit: "1c85096588648ac444ede0e7ae401333209f57e5"
+    report: "docs/task-reports/III.1.5.md"
+    verified_at: "2026-06-26T12:53:23+09:00"
   - id: "III.2.1"
     title: "`PropertyKey`를 문자열이 아닌 고정 numeric ID로 정의하고 사람이 읽는 이름과 별도 registry를 둡니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.2.1.md"
+    commit: "754d726a205675450e52ac4c3ca7d923588ea747"
+    report: "docs/task-reports/III.2.1.md"
+    verified_at: "2026-06-26T12:54:46+09:00"
   - id: "III.2.2"
     title: "`PropertyPath`를 `StableId + Vec<PropertyKey> + optional index/key segment`로 정의합니다. 경로는 canonical 비교·정렬이 가능해야 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.2.2.md"
+    commit: "fe36d019e70bff38cad2ddd3500088c8b8a02e8c"
+    report: "docs/task-reports/III.2.2.md"
+    verified_at: "2026-06-26T12:56:22+09:00"
   - id: "III.2.3"
     title: "강한 타입 참조 `NodeRef`, `TokenRef`, `ComponentRef`, `AssetRef`를 분리합니다. 서로 암묵 변환을 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.2.3.md"
+    commit: "a07b0642df1bf5444371e2f2543e81ab402b7d69"
+    report: "docs/task-reports/III.2.3.md"
+    verified_at: "2026-06-26T13:05:05+09:00"
   - id: "III.2.4"
     title: "dangling reference를 표현하는 `UnresolvedRef`를 추가하고 원래 ID·예상 타입·발견 위치를 보존합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.2.4.md"
+    commit: "e04f9b446956ad13cfbad389ee2b377c4f5ccad0"
+    report: "docs/task-reports/III.2.4.md"
+    verified_at: "2026-06-26T13:06:46+09:00"
   - id: "III.3.1"
     title: "`FiniteF32` 또는 동등 타입을 구현해 NaN·±Infinity를 생성·직렬화 단계에서 거부합니다. `-0.0`은 `0.0`으로 정규화합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.3.1.md"
+    commit: "58aeff4bd8e92d5deccf26239513a6100469498d"
+    report: "docs/task-reports/III.3.1.md"
+    verified_at: "2026-06-26T13:08:25+09:00"
   - id: "III.3.2"
     title: "`Length`, `Percentage`, `Angle`, `Duration`, `Scalar`를 별도 newtype으로 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.3.2.md"
+    commit: "7537c4713a8d2f03addb57d7f17150409ce48ca6"
+    report: "docs/task-reports/III.3.2.md"
+    verified_at: "2026-06-26T13:10:42+09:00"
   - id: "III.3.3"
     title: "`Vec2`, `Size2`, `Rect`, `Insets`, `Transform2D`를 finite 값만 허용하도록 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.3.3.md"
+    commit: "576ee5eb5642b13c010fd81c76ae8996f52f482b"
+    report: "docs/task-reports/III.3.3.md"
+    verified_at: "2026-06-26T13:12:38+09:00"
   - id: "III.3.4"
     title: "문자열 값은 UTF-8을 사용하고 저장 전 Unicode NFC 정규화를 선택적으로 적용할 위치를 분리합니다. 사용자 텍스트 자체는 정규화하지 않고 식별자·파일 경로만 정규화합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.3.4.md"
+    commit: "8d0db18c9478e695759e9a7dbe35bd4693de91e2"
+    report: "docs/task-reports/III.3.4.md"
+    verified_at: "2026-06-26T13:14:52+09:00"
   - id: "III.3.5"
     title: "`TypedValue` tagged union에 Boolean, Number, String, Enum, Length, Percentage, Angle, Duration, Color, Gradient, Shadow, Typography, ResourceRef를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.2"
       - "III.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.3.5.md"
+    commit: "46965b7154cfbba67715990e02587970974eb7df"
+    report: "docs/task-reports/III.3.5.md"
+    verified_at: "2026-06-26T17:21:29+09:00"
   - id: "III.4.1"
     title: "`ColorSpace`에 sRGB와 DisplayP3를 정의하고 색상은 비연관 알파(unassociated alpha)로 저장합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.4.1.md"
+    commit: "3dc62b79a55c31eb164d60b316204b113b65ebfa"
+    report: "docs/task-reports/III.4.1.md"
+    verified_at: "2026-06-26T17:27:32+09:00"
   - id: "III.4.2"
     title: "선형 색공간 변환 함수를 정의하고 sRGB/P3 encode/decode reference fixture를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.4.2.md"
+    commit: "98c8aa6a83887cdf47df95449cfd0d6f12843c2c"
+    report: "docs/task-reports/III.4.2.md"
+    verified_at: "2026-06-26T17:34:26+09:00"
   - id: "III.4.3"
     title: "Gradient stop을 안정 ID, position, color로 정의하고 position 정렬은 저장 순서와 시각 순서를 분리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
       - "III.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.4.3.md"
+    commit: "0efd1c2332b3c63b27588d09cbcb89a7180e261a"
+    report: "docs/task-reports/III.4.3.md"
+    verified_at: "2026-06-26T17:39:03+09:00"
   - id: "III.4.4"
     title: "Shadow와 blur parameter 타입을 정의하고 음수·비정상 radius를 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.1"
       - "III.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.4.4.md"
+    commit: "f2628d14798cb38d471ed9ceadcd80c1d7dbb683"
+    report: "docs/task-reports/III.4.4.md"
+    verified_at: "2026-06-26T17:44:36+09:00"
   - id: "III.5.1"
     title: "`OrderKey` 요구사항 fixture를 먼저 작성합니다. 앞·뒤·사이 삽입, 서로 다른 브랜치 동시 삽입, 결정론적 정렬, 키 길이 상한을 검증합니다. 구현은 하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.5.1.md"
+    commit: "bd09f02a1debb190fc750109d55ebc2c2065ce68"
+    report: "docs/task-reports/III.5.1.md"
+    verified_at: "2026-06-26T19:27:02+09:00"
   - id: "III.5.2"
     title: "승인된 OrderKey 알고리즘을 `core-types`에 구현합니다. 키는 비교 가능한 byte sequence이며 생성에 난수를 사용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.5.2.md"
+    commit: "a5ce295a53f2727d5349892c97529ee58731769d"
+    report: "docs/task-reports/III.5.2.md"
+    verified_at: "2026-06-26T19:31:02+09:00"
   - id: "III.5.3"
     title: "키가 임계 길이를 넘을 때 부모 단위 재균형 함수를 구현합니다. 재균형은 의미 순서를 바꾸지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.5.3.md"
+    commit: "1fef7f379f9f7328ae28f74fc67e21c54f5396b2"
+    report: "docs/task-reports/III.5.3.md"
+    verified_at: "2026-06-26T19:34:17+09:00"
   - id: "III.5.4"
     title: "Semantic Merge에서 독립 삽입이 충돌 없이 합쳐지는 OrderKey fixture를 추가합니다. merge 구현 전에는 fixture data만 만듭니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.5.4.md"
+    commit: "46f959598e79713cf4c1fdf70639fd4fbaab10b7"
+    report: "docs/task-reports/III.5.4.md"
+    verified_at: "2026-06-26T19:39:25+09:00"
   - id: "III.6.1"
     title: "`document`에 generational arena wrapper를 추가합니다. 개별 node box allocation을 공개 API에서 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.6.1.md"
+    commit: "399479086bc413f7308b83d521433bb6d8cdcda3"
+    report: "docs/task-reports/III.6.1.md"
+    verified_at: "2026-06-26T19:53:17+09:00"
   - id: "III.6.2"
     title: "공통 node 필드를 SoA column으로 저장하는 최소 `NodeColumns`를 구현합니다. 종류별 payload는 아직 없습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.6.2.md"
+    commit: "29225702ed5618cbf14c0c6889fde47272e80e9a"
+    report: "docs/task-reports/III.6.2.md"
+    verified_at: "2026-06-29T02:07:38+09:00"
   - id: "III.6.3"
     title: "`DocumentSnapshotView` 읽기 전용 인터페이스를 추가하고 mutable arena reference를 외부 crate에 노출하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.6.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/III.6.3.md"
+    commit: "bb411c35412fca27069ad9df18c94980810ab575"
+    report: "docs/task-reports/III.6.3.md"
+    verified_at: "2026-06-29T02:11:13+09:00"
   - id: "IV.1.1"
     title: "`project` crate에 `stellar.yaml` 데이터 구조를 정의합니다. 필수 필드는 format/schema version, project id/name, target profiles, dependencies입니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.1.1.md"
+    commit: "4d3e26a4d6e9db7f73efe82f85d69adaeaf85f81"
+    report: "docs/task-reports/IV.1.1.md"
+    verified_at: "2026-06-29T02:58:29+09:00"
   - id: "IV.1.2"
     title: "YAML 파서를 래핑해 다중 문서, custom tag, anchor, alias, merge key를 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.1.2.md"
+    commit: "a1480d8c99160187141fb62ca4b20314e122adc5"
+    report: "docs/task-reports/IV.1.2.md"
+    verified_at: "2026-06-29T11:14:30+09:00"
   - id: "IV.1.3"
     title: "중복 mapping key를 위치 정보와 함께 거부합니다. parser가 마지막 값을 덮어쓰는 동작은 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.1.3.md"
+    commit: "7ae051fd38bbc0695eb28d5ad576858f5cb3dca0"
+    report: "docs/task-reports/IV.1.3.md"
+    verified_at: "2026-06-29T11:17:05+09:00"
   - id: "IV.1.4"
     title: "scalar 암묵 타입 추론을 제한합니다. 날짜·yes/no·leading zero 숫자는 문자열로만 허용하거나 명시 오류 처리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.1.4.md"
+    commit: "ef3b55da2cc9c0d07a62309980308b5d9478ea24"
+    report: "docs/task-reports/IV.1.4.md"
+    verified_at: "2026-06-29T11:21:31+09:00"
   - id: "IV.1.5"
     title: "canonical YAML writer를 구현합니다. 키 순서, 들여쓰기 2칸, LF, 마지막 newline을 고정합니다. 주석 보존은 지원하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.1.5.md"
+    commit: "634fd8ad2cca421edbf20f8b658c35495336352d"
+    report: "docs/task-reports/IV.1.5.md"
+    verified_at: "2026-06-29T11:26:49+09:00"
   - id: "IV.1.6"
     title: "`stellar.lock.yaml` 모델을 별도로 정의합니다. resolved dependency는 logical ID, source, exact commit, content hash, schema version, dependency path를 포함합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.1.6.md"
+    commit: "a12d7a97ec745d7f73b5a50548d6fe6ac8830655"
+    report: "docs/task-reports/IV.1.6.md"
+    verified_at: "2026-06-29T11:31:04+09:00"
   - id: "IV.1.7"
     title: "lock writer는 사용자 편집 필드를 받지 않고 전부 resolver 결과에서 생성되게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.1.7.md"
+    commit: "53c0d639caab399ce668dc7c4490d5f800994d76"
+    report: "docs/task-reports/IV.1.7.md"
+    verified_at: "2026-06-29T11:33:52+09:00"
   - id: "IV.2.1"
     title: "플랫폼 공통 폴더 이름 검증기를 구현합니다. Windows 예약 문자·이름, trailing space/dot, 대소문자 충돌, 길이 정책을 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.2.1.md"
+    commit: "7d1d7e21525da46f0913f5c2776c3fe2b726fd84"
+    report: "docs/task-reports/IV.2.1.md"
+    verified_at: "2026-06-29T11:37:43+09:00"
   - id: "IV.2.2"
     title: "프로젝트 root는 `stellar.yaml`과 `.git` directory 또는 gitfile이 같은 경로에 있어야 한다는 검증기를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.2.2.md"
+    commit: "a2e9770a94e9310883da37635c35f07df8d844a6"
+    report: "docs/task-reports/IV.2.2.md"
+    verified_at: "2026-06-29T11:40:12+09:00"
   - id: "IV.2.3"
     title: "`ProjectIdentity`를 project StableId와 canonical root path의 조합으로 생성합니다. symlink 경로와 실제 경로 중복 open 판정을 위한 canonical target도 별도 저장합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
       - "IV.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.2.3.md"
+    commit: "8cde8a2a08e6970a520cfa6e0b17c90da1419444"
+    report: "docs/task-reports/IV.2.3.md"
+    verified_at: "2026-06-29T11:44:29+09:00"
   - id: "IV.2.4"
     title: "일반 Git repo지만 `stellar.yaml`이 없는 경우 `NotAStellarProject`로 거부합니다. 자동 변환 코드는 만들지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.2.4.md"
+    commit: "8085a1650d88caf6f1eab90a6a62cd8d363ace57"
+    report: "docs/task-reports/IV.2.4.md"
+    verified_at: "2026-06-29T11:46:40+09:00"
   - id: "IV.3.1"
     title: "`git-porcelain`에 Git executable 탐색 순서를 구현합니다: 사용자 지정 절대 경로, 알려진 시스템 경로, PATH. shell을 거치지 않습니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.3.1.md"
+    commit: "5f338ca8b7f0403a4f89f69efa5e0a68633abc12"
+    report: "docs/task-reports/IV.3.1.md"
+    verified_at: "2026-06-29T11:49:44+09:00"
   - id: "IV.3.2"
     title: "`git --version`을 실행해 semantic version을 파싱하고 raw output도 보존합니다. 최소 버전은 아직 강제하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.3.2.md"
+    commit: "08543d314403f4c211239c875d75f2fe03c3ddad"
+    report: "docs/task-reports/IV.3.2.md"
+    verified_at: "2026-06-29T11:52:50+09:00"
   - id: "IV.3.3"
     title: "모든 Git 실행에 argv 배열, cwd, 환경 allowlist, timeout, stdout/stderr byte capture를 사용하는 `GitRunner`를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.3.3.md"
+    commit: "b6bc8dc3fe3a4c57e1fda7bce8f3fe659540cadf"
+    report: "docs/task-reports/IV.3.3.md"
+    verified_at: "2026-06-29T11:56:31+09:00"
   - id: "IV.3.4"
     title: "Git exit code, stdout, stderr를 보존한 `GitCommandResult`를 정의하고 비영 종료를 자동 문자열 성공으로 바꾸지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.3.4.md"
+    commit: "73019122f5724f481dbe664da8fe4f27220ec827"
+    report: "docs/task-reports/IV.3.4.md"
+    verified_at: "2026-06-29T16:41:07+09:00"
   - id: "IV.3.5"
     title: "`GitInstallationState`를 Available, Missing, UnsupportedVersion, InstallInProgress, ReprobeRequired로 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.3.5.md"
+    commit: "26018d55e93ef61b59b353e73ee91fc16449d719"
+    report: "docs/task-reports/IV.3.5.md"
+    verified_at: "2026-06-29T16:44:01+09:00"
   - id: "IV.3.6"
     title: "macOS에서 사용자가 설치를 승인한 경우에만 `xcode-select --install`을 시작하는 shell adapter를 구현합니다. 자동 관리자 권한 상승과 무승인 설치는 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.5"
       - "II.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.3.6.md"
+    commit: "93958a134110951757728ffb484a55447d1c754a"
+    report: "docs/task-reports/IV.3.6.md"
+    verified_at: "2026-06-29T16:46:32+09:00"
   - id: "IV.3.7"
     title: "Windows에서 사용자가 승인한 경우 `winget install --id Git.Git -e --source winget`을 argv 방식으로 실행하고 WinGet 미존재 시 수동 설치 안내 상태를 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.5"
       - "II.6.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.3.7.md"
+    commit: "5c593dcebc3f04612fbde7e553226853b4bdfa85"
+    report: "docs/task-reports/IV.3.7.md"
+    verified_at: "2026-06-29T16:48:46+09:00"
   - id: "IV.3.8"
     title: "설치 프로세스 종료 후 Git executable을 다시 탐지하고 version/capability probe를 재실행합니다. 앱 재시작을 필수로 요구하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.6"
       - "IV.3.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.3.8.md"
+    commit: "ae653667280e6ce28653a952510836cdd0460bc4"
+    report: "docs/task-reports/IV.3.8.md"
+    verified_at: "2026-06-29T16:51:00+09:00"
   - id: "IV.4.1"
     title: "`ProjectCreateRequest { parent_dir, folder_name, project_name }`를 정의하고 사전 검증만 수행하는 함수부터 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.2.1"
       - "IV.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.4.1.md"
+    commit: "39bb981b096579af41e68f4b224dd3b52cd2fbfb"
+    report: "docs/task-reports/IV.4.1.md"
+    verified_at: "2026-06-29T16:54:19+09:00"
   - id: "IV.4.2"
     title: "검증 후 새 폴더를 생성하고 실패 시 생성한 빈 폴더를 제거하는 filesystem transaction helper를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.4.2.md"
+    commit: "d2168915f567fb95c5dd71a87afb2dcab25e608a"
+    report: "docs/task-reports/IV.4.2.md"
+    verified_at: "2026-06-29T16:56:43+09:00"
   - id: "IV.4.3"
     title: "기본 `stellar.yaml`, 빈 `stellar.lock.yaml`, `.gitignore`, `.gitattributes`, `design/`, `assets/`를 임시 staging directory에 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.5"
       - "IV.1.7"
       - "IV.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.4.3.md"
+    commit: "bebe1f0f77b452a36072e5b1920dc2af5550a88a"
+    report: "docs/task-reports/IV.4.3.md"
+    verified_at: "2026-06-29T16:59:24+09:00"
   - id: "IV.4.4"
     title: "새 폴더에서 `git init -b main`을 시스템 Git으로 실행합니다. Git이 `-b`를 지원하지 않으면 지원 오류를 내고 대체 명령을 추측하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.4"
       - "IV.4.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.4.4.md"
+    commit: "c6ff542f9b24d75104e985fdffcaeba599939e8b"
+    report: "docs/task-reports/IV.4.4.md"
+    verified_at: "2026-06-29T17:02:23+09:00"
   - id: "IV.4.5"
     title: "기본 파일을 `git add --all`하고 user.name/email 존재를 검사합니다. 누락 시 파일은 남기되 커밋 단계에서 중단 상태를 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.4.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.4.5.md"
+    commit: "1c24208c14685052fab2152f16b821133069c435"
+    report: "docs/task-reports/IV.4.5.md"
+    verified_at: "2026-06-29T17:06:27+09:00"
   - id: "IV.4.6"
     title: "커밋 메시지 `New Stellar project initialized`로 최초 커밋을 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.4.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.4.6.md"
+    commit: "1b443abac14b7336363b344670950215ee664ffe"
+    report: "docs/task-reports/IV.4.6.md"
+    verified_at: "2026-06-29T17:08:19+09:00"
   - id: "IV.4.7"
     title: "생성 중 Git init 이전 실패와 이후 실패의 rollback 정책을 구현합니다. Git repo 생성 후 commit 실패는 폴더를 삭제하지 않고 `InitializationIncomplete`로 반환합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.4.7.md"
+    commit: "4c0eb8430af3c9b6ed3c8672b84c2b7347ae2bc6"
+    report: "docs/task-reports/IV.4.7.md"
+    verified_at: "2026-06-29T17:13:42+09:00"
   - id: "IV.5.1"
     title: "경로 선택 후 root 검증, YAML parse, Git root 확인만 수행하는 `ProjectProbe`를 구현합니다. 문서 청크는 아직 읽지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.2.2"
       - "IV.1.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.5.1.md"
+    commit: "5973335a9a4e1e11324be578bb0f0d80481cf091"
+    report: "docs/task-reports/IV.5.1.md"
+    verified_at: "2026-06-29T17:16:17+09:00"
   - id: "IV.5.2"
     title: "프로젝트 신뢰 상태를 OS 사용자 데이터 영역에 `ProjectIdentity` 기준으로 저장하는 인터페이스를 정의합니다. 실제 UI는 나중에 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.5.2.md"
+    commit: "4ab44829444e7ff4e6617744db9f37476da3ac1e"
+    report: "docs/task-reports/IV.5.2.md"
+    verified_at: "2026-06-29T17:18:52+09:00"
   - id: "IV.5.3"
     title: "신뢰되지 않은 프로젝트 probe는 문서 메타데이터만 읽고 Git 실행, 외부 symlink 대상, 필터 실행을 하지 않게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.5.1"
       - "IV.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.5.3.md"
+    commit: "c6781b6a3ab64e44eba61c71b6ca88a1776bb49c"
+    report: "docs/task-reports/IV.5.3.md"
+    verified_at: "2026-06-29T17:22:14+09:00"
   - id: "IV.6.1"
     title: "clone request에 URL, parent, folder name을 정의하고 Git URL을 로그·telemetry에서 민감값으로 취급합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.4"
       - "II.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.6.1.md"
+    commit: "d0dd4d605e94b61fdbaa08555cddbf612f639c0b"
+    report: "docs/task-reports/IV.6.1.md"
+    verified_at: "2026-06-29T17:25:20+09:00"
   - id: "IV.6.2"
     title: "임시 폴더로 `git clone -- <url> <temp>`를 실행하고 성공 후 최종 폴더로 rename합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.6.2.md"
+    commit: "cfbb1fc7170733bb00636ccc098c8984d2d35386"
+    report: "docs/task-reports/IV.6.2.md"
+    verified_at: "2026-06-29T17:29:26+09:00"
   - id: "IV.6.3"
     title: "clone 결과에 `stellar.yaml`이 없으면 열기를 거부하고 clone 결과 보존·삭제 선택은 호출자에게 상태로 반환합니다. 자동 변환은 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.6.2"
       - "IV.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.6.3.md"
+    commit: "d6c238def87607cbdd593914a5a9e29bff8ebc14"
+    report: "docs/task-reports/IV.6.3.md"
+    verified_at: "2026-06-29T17:33:05+09:00"
   - id: "IV.6.4"
     title: "valid Stellar repo는 `ProjectProbe`를 통과한 뒤에만 성공으로 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.6.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IV.6.4.md"
+    commit: "5a3709ec5a1b8e05ec1c7c8686073732d42cca52"
+    report: "docs/task-reports/IV.6.4.md"
+    verified_at: "2026-06-29T17:36:09+09:00"
   - id: "V.1.1"
     title: "저장 primitive의 canonical 규칙 문서를 작성합니다: little-endian, fixed integer width, length-prefixed UTF-8, sorted map key, finite float bits, unknown field policy. 구현 전 golden bytes를 정의합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.1.1.md"
+    commit: "ba3b9808a553a94d31182a50dc01c9aae53a5cd3"
+    report: "docs/task-reports/V.1.1.md"
+    verified_at: "2026-06-30T12:38:36+09:00"
   - id: "V.1.2"
     title: "`storage`에 canonical encoder를 구현합니다. map 입력 순서와 무관하게 key order로 기록합니다."
     status: not_started
