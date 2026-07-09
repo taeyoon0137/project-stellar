@@ -8,4 +8,7 @@ pub mod id;
 /// chunk envelope header (V.2.2).
 pub mod envelope;
 
+/// chunk object 경로 생성 (V.2.3).
+pub mod path;
+
 pub use id::ChunkId;
