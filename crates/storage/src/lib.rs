@@ -8,3 +8,6 @@ pub mod hash;
 
 /// chunk 저장소 (V.2).
 pub mod chunk;
+
+/// atomic 파일 쓰기 (V.2.5).
+pub mod atomic_file;

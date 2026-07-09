@@ -440,7 +440,7 @@ tools/xtask/
 | V.2.2 | `[x]` | chunk envelope에 magic, format version, chunk kind, uncompressed length, payload hash를 정의합니다. 압축은 아직 사용하지 않습니다. | golden header bytes 고정. | V.1.5 |
 | V.2.3 | `[x]` | content hash에서 `design/objects/<prefix>/<hash>.starchunk` 경로를 생성합니다. path traversal 문자열 입력은 불가능한 타입으로 제한합니다. | 모든 hash가 고정 길이 안전 경로 생성. | V.1.5 |
 | V.2.4 | `[x]` | immutable chunk write를 구현합니다. 같은 hash 파일이 있으면 내용 검증 후 재사용하고 다르면 corruption 오류를 반환합니다. | dedup·collision simulation fixture 통과. | V.2.2, V.2.3 |
-| V.2.5 | `[ ]` | temp file write, flush, fsync 정책, atomic rename을 플랫폼 abstraction으로 구현합니다. | 각 write 단계 강제 종료 fault injection에서 부분 파일을 current로 읽지 않습니다. | V.2.4 |
+| V.2.5 | `[x]` | temp file write, flush, fsync 정책, atomic rename을 플랫폼 abstraction으로 구현합니다. | 각 write 단계 강제 종료 fault injection에서 부분 파일을 current로 읽지 않습니다. | V.2.4 |
 | V.2.6 | `[ ]` | chunk read 시 envelope, length, hash를 전부 검증합니다. 실패한 bytes를 자동 수정하지 않습니다. | single-bit corruption fixture 전부 탐지. | V.2.4 |
 | V.2.7 | `[ ]` | chunk kind registry를 추가하고 unknown optional kind는 skip, unknown required kind는 오류가 되게 version policy를 구현합니다. | optional/required unknown fixture 결과 정확. | V.2.2 |
 

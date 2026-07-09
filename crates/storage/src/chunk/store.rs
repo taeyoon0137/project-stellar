@@ -5,12 +5,14 @@
 //! - 내용이 기대 bytes와 다르면 덮어쓰지 않고 corruption 오류를 반환합니다.
 //! - 손상된 bytes를 자동 수정하지 않습니다.
 //!
-//! temp file·fsync·atomic rename 정책은 V.2.5에서 플랫폼 abstraction으로
-//! 분리합니다. 현 단계 write는 단순 create-new 쓰기입니다.
+//! 파일 기록은 temp write → flush → fsync → atomic rename(V.2.5,
+//! [`crate::atomic_file`])을 사용합니다. 중단 시 부분 파일이 대상 경로에
+//! 나타나지 않습니다.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use crate::atomic_file::write_file_atomic;
 use crate::hash::ContentHash;
 
 use super::envelope::{ChunkEnvelope, ChunkKindCode, EnvelopeError};
@@ -146,7 +148,7 @@ impl ChunkStore {
             path: parent.to_path_buf(),
             source,
         })?;
-        std::fs::write(&target, &expected_bytes).map_err(|source| ChunkStoreError::Io {
+        write_file_atomic(&target, &expected_bytes).map_err(|source| ChunkStoreError::Io {
             path: target.clone(),
             source,
         })?;
