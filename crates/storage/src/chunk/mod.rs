@@ -23,4 +23,7 @@ pub mod pointer;
 /// 변경 chunk만 기록하는 write planner (V.3.3).
 pub mod planner;
 
+/// chunk remap manifest (V.3.4).
+pub mod remap;
+
 pub use id::ChunkId;
