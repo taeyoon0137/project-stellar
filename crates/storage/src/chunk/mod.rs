@@ -14,4 +14,7 @@ pub mod path;
 /// immutable chunk write (V.2.4).
 pub mod store;
 
+/// chunk kind registry와 unknown 정책 (V.2.7).
+pub mod kind_registry;
+
 pub use id::ChunkId;

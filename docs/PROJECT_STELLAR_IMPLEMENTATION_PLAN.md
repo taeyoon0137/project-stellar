@@ -442,7 +442,7 @@ tools/xtask/
 | V.2.4 | `[x]` | immutable chunk write를 구현합니다. 같은 hash 파일이 있으면 내용 검증 후 재사용하고 다르면 corruption 오류를 반환합니다. | dedup·collision simulation fixture 통과. | V.2.2, V.2.3 |
 | V.2.5 | `[x]` | temp file write, flush, fsync 정책, atomic rename을 플랫폼 abstraction으로 구현합니다. | 각 write 단계 강제 종료 fault injection에서 부분 파일을 current로 읽지 않습니다. | V.2.4 |
 | V.2.6 | `[x]` | chunk read 시 envelope, length, hash를 전부 검증합니다. 실패한 bytes를 자동 수정하지 않습니다. | single-bit corruption fixture 전부 탐지. | V.2.4 |
-| V.2.7 | `[ ]` | chunk kind registry를 추가하고 unknown optional kind는 skip, unknown required kind는 오류가 되게 version policy를 구현합니다. | optional/required unknown fixture 결과 정확. | V.2.2 |
+| V.2.7 | `[x]` | chunk kind registry를 추가하고 unknown optional kind는 skip, unknown required kind는 오류가 되게 version policy를 구현합니다. | optional/required unknown fixture 결과 정확. | V.2.2 |
 
 ### V.3 논리 ChunkId와 ContentHash 매핑
 
