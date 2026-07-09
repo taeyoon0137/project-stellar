@@ -4,3 +4,6 @@
 
 /// generation manifest (V.4.1).
 pub mod manifest;
+
+/// current generation pointer 파일 (V.4.3).
+pub mod current;
