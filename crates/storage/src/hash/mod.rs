@@ -1,0 +1,245 @@
+//! content hash (V.1.5, ADR-0004).
+//!
+//! chunk payload·manifest를 주소화하는 `ContentHash` newtype과 문자열 형식을
+//! 제공합니다. 문자열 형식은 `sha256:<64자리 소문자 16진수>`로 고정합니다.
+
+use std::fmt;
+use std::str::FromStr;
+
+/// SHA-256 구현 (FIPS 180-4).
+mod sha256;
+
+/// content hash 알고리즘 registry (ADR-0004).
+///
+/// 새 알고리즘은 새 ADR로만 추가합니다. 문자열 prefix가 데이터에 남으므로
+/// 이름은 안정적으로 유지되어야 합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum HashAlgorithm {
+    /// SHA-256 (FIPS 180-4). 문자열 prefix `sha256`.
+    Sha256,
+}
+
+impl HashAlgorithm {
+    /// 문자열 형식에 쓰는 안정 이름.
+    pub fn name(self) -> &'static str {
+        match self {
+            HashAlgorithm::Sha256 => "sha256",
+        }
+    }
+
+    /// digest 길이(byte).
+    pub fn digest_len(self) -> usize {
+        match self {
+            HashAlgorithm::Sha256 => 32,
+        }
+    }
+}
+
+/// `ContentHash` 문자열 파싱 실패.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseContentHashError {
+    /// `<algorithm>:<hex>` 형태가 아닙니다.
+    MissingSeparator,
+    /// 알 수 없는 알고리즘 이름입니다.
+    UnknownAlgorithm {
+        /// 입력에 있던 알고리즘 이름.
+        name: String,
+    },
+    /// hex 길이가 알고리즘 digest 길이와 다릅니다.
+    InvalidLength {
+        /// 기대 hex 길이.
+        expected: usize,
+        /// 실제 hex 길이.
+        actual: usize,
+    },
+    /// 소문자 16진수가 아닌 문자가 있습니다.
+    InvalidHexDigit {
+        /// 위반 문자.
+        found: char,
+    },
+}
+
+impl fmt::Display for ParseContentHashError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseContentHashError::MissingSeparator => {
+                f.write_str("content hash는 '<algorithm>:<hex>' 형태여야 합니다")
+            }
+            ParseContentHashError::UnknownAlgorithm { name } => {
+                write!(f, "알 수 없는 hash 알고리즘입니다: {name}")
+            }
+            ParseContentHashError::InvalidLength { expected, actual } => {
+                write!(
+                    f,
+                    "hex 길이가 잘못되었습니다: 기대 {expected}, 실제 {actual}"
+                )
+            }
+            ParseContentHashError::InvalidHexDigit { found } => {
+                write!(f, "소문자 16진수가 아닌 문자입니다: {found:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseContentHashError {}
+
+/// content hash newtype (ADR-0004).
+///
+/// 알고리즘 tag + 32바이트 digest. 문자열 형식은
+/// `sha256:<64자리 소문자 16진수>`(총 71자)입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ContentHash {
+    algorithm: HashAlgorithm,
+    digest: [u8; 32],
+}
+
+impl ContentHash {
+    /// 현재 canonical 알고리즘(SHA-256)으로 입력의 content hash를 계산합니다.
+    pub fn compute(input: &[u8]) -> ContentHash {
+        ContentHash {
+            algorithm: HashAlgorithm::Sha256,
+            digest: sha256::sha256(input),
+        }
+    }
+
+    /// 알고리즘.
+    pub fn algorithm(&self) -> HashAlgorithm {
+        self.algorithm
+    }
+
+    /// digest bytes.
+    pub fn digest(&self) -> &[u8; 32] {
+        &self.digest
+    }
+
+    /// digest의 소문자 16진수(알고리즘 prefix 없음).
+    pub fn digest_hex(&self) -> String {
+        self.digest.iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
+
+impl fmt::Display for ContentHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.algorithm.name(), self.digest_hex())
+    }
+}
+
+impl FromStr for ContentHash {
+    type Err = ParseContentHashError;
+
+    fn from_str(s: &str) -> Result<ContentHash, ParseContentHashError> {
+        let (name, hex) = s
+            .split_once(':')
+            .ok_or(ParseContentHashError::MissingSeparator)?;
+        let algorithm = match name {
+            "sha256" => HashAlgorithm::Sha256,
+            other => {
+                return Err(ParseContentHashError::UnknownAlgorithm {
+                    name: other.to_string(),
+                })
+            }
+        };
+        let expected = algorithm.digest_len() * 2;
+        if hex.len() != expected {
+            return Err(ParseContentHashError::InvalidLength {
+                expected,
+                actual: hex.len(),
+            });
+        }
+        let mut digest = [0u8; 32];
+        for (i, byte) in digest.iter_mut().enumerate() {
+            let pair = &hex[i * 2..i * 2 + 2];
+            for c in pair.chars() {
+                let is_lower_hex = c.is_ascii_digit() || ('a'..='f').contains(&c);
+                if !is_lower_hex {
+                    return Err(ParseContentHashError::InvalidHexDigit { found: c });
+                }
+            }
+            *byte = u8::from_str_radix(pair, 16).expect("소문자 hex 검증 완료");
+        }
+        Ok(ContentHash { algorithm, digest })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_matches_sha256_test_vector() {
+        // FIPS 180-4 "abc" vector.
+        let hash = ContentHash::compute(b"abc");
+        assert_eq!(
+            hash.to_string(),
+            "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(hash.algorithm(), HashAlgorithm::Sha256);
+    }
+
+    #[test]
+    fn string_round_trip() {
+        let original = ContentHash::compute(b"round trip");
+        let text = original.to_string();
+        assert_eq!(text.len(), 71, "sha256: 7자 + hex 64자");
+        let parsed: ContentHash = text.parse().unwrap();
+        assert_eq!(parsed, original);
+        assert_eq!(parsed.to_string(), text);
+    }
+
+    #[test]
+    fn parse_rejects_missing_separator() {
+        let err = "deadbeef".parse::<ContentHash>().unwrap_err();
+        assert_eq!(err, ParseContentHashError::MissingSeparator);
+    }
+
+    #[test]
+    fn parse_rejects_unknown_algorithm() {
+        let hex64 = "0".repeat(64);
+        let err = format!("blake3:{hex64}")
+            .parse::<ContentHash>()
+            .unwrap_err();
+        assert_eq!(
+            err,
+            ParseContentHashError::UnknownAlgorithm {
+                name: "blake3".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parse_rejects_wrong_length() {
+        let err = "sha256:abcd".parse::<ContentHash>().unwrap_err();
+        assert_eq!(
+            err,
+            ParseContentHashError::InvalidLength {
+                expected: 64,
+                actual: 4
+            }
+        );
+    }
+
+    #[test]
+    fn parse_rejects_uppercase_hex() {
+        let mut hex = "a".repeat(63);
+        hex.push('F');
+        let err = format!("sha256:{hex}").parse::<ContentHash>().unwrap_err();
+        assert_eq!(err, ParseContentHashError::InvalidHexDigit { found: 'F' });
+    }
+
+    #[test]
+    fn parse_rejects_non_hex_character() {
+        let mut hex = "a".repeat(63);
+        hex.push('g');
+        let err = format!("sha256:{hex}").parse::<ContentHash>().unwrap_err();
+        assert_eq!(err, ParseContentHashError::InvalidHexDigit { found: 'g' });
+    }
+
+    #[test]
+    fn ordering_is_stable_for_map_keys() {
+        let a = ContentHash::compute(b"a");
+        let b = ContentHash::compute(b"b");
+        // Ord는 (algorithm, digest bytes) 순서 — 결정론적이면 충분합니다.
+        assert_ne!(a, b);
+        assert_eq!(a.cmp(&b), a.digest().cmp(b.digest()));
+    }
+}

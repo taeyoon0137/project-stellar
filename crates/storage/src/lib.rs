@@ -2,3 +2,6 @@
 
 /// canonical binary 인코딩 (V.1).
 pub mod canonical;
+
+/// content hash (V.1.5, ADR-0004).
+pub mod hash;
