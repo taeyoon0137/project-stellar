@@ -5,3 +5,9 @@
 
 /// canonical encoder (V.1.2).
 pub mod encode;
+
+/// canonical decoder (V.1.3).
+pub mod decode;
+
+/// map entry: (key bytes, canonical 인코딩된 value bytes).
+pub type MapEntry = (Vec<u8>, Vec<u8>);

@@ -13,6 +13,8 @@
 
 use std::fmt;
 
+use super::MapEntry;
+
 /// canonical 인코딩 실패.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EncodeError {
@@ -26,6 +28,11 @@ pub enum EncodeError {
         /// 중복된 key bytes.
         key: Vec<u8>,
     },
+    /// 레코드에 동일한 field tag가 두 번 이상 나타납니다(R6).
+    DuplicateTag {
+        /// 중복된 tag.
+        tag: u32,
+    },
 }
 
 impl fmt::Display for EncodeError {
@@ -37,9 +44,29 @@ impl fmt::Display for EncodeError {
             EncodeError::DuplicateKey { key } => {
                 write!(f, "map key가 중복됩니다: {}", hex(key))
             }
+            EncodeError::DuplicateTag { tag } => {
+                write!(f, "field tag가 중복됩니다: {tag}")
+            }
         }
     }
 }
+
+/// 레코드의 tagged field (R6).
+///
+/// wire 형식: `u32` LE tag + `u8` flags(bit0 = mandatory) + 길이 프리픽스 payload.
+/// 레코드는 `u32` LE field 수 + tag 오름차순으로 정렬된 field들입니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Field {
+    /// field 식별 tag. 레코드 안에서 유일해야 합니다.
+    pub tag: u32,
+    /// 디코더가 모르는 tag일 때 거부해야 하면 true(R6 mandatory), skip 가능하면 false.
+    pub mandatory: bool,
+    /// canonical 인코딩된 payload bytes.
+    pub payload: Vec<u8>,
+}
+
+/// field flags bit0: mandatory.
+pub(crate) const FIELD_FLAG_MANDATORY: u8 = 0b0000_0001;
 
 impl std::error::Error for EncodeError {}
 
@@ -157,9 +184,9 @@ impl CanonicalEncoder {
     /// 길이 프리픽스 key bytes + 길이 프리픽스 value bytes.
     /// value bytes는 호출자가 미리 canonical 인코딩한 결과입니다.
     /// 입력 삽입 순서는 결과에 영향을 주지 않으며 중복 key는 거부합니다.
-    pub fn put_map(&mut self, entries: &[(Vec<u8>, Vec<u8>)]) -> Result<(), EncodeError> {
+    pub fn put_map(&mut self, entries: &[MapEntry]) -> Result<(), EncodeError> {
         let count = check_len(entries.len())?;
-        let mut sorted: Vec<&(Vec<u8>, Vec<u8>)> = entries.iter().collect();
+        let mut sorted: Vec<&MapEntry> = entries.iter().collect();
         sorted.sort_by(|a, b| a.0.cmp(&b.0));
         for pair in sorted.windows(2) {
             if pair[0].0 == pair[1].0 {
@@ -172,6 +199,33 @@ impl CanonicalEncoder {
         for (key, value) in sorted {
             self.put_bytes(key)?;
             self.put_bytes(value)?;
+        }
+        Ok(())
+    }
+
+    /// 레코드를 tag 오름차순으로 정렬해 기록합니다(R6).
+    ///
+    /// 형식: `u32` LE field 수 + 정렬된 각 field(`u32` LE tag, `u8` flags,
+    /// 길이 프리픽스 payload). 입력 순서는 결과에 영향을 주지 않으며
+    /// 중복 tag는 거부합니다.
+    pub fn put_fields(&mut self, fields: &[Field]) -> Result<(), EncodeError> {
+        let count = check_len(fields.len())?;
+        let mut sorted: Vec<&Field> = fields.iter().collect();
+        sorted.sort_by_key(|f| f.tag);
+        for pair in sorted.windows(2) {
+            if pair[0].tag == pair[1].tag {
+                return Err(EncodeError::DuplicateTag { tag: pair[0].tag });
+            }
+        }
+        self.put_u32(count);
+        for field in sorted {
+            self.put_u32(field.tag);
+            self.put_u8(if field.mandatory {
+                FIELD_FLAG_MANDATORY
+            } else {
+                0
+            });
+            self.put_bytes(&field.payload)?;
         }
         Ok(())
     }
@@ -376,6 +430,51 @@ mod tests {
         assert_eq!(
             check_len(too_long).unwrap_err(),
             EncodeError::LengthOverflow { len: too_long }
+        );
+    }
+
+    #[test]
+    fn fields_are_sorted_by_tag() {
+        let fields = vec![
+            Field {
+                tag: 7,
+                mandatory: false,
+                payload: vec![0x07],
+            },
+            Field {
+                tag: 1,
+                mandatory: true,
+                payload: vec![0x01],
+            },
+        ];
+        let mut enc = CanonicalEncoder::new();
+        enc.put_fields(&fields).unwrap();
+        // count=2, tag=1(mandatory) 먼저, tag=7(optional) 나중.
+        let expected = "02000000\
+             01000000 01 01000000 01\
+             07000000 00 01000000 07"
+            .replace(' ', "");
+        assert_eq!(hex(enc.bytes()), expected);
+    }
+
+    #[test]
+    fn duplicate_field_tag_is_rejected() {
+        let fields = vec![
+            Field {
+                tag: 3,
+                mandatory: false,
+                payload: vec![],
+            },
+            Field {
+                tag: 3,
+                mandatory: true,
+                payload: vec![],
+            },
+        ];
+        let mut enc = CanonicalEncoder::new();
+        assert_eq!(
+            enc.put_fields(&fields).unwrap_err(),
+            EncodeError::DuplicateTag { tag: 3 }
         );
     }
 
