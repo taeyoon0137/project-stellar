@@ -35,6 +35,37 @@ pub enum ChunkStoreError {
         /// 원인.
         source: std::io::Error,
     },
+    /// 요청한 hash의 chunk 파일이 없습니다.
+    MissingChunk {
+        /// 없는 상대 경로.
+        path: ChunkObjectPath,
+    },
+    /// envelope kind가 기대(kind pointer)와 다릅니다.
+    KindMismatch {
+        /// 기대 kind.
+        expected: ChunkKindCode,
+        /// 파일에 기록된 kind.
+        found: ChunkKindCode,
+    },
+    /// payload 길이가 envelope의 uncompressed length와 다릅니다.
+    LengthMismatch {
+        /// envelope에 기록된 길이.
+        expected: u64,
+        /// 실제 payload 길이.
+        found: u64,
+    },
+    /// envelope의 payload hash가 요청 주소(hash)와 다릅니다.
+    AddressMismatch {
+        /// 요청한 hash.
+        requested: ContentHash,
+        /// envelope에 기록된 hash.
+        found: ContentHash,
+    },
+    /// payload를 다시 hash한 값이 envelope의 hash와 다릅니다(bit corruption).
+    PayloadHashMismatch {
+        /// 손상이 탐지된 상대 경로.
+        path: ChunkObjectPath,
+    },
 }
 
 impl fmt::Display for ChunkStoreError {
@@ -49,6 +80,25 @@ impl fmt::Display for ChunkStoreError {
             ChunkStoreError::Envelope(e) => write!(f, "envelope 오류: {e}"),
             ChunkStoreError::Io { path, source } => {
                 write!(f, "I/O 실패 ({}): {source}", path.display())
+            }
+            ChunkStoreError::MissingChunk { path } => {
+                write!(f, "chunk 파일이 없습니다: {path}")
+            }
+            ChunkStoreError::KindMismatch { expected, found } => {
+                write!(
+                    f,
+                    "chunk kind가 다릅니다: 기대 {}, 실제 {}",
+                    expected.0, found.0
+                )
+            }
+            ChunkStoreError::LengthMismatch { expected, found } => {
+                write!(f, "payload 길이가 다릅니다: 기대 {expected}, 실제 {found}")
+            }
+            ChunkStoreError::AddressMismatch { requested, found } => {
+                write!(f, "chunk 주소 불일치: 요청 {requested}, 파일 {found}")
+            }
+            ChunkStoreError::PayloadHashMismatch { path } => {
+                write!(f, "payload hash 불일치(corruption 탐지): {path}")
             }
         }
     }
@@ -154,6 +204,57 @@ impl ChunkStore {
         })?;
         Ok(WriteOutcome::Written { hash, path })
     }
+
+    /// hash 주소의 chunk를 읽고 **전부** 검증합니다(V.2.6).
+    ///
+    /// 검증: envelope(magic·version·hash 형식) → kind가 `expected_kind`와 일치 →
+    /// payload 길이가 envelope 기록과 일치 → envelope hash가 요청 주소와 일치 →
+    /// payload 재해시가 envelope hash와 일치. 어떤 실패도 bytes를 자동 수정하지
+    /// 않습니다. `expected_kind`는 chunk pointer(V.3.1)가 아는 kind입니다 —
+    /// header kind 필드의 bit corruption도 이 비교로 탐지됩니다.
+    pub fn read_chunk(
+        &self,
+        hash: &ContentHash,
+        expected_kind: ChunkKindCode,
+    ) -> Result<Vec<u8>, ChunkStoreError> {
+        let path = ChunkObjectPath::for_hash(hash);
+        let target = self.absolute_path(&path);
+        if !target.exists() {
+            return Err(ChunkStoreError::MissingChunk { path });
+        }
+        let bytes = std::fs::read(&target).map_err(|source| ChunkStoreError::Io {
+            path: target.clone(),
+            source,
+        })?;
+
+        let mut dec = crate::canonical::decode::CanonicalDecoder::new(&bytes);
+        let envelope = ChunkEnvelope::decode(&mut dec)?;
+        if envelope.kind != expected_kind {
+            return Err(ChunkStoreError::KindMismatch {
+                expected: expected_kind,
+                found: envelope.kind,
+            });
+        }
+        let payload = dec
+            .take_raw(dec.remaining())
+            .expect("남은 전부는 항상 성공");
+        if payload.len() as u64 != envelope.uncompressed_len {
+            return Err(ChunkStoreError::LengthMismatch {
+                expected: envelope.uncompressed_len,
+                found: payload.len() as u64,
+            });
+        }
+        if envelope.payload_hash != *hash {
+            return Err(ChunkStoreError::AddressMismatch {
+                requested: *hash,
+                found: envelope.payload_hash,
+            });
+        }
+        if ContentHash::compute(payload) != envelope.payload_hash {
+            return Err(ChunkStoreError::PayloadHashMismatch { path });
+        }
+        Ok(payload.to_vec())
+    }
 }
 
 #[cfg(test)]
@@ -250,6 +351,90 @@ mod tests {
             .write_chunk(ChunkKindCode(2), b"same payload")
             .unwrap_err();
         assert!(matches!(err, ChunkStoreError::CorruptExisting { .. }));
+    }
+
+    #[test]
+    fn read_round_trip() {
+        let dir = TempDir::new();
+        let store = ChunkStore::new(&dir.path);
+        let outcome = store.write_chunk(KIND, b"read me back").unwrap();
+        let WriteOutcome::Written { hash, .. } = outcome else {
+            panic!("Written이어야 함");
+        };
+        let payload = store.read_chunk(&hash, KIND).unwrap();
+        assert_eq!(payload, b"read me back");
+    }
+
+    #[test]
+    fn read_missing_chunk_fails() {
+        let dir = TempDir::new();
+        let store = ChunkStore::new(&dir.path);
+        let hash = ContentHash::compute(b"never written");
+        let err = store.read_chunk(&hash, KIND).unwrap_err();
+        assert!(matches!(err, ChunkStoreError::MissingChunk { .. }));
+    }
+
+    #[test]
+    fn read_with_wrong_expected_kind_fails() {
+        let dir = TempDir::new();
+        let store = ChunkStore::new(&dir.path);
+        let WriteOutcome::Written { hash, .. } = store.write_chunk(KIND, b"kind check").unwrap()
+        else {
+            panic!("Written이어야 함");
+        };
+        let err = store.read_chunk(&hash, ChunkKindCode(9)).unwrap_err();
+        assert!(matches!(err, ChunkStoreError::KindMismatch { .. }));
+    }
+
+    #[test]
+    fn every_single_bit_corruption_is_detected() {
+        // 검증 기준(V.2.6): single-bit corruption fixture 전부 탐지.
+        // 파일의 모든 byte·모든 bit을 하나씩 뒤집어 읽기가 반드시 실패해야 합니다.
+        let dir = TempDir::new();
+        let store = ChunkStore::new(&dir.path);
+        let WriteOutcome::Written { hash, path } = store
+            .write_chunk(KIND, b"single bit corruption target")
+            .unwrap()
+        else {
+            panic!("Written이어야 함");
+        };
+        let file = dir.path.join(path.to_relative_path());
+        let original = std::fs::read(&file).unwrap();
+
+        for byte_index in 0..original.len() {
+            for bit in 0..8u8 {
+                let mut corrupted = original.clone();
+                corrupted[byte_index] ^= 1 << bit;
+                std::fs::write(&file, &corrupted).unwrap();
+                assert!(
+                    store.read_chunk(&hash, KIND).is_err(),
+                    "byte {byte_index} bit {bit} 손상이 탐지되지 않음"
+                );
+            }
+        }
+        // 원본 복원 후에는 정상 읽기.
+        std::fs::write(&file, &original).unwrap();
+        assert!(store.read_chunk(&hash, KIND).is_ok());
+    }
+
+    #[test]
+    fn truncated_file_is_detected() {
+        let dir = TempDir::new();
+        let store = ChunkStore::new(&dir.path);
+        let WriteOutcome::Written { hash, path } =
+            store.write_chunk(KIND, b"truncate target").unwrap()
+        else {
+            panic!("Written이어야 함");
+        };
+        let file = dir.path.join(path.to_relative_path());
+        let original = std::fs::read(&file).unwrap();
+        for cut in [0, 5, 50, original.len() - 1] {
+            std::fs::write(&file, &original[..cut]).unwrap();
+            assert!(
+                store.read_chunk(&hash, KIND).is_err(),
+                "절단 길이 {cut} 손상이 탐지되지 않음"
+            );
+        }
     }
 
     #[test]
