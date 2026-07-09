@@ -10,3 +10,6 @@ pub mod current;
 
 /// 프로젝트 열기 loader (V.4.4).
 pub mod loader;
+
+/// 정상 세대 fallback scanner (V.4.5).
+pub mod scanner;

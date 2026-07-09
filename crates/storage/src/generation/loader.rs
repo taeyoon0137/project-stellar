@@ -200,23 +200,20 @@ pub struct LoadedGeneration {
     pub manifest: GenerationManifest,
 }
 
-/// current generation을 열고 검증합니다 (V.4.4).
-pub fn load_current_generation(
+/// hash 주소의 세대 하나를 검증합니다: manifest 읽기·검증 → project id →
+/// chunk 존재 확인. loader(V.4.4)와 fallback scanner(V.4.5)가 공유합니다.
+pub fn verify_generation(
     root: &Path,
+    manifest_hash: &ContentHash,
     expected_project_id: StableId,
 ) -> Result<LoadedGeneration, LoadError> {
-    // 1. current pointer.
-    let manifest_hash = read_current_pointer(root)?;
-    // 2. manifest.
-    let manifest = read_manifest_file(root, &manifest_hash)?;
-    // 3. project id.
+    let manifest = read_manifest_file(root, manifest_hash)?;
     if manifest.project_id != expected_project_id {
         return Err(LoadError::WrongProjectId {
             expected: expected_project_id,
             found: manifest.project_id,
         });
     }
-    // 4. chunk 존재 확인.
     for pointer in &manifest.chunk_pointers {
         let chunk_path = ChunkObjectPath::for_hash(&pointer.content_hash);
         if !root.join(chunk_path.to_relative_path()).is_file() {
@@ -224,9 +221,19 @@ pub fn load_current_generation(
         }
     }
     Ok(LoadedGeneration {
-        manifest_hash,
+        manifest_hash: *manifest_hash,
         manifest,
     })
+}
+
+/// current generation을 열고 검증합니다 (V.4.4).
+pub fn load_current_generation(
+    root: &Path,
+    expected_project_id: StableId,
+) -> Result<LoadedGeneration, LoadError> {
+    // 1. current pointer → 2. manifest → 3. project id → 4. chunk 존재.
+    let manifest_hash = read_current_pointer(root)?;
+    verify_generation(root, &manifest_hash, expected_project_id)
 }
 
 #[cfg(test)]
