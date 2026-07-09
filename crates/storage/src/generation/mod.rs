@@ -1,0 +1,6 @@
+//! generation 저장 (V.4).
+//!
+//! generation manifest와 current pointer, loader, fallback scanner를 담습니다.
+
+/// generation manifest (V.4.1).
+pub mod manifest;

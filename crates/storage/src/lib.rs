@@ -11,3 +11,6 @@ pub mod chunk;
 
 /// atomic 파일 쓰기 (V.2.5).
 pub mod atomic_file;
+
+/// generation 저장 (V.4).
+pub mod generation;
