@@ -206,6 +206,16 @@ impl GenerationManifest {
         Ok(enc.into_bytes())
     }
 
+    /// manifest를 canonical encode하고 content hash를 함께 반환합니다 (V.4.2).
+    ///
+    /// hash는 인코딩된 bytes 전체(ADR-0004, SHA-256)에 대해 계산합니다. 동일한
+    /// 논리 모델은 pointer 입력 순서와 무관하게 동일 bytes → 동일 hash를 만듭니다.
+    pub fn encode_with_hash(&self) -> Result<(Vec<u8>, crate::hash::ContentHash), ManifestError> {
+        let bytes = self.encode()?;
+        let hash = crate::hash::ContentHash::compute(&bytes);
+        Ok((bytes, hash))
+    }
+
     /// bytes에서 manifest를 디코딩하고 전부 검증합니다.
     pub fn decode(bytes: &[u8]) -> Result<GenerationManifest, ManifestError> {
         let mut dec = CanonicalDecoder::new(bytes);
@@ -328,6 +338,35 @@ mod tests {
         expected.put_u32(0); // pointer count
         expected.put_u32(0); // root doc count
         assert_eq!(manifest.encode().unwrap(), expected.into_bytes());
+    }
+
+    #[test]
+    fn identical_models_hash_identically() {
+        // 검증 기준(V.4.2): 동일 모델 byte-identical (→ 동일 content hash).
+        // pointer 입력 순서만 다른 두 모델.
+        let a = sample();
+        let mut b = sample();
+        b.chunk_pointers.reverse();
+
+        let (bytes_a, hash_a) = a.encode_with_hash().unwrap();
+        let (bytes_b, hash_b) = b.encode_with_hash().unwrap();
+        assert_eq!(bytes_a, bytes_b);
+        assert_eq!(hash_a, hash_b);
+
+        // 100회 반복 인코딩도 byte-identical.
+        for _ in 0..100 {
+            assert_eq!(a.encode().unwrap(), bytes_a);
+        }
+    }
+
+    #[test]
+    fn different_models_hash_differently() {
+        let a = sample();
+        let mut b = sample();
+        b.schema_version += 1;
+        let (_, hash_a) = a.encode_with_hash().unwrap();
+        let (_, hash_b) = b.encode_with_hash().unwrap();
+        assert_ne!(hash_a, hash_b);
     }
 
     #[test]

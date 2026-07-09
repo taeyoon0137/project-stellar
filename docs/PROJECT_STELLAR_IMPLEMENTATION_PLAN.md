@@ -458,7 +458,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | V.4.1 | `[x]` | generation manifest에 generation number, parent generation, project id, schema version, chunk pointers, root document IDs를 정의합니다. | golden manifest round-trip. | V.3.2, IV.1.1 |
-| V.4.2 | `[ ]` | manifest 자체를 canonical encode하고 content hash를 계산합니다. | 동일 모델 byte-identical. | V.4.1, V.1.2 |
+| V.4.2 | `[x]` | manifest 자체를 canonical encode하고 content hash를 계산합니다. | 동일 모델 byte-identical. | V.4.1, V.1.2 |
 | V.4.3 | `[ ]` | current pointer 파일에는 manifest hash 하나만 기록합니다. temp write 후 atomic replace로 전환합니다. | current pointer가 partial 상태를 노출하지 않는 fault test 통과. | V.4.2, V.2.5 |
 | V.4.4 | `[ ]` | 프로젝트 열기 시 current pointer→manifest→chunks 순으로 검증하는 loader를 구현합니다. | 누락 manifest, 누락 chunk, 잘못된 project id fixture 실패. | V.4.3, V.2.6 |
 | V.4.5 | `[ ]` | current generation이 손상되면 parent chain과 보존된 manifest 목록에서 최신 정상 세대를 찾는 scanner를 구현합니다. | 최신 2세대 손상 fixture에서 세 번째 정상 세대 선택. | V.4.4 |
