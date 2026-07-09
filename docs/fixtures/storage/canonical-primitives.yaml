@@ -74,6 +74,10 @@ primitives:
     type: f32
     value: "-2.0"
     bytes: "000000c0"
+  - name: f32_neg_zero_normalized
+    type: f32
+    value: "-0.0"
+    bytes: "00000000"
   - name: f64_one
     type: f64
     value: "1.0"
@@ -81,6 +85,10 @@ primitives:
   - name: f64_zero
     type: f64
     value: "0.0"
+    bytes: "0000000000000000"
+  - name: f64_neg_zero_normalized
+    type: f64
+    value: "-0.0"
     bytes: "0000000000000000"
   - name: string_empty
     type: string

@@ -7,11 +7,13 @@
 //! - R4: map은 key의 canonical byte 순서로 정렬해 기록합니다. 입력 삽입 순서와
 //!   무관하게 동일 bytes를 만들고, 중복 key는 거부합니다.
 //!
-//! float 정책(R5: NaN·±Infinity 거부, `-0.0` 정규화)은 V.1.4에서 적용합니다.
-//! 현재 [`CanonicalEncoder::put_f32`]/[`CanonicalEncoder::put_f64`]는 IEEE-754
-//! 비트 패턴을 그대로 기록합니다.
+//! - R5(V.1.4): float은 유한 값만 기록합니다. NaN·±Infinity는 거부하고 `-0.0`은
+//!   `+0.0`으로 정규화합니다. f32 규칙은 core의 [`FiniteF32`](III.3.1)를 그대로
+//!   사용하고, f64는 같은 규칙을 적용합니다.
 
 use std::fmt;
+
+use stellar_core_types::value::FiniteF32;
 
 use super::MapEntry;
 
@@ -33,6 +35,11 @@ pub enum EncodeError {
         /// 중복된 tag.
         tag: u32,
     },
+    /// float 값이 유한하지 않습니다(NaN 또는 ±Infinity, R5).
+    NonFiniteFloat {
+        /// 원본 IEEE-754 비트 패턴(f32는 하위 32bit).
+        bits: u64,
+    },
 }
 
 impl fmt::Display for EncodeError {
@@ -46,6 +53,12 @@ impl fmt::Display for EncodeError {
             }
             EncodeError::DuplicateTag { tag } => {
                 write!(f, "field tag가 중복됩니다: {tag}")
+            }
+            EncodeError::NonFiniteFloat { bits } => {
+                write!(
+                    f,
+                    "float 값이 유한하지 않습니다(NaN 또는 ±Infinity): bits=0x{bits:016x}"
+                )
             }
         }
     }
@@ -149,18 +162,36 @@ impl CanonicalEncoder {
         self.buf.push(u8::from(value));
     }
 
-    /// `f32` IEEE-754 비트 패턴을 LE 4바이트로 기록합니다(R1).
+    /// `f32`를 LE 4바이트로 기록합니다(R1, R5).
     ///
-    /// 유한성 검사·`-0.0` 정규화(R5)는 V.1.4에서 적용합니다.
-    pub fn put_f32(&mut self, value: f32) {
+    /// core 규칙(III.3.1, [`FiniteF32`])을 그대로 적용합니다:
+    /// NaN·±Infinity는 거부하고 `-0.0`은 `+0.0`으로 정규화합니다.
+    pub fn put_f32(&mut self, value: f32) -> Result<(), EncodeError> {
+        let finite = FiniteF32::new(value).map_err(|_| EncodeError::NonFiniteFloat {
+            bits: u64::from(value.to_bits()),
+        })?;
+        self.buf.extend_from_slice(&finite.to_le_bytes());
+        Ok(())
+    }
+
+    /// 이미 검증된 [`FiniteF32`]를 LE 4바이트로 기록합니다(R1, R5).
+    pub fn put_finite_f32(&mut self, value: FiniteF32) {
         self.buf.extend_from_slice(&value.to_le_bytes());
     }
 
-    /// `f64` IEEE-754 비트 패턴을 LE 8바이트로 기록합니다(R1).
+    /// `f64`를 LE 8바이트로 기록합니다(R1, R5).
     ///
-    /// 유한성 검사·`-0.0` 정규화(R5)는 V.1.4에서 적용합니다.
-    pub fn put_f64(&mut self, value: f64) {
-        self.buf.extend_from_slice(&value.to_le_bytes());
+    /// f32와 같은 규칙: NaN·±Infinity는 거부하고 `-0.0`은 `+0.0`으로 정규화합니다.
+    pub fn put_f64(&mut self, value: f64) -> Result<(), EncodeError> {
+        if !value.is_finite() {
+            return Err(EncodeError::NonFiniteFloat {
+                bits: value.to_bits(),
+            });
+        }
+        // value == 0.0 은 +0.0 과 -0.0 모두에 참 → 항상 +0.0 으로 정규화.
+        let normalized = if value == 0.0 { 0.0 } else { value };
+        self.buf.extend_from_slice(&normalized.to_le_bytes());
+        Ok(())
     }
 
     /// 바이트열을 `u32` LE 길이 프리픽스 + payload로 기록합니다(R3).
@@ -298,8 +329,8 @@ mod tests {
             "i32" => enc.put_i32(v.parse().unwrap()),
             "i64" => enc.put_i64(v.parse().unwrap()),
             "bool" => enc.put_bool(v.parse().unwrap()),
-            "f32" => enc.put_f32(v.parse().unwrap()),
-            "f64" => enc.put_f64(v.parse().unwrap()),
+            "f32" => enc.put_f32(v.parse().unwrap()).unwrap(),
+            "f64" => enc.put_f64(v.parse().unwrap()).unwrap(),
             "string" => enc.put_string(v).unwrap(),
             other => panic!("알 수 없는 fixture type: {other}"),
         }
@@ -431,6 +462,48 @@ mod tests {
             check_len(too_long).unwrap_err(),
             EncodeError::LengthOverflow { len: too_long }
         );
+    }
+
+    #[test]
+    fn non_finite_floats_are_rejected() {
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut enc = CanonicalEncoder::new();
+            assert_eq!(
+                enc.put_f32(value).unwrap_err(),
+                EncodeError::NonFiniteFloat {
+                    bits: u64::from(value.to_bits())
+                },
+                "f32 {value} 거부 실패"
+            );
+            assert!(enc.bytes().is_empty(), "거부 시 bytes를 남기지 않아야 함");
+        }
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut enc = CanonicalEncoder::new();
+            assert_eq!(
+                enc.put_f64(value).unwrap_err(),
+                EncodeError::NonFiniteFloat {
+                    bits: value.to_bits()
+                },
+                "f64 {value} 거부 실패"
+            );
+            assert!(enc.bytes().is_empty(), "거부 시 bytes를 남기지 않아야 함");
+        }
+    }
+
+    #[test]
+    fn negative_zero_is_normalized_to_positive_zero() {
+        let mut enc = CanonicalEncoder::new();
+        enc.put_f32(-0.0_f32).unwrap();
+        enc.put_f64(-0.0_f64).unwrap();
+        assert_eq!(hex(enc.bytes()), "000000000000000000000000");
+    }
+
+    #[test]
+    fn finite_f32_writes_core_type_directly() {
+        use stellar_core_types::value::FiniteF32;
+        let mut enc = CanonicalEncoder::new();
+        enc.put_finite_f32(FiniteF32::new(1.0).unwrap());
+        assert_eq!(hex(enc.bytes()), "0000803f");
     }
 
     #[test]

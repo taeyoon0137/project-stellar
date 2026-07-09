@@ -5,8 +5,7 @@
 //! - 길이 프리픽스가 남은 입력보다 큰 length overflow.
 //! - map 중복 key와 canonical 정렬 위반(R4).
 //! - 레코드의 unknown mandatory tag(R6). unknown optional tag는 skip합니다.
-//!
-//! float 유한성 정책(R5)은 V.1.4에서 encoder와 함께 확정합니다.
+//! - 비유한 float bits와 `-0.0`(비canonical, R5·V.1.4).
 
 use std::fmt;
 
@@ -72,6 +71,11 @@ pub enum DecodeError {
         /// 남은 byte 수.
         remaining: usize,
     },
+    /// float bits가 canonical하지 않습니다(NaN·±Infinity 또는 `-0.0`, R5).
+    InvalidFloat {
+        /// 원본 IEEE-754 비트 패턴(f32는 하위 32bit).
+        bits: u64,
+    },
 }
 
 impl fmt::Display for DecodeError {
@@ -111,6 +115,12 @@ impl fmt::Display for DecodeError {
             }
             DecodeError::TrailingBytes { remaining } => {
                 write!(f, "입력 끝에 {remaining} bytes가 남았습니다")
+            }
+            DecodeError::InvalidFloat { bits } => {
+                write!(
+                    f,
+                    "float bits가 canonical하지 않습니다(NaN·±Infinity·-0.0): 0x{bits:016x}"
+                )
             }
         }
     }
@@ -217,14 +227,28 @@ impl<'a> CanonicalDecoder<'a> {
         }
     }
 
-    /// `f32` IEEE-754 비트 패턴을 LE로 읽습니다(R1). 유한성 정책은 V.1.4에서 적용합니다.
+    /// `f32`를 LE로 읽습니다(R1, R5). canonical 입력은 유한 값만 담으므로
+    /// NaN·±Infinity와 `-0.0` bits는 거부합니다.
     pub fn take_f32(&mut self) -> Result<f32, DecodeError> {
-        Ok(f32::from_le_bytes(self.take_array()?))
+        let value = f32::from_le_bytes(self.take_array()?);
+        if !value.is_finite() || value.to_bits() == (-0.0_f32).to_bits() {
+            return Err(DecodeError::InvalidFloat {
+                bits: u64::from(value.to_bits()),
+            });
+        }
+        Ok(value)
     }
 
-    /// `f64` IEEE-754 비트 패턴을 LE로 읽습니다(R1). 유한성 정책은 V.1.4에서 적용합니다.
+    /// `f64`를 LE로 읽습니다(R1, R5). canonical 입력은 유한 값만 담으므로
+    /// NaN·±Infinity와 `-0.0` bits는 거부합니다.
     pub fn take_f64(&mut self) -> Result<f64, DecodeError> {
-        Ok(f64::from_le_bytes(self.take_array()?))
+        let value = f64::from_le_bytes(self.take_array()?);
+        if !value.is_finite() || value.to_bits() == (-0.0_f64).to_bits() {
+            return Err(DecodeError::InvalidFloat {
+                bits: value.to_bits(),
+            });
+        }
+        Ok(value)
     }
 
     /// 길이 프리픽스 바이트열을 읽습니다(R3). 길이가 남은 입력을 초과하면 거부합니다.
@@ -338,8 +362,8 @@ mod tests {
         enc.put_i32(-256);
         enc.put_i64(i64::MIN);
         enc.put_bool(true);
-        enc.put_f32(1.0);
-        enc.put_f64(-2.5);
+        enc.put_f32(1.0).unwrap();
+        enc.put_f64(-2.5).unwrap();
         enc.put_string("héllo").unwrap();
         let bytes = enc.into_bytes();
 
@@ -434,6 +458,8 @@ mod tests {
         String,
         Map,
         Fields,
+        F32,
+        F64,
     }
 
     #[test]
@@ -497,6 +523,22 @@ mod tests {
                 from_hex("01000000 63000000 01 00000000"),
             ),
             ("map 뒤 trailing bytes", Path::Map, from_hex("00000000 ff")),
+            ("f32 NaN bits", Path::F32, f32::NAN.to_le_bytes().to_vec()),
+            (
+                "f32 -0.0 bits",
+                Path::F32,
+                (-0.0_f32).to_le_bytes().to_vec(),
+            ),
+            (
+                "f64 +Infinity bits",
+                Path::F64,
+                f64::INFINITY.to_le_bytes().to_vec(),
+            ),
+            (
+                "f64 -0.0 bits",
+                Path::F64,
+                (-0.0_f64).to_le_bytes().to_vec(),
+            ),
         ];
 
         for (name, path, bytes) in corpus {
@@ -508,6 +550,8 @@ mod tests {
                 Path::String => dec.take_string().map(|_| ()),
                 Path::Map => dec.take_map().and_then(|_| dec.expect_end()),
                 Path::Fields => dec.take_fields(known).and_then(|_| dec.expect_end()),
+                Path::F32 => dec.take_f32().map(|_| ()),
+                Path::F64 => dec.take_f64().map(|_| ()),
             };
             assert!(
                 result.is_err(),

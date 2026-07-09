@@ -429,7 +429,7 @@ tools/xtask/
 | V.1.1 | `[x]` | 저장 primitive의 canonical 규칙 문서를 작성합니다: little-endian, fixed integer width, length-prefixed UTF-8, sorted map key, finite float bits, unknown field policy. 구현 전 golden bytes를 정의합니다. | `docs/fixtures/storage/canonical-primitives.yaml` 존재 및 스키마 검사 통과. | Phase III |
 | V.1.2 | `[x]` | `storage`에 canonical encoder를 구현합니다. map 입력 순서와 무관하게 key order로 기록합니다. | 동일 값의 삽입 순서를 바꾼 1,000 fixture가 동일 bytes. | V.1.1 |
 | V.1.3 | `[x]` | canonical decoder를 구현하고 length overflow, duplicate key, unknown mandatory tag를 거부합니다. | malformed corpus 전부 panic 없이 오류 반환. | V.1.2 |
-| V.1.4 | `[ ]` | 저장 float가 NaN·Infinity·negative zero를 포함하면 encoder가 거부 또는 정규화하도록 core 규칙과 일치시킵니다. | primitive golden bytes 일치. | V.1.2, III.3.1 |
+| V.1.4 | `[x]` | 저장 float가 NaN·Infinity·negative zero를 포함하면 encoder가 거부 또는 정규화하도록 core 규칙과 일치시킵니다. | primitive golden bytes 일치. | V.1.2, III.3.1 |
 | V.1.5 | `[ ]` | content hash 알고리즘을 ADR로 고정하고 `ContentHash` newtype과 문자열 형식을 구현합니다. 알고리즘 이름을 hash 값에 포함합니다. | hash test vector와 문자열 parse round-trip 통과. | I.3.5, ADR 승인 |
 
 ### V.2 Chunk envelope와 저장소
