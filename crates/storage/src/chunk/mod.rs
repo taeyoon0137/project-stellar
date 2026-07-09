@@ -20,4 +20,7 @@ pub mod kind_registry;
 /// 논리 ChunkId → content hash 매핑 pointer (V.3.1).
 pub mod pointer;
 
+/// 변경 chunk만 기록하는 write planner (V.3.3).
+pub mod planner;
+
 pub use id::ChunkId;
