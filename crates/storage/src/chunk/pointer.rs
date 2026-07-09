@@ -110,6 +110,73 @@ impl ChunkPointer {
     }
 }
 
+/// pointer 집합 검증 실패 (V.3.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PointerSetError {
+    /// 같은 ChunkId가 서로 다른 content hash를 가리킵니다.
+    ConflictingChunkId {
+        /// 충돌한 논리 id.
+        chunk_id: ChunkId,
+        /// 먼저 나온 hash.
+        first: ContentHash,
+        /// 나중에 나온 hash.
+        second: ContentHash,
+    },
+    /// 같은 ChunkId 항목이 두 번 이상 나타납니다(hash까지 동일한 중복).
+    DuplicateChunkId {
+        /// 중복된 논리 id.
+        chunk_id: ChunkId,
+    },
+}
+
+impl fmt::Display for PointerSetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PointerSetError::ConflictingChunkId {
+                chunk_id,
+                first,
+                second,
+            } => {
+                write!(
+                    f,
+                    "ChunkId {chunk_id}가 한 manifest에서 두 hash를 가리킵니다: {first} / {second}"
+                )
+            }
+            PointerSetError::DuplicateChunkId { chunk_id } => {
+                write!(f, "ChunkId {chunk_id} 항목이 중복됩니다")
+            }
+        }
+    }
+}
+
+impl std::error::Error for PointerSetError {}
+
+/// 한 generation manifest의 pointer 집합을 검증합니다 (V.3.2).
+///
+/// 같은 ChunkId가 두 번 나타나면 거부합니다 — 다른 hash를 가리키면
+/// [`PointerSetError::ConflictingChunkId`], 완전히 같은 항목이 반복되어도
+/// [`PointerSetError::DuplicateChunkId`]입니다.
+pub fn validate_pointer_set(pointers: &[ChunkPointer]) -> Result<(), PointerSetError> {
+    let mut seen: std::collections::BTreeMap<ChunkId, ContentHash> =
+        std::collections::BTreeMap::new();
+    for pointer in pointers {
+        if let Some(first) = seen.get(&pointer.chunk_id) {
+            if *first != pointer.content_hash {
+                return Err(PointerSetError::ConflictingChunkId {
+                    chunk_id: pointer.chunk_id,
+                    first: *first,
+                    second: pointer.content_hash,
+                });
+            }
+            return Err(PointerSetError::DuplicateChunkId {
+                chunk_id: pointer.chunk_id,
+            });
+        }
+        seen.insert(pointer.chunk_id, pointer.content_hash);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +240,52 @@ mod tests {
         let mut dec = CanonicalDecoder::new(&bytes);
         let err = ChunkPointer::decode(&mut dec).unwrap_err();
         assert!(matches!(err, PointerCodecError::InvalidHash { .. }));
+    }
+
+    #[test]
+    fn pointer_set_with_unique_ids_passes() {
+        let pointers: Vec<ChunkPointer> = (0..10u64)
+            .map(|i| pointer(1_000 + i, format!("p{i}").as_bytes()))
+            .collect();
+        assert_eq!(validate_pointer_set(&pointers), Ok(()));
+        assert_eq!(validate_pointer_set(&[]), Ok(()));
+    }
+
+    #[test]
+    fn same_chunk_id_with_two_hashes_is_rejected() {
+        // 검증 기준(V.3.2): duplicate pointer fixture 실패.
+        let a = pointer(1_000, b"content-a");
+        let mut b = a;
+        b.content_hash = ContentHash::compute(b"content-b");
+        let err = validate_pointer_set(&[a, b]).unwrap_err();
+        assert_eq!(
+            err,
+            PointerSetError::ConflictingChunkId {
+                chunk_id: a.chunk_id,
+                first: a.content_hash,
+                second: b.content_hash,
+            }
+        );
+    }
+
+    #[test]
+    fn exact_duplicate_pointer_is_rejected() {
+        let a = pointer(1_000, b"content-a");
+        let err = validate_pointer_set(&[a, a]).unwrap_err();
+        assert_eq!(
+            err,
+            PointerSetError::DuplicateChunkId {
+                chunk_id: a.chunk_id
+            }
+        );
+    }
+
+    #[test]
+    fn two_ids_sharing_one_hash_is_allowed() {
+        // 서로 다른 논리 chunk가 같은 내용(dedup)을 가리키는 것은 허용됩니다.
+        let a = pointer(1_000, b"shared");
+        let b = pointer(2_000, b"shared");
+        assert_eq!(validate_pointer_set(&[a, b]), Ok(()));
     }
 
     #[test]
