@@ -194,6 +194,14 @@ impl CanonicalEncoder {
         Ok(())
     }
 
+    /// 고정 폭 raw bytes를 길이 프리픽스 없이 기록합니다.
+    ///
+    /// magic처럼 폭이 형식으로 고정된 필드 전용입니다. 가변 길이 데이터는
+    /// [`CanonicalEncoder::put_bytes`](R3)를 사용해야 합니다.
+    pub fn put_raw_magic(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
+
     /// 바이트열을 `u32` LE 길이 프리픽스 + payload로 기록합니다(R3).
     pub fn put_bytes(&mut self, payload: &[u8]) -> Result<(), EncodeError> {
         let len = check_len(payload.len())?;

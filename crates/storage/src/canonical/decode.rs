@@ -178,6 +178,11 @@ impl<'a> CanonicalDecoder<'a> {
         Ok(slice.try_into().expect("길이 N 보장"))
     }
 
+    /// 고정 폭 raw bytes를 길이 프리픽스 없이 읽습니다(magic 등 고정 길이 필드용).
+    pub fn take_raw(&mut self, n: usize) -> Result<&'a [u8], DecodeError> {
+        self.take(n)
+    }
+
     /// `u8`을 읽습니다(R2).
     pub fn take_u8(&mut self) -> Result<u8, DecodeError> {
         Ok(u8::from_le_bytes(self.take_array()?))
