@@ -5,3 +5,6 @@ pub mod canonical;
 
 /// content hash (V.1.5, ADR-0004).
 pub mod hash;
+
+/// chunk 저장소 (V.2).
+pub mod chunk;
