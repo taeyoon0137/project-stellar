@@ -17,4 +17,7 @@ pub mod store;
 /// chunk kind registry와 unknown 정책 (V.2.7).
 pub mod kind_registry;
 
+/// 논리 ChunkId → content hash 매핑 pointer (V.3.1).
+pub mod pointer;
+
 pub use id::ChunkId;

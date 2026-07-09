@@ -448,7 +448,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| V.3.1 | `[ ]` | `ChunkPointer { chunk_id, content_hash, kind, schema_version }`를 정의합니다. | binary round-trip·정렬 통과. | V.2.1, V.1.5 |
+| V.3.1 | `[x]` | `ChunkPointer { chunk_id, content_hash, kind, schema_version }`를 정의합니다. | binary round-trip·정렬 통과. | V.2.1, V.1.5 |
 | V.3.2 | `[ ]` | 동일 ChunkId가 한 generation manifest에서 두 hash를 가리키면 거부하는 validator를 구현합니다. | duplicate pointer fixture 실패. | V.3.1 |
 | V.3.3 | `[ ]` | 변경된 logical chunk만 새 payload로 encode하고 나머지 pointer를 재사용하는 planner를 구현합니다. | 단일 속성 변경 fixture에서 예상 chunk 하나만 hash 변경. | V.3.1, V.2.4 |
 | V.3.4 | `[ ]` | chunk split/merge 전에도 외부 참조가 ChunkId를 통해 유지되도록 remap manifest 타입을 추가합니다. 실제 split은 후속 작업입니다. | remap chain cycle·missing target 검증 통과. | V.3.1 |

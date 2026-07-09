@@ -116,7 +116,7 @@ impl ChunkEnvelope {
     /// header bytes를 인코딩합니다(현재 format version).
     pub fn encode(&self) -> Result<Vec<u8>, EnvelopeError> {
         let mut enc = CanonicalEncoder::new();
-        enc.put_raw_magic(&CHUNK_MAGIC);
+        enc.put_fixed_raw(&CHUNK_MAGIC);
         enc.put_u32(CHUNK_FORMAT_VERSION);
         enc.put_u32(self.kind.0);
         enc.put_u64(self.uncompressed_len);

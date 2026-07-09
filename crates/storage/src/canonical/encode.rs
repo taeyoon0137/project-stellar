@@ -198,7 +198,7 @@ impl CanonicalEncoder {
     ///
     /// magic처럼 폭이 형식으로 고정된 필드 전용입니다. 가변 길이 데이터는
     /// [`CanonicalEncoder::put_bytes`](R3)를 사용해야 합니다.
-    pub fn put_raw_magic(&mut self, bytes: &[u8]) {
+    pub fn put_fixed_raw(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
     }
 
