@@ -11,4 +11,7 @@ pub mod envelope;
 /// chunk object 경로 생성 (V.2.3).
 pub mod path;
 
+/// immutable chunk write (V.2.4).
+pub mod store;
+
 pub use id::ChunkId;
