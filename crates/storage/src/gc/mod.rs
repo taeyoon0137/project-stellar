@@ -7,3 +7,6 @@ pub mod retention;
 
 /// reachable mark scanner (V.7.2).
 pub mod mark;
+
+/// unreferenced 파일 sweep (V.7.3).
+pub mod sweep;

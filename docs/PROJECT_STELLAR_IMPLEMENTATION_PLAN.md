@@ -492,7 +492,7 @@ tools/xtask/
 |---|---|---|---|---|
 | V.7.1 | `[x]` | 보존 generation 정책 인터페이스를 만들고 기본값은 current+직전 정상 세대+복구에 필요한 세대로 둡니다. 수치는 config에서 읽습니다. | policy fixture 통과. | V.4.5 |
 | V.7.2 | `[x]` | 보존 manifest에서 reachable content hash를 mark하는 scanner를 구현합니다. | shared chunk가 한 generation 삭제로 제거되지 않습니다. | V.7.1 |
-| V.7.3 | `[ ]` | unreferenced chunk를 grace period 이후 sweep하는 작업을 구현합니다. 파일 삭제 실패는 다음 실행으로 이월합니다. | active chunk 미삭제, orphan 삭제 fixture 통과. | V.7.2 |
+| V.7.3 | `[x]` | unreferenced chunk를 grace period 이후 sweep하는 작업을 구현합니다. 파일 삭제 실패는 다음 실행으로 이월합니다. | active chunk 미삭제, orphan 삭제 fixture 통과. | V.7.2 |
 | V.7.4 | `[ ]` | GC는 프로젝트 open 직후가 아니라 idle+저장 없음 조건에서만 시작하도록 scheduler interface를 추가합니다. | save 중 GC 시작하지 않는 동시성 테스트. | V.7.3 |
 
 ### V.8 스키마 버전과 마이그레이션
