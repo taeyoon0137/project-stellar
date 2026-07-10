@@ -4,3 +4,6 @@
 
 /// 보존 generation 정책 (V.7.1).
 pub mod retention;
+
+/// reachable mark scanner (V.7.2).
+pub mod mark;
