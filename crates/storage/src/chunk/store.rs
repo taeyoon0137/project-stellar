@@ -12,7 +12,6 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::atomic_file::write_file_atomic;
 use crate::hash::ContentHash;
 
 use super::envelope::{ChunkEnvelope, ChunkKindCode, EnvelopeError};
@@ -177,6 +176,17 @@ impl ChunkStore {
         kind: ChunkKindCode,
         payload: &[u8],
     ) -> Result<WriteOutcome, ChunkStoreError> {
+        self.write_chunk_observed(kind, payload, &mut crate::atomic_file::NoopObserver)
+    }
+
+    /// [`ChunkStore::write_chunk`]에 atomic write 단계 관찰자를 주입한 버전
+    /// (fault injection 테스트용, V.5.6).
+    pub fn write_chunk_observed(
+        &self,
+        kind: ChunkKindCode,
+        payload: &[u8],
+        observer: &mut dyn crate::atomic_file::WriteObserver,
+    ) -> Result<WriteOutcome, ChunkStoreError> {
         let (envelope, expected_bytes) = ChunkStore::encode_file_bytes(kind, payload)?;
         let hash = envelope.payload_hash;
         let path = ChunkObjectPath::for_hash(&hash);
@@ -198,10 +208,11 @@ impl ChunkStore {
             path: parent.to_path_buf(),
             source,
         })?;
-        write_file_atomic(&target, &expected_bytes).map_err(|source| ChunkStoreError::Io {
-            path: target.clone(),
-            source,
-        })?;
+        crate::atomic_file::write_file_atomic_observed(&target, &expected_bytes, observer)
+            .map_err(|source| ChunkStoreError::Io {
+                path: target.clone(),
+                source,
+            })?;
         Ok(WriteOutcome::Written { hash, path })
     }
 

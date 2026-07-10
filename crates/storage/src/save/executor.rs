@@ -15,7 +15,7 @@ use std::fmt;
 use std::path::Path;
 
 use crate::chunk::store::{ChunkStore, ChunkStoreError};
-use crate::generation::loader::{write_manifest_file, LoadError};
+use crate::generation::loader::LoadError;
 use crate::hash::ContentHash;
 
 use super::optimistic::{check_base_generation, BaseCheckError};
@@ -55,6 +55,30 @@ impl fmt::Display for SaveStage {
 pub trait SaveObserver {
     /// `stage` 실행 직전 호출됩니다.
     fn before(&mut self, stage: &SaveStage) -> std::io::Result<()>;
+
+    /// `op`(ChunkWrite/ManifestWrite)가 수행하는 atomic write의 내부 단계
+    /// (temp 생성·기록·flush·fsync·rename·dir sync) 직전 호출됩니다(V.5.6
+    /// fault matrix용). 기본 구현은 통과입니다.
+    fn before_file_stage(
+        &mut self,
+        op: &SaveStage,
+        stage: crate::atomic_file::WriteStage,
+    ) -> std::io::Result<()> {
+        let _ = (op, stage);
+        Ok(())
+    }
+}
+
+/// [`SaveObserver::before_file_stage`]를 atomic write 관찰자로 잇는 adapter.
+struct FileStageAdapter<'a> {
+    op: SaveStage,
+    observer: &'a mut dyn SaveObserver,
+}
+
+impl crate::atomic_file::WriteObserver for FileStageAdapter<'_> {
+    fn before(&mut self, stage: crate::atomic_file::WriteStage) -> std::io::Result<()> {
+        self.observer.before_file_stage(&self.op, stage)
+    }
 }
 
 /// 아무 것도 주입하지 않는 기본 관찰자.
@@ -139,8 +163,14 @@ pub fn prepare_save(
     let store = ChunkStore::new(root);
     for (index, write) in plan.dirty_chunks.iter().enumerate() {
         let stage = SaveStage::ChunkWrite { index };
-        observer.before(&stage).map_err(|e| abort(stage, e))?;
-        store.write_chunk(write.kind, &write.payload)?;
+        observer
+            .before(&stage)
+            .map_err(|e| abort(stage.clone(), e))?;
+        let mut adapter = FileStageAdapter {
+            op: stage,
+            observer,
+        };
+        store.write_chunk_observed(write.kind, &write.payload, &mut adapter)?;
     }
 
     // 기록 직후 재읽기 전체 검증(V.2.6): envelope·length·hash.
@@ -155,8 +185,13 @@ pub fn prepare_save(
     observer
         .before(&SaveStage::ManifestWrite)
         .map_err(|e| abort(SaveStage::ManifestWrite, e))?;
+    let mut adapter = FileStageAdapter {
+        op: SaveStage::ManifestWrite,
+        observer,
+    };
     let manifest_hash =
-        write_manifest_file(root, &plan.manifest).map_err(SaveExecError::Manifest)?;
+        crate::generation::loader::write_manifest_file_observed(root, &plan.manifest, &mut adapter)
+            .map_err(SaveExecError::Manifest)?;
 
     Ok(PreparedSave { manifest_hash })
 }
@@ -170,7 +205,9 @@ mod tests {
     use crate::chunk::pointer::ChunkPointer;
     use crate::chunk::store::WriteOutcome;
     use crate::generation::current::{read_current_pointer, write_current_pointer};
-    use crate::generation::loader::{load_current_generation, LoadedGeneration};
+    use crate::generation::loader::{
+        load_current_generation, write_manifest_file, LoadedGeneration,
+    };
     use crate::generation::manifest::GenerationManifest;
     use crate::save::plan::build_save_plan;
     use std::path::PathBuf;

@@ -15,7 +15,6 @@ use std::path::{Path, PathBuf};
 
 use stellar_core_types::ids::StableId;
 
-use crate::atomic_file::write_file_atomic;
 use crate::chunk::path::ChunkObjectPath;
 use crate::hash::ContentHash;
 
@@ -144,6 +143,16 @@ pub fn write_manifest_file(
     root: &Path,
     manifest: &GenerationManifest,
 ) -> Result<ContentHash, LoadError> {
+    write_manifest_file_observed(root, manifest, &mut crate::atomic_file::NoopObserver)
+}
+
+/// [`write_manifest_file`]에 atomic write 단계 관찰자를 주입한 버전
+/// (fault injection 테스트용, V.5.6).
+pub fn write_manifest_file_observed(
+    root: &Path,
+    manifest: &GenerationManifest,
+    observer: &mut dyn crate::atomic_file::WriteObserver,
+) -> Result<ContentHash, LoadError> {
     let (bytes, hash) = manifest.encode_with_hash()?;
     let path = manifest_path(root, &hash);
     if path.exists() {
@@ -161,9 +170,11 @@ pub fn write_manifest_file(
         path: parent.to_path_buf(),
         source,
     })?;
-    write_file_atomic(&path, &bytes).map_err(|source| LoadError::Io {
-        path: path.clone(),
-        source,
+    crate::atomic_file::write_file_atomic_observed(&path, &bytes, observer).map_err(|source| {
+        LoadError::Io {
+            path: path.clone(),
+            source,
+        }
     })?;
     Ok(hash)
 }

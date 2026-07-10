@@ -103,6 +103,16 @@ impl SaveObserver for CancelCheck<'_> {
         }
         self.inner.before(stage)
     }
+
+    fn before_file_stage(
+        &mut self,
+        op: &SaveStage,
+        stage: crate::atomic_file::WriteStage,
+    ) -> std::io::Result<()> {
+        // 파일 내부 단계에서는 취소를 새로 확인하지 않고(원자 단위 유지)
+        // 내부 관찰자의 주입만 전달합니다.
+        self.inner.before_file_stage(op, stage)
+    }
 }
 
 /// 저장 전체를 실행합니다: prepare(각 단계 취소 확인) → 취소 최종 확인 →

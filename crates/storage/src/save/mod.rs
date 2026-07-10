@@ -16,3 +16,7 @@ pub mod commit;
 
 /// 취소 token과 전체 저장 파이프라인 (V.5.5).
 pub mod cancel;
+
+/// save transaction fault matrix (V.5.6, 테스트 전용).
+#[cfg(test)]
+mod fault_matrix;

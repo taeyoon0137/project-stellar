@@ -473,7 +473,7 @@ tools/xtask/
 | V.5.3 | `[x]` | dirty chunk를 모두 쓰고 재읽어 검증한 뒤 manifest를 기록하는 단계 실행기를 구현합니다. | 중간 실패 시 current generation 유지. | V.5.2, V.2.5 |
 | V.5.4 | `[x]` | 마지막 단계에서 current pointer를 전환하고 성공 후에만 in-memory saved generation을 갱신합니다. | pointer 전환 실패 시 memory generation 미변경. | V.5.3, V.4.3 |
 | V.5.5 | `[x]` | 저장 취소 token을 지원하되 pointer 전환 시작 이후에는 취소를 무시하고 완료 또는 실패까지 진행합니다. | 각 단계 cancel fixture 결과 정확. | V.5.3 |
-| V.5.6 | `[ ]` | save transaction fault matrix를 작성해 chunk write, fsync, manifest write, pointer replace 각 지점의 실패를 자동 주입합니다. | 모든 fixture에서 이전 세대 또는 새 세대 중 하나만 열림. | V.5.4 |
+| V.5.6 | `[x]` | save transaction fault matrix를 작성해 chunk write, fsync, manifest write, pointer replace 각 지점의 실패를 자동 주입합니다. | 모든 fixture에서 이전 세대 또는 새 세대 중 하나만 열림. | V.5.4 |
 
 ### V.6 청크 경계와 지연 로딩
 
