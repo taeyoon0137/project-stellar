@@ -13,3 +13,6 @@ pub mod executor;
 
 /// current pointer 전환 commit (V.5.4).
 pub mod commit;
+
+/// 취소 token과 전체 저장 파이프라인 (V.5.5).
+pub mod cancel;
