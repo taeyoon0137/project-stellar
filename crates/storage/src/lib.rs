@@ -14,3 +14,6 @@ pub mod atomic_file;
 
 /// generation 저장 (V.4).
 pub mod generation;
+
+/// 저장 트랜잭션 (V.5).
+pub mod save;
