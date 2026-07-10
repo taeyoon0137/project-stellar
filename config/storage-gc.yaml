@@ -1,0 +1,10 @@
+# 저장 GC 보존 정책 수치 (V.7.1).
+#
+# storage crate의 RetentionPolicy가 읽습니다. 형식은 `key: value` 한 줄씩만
+# 허용합니다(중첩 없음).
+
+# 항상 보존할 최근 정상 세대 수(current 포함). 기본 2 = current + 직전 정상 세대.
+keep_recent_generations: 2
+
+# unreferenced chunk sweep 유예 시간(초, V.7.3).
+grace_period_seconds: 86400

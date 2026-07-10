@@ -17,3 +17,6 @@ pub mod generation;
 
 /// 저장 트랜잭션 (V.5).
 pub mod save;
+
+/// garbage collection (V.7).
+pub mod gc;
