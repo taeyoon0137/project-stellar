@@ -10,3 +10,6 @@ pub mod optimistic;
 
 /// 저장 단계 실행기 (V.5.3).
 pub mod executor;
+
+/// current pointer 전환 commit (V.5.4).
+pub mod commit;
