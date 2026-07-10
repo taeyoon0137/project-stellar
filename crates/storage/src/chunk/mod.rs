@@ -26,4 +26,7 @@ pub mod planner;
 /// chunk remap manifest (V.3.4).
 pub mod remap;
 
+/// 초기 chunk kind 정의 (V.6.1).
+pub mod kinds;
+
 pub use id::ChunkId;
