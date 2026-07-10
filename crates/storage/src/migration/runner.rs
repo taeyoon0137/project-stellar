@@ -300,6 +300,115 @@ mod tests {
     }
 
     #[test]
+    fn failure_at_each_save_stage_keeps_original_current() {
+        // 검증 기준(V.8.4): 단계 중간 실패 시 원본 current 유지.
+        use crate::atomic_file::WriteStage;
+        use crate::save::executor::SaveStage;
+
+        // 내용을 실제로 바꾸는 v1→v2 step(모든 chunk payload에 suffix 추가)
+        // → chunk write 단계가 실제로 실행됩니다.
+        fn content_registry() -> MigrationRegistry {
+            let mut registry = MigrationRegistry::new();
+            registry
+                .register(crate::migration::registry::MigrationStep {
+                    from: 1,
+                    to: 2,
+                    migrate: Box::new(|doc| {
+                        for (_, _, payload) in &mut doc.chunks {
+                            payload.extend_from_slice(b"-v2");
+                        }
+                        Ok(())
+                    }),
+                })
+                .unwrap();
+            registry
+        }
+
+        struct PrepareFail {
+            stage: SaveStage,
+        }
+        impl SaveObserver for PrepareFail {
+            fn before(&mut self, stage: &SaveStage) -> std::io::Result<()> {
+                if *stage == self.stage {
+                    return Err(std::io::Error::other("주입"));
+                }
+                Ok(())
+            }
+        }
+        struct PointerFail {
+            stage: WriteStage,
+        }
+        impl WriteObserver for PointerFail {
+            fn before(&mut self, stage: WriteStage) -> std::io::Result<()> {
+                if stage == self.stage {
+                    return Err(std::io::Error::other("주입"));
+                }
+                Ok(())
+            }
+        }
+
+        let project_id = stable(42);
+        let prepare_stages = [
+            SaveStage::BaseCheck,
+            SaveStage::ChunkWrite { index: 0 },
+            SaveStage::ChunkVerify { index: 1 },
+            SaveStage::ManifestWrite,
+        ];
+        for stage in prepare_stages {
+            let dir = TempDir::new();
+            let (original_hash, _) = v1_project(&dir, project_id);
+            let mut prepare = PrepareFail {
+                stage: stage.clone(),
+            };
+            let mut pointer = crate::atomic_file::NoopObserver;
+            let err = run_migration_observed(
+                &dir.path,
+                project_id,
+                &content_registry(),
+                2,
+                &mut prepare,
+                &mut pointer,
+            )
+            .unwrap_err();
+            assert!(matches!(err, MigrationRunError::Save(_)), "{stage}");
+            // 원본 current 유지 + 완전 로드 가능.
+            assert_eq!(
+                read_current_pointer(&dir.path).unwrap(),
+                original_hash,
+                "{stage}"
+            );
+            let loaded = load_current_generation(&dir.path, project_id).unwrap();
+            assert_eq!(loaded.manifest.generation, 1, "{stage}");
+            assert_eq!(loaded.manifest.schema_version, 1, "{stage}");
+        }
+
+        // pointer 전환 자체 실패(rename 이전 단계들).
+        for stage in [
+            WriteStage::CreateTemp,
+            WriteStage::SyncFile,
+            WriteStage::Rename,
+        ] {
+            let dir = TempDir::new();
+            let (original_hash, _) = v1_project(&dir, project_id);
+            let mut prepare = crate::save::executor::NoopSaveObserver;
+            let mut pointer = PointerFail { stage };
+            let err = run_migration_observed(
+                &dir.path,
+                project_id,
+                &content_registry(),
+                2,
+                &mut prepare,
+                &mut pointer,
+            )
+            .unwrap_err();
+            assert!(matches!(err, MigrationRunError::Save(_)));
+            assert_eq!(read_current_pointer(&dir.path).unwrap(), original_hash);
+            let loaded = load_current_generation(&dir.path, project_id).unwrap();
+            assert_eq!(loaded.manifest.schema_version, 1);
+        }
+    }
+
+    #[test]
     fn missing_migration_path_fails_without_changes() {
         let dir = TempDir::new();
         let project_id = stable(42);
