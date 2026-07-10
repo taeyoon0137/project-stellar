@@ -7,6 +7,9 @@ publish = false
 # 부트스트랩 한정 의존성. config/bootstrap-dependencies.yaml 참조(I.3.2에서 이전·삭제).
 [dependencies]
 yaml-rust2 = "=0.11.0"
+# chunk 크기 측정 harness(V.6.3)용 내부 crate.
+stellar-storage = { path = "../../crates/storage" }
+stellar-core-types = { path = "../../crates/core-types" }
 
 [lints]
 workspace = true

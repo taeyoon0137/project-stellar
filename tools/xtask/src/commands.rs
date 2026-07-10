@@ -29,7 +29,7 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 15] = [
+pub const COMMANDS: [&str; 16] = [
     "help",
     "generate-ledger",
     "generate-ffi-header",
@@ -45,6 +45,7 @@ pub const COMMANDS: [&str; 15] = [
     "check-core",
     "validate-crate-graph",
     "validate-storage-fixtures",
+    "bench-chunk-size",
 ];
 
 /// 사용법 문자열. 각 명령이 정확히 한 번 나타납니다.
@@ -96,6 +97,13 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
         },
         "validate-crate-graph" => cmd_validate_crate_graph(repo_root),
         "validate-storage-fixtures" => cmd_validate_storage_fixtures(repo_root),
+        "bench-chunk-size" => match crate::chunk_bench::run_bench(repo_root) {
+            Ok(path) => {
+                println!("chunk 크기 벤치마크 기록 완료: {}", path.display());
+                Ok(())
+            }
+            Err(e) => Err(internal(&e)),
+        },
         other => {
             eprintln!("알 수 없는 명령: {other}");
             eprint!("{}", usage());
@@ -427,6 +435,11 @@ fn direct_dependencies(repo_root: &Path) -> Result<Vec<String>, i32> {
     let mut names = Vec::new();
     for line in text.lines().skip(1) {
         if let Some(rest) = line.split("── ").nth(1) {
+            // 내부 workspace crate(path 의존, "(/…)" 표기)는 외부 공급망 승인
+            // 대상이 아니므로 제외합니다(I.3.2의 범위는 외부 dependency).
+            if rest.contains(" (/") {
+                continue;
+            }
             if let Some(name) = rest.split_whitespace().next() {
                 names.push(name.to_string());
             }
