@@ -16,3 +16,6 @@ pub mod scanner;
 
 /// 프로젝트 저장소 open과 읽기 전용 recovery (V.4.6).
 pub mod open;
+
+/// 지연 로딩 loader (V.6.6).
+pub mod lazy;

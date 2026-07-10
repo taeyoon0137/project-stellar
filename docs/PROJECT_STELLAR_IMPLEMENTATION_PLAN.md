@@ -484,7 +484,7 @@ tools/xtask/
 | V.6.3 | `[x]` | chunk 목표 크기 측정 harness를 만들고 64KiB, 256KiB, 1MiB 후보의 로드·저장·Git delta 결과를 기록합니다. 결론을 자동 선택하지 않습니다. | raw benchmark와 ADR 입력 보고서 생성. | V.5.6 |
 | V.6.4 | `[ ]` | 승인된 임계치를 `config/versions.yaml`이 아니라 `config/performance-budgets.yaml`에 기록하고 split planner를 구현합니다. | 경계 바로 아래·위 fixture에서 예상 split. | V.6.3, ADR 승인 |
 | V.6.5 | `[ ]` | 작은 인접 chunk를 idle 작업에서 merge하는 planner를 구현하되 current save와 동시에 실행되지 않게 합니다. | merge 전후 의미 snapshot 동일. | V.6.4 |
-| V.6.6 | `[ ]` | 프로젝트 열기에서 DocumentManifest까지만 먼저 읽고 ViewTree subtree는 요청 시 읽는 lazy loader를 구현합니다. | 비활성 view chunk에 read syscall이 발생하지 않는 계측 테스트. | V.4.4, V.6.2 |
+| V.6.6 | `[x]` | 프로젝트 열기에서 DocumentManifest까지만 먼저 읽고 ViewTree subtree는 요청 시 읽는 lazy loader를 구현합니다. | 비활성 view chunk에 read syscall이 발생하지 않는 계측 테스트. | V.4.4, V.6.2 |
 
 ### V.7 Garbage collection
 
