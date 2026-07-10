@@ -480,7 +480,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | V.6.1 | `[x]` | 초기 chunk kind를 ProjectMetadata, DocumentManifest, ViewTree, ComponentLibrary, TokenSet, AssetMetadata로 정의합니다. | kind registry golden test. | V.2.7 |
-| V.6.2 | `[ ]` | ViewTree는 의미 있는 subtree root 목록을 포함하고 개별 subtree chunk를 참조하게 스키마를 정의합니다. | 2개 subtree fixture round-trip. | V.6.1 |
+| V.6.2 | `[x]` | ViewTree는 의미 있는 subtree root 목록을 포함하고 개별 subtree chunk를 참조하게 스키마를 정의합니다. | 2개 subtree fixture round-trip. | V.6.1 |
 | V.6.3 | `[ ]` | chunk 목표 크기 측정 harness를 만들고 64KiB, 256KiB, 1MiB 후보의 로드·저장·Git delta 결과를 기록합니다. 결론을 자동 선택하지 않습니다. | raw benchmark와 ADR 입력 보고서 생성. | V.5.6 |
 | V.6.4 | `[ ]` | 승인된 임계치를 `config/versions.yaml`이 아니라 `config/performance-budgets.yaml`에 기록하고 split planner를 구현합니다. | 경계 바로 아래·위 fixture에서 예상 split. | V.6.3, ADR 승인 |
 | V.6.5 | `[ ]` | 작은 인접 chunk를 idle 작업에서 merge하는 planner를 구현하되 current save와 동시에 실행되지 않게 합니다. | merge 전후 의미 snapshot 동일. | V.6.4 |

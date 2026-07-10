@@ -29,4 +29,7 @@ pub mod remap;
 /// 초기 chunk kind 정의 (V.6.1).
 pub mod kinds;
 
+/// ViewTree chunk payload 스키마 (V.6.2).
+pub mod view_tree;
+
 pub use id::ChunkId;
