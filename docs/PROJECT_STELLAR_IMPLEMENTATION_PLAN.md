@@ -499,7 +499,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| V.8.1 | `[ ]` | format_version, schema_version, minimum_reader_version, minimum_writer_version 타입과 호환성 판정 함수를 구현합니다. | 읽기 전용·편집 가능·거부 matrix test 통과. | V.4.1 |
+| V.8.1 | `[x]` | format_version, schema_version, minimum_reader_version, minimum_writer_version 타입과 호환성 판정 함수를 구현합니다. | 읽기 전용·편집 가능·거부 matrix test 통과. | V.4.1 |
 | V.8.2 | `[ ]` | `MigrationStep { from, to, migrate }` registry를 만들고 연속 경로가 없으면 거부합니다. | gap·cycle·duplicate step fixture 실패. | V.8.1 |
 | V.8.3 | `[ ]` | noop v1→v2 test migration을 만들어 원본 세대를 수정하지 않고 새 generation으로 결과를 기록합니다. | 원본 hash 유지, 새 generation 생성. | V.8.2, V.5.4 |
 | V.8.4 | `[ ]` | migration 전체를 temp generation에서 수행하고 모든 검증 후 current pointer를 전환합니다. | 단계 중간 실패 시 원본 current 유지. | V.8.3 |

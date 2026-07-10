@@ -20,3 +20,6 @@ pub mod save;
 
 /// garbage collection (V.7).
 pub mod gc;
+
+/// 스키마 버전과 마이그레이션 (V.8).
+pub mod migration;
