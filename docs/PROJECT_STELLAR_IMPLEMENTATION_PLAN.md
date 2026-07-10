@@ -503,7 +503,7 @@ tools/xtask/
 | V.8.2 | `[x]` | `MigrationStep { from, to, migrate }` registry를 만들고 연속 경로가 없으면 거부합니다. | gap·cycle·duplicate step fixture 실패. | V.8.1 |
 | V.8.3 | `[x]` | noop v1→v2 test migration을 만들어 원본 세대를 수정하지 않고 새 generation으로 결과를 기록합니다. | 원본 hash 유지, 새 generation 생성. | V.8.2, V.5.4 |
 | V.8.4 | `[x]` | migration 전체를 temp generation에서 수행하고 모든 검증 후 current pointer를 전환합니다. | 단계 중간 실패 시 원본 current 유지. | V.8.3 |
-| V.8.5 | `[ ]` | migration 결과를 자동 commit하지 않고 Git working tree 변경으로 남기는 통합 fixture를 추가합니다. | `git status`에 expected files만 변경. | V.8.4, IV.3.4 |
+| V.8.5 | `[x]` | migration 결과를 자동 commit하지 않고 Git working tree 변경으로 남기는 통합 fixture를 추가합니다. | `git status`에 expected files만 변경. | V.8.4, IV.3.4 |
 | V.8.6 | `[ ]` | migration golden fixture runner를 `cargo xtask test-migrations`로 추가합니다. | 모든 과거 fixture가 최신 snapshot으로 정확히 변환. | V.8.3 |
 
 ### V.9 복구 스냅샷 저장 기초
