@@ -10,3 +10,6 @@ pub mod mark;
 
 /// unreferenced 파일 sweep (V.7.3).
 pub mod sweep;
+
+/// GC scheduler interface (V.7.4).
+pub mod scheduler;
