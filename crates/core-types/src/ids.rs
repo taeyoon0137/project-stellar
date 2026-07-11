@@ -212,6 +212,32 @@ impl StableIdGenerator {
     }
 }
 
+/// 창(window) 세션 식별자(V.9.1, VII.1.1).
+///
+/// 한 창의 편집 세션을 식별하는 [`StableId`] 기반 newtype입니다. 복구 스냅샷
+/// 키(V.9)와 창별 undo/redo(Phase VII)가 사용합니다. Node StableId 등 다른
+/// 식별자와 타입 수준에서 섞이지 않습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WindowSessionId(StableId);
+
+impl WindowSessionId {
+    /// `StableId`로부터 만듭니다.
+    pub const fn from_stable_id(id: StableId) -> WindowSessionId {
+        WindowSessionId(id)
+    }
+
+    /// 내부 `StableId`.
+    pub const fn stable_id(&self) -> StableId {
+        self.0
+    }
+}
+
+impl fmt::Display for WindowSessionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// 런타임 전용 엔티티 핸들(III.1.3).
 ///
 /// `slot`/`generation`은 crate 내부에서만 접근 가능합니다(`pub(crate)`). 저장(persist)과

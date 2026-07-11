@@ -35,3 +35,6 @@ pub mod trust;
 
 /// 프로젝트 clone 요청과 민감 URL (IV.6.1).
 pub mod clone;
+
+/// 복구 스냅샷 저장소 (V.9.1).
+pub mod recovery;
