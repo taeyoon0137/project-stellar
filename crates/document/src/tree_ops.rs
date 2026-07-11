@@ -1,4 +1,4 @@
-//! parent-child 삽입·이동 validator (VI.2.3).
+//! parent-child 삽입·이동 validator (VI.2.3)와 정렬 자식 조회 (VI.2.4).
 //!
 //! reparent가 tree 불변식을 깨지 않는지 적용 전에 검증합니다:
 //!
@@ -107,6 +107,23 @@ pub fn validate_reparent(
         return Err(ReparentError::CrossViewMove);
     }
     Ok(())
+}
+
+/// 부모의 자식들을 **OrderKey 순서**로 반환합니다(VI.2.4).
+///
+/// arena 삽입 순서(slot 순서)에 의존하지 않습니다 — 같은 tree를 어떤 순서로
+/// 삽입해도 결과가 같습니다. OrderKey가 같으면 StableId로 tie-break해
+/// 결정론을 보장합니다(OrderKey 유일성 검증은 VI.10.1).
+pub fn children_in_order(columns: &NodeColumns, parent: RuntimeEntityId) -> Vec<RuntimeEntityId> {
+    let mut children: Vec<_> = columns
+        .iter_live()
+        .filter_map(|id| {
+            let fields = columns.get(id)?;
+            (fields.parent == Some(parent)).then_some((fields.order_key, fields.stable_id, id))
+        })
+        .collect();
+    children.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
+    children.into_iter().map(|(_, _, id)| id).collect()
 }
 
 /// 검증 후 reparent를 적용합니다.
@@ -228,6 +245,67 @@ mod tests {
         // 이동 후에도 다시 유효한 이동 가능.
         reparent(&mut t.columns, t.c, t.a).unwrap();
         assert_eq!(t.columns.get(t.c).unwrap().parent, Some(t.a));
+    }
+
+    #[test]
+    fn child_order_is_independent_of_insertion_order() {
+        // 검증 기준(VI.2.4): 삽입 순서가 다른 동일 tree fixture의 child order 동일.
+        use crate::node_columns::NodeColumns;
+
+        // 자식 3개의 (seed, order key bytes) — 의미상 순서는 k1 < k2 < k3.
+        let spec: [(u64, u8); 3] = [(10, 0x20), (11, 0x40), (12, 0x60)];
+
+        // 서로 다른 삽입 순서 6가지 전부.
+        let permutations: [[usize; 3]; 6] = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        let mut reference: Option<Vec<StableId>> = None;
+        for perm in permutations {
+            let mut columns = NodeColumns::new();
+            let root = columns.insert(fields(1, None));
+            for index in perm {
+                let (seed, key_byte) = spec[index];
+                let mut f = fields(seed, Some(root));
+                f.order_key = OrderKey::from_bytes(vec![key_byte]).unwrap();
+                columns.insert(f);
+            }
+            let order: Vec<StableId> = children_in_order(&columns, root)
+                .into_iter()
+                .map(|id| columns.get(id).unwrap().stable_id)
+                .collect();
+            match &reference {
+                None => reference = Some(order),
+                Some(expected) => assert_eq!(&order, expected, "삽입 순서 {perm:?}"),
+            }
+        }
+        // 의미 순서(k1<k2<k3)와 일치.
+        assert_eq!(
+            reference.unwrap(),
+            vec![
+                StableId::new_v7(10, 0, 10),
+                StableId::new_v7(11, 0, 11),
+                StableId::new_v7(12, 0, 12),
+            ]
+        );
+    }
+
+    #[test]
+    fn children_query_excludes_other_parents_and_removed() {
+        let mut t = tree();
+        // root의 자식은 a, d.
+        let children = children_in_order(&t.columns, t.root);
+        assert_eq!(children.len(), 2);
+        assert!(children.contains(&t.a) && children.contains(&t.d));
+        // d 제거 후엔 a만.
+        t.columns.remove(t.d);
+        assert_eq!(children_in_order(&t.columns, t.root), vec![t.a]);
+        // 자식 없는 leaf.
+        assert!(children_in_order(&t.columns, t.c).is_empty());
     }
 
     #[test]

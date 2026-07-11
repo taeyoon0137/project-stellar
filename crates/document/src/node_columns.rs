@@ -46,6 +46,8 @@ pub struct NodeColumns {
     visible: Vec<bool>,
     locked: Vec<bool>,
     display_name: Vec<String>,
+    /// slot별 현재 live 핸들(순회용, column과 같은 길이).
+    handle_by_slot: Vec<Option<RuntimeEntityId>>,
     len: usize,
 }
 
@@ -61,6 +63,7 @@ impl NodeColumns {
             visible: Vec::new(),
             locked: Vec::new(),
             display_name: Vec::new(),
+            handle_by_slot: Vec::new(),
             len: 0,
         }
     }
@@ -78,6 +81,7 @@ impl NodeColumns {
             self.visible.push(fields.visible);
             self.locked.push(fields.locked);
             self.display_name.push(fields.display_name);
+            self.handle_by_slot.push(Some(id));
         } else {
             self.stable_id[slot] = fields.stable_id;
             self.kind[slot] = fields.kind;
@@ -86,6 +90,7 @@ impl NodeColumns {
             self.visible[slot] = fields.visible;
             self.locked[slot] = fields.locked;
             self.display_name[slot] = fields.display_name;
+            self.handle_by_slot[slot] = Some(id);
         }
         self.len += 1;
         id
@@ -168,12 +173,22 @@ impl NodeColumns {
     /// node를 제거합니다. column 데이터는 재사용 시 덮어쓰며 길이는 줄이지 않습니다.
     /// stale 핸들이면 `false`.
     pub fn remove(&mut self, id: RuntimeEntityId) -> bool {
-        if self.alloc.live_slot(id).is_none() {
+        let Some(slot) = self.alloc.live_slot(id) else {
             return false;
-        }
+        };
+        self.handle_by_slot[slot] = None;
         self.alloc.deallocate(id);
         self.len -= 1;
         true
+    }
+
+    /// 살아 있는 모든 핸들을 slot 순서로 순회합니다.
+    ///
+    /// slot 순서는 arena 내부 사정이므로 **문서 의미 순서가 아닙니다** —
+    /// 자식 순서는 [`children_in_order`](crate::tree_ops::children_in_order)를
+    /// 사용하세요(VI.2.4).
+    pub fn iter_live(&self) -> impl Iterator<Item = RuntimeEntityId> + '_ {
+        self.handle_by_slot.iter().filter_map(|h| *h)
     }
 
     /// 살아 있는 node 수.
@@ -212,6 +227,7 @@ mod tests {
             && c.visible.len() == n
             && c.locked.len() == n
             && c.display_name.len() == n
+            && c.handle_by_slot.len() == n
     }
 
     #[test]
