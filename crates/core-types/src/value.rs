@@ -362,6 +362,18 @@ impl Transform2D {
         })
     }
 
+    /// 성분 (a, b, c, d, tx, ty).
+    pub const fn components(&self) -> (f32, f32, f32, f32, f32, f32) {
+        (
+            self.a.get(),
+            self.b.get(),
+            self.c.get(),
+            self.d.get(),
+            self.tx.get(),
+            self.ty.get(),
+        )
+    }
+
     /// 선형부 행렬식 a·d − b·c.
     pub fn determinant(&self) -> f32 {
         self.a.get() * self.d.get() - self.b.get() * self.c.get()

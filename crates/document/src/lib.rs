@@ -31,3 +31,6 @@ pub mod reference_index;
 
 /// node count·depth incremental 훅 (VI.2.6).
 pub mod tree_stats;
+
+/// Frame payload (VI.3.1).
+pub mod frame;
