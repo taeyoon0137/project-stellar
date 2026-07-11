@@ -13,3 +13,6 @@ pub mod snapshot;
 
 /// 문서·페이지·View 정의 (VI.1.1).
 pub mod definitions;
+
+/// 열린 문서 집합 (VI.1.4).
+pub mod open_set;

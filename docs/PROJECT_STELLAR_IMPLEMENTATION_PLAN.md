@@ -528,7 +528,7 @@ tools/xtask/
 | VI.1.1 | `[x]` | `document`에 `ProjectDocumentIndex`, `DocumentDefinition`, `PageDefinition`, `ViewDefinition` 타입을 추가합니다. 각 타입은 고유 StableId와 표시 이름을 가집니다. | 생성·삭제·binary round-trip 테스트 통과. | Phase V, III.1.1 |
 | VI.1.2 | `[x]` | Document→Page→View 소유 관계를 명시하고 한 View는 정확히 하나의 root Frame을 갖게 합니다. | root 없음·root 두 개 fixture 거부. | VI.1.1 |
 | VI.1.3 | `[x]` | 표시 이름은 비어 있을 수 있지만 ID와 저장 경로에 사용하지 않도록 API를 분리합니다. | 이름 변경 후 참조·chunk 경로가 변하지 않습니다. | VI.1.1 |
-| VI.1.4 | `[ ]` | 현재 열려 있는 문서와 저장된 문서 index를 분리하는 `OpenDocumentSet` 런타임 타입을 추가합니다. | 같은 문서를 중복 open할 때 기존 handle 반환. | VI.1.1, III.6.3 |
+| VI.1.4 | `[x]` | 현재 열려 있는 문서와 저장된 문서 index를 분리하는 `OpenDocumentSet` 런타임 타입을 추가합니다. | 같은 문서를 중복 open할 때 기존 handle 반환. | VI.1.1, III.6.3 |
 | VI.1.5 | `[ ]` | 최대 10개 열린 문서 제한을 config로 검사하고 초과 시 기존 문서를 자동 닫지 않습니다. | 10개 성공, 11번째 명확한 오류. | VI.1.4 |
 
 ### VI.2 공통 Node 레코드
