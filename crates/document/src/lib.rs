@@ -25,3 +25,6 @@ pub mod node_kind;
 
 /// parent-child 삽입·이동 validator (VI.2.3).
 pub mod tree_ops;
+
+/// 참조 inbound/outbound index (VI.2.5).
+pub mod reference_index;
