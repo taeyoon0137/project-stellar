@@ -1,0 +1,8 @@
+# 문서 런타임 제한 (VI.1.5).
+#
+# document crate의 OpenDocumentLimits가 읽습니다. 형식은 `key: value` 한 줄씩만
+# 허용합니다(중첩 없음).
+
+# 동시에 열 수 있는 최대 문서 수. 초과 시 기존 문서를 자동으로 닫지 않고
+# 명확한 오류를 반환합니다.
+max_open_documents: 10

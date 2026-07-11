@@ -16,3 +16,6 @@ pub mod definitions;
 
 /// 열린 문서 집합 (VI.1.4).
 pub mod open_set;
+
+/// 열린 문서 수 제한 (VI.1.5).
+pub mod open_limits;
