@@ -28,3 +28,6 @@ pub mod tree_ops;
 
 /// 참조 inbound/outbound index (VI.2.5).
 pub mod reference_index;
+
+/// node count·depth incremental 훅 (VI.2.6).
+pub mod tree_stats;
