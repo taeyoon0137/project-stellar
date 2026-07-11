@@ -44,3 +44,6 @@ pub mod recovery_payload;
 
 /// 복구 스냅샷 최신성 probe (V.9.3).
 pub mod recovery_probe;
+
+/// 정상 종료 marker와 스냅샷 cleanup (V.9.4).
+pub mod recovery_shutdown;

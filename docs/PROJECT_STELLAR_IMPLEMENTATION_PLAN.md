@@ -513,7 +513,7 @@ tools/xtask/
 | V.9.1 | `[x]` | 프로젝트 저장소 밖 OS app data에 `RecoverySnapshotStore` 인터페이스를 정의합니다. 키는 ProjectIdentity와 WindowSessionId입니다. | 경로에 프로젝트명·텍스트가 노출되지 않습니다. | IV.2.3, V.1.2 |
 | V.9.2 | `[x]` | 문서 미저장 snapshot, 열린 탭, viewport, 선택, target profile을 canonical recovery payload로 정의합니다. 터미널·Git 실행 상태는 포함하지 않습니다. | payload round-trip. | V.9.1 |
 | V.9.3 | `[x]` | 정상 저장 generation보다 recovery revision이 최신인지 비교하는 probe를 구현합니다. | 오래된 snapshot은 제안하지 않습니다. | V.9.2, V.4.4 |
-| V.9.4 | `[ ]` | 정상 종료 marker와 snapshot cleanup을 구현합니다. 비정상 종료 simulation에서는 snapshot이 남습니다. | 정상·비정상 fixture 결과 정확. | V.9.3 |
+| V.9.4 | `[x]` | 정상 종료 marker와 snapshot cleanup을 구현합니다. 비정상 종료 simulation에서는 snapshot이 남습니다. | 정상·비정상 fixture 결과 정확. | V.9.3 |
 
 **Phase V 완료 조건:** 저장 fault matrix, migration golden test, 정상 세대 fallback을 통과합니다.
 
