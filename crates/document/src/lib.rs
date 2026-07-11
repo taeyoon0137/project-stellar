@@ -22,3 +22,6 @@ pub mod open_limits;
 
 /// Node 종류 (VI.2.1).
 pub mod node_kind;
+
+/// parent-child 삽입·이동 validator (VI.2.3).
+pub mod tree_ops;
