@@ -112,8 +112,12 @@ mod tests {
     fn fields(seed: u64) -> NodeFields {
         NodeFields {
             stable_id: StableId::new_v7(seed, 0, seed),
+            kind: crate::node_kind::NodeKind::Frame,
             parent: None,
             order_key: OrderKey::between(None, None),
+            visible: true,
+            locked: false,
+            display_name: String::new(),
         }
     }
 

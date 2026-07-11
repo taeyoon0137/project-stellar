@@ -536,7 +536,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | VI.2.1 | `[x]` | `NodeKind`에 Frame, Fragment, Shape, Path, Text, Image, ComponentInstance를 정의합니다. ComponentDefinition은 scene node가 아닌 resource로 유지합니다. | numeric kind golden test. | VI.1.2 |
-| VI.2.2 | `[ ]` | 공통 Node column에 StableId, kind, parent RuntimeEntityId, OrderKey, visible, locked, display name을 추가합니다. | column invariant와 round-trip 통과. | III.6.2, VI.2.1 |
+| VI.2.2 | `[x]` | 공통 Node column에 StableId, kind, parent RuntimeEntityId, OrderKey, visible, locked, display name을 추가합니다. | column invariant와 round-trip 통과. | III.6.2, VI.2.1 |
 | VI.2.3 | `[ ]` | parent-child 삽입 validator를 구현합니다. 자기 자신·자손을 부모로 지정하거나 다른 View root로 무단 이동하는 것을 거부합니다. | cycle·cross-view fixture 실패. | VI.2.2 |
 | VI.2.4 | `[ ]` | 자식 조회는 OrderKey 정렬 결과를 반환하고 arena 삽입 순서에 의존하지 않게 합니다. | 삽입 순서가 다른 동일 tree fixture의 child order 동일. | VI.2.2, III.5.2 |
 | VI.2.5 | `[ ]` | node 삭제 전 참조 inbound 목록을 조회하는 `ReferenceIndex` 인터페이스를 추가합니다. 삭제 정책은 command 단계에서 처리합니다. | inbound/outbound fixture 정확. | III.2.3, VI.2.2 |
