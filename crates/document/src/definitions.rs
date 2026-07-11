@@ -80,13 +80,33 @@ impl std::error::Error for DefinitionError {}
 pub struct ViewDefinition {
     /// 고유 StableId.
     pub id: StableId,
-    /// 표시 이름(비어 있을 수 있음, 식별에 사용 금지).
-    pub display_name: String,
+    /// 표시 이름(비어 있을 수 있음). 식별·저장 경로에 사용 금지 — 접근은
+    /// [`ViewDefinition::display_name`]/[`ViewDefinition::rename`]으로만.
+    display_name: String,
     /// 이 View의 root Frame node StableId(정확히 하나).
     pub root_frame: StableId,
 }
 
 impl ViewDefinition {
+    /// View를 만듭니다.
+    pub fn new(id: StableId, display_name: String, root_frame: StableId) -> ViewDefinition {
+        ViewDefinition {
+            id,
+            display_name,
+            root_frame,
+        }
+    }
+
+    /// 표시 이름(식별에 사용 금지).
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    /// 표시 이름을 바꿉니다. id·root frame·참조에는 영향이 없습니다(VI.1.3).
+    pub fn rename(&mut self, display_name: String) {
+        self.display_name = display_name;
+    }
+
     /// root 후보 목록으로부터 View를 만듭니다(VI.1.2).
     ///
     /// 파일·병합 등 외부 입력이 주는 root 목록이 정확히 1개가 아니면
@@ -116,8 +136,8 @@ impl ViewDefinition {
 pub struct PageDefinition {
     /// 고유 StableId.
     pub id: StableId,
-    /// 표시 이름.
-    pub display_name: String,
+    /// 표시 이름(식별·저장 경로에 사용 금지).
+    display_name: String,
     /// 소유한 View들(표시 순).
     pub views: Vec<ViewDefinition>,
 }
@@ -127,8 +147,8 @@ pub struct PageDefinition {
 pub struct DocumentDefinition {
     /// 고유 StableId.
     pub id: StableId,
-    /// 표시 이름.
-    pub display_name: String,
+    /// 표시 이름(식별·저장 경로에 사용 금지).
+    display_name: String,
     /// 소유한 페이지들(표시 순).
     pub pages: Vec<PageDefinition>,
 }
@@ -141,6 +161,25 @@ pub struct ProjectDocumentIndex {
 }
 
 impl PageDefinition {
+    /// 페이지를 만듭니다.
+    pub fn new(id: StableId, display_name: String) -> PageDefinition {
+        PageDefinition {
+            id,
+            display_name,
+            views: Vec::new(),
+        }
+    }
+
+    /// 표시 이름(식별에 사용 금지).
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    /// 표시 이름을 바꿉니다. id·소유 View·참조에는 영향이 없습니다(VI.1.3).
+    pub fn rename(&mut self, display_name: String) {
+        self.display_name = display_name;
+    }
+
     /// View를 추가합니다. 같은 id가 있으면 거부합니다.
     pub fn add_view(&mut self, view: ViewDefinition) -> Result<(), DefinitionError> {
         if self.views.iter().any(|v| v.id == view.id) {
@@ -162,6 +201,25 @@ impl PageDefinition {
 }
 
 impl DocumentDefinition {
+    /// 문서를 만듭니다.
+    pub fn new(id: StableId, display_name: String) -> DocumentDefinition {
+        DocumentDefinition {
+            id,
+            display_name,
+            pages: Vec::new(),
+        }
+    }
+
+    /// 표시 이름(식별에 사용 금지).
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    /// 표시 이름을 바꿉니다. id·소유 페이지·참조에는 영향이 없습니다(VI.1.3).
+    pub fn rename(&mut self, display_name: String) {
+        self.display_name = display_name;
+    }
+
     /// 페이지를 추가합니다. 같은 id가 있으면 거부합니다.
     pub fn add_page(&mut self, page: PageDefinition) -> Result<(), DefinitionError> {
         if self.pages.iter().any(|p| p.id == page.id) {
@@ -544,6 +602,54 @@ mod tests {
             index.validate_ownership().unwrap_err(),
             DefinitionError::DuplicateId { .. }
         ));
+    }
+
+    #[test]
+    fn rename_does_not_change_ids_or_references() {
+        // 검증 기준(VI.1.3): 이름 변경 후 참조·chunk 경로가 변하지 않습니다.
+        // chunk 경로는 StableId/content hash로만 유도되므로(V.2.3) 여기서는
+        // 식별자·참조 불변을 고정합니다.
+        let mut index = sample_index();
+        let doc_id = index.documents[0].id;
+        let page_id = index.documents[0].pages[0].id;
+        let view_id = index.documents[0].pages[0].views[0].id;
+        let root_before = index.documents[0].pages[0].views[0].root_frame;
+
+        index.documents[0].rename("문서 새 이름".to_string());
+        index.documents[0].pages[0].rename("페이지 새 이름".to_string());
+        index.documents[0].pages[0].views[0].rename("뷰 새 이름".to_string());
+        // 빈 이름도 허용.
+        index.documents[0].pages[0].views[0].rename(String::new());
+
+        assert_eq!(index.documents[0].id, doc_id);
+        assert_eq!(index.documents[0].pages[0].id, page_id);
+        assert_eq!(index.documents[0].pages[0].views[0].id, view_id);
+        assert_eq!(index.documents[0].pages[0].views[0].root_frame, root_before);
+        // id 기반 조회(참조)가 그대로 동작.
+        assert!(index.document(doc_id).is_some());
+        assert!(index.validate_ownership().is_ok());
+
+        // 인코딩에서 id 위치의 bytes도 불변(이름 길이만 다름).
+        let bytes = index.encode();
+        let decoded = ProjectDocumentIndex::decode(&bytes).unwrap();
+        assert_eq!(decoded.documents[0].id, doc_id);
+        assert_eq!(decoded.documents[0].display_name(), "문서 새 이름");
+    }
+
+    #[test]
+    fn constructors_build_hierarchy() {
+        let mut doc = DocumentDefinition::new(stable(1), "문서".to_string());
+        let mut page = PageDefinition::new(stable(10), String::new());
+        page.add_view(ViewDefinition::new(
+            stable(100),
+            "뷰".to_string(),
+            stable(5_100),
+        ))
+        .unwrap();
+        doc.add_page(page).unwrap();
+        assert_eq!(doc.display_name(), "문서");
+        assert_eq!(doc.pages[0].display_name(), "");
+        assert_eq!(doc.pages[0].views[0].display_name(), "뷰");
     }
 
     #[test]
