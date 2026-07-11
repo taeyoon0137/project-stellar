@@ -38,3 +38,6 @@ pub mod clone;
 
 /// 복구 스냅샷 저장소 (V.9.1).
 pub mod recovery;
+
+/// canonical recovery payload (V.9.2).
+pub mod recovery_payload;
