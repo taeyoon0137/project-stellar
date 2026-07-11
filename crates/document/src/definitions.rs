@@ -30,6 +30,23 @@ pub enum DefinitionError {
         /// 원인.
         reason: &'static str,
     },
+    /// View에 root Frame이 없습니다(VI.1.2).
+    MissingRootFrame {
+        /// 해당 View id.
+        view: StableId,
+    },
+    /// View에 root Frame이 두 개 이상입니다(VI.1.2).
+    MultipleRootFrames {
+        /// 해당 View id.
+        view: StableId,
+        /// root 후보 수.
+        count: usize,
+    },
+    /// 두 View가 같은 root Frame을 공유합니다(VI.1.2).
+    SharedRootFrame {
+        /// 공유된 root Frame id.
+        root_frame: StableId,
+    },
 }
 
 impl fmt::Display for DefinitionError {
@@ -38,6 +55,15 @@ impl fmt::Display for DefinitionError {
             DefinitionError::DuplicateId { id } => write!(f, "중복 StableId: {id}"),
             DefinitionError::NotFound { id } => write!(f, "찾을 수 없는 StableId: {id}"),
             DefinitionError::Malformed { reason } => write!(f, "binary 형식 위반: {reason}"),
+            DefinitionError::MissingRootFrame { view } => {
+                write!(f, "View {view}에 root Frame이 없습니다")
+            }
+            DefinitionError::MultipleRootFrames { view, count } => {
+                write!(f, "View {view}에 root Frame이 {count}개입니다(정확히 1개)")
+            }
+            DefinitionError::SharedRootFrame { root_frame } => {
+                write!(f, "root Frame {root_frame}을 두 View가 공유합니다")
+            }
         }
     }
 }
@@ -45,12 +71,44 @@ impl fmt::Display for DefinitionError {
 impl std::error::Error for DefinitionError {}
 
 /// View 정의: 편집 화면 하나.
+///
+/// 소유 관계(VI.1.2): View는 정확히 하나의 [`PageDefinition`]에 속하고,
+/// **정확히 하나의 root Frame**을 가집니다 — 필드 타입이 단일 `StableId`이므로
+/// root 없음/복수 root는 표현 자체가 불가능하고, 목록 입력 경로는
+/// [`ViewDefinition::with_roots`]가 거부합니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ViewDefinition {
     /// 고유 StableId.
     pub id: StableId,
     /// 표시 이름(비어 있을 수 있음, 식별에 사용 금지).
     pub display_name: String,
+    /// 이 View의 root Frame node StableId(정확히 하나).
+    pub root_frame: StableId,
+}
+
+impl ViewDefinition {
+    /// root 후보 목록으로부터 View를 만듭니다(VI.1.2).
+    ///
+    /// 파일·병합 등 외부 입력이 주는 root 목록이 정확히 1개가 아니면
+    /// 거부합니다.
+    pub fn with_roots(
+        id: StableId,
+        display_name: String,
+        roots: &[StableId],
+    ) -> Result<ViewDefinition, DefinitionError> {
+        match roots {
+            [root] => Ok(ViewDefinition {
+                id,
+                display_name,
+                root_frame: *root,
+            }),
+            [] => Err(DefinitionError::MissingRootFrame { view: id }),
+            _ => Err(DefinitionError::MultipleRootFrames {
+                view: id,
+                count: roots.len(),
+            }),
+        }
+    }
 }
 
 /// 페이지 정의: View들을 담습니다.
@@ -153,6 +211,37 @@ impl ProjectDocumentIndex {
     pub fn document(&self, id: StableId) -> Option<&DocumentDefinition> {
         self.documents.iter().find(|d| d.id == id)
     }
+
+    /// 소유 관계 불변식을 검증합니다(VI.1.2).
+    ///
+    /// - 문서·페이지·View id가 전체에서 유일해야 합니다(각 항목은 정확히 하나의
+    ///   부모에 속함).
+    /// - 서로 다른 View가 같은 root Frame을 공유할 수 없습니다.
+    pub fn validate_ownership(&self) -> Result<(), DefinitionError> {
+        let mut ids = std::collections::BTreeSet::new();
+        let mut roots = std::collections::BTreeSet::new();
+        for document in &self.documents {
+            if !ids.insert(document.id) {
+                return Err(DefinitionError::DuplicateId { id: document.id });
+            }
+            for page in &document.pages {
+                if !ids.insert(page.id) {
+                    return Err(DefinitionError::DuplicateId { id: page.id });
+                }
+                for view in &page.views {
+                    if !ids.insert(view.id) {
+                        return Err(DefinitionError::DuplicateId { id: view.id });
+                    }
+                    if !roots.insert(view.root_frame) {
+                        return Err(DefinitionError::SharedRootFrame {
+                            root_frame: view.root_frame,
+                        });
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 // --- binary 인코딩 (canonical 규칙 R1~R3) ---
@@ -215,12 +304,14 @@ impl ViewDefinition {
     fn encode_into(&self, buf: &mut Vec<u8>) {
         buf.extend_from_slice(&self.id.to_bytes());
         put_string(buf, &self.display_name);
+        buf.extend_from_slice(&self.root_frame.to_bytes());
     }
 
     fn decode_from(reader: &mut Reader<'_>) -> Result<ViewDefinition, DefinitionError> {
         Ok(ViewDefinition {
             id: reader.take_id()?,
             display_name: reader.take_string()?,
+            root_frame: reader.take_id()?,
         })
     }
 }
@@ -327,11 +418,13 @@ mod tests {
         page.add_view(ViewDefinition {
             id: stable(100),
             display_name: "홈 화면".to_string(),
+            root_frame: stable(5_100),
         })
         .unwrap();
         page.add_view(ViewDefinition {
             id: stable(101),
             display_name: String::new(), // 빈 표시 이름 허용.
+            root_frame: stable(5_101),
         })
         .unwrap();
         doc.add_page(page).unwrap();
@@ -361,6 +454,7 @@ mod tests {
             page.add_view(ViewDefinition {
                 id: stable(100),
                 display_name: String::new(),
+                root_frame: stable(5_999),
             }),
             Err(DefinitionError::DuplicateId { .. })
         ));
@@ -407,6 +501,49 @@ mod tests {
             .unwrap();
         let decoded = ProjectDocumentIndex::decode(&index.encode()).unwrap();
         assert_eq!(decoded.documents[0].display_name, "한글 이름 🎨");
+    }
+
+    #[test]
+    fn view_requires_exactly_one_root_frame() {
+        // 검증 기준(VI.1.2): root 없음·root 두 개 fixture 거부.
+        assert_eq!(
+            ViewDefinition::with_roots(stable(100), String::new(), &[]).unwrap_err(),
+            DefinitionError::MissingRootFrame { view: stable(100) }
+        );
+        assert_eq!(
+            ViewDefinition::with_roots(stable(100), String::new(), &[stable(5_100), stable(5_101)])
+                .unwrap_err(),
+            DefinitionError::MultipleRootFrames {
+                view: stable(100),
+                count: 2
+            }
+        );
+        let view =
+            ViewDefinition::with_roots(stable(100), String::new(), &[stable(5_100)]).unwrap();
+        assert_eq!(view.root_frame, stable(5_100));
+    }
+
+    #[test]
+    fn ownership_validation_rejects_shared_roots_and_duplicate_ids() {
+        let mut index = sample_index();
+        assert!(index.validate_ownership().is_ok());
+
+        // 두 View가 같은 root Frame 공유 → 거부.
+        index.documents[0].pages[0].views[1].root_frame = stable(5_100);
+        assert_eq!(
+            index.validate_ownership().unwrap_err(),
+            DefinitionError::SharedRootFrame {
+                root_frame: stable(5_100)
+            }
+        );
+
+        // 페이지 id가 문서 id와 충돌 → 거부(전역 유일성).
+        let mut index = sample_index();
+        index.documents[0].pages[0].id = stable(1);
+        assert!(matches!(
+            index.validate_ownership().unwrap_err(),
+            DefinitionError::DuplicateId { .. }
+        ));
     }
 
     #[test]
