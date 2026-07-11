@@ -1685,225 +1685,405 @@ tasks:
     verified_at: "2026-06-30T12:38:36+09:00"
   - id: "V.1.2"
     title: "`storage`에 canonical encoder를 구현합니다. map 입력 순서와 무관하게 key order로 기록합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.1.2.md"
+    commit: "9ec19edc6523e32e47c25d81388061cddeaf47bc"
+    report: "docs/task-reports/V.1.2.md"
+    verified_at: "2026-07-07T23:21:43+09:00"
   - id: "V.1.3"
     title: "canonical decoder를 구현하고 length overflow, duplicate key, unknown mandatory tag를 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.1.3.md"
+    commit: "cade17ad8c6ca07eaf539fa9be83919dd4266d30"
+    report: "docs/task-reports/V.1.3.md"
+    verified_at: "2026-07-10T02:23:56+09:00"
   - id: "V.1.4"
     title: "저장 float가 NaN·Infinity·negative zero를 포함하면 encoder가 거부 또는 정규화하도록 core 규칙과 일치시킵니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.1.2"
       - "III.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.1.4.md"
+    commit: "0cda7d53a97c520556e097019302c1493fac2e4a"
+    report: "docs/task-reports/V.1.4.md"
+    verified_at: "2026-07-10T02:27:28+09:00"
   - id: "V.1.5"
     title: "content hash 알고리즘을 ADR로 고정하고 `ContentHash` newtype과 문자열 형식을 구현합니다. 알고리즘 이름을 hash 값에 포함합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.3.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.1.5.md"
+    commit: "16b86fde2d028fcfecc0c7503390462074317ff2"
+    report: "docs/task-reports/V.1.5.md"
+    verified_at: "2026-07-10T02:31:44+09:00"
   - id: "V.2.1"
     title: "`ChunkId`를 StableId 기반 불변 논리 ID로 정의합니다. Node StableId와 타입이 섞이지 않게 newtype을 사용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.2.1.md"
+    commit: "a001acf5852fad6ead4a719e4cce8f8ea8f934f5"
+    report: "docs/task-reports/V.2.1.md"
+    verified_at: "2026-07-10T02:33:31+09:00"
   - id: "V.2.2"
     title: "chunk envelope에 magic, format version, chunk kind, uncompressed length, payload hash를 정의합니다. 압축은 아직 사용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.2.2.md"
+    commit: "3c1a3c94a1f8fe4e5b88f1158301c76f07b8e3f1"
+    report: "docs/task-reports/V.2.2.md"
+    verified_at: "2026-07-10T02:35:41+09:00"
   - id: "V.2.3"
     title: "content hash에서 `design/objects/<prefix>/<hash>.starchunk` 경로를 생성합니다. path traversal 문자열 입력은 불가능한 타입으로 제한합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.2.3.md"
+    commit: "78f587b5b405c6ee90f085fe045fc04507ae9917"
+    report: "docs/task-reports/V.2.3.md"
+    verified_at: "2026-07-10T02:37:11+09:00"
   - id: "V.2.4"
     title: "immutable chunk write를 구현합니다. 같은 hash 파일이 있으면 내용 검증 후 재사용하고 다르면 corruption 오류를 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.2.2"
       - "V.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.2.4.md"
+    commit: "ec7e6c9c36d9078e6a36645c385234875ff563b6"
+    report: "docs/task-reports/V.2.4.md"
+    verified_at: "2026-07-10T02:38:56+09:00"
   - id: "V.2.5"
     title: "temp file write, flush, fsync 정책, atomic rename을 플랫폼 abstraction으로 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.2.5.md"
+    commit: "1f27059766b68e3eb23d576e91df89b06a43a9cb"
+    report: "docs/task-reports/V.2.5.md"
+    verified_at: "2026-07-10T02:41:18+09:00"
   - id: "V.2.6"
     title: "chunk read 시 envelope, length, hash를 전부 검증합니다. 실패한 bytes를 자동 수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.2.6.md"
+    commit: "3268f497a4af1fabb2dd3eaa2614a5bc5fe5bd09"
+    report: "docs/task-reports/V.2.6.md"
+    verified_at: "2026-07-10T02:43:27+09:00"
   - id: "V.2.7"
     title: "chunk kind registry를 추가하고 unknown optional kind는 skip, unknown required kind는 오류가 되게 version policy를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.2.7.md"
+    commit: "54c336fe64a9db0bd54b3205762379e7aee2a41d"
+    report: "docs/task-reports/V.2.7.md"
+    verified_at: "2026-07-10T02:44:50+09:00"
   - id: "V.3.1"
     title: "`ChunkPointer { chunk_id, content_hash, kind, schema_version }`를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.2.1"
       - "V.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.3.1.md"
+    commit: "fd58bef003c26cf2ec44255f6e422e9b04b53160"
+    report: "docs/task-reports/V.3.1.md"
+    verified_at: "2026-07-10T02:46:31+09:00"
   - id: "V.3.2"
     title: "동일 ChunkId가 한 generation manifest에서 두 hash를 가리키면 거부하는 validator를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.3.2.md"
+    commit: "ad8ef4bf72f3452b17bb18cd1cd3768f23dba9d8"
+    report: "docs/task-reports/V.3.2.md"
+    verified_at: "2026-07-10T02:47:39+09:00"
   - id: "V.3.3"
     title: "변경된 logical chunk만 새 payload로 encode하고 나머지 pointer를 재사용하는 planner를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.3.1"
       - "V.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.3.3.md"
+    commit: "27ab661b93184185bb4535d425992a6955ff5971"
+    report: "docs/task-reports/V.3.3.md"
+    verified_at: "2026-07-10T02:49:24+09:00"
   - id: "V.3.4"
     title: "chunk split/merge 전에도 외부 참조가 ChunkId를 통해 유지되도록 remap manifest 타입을 추가합니다. 실제 split은 후속 작업입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.3.4.md"
+    commit: "4abd543e58e23f0d0bc9180ad0f6f35ce663cabe"
+    report: "docs/task-reports/V.3.4.md"
+    verified_at: "2026-07-10T02:50:50+09:00"
   - id: "V.4.1"
     title: "generation manifest에 generation number, parent generation, project id, schema version, chunk pointers, root document IDs를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.3.2"
       - "IV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.4.1.md"
+    commit: "47b43daa41b5c7091954b1538de080386abb15b5"
+    report: "docs/task-reports/V.4.1.md"
+    verified_at: "2026-07-10T02:52:59+09:00"
   - id: "V.4.2"
     title: "manifest 자체를 canonical encode하고 content hash를 계산합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.4.1"
       - "V.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.4.2.md"
+    commit: "405d21b325c607348e5c2e807b7d2ab4b2c93d4e"
+    report: "docs/task-reports/V.4.2.md"
+    verified_at: "2026-07-10T02:53:53+09:00"
   - id: "V.4.3"
     title: "current pointer 파일에는 manifest hash 하나만 기록합니다. temp write 후 atomic replace로 전환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.4.2"
       - "V.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.4.3.md"
+    commit: "5f8b78944e7641712ea143caab1480b51e73b5ff"
+    report: "docs/task-reports/V.4.3.md"
+    verified_at: "2026-07-10T02:55:20+09:00"
   - id: "V.4.4"
     title: "프로젝트 열기 시 current pointer→manifest→chunks 순으로 검증하는 loader를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.4.3"
       - "V.2.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.4.4.md"
+    commit: "2c32bff46243840d49613ebe80ecfdf4f7a2beb8"
+    report: "docs/task-reports/V.4.4.md"
+    verified_at: "2026-07-10T02:57:30+09:00"
   - id: "V.4.5"
     title: "current generation이 손상되면 parent chain과 보존된 manifest 목록에서 최신 정상 세대를 찾는 scanner를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.4.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.4.5.md"
+    commit: "707f4d18f5f6d097db164175db5885c09871ce60"
+    report: "docs/task-reports/V.4.5.md"
+    verified_at: "2026-07-10T02:59:21+09:00"
   - id: "V.4.6"
     title: "정상 세대 fallback 시 읽기 전용 recovery result를 반환하고 자동 current pointer 변경은 하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.4.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.4.6.md"
+    commit: "5020eb05c61f1f0d0e409cc112f1edae7952ab0a"
+    report: "docs/task-reports/V.4.6.md"
+    verified_at: "2026-07-10T13:28:31+09:00"
   - id: "V.5.1"
     title: "`SavePlan`에 base generation, target generation, dirty logical chunks, new manifest를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.3.3"
       - "V.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.5.1.md"
+    commit: "a353a26f90bf9dcaf8a56c06601f5cd0806638ef"
+    report: "docs/task-reports/V.5.1.md"
+    verified_at: "2026-07-10T13:30:00+09:00"
   - id: "V.5.2"
     title: "저장 전 current pointer가 base generation과 같은지 비교하는 optimistic check를 구현합니다. 다르면 write를 시작하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.5.2.md"
+    commit: "57e55570ab70b66056865a86a01646c57dbd60cf"
+    report: "docs/task-reports/V.5.2.md"
+    verified_at: "2026-07-10T13:31:21+09:00"
   - id: "V.5.3"
     title: "dirty chunk를 모두 쓰고 재읽어 검증한 뒤 manifest를 기록하는 단계 실행기를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.5.2"
       - "V.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.5.3.md"
+    commit: "32bc7d232f0c1a291799df5504b79fa2d1c7e128"
+    report: "docs/task-reports/V.5.3.md"
+    verified_at: "2026-07-10T13:33:16+09:00"
   - id: "V.5.4"
     title: "마지막 단계에서 current pointer를 전환하고 성공 후에만 in-memory saved generation을 갱신합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.5.3"
       - "V.4.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.5.4.md"
+    commit: "8eb8d30f3e9a34d65481f32fb578d9bbae613785"
+    report: "docs/task-reports/V.5.4.md"
+    verified_at: "2026-07-10T13:34:46+09:00"
   - id: "V.5.5"
     title: "저장 취소 token을 지원하되 pointer 전환 시작 이후에는 취소를 무시하고 완료 또는 실패까지 진행합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.5.5.md"
+    commit: "a98dd501adbba681f44af2f81efd66670c32f615"
+    report: "docs/task-reports/V.5.5.md"
+    verified_at: "2026-07-10T13:37:02+09:00"
   - id: "V.5.6"
     title: "save transaction fault matrix를 작성해 chunk write, fsync, manifest write, pointer replace 각 지점의 실패를 자동 주입합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.5.6.md"
+    commit: "3ac8327d557aeba7f66755afd6538c74e1aff71a"
+    report: "docs/task-reports/V.5.6.md"
+    verified_at: "2026-07-10T13:41:52+09:00"
   - id: "V.6.1"
     title: "초기 chunk kind를 ProjectMetadata, DocumentManifest, ViewTree, ComponentLibrary, TokenSet, AssetMetadata로 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.2.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.6.1.md"
+    commit: "ada4951e826a57f58108bfb9773cfc911de0f24e"
+    report: "docs/task-reports/V.6.1.md"
+    verified_at: "2026-07-10T13:43:07+09:00"
   - id: "V.6.2"
     title: "ViewTree는 의미 있는 subtree root 목록을 포함하고 개별 subtree chunk를 참조하게 스키마를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.6.2.md"
+    commit: "e3d8560018e73de221b5bb03a948fbf564a56dda"
+    report: "docs/task-reports/V.6.2.md"
+    verified_at: "2026-07-10T13:44:31+09:00"
   - id: "V.6.3"
     title: "chunk 목표 크기 측정 harness를 만들고 64KiB, 256KiB, 1MiB 후보의 로드·저장·Git delta 결과를 기록합니다. 결론을 자동 선택하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.5.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.6.3.md"
+    commit: "9a6ea408c45d78de69304827ffcc697adbe323c3"
+    report: "docs/task-reports/V.6.3.md"
+    verified_at: "2026-07-10T13:50:05+09:00"
   - id: "V.6.4"
     title: "승인된 임계치를 `config/versions.yaml`이 아니라 `config/performance-budgets.yaml`에 기록하고 split planner를 구현합니다."
     status: not_started
@@ -1920,114 +2100,204 @@ tasks:
       - DEV-MAC
   - id: "V.6.6"
     title: "프로젝트 열기에서 DocumentManifest까지만 먼저 읽고 ViewTree subtree는 요청 시 읽는 lazy loader를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.4.4"
       - "V.6.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.6.6.md"
+    commit: "4095eaac9fb795e46f5c0477576750a83f59cad1"
+    report: "docs/task-reports/V.6.6.md"
+    verified_at: "2026-07-10T13:51:57+09:00"
   - id: "V.7.1"
     title: "보존 generation 정책 인터페이스를 만들고 기본값은 current+직전 정상 세대+복구에 필요한 세대로 둡니다. 수치는 config에서 읽습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.4.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.7.1.md"
+    commit: "574185887ff8d46c93a95a1f5ecf6544d232af39"
+    report: "docs/task-reports/V.7.1.md"
+    verified_at: "2026-07-10T13:54:01+09:00"
   - id: "V.7.2"
     title: "보존 manifest에서 reachable content hash를 mark하는 scanner를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.7.2.md"
+    commit: "27ff67bf15ec0702d6543cd7304e3cde8fc49ed1"
+    report: "docs/task-reports/V.7.2.md"
+    verified_at: "2026-07-10T13:55:15+09:00"
   - id: "V.7.3"
     title: "unreferenced chunk를 grace period 이후 sweep하는 작업을 구현합니다. 파일 삭제 실패는 다음 실행으로 이월합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.7.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.7.3.md"
+    commit: "6dfbd45103381ed71b487c39846c70b7fe099282"
+    report: "docs/task-reports/V.7.3.md"
+    verified_at: "2026-07-10T13:56:55+09:00"
   - id: "V.7.4"
     title: "GC는 프로젝트 open 직후가 아니라 idle+저장 없음 조건에서만 시작하도록 scheduler interface를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.7.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.7.4.md"
+    commit: "25d736dfdb5ea6b1a12d244cd8ded64c9ef612f2"
+    report: "docs/task-reports/V.7.4.md"
+    verified_at: "2026-07-10T13:58:40+09:00"
   - id: "V.8.1"
     title: "format_version, schema_version, minimum_reader_version, minimum_writer_version 타입과 호환성 판정 함수를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.8.1.md"
+    commit: "6973a2afd1643a56f39e58ea321fcfb55e64209a"
+    report: "docs/task-reports/V.8.1.md"
+    verified_at: "2026-07-10T14:00:08+09:00"
   - id: "V.8.2"
     title: "`MigrationStep { from, to, migrate }` registry를 만들고 연속 경로가 없으면 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.8.2.md"
+    commit: "2dbe57d88da4dff0b631c61d754cb07a553ae3dd"
+    report: "docs/task-reports/V.8.2.md"
+    verified_at: "2026-07-10T14:01:50+09:00"
   - id: "V.8.3"
     title: "noop v1→v2 test migration을 만들어 원본 세대를 수정하지 않고 새 generation으로 결과를 기록합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.8.2"
       - "V.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.8.3.md"
+    commit: "361ccfe230abca4aaa524ba97b2890f6db39348c"
+    report: "docs/task-reports/V.8.3.md"
+    verified_at: "2026-07-10T14:03:45+09:00"
   - id: "V.8.4"
     title: "migration 전체를 temp generation에서 수행하고 모든 검증 후 current pointer를 전환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.8.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.8.4.md"
+    commit: "f023de4b4f57aed5f5867ad554906209266d2be3"
+    report: "docs/task-reports/V.8.4.md"
+    verified_at: "2026-07-10T14:04:50+09:00"
   - id: "V.8.5"
     title: "migration 결과를 자동 commit하지 않고 Git working tree 변경으로 남기는 통합 fixture를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.8.4"
       - "IV.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.8.5.md"
+    commit: "89cb0e5c187877cf913462aed35811b49192d758"
+    report: "docs/task-reports/V.8.5.md"
+    verified_at: "2026-07-10T14:06:01+09:00"
   - id: "V.8.6"
     title: "migration golden fixture runner를 `cargo xtask test-migrations`로 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.8.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.8.6.md"
+    commit: "b19cfad4033b9dc09bb39f11811dc8b272c63318"
+    report: "docs/task-reports/V.8.6.md"
+    verified_at: "2026-07-11T15:07:19+09:00"
   - id: "V.9.1"
     title: "프로젝트 저장소 밖 OS app data에 `RecoverySnapshotStore` 인터페이스를 정의합니다. 키는 ProjectIdentity와 WindowSessionId입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.2.3"
       - "V.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.9.1.md"
+    commit: "5d7f08f2a925c59c8d1d2d97e4f1247b07836a08"
+    report: "docs/task-reports/V.9.1.md"
+    verified_at: "2026-07-11T15:11:48+09:00"
   - id: "V.9.2"
     title: "문서 미저장 snapshot, 열린 탭, viewport, 선택, target profile을 canonical recovery payload로 정의합니다. 터미널·Git 실행 상태는 포함하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.9.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.9.2.md"
+    commit: "7f50f484071a8af34f9025760eee238f2a927cce"
+    report: "docs/task-reports/V.9.2.md"
+    verified_at: "2026-07-11T15:13:40+09:00"
   - id: "V.9.3"
     title: "정상 저장 generation보다 recovery revision이 최신인지 비교하는 probe를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.9.2"
       - "V.4.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.9.3.md"
+    commit: "9d1d5b27b999fd2646159eb6a5205d96f445ea6e"
+    report: "docs/task-reports/V.9.3.md"
+    verified_at: "2026-07-11T15:15:44+09:00"
   - id: "V.9.4"
     title: "정상 종료 marker와 snapshot cleanup을 구현합니다. 비정상 종료 simulation에서는 snapshot이 남습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.9.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.9.4.md"
+    commit: "52a8ba2d51c30efae7cec71971f56d73ab1c73fb"
+    report: "docs/task-reports/V.9.4.md"
+    verified_at: "2026-07-11T15:17:19+09:00"
   - id: "VI.1.1"
     title: "`document`에 `ProjectDocumentIndex`, `DocumentDefinition`, `PageDefinition`, `ViewDefinition` 타입을 추가합니다. 각 타입은 고유 StableId와 표시 이름을 가집니다."
     status: not_started
