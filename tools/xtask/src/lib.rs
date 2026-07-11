@@ -12,6 +12,7 @@ pub mod commit_message;
 pub mod crate_graph;
 pub mod dependencies;
 pub mod ffi_header;
+pub mod migration_fixtures;
 pub mod plan;
 pub mod pr_body;
 pub mod storage_fixtures;

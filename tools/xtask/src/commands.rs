@@ -29,7 +29,7 @@ pub const EXIT_POLICY: i32 = 65;
 pub const EXIT_INTERNAL: i32 = 70;
 
 /// 등록된 명령 이름(help 포함).
-pub const COMMANDS: [&str; 16] = [
+pub const COMMANDS: [&str; 17] = [
     "help",
     "generate-ledger",
     "generate-ffi-header",
@@ -46,6 +46,7 @@ pub const COMMANDS: [&str; 16] = [
     "validate-crate-graph",
     "validate-storage-fixtures",
     "bench-chunk-size",
+    "test-migrations",
 ];
 
 /// 사용법 문자열. 각 명령이 정확히 한 번 나타납니다.
@@ -103,6 +104,13 @@ pub fn run(args: &[String], repo_root: &Path) -> i32 {
                 Ok(())
             }
             Err(e) => Err(internal(&e)),
+        },
+        "test-migrations" => match crate::migration_fixtures::run_test_migrations() {
+            Ok(count) => {
+                println!("migration golden fixture 통과: {count} fixtures");
+                Ok(())
+            }
+            Err(e) => Err(policy_err(&[e])),
         },
         other => {
             eprintln!("알 수 없는 명령: {other}");
