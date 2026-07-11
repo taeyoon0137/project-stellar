@@ -41,3 +41,6 @@ pub mod recovery;
 
 /// canonical recovery payload (V.9.2).
 pub mod recovery_payload;
+
+/// 복구 스냅샷 최신성 probe (V.9.3).
+pub mod recovery_probe;
