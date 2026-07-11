@@ -19,3 +19,6 @@ pub mod open_set;
 
 /// 열린 문서 수 제한 (VI.1.5).
 pub mod open_limits;
+
+/// Node 종류 (VI.2.1).
+pub mod node_kind;
