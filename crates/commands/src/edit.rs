@@ -195,6 +195,60 @@ impl<'a> EditContext<'a> {
         Ok(previous)
     }
 
+    /// node 레코드 전체(부모·순서·표시·잠금·이름·payload, 종류 포함)를 `record`로 바꾸고 이전
+    /// 레코드를 반환합니다. 자손과 modifier stack은 그대로 유지합니다(composite primitive).
+    ///
+    /// `DocumentModel`이 공통 필드 제자리 변경을 공개하지 않으므로, 이름·같은 종류 payload만
+    /// 바뀌면 해당 primitive를 쓰고, 그 밖의 변경은 subtree를 자손부터 지운 뒤 새 레코드와
+    /// 원래 자손·stack을 다시 넣습니다(비용 O(subtree)). 모든 단계가 journal에 남아 실패 시
+    /// 함께 되돌려집니다. 결과 문서의 유효성(부모 종류·OrderKey·modifier 소유)은 호출하는
+    /// command가 먼저 검증합니다.
+    pub fn replace_record(&mut self, record: NodeRecord) -> Result<NodeRecord, CommandError> {
+        let id = record.id;
+        let previous = self
+            .model
+            .record(id)
+            .ok_or(CommandError::UnknownNode { id })?;
+        if previous == record {
+            return Ok(previous);
+        }
+        let structural = previous.parent != record.parent
+            || previous.order_key != record.order_key
+            || previous.visible != record.visible
+            || previous.locked != record.locked
+            || previous.kind() != record.kind();
+        if !structural {
+            if previous.display_name != record.display_name {
+                self.set_display_name(id, record.display_name.clone())?;
+            }
+            if previous.payload != record.payload {
+                self.set_payload(id, record.payload)?;
+            }
+            return Ok(previous);
+        }
+        let subtree = crate::tree::ChildIndex::build(self.model).subtree(id);
+        let mut detached = Vec::with_capacity(subtree.len());
+        for node in subtree.iter().rev() {
+            detached.push(self.remove_leaf(*node)?);
+        }
+        detached.reverse();
+        let mut stacks = Vec::new();
+        for (index, (old, stack)) in detached.into_iter().enumerate() {
+            if index == 0 {
+                self.insert_node(record.clone())?;
+            } else {
+                self.insert_node(old)?;
+            }
+            if let Some(stack) = stack {
+                stacks.push(stack);
+            }
+        }
+        for stack in stacks {
+            self.set_modifier_stack(stack)?;
+        }
+        Ok(previous)
+    }
+
     /// 지금까지의 변경 기록을 꺼냅니다(journal은 버립니다).
     pub fn into_changes(self) -> ChangeRecorder {
         self.changes

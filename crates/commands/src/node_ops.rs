@@ -3,6 +3,8 @@
 //! - [`InsertNode`] (VII.2.1): caller가 StableId를 정한 node(또는 그 node를 root로 하는
 //!   pre-order subtree)를 삽입합니다. 중복 id, 잘못된 부모, 형제 OrderKey 충돌, 깊이 초과,
 //!   참조 종류 불일치, modifier 소유·cycle 위반을 적용 전에 거부합니다.
+//! - [`MoveNode`] (VII.2.3): 부모와 OrderKey를 함께 바꿉니다. cycle·다른 View로의 이동을
+//!   거부합니다.
 //! - [`DeleteSubtree`] (VII.2.2): subtree를 지웁니다. 역 command는 subtree와 내부 참조를 담은
 //!   InsertNode이고, 외부 inbound 참조가 있으면 정책 오류로 거부합니다. InsertNode의 역입니다.
 
@@ -16,8 +18,10 @@ use stellar_document::modifier::{find_modifier_cycle, validate_modifier_owner, M
 use stellar_document::node_kind::NodeKind;
 use stellar_document::record_codec::{decode_node_record, encode_node_record};
 use stellar_document::records::{NodePayload, NodeRecord};
+use stellar_document::tree_ops::validate_reparent;
 use stellar_document::validate::{can_have_children, MAX_NODE_DEPTH};
 
+use crate::change::{node_keys, STRUCTURE_INVALIDATION};
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::command::CommandError;
 use crate::edit::EditContext;
@@ -381,6 +385,156 @@ impl DeleteSubtree {
     pub(crate) fn decode_from(input: &mut Reader<'_>) -> Result<DeleteSubtree, CommandCodecError> {
         Ok(DeleteSubtree { root: input.id()? })
     }
+}
+
+/// node 이동·재정렬 (VII.2.3).
+///
+/// 부모와 OrderKey를 **함께** 바꿉니다(같은 부모에 새 key면 재정렬). 자손과 modifier stack은
+/// 함께 옮겨집니다. 다음을 적용 전에 거부합니다:
+///
+/// - View root 이동, 자기 자신·자손을 부모로 지정(cycle), 다른 View tree로의 이동
+///   ([`validate_reparent`](stellar_document::tree_ops::validate_reparent), VI.2.3).
+/// - 자식을 가질 수 없는 부모, 새 형제와 OrderKey 충돌, 최대 깊이 초과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MoveNode {
+    /// 옮길 node.
+    pub node: StableId,
+    /// 새 부모.
+    pub new_parent: StableId,
+    /// 새 형제 순서 key.
+    pub order_key: OrderKey,
+}
+
+impl MoveNode {
+    pub(crate) fn validate(&self, model: &DocumentModel) -> Result<(), CommandError> {
+        let node_handle = model
+            .runtime_id(self.node)
+            .ok_or(CommandError::UnknownNode { id: self.node })?;
+        let parent_handle =
+            model
+                .runtime_id(self.new_parent)
+                .ok_or(CommandError::InvalidParent {
+                    node: self.node,
+                    parent: Some(self.new_parent),
+                })?;
+        if parent_of(model, self.node) == Some(None) {
+            return Err(CommandError::ViewRoot { node: self.node });
+        }
+        validate_reparent(model.columns(), node_handle, parent_handle).map_err(|error| {
+            CommandError::Reparent {
+                node: self.node,
+                error,
+            }
+        })?;
+        let parent_kind = kind_of(model, self.new_parent).ok_or(CommandError::UnknownNode {
+            id: self.new_parent,
+        })?;
+        if !can_have_children(parent_kind) {
+            return Err(CommandError::InvalidParent {
+                node: self.node,
+                parent: Some(self.new_parent),
+            });
+        }
+        let index = ChildIndex::build(model);
+        for sibling in index.children(self.new_parent) {
+            if *sibling != self.node
+                && crate::tree::order_key_of(model, *sibling).as_ref() == Some(&self.order_key)
+            {
+                return Err(CommandError::DuplicateOrderKey {
+                    parent: self.new_parent,
+                    node: self.node,
+                });
+            }
+        }
+        // 깊이: 새 부모 깊이 + 1 + subtree 높이.
+        let parent_depth = depth_of(model, self.new_parent).ok_or(CommandError::UnknownNode {
+            id: self.new_parent,
+        })?;
+        let height = subtree_height(&index, self.node);
+        let deepest = parent_depth + 1 + height;
+        if deepest > MAX_NODE_DEPTH {
+            return Err(CommandError::DepthExceeded {
+                node: self.node,
+                depth: deepest,
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn invert(&self, model: &DocumentModel) -> Result<MoveNode, CommandError> {
+        let parent = parent_of(model, self.node)
+            .ok_or(CommandError::UnknownNode { id: self.node })?
+            .ok_or(CommandError::ViewRoot { node: self.node })?;
+        let order_key = crate::tree::order_key_of(model, self.node)
+            .ok_or(CommandError::UnknownNode { id: self.node })?;
+        Ok(MoveNode {
+            node: self.node,
+            new_parent: parent,
+            order_key,
+        })
+    }
+
+    pub(crate) fn apply(&self, ctx: &mut EditContext<'_>) -> Result<(), CommandError> {
+        let mut record = ctx
+            .model()
+            .record(self.node)
+            .ok_or(CommandError::UnknownNode { id: self.node })?;
+        let old_parent = record.parent;
+        if old_parent == Some(self.new_parent) && record.order_key == self.order_key {
+            return Ok(());
+        }
+        record.parent = Some(self.new_parent);
+        record.order_key = self.order_key.clone();
+        ctx.replace_record(record)?;
+        if old_parent != Some(self.new_parent) {
+            ctx.changes()
+                .node_property(self.node, node_keys::PARENT, STRUCTURE_INVALIDATION);
+        }
+        ctx.changes()
+            .node_property(self.node, node_keys::ORDER_KEY, STRUCTURE_INVALIDATION);
+        if let Some(old_parent) = old_parent {
+            ctx.changes().structure(old_parent);
+        }
+        ctx.changes().structure(self.new_parent);
+        Ok(())
+    }
+
+    pub(crate) fn encode_into(&self, out: &mut Writer) {
+        out.id(self.node);
+        out.id(self.new_parent);
+        out.bytes(self.order_key.as_bytes());
+    }
+
+    pub(crate) fn decode_from(input: &mut Reader<'_>) -> Result<MoveNode, CommandCodecError> {
+        let node = input.id()?;
+        let new_parent = input.id()?;
+        let order_key = decode_order_key(input)?;
+        Ok(MoveNode {
+            node,
+            new_parent,
+            order_key,
+        })
+    }
+}
+
+/// `u32` 길이 + bytes로 기록된 OrderKey(정규형 검증).
+pub(crate) fn decode_order_key(input: &mut Reader<'_>) -> Result<OrderKey, CommandCodecError> {
+    OrderKey::from_bytes(input.bytes()?.to_vec()).map_err(|_| CommandCodecError::Malformed {
+        reason: "잘못된 OrderKey",
+    })
+}
+
+/// `root` 아래 가장 깊은 자손까지의 거리(leaf = 0).
+fn subtree_height(index: &ChildIndex, root: StableId) -> u32 {
+    let mut height = 0u32;
+    let mut stack = vec![(root, 0u32)];
+    while let Some((id, depth)) = stack.pop() {
+        height = height.max(depth);
+        for child in index.children(id) {
+            stack.push((*child, depth.saturating_add(1)));
+        }
+    }
+    height
 }
 
 #[cfg(test)]
@@ -850,5 +1004,226 @@ mod tests {
         }
         assert!(deleted > 300, "삭제 {deleted}");
         assert!(rejected > 20, "정책 거부 {rejected}");
+    }
+
+    fn move_to(node: u64, parent: u64, key: u8) -> Command {
+        Command::MoveNode(MoveNode {
+            node: sid(node),
+            new_parent: sid(parent),
+            order_key: OrderKey::from_bytes(vec![key]).unwrap(),
+        })
+    }
+
+    #[test]
+    fn move_and_reorder_round_trip() {
+        // 검증 기준(VII.2.3): move→undo, reorder fixture 통과.
+        let mut state = DocumentState::new(small_model());
+        let before = snapshot(&state);
+        // 13(11의 자식)을 12 아래로.
+        let request = CommandRequest::at(&state, move_to(13, 12, 0x10));
+        let outcome = state.execute(&request).unwrap();
+        assert_eq!(state.model().children_in_order(sid(12)), vec![sid(13)]);
+        assert!(state.model().children_in_order(sid(11)).is_empty());
+        assert_eq!(
+            outcome.changes.changed_properties(),
+            vec![
+                stellar_core_types::property::PropertyPath::with_keys(
+                    sid(13),
+                    vec![node_keys::PARENT]
+                ),
+                stellar_core_types::property::PropertyPath::with_keys(
+                    sid(13),
+                    vec![node_keys::ORDER_KEY]
+                ),
+            ]
+        );
+        assert_eq!(
+            outcome.changes.changed_nodes(),
+            vec![sid(11), sid(12), sid(13)]
+        );
+        assert_eq!(outcome.inverse, move_to(13, 11, 0x10));
+        run(&mut state, outcome.inverse).unwrap();
+        assert_eq!(snapshot(&state), before);
+
+        // 재정렬: 같은 부모 안에서 12를 11 앞으로.
+        let inverse = run(&mut state, move_to(12, 10, 0x08)).unwrap();
+        assert_eq!(
+            state.model().children_in_order(sid(10)),
+            vec![sid(12), sid(11)]
+        );
+        run(&mut state, inverse).unwrap();
+        assert_eq!(
+            state.model().children_in_order(sid(10)),
+            vec![sid(11), sid(12)]
+        );
+        assert_eq!(snapshot(&state), before);
+
+        // 자손·modifier stack이 함께 옮겨집니다.
+        let mut stack = ModifierStack::new(sid(14));
+        stack
+            .push_back(ModifierId::new(sid(80)), ModifierKind::Blur)
+            .unwrap();
+        run(
+            &mut state,
+            Command::InsertNode(InsertNode {
+                nodes: vec![frame(14, Some(13), 0x10)],
+                modifier_stacks: vec![stack.clone()],
+            }),
+        )
+        .unwrap();
+        let with_child = snapshot(&state);
+        let inverse = run(&mut state, move_to(11, 12, 0x10)).unwrap();
+        assert_eq!(state.model().children_in_order(sid(12)), vec![sid(11)]);
+        assert_eq!(state.model().children_in_order(sid(13)), vec![sid(14)]);
+        assert_eq!(state.model().modifier_stack(sid(14)), Some(&stack));
+        run(&mut state, inverse).unwrap();
+        assert_eq!(snapshot(&state), with_child);
+    }
+
+    fn two_view_model() -> DocumentModel {
+        use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
+        let mut definition = DocumentDefinition::new(sid(1), String::new());
+        let mut page = PageDefinition::new(sid(2), String::new());
+        page.add_view(ViewDefinition::new(sid(3), String::new(), sid(10)))
+            .unwrap();
+        page.add_view(ViewDefinition::new(sid(4), String::new(), sid(50)))
+            .unwrap();
+        definition.add_page(page).unwrap();
+        let mut model = DocumentModel::new(definition);
+        model.insert_node(frame(10, None, 0x10)).unwrap();
+        model.insert_node(frame(11, Some(10), 0x10)).unwrap();
+        model.insert_node(frame(13, Some(11), 0x10)).unwrap();
+        model.insert_node(frame(50, None, 0x10)).unwrap();
+        model.insert_node(frame(51, Some(50), 0x10)).unwrap();
+        let mut text = frame(52, Some(50), 0x20);
+        text.payload = NodePayload::Text(TextPayload::empty(0));
+        model.insert_node(text).unwrap();
+        model
+    }
+
+    #[test]
+    fn invalid_moves_are_rejected() {
+        use stellar_document::tree_ops::ReparentError;
+        let mut state = DocumentState::new(two_view_model());
+        let before = snapshot(&state);
+        let reparent = |error| CommandError::Reparent {
+            node: sid(11),
+            error,
+        };
+        assert_eq!(
+            run(&mut state, move_to(11, 11, 0x30)),
+            Err(reparent(ReparentError::SelfParent))
+        );
+        assert_eq!(
+            run(&mut state, move_to(11, 13, 0x30)),
+            Err(reparent(ReparentError::DescendantParent))
+        );
+        assert_eq!(
+            run(&mut state, move_to(11, 51, 0x30)),
+            Err(reparent(ReparentError::CrossViewMove))
+        );
+        assert_eq!(
+            run(&mut state, move_to(10, 11, 0x30)),
+            Err(CommandError::ViewRoot { node: sid(10) })
+        );
+        assert_eq!(
+            run(&mut state, move_to(51, 52, 0x30)),
+            Err(CommandError::InvalidParent {
+                node: sid(51),
+                parent: Some(sid(52))
+            })
+        );
+        assert_eq!(
+            run(&mut state, move_to(13, 10, 0x10)),
+            Err(CommandError::DuplicateOrderKey {
+                parent: sid(10),
+                node: sid(13)
+            })
+        );
+        assert_eq!(
+            run(&mut state, move_to(99, 10, 0x30)),
+            Err(CommandError::UnknownNode { id: sid(99) })
+        );
+        assert_eq!(snapshot(&state), before);
+        // 같은 위치로의 이동은 변경 없음.
+        let request = CommandRequest::at(&state, move_to(13, 11, 0x10));
+        let outcome = state.execute(&request).unwrap();
+        assert!(outcome.changes.is_empty());
+        assert_eq!(snapshot(&state), before);
+    }
+
+    #[test]
+    fn move_depth_limit_counts_subtree_height() {
+        let mut state = DocumentState::new(small_model());
+        // 12 아래 62단 chain → 가장 깊은 node depth 63.
+        let mut chain = Vec::new();
+        for i in 0..62u64 {
+            let parent = if i == 0 { 12 } else { 199 + i };
+            chain.push(frame(200 + i, Some(parent), 0x40));
+        }
+        run(
+            &mut state,
+            Command::InsertNode(InsertNode {
+                nodes: chain,
+                modifier_stacks: Vec::new(),
+            }),
+        )
+        .unwrap();
+        // 12(높이 62)를 13(depth 2) 아래로 → 3 + 62 = 65 > 64.
+        assert_eq!(
+            run(&mut state, move_to(12, 13, 0x50)),
+            Err(CommandError::DepthExceeded {
+                node: sid(12),
+                depth: 65
+            })
+        );
+        // 11(depth 1) 아래로는 2 + 62 = 64 허용.
+        run(&mut state, move_to(12, 11, 0x50)).unwrap();
+    }
+
+    #[test]
+    fn random_moves_round_trip() {
+        use stellar_document::test_support::random_document::{random_valid_document, SplitMix64};
+        let mut moved = 0;
+        for seed in 0..120u64 {
+            let mut state = DocumentState::new(random_valid_document(seed));
+            let before = state.model().to_records().unwrap();
+            let ids = crate::tree::node_ids(state.model());
+            if ids.len() < 3 {
+                continue;
+            }
+            let mut rng = SplitMix64::new(seed ^ 0x307E);
+            for _ in 0..6 {
+                let node = *rng.pick(&ids);
+                let parent = *rng.pick(&ids);
+                let index = ChildIndex::build(state.model());
+                let siblings = index.children(parent);
+                let at = rng.below(siblings.len() as u64 + 1) as usize;
+                let left = at
+                    .checked_sub(1)
+                    .and_then(|i| siblings.get(i))
+                    .and_then(|id| crate::tree::order_key_of(state.model(), *id));
+                let right = siblings
+                    .get(at)
+                    .and_then(|id| crate::tree::order_key_of(state.model(), *id));
+                let key = OrderKey::between(left.as_ref(), right.as_ref());
+                let command = Command::MoveNode(MoveNode {
+                    node,
+                    new_parent: parent,
+                    order_key: key,
+                });
+                let request = CommandRequest::at(&state, command);
+                if let Ok(outcome) = state.execute(&request) {
+                    moved += 1;
+                    stellar_document::validate::validate_document(
+                        &state.model().to_records().unwrap(),
+                    )
+                    .expect("이동 후 문서 유효");
+                    run(&mut state, outcome.inverse).unwrap();
+                    assert_eq!(state.model().to_records().unwrap(), before, "seed {seed}");
+                }
+            }
+        }
+        assert!(moved > 100, "이동 {moved}");
     }
 }

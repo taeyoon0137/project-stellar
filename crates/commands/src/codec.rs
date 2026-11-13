@@ -20,7 +20,7 @@ use stellar_core_types::ids::StableId;
 
 use crate::command::Command;
 use crate::kind::CommandKind;
-use crate::node_ops::{DeleteSubtree, InsertNode};
+use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
 
 /// command 직렬화 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,6 +268,7 @@ fn encode_payload(command: &Command, out: &mut Writer) {
     match command {
         Command::InsertNode(command) => command.encode_into(out),
         Command::DeleteSubtree(command) => command.encode_into(out),
+        Command::MoveNode(command) => command.encode_into(out),
         #[cfg(test)]
         Command::TestProbe(probe) => {
             out.id(probe.node);
@@ -300,6 +301,7 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
     match kind {
         CommandKind::InsertNode => InsertNode::decode_from(input).map(Command::InsertNode),
         CommandKind::DeleteSubtree => DeleteSubtree::decode_from(input).map(Command::DeleteSubtree),
+        CommandKind::MoveNode => MoveNode::decode_from(input).map(Command::MoveNode),
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {
             node: input.id()?,

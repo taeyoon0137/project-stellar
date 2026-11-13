@@ -23,7 +23,7 @@ use stellar_document::model::{DocumentModel, ModelError};
 
 use crate::edit::EditContext;
 use crate::kind::CommandKind;
-use crate::node_ops::{DeleteSubtree, InsertNode};
+use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
 
 /// command 검증·적용 오류.
 #[derive(Debug, Clone, PartialEq)]
@@ -95,6 +95,13 @@ pub enum CommandError {
         /// 참조하는 subtree 밖 node.
         from: StableId,
     },
+    /// tree 이동 규칙 위반(VI.2.3: 자기 부모·자손 부모·다른 View 이동).
+    Reparent {
+        /// 대상 node.
+        node: StableId,
+        /// 원인.
+        error: stellar_document::tree_ops::ReparentError,
+    },
     /// View root는 이 command로 삭제·이동할 수 없습니다.
     ViewRoot {
         /// 대상 node.
@@ -160,6 +167,7 @@ impl fmt::Display for CommandError {
                 f,
                 "subtree 밖 node {from}가 삭제 대상 {target}를 참조합니다(참조를 먼저 정리해야 합니다)"
             ),
+            CommandError::Reparent { node, error } => write!(f, "node {node} 이동 거부: {error}"),
             CommandError::ViewRoot { node } => {
                 write!(f, "View root {node}는 삭제·이동할 수 없습니다")
             }
@@ -196,6 +204,8 @@ pub enum Command {
     InsertNode(InsertNode),
     /// node subtree 삭제 (VII.2.1·VII.2.2).
     DeleteSubtree(DeleteSubtree),
+    /// node 이동·재정렬 (VII.2.3).
+    MoveNode(MoveNode),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -207,6 +217,7 @@ impl Command {
         match self {
             Command::InsertNode(_) => CommandKind::InsertNode,
             Command::DeleteSubtree(_) => CommandKind::DeleteSubtree,
+            Command::MoveNode(_) => CommandKind::MoveNode,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -217,6 +228,7 @@ impl Command {
         match self {
             Command::InsertNode(command) => command.validate(model),
             Command::DeleteSubtree(command) => command.validate(model),
+            Command::MoveNode(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -227,6 +239,7 @@ impl Command {
         match self {
             Command::InsertNode(command) => command.invert().map(Command::DeleteSubtree),
             Command::DeleteSubtree(command) => command.invert(model).map(Command::InsertNode),
+            Command::MoveNode(command) => command.invert(model).map(Command::MoveNode),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -237,6 +250,7 @@ impl Command {
         match self {
             Command::InsertNode(command) => command.apply(ctx),
             Command::DeleteSubtree(command) => command.apply(ctx),
+            Command::MoveNode(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

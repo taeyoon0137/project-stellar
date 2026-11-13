@@ -17,6 +17,8 @@ pub enum CommandKind {
     InsertNode,
     /// node subtree 삭제 (VII.2.1·VII.2.2).
     DeleteSubtree,
+    /// node 이동·재정렬 (VII.2.3).
+    MoveNode,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -24,7 +26,11 @@ pub enum CommandKind {
 
 impl CommandKind {
     /// 프로덕션 registry에 등록된 모든 종류(번호 오름차순).
-    pub const ALL: &'static [CommandKind] = &[CommandKind::InsertNode, CommandKind::DeleteSubtree];
+    pub const ALL: &'static [CommandKind] = &[
+        CommandKind::InsertNode,
+        CommandKind::DeleteSubtree,
+        CommandKind::MoveNode,
+    ];
 
     /// 영구 예약 값(유효한 종류가 아님).
     pub const RESERVED: u16 = 0x0000;
@@ -34,6 +40,7 @@ impl CommandKind {
         match self {
             CommandKind::InsertNode => 0x0001,
             CommandKind::DeleteSubtree => 0x0002,
+            CommandKind::MoveNode => 0x0003,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -56,6 +63,7 @@ impl CommandKind {
         match self {
             CommandKind::InsertNode => "insert-node",
             CommandKind::DeleteSubtree => "delete-subtree",
+            CommandKind::MoveNode => "move-node",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -96,7 +104,11 @@ mod tests {
             .collect();
         assert_eq!(
             golden,
-            vec![(0x0001, "insert-node"), (0x0002, "delete-subtree")]
+            vec![
+                (0x0001, "insert-node"),
+                (0x0002, "delete-subtree"),
+                (0x0003, "move-node"),
+            ]
         );
     }
 
