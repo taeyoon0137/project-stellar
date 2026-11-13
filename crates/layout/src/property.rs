@@ -24,6 +24,8 @@ pub enum LayoutProperty {
     Position,
     /// local transform (X.2.4).
     Transform,
+    /// Stack 자식 grow·shrink·basis (X.3.3).
+    Flex,
 }
 
 impl LayoutProperty {
@@ -38,6 +40,7 @@ impl LayoutProperty {
             LayoutProperty::Content => "content",
             LayoutProperty::Position => "position",
             LayoutProperty::Transform => "transform",
+            LayoutProperty::Flex => "flex",
         }
     }
 }

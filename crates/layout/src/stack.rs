@@ -22,8 +22,13 @@
 //!    `cross − 크기`입니다.
 //!
 //! Hug 측정: main extent = 위 합계, cross extent = 자식 cross 크기 최댓값.
-//! main 축 `Fill`(늘림)과 grow·shrink는 X.3.3에서 구현하며, 그 전까지 main 축 `Fill`은 콘텐츠
-//! 크기로 해석합니다.
+//!
+//! # main 크기 (X.3.3)
+//!
+//! 자식 main 크기는 [`crate::flex`]의 grow·shrink·basis 분배로 정합니다. content main이 definite면
+//! 남는(모자란) 공간을 분배하고, indefinite(main Hug 측정)면 base(hypothetical) 크기를 씁니다. 분배
+//! 잔여 subpixel은 child visual order 앞에서부터 줍니다. main 축 `Fill`은 `grow 1, shrink 1, basis 0`
+//! 입니다. 분배 뒤 자식은 정해진 main 크기(forced)로 다시 해석되어 cross 크기가 확정됩니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::value::{FiniteF32, Length};
@@ -32,6 +37,7 @@ use crate::codec::{Reader, Writer};
 use crate::distribute::distribute_equal;
 use crate::engine::{at, AxisSizing, ChildConstraint, Engine};
 use crate::error::LayoutError;
+use crate::flex::{resolve_flexible_lengths, FlexInput, PreparedBasis, FILL_FACTOR};
 use crate::geometry::{Axis, LayoutRect, LayoutSize};
 use crate::input::{length_unit, ContainerLayout};
 use crate::property::LayoutProperty;
@@ -252,8 +258,8 @@ fn stack_of(engine: &Engine<'_>, index: usize) -> Result<StackUnits, LayoutError
     }
 }
 
-/// 자식 하나의 제약. main 축 Fill은 아직 늘리지 않고(X.3.3) 콘텐츠 크기로 해석합니다. cross 축
-/// Fill은 cross 크기를 채우고, `Stretch` 정렬은 cross가 HugContent인 자식을 cross 크기로 늘립니다.
+/// 자식 하나의 base 제약(main 크기 분배 전). cross 축 Fill은 cross 크기를 채우고, `Stretch`
+/// 정렬은 cross가 HugContent인 자식을 cross 크기로 늘립니다.
 fn child_constraint(
     engine: &Engine<'_>,
     child: usize,
@@ -294,6 +300,65 @@ fn main_total(
     Ok(total)
 }
 
+/// 한 줄 자식들의 최종 크기(visual order). main 크기는 grow·shrink·basis로 분배합니다(X.3.3).
+fn line_sizes(
+    engine: &mut Engine<'_>,
+    id: StableId,
+    children: &[usize],
+    units: &StackUnits,
+    inner: [Option<LayoutUnit>; 2],
+) -> Result<Vec<LayoutSize>, LayoutError> {
+    let main = units.main.index();
+    let mut inputs = Vec::with_capacity(children.len());
+    let mut constraints = Vec::with_capacity(children.len());
+    for &child in children {
+        let constraint = child_constraint(engine, child, units, inner);
+        let flex = engine.nodes[child].flex;
+        let main_fill = engine.nodes[child].sizing[main] == AxisSizing::Fill;
+        let base = match (flex.basis, inner[main]) {
+            (PreparedBasis::Length(value), _) => value,
+            (PreparedBasis::Percentage(percent), Some(extent)) => {
+                extent.checked_mul_percent(percent).map_err(at(id))?
+            }
+            _ if main_fill => LayoutUnit::ZERO,
+            _ => engine.resolve_size(child, constraint)?.get(units.main),
+        };
+        let (grow, shrink) = if main_fill {
+            (FILL_FACTOR, FILL_FACTOR)
+        } else {
+            (flex.grow, flex.shrink)
+        };
+        inputs.push(FlexInput {
+            base,
+            grow,
+            shrink,
+            min: LayoutUnit::ZERO,
+            max: None,
+        });
+        constraints.push(constraint);
+    }
+    let main_sizes: Vec<LayoutUnit> = match inner[main] {
+        Some(extent) => {
+            let mut gaps = LayoutUnit::ZERO;
+            for _ in 1..children.len() {
+                gaps = gaps.checked_add(units.gap).map_err(at(id))?;
+            }
+            let available = extent.checked_sub(gaps).map_err(at(id))?;
+            resolve_flexible_lengths(available, &inputs).map_err(at(id))?
+        }
+        None => inputs
+            .iter()
+            .map(|input| input.base.max(input.min))
+            .collect(),
+    };
+    let mut sizes = Vec::with_capacity(children.len());
+    for ((&child, mut constraint), main_size) in children.iter().zip(constraints).zip(main_sizes) {
+        constraint.forced[main] = Some(main_size);
+        sizes.push(engine.resolve_size(child, constraint)?);
+    }
+    Ok(sizes)
+}
+
 /// Stack container의 content extent(Hug 측정).
 pub(crate) fn measure(
     engine: &mut Engine<'_>,
@@ -302,11 +367,8 @@ pub(crate) fn measure(
 ) -> Result<[LayoutUnit; 2], LayoutError> {
     let id = engine.nodes[index].id;
     let units = stack_of(engine, index)?;
-    let mut sizes = Vec::new();
-    for child in engine.children(index) {
-        let constraint = child_constraint(engine, child, &units, inner);
-        sizes.push(engine.resolve_size(child, constraint)?);
-    }
+    let children = engine.children(index);
+    let sizes = line_sizes(engine, id, &children, &units, inner)?;
     let mut extent = [LayoutUnit::ZERO; 2];
     extent[units.main.index()] = main_total(id, &sizes, &units)?;
     extent[units.cross.index()] = sizes
@@ -392,11 +454,7 @@ pub(crate) fn place(
     let units = stack_of(engine, index)?;
     let inner_axes = [Some(inner.width()), Some(inner.height())];
     let children = engine.children(index);
-    let mut sizes = Vec::with_capacity(children.len());
-    for &child in &children {
-        let constraint = child_constraint(engine, child, &units, inner_axes);
-        sizes.push(engine.resolve_size(child, constraint)?);
-    }
+    let sizes = line_sizes(engine, id, &children, &units, inner_axes)?;
     let main_extent = inner.get(units.main);
     let cross_extent = inner.get(units.cross);
     let free = main_extent
@@ -767,5 +825,234 @@ mod tests {
             (rect(5).y(), rect(5).width(), rect(5).height()),
             (px(45), px(30), px(3))
         );
+    }
+
+    use crate::flex::{FlexBasis, FlexItem};
+    use stellar_core_types::value::{Percentage, Scalar};
+
+    fn scalar(value: f32) -> Scalar {
+        Scalar::new(value).unwrap()
+    }
+
+    fn flex(grow: f32, shrink: f32, basis: FlexBasis) -> FlexItem {
+        FlexItem::new(scalar(grow), scalar(shrink), basis)
+    }
+
+    /// 가로 Stack(너비 `width`, 높이 10) 안의 (StableId, OrderKey 순번, 자식) 목록을 계산합니다.
+    fn row(
+        width: SizingMode,
+        stack: StackLayout,
+        children: Vec<(u64, u32, LayoutNode)>,
+    ) -> LayoutResult {
+        let mut root = LayoutNode::new(id(1))
+            .with_sizing(width, SizingMode::Fixed(len(10.0)))
+            .with_container(ContainerLayout::Stack(stack));
+        let mut nodes = Vec::new();
+        for (n, order, child) in children {
+            root = root.with_child(id(n), key(order));
+            nodes.push(child);
+        }
+        nodes.insert(0, root);
+        compute_layout(&LayoutInput::new(id(1), nodes)).unwrap()
+    }
+
+    fn child(n: u64, width: SizingMode, item: FlexItem) -> LayoutNode {
+        LayoutNode::new(id(n))
+            .with_sizing(width, SizingMode::Fixed(len(10.0)))
+            .with_flex(item)
+    }
+
+    /// (x px, width px) 목록.
+    fn spans(result: &LayoutResult, ids: &[u64]) -> Vec<(f64, f64)> {
+        ids.iter()
+            .map(|n| {
+                let r = result.get(id(*n)).unwrap().local_rect();
+                (r.x().to_px_f64(), r.width().to_px_f64())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn reference_flex_grow_shrink_basis_fixtures() {
+        let fixed = |w: f32| SizingMode::Fixed(len(w));
+        let horizontal = StackLayout::new(Axis::Horizontal);
+        // 1) basis 50/100/50, grow 1/2/1, 300 → 75/150/75.
+        let basis = |v: f32| FlexBasis::Length(len(v));
+        let grow = row(
+            fixed(300.0),
+            horizontal,
+            vec![
+                (2, 1, child(2, fixed(0.0), flex(1.0, 0.0, basis(50.0)))),
+                (3, 2, child(3, fixed(0.0), flex(2.0, 0.0, basis(100.0)))),
+                (4, 3, child(4, fixed(0.0), flex(1.0, 0.0, basis(50.0)))),
+            ],
+        );
+        assert_eq!(
+            spans(&grow, &[2, 3, 4]),
+            vec![(0.0, 75.0), (75.0, 150.0), (225.0, 75.0)]
+        );
+        // 2) 같은 입력 + gap 10: 사용 가능 280, free 80 → 70/140/70.
+        let gapped = row(
+            fixed(300.0),
+            StackLayout {
+                gap: len(10.0),
+                ..horizontal
+            },
+            vec![
+                (2, 1, child(2, fixed(0.0), flex(1.0, 0.0, basis(50.0)))),
+                (3, 2, child(3, fixed(0.0), flex(2.0, 0.0, basis(100.0)))),
+                (4, 3, child(4, fixed(0.0), flex(1.0, 0.0, basis(50.0)))),
+            ],
+        );
+        assert_eq!(
+            spans(&gapped, &[2, 3, 4]),
+            vec![(0.0, 70.0), (80.0, 140.0), (230.0, 70.0)]
+        );
+        // 3) shrink: Fixed 100×3(basis Auto), shrink 1/1/2, 200 → 75/75/50.
+        let auto = FlexBasis::Auto;
+        let shrink = row(
+            fixed(200.0),
+            horizontal,
+            vec![
+                (2, 1, child(2, fixed(100.0), flex(0.0, 1.0, auto))),
+                (3, 2, child(3, fixed(100.0), flex(0.0, 1.0, auto))),
+                (4, 3, child(4, fixed(100.0), flex(0.0, 2.0, auto))),
+            ],
+        );
+        assert_eq!(
+            spans(&shrink, &[2, 3, 4]),
+            vec![(0.0, 75.0), (75.0, 75.0), (150.0, 50.0)]
+        );
+        // 4) Fill + Fixed 100 + Fill in 400 → 150/100/150.
+        let fill = row(
+            fixed(400.0),
+            horizontal,
+            vec![
+                (2, 1, child(2, SizingMode::Fill, FlexItem::default())),
+                (3, 2, child(3, fixed(100.0), FlexItem::default())),
+                (4, 3, child(4, SizingMode::Fill, FlexItem::default())),
+            ],
+        );
+        assert_eq!(
+            spans(&fill, &[2, 3, 4]),
+            vec![(0.0, 150.0), (150.0, 100.0), (250.0, 150.0)]
+        );
+        // 5) percentage basis 25% of 400 = 100, grow 0.5 vs 1.5(basis 0) in 나머지 300 → 75/225.
+        let pct = FlexBasis::Percentage(Percentage::new(25.0).unwrap());
+        let fractional = row(
+            fixed(400.0),
+            horizontal,
+            vec![
+                (2, 1, child(2, fixed(0.0), flex(0.0, 0.0, pct))),
+                (3, 2, child(3, fixed(0.0), flex(0.5, 0.0, basis(0.0)))),
+                (4, 3, child(4, fixed(0.0), flex(1.5, 0.0, basis(0.0)))),
+            ],
+        );
+        assert_eq!(
+            spans(&fractional, &[2, 3, 4]),
+            vec![(0.0, 100.0), (100.0, 75.0), (175.0, 225.0)]
+        );
+        // 6) Hug container: 분배하지 않고 base 합(30 + 40) = 70.
+        let hug = row(
+            SizingMode::HugContent,
+            horizontal,
+            vec![
+                (2, 1, child(2, fixed(0.0), flex(1.0, 1.0, basis(30.0)))),
+                (3, 2, child(3, fixed(0.0), flex(3.0, 1.0, basis(40.0)))),
+            ],
+        );
+        assert_eq!(spans(&hug, &[2, 3]), vec![(0.0, 30.0), (30.0, 40.0)]);
+        assert_eq!(
+            hug.get(id(1)).unwrap().local_rect().width().to_px_f64(),
+            70.0
+        );
+    }
+
+    #[test]
+    fn residual_follows_visual_order_not_stable_id() {
+        // visual order: id 9(key 1), id 5(key 2), id 7(key 3). StableId 순서(5, 7, 9)와 다릅니다.
+        // 100 px / Fill 3개 = 2133.33 subpixel → 잔여 1은 visual order 첫 자식(id 9).
+        for direction in [StackDirection::Forward, StackDirection::Reverse] {
+            let stack = StackLayout {
+                direction,
+                ..StackLayout::new(Axis::Horizontal)
+            };
+            let result = row(
+                SizingMode::Fixed(len(100.0)),
+                stack,
+                vec![
+                    (5, 2, child(5, SizingMode::Fill, FlexItem::default())),
+                    (7, 3, child(7, SizingMode::Fill, FlexItem::default())),
+                    (9, 1, child(9, SizingMode::Fill, FlexItem::default())),
+                ],
+            );
+            let raw = |n: u64| {
+                let r = result.get(id(n)).unwrap().local_rect();
+                (r.x().raw(), r.width().raw())
+            };
+            match direction {
+                StackDirection::Forward => {
+                    assert_eq!(
+                        [raw(9), raw(5), raw(7)],
+                        [(0, 2134), (2134, 2133), (4267, 2133)]
+                    );
+                }
+                StackDirection::Reverse => {
+                    assert_eq!(
+                        [raw(9), raw(5), raw(7)],
+                        [(4266, 2134), (2133, 2133), (0, 2133)]
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn flex_validation_and_round_trip() {
+        let stack = ContainerLayout::Stack(StackLayout::new(Axis::Horizontal));
+        let parent = || {
+            LayoutNode::new(id(1))
+                .with_fixed_size(len(100.0), len(10.0))
+                .with_container(stack.clone())
+                .with_child(id(2), key(1))
+        };
+        // main 축 Fill + 기본값이 아닌 flex → InvalidSizing.
+        let conflict = child(2, SizingMode::Fill, flex(1.0, 0.0, FlexBasis::Auto));
+        assert!(matches!(
+            LayoutInput::new(id(1), vec![parent(), conflict]).validate(),
+            Err(LayoutError::InvalidSizing { node, axis: Axis::Horizontal, .. }) if node == id(2)
+        ));
+        // cross 축 Fill + flex는 허용.
+        let cross_fill = LayoutNode::new(id(2))
+            .with_sizing(SizingMode::Fixed(len(5.0)), SizingMode::Fill)
+            .with_flex(flex(1.0, 1.0, FlexBasis::Auto));
+        let input = LayoutInput::new(id(1), vec![parent(), cross_fill]);
+        assert!(input.validate().is_ok());
+        let result = compute_layout(&input).unwrap();
+        assert_eq!(result.get(id(2)).unwrap().local_rect().width(), px(100));
+        assert_eq!(result.get(id(2)).unwrap().local_rect().height(), px(10));
+        // 음수 factor·basis 거부.
+        let negative = child(
+            2,
+            SizingMode::Fixed(len(1.0)),
+            flex(-1.0, 0.0, FlexBasis::Auto),
+        );
+        assert_eq!(
+            LayoutInput::new(id(1), vec![parent(), negative]).validate(),
+            Err(LayoutError::NegativeValue {
+                node: id(2),
+                property: LayoutProperty::Flex
+            })
+        );
+        // round-trip(모든 basis 형태).
+        for basis in [
+            FlexBasis::Auto,
+            FlexBasis::Length(len(12.5)),
+            FlexBasis::Percentage(Percentage::new(30.0).unwrap()),
+        ] {
+            let node = child(2, SizingMode::Fixed(len(1.0)), flex(0.25, 3.0, basis));
+            let input = LayoutInput::new(id(1), vec![parent(), node]);
+            assert_eq!(LayoutInput::decode(&input.encode()).unwrap(), input);
+        }
     }
 }

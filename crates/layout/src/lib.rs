@@ -39,6 +39,9 @@ pub mod stack;
 /// local transform 적용 정책 (X.2.4).
 pub mod transform;
 
+/// Stack 자식 grow·shrink·basis (X.3.3).
+pub mod flex;
+
 /// canonical bytes writer/reader (crate 내부).
 mod codec;
 

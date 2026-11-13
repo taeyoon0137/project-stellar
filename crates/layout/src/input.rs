@@ -23,6 +23,7 @@ use stellar_core_types::value::{Insets, Length, Percentage, Transform2D};
 
 use crate::codec::{Reader, Writer};
 use crate::error::LayoutError;
+use crate::flex::{decode_flex, encode_flex, prepare_flex, validate_flex_combination, FlexItem};
 use crate::free::{
     decode_position, encode_position, validate_anchor_combination, validate_position_values,
     AxisAnchors, FreePosition,
@@ -107,6 +108,8 @@ pub struct LayoutNode {
     pub position: FreePosition,
     /// local transform(X.2.4). 레이아웃 계산에 참여하지 않고 layout rect 확정 뒤 적용합니다.
     pub transform: Transform2D,
+    /// Stack 부모 main 축의 grow·shrink·basis(X.3.3). 다른 배치 방식의 자식에서는 무시합니다.
+    pub flex: FlexItem,
 }
 
 impl LayoutNode {
@@ -122,7 +125,14 @@ impl LayoutNode {
             content: LayoutContent::None,
             position: FreePosition::default(),
             transform: Transform2D::identity(),
+            flex: FlexItem::default(),
         }
+    }
+
+    /// Stack 부모 main 축의 grow·shrink·basis를 지정합니다.
+    pub fn with_flex(mut self, flex: FlexItem) -> LayoutNode {
+        self.flex = flex;
+        self
     }
 
     /// local transform을 지정합니다.
@@ -298,8 +308,9 @@ impl LayoutInput {
         for (position, node) in self.nodes.iter().enumerate() {
             validate_node_values(node, position == root)?;
             if let Some(parent_index) = parent[position] {
-                if self.nodes[parent_index].container == ContainerLayout::Free {
-                    validate_anchor_combination(node)?;
+                match &self.nodes[parent_index].container {
+                    ContainerLayout::Free => validate_anchor_combination(node)?,
+                    ContainerLayout::Stack(stack) => validate_flex_combination(node, stack.axis)?,
                 }
             }
         }
@@ -389,6 +400,7 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
         }
     }
     validate_position_values(node)?;
+    prepare_flex(node)?;
     Ok(())
 }
 
@@ -437,6 +449,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
     for component in [a, b, c, d, tx, ty] {
         w.bytes(&component.to_le_bytes());
     }
+    encode_flex(w, &node.flex);
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
@@ -502,6 +515,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
     let [a, b, c, d, tx, ty] = components;
     let transform = Transform2D::new(a, b, c, d, tx, ty)
         .map_err(|_| LayoutError::NonFinite { field: "transform" })?;
+    let flex = decode_flex(r)?;
     Ok(LayoutNode {
         id,
         children,
@@ -512,6 +526,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         content,
         position,
         transform,
+        flex,
     })
 }
 

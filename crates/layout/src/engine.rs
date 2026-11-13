@@ -16,6 +16,7 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::value::{FiniteF32, Insets};
 
 use crate::error::LayoutError;
+use crate::flex::{prepare_flex, PreparedFlex};
 use crate::free::{self, PreparedAnchors};
 use crate::geometry::{Axis, LayoutRect, LayoutSize};
 use crate::input::{
@@ -111,6 +112,8 @@ pub(crate) struct Prepared {
     pub(crate) intrinsic: Option<([LayoutUnit; 2], Option<LayoutUnit>)>,
     /// Free 배치 anchor (가로, 세로).
     pub(crate) anchors: [PreparedAnchors; 2],
+    /// Stack 자식 grow·shrink·basis.
+    pub(crate) flex: PreparedFlex,
 }
 
 /// 결과 box 조립 전 값.
@@ -345,12 +348,14 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
         }
     };
     let anchors = free::prepare_position(node)?;
+    let flex = prepare_flex(node)?;
     Ok(Prepared {
         id: node.id,
         padding,
         sizing,
         intrinsic,
         anchors,
+        flex,
     })
 }
 
