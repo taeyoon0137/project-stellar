@@ -6,13 +6,16 @@
 //! 없습니다(자기 참조·프로젝트 안 의존성 checkout 금지, XV.3.1). library 매니페스트의 전이 선언에
 //! 있는 override는 사용하지 않습니다(resolver가 무시).
 //!
-//! 위치 검사는 lexical 정규화 기준입니다. symlink 해석·대상 probe(일반 저장소·library id 검사)는
-//! XV.6.2가 담당합니다.
+//! 매핑 단계(XV.6.1)의 위치 검사는 lexical 정규화 기준입니다. 대상 검증(XV.6.2,
+//! [`validate_local_override`])은 symlink를 해석한 실제 경로로 위치를 다시 확인하고, ProjectProbe로
+//! 일반 Git 저장소·손상 매니페스트·다른 library id를 거부합니다.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
-use crate::declaration::{DependencyDeclaration, LocalOverridePath, LogicalName};
+use crate::declaration::{DependencyDeclaration, LibraryId, LocalOverridePath, LogicalName};
+use crate::entry_validation::{LibraryProbeFailure, LibraryProjectValidator};
 use crate::node::{invalid, join, SchemaError, ValueError};
 
 /// logical name 하나의 override 대상.
@@ -108,12 +111,213 @@ pub fn local_overrides(
     Ok(map)
 }
 
+/// local override 대상 거부 사유(XV.6.2). 경로 원문은 담지 않습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalOverrideRejection {
+    /// 대상 경로가 없거나 읽을 수 없음.
+    Unavailable {
+        /// io 오류 종류.
+        kind: std::io::ErrorKind,
+    },
+    /// symlink 해석 후 사용 프로젝트 root 자신·내부를 가리킴.
+    InsideProject,
+    /// 일반 Git 저장소 또는 Stellar 프로젝트가 아님.
+    NotAStellarProject,
+    /// 대상 매니페스트 손상.
+    CorruptManifest,
+    /// 대상의 `project.id`가 선언한 library id와 다름.
+    LibraryIdMismatch {
+        /// 선언한 id.
+        expected: LibraryId,
+        /// 대상의 id.
+        found: LibraryId,
+    },
+}
+
+impl fmt::Display for LocalOverrideRejection {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LocalOverrideRejection::Unavailable { kind } => {
+                write!(f, "local override 대상을 읽을 수 없습니다: {kind:?}")
+            }
+            LocalOverrideRejection::InsideProject => {
+                f.write_str("local override가 사용 프로젝트 안을 가리킵니다(symlink 해석 후)")
+            }
+            LocalOverrideRejection::NotAStellarProject => {
+                f.write_str("local override 대상이 Stellar 프로젝트가 아닙니다(일반 Git 저장소)")
+            }
+            LocalOverrideRejection::CorruptManifest => {
+                f.write_str("local override 대상 매니페스트가 손상되었습니다")
+            }
+            LocalOverrideRejection::LibraryIdMismatch { expected, found } => write!(
+                f,
+                "local override 대상의 library id가 다릅니다: 선언 {expected}, 실제 {found}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for LocalOverrideRejection {}
+
+/// 검증을 통과한 local override 대상. [`validate_local_override`]만 만들 수 있습니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedLocalOverride {
+    root: PathBuf,
+    library_id: LibraryId,
+    schema_version: u32,
+}
+
+impl ValidatedLocalOverride {
+    /// symlink를 해석한 대상 root.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// 대상 library id.
+    pub fn library_id(&self) -> LibraryId {
+        self.library_id
+    }
+
+    /// 대상 매니페스트 schema version.
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+}
+
+/// local override 대상을 검증합니다(XV.6.2).
+///
+/// 1. 대상과 사용 프로젝트 root를 canonicalize(symlink 해석)하고 대상이 프로젝트 자신·내부면 거부.
+/// 2. ProjectProbe로 일반 Git 저장소·손상 매니페스트 거부.
+/// 3. probe `project.id`가 선언 library id와 다르면 거부.
+pub fn validate_local_override(
+    target: &LocalOverrideRoot,
+    project_root: &Path,
+    expected: LibraryId,
+    validator: &mut dyn LibraryProjectValidator,
+) -> Result<ValidatedLocalOverride, LocalOverrideRejection> {
+    let unavailable = |e: std::io::Error| LocalOverrideRejection::Unavailable { kind: e.kind() };
+    let root = std::fs::canonicalize(&target.root).map_err(unavailable)?;
+    let project = std::fs::canonicalize(project_root).map_err(unavailable)?;
+    if root.starts_with(&project) {
+        return Err(LocalOverrideRejection::InsideProject);
+    }
+    let probed = validator.probe(&root).map_err(|failure| match failure {
+        LibraryProbeFailure::NotAStellarProject => LocalOverrideRejection::NotAStellarProject,
+        LibraryProbeFailure::CorruptManifest => LocalOverrideRejection::CorruptManifest,
+        LibraryProbeFailure::Io { kind } => LocalOverrideRejection::Unavailable { kind },
+    })?;
+    if probed.project_id != expected {
+        return Err(LocalOverrideRejection::LibraryIdMismatch {
+            expected,
+            found: probed.project_id,
+        });
+    }
+    Ok(ValidatedLocalOverride {
+        root,
+        library_id: probed.project_id,
+        schema_version: probed.schema_version,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::declaration::dependencies_from_node;
-    use crate::declaration::fixtures::decl;
+    use crate::declaration::fixtures::{decl, library};
+    use crate::entry_validation::fake::TableValidator;
+    use crate::entry_validation::ProbedLibrary;
     use crate::node::DeclNode;
+    use crate::test_support::{SystemGit, TempDir};
+
+    /// 실제 디렉터리 fixture: 사용 프로젝트, 정상 library, 일반 Git 저장소, 다른 id library,
+    /// 손상 library, 프로젝트 안을 가리키는 symlink.
+    struct Fixture {
+        _tmp: TempDir,
+        project: PathBuf,
+        validator: TableValidator,
+    }
+
+    fn fixture() -> Fixture {
+        let tmp = TempDir::new("override-target");
+        let base = tmp.path().to_path_buf();
+        for dir in ["app/vendor", "ds", "plain-repo", "other-lib", "broken-lib"] {
+            std::fs::create_dir_all(base.join(dir)).unwrap();
+        }
+        if let Some(mut git) = SystemGit::find(&base) {
+            git.ok(&base.join("plain-repo"), ["init", "-q"]);
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(base.join("app/vendor"), base.join("sneaky")).unwrap();
+        let mut validator = TableValidator::default();
+        let lib = |id: u8| {
+            Ok(ProbedLibrary {
+                project_id: library(id),
+                schema_version: 2,
+            })
+        };
+        validator.probes.insert(base.join("ds"), lib(1));
+        validator.probes.insert(base.join("other-lib"), lib(9));
+        validator.probes.insert(
+            base.join("broken-lib"),
+            Err(LibraryProbeFailure::CorruptManifest),
+        );
+        validator.probes.insert(
+            base.join("plain-repo"),
+            Err(LibraryProbeFailure::NotAStellarProject),
+        );
+        Fixture {
+            project: base.join("app"),
+            validator,
+            _tmp: tmp,
+        }
+    }
+
+    fn check(
+        fx: &mut Fixture,
+        relative: &str,
+    ) -> Result<ValidatedLocalOverride, LocalOverrideRejection> {
+        let mut d = decl("ds", 1, "https://e.com/ds.git", "v1");
+        d.local_override = Some(LocalOverridePath::new(relative).unwrap());
+        let map = local_overrides(&[d], &fx.project).unwrap();
+        let target = map.get(&LogicalName::new("ds").unwrap()).unwrap().clone();
+        validate_local_override(&target, &fx.project, library(1), &mut fx.validator)
+    }
+
+    #[test]
+    fn plain_repo_or_wrong_library_id_is_rejected() {
+        let mut fx = fixture();
+        assert_eq!(
+            check(&mut fx, "../plain-repo"),
+            Err(LocalOverrideRejection::NotAStellarProject)
+        );
+        assert_eq!(
+            check(&mut fx, "../other-lib"),
+            Err(LocalOverrideRejection::LibraryIdMismatch {
+                expected: library(1),
+                found: library(9)
+            })
+        );
+        assert_eq!(
+            check(&mut fx, "../broken-lib"),
+            Err(LocalOverrideRejection::CorruptManifest)
+        );
+        assert!(matches!(
+            check(&mut fx, "../missing"),
+            Err(LocalOverrideRejection::Unavailable {
+                kind: std::io::ErrorKind::NotFound
+            })
+        ));
+        // lexical 검사는 통과하지만 symlink가 프로젝트 안을 가리킴.
+        #[cfg(unix)]
+        assert_eq!(
+            check(&mut fx, "../sneaky"),
+            Err(LocalOverrideRejection::InsideProject)
+        );
+        let ok = check(&mut fx, "../ds").unwrap();
+        assert_eq!(ok.library_id(), library(1));
+        assert_eq!(ok.schema_version(), 2);
+        assert!(ok.root().ends_with("ds"));
+    }
 
     const PROJECT: &str = "/work/app";
 
