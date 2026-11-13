@@ -1,310 +1,196 @@
 import AppKit
+import Sparkle
 
-/// 앱 업데이트 채널(XVI.9.5). Stable과 Beta는 서로 다른 feed URL을 쓰고 서로의 항목을 받지 않습니다.
+/// 앱 업데이트 채널(XVI.9.5, ADR-0017).
+///
+/// Stable과 Beta는 서로 다른 appcast URL을 씁니다. 그와 별도로 Sparkle channel 필터를 겹쳐, Stable은 기본 채널
+/// 항목(`<sparkle:channel>` 없음)만, Beta는 기본 채널과 `beta` 채널 항목을 받습니다. 그래서 Beta 항목이 Stable
+/// appcast에 잘못 올라가도 Stable 사용자에게는 제안되지 않습니다.
 enum UpdateChannel: String, CaseIterable {
     case stable
     case beta
 
-    /// 사용자 설정(`UserDefaults` key `StellarUpdateChannel`). 값이 없거나 알 수 없으면 Stable입니다.
+    /// 사용자 설정 key(`UserDefaults`).
+    static let defaultsKey = "StellarUpdateChannel"
+
+    /// 사용자 설정 채널. 값이 없거나 알 수 없으면 Stable입니다.
     static func preferred(_ defaults: UserDefaults = .standard) -> UpdateChannel {
-        defaults.string(forKey: "StellarUpdateChannel").flatMap(UpdateChannel.init(rawValue:)) ?? .stable
+        defaults.string(forKey: defaultsKey).flatMap(UpdateChannel.init(rawValue:)) ?? .stable
+    }
+
+    /// Sparkle `allowedChannels`. 기본 채널은 Sparkle이 항상 허용하므로 Stable은 빈 집합입니다.
+    var sparkleChannels: Set<String> {
+        self == .beta ? ["beta"] : []
     }
 }
 
-/// feed의 업데이트 항목 하나.
-struct UpdateItem: Equatable {
-    /// 표시용 버전(예: "0.1.0").
-    let version: String
-    /// 비교용 build 번호(`CFBundleVersion` 정수).
-    let build: Int
-    /// 설치 가능한 최소 macOS.
-    let minimumSystemVersion: OperatingSystemVersion
-    /// 사용자가 승인한 뒤에만 여는 다운로드 위치(https).
-    let downloadURL: URL
+/// 업데이트 구성 Info.plist key. 값은 `apps/macos/StellarMac/Info.plist`가 Xcode build setting
+/// `STELLAR_UPDATE_FEED_STABLE`·`STELLAR_UPDATE_FEED_BETA`·`STELLAR_UPDATE_PUBLIC_ED_KEY`에서 채웁니다.
+enum UpdateInfoKey {
+    static let stableFeed = "SUFeedURL"
+    static let betaFeed = "StellarUpdateFeedBeta"
+    static let publicKey = "SUPublicEDKey"
+    static let requireSignedFeed = "SURequireSignedFeed"
+    static let verifyBeforeExtraction = "SUVerifyUpdateBeforeExtraction"
+    static let allowsAutomaticUpdates = "SUAllowsAutomaticUpdates"
+    static let automaticallyUpdate = "SUAutomaticallyUpdate"
+}
 
-    static func == (lhs: UpdateItem, rhs: UpdateItem) -> Bool {
-        lhs.version == rhs.version && lhs.build == rhs.build && lhs.downloadURL == rhs.downloadURL
-            && lhs.minimumSystemVersion.majorVersion == rhs.minimumSystemVersion.majorVersion
-            && lhs.minimumSystemVersion.minorVersion == rhs.minimumSystemVersion.minorVersion
-            && lhs.minimumSystemVersion.patchVersion == rhs.minimumSystemVersion.patchVersion
+/// 업데이트를 켤 수 없는 구성. 앱은 이 경우 updater를 시작하지 않고 네트워크 요청도 하지 않습니다.
+enum UpdateConfigurationError: Error, Equatable {
+    /// 채널 appcast URL이 없거나 비어 있음.
+    case missingFeedURL(UpdateChannel)
+    /// 채널 appcast URL이 허용 scheme(배포 앱은 https)이 아님.
+    case insecureFeedURL(UpdateChannel)
+    /// Stable과 Beta가 같은 appcast를 가리킴(채널 분리 위반).
+    case sharedFeedURL
+    /// appcast 서명 요구(`SURequireSignedFeed`)나 추출 전 검증(`SUVerifyUpdateBeforeExtraction`)이 꺼져 있음.
+    case unsignedFeedAllowed
+    /// 자동 다운로드·설치(`SUAllowsAutomaticUpdates`, `SUAutomaticallyUpdate`)가 명시적으로 꺼져 있지 않음.
+    case automaticInstallAllowed
+    /// EdDSA 공개 키가 없음(배포 키 생성 전, 사용자 단계).
+    case missingPublicKey
+    /// EdDSA 공개 키가 base64 32바이트가 아님.
+    case invalidPublicKey
+}
+
+/// 검증된 업데이트 구성.
+struct UpdateConfiguration: Equatable {
+    let stableFeedURL: URL
+    let betaFeedURL: URL
+    /// Ed25519 공개 키(32바이트). appcast와 업데이트 archive 서명을 이 키로 검증합니다.
+    let publicKey: Data
+
+    /// Info.plist 사전에서 구성을 읽습니다. `allowedSchemes`는 배포 앱에서 https만이며, headless fixture만
+    /// `file`을 씁니다.
+    static func load(
+        info: [String: Any], allowedSchemes: Set<String> = ["https"]
+    ) -> Result<UpdateConfiguration, UpdateConfigurationError> {
+        func feed(_ key: String, _ channel: UpdateChannel) -> Result<URL, UpdateConfigurationError> {
+            guard let text = (info[key] as? String)?.trimmingCharacters(in: .whitespaces), !text.isEmpty,
+                let url = URL(string: text)
+            else { return .failure(.missingFeedURL(channel)) }
+            guard let scheme = url.scheme?.lowercased(), allowedSchemes.contains(scheme),
+                url.isFileURL || url.host?.isEmpty == false
+            else { return .failure(.insecureFeedURL(channel)) }
+            return .success(url)
+        }
+
+        let stable: URL
+        let beta: URL
+        switch feed(UpdateInfoKey.stableFeed, .stable) {
+        case .failure(let error): return .failure(error)
+        case .success(let url): stable = url
+        }
+        switch feed(UpdateInfoKey.betaFeed, .beta) {
+        case .failure(let error): return .failure(error)
+        case .success(let url): beta = url
+        }
+        guard stable.absoluteString != beta.absoluteString else { return .failure(.sharedFeedURL) }
+
+        // 서명된 appcast와 추출 전 archive 서명 검증을 모두 요구합니다(feed 위조로 다운로드 위치를 바꾸지 못함).
+        guard info[UpdateInfoKey.requireSignedFeed] as? Bool == true,
+            info[UpdateInfoKey.verifyBeforeExtraction] as? Bool == true
+        else { return .failure(.unsignedFeedAllowed) }
+        // Sparkle은 key가 없으면 자동 업데이트를 허용하므로 명시적 false만 받습니다.
+        guard info[UpdateInfoKey.allowsAutomaticUpdates] as? Bool == false,
+            info[UpdateInfoKey.automaticallyUpdate] as? Bool == false
+        else { return .failure(.automaticInstallAllowed) }
+
+        guard let keyText = (info[UpdateInfoKey.publicKey] as? String)?.trimmingCharacters(in: .whitespaces),
+            !keyText.isEmpty
+        else { return .failure(.missingPublicKey) }
+        guard let key = Data(base64Encoded: keyText), key.count == 32 else { return .failure(.invalidPublicKey) }
+        return .success(UpdateConfiguration(stableFeedURL: stable, betaFeedURL: beta, publicKey: key))
+    }
+
+    func feedURL(for channel: UpdateChannel) -> URL {
+        channel == .stable ? stableFeedURL : betaFeedURL
     }
 }
 
-/// feed 읽기·검증 오류.
-enum UpdateFeedError: Error, Equatable {
-    /// feed URL이 https가 아님.
-    case insecureFeedURL
-    /// 내려받기 실패.
-    case loadFailed(String)
-    /// JSON 구조가 맞지 않음.
-    case malformed
-    /// 지원하지 않는 feed schema 버전.
-    case unsupportedSchema(Int)
-    /// feed가 선언한 채널이 요청한 채널과 다름(채널 격리 위반).
-    case channelMismatch(expected: String, found: String)
+/// 채널 선택 정책. Sparkle은 확인할 때마다 delegate로 읽으므로 채널 변경은 다음 확인부터 적용됩니다.
+struct UpdateChannelPolicy {
+    let configuration: UpdateConfiguration
+    let defaults: UserDefaults
+
+    var channel: UpdateChannel { UpdateChannel.preferred(defaults) }
+    /// 이 채널의 appcast 하나만 요청합니다.
+    var feedURLString: String { configuration.feedURL(for: channel).absoluteString }
+    var allowedChannels: Set<String> { channel.sparkleChannels }
 }
 
-/// 채널 feed 문서(JSON, schema 1).
+/// 채널 정책만 Sparkle에 전달하는 updater delegate.
+final class UpdateChannelDelegate: NSObject, SPUUpdaterDelegate {
+    let policy: UpdateChannelPolicy
+
+    init(policy: UpdateChannelPolicy) {
+        self.policy = policy
+    }
+
+    func feedURLString(for updater: SPUUpdater) -> String? {
+        policy.feedURLString
+    }
+
+    func allowedChannels(for updater: SPUUpdater) -> Set<String> {
+        policy.allowedChannels
+    }
+}
+
+/// 앱 업데이트(XVI.9.5, ADR-0017): Sparkle updater를 구성이 완전할 때만 시작합니다.
 ///
-/// ```json
-/// { "schema": 1, "channel": "stable",
-///   "items": [ { "version": "0.1.0", "build": 2, "minimumSystemVersion": "26.0",
-///                "downloadURL": "https://…/Stellar-0.1.0.zip" } ] }
-/// ```
-/// https가 아닌 다운로드 URL·잘못된 버전 문자열·0 이하 build 항목은 버립니다.
-struct UpdateFeed {
-    static let schemaVersion = 1
-
-    let channel: UpdateChannel
-    let items: [UpdateItem]
-
-    private struct Document: Decodable {
-        let schema: Int
-        let channel: String
-        let items: [Entry]
+/// - 확인: `SUEnableAutomaticChecks`·`SUScheduledCheckInterval`(하루 1회)에 따른 background 확인.
+/// - 승인: Sparkle 표준 UI가 새 버전을 알리고, 사용자가 설치를 고른 뒤에만 다운로드합니다. 설치·재실행도
+///   사용자 선택 후입니다. 자동 다운로드·자동 설치는 Info.plist에서 끕니다.
+/// - 무결성: appcast와 archive 모두 EdDSA 서명이 맞아야 합니다.
+/// 구성이 불완전하면(예: 배포 키 생성 전) updater를 만들지 않아 네트워크 요청이 없습니다.
+final class AppUpdateController {
+    enum State: Equatable {
+        /// 구성이 불완전해 시작하지 않음.
+        case disabled(UpdateConfigurationError)
+        /// Sparkle이 구성 검사에서 시작을 거부함.
+        case failedToStart(String)
+        /// 선호 채널로 시작함.
+        case started(UpdateChannel)
     }
 
-    private struct Entry: Decodable {
-        let version: String
-        let build: Int
-        let minimumSystemVersion: String
-        let downloadURL: String
-    }
+    let state: State
+    private let updater: SPUUpdater?
+    private let delegate: UpdateChannelDelegate?
+    private let userDriver: SPUStandardUserDriver?
 
-    /// `expected` 채널의 feed로 해석합니다. 다른 채널을 선언한 문서는 거부합니다.
-    static func parse(_ data: Data, expected: UpdateChannel) -> Result<UpdateFeed, UpdateFeedError> {
-        guard let document = try? JSONDecoder().decode(Document.self, from: data) else {
-            return .failure(.malformed)
-        }
-        guard document.schema == schemaVersion else {
-            return .failure(.unsupportedSchema(document.schema))
-        }
-        guard document.channel == expected.rawValue else {
-            return .failure(.channelMismatch(expected: expected.rawValue, found: document.channel))
-        }
-        let items = document.items.compactMap { entry -> UpdateItem? in
-            guard entry.build > 0,
-                let minimum = parseSystemVersion(entry.minimumSystemVersion),
-                let url = URL(string: entry.downloadURL), url.scheme == "https", url.host != nil
-            else { return nil }
-            return UpdateItem(
-                version: entry.version, build: entry.build, minimumSystemVersion: minimum, downloadURL: url)
-        }
-        return .success(UpdateFeed(channel: expected, items: items))
-    }
-
-    /// "26", "26.1", "26.1.2" 형식만 받습니다.
-    static func parseSystemVersion(_ text: String) -> OperatingSystemVersion? {
-        let parts = text.split(separator: ".", omittingEmptySubsequences: false)
-        guard (1...3).contains(parts.count) else { return nil }
-        var numbers: [Int] = []
-        for part in parts {
-            guard !part.isEmpty, part.allSatisfy({ $0.isASCII && $0.isNumber }), let value = Int(part) else {
-                return nil
+    /// `allowedSchemes`는 배포 앱에서 기본값(https)만 씁니다.
+    init(bundle: Bundle = .main, defaults: UserDefaults = .standard, allowedSchemes: Set<String> = ["https"]) {
+        switch UpdateConfiguration.load(info: bundle.infoDictionary ?? [:], allowedSchemes: allowedSchemes) {
+        case .failure(let reason):
+            state = .disabled(reason)
+            updater = nil
+            delegate = nil
+            userDriver = nil
+        case .success(let configuration):
+            let channelDelegate = UpdateChannelDelegate(
+                policy: UpdateChannelPolicy(configuration: configuration, defaults: defaults))
+            let driver = SPUStandardUserDriver(hostBundle: bundle, delegate: nil)
+            let sparkle = SPUUpdater(
+                hostBundle: bundle, applicationBundle: bundle, userDriver: driver, delegate: channelDelegate)
+            do {
+                try sparkle.start()
+                state = .started(channelDelegate.policy.channel)
+            } catch {
+                state = .failedToStart(error.localizedDescription)
             }
-            numbers.append(value)
-        }
-        while numbers.count < 3 { numbers.append(0) }
-        return OperatingSystemVersion(majorVersion: numbers[0], minorVersion: numbers[1], patchVersion: numbers[2])
-    }
-}
-
-/// feed 내려받기(주입 가능). 호출은 background queue에서 일어납니다.
-protocol UpdateFeedLoading {
-    func load(_ url: URL, completion: @escaping (Result<Data, UpdateFeedError>) -> Void)
-}
-
-/// 사용자 승인 요청(주입 가능). `completion(true)`일 때만 다운로드합니다.
-protocol UpdateApproving {
-    func requestApproval(for item: UpdateItem, channel: UpdateChannel, completion: @escaping (Bool) -> Void)
-}
-
-/// 승인된 업데이트의 다운로드 시작(주입 가능).
-protocol UpdateDownloading {
-    func download(_ item: UpdateItem)
-}
-
-/// 한 채널의 업데이트 확인 결과.
-enum UpdateCheckResult: Equatable {
-    /// 설치할 새 항목이 없음.
-    case upToDate
-    /// 새 항목이 있으나 사용자가 거절함(다운로드 없음).
-    case declined(UpdateItem)
-    /// 사용자가 승인해 다운로드를 시작함.
-    case approved(UpdateItem)
-    /// feed 오류(다운로드 없음).
-    case failed(UpdateFeedError)
-}
-
-/// 한 채널의 background 업데이트 확인(XVI.9.5).
-///
-/// 확인 자체는 background queue에서 feed만 읽습니다. 새 항목이 있으면 사용자 승인을 요청하고, 승인한 경우에만
-/// 다운로드를 시작합니다. 자동 다운로드·자동 설치·앱 강제 종료는 하지 않습니다.
-final class UpdateChecker {
-    let channel: UpdateChannel
-    let feedURL: URL
-    private let currentBuild: Int
-    private let systemVersion: OperatingSystemVersion
-    private let loader: UpdateFeedLoading
-    private let approver: UpdateApproving
-    private let downloader: UpdateDownloading
-    private let queue = DispatchQueue(label: "xyz.taeyoon.stellar.update-check", qos: .utility)
-
-    init(
-        channel: UpdateChannel, feedURL: URL, currentBuild: Int, systemVersion: OperatingSystemVersion,
-        loader: UpdateFeedLoading, approver: UpdateApproving, downloader: UpdateDownloading
-    ) {
-        self.channel = channel
-        self.feedURL = feedURL
-        self.currentBuild = currentBuild
-        self.systemVersion = systemVersion
-        self.loader = loader
-        self.approver = approver
-        self.downloader = downloader
-    }
-
-    /// feed에서 현재 build보다 새롭고 이 OS에 설치 가능한 가장 높은 build 항목.
-    func newestApplicable(in feed: UpdateFeed) -> UpdateItem? {
-        feed.items
-            .filter { $0.build > currentBuild && UpdateChecker.version(systemVersion, isAtLeast: $0.minimumSystemVersion) }
-            .max { $0.build < $1.build }
-    }
-
-    /// background queue에서 확인합니다. 결과는 같은 background queue에서 `completion`으로 전달합니다.
-    func check(completion: @escaping (UpdateCheckResult) -> Void) {
-        queue.async { [self] in
-            guard feedURL.scheme == "https" else {
-                completion(.failed(.insecureFeedURL))
-                return
-            }
-            loader.load(feedURL) { [self] loaded in
-                queue.async { [self] in
-                    let parsed = loaded.flatMap { UpdateFeed.parse($0, expected: channel) }
-                    switch parsed {
-                    case .failure(let error):
-                        completion(.failed(error))
-                    case .success(let feed):
-                        guard let item = newestApplicable(in: feed) else {
-                            completion(.upToDate)
-                            return
-                        }
-                        approver.requestApproval(for: item, channel: channel) { [self] approved in
-                            if approved {
-                                downloader.download(item)
-                                completion(.approved(item))
-                            } else {
-                                completion(.declined(item))
-                            }
-                        }
-                    }
-                }
-            }
+            updater = sparkle
+            delegate = channelDelegate
+            userDriver = driver
         }
     }
 
-    static func version(_ version: OperatingSystemVersion, isAtLeast minimum: OperatingSystemVersion) -> Bool {
-        (version.majorVersion, version.minorVersion, version.patchVersion)
-            >= (minimum.majorVersion, minimum.minorVersion, minimum.patchVersion)
-    }
-}
-
-/// 앱 실행 중 주기적 background 확인(`NSBackgroundActivityScheduler`, 하루 1회·utility QoS).
-final class UpdateScheduler {
-    static let interval: TimeInterval = 24 * 60 * 60
-    static let tolerance: TimeInterval = 60 * 60
-
-    let activity: NSBackgroundActivityScheduler
-    private let checker: UpdateChecker
-
-    init(checker: UpdateChecker) {
-        self.checker = checker
-        activity = NSBackgroundActivityScheduler(
-            identifier: "xyz.taeyoon.stellar.update-check.\(checker.channel.rawValue)")
-        activity.repeats = true
-        activity.interval = UpdateScheduler.interval
-        activity.tolerance = UpdateScheduler.tolerance
-        activity.qualityOfService = .utility
-    }
-
-    func start() {
-        activity.schedule { [checker] done in
-            checker.check { _ in done(.finished) }
-        }
-    }
-
-    func stop() {
-        activity.invalidate()
-    }
-}
-
-/// 배포 앱 구성: Info.plist의 채널별 feed URL(`StellarUpdateFeedStable`, `StellarUpdateFeedBeta`).
-///
-/// 값이 없으면 업데이트 확인을 시작하지 않습니다(feed 위치는 배포 결정 후 설정).
-enum UpdateConfiguration {
-    static func feedURL(for channel: UpdateChannel, bundle: Bundle = .main) -> URL? {
-        let key = channel == .stable ? "StellarUpdateFeedStable" : "StellarUpdateFeedBeta"
-        guard let text = bundle.object(forInfoDictionaryKey: key) as? String,
-            let url = URL(string: text), url.scheme == "https"
-        else { return nil }
-        return url
-    }
-
-    static func currentBuild(bundle: Bundle = .main) -> Int {
-        (bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String).flatMap(Int.init) ?? 0
-    }
-
-    /// 설정된 경우에만 선호 채널의 scheduler를 만듭니다.
-    static func makeScheduler(bundle: Bundle = .main, defaults: UserDefaults = .standard) -> UpdateScheduler? {
-        let channel = UpdateChannel.preferred(defaults)
-        guard let url = feedURL(for: channel, bundle: bundle) else { return nil }
-        let checker = UpdateChecker(
-            channel: channel, feedURL: url, currentBuild: currentBuild(bundle: bundle),
-            systemVersion: ProcessInfo.processInfo.operatingSystemVersion,
-            loader: URLSessionFeedLoader(), approver: AlertUpdateApprover(), downloader: BrowserUpdateDownloader())
-        return UpdateScheduler(checker: checker)
-    }
-}
-
-/// https feed를 ephemeral session으로 읽습니다(cookie·cache 없음).
-struct URLSessionFeedLoader: UpdateFeedLoading {
-    func load(_ url: URL, completion: @escaping (Result<Data, UpdateFeedError>) -> Void) {
-        guard url.scheme == "https" else {
-            completion(.failure(.insecureFeedURL))
-            return
-        }
-        let session = URLSession(configuration: .ephemeral)
-        session.dataTask(with: url) { data, response, error in
-            if let error {
-                completion(.failure(.loadFailed(error.localizedDescription)))
-            } else if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                completion(.failure(.loadFailed("HTTP \(http.statusCode)")))
-            } else {
-                completion(.success(data ?? Data()))
-            }
-            session.finishTasksAndInvalidate()
-        }.resume()
-    }
-}
-
-/// main thread에서 native alert로 승인을 묻습니다(두 선택지: 다운로드, 나중에).
-struct AlertUpdateApprover: UpdateApproving {
-    func requestApproval(for item: UpdateItem, channel: UpdateChannel, completion: @escaping (Bool) -> Void) {
-        DispatchQueue.main.async {
-            let alert = NSAlert()
-            alert.messageText = "Stellar \(item.version) 업데이트가 있습니다"
-            alert.informativeText = "\(channel.rawValue) 채널의 새 버전입니다. 다운로드하면 브라우저에서 내려받습니다."
-            alert.addButton(withTitle: "다운로드")
-            alert.addButton(withTitle: "나중에")
-            completion(alert.runModal() == .alertFirstButtonReturn)
-        }
-    }
-}
-
-/// 승인된 업데이트를 기본 브라우저로 내려받습니다. 설치는 사용자가 공증된 앱으로 직접 합니다.
-struct BrowserUpdateDownloader: UpdateDownloading {
-    func download(_ item: UpdateItem) {
-        DispatchQueue.main.async {
-            NSWorkspace.shared.open(item.downloadURL)
+    /// 로그용 한 줄 설명.
+    var summary: String {
+        switch state {
+        case .disabled(let reason): return "disabled(\(reason))"
+        case .failedToStart(let message): return "failed(\(message))"
+        case .started(let channel): return "started(\(channel.rawValue))"
         }
     }
 }

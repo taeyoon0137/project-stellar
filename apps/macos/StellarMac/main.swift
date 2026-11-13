@@ -22,7 +22,8 @@ if CommandLine.arguments.contains("--input-check") {
     exit(InputCheck.run() ? 0 : 1)
 }
 
-// update 검사 모드: Stable/Beta 채널 격리와 승인 전 다운로드 금지를 headless로 검증하고 종료(XVI.9.5).
+// update 검사 모드: 업데이트 구성, Stable/Beta 채널 격리, appcast 서명, 승인 전 다운로드 금지를 실제 Sparkle과
+// loopback fixture로 headless 검증하고 종료(XVI.9.5, ADR-0017).
 if CommandLine.arguments.contains("--update-check") {
     exit(UpdateCheck.run() ? 0 : 1)
 }

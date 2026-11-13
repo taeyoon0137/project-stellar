@@ -10,8 +10,13 @@
 #   - 없으면 로그인 키체인에서 해당 종류의 identity를 찾고, 정확히 하나일 때만 씁니다.
 #   identity·team 정보는 저장소에 기록하지 않습니다(로컬 키체인과 환경 변수로만 전달).
 #
-# 순서: 저장소 서명 자료 부재 확인 → scripts/macos/release_build.sh(Release 빌드·구성·번들 검사) → 서명 →
-#       codesign --verify --deep --strict → Developer ID 체인·timestamp 확인 → scripts/macos/bundle_check.sh(서명본)
+# 순서: 저장소 서명 자료 부재 확인 → scripts/macos/release_build.sh(Release 빌드·구성·번들 검사) →
+#       업데이트 공개 키 확인 → 안쪽부터 서명(scripts/macos/codesign_bundle.sh: Sparkle XPC services·Autoupdate·
+#       Updater.app·framework → 앱) → codesign --verify --deep --strict → Developer ID 체인·timestamp 확인 →
+#       scripts/macos/bundle_check.sh(서명본)
+#
+# 업데이트 공개 키(ADR-0017): release_build.sh와 같은 STELLAR_UPDATE_* 환경 변수로 전달합니다. 배포 서명에서
+# RFC 8032 test vector 키(headless fixture 전용)는 거부하고, 키가 없으면 업데이트가 꺼진 배포본임을 경고합니다.
 #
 # 산출물: apps/macos/build/Build/Products/Release/StellarMac.app (build/는 git ignore)
 #
@@ -77,9 +82,22 @@ fi
 APP="$REPO_ROOT/apps/macos/build/Build/Products/Release/StellarMac.app"
 BIN="$APP/Contents/MacOS/StellarMac"
 
-# --- 서명: Hardened Runtime(공증 필수) ---
-# Rust 코어는 staticlib으로 실행 파일에 링크되어 중첩 서명 대상이 없습니다(bundle_check.sh가 확인).
-codesign --force --options runtime "$TIMESTAMP_FLAG" --sign "$IDENTITY" "$APP"
+# --- 업데이트 공개 키(ADR-0017) ---
+# RFC 8032 §7.1 TEST 1 공개 키: 개인 키가 공개된 test vector라 배포본에 들어가면 누구나 업데이트를 서명할 수 있습니다.
+TEST_VECTOR_PUBLIC_KEY="11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
+UPDATE_PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP/Contents/Info.plist" 2>/dev/null || true)"
+if [ "$UPDATE_PUBLIC_KEY" = "$TEST_VECTOR_PUBLIC_KEY" ]; then
+  echo "✖ SUPublicEDKey가 RFC 8032 test vector 키입니다. 배포에는 generate_keys로 만든 키를 쓰세요(ADR-0017)." >&2
+  exit 1
+fi
+if [ -z "$UPDATE_PUBLIC_KEY" ] && [ "$MODE" = "developer-id" ]; then
+  echo "⚠ SUPublicEDKey가 비어 있어 이 배포본은 업데이트를 확인하지 않습니다(ADR-0017 사용자 단계: 키 생성 후" \
+    "STELLAR_UPDATE_PUBLIC_ED_KEY로 다시 빌드)." >&2
+fi
+
+# --- 서명: 안쪽 코드부터, 모두 Hardened Runtime(공증 필수) ---
+# Rust 코어는 staticlib으로 실행 파일에 링크되어 별도 서명 대상이 없습니다(bundle_check.sh가 확인).
+"$REPO_ROOT/scripts/macos/codesign_bundle.sh" "$IDENTITY" "$TIMESTAMP_FLAG" "$APP"
 
 # --- 검증 ---
 codesign --verify --deep --strict --verbose=2 "$APP"

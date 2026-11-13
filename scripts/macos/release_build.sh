@@ -7,8 +7,19 @@
 #  - 실행 파일과 Rust 코어 staticlib이 arm64 전용(lipo)
 #  - 실행 파일 LC_BUILD_VERSION: platform MACOS, minos 26.0
 #  - Info.plist: CFBundleIdentifier, LSMinimumSystemVersion=26.0, CFBundleExecutable
+#  - Info.plist 업데이트 구성(ADR-0017): Stable/Beta appcast https URL(서로 다름), 서명 appcast·추출 전 검증 요구,
+#    자동 다운로드·설치 금지
 #  - Release 실행 파일 --smoke(FFI로 코어 버전 읽기)
 #  - 번들 구조·링크·rpath·서명 구조·재배치 실행: scripts/macos/bundle_check.sh --adhoc-sign(XVI.9.2)
+#
+# Swift package(Sparkle)는 Package.resolved 고정 버전만 쓰고(-disableAutomaticPackageResolution),
+# 자격 증명 조회는 키체인 대신 netrc로 합니다(공개 package라 인증 불필요, 키체인 접근 대화상자 방지).
+#
+# 업데이트 구성 override(설정된 환경 변수만 xcodebuild build setting으로 전달):
+#   STELLAR_UPDATE_FEED_STABLE, STELLAR_UPDATE_FEED_BETA  appcast URL(기본값은 project.pbxproj의 공개 릴리스
+#                                                         저장소 placeholder)
+#   STELLAR_UPDATE_PUBLIC_ED_KEY                          Sparkle EdDSA 공개 키(base64). 비어 있으면 앱은 업데이트를
+#                                                         시작하지 않습니다. 키 생성은 사용자 단계입니다(ADR-0017).
 #
 # 산출물: apps/macos/build/Build/Products/Release/StellarMac.app (build/는 git ignore)
 # 종료 코드: 0 성공, 그 외 빌드·검사 실패.
@@ -36,9 +47,17 @@ fail() {
 
 PROJECT="$REPO_ROOT/apps/macos/StellarMac.xcodeproj"
 DERIVED="$REPO_ROOT/apps/macos/build"
+PACKAGE_FLAGS=(-packageAuthorizationProvider netrc -disableAutomaticPackageResolution)
+UPDATE_OVERRIDES=()
+for name in STELLAR_UPDATE_FEED_STABLE STELLAR_UPDATE_FEED_BETA STELLAR_UPDATE_PUBLIC_ED_KEY; do
+  if [ -n "${!name:-}" ]; then
+    UPDATE_OVERRIDES+=("$name=${!name}")
+  fi
+done
 
 # --- Xcode Release 설정 고정값 ---
-SETTINGS="$(xcodebuild -project "$PROJECT" -scheme StellarMac -configuration Release -showBuildSettings 2>/dev/null)"
+SETTINGS="$(xcodebuild -project "$PROJECT" -scheme StellarMac -configuration Release "${PACKAGE_FLAGS[@]}" \
+  -derivedDataPath "$DERIVED" ${UPDATE_OVERRIDES[@]+"${UPDATE_OVERRIDES[@]}"} -showBuildSettings 2>/dev/null)"
 setting() {
   # 'KEY = value' 줄에서 값만 꺼냅니다(정확히 일치하는 key).
   printf '%s\n' "$SETTINGS" | awk -v key="$1" '$1 == key && $2 == "=" { sub(/^[^=]*= /, ""); print; exit }'
@@ -57,7 +76,9 @@ xcodebuild \
   -scheme StellarMac \
   -configuration Release \
   -derivedDataPath "$DERIVED" \
+  "${PACKAGE_FLAGS[@]}" \
   CODE_SIGNING_ALLOWED=NO \
+  ${UPDATE_OVERRIDES[@]+"${UPDATE_OVERRIDES[@]}"} \
   build
 
 APP="$DERIVED/Build/Products/Release/StellarMac.app"
@@ -87,6 +108,26 @@ plist() {
 [ "$(plist LSMinimumSystemVersion)" = "$EXPECTED_MIN_OS" ] || fail "LSMinimumSystemVersion=$(plist LSMinimumSystemVersion)"
 [ "$(plist CFBundleExecutable)" = "StellarMac" ] || fail "CFBundleExecutable=$(plist CFBundleExecutable)"
 echo "✓ Info.plist: $EXPECTED_BUNDLE_ID, LSMinimumSystemVersion $EXPECTED_MIN_OS"
+
+# --- Info.plist 업데이트 구성(ADR-0017) ---
+STABLE_FEED="$(plist SUFeedURL)"
+BETA_FEED="$(plist StellarUpdateFeedBeta)"
+case "$STABLE_FEED" in https://?*) ;; *) fail "SUFeedURL이 https URL이 아님: '$STABLE_FEED'" ;; esac
+case "$BETA_FEED" in https://?*) ;; *) fail "StellarUpdateFeedBeta가 https URL이 아님: '$BETA_FEED'" ;; esac
+[ "$STABLE_FEED" != "$BETA_FEED" ] || fail "Stable과 Beta appcast URL이 같음"
+for key in SURequireSignedFeed SUVerifyUpdateBeforeExtraction SUEnableAutomaticChecks; do
+  [ "$(plist "$key")" = "true" ] || fail "$key=$(plist "$key")"
+done
+for key in SUAllowsAutomaticUpdates SUAutomaticallyUpdate; do
+  [ "$(plist "$key")" = "false" ] || fail "$key=$(plist "$key")"
+done
+PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP/Contents/Info.plist" 2>/dev/null || true)"
+if [ -n "$PUBLIC_KEY" ]; then
+  KEY_STATE="EdDSA 공개 키 설정됨"
+else
+  KEY_STATE="EdDSA 공개 키 없음(업데이트 비활성, ADR-0017 사용자 단계)"
+fi
+echo "✓ 업데이트 구성: stable/beta appcast 분리, 서명 appcast 요구, 자동 설치 금지, $KEY_STATE"
 
 # --- Release 실행 smoke ---
 "$BIN" --smoke

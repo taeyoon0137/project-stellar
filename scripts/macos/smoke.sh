@@ -6,7 +6,7 @@
 #  - --canvas-check: drawable pixel == point × scale 및 코어 round-trip 확인
 #  - --text-input-check: 네이티브 UI 텍스트 컨트롤의 undo/IME(marked text) smoke
 #  - --input-check: mouse·trackpad·keyboard NSEvent → 공통 InputEvent 변환과 연속 move coalescing
-#  - --update-check: 업데이트 채널 격리·승인 gate
+#  - --update-check: 업데이트 구성·채널 격리·appcast 서명·승인 gate(Sparkle, loopback fixture)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -23,11 +23,15 @@ fi
 
 DERIVED="$REPO_ROOT/apps/macos/build"
 
+# Swift package(Sparkle, ADR-0017)는 Package.resolved 고정 버전만 쓰고 자격 증명 조회는 netrc로 합니다
+# (공개 package라 인증 불필요, 키체인 접근 대화상자 방지).
 xcodebuild \
   -project "$REPO_ROOT/apps/macos/StellarMac.xcodeproj" \
   -scheme StellarMac \
   -configuration Debug \
   -derivedDataPath "$DERIVED" \
+  -packageAuthorizationProvider netrc \
+  -disableAutomaticPackageResolution \
   CODE_SIGNING_ALLOWED=NO \
   build
 
@@ -91,7 +95,8 @@ echo "text 구조 ok: ${NATIVE_UI_SOURCES[*]}"
 #        + 10,000 drag → 최신 1개 coalescing(XII.3.4).
 "$APP" --input-check
 
-# update: Stable/Beta feed 채널 격리, background 확인, 승인 전 다운로드 금지(XVI.9.5).
+# update: Info.plist 업데이트 구성, Stable/Beta appcast 채널 격리, appcast 서명 검증, 승인 전 다운로드 금지
+#         (XVI.9.5, ADR-0017; 실제 Sparkle updater와 127.0.0.1 fixture 서버, 외부 네트워크 없음).
 "$APP" --update-check
 
 echo "smoke OK"

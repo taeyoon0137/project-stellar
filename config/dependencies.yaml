@@ -75,3 +75,16 @@ dependencies:
     approval: approved
     purpose: "UAX #14 줄바꿈 기회 기본 알고리즘 (stellar-text X.9.4, ADR-0016)"
     replaceable: true
+
+# 네이티브 셸(cargo 밖) 직접 의존성. 필드는 위와 같습니다.
+# `cargo xtask validate-dependencies`는 현재 `dependencies`(xtask cargo 직접 의존성 대조)만 검사하므로,
+# cargo가 아닌 의존성은 이 목록에 따로 기록합니다(ADR-0017).
+platform_dependencies:
+  - name: Sparkle
+    ecosystem: swiftpm
+    version: "2.10.1"
+    license: "MIT AND BSD-2-Clause AND Zlib"
+    approval: approved
+    purpose: "macOS 앱 업데이트: Stable/Beta appcast background 확인, EdDSA 서명 검증, 사용자 승인 후 다운로드·설치 (ADR-0017). 포함 구성요소: bsdiff(BSD-2-Clause), sais-lite(MIT), orlp/ed25519(Zlib), SUSignatureVerifier(BSD-2-Clause)"
+    replaceable: true
+    separate_approval: true
