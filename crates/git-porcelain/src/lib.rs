@@ -59,6 +59,9 @@ pub mod ops;
 /// `git status --porcelain=v2 -z --branch` 해석(XIV.2.1~).
 pub mod status;
 
+/// `RepositoryStatus` 저장소 요약 상태(XIV.2.2).
+pub mod repo_status;
+
 /// Git LFS 설치 감지 (XIII.7.1).
 pub mod lfs;
 
