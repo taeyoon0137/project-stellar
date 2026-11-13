@@ -57,3 +57,25 @@
   XI.3.4는 선행 X.10.3(text caret·hit-test cluster, `[ ]`)이 미완료라 이 lane에서 진행하지 못했습니다.
 - 역변환은 float 반올림이 있어 경계 위 점의 판정이 1 ulp 수준에서 흔들릴 수 있습니다(경계 포함 규칙).
 - hit test 지연(p99) 측정은 XI.3.6 benchmark 범위입니다(XI.3.4에 의존해 차단).
+
+## 후속 수정 (리뷰 minor: brute-force oracle이 구현과 같은 판정 함수를 공유)
+
+- **지적**: `hits_match_brute_force_predicate_on_random_fixture`가 구현과 같은 `to_local`·`clip_stack_contains`를
+  써서, 공간 인덱스 누락과 z 역순만 증명하고 clip·모서리 radius 수식은 독립 검증하지 못했습니다.
+- **추가 테스트**(test-only, 구현 변경 없음):
+  - `rounded_rect_and_rotated_clip_match_independent_sdf_oracle`: 사분면별 radius rounded-box signed distance(구현의
+    모서리 영역 판정과 다른 수식)로 radius 4종 × 0.5 간격 격자 38,801점에서 `rounded_rect_contains`를, 같은 점을 30°
+    회전·평행이동 clip의 world로 보내 `clip_contains`를 비교합니다. local 좌표는 `Transform2D::inverse` 대신 회전 성분으로
+    직접 되돌립니다. 경계 0.01 이내 점은 부동소수 오차로 빼고, clip stack 교집합 4점은 손으로 확인했습니다.
+  - `random_fixture_clip_semantics_match_independent_oracle`: 780 node 무작위 fixture에서 local 좌표(평행이동 직접 계산)와
+    clip 판정(SDF, path clip은 command 점을 직접 훑은 껍질)을 독립 oracle로 계산해 `hit_test_broad` 결과와 비교합니다.
+    node bounds(XI.3.1, 자체 테스트 보유)만 공유합니다.
+- **변이 확인**: `rounded_rect_contains`의 top-right 모서리 radius를 bottom-left로 바꾸면 SDF oracle 테스트가, clip stack
+  판정을 가장 안쪽 clip만 보게 바꾸면 두 oracle 테스트가 실패했습니다(기존 brute-force 테스트는 후자에서도 통과).
+  변이는 확인 후 되돌렸습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-scene` | unit 77, doc 2 passed, 0 failed |
+| `cargo clippy -p stellar-scene --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-scene -- --check` | 통과 |

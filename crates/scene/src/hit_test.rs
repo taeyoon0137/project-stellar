@@ -403,4 +403,187 @@ mod tests {
             assert_eq!(result.z_orders(), expected);
         }
     }
+
+    /// 경계에서 이 거리 안의 점은 부동소수 오차로 판정이 갈릴 수 있어 oracle 비교에서 뺍니다.
+    const ORACLE_EPS: f32 = 1e-2;
+
+    /// 모서리 둥근 사각형 signed distance(음수 = 안). broad-phase의 모서리 영역 판정과 독립인
+    /// 수식(사분면별 radius rounded box)입니다. radius는 변 길이 절반 이하여야 합니다.
+    fn rounded_box_sdf(bounds: (f32, f32, f32, f32), radii: &CornerRadii, x: f32, y: f32) -> f32 {
+        let (x0, y0, x1, y1) = bounds;
+        let (tl, tr, br, bl) = radii.components();
+        let (cx, cy) = ((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+        let (bx, by) = ((x1 - x0) / 2.0, (y1 - y0) / 2.0);
+        let r = match (x >= cx, y >= cy) {
+            (false, false) => tl,
+            (true, false) => tr,
+            (true, true) => br,
+            (false, true) => bl,
+        };
+        let qx = (x - cx).abs() - bx + r;
+        let qy = (y - cy).abs() - by + r;
+        let outside = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt();
+        outside + qx.max(qy).min(0.0) - r
+    }
+
+    /// clip 하나의 독립 판정: 경계 근처면 `None`, 아니면 안이면 `Some(true)`.
+    ///
+    /// local 좌표는 `Transform2D::inverse`를 쓰지 않고 회전·평행이동 성분으로 직접 되돌리며,
+    /// path clip은 command 점을 직접 훑은 control 껍질로 판정합니다.
+    fn oracle_clip(clip: &ClipShape, world: Vec2) -> Option<bool> {
+        let transform = match clip {
+            ClipShape::Rect { transform, .. } | ClipShape::Path { transform, .. } => transform,
+        };
+        // 회전(+평행이동)만 허용: (a, b, c, d) = (cos, sin, −sin, cos).
+        let (cos, sin, c, d, tx, ty) = transform.components();
+        assert!(
+            (c + sin).abs() < 1e-6 && (d - cos).abs() < 1e-6,
+            "oracle은 회전·평행이동 clip만 다룹니다"
+        );
+        let (dx, dy) = (world.x() - tx, world.y() - ty);
+        let (x, y) = (cos * dx + sin * dy, -sin * dx + cos * dy);
+        match clip {
+            ClipShape::Rect { rect, radii, .. } => {
+                let (ox, oy) = (rect.origin().x(), rect.origin().y());
+                let bounds = (ox, oy, ox + rect.size().width(), oy + rect.size().height());
+                let distance = rounded_box_sdf(bounds, radii, x, y);
+                (distance.abs() >= ORACLE_EPS).then_some(distance < 0.0)
+            }
+            ClipShape::Path { geometry, .. } => {
+                let points: Vec<Vec2> = geometry
+                    .commands()
+                    .iter()
+                    .flat_map(|command| match *command {
+                        PathCommand::MoveTo(point) | PathCommand::LineTo(point) => vec![point],
+                        PathCommand::CubicTo { c1, c2, to } => vec![c1, c2, to],
+                        PathCommand::Close => Vec::new(),
+                    })
+                    .collect();
+                let fold = |pick: fn(&Vec2) -> f32| {
+                    points
+                        .iter()
+                        .map(pick)
+                        .fold((f32::MAX, f32::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)))
+                };
+                let ((min_x, max_x), (min_y, max_y)) = (fold(Vec2::x), fold(Vec2::y));
+                // 껍질 경계까지의 최소 거리(안이면 양수).
+                let margin = (x - min_x).min(max_x - x).min(y - min_y).min(max_y - y);
+                (margin.abs() >= ORACLE_EPS).then_some(margin > 0.0)
+            }
+        }
+    }
+
+    #[test]
+    fn rounded_rect_and_rotated_clip_match_independent_sdf_oracle() {
+        // 리뷰(hit-test-oracle-shares-predicates): broad-phase가 쓰는 판정 함수와 다른 수식으로
+        // 모서리 radius·회전 clip을 촘촘한 격자에서 독립 검증합니다.
+        let bounds = Aabb::new(10.0, 20.0, 110.0, 80.0).unwrap();
+        let radius_sets = [
+            CornerRadii::ZERO,
+            CornerRadii::new(30.0, 30.0, 30.0, 30.0).unwrap(),
+            CornerRadii::new(10.0, 0.0, 25.0, 5.0).unwrap(),
+            CornerRadii::new(0.0, 30.0, 0.0, 12.5).unwrap(),
+        ];
+        let (cos, sin) = (30f32.to_radians().cos(), 30f32.to_radians().sin());
+        let rotated = Transform2D::new(cos, sin, -sin, cos, 500.0, -40.0).unwrap();
+        let mut compared = 0usize;
+        for radii in &radius_sets {
+            let clip = ClipShape::Rect {
+                rect: rect(10.0, 20.0, 100.0, 60.0),
+                radii: *radii,
+                transform: rotated,
+            };
+            for ix in 0..=240 {
+                for iy in 0..=160 {
+                    let (x, y) = (ix as f32 * 0.5, iy as f32 * 0.5 + 10.0);
+                    // local 판정.
+                    let distance = rounded_box_sdf((10.0, 20.0, 110.0, 80.0), radii, x, y);
+                    if distance.abs() >= ORACLE_EPS {
+                        assert_eq!(
+                            rounded_rect_contains(&bounds, radii, p(x, y)),
+                            distance < 0.0,
+                            "local ({x}, {y}) radii {radii:?}"
+                        );
+                        compared += 1;
+                    }
+                    // 같은 local 점을 회전 clip의 world로 보낸 판정.
+                    let world = rotated.apply(p(x, y)).unwrap();
+                    if let Some(inside) = oracle_clip(&clip, world) {
+                        assert_eq!(clip_contains(&clip, world), inside, "world {world:?}");
+                        compared += 1;
+                    }
+                }
+            }
+        }
+        assert!(compared > 4 * 2 * 36_000, "비교한 점 {compared}");
+        // stack은 모든 clip의 교집합입니다.
+        let outer = ClipShape::Rect {
+            rect: rect(0.0, 0.0, 50.0, 50.0),
+            radii: CornerRadii::new(20.0, 20.0, 20.0, 20.0).unwrap(),
+            transform: Transform2D::identity(),
+        };
+        let inner = ClipShape::Rect {
+            rect: rect(0.0, 0.0, 40.0, 40.0),
+            radii: CornerRadii::ZERO,
+            transform: translate(25.0, 25.0),
+        };
+        let stack = ClipStackRef::none().push(outer.clone()).push(inner.clone());
+        for (x, y) in [(30.0, 30.0), (48.0, 48.0), (10.0, 10.0), (60.0, 30.0)] {
+            let point = p(x, y);
+            let expected = oracle_clip(&outer, point).zip(oracle_clip(&inner, point));
+            let (a, b) = expected.expect("격자 점은 경계에서 떨어져 있음");
+            assert_eq!(clip_stack_contains(&stack, point), a && b, "({x}, {y})");
+        }
+    }
+
+    #[test]
+    fn random_fixture_clip_semantics_match_independent_oracle() {
+        // 리뷰(hit-test-oracle-shares-predicates): 무작위 fixture의 기대 hit 목록을 독립 clip
+        // oracle로 계산합니다. node bounds 판정(XI.3.1)만 공유하고 local 좌표도 직접 계산합니다.
+        let snapshot = fixtures::generate(FixtureConfig {
+            seed: 0x34,
+            roots: 5,
+            children: 5,
+            depth: 3,
+        });
+        let index = SceneSpatialIndex::build(&snapshot);
+        let mut rng = SplitMix64::new(0x34);
+        let (mut checked, mut clipped) = (0usize, 0usize);
+        'points: for _ in 0..400 {
+            let point = p(rng.range(-300.0, 1_500.0), rng.range(-300.0, 1_500.0));
+            let mut expected = Vec::new();
+            for node in snapshot.iter_preorder() {
+                if !node.hit().is_hit_target() {
+                    continue;
+                }
+                // fixture node는 모두 평행이동 world transform입니다.
+                let (a, b, c, d, tx, ty) = node.world_transform().components();
+                assert_eq!((a, b, c, d), (1.0, 0.0, 0.0, 1.0));
+                let local = p(point.x() - tx, point.y() - ty);
+                if !node.local_hit_bounds().contains_point(local) {
+                    continue;
+                }
+                let mut inside = true;
+                for clip in node.clip().iter_inner_first() {
+                    match oracle_clip(clip, point) {
+                        Some(clip_inside) => inside &= clip_inside,
+                        None => continue 'points,
+                    }
+                }
+                if inside {
+                    expected.push(node.z());
+                } else {
+                    clipped += 1;
+                }
+            }
+            expected.sort_unstable_by_key(|z| std::cmp::Reverse(*z));
+            assert_eq!(hit_test_broad(&index, point).z_orders(), expected);
+            checked += 1;
+        }
+        // 대부분의 점을 비교했고, clip이 실제로 후보를 거른 경우가 있어야 의미가 있습니다.
+        assert!(
+            checked > 350 && clipped > 0,
+            "checked {checked}, clipped {clipped}"
+        );
+    }
 }
