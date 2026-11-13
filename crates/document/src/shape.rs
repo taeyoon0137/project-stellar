@@ -5,9 +5,10 @@
 
 use std::fmt;
 
-use stellar_core_types::value::Size2;
+use stellar_core_types::value::{Rect, Size2, Vec2};
 
 use crate::frame::CornerRadius;
+use crate::path::PathCommand;
 
 /// Shape payload 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +23,16 @@ pub enum ShapeError {
         /// 원인.
         reason: &'static str,
     },
+    /// 이 버전이 모르는 mandatory field입니다(unknown field 정책 R6).
+    UnknownMandatoryField {
+        /// field tag.
+        tag: u32,
+    },
+    /// 필수 field가 없습니다.
+    MissingField {
+        /// field tag.
+        tag: u32,
+    },
 }
 
 impl fmt::Display for ShapeError {
@@ -29,6 +40,10 @@ impl fmt::Display for ShapeError {
         match self {
             ShapeError::UnknownKind { tag } => write!(f, "알 수 없는 shape kind tag: {tag}"),
             ShapeError::Malformed { reason } => write!(f, "Shape binary 형식 위반: {reason}"),
+            ShapeError::UnknownMandatoryField { tag } => {
+                write!(f, "알 수 없는 mandatory field입니다: {tag}")
+            }
+            ShapeError::MissingField { tag } => write!(f, "필수 field가 없습니다: {tag}"),
         }
     }
 }
@@ -115,6 +130,133 @@ impl RectangleParams {
     }
 }
 
+/// 저장 계층이 파싱한 tagged field 하나(canonical R6 형식의 의미 단위).
+///
+/// document crate는 chunk codec(storage)에 의존하지 않으므로, 저장 계층이 읽은
+/// field를 이 형태로 넘겨받아 의미를 해석합니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawField {
+    /// field tag.
+    pub tag: u32,
+    /// 모르는 reader가 거부해야 하면 true.
+    pub mandatory: bool,
+    /// payload bytes.
+    pub payload: Vec<u8>,
+}
+
+/// Ellipse 파라미터 (VI.5.3).
+///
+/// 타원은 **bounds로만** 정의합니다. 초기 범위에서는 start/end angle(호·부채꼴)을
+/// 지원하지 않으며, 파일에 그런 field가 있으면 unknown field 정책을 따릅니다:
+/// optional이면 무시하고 mandatory이면 거부합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EllipseParams {
+    /// 외접 사각형(shape local 좌표).
+    pub bounds: Rect,
+}
+
+/// Ellipse field tag: bounds.
+pub const ELLIPSE_FIELD_BOUNDS: u32 = 1;
+
+/// 원을 4개 cubic으로 근사하는 control 거리 비율 `4(√2 − 1)/3`.
+pub const CIRCLE_KAPPA: f32 = 0.552_284_8;
+
+fn rect_from_bytes(bytes: &[u8]) -> Result<Rect, ShapeError> {
+    if bytes.len() != 16 {
+        return Err(ShapeError::Malformed {
+            reason: "bounds는 16바이트",
+        });
+    }
+    let f = |i: usize| f32::from_le_bytes(bytes[i..i + 4].try_into().expect("4바이트"));
+    let origin = Vec2::new(f(0), f(4)).map_err(|_| ShapeError::Malformed {
+        reason: "bounds 비유한",
+    })?;
+    let size = Size2::new(f(8), f(12)).map_err(|_| ShapeError::Malformed {
+        reason: "bounds 음수·비유한",
+    })?;
+    Ok(Rect::new(origin, size))
+}
+
+fn rect_to_bytes(rect: &Rect) -> Vec<u8> {
+    let mut out = Vec::with_capacity(16);
+    for v in [
+        rect.origin().x(),
+        rect.origin().y(),
+        rect.size().width(),
+        rect.size().height(),
+    ] {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
+impl EllipseParams {
+    /// tagged field로 기록합니다.
+    pub fn to_fields(&self) -> Vec<RawField> {
+        vec![RawField {
+            tag: ELLIPSE_FIELD_BOUNDS,
+            mandatory: true,
+            payload: rect_to_bytes(&self.bounds),
+        }]
+    }
+
+    /// tagged field에서 해석합니다. 모르는 optional field(예: 미래 버전의 start
+    /// angle)는 무시하고, 모르는 mandatory field는 거부합니다.
+    pub fn from_fields(fields: &[RawField]) -> Result<EllipseParams, ShapeError> {
+        let mut bounds = None;
+        for field in fields {
+            match field.tag {
+                ELLIPSE_FIELD_BOUNDS => bounds = Some(rect_from_bytes(&field.payload)?),
+                tag if field.mandatory => return Err(ShapeError::UnknownMandatoryField { tag }),
+                _ => {} // unknown optional: skip.
+            }
+        }
+        Ok(EllipseParams {
+            bounds: bounds.ok_or(ShapeError::MissingField {
+                tag: ELLIPSE_FIELD_BOUNDS,
+            })?,
+        })
+    }
+
+    /// 전체 타원 path(4개 cubic). 오른쪽 끝에서 시작해 y-down 좌표 기준
+    /// 시계 방향(오른쪽 → 아래 → 왼쪽 → 위)으로 그리고 닫습니다.
+    pub fn to_path(&self) -> Vec<PathCommand> {
+        let o = self.bounds.origin();
+        let s = self.bounds.size();
+        let rx = s.width() / 2.0;
+        let ry = s.height() / 2.0;
+        let cx = o.x() + rx;
+        let cy = o.y() + ry;
+        let kx = rx * CIRCLE_KAPPA;
+        let ky = ry * CIRCLE_KAPPA;
+        let p = |x: f32, y: f32| Vec2::new(x, y).expect("finite bounds");
+        vec![
+            PathCommand::MoveTo(p(cx + rx, cy)),
+            PathCommand::CubicTo {
+                c1: p(cx + rx, cy + ky),
+                c2: p(cx + kx, cy + ry),
+                to: p(cx, cy + ry),
+            },
+            PathCommand::CubicTo {
+                c1: p(cx - kx, cy + ry),
+                c2: p(cx - rx, cy + ky),
+                to: p(cx - rx, cy),
+            },
+            PathCommand::CubicTo {
+                c1: p(cx - rx, cy - ky),
+                c2: p(cx - kx, cy - ry),
+                to: p(cx, cy - ry),
+            },
+            PathCommand::CubicTo {
+                c1: p(cx + kx, cy - ry),
+                c2: p(cx + rx, cy - ky),
+                to: p(cx + rx, cy),
+            },
+            PathCommand::Close,
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +338,86 @@ mod tests {
         };
         assert_eq!(params.effective_corner_radius(), (0.0, 0.0, 0.0, 0.0));
         assert_eq!(params.corner_radius.components(), (8.0, 8.0, 8.0, 8.0));
+    }
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
+        Rect::new(Vec2::new(x, y).unwrap(), Size2::new(w, h).unwrap())
+    }
+
+    #[test]
+    fn full_ellipse_path_matches_reference() {
+        // 검증 기준(VI.5.3): full ellipse path reference와 일치.
+        let ellipse = EllipseParams {
+            bounds: rect(0.0, 0.0, 200.0, 100.0),
+        };
+        let path = ellipse.to_path();
+        // 손 계산 reference: cx=100, cy=50, rx=100, ry=50, k=0.5522848.
+        let reference: [(f32, f32); 13] = [
+            (200.0, 50.0),
+            (200.0, 77.61424),
+            (155.22848, 100.0),
+            (100.0, 100.0),
+            (44.77152, 100.0),
+            (0.0, 77.61424),
+            (0.0, 50.0),
+            (0.0, 22.38576),
+            (44.77152, 0.0),
+            (100.0, 0.0),
+            (155.22848, 0.0),
+            (200.0, 22.38576),
+            (200.0, 50.0),
+        ];
+        let mut points = Vec::new();
+        for command in &path {
+            match *command {
+                PathCommand::MoveTo(p) => points.push(p),
+                PathCommand::CubicTo { c1, c2, to } => points.extend([c1, c2, to]),
+                PathCommand::Close => {}
+                PathCommand::LineTo(_) => panic!("타원에 LineTo 없음"),
+            }
+        }
+        assert_eq!(points.len(), reference.len());
+        for (p, (x, y)) in points.iter().zip(reference) {
+            assert!(
+                (p.x() - x).abs() < 1e-3 && (p.y() - y).abs() < 1e-3,
+                "{p:?} vs ({x},{y})"
+            );
+        }
+        assert_eq!(path.last(), Some(&PathCommand::Close));
+        // 결정론: 같은 입력 → 같은 command(bit 동일).
+        assert_eq!(ellipse.to_path(), path);
+    }
+
+    #[test]
+    fn ellipse_unknown_field_policy() {
+        let ellipse = EllipseParams {
+            bounds: rect(1.0, 2.0, 30.0, 40.0),
+        };
+        let mut fields = ellipse.to_fields();
+        assert_eq!(EllipseParams::from_fields(&fields).unwrap(), ellipse);
+        // 미래 버전의 optional start angle → 무시.
+        fields.push(RawField {
+            tag: 2,
+            mandatory: false,
+            payload: 1.0f32.to_le_bytes().to_vec(),
+        });
+        assert_eq!(EllipseParams::from_fields(&fields).unwrap(), ellipse);
+        // mandatory로 표시된 end angle → 거부.
+        fields.push(RawField {
+            tag: 3,
+            mandatory: true,
+            payload: 2.0f32.to_le_bytes().to_vec(),
+        });
+        assert_eq!(
+            EllipseParams::from_fields(&fields).unwrap_err(),
+            ShapeError::UnknownMandatoryField { tag: 3 }
+        );
+        // bounds 누락.
+        assert_eq!(
+            EllipseParams::from_fields(&[]).unwrap_err(),
+            ShapeError::MissingField {
+                tag: ELLIPSE_FIELD_BOUNDS
+            }
+        );
     }
 }
