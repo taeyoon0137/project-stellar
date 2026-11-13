@@ -512,6 +512,128 @@ impl ParagraphStyle {
     }
 }
 
+// --- 결정론적 편집 helper (VI.7.5) ---
+
+/// 내용의 `[range)`를 `replacement`로 바꾸고 style run·paragraph를 결정론적으로
+/// 갱신한 새 payload를 반환합니다(삽입 = 빈 범위, 삭제 = 빈 replacement).
+///
+/// 규칙:
+/// - **삭제 구간**과 겹치는 run은 축소되고, 비게 된 run은 사라집니다. 삭제 구간 뒤의
+///   run은 삭제 길이만큼 당겨집니다.
+/// - **삽입 텍스트의 style**: replace는 첫 교체 문자의 run style을, 순수 삽입은 바로
+///   왼쪽 문자의 run style을(위치 0이면 첫 문자의 run을) 상속해 그 run이 확장됩니다.
+///   상속할 run이 없으면 삽입 구간은 run 없이(기본 style) 남습니다.
+/// - 삽입 위치 뒤의 run은 삽입 길이만큼 밀립니다.
+/// - **paragraph**: 삭제된 `'\n'`마다 다음 paragraph가 앞 paragraph에 합쳐지고(앞
+///   paragraph style 유지), 삽입된 `'\n'`마다 삽입 위치 paragraph의 style을 복제합니다.
+/// - 결과 run은 VI.7.2 canonical 형식으로 정규화합니다(`styles`로 값 비교 병합).
+pub fn edit_text(
+    payload: &TextPayload,
+    range: TextRange,
+    replacement: &str,
+    styles: &[TextStyle],
+) -> Result<TextPayload, TextError> {
+    let text = payload.content();
+    let len = scalar_len(text);
+    if range.end.0 > len {
+        return Err(TextError::RangeOutOfBounds { range, len });
+    }
+    let (a, b) = (range.start.0, range.end.0);
+    let d = b - a;
+    let k = scalar_len(replacement);
+
+    // 1. 상속 style.
+    let covering = |pos: u32| {
+        payload
+            .style_runs()
+            .iter()
+            .rev()
+            .find(|r| r.range.start.0 <= pos && pos < r.range.end.0)
+            .map(|r| r.style)
+    };
+    let inherit = if d > 0 {
+        covering(a)
+    } else if a > 0 {
+        covering(a - 1)
+    } else {
+        covering(0)
+    };
+
+    // 2. 삭제: 좌표 사상 후 빈 run 제거.
+    let map = |x: u32| {
+        if x <= a {
+            x
+        } else if x <= b {
+            a
+        } else {
+            x - d
+        }
+    };
+    let mut runs: Vec<StyleRun> = payload
+        .style_runs()
+        .iter()
+        .map(|r| StyleRun {
+            range: TextRange {
+                start: TextIndex(map(r.range.start.0)),
+                end: TextIndex(map(r.range.end.0)),
+            },
+            style: r.style,
+        })
+        .filter(|r| !r.range.is_empty())
+        .collect();
+
+    // 3. 삽입: a 이후 run 밀기 + 상속 run 확장.
+    if k > 0 {
+        for run in &mut runs {
+            if run.range.start.0 >= a {
+                run.range.start.0 += k;
+                run.range.end.0 += k;
+            } else if run.range.end.0 > a {
+                // a를 내부에 포함하는 run(삽입이 run 중간): 확장.
+                run.range.end.0 += k;
+            }
+        }
+        if let Some(style) = inherit {
+            // 확장된 같은 style run이 이미 삽입 구간 [a, a+k)를 덮으면 추가하지 않습니다.
+            let already_covered = runs
+                .iter()
+                .any(|r| r.style == style && r.range.start.0 <= a && r.range.end.0 >= a + k);
+            if !already_covered {
+                runs.push(StyleRun {
+                    range: TextRange {
+                        start: TextIndex(a),
+                        end: TextIndex(a + k),
+                    },
+                    style,
+                });
+            }
+        }
+    }
+
+    // 4. 새 내용.
+    let start_byte = byte_offset(text, range.start).expect("범위 검사 완료");
+    let end_byte = byte_offset(text, range.end).expect("범위 검사 완료");
+    let mut content = String::with_capacity(text.len() + replacement.len());
+    content.push_str(&text[..start_byte]);
+    content.push_str(replacement);
+    content.push_str(&text[end_byte..]);
+
+    // 5. paragraph.
+    let paragraph_index = text[..start_byte].matches('\n').count();
+    let removed = text[start_byte..end_byte].matches('\n').count();
+    let added = replacement.matches('\n').count();
+    let mut paragraphs = payload.paragraphs().to_vec();
+    paragraphs.drain(paragraph_index + 1..paragraph_index + 1 + removed);
+    let template = paragraphs[paragraph_index];
+    for _ in 0..added {
+        paragraphs.insert(paragraph_index + 1, template);
+    }
+
+    // 6. canonical 정규화(나중 run 우선 → 상속 run을 마지막에 둔 순서 유지).
+    let runs = normalize_style_runs(&runs, styles);
+    TextPayload::new(UserText::new(&content), paragraphs, runs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -765,5 +887,128 @@ mod tests {
             vec![run(0, 1, 0)]
         )
         .is_err());
+    }
+
+    mod edit {
+        use super::super::*;
+
+        fn run(start: u32, end: u32, style: u32) -> StyleRun {
+            StyleRun {
+                range: TextRange::new(start, end).unwrap(),
+                style,
+            }
+        }
+
+        fn styles() -> Vec<TextStyle> {
+            (0..4)
+                .map(|i| {
+                    TextStyle::new(Some(StableId::new_v7(100 + i, 0, i)), None, vec![], vec![])
+                })
+                .collect()
+        }
+
+        /// "Hello World": 0..5 style 1, 6..11 style 2(공백 5..6은 run 없음).
+        fn sample() -> TextPayload {
+            TextPayload::new(
+                UserText::new("Hello World"),
+                vec![Paragraph { style: 0 }],
+                vec![run(0, 5, 1), run(6, 11, 2)],
+            )
+            .unwrap()
+        }
+
+        fn range(a: u32, b: u32) -> TextRange {
+            TextRange::new(a, b).unwrap()
+        }
+
+        #[test]
+        fn insert_fixtures() {
+            // 검증 기준(VI.7.5): 삽입 fixture.
+            let s = styles();
+            // run 중간 삽입 → 그 run 확장.
+            let e = edit_text(&sample(), range(2, 2), "XY", &s).unwrap();
+            assert_eq!(e.content(), "HeXYllo World");
+            assert_eq!(e.style_runs(), &[run(0, 7, 1), run(8, 13, 2)]);
+            // run 끝 경계 삽입 → 왼쪽 run 상속.
+            let e = edit_text(&sample(), range(5, 5), "!", &s).unwrap();
+            assert_eq!(e.content(), "Hello! World");
+            assert_eq!(e.style_runs(), &[run(0, 6, 1), run(7, 12, 2)]);
+            // 위치 0 삽입 → 첫 문자 run 상속.
+            let e = edit_text(&sample(), range(0, 0), ">>", &s).unwrap();
+            assert_eq!(e.style_runs(), &[run(0, 7, 1), run(8, 13, 2)]);
+            // 공백(run 없음) 뒤 삽입: 왼쪽 문자(공백)에 run이 없으므로 기본 style.
+            let e = edit_text(&sample(), range(6, 6), "_", &s).unwrap();
+            assert_eq!(e.content(), "Hello _World");
+            assert_eq!(e.style_runs(), &[run(0, 5, 1), run(7, 12, 2)]);
+        }
+
+        #[test]
+        fn delete_fixtures() {
+            // 검증 기준(VI.7.5): 삭제 fixture.
+            let s = styles();
+            // 두 run에 걸친 삭제 → 둘 다 축소.
+            let e = edit_text(&sample(), range(3, 8), "", &s).unwrap();
+            assert_eq!(e.content(), "Helrld");
+            assert_eq!(e.style_runs(), &[run(0, 3, 1), run(3, 6, 2)]);
+            // run 전체 삭제 → run 제거, 뒤 run 당김.
+            let e = edit_text(&sample(), range(0, 6), "", &s).unwrap();
+            assert_eq!(e.content(), "World");
+            assert_eq!(e.style_runs(), &[run(0, 5, 2)]);
+            // 전부 삭제 → 빈 텍스트(유효 node, VI.7.4).
+            let e = edit_text(&sample(), range(0, 11), "", &s).unwrap();
+            assert!(e.is_empty());
+            assert!(e.style_runs().is_empty());
+        }
+
+        #[test]
+        fn replace_fixtures() {
+            // 검증 기준(VI.7.5): replace fixture.
+            let s = styles();
+            // "World" → "세계": 첫 교체 문자의 style 2 상속.
+            let e = edit_text(&sample(), range(6, 11), "세계", &s).unwrap();
+            assert_eq!(e.content(), "Hello 세계");
+            assert_eq!(e.style_runs(), &[run(0, 5, 1), run(6, 8, 2)]);
+            // run 경계를 가로지르는 replace: 시작 문자(style 1) 상속.
+            let e = edit_text(&sample(), range(4, 7), "Z", &s).unwrap();
+            assert_eq!(e.content(), "HellZorld");
+            assert_eq!(e.style_runs(), &[run(0, 5, 1), run(5, 9, 2)]);
+        }
+
+        #[test]
+        fn paragraphs_follow_newline_edits() {
+            let s = styles();
+            let two = TextPayload::new(
+                UserText::new("ab\ncd"),
+                vec![Paragraph { style: 1 }, Paragraph { style: 2 }],
+                vec![],
+            )
+            .unwrap();
+            // 줄바꿈 삽입 → 삽입 위치 paragraph style 복제.
+            let e = edit_text(&two, range(1, 1), "\n", &s).unwrap();
+            assert_eq!(
+                e.paragraphs(),
+                &[
+                    Paragraph { style: 1 },
+                    Paragraph { style: 1 },
+                    Paragraph { style: 2 }
+                ]
+            );
+            // 줄바꿈 삭제 → 다음 paragraph가 앞에 합쳐짐(앞 style 유지).
+            let e = edit_text(&two, range(2, 3), "", &s).unwrap();
+            assert_eq!(e.content(), "abcd");
+            assert_eq!(e.paragraphs(), &[Paragraph { style: 1 }]);
+        }
+
+        #[test]
+        fn edits_are_deterministic_and_validated() {
+            let s = styles();
+            let a = edit_text(&sample(), range(2, 9), "중간", &s).unwrap();
+            let b = edit_text(&sample(), range(2, 9), "중간", &s).unwrap();
+            assert_eq!(a.encode(), b.encode());
+            assert!(matches!(
+                edit_text(&sample(), range(5, 99), "", &s),
+                Err(TextError::RangeOutOfBounds { .. })
+            ));
+        }
     }
 }
