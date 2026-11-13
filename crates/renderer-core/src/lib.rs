@@ -17,3 +17,7 @@ pub mod placeholder;
 
 /// content 기반 texture cache key (XI.7.3).
 pub mod texture_cache;
+
+/// 테스트 전용 SHA-256 (asset 계층 모사).
+#[cfg(test)]
+mod test_sha256;

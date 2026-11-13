@@ -11,7 +11,8 @@
 //!   같은 content는 하나의 entry를 공유합니다(source path가 달라도 dedup).
 //!   crate 의존 정책(II.2.8)상 renderer-core는 storage를 import할 수 없어, algorithm tag +
 //!   32-byte digest를 같은 의미로 담는 [`AssetContentHash`]를 둡니다. asset 계층은 storage
-//!   `ContentHash`의 algorithm과 digest를 그대로 넘깁니다.
+//!   `ContentHash`의 algorithm과 digest를 그대로 넘기거나, 같은 ADR-0004 문자열을
+//!   [`AssetContentHash`]의 `FromStr`로 읽습니다(두 타입이 같은 문자열 형식을 공유).
 //! - **decode settings**: texture bytes를 바꾸는 decode 선택 — pixel format(XI.7.1)과 mipmap
 //!   여부(XI.7.2). sampling mode(Linear/Nearest, VI.8.1)는 sampler state라 texture bytes를
 //!   바꾸지 않으므로 제외합니다. decode 상한([`DecodeLimits`])은 성공 여부만 바꾸고 출력은
@@ -19,7 +20,9 @@
 //! - **color transform**: decode된 RGB를 어떤 색공간으로 해석하는지([`SourceColorSpace`]: asset
 //!   embedded 또는 Image node의 `color_space_override`, VI.8.1)와 texture를 저장할 working
 //!   색공간(target: sRGB 또는 Display P3, 아키텍처 §10.3)입니다. 같은 content라도 해석·target이
-//!   다르면 texture bytes가 다르므로 다른 entry입니다.
+//!   다르면 texture bytes가 다르므로 다른 entry입니다. asset의 embedded 색공간을 알면
+//!   [`TextureCacheKey::canonical_for_embedded`]로 `Override(embedded)`를 `Embedded`로 정규화해
+//!   같은 texture가 두 entry로 나뉘지 않게 합니다.
 //!
 //! key는 모두 고정 크기 `Copy` 값이라 `Eq`/`Hash`가 정확합니다(digest 충돌 개념 없음).
 //! [`TextureCacheKey::canonical_bytes`]는 고정 37 bytes 배치로 fixture·진단에 씁니다.
@@ -28,6 +31,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use stellar_scene::ColorSpace;
@@ -98,6 +102,89 @@ impl fmt::Display for AssetContentHash {
             write!(f, "{byte:02x}")?;
         }
         Ok(())
+    }
+}
+
+/// [`AssetContentHash`] 문자열 파싱 실패. storage `ParseContentHashError`와 같은 규칙입니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseAssetContentHashError {
+    /// `<algorithm>:<hex>` 형태가 아닙니다.
+    MissingSeparator,
+    /// ADR-0004 registry에 없는 알고리즘입니다.
+    UnknownAlgorithm,
+    /// hex 길이가 64가 아닙니다.
+    InvalidLength {
+        /// 실제 hex 길이(bytes).
+        actual: usize,
+    },
+    /// 소문자 16진수가 아닌 문자가 있습니다.
+    InvalidHexDigit {
+        /// 위반 문자.
+        found: char,
+    },
+}
+
+impl fmt::Display for ParseAssetContentHashError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseAssetContentHashError::MissingSeparator => {
+                f.write_str("content hash는 '<algorithm>:<hex>' 형태여야 합니다")
+            }
+            ParseAssetContentHashError::UnknownAlgorithm => {
+                f.write_str("알 수 없는 hash 알고리즘입니다")
+            }
+            ParseAssetContentHashError::InvalidLength { actual } => {
+                write!(f, "hex 길이가 잘못되었습니다: 기대 64, 실제 {actual}")
+            }
+            ParseAssetContentHashError::InvalidHexDigit { found } => {
+                write!(f, "소문자 16진수가 아닌 문자입니다: {found:?}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseAssetContentHashError {}
+
+impl FromStr for AssetContentHash {
+    type Err = ParseAssetContentHashError;
+
+    /// ADR-0004 문자열(`sha256:<64자리 소문자 16진수>`)을 읽습니다.
+    ///
+    /// asset 계층은 storage `ContentHash`의 `Display` 문자열을 그대로 넘길 수 있습니다. 두 타입이
+    /// 같은 문자열 형식을 공유하므로 변환 경로가 표현 차이로 어긋나지 않습니다. 대문자·다중 byte
+    /// 문자·길이 위반은 거부합니다.
+    fn from_str(s: &str) -> Result<AssetContentHash, ParseAssetContentHashError> {
+        let (name, hex) = s
+            .split_once(':')
+            .ok_or(ParseAssetContentHashError::MissingSeparator)?;
+        let algorithm = match name {
+            "sha256" => ContentHashAlgorithm::Sha256,
+            _ => return Err(ParseAssetContentHashError::UnknownAlgorithm),
+        };
+        if hex.len() != 64 {
+            return Err(ParseAssetContentHashError::InvalidLength { actual: hex.len() });
+        }
+        // byte 길이가 맞아도 다중 byte 문자가 섞일 수 있으므로 slice 전에 모든 문자를 검사합니다.
+        if let Some(found) = hex
+            .chars()
+            .find(|c| !(c.is_ascii_digit() || ('a'..='f').contains(c)))
+        {
+            return Err(ParseAssetContentHashError::InvalidHexDigit { found });
+        }
+        let mut digest = [0u8; 32];
+        for (byte, pair) in digest.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+            *byte = (hex_value(pair[0]) << 4) | hex_value(pair[1]);
+        }
+        Ok(AssetContentHash { algorithm, digest })
+    }
+}
+
+/// 검증된 소문자 hex 문자 하나의 값.
+const fn hex_value(c: u8) -> u8 {
+    match c {
+        b'0'..=b'9' => c - b'0',
+        b'a'..=b'f' => c - b'a' + 10,
+        _ => 0,
     }
 }
 
@@ -208,6 +295,25 @@ impl ColorTransform {
             (ColorSpace::Srgb, ColorSpace::Srgb) | (ColorSpace::DisplayP3, ColorSpace::DisplayP3)
         )
     }
+
+    /// asset의 embedded 색공간을 알 때 쓰는 정규형.
+    ///
+    /// `Override(X)`인데 X가 `embedded`와 같으면 해석 결과가 `Embedded`와 같으므로 `Embedded`로
+    /// 바꿉니다. 그 외에는 그대로입니다. embedded 색공간은 decoder header(색공간 정보가 없으면
+    /// sRGB, XI.7.1)나 asset metadata에서 얻습니다. 모르는 상태에서는 정규화하지 않고 원래
+    /// key를 쓰며, 이때는 같은 texture가 두 entry로 나뉠 수 있습니다(보수적 miss).
+    pub const fn canonical_for(&self, embedded: ColorSpace) -> ColorTransform {
+        let source = match self.source {
+            SourceColorSpace::Override(space) if space.tag() == embedded.tag() => {
+                SourceColorSpace::Embedded
+            }
+            other => other,
+        };
+        ColorTransform {
+            source,
+            target: self.target,
+        }
+    }
 }
 
 /// texture cache key 길이(bytes).
@@ -250,6 +356,17 @@ impl TextureCacheKey {
     /// color transform.
     pub const fn color(&self) -> ColorTransform {
         self.color
+    }
+
+    /// embedded 색공간을 알 때의 정규 key([`ColorTransform::canonical_for`]).
+    ///
+    /// `Override(embedded)`와 `Embedded`가 같은 entry를 공유하게 합니다.
+    pub const fn canonical_for_embedded(&self, embedded: ColorSpace) -> TextureCacheKey {
+        TextureCacheKey {
+            content: self.content,
+            settings: self.settings,
+            color: self.color.canonical_for(embedded),
+        }
     }
 
     /// 고정 배치 canonical bytes.
@@ -407,23 +524,32 @@ mod tests {
         0x06, 0xc1,
     ];
 
-    /// asset 계층 모사: bytes만으로 content hash를 정합니다(경로를 보지 않음).
-    /// renderer-core는 SHA-256을 구현하지 않으므로 FIPS vector 입력만 다룹니다.
+    /// asset 계층 모사: bytes만으로 content hash를 **계산**합니다(경로를 보지 않음).
+    ///
+    /// 테스트 전용 SHA-256([`crate::test_sha256`])은 storage `ContentHash::compute`와 같은 FIPS
+    /// vector로 고정되어 있어, 같은 bytes에 storage와 같은 digest를 냅니다.
     fn content_hash_of(bytes: &[u8]) -> AssetContentHash {
-        let digest = match bytes {
-            b"abc" => SHA256_ABC,
-            b"" => SHA256_EMPTY,
-            other if other == MSG_448 => SHA256_448,
-            _ => panic!("테스트 vector 밖 입력"),
-        };
-        AssetContentHash::sha256(digest)
+        AssetContentHash::sha256(crate::test_sha256::sha256(bytes))
+    }
+
+    /// PNG signature로 시작하는 결정론적 가짜 asset bytes(seed마다 내용이 다름).
+    fn fake_png(seed: u8, len: usize) -> Vec<u8> {
+        let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        let mut state = u32::from(seed).wrapping_mul(2_654_435_761).wrapping_add(1);
+        while bytes.len() < len {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            bytes.push(state.to_le_bytes()[0]);
+        }
+        bytes
     }
 
     /// 프로젝트 asset 하나: 경로·AssetRef id·원본 bytes.
     struct AssetRecord {
         source_path: &'static str,
         asset_ref: u128,
-        bytes: &'static [u8],
+        bytes: Vec<u8>,
     }
 
     /// Image node 하나의 texture 요청.
@@ -441,7 +567,7 @@ mod tests {
 
     fn key_for(image: &ImageUse<'_>, target: ColorSpace) -> TextureCacheKey {
         TextureCacheKey::new(
-            content_hash_of(image.asset.bytes),
+            content_hash_of(&image.asset.bytes),
             DecodeSettings::DEFAULT,
             ColorTransform::new(
                 SourceColorSpace::from_override(image.color_space_override),
@@ -453,23 +579,39 @@ mod tests {
     #[test]
     fn same_content_from_different_source_paths_dedups() {
         // 검증 기준(XI.7.3): source path가 달라도 같은 content dedup.
+        // 원본과 사본은 따로 할당한 같은 bytes, other는 마지막 1 byte만 다른 bytes입니다.
         let original = AssetRecord {
             source_path: "assets/photos/hero.png",
             asset_ref: 1,
-            bytes: b"abc",
+            bytes: fake_png(7, 4096),
         };
         let copied = AssetRecord {
             source_path: "imports/marketing/hero-copy.png",
             asset_ref: 2,
-            bytes: b"abc",
+            bytes: fake_png(7, 4096),
         };
+        let mut near_copy = fake_png(7, 4096);
+        near_copy[4095] ^= 0x01;
         let other = AssetRecord {
             source_path: "assets/photos/hero.png.bak",
             asset_ref: 3,
-            bytes: MSG_448,
+            bytes: near_copy,
         };
         assert_ne!(original.source_path, copied.source_path);
         assert_ne!(original.asset_ref, copied.asset_ref);
+        assert!(!std::ptr::eq(
+            original.bytes.as_ptr(),
+            copied.bytes.as_ptr()
+        ));
+        // hash는 bytes에서 계산되므로 1 byte 차이도 다른 content입니다.
+        assert_eq!(
+            content_hash_of(&original.bytes),
+            content_hash_of(&copied.bytes)
+        );
+        assert_ne!(
+            content_hash_of(&original.bytes),
+            content_hash_of(&other.bytes)
+        );
 
         let uses = [
             ImageUse {
@@ -696,5 +838,133 @@ mod tests {
                 entries: 0
             }
         );
+    }
+
+    #[test]
+    fn asset_layer_hash_is_computed_from_bytes() {
+        // asset 계층 모사가 lookup table이 아니라 계산임을 FIPS vector로 고정합니다.
+        assert_eq!(
+            content_hash_of(b"abc"),
+            AssetContentHash::sha256(SHA256_ABC)
+        );
+        assert_eq!(content_hash_of(b""), AssetContentHash::sha256(SHA256_EMPTY));
+        assert_eq!(
+            content_hash_of(MSG_448),
+            AssetContentHash::sha256(SHA256_448)
+        );
+    }
+
+    #[test]
+    fn storage_string_form_converts_to_asset_content_hash() {
+        // storage `ContentHash::compute(b"abc").to_string()`이 내는 문자열(storage hash 테스트 golden).
+        let storage_abc = "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+        let parsed: AssetContentHash = storage_abc.parse().unwrap();
+        assert_eq!(parsed, AssetContentHash::sha256(SHA256_ABC));
+        assert_eq!(parsed.to_string(), storage_abc);
+        // 계산한 hash의 문자열 왕복.
+        for bytes in [fake_png(1, 100), fake_png(2, 5000), Vec::new()] {
+            let hash = content_hash_of(&bytes);
+            assert_eq!(hash.to_string().parse::<AssetContentHash>(), Ok(hash));
+        }
+
+        let hex64 = "0".repeat(64);
+        assert_eq!(
+            "deadbeef".parse::<AssetContentHash>(),
+            Err(ParseAssetContentHashError::MissingSeparator)
+        );
+        assert_eq!(
+            format!("blake3:{hex64}").parse::<AssetContentHash>(),
+            Err(ParseAssetContentHashError::UnknownAlgorithm)
+        );
+        assert_eq!(
+            "sha256:abcd".parse::<AssetContentHash>(),
+            Err(ParseAssetContentHashError::InvalidLength { actual: 4 })
+        );
+        assert_eq!(
+            format!("sha256:{}", "A".repeat(64)).parse::<AssetContentHash>(),
+            Err(ParseAssetContentHashError::InvalidHexDigit { found: 'A' })
+        );
+        // byte 길이는 64지만 다중 byte 문자가 섞인 입력도 panic 없이 거부합니다.
+        let multibyte = format!("sha256:é{}", "0".repeat(62));
+        assert_eq!(multibyte.len(), 7 + 64);
+        assert_eq!(
+            multibyte.parse::<AssetContentHash>(),
+            Err(ParseAssetContentHashError::InvalidHexDigit { found: 'é' })
+        );
+    }
+
+    #[test]
+    fn override_equal_to_embedded_shares_entry_once_embedded_is_known() {
+        let content = content_hash_of(&fake_png(3, 256));
+        let embedded_key = TextureCacheKey::new(
+            content,
+            DecodeSettings::DEFAULT,
+            ColorTransform::new(SourceColorSpace::Embedded, ColorSpace::Srgb),
+        );
+        let override_same = TextureCacheKey::new(
+            content,
+            DecodeSettings::DEFAULT,
+            ColorTransform::new(
+                SourceColorSpace::Override(ColorSpace::Srgb),
+                ColorSpace::Srgb,
+            ),
+        );
+        let override_other = TextureCacheKey::new(
+            content,
+            DecodeSettings::DEFAULT,
+            ColorTransform::new(
+                SourceColorSpace::Override(ColorSpace::DisplayP3),
+                ColorSpace::Srgb,
+            ),
+        );
+        // embedded 색공간을 모르면 보수적으로 다른 key입니다.
+        assert_ne!(embedded_key, override_same);
+        // embedded가 sRGB임을 알면 Override(sRGB)는 Embedded와 같은 key로 정규화됩니다.
+        assert_eq!(
+            override_same.canonical_for_embedded(ColorSpace::Srgb),
+            embedded_key
+        );
+        assert_eq!(
+            embedded_key.canonical_for_embedded(ColorSpace::Srgb),
+            embedded_key
+        );
+        // 해석이 실제로 달라지는 override는 그대로 남습니다.
+        assert_eq!(
+            override_other.canonical_for_embedded(ColorSpace::Srgb),
+            override_other
+        );
+        // embedded가 P3인 asset에서는 Override(sRGB)가 해석을 바꾸므로 정규화하지 않습니다.
+        assert_eq!(
+            override_same.canonical_for_embedded(ColorSpace::DisplayP3),
+            override_same
+        );
+        // 정규화는 해석 결과를 바꾸지 않습니다.
+        for embedded in [ColorSpace::Srgb, ColorSpace::DisplayP3] {
+            for key in [embedded_key, override_same, override_other] {
+                let canonical = key.canonical_for_embedded(embedded);
+                assert_eq!(
+                    canonical.color().source.resolve(embedded),
+                    key.color().source.resolve(embedded)
+                );
+                assert_eq!(canonical.color().target, key.color().target);
+            }
+        }
+
+        let mut cache = TextureCache::new();
+        let first = cache
+            .get_or_create(
+                embedded_key.canonical_for_embedded(ColorSpace::Srgb),
+                |_| Ok::<_, ()>(1u8),
+            )
+            .unwrap();
+        let second = cache
+            .get_or_create(
+                override_same.canonical_for_embedded(ColorSpace::Srgb),
+                |_| Ok::<_, ()>(2u8),
+            )
+            .unwrap();
+        assert_eq!(second.outcome, CacheOutcome::Hit);
+        assert!(Arc::ptr_eq(&first.texture, &second.texture));
+        assert_eq!(cache.len(), 1);
     }
 }
