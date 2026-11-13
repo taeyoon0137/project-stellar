@@ -13,27 +13,30 @@
 //!   adapter는 `system_macos`(CoreText)입니다.
 //! - [`external`]: External Font — 관리형 패키지의 고정 hash/face 참조 인터페이스(다운로드 없음).
 //! - [`reproducibility`]: 같은 family 이름·다른 파일 hash를 다른 face로 보고 재현성 경고를 만듭니다.
+//!
+//! 하위 모듈 선언에는 바깥 doc 주석(`///`)을 달지 않습니다. 바깥 doc이 있으면 rustdoc이 각 모듈의
+//! 안쪽 doc(`//!`) 링크를 이 모듈 기준으로 해석해 깨집니다. 설명은 각 파일의 안쪽 doc에 둡니다.
 
-/// 폰트 파일 container probe (XIII.6.1).
+// 폰트 파일 container probe (XIII.6.1).
 pub mod sfnt;
 
-/// 프로젝트 폰트 라이선스 metadata (XIII.6.1)와 라이선스·임베딩 상태 (XIII.6.6).
+// 프로젝트 폰트 라이선스 metadata (XIII.6.1)와 라이선스·임베딩 상태 (XIII.6.6).
 pub mod license;
 
-/// Project Font import와 record (XIII.6.1).
+// Project Font import와 record (XIII.6.1).
 pub mod project_font;
 
-/// 시스템 폰트 discovery (XIII.6.2).
+// 시스템 폰트 discovery (XIII.6.2).
 pub mod system;
 
-/// macOS CoreText 시스템 폰트 locator (XIII.6.2).
+// macOS CoreText 시스템 폰트 locator (XIII.6.2).
 #[cfg(target_os = "macos")]
 pub mod system_macos;
 
-/// External Font 패키지 참조 인터페이스 (XIII.6.4).
+// External Font 패키지 참조 인터페이스 (XIII.6.4).
 pub mod external;
 
-/// 폰트 파일 hash 불일치 재현성 경고 (XIII.6.5).
+// 폰트 파일 hash 불일치 재현성 경고 (XIII.6.5).
 pub mod reproducibility;
 
 #[cfg(test)]
