@@ -598,7 +598,7 @@ tools/xtask/
 |---|---|---|---|---|
 | VI.8.1 | `[x]` | Image payload에 AssetRef, fit mode, crop rect, sampling mode, color space override를 정의합니다. | round-trip. | VI.2.2, III.2.3 |
 | VI.8.2 | `[x]` | missing AssetRef 상태를 invalid node가 아니라 missing resource diagnostic으로 표현하고 placeholder bounds는 유지합니다. | 에셋 누락 전후 layout bounds 동일. | VI.8.1, III.2.4 |
-| VI.8.3 | `[ ]` | crop rect는 normalized 0..1 범위로 clamp 평가하되 저장값 validation에서 범위 밖을 거부합니다. | 경계값 fixture 통과. | VI.8.1 |
+| VI.8.3 | `[x]` | crop rect는 normalized 0..1 범위로 clamp 평가하되 저장값 validation에서 범위 밖을 거부합니다. | 경계값 fixture 통과. | VI.8.1 |
 
 ### VI.9 Modifier Stack
 

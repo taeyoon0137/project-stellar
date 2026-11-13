@@ -16,6 +16,8 @@ use stellar_core_types::value::{FiniteF32, Rect, Size2, Vec2};
 pub enum ImageError {
     /// 값이 유한하지 않습니다.
     NonFinite,
+    /// crop 영역이 정규화 범위를 벗어납니다(VI.8.3).
+    CropOutOfRange,
     /// 입력이 부족하거나 형식이 아닙니다.
     Malformed {
         /// 원인.
@@ -27,6 +29,9 @@ impl fmt::Display for ImageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ImageError::NonFinite => f.write_str("이미지 값이 유한하지 않습니다"),
+            ImageError::CropOutOfRange => f.write_str(
+                "crop 영역은 0..1 범위여야 합니다(x,y ≥ 0, width,height > 0, x+width ≤ 1, y+height ≤ 1)",
+            ),
             ImageError::Malformed { reason } => write!(f, "Image binary 형식 위반: {reason}"),
         }
     }
@@ -78,7 +83,10 @@ impl CropRect {
         height: FiniteF32::ONE,
     };
 
-    /// 유한 값으로 만듭니다(범위 검증은 VI.8.3).
+    /// **저장값** crop을 엄격 검증해 만듭니다(VI.8.3).
+    ///
+    /// `x, y ≥ 0`, `width, height > 0`, `x + width ≤ 1`, `y + height ≤ 1`. 범위 밖은
+    /// clamp하지 않고 거부합니다 — 파일의 잘못된 값이 조용히 고쳐져 저장되지 않도록.
     pub fn from_components(
         x: f32,
         y: f32,
@@ -86,12 +94,41 @@ impl CropRect {
         height: f32,
     ) -> Result<CropRect, ImageError> {
         let f = |v: f32| FiniteF32::new(v).map_err(|_| ImageError::NonFinite);
-        Ok(CropRect {
+        let rect = CropRect {
             x: f(x)?,
             y: f(y)?,
             width: f(width)?,
             height: f(height)?,
-        })
+        };
+        let ok = x >= 0.0
+            && y >= 0.0
+            && width > 0.0
+            && height > 0.0
+            && x + width <= 1.0
+            && y + height <= 1.0;
+        if ok {
+            Ok(rect)
+        } else {
+            Err(ImageError::CropOutOfRange)
+        }
+    }
+
+    /// **평가용** crop: 런타임 값(애니메이션·표현식 결과 등)을 0..1로 clamp합니다.
+    ///
+    /// 비유한 값은 전체 영역 기준값으로 대체합니다. 저장 경로에는 쓰지 않습니다.
+    pub fn clamped(x: f32, y: f32, width: f32, height: f32) -> CropRect {
+        let finite = |v: f32, fallback: f32| if v.is_finite() { v } else { fallback };
+        let x = finite(x, 0.0).clamp(0.0, 1.0);
+        let y = finite(y, 0.0).clamp(0.0, 1.0);
+        let width = finite(width, 1.0).clamp(0.0, 1.0 - x);
+        let height = finite(height, 1.0).clamp(0.0, 1.0 - y);
+        let f = |v: f32| FiniteF32::new(v).expect("clamp 결과는 유한");
+        CropRect {
+            x: f(x),
+            y: f(y),
+            width: f(width),
+            height: f(height),
+        }
     }
 
     /// `(x, y, width, height)`.
@@ -322,5 +359,49 @@ mod tests {
         assert_eq!(payload.layout_bounds(), bounds_present);
         assert_eq!(bounds_present.size(), Size2::new(320.0, 180.0).unwrap());
         assert!(ImagePayload::decode(&payload.encode()).is_ok());
+    }
+
+    #[test]
+    fn crop_boundary_fixtures() {
+        // 검증 기준(VI.8.3): 경계값 fixture 통과.
+        // 저장값: 경계 포함 허용.
+        assert!(CropRect::from_components(0.0, 0.0, 1.0, 1.0).is_ok());
+        assert!(
+            CropRect::from_components(0.5, 0.5, 0.5, 0.5).is_ok(),
+            "x+w = 1 경계"
+        );
+        assert!(CropRect::from_components(0.75, 0.0, 0.25, 1.0).is_ok());
+        // 저장값: 범위 밖 거부(clamp하지 않음).
+        for (x, y, w, h) in [
+            (-0.001, 0.0, 0.5, 0.5),
+            (0.0, -0.1, 0.5, 0.5),
+            (0.6, 0.0, 0.5, 0.5),
+            (0.0, 0.0, 0.0, 1.0),
+            (0.0, 0.0, 1.0, 1.0001),
+        ] {
+            assert_eq!(
+                CropRect::from_components(x, y, w, h).unwrap_err(),
+                ImageError::CropOutOfRange,
+                "({x},{y},{w},{h})"
+            );
+        }
+        // 평가값: clamp.
+        assert_eq!(
+            CropRect::clamped(-0.5, 0.25, 2.0, 0.5).components(),
+            (0.0, 0.25, 1.0, 0.5)
+        );
+        let (x, _, w, _) = CropRect::clamped(0.75, 0.0, 0.5, 1.0).components();
+        assert_eq!((x, w), (0.75, 0.25));
+        assert_eq!(
+            CropRect::clamped(f32::NAN, 0.0, f32::INFINITY, 1.0).components(),
+            (0.0, 0.0, 1.0, 1.0)
+        );
+        // 저장 decode도 같은 검증.
+        let mut bytes = ImagePayload::new(asset(1), Size2::new(1.0, 1.0).unwrap()).encode();
+        bytes[33..37].copy_from_slice(&1.5f32.to_le_bytes());
+        assert_eq!(
+            ImagePayload::decode(&bytes).unwrap_err(),
+            ImageError::CropOutOfRange
+        );
     }
 }
