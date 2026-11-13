@@ -120,16 +120,20 @@ pub fn load_reference(
     }
 }
 
-/// `if` 선택 의미: 조건이 `true`면 참 branch 값.
-pub fn select_if(
-    condition: &Option<TypedValue>,
-    then_value: Option<TypedValue>,
-    else_value: Option<TypedValue>,
-) -> Result<Option<TypedValue>, EvalErrorKind> {
+/// 조건 값의 참·거짓(`if` 조건, `and`/`or` 왼쪽). Boolean이 아니면 방어 오류입니다.
+pub fn truth(condition: &Option<TypedValue>) -> Result<bool, EvalErrorKind> {
     match condition {
-        Some(TypedValue::Boolean(true)) => Ok(then_value),
-        Some(TypedValue::Boolean(false)) => Ok(else_value),
+        Some(TypedValue::Boolean(value)) => Ok(*value),
         _ => Err(EvalErrorKind::OperandTypeMismatch),
+    }
+}
+
+/// `and`/`or`의 왼쪽 값만으로 결과가 정해지면 그 결과(short-circuit, VIII.4.3).
+pub fn short_circuit(op: LogicalOp, lhs: bool) -> Option<bool> {
+    match (op, lhs) {
+        (LogicalOp::And, false) => Some(false),
+        (LogicalOp::Or, true) => Some(true),
+        _ => None,
     }
 }
 
@@ -288,12 +292,13 @@ mod tests {
     fn selection_semantics() {
         let a = Some(TypedValue::Boolean(true));
         let b = Some(TypedValue::Boolean(false));
-        assert_eq!(select_if(&a, a.clone(), b.clone()), Ok(a.clone()));
-        assert_eq!(select_if(&b, a.clone(), b.clone()), Ok(b.clone()));
-        assert_eq!(
-            select_if(&None, a.clone(), b.clone()),
-            Err(EvalErrorKind::OperandTypeMismatch)
-        );
+        assert_eq!(truth(&a), Ok(true));
+        assert_eq!(truth(&b), Ok(false));
+        assert_eq!(truth(&None), Err(EvalErrorKind::OperandTypeMismatch));
+        assert_eq!(short_circuit(LogicalOp::And, false), Some(false));
+        assert_eq!(short_circuit(LogicalOp::And, true), None);
+        assert_eq!(short_circuit(LogicalOp::Or, true), Some(true));
+        assert_eq!(short_circuit(LogicalOp::Or, false), None);
         let patterns = [TypedValue::Boolean(false), TypedValue::Boolean(true)];
         assert_eq!(match_arm(&a, &patterns), Some(1));
         assert_eq!(match_arm(&None, &patterns), None);

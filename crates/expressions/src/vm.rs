@@ -1,4 +1,7 @@
-//! bytecode evaluator (VIII.4.1).
+//! bytecode evaluator (VIII.4.1~VIII.4.3).
+//!
+//! `if`·`match`·`and`·`or`는 compiler가 만든 jump로 short-circuit 실행합니다(VIII.4.3). 선택되지 않은 branch의
+//! 명령·공유 block은 실행하지 않으므로 그 안의 오류도 발생하지 않습니다.
 //!
 //! [`Program`]을 operand stack과 명시적 frame stack으로 실행합니다. Rust 재귀를 쓰지 않으며, 공유 block은
 //! 처음 [`Instr::Eval`]에서 한 번 평가한 뒤 결과를 캐시합니다. 값 의미는 [`crate::eval`]의 공용 함수를 써서
@@ -8,8 +11,7 @@ use stellar_core_types::typed_value::TypedValue;
 
 use crate::bytecode::{Instr, Program};
 use crate::eval::{
-    apply_binary, apply_unary, load_reference, match_arm, select_if, EvalError, EvalErrorKind,
-    ReferenceValues,
+    apply_binary, apply_unary, load_reference, truth, EvalError, EvalErrorKind, ReferenceValues,
 };
 
 /// 평가 실행 기록.
@@ -84,11 +86,27 @@ impl Program {
                         }
                     }
                 }
-                Instr::Select => {
-                    let else_value = stack.pop().ok_or_else(|| malformed(node))?;
-                    let then_value = stack.pop().ok_or_else(|| malformed(node))?;
+                Instr::JumpIfFalse(target) => {
                     let condition = stack.pop().ok_or_else(|| malformed(node))?;
-                    stack.push(select_if(&condition, then_value, else_value).map_err(fail)?);
+                    if !truth(&condition).map_err(fail)? {
+                        frame.pc = target as usize;
+                    }
+                }
+                Instr::Jump(target) => frame.pc = target as usize,
+                Instr::MatchCase { pattern, miss } => {
+                    let pattern = self
+                        .constants()
+                        .get(pattern as usize)
+                        .ok_or_else(|| malformed(node))?;
+                    let scrutinee = stack.last().ok_or_else(|| malformed(node))?;
+                    if scrutinee.is_some() && scrutinee == pattern {
+                        stack.pop();
+                    } else {
+                        frame.pc = miss as usize;
+                    }
+                }
+                Instr::Pop => {
+                    stack.pop().ok_or_else(|| malformed(node))?;
                 }
                 Instr::Unary(op) => {
                     let operand = stack.pop().ok_or_else(|| malformed(node))?;
@@ -98,24 +116,6 @@ impl Program {
                     let rhs = stack.pop().ok_or_else(|| malformed(node))?;
                     let lhs = stack.pop().ok_or_else(|| malformed(node))?;
                     stack.push(apply_binary(op, &lhs, &rhs).map_err(fail)?);
-                }
-                Instr::MatchSelect(set) => {
-                    let patterns = self
-                        .patterns()
-                        .get(set as usize)
-                        .ok_or_else(|| malformed(node))?;
-                    let start = stack
-                        .len()
-                        .checked_sub(patterns.len() + 2)
-                        .ok_or_else(|| malformed(node))?;
-                    let mut operands = stack.split_off(start);
-                    let default = operands.pop().ok_or_else(|| malformed(node))?;
-                    let scrutinee = operands.remove(0);
-                    let chosen = match match_arm(&scrutinee, patterns) {
-                        Some(arm) => operands.swap_remove(arm),
-                        None => default,
-                    };
-                    stack.push(chosen);
                 }
                 Instr::Return => {
                     let value = stack.pop().ok_or_else(|| malformed(node))?;
@@ -288,7 +288,8 @@ mod tests {
             trace.block_runs, 2,
             "공유 block은 한 번만 실행(두 번째는 캐시)"
         );
-        assert_eq!(trace.instructions as usize, program.instruction_count());
+        // short-circuit(VIII.4.3): 선택되지 않은 branch 명령은 실행하지 않습니다.
+        assert!((trace.instructions as usize) < program.instruction_count());
         // 명령마다 원인 node가 있음.
         for block in program.blocks() {
             assert_eq!(block.code().len(), block.sources().len());
@@ -329,6 +330,8 @@ mod tests {
         let program = Program::compile(&ast, &types()).expect("컴파일");
         let mut values = environments().remove(0);
         values.remove(&token(1));
+        // token1을 읽는 branch가 선택되도록 env1 = true(VIII.4.3 이후 미선택 branch는 평가하지 않음).
+        values.insert(env(1), Some(TypedValue::Boolean(true)));
         let expected = EvalError::new(Some(id(7)), EvalErrorKind::MissingReference(token(1)));
         assert_eq!(program.evaluate(&values), Err(expected.clone()));
         assert_eq!(evaluate_ast(&ast, &types(), &values), Err(expected));
@@ -772,5 +775,279 @@ mod tests {
                 assert_eq!(by_bytecode, Ok(Some(num(8.0))));
             }
         }
+    }
+}
+
+/// VIII.4.3 short-circuit fixture.
+#[cfg(test)]
+mod short_circuit_tests {
+    use std::collections::BTreeMap;
+
+    use stellar_core_types::ids::StableId;
+    use stellar_core_types::reference::TokenRef;
+    use stellar_core_types::typed_value::{EnumValue, TypedValue};
+    use stellar_core_types::value::FiniteF32;
+
+    use super::*;
+    use crate::ast::{ExprNode, ExprNodeId, ExpressionAst, ReferenceTarget};
+    use crate::ast_eval::evaluate_ast;
+    use crate::ops::BinaryOp;
+    use crate::types::{EnumTypeId, ExpressionType, TypeSpec};
+
+    fn id(n: u8) -> ExprNodeId {
+        ExprNodeId::new(StableId::from_bytes([n; 16]))
+    }
+
+    fn num(v: f32) -> TypedValue {
+        TypedValue::Number(FiniteF32::new(v).expect("유한"))
+    }
+
+    fn boolean(v: bool) -> TypedValue {
+        TypedValue::Boolean(v)
+    }
+
+    /// 값을 넣지 않는(평가하면 MissingReference) 참조.
+    fn missing() -> ReferenceTarget {
+        ReferenceTarget::Token(TokenRef::new(StableId::from_bytes([0xDD; 16])))
+    }
+
+    fn selector() -> ReferenceTarget {
+        ReferenceTarget::Token(TokenRef::new(StableId::from_bytes([0xEE; 16])))
+    }
+
+    fn flag() -> ReferenceTarget {
+        ReferenceTarget::Token(TokenRef::new(StableId::from_bytes([0xFF; 16])))
+    }
+
+    fn types() -> BTreeMap<ReferenceTarget, TypeSpec> {
+        BTreeMap::from([
+            (missing(), TypeSpec::required(ExpressionType::Number)),
+            (
+                selector(),
+                TypeSpec::required(ExpressionType::Enum(EnumTypeId::new(3))),
+            ),
+            (flag(), TypeSpec::required(ExpressionType::Boolean)),
+        ])
+    }
+
+    /// node 90 = `1 / 0`(평가하면 DivisionByZero), node 91 = 누락 참조, 92·93 = 리터럴 1·0.
+    fn poison() -> Vec<ExprNode> {
+        vec![
+            ExprNode::binary(id(90), BinaryOp::Divide, id(92), id(93)),
+            ExprNode::reference(id(91), missing()),
+            ExprNode::literal(id(92), num(1.0)),
+            ExprNode::literal(id(93), num(0.0)),
+        ]
+    }
+
+    fn run(
+        root: ExprNodeId,
+        mut nodes: Vec<ExprNode>,
+        values: &BTreeMap<ReferenceTarget, Option<TypedValue>>,
+    ) -> (Result<Option<TypedValue>, EvalError>, EvalTrace, usize) {
+        // 참조된 poison node만 고정점까지 추가합니다(도달 불가 node 금지).
+        loop {
+            let mut added = false;
+            for extra in poison() {
+                let present = nodes.iter().any(|n| n.id() == extra.id());
+                let referenced = nodes
+                    .iter()
+                    .any(|n| n.children().iter().any(|c| c.target == extra.id()));
+                if !present && referenced {
+                    nodes.push(extra);
+                    added = true;
+                }
+            }
+            if !added {
+                break;
+            }
+        }
+        let ast = ExpressionAst::new(root, nodes).expect("유효");
+        let program = Program::compile(&ast, &types()).expect("컴파일");
+        let traced = program.evaluate_traced(values);
+        let by_ast = evaluate_ast(&ast, &types(), values);
+        let result = traced.clone().map(|(value, _)| value);
+        assert_eq!(result, by_ast, "VM과 AST evaluator 결과 동일");
+        let trace = traced.map(|(_, trace)| trace).unwrap_or_default();
+        (result, trace, program.instruction_count())
+    }
+
+    fn flag_values(value: bool) -> BTreeMap<ReferenceTarget, Option<TypedValue>> {
+        BTreeMap::from([
+            (flag(), Some(boolean(value))),
+            (selector(), Some(TypedValue::Enum(EnumValue::new(3, 1)))),
+        ])
+    }
+
+    #[test]
+    fn if_skips_unselected_branch_errors() {
+        // if flag then 7 else (1/0)
+        let nodes = || {
+            vec![
+                ExprNode::if_else(id(1), id(2), id(3), id(90)),
+                ExprNode::reference(id(2), flag()),
+                ExprNode::literal(id(3), num(7.0)),
+            ]
+        };
+        let (result, trace, total) = run(id(1), nodes(), &flag_values(true));
+        assert_eq!(result, Ok(Some(num(7.0))));
+        assert!(
+            (trace.instructions as usize) < total,
+            "else branch 명령 미실행"
+        );
+        // 선택된 branch의 오류는 그대로 발생(node = 1/0 node).
+        let (result, _, _) = run(id(1), nodes(), &flag_values(false));
+        assert_eq!(
+            result,
+            Err(EvalError::new(Some(id(90)), EvalErrorKind::DivisionByZero))
+        );
+        // if flag then 누락 참조 else 8 → false면 오류 없음.
+        let nodes = vec![
+            ExprNode::if_else(id(1), id(2), id(91), id(3)),
+            ExprNode::reference(id(2), flag()),
+            ExprNode::literal(id(3), num(8.0)),
+        ];
+        let (result, _, _) = run(id(1), nodes, &flag_values(false));
+        assert_eq!(result, Ok(Some(num(8.0))));
+    }
+
+    #[test]
+    fn match_skips_unselected_arm_and_default_errors() {
+        // match selector { E0 => 1/0, E1 => 5, E2 => 누락 참조 } else 1/0
+        let nodes = || {
+            vec![
+                ExprNode::match_on(
+                    id(1),
+                    id(2),
+                    vec![
+                        (TypedValue::Enum(EnumValue::new(3, 0)), id(90)),
+                        (TypedValue::Enum(EnumValue::new(3, 1)), id(4)),
+                        (TypedValue::Enum(EnumValue::new(3, 2)), id(91)),
+                    ],
+                    id(90),
+                ),
+                ExprNode::reference(id(2), selector()),
+                ExprNode::literal(id(4), num(5.0)),
+            ]
+        };
+        let with_variant = |variant: u32| {
+            BTreeMap::from([(
+                selector(),
+                Some(TypedValue::Enum(EnumValue::new(3, variant))),
+            )])
+        };
+        let (result, _, _) = run(id(1), nodes(), &with_variant(1));
+        assert_eq!(result, Ok(Some(num(5.0))), "arm 1만 평가");
+        let (result, _, _) = run(id(1), nodes(), &with_variant(2));
+        assert_eq!(
+            result,
+            Err(EvalError::new(
+                Some(id(91)),
+                EvalErrorKind::MissingReference(missing())
+            ))
+        );
+        let (result, _, _) = run(id(1), nodes(), &with_variant(9));
+        assert_eq!(
+            result,
+            Err(EvalError::new(Some(id(90)), EvalErrorKind::DivisionByZero)),
+            "일치 arm 없음 → 기본 branch 평가"
+        );
+        // 기본 branch만 안전하고 모든 arm이 오류여도 기본 branch 선택 시 오류 없음.
+        let nodes = vec![
+            ExprNode::match_on(
+                id(1),
+                id(2),
+                vec![
+                    (TypedValue::Enum(EnumValue::new(3, 0)), id(90)),
+                    (TypedValue::Enum(EnumValue::new(3, 1)), id(91)),
+                ],
+                id(4),
+            ),
+            ExprNode::reference(id(2), selector()),
+            ExprNode::literal(id(4), num(6.0)),
+        ];
+        let (result, _, _) = run(id(1), nodes, &with_variant(7));
+        assert_eq!(result, Ok(Some(num(6.0))));
+    }
+
+    #[test]
+    fn and_or_short_circuit() {
+        // flag and (1/0 == 1), flag or (누락 참조 == 1)
+        let and_nodes = || {
+            vec![
+                ExprNode::binary(id(1), BinaryOp::And, id(2), id(3)),
+                ExprNode::reference(id(2), flag()),
+                ExprNode::binary(id(3), BinaryOp::Equal, id(90), id(92)),
+            ]
+        };
+        let (result, _, _) = run(id(1), and_nodes(), &flag_values(false));
+        assert_eq!(
+            result,
+            Ok(Some(boolean(false))),
+            "false and … → 오른쪽 미평가"
+        );
+        let (result, _, _) = run(id(1), and_nodes(), &flag_values(true));
+        assert_eq!(
+            result,
+            Err(EvalError::new(Some(id(90)), EvalErrorKind::DivisionByZero))
+        );
+        let or_nodes = || {
+            vec![
+                ExprNode::binary(id(1), BinaryOp::Or, id(2), id(3)),
+                ExprNode::reference(id(2), flag()),
+                ExprNode::binary(id(3), BinaryOp::Equal, id(91), id(4)),
+                ExprNode::literal(id(4), num(1.0)),
+            ]
+        };
+        let (result, _, _) = run(id(1), or_nodes(), &flag_values(true));
+        assert_eq!(result, Ok(Some(boolean(true))), "true or … → 오른쪽 미평가");
+        let (result, _, _) = run(id(1), or_nodes(), &flag_values(false));
+        assert_eq!(
+            result,
+            Err(EvalError::new(
+                Some(id(91)),
+                EvalErrorKind::MissingReference(missing())
+            ))
+        );
+        // 진리표(오른쪽이 평가되는 경우 포함): VM = AST.
+        for a in [false, true] {
+            for b in [false, true] {
+                for op in [BinaryOp::And, BinaryOp::Or] {
+                    let nodes = vec![
+                        ExprNode::binary(id(1), op, id(2), id(3)),
+                        ExprNode::reference(id(2), flag()),
+                        ExprNode::literal(id(3), boolean(b)),
+                    ];
+                    let (result, _, _) = run(id(1), nodes, &flag_values(a));
+                    let expected = if op == BinaryOp::And { a && b } else { a || b };
+                    assert_eq!(result, Ok(Some(boolean(expected))));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shared_block_in_unselected_branch_is_not_run() {
+        // S = 1/0 를 두 곳(else, 다른 if의 then)에서 공유 → 별도 block. flag=true면 실행 안 됨.
+        let nodes = vec![
+            ExprNode::if_else(id(1), id(2), id(3), id(90)),
+            ExprNode::reference(id(2), flag()),
+            ExprNode::if_else(id(3), id(2), id(4), id(90)),
+            ExprNode::literal(id(4), num(3.0)),
+        ];
+        let mut full = nodes.clone();
+        full.extend(poison().into_iter().filter(|n| n.id() != id(91)));
+        let ast = ExpressionAst::new(id(1), full).expect("유효");
+        let program = Program::compile(&ast, &types()).expect("컴파일");
+        assert_eq!(program.blocks().len(), 2, "공유 연산 node는 별도 block");
+        let (result, trace, _) = run(id(1), nodes, &flag_values(true));
+        assert_eq!(result, Ok(Some(num(3.0))));
+        assert_eq!(trace.block_runs, 1, "공유 1/0 block 미실행");
+        let (result, trace, _) = run(id(1), ast.nodes().to_vec(), &flag_values(false));
+        assert_eq!(
+            result,
+            Err(EvalError::new(Some(id(90)), EvalErrorKind::DivisionByZero))
+        );
+        assert_eq!(trace, EvalTrace::default(), "오류 시 trace 없음");
     }
 }

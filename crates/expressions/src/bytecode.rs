@@ -1,4 +1,4 @@
-//! 표현식 bytecode 내부 포맷과 compiler (VIII.4.1).
+//! 표현식 bytecode 내부 포맷과 compiler (VIII.4.1~VIII.4.3).
 //!
 //! 검증·type 검사를 통과한 AST를 stack bytecode [`Program`]으로 컴파일합니다. bytecode는 **저장하지 않는
 //! 실행 캐시**입니다. 직렬화 형식·안정 번호가 없고, 원본은 항상 canonical AST(VIII.2.5)이며 필요할 때마다
@@ -9,10 +9,21 @@
 //! - **block**: 값 하나를 계산해 반환하는 명령 열. block 0은 root입니다. 여러 부모가 공유하는 연산 node
 //!   (DAG)는 별도 block으로 한 번만 컴파일하고, 부모는 [`Instr::Eval`]로 부릅니다. evaluator는 block 결과를
 //!   캐시해 공유 node를 한 번만 평가합니다. Literal·Reference 공유 node는 load 명령이라 그대로 복제합니다.
-//! - **constant pool**: 리터럴 값(null 포함). 같은 값은 한 번만 들어갑니다(첫 등장 순서).
+//! - **constant pool**: 리터럴 값(null 포함)과 `match` pattern 값. 같은 값은 한 번만 들어갑니다(첫 등장 순서).
 //! - **reference table**: 참조 대상과 type 검사 때의 타입. 평가 시 입력 값을 이 타입으로 검증합니다.
-//! - **pattern table**: `match` arm pattern 값 목록.
 //! - 명령마다 원인 AST node를 기록해 평가 오류가 node StableId를 가리키게 합니다.
+//!
+//! **short-circuit(VIII.4.3)**: `if`·`match`·`and`·`or`는 block 안 jump로 컴파일해 선택된 branch만 실행합니다.
+//! 선택되지 않은 branch의 연산·참조·공유 block은 실행되지 않으므로 그 안의 오류(0 나누기, 누락 참조 등)도
+//! 발생하지 않습니다.
+//!
+//! ```text
+//! if c then a else b :  c; JumpIfFalse(L1); a; Jump(L2); L1: b; L2:
+//! match s {p0 => a0, …} else d :
+//!                       s; MatchCase(p0, M1); a0; Jump(E); M1: MatchCase(p1, M2); a1; Jump(E); … ; Mn: Pop; d; E:
+//! x and y            :  x; JumpIfFalse(F); y; Jump(E); F: Const(false); E:
+//! x or y             :  x; JumpIfFalse(R); Const(true); Jump(E); R: y; E:
+//! ```
 //!
 //! 컴파일은 명시적 stack으로 수행해 재귀하지 않습니다.
 
@@ -36,10 +47,20 @@ pub enum Instr {
     LoadRef(u32),
     /// 공유 block `index`의 값을 push(첫 호출에서 평가, 이후 캐시).
     Eval(u32),
-    /// `[condition, then, else]`를 pop하고 조건에 따라 하나를 push(`if`).
-    Select,
-    /// `[scrutinee, arm0, …, armN-1, default]`를 pop하고 pattern table `index`로 고른 값을 push(`match`).
-    MatchSelect(u32),
+    /// Boolean 조건을 pop하고 `false`면 같은 block의 명령 `target`으로 이동(VIII.4.3).
+    JumpIfFalse(u32),
+    /// 같은 block의 명령 `target`으로 이동(VIII.4.3).
+    Jump(u32),
+    /// stack top(match 대상)이 constant `pattern`과 같으면 pop하고 다음 명령, 다르면 남겨 두고 `miss`로
+    /// 이동(VIII.4.3).
+    MatchCase {
+        /// pattern 값의 constant pool index.
+        pattern: u32,
+        /// 불일치 시 이동할 명령 index.
+        miss: u32,
+    },
+    /// stack top을 버림(일치 arm이 없을 때 match 대상 제거, VIII.4.3).
+    Pop,
     /// operand 하나를 pop하고 단항 연산 결과를 push(VIII.4.2).
     Unary(UnaryOp),
     /// `[lhs, rhs]`를 pop하고 이항 연산 결과를 push(VIII.4.2).
@@ -115,7 +136,6 @@ pub struct Program {
     blocks: Vec<CodeBlock>,
     constants: Vec<Option<TypedValue>>,
     references: Vec<(ReferenceTarget, TypeSpec)>,
-    patterns: Vec<Vec<TypedValue>>,
     result_type: TypeSpec,
 }
 
@@ -147,7 +167,6 @@ impl Program {
             constant_index: BTreeMap::new(),
             references: Vec::new(),
             reference_index: BTreeMap::new(),
-            patterns: Vec::new(),
         };
         compiler.block_for(ast.root())?;
         let mut blocks = Vec::new();
@@ -158,7 +177,6 @@ impl Program {
             blocks,
             constants: compiler.constants,
             references: compiler.references,
-            patterns: compiler.patterns,
             result_type,
         })
     }
@@ -176,11 +194,6 @@ impl Program {
     /// reference table.
     pub fn references(&self) -> &[(ReferenceTarget, TypeSpec)] {
         &self.references
-    }
-
-    /// pattern table.
-    pub fn patterns(&self) -> &[Vec<TypedValue>] {
-        &self.patterns
     }
 
     /// 결과 타입.
@@ -206,12 +219,27 @@ impl Program {
     }
 }
 
+/// 이동 대상이 label인 미해결 명령.
+#[derive(Clone, Copy)]
+enum Pending {
+    /// 이미 확정된 명령.
+    Ready(Instr),
+    /// `JumpIfFalse(label)`.
+    JumpIfFalse(usize),
+    /// `Jump(label)`.
+    Jump(usize),
+    /// `MatchCase { pattern, miss: label }`.
+    MatchCase { pattern: u32, miss: usize },
+}
+
 /// 컴파일 작업.
 enum Task {
     /// node 값을 stack에 남기는 코드 생성.
     Visit(ExprNodeId),
     /// 명령 하나 기록.
-    Emit(Instr, ExprNodeId),
+    Emit(Pending, ExprNodeId),
+    /// label 위치를 현재 명령 위치로 확정.
+    Label(usize),
 }
 
 struct Compiler<'a> {
@@ -224,7 +252,6 @@ struct Compiler<'a> {
     constant_index: BTreeMap<Option<TypedValue>, u32>,
     references: Vec<(ReferenceTarget, TypeSpec)>,
     reference_index: BTreeMap<ReferenceTarget, u32>,
-    patterns: Vec<Vec<TypedValue>>,
 }
 
 fn index_u32(len: usize) -> Result<u32, CompileError> {
@@ -284,15 +311,27 @@ impl Compiler<'_> {
     }
 
     fn compile_block(&mut self, block_root: ExprNodeId) -> Result<CodeBlock, CompileError> {
-        let mut code = Vec::new();
+        let mut code: Vec<Pending> = Vec::new();
         let mut sources = Vec::new();
+        let mut labels: Vec<Option<u32>> = Vec::new();
+        fn new_label(labels: &mut Vec<Option<u32>>) -> usize {
+            labels.push(None);
+            labels.len() - 1
+        }
         let mut stack = vec![Task::Visit(block_root)];
         let mut first = true;
         while let Some(task) = stack.pop() {
             let id = match task {
-                Task::Emit(instr, source) => {
-                    code.push(instr);
+                Task::Emit(pending, source) => {
+                    code.push(pending);
                     sources.push(source);
+                    continue;
+                }
+                Task::Label(label) => {
+                    let position = index_u32(code.len())?;
+                    if let Some(slot) = labels.get_mut(label) {
+                        *slot = Some(position);
+                    }
                     continue;
                 }
                 Task::Visit(id) => id,
@@ -300,7 +339,7 @@ impl Compiler<'_> {
             let is_root = std::mem::replace(&mut first, false);
             if !is_root && self.is_shared_operation(id) {
                 let index = self.block_for(id)?;
-                code.push(Instr::Eval(index));
+                code.push(Pending::Ready(Instr::Eval(index)));
                 sources.push(id);
                 continue;
             }
@@ -309,6 +348,7 @@ impl Compiler<'_> {
                 .node(id)
                 .ok_or(CompileError::TypeErrors(Vec::new()))?;
             let child = |slot| node.child(slot).ok_or(CompileError::TypeErrors(Vec::new()));
+            let emit = |instr: Instr| Task::Emit(Pending::Ready(instr), id);
             match node.payload() {
                 NodePayload::Literal(literal) => {
                     let value = match literal {
@@ -316,39 +356,79 @@ impl Compiler<'_> {
                         Literal::Null(_) => None,
                     };
                     let index = self.constant(value)?;
-                    code.push(Instr::Const(index));
-                    sources.push(id);
+                    stack.push(emit(Instr::Const(index)));
                 }
                 NodePayload::Reference(target) => {
                     let index = self.reference(target, id)?;
-                    code.push(Instr::LoadRef(index));
-                    sources.push(id);
+                    stack.push(emit(Instr::LoadRef(index)));
                 }
                 NodePayload::If => {
-                    stack.push(Task::Emit(Instr::Select, id));
+                    let otherwise = new_label(&mut labels);
+                    let end = new_label(&mut labels);
+                    // LIFO: 마지막에 push한 작업이 먼저 실행됩니다.
+                    stack.push(Task::Label(end));
                     stack.push(Task::Visit(child(ChildSlot::Else)?));
+                    stack.push(Task::Label(otherwise));
+                    stack.push(Task::Emit(Pending::Jump(end), id));
                     stack.push(Task::Visit(child(ChildSlot::Then)?));
+                    stack.push(Task::Emit(Pending::JumpIfFalse(otherwise), id));
                     stack.push(Task::Visit(child(ChildSlot::Condition)?));
                 }
                 NodePayload::Match(patterns) => {
-                    let set = index_u32(self.patterns.len())?;
-                    self.patterns.push(patterns.clone());
-                    stack.push(Task::Emit(Instr::MatchSelect(set), id));
-                    stack.push(Task::Visit(child(ChildSlot::Default)?));
-                    for index in (0..patterns.len()).rev() {
+                    let end = new_label(&mut labels);
+                    let mut tasks = vec![Task::Visit(child(ChildSlot::Scrutinee)?)];
+                    for (index, pattern) in patterns.iter().enumerate() {
+                        let miss = new_label(&mut labels);
+                        let pattern = self.constant(Some(pattern.clone()))?;
                         let slot = ChildSlot::Arm(
                             u16::try_from(index).map_err(|_| CompileError::TooLarge)?,
                         );
-                        stack.push(Task::Visit(child(slot)?));
+                        tasks.push(Task::Emit(Pending::MatchCase { pattern, miss }, id));
+                        tasks.push(Task::Visit(child(slot)?));
+                        tasks.push(Task::Emit(Pending::Jump(end), id));
+                        tasks.push(Task::Label(miss));
                     }
-                    stack.push(Task::Visit(child(ChildSlot::Scrutinee)?));
+                    tasks.push(emit(Instr::Pop));
+                    tasks.push(Task::Visit(child(ChildSlot::Default)?));
+                    tasks.push(Task::Label(end));
+                    stack.extend(tasks.into_iter().rev());
+                }
+                NodePayload::Binary(op @ (BinaryOp::And | BinaryOp::Or)) => {
+                    let alternative = new_label(&mut labels);
+                    let end = new_label(&mut labels);
+                    let lhs = child(ChildSlot::Lhs)?;
+                    let rhs = child(ChildSlot::Rhs)?;
+                    let tasks = if *op == BinaryOp::And {
+                        let false_index = self.constant(Some(TypedValue::Boolean(false)))?;
+                        vec![
+                            Task::Visit(lhs),
+                            Task::Emit(Pending::JumpIfFalse(alternative), id),
+                            Task::Visit(rhs),
+                            Task::Emit(Pending::Jump(end), id),
+                            Task::Label(alternative),
+                            emit(Instr::Const(false_index)),
+                            Task::Label(end),
+                        ]
+                    } else {
+                        let true_index = self.constant(Some(TypedValue::Boolean(true)))?;
+                        vec![
+                            Task::Visit(lhs),
+                            Task::Emit(Pending::JumpIfFalse(alternative), id),
+                            emit(Instr::Const(true_index)),
+                            Task::Emit(Pending::Jump(end), id),
+                            Task::Label(alternative),
+                            Task::Visit(rhs),
+                            Task::Label(end),
+                        ]
+                    };
+                    stack.extend(tasks.into_iter().rev());
                 }
                 NodePayload::Unary(op) => {
-                    stack.push(Task::Emit(Instr::Unary(*op), id));
+                    stack.push(emit(Instr::Unary(*op)));
                     stack.push(Task::Visit(child(ChildSlot::Operand)?));
                 }
                 NodePayload::Binary(op) => {
-                    stack.push(Task::Emit(Instr::Binary(*op), id));
+                    stack.push(emit(Instr::Binary(*op)));
                     stack.push(Task::Visit(child(ChildSlot::Rhs)?));
                     stack.push(Task::Visit(child(ChildSlot::Lhs)?));
                 }
@@ -360,8 +440,29 @@ impl Compiler<'_> {
                 }
             }
         }
-        code.push(Instr::Return);
+        code.push(Pending::Ready(Instr::Return));
         sources.push(block_root);
+        let resolve = |label: usize| -> Result<u32, CompileError> {
+            labels
+                .get(label)
+                .copied()
+                .flatten()
+                .ok_or(CompileError::TooLarge)
+        };
+        let code = code
+            .into_iter()
+            .map(|pending| {
+                Ok(match pending {
+                    Pending::Ready(instr) => instr,
+                    Pending::JumpIfFalse(label) => Instr::JumpIfFalse(resolve(label)?),
+                    Pending::Jump(label) => Instr::Jump(resolve(label)?),
+                    Pending::MatchCase { pattern, miss } => Instr::MatchCase {
+                        pattern,
+                        miss: resolve(miss)?,
+                    },
+                })
+            })
+            .collect::<Result<Vec<Instr>, CompileError>>()?;
         Ok(CodeBlock {
             node: block_root,
             code,
