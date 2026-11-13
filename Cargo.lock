@@ -178,6 +178,7 @@ dependencies = [
  "stellar-document",
  "stellar-git-porcelain",
  "stellar-storage",
+ "stellar-text",
  "yaml-rust2",
 ]
 

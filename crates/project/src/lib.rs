@@ -77,3 +77,6 @@ pub mod private_temp;
 
 /// conflict 세 stage virtual project 열기 (XIV.11.2).
 pub mod conflict_open;
+
+/// 프로젝트·시스템·외부 폰트 (XIII.6).
+pub mod fonts;
