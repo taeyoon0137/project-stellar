@@ -14,3 +14,6 @@ pub mod json;
 
 /// canonical semantic snapshot JSON (VI.10.4).
 pub mod semantic_snapshot;
+
+/// seed 기반 random valid document 생성기 (VI.10.5).
+pub mod random_document;
