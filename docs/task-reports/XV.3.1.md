@@ -59,3 +59,7 @@
 - plain mode index는 repository URL 원문을 앱 데이터에 저장합니다. URL을 남기지 않는 privacy
   mode는 XV.3.5입니다.
 - 여러 프로세스의 동시 index 갱신 잠금은 XV.3.6 범위입니다(현재는 마지막 rename이 이깁니다).
+
+## 상태 정정(통합 리뷰, 2026-11-14)
+
+- `[x]` → `[~]`: 엄격 선행 사슬에 `[~]` 행(XV.1.1 등)이 있어 함께 `[~]`로 둡니다. 이 행 자체의 검증은 dependencies crate 안에서 통과했습니다.

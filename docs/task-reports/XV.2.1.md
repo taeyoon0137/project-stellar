@@ -45,3 +45,7 @@
 - 아키텍처 30.3의 resource 참조 키는 `DependencyInstanceId + LibraryId + ResolvedCommit +
   ResourceStableId`입니다. DependencyInstanceId와 resource 단위 key는 library snapshot(XV.5.1)
   범위입니다.
+
+## 상태 정정(통합 리뷰, 2026-11-14)
+
+- `[x]` → `[~]`: 엄격 선행 사슬에 `[~]` 행(XV.1.1 등)이 있어 함께 `[~]`로 둡니다. 이 행 자체의 검증은 dependencies crate 안에서 통과했습니다.

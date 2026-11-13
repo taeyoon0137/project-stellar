@@ -55,3 +55,7 @@
 
 - project `Lockfile`(IV.1.6) 모델은 이 필드 집합(library_id·repository·requested·dependencies)을 아직
   모릅니다. 텍스트 lock 연결 시 project 모델을 이 validator와 맞춰야 합니다.
+
+## 상태 정정(통합 리뷰, 2026-11-14)
+
+- `[x]` → `[~]`: 엄격 선행(XV.3.4·XV.4.1)이 `[~]`입니다.

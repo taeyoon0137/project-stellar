@@ -1515,31 +1515,31 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XV.1.1 | `[x]` | `stellar.yaml` dependency entry에 logical name, library id, source kind Git, repository URL, version selector(tag/commit/branch), optional local override를 정의합니다. | schema round-trip. | IV.1.1, Phase XIV |
-| XV.1.2 | `[x]` | branch selector는 개발 편의 선언으로 허용하되 lockfile에는 항상 exact commit을 기록하게 합니다. | branch resolve 후 lock exact hash. | XV.1.1 |
-| XV.1.3 | `[x]` | 같은 logical name 중복, 같은 LibraryId 다른 selector, 다른 LibraryId 같은 URL을 구분해 validation합니다. | conflict matrix fixture 통과. | XV.1.1 |
-| XV.1.4 | `[x]` | dependency URL과 local override path를 telemetry 민감값으로 분류합니다. | diagnostic/telemetry redaction 통과. | II.3.2, XV.1.1 |
+| XV.1.1 | `[~]` | `stellar.yaml` dependency entry에 logical name, library id, source kind Git, repository URL, version selector(tag/commit/branch), optional local override를 정의합니다. | schema round-trip. | IV.1.1, Phase XIV |
+| XV.1.2 | `[~]` | branch selector는 개발 편의 선언으로 허용하되 lockfile에는 항상 exact commit을 기록하게 합니다. | branch resolve 후 lock exact hash. | XV.1.1 |
+| XV.1.3 | `[~]` | 같은 logical name 중복, 같은 LibraryId 다른 selector, 다른 LibraryId 같은 URL을 구분해 validation합니다. | conflict matrix fixture 통과. | XV.1.1 |
+| XV.1.4 | `[~]` | dependency URL과 local override path를 telemetry 민감값으로 분류합니다. | diagnostic/telemetry redaction 통과. | II.3.2, XV.1.1 |
 
 ### XV.2 Resolver와 전이 그래프
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XV.2.1 | `[x]` | `DependencyNodeKey`를 LibraryId+ResolvedCommit으로 정의해 동일 library 여러 버전을 별도 node로 허용합니다. | v1/v2 동시 key fixture 통과. | XV.1.1 |
-| XV.2.2 | `[x]` | dependency graph edge에 parent dependency path를 기록합니다. 같은 resolved node는 그래프에서 dedup합니다. | diamond dependency fixture 정확. | XV.2.1 |
-| XV.2.3 | `[x]` | transitive cycle을 탐지하고 dependency path 전체를 오류로 반환합니다. | A→B→A fixture 실패. | XV.2.2 |
-| XV.2.4 | `[x]` | version selector resolution은 시스템 Git의 `ls-remote`, fetch된 refs, commit verification을 사용합니다. Git 객체를 직접 파싱하지 않습니다. | tag/branch/commit fixture resolve. | XIV.1.3, XV.1.2 |
-| XV.2.5 | `[x]` | 같은 LibraryId의 여러 resolved commit이 그래프에 존재하면 오류가 아니라 `DuplicateLibraryVersionWarning`을 생성합니다. | v1/v2 fixture warning 1건. | XV.2.1 |
-| XV.2.6 | `[x]` | resolver 결과를 LibraryId, commit, dependency path로 deterministic sort합니다. | 선언 순서 변경에도 lock output 동일. | XV.2.2 |
+| XV.2.1 | `[~]` | `DependencyNodeKey`를 LibraryId+ResolvedCommit으로 정의해 동일 library 여러 버전을 별도 node로 허용합니다. | v1/v2 동시 key fixture 통과. | XV.1.1 |
+| XV.2.2 | `[~]` | dependency graph edge에 parent dependency path를 기록합니다. 같은 resolved node는 그래프에서 dedup합니다. | diamond dependency fixture 정확. | XV.2.1 |
+| XV.2.3 | `[~]` | transitive cycle을 탐지하고 dependency path 전체를 오류로 반환합니다. | A→B→A fixture 실패. | XV.2.2 |
+| XV.2.4 | `[~]` | version selector resolution은 시스템 Git의 `ls-remote`, fetch된 refs, commit verification을 사용합니다. Git 객체를 직접 파싱하지 않습니다. | tag/branch/commit fixture resolve. | XIV.1.3, XV.1.2 |
+| XV.2.5 | `[~]` | 같은 LibraryId의 여러 resolved commit이 그래프에 존재하면 오류가 아니라 `DuplicateLibraryVersionWarning`을 생성합니다. | v1/v2 fixture warning 1건. | XV.2.1 |
+| XV.2.6 | `[~]` | resolver 결과를 LibraryId, commit, dependency path로 deterministic sort합니다. | 선언 순서 변경에도 lock output 동일. | XV.2.2 |
 
 ### XV.3 공용 콘텐츠 캐시
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XV.3.1 | `[x]` | 사용자별 OS app data에 library cache root와 cache index를 정의합니다. project folder 안에는 의존성 checkout을 만들지 않습니다. | Git status 변화 없음. | V.1.5, XV.2.1 |
-| XV.3.2 | `[x]` | repository URL별 bare mirror 또는 동등 system Git cache를 생성하고 fetch를 GitRunner로 수행합니다. | 같은 repo 두 dependency fetch 중복 네트워크 1회. | XIV.1.3, XV.3.1 |
+| XV.3.1 | `[~]` | 사용자별 OS app data에 library cache root와 cache index를 정의합니다. project folder 안에는 의존성 checkout을 만들지 않습니다. | Git status 변화 없음. | V.1.5, XV.2.1 |
+| XV.3.2 | `[~]` | repository URL별 bare mirror 또는 동등 system Git cache를 생성하고 fetch를 GitRunner로 수행합니다. | 같은 repo 두 dependency fetch 중복 네트워크 1회. | XIV.1.3, XV.3.1 |
 | XV.3.3 | `[ ]` | exact commit의 Stellar project files를 content-addressed immutable cache entry로 materialize합니다. | 같은 commit 재요청 bytes 재사용. | XV.3.2, XIV.2.6 |
 | XV.3.4 | `[~]` | cache entry를 ProjectProbe와 storage validator로 검증하고 일반 Git repo 또는 손상 library를 거부합니다. | invalid library fixture 실패. | IV.5.1, V.4.4 |
-| XV.3.5 | `[x]` | cache index에 repository URL 원문 대신 keyed identifier와 commit/content hash만 저장하는 privacy mode를 구현합니다. 원본 URL은 local secure config에만 둡니다. | exported diagnostic에 URL 없음. | XV.1.4, XV.3.1 |
+| XV.3.5 | `[~]` | cache index에 repository URL 원문 대신 keyed identifier와 commit/content hash만 저장하는 privacy mode를 구현합니다. 원본 URL은 local secure config에만 둡니다. | exported diagnostic에 URL 없음. | XV.1.4, XV.3.1 |
 | XV.3.6 | `[ ]` | cache read lock과 fetch/write lock을 분리해 여러 Stellar project가 같은 entry를 동시에 읽을 수 있게 합니다. | two-process concurrency fixture 통과. | XV.3.3 |
 
 ### XV.4 Lockfile 생성
@@ -1547,9 +1547,9 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XV.4.1 | `[~]` | resolver graph를 `stellar.lock.yaml`의 resolved entries와 dependency paths로 변환합니다. | canonical lock golden. | IV.1.6, XV.2.6 |
-| XV.4.2 | `[x]` | 각 entry에 exact commit, cached content hash, library schema version, transitive dependencies를 기록합니다. | 누락 field validator 실패. | XV.3.4, XV.4.1 |
+| XV.4.2 | `[~]` | 각 entry에 exact commit, cached content hash, library schema version, transitive dependencies를 기록합니다. | 누락 field validator 실패. | XV.3.4, XV.4.1 |
 | XV.4.3 | `[ ]` | lockfile가 존재하면 선언 selector가 바뀌지 않은 dependency는 network 없이 lock commit을 우선 사용합니다. | offline cache fixture 통과. | XV.4.2, XV.3.3 |
-| XV.4.4 | `[x]` | lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 자동으로 다른 commit을 선택하지 않습니다. | tampered cache fixture 실패. | XV.4.2 |
+| XV.4.4 | `[~]` | lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 자동으로 다른 commit을 선택하지 않습니다. | tampered cache fixture 실패. | XV.4.2 |
 | XV.4.5 | `[ ]` | resolve 성공 후 lockfile을 canonical write하고 autosave와 별도 project file transaction으로 기록합니다. 자동 commit하지 않습니다. | Git status에 lockfile만 예상대로 변경. | XV.4.1, IV.1.7 |
 
 ### XV.5 읽기 전용 Library 로드
@@ -1566,7 +1566,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XV.6.1 | `[x]` | `stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다. | schema validation. | XV.1.1 |
+| XV.6.1 | `[~]` | `stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다. | schema validation. | XV.1.1 |
 | XV.6.2 | `[~]` | local path가 일반 repo 또는 잘못된 library id이면 거부합니다. | fixture 실패. | XV.6.1, IV.5.1 |
 | XV.6.3 | `[ ]` | local override의 current commit과 working tree dirty 상태를 진단에 표시하되 lockfile exact remote commit은 유지합니다. | dirty override warning. | XV.6.2, XIV.2.2 |
 | XV.6.4 | `[ ]` | linked worktree path도 ProjectProbe로 허용합니다. | worktree library fixture load. | XIV.1.2, XV.6.2 |
@@ -1588,7 +1588,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XV.8.1 | `[ ]` | 최근 사용 시각과 lockfile reference set을 기준으로 cache GC 후보를 계산합니다. 삭제 임계치는 config에 둡니다. | active lock entry 후보 제외. | XV.3.6, XV.4.2 |
 | XV.8.2 | `[ ]` | 여러 project가 참조하는 cache entry는 마지막 참조가 사라질 때까지 삭제하지 않습니다. | two-project fixture 통과. | XV.8.1 |
-| XV.8.3 | `[x]` | duplicate library version warning에 dependency paths와 예상 추가 용량을 포함합니다. repository URL은 표시 UI에만 local source로 전달하고 telemetry에는 제외합니다. | warning fixture 정확. | XV.2.5, XV.3.5 |
+| XV.8.3 | `[~]` | duplicate library version warning에 dependency paths와 예상 추가 용량을 포함합니다. repository URL은 표시 UI에만 local source로 전달하고 telemetry에는 제외합니다. | warning fixture 정확. | XV.2.5, XV.3.5 |
 | XV.8.4 | `[ ]` | 외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update. | semantic snapshot·lockfile golden 통과. | XV.1~XV.7 |
 
 **Phase XV 완료 조건:** 외부 library exact version 재현, 다중 버전 격리, 읽기 전용 정책, update 검토가 통과합니다.
@@ -1688,9 +1688,9 @@ tools/xtask/
 |---|---|---|---|---|
 | XVI.9.1 | `[x]` | Release configuration, bundle identifier, minimum macOS 26, arm64-only 설정을 고정합니다. | built binary architecture arm64 only. | Phase XII |
 | XVI.9.2 | `[~]` | Rust core library와 resources를 app bundle에 포함하고 rpath/code signature 구조를 검증합니다. | clean machine launch smoke. | XVI.9.1 |
-| XVI.9.3 | `[x]` | Developer ID signing pipeline을 구성합니다. 로컬 개발 key를 repo에 저장하지 않습니다. | `codesign --verify --deep --strict` 통과. | XVI.9.2 |
+| XVI.9.3 | `[~]` | Developer ID signing pipeline을 구성합니다. 로컬 개발 key를 repo에 저장하지 않습니다. | `codesign --verify --deep --strict` 통과. | XVI.9.2 |
 | XVI.9.4 | `[~]` | notarization submission과 ticket stapling pipeline을 구성합니다. | Gatekeeper clean machine 검증 통과. | XVI.9.3 |
-| XVI.9.5 | `[x]` | Stable/Beta update feed를 분리하고 앱은 background check만 수행합니다. 다운로드·설치는 사용자 승인 후입니다. | channel isolation fixture. | XVI.9.2 |
+| XVI.9.5 | `[~]` | Stable/Beta update feed를 분리하고 앱은 background check만 수행합니다. 다운로드·설치는 사용자 승인 후입니다. | channel isolation fixture. | XVI.9.2 |
 | XVI.9.6 | `[ ]` | 업데이트 전 open project 상태를 저장·복구하고 강제 종료하지 않습니다. | dirty project update prompt fixture. | XIII.1.6, XVI.9.5 |
 
 ### XVI.10 Windows MSIX·서명·업데이트

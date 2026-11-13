@@ -44,3 +44,7 @@
 
 - Token 불일치·Component 호환성 경고(아키텍처 30.3)는 library snapshot과 semantic diff(XV.5·XV.7)가
   있어야 계산할 수 있습니다.
+
+## 상태 정정(통합 리뷰, 2026-11-14)
+
+- `[x]` → `[~]`: 엄격 선행 사슬에 `[~]` 행(XV.1.1 등)이 있어 함께 `[~]`로 둡니다. 이 행 자체의 검증은 dependencies crate 안에서 통과했습니다.

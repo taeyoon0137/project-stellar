@@ -67,3 +67,7 @@
   해당 tag가 없으면 명시적 오류가 나지만, 같은 이름의 tag와 branch가 둘 다 있으면 tag가 선택됩니다.
 - URL 형식 검증은 안전 규칙(주입·transport)만 다룹니다. 실제 접근 가능 여부는 시스템 Git이
   판단합니다.
+
+## 상태 정정(통합 리뷰, 2026-11-14)
+
+- `[x]` → `[~]`: round-trip은 dependencies crate의 중립 tree에서만 증명했고, 실제 stellar.yaml 파서(project crate)는 새 스키마를 아직 받지 않습니다.
