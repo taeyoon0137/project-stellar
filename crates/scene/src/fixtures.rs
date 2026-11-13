@@ -107,6 +107,51 @@ pub(crate) fn leaf(source: u64, z: u64, w: f32, h: f32) -> Arc<SceneNode> {
     Arc::new(SceneNode::leaf(spec(source, rect_content(w, h), z)))
 }
 
+/// 깊은 입력 회귀 테스트가 쓰는 깊이. 재귀 구현이면 release 8 MiB stack에서도 넘칩니다.
+pub(crate) const DEEP: u64 = 100_000;
+
+/// `bottom` 위에 자식 하나짜리 node를 `levels`단 쌓습니다(위에서부터 z = 1, …, `levels`).
+///
+/// 재귀 없이 아래에서 위로 만듭니다. `bottom.z()`는 `levels`보다 커야 합니다.
+pub(crate) fn chain_over(bottom: Arc<SceneNode>, levels: u64) -> Arc<SceneNode> {
+    let mut node = bottom;
+    for z in (1..=levels).rev() {
+        node = Arc::new(SceneNode::new(spec(z, rect_content(1.0, 1.0), z), vec![node]).expect("z"));
+    }
+    node
+}
+
+/// `w×w` 직각 rect clip.
+pub(crate) fn rect_clip(w: f32) -> ClipShape {
+    ClipShape::Rect {
+        rect: rect(0.0, 0.0, w, w),
+        radii: CornerRadii::ZERO,
+        transform: Transform2D::identity(),
+    }
+}
+
+/// clip `depth`개를 쌓은 clip stack(바깥쪽 clip 크기 `outer`, 안쪽은 모두 1×1).
+pub(crate) fn deep_clip(depth: u64, outer: f32) -> ClipStackRef {
+    let mut clip = ClipStackRef::none();
+    for level in 0..depth {
+        clip = clip.push(rect_clip(if level == 0 { outer } else { 1.0 }));
+    }
+    clip
+}
+
+/// 작은 호출 stack(256 KiB) thread에서 `body`를 실행합니다.
+///
+/// 깊은 입력을 재귀로 처리하는 구현이면 stack overflow로 프로세스가 중단되어 테스트가
+/// 실패합니다. 기본 test thread stack 크기나 build profile과 무관하게 회귀를 잡습니다.
+pub(crate) fn on_small_stack<F: FnOnce() + Send + 'static>(body: F) {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024)
+        .spawn(body)
+        .expect("test thread")
+        .join()
+        .expect("test thread panicked");
+}
+
 /// fixture 설정.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FixtureConfig {

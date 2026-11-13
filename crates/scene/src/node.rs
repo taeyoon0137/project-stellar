@@ -543,7 +543,11 @@ impl From<SceneTreeError> for SceneEditError {
 ///
 /// 자식은 [`PersistentVec`]에 `Arc<SceneNode>`로 보관해 같은 subtree와 자식 목록 chunk를 여러
 /// snapshot이 공유할 수 있습니다(XI.1.4).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// **깊은 tree**: 해제(`Drop`)와 값 비교(`PartialEq`)는 명시적 stack으로 반복 처리하고,
+/// `Debug`는 [`DEBUG_CHILD_DEPTH`]단까지만 자식을 펼칩니다. decode가 받아들인 수십만 단
+/// tree도 호출 stack을 소모하지 않습니다.
+#[derive(Clone)]
 pub struct SceneNode {
     source: StableId,
     content: SceneContent,
@@ -673,29 +677,27 @@ impl SceneNode {
             .children
             .set(index, child)
             .ok_or(SceneEditError::PathOutOfRange { level: 0, index })?;
-        Ok(SceneNode {
-            children,
-            subtree_len,
-            last_z,
-            ..self.clone_fields()
-        })
+        // 자식 목록 복제는 root 참조만 늘리는 O(1)이고, 바로 새 목록으로 바꿉니다.
+        let mut node = self.clone();
+        node.children = children;
+        node.subtree_len = subtree_len;
+        node.last_z = last_z;
+        Ok(node)
     }
 
-    /// 자식을 제외한 field 복사본(자식 목록은 O(1) 공유 복제).
-    fn clone_fields(&self) -> SceneNode {
-        SceneNode {
-            source: self.source,
-            content: self.content.clone(),
-            world_transform: self.world_transform,
-            layout_rect: self.layout_rect,
-            clip: self.clip.clone(),
-            paint: self.paint.clone(),
-            z: self.z,
-            hit: self.hit,
-            children: self.children.clone(),
-            subtree_len: self.subtree_len,
-            last_z: self.last_z,
-        }
+    /// 자식을 제외한 field가 모두 같으면 참입니다(자식 수·subtree 요약값 포함).
+    fn fields_eq(&self, other: &SceneNode) -> bool {
+        self.source == other.source
+            && self.z == other.z
+            && self.last_z == other.last_z
+            && self.subtree_len == other.subtree_len
+            && self.children.len() == other.children.len()
+            && self.hit == other.hit
+            && self.world_transform == other.world_transform
+            && self.layout_rect == other.layout_rect
+            && self.content == other.content
+            && self.paint == other.paint
+            && self.clip == other.clip
     }
 
     /// 자기 field를 [`SceneNodeSpec`]으로 돌려줍니다(자식 제외).
@@ -780,6 +782,138 @@ impl SceneNode {
     /// 자신을 포함한 subtree node 수.
     pub const fn subtree_len(&self) -> u64 {
         self.subtree_len
+    }
+}
+
+/// 자식 목록을 비우고, 목록이 들고 있던 자식 참조를 `out`으로 옮깁니다.
+///
+/// 원소를 꺼낼 수 없는 공유 chunk 구조라 참조를 하나 늘린 뒤 목록을 해제합니다. 목록 chunk를
+/// 다른 node와 공유하면 그쪽 참조가 남아 자식은 해제되지 않습니다.
+fn detach_children(children: &mut PersistentVec<Arc<SceneNode>>, out: &mut Vec<Arc<SceneNode>>) {
+    let list = std::mem::take(children);
+    out.extend(list.iter().cloned());
+}
+
+impl Drop for SceneNode {
+    /// subtree를 명시적 stack으로 해제합니다.
+    ///
+    /// 기본 drop은 자식 → 손자로 재귀하므로 깊은 tree에서 stack overflow로 프로세스가
+    /// 중단됩니다(panic이 아니라 복구할 수 없음). 마지막 참조인 자식만 떼어 내 자식 목록을
+    /// 비운 뒤 해제하므로, 각 node는 빈 자식 목록으로 해제되어 재귀하지 않습니다. 다른
+    /// snapshot과 공유하는 subtree는 참조만 줄이고 내려가지 않습니다. `Arc::into_inner`는
+    /// 동시에 해제하는 thread 중 정확히 하나에게만 node를 넘깁니다.
+    fn drop(&mut self) {
+        if self.children.is_empty() {
+            return;
+        }
+        let mut pending = Vec::new();
+        detach_children(&mut self.children, &mut pending);
+        while let Some(child) = pending.pop() {
+            if let Some(mut node) = Arc::into_inner(child) {
+                detach_children(&mut node.children, &mut pending);
+            }
+        }
+    }
+}
+
+impl PartialEq for SceneNode {
+    /// subtree 전체를 값으로 비교합니다(`Arc` 공유 구조와 무관).
+    ///
+    /// 깊은 tree에서도 호출 stack을 소모하지 않도록 명시적 stack을 씁니다. 같은 allocation을
+    /// 가리키는 subtree는 내려가지 않습니다(`Eq`이므로 반사성으로 같음).
+    fn eq(&self, other: &SceneNode) -> bool {
+        let mut pending: Vec<(&SceneNode, &SceneNode)> = Vec::new();
+        let mut pair = (self, other);
+        loop {
+            let (a, b) = pair;
+            if !std::ptr::eq(a, b) {
+                if !a.fields_eq(b) {
+                    return false;
+                }
+                pending.extend(
+                    a.children
+                        .iter()
+                        .zip(b.children.iter())
+                        .filter(|(x, y)| !Arc::ptr_eq(x, y))
+                        .map(|(x, y)| (&**x, &**y)),
+                );
+            }
+            match pending.pop() {
+                Some(next) => pair = next,
+                None => return true,
+            }
+        }
+    }
+}
+
+impl Eq for SceneNode {}
+
+/// [`SceneNode`] `Debug` 출력이 자식을 펼치는 최대 단계. 더 깊은 자식은 개수만 표시합니다.
+pub const DEBUG_CHILD_DEPTH: usize = 8;
+
+impl fmt::Debug for SceneNode {
+    /// 자기 field와 [`DEBUG_CHILD_DEPTH`]단까지의 자식을 출력합니다(재귀 깊이 상한).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        DebugNode {
+            node: self,
+            child_depth: DEBUG_CHILD_DEPTH,
+        }
+        .fmt(f)
+    }
+}
+
+/// 남은 펼침 단계를 들고 있는 [`SceneNode`] Debug 표현.
+struct DebugNode<'a> {
+    node: &'a SceneNode,
+    child_depth: usize,
+}
+
+impl fmt::Debug for DebugNode<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let node = self.node;
+        let mut out = f.debug_struct("SceneNode");
+        out.field("source", &node.source)
+            .field("content", &node.content)
+            .field("world_transform", &node.world_transform)
+            .field("layout_rect", &node.layout_rect)
+            .field("clip", &node.clip)
+            .field("paint", &node.paint)
+            .field("z", &node.z)
+            .field("hit", &node.hit)
+            .field("subtree_len", &node.subtree_len)
+            .field("last_z", &node.last_z);
+        match self.child_depth.checked_sub(1) {
+            Some(child_depth) => out.field(
+                "children",
+                &DebugChildren {
+                    list: &node.children,
+                    child_depth,
+                },
+            ),
+            None if node.children.is_empty() => out.field("children", &[(); 0]),
+            None => out.field(
+                "children",
+                &format_args!("[… {} children]", node.children.len()),
+            ),
+        };
+        out.finish()
+    }
+}
+
+/// [`DebugNode`]의 자식 목록 표현.
+struct DebugChildren<'a> {
+    list: &'a PersistentVec<Arc<SceneNode>>,
+    child_depth: usize,
+}
+
+impl fmt::Debug for DebugChildren<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries(self.list.iter().map(|child| DebugNode {
+                node: child,
+                child_depth: self.child_depth,
+            }))
+            .finish()
     }
 }
 
@@ -928,6 +1062,48 @@ mod tests {
                 next: ZOrder(2)
             }
         );
+    }
+
+    #[test]
+    fn deep_tree_drop_eq_and_debug_do_not_recurse() {
+        use crate::fixtures::{chain_over, leaf, on_small_stack, DEEP};
+        // 회귀(scene recursive-drop-stack-overflow): 10만 단 사슬의 비교·Debug·해제가 작은
+        // stack에서도 끝나야 합니다.
+        on_small_stack(|| {
+            let bottom = leaf(0, DEEP + 1, 1.0, 1.0);
+            let bottom_alive = Arc::downgrade(&bottom);
+            let a = chain_over(bottom, DEEP);
+            let b = chain_over(leaf(0, DEEP + 1, 1.0, 1.0), DEEP);
+            assert_eq!(a.subtree_len(), DEEP + 1);
+            // 독립 생성한 같은 값: 공유 없이 맨 아래까지 값으로 비교합니다.
+            assert!(*a == *b);
+            // 맨 아래 leaf만 다르면 다릅니다.
+            let c = chain_over(leaf(0, DEEP + 1, 2.0, 1.0), DEEP);
+            assert!(*a != *c);
+            // Debug는 정해진 깊이까지만 자식을 펼칩니다.
+            let debug = format!("{a:?}");
+            assert!(debug.len() < 64 * 1024, "Debug 길이 {}", debug.len());
+            assert!(debug.contains("children"));
+
+            // 공유 subtree는 한쪽을 해제해도 남고, 마지막 참조가 사라지면 해제됩니다.
+            let shared = chain_over(leaf(0, DEEP + 2, 1.0, 1.0), DEEP);
+            let shared_alive = Arc::downgrade(&shared);
+            let left = SceneNode::new(
+                crate::fixtures::spec(9, crate::fixtures::rect_content(1.0, 1.0), 0),
+                vec![Arc::clone(&shared)],
+            )
+            .unwrap();
+            drop(shared);
+            let right = left.clone();
+            drop(left);
+            assert!(shared_alive.upgrade().is_some());
+            assert_eq!(right.subtree_len(), DEEP + 2);
+            drop(right);
+            assert!(shared_alive.upgrade().is_none());
+
+            drop((a, b, c));
+            assert!(bottom_alive.upgrade().is_none());
+        });
     }
 
     #[test]

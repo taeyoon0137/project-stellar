@@ -73,3 +73,32 @@
   생길 때 대응표 기준 교차 fixture를 추가해야 합니다.
 - `TextLayoutKey`의 의미(입력 hash 구성)는 text layout cache(X.10.5, 미착수)가 정합니다.
 - 매우 깊은(수만 단계) tree의 `Drop`·`PartialEq`는 재귀입니다. decode·encode·순회는 재귀가 없습니다.
+
+## 후속 수정 (리뷰 major: 깊은 tree·clip stack의 재귀 Drop/PartialEq)
+
+- **결함**: `SceneNode`(자식 `Arc` → `PersistentVec`)와 `ClipStackRef`(`Arc` linked list)가 기본 재귀 `Drop`을,
+  `SceneNode`가 재귀 `PartialEq`·`Debug`를 써서, decode가 `Ok`로 받아들인 깊은 입력(10만 단 node 사슬, clip
+  10만 개)을 비교·해제하는 순간 stack overflow로 프로세스가 중단(SIGABRT, panic 아님)됐습니다. `replace_node`의
+  경로 복사(`replace_below`)도 경로 길이만큼 재귀했습니다.
+- **수정**:
+  - `ClipStackRef`: `Drop`이 `Arc::into_inner`로 마지막 참조인 항목만 떼어 내 반복 해제하고, 공유 prefix를 만나면
+    멈춥니다. `Debug`는 바깥쪽 → 안쪽 clip 목록을 반복 출력합니다(내부 `ClipEntry` 중첩 출력 제거).
+  - `SceneNode`: `Drop`이 자식 목록을 비워 명시적 stack으로 subtree를 해제합니다(공유 subtree는 참조만 줄임).
+    `PartialEq`는 명시적 stack 반복 비교(같은 allocation은 건너뜀)이며 비교 대상 field는 이전 derive와 같습니다.
+    `Debug`는 `DEBUG_CHILD_DEPTH`(8)단까지만 자식을 펼치고 더 깊은 자식은 개수만 표시합니다.
+  - `SceneSnapshot::replace_node`: 경로를 먼저 끝까지 확인한 뒤 아래에서 위로 조상을 다시 만드는 반복 구현으로
+    바꿨습니다. 오류 단계(`PathOutOfRange.level`) 의미는 같습니다.
+- **회귀 테스트**(모두 256 KiB stack thread에서 실행, 수정 전 5개 모두 SIGABRT 확인):
+  `node::deep_tree_drop_eq_and_debug_do_not_recurse`, `stack::deep_clip_stack_drop_eq_and_debug_do_not_recurse`,
+  `snapshot::deep_path_replace_and_drop_do_not_recurse`,
+  `codec::hundred_thousand_deep_tree_decodes_compares_and_drops_on_small_stack`,
+  `codec::hundred_thousand_deep_clip_stack_round_trips_on_small_stack`(깊이 100,000).
+- **명세 동작 변경**: `SceneNode`·`ClipStackRef`의 `Debug` 출력 형식이 바뀌었습니다(값 비교·canonical bytes·semantic
+  hash는 불변). 위 "남은 위험"의 재귀 `Drop`·`PartialEq` 한계는 이 수정으로 해소됐습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-scene` | unit 75, doc 2 passed, 0 failed |
+| `cargo clippy -p stellar-scene --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-scene -- --check` | 통과 |
+| `cargo test -p stellar-renderer-core` | unit 33, doc 1 passed, 0 failed (scene 사용처 회귀 없음) |

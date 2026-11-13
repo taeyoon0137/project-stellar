@@ -44,7 +44,6 @@ pub enum ClipShape {
     },
 }
 
-#[derive(Debug)]
 struct ClipEntry {
     parent: ClipStackRef,
     clip: ClipShape,
@@ -52,8 +51,33 @@ struct ClipEntry {
 }
 
 /// 불변 clip stack 참조. 비어 있으면 clip이 없습니다.
-#[derive(Debug, Clone, Default)]
+///
+/// 해제·비교·Debug 출력은 모두 반복으로 처리합니다. 신뢰하지 않는 입력(decode)에서 온
+/// 수십만 단 clip 목록도 호출 stack을 소모하지 않습니다.
+#[derive(Clone, Default)]
 pub struct ClipStackRef(Option<Arc<ClipEntry>>);
+
+impl Drop for ClipStackRef {
+    /// 마지막 참조인 항목만 하나씩 떼어 내 해제합니다.
+    ///
+    /// 기본 drop은 `parent`를 따라 재귀하므로 깊은 목록에서 stack overflow로 프로세스가
+    /// 중단됩니다. 다른 참조가 남은 항목(공유 prefix)을 만나면 거기서 멈춥니다.
+    /// `Arc::into_inner`는 동시에 해제하는 thread 중 정확히 하나에게만 항목을 넘깁니다.
+    fn drop(&mut self) {
+        let mut next = self.0.take();
+        while let Some(entry) = next {
+            // 꺼낸 항목은 parent가 비워진 채로 해제되므로 재귀하지 않습니다.
+            next = Arc::into_inner(entry).and_then(|mut entry| entry.parent.0.take());
+        }
+    }
+}
+
+impl fmt::Debug for ClipStackRef {
+    /// clip을 바깥쪽 → 안쪽 순 목록으로 출력합니다(반복).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.to_outer_first()).finish()
+    }
+}
 
 impl ClipStackRef {
     /// 빈 stack(clip 없음).
@@ -123,9 +147,16 @@ impl PartialEq for ClipStackRef {
 impl Eq for ClipStackRef {}
 
 /// [`ClipStackRef::iter_inner_first`] 반복자.
-#[derive(Debug)]
 pub struct ClipIter<'a> {
     next: Option<&'a ClipEntry>,
+}
+
+impl fmt::Debug for ClipIter<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ClipIter")
+            .field("remaining", &self.next.map_or(0, |entry| entry.depth))
+            .finish()
+    }
 }
 
 impl<'a> Iterator for ClipIter<'a> {
@@ -487,6 +518,32 @@ mod tests {
         assert!(!a.ptr_eq(&a2));
         assert!(ClipStackRef::none().is_empty());
         assert_eq!(ClipStackRef::none(), ClipStackRef::default());
+    }
+
+    #[test]
+    fn deep_clip_stack_drop_eq_and_debug_do_not_recurse() {
+        use crate::fixtures::{deep_clip, on_small_stack, DEEP};
+        // 회귀(scene recursive-drop-stack-overflow): 10만 단 clip linked list의 비교·Debug·
+        // 해제가 작은 stack에서도 끝나야 합니다.
+        on_small_stack(|| {
+            let a = deep_clip(DEEP, 100.0);
+            let b = deep_clip(DEEP, 100.0);
+            assert_eq!(a.depth(), DEEP as usize);
+            assert!(a == b && !a.ptr_eq(&b));
+            // 가장 바깥 clip만 달라도 다릅니다.
+            assert!(a != deep_clip(DEEP, 99.0));
+            // 공유 prefix는 바깥 참조를 해제해도 안쪽 stack에서 그대로 읽힙니다.
+            let inner = a.push(rect_clip(5.0));
+            drop(a);
+            assert_eq!(inner.depth(), DEEP as usize + 1);
+            assert_eq!(inner.to_outer_first().first(), Some(&&rect_clip(100.0)));
+            drop((inner, b));
+            // Debug는 clip 목록을 반복으로 출력합니다.
+            let short = deep_clip(20_000, 3.0);
+            let debug = format!("{short:?}");
+            assert!(debug.starts_with('['));
+            assert_eq!(debug.matches("radii").count(), 20_000);
+        });
     }
 
     #[test]

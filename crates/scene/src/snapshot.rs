@@ -123,7 +123,7 @@ impl SceneSnapshot {
                 level: 0,
                 index: root_index,
             })?;
-        let new_root = replace_below(old_root, rest, node, 1)?;
+        let new_root = replace_below(old_root, rest, node)?;
         if let Some(previous) = root_index.checked_sub(1).and_then(|i| self.roots.get(i)) {
             check_z_follows(previous.last_z(), new_root.z())?;
         }
@@ -251,28 +251,38 @@ impl<'a> Iterator for PreOrder<'a> {
     }
 }
 
-/// `node` 아래 `path` 위치를 `replacement`로 바꾼 새 node(경로 복사).
+/// `root` 아래 `path` 위치를 `replacement`로 바꾼 새 node(경로 복사).
+///
+/// `path[k]`는 `k + 1`단계 index입니다. 경로를 먼저 끝까지 확인한 뒤 아래에서 위로 조상을
+/// 다시 만들며, 재귀하지 않아 경로가 수십만 단이어도 호출 stack을 소모하지 않습니다.
 fn replace_below(
-    node: &Arc<SceneNode>,
+    root: &Arc<SceneNode>,
     path: &[usize],
     replacement: Arc<SceneNode>,
-    level: usize,
 ) -> Result<Arc<SceneNode>, SceneEditError> {
-    let Some((&index, rest)) = path.split_first() else {
-        return Ok(replacement);
-    };
-    let child = node
-        .child(index)
-        .ok_or(SceneEditError::PathOutOfRange { level, index })?;
-    let new_child = replace_below(child, rest, replacement, level + 1)?;
-    node.with_child_replaced(index, new_child)
-        .map(Arc::new)
-        .map_err(|error| match error {
-            SceneEditError::PathOutOfRange { index, .. } => {
-                SceneEditError::PathOutOfRange { level, index }
-            }
-            other => other,
-        })
+    let mut ancestors: Vec<&Arc<SceneNode>> = Vec::with_capacity(path.len());
+    let mut node = root;
+    for (offset, &index) in path.iter().enumerate() {
+        ancestors.push(node);
+        node = node.child(index).ok_or(SceneEditError::PathOutOfRange {
+            level: offset + 1,
+            index,
+        })?;
+    }
+    let mut current = replacement;
+    for (offset, (ancestor, &index)) in ancestors.iter().zip(path).enumerate().rev() {
+        let level = offset + 1;
+        current = ancestor
+            .with_child_replaced(index, current)
+            .map(Arc::new)
+            .map_err(|error| match error {
+                SceneEditError::PathOutOfRange { index, .. } => {
+                    SceneEditError::PathOutOfRange { level, index }
+                }
+                other => other,
+            })?;
+    }
+    Ok(current)
 }
 
 #[cfg(test)]
@@ -575,6 +585,51 @@ mod tests {
             ),
             Err(SceneEditError::Tree(_))
         ));
+    }
+
+    #[test]
+    fn deep_path_replace_and_drop_do_not_recurse() {
+        use crate::fixtures::{chain_over, on_small_stack, DEEP};
+        // 회귀(scene recursive-drop-stack-overflow): 10만 단 경로의 replace_node·비교·해제가
+        // 작은 stack에서도 끝나야 합니다.
+        on_small_stack(|| {
+            let base = SceneSnapshot::new(
+                DocumentRevision(1),
+                SceneRevision(1),
+                vec![chain_over(leaf(0, DEEP + 1, 1.0, 1.0), DEEP)],
+            )
+            .unwrap();
+            let mut path = vec![0usize; DEEP as usize + 1];
+            let target = Arc::clone(node_at(&base, &path));
+            let replacement = Arc::new(SceneNode::leaf(repainted(&target)));
+            let next = base
+                .replace_node(
+                    DocumentRevision(2),
+                    SceneRevision(2),
+                    &path,
+                    Arc::clone(&replacement),
+                )
+                .unwrap();
+            assert!(Arc::ptr_eq(node_at(&next, &path), &replacement));
+            assert!(Arc::ptr_eq(node_at(&base, &path), &target));
+            assert_eq!(next.node_count(), DEEP + 1);
+            // 경로 위 node만 새로 할당됩니다.
+            assert_eq!(next.sharing_with(&base).new_nodes, DEEP + 1);
+            assert!(next != base);
+            // 깊은 경로 끝의 범위 밖 index는 해당 단계로 보고합니다.
+            path.push(3);
+            assert_eq!(
+                base.replace_node(DocumentRevision(2), SceneRevision(2), &path, replacement),
+                Err(SceneEditError::PathOutOfRange {
+                    level: DEEP as usize + 1,
+                    index: 3
+                })
+            );
+            // 같은 내용의 복제본과 값이 같고, 해제도 반복으로 끝납니다.
+            let copy = base.clone();
+            assert!(copy == base);
+            drop((base, next, copy, target));
+        });
     }
 
     #[test]

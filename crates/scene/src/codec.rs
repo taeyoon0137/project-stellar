@@ -845,6 +845,60 @@ mod tests {
     }
 
     #[test]
+    fn hundred_thousand_deep_tree_decodes_compares_and_drops_on_small_stack() {
+        use crate::fixtures::{chain_over, leaf, on_small_stack, DEEP};
+        // 회귀(scene recursive-drop-stack-overflow): decode가 Ok를 돌려준 뒤 비교·해제에서
+        // stack overflow로 프로세스가 중단되던 10만 단 입력.
+        on_small_stack(|| {
+            let snapshot = SceneSnapshot::new(
+                DocumentRevision(1),
+                SceneRevision(1),
+                vec![chain_over(leaf(0, DEEP + 1, 1.0, 1.0), DEEP)],
+            )
+            .unwrap();
+            let bytes = encode(&snapshot);
+            let decoded = decode(&bytes).unwrap();
+            assert_eq!(decoded.node_count(), DEEP + 1);
+            assert!(decoded == snapshot);
+            assert_eq!(decoded.semantic_hash(), snapshot.semantic_hash());
+            assert_eq!(encode(&decoded), bytes);
+            drop(decoded);
+            // 도중에 잘린 깊은 입력: 만들던 subtree를 버려도 중단되지 않습니다.
+            assert_eq!(
+                decode(&bytes[..bytes.len() - 1]),
+                Err(SceneCodecError::Truncated)
+            );
+        });
+    }
+
+    #[test]
+    fn hundred_thousand_deep_clip_stack_round_trips_on_small_stack() {
+        use crate::fixtures::{deep_clip, on_small_stack, DEEP};
+        // 회귀(scene recursive-drop-stack-overflow): clip 10만 개 node 하나.
+        on_small_stack(|| {
+            let mut node_spec = spec(1, fixtures::rect_content(1.0, 1.0), 1);
+            node_spec.clip = deep_clip(DEEP, 50.0);
+            let snapshot = SceneSnapshot::new(
+                DocumentRevision(1),
+                SceneRevision(1),
+                vec![Arc::new(SceneNode::leaf(node_spec))],
+            )
+            .unwrap();
+            let bytes = encode(&snapshot);
+            let decoded = decode(&bytes).unwrap();
+            assert_eq!(decoded.root(0).unwrap().clip().depth(), DEEP as usize);
+            assert!(decoded == snapshot);
+            assert_eq!(encode(&decoded), bytes);
+            drop((decoded, snapshot));
+            // clip 목록 도중에 잘린 입력: 읽던 clip stack을 버려도 중단되지 않습니다.
+            assert_eq!(
+                decode(&bytes[..bytes.len() / 2]),
+                Err(SceneCodecError::Truncated)
+            );
+        });
+    }
+
+    #[test]
     fn every_truncation_is_a_structured_error() {
         let bytes = encode(&sample_snapshot());
         for len in 0..bytes.len() {
