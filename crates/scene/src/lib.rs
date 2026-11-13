@@ -21,6 +21,9 @@ pub mod snapshot;
 /// Scene snapshot canonical serialization (XI.1.1).
 pub mod codec;
 
+/// DocumentRevision → SceneRevision 매핑과 snapshot 세대 (XI.1.3).
+pub mod revision;
+
 /// 테스트 전용 scene fixture 생성기 (XI.1.2).
 #[cfg(test)]
 mod fixtures;
