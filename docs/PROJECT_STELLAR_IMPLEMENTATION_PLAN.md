@@ -690,7 +690,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| VII.6.1 | `[ ]` | 각 command에 `apply(forward); apply(inverse)`가 원본 semantic snapshot으로 돌아오는 property test macro를 작성합니다. | 모든 Phase VII command 등록 검사 통과. | VII.2, VII.3 |
+| VII.6.1 | `[x]` | 각 command에 `apply(forward); apply(inverse)`가 원본 semantic snapshot으로 돌아오는 property test macro를 작성합니다. | 모든 Phase VII command 등록 검사 통과. | VII.2, VII.3 |
 | VII.6.2 | `[ ]` | random valid command sequence 1,000개를 생성하고 전체 undo 후 초기 상태, 전체 redo 후 최종 상태를 확인합니다. | seed corpus 전부 통과. | VII.6.1, VII.5.3 |
 | VII.6.3 | `[ ]` | command 실행 중 panic·out-of-bounds가 없는 fuzz target을 추가합니다. | 정해진 CI fuzz smoke duration 무오류. | VII.1.5 |
 
