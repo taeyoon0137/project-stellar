@@ -43,3 +43,6 @@ pub mod capabilities;
 
 /// Fragment payload (VI.4).
 pub mod fragment;
+
+/// Shape payload (VI.5).
+pub mod shape;
