@@ -26,6 +26,9 @@ pub mod track;
 /// 기존 이력 LFS 변환 미지원(XIII.7.4).
 pub mod migrate;
 
+/// LFS pointer만 있는 asset 진단(XIII.7.5).
+pub mod pointer;
+
 use crate::runner::{argv, GitOutput, GitRunError, GitRunner};
 
 /// Git LFS 버전과 raw output.

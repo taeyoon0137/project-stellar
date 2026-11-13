@@ -187,10 +187,27 @@ pub fn read_working_tree_file(
     worktree_root: &Path,
     file: &WorkingTreeFile,
 ) -> Result<Vec<u8>, std::io::ErrorKind> {
-    let components = validate_snapshot_path(file.path.as_bytes())
-        .map_err(|_| std::io::ErrorKind::InvalidInput)?;
-    // 상위 component가 symlink면 root 밖을 읽을 수 있으므로 거부합니다.
-    let mut current = worktree_root.to_path_buf();
+    let local = checked_local_path(worktree_root, &file.path)?;
+    match file.kind {
+        WorkingTreeFileKind::Symlink => {
+            let target = std::fs::read_link(&local).map_err(|e| e.kind())?;
+            Ok(os_bytes(target.as_os_str()))
+        }
+        _ => read_regular_no_follow(&local, u64::MAX),
+    }
+}
+
+/// 경로를 검증하고 상위 component가 모두 symlink가 아닌 디렉터리인 root 아래 로컬 경로를 돌려줍니다.
+///
+/// 상위 component가 symlink면 root 밖을 가리킬 수 있으므로 [`std::io::ErrorKind::InvalidInput`],
+/// 상위 디렉터리가 없으면 [`std::io::ErrorKind::NotFound`]입니다. 마지막 component는 확인하지 않습니다.
+pub(crate) fn checked_local_path(
+    root: &Path,
+    path: &GitPath,
+) -> Result<PathBuf, std::io::ErrorKind> {
+    let components =
+        validate_snapshot_path(path.as_bytes()).map_err(|_| std::io::ErrorKind::InvalidInput)?;
+    let mut current = root.to_path_buf();
     for c in &components[..components.len() - 1] {
         let os = GitPath::from_bytes(c)
             .to_path_buf()
@@ -201,31 +218,30 @@ pub fn read_working_tree_file(
             return Err(std::io::ErrorKind::InvalidInput);
         }
     }
-    let local = local_path(worktree_root, &file.path).ok_or(std::io::ErrorKind::InvalidInput)?;
-    match file.kind {
-        WorkingTreeFileKind::Symlink => {
-            let target = std::fs::read_link(&local).map_err(|e| e.kind())?;
-            Ok(os_bytes(target.as_os_str()))
-        }
-        _ => read_regular_no_follow(&local),
-    }
+    local_path(root, path).ok_or(std::io::ErrorKind::InvalidInput)
 }
 
-/// 마지막 component를 따라가지 않고 일반 파일을 읽습니다(확인 → 열기 → 같은 파일 재확인).
-fn read_regular_no_follow(local: &Path) -> Result<Vec<u8>, std::io::ErrorKind> {
+/// 마지막 component를 따라가지 않고 일반 파일을 최대 `limit` byte까지 읽습니다(확인 → 열기 → 같은 파일
+/// 재확인).
+pub(crate) fn read_regular_no_follow(
+    local: &Path,
+    limit: u64,
+) -> Result<Vec<u8>, std::io::ErrorKind> {
     use std::io::Read;
     let before = std::fs::symlink_metadata(local).map_err(|e| e.kind())?;
     if !before.is_file() {
         // symlink·디렉터리·특수 파일로 바뀜.
         return Err(std::io::ErrorKind::InvalidInput);
     }
-    let mut file = std::fs::File::open(local).map_err(|e| e.kind())?;
+    let file = std::fs::File::open(local).map_err(|e| e.kind())?;
     let opened = file.metadata().map_err(|e| e.kind())?;
     if !opened.is_file() || !same_file(&before, &opened) {
         return Err(std::io::ErrorKind::InvalidInput);
     }
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes).map_err(|e| e.kind())?;
+    file.take(limit)
+        .read_to_end(&mut bytes)
+        .map_err(|e| e.kind())?;
     Ok(bytes)
 }
 
