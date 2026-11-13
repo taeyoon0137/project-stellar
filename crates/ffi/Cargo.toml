@@ -11,6 +11,8 @@ crate-type = ["lib", "staticlib"]
 
 [dependencies]
 stellar-core-types = { path = "../core-types" }
+# 셸 경계는 문서·프로젝트 작업에 runtime을 통해서만 도달합니다(ADR-0013, ADR-0014).
+stellar-runtime = { path = "../runtime" }
 
 [lints]
 workspace = true

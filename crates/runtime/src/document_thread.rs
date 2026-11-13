@@ -56,6 +56,7 @@ use stellar_renderer_core::thread_role::{
     bind_thread_role, current_thread_role, ThreadRole, ThreadRoleError,
 };
 
+use crate::app::AppSessions;
 use crate::command_queue::{
     CommandPriority, CommandQueue, Pushed, QueueCapacity, RejectReason, SubmitOptions,
 };
@@ -163,6 +164,8 @@ pub fn on_document_thread() -> bool {
 pub struct DocumentContext {
     documents: OpenDocumentSet,
     revisions: HashMap<OpenDocumentHandle, DocumentRevision>,
+    /// 셸 경계용 프로젝트·문서 session 표([`crate::app`]). crate 밖에는 노출하지 않습니다.
+    app: AppSessions,
     _not_send: PhantomData<*const ()>,
 }
 
@@ -171,8 +174,19 @@ impl DocumentContext {
         DocumentContext {
             documents: OpenDocumentSet::new(),
             revisions: HashMap::new(),
+            app: AppSessions::default(),
             _not_send: PhantomData,
         }
+    }
+
+    /// 프로젝트·문서 session 표(읽기).
+    pub(crate) fn app_sessions(&self) -> &AppSessions {
+        &self.app
+    }
+
+    /// 프로젝트·문서 session 표(쓰기).
+    pub(crate) fn app_sessions_mut(&mut self) -> &mut AppSessions {
+        &mut self.app
     }
 
     /// 문서를 엽니다. 이미 열려 있으면 기존 handle을 반환합니다(VI.1.4). 새로 열린 문서의

@@ -4,6 +4,13 @@
 //! 모든 작업 함수는 [`StellarStatus`]를 반환하고, 오류 세부는 전역이 아니라
 //! handle별 `stellar_last_error`로 읽습니다.
 //! 모든 FFI 경계는 [`ffi_guard`]로 감싸 panic이 경계를 넘지 않고 `InternalPanic`으로 변환됩니다.
+//!
+//! 프로젝트·문서 요청(`stellar_project_*`, `stellar_document_*`)은 `stellar-runtime`의
+//! [`AppRuntime`]으로 넘깁니다. 요청은 기다리지 않고 request id를 돌려주며, 완료는
+//! [`stellar_runtime_poll_event`]로 pull하는 event와 [`stellar_runtime_state`]·
+//! [`stellar_document_info`]로 읽는 상태 snapshot으로만 셸에 돌아옵니다(ADR-0014). Rust 타입은
+//! 경계를 넘지 않고 정수 handle·고정 POD 구조체·버전형 바이트만 씁니다. `AppRuntime`(document
+//! thread)은 handle의 첫 프로젝트·문서 요청에서 시작합니다.
 
 /// 양 플랫폼 공통 입력 이벤트와 native timestamp 변환 (XII.3.1).
 pub mod input;
@@ -18,6 +25,10 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use stellar_core_types::clock::MonotonicClock;
+use stellar_core_types::ids::StableId;
+use stellar_runtime::app::{
+    AppRuntime, DocumentSessionId, EventPoll, ProjectSessionId, RequestError, RequestId,
+};
 
 use crate::input::{InputTimeDomain, NativeTimestamp};
 use crate::input_macos::{convert_mac_event, StellarMacEvent};
@@ -90,6 +101,8 @@ struct Runtime {
     input: InputQueue,
     /// native 입력 시각 → 코어 단조 domain 변환기(첫 입력에서 기준점을 잡음).
     input_domain: Option<InputTimeDomain>,
+    /// 프로젝트·문서 요청을 처리하는 앱 runtime(첫 요청에서 시작).
+    app: Option<AppRuntime>,
 }
 
 impl Runtime {
@@ -101,7 +114,52 @@ impl Runtime {
             drawable: None,
             input: InputQueue::new(INPUT_QUEUE_CAPACITY),
             input_domain: None,
+            app: None,
         }
+    }
+
+    /// 앱 runtime을 돌려줍니다. 아직 없으면 시작합니다(실패 시 last error 설정).
+    fn app(&mut self) -> Result<&AppRuntime, StellarStatus> {
+        if self.app.is_none() {
+            match AppRuntime::start() {
+                Ok(app) => self.app = Some(app),
+                Err(error) => {
+                    self.last_error = Some((
+                        StellarStatus::Internal,
+                        format!("코어 runtime을 시작하지 못했습니다: {error}"),
+                    ));
+                    return Err(StellarStatus::Internal);
+                }
+            }
+        }
+        self.app.as_ref().ok_or(StellarStatus::Internal)
+    }
+
+    /// 요청 접수 결과를 상태 코드로 바꾸고 request id를 씁니다(실패 시 0과 last error).
+    ///
+    /// # Safety
+    /// `out_request`는 null이거나 `u64` 쓰기가 유효한 포인터여야 합니다.
+    unsafe fn finish_request(
+        &mut self,
+        result: Result<RequestId, RequestError>,
+        out_request: *mut u64,
+    ) -> StellarStatus {
+        let (status, request) = match result {
+            Ok(request) => (StellarStatus::Ok, request.0),
+            Err(error) => {
+                let status = match error {
+                    RequestError::QueueFull => StellarStatus::QueueFull,
+                    RequestError::Stopped => StellarStatus::Internal,
+                    RequestError::InvalidPath { .. } => StellarStatus::InvalidArgument,
+                };
+                self.last_error = Some((status, error.to_string()));
+                (status, 0)
+            }
+        };
+        if !out_request.is_null() {
+            unsafe { *out_request = request };
+        }
+        status
     }
 }
 
@@ -168,10 +226,16 @@ pub extern "C" fn stellar_runtime_destroy(handle: u64) -> StellarStatus {
         let Ok(mut reg) = registry().lock() else {
             return StellarStatus::Internal;
         };
-        if reg.live.remove(&handle).is_some() {
-            StellarStatus::Ok
-        } else {
-            StellarStatus::InvalidHandle
+        let removed = reg.live.remove(&handle);
+        // registry lock을 놓은 뒤 파괴합니다. 앱 runtime 종료는 document thread join을 기다리므로
+        // lock을 쥔 채 기다리면 다른 handle의 호출이 막힙니다.
+        drop(reg);
+        match removed {
+            Some(runtime) => {
+                drop(runtime);
+                StellarStatus::Ok
+            }
+            None => StellarStatus::InvalidHandle,
         }
     })
 }
@@ -377,8 +441,8 @@ pub unsafe extern "C" fn stellar_runtime_poll_event(
             return StellarStatus::InvalidHandle;
         };
         let Some((front_kind, front_payload)) = rt.events.front() else {
-            unsafe { write_len(out_written, 0) };
-            return StellarStatus::NoError;
+            // 코어 내부 event가 없으면 앱 runtime의 완료 event를 같은 규칙으로 읽습니다.
+            return unsafe { poll_app_event(rt, out_kind, buf, buf_len, out_written) };
         };
         let kind = *front_kind;
         let need = front_payload.len();
@@ -579,6 +643,303 @@ pub unsafe extern "C" fn stellar_runtime_poll_input(
         let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
         out[..bytes.len()].copy_from_slice(&bytes);
         unsafe { write_len(out_written, bytes.len()) };
+        StellarStatus::Ok
+    })
+}
+
+/// 앱 runtime 완료 event를 `stellar_runtime_poll_event` 규칙으로 읽습니다.
+///
+/// # Safety
+/// [`stellar_runtime_poll_event`]와 같습니다.
+unsafe fn poll_app_event(
+    rt: &Runtime,
+    out_kind: *mut u32,
+    buf: *mut u8,
+    buf_len: usize,
+    out_written: *mut usize,
+) -> StellarStatus {
+    let Some(app) = rt.app.as_ref() else {
+        unsafe { write_len(out_written, 0) };
+        return StellarStatus::NoError;
+    };
+    let capacity = (!buf.is_null()).then_some(buf_len);
+    match app.poll_event(capacity) {
+        EventPoll::Empty => {
+            unsafe { write_len(out_written, 0) };
+            StellarStatus::NoError
+        }
+        EventPoll::Pending { kind, len } => {
+            if !buf.is_null() {
+                return StellarStatus::BufferTooSmall;
+            }
+            if !out_kind.is_null() {
+                unsafe { *out_kind = kind };
+            }
+            unsafe { write_len(out_written, len) };
+            StellarStatus::Ok
+        }
+        EventPoll::Taken { kind, payload } => {
+            if !out_kind.is_null() {
+                unsafe { *out_kind = kind };
+            }
+            let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
+            out[..payload.len()].copy_from_slice(&payload);
+            unsafe { write_len(out_written, payload.len()) };
+            StellarStatus::Ok
+        }
+    }
+}
+
+/// `StellarRuntimeState` 레이아웃 버전.
+pub const RUNTIME_STATE_VERSION: u32 = 1;
+
+/// `StellarDocumentInfo` 레이아웃 버전.
+pub const DOCUMENT_INFO_VERSION: u32 = 1;
+
+/// 앱 runtime 상태 snapshot 요약(고정 40 byte, C ABI).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct StellarRuntimeState {
+    /// [`RUNTIME_STATE_VERSION`](코어가 씀).
+    pub version: u32,
+    /// 0.
+    pub reserved: u32,
+    /// 상태 snapshot 게시 세대(성공한 요청마다 1 증가, 0 = 아직 없음).
+    pub generation: u64,
+    /// 열린 프로젝트 session 수.
+    pub project_count: u64,
+    /// 열린 문서 session 수.
+    pub document_count: u64,
+    /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
+    pub outstanding: u64,
+}
+
+/// 열린 문서 session 정보(고정 56 byte, C ABI).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct StellarDocumentInfo {
+    /// [`DOCUMENT_INFO_VERSION`](코어가 씀).
+    pub version: u32,
+    /// 0.
+    pub reserved: u32,
+    /// 문서 session handle.
+    pub document: u64,
+    /// 소속 프로젝트 session handle.
+    pub project: u64,
+    /// snapshot 게시 시점의 문서 revision.
+    pub revision: u64,
+    /// snapshot 게시 시점의 node 수.
+    pub node_count: u64,
+    /// 문서 StableId 16 byte(UUID 바이트 순서).
+    pub document_id: [u8; 16],
+}
+
+/// 프로젝트 폴더 열기를 요청합니다(XII.6.2 코어 측). 기다리지 않고 request id를 씁니다.
+///
+/// 경로는 UTF-8 ptr+len 절대 경로입니다. 결과는 `STELLAR_EVENT_PROJECT_OPENED` 또는
+/// `STELLAR_EVENT_REQUEST_FAILED` event로 옵니다. 빈 경로·상대 경로·NUL 포함은
+/// `InvalidArgument`, 처리 대기 요청이 가득 차면 `QueueFull`입니다(요청 없음, `out_request = 0`).
+///
+/// # Safety
+/// `path_len > 0`이면 `path`는 `path_len` 바이트 읽기가 유효해야 하고, `out_request`는 null이거나
+/// 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_project_open(
+    handle: u64,
+    path: *const u8,
+    path_len: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let root = match unsafe { decode_utf8_owned(path, path_len) } {
+            Ok(root) => root,
+            Err(status) => {
+                rt.last_error = Some((status, "invalid project path bytes".to_string()));
+                return status;
+            }
+        };
+        let result = match rt.app() {
+            Ok(app) => app.open_project(std::path::Path::new(&root)),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 프로젝트 session 닫기를 요청합니다. 그 아래 열린 문서도 닫습니다.
+///
+/// 결과는 `STELLAR_EVENT_PROJECT_CLOSED` 또는 `STELLAR_EVENT_REQUEST_FAILED` event로 옵니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_project_close(
+    handle: u64,
+    project: u64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.close_project(ProjectSessionId(project)),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 프로젝트 session 아래에서 문서 열기를 요청합니다. `document_id`는 StableId 16 byte입니다.
+///
+/// 결과는 `STELLAR_EVENT_DOCUMENT_OPENED` 또는 `STELLAR_EVENT_REQUEST_FAILED` event로 옵니다.
+///
+/// # Safety
+/// `document_id`는 16 byte 읽기가 유효한 포인터여야 하고, `out_request`는 null이거나 유효해야
+/// 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_document_open(
+    handle: u64,
+    project: u64,
+    document_id: *const u8,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if document_id.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(unsafe { std::slice::from_raw_parts(document_id, 16) });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.open_document(ProjectSessionId(project), StableId::from_bytes(bytes)),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 문서 session 닫기를 요청합니다.
+///
+/// 결과는 `STELLAR_EVENT_DOCUMENT_CLOSED` 또는 `STELLAR_EVENT_REQUEST_FAILED` event로 옵니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_document_close(
+    handle: u64,
+    document: u64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.close_document(DocumentSessionId(document)),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 최신 상태 snapshot 요약을 씁니다. document thread를 기다리지 않습니다.
+///
+/// 아직 요청이 없었으면 세대 0·개수 0입니다.
+///
+/// # Safety
+/// `out_state`는 `StellarRuntimeState` 쓰기가 유효한 포인터여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_runtime_state(
+    handle: u64,
+    out_state: *mut StellarRuntimeState,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_state.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let mut state = StellarRuntimeState {
+            version: RUNTIME_STATE_VERSION,
+            ..StellarRuntimeState::default()
+        };
+        if let Some(app) = rt.app.as_ref() {
+            let snapshot = app.state();
+            state.generation = snapshot.generation;
+            state.project_count = snapshot.projects.len() as u64;
+            state.document_count = snapshot.documents.len() as u64;
+            state.outstanding = app.outstanding() as u64;
+        }
+        unsafe { *out_state = state };
+        StellarStatus::Ok
+    })
+}
+
+/// 열린 문서 session의 최신 snapshot 정보를 씁니다. document thread를 기다리지 않습니다.
+///
+/// 열려 있지 않은 문서 session은 `InvalidArgument`(last error 설정)입니다.
+///
+/// # Safety
+/// `out_info`는 `StellarDocumentInfo` 쓰기가 유효한 포인터여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_document_info(
+    handle: u64,
+    document: u64,
+    out_info: *mut StellarDocumentInfo,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_info.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let snapshot = rt.app.as_ref().map(AppRuntime::state);
+        let Some(summary) = snapshot
+            .as_ref()
+            .and_then(|state| state.document(DocumentSessionId(document)))
+        else {
+            rt.last_error = Some((
+                StellarStatus::InvalidArgument,
+                format!("열려 있지 않은 문서 session입니다: {document}"),
+            ));
+            return StellarStatus::InvalidArgument;
+        };
+        let info = StellarDocumentInfo {
+            version: DOCUMENT_INFO_VERSION,
+            reserved: 0,
+            document: summary.document.0,
+            project: summary.project.0,
+            revision: summary.revision.0,
+            node_count: summary.node_count,
+            document_id: summary.document_id.to_bytes(),
+        };
+        unsafe { *out_info = info };
         StellarStatus::Ok
     })
 }
@@ -911,6 +1272,453 @@ mod tests {
             "sizeof(StellarMacEvent) == {}",
             std::mem::size_of::<StellarMacEvent>()
         )));
+    }
+
+    #[test]
+    fn header_declares_session_constants_and_layouts() {
+        use stellar_runtime::app::{
+            event_kind, RequestFailure, EVENT_SCHEMA_VERSION, EVENT_TEXT_MAX,
+        };
+
+        let header = include_str!("../include/stellar_ffi.h");
+        let define = |name: &str, value: String| {
+            let line = format!("#define {name} {value}\n");
+            assert!(header.contains(&line), "헤더에 {line:?} 없음");
+        };
+        define(
+            "STELLAR_EVENT_SCHEMA_VERSION",
+            EVENT_SCHEMA_VERSION.to_string(),
+        );
+        define("STELLAR_EVENT_TEXT_MAX", EVENT_TEXT_MAX.to_string());
+        for (name, kind) in [
+            ("STELLAR_EVENT_PROJECT_OPENED", event_kind::PROJECT_OPENED),
+            ("STELLAR_EVENT_PROJECT_CLOSED", event_kind::PROJECT_CLOSED),
+            ("STELLAR_EVENT_DOCUMENT_OPENED", event_kind::DOCUMENT_OPENED),
+            ("STELLAR_EVENT_DOCUMENT_CLOSED", event_kind::DOCUMENT_CLOSED),
+            ("STELLAR_EVENT_REQUEST_FAILED", event_kind::REQUEST_FAILED),
+        ] {
+            define(name, format!("{kind:#06x}"));
+        }
+        define(
+            "STELLAR_EVENT_CAPACITY",
+            AppRuntime::DEFAULT_EVENT_CAPACITY.to_string(),
+        );
+        let failures = [
+            ("UNKNOWN_PROJECT", RequestFailure::UnknownProject),
+            ("UNKNOWN_DOCUMENT", RequestFailure::UnknownDocument),
+            (
+                "DOCUMENT_IN_OTHER_PROJECT",
+                RequestFailure::DocumentInOtherProject,
+            ),
+            ("NOT_A_REPOSITORY", RequestFailure::NotARepository),
+            ("NOT_A_STELLAR_PROJECT", RequestFailure::NotAStellarProject),
+            ("MANIFEST_UNREADABLE", RequestFailure::ManifestUnreadable),
+            ("MANIFEST_CORRUPT", RequestFailure::ManifestCorrupt),
+            ("MANIFEST_INVALID", RequestFailure::ManifestInvalid),
+            ("INVALID_PROJECT_ID", RequestFailure::InvalidProjectId),
+            ("UNTRUSTED_SYMLINK", RequestFailure::UntrustedSymlink),
+            ("PATH_UNRESOLVED", RequestFailure::PathUnresolved),
+        ];
+        assert_eq!(
+            failures.len(),
+            RequestFailure::ALL.len(),
+            "모든 실패 코드 노출"
+        );
+        for (name, failure) in failures {
+            define(
+                &format!("STELLAR_FAILURE_{name}"),
+                failure.code().to_string(),
+            );
+        }
+        define(
+            "STELLAR_RUNTIME_STATE_VERSION",
+            RUNTIME_STATE_VERSION.to_string(),
+        );
+        define(
+            "STELLAR_DOCUMENT_INFO_VERSION",
+            DOCUMENT_INFO_VERSION.to_string(),
+        );
+        assert!(header.contains(&format!(
+            "sizeof(StellarRuntimeState) == {}",
+            std::mem::size_of::<StellarRuntimeState>()
+        )));
+        assert!(header.contains(&format!(
+            "sizeof(StellarDocumentInfo) == {}",
+            std::mem::size_of::<StellarDocumentInfo>()
+        )));
+    }
+
+    #[test]
+    fn session_struct_layouts_are_fixed() {
+        use std::mem::{align_of, offset_of, size_of};
+        assert_eq!(size_of::<StellarRuntimeState>(), 40);
+        assert_eq!(align_of::<StellarRuntimeState>(), 8);
+        assert_eq!(offset_of!(StellarRuntimeState, version), 0);
+        assert_eq!(offset_of!(StellarRuntimeState, reserved), 4);
+        assert_eq!(offset_of!(StellarRuntimeState, generation), 8);
+        assert_eq!(offset_of!(StellarRuntimeState, project_count), 16);
+        assert_eq!(offset_of!(StellarRuntimeState, document_count), 24);
+        assert_eq!(offset_of!(StellarRuntimeState, outstanding), 32);
+        assert_eq!(size_of::<StellarDocumentInfo>(), 56);
+        assert_eq!(offset_of!(StellarDocumentInfo, version), 0);
+        assert_eq!(offset_of!(StellarDocumentInfo, reserved), 4);
+        assert_eq!(offset_of!(StellarDocumentInfo, document), 8);
+        assert_eq!(offset_of!(StellarDocumentInfo, project), 16);
+        assert_eq!(offset_of!(StellarDocumentInfo, revision), 24);
+        assert_eq!(offset_of!(StellarDocumentInfo, node_count), 32);
+        assert_eq!(offset_of!(StellarDocumentInfo, document_id), 40);
+    }
+
+    mod project_session {
+        use super::*;
+        use std::path::{Path, PathBuf};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
+        use stellar_runtime::app::{event_kind, RequestFailure, RuntimeEvent};
+
+        const MANIFEST: &str = "schema_version: \"1\"\nproject:\n  id: \"0195c530-3acd-7bc1-8414-c213f61cb965\"\n  name: FFI 프로젝트\ntarget_profiles: []\ndependencies: {}\n";
+
+        struct TempDir {
+            path: PathBuf,
+        }
+
+        impl TempDir {
+            fn new(tag: &str) -> TempDir {
+                static COUNTER: AtomicUsize = AtomicUsize::new(0);
+                let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+                let path = std::env::temp_dir().join(format!(
+                    "stellar-ffi-session-{tag}-{}-{n}",
+                    std::process::id()
+                ));
+                let _ = std::fs::remove_dir_all(&path);
+                std::fs::create_dir_all(&path).unwrap();
+                TempDir { path }
+            }
+
+            fn project() -> TempDir {
+                let dir = TempDir::new("project");
+                std::fs::write(dir.path.join("stellar.yaml"), MANIFEST).unwrap();
+                std::fs::create_dir(dir.path.join(".git")).unwrap();
+                dir
+            }
+
+            fn path_bytes(&self) -> Vec<u8> {
+                self.path.to_str().unwrap().as_bytes().to_vec()
+            }
+        }
+
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.path);
+            }
+        }
+
+        fn open_project(h: u64, path: &[u8]) -> (StellarStatus, u64) {
+            let mut request = 99u64;
+            let status =
+                unsafe { stellar_project_open(h, path.as_ptr(), path.len(), &mut request) };
+            (status, request)
+        }
+
+        /// 다음 event를 C ABI로 읽습니다(길이 조회 → buffer). 최대 5초 기다립니다.
+        fn next_event(h: u64) -> (u32, Vec<u8>) {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                let mut kind = 0u32;
+                let mut need = 0usize;
+                let status = unsafe {
+                    stellar_runtime_poll_event(h, &mut kind, std::ptr::null_mut(), 0, &mut need)
+                };
+                if status == StellarStatus::Ok {
+                    let mut buf = vec![0u8; need];
+                    let mut written = 0usize;
+                    let mut taken_kind = 0u32;
+                    let status = unsafe {
+                        stellar_runtime_poll_event(
+                            h,
+                            &mut taken_kind,
+                            buf.as_mut_ptr(),
+                            buf.len(),
+                            &mut written,
+                        )
+                    };
+                    assert_eq!(status, StellarStatus::Ok);
+                    assert_eq!(taken_kind, kind);
+                    buf.truncate(written);
+                    return (kind, buf);
+                }
+                assert_eq!(status, StellarStatus::NoError);
+                assert!(Instant::now() < deadline, "event가 오지 않았습니다");
+                std::thread::yield_now();
+            }
+        }
+
+        fn next_runtime_event(h: u64) -> RuntimeEvent {
+            let (kind, payload) = next_event(h);
+            RuntimeEvent::decode(kind, &payload).expect("event payload")
+        }
+
+        fn state(h: u64) -> StellarRuntimeState {
+            let mut state = StellarRuntimeState::default();
+            assert_eq!(
+                unsafe { stellar_runtime_state(h, &mut state) },
+                StellarStatus::Ok
+            );
+            state
+        }
+
+        fn last_error(h: u64) -> String {
+            let mut buf = [0u8; 512];
+            let mut written = 0usize;
+            let status =
+                unsafe { stellar_last_error(h, buf.as_mut_ptr(), buf.len(), &mut written) };
+            assert_eq!(status, StellarStatus::Ok);
+            String::from_utf8(buf[..written].to_vec()).unwrap()
+        }
+
+        #[test]
+        fn project_and_document_lifecycle_through_the_c_abi() {
+            let fixture = TempDir::project();
+            let h = create();
+            // 요청 전: app runtime 미시작, 세대 0.
+            let before = state(h);
+            assert_eq!(before.version, RUNTIME_STATE_VERSION);
+            assert_eq!(
+                (before.generation, before.project_count, before.outstanding),
+                (0, 0, 0)
+            );
+
+            let (status, request) = open_project(h, &fixture.path_bytes());
+            assert_eq!(status, StellarStatus::Ok);
+            assert_eq!(request, 1);
+            let RuntimeEvent::ProjectOpened {
+                request: got,
+                project,
+                name,
+                root,
+                ..
+            } = next_runtime_event(h)
+            else {
+                panic!("프로젝트 열기 실패");
+            };
+            assert_eq!(got.0, request);
+            assert_eq!(name, "FFI 프로젝트");
+            assert_eq!(Path::new(&root), fixture.path.as_path());
+            let after = state(h);
+            assert_eq!((after.generation, after.project_count), (1, 1));
+            assert_eq!(after.outstanding, 0);
+
+            // 문서 열기 → 정보 조회.
+            let doc = StableId::new_v7(7, 0x0abc, 7);
+            let mut doc_request = 0u64;
+            assert_eq!(
+                unsafe {
+                    stellar_document_open(h, project.0, doc.to_bytes().as_ptr(), &mut doc_request)
+                },
+                StellarStatus::Ok
+            );
+            let RuntimeEvent::DocumentOpened {
+                document,
+                document_id,
+                already_open,
+                ..
+            } = next_runtime_event(h)
+            else {
+                panic!("문서 열기 실패");
+            };
+            assert_eq!(document_id, doc);
+            assert!(!already_open);
+            let mut info = StellarDocumentInfo::default();
+            assert_eq!(
+                unsafe { stellar_document_info(h, document.0, &mut info) },
+                StellarStatus::Ok
+            );
+            assert_eq!(
+                info,
+                StellarDocumentInfo {
+                    version: DOCUMENT_INFO_VERSION,
+                    reserved: 0,
+                    document: document.0,
+                    project: project.0,
+                    revision: 0,
+                    node_count: 0,
+                    document_id: doc.to_bytes(),
+                }
+            );
+            assert_eq!(state(h).document_count, 1);
+
+            // 프로젝트 닫기 → 문서도 닫힘, 정보 조회는 InvalidArgument.
+            let mut close_request = 0u64;
+            assert_eq!(
+                unsafe { stellar_project_close(h, project.0, &mut close_request) },
+                StellarStatus::Ok
+            );
+            assert_eq!(
+                next_runtime_event(h),
+                RuntimeEvent::ProjectClosed {
+                    request: stellar_runtime::app::RequestId(close_request),
+                    project,
+                    closed_documents: 1,
+                }
+            );
+            assert_eq!(
+                unsafe { stellar_document_info(h, document.0, &mut info) },
+                StellarStatus::InvalidArgument
+            );
+            assert!(last_error(h).contains("문서 session"));
+            let mut doc_close = 0u64;
+            assert_eq!(
+                unsafe { stellar_document_close(h, document.0, &mut doc_close) },
+                StellarStatus::Ok
+            );
+            let RuntimeEvent::RequestFailed { failure, .. } = next_runtime_event(h) else {
+                panic!("실패 event가 아님");
+            };
+            assert_eq!(failure, RequestFailure::UnknownDocument);
+            let last = state(h);
+            assert_eq!((last.project_count, last.document_count), (0, 0));
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn invalid_project_folder_reports_a_failure_event() {
+            let empty = TempDir::new("no-repo");
+            let h = create();
+            let (status, request) = open_project(h, &empty.path_bytes());
+            assert_eq!(status, StellarStatus::Ok);
+            let (kind, payload) = next_event(h);
+            assert_eq!(kind, event_kind::REQUEST_FAILED);
+            // payload: version u32, request u64, failure u32, message.
+            assert_eq!(&payload[4..12], &request.to_le_bytes());
+            assert_eq!(
+                u32::from_le_bytes(payload[12..16].try_into().unwrap()),
+                RequestFailure::NotARepository.code()
+            );
+            assert_eq!(state(h).generation, 0, "실패는 상태를 바꾸지 않음");
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn request_arguments_are_validated_at_the_boundary() {
+            let h = create();
+            let (status, request) = open_project(h, b"relative/project");
+            assert_eq!((status, request), (StellarStatus::InvalidArgument, 0));
+            assert!(last_error(h).contains("절대"));
+            let (status, _) = open_project(h, &[0xFF, 0xFE]);
+            assert_eq!(status, StellarStatus::InvalidUtf8);
+            assert_eq!(
+                unsafe { stellar_project_open(h, std::ptr::null(), 4, std::ptr::null_mut()) },
+                StellarStatus::NullPointer
+            );
+            assert_eq!(
+                unsafe { stellar_document_open(h, 1, std::ptr::null(), std::ptr::null_mut()) },
+                StellarStatus::NullPointer
+            );
+            assert_eq!(
+                unsafe { stellar_runtime_state(h, std::ptr::null_mut()) },
+                StellarStatus::NullPointer
+            );
+            assert_eq!(
+                unsafe { stellar_document_info(h, 1, std::ptr::null_mut()) },
+                StellarStatus::NullPointer
+            );
+            // 알 수 없는 handle.
+            let mut out = StellarRuntimeState::default();
+            assert_eq!(
+                unsafe { stellar_runtime_state(999_999, &mut out) },
+                StellarStatus::InvalidHandle
+            );
+            assert_eq!(
+                unsafe { stellar_project_close(999_999, 1, std::ptr::null_mut()) },
+                StellarStatus::InvalidHandle
+            );
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn poll_keeps_runtime_events_on_small_buffers_after_local_events() {
+            let empty = TempDir::new("poll");
+            let h = create();
+            let (status, request) = open_project(h, &empty.path_bytes());
+            assert_eq!(status, StellarStatus::Ok);
+            // 코어 내부 event는 runtime 완료 event보다 먼저 읽힙니다.
+            assert_eq!(enqueue_event(h, 7, b"local"), StellarStatus::Ok);
+            let (kind, payload) = next_event(h);
+            assert_eq!((kind, payload.as_slice()), (7, b"local".as_slice()));
+            // runtime event가 준비될 때까지 기다린 뒤 작은 buffer는 꺼내지 않습니다.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let need = loop {
+                let mut need = 0usize;
+                let status = unsafe {
+                    stellar_runtime_poll_event(
+                        h,
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                        0,
+                        &mut need,
+                    )
+                };
+                if status == StellarStatus::Ok {
+                    break need;
+                }
+                assert!(Instant::now() < deadline);
+                std::thread::yield_now();
+            };
+            let mut small = vec![0u8; need - 1];
+            let mut written = 0usize;
+            assert_eq!(
+                unsafe {
+                    stellar_runtime_poll_event(
+                        h,
+                        std::ptr::null_mut(),
+                        small.as_mut_ptr(),
+                        small.len(),
+                        &mut written,
+                    )
+                },
+                StellarStatus::BufferTooSmall
+            );
+            assert_eq!(state(h).outstanding, 1, "꺼내지 않았으므로 남아 있음");
+            let event = next_runtime_event(h);
+            assert_eq!(event.request().0, request);
+            assert_eq!(state(h).outstanding, 0);
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn unpolled_requests_are_bounded() {
+            let empty = TempDir::new("bounded");
+            let path = empty.path_bytes();
+            let h = create();
+            for _ in 0..AppRuntime::DEFAULT_EVENT_CAPACITY {
+                assert_eq!(open_project(h, &path).0, StellarStatus::Ok);
+            }
+            let (status, request) = open_project(h, &path);
+            assert_eq!((status, request), (StellarStatus::QueueFull, 0));
+            assert!(last_error(h).contains("가득"));
+            assert_eq!(
+                state(h).outstanding,
+                AppRuntime::DEFAULT_EVENT_CAPACITY as u64
+            );
+            // 하나를 꺼내면 다시 받습니다.
+            next_event(h);
+            assert_eq!(open_project(h, &path).0, StellarStatus::Ok);
+            // 완료 event를 남긴 채 파괴해도 누수 없이 끝납니다.
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn create_destroy_cycles_with_a_started_core_do_not_leak() {
+            let empty = TempDir::new("cycles");
+            let path = empty.path_bytes();
+            for _ in 0..50 {
+                let h = create();
+                assert_eq!(open_project(h, &path).0, StellarStatus::Ok);
+                assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+                assert_eq!(stellar_runtime_destroy(h), StellarStatus::InvalidHandle);
+            }
+        }
     }
 
     mod mac_input {

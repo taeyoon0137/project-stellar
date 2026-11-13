@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 stellar-core-types = { path = "../core-types" }
 stellar-document = { path = "../document" }
+# 프로젝트 열기(probe·identity, IV.2~IV.5)를 document thread에서 실행합니다.
+stellar-project = { path = "../project" }
 # thread 역할 표시(XI.7.1)를 runtime이 만드는 thread에 bind합니다.
 stellar-renderer-core = { path = "../renderer-core" }
 

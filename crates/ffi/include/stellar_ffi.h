@@ -61,6 +61,74 @@ static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #endif
 
+/* 프로젝트·문서 요청의 완료 event(stellar_runtime_poll_event의 out_kind와 payload).
+ * 요청마다 정확히 하나가 옵니다. payload는 little-endian이고 u32 schema version
+ * (STELLAR_EVENT_SCHEMA_VERSION)으로 시작합니다. str은 u32 길이 + UTF-8 바이트
+ * (최대 STELLAR_EVENT_TEXT_MAX byte, 문자 경계에서 자름), id는 StableId 16 byte입니다.
+ *   PROJECT_OPENED : request u64, project u64, project_id[16], name str, root str
+ *   PROJECT_CLOSED : request u64, project u64, closed_documents u32
+ *   DOCUMENT_OPENED: request u64, project u64, document u64, document_id[16], already_open u8
+ *   DOCUMENT_CLOSED: request u64, document u64
+ *   REQUEST_FAILED : request u64, failure u32 (STELLAR_FAILURE_*), message str */
+#define STELLAR_EVENT_SCHEMA_VERSION 1
+#define STELLAR_EVENT_TEXT_MAX 4096
+#define STELLAR_EVENT_PROJECT_OPENED 0x0101
+#define STELLAR_EVENT_PROJECT_CLOSED 0x0102
+#define STELLAR_EVENT_DOCUMENT_OPENED 0x0103
+#define STELLAR_EVENT_DOCUMENT_CLOSED 0x0104
+#define STELLAR_EVENT_REQUEST_FAILED 0x0105
+
+/* 완료 event를 아직 꺼내지 않은 요청(실행 중 포함) 상한. 닿으면 새 요청은 STELLAR_QUEUE_FULL. */
+#define STELLAR_EVENT_CAPACITY 1024
+
+/* REQUEST_FAILED 실패 코드. */
+#define STELLAR_FAILURE_UNKNOWN_PROJECT 1
+#define STELLAR_FAILURE_UNKNOWN_DOCUMENT 2
+#define STELLAR_FAILURE_DOCUMENT_IN_OTHER_PROJECT 3
+#define STELLAR_FAILURE_NOT_A_REPOSITORY 10
+#define STELLAR_FAILURE_NOT_A_STELLAR_PROJECT 11
+#define STELLAR_FAILURE_MANIFEST_UNREADABLE 12
+#define STELLAR_FAILURE_MANIFEST_CORRUPT 13
+#define STELLAR_FAILURE_MANIFEST_INVALID 14
+#define STELLAR_FAILURE_INVALID_PROJECT_ID 15
+#define STELLAR_FAILURE_UNTRUSTED_SYMLINK 16
+#define STELLAR_FAILURE_PATH_UNRESOLVED 17
+
+/* StellarRuntimeState 레이아웃 버전. */
+#define STELLAR_RUNTIME_STATE_VERSION 1
+
+/* 앱 runtime 최신 상태 snapshot 요약(고정 40 byte, 코어가 씀). */
+typedef struct StellarRuntimeState {
+    uint32_t version;         /* STELLAR_RUNTIME_STATE_VERSION */
+    uint32_t reserved;        /* 0 */
+    uint64_t generation;      /* snapshot 게시 세대(성공한 요청마다 1 증가, 0 = 아직 없음) */
+    uint64_t project_count;   /* 열린 프로젝트 session 수 */
+    uint64_t document_count;  /* 열린 문서 session 수 */
+    uint64_t outstanding;     /* 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함) */
+} StellarRuntimeState;
+
+/* StellarDocumentInfo 레이아웃 버전. */
+#define STELLAR_DOCUMENT_INFO_VERSION 1
+
+/* 열린 문서 session 정보(고정 56 byte, 코어가 씀). */
+typedef struct StellarDocumentInfo {
+    uint32_t version;         /* STELLAR_DOCUMENT_INFO_VERSION */
+    uint32_t reserved;        /* 0 */
+    uint64_t document;        /* 문서 session handle */
+    uint64_t project;         /* 소속 프로젝트 session handle */
+    uint64_t revision;        /* snapshot 게시 시점의 문서 revision */
+    uint64_t node_count;      /* snapshot 게시 시점의 node 수 */
+    uint8_t document_id[16];  /* 문서 StableId(UUID 바이트 순서) */
+} StellarDocumentInfo;
+
+#ifdef __cplusplus
+static_assert(sizeof(StellarRuntimeState) == 40, "StellarRuntimeState layout");
+static_assert(sizeof(StellarDocumentInfo) == 56, "StellarDocumentInfo layout");
+#else
+_Static_assert(sizeof(StellarRuntimeState) == 40, "StellarRuntimeState layout");
+_Static_assert(sizeof(StellarDocumentInfo) == 56, "StellarDocumentInfo layout");
+#endif
+
 /* runtime을 생성하고 handle을 out_handle에 씁니다. */
 StellarStatus stellar_runtime_create(uint64_t *out_handle);
 
@@ -79,7 +147,7 @@ StellarStatus stellar_runtime_set_label(uint64_t handle, const uint8_t *ptr, siz
 /* handle label 조회(출력: 호출자 buffer). */
 StellarStatus stellar_runtime_label(uint64_t handle, uint8_t *buf, size_t buf_len, size_t *out_written);
 
-/* 이벤트 큐에서 다음 이벤트를 pull 방식으로 읽습니다(FIFO, 빈 큐는 STELLAR_NO_ERROR). */
+/* 이벤트 큐에서 다음 이벤트를 pull 방식으로 읽습니다(FIFO, 빈 큐는 STELLAR_NO_ERROR, 프로젝트·문서 완료 event 포함). */
 StellarStatus stellar_runtime_poll_event(uint64_t handle, uint32_t *out_kind, uint8_t *buf, size_t buf_len, size_t *out_written);
 
 /* 셸이 계산한 drawable(backing) 픽셀 크기와 backing scale을 코어에 전달합니다. */
@@ -93,6 +161,24 @@ StellarStatus stellar_runtime_submit_mac_event(uint64_t handle, const StellarMac
 
 /* 입력 대기열의 다음 공통 입력 이벤트 직렬화 바이트를 읽습니다(FIFO, 빈 대기열은 STELLAR_NO_ERROR). */
 StellarStatus stellar_runtime_poll_input(uint64_t handle, uint8_t *buf, size_t buf_len, size_t *out_written);
+
+/* 프로젝트 폴더 열기를 요청합니다(입력: 절대 경로 UTF-8 ptr+len). 기다리지 않고 request id를 씁니다(실패 시 0). */
+StellarStatus stellar_project_open(uint64_t handle, const uint8_t *path, size_t path_len, uint64_t *out_request);
+
+/* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
+StellarStatus stellar_project_close(uint64_t handle, uint64_t project, uint64_t *out_request);
+
+/* 프로젝트 session 아래에서 문서 열기를 요청합니다(document_id: StableId 16 byte). */
+StellarStatus stellar_document_open(uint64_t handle, uint64_t project, const uint8_t *document_id, uint64_t *out_request);
+
+/* 문서 session 닫기를 요청합니다. */
+StellarStatus stellar_document_close(uint64_t handle, uint64_t document, uint64_t *out_request);
+
+/* 최신 상태 snapshot 요약을 씁니다(document thread를 기다리지 않음). */
+StellarStatus stellar_runtime_state(uint64_t handle, StellarRuntimeState *out_state);
+
+/* 열린 문서 session의 최신 snapshot 정보를 씁니다(없는 문서는 STELLAR_INVALID_ARGUMENT). */
+StellarStatus stellar_document_info(uint64_t handle, uint64_t document, StellarDocumentInfo *out_info);
 
 /* 살아 있는 runtime handle 수(진단용). */
 uint64_t stellar_runtime_live_count(void);
