@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# macOS Release 빌드와 배포 구성 검사(XVI.9.1).
+# macOS Release 빌드와 배포 구성 검사(XVI.9.1, XVI.9.2).
 #
 # 서명하지 않은 Release 앱을 빌드하고 다음을 확인합니다(하나라도 어긋나면 실패):
 #  - Xcode Release 설정: ARCHS=arm64, ONLY_ACTIVE_ARCH=NO, MACOSX_DEPLOYMENT_TARGET=26.0,
@@ -8,6 +8,7 @@
 #  - 실행 파일 LC_BUILD_VERSION: platform MACOS, minos 26.0
 #  - Info.plist: CFBundleIdentifier, LSMinimumSystemVersion=26.0, CFBundleExecutable
 #  - Release 실행 파일 --smoke(FFI로 코어 버전 읽기)
+#  - 번들 구조·링크·rpath·서명 구조·재배치 실행: scripts/macos/bundle_check.sh --adhoc-sign(XVI.9.2)
 #
 # 산출물: apps/macos/build/Build/Products/Release/StellarMac.app (build/는 git ignore)
 # 종료 코드: 0 성공, 그 외 빌드·검사 실패.
@@ -89,5 +90,8 @@ echo "✓ Info.plist: $EXPECTED_BUNDLE_ID, LSMinimumSystemVersion $EXPECTED_MIN_
 
 # --- Release 실행 smoke ---
 "$BIN" --smoke
+
+# --- 번들 구조·rpath·서명 구조·재배치 실행(ad-hoc 서명 사본, 원본은 서명하지 않은 상태 유지) ---
+"$REPO_ROOT/scripts/macos/bundle_check.sh" --adhoc-sign "$APP"
 
 echo "✓ Release 구성 검사 통과: $APP"
