@@ -204,7 +204,8 @@ pub fn put_opt_id(out: &mut Vec<u8>, id: Option<StableId>) {
     }
 }
 
-fn read_opt_id(
+/// 선택 id를 읽습니다.
+pub fn read_opt_id(
     reader: &mut Reader<'_>,
     field: &'static str,
 ) -> Result<Option<StableId>, DecodeError> {
@@ -333,7 +334,8 @@ pub fn read_value(reader: &mut Reader<'_>) -> Result<SemanticValue, DecodeError>
     Ok(value)
 }
 
-fn put_opt_value(out: &mut Vec<u8>, value: Option<&SemanticValue>) {
+/// 선택 값을 기록합니다.
+pub fn put_opt_value(out: &mut Vec<u8>, value: Option<&SemanticValue>) {
     match value {
         None => out.push(0),
         Some(value) => {
@@ -343,7 +345,8 @@ fn put_opt_value(out: &mut Vec<u8>, value: Option<&SemanticValue>) {
     }
 }
 
-fn read_opt_value(reader: &mut Reader<'_>) -> Result<Option<SemanticValue>, DecodeError> {
+/// 선택 값을 읽습니다.
+pub fn read_opt_value(reader: &mut Reader<'_>) -> Result<Option<SemanticValue>, DecodeError> {
     if reader.flag("value.present")? {
         Ok(Some(read_value(reader)?))
     } else {
@@ -479,7 +482,8 @@ pub fn read_snapshot(reader: &mut Reader<'_>) -> Result<SemanticSnapshot, Decode
     Ok(snapshot)
 }
 
-fn put_provenance(out: &mut Vec<u8>, provenance: &Provenance) {
+/// 출처를 기록합니다.
+pub fn put_provenance(out: &mut Vec<u8>, provenance: &Provenance) {
     out.push(provenance.code());
     match provenance {
         Provenance::Project => {}
@@ -503,7 +507,8 @@ fn put_provenance(out: &mut Vec<u8>, provenance: &Provenance) {
     }
 }
 
-fn read_provenance(reader: &mut Reader<'_>) -> Result<Provenance, DecodeError> {
+/// 출처를 읽습니다.
+pub fn read_provenance(reader: &mut Reader<'_>) -> Result<Provenance, DecodeError> {
     match reader.u8()? {
         1 => Ok(Provenance::Project),
         2 => Ok(Provenance::Document {
@@ -525,12 +530,14 @@ fn read_provenance(reader: &mut Reader<'_>) -> Result<Provenance, DecodeError> {
     }
 }
 
-fn put_position(out: &mut Vec<u8>, position: &Position) {
+/// 위치를 기록합니다.
+pub fn put_position(out: &mut Vec<u8>, position: &Position) {
     put_opt_id(out, position.parent);
     put_opt_order_key(out, position.order_key.as_ref());
 }
 
-fn read_position(reader: &mut Reader<'_>) -> Result<Position, DecodeError> {
+/// 위치를 읽습니다.
+pub fn read_position(reader: &mut Reader<'_>) -> Result<Position, DecodeError> {
     Ok(Position {
         parent: read_opt_id(reader, "position.parent")?,
         order_key: read_opt_order_key(reader)?,
