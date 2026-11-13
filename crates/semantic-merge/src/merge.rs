@@ -19,6 +19,12 @@
 //! **겹침**: 양쪽이 같은 대상을 서로 다르게 바꾸면 conflict이며 candidate는 그 대상의 base 상태를
 //! 유지합니다. 한쪽이 객체 구조를 바꾸면(삭제·교체) 다른 쪽의 그 객체 변경 전체가 겹칩니다.
 //!
+//! **conflict 분류(XIV.10.5)**: 한쪽 삭제 대 다른 쪽 편집은 다른 쪽이 위치만 바꿨으면
+//! delete-vs-move, 속성·구조를 바꿨으면 delete-vs-modify입니다. 같은 속성의 서로 다른 변경은
+//! 한쪽이 값 타입(`ValueType`)을 바꾸고 다른 쪽이 같은 타입 값만 바꿨으면
+//! type-change-vs-value-change, 그 밖은 property-value입니다. 양쪽이 같은 StableId를 서로 다르게
+//! 정의(추가·교체)하면 inconsistent-definition입니다.
+//!
 //! **구조 정합**: 한쪽이 삭제한 parent 아래에 다른 쪽이 객체를 추가·이동해 candidate에 parent
 //! 없는 객체가 생기면, 그 parent 삭제를 받아들이지 않고 delete-vs-modify conflict로 바꿉니다
 //! (입력 자체에 이미 있던 고아는 건드리지 않습니다).
@@ -31,6 +37,7 @@ use stellar_semantic_diff::core_types::ids::StableId;
 use stellar_semantic_diff::core_types::property::PropertyPath;
 use stellar_semantic_diff::diff::{diff, object_provenance, SemanticDiff};
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
+use stellar_semantic_diff::value::SemanticValue;
 
 use crate::model::{
     ConflictKind, ConflictTarget, MergeError, MergeInput, MergeResult, SemanticConflict, SideState,
@@ -110,6 +117,49 @@ fn value_state(snapshot: &SemanticSnapshot, path: &PropertyPath) -> SideState {
     })
 }
 
+/// 한쪽 삭제 대 다른 쪽 편집의 conflict 종류(XIV.10.5): 다른 쪽이 위치만 바꿨으면
+/// delete-vs-move, 속성·구조를 바꿨으면 delete-vs-modify.
+fn delete_conflict_kind(other: &Edits<'_>) -> ConflictKind {
+    if other.structure.is_empty() && other.properties.is_empty() && other.position.is_some() {
+        ConflictKind::DeleteVsMove
+    } else {
+        ConflictKind::DeleteVsModify
+    }
+}
+
+/// 속성 변경의 이전·이후 값.
+fn property_values(
+    change: &SemanticChange,
+) -> Option<(Option<&SemanticValue>, Option<&SemanticValue>)> {
+    match change {
+        SemanticChange::SetProperty(c)
+        | SemanticChange::ChangeToken(c)
+        | SemanticChange::ComponentInterfaceChange(c)
+        | SemanticChange::AssetRefChange(c) => Some((c.old.as_ref(), c.new.as_ref())),
+        _ => None,
+    }
+}
+
+/// 값이 있는 상태에서 타입이 바뀌는 변경인지(`Some(true)`), 같은 타입 값 변경인지(`Some(false)`).
+/// 속성 추가·삭제는 `None`.
+fn type_changes(change: &SemanticChange) -> Option<bool> {
+    match property_values(change)? {
+        (Some(old), Some(new)) => Some(old.value_type() != new.value_type()),
+        _ => None,
+    }
+}
+
+/// 같은 속성의 서로 다른 변경 conflict 종류(XIV.10.5): 한쪽은 값 타입을 바꾸고 다른 쪽은 같은
+/// 타입 안에서 값만 바꿨으면 type-change-vs-value-change, 그 밖은 property-value.
+fn property_conflict_kind(a: &SemanticChange, b: &SemanticChange) -> ConflictKind {
+    match (type_changes(a), type_changes(b)) {
+        (Some(true), Some(false)) | (Some(false), Some(true)) => {
+            ConflictKind::TypeChangeVsValueChange
+        }
+        _ => ConflictKind::PropertyValue,
+    }
+}
+
 /// 두 위치 변경의 결과 위치가 같은지.
 fn same_position(a: &SemanticChange, b: &SemanticChange) -> bool {
     match (a, b) {
@@ -179,10 +229,10 @@ impl<'a> Merger<'a> {
             return;
         }
         if !ours.structure.is_empty() || !theirs.structure.is_empty() {
-            let kind = if ours.deletes() || theirs.deletes() {
-                ConflictKind::DeleteVsModify
-            } else {
-                ConflictKind::InconsistentDefinition
+            let kind = match (ours.deletes(), theirs.deletes()) {
+                (true, false) => delete_conflict_kind(theirs),
+                (false, true) => delete_conflict_kind(ours),
+                _ => ConflictKind::InconsistentDefinition,
             };
             self.object_conflict(kind, id);
             return;
@@ -218,8 +268,8 @@ impl<'a> Merger<'a> {
                     // 같은 경로를 같은 값으로(XIV.10.3): 한 변경으로 합칩니다.
                     self.accepted.push((*change).clone())
                 }
-                (Some(change), Some(_)) => self.conflicts.push(SemanticConflict {
-                    kind: ConflictKind::PropertyValue,
+                (Some(change), Some(other)) => self.conflicts.push(SemanticConflict {
+                    kind: property_conflict_kind(change, other),
                     provenance: *change.provenance(),
                     object: id,
                     target: ConflictTarget::Property(path.clone()),
@@ -234,7 +284,9 @@ impl<'a> Merger<'a> {
 
     /// candidate에서 merge가 만든 고아를 찾습니다: parent가 없지만, 그 객체를 그 parent 아래에
     /// 둔 쪽 snapshot에는 parent가 있던 경우.
-    fn merge_orphan_parent(&self, merged: &SemanticSnapshot) -> Option<StableId> {
+    ///
+    /// 반환: (삭제된 parent, 고아가 된 객체).
+    fn merge_orphan(&self, merged: &SemanticSnapshot) -> Option<(StableId, StableId)> {
         let input = self.input;
         merged.objects().find_map(|object| {
             let parent = object.parent()?;
@@ -245,7 +297,7 @@ impl<'a> Merger<'a> {
                 side.get(object.id())
                     .is_some_and(|o| o.parent() == Some(parent) && side.contains(parent))
             });
-            placed_with_parent.then_some(parent)
+            placed_with_parent.then_some((parent, object.id()))
         })
     }
 }
@@ -273,7 +325,7 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
     // 고아를 만든 parent 삭제를 conflict로 되돌리고 다시 적용합니다. 되돌릴 때마다 받아들인
     // 변경이 줄어들므로 유한 번에 끝납니다.
     let mut merged = apply(&input.base, &merger.accepted).map_err(MergeError::Apply)?;
-    while let Some(parent) = merger.merge_orphan_parent(&merged) {
+    while let Some((parent, orphan)) = merger.merge_orphan(&merged) {
         let before = merger.accepted.len();
         merger.accepted.retain(|change| {
             !(change.object_id() == parent
@@ -286,7 +338,14 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
             // 삭제가 받아들여진 변경이 아니면(입력 불변식 위반) 더 되돌릴 것이 없습니다.
             break;
         }
-        merger.object_conflict(ConflictKind::DeleteVsModify, parent);
+        // 다른 쪽이 parent 아래로 옮겨 온 객체면 delete-vs-move, 새로 추가한 객체면
+        // delete-vs-modify(subtree 수정)입니다(XIV.10.5).
+        let kind = if input.base.contains(orphan) {
+            ConflictKind::DeleteVsMove
+        } else {
+            ConflictKind::DeleteVsModify
+        };
+        merger.object_conflict(kind, parent);
         merged = apply(&input.base, &merger.accepted).map_err(MergeError::Apply)?;
     }
 
@@ -313,7 +372,6 @@ pub(crate) mod tests {
     use crate::model::tests::{key, node, sid, snapshot, text};
     use stellar_semantic_diff::keys;
     use stellar_semantic_diff::snapshot::SemanticObject;
-    use stellar_semantic_diff::value::SemanticValue;
 
     /// base: root 10 ─ 11(a) ─ 13(c), 12(b).
     pub(crate) fn base() -> SemanticSnapshot {
@@ -651,6 +709,165 @@ pub(crate) mod tests {
         // 결과 bytes round-trip 후에도 conflict 기록이 같습니다.
         let decoded = MergeResult::from_canonical_bytes(&result.to_canonical_bytes()).unwrap();
         assert_eq!(decoded, result);
+    }
+
+    /// conflict matrix 한 줄: (이름, ours 편집, theirs 편집, 기대 conflict 종류 목록).
+    type Action = fn(&SemanticSnapshot) -> SemanticSnapshot;
+
+    fn delete_11(s: &SemanticSnapshot) -> SemanticSnapshot {
+        let mut out = s.clone();
+        out.remove(sid(11));
+        out.remove(sid(13));
+        out
+    }
+
+    fn rename_11(s: &SemanticSnapshot) -> SemanticSnapshot {
+        edit(s, 11, |o| set(o, keys::DISPLAY_NAME, text("renamed")))
+    }
+
+    fn move_11(s: &SemanticSnapshot) -> SemanticSnapshot {
+        edit(s, 11, |o| o.set_position(Some(sid(12)), Some(key(0x80))))
+    }
+
+    fn reorder_11(s: &SemanticSnapshot) -> SemanticSnapshot {
+        edit(s, 11, |o| o.set_position(Some(sid(10)), Some(key(0xE0))))
+    }
+
+    fn move_and_rename_11(s: &SemanticSnapshot) -> SemanticSnapshot {
+        rename_11(&move_11(s))
+    }
+
+    fn name_as_number_11(s: &SemanticSnapshot) -> SemanticSnapshot {
+        edit(s, 11, |o| {
+            set(o, keys::DISPLAY_NAME, SemanticValue::Uint(7))
+        })
+    }
+
+    fn name_as_bool_11(s: &SemanticSnapshot) -> SemanticSnapshot {
+        edit(s, 11, |o| {
+            set(o, keys::DISPLAY_NAME, SemanticValue::Bool(true))
+        })
+    }
+
+    fn add_child_under_11(s: &SemanticSnapshot) -> SemanticSnapshot {
+        let mut out = s.clone();
+        out.insert(node(50, Some(11), 0xF0, &[])).unwrap();
+        out
+    }
+
+    fn move_12_under_11(s: &SemanticSnapshot) -> SemanticSnapshot {
+        edit(s, 12, |o| o.set_position(Some(sid(11)), Some(key(0xF0))))
+    }
+
+    fn replace_11_as_token(s: &SemanticSnapshot) -> SemanticSnapshot {
+        let mut out = delete_11(s);
+        out.insert(SemanticObject::new(
+            sid(11),
+            stellar_semantic_diff::snapshot::ObjectKind::Token,
+            stellar_semantic_diff::snapshot::Origin::Project,
+        ))
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn conflict_matrix() {
+        use ConflictKind::*;
+        let matrix: [(&str, Action, Action, &[ConflictKind]); 14] = [
+            ("delete vs modify", delete_11, rename_11, &[DeleteVsModify]),
+            ("modify vs delete", rename_11, delete_11, &[DeleteVsModify]),
+            ("delete vs move", delete_11, move_11, &[DeleteVsMove]),
+            ("reorder vs delete", reorder_11, delete_11, &[DeleteVsMove]),
+            (
+                "delete vs move+modify",
+                delete_11,
+                move_and_rename_11,
+                &[DeleteVsModify],
+            ),
+            (
+                "type vs value",
+                name_as_number_11,
+                rename_11,
+                &[TypeChangeVsValueChange],
+            ),
+            (
+                "value vs type",
+                rename_11,
+                name_as_number_11,
+                &[TypeChangeVsValueChange],
+            ),
+            (
+                "type vs other type",
+                name_as_number_11,
+                name_as_bool_11,
+                &[PropertyValue],
+            ),
+            (
+                "value vs value",
+                rename_11,
+                |s| edit(s, 11, |o| set(o, keys::DISPLAY_NAME, text("other"))),
+                &[PropertyValue],
+            ),
+            (
+                "delete parent vs add child",
+                delete_11,
+                add_child_under_11,
+                &[DeleteVsModify],
+            ),
+            (
+                "delete parent vs move child in",
+                delete_11,
+                move_12_under_11,
+                &[DeleteVsMove],
+            ),
+            (
+                "replace vs modify",
+                replace_11_as_token,
+                rename_11,
+                &[InconsistentDefinition],
+            ),
+            ("delete vs delete", delete_11, delete_11, &[]),
+            (
+                "move vs move elsewhere",
+                move_11,
+                reorder_11,
+                &[ConflictingReorder],
+            ),
+        ];
+        let base = base();
+        let mut produced = BTreeSet::new();
+        for (name, ours, theirs, expected) in matrix {
+            let result = run(&base, &ours(&base), &theirs(&base));
+            let kinds: Vec<_> = result.conflicts.iter().map(|c| c.kind).collect();
+            assert_eq!(kinds, expected, "{name}: {:?}", result.conflicts);
+            for conflict in &result.conflicts {
+                assert_eq!(conflict.object, sid(11), "{name}");
+            }
+            produced.extend(kinds);
+        }
+        // matrix가 모든 conflict 종류를 서로 다른 kind로 냅니다.
+        assert_eq!(
+            produced.into_iter().collect::<Vec<_>>(),
+            ConflictKind::ALL.to_vec()
+        );
+    }
+
+    #[test]
+    fn delete_conflict_keeps_base_object_and_records_sides() {
+        let base = base();
+        let result = run(&base, &delete_11(&base), &move_11(&base));
+        let conflict = &result.conflicts[0];
+        assert_eq!(conflict.target, ConflictTarget::Object);
+        assert_eq!(
+            conflict.base,
+            SideState::Object(Box::new(base.get(sid(11)).unwrap().clone()))
+        );
+        assert_eq!(conflict.ours, SideState::Missing);
+        assert_eq!(
+            conflict.theirs,
+            SideState::Object(Box::new(move_11(&base).get(sid(11)).unwrap().clone()))
+        );
+        assert_eq!(result.merged.get(sid(11)), base.get(sid(11)));
     }
 
     #[test]

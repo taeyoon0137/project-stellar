@@ -1457,7 +1457,7 @@ tools/xtask/
 | XIV.10.2 | `[x]` | 서로 다른 StableId 변경과 같은 object의 서로 다른 PropertyPath 변경을 자동 병합합니다. | non-overlap fixture conflict 0. | XIV.10.1, XIV.3.9 |
 | XIV.10.3 | `[x]` | 같은 PropertyPath를 양쪽이 같은 값으로 바꾼 경우 conflict 없이 한 변경으로 합칩니다. | identical edit fixture 통과. | XIV.10.2 |
 | XIV.10.4 | `[x]` | same property different value conflict를 생성하고 base/ours/theirs 값을 모두 보존합니다. | conflict record 정확. | XIV.10.2 |
-| XIV.10.5 | `[ ]` | delete-vs-modify, delete-vs-move, type-change-vs-value-change conflict를 각각 다른 kind로 분류합니다. | conflict matrix fixture 통과. | XIV.10.1 |
+| XIV.10.5 | `[x]` | delete-vs-modify, delete-vs-move, type-change-vs-value-change conflict를 각각 다른 kind로 분류합니다. | conflict matrix fixture 통과. | XIV.10.1 |
 | XIV.10.6 | `[ ]` | OrderKey independent insertion을 자동 병합하고 같은 child conflicting reorder를 conflict로 분류합니다. | Phase III fixture 통과. | III.5.4, XIV.10.2 |
 | XIV.10.7 | `[ ]` | component property 삭제 vs instance override 추가, token type 변경 vs value 변경, drilling chain break를 전용 conflict로 분류합니다. | fixture corpus 통과. | IX.1.3, IX.4.6, VIII.5.5 |
 | XIV.10.8 | `[ ]` | conflict 없는 merged snapshot을 full validator로 검증합니다. invalid result는 자동 merge 성공으로 반환하지 않습니다. | invalid cross-ref fixture conflict/error. | XIV.10.2~XIV.10.7, VI.10.1 |
