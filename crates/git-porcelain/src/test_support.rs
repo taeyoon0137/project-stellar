@@ -134,6 +134,9 @@ pub(crate) fn init_repo_with_identity(runner: &GitRunner, dir: &Path) {
 
 /// 파일 하나를 커밋합니다.
 pub(crate) fn commit_file(runner: &GitRunner, dir: &Path, name: &str, contents: &[u8]) {
+    if let Some(parent) = dir.join(name).parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
     std::fs::write(dir.join(name), contents).unwrap();
     git_ok(runner, dir, ["add", "--", name]);
     git_ok(runner, dir, ["commit", "-q", "-m", "fixture"]);
