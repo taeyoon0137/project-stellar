@@ -63,6 +63,82 @@ impl fmt::Display for ModifierError {
 
 impl std::error::Error for ModifierError {}
 
+/// modifier 종류. 숫자 값은 저장 포맷의 일부입니다(golden test로 고정).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u16)]
+pub enum ModifierKind {
+    /// 추가 변환.
+    Transform = 1,
+    /// boolean 연산(다른 node 참조).
+    Boolean = 2,
+    /// stroke를 fill 외곽선으로 확장.
+    StrokeExpand = 3,
+    /// 모서리 둥글리기.
+    Corner = 4,
+    /// mask(다른 node 참조).
+    Mask = 5,
+    /// clip(다른 node 참조).
+    Clip = 6,
+    /// 채우기.
+    Fill = 7,
+    /// 선.
+    Stroke = 8,
+    /// 그림자.
+    Shadow = 9,
+    /// 흐림.
+    Blur = 10,
+    /// blend mode.
+    Blend = 11,
+    /// 불투명도.
+    Opacity = 12,
+}
+
+impl ModifierKind {
+    /// 정의된 모든 종류.
+    pub const ALL: [ModifierKind; 12] = [
+        ModifierKind::Transform,
+        ModifierKind::Boolean,
+        ModifierKind::StrokeExpand,
+        ModifierKind::Corner,
+        ModifierKind::Mask,
+        ModifierKind::Clip,
+        ModifierKind::Fill,
+        ModifierKind::Stroke,
+        ModifierKind::Shadow,
+        ModifierKind::Blur,
+        ModifierKind::Blend,
+        ModifierKind::Opacity,
+    ];
+
+    /// 안정 numeric 값.
+    pub fn as_u16(self) -> u16 {
+        self as u16
+    }
+
+    /// 숫자에서 복원합니다.
+    pub fn from_u16(value: u16) -> Option<ModifierKind> {
+        ModifierKind::ALL.into_iter().find(|k| k.as_u16() == value)
+    }
+
+    /// 진단용 이름.
+    pub fn name(self) -> &'static str {
+        match self {
+            ModifierKind::Transform => "transform",
+            ModifierKind::Boolean => "boolean",
+            ModifierKind::StrokeExpand => "stroke-expand",
+            ModifierKind::Corner => "corner",
+            ModifierKind::Mask => "mask",
+            ModifierKind::Clip => "clip",
+            ModifierKind::Fill => "fill",
+            ModifierKind::Stroke => "stroke",
+            ModifierKind::Shadow => "shadow",
+            ModifierKind::Blur => "blur",
+            ModifierKind::Blend => "blend",
+            ModifierKind::Opacity => "opacity",
+        }
+    }
+}
+
 /// stack의 한 항목(id + 순서 key).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModifierEntry {
@@ -70,6 +146,8 @@ pub struct ModifierEntry {
     pub id: ModifierId,
     /// 순서 key.
     pub order: OrderKey,
+    /// 종류.
+    pub kind: ModifierKind,
 }
 
 /// node 하나의 modifier stack. node payload와 별도로 저장됩니다.
@@ -115,11 +193,16 @@ impl ModifierStack {
     }
 
     /// 맨 뒤(가장 나중 적용)에 새 modifier를 추가하고 그 key를 반환합니다.
-    pub fn push_back(&mut self, id: ModifierId) -> Result<OrderKey, ModifierError> {
+    pub fn push_back(
+        &mut self,
+        id: ModifierId,
+        kind: ModifierKind,
+    ) -> Result<OrderKey, ModifierError> {
         let order = OrderKey::between(self.entries.last().map(|e| &e.order), None);
         self.insert(ModifierEntry {
             id,
             order: order.clone(),
+            kind,
         })?;
         Ok(order)
     }
@@ -134,7 +217,7 @@ impl ModifierStack {
         Ok(self.entries.remove(index))
     }
 
-    /// canonical bytes: node id + 항목 수 + (id 16 + key 길이 u32 + key bytes)*.
+    /// canonical bytes: node id + 항목 수 + (id 16 + key 길이 u32 + key bytes + kind u16)*.
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&self.node.to_bytes());
@@ -144,6 +227,7 @@ impl ModifierStack {
             let key = entry.order.as_bytes();
             buf.extend_from_slice(&(key.len() as u32).to_le_bytes());
             buf.extend_from_slice(key);
+            buf.extend_from_slice(&entry.kind.as_u16().to_le_bytes());
         }
         buf
     }
@@ -183,8 +267,12 @@ impl ModifierStack {
                     reason: "OrderKey 정렬 위반",
                 });
             }
+            let kind_raw = u16::from_le_bytes(take(2)?.try_into().expect("2바이트"));
+            let kind = ModifierKind::from_u16(kind_raw).ok_or(ModifierError::Malformed {
+                reason: "알 수 없는 modifier kind",
+            })?;
             previous = Some(order.clone());
-            stack.insert(ModifierEntry { id, order })?;
+            stack.insert(ModifierEntry { id, order, kind })?;
         }
         if pos != bytes.len() {
             return Err(ModifierError::Malformed {
@@ -207,9 +295,9 @@ mod tests {
     fn id_and_order_round_trip() {
         // 검증 기준(VI.9.1): ID와 순서 round-trip.
         let mut stack = ModifierStack::new(StableId::new_v7(1, 0, 1));
-        stack.push_back(id(10)).unwrap();
-        stack.push_back(id(11)).unwrap();
-        stack.push_back(id(12)).unwrap();
+        stack.push_back(id(10), ModifierKind::Fill).unwrap();
+        stack.push_back(id(11), ModifierKind::Stroke).unwrap();
+        stack.push_back(id(12), ModifierKind::Shadow).unwrap();
         // 맨 앞에 삽입(다른 항목의 key 불변).
         let first_key = OrderKey::between(None, Some(&stack.entries()[0].order));
         let keys_before: Vec<_> = stack.entries().iter().map(|e| e.order.clone()).collect();
@@ -217,6 +305,7 @@ mod tests {
             .insert(ModifierEntry {
                 id: id(9),
                 order: first_key,
+                kind: ModifierKind::Transform,
             })
             .unwrap();
         assert_eq!(stack.ids_in_order(), vec![id(9), id(10), id(11), id(12)]);
@@ -242,16 +331,17 @@ mod tests {
     #[test]
     fn duplicates_and_malformed_are_rejected() {
         let mut stack = ModifierStack::new(StableId::new_v7(1, 0, 1));
-        let key = stack.push_back(id(10)).unwrap();
+        let key = stack.push_back(id(10), ModifierKind::Fill).unwrap();
         assert_eq!(
-            stack.push_back(id(10)).unwrap_err(),
+            stack.push_back(id(10), ModifierKind::Fill).unwrap_err(),
             ModifierError::DuplicateId { id: id(10) }
         );
         assert_eq!(
             stack
                 .insert(ModifierEntry {
                     id: id(11),
-                    order: key
+                    order: key,
+                    kind: ModifierKind::Blur,
                 })
                 .unwrap_err(),
             ModifierError::DuplicateOrderKey
@@ -265,5 +355,42 @@ mod tests {
         bytes.push(0);
         assert!(ModifierStack::decode(&bytes).is_err());
         assert!(ModifierStack::decode(&[0; 5]).is_err());
+    }
+
+    #[test]
+    fn golden_numeric_modifier_kinds() {
+        // 검증 기준(VI.9.2): numeric kind golden test.
+        let golden: [(ModifierKind, u16, &str); 12] = [
+            (ModifierKind::Transform, 1, "transform"),
+            (ModifierKind::Boolean, 2, "boolean"),
+            (ModifierKind::StrokeExpand, 3, "stroke-expand"),
+            (ModifierKind::Corner, 4, "corner"),
+            (ModifierKind::Mask, 5, "mask"),
+            (ModifierKind::Clip, 6, "clip"),
+            (ModifierKind::Fill, 7, "fill"),
+            (ModifierKind::Stroke, 8, "stroke"),
+            (ModifierKind::Shadow, 9, "shadow"),
+            (ModifierKind::Blur, 10, "blur"),
+            (ModifierKind::Blend, 11, "blend"),
+            (ModifierKind::Opacity, 12, "opacity"),
+        ];
+        assert_eq!(ModifierKind::ALL.len(), golden.len());
+        for (kind, value, name) in golden {
+            assert_eq!(kind.as_u16(), value, "{name}");
+            assert_eq!(kind.name(), name);
+            assert_eq!(ModifierKind::from_u16(value), Some(kind));
+        }
+        assert_eq!(ModifierKind::from_u16(0), None);
+        assert_eq!(ModifierKind::from_u16(13), None);
+    }
+
+    #[test]
+    fn unknown_kind_in_bytes_is_rejected() {
+        let mut stack = ModifierStack::new(StableId::new_v7(1, 0, 1));
+        stack.push_back(id(10), ModifierKind::Opacity).unwrap();
+        let mut bytes = stack.encode();
+        let n = bytes.len();
+        bytes[n - 2..].copy_from_slice(&99u16.to_le_bytes());
+        assert!(ModifierStack::decode(&bytes).is_err());
     }
 }
