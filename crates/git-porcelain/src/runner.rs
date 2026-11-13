@@ -15,6 +15,9 @@
 //!   실행은 stdin을 비워(null) 둡니다.
 //! - **spawn 계측**: 실제 프로세스 생성 시도 횟수를 [`GitRunner::spawn_count`]로 셉니다(XIV.1.1).
 //!   trust gate가 프로세스를 하나도 만들지 않았음을 검증하는 데 사용합니다.
+//! - **trace**: [`GitRunner::with_trace_sink`]로 연결한 sink에 프로세스 생성을 시도한 모든 실행의
+//!   [`GitCommandTrace`](명령 종류·소요 시간·종료 상태만)와 redaction된 [`GitDebugLine`]을 보냅니다
+//!   (XIV.1.6). URL·branch·경로·commit hash는 trace에 들어가지 않습니다.
 
 use std::ffi::{OsStr, OsString};
 use std::io::{Read, Write};
@@ -26,6 +29,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::cancel::{terminate_process_tree, GitCancelToken};
+use crate::trace::{
+    GitCommandKind, GitCommandTrace, GitDebugLine, GitTraceExit, GitTraceSink, TraceSinkHandle,
+};
 
 /// stderr 조각을 받는 콜백.
 type StderrSink<'a> = &'a mut dyn FnMut(&[u8]);
@@ -119,6 +125,7 @@ pub struct GitRunner {
     parent_env: ParentEnv,
     timeout: Duration,
     spawn_count: Arc<AtomicU64>,
+    trace_sink: Option<TraceSinkHandle>,
 }
 
 impl GitRunner {
@@ -131,7 +138,17 @@ impl GitRunner {
             parent_env: ParentEnv::Process,
             timeout,
             spawn_count: Arc::new(AtomicU64::new(0)),
+            trace_sink: None,
         }
+    }
+
+    /// 실행 trace를 받을 sink를 연결합니다(XIV.1.6). 사본은 같은 sink를 공유합니다.
+    ///
+    /// sink는 프로세스 생성을 시도한 실행마다 [`GitCommandTrace`]를 받고, 이어서 redaction된
+    /// [`GitDebugLine`](실패하면 redaction된 stderr 포함)을 받습니다.
+    pub fn with_trace_sink(mut self, sink: Arc<dyn GitTraceSink>) -> GitRunner {
+        self.trace_sink = Some(TraceSinkHandle(sink));
+        self
     }
 
     /// allowlist 값을 현재 프로세스 환경 대신 `vars`에서 읽는 사본(테스트 전용, 카운터 공유).
@@ -258,12 +275,62 @@ impl GitRunner {
         cwd: &Path,
         input: Option<&[u8]>,
         cancel: Option<&GitCancelToken>,
+        on_stderr: Option<StderrSink<'_>>,
+    ) -> Result<GitOutput, GitRunError> {
+        // 실행 전 취소: 프로세스를 만들지 않으므로 trace도 남기지 않습니다.
+        if cancel.is_some_and(GitCancelToken::is_cancelled) {
+            return Err(GitRunError::Cancelled);
+        }
+        let start = Instant::now();
+        let result = self.spawn_and_wait(args, cwd, input, cancel, on_stderr);
+        self.emit_trace(args, start.elapsed(), &result);
+        result
+    }
+
+    /// trace sink가 있으면 trace와 redaction된 debug line을 보냅니다.
+    fn emit_trace(
+        &self,
+        args: &[OsString],
+        duration: Duration,
+        result: &Result<GitOutput, GitRunError>,
+    ) {
+        let Some(TraceSinkHandle(sink)) = &self.trace_sink else {
+            return;
+        };
+        let exit = match result {
+            Ok(output) => match output.exit_code {
+                Some(code) => GitTraceExit::Code(code),
+                None => GitTraceExit::Signal,
+            },
+            Err(GitRunError::Spawn { .. }) => GitTraceExit::SpawnFailed,
+            Err(GitRunError::Timeout) => GitTraceExit::TimedOut,
+            Err(GitRunError::Cancelled) => GitTraceExit::Cancelled,
+            Err(GitRunError::Wait { .. }) => GitTraceExit::WaitFailed,
+        };
+        let trace = GitCommandTrace {
+            kind: GitCommandKind::from_argv(args),
+            duration,
+            exit,
+        };
+        sink.record(&trace);
+        let mut line = GitDebugLine::new(trace, args);
+        if let Ok(output) = result {
+            if !output.success() && !output.stderr.is_empty() {
+                line = line.with_stderr(&output.stderr);
+            }
+        }
+        sink.record_debug(&line);
+    }
+
+    fn spawn_and_wait(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: Option<&[u8]>,
+        cancel: Option<&GitCancelToken>,
         mut on_stderr: Option<StderrSink<'_>>,
     ) -> Result<GitOutput, GitRunError> {
         let cancelled = || cancel.is_some_and(GitCancelToken::is_cancelled);
-        if cancelled() {
-            return Err(GitRunError::Cancelled);
-        }
 
         let mut command = Command::new(&self.git_path);
         command
@@ -681,6 +748,115 @@ mod tests {
         assert_eq!(joined, out.stderr);
         // 첫 조각은 프로세스 종료(≥0.3초) 전에 전달됨.
         assert!(seen[0].0.duration_since(start) < Duration::from_millis(300));
+    }
+
+    /// trace를 모으는 테스트 sink.
+    #[derive(Default)]
+    struct CollectSink {
+        traces: std::sync::Mutex<Vec<GitCommandTrace>>,
+        lines: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl GitTraceSink for CollectSink {
+        fn record(&self, trace: &GitCommandTrace) {
+            self.traces.lock().unwrap().push(*trace);
+        }
+
+        fn record_debug(&self, line: &GitDebugLine) {
+            self.lines.lock().unwrap().push(line.render());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn secret_fixture_is_redacted_from_trace_and_debug_log() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new();
+        // stdout·stderr에 argv와 비밀 값을 그대로 출력하고 실패하는 가짜 Git.
+        let fake = dir.path.join("fake-git");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\necho \"$@\"\necho \"fatal: unable to access 'https://alice:ghp_SECRET@github.com/org/private-repo.git/': denied\" >&2\n\
+             echo \"error: src refspec 'secret-branch' does not match /Users/alice/Projects/secret at 0123456789abcdef0123456789abcdef01234567\" >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let sink = Arc::new(CollectSink::default());
+        let runner = GitRunner::new(fake, Vec::new(), Duration::from_millis(5_000))
+            .with_trace_sink(sink.clone());
+        let secret_argv = argv([
+            "-c",
+            "credential.helper=store --file=/Users/alice/secret-store",
+            "push",
+            "--porcelain",
+            "https://alice:ghp_SECRET@github.com/org/private-repo.git",
+            "refs/heads/secret-branch:refs/heads/secret-branch",
+            "--",
+            "/Users/alice/Projects/secret/path.yaml",
+            "0123456789abcdef0123456789abcdef01234567",
+        ]);
+        let out = runner.run(&secret_argv, &dir.path).unwrap();
+        assert_eq!(out.exit_code, Some(1));
+        // 사본도 같은 sink를 씁니다.
+        runner.clone().run(&argv(["status"]), &dir.path).unwrap();
+        // 실행 전 취소는 프로세스·trace 없음.
+        let token = GitCancelToken::new();
+        token.cancel();
+        assert_eq!(
+            runner.run_cancellable(&argv(["fetch"]), &dir.path, &token),
+            Err(GitRunError::Cancelled)
+        );
+        // spawn 실패도 기록합니다.
+        let missing =
+            runner_for("/nonexistent/definitely/not/here", 5_000).with_trace_sink(sink.clone());
+        assert!(missing
+            .run(&argv(["clone", "https://x@y/z"]), &dir.path)
+            .is_err());
+
+        let traces = sink.traces.lock().unwrap().clone();
+        let kinds: Vec<(GitCommandKind, GitTraceExit)> =
+            traces.iter().map(|t| (t.kind, t.exit)).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (GitCommandKind::Push, GitTraceExit::Code(1)),
+                (GitCommandKind::Status, GitTraceExit::Code(1)),
+                (GitCommandKind::Clone, GitTraceExit::SpawnFailed),
+            ]
+        );
+        let lines = sink.lines.lock().unwrap().clone();
+        assert_eq!(lines.len(), 3);
+        let everything = format!("{traces:?}\n{}", lines.join("\n"));
+        for secret in [
+            "ghp_SECRET",
+            "alice",
+            "github.com",
+            "private-repo",
+            "secret-branch",
+            "secret-store",
+            "/Users",
+            "path.yaml",
+            "0123456789abcdef",
+            "credential.helper",
+            "x@y",
+        ] {
+            assert!(
+                !everything.contains(secret),
+                "{secret:?} 노출: {everything}"
+            );
+        }
+        assert!(
+            lines[0].starts_with(
+                "git -c <config> push --porcelain <url> <ref> -- <path> <oid> kind=push exit=1"
+            ),
+            "{}",
+            lines[0]
+        );
+        assert!(
+            lines[0].contains("stderr=fatal: unable to access '<redacted>'"),
+            "{}",
+            lines[0]
+        );
     }
 
     #[test]

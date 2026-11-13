@@ -1357,7 +1357,7 @@ tools/xtask/
 | XIV.1.3 | `[x]` | Git capability probe에 porcelain v2, pathspec-from-file, update-index --index-info, worktree, LFS availability를 기록합니다. 초기 UI가 쓰지 않는 기능도 capability로만 저장합니다. | 서로 다른 Git fixture output parse. | IV.3.2 |
 | XIV.1.4 | `[x]` | Git command cancellation을 구현합니다. child process와 자식 프로세스 tree를 플랫폼 안전 방식으로 종료하고 partial app state를 성공으로 처리하지 않습니다. | long-running fixture cancel 후 process 잔존 0. | IV.3.3 |
 | XIV.1.5 | `[x]` | stdout/stderr decoding은 UTF-8 우선, raw bytes 보존, invalid sequence replacement 표시를 구분합니다. machine parse는 `-z` 또는 stable format만 사용합니다. | non-UTF8 filename fixture 처리. | IV.3.4 |
-| XIV.1.6 | `[ ]` | Git command trace에는 command kind, duration, exit code만 기록하고 URL, branch, path, commit hash는 telemetry에서 제외합니다. 로컬 debug log도 redaction 규칙을 적용합니다. | secret fixture redaction 통과. | II.3.2, XIV.1.5 |
+| XIV.1.6 | `[x]` | Git command trace에는 command kind, duration, exit code만 기록하고 URL, branch, path, commit hash는 telemetry에서 제외합니다. 로컬 debug log도 redaction 규칙을 적용합니다. | secret fixture redaction 통과. | II.3.2, XIV.1.5 |
 
 ### XIV.2 Git 상태와 SnapshotProvider
 

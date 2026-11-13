@@ -21,6 +21,9 @@ pub mod command;
 /// Git 출력 디코딩 (XIV.1.5).
 pub mod decode;
 
+/// Git command trace와 debug log redaction (XIV.1.6).
+pub mod trace;
+
 /// Git 설치 상태 머신 (IV.3.5).
 pub mod install_state;
 
