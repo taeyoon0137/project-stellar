@@ -4147,11 +4147,17 @@ tasks:
       - DEV-MAC
   - id: "X.1.1"
     title: "`layout`에 `LayoutInput`, `LayoutBox`, `LayoutResult`, `LayoutError`를 정의합니다. 결과는 local rect, content rect, baseline, overflow bounds를 포함합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.1.1.md"
+    commit: "ff1e2f2c727049b07dafe3fe2819b25dd109375b"
+    report: "docs/task-reports/X.1.1.md"
+    verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.1.2"
     title: "layout tree view는 Fragment를 flatten하고 ComponentInstance virtual subtree와 View Variant 적용 결과를 읽도록 합니다. 원본 document를 수정하지 않습니다."
     status: not_started
@@ -4163,11 +4169,17 @@ tasks:
       - DEV-MAC
   - id: "X.1.3"
     title: "layout property registry에 각 속성의 dirty class를 SelfSize, ParentFlow, DescendantConstraint, PaintOnly로 분류합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.3.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.1.3.md"
+    commit: "17722581e7e379851e14a5e5dd803d03be59b868"
+    report: "docs/task-reports/X.1.3.md"
+    verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.1.4"
     title: "LayoutRevision과 node별 input hash/output cache 타입을 정의합니다."
     status: verified
@@ -4196,68 +4208,122 @@ tasks:
     verified_at: "2026-11-14T00:38:57+09:00"
   - id: "X.2.1"
     title: "Free layout에서 자식 local position과 size를 그대로 사용하고 parent padding·content origin을 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.2.1.md"
+    commit: "5a435dc5551aa366b5ffd419091e80bba900fb1f"
+    report: "docs/task-reports/X.2.1.md"
+    verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.2.2"
     title: "absolute anchors left/right/top/bottom과 fixed size 조합의 해석 순서를 정의합니다. over-constrained 입력은 명시 우선순위가 아니라 오류로 처리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.2.2.md"
+    commit: "1e0af7e28071e1495772580d041c872f0d61d484"
+    report: "docs/task-reports/X.2.2.md"
+    verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.2.3"
     title: "percentage position/size를 containing block content rect 기준으로 계산합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.2.1"
       - "III.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.2.3.md"
+    commit: "32233d347b48dedc8987d46e5863844dbf06a64c"
+    report: "docs/task-reports/X.2.3.md"
+    verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.2.4"
     title: "local transform은 layout rect 계산 후 적용하고 flow size에는 영향을 주지 않는 초기 정책을 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.2.4.md"
+    commit: "a35a8ec721bd80060ef38fc032d6c583b1c5b338"
+    report: "docs/task-reports/X.2.4.md"
+    verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.3.1"
     title: "Stack axis, direction, gap, padding, main/cross alignment 타입을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.3.1.md"
+    commit: "2de529012732e6c61dd20d4f1923ec4d7b03eb01"
+    report: "docs/task-reports/X.3.1.md"
+    verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.3.2"
     title: "고정 크기 child의 순방향 배치와 gap 계산을 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.3.2.md"
+    commit: "fd2cc4431cb98c1414e879697ad5c0ad7f15f197"
+    report: "docs/task-reports/X.3.2.md"
+    verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.3.3"
     title: "grow, shrink, basis를 구현하고 분배 잔여값 처리 순서를 StableId가 아닌 child visual order로 고정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.3.3.md"
+    commit: "a39698b0b9998bd2a2e164ac55f61000a8d5008f"
+    report: "docs/task-reports/X.3.3.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.3.4"
     title: "wrap과 multi-line cross alignment를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.3.4.md"
+    commit: "056a41771a52595c69c047c327cf02e78676850e"
+    report: "docs/task-reports/X.3.4.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.3.5"
     title: "hidden child와 zero-size child 처리 규칙을 구현합니다. hidden은 flow에서 제외하고 zero-size는 gap 참여 정책을 명시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.3.5.md"
+    commit: "c351f581386dc29c8806d00fe8c9d6cfb887e380"
+    report: "docs/task-reports/X.3.5.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.3.6"
     title: "baseline alignment hook을 추가하고 Text baseline이 없는 node는 bottom edge fallback을 사용합니다."
     status: not_started
@@ -4268,32 +4334,56 @@ tasks:
       - DEV-MAC
   - id: "X.4.1"
     title: "Grid track 타입 Fixed, Fraction, MinContent, MaxContent, MinMax를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.4.1.md"
+    commit: "b8feef367d76a9303b98ee0e7bad01c49392ca1b"
+    report: "docs/task-reports/X.4.1.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.4.2"
     title: "explicit row/column track sizing을 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.4.2.md"
+    commit: "48f92ef20171cdc45f9bced0a6c3d5ea64b8d062"
+    report: "docs/task-reports/X.4.2.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.4.3"
     title: "grid item start/end, span과 gap을 구현합니다. invalid span은 오류입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.4.3.md"
+    commit: "d7abece3afa79a18712ea92177f1678489ae05a0"
+    report: "docs/task-reports/X.4.3.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.4.4"
     title: "auto placement를 row-major deterministic order로 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.4.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.4.4.md"
+    commit: "4bc0367c14d20b26cf7a970c5efe6ffb326a0afa"
+    report: "docs/task-reports/X.4.4.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.4.5"
     title: "content-based track sizing을 텍스트·이미지 intrinsic size hook으로 연결합니다."
     status: not_started
@@ -4304,61 +4394,109 @@ tasks:
       - DEV-MAC
   - id: "X.5.1"
     title: "Overlay layout에서 모든 child가 같은 containing block을 사용하고 z-order는 OrderKey를 따르게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.5.1.md"
+    commit: "42e902e7f4c0d6f9eb9397bf19120003c2480c73"
+    report: "docs/task-reports/X.5.1.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.5.2"
     title: "Anchor target을 parent edge, sibling edge, center, baseline로 정의하고 참조는 StableId를 사용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.2.3"
       - "X.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.5.2.md"
+    commit: "3ed65eb789d96844f5d133272a985e508aeb1b67"
+    report: "docs/task-reports/X.5.2.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.5.3"
     title: "constraint graph를 구축하고 cycle·underdetermined·overdetermined를 분류합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.5.3.md"
+    commit: "b3dcfa4caacb90c2fad988464dabfad9961b4dc1"
+    report: "docs/task-reports/X.5.3.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.5.4"
     title: "초기 constraint solver는 equality와 priority 없는 필수 제약만 지원합니다. 지원하지 않는 priority 필드는 스키마에 넣지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.5.4.md"
+    commit: "5b8ba812eaafbfde99c14ae6ca9c901e63cd14d8"
+    report: "docs/task-reports/X.5.4.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.5.5"
     title: "constraint 변경 영향 범위를 connected component로 제한합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.5.5.md"
+    commit: "e6b382cb57078c1e24bb9ad13a8c7ccefaf6bdd8"
+    report: "docs/task-reports/X.5.5.md"
+    verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.6.1"
     title: "SizingMode에 Fixed, Fill, HugContent, Percentage를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.6.1.md"
+    commit: "7e06056e9f0d74636bf84e5ddea4cc074293c00a"
+    report: "docs/task-reports/X.6.1.md"
+    verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.6.2"
     title: "min/max clamp를 모든 layout mode의 최종 size에 동일 순서로 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.6.2.md"
+    commit: "bd08ec168e90eb7663b3ffb0103bc2d75da74dd8"
+    report: "docs/task-reports/X.6.2.md"
+    verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.6.3"
     title: "aspect ratio constraint를 한 축이 definite일 때만 적용하고 양 축 indefinite는 intrinsic size로 해결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.6.3.md"
+    commit: "891279524666278181856b72594946d21a24bdd9"
+    report: "docs/task-reports/X.6.3.md"
+    verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.6.4"
     title: "content intrinsic measurement trait를 Shape, Text, Image, ComponentInstance별로 정의합니다."
     status: not_started
@@ -4405,12 +4543,18 @@ tasks:
       - DEV-MAC
   - id: "X.7.5"
     title: "layout result가 DocumentRevision과 input hash에 맞지 않으면 폐기하는 worker result guard를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.3.4"
       - "X.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.5.md"
+    commit: "ef7074f4813b9fc51f63ddd884cb85b484933868"
+    report: "docs/task-reports/X.7.5.md"
+    verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.7.6"
     title: "전체 layout fallback 경로를 테스트·진단용으로만 제공하고 일반 property 변경에서 호출되면 debug assertion과 metric을 남깁니다."
     status: not_started
@@ -4575,9 +4719,15 @@ tasks:
       - DEV-MAC
   - id: "X.11.1"
     title: "Free, Stack, Grid, Overlay, Constraint 각각 최소 50개 fixture를 생성하는 schema와 runner를 작성합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.11.1.md"
+    commit: "da1c5083c94aef2a1aa670c54b95de6f73025307"
+    report: "docs/task-reports/X.11.1.md"
+    verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.11.2"
     title: "nested component, variant, token 조건이 포함된 layout fixture 20개를 추가합니다."
     status: not_started
@@ -6115,55 +6265,92 @@ tasks:
       - DEV-MAC
   - id: "XIV.2.1"
     title: "`git status --porcelain=v2 -z --branch` parser를 구현합니다. ordinary, rename/copy, unmerged, untracked, ignored를 구분합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.2.1.md"
+    commit: "5278e56c42d7de77ec0827af2ecb3bd0623869e4"
+    report: "docs/task-reports/XIV.2.1.md"
+    verified_at: "2026-11-14T02:14:03+09:00"
   - id: "XIV.2.2"
     title: "`RepositoryStatus`에 HEAD, upstream 상태, staged/unstaged/untracked counts, conflict state를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.2.2.md"
+    commit: "37914fe828a5a27dbc98972336296e283fd74610"
+    report: "docs/task-reports/XIV.2.2.md"
+    verified_at: "2026-11-14T02:14:03+09:00"
   - id: "XIV.2.3"
     title: "`SnapshotSource`를 Head(commit), Index, WorkingTree, Commit(hash), Tree(hash)로 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.2.3.md"
+    commit: "7cf90ff2ec76e8b3a6eeced139775f232b77c516"
+    report: "docs/task-reports/XIV.2.3.md"
+    verified_at: "2026-11-14T02:14:03+09:00"
   - id: "XIV.2.4"
     title: "HEAD/commit tree의 파일 목록과 mode/blob ID를 `git ls-tree -rz`로 읽는 provider를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.2.4.md"
+    commit: "cc5012c57b71fa07292ed9fcb1d5ce45fca40057"
+    report: "docs/task-reports/XIV.2.4.md"
+    verified_at: "2026-11-14T02:14:03+09:00"
   - id: "XIV.2.5"
     title: "index의 stage 0 파일 목록과 blob ID를 `git ls-files --stage -z`로 읽는 provider를 구현합니다. unmerged entry는 별도 conflict provider로 넘깁니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.2.5.md"
+    commit: "56e1d4d208ffc8ca20c0fa214da799c6ebadb121"
+    report: "docs/task-reports/XIV.2.5.md"
+    verified_at: "2026-11-14T02:14:03+09:00"
   - id: "XIV.2.6"
     title: "blob content를 `git cat-file --batch`로 읽고 temp virtual project filesystem에 materialize합니다. `.git`은 생성하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.2.4"
       - "XIV.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.2.6.md"
+    commit: "5d1b1d6539564ae5ea0ef034f5463094f367a100"
+    report: "docs/task-reports/XIV.2.6.md"
+    verified_at: "2026-11-14T02:14:03+09:00"
   - id: "XIV.2.7"
     title: "WorkingTree provider는 disk project loader를 사용하고 저장 대기 memory state와 구분합니다. Git status는 저장된 file 기준임을 명시합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "V.4.4"
       - "XIV.2.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIV.2.7.md"
   - id: "XIV.2.8"
     title: "Git UI를 열기 전 pending autosave를 flush할지 호출자에게 상태를 반환합니다. 자동으로 사용자의 memory edit를 저장하지 않습니다."
     status: not_started
@@ -6269,11 +6456,17 @@ tasks:
       - DEV-MAC
   - id: "XIV.4.4"
     title: "non-Stellar files는 raw Git file status로만 표시하고 semantic parser로 해석하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.4.4.md"
+    commit: "01a076eafd80f53c9c5f8a3a1206a18e761f3dda"
+    report: "docs/task-reports/XIV.4.4.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.4.5"
     title: "corrupt WorkingTree Stellar state는 semantic status를 실패시키되 raw Git status는 계속 제공하고 자동 수정하지 않습니다."
     status: not_started
@@ -6448,54 +6641,96 @@ tasks:
       - DEV-MAC
   - id: "XIV.9.1"
     title: "existing remote 목록을 `git remote -v`의 안정 parse 방식으로 읽고 fetch/push URL을 구분합니다. URL은 민감값으로 처리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.9.1.md"
+    commit: "84131958ba934897550da6ef8ff696d6eb2c9ea9"
+    report: "docs/task-reports/XIV.9.1.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.9.2"
     title: "GitHub URL 형식 검증은 HTTPS/SSH canonical patterns만 확인하고 API 호출은 하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.9.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.9.2.md"
+    commit: "26b420d8446fc70968c7ceae736228d5da60fedb"
+    report: "docs/task-reports/XIV.9.2.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.9.3"
     title: "새 GitHub remote 연결 전에 `git ls-remote`로 refs 존재 여부를 확인합니다. refs가 하나라도 있으면 최초 업로드 연결을 거부하고 Clone 안내 상태를 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.9.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.9.3.md"
+    commit: "cfd9e2cb5405ef6fb3d51e9a281a2c154e48d19c"
+    report: "docs/task-reports/XIV.9.3.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.9.4"
     title: "empty remote만 `git remote add <name> <url>`로 등록합니다. 기본 remote name은 `origin`, 이미 있으면 호출자가 다른 이름을 제공해야 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.9.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.9.4.md"
+    commit: "69df3244c736cee7020f4a6d82a81300925cf32f"
+    report: "docs/task-reports/XIV.9.4.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.9.5"
     title: "Push는 사용자가 선택한 existing remote/refspec을 시스템 Git으로 실행합니다. force push UI는 제공하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.9.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.9.5.md"
+    commit: "bb03a46214cf01bb1cfac2e99ea646965c282a22"
+    report: "docs/task-reports/XIV.9.5.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.9.6"
     title: "credential helper/SSH agent prompt를 Git에 위임하고 Stellar는 token/key를 저장하지 않습니다. askpass bridge가 필요하면 입력 값은 메모리에서 즉시 폐기합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.9.5"
       - "II.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.9.6.md"
+    commit: "1b1acff825efba3059126d45b77b7ed76d089ebb"
+    report: "docs/task-reports/XIV.9.6.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.9.7"
     title: "push 성공 후 remote tracking status를 갱신합니다. 실패 시 local commit/index를 변경하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.9.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.9.7.md"
+    commit: "45a9ac3a71ee403224c196c76710fc10f1104f69"
+    report: "docs/task-reports/XIV.9.7.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.10.1"
     title: "`MergeInput { base, ours, theirs }`, `MergeResult`, `SemanticConflict` 모델을 정의합니다."
     status: not_started
@@ -6565,19 +6800,26 @@ tasks:
       - DEV-MAC
   - id: "XIV.11.1"
     title: "`git ls-files -u -z`를 읽어 stage 1(base), 2(ours), 3(theirs) blob과 mode를 path별로 수집합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.11.1.md"
+    commit: "817d7e70b9193b11b80f1e0b163932693bf50496"
+    report: "docs/task-reports/XIV.11.1.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.11.2"
     title: "conflict 관련 Stellar project 파일의 세 stage를 각각 virtual project snapshot으로 materialize합니다. conflict 없는 path는 current index/working 상태와 결합합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIV.2.6"
       - "XIV.11.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIV.11.2.md"
   - id: "XIV.11.3"
     title: "세 snapshot을 Semantic Merge engine에 전달하고 raw file conflict와 semantic conflict mapping을 유지합니다."
     status: not_started
@@ -6588,11 +6830,17 @@ tasks:
       - DEV-MAC
   - id: "XIV.11.4"
     title: "Stellar 파일이 아닌 conflict는 raw Git conflict로 표시하고 Semantic Merge로 해석하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.11.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.11.4.md"
+    commit: "578d503de82009e5ef237db1a93441a4882ed862"
+    report: "docs/task-reports/XIV.11.4.md"
+    verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.12.1"
     title: "conflict별 resolution을 ChooseBase, ChooseOurs, ChooseTheirs, CustomValue, Delete, KeepModified로 정의하고 허용 action은 conflict kind별로 제한합니다."
     status: not_started
@@ -8660,23 +8908,41 @@ tasks:
       - DEV-MAC
   - id: "XXVI.1.1"
     title: "branch list/switch/create/delete UI API를 시스템 Git 명령에 연결합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.1.1.md"
+    commit: "23080419cf9154ebb587caec19b8a011fe6d5251"
+    report: "docs/task-reports/XXVI.1.1.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.1.2"
     title: "fetch UI와 progress를 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXVI.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.1.2.md"
+    commit: "75cb4234f12be4af5507f24c2d42d9427cd3b937"
+    report: "docs/task-reports/XXVI.1.2.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.1.3"
     title: "pull strategy를 사용자가 merge/rebase/ff-only 중 선택하게 하고 시스템 config 기본을 임의 변경하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXVI.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.1.3.md"
+    commit: "9e5ea91e6f6b21d2d37fa12bfe04405d0dff32b3"
+    report: "docs/task-reports/XXVI.1.3.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.1.4"
     title: "merge/rebase 시작과 abort/continue UI를 Git 상태 기반으로 연결합니다. continue는 Conflict UI 해결 후 사용자가 명시 실행합니다."
     status: not_started
@@ -8686,9 +8952,15 @@ tasks:
       - DEV-MAC
   - id: "XXVI.2.1"
     title: "stash list/create/apply/pop/drop UI를 시스템 Git으로 연결합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.2.1.md"
+    commit: "3bc0e7f94f13202714887736eac974be8248781a"
+    report: "docs/task-reports/XXVI.2.1.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.2.2"
     title: "cherry-pick/revert UI와 conflict 상태 연결을 구현합니다."
     status: not_started
@@ -8698,30 +8970,54 @@ tasks:
       - DEV-MAC
   - id: "XXVI.2.3"
     title: "reset/restore는 destructive level별 확인을 요구하고 command preview를 표시합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.2.3.md"
+    commit: "26663a0488af177cf25cc67ed07eb9e198de2bd6"
+    report: "docs/task-reports/XXVI.2.3.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.2.4"
     title: "reflog 조회와 선택 ref 복구 command를 제공합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.2.4.md"
+    commit: "842fae3aa1014bc407cb0891a498a290783f456a"
+    report: "docs/task-reports/XXVI.2.4.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.3.1"
     title: "`git worktree list --porcelain` parser를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.3.1.md"
+    commit: "a0b96f39cae3a9ba4c8b2ccbbe2d70bba4431a1a"
+    report: "docs/task-reports/XXVI.3.1.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.3.2"
     title: "add/remove/move/lock/unlock/prune/repair를 시스템 Git command로 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXVI.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.3.2.md"
+    commit: "82768546a82fcf3706f2e7691354ffa91d5d1027"
+    report: "docs/task-reports/XXVI.3.2.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.3.3"
     title: "worktree별 Stellar project root 검증 후 별도 창에서 엽니다."
     status: not_started
@@ -8732,23 +9028,41 @@ tasks:
       - DEV-MAC
   - id: "XXVI.3.4"
     title: "untracked file이 있는 worktree remove를 Git이 거부하면 결과를 그대로 표시하고 force를 기본 제공하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXVI.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.3.4.md"
+    commit: "5450e466aefd298fde70e7be74e08c9a109a8496"
+    report: "docs/task-reports/XXVI.3.4.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.4.1"
     title: "tags, notes, bisect, sparse-checkout, submodule 상태의 read UI를 우선 구현합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.4.1.md"
+    commit: "7742d7200dc3542c1d9a6310781add7270ad8042"
+    report: "docs/task-reports/XXVI.4.1.md"
+    verified_at: "2026-11-14T02:14:05+09:00"
   - id: "XXVI.4.2"
     title: "각 기능의 write UI는 별도 task/승인 후 추가하고 시스템 Git에서 가능하다는 이유만으로 자동 노출하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXVI.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVI.4.2.md"
+    commit: "179c8f8efdfae03e54913c7f7b47ece3a9ea5709"
+    report: "docs/task-reports/XXVI.4.2.md"
+    verified_at: "2026-11-14T02:14:06+09:00"
   - id: "XXVII.1.1"
     title: "Rust target과 Windows solution에 ARM64 configuration을 추가합니다."
     status: blocked
