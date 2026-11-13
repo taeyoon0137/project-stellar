@@ -147,24 +147,48 @@ pub enum ReferenceIssue {
         /// 대상 토큰의 scope.
         target_scope: TokenScope,
     },
+    /// 참조한 토큰이 orphan plan(VIII.5.5)으로 삭제되어 참조가 orphan 상태입니다. 의도한 상태이므로 저장을
+    /// 막지 않습니다([`crate::token_graph::validate_for_save`]).
+    Orphaned {
+        /// 참조하는 토큰.
+        token: TokenRef,
+        /// 삭제된 대상.
+        target: TokenRef,
+    },
+}
+
+/// orphan plan으로 삭제된 토큰의 기록(VIII.5.5). 참조를 지우지 않고 원래 ID·scope·이름·마지막 유효 타입을
+/// 보존합니다(아키텍처 §14.4). 참조하는 토큰은 [`TokenRegistry::referrers`]로 언제든 다시 구합니다. 같은 ID를 같은
+/// scope·이름·타입으로 다시 만들면 기록이 사라지고 참조가 다시 연결됩니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenTombstone {
+    /// 삭제된 토큰.
+    pub token: TokenRef,
+    /// 정의되어 있던 scope.
+    pub scope: TokenScope,
+    /// 마지막 이름.
+    pub name: TokenName,
+    /// 마지막 유효 타입. 참조하는 표현식은 계속 이 타입으로 type 검사됩니다.
+    pub token_type: TokenType,
 }
 
 /// scope별 TokenSet registry (VIII.5.2).
 ///
 /// 토큰마다 값 revision(VIII.5.4)을 둡니다. 정의 추가와 default expression 교체는 그 토큰의 revision을 새 값으로
 /// 올리고, rename은 값에 영향이 없으므로 올리지 않습니다. revision은 registry 안에서 단조 증가하며 저장하지 않습니다.
-/// 동등성(`PartialEq`)은 revision과 무관하게 scope별 TokenSet 내용만 비교합니다.
+/// 동등성(`PartialEq`)은 revision과 무관하게 scope별 TokenSet 내용과 orphan 기록(tombstone)만 비교합니다.
 #[derive(Debug, Clone, Default)]
 pub struct TokenRegistry {
     sets: BTreeMap<TokenScope, TokenSet>,
     owners: BTreeMap<TokenRef, TokenScope>,
+    tombstones: BTreeMap<TokenRef, TokenTombstone>,
     revisions: BTreeMap<TokenRef, u64>,
     last_revision: u64,
 }
 
 impl PartialEq for TokenRegistry {
     fn eq(&self, other: &TokenRegistry) -> bool {
-        self.sets == other.sets
+        self.sets == other.sets && self.tombstones == other.tombstones
     }
 }
 
@@ -332,6 +356,12 @@ impl TokenRegistry {
         for (from, definition) in self.tokens() {
             for target in definition.referenced_tokens() {
                 match self.scope_of(target) {
+                    None if self.tombstones.contains_key(&target) => {
+                        issues.insert(ReferenceIssue::Orphaned {
+                            token: definition.id(),
+                            target,
+                        });
+                    }
                     None => {
                         issues.insert(ReferenceIssue::Dangling {
                             token: definition.id(),
@@ -410,6 +440,24 @@ impl TokenRegistry {
             .collect()
     }
 
+    /// orphan plan으로 삭제된 토큰의 기록.
+    pub fn tombstone(&self, token: TokenRef) -> Option<&TokenTombstone> {
+        self.tombstones.get(&token)
+    }
+
+    /// 모든 orphan 기록(ID 순).
+    pub fn tombstones(&self) -> impl Iterator<Item = &TokenTombstone> {
+        self.tombstones.values()
+    }
+
+    pub(crate) fn insert_tombstone(&mut self, tombstone: TokenTombstone) {
+        self.tombstones.insert(tombstone.token, tombstone);
+    }
+
+    pub(crate) fn remove_tombstone(&mut self, token: TokenRef) -> Option<TokenTombstone> {
+        self.tombstones.remove(&token)
+    }
+
     fn set_of_mut(&mut self, token: TokenRef) -> Result<&mut TokenSet, RegistryError> {
         let scope = self
             .scope_of(token)
@@ -421,9 +469,15 @@ impl TokenRegistry {
 }
 
 impl TokenTypes for TokenRegistry {
+    /// 정의된 토큰의 타입. orphan 기록만 남은 토큰은 마지막 유효 타입입니다.
     fn token_type_of(&self, id: TokenRef) -> Option<TokenType> {
         self.resolve(id)
             .map(|resolved| resolved.definition.token_type())
+            .or_else(|| {
+                self.tombstones
+                    .get(&id)
+                    .map(|tombstone| tombstone.token_type)
+            })
     }
 }
 

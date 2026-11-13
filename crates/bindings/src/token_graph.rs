@@ -53,7 +53,8 @@ enum Mark {
 }
 
 impl TokenDependencyGraph {
-    /// registry의 모든 토큰으로 graph를 만듭니다. registry에 없는 대상으로 가는 간선은 넣지 않습니다.
+    /// registry의 모든 토큰으로 graph를 만듭니다. registry에 없는 대상으로 가는 간선은 넣지 않습니다. 단 orphan
+    /// 기록(VIII.5.5)이 있는 토큰으로 가는 간선은 넣어, 같은 ID를 다시 만들 때 생길 cycle을 미리 찾을 수 있게 합니다.
     pub fn build(registry: &TokenRegistry) -> TokenDependencyGraph {
         let mut graph = TokenDependencyGraph::default();
         for (_, definition) in registry.tokens() {
@@ -61,7 +62,9 @@ impl TokenDependencyGraph {
             let deps: Vec<TokenRef> = definition
                 .referenced_tokens()
                 .into_iter()
-                .filter(|target| registry.scope_of(*target).is_some())
+                .filter(|target| {
+                    registry.scope_of(*target).is_some() || registry.tombstone(*target).is_some()
+                })
                 .collect();
             for dep in &deps {
                 graph.dependents.entry(*dep).or_default().insert(id);
@@ -267,7 +270,7 @@ impl fmt::Display for TokenValidationError {
 
 impl std::error::Error for TokenValidationError {}
 
-/// 저장 전에 registry 전체를 검증합니다: cycle, 참조 문제, default expression type.
+/// 저장 전에 registry 전체를 검증합니다: cycle, 참조 문제(orphan 참조 제외), default expression type.
 ///
 /// `others`는 토큰이 아닌 참조(환경 입력 등)의 타입 제공자입니다. 오류가 하나라도 있으면 저장을 거부해야 하며,
 /// 오류 순서는 cycle → 참조 문제(정렬) → type 오류(scope·ID 순)로 결정적입니다.
@@ -283,6 +286,8 @@ pub fn validate_for_save(
         registry
             .reference_issues()
             .into_iter()
+            // orphan 참조는 명시 계획으로 만든 의도된 상태라 저장을 막지 않습니다(§14.4).
+            .filter(|issue| !matches!(issue, ReferenceIssue::Orphaned { .. }))
             .map(TokenValidationError::Reference),
     );
     let types = TokenReferenceTypes {

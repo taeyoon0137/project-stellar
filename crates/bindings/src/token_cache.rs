@@ -61,6 +61,8 @@ pub enum TokenEvalError {
     Eval(EvalError),
     /// 참조한 토큰의 평가가 실패했습니다.
     Dependency(TokenRef),
+    /// 참조한 토큰이 orphan plan으로 삭제되었습니다(VIII.5.5).
+    Orphaned(TokenRef),
 }
 
 impl fmt::Display for TokenEvalError {
@@ -72,6 +74,9 @@ impl fmt::Display for TokenEvalError {
             TokenEvalError::Eval(error) => write!(f, "{error}"),
             TokenEvalError::Dependency(token) => {
                 write!(f, "참조한 토큰 {}의 평가가 실패했습니다", token.id())
+            }
+            TokenEvalError::Orphaned(token) => {
+                write!(f, "참조한 토큰 {}은 삭제되어 orphan 상태입니다", token.id())
             }
         }
     }
@@ -393,6 +398,11 @@ impl TokenValueCache {
                     }) =>
                 {
                     TokenEvalError::Dependency(*dep)
+                }
+                EvalErrorKind::MissingReference(ReferenceTarget::Token(dep))
+                    if registry.tombstone(*dep).is_some() =>
+                {
+                    TokenEvalError::Orphaned(*dep)
                 }
                 _ => TokenEvalError::Eval(error),
             })

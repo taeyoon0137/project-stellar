@@ -11,3 +11,6 @@ pub mod token_graph;
 
 /// 토큰 값 평가 cache (VIII.5.4).
 pub mod token_cache;
+
+/// 토큰 생성·삭제·rename·expression 변경 command (VIII.5.5).
+pub mod token_commands;
