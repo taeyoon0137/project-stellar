@@ -20,6 +20,8 @@ pub enum LayoutProperty {
     Height,
     /// leaf 콘텐츠의 intrinsic 크기·baseline.
     Content,
+    /// Free 부모 안에서의 local position (X.2.1).
+    Position,
 }
 
 impl LayoutProperty {
@@ -32,6 +34,7 @@ impl LayoutProperty {
             LayoutProperty::Width => "width",
             LayoutProperty::Height => "height",
             LayoutProperty::Content => "content",
+            LayoutProperty::Position => "position",
         }
     }
 }

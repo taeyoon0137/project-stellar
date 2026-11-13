@@ -27,6 +27,12 @@ pub mod output;
 /// 축별 크기 결정 방식 (X.6.1).
 pub mod sizing;
 
+/// 레이아웃 엔진 진입점 (X.2.1).
+pub mod engine;
+
+/// 자유 배치 (X.2.1).
+pub mod free;
+
 /// canonical bytes writer/reader (crate 내부).
 mod codec;
 

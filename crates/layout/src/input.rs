@@ -23,6 +23,7 @@ use stellar_core_types::value::{Insets, Length, Percentage};
 
 use crate::codec::{Reader, Writer};
 use crate::error::LayoutError;
+use crate::free::FreePosition;
 use crate::geometry::Axis;
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
@@ -96,6 +97,8 @@ pub struct LayoutNode {
     pub height: SizingMode,
     /// 콘텐츠.
     pub content: LayoutContent,
+    /// Free 부모 안에서의 local position(X.2.1).
+    pub position: FreePosition,
 }
 
 impl LayoutNode {
@@ -109,7 +112,14 @@ impl LayoutNode {
             width: SizingMode::default(),
             height: SizingMode::default(),
             content: LayoutContent::None,
+            position: FreePosition::default(),
         }
+    }
+
+    /// Free 부모 안에서의 local position을 지정합니다.
+    pub fn with_position(mut self, x: Length, y: Length) -> LayoutNode {
+        self.position = FreePosition { x, y };
+        self
     }
 
     /// 자식을 추가합니다.
@@ -167,12 +177,12 @@ pub struct LayoutInput {
 
 /// 검증된 tree index (crate 내부).
 #[derive(Debug, Clone)]
-// 레이아웃 엔진(X.2.1)이 읽기 전까지는 검증 결과로만 사용합니다.
-#[allow(dead_code)]
 pub(crate) struct TreeIndex {
     /// StableId → `nodes` index.
+    #[allow(dead_code)]
     pub(crate) index: HashMap<StableId, usize>,
     /// 부모 index.
+    #[allow(dead_code)]
     pub(crate) parent: Vec<Option<usize>>,
     /// visual order로 정렬한 자식 index.
     pub(crate) children: Vec<Vec<usize>>,
@@ -345,6 +355,8 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
             length_unit(node.id, LayoutProperty::Content, baseline, true)?;
         }
     }
+    length_unit(node.id, LayoutProperty::Position, node.position.x, true)?;
+    length_unit(node.id, LayoutProperty::Position, node.position.y, true)?;
     Ok(())
 }
 
@@ -383,6 +395,8 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
             }
         }
     }
+    w.length(node.position.x);
+    w.length(node.position.y);
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
@@ -439,6 +453,10 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
             })
         }
     };
+    let position = FreePosition {
+        x: r.length("position x")?,
+        y: r.length("position y")?,
+    };
     Ok(LayoutNode {
         id,
         children,
@@ -447,6 +465,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         width,
         height,
         content,
+        position,
     })
 }
 
