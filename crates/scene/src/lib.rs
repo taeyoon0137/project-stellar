@@ -36,6 +36,12 @@ pub mod freshness;
 /// node 종류별 scene builder (XI.2.2).
 pub mod builder;
 
+/// 축 정렬 bounds와 scene node world bounds (XI.3.1).
+pub mod bounds;
+
+/// world bounds 기반 공간 인덱스 (XI.3.1).
+pub mod spatial;
+
 /// 테스트 전용 scene fixture 생성기 (XI.1.2).
 #[cfg(test)]
 mod fixtures;

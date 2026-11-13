@@ -1054,7 +1054,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XI.3.1 | `[ ]` | world bounds 기반 공간 인덱스 인터페이스를 정의하고 insert/update/remove/query를 구현합니다. | 20만 node random query correctness. | XI.1.2 |
+| XI.3.1 | `[x]` | world bounds 기반 공간 인덱스 인터페이스를 정의하고 insert/update/remove/query를 구현합니다. | 20만 node random query correctness. | XI.1.2 |
 | XI.3.2 | `[ ]` | viewport frustum과 clip bounds로 visible candidate를 계산합니다. | 화면 밖 node draw list 제외. | XI.3.1 |
 | XI.3.3 | `[ ]` | z-order 역순, clip, visibility, pointer-events semantic을 적용한 broad-phase hit test를 구현합니다. | overlap fixture에서 topmost 결과. | XI.3.1, XI.1.2 |
 | XI.3.4 | `[ ]` | Shape/Path/Text/Image별 narrow-phase hit test를 구현합니다. alpha pixel hit test는 초기 제외하고 bounds 또는 geometry policy를 명시합니다. | node kind별 fixture 통과. | XI.3.3, VI.5.6, VI.6.4, X.10.3 |
