@@ -50,6 +50,15 @@ pub mod commit;
 /// commit identity 해석(IV.4.5·XIV.8.3 공통).
 pub mod identity;
 
+/// Git object ID·file mode 값 타입(XIV.2.1~).
+pub mod object;
+
+/// 저장소 연산 공통 실행·오류(XIV.2.1~).
+pub mod ops;
+
+/// `git status --porcelain=v2 -z --branch` 해석(XIV.2.1~).
+pub mod status;
+
 /// Git LFS 설치 감지 (XIII.7.1).
 pub mod lfs;
 

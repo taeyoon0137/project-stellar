@@ -102,6 +102,42 @@ pub(crate) fn commit_file(runner: &GitRunner, dir: &Path, name: &str, contents: 
     git_ok(runner, dir, ["commit", "-q", "-m", "fixture"]);
 }
 
+/// 바이트를 blob으로 기록하고 object ID(16진수)를 반환합니다(`hash-object -w --stdin`).
+pub(crate) fn write_blob(runner: &GitRunner, dir: &Path, bytes: &[u8]) -> String {
+    let out = runner
+        .run_with_input(&argv(["hash-object", "-w", "--stdin"]), dir, bytes)
+        .expect("hash-object 실행");
+    assert!(out.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// 작업 트리 파일 없이 index에 원시 바이트 경로를 추가합니다(`update-index --cacheinfo`).
+///
+/// macOS APFS는 UTF-8이 아닌 파일 이름을 만들 수 없으므로 non-UTF8 경로 fixture는 이 방식으로
+/// Git 경로만 등록합니다(argv는 원시 바이트 그대로 전달).
+#[cfg(unix)]
+pub(crate) fn add_index_path(
+    runner: &GitRunner,
+    dir: &Path,
+    mode: &str,
+    raw_path: &[u8],
+    contents: &[u8],
+) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let oid = write_blob(runner, dir, contents);
+    let mut cacheinfo = format!("{mode},{oid},").into_bytes();
+    cacheinfo.extend_from_slice(raw_path);
+    let args: Vec<OsString> = vec![
+        OsString::from("update-index"),
+        OsString::from("--add"),
+        OsString::from("--cacheinfo"),
+        std::ffi::OsStr::from_bytes(&cacheinfo).to_os_string(),
+    ];
+    let out = runner.run(&args, dir).unwrap();
+    assert!(out.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    oid
+}
+
 /// symlink를 해석한 실경로(macOS `/var`→`/private/var` 차이 흡수).
 pub(crate) fn canonical(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap()

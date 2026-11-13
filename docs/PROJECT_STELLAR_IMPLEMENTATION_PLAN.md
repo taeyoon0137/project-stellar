@@ -1362,7 +1362,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIV.2.1 | `[ ]` | `git status --porcelain=v2 -z --branch` parser를 구현합니다. ordinary, rename/copy, unmerged, untracked, ignored를 구분합니다. | fixture corpus 전부 parse. | XIV.1.5 |
+| XIV.2.1 | `[x]` | `git status --porcelain=v2 -z --branch` parser를 구현합니다. ordinary, rename/copy, unmerged, untracked, ignored를 구분합니다. | fixture corpus 전부 parse. | XIV.1.5 |
 | XIV.2.2 | `[ ]` | `RepositoryStatus`에 HEAD, upstream 상태, staged/unstaged/untracked counts, conflict state를 정의합니다. | detached HEAD·unborn branch fixture 통과. | XIV.2.1 |
 | XIV.2.3 | `[ ]` | `SnapshotSource`를 Head(commit), Index, WorkingTree, Commit(hash), Tree(hash)로 정의합니다. | type round-trip. | XIV.2.2 |
 | XIV.2.4 | `[ ]` | HEAD/commit tree의 파일 목록과 mode/blob ID를 `git ls-tree -rz`로 읽는 provider를 구현합니다. | symlink·executable·unicode path fixture 통과. | XIV.2.3 |
