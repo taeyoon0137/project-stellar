@@ -46,6 +46,18 @@ impl WindowHistory {
         }
     }
 
+    /// 복원한 history로 창을 엽니다(XXV.1.3). 현재 창 선택은 journal에 담지 않으므로 비어 있습니다(선택
+    /// 복구는 복구 스냅샷 V.9.2의 몫).
+    pub(crate) fn from_history(window: WindowSessionId, history: History) -> WindowHistory {
+        WindowHistory {
+            window,
+            history,
+            view: WindowViewState::new(window),
+            selection_policy: SelectionPolicy::default(),
+            preview_selection: None,
+        }
+    }
+
     /// 창 id.
     pub fn window(&self) -> WindowSessionId {
         self.window

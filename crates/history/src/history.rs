@@ -88,6 +88,23 @@ impl History {
         }
     }
 
+    /// journal에서 복원한 stack으로 history를 만듭니다(XXV.1.3). 열린 grouping·preview는 없고, 새 항목은
+    /// `next_sequence`부터 이어 할당합니다. sequence 무결성은 journal 디코딩이 이미 확인했습니다.
+    pub(crate) fn from_parts(
+        policy: HistoryGroupingPolicy,
+        undo: Vec<HistoryEntry>,
+        redo: Vec<HistoryEntry>,
+        next_sequence: u64,
+    ) -> History {
+        History {
+            entries: undo,
+            redo,
+            sequences: SequenceAllocator::starting_at(next_sequence),
+            policy,
+            ..History::default()
+        }
+    }
+
     /// grouping 정책.
     pub fn policy(&self) -> HistoryGroupingPolicy {
         self.policy
