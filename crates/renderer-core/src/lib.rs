@@ -33,6 +33,9 @@ pub mod frame_resources;
 /// present queue 깊이 ≤ 1 frame scheduler (XI.5.5).
 pub mod frame_scheduler;
 
+/// scene primitive → opaque/transparent/effect pass compiler (XI.4.2).
+pub mod pass_compiler;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;
