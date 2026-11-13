@@ -9,7 +9,7 @@
 //! `stellar-expressions`의 AST·type checker·evaluator(Phase VIII)를 그대로 씁니다. 값 binding
 //! 그래프(VIII.6)는 `stellar-bindings`의 몫입니다.
 
-mod codec;
+pub(crate) mod codec;
 
 /// ComponentDefinition resource와 정의 tree (IX.1.1).
 pub mod definition;

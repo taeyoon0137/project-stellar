@@ -12,6 +12,9 @@ pub mod node_columns;
 pub mod snapshot;
 
 pub mod component;
+
+/// Frame에 부착하는 control 계약 (IX.6).
+pub mod control;
 /// 문서·페이지·View 정의 (VI.1.1).
 pub mod definitions;
 
