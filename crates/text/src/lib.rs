@@ -21,5 +21,11 @@ pub mod missing_font;
 /// 공통 shaping 엔진 wrapper (X.9.1).
 pub mod shaping;
 
+/// Unicode BiDi level 해석 (X.9.2).
+pub mod bidi;
+
+/// script·language·direction itemization (X.9.2).
+pub mod itemize;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;

@@ -54,3 +54,10 @@ dependencies:
     approval: approved
     purpose: "HarfBuzz 호환 순수 Rust text shaping 엔진 (stellar-text X.9.1, ADR-0016)"
     replaceable: true
+  - name: unicode-bidi
+    ecosystem: cargo
+    version: "0.3.18"
+    license: "MIT OR Apache-2.0"
+    approval: approved
+    purpose: "Unicode BiDi(UAX #9) level 해석·재배치 (stellar-text X.9.2~X.9.3, ADR-0016)"
+    replaceable: true
