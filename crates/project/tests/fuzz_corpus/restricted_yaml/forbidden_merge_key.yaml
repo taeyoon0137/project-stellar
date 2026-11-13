@@ -1,0 +1,7 @@
+base: {a: 1}
+merged:
+  <<: {b: 2}
+flow: {a: 1, <<: 2}
+key: <<
+list:
+  - <<

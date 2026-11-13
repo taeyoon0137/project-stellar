@@ -6,11 +6,43 @@
 //! 암시적 타입 추론 없이 문자열로 보존합니다(IV.1.4).
 //!
 //! 중복 키는 같은 매핑 안에서만 판정하며, 마지막 값으로 덮어쓰지 않고 거부합니다(IV.1.3).
+//!
+//! 적대적 입력 방어(XVI.6.1 fuzz 결과, 기술 아키텍처 37.2 깊이·개수 제한):
+//! - 입력 크기 상한 [`MAX_INPUT_BYTES`]를 넘으면 파싱 전에 거부합니다.
+//! - YAML 1.2 `c-printable`이 아닌 문자(NUL 등 제어 문자)를 거부합니다. 하위 scanner는 NUL을
+//!   입력 끝으로 취급해 뒤 내용을 조용히 버리므로, 거부하지 않으면 Git이 보는 내용과 Stellar가
+//!   읽는 내용이 달라집니다.
+//! - 하위 parser의 재귀 `load` 대신 event를 하나씩 당겨 처리합니다(깊은 block 중첩에서 stack
+//!   overflow 없음). 컨테이너 중첩은 [`MAX_NESTING_DEPTH`]까지만 허용합니다.
+//! - 이벤트 하나를 만들기 위한 scanner 선읽기를 [`MAX_EVENT_LOOKAHEAD_CHARS`]로 제한합니다. 하위
+//!   scanner는 key가 될 수 있는 위치(예: 문서 최상위)의 flow collection을 끝까지 token(약 128
+//!   bytes/개)으로 버퍼링한 뒤 첫 이벤트를 내므로, 이 상한이 없으면 입력 1 byte당 수백 bytes를
+//!   할당합니다.
+//! - 중복 키 판정은 매핑마다 키 hash 집합을 써서 선형 시간에 수행합니다(키 수 제곱 시간 없음).
+//!   hash가 겹칠 때만 실제 키를 비교합니다.
+
+use std::cell::Cell;
+use std::collections::hash_map::RandomState;
+use std::collections::HashSet;
+use std::hash::BuildHasher;
+use std::rc::Rc;
 
 use yaml_rust2::parser::{Event, MarkedEventReceiver, Parser};
 use yaml_rust2::scanner::Marker;
 
 use crate::yaml::YamlValue;
+
+/// 입력 크기 상한(bytes). 매니페스트·잠금 파일은 작은 설정 파일이므로 넉넉한 상한입니다.
+pub const MAX_INPUT_BYTES: usize = 1024 * 1024;
+
+/// 컨테이너(매핑·시퀀스) 중첩 깊이 상한.
+pub const MAX_NESTING_DEPTH: usize = 64;
+
+/// 이벤트 하나를 만들기 위해 scanner가 미리 읽을 수 있는 문자 수 상한.
+///
+/// 단일 스칼라, 버퍼링되는 하나의 flow collection, 연속된 주석·공백이 이 길이를 넘으면
+/// 거부합니다.
+pub const MAX_EVENT_LOOKAHEAD_CHARS: usize = 32 * 1024;
 
 /// loader 오류 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +65,14 @@ pub enum LoaderErrorKind {
     EmptyDocument,
     /// 하위 파서 오류.
     Parse,
+    /// 입력 크기 상한 초과.
+    InputTooLarge,
+    /// `c-printable`이 아닌 문자(제어 문자 등).
+    NonPrintable,
+    /// 컨테이너 중첩 깊이 상한 초과.
+    NestingTooDeep,
+    /// 이벤트 하나에 필요한 선읽기 상한 초과(과도하게 긴 스칼라·flow collection·주석).
+    LookaheadTooLarge,
 }
 
 impl LoaderErrorKind {
@@ -48,6 +88,10 @@ impl LoaderErrorKind {
             LoaderErrorKind::MultipleDocuments => "multiple-documents",
             LoaderErrorKind::EmptyDocument => "empty-document",
             LoaderErrorKind::Parse => "parse",
+            LoaderErrorKind::InputTooLarge => "input-too-large",
+            LoaderErrorKind::NonPrintable => "non-printable",
+            LoaderErrorKind::NestingTooDeep => "nesting-too-deep",
+            LoaderErrorKind::LookaheadTooLarge => "lookahead-too-large",
         }
     }
 }
@@ -85,6 +129,8 @@ enum Container {
     Mapping {
         pairs: Vec<(YamlValue, YamlValue)>,
         pending_key: Option<YamlValue>,
+        /// 이미 나온 키의 hash(중복 키 선형 시간 판정).
+        key_hashes: HashSet<u64>,
     },
 }
 
@@ -93,6 +139,8 @@ struct RestrictedReceiver {
     root: Option<YamlValue>,
     document_count: usize,
     error: Option<LoaderError>,
+    /// 키 hash용 무작위 seed hasher(입력이 hash 충돌을 고를 수 없음).
+    hasher: RandomState,
 }
 
 impl RestrictedReceiver {
@@ -102,6 +150,20 @@ impl RestrictedReceiver {
             root: None,
             document_count: 0,
             error: None,
+            hasher: RandomState::new(),
+        }
+    }
+
+    /// 컨테이너를 엽니다. 중첩 깊이 상한을 넘으면 오류를 기록합니다.
+    fn open_container(&mut self, container: Container, mark: Marker) {
+        if self.stack.len() >= MAX_NESTING_DEPTH {
+            self.set_error(
+                LoaderErrorKind::NestingTooDeep,
+                mark,
+                "컨테이너 중첩 깊이 상한을 넘었습니다",
+            );
+        } else {
+            self.stack.push(container);
         }
     }
 
@@ -118,6 +180,7 @@ impl RestrictedReceiver {
 
     /// 값을 현재 컨테이너에 넣습니다. merge key 발견 시 `Err`.
     fn push_value(&mut self, value: YamlValue) -> Result<(), LoaderErrorKind> {
+        let hasher = &self.hasher;
         match self.stack.last_mut() {
             None => {
                 if self.root.is_none() {
@@ -129,7 +192,11 @@ impl RestrictedReceiver {
                 items.push(value);
                 Ok(())
             }
-            Some(Container::Mapping { pairs, pending_key }) => {
+            Some(Container::Mapping {
+                pairs,
+                pending_key,
+                key_hashes,
+            }) => {
                 if pending_key.is_none() {
                     // 키 위치: 스칼라만 허용. `<<`는 merge key로 거부, 시퀀스·매핑 복합 키도 거부.
                     // 같은 매핑 안의 중복 키는 거부합니다(마지막 값 덮어쓰기 금지).
@@ -137,8 +204,11 @@ impl RestrictedReceiver {
                         YamlValue::Scalar(key) if key == "<<" => {
                             return Err(LoaderErrorKind::MergeKey)
                         }
-                        YamlValue::Scalar(_) => {
-                            if pairs.iter().any(|(existing, _)| existing == &value) {
+                        YamlValue::Scalar(key) => {
+                            // 새 hash면 중복이 아님. hash가 겹칠 때만 실제 키를 비교합니다.
+                            if !key_hashes.insert(hasher.hash_one(key.as_str()))
+                                && pairs.iter().any(|(existing, _)| existing == &value)
+                            {
                                 return Err(LoaderErrorKind::DuplicateKey);
                             }
                             *pending_key = Some(value);
@@ -210,7 +280,7 @@ impl MarkedEventReceiver for RestrictedReceiver {
                         "custom tag는 허용되지 않습니다",
                     );
                 } else {
-                    self.stack.push(Container::Sequence(Vec::new()));
+                    self.open_container(Container::Sequence(Vec::new()), mark);
                 }
             }
             Event::SequenceEnd => {
@@ -228,10 +298,14 @@ impl MarkedEventReceiver for RestrictedReceiver {
                         "custom tag는 허용되지 않습니다",
                     );
                 } else {
-                    self.stack.push(Container::Mapping {
-                        pairs: Vec::new(),
-                        pending_key: None,
-                    });
+                    self.open_container(
+                        Container::Mapping {
+                            pairs: Vec::new(),
+                            pending_key: None,
+                            key_hashes: HashSet::new(),
+                        },
+                        mark,
+                    );
                 }
             }
             Event::MappingEnd => {
@@ -243,19 +317,154 @@ impl MarkedEventReceiver for RestrictedReceiver {
     }
 }
 
+/// scanner 선읽기 계측 상태(loader와 문자 iterator가 공유).
+struct Lookahead {
+    /// 지금까지 scanner에 건넨 문자 수.
+    consumed: Cell<usize>,
+    /// 마지막 이벤트를 받은 시점의 `consumed`.
+    base: Cell<usize>,
+    /// 상한을 넘어 입력 끝을 돌려주었는지.
+    exceeded: Cell<bool>,
+}
+
+/// 이벤트 사이 선읽기가 [`MAX_EVENT_LOOKAHEAD_CHARS`]를 넘으면 입력 끝(`None`)을 돌려주는 문자
+/// iterator. 그 뒤 loader는 결과와 무관하게 [`LoaderErrorKind::LookaheadTooLarge`]로 거부합니다.
+struct BudgetedChars<'a> {
+    chars: std::str::Chars<'a>,
+    lookahead: Rc<Lookahead>,
+}
+
+impl Iterator for BudgetedChars<'_> {
+    type Item = char;
+
+    fn next(&mut self) -> Option<char> {
+        let lookahead = &self.lookahead;
+        if lookahead.exceeded.get() {
+            return None;
+        }
+        if lookahead.consumed.get() - lookahead.base.get() >= MAX_EVENT_LOOKAHEAD_CHARS {
+            lookahead.exceeded.set(true);
+            return None;
+        }
+        let c = self.chars.next()?;
+        lookahead.consumed.set(lookahead.consumed.get() + 1);
+        Some(c)
+    }
+}
+
+/// YAML 1.2 `c-printable` 문자인지 판정합니다.
+fn is_c_printable(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n'
+            | '\r'
+            | '\u{20}'..='\u{7e}'
+            | '\u{85}'
+            | '\u{a0}'..='\u{d7ff}'
+            | '\u{e000}'..='\u{fffd}'
+            | '\u{10000}'..='\u{10ffff}'
+    )
+}
+
+/// 첫 `c-printable`이 아닌 문자의 (1-기반 줄, 1-기반 열, 문자)를 찾습니다.
+fn find_non_printable(input: &str) -> Option<(usize, usize, char)> {
+    let (mut line, mut col) = (1, 1);
+    for c in input.chars() {
+        if !is_c_printable(c) {
+            return Some((line, col, c));
+        }
+        if c == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    None
+}
+
+/// 문자 index의 (1-기반 줄, 1-기반 열).
+fn char_position(input: &str, char_index: usize) -> (usize, usize) {
+    let (mut line, mut col) = (1, 1);
+    for c in input.chars().take(char_index) {
+        if c == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
 /// 제한 YAML 문자열을 [`YamlValue`] 트리로 로드합니다.
+///
+/// 크기 상한·문자 집합을 먼저 검사한 뒤, 하위 parser에서 이벤트를 하나씩 당겨 처리합니다.
 pub fn load_restricted(input: &str) -> Result<YamlValue, LoaderError> {
+    if input.len() > MAX_INPUT_BYTES {
+        return Err(LoaderError {
+            kind: LoaderErrorKind::InputTooLarge,
+            line: 0,
+            col: 0,
+            message: format!(
+                "입력이 {} bytes로 상한 {MAX_INPUT_BYTES} bytes를 넘습니다",
+                input.len()
+            ),
+        });
+    }
+    if let Some((line, col, c)) = find_non_printable(input) {
+        return Err(LoaderError {
+            kind: LoaderErrorKind::NonPrintable,
+            line,
+            col,
+            message: format!("허용되지 않는 문자 U+{:04X}", u32::from(c)),
+        });
+    }
+
+    let lookahead = Rc::new(Lookahead {
+        consumed: Cell::new(0),
+        base: Cell::new(0),
+        exceeded: Cell::new(false),
+    });
+    let mut parser = Parser::new(BudgetedChars {
+        chars: input.chars(),
+        lookahead: Rc::clone(&lookahead),
+    });
     let mut receiver = RestrictedReceiver::new();
-    let mut parser = Parser::new_from_str(input);
-    if let Err(scan_error) = parser.load(&mut receiver, true) {
-        if receiver.error.is_none() {
-            let mark = scan_error.marker();
+    loop {
+        let next = parser.next_token();
+        // 선읽기 상한을 넘었으면 scanner가 본 입력 끝은 가짜이므로 결과와 무관하게 거부합니다.
+        if lookahead.exceeded.get() {
+            let (line, col) = char_position(input, lookahead.base.get());
             return Err(LoaderError {
-                kind: LoaderErrorKind::Parse,
-                line: mark.line(),
-                col: mark.col(),
-                message: scan_error.info().to_string(),
+                kind: LoaderErrorKind::LookaheadTooLarge,
+                line,
+                col,
+                message: format!(
+                    "이벤트 하나에 {MAX_EVENT_LOOKAHEAD_CHARS}자를 넘는 선읽기가 필요합니다\
+                     (너무 긴 스칼라·flow collection·주석)"
+                ),
             });
+        }
+        lookahead.base.set(lookahead.consumed.get());
+        match next {
+            Ok((event, mark)) => {
+                let end = matches!(event, Event::StreamEnd);
+                receiver.on_event(event, mark);
+                // 첫 오류에서 멈춥니다(이후 입력은 결과에 영향 없음).
+                if end || receiver.error.is_some() {
+                    break;
+                }
+            }
+            Err(scan_error) => {
+                let mark = scan_error.marker();
+                return Err(LoaderError {
+                    kind: LoaderErrorKind::Parse,
+                    line: mark.line(),
+                    col: mark.col(),
+                    message: scan_error.info().to_string(),
+                });
+            }
         }
     }
     if let Some(error) = receiver.error {
@@ -446,5 +655,120 @@ mod tests {
             value.get("date").and_then(YamlValue::as_scalar),
             Some("2020-01-01")
         );
+    }
+
+    // --- XVI.6.1: fuzz가 찾은 적대적 입력 방어 ---
+
+    #[test]
+    fn rejects_input_over_size_limit() {
+        let at_limit = format!("a: {}", "x".repeat(MAX_INPUT_BYTES - 3));
+        // 크기 상한 자체는 통과(선읽기 상한에서 별도로 거부될 수 있음).
+        assert_ne!(
+            load_restricted(&at_limit).map_err(|e| e.kind),
+            Err(LoaderErrorKind::InputTooLarge)
+        );
+        let over = "#".repeat(MAX_INPUT_BYTES + 1);
+        assert_eq!(err(&over).kind.code(), "input-too-large");
+    }
+
+    #[test]
+    fn raw_nul_is_rejected_instead_of_truncating() {
+        // 하위 scanner는 NUL을 입력 끝으로 보아 뒤 내용을 버렸음({a: b}로 성공).
+        let e = err("a: b\n\u{0}\nc: [unclosed\n");
+        assert_eq!(e.kind.code(), "non-printable");
+        assert_eq!((e.line, e.col), (2, 1));
+        assert_eq!(err("a: b\u{0}c: d\n").kind.code(), "non-printable");
+    }
+
+    #[test]
+    fn rejects_non_printable_but_allows_printable_specials() {
+        for bad in [
+            "a: \u{1}\n",
+            "a: \"\u{7f}\"\n",
+            "a: \u{9f}\n",
+            "a: \u{fffe}\n",
+        ] {
+            assert_eq!(err(bad).kind.code(), "non-printable", "입력: {bad:?}");
+        }
+        // TAB, NEL, NBSP, BOM, 보조 평면 문자는 c-printable.
+        for ok in [
+            "a: x\ty\n",
+            "a: x\u{85}y\n",
+            "a: x\u{a0}y\n",
+            "\u{feff}a: b\n",
+            "a: 😀\n",
+        ] {
+            assert!(load_restricted(ok).is_ok(), "입력: {ok:?}");
+        }
+        // 이스케이프로 표현한 제어 문자는 값으로 허용.
+        let v = load_restricted("a: \"x\\0y\\x01\"\n").unwrap();
+        assert_eq!(
+            v.get("a").and_then(YamlValue::as_scalar),
+            Some("x\u{0}y\u{1}")
+        );
+    }
+
+    #[test]
+    fn deep_block_nesting_is_rejected_without_stack_overflow() {
+        // 재귀 load였다면 2 MiB stack thread에서 stack overflow로 abort.
+        let deep = format!("{}x\n", "- ".repeat(100_000));
+        assert_eq!(err(&deep).kind.code(), "nesting-too-deep");
+        let mut mapping = String::new();
+        for i in 0..200 {
+            mapping.push_str(&" ".repeat(i));
+            mapping.push_str("k:\n");
+        }
+        assert_eq!(err(&mapping).kind.code(), "nesting-too-deep");
+    }
+
+    #[test]
+    fn nesting_limit_is_exact() {
+        let nested = |depth: usize| format!("{}{}", "[".repeat(depth), "]".repeat(depth));
+        assert!(load_restricted(&nested(MAX_NESTING_DEPTH)).is_ok());
+        assert_eq!(
+            err(&nested(MAX_NESTING_DEPTH + 1)).kind.code(),
+            "nesting-too-deep"
+        );
+    }
+
+    #[test]
+    fn many_keys_are_checked_in_linear_time() {
+        // 제곱 시간 중복 검사였다면 debug 빌드에서 수십 초.
+        let many: String = (0..50_000).map(|i| format!("k{i}: v\n")).collect();
+        let started = std::time::Instant::now();
+        let v = load_restricted(&many).unwrap();
+        assert_eq!(v.as_mapping().map(<[_]>::len), Some(50_000));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        // 많은 키 뒤의 중복도 여전히 거부.
+        let dup = format!("{many}k123: again\n");
+        let e = err(&dup);
+        assert_eq!(e.kind.code(), "duplicate-key");
+        assert_eq!(e.line, 50_001);
+    }
+
+    #[test]
+    fn lookahead_limit_bounds_long_scalars_and_flow_collections() {
+        let long_scalar = format!("a: {}\n", "x".repeat(MAX_EVENT_LOOKAHEAD_CHARS + 1));
+        let e = err(&long_scalar);
+        assert_eq!(e.kind.code(), "lookahead-too-large");
+        assert_eq!(e.line, 1);
+        // key가 될 수 있는 위치(문서 최상위)의 flow collection은 scanner가 전체를 버퍼링함.
+        let big_flow = format!("[{}x]\n", "x,".repeat(MAX_EVENT_LOOKAHEAD_CHARS));
+        assert_eq!(err(&big_flow).kind.code(), "lookahead-too-large");
+        let comments = format!("{}a: b\n", "# 주석\n".repeat(MAX_EVENT_LOOKAHEAD_CHARS / 4));
+        assert_eq!(err(&comments).kind.code(), "lookahead-too-large");
+        // 상한 안의 스칼라·flow collection은 허용(잘림 없이 전체 값).
+        let ok_scalar = format!("a: {}\n", "x".repeat(MAX_EVENT_LOOKAHEAD_CHARS / 2));
+        let v = load_restricted(&ok_scalar).unwrap();
+        assert_eq!(
+            v.get("a").and_then(YamlValue::as_scalar).map(str::len),
+            Some(MAX_EVENT_LOOKAHEAD_CHARS / 2)
+        );
+        let ok_flow = format!("[{}x]\n", "x,".repeat(1_000));
+        let v = load_restricted(&ok_flow).unwrap();
+        assert_eq!(v.as_sequence().map(<[_]>::len), Some(1_001));
+        // 작은 이벤트가 많은 긴 block 문서는 상한과 무관.
+        let long_block: String = "- item\n".repeat(MAX_EVENT_LOOKAHEAD_CHARS);
+        assert!(load_restricted(&long_block).is_ok());
     }
 }

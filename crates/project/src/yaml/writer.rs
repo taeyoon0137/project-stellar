@@ -11,6 +11,9 @@
 //! 영문/숫자/`_`/`-`로 구성, 불리언·널 키워드 아님)만 무인용으로 출력하고, 그 외(숫자처럼 보임,
 //! 특수문자, 공백, 빈 문자열, 키워드)는 이스케이프한 더블쿼트로 출력합니다. 이로써 제한
 //! loader(IV.1.2)로 다시 읽으면 동일한 [`YamlValue`]가 됩니다.
+//!
+//! round-trip 보강(XVI.6.1 fuzz 결과): 제어·비출력·줄 구분 문자는 더블쿼트 안에서 `\uXXXX`로
+//! 기록하고, 렌더링 길이가 implicit key 상한(1024자)을 넘는 키는 explicit key(`? `)로 기록합니다.
 
 use crate::yaml::YamlValue;
 
@@ -36,10 +39,23 @@ fn push_indent(out: &mut String, indent: usize) {
     }
 }
 
+/// YAML implicit key 길이 상한(렌더링된 문자 수, YAML 1.2 §7.4).
+const MAX_IMPLICIT_KEY_CHARS: usize = 1024;
+
 fn write_mapping(out: &mut String, pairs: &[(YamlValue, YamlValue)], indent: usize) {
     for (key, value) in pairs {
         push_indent(out, indent);
-        out.push_str(&render_key(key));
+        let rendered = render_key(key);
+        if rendered.chars().count() > MAX_IMPLICIT_KEY_CHARS {
+            // implicit key 상한을 넘는 키는 explicit key(`? `)로 기록합니다(XVI.6.1). implicit
+            // key로 쓰면 제한 loader가 다시 읽지 못합니다.
+            out.push_str("? ");
+            out.push_str(&rendered);
+            out.push('\n');
+            push_indent(out, indent);
+        } else {
+            out.push_str(&rendered);
+        }
         out.push(':');
         write_child(out, value, indent);
     }
@@ -97,12 +113,28 @@ fn render_scalar(s: &str) -> String {
                 '\n' => out.push_str("\\n"),
                 '\t' => out.push_str("\\t"),
                 '\r' => out.push_str("\\r"),
+                // 제어·비출력 문자와 줄 구분 문자는 `\uXXXX`로 기록합니다(XVI.6.1). 원문으로 두면
+                // 제한 loader가 다시 읽지 못하거나(NUL 등) 값이 달라질 수 있습니다.
+                c if needs_unicode_escape(c) => {
+                    out.push_str(&format!("\\u{:04x}", u32::from(c)));
+                }
                 _ => out.push(c),
             }
         }
         out.push('"');
         out
     }
+}
+
+/// 더블쿼트 안에서도 `\uXXXX` 이스케이프가 필요한 문자인지 판정합니다.
+///
+/// C0 제어 문자(전용 이스케이프가 있는 `\t`·`\n`·`\r` 제외), DEL, C1 제어 문자(NEL 포함),
+/// U+2028/U+2029 줄 구분 문자, BOM(U+FEFF), 비문자 U+FFFE/U+FFFF. 모두 BMP 문자입니다.
+fn needs_unicode_escape(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0}'..='\u{1f}' | '\u{7f}'..='\u{9f}' | '\u{2028}' | '\u{2029}' | '\u{feff}' | '\u{fffe}' | '\u{ffff}'
+    )
 }
 
 /// 무인용 plain으로 안전한지 판정합니다(영문 시작, 영문/숫자/`_`/`-`, 키워드 아님).
@@ -345,5 +377,77 @@ mod tests {
                 version: "v2.4.0".to_string(),
             }],
         }
+    }
+
+    #[test]
+    fn control_and_separator_chars_are_escaped_and_round_trip() {
+        // XVI.6.1 fuzz 발견: 원문 NUL 등을 기록하면 제한 loader가 다시 읽지 못했음.
+        let tricky = [
+            "\u{0}",
+            "a\u{1}b",
+            "\u{1b}[0m",
+            "del\u{7f}",
+            "nel\u{85}",
+            "c1\u{9f}",
+            "ls\u{2028}ps\u{2029}",
+            "bom\u{feff}",
+            "\u{fffe}\u{ffff}",
+            "tab\tnl\ncr\r",
+        ];
+        for s in tricky {
+            let tree = YamlValue::Mapping(vec![(YamlValue::scalar(s), YamlValue::scalar(s))]);
+            let text = write_canonical(&tree);
+            assert!(
+                text.chars().all(|c| c == '\n' || !needs_unicode_escape(c)),
+                "원문 제어 문자 기록: {text:?}"
+            );
+            assert_eq!(load_restricted(&text).unwrap(), tree, "입력: {s:?}");
+        }
+        assert_eq!(
+            write_canonical(&YamlValue::scalar("\u{0}")),
+            "\"\\u0000\"\n"
+        );
+    }
+
+    #[test]
+    fn keys_over_implicit_limit_use_explicit_form_and_round_trip() {
+        // XVI.6.1 fuzz 발견: 1024자를 넘는 키를 implicit key로 쓰면 다시 읽지 못했음.
+        // 렌더링 길이 1024(plain)는 implicit, 1025는 explicit.
+        let at_limit = format!("k{}", "a".repeat(MAX_IMPLICIT_KEY_CHARS - 1));
+        let over_limit = format!("k{}", "a".repeat(MAX_IMPLICIT_KEY_CHARS));
+        let escaped = "\u{0}".repeat(200); // 렌더링 시 6배로 늘어남.
+        for key in [at_limit.as_str(), over_limit.as_str(), escaped.as_str()] {
+            for value in [
+                YamlValue::scalar("v"),
+                YamlValue::Mapping(vec![(YamlValue::scalar("x"), YamlValue::scalar("1"))]),
+                YamlValue::Sequence(vec![YamlValue::scalar("a"), YamlValue::scalar("b")]),
+                YamlValue::Mapping(vec![]),
+            ] {
+                let tree = YamlValue::Mapping(vec![
+                    (
+                        YamlValue::scalar("outer"),
+                        YamlValue::Mapping(vec![(YamlValue::scalar(key), value.clone())]),
+                    ),
+                    (YamlValue::scalar(key), value),
+                ]);
+                let text = write_canonical(&tree);
+                assert_eq!(
+                    load_restricted(&text).unwrap(),
+                    tree,
+                    "key len {}",
+                    key.len()
+                );
+            }
+        }
+        let text = write_canonical(&YamlValue::Mapping(vec![(
+            YamlValue::scalar(at_limit.as_str()),
+            YamlValue::scalar("v"),
+        )]));
+        assert!(!text.starts_with("? "));
+        let text = write_canonical(&YamlValue::Mapping(vec![(
+            YamlValue::scalar(over_limit.as_str()),
+            YamlValue::scalar("v"),
+        )]));
+        assert!(text.starts_with("? ") && text.ends_with("\n: v\n"));
     }
 }
