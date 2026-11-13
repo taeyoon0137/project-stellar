@@ -2186,7 +2186,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XXVI.2.1 | `[x]` | stash list/create/apply/pop/drop UI를 시스템 Git으로 연결합니다. | fixture. | Phase XIV |
 | XXVI.2.2 | `[ ]` | cherry-pick/revert UI와 conflict 상태 연결을 구현합니다. | fixture. | XIV.12.4 |
-| XXVI.2.3 | `[ ]` | reset/restore는 destructive level별 확인을 요구하고 command preview를 표시합니다. | hard reset confirm 없이는 실행 0. | Phase XIV |
+| XXVI.2.3 | `[x]` | reset/restore는 destructive level별 확인을 요구하고 command preview를 표시합니다. | hard reset confirm 없이는 실행 0. | Phase XIV |
 | XXVI.2.4 | `[ ]` | reflog 조회와 선택 ref 복구 command를 제공합니다. | fixture. | XIV.1.3 |
 
 ### XXVI.3 Worktree UI
