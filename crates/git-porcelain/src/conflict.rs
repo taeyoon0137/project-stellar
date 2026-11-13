@@ -99,6 +99,69 @@ pub fn read_unmerged_paths(
     Ok(group_unmerged(parse_ls_files_stage(&output.stdout)?)?)
 }
 
+/// raw Git conflict 표시(XIV.11.4, Semantic Merge로 해석하지 않음).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RawConflict {
+    /// 경로.
+    pub path: GitPath,
+    /// Git 2글자 unmerged 상태(`UU`, `AA`, `DU`, `UD`, `AU`, `UA`, `DD`), stage 존재로 결정.
+    pub xy: &'static str,
+    /// stage 원본(사용자가 외부 도구로 해결할 때 참고).
+    pub stages: UnmergedPath,
+}
+
+/// stage 존재 여부를 Git unmerged `XY`로 바꿉니다(`git status`와 같은 표기).
+pub fn unmerged_xy(path: &UnmergedPath) -> &'static str {
+    match (
+        path.base.is_some(),
+        path.ours.is_some(),
+        path.theirs.is_some(),
+    ) {
+        (true, true, true) => "UU",
+        (false, true, true) => "AA",
+        (true, false, true) => "DU",
+        (true, true, false) => "UD",
+        (false, true, false) => "AU",
+        (false, false, true) => "UA",
+        (true, false, false) | (false, false, false) => "DD",
+    }
+}
+
+/// Semantic Merge 대상과 raw conflict로 나눈 결과.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ConflictPartition {
+    /// Stellar 프로젝트 파일 conflict(Semantic Merge 입력).
+    pub semantic: Vec<UnmergedPath>,
+    /// non-Stellar 파일 conflict(raw 표시 전용).
+    pub raw: Vec<RawConflict>,
+}
+
+/// conflict를 Stellar 파일(semantic)과 그 밖(raw)으로 나눕니다([`crate::classify`] 분류).
+pub fn partition_conflicts(paths: Vec<UnmergedPath>) -> ConflictPartition {
+    use crate::classify::{classify_project_path, ProjectFileClass};
+    let mut out = ConflictPartition::default();
+    for path in paths {
+        if classify_project_path(path.path.as_bytes()) == ProjectFileClass::NonStellar {
+            out.raw.push(RawConflict {
+                path: path.path.clone(),
+                xy: unmerged_xy(&path),
+                stages: path,
+            });
+        } else {
+            out.semantic.push(path);
+        }
+    }
+    out
+}
+
+/// 현재 conflict를 읽어 semantic/raw로 나눕니다(읽기 전용).
+pub fn read_conflict_partition(
+    git: &GatedGitRunner,
+    worktree: &Path,
+) -> Result<ConflictPartition, GitOpError> {
+    Ok(partition_conflicts(read_unmerged_paths(git, worktree)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +336,101 @@ mod tests {
             );
             assert_matches_git(&runner, dir.path(), &paths);
         }
+
+        #[test]
+        fn readme_conflict_stays_raw_and_is_not_semantic_input() {
+            use crate::status::{read_status, StatusEntry, StatusOptions};
+            let Some((dir, runner)) = conflicted(
+                "conflict-readme",
+                &[
+                    ("README.md", b"base\n"),
+                    ("design/current.stellarref", b"gen-base\n"),
+                    ("docs/notes.md", b"n\n"),
+                ],
+                &|r, repo| {
+                    commit_file(r, repo, "README.md", b"ours\n");
+                    commit_file(r, repo, "design/current.stellarref", b"gen-ours\n");
+                    git_ok(r, repo, ["rm", "-q", "docs/notes.md"]);
+                    git_ok(r, repo, ["commit", "-q", "-m", "rm notes"]);
+                },
+                &|r, repo| {
+                    commit_file(r, repo, "README.md", b"theirs\n");
+                    commit_file(r, repo, "design/current.stellarref", b"gen-theirs\n");
+                    commit_file(r, repo, "docs/notes.md", b"edited\n");
+                },
+            ) else {
+                return;
+            };
+            let gate = GatedGitRunner::new(runner.clone(), GitTrust::Trusted);
+            let partition = read_conflict_partition(&gate, dir.path()).unwrap();
+            let semantic: Vec<&[u8]> = partition
+                .semantic
+                .iter()
+                .map(|p| p.path.as_bytes())
+                .collect();
+            assert_eq!(semantic, vec![&b"design/current.stellarref"[..]]);
+            let raw: Vec<(&[u8], &str)> = partition
+                .raw
+                .iter()
+                .map(|r| (r.path.as_bytes(), r.xy))
+                .collect();
+            assert_eq!(
+                raw,
+                vec![(&b"README.md"[..], "UU"), (b"docs/notes.md", "DU")]
+            );
+            // raw 표기는 git status의 unmerged XY와 같음.
+            let status = read_status(&gate, dir.path(), StatusOptions::default()).unwrap();
+            for r in &partition.raw {
+                let kind = status
+                    .entries
+                    .iter()
+                    .find_map(|e| match e {
+                        StatusEntry::Unmerged(u) if u.path == r.path => Some(u.kind),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert_eq!(kind.as_str(), r.xy);
+            }
+            // stage 원본은 보존(외부 도구 해결용).
+            assert!(partition.raw[0].stages.ours.is_some());
+        }
+    }
+
+    #[test]
+    fn unmerged_xy_matches_stage_presence() {
+        let blob = StageBlob {
+            mode: FileMode::REGULAR,
+            oid: ObjectId::parse(B1).unwrap(),
+        };
+        let path = |b: bool, o: bool, t: bool| UnmergedPath {
+            path: GitPath::from_bytes(b"x"),
+            base: b.then(|| blob.clone()),
+            ours: o.then(|| blob.clone()),
+            theirs: t.then(|| blob.clone()),
+        };
+        let table = [
+            ((true, true, true), "UU"),
+            ((false, true, true), "AA"),
+            ((true, false, true), "DU"),
+            ((true, true, false), "UD"),
+            ((false, true, false), "AU"),
+            ((false, false, true), "UA"),
+            ((true, false, false), "DD"),
+        ];
+        for ((b, o, t), xy) in table {
+            assert_eq!(unmerged_xy(&path(b, o, t)), xy);
+        }
+        let parts = partition_conflicts(vec![
+            UnmergedPath {
+                path: GitPath::from_bytes(b"stellar.yaml"),
+                ..path(true, true, true)
+            },
+            UnmergedPath {
+                path: GitPath::from_bytes(b"LICENSE"),
+                ..path(false, true, true)
+            },
+        ]);
+        assert_eq!(parts.semantic.len(), 1);
+        assert_eq!(parts.raw[0].xy, "AA");
     }
 }
