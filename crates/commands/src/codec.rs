@@ -21,6 +21,7 @@ use stellar_core_types::ids::StableId;
 use crate::command::Command;
 use crate::kind::CommandKind;
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
+use crate::property::SetProperty;
 
 /// command 직렬화 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,8 +77,6 @@ impl Writer {
         self.buf.extend_from_slice(bytes);
     }
 
-    // SetProperty(VII.2.4) 전까지는 테스트 probe만 씁니다.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn bool(&mut self, value: bool) {
         self.buf.push(u8::from(value));
     }
@@ -91,6 +90,11 @@ impl Writer {
     }
 
     pub(crate) fn u64(&mut self, value: u64) {
+        self.buf.extend_from_slice(&value.to_le_bytes());
+    }
+
+    /// f32 LE(bit 그대로). 값은 finite 타입에서 오므로 유한합니다.
+    pub(crate) fn f32(&mut self, value: f32) {
         self.buf.extend_from_slice(&value.to_le_bytes());
     }
 
@@ -115,8 +119,6 @@ impl Writer {
         self.buf.extend_from_slice(bytes);
     }
 
-    // SetProperty(VII.2.4) 전까지는 테스트 probe만 씁니다.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn str(&mut self, text: &str) {
         self.bytes(text.as_bytes());
     }
@@ -184,6 +186,20 @@ impl<'a> Reader<'a> {
         Ok(u32::from_le_bytes(raw))
     }
 
+    /// f32 LE. NaN·±Infinity는 거부합니다.
+    pub(crate) fn f32(&mut self) -> Result<f32, CommandCodecError> {
+        let mut raw = [0u8; 4];
+        raw.copy_from_slice(self.take(4)?);
+        let value = f32::from_le_bytes(raw);
+        if value.is_finite() {
+            Ok(value)
+        } else {
+            Err(CommandCodecError::Malformed {
+                reason: "유한하지 않은 f32",
+            })
+        }
+    }
+
     pub(crate) fn u64(&mut self) -> Result<u64, CommandCodecError> {
         let mut raw = [0u8; 8];
         raw.copy_from_slice(self.take(8)?);
@@ -209,8 +225,6 @@ impl<'a> Reader<'a> {
         self.take(len)
     }
 
-    // SetProperty(VII.2.4) 전까지는 테스트 probe만 씁니다.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn string(&mut self) -> Result<String, CommandCodecError> {
         let bytes = self.bytes()?;
         String::from_utf8(bytes.to_vec()).map_err(|_| CommandCodecError::Malformed {
@@ -269,6 +283,7 @@ fn encode_payload(command: &Command, out: &mut Writer) {
         Command::InsertNode(command) => command.encode_into(out),
         Command::DeleteSubtree(command) => command.encode_into(out),
         Command::MoveNode(command) => command.encode_into(out),
+        Command::SetProperty(command) => command.encode_into(out),
         #[cfg(test)]
         Command::TestProbe(probe) => {
             out.id(probe.node);
@@ -302,6 +317,7 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         CommandKind::InsertNode => InsertNode::decode_from(input).map(Command::InsertNode),
         CommandKind::DeleteSubtree => DeleteSubtree::decode_from(input).map(Command::DeleteSubtree),
         CommandKind::MoveNode => MoveNode::decode_from(input).map(Command::MoveNode),
+        CommandKind::SetProperty => SetProperty::decode_from(input).map(Command::SetProperty),
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {
             node: input.id()?,

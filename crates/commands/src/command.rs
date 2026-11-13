@@ -24,6 +24,7 @@ use stellar_document::model::{DocumentModel, ModelError};
 use crate::edit::EditContext;
 use crate::kind::CommandKind;
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
+use crate::property::{PropertyValueType, SetProperty};
 
 /// command 검증·적용 오류.
 #[derive(Debug, Clone, PartialEq)]
@@ -102,6 +103,27 @@ pub enum CommandError {
         /// 원인.
         error: stellar_document::tree_ops::ReparentError,
     },
+    /// metadata registry에 없는(그 node 종류가 가지지 않는) 속성입니다(VII.2.4).
+    UnknownProperty {
+        /// 대상 node(modifier 속성이면 modifier id).
+        node: StableId,
+        /// 요청 key.
+        key: stellar_core_types::property::PropertyKey,
+    },
+    /// 값 타입이 registry 타입과 다릅니다(VII.2.4).
+    PropertyTypeMismatch {
+        /// 요청 key.
+        key: stellar_core_types::property::PropertyKey,
+        /// registry 타입.
+        expected: PropertyValueType,
+        /// 요청 값 타입.
+        found: PropertyValueType,
+    },
+    /// 이 command로 설정할 수 없는 속성입니다(부모·순서는 이동 command 전용).
+    PropertyNotSettable {
+        /// 요청 key.
+        key: stellar_core_types::property::PropertyKey,
+    },
     /// View root는 이 command로 삭제·이동할 수 없습니다.
     ViewRoot {
         /// 대상 node.
@@ -168,6 +190,21 @@ impl fmt::Display for CommandError {
                 "subtree 밖 node {from}가 삭제 대상 {target}를 참조합니다(참조를 먼저 정리해야 합니다)"
             ),
             CommandError::Reparent { node, error } => write!(f, "node {node} 이동 거부: {error}"),
+            CommandError::UnknownProperty { node, key } => {
+                write!(f, "{node}에 속성 {:#06x}가 없습니다", key.0)
+            }
+            CommandError::PropertyTypeMismatch {
+                key,
+                expected,
+                found,
+            } => write!(
+                f,
+                "속성 {:#06x}의 값 타입은 {expected}여야 하지만 {found}입니다",
+                key.0
+            ),
+            CommandError::PropertyNotSettable { key } => {
+                write!(f, "속성 {:#06x}는 이 command로 설정할 수 없습니다", key.0)
+            }
             CommandError::ViewRoot { node } => {
                 write!(f, "View root {node}는 삭제·이동할 수 없습니다")
             }
@@ -206,6 +243,8 @@ pub enum Command {
     DeleteSubtree(DeleteSubtree),
     /// node 이동·재정렬 (VII.2.3).
     MoveNode(MoveNode),
+    /// node 속성 변경 (VII.2.4).
+    SetProperty(SetProperty),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -218,6 +257,7 @@ impl Command {
             Command::InsertNode(_) => CommandKind::InsertNode,
             Command::DeleteSubtree(_) => CommandKind::DeleteSubtree,
             Command::MoveNode(_) => CommandKind::MoveNode,
+            Command::SetProperty(_) => CommandKind::SetProperty,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -229,6 +269,7 @@ impl Command {
             Command::InsertNode(command) => command.validate(model),
             Command::DeleteSubtree(command) => command.validate(model),
             Command::MoveNode(command) => command.validate(model),
+            Command::SetProperty(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -240,6 +281,7 @@ impl Command {
             Command::InsertNode(command) => command.invert().map(Command::DeleteSubtree),
             Command::DeleteSubtree(command) => command.invert(model).map(Command::InsertNode),
             Command::MoveNode(command) => command.invert(model).map(Command::MoveNode),
+            Command::SetProperty(command) => command.invert(model).map(Command::SetProperty),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -251,6 +293,7 @@ impl Command {
             Command::InsertNode(command) => command.apply(ctx),
             Command::DeleteSubtree(command) => command.apply(ctx),
             Command::MoveNode(command) => command.apply(ctx),
+            Command::SetProperty(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

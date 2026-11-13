@@ -39,3 +39,6 @@ pub(crate) mod tree;
 
 /// node 구조 command: InsertNode·DeleteSubtree (VII.2.1~).
 pub mod node_ops;
+
+/// `SetProperty` command와 속성 값 (VII.2.4).
+pub mod property;

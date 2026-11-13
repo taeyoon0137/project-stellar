@@ -19,6 +19,8 @@ pub enum CommandKind {
     DeleteSubtree,
     /// node 이동·재정렬 (VII.2.3).
     MoveNode,
+    /// node 속성 변경 (VII.2.4).
+    SetProperty,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -30,6 +32,7 @@ impl CommandKind {
         CommandKind::InsertNode,
         CommandKind::DeleteSubtree,
         CommandKind::MoveNode,
+        CommandKind::SetProperty,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -41,6 +44,7 @@ impl CommandKind {
             CommandKind::InsertNode => 0x0001,
             CommandKind::DeleteSubtree => 0x0002,
             CommandKind::MoveNode => 0x0003,
+            CommandKind::SetProperty => 0x0010,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -64,6 +68,7 @@ impl CommandKind {
             CommandKind::InsertNode => "insert-node",
             CommandKind::DeleteSubtree => "delete-subtree",
             CommandKind::MoveNode => "move-node",
+            CommandKind::SetProperty => "set-property",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -108,6 +113,7 @@ mod tests {
                 (0x0001, "insert-node"),
                 (0x0002, "delete-subtree"),
                 (0x0003, "move-node"),
+                (0x0010, "set-property"),
             ]
         );
     }
