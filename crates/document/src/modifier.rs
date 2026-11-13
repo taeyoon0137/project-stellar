@@ -753,6 +753,93 @@ impl ModifierStack {
     }
 }
 
+// --- 참조 cycle 검출 (VI.9.5) ---
+
+/// modifier 참조 graph의 cycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModifierCycle {
+    /// cycle을 이루는 node 경로. 첫 node가 마지막에 다시 나옵니다
+    /// (예: `[a, b, a]`, 자기 참조는 `[a, a]`).
+    pub path: Vec<StableId>,
+}
+
+impl fmt::Display for ModifierCycle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<String> = self.path.iter().map(|id| id.to_string()).collect();
+        write!(f, "modifier 참조 cycle: {}", names.join(" → "))
+    }
+}
+
+impl std::error::Error for ModifierCycle {}
+
+/// 모든 stack의 modifier 참조(소유 node → 참조 node)로 graph를 만들고 cycle을
+/// 찾습니다. self·direct·indirect cycle을 모두 검출하며, 저장 전 검증(VI.10.1)이
+/// 이 결과로 저장을 거부합니다. 비활성 modifier 참조도 포함합니다(다시 켜는 순간
+/// cycle이 되므로).
+///
+/// 결정론: node·간선을 StableId 순으로 방문하므로 같은 입력은 같은 cycle을
+/// 보고합니다.
+pub fn find_modifier_cycle(stacks: &[ModifierStack]) -> Option<ModifierCycle> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut graph: BTreeMap<StableId, BTreeSet<StableId>> = BTreeMap::new();
+    for stack in stacks {
+        let targets = graph.entry(stack.node).or_default();
+        for entry in &stack.entries {
+            targets.extend(entry.payload.referenced_nodes());
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Mark {
+        Visiting,
+        Done,
+    }
+    let mut marks: BTreeMap<StableId, Mark> = BTreeMap::new();
+
+    // 반복 DFS(재귀 깊이 제한 회피): (node, 다음 간선 index) 스택 + 현재 경로.
+    let roots: Vec<StableId> = graph.keys().copied().collect();
+    for root in roots {
+        if marks.contains_key(&root) {
+            continue;
+        }
+        let mut path: Vec<StableId> = vec![root];
+        let mut iters: Vec<Vec<StableId>> = vec![graph
+            .get(&root)
+            .map(|s| s.iter().copied().collect())
+            .unwrap_or_default()];
+        marks.insert(root, Mark::Visiting);
+        while let Some(next_list) = iters.last_mut() {
+            if let Some(next) = next_list.first().copied() {
+                next_list.remove(0);
+                match marks.get(&next) {
+                    Some(Mark::Visiting) => {
+                        let start = path.iter().position(|n| *n == next).expect("경로 위");
+                        let mut cycle = path[start..].to_vec();
+                        cycle.push(next);
+                        return Some(ModifierCycle { path: cycle });
+                    }
+                    Some(Mark::Done) => {}
+                    None => {
+                        marks.insert(next, Mark::Visiting);
+                        path.push(next);
+                        iters.push(
+                            graph
+                                .get(&next)
+                                .map(|s| s.iter().copied().collect())
+                                .unwrap_or_default(),
+                        );
+                    }
+                }
+            } else {
+                iters.pop();
+                let done = path.pop().expect("경로와 반복자 길이 일치");
+                marks.insert(done, Mark::Done);
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1036,5 +1123,70 @@ mod tests {
         stack.sync_references(&mut index);
         assert_eq!(index.inbound(a), vec![StableId::new_v7(2, 0, 2)]);
         assert_eq!(index.edge_count(), 2);
+    }
+
+    fn mask_stack(owner: u64, source: u64, modifier: u64) -> ModifierStack {
+        let mut stack = ModifierStack::new(StableId::new_v7(owner, 0, owner));
+        stack.push_back(id(modifier), ModifierKind::Mask).unwrap();
+        stack
+            .set_payload(
+                id(modifier),
+                ModifierPayload::Mask {
+                    source: NodeRef::new(StableId::new_v7(source, 0, source)),
+                },
+            )
+            .unwrap();
+        stack
+    }
+
+    fn sid(n: u64) -> StableId {
+        StableId::new_v7(n, 0, n)
+    }
+
+    #[test]
+    fn self_direct_and_indirect_cycles_are_detected() {
+        // 검증 기준(VI.9.5): cycle fixture 전부 실패.
+        // self: A mask = A.
+        let cycle = find_modifier_cycle(&[mask_stack(1, 1, 10)]).expect("self cycle");
+        assert_eq!(cycle.path, vec![sid(1), sid(1)]);
+
+        // direct: A → B, B → A.
+        let cycle = find_modifier_cycle(&[mask_stack(1, 2, 10), mask_stack(2, 1, 11)])
+            .expect("direct cycle");
+        assert_eq!(cycle.path, vec![sid(1), sid(2), sid(1)]);
+
+        // indirect: A → B → C → A (Boolean 경유 포함).
+        let mut c = ModifierStack::new(sid(3));
+        c.push_back(id(12), ModifierKind::Boolean).unwrap();
+        c.set_payload(
+            id(12),
+            ModifierPayload::Boolean {
+                op: BooleanOp::Intersect,
+                operands: vec![NodeRef::new(sid(9)), NodeRef::new(sid(1))],
+            },
+        )
+        .unwrap();
+        let cycle = find_modifier_cycle(&[mask_stack(1, 2, 10), mask_stack(2, 3, 11), c])
+            .expect("indirect cycle");
+        assert_eq!(cycle.path, vec![sid(1), sid(2), sid(3), sid(1)]);
+        assert!(cycle.to_string().contains("→"));
+    }
+
+    #[test]
+    fn acyclic_graphs_and_disabled_modifiers() {
+        // chain A → B → C, D → C (공유 대상) — cycle 없음.
+        let stacks = [
+            mask_stack(1, 2, 10),
+            mask_stack(2, 3, 11),
+            mask_stack(4, 3, 12),
+        ];
+        assert!(find_modifier_cycle(&stacks).is_none());
+        // 비활성 modifier가 만드는 cycle도 거부(다시 켜면 cycle이 되므로).
+        let mut back = mask_stack(3, 1, 13);
+        back.set_enabled(id(13), false).unwrap();
+        let stacks = [mask_stack(1, 2, 10), mask_stack(2, 3, 11), back];
+        assert!(find_modifier_cycle(&stacks).is_some());
+        // 결정론.
+        assert_eq!(find_modifier_cycle(&stacks), find_modifier_cycle(&stacks));
     }
 }
