@@ -79,3 +79,29 @@
 - unknown optional tag를 보존하지 않고 무시하므로, 미래 버전이 쓴 optional field는 이 버전이
   재기록하면 사라집니다(R6 "무시" 정책 선택).
 - media type 허용 목록·unknown type의 binary 저장 정책·최대 크기는 XIII.5.7에서 정합니다.
+
+## 후속 수정(리뷰 반영)
+
+- **원본 경로 기록 정책(Fix)**: `SourceMetadata`가 import한 사용자의 절대 로컬 경로를
+  그대로 기록하던 문제를 고쳤습니다. record는 Git에 commit되므로(아키텍처 29.1 "clone·
+  worktree·프로젝트 이동에서 재현 가능") 이제 원본 위치를 `SourceLocation`으로 기록합니다.
+  - 프로젝트 내부: project root 기준 `/` 상대 경로만(`SourceMetadata::project`). 빈 경로·
+    NUL·`\`·선행 `/`·빈 구성 요소·`.`·`..`는 생성과 디코딩 모두에서 거부합니다.
+  - 프로젝트 외부: 파일 이름과 비가역 출처 지문(`external_origin_fingerprint` =
+    domain 구분 prefix + 해석된 절대 경로 bytes의 SHA-256)만(`SourceMetadata::external`).
+  - `from_import_path`는 root·원본을 canonicalize(symlink 해석)한 뒤 구성 요소 단위로
+    포함 여부를 판정합니다(`/work/project-old`는 `/work/project`의 내부가 아님).
+    UTF-8로 표현할 수 없는 경로는 기록하지 않고 `NonUtf8Path`로 거부합니다.
+  - nested record 형식: tag 1 location kind(`u8`, 1 내부·2 외부), tag 2 path(내부 상대
+    경로 또는 외부 파일 이름), tag 3 origin fingerprint(외부 전용 필수, 내부 kind에 있으면
+    `UnexpectedField`로 거부). 정의되지 않은 kind는 `InvalidSourceKind`로 거부합니다.
+  - 검증: 외부 원본 record bytes에 디렉터리 경로 문자열이 남지 않음
+    (`resolved_paths_outside_project_keep_only_file_name_and_fingerprint`), 내부·외부 golden
+    layout, kind·지문 조합 검증, canonicalize 기반 판정(실제 temp 디렉터리) 테스트를
+    추가했습니다. `cargo test -p stellar-assets` 42 passed + doctest 2 passed, clippy 경고 0,
+    fmt 통과.
+- **`AssetId` 표현(재검토, 변경 없음)**: storage는 core-types `StableId`를 재노출하지 않고
+  (`pub use` 없음), `stellar-assets`의 허용 의존은 `stellar-storage`뿐이며(`crate_graph.rs`),
+  Cargo는 전이 의존 crate 이름 참조를 허용하지 않으므로 `AssetId(StableId)`로 바꿀 수
+  없습니다. 위 "차이" 절의 16바이트 표현을 유지합니다. 직접 newtype으로 바꾸려면 storage의
+  `StableId` 재노출 또는 assets → core-types edge 허용이 먼저 필요합니다.

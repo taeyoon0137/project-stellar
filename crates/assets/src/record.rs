@@ -19,7 +19,18 @@
 //!
 //! | tag | field | mandatory | payload |
 //! |---|---|---|---|
-//! | 1 | original path | 예 | 길이 프리픽스 UTF-8 |
+//! | 1 | location kind | 예 | `u8` (1 = 프로젝트 내부, 2 = 프로젝트 외부) |
+//! | 2 | path | 예 | 길이 프리픽스 UTF-8 — 내부: project root 기준 `/` 상대 경로, 외부: 파일 이름만 |
+//! | 3 | origin fingerprint | 예(외부 전용) | 길이 프리픽스 UTF-8 (`sha256:<hex>`). 내부 kind에는 금지 |
+//!
+//! # 원본 경로 기록 정책(privacy·이식성)
+//!
+//! record는 Git에 commit되므로 import한 사용자의 **절대 로컬 경로를 그대로 기록하지
+//! 않습니다**(아키텍처 29.1 "clone·worktree·프로젝트 이동에서 재현 가능").
+//! - 원본이 프로젝트 안에 있으면 project root 기준 상대 경로(`/` 구분)만 기록합니다.
+//! - 프로젝트 밖이면 파일 이름과 비가역 출처 지문(domain 구분 prefix + 해석된 절대 경로의
+//!   SHA-256)만 기록합니다. 지문에서 경로를 복원할 수 없으며, `Update from Source`
+//!   (XIII.5.5)가 호출자가 제시한 경로가 같은 출처인지 확인하는 데만 씁니다.
 //!
 //! # 엄격한 디코딩
 //!
@@ -28,6 +39,7 @@
 //! unknown **optional** tag는 R6 정책대로 무시합니다(재기록 시 결정론적으로 제거됨).
 
 use std::fmt;
+use std::path::{Component, Path, PathBuf};
 
 use stellar_storage::canonical::decode::{CanonicalDecoder, DecodeError};
 use stellar_storage::canonical::encode::{CanonicalEncoder, EncodeError, Field};
@@ -42,7 +54,16 @@ const TAG_SIZE: u32 = 3;
 const TAG_SOURCE_METADATA: u32 = 4;
 
 /// SourceMetadata field tag.
-const TAG_ORIGINAL_PATH: u32 = 1;
+const TAG_SOURCE_KIND: u32 = 1;
+const TAG_SOURCE_PATH: u32 = 2;
+const TAG_SOURCE_ORIGIN: u32 = 3;
+
+/// SourceMetadata location kind 값.
+const SOURCE_KIND_PROJECT: u8 = 1;
+const SOURCE_KIND_EXTERNAL: u8 = 2;
+
+/// 외부 출처 지문의 domain 구분 prefix(다른 용도의 SHA-256 값과 섞이지 않게 합니다).
+const EXTERNAL_ORIGIN_DOMAIN: &[u8] = b"stellar.asset.source-origin.v1\0";
 
 /// known field의 (tag, mandatory flag).
 const ASSET_RECORD_FIELDS: [(u32, bool); 4] = [
@@ -51,7 +72,11 @@ const ASSET_RECORD_FIELDS: [(u32, bool); 4] = [
     (TAG_SIZE, true),
     (TAG_SOURCE_METADATA, false),
 ];
-const SOURCE_METADATA_FIELDS: [(u32, bool); 1] = [(TAG_ORIGINAL_PATH, true)];
+const SOURCE_METADATA_FIELDS: [(u32, bool); 3] = [
+    (TAG_SOURCE_KIND, true),
+    (TAG_SOURCE_PATH, true),
+    (TAG_SOURCE_ORIGIN, true),
+];
 
 /// 오류가 발생한 record 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,18 +99,64 @@ impl fmt::Display for RecordKind {
 /// source metadata 형식 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceMetadataError {
-    /// 원본 경로가 비어 있습니다.
+    /// 경로(또는 파일 이름)가 비어 있습니다.
     EmptyPath,
-    /// 원본 경로에 NUL 문자가 있습니다.
+    /// 경로에 NUL 문자가 있습니다.
     ContainsNul,
+    /// 프로젝트 상대 경로가 `/`로 시작합니다(절대 경로 기록 금지).
+    AbsolutePath,
+    /// 프로젝트 상대 경로에 빈 구성 요소·`.`·`..`가 있습니다.
+    InvalidComponent {
+        /// 위반 구성 요소.
+        component: String,
+    },
+    /// 경로에 `\`가 있습니다(내부 구분자는 `/`만 사용, 아키텍처 19.2).
+    Backslash,
+    /// 외부 원본 파일 이름에 구분자가 있거나 `.`·`..`입니다.
+    InvalidFileName {
+        /// 위반 파일 이름.
+        name: String,
+    },
+    /// 경로를 UTF-8로 표현할 수 없습니다(기록하지 않음).
+    NonUtf8Path,
+    /// 해석된 경로 입력이 절대 경로가 아닙니다.
+    NotAbsolute,
+    /// 해석된 경로 입력에 `.`·`..` 구성 요소가 남아 있습니다.
+    NotNormalized,
+    /// 경로 해석(canonicalize)에 실패했습니다.
+    Resolve {
+        /// I/O 오류 종류.
+        kind: std::io::ErrorKind,
+    },
 }
 
 impl fmt::Display for SourceMetadataError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SourceMetadataError::EmptyPath => f.write_str("source 원본 경로가 비어 있습니다"),
-            SourceMetadataError::ContainsNul => {
-                f.write_str("source 원본 경로에 NUL 문자가 있습니다")
+            SourceMetadataError::EmptyPath => f.write_str("source 경로가 비어 있습니다"),
+            SourceMetadataError::ContainsNul => f.write_str("source 경로에 NUL 문자가 있습니다"),
+            SourceMetadataError::AbsolutePath => {
+                f.write_str("source 프로젝트 경로는 상대 경로여야 합니다")
+            }
+            SourceMetadataError::InvalidComponent { component } => write!(
+                f,
+                "source 프로젝트 경로에 허용되지 않는 구성 요소가 있습니다: {component:?}"
+            ),
+            SourceMetadataError::Backslash => f.write_str("source 경로 구분자는 '/'만 허용됩니다"),
+            SourceMetadataError::InvalidFileName { name } => {
+                write!(f, "source 파일 이름이 잘못되었습니다: {name:?}")
+            }
+            SourceMetadataError::NonUtf8Path => {
+                f.write_str("source 경로를 UTF-8로 표현할 수 없습니다")
+            }
+            SourceMetadataError::NotAbsolute => {
+                f.write_str("해석된 source·project 경로는 절대 경로여야 합니다")
+            }
+            SourceMetadataError::NotNormalized => {
+                f.write_str("해석된 source·project 경로에 '.'·'..'가 남아 있습니다")
+            }
+            SourceMetadataError::Resolve { kind } => {
+                write!(f, "source·project 경로를 해석할 수 없습니다: {kind}")
             }
         }
     }
@@ -127,6 +198,18 @@ pub enum AssetRecordError {
     },
     /// source metadata 값이 잘못되었습니다.
     InvalidSourceMetadata(SourceMetadataError),
+    /// source metadata location kind 값이 정의되지 않았습니다.
+    InvalidSourceKind {
+        /// 입력에 기록된 값.
+        value: u8,
+    },
+    /// 현재 값 조합에서 금지된 field가 있습니다(예: 내부 kind의 origin fingerprint).
+    UnexpectedField {
+        /// 위반이 발견된 record.
+        record: RecordKind,
+        /// 위반 tag.
+        tag: u32,
+    },
 }
 
 impl fmt::Display for AssetRecordError {
@@ -160,6 +243,15 @@ impl fmt::Display for AssetRecordError {
             AssetRecordError::InvalidSourceMetadata(e) => {
                 write!(f, "source metadata가 잘못되었습니다: {e}")
             }
+            AssetRecordError::InvalidSourceKind { value } => {
+                write!(
+                    f,
+                    "source metadata location kind 값이 잘못되었습니다: {value}"
+                )
+            }
+            AssetRecordError::UnexpectedField { record, tag } => {
+                write!(f, "{record}에 허용되지 않는 field(tag {tag})가 있습니다")
+            }
         }
     }
 }
@@ -178,41 +270,176 @@ impl From<EncodeError> for AssetRecordError {
     }
 }
 
+/// 원본 위치(경로 기록 정책은 모듈 문서 참조).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SourceLocation {
+    /// 프로젝트 안의 원본 — project root 기준 `/` 구분 상대 경로.
+    Project {
+        /// 상대 경로(예: `images/logo.png`).
+        relative_path: String,
+    },
+    /// 프로젝트 밖의 원본 — 파일 이름과 비가역 출처 지문만 기록합니다.
+    External {
+        /// 원본 파일 이름(디렉터리 없음).
+        file_name: String,
+        /// [`external_origin_fingerprint`] 값.
+        origin: ContentHash,
+    },
+}
+
 /// 외부 원본 출처 정보(optional).
 ///
-/// import 당시 원본 경로를 기록할 뿐이며, 외부 파일 변경을 자동 반영하지 않습니다
-/// (`Update from Source`는 명시 실행, XIII.5.5). canonical 문자열은 UTF-8이므로 UTF-8로
-/// 표현할 수 없는 경로는 기록하지 않는 것은 호출자(import) 책임입니다.
+/// import 당시 원본 위치를 기록할 뿐이며, 외부 파일 변경을 자동 반영하지 않습니다
+/// (`Update from Source`는 명시 실행, XIII.5.5). 절대 로컬 경로는 기록하지 않습니다.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourceMetadata {
-    original_path: String,
+    location: SourceLocation,
 }
 
 impl SourceMetadata {
-    /// 원본 경로로 만듭니다. 빈 경로와 NUL 포함 경로는 거부합니다.
-    pub fn new(original_path: impl Into<String>) -> Result<SourceMetadata, SourceMetadataError> {
-        let original_path = original_path.into();
-        if original_path.is_empty() {
-            return Err(SourceMetadataError::EmptyPath);
-        }
-        if original_path.contains('\0') {
-            return Err(SourceMetadataError::ContainsNul);
-        }
-        Ok(SourceMetadata { original_path })
+    /// 프로젝트 내부 원본(project root 기준 `/` 상대 경로)으로 만듭니다.
+    ///
+    /// 빈 경로·NUL·`\`·선행 `/`·빈 구성 요소·`.`·`..`를 거부합니다.
+    pub fn project(
+        relative_path: impl Into<String>,
+    ) -> Result<SourceMetadata, SourceMetadataError> {
+        let relative_path = relative_path.into();
+        validate_relative_path(&relative_path)?;
+        Ok(SourceMetadata {
+            location: SourceLocation::Project { relative_path },
+        })
     }
 
-    /// import 당시 원본 경로.
-    pub fn original_path(&self) -> &str {
-        &self.original_path
+    /// 프로젝트 외부 원본(파일 이름 + 출처 지문)으로 만듭니다.
+    pub fn external(
+        file_name: impl Into<String>,
+        origin: ContentHash,
+    ) -> Result<SourceMetadata, SourceMetadataError> {
+        let file_name = file_name.into();
+        validate_file_name(&file_name)?;
+        Ok(SourceMetadata {
+            location: SourceLocation::External { file_name, origin },
+        })
+    }
+
+    /// 이미 해석된(절대·정규화) project root와 원본 경로로 만듭니다(파일 I/O 없음).
+    ///
+    /// 원본이 root 아래면 상대 경로를, 아니면 파일 이름과 출처 지문을 기록합니다.
+    pub fn from_resolved_paths(
+        project_root: &Path,
+        source: &Path,
+    ) -> Result<SourceMetadata, SourceMetadataError> {
+        for path in [project_root, source] {
+            if !path.is_absolute() {
+                return Err(SourceMetadataError::NotAbsolute);
+            }
+            if path
+                .components()
+                .any(|c| matches!(c, Component::CurDir | Component::ParentDir))
+            {
+                return Err(SourceMetadataError::NotNormalized);
+            }
+        }
+        match source.strip_prefix(project_root) {
+            Ok(relative) => {
+                let mut parts: Vec<&str> = Vec::new();
+                for component in relative.components() {
+                    let Component::Normal(part) = component else {
+                        return Err(SourceMetadataError::NotNormalized);
+                    };
+                    parts.push(part.to_str().ok_or(SourceMetadataError::NonUtf8Path)?);
+                }
+                SourceMetadata::project(parts.join("/"))
+            }
+            Err(_) => {
+                let name = source.file_name().ok_or(SourceMetadataError::EmptyPath)?;
+                let name = name.to_str().ok_or(SourceMetadataError::NonUtf8Path)?;
+                SourceMetadata::external(name, external_origin_fingerprint(source))
+            }
+        }
+    }
+
+    /// project root와 원본 경로를 canonicalize(symlink 해석)한 뒤
+    /// [`SourceMetadata::from_resolved_paths`]로 만듭니다.
+    pub fn from_import_path(
+        project_root: &Path,
+        source: &Path,
+    ) -> Result<SourceMetadata, SourceMetadataError> {
+        let resolve = |p: &Path| {
+            std::fs::canonicalize(p).map_err(|e| SourceMetadataError::Resolve { kind: e.kind() })
+        };
+        SourceMetadata::from_resolved_paths(&resolve(project_root)?, &resolve(source)?)
+    }
+
+    /// 원본 위치.
+    pub fn location(&self) -> &SourceLocation {
+        &self.location
+    }
+
+    /// 원본 파일 이름(표시용). 내부 경로는 마지막 구성 요소입니다.
+    pub fn file_name(&self) -> &str {
+        match &self.location {
+            SourceLocation::Project { relative_path } => relative_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(relative_path.as_str()),
+            SourceLocation::External { file_name, .. } => file_name,
+        }
+    }
+
+    /// 내부 원본이면 project root 기준 실제 경로를 만듭니다. 외부면 `None`.
+    pub fn project_path(&self, project_root: &Path) -> Option<PathBuf> {
+        match &self.location {
+            SourceLocation::Project { relative_path } => {
+                let mut path = project_root.to_path_buf();
+                for part in relative_path.split('/') {
+                    path.push(part);
+                }
+                Some(path)
+            }
+            SourceLocation::External { .. } => None,
+        }
+    }
+
+    /// 해석된 절대 경로가 기록된 외부 출처와 같은지(지문 비교). 내부 원본은 `false`.
+    pub fn matches_external_origin(&self, resolved_source: &Path) -> bool {
+        match &self.location {
+            SourceLocation::External { origin, .. } => {
+                *origin == external_origin_fingerprint(resolved_source)
+            }
+            SourceLocation::Project { .. } => false,
+        }
     }
 
     /// nested record payload bytes.
     fn encode_payload(&self) -> Result<Vec<u8>, AssetRecordError> {
-        let fields = [Field {
-            tag: TAG_ORIGINAL_PATH,
-            mandatory: true,
-            payload: string_payload(&self.original_path)?,
-        }];
+        let (kind, path, origin) = match &self.location {
+            SourceLocation::Project { relative_path } => {
+                (SOURCE_KIND_PROJECT, relative_path.as_str(), None)
+            }
+            SourceLocation::External { file_name, origin } => {
+                (SOURCE_KIND_EXTERNAL, file_name.as_str(), Some(origin))
+            }
+        };
+        let mut fields = vec![
+            Field {
+                tag: TAG_SOURCE_KIND,
+                mandatory: true,
+                payload: vec![kind],
+            },
+            Field {
+                tag: TAG_SOURCE_PATH,
+                mandatory: true,
+                payload: string_payload(path)?,
+            },
+        ];
+        if let Some(origin) = origin {
+            fields.push(Field {
+                tag: TAG_SOURCE_ORIGIN,
+                mandatory: true,
+                payload: string_payload(&origin.to_string())?,
+            });
+        }
         let mut enc = CanonicalEncoder::new();
         enc.put_fields(&fields)?;
         Ok(enc.into_bytes())
@@ -224,9 +451,85 @@ impl SourceMetadata {
         let mut dec = CanonicalDecoder::new(payload);
         let fields = take_known_fields(&mut dec, kind, &SOURCE_METADATA_FIELDS)?;
         dec.expect_end()?;
-        let path = take_string_payload(required_payload(&fields, kind, TAG_ORIGINAL_PATH)?)?;
-        SourceMetadata::new(path).map_err(AssetRecordError::InvalidSourceMetadata)
+
+        let mut kind_dec = CanonicalDecoder::new(required_payload(&fields, kind, TAG_SOURCE_KIND)?);
+        let location_kind = kind_dec.take_u8()?;
+        kind_dec.expect_end()?;
+        let path = take_string_payload(required_payload(&fields, kind, TAG_SOURCE_PATH)?)?;
+        let origin = find_payload(&fields, TAG_SOURCE_ORIGIN);
+
+        match location_kind {
+            SOURCE_KIND_PROJECT => {
+                if origin.is_some() {
+                    return Err(AssetRecordError::UnexpectedField {
+                        record: kind,
+                        tag: TAG_SOURCE_ORIGIN,
+                    });
+                }
+                SourceMetadata::project(path).map_err(AssetRecordError::InvalidSourceMetadata)
+            }
+            SOURCE_KIND_EXTERNAL => {
+                let origin = origin.ok_or(AssetRecordError::MissingField {
+                    record: kind,
+                    tag: TAG_SOURCE_ORIGIN,
+                })?;
+                let origin: ContentHash = take_string_payload(origin)?
+                    .parse()
+                    .map_err(AssetRecordError::InvalidContentHash)?;
+                SourceMetadata::external(path, origin)
+                    .map_err(AssetRecordError::InvalidSourceMetadata)
+            }
+            value => Err(AssetRecordError::InvalidSourceKind { value }),
+        }
     }
+}
+
+/// 해석된 절대 원본 경로의 비가역 출처 지문.
+///
+/// `SHA-256(domain prefix ‖ 경로의 OS encoded bytes)`입니다. 경로를 복원할 수 없지만,
+/// 후보 경로를 알면 같은지 확인할 수 있습니다(같은 출처 판정 전용 — 비밀 값이 아닙니다).
+pub fn external_origin_fingerprint(resolved_source: &Path) -> ContentHash {
+    let mut input = EXTERNAL_ORIGIN_DOMAIN.to_vec();
+    input.extend_from_slice(resolved_source.as_os_str().as_encoded_bytes());
+    ContentHash::compute(&input)
+}
+
+fn check_common(text: &str) -> Result<(), SourceMetadataError> {
+    if text.is_empty() {
+        return Err(SourceMetadataError::EmptyPath);
+    }
+    if text.contains('\0') {
+        return Err(SourceMetadataError::ContainsNul);
+    }
+    if text.contains('\\') {
+        return Err(SourceMetadataError::Backslash);
+    }
+    Ok(())
+}
+
+fn validate_relative_path(path: &str) -> Result<(), SourceMetadataError> {
+    check_common(path)?;
+    if path.starts_with('/') {
+        return Err(SourceMetadataError::AbsolutePath);
+    }
+    for component in path.split('/') {
+        if component.is_empty() || component == "." || component == ".." {
+            return Err(SourceMetadataError::InvalidComponent {
+                component: component.to_string(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_file_name(name: &str) -> Result<(), SourceMetadataError> {
+    check_common(name)?;
+    if name.contains('/') || name == "." || name == ".." {
+        return Err(SourceMetadataError::InvalidFileName {
+            name: name.to_string(),
+        });
+    }
+    Ok(())
 }
 
 /// 에셋 record.
@@ -389,12 +692,16 @@ fn required_payload(
 mod tests {
     use super::*;
 
+    fn project_source(path: &str) -> SourceMetadata {
+        SourceMetadata::project(path).unwrap()
+    }
+
     fn record(source: Option<&str>) -> AssetRecord {
         AssetRecord {
             content_hash: ContentHash::compute(b"asset payload"),
             media_type: MediaType::new("image/png").unwrap(),
             size: 1234,
-            source_metadata: source.map(|p| SourceMetadata::new(p).unwrap()),
+            source_metadata: source.map(project_source),
         }
     }
 
@@ -443,6 +750,17 @@ mod tests {
         enc.into_bytes()
     }
 
+    /// source metadata nested payload를 field 목록으로 직접 만듭니다.
+    fn source_payload(fields: &[Field]) -> Vec<u8> {
+        encode_fields(fields)
+    }
+
+    fn decode_with_source(source: Vec<u8>) -> Result<AssetRecord, AssetRecordError> {
+        let mut fields = base_fields();
+        fields.push(field(TAG_SOURCE_METADATA, false, source));
+        AssetRecord::decode(&encode_fields(&fields))
+    }
+
     #[test]
     fn round_trip_without_source_metadata() {
         let original = record(None);
@@ -457,16 +775,32 @@ mod tests {
     }
 
     #[test]
-    fn round_trip_with_source_metadata() {
-        let original = record(Some("/Users/디자이너/에셋/로고 최종.png"));
+    fn round_trip_with_project_source_metadata() {
+        let original = record(Some("에셋/로고 최종.png"));
         let bytes = original.encode().unwrap();
         let decoded = AssetRecord::decode(&bytes).unwrap();
         assert_eq!(decoded, original);
+        let source = decoded.source_metadata.as_ref().unwrap();
         assert_eq!(
-            decoded.source_metadata.as_ref().unwrap().original_path(),
-            "/Users/디자이너/에셋/로고 최종.png"
+            source.location(),
+            &SourceLocation::Project {
+                relative_path: "에셋/로고 최종.png".to_string()
+            }
         );
+        assert_eq!(source.file_name(), "로고 최종.png");
         assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+
+    #[test]
+    fn round_trip_with_external_source_metadata() {
+        let origin = external_origin_fingerprint(Path::new("/Users/someone/Desktop/logo.png"));
+        let mut original = record(None);
+        original.source_metadata = Some(SourceMetadata::external("logo.png", origin).unwrap());
+        let bytes = original.encode().unwrap();
+        let decoded = AssetRecord::decode(&bytes).unwrap();
+        assert_eq!(decoded, original);
+        assert_eq!(decoded.source_metadata.unwrap().file_name(), "logo.png");
+        assert_eq!(original.encode().unwrap(), bytes);
     }
 
     #[test]
@@ -488,7 +822,7 @@ mod tests {
                 media_type: MediaType::new("font/woff2").unwrap(),
                 size: i * 1000,
                 source_metadata: (i % 2 == 0)
-                    .then(|| SourceMetadata::new(format!("/fonts/{i}.woff2")).unwrap()),
+                    .then(|| SourceMetadata::project(format!("fonts/{i}.woff2")).unwrap()),
             })
             .collect();
         let mut enc = CanonicalEncoder::new();
@@ -523,23 +857,47 @@ mod tests {
         expected.extend_from_slice(&[0xd2, 0x04, 0, 0, 0, 0, 0, 0]); // 1234 LE
         assert_eq!(record(None).encode().unwrap(), expected);
 
-        // source metadata는 optional(flags 0) tag 4로 끝에 붙습니다.
-        let with_source = record(Some("/a.png")).encode().unwrap();
+        // source metadata(내부 경로)는 optional(flags 0) tag 4로 끝에 붙습니다.
+        let with_source = record(Some("a.png")).encode().unwrap();
         let mut expected_source = expected.clone();
         expected_source[0] = 0x04; // field 수 4
         expected_source.extend_from_slice(&[0x04, 0x00, 0x00, 0x00, 0x00]); // tag 4, optional
-        expected_source.extend_from_slice(&[0x17, 0x00, 0x00, 0x00]); // payload 23 bytes
-        expected_source.extend_from_slice(&[0x01, 0x00, 0x00, 0x00]); // nested field 수 1
+        expected_source.extend_from_slice(&[0x20, 0x00, 0x00, 0x00]); // payload 32 bytes
+        expected_source.extend_from_slice(&[0x02, 0x00, 0x00, 0x00]); // nested field 수 2
         expected_source.extend_from_slice(&[0x01, 0x00, 0x00, 0x00, 0x01]); // tag 1, mandatory
-        expected_source.extend_from_slice(&[0x0a, 0x00, 0x00, 0x00]); // payload 10 bytes
-        expected_source.extend_from_slice(&[0x06, 0x00, 0x00, 0x00]); // 문자열 6 bytes
-        expected_source.extend_from_slice(b"/a.png");
+        expected_source.extend_from_slice(&[0x01, 0x00, 0x00, 0x00, 0x01]); // payload 1 byte: 내부
+        expected_source.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x01]); // tag 2, mandatory
+        expected_source.extend_from_slice(&[0x09, 0x00, 0x00, 0x00]); // payload 9 bytes
+        expected_source.extend_from_slice(&[0x05, 0x00, 0x00, 0x00]); // 문자열 5 bytes
+        expected_source.extend_from_slice(b"a.png");
         assert_eq!(with_source, expected_source);
+
+        // 외부 원본: kind 2 + 파일 이름 + tag 3 지문(71자 문자열).
+        let origin = external_origin_fingerprint(Path::new("/elsewhere/a.png"));
+        let mut external = record(None);
+        external.source_metadata = Some(SourceMetadata::external("a.png", origin).unwrap());
+        let bytes = external.encode().unwrap();
+        let mut expected_external = expected.clone();
+        expected_external[0] = 0x04;
+        expected_external.extend_from_slice(&[0x04, 0x00, 0x00, 0x00, 0x00]);
+        expected_external.extend_from_slice(&[0x74, 0x00, 0x00, 0x00]); // payload 116 bytes
+        expected_external.extend_from_slice(&[0x03, 0x00, 0x00, 0x00]); // nested field 수 3
+        expected_external.extend_from_slice(&[0x01, 0x00, 0x00, 0x00, 0x01]);
+        expected_external.extend_from_slice(&[0x01, 0x00, 0x00, 0x00, 0x02]); // kind 2: 외부
+        expected_external.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x01]);
+        expected_external.extend_from_slice(&[0x09, 0x00, 0x00, 0x00]);
+        expected_external.extend_from_slice(&[0x05, 0x00, 0x00, 0x00]);
+        expected_external.extend_from_slice(b"a.png");
+        expected_external.extend_from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]); // tag 3
+        expected_external.extend_from_slice(&[0x4b, 0x00, 0x00, 0x00]); // payload 75 bytes
+        expected_external.extend_from_slice(&[0x47, 0x00, 0x00, 0x00]); // 문자열 71 bytes
+        expected_external.extend_from_slice(origin.to_string().as_bytes());
+        assert_eq!(bytes, expected_external);
     }
 
     #[test]
     fn truncated_input_is_rejected_at_every_length() {
-        let bytes = record(Some("/src/logo.png")).encode().unwrap();
+        let bytes = record(Some("src/logo.png")).encode().unwrap();
         for cut in 0..bytes.len() {
             let err = AssetRecord::decode(&bytes[..cut]).unwrap_err();
             assert!(
@@ -582,14 +940,13 @@ mod tests {
 
     #[test]
     fn nested_unknown_mandatory_tag_is_rejected() {
-        let source = encode_fields(&[
-            field(TAG_ORIGINAL_PATH, true, string_payload("/a.png").unwrap()),
+        let source = source_payload(&[
+            field(TAG_SOURCE_KIND, true, vec![SOURCE_KIND_PROJECT]),
+            field(TAG_SOURCE_PATH, true, string_payload("a.png").unwrap()),
             field(5, true, Vec::new()),
         ]);
-        let mut fields = base_fields();
-        fields.push(field(TAG_SOURCE_METADATA, false, source));
         assert_eq!(
-            AssetRecord::decode(&encode_fields(&fields)).unwrap_err(),
+            decode_with_source(source).unwrap_err(),
             AssetRecordError::Decode(DecodeError::UnknownMandatoryTag { tag: 5 })
         );
     }
@@ -610,14 +967,83 @@ mod tests {
             );
         }
 
-        let mut fields = base_fields();
-        fields.push(field(TAG_SOURCE_METADATA, false, encode_fields(&[])));
+        let kind = |value: u8| field(TAG_SOURCE_KIND, true, vec![value]);
+        let path = |text: &str| field(TAG_SOURCE_PATH, true, string_payload(text).unwrap());
+        for (fields, tag) in [
+            (vec![], TAG_SOURCE_KIND),
+            (vec![path("a.png")], TAG_SOURCE_KIND),
+            (vec![kind(SOURCE_KIND_PROJECT)], TAG_SOURCE_PATH),
+            // 외부 kind는 출처 지문이 필수입니다.
+            (
+                vec![kind(SOURCE_KIND_EXTERNAL), path("a.png")],
+                TAG_SOURCE_ORIGIN,
+            ),
+        ] {
+            assert_eq!(
+                decode_with_source(source_payload(&fields)).unwrap_err(),
+                AssetRecordError::MissingField {
+                    record: RecordKind::SourceMetadata,
+                    tag
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn source_kind_and_origin_combinations_are_validated() {
+        let origin = external_origin_fingerprint(Path::new("/x/a.png")).to_string();
+        let origin_field = field(TAG_SOURCE_ORIGIN, true, string_payload(&origin).unwrap());
+        let path = field(TAG_SOURCE_PATH, true, string_payload("a.png").unwrap());
+
+        // 내부 kind에 지문이 있으면 거부합니다(절대 경로 유출 경로 차단).
+        let source = source_payload(&[
+            field(TAG_SOURCE_KIND, true, vec![SOURCE_KIND_PROJECT]),
+            path.clone(),
+            origin_field.clone(),
+        ]);
         assert_eq!(
-            AssetRecord::decode(&encode_fields(&fields)).unwrap_err(),
-            AssetRecordError::MissingField {
+            decode_with_source(source).unwrap_err(),
+            AssetRecordError::UnexpectedField {
                 record: RecordKind::SourceMetadata,
-                tag: TAG_ORIGINAL_PATH
+                tag: TAG_SOURCE_ORIGIN
             }
+        );
+
+        // 정의되지 않은 kind 값.
+        for value in [0u8, 3, 0xff] {
+            let source = source_payload(&[field(TAG_SOURCE_KIND, true, vec![value]), path.clone()]);
+            assert_eq!(
+                decode_with_source(source).unwrap_err(),
+                AssetRecordError::InvalidSourceKind { value }
+            );
+        }
+
+        // kind payload 폭 위반.
+        let source = source_payload(&[
+            field(TAG_SOURCE_KIND, true, vec![SOURCE_KIND_PROJECT, 0]),
+            path.clone(),
+        ]);
+        assert_eq!(
+            decode_with_source(source).unwrap_err(),
+            AssetRecordError::Decode(DecodeError::TrailingBytes { remaining: 1 })
+        );
+
+        // 지문 문자열이 hash 형식이 아님.
+        let source = source_payload(&[
+            field(TAG_SOURCE_KIND, true, vec![SOURCE_KIND_EXTERNAL]),
+            path,
+            field(
+                TAG_SOURCE_ORIGIN,
+                true,
+                string_payload("sha256:00").unwrap(),
+            ),
+        ]);
+        assert_eq!(
+            decode_with_source(source).unwrap_err(),
+            AssetRecordError::InvalidContentHash(ParseContentHashError::InvalidLength {
+                expected: 64,
+                actual: 2
+            })
         );
     }
 
@@ -635,7 +1061,7 @@ mod tests {
         );
 
         let mut fields = base_fields();
-        let source = SourceMetadata::new("/a.png").unwrap();
+        let source = project_source("a.png");
         fields.push(field(
             TAG_SOURCE_METADATA,
             true,
@@ -735,53 +1161,270 @@ mod tests {
         );
 
         // nested source record 뒤 잔여 bytes.
-        let mut source = SourceMetadata::new("/a.png")
-            .unwrap()
-            .encode_payload()
-            .unwrap();
+        let mut source = project_source("a.png").encode_payload().unwrap();
         source.push(0);
-        let mut fields = base_fields();
-        fields.push(field(TAG_SOURCE_METADATA, false, source));
         assert_eq!(
-            AssetRecord::decode(&encode_fields(&fields)).unwrap_err(),
+            decode_with_source(source).unwrap_err(),
             AssetRecordError::Decode(DecodeError::TrailingBytes { remaining: 1 })
         );
     }
 
     #[test]
-    fn invalid_source_metadata_is_rejected() {
-        assert_eq!(
-            SourceMetadata::new("").unwrap_err(),
-            SourceMetadataError::EmptyPath
-        );
-        assert_eq!(
-            SourceMetadata::new("/a\0b").unwrap_err(),
-            SourceMetadataError::ContainsNul
-        );
-
+    fn invalid_project_paths_are_rejected() {
         for (path, expected) in [
             ("", SourceMetadataError::EmptyPath),
-            ("/a\0b", SourceMetadataError::ContainsNul),
+            ("a\0b.png", SourceMetadataError::ContainsNul),
+            ("/Users/someone/a.png", SourceMetadataError::AbsolutePath),
+            ("dir\\a.png", SourceMetadataError::Backslash),
+            (
+                "../a.png",
+                SourceMetadataError::InvalidComponent {
+                    component: "..".to_string(),
+                },
+            ),
+            (
+                "a/./b.png",
+                SourceMetadataError::InvalidComponent {
+                    component: ".".to_string(),
+                },
+            ),
+            (
+                "a//b.png",
+                SourceMetadataError::InvalidComponent {
+                    component: String::new(),
+                },
+            ),
+            (
+                "a/",
+                SourceMetadataError::InvalidComponent {
+                    component: String::new(),
+                },
+            ),
         ] {
-            let source = encode_fields(&[field(
-                TAG_ORIGINAL_PATH,
-                true,
-                string_payload(path).unwrap(),
-            )]);
-            let mut fields = base_fields();
-            fields.push(field(TAG_SOURCE_METADATA, false, source));
             assert_eq!(
-                AssetRecord::decode(&encode_fields(&fields)).unwrap_err(),
-                AssetRecordError::InvalidSourceMetadata(expected)
+                SourceMetadata::project(path).unwrap_err(),
+                expected,
+                "{path:?}"
+            );
+            // 디코딩 경로에서도 같은 규칙으로 거부합니다(절대 경로가 기록된 입력 포함).
+            let source = source_payload(&[
+                field(TAG_SOURCE_KIND, true, vec![SOURCE_KIND_PROJECT]),
+                field(TAG_SOURCE_PATH, true, string_payload(path).unwrap()),
+            ]);
+            assert_eq!(
+                decode_with_source(source).unwrap_err(),
+                AssetRecordError::InvalidSourceMetadata(expected),
+                "{path:?}"
             );
         }
     }
 
     #[test]
+    fn invalid_external_file_names_are_rejected() {
+        let origin = external_origin_fingerprint(Path::new("/x/a.png"));
+        for (name, expected) in [
+            ("", SourceMetadataError::EmptyPath),
+            ("a\0.png", SourceMetadataError::ContainsNul),
+            ("a\\b.png", SourceMetadataError::Backslash),
+            (
+                "dir/a.png",
+                SourceMetadataError::InvalidFileName {
+                    name: "dir/a.png".to_string(),
+                },
+            ),
+            (
+                "/Users/someone/a.png",
+                SourceMetadataError::InvalidFileName {
+                    name: "/Users/someone/a.png".to_string(),
+                },
+            ),
+            (
+                "..",
+                SourceMetadataError::InvalidFileName {
+                    name: "..".to_string(),
+                },
+            ),
+        ] {
+            assert_eq!(
+                SourceMetadata::external(name, origin).unwrap_err(),
+                expected,
+                "{name:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolved_paths_inside_project_become_relative() {
+        let root = Path::new("/work/project");
+        let source =
+            SourceMetadata::from_resolved_paths(root, Path::new("/work/project/images/로고.png"))
+                .unwrap();
+        assert_eq!(
+            source.location(),
+            &SourceLocation::Project {
+                relative_path: "images/로고.png".to_string()
+            }
+        );
+        assert_eq!(
+            source.project_path(root).unwrap(),
+            Path::new("/work/project/images/로고.png")
+        );
+        assert!(!source.matches_external_origin(Path::new("/work/project/images/로고.png")));
+
+        // root 자체는 원본 파일이 될 수 없습니다.
+        assert_eq!(
+            SourceMetadata::from_resolved_paths(root, root).unwrap_err(),
+            SourceMetadataError::EmptyPath
+        );
+        // 접두 문자열만 같은 형제 디렉터리는 외부입니다(구성 요소 단위 비교).
+        let sibling =
+            SourceMetadata::from_resolved_paths(root, Path::new("/work/project-old/a.png"))
+                .unwrap();
+        assert!(matches!(
+            sibling.location(),
+            SourceLocation::External { .. }
+        ));
+    }
+
+    #[test]
+    fn resolved_paths_outside_project_keep_only_file_name_and_fingerprint() {
+        let root = Path::new("/work/project");
+        let outside = Path::new("/Users/someone/Desktop/브랜드/logo.png");
+        let source = SourceMetadata::from_resolved_paths(root, outside).unwrap();
+        assert_eq!(
+            source.location(),
+            &SourceLocation::External {
+                file_name: "logo.png".to_string(),
+                origin: external_origin_fingerprint(outside),
+            }
+        );
+        assert!(source.matches_external_origin(outside));
+        assert!(!source.matches_external_origin(Path::new("/Users/other/Desktop/브랜드/logo.png")));
+        assert_eq!(source.project_path(root), None);
+
+        // 기록 bytes에 디렉터리 경로가 남지 않습니다(privacy).
+        let mut rec = record(None);
+        rec.source_metadata = Some(source);
+        let bytes = rec.encode().unwrap();
+        for leaked in ["/Users", "someone", "Desktop", "브랜드"] {
+            assert!(
+                !bytes.windows(leaked.len()).any(|w| w == leaked.as_bytes()),
+                "{leaked:?}가 기록됨"
+            );
+        }
+        assert!(bytes.windows(8).any(|w| w == b"logo.png"));
+    }
+
+    #[test]
+    fn fingerprint_is_domain_separated_and_path_sensitive() {
+        let a = Path::new("/a/logo.png");
+        assert_eq!(
+            external_origin_fingerprint(a),
+            external_origin_fingerprint(a)
+        );
+        assert_ne!(
+            external_origin_fingerprint(a),
+            external_origin_fingerprint(Path::new("/b/logo.png"))
+        );
+        // 경로 bytes의 단순 SHA-256과 다릅니다(domain prefix).
+        assert_ne!(
+            external_origin_fingerprint(a),
+            ContentHash::compute(b"/a/logo.png")
+        );
+    }
+
+    #[test]
+    fn unresolved_inputs_are_rejected() {
+        let root = Path::new("/work/project");
+        for (root, source, expected) in [
+            (
+                Path::new("work/project"),
+                Path::new("/work/project/a.png"),
+                SourceMetadataError::NotAbsolute,
+            ),
+            (root, Path::new("a.png"), SourceMetadataError::NotAbsolute),
+            (
+                root,
+                Path::new("/work/project/../secret/a.png"),
+                SourceMetadataError::NotNormalized,
+            ),
+            (
+                Path::new("/work/other/../project"),
+                Path::new("/work/project/a.png"),
+                SourceMetadataError::NotNormalized,
+            ),
+        ] {
+            assert_eq!(
+                SourceMetadata::from_resolved_paths(root, source).unwrap_err(),
+                expected,
+                "{root:?} {source:?}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_paths_are_not_recorded() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+        let root = Path::new("/work/project");
+        let inside = Path::new("/work/project").join(OsStr::from_bytes(b"\xff.png"));
+        let outside = Path::new("/elsewhere").join(OsStr::from_bytes(b"\xfe.png"));
+        for source in [inside, outside] {
+            assert_eq!(
+                SourceMetadata::from_resolved_paths(root, &source).unwrap_err(),
+                SourceMetadataError::NonUtf8Path
+            );
+        }
+    }
+
+    #[test]
+    fn import_path_resolution_uses_canonical_paths() {
+        let base =
+            std::env::temp_dir().join(format!("stellar-assets-source-test-{}", std::process::id()));
+        let project = base.join("project");
+        let outside = base.join("outside");
+        std::fs::create_dir_all(project.join("images")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(project.join("images").join("a.png"), b"a").unwrap();
+        std::fs::write(outside.join("b.png"), b"b").unwrap();
+
+        // `..`가 섞인 비정규 입력도 canonicalize 후 판정합니다.
+        let inside = SourceMetadata::from_import_path(
+            &project,
+            &project
+                .join("images")
+                .join("..")
+                .join("images")
+                .join("a.png"),
+        )
+        .unwrap();
+        assert_eq!(
+            inside.location(),
+            &SourceLocation::Project {
+                relative_path: "images/a.png".to_string()
+            }
+        );
+
+        let external = SourceMetadata::from_import_path(&project, &outside.join("b.png")).unwrap();
+        let resolved = std::fs::canonicalize(outside.join("b.png")).unwrap();
+        assert!(external.matches_external_origin(&resolved));
+        assert_eq!(external.file_name(), "b.png");
+
+        assert_eq!(
+            SourceMetadata::from_import_path(&project, &outside.join("missing.png")).unwrap_err(),
+            SourceMetadataError::Resolve {
+                kind: std::io::ErrorKind::NotFound
+            }
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn same_content_hash_can_back_distinct_records() {
         // dedup(XIII.5.3) 전제: record는 AssetId를 포함하지 않고 content hash만 공유합니다.
-        let a = record(Some("/a.png"));
-        let b = record(Some("/copy/a.png"));
+        let a = record(Some("a.png"));
+        let b = record(Some("copy/a.png"));
         assert_eq!(a.content_hash, b.content_hash);
         assert_ne!(a.encode().unwrap(), b.encode().unwrap());
     }
@@ -798,5 +1441,8 @@ mod tests {
         );
         let err = AssetRecordError::Decode(DecodeError::TrailingBytes { remaining: 2 });
         assert!(err.to_string().contains("2 bytes"));
+        assert!(SourceMetadataError::AbsolutePath
+            .to_string()
+            .contains("상대 경로"));
     }
 }
