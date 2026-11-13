@@ -401,7 +401,8 @@ mod stream {
 
     #[derive(Default)]
     struct QueueState {
-        raw: VecDeque<RawFsEvent>,
+        /// (알림을 받은 stream의 root, 원시 알림).
+        raw: VecDeque<(WatchRootId, RawFsEvent)>,
         dropped: bool,
     }
 
@@ -414,6 +415,7 @@ mod stream {
 
     /// stream 하나의 callback 문맥(stream 수명 동안 유지).
     struct StreamContext {
+        root: WatchRootId,
         queue: Arc<EventQueue>,
     }
 
@@ -461,11 +463,14 @@ mod stream {
                 state.dropped = true;
                 continue;
             }
-            state.raw.push_back(RawFsEvent {
-                id,
-                flags,
-                path: path.to_bytes().to_vec(),
-            });
+            state.raw.push_back((
+                context.root,
+                RawFsEvent {
+                    id,
+                    flags,
+                    path: path.to_bytes().to_vec(),
+                },
+            ));
         }
         drop(state);
         context.queue.ready.notify_all();
@@ -484,6 +489,7 @@ mod stream {
                     path: path.to_path_buf(),
                 })?;
             let context = Box::into_raw(Box::new(StreamContext {
+                root,
                 queue: Arc::clone(shared),
             }));
             let fail = |context: *mut StreamContext| {
@@ -644,14 +650,55 @@ mod stream {
             }
         }
 
+        /// 외부 symlink target을 감시 root로 추가하고 stream을 시작합니다(XIII.4.4). 이미 감시 중이면
+        /// 기존 id를 돌려줍니다.
+        pub fn add_external_target(&mut self, target: &Path) -> Result<WatchRootId, WatcherError> {
+            let id = self.roots.add_external(target)?;
+            if self.streams.iter().any(|s| s.root == id) {
+                return Ok(id);
+            }
+            let started = stream_path(&self.roots, id)
+                .ok_or_else(|| WatcherError::Stream {
+                    path: target.to_path_buf(),
+                })
+                .and_then(|path| Stream::start(id, &path, &self.queue));
+            match started {
+                Ok(stream) => {
+                    self.streams.push(stream);
+                    Ok(id)
+                }
+                Err(error) => {
+                    let _ = self.roots.remove(id);
+                    Err(error)
+                }
+            }
+        }
+
+        /// 외부 감시 root를 해제합니다(XIII.4.4). stream을 멈추고, 이미 대기열에 들어온 그 root의
+        /// 알림은 버립니다. 프로젝트 root는 해제할 수 없습니다.
+        pub fn remove_external_target(&mut self, id: WatchRootId) -> Result<bool, WatcherError> {
+            let removed = self.roots.remove(id)?.is_some();
+            // stream drop은 callback 완료를 기다린 뒤 문맥을 해제합니다.
+            self.streams.retain(|s| s.root != id);
+            Ok(removed)
+        }
+
         /// 대기열의 원시 알림을 꺼내 normalize합니다.
         fn take_events(&self) -> Vec<FileWatchEvent> {
-            let (mut raw, dropped) = {
+            let (tagged, dropped) = {
                 let mut state = self.queue.lock();
                 let dropped = std::mem::take(&mut state.dropped);
                 (Vec::from(std::mem::take(&mut state.raw)), dropped)
             };
-            raw.sort_by_key(|event| event.id);
+            // 해제된 root의 늦은 알림은 버리고, 겹친 root의 stream이 같은 알림을 두 번 받은 경우 하나만
+            // 남깁니다(같은 event id·경로).
+            let mut raw: Vec<RawFsEvent> = tagged
+                .into_iter()
+                .filter(|(root, _)| self.roots.get(*root).is_some())
+                .map(|(_, event)| event)
+                .collect();
+            raw.sort_by(|a, b| a.id.cmp(&b.id).then_with(|| a.path.cmp(&b.path)));
+            raw.dedup_by(|a, b| a.id == b.id && a.path == b.path);
             let mut events = self
                 .normalizer
                 .lock()

@@ -9,6 +9,7 @@
 //! - [`own_save`]: Stellar 자신의 저장이 만든 event 식별(XIII.2.4).
 //! - [`coalesce`]: 다중 파일 event를 current pointer 변화 단위로 묶음(XIII.2.5).
 //! - [`rescan`]: 넘침 뒤 current pointer·tracked files 전체 재검사(XIII.2.6).
+//! - [`targets`]: 외부 symlink target 감시 동적 등록·해제(XIII.4.4).
 
 pub mod coalesce;
 pub mod event;
@@ -16,6 +17,7 @@ pub mod fsevents;
 pub mod own_save;
 pub mod rescan;
 pub mod roots;
+pub mod targets;
 
 use std::time::Duration;
 
