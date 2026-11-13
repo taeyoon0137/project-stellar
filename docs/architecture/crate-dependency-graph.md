@@ -23,7 +23,7 @@
 | `stellar-storage` | core-types |
 | `stellar-assets` | storage, core-types |
 | `stellar-dependencies` | core-types |
-| `stellar-project` | core-types, document, storage, assets, dependencies, git-porcelain, commands, history |
+| `stellar-project` | core-types, document, storage, assets, dependencies, git-porcelain, commands, history, text |
 | `stellar-semantic-diff` | document, core-types |
 | `stellar-semantic-merge` | semantic-diff |
 | `stellar-git-porcelain` | core-types |
@@ -64,6 +64,7 @@ graph TD
   project --> dependencies
   project --> commands
   project --> history
+  project --> text
   semantic_diff --> document
   semantic_diff --> core_types
   semantic_merge --> semantic_diff
@@ -88,7 +89,7 @@ graph TD
 
 ## 규칙
 
-- `document`·`bindings`는 표현식 AST를 저장·평가 입력으로 쓰므로 `expressions`에 의존합니다. `project`는 Command 단위 자동 저장·복구를 위해 `commands`·`history`에 의존합니다(2026-11-14, 순환 없음).
+- `document`·`bindings`는 표현식 AST를 저장·평가 입력으로 쓰므로 `expressions`에 의존합니다. `project`는 Command 단위 자동 저장·복구를 위해 `commands`·`history`에 의존하고, 프로젝트·시스템 폰트 등록(XIII.6)을 위해 `text`에 의존합니다(2026-11-14, 순환 없음).
 - 셸 경계(`ffi`)는 문서·프로젝트 작업에 `runtime`을 통해서만 도달합니다(ADR-0013, 2026-11-14).
 - `commands`와 `history`는 이미 `document`를 거쳐 `core-types`에 전이 의존하므로, StableId·WindowSessionId·DocumentRevision 같은 기본 타입을 직접 쓰도록 `core-types` 직접 의존을 허용합니다(2026-11-14, `semantic-diff` 선례와 같음).
 - `assets`도 같은 이유로 `core-types` 직접 의존을 허용합니다. AssetId는 계획서(XIII.5.1)대로 StableId newtype입니다(2026-11-14).
