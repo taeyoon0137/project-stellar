@@ -6,7 +6,9 @@
 //! **preview(VII.4.2)**: pointer gesture(drag·resize·rotate)는 `begin → update* → end`로 한
 //! 항목을 만듭니다. `update`는 직전 preview transaction을 되돌리고 새 transaction을 적용하는 일을
 //! **한 원자 transaction**으로 수행하므로 문서에는 항상 마지막 preview만 반영되고 history에는
-//! 아무것도 쌓이지 않습니다. `end`에서 마지막 preview를 한 항목으로 확정합니다.
+//! 아무것도 쌓이지 않습니다. `end`에서 마지막 preview를 한 항목으로 확정합니다. slider·scrub
+//! (VII.4.5)도 같은 경로이며, `cancel`은 preview 전 상태로 되돌리고 항목을 만들지 않습니다(§23.3:
+//! 취소된 조작은 기록하지 않음).
 
 use stellar_commands::change::ChangeSet;
 use stellar_commands::state::DocumentState;
@@ -176,6 +178,24 @@ impl History {
     /// pointer gesture(drag·resize·rotate)를 시작합니다(VII.4.2).
     pub fn begin_pointer_gesture(&mut self, gesture: u64) -> Result<(), HistoryError> {
         self.begin_preview(GroupingKey::PointerGesture { gesture })
+    }
+
+    /// slider·scrub 조작을 시작합니다(VII.4.5). update·end는 pointer gesture와 같고, 취소는
+    /// [`History::cancel_preview`]입니다.
+    pub fn begin_scrub(&mut self, control: u64) -> Result<(), HistoryError> {
+        self.begin_preview(GroupingKey::Scrub { control })
+    }
+
+    /// preview를 취소합니다(VII.4.5): 적용 중인 preview를 되돌려 시작 전 상태로 돌아가고 history
+    /// 항목을 만들지 않습니다. 되돌리기가 실패하면 문서는 그대로이고 preview도 유지되어 다시 시도할
+    /// 수 있습니다.
+    pub fn cancel_preview(&mut self, doc: &mut DocumentState) -> Result<(), HistoryError> {
+        let preview = self.preview.as_ref().ok_or(HistoryError::NoPreview)?;
+        if let Some(applied) = &preview.applied {
+            doc.execute_transaction(&applied.inverse.rebased(doc.revision()))?;
+        }
+        self.preview = None;
+        Ok(())
     }
 
     /// preview transaction을 교체합니다(pointer move).
@@ -808,6 +828,95 @@ mod tests {
                 Command::DeleteSubtree(stellar_commands::node_ops::DeleteSubtree { root: sid(13) }),
             );
             assert_eq!(GroupingKey::keyboard(&delete), None);
+        }
+    }
+
+    mod scrub {
+        //! slider·scrub commit/cancel fixture(VII.4.5).
+
+        use super::super::test_fixtures::*;
+        use super::super::*;
+        use stellar_commands::command::Command;
+        use stellar_commands::document::frame::{keys as frame_keys, CornerRadius};
+        use stellar_commands::property::{PropertyValue, SetProperty};
+
+        fn radius(doc: &DocumentState, value: f32) -> CommandTransaction {
+            tx(
+                doc,
+                10_000 + value as u64,
+                Command::SetProperty(SetProperty {
+                    node: sid(12),
+                    key: frame_keys::CORNER_RADIUS,
+                    value: PropertyValue::CornerRadius(
+                        CornerRadius::new(value, value, value, value).unwrap(),
+                    ),
+                }),
+            )
+        }
+
+        fn snapshot(doc: &DocumentState) -> String {
+            stellar_commands::document::test_support::semantic_snapshot::model_snapshot_json(
+                doc.model(),
+            )
+            .unwrap()
+        }
+
+        #[test]
+        fn scrub_commit_records_one_entry() {
+            // 검증 기준(VII.4.5): commit fixture.
+            let mut doc = small_state();
+            let before = snapshot(&doc);
+            let mut history = History::new();
+            history.begin_scrub(3).unwrap();
+            for value in 1..=50 {
+                let t = radius(&doc, value as f32);
+                history.update_preview(&mut doc, &t).unwrap();
+            }
+            history.end_preview().unwrap();
+            assert_eq!(history.len(), 1);
+            assert_eq!(
+                history.entries()[0].grouping,
+                Some(GroupingKey::Scrub { control: 3 })
+            );
+            let HistoryPayload::Document { inverse, .. } = &history.entries()[0].payload else {
+                panic!("문서 항목");
+            };
+            doc.execute_transaction(&inverse.rebased(doc.revision()))
+                .unwrap();
+            assert_eq!(snapshot(&doc), before);
+        }
+
+        #[test]
+        fn scrub_cancel_restores_pre_preview_state_without_history() {
+            // 검증 기준(VII.4.5): cancel fixture.
+            let mut doc = small_state();
+            let mut history = History::new();
+            // 앞선 기록 하나.
+            let t = tx(&doc, 11_000, Command::rename_node(sid(11), "앞선 편집"));
+            history.record_document(&mut doc, &t, None).unwrap();
+            let before = snapshot(&doc);
+            history.begin_scrub(4).unwrap();
+            for value in 1..=30 {
+                let t = radius(&doc, value as f32);
+                history.update_preview(&mut doc, &t).unwrap();
+            }
+            assert_ne!(snapshot(&doc), before, "preview 반영 중");
+            history.cancel_preview(&mut doc).unwrap();
+            assert_eq!(snapshot(&doc), before, "취소 → preview 전 상태");
+            assert_eq!(history.len(), 1, "취소는 항목을 만들지 않음");
+            assert!(!history.preview_active());
+            // update 없는 취소, 비활성 취소.
+            history.begin_scrub(5).unwrap();
+            history.cancel_preview(&mut doc).unwrap();
+            assert_eq!(snapshot(&doc), before);
+            assert_eq!(
+                history.cancel_preview(&mut doc),
+                Err(HistoryError::NoPreview)
+            );
+            // 취소 뒤 일반 기록은 정상입니다.
+            let t = tx(&doc, 11_001, Command::rename_node(sid(12), "다음"));
+            history.record_document(&mut doc, &t, None).unwrap();
+            assert_eq!(history.len(), 2);
         }
     }
 }
