@@ -72,7 +72,32 @@
   결과로 재조정해야 합니다.
 - media type은 호출자가 선언한 값을 판정합니다. 파일 내용 sniffing(magic bytes)으로 선언과
   실제 형식이 맞는지 확인하는 것은 이 작업 범위 밖입니다.
-- 정책 없이 만든 `ImportRequest::new`는 크기 제한이 없습니다. 사용자 import 경로는 항상
-  `AssetImportPolicy::request`를 거치도록 상위 계층(project·셸)에서 연결해야 합니다.
+- ~~정책 없이 만든 `ImportRequest::new`는 크기 제한이 없습니다. 사용자 import 경로는 항상
+  `AssetImportPolicy::request`를 거치도록 상위 계층(project·셸)에서 연결해야 합니다.~~
+  → 후속 수정으로 정책 없는 요청은 crate 내부 전용이 되었습니다(아래 절).
 - 읽는 도중 커진 파일의 `TooLarge.size`는 전체 크기가 아니라 상한을 넘은 시점까지 읽은
   크기입니다.
+
+## 후속 수정(리뷰 반영): 공개 import 경로에 정책 강제
+
+- **문제**: 정책이 opt-in이었습니다. 공개 `ImportRequest::new`/`import_file`은 원본의 아무
+  `[a-z0-9]{1,16}` 확장자(예: `html`, `exe`)를 저장 확장자로 쓰고 크기 제한이 없었으며,
+  `config/asset-import.yaml`은 `AssetImportPolicy::request`를 쓸 때만 적용되었습니다.
+- **수정**:
+  - `ImportRequest::new`·`with_extension`·`with_max_size`를 `pub(crate)`로 바꿨습니다. crate
+    밖에서는 `AssetImportPolicy::request`로만 요청을 만들 수 있어, 공개 import는 항상 정책의
+    media type 판정(허용 목록·unknown type 처리), 표의 저장 확장자, 최대 단일 파일 크기를
+    거칩니다. `without_source_metadata`와 조회 메서드는 공개로 남겼습니다.
+  - `AssetStore::update_from_source`와 `update_from_selected_source`가 `&AssetImportPolicy`를
+    필수 인자로 받습니다. 정책 없는 `update_from_source`와 `_with_policy` 변형은 제거했습니다
+    (공개 API 변경, 현재 workspace에 외부 호출자 없음 — `cargo check -p stellar-project` 통과).
+  - integration test(`tests/import_memory.rs`)도 출하 정책으로 요청을 만듭니다.
+- **검증**: `public_import_path_always_applies_policy` — `page.html`(`text/html`)·
+  `tool.exe`는 `application/octet-stream`·`.bin`으로 저장, `image/png`로 선언한 `logo.html`은
+  `.png`, 요청은 항상 정책 상한을 담음, `reject` 정책은 요청 단계에서 거부하고 아무 것도 쓰지
+  않음. 크기 경계 fixture에서 공개 요청이 상한 초과 시 `TooLarge`. 정책 없는 요청 생성과
+  확장자·크기 덮어쓰기가 crate 밖에서 컴파일되지 않음(compile_fail doctest 2건, 일시적으로 일반
+  doctest로 바꿔 `E0624` private 오류임을 확인). `cargo test -p stellar-assets` lib 118 passed +
+  integration 1 passed + doctest 7 passed, clippy 경고 0, fmt 통과, `validate-crate-graph` 통과.
+- **남은 위험**: crate 내부 코드는 여전히 정책 없는 요청을 만들 수 있습니다(단위 테스트·정책 구현
+  전용). media type은 여전히 호출자 선언 값이며 내용 sniffing은 하지 않습니다.

@@ -9,7 +9,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use stellar_assets::hash_stream::{StreamingHasher, STREAM_BUFFER_SIZE};
 use stellar_assets::media_type::MediaType;
-use stellar_assets::store::{AssetStore, ImportRequest};
+use stellar_assets::policy::AssetImportPolicy;
+use stellar_assets::store::AssetStore;
 
 struct CountingAllocator;
 
@@ -73,7 +74,18 @@ fn large_file_import_does_not_load_whole_file_into_memory() {
     let expected = expected.finish().unwrap();
 
     let store = AssetStore::new(&project);
-    let request = ImportRequest::new(&source, MediaType::new("application/octet-stream").unwrap())
+    // 공개 import 경로는 출하 정책(config/asset-import.yaml)을 거칩니다(16 MiB < 상한).
+    let policy = AssetImportPolicy::from_config_file(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../config/asset-import.yaml"
+    )))
+    .unwrap();
+    let request = policy
+        .request(
+            &source,
+            &MediaType::new("application/octet-stream").unwrap(),
+        )
+        .unwrap()
         .without_source_metadata();
 
     let baseline = CURRENT.load(Ordering::SeqCst);

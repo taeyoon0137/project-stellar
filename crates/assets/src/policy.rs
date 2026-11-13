@@ -10,6 +10,9 @@
 //!   확장자와 무관 — 같은 content는 media type이 같으면 같은 경로).
 //! - **unknown type**: `store_as_binary`면 binary asset(`application/octet-stream`, 확장자
 //!   `bin`)으로 저장하고([`ImportDecision::fallback_to_binary`]), `reject`면 거부합니다.
+//! - **강제**: crate 밖에서 import 요청([`ImportRequest`])은 [`AssetImportPolicy::request`]로만
+//!   만들 수 있고, `Update from Source`도 정책 인자를 요구합니다. 정책 없는 요청·확장자/크기
+//!   덮어쓰기는 crate 내부 전용입니다(opt-in이 아님).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -326,17 +329,13 @@ impl AssetImportPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::test_support::{files_under, test_store, TempDir};
+    use crate::store::test_support::{files_under, shipped_policy, test_store, TempDir};
     use crate::store::{AssetStore, ImportError};
     use crate::update_source::UpdateFromSourceOutcome;
     use stellar_storage::hash::ContentHash;
 
     fn shipped() -> AssetImportPolicy {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../config/asset-import.yaml"
-        );
-        AssetImportPolicy::from_config_file(Path::new(path)).unwrap()
+        shipped_policy()
     }
 
     fn media(text: &str) -> MediaType {
@@ -586,13 +585,64 @@ mod tests {
                 );
             }
         }
-        // 정책 없는 요청은 크기 제한이 없습니다.
+        // 공개 경로의 요청은 항상 정책 상한을 담습니다(크기 제한 없는 요청은 crate 내부 전용).
         let large = fx.outside.join("large.png");
         std::fs::write(&large, vec![1u8; 2000]).unwrap();
-        assert!(fx
+        let request = policy.request(&large, &media("image/png")).unwrap();
+        assert_eq!(request.max_size(), Some(1000));
+        assert!(matches!(
+            fx.store.import_file(&request).unwrap_err(),
+            ImportError::TooLarge { .. }
+        ));
+    }
+
+    /// 공개 import 경로의 정책 강제 fixture: 원본 확장자(html·exe)는 저장 확장자가 되지 않고,
+    /// unknown type은 정책대로 binary 저장 또는 거부, 크기 상한은 항상 적용됩니다.
+    #[test]
+    fn public_import_path_always_applies_policy() {
+        let fx = fixture();
+        let shipped = shipped();
+        for (name, declared) in [
+            ("page.html", "text/html"),
+            ("tool.exe", "application/x-msdownload"),
+        ] {
+            let source = fx.outside.join(name);
+            std::fs::write(&source, name.as_bytes()).unwrap();
+            let request = shipped.request(&source, &media(declared)).unwrap();
+            assert_eq!(request.max_size(), Some(shipped.max_file_size_bytes()));
+            let imported = fx.store.import_file(&request).unwrap();
+            assert_eq!(
+                imported.record.media_type,
+                media(BINARY_MEDIA_TYPE),
+                "{name}"
+            );
+            assert!(
+                imported.object_path.file_name().ends_with(".bin"),
+                "{name}: {}",
+                imported.object_path
+            );
+        }
+        // 허용 type이라도 원본 확장자가 아니라 표의 확장자로 저장합니다.
+        let disguised = fx.outside.join("logo.html");
+        std::fs::write(&disguised, b"png bytes").unwrap();
+        let imported = fx
             .store
-            .import_file(&ImportRequest::new(&large, media("image/png")))
-            .is_ok());
+            .import_file(&shipped.request(&disguised, &media("image/png")).unwrap())
+            .unwrap();
+        assert!(imported.object_path.file_name().ends_with(".png"));
+
+        // reject 정책은 unknown type을 요청 단계에서 거부합니다(아무 것도 쓰지 않음).
+        let strict = small_policy("reject");
+        let before = files_under(&fx.project.join("assets"));
+        assert_eq!(
+            strict
+                .request(fx.outside.join("page.html"), &media("text/html"))
+                .unwrap_err(),
+            PolicyViolation::MediaTypeNotAllowed {
+                media_type: media("text/html")
+            }
+        );
+        assert_eq!(files_under(&fx.project.join("assets")), before);
     }
 
     #[test]
@@ -644,7 +694,7 @@ mod tests {
         let before = files_under(&fx.project.join("assets"));
         assert_eq!(
             fx.store
-                .update_from_source_with_policy(id, &current, None, &policy)
+                .update_from_source(id, &current, None, &policy)
                 .unwrap_err(),
             ImportError::TooLarge {
                 size: 1001,
@@ -657,7 +707,7 @@ mod tests {
         std::fs::write(&source, vec![2u8; 1000]).unwrap();
         assert!(matches!(
             fx.store
-                .update_from_source_with_policy(id, &current, None, &policy)
+                .update_from_source(id, &current, None, &policy)
                 .unwrap(),
             UpdateFromSourceOutcome::Updated { .. }
         ));
@@ -669,7 +719,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             fx.store
-                .update_from_source_with_policy(id, &current, None, &strict)
+                .update_from_source(id, &current, None, &strict)
                 .unwrap_err(),
             ImportError::Policy(PolicyViolation::MediaTypeNotAllowed {
                 media_type: media("image/png")

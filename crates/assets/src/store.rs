@@ -147,6 +147,51 @@ impl fmt::Display for ImportError {
 impl std::error::Error for ImportError {}
 
 /// 외부 파일 import 요청.
+///
+/// # import 정책 강제(XIII.5.7)
+///
+/// crate 밖에서는 [`AssetImportPolicy::request`](crate::policy::AssetImportPolicy::request)로만
+/// 만들 수 있습니다. 그래서 공개 import 경로는 항상 `config/asset-import.yaml` 정책(허용 media
+/// type과 표의 저장 확장자, 최대 단일 파일 크기)을 거칩니다. 원본 확장자(`html`·`exe` 등)는
+/// 저장 확장자로 쓰이지 않습니다.
+///
+/// ```
+/// use stellar_assets::media_type::MediaType;
+/// use stellar_assets::policy::AssetImportPolicy;
+/// let policy = AssetImportPolicy::from_config_str(
+///     "max_file_size_bytes: 10\nunknown_media_type: store_as_binary\nmedia_type: image/png png\n",
+/// )
+/// .unwrap();
+/// let request = policy
+///     .request("/x/page.html", &MediaType::new("text/html").unwrap())
+///     .unwrap();
+/// assert_eq!(request.extension().as_str(), "bin");
+/// assert_eq!(request.max_size(), Some(10));
+/// ```
+///
+/// 정책 없이 요청을 만들거나 정책이 정한 확장자·크기를 바꾸면 컴파일이 실패합니다.
+///
+/// ```compile_fail
+/// use stellar_assets::media_type::MediaType;
+/// use stellar_assets::store::ImportRequest;
+/// let _ = ImportRequest::new("/x/page.html", MediaType::new("text/html").unwrap());
+/// ```
+///
+/// ```compile_fail
+/// use stellar_assets::media_type::MediaType;
+/// use stellar_assets::path::SafeExtension;
+/// use stellar_assets::policy::AssetImportPolicy;
+/// let policy = AssetImportPolicy::from_config_str(
+///     "max_file_size_bytes: 10\nunknown_media_type: store_as_binary\nmedia_type: image/png png\n",
+/// )
+/// .unwrap();
+/// let png = MediaType::new("image/png").unwrap();
+/// let _ = policy
+///     .request("/x/a.png", &png)
+///     .unwrap()
+///     .with_extension(SafeExtension::new("html").unwrap())
+///     .with_max_size(u64::MAX);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportRequest {
     source: PathBuf,
@@ -159,12 +204,13 @@ pub struct ImportRequest {
 }
 
 impl ImportRequest {
-    /// 원본 경로와 media type으로 요청을 만듭니다.
+    /// 원본 경로와 media type으로 정책 없는 요청을 만듭니다(crate 내부 전용).
     ///
     /// 확장자는 원본 확장자를 정규화한 값(비안전하면 `bin`)이고, 원본 위치를 기록하며,
-    /// 크기 제한은 없습니다. config 정책을 적용하려면
-    /// [`AssetImportPolicy::request`](crate::policy::AssetImportPolicy::request)를 씁니다.
-    pub fn new(source: impl Into<PathBuf>, media_type: MediaType) -> ImportRequest {
+    /// 크기 제한은 없습니다. 공개 경로는
+    /// [`AssetImportPolicy::request`](crate::policy::AssetImportPolicy::request)가 이 값에 정책의
+    /// media type·확장자·최대 크기를 채워 만듭니다.
+    pub(crate) fn new(source: impl Into<PathBuf>, media_type: MediaType) -> ImportRequest {
         let source = source.into();
         let extension = SafeExtension::from_source_path(&source);
         ImportRequest {
@@ -187,19 +233,19 @@ impl ImportRequest {
         self
     }
 
-    /// 최대 단일 파일 크기(byte, 이 값까지 허용)를 지정합니다.
-    pub fn with_max_size(mut self, max_size: u64) -> ImportRequest {
+    /// 최대 단일 파일 크기(byte, 이 값까지 허용)를 지정합니다(crate 내부 전용 — 정책 값).
+    pub(crate) fn with_max_size(mut self, max_size: u64) -> ImportRequest {
         self.max_size = Some(max_size);
         self
     }
 
-    /// 최대 단일 파일 크기.
+    /// 최대 단일 파일 크기. 공개 경로(정책 요청)에서는 항상 `Some`입니다.
     pub fn max_size(&self) -> Option<u64> {
         self.max_size
     }
 
-    /// 저장 확장자를 지정합니다.
-    pub fn with_extension(mut self, extension: SafeExtension) -> ImportRequest {
+    /// 저장 확장자를 지정합니다(crate 내부 전용 — 정책 표의 확장자).
+    pub(crate) fn with_extension(mut self, extension: SafeExtension) -> ImportRequest {
         self.extension = extension;
         self
     }
@@ -614,6 +660,15 @@ pub(crate) mod test_support {
     /// 테스트용 기기 출처 key.
     pub fn test_origin_key() -> crate::origin::OriginKey {
         crate::origin::OriginKey::from_bytes([0x42; 32])
+    }
+
+    /// 출하 config(`config/asset-import.yaml`) 정책.
+    pub fn shipped_policy() -> crate::policy::AssetImportPolicy {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../config/asset-import.yaml"
+        );
+        crate::policy::AssetImportPolicy::from_config_file(Path::new(path)).unwrap()
     }
 
     /// 테스트 key를 설정한 저장소(외부 원본 기록 가능).

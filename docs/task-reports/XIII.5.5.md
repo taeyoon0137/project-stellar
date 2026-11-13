@@ -112,3 +112,10 @@
 - 검증: `external_source_from_other_machine_requires_user_selection`(정확한 원래 경로로도
   `OriginUnverifiable`, 파일 변경 없음 → 사용자 선택으로 갱신 → 이후 이 기기 후보 경로로 확인,
   없는 경로·디렉터리 선택은 `NotFound`·`NotAFile`), `external_source_without_configured_key_is_an_error`.
+
+## 후속 수정(리뷰 반영): 정책 필수 인자
+
+- `update_from_source(asset_id, current, external_source, policy)`와
+  `update_from_selected_source(asset_id, current, selected, policy)`가 import 정책을 필수로
+  받습니다. 정책 없는 변형과 `update_from_source_with_policy`·
+  `update_from_selected_source_with_policy`는 제거했습니다(XIII.5.7 후속 수정).

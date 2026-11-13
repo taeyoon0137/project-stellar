@@ -41,7 +41,7 @@ use crate::origin::OriginCheck;
 use crate::path::AssetObjectPath;
 use crate::policy::AssetImportPolicy;
 use crate::record::{AssetRecord, SourceLocation, SourceMetadata, SourceMetadataError};
-use crate::store::{AssetStore, ImportError, ImportOperation, ImportOutcome, ImportRequest};
+use crate::store::{AssetStore, ImportError, ImportOperation, ImportOutcome};
 
 /// 원본을 쓸 수 없어 기존 asset을 유지한 이유.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -136,19 +136,23 @@ impl AssetStore {
     /// source metadata의 원본을 다시 읽어 새 hash asset을 만듭니다(참조 변경은 반환만).
     ///
     /// `external_source`는 외부 원본일 때만 쓰이는 후보 경로입니다(내부 원본은 무시).
+    /// import 정책(XIII.5.7)은 항상 적용됩니다. 원본이 최대 크기를 넘으면
+    /// [`ImportError::TooLarge`], media type이 더 이상 허용되지 않으면 [`ImportError::Policy`]이며,
+    /// 두 경우 모두 아무 것도 쓰지 않아 기존 asset이 유지됩니다.
     pub fn update_from_source(
         &self,
         asset_id: AssetId,
         current: &AssetRecord,
         external_source: Option<&Path>,
+        policy: &AssetImportPolicy,
     ) -> Result<UpdateFromSourceOutcome, ImportError> {
         let choice = SourceChoice::Recorded {
             external_candidate: external_source,
         };
-        self.update_from_source_inner(asset_id, current, choice, None)
+        self.update_from_source_inner(asset_id, current, choice, policy)
     }
 
-    /// 사용자가 **직접 고른** 원본 경로로 갱신합니다(출처 지문 확인 없음).
+    /// 사용자가 **직접 고른** 원본 경로로 갱신합니다(출처 지문 확인 없음, 정책은 적용).
     ///
     /// [`SourceUnavailable::OriginUnverifiable`](다른 기기에서 기록) 등으로 사용자에게 원본을
     /// 다시 선택받은 뒤에만 호출합니다. record·Git·캐시에서 온 경로를 넘기지 않습니다(그 경우는
@@ -159,38 +163,10 @@ impl AssetStore {
         asset_id: AssetId,
         current: &AssetRecord,
         selected: &Path,
-    ) -> Result<UpdateFromSourceOutcome, ImportError> {
-        self.update_from_source_inner(asset_id, current, SourceChoice::Selected(selected), None)
-    }
-
-    /// [`AssetStore::update_from_selected_source`]에 import 정책(XIII.5.7)을 적용한 버전.
-    pub fn update_from_selected_source_with_policy(
-        &self,
-        asset_id: AssetId,
-        current: &AssetRecord,
-        selected: &Path,
         policy: &AssetImportPolicy,
     ) -> Result<UpdateFromSourceOutcome, ImportError> {
         let choice = SourceChoice::Selected(selected);
-        self.update_from_source_inner(asset_id, current, choice, Some(policy))
-    }
-
-    /// [`AssetStore::update_from_source`]에 import 정책(XIII.5.7)을 적용한 버전.
-    ///
-    /// 원본이 최대 크기를 넘으면 [`ImportError::TooLarge`], media type이 더 이상 허용되지
-    /// 않으면 [`ImportError::Policy`]이며, 두 경우 모두 아무 것도 쓰지 않아 기존 asset이
-    /// 유지됩니다.
-    pub fn update_from_source_with_policy(
-        &self,
-        asset_id: AssetId,
-        current: &AssetRecord,
-        external_source: Option<&Path>,
-        policy: &AssetImportPolicy,
-    ) -> Result<UpdateFromSourceOutcome, ImportError> {
-        let choice = SourceChoice::Recorded {
-            external_candidate: external_source,
-        };
-        self.update_from_source_inner(asset_id, current, choice, Some(policy))
+        self.update_from_source_inner(asset_id, current, choice, policy)
     }
 
     fn update_from_source_inner(
@@ -198,7 +174,7 @@ impl AssetStore {
         asset_id: AssetId,
         current: &AssetRecord,
         choice: SourceChoice<'_>,
-        policy: Option<&AssetImportPolicy>,
+        policy: &AssetImportPolicy,
     ) -> Result<UpdateFromSourceOutcome, ImportError> {
         let resolved = match choice {
             SourceChoice::Recorded { external_candidate } => {
@@ -210,12 +186,9 @@ impl AssetStore {
             Ok(path) => path,
             Err(reason) => return Ok(UpdateFromSourceOutcome::SourceUnavailable(reason)),
         };
-        let mut request = match policy {
-            Some(policy) => policy
-                .request(&source, &current.media_type)
-                .map_err(ImportError::Policy)?,
-            None => ImportRequest::new(&source, current.media_type.clone()),
-        };
+        let mut request = policy
+            .request(&source, &current.media_type)
+            .map_err(ImportError::Policy)?;
         // 기록된 내부 원본: 확인 뒤 경로가 바뀌어도 import가 쓰기 전에 다시 거부합니다(방어
         // 심층화). 사용자가 고른 경로는 새 위치로 기록합니다.
         let recorded = match choice {
@@ -379,8 +352,16 @@ mod tests {
     use super::*;
     use crate::media_type::MediaType;
     use crate::origin::OriginKey;
-    use crate::store::test_support::{files_under, test_origin_key, test_store, TempDir};
+    use crate::store::test_support::{
+        files_under, shipped_policy, test_origin_key, test_store, TempDir,
+    };
+    use crate::store::ImportRequest;
     use stellar_storage::hash::ContentHash;
+
+    /// 출하 config 정책(image/png 허용, 512 MiB).
+    fn policy() -> AssetImportPolicy {
+        shipped_policy()
+    }
 
     struct Fixture {
         _dir: TempDir,
@@ -427,7 +408,10 @@ mod tests {
         let current = import(&fx, &source, b"version 1");
         std::fs::write(&source, b"version 2").unwrap();
 
-        let outcome = fx.store.update_from_source(id(), &current, None).unwrap();
+        let outcome = fx
+            .store
+            .update_from_source(id(), &current, None, &policy())
+            .unwrap();
         let UpdateFromSourceOutcome::Updated {
             update,
             object_path,
@@ -467,7 +451,9 @@ mod tests {
         let current = import(&fx, &source, b"same");
         let before = files_under(&fx.project.join("assets"));
         assert_eq!(
-            fx.store.update_from_source(id(), &current, None).unwrap(),
+            fx.store
+                .update_from_source(id(), &current, None, &policy())
+                .unwrap(),
             UpdateFromSourceOutcome::Unchanged
         );
         assert_eq!(files_under(&fx.project.join("assets")), before);
@@ -483,13 +469,17 @@ mod tests {
 
         std::fs::remove_file(&source).unwrap();
         assert_eq!(
-            fx.store.update_from_source(id(), &current, None).unwrap(),
+            fx.store
+                .update_from_source(id(), &current, None, &policy())
+                .unwrap(),
             UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::NotFound)
         );
         // 디렉터리로 바뀐 원본도 마찬가지입니다.
         std::fs::create_dir_all(&source).unwrap();
         assert_eq!(
-            fx.store.update_from_source(id(), &current, None).unwrap(),
+            fx.store
+                .update_from_source(id(), &current, None, &policy())
+                .unwrap(),
             UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::NotAFile)
         );
 
@@ -518,7 +508,7 @@ mod tests {
             .record;
         assert_eq!(
             fx.store
-                .update_from_source(id(), &current, Some(&source))
+                .update_from_source(id(), &current, Some(&source), &policy())
                 .unwrap(),
             UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::NoSourceMetadata)
         );
@@ -533,12 +523,14 @@ mod tests {
         std::fs::write(&other, b"external v2").unwrap();
 
         assert_eq!(
-            fx.store.update_from_source(id(), &current, None).unwrap(),
+            fx.store
+                .update_from_source(id(), &current, None, &policy())
+                .unwrap(),
             UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::ExternalPathRequired)
         );
         assert_eq!(
             fx.store
-                .update_from_source(id(), &current, Some(&other))
+                .update_from_source(id(), &current, Some(&other), &policy())
                 .unwrap(),
             UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::OriginMismatch)
         );
@@ -546,7 +538,7 @@ mod tests {
         std::fs::write(&source, b"external v2").unwrap();
         let outcome = fx
             .store
-            .update_from_source(id(), &current, Some(&source))
+            .update_from_source(id(), &current, Some(&source), &policy())
             .unwrap();
         let UpdateFromSourceOutcome::Updated { update, .. } = outcome else {
             panic!("Updated 기대: {outcome:?}");
@@ -565,7 +557,7 @@ mod tests {
         std::fs::remove_file(&source).unwrap();
         assert_eq!(
             fx.store
-                .update_from_source(id(), &current, Some(&source))
+                .update_from_source(id(), &current, Some(&source), &policy())
                 .unwrap(),
             UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::NotFound)
         );
@@ -591,7 +583,7 @@ mod tests {
         for candidate in [None, Some(source.as_path())] {
             assert_eq!(
                 fx.store
-                    .update_from_source(id(), &current, candidate)
+                    .update_from_source(id(), &current, candidate, &policy())
                     .unwrap(),
                 UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::OriginUnverifiable),
                 "{candidate:?}"
@@ -602,7 +594,7 @@ mod tests {
         // 사용자가 원본을 다시 고르면 갱신하고, 새 record는 이 기기 key의 지문을 씁니다.
         let outcome = fx
             .store
-            .update_from_selected_source(id(), &current, &source)
+            .update_from_selected_source(id(), &current, &source, &policy())
             .unwrap();
         let UpdateFromSourceOutcome::Updated { update, .. } = outcome else {
             panic!("Updated 기대: {outcome:?}");
@@ -614,7 +606,7 @@ mod tests {
         std::fs::write(&source, b"v3").unwrap();
         assert!(matches!(
             fx.store
-                .update_from_source(id(), &update.next, Some(&source))
+                .update_from_source(id(), &update.next, Some(&source), &policy())
                 .unwrap(),
             UpdateFromSourceOutcome::Updated { .. }
         ));
@@ -622,13 +614,18 @@ mod tests {
         // 고른 경로가 없거나 파일이 아니면 기존 asset 유지입니다.
         assert_eq!(
             fx.store
-                .update_from_selected_source(id(), &current, &fx.outside.join("missing.png"))
+                .update_from_selected_source(
+                    id(),
+                    &current,
+                    &fx.outside.join("missing.png"),
+                    &policy()
+                )
                 .unwrap(),
             UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::NotFound)
         );
         assert_eq!(
             fx.store
-                .update_from_selected_source(id(), &current, &fx.outside)
+                .update_from_selected_source(id(), &current, &fx.outside, &policy())
                 .unwrap(),
             UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::NotAFile)
         );
@@ -642,7 +639,7 @@ mod tests {
         let unkeyed = AssetStore::new(&fx.project);
         assert_eq!(
             unkeyed
-                .update_from_source(id(), &current, Some(&source))
+                .update_from_source(id(), &current, Some(&source), &policy())
                 .unwrap_err(),
             ImportError::SourceMetadata(SourceMetadataError::OriginKey(
                 crate::origin::OriginKeyError::Unconfigured
@@ -658,7 +655,10 @@ mod tests {
         // 다른 에셋이 이미 v2 content를 들여온 상태.
         let _ = import(&fx, &fx.outside.join("v2.png"), b"v2");
         std::fs::write(&source, b"v2").unwrap();
-        let outcome = fx.store.update_from_source(id(), &current, None).unwrap();
+        let outcome = fx
+            .store
+            .update_from_source(id(), &current, None, &policy())
+            .unwrap();
         assert!(matches!(
             outcome,
             UpdateFromSourceOutcome::Updated {
@@ -675,8 +675,10 @@ mod tests {
         let source = fx.project.join("images").join("logo.png");
         let current = import(&fx, &source, b"one");
         std::fs::write(&source, b"two").unwrap();
-        let UpdateFromSourceOutcome::Updated { update, .. } =
-            fx.store.update_from_source(id(), &current, None).unwrap()
+        let UpdateFromSourceOutcome::Updated { update, .. } = fx
+            .store
+            .update_from_source(id(), &current, None, &policy())
+            .unwrap()
         else {
             panic!("Updated 기대");
         };
@@ -725,7 +727,9 @@ mod tests {
                 Some(SourceMetadata::project(relative).unwrap()),
             );
             assert_eq!(
-                fx.store.update_from_source(id(), &current, None).unwrap(),
+                fx.store
+                    .update_from_source(id(), &current, None, &policy())
+                    .unwrap(),
                 UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::OutsideProject),
                 "{relative}"
             );
@@ -781,7 +785,10 @@ mod tests {
             Some(SourceMetadata::project("images/alias.png").unwrap()),
         );
         std::fs::write(&real, b"v2").unwrap();
-        let outcome = fx.store.update_from_source(id(), &current, None).unwrap();
+        let outcome = fx
+            .store
+            .update_from_source(id(), &current, None, &policy())
+            .unwrap();
         let UpdateFromSourceOutcome::Updated { update, .. } = outcome else {
             panic!("Updated 기대: {outcome:?}");
         };
