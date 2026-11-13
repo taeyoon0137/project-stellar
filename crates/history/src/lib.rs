@@ -15,3 +15,7 @@ pub mod grouping;
 
 /// 창별 history (VII.5).
 pub mod window;
+
+/// random command sequence undo/redo property test (VII.6.2).
+#[cfg(test)]
+mod sequence_property;
