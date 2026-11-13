@@ -2196,7 +2196,7 @@ tools/xtask/
 | XXVI.3.1 | `[x]` | `git worktree list --porcelain` parser를 구현합니다. | main/linked/locked/prunable fixture. | XIV.1.3 |
 | XXVI.3.2 | `[x]` | add/remove/move/lock/unlock/prune/repair를 시스템 Git command로 연결합니다. | command matrix fixture. | XXVI.3.1 |
 | XXVI.3.3 | `[ ]` | worktree별 Stellar project root 검증 후 별도 창에서 엽니다. | same common repo, independent index fixture. | XIV.14.5, XII.2.1 |
-| XXVI.3.4 | `[ ]` | untracked file이 있는 worktree remove를 Git이 거부하면 결과를 그대로 표시하고 force를 기본 제공하지 않습니다. | fixture. | XXVI.3.2 |
+| XXVI.3.4 | `[x]` | untracked file이 있는 worktree remove를 Git이 거부하면 결과를 그대로 표시하고 force를 기본 제공하지 않습니다. | fixture. | XXVI.3.2 |
 
 ### XXVI.4 기타 Git 기능
 

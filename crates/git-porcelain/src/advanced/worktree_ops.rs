@@ -143,6 +143,62 @@ pub fn plan_repair(paths: &[PathBuf]) -> Result<CommandPlan, PlanError> {
     Ok(CommandPlan::new(args, DestructiveLevel::Safe))
 }
 
+/// worktree 제거 실패(XXVI.3.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoveError {
+    /// 확인 필요·입력 오류·실행 실패.
+    Plan(PlanError),
+    /// Git이 제거를 거부함(변경·untracked 파일, lock 등). Git 메시지를 그대로 보여 주며 force는 제공하지 않습니다.
+    RefusedByGit {
+        /// 종료 코드.
+        exit_code: Option<i32>,
+        /// Git stderr(UTF-8 우선 표시 텍스트).
+        message: String,
+    },
+}
+
+impl std::fmt::Display for RemoveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RemoveError::Plan(e) => write!(f, "{e}"),
+            RemoveError::RefusedByGit { message, .. } => {
+                write!(f, "Git이 worktree 제거를 거부했습니다: {}", message.trim())
+            }
+        }
+    }
+}
+
+impl std::error::Error for RemoveError {}
+
+/// 확인된 remove plan을 실행합니다. Git이 거부하면 그 결과를 [`RemoveError::RefusedByGit`]로 그대로 돌려줍니다.
+///
+/// 이 API에는 force 경로가 없습니다. untracked·변경 파일이 있는 worktree는 사용자가 직접 정리한 뒤 다시
+/// 시도하거나 외부 터미널에서 Git을 사용합니다.
+pub fn remove_worktree(
+    git: &GatedGitRunner,
+    cwd: &Path,
+    plan: &CommandPlan,
+    confirmation: Option<&super::Confirmation>,
+) -> Result<(), RemoveError> {
+    let is_remove = plan.args().get(1).is_some_and(|a| a == "remove")
+        && !plan.args().iter().any(|a| a == "--force" || a == "-f");
+    if !is_remove {
+        return Err(RemoveError::Plan(PlanError::InvalidInput(
+            "remove plan 아님",
+        )));
+    }
+    match super::execute_plan(git, cwd, plan, confirmation) {
+        Ok(_) => Ok(()),
+        Err(PlanError::Op(GitOpError::Git(failure))) => Err(RemoveError::RefusedByGit {
+            exit_code: failure.exit_code,
+            message: crate::decode::GitText::from_bytes(&failure.stderr)
+                .display()
+                .to_string(),
+        }),
+        Err(other) => Err(RemoveError::Plan(other)),
+    }
+}
+
 /// prune이 지울 대상을 미리 봅니다(`git worktree prune --dry-run --verbose`, 변경 없음).
 pub fn preview_prune(git: &GatedGitRunner, cwd: &Path) -> Result<Vec<String>, GitOpError> {
     let out = run_ok(
@@ -329,6 +385,68 @@ mod tests {
 
             // repair: 정상 상태에서 성공.
             run(&plan_repair(&[]).unwrap());
+        }
+
+        #[test]
+        fn untracked_or_modified_worktree_remove_is_refused_as_is() {
+            let Some(git) = system_git() else {
+                return;
+            };
+            let dir = TempDir::new("adv-wtremove");
+            let runner = hermetic_runner(git);
+            let repo = dir.path().join("repo");
+            std::fs::create_dir_all(&repo).unwrap();
+            init_repo_with_identity(&runner, &repo);
+            commit_file(&runner, &repo, "stellar.yaml", b"v: 1\n");
+            let gate = GatedGitRunner::new(runner.clone(), GitTrust::Trusted);
+            let wt = dir.path().join("linked");
+            let add = plan_add(&wt, &AddTarget::Detached("HEAD".into())).unwrap();
+            execute_plan(&gate, &repo, &add, None).unwrap();
+
+            // untracked 파일 → Git 거부, 메시지 보존, worktree·파일 유지.
+            std::fs::write(wt.join("scratch.txt"), b"keep me\n").unwrap();
+            let remove = plan_remove(&wt).unwrap();
+            let confirm = Confirmation::confirm(&remove);
+            match remove_worktree(&gate, &repo, &remove, Some(&confirm)) {
+                Err(RemoveError::RefusedByGit { exit_code, message }) => {
+                    assert_ne!(exit_code, Some(0));
+                    assert!(!message.trim().is_empty());
+                    assert!(RemoveError::RefusedByGit {
+                        exit_code,
+                        message: message.clone()
+                    }
+                    .to_string()
+                    .contains(message.trim()));
+                }
+                other => panic!("{other:?}"),
+            }
+            assert_eq!(std::fs::read(wt.join("scratch.txt")).unwrap(), b"keep me\n");
+            assert_eq!(list_worktrees(&gate, &repo).unwrap().len(), 2);
+
+            // tracked 변경도 거부.
+            std::fs::remove_file(wt.join("scratch.txt")).unwrap();
+            std::fs::write(wt.join("stellar.yaml"), b"v: changed\n").unwrap();
+            assert!(matches!(
+                remove_worktree(&gate, &repo, &remove, Some(&confirm)),
+                Err(RemoveError::RefusedByGit { .. })
+            ));
+            assert!(wt.join("stellar.yaml").exists());
+
+            // force plan은 이 API로 실행할 수 없음(수동 조립도 거부).
+            let forced = CommandPlan::new(
+                argv(["worktree", "remove", "--force", "--", wt.to_str().unwrap()]),
+                DestructiveLevel::DiscardsWork,
+            );
+            assert!(matches!(
+                remove_worktree(&gate, &repo, &forced, Some(&Confirmation::confirm(&forced))),
+                Err(RemoveError::Plan(PlanError::InvalidInput(_)))
+            ));
+            assert!(wt.exists());
+
+            // 정리 후에는 제거 성공.
+            crate::test_support::git_ok(&runner, &wt, ["checkout", "--", "stellar.yaml"]);
+            remove_worktree(&gate, &repo, &remove, Some(&confirm)).unwrap();
+            assert!(!wt.exists());
         }
     }
 }
