@@ -153,7 +153,20 @@ impl SystemGit {
     }
 
     fn spawn(&self, args: &[OsString], cwd: &Path) -> Result<GitCommandOutput, GitInvocationError> {
-        let output = Command::new(&self.git)
+        self.spawn_with(args, cwd, None)
+    }
+
+    fn spawn_with(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: Option<&[u8]>,
+    ) -> Result<GitCommandOutput, GitInvocationError> {
+        use std::io::Write;
+        use std::process::Stdio;
+
+        let mut command = Command::new(&self.git);
+        command
             .args(args)
             .current_dir(cwd)
             .env_clear()
@@ -164,23 +177,39 @@ impl SystemGit {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("LC_ALL", "C")
-            .output()
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = command.spawn().map_err(|_| GitInvocationError::Spawn)?;
+        // 자식이 출력하며 읽는 경우의 교착을 피하려고 stdin은 별도 thread로 쓰고 닫습니다.
+        let writer = match (input, child.stdin.take()) {
+            (Some(bytes), Some(mut pipe)) => {
+                let bytes = bytes.to_vec();
+                Some(std::thread::spawn(move || {
+                    let _ = pipe.write_all(&bytes);
+                }))
+            }
+            _ => None,
+        };
+        let output = child
+            .wait_with_output()
             .map_err(|_| GitInvocationError::Spawn)?;
+        if let Some(writer) = writer {
+            let _ = writer.join();
+        }
         Ok(GitCommandOutput {
             exit_code: output.status.code(),
             stdout: output.stdout,
             stderr: output.stderr,
         })
     }
-}
 
-impl GitCommandRunner for SystemGit {
-    fn run_git(
-        &mut self,
-        args: &[OsString],
-        cwd: &Path,
-    ) -> Result<GitCommandOutput, GitInvocationError> {
-        // `--git-dir <dir>` 같은 전역 option 뒤의 첫 하위 명령을 기록합니다.
+    /// `--git-dir <dir>` 같은 전역 option 뒤의 첫 하위 명령을 기록합니다.
+    fn record(&mut self, args: &[OsString]) {
         let mut iter = args.iter().map(|a| a.to_string_lossy().into_owned());
         let mut subcommand = String::new();
         while let Some(arg) = iter.next() {
@@ -194,7 +223,46 @@ impl GitCommandRunner for SystemGit {
             }
         }
         *self.calls.entry(subcommand).or_default() += 1;
+    }
+}
+
+impl GitCommandRunner for SystemGit {
+    fn run_git(
+        &mut self,
+        args: &[OsString],
+        cwd: &Path,
+    ) -> Result<GitCommandOutput, GitInvocationError> {
+        self.record(args);
         self.spawn(args, cwd)
+    }
+
+    fn run_git_with_input(
+        &mut self,
+        args: &[OsString],
+        cwd: &Path,
+        input: &[u8],
+    ) -> Result<GitCommandOutput, GitInvocationError> {
+        self.record(args);
+        self.spawn_with(args, cwd, Some(input))
+    }
+}
+
+/// 테스트용 결정적 32바이트 digest(FNV-1a 64 네 줄기, **암호학적 아님** — 운영은 storage SHA-256).
+pub(crate) struct FakeSha256;
+
+impl crate::cache_entry::Sha256Digest for FakeSha256 {
+    fn sha256(&self, bytes: &[u8]) -> [u8; 32] {
+        let mut out = [0u8; 32];
+        for (lane, chunk) in out.chunks_mut(8).enumerate() {
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ (lane as u64).wrapping_mul(0x9e37_79b9);
+            for b in bytes {
+                h ^= u64::from(*b);
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            h ^= bytes.len() as u64;
+            chunk.copy_from_slice(&h.to_le_bytes());
+        }
+        out
     }
 }
 

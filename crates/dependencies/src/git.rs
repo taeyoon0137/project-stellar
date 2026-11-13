@@ -61,11 +61,22 @@ impl std::error::Error for GitInvocationError {}
 
 /// 시스템 Git 실행기.
 pub trait GitCommandRunner {
-    /// `git <args>`를 `cwd`에서 실행합니다(shell을 거치지 않음).
+    /// `git <args>`를 `cwd`에서 실행합니다(shell을 거치지 않음). stdin은 비어 있습니다.
     fn run_git(
         &mut self,
         args: &[OsString],
         cwd: &Path,
+    ) -> Result<GitCommandOutput, GitInvocationError>;
+
+    /// `input`을 자식 stdin으로 넘기고 닫은 뒤 `git <args>`를 실행합니다(예: `cat-file --batch`).
+    ///
+    /// 구현은 출력하면서 읽는 자식과 교착하지 않도록 stdin을 별도로 써야 합니다(git-porcelain
+    /// `GitRunner::run_with_input`과 같은 계약).
+    fn run_git_with_input(
+        &mut self,
+        args: &[OsString],
+        cwd: &Path,
+        input: &[u8],
     ) -> Result<GitCommandOutput, GitInvocationError>;
 }
 

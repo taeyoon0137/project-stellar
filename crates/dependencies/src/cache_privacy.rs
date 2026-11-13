@@ -222,12 +222,58 @@ impl PrivateCacheIndex {
     pub fn write_to(&self, path: &Path) -> Result<(), CacheIndexError> {
         crate::cache_index::write_atomic(path, &self.encode()?)
     }
+
+    /// 파일에서 읽습니다. 파일이 없으면 빈 index입니다.
+    pub fn read_from(path: &Path) -> Result<PrivateCacheIndex, CacheIndexError> {
+        match std::fs::read(path) {
+            Ok(bytes) => PrivateCacheIndex::decode(&bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(PrivateCacheIndex::default()),
+            Err(e) => Err(CacheIndexError::Io { kind: e.kind() }),
+        }
+    }
+
+    /// 최근 사용 시각을 갱신합니다(과거로 되돌리지 않음). entry가 없으면 `false`.
+    pub fn touch(
+        &mut self,
+        repository_key: &RepositoryKey,
+        commit: &CommitId,
+        now_unix_ms: u64,
+    ) -> bool {
+        match self
+            .entries
+            .get_mut(&(repository_key.clone(), commit.clone()))
+        {
+            Some(entry) => {
+                entry.last_used_unix_ms = entry.last_used_unix_ms.max(now_unix_ms);
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 impl LocalSourceConfig {
     /// keyed identifier의 원본 URL(로컬 UI 표시용).
     pub fn source_for(&self, key: &RepositoryKey) -> Option<&RepositoryUrl> {
         self.sources.get(key)
+    }
+
+    /// keyed identifier → 원본 URL을 등록하거나 교체합니다. 바뀌었으면 `true`.
+    pub fn upsert(&mut self, key: RepositoryKey, repository: RepositoryUrl) -> bool {
+        if self.sources.get(&key) == Some(&repository) {
+            return false;
+        }
+        self.sources.insert(key, repository);
+        true
+    }
+
+    /// 파일에서 읽습니다. 파일이 없으면 빈 config입니다.
+    pub fn read_from(path: &Path) -> Result<LocalSourceConfig, CacheIndexError> {
+        match std::fs::read(path) {
+            Ok(bytes) => LocalSourceConfig::decode(&bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(LocalSourceConfig::default()),
+            Err(e) => Err(CacheIndexError::Io { kind: e.kind() }),
+        }
     }
 
     /// 등록 수.

@@ -1538,7 +1538,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XV.3.1 | `[x]` | 사용자별 OS app data에 library cache root와 cache index를 정의합니다. project folder 안에는 의존성 checkout을 만들지 않습니다. | Git status 변화 없음. | V.1.5, XV.2.1 |
 | XV.3.2 | `[x]` | repository URL별 bare mirror 또는 동등 system Git cache를 생성하고 fetch를 GitRunner로 수행합니다. | 같은 repo 두 dependency fetch 중복 네트워크 1회. | XIV.1.3, XV.3.1 |
-| XV.3.3 | `[ ]` | exact commit의 Stellar project files를 content-addressed immutable cache entry로 materialize합니다. | 같은 commit 재요청 bytes 재사용. | XV.3.2, XIV.2.6 |
+| XV.3.3 | `[x]` | exact commit의 Stellar project files를 content-addressed immutable cache entry로 materialize합니다. | 같은 commit 재요청 bytes 재사용. | XV.3.2, XIV.2.6 |
 | XV.3.4 | `[~]` | cache entry를 ProjectProbe와 storage validator로 검증하고 일반 Git repo 또는 손상 library를 거부합니다. | invalid library fixture 실패. | IV.5.1, V.4.4 |
 | XV.3.5 | `[x]` | cache index에 repository URL 원문 대신 keyed identifier와 commit/content hash만 저장하는 privacy mode를 구현합니다. 원본 URL은 local secure config에만 둡니다. | exported diagnostic에 URL 없음. | XV.1.4, XV.3.1 |
 | XV.3.6 | `[ ]` | cache read lock과 fetch/write lock을 분리해 여러 Stellar project가 같은 entry를 동시에 읽을 수 있게 합니다. | two-process concurrency fixture 통과. | XV.3.3 |

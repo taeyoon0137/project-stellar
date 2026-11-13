@@ -43,6 +43,9 @@ pub mod cache_index;
 /// repository별 bare mirror cache (XV.3.2).
 pub mod mirror;
 
+/// content-addressed immutable library cache entry (XV.3.3).
+pub mod cache_entry;
+
 /// library cache entry 검증 (XV.3.4).
 pub mod entry_validation;
 

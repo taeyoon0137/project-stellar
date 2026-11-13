@@ -283,12 +283,9 @@ pub(crate) mod test_git {
         }
     }
 
-    impl GitCommandRunner for TestGit {
-        fn run_git(
-            &mut self,
-            args: &[OsString],
-            cwd: &Path,
-        ) -> Result<GitCommandOutput, GitInvocationError> {
+    impl TestGit {
+        /// `--git-dir <dir>` 같은 전역 option 뒤의 첫 하위 명령을 기록합니다.
+        fn record(&mut self, args: &[OsString]) {
             let mut iter = args.iter().map(|a| a.to_string_lossy().into_owned());
             let mut subcommand = String::new();
             while let Some(arg) = iter.next() {
@@ -302,16 +299,70 @@ pub(crate) mod test_git {
                 }
             }
             *self.calls.entry(subcommand).or_default() += 1;
-            let out = self
-                .command(cwd)
+        }
+
+        fn execute(
+            &self,
+            args: &[OsString],
+            cwd: &Path,
+            input: Option<&[u8]>,
+        ) -> Result<GitCommandOutput, GitInvocationError> {
+            use std::io::Write;
+            use std::process::Stdio;
+
+            let mut command = self.command(cwd);
+            command
                 .args(args)
-                .output()
+                .stdin(if input.is_some() {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                })
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            let mut child = command.spawn().map_err(|_| GitInvocationError::Spawn)?;
+            // 출력하며 읽는 자식과 교착하지 않도록 stdin은 별도 thread로 쓰고 닫습니다.
+            let writer = match (input, child.stdin.take()) {
+                (Some(bytes), Some(mut pipe)) => {
+                    let bytes = bytes.to_vec();
+                    Some(std::thread::spawn(move || {
+                        let _ = pipe.write_all(&bytes);
+                    }))
+                }
+                _ => None,
+            };
+            let out = child
+                .wait_with_output()
                 .map_err(|_| GitInvocationError::Spawn)?;
+            if let Some(writer) = writer {
+                let _ = writer.join();
+            }
             Ok(GitCommandOutput {
                 exit_code: out.status.code(),
                 stdout: out.stdout,
                 stderr: out.stderr,
             })
+        }
+    }
+
+    impl GitCommandRunner for TestGit {
+        fn run_git(
+            &mut self,
+            args: &[OsString],
+            cwd: &Path,
+        ) -> Result<GitCommandOutput, GitInvocationError> {
+            self.record(args);
+            self.execute(args, cwd, None)
+        }
+
+        fn run_git_with_input(
+            &mut self,
+            args: &[OsString],
+            cwd: &Path,
+            input: &[u8],
+        ) -> Result<GitCommandOutput, GitInvocationError> {
+            self.record(args);
+            self.execute(args, cwd, Some(input))
         }
     }
 
