@@ -63,6 +63,9 @@ pub mod status;
 /// `RepositoryStatus` 저장소 요약 상태(XIV.2.2).
 pub mod repo_status;
 
+/// Stellar 프로젝트 파일 분류와 raw Git status 분리(XIV.4.4).
+pub mod classify;
+
 /// Git LFS 설치 감지 (XIII.7.1).
 pub mod lfs;
 

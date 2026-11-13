@@ -1393,7 +1393,7 @@ tools/xtask/
 | XIV.4.1 | `[ ]` | HEAD→Index diff를 Staged, Index→WorkingTree diff를 Unstaged로 계산합니다. | 부분 staged fixture 분류 정확. | XIV.3.10, XIV.2.5, XIV.2.7 |
 | XIV.4.2 | `[ ]` | 같은 PropertyPath가 staged와 unstaged에서 연속 수정된 경우 base/head, staged, working 세 값을 모두 보존합니다. | H=1, I=2, W=3 fixture 표시 정확. | XIV.4.1 |
 | XIV.4.3 | `[ ]` | untracked Stellar files는 WorkingTree snapshot에 포함하되 index snapshot에는 없는 AddObject/File change로 표시합니다. | untracked chunk/asset fixture 통과. | XIV.4.1 |
-| XIV.4.4 | `[ ]` | non-Stellar files는 raw Git file status로만 표시하고 semantic parser로 해석하지 않습니다. | README change raw status 유지. | XIV.2.1 |
+| XIV.4.4 | `[x]` | non-Stellar files는 raw Git file status로만 표시하고 semantic parser로 해석하지 않습니다. | README change raw status 유지. | XIV.2.1 |
 | XIV.4.5 | `[ ]` | corrupt WorkingTree Stellar state는 semantic status를 실패시키되 raw Git status는 계속 제공하고 자동 수정하지 않습니다. | corrupt chunk fixture raw status 가능. | XIV.4.1, V.4.4 |
 
 ### XIV.5 선택 변경의 Staging 계획
