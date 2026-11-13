@@ -1526,7 +1526,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XV.2.1 | `[x]` | `DependencyNodeKey`를 LibraryId+ResolvedCommit으로 정의해 동일 library 여러 버전을 별도 node로 허용합니다. | v1/v2 동시 key fixture 통과. | XV.1.1 |
 | XV.2.2 | `[x]` | dependency graph edge에 parent dependency path를 기록합니다. 같은 resolved node는 그래프에서 dedup합니다. | diamond dependency fixture 정확. | XV.2.1 |
-| XV.2.3 | `[ ]` | transitive cycle을 탐지하고 dependency path 전체를 오류로 반환합니다. | A→B→A fixture 실패. | XV.2.2 |
+| XV.2.3 | `[x]` | transitive cycle을 탐지하고 dependency path 전체를 오류로 반환합니다. | A→B→A fixture 실패. | XV.2.2 |
 | XV.2.4 | `[ ]` | version selector resolution은 시스템 Git의 `ls-remote`, fetch된 refs, commit verification을 사용합니다. Git 객체를 직접 파싱하지 않습니다. | tag/branch/commit fixture resolve. | XIV.1.3, XV.1.2 |
 | XV.2.5 | `[ ]` | 같은 LibraryId의 여러 resolved commit이 그래프에 존재하면 오류가 아니라 `DuplicateLibraryVersionWarning`을 생성합니다. | v1/v2 fixture warning 1건. | XV.2.1 |
 | XV.2.6 | `[ ]` | resolver 결과를 LibraryId, commit, dependency path로 deterministic sort합니다. | 선언 순서 변경에도 lock output 동일. | XV.2.2 |

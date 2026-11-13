@@ -4,7 +4,7 @@
 //! commit의 library 매니페스트([`LibraryManifestSource`])에서 전이 선언을 읽어 [`DependencyGraph`]를
 //! 만듭니다. 같은 [`DependencyNodeKey`]에 다시 도달하면 node는 재사용(dedup)하고 edge만 그 경로로
 //! 추가합니다. 탐색은 명시적 stack을 쓰는 깊이 우선이라 깊은 체인에서도 호출 stack을 소모하지
-//! 않습니다.
+//! 않습니다. 현재 탐색 체인의 조상 node에 다시 도달하면 전체 경로와 함께 순환 오류입니다(XV.2.3).
 //!
 //! 매니페스트 읽기(`git show <commit>:stellar.yaml` + 제한 YAML 파싱)는 project crate가 구현합니다.
 //! library 매니페스트 안의 `local_override`는 무시합니다(override는 사용 프로젝트 선언에만 적용).
@@ -94,6 +94,13 @@ pub enum ResolveError {
         /// commit 매니페스트의 id.
         found: LibraryId,
     },
+    /// 전이 순환(XV.2.3): 탐색 중인 조상 node에 다시 도달함.
+    Cycle {
+        /// root에서 순환을 닫는 선언까지의 전체 경로(예: `a > b > a`).
+        path: DependencyPath,
+        /// 다시 도달한 node.
+        node: DependencyNodeKey,
+    },
 }
 
 impl fmt::Display for ResolveError {
@@ -109,6 +116,9 @@ impl fmt::Display for ResolveError {
                 f,
                 "{path}: 선언한 library id {declared}와 저장소의 project id {found}가 다릅니다"
             ),
+            ResolveError::Cycle { path, node } => {
+                write!(f, "의존성 순환: {path} (다시 도달한 node {node})")
+            }
         }
     }
 }
@@ -171,6 +181,12 @@ where
             }
         };
         let key = DependencyNodeKey::new(declaration.library_id, commit);
+
+        // 순환: 현재 탐색 체인(stack의 부모들)에 같은 node가 있으면 전체 경로와 함께 실패합니다.
+        // 체인 밖에서 이미 해석된 node는 아래 dedup으로 재사용합니다(diamond).
+        if stack.iter().any(|f| f.parent.as_ref() == Some(&key)) {
+            return Err(ResolveError::Cycle { path, node: key });
+        }
 
         graph.edges.push(DependencyEdge {
             parent: parent.clone(),
@@ -446,6 +462,75 @@ mod tests {
                 path: path(&["a", "c"]),
                 error: ManifestSourceError::Unavailable
             })
+        );
+    }
+
+    #[test]
+    fn transitive_cycle_fails_with_full_path() {
+        // A v1 → B v1 → A v1.
+        let mut catalog = Catalog::default();
+        catalog.publish(A, 1, "v1", 0xa1, vec![decl("b", 2, B, "v1")]);
+        catalog.publish(B, 2, "v1", 0xb1, vec![decl("a", 1, A, "v1")]);
+        let err = resolve(&catalog, &[decl("a", 1, A, "v1")]).unwrap_err();
+        assert_eq!(
+            err,
+            ResolveError::Cycle {
+                path: path(&["a", "b", "a"]),
+                node: key(1, 0xa1),
+            }
+        );
+        assert!(err.to_string().contains("a > b > a"));
+
+        // 자기 자신 의존(A → A).
+        let mut selfish = Catalog::default();
+        selfish.publish(A, 1, "v1", 0xa1, vec![decl("me", 1, A, "v1")]);
+        assert_eq!(
+            resolve(&selfish, &[decl("a", 1, A, "v1")]),
+            Err(ResolveError::Cycle {
+                path: path(&["a", "me"]),
+                node: key(1, 0xa1),
+            })
+        );
+
+        // 더 긴 순환(root → x → a → b → c → a): 경로 전체.
+        let mut long = Catalog::default();
+        long.publish(B, 2, "v1", 0xb1, vec![decl("c", 3, C, "v1")]);
+        long.publish(C, 3, "v1", 0xc1, vec![decl("a", 1, A, "v1")]);
+        long.publish(A, 1, "v1", 0xa1, vec![decl("b", 2, B, "v1")]);
+        long.publish(
+            "https://e.com/x",
+            4,
+            "v1",
+            0x41,
+            vec![decl("a", 1, A, "v1")],
+        );
+        assert_eq!(
+            resolve(&long, &[decl("x", 4, "https://e.com/x", "v1")]),
+            Err(ResolveError::Cycle {
+                path: path(&["x", "a", "b", "c", "a"]),
+                node: key(1, 0xa1),
+            })
+        );
+    }
+
+    #[test]
+    fn diamond_and_repeated_root_reference_are_not_cycles() {
+        // diamond는 순환이 아님.
+        let catalog = diamond();
+        assert!(resolve(&catalog, &[decl("a", 1, A, "v1"), decl("b", 2, B, "v1")]).is_ok());
+        // root가 이미 해석된 c를 다시 직접 선언해도 순환 아님.
+        let graph = resolve(&catalog, &[decl("a", 1, A, "v1"), decl("c", 3, C, "v1")]).unwrap();
+        assert_eq!(graph.node_count(), 2);
+        assert_eq!(graph.edges().len(), 3);
+        // 같은 library의 다른 버전 체인(A v2 → A v1)은 node가 달라 순환이 아님.
+        let mut versions = Catalog::default();
+        versions.publish(A, 1, "v1", 0xa1, vec![]);
+        versions.publish(A, 1, "v2", 0xa2, vec![decl("old", 1, A, "v1")]);
+        assert_eq!(
+            resolve(&versions, &[decl("a", 1, A, "v2")])
+                .unwrap()
+                .node_count(),
+            2
         );
     }
 
