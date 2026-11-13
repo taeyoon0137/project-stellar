@@ -965,7 +965,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| X.6.1 | `[ ]` | SizingMode에 Fixed, Fill, HugContent, Percentage를 정의합니다. | invalid mode combination 거부. | X.1.1 |
+| X.6.1 | `[x]` | SizingMode에 Fixed, Fill, HugContent, Percentage를 정의합니다. | invalid mode combination 거부. | X.1.1 |
 | X.6.2 | `[ ]` | min/max clamp를 모든 layout mode의 최종 size에 동일 순서로 적용합니다. | min>max 오류, boundary fixture 통과. | X.6.1 |
 | X.6.3 | `[ ]` | aspect ratio constraint를 한 축이 definite일 때만 적용하고 양 축 indefinite는 intrinsic size로 해결합니다. | ratio matrix fixture 통과. | X.6.1 |
 | X.6.4 | `[ ]` | content intrinsic measurement trait를 Shape, Text, Image, ComponentInstance별로 정의합니다. | 각 node default intrinsic fixture 통과. | Phase VI, IX.2.2 |

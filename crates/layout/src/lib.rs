@@ -24,6 +24,9 @@ pub mod input;
 /// 레이아웃 출력 box·결과 (X.1.1).
 pub mod output;
 
+/// 축별 크기 결정 방식 (X.6.1).
+pub mod sizing;
+
 /// canonical bytes writer/reader (crate 내부).
 mod codec;
 

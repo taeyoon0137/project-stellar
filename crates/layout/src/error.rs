@@ -7,6 +7,7 @@ use std::fmt;
 
 use stellar_core_types::ids::StableId;
 
+use crate::geometry::Axis;
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnitError;
 
@@ -70,6 +71,15 @@ pub enum LayoutError {
         node: StableId,
         /// 속성.
         property: LayoutProperty,
+    },
+    /// sizing mode 값·조합이 허용되지 않습니다 (X.6.1).
+    InvalidSizing {
+        /// 대상 node.
+        node: StableId,
+        /// 축.
+        axis: Axis,
+        /// 사유.
+        reason: &'static str,
     },
     /// 레이아웃 결과 box의 불변식이 깨졌습니다.
     InvalidBox {
@@ -137,6 +147,9 @@ impl fmt::Display for LayoutError {
                     f,
                     "node {node}의 {property} 값이 레이아웃 수치 범위를 벗어납니다"
                 )
+            }
+            LayoutError::InvalidSizing { node, axis, reason } => {
+                write!(f, "node {node}의 {axis} sizing이 잘못되었습니다: {reason}")
             }
             LayoutError::InvalidBox { node, reason } => {
                 write!(f, "node {node}의 레이아웃 box가 잘못되었습니다: {reason}")

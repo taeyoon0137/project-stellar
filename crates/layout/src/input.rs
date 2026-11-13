@@ -19,12 +19,16 @@ use std::collections::HashMap;
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
-use stellar_core_types::value::{Insets, Length};
+use stellar_core_types::value::{Insets, Length, Percentage};
 
 use crate::codec::{Reader, Writer};
 use crate::error::LayoutError;
+use crate::geometry::Axis;
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
+use crate::sizing::{validate_sizing, SIZING_FILL, SIZING_FIXED, SIZING_HUG, SIZING_PERCENTAGE};
+
+pub use crate::sizing::SizingMode;
 
 /// 레이아웃 재귀가 허용하는 최대 tree 깊이(root = 0).
 pub const MAX_LAYOUT_DEPTH: usize = 256;
@@ -49,19 +53,6 @@ pub enum ContainerLayout {
     /// 자유 배치(자식 local position·size 사용).
     #[default]
     Free,
-}
-
-/// 한 축의 크기 결정 방식 (X.1.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SizingMode {
-    /// 고정 크기(비음수).
-    Fixed(Length),
-}
-
-impl Default for SizingMode {
-    fn default() -> SizingMode {
-        SizingMode::Fixed(Length::from_raw(stellar_core_types::value::FiniteF32::ZERO))
-    }
 }
 
 /// leaf 콘텐츠의 intrinsic 크기와 baseline (X.1.1).
@@ -270,8 +261,8 @@ impl LayoutInput {
             }
         }
 
-        for node in &self.nodes {
-            validate_node_values(node)?;
+        for (position, node) in self.nodes.iter().enumerate() {
+            validate_node_values(node, position == root)?;
         }
         Ok(TreeIndex {
             index,
@@ -335,8 +326,8 @@ pub(crate) fn length_unit(
     LayoutUnit::from_length(value).map_err(|_| LayoutError::OutOfRange { node, property })
 }
 
-/// node 하나의 값 범위를 검증합니다.
-fn validate_node_values(node: &LayoutNode) -> Result<(), LayoutError> {
+/// node 하나의 값 범위와 속성 조합을 검증합니다.
+fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutError> {
     let (top, right, bottom, left) = node.padding.components();
     for value in [top, right, bottom, left] {
         let length = Length::new(value).map_err(|_| LayoutError::OutOfRange {
@@ -345,16 +336,8 @@ fn validate_node_values(node: &LayoutNode) -> Result<(), LayoutError> {
         })?;
         length_unit(node.id, LayoutProperty::Padding, length, false)?;
     }
-    for (property, mode) in [
-        (LayoutProperty::Width, node.width),
-        (LayoutProperty::Height, node.height),
-    ] {
-        match mode {
-            SizingMode::Fixed(length) => {
-                length_unit(node.id, property, length, false)?;
-            }
-        }
-    }
+    validate_sizing(node.id, Axis::Horizontal, node.width, is_root)?;
+    validate_sizing(node.id, Axis::Vertical, node.height, is_root)?;
     if let LayoutContent::Intrinsic(content) = node.content {
         length_unit(node.id, LayoutProperty::Content, content.width, false)?;
         length_unit(node.id, LayoutProperty::Content, content.height, false)?;
@@ -368,8 +351,6 @@ fn validate_node_values(node: &LayoutNode) -> Result<(), LayoutError> {
 // --- canonical bytes ---
 
 const CONTAINER_FREE: u8 = 0;
-
-const SIZING_FIXED: u8 = 0;
 
 const CONTENT_NONE: u8 = 0;
 const CONTENT_INTRINSIC: u8 = 1;
@@ -405,11 +386,11 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
+    w.u8(mode.tag());
     match mode {
-        SizingMode::Fixed(length) => {
-            w.u8(SIZING_FIXED);
-            w.length(length);
-        }
+        SizingMode::Fixed(length) => w.length(length),
+        SizingMode::Percentage(percent) => w.finite(percent.raw()),
+        SizingMode::Fill | SizingMode::HugContent => {}
     }
 }
 
@@ -472,6 +453,11 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
 fn decode_sizing(r: &mut Reader<'_>, field: &'static str) -> Result<SizingMode, LayoutError> {
     match r.u8()? {
         SIZING_FIXED => Ok(SizingMode::Fixed(r.length(field)?)),
+        SIZING_FILL => Ok(SizingMode::Fill),
+        SIZING_HUG => Ok(SizingMode::HugContent),
+        SIZING_PERCENTAGE => Ok(SizingMode::Percentage(Percentage::from_raw(
+            r.finite(field)?,
+        ))),
         _ => Err(LayoutError::Malformed {
             reason: "알 수 없는 sizing tag",
         }),
