@@ -15,3 +15,6 @@ pub mod selection;
 
 /// 의존성 선언 충돌 validation (XV.1.3).
 pub mod validation;
+
+/// 의존성 선언 민감값 분류와 redaction (XV.1.4).
+pub mod sensitivity;

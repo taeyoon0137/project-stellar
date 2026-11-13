@@ -153,14 +153,14 @@ pub(crate) mod fake {
             if let VersionSelector::Commit(commit) = selector {
                 if self
                     .table
-                    .contains_key(&(repository.as_str().to_string(), selector.clone()))
+                    .contains_key(&(repository.reveal().to_string(), selector.clone()))
                 {
                     return Ok(commit.clone());
                 }
                 return Err(SelectorError::CommitNotFound);
             }
             self.table
-                .get(&(repository.as_str().to_string(), selector.clone()))
+                .get(&(repository.reveal().to_string(), selector.clone()))
                 .cloned()
                 .ok_or(SelectorError::RefNotFound {
                     kind: selector.kind(),

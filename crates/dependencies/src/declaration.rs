@@ -154,7 +154,10 @@ impl FromStr for SourceKind {
 ///
 /// 제어 문자·공백을 금지하고, Git option으로 해석될 수 있는 `-` 시작과 명령을 실행하는 remote
 /// helper transport(`ext::`, `fd::`)를 거부합니다.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// telemetry·진단 민감값입니다(XV.1.4): `Debug`는 값을 가리고 `Display`는 구현하지 않으며, 원문은
+/// [`RepositoryUrl::reveal`]로만 얻습니다.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RepositoryUrl(String);
 
 impl RepositoryUrl {
@@ -181,8 +184,8 @@ impl RepositoryUrl {
         Ok(RepositoryUrl(text.to_string()))
     }
 
-    /// 원문 문자열(Git 인자로 넘길 때만 사용).
-    pub fn as_str(&self) -> &str {
+    /// 원문 문자열. Git 인자·로컬 UI 표시처럼 명시적 경로에서만 사용합니다(XV.1.4).
+    pub fn reveal(&self) -> &str {
         &self.0
     }
 }
@@ -376,7 +379,10 @@ impl VersionSelector {
 }
 
 /// local override 경로(사용 프로젝트 root 기준 상대 경로 또는 절대 경로, 구분자 `/`).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// telemetry·진단 민감값입니다(XV.1.4): `Debug`는 값을 가리고 `Display`는 구현하지 않으며, 원문은
+/// [`LocalOverridePath::reveal`]로만 얻습니다.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LocalOverridePath(String);
 
 impl LocalOverridePath {
@@ -396,8 +402,8 @@ impl LocalOverridePath {
         Ok(LocalOverridePath(text.to_string()))
     }
 
-    /// 원문 문자열(로컬 파일 시스템 접근에만 사용).
-    pub fn as_str(&self) -> &str {
+    /// 원문 문자열. 로컬 파일 시스템 접근·로컬 UI 표시에서만 사용합니다(XV.1.4).
+    pub fn reveal(&self) -> &str {
         &self.0
     }
 }
@@ -439,14 +445,14 @@ impl DependencyDeclaration {
             ),
             (
                 "repository".to_string(),
-                DeclNode::scalar(self.repository.as_str()),
+                DeclNode::scalar(self.repository.reveal()),
             ),
             ("version".to_string(), self.version.to_node()),
         ];
         if let Some(path) = &self.local_override {
             pairs.push((
                 "local_override".to_string(),
-                DeclNode::scalar(path.as_str()),
+                DeclNode::scalar(path.reveal()),
             ));
         }
         (self.name.as_str().to_string(), DeclNode::Mapping(pairs))

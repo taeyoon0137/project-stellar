@@ -22,8 +22,9 @@ impl RepositoryUrl {
     ///
     /// 끝의 `/`와 `.git`을 제거하고, `scheme://[user@]host/...`와 scp 형식 `[user@]host:path`의
     /// scheme·host만 소문자로 바꿉니다. 경로 대소문자는 보존합니다(서버가 구분할 수 있음).
+    /// 비교 키도 URL 원문과 같은 민감값입니다(XV.1.4) — 그룹 판정에만 쓰고 출력하지 않습니다.
     pub fn comparison_key(&self) -> String {
-        let mut text = self.as_str().trim_end_matches('/');
+        let mut text = self.reveal().trim_end_matches('/');
         if let Some(stripped) = text.strip_suffix(".git") {
             text = stripped.trim_end_matches('/');
         }
