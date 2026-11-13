@@ -8,3 +8,6 @@ pub mod registry;
 
 /// 명시적 font fallback chain (X.8.3).
 pub mod fallback;
+
+/// missing font 진단 (X.8.4).
+pub mod missing_font;
