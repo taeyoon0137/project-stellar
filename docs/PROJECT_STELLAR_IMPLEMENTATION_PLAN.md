@@ -1199,7 +1199,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XII.5.1 | `[ ]` | macOS 레이어명·검색·일반 필드에 NSTextField/NSTextView를 사용하고 core text engine을 호출하지 않습니다. | native undo/IME smoke test. | II.5.3 |
+| XII.5.1 | `[x]` | macOS 레이어명·검색·일반 필드에 NSTextField/NSTextView를 사용하고 core text engine을 호출하지 않습니다. | native undo/IME smoke test. | II.5.3 |
 | XII.5.2 | `[!]` | Windows 레이어명·검색·일반 필드에 TextBox/RichEditBox를 사용합니다. | native undo/IME smoke test. | II.6.3 |
 | XII.5.3 | `[ ]` | 캔버스 Text node 편집용 common editing session을 정의하고 native IME composition event만 받아 Phase X layout으로 표시합니다. | 한글 조합 중간·확정 fixture 통과. | X.10.3, XII.3.1 |
 | XII.5.4 | `[ ]` | macOS text input client adapter를 구현해 marked text, selection range, candidate rect를 common session과 연결합니다. | 한글·일본어 IME manual automation fixture 통과. | XII.5.3 |
