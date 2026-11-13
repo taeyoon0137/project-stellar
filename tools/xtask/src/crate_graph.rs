@@ -57,7 +57,22 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ("stellar-target-profile", &[core]),
         ("stellar-accessibility", &[core]),
         ("stellar-diagnostics", &[core]),
-        ("stellar-ffi", &[core]),
+        // 앱 프로세스 runtime(ADR-0013): thread 구성과 document thread event loop.
+        (
+            "stellar-runtime",
+            &[
+                core,
+                "stellar-document",
+                "stellar-commands",
+                "stellar-history",
+                "stellar-project",
+                "stellar-storage",
+                "stellar-assets",
+                "stellar-renderer-core",
+            ],
+        ),
+        // 셸 경계는 runtime을 통해서만 문서·프로젝트 작업에 도달합니다(ADR-0013).
+        ("stellar-ffi", &[core, "stellar-runtime"]),
         // headless 도구(XXIV.1.1, `tools/stellar-cli`): core crate만 사용합니다. MCP·agent·FFI·
         // GUI(renderer) crate에 의존하지 않습니다.
         (
@@ -187,6 +202,43 @@ mod tests {
                 .map(|v| v.code)
                 .collect();
             assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
+        }
+    }
+
+    #[test]
+    fn runtime_edges_pass_and_ffi_reaches_runtime() {
+        // ADR-0013: ffi -> runtime -> (document, commands, history, project, storage, assets,
+        // renderer-core, core-types).
+        let edges = [
+            edge("stellar-ffi", "stellar-runtime"),
+            edge("stellar-ffi", "stellar-core-types"),
+            edge("stellar-runtime", "stellar-core-types"),
+            edge("stellar-runtime", "stellar-document"),
+            edge("stellar-runtime", "stellar-commands"),
+            edge("stellar-runtime", "stellar-history"),
+            edge("stellar-runtime", "stellar-project"),
+            edge("stellar-runtime", "stellar-storage"),
+            edge("stellar-runtime", "stellar-assets"),
+            edge("stellar-runtime", "stellar-renderer-core"),
+        ];
+        assert!(check_crate_graph(&edges).is_empty());
+    }
+
+    #[test]
+    fn runtime_reverse_and_bypass_edges_fail() {
+        // runtime -> ffi 는 역방향, 하위 crate -> runtime 은 역참조, ffi -> document 는 runtime 우회.
+        for (from, to) in [
+            ("stellar-runtime", "stellar-ffi"),
+            ("stellar-document", "stellar-runtime"),
+            ("stellar-project", "stellar-runtime"),
+            ("stellar-ffi", "stellar-document"),
+            ("stellar-ffi", "stellar-project"),
+        ] {
+            let codes: Vec<&str> = check_crate_graph(&[edge(from, to)])
+                .iter()
+                .map(|v| v.code)
+                .collect();
+            assert_eq!(codes, vec!["forbidden-edge"], "{from} -> {to}");
         }
     }
 

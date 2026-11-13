@@ -1158,7 +1158,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XII.1.1 | `[ ]` | `DocumentThread` event loop를 구현하고 모든 mutable document 접근을 이 thread로 제한합니다. | 다른 thread 직접 mutate compile/API test 실패. | Phase XI, Phase VII |
+| XII.1.1 | `[x]` | `DocumentThread` event loop를 구현하고 모든 mutable document 접근을 이 thread로 제한합니다. | 다른 thread 직접 mutate compile/API test 실패. | Phase XI, Phase VII |
 | XII.1.2 | `[ ]` | UI→DocumentThread command queue를 bounded channel로 구현하고 입력 이벤트에 priority를 부여합니다. | queue overflow 정책 fixture 통과, blocking UI call 없음. | XII.1.1 |
 | XII.1.3 | `[ ]` | RenderThread를 구현하고 최신 SceneSnapshot을 lock-free handoff로 수신합니다. | document thread가 render submit을 기다리지 않습니다. | XI.1.5, XII.1.1 |
 | XII.1.4 | `[ ]` | worker pool을 text shaping, tessellation, image decode, save serialization class로 나누거나 priority tag로 구분합니다. | interactive 작업이 background GC보다 먼저 실행. | X.7.5, XI.6.3, XI.7.1 |

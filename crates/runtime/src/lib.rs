@@ -1,0 +1,8 @@
+//! stellar-runtime — 앱 프로세스 runtime: thread 구성과 document thread event loop.
+//!
+//! 아키텍처 §9.2의 앱 내부 thread 모델(Native UI, Document, Render, Worker Pool)을 코어 쪽에서
+//! 구성합니다. 네이티브 셸은 안정 C ABI(`stellar-ffi`)를 거쳐 이 crate에 도달하고, 이 crate는
+//! ffi를 역참조하지 않습니다. crate 경계와 thread 모델 결정은 ADR-0013에 기록합니다.
+
+/// DocumentThread event loop (XII.1.1).
+pub mod document_thread;
