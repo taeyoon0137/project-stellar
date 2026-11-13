@@ -804,7 +804,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | IX.2.1 | `[x]` | ComponentInstance node payload에 ComponentRef, sparse PropertyOverride map, SlotOverride map을 정의합니다. | round-trip. | IX.1.1, VI.2.1 |
-| IX.2.2 | `[ ]` | instance expansion view를 구현해 definition tree와 instance override를 합성한 read-only virtual subtree를 제공합니다. 실제 node 복제는 금지합니다. | 5만 instance에서 definition node count가 물리 복제되지 않습니다. | IX.2.1 |
+| IX.2.2 | `[x]` | instance expansion view를 구현해 definition tree와 instance override를 합성한 read-only virtual subtree를 제공합니다. 실제 node 복제는 금지합니다. | 5만 instance에서 definition node count가 물리 복제되지 않습니다. | IX.2.1 |
 | IX.2.3 | `[ ]` | 공개 Property만 instance에서 override 가능하게 validator를 구현합니다. private·nested property 직접 접근은 거부합니다. | 직접 nested access fixture 실패. | IX.1.2, IX.2.1 |
 | IX.2.4 | `[ ]` | override 생성·변경·reset command를 구현합니다. reset은 map entry를 삭제하고 default로 돌아갑니다. | apply/inverse와 sparse 저장 확인. | IX.2.3, Phase VII |
 | IX.2.5 | `[ ]` | 자유 구조 편집은 금지하고 definition이 허용한 Slot만 변경 가능하게 virtual subtree mutation validator를 구현합니다. | nested child delete/move 거부. | IX.2.2 |

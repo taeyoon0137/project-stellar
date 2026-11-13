@@ -15,3 +15,6 @@ pub mod definition;
 
 /// ComponentInstance node payload (IX.2.1).
 pub mod instance;
+
+/// 인스턴스 expansion view (IX.2.2).
+pub mod expansion;
