@@ -5511,48 +5511,79 @@ tasks:
     verified_at: "2026-11-14T01:06:37+09:00"
   - id: "XIII.5.2"
     title: "외부 파일 import 시 streaming hash를 계산하고 `assets/<prefix>/<hash>.<safe-ext>`로 복사합니다. 원본 경로는 optional metadata입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.5.2.md"
+    commit: "765d640719be9fbfaf299ebc507b26d9cf8dcc26"
+    report: "docs/task-reports/XIII.5.2.md"
+    verified_at: "2026-11-14T01:47:34+09:00"
   - id: "XIII.5.3"
     title: "동일 content hash는 파일을 재복사하지 않고 새 AssetId가 같은 content를 참조할 수 있게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.5.3.md"
+    commit: "7c83a13144a0c2922de774c3522e00a6ec6c2639"
+    report: "docs/task-reports/XIII.5.3.md"
+    verified_at: "2026-11-14T01:47:34+09:00"
   - id: "XIII.5.4"
     title: "asset write도 temp+fsync+atomic rename을 사용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.5.2"
       - "V.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.5.4.md"
+    commit: "ad6ff2c5c10cdc43e8dfc74ff3adf7bd28ec0093"
+    report: "docs/task-reports/XIII.5.4.md"
+    verified_at: "2026-11-14T01:47:34+09:00"
   - id: "XIII.5.5"
     title: "`UpdateFromSource`는 source metadata 경로를 다시 읽고 새 hash asset을 만든 뒤 AssetRecord 참조를 command로 변경합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIII.5.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIII.5.5.md"
   - id: "XIII.5.6"
     title: "project에서 참조되지 않는 asset content GC를 generation/chunk GC와 별도 mark-sweep으로 구현합니다. Git tracked history는 고려하지 않고 current project refs만 다룹니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.5.3"
       - "V.7.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.5.6.md"
+    commit: "dba3b56793dd313b59fc25ef0dde7df2b291287c"
+    report: "docs/task-reports/XIII.5.6.md"
+    verified_at: "2026-11-14T01:47:34+09:00"
   - id: "XIII.5.7"
     title: "import 허용 media type과 최대 단일 파일 크기 정책을 config에 정의합니다. unknown type은 binary asset으로 저장 가능 여부를 명시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.5.7.md"
+    commit: "f8cbf1a5613f3fcda1917705dc29b90489450864"
+    report: "docs/task-reports/XIII.5.7.md"
+    verified_at: "2026-11-14T01:47:34+09:00"
   - id: "XIII.6.1"
     title: "Project Font import를 AssetStore와 연결하고 font file hash, face count, licensing metadata 입력 필드를 기록합니다."
     status: not_started
