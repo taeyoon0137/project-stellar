@@ -2,7 +2,7 @@
 # 현재 member는 tools/xtask 하나뿐입니다. 기능 crate는 Phase II.2에서 추가합니다.
 [workspace]
 resolver = "2"
-members = ["tools/xtask", "crates/core-types", "crates/document", "crates/commands", "crates/history", "crates/expressions", "crates/bindings", "crates/layout", "crates/text", "crates/scene", "crates/renderer-core", "crates/renderer-metal", "crates/renderer-d3d12", "crates/storage", "crates/project", "crates/assets", "crates/dependencies", "crates/semantic-diff", "crates/semantic-merge", "crates/git-porcelain", "crates/target-profile", "crates/accessibility", "crates/diagnostics", "crates/ffi", "tools/stellar-cli", "tools/stellar-mcp", "crates/runtime", "crates/export", "crates/terminal", "benchmarks/fixtures"]
+members = ["tools/xtask", "crates/core-types", "crates/document", "crates/commands", "crates/history", "crates/expressions", "crates/bindings", "crates/layout", "crates/text", "crates/scene", "crates/renderer-core", "crates/renderer-metal", "crates/renderer-d3d12", "crates/storage", "crates/project", "crates/assets", "crates/dependencies", "crates/semantic-diff", "crates/semantic-merge", "crates/git-porcelain", "crates/target-profile", "crates/accessibility", "crates/diagnostics", "crates/ffi", "tools/stellar-cli", "tools/stellar-mcp", "crates/local-ipc", "crates/runtime", "crates/export", "crates/terminal", "benchmarks/fixtures"]
 
 # 공통 package metadata. member는 `<field>.workspace = true`로 상속할 수 있습니다.
 [workspace.package]

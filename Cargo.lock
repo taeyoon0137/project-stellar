@@ -167,8 +167,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-local-ipc"
+version = "0.0.0"
+
+[[package]]
 name = "stellar-mcp"
 version = "0.0.0"
+dependencies = [
+ "stellar-local-ipc",
+]
 
 [[package]]
 name = "stellar-project"

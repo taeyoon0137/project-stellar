@@ -16,9 +16,10 @@ pub mod framing;
 pub mod jsonrpc;
 
 /// 브리지↔앱 로컬 IPC: endpoint registry (XIX.1.2), 사용자·nonce handshake (XIX.1.3).
-/// macOS 전용(ADR-0006).
-#[cfg(target_os = "macos")]
-pub mod ipc;
+///
+/// 앱 runtime과 같은 구현을 쓰도록 `stellar-local-ipc` crate(ADR-0005 §8)에 있습니다. 기존 경로
+/// `stellar_mcp::ipc`를 유지하려고 다시 내보냅니다. macOS 전용(ADR-0006).
+pub use stellar_local_ipc as ipc;
 
 /// stderr 전용 로그 (XIX.1.1).
 pub mod log;

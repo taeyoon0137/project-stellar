@@ -104,7 +104,13 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ),
         // MCP stdio 브리지(XIX.1.1, `tools/stellar-mcp`): FFI·GUI crate에 의존하지 않습니다.
         // headless 도구(stellar-cli)는 이 브리지에 의존할 수 없습니다(위 항목에 없음).
-        ("stellar-mcp", &[core, "stellar-diagnostics"]),
+        (
+            "stellar-mcp",
+            &[core, "stellar-diagnostics", "stellar-local-ipc"],
+        ),
+        // bridge↔app 로컬 IPC(ADR-0005 §8, `crates/local-ipc`): core-types만 허용합니다.
+        // document·commands·ops에 도달하지 않습니다.
+        ("stellar-local-ipc", &[core]),
     ];
     entries.iter().map(|(k, v)| (*k, v.to_vec())).collect()
 }
@@ -209,6 +215,39 @@ mod tests {
                 .collect();
             assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
         }
+    }
+
+    #[test]
+    fn local_ipc_depends_only_on_core_types() {
+        // ADR-0005 §8: local-ipc는 core-types만 허용하고 document·commands·ops에 도달하지 않습니다.
+        let manifest = format!(
+            "{}/../../crates/local-ipc/Cargo.toml",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let text = std::fs::read_to_string(manifest).unwrap();
+        assert!(text.contains("name = \"stellar-local-ipc\""));
+        assert!(check_crate_graph(&[edge("stellar-local-ipc", "stellar-core-types")]).is_empty());
+        for forbidden in [
+            "stellar-document",
+            "stellar-commands",
+            "stellar-history",
+            "stellar-storage",
+            "stellar-diagnostics",
+            "stellar-mcp",
+        ] {
+            let codes: Vec<&str> = check_crate_graph(&[edge("stellar-local-ipc", forbidden)])
+                .iter()
+                .map(|v| v.code)
+                .collect();
+            assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
+        }
+        // 브리지는 local-ipc를 쓸 수 있고, headless 도구(L1)는 쓸 수 없습니다.
+        assert!(check_crate_graph(&[edge("stellar-mcp", "stellar-local-ipc")]).is_empty());
+        let codes: Vec<&str> = check_crate_graph(&[edge("stellar-cli", "stellar-local-ipc")])
+            .iter()
+            .map(|v| v.code)
+            .collect();
+        assert_eq!(codes, vec!["forbidden-edge"]);
     }
 
     #[test]

@@ -11,12 +11,12 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
-use super::handshake::{
+use crate::handshake::{
     read_line, set_timeouts, verify_peer, write_message, HandshakeError, Message, DEFAULT_TIMEOUT,
 };
-use super::nonce::{Nonce, NonceLedger};
-use super::os;
-use super::registry::{Endpoint, InstanceId, Registry};
+use crate::nonce::{Nonce, NonceLedger};
+use crate::os;
+use crate::registry::{Endpoint, InstanceId, Registry};
 
 /// socket 경로 한도를 넘지 않도록 짧은 이름을 쓰는 임시 디렉터리.
 pub(crate) struct TempDir {

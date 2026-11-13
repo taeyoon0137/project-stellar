@@ -8,6 +8,8 @@ publish = false
 # L2 MCP stdio 브리지(XIX.1.1): 외부 crate와 FFI crate에 의존하지 않습니다.
 # network port를 열지 않으며, 로컬 IPC만 사용합니다.
 [dependencies]
+# bridge↔app 로컬 IPC(ADR-0005 §8 허용 edge).
+stellar-local-ipc = { path = "../../crates/local-ipc" }
 
 [lints]
 workspace = true

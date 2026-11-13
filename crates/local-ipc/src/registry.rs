@@ -5,7 +5,7 @@
 //!
 //! ## 위치와 형식(앱 측 계약)
 //!
-//! - registry 디렉터리: 사용자 임시 디렉터리([`super::os::user_temp_dir`]) 아래
+//! - registry 디렉터리: 사용자 임시 디렉터리([`crate::os::user_temp_dir`]) 아래
 //!   `stellar-ipc-<uid>`. 환경 변수에 의존하지 않습니다.
 //! - 디렉터리는 **현재 사용자 소유, symlink 아님, 권한 정확히 0700**이어야 합니다. 조건을 하나라도
 //!   어기면 어떤 항목도 신뢰하지 않고 [`RegistryError::Insecure`]를 반환합니다.
@@ -22,7 +22,7 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 
-use super::os;
+use crate::os;
 
 /// registry 디렉터리 이름 접두사(뒤에 uid).
 pub const REGISTRY_DIR_PREFIX: &str = "stellar-ipc-";
@@ -373,7 +373,7 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::test_support::{register, secure_registry, AppDouble, TempDir};
+    use crate::test_support::{register, secure_registry, AppDouble, TempDir};
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::net::UnixListener;
 

@@ -25,9 +25,9 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use super::nonce::{Nonce, NonceLedger};
-use super::os;
-use super::registry::Endpoint;
+use crate::nonce::{Nonce, NonceLedger};
+use crate::os;
+use crate::registry::Endpoint;
 
 /// handshake protocol 표지.
 pub const PROTOCOL_TAG: &str = "STELLAR-IPC/1";
@@ -333,8 +333,8 @@ pub fn connect(endpoint: &Endpoint, ledger: &mut NonceLedger) -> Result<Session,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ipc::registry::{InstanceId, Registry};
-    use crate::ipc::test_support::{
+    use crate::registry::{InstanceId, Registry};
+    use crate::test_support::{
         register, secure_registry, spawn_app, AppBehavior, AppOutcome, TempDir,
     };
 
