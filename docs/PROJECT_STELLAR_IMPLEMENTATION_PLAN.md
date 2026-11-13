@@ -2177,7 +2177,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XXVI.1.1 | `[x]` | branch list/switch/create/delete UI API를 시스템 Git 명령에 연결합니다. | local repo fixture. | Phase XIV |
 | XXVI.1.2 | `[x]` | fetch UI와 progress를 연결합니다. | local remote fixture. | XXVI.1.1 |
-| XXVI.1.3 | `[ ]` | pull strategy를 사용자가 merge/rebase/ff-only 중 선택하게 하고 시스템 config 기본을 임의 변경하지 않습니다. | strategy fixture. | XXVI.1.2 |
+| XXVI.1.3 | `[x]` | pull strategy를 사용자가 merge/rebase/ff-only 중 선택하게 하고 시스템 config 기본을 임의 변경하지 않습니다. | strategy fixture. | XXVI.1.2 |
 | XXVI.1.4 | `[ ]` | merge/rebase 시작과 abort/continue UI를 Git 상태 기반으로 연결합니다. continue는 Conflict UI 해결 후 사용자가 명시 실행합니다. | scenario fixture. | XIV.12.5 |
 
 ### XXVI.2 Stash·Cherry-pick·Revert·Reset·Reflog
