@@ -8,6 +8,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use stellar_core_types::gradient::GradientStop;
 use stellar_core_types::typed_value::TypedValue;
 use stellar_core_types::value::{Angle, Duration, FiniteF32, Length, Percentage};
 
@@ -80,9 +81,16 @@ pub enum EvalErrorKind {
         /// 적용한 한도.
         limit: usize,
     },
+    /// operand stack과 공유 결과 캐시가 함께 보유한 값의 heap bytes([`value_heap_bytes`] 합)가 한도를
+    /// 넘었습니다(VIII.4.5 보완). 공유 값의 복제가 쌓여 메모리가 증폭되는 것을 막습니다.
+    ValueMemoryExceeded {
+        /// 적용한 한도(bytes).
+        limit: usize,
+    },
 }
 
-/// 문자열 함수 결과의 최대 UTF-8 byte 수(VIII.4.4). 공유 node로 결합을 반복해도 메모리가 폭증하지 않게 합니다.
+/// 문자열 함수 결과의 최대 UTF-8 byte 수(VIII.4.4). 결과 하나의 크기만 제한합니다. 같은 값의 복제가 stack·
+/// 캐시에 쌓이는 증폭은 평가 한도의 값 bytes 상한(`EvalLimits::max_value_bytes`)이 막습니다.
 pub const MAX_STRING_BYTES: usize = 1 << 20;
 
 /// 함수 인자 값 위반 내용(VIII.4.4).
@@ -138,6 +146,9 @@ impl fmt::Display for EvalErrorKind {
             EvalErrorKind::StackLimitExceeded { limit } => {
                 write!(f, "operand stack 깊이 {limit}을 넘었습니다")
             }
+            EvalErrorKind::ValueMemoryExceeded { limit } => {
+                write!(f, "평가 중 보유한 값이 {limit} bytes를 넘었습니다")
+            }
         }
     }
 }
@@ -188,41 +199,100 @@ pub fn load_reference(
     }
 }
 
-/// 깊이 한도를 지키는 operand stack (VIII.4.5).
+/// 값 하나가 보유한 heap bytes(평가 메모리 계량 단위, VIII.4.5 보완).
 ///
-/// push 전에 깊이를 검사하므로 stack은 어떤 순간에도 `max_depth`개를 넘지 않습니다. bytecode evaluator와
-/// AST 기준 evaluator가 같은 한도 의미를 공유합니다.
+/// 문자열은 UTF-8 길이, 그라디언트는 stop 수 × stop 크기, 타이포그래피 placeholder는 payload 길이이고 그 외
+/// 고정 크기 값과 값 없음은 0입니다. capacity가 아니라 길이를 쓰므로 플랫폼·할당자와 무관하게 결정적입니다.
+/// stack 항목 자체의 고정 크기는 깊이 한도([`StackLimitExceeded`](EvalErrorKind::StackLimitExceeded))가 제한합니다.
+pub fn value_heap_bytes(value: &Option<TypedValue>) -> usize {
+    match value {
+        Some(TypedValue::String(text)) => text.len(),
+        Some(TypedValue::Gradient(gradient)) => gradient
+            .stops()
+            .len()
+            .saturating_mul(std::mem::size_of::<GradientStop>()),
+        Some(TypedValue::Typography(typography)) => typography.as_bytes().len(),
+        _ => 0,
+    }
+}
+
+/// 깊이·값 bytes 한도를 지키는 operand stack (VIII.4.5).
+///
+/// push 전에 깊이와 bytes를 검사하므로 stack은 어떤 순간에도 `max_depth`개를 넘지 않고, stack 값과
+/// [`BoundedStack::hold`]로 예약한 캐시 값의 [`value_heap_bytes`] 합은 `max_bytes`를 넘지 않습니다. bytecode
+/// evaluator와 AST 기준 evaluator가 같은 한도 의미를 공유합니다.
 pub(crate) struct BoundedStack {
     values: Vec<Option<TypedValue>>,
     max_depth: usize,
     peak_depth: usize,
+    held_bytes: usize,
+    max_bytes: usize,
+    peak_bytes: usize,
 }
 
 impl BoundedStack {
     /// 빈 stack을 만듭니다.
-    pub(crate) fn new(max_depth: usize) -> BoundedStack {
+    pub(crate) fn new(max_depth: usize, max_bytes: usize) -> BoundedStack {
         BoundedStack {
             values: Vec::new(),
             max_depth,
             peak_depth: 0,
+            held_bytes: 0,
+            max_bytes,
+            peak_bytes: 0,
         }
     }
 
-    /// 값을 push합니다. push하면 `max_depth`를 넘는 경우 push하지 않고 오류입니다.
+    /// 값을 push합니다. push하면 깊이 한도나 bytes 한도를 넘는 경우 push하지 않고 오류입니다.
     pub(crate) fn push(&mut self, value: Option<TypedValue>) -> Result<(), EvalErrorKind> {
-        if self.values.len() >= self.max_depth {
-            return Err(EvalErrorKind::StackLimitExceeded {
-                limit: self.max_depth,
-            });
-        }
+        self.check_depth()?;
+        self.hold(value_heap_bytes(&value))?;
         self.values.push(value);
         self.peak_depth = self.peak_depth.max(self.values.len());
         Ok(())
     }
 
+    /// `value`의 복제를 push합니다. 한도를 먼저 검사하므로 넘는 경우 복제하지 않습니다.
+    pub(crate) fn push_clone(&mut self, value: &Option<TypedValue>) -> Result<(), EvalErrorKind> {
+        self.check_depth()?;
+        self.hold(value_heap_bytes(value))?;
+        self.values.push(value.clone());
+        self.peak_depth = self.peak_depth.max(self.values.len());
+        Ok(())
+    }
+
+    fn check_depth(&self) -> Result<(), EvalErrorKind> {
+        if self.values.len() >= self.max_depth {
+            return Err(EvalErrorKind::StackLimitExceeded {
+                limit: self.max_depth,
+            });
+        }
+        Ok(())
+    }
+
+    /// stack 밖(공유 결과 캐시)에 보관할 값의 bytes를 예약합니다. 예약은 평가가 끝날 때까지 유지됩니다.
+    pub(crate) fn hold(&mut self, bytes: usize) -> Result<(), EvalErrorKind> {
+        let held = self
+            .held_bytes
+            .checked_add(bytes)
+            .filter(|held| *held <= self.max_bytes)
+            .ok_or(EvalErrorKind::ValueMemoryExceeded {
+                limit: self.max_bytes,
+            })?;
+        self.held_bytes = held;
+        self.peak_bytes = self.peak_bytes.max(held);
+        Ok(())
+    }
+
+    fn release(&mut self, value: &Option<TypedValue>) {
+        self.held_bytes = self.held_bytes.saturating_sub(value_heap_bytes(value));
+    }
+
     /// 맨 위 값을 꺼냅니다.
     pub(crate) fn pop(&mut self) -> Option<Option<TypedValue>> {
-        self.values.pop()
+        let value = self.values.pop()?;
+        self.release(&value);
+        Some(value)
     }
 
     /// 맨 위 값.
@@ -233,7 +303,11 @@ impl BoundedStack {
     /// 위에서 `count`개를 순서대로 꺼냅니다. 값이 모자라면 `None`(stack 불변).
     pub(crate) fn pop_many(&mut self, count: usize) -> Option<Vec<Option<TypedValue>>> {
         let start = self.values.len().checked_sub(count)?;
-        Some(self.values.split_off(start))
+        let values = self.values.split_off(start);
+        for value in &values {
+            self.release(value);
+        }
+        Some(values)
     }
 
     /// 비어 있으면 `true`.
@@ -244,6 +318,11 @@ impl BoundedStack {
     /// 지금까지의 최대 깊이.
     pub(crate) fn peak_depth(&self) -> usize {
         self.peak_depth
+    }
+
+    /// 지금까지 동시에 보유한 최대 값 bytes(stack + 캐시 예약).
+    pub(crate) fn peak_bytes(&self) -> usize {
+        self.peak_bytes
     }
 }
 

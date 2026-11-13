@@ -1,7 +1,8 @@
 //! bytecode evaluator (VIII.4.1~VIII.4.5).
 //!
-//! 평가는 [`EvalLimits`]의 instruction budget, frame(공유 block 중첩) 깊이, operand stack 깊이 안에서만
-//! 진행합니다(VIII.4.5). 한도를 넘는 비정상적으로 큰 표현식은 typed 오류로 종료하며 Rust stack을 쓰지 않습니다.
+//! 평가는 [`EvalLimits`]의 instruction budget, frame(공유 block 중첩) 깊이, operand stack 깊이, 보유 값 bytes
+//! 안에서만 진행합니다(VIII.4.5). 한도를 넘는 비정상적으로 큰 표현식은 typed 오류로 종료하며 Rust stack을 쓰지
+//! 않습니다.
 //!
 //! `if`·`match`·`and`·`or`는 compiler가 만든 jump로 short-circuit 실행합니다(VIII.4.3). 선택되지 않은 branch의
 //! 명령·공유 block은 실행하지 않으므로 그 안의 오류도 발생하지 않습니다.
@@ -14,8 +15,8 @@ use stellar_core_types::typed_value::TypedValue;
 
 use crate::bytecode::{Instr, Program};
 use crate::eval::{
-    apply_binary, apply_unary, load_reference, truth, BoundedStack, EvalError, EvalErrorKind,
-    ReferenceValues,
+    apply_binary, apply_unary, load_reference, truth, value_heap_bytes, BoundedStack, EvalError,
+    EvalErrorKind, ReferenceValues,
 };
 use crate::function_eval::apply_function;
 
@@ -28,6 +29,8 @@ pub struct EvalTrace {
     pub block_runs: u64,
     /// operand stack의 최대 깊이. 항상 [`EvalLimits::max_stack_depth`] 이하입니다.
     pub peak_stack_depth: usize,
+    /// stack과 공유 결과 캐시가 동시에 보유한 최대 값 bytes. 항상 [`EvalLimits::max_value_bytes`] 이하입니다.
+    pub peak_value_bytes: usize,
 }
 
 /// 평가 자원 제한 (VIII.4.5).
@@ -41,14 +44,20 @@ pub struct EvalLimits {
     pub max_call_depth: usize,
     /// operand stack 최대 깊이.
     pub max_stack_depth: usize,
+    /// operand stack과 공유 결과 캐시가 함께 보유할 수 있는 값의 최대 heap bytes
+    /// ([`value_heap_bytes`](crate::eval::value_heap_bytes) 합). 공유 문자열의 복제가 stack에 쌓이는 증폭을
+    /// 막습니다. 진행 중인 함수 결과 하나([`MAX_STRING_BYTES`](crate::eval::MAX_STRING_BYTES) 이하)는 검사 직전에
+    /// 잠시 더 존재할 수 있습니다.
+    pub max_value_bytes: usize,
 }
 
 impl EvalLimits {
-    /// 기본 한도: 명령 1,000,000개, frame 256개, operand 65,536개.
+    /// 기본 한도: 명령 1,000,000개, frame 256개, operand 65,536개, 값 16 MiB(문자열 결과 상한의 16배).
     pub const DEFAULT: EvalLimits = EvalLimits {
         instruction_budget: 1_000_000,
         max_call_depth: 256,
         max_stack_depth: 65_536,
+        max_value_bytes: 16 * crate::eval::MAX_STRING_BYTES,
     };
 }
 
@@ -79,14 +88,15 @@ impl Program {
 
     /// 주어진 한도로 평가하고 실행 기록을 함께 돌려줍니다(VIII.4.5).
     ///
-    /// operand stack 깊이는 push 전에 검사하므로 stack은 어떤 순간에도 `max_stack_depth`개를 넘지 않습니다.
+    /// operand stack 깊이와 값 bytes는 push 전에 검사하므로 stack은 어떤 순간에도 `max_stack_depth`개를 넘지 않고,
+    /// stack·공유 결과 캐시가 보유한 값은 `max_value_bytes`를 넘지 않습니다.
     pub fn evaluate_with_limits(
         &self,
         values: &dyn ReferenceValues,
         limits: EvalLimits,
     ) -> Result<(Option<TypedValue>, EvalTrace), EvalError> {
         let mut trace = EvalTrace::default();
-        let mut stack = BoundedStack::new(limits.max_stack_depth);
+        let mut stack = BoundedStack::new(limits.max_stack_depth, limits.max_value_bytes);
         let mut cache: Vec<Option<Option<TypedValue>>> = vec![None; self.blocks().len()];
         let mut frames = vec![Frame { block: 0, pc: 0 }];
         trace.block_runs = 1;
@@ -118,7 +128,7 @@ impl Program {
                         .constants()
                         .get(index as usize)
                         .ok_or_else(|| malformed(node))?;
-                    stack.push(value.clone()).map_err(fail)?;
+                    stack.push_clone(value).map_err(fail)?;
                 }
                 Instr::LoadRef(index) => {
                     let (target, expected) = self
@@ -131,7 +141,7 @@ impl Program {
                 Instr::Eval(index) => {
                     let slot = cache.get(index as usize).ok_or_else(|| malformed(node))?;
                     match slot {
-                        Some(value) => stack.push(value.clone()).map_err(fail)?,
+                        Some(value) => stack.push_clone(value).map_err(fail)?,
                         None => {
                             if frames.len() >= limits.max_call_depth {
                                 return Err(fail(EvalErrorKind::CallDepthExceeded {
@@ -194,6 +204,7 @@ impl Program {
                     let finished = frames.pop().ok_or_else(|| malformed(node))?;
                     if frames.is_empty() {
                         trace.peak_stack_depth = stack.peak_depth();
+                        trace.peak_value_bytes = stack.peak_bytes();
                         return if stack.is_empty() {
                             Ok((value, trace))
                         } else {
@@ -201,6 +212,8 @@ impl Program {
                         };
                     }
                     if let Some(slot) = cache.get_mut(finished.block) {
+                        // 캐시 복제도 같은 값 bytes 한도에 포함합니다(평가가 끝날 때까지 보유).
+                        stack.hold(value_heap_bytes(&value)).map_err(fail)?;
                         *slot = Some(value.clone());
                     }
                     stack.push(value).map_err(fail)?;
@@ -1138,6 +1151,7 @@ mod limit_tests {
 
     use super::*;
     use crate::ast::{ExprNode, ExprNodeId, ExpressionAst, ReferenceTarget};
+    use crate::functions::FunctionId;
     use crate::ops::{BinaryOp, UnaryOp};
     use crate::types::TypeSpec;
 
@@ -1358,6 +1372,87 @@ mod limit_tests {
         assert_eq!(
             with_limit(0).expect_err("빈 한도").node,
             Some(id(2_000_001))
+        );
+    }
+
+    /// `e(1) and (e(2) and … e(k))`, `e(i) = c(i) == c(i)`, `c(i) = concat(H, "i")` — `c(i)`는 공유 node라서
+    /// 결과가 캐시에 남습니다. `H`는 `half` bytes 공유 literal입니다.
+    fn cached_concat_chain(k: u64, half: usize) -> ExpressionAst {
+        let shared = id(9_000_000);
+        let e = |n: u64| id(1_000 + n);
+        let c = |n: u64| id(2_000 + n);
+        let suffix = |n: u64| id(3_000 + n);
+        let mut nodes = vec![ExprNode::literal(
+            shared,
+            TypedValue::String("h".repeat(half)),
+        )];
+        for n in 1..=k {
+            if n + 1 < k {
+                nodes.push(ExprNode::binary(id(n), BinaryOp::And, e(n), id(n + 1)));
+            } else if n + 1 == k {
+                nodes.push(ExprNode::binary(id(n), BinaryOp::And, e(n), e(k)));
+            }
+            nodes.push(ExprNode::binary(e(n), BinaryOp::Equal, c(n), c(n)));
+            nodes.push(ExprNode::call(
+                c(n),
+                FunctionId::Concat,
+                &[shared, suffix(n)],
+            ));
+            nodes.push(ExprNode::literal(
+                suffix(n),
+                TypedValue::String(n.to_string()),
+            ));
+        }
+        ExpressionAst::new(id(1), nodes).expect("유효(k ≥ 2)")
+    }
+
+    #[test]
+    fn cached_shared_results_count_toward_value_limit() {
+        let half = 512 * 1024;
+        let limits = EvalLimits {
+            max_value_bytes: 4 << 20,
+            ..EvalLimits::DEFAULT
+        };
+        // 5개: 캐시 5 × 512 KiB + 비교 중 stack 2개 ≈ 3.5 MiB → 통과.
+        let program = compile(&cached_concat_chain(5, half));
+        let (value, trace) = program
+            .evaluate_with_limits(&BTreeMap::new(), limits)
+            .expect("한도 안");
+        assert_eq!(value, Some(TypedValue::Boolean(true)));
+        assert!(trace.peak_value_bytes <= limits.max_value_bytes);
+        assert!(
+            trace.peak_value_bytes >= 5 * half,
+            "캐시 보유분도 계량: {}",
+            trace.peak_value_bytes
+        );
+        // 10개: 캐시가 누적되어 한도 초과(캐시를 계량하지 않으면 stack만으로는 1 MiB 남짓).
+        let program = compile(&cached_concat_chain(10, half));
+        let error = program
+            .evaluate_with_limits(&BTreeMap::new(), limits)
+            .expect_err("캐시 누적 초과");
+        assert_eq!(
+            error.kind,
+            EvalErrorKind::ValueMemoryExceeded { limit: 4 << 20 }
+        );
+        // 기본 한도(16 MiB)에서는 같은 program이 정상 종료합니다.
+        let (_, trace) = program
+            .evaluate_traced(&BTreeMap::new())
+            .expect("기본 한도");
+        assert!(trace.peak_value_bytes <= EvalLimits::DEFAULT.max_value_bytes);
+    }
+
+    #[test]
+    fn value_heap_bytes_measures_heap_payloads() {
+        use crate::eval::value_heap_bytes;
+        assert_eq!(value_heap_bytes(&None), 0);
+        assert_eq!(value_heap_bytes(&Some(one())), 0);
+        assert_eq!(
+            value_heap_bytes(&Some(TypedValue::String("가나".to_string()))),
+            6
+        );
+        assert_eq!(
+            EvalLimits::DEFAULT.max_value_bytes,
+            16 * crate::eval::MAX_STRING_BYTES
         );
     }
 }
