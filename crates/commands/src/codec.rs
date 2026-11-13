@@ -20,6 +20,7 @@ use stellar_core_types::ids::StableId;
 
 use crate::command::Command;
 use crate::kind::CommandKind;
+use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
 use crate::property::SetProperty;
 
@@ -284,6 +285,10 @@ fn encode_payload(command: &Command, out: &mut Writer) {
         Command::DeleteSubtree(command) => command.encode_into(out),
         Command::MoveNode(command) => command.encode_into(out),
         Command::SetProperty(command) => command.encode_into(out),
+        Command::InsertModifier(command) => command.encode_into(out),
+        Command::RemoveModifier(command) => command.encode_into(out),
+        Command::MoveModifier(command) => command.encode_into(out),
+        Command::SetModifierProperty(command) => command.encode_into(out),
         #[cfg(test)]
         Command::TestProbe(probe) => {
             out.id(probe.node);
@@ -318,6 +323,16 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         CommandKind::DeleteSubtree => DeleteSubtree::decode_from(input).map(Command::DeleteSubtree),
         CommandKind::MoveNode => MoveNode::decode_from(input).map(Command::MoveNode),
         CommandKind::SetProperty => SetProperty::decode_from(input).map(Command::SetProperty),
+        CommandKind::InsertModifier => {
+            InsertModifier::decode_from(input).map(Command::InsertModifier)
+        }
+        CommandKind::RemoveModifier => {
+            RemoveModifier::decode_from(input).map(Command::RemoveModifier)
+        }
+        CommandKind::MoveModifier => MoveModifier::decode_from(input).map(Command::MoveModifier),
+        CommandKind::SetModifierProperty => {
+            SetModifierProperty::decode_from(input).map(Command::SetModifierProperty)
+        }
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {
             node: input.id()?,

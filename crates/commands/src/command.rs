@@ -23,6 +23,7 @@ use stellar_document::model::{DocumentModel, ModelError};
 
 use crate::edit::EditContext;
 use crate::kind::CommandKind;
+use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
 use crate::property::{PropertyValueType, SetProperty};
 
@@ -245,6 +246,14 @@ pub enum Command {
     MoveNode(MoveNode),
     /// node 속성 변경 (VII.2.4).
     SetProperty(SetProperty),
+    /// modifier 삽입 (VII.2.6).
+    InsertModifier(InsertModifier),
+    /// modifier 제거 (VII.2.6).
+    RemoveModifier(RemoveModifier),
+    /// modifier 순서 변경 (VII.2.6).
+    MoveModifier(MoveModifier),
+    /// modifier 속성 변경 (VII.2.6).
+    SetModifierProperty(SetModifierProperty),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -273,6 +282,10 @@ impl Command {
             Command::DeleteSubtree(_) => CommandKind::DeleteSubtree,
             Command::MoveNode(_) => CommandKind::MoveNode,
             Command::SetProperty(_) => CommandKind::SetProperty,
+            Command::InsertModifier(_) => CommandKind::InsertModifier,
+            Command::RemoveModifier(_) => CommandKind::RemoveModifier,
+            Command::MoveModifier(_) => CommandKind::MoveModifier,
+            Command::SetModifierProperty(_) => CommandKind::SetModifierProperty,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -285,6 +298,10 @@ impl Command {
             Command::DeleteSubtree(command) => command.validate(model),
             Command::MoveNode(command) => command.validate(model),
             Command::SetProperty(command) => command.validate(model),
+            Command::InsertModifier(command) => command.validate(model),
+            Command::RemoveModifier(command) => command.validate(model),
+            Command::MoveModifier(command) => command.validate(model),
+            Command::SetModifierProperty(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -297,6 +314,12 @@ impl Command {
             Command::DeleteSubtree(command) => command.invert(model).map(Command::InsertNode),
             Command::MoveNode(command) => command.invert(model).map(Command::MoveNode),
             Command::SetProperty(command) => command.invert(model).map(Command::SetProperty),
+            Command::InsertModifier(command) => Ok(Command::RemoveModifier(command.invert())),
+            Command::RemoveModifier(command) => command.invert(model).map(Command::InsertModifier),
+            Command::MoveModifier(command) => command.invert(model).map(Command::MoveModifier),
+            Command::SetModifierProperty(command) => {
+                command.invert(model).map(Command::SetModifierProperty)
+            }
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -309,6 +332,10 @@ impl Command {
             Command::DeleteSubtree(command) => command.apply(ctx),
             Command::MoveNode(command) => command.apply(ctx),
             Command::SetProperty(command) => command.apply(ctx),
+            Command::InsertModifier(command) => command.apply(ctx),
+            Command::RemoveModifier(command) => command.apply(ctx),
+            Command::MoveModifier(command) => command.apply(ctx),
+            Command::SetModifierProperty(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

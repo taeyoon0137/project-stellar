@@ -25,10 +25,11 @@ use stellar_core_types::color::Color;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyKey;
 use stellar_core_types::reference::NodeRef;
-use stellar_core_types::value::{Size2, Transform2D};
+use stellar_core_types::value::{FiniteF32, Size2, Transform2D, Vec2};
 use stellar_document::frame::{keys as frame_keys, Border, Clipping, CornerRadius, FramePayload};
 use stellar_document::frame_metadata::{frame_property, FramePropertyType};
 use stellar_document::model::DocumentModel;
+use stellar_document::modifier::{BlendMode, BooleanOp};
 use stellar_document::modifier_metadata::InvalidationSet;
 use stellar_document::node_kind::NodeKind;
 use stellar_document::records::{NodePayload, NodeRecord};
@@ -60,6 +61,22 @@ pub enum PropertyValueType {
     CornerRadius,
     /// 선택적 layout 참조.
     OptionalLayoutRef,
+    /// boolean 연산 종류(modifier, VII.2.6).
+    BooleanOp,
+    /// node 참조 목록(modifier).
+    NodeRefList,
+    /// node 참조 하나(modifier, NIL = 미지정).
+    NodeRef,
+    /// 비음수 finite 수(modifier).
+    NonNegative,
+    /// 색(modifier).
+    Color,
+    /// 2D 오프셋(modifier).
+    Offset,
+    /// 0..=1 값(modifier).
+    UnitInterval,
+    /// blend mode(modifier).
+    BlendMode,
 }
 
 impl PropertyValueType {
@@ -75,6 +92,14 @@ impl PropertyValueType {
             PropertyValueType::OptionalBorder => "optional-border",
             PropertyValueType::CornerRadius => "corner-radius",
             PropertyValueType::OptionalLayoutRef => "optional-layout-ref",
+            PropertyValueType::BooleanOp => "boolean-op",
+            PropertyValueType::NodeRefList => "node-ref-list",
+            PropertyValueType::NodeRef => "node-ref",
+            PropertyValueType::NonNegative => "non-negative",
+            PropertyValueType::Color => "color",
+            PropertyValueType::Offset => "offset",
+            PropertyValueType::UnitInterval => "unit-interval",
+            PropertyValueType::BlendMode => "blend-mode",
         }
     }
 }
@@ -106,6 +131,22 @@ pub enum PropertyValue {
     CornerRadius(CornerRadius),
     /// 선택적 layout 참조.
     OptionalLayoutRef(Option<StableId>),
+    /// boolean 연산.
+    BooleanOp(BooleanOp),
+    /// node 참조 목록.
+    NodeRefList(Vec<NodeRef>),
+    /// node 참조.
+    NodeRef(NodeRef),
+    /// 비음수 수(범위는 payload 검증이 확인).
+    NonNegative(FiniteF32),
+    /// 색.
+    Color(Color),
+    /// 오프셋.
+    Offset(Vec2),
+    /// 0..=1 값(범위는 payload 검증이 확인).
+    UnitInterval(FiniteF32),
+    /// blend mode.
+    BlendMode(BlendMode),
 }
 
 const TAG_BOOL: u8 = 1;
@@ -117,6 +158,40 @@ const TAG_OPTIONAL_COLOR: u8 = 6;
 const TAG_OPTIONAL_BORDER: u8 = 7;
 const TAG_CORNER_RADIUS: u8 = 8;
 const TAG_OPTIONAL_LAYOUT_REF: u8 = 9;
+const TAG_BOOLEAN_OP: u8 = 10;
+const TAG_NODE_REF_LIST: u8 = 11;
+const TAG_NODE_REF: u8 = 12;
+const TAG_NON_NEGATIVE: u8 = 13;
+const TAG_COLOR: u8 = 14;
+const TAG_OFFSET: u8 = 15;
+const TAG_UNIT_INTERVAL: u8 = 16;
+const TAG_BLEND_MODE: u8 = 17;
+
+/// boolean 연산 저장 tag(document `BooleanOp` repr과 같은 값).
+fn boolean_op_from_tag(tag: u8) -> Option<BooleanOp> {
+    [
+        BooleanOp::Union,
+        BooleanOp::Subtract,
+        BooleanOp::Intersect,
+        BooleanOp::Exclude,
+    ]
+    .into_iter()
+    .find(|op| *op as u8 == tag)
+}
+
+/// blend mode 저장 tag(document `BlendMode` repr과 같은 값).
+fn blend_mode_from_tag(tag: u8) -> Option<BlendMode> {
+    [
+        BlendMode::Normal,
+        BlendMode::Multiply,
+        BlendMode::Screen,
+        BlendMode::Overlay,
+        BlendMode::Darken,
+        BlendMode::Lighten,
+    ]
+    .into_iter()
+    .find(|mode| *mode as u8 == tag)
+}
 
 impl PropertyValue {
     /// 값의 타입.
@@ -131,6 +206,14 @@ impl PropertyValue {
             PropertyValue::OptionalBorder(_) => PropertyValueType::OptionalBorder,
             PropertyValue::CornerRadius(_) => PropertyValueType::CornerRadius,
             PropertyValue::OptionalLayoutRef(_) => PropertyValueType::OptionalLayoutRef,
+            PropertyValue::BooleanOp(_) => PropertyValueType::BooleanOp,
+            PropertyValue::NodeRefList(_) => PropertyValueType::NodeRefList,
+            PropertyValue::NodeRef(_) => PropertyValueType::NodeRef,
+            PropertyValue::NonNegative(_) => PropertyValueType::NonNegative,
+            PropertyValue::Color(_) => PropertyValueType::Color,
+            PropertyValue::Offset(_) => PropertyValueType::Offset,
+            PropertyValue::UnitInterval(_) => PropertyValueType::UnitInterval,
+            PropertyValue::BlendMode(_) => PropertyValueType::BlendMode,
         }
     }
 
@@ -193,6 +276,42 @@ impl PropertyValue {
                 out.u8(TAG_OPTIONAL_LAYOUT_REF);
                 out.opt_id(*layout);
             }
+            PropertyValue::BooleanOp(op) => {
+                out.u8(TAG_BOOLEAN_OP);
+                out.u8(*op as u8);
+            }
+            PropertyValue::NodeRefList(refs) => {
+                out.u8(TAG_NODE_REF_LIST);
+                out.len(refs.len());
+                for target in refs {
+                    out.id(target.id());
+                }
+            }
+            PropertyValue::NodeRef(target) => {
+                out.u8(TAG_NODE_REF);
+                out.id(target.id());
+            }
+            PropertyValue::NonNegative(value) => {
+                out.u8(TAG_NON_NEGATIVE);
+                out.f32(value.get());
+            }
+            PropertyValue::Color(color) => {
+                out.u8(TAG_COLOR);
+                out.raw(&color.to_bytes());
+            }
+            PropertyValue::Offset(offset) => {
+                out.u8(TAG_OFFSET);
+                out.f32(offset.x());
+                out.f32(offset.y());
+            }
+            PropertyValue::UnitInterval(value) => {
+                out.u8(TAG_UNIT_INTERVAL);
+                out.f32(value.get());
+            }
+            PropertyValue::BlendMode(mode) => {
+                out.u8(TAG_BLEND_MODE);
+                out.u8(*mode as u8);
+            }
         }
     }
 
@@ -242,9 +361,39 @@ impl PropertyValue {
                     .map_err(|_| malformed("잘못된 corner radius"))
             }
             TAG_OPTIONAL_LAYOUT_REF => Ok(PropertyValue::OptionalLayoutRef(input.opt_id()?)),
+            TAG_BOOLEAN_OP => boolean_op_from_tag(input.u8()?)
+                .map(PropertyValue::BooleanOp)
+                .ok_or(malformed("알 수 없는 boolean 연산")),
+            TAG_NODE_REF_LIST => {
+                let count = input.len()?;
+                let mut refs = Vec::with_capacity(count);
+                for _ in 0..count {
+                    refs.push(NodeRef::new(input.id()?));
+                }
+                Ok(PropertyValue::NodeRefList(refs))
+            }
+            TAG_NODE_REF => Ok(PropertyValue::NodeRef(NodeRef::new(input.id()?))),
+            TAG_NON_NEGATIVE => finite(input.f32()?).map(PropertyValue::NonNegative),
+            TAG_COLOR => Ok(PropertyValue::Color(read_color(input)?)),
+            TAG_OFFSET => {
+                let (x, y) = (input.f32()?, input.f32()?);
+                Vec2::new(x, y)
+                    .map(PropertyValue::Offset)
+                    .map_err(|_| malformed("잘못된 offset"))
+            }
+            TAG_UNIT_INTERVAL => finite(input.f32()?).map(PropertyValue::UnitInterval),
+            TAG_BLEND_MODE => blend_mode_from_tag(input.u8()?)
+                .map(PropertyValue::BlendMode)
+                .ok_or(malformed("알 수 없는 blend mode")),
             _ => Err(malformed("알 수 없는 속성 값 tag")),
         }
     }
+}
+
+fn finite(value: f32) -> Result<FiniteF32, CommandCodecError> {
+    FiniteF32::new(value).map_err(|_| CommandCodecError::Malformed {
+        reason: "유한하지 않은 f32",
+    })
 }
 
 pub(crate) fn read_color(input: &mut Reader<'_>) -> Result<Color, CommandCodecError> {
@@ -549,6 +698,21 @@ mod tests {
                 PropertyValue::CornerRadius(CornerRadius::new(1.0, 2.0, 3.0, 4.0).unwrap())
             }
             PropertyValueType::OptionalLayoutRef => PropertyValue::OptionalLayoutRef(Some(sid(77))),
+            // modifier 값 타입(VII.2.6).
+            PropertyValueType::BooleanOp => PropertyValue::BooleanOp(BooleanOp::Intersect),
+            PropertyValueType::NodeRefList => {
+                PropertyValue::NodeRefList(vec![NodeRef::new(sid(5)), NodeRef::new(sid(6))])
+            }
+            PropertyValueType::NodeRef => PropertyValue::NodeRef(NodeRef::new(sid(5))),
+            PropertyValueType::NonNegative => {
+                PropertyValue::NonNegative(FiniteF32::new(2.0).unwrap())
+            }
+            PropertyValueType::Color => PropertyValue::Color(red),
+            PropertyValueType::Offset => PropertyValue::Offset(Vec2::new(1.5, -2.0).unwrap()),
+            PropertyValueType::UnitInterval => {
+                PropertyValue::UnitInterval(FiniteF32::new(0.5).unwrap())
+            }
+            PropertyValueType::BlendMode => PropertyValue::BlendMode(BlendMode::Screen),
         }
     }
 

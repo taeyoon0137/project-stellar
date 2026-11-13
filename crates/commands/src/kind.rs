@@ -21,6 +21,14 @@ pub enum CommandKind {
     MoveNode,
     /// node 속성 변경 (VII.2.4).
     SetProperty,
+    /// modifier 삽입 (VII.2.6).
+    InsertModifier,
+    /// modifier 제거 (VII.2.6).
+    RemoveModifier,
+    /// modifier 순서 변경 (VII.2.6).
+    MoveModifier,
+    /// modifier 속성 변경 (VII.2.6).
+    SetModifierProperty,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -33,6 +41,10 @@ impl CommandKind {
         CommandKind::DeleteSubtree,
         CommandKind::MoveNode,
         CommandKind::SetProperty,
+        CommandKind::InsertModifier,
+        CommandKind::RemoveModifier,
+        CommandKind::MoveModifier,
+        CommandKind::SetModifierProperty,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -45,6 +57,10 @@ impl CommandKind {
             CommandKind::DeleteSubtree => 0x0002,
             CommandKind::MoveNode => 0x0003,
             CommandKind::SetProperty => 0x0010,
+            CommandKind::InsertModifier => 0x0020,
+            CommandKind::RemoveModifier => 0x0021,
+            CommandKind::MoveModifier => 0x0022,
+            CommandKind::SetModifierProperty => 0x0023,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -69,6 +85,10 @@ impl CommandKind {
             CommandKind::DeleteSubtree => "delete-subtree",
             CommandKind::MoveNode => "move-node",
             CommandKind::SetProperty => "set-property",
+            CommandKind::InsertModifier => "insert-modifier",
+            CommandKind::RemoveModifier => "remove-modifier",
+            CommandKind::MoveModifier => "move-modifier",
+            CommandKind::SetModifierProperty => "set-modifier-property",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -114,6 +134,10 @@ mod tests {
                 (0x0002, "delete-subtree"),
                 (0x0003, "move-node"),
                 (0x0010, "set-property"),
+                (0x0020, "insert-modifier"),
+                (0x0021, "remove-modifier"),
+                (0x0022, "move-modifier"),
+                (0x0023, "set-modifier-property"),
             ]
         );
     }
