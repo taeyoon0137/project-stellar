@@ -18,3 +18,6 @@ pub mod instance;
 
 /// 인스턴스 expansion view (IX.2.2).
 pub mod expansion;
+
+/// ComponentSlot (IX.3.1).
+pub mod slot;

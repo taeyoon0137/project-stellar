@@ -23,6 +23,7 @@ use super::codec::{
     capacity_hint, put_bool, put_bytes, put_count, put_id, put_kind, put_opt_id, put_order_key,
     put_str, Malformed, Reader,
 };
+use super::slot::{ComponentSlot, SlotError};
 use crate::node_kind::NodeKind;
 
 /// Component Property의 안정 식별자. node·slot 식별자와 타입이 섞이지 않습니다.
@@ -125,6 +126,14 @@ pub enum ComponentDefinitionError {
         /// 원인.
         reason: &'static str,
     },
+    /// slot record가 잘못됐습니다(IX.3.1, library 디코딩 경로).
+    Slot(SlotError),
+}
+
+impl From<SlotError> for ComponentDefinitionError {
+    fn from(err: SlotError) -> ComponentDefinitionError {
+        ComponentDefinitionError::Slot(err)
+    }
 }
 
 impl fmt::Display for ComponentDefinitionError {
@@ -164,6 +173,7 @@ impl fmt::Display for ComponentDefinitionError {
             ComponentDefinitionError::Malformed { reason } => {
                 write!(f, "컴포넌트 정의 binary 형식 위반: {reason}")
             }
+            ComponentDefinitionError::Slot(err) => write!(f, "slot 오류: {err}"),
         }
     }
 }
@@ -633,11 +643,12 @@ impl ComponentDefinition {
     }
 }
 
-/// library에 등록된 컴포넌트 한 개: 정의 + 정의 tree.
+/// library에 등록된 컴포넌트 한 개: 정의 + 정의 tree + Slot record(IX.3.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentEntry {
     definition: ComponentDefinition,
     tree: DefinitionTree,
+    slots: BTreeMap<ComponentSlotId, ComponentSlot>,
 }
 
 impl ComponentEntry {
@@ -649,6 +660,25 @@ impl ComponentEntry {
     /// 정의 tree.
     pub fn tree(&self) -> &DefinitionTree {
         &self.tree
+    }
+
+    /// slot record.
+    pub fn slot(&self, slot: ComponentSlotId) -> Option<&ComponentSlot> {
+        self.slots.get(&slot)
+    }
+
+    /// slot record(slot id 오름차순).
+    pub fn slots(&self) -> impl Iterator<Item = &ComponentSlot> + '_ {
+        self.slots.values()
+    }
+
+    /// host node에 붙은 slot.
+    pub fn slot_for_host(&self, host: StableId) -> Option<&ComponentSlot> {
+        self.slots.values().find(|slot| slot.host.id() == host)
+    }
+
+    pub(super) fn insert_slot(&mut self, slot: ComponentSlot) {
+        self.slots.insert(slot.id, slot);
     }
 }
 
@@ -699,14 +729,24 @@ impl ComponentLibrary {
         for node in tree.iter() {
             self.node_owner.insert(node.id, definition.id);
         }
-        self.entries
-            .insert(definition.id, ComponentEntry { definition, tree });
+        self.entries.insert(
+            definition.id,
+            ComponentEntry {
+                definition,
+                tree,
+                slots: BTreeMap::new(),
+            },
+        );
         Ok(())
     }
 
     /// 컴포넌트를 찾습니다.
     pub fn get(&self, component: ComponentRef) -> Option<&ComponentEntry> {
         self.entries.get(&component.id())
+    }
+
+    pub(super) fn entry_mut(&mut self, component: ComponentRef) -> Option<&mut ComponentEntry> {
+        self.entries.get_mut(&component.id())
     }
 
     /// node를 소유한 컴포넌트.
@@ -751,6 +791,10 @@ impl ComponentLibrary {
         for entry in self.entries.values() {
             entry.definition.encode_into(&mut buf);
             entry.tree.encode_into(&mut buf);
+            put_count(&mut buf, entry.slots.len());
+            for slot in entry.slots.values() {
+                slot.encode_into(&mut buf);
+            }
         }
         buf
     }
@@ -762,8 +806,14 @@ impl ComponentLibrary {
         let mut library = ComponentLibrary::new();
         for _ in 0..count {
             let definition = ComponentDefinition::decode_from(&mut reader)?;
+            let component = definition.reference();
             let tree = DefinitionTree::decode_from(&mut reader)?;
             library.insert(definition, tree)?;
+            let slot_count = reader.count()?;
+            for _ in 0..slot_count {
+                let slot = ComponentSlot::decode_from(&mut reader)?;
+                library.add_slot(component, slot)?;
+            }
         }
         reader.expect_end()?;
         if library.encode() != bytes {
