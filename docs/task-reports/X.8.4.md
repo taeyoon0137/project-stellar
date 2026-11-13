@@ -40,7 +40,7 @@
 | 검사 | 결과 |
 |---|---|
 | **fixture 정확**(`missing_font_fixture_is_exact`): Text 5개(중복 입력 1개 포함)에서 A(Project)→`[1,2,4]`, A(System)→`[5]`, C(System, wght 700)→`[2]` 세 진단과 face index·axes 일치, 모든 face 등록된 Text 3은 미포함 | 통과 |
-| **텍스트 내용 미포함**(`diagnostics_never_contain_text_content`): fixture Text 내용 문자열과 그 일부가 모든 진단의 Display·Debug 출력에 없음 | 통과 |
+| **텍스트 내용 미포함**(구조적 보장, `diagnostics_have_no_text_content_field`): `TextFontUsage`·`MissingFontDiagnostic`에 내용 필드가 없음을 exhaustive 비구조화로 컴파일 시 고정하고, Display가 code·face key·출처·axes·StableId만으로 재구성한 문자열과 같음을 확인. 행동 증명이 아니라 구조적 보장입니다(2026-11-14 리뷰 반영으로 내용 문자열 비포함 검사를 대체) | 통과 |
 | Display 형식 고정(axes 있음·없음 두 경우) | 통과 |
 | 입력 순서를 뒤집어도 같은 결과 | 통과 |
 | 모든 face 등록 시·빈 입력 시 진단 0개 | 통과 |

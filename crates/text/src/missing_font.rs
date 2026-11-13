@@ -126,14 +126,12 @@ mod tests {
         FontFallbackChain::new(faces).expect("chain")
     }
 
-    /// 문서 쪽 Text node를 흉내 낸 fixture 레코드. 진단 입력에는 id와 chain만 넘깁니다.
+    /// Text node fixture 레코드(id와 chain). 진단 입력 타입에는 Text 내용 필드가 없으므로 fixture도
+    /// 내용을 갖지 않습니다.
     struct TextNodeFixture {
         id: StableId,
-        content: &'static str,
         chain: FontFallbackChain,
     }
-
-    const SECRET: &str = "기밀 원고: 출시일 12월 1일";
 
     fn fixture_nodes() -> Vec<TextNodeFixture> {
         let a_project = face(FontSource::Project, 0x0A);
@@ -142,27 +140,22 @@ mod tests {
         vec![
             TextNodeFixture {
                 id: id(4),
-                content: SECRET,
                 chain: chain(vec![a_project.clone()]),
             },
             TextNodeFixture {
                 id: id(1),
-                content: SECRET,
                 chain: chain(vec![a_project.clone(), b_system.clone()]),
             },
             TextNodeFixture {
                 id: id(2),
-                content: SECRET,
                 chain: chain(vec![c_bold, a_project]),
             },
             TextNodeFixture {
                 id: id(3),
-                content: SECRET,
                 chain: chain(vec![b_system]),
             },
             TextNodeFixture {
                 id: id(5),
-                content: SECRET,
                 chain: chain(vec![face(FontSource::System, 0x0A)]),
             },
         ]
@@ -232,22 +225,44 @@ mod tests {
         assert_eq!(collect_missing_fonts(&reversed, &registry()), forward);
     }
 
+    /// "텍스트 내용 미포함"은 **구조적 보장**입니다. 진단 입력([`TextFontUsage`])과 진단
+    /// ([`MissingFontDiagnostic`])에 Text 내용 필드가 없으므로 내용이 진단에 들어올 경로가 없습니다.
+    /// 아래 exhaustive 비구조화는 두 타입에 필드가 추가되면 컴파일이 실패하므로, 내용 필드를 추가하는
+    /// 변경은 이 테스트를 함께 고쳐야 합니다. Display는 code·face key·출처·axes·StableId만으로
+    /// 재구성되는 문자열과 정확히 같아야 합니다(다른 구성 요소 없음).
     #[test]
-    fn diagnostics_never_contain_text_content() {
+    fn diagnostics_have_no_text_content_field() {
         let nodes = fixture_nodes();
-        assert!(nodes.iter().all(|n| n.content == SECRET));
-        let diagnostics = collect_missing_fonts(&usages(&nodes), &registry());
+        let input = usages(&nodes);
+        for usage in &input {
+            let TextFontUsage {
+                text_id: _,
+                chain: _,
+            } = *usage;
+        }
+        let diagnostics = collect_missing_fonts(&input, &registry());
         assert!(!diagnostics.is_empty());
         for diagnostic in &diagnostics {
-            let display = diagnostic.to_string();
-            let debug = format!("{diagnostic:?}");
-            for fragment in [SECRET, "기밀", "출시일"] {
-                assert!(
-                    !display.contains(fragment),
-                    "Display에 내용 포함: {display}"
-                );
-                assert!(!debug.contains(fragment), "Debug에 내용 포함: {debug}");
+            let MissingFontDiagnostic {
+                requested,
+                affected_text_ids,
+            } = diagnostic;
+            let mut expected = format!(
+                "missing-font: face {} (출처 {}",
+                FontFaceKey::from(requested),
+                requested.source()
+            );
+            if !requested.variations().is_empty() {
+                expected.push_str(", axes");
+                for variation in requested.variations() {
+                    expected.push_str(&format!(" {}={}", variation.tag, variation.value.get()));
+                }
             }
+            expected.push_str(&format!(") 누락, 영향 Text {}개:", affected_text_ids.len()));
+            for id in affected_text_ids {
+                expected.push_str(&format!(" {id}"));
+            }
+            assert_eq!(diagnostic.to_string(), expected);
         }
     }
 
