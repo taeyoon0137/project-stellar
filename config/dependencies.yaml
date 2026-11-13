@@ -47,3 +47,10 @@ dependencies:
     purpose: "macOS IPC 상대·구독 CLI 실행 파일의 코드 서명 신원 확인(Security.framework SecCode·SecStaticCode binding) (ADR-0020)"
     replaceable: true
     planned_for: "XIX.1.6, XIX.1.7, XXIX.2.3"
+  - name: harfrust
+    ecosystem: cargo
+    version: "0.15.0"
+    license: "MIT"
+    approval: approved
+    purpose: "HarfBuzz 호환 순수 Rust text shaping 엔진 (stellar-text X.9.1, ADR-0016)"
+    replaceable: true

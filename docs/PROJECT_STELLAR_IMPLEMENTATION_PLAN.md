@@ -996,7 +996,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| X.9.1 | `[ ]` | 승인된 HarfBuzz binding을 dependencies policy에 등록하고 `text` crate에 안전 wrapper를 구현합니다. raw pointer는 wrapper 밖에 노출하지 않습니다. | simple Latin shaping fixture 통과, leak sanitizer clean. | I.3.2, X.8.2 |
+| X.9.1 | `[x]` | 승인된 HarfBuzz binding을 dependencies policy에 등록하고 `text` crate에 안전 wrapper를 구현합니다. raw pointer는 wrapper 밖에 노출하지 않습니다. | simple Latin shaping fixture 통과, leak sanitizer clean. | I.3.2, X.8.2 |
 | X.9.2 | `[ ]` | script/language/direction itemization을 구현합니다. 입력 문자열과 style run을 shaping runs로 분할합니다. | Latin+Arabic+한글 mixed fixture 통과. | X.9.1, VI.7.2 |
 | X.9.3 | `[ ]` | Unicode BiDi 알고리즘 구현 또는 승인 dependency wrapper를 추가합니다. visual order와 logical cluster mapping을 모두 유지합니다. | 공식 또는 고정 BiDi corpus 통과. | X.9.2 |
 | X.9.4 | `[ ]` | line break opportunity 계산을 공통 엔진으로 구현하고 locale 입력을 명시합니다. | 한글·일본어·영문·공백 fixture 통과. | X.9.2 |
