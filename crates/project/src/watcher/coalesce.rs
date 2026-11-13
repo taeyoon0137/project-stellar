@@ -153,6 +153,23 @@ impl ChangeCoalescer {
         out
     }
 
+    /// 조용한 구간을 기다리지 않고 current pointer를 지금 다시 확인합니다(넘침 rescan, XIII.2.6).
+    ///
+    /// 모아 둔 저장소 영역 경로는 결과에 포함하고, 저장소 밖 파일 event는 그대로 남겨 다음
+    /// [`ChangeCoalescer::poll`]에 맡깁니다.
+    pub fn rescan_pointer(&mut self, ledger: &OwnSaveLedger) -> Vec<ExternalChange> {
+        let mut out = Vec::new();
+        self.pointer_dirty = false;
+        self.settle_pointer(ledger, &mut out);
+        if self.awaiting.is_none() {
+            self.pending_storage.clear();
+        }
+        if self.pending_files.is_empty() && self.awaiting.is_none() {
+            self.last_event_at = None;
+        }
+        out
+    }
+
     /// current pointer를 확인하고 외부의 완성된 generation이면 하나로 내보냅니다.
     fn settle_pointer(&mut self, ledger: &OwnSaveLedger, out: &mut Vec<ExternalChange>) {
         let candidate = match self.tracker.observe(ledger) {
