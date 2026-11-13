@@ -24,3 +24,12 @@ pub mod graph;
 
 /// 전이 의존성 resolver (XV.2.2).
 pub mod resolver;
+
+/// 시스템 Git 실행 경계 (XV.2.4).
+pub mod git;
+
+/// 시스템 Git 기반 version 선택자 해석 (XV.2.4).
+pub mod git_refs;
+
+#[cfg(test)]
+pub(crate) mod test_support;
