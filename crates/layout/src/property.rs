@@ -28,6 +28,8 @@ pub enum LayoutProperty {
     Flex,
     /// 표시 여부 (X.3.5).
     Visibility,
+    /// Grid item 열·행 위치 (X.4.3).
+    GridPlacement,
 }
 
 impl LayoutProperty {
@@ -44,6 +46,7 @@ impl LayoutProperty {
             LayoutProperty::Transform => "transform",
             LayoutProperty::Flex => "flex",
             LayoutProperty::Visibility => "visibility",
+            LayoutProperty::GridPlacement => "grid-placement",
         }
     }
 }

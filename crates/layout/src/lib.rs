@@ -46,8 +46,6 @@ pub mod flex;
 pub mod grid;
 
 /// Grid track sizing (X.4.2, crate 내부).
-// 엔진 연결(X.4.3) 전까지는 단위 테스트에서만 호출합니다.
-#[cfg_attr(not(test), allow(dead_code))]
 mod grid_tracks;
 
 /// canonical bytes writer/reader (crate 내부).

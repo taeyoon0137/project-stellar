@@ -19,6 +19,7 @@ use crate::error::LayoutError;
 use crate::flex::{prepare_flex, PreparedFlex};
 use crate::free::{self, PreparedAnchors};
 use crate::geometry::{Axis, LayoutRect, LayoutSize};
+use crate::grid;
 use crate::input::{
     length_unit, ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode, TreeIndex,
 };
@@ -264,10 +265,7 @@ impl<'a> Engine<'a> {
         match &self.node(index).container {
             ContainerLayout::Free => free::measure(self, index, inner),
             ContainerLayout::Stack(_) => stack::measure(self, index, inner),
-            ContainerLayout::Grid(_) => Err(LayoutError::UnsupportedFeature {
-                node: self.nodes[index].id,
-                feature: "Grid 배치(X.4.3)",
-            }),
+            ContainerLayout::Grid(_) => grid::measure(self, index, inner),
         }
     }
 
@@ -306,12 +304,7 @@ impl<'a> Engine<'a> {
         let placements = match &self.node(index).container {
             ContainerLayout::Free => free::place(self, index, inner)?,
             ContainerLayout::Stack(_) => stack::place(self, index, inner)?,
-            ContainerLayout::Grid(_) => {
-                return Err(LayoutError::UnsupportedFeature {
-                    node: id,
-                    feature: "Grid 배치(X.4.3)",
-                })
-            }
+            ContainerLayout::Grid(_) => grid::place(self, index, inner)?,
         };
         let mut overflow = LayoutRect::at_origin(size);
         for (child, child_rect) in placements {

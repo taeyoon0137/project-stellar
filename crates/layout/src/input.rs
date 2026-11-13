@@ -29,7 +29,10 @@ use crate::free::{
     AxisAnchors, FreePosition,
 };
 use crate::geometry::Axis;
-use crate::grid::{decode_grid, encode_grid, validate_grid, GridLayout};
+use crate::grid::{
+    decode_grid, decode_item, encode_grid, encode_item, validate_grid, validate_item, GridItem,
+    GridLayout,
+};
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
 use crate::sizing::{validate_sizing, SIZING_FILL, SIZING_FIXED, SIZING_HUG, SIZING_PERCENTAGE};
@@ -118,6 +121,8 @@ pub struct LayoutNode {
     /// 표시 여부(X.3.5). `false`면 부모 배치에서 제외되고 subtree가 결과에 포함되지 않습니다.
     /// root에는 적용하지 않습니다(root는 항상 배치).
     pub visible: bool,
+    /// Grid 부모 안의 열·행 위치(X.4.3). 다른 배치 방식의 자식에서는 무시합니다.
+    pub grid: GridItem,
 }
 
 impl LayoutNode {
@@ -135,7 +140,14 @@ impl LayoutNode {
             transform: Transform2D::identity(),
             flex: FlexItem::default(),
             visible: true,
+            grid: GridItem::default(),
         }
+    }
+
+    /// Grid 부모 안의 열·행 위치를 지정합니다.
+    pub fn with_grid(mut self, grid: GridItem) -> LayoutNode {
+        self.grid = grid;
+        self
     }
 
     /// 표시 여부를 지정합니다.
@@ -326,7 +338,7 @@ impl LayoutInput {
                 match &self.nodes[parent_index].container {
                     ContainerLayout::Free => validate_anchor_combination(node)?,
                     ContainerLayout::Stack(stack) => validate_flex_combination(node, stack.axis)?,
-                    ContainerLayout::Grid(_) => {}
+                    ContainerLayout::Grid(grid) => validate_item(node.id, &node.grid, grid)?,
                 }
             }
         }
@@ -474,6 +486,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
     }
     encode_flex(w, &node.flex);
     w.bool(node.visible);
+    encode_item(w, &node.grid);
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
@@ -546,6 +559,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         .map_err(|_| LayoutError::NonFinite { field: "transform" })?;
     let flex = decode_flex(r)?;
     let visible = r.bool("visible flag")?;
+    let grid = decode_item(r)?;
     Ok(LayoutNode {
         id,
         children,
@@ -558,6 +572,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         transform,
         flex,
         visible,
+        grid,
     })
 }
 
