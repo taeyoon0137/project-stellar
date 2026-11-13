@@ -6,9 +6,11 @@
 //! - [`event`]: 플랫폼 독립 event 모델과 canonical 인코딩(XIII.2.1).
 //! - [`roots`]: 감시 root(프로젝트 root·외부 symlink target allowlist)와 경로 변환(XIII.2.2).
 //! - [`fsevents`]: macOS FSEvents adapter와 플랫폼 독립 normalize 규칙(XIII.2.2).
+//! - [`own_save`]: Stellar 자신의 저장이 만든 event 식별(XIII.2.4).
 
 pub mod event;
 pub mod fsevents;
+pub mod own_save;
 pub mod roots;
 
 use std::time::Duration;

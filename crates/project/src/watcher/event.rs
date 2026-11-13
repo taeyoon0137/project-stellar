@@ -67,6 +67,14 @@ impl WatchPath {
         Ok(WatchPath { root, relative })
     }
 
+    /// root 자신을 가리키는 경로(항상 유효).
+    pub fn root_of(root: WatchRootId) -> WatchPath {
+        WatchPath {
+            root,
+            relative: String::new(),
+        }
+    }
+
     /// 프로젝트 root 기준 경로.
     pub fn project(relative: impl Into<String>) -> Result<WatchPath, InvalidPathReason> {
         WatchPath::new(WatchRootId::PROJECT, relative)
