@@ -1099,7 +1099,7 @@ tools/xtask/
 | XI.7.1 | `[x]` | 이미지 decoder interface를 worker 전용으로 정의하고 decoded pixel format을 명시합니다. | malformed image corpus panic 없음. | VI.8.1 |
 | XI.7.2 | `[ ]` | mipmap 생성과 texture upload task를 구현합니다. | 크기별 expected mip count. | XI.7.1, XI.5.3 |
 | XI.7.3 | `[ ]` | texture cache key를 asset content hash, decode settings, color transform으로 정의합니다. | source path가 달라도 같은 content dedup. | V.1.5, XI.7.1 |
-| XI.7.4 | `[x]` | missing/decoding asset placeholder를 deterministic checker 또는 neutral icon으로 정의하고 양 backend 동일 data를 사용합니다. | screenshot fixture 동일. | VI.8.2 |
+| XI.7.4 | `[~]` | missing/decoding asset placeholder를 deterministic checker 또는 neutral icon으로 정의하고 양 backend 동일 data를 사용합니다. | screenshot fixture 동일. | VI.8.2 |
 
 ### XI.8 Metal backend
 

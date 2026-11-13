@@ -2,7 +2,7 @@
 
 - WBS: XI.7.4
 - 작업명: missing/decoding asset placeholder를 결정론적 checker로 정의하고 양 backend가 같은 data 사용
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — ADR-0006 4번 규칙에 따라 GPU 출력에 의존하는 "양 backend screenshot 동일"은 Metal backend(XI.8) screenshot fixture가 생길 때까지 확정하지 않습니다.
 - 선행: VI.8.2 (`develop`에서 완료: `339f981`)
 
 ## 필수 실행 환경
@@ -71,3 +71,4 @@
   규칙 차이로 경계 pixel 허용 오차 정책이 필요합니다(아키텍처 §10.2).
 - 기준 screenshot은 sRGB 인코딩 값 그대로입니다. 선형 합성 경로(blend·opacity)와 결합된 결과는
   후속 적합성 테스트 범위입니다.
+- 상태 정정(통합 리뷰): placeholder data와 CPU 기준 rasterization이 결정론적이라는 것만 증명했습니다. Metal screenshot fixture 비교는 XI.8 이후 추가하고, Direct3D 12 비교는 ADR-0006에 따라 보류합니다.
