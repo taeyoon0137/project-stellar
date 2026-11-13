@@ -1379,7 +1379,7 @@ tools/xtask/
 | XIV.3.1 | `[x]` | `SemanticSnapshot`을 프로젝트 metadata, documents, nodes, properties, tokens, components, assets refs의 StableId index로 정의합니다. runtime cache는 제외합니다. | HEAD/Index/WT snapshot build fixture 통과. | VI.10.4, XIV.2.6 |
 | XIV.3.2 | `[x]` | `SemanticChange` kind에 AddObject, RemoveObject, MoveObject, ReorderObject, SetProperty, Add/Remove/ChangeToken, ComponentInterfaceChange, AssetRefChange를 정의합니다. | kind golden test. | XIV.3.1 |
 | XIV.3.3 | `[x]` | object match는 StableId로만 수행하고 이름·geometry 유사도로 rename 추정하지 않습니다. | 같은 이름 다른 ID는 add/remove. | XIV.3.1 |
-| XIV.3.4 | `[ ]` | property diff는 `StableId + PropertyPath`와 canonical TypedValue를 비교합니다. float epsilon diff를 사용하지 않습니다. | bit-different finite float fixture change 탐지. | III.2.2, XIV.3.2 |
+| XIV.3.4 | `[x]` | property diff는 `StableId + PropertyPath`와 canonical TypedValue를 비교합니다. float epsilon diff를 사용하지 않습니다. | bit-different finite float fixture change 탐지. | III.2.2, XIV.3.2 |
 | XIV.3.5 | `[ ]` | move/reorder는 parent ID와 OrderKey의 의미 순서를 비교해 분류합니다. 저장 chunk 이동은 semantic change로 표시하지 않습니다. | rechunk-only fixture semantic diff 0. | III.5.2, V.6.5 |
 | XIV.3.6 | `[ ]` | component definition과 instance override diff를 별도 provenance와 함께 생성합니다. | definition change와 instance override 구분. | IX.1, IX.2 |
 | XIV.3.7 | `[ ]` | variant·binding·expression AST는 StableId node 단위로 diff하고 전체 blob 변경으로 축약하지 않습니다. | AST 한 operator 변경 fixture 1 change. | VIII.2.1, IX.7.3 |
