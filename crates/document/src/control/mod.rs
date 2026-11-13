@@ -32,6 +32,9 @@ pub mod modal;
 /// List 계약 (IX.6.5).
 pub mod list;
 
+/// SingleSelectionGroup 계약 (IX.6.6).
+pub mod selection_group;
+
 use crate::component::codec::{
     put_bool, put_bytes, put_count, put_id, put_u16, put_u8, Malformed, Reader,
 };

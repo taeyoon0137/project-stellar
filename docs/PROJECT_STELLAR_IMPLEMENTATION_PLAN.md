@@ -852,7 +852,7 @@ tools/xtask/
 | IX.6.3 | `[x]` | TextInput contract에 editable value, placeholder, focus, IME input 의미를 정의합니다. | editable binding type이 string이 아니면 오류. | IX.6.1, VI.7.1 |
 | IX.6.4 | `[x]` | Modal contract에 overlay, focus scope, dismiss event 의미를 정의합니다. | focus scope root 누락 diagnostic. | IX.6.1 |
 | IX.6.5 | `[x]` | List contract에 collection, item identity, selection mode, navigation 의미를 정의합니다. | duplicate item identity fixture 오류. | IX.6.1 |
-| IX.6.6 | `[ ]` | SingleSelectionGroup contract를 추가해 List+Button 합성 Radio UI를 표현합니다. 별도 RadioButton node는 만들지 않습니다. | 한 번에 둘 이상 selected인 runtime state 거부. | IX.6.2, IX.6.5 |
+| IX.6.6 | `[x]` | SingleSelectionGroup contract를 추가해 List+Button 합성 Radio UI를 표현합니다. 별도 RadioButton node는 만들지 않습니다. | 한 번에 둘 이상 selected인 runtime state 거부. | IX.6.2, IX.6.5 |
 | IX.6.7 | `[ ]` | contract별 유효성 registry와 target export hint를 정의합니다. 코드 생성은 하지 않습니다. | registry 누락 검사 통과. | IX.6.2~IX.6.6 |
 
 ### IX.7 View 변수와 Nullable 조합형 Variant
