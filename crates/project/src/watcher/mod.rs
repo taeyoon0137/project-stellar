@@ -4,8 +4,12 @@
 //! 관찰하고, 외부 에디터·시스템 Git·스크립트의 직접 수정을 같은 경로로 처리합니다.
 //!
 //! - [`event`]: 플랫폼 독립 event 모델과 canonical 인코딩(XIII.2.1).
+//! - [`roots`]: 감시 root(프로젝트 root·외부 symlink target allowlist)와 경로 변환(XIII.2.2).
+//! - [`fsevents`]: macOS FSEvents adapter와 플랫폼 독립 normalize 규칙(XIII.2.2).
 
 pub mod event;
+pub mod fsevents;
+pub mod roots;
 
 use std::time::Duration;
 

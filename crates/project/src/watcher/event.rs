@@ -33,7 +33,7 @@ use crate::path_resolver::{split_project_path, InvalidPathReason};
 /// event batch 인코딩 version.
 pub const WATCH_EVENT_FORMAT_VERSION: u8 = 1;
 
-/// 감시 root 식별자. [`WatchRootId::PROJECT`](0)는 프로젝트 root, 1 이상은 외부 symlink target.
+/// 감시 root 식별자. 0([`WatchRootId::PROJECT`])은 프로젝트 root, 1 이상은 외부 symlink target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct WatchRootId(pub u32);
 
