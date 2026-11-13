@@ -51,3 +51,8 @@
 ## 남은 위험 / 한계
 
 - 비율로 정해진 축이 min/max에 걸리면 비율이 깨질 수 있습니다(다른 축으로 다시 전파하지 않음).
+
+## 후속 변경 (리뷰 minor: 가중치 양자화 규칙 통일)
+
+- 1/128 미만 양수 비율은 이제 `InvalidSizing` 대신 flex factor·grid fr과 같은 `LayoutError::BelowResolution`입니다.
+  0·음수 비율은 그대로 `InvalidSizing`입니다. 상세와 검증 결과는 `docs/task-reports/X.3.3.md` 후속 수정 절에 있습니다.

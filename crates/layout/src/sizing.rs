@@ -277,7 +277,36 @@ impl PreparedRatio {
     }
 }
 
-/// 비율을 검증·변환합니다(각 값이 1/64 단위로 0보다 커야 함).
+/// 1/64 격자로 양자화하는 비음수 가중치(flex grow·shrink, grid fr, aspect ratio 성분)를 변환합니다.
+///
+/// 모든 가중치 입력이 같은 규칙을 씁니다.
+///
+/// - 음수: [`LayoutError::NegativeValue`].
+/// - `LayoutUnit` 범위 초과: [`LayoutError::OutOfRange`].
+/// - 0이 아닌데 1/64 격자에서 0으로 반올림되는 값(1/128 미만): [`LayoutError::BelowResolution`].
+///   예를 들어 grow `0.001`을 조용히 grow 0(늘지 않음)으로 바꾸지 않습니다.
+/// - 0은 0입니다.
+///
+/// 길이(크기·padding·gap 등)는 가중치가 아니므로 이 규칙을 쓰지 않고 1/64로 반올림합니다(0.001 px →
+/// 0 px는 같은 의미).
+pub(crate) fn quantize_weight(
+    node: StableId,
+    property: LayoutProperty,
+    value: Scalar,
+) -> Result<u64, LayoutError> {
+    if value.get() < 0.0 {
+        return Err(LayoutError::NegativeValue { node, property });
+    }
+    let unit =
+        LayoutUnit::from_px(value.raw()).map_err(|_| LayoutError::OutOfRange { node, property })?;
+    if unit.raw() == 0 && value.get() != 0.0 {
+        return Err(LayoutError::BelowResolution { node, property });
+    }
+    u64::try_from(unit.raw()).map_err(|_| LayoutError::NegativeValue { node, property })
+}
+
+/// 비율을 검증·변환합니다. 각 값은 양수여야 하며(0·음수는 [`LayoutError::InvalidSizing`]),
+/// 양자화는 [`quantize_weight`] 규칙을 따릅니다.
 pub(crate) fn prepare_ratio(
     node: StableId,
     ratio: Option<AspectRatio>,
@@ -286,18 +315,18 @@ pub(crate) fn prepare_ratio(
         return Ok(None);
     };
     let convert = |value: Scalar| -> Result<i64, LayoutError> {
-        let unit = LayoutUnit::from_px(value.raw()).map_err(|_| LayoutError::OutOfRange {
-            node,
-            property: LayoutProperty::AspectRatio,
-        })?;
-        if unit.raw() <= 0 {
+        if value.get() <= 0.0 {
             return Err(LayoutError::InvalidSizing {
                 node,
                 axis: Axis::Horizontal,
-                reason: "aspect ratio 값은 1/128보다 큰 양수여야 합니다",
+                reason: "aspect ratio 값은 양수여야 합니다",
             });
         }
-        Ok(i64::from(unit.raw()))
+        let units = quantize_weight(node, LayoutProperty::AspectRatio, value)?;
+        i64::try_from(units).map_err(|_| LayoutError::OutOfRange {
+            node,
+            property: LayoutProperty::AspectRatio,
+        })
     };
     Ok(Some(PreparedRatio {
         width: convert(ratio.width)?,
@@ -777,13 +806,102 @@ mod tests {
         let result = compute_layout(&input).unwrap();
         assert_eq!(size_px(&result, 2), (120.0, 60.0));
         assert_eq!(LayoutInput::decode(&input.encode()).unwrap(), input);
-        // 0·음수·너무 작은 비율 거부.
-        for bad in [ratio(0.0, 1.0), ratio(1.0, -2.0), ratio(0.001, 1.0)] {
+        // 0·음수 비율 거부.
+        for bad in [ratio(0.0, 1.0), ratio(1.0, -2.0)] {
             let input =
                 LayoutInput::new(id(1), vec![LayoutNode::new(id(1)).with_aspect_ratio(bad)]);
             assert!(
                 matches!(input.validate(), Err(LayoutError::InvalidSizing { .. })),
                 "{bad:?}"
+            );
+        }
+        // 0으로 반올림되는 양수 비율은 flex·fr과 같은 BelowResolution(리뷰 후속).
+        let tiny = LayoutInput::new(
+            id(1),
+            vec![LayoutNode::new(id(1)).with_aspect_ratio(ratio(0.001, 1.0))],
+        );
+        assert_eq!(
+            tiny.validate(),
+            Err(LayoutError::BelowResolution {
+                node: id(1),
+                property: LayoutProperty::AspectRatio
+            })
+        );
+    }
+
+    #[test]
+    fn weight_quantization_is_consistent_across_flex_fr_and_ratio() {
+        // 리뷰 재현: flex grow·shrink와 grid fr의 1/128 미만 양수는 조용히 0이 되었습니다.
+        // 지금은 세 가중치 입력이 같은 규칙(quantize_weight)을 씁니다.
+        let scalar = |v: f32| Scalar::new(v).unwrap();
+        let below = LayoutError::BelowResolution {
+            node: id(7),
+            property: LayoutProperty::Flex,
+        };
+        for (value, expected) in [
+            (0.0, Ok(0)),
+            // 정확히 1/128은 ties away from zero로 1 subpixel.
+            (1.0 / 128.0, Ok(1)),
+            (0.001, Err(below.clone())),
+            (1.0 / 129.0, Err(below.clone())),
+            (1.5, Ok(96)),
+            (
+                -0.001,
+                Err(LayoutError::NegativeValue {
+                    node: id(7),
+                    property: LayoutProperty::Flex,
+                }),
+            ),
+        ] {
+            assert_eq!(
+                quantize_weight(id(7), LayoutProperty::Flex, scalar(value)),
+                expected,
+                "{value}"
+            );
+        }
+        // Stack 자식 grow·shrink 0.001 → 검증 단계 BelowResolution(이전에는 grow 0으로 동작).
+        use crate::flex::{FlexBasis, FlexItem};
+        for flex in [
+            FlexItem::new(scalar(0.001), scalar(0.0), FlexBasis::Auto),
+            FlexItem::new(scalar(0.0), scalar(0.004), FlexBasis::Auto),
+        ] {
+            let input = LayoutInput::new(
+                id(1),
+                vec![
+                    LayoutNode::new(id(1))
+                        .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Horizontal)))
+                        .with_child(id(2), key(1)),
+                    LayoutNode::new(id(2)).with_flex(flex),
+                ],
+            );
+            assert_eq!(
+                input.validate(),
+                Err(LayoutError::BelowResolution {
+                    node: id(2),
+                    property: LayoutProperty::Flex
+                })
+            );
+        }
+        // grid fr 0.005 → BelowResolution(이전에는 0fr).
+        use crate::grid::{GridLayout, TrackBreadth, TrackSize};
+        for track in [
+            TrackSize::Fraction(scalar(0.005)),
+            TrackSize::MinMax(
+                TrackBreadth::Fixed(len(1.0)),
+                TrackBreadth::Fraction(scalar(0.005)),
+            ),
+        ] {
+            let input = LayoutInput::new(
+                id(1),
+                vec![LayoutNode::new(id(1))
+                    .with_container(ContainerLayout::Grid(GridLayout::new(vec![track], vec![])))],
+            );
+            assert_eq!(
+                input.validate(),
+                Err(LayoutError::BelowResolution {
+                    node: id(1),
+                    property: LayoutProperty::ContainerLayout
+                })
             );
         }
     }

@@ -56,3 +56,26 @@
 ## 남은 위험 / 한계
 
 - factor를 1/64 단위로 반올림하므로 1/128 미만 차이의 factor는 같은 값으로 취급됩니다.
+
+## 후속 수정 (리뷰 minor: 1/128 미만 가중치의 조용한 0 양자화)
+
+- **결함**: flex grow·shrink와 grid fr 값 중 1/128 미만 양수는 1/64 격자에서 0으로 반올림되어 오류 없이 0으로
+  동작했습니다(grow 0.001 → 늘지 않음). 같은 1/64 양자화를 쓰는 aspect ratio는 같은 값을 오류로 거부해 규칙이
+  달랐습니다.
+- **수정** (`crates/layout/src/sizing.rs`, `flex.rs`, `grid.rs`, `error.rs`): 세 가중치 입력이 공통 함수
+  `quantize_weight`를 씁니다. 음수 `NegativeValue`, 범위 초과 `OutOfRange`, 0이 아닌데 0으로 반올림되는 값은 새 오류
+  `LayoutError::BelowResolution { node, property }`, 0은 0입니다. aspect ratio는 추가로 0·음수를 `InvalidSizing`("양수여야
+  합니다")으로 거부합니다. **명세 변경**: aspect ratio의 1/128 미만 양수는 `InvalidSizing` 대신 `BelowResolution`입니다
+  (X.6.3 테스트 단언 갱신). 길이(크기·padding·gap)는 가중치가 아니므로 기존처럼 1/64로 반올림합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo fmt -p stellar-layout` | 종료 코드 0 |
+| `cargo test -p stellar-layout` | unit 125 + `layout_corpus` 2 + doctest 2 passed, 0 failed |
+| `cargo clippy -p stellar-layout --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-layout -- --check` | 종료 코드 0 |
+
+| 검사 | 결과 |
+|---|---|
+| `quantize_weight` 경계(0 → 0, 정확히 1/128 → 1, 0.001·1/129 → `BelowResolution`, 1.5 → 96, -0.001 → `NegativeValue`), Stack grow 0.001·shrink 0.004와 grid fr 0.005(단독·minmax 최댓값)가 검증 단계 `BelowResolution`(`weight_quantization_is_consistent_across_flex_fr_and_ratio`) | 통과 |
+| aspect ratio 0·음수 `InvalidSizing`, 0.001 `BelowResolution`(`ratio_follows_stack_main_size_and_validates`) | 통과 |

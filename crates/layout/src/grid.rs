@@ -3,7 +3,8 @@
 //! # track 타입
 //!
 //! - `Fixed(len)`: 고정 크기(비음수).
-//! - `Fraction(fr)`: 남는 공간을 fr 비례로 나눔(비음수, 1/64 단위로 반올림).
+//! - `Fraction(fr)`: 남는 공간을 fr 비례로 나눔(비음수, 1/64 단위로 반올림). 0이 아닌데 0으로
+//!   반올림되는 값(1/128 미만)은 [`LayoutError::BelowResolution`]입니다.
 //! - `MinContent`·`MaxContent`: 그 track에 놓인 item의 최소·최대 콘텐츠 기여 크기.
 //! - `MinMax(min, max)`: `min` 이상 `max` 이하. `min`은 `Fraction`일 수 없고, 둘 다 `Fixed`면
 //!   `min ≤ max`여야 합니다.
@@ -61,6 +62,7 @@ use crate::grid_tracks::{
 use crate::input::{length_unit, ContainerLayout};
 use crate::property::LayoutProperty;
 use crate::rounding::{LayoutUnit, LayoutUnitError};
+use crate::sizing::quantize_weight;
 
 /// 한 축의 최대 track 수(line 1~`u16::MAX`).
 pub const MAX_GRID_TRACKS: usize = u16::MAX as usize - 1;
@@ -137,19 +139,9 @@ fn invalid(node: StableId, reason: &'static str) -> LayoutError {
     LayoutError::InvalidGrid { node, reason }
 }
 
-/// fr 값을 1/64 정수로 변환합니다(비음수).
+/// fr 값을 1/64 정수로 변환합니다(비음수, 0이 아닌데 0으로 반올림되면 오류 — flex factor와 같은 규칙).
 pub(crate) fn fraction_units(node: StableId, value: Scalar) -> Result<u64, LayoutError> {
-    if value.get() < 0.0 {
-        return Err(LayoutError::NegativeValue {
-            node,
-            property: LayoutProperty::ContainerLayout,
-        });
-    }
-    let unit = LayoutUnit::from_px(value.raw()).map_err(|_| LayoutError::OutOfRange {
-        node,
-        property: LayoutProperty::ContainerLayout,
-    })?;
-    u64::try_from(unit.raw()).map_err(|_| invalid(node, "fr 값이 음수입니다"))
+    quantize_weight(node, LayoutProperty::ContainerLayout, value)
 }
 
 fn validate_breadth(node: StableId, breadth: TrackBreadth) -> Result<(), LayoutError> {

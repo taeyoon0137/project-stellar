@@ -102,6 +102,14 @@ pub enum LayoutError {
         /// 속성.
         property: LayoutProperty,
     },
+    /// 0이 아닌 가중치 값(flex grow·shrink, grid fr, aspect ratio 성분)이 1/64 격자에서 0으로
+    /// 반올림됩니다(1/128 미만). 조용히 0으로 바꾸지 않고 거부합니다.
+    BelowResolution {
+        /// 대상 node.
+        node: StableId,
+        /// 속성.
+        property: LayoutProperty,
+    },
     /// sizing mode 값·조합이 허용되지 않습니다 (X.6.1).
     InvalidSizing {
         /// 대상 node.
@@ -217,6 +225,12 @@ impl fmt::Display for LayoutError {
                 write!(
                     f,
                     "node {node}의 {property} 값이 레이아웃 수치 범위를 벗어납니다"
+                )
+            }
+            LayoutError::BelowResolution { node, property } => {
+                write!(
+                    f,
+                    "node {node}의 {property} 값이 0이 아니지만 레이아웃 해상도(1/64)에서 0으로 반올림됩니다"
                 )
             }
             LayoutError::InvalidSizing { node, axis, reason } => {

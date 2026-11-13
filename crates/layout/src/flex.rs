@@ -7,7 +7,9 @@
 //! - `basis`: flex base size. `Auto`는 자식 main sizing(`Fixed` 값, `HugContent` 콘텐츠 크기,
 //!   `Percentage`)을 씁니다. `Length`·`Percentage`(content main 크기 기준)는 그 값을 씁니다.
 //! - `grow`·`shrink`: 비음수 factor. 기본값은 둘 다 0(고정 크기 자식은 늘거나 줄지 않음)입니다.
-//!   factor는 계산 전에 `1/64` 단위로 반올림합니다(레이아웃 subpixel 격자와 같은 규칙).
+//!   factor는 계산 전에 `1/64` 단위로 반올림합니다(레이아웃 subpixel 격자와 같은 규칙). 0이 아닌데
+//!   0으로 반올림되는 factor(1/128 미만)는 [`LayoutError::BelowResolution`]으로 거부합니다(grid fr·aspect
+//!   ratio와 같은 규칙).
 //! - main 축 `SizingMode::Fill`은 `grow 1, shrink 1, basis 0`과 같습니다. main 축 `Fill`과 기본값이
 //!   아닌 `FlexItem`을 함께 쓰면 의미가 겹치므로 [`LayoutError::InvalidSizing`]으로 거부합니다.
 //!
@@ -33,7 +35,7 @@ use crate::geometry::Axis;
 use crate::input::{length_unit, LayoutNode};
 use crate::property::LayoutProperty;
 use crate::rounding::{LayoutUnit, LayoutUnitError};
-use crate::sizing::SizingMode;
+use crate::sizing::{quantize_weight, SizingMode};
 
 use stellar_core_types::value::Length;
 
@@ -106,13 +108,7 @@ pub(crate) struct PreparedFlex {
 pub(crate) const FILL_FACTOR: u64 = 64;
 
 fn factor(node: StableId, value: Scalar) -> Result<u64, LayoutError> {
-    let property = LayoutProperty::Flex;
-    if value.get() < 0.0 {
-        return Err(LayoutError::NegativeValue { node, property });
-    }
-    let unit =
-        LayoutUnit::from_px(value.raw()).map_err(|_| LayoutError::OutOfRange { node, property })?;
-    u64::try_from(unit.raw()).map_err(|_| LayoutError::NegativeValue { node, property })
+    quantize_weight(node, LayoutProperty::Flex, value)
 }
 
 /// flex 입력을 변환·검증합니다.
