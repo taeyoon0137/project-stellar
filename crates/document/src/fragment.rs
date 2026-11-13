@@ -6,6 +6,13 @@
 
 use std::fmt;
 
+use stellar_core_types::ids::RuntimeEntityId;
+use stellar_core_types::value::{Rect, Size2, Vec2};
+
+use crate::node_columns::NodeColumns;
+use crate::node_kind::NodeKind;
+use crate::tree_ops::children_in_order;
+
 /// Fragment payload 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FragmentError {
@@ -78,10 +85,10 @@ impl VisualPropertyClass {
 /// Fragment는 모든 [`VisualPropertyClass`]를 거부합니다. 다른 종류의 세부 허용
 /// 규칙은 각 종류의 property registry(VI.3.5 등)가 담당하며 여기서는 통과시킵니다.
 pub fn validate_visual_property(
-    kind: crate::node_kind::NodeKind,
+    kind: NodeKind,
     class: VisualPropertyClass,
 ) -> Result<(), FragmentError> {
-    if kind == crate::node_kind::NodeKind::Fragment {
+    if kind == NodeKind::Fragment {
         return Err(FragmentError::ForbiddenProperty { class });
     }
     Ok(())
@@ -122,6 +129,58 @@ impl FragmentPayload {
             Err(FragmentError::UnexpectedPayload { len: bytes.len() })
         }
     }
+}
+
+// --- visual bounds (VI.4.3) ---
+
+fn union_rect(a: Rect, b: Rect) -> Rect {
+    let min_x = a.origin().x().min(b.origin().x());
+    let min_y = a.origin().y().min(b.origin().y());
+    let max_x = (a.origin().x() + a.size().width()).max(b.origin().x() + b.size().width());
+    let max_y = (a.origin().y() + a.size().height()).max(b.origin().y() + b.size().height());
+    // 입력이 finite이면 합집합 경계도 finite(오버플로 시 원래 a를 유지).
+    match (
+        Vec2::new(min_x, min_y),
+        Size2::new(max_x - min_x, max_y - min_y),
+    ) {
+        (Ok(origin), Ok(size)) => Rect::new(origin, size),
+        _ => a,
+    }
+}
+
+/// Fragment의 visual bounds: **가시 자식 bounds의 합집합**(read-only helper).
+///
+/// - Fragment는 좌표계를 만들지 않으므로 자식 bounds는 containing Frame
+///   좌표계에서 받습니다(`leaf_bounds`가 제공).
+/// - 숨김(`visible == false`) 자식은 제외합니다.
+/// - 중첩 Fragment는 재귀적으로 그 가시 자식들의 합집합을 사용합니다.
+/// - 가시 자식이 없으면(빈 Fragment) `None`입니다.
+pub fn fragment_visual_bounds(
+    columns: &NodeColumns,
+    fragment: RuntimeEntityId,
+    leaf_bounds: &dyn Fn(RuntimeEntityId) -> Option<Rect>,
+) -> Option<Rect> {
+    let mut union: Option<Rect> = None;
+    for child in children_in_order(columns, fragment) {
+        let Some(fields) = columns.get(child) else {
+            continue;
+        };
+        if !fields.visible {
+            continue;
+        }
+        let bounds = if fields.kind == NodeKind::Fragment {
+            fragment_visual_bounds(columns, child, leaf_bounds)
+        } else {
+            leaf_bounds(child)
+        };
+        if let Some(rect) = bounds {
+            union = Some(match union {
+                None => rect,
+                Some(current) => union_rect(current, rect),
+            });
+        }
+    }
+    union
 }
 
 #[cfg(test)]
@@ -172,6 +231,97 @@ mod tests {
                     kind.name()
                 );
             }
+        }
+    }
+
+    mod bounds {
+        use super::super::*;
+        use crate::node_columns::NodeFields;
+        use std::collections::HashMap;
+        use stellar_core_types::ids::StableId;
+        use stellar_core_types::order_key::OrderKey;
+
+        fn insert(
+            columns: &mut NodeColumns,
+            seed: u64,
+            kind: NodeKind,
+            parent: Option<RuntimeEntityId>,
+            visible: bool,
+        ) -> RuntimeEntityId {
+            columns.insert(NodeFields {
+                stable_id: StableId::new_v7(seed, 0, seed),
+                kind,
+                parent,
+                order_key: OrderKey::from_bytes(vec![(seed % 250) as u8 + 1]).unwrap(),
+                visible,
+                locked: false,
+                display_name: String::new(),
+            })
+        }
+
+        fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
+            Rect::new(Vec2::new(x, y).unwrap(), Size2::new(w, h).unwrap())
+        }
+
+        #[test]
+        fn empty_fragment_has_no_bounds() {
+            // 검증 기준(VI.4.3): 빈 fragment.
+            let mut columns = NodeColumns::new();
+            let frame = insert(&mut columns, 1, NodeKind::Frame, None, true);
+            let fragment = insert(&mut columns, 2, NodeKind::Fragment, Some(frame), true);
+            assert_eq!(fragment_visual_bounds(&columns, fragment, &|_| None), None);
+        }
+
+        #[test]
+        fn hidden_children_are_excluded() {
+            // 검증 기준(VI.4.3): 숨김 자식.
+            let mut columns = NodeColumns::new();
+            let frame = insert(&mut columns, 1, NodeKind::Frame, None, true);
+            let fragment = insert(&mut columns, 2, NodeKind::Fragment, Some(frame), true);
+            let a = insert(&mut columns, 3, NodeKind::Shape, Some(fragment), true);
+            let hidden = insert(&mut columns, 4, NodeKind::Shape, Some(fragment), false);
+            let map: HashMap<RuntimeEntityId, Rect> = [
+                (a, rect(10.0, 10.0, 20.0, 20.0)),
+                (hidden, rect(500.0, 500.0, 10.0, 10.0)),
+            ]
+            .into_iter()
+            .collect();
+            let lookup = |id: RuntimeEntityId| map.get(&id).copied();
+            assert_eq!(
+                fragment_visual_bounds(&columns, fragment, &lookup),
+                Some(rect(10.0, 10.0, 20.0, 20.0))
+            );
+        }
+
+        #[test]
+        fn nested_fragments_union_recursively() {
+            // 검증 기준(VI.4.3): nested fragment.
+            let mut columns = NodeColumns::new();
+            let frame = insert(&mut columns, 1, NodeKind::Frame, None, true);
+            let outer = insert(&mut columns, 2, NodeKind::Fragment, Some(frame), true);
+            let a = insert(&mut columns, 3, NodeKind::Text, Some(outer), true);
+            let inner = insert(&mut columns, 4, NodeKind::Fragment, Some(outer), true);
+            let b = insert(&mut columns, 5, NodeKind::Image, Some(inner), true);
+            let empty_inner = insert(&mut columns, 6, NodeKind::Fragment, Some(outer), true);
+            let _ = empty_inner;
+            let map: HashMap<RuntimeEntityId, Rect> = [
+                (a, rect(0.0, 0.0, 10.0, 10.0)),
+                (b, rect(50.0, -20.0, 30.0, 40.0)),
+            ]
+            .into_iter()
+            .collect();
+            let lookup = |id: RuntimeEntityId| map.get(&id).copied();
+            // x: 0..80, y: -20..20.
+            assert_eq!(
+                fragment_visual_bounds(&columns, outer, &lookup),
+                Some(rect(0.0, -20.0, 80.0, 40.0))
+            );
+            // 숨김 inner fragment면 그 자손도 제외.
+            columns.set_visible(inner, false);
+            assert_eq!(
+                fragment_visual_bounds(&columns, outer, &lookup),
+                Some(rect(0.0, 0.0, 10.0, 10.0))
+            );
         }
     }
 }

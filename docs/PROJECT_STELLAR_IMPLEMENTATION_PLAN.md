@@ -558,7 +558,7 @@ tools/xtask/
 |---|---|---|---|---|
 | VI.4.1 | `[x]` | Fragment payload는 별도 렌더·layout 필드를 갖지 않는 zero-size marker로 구현합니다. | payload serialized bytes가 metadata 외 추가 필드 없음. | VI.2.2 |
 | VI.4.2 | `[x]` | Fragment에 transform, opacity, blend, mask, filter, fill, border, padding 설정을 시도하면 validation 오류를 반환합니다. | 금지 속성 fixture 전부 실패. | VI.4.1 |
-| VI.4.3 | `[ ]` | Fragment의 visual bounds는 가시 자식 bounds의 union으로 계산하는 read-only helper를 구현합니다. | 빈 fragment, 숨김 자식, nested fragment fixture 통과. | VI.4.1 |
+| VI.4.3 | `[x]` | Fragment의 visual bounds는 가시 자식 bounds의 union으로 계산하는 read-only helper를 구현합니다. | 빈 fragment, 숨김 자식, nested fragment fixture 통과. | VI.4.1 |
 | VI.4.4 | `[ ]` | Fragment→Frame 변환용 순수 변환 계획을 구현합니다. 새 Frame은 Fragment StableId를 유지하고 필요한 기본 payload를 추가합니다. | 자식 순서와 참조가 유지됩니다. | VI.4.1, VI.3.1 |
 
 ### VI.5 Shape
