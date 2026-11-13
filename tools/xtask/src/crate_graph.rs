@@ -26,11 +26,11 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
     let core = "stellar-core-types";
     let entries: &[(&str, &[&str])] = &[
         (core, &[]),
-        ("stellar-document", &[core]),
+        ("stellar-document", &[core, "stellar-expressions"]),
         ("stellar-commands", &["stellar-document", core]),
         ("stellar-history", &["stellar-commands", core]),
         ("stellar-expressions", &[core]),
-        ("stellar-bindings", &[core]),
+        ("stellar-bindings", &[core, "stellar-expressions"]),
         ("stellar-layout", &[core]),
         ("stellar-text", &[core]),
         ("stellar-scene", &[core]),
@@ -49,6 +49,8 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-assets",
                 "stellar-dependencies",
                 "stellar-git-porcelain",
+                "stellar-commands",
+                "stellar-history",
             ],
         ),
         ("stellar-semantic-diff", &["stellar-document", core]),
