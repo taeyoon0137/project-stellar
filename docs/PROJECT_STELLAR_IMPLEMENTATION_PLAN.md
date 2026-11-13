@@ -988,7 +988,7 @@ tools/xtask/
 |---|---|---|---|---|
 | X.8.1 | `[x]` | `FontSource`를 Project, System, External로 정의하고 `FontFaceRef`에 file hash, face index, variation axes를 포함합니다. | round-trip. | III.3.5, V.1.5 |
 | X.8.2 | `[x]` | `FontRegistry` 인터페이스를 정의하고 같은 face를 hash+index로 dedup합니다. 플랫폼 font discovery 구현은 Phase XIII에서 연결합니다. | duplicate register returns same handle. | X.8.1 |
-| X.8.3 | `[ ]` | explicit fallback chain 모델을 정의합니다. missing face를 임의 시스템 font로 바꾸지 않습니다. | fallback order fixture 통과. | X.8.2 |
+| X.8.3 | `[x]` | explicit fallback chain 모델을 정의합니다. missing face를 임의 시스템 font로 바꾸지 않습니다. | fallback order fixture 통과. | X.8.2 |
 | X.8.4 | `[ ]` | missing font diagnostic에 requested face, source, affected Text IDs를 포함합니다. | fixture 정확, 텍스트 내용 미포함. | X.8.3, II.3.2 |
 
 ### X.9 공통 shaping·BiDi·줄바꿈

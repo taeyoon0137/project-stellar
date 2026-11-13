@@ -5,3 +5,6 @@ pub mod font;
 
 /// 폰트 face registry와 hash+index dedup (X.8.2).
 pub mod registry;
+
+/// 명시적 font fallback chain (X.8.3).
+pub mod fallback;
