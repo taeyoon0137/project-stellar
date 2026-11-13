@@ -31,6 +31,7 @@ use crate::geometry::Axis;
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
 use crate::sizing::{validate_sizing, SIZING_FILL, SIZING_FIXED, SIZING_HUG, SIZING_PERCENTAGE};
+use crate::stack::{decode_stack, encode_stack, validate_stack, StackLayout};
 
 pub use crate::sizing::SizingMode;
 
@@ -57,6 +58,8 @@ pub enum ContainerLayout {
     /// 자유 배치(자식 local position·size 사용).
     #[default]
     Free,
+    /// 한 축을 따라 차례로 배치(X.3).
+    Stack(StackLayout),
 }
 
 /// leaf 콘텐츠의 intrinsic 크기와 baseline (X.1.1).
@@ -363,6 +366,10 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
         })?;
         length_unit(node.id, LayoutProperty::Padding, length, false)?;
     }
+    match &node.container {
+        ContainerLayout::Free => {}
+        ContainerLayout::Stack(stack) => validate_stack(node.id, stack)?,
+    }
     validate_sizing(node.id, Axis::Horizontal, node.width, is_root)?;
     validate_sizing(node.id, Axis::Vertical, node.height, is_root)?;
     if let LayoutContent::Intrinsic(content) = node.content {
@@ -379,6 +386,7 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
 // --- canonical bytes ---
 
 const CONTAINER_FREE: u8 = 0;
+const CONTAINER_STACK: u8 = 1;
 
 const CONTENT_NONE: u8 = 0;
 const CONTENT_INTRINSIC: u8 = 1;
@@ -392,6 +400,10 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
     }
     match node.container {
         ContainerLayout::Free => w.u8(CONTAINER_FREE),
+        ContainerLayout::Stack(stack) => {
+            w.u8(CONTAINER_STACK);
+            encode_stack(w, &stack);
+        }
     }
     w.insets(&node.padding);
     encode_sizing(w, node.width);
@@ -437,6 +449,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
     }
     let container = match r.u8()? {
         CONTAINER_FREE => ContainerLayout::Free,
+        CONTAINER_STACK => ContainerLayout::Stack(decode_stack(r)?),
         _ => {
             return Err(LayoutError::Malformed {
                 reason: "알 수 없는 container tag",

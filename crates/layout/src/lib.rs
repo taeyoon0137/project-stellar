@@ -30,8 +30,11 @@ pub mod sizing;
 /// 레이아웃 엔진 진입점 (X.2.1).
 pub mod engine;
 
-/// 자유 배치 (X.2.1).
+/// 자유 배치 (X.2.1~X.2.3).
 pub mod free;
+
+/// Stack(Flex 계열) 배치 (X.3).
+pub mod stack;
 
 /// canonical bytes writer/reader (crate 내부).
 mod codec;

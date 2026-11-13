@@ -88,6 +88,13 @@ pub enum LayoutError {
         /// 축.
         axis: Axis,
     },
+    /// 아직 구현하지 않은 레이아웃 기능을 사용했습니다.
+    UnsupportedFeature {
+        /// 대상 node.
+        node: StableId,
+        /// 기능 설명.
+        feature: &'static str,
+    },
     /// 레이아웃 결과 box의 불변식이 깨졌습니다.
     InvalidBox {
         /// 대상 node.
@@ -162,6 +169,12 @@ impl fmt::Display for LayoutError {
                 write!(
                     f,
                     "node {node}의 {axis} 배치 제약이 과다합니다(우선순위로 해소하지 않음)"
+                )
+            }
+            LayoutError::UnsupportedFeature { node, feature } => {
+                write!(
+                    f,
+                    "node {node}: 지원하지 않는 레이아웃 기능입니다({feature})"
                 )
             }
             LayoutError::InvalidBox { node, reason } => {

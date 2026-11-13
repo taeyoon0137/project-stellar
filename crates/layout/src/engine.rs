@@ -237,6 +237,10 @@ impl<'a> Engine<'a> {
         }
         match self.node(index).container {
             ContainerLayout::Free => free::measure(self, index, inner),
+            ContainerLayout::Stack(_) => Err(LayoutError::UnsupportedFeature {
+                node: self.nodes[index].id,
+                feature: "Stack 배치(X.3.2)",
+            }),
         }
     }
 
@@ -274,6 +278,12 @@ impl<'a> Engine<'a> {
 
         let placements = match self.node(index).container {
             ContainerLayout::Free => free::place(self, index, inner)?,
+            ContainerLayout::Stack(_) => {
+                return Err(LayoutError::UnsupportedFeature {
+                    node: id,
+                    feature: "Stack 배치(X.3.2)",
+                })
+            }
         };
         let mut overflow = LayoutRect::at_origin(size);
         for (child, child_rect) in placements {
