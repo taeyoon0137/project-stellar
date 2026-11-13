@@ -63,3 +63,17 @@
   Gatekeeper 확인이 필요합니다. 첫 실행 확인 대화상자는 사람의 클릭이 필요합니다.
 - 배포 형식(zip/dmg)과 배포 위치는 정하지 않았습니다. dmg로 배포하면 dmg 자체 서명·공증·stapling 단계가 추가로 필요합니다.
 - 공증은 Apple 서비스 가용성과 네트워크에 의존합니다.
+
+## 재평가(2026-11-14, Sparkle 내장 반영)
+
+- **상태**: `[~]`를 유지합니다. 이유는 두 가지입니다.
+  - 엄격 선행 XVI.9.3이 `[~]`입니다(그 선행 XVI.9.2가 깨끗한 장비 실행 미확보).
+  - "Gatekeeper clean machine 검증"이 미확보입니다.
+- **번들 변경**: 리뷰 수정 커밋 `5b993ac`로 번들에 Sparkle.framework가 들어갔습니다. 위 공증 증거
+  (submission `f2d9c2f9-…`)는 Sparkle이 없던 번들에 대한 것입니다. 현재 번들은 다시 공증해야 합니다.
+- **이번에 하지 않은 것**: 공증 재제출은 하지 않았습니다. 사용자 Apple 계정으로 외부 서비스에 binary를 올리는 일이라,
+  통합 리뷰(P6)가 사용자 확인을 요구했기 때문입니다.
+- **stapled 번들 검사**: `notarize.sh`는 바꾸지 않았습니다. stapling 후 실행하는 `bundle_check.sh`는 이제
+  Sparkle.framework 구조와 중첩 코드 team 일치를 함께 검사합니다(XVI.9.2 보고서 참조).
+- **재공증 절차**: Developer ID 서명(`sign_release.sh`, 이번에 통과) 뒤 사용자가 `scripts/macos/notarize.sh`를
+  실행합니다. 중첩 코드가 모두 같은 Developer ID·Hardened Runtime·secure timestamp로 서명되어 있어야 공증을 통과합니다.

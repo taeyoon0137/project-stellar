@@ -60,3 +60,23 @@
 ## 상태 정정(통합 리뷰, 2026-11-14)
 
 - `[x]` → `[~]`: 엄격 선행 XVI.9.2가 `[~]`입니다.
+
+## 재평가(2026-11-14, Sparkle 내장 반영)
+
+- **상태**: `[~]`를 유지합니다. 엄격 선행 XVI.9.2가 `[~]`이기 때문입니다(깨끗한 장비 실행 미확보, XVI.9.2 보고서
+  참조).
+- **pipeline 변경**: 리뷰 수정 커밋 `5b993ac`(ADR-0017)로 번들에 Sparkle.framework와 중첩 코드 5개가 들어갔습니다.
+  - `sign_release.sh`는 `scripts/macos/codesign_bundle.sh`로 안쪽부터 서명합니다. 순서는 Installer.xpc →
+    Downloader.xpc(entitlements 보존) → Autoupdate → Updater.app → framework → 앱이고, 모두 Hardened Runtime과
+    secure timestamp를 씁니다. `--deep` 서명은 쓰지 않습니다.
+  - 배포 서명에서 RFC 8032 test vector 공개 키(`SUPublicEDKey`)는 거부합니다.
+  - 공개 키가 비어 있으면 "업데이트가 꺼진 배포본"이라고 경고합니다.
+- 서명 identity·team은 여전히 저장소와 보고서에 기록하지 않습니다. `bundle_check.sh`도 team 값을 출력하지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `scripts/macos/sign_release.sh`(Developer ID) | Release 빌드·구성·번들 검사 ✓, 공개 키 없음 경고, 서명, deep strict verify, 서명본 번들 검사(중첩 코드 5개 같은 team·Hardened Runtime) ✓, `✓ 서명 완료(developer-id)`, 종료 0 |
+| `codesign -dvv StellarMac.app`(이름·team 가림) | `Identifier=xyz.taeyoon.stellar`, `flags=0x10000(runtime)`, Developer ID 체인 → `Apple Root CA`, `Timestamp=Nov 14, 2026 at 3:14:18 AM`, `Info.plist entries=29` |
+| `codesign -dvv .../Sparkle.framework/Versions/B/Autoupdate` | `flags=0x10000(runtime)`, Developer ID 체인, `Timestamp=Nov 14, 2026 at 3:14:15 AM` |
+| `codesign -d --entitlements - --xml StellarMac.app` | entitlements 없음(0바이트, library validation 유지) |
+| `shasum -a 256 .../Contents/MacOS/StellarMac`(서명본) | `0b2010ef823cbe8dbebbcc471cb49eef1c7f562394daa414ff867becb4233092` |

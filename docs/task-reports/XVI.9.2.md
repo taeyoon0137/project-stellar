@@ -67,3 +67,39 @@
   (XVI.9.4 공증본으로 수행하면 Gatekeeper 첫 실행까지 함께 확인 가능).
 - `/usr/lib/swift/*`는 macOS 26 시스템 Swift runtime에 의존합니다(최소 OS 26.0과 일치).
 - sandbox-exec는 deprecated 도구입니다. 향후 macOS에서 동작하지 않으면 재배치 실행 단계 대체가 필요합니다.
+
+## 재평가(2026-11-14, Sparkle 내장 반영)
+
+- **상태**: `[~]`를 유지합니다. 미확보 항목은 여전히 "clean machine launch smoke" 하나입니다.
+  - 이 장비에서 쓸 수 있는 깨끗한 macOS 환경이 없습니다. Parallels에는 Windows 11 VM 하나만 있습니다
+    (`prlctl list -a`). tart·UTM 같은 macOS VM 도구도 없습니다.
+  - macOS VM을 새로 만들려면 restore image를 내려받고 사용자가 설정해야 합니다. 새 사용자 계정을 만드는 것은 시스템
+    변경이라 사용자 확인이 필요합니다. 에이전트는 둘 다 하지 않았습니다.
+  - 계획 §1.3 규칙 5에 따라, 같은 장비의 근사 검증으로 `[x]`로 올리지 않습니다.
+- **번들 구조 변경**: 리뷰 수정 커밋 `5b993ac`(ADR-0017)로 `Contents/Frameworks/Sparkle.framework`가 번들에 추가되었습니다.
+  `scripts/macos/bundle_check.sh`를 다음과 같이 바꿨습니다.
+  - allowlist에 Sparkle.framework 하위를 추가했습니다. 헤더·`PrivateHeaders`·`Modules`와 다른 framework는 거부합니다.
+  - Mach-O를 고정 목록 6개로 제한했습니다(실행 파일, framework, Autoupdate, Updater, Downloader, Installer). 모두 arm64
+    slice를 포함해야 합니다.
+  - 동적 링크는 시스템 경로와 `@rpath/Sparkle.framework/Versions/B/Sparkle`만 허용하고, rpath 대상이 번들 안에 있는지
+    확인합니다.
+  - 모든 중첩 코드가 Hardened Runtime이고 앱과 TeamIdentifier가 같아야 합니다.
+  - 서명된 앱에 library validation을 끄는 entitlement가 있으면 실패로 처리합니다.
+  - 재배치 실행에 `--update-check`를 추가했습니다. 번들 안 Sparkle.framework를 실제로 load합니다.
+- **ad-hoc 사본 예외**: ad-hoc 서명에는 Team ID가 없습니다. 그래서 Hardened Runtime의 library validation이 번들 안
+  framework load를 거부합니다(`mapping process and mapped file (non-platform) have different Team IDs`로 실제 확인).
+  임시 검사 사본의 앱 실행 파일에만 `com.apple.security.cs.disable-library-validation`을 붙여 서명합니다. 배포 서명에는
+  붙이지 않고, 서명본에서는 이 entitlement가 없는지 검사합니다.
+- **서명 구조**: 안쪽부터 서명하는 `scripts/macos/codesign_bundle.sh`(신규)를 ad-hoc 검사와 배포 서명이 함께 씁니다.
+
+| 명령 | 결과 |
+|---|---|
+| `scripts/macos/release_build.sh`(ad-hoc 사본) | 번들 검사 7단계 ✓(Mach-O 6개, 링크 70개 항목, rpath `@executable_path/../Frameworks`, 중첩 코드 5개), 재배치 `--smoke`/`--lifecycle-check`/`--canvas-check`/`--update-check` 통과, 종료 0 |
+| `scripts/macos/sign_release.sh`(Developer ID 서명본에 같은 검사) | 같은 team·library validation 유지 상태로 재배치 4개 모드 통과, 종료 0 |
+
+| 검사 | 결과 |
+|---|---|
+| 검사 민감도: `Contents/Frameworks/Other.framework` 추가 → `허용되지 않은 번들 항목` 실패 | 확인 |
+| 검사 민감도: Sparkle `Versions/B/Headers` 추가 → `헤더가 남아 있음` 실패 | 확인 |
+| 검사 민감도: framework Resources에 Mach-O 추가 → `Mach-O 파일 목록` 실패 | 확인 |
+| **clean machine launch smoke** | 미실행(깨끗한 장비 없음) |
