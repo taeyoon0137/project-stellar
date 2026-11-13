@@ -63,6 +63,10 @@ pub enum RegistryError {
     IdSpaceExhausted,
     /// child 종료 중 OS 호출이 실패했습니다.
     Terminate(TerminalIoError),
+    /// 실행 중인 child가 없습니다.
+    NotRunning,
+    /// 실행 중 child에 대한 OS 호출(resize 등)이 실패했습니다.
+    Process(TerminalIoError),
 }
 
 impl fmt::Display for RegistryError {
@@ -78,6 +82,8 @@ impl fmt::Display for RegistryError {
             RegistryError::Terminate(err) => {
                 write!(f, "터미널 프로세스를 종료하지 못했습니다: {err}")
             }
+            RegistryError::NotRunning => f.write_str("실행 중인 터미널 프로세스가 없습니다"),
+            RegistryError::Process(err) => write!(f, "터미널 프로세스 호출 실패: {err}"),
         }
     }
 }
@@ -371,6 +377,20 @@ impl TerminalRegistry {
         self.sessions.get(&id)
     }
 
+    /// 실행 중 세션의 터미널 크기를 바꿉니다(XVIII.2.3, winsize ioctl).
+    pub fn resize(
+        &mut self,
+        id: TerminalSessionId,
+        size: TerminalSize,
+    ) -> Result<(), RegistryError> {
+        let session = self
+            .sessions
+            .get_mut(&id)
+            .ok_or(RegistryError::UnknownSession)?;
+        let process = session.process.as_mut().ok_or(RegistryError::NotRunning)?;
+        process.resize(size).map_err(RegistryError::Process)
+    }
+
     /// 세션(가변: 입력 쓰기 등).
     pub fn session_mut(&mut self, id: TerminalSessionId) -> Option<&mut TerminalSession> {
         self.sessions.get_mut(&id)
@@ -428,6 +448,7 @@ pub(crate) mod tests {
         launches: Arc<AtomicUsize>,
         terminated: Arc<AtomicUsize>,
         dropped: Arc<AtomicUsize>,
+        resized: Arc<AtomicUsize>,
     }
 
     impl FakeCounters {
@@ -442,12 +463,17 @@ pub(crate) mod tests {
         pub(crate) fn dropped(&self) -> usize {
             self.dropped.load(Ordering::SeqCst)
         }
+
+        pub(crate) fn resized(&self) -> usize {
+            self.resized.load(Ordering::SeqCst)
+        }
     }
 
     #[derive(Debug)]
     pub(crate) struct FakeProcess {
         pid: u32,
         counters: FakeCounters,
+        size: TerminalSize,
     }
 
     impl TerminalProcess for FakeProcess {
@@ -475,6 +501,16 @@ pub(crate) mod tests {
 
         fn output_reader(&self) -> Result<Box<dyn std::io::Read + Send>, TerminalIoError> {
             Ok(Box::new(std::io::empty()))
+        }
+
+        fn resize(&mut self, size: TerminalSize) -> Result<(), TerminalIoError> {
+            self.counters.resized.fetch_add(1, Ordering::SeqCst);
+            self.size = size;
+            Ok(())
+        }
+
+        fn size(&self) -> Result<TerminalSize, TerminalIoError> {
+            Ok(self.size)
         }
     }
 
@@ -506,6 +542,7 @@ pub(crate) mod tests {
             Ok(Box::new(FakeProcess {
                 pid,
                 counters: self.counters.clone(),
+                size: request.size(),
             }))
         }
     }
@@ -936,5 +973,42 @@ pub(crate) mod tests {
             assert_eq!(report.status, TerminalExitStatus::Exited(7));
             registry.close(id).unwrap();
         }
+    }
+
+    #[test]
+    fn resize_is_forwarded_to_running_sessions_only() {
+        let dir = TempDir::new();
+        let context = CwdContext::new(dir.path(), &[]).unwrap();
+        let shell = sh();
+        let environment = LaunchEnvironment {
+            cwd: &context,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
+            env_lookup: fake_env,
+            size: TerminalSize::new(30, 90).unwrap(),
+        };
+        let mut launcher = FakeLauncher::default();
+        let mut registry = TerminalRegistry::new(window(18));
+        let id = registry.create(profile("resize")).unwrap();
+        let size = TerminalSize::new(50, 132).unwrap();
+        assert_eq!(registry.resize(id, size), Err(RegistryError::NotRunning));
+        registry
+            .start(id, trusted(&registry), &environment, &mut launcher)
+            .unwrap();
+        assert_eq!(
+            launcher.requests[0].size(),
+            TerminalSize::new(30, 90).unwrap()
+        );
+        registry.resize(id, size).unwrap();
+        assert_eq!(launcher.counters.resized(), 1);
+        assert_eq!(
+            registry.session(id).unwrap().process().unwrap().size(),
+            Ok(size)
+        );
+        registry.close(id).unwrap();
+        assert_eq!(
+            registry.resize(id, size),
+            Err(RegistryError::UnknownSession)
+        );
     }
 }

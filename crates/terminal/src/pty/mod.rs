@@ -1,4 +1,4 @@
-//! macOS POSIX PTY 실행기 (XVIII.2.1).
+//! macOS POSIX PTY 실행기 (XVIII.2.1, XVIII.2.3).
 //!
 //! **PTY 생성**: `posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC)` → `grantpt` → `unlockpt` →
 //! `ptsname_r` → slave를 `open(O_RDWR | O_NOCTTY | O_CLOEXEC)`. master·slave fd는 만들 때부터
@@ -18,6 +18,10 @@
 //! [`DRAIN_TIMEOUT`]) 기다린 뒤 닫습니다(같은 실측에서 유실 0). 부모가 slave를 닫은 뒤에 master
 //! 읽기가 EOF가 됩니다. 사용자가 세션을 닫는 경우([`TerminalProcess::terminate`])에는 기다리지 않고
 //! 바로 닫습니다.
+//!
+//! **크기**: 초기 크기와 resize는 master에 `TIOCSWINSZ`로 전달합니다. 커널이 새 크기를 저장하고
+//! foreground process group에 `SIGWINCH`를 보내며, child는 `TIOCGWINSZ`(예: `stty size`)로 새 크기를
+//! 읽습니다. [`TerminalProcess::size`]는 master의 `TIOCGWINSZ` 값입니다.
 //!
 //! **종료**: 세션 leader의 process group(leader pid와 같음)에 `SIGHUP`(터미널 hangup)과
 //! `SIGCONT`(정지된 job 깨우기)를 보내고, 유예 시간 안에 끝나지 않으면 `SIGKILL`을 보낸 뒤 leader를
@@ -169,6 +173,27 @@ fn set_winsize(master: &impl AsRawFd, size: TerminalSize) -> Result<(), Terminal
         return Err(TerminalIoError::last_os_error("ioctl(TIOCSWINSZ)"));
     }
     Ok(())
+}
+
+/// master의 현재 크기(`TIOCGWINSZ`).
+fn get_winsize(master: &impl AsRawFd) -> Result<TerminalSize, TerminalIoError> {
+    let mut winsize = sys::Winsize::default();
+    // SAFETY: TIOCGWINSZ는 struct winsize 포인터 하나에 값을 씁니다. winsize는 호출 동안 살아 있습니다.
+    let rc = unsafe {
+        sys::ioctl(
+            master.as_raw_fd(),
+            sys::TIOCGWINSZ,
+            &mut winsize as *mut sys::Winsize,
+        )
+    };
+    if rc != 0 {
+        return Err(TerminalIoError::last_os_error("ioctl(TIOCGWINSZ)"));
+    }
+    TerminalSize::new(winsize.ws_row, winsize.ws_col).map_err(|_| TerminalIoError {
+        operation: "ioctl(TIOCGWINSZ)",
+        kind: io::ErrorKind::InvalidData,
+        os_code: None,
+    })
 }
 
 /// slave 출력 queue가 비었는지(`TIOCOUTQ`). 조회가 실패하면(revoke 등) 더 기다릴 것이 없으므로
@@ -398,6 +423,14 @@ impl TerminalProcess for PtyProcess {
             .map_err(|err| TerminalIoError::from_io("dup master", &err))?;
         Ok(Box::new(reader))
     }
+
+    fn resize(&mut self, size: TerminalSize) -> Result<(), TerminalIoError> {
+        set_winsize(&self.master, size)
+    }
+
+    fn size(&self) -> Result<TerminalSize, TerminalIoError> {
+        get_winsize(&self.master)
+    }
 }
 
 #[cfg(test)]
@@ -539,5 +572,72 @@ pub(crate) mod tests {
             "{err:?}"
         );
         assert_eq!(launcher.spawn_count(), 1);
+    }
+
+    fn request_sized(
+        program: &str,
+        args: &[&str],
+        cwd: &Path,
+        size: TerminalSize,
+    ) -> LaunchRequest {
+        LaunchRequest::new(
+            PathBuf::from(program),
+            args.iter().map(OsString::from).collect(),
+            None,
+            cwd.to_path_buf(),
+            vec![(OsString::from("PATH"), OsString::from("/usr/bin:/bin"))],
+            size,
+        )
+    }
+
+    #[test]
+    fn initial_size_fixture() {
+        let dir = TempDir::new();
+        for (rows, cols) in [(24, 80), (33, 101), (1, 1), (200, 500)] {
+            let size = TerminalSize::new(rows, cols).unwrap();
+            let (report, text) =
+                run_to_end(&request_sized("/bin/stty", &["size"], dir.path(), size));
+            assert_eq!(report.status, TerminalExitStatus::Exited(0));
+            assert_eq!(text, format!("{rows} {cols}\r\n"));
+        }
+    }
+
+    #[test]
+    fn resize_fixture_columns_and_rows() {
+        let dir = TempDir::new();
+        let mut process = launch(&request(
+            "/bin/sh",
+            &["-c", "read line; /bin/stty size"],
+            dir.path(),
+        ));
+        let output = OutputCollector::start(process.output_reader().unwrap());
+        assert_eq!(process.size().unwrap(), TerminalSize::DEFAULT);
+        let size = TerminalSize::new(50, 132).unwrap();
+        process.resize(size).unwrap();
+        assert_eq!(process.size().unwrap(), size);
+        // child가 새 크기를 읽습니다.
+        process.write_input(b"\n").unwrap();
+        let report = wait_exit(process.as_mut());
+        assert_eq!(report.status, TerminalExitStatus::Exited(0));
+        assert!(output.wait_eof(TIMEOUT).ends_with("50 132\r\n"));
+    }
+
+    #[test]
+    fn resize_delivers_sigwinch_to_foreground_job() {
+        let dir = TempDir::new();
+        let mut process = launch(&request(
+            "/bin/sh",
+            &[
+                "-c",
+                "trap '/bin/stty size; exit 0' WINCH; echo ready; while :; do /bin/sleep 0.05; done",
+            ],
+            dir.path(),
+        ));
+        let mut output = OutputCollector::start(process.output_reader().unwrap());
+        output.wait_for("ready", TIMEOUT);
+        process.resize(TerminalSize::new(40, 100).unwrap()).unwrap();
+        output.wait_for("40 100\r\n", TIMEOUT);
+        let report = wait_exit(process.as_mut());
+        assert_eq!(report.status, TerminalExitStatus::Exited(0));
     }
 }

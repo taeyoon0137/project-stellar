@@ -1,4 +1,4 @@
-//! 실행 요청과 실행기 경계 (XVIII.1.4, XVIII.2.1).
+//! 실행 요청과 실행기 경계 (XVIII.1.4, XVIII.2.1, XVIII.2.3).
 //!
 //! registry는 신뢰 gate·cwd·명령·환경을 확인한 뒤 [`LaunchRequest`]를 만들어 [`TerminalLauncher`]에
 //! 넘깁니다. 실제 PTY 생성과 child 실행은 플랫폼 실행기가 맡습니다(macOS POSIX PTY: XVIII.2.1).
@@ -171,6 +171,12 @@ pub trait TerminalProcess: fmt::Debug + Send {
     /// 출력을 읽는 독립 reader(별도 thread에서 읽도록 복제한 handle). 세션의 모든 프로세스가
     /// 터미널을 닫으면 EOF(`Ok(0)`) 또는 오류로 끝납니다.
     fn output_reader(&self) -> Result<Box<dyn Read + Send>, TerminalIoError>;
+
+    /// 터미널 크기를 바꿉니다(foreground process group에 `SIGWINCH`).
+    fn resize(&mut self, size: TerminalSize) -> Result<(), TerminalIoError>;
+
+    /// 현재 터미널 크기.
+    fn size(&self) -> Result<TerminalSize, TerminalIoError>;
 }
 
 /// 터미널 child 실행기.

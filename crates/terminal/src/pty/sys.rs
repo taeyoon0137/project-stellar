@@ -28,6 +28,8 @@ const fn ioc(inout: u32, group: u8, num: u8, len: usize) -> c_ulong {
 pub(crate) const TIOCSCTTY: c_ulong = ioc(IOC_VOID, b't', 97, 0);
 /// `TIOCSWINSZ = _IOW('t', 103, struct winsize)`.
 pub(crate) const TIOCSWINSZ: c_ulong = ioc(IOC_IN, b't', 103, std::mem::size_of::<Winsize>());
+/// `TIOCGWINSZ = _IOR('t', 104, struct winsize)`.
+pub(crate) const TIOCGWINSZ: c_ulong = ioc(IOC_OUT, b't', 104, std::mem::size_of::<Winsize>());
 /// `TIOCOUTQ = _IOR('t', 115, int)`: 출력 queue 길이.
 pub(crate) const TIOCOUTQ: c_ulong = ioc(IOC_OUT, b't', 115, std::mem::size_of::<c_int>());
 
@@ -68,6 +70,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<Winsize>(), 8);
         assert_eq!(TIOCSCTTY, 0x2000_7461);
         assert_eq!(TIOCSWINSZ, 0x8008_7467);
+        assert_eq!(TIOCGWINSZ, 0x4008_7468);
         assert_eq!(TIOCOUTQ, 0x4004_7473);
         assert_eq!((O_RDWR, O_NOCTTY, O_CLOEXEC), (2, 0x20000, 0x0100_0000));
         assert_eq!((SIGHUP, SIGKILL, SIGCONT), (1, 9, 19));
