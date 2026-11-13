@@ -13,6 +13,8 @@ use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::reference::NodeRef;
 use stellar_core_types::value::{FiniteF32, Transform2D, Vec2};
 
+use crate::node_kind::NodeKind;
+
 /// modifier의 안정 식별자. node StableId와 타입이 섞이지 않습니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModifierId(StableId);
@@ -59,6 +61,11 @@ pub enum ModifierError {
         /// 원인.
         reason: &'static str,
     },
+    /// Fragment에는 modifier를 넣을 수 없습니다(VI.9.6).
+    FragmentOwner {
+        /// 삽입하려던 modifier 종류.
+        kind: ModifierKind,
+    },
 }
 
 impl fmt::Display for ModifierError {
@@ -74,6 +81,11 @@ impl fmt::Display for ModifierError {
                 write!(f, "{} modifier의 payload 종류가 다릅니다", kind.name())
             }
             ModifierError::InvalidPayload { reason } => write!(f, "modifier 값 오류: {reason}"),
+            ModifierError::FragmentOwner { kind } => write!(
+                f,
+                "Fragment에는 {} modifier를 넣을 수 없습니다. Frame으로 변환한 뒤 추가하세요",
+                kind.name()
+            ),
         }
     }
 }
@@ -498,6 +510,29 @@ impl ModifierPayload {
     }
 }
 
+// --- modifier 소유 node 제약 (VI.9.6) ---
+
+/// 이 종류의 node가 modifier를 소유할 수 있는지(VI.9.6).
+///
+/// Fragment는 렌더·layout 필드가 없는 zero-size 구조 marker(VI.4.1)라 변환·효과를
+/// 가질 수 없습니다. 그 밖의 종류는 modifier stack을 가질 수 있습니다.
+pub fn can_own_modifiers(owner: NodeKind) -> bool {
+    owner != NodeKind::Fragment
+}
+
+/// `owner` 종류의 node에 `kind` modifier를 넣을 수 있는지 검증합니다(VI.9.6).
+///
+/// Fragment에는 **어떤 종류의** modifier도 넣을 수 없습니다 — VI.4.2의 금지 시각
+/// 속성 분류에 없는 Boolean·Corner 등도 마찬가지입니다. 변형·효과가 필요하면
+/// Frame으로 변환(VI.4.4)한 뒤 추가합니다.
+pub fn validate_modifier_owner(owner: NodeKind, kind: ModifierKind) -> Result<(), ModifierError> {
+    if can_own_modifiers(owner) {
+        Ok(())
+    } else {
+        Err(ModifierError::FragmentOwner { kind })
+    }
+}
+
 /// stack의 한 항목(id + 순서 key).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModifierEntry {
@@ -574,6 +609,34 @@ impl ModifierStack {
             payload: ModifierPayload::default_for(kind),
         })?;
         Ok(order)
+    }
+
+    /// 소유 node 종류를 확인한 뒤 항목을 추가합니다(modifier 삽입 command 경로,
+    /// VI.9.6).
+    ///
+    /// `owner`가 Fragment이면 [`ModifierError::FragmentOwner`]로 거부하고 stack을
+    /// 바꾸지 않습니다. 그 밖의 검사는 [`ModifierStack::insert`]와 같습니다.
+    /// stack 자체는 소유 node 종류를 모르므로, 저장된 문서에서 Fragment가 stack을
+    /// 가진 경우는 문서 validator(VI.10.1)가 다시 거부합니다.
+    pub fn insert_on(
+        &mut self,
+        owner: NodeKind,
+        entry: ModifierEntry,
+    ) -> Result<(), ModifierError> {
+        validate_modifier_owner(owner, entry.kind)?;
+        self.insert(entry)
+    }
+
+    /// 소유 node 종류를 확인한 뒤 맨 뒤에 새 modifier를 추가합니다(VI.9.6).
+    /// Fragment이면 거부하고 stack을 바꾸지 않습니다.
+    pub fn push_back_on(
+        &mut self,
+        owner: NodeKind,
+        id: ModifierId,
+        kind: ModifierKind,
+    ) -> Result<OrderKey, ModifierError> {
+        validate_modifier_owner(owner, kind)?;
+        self.push_back(id, kind)
     }
 
     /// 활성 여부를 바꿉니다(저장에서 제거하지 않음).
@@ -1188,5 +1251,83 @@ mod tests {
         assert!(find_modifier_cycle(&stacks).is_some());
         // 결정론.
         assert_eq!(find_modifier_cycle(&stacks), find_modifier_cycle(&stacks));
+    }
+
+    #[test]
+    fn fragment_modifier_command_fixtures_fail() {
+        // 검증 기준(VI.9.6): Fragment modifier command fixture 실패.
+        // command 경로(push_back_on·insert_on) 모두, 모든 modifier kind에 대해 거부하고
+        // stack을 바꾸지 않습니다.
+        let owner = StableId::new_v7(1, 0, 1);
+        let mut stack = ModifierStack::new(owner);
+        let before = stack.encode();
+        for (i, kind) in ModifierKind::ALL.into_iter().enumerate() {
+            let err = stack
+                .push_back_on(NodeKind::Fragment, id(100 + i as u64), kind)
+                .unwrap_err();
+            assert_eq!(err, ModifierError::FragmentOwner { kind });
+            assert!(err.to_string().contains("Frame"), "{err}");
+            assert!(err.to_string().contains(kind.name()), "{err}");
+
+            let entry = ModifierEntry {
+                id: id(200 + i as u64),
+                order: OrderKey::between(None, None),
+                kind,
+                enabled: true,
+                payload: ModifierPayload::default_for(kind),
+            };
+            assert_eq!(
+                stack.insert_on(NodeKind::Fragment, entry).unwrap_err(),
+                ModifierError::FragmentOwner { kind }
+            );
+        }
+        assert!(stack.entries().is_empty(), "거부 후 stack 불변");
+        assert_eq!(stack.encode(), before);
+        assert!(!can_own_modifiers(NodeKind::Fragment));
+    }
+
+    #[test]
+    fn fragment_rejection_precedes_other_entry_checks() {
+        // owner 검사가 먼저입니다: kind·payload가 어긋난 항목도 Fragment면 FragmentOwner.
+        let mut stack = ModifierStack::new(StableId::new_v7(1, 0, 1));
+        let mismatched = ModifierEntry {
+            id: id(10),
+            order: OrderKey::between(None, None),
+            kind: ModifierKind::Opacity,
+            enabled: true,
+            payload: ModifierPayload::default_for(ModifierKind::Blur),
+        };
+        assert_eq!(
+            stack
+                .insert_on(NodeKind::Fragment, mismatched.clone())
+                .unwrap_err(),
+            ModifierError::FragmentOwner {
+                kind: ModifierKind::Opacity
+            }
+        );
+        // Fragment가 아니면 기존 검사(kind/payload 불일치)가 그대로 적용됩니다.
+        assert_eq!(
+            stack.insert_on(NodeKind::Shape, mismatched).unwrap_err(),
+            ModifierError::KindPayloadMismatch {
+                kind: ModifierKind::Opacity
+            }
+        );
+    }
+
+    #[test]
+    fn non_fragment_owners_accept_every_modifier_kind() {
+        for owner_kind in NodeKind::ALL {
+            if owner_kind == NodeKind::Fragment {
+                continue;
+            }
+            assert!(can_own_modifiers(owner_kind));
+            let mut stack = ModifierStack::new(StableId::new_v7(1, 0, 1));
+            for (i, kind) in ModifierKind::ALL.into_iter().enumerate() {
+                stack
+                    .push_back_on(owner_kind, id(100 + i as u64), kind)
+                    .unwrap_or_else(|e| panic!("{}: {e}", owner_kind.name()));
+            }
+            assert_eq!(stack.entries().len(), ModifierKind::ALL.len());
+        }
     }
 }
