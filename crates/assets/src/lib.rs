@@ -20,3 +20,6 @@ pub mod store;
 
 /// `AssetId → AssetRecord` catalog (XIII.5.3).
 pub mod catalog;
+
+/// 에셋 streaming atomic write — temp+fsync+atomic rename (XIII.5.4).
+pub mod atomic_write;

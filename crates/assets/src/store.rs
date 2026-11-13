@@ -8,7 +8,8 @@
 //! 2. **copy pass**: hash로 정한 `assets/<prefix>/<hash>.<safe-ext>`(같은 디렉터리의 temp
 //!    파일)로 같은 buffer 단위로 복사하면서 다시 hash합니다. 두 pass의 hash·크기가 다르면
 //!    (import 도중 원본 변경) temp를 지우고 [`ImportError::SourceChanged`]로 실패합니다.
-//!    검증이 끝난 temp만 최종 이름으로 rename합니다.
+//!    검증이 끝난 temp만 flush → fsync → 최종 이름 rename → 부모 디렉터리 sync합니다
+//!    (storage V.2.5와 같은 protocol, [`crate::atomic_write`], XIII.5.4).
 //!
 //! # dedup (XIII.5.3)
 //!
@@ -24,13 +25,16 @@
 //! 남깁니다([`SourceMetadata::from_import_path`]).
 
 use std::fmt;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use stellar_storage::hash::{ContentHash, ParseContentHashError};
 
+use crate::atomic_write::{
+    write_atomic_streamed, AtomicWriteError, NoopObserver, WriteObserver, WriteStage,
+};
 use crate::hash_stream::{hash_reader_with, StreamDigest, StreamHashError, STREAM_BUFFER_SIZE};
 use crate::media_type::MediaType;
 use crate::path::{AssetObjectPath, SafeExtension};
@@ -47,23 +51,22 @@ pub enum ImportOperation {
     LocateContent,
     /// shard 디렉터리 생성.
     CreateDirectory,
-    /// copy pass(읽기·temp 쓰기).
+    /// copy pass 내용 기록(원본 읽기·temp 쓰기).
     CopyContent,
-    /// temp → 최종 이름 rename.
-    Rename,
+    /// atomic write 단계(temp 생성·flush·sync·rename·부모 sync, XIII.5.4).
+    Write(WriteStage),
 }
 
 impl fmt::Display for ImportOperation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = match self {
-            ImportOperation::OpenSource => "open-source",
-            ImportOperation::HashSource => "hash-source",
-            ImportOperation::LocateContent => "locate-content",
-            ImportOperation::CreateDirectory => "create-directory",
-            ImportOperation::CopyContent => "copy-content",
-            ImportOperation::Rename => "rename",
-        };
-        f.write_str(name)
+        match self {
+            ImportOperation::OpenSource => f.write_str("open-source"),
+            ImportOperation::HashSource => f.write_str("hash-source"),
+            ImportOperation::LocateContent => f.write_str("locate-content"),
+            ImportOperation::CreateDirectory => f.write_str("create-directory"),
+            ImportOperation::CopyContent => f.write_str("copy-content"),
+            ImportOperation::Write(stage) => write!(f, "write-{stage}"),
+        }
     }
 }
 
@@ -227,6 +230,17 @@ impl AssetStore {
 
     /// 외부 파일을 streaming hash 후 `assets/`로 복사합니다.
     pub fn import_file(&self, request: &ImportRequest) -> Result<ImportedAsset, ImportError> {
+        self.import_file_observed(request, &mut NoopObserver)
+    }
+
+    /// [`AssetStore::import_file`]에 쓰기 단계 관찰자를 주입한 버전(fault injection 테스트용).
+    ///
+    /// 관찰자가 `Err`를 반환하면 그 단계를 실행하지 않고 중단합니다(storage V.2.5와 같은 규약).
+    pub fn import_file_observed(
+        &self,
+        request: &ImportRequest,
+        observer: &mut dyn WriteObserver,
+    ) -> Result<ImportedAsset, ImportError> {
         // metadata를 먼저 만들어 기록할 수 없는 경로면 아무 것도 쓰기 전에 실패합니다.
         let source_metadata = if request.record_source {
             Some(
@@ -246,7 +260,13 @@ impl AssetStore {
             Some(existing) => (existing, ImportOutcome::Deduplicated),
             None => {
                 let object_path = AssetObjectPath::new(&digest.hash, &request.extension);
-                self.copy_content(&request.source, &digest, &object_path, &mut buffer)?;
+                self.copy_content(
+                    &request.source,
+                    &digest,
+                    &object_path,
+                    &mut buffer,
+                    observer,
+                )?;
                 (object_path, ImportOutcome::Copied)
             }
         };
@@ -305,28 +325,35 @@ impl AssetStore {
         Ok(found)
     }
 
-    /// copy pass: temp에 복사·재hash 검증 후 최종 이름으로 rename합니다.
+    /// copy pass: streaming atomic write(XIII.5.4)로 temp에 복사·재hash 검증 후
+    /// flush → fsync → rename → 부모 디렉터리 sync합니다.
     fn copy_content(
         &self,
         source: &Path,
         expected: &StreamDigest,
         object: &AssetObjectPath,
         buffer: &mut [u8],
+        observer: &mut dyn WriteObserver,
     ) -> Result<(), ImportError> {
         let dir = self.root.join(object.relative_dir());
         std::fs::create_dir_all(&dir)
             .map_err(|e| ImportError::io(ImportOperation::CreateDirectory, &e))?;
         let target = dir.join(object.file_name());
-        let temp = temp_path_for(&target);
-        let result = copy_verified(source, &temp, expected, buffer).and_then(|()| {
-            std::fs::rename(&temp, &target)
-                .map_err(|e| ImportError::io(ImportOperation::Rename, &e))
-        });
-        if result.is_err() {
-            // 실패 경로에서는 temp를 치웁니다(실패해도 무시 — 최종 파일은 만들어지지 않음).
-            let _ = std::fs::remove_file(&temp);
-        }
-        result
+        let mut input = open_source(source)?;
+        write_atomic_streamed(&target, observer, |output| {
+            let copied = hash_reader_with(&mut input, buffer, |chunk| output.write_all(chunk))
+                .map_err(|e| ImportError::stream(ImportOperation::CopyContent, e))?;
+            if copied != *expected {
+                return Err(ImportError::SourceChanged);
+            }
+            Ok(())
+        })
+        .map_err(|e| match e {
+            AtomicWriteError::Stage { stage, error } => {
+                ImportError::io(ImportOperation::Write(stage), &error)
+            }
+            AtomicWriteError::Body(e) => e,
+        })
     }
 }
 
@@ -347,30 +374,6 @@ fn hash_source(path: &Path, buffer: &mut [u8]) -> Result<StreamDigest, ImportErr
     let mut file = open_source(path)?;
     hash_reader_with(&mut file, buffer, |_| Ok(()))
         .map_err(|e| ImportError::stream(ImportOperation::HashSource, e))
-}
-
-/// copy pass: 원본을 temp로 복사하며 다시 hash하고 hash pass 결과와 비교합니다.
-fn copy_verified(
-    source: &Path,
-    temp: &Path,
-    expected: &StreamDigest,
-    buffer: &mut [u8],
-) -> Result<(), ImportError> {
-    let mut input = open_source(source)?;
-    let mut output = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(temp)
-        .map_err(|e| ImportError::io(ImportOperation::CopyContent, &e))?;
-    let copied = hash_reader_with(&mut input, buffer, |chunk| output.write_all(chunk))
-        .map_err(|e| ImportError::stream(ImportOperation::CopyContent, e))?;
-    if copied != *expected {
-        return Err(ImportError::SourceChanged);
-    }
-    output
-        .flush()
-        .map_err(|e| ImportError::io(ImportOperation::CopyContent, &e))?;
-    Ok(())
 }
 
 /// 대상과 같은 디렉터리에 만들 temp 파일 경로(`.<file>.tmp-<pid>-<n>`).
@@ -772,7 +775,7 @@ mod tests {
         let object = AssetObjectPath::new(&digest.hash, &SafeExtension::new("png").unwrap());
         assert_eq!(
             fx.store
-                .copy_content(&source, &digest, &object, &mut buffer)
+                .copy_content(&source, &digest, &object, &mut buffer, &mut NoopObserver)
                 .unwrap_err(),
             ImportError::SourceChanged
         );
@@ -802,9 +805,114 @@ mod tests {
     fn error_messages_are_descriptive() {
         assert!(ImportError::SourceChanged.to_string().contains("원본"));
         let err = ImportError::io(
-            ImportOperation::Rename,
+            ImportOperation::Write(WriteStage::Rename),
             &std::io::Error::from(ErrorKind::PermissionDenied),
         );
-        assert!(err.to_string().contains("rename"));
+        assert!(err.to_string().contains("write-rename"));
+    }
+
+    /// 지정 단계 직전에 중단을 주입하는 관찰자.
+    struct FailAt(WriteStage);
+
+    impl WriteObserver for FailAt {
+        fn before(&mut self, stage: WriteStage) -> std::io::Result<()> {
+            if stage == self.0 {
+                return Err(std::io::Error::other(format!("주입된 중단: {stage}")));
+            }
+            Ok(())
+        }
+    }
+
+    /// 지정 단계 직전에 panic(정리 코드 미실행 = 강제 종료 모사)하는 관찰자.
+    struct AbortAt(WriteStage);
+
+    impl WriteObserver for AbortAt {
+        fn before(&mut self, stage: WriteStage) -> std::io::Result<()> {
+            if stage == self.0 {
+                panic!("강제 종료 모사: {stage}");
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn interrupted_import_never_leaves_partial_final_file() {
+        let bytes = patterned(3 * STREAM_BUFFER_SIZE + 11, 2);
+        for fail in WriteStage::ALL {
+            let fx = fixture();
+            let source = fx.outside.join("a.png");
+            std::fs::write(&source, &bytes).unwrap();
+            let request = ImportRequest::new(&source, png());
+            let err = fx
+                .store
+                .import_file_observed(&request, &mut FailAt(fail))
+                .unwrap_err();
+            assert!(
+                matches!(err, ImportError::Io { operation: ImportOperation::Write(stage), .. } if stage == fail),
+                "{fail}: {err:?}"
+            );
+            let object = AssetObjectPath::new(&ContentHash::compute(&bytes), request.extension());
+            let content = fx.store.content_path(&object);
+            if fail == WriteStage::SyncParentDir {
+                // rename 이후 중단: 최종 파일은 완전한 내용입니다.
+                assert_eq!(std::fs::read(&content).unwrap(), bytes);
+            } else {
+                assert!(!content.exists(), "{fail}: 최종 파일 없음");
+            }
+            // 우아한 실패는 temp를 남기지 않습니다.
+            let left = files_under(&fx.project.join("assets"));
+            assert!(left.iter().all(|p| *p == content), "{fail}: {left:?}");
+
+            // 재시도는 정상 완료됩니다(이미 완전한 파일이 있으면 dedup).
+            let retry = fx.store.import_file(&request).unwrap();
+            let expected = if fail == WriteStage::SyncParentDir {
+                ImportOutcome::Deduplicated
+            } else {
+                ImportOutcome::Copied
+            };
+            assert_eq!(retry.outcome, expected, "{fail}");
+            assert_eq!(std::fs::read(&content).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn forced_abort_after_copy_leaves_only_hidden_temp() {
+        let bytes = patterned(2 * STREAM_BUFFER_SIZE + 1, 6);
+        for abort in [WriteStage::Flush, WriteStage::SyncFile, WriteStage::Rename] {
+            let fx = fixture();
+            let source = fx.outside.join("a.png");
+            std::fs::write(&source, &bytes).unwrap();
+            let request = ImportRequest::new(&source, png());
+            let store = fx.store.clone();
+            let request_for_abort = request.clone();
+            let outcome = std::panic::catch_unwind(move || {
+                let _ = store.import_file_observed(&request_for_abort, &mut AbortAt(abort));
+            });
+            assert!(outcome.is_err(), "{abort}");
+
+            let object = AssetObjectPath::new(&ContentHash::compute(&bytes), request.extension());
+            let content = fx.store.content_path(&object);
+            assert!(!content.exists(), "{abort}: 최종 이름에 내용 없음");
+            // 정리되지 않은 temp는 남지만 content 파일로 해석되지 않습니다.
+            let left = files_under(&fx.project.join("assets"));
+            assert_eq!(left.len(), 1, "{abort}");
+            assert!(left[0]
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with('.'));
+            let size = bytes.len() as u64;
+            assert_eq!(
+                fx.store
+                    .locate_content(&ContentHash::compute(&bytes), size)
+                    .unwrap(),
+                None
+            );
+            // 재import는 temp를 dedup 대상으로 쓰지 않고 새로 기록합니다.
+            let retry = fx.store.import_file(&request).unwrap();
+            assert_eq!(retry.outcome, ImportOutcome::Copied);
+            assert_eq!(std::fs::read(&content).unwrap(), bytes);
+        }
     }
 }
