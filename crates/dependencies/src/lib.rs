@@ -1,1 +1,11 @@
-//! stellar-dependencies — 외부 라이브러리 의존성 모델 골격. 의존: core-types.
+//! stellar-dependencies — Git 기반 외부 Component·Token library 의존성 모델 (Phase XV).
+//!
+//! 의존: core-types만. `stellar.yaml`·`stellar.lock.yaml` 텍스트(제한 YAML), 시스템 Git 실행,
+//! 프로젝트 probe·저장소 검증은 project crate가 이 crate의 trait과 형식 중립 트리([`node`])를
+//! 구현·연결합니다.
+
+/// 형식 중립 선언 트리와 스키마 오류 (XV.1.1).
+pub mod node;
+
+/// `stellar.yaml` 의존성 선언 모델 (XV.1.1).
+pub mod declaration;
