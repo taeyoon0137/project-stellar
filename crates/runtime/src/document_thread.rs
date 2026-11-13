@@ -7,7 +7,7 @@
 //!   벗어나지 않습니다. [`DocumentThread`]와 [`DocumentSender`]는 문서에 대한 어떤 참조도
 //!   돌려주지 않습니다.
 //! - 다른 thread는 job(`FnOnce(&mut DocumentContext) -> T`)을 보내기만 합니다. job은 document
-//!   thread에서 접수 순서대로 하나씩 실행되고, 결과 `T`(소유 값)만 [`JobTicket`]으로 돌아옵니다.
+//!   thread에서 하나씩 실행되고, 결과 `T`(소유 값)만 [`JobTicket`]으로 돌아옵니다.
 //! - [`DocumentContext`]와 [`DocumentMut`]는 `!Send`·`!Sync`입니다. job 안에서 다른 thread
 //!   (`std::thread::spawn`, `std::thread::scope` 포함)로 넘겨 변경할 수 없고, job closure의
 //!   higher-ranked lifetime 때문에 job 밖으로 빼돌릴 수도 없습니다(compile_fail doctest로 고정).
@@ -15,17 +15,26 @@
 //! - document thread는 [`ThreadRole::Document`]로 bind되어 worker 전용 작업(XI.7.1)을 거부하고,
 //!   document thread에서의 blocking 대기([`JobTicket::wait`])도 거부합니다(자기 대기 deadlock 방지).
 //!
+//! # 수신함 (XII.1.2)
+//!
+//! 수신함은 우선순위별 bounded lane을 가진 [`CommandQueue`]입니다. 처리 순서와 overflow 정책은
+//! [`crate::command_queue`] 문서에 있습니다. UI thread가 쓰는 접수 API
+//! ([`DocumentSender::try_submit`], [`DocumentSender::submit`])는 용량·job 실행을 기다리지 않고
+//! 바로 판정하며, [`ThreadRole::Ui`] thread에서의 blocking 대기([`JobTicket::wait`],
+//! [`JobTicket::wait_timeout`])는 거부합니다. UI thread는 [`JobTicket::try_take`]로만 결과를
+//! 확인합니다.
+//!
 //! # 종료
 //!
 //! [`DocumentThread::shutdown`]은 새 job 접수를 닫고, 이미 접수된 job을 모두 실행한 뒤 thread를
 //! join합니다. thread별 전체 종료 순서는 XII.1.6 소관입니다.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::marker::PhantomData;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::Duration;
 
@@ -36,6 +45,10 @@ use stellar_document::open_set::{OpenDocumentHandle, OpenDocumentSet, OpenOutcom
 use stellar_document::snapshot::{Document, DocumentSnapshotView};
 use stellar_renderer_core::thread_role::{
     bind_thread_role, current_thread_role, ThreadRole, ThreadRoleError,
+};
+
+use crate::command_queue::{
+    CommandPriority, CommandQueue, Pushed, QueueCapacity, RejectReason, SubmitOptions,
 };
 
 /// document thread 이름(디버거·trace 표시용).
@@ -269,12 +282,18 @@ impl DocumentMut<'_> {
 pub enum JobError {
     /// document thread가 job을 끝내기 전에 사라졌습니다(실행 전 비정상 종료, job panic).
     Lost,
+    /// 같은 병합 key의 더 새 job으로 대체됐습니다(XII.1.2).
+    Superseded,
+    /// background lane 용량 초과로 밀려났습니다(XII.1.2).
+    Evicted,
 }
 
 impl fmt::Display for JobError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             JobError::Lost => write!(f, "document thread가 job을 끝내기 전에 종료됐습니다"),
+            JobError::Superseded => write!(f, "같은 병합 key의 더 새 job으로 대체됐습니다"),
+            JobError::Evicted => write!(f, "background lane 용량 초과로 밀려났습니다"),
         }
     }
 }
@@ -314,9 +333,12 @@ impl std::error::Error for TicketError {}
 
 type JobReply<T> = Result<T, JobError>;
 
-/// 타입을 지운 job. document thread에서 한 번 실행됩니다.
+/// 타입을 지운 job. document thread에서 한 번 실행되거나, 실행 없이 버려집니다.
 trait ErasedJob: Send {
     fn run(self: Box<Self>, context: &mut DocumentContext);
+
+    /// 실행하지 않고 버립니다. ticket에 이유를 알립니다.
+    fn discard(self: Box<Self>, reason: JobError);
 }
 
 struct TypedJob<F, T> {
@@ -335,13 +357,23 @@ where
         // ticket을 버린 호출자에게는 결과를 전달하지 않습니다(정상 경로).
         let _ = reply.send(Ok(value));
     }
+
+    fn discard(self: Box<Self>, reason: JobError) {
+        let TypedJob { job, reply } = *self;
+        // closure(캡처 값 포함)를 먼저 버린 뒤 ticket에 알립니다.
+        drop(job);
+        let _ = reply.send(Err(reason));
+    }
 }
 
 /// blocking 대기가 허용되는 thread인지 확인합니다.
 fn ensure_blocking_allowed() -> Result<(), TicketError> {
     match current_thread_role() {
         // document thread가 자기 queue의 job을 기다리면 deadlock입니다.
-        Some(role @ ThreadRole::Document) => Err(TicketError::BlockingNotAllowed { role }),
+        // UI thread는 document thread를 기다리지 않습니다(XII.1.2, blocking UI call 금지).
+        Some(role @ (ThreadRole::Document | ThreadRole::Ui)) => {
+            Err(TicketError::BlockingNotAllowed { role })
+        }
         _ => Ok(()),
     }
 }
@@ -387,7 +419,7 @@ impl<T> JobTicket<T> {
 
     /// 최대 `timeout`만큼 결과를 기다립니다. 시간이 지나면 `Ok(None)`입니다.
     ///
-    /// document thread에서는 거부합니다([`TicketError::BlockingNotAllowed`]).
+    /// document·UI thread에서는 거부합니다([`TicketError::BlockingNotAllowed`]).
     pub fn wait_timeout(&mut self, timeout: Duration) -> Result<Option<T>, TicketError> {
         if self.taken {
             return Err(TicketError::AlreadyTaken);
@@ -402,7 +434,7 @@ impl<T> JobTicket<T> {
 
     /// 결과가 나올 때까지 기다립니다.
     ///
-    /// document thread에서는 거부합니다([`TicketError::BlockingNotAllowed`]).
+    /// document·UI thread에서는 거부합니다([`TicketError::BlockingNotAllowed`]).
     pub fn wait(mut self) -> Result<T, TicketError> {
         if self.taken {
             return Err(TicketError::AlreadyTaken);
@@ -424,86 +456,10 @@ impl<T> JobTicket<T> {
 // inbox
 // ---------------------------------------------------------------------------
 
-/// UI·다른 thread → document thread job 수신함(FIFO).
+/// UI·다른 thread → document thread job 수신함: 우선순위별 bounded lane(XII.1.2).
 ///
-/// 임계 구역은 push/pop 한 번(O(1))뿐이며 job 실행·drop은 항상 lock 밖에서 합니다.
-struct Inbox {
-    state: Mutex<InboxState>,
-    ready: Condvar,
-}
-
-struct InboxState {
-    jobs: VecDeque<Box<dyn ErasedJob>>,
-    closed: bool,
-}
-
-impl Inbox {
-    fn new() -> Inbox {
-        Inbox {
-            state: Mutex::new(InboxState {
-                jobs: VecDeque::new(),
-                closed: false,
-            }),
-            ready: Condvar::new(),
-        }
-    }
-
-    fn lock(&self) -> MutexGuard<'_, InboxState> {
-        // 임계 구역에서 panic하는 코드가 없으므로 poison 상태도 일관됩니다.
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// job을 넣습니다. 닫혀 있으면 job을 돌려줍니다(호출자가 lock 밖에서 버립니다).
-    fn push(&self, job: Box<dyn ErasedJob>) -> Result<(), Box<dyn ErasedJob>> {
-        let mut state = self.lock();
-        if state.closed {
-            return Err(job);
-        }
-        state.jobs.push_back(job);
-        drop(state);
-        self.ready.notify_one();
-        Ok(())
-    }
-
-    /// 다음 job을 꺼냅니다. 비어 있으면 기다리고, 닫힌 뒤 비면 `None`입니다.
-    fn pop_blocking(&self) -> Option<Box<dyn ErasedJob>> {
-        let mut state = self.lock();
-        loop {
-            if let Some(job) = state.jobs.pop_front() {
-                return Some(job);
-            }
-            if state.closed {
-                return None;
-            }
-            state = self
-                .ready
-                .wait(state)
-                .unwrap_or_else(PoisonError::into_inner);
-        }
-    }
-
-    /// 새 접수를 닫습니다. 이미 접수된 job은 그대로 둡니다.
-    fn close(&self) {
-        let mut state = self.lock();
-        state.closed = true;
-        drop(state);
-        self.ready.notify_all();
-    }
-
-    /// 닫고 남은 job을 꺼냅니다(비정상 종료 경로).
-    fn close_and_take(&self) -> VecDeque<Box<dyn ErasedJob>> {
-        let mut state = self.lock();
-        state.closed = true;
-        let remaining = std::mem::take(&mut state.jobs);
-        drop(state);
-        self.ready.notify_all();
-        remaining
-    }
-
-    fn is_closed(&self) -> bool {
-        self.lock().closed
-    }
-}
+/// 임계 구역은 접수·꺼내기 한 번(O(1))뿐이며 job 실행·폐기는 항상 lock 밖에서 합니다.
+type Inbox = CommandQueue<Box<dyn ErasedJob>>;
 
 /// document thread가 어떤 경로로 끝나든(panic 포함) 수신함을 닫고 남은 job을 버립니다.
 struct CloseOnExit {
@@ -513,8 +469,9 @@ struct CloseOnExit {
 impl Drop for CloseOnExit {
     fn drop(&mut self) {
         // 남은 job은 lock 밖에서 버립니다. 각 ticket은 `JobError::Lost`가 됩니다.
-        let remaining = self.inbox.close_and_take();
-        drop(remaining);
+        for job in self.inbox.close_and_drain() {
+            job.discard(JobError::Lost);
+        }
     }
 }
 
@@ -527,22 +484,55 @@ impl Drop for CloseOnExit {
 pub enum SubmitError {
     /// document thread가 종료 중이거나 종료됐습니다.
     Stopped,
+    /// 해당 우선순위 lane 용량이 찼습니다(XII.1.2). job은 접수되지 않았고 실행되지 않습니다.
+    QueueFull {
+        /// 해당 lane.
+        priority: CommandPriority,
+    },
 }
 
 impl fmt::Display for SubmitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SubmitError::Stopped => write!(f, "document thread가 job 접수를 닫았습니다"),
+            SubmitError::QueueFull { priority } => {
+                write!(
+                    f,
+                    "{} lane 용량이 차 job을 접수하지 못했습니다",
+                    priority.name()
+                )
+            }
         }
     }
 }
 
 impl std::error::Error for SubmitError {}
 
+/// 접수 판정(XII.1.2 overflow 정책).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubmitOutcome {
+    /// lane 끝에 접수했습니다.
+    Enqueued,
+    /// 같은 병합 key의 마지막 job을 대체했습니다(대체된 ticket은 [`JobError::Superseded`]).
+    Coalesced,
+    /// background lane의 가장 오래된 job을 밀어내고 접수했습니다(밀려난 ticket은
+    /// [`JobError::Evicted`]).
+    EnqueuedEvicting,
+}
+
+/// 접수된 job의 ticket과 판정.
+#[derive(Debug)]
+pub struct Submitted<T> {
+    /// 결과 handle.
+    pub ticket: JobTicket<T>,
+    /// 접수 판정.
+    pub outcome: SubmitOutcome,
+}
+
 /// 다른 thread가 document thread에 job을 보내는 handle. 복제해 여러 thread에서 쓸 수 있습니다.
 ///
-/// 문서 참조를 돌려주는 API가 없습니다. 모든 변경은 [`DocumentSender::submit`]한 job 안에서
-/// document thread가 수행합니다.
+/// 문서 참조를 돌려주는 API가 없습니다. 모든 변경은 접수한 job 안에서 document thread가
+/// 수행합니다. 접수 API는 용량·job 실행을 기다리지 않습니다(UI thread에서 안전).
 #[derive(Clone)]
 pub struct DocumentSender {
     inbox: Arc<Inbox>,
@@ -557,21 +547,55 @@ impl fmt::Debug for DocumentSender {
 }
 
 impl DocumentSender {
-    /// job을 접수합니다. job 실행을 기다리지 않고 바로 반환합니다.
+    /// [`CommandPriority::Command`] 우선순위로 job을 접수합니다. 기다리지 않고 바로 반환합니다.
+    ///
+    /// command lane이 차 있으면 [`SubmitError::QueueFull`]입니다.
     pub fn submit<F, T>(&self, job: F) -> Result<JobTicket<T>, SubmitError>
+    where
+        F: FnOnce(&mut DocumentContext) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        self.try_submit(SubmitOptions::command(), job)
+            .map(|submitted| submitted.ticket)
+    }
+
+    /// 우선순위·병합 key를 지정해 job을 접수합니다. 기다리지 않고 overflow 정책대로 바로
+    /// 판정합니다([`crate::command_queue`]).
+    ///
+    /// 대체·밀려난 이전 job의 ticket에는 lock 밖에서 이유를 알립니다.
+    pub fn try_submit<F, T>(
+        &self,
+        options: SubmitOptions,
+        job: F,
+    ) -> Result<Submitted<T>, SubmitError>
     where
         F: FnOnce(&mut DocumentContext) -> T + Send + 'static,
         T: Send + 'static,
     {
         let (reply, receiver) = mpsc::channel();
         let job: Box<dyn ErasedJob> = Box::new(TypedJob { job, reply });
-        match self.inbox.push(job) {
-            Ok(()) => Ok(JobTicket::new(receiver)),
-            Err(rejected) => {
-                drop(rejected);
-                Err(SubmitError::Stopped)
+        let outcome = match self.inbox.try_push(options, job) {
+            Ok(Pushed::Enqueued) => SubmitOutcome::Enqueued,
+            Ok(Pushed::Coalesced { superseded }) => {
+                superseded.discard(JobError::Superseded);
+                SubmitOutcome::Coalesced
             }
-        }
+            Ok(Pushed::EnqueuedEvicting { evicted }) => {
+                evicted.discard(JobError::Evicted);
+                SubmitOutcome::EnqueuedEvicting
+            }
+            Err(rejected) => {
+                drop(rejected.item);
+                return Err(match rejected.reason {
+                    RejectReason::Closed => SubmitError::Stopped,
+                    RejectReason::QueueFull { priority } => SubmitError::QueueFull { priority },
+                });
+            }
+        };
+        Ok(Submitted {
+            ticket: JobTicket::new(receiver),
+            outcome,
+        })
     }
 
     /// job 접수가 닫혔는지.
@@ -641,9 +665,14 @@ impl fmt::Debug for DocumentThread {
 }
 
 impl DocumentThread {
-    /// document thread를 시작합니다.
+    /// 기본 lane 용량([`QueueCapacity::default`])으로 document thread를 시작합니다.
     pub fn spawn() -> Result<DocumentThread, DocumentThreadError> {
-        let inbox = Arc::new(Inbox::new());
+        DocumentThread::spawn_with(QueueCapacity::default())
+    }
+
+    /// lane 용량을 지정해 document thread를 시작합니다.
+    pub fn spawn_with(capacity: QueueCapacity) -> Result<DocumentThread, DocumentThreadError> {
+        let inbox = Arc::new(Inbox::new(capacity));
         let loop_inbox = Arc::clone(&inbox);
         let join = thread::Builder::new()
             .name(DOCUMENT_THREAD_NAME.to_string())
@@ -703,7 +732,7 @@ impl Drop for DocumentThread {
     }
 }
 
-/// document thread event loop: job을 접수 순서대로 하나씩 실행합니다.
+/// document thread event loop: 가장 높은 우선순위 lane의 가장 오래된 job부터 하나씩 실행합니다.
 fn run_loop(inbox: Arc<Inbox>) -> Result<DocumentLoopStats, DocumentThreadError> {
     let _close_on_exit = CloseOnExit {
         inbox: Arc::clone(&inbox),
@@ -1044,5 +1073,270 @@ mod tests {
         assert!(DocumentThreadError::ShutdownFromDocumentThread
             .to_string()
             .contains("자기 자신"));
+    }
+}
+
+/// XII.1.2: bounded 우선순위 수신함과 UI 무대기 접수.
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+    use crate::command_queue::InputEventClass;
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    /// 조건이 참이 될 때까지 최대 5초 기다립니다.
+    fn wait_until(mut condition: impl FnMut() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if condition() {
+                return true;
+            }
+            thread::yield_now();
+        }
+        condition()
+    }
+
+    /// document thread를 job 실행 중 상태로 막아 두고, 수신함이 빌 때까지 기다립니다.
+    fn block_document_thread(sender: &DocumentSender) -> Sender<()> {
+        let (release, wait) = mpsc::channel::<()>();
+        sender
+            .submit(move |_ctx| {
+                let _ = wait.recv();
+            })
+            .unwrap();
+        assert!(
+            wait_until(|| sender.inbox.is_empty()),
+            "gate job이 꺼내져 실행 중이어야 함"
+        );
+        release
+    }
+
+    /// `ThreadRole::Ui`로 bind한 thread에서 body를 실행합니다.
+    fn on_ui_thread<R: Send + 'static>(
+        body: impl FnOnce() -> R + Send + 'static,
+    ) -> thread::JoinHandle<R> {
+        thread::spawn(move || {
+            let _ui = bind_thread_role(ThreadRole::Ui).unwrap();
+            body()
+        })
+    }
+
+    type Log = Arc<Mutex<Vec<String>>>;
+
+    fn logging_job(log: &Log, label: &str) -> impl FnOnce(&mut DocumentContext) + Send + 'static {
+        let log = Arc::clone(log);
+        let label = label.to_string();
+        move |_ctx| log.lock().unwrap().push(label)
+    }
+
+    #[test]
+    fn ui_submissions_never_wait_for_a_busy_document_thread() {
+        // 검증 기준(XII.1.2) "blocking UI call 없음": document thread가 job 실행 중으로 멈춰 있어도
+        // UI thread의 접수는 overflow 정책대로 바로 판정되고, UI thread의 blocking 대기는 거부됩니다.
+        let capacity = QueueCapacity::new(4, 4, 4).unwrap();
+        let doc = DocumentThread::spawn_with(capacity).unwrap();
+        let sender = doc.sender();
+        let release = block_document_thread(&sender);
+        let log: Log = Arc::new(Mutex::new(Vec::new()));
+
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        let ui_sender = sender.clone();
+        let ui_log = Arc::clone(&log);
+        let ui = on_ui_thread(move || {
+            let mut outcomes = Vec::new();
+            let mut tickets = Vec::new();
+            for (prefix, options) in [
+                ("i", SubmitOptions::input()),
+                ("c", SubmitOptions::command()),
+                ("b", SubmitOptions::background()),
+            ] {
+                for n in 0..6 {
+                    let label = format!("{prefix}{n}");
+                    match ui_sender.try_submit(options, logging_job(&ui_log, &label)) {
+                        Ok(submitted) => {
+                            outcomes.push((label.clone(), Ok(submitted.outcome)));
+                            tickets.push((label, submitted.ticket));
+                        }
+                        Err(error) => outcomes.push((label, Err(error))),
+                    }
+                }
+            }
+            // UI thread: 대기 없는 확인만 허용, blocking 대기는 거부.
+            let (_, first) = &mut tickets[0];
+            let polled = first.try_take();
+            let timed = first.wait_timeout(Duration::from_secs(5));
+            let (_, last) = tickets.pop().unwrap();
+            let waited = last.wait();
+            done_tx.send(()).unwrap();
+            (outcomes, tickets, polled, timed, waited)
+        });
+        // gate를 열기 전에 UI thread가 끝나야 합니다(접수 중 대기 없음).
+        assert!(
+            done_rx.recv_timeout(Duration::from_secs(10)).is_ok(),
+            "UI 접수가 바쁜 document thread를 기다렸습니다"
+        );
+        let (outcomes, tickets, polled, timed, waited) = ui.join().unwrap();
+
+        let refused = TicketError::BlockingNotAllowed {
+            role: ThreadRole::Ui,
+        };
+        assert_eq!(polled, Ok(None));
+        assert_eq!(timed, Err(refused));
+        assert_eq!(waited, Err(refused));
+
+        let expected: Vec<(String, Result<SubmitOutcome, SubmitError>)> = [
+            ("i", CommandPriority::Input),
+            ("c", CommandPriority::Command),
+            ("b", CommandPriority::Background),
+        ]
+        .into_iter()
+        .flat_map(|(prefix, priority)| {
+            (0..6).map(move |n| {
+                let outcome = match (priority, n) {
+                    (_, 0..=3) => Ok(SubmitOutcome::Enqueued),
+                    (CommandPriority::Background, _) => Ok(SubmitOutcome::EnqueuedEvicting),
+                    (priority, _) => Err(SubmitError::QueueFull { priority }),
+                };
+                (format!("{prefix}{n}"), outcome)
+            })
+        })
+        .collect();
+        assert_eq!(outcomes, expected);
+
+        release.send(()).unwrap();
+        let stats = doc.shutdown().unwrap();
+        // gate 1 + input 4 + command 4 + background 4(b5는 UI가 ticket을 버렸어도 실행).
+        assert_eq!(stats.jobs_run, 13);
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["i0", "i1", "i2", "i3", "c0", "c1", "c2", "c3", "b2", "b3", "b4", "b5"]
+        );
+        // 남은 ticket(b5는 UI thread의 거부된 wait가 소비)은 역할 없는 test thread에서 기다립니다.
+        // i0은 UI thread의 try_take·wait_timeout이 결과를 꺼내지 않았으므로 여전히 결과를 받습니다.
+        for (label, ticket) in tickets {
+            let result = ticket.wait();
+            match label.as_str() {
+                "b0" | "b1" => assert_eq!(result, Err(TicketError::Job(JobError::Evicted))),
+                _ => assert_eq!(result, Ok(()), "{label}"),
+            }
+        }
+    }
+
+    #[test]
+    fn pointer_moves_coalesce_to_the_latest_while_busy() {
+        let doc = DocumentThread::spawn().unwrap();
+        let sender = doc.sender();
+        let release = block_document_thread(&sender);
+        let options = InputEventClass::PointerMove { device: 1 }.submit_options();
+        let mut submitted: Vec<Submitted<u32>> = (0..100u32)
+            .map(|x| sender.try_submit(options, move |_ctx| x).unwrap())
+            .collect();
+        assert_eq!(submitted[0].outcome, SubmitOutcome::Enqueued);
+        assert!(submitted[1..]
+            .iter()
+            .all(|s| s.outcome == SubmitOutcome::Coalesced));
+        assert_eq!(sender.inbox.lane_len(CommandPriority::Input), 1);
+        release.send(()).unwrap();
+        let last = submitted.pop().unwrap();
+        assert_eq!(last.ticket.wait(), Ok(99));
+        for earlier in submitted {
+            assert_eq!(
+                earlier.ticket.wait(),
+                Err(TicketError::Job(JobError::Superseded))
+            );
+        }
+        assert_eq!(doc.shutdown().unwrap().jobs_run, 2);
+    }
+
+    #[test]
+    fn discrete_input_is_never_merged_or_reordered() {
+        let doc = DocumentThread::spawn().unwrap();
+        let sender = doc.sender();
+        let release = block_document_thread(&sender);
+        let log: Log = Arc::new(Mutex::new(Vec::new()));
+        let steps = [
+            ("m1", InputEventClass::PointerMove { device: 1 }),
+            ("m2", InputEventClass::PointerMove { device: 1 }),
+            ("down", InputEventClass::Discrete),
+            ("m3", InputEventClass::PointerMove { device: 1 }),
+            ("w1", InputEventClass::Wheel),
+            ("w2", InputEventClass::Wheel),
+            ("r1", InputEventClass::Resize),
+            ("r2", InputEventClass::Resize),
+            ("up", InputEventClass::Discrete),
+        ];
+        let outcomes: Vec<SubmitOutcome> = steps
+            .iter()
+            .map(|(label, class)| {
+                sender
+                    .try_submit(class.submit_options(), logging_job(&log, label))
+                    .unwrap()
+                    .outcome
+            })
+            .collect();
+        use SubmitOutcome::{Coalesced, Enqueued};
+        assert_eq!(
+            outcomes,
+            [
+                Enqueued, Coalesced, Enqueued, Enqueued, Enqueued, Enqueued, Enqueued, Coalesced,
+                Enqueued
+            ]
+        );
+        release.send(()).unwrap();
+        doc.shutdown().unwrap();
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["m2", "down", "m3", "w1", "w2", "r2", "up"]
+        );
+    }
+
+    #[test]
+    fn submit_uses_the_command_lane_after_input() {
+        let doc = DocumentThread::spawn().unwrap();
+        let sender = doc.sender();
+        let release = block_document_thread(&sender);
+        let log: Log = Arc::new(Mutex::new(Vec::new()));
+        sender
+            .try_submit(SubmitOptions::background(), logging_job(&log, "bg"))
+            .unwrap();
+        sender.submit(logging_job(&log, "cmd")).unwrap();
+        sender
+            .try_submit(SubmitOptions::input(), logging_job(&log, "key"))
+            .unwrap();
+        assert_eq!(sender.inbox.lane_len(CommandPriority::Command), 1);
+        release.send(()).unwrap();
+        doc.shutdown().unwrap();
+        assert_eq!(*log.lock().unwrap(), ["key", "cmd", "bg"]);
+    }
+
+    #[test]
+    fn stopped_thread_rejects_ui_submissions_immediately() {
+        let doc = DocumentThread::spawn().unwrap();
+        let sender = doc.sender();
+        doc.shutdown().unwrap();
+        let result = on_ui_thread(move || {
+            sender
+                .try_submit(SubmitOptions::input(), |_ctx| ())
+                .map(|s| s.outcome)
+        })
+        .join()
+        .unwrap();
+        assert_eq!(result, Err(SubmitError::Stopped));
+    }
+
+    #[test]
+    fn queue_errors_display_in_korean() {
+        assert!(SubmitError::QueueFull {
+            priority: CommandPriority::Input
+        }
+        .to_string()
+        .contains("input lane"));
+        assert!(JobError::Superseded.to_string().contains("대체"));
+        assert!(JobError::Evicted.to_string().contains("밀려"));
+        assert!(TicketError::BlockingNotAllowed {
+            role: ThreadRole::Ui
+        }
+        .to_string()
+        .contains("Ui"));
     }
 }

@@ -1,0 +1,133 @@
+# command queue overflow 정책 fixture v1 (XII.1.2)
+#
+# 문법
+#   case <이름>                               새 case 시작
+#   capacity <input> <command> <background>   lane별 용량으로 빈 queue 생성
+#   push <label> <spec> [coalesce=<key>] => <기대>
+#     spec : input | command | background
+#            input:pointer-move:<device> | input:resize | input:wheel | input:discrete
+#     key  : pointer-move:<device> | resize | custom:<n>
+#     기대 : enqueued | coalesced <대체된 label> | evicted <밀려난 label> | full | closed
+#   close                                     새 접수 닫기
+#   drain => <label...> | -                   try_pop으로 모두 꺼낸 순서
+#   end                                       case 끝(대기 항목이 없어야 함)
+
+case priority_order_input_command_background
+capacity 4 4 4
+push b1 background => enqueued
+push c1 command => enqueued
+push i1 input => enqueued
+push b2 background => enqueued
+push c2 command => enqueued
+push i2 input:discrete => enqueued
+drain => i1 i2 c1 c2 b1 b2
+end
+
+case input_full_rejects_without_dropping
+capacity 2 2 2
+push i1 input:discrete => enqueued
+push i2 input:wheel => enqueued
+push i3 input:discrete => full
+push i4 input:pointer-move:1 => full
+drain => i1 i2
+push i5 input:discrete => enqueued
+drain => i5
+end
+
+case command_full_rejects_without_dropping
+capacity 2 1 2
+push c1 command => enqueued
+push c2 command => full
+push i1 input => enqueued
+drain => i1 c1
+end
+
+case background_full_evicts_oldest
+capacity 2 2 2
+push b1 background => enqueued
+push b2 background => enqueued
+push b3 background => evicted b1
+push b4 background => evicted b2
+drain => b3 b4
+end
+
+case lanes_are_independent
+capacity 1 1 1
+push b1 background => enqueued
+push b2 background => evicted b1
+push c1 command => enqueued
+push i1 input => enqueued
+push c2 command => full
+push i2 input => full
+drain => i1 c1 b2
+end
+
+case pointer_move_coalesces_only_adjacent_same_device
+capacity 8 8 8
+push m1 input:pointer-move:1 => enqueued
+push m2 input:pointer-move:1 => coalesced m1
+push m3 input:pointer-move:1 => coalesced m2
+push k1 input:discrete => enqueued
+push m4 input:pointer-move:1 => enqueued
+push p1 input:pointer-move:2 => enqueued
+push p2 input:pointer-move:2 => coalesced p1
+push m5 input:pointer-move:1 => enqueued
+drain => m3 k1 m4 p2 m5
+end
+
+case coalesce_needs_no_capacity
+capacity 2 1 1
+push k1 input:discrete => enqueued
+push m1 input:pointer-move:1 => enqueued
+push m2 input:pointer-move:1 => coalesced m1
+push k2 input:discrete => full
+push m3 input:pointer-move:1 => coalesced m2
+drain => k1 m3
+end
+
+case resize_coalesces_wheel_does_not
+capacity 8 8 8
+push r1 input:resize => enqueued
+push r2 input:resize => coalesced r1
+push w1 input:wheel => enqueued
+push w2 input:wheel => enqueued
+push r3 input:resize => enqueued
+drain => r2 w1 w2 r3
+end
+
+case coalesce_is_per_lane
+capacity 4 4 4
+push i1 input coalesce=custom:7 => enqueued
+push c1 command coalesce=custom:7 => enqueued
+push c2 command coalesce=custom:7 => coalesced c1
+push i2 input coalesce=custom:7 => coalesced i1
+drain => i2 c2
+end
+
+case background_coalesce_before_evict
+capacity 1 1 1
+push b1 background coalesce=custom:1 => enqueued
+push b2 background coalesce=custom:1 => coalesced b1
+push b3 background coalesce=custom:2 => evicted b2
+drain => b3
+end
+
+case closed_rejects_new_and_drains_pending
+capacity 2 2 2
+push i1 input => enqueued
+push c1 command => enqueued
+push b1 background => enqueued
+close
+push i2 input => closed
+push b2 background => closed
+drain => i1 c1 b1
+end
+
+case closed_rejects_coalesce_candidate
+capacity 2 2 2
+push m1 input:pointer-move:1 => enqueued
+close
+push m2 input:pointer-move:1 => closed
+drain => m1
+drain => -
+end

@@ -44,7 +44,18 @@ Render(불변 scene snapshot 읽기), Worker Pool로 나누고 "문서 모델에
      `DocumentRevision`을 1 올립니다(§9.2 "문서 세대"와 이후 worker 결과 검증의 기준).
    - runtime이 만드는 thread에는 `stellar-renderer-core`의 `ThreadRole`(XI.7.1)을 bind합니다.
      document thread에서 job 결과를 blocking으로 기다리는 호출은 거부합니다(자기 대기 deadlock).
-4. **종료**: document thread 종료는 접수 닫기 → 이미 접수된 job 실행 → join 순서입니다. 전체 종료
+4. **UI→document 수신함(XII.1.2)**: 수신함은 우선순위별 bounded lane(`Input` → `Command` →
+   `Background` 순으로 처리, lane 안 FIFO)입니다.
+   - 셸 입력 이벤트는 모두 `Input` 우선순위입니다. 절대 상태인 pointer move(장치별)와 resize는
+     같은 lane의 마지막 항목이 같은 key일 때만 최신 값으로 대체하고, 상대량인 wheel과 이산
+     이벤트(pointer down/up/cancel, key, text composition, focus)는 병합하지 않습니다. 셸 경계는
+     공통 `InputEvent`를 `InputEventClass`로 바꿔 접수 옵션을 얻습니다.
+   - lane이 차면 `Input`·`Command`는 즉시 `QueueFull`로 거부하고(이미 접수된 항목을 버리지
+     않음), `Background`는 가장 오래된 항목을 밀어냅니다. 대체·밀려난 job의 ticket에는 이유를
+     알립니다.
+   - UI thread의 접수 API는 용량·job 실행을 기다리지 않습니다. `ThreadRole::Ui` thread에서
+     job 결과를 blocking으로 기다리는 호출은 거부하고, UI는 대기 없는 확인만 씁니다.
+5. **종료**: document thread 종료는 접수 닫기 → 이미 접수된 job 실행 → join 순서입니다. 전체 종료
    순서는 계획 XII.1.6대로 UI stop → command drain/cancel → render stop → worker stop → runtime
    destroy로 고정하며, render thread·worker pool이 생기는 시점에 이 crate에서 구현합니다.
 
@@ -58,6 +69,13 @@ Render(불변 scene snapshot 읽기), Worker Pool로 나누고 "문서 모델에
   못하고, render thread의 무잠금 읽기(§9.3)와도 맞지 않습니다. 채택하지 않습니다.
 - **외부 channel crate 사용**: `config/dependencies.yaml` 승인 목록에 없고 표준 라이브러리로
   충분합니다. 채택하지 않습니다.
+- **용량이 차면 UI가 자리가 날 때까지 대기(`std::sync::mpsc::sync_channel`의 `send`)**: document
+  thread가 긴 job을 실행하는 동안 UI thread가 멈춥니다(XII.1.2 "blocking UI call 없음" 위반).
+  채택하지 않습니다.
+- **단일 FIFO에 우선순위 없이 접수**: 백그라운드 요청이 쌓이면 입력 처리가 뒤로 밀립니다(XII.1.2
+  "입력 이벤트에 priority"). 채택하지 않습니다.
+- **pointer move를 lane 어디서든 같은 key와 병합**: 사이에 낀 down/up과의 순서가 바뀌어 drag 의미가
+  깨집니다. 연속된 같은 key만 병합합니다.
 
 ## Consequences
 
@@ -78,9 +96,10 @@ Render(불변 scene snapshot 읽기), Worker Pool로 나누고 "문서 모델에
 
 ## Performance
 
-성능 예산(`config/performance-budgets.yaml`)은 바꾸지 않습니다. job 수신함 임계 구역은 push/pop 한 번
-(O(1))이며 job 실행·drop은 lock 밖에서 합니다. document thread가 render 제출을 기다리지 않는 계약은
-XII.1.3에서 검증합니다.
+성능 예산(`config/performance-budgets.yaml`)은 바꾸지 않습니다. job 수신함 임계 구역은 접수·꺼내기
+한 번(O(1))이며 job 실행·폐기는 lock 밖에서 합니다. lane 용량 기본값은 코드 상수로 둔 초기값이며,
+입력 queue latency 측정(XII.3.5) 결과로 조정합니다. document thread가 render 제출을 기다리지 않는
+계약은 XII.1.3에서 검증합니다.
 
 ## Security
 

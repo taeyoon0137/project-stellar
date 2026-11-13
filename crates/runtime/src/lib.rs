@@ -6,3 +6,6 @@
 
 /// DocumentThread event loop (XII.1.1).
 pub mod document_thread;
+
+/// UI→DocumentThread bounded command queue와 입력 우선순위 (XII.1.2).
+pub mod command_queue;
