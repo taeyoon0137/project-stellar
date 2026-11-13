@@ -612,7 +612,7 @@ tools/xtask/
 | VI.9.4 | `[x]` | Boolean·Mask·Clip의 다른 NodeRef 의존성을 ReferenceIndex에 등록합니다. | 참조 추가·제거 시 inbound index 정확. | VI.2.5, VI.9.2 |
 | VI.9.5 | `[x]` | modifier 참조 graph cycle detector를 구현합니다. direct/self/indirect cycle을 저장 전 거부합니다. | cycle fixture 전부 실패. | VI.9.4 |
 | VI.9.6 | `[x]` | Fragment에 modifier 삽입을 거부합니다. | Fragment modifier command fixture 실패. | VI.4.2, VI.9.1 |
-| VI.9.7 | `[ ]` | modifier property metadata와 geometry/layout/paint invalidation class를 정의합니다. | registry 누락 검사 통과. | VI.9.2 |
+| VI.9.7 | `[x]` | modifier property metadata와 geometry/layout/paint invalidation class를 정의합니다. | registry 누락 검사 통과. | VI.9.2 |
 
 ### VI.10 문서 불변식과 직렬화
 

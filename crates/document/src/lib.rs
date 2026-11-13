@@ -58,3 +58,6 @@ pub mod image;
 
 /// Modifier stack (VI.9).
 pub mod modifier;
+
+/// Modifier property metadata와 무효화 class registry (VI.9.7).
+pub mod modifier_metadata;
