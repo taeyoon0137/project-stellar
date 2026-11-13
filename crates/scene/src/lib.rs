@@ -6,4 +6,5 @@
 /// Scene path geometry (XI.6.1).
 pub mod geometry;
 
+pub use stellar_core_types::color::ColorSpace;
 pub use stellar_core_types::value::{FiniteF32, NonFiniteError, Vec2};

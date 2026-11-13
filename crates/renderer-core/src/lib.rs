@@ -5,3 +5,9 @@ mod digest;
 
 /// Shape/Path fill tessellation interface와 cache key (XI.6.1).
 pub mod tessellation;
+
+/// thread 역할 표시 (XI.7.1).
+pub mod thread_role;
+
+/// worker 전용 이미지 decoder interface와 decoded pixel format (XI.7.1).
+pub mod image_decode;
