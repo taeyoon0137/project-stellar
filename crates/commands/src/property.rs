@@ -11,6 +11,11 @@
 //! [`CommandError::PropertyTypeMismatch`]로 거부합니다. 결과 change set의 무효화 class도 같은
 //! registry에서 가져옵니다.
 //!
+//! **specialization (VII.2.5)**: 표시 여부·잠금·이름 변경은 별도 command 종류가 아니라
+//! [`SetProperty::visibility`]·[`SetProperty::locked`]·[`SetProperty::rename`](그리고 같은 이름의
+//! [`Command`](crate::command::Command) 생성자)로 만든 `SetProperty`입니다. 따라서 직렬화·검증·
+//! 적용·undo가 모두 같은 core patch 경로를 지납니다.
+//!
 //! 값 직렬화: type tag `u8` + 값(f32는 LE bit 그대로, 색은 [`Color::to_bytes`], id는 16바이트).
 //! tag는 저장·journal 계약입니다.
 
@@ -359,7 +364,46 @@ pub struct SetProperty {
     pub value: PropertyValue,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// 테스트 전용: core patch 경로(`SetProperty::apply`) 호출 수.
+    static CORE_PATCH_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// 테스트 전용: 현재 thread의 core patch 호출 수.
+#[cfg(test)]
+pub(crate) fn core_patch_calls() -> usize {
+    CORE_PATCH_CALLS.with(std::cell::Cell::get)
+}
+
 impl SetProperty {
+    /// 표시 여부 변경(`SetVisibility` specialization, VII.2.5).
+    pub fn visibility(node: StableId, visible: bool) -> SetProperty {
+        SetProperty {
+            node,
+            key: node_keys::VISIBLE,
+            value: PropertyValue::Bool(visible),
+        }
+    }
+
+    /// 잠금 변경(`SetLocked` specialization, VII.2.5).
+    pub fn locked(node: StableId, locked: bool) -> SetProperty {
+        SetProperty {
+            node,
+            key: node_keys::LOCKED,
+            value: PropertyValue::Bool(locked),
+        }
+    }
+
+    /// 표시 이름 변경(`RenameNode` specialization, VII.2.5).
+    pub fn rename(node: StableId, name: impl Into<String>) -> SetProperty {
+        SetProperty {
+            node,
+            key: node_keys::DISPLAY_NAME,
+            value: PropertyValue::Text(name.into()),
+        }
+    }
+
     fn info(&self, model: &DocumentModel) -> Result<PropertyInfo, CommandError> {
         let kind = model
             .payload(self.node)
@@ -417,6 +461,8 @@ impl SetProperty {
 
     /// 모든 속성 변경이 지나는 core patch 경로(VII.2.5 specialization 포함).
     pub(crate) fn apply(&self, ctx: &mut EditContext<'_>) -> Result<(), CommandError> {
+        #[cfg(test)]
+        CORE_PATCH_CALLS.with(|calls| calls.set(calls.get() + 1));
         let info = self.info(ctx.model())?;
         let mut record = ctx
             .model()
@@ -680,5 +726,65 @@ mod tests {
         let tag_at = 2 + 4 + 16 + 4;
         bad[tag_at] = 0x7F;
         assert!(decode_command(&bad).is_err());
+    }
+
+    #[test]
+    fn specializations_use_the_same_core_patch_path() {
+        // 검증 기준(VII.2.5): 동일 core patch 경로 사용 확인.
+        use crate::kind::CommandKind;
+        let specializations = [
+            (Command::set_visibility(sid(11), false), node_keys::VISIBLE),
+            (Command::set_locked(sid(11), true), node_keys::LOCKED),
+            (
+                Command::rename_node(sid(11), "새 이름"),
+                node_keys::DISPLAY_NAME,
+            ),
+        ];
+        // 별도 command 종류가 없습니다.
+        for name in ["set-visibility", "set-locked", "rename-node"] {
+            assert!(CommandKind::ALL.iter().all(|k| k.name() != name), "{name}");
+        }
+        for (command, key) in specializations {
+            assert_eq!(command.kind(), CommandKind::SetProperty);
+            let Command::SetProperty(patch) = &command else {
+                panic!("SetProperty여야 함");
+            };
+            assert_eq!(patch.key, key);
+            // 같은 직렬화(kind 0x0010).
+            let bytes = encode_command(&command);
+            assert_eq!(&bytes[..2], &0x0010u16.to_le_bytes());
+            assert_eq!(decode_command(&bytes).unwrap(), command);
+
+            // 같은 apply 경로: core patch 호출 1회, 일반 SetProperty와 같은 결과.
+            let mut via_specialization = DocumentState::new(small_model());
+            let calls = core_patch_calls();
+            let request = CommandRequest::at(&via_specialization, command.clone());
+            let outcome = via_specialization.execute(&request).unwrap();
+            assert_eq!(core_patch_calls(), calls + 1);
+            let mut via_generic = DocumentState::new(small_model());
+            let generic = set(11, key, patch.value.clone());
+            let request = CommandRequest::at(&via_generic, generic);
+            let generic_outcome = via_generic.execute(&request).unwrap();
+            assert_eq!(
+                model_snapshot_json(via_specialization.model()).unwrap(),
+                model_snapshot_json(via_generic.model()).unwrap()
+            );
+            assert_eq!(outcome.changes, generic_outcome.changes);
+            // undo도 SetProperty.
+            assert_eq!(outcome.inverse.kind(), CommandKind::SetProperty);
+        }
+        // 의미 확인.
+        let mut state = DocumentState::new(small_model());
+        for command in [
+            Command::set_visibility(sid(12), false),
+            Command::set_locked(sid(12), true),
+            Command::rename_node(sid(12), "카드"),
+        ] {
+            let request = CommandRequest::at(&state, command);
+            state.execute(&request).unwrap();
+        }
+        let record = state.model().record(sid(12)).unwrap();
+        assert!(!record.visible && record.locked);
+        assert_eq!(record.display_name, "카드");
     }
 }

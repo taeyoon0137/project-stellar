@@ -251,6 +251,21 @@ pub enum Command {
 }
 
 impl Command {
+    /// 표시 여부 변경. 별도 종류가 아닌 [`SetProperty`] specialization입니다(VII.2.5).
+    pub fn set_visibility(node: StableId, visible: bool) -> Command {
+        Command::SetProperty(SetProperty::visibility(node, visible))
+    }
+
+    /// 잠금 변경. [`SetProperty`] specialization입니다(VII.2.5).
+    pub fn set_locked(node: StableId, locked: bool) -> Command {
+        Command::SetProperty(SetProperty::locked(node, locked))
+    }
+
+    /// 표시 이름 변경. [`SetProperty`] specialization입니다(VII.2.5).
+    pub fn rename_node(node: StableId, name: impl Into<String>) -> Command {
+        Command::SetProperty(SetProperty::rename(node, name))
+    }
+
     /// command 종류.
     pub fn kind(&self) -> CommandKind {
         match self {
