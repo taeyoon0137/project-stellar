@@ -1549,7 +1549,7 @@ tools/xtask/
 | XV.4.1 | `[~]` | resolver graph를 `stellar.lock.yaml`의 resolved entries와 dependency paths로 변환합니다. | canonical lock golden. | IV.1.6, XV.2.6 |
 | XV.4.2 | `[x]` | 각 entry에 exact commit, cached content hash, library schema version, transitive dependencies를 기록합니다. | 누락 field validator 실패. | XV.3.4, XV.4.1 |
 | XV.4.3 | `[ ]` | lockfile가 존재하면 선언 selector가 바뀌지 않은 dependency는 network 없이 lock commit을 우선 사용합니다. | offline cache fixture 통과. | XV.4.2, XV.3.3 |
-| XV.4.4 | `[ ]` | lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 자동으로 다른 commit을 선택하지 않습니다. | tampered cache fixture 실패. | XV.4.2 |
+| XV.4.4 | `[x]` | lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 자동으로 다른 commit을 선택하지 않습니다. | tampered cache fixture 실패. | XV.4.2 |
 | XV.4.5 | `[ ]` | resolve 성공 후 lockfile을 canonical write하고 autosave와 별도 project file transaction으로 기록합니다. 자동 commit하지 않습니다. | Git status에 lockfile만 예상대로 변경. | XV.4.1, IV.1.7 |
 
 ### XV.5 읽기 전용 Library 로드
