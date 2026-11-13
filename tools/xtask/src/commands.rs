@@ -11,7 +11,7 @@ use crate::check_core::run_check_core;
 use crate::commit_message::validate_commit_subject;
 use crate::crate_graph::check_workspace_graph;
 use crate::crate_graph::manifest::scan_workspace;
-use crate::dependencies::validate_dependencies;
+use crate::dependencies::{parse_workspace_direct_deps, validate_dependencies_with, PlanProgress};
 use crate::ffi_header::generate_header;
 use crate::pr_body::validate_pr_body;
 use crate::storage_fixtures::check_canonical_primitives;
@@ -244,16 +244,19 @@ fn cmd_validate_versions(repo_root: &Path) -> Result<(), i32> {
 
 fn cmd_validate_dependencies(repo_root: &Path) -> Result<(), i32> {
     let content = read(repo_root, "config/dependencies.yaml")?;
+    // XXIX.1.2: planned_for 행의 존재·완료 여부를 계획서에서 확인합니다.
+    let plan = read(repo_root, "docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md")?;
+    let progress = PlanProgress::from_plan(&plan);
     let names = direct_dependencies(repo_root)?;
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let errors = validate_dependencies(&content, &refs);
+    let errors = validate_dependencies_with(&content, &refs, Some(&progress));
     if errors.is_empty() {
         Ok(())
     } else {
         Err(policy_err(
             &errors
                 .iter()
-                .map(|e| e.code.to_string())
+                .map(|e| format!("{}: {}", e.code, e.message))
                 .collect::<Vec<_>>(),
         ))
     }
@@ -386,31 +389,32 @@ fn cmd_generate_ffi_header(repo_root: &Path, rest: &[String]) -> Result<(), i32>
     }
 }
 
-/// `cargo tree`로 xtask의 직접 의존성 이름을 수집합니다.
+/// `cargo tree`로 workspace 모든 member의 외부 직접 의존성 이름을 수집합니다(XXIX.1.2).
+///
+/// normal·build·dev 의존을 모든 target에 대해 모으고, 내부 workspace path 의존은 제외합니다.
 fn direct_dependencies(repo_root: &Path) -> Result<Vec<String>, i32> {
     let output = Command::new("cargo")
         .current_dir(repo_root)
-        .args(["tree", "-p", "xtask", "-e", "normal", "--depth", "1"])
+        .args([
+            "tree",
+            "--workspace",
+            "-e",
+            "normal,build,dev",
+            "--target",
+            "all",
+            "--depth",
+            "1",
+            "--prefix",
+            "depth",
+            "--no-dedupe",
+        ])
         .output()
         .map_err(|e| internal(&format!("cargo tree 실행 실패: {e}")))?;
     if !output.status.success() {
         return Err(internal("cargo tree 종료 코드 비0"));
     }
     let text = String::from_utf8_lossy(&output.stdout);
-    let mut names = Vec::new();
-    for line in text.lines().skip(1) {
-        if let Some(rest) = line.split("── ").nth(1) {
-            // 내부 workspace crate(path 의존, "(/…)" 표기)는 외부 공급망 승인
-            // 대상이 아니므로 제외합니다(I.3.2의 범위는 외부 dependency).
-            if rest.contains(" (/") {
-                continue;
-            }
-            if let Some(name) = rest.split_whitespace().next() {
-                names.push(name.to_string());
-            }
-        }
-    }
-    Ok(names)
+    parse_workspace_direct_deps(&text).map_err(|e| internal(&format!("{}: {}", e.code, e.message)))
 }
 
 #[cfg(test)]

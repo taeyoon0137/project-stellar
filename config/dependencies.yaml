@@ -1,7 +1,11 @@
-# 승인된 직접 의존성 목록 (I.3.2).
+# 승인된 직접 의존성 목록 (I.3.2, workspace 전체 범위는 XXIX.1.2).
 #
-# 모든 direct dependency는 여기에 등록되어야 합니다.
-# 필드: name, ecosystem, version, license, approval, purpose, replaceable.
+# workspace 모든 member의 외부 direct dependency(normal·build·dev, 모든 target)는 여기에
+# 등록되어야 합니다.
+# 필드: name, ecosystem, version, license, approval, purpose, replaceable,
+#       separate_approval(선택), planned_for(선택).
+# planned_for: 아직 어떤 member도 쓰지 않는 approved 항목을 처음 도입할 WBS 행(쉼표 구분).
+#              그 행이 모두 `[x]`인데도 쓰이지 않으면 validate-dependencies가 실패합니다.
 dependencies:
   - name: yaml-rust2
     ecosystem: cargo
@@ -10,3 +14,36 @@ dependencies:
     approval: approved
     purpose: "제한 YAML 파싱 (Phase I 도구 + Phase IV 매니페스트)"
     replaceable: true
+  # 에이전트 도구 계층(XIX.9, XXIV.4, XXIX) 외부 의존 (ADR-0020).
+  - name: serde
+    ecosystem: cargo
+    version: "1.0.229"
+    license: "MIT OR Apache-2.0"
+    approval: approved
+    purpose: "에이전트 도구 계층 메시지·출력 타입의 JSON 직렬화 derive. 프로젝트 파일 포맷 인코딩에는 쓰지 않음 (ADR-0020)"
+    replaceable: true
+    planned_for: "XIX.9.1, XIX.9.2, XXIV.4.3, XXIV.4.4, XXIX.2.10"
+  - name: serde_json
+    ecosystem: cargo
+    version: "1.0.154"
+    license: "MIT OR Apache-2.0"
+    approval: approved
+    purpose: "MCP JSON-RPC 메시지, stellar 명령 JSON 입출력, 구독 CLI 구조화 출력 해석. JSON-RPC 줄 단위 프레이밍은 이 crate와 표준 라이브러리로 구현 (ADR-0020)"
+    replaceable: true
+    planned_for: "XIX.9.1, XIX.9.2, XXIV.4.3, XXIV.4.4, XXIX.2.11"
+  - name: libc
+    ecosystem: cargo
+    version: "0.2.191"
+    license: "MIT OR Apache-2.0"
+    approval: approved
+    purpose: "macOS IPC 상대 인증용 시스템 호출 binding(peer 자격 증명·audit token 조회) (ADR-0020)"
+    replaceable: true
+    planned_for: "XIX.1.6, XIX.1.7"
+  - name: security-framework
+    ecosystem: cargo
+    version: "3.7.0"
+    license: "MIT OR Apache-2.0"
+    approval: approved
+    purpose: "macOS IPC 상대·구독 CLI 실행 파일의 코드 서명 신원 확인(Security.framework SecCode·SecStaticCode binding) (ADR-0020)"
+    replaceable: true
+    planned_for: "XIX.1.6, XIX.1.7, XXIX.2.3"
