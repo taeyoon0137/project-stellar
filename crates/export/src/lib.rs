@@ -6,6 +6,17 @@
 /// 내보내기 요청과 field schema (XX.1.1).
 pub mod request;
 
+/// 내보내기 입력 고정: scene snapshot·resource revision (XX.1.2).
+pub mod capture;
+
+/// 테스트 전용 scene fixture.
+#[cfg(test)]
+mod test_fixtures;
+
+pub use capture::{
+    AssetRevision, CaptureError, EncodedImage, ExportAssetSource, ExportCapture, ExportRoot,
+    FontRevision, ImageMedia, ResourcePins, SceneSource,
+};
 pub use request::{
     ExportBackground, ExportFormat, ExportRequest, ExportRequestError, ExportScale, ExportSource,
     OutputPath, TargetProfileKey,
