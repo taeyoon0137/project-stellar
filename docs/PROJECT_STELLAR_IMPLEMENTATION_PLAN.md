@@ -19,6 +19,7 @@
 - **2026-06-23 — I.2.1 원자화:** `I.2.1`은 TaskStatus Rust 데이터 모델만 정의합니다. YAML 파싱, 레코드 검증, 그래프 검증, 증거 검증, 계획 동기화는 별도 WBS로 분리했습니다.
 - **2026-11-14 — Windows 지원 보류(ADR-0006):** 당분간 macOS만 지원합니다. Windows 전용 행은 `[!]`(사용자 결정 차단)로 표기하고, 양 플랫폼 비교 행은 ADR-0006의 판정 규칙(IEEE 기본 연산만 쓰는 결과는 macOS 증거로 `[x]`, 플랫폼 의존 결과는 `[~]`)을 따릅니다. 코어는 플랫폼 중립을 유지합니다.
 - **2026-11-14 — 커밋 규칙 정합:** 지침 우선순위상 위인 `AGENTS.md`에 맞춰 WBS 작업은 `Task(<WBS-ID>)`, WBS 밖 유지보수는 `Feat:`·`Docs:`·`Refactor:`·`Fix:`·`Chore:`·`Test:`를 허용합니다. 2026-06-23 "커밋 규칙 고정"을 대체하며, `cargo xtask validate-commit-message`와 CI commit subject 검사도 같은 기준을 씁니다.
+- **2026-11-14 — 제품 테스트 실행 위치:** 제품 crate 테스트는 CI에 추가하지 않고, 통합 시 로컬 `cargo xtask check-core`(workspace fmt·clippy·test·doctest)로 검증합니다. 행 지시의 "CI smoke"는 이 로컬 통합 검증을 뜻합니다(VI.10.5 문구 수정).
 
 ---
 
@@ -622,7 +623,7 @@ tools/xtask/
 | VI.10.2 | `[x]` | document→chunk model serializer를 구현하고 runtime ID를 저장하지 않습니다. | save bytes에 RuntimeEntityId pattern 없음. | VI.10.1, V.6.2 |
 | VI.10.3 | `[x]` | chunk model→document loader를 구현하고 ID registry와 parent order를 재구축합니다. | 100개 golden document round-trip 의미 동일. | VI.10.2 |
 | VI.10.4 | `[x]` | canonical semantic snapshot JSON을 테스트 전용으로 생성합니다. 프로덕션 저장에는 사용하지 않습니다. | 양 플랫폼 fixture diff가 byte-identical. | VI.10.3 |
-| VI.10.5 | `[~]` | random valid document generator를 추가하고 1,000 seed round-trip property test를 CI smoke로 설정합니다. | panic, 데이터 손실, 비결정성 0건. | VI.10.3 |
+| VI.10.5 | `[x]` | random valid document generator를 추가하고 1,000 seed round-trip property test를 workspace 통합 검증(`cargo xtask check-core`)의 smoke로 포함합니다. | panic, 데이터 손실, 비결정성 0건. | VI.10.3 |
 
 **Phase VI 완료 조건:** 빈 View와 기본 Node 조합의 생성·검증·저장·재로드가 통과합니다. G3의 문서 모델 부분 완료.
 

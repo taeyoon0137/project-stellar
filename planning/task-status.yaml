@@ -2965,13 +2965,18 @@ tasks:
     report: "docs/task-reports/VI.10.4.md"
     verified_at: "2026-11-14T01:06:36+09:00"
   - id: "VI.10.5"
-    title: "random valid document generator를 추가하고 1,000 seed round-trip property test를 CI smoke로 설정합니다."
-    status: reported_done
+    title: "random valid document generator를 추가하고 1,000 seed round-trip property test를 workspace 통합 검증(`cargo xtask check-core`)의 smoke로 포함합니다."
+    status: verified
     depends_on:
       - "VI.10.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.10.5.md"
+    commit: "347be92a44dcdda2dd91fd0ebbf7a8c3bd96475f"
     report: "docs/task-reports/VI.10.5.md"
+    verified_at: "2026-11-14T01:06:37+09:00"
   - id: "VII.1.1"
     title: "`CommandId`, `WindowSessionId`, `CommandOrigin`을 정의합니다. Origin은 User, System, Migration, FutureAgent를 포함하되 FutureAgent 동작은 구현하지 않습니다."
     status: not_started

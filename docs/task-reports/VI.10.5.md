@@ -2,7 +2,7 @@
 
 - WBS: VI.10.5
 - 작업명: random valid document generator, 1,000 seed round-trip property test(CI smoke)
-- 상태: 부분 완료 (`[~]`) — 1,000 seed property test는 로컬 `cargo test -p stellar-document`에서 통과하지만, 지시의 "CI smoke로 설정"은 아직 하지 않았습니다(CI는 현재 xtask 테스트만 실행).
+- 상태: 완료 (`[x]`) — 1,000 seed property test는 workspace 통합 검증(`cargo xtask check-core`의 `cargo test --workspace`)에 포함됩니다. 제품 테스트는 CI에 추가하지 않기로 했습니다(2026-11-14).
 - 선행: VI.10.3
 
 ## 필수 실행 환경
@@ -60,4 +60,4 @@
 
 - CI가 crate 테스트를 실행하도록 workflow를 확장하는 작업이 별도로 필요합니다(이 smoke 포함).
 - ComponentInstance는 payload 스키마(Phase IX) 전이라 생성 대상이 아닙니다.
-- 상태 정정(통합 리뷰): CI workflow에 제품 crate 테스트 job이 추가되면 `[x]`로 확정합니다.
+- 상태 확정(2026-11-14): 제품 테스트는 CI 대신 로컬 통합 검증으로 실행하기로 해 행 문구를 맞추고 `[x]`로 확정했습니다.
