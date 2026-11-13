@@ -13,7 +13,8 @@
 //!                 └─▶ Encoded ─▶ [schedule_present] ─▶ submit ─▶ (대기로 복귀)
 //! ```
 //!
-//! - `init`이 가장 먼저이며 한 번입니다. device lost 뒤에는 다시 `init`만 허용합니다.
+//! - `init`이 가장 먼저이며 한 번입니다. device 재생성이 필요한 오류(`DeviceLost`·`Internal`,
+//!   [`recovery`]) 뒤에는 다시 `init`만 허용합니다.
 //! - frame은 한 번에 하나만 열립니다. `encode`가 `Encoded`를 돌려준 뒤 `submit` 전까지는 resize와
 //!   resource 생성·갱신·파괴를 금지합니다(upload는 encode 전에 끝냄, XI.5.3).
 //! - present 예약은 `submit` **전에** 열린 frame에 한 번 겁니다. Metal은 command buffer에 present를
@@ -46,6 +47,9 @@ pub mod command;
 
 /// 호출 순서 검사.
 mod call_order;
+
+/// 오류 분류와 복구 정책 (XI.5.4).
+pub mod recovery;
 
 /// GPU resource handle은 generational ID입니다(XI.5.2, [`crate::gpu_handle`]).
 pub use crate::gpu_handle::{BufferHandle, TextureHandle};

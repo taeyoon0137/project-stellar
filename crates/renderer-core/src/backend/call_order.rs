@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::fmt;
 
+use crate::backend::recovery::Recovery;
 use crate::backend::{
     BackendError, BackendErrorKind, BackendKind, BufferDesc, BufferHandle, DeviceCapabilities,
     DeviceConfig, EncodeOutcome, EncodedFrame, FrameEncodeRequest, FrameId, GpuProgress,
@@ -421,9 +422,10 @@ impl CallOrderValidator {
         }
     }
 
-    /// 호출 결과가 device lost면 상태를 `Lost`로 바꿉니다.
+    /// 호출 결과가 device 재생성이 필요한 오류(`DeviceLost`, `Internal`, XI.5.4)면 상태를 `Lost`로
+    /// 바꿉니다. 이후 `init`만 허용합니다.
     pub fn observe_error(&mut self, error: &BackendError) {
-        if error.kind() == BackendErrorKind::DeviceLost {
+        if error.recovery() == Recovery::RecreateDevice {
             self.state = CallOrderState::Lost;
             self.open = None;
         }
