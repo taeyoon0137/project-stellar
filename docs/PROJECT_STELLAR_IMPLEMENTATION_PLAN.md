@@ -1013,7 +1013,7 @@ tools/xtask/
 | X.10.4 | `[!]` | Text intrinsic width/height와 baseline을 layout intrinsic hook에 연결합니다. | Stack baseline fixture 통과. | X.10.2, X.6.4 |
 | X.10.5 | `[x]` | shaping·line layout cache key에 text hash, style hash, font face hash, width, locale, target profile을 포함합니다. | 한 입력 변경마다 예상 cache miss. | X.10.1, X.8.1 |
 | X.10.6 | `[x]` | 텍스트 일부 편집 시 영향 paragraph와 이후 line만 재배치하는 incremental API를 구현합니다. | 첫 paragraph edit가 독립 두 번째 paragraph를 재shape하지 않습니다. | VI.7.5, X.10.5 |
-| X.10.7 | `[ ]` | macOS·Windows 동일 font files로 glyph IDs, advances, line breaks golden 비교를 CI에 추가합니다. | byte-identical logical layout. | X.10.6 |
+| X.10.7 | `[~]` | macOS·Windows 동일 font files로 glyph IDs, advances, line breaks golden 비교를 CI에 추가합니다. | byte-identical logical layout. | X.10.6 |
 
 ### X.11 레이아웃 적합성 corpus
 

@@ -1,0 +1,286 @@
+# stellar-text logical layout golden v1 (X.10.7). 생성: STELLAR_TEXT_UPDATE_GOLDEN=1 cargo test -p stellar-text golden
+# fixture latin-liga-narrow
+fonts f418c09161f77d5800c2dea794018ad5
+digest 6ade1806682e666d13134907378345d0
+box w=3481 h=3072 content_h=3072 top=0
+line p=0 l=0 r=0..11 top=0 h=1024 base=819 x=0 w=3481
+  g id=80 c=0 x=0 adv=512 j=0 dx=0 dy=0
+  g id=97 c=1 x=512 adv=819 j=0 dx=0 dy=0
+  g id=68 c=4 x=1331 adv=512 j=0 dx=0 dy=0
+  g id=70 c=5 x=1843 adv=512 j=0 dx=0 dy=0
+  g id=1 c=6 x=2355 adv=256 j=0 dx=0 dy=0
+  g id=96 c=7 x=2611 adv=563 j=0 dx=0 dy=0
+  g id=85 c=9 x=3174 adv=307 j=0 dx=0 dy=0
+  g id=1 c=10 x=3481 adv=256 j=0 dx=0 dy=0
+line p=0 l=1 r=11..18 top=1024 h=1024 base=1843 x=0 w=2252
+  g id=71 c=11 x=0 adv=307 j=0 dx=0 dy=0
+  g id=77 c=12 x=307 adv=307 j=0 dx=0 dy=0
+  g id=86 c=13 x=614 adv=512 j=0 dx=0 dy=0
+  g id=71 c=14 x=1126 adv=307 j=0 dx=0 dy=0
+  g id=71 c=15 x=1433 adv=307 j=0 dx=0 dy=0
+  g id=90 c=16 x=1740 adv=512 j=0 dx=0 dy=0
+  g id=1 c=17 x=2252 adv=256 j=0 dx=0 dy=0
+line p=0 l=2 r=18..24 top=2048 h=1024 base=2867 x=0 w=2764
+  g id=88 c=18 x=0 adv=819 j=0 dx=0 dy=0
+  g id=66 c=19 x=819 adv=512 j=0 dx=0 dy=0
+  g id=71 c=20 x=1331 adv=307 j=0 dx=0 dy=0
+  g id=71 c=21 x=1638 adv=307 j=0 dx=0 dy=0
+  g id=77 c=22 x=1945 adv=307 j=0 dx=0 dy=0
+  g id=70 c=23 x=2252 adv=512 j=0 dx=0 dy=0
+# fixture cjk-ja-kinsoku
+fonts 40837cd7cab8aba921522f4d0fb593d9 259bb3c31307793a3d75aab630de6c16
+digest 78a2eaac804d06746c1efaf21575cec9
+box w=4096 h=4504 content_h=4504 top=0
+line p=0 l=0 r=0..12 top=0 h=1126 base=952 x=0 w=4096
+  g id=6375 c=0 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=6702 c=3 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=15776 c=6 x=2048 adv=1024 j=0 dx=0 dy=0
+  g id=112 c=9 x=3072 adv=1024 j=0 dx=0 dy=0
+line p=0 l=1 r=12..24 top=1126 h=1126 base=2078 x=0 w=4096
+  g id=6281 c=12 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=11746 c=15 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=4 c=18 x=2048 adv=1024 j=0 dx=0 dy=0
+  g id=105 c=21 x=3072 adv=1024 j=0 dx=0 dy=0
+line p=0 l=2 r=24..36 top=2252 h=1126 base=3204 x=0 w=4096
+  g id=91 c=24 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=4 c=27 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=175 c=30 x=2048 adv=1024 j=0 dx=0 dy=0
+  g id=229 c=33 x=3072 adv=1024 j=0 dx=0 dy=0
+line p=0 l=3 r=36..42 top=3378 h=1126 base=4330 x=0 w=2048
+  g id=197 c=36 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=202 c=39 x=1024 adv=1024 j=0 dx=0 dy=0
+# fixture hangul-normal
+fonts 40837cd7cab8aba921522f4d0fb593d9 259bb3c31307793a3d75aab630de6c16
+digest 05459d024b03deaca682e3b152ea6045
+box w=3328 h=5876 content_h=5876 top=0
+line p=0 l=0 r=0..10 top=0 h=1208 base=952 x=0 w=3072
+  g id=31838 c=0 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=21615 c=3 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=27830 c=6 x=2048 adv=1024 j=0 dx=0 dy=0
+  g id=1 c=9 x=3072 adv=256 j=0 dx=0 dy=0
+line p=0 l=1 r=10..20 top=1208 h=1208 base=2160 x=0 w=3072
+  g id=30799 c=10 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=27046 c=13 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=31162 c=16 x=2048 adv=1024 j=0 dx=0 dy=0
+  g id=1 c=19 x=3072 adv=256 j=0 dx=0 dy=0
+line p=0 l=2 r=20..29 top=2416 h=1126 base=3368 x=0 w=3072
+  g id=24330 c=20 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=28278 c=23 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=27718 c=26 x=2048 adv=1024 j=0 dx=0 dy=0
+line p=0 l=3 r=29..39 top=3542 h=1208 base=4494 x=0 w=3328
+  g id=28101 c=29 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=1 c=32 x=1024 adv=256 j=0 dx=0 dy=0
+  g id=21426 c=33 x=1280 adv=1024 j=0 dx=0 dy=0
+  g id=28439 c=36 x=2304 adv=1024 j=0 dx=0 dy=0
+line p=0 l=4 r=39..42 top=4750 h=1126 base=5702 x=0 w=1024
+  g id=24418 c=39 x=0 adv=1024 j=0 dx=0 dy=0
+# fixture hangul-keep-all
+fonts 40837cd7cab8aba921522f4d0fb593d9 259bb3c31307793a3d75aab630de6c16
+digest ace26a0f0dc65bb63a8b5ed34786c755
+box w=3072 h=5876 content_h=5876 top=0
+line p=0 l=0 r=0..10 top=0 h=1208 base=952 x=0 w=3072
+  g id=31838 c=0 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=21615 c=3 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=27830 c=6 x=2048 adv=1024 j=0 dx=0 dy=0
+  g id=1 c=9 x=3072 adv=256 j=0 dx=0 dy=0
+line p=0 l=1 r=10..20 top=1208 h=1208 base=2160 x=0 w=3072
+  g id=30799 c=10 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=27046 c=13 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=31162 c=16 x=2048 adv=1024 j=0 dx=0 dy=0
+  g id=1 c=19 x=3072 adv=256 j=0 dx=0 dy=0
+line p=0 l=2 r=20..29 top=2416 h=1126 base=3368 x=0 w=3072
+  g id=24330 c=20 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=28278 c=23 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=27718 c=26 x=2048 adv=1024 j=0 dx=0 dy=0
+line p=0 l=3 r=29..33 top=3542 h=1208 base=4494 x=0 w=1024
+  g id=28101 c=29 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=1 c=32 x=1024 adv=256 j=0 dx=0 dy=0
+line p=0 l=4 r=33..42 top=4750 h=1126 base=5702 x=0 w=3072
+  g id=21426 c=33 x=0 adv=1024 j=0 dx=0 dy=0
+  g id=28439 c=36 x=1024 adv=1024 j=0 dx=0 dy=0
+  g id=24418 c=39 x=2048 adv=1024 j=0 dx=0 dy=0
+# fixture bidi-ltr-mixed
+fonts 04f5db99ac0c67c83e7d067c9eb54d8e
+digest 1c8d98e2ae1006e2140ce3394059f452
+box w=6554 h=1024 content_h=1024 top=0
+line p=0 l=0 r=0..18 top=0 h=1024 base=819 x=0 w=6554
+  g id=66 c=0 x=0 adv=512 j=0 dx=0 dy=0
+  g id=67 c=1 x=512 adv=512 j=0 dx=0 dy=0
+  g id=68 c=2 x=1024 adv=512 j=0 dx=0 dy=0
+  g id=1 c=3 x=1536 adv=256 j=0 dx=0 dy=0
+  g id=18 c=11 x=1792 adv=512 j=0 dx=0 dy=0
+  g id=19 c=12 x=2304 adv=512 j=0 dx=0 dy=0
+  g id=20 c=13 x=2816 adv=512 j=0 dx=0 dy=0
+  g id=1 c=10 x=3328 adv=256 j=0 dx=0 dy=0
+  g id=162 c=8 x=3584 adv=461 j=0 dx=0 dy=0
+  g id=161 c=6 x=4045 adv=461 j=0 dx=0 dy=0
+  g id=160 c=4 x=4506 adv=461 j=0 dx=0 dy=0
+  g id=1 c=14 x=4967 adv=256 j=0 dx=0 dy=0
+  g id=69 c=15 x=5223 adv=512 j=0 dx=0 dy=0
+  g id=70 c=16 x=5735 adv=512 j=0 dx=0 dy=0
+  g id=71 c=17 x=6247 adv=307 j=0 dx=0 dy=0
+# fixture bidi-rtl-arabic
+fonts 04f5db99ac0c67c83e7d067c9eb54d8e
+digest 39df491eb5d80b6cf0794d19e5466d3d
+box w=7480 h=3328 content_h=3328 top=0
+line p=0 l=0 r=0..31 top=0 h=1024 base=819 x=0 w=7480
+  g id=1 c=30 x=0 adv=256 j=0 dx=0 dy=0
+  g id=19 c=26 x=256 adv=512 j=0 dx=0 dy=0
+  g id=17 c=27 x=768 adv=512 j=0 dx=0 dy=0
+  g id=19 c=28 x=1280 adv=512 j=0 dx=0 dy=0
+  g id=23 c=29 x=1792 adv=512 j=0 dx=0 dy=0
+  g id=1 c=25 x=2304 adv=256 j=0 dx=0 dy=0
+  g id=277 c=23 x=2560 adv=410 j=0 dx=0 dy=0
+  g id=276 c=21 x=2970 adv=410 j=0 dx=0 dy=0
+  g id=247 c=19 x=3380 adv=410 j=0 dx=0 dy=0
+  g id=265 c=17 x=3790 adv=410 j=0 dx=0 dy=0
+  g id=276 c=15 x=4200 adv=410 j=0 dx=0 dy=0
+  g id=247 c=13 x=4610 adv=410 j=0 dx=0 dy=0
+  g id=248 c=11 x=5020 adv=410 j=0 dx=0 dy=0
+  g id=1 c=10 x=5430 adv=256 j=0 dx=0 dy=0
+  g id=247 c=8 x=5686 adv=410 j=0 dx=0 dy=0
+  g id=248 c=6 x=6096 adv=410 j=0 dx=0 dy=0
+  g id=253 c=4 x=6506 adv=410 j=0 dx=0 dy=0
+  g id=257 c=2 x=6916 adv=410 j=0 dx=0 dy=0
+  g id=277 c=0 x=7326 adv=410 j=0 dx=0 dy=0
+line p=0 l=1 r=31..33 top=1024 h=1024 base=1843 x=6456 w=1024
+  g id=80 c=31 x=6456 adv=512 j=0 dx=0 dy=0
+  g id=76 c=32 x=6968 adv=512 j=0 dx=0 dy=0
+line p=1 l=0 r=0..17 top=2304 h=1024 base=3123 x=1438 w=6042
+  g id=88 c=9 x=1438 adv=819 j=0 dx=0 dy=0
+  g id=80 c=10 x=2257 adv=512 j=0 dx=0 dy=0
+  g id=83 c=11 x=2769 adv=512 j=0 dx=0 dy=0
+  g id=77 c=12 x=3281 adv=307 j=0 dx=0 dy=0
+  g id=69 c=13 x=3588 adv=512 j=0 dx=0 dy=0
+  g id=1 c=14 x=4100 adv=256 j=0 dx=0 dy=0
+  g id=21 c=15 x=4356 adv=512 j=0 dx=0 dy=0
+  g id=19 c=16 x=4868 adv=512 j=0 dx=0 dy=0
+  g id=1 c=8 x=5380 adv=256 j=0 dx=0 dy=0
+  g id=173 c=6 x=5636 adv=461 j=0 dx=0 dy=0
+  g id=165 c=4 x=6097 adv=461 j=0 dx=0 dy=0
+  g id=172 c=2 x=6558 adv=461 j=0 dx=0 dy=0
+  g id=185 c=0 x=7019 adv=461 j=0 dx=0 dy=0
+# fixture emoji-cjk-fallback
+fonts 40837cd7cab8aba921522f4d0fb593d9 259bb3c31307793a3d75aab630de6c16 c4582de458e7f0764a5b93f9e0ffb9e3
+digest f87b68ab6889c8736e85e4b96d948c24
+box w=7629 h=1331 content_h=1331 top=0
+line p=0 l=0 r=0..27 top=0 h=1331 base=1024 x=0 w=7629
+  g id=41 c=0 x=0 adv=512 j=0 dx=0 dy=0
+  g id=74 c=1 x=512 adv=307 j=0 dx=0 dy=0
+  g id=1 c=2 x=819 adv=256 j=0 dx=0 dy=0
+  g id=771 c=3 x=1075 adv=1229 j=0 dx=0 dy=0
+  g id=1 c=7 x=2304 adv=256 j=0 dx=0 dy=0
+  g id=610 c=8 x=2560 adv=1024 j=0 dx=0 dy=0
+  g id=3199 c=11 x=3584 adv=1024 j=0 dx=0 dy=0
+  g id=1 c=14 x=4608 adv=256 j=0 dx=0 dy=0
+  g id=364 c=15 x=4864 adv=1229 j=0 dx=0 dy=0
+  g id=446 c=15 x=6093 adv=1229 j=0 dx=0 dy=0
+  g id=2 c=26 x=7322 adv=307 j=0 dx=0 dy=0
+# fixture variable-axis-and-features
+fonts 26d98760a141365f85cf5136968ff4d1 f418c09161f77d5800c2dea794018ad5
+digest 5eca7d54af1eaace9274420176b607b1
+box w=8588 h=1280 content_h=1280 top=0
+line p=0 l=0 r=0..18 top=0 h=1280 base=1024 x=0 w=8588
+  g id=35 c=0 x=0 adv=614 j=0 dx=0 dy=0
+  g id=80 c=1 x=614 adv=614 j=0 dx=0 dy=0
+  g id=77 c=2 x=1228 adv=410 j=0 dx=0 dy=0
+  g id=69 c=3 x=1638 adv=614 j=0 dx=0 dy=0
+  g id=1 c=4 x=2252 adv=358 j=0 dx=0 dy=0
+  g id=71 c=5 x=2610 adv=410 j=0 dx=0 dy=0
+  g id=74 c=6 x=3020 adv=410 j=0 dx=0 dy=0
+  g id=1 c=7 x=3430 adv=358 j=0 dx=0 dy=0
+  g id=77 c=8 x=3788 adv=384 j=0 dx=0 dy=0
+  g id=74 c=9 x=4172 adv=384 j=0 dx=0 dy=0
+  g id=72 c=10 x=4556 adv=640 j=0 dx=0 dy=0
+  g id=73 c=11 x=5196 adv=640 j=0 dx=0 dy=0
+  g id=85 c=12 x=5836 adv=384 j=0 dx=0 dy=0
+  g id=70 c=13 x=6220 adv=640 j=0 dx=0 dy=0
+  g id=83 c=14 x=6860 adv=640 j=0 dx=0 dy=0
+  g id=1 c=15 x=7500 adv=320 j=0 dx=0 dy=0
+  g id=71 c=16 x=7820 adv=384 j=0 dx=0 dy=0
+  g id=74 c=17 x=8204 adv=384 j=0 dx=0 dy=0
+# fixture justify-center-boxed
+fonts 40837cd7cab8aba921522f4d0fb593d9
+digest 13afbcf51806f973969625c67671e58b
+box w=7040 h=12800 content_h=8828 top=1986
+line p=0 l=0 r=0..10 top=1986 h=1434 base=3010 x=0 w=7040
+  g id=85 c=0 x=0 adv=307 j=0 dx=0 dy=0
+  g id=73 c=1 x=307 adv=512 j=0 dx=0 dy=0
+  g id=70 c=2 x=819 adv=512 j=0 dx=0 dy=0
+  g id=1 c=3 x=1331 adv=256 j=3098 dx=0 dy=0
+  g id=82 c=4 x=4685 adv=512 j=0 dx=0 dy=0
+  g id=86 c=5 x=5197 adv=512 j=0 dx=0 dy=0
+  g id=74 c=6 x=5709 adv=307 j=0 dx=0 dy=0
+  g id=68 c=7 x=6016 adv=512 j=0 dx=0 dy=0
+  g id=76 c=8 x=6528 adv=512 j=0 dx=0 dy=0
+  g id=1 c=9 x=7040 adv=256 j=0 dx=0 dy=0
+line p=0 l=1 r=10..20 top=3420 h=1434 base=4444 x=0 w=7040
+  g id=67 c=10 x=0 adv=512 j=0 dx=0 dy=0
+  g id=83 c=11 x=512 adv=512 j=0 dx=0 dy=0
+  g id=80 c=12 x=1024 adv=512 j=0 dx=0 dy=0
+  g id=88 c=13 x=1536 adv=819 j=0 dx=0 dy=0
+  g id=79 c=14 x=2355 adv=512 j=0 dx=0 dy=0
+  g id=1 c=15 x=2867 adv=256 j=2586 dx=0 dy=0
+  g id=71 c=16 x=5709 adv=307 j=0 dx=0 dy=0
+  g id=80 c=17 x=6016 adv=512 j=0 dx=0 dy=0
+  g id=89 c=18 x=6528 adv=512 j=0 dx=0 dy=0
+  g id=1 c=19 x=7040 adv=256 j=0 dx=0 dy=0
+line p=0 l=2 r=20..35 top=4854 h=1434 base=5878 x=0 w=7040
+  g id=75 c=20 x=0 adv=307 j=0 dx=0 dy=0
+  g id=86 c=21 x=307 adv=512 j=0 dx=0 dy=0
+  g id=78 c=22 x=819 adv=819 j=0 dx=0 dy=0
+  g id=81 c=23 x=1638 adv=512 j=0 dx=0 dy=0
+  g id=84 c=24 x=2150 adv=512 j=0 dx=0 dy=0
+  g id=1 c=25 x=2662 adv=256 j=244 dx=0 dy=0
+  g id=80 c=26 x=3162 adv=512 j=0 dx=0 dy=0
+  g id=87 c=27 x=3674 adv=512 j=0 dx=0 dy=0
+  g id=70 c=28 x=4186 adv=512 j=0 dx=0 dy=0
+  g id=83 c=29 x=4698 adv=512 j=0 dx=0 dy=0
+  g id=1 c=30 x=5210 adv=256 j=243 dx=0 dy=0
+  g id=85 c=31 x=5709 adv=307 j=0 dx=0 dy=0
+  g id=73 c=32 x=6016 adv=512 j=0 dx=0 dy=0
+  g id=70 c=33 x=6528 adv=512 j=0 dx=0 dy=0
+  g id=1 c=34 x=7040 adv=256 j=0 dx=0 dy=0
+line p=0 l=3 r=35..43 top=6288 h=1434 base=7312 x=0 w=3635
+  g id=77 c=35 x=0 adv=307 j=0 dx=0 dy=0
+  g id=66 c=36 x=307 adv=512 j=0 dx=0 dy=0
+  g id=91 c=37 x=819 adv=512 j=0 dx=0 dy=0
+  g id=90 c=38 x=1331 adv=512 j=0 dx=0 dy=0
+  g id=1 c=39 x=1843 adv=256 j=0 dx=0 dy=0
+  g id=69 c=40 x=2099 adv=512 j=0 dx=0 dy=0
+  g id=80 c=41 x=2611 adv=512 j=0 dx=0 dy=0
+  g id=72 c=42 x=3123 adv=512 j=0 dx=0 dy=0
+line p=1 l=0 r=0..13 top=8106 h=1300 base=9063 x=730 w=5580
+  g id=68 c=0 x=730 adv=512 j=0 dx=0 dy=0
+  g id=70 c=1 x=1242 adv=512 j=0 dx=0 dy=0
+  g id=79 c=2 x=1754 adv=512 j=0 dx=0 dy=0
+  g id=85 c=3 x=2266 adv=307 j=0 dx=0 dy=0
+  g id=70 c=4 x=2573 adv=512 j=0 dx=0 dy=0
+  g id=83 c=5 x=3085 adv=512 j=0 dx=0 dy=0
+  g id=70 c=6 x=3597 adv=512 j=0 dx=0 dy=0
+  g id=69 c=7 x=4109 adv=512 j=0 dx=0 dy=0
+  g id=1 c=8 x=4621 adv=256 j=0 dx=0 dy=0
+  g id=85 c=9 x=4877 adv=307 j=0 dx=0 dy=0
+  g id=66 c=10 x=5184 adv=512 j=0 dx=0 dy=0
+  g id=74 c=11 x=5696 adv=307 j=0 dx=0 dy=0
+  g id=77 c=12 x=6003 adv=307 j=0 dx=0 dy=0
+line p=2 l=0 r=0..0 top=9790 h=1024 base=10609 x=0 w=0
+# fixture missing-glyph-and-hard-break
+fonts 40837cd7cab8aba921522f4d0fb593d9
+digest abdde54bc3c43943215dbb81aaaa4e16
+box w=3737 h=2048 content_h=2048 top=0
+line p=0 l=0 r=0..8 top=0 h=1024 base=819 x=0 w=2048
+  g id=66 c=0 x=0 adv=512 j=0 dx=0 dy=0
+  g id=0 c=1 x=512 adv=512 j=0 dx=0 dy=0
+  g id=67 c=4 x=1024 adv=512 j=0 dx=0 dy=0
+  g id=0 c=5 x=1536 adv=512 j=0 dx=0 dy=0
+line p=0 l=1 r=8..17 top=1024 h=1024 base=1843 x=0 w=3737
+  g id=79 c=8 x=0 adv=512 j=0 dx=0 dy=0
+  g id=70 c=9 x=512 adv=512 j=0 dx=0 dy=0
+  g id=89 c=10 x=1024 adv=512 j=0 dx=0 dy=0
+  g id=85 c=11 x=1536 adv=307 j=0 dx=0 dy=0
+  g id=1 c=12 x=1843 adv=256 j=0 dx=0 dy=0
+  g id=77 c=13 x=2099 adv=307 j=0 dx=0 dy=0
+  g id=74 c=14 x=2406 adv=307 j=0 dx=0 dy=0
+  g id=79 c=15 x=2713 adv=512 j=0 dx=0 dy=0
+  g id=70 c=16 x=3225 adv=512 j=0 dx=0 dy=0

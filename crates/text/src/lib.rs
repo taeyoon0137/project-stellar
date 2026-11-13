@@ -56,3 +56,6 @@ pub mod incremental;
 
 #[cfg(test)]
 pub(crate) mod test_fonts;
+
+#[cfg(test)]
+mod golden;

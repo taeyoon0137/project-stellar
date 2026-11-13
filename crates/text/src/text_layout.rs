@@ -391,6 +391,60 @@ impl TextLayout {
     pub fn last_baseline(&self) -> Option<TextUnit> {
         self.lines.last().map(|l| l.baseline)
     }
+
+    /// 논리 레이아웃 canonical bytes (X.10.7). 플랫폼 간 비교·golden에 씁니다.
+    ///
+    /// ```text
+    /// [4] "STXL"  u16 version(1)
+    /// i32 width, height, content_height, content_top   u32 줄 수
+    /// 줄마다: u32 paragraph, line, range start, range end
+    ///         i32 top, height, baseline, x, width     u32 glyph 수
+    ///         glyph마다: u32 glyph id, cluster  i32 x, baseline, advance, justify_extra, x_offset, y_offset
+    /// ```
+    ///
+    /// 모든 정수는 little-endian입니다. 값은 정수 subpixel이므로 같은 입력·같은 폰트 bytes는 같은 bytes를
+    /// 냅니다. 개수·offset은 `u32`로 기록합니다(텍스트 길이는 shaping 단계에서 `u32`로 제한됨).
+    pub fn encode_logical(&self) -> Vec<u8> {
+        fn u32_of(value: usize) -> [u8; 4] {
+            u32::try_from(value).unwrap_or(u32::MAX).to_le_bytes()
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(b"STXL");
+        out.extend_from_slice(&1u16.to_le_bytes());
+        for value in [
+            self.width,
+            self.height,
+            self.content_height,
+            self.content_top,
+        ] {
+            out.extend_from_slice(&value.raw().to_le_bytes());
+        }
+        out.extend_from_slice(&u32_of(self.lines.len()));
+        for line in &self.lines {
+            for value in [line.paragraph, line.line, line.range.start, line.range.end] {
+                out.extend_from_slice(&u32_of(value));
+            }
+            for value in [line.top, line.height, line.baseline, line.x, line.width] {
+                out.extend_from_slice(&value.raw().to_le_bytes());
+            }
+            out.extend_from_slice(&u32_of(line.glyphs.len()));
+            for g in &line.glyphs {
+                out.extend_from_slice(&g.glyph.raw().to_le_bytes());
+                out.extend_from_slice(&g.cluster.to_le_bytes());
+                for value in [
+                    g.x,
+                    g.baseline,
+                    g.advance,
+                    g.justify_extra,
+                    g.x_offset,
+                    g.y_offset,
+                ] {
+                    out.extend_from_slice(&value.raw().to_le_bytes());
+                }
+            }
+        }
+        out
+    }
 }
 
 /// paragraph를 쌓고 정렬합니다 (X.10.2 2단계). `paragraph_spacing`은 paragraph 사이에만 넣습니다.
