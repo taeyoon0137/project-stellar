@@ -36,7 +36,19 @@
 //!
 //! 절단·끝 잔여 bytes·tag 중복/역순·정의되지 않은 flags·unknown mandatory tag·필수 field
 //! 누락·known tag의 mandatory flag 불일치·비canonical media type은 모두 거부합니다.
-//! unknown **optional** tag는 R6 정책대로 무시합니다(재기록 시 결정론적으로 제거됨).
+//!
+//! # 전방 호환(unknown field) 정책 — R6 "보존"
+//!
+//! - unknown **mandatory** tag: 거부합니다(storage decoder와 같은 `UnknownMandatoryTag`).
+//! - unknown **optional** tag: 조용히 버리지 않고 **보존**합니다([`PreservedFields`]).
+//!   재기록 시 known field와 함께 tag 오름차순으로 payload를 그대로 다시 씁니다. 따라서
+//!   미래 버전이 쓴 record를 이 버전이 decode → encode해도 bytes가 같습니다(결정론 유지).
+//!   AssetRecord(최상위)와 SourceMetadata(nested) 모두 같은 정책입니다.
+//! - 보존 field는 decode로만 생깁니다. 내용이 바뀌는 연산(import·Update from Source)은
+//!   [`AssetRecord::new`]로 새 record를 만들며 이전 record의 보존 field를 이어받지 않습니다
+//!   (다른 content에 대한 미래 field 값을 잘못 옮기지 않기 위함).
+//! - known field의 정의되지 않은 **값**(예: source location kind 3)은 보존 대상이 아니며
+//!   명시 오류로 거부합니다.
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
@@ -77,6 +89,61 @@ const SOURCE_METADATA_FIELDS: [(u32, bool); 3] = [
     (TAG_SOURCE_PATH, true),
     (TAG_SOURCE_ORIGIN, true),
 ];
+
+/// field flags bit0: mandatory (storage canonical wire 형식과 같은 값, R6).
+const FIELD_FLAG_MANDATORY: u8 = 0b0000_0001;
+
+/// 보존한 unknown optional field 하나(R6 보존 정책).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PreservedField {
+    tag: u32,
+    payload: Vec<u8>,
+}
+
+impl PreservedField {
+    /// field tag.
+    pub fn tag(&self) -> u32 {
+        self.tag
+    }
+
+    /// 해석하지 않은 payload bytes(입력 그대로).
+    pub fn payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+/// record가 해석하지 못한 optional field 목록(tag 오름차순, 중복 없음).
+///
+/// decode로만 채워집니다. 공개 생성자는 빈 목록([`Default`])뿐이므로 known tag와 충돌하는
+/// 보존 field를 만들 수 없습니다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct PreservedFields(Vec<PreservedField>);
+
+impl PreservedFields {
+    /// 보존 field가 없으면 `true`.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// 보존 field 수.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// tag 오름차순 순회.
+    pub fn iter(&self) -> std::slice::Iter<'_, PreservedField> {
+        self.0.iter()
+    }
+
+    /// 재기록용 optional field.
+    fn to_fields(&self) -> impl Iterator<Item = Field> + '_ {
+        self.0.iter().map(|f| Field {
+            tag: f.tag,
+            mandatory: false,
+            payload: f.payload.clone(),
+        })
+    }
+}
 
 /// 오류가 발생한 record 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -294,6 +361,7 @@ pub enum SourceLocation {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SourceMetadata {
     location: SourceLocation,
+    preserved: PreservedFields,
 }
 
 impl SourceMetadata {
@@ -307,6 +375,7 @@ impl SourceMetadata {
         validate_relative_path(&relative_path)?;
         Ok(SourceMetadata {
             location: SourceLocation::Project { relative_path },
+            preserved: PreservedFields::default(),
         })
     }
 
@@ -319,6 +388,7 @@ impl SourceMetadata {
         validate_file_name(&file_name)?;
         Ok(SourceMetadata {
             location: SourceLocation::External { file_name, origin },
+            preserved: PreservedFields::default(),
         })
     }
 
@@ -440,23 +510,40 @@ impl SourceMetadata {
                 payload: string_payload(&origin.to_string())?,
             });
         }
+        fields.extend(self.preserved.to_fields());
         let mut enc = CanonicalEncoder::new();
         enc.put_fields(&fields)?;
         Ok(enc.into_bytes())
     }
 
+    /// decode 시 보존한 unknown optional field(R6 보존 정책).
+    pub fn preserved_fields(&self) -> &PreservedFields {
+        &self.preserved
+    }
+
     /// nested record payload를 끝까지 엄격히 디코딩합니다.
     fn decode_payload(payload: &[u8]) -> Result<SourceMetadata, AssetRecordError> {
-        let kind = RecordKind::SourceMetadata;
         let mut dec = CanonicalDecoder::new(payload);
-        let fields = take_known_fields(&mut dec, kind, &SOURCE_METADATA_FIELDS)?;
+        let (fields, preserved) = take_record_fields(
+            &mut dec,
+            RecordKind::SourceMetadata,
+            &SOURCE_METADATA_FIELDS,
+        )?;
         dec.expect_end()?;
+        let mut source = SourceMetadata::from_known_fields(&fields)?;
+        source.preserved = preserved;
+        Ok(source)
+    }
 
-        let mut kind_dec = CanonicalDecoder::new(required_payload(&fields, kind, TAG_SOURCE_KIND)?);
+    /// known field 값을 해석·검증합니다.
+    fn from_known_fields(fields: &[Field]) -> Result<SourceMetadata, AssetRecordError> {
+        let kind = RecordKind::SourceMetadata;
+
+        let mut kind_dec = CanonicalDecoder::new(required_payload(fields, kind, TAG_SOURCE_KIND)?);
         let location_kind = kind_dec.take_u8()?;
         kind_dec.expect_end()?;
-        let path = take_string_payload(required_payload(&fields, kind, TAG_SOURCE_PATH)?)?;
-        let origin = find_payload(&fields, TAG_SOURCE_ORIGIN);
+        let path = take_string_payload(required_payload(fields, kind, TAG_SOURCE_PATH)?)?;
+        let origin = find_payload(fields, TAG_SOURCE_ORIGIN);
 
         match location_kind {
             SOURCE_KIND_PROJECT => {
@@ -543,10 +630,35 @@ pub struct AssetRecord {
     pub size: u64,
     /// 외부 원본 출처 정보(optional).
     pub source_metadata: Option<SourceMetadata>,
+    /// decode 시 보존한 unknown optional field(R6 보존 정책, decode로만 채워짐).
+    preserved: PreservedFields,
 }
 
 impl AssetRecord {
+    /// 보존 field 없이 새 record를 만듭니다(import·Update from Source 등 새 content).
+    pub fn new(
+        content_hash: ContentHash,
+        media_type: MediaType,
+        size: u64,
+        source_metadata: Option<SourceMetadata>,
+    ) -> AssetRecord {
+        AssetRecord {
+            content_hash,
+            media_type,
+            size,
+            source_metadata,
+            preserved: PreservedFields::default(),
+        }
+    }
+
+    /// decode 시 보존한 unknown optional field(R6 보존 정책).
+    pub fn preserved_fields(&self) -> &PreservedFields {
+        &self.preserved
+    }
+
     /// encoder 현재 위치에 record를 canonical 인코딩합니다.
+    ///
+    /// 보존 field는 known field와 함께 tag 오름차순으로 payload 그대로 다시 씁니다.
     pub fn encode_into(&self, enc: &mut CanonicalEncoder) -> Result<(), AssetRecordError> {
         let mut size = CanonicalEncoder::new();
         size.put_u64(self.size);
@@ -574,6 +686,7 @@ impl AssetRecord {
                 payload: source.encode_payload()?,
             });
         }
+        fields.extend(self.preserved.to_fields());
         enc.put_fields(&fields)?;
         Ok(())
     }
@@ -591,7 +704,7 @@ impl AssetRecord {
     /// (단독 bytes는 [`AssetRecord::decode`]).
     pub fn decode_from(dec: &mut CanonicalDecoder<'_>) -> Result<AssetRecord, AssetRecordError> {
         let kind = RecordKind::AssetRecord;
-        let fields = take_known_fields(dec, kind, &ASSET_RECORD_FIELDS)?;
+        let (fields, preserved) = take_record_fields(dec, kind, &ASSET_RECORD_FIELDS)?;
 
         let hash_text = take_string_payload(required_payload(&fields, kind, TAG_CONTENT_HASH)?)?;
         let content_hash: ContentHash = hash_text
@@ -620,6 +733,7 @@ impl AssetRecord {
             media_type,
             size,
             source_metadata,
+            preserved,
         })
     }
 
@@ -647,17 +761,51 @@ fn take_string_payload(payload: &[u8]) -> Result<&str, DecodeError> {
     Ok(value)
 }
 
-/// record를 읽고 known tag의 mandatory flag가 형식 정의와 같은지 검사합니다.
+/// record를 읽어 known field와 보존할 unknown optional field로 나눕니다(R6 보존 정책).
 ///
-/// unknown mandatory tag는 storage decoder가 거부하고, unknown optional tag는 skip됩니다(R6).
-fn take_known_fields(
+/// wire 형식·구조 검사는 storage [`CanonicalDecoder::take_fields`]와 같습니다(같은 순서로
+/// `InvalidFlags`·`DuplicateTag`·`MisorderedTag`·`UnknownMandatoryTag`를 냅니다). storage
+/// decoder는 unknown optional field를 버리므로 보존을 위해 같은 규칙을 여기서 읽습니다
+/// (`record_reader_agrees_with_storage_take_fields` 테스트로 일치를 고정). 구조 검사를
+/// 통과한 뒤 known tag의 mandatory flag가 형식 정의와 같은지 검사합니다.
+fn take_record_fields(
     dec: &mut CanonicalDecoder<'_>,
     record: RecordKind,
     specs: &[(u32, bool)],
-) -> Result<Vec<Field>, AssetRecordError> {
-    let tags: Vec<u32> = specs.iter().map(|(tag, _)| *tag).collect();
-    let fields = dec.take_fields(&tags)?;
-    for field in &fields {
+) -> Result<(Vec<Field>, PreservedFields), AssetRecordError> {
+    let count = dec.take_u32()?;
+    let mut known: Vec<Field> = Vec::new();
+    let mut preserved: Vec<PreservedField> = Vec::new();
+    let mut last_tag: Option<u32> = None;
+    for _ in 0..count {
+        let tag = dec.take_u32()?;
+        let flags = dec.take_u8()?;
+        if flags & !FIELD_FLAG_MANDATORY != 0 {
+            return Err(DecodeError::InvalidFlags { value: flags }.into());
+        }
+        let mandatory = flags & FIELD_FLAG_MANDATORY != 0;
+        let payload = dec.take_bytes()?.to_vec();
+        if let Some(last) = last_tag {
+            match tag.cmp(&last) {
+                std::cmp::Ordering::Equal => return Err(DecodeError::DuplicateTag { tag }.into()),
+                std::cmp::Ordering::Less => return Err(DecodeError::MisorderedTag { tag }.into()),
+                std::cmp::Ordering::Greater => {}
+            }
+        }
+        last_tag = Some(tag);
+        if specs.iter().any(|(known_tag, _)| *known_tag == tag) {
+            known.push(Field {
+                tag,
+                mandatory,
+                payload,
+            });
+        } else if mandatory {
+            return Err(DecodeError::UnknownMandatoryTag { tag }.into());
+        } else {
+            preserved.push(PreservedField { tag, payload });
+        }
+    }
+    for field in &known {
         let expected = specs
             .iter()
             .find(|(tag, _)| *tag == field.tag)
@@ -670,7 +818,7 @@ fn take_known_fields(
             });
         }
     }
-    Ok(fields)
+    Ok((known, PreservedFields(preserved)))
 }
 
 fn find_payload(fields: &[Field], tag: u32) -> Option<&[u8]> {
@@ -697,12 +845,12 @@ mod tests {
     }
 
     fn record(source: Option<&str>) -> AssetRecord {
-        AssetRecord {
-            content_hash: ContentHash::compute(b"asset payload"),
-            media_type: MediaType::new("image/png").unwrap(),
-            size: 1234,
-            source_metadata: source.map(project_source),
-        }
+        AssetRecord::new(
+            ContentHash::compute(b"asset payload"),
+            MediaType::new("image/png").unwrap(),
+            1234,
+            source.map(project_source),
+        )
     }
 
     fn field(tag: u32, mandatory: bool, payload: Vec<u8>) -> Field {
@@ -817,12 +965,14 @@ mod tests {
     #[test]
     fn records_in_sequence_round_trip() {
         let records: Vec<AssetRecord> = (0..5u64)
-            .map(|i| AssetRecord {
-                content_hash: ContentHash::compute(format!("asset-{i}").as_bytes()),
-                media_type: MediaType::new("font/woff2").unwrap(),
-                size: i * 1000,
-                source_metadata: (i % 2 == 0)
-                    .then(|| SourceMetadata::project(format!("fonts/{i}.woff2")).unwrap()),
+            .map(|i| {
+                AssetRecord::new(
+                    ContentHash::compute(format!("asset-{i}").as_bytes()),
+                    MediaType::new("font/woff2").unwrap(),
+                    i * 1000,
+                    (i % 2 == 0)
+                        .then(|| SourceMetadata::project(format!("fonts/{i}.woff2")).unwrap()),
+                )
             })
             .collect();
         let mut enc = CanonicalEncoder::new();
@@ -928,14 +1078,112 @@ mod tests {
     }
 
     #[test]
-    fn unknown_optional_tag_is_skipped_per_r6() {
+    fn unknown_optional_tags_are_preserved_and_reemitted() {
+        // 미래 버전이 known field 앞·사이·뒤에 optional field를 추가한 record.
         let mut fields = base_fields();
+        fields.push(field(0, false, vec![0x01, 0x02]));
+        fields.push(field(
+            TAG_SOURCE_METADATA,
+            false,
+            project_source("a.png").encode_payload().unwrap(),
+        ));
+        fields.push(field(5, false, Vec::new()));
         fields.push(field(9, false, vec![0xaa]));
         let bytes = encode_fields(&fields);
+
         let decoded = AssetRecord::decode(&bytes).unwrap();
-        assert_eq!(decoded, record(None));
-        // 무시한 field는 재기록에서 결정론적으로 제거됩니다.
-        assert_eq!(decoded.encode().unwrap(), record(None).encode().unwrap());
+        // known field 해석은 보존 field와 무관합니다.
+        assert_eq!(decoded.content_hash, record(None).content_hash);
+        assert_eq!(decoded.size, 1234);
+        assert_eq!(decoded.source_metadata, Some(project_source("a.png")));
+        // 조용히 버리지 않습니다: tag·payload를 순서대로 보존합니다.
+        let preserved: Vec<(u32, Vec<u8>)> = decoded
+            .preserved_fields()
+            .iter()
+            .map(|f| (f.tag(), f.payload().to_vec()))
+            .collect();
+        assert_eq!(
+            preserved,
+            vec![(0, vec![0x01, 0x02]), (5, Vec::new()), (9, vec![0xaa])]
+        );
+        assert_eq!(decoded.preserved_fields().len(), 3);
+        // 재기록은 입력과 같은 bytes(결정론), 다시 decode해도 같은 값입니다.
+        let reencoded = decoded.encode().unwrap();
+        assert_eq!(reencoded, bytes);
+        assert_eq!(AssetRecord::decode(&reencoded).unwrap(), decoded);
+        // 보존 field가 있는 record는 같은 known 값의 새 record와 구분됩니다.
+        assert_ne!(decoded, record(Some("a.png")));
+        assert!(record(Some("a.png")).preserved_fields().is_empty());
+    }
+
+    #[test]
+    fn nested_unknown_optional_tags_are_preserved() {
+        let source = source_payload(&[
+            field(TAG_SOURCE_KIND, true, vec![SOURCE_KIND_PROJECT]),
+            field(TAG_SOURCE_PATH, true, string_payload("a.png").unwrap()),
+            field(7, false, vec![0x07]),
+        ]);
+        let mut fields = base_fields();
+        fields.push(field(TAG_SOURCE_METADATA, false, source));
+        let bytes = encode_fields(&fields);
+
+        let decoded = AssetRecord::decode(&bytes).unwrap();
+        assert!(decoded.preserved_fields().is_empty());
+        let nested = decoded.source_metadata.as_ref().unwrap();
+        assert_eq!(nested.location(), project_source("a.png").location());
+        let tags: Vec<u32> = nested.preserved_fields().iter().map(|f| f.tag()).collect();
+        assert_eq!(tags, vec![7]);
+        assert_eq!(decoded.encode().unwrap(), bytes);
+    }
+
+    #[test]
+    fn new_records_do_not_inherit_preserved_fields() {
+        let mut fields = base_fields();
+        fields.push(field(9, false, vec![0xaa]));
+        let decoded = AssetRecord::decode(&encode_fields(&fields)).unwrap();
+        // 새 content로 다시 만든 record(import·Update from Source 경로)는 보존 field가 없습니다.
+        let fresh = AssetRecord::new(
+            ContentHash::compute(b"new content"),
+            decoded.media_type.clone(),
+            11,
+            decoded.source_metadata.clone(),
+        );
+        assert!(fresh.preserved_fields().is_empty());
+        assert_eq!(fresh.encode().unwrap()[0], 0x03, "known field 3개만 기록");
+    }
+
+    #[test]
+    fn record_reader_agrees_with_storage_take_fields() {
+        // 보존 reader는 storage decoder와 같은 구조 규칙·오류를 냅니다. known field 결과도 같습니다.
+        let fields = base_fields();
+        let entry = |i: usize, flags: u8| (fields[i].tag, flags, fields[i].payload.clone());
+        let mut inputs = vec![
+            encode_fields(&fields),
+            raw_record(&[entry(0, 1), entry(0, 1), entry(1, 1), entry(2, 1)]),
+            raw_record(&[entry(1, 1), entry(0, 1), entry(2, 1)]),
+            raw_record(&[entry(0, 0x80), entry(1, 1), entry(2, 1)]),
+            raw_record(&[entry(0, 1), (8, 1, vec![]), entry(1, 1)]),
+            raw_record(&[(0, 0, vec![1]), entry(0, 1), entry(1, 1), (6, 0, vec![])]),
+        ];
+        let full = encode_fields(&fields);
+        inputs.extend((0..full.len()).map(|cut| full[..cut].to_vec()));
+
+        let tags: Vec<u32> = ASSET_RECORD_FIELDS.iter().map(|(t, _)| *t).collect();
+        for input in inputs {
+            let storage = CanonicalDecoder::new(&input).take_fields(&tags);
+            let ours = take_record_fields(
+                &mut CanonicalDecoder::new(&input),
+                RecordKind::AssetRecord,
+                &ASSET_RECORD_FIELDS,
+            );
+            match (storage, ours) {
+                (Ok(expected), Ok((known, _))) => assert_eq!(known, expected),
+                (Err(expected), Err(err)) => {
+                    assert_eq!(err, AssetRecordError::Decode(expected), "{input:02x?}")
+                }
+                (storage, ours) => panic!("불일치: storage {storage:?}, ours {ours:?}"),
+            }
+        }
     }
 
     #[test]

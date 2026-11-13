@@ -76,8 +76,9 @@
   형식을 StableId와 다르게 바꾸면 함께 바뀝니다(현재 ChunkId는 StableId 위임).
 - AssetId 생성(UUIDv7 발급)은 assets에 두지 않았습니다. import(XIII.5.2)에서 상위 crate가
   발급한 id를 받거나 bytes로 전달받는 방식으로 연결해야 합니다.
-- unknown optional tag를 보존하지 않고 무시하므로, 미래 버전이 쓴 optional field는 이 버전이
-  재기록하면 사라집니다(R6 "무시" 정책 선택).
+- ~~unknown optional tag를 보존하지 않고 무시하므로, 미래 버전이 쓴 optional field는 이 버전이
+  재기록하면 사라집니다(R6 "무시" 정책 선택).~~ → 후속 수정으로 "보존" 정책으로 바꿨습니다
+  (아래 절).
 - media type 허용 목록·unknown type의 binary 저장 정책·최대 크기는 XIII.5.7에서 정합니다.
 
 ## 후속 수정(리뷰 반영)
@@ -105,3 +106,18 @@
   Cargo는 전이 의존 crate 이름 참조를 허용하지 않으므로 `AssetId(StableId)`로 바꿀 수
   없습니다. 위 "차이" 절의 16바이트 표현을 유지합니다. 직접 newtype으로 바꾸려면 storage의
   `StableId` 재노출 또는 assets → core-types edge 허용이 먼저 필요합니다.
+- **unknown optional field 전방 호환 정책(Fix)**: 조용히 버리던(silent drop) 동작을 R6의
+  **보존** 정책으로 명시·고정했습니다.
+  - unknown mandatory tag는 기존대로 `UnknownMandatoryTag`로 거부합니다.
+  - unknown optional tag는 `PreservedFields`(tag 오름차순, tag·payload 그대로)에 보존하고,
+    재기록 시 known field와 함께 tag 순으로 다시 씁니다. 미래 버전이 쓴 record를 이 버전이
+    decode → encode해도 같은 bytes입니다(결정론). AssetRecord와 nested SourceMetadata 모두
+    같은 정책입니다.
+  - 보존 field는 decode로만 생깁니다(공개 생성자는 빈 목록뿐). 새 content를 만드는 연산은
+    `AssetRecord::new`로 보존 field 없는 record를 만들며 이전 record의 보존 field를 이어받지
+    않습니다. known field의 정의되지 않은 값(예: location kind 3)은 보존하지 않고 거부합니다.
+  - storage `take_fields`가 unknown optional field를 버리므로 같은 wire 규칙의 reader를
+    assets에 두었습니다. 구조 오류(`InvalidFlags`·`DuplicateTag`·`MisorderedTag`·
+    `UnknownMandatoryTag`·모든 절단 길이)와 known field 결과가 storage decoder와 같음을
+    `record_reader_agrees_with_storage_take_fields`로 고정했습니다.
+  - 검증: `cargo test -p stellar-assets` 45 passed + doctest 2 passed, clippy 경고 0, fmt 통과.
