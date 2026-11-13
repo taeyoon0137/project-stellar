@@ -386,7 +386,11 @@ impl VersionSelector {
 pub struct LocalOverridePath(String);
 
 impl LocalOverridePath {
-    /// 기본 규칙(빈 값·길이·제어 문자)을 검사해 만듭니다.
+    /// 규칙을 검사해 만듭니다.
+    ///
+    /// 빈 값·길이·제어 문자 외에 경로 형식(XV.6.1)을 검사합니다: 내부 구분자는 `/`만(아키텍처
+    /// 19.2, `\` 금지), 빈 component(`a//b`)·끝 `/`·`.` component 금지. `..`은 사용 프로젝트 밖을
+    /// 가리키기 위해 허용합니다. 프로젝트 root 기준 위치 검사는 [`crate::local_override`]가 합니다.
     pub fn new(text: &str) -> Result<LocalOverridePath, ValueError> {
         if text.is_empty() {
             return Err(ValueError::Empty);
@@ -396,10 +400,24 @@ impl LocalOverridePath {
                 max: MAX_LOCAL_OVERRIDE_LEN,
             });
         }
-        if text.chars().any(char::is_control) {
+        if text.chars().any(|c| c.is_control() || c == '\\') {
             return Err(ValueError::InvalidCharacter);
         }
+        let body = text.strip_prefix('/').unwrap_or(text);
+        if body.is_empty() || body.split('/').any(|part| part.is_empty() || part == ".") {
+            return Err(ValueError::InvalidOverridePath);
+        }
         Ok(LocalOverridePath(text.to_string()))
+    }
+
+    /// 절대 경로(`/` 시작)인지.
+    pub fn is_absolute(&self) -> bool {
+        self.0.starts_with('/')
+    }
+
+    /// `/`로 나눈 component(절대 경로의 첫 `/` 제외).
+    pub fn components(&self) -> impl Iterator<Item = &str> {
+        self.0.strip_prefix('/').unwrap_or(&self.0).split('/')
     }
 
     /// 원문 문자열. 로컬 파일 시스템 접근·로컬 UI 표시에서만 사용합니다(XV.1.4).

@@ -55,5 +55,8 @@ pub mod lock;
 /// lockfile content hash와 cache entry 무결성 검사 (XV.4.4).
 pub mod lock_integrity;
 
+/// local path override 매핑 (XV.6.1).
+pub mod local_override;
+
 #[cfg(test)]
 pub(crate) mod test_support;

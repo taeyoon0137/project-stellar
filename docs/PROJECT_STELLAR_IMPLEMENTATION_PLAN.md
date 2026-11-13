@@ -1566,7 +1566,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XV.6.1 | `[ ]` | `stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다. | schema validation. | XV.1.1 |
+| XV.6.1 | `[x]` | `stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다. | schema validation. | XV.1.1 |
 | XV.6.2 | `[ ]` | local path가 일반 repo 또는 잘못된 library id이면 거부합니다. | fixture 실패. | XV.6.1, IV.5.1 |
 | XV.6.3 | `[ ]` | local override의 current commit과 working tree dirty 상태를 진단에 표시하되 lockfile exact remote commit은 유지합니다. | dirty override warning. | XV.6.2, XIV.2.2 |
 | XV.6.4 | `[ ]` | linked worktree path도 ProjectProbe로 허용합니다. | worktree library fixture load. | XIV.1.2, XV.6.2 |

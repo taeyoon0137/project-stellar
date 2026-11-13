@@ -137,6 +137,10 @@ pub enum ValueError {
     UnsupportedVersion,
     /// 다른 필드와 모순(예: `logical_id`가 dependency path 마지막 이름과 다름).
     Inconsistent,
+    /// local override 경로 형식 위반(빈 component, 끝 `/`, `.` component).
+    InvalidOverridePath,
+    /// local override가 사용 프로젝트 root 자신 또는 그 내부를 가리킴.
+    OverrideInsideProject,
 }
 
 impl fmt::Display for ValueError {
@@ -165,6 +169,12 @@ impl fmt::Display for ValueError {
             ValueError::InvalidInteger => f.write_str("음이 아닌 10진 정수가 아닙니다"),
             ValueError::UnsupportedVersion => f.write_str("지원하지 않는 schema version입니다"),
             ValueError::Inconsistent => f.write_str("다른 필드와 모순됩니다"),
+            ValueError::InvalidOverridePath => f.write_str(
+                "local override 경로 형식이 잘못되었습니다('/' 구분, 빈·'.' component 금지)",
+            ),
+            ValueError::OverrideInsideProject => f.write_str(
+                "local override는 사용 프로젝트 밖의 다른 프로젝트 root를 가리켜야 합니다",
+            ),
         }
     }
 }
