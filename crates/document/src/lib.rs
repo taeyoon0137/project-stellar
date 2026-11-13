@@ -11,6 +11,7 @@ pub mod node_columns;
 /// 문서 소유자와 읽기 전용 스냅샷 view (III.6.3).
 pub mod snapshot;
 
+pub mod component;
 /// 문서·페이지·View 정의 (VI.1.1).
 pub mod definitions;
 
