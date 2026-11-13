@@ -12,3 +12,6 @@ pub mod declaration;
 
 /// version 선택자 해석 계약과 lock pin (XV.1.2).
 pub mod selection;
+
+/// 의존성 선언 충돌 validation (XV.1.3).
+pub mod validation;
