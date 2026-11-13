@@ -46,3 +46,6 @@ pub mod fragment;
 
 /// Shape payload (VI.5).
 pub mod shape;
+
+/// Path command (VI.6).
+pub mod path;
