@@ -58,6 +58,7 @@ dependencies = [
 name = "stellar-assets"
 version = "0.0.0"
 dependencies = [
+ "stellar-core-types",
  "stellar-storage",
 ]
 

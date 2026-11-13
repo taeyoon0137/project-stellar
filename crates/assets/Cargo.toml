@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+stellar-core-types = { path = "../core-types" }
 stellar-storage = { path = "../storage" }
 
 [lints]

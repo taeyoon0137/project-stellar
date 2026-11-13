@@ -69,6 +69,8 @@
   때문입니다. bytes·문자열 형식·정렬·파싱 오류는 StableId와 같으며, StableId와의 변환은
   core-types를 의존하는 상위 crate(project)가 16바이트로 수행합니다. 직접 newtype이
   필요하다고 판단되면 의존 정책 변경(assets → core-types edge 허용)이 선행되어야 합니다.
+  → **해소**: 의존 정책이 `assets → core-types`를 허용한 뒤(99448ba) `AssetId(StableId)`
+  newtype으로 바꿨습니다(아래 "후속 수정(리뷰 반영 3차)"). 이 차이는 더 이상 없습니다.
 
 ## 남은 위험 / 한계
 
@@ -168,3 +170,25 @@
 - **남은 위험**: 비Unix의 OS 난수는 아직 없습니다(`RandomUnavailable`, Windows 지원 보류).
   key는 메모리에서 지우지(zeroize) 않습니다. key 파일 위치(`data_dir`)를 셸이 연결해야 실제
   외부 원본 import가 동작합니다.
+
+## 후속 수정(리뷰 반영 3차): `AssetId`를 `StableId` newtype으로 변경
+
+- **문제**: 작업 지시("`AssetId` StableId newtype")와 달리 `AssetId`가 `[u8; 16]`을 감쌌고,
+  문자열 변환을 storage `ChunkId` codec에 위임했습니다. 상태 `[x]`가 지시 미충족을 가렸습니다.
+- **수정**: `crates/assets/Cargo.toml`에 `stellar-core-types` path 의존을 추가하고(의존 정책
+  99448ba에서 허용, `validate-crate-graph` 통과) `pub struct AssetId(StableId)`로 바꿨습니다.
+  `from_stable_id`·`stable_id`·`From<StableId>`·`From<AssetId> for StableId`를 추가했고,
+  `Display`·`FromStr`은 StableId에 직접 위임합니다(`ParseAssetIdError = ParseStableIdError`).
+  `ChunkId` codec 의존은 제거했습니다. 감싸지 않은 `StableId`를 `AssetId` 자리에 넘기면
+  컴파일이 실패합니다(compile_fail doctest 추가, 명시 변환 예시 doctest 추가).
+- **인코딩 호환**: canonical 인코딩은 그대로 16바이트 raw(big-endian)이고 정렬·문자열도
+  같으므로 기존 fixture·golden 값이 그대로 유효합니다(`canonical_encoding_is_16_raw_bytes_and_round_trips`
+  변경 없음 통과, 기존 sample bytes = `StableId::new_v7(0x01923c4d5e6f, 0xabc, 0x0123456789abcdef)`
+  출력임을 `wraps_stable_id_without_changing_representation`으로 고정).
+- **부수 변경**: 의존 추가로 workspace `Cargo.lock`의 `stellar-assets` 의존 목록에
+  `"stellar-core-types"` 한 줄이 추가되었습니다(CI가 `--locked`를 쓰므로 함께 기록).
+- **상태**: 지시 내용(StableId newtype)과 검증(round-trip)을 모두 충족하므로 계획서 `[x]`를
+  유지합니다. `planning/task-status.yaml`은 이 작업에서 수정하지 않았습니다.
+- **검증**: `cargo test -p stellar-assets` lib 116 passed + integration 1 passed + doctest
+  4 passed(compile_fail 3, 실행 1), clippy 경고 0, fmt 통과, `validate-crate-graph` 통과,
+  `cargo check -p stellar-project` 통과.

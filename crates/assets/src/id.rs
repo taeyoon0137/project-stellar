@@ -1,44 +1,59 @@
-//! `AssetId` — StableId 기반 에셋 식별자 (XIII.5.1).
+//! `AssetId` — StableId newtype 에셋 식별자 (XIII.5.1).
 //!
 //! 에셋의 **논리** 식별자입니다. 같은 content hash를 여러 AssetId가 참조할 수 있으므로
 //! (XIII.5.3 dedup) 내용 주소와 별개인 StableId 도메인으로 둡니다. Node·chunk 등 다른
-//! StableId 도메인과 섞이지 않도록 newtype으로 감쌉니다.
+//! StableId 도메인과 섞이지 않도록 core-types [`StableId`]를 newtype으로 감쌉니다
+//! (crate 의존 정책상 `assets → core-types` 직접 의존 허용, 2026-11-14).
 //!
 //! # 표현
 //!
-//! crate 의존 정책(II.2.8)상 `stellar-assets`는 `stellar-storage`만 직접 의존하므로
-//! core-types의 `StableId` 타입을 이름으로 참조할 수 없습니다. 그래서 내부 값은
-//! `StableId`와 **동일한 표현**인 16바이트(big-endian, UUIDv7 레이아웃)로 보관합니다.
-//! - 정렬: `StableId`와 같은 byte 사전식(= UUIDv7 timestamp 순).
-//! - 문자열: storage가 공개하는 StableId 문자열 codec([`ChunkId`]의 `Display`/`FromStr`)을
-//!   변환에만 사용해 `StableId`와 글자 단위로 같은 형식(표준 소문자 hyphen UUID)을
-//!   보장합니다. 변환 중간값은 밖으로 나가지 않으므로 chunk 도메인과 섞이지 않습니다.
-//! - `StableId`와의 변환은 core-types를 의존하는 상위 crate가 16바이트로 수행합니다
-//!   (`AssetId::from_bytes(id.to_bytes())`, `StableId::from_bytes(asset.to_bytes())`).
+//! 내부 값이 [`StableId`]이므로 bytes·정렬·문자열·파싱 오류가 모두 StableId 그대로입니다.
+//! - binary·canonical: 16바이트(big-endian, UUIDv7 레이아웃) raw. 이전 표현(`[u8; 16]`)과
+//!   **같은 bytes**이므로 기존 인코딩 fixture가 그대로 유효합니다.
+//! - 정렬: StableId와 같은 byte 사전식(= UUIDv7 timestamp 순).
+//! - 문자열: 표준 소문자 hyphen UUID(StableId `Display`/`FromStr`).
+//! - StableId와의 변환: [`AssetId::from_stable_id`]·[`AssetId::stable_id`]와 `From` 구현.
 
 use std::fmt;
 use std::str::FromStr;
 
+use stellar_core_types::ids::{ParseStableIdError, StableId};
 use stellar_storage::canonical::decode::{CanonicalDecoder, DecodeError};
 use stellar_storage::canonical::encode::CanonicalEncoder;
-use stellar_storage::chunk::ChunkId;
 
-/// `AssetId` 문자열 파싱 오류.
+/// `AssetId` 문자열 파싱 오류(StableId 문자열 규칙 그대로).
+pub type ParseAssetIdError = ParseStableIdError;
+
+/// StableId newtype 에셋 식별자.
 ///
-/// core-types의 `ParseStableIdError`와 같은 타입입니다(StableId 문자열 규칙을 그대로 사용).
-pub type ParseAssetIdError = <ChunkId as FromStr>::Err;
-
-/// StableId 기반 에셋 식별자.
+/// StableId와는 명시 변환으로만 오갑니다.
+///
+/// ```
+/// use stellar_assets::id::AssetId;
+/// use stellar_core_types::ids::StableId;
+/// let stable = StableId::new_v7(0x0192_3c4d_5e6f, 0xabc, 0x0123_4567_89ab_cdef);
+/// let asset = AssetId::from_stable_id(stable);
+/// assert_eq!(asset.stable_id(), stable);
+/// assert_eq!(asset.to_string(), stable.to_string());
+/// ```
 ///
 /// # 다른 StableId 도메인과 혼용은 컴파일 실패
 ///
-/// `AssetId`를 요구하는 자리에 다른 도메인 식별자(예: [`ChunkId`])를 넘길 수 없습니다.
+/// `AssetId`를 요구하는 자리에 다른 도메인 식별자(예: [`ChunkId`](stellar_storage::chunk::ChunkId))나
+/// 감싸지 않은 [`StableId`]를 넘길 수 없습니다.
 ///
 /// ```compile_fail
 /// use stellar_assets::id::AssetId;
 /// use stellar_storage::chunk::ChunkId;
 /// fn wants_asset(id: AssetId) {}
 /// wants_asset(ChunkId::from_bytes([0u8; 16])); // ChunkId ≠ AssetId — 컴파일 실패
+/// ```
+///
+/// ```compile_fail
+/// use stellar_assets::id::AssetId;
+/// use stellar_core_types::ids::StableId;
+/// fn wants_asset(id: AssetId) {}
+/// wants_asset(StableId::NIL); // StableId ≠ AssetId — 컴파일 실패(명시 변환 필요)
 /// ```
 ///
 /// 반대 방향도 마찬가지입니다.
@@ -50,49 +65,66 @@ pub type ParseAssetIdError = <ChunkId as FromStr>::Err;
 /// wants_chunk(AssetId::from_bytes([0u8; 16])); // AssetId ≠ ChunkId — 컴파일 실패
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AssetId([u8; 16]);
+pub struct AssetId(StableId);
 
 impl AssetId {
     /// binary 인코딩 폭(byte). StableId와 같습니다.
     pub const ENCODED_LEN: usize = 16;
 
-    /// 모든 바이트가 0인 nil 식별자(StableId nil과 같은 bytes).
-    pub const NIL: AssetId = AssetId([0u8; 16]);
+    /// nil 식별자(StableId nil).
+    pub const NIL: AssetId = AssetId(StableId::NIL);
+
+    /// StableId를 에셋 식별자로 감쌉니다.
+    pub const fn from_stable_id(id: StableId) -> AssetId {
+        AssetId(id)
+    }
+
+    /// 감싼 StableId.
+    pub const fn stable_id(&self) -> StableId {
+        self.0
+    }
 
     /// StableId 16바이트(big-endian) 표현으로부터 만듭니다.
     pub const fn from_bytes(bytes: [u8; 16]) -> AssetId {
-        AssetId(bytes)
+        AssetId(StableId::from_bytes(bytes))
     }
 
     /// StableId 16바이트(big-endian) 표현을 반환합니다.
     pub const fn to_bytes(&self) -> [u8; 16] {
-        self.0
+        self.0.to_bytes()
     }
 
     /// canonical 인코딩: 16바이트 raw(big-endian, 길이 프리픽스 없음).
     ///
     /// manifest·pointer의 StableId·ChunkId 필드와 같은 규칙입니다.
     pub fn encode_into(&self, enc: &mut CanonicalEncoder) {
-        enc.put_fixed_raw(&self.0);
+        enc.put_fixed_raw(&self.to_bytes());
     }
 
     /// decoder 현재 위치에서 16바이트 raw를 읽습니다. 입력이 부족하면 오류입니다.
     pub fn decode_from(dec: &mut CanonicalDecoder<'_>) -> Result<AssetId, DecodeError> {
         let mut bytes = [0u8; 16];
         bytes.copy_from_slice(dec.take_raw(Self::ENCODED_LEN)?);
-        Ok(AssetId(bytes))
+        Ok(AssetId::from_bytes(bytes))
     }
+}
 
-    /// 문자열 변환용 StableId codec(변환 전용, 외부로 노출하지 않음).
-    fn stable_codec(&self) -> ChunkId {
-        ChunkId::from_bytes(self.0)
+impl From<StableId> for AssetId {
+    fn from(id: StableId) -> AssetId {
+        AssetId(id)
+    }
+}
+
+impl From<AssetId> for StableId {
+    fn from(id: AssetId) -> StableId {
+        id.0
     }
 }
 
 impl fmt::Display for AssetId {
     /// 표준 소문자 hyphen UUID(StableId 문자열 형식).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.stable_codec(), f)
+        fmt::Display::fmt(&self.0, f)
     }
 }
 
@@ -107,8 +139,7 @@ impl FromStr for AssetId {
 
     /// 표준 hyphen UUID(대소문자 무관, StableId 규칙)를 파싱합니다. 출력은 항상 소문자입니다.
     fn from_str(s: &str) -> Result<AssetId, ParseAssetIdError> {
-        let codec: ChunkId = s.parse()?;
-        Ok(AssetId(codec.to_bytes()))
+        s.parse::<StableId>().map(AssetId)
     }
 }
 
@@ -132,6 +163,29 @@ mod tests {
         let id = sample();
         assert_eq!(id.to_bytes(), SAMPLE_BYTES);
         assert_eq!(AssetId::from_bytes(id.to_bytes()), id);
+    }
+
+    #[test]
+    fn wraps_stable_id_without_changing_representation() {
+        let stable = StableId::new_v7(0x0192_3c4d_5e6f, 0xabc, 0x0123_4567_89ab_cdef);
+        assert_eq!(
+            stable.to_bytes(),
+            SAMPLE_BYTES,
+            "sample은 StableId::new_v7 출력"
+        );
+        let id = AssetId::from_stable_id(stable);
+        assert_eq!(id, sample());
+        assert_eq!(id.stable_id(), stable);
+        assert_eq!(AssetId::from(stable), id);
+        assert_eq!(StableId::from(id), stable);
+        assert_eq!(id.to_bytes(), stable.to_bytes());
+        assert_eq!(id.to_string(), stable.to_string());
+        assert_eq!(AssetId::NIL.stable_id(), StableId::NIL);
+        let other = StableId::new_v7(1, 0, 0);
+        assert_eq!(
+            AssetId::from_stable_id(stable).cmp(&AssetId::from_stable_id(other)),
+            stable.cmp(&other)
+        );
     }
 
     #[test]
@@ -192,18 +246,14 @@ mod tests {
         let bad_hyphen = "01923c4d_5e6f-7abc-8123-456789abcdef";
         let bad_hex = "01923c4d-5e6f-7abc-8123-456789abcdeg";
         for (input, expected) in [
-            (short, short.parse::<ChunkId>().unwrap_err()),
-            (long, long.parse::<ChunkId>().unwrap_err()),
-            (bad_hyphen, bad_hyphen.parse::<ChunkId>().unwrap_err()),
-            (bad_hex, bad_hex.parse::<ChunkId>().unwrap_err()),
+            (short, ParseStableIdError::Length),
+            (long, ParseStableIdError::Length),
+            (bad_hyphen, ParseStableIdError::Format),
+            (bad_hex, ParseStableIdError::Format),
         ] {
+            assert_eq!(input.parse::<StableId>().unwrap_err(), expected, "{input}");
             assert_eq!(input.parse::<AssetId>().unwrap_err(), expected, "{input}");
         }
-        assert_ne!(
-            short.parse::<AssetId>().unwrap_err(),
-            bad_hex.parse::<AssetId>().unwrap_err(),
-            "길이 오류와 형식 오류는 구분됩니다"
-        );
     }
 
     #[test]
