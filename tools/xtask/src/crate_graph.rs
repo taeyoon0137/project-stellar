@@ -58,6 +58,18 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ("stellar-accessibility", &[core]),
         ("stellar-diagnostics", &[core]),
         ("stellar-ffi", &[core]),
+        // headless 도구(XXIV.1.1, `tools/stellar-cli`): core crate만 사용합니다. MCP·agent·FFI·
+        // GUI(renderer) crate에 의존하지 않습니다.
+        (
+            "stellar-cli",
+            &[
+                core,
+                "stellar-project",
+                "stellar-document",
+                "stellar-storage",
+                "stellar-diagnostics",
+            ],
+        ),
     ];
     entries.iter().map(|(k, v)| (*k, v.to_vec())).collect()
 }
@@ -110,6 +122,52 @@ mod tests {
         let edges = [edge("stellar-core-types", "stellar-document")];
         let codes: Vec<&str> = check_crate_graph(&edges).iter().map(|v| v.code).collect();
         assert!(codes.contains(&"forbidden-edge"));
+    }
+
+    /// `tools/<dir>/Cargo.toml`의 `[dependencies]`에서 내부(stellar-*) 의존 edge를 읽습니다.
+    fn tool_edges(dir: &str) -> Vec<(String, String)> {
+        let path = format!("{}/../{dir}/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let name = text
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("name = "))
+            .map(|n| n.trim().trim_matches('"').to_string())
+            .unwrap();
+        let mut inside = false;
+        let mut edges = Vec::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                inside = trimmed == "[dependencies]";
+                continue;
+            }
+            if let (true, Some((key, _))) = (inside, trimmed.split_once('=')) {
+                let key = key.trim();
+                if key.starts_with("stellar-") {
+                    edges.push((name.clone(), key.to_string()));
+                }
+            }
+        }
+        edges
+    }
+
+    #[test]
+    fn stellar_cli_uses_only_core_crates() {
+        // XXIV.1.1: 실제 manifest의 내부 의존이 정책을 따릅니다.
+        assert!(check_crate_graph(&tool_edges("stellar-cli")).is_empty());
+        // L1 headless 도구는 MCP·FFI·GUI(renderer) crate에 의존할 수 없습니다.
+        for forbidden in [
+            "stellar-mcp",
+            "stellar-ffi",
+            "stellar-renderer-core",
+            "stellar-renderer-metal",
+        ] {
+            let codes: Vec<&str> = check_crate_graph(&[edge("stellar-cli", forbidden)])
+                .iter()
+                .map(|v| v.code)
+                .collect();
+            assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
+        }
     }
 
     #[test]
