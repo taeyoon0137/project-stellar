@@ -1376,7 +1376,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIV.3.1 | `[ ]` | `SemanticSnapshot`을 프로젝트 metadata, documents, nodes, properties, tokens, components, assets refs의 StableId index로 정의합니다. runtime cache는 제외합니다. | HEAD/Index/WT snapshot build fixture 통과. | VI.10.4, XIV.2.6 |
+| XIV.3.1 | `[x]` | `SemanticSnapshot`을 프로젝트 metadata, documents, nodes, properties, tokens, components, assets refs의 StableId index로 정의합니다. runtime cache는 제외합니다. | HEAD/Index/WT snapshot build fixture 통과. | VI.10.4, XIV.2.6 |
 | XIV.3.2 | `[ ]` | `SemanticChange` kind에 AddObject, RemoveObject, MoveObject, ReorderObject, SetProperty, Add/Remove/ChangeToken, ComponentInterfaceChange, AssetRefChange를 정의합니다. | kind golden test. | XIV.3.1 |
 | XIV.3.3 | `[ ]` | object match는 StableId로만 수행하고 이름·geometry 유사도로 rename 추정하지 않습니다. | 같은 이름 다른 ID는 add/remove. | XIV.3.1 |
 | XIV.3.4 | `[ ]` | property diff는 `StableId + PropertyPath`와 canonical TypedValue를 비교합니다. float epsilon diff를 사용하지 않습니다. | bit-different finite float fixture change 탐지. | III.2.2, XIV.3.2 |
