@@ -10,6 +10,10 @@
 //!
 //! 같은 node·같은 제약의 크기 해석은 한 계산 안에서 memo하여 중첩 Hug의 반복 측정을 막습니다.
 //!
+//! 측정(bottom-up, content 크기)과 배치(top-down, 위치·진단)는 분리되어 있습니다(X.7.2,
+//! [`crate::measure`]). 측정은 subtree 입력과 요청만의 함수라 같은 요청을 한 계산에서 한 번만 계산하고,
+//! [`compute_layout_cached`]는 계산 사이에도 [`MeasureKey`]로 재사용합니다.
+//!
 //! # 재귀 깊이와 stack
 //!
 //! 크기 해석·배치는 tree 깊이에 비례해 재귀합니다(배치 → 크기 해석 → 측정 → 자식 크기 해석).
@@ -24,6 +28,7 @@ use std::collections::HashMap;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::value::{FiniteF32, Insets};
 
+use crate::cache::LayoutInputHash;
 use crate::constraint;
 use crate::error::LayoutError;
 use crate::flex::{prepare_flex, PreparedFlex};
@@ -38,6 +43,7 @@ use crate::intrinsic::{
     ContentKind, ContentMeasurer, DefaultMeasurer, IntrinsicMeasure, IntrinsicMode, IntrinsicSize,
     MeasureRequest,
 };
+use crate::measure::{subtree_hashes, MeasureCache, MeasureKey};
 use crate::output::{LayoutBox, LayoutDiagnostic, LayoutResult};
 use crate::overlay;
 use crate::property::LayoutProperty;
@@ -69,16 +75,64 @@ pub fn compute_layout_with(
     input: &LayoutInput,
     measurer: &dyn ContentMeasurer,
 ) -> Result<LayoutResult, LayoutError> {
+    run(input, measurer, None).map(|run| run.result)
+}
+
+/// 계산 간 측정 cache를 써서 레이아웃하고 집계를 함께 돌려줍니다 (X.7.2).
+///
+/// 측정(bottom-up)은 [`crate::measure::MeasureKey`]가 같으면 `cache`의 결과를 재사용하고, 배치
+/// (top-down)는 매번 다시 합니다. 결과는 cache 유무와 무관하게 같습니다. 계산이 성공하면 `cache`에서
+/// 현재 입력에 맞지 않는 entry를 지웁니다.
+pub fn compute_layout_cached(
+    input: &LayoutInput,
+    measurer: &dyn ContentMeasurer,
+    cache: &mut MeasureCache,
+) -> Result<LayoutRun, LayoutError> {
+    run(input, measurer, Some(cache))
+}
+
+/// 한 번의 계산 집계 (X.7.2). 값은 포화 증가합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LayoutStats {
+    /// 실제로 계산한 측정(content 크기) 수. 같은 요청은 한 계산에서 한 번만 셉니다.
+    pub measured: u64,
+    /// 같은 계산 안에서 이미 계산한 측정을 다시 읽은 수.
+    pub memo_hits: u64,
+    /// 계산 간 [`MeasureCache`]에서 읽은 측정 수.
+    pub cache_hits: u64,
+    /// 측정기([`ContentMeasurer`]) 호출 수.
+    pub measurer_calls: u64,
+    /// 배치(top-down)로 방문한 node 수.
+    pub arranged: u64,
+}
+
+/// 레이아웃 결과와 집계 (X.7.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutRun {
+    /// 결과.
+    pub result: LayoutResult,
+    /// 집계.
+    pub stats: LayoutStats,
+}
+
+/// 검증하고, 깊은 tree는 전용 stack thread에서 계산합니다.
+fn run(
+    input: &LayoutInput,
+    measurer: &dyn ContentMeasurer,
+    cache: Option<&mut MeasureCache>,
+) -> Result<LayoutRun, LayoutError> {
     let tree = input.tree()?;
     if tree.depth <= INLINE_LAYOUT_DEPTH {
-        return compute_validated(input, tree, measurer);
+        return compute_validated(input, tree, measurer, cache);
     }
     let depth = tree.depth;
     std::thread::scope(|scope| {
         let worker = std::thread::Builder::new()
             .name("stellar-layout-deep".to_owned())
             .stack_size(DEEP_LAYOUT_STACK_BYTES)
-            .spawn_scoped(scope, move || compute_validated(input, tree, measurer))
+            .spawn_scoped(scope, move || {
+                compute_validated(input, tree, measurer, cache)
+            })
             .map_err(|_| LayoutError::DeepStackUnavailable { depth })?;
         match worker.join() {
             Ok(result) => result,
@@ -93,8 +147,9 @@ fn compute_validated(
     input: &LayoutInput,
     tree: TreeIndex,
     measurer: &dyn ContentMeasurer,
-) -> Result<LayoutResult, LayoutError> {
-    let mut engine = Engine::new(input, tree, measurer)?;
+    cache: Option<&mut MeasureCache>,
+) -> Result<LayoutRun, LayoutError> {
+    let mut engine = Engine::new(input, tree, measurer, cache)?;
     let root = engine.tree.root;
     let size = engine.resolve_size(root, ChildConstraint::UNCONSTRAINED)?;
     let mut pending = Vec::with_capacity(input.nodes.len());
@@ -108,7 +163,20 @@ fn compute_validated(
         .into_iter()
         .map(|p| LayoutBox::new(p.id, p.rect, p.content, p.baseline, p.overflow))
         .collect::<Result<Vec<_>, _>>()?;
-    LayoutResult::with_diagnostics(boxes, engine.diagnostics)
+    let result = LayoutResult::with_diagnostics(boxes, engine.diagnostics)?;
+    if let Some(cache) = engine.cache {
+        let current: HashMap<StableId, LayoutInputHash> = engine
+            .nodes
+            .iter()
+            .map(|node| node.id)
+            .zip(engine.subtree.iter().copied())
+            .collect();
+        cache.retain_current(&current, engine.measurer.revision());
+    }
+    Ok(LayoutRun {
+        result,
+        stats: engine.stats,
+    })
 }
 
 /// 부모 배치 방식이 자식 크기 해석에 주는 축별 제약.
@@ -219,14 +287,20 @@ pub(crate) struct Engine<'a> {
     pub(crate) tree: TreeIndex,
     pub(crate) nodes: Vec<Prepared>,
     memo: HashMap<(usize, ChildConstraint), LayoutSize>,
-    /// 측정 콘텐츠 결과 memo((node index, 가용 크기, mode) → 측정값).
-    content_memo: HashMap<(usize, [Option<LayoutUnit>; 2], IntrinsicMode), IntrinsicSize>,
+    /// 측정 결과 in-run memo((node index, 가용 크기, mode) → 측정값, X.7.2).
+    measure_memo: HashMap<(usize, [Option<LayoutUnit>; 2], IntrinsicMode), IntrinsicSize>,
+    /// node별 subtree input hash(입력 순서, X.7.2).
+    subtree: Vec<LayoutInputHash>,
+    /// 계산 간 측정 cache(X.7.2).
+    cache: Option<&'a mut MeasureCache>,
     /// 콘텐츠 측정기(X.6.4).
     measurer: &'a dyn ContentMeasurer,
     /// Grid item(node index)의 영역 축별 의존성(X.6.5, Grid 배치가 기록).
     pub(crate) grid_areas: HashMap<usize, [AreaDependence; 2]>,
     /// 레이아웃을 실패시키지 않는 진단(배치 순서대로).
     pub(crate) diagnostics: Vec<LayoutDiagnostic>,
+    /// 집계(X.7.2).
+    stats: LayoutStats,
 }
 
 /// 수치 오류를 node 문맥과 함께 레이아웃 오류로 바꿉니다.
@@ -256,36 +330,116 @@ impl<'a> Engine<'a> {
         input: &'a LayoutInput,
         tree: TreeIndex,
         measurer: &'a dyn ContentMeasurer,
+        cache: Option<&'a mut MeasureCache>,
     ) -> Result<Engine<'a>, LayoutError> {
         let nodes = input
             .nodes
             .iter()
             .map(prepare)
             .collect::<Result<Vec<_>, _>>()?;
+        // cache가 없으면 key가 필요 없으므로 subtree hash를 계산하지 않습니다.
+        let subtree = if cache.is_some() {
+            subtree_hashes(input, &tree)
+        } else {
+            Vec::new()
+        };
         Ok(Engine {
             input,
             tree,
             nodes,
             memo: HashMap::new(),
-            content_memo: HashMap::new(),
+            measure_memo: HashMap::new(),
+            subtree,
+            cache,
             measurer,
             grid_areas: HashMap::new(),
             diagnostics: Vec::new(),
+            stats: LayoutStats::default(),
         })
     }
 
-    /// 측정 콘텐츠를 측정합니다(같은 요청은 한 계산에서 한 번만 측정기에 보냄). 결과 크기는 비음수로
-    /// 검증합니다. `subtree`는 ComponentInstance 자식 extent입니다.
-    fn measure_content(
+    /// node content를 측정합니다(bottom-up, X.7.2).
+    ///
+    /// 결과는 node subtree 입력과 요청(가용 content 크기, mode)만의 함수이며 배치·진단을 만들지 않습니다.
+    /// 같은 요청은 한 계산에서 한 번만 계산하고(in-run memo), 계산 간 cache가 있으면 [`MeasureKey`]로
+    /// 재사용합니다. 고정 intrinsic은 그대로 돌려줍니다(측정으로 세지 않음).
+    fn measure(
+        &mut self,
+        index: usize,
+        available: [Option<LayoutUnit>; 2],
+        mode: IntrinsicMode,
+    ) -> Result<IntrinsicSize, LayoutError> {
+        if let PreparedContent::Fixed([width, height], baseline) = self.nodes[index].content {
+            return Ok(IntrinsicSize {
+                width,
+                height,
+                baseline,
+            });
+        }
+        if let Some(size) = self.measure_memo.get(&(index, available, mode)) {
+            self.stats.memo_hits = self.stats.memo_hits.saturating_add(1);
+            return Ok(*size);
+        }
+        let key = self.cache.as_ref().map(|_| MeasureKey {
+            node: self.nodes[index].id,
+            subtree: self.subtree[index],
+            available,
+            mode,
+            measurer: self.measurer.revision(),
+        });
+        if let (Some(cache), Some(key)) = (self.cache.as_deref_mut(), key.as_ref()) {
+            if let Some(size) = cache.get(key) {
+                self.stats.cache_hits = self.stats.cache_hits.saturating_add(1);
+                self.measure_memo.insert((index, available, mode), size);
+                return Ok(size);
+            }
+        }
+        let size = self.compute_measure(index, available, mode)?;
+        self.stats.measured = self.stats.measured.saturating_add(1);
+        self.measure_memo.insert((index, available, mode), size);
+        if let (Some(cache), Some(key)) = (self.cache.as_deref_mut(), key) {
+            cache.insert(key, size);
+        }
+        Ok(size)
+    }
+
+    /// cache 없이 node content를 측정합니다. container는 자식 측정을 합성하고, 측정 콘텐츠 leaf와
+    /// ComponentInstance는 측정기를 호출합니다.
+    fn compute_measure(
+        &mut self,
+        index: usize,
+        available: [Option<LayoutUnit>; 2],
+        mode: IntrinsicMode,
+    ) -> Result<IntrinsicSize, LayoutError> {
+        let content = self.nodes[index].content;
+        if let PreparedContent::Measured(kind) = content {
+            if !kind.allows_children() {
+                return self.call_measurer(index, available, mode, None);
+            }
+        }
+        let [width, height] = match &self.node(index).container {
+            ContainerLayout::Free => free::measure(self, index, available),
+            ContainerLayout::Stack(_) => stack::measure(self, index, available),
+            ContainerLayout::Grid(_) => grid::measure(self, index, available),
+            ContainerLayout::Overlay(_) => overlay::measure(self, index, available),
+            ContainerLayout::Constraint => constraint::measure(self, index, available),
+        }?;
+        if content == PreparedContent::Measured(ContentKind::ComponentInstance) {
+            // ComponentInstance: 자식(virtual subtree) extent를 측정기에 넘깁니다.
+            return self.call_measurer(index, available, mode, Some([width, height]));
+        }
+        Ok(IntrinsicSize::new(width, height))
+    }
+
+    /// 측정기를 호출하고 결과 크기가 비음수인지 검증합니다. `subtree`는 ComponentInstance 자식
+    /// extent입니다.
+    fn call_measurer(
         &mut self,
         index: usize,
         available: [Option<LayoutUnit>; 2],
         mode: IntrinsicMode,
         subtree: Option<[LayoutUnit; 2]>,
     ) -> Result<IntrinsicSize, LayoutError> {
-        if let Some(size) = self.content_memo.get(&(index, available, mode)) {
-            return Ok(*size);
-        }
         let node = self.node(index);
         let LayoutContent::Measured(content) = &node.content else {
             return Err(LayoutError::InvalidBox {
@@ -306,6 +460,7 @@ impl<'a> Engine<'a> {
             kind,
             reason,
         };
+        self.stats.measurer_calls = self.stats.measurer_calls.saturating_add(1);
         let size = self
             .measurer
             .measure(&request, content)
@@ -313,7 +468,6 @@ impl<'a> Engine<'a> {
         if size.width < LayoutUnit::ZERO || size.height < LayoutUnit::ZERO {
             return Err(failed("측정 결과 크기가 음수입니다"));
         }
-        self.content_memo.insert((index, available, mode), size);
         Ok(size)
     }
 
@@ -338,7 +492,7 @@ impl<'a> Engine<'a> {
                 let width =
                     sub_floor_zero(size.width(), padding.sum(Axis::Horizontal).map_err(at(id))?)
                         .map_err(at(id))?;
-                self.measure_content(index, [Some(width), None], IntrinsicMode::MaxContent, None)?
+                self.measure(index, [Some(width), None], IntrinsicMode::MaxContent)?
                     .baseline
             }
         };
@@ -462,28 +616,8 @@ impl<'a> Engine<'a> {
         index: usize,
         inner: [Option<LayoutUnit>; 2],
     ) -> Result<[LayoutUnit; 2], LayoutError> {
-        let mode = IntrinsicMode::MaxContent;
-        match self.nodes[index].content {
-            PreparedContent::Fixed(size, _) => return Ok(size),
-            PreparedContent::Measured(kind) if !kind.allows_children() => {
-                let size = self.measure_content(index, inner, mode, None)?;
-                return Ok([size.width, size.height]);
-            }
-            PreparedContent::None | PreparedContent::Measured(_) => {}
-        }
-        let extent = match &self.node(index).container {
-            ContainerLayout::Free => free::measure(self, index, inner),
-            ContainerLayout::Stack(_) => stack::measure(self, index, inner),
-            ContainerLayout::Grid(_) => grid::measure(self, index, inner),
-            ContainerLayout::Overlay(_) => overlay::measure(self, index, inner),
-            ContainerLayout::Constraint => constraint::measure(self, index, inner),
-        }?;
-        if self.nodes[index].content == PreparedContent::Measured(ContentKind::ComponentInstance) {
-            // ComponentInstance: 자식(virtual subtree) extent를 측정기에 넘깁니다.
-            let size = self.measure_content(index, inner, mode, Some(extent))?;
-            return Ok([size.width, size.height]);
-        }
-        Ok(extent)
+        let size = self.measure(index, inner, IntrinsicMode::MaxContent)?;
+        Ok([size.width, size.height])
     }
 
     /// node 자신의 크기가 콘텐츠로 정해지는 조상(축별, X.6.5). `link`는 node의 containing block이
@@ -563,6 +697,7 @@ impl<'a> Engine<'a> {
         let padding = prepared.padding;
         let sizing = prepared.sizing;
         let size = rect.size();
+        self.stats.arranged = self.stats.arranged.saturating_add(1);
         // X.6.5: Percentage 축이 자신의 측정 기여로 크기가 정해지는 조상에 비례하면 순환입니다.
         for axis in Axis::BOTH {
             if let (AxisSizing::Percentage(_), Some(ancestor)) =
@@ -756,10 +891,19 @@ mod tests {
             }
             // 결과는 계산 thread와 무관합니다(같은 tree를 큰 stack에서 직접 계산한 bytes와 동일).
             let direct = on_thread(DEEP_LAYOUT_STACK_BYTES, || {
-                compute_validated(&input, input.tree().unwrap(), &DefaultMeasurer)
+                compute_validated(&input, input.tree().unwrap(), &DefaultMeasurer, None)
             })
             .unwrap();
-            assert_eq!(direct.encode(), result.encode());
+            assert_eq!(direct.result.encode(), result.encode());
+            // 계산 간 cache도 전용 thread 경로로 넘어가며 두 번째 계산은 측정 0입니다.
+            let mut cache = MeasureCache::new();
+            let cached = on_thread(DEFAULT_THREAD_STACK, || {
+                compute_layout_cached(&input, &DefaultMeasurer, &mut cache)
+            })
+            .unwrap();
+            assert_eq!(cached.result, result);
+            let again = compute_layout_cached(&input, &DefaultMeasurer, &mut cache).unwrap();
+            assert_eq!((again.stats.measured, again.result), (0, result));
         }
     }
 

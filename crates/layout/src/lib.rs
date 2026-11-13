@@ -30,6 +30,9 @@ pub mod sizing;
 /// content intrinsic 측정 hook (X.6.4).
 pub mod intrinsic;
 
+/// 측정 cache key와 계산 간 측정 cache (X.7.2).
+pub mod measure;
+
 /// 레이아웃 엔진 진입점 (X.2.1).
 pub mod engine;
 

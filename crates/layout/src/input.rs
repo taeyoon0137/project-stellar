@@ -516,6 +516,13 @@ const CONTENT_NONE: u8 = 0;
 const CONTENT_INTRINSIC: u8 = 1;
 const CONTENT_MEASURED: u8 = 2;
 
+/// node 하나의 canonical bytes([`LayoutInput::encode`]의 node 부분, X.7.2 측정 key용).
+pub(crate) fn node_bytes(node: &LayoutNode) -> Vec<u8> {
+    let mut w = Writer::new();
+    encode_node(&mut w, node);
+    w.finish()
+}
+
 fn encode_node(w: &mut Writer, node: &LayoutNode) {
     w.id(node.id);
     w.len(node.children.len());
