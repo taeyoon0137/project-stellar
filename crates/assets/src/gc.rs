@@ -23,6 +23,9 @@
 //!   import·`Update from Source` 호출자는 `GcScheduler::note_activity`(또는 저장 guard)로
 //!   GC와 겹치지 않게 해야 합니다 — dedup import는 기존 파일 mtime을 바꾸지 않으므로 grace
 //!   period만으로는 보호되지 않습니다.
+//! - **삭제 직전 재확인**: 각 파일을 지우기 직전에 파일·shard·`assets/`를 다시 `lstat`해 목록
+//!   수집 때와 같은 항목(`(dev, ino)`)인지 봅니다. 그 사이 symlink·다른 파일·다른 디렉터리로
+//!   바뀌었으면 지우지 않고 이월합니다(경로 기반 검사의 경합 완화, crate 내부 `fs_guard` 모듈).
 //! - 삭제 실패는 오류가 아니라 결과에 기록하고 다음 실행으로 이월합니다(idempotent).
 
 use std::collections::BTreeSet;
@@ -33,7 +36,8 @@ use std::time::{Duration, SystemTime};
 use stellar_storage::gc::scheduler::GcGuard;
 use stellar_storage::hash::ContentHash;
 
-use crate::path::{assets_dir_state, AssetObjectPath, AssetsDirState, ASSETS_DIR};
+use crate::fs_guard::FileIdentity;
+use crate::path::{AssetObjectPath, ASSETS_DIR};
 use crate::record::AssetRecord;
 use crate::store::parse_temp_file_name;
 
@@ -116,27 +120,46 @@ fn classify(prefix: &str, name: &str) -> Entry {
     }
 }
 
-/// 수집한 `(shard 이름, 파일 이름, 경로)` 목록.
-type CollectedFiles = Vec<(String, String, PathBuf)>;
+/// 수집한 content·temp 후보 파일(목록 수집 때 `lstat` identity 포함).
+struct Collected {
+    /// shard 이름.
+    prefix: String,
+    /// 파일 이름.
+    name: String,
+    /// 파일 경로.
+    path: PathBuf,
+    /// 파일 identity.
+    identity: FileIdentity,
+    /// shard 디렉터리 경로.
+    shard: PathBuf,
+    /// shard 디렉터리 identity.
+    shard_identity: FileIdentity,
+}
 
-/// `assets/<prefix>/<file>` 일반 파일 목록(symlink·하위 디렉터리 제외)과 무시 항목 수.
+/// `assets/<prefix>/<file>` 일반 파일 목록(symlink·하위 디렉터리 제외)과 `assets/` identity.
 ///
-/// `assets/`나 shard 이름 항목이 symlink면 따라가지 않고 오류입니다.
-fn collect(assets: &Path, outcome: &mut AssetSweepOutcome) -> Result<CollectedFiles, AssetGcError> {
+/// `assets/`나 shard 이름 항목이 symlink면 따라가지 않고 오류입니다. `assets/`가 없거나 다룰 수
+/// 없으면 `None`.
+fn collect(
+    assets: &Path,
+    outcome: &mut AssetSweepOutcome,
+) -> Result<Option<(FileIdentity, Vec<Collected>)>, AssetGcError> {
     let mut files = Vec::new();
     let symlinked = |path: PathBuf| AssetGcError::SymlinkedAssetsDirectory { path };
-    match assets_dir_state(assets) {
-        Ok(AssetsDirState::Directory) => {}
-        Ok(AssetsDirState::Symlink) => return Err(symlinked(assets.to_path_buf())),
+    let assets_identity = match FileIdentity::lstat(assets) {
+        Ok((metadata, _)) if metadata.file_type().is_symlink() => {
+            return Err(symlinked(assets.to_path_buf()))
+        }
+        Ok((metadata, identity)) if metadata.is_dir() => identity,
         // 없거나 디렉터리가 아니거나 조회 실패: 다룰 content가 없습니다.
-        Ok(AssetsDirState::Missing | AssetsDirState::NotDirectory) | Err(_) => return Ok(files),
-    }
+        Ok(_) | Err(_) => return Ok(None),
+    };
     let Ok(shards) = std::fs::read_dir(assets) else {
-        return Ok(files);
+        return Ok(None);
     };
     for shard in shards.flatten() {
         let shard_name = shard.file_name().to_string_lossy().into_owned();
-        // DirEntry::file_type은 symlink를 따라가지 않습니다.
+        // DirEntry::file_type·metadata는 symlink를 따라가지 않습니다.
         let file_type = shard.file_type().ok();
         if is_shard_name(&shard_name) && file_type.is_some_and(|t| t.is_symlink()) {
             return Err(symlinked(shard.path()));
@@ -146,22 +169,34 @@ fn collect(assets: &Path, outcome: &mut AssetSweepOutcome) -> Result<CollectedFi
             outcome.ignored += 1;
             continue;
         }
-        let Ok(entries) = std::fs::read_dir(shard.path()) else {
+        let (Ok(shard_metadata), Ok(entries)) = (shard.metadata(), std::fs::read_dir(shard.path()))
+        else {
             outcome.carry_over.push(shard.path());
             continue;
         };
+        let shard_identity = FileIdentity::of(&shard_metadata);
         for entry in entries.flatten() {
-            let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
-            match entry.file_name().to_str() {
-                Some(name) if is_file => {
-                    files.push((shard_name.clone(), name.to_string(), entry.path()));
-                }
+            let metadata = entry.metadata().ok().filter(|m| m.file_type().is_file());
+            match (entry.file_name().to_str(), metadata) {
+                (Some(name), Some(metadata)) => files.push(Collected {
+                    prefix: shard_name.clone(),
+                    name: name.to_string(),
+                    path: entry.path(),
+                    identity: FileIdentity::of(&metadata),
+                    shard: shard.path(),
+                    shard_identity,
+                }),
                 _ => outcome.ignored += 1,
             }
         }
     }
-    files.sort_by(|a, b| a.2.cmp(&b.2));
-    Ok(files)
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(Some((assets_identity, files)))
+}
+
+/// 경로가 지금도 `identity`의 실제 디렉터리인지(`lstat`, 따라가지 않음).
+fn same_dir(path: &Path, identity: FileIdentity) -> bool {
+    matches!(FileIdentity::lstat(path), Ok((metadata, id)) if metadata.is_dir() && id == identity)
 }
 
 /// unreferenced asset content를 sweep합니다.
@@ -172,18 +207,35 @@ fn collect(assets: &Path, outcome: &mut AssetSweepOutcome) -> Result<CollectedFi
 /// - `_gc`: V.7.4 scheduler의 GC guard — idle + 저장 없음 조건의 증거입니다.
 ///
 /// `assets/`나 shard 디렉터리가 symlink면 아무 것도 삭제하지 않고
-/// [`AssetGcError::SymlinkedAssetsDirectory`]입니다.
+/// [`AssetGcError::SymlinkedAssetsDirectory`]입니다. 각 삭제 직전에 파일·shard·`assets/`를 다시
+/// `lstat`해 목록 수집 때와 같은 항목인지 확인하고, 다르면 지우지 않고 이월합니다
+/// (crate 내부 `fs_guard` 모듈).
 pub fn sweep_unreferenced_assets(
     project_root: &Path,
     live: &BTreeSet<ContentHash>,
     grace: Duration,
     now: SystemTime,
+    gc: &GcGuard<'_>,
+) -> Result<AssetSweepOutcome, AssetGcError> {
+    sweep_observed(project_root, live, grace, now, gc, &mut |_| {})
+}
+
+/// [`sweep_unreferenced_assets`]에 삭제 판정 직전 hook을 주입한 버전(교체 경합 테스트용).
+fn sweep_observed(
+    project_root: &Path,
+    live: &BTreeSet<ContentHash>,
+    grace: Duration,
+    now: SystemTime,
     _gc: &GcGuard<'_>,
+    before_delete_check: &mut dyn FnMut(&Path),
 ) -> Result<AssetSweepOutcome, AssetGcError> {
     let mut outcome = AssetSweepOutcome::default();
-    let files = collect(&project_root.join(ASSETS_DIR), &mut outcome)?;
-    for (prefix, name, path) in files {
-        let temp = match classify(&prefix, &name) {
+    let assets = project_root.join(ASSETS_DIR);
+    let Some((assets_identity, files)) = collect(&assets, &mut outcome)? else {
+        return Ok(outcome);
+    };
+    for file in files {
+        let temp = match classify(&file.prefix, &file.name) {
             Entry::Content(hash) if live.contains(&hash) => {
                 outcome.kept_live += 1;
                 continue;
@@ -195,14 +247,27 @@ pub fn sweep_unreferenced_assets(
                 continue;
             }
         };
+        before_delete_check(&file.path);
+        // 목록 수집 뒤 같은 이름에 다른 항목(symlink·다른 파일)이 들어왔으면 지우지 않습니다.
+        let metadata = match FileIdentity::lstat(&file.path) {
+            Ok((metadata, identity))
+                if metadata.file_type().is_file() && identity == file.identity =>
+            {
+                metadata
+            }
+            _ => {
+                outcome.carry_over.push(file.path);
+                continue;
+            }
+        };
         // grace 판정: mtime을 읽지 못하면 보수적으로 보존(이월).
-        let old_enough = match path.symlink_metadata().and_then(|m| m.modified()) {
+        let old_enough = match metadata.modified() {
             Ok(mtime) => now
                 .duration_since(mtime)
                 .map(|age| age >= grace)
                 .unwrap_or(false),
             Err(_) => {
-                outcome.carry_over.push(path);
+                outcome.carry_over.push(file.path);
                 continue;
             }
         };
@@ -210,10 +275,15 @@ pub fn sweep_unreferenced_assets(
             outcome.kept_in_grace += 1;
             continue;
         }
-        match std::fs::remove_file(&path) {
-            Ok(()) if temp => outcome.deleted_temp.push(path),
-            Ok(()) => outcome.deleted.push(path),
-            Err(_) => outcome.carry_over.push(path),
+        // 삭제 직전 디렉터리 확인: `assets/`·shard가 수집 때와 같은 실제 디렉터리여야 합니다.
+        if !same_dir(&assets, assets_identity) || !same_dir(&file.shard, file.shard_identity) {
+            outcome.carry_over.push(file.path);
+            continue;
+        }
+        match std::fs::remove_file(&file.path) {
+            Ok(()) if temp => outcome.deleted_temp.push(file.path),
+            Ok(()) => outcome.deleted.push(file.path),
+            Err(_) => outcome.carry_over.push(file.path),
         }
     }
     Ok(outcome)
@@ -499,6 +569,68 @@ mod tests {
         );
         assert!(err.to_string().contains("symlink"));
         assert!(victim.exists(), "프로젝트 밖 파일 보존");
+    }
+
+    /// 보안 리뷰 S4: 목록 수집 뒤 삭제 전에 파일·shard·`assets/`를 바꾸는 경합 fixture.
+    #[cfg(unix)]
+    #[test]
+    fn entries_swapped_after_listing_are_not_deleted() {
+        let (scheduler, start) = idle_scheduler();
+        let guard = scheduler
+            .try_begin_gc(start + Duration::from_secs(2))
+            .unwrap();
+        let empty = BTreeSet::new();
+
+        // 1) 파일을 다른 파일로 교체(rename): 지우지 않고 이월합니다.
+        let fx = fixture();
+        let (_, content) = import(&fx, "a.png", b"orphan");
+        let replacement = fx.outside.join("replacement");
+        std::fs::write(&replacement, b"user data").unwrap();
+        let outcome = sweep_observed(&fx.project, &empty, GRACE, later(), &guard, &mut |path| {
+            if path == content {
+                std::fs::rename(&replacement, path).unwrap();
+            }
+        })
+        .unwrap();
+        assert!(outcome.deleted.is_empty());
+        assert_eq!(outcome.carry_over, vec![content.clone()]);
+        assert_eq!(std::fs::read(&content).unwrap(), b"user data");
+
+        // 2) shard를 밖의 같은 이름 파일이 있는 디렉터리 symlink로 교체: 밖 파일 보존.
+        let fx = fixture();
+        let (_, content) = import(&fx, "a.png", b"orphan");
+        let shard = content.parent().unwrap().to_path_buf();
+        let victim_shard = fx.outside.join("victim-shard");
+        std::fs::create_dir_all(&victim_shard).unwrap();
+        let victim = victim_shard.join(content.file_name().unwrap());
+        std::fs::write(&victim, b"victim").unwrap();
+        let moved = fx.project.join("assets").join("moved");
+        let outcome = sweep_observed(&fx.project, &empty, GRACE, later(), &guard, &mut |_| {
+            std::fs::rename(&shard, &moved).unwrap();
+            std::os::unix::fs::symlink(&victim_shard, &shard).unwrap();
+        })
+        .unwrap();
+        assert!(outcome.deleted.is_empty());
+        assert_eq!(outcome.carry_over, vec![content.clone()]);
+        assert_eq!(std::fs::read(&victim).unwrap(), b"victim", "밖 파일 보존");
+
+        // 3) `assets/` 자체를 다른 디렉터리로 교체: 지우지 않습니다.
+        let fx = fixture();
+        let (_, content) = import(&fx, "a.png", b"orphan");
+        let assets = fx.project.join("assets");
+        let assets_moved = fx.project.join("assets-moved");
+        let outcome = sweep_observed(&fx.project, &empty, GRACE, later(), &guard, &mut |_| {
+            std::fs::rename(&assets, &assets_moved).unwrap();
+            std::fs::create_dir(&assets).unwrap();
+            // 같은 상대 경로에 사용자 파일을 둡니다(교체된 디렉터리의 다른 파일).
+            let shard = assets.join(content.parent().unwrap().file_name().unwrap());
+            std::fs::create_dir(&shard).unwrap();
+            std::fs::write(shard.join(content.file_name().unwrap()), b"new").unwrap();
+        })
+        .unwrap();
+        assert!(outcome.deleted.is_empty());
+        assert_eq!(outcome.carry_over, vec![content.clone()]);
+        assert_eq!(std::fs::read(&content).unwrap(), b"new");
     }
 
     #[test]

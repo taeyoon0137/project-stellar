@@ -159,3 +159,12 @@
 - **남은 위험**: project 계층의 실제 정책(신뢰 매트릭스·`git check-ignore`) 연결은 아직 없습니다.
   NTFS 8.3 짧은 이름·ADS 표기는 다루지 않습니다(Windows 지원 보류). 판정과 열기 사이 경로 교체
   (TOCTOU)는 별도 후속 수정(S4)에서 다룹니다.
+
+## 후속 수정(보안 리뷰 반영): 판정한 원본 항목 고정(TOCTOU 완화)
+
+- 기록된 원본(내부·외부)은 판정 때 canonical 경로를 `lstat`해 일반 파일인지 확인하고 그 identity를
+  import 요청에 고정합니다(`pinned_to`). import는 경로 전체 symlink를 따라가지 않고 열며(macOS
+  `O_NOFOLLOW_ANY`) 연 파일이 판정한 항목일 때만 읽으므로, 판정(보호 영역·호출자 정책·출처 지문) 뒤
+  경로를 바꿔도 다른 파일을 `assets/`로 복사하지 않습니다(`ImportError::SourceChanged`). 사용자가
+  고른 경로(`update_from_selected_source`)는 고정하지 않습니다. 세부와 남은 한계는 XIII.5.2 후속 수정
+  (TOCTOU 완화) 절에 있습니다.

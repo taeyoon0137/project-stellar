@@ -35,6 +35,7 @@ use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::atomic_write::{create_new_temp, TEMP_NAME_ATTEMPTS};
+use crate::fs_guard::{is_symlink_refusal, open_read, FileIdentity, NoFollow};
 use crate::hash_stream::hmac_sha256;
 
 /// key 길이(byte).
@@ -96,6 +97,12 @@ pub enum OriginKeyError {
         owner: u32,
         /// 현재 사용자 uid.
         expected: u32,
+    },
+    /// 검사한 key 파일 또는 디렉터리가 열기·읽기 사이에 다른 항목으로 바뀌었습니다(symlink로
+    /// 교체 포함). 읽은 값을 쓰지 않습니다(crate 내부 `fs_guard` 모듈).
+    ChangedDuringCheck {
+        /// 바뀐 경로.
+        path: PathBuf,
     },
     /// key 디렉터리가 안전하지 않습니다. 실제 디렉터리(symlink 아님)이고 현재 사용자 소유이며
     /// group·other 쓰기 권한이 없어야 합니다 — 다른 사용자가 key를 지우거나 바꿔 같은 기기
@@ -182,6 +189,9 @@ impl fmt::Display for OriginKeyError {
                 f,
                 "출처 key 파일 소유자가 현재 사용자가 아닙니다(uid {owner}, 현재 {expected}): {path:?}"
             ),
+            OriginKeyError::ChangedDuringCheck { path } => {
+                write!(f, "출처 key 경로가 확인 도중 바뀌었습니다: {path:?}")
+            }
             OriginKeyError::InsecureDirectory { path, issue } => write!(
                 f,
                 "출처 key 디렉터리가 안전하지 않습니다({issue}): {path:?}"
@@ -481,29 +491,64 @@ impl OriginKeyFile {
     /// ([`OriginKeyError::InsecureDirectory`]), key 파일은 symlink가 아닌 일반 파일·현재 사용자
     /// 소유·`0600` 이하여야 합니다([`OriginKeyError::Corrupt`]·[`OriginKeyError::ForeignOwner`]·
     /// [`OriginKeyError::InsecurePermissions`]).
+    ///
+    /// 검사와 열기 사이 교체(TOCTOU)를 줄이기 위해, 파일은 symlink를 따라가지 않고 열며(macOS
+    /// `O_NOFOLLOW`) 연 fd의 `fstat`으로 같은 검사를 다시 하고 `lstat`한 항목과 identity가 같아야
+    /// 읽습니다. 읽은 뒤 디렉터리 identity도 다시 확인합니다. 바뀌었으면
+    /// [`OriginKeyError::ChangedDuringCheck`]입니다(crate 내부 `fs_guard` 모듈).
     pub fn load(&self) -> Result<Option<OriginKey>, OriginKeyError> {
+        self.load_observed(&mut |_| {})
+    }
+
+    /// [`OriginKeyFile::load`]에 단계 사이 hook을 주입한 버전(교체 경합 테스트용).
+    fn load_observed(
+        &self,
+        between: &mut dyn FnMut(LoadPoint),
+    ) -> Result<Option<OriginKey>, OriginKeyError> {
         let io = |e: std::io::Error| OriginKeyError::Io {
             path: self.path.clone(),
             kind: e.kind(),
         };
-        if check_key_dir(self.dir()?)?.is_none() {
+        let changed = |path: &Path| OriginKeyError::ChangedDuringCheck {
+            path: path.to_path_buf(),
+        };
+        let dir = self.dir()?;
+        let Some(dir_metadata) = check_key_dir(dir)? else {
             return Ok(None);
-        }
-        let metadata = match std::fs::symlink_metadata(&self.path) {
-            Ok(metadata) => metadata,
+        };
+        let (metadata, identity) = match FileIdentity::lstat(&self.path) {
+            Ok(checked) => checked,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(io(e)),
         };
         check_key_file(&self.path, &metadata, current_uid())?;
+        between(LoadPoint::FileChecked);
+        let mut file = match open_read(&self.path, NoFollow::Final) {
+            Ok(file) => file,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Err(changed(&self.path)),
+            // 검사 뒤 symlink로 바뀌었습니다(따라가지 않음).
+            Err(e) if is_symlink_refusal(&e) => return Err(changed(&self.path)),
+            Err(e) => return Err(io(e)),
+        };
+        let opened = file.metadata().map_err(io)?;
+        if FileIdentity::of(&opened) != identity {
+            return Err(changed(&self.path));
+        }
+        check_key_file(&self.path, &opened, current_uid())?;
         let mut text = String::new();
-        std::fs::File::open(&self.path)
-            .and_then(|mut file| file.read_to_string(&mut text))
-            .map_err(|e| match e.kind() {
-                ErrorKind::InvalidData => OriginKeyError::Corrupt {
-                    path: self.path.clone(),
-                },
-                _ => io(e),
-            })?;
+        file.read_to_string(&mut text).map_err(|e| match e.kind() {
+            ErrorKind::InvalidData => OriginKeyError::Corrupt {
+                path: self.path.clone(),
+            },
+            _ => io(e),
+        })?;
+        drop(file);
+        between(LoadPoint::FileRead);
+        // 읽는 동안 디렉터리가 교체되지 않았는지 확인합니다(경로 기반 검사의 창 축소).
+        match check_key_dir(dir)? {
+            Some(now) if FileIdentity::of(&now) == FileIdentity::of(&dir_metadata) => {}
+            _ => return Err(changed(dir)),
+        }
         OriginKey::from_file_text(&text)
             .map(Some)
             .ok_or(OriginKeyError::Corrupt {
@@ -580,6 +625,15 @@ impl OriginKeyFile {
 
 /// 최종 이름 경합 뒤 다시 읽고 만드는 최대 횟수.
 const PUBLISH_ATTEMPTS: usize = 4;
+
+/// [`OriginKeyFile::load_observed`] hook 지점.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LoadPoint {
+    /// 디렉터리·파일 `lstat` 검사를 마치고 열기 전.
+    FileChecked,
+    /// 파일을 다 읽고 디렉터리를 다시 확인하기 전.
+    FileRead,
+}
 
 /// [`OriginKeyFile::publish`] 결과.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1171,6 +1225,73 @@ mod tests {
                 issue: KeyDirectoryIssue::NotADirectory,
             }
         );
+    }
+
+    /// 보안 리뷰 S4: 검사(`lstat`)와 열기·읽기 사이에 key 파일·디렉터리를 바꾸는 경합 fixture.
+    #[cfg(unix)]
+    #[test]
+    fn key_swapped_between_check_and_use_is_not_used() {
+        let dir = TempDir::new("origin-key-swap");
+        let file = OriginKeyFile::in_data_dir(&dir.path.join("data")).unwrap();
+        let key_dir = file.path().parent().unwrap().to_path_buf();
+        create_private_dir_all(&key_dir).unwrap();
+        let reset = || {
+            let _ = std::fs::remove_file(file.path());
+            write_private_file(file.path(), key(1).to_file_text().as_bytes()).unwrap();
+        };
+        let attacker = dir.path.join("attacker-key");
+        write_private_file(&attacker, key(9).to_file_text().as_bytes()).unwrap();
+        let changed = OriginKeyError::ChangedDuringCheck {
+            path: file.path().to_path_buf(),
+        };
+
+        // 1) 검사 뒤 다른 key를 가리키는 symlink로 교체: 따라가지 않습니다.
+        reset();
+        let err = file
+            .load_observed(&mut |point| {
+                if point == LoadPoint::FileChecked {
+                    std::fs::remove_file(file.path()).unwrap();
+                    std::os::unix::fs::symlink(&attacker, file.path()).unwrap();
+                }
+            })
+            .unwrap_err();
+        assert_eq!(err, changed);
+
+        // 2) 검사 뒤 다른 일반 파일로 교체(rename): identity가 달라 쓰지 않습니다.
+        reset();
+        let replacement = dir.path.join("replacement-key");
+        write_private_file(&replacement, key(9).to_file_text().as_bytes()).unwrap();
+        let err = file
+            .load_observed(&mut |point| {
+                if point == LoadPoint::FileChecked {
+                    std::fs::rename(&replacement, file.path()).unwrap();
+                }
+            })
+            .unwrap_err();
+        assert_eq!(err, changed);
+
+        // 3) 읽은 뒤 key 디렉터리 교체: 디렉터리 identity가 달라 쓰지 않습니다.
+        reset();
+        let moved = dir.path.join("data").join("assets-old");
+        let err = file
+            .load_observed(&mut |point| {
+                if point == LoadPoint::FileRead {
+                    std::fs::rename(&key_dir, &moved).unwrap();
+                    create_private_dir_all(&key_dir).unwrap();
+                }
+            })
+            .unwrap_err();
+        assert_eq!(
+            err,
+            OriginKeyError::ChangedDuringCheck {
+                path: key_dir.clone()
+            }
+        );
+        assert!(err.to_string().contains("바뀌었습니다"));
+
+        // 교체가 없으면 그대로 읽습니다.
+        reset();
+        assert_eq!(file.load().unwrap(), Some(key(1)));
     }
 
     /// 소유자 검사(다른 uid는 root 없이 만들 수 없으므로 기대 uid를 바꿔 판정 함수를 검사).

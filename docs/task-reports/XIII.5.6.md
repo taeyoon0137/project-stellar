@@ -90,3 +90,15 @@
   (writer temp만 삭제, `.DS_Store.tmp-1-2`·`.notes.tmp-1-1`·순번 누락·선행 0·`.bak` 삽입 이름 보존).
   `cargo test -p stellar-assets` lib 122 passed + integration 1 passed + doctest 7 passed,
   clippy 경고 0, fmt 통과, `validate-crate-graph` 통과.
+
+## 후속 수정(보안 리뷰 반영): 삭제 직전 identity 재확인(TOCTOU 완화)
+
+- **문제**: 목록 수집(`lstat`·`DirEntry`) 뒤 경로 기반 `remove_file`이라, 그 사이 shard·`assets/`를
+  symlink로 바꾸면 삭제가 다른 위치로 갈 수 있었습니다.
+- **수정**: 목록 수집 때 파일·shard·`assets/`의 `(dev, ino)`를 기록하고, 각 삭제 직전에 파일을 다시
+  `lstat`해 같은 일반 파일인지(grace 판정 mtime도 이 값 사용), `assets/`·shard가 같은 실제 디렉터리인지
+  확인합니다. 다르면 지우지 않고 `carry_over`로 이월합니다.
+- **검증**: `entries_swapped_after_listing_are_not_deleted`(파일 rename 교체, shard를 밖 디렉터리
+  symlink로 교체, `assets/` 교체 — 모두 삭제 없음·이월, 밖 파일 보존). 기존 GC 테스트 그대로 통과.
+- **남은 한계**: 재확인 직후와 `remove_file` 사이의 짧은 창은 남습니다(std에 `unlinkat` 없음, XIII.5.2
+  후속 수정 절 참조).

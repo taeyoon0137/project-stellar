@@ -45,6 +45,7 @@ use stellar_storage::hash::{ContentHash, ParseContentHashError};
 use crate::atomic_write::{
     write_atomic_streamed, AtomicWriteError, NoopObserver, WriteObserver, WriteStage,
 };
+use crate::fs_guard::{is_symlink_refusal, open_read, FileIdentity, NoFollow};
 use crate::hash_stream::{hash_reader_with, StreamDigest, StreamHashError, STREAM_BUFFER_SIZE};
 use crate::media_type::MediaType;
 use crate::origin::{OriginKey, OriginKeyError, OriginKeyFile, OriginKeyProvider};
@@ -118,6 +119,12 @@ pub enum ImportError {
         /// symlink인 디렉터리 경로.
         path: PathBuf,
     },
+    /// 확인한 `assets/` 또는 shard 디렉터리가 쓰기 도중 다른 항목으로 바뀌었습니다. temp
+    /// 생성·rename을 하지 않습니다(경로 기반 검사의 경합 완화, crate 내부 `fs_guard` 모듈).
+    AssetsDirectoryChanged {
+        /// 바뀐 디렉터리 경로.
+        path: PathBuf,
+    },
 }
 
 impl ImportError {
@@ -157,6 +164,11 @@ impl fmt::Display for ImportError {
             ImportError::SymlinkedAssetsDirectory { path } => write!(
                 f,
                 "에셋 디렉터리가 symlink라 따라가지 않습니다: {}",
+                path.display()
+            ),
+            ImportError::AssetsDirectoryChanged { path } => write!(
+                f,
+                "에셋 디렉터리가 확인 뒤 바뀌어 쓰지 않습니다: {}",
                 path.display()
             ),
         }
@@ -221,6 +233,8 @@ pub struct ImportRequest {
     /// 원본이 project root 안의 **이 상대 경로**로 해석되어야 합니다(내부 원본
     /// `Update from Source`가 판정을 통과시킨 경로, XIII.5.5).
     require_project_source: Option<String>,
+    /// 원본을 이 identity의 항목으로만 읽습니다(판정한 canonical 경로, 보안 리뷰 S4).
+    pinned_source: Option<FileIdentity>,
 }
 
 impl ImportRequest {
@@ -240,7 +254,19 @@ impl ImportRequest {
             record_source: true,
             max_size: None,
             require_project_source: None,
+            pinned_source: None,
         }
+    }
+
+    /// 원본을 판정 때 `lstat`한 항목(`identity`)으로만 읽습니다(아무 것도 쓰기 전 검사).
+    ///
+    /// `Update from Source`가 판정한 canonical 원본 경로에 붙입니다. hash pass·copy pass 모두
+    /// 경로의 어느 구성 요소도 symlink를 따라가지 않고 열며(macOS `O_NOFOLLOW_ANY`), 연 fd의
+    /// identity가 `identity`와 다르면 [`ImportError::SourceChanged`]입니다
+    /// ([`crate::fs_guard`]). 그래서 판정 뒤 경로를 바꿔도 판정한 파일만 읽습니다.
+    pub(crate) fn pinned_to(mut self, identity: FileIdentity) -> ImportRequest {
+        self.pinned_source = Some(identity);
+        self
     }
 
     /// 원본이 canonical project root 안의 `approved_relative`(`/` 구분)로 해석될 때만
@@ -429,20 +455,18 @@ impl AssetStore {
             None
         };
 
+        let source = SourceRef {
+            path: &request.source,
+            pin: request.pinned_source,
+        };
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
-        let digest = hash_source(&request.source, &mut buffer, request.max_size)?;
+        let digest = hash_source(source, &mut buffer, request.max_size)?;
         let (object_path, outcome) =
             match self.locate_verified_content(&digest.hash, digest.size, &mut buffer)? {
                 Some(existing) => (existing, ImportOutcome::Deduplicated),
                 None => {
                     let object_path = AssetObjectPath::new(&digest.hash, &request.extension);
-                    self.copy_content(
-                        &request.source,
-                        &digest,
-                        &object_path,
-                        &mut buffer,
-                        observer,
-                    )?;
+                    self.copy_content(source, &digest, &object_path, &mut buffer, observer)?;
                     (object_path, ImportOutcome::Copied)
                 }
             };
@@ -493,13 +517,14 @@ impl AssetStore {
                 }
             }
         }
+        let (_, shard_identity) = FileIdentity::lstat(&dir).map_err(locate_error)?;
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(locate_error(e)),
         };
         let prefix = &hash.digest_hex()[..2];
-        let mut candidates: Vec<AssetObjectPath> = Vec::new();
+        let mut candidates: Vec<(AssetObjectPath, FileIdentity)> = Vec::new();
         for entry in entries {
             let entry = entry.map_err(locate_error)?;
             let Some(name) = entry.file_name().to_str().map(str::to_string) else {
@@ -516,11 +541,16 @@ impl AssetStore {
             if !metadata.is_file() || metadata.len() != size {
                 continue;
             }
-            candidates.push(path);
+            candidates.push((path, FileIdentity::of(&metadata)));
         }
-        candidates.sort();
-        for candidate in candidates {
-            if self.content_matches(&candidate, hash, size, buffer) {
+        // 목록을 읽는 동안 shard가 다른 디렉터리(symlink 포함)로 바뀌었으면 재사용하지 않습니다.
+        match FileIdentity::lstat(&dir) {
+            Ok((metadata, identity)) if metadata.is_dir() && identity == shard_identity => {}
+            _ => return Ok(None),
+        }
+        candidates.sort_by(|a, b| a.0.cmp(&b.0));
+        for (candidate, identity) in candidates {
+            if self.content_matches(&candidate, identity, hash, size, buffer) {
                 return Ok(Some(candidate));
             }
         }
@@ -529,17 +559,24 @@ impl AssetStore {
 
     /// 기존 content 파일을 다시 hash해 기대 hash·크기와 같은지 확인합니다.
     ///
-    /// 읽기 실패도 "확인할 수 없음"이므로 재사용하지 않습니다(copy pass가 새로 기록).
+    /// 목록에서 본 항목(`listed`)만 읽습니다: symlink를 따라가지 않고 열고(macOS `O_NOFOLLOW`),
+    /// 연 fd의 identity가 `listed`와 같아야 합니다. 읽기 실패도 "확인할 수 없음"이므로 재사용하지
+    /// 않습니다(copy pass가 새로 기록).
     fn content_matches(
         &self,
         object: &AssetObjectPath,
+        listed: FileIdentity,
         hash: &ContentHash,
         size: u64,
         buffer: &mut [u8],
     ) -> bool {
-        let Ok(mut file) = File::open(self.content_path(object)) else {
+        let Ok(mut file) = open_read(&self.content_path(object), NoFollow::Final) else {
             return false;
         };
+        match file.metadata() {
+            Ok(metadata) if metadata.is_file() && FileIdentity::of(&metadata) == listed => {}
+            _ => return false,
+        }
         match hash_reader_with(&mut file, buffer, |_| Ok(())) {
             Ok(digest) => digest.hash == *hash && digest.size == size,
             Err(_) => false,
@@ -548,9 +585,13 @@ impl AssetStore {
 
     /// copy pass: streaming atomic write(XIII.5.4)로 temp에 복사·재hash 검증 후
     /// flush → fsync → rename → 부모 디렉터리 sync합니다.
+    ///
+    /// temp 생성과 rename 직전에 `assets/`·shard 디렉터리 identity가 확인 때와 같은지 다시 봅니다
+    /// ([`DirGuard`]). 다르면 그 단계를 실행하지 않고 [`ImportError::AssetsDirectoryChanged`]
+    /// (symlink로 바뀌었으면 [`ImportError::SymlinkedAssetsDirectory`])입니다.
     fn copy_content(
         &self,
-        source: &Path,
+        source: SourceRef<'_>,
         expected: &StreamDigest,
         object: &AssetObjectPath,
         buffer: &mut [u8],
@@ -559,53 +600,98 @@ impl AssetStore {
         // `assets/`와 shard를 한 단계씩 확인·생성합니다. symlink는 따라가지 않습니다
         // (`create_dir_all`은 symlink 디렉터리를 그대로 통과하므로 쓰지 않음).
         let assets = self.root.join(ASSETS_DIR);
-        ensure_real_dir(&assets)?;
+        let assets_identity = ensure_real_dir(&assets)?;
         let dir = assets.join(object.prefix());
-        ensure_real_dir(&dir)?;
+        let dir_identity = ensure_real_dir(&dir)?;
         let target = dir.join(object.file_name());
         let mut input = open_source(source)?;
-        write_atomic_streamed(&target, observer, |output| {
+        let mut guard = DirGuard {
+            inner: observer,
+            dirs: [(assets, assets_identity), (dir, dir_identity)],
+            changed: None,
+        };
+        let written = write_atomic_streamed(&target, &mut guard, |output| {
             let copied = hash_reader_with(&mut input, buffer, |chunk| output.write_all(chunk))
                 .map_err(|e| ImportError::stream(ImportOperation::CopyContent, e))?;
             if copied != *expected {
                 return Err(ImportError::SourceChanged);
             }
             Ok(())
-        })
-        .map_err(|e| match e {
-            AtomicWriteError::Stage { stage, error } => {
-                ImportError::io(ImportOperation::Write(stage), &error)
-            }
+        });
+        written.map_err(|e| match e {
+            AtomicWriteError::Stage { stage, error } => guard
+                .changed
+                .take()
+                .unwrap_or_else(|| ImportError::io(ImportOperation::Write(stage), &error)),
             AtomicWriteError::Body(e) => e,
         })
     }
 }
 
-/// 실제 디렉터리를 보장합니다. 없으면 만들고(`create_dir`, 한 단계), symlink면 따라가지 않고
-/// [`ImportError::SymlinkedAssetsDirectory`], 디렉터리가 아니면 I/O 오류입니다.
-fn ensure_real_dir(path: &Path) -> Result<(), ImportError> {
-    let create_error = |e: std::io::Error| ImportError::io(ImportOperation::CreateDirectory, &e);
-    let state = assets_dir_state(path).map_err(create_error)?;
-    let state = match state {
-        AssetsDirState::Missing => match std::fs::create_dir(path) {
-            Ok(()) => return Ok(()),
-            // 동시에 다른 import가 만든 경우: 무엇이 생겼는지 다시 확인합니다.
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                assets_dir_state(path).map_err(create_error)?
+/// copy pass 관찰자 wrapper(보안 리뷰 S4).
+///
+/// temp 생성·rename 직전에 확인한 디렉터리들을 다시 `lstat`해 같은 실제 디렉터리인지 봅니다.
+/// 경로 기반 검사와 쓰기 사이의 창을 "디렉터리 확인 → 긴 복사 → rename" 전체에서 "다시 확인 →
+/// syscall" 직전으로 줄입니다(완전히 없애지는 못함, [`crate::fs_guard`]).
+struct DirGuard<'a> {
+    inner: &'a mut dyn WriteObserver,
+    dirs: [(PathBuf, FileIdentity); 2],
+    changed: Option<ImportError>,
+}
+
+impl WriteObserver for DirGuard<'_> {
+    fn before(&mut self, stage: WriteStage) -> std::io::Result<()> {
+        self.inner.before(stage)?;
+        if !matches!(stage, WriteStage::CreateTemp | WriteStage::Rename) {
+            return Ok(());
+        }
+        for (path, identity) in &self.dirs {
+            let now = FileIdentity::lstat(path);
+            if matches!(&now, Ok((metadata, id)) if metadata.is_dir() && id == identity) {
+                continue;
             }
-            Err(e) => return Err(create_error(e)),
-        },
+            let path = path.clone();
+            self.changed = Some(match now {
+                Ok((metadata, _)) if metadata.file_type().is_symlink() => {
+                    ImportError::SymlinkedAssetsDirectory { path }
+                }
+                _ => ImportError::AssetsDirectoryChanged { path },
+            });
+            return Err(std::io::Error::other(
+                "에셋 디렉터리가 확인 뒤 바뀌었습니다",
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// 실제 디렉터리를 보장하고 그 identity를 돌려줍니다. 없으면 만들고(`create_dir`, 한 단계),
+/// symlink면 따라가지 않고 [`ImportError::SymlinkedAssetsDirectory`], 디렉터리가 아니면 I/O
+/// 오류입니다.
+fn ensure_real_dir(path: &Path) -> Result<FileIdentity, ImportError> {
+    let create_error = |e: std::io::Error| ImportError::io(ImportOperation::CreateDirectory, &e);
+    let checked = match FileIdentity::lstat(path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            match std::fs::create_dir(path) {
+                Ok(()) => {}
+                // 동시에 다른 import가 만든 경우: 무엇이 생겼는지 다시 확인합니다.
+                Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(create_error(e)),
+            }
+            FileIdentity::lstat(path)
+        }
         other => other,
     };
-    match state {
-        AssetsDirState::Directory => Ok(()),
-        AssetsDirState::Symlink => Err(ImportError::SymlinkedAssetsDirectory {
+    let (metadata, identity) = checked.map_err(create_error)?;
+    if metadata.file_type().is_symlink() {
+        return Err(ImportError::SymlinkedAssetsDirectory {
             path: path.to_path_buf(),
-        }),
-        AssetsDirState::Missing | AssetsDirState::NotDirectory => {
-            Err(create_error(std::io::Error::from(ErrorKind::NotADirectory)))
-        }
+        });
     }
+    if !metadata.is_dir() {
+        return Err(create_error(std::io::Error::from(ErrorKind::NotADirectory)));
+    }
+    Ok(identity)
 }
 
 /// store의 key 공급원을 metadata 생성에 넘기는 내부 어댑터(key를 공개 API로 노출하지 않음).
@@ -617,12 +703,43 @@ impl OriginKeyProvider for StoreOriginKey<'_> {
     }
 }
 
+/// import가 읽을 원본: 경로와 선택적 identity 고정([`ImportRequest::pinned_to`]).
+#[derive(Debug, Clone, Copy)]
+struct SourceRef<'a> {
+    path: &'a Path,
+    pin: Option<FileIdentity>,
+}
+
+impl<'a> SourceRef<'a> {
+    /// 고정 없는 원본(사용자가 고른 경로 — symlink도 따라감).
+    #[cfg(test)]
+    fn unpinned(path: &'a Path) -> SourceRef<'a> {
+        SourceRef { path, pin: None }
+    }
+}
+
 /// 원본을 열고 일반 파일인지 확인합니다. 파일과 현재 크기를 돌려줍니다.
-fn open_source_with_len(path: &Path) -> Result<(File, u64), ImportError> {
-    let file = File::open(path).map_err(|e| ImportError::io(ImportOperation::OpenSource, &e))?;
-    let metadata = file
-        .metadata()
-        .map_err(|e| ImportError::io(ImportOperation::OpenSource, &e))?;
+///
+/// 고정된 원본은 어느 구성 요소도 symlink를 따라가지 않고 열며(macOS `O_NOFOLLOW_ANY`), 연 fd의
+/// identity가 고정 값과 다르면 [`ImportError::SourceChanged`]입니다.
+fn open_source_with_len(source: SourceRef<'_>) -> Result<(File, u64), ImportError> {
+    let open_error = |e: &std::io::Error| ImportError::io(ImportOperation::OpenSource, e);
+    let file = match source.pin {
+        None => File::open(source.path).map_err(|e| open_error(&e))?,
+        Some(_) => match open_read(source.path, NoFollow::AnyComponent) {
+            Ok(file) => file,
+            // 판정 뒤 경로에 symlink가 생겼습니다(따라가지 않음).
+            Err(e) if is_symlink_refusal(&e) => return Err(ImportError::SourceChanged),
+            Err(e) => return Err(open_error(&e)),
+        },
+    };
+    let metadata = file.metadata().map_err(|e| open_error(&e))?;
+    if source
+        .pin
+        .is_some_and(|pin| FileIdentity::of(&metadata) != pin)
+    {
+        return Err(ImportError::SourceChanged);
+    }
     if !metadata.is_file() {
         return Err(ImportError::NotAFile);
     }
@@ -630,18 +747,18 @@ fn open_source_with_len(path: &Path) -> Result<(File, u64), ImportError> {
 }
 
 /// 원본을 열고 일반 파일인지 확인합니다.
-fn open_source(path: &Path) -> Result<File, ImportError> {
-    open_source_with_len(path).map(|(file, _)| file)
+fn open_source(source: SourceRef<'_>) -> Result<File, ImportError> {
+    open_source_with_len(source).map(|(file, _)| file)
 }
 
 /// hash pass. `max_size`를 넘으면 읽기 전(메타데이터 크기) 또는 읽는 도중(파일이 커진 경우)
 /// [`ImportError::TooLarge`]로 멈춥니다.
 fn hash_source(
-    path: &Path,
+    source: SourceRef<'_>,
     buffer: &mut [u8],
     max_size: Option<u64>,
 ) -> Result<StreamDigest, ImportError> {
-    let (mut file, len) = open_source_with_len(path)?;
+    let (mut file, len) = open_source_with_len(source)?;
     if let Some(max) = max_size {
         if len > max {
             return Err(ImportError::TooLarge { size: len, max });
@@ -1192,10 +1309,16 @@ mod tests {
         // shard가 없을 때도 copy pass가 symlink를 통과해 만들지 않습니다(copy_content 직접).
         std::fs::remove_file(target.join(object.file_name())).unwrap();
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
-        let digest = hash_source(&source, &mut buffer, None).unwrap();
+        let digest = hash_source(SourceRef::unpinned(&source), &mut buffer, None).unwrap();
         assert_eq!(
             fx.store
-                .copy_content(&source, &digest, &object, &mut buffer, &mut NoopObserver)
+                .copy_content(
+                    SourceRef::unpinned(&source),
+                    &digest,
+                    &object,
+                    &mut buffer,
+                    &mut NoopObserver,
+                )
                 .unwrap_err(),
             expected
         );
@@ -1323,13 +1446,19 @@ mod tests {
         let source = fx.outside.join("a.png");
         std::fs::write(&source, b"first").unwrap();
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
-        let digest = hash_source(&source, &mut buffer, None).unwrap();
+        let digest = hash_source(SourceRef::unpinned(&source), &mut buffer, None).unwrap();
         // hash pass 후 원본이 바뀐 상황.
         std::fs::write(&source, b"second").unwrap();
         let object = AssetObjectPath::new(&digest.hash, &SafeExtension::new("png").unwrap());
         assert_eq!(
             fx.store
-                .copy_content(&source, &digest, &object, &mut buffer, &mut NoopObserver)
+                .copy_content(
+                    SourceRef::unpinned(&source),
+                    &digest,
+                    &object,
+                    &mut buffer,
+                    &mut NoopObserver,
+                )
                 .unwrap_err(),
             ImportError::SourceChanged
         );
@@ -1486,5 +1615,155 @@ mod tests {
             assert_eq!(retry.outcome, ImportOutcome::Copied);
             assert_eq!(std::fs::read(&content).unwrap(), bytes);
         }
+    }
+
+    /// 보안 리뷰 S4: 판정(`lstat`) 뒤 원본 경로를 바꾸는 경합 — 고정한 항목만 읽습니다.
+    #[cfg(unix)]
+    #[test]
+    fn pinned_source_reads_only_the_checked_entry() {
+        let fx = fixture();
+        let images = fx.project.join("images");
+        std::fs::create_dir_all(&images).unwrap();
+        let source = images.join("a.png");
+        std::fs::write(&source, b"checked").unwrap();
+        let (_, checked) = FileIdentity::lstat(&source).unwrap();
+        let pinned = |path: &Path, identity| ImportRequest::new(path, png()).pinned_to(identity);
+
+        // 판정한 항목 그대로면 정상 import합니다.
+        let ok = fx.store.import_file(&pinned(&source, checked)).unwrap();
+        assert_eq!(ok.record.content_hash, ContentHash::compute(b"checked"));
+        let before = files_under(&fx.project.join("assets"));
+
+        // 1) 같은 경로에 다른 파일을 rename으로 넣음: identity가 달라 읽지 않습니다.
+        let swapped = images.join("swap.png");
+        std::fs::write(&swapped, b"SECRET swapped").unwrap();
+        std::fs::rename(&swapped, &source).unwrap();
+        assert_eq!(
+            fx.store.import_file(&pinned(&source, checked)).unwrap_err(),
+            ImportError::SourceChanged
+        );
+
+        // 2) 경로를 밖의 비밀 파일 symlink로 교체: 따라가지 않습니다(macOS) / identity 불일치.
+        let secret = fx.outside.join("secret.png");
+        std::fs::write(&secret, b"SECRET outside").unwrap();
+        std::fs::remove_file(&source).unwrap();
+        std::os::unix::fs::symlink(&secret, &source).unwrap();
+        assert_eq!(
+            fx.store.import_file(&pinned(&source, checked)).unwrap_err(),
+            ImportError::SourceChanged
+        );
+        assert_eq!(files_under(&fx.project.join("assets")), before, "쓰지 않음");
+
+        // 3) 중간 구성 요소 symlink: macOS `O_NOFOLLOW_ANY`는 identity가 같아도 열지 않습니다.
+        #[cfg(target_os = "macos")]
+        {
+            let real = images.join("b.png");
+            std::fs::write(&real, b"via alias").unwrap();
+            let (_, identity) = FileIdentity::lstat(&real).unwrap();
+            std::os::unix::fs::symlink(&images, fx.project.join("alias")).unwrap();
+            let via_alias = fx.project.join("alias").join("b.png");
+            assert_eq!(
+                fx.store
+                    .import_file(&pinned(&via_alias, identity))
+                    .unwrap_err(),
+                ImportError::SourceChanged
+            );
+            // 고정 없는 요청(사용자가 고른 경로)은 symlink를 따라갑니다.
+            assert!(fx
+                .store
+                .import_file(&ImportRequest::new(&via_alias, png()))
+                .is_ok());
+        }
+    }
+
+    /// 지정 단계 직전에 디렉터리 교체를 주입하는 관찰자.
+    struct SwapAt<F: FnMut()> {
+        stage: WriteStage,
+        swap: F,
+    }
+
+    impl<F: FnMut()> WriteObserver for SwapAt<F> {
+        fn before(&mut self, stage: WriteStage) -> std::io::Result<()> {
+            if stage == self.stage {
+                (self.swap)();
+            }
+            Ok(())
+        }
+    }
+
+    /// 보안 리뷰 S4: copy pass 도중(rename 직전) shard를 바꾸는 경합 — rename하지 않습니다.
+    #[cfg(unix)]
+    #[test]
+    fn shard_swapped_before_rename_is_not_written_through() {
+        let bytes = b"payload".to_vec();
+        let hash = ContentHash::compute(&bytes);
+        let object = AssetObjectPath::new(&hash, &SafeExtension::new("png").unwrap());
+        for to_symlink in [true, false] {
+            let fx = fixture();
+            let source = fx.outside.join("a.png");
+            std::fs::write(&source, &bytes).unwrap();
+            let outside_shard = fx.outside.join("redirected");
+            std::fs::create_dir_all(&outside_shard).unwrap();
+            let shard = fx.project.join("assets").join(object.prefix());
+            let moved = fx.project.join("assets").join("moved-shard");
+            let mut observer = SwapAt {
+                stage: WriteStage::Rename,
+                swap: || {
+                    std::fs::rename(&shard, &moved).unwrap();
+                    if to_symlink {
+                        std::os::unix::fs::symlink(&outside_shard, &shard).unwrap();
+                    } else {
+                        std::fs::create_dir(&shard).unwrap();
+                    }
+                },
+            };
+            let err = fx
+                .store
+                .import_file_observed(&ImportRequest::new(&source, png()), &mut observer)
+                .unwrap_err();
+            let expected = if to_symlink {
+                ImportError::SymlinkedAssetsDirectory {
+                    path: shard.clone(),
+                }
+            } else {
+                ImportError::AssetsDirectoryChanged {
+                    path: shard.clone(),
+                }
+            };
+            assert_eq!(err, expected);
+            assert!(err.to_string().contains(&shard.display().to_string()));
+            assert!(files_under(&outside_shard).is_empty(), "밖에 쓰지 않음");
+            assert!(
+                !fx.store.content_path(&object).exists(),
+                "새 shard에 최종 파일 없음"
+            );
+        }
+    }
+
+    /// dedup 재hash는 목록에서 본 항목만 읽습니다(identity가 다르면 재사용하지 않음).
+    #[test]
+    fn dedup_reads_only_the_listed_entry() {
+        let fx = fixture();
+        let source = fx.outside.join("a.png");
+        std::fs::write(&source, b"same").unwrap();
+        let imported = fx
+            .store
+            .import_file(&ImportRequest::new(&source, png()))
+            .unwrap();
+        let content = fx.store.content_path(&imported.object_path);
+        let (_, listed) = FileIdentity::lstat(&content).unwrap();
+        let hash = ContentHash::compute(b"same");
+        let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
+        assert!(fx
+            .store
+            .content_matches(&imported.object_path, listed, &hash, 4, &mut buffer));
+        // 같은 내용이라도 목록 뒤 다른 항목으로 바뀌었으면 재사용하지 않습니다.
+        let replacement = content.with_file_name("replacement");
+        std::fs::write(&replacement, b"same").unwrap();
+        std::fs::rename(&replacement, &content).unwrap();
+        #[cfg(unix)]
+        assert!(!fx
+            .store
+            .content_matches(&imported.object_path, listed, &hash, 4, &mut buffer));
     }
 }

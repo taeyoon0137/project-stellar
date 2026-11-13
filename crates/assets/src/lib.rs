@@ -33,6 +33,9 @@ pub mod update_source;
 /// 프로젝트 내부 원본 경로 경계 — 고정 거부 영역과 호출자 정책 (XIII.5.5 후속 수정).
 pub mod project_source;
 
+/// symlink를 따라가지 않는 열기와 파일 identity 비교(TOCTOU 완화, crate 내부).
+mod fs_guard;
+
 /// asset content GC — generation/chunk GC와 별도 mark-sweep (XIII.5.6).
 pub mod gc;
 

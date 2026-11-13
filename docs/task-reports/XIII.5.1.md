@@ -233,3 +233,18 @@
   passed + doctest 8 passed, clippy 경고 0, fmt 통과.
 - **남은 위험**: key 디렉터리의 상위(`data_dir` 이상)는 확인하지 않습니다(셸이 정한 사용자 전용 앱
   데이터 영역 전제). 비Unix는 소유자·권한 검사를 하지 않습니다(Windows 지원 보류).
+
+## 후속 수정(보안 리뷰 반영): 출처 key 읽기 경합(TOCTOU) 완화
+
+- **문제**: `load`가 `symlink_metadata`로 검사한 뒤 `File::open`(symlink를 따라감)으로 다시 열어,
+  그 사이 key 파일을 symlink·다른 파일로 바꿀 수 있었습니다.
+- **수정**: key 파일을 `O_NOFOLLOW`(macOS)로 열고, 연 fd의 `fstat`으로 일반 파일·소유자·`0600` 검사를
+  다시 하며 `lstat`한 항목과 identity가 같아야 읽습니다. 읽은 뒤 key 디렉터리 identity도 다시
+  확인합니다. 바뀌었으면 새 typed 오류 `OriginKeyError::ChangedDuringCheck { path }`이며 읽은 값을
+  쓰지 않습니다.
+- **검증**: `key_swapped_between_check_and_use_is_not_used`(검사 뒤 다른 key를 가리키는 symlink로
+  교체, rename으로 다른 파일 교체, 읽은 뒤 key 디렉터리 교체 — 모두 `ChangedDuringCheck`, 교체가 없으면
+  정상 읽기).
+- **남은 한계**: key 경로의 상위 구성 요소 교체와 key 생성(`hard_link`)·`ensure_outside`는 경로
+  기반입니다(XIII.5.2 후속 수정 TOCTOU 절 참조). key 디렉터리는 S3 검사로 다른 사용자가 쓸 수 없어야
+  합니다.

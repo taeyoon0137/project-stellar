@@ -20,6 +20,9 @@
 //!      어느 단계에서 거부되어도 아무 것도 읽거나 쓰지 않습니다. 내부 원본은 외부 원본으로
 //!      바뀌지 않고, 새 record도 기록된 상대 경로를 그대로 유지합니다. import는 판정을 통과한
 //!      해석 경로로만 진행합니다(판정 뒤 다른 파일로 해석되면 [`ImportError::SourceChanged`]).
+//!      기록된 원본(내부·외부)은 판정 때 `lstat`한 항목 identity로 고정해, hash pass·copy pass
+//!      모두 경로의 어느 구성 요소도 symlink를 따라가지 않고 열고(macOS `O_NOFOLLOW_ANY`) 연
+//!      파일이 그 항목일 때만 읽습니다(보안 리뷰 S4).
 //!    - 프로젝트 외부: 절대 경로를 기록하지 않으므로(XIII.5.1 후속 수정) 호출자가 후보 경로를
 //!      제시해야 하며, canonicalize한 경로의 출처 지문이 이 기기 key로 기록과 같아야 합니다
 //!      ([`crate::origin`]). 지문이 **다른 기기 key**로 기록되었으면 어떤 후보 경로로도 확인할
@@ -47,6 +50,7 @@ use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
 
 use crate::catalog::{AssetCatalog, CatalogError};
+use crate::fs_guard::FileIdentity;
 use crate::id::AssetId;
 use crate::origin::{OriginCheck, OriginFingerprint};
 use crate::path::AssetObjectPath;
@@ -166,6 +170,8 @@ struct ResolvedSource {
     path: PathBuf,
     /// 기록된 내부 원본이면 판정을 통과한 canonical project root 기준 `/` 상대 경로.
     approved_project_path: Option<String>,
+    /// 기록된 원본이면 판정 때 `lstat`한 항목 identity(import는 이 항목만 읽음).
+    pin: Option<FileIdentity>,
 }
 
 impl ResolvedSource {
@@ -173,7 +179,19 @@ impl ResolvedSource {
         ResolvedSource {
             path,
             approved_project_path: None,
+            pin: None,
         }
+    }
+}
+
+/// 판정한 canonical 경로를 `lstat`합니다(따라가지 않음). 일반 파일이면 identity, 아니면
+/// [`SourceUnavailable::NotAFile`]·[`SourceUnavailable::NotFound`].
+fn checked_file(resolved: &Path) -> Result<Result<FileIdentity, SourceUnavailable>, ImportError> {
+    match FileIdentity::lstat(resolved) {
+        Ok((metadata, identity)) if metadata.file_type().is_file() => Ok(Ok(identity)),
+        Ok(_) => Ok(Err(SourceUnavailable::NotAFile)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(Err(SourceUnavailable::NotFound)),
+        Err(e) => Err(open_error(e)),
     }
 }
 
@@ -255,6 +273,10 @@ impl AssetStore {
         };
         if let Some(approved) = source.approved_project_path {
             request = request.requiring_project_source(approved);
+        }
+        // 판정한 항목만 읽습니다(경로가 바뀌어도 판정 뒤 다른 파일을 읽지 않음, 보안 리뷰 S4).
+        if let Some(pin) = source.pin {
+            request = request.pinned_to(pin);
         }
         let mut imported = match self.import_file(&request) {
             Ok(imported) => imported,
@@ -365,9 +387,13 @@ impl AssetStore {
         if let Some(area) = protected_area(parts.iter().copied()) {
             return Ok(Err(SourceUnavailable::ProtectedPath(area)));
         }
-        if parts.is_empty() || !resolved.is_file() {
+        if parts.is_empty() {
             return Ok(Err(SourceUnavailable::NotAFile));
         }
+        let identity = match checked_file(&resolved)? {
+            Ok(identity) => identity,
+            Err(reason) => return Ok(Err(reason)),
+        };
         let resolved_relative = parts.join("/");
         let candidate = ProjectSourceCandidate::new(recorded, &resolved_relative, &resolved);
         if project_sources.decide(&candidate) != ProjectSourceDecision::Allow {
@@ -376,6 +402,7 @@ impl AssetStore {
         Ok(Ok(ResolvedSource {
             path: resolved,
             approved_project_path: Some(resolved_relative),
+            pin: Some(identity),
         }))
     }
 
@@ -410,10 +437,15 @@ impl AssetStore {
                 return Ok(Err(SourceUnavailable::OriginMismatch))
             }
         }
-        if !resolved.is_file() {
-            return Ok(Err(SourceUnavailable::NotAFile));
-        }
-        Ok(Ok(ResolvedSource::unpinned(resolved)))
+        let identity = match checked_file(&resolved)? {
+            Ok(identity) => identity,
+            Err(reason) => return Ok(Err(reason)),
+        };
+        Ok(Ok(ResolvedSource {
+            path: resolved,
+            approved_project_path: None,
+            pin: Some(identity),
+        }))
     }
 }
 

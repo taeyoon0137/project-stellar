@@ -98,3 +98,32 @@
 - **남은 위험**: 확인과 쓰기 사이에 디렉터리를 symlink로 바꾸는 동시 공격(TOCTOU)은 `openat`
   계열 없이 완전히 막지 못합니다. project root 자체의 symlink는 사용자가 연 경로이므로 허용합니다.
   project root가 없으면 이제 `assets/`를 만들지 않고 `CreateDirectory` I/O 오류입니다.
+
+## 후속 수정(보안 리뷰 반영): 경로 기반 검사와 사용 사이 경합(TOCTOU) 완화
+
+- **문제**: symlink 방어가 모두 경로 기반 `lstat`/`canonicalize` 검사 뒤 별도의 경로 기반
+  열기·생성·삭제였습니다. 검사와 사용 사이에 디렉터리·파일을 symlink로 바꾸는 동시 로컬 공격자는
+  읽기·쓰기·삭제를 다른 위치로 돌릴 수 있었습니다(commit된 정적 symlink는 이미 차단).
+- **수정**(`crates/assets/src/fs_guard.rs` 신규 crate 내부 모듈, 외부 의존 없음):
+  - `open_read(path, NoFollow)`: macOS에서 `O_NOFOLLOW`(마지막 구성 요소) 또는 `O_NOFOLLOW_ANY`
+    (경로 전체)와 `O_NONBLOCK`으로 엽니다(SDK header로 값 확인, 두 flag를 함께 주면 `EINVAL`이라
+    `O_NOFOLLOW_ANY`만 사용). `FileIdentity`(`(dev, ino)`)로 `lstat`·`fstat` 결과를 비교합니다.
+  - **고정 원본**: crate 내부 `ImportRequest::pinned_to(identity)`가 있으면 hash pass·copy pass 모두
+    `O_NOFOLLOW_ANY`로 열고 연 fd identity가 고정 값과 다르면 `ImportError::SourceChanged`입니다
+    (XIII.5.5가 판정한 원본에 사용, 사용자가 고른 경로는 기존처럼 따라감).
+  - **dedup 재hash**: 목록에서 본 content 파일만 읽습니다(`O_NOFOLLOW` + 목록 identity와 fd identity
+    비교, 목록 읽는 동안 shard identity가 바뀌면 재사용 안 함).
+  - **copy pass**: `ensure_real_dir`가 디렉터리 identity를 돌려주고, 관찰자 wrapper(`DirGuard`)가 temp
+    생성·rename 직전에 `assets/`·shard를 다시 `lstat`합니다. 바뀌었으면 그 단계를 실행하지 않고 새
+    typed 오류 `ImportError::AssetsDirectoryChanged { path }`(symlink로 바뀌면
+    `SymlinkedAssetsDirectory`)입니다.
+- **검증**: `fs_guard` 단위 테스트(identity 추적, macOS 마지막·중간 구성 요소 symlink 거부, FIFO 열기
+  비차단), `pinned_source_reads_only_the_checked_entry`(rename 교체·밖 비밀 파일 symlink 교체 →
+  `SourceChanged`·쓰기 없음, macOS 중간 디렉터리 symlink 거부, 고정 없는 요청은 따라감),
+  `shard_swapped_before_rename_is_not_written_through`(rename 직전 shard를 symlink·새 디렉터리로 교체 →
+  typed 오류, 밖에 쓰지 않음), `dedup_reads_only_the_listed_entry`. `cargo test -p stellar-assets` lib
+  143 passed + integration 1 passed + doctest 8 passed, clippy 경고 0, fmt 통과.
+- **남은 한계(정확히)**: std에 `openat`·`unlinkat`·`renameat`이 없어, 디렉터리를 다시 `lstat`한 직후와
+  실제 경로 기반 syscall(temp 생성·`rename`·`remove_file`) 사이의 짧은 창은 남습니다. 출처 key 파일의
+  `ensure_outside`(canonicalize 판정)도 경로 기반입니다. macOS 밖 Unix는 flag 없이 열고 identity
+  비교로만 검출하며, Windows는 다루지 않습니다(지원 보류).
