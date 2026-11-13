@@ -1968,7 +1968,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XX.3.1 | `[x]` | Scene primitive→SVG element mapping table을 정의합니다. Frame/Shape/Path/Image/clip/gradient 기본 지원을 명시합니다. | mapping inventory 통과. | XX.1.2 |
 | XX.3.2 | `[ ]` | 모든 Text glyph run을 outline Path로 변환합니다. `<text>` 요소와 font embedding은 생성하지 않습니다. | SVG에 `<text` 문자열 0, 외형 golden 통과. | X.9.6, XI.6.4 |
-| XX.3.3 | `[ ]` | SVG id는 StableId에서 deterministic safe id로 생성하고 collision을 검사합니다. | same snapshot byte-identical. | III.1.1 |
+| XX.3.3 | `[x]` | SVG id는 StableId에서 deterministic safe id로 생성하고 collision을 검사합니다. | same snapshot byte-identical. | III.1.1 |
 | XX.3.4 | `[ ]` | SVG로 정확히 표현 가능한 gradient, clip, mask, opacity를 vector로 기록합니다. | validator와 browser render fixture 통과. | XI.10.4 |
 
 ### XX.4 부분 래스터화

@@ -11,3 +11,11 @@ pub mod format;
 
 /// Scene primitive별 SVG 요소 표기 (XX.3.1).
 pub mod element;
+
+/// StableId 기반 SVG id 생성과 충돌 검사 (XX.3.3).
+pub mod id;
+
+/// SVG 문서 writer (XX.3.3).
+pub mod writer;
+
+pub use writer::{write_svg, SvgDocument, SvgExportError, SvgWriteOptions};
