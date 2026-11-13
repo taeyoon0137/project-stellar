@@ -14,6 +14,7 @@
 use std::path::Path;
 
 use super::{list_remotes, redact_credentials, redacted_failure, RemoteError};
+use crate::repo_status::{read_repository_status, RepositoryStatus};
 use crate::runner::argv;
 use crate::trust::GatedGitRunner;
 
@@ -275,6 +276,30 @@ pub fn push(
     })
 }
 
+/// push 성공 후 다시 읽은 저장소 상태(XIV.9.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PushReport {
+    /// ref별 push 결과.
+    pub outcome: PushOutcome,
+    /// push 직후 status(remote tracking ahead/behind 갱신 반영).
+    pub status: RepositoryStatus,
+}
+
+/// push 후 remote tracking 상태를 다시 읽습니다(XIV.9.7).
+///
+/// 성공하면 [`read_repository_status`]로 upstream ahead/behind를 갱신해 돌려줍니다. 실패하면 오류만
+/// 돌려주고 **그 밖의 Git 명령을 실행하지 않습니다**(fetch·pull·reset·rollback 없음). 그래서 거부된 push가
+/// local commit·index·ref를 바꾸지 않습니다(Git push 자체도 local 상태를 바꾸지 않음).
+pub fn push_and_refresh(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    request: &PushRequest,
+) -> Result<PushReport, PushError> {
+    let outcome = push(git, worktree, request)?;
+    let status = read_repository_status(git, worktree).map_err(RemoteError::from)?;
+    Ok(PushReport { outcome, status })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +523,107 @@ mod tests {
             }
             // 원격은 덮어쓰이지 않음(force 없음).
             assert_eq!(rev(&fx.runner, &fx.bare, "main"), remote_before);
+        }
+
+        /// local 상태 지문: HEAD, 모든 ref, index 항목, 작업 트리 status.
+        fn local_state(runner: &crate::runner::GitRunner, work: &Path) -> Vec<Vec<u8>> {
+            [
+                vec!["rev-parse", "HEAD"],
+                vec!["for-each-ref", "--format=%(refname) %(objectname)"],
+                vec!["ls-files", "--stage", "-z"],
+                vec!["status", "--porcelain=v2", "-z", "--branch"],
+            ]
+            .into_iter()
+            .map(|args| git_ok(runner, work, args).stdout)
+            .collect()
+        }
+
+        #[test]
+        fn successful_push_refreshes_tracking_status() {
+            use crate::repo_status::UpstreamState;
+            let Some(fx) = fixture() else {
+                return;
+            };
+            let gate = GatedGitRunner::new(fx.runner.clone(), GitTrust::Trusted);
+            let request = PushRequest {
+                remote: "origin".into(),
+                refspec: PushRefspec::branch("main").unwrap(),
+                set_upstream: true,
+            };
+            let report = push_and_refresh(&gate, &fx.work, &request).unwrap();
+            assert_eq!(
+                report.status.upstream,
+                UpstreamState::Tracking {
+                    name: b"origin/main".to_vec(),
+                    ahead: 0,
+                    behind: 0
+                }
+            );
+            commit_file(&fx.runner, &fx.work, "stellar.yaml", b"v: 3\n");
+            let before = crate::repo_status::read_repository_status(&gate, &fx.work).unwrap();
+            assert!(matches!(
+                before.upstream,
+                UpstreamState::Tracking {
+                    ahead: 1,
+                    behind: 0,
+                    ..
+                }
+            ));
+            let report = push_and_refresh(&gate, &fx.work, &request).unwrap();
+            assert_eq!(report.outcome.refs[0].flag, RefUpdateFlag::FastForward);
+            assert!(matches!(
+                report.status.upstream,
+                UpstreamState::Tracking {
+                    ahead: 0,
+                    behind: 0,
+                    ..
+                }
+            ));
+        }
+
+        #[test]
+        fn rejected_push_keeps_local_state_identical() {
+            let Some(fx) = fixture() else {
+                return;
+            };
+            let gate = GatedGitRunner::new(fx.runner.clone(), GitTrust::Trusted);
+            let request = PushRequest {
+                remote: "origin".into(),
+                refspec: PushRefspec::branch("main").unwrap(),
+                set_upstream: true,
+            };
+            push_and_refresh(&gate, &fx.work, &request).unwrap();
+            let other = fx.work.parent().unwrap().join("other");
+            git_ok(
+                &fx.runner,
+                fx.work.parent().unwrap(),
+                [
+                    "clone",
+                    "-q",
+                    fx.bare.to_str().unwrap(),
+                    other.to_str().unwrap(),
+                ],
+            );
+            init_repo_with_identity(&fx.runner, &other);
+            commit_file(&fx.runner, &other, "remote.txt", b"r\n");
+            git_ok(&fx.runner, &other, ["push", "-q", "origin", "main"]);
+            // local: commit 1개 + staged 변경 + unstaged 변경.
+            commit_file(&fx.runner, &fx.work, "local.txt", b"l\n");
+            std::fs::write(fx.work.join("staged.txt"), b"s\n").unwrap();
+            git_ok(&fx.runner, &fx.work, ["add", "staged.txt"]);
+            std::fs::write(fx.work.join("stellar.yaml"), b"unsaved-to-index\n").unwrap();
+
+            let before = local_state(&fx.runner, &fx.work);
+            let worktree_bytes = std::fs::read(fx.work.join("stellar.yaml")).unwrap();
+            assert!(matches!(
+                push_and_refresh(&gate, &fx.work, &request),
+                Err(PushError::Rejected { .. })
+            ));
+            assert_eq!(local_state(&fx.runner, &fx.work), before);
+            assert_eq!(
+                std::fs::read(fx.work.join("stellar.yaml")).unwrap(),
+                worktree_bytes
+            );
         }
     }
 }
