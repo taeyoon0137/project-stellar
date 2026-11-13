@@ -3171,11 +3171,17 @@ tasks:
       - DEV-MAC
   - id: "VIII.1.1"
     title: "`ExpressionType`을 TypedValue와 1:1 대응하도록 정의하고 nullable은 일반 타입과 별도 `Optional<T>`로 표현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.1.1.md"
+    commit: "598820e590385dd8a0e51bbccec872e050702e94"
+    report: "docs/task-reports/VIII.1.1.md"
+    verified_at: "2026-11-14T00:38:58+09:00"
   - id: "VIII.1.2"
     title: "산술 type rule table을 코드와 문서로 정의합니다: length+length, length×scalar 등 허용 조합만 등록합니다."
     status: not_started
@@ -3947,18 +3953,30 @@ tasks:
       - DEV-MAC
   - id: "X.1.4"
     title: "LayoutRevision과 node별 input hash/output cache 타입을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.1.4.md"
+    commit: "b535b760868c327434a45badadd14522e0a611ef"
+    report: "docs/task-reports/X.1.4.md"
+    verified_at: "2026-11-14T00:38:57+09:00"
   - id: "X.1.5"
     title: "레이아웃 수치의 rounding 정책을 logical subpixel 단위로 고정하고 pixel snapping은 렌더 단계로 분리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.1.5.md"
+    commit: "883ba6d02e8b8760f10b534e4a1f5a84636a9b5d"
+    report: "docs/task-reports/X.1.5.md"
+    verified_at: "2026-11-14T00:38:57+09:00"
   - id: "X.2.1"
     title: "Free layout에서 자식 local position과 size를 그대로 사용하고 parent padding·content origin을 적용합니다."
     status: not_started
@@ -4554,12 +4572,18 @@ tasks:
       - DEV-MAC
   - id: "XI.6.1"
     title: "Shape/Path fill tessellation interface와 cache key를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.5.6"
       - "VI.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.6.1.md"
+    commit: "e3bf1768b0a30630461e1c5823b95e121c9911fe"
+    report: "docs/task-reports/XI.6.1.md"
+    verified_at: "2026-11-14T00:38:58+09:00"
   - id: "XI.6.2"
     title: "stroke tessellation에 width, join, cap, dash를 적용합니다."
     status: not_started
@@ -4598,11 +4622,17 @@ tasks:
       - DEV-MAC
   - id: "XI.7.1"
     title: "이미지 decoder interface를 worker 전용으로 정의하고 decoded pixel format을 명시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.7.1.md"
+    commit: "f4f3dd0c9543d005a8f47da53fbc9d996bcc27b0"
+    report: "docs/task-reports/XI.7.1.md"
+    verified_at: "2026-11-14T00:38:58+09:00"
   - id: "XI.7.2"
     title: "mipmap 생성과 texture upload task를 구현합니다."
     status: not_started
@@ -4621,11 +4651,12 @@ tasks:
       - DEV-MAC
   - id: "XI.7.4"
     title: "missing/decoding asset placeholder를 deterministic checker 또는 neutral icon으로 정의하고 양 backend 동일 data를 사용합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VI.8.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XI.7.4.md"
   - id: "XI.8.1"
     title: "`renderer-metal`에서 MTLDevice, command queue, CAMetalLayer 연결과 pixel format을 초기화합니다."
     status: not_started
@@ -4909,11 +4940,17 @@ tasks:
       - DEV-MAC
   - id: "XII.3.1"
     title: "공통 `InputEvent`에 pointer, wheel, key, text composition, focus, resize를 정의하고 native timestamp를 monotonic domain으로 변환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.3.1.md"
+    commit: "76ce74421ac63c86b4c15e07f2bb290928f74b9e"
+    report: "docs/task-reports/XII.3.1.md"
+    verified_at: "2026-11-14T00:38:58+09:00"
   - id: "XII.3.2"
     title: "macOS mouse/trackpad/keyboard 이벤트를 InputEvent로 변환합니다."
     status: not_started
@@ -4994,11 +5031,17 @@ tasks:
       - DEV-MAC
   - id: "XII.5.1"
     title: "macOS 레이어명·검색·일반 필드에 NSTextField/NSTextView를 사용하고 core text engine을 호출하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.5.1.md"
+    commit: "a3420af43d71ecba132cf43ded79279ec5877553"
+    report: "docs/task-reports/XII.5.1.md"
+    verified_at: "2026-11-14T00:39:08+09:00"
   - id: "XII.5.2"
     title: "Windows 레이어명·검색·일반 필드에 TextBox/RichEditBox를 사용합니다."
     status: blocked
@@ -5314,11 +5357,17 @@ tasks:
       - DEV-MAC
   - id: "XIII.4.1"
     title: "파일·디렉터리 symlink를 그대로 허용하는 path resolver를 구현합니다. 내부·외부 target 모두 허용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.4.1.md"
+    commit: "6b402a8900efa3954efeb3d8d14597ee1bffbe40"
+    report: "docs/task-reports/XIII.4.1.md"
+    verified_at: "2026-11-14T00:38:52+09:00"
   - id: "XIII.4.2"
     title: "symlink cycle과 최대 hop을 검사해 무한 순회를 차단합니다."
     status: not_started
@@ -5456,11 +5505,17 @@ tasks:
       - DEV-MAC
   - id: "XIII.7.1"
     title: "`git lfs version`을 시스템 Git 환경에서 실행해 설치 상태와 버전을 읽습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.7.1.md"
+    commit: "75e68ffdd8bbf6cc49a104347a41b60c621f568c"
+    report: "docs/task-reports/XIII.7.1.md"
+    verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIII.7.2"
     title: "에셋 크기·확장자 기반 LFS 권고 정책을 config에서 읽고 import 후 경고만 생성합니다. 자동 `.gitattributes` 수정은 하지 않습니다."
     status: not_started
@@ -5549,40 +5604,70 @@ tasks:
       - DEV-MAC
   - id: "XIV.1.1"
     title: "trusted project에서만 GitRunner를 활성화하고 untrusted 상태에서는 모든 Git command request를 `ProjectNotTrusted`로 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.5.3"
       - "IV.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.1.1.md"
+    commit: "4b0c27965e9f7408aac79b37caf49343f63a6485"
+    report: "docs/task-reports/XIV.1.1.md"
+    verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIV.1.2"
     title: "`git rev-parse --show-toplevel`, `--git-dir`, `--git-common-dir`, `--is-inside-work-tree`를 실행해 worktree root와 gitfile 구조를 읽습니다. 경로를 직접 추측하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.1.2.md"
+    commit: "19416a0769a81507408caf3271a8471202d86e1d"
+    report: "docs/task-reports/XIV.1.2.md"
+    verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIV.1.3"
     title: "Git capability probe에 porcelain v2, pathspec-from-file, update-index --index-info, worktree, LFS availability를 기록합니다. 초기 UI가 쓰지 않는 기능도 capability로만 저장합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.1.3.md"
+    commit: "dd3b01b488961493c05d389c3584660b11409f3b"
+    report: "docs/task-reports/XIV.1.3.md"
+    verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIV.1.4"
     title: "Git command cancellation을 구현합니다. child process와 자식 프로세스 tree를 플랫폼 안전 방식으로 종료하고 partial app state를 성공으로 처리하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.1.4.md"
+    commit: "96e5e0ce5e7eef758b921294408d7bdb6591d197"
+    report: "docs/task-reports/XIV.1.4.md"
+    verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIV.1.5"
     title: "stdout/stderr decoding은 UTF-8 우선, raw bytes 보존, invalid sequence replacement 표시를 구분합니다. machine parse는 `-z` 또는 stable format만 사용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.1.5.md"
+    commit: "2045372dc27640cec779594446954addf01316c0"
+    report: "docs/task-reports/XIV.1.5.md"
+    verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIV.1.6"
     title: "Git command trace에는 command kind, duration, exit code만 기록하고 URL, branch, path, commit hash는 telemetry에서 제외합니다. 로컬 debug log도 redaction 규칙을 적용합니다."
     status: not_started
@@ -5887,18 +5972,30 @@ tasks:
       - DEV-MAC
   - id: "XIV.8.2"
     title: "commit message를 temp file 또는 stdin으로 시스템 Git에 전달하고 shell escaping에 의존하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.8.2.md"
+    commit: "9dd6ab6b2f3c3fdb36fea72b3a948fdf30c3a09b"
+    report: "docs/task-reports/XIV.8.2.md"
+    verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIV.8.3"
     title: "user.name/email 미설정 오류를 구조화해 UI가 안내할 수 있게 합니다. Stellar가 전역 config를 자동 수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.4.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.8.3.md"
+    commit: "52a9f0dac594578b6a5ffdbc343519612c2e2259"
+    report: "docs/task-reports/XIV.8.3.md"
+    verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIV.8.4"
     title: "commit 성공 후 HEAD, index, status를 다시 조회하고 자동 push하지 않습니다."
     status: not_started
@@ -6706,11 +6803,17 @@ tasks:
       - DEV-MAC
   - id: "XVI.6.1"
     title: "restricted YAML parser fuzz target을 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.6.1.md"
+    commit: "93a34146bb539a5804aaced9f19ff0ddb7ffb741"
+    report: "docs/task-reports/XVI.6.1.md"
+    verified_at: "2026-11-14T00:38:57+09:00"
   - id: "XVI.6.2"
     title: "chunk envelope/canonical decoder fuzz target을 추가합니다."
     status: not_started
@@ -6764,11 +6867,17 @@ tasks:
       - DEV-MAC
   - id: "XVI.7.2"
     title: "trust grant/revoke API를 구현하고 OS user data store에 기록합니다. project file/Git config는 변경하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.7.2.md"
+    commit: "350cbe980fbd70b1eeb9fe7d2a52ddbf65deee6b"
+    report: "docs/task-reports/XVI.7.2.md"
+    verified_at: "2026-11-14T00:38:57+09:00"
   - id: "XVI.7.3"
     title: "Git hooks, filters, diff/merge driver는 시스템 Git이 실행하되 trusted mode에서만 Git command 자체를 허용합니다. Stellar가 hook 파일을 직접 실행하지 않습니다."
     status: not_started
