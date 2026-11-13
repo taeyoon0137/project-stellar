@@ -28,7 +28,8 @@ Render(불변 scene snapshot 읽기), Worker Pool로 나누고 "문서 모델에
 2. **crate 경계(허용 직접 의존)**:
    - `stellar-runtime` → `stellar-core-types`, `stellar-document`, `stellar-commands`,
      `stellar-history`, `stellar-project`, `stellar-storage`, `stellar-assets`,
-     `stellar-renderer-core`.
+     `stellar-renderer-core`. Phase XXIX 에이전트 기능을 위한 runtime 허용 의존 확장(agent-host,
+     agent-protocol, ops 등)은 ADR-0005 §8을 따릅니다.
    - `stellar-ffi` → `stellar-core-types`, `stellar-runtime`. ffi는 runtime을 우회해
      document·project에 직접 의존하지 않습니다(단일 작성자 규칙을 셸 경계에서도 유지).
    - 역방향 금지: runtime은 ffi에 의존하지 않고, runtime 아래 crate는 runtime을 참조하지
