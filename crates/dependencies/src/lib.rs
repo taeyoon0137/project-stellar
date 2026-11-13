@@ -18,3 +18,6 @@ pub mod validation;
 
 /// 의존성 선언 민감값 분류와 redaction (XV.1.4).
 pub mod sensitivity;
+
+/// 의존성 resolver 그래프 (XV.2).
+pub mod graph;
