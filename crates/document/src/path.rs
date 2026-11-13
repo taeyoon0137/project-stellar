@@ -6,6 +6,7 @@
 
 use std::fmt;
 
+use stellar_core_types::ids::StableId;
 use stellar_core_types::value::{NonFiniteError, Vec2};
 
 /// Path 오류.
@@ -33,6 +34,21 @@ pub enum PathError {
         /// 발견된 tag.
         tag: u8,
     },
+    /// command와 id 목록의 모양이 맞지 않습니다(VI.6.3).
+    IdShapeMismatch {
+        /// command index.
+        index: usize,
+    },
+    /// point·handle id가 중복됩니다(VI.6.3).
+    DuplicateId {
+        /// 중복 id.
+        id: StableId,
+    },
+    /// 삽입 위치가 범위를 벗어납니다.
+    IndexOutOfRange {
+        /// 요청 index.
+        index: usize,
+    },
 }
 
 impl fmt::Display for PathError {
@@ -45,6 +61,11 @@ impl fmt::Display for PathError {
                 write!(f, "command {index}: subpath는 MoveTo로 시작해야 합니다")
             }
             PathError::UnknownWinding { tag } => write!(f, "알 수 없는 winding rule tag: {tag}"),
+            PathError::IdShapeMismatch { index } => {
+                write!(f, "command {index}의 point/handle id 구성이 맞지 않습니다")
+            }
+            PathError::DuplicateId { id } => write!(f, "path point/handle id 중복: {id}"),
+            PathError::IndexOutOfRange { index } => write!(f, "삽입 위치가 범위 밖입니다: {index}"),
         }
     }
 }
@@ -298,6 +319,134 @@ impl PathData {
     }
 }
 
+// --- point·handle 식별자 (VI.6.3) ---
+
+/// path anchor point의 안정 식별자.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PathPointId(pub StableId);
+
+/// cubic control handle의 안정 식별자.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PathHandleId(pub StableId);
+
+/// command 하나에 붙는 id. 끝점이 있는 command(MoveTo·LineTo·CubicTo)는 point
+/// id를, CubicTo는 두 handle id를 추가로 가집니다. Close는 id가 없습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandIds {
+    /// 끝점 id.
+    pub point: Option<PathPointId>,
+    /// (c1, c2) handle id.
+    pub handles: Option<(PathHandleId, PathHandleId)>,
+}
+
+/// point·handle에 StableId가 붙은 path. 개별 point 단위 semantic diff의 기준입니다.
+///
+/// 불변식: id 목록 길이 = command 수, 각 id 구성이 command 종류와 일치, 모든
+/// id가 유일.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdentifiedPath {
+    data: PathData,
+    ids: Vec<CommandIds>,
+}
+
+fn expected_shape(command: &PathCommand) -> (bool, bool) {
+    match command {
+        PathCommand::MoveTo(_) | PathCommand::LineTo(_) => (true, false),
+        PathCommand::CubicTo { .. } => (true, true),
+        PathCommand::Close => (false, false),
+    }
+}
+
+impl IdentifiedPath {
+    /// 검증 후 만듭니다.
+    pub fn new(data: PathData, ids: Vec<CommandIds>) -> Result<IdentifiedPath, PathError> {
+        if ids.len() != data.commands().len() {
+            return Err(PathError::IdShapeMismatch {
+                index: ids.len().min(data.commands().len()),
+            });
+        }
+        let mut seen = std::collections::BTreeSet::new();
+        for (index, (command, id)) in data.commands().iter().zip(&ids).enumerate() {
+            let (needs_point, needs_handles) = expected_shape(command);
+            if needs_point != id.point.is_some() || needs_handles != id.handles.is_some() {
+                return Err(PathError::IdShapeMismatch { index });
+            }
+            let mut all = Vec::new();
+            if let Some(point) = id.point {
+                all.push(point.0);
+            }
+            if let Some((h1, h2)) = id.handles {
+                all.extend([h1.0, h2.0]);
+            }
+            for raw in all {
+                if !seen.insert(raw) {
+                    return Err(PathError::DuplicateId { id: raw });
+                }
+            }
+        }
+        Ok(IdentifiedPath { data, ids })
+    }
+
+    /// 새 id를 생성기에서 받아 모든 point·handle에 부여합니다.
+    pub fn assign(data: PathData, next_id: &mut dyn FnMut() -> StableId) -> IdentifiedPath {
+        let ids = data
+            .commands()
+            .iter()
+            .map(|command| {
+                let (needs_point, needs_handles) = expected_shape(command);
+                CommandIds {
+                    point: needs_point.then(|| PathPointId(next_id())),
+                    handles: needs_handles
+                        .then(|| (PathHandleId(next_id()), PathHandleId(next_id()))),
+                }
+            })
+            .collect();
+        IdentifiedPath { data, ids }
+    }
+
+    /// path 데이터.
+    pub fn data(&self) -> &PathData {
+        &self.data
+    }
+
+    /// command별 id.
+    pub fn ids(&self) -> &[CommandIds] {
+        &self.ids
+    }
+
+    /// anchor point id 목록(command 순).
+    pub fn point_ids(&self) -> Vec<PathPointId> {
+        self.ids.iter().filter_map(|id| id.point).collect()
+    }
+
+    /// `index` 위치에 LineTo point를 삽입합니다. 기존 point·handle id는 그대로
+    /// 유지되고 새 point만 `id`를 받습니다. 결과가 subpath 규칙을 어기면(예: 맨
+    /// 앞, Close 직후) 거부하고 path를 바꾸지 않습니다.
+    pub fn insert_line_point(
+        &mut self,
+        index: usize,
+        to: Vec2,
+        id: PathPointId,
+    ) -> Result<(), PathError> {
+        if index > self.ids.len() {
+            return Err(PathError::IndexOutOfRange { index });
+        }
+        let mut commands = self.data.commands().to_vec();
+        commands.insert(index, PathCommand::LineTo(to));
+        let mut ids = self.ids.clone();
+        ids.insert(
+            index,
+            CommandIds {
+                point: Some(id),
+                handles: None,
+            },
+        );
+        let data = PathData::new(self.data.winding(), commands)?;
+        *self = IdentifiedPath::new(data, ids)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,5 +603,104 @@ mod tests {
             PathData::decode(&bytes).unwrap_err(),
             PathError::UnknownWinding { tag: 7 }
         );
+    }
+
+    mod identified {
+        use super::super::*;
+
+        fn p(x: f32, y: f32) -> Vec2 {
+            Vec2::new(x, y).unwrap()
+        }
+
+        fn sample() -> PathData {
+            PathData::new(
+                WindingRule::NonZero,
+                vec![
+                    PathCommand::MoveTo(p(0.0, 0.0)),
+                    PathCommand::LineTo(p(10.0, 0.0)),
+                    PathCommand::CubicTo {
+                        c1: p(12.0, 2.0),
+                        c2: p(12.0, 8.0),
+                        to: p(10.0, 10.0),
+                    },
+                    PathCommand::Close,
+                ],
+            )
+            .unwrap()
+        }
+
+        fn generator() -> impl FnMut() -> StableId {
+            let mut n = 0u64;
+            move || {
+                n += 1;
+                StableId::new_v7(1_000 + n, 0, n)
+            }
+        }
+
+        #[test]
+        fn inserting_a_point_keeps_existing_ids() {
+            // 검증 기준(VI.6.3): point 삽입 후 기존 point ID 유지.
+            let mut gen = generator();
+            let mut path = IdentifiedPath::assign(sample(), &mut gen);
+            let before_points = path.point_ids();
+            let before_handles: Vec<_> = path.ids().iter().filter_map(|i| i.handles).collect();
+            assert_eq!(before_points.len(), 3);
+
+            let new_id = PathPointId(StableId::new_v7(9_999, 0, 9_999));
+            path.insert_line_point(2, p(11.0, 5.0), new_id).unwrap();
+
+            let after = path.point_ids();
+            assert_eq!(after.len(), 4);
+            assert_eq!(after[0], before_points[0]);
+            assert_eq!(after[1], before_points[1]);
+            assert_eq!(after[2], new_id, "새 point만 새 id");
+            assert_eq!(after[3], before_points[2]);
+            let after_handles: Vec<_> = path.ids().iter().filter_map(|i| i.handles).collect();
+            assert_eq!(after_handles, before_handles, "handle id 유지");
+        }
+
+        #[test]
+        fn invalid_insertions_are_rejected_without_change() {
+            let mut gen = generator();
+            let mut path = IdentifiedPath::assign(sample(), &mut gen);
+            let snapshot = path.clone();
+            let id = PathPointId(StableId::new_v7(9_999, 0, 9_999));
+            // 맨 앞(MoveTo 앞)과 Close 뒤는 subpath 규칙 위반.
+            assert!(matches!(
+                path.insert_line_point(0, p(1.0, 1.0), id),
+                Err(PathError::MissingMoveTo { .. })
+            ));
+            assert!(matches!(
+                path.insert_line_point(4, p(1.0, 1.0), id),
+                Err(PathError::MissingMoveTo { .. })
+            ));
+            assert!(matches!(
+                path.insert_line_point(99, p(1.0, 1.0), id),
+                Err(PathError::IndexOutOfRange { index: 99 })
+            ));
+            // 기존 id와 중복되는 새 id.
+            let existing = path.point_ids()[0];
+            assert!(matches!(
+                path.insert_line_point(1, p(1.0, 1.0), existing),
+                Err(PathError::DuplicateId { .. })
+            ));
+            assert_eq!(path, snapshot, "거부 시 불변");
+        }
+
+        #[test]
+        fn id_shape_must_match_commands() {
+            let data = sample();
+            let bad = vec![
+                CommandIds {
+                    point: None,
+                    handles: None,
+                };
+                4
+            ];
+            assert_eq!(
+                IdentifiedPath::new(data, bad).unwrap_err(),
+                PathError::IdShapeMismatch { index: 0 }
+            );
+        }
     }
 }
