@@ -29,6 +29,9 @@ pub mod text_input;
 /// Modal 계약 (IX.6.4).
 pub mod modal;
 
+/// List 계약 (IX.6.5).
+pub mod list;
+
 use crate::component::codec::{
     put_bool, put_bytes, put_count, put_id, put_u16, put_u8, Malformed, Reader,
 };
@@ -725,6 +728,39 @@ impl<'a> FieldChecker<'a> {
             return None;
         }
         Some(*node)
+    }
+
+    /// enum 상수 field: `enum_type`의 `0..variants` 안이어야 합니다. variant를 돌려줍니다.
+    pub(crate) fn enum_constant(
+        &mut self,
+        field: ContractField,
+        required: bool,
+        enum_type: u32,
+        variants: u32,
+    ) -> Option<u32> {
+        let value = self.get(field, required)?;
+        let expected = ExpressionType::Enum(stellar_expressions::types::EnumTypeId::new(enum_type));
+        match value {
+            ContractValue::Constant(TypedValue::Enum(e))
+                if e.enum_type() == enum_type && e.variant() < variants =>
+            {
+                Some(e.variant())
+            }
+            ContractValue::Constant(other) => {
+                self.push(
+                    Some(field),
+                    ContractProblem::TypeMismatch {
+                        expected,
+                        found: Some(TypeSpec::required(ExpressionType::of(other))),
+                    },
+                );
+                None
+            }
+            other => {
+                self.wrong_kind(field, &[ValueKind::Constant], other.kind());
+                None
+            }
+        }
     }
 
     /// 상호작용 계약이 `event`를 처리해야 합니다.
