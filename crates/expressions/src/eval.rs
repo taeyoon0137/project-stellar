@@ -188,6 +188,65 @@ pub fn load_reference(
     }
 }
 
+/// 깊이 한도를 지키는 operand stack (VIII.4.5).
+///
+/// push 전에 깊이를 검사하므로 stack은 어떤 순간에도 `max_depth`개를 넘지 않습니다. bytecode evaluator와
+/// AST 기준 evaluator가 같은 한도 의미를 공유합니다.
+pub(crate) struct BoundedStack {
+    values: Vec<Option<TypedValue>>,
+    max_depth: usize,
+    peak_depth: usize,
+}
+
+impl BoundedStack {
+    /// 빈 stack을 만듭니다.
+    pub(crate) fn new(max_depth: usize) -> BoundedStack {
+        BoundedStack {
+            values: Vec::new(),
+            max_depth,
+            peak_depth: 0,
+        }
+    }
+
+    /// 값을 push합니다. push하면 `max_depth`를 넘는 경우 push하지 않고 오류입니다.
+    pub(crate) fn push(&mut self, value: Option<TypedValue>) -> Result<(), EvalErrorKind> {
+        if self.values.len() >= self.max_depth {
+            return Err(EvalErrorKind::StackLimitExceeded {
+                limit: self.max_depth,
+            });
+        }
+        self.values.push(value);
+        self.peak_depth = self.peak_depth.max(self.values.len());
+        Ok(())
+    }
+
+    /// 맨 위 값을 꺼냅니다.
+    pub(crate) fn pop(&mut self) -> Option<Option<TypedValue>> {
+        self.values.pop()
+    }
+
+    /// 맨 위 값.
+    pub(crate) fn last(&self) -> Option<&Option<TypedValue>> {
+        self.values.last()
+    }
+
+    /// 위에서 `count`개를 순서대로 꺼냅니다. 값이 모자라면 `None`(stack 불변).
+    pub(crate) fn pop_many(&mut self, count: usize) -> Option<Vec<Option<TypedValue>>> {
+        let start = self.values.len().checked_sub(count)?;
+        Some(self.values.split_off(start))
+    }
+
+    /// 비어 있으면 `true`.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+
+    /// 지금까지의 최대 깊이.
+    pub(crate) fn peak_depth(&self) -> usize {
+        self.peak_depth
+    }
+}
+
 /// 조건 값의 참·거짓(`if` 조건, `and`/`or` 왼쪽). Boolean이 아니면 방어 오류입니다.
 pub fn truth(condition: &Option<TypedValue>) -> Result<bool, EvalErrorKind> {
     match condition {

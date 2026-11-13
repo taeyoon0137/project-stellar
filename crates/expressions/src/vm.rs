@@ -14,7 +14,8 @@ use stellar_core_types::typed_value::TypedValue;
 
 use crate::bytecode::{Instr, Program};
 use crate::eval::{
-    apply_binary, apply_unary, load_reference, truth, EvalError, EvalErrorKind, ReferenceValues,
+    apply_binary, apply_unary, load_reference, truth, BoundedStack, EvalError, EvalErrorKind,
+    ReferenceValues,
 };
 use crate::function_eval::apply_function;
 
@@ -25,6 +26,8 @@ pub struct EvalTrace {
     pub instructions: u64,
     /// 실행한 block 수(공유 block 캐시 적중은 제외).
     pub block_runs: u64,
+    /// operand stack의 최대 깊이. 항상 [`EvalLimits::max_stack_depth`] 이하입니다.
+    pub peak_stack_depth: usize,
 }
 
 /// 평가 자원 제한 (VIII.4.5).
@@ -75,13 +78,15 @@ impl Program {
     }
 
     /// 주어진 한도로 평가하고 실행 기록을 함께 돌려줍니다(VIII.4.5).
+    ///
+    /// operand stack 깊이는 push 전에 검사하므로 stack은 어떤 순간에도 `max_stack_depth`개를 넘지 않습니다.
     pub fn evaluate_with_limits(
         &self,
         values: &dyn ReferenceValues,
         limits: EvalLimits,
     ) -> Result<(Option<TypedValue>, EvalTrace), EvalError> {
         let mut trace = EvalTrace::default();
-        let mut stack: Vec<Option<TypedValue>> = Vec::new();
+        let mut stack = BoundedStack::new(limits.max_stack_depth);
         let mut cache: Vec<Option<Option<TypedValue>>> = vec![None; self.blocks().len()];
         let mut frames = vec![Frame { block: 0, pc: 0 }];
         trace.block_runs = 1;
@@ -104,14 +109,6 @@ impl Program {
                     },
                 ));
             }
-            if stack.len() > limits.max_stack_depth {
-                return Err(EvalError::new(
-                    node,
-                    EvalErrorKind::StackLimitExceeded {
-                        limit: limits.max_stack_depth,
-                    },
-                ));
-            }
             frame.pc += 1;
             trace.instructions += 1;
             let fail = |kind| EvalError::new(node, kind);
@@ -121,19 +118,20 @@ impl Program {
                         .constants()
                         .get(index as usize)
                         .ok_or_else(|| malformed(node))?;
-                    stack.push(value.clone());
+                    stack.push(value.clone()).map_err(fail)?;
                 }
                 Instr::LoadRef(index) => {
                     let (target, expected) = self
                         .references()
                         .get(index as usize)
                         .ok_or_else(|| malformed(node))?;
-                    stack.push(load_reference(target, *expected, values).map_err(fail)?);
+                    let value = load_reference(target, *expected, values).map_err(fail)?;
+                    stack.push(value).map_err(fail)?;
                 }
                 Instr::Eval(index) => {
                     let slot = cache.get(index as usize).ok_or_else(|| malformed(node))?;
                     match slot {
-                        Some(value) => stack.push(value.clone()),
+                        Some(value) => stack.push(value.clone()).map_err(fail)?,
                         None => {
                             if frames.len() >= limits.max_call_depth {
                                 return Err(fail(EvalErrorKind::CallDepthExceeded {
@@ -172,25 +170,30 @@ impl Program {
                 }
                 Instr::Unary(op) => {
                     let operand = stack.pop().ok_or_else(|| malformed(node))?;
-                    stack.push(apply_unary(op, &operand).map_err(fail)?);
+                    stack
+                        .push(apply_unary(op, &operand).map_err(fail)?)
+                        .map_err(fail)?;
                 }
                 Instr::Binary(op) => {
                     let rhs = stack.pop().ok_or_else(|| malformed(node))?;
                     let lhs = stack.pop().ok_or_else(|| malformed(node))?;
-                    stack.push(apply_binary(op, &lhs, &rhs).map_err(fail)?);
+                    stack
+                        .push(apply_binary(op, &lhs, &rhs).map_err(fail)?)
+                        .map_err(fail)?;
                 }
                 Instr::Call { function, argc } => {
-                    let start = stack
-                        .len()
-                        .checked_sub(usize::from(argc))
+                    let args = stack
+                        .pop_many(usize::from(argc))
                         .ok_or_else(|| malformed(node))?;
-                    let args = stack.split_off(start);
-                    stack.push(apply_function(function, &args).map_err(fail)?);
+                    stack
+                        .push(apply_function(function, &args).map_err(fail)?)
+                        .map_err(fail)?;
                 }
                 Instr::Return => {
                     let value = stack.pop().ok_or_else(|| malformed(node))?;
                     let finished = frames.pop().ok_or_else(|| malformed(node))?;
                     if frames.is_empty() {
+                        trace.peak_stack_depth = stack.peak_depth();
                         return if stack.is_empty() {
                             Ok((value, trace))
                         } else {
@@ -200,7 +203,7 @@ impl Program {
                     if let Some(slot) = cache.get_mut(finished.block) {
                         *slot = Some(value.clone());
                     }
-                    stack.push(value);
+                    stack.push(value).map_err(fail)?;
                 }
             }
         }
@@ -1309,5 +1312,52 @@ mod limit_tests {
             .expect("정상");
         assert_eq!(value, Some(minus_one()), "홀수(9,999) 번 부호 반전");
         assert!(trace.instructions < EvalLimits::DEFAULT.instruction_budget);
+    }
+
+    /// `lhs(1) + (lhs(2) + (… + (lhs(depth) + 1)))` — 왼쪽 literal이 level마다 다른 node라서
+    /// 한도를 넘는 push의 원인 node를 구분할 수 있습니다. 최대 stack 깊이는 `depth + 1`입니다.
+    fn distinct_right_nested(depth: u64) -> ExpressionAst {
+        let lhs = |n: u64| id(2_000_000 + n);
+        let mut nodes: Vec<ExprNode> = (1..=depth)
+            .map(|n| ExprNode::binary(id(n), BinaryOp::Add, lhs(n), id(n + 1)))
+            .collect();
+        nodes.extend((1..=depth).map(|n| ExprNode::literal(lhs(n), one())));
+        nodes.push(ExprNode::literal(id(depth + 1), one()));
+        ExpressionAst::new(id(1), nodes).expect("유효")
+    }
+
+    #[test]
+    fn stack_never_exceeds_limit_and_stops_at_overflowing_push() {
+        // 회귀(VIII.4.5 리뷰): 이전에는 실행 전 `len > limit`만 검사해 stack이 limit + 1개까지 찼고,
+        // 오류도 넘친 push 다음 명령에서 났습니다.
+        let depth = 1_000u64;
+        let program = compile(&distinct_right_nested(depth));
+        let with_limit = |limit: usize| {
+            program.evaluate_with_limits(
+                &BTreeMap::new(),
+                EvalLimits {
+                    max_stack_depth: limit,
+                    ..EvalLimits::DEFAULT
+                },
+            )
+        };
+        // 501번째 push(= lhs(501))가 한도 500을 넘으므로 그 node에서 멈춥니다.
+        let error = with_limit(500).expect_err("한도 초과");
+        assert_eq!(error.kind, EvalErrorKind::StackLimitExceeded { limit: 500 });
+        assert_eq!(error.node, Some(id(2_000_501)));
+        // 경계: 최대 깊이(depth + 1)와 같은 한도는 통과, 1 작으면 innermost literal push에서 실패.
+        let (value, trace) = with_limit(1_001).expect("경계 한도 통과");
+        assert_eq!(
+            value,
+            Some(TypedValue::Number(FiniteF32::new(1_001.0).expect("유한")))
+        );
+        assert_eq!(trace.peak_stack_depth, 1_001);
+        let error = with_limit(1_000).expect_err("1 부족");
+        assert_eq!(error.node, Some(id(depth + 1)));
+        // 한도 0이면 첫 push부터 거부.
+        assert_eq!(
+            with_limit(0).expect_err("빈 한도").node,
+            Some(id(2_000_001))
+        );
     }
 }
