@@ -32,3 +32,6 @@ pub mod typecheck;
 
 /// GUI 편집용 block·edge projection (VIII.3.1).
 pub mod graph_view;
+
+/// GUI socket 타입과 연결 가능 여부 (VIII.3.2).
+pub mod sockets;
