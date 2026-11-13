@@ -26,6 +26,9 @@ pub mod button;
 /// TextInput 계약 (IX.6.3).
 pub mod text_input;
 
+/// Modal 계약 (IX.6.4).
+pub mod modal;
+
 use crate::component::codec::{
     put_bool, put_bytes, put_count, put_id, put_u16, put_u8, Malformed, Reader,
 };
@@ -699,6 +702,29 @@ impl<'a> FieldChecker<'a> {
             }
             other => self.wrong_kind(field, &[ValueKind::Action], other.kind()),
         }
+    }
+
+    /// node field: 존재해야 하고 `within_frame`이면 계약 Frame 자신이나 자손이어야 합니다. node id를 돌려줍니다.
+    pub(crate) fn node(
+        &mut self,
+        field: ContractField,
+        required: bool,
+        within_frame: bool,
+    ) -> Option<StableId> {
+        let value = self.get(field, required)?;
+        let ContractValue::Node(node) = value else {
+            self.wrong_kind(field, &[ValueKind::Node], value.kind());
+            return None;
+        };
+        if self.scope.node_kind(*node).is_none() {
+            self.push(Some(field), ContractProblem::UnresolvedReference);
+            return None;
+        }
+        if within_frame && !self.scope.is_within(*node, self.frame) {
+            self.push(Some(field), ContractProblem::OutsideFrame);
+            return None;
+        }
+        Some(*node)
     }
 
     /// 상호작용 계약이 `event`를 처리해야 합니다.
