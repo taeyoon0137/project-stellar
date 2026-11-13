@@ -733,7 +733,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | VIII.4.1 | `[x]` | 검증된 AST를 stack 또는 register bytecode로 컴파일하는 내부 포맷을 정의합니다. bytecode는 저장하지 않고 캐시로만 사용합니다. | AST와 bytecode evaluator 결과 동일 fixture. | VIII.2.4 |
-| VIII.4.2 | `[ ]` | literal·산술·비교·논리 evaluator를 구현합니다. division by zero는 typed evaluation error입니다. | table-driven test 통과. | VIII.4.1 |
+| VIII.4.2 | `[x]` | literal·산술·비교·논리 evaluator를 구현합니다. division by zero는 typed evaluation error입니다. | table-driven test 통과. | VIII.4.1 |
 | VIII.4.3 | `[ ]` | if·match short-circuit 평가를 구현해 선택되지 않은 branch 오류가 실행되지 않게 합니다. | short-circuit fixture 통과. | VIII.4.2 |
 | VIII.4.4 | `[ ]` | color·string·수치 함수 evaluator를 구현합니다. | reference value fixture 통과. | VIII.4.2, VIII.1.4 |
 | VIII.4.5 | `[ ]` | evaluator에 instruction budget과 recursion 없는 call depth limit를 적용합니다. | 비정상적으로 큰 AST가 제한 오류로 종료. | VIII.4.1 |

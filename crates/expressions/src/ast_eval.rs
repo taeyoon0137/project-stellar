@@ -10,7 +10,8 @@ use stellar_core_types::typed_value::TypedValue;
 
 use crate::ast::{ChildSlot, ExprNodeId, ExpressionAst, Literal, NodePayload};
 use crate::eval::{
-    load_reference, match_arm, select_if, EvalError, EvalErrorKind, ReferenceValues,
+    apply_binary, apply_unary, load_reference, match_arm, select_if, EvalError, EvalErrorKind,
+    ReferenceValues,
 };
 use crate::typecheck::{type_check, ReferenceTypes};
 
@@ -73,9 +74,14 @@ pub fn evaluate_ast(
                     None => value_of(ChildSlot::Default)?,
                 }
             }
-            NodePayload::Unary(_) | NodePayload::Binary(_) | NodePayload::Call(_) => {
-                return Err(fail(EvalErrorKind::UnsupportedNode))
+            NodePayload::Unary(op) => {
+                apply_unary(*op, &value_of(ChildSlot::Operand)?).map_err(fail)?
             }
+            NodePayload::Binary(op) => {
+                apply_binary(*op, &value_of(ChildSlot::Lhs)?, &value_of(ChildSlot::Rhs)?)
+                    .map_err(fail)?
+            }
+            NodePayload::Call(_) => return Err(fail(EvalErrorKind::UnsupportedNode)),
         };
         memo.insert(id, value);
     }

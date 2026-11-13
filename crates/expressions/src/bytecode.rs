@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 use stellar_core_types::typed_value::TypedValue;
 
 use crate::ast::{ChildSlot, ExprNodeId, ExpressionAst, Literal, NodePayload, ReferenceTarget};
-use crate::ops::NodeKind;
+use crate::ops::{BinaryOp, NodeKind, UnaryOp};
 use crate::typecheck::{type_check, ReferenceTypes, TypeError};
 use crate::types::TypeSpec;
 
@@ -40,6 +40,10 @@ pub enum Instr {
     Select,
     /// `[scrutinee, arm0, …, armN-1, default]`를 pop하고 pattern table `index`로 고른 값을 push(`match`).
     MatchSelect(u32),
+    /// operand 하나를 pop하고 단항 연산 결과를 push(VIII.4.2).
+    Unary(UnaryOp),
+    /// `[lhs, rhs]`를 pop하고 이항 연산 결과를 push(VIII.4.2).
+    Binary(BinaryOp),
     /// stack top을 block 결과로 반환.
     Return,
 }
@@ -339,7 +343,16 @@ impl Compiler<'_> {
                     }
                     stack.push(Task::Visit(child(ChildSlot::Scrutinee)?));
                 }
-                NodePayload::Unary(_) | NodePayload::Binary(_) | NodePayload::Call(_) => {
+                NodePayload::Unary(op) => {
+                    stack.push(Task::Emit(Instr::Unary(*op), id));
+                    stack.push(Task::Visit(child(ChildSlot::Operand)?));
+                }
+                NodePayload::Binary(op) => {
+                    stack.push(Task::Emit(Instr::Binary(*op), id));
+                    stack.push(Task::Visit(child(ChildSlot::Rhs)?));
+                    stack.push(Task::Visit(child(ChildSlot::Lhs)?));
+                }
+                NodePayload::Call(_) => {
                     return Err(CompileError::UnsupportedNode {
                         node: id,
                         kind: node.kind(),

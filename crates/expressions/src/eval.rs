@@ -1,4 +1,4 @@
-//! 표현식 평가 공통 타입과 값 의미 (VIII.4.1).
+//! 표현식 평가 공통 타입과 값 의미 (VIII.4.1, VIII.4.2).
 //!
 //! bytecode evaluator([`crate::vm`])와 AST 기준 evaluator([`crate::ast_eval`])가 같은 오류 타입·참조 입력·
 //! 값 의미 함수를 공유합니다. 두 evaluator가 이 모듈의 함수만으로 값을 계산하므로 결과가 같아야 합니다.
@@ -9,9 +9,13 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use stellar_core_types::typed_value::TypedValue;
+use stellar_core_types::value::{Angle, Duration, FiniteF32, Length, Percentage};
 
+use crate::arithmetic::{arithmetic_rule, ArithmeticOp};
 use crate::ast::{ExprNodeId, ReferenceTarget};
-use crate::types::TypeSpec;
+use crate::logic::{ComparisonOp, LogicalOp};
+use crate::ops::{BinaryOp, BinaryOpClass, UnaryOp};
+use crate::types::{ExpressionType, TypeSpec};
 
 /// 참조 대상의 현재 값 제공자.
 ///
@@ -45,8 +49,12 @@ pub enum EvalErrorKind {
     MalformedProgram,
     /// AST 기준 evaluator에 type 오류가 있는 AST가 주어졌습니다.
     IllTyped,
-    /// 이 단계에서 아직 평가 의미가 없는 node 종류입니다(연산·호출 의미는 VIII.4.2·VIII.4.4).
+    /// 이 단계에서 아직 평가 의미가 없는 node 종류입니다(함수 호출 의미는 VIII.4.4).
     UnsupportedNode,
+    /// 0으로 나누기 또는 0에 대한 나머지(VIII.4.2).
+    DivisionByZero,
+    /// 결과가 유한 범위를 벗어났습니다(overflow, VIII.4.2).
+    NonFiniteResult,
 }
 
 impl fmt::Display for EvalErrorKind {
@@ -60,6 +68,8 @@ impl fmt::Display for EvalErrorKind {
             EvalErrorKind::MalformedProgram => f.write_str("program 내부 불변식 위반"),
             EvalErrorKind::IllTyped => f.write_str("type 오류가 있는 AST는 평가할 수 없습니다"),
             EvalErrorKind::UnsupportedNode => f.write_str("아직 평가할 수 없는 node 종류입니다"),
+            EvalErrorKind::DivisionByZero => f.write_str("0으로 나눌 수 없습니다"),
+            EvalErrorKind::NonFiniteResult => f.write_str("결과가 유한 범위를 벗어났습니다"),
         }
     }
 }
@@ -127,6 +137,116 @@ pub fn select_if(
 pub fn match_arm(scrutinee: &Option<TypedValue>, patterns: &[TypedValue]) -> Option<usize> {
     let scrutinee = scrutinee.as_ref()?;
     patterns.iter().position(|pattern| pattern == scrutinee)
+}
+
+// --- 연산 의미 (VIII.4.2) ---
+//
+// 수치·단위 값은 f32 IEEE-754 기본 연산(+, −, ×, ÷)과 정확(exact) 연산인 나머지(fmod)·부호 반전만 씁니다.
+// 결과가 비유한(overflow)이면 `NonFiniteResult`, 0으로 나누기·0에 대한 나머지는 `DivisionByZero`입니다.
+// 결과 `-0.0`은 `FiniteF32` 규칙대로 `+0.0`으로 정규화합니다.
+
+/// 수치·단위 값의 내부 f32와 타입.
+fn numeric(value: &Option<TypedValue>) -> Result<(ExpressionType, f32), EvalErrorKind> {
+    match value {
+        Some(TypedValue::Number(v)) => Ok((ExpressionType::Number, v.get())),
+        Some(TypedValue::Length(v)) => Ok((ExpressionType::Length, v.get())),
+        Some(TypedValue::Percentage(v)) => Ok((ExpressionType::Percentage, v.get())),
+        Some(TypedValue::Angle(v)) => Ok((ExpressionType::Angle, v.get())),
+        Some(TypedValue::Duration(v)) => Ok((ExpressionType::Duration, v.get())),
+        _ => Err(EvalErrorKind::OperandTypeMismatch),
+    }
+}
+
+/// f32 결과를 `value_type`의 값으로 만듭니다. 비유한이면 `NonFiniteResult`.
+pub(crate) fn make_numeric(
+    value_type: ExpressionType,
+    raw: f32,
+) -> Result<Option<TypedValue>, EvalErrorKind> {
+    let finite = FiniteF32::new(raw).map_err(|_| EvalErrorKind::NonFiniteResult)?;
+    let value = match value_type {
+        ExpressionType::Number => TypedValue::Number(finite),
+        ExpressionType::Length => TypedValue::Length(Length::from_raw(finite)),
+        ExpressionType::Percentage => TypedValue::Percentage(Percentage::from_raw(finite)),
+        ExpressionType::Angle => TypedValue::Angle(Angle::from_raw(finite)),
+        ExpressionType::Duration => TypedValue::Duration(Duration::from_raw(finite)),
+        _ => return Err(EvalErrorKind::OperandTypeMismatch),
+    };
+    Ok(Some(value))
+}
+
+fn boolean(value: &Option<TypedValue>) -> Result<bool, EvalErrorKind> {
+    match value {
+        Some(TypedValue::Boolean(b)) => Ok(*b),
+        _ => Err(EvalErrorKind::OperandTypeMismatch),
+    }
+}
+
+/// 단항 연산 의미(VIII.4.2).
+pub fn apply_unary(
+    op: UnaryOp,
+    operand: &Option<TypedValue>,
+) -> Result<Option<TypedValue>, EvalErrorKind> {
+    match op {
+        UnaryOp::Negate => {
+            let (value_type, raw) = numeric(operand)?;
+            make_numeric(value_type, -raw)
+        }
+        UnaryOp::Not => Ok(Some(TypedValue::Boolean(!boolean(operand)?))),
+    }
+}
+
+/// 이항 연산 의미(VIII.4.2). 결과 타입은 산술 규칙 표(VIII.1.2)를 따릅니다.
+pub fn apply_binary(
+    op: BinaryOp,
+    lhs: &Option<TypedValue>,
+    rhs: &Option<TypedValue>,
+) -> Result<Option<TypedValue>, EvalErrorKind> {
+    match op.class() {
+        BinaryOpClass::Arithmetic(arith) => {
+            let (lhs_type, a) = numeric(lhs)?;
+            let (rhs_type, b) = numeric(rhs)?;
+            let rule = arithmetic_rule(arith, lhs_type, rhs_type)
+                .ok_or(EvalErrorKind::OperandTypeMismatch)?;
+            let raw = match arith {
+                ArithmeticOp::Add => a + b,
+                ArithmeticOp::Subtract => a - b,
+                ArithmeticOp::Multiply => a * b,
+                ArithmeticOp::Divide | ArithmeticOp::Remainder if b == 0.0 => {
+                    return Err(EvalErrorKind::DivisionByZero)
+                }
+                ArithmeticOp::Divide => a / b,
+                ArithmeticOp::Remainder => a % b,
+            };
+            make_numeric(rule.result, raw)
+        }
+        BinaryOpClass::Comparison(comparison) => {
+            let result = match comparison {
+                ComparisonOp::Equal => lhs == rhs,
+                ComparisonOp::NotEqual => lhs != rhs,
+                ordered => {
+                    let (lhs_type, a) = numeric(lhs)?;
+                    let (rhs_type, b) = numeric(rhs)?;
+                    if lhs_type != rhs_type {
+                        return Err(EvalErrorKind::OperandTypeMismatch);
+                    }
+                    match ordered {
+                        ComparisonOp::Less => a < b,
+                        ComparisonOp::LessEqual => a <= b,
+                        ComparisonOp::Greater => a > b,
+                        _ => a >= b,
+                    }
+                }
+            };
+            Ok(Some(TypedValue::Boolean(result)))
+        }
+        BinaryOpClass::Logical(logical) => {
+            let (a, b) = (boolean(lhs)?, boolean(rhs)?);
+            Ok(Some(TypedValue::Boolean(match logical {
+                LogicalOp::And => a && b,
+                LogicalOp::Or => a || b,
+            })))
+        }
+    }
 }
 
 #[cfg(test)]
