@@ -19,8 +19,31 @@
 //!
 //! 환경 enum 타입은 `0xE000_0000` 대역의 [`EnumTypeId`]를 씁니다. 다른 enum registry는 이 대역을 쓰지 않습니다.
 //! 각 enum의 variant 번호도 고정입니다([`platform`], [`color_scheme`], [`contrast`], [`interaction_state`]).
+//!
+//! **missing key 기본값 정책(VIII.7.2)**: [`EvaluationEnvironment`]에 값이 없는 등록 key는 registry가 고정한 기본값
+//! ([`missing_default`])으로 평가합니다. 값 없음(null)으로 두지 않으므로 환경 참조의 타입은 항상 `Required`입니다.
+//!
+//! | key | 기본값 |
+//! |---|---|
+//! | platform | `generic`(0) |
+//! | os_version · api_level | 0 |
+//! | color_scheme | `light`(0) |
+//! | contrast | `standard`(0) |
+//! | reduced_motion | `false` |
+//! | viewport_width × viewport_height | 1280px × 800px |
+//! | locale | `"und"`(BCP 47 미정) |
+//! | density | 1 |
+//! | interaction_state | `default`(0) |
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+use std::sync::Arc;
+
+use stellar_core_types::typed_value::{EnumValue, TypedValue};
+use stellar_core_types::value::{FiniteF32, Length};
 
 use crate::ast::{EnvironmentKey, ReferenceTarget};
+use crate::eval::ReferenceValues;
 use crate::typecheck::ReferenceTypes;
 use crate::types::{EnumTypeId, ExpressionType, TypeSpec};
 
@@ -177,6 +200,184 @@ impl ReferenceTypes for EnvironmentTypes {
     }
 }
 
+/// 등록 key의 missing 기본값(모듈 문서 표). 미등록 key는 `None`.
+pub fn missing_default(key: EnvironmentKey) -> Option<TypedValue> {
+    let number = |v: f32| FiniteF32::new(v).ok().map(TypedValue::Number);
+    let length = |v: f32| Length::new(v).ok().map(TypedValue::Length);
+    let variant = |enum_type: EnumTypeId, index: u32| {
+        Some(TypedValue::Enum(EnumValue::new(enum_type.raw(), index)))
+    };
+    match key {
+        PLATFORM => variant(PLATFORM_TYPE, platform::GENERIC),
+        OS_VERSION | API_LEVEL => number(0.0),
+        COLOR_SCHEME => variant(COLOR_SCHEME_TYPE, color_scheme::LIGHT),
+        CONTRAST => variant(CONTRAST_TYPE, contrast::STANDARD),
+        REDUCED_MOTION => Some(TypedValue::Boolean(false)),
+        VIEWPORT_WIDTH => length(1280.0),
+        VIEWPORT_HEIGHT => length(800.0),
+        LOCALE => Some(TypedValue::String("und".to_string())),
+        DENSITY => number(1.0),
+        INTERACTION_STATE => variant(INTERACTION_STATE_TYPE, interaction_state::DEFAULT),
+        _ => None,
+    }
+}
+
+/// 환경 값 검증 오류.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum EnvironmentError {
+    /// registry에 없는 key.
+    UnknownKey(EnvironmentKey),
+    /// 값 타입이 key 타입과 다릅니다.
+    TypeMismatch {
+        /// key.
+        key: EnvironmentKey,
+        /// key 타입.
+        expected: ExpressionType,
+    },
+    /// enum variant 번호가 key의 variant 수를 넘습니다.
+    InvalidVariant {
+        /// key.
+        key: EnvironmentKey,
+        /// 주어진 variant.
+        variant: u32,
+    },
+}
+
+impl fmt::Display for EnvironmentError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            EnvironmentError::UnknownKey(key) => write!(f, "등록되지 않은 환경 key: {}", key.raw()),
+            EnvironmentError::TypeMismatch { key, expected } => {
+                write!(
+                    f,
+                    "환경 key {}의 값은 {expected} 타입이어야 합니다",
+                    key.raw()
+                )
+            }
+            EnvironmentError::InvalidVariant { key, variant } => {
+                write!(f, "환경 key {}에 없는 variant {variant}", key.raw())
+            }
+        }
+    }
+}
+
+impl std::error::Error for EnvironmentError {}
+
+/// 값이 key의 registry 타입·variant 범위를 지키는지 검사합니다.
+pub fn check_value(key: EnvironmentKey, value: &TypedValue) -> Result<(), EnvironmentError> {
+    let info = key_info(key).ok_or(EnvironmentError::UnknownKey(key))?;
+    if !info.value_type.matches(value) {
+        return Err(EnvironmentError::TypeMismatch {
+            key,
+            expected: info.value_type,
+        });
+    }
+    if let TypedValue::Enum(e) = value {
+        if e.variant() >= info.variants {
+            return Err(EnvironmentError::InvalidVariant {
+                key,
+                variant: e.variant(),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// 표현식 평가 환경 (VIII.7.2). 불변 map이며 바꿀 때는 새 환경을 만듭니다(복제는 공유 참조라 가볍습니다).
+///
+/// 명시한 값만 보관하고, 없는 등록 key는 [`missing_default`]로 평가합니다. 모든 값은 생성 시 registry 타입·variant
+/// 범위를 검사합니다.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EvaluationEnvironment {
+    values: Arc<BTreeMap<EnvironmentKey, TypedValue>>,
+}
+
+impl EvaluationEnvironment {
+    /// 값이 하나도 없는 환경(모든 key가 기본값).
+    pub fn new() -> EvaluationEnvironment {
+        EvaluationEnvironment::default()
+    }
+
+    /// (key, 값) 목록으로 만듭니다. 같은 key가 반복되면 마지막 값입니다.
+    pub fn from_values(
+        values: impl IntoIterator<Item = (EnvironmentKey, TypedValue)>,
+    ) -> Result<EvaluationEnvironment, EnvironmentError> {
+        let mut map = BTreeMap::new();
+        for (key, value) in values {
+            check_value(key, &value)?;
+            map.insert(key, value);
+        }
+        Ok(EvaluationEnvironment {
+            values: Arc::new(map),
+        })
+    }
+
+    /// `key`를 `value`로 바꾼 새 환경. 원래 환경은 그대로입니다.
+    pub fn with(
+        &self,
+        key: EnvironmentKey,
+        value: TypedValue,
+    ) -> Result<EvaluationEnvironment, EnvironmentError> {
+        check_value(key, &value)?;
+        let mut map = (*self.values).clone();
+        map.insert(key, value);
+        Ok(EvaluationEnvironment {
+            values: Arc::new(map),
+        })
+    }
+
+    /// `key`의 명시 값을 지운 새 환경(이후 기본값으로 평가).
+    pub fn without(&self, key: EnvironmentKey) -> EvaluationEnvironment {
+        let mut map = (*self.values).clone();
+        map.remove(&key);
+        EvaluationEnvironment {
+            values: Arc::new(map),
+        }
+    }
+
+    /// 명시한 값(기본값 제외).
+    pub fn explicit(&self, key: EnvironmentKey) -> Option<&TypedValue> {
+        self.values.get(&key)
+    }
+
+    /// 명시 여부.
+    pub fn is_present(&self, key: EnvironmentKey) -> bool {
+        self.values.contains_key(&key)
+    }
+
+    /// 평가에 쓰는 값: 명시 값 또는 registry 기본값. 미등록 key는 `None`.
+    pub fn value(&self, key: EnvironmentKey) -> Option<TypedValue> {
+        match self.values.get(&key) {
+            Some(value) => Some(value.clone()),
+            None => missing_default(key),
+        }
+    }
+
+    /// 평가 값이 `other`와 다른 등록 key(ID 순). 기본값과 같은 값을 명시해도 바뀐 것으로 보지 않습니다.
+    pub fn changed_keys(&self, other: &EvaluationEnvironment) -> BTreeSet<EnvironmentKey> {
+        let candidates: BTreeSet<EnvironmentKey> = self
+            .values
+            .keys()
+            .chain(other.values.keys())
+            .copied()
+            .collect();
+        candidates
+            .into_iter()
+            .filter(|key| self.value(*key) != other.value(*key))
+            .collect()
+    }
+}
+
+impl ReferenceValues for EvaluationEnvironment {
+    /// 환경 참조만 해석합니다(그 밖의 참조는 모르는 대상).
+    fn reference_value(&self, target: &ReferenceTarget) -> Option<Option<TypedValue>> {
+        match target {
+            ReferenceTarget::Environment(key) => self.value(*key).map(Some),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +460,133 @@ mod tests {
         assert_eq!(
             EnvironmentTypes.reference_type(&ReferenceTarget::Environment(EnvironmentKey::new(99))),
             None
+        );
+    }
+
+    fn dark() -> TypedValue {
+        TypedValue::Enum(EnumValue::new(COLOR_SCHEME_TYPE.raw(), color_scheme::DARK))
+    }
+
+    #[test]
+    fn missing_keys_use_registry_defaults() {
+        let empty = EvaluationEnvironment::new();
+        for key in ALL_KEYS {
+            let info = key_info(key).expect("등록");
+            let value = empty.value(key).expect("기본값 고정");
+            assert!(info.value_type.matches(&value), "{} 기본값 타입", info.name);
+            assert_eq!(check_value(key, &value), Ok(()));
+            assert!(!empty.is_present(key));
+        }
+        assert_eq!(
+            empty.value(VIEWPORT_WIDTH),
+            Some(TypedValue::Length(Length::new(1280.0).expect("유한")))
+        );
+        assert_eq!(
+            empty.value(LOCALE),
+            Some(TypedValue::String("und".to_string()))
+        );
+        assert_eq!(empty.value(EnvironmentKey::new(99)), None);
+        assert_eq!(
+            empty.reference_value(&ReferenceTarget::Environment(REDUCED_MOTION)),
+            Some(Some(TypedValue::Boolean(false)))
+        );
+    }
+
+    #[test]
+    fn present_values_override_and_environment_is_immutable() {
+        let base = EvaluationEnvironment::from_values([(COLOR_SCHEME, dark())]).expect("유효");
+        assert!(base.is_present(COLOR_SCHEME));
+        assert_eq!(base.value(COLOR_SCHEME), Some(dark()));
+        assert_eq!(base.explicit(CONTRAST), None);
+        // with는 새 환경을 만들고 원래 환경은 그대로입니다.
+        let wide = base
+            .with(
+                VIEWPORT_WIDTH,
+                TypedValue::Length(Length::new(1920.0).expect("유한")),
+            )
+            .expect("유효");
+        assert!(!base.is_present(VIEWPORT_WIDTH));
+        assert_eq!(wide.changed_keys(&base), BTreeSet::from([VIEWPORT_WIDTH]));
+        // 기본값과 같은 명시 값은 변화가 아닙니다.
+        let explicit_light = base
+            .with(
+                CONTRAST,
+                TypedValue::Enum(EnumValue::new(CONTRAST_TYPE.raw(), contrast::STANDARD)),
+            )
+            .expect("유효");
+        assert!(explicit_light.changed_keys(&base).is_empty());
+        assert_eq!(
+            base.without(COLOR_SCHEME).changed_keys(&base),
+            BTreeSet::from([COLOR_SCHEME])
+        );
+        // 잘못된 값은 거부합니다.
+        assert_eq!(
+            base.with(REDUCED_MOTION, TypedValue::Number(FiniteF32::ONE)),
+            Err(EnvironmentError::TypeMismatch {
+                key: REDUCED_MOTION,
+                expected: ExpressionType::Boolean
+            })
+        );
+        assert_eq!(
+            base.with(
+                COLOR_SCHEME,
+                TypedValue::Enum(EnumValue::new(COLOR_SCHEME_TYPE.raw(), 2))
+            ),
+            Err(EnvironmentError::InvalidVariant {
+                key: COLOR_SCHEME,
+                variant: 2
+            })
+        );
+        assert_eq!(
+            EvaluationEnvironment::from_values([(
+                EnvironmentKey::new(42),
+                TypedValue::Boolean(true)
+            )]),
+            Err(EnvironmentError::UnknownKey(EnvironmentKey::new(42)))
+        );
+        // 다른 enum 타입의 값도 타입 불일치입니다.
+        assert!(matches!(
+            base.with(
+                COLOR_SCHEME,
+                TypedValue::Enum(EnumValue::new(CONTRAST_TYPE.raw(), 0))
+            ),
+            Err(EnvironmentError::TypeMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn expressions_evaluate_against_missing_and_present_values() {
+        use crate::ast::{ExprNode, ExprNodeId, ExpressionAst};
+        use crate::bytecode::Program;
+        use crate::ops::BinaryOp;
+        use stellar_core_types::ids::StableId;
+        let id = |n: u64| ExprNodeId::new(StableId::new_v7(n, 0, n));
+        // if color_scheme == dark then 1 else 2
+        let ast = ExpressionAst::new(
+            id(1),
+            vec![
+                ExprNode::if_else(id(1), id(2), id(5), id(6)),
+                ExprNode::binary(id(2), BinaryOp::Equal, id(3), id(4)),
+                ExprNode::reference(id(3), ReferenceTarget::Environment(COLOR_SCHEME)),
+                ExprNode::literal(id(4), dark()),
+                ExprNode::literal(id(5), TypedValue::Number(FiniteF32::ONE)),
+                ExprNode::literal(
+                    id(6),
+                    TypedValue::Number(FiniteF32::new(2.0).expect("유한")),
+                ),
+            ],
+        )
+        .expect("유효");
+        let program = Program::compile(&ast, &EnvironmentTypes).expect("컴파일");
+        let missing = EvaluationEnvironment::new();
+        let present = missing.with(COLOR_SCHEME, dark()).expect("유효");
+        assert_eq!(
+            program.evaluate(&missing),
+            Ok(Some(TypedValue::Number(FiniteF32::new(2.0).expect("유한"))))
+        );
+        assert_eq!(
+            program.evaluate(&present),
+            Ok(Some(TypedValue::Number(FiniteF32::ONE)))
         );
     }
 }
