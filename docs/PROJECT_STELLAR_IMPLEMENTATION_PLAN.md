@@ -1549,7 +1549,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XV.4.1 | `[x]` | resolver graph를 `stellar.lock.yaml`의 resolved entries와 dependency paths로 변환합니다. | canonical lock golden. | IV.1.6, XV.2.6 |
 | XV.4.2 | `[~]` | 각 entry에 exact commit, cached content hash, library schema version, transitive dependencies를 기록합니다. | 누락 field validator 실패. | XV.3.4, XV.4.1 |
-| XV.4.3 | `[ ]` | lockfile가 존재하면 선언 selector가 바뀌지 않은 dependency는 network 없이 lock commit을 우선 사용합니다. | offline cache fixture 통과. | XV.4.2, XV.3.3 |
+| XV.4.3 | `[!]` | lockfile가 존재하면 선언 selector가 바뀌지 않은 dependency는 network 없이 lock commit을 우선 사용합니다. | offline cache fixture 통과. | XV.4.2, XV.3.3 |
 | XV.4.4 | `[~]` | lockfile content hash와 cache entry가 다르면 corruption으로 처리하고 자동으로 다른 commit을 선택하지 않습니다. | tampered cache fixture 실패. | XV.4.2 |
 | XV.4.5 | `[x]` | resolve 성공 후 lockfile을 canonical write하고 autosave와 별도 project file transaction으로 기록합니다. 자동 commit하지 않습니다. | Git status에 lockfile만 예상대로 변경. | XV.4.1, IV.1.7 |
 
@@ -1557,7 +1557,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XV.5.1 | `[ ]` | library project에서 export된 ComponentDefinition·TokenSet index를 읽는 `LibrarySnapshot`을 정의합니다. 모든 resource key에 LibraryId+commit+StableId를 포함합니다. | v1/v2 same StableId 충돌 없음. | XV.2.1, IX.1.1, VIII.5.1 |
+| XV.5.1 | `[!]` | library project에서 export된 ComponentDefinition·TokenSet index를 읽는 `LibrarySnapshot`을 정의합니다. 모든 resource key에 LibraryId+commit+StableId를 포함합니다. | v1/v2 same StableId 충돌 없음. | XV.2.1, IX.1.1, VIII.5.1 |
 | XV.5.2 | `[ ]` | 사용 project document가 library resource를 참조할 수 있게 `ExternalComponentRef`, `ExternalTokenRef`를 구현합니다. | round-trip. | XV.5.1 |
 | XV.5.3 | `[ ]` | library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다. | edit definition fixture 실패, override 성공. | XV.5.2, IX.2.4 |
 | XV.5.4 | `[ ]` | library의 transitive resource ref를 동일 dependency graph instance 안에서 resolve합니다. | v1 parent가 v1 child, v2 parent가 v2 child 참조. | XV.2.2, XV.5.1 |
@@ -1569,9 +1569,9 @@ tools/xtask/
 |---|---|---|---|---|
 | XV.6.1 | `[x]` | `stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다. | schema validation. | XV.1.1 |
 | XV.6.2 | `[~]` | local path가 일반 repo 또는 잘못된 library id이면 거부합니다. | fixture 실패. | XV.6.1, IV.5.1 |
-| XV.6.3 | `[ ]` | local override의 current commit과 working tree dirty 상태를 진단에 표시하되 lockfile exact remote commit은 유지합니다. | dirty override warning. | XV.6.2, XIV.2.2 |
-| XV.6.4 | `[ ]` | linked worktree path도 ProjectProbe로 허용합니다. | worktree library fixture load. | XIV.1.2, XV.6.2 |
-| XV.6.5 | `[ ]` | local override는 개발 세션에서만 사용하고 release validation에서 존재하면 경고 또는 정책 오류를 config로 제어합니다. | release gate fixture 통과. | XV.6.3 |
+| XV.6.3 | `[!]` | local override의 current commit과 working tree dirty 상태를 진단에 표시하되 lockfile exact remote commit은 유지합니다. | dirty override warning. | XV.6.2, XIV.2.2 |
+| XV.6.4 | `[!]` | linked worktree path도 ProjectProbe로 허용합니다. | worktree library fixture load. | XIV.1.2, XV.6.2 |
+| XV.6.5 | `[!]` | local override는 개발 세션에서만 사용하고 release validation에서 존재하면 경고 또는 정책 오류를 config로 제어합니다. | release gate fixture 통과. | XV.6.3 |
 
 ### XV.7 Library 업데이트
 
@@ -1587,8 +1587,8 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XV.8.1 | `[ ]` | 최근 사용 시각과 lockfile reference set을 기준으로 cache GC 후보를 계산합니다. 삭제 임계치는 config에 둡니다. | active lock entry 후보 제외. | XV.3.6, XV.4.2 |
-| XV.8.2 | `[ ]` | 여러 project가 참조하는 cache entry는 마지막 참조가 사라질 때까지 삭제하지 않습니다. | two-project fixture 통과. | XV.8.1 |
+| XV.8.1 | `[!]` | 최근 사용 시각과 lockfile reference set을 기준으로 cache GC 후보를 계산합니다. 삭제 임계치는 config에 둡니다. | active lock entry 후보 제외. | XV.3.6, XV.4.2 |
+| XV.8.2 | `[!]` | 여러 project가 참조하는 cache entry는 마지막 참조가 사라질 때까지 삭제하지 않습니다. | two-project fixture 통과. | XV.8.1 |
 | XV.8.3 | `[x]` | duplicate library version warning에 dependency paths와 예상 추가 용량을 포함합니다. repository URL은 표시 UI에만 local source로 전달하고 telemetry에는 제외합니다. | warning fixture 정확. | XV.2.5, XV.3.5 |
 | XV.8.4 | `[ ]` | 외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update. | semantic snapshot·lockfile golden 통과. | XV.1~XV.7 |
 
