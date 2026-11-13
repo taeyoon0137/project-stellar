@@ -23,3 +23,6 @@ pub mod ast;
 
 /// AST node binary 직렬화 (VIII.2.2).
 pub mod codec;
+
+/// AST cycle detector (VIII.2.3).
+pub mod cycle;

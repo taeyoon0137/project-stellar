@@ -1,4 +1,4 @@
-//! Expression AST 공통 node 구조 (VIII.2.1).
+//! Expression AST 공통 node 구조 (VIII.2.1~VIII.2.3).
 //!
 //! 표현식의 원본은 타입이 지정된 AST입니다(아키텍처 §14.1). 모든 node는
 //!
@@ -8,10 +8,8 @@
 //!
 //! 를 가집니다. child는 node를 직접 소유하지 않고 ID로 가리키므로, 한 node를 여러 부모가 공유하는
 //! **DAG**를 표현할 수 있습니다. [`ExpressionAst::new`]는 ID 유일성, root 존재, child 참조 해석,
-//! kind별 slot 구성, root에서의 도달 가능성을 검증합니다. 모든 검증은 재귀 없이 명시적 stack으로
-//! 수행합니다.
-//!
-//! kind별 slot 구성:
+//! kind별 slot 구성, root에서의 도달 가능성, cycle 금지([`crate::cycle`], VIII.2.3)를 검증합니다. 모든
+//! 검증은 재귀 없이 명시적 stack으로 수행합니다.
 //!
 //! kind별 payload(VIII.2.2)와 slot 구성:
 //!
@@ -454,6 +452,11 @@ pub enum AstError {
     },
     /// root에서 도달할 수 없는 node가 있습니다.
     UnreachableNode(ExprNodeId),
+    /// child 참조가 cycle을 이룹니다(VIII.2.3). 경로는 시작 node로 닫힙니다(`[a, …, a]`).
+    Cycle {
+        /// cycle 경로.
+        path: Vec<ExprNodeId>,
+    },
 }
 
 impl fmt::Display for AstError {
@@ -476,6 +479,16 @@ impl fmt::Display for AstError {
                 write!(f, "{node}의 {slot} slot이 비어 있습니다")
             }
             AstError::UnreachableNode(id) => write!(f, "root에서 도달할 수 없는 node: {id}"),
+            AstError::Cycle { path } => {
+                f.write_str("child 참조 cycle: ")?;
+                for (index, id) in path.iter().enumerate() {
+                    if index > 0 {
+                        f.write_str(" → ")?;
+                    }
+                    write!(f, "{id}")?;
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -496,7 +509,8 @@ pub struct ExpressionAst {
 impl ExpressionAst {
     /// node 목록과 root로 AST를 만들고 구조를 검증합니다.
     ///
-    /// 검사 순서: ID 유일성 → root 존재 → node별 slot 구성 → child 참조 해석 → 도달 가능성.
+    /// 검사 순서: ID 유일성 → root 존재 → node별 slot 구성 → child 참조 해석 → 도달 가능성 →
+    /// cycle 금지(VIII.2.3).
     pub fn new(root: ExprNodeId, nodes: Vec<ExprNode>) -> Result<ExpressionAst, AstError> {
         let mut index = BTreeMap::new();
         for (position, node) in nodes.iter().enumerate() {
@@ -523,6 +537,9 @@ impl ExpressionAst {
         let reachable = ast.reachable_from_root();
         if let Some(node) = ast.nodes.iter().find(|node| !reachable.contains(&node.id)) {
             return Err(AstError::UnreachableNode(node.id));
+        }
+        if let Some(path) = crate::cycle::find_cycle(&ast) {
+            return Err(AstError::Cycle { path });
         }
         Ok(ast)
     }
