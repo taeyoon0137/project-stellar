@@ -1842,7 +1842,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XIX.1.1 | `[x]` | 별도 `tools/stellar-mcp` 실행 파일을 생성하고 stdin/stdout JSON-RPC 프레이밍을 구현합니다. stdout에는 프로토콜 메시지 외 로그를 쓰지 않습니다. | protocol smoke fixture. | G8 |
-| XIX.1.2 | `[ ]` | 브리지가 실행 중 Stellar 앱을 찾는 로컬 IPC endpoint registry를 구현합니다. network port는 열지 않습니다. | app 없음/한 개/여러 개 fixture 통과. | XIX.1.1 |
+| XIX.1.2 | `[x]` | 브리지가 실행 중 Stellar 앱을 찾는 로컬 IPC endpoint registry를 구현합니다. network port는 열지 않습니다. | app 없음/한 개/여러 개 fixture 통과. | XIX.1.1 |
 | XIX.1.3 | `[ ]` | bridge↔app IPC에 session nonce와 OS 사용자 identity 검증을 적용합니다. | 다른 사용자·재사용 nonce 거부. | XIX.1.2 |
 | XIX.1.4 | `[ ]` | 한 bridge process가 한 agent session만 담당하고 종료 시 session permission을 폐기합니다. | disconnect cleanup 통과. | XIX.1.3 |
 | XIX.1.5 | `[x]` | MCP protocol version을 config에 고정하고 unsupported client version에 명확한 오류를 반환합니다. | version matrix fixture. | XIX.1.1 |

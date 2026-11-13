@@ -15,6 +15,10 @@ pub mod framing;
 /// JSON-RPC 2.0 메시지 모델 (XIX.1.1).
 pub mod jsonrpc;
 
+/// 브리지↔앱 로컬 IPC: endpoint registry (XIX.1.2). macOS 전용(ADR-0006).
+#[cfg(target_os = "macos")]
+pub mod ipc;
+
 /// stderr 전용 로그 (XIX.1.1).
 pub mod log;
 
