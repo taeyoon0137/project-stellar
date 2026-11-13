@@ -12,3 +12,6 @@ mod codec;
 
 /// ComponentDefinition resource와 정의 tree (IX.1.1).
 pub mod definition;
+
+/// ComponentInstance node payload (IX.2.1).
+pub mod instance;
