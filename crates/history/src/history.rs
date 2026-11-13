@@ -11,16 +11,25 @@
 use stellar_commands::change::ChangeSet;
 use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
+use stellar_core_types::clock::MonotonicClock;
 
 use crate::entry::{
     GroupingKey, HistoryEntry, HistoryError, HistoryPayload, HistorySequence, SequenceAllocator,
 };
+use crate::grouping::HistoryGroupingPolicy;
 
 /// 적용 중인 preview transaction과 그 역(gesture 시작 전 상태로 되돌림).
 #[derive(Debug, Clone)]
 struct AppliedPreview {
     forward: CommandTransaction,
     inverse: CommandTransaction,
+}
+
+/// 마지막 항목에 이어 합칠 수 있는 입력 묶음(VII.4.3~).
+#[derive(Debug, Clone, Copy)]
+struct OpenGroup {
+    key: GroupingKey,
+    last_nanos: u64,
 }
 
 /// 진행 중인 preview 조작.
@@ -36,12 +45,27 @@ pub struct History {
     entries: Vec<HistoryEntry>,
     sequences: SequenceAllocator,
     preview: Option<Preview>,
+    policy: HistoryGroupingPolicy,
+    open_group: Option<OpenGroup>,
 }
 
 impl History {
     /// 빈 history.
     pub fn new() -> History {
         History::default()
+    }
+
+    /// grouping 정책을 지정한 빈 history.
+    pub fn with_policy(policy: HistoryGroupingPolicy) -> History {
+        History {
+            policy,
+            ..History::default()
+        }
+    }
+
+    /// grouping 정책.
+    pub fn policy(&self) -> HistoryGroupingPolicy {
+        self.policy
     }
 
     /// 확정된 항목(오래된 것부터).
@@ -74,6 +98,7 @@ impl History {
         let sequence = sequences.allocate()?;
         let applied = doc.execute_transaction(transaction)?;
         self.sequences = sequences;
+        self.open_group = None;
         self.entries.push(HistoryEntry {
             sequence,
             origin: transaction.origin,
@@ -82,6 +107,54 @@ impl History {
                 forward: transaction.clone(),
                 inverse: applied.inverse,
             },
+        });
+        Ok(applied.changes)
+    }
+
+    /// grouping key를 가진 연속 입력을 실행하고, 정책([`HistoryGroupingPolicy`])이 허락하면 마지막
+    /// 항목에 합칩니다(VII.4.3~). 합치면 정방향은 뒤에 이어 붙이고 역방향은 앞에 붙여, 항목 하나의
+    /// undo가 묶음 전체를 되돌립니다.
+    pub fn record_grouped<C: MonotonicClock>(
+        &mut self,
+        doc: &mut DocumentState,
+        transaction: &CommandTransaction,
+        key: GroupingKey,
+        clock: &C,
+    ) -> Result<ChangeSet, HistoryError> {
+        if self.preview.is_some() {
+            return Err(HistoryError::PreviewActive);
+        }
+        let now = clock.now_nanos();
+        let merge = self.open_group.is_some_and(|open| {
+            self.policy
+                .should_merge(&open.key, open.last_nanos, &key, now)
+        }) && self.entries.last().is_some_and(HistoryEntry::is_document);
+        if !merge {
+            let changes = self.record_document(doc, transaction, Some(key))?;
+            self.open_group = Some(OpenGroup {
+                key,
+                last_nanos: now,
+            });
+            return Ok(changes);
+        }
+        let applied = doc.execute_transaction(transaction)?;
+        if let Some(HistoryEntry {
+            grouping,
+            payload: HistoryPayload::Document { forward, inverse },
+            ..
+        }) = self.entries.last_mut()
+        {
+            forward
+                .requests
+                .extend(transaction.requests.iter().cloned());
+            let mut merged = applied.inverse.requests;
+            merged.append(&mut inverse.requests);
+            inverse.requests = merged;
+            *grouping = Some(key);
+        }
+        self.open_group = Some(OpenGroup {
+            key,
+            last_nanos: now,
         });
         Ok(applied.changes)
     }
@@ -147,6 +220,7 @@ impl History {
         let sequence = self.sequences.allocate()?;
         let key = preview.key;
         self.preview = None;
+        self.open_group = None;
         self.entries.push(HistoryEntry {
             sequence,
             origin: applied.forward.origin,
@@ -437,5 +511,170 @@ mod tests {
         assert_eq!(history.end_preview().unwrap(), None);
         assert_eq!(history.len(), 1);
         assert_eq!(history.end_preview(), Err(HistoryError::NoPreview));
+    }
+
+    mod text {
+        //! 텍스트 입력 grouping fixture(VII.4.3).
+
+        use super::super::test_fixtures::*;
+        use super::super::*;
+        use crate::entry::TextInputKind;
+        use crate::grouping::GroupingConfig;
+        use stellar_commands::command::Command;
+        use stellar_commands::convert::RestoreNodeRecords;
+        use stellar_commands::document::records::NodePayload;
+        use stellar_commands::document::text::{edit_text, scalar_len, TextPayload, TextRange};
+        use stellar_commands::node_ops::InsertNode;
+        use stellar_core_types::clock::ManualClock;
+
+        const MS: u64 = 1_000_000;
+
+        fn text_node(doc: &mut DocumentState, id: u64) {
+            let mut record = frame(id, Some(12), 0x10 + id as u8);
+            record.payload = NodePayload::Text(TextPayload::empty(0));
+            let t = tx(
+                doc,
+                5_000 + id,
+                Command::InsertNode(InsertNode::single(record)),
+            );
+            doc.execute_transaction(&t).unwrap();
+        }
+
+        fn content(doc: &DocumentState, id: u64) -> String {
+            match doc.model().payload(sid(id)) {
+                Some(NodePayload::Text(text)) => text.content().to_string(),
+                _ => panic!("Text node"),
+            }
+        }
+
+        /// `[start, end)`를 `replacement`로 바꾸는 편집 transaction과 grouping key.
+        fn text_edit(
+            doc: &DocumentState,
+            id: u64,
+            start: u32,
+            end: u32,
+            replacement: &str,
+            kind: TextInputKind,
+            caret_before: u32,
+        ) -> (CommandTransaction, GroupingKey) {
+            let mut record = doc.model().record(sid(id)).unwrap();
+            let NodePayload::Text(text) = &record.payload else {
+                panic!("Text");
+            };
+            let edited =
+                edit_text(text, TextRange::new(start, end).unwrap(), replacement, &[]).unwrap();
+            record.payload = NodePayload::Text(edited);
+            let caret_after = start + scalar_len(replacement);
+            let command = Command::RestoreNodeRecords(RestoreNodeRecords {
+                records: vec![record],
+            });
+            let key = GroupingKey::TextInput {
+                node: sid(id),
+                kind,
+                caret_before,
+                caret_after,
+            };
+            (tx(doc, 6_000 + u64::from(start), command), key)
+        }
+
+        fn type_char(
+            history: &mut History,
+            doc: &mut DocumentState,
+            clock: &ManualClock,
+            id: u64,
+            caret: u32,
+            ch: &str,
+        ) {
+            let (t, key) = text_edit(doc, id, caret, caret, ch, TextInputKind::Insert, caret);
+            history.record_grouped(doc, &t, key, clock).unwrap();
+        }
+
+        #[test]
+        fn consecutive_typing_merges_into_one_entry_and_undoes_together() {
+            // 검증 기준(VII.4.3): 조건별 merge/split fixture 통과 — merge.
+            let mut doc = small_state();
+            text_node(&mut doc, 20);
+            let mut history = History::new();
+            let mut clock = ManualClock::new(0);
+            for (i, ch) in ["가", "b", "😀"].iter().enumerate() {
+                type_char(&mut history, &mut doc, &clock, 20, i as u32, ch);
+                clock.advance(200 * MS);
+            }
+            assert_eq!(content(&doc, 20), "가b😀");
+            assert_eq!(history.len(), 1, "연속 입력 1건");
+            let entry = &history.entries()[0];
+            assert_eq!(
+                entry.grouping,
+                Some(GroupingKey::TextInput {
+                    node: sid(20),
+                    kind: TextInputKind::Insert,
+                    caret_before: 2,
+                    caret_after: 3
+                })
+            );
+            let HistoryPayload::Document { forward, inverse } = &entry.payload else {
+                panic!("문서 항목");
+            };
+            assert_eq!(forward.requests.len(), 3);
+            doc.execute_transaction(&inverse.rebased(doc.revision()))
+                .unwrap();
+            assert_eq!(content(&doc, 20), "", "항목 하나의 역이 묶음 전체를 되돌림");
+        }
+
+        #[test]
+        fn split_conditions() {
+            // 검증 기준(VII.4.3): split — 간격 초과, 다른 node, 비인접 caret, 입력 종류 변경.
+            let mut doc = small_state();
+            text_node(&mut doc, 20);
+            text_node(&mut doc, 21);
+            let mut history = History::new();
+            let mut clock = ManualClock::new(0);
+            type_char(&mut history, &mut doc, &clock, 20, 0, "a");
+            clock.advance(1_500 * MS); // 기본 간격 1초 초과
+            type_char(&mut history, &mut doc, &clock, 20, 1, "b");
+            assert_eq!(history.len(), 2, "간격 초과 → 분리");
+            clock.advance(10 * MS);
+            type_char(&mut history, &mut doc, &clock, 21, 0, "x");
+            assert_eq!(history.len(), 3, "다른 node → 분리");
+            clock.advance(10 * MS);
+            type_char(&mut history, &mut doc, &clock, 20, 0, "_");
+            assert_eq!(history.len(), 4, "다른 node 뒤 비인접 caret → 분리");
+            clock.advance(10 * MS);
+            type_char(&mut history, &mut doc, &clock, 20, 3, "c");
+            assert_eq!(history.len(), 5, "비인접 caret(1 → 3) → 분리");
+            clock.advance(10 * MS);
+            // Backspace: caret 4 → 3, 다음 Backspace는 caret 3 → 2(인접).
+            let (t, key) = text_edit(&doc, 20, 3, 4, "", TextInputKind::DeleteBackward, 4);
+            history.record_grouped(&mut doc, &t, key, &clock).unwrap();
+            assert_eq!(history.len(), 6, "입력 종류 변경 → 분리");
+            clock.advance(10 * MS);
+            let (t, key) = text_edit(&doc, 20, 2, 3, "", TextInputKind::DeleteBackward, 3);
+            history.record_grouped(&mut doc, &t, key, &clock).unwrap();
+            assert_eq!(history.len(), 6, "연속 Backspace → 병합");
+            assert_eq!(content(&doc, 20), "_a");
+            // 일반 기록이 끼면 묶음이 닫힙니다.
+            let t = tx(&doc, 7_000, Command::rename_node(sid(11), "x"));
+            history.record_document(&mut doc, &t, None).unwrap();
+            clock.advance(10 * MS);
+            let (t, key) = text_edit(&doc, 20, 1, 2, "", TextInputKind::DeleteBackward, 2);
+            history.record_grouped(&mut doc, &t, key, &clock).unwrap();
+            assert_eq!(history.len(), 8);
+        }
+
+        #[test]
+        fn interval_comes_from_config() {
+            let mut doc = small_state();
+            text_node(&mut doc, 20);
+            let mut history = History::with_policy(HistoryGroupingPolicy::new(GroupingConfig {
+                text_merge_interval_nanos: 50 * MS,
+            }));
+            let mut clock = ManualClock::new(0);
+            type_char(&mut history, &mut doc, &clock, 20, 0, "a");
+            clock.advance(40 * MS);
+            type_char(&mut history, &mut doc, &clock, 20, 1, "b");
+            clock.advance(60 * MS);
+            type_char(&mut history, &mut doc, &clock, 20, 2, "c");
+            assert_eq!(history.len(), 2, "50ms 설정: 40ms 병합, 60ms 분리");
+        }
     }
 }
