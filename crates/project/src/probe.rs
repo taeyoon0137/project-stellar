@@ -3,14 +3,21 @@
 //! 경로 선택 직후 **가벼운 검사만** 수행합니다: root 검증(IV.2.2, `stellar.yaml`+`.git` 동일
 //! 경로), `stellar.yaml` YAML parse(IV.1.2), 매니페스트 스키마 검증(IV.1.1). **문서 청크
 //! (`design/` 등)는 읽지 않습니다.** 신뢰 상태·문서 로드는 후속(IV.5.2~)에서 다룹니다.
+//!
+//! `stellar.yaml`은 신뢰되지 않은 입력이므로 loader 상한
+//! ([`MAX_INPUT_BYTES`](crate::yaml::loader::MAX_INPUT_BYTES))보다 많이 읽지
+//! 않습니다. 열린 파일의 크기가 상한을 넘으면 내용을 읽기 전에 거부하고, 크기 확인 뒤 파일이
+//! 자라더라도 상한 + 1 바이트에서 읽기를 멈춥니다.
 
-use std::io;
+use std::fs::File;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use crate::manifest::{Manifest, ManifestError};
 use crate::root::{validate_project_root, GitLink, RootError, MANIFEST_FILE};
 use crate::trust::TrustStatus;
-use crate::yaml::{load_restricted, LoaderError};
+use crate::yaml::loader::MAX_INPUT_BYTES;
+use crate::yaml::{load_restricted, LoaderError, LoaderErrorKind};
 
 /// probe 성공 결과(문서는 아직 로드하지 않음).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,9 +64,8 @@ pub fn probe_project(path: &Path) -> Result<ProjectProbe, ProbeError> {
     // 1. root 검증(stellar.yaml + .git 동일 경로).
     let git_link = validate_project_root(path).map_err(ProbeError::Root)?;
 
-    // 2. stellar.yaml 읽기.
-    let text = std::fs::read_to_string(path.join(MANIFEST_FILE))
-        .map_err(|e| ProbeError::ManifestRead { kind: e.kind() })?;
+    // 2. stellar.yaml 읽기(loader 상한까지만).
+    let text = read_manifest_bounded(&path.join(MANIFEST_FILE))?;
 
     // 3. YAML parse(제한 loader).
     let value = load_restricted(&text).map_err(ProbeError::ManifestSyntax)?;
@@ -71,6 +77,51 @@ pub fn probe_project(path: &Path) -> Result<ProjectProbe, ProbeError> {
         root: path.to_path_buf(),
         git_link,
         manifest,
+    })
+}
+
+/// `stellar.yaml`을 loader 상한([`MAX_INPUT_BYTES`])까지만 읽어 UTF-8 문자열로 돌려줍니다.
+///
+/// 열린 handle의 크기가 상한을 넘으면 내용을 읽지 않고 `input-too-large`로 거부합니다(sparse
+/// 파일처럼 실제 바이트가 없어도 크기만으로 거부). 크기 확인 뒤 파일이 자라도 [`read_at_most`]가
+/// 상한 + 1 바이트에서 멈추므로 메모리·읽기 시간은 상한에 묶입니다.
+fn read_manifest_bounded(path: &Path) -> Result<String, ProbeError> {
+    let read_error = |e: io::Error| ProbeError::ManifestRead { kind: e.kind() };
+    let file = File::open(path).map_err(read_error)?;
+    let declared = file.metadata().map_err(read_error)?.len();
+    let limit = u64::try_from(MAX_INPUT_BYTES).unwrap_or(u64::MAX);
+    if declared > limit {
+        return Err(input_too_large(Some(declared)));
+    }
+    let bytes = read_at_most(file, MAX_INPUT_BYTES)
+        .map_err(read_error)?
+        .ok_or_else(|| input_too_large(None))?;
+    String::from_utf8(bytes).map_err(|_| ProbeError::ManifestRead {
+        kind: io::ErrorKind::InvalidData,
+    })
+}
+
+/// `reader`에서 최대 `limit + 1` 바이트만 읽습니다. `limit`을 넘으면 `Ok(None)`입니다.
+///
+/// 끝없는 입력(장치 파일, 계속 자라는 파일)에서도 읽기량과 할당량이 `limit + 1`에 묶입니다.
+fn read_at_most(reader: impl Read, limit: usize) -> io::Result<Option<Vec<u8>>> {
+    let cap = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
+    let mut bytes = Vec::new();
+    reader.take(cap).read_to_end(&mut bytes)?;
+    Ok((bytes.len() <= limit).then_some(bytes))
+}
+
+/// loader와 같은 `input-too-large` 오류를 만듭니다. 크기를 알면 메시지에 넣습니다.
+fn input_too_large(declared: Option<u64>) -> ProbeError {
+    let message = match declared {
+        Some(bytes) => format!("입력이 {bytes} bytes로 상한 {MAX_INPUT_BYTES} bytes를 넘습니다"),
+        None => format!("입력이 상한 {MAX_INPUT_BYTES} bytes를 넘습니다"),
+    };
+    ProbeError::ManifestSyntax(LoaderError {
+        kind: LoaderErrorKind::InputTooLarge,
+        line: 0,
+        col: 0,
+        message,
     })
 }
 
@@ -211,6 +262,68 @@ mod tests {
             probe_project(&dir.path),
             Err(ProbeError::ManifestSchema(_))
         ));
+    }
+
+    /// 상한의 `multiple`배 크기 sparse 매니페스트를 만들고 마지막 바이트를 UTF-8이 아닌 값으로
+    /// 둡니다. 파일 전체를 읽으면 UTF-8 오류(`ManifestRead`)가 나므로 읽은 범위를 구분할 수
+    /// 있습니다.
+    fn write_sparse_manifest(dir: &Path, multiple: u64) {
+        use std::io::{Seek, SeekFrom, Write};
+        let size = u64::try_from(MAX_INPUT_BYTES).unwrap() * multiple;
+        let mut file = std::fs::File::create(dir.join(MANIFEST_FILE)).unwrap();
+        file.set_len(size).unwrap();
+        file.seek(SeekFrom::Start(size - 1)).unwrap();
+        file.write_all(&[0xFF]).unwrap();
+    }
+
+    #[test]
+    fn oversized_manifest_is_rejected_before_reading_its_body() {
+        let dir = TempDir::new();
+        write_sparse_manifest(&dir.path, 64);
+        make_git_dir(&dir.path);
+        match probe_project(&dir.path) {
+            Err(ProbeError::ManifestSyntax(error)) => {
+                assert_eq!(error.kind, LoaderErrorKind::InputTooLarge, "{error}");
+            }
+            other => panic!("상한 초과 매니페스트가 input-too-large가 아님: {other:?}"),
+        }
+        // 비신뢰 probe도 같은 상한을 씁니다.
+        assert!(matches!(
+            safe_probe(&dir.path, TrustStatus::NotTrusted),
+            Err(SafeProbeError::Probe(ProbeError::ManifestSyntax(
+                LoaderError {
+                    kind: LoaderErrorKind::InputTooLarge,
+                    ..
+                }
+            )))
+        ));
+    }
+
+    #[test]
+    fn bounded_read_stops_on_an_endless_source() {
+        // 크기 정보가 없는 끝없는 입력도 상한 + 1 바이트에서 멈춥니다.
+        assert_eq!(
+            read_at_most(io::repeat(b'a'), MAX_INPUT_BYTES).unwrap(),
+            None
+        );
+        let exact = read_at_most(io::repeat(b'a').take(16), 16).unwrap();
+        assert_eq!(exact.as_deref(), Some(&[b'a'; 16][..]));
+        assert_eq!(read_at_most(io::repeat(b'a').take(17), 16).unwrap(), None);
+    }
+
+    #[test]
+    fn manifest_at_exact_limit_is_not_rejected_as_too_large() {
+        // 경계값: 정확히 상한 크기는 크기 검사를 통과하고 loader 단계로 넘어갑니다.
+        let dir = TempDir::new();
+        write_manifest(&dir.path, &"#".repeat(MAX_INPUT_BYTES));
+        make_git_dir(&dir.path);
+        match probe_project(&dir.path) {
+            Err(ProbeError::ManifestSyntax(error)) => {
+                assert_ne!(error.kind, LoaderErrorKind::InputTooLarge, "{error}");
+            }
+            Err(ProbeError::ManifestSchema(_)) => {}
+            other => panic!("예상하지 않은 결과: {other:?}"),
+        }
     }
 
     #[test]

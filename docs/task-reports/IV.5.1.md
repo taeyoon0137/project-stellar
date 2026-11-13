@@ -50,3 +50,20 @@
 
 - 신뢰 상태 저장은 IV.5.2, 비신뢰 probe의 안전 제약(외부 프로세스·symlink·필터 금지)은 IV.5.3에서
   추가합니다. 본 작업은 경량 probe에 한정합니다.
+
+## 후속 수정(보안 리뷰 반영): `stellar.yaml` 읽기를 loader 상한에 묶음
+
+- **문제**: `probe_project`가 `std::fs::read_to_string`으로 `stellar.yaml` 전체를 읽은 뒤에야
+  loader의 `MAX_INPUT_BYTES`(1 MiB) 검사가 돌았습니다. runtime·FFI 프로젝트 열기 경로가 이 probe를
+  셸에 노출하므로, 거대한(sparse 포함) 매니페스트를 가진 폴더를 열면 document thread가 GiB 단위로
+  할당·읽기를 하며 뒤의 job을 막고, 할당 실패 시 release(`panic = abort`)에서 process가 끝날 수
+  있었습니다.
+- **수정**: 매니페스트는 연 handle의 크기가 상한을 넘으면 내용을 읽지 않고 `input-too-large`
+  (`ManifestSyntax`, runtime `ManifestCorrupt`)로 거부합니다. 크기 확인 뒤 파일이 자라도
+  `Read::take(상한 + 1)`로 읽기·할당량을 상한에 묶습니다. 상한 이하의 동작(UTF-8 오류 →
+  `ManifestRead(InvalidData)`, loader 이후 단계)은 그대로입니다.
+- **검증**: `oversized_manifest_is_rejected_before_reading_its_body`(상한 64배 sparse 파일 끝의
+  비 UTF-8 바이트를 읽지 않음, 수정 전 `ManifestRead(InvalidData)`로 실패),
+  `manifest_at_exact_limit_is_not_rejected_as_too_large`(경계값),
+  `bounded_read_stops_on_an_endless_source`(끝없는 입력), runtime 통합 테스트
+  `oversized_manifest_is_rejected_without_reading_its_body`(수정 전 `ManifestUnreadable`로 실패).

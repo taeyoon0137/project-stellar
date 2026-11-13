@@ -24,7 +24,10 @@
 //!    `stellar.yaml`이 없으면 [`RequestFailure::NotAStellarProject`]. 자동 변환은 하지 않습니다.
 //! 2. 신뢰되지 않은 프로젝트용 안전 probe(IV.5.3): 매니페스트 메타데이터만 읽고 Git·필터를 실행하지
 //!    않으며, symlink 매니페스트는 따르지 않습니다. 신뢰 저장소 연결 전이므로 모든 프로젝트를
-//!    신뢰되지 않음으로 엽니다.
+//!    신뢰되지 않음으로 엽니다. `stellar.yaml`은 loader 상한(1 MiB)까지만 읽으므로 거대한
+//!    매니페스트도 document thread를 오래 붙잡지 않고
+//!    [`ManifestCorrupt`](crate::app::RequestFailure::ManifestCorrupt)(`input-too-large`)가
+//!    됩니다.
 //! 3. 매니페스트 `project.id`를 [`StableId`]로 바꾸고 [`ProjectIdentity`](IV.2.3)를 만듭니다.
 //!
 //! 각 실패는 고정 코드([`RequestFailure`])와 한국어 메시지로 [`RuntimeEvent::RequestFailed`]가

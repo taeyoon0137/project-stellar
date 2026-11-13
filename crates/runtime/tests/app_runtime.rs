@@ -220,6 +220,30 @@ fn invalid_project_folders_map_to_fixed_failures() {
 }
 
 #[test]
+fn oversized_manifest_is_rejected_without_reading_its_body() {
+    // 셸에서 닿는 열기 경로는 신뢰되지 않은 `stellar.yaml`을 loader 상한보다 많이 읽으면 안
+    // 됩니다. 상한의 64배짜리 sparse 파일 끝에 UTF-8이 아닌 바이트를 두어, 파일 전체를 읽으면
+    // `ManifestUnreadable`(UTF-8 오류)이 되고 상한에서 멈추면 `input-too-large`가 되게 합니다.
+    use std::io::{Seek, SeekFrom, Write};
+    use stellar_project::yaml::loader::MAX_INPUT_BYTES;
+
+    let fixture = project_fixture("x");
+    let size = u64::try_from(MAX_INPUT_BYTES).unwrap() * 64;
+    let mut file = std::fs::File::create(fixture.path().join("stellar.yaml")).unwrap();
+    file.set_len(size).unwrap();
+    file.seek(SeekFrom::Start(size - 1)).unwrap();
+    file.write_all(&[0xFF]).unwrap();
+    drop(file);
+
+    let app = AppRuntime::start().unwrap();
+    let request = app.open_project(fixture.path()).unwrap();
+    let message = expect_failure(&app, request, RequestFailure::ManifestCorrupt);
+    assert!(message.contains("input-too-large"), "{message}");
+    assert_eq!(app.state().generation, 0);
+    app.shutdown().unwrap();
+}
+
+#[test]
 fn path_rules_are_checked_without_a_request() {
     let app = AppRuntime::start().unwrap();
     for (path, needle) in [
