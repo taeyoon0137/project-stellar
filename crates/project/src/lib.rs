@@ -50,3 +50,6 @@ pub mod recovery_shutdown;
 
 /// symlink를 그대로 허용하는 프로젝트 경로 resolver (XIII.4.1).
 pub mod path_resolver;
+
+/// 프로젝트 신뢰 grant/revoke와 OS 사용자 데이터 저장소 (XVI.7.2).
+pub mod trust_store;

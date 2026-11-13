@@ -1665,7 +1665,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XVI.7.1 | `[ ]` | untrusted mode capability matrix를 코드로 정의합니다: 문서 제한 읽기 허용, Git/terminal/future MCP/external filter/external symlink read 금지. | capability table test 통과. | IV.5.3, XIII.4.5, XIV.1.1 |
-| XVI.7.2 | `[ ]` | trust grant/revoke API를 구현하고 OS user data store에 기록합니다. project file/Git config는 변경하지 않습니다. | grant/revoke/reopen fixture 통과. | IV.5.2 |
+| XVI.7.2 | `[x]` | trust grant/revoke API를 구현하고 OS user data store에 기록합니다. project file/Git config는 변경하지 않습니다. | grant/revoke/reopen fixture 통과. | IV.5.2 |
 | XVI.7.3 | `[ ]` | Git hooks, filters, diff/merge driver는 시스템 Git이 실행하되 trusted mode에서만 Git command 자체를 허용합니다. Stellar가 hook 파일을 직접 실행하지 않습니다. | untrusted commit process spawn 0. | XIV.8.5, XVI.7.1 |
 | XVI.7.4 | `[ ]` | file parser worker process 격리 interface를 정의하고 이미지·font parser를 선택적으로 worker에서 실행할 수 있게 합니다. 초기에는 feature flag로 활성화합니다. | parser crash가 app process를 종료하지 않는 integration test. | XI.7.1, XIII.6.1, XII.1.4 |
 | XVI.7.5 | `[ ]` | temp directory permissions와 cleanup을 강화하고 다른 사용자 접근을 금지합니다. | platform permission test 통과. | XIV.2.6, IV.6.2 |
