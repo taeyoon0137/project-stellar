@@ -35,6 +35,9 @@ pub mod trust;
 /// 저장소 위치 판별 (XIV.1.2).
 pub mod location;
 
+/// Git capability probe (XIV.1.3).
+pub mod capability;
+
 /// 테스트 공용 도구(테스트 빌드 전용).
 #[cfg(test)]
 mod test_support;
