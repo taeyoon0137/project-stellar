@@ -15,6 +15,9 @@ pub mod manifest_source;
 /// `stellar.lock.yaml` 잠금 파일 데이터 모델 (IV.1.6).
 pub mod lock;
 
+/// resolve 결과 `stellar.lock.yaml` 기록 transaction (XV.4.5).
+pub mod lockfile_write;
+
 /// 플랫폼 공통 폴더 이름 검증기 (IV.2.1).
 pub mod folder_name;
 
