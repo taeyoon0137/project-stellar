@@ -6,8 +6,41 @@
 //!
 //! 필수 최상위 필드: `schema_version`, `project`, `target_profiles`, `dependencies`.
 //! 알 수 없는 키는 거부합니다(제한 스키마).
+//!
+//! `dependencies` 절의 entry 스키마는 의존성 모델(XV.1.1, `stellar-dependencies`)이 정의합니다:
+//! logical name(매핑 키), `source`(Git), `library_id`, `repository`, `version`(tag 스칼라 또는
+//! `{branch: ...}`·`{commit: ...}`), 선택 `local_override`(XV.6.1). 이 모듈은 [`YamlValue`]를
+//! 형식 중립 트리로 바꿔([`crate::manifest_node`]) 그 모델로 검증·기록하므로 `stellar.yaml`
+//! 의존성 형식은 하나뿐입니다.
+//!
+//! ```yaml
+//! dependencies:
+//!   design-system:
+//!     source: git
+//!     library_id: 0195c530-3acd-7bc1-8414-c213f61cb965
+//!     repository: git@github.com:example/design-system.git
+//!     version: v2.4.0
+//!   icons:
+//!     source: git
+//!     library_id: 0195c530-3acd-7bc1-8414-c213f61cb966
+//!     repository: https://example.com/icons.git
+//!     version:
+//!       branch: main
+//!     local_override: ../icons
+//! ```
 
+use std::path::Path;
+
+use stellar_dependencies::declaration::{dependencies_from_node, dependencies_to_node};
+use stellar_dependencies::local_override::{local_overrides, LocalOverrideMap};
+use stellar_dependencies::node::{SchemaError, ValueError};
+use stellar_dependencies::validation::{validate_declarations, DeclarationReport};
+
+use crate::manifest_node::{node_to_yaml, yaml_to_node, NodeConversionError};
 use crate::yaml::YamlValue;
+
+/// 의존성 선언 entry(XV.1.1 모델). `stellar.yaml` `dependencies` 절의 유일한 표현입니다.
+pub use stellar_dependencies::declaration::DependencyDeclaration as Dependency;
 
 /// 현재 매니페스트 스키마 버전.
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -37,6 +70,45 @@ pub enum ManifestError {
         /// 키가 나타난 경로.
         path: String,
     },
+    /// 의존성 선언 값 규칙 위반(XV.1.1). 입력 값은 담지 않습니다(XV.1.4).
+    InvalidValue {
+        /// 필드 경로(예: `dependencies.design-system.library_id`).
+        path: String,
+        /// 위반한 규칙.
+        error: ValueError,
+    },
+    /// 컨테이너 중첩 깊이 초과.
+    TooDeep {
+        /// 상한을 넘은 위치.
+        path: String,
+    },
+}
+
+impl From<SchemaError> for ManifestError {
+    fn from(error: SchemaError) -> ManifestError {
+        match error {
+            SchemaError::MissingField { path } => ManifestError::MissingField { path },
+            SchemaError::WrongType { path, expected } => {
+                ManifestError::WrongType { path, expected }
+            }
+            SchemaError::UnknownKey { path } => ManifestError::UnknownKey { path },
+            SchemaError::InvalidValue { path, error } => {
+                ManifestError::InvalidValue { path, error }
+            }
+        }
+    }
+}
+
+impl From<NodeConversionError> for ManifestError {
+    fn from(error: NodeConversionError) -> ManifestError {
+        match error {
+            NodeConversionError::NonScalarKey { path } => ManifestError::WrongType {
+                path: format!("{path} 키"),
+                expected: "scalar",
+            },
+            NodeConversionError::TooDeep { path } => ManifestError::TooDeep { path },
+        }
+    }
 }
 
 impl std::fmt::Display for ManifestError {
@@ -50,6 +122,10 @@ impl std::fmt::Display for ManifestError {
                 write!(f, "schema_version가 음이 아닌 정수가 아닙니다: {value}")
             }
             ManifestError::UnknownKey { path } => write!(f, "알 수 없는 키: {path}"),
+            ManifestError::InvalidValue { path, error } => {
+                write!(f, "잘못된 값({path}): {error}")
+            }
+            ManifestError::TooDeep { path } => write!(f, "중첩 깊이 상한 초과: {path}"),
         }
     }
 }
@@ -78,19 +154,6 @@ pub struct TargetProfile {
     pub baseline: Option<String>,
 }
 
-/// 의존성 선언.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Dependency {
-    /// 의존성 논리 이름(매핑 키).
-    pub name: String,
-    /// source(예: `git`).
-    pub source: String,
-    /// repository URL.
-    pub repository: String,
-    /// 버전 조건.
-    pub version: String,
-}
-
 /// `stellar.yaml` 매니페스트.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
@@ -100,7 +163,7 @@ pub struct Manifest {
     pub project: ProjectMeta,
     /// 대상 프로파일(저장 순서 보존).
     pub target_profiles: Vec<TargetProfile>,
-    /// 의존성(저장 순서 보존).
+    /// 의존성 선언(저장 순서 보존, XV.1.1 모델).
     pub dependencies: Vec<Dependency>,
 }
 
@@ -131,10 +194,25 @@ impl Manifest {
             ),
             (
                 YamlValue::scalar("dependencies"),
-                YamlValue::Mapping(self.dependencies.iter().map(dependency_to_yaml).collect()),
+                node_to_yaml(&dependencies_to_node(&self.dependencies)),
             ),
         ];
         YamlValue::Mapping(top)
+    }
+
+    /// 의존성 선언 충돌을 검사합니다(XV.1.3: 같은 logical name 중복, 같은 LibraryId 다른 선택자,
+    /// 다른 LibraryId 같은 repository). 스키마 검증([`Manifest::from_yaml`])과 별개의 의미 검사라
+    /// 프로젝트 열기를 막지 않고 진단으로 보고합니다.
+    pub fn validate_dependencies(&self) -> DeclarationReport {
+        validate_declarations(&self.dependencies)
+    }
+
+    /// `local_override`를 logical name → 로컬 프로젝트 root로 매핑합니다(XV.6.1).
+    ///
+    /// `project_root`는 이 매니페스트가 있는 사용 프로젝트 root의 절대 경로입니다. 대상이 사용
+    /// 프로젝트 자신·내부이거나 같은 이름 override가 두 번이면 경로와 함께 거부합니다.
+    pub fn local_overrides(&self, project_root: &Path) -> Result<LocalOverrideMap, ManifestError> {
+        Ok(local_overrides(&self.dependencies, project_root)?)
     }
 
     /// 매니페스트를 loader 제한을 강제하며 canonical 텍스트로 기록합니다.
@@ -197,26 +275,6 @@ fn profile_to_yaml(profile: &TargetProfile) -> YamlValue {
         ));
     }
     YamlValue::Mapping(pairs)
-}
-
-fn dependency_to_yaml(dependency: &Dependency) -> (YamlValue, YamlValue) {
-    (
-        YamlValue::scalar(dependency.name.clone()),
-        YamlValue::Mapping(vec![
-            (
-                YamlValue::scalar("source"),
-                YamlValue::scalar(dependency.source.clone()),
-            ),
-            (
-                YamlValue::scalar("repository"),
-                YamlValue::scalar(dependency.repository.clone()),
-            ),
-            (
-                YamlValue::scalar("version"),
-                YamlValue::scalar(dependency.version.clone()),
-            ),
-        ]),
-    )
 }
 
 fn require<'a>(value: &'a YamlValue, key: &str) -> Result<&'a YamlValue, ManifestError> {
@@ -324,45 +382,10 @@ fn parse_target_profiles(value: &YamlValue) -> Result<Vec<TargetProfile>, Manife
 }
 
 fn parse_dependencies(value: &YamlValue) -> Result<Vec<Dependency>, ManifestError> {
-    let pairs = expect_mapping(value, "dependencies")?;
-    let mut deps = Vec::with_capacity(pairs.len());
-    for (key, spec) in pairs {
-        let name = key.as_scalar().ok_or_else(|| ManifestError::WrongType {
-            path: "dependencies 키".to_string(),
-            expected: "scalar",
-        })?;
-        let path = join("dependencies", name);
-        let spec_pairs = expect_mapping(spec, &path)?;
-        reject_unknown_keys(spec_pairs, &path, &["source", "repository", "version"])?;
-        let source = expect_scalar(
-            spec.get("source")
-                .ok_or_else(|| ManifestError::MissingField {
-                    path: join(&path, "source"),
-                })?,
-            &join(&path, "source"),
-        )?;
-        let repository = expect_scalar(
-            spec.get("repository")
-                .ok_or_else(|| ManifestError::MissingField {
-                    path: join(&path, "repository"),
-                })?,
-            &join(&path, "repository"),
-        )?;
-        let version = expect_scalar(
-            spec.get("version")
-                .ok_or_else(|| ManifestError::MissingField {
-                    path: join(&path, "version"),
-                })?,
-            &join(&path, "version"),
-        )?;
-        deps.push(Dependency {
-            name: name.to_string(),
-            source: source.to_string(),
-            repository: repository.to_string(),
-            version: version.to_string(),
-        });
-    }
-    Ok(deps)
+    // 의존성 entry 스키마는 의존성 모델 하나가 정의합니다(XV.1.1). 같은 logical name 중복은
+    // 보존하고 판정은 XV.1.3 validation이 합니다(제한 loader는 중복 키를 이미 거부합니다).
+    let node = yaml_to_node(value, "dependencies")?;
+    Ok(dependencies_from_node(&node)?)
 }
 
 fn optional_scalar(
@@ -391,8 +414,56 @@ fn at(parent: &'static str) -> impl Fn(ManifestError) -> ManifestError {
 }
 
 #[cfg(test)]
+pub(crate) mod fixtures {
+    //! 테스트 공용 의존성 선언 fixture(manifest·lock·writer 테스트).
+
+    use stellar_dependencies::declaration::{
+        LibraryId, LocalOverridePath, LogicalName, RefName, RepositoryUrl, SourceKind,
+        VersionSelector,
+    };
+
+    use super::Dependency;
+
+    /// 번호로 결정적 LibraryId(UUID v7 형식)를 만듭니다.
+    pub(crate) fn library(n: u8) -> LibraryId {
+        format!("0195c530-3acd-7bc1-8414-{:012x}", n)
+            .parse()
+            .expect("library id fixture")
+    }
+
+    /// tag 선택자 선언.
+    pub(crate) fn tag_dependency(name: &str, lib: u8, url: &str, tag: &str) -> Dependency {
+        Dependency {
+            name: LogicalName::new(name).expect("name"),
+            library_id: library(lib),
+            source: SourceKind::Git,
+            repository: RepositoryUrl::new(url).expect("url"),
+            version: VersionSelector::Tag(RefName::new(tag).expect("tag")),
+            local_override: None,
+        }
+    }
+
+    /// branch 선택자 + local override 선언.
+    pub(crate) fn branch_dependency(
+        name: &str,
+        lib: u8,
+        url: &str,
+        branch: &str,
+        local_override: Option<&str>,
+    ) -> Dependency {
+        let mut dep = tag_dependency(name, lib, url, "unused");
+        dep.version = VersionSelector::Branch(RefName::new(branch).expect("branch"));
+        dep.local_override = local_override.map(|p| LocalOverridePath::new(p).expect("override"));
+        dep
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use super::fixtures::{branch_dependency, library, tag_dependency};
     use super::*;
+    use stellar_dependencies::declaration::{CommitId, LogicalName, VersionSelector};
+    use stellar_dependencies::validation::ConflictKind;
 
     fn minimal() -> Manifest {
         Manifest {
@@ -427,12 +498,12 @@ mod tests {
                     baseline: Some("modern".to_string()),
                 },
             ],
-            dependencies: vec![Dependency {
-                name: "design-system".to_string(),
-                source: "git".to_string(),
-                repository: "git@github.com:example/design-system.git".to_string(),
-                version: "v2.4.0".to_string(),
-            }],
+            dependencies: vec![tag_dependency(
+                "design-system",
+                1,
+                "git@github.com:example/design-system.git",
+                "v2.4.0",
+            )],
         }
     }
 
@@ -458,7 +529,7 @@ mod tests {
             restored.target_profiles[1].baseline.as_deref(),
             Some("modern")
         );
-        assert_eq!(restored.dependencies[0].name, "design-system");
+        assert_eq!(restored.dependencies[0].name.as_str(), "design-system");
     }
 
     #[test]
@@ -582,12 +653,7 @@ mod tests {
 
     #[test]
     fn checked_write_rejects_manifests_that_would_not_reload() {
-        let dep = |name: &str| Dependency {
-            name: name.to_string(),
-            source: "git".to_string(),
-            repository: "git@example.com:lib.git".to_string(),
-            version: "v1".to_string(),
-        };
+        let dep = |name: &str| tag_dependency(name, 1, "git@example.com:lib.git", "v1");
         let base = Manifest {
             schema_version: CURRENT_SCHEMA_VERSION,
             project: ProjectMeta {
@@ -609,13 +675,8 @@ mod tests {
             dup.write(),
             Err(crate::yaml::WriteError::DuplicateKey { .. })
         ));
-        // `<<` 이름 → merge key.
-        let mut merge = base.clone();
-        merge.dependencies = vec![dep("<<")];
-        assert!(matches!(
-            merge.write(),
-            Err(crate::yaml::WriteError::MergeKey { .. })
-        ));
+        // `<<` 이름(merge key)은 의존성 모델의 logical name 규칙이 먼저 막습니다.
+        assert!(LogicalName::new("<<").is_err());
         // 선읽기 상한을 넘는 이름.
         let mut long = base.clone();
         long.project.name = "n".repeat(crate::yaml::loader::MAX_EVENT_LOOKAHEAD_CHARS + 1);
@@ -623,5 +684,258 @@ mod tests {
             long.write(),
             Err(crate::yaml::WriteError::NotReloadable(_))
         ));
+    }
+
+    /// 아키텍처 20.3 형식 + XV.1.1 entry 스키마(tag 스칼라, branch 매핑 + local override,
+    /// commit 매핑)를 담은 실제 `stellar.yaml` 텍스트(canonical 형식).
+    const DEPENDENCY_SCHEMA_TEXT: &str = r#"schema_version: "1"
+project:
+  id: "0195c530-3acd-7bc1-8414-c213f61cb965"
+  name: "Project Stellar"
+target_profiles: []
+dependencies:
+  design-system:
+    source: git
+    library_id: "0195c530-3acd-7bc1-8414-000000000001"
+    repository: "git@github.com:example/design-system.git"
+    version: "v2.4.0"
+  icons:
+    source: git
+    library_id: "0195c530-3acd-7bc1-8414-000000000002"
+    repository: "https://example.com/icons.git"
+    version:
+      branch: "feature/next"
+    local_override: "../icons"
+  tokens:
+    source: git
+    library_id: "0195c530-3acd-7bc1-8414-000000000003"
+    repository: "file:///srv/tokens"
+    version:
+      commit: abababababababababababababababababababab
+"#;
+
+    fn parse_text(text: &str) -> Result<Manifest, ManifestError> {
+        Manifest::from_yaml(&crate::yaml::load_restricted(text).expect("제한 YAML"))
+    }
+
+    #[test]
+    fn dependency_entry_schema_round_trips_through_stellar_yaml_parser() {
+        // XV.1.1: 실제 stellar.yaml 파서(제한 loader → Manifest::from_yaml)가 entry 스키마를 받음.
+        let manifest = parse_text(DEPENDENCY_SCHEMA_TEXT).expect("새 스키마 파싱");
+        let mut pinned = tag_dependency("tokens", 3, "file:///srv/tokens", "unused");
+        pinned.version = VersionSelector::Commit(
+            "abababababababababababababababababababab"
+                .parse::<CommitId>()
+                .unwrap(),
+        );
+        let expected = vec![
+            tag_dependency(
+                "design-system",
+                1,
+                "git@github.com:example/design-system.git",
+                "v2.4.0",
+            ),
+            branch_dependency(
+                "icons",
+                2,
+                "https://example.com/icons.git",
+                "feature/next",
+                Some("../icons"),
+            ),
+            pinned,
+        ];
+        assert_eq!(manifest.dependencies, expected);
+        assert_eq!(manifest.dependencies[0].library_id, library(1));
+
+        // canonical writer 출력은 입력 텍스트와 byte 단위로 같고, 다시 읽으면 같은 모델.
+        let written = manifest.write().expect("checked write");
+        assert_eq!(written, DEPENDENCY_SCHEMA_TEXT);
+        assert_eq!(parse_text(&written).unwrap(), manifest);
+
+        // `version: {tag: ...}` 입력은 스칼라로 정규화해 기록.
+        let tag_mapping = DEPENDENCY_SCHEMA_TEXT.replace(
+            "    version: \"v2.4.0\"\n",
+            "    version:\n      tag: \"v2.4.0\"\n",
+        );
+        let normalized = parse_text(&tag_mapping).unwrap();
+        assert_eq!(normalized, manifest);
+        assert_eq!(normalized.write().unwrap(), DEPENDENCY_SCHEMA_TEXT);
+    }
+
+    #[test]
+    fn dependency_schema_violations_are_rejected_by_stellar_yaml_parser() {
+        let manifest_with = |entry: &str| {
+            format!(
+                "schema_version: 1\nproject:\n  id: x\n  name: y\ntarget_profiles: []\n\
+                 dependencies:\n  lib:\n{entry}"
+            )
+        };
+        let valid = "    source: git\n    library_id: 0195c530-3acd-7bc1-8414-000000000009\n    \
+                     repository: https://e/x\n    version: v1\n";
+        assert!(parse_text(&manifest_with(valid)).is_ok());
+
+        // IV.1.1 형식(library_id 없음)은 더 이상 받지 않음.
+        assert_eq!(
+            parse_text(&manifest_with(
+                "    source: git\n    repository: https://e/x\n    version: v1\n"
+            )),
+            Err(ManifestError::MissingField {
+                path: "dependencies.lib.library_id".to_string()
+            })
+        );
+
+        // (바꿀 줄, 바꿀 내용, 기대 오류).
+        let cases: Vec<(&str, &str, ManifestError)> = vec![
+            (
+                "    version: v1\n",
+                "    version: v1\n    mirror: x\n",
+                ManifestError::UnknownKey {
+                    path: "dependencies.lib.mirror".to_string(),
+                },
+            ),
+            (
+                "source: git",
+                "source: svn",
+                ManifestError::InvalidValue {
+                    path: "dependencies.lib.source".to_string(),
+                    error: ValueError::UnknownSource,
+                },
+            ),
+            (
+                "library_id: 0195c530-3acd-7bc1-8414-000000000009",
+                "library_id: not-a-uuid",
+                ManifestError::InvalidValue {
+                    path: "dependencies.lib.library_id".to_string(),
+                    error: ValueError::InvalidLibraryId,
+                },
+            ),
+            (
+                "repository: https://e/x",
+                "repository: \"--upload-pack=touch\"",
+                ManifestError::InvalidValue {
+                    path: "dependencies.lib.repository".to_string(),
+                    error: ValueError::LeadingDash,
+                },
+            ),
+            (
+                "version: v1",
+                "version:\n      commit: abc1234",
+                ManifestError::InvalidValue {
+                    path: "dependencies.lib.version.commit".to_string(),
+                    error: ValueError::InvalidCommitLength,
+                },
+            ),
+            (
+                "version: v1",
+                "version:\n      tag: v1\n      branch: main",
+                ManifestError::InvalidValue {
+                    path: "dependencies.lib.version".to_string(),
+                    error: ValueError::InvalidSelector,
+                },
+            ),
+            (
+                "    version: v1\n",
+                "    version: v1\n    local_override: ./ds\n",
+                ManifestError::InvalidValue {
+                    path: "dependencies.lib.local_override".to_string(),
+                    error: ValueError::InvalidOverridePath,
+                },
+            ),
+        ];
+        for (from, to, expected) in cases {
+            let entry = valid.replace(from, to);
+            let err = parse_text(&manifest_with(&entry)).unwrap_err();
+            assert_eq!(err, expected, "entry={entry:?}");
+            // 오류 메시지는 URL·경로 원문을 복사하지 않음(XV.1.4).
+            let text = err.to_string();
+            assert!(
+                !text.contains("upload-pack") && !text.contains("./ds"),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn local_override_schema_is_validated_through_stellar_yaml_parser() {
+        // XV.6.1: 실제 파서가 읽은 local_override를 logical name → 로컬 root로 매핑.
+        let manifest = parse_text(DEPENDENCY_SCHEMA_TEXT).unwrap();
+        let project = std::path::Path::new("/work/app");
+        let map = manifest.local_overrides(project).unwrap();
+        assert_eq!(map.len(), 1);
+        let icons = map.get(&LogicalName::new("icons").unwrap()).unwrap();
+        assert_eq!(icons.root, std::path::Path::new("/work/icons"));
+        assert_eq!(icons.declared.reveal(), "../icons");
+
+        // 사용 프로젝트 안을 가리키는 override는 경로와 함께 거부.
+        let inside = DEPENDENCY_SCHEMA_TEXT.replace("\"../icons\"", "\"../app/vendor/icons\"");
+        assert_eq!(
+            parse_text(&inside).unwrap().local_overrides(project),
+            Err(ManifestError::InvalidValue {
+                path: "dependencies.icons.local_override".to_string(),
+                error: ValueError::OverrideInsideProject,
+            })
+        );
+        // 형식 위반(`\` 구분자, 빈 component, `.` component)은 파싱 단계에서 거부.
+        for bad in [r#""..\\icons""#, r#""../a//icons""#, r#""./icons""#] {
+            let text = DEPENDENCY_SCHEMA_TEXT.replace("\"../icons\"", bad);
+            let err = parse_text(&text).unwrap_err();
+            assert!(
+                matches!(
+                    &err,
+                    ManifestError::InvalidValue { path, .. }
+                        if path == "dependencies.icons.local_override"
+                ),
+                "{bad}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn dependency_conflicts_are_reported_from_parsed_manifest() {
+        // XV.1.3: 같은 LibraryId 다른 선택자(경고), 다른 LibraryId 같은 URL(오류)을 파싱 결과에서 판정.
+        let text = DEPENDENCY_SCHEMA_TEXT
+            .replace(
+                "0195c530-3acd-7bc1-8414-000000000003",
+                "0195c530-3acd-7bc1-8414-000000000001",
+            )
+            .replace(
+                "\"https://example.com/icons.git\"",
+                "\"git@github.com:example/design-system.git\"",
+            );
+        let report = parse_text(&text).unwrap().validate_dependencies();
+        let kinds: Vec<ConflictKind> = report.conflicts.iter().map(|c| c.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                ConflictKind::DifferentLibrarySameRepository,
+                ConflictKind::SameLibraryDifferentSelector
+            ]
+        );
+        assert!(report.has_errors());
+        // 충돌 없는 선언은 보고 없음.
+        assert!(parse_text(DEPENDENCY_SCHEMA_TEXT)
+            .unwrap()
+            .validate_dependencies()
+            .conflicts
+            .is_empty());
+    }
+
+    #[test]
+    fn parsed_dependency_values_stay_redacted_in_debug_and_diagnostics() {
+        // XV.1.4: 파서가 만든 모델의 Debug·진단·telemetry에 URL·override 경로 원문이 없음.
+        let manifest = parse_text(DEPENDENCY_SCHEMA_TEXT).unwrap();
+        let secrets = ["example.com", "github.com", "/srv/tokens", "../icons"];
+        let debug = format!("{manifest:?}");
+        for secret in secrets {
+            assert!(!debug.contains(secret), "Debug에 {secret} 노출: {debug}");
+        }
+        for dep in &manifest.dependencies {
+            let diagnostic = dep.diagnostic().to_string();
+            let telemetry = format!("{:?}", dep.telemetry());
+            for secret in secrets {
+                assert!(!diagnostic.contains(secret), "{diagnostic}");
+                assert!(!telemetry.contains(secret), "{telemetry}");
+            }
+        }
     }
 }

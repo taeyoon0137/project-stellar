@@ -6,6 +6,9 @@ pub mod yaml;
 /// `stellar.yaml` 매니페스트 데이터 모델 (IV.1.1).
 pub mod manifest;
 
+/// 제한 YAML ↔ 의존성 형식 중립 트리 변환 (XV.1.1·XV.4.1 연결).
+pub mod manifest_node;
+
 /// `stellar.lock.yaml` 잠금 파일 데이터 모델 (IV.1.6).
 pub mod lock;
 

@@ -167,9 +167,9 @@ fn probe_json(probe: &ProjectProbe) -> JsonValue {
                     .iter()
                     .map(|d| {
                         JsonValue::object(vec![
-                            ("name", JsonValue::string(d.name.clone())),
-                            ("source", JsonValue::string(d.source.clone())),
-                            ("version", JsonValue::string(d.version.clone())),
+                            ("name", JsonValue::string(d.name.as_str())),
+                            ("source", JsonValue::string(d.source.as_str())),
+                            ("version", JsonValue::string(d.version.value())),
                         ])
                     })
                     .collect(),

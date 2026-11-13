@@ -28,6 +28,9 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use stellar_dependencies::declaration::{
+    LogicalName, RefName, RepositoryUrl, SourceKind, VersionSelector,
+};
 use stellar_project::lock::{Lockfile, ResolvedDependency};
 use stellar_project::manifest::{Dependency, Manifest, ProjectMeta, TargetProfile};
 use stellar_project::yaml::loader::{
@@ -486,10 +489,15 @@ fn model_seeds() -> Vec<Vec<u8>> {
             baseline: Some("modern".to_string()),
         }],
         dependencies: vec![Dependency {
-            name: "design-system".to_string(),
-            source: "git".to_string(),
-            repository: "https://example.invalid/design-system.git".to_string(),
-            version: "v2.4.0".to_string(),
+            name: LogicalName::new("design-system").expect("name"),
+            library_id: "0195c530-3acd-7bc1-8414-c213f61cb966"
+                .parse()
+                .expect("library id"),
+            source: SourceKind::Git,
+            repository: RepositoryUrl::new("https://example.invalid/design-system.git")
+                .expect("url"),
+            version: VersionSelector::Tag(RefName::new("v2.4.0").expect("tag")),
+            local_override: None,
         }],
     };
     let lock = Lockfile {

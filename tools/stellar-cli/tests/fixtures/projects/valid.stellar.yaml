@@ -12,5 +12,6 @@ target_profiles:
 dependencies:
   design-system:
     source: git
+    library_id: 0195c530-3acd-7bc1-8414-c213f61cb966
     repository: https://example.com/design-system.git
     version: v2.4.0

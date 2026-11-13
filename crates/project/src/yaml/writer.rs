@@ -305,9 +305,8 @@ fn is_confusable_keyword(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::{
-        Dependency, Manifest, ProjectMeta, TargetProfile, CURRENT_SCHEMA_VERSION,
-    };
+    use crate::manifest::fixtures::tag_dependency;
+    use crate::manifest::{Manifest, ProjectMeta, TargetProfile, CURRENT_SCHEMA_VERSION};
     use crate::yaml::load_restricted;
 
     fn sample_tree() -> YamlValue {
@@ -512,12 +511,12 @@ mod tests {
                     baseline: Some("modern".to_string()),
                 },
             ],
-            dependencies: vec![Dependency {
-                name: "design-system".to_string(),
-                source: "git".to_string(),
-                repository: "git@github.com:example/design-system.git".to_string(),
-                version: "v2.4.0".to_string(),
-            }],
+            dependencies: vec![tag_dependency(
+                "design-system",
+                1,
+                "git@github.com:example/design-system.git",
+                "v2.4.0",
+            )],
         }
     }
 
