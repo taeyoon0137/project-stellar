@@ -18,3 +18,9 @@ pub mod edit;
 
 /// command canonical 직렬화 (VII.1.2).
 pub mod codec;
+
+/// command 대상 문서 상태(모델 + revision) (VII.1.3).
+pub mod state;
+
+/// base revision과 precondition을 포함한 command 요청 (VII.1.3).
+pub mod request;

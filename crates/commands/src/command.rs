@@ -18,6 +18,7 @@
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
+use stellar_core_types::revision::DocumentRevision;
 use stellar_document::model::{DocumentModel, ModelError};
 
 use crate::edit::EditContext;
@@ -33,6 +34,20 @@ pub enum CommandError {
     },
     /// 문서 모델이 변경을 거부했습니다.
     Model(ModelError),
+    /// command가 기준으로 삼은 revision과 현재 문서 revision이 다릅니다(VII.1.3).
+    RevisionMismatch {
+        /// command의 base revision.
+        expected: DocumentRevision,
+        /// 현재 문서 revision.
+        actual: DocumentRevision,
+    },
+    /// precondition이 성립하지 않습니다(VII.1.3).
+    PreconditionFailed {
+        /// precondition 목록 안 위치.
+        index: usize,
+        /// 실패한 precondition.
+        precondition: crate::request::Precondition,
+    },
 }
 
 impl fmt::Display for CommandError {
@@ -40,6 +55,15 @@ impl fmt::Display for CommandError {
         match self {
             CommandError::UnknownNode { id } => write!(f, "node {id}가 없습니다"),
             CommandError::Model(error) => write!(f, "문서 모델 오류: {error}"),
+            CommandError::RevisionMismatch { expected, actual } => write!(
+                f,
+                "base revision {}이 현재 문서 revision {}과 다릅니다",
+                expected.0, actual.0
+            ),
+            CommandError::PreconditionFailed {
+                index,
+                precondition,
+            } => write!(f, "precondition #{index} 실패: {precondition}"),
         }
     }
 }

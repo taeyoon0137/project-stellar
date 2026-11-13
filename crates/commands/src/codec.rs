@@ -86,8 +86,23 @@ impl Writer {
         self.buf.extend_from_slice(&value.to_le_bytes());
     }
 
+    pub(crate) fn u64(&mut self, value: u64) {
+        self.buf.extend_from_slice(&value.to_le_bytes());
+    }
+
     pub(crate) fn id(&mut self, id: StableId) {
         self.buf.extend_from_slice(&id.to_bytes());
+    }
+
+    /// 선택적 id: flag `u8`(0/1) + (있으면) 16바이트.
+    pub(crate) fn opt_id(&mut self, id: Option<StableId>) {
+        match id {
+            None => self.u8(0),
+            Some(id) => {
+                self.u8(1);
+                self.id(id);
+            }
+        }
     }
 
     /// `u32` 길이 프리픽스 + bytes.
@@ -167,10 +182,24 @@ impl<'a> Reader<'a> {
         Ok(u32::from_le_bytes(raw))
     }
 
+    pub(crate) fn u64(&mut self) -> Result<u64, CommandCodecError> {
+        let mut raw = [0u8; 8];
+        raw.copy_from_slice(self.take(8)?);
+        Ok(u64::from_le_bytes(raw))
+    }
+
     pub(crate) fn id(&mut self) -> Result<StableId, CommandCodecError> {
         let mut raw = [0u8; 16];
         raw.copy_from_slice(self.take(16)?);
         Ok(StableId::from_bytes(raw))
+    }
+
+    pub(crate) fn opt_id(&mut self) -> Result<Option<StableId>, CommandCodecError> {
+        if self.bool()? {
+            Ok(Some(self.id()?))
+        } else {
+            Ok(None)
+        }
     }
 
     pub(crate) fn bytes(&mut self) -> Result<&'a [u8], CommandCodecError> {
