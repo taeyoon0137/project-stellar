@@ -8,3 +8,8 @@
 pub mod source;
 
 pub use source::{resolve_source, ResolvedSource, SourceError, SourceRef, WorktreeState};
+
+/// 공통 이력 base와 비교 방식(XXIII.1.2).
+pub mod base;
+
+pub use base::{comparison_mode, ComparisonMode, TwoWayReason};
