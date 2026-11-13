@@ -53,3 +53,6 @@ pub mod path_resolver;
 
 /// 프로젝트 신뢰 grant/revoke와 OS 사용자 데이터 저장소 (XVI.7.2).
 pub mod trust_store;
+
+/// 문서 ↔ chunk model 입출력 (VI.10.2).
+pub mod document_io;

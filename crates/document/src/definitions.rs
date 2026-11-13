@@ -426,6 +426,28 @@ impl DocumentDefinition {
     }
 }
 
+impl DocumentDefinition {
+    /// 문서 정의 하나를 canonical binary bytes로 인코딩합니다(DocumentManifest chunk 용,
+    /// VI.10.2). 형식은 index 안의 문서 항목과 같습니다.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::new();
+        self.encode_into(&mut buf);
+        buf
+    }
+
+    /// [`DocumentDefinition::encode`] bytes에서 디코딩합니다. malformed 입력은 panic 없이
+    /// 거부합니다.
+    pub fn decode(bytes: &[u8]) -> Result<DocumentDefinition, DefinitionError> {
+        let mut reader = Reader {
+            input: bytes,
+            pos: 0,
+        };
+        let definition = DocumentDefinition::decode_from(&mut reader)?;
+        reader.expect_end()?;
+        Ok(definition)
+    }
+}
+
 impl ProjectDocumentIndex {
     /// canonical binary bytes로 인코딩합니다.
     pub fn encode(&self) -> Vec<u8> {
@@ -678,5 +700,22 @@ mod tests {
         corrupt[len - 2] = 0xff;
         corrupt[len - 1] = 0xfe;
         assert!(ProjectDocumentIndex::decode(&corrupt).is_err());
+    }
+
+    #[test]
+    fn single_document_definition_round_trips() {
+        // VI.10.2: DocumentManifest chunk가 쓰는 단일 문서 인코딩.
+        let index = sample_index();
+        let definition = &index.documents[0];
+        let bytes = definition.encode();
+        let decoded = DocumentDefinition::decode(&bytes).unwrap();
+        assert_eq!(&decoded, definition);
+        assert_eq!(decoded.encode(), bytes);
+        // index 안의 항목 형식과 동일(문서 수 u32 프리픽스 뒤).
+        assert_eq!(&index.encode()[4..], &bytes[..]);
+        assert!(DocumentDefinition::decode(&bytes[..bytes.len() - 1]).is_err());
+        let mut extended = bytes;
+        extended.push(0);
+        assert!(DocumentDefinition::decode(&extended).is_err());
     }
 }

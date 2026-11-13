@@ -457,6 +457,21 @@ impl PolygonParams {
         self.sides
     }
 
+    /// 외접 bounds.
+    pub fn bounds(&self) -> Rect {
+        self.bounds
+    }
+
+    /// 회전(도).
+    pub fn rotation_degrees(&self) -> f32 {
+        self.rotation_degrees
+    }
+
+    /// 저장된 원본 corner radius(평가 clamp 전).
+    pub fn corner_radius(&self) -> f32 {
+        self.corner_radius
+    }
+
     /// 꼭짓점 좌표(첫 꼭짓점부터 시계 방향).
     pub fn vertices(&self) -> Vec<(f32, f32)> {
         let o = self.bounds.origin();
@@ -568,6 +583,124 @@ pub fn evaluate_shape_path(geometry: &ShapeGeometry) -> Vec<PathCommand> {
         ShapeGeometry::Ellipse(params) => params.to_path(),
         ShapeGeometry::Line(params) => params.to_path(),
         ShapeGeometry::Polygon(params) => params.to_path(),
+    }
+}
+
+// --- canonical binary 인코딩 (VI.10.2) ---
+//
+// node 레코드 직렬화(VI.10.2)가 쓰는 storage 독립 형식입니다: shape kind tag(u8) +
+// 종류별 고정 필드(f32 LE, `-0.0`은 `+0.0`으로 정규화). 저장값은 평가 clamp 전 원본입니다.
+
+fn put_f32(buf: &mut Vec<u8>, value: f32) {
+    let normalized = if value == 0.0 { 0.0f32 } else { value };
+    buf.extend_from_slice(&normalized.to_le_bytes());
+}
+
+fn put_rect(buf: &mut Vec<u8>, rect: &Rect) {
+    for v in [
+        rect.origin().x(),
+        rect.origin().y(),
+        rect.size().width(),
+        rect.size().height(),
+    ] {
+        put_f32(buf, v);
+    }
+}
+
+impl ShapeGeometry {
+    /// canonical bytes.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = vec![self.kind().tag()];
+        match self {
+            ShapeGeometry::Rectangle(params) => {
+                put_f32(&mut buf, params.size.width());
+                put_f32(&mut buf, params.size.height());
+                let (tl, tr, br, bl) = params.corner_radius.components();
+                for v in [tl, tr, br, bl] {
+                    put_f32(&mut buf, v);
+                }
+            }
+            ShapeGeometry::Ellipse(params) => put_rect(&mut buf, &params.bounds),
+            ShapeGeometry::Line(params) => {
+                for v in [
+                    params.start.x(),
+                    params.start.y(),
+                    params.end.x(),
+                    params.end.y(),
+                ] {
+                    put_f32(&mut buf, v);
+                }
+                buf.push(params.cap as u8);
+            }
+            ShapeGeometry::Polygon(params) => {
+                put_rect(&mut buf, &params.bounds);
+                buf.extend_from_slice(&params.sides.to_le_bytes());
+                put_f32(&mut buf, params.rotation_degrees);
+                put_f32(&mut buf, params.corner_radius);
+            }
+        }
+        buf
+    }
+
+    /// bytes에서 복원하고 검증합니다(음수 size·잘못된 변 수 등 거부).
+    pub fn decode(bytes: &[u8]) -> Result<ShapeGeometry, ShapeError> {
+        let bad = |reason| ShapeError::Malformed { reason };
+        let (&tag, body) = bytes.split_first().ok_or(bad("kind tag 없음"))?;
+        let kind = ShapeKind::from_tag(tag)?;
+        let expected_len = match kind {
+            ShapeKind::Rectangle => 24,
+            ShapeKind::Ellipse => 16,
+            ShapeKind::Line => 17,
+            ShapeKind::Polygon => 28,
+        };
+        if body.len() != expected_len {
+            return Err(bad("payload 길이 불일치"));
+        }
+        let f = |i: usize| -> Result<f32, ShapeError> {
+            let raw: [u8; 4] = body
+                .get(i..i + 4)
+                .and_then(|s| s.try_into().ok())
+                .ok_or(bad("입력 부족"))?;
+            let value = f32::from_le_bytes(raw);
+            if value.is_finite() {
+                Ok(value)
+            } else {
+                Err(bad("비유한 값"))
+            }
+        };
+        let geometry = match kind {
+            ShapeKind::Rectangle => ShapeGeometry::Rectangle(RectangleParams {
+                size: Size2::new(f(0)?, f(4)?).map_err(|_| bad("size 음수"))?,
+                corner_radius: CornerRadius::new(f(8)?, f(12)?, f(16)?, f(20)?)
+                    .map_err(|_| ShapeError::InvalidCornerRadius)?,
+            }),
+            ShapeKind::Ellipse => ShapeGeometry::Ellipse(EllipseParams {
+                bounds: rect_from_bytes(body)?,
+            }),
+            ShapeKind::Line => {
+                let point = |x: f32, y: f32| Vec2::new(x, y).map_err(|_| bad("비유한 값"));
+                let cap = match body[16] {
+                    0 => LineCap::Butt,
+                    1 => LineCap::Round,
+                    2 => LineCap::Square,
+                    _ => return Err(bad("알 수 없는 cap tag")),
+                };
+                ShapeGeometry::Line(LineParams {
+                    start: point(f(0)?, f(4)?)?,
+                    end: point(f(8)?, f(12)?)?,
+                    cap,
+                })
+            }
+            ShapeKind::Polygon => {
+                let bounds = rect_from_bytes(&body[..16])?;
+                let raw_sides: [u8; 4] = body[16..20].try_into().map_err(|_| bad("입력 부족"))?;
+                let sides = u32::from_le_bytes(raw_sides);
+                let rotation =
+                    stellar_core_types::value::Angle::new(f(20)?).map_err(|_| bad("비유한 값"))?;
+                ShapeGeometry::Polygon(PolygonParams::new(bounds, sides, rotation, f(24)?)?)
+            }
+        };
+        Ok(geometry)
     }
 }
 
@@ -963,5 +1096,90 @@ mod tests {
             assert_eq!(geometry, before);
             assert_ne!(geometry.kind().name(), "path");
         }
+    }
+
+    #[test]
+    fn geometry_codec_round_trips_every_kind() {
+        // VI.10.2: node 레코드 직렬화용 shape 인코딩.
+        let rect = |x: f32, y: f32, w: f32, h: f32| {
+            Rect::new(Vec2::new(x, y).unwrap(), Size2::new(w, h).unwrap())
+        };
+        let geometries = [
+            ShapeGeometry::Rectangle(RectangleParams {
+                size: Size2::new(30.0, 12.5).unwrap(),
+                corner_radius: CornerRadius::new(1.0, 2.0, 3.0, 400.0).unwrap(),
+            }),
+            ShapeGeometry::Ellipse(EllipseParams {
+                bounds: rect(-4.0, 2.0, 8.0, 6.0),
+            }),
+            ShapeGeometry::Line(LineParams {
+                start: Vec2::new(1.0, -1.0).unwrap(),
+                end: Vec2::new(1.0, -1.0).unwrap(),
+                cap: LineCap::Square,
+            }),
+            ShapeGeometry::Polygon(
+                PolygonParams::new(
+                    rect(0.0, 0.0, 10.0, 10.0),
+                    7,
+                    stellar_core_types::value::Angle::new(-30.5).unwrap(),
+                    2.25,
+                )
+                .unwrap(),
+            ),
+        ];
+        for geometry in geometries {
+            let bytes = geometry.encode();
+            assert_eq!(bytes[0], geometry.kind().tag());
+            let decoded = ShapeGeometry::decode(&bytes).unwrap();
+            assert_eq!(decoded, geometry);
+            assert_eq!(decoded.encode(), bytes, "재인코딩 byte-identical");
+            // 절단·trailing은 거부.
+            assert!(ShapeGeometry::decode(&bytes[..bytes.len() - 1]).is_err());
+            let mut extended = bytes.clone();
+            extended.push(0);
+            assert!(ShapeGeometry::decode(&extended).is_err());
+        }
+    }
+
+    #[test]
+    fn geometry_codec_rejects_invalid_values() {
+        assert!(matches!(
+            ShapeGeometry::decode(&[9]),
+            Err(ShapeError::UnknownKind { tag: 9 })
+        ));
+        assert!(ShapeGeometry::decode(&[]).is_err());
+        // polygon 변 수 2.
+        let mut bytes = ShapeGeometry::Polygon(
+            PolygonParams::new(
+                Rect::new(Vec2::ZERO, Size2::new(1.0, 1.0).unwrap()),
+                3,
+                stellar_core_types::value::Angle::new(0.0).unwrap(),
+                0.0,
+            )
+            .unwrap(),
+        )
+        .encode();
+        bytes[17..21].copy_from_slice(&2u32.to_le_bytes());
+        assert!(matches!(
+            ShapeGeometry::decode(&bytes),
+            Err(ShapeError::InvalidSideCount { sides: 2 })
+        ));
+        // 음수 width.
+        let mut bytes = ShapeGeometry::Rectangle(RectangleParams {
+            size: Size2::new(1.0, 1.0).unwrap(),
+            corner_radius: CornerRadius::ZERO,
+        })
+        .encode();
+        bytes[1..5].copy_from_slice(&(-1.0f32).to_le_bytes());
+        assert!(ShapeGeometry::decode(&bytes).is_err());
+        // NaN 좌표.
+        let mut bytes = ShapeGeometry::Line(LineParams {
+            start: Vec2::ZERO,
+            end: Vec2::ZERO,
+            cap: LineCap::Butt,
+        })
+        .encode();
+        bytes[1..5].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(ShapeGeometry::decode(&bytes).is_err());
     }
 }

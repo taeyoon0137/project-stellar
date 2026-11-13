@@ -447,6 +447,98 @@ impl IdentifiedPath {
     }
 }
 
+// --- IdentifiedPath canonical 인코딩 (VI.10.2) ---
+//
+// 형식: `u32` 길이 + [`PathData::encode`] bytes, `u32` id 항목 수, 항목마다 flag(u8: bit0
+// point, bit1 handles) + point id 16 + handle id 16×2. Close 항목은 flag 0만 기록합니다.
+
+const IDS_POINT: u8 = 0b01;
+const IDS_HANDLES: u8 = 0b10;
+
+fn take_u32(reader: &mut Reader<'_>) -> Result<u32, PathError> {
+    let raw: [u8; 4] = reader
+        .take(4)?
+        .try_into()
+        .map_err(|_| PathError::Malformed {
+            reason: "입력 부족",
+        })?;
+    Ok(u32::from_le_bytes(raw))
+}
+
+fn take_stable_id(reader: &mut Reader<'_>) -> Result<StableId, PathError> {
+    let mut raw = [0u8; 16];
+    raw.copy_from_slice(reader.take(16)?);
+    Ok(StableId::from_bytes(raw))
+}
+
+impl IdentifiedPath {
+    /// canonical bytes.
+    pub fn encode(&self) -> Vec<u8> {
+        let data = self.data.encode();
+        let mut buf = Vec::with_capacity(data.len() + 8 + self.ids.len() * 49);
+        buf.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        buf.extend_from_slice(&data);
+        buf.extend_from_slice(&(self.ids.len() as u32).to_le_bytes());
+        for ids in &self.ids {
+            let mut flag = 0u8;
+            if ids.point.is_some() {
+                flag |= IDS_POINT;
+            }
+            if ids.handles.is_some() {
+                flag |= IDS_HANDLES;
+            }
+            buf.push(flag);
+            if let Some(point) = ids.point {
+                buf.extend_from_slice(&point.0.to_bytes());
+            }
+            if let Some((h1, h2)) = ids.handles {
+                buf.extend_from_slice(&h1.0.to_bytes());
+                buf.extend_from_slice(&h2.0.to_bytes());
+            }
+        }
+        buf
+    }
+
+    /// bytes에서 복원하고 검증합니다(subpath 규칙, id 구성·유일성).
+    pub fn decode(bytes: &[u8]) -> Result<IdentifiedPath, PathError> {
+        let mut reader = Reader {
+            input: bytes,
+            pos: 0,
+        };
+        let data_len = take_u32(&mut reader)? as usize;
+        let data = PathData::decode(reader.take(data_len)?)?;
+        let count = take_u32(&mut reader)? as usize;
+        let mut ids = Vec::with_capacity(count.min(data.commands().len()));
+        for _ in 0..count {
+            let flag = reader.take(1)?[0];
+            if flag & !(IDS_POINT | IDS_HANDLES) != 0 {
+                return Err(PathError::Malformed {
+                    reason: "알 수 없는 id flag",
+                });
+            }
+            let point = if flag & IDS_POINT != 0 {
+                Some(PathPointId(take_stable_id(&mut reader)?))
+            } else {
+                None
+            };
+            let handles = if flag & IDS_HANDLES != 0 {
+                let h1 = PathHandleId(take_stable_id(&mut reader)?);
+                let h2 = PathHandleId(take_stable_id(&mut reader)?);
+                Some((h1, h2))
+            } else {
+                None
+            };
+            ids.push(CommandIds { point, handles });
+        }
+        if reader.pos != bytes.len() {
+            return Err(PathError::Malformed {
+                reason: "trailing bytes",
+            });
+        }
+        IdentifiedPath::new(data, ids)
+    }
+}
+
 // --- bounds (VI.6.4) ---
 
 /// 3차 Bézier 한 축의 극값 파라미터(0 < t < 1).
@@ -1008,5 +1100,53 @@ mod tests {
             let _ = plan_shape_to_path(StableId::new_v7(1, 0, 1), &geometry, &mut gen).unwrap();
             assert_eq!(geometry, before, "원본 geometry 불변");
         }
+    }
+
+    #[test]
+    fn identified_path_codec_round_trips() {
+        // VI.10.2: node 레코드 직렬화용 IdentifiedPath 인코딩(point·handle id 보존).
+        let data = PathData::new(
+            WindingRule::EvenOdd,
+            vec![
+                PathCommand::MoveTo(p(0.0, 0.0)),
+                PathCommand::CubicTo {
+                    c1: p(1.0, 2.0),
+                    c2: p(3.0, 4.0),
+                    to: p(5.0, 0.0),
+                },
+                PathCommand::LineTo(p(5.0, 5.0)),
+                PathCommand::Close,
+            ],
+        )
+        .unwrap();
+        let mut next = 0u64;
+        let path = IdentifiedPath::assign(data, &mut || {
+            next += 1;
+            StableId::new_v7(next, 0, next)
+        });
+        let bytes = path.encode();
+        let decoded = IdentifiedPath::decode(&bytes).unwrap();
+        assert_eq!(decoded, path);
+        assert_eq!(decoded.encode(), bytes);
+        assert_eq!(decoded.point_ids(), path.point_ids());
+        // 빈 path.
+        let empty = IdentifiedPath::new(PathData::default(), vec![]).unwrap();
+        assert_eq!(IdentifiedPath::decode(&empty.encode()).unwrap(), empty);
+        // 절단·trailing·잘못된 flag 거부.
+        for cut in [0, 3, bytes.len() - 1] {
+            assert!(IdentifiedPath::decode(&bytes[..cut]).is_err(), "절단 {cut}");
+        }
+        let mut extended = bytes.clone();
+        extended.push(0);
+        assert!(IdentifiedPath::decode(&extended).is_err());
+        let data_len = u32::from_le_bytes(bytes[..4].try_into().unwrap()) as usize;
+        let flag_at = 4 + data_len + 4;
+        let mut bad_flag = bytes.clone();
+        bad_flag[flag_at] = 0b100;
+        assert!(IdentifiedPath::decode(&bad_flag).is_err());
+        // id 구성 불일치(MoveTo에 handle flag) 거부.
+        let mut mismatch = bytes;
+        mismatch[flag_at] = IDS_POINT | IDS_HANDLES;
+        assert!(IdentifiedPath::decode(&mismatch).is_err());
     }
 }

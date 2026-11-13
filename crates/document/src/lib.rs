@@ -67,3 +67,9 @@ pub mod records;
 
 /// 전체 document validator (VI.10.1).
 pub mod validate;
+
+/// 영속 레코드 canonical 인코딩과 View subtree 분할 (VI.10.2).
+pub mod record_codec;
+
+/// 런타임 문서 모델 (VI.10.2).
+pub mod model;
