@@ -62,3 +62,6 @@ pub mod capability;
 
 /// 프로젝트 파일 감시기 (XIII.2).
 pub mod watcher;
+
+/// 외부 변경 반영 상태 (XIII.3).
+pub mod external_change;
