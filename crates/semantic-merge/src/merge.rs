@@ -12,7 +12,11 @@
 //! 같은 객체의 서로 다른 PropertyPath 변경, 같은 객체의 위치 변경과 속성 변경은 겹치지 않으므로
 //! conflict가 없습니다. 받아들인 변경은 semantic-diff `apply`로 base에 적용해 candidate를 만듭니다.
 //!
-//! **겹침**: 양쪽이 같은 대상을 바꾸면 conflict이며 candidate는 그 대상의 base 상태를
+//! **동일 변경(XIV.10.3)**: 양쪽이 같은 대상을 **같은 결과**로 바꾸면(같은 PropertyPath를
+//! canonical 비교로 같은 값으로, 같은 위치로, 같은 삭제·추가로) conflict 없이 한 변경으로
+//! 합칩니다.
+//!
+//! **겹침**: 양쪽이 같은 대상을 서로 다르게 바꾸면 conflict이며 candidate는 그 대상의 base 상태를
 //! 유지합니다. 한쪽이 객체 구조를 바꾸면(삭제·교체) 다른 쪽의 그 객체 변경 전체가 겹칩니다.
 //!
 //! **구조 정합**: 한쪽이 삭제한 parent 아래에 다른 쪽이 객체를 추가·이동해 candidate에 parent
@@ -106,6 +110,33 @@ fn value_state(snapshot: &SemanticSnapshot, path: &PropertyPath) -> SideState {
     })
 }
 
+/// 두 위치 변경의 결과 위치가 같은지.
+fn same_position(a: &SemanticChange, b: &SemanticChange) -> bool {
+    match (a, b) {
+        (
+            SemanticChange::MoveObject(x) | SemanticChange::ReorderObject(x),
+            SemanticChange::MoveObject(y) | SemanticChange::ReorderObject(y),
+        ) => x.to == y.to,
+        _ => false,
+    }
+}
+
+/// 두 속성 변경의 이후 값이 canonical 비교로 같은지(둘 다 삭제 포함).
+fn same_new_value(a: &SemanticChange, b: &SemanticChange) -> bool {
+    let new = |change: &SemanticChange| match change {
+        SemanticChange::SetProperty(c)
+        | SemanticChange::ChangeToken(c)
+        | SemanticChange::ComponentInterfaceChange(c)
+        | SemanticChange::AssetRefChange(c) => Some(c.new.clone()),
+        _ => None,
+    };
+    match (new(a), new(b)) {
+        (Some(None), Some(None)) => true,
+        (Some(Some(x)), Some(Some(y))) => x.canonical_eq(&y),
+        _ => false,
+    }
+}
+
 /// merge 진행 상태.
 struct Merger<'a> {
     input: &'a MergeInput,
@@ -142,6 +173,11 @@ impl<'a> Merger<'a> {
 
     fn merge_object(&mut self, id: StableId, ours: &Edits<'_>, theirs: &Edits<'_>) {
         let input = self.input;
+        if !ours.structure.is_empty() && ours.structure == theirs.structure {
+            // 같은 삭제·추가·교체(XIV.10.3). 구조 변경 객체에는 다른 변경이 없습니다.
+            self.accept(ours);
+            return;
+        }
         if !ours.structure.is_empty() || !theirs.structure.is_empty() {
             let kind = if ours.deletes() || theirs.deletes() {
                 ConflictKind::DeleteVsModify
@@ -153,6 +189,9 @@ impl<'a> Merger<'a> {
         }
         match (ours.position, theirs.position) {
             (Some(change), None) | (None, Some(change)) => self.accepted.push(change.clone()),
+            (Some(change), Some(other)) if same_position(change, other) => {
+                self.accepted.push(change.clone())
+            }
             (Some(change), Some(_)) => self.conflicts.push(SemanticConflict {
                 kind: ConflictKind::ConflictingReorder,
                 provenance: *change.provenance(),
@@ -173,6 +212,10 @@ impl<'a> Merger<'a> {
         for path in paths {
             match (ours.properties.get(path), theirs.properties.get(path)) {
                 (Some(change), None) | (None, Some(change)) => {
+                    self.accepted.push((*change).clone())
+                }
+                (Some(change), Some(other)) if same_new_value(change, other) => {
+                    // 같은 경로를 같은 값으로(XIV.10.3): 한 변경으로 합칩니다.
                     self.accepted.push((*change).clone())
                 }
                 (Some(change), Some(_)) => self.conflicts.push(SemanticConflict {
@@ -491,6 +534,67 @@ pub(crate) mod tests {
             let result = run(&base, &ours, &theirs);
             assert!(result.is_clean(), "seed {seed}: {:?}", result.conflicts);
             assert_eq!(result.merged, expected, "seed {seed}");
+        }
+    }
+
+    #[test]
+    fn identical_edit_merges_as_one_change() {
+        let base = base();
+        let same = |s: &SemanticSnapshot| edit(s, 11, |o| set(o, keys::DISPLAY_NAME, text("same")));
+        let ours = edit(&same(&base), 12, |o| {
+            set(o, keys::LOCKED, SemanticValue::Bool(true))
+        });
+        let theirs = same(&base);
+        let result = run(&base, &ours, &theirs);
+        assert!(result.is_clean(), "{:?}", result.conflicts);
+        assert_eq!(result.merged, ours);
+        let renames: Vec<_> = result
+            .changes
+            .iter()
+            .filter(|c| c.object_id() == sid(11))
+            .collect();
+        assert_eq!(renames.len(), 1, "같은 변경은 한 번만");
+
+        // 같은 속성 삭제, 같은 위치 이동, 같은 객체 삭제·추가도 합칩니다.
+        let both = |s: &SemanticSnapshot| {
+            let mut out = edit(s, 11, |o| {
+                o.remove_property(&o.path(&[keys::VISIBLE]));
+                o.set_position(Some(sid(12)), Some(key(0x22)));
+            });
+            out.remove(sid(13));
+            out.insert(node(
+                40,
+                Some(10),
+                0x10,
+                &[(keys::DISPLAY_NAME, text("new"))],
+            ))
+            .unwrap();
+            out
+        };
+        let result = run(&base, &both(&base), &both(&base));
+        assert!(result.is_clean(), "{:?}", result.conflicts);
+        assert_eq!(result.merged, both(&base));
+    }
+
+    #[test]
+    fn same_edits_on_both_sides_property() {
+        // merge(base, X, X) == X: 양쪽 같은 무작위 편집은 항상 conflict 0.
+        for seed in 0..100 {
+            let size = 4 + seed % 16;
+            let base = random_tree(seed, size);
+            let mut rng = Rng(seed ^ 0xBEEF);
+            let mut changed = base.clone();
+            for n in 1..size {
+                if rng.below(3) == 0 {
+                    changed = edit(&changed, 100 + n, |o| set(o, keys::DISPLAY_NAME, text("e")));
+                }
+            }
+            if rng.below(2) == 0 {
+                changed.insert(node(900, Some(100), 0x7F, &[])).unwrap();
+            }
+            let result = run(&base, &changed, &changed);
+            assert!(result.is_clean(), "seed {seed}: {:?}", result.conflicts);
+            assert_eq!(result.merged, changed, "seed {seed}");
         }
     }
 

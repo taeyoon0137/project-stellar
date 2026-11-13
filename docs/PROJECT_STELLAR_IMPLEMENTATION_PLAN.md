@@ -1455,7 +1455,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XIV.10.1 | `[x]` | `MergeInput { base, ours, theirs }`, `MergeResult`, `SemanticConflict` 모델을 정의합니다. | round-trip. | XIV.3.1 |
 | XIV.10.2 | `[x]` | 서로 다른 StableId 변경과 같은 object의 서로 다른 PropertyPath 변경을 자동 병합합니다. | non-overlap fixture conflict 0. | XIV.10.1, XIV.3.9 |
-| XIV.10.3 | `[ ]` | 같은 PropertyPath를 양쪽이 같은 값으로 바꾼 경우 conflict 없이 한 변경으로 합칩니다. | identical edit fixture 통과. | XIV.10.2 |
+| XIV.10.3 | `[x]` | 같은 PropertyPath를 양쪽이 같은 값으로 바꾼 경우 conflict 없이 한 변경으로 합칩니다. | identical edit fixture 통과. | XIV.10.2 |
 | XIV.10.4 | `[ ]` | same property different value conflict를 생성하고 base/ours/theirs 값을 모두 보존합니다. | conflict record 정확. | XIV.10.2 |
 | XIV.10.5 | `[ ]` | delete-vs-modify, delete-vs-move, type-change-vs-value-change conflict를 각각 다른 kind로 분류합니다. | conflict matrix fixture 통과. | XIV.10.1 |
 | XIV.10.6 | `[ ]` | OrderKey independent insertion을 자동 병합하고 같은 child conflicting reorder를 conflict로 분류합니다. | Phase III fixture 통과. | III.5.4, XIV.10.2 |
