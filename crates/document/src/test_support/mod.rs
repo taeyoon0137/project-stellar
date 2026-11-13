@@ -2,12 +2,14 @@
 //!
 //! 이 모듈은 테스트(이 crate의 unit test와 다른 crate의 통합 테스트)에서만 사용합니다.
 //! 프로덕션 저장·로드 경로는 이 모듈을 호출하지 않습니다 — 저장 형식은 chunk model
-//! (VI.10.2)뿐이고 semantic snapshot JSON은 비교·diff 용도입니다. 이 crate의 비테스트
-//! 코드가 이 모듈을 참조하지 않는다는 사실은 `semantic_snapshot` 테스트가 소스를 검사해
-//! 고정합니다.
+//! (VI.10.2)뿐이고 semantic snapshot JSON은 비교·diff 용도입니다.
 //!
-//! 다른 crate의 통합 테스트도 쓸 수 있도록 `cfg(test)`가 아닌 공개 모듈로 두되 문서에서는
-//! 숨깁니다(`#[doc(hidden)]`). 새 의존성 없이 직접 구현합니다.
+//! 프로덕션 빌드에는 **컴파일되지 않습니다**: `cfg(test)` 또는 기본값이 꺼진 `test-support`
+//! feature에서만 존재합니다. 다른 crate의 통합 테스트는 `[dev-dependencies]`에서 그 feature를
+//! 켭니다. `semantic_snapshot` 테스트가 (1) 이 crate와 workspace의 모든 다른 crate의 비테스트
+//! 소스가 이 모듈을 참조하지 않는지, (2) 어떤 manifest도 `[dev-dependencies]` 밖에서 feature를
+//! 켜지 않는지 검사해 고정합니다. 문서에서는 숨깁니다(`#[doc(hidden)]`). 새 의존성 없이 직접
+//! 구현합니다.
 
 /// 결정론적 JSON 값과 출력기.
 pub mod json;

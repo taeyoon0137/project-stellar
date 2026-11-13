@@ -62,3 +62,25 @@
 - Windows 재개 시 같은 fixture 테스트를 Windows CI에서 실행해 byte-identical을 재확인해야 합니다.
 - fixture 갱신은 `STELLAR_UPDATE_SNAPSHOT_FIXTURES=1`로만 합니다. 의도하지 않은 갱신을 막으려면
   리뷰에서 fixture diff를 확인해야 합니다.
+
+## 후속 수정 (리뷰 minor: test_support의 프로덕션 빌드 포함)
+
+- **결함**: `test_support`가 숨김 공개 모듈이라 프로덕션 빌드에도 컴파일됐고, "프로덕션 미사용" 소스 검사는 이 crate의
+  `src`만 봤습니다.
+- **수정**: `crates/document/Cargo.toml`에 기본값이 꺼진 `test-support` feature를 추가하고 모듈을
+  `#[cfg(any(test, feature = "test-support"))]`로 gate했습니다. 이를 쓰는 `crates/project` 통합 테스트는
+  `[dev-dependencies]`에서만 feature를 켭니다. `cargo tree -e normal,features`에서 stellar-project의 일반 edge는
+  `default` feature만, dev edge만 `test-support`를 켭니다.
+- **검사 확장**: `workspace_production_code_does_not_use_test_support`가 root `Cargo.toml`의 모든 member(crates/*,
+  tools/*)의 비테스트 소스에서 `stellar_document::…test_support`(use group 포함) 참조가 없는지, 어떤 manifest도
+  `[dependencies]`·`[build-dependencies]`·`[features]`에서 `test-support`를 켜지 않는지 검사합니다(scanner positive
+  control 포함). lib.rs 선언의 gate 형태와 feature가 default가 아님도 고정합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-document` | unit 244 포함 전부 passed, 0 failed |
+| `cargo test -p stellar-project` | unit 168, `document_residency` 3, `document_round_trip` 4, `document_serialize` 4, `restricted_yaml_fuzz` 4 passed, 0 failed |
+| `cargo clippy -p stellar-document -p stellar-project --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -p stellar-project -- --check` | 통과 |
+| `cargo check --workspace` | 통과(프로덕션 빌드에서 test_support 없이 컴파일) |
+| `cargo tree -p stellar-project -e normal,features -i stellar-document` | `default` feature만 |

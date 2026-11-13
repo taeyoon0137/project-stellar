@@ -749,5 +749,125 @@ mod tests {
             1,
             "lib.rs는 선언 1회만"
         );
+        // 선언은 cfg(test) 또는 기본값이 꺼진 feature에서만 컴파일됩니다.
+        assert!(
+            lib.contains(
+                "#[cfg(any(test, feature = \"test-support\"))]\n#[doc(hidden)]\npub mod test_support;"
+            ),
+            "lib.rs의 test_support 선언은 test-support feature로 gate돼야 합니다"
+        );
+        let manifest =
+            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+                .unwrap();
+        let features = manifest_section(&manifest, "features");
+        assert!(features.contains("test-support = []"), "feature 정의");
+        assert!(
+            !features.contains("default"),
+            "test-support는 기본 feature가 아닙니다"
+        );
+    }
+
+    use std::path::{Path, PathBuf};
+
+    /// workspace root Cargo.toml의 `members` 목록.
+    fn workspace_members(root: &Path) -> Vec<PathBuf> {
+        let text = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        let start = text.find("members").expect("members");
+        let open = start + text[start..].find('[').expect("[");
+        let close = open + text[open..].find(']').expect("]");
+        text[open + 1..close]
+            .split(',')
+            .map(|m| m.trim().trim_matches('"'))
+            .filter(|m| !m.is_empty())
+            .map(|m| root.join(m))
+            .collect()
+    }
+
+    /// `[name]` 표 본문(다음 표 머리 전까지). 없으면 빈 문자열.
+    fn manifest_section(text: &str, name: &str) -> String {
+        let header = format!("[{name}]");
+        let mut out = String::new();
+        let mut inside = false;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with('[') {
+                inside = trimmed == header;
+                continue;
+            }
+            if inside {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// 비테스트 소스(첫 `#[cfg(test)]` 앞)에서 `stellar_document`로 시작하는 경로·use 문이
+    /// `test_support`에 닿는지. use group(`stellar_document::{.., test_support}`)도 잡도록 각
+    /// 등장 위치부터 다음 `;`까지를 봅니다.
+    fn references_document_test_support(production: &str) -> bool {
+        production.match_indices("stellar_document").any(|(at, _)| {
+            let rest = &production[at..];
+            let statement = rest.split(';').next().unwrap_or(rest);
+            statement.contains("test_support")
+        })
+    }
+
+    #[test]
+    fn workspace_production_code_does_not_use_test_support() {
+        // 검증 기준(VI.10.4) 확장: workspace의 다른 모든 crate(crates/*, tools/*)의 비테스트
+        // 소스가 document test_support를 참조하지 않고, 어떤 manifest도 `[dev-dependencies]`
+        // 밖에서 test-support feature를 켜지 않습니다.
+        let document = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = document.join("../..");
+        let members = workspace_members(&root);
+        assert!(members.len() > 20, "members {}", members.len());
+        assert!(members.iter().any(|m| m.ends_with("crates/project")));
+        let mut scanned = 0usize;
+        for member in &members {
+            let manifest = std::fs::read_to_string(member.join("Cargo.toml")).unwrap();
+            let is_document = member.ends_with("crates/document");
+            for section in ["dependencies", "build-dependencies", "features"] {
+                if is_document && section == "features" {
+                    continue;
+                }
+                let body = manifest_section(&manifest, section);
+                assert!(
+                    !body.contains("test-support"),
+                    "{}의 [{section}]가 test-support를 켭니다(dev-dependencies만 허용)",
+                    member.display()
+                );
+            }
+            if is_document {
+                continue;
+            }
+            let src = member.join("src");
+            if !src.is_dir() {
+                continue;
+            }
+            let mut files = Vec::new();
+            rust_sources(&src, &mut files);
+            for file in files {
+                let text = std::fs::read_to_string(&file).unwrap();
+                let production = text.split("#[cfg(test)]").next().unwrap_or("");
+                assert!(
+                    !references_document_test_support(production),
+                    "{}의 프로덕션 코드가 stellar_document::test_support를 참조합니다",
+                    file.display()
+                );
+                scanned += 1;
+            }
+        }
+        assert!(scanned > 100, "검사한 소스 {scanned}개");
+        // scanner 자체 검증(positive control).
+        assert!(references_document_test_support(
+            "use stellar_document::test_support::json::Json;"
+        ));
+        assert!(references_document_test_support(
+            "use stellar_document::{model::DocumentModel, test_support::semantic_snapshot};"
+        ));
+        assert!(!references_document_test_support(
+            "use stellar_document::model::DocumentModel;\nmod test_support;"
+        ));
     }
 }
