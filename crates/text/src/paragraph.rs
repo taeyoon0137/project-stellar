@@ -1,0 +1,512 @@
+//! paragraph shaping pipeline (X.10.1).
+//!
+//! paragraph 하나를 itemization(X.9.2) → grapheme 단위 font fallback(X.9.5) → shaping(X.9.1·X.9.6)
+//! 순서로 처리해 [`ShapedParagraph`]를 만듭니다. glyph 위치는 style 글꼴 크기로 정수 변환한 subpixel
+//! ([`TextUnit`]) 값입니다.
+//!
+//! [`ShapedParagraph::segments`]는 줄바꿈·caret의 **원자 단위**입니다. shaping은 grapheme을 쪼개지
+//! 않는 cluster 수준(`MonotoneGraphemes`)으로 하므로 shaping cluster 경계는 grapheme 경계의 부분집합이고,
+//! ligature처럼 여러 grapheme이 한 cluster가 되면 segment도 하나입니다. 줄은 segment 경계에서만
+//! 끊기므로 cluster가 두 줄로 쪼개지지 않습니다.
+
+use std::fmt;
+use std::ops::Range;
+
+use unicode_segmentation::UnicodeSegmentation;
+
+use crate::bidi::{BaseDirection, BidiError, BidiLevel};
+use crate::fallback::ResolvedFallbackChain;
+use crate::font_runs::{
+    assign_fonts, shape_font_runs, FaceSource, FontRunError, MissingGlyphCluster, RunFace,
+    ShapingStyle,
+};
+use crate::itemize::{itemize, Itemization, ItemizeError, StyleSpan};
+use crate::shaping::{GlyphId, LineMetrics};
+use crate::units::{FontSize, TextUnit, UnitError};
+
+/// style 하나의 레이아웃 설정.
+#[derive(Debug, Clone)]
+pub struct TextStyleSpec<'a> {
+    /// 해석된 fallback chain.
+    pub chain: ResolvedFallbackChain<'a>,
+    /// OpenType feature·variation.
+    pub shaping: ShapingStyle,
+    /// 글꼴 크기.
+    pub font_size: FontSize,
+}
+
+/// paragraph 입력.
+#[derive(Debug, Clone, Copy)]
+pub struct ParagraphInput<'a> {
+    /// paragraph 텍스트(`'\n'` 없음).
+    pub text: &'a str,
+    /// style span(X.9.2 규칙).
+    pub spans: &'a [StyleSpan],
+    /// 기준 방향.
+    pub base_direction: BaseDirection,
+}
+
+/// 텍스트 레이아웃 오류.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TextLayoutError {
+    /// itemization 입력 오류.
+    Itemize(ItemizeError),
+    /// font 할당·shaping 오류.
+    FontRun(FontRunError),
+    /// BiDi 재배치 오류.
+    Bidi(BidiError),
+    /// 단위 범위 오류.
+    Unit(UnitError),
+    /// paragraph 텍스트에 `'\n'`이 있습니다(paragraph 구분자).
+    ParagraphSeparatorInText {
+        /// 위치.
+        offset: usize,
+    },
+    /// 너비 제약이 음수입니다.
+    NegativeWidth,
+}
+
+impl fmt::Display for TextLayoutError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TextLayoutError::Itemize(err) => write!(f, "itemization 오류: {err}"),
+            TextLayoutError::FontRun(err) => write!(f, "font run 오류: {err}"),
+            TextLayoutError::Bidi(err) => write!(f, "BiDi 오류: {err}"),
+            TextLayoutError::Unit(err) => write!(f, "단위 오류: {err}"),
+            TextLayoutError::ParagraphSeparatorInText { offset } => {
+                write!(f, "paragraph 텍스트 {offset} 위치에 '\\n'이 있습니다")
+            }
+            TextLayoutError::NegativeWidth => f.write_str("너비 제약은 음수일 수 없습니다"),
+        }
+    }
+}
+
+impl std::error::Error for TextLayoutError {}
+
+impl From<ItemizeError> for TextLayoutError {
+    fn from(err: ItemizeError) -> TextLayoutError {
+        TextLayoutError::Itemize(err)
+    }
+}
+
+impl From<FontRunError> for TextLayoutError {
+    fn from(err: FontRunError) -> TextLayoutError {
+        TextLayoutError::FontRun(err)
+    }
+}
+
+impl From<BidiError> for TextLayoutError {
+    fn from(err: BidiError) -> TextLayoutError {
+        TextLayoutError::Bidi(err)
+    }
+}
+
+impl From<UnitError> for TextLayoutError {
+    fn from(err: UnitError) -> TextLayoutError {
+        TextLayoutError::Unit(err)
+    }
+}
+
+/// 위치가 정해진 glyph(subpixel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PositionedGlyph {
+    /// glyph.
+    pub glyph: GlyphId,
+    /// paragraph byte offset(cluster 시작).
+    pub cluster: u32,
+    /// 가로 advance.
+    pub x_advance: TextUnit,
+    /// 가로 offset.
+    pub x_offset: TextUnit,
+    /// 세로 offset(위쪽이 양수, font 좌표계).
+    pub y_offset: TextUnit,
+}
+
+/// 줄 metric(subpixel). descent는 음수입니다.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub struct ScaledLineMetrics {
+    /// baseline 위 높이.
+    pub ascent: TextUnit,
+    /// baseline 아래 깊이(≤ 0).
+    pub descent: TextUnit,
+    /// line gap.
+    pub line_gap: TextUnit,
+}
+
+/// shaping된 glyph run(한 item 안 같은 face 구간).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GlyphRun {
+    /// paragraph byte 범위.
+    pub range: Range<usize>,
+    /// itemization item index.
+    pub item: usize,
+    /// style index.
+    pub style: u32,
+    /// BiDi level.
+    pub level: BidiLevel,
+    /// face(없으면 glyph 없음).
+    pub face: RunFace,
+    /// 글꼴 크기.
+    pub font_size: FontSize,
+    /// 이 run 글꼴의 줄 metric(face가 없으면 0).
+    pub metrics: ScaledLineMetrics,
+    /// glyph(visual 순서).
+    pub glyphs: Vec<PositionedGlyph>,
+}
+
+/// 줄바꿈·caret 원자 단위(shaping cluster).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Segment {
+    /// paragraph byte 범위.
+    pub range: Range<usize>,
+    /// 가로 advance 합.
+    pub advance: TextUnit,
+    /// 줄 끝에서 폭에 넣지 않는 공백(hanging whitespace)인지.
+    pub is_whitespace: bool,
+    /// 속한 glyph run index.
+    pub run: usize,
+}
+
+/// shaping된 paragraph (X.10.1 입력).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShapedParagraph {
+    text: String,
+    itemization: Itemization,
+    runs: Vec<GlyphRun>,
+    segments: Vec<Segment>,
+    missing: Vec<MissingGlyphCluster>,
+    default_metrics: ScaledLineMetrics,
+}
+
+impl ShapedParagraph {
+    /// paragraph 텍스트.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
+    /// itemization(BiDi 포함).
+    pub fn itemization(&self) -> &Itemization {
+        &self.itemization
+    }
+
+    /// 논리 순서 glyph run.
+    pub fn runs(&self) -> &[GlyphRun] {
+        &self.runs
+    }
+
+    /// 논리 순서 원자 segment.
+    pub fn segments(&self) -> &[Segment] {
+        &self.segments
+    }
+
+    /// missing glyph cluster.
+    pub fn missing(&self) -> &[MissingGlyphCluster] {
+        &self.missing
+    }
+
+    /// 빈 paragraph·glyph 없는 줄에 쓰는 metric(첫 style 첫 사용 가능 face 기준).
+    pub fn default_metrics(&self) -> ScaledLineMetrics {
+        self.default_metrics
+    }
+
+    /// segment 경계 offset인지(0과 텍스트 끝 포함).
+    pub fn is_segment_boundary(&self, offset: usize) -> bool {
+        offset == 0
+            || offset == self.text.len()
+            || self
+                .segments
+                .binary_search_by_key(&offset, |s| s.range.start)
+                .is_ok()
+    }
+}
+
+/// 줄 끝 hanging 공백 문자(CSS `white-space: normal`의 공백·탭·전각 공백 등).
+pub fn is_hanging_whitespace(c: char) -> bool {
+    matches!(
+        c,
+        ' ' | '\t' | '\u{1680}' | '\u{2000}'..='\u{2006}' | '\u{2008}'..='\u{200A}' | '\u{205F}' | '\u{3000}'
+    )
+}
+
+fn scale_metrics(
+    metrics: LineMetrics,
+    size: FontSize,
+    upem: u16,
+) -> Result<ScaledLineMetrics, UnitError> {
+    Ok(ScaledLineMetrics {
+        ascent: size.scale(i64::from(metrics.ascender), upem)?,
+        descent: size.scale(i64::from(metrics.descender), upem)?,
+        line_gap: size.scale(i64::from(metrics.line_gap), upem)?,
+    })
+}
+
+/// paragraph를 shaping합니다 (X.10.1 pipeline). `styles[style]`이 span style의 설정입니다.
+pub fn shape_paragraph<S: FaceSource + ?Sized>(
+    input: &ParagraphInput<'_>,
+    styles: &[TextStyleSpec<'_>],
+    faces: &S,
+) -> Result<ShapedParagraph, TextLayoutError> {
+    let text = input.text;
+    if let Some(offset) = text.find('\n') {
+        return Err(TextLayoutError::ParagraphSeparatorInText { offset });
+    }
+    let itemization = itemize(text, input.spans, input.base_direction)?;
+    let chains: Vec<ResolvedFallbackChain<'_>> = styles.iter().map(|s| s.chain.clone()).collect();
+    let shaping: Vec<ShapingStyle> = styles.iter().map(|s| s.shaping.clone()).collect();
+    let assignment = assign_fonts(text, &itemization.items, &chains, faces)?;
+    let (shaped_runs, missing) = shape_font_runs(
+        text,
+        &itemization.items,
+        &assignment,
+        &chains,
+        &shaping,
+        faces,
+    )?;
+
+    let mut runs = Vec::with_capacity(shaped_runs.len());
+    let mut segments = Vec::new();
+    for shaped_run in shaped_runs {
+        // assign_fonts·shape_font_runs가 item index와 style index를 이미 검증했지만, 색인 대신 조회로
+        // 다시 확인해 panic 경로를 두지 않습니다.
+        let invalid_item = FontRunError::InvalidItem {
+            item: shaped_run.run.item,
+        };
+        let item = itemization
+            .items
+            .get(shaped_run.run.item)
+            .ok_or(invalid_item)?;
+        let spec = usize::try_from(item.style)
+            .ok()
+            .and_then(|s| styles.get(s))
+            .ok_or(FontRunError::UnknownStyle {
+                item: shaped_run.run.item,
+                style: item.style,
+            })?;
+        let size = spec.font_size;
+        let (glyphs, metrics) = match (&shaped_run.shaped, shaped_run.run.face) {
+            (Some(shaped), RunFace::Face { handle, .. }) => {
+                let upem = shaped.units_per_em;
+                let mut glyphs = Vec::with_capacity(shaped.glyphs.len());
+                for g in &shaped.glyphs {
+                    glyphs.push(PositionedGlyph {
+                        glyph: g.glyph,
+                        cluster: g.cluster,
+                        x_advance: size.scale(i64::from(g.x_advance), upem)?,
+                        x_offset: size.scale(i64::from(g.x_offset), upem)?,
+                        y_offset: size.scale(i64::from(g.y_offset), upem)?,
+                    });
+                }
+                let metrics = match faces.face(handle) {
+                    Some(face) => scale_metrics(face.line_metrics(), size, upem)?,
+                    None => ScaledLineMetrics::default(),
+                };
+                (glyphs, metrics)
+            }
+            _ => (Vec::new(), ScaledLineMetrics::default()),
+        };
+        let run_index = runs.len();
+        push_segments(
+            text,
+            &shaped_run.run.range,
+            &glyphs,
+            run_index,
+            &mut segments,
+        )?;
+        runs.push(GlyphRun {
+            range: shaped_run.run.range.clone(),
+            item: shaped_run.run.item,
+            style: item.style,
+            level: item.level,
+            face: shaped_run.run.face,
+            font_size: size,
+            metrics,
+            glyphs,
+        });
+    }
+
+    let default_metrics = default_metrics(input, styles, faces)?;
+    Ok(ShapedParagraph {
+        text: text.to_string(),
+        itemization,
+        runs,
+        segments,
+        missing,
+        default_metrics,
+    })
+}
+
+/// 첫 style의 첫 로드된 face metric(없으면 0). 빈 paragraph 줄 높이에 씁니다.
+fn default_metrics<S: FaceSource + ?Sized>(
+    input: &ParagraphInput<'_>,
+    styles: &[TextStyleSpec<'_>],
+    faces: &S,
+) -> Result<ScaledLineMetrics, UnitError> {
+    let style = input
+        .spans
+        .first()
+        .and_then(|s| styles.get(s.style as usize))
+        .or_else(|| styles.first());
+    let Some(style) = style else {
+        return Ok(ScaledLineMetrics::default());
+    };
+    let face = style
+        .chain
+        .available()
+        .find_map(|(_, handle)| faces.face(handle));
+    match face {
+        Some(face) => scale_metrics(face.line_metrics(), style.font_size, face.units_per_em()),
+        None => Ok(ScaledLineMetrics::default()),
+    }
+}
+
+/// run 하나를 shaping cluster segment로 나눕니다. glyph가 없는 run은 grapheme segment(폭 0)입니다.
+fn push_segments(
+    text: &str,
+    range: &Range<usize>,
+    glyphs: &[PositionedGlyph],
+    run: usize,
+    out: &mut Vec<Segment>,
+) -> Result<(), UnitError> {
+    let mut starts: Vec<usize> = if glyphs.is_empty() {
+        text[range.clone()]
+            .grapheme_indices(true)
+            .map(|(i, _)| range.start + i)
+            .collect()
+    } else {
+        glyphs.iter().map(|g| g.cluster as usize).collect()
+    };
+    starts.push(range.start);
+    starts.sort_unstable();
+    starts.dedup();
+    for (i, &start) in starts.iter().enumerate() {
+        let end = starts.get(i + 1).copied().unwrap_or(range.end);
+        if start >= end {
+            continue;
+        }
+        let advance: i64 = glyphs
+            .iter()
+            .filter(|g| (start..end).contains(&(g.cluster as usize)))
+            .map(|g| i64::from(g.x_advance.raw()))
+            .sum();
+        out.push(Segment {
+            range: start..end,
+            advance: TextUnit::from_i64(advance)?,
+            is_whitespace: text[start..end].chars().all(is_hanging_whitespace),
+            run,
+        });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::font_runs::tests::FontSet;
+    use crate::test_fonts::{cjk_spec, latin_liga_spec};
+
+    /// Latin(liga) → CJK chain, 16px 단일 style fixture.
+    pub(crate) struct Fixture {
+        pub set: FontSet,
+        pub chain: crate::fallback::FontFallbackChain,
+    }
+
+    impl Fixture {
+        pub(crate) fn new() -> Fixture {
+            let set = FontSet::new(&[latin_liga_spec(), cjk_spec()]);
+            let chain = set.chain(&[0, 1]);
+            Fixture { set, chain }
+        }
+
+        pub(crate) fn styles(&self, px: i32) -> Vec<TextStyleSpec<'_>> {
+            vec![TextStyleSpec {
+                chain: self.chain.resolve(&self.set.registry),
+                shaping: ShapingStyle::default(),
+                font_size: FontSize::from_px(px).expect("크기"),
+            }]
+        }
+
+        pub(crate) fn shape(&self, text: &str, px: i32, base: BaseDirection) -> ShapedParagraph {
+            let spans = vec![StyleSpan {
+                range: 0..text.len(),
+                style: 0,
+                language: None,
+            }];
+            shape_paragraph(
+                &ParagraphInput {
+                    text,
+                    spans: &spans,
+                    base_direction: base,
+                },
+                &self.styles(px),
+                &self.set.faces,
+            )
+            .expect("shape")
+        }
+    }
+
+    #[test]
+    fn segments_follow_shaping_clusters_and_scale_to_subpixels() {
+        let fx = Fixture::new();
+        // 16px, upem 1000: 500fu → 512 subpx, ffi ligature 800fu → 819.2 → 819.
+        let para = fx.shape("office 日本", 16, BaseDirection::LeftToRight);
+        let segments: Vec<(Range<usize>, i32, bool)> = para
+            .segments()
+            .iter()
+            .map(|s| (s.range.clone(), s.advance.raw(), s.is_whitespace))
+            .collect();
+        assert_eq!(
+            segments,
+            vec![
+                (0..1, 512, false),
+                // ligature cluster는 grapheme 3개를 한 segment로 묶습니다.
+                (1..4, 819, false),
+                (4..5, 512, false),
+                (5..6, 512, false),
+                (6..7, 256, true),
+                (7..10, 1024, false),
+                (10..13, 1024, false),
+            ]
+        );
+        assert!(para.is_segment_boundary(1));
+        assert!(!para.is_segment_boundary(2));
+        assert!(para.is_segment_boundary(13));
+        assert_eq!(para.runs().len(), 2);
+        assert_eq!(
+            para.runs()[0].metrics,
+            ScaledLineMetrics {
+                ascent: TextUnit::from_raw(819),
+                descent: TextUnit::from_raw(-205),
+                line_gap: TextUnit::ZERO
+            }
+        );
+        assert_eq!(para.default_metrics(), para.runs()[0].metrics);
+        assert!(para.missing().is_empty());
+        assert_eq!(para.text(), "office 日本");
+    }
+
+    #[test]
+    fn newline_in_paragraph_is_rejected() {
+        let fx = Fixture::new();
+        let spans = vec![StyleSpan {
+            range: 0..3,
+            style: 0,
+            language: None,
+        }];
+        let err = shape_paragraph(
+            &ParagraphInput {
+                text: "a\nb",
+                spans: &spans,
+                base_direction: BaseDirection::LeftToRight,
+            },
+            &fx.styles(16),
+            &fx.set.faces,
+        );
+        assert_eq!(
+            err.map(|_| ()),
+            Err(TextLayoutError::ParagraphSeparatorInText { offset: 1 })
+        );
+        assert!(TextLayoutError::NegativeWidth.to_string().contains("음수"));
+        assert!(is_hanging_whitespace('\u{3000}'));
+        assert!(!is_hanging_whitespace('\u{00A0}'));
+    }
+}

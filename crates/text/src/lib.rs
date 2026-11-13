@@ -33,5 +33,14 @@ pub mod line_break;
 /// grapheme 단위 font fallback과 missing glyph cluster (X.9.5).
 pub mod font_runs;
 
+/// 텍스트 레이아웃 고정소수점 단위 (X.10.1).
+pub mod units;
+
+/// paragraph shaping pipeline과 원자 segment (X.10.1).
+pub mod paragraph;
+
+/// shaping 결과의 너비 기반 줄 나누기 (X.10.1).
+pub mod line_layout;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;
