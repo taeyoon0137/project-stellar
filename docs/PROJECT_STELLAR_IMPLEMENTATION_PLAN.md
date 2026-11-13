@@ -2290,7 +2290,7 @@ tools/xtask/
 | XXVIII.2.1 | `[ ]` | valid/invalid binary/YAML golden corpus를 라이선스와 함께 공개 가능한 형태로 정리합니다. project content는 synthetic만 사용합니다. | corpus manifest 완전. | XXVIII.1.2 |
 | XXVIII.2.2 | `[ ]` | parser/writer conformance runner와 expected result schema를 제공합니다. | official implementation 통과. | XXVIII.2.1 |
 | XXVIII.2.3 | `[ ]` | semantic diff/merge conformance corpus와 runner를 제공합니다. | official implementation 통과. | XXVIII.1.3 |
-| XXVIII.2.4 | `[ ]` | version compatibility matrix와 deprecation policy를 공개합니다. | historical fixture 검증. | V.8.6 |
+| XXVIII.2.4 | `[x]` | version compatibility matrix와 deprecation policy를 공개합니다. | historical fixture 검증. | V.8.6 |
 
 ### XXVIII.3 첫 공개 버전
 
