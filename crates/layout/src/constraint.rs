@@ -1,4 +1,4 @@
-//! Anchor·Constraint 배치 (X.5.2~X.5.4).
+//! Anchor·Constraint 배치 (X.5.2~X.5.5).
 //!
 //! # anchor target
 //!
@@ -35,6 +35,12 @@
 //! `Cycle`·`Overdetermined`는 오류, `Underdetermined`는 진단 + fallback(미정 크기 = 콘텐츠 크기,
 //! 미정 위치 = 첫 등식 또는 0)입니다. Fill 크기가 음수로 풀리면 0으로 자릅니다. 같은 입력은 항상 같은
 //! 해를 냅니다(형제 입력 순서·삽입 순서 무관).
+//!
+//! # 영향 범위 (X.5.5)
+//!
+//! constraint 참조는 같은 부모의 형제 사이에만 있으므로, 한 형제의 constraint 변경은 그 형제가 속한
+//! 무방향 연결 요소(변경 전·후 모두) 안에서만 해를 바꿉니다. [`ConstraintSystem`]은 그 연결 요소만
+//! 다시 풀고 다른 요소의 해를 재사용합니다.
 
 use std::collections::HashMap;
 
@@ -801,6 +807,178 @@ pub(crate) fn place(
     Ok(placements)
 }
 
+// --- 연결 요소 단위 증분 풀이 (X.5.5) ---
+
+/// 증분 constraint 계산의 형제 입력 (X.5.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstraintSibling {
+    /// 형제 node.
+    pub id: StableId,
+    /// 형제의 constraint(축이 다른 것은 무시).
+    pub constraints: Vec<Constraint>,
+    /// 이 축 크기를 constraint로 정하는지(`Fill`).
+    pub fill: bool,
+    /// 정해진 크기 또는 미정 크기 fallback.
+    pub size: LayoutUnit,
+    /// top에서 첫 baseline까지(세로 축).
+    pub baseline: Option<LayoutUnit>,
+}
+
+/// 한 형제의 축 해.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConstraintPlacement {
+    /// content box 기준 시작 위치.
+    pub start: LayoutUnit,
+    /// 크기.
+    pub size: LayoutUnit,
+}
+
+/// 한 축의 형제 constraint를 연결 요소 단위로 증분 계산합니다 (X.5.5).
+///
+/// constraint가 바뀐 형제의 **변경 전·후 연결 요소**만 다시 풀고, 다른 연결 요소의 해는 그대로
+/// 둡니다. [`ConstraintSystem::solve_counts`]는 형제별 풀이 횟수로, 무관한 연결 요소의 재계산이 0임을
+/// 확인할 수 있습니다.
+#[derive(Debug, Clone)]
+pub struct ConstraintSystem {
+    axis: Axis,
+    extent: LayoutUnit,
+    siblings: Vec<ConstraintSibling>,
+    solutions: Vec<Option<AxisSolution>>,
+    solve_counts: Vec<u64>,
+    diagnostics: Vec<LayoutDiagnostic>,
+}
+
+impl ConstraintSystem {
+    /// 형제 전체를 풀어 시스템을 만듭니다. `extent`는 부모 content 크기입니다.
+    pub fn new(
+        axis: Axis,
+        extent: LayoutUnit,
+        siblings: Vec<ConstraintSibling>,
+    ) -> Result<ConstraintSystem, LayoutError> {
+        let count = siblings.len();
+        let mut system = ConstraintSystem {
+            axis,
+            extent,
+            siblings,
+            solutions: vec![None; count],
+            solve_counts: vec![0; count],
+            diagnostics: Vec::new(),
+        };
+        system.solve(None)?;
+        Ok(system)
+    }
+
+    /// 형제의 해.
+    pub fn placement(&self, id: StableId) -> Option<ConstraintPlacement> {
+        let index = self.siblings.iter().position(|s| s.id == id)?;
+        self.solutions[index].map(|s| ConstraintPlacement {
+            start: s.start,
+            size: s.size,
+        })
+    }
+
+    /// 형제별 누적 풀이 횟수(형제 입력 순).
+    pub fn solve_counts(&self) -> &[u64] {
+        &self.solve_counts
+    }
+
+    /// 마지막 풀이의 진단.
+    pub fn diagnostics(&self) -> &[LayoutDiagnostic] {
+        &self.diagnostics
+    }
+
+    /// 형제 하나의 constraint를 바꾸고 영향 연결 요소만 다시 풉니다. 다시 푼 형제 id를 형제 순서로
+    /// 반환합니다. 오류가 나면 시스템은 바뀌지 않습니다.
+    pub fn set_constraints(
+        &mut self,
+        id: StableId,
+        constraints: Vec<Constraint>,
+    ) -> Result<Vec<StableId>, LayoutError> {
+        let index = self.siblings.iter().position(|s| s.id == id).ok_or(
+            LayoutError::InvalidConstraint {
+                node: id,
+                reason: "constraint system에 없는 형제입니다",
+            },
+        )?;
+        let before = self.graph()?.1.components;
+        let mut next = self.clone();
+        next.siblings[index].constraints = constraints;
+        let after = next.graph()?.1.components;
+        let mut affected: Vec<usize> = Vec::new();
+        for component in before.iter().chain(&after) {
+            if component.contains(&index) {
+                for &member in component {
+                    if !affected.contains(&member) {
+                        affected.push(member);
+                    }
+                }
+            }
+        }
+        affected.sort_unstable();
+        for &member in &affected {
+            next.solutions[member] = None;
+        }
+        next.solve(Some(&affected))?;
+        *self = next;
+        Ok(affected.iter().map(|&i| self.siblings[i].id).collect())
+    }
+
+    /// 해석된 constraint와 graph.
+    fn graph(
+        &self,
+    ) -> Result<(Vec<ResolvedConstraint>, AxisGraph, Vec<LayoutDiagnostic>), LayoutError> {
+        let views: Vec<SiblingConstraints<'_>> = self
+            .siblings
+            .iter()
+            .map(|s| SiblingConstraints {
+                id: s.id,
+                constraints: &s.constraints,
+            })
+            .collect();
+        let (resolved, diagnostics) = resolve_targets(&views)?;
+        let resolved: Vec<ResolvedConstraint> = resolved
+            .into_iter()
+            .filter(|c| c.edge.axis() == self.axis)
+            .collect();
+        let size_unknown: Vec<bool> = self.siblings.iter().map(|s| s.fill).collect();
+        let has_baseline: Vec<bool> = self.siblings.iter().map(|s| s.baseline.is_some()).collect();
+        let graph = build_axis_graph(self.siblings.len(), &resolved, &size_unknown, &has_baseline);
+        Ok((resolved, graph, diagnostics))
+    }
+
+    fn solve(&mut self, only: Option<&[usize]>) -> Result<(), LayoutError> {
+        let (resolved, graph, mut diagnostics) = self.graph()?;
+        let ids: Vec<StableId> = self.siblings.iter().map(|s| s.id).collect();
+        let inputs: Vec<AxisInput> = self
+            .siblings
+            .iter()
+            .map(|s| AxisInput {
+                size_unknown: s.fill,
+                size: s.size,
+                baseline: s.baseline,
+            })
+            .collect();
+        solve_axis(
+            &ids,
+            self.axis,
+            self.extent,
+            &resolved,
+            &inputs,
+            &graph,
+            only,
+            &mut self.solutions,
+            &mut diagnostics,
+        )?;
+        for (i, count) in self.solve_counts.iter_mut().enumerate() {
+            if only.is_none_or(|members| members.contains(&i)) {
+                *count += 1;
+            }
+        }
+        self.diagnostics = diagnostics;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1089,7 +1267,7 @@ mod tests {
     use crate::engine::compute_layout;
     use crate::input::{ContainerLayout, IntrinsicContent, LayoutContent, SizingMode};
     use crate::output::LayoutResult;
-    use crate::test_support::key;
+    use crate::test_support::{key, px};
     use stellar_core_types::value::Insets;
 
     fn left(target: AnchorTarget, offset: f32) -> Constraint {
@@ -1277,5 +1455,121 @@ mod tests {
         );
         // 진단은 결과 bytes로 round-trip.
         assert_eq!(LayoutResult::decode(&result.encode()).unwrap(), result);
+    }
+
+    fn sibling_input(n: u64, constraints: Vec<Constraint>) -> ConstraintSibling {
+        ConstraintSibling {
+            id: id(n),
+            constraints,
+            fill: false,
+            size: px(10),
+            baseline: None,
+        }
+    }
+
+    fn after(n: u64, offset: f32) -> Constraint {
+        Constraint::new(
+            AnchorEdge::Left,
+            AnchorTarget::Sibling {
+                node: id(n),
+                edge: AnchorEdge::Right,
+            },
+            len(offset),
+        )
+    }
+
+    fn from_parent(offset: f32) -> Constraint {
+        Constraint::new(
+            AnchorEdge::Left,
+            AnchorTarget::Parent(AnchorEdge::Left),
+            len(offset),
+        )
+    }
+
+    /// 연결 요소 {A, B}, {C, D}, {E}.
+    fn three_components() -> ConstraintSystem {
+        ConstraintSystem::new(
+            Axis::Horizontal,
+            px(200),
+            vec![
+                sibling_input(2, vec![from_parent(0.0)]),
+                sibling_input(3, vec![after(2, 5.0)]),
+                sibling_input(4, vec![from_parent(100.0)]),
+                sibling_input(5, vec![after(4, 5.0)]),
+                sibling_input(6, vec![from_parent(150.0)]),
+            ],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn unrelated_components_are_not_recomputed() {
+        let mut system = three_components();
+        assert_eq!(system.solve_counts(), &[1, 1, 1, 1, 1]);
+        let before_ab = (system.placement(id(2)), system.placement(id(3)));
+        let before_e = system.placement(id(6));
+        // C의 offset 변경 → {C, D}만 다시 풉니다.
+        let resolved = system
+            .set_constraints(id(4), vec![from_parent(120.0)])
+            .unwrap();
+        assert_eq!(resolved, vec![id(4), id(5)]);
+        assert_eq!(
+            system.solve_counts(),
+            &[1, 1, 2, 2, 1],
+            "무관 요소 재계산 0"
+        );
+        assert_eq!(system.placement(id(4)).unwrap().start, px(120));
+        assert_eq!(system.placement(id(5)).unwrap().start, px(135));
+        assert_eq!(
+            (system.placement(id(2)), system.placement(id(3))),
+            before_ab
+        );
+        assert_eq!(system.placement(id(6)), before_e);
+    }
+
+    #[test]
+    fn merging_and_splitting_components_resolve_both_sides() {
+        let mut system = three_components();
+        // E가 B 뒤에 붙음 → 변경 전 {E}와 변경 후 {A, B, E}만 다시 풉니다.
+        let resolved = system.set_constraints(id(6), vec![after(3, 1.0)]).unwrap();
+        assert_eq!(resolved, vec![id(2), id(3), id(6)]);
+        assert_eq!(system.solve_counts(), &[2, 2, 1, 1, 2]);
+        assert_eq!(system.placement(id(6)).unwrap().start, px(26));
+        // B가 A와 끊김 → 변경 전 요소 {A, B, E} 전체를 다시 풉니다(C, D는 그대로).
+        let resolved = system
+            .set_constraints(id(3), vec![from_parent(50.0)])
+            .unwrap();
+        assert_eq!(resolved, vec![id(2), id(3), id(6)]);
+        assert_eq!(system.solve_counts(), &[3, 3, 1, 1, 3]);
+        assert_eq!(system.placement(id(6)).unwrap().start, px(61));
+        // 같은 결과를 처음부터 풀어도 같습니다(증분 = 전체 계산).
+        let full = ConstraintSystem::new(
+            Axis::Horizontal,
+            px(200),
+            vec![
+                sibling_input(2, vec![from_parent(0.0)]),
+                sibling_input(3, vec![from_parent(50.0)]),
+                sibling_input(4, vec![from_parent(100.0)]),
+                sibling_input(5, vec![after(4, 5.0)]),
+                sibling_input(6, vec![after(3, 1.0)]),
+            ],
+        )
+        .unwrap();
+        for n in 2..=6 {
+            assert_eq!(system.placement(id(n)), full.placement(id(n)), "node {n}");
+        }
+    }
+
+    #[test]
+    fn failed_update_leaves_system_unchanged() {
+        let mut system = three_components();
+        let counts = system.solve_counts().to_vec();
+        // A가 B를 참조 → 순환 → 오류, 시스템 불변.
+        let result = system.set_constraints(id(2), vec![after(3, 0.0)]);
+        assert!(matches!(result, Err(LayoutError::ConstraintCycle { .. })));
+        assert_eq!(system.solve_counts(), counts.as_slice());
+        assert_eq!(system.placement(id(2)).unwrap().start, px(0));
+        assert!(system.set_constraints(id(99), Vec::new()).is_err());
+        assert!(system.diagnostics().is_empty());
     }
 }
