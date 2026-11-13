@@ -44,13 +44,43 @@ fi
 # canvas: drawable pixel == point × scale + 코어 round-trip.
 "$APP" --canvas-check
 
-# 네이티브 UI 텍스트 컨트롤은 코어 텍스트 엔진(FFI)을 호출하지 않습니다(XII.5.1 구조 검사).
-for source in NativeTextControls.swift NativeFieldsPanel.swift; do
-  if grep -n "stellar_" "$REPO_ROOT/apps/macos/StellarMac/$source"; then
-    echo "text 구조 실패: $source 가 코어 FFI를 호출합니다." >&2
+# 네이티브 UI 텍스트 컨트롤은 코어 텍스트 엔진(FFI)을 직접·간접으로 호출하지 않습니다(XII.5.1 구조 검사).
+# - 대상: 고정 목록 + `Native*.swift`로 추가되는 네이티브 UI 파일 전부.
+# - 목록의 파일이 없으면(이름 변경·삭제) 검사가 조용히 통과하지 않도록 실패합니다.
+# - 직접 호출(`stellar_`)뿐 아니라 셸 FFI wrapper(`CoreRuntime`, `RuntimeHost`)와 runtime handle 전달도 금지합니다.
+# - grep 종료 코드 0(발견)과 2 이상(읽기 오류)은 모두 실패로 처리합니다.
+SOURCES_DIR="$REPO_ROOT/apps/macos/StellarMac"
+NATIVE_UI_SOURCES=(NativeTextControls.swift NativeFieldsPanel.swift)
+for path in "$SOURCES_DIR"/Native*.swift; do
+  [ -e "$path" ] || continue
+  name="$(basename "$path")"
+  case " ${NATIVE_UI_SOURCES[*]} " in
+    *" $name "*) ;;
+    *) NATIVE_UI_SOURCES+=("$name") ;;
+  esac
+done
+CORE_CALL_PATTERN='stellar_|CoreRuntime|RuntimeHost|runtimeHandle'
+for source in "${NATIVE_UI_SOURCES[@]}"; do
+  path="$SOURCES_DIR/$source"
+  if [ ! -f "$path" ]; then
+    echo "text 구조 실패: 검사 대상 $source 가 없습니다(이름을 바꿨다면 smoke.sh 목록을 갱신하세요)." >&2
     exit 1
   fi
+  status=0
+  grep -nE "$CORE_CALL_PATTERN" "$path" || status=$?
+  case "$status" in
+    0)
+      echo "text 구조 실패: $source 가 코어 FFI를 호출합니다." >&2
+      exit 1
+      ;;
+    1) ;;
+    *)
+      echo "text 구조 실패: $source 검사 중 grep 오류(종료 $status)." >&2
+      exit 1
+      ;;
+  esac
 done
+echo "text 구조 ok: ${NATIVE_UI_SOURCES[*]}"
 
 # text input: NSTextView/NSTextField/NSSearchField의 native undo/redo + IME marked text.
 "$APP" --text-input-check
