@@ -1,0 +1,68 @@
+# 작업 보고서: IX.2.6 명시적 detach command
+
+- WBS: IX.2.6
+- 작업명: virtual subtree를 실제 nodes로 복제하고 ComponentRef를 제거하는 detach command(새 ID remap)
+- 상태: 완료 (`[x]`)
+- 선행: IX.2.2, III.1.5, Phase VII(phase 단위 선행 — 완화 적용, 아래 "차이" 참조)
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust, 로컬 검증).
+
+## 변경 파일 목록
+
+- `crates/document/src/component/detach.rs`(신규) — `detach_instance`, `undo_detach`, `DetachRecord`,
+  `SceneNodeRecord`, `MovedContent`, `DetachError`.
+- `crates/document/src/component/mod.rs` — `pub mod detach;` 등록.
+- `crates/document/tests/component_detach.rs`(신규) — 시각 의미·undo·remap 검증.
+- `docs/task-reports/IX.2.6.md`(신규), 계획서(IX.2.6 `[ ]`→`[x]`).
+
+## 구현 요약
+
+- **검증 후 적용**: 인스턴스 해석과 slot 투영 검증(IX.3.2)을 scene 변경 전에 끝내고, 실패하면 scene을
+  바꾸지 않습니다.
+- **복제**: 정의 tree를 전위 순회해 복제합니다. 인스턴스 node 자리는 정의 root Frame 복제본이 차지하되
+  외부 참조 보존을 위해 **인스턴스 StableId를 유지**하고(부모·순서·이름 유지, 표시 = 인스턴스∧root,
+  잠금 = 인스턴스∨root), 나머지 복제 node는 `IdRemapTable::clone_ids`(III.1.5)로 새 StableId를 받습니다.
+  nested 인스턴스 payload의 내부 참조(slot content)는 새 id로 재매핑하고, 외부 참조(참조 컴포넌트,
+  property override)는 유지합니다.
+- **slot**: override된 slot은 default content를 복제하지 않고, 인스턴스 소유 content를 복제된 host 아래로
+  실제 reparent합니다(투영 순서대로 새 OrderKey). override 없는 slot은 default content를 복제합니다.
+- **ComponentRef 제거**: 인스턴스 자리는 Frame이 되어 payload도 정의 root payload로 바뀝니다. nested
+  인스턴스는 한 단계만 풀려 실제 인스턴스 node로 남습니다.
+- **undo**: `DetachRecord`(원래 인스턴스 필드·payload, 생성 node, 옮긴 content의 원래 부모·OrderKey,
+  remap 표)로 복원합니다. scene이 detach 직후 상태가 아니면 아무것도 바꾸지 않고 거부합니다.
+
+## 실행한 명령 / 검증 (`DEV-MAC`)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo fmt -p stellar-document` | 완료 |
+| `cargo test -p stellar-document` | unit 174 passed, `component_detach` 2, `component_expansion_scale` 1, `component_slot_projection` 1 passed, doctest 2 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| detach 전 가상 subtree와 detach 후 실제 subtree의 (깊이, 종류, 실효 표시, payload/참조 컴포넌트) 전체 일치 — nested 인스턴스·nested slot·slot의 실제 인스턴스·숨김 default content 포함(`detach_preserves_visual_meaning_and_undo_restores`) | 통과 |
+| undo 후 scene 의미 snapshot(StableId·종류·부모·OrderKey·표시·잠금·이름·payload) detach 전과 동일, slot 투영 검증 재통과(같은 테스트) | 통과 |
+| 복제 node 6개 모두 새 id(정의 id와 불교차), override된 default content 미복제, nested payload 내부 참조 재매핑·외부 참조 유지, 정의 library bytes 불변(같은 테스트) | 통과 |
+| 같은 seed·시계면 같은 결과(`detach_is_deterministic_for_same_seed`) | 통과 |
+| root 복제본이 인스턴스 자리·id 유지, 표시·잠금·이름 합성(`root_copy_takes_instance_place_and_identity`) | 통과 |
+| 비인스턴스·미해결 컴포넌트 거부 시 scene 불변(`invalid_targets_leave_scene_unchanged`), 상태가 바뀐 뒤 undo 거부·불변(`undo_rejects_changed_state`) | 통과 |
+
+## 차이(작업 지시와 다른 점)
+
+- 선행 `Phase VII`은 phase 단위 선행이라 사용자 지시(2026-11-14)에 따라 완화했습니다. 3002e6d의
+  `stellar-commands`는 골격뿐이라 closed enum command·revision·history는 없습니다. 이 작업은 document 계층
+  apply/undo 함수 쌍(`detach_instance`/`undo_detach` + 되돌리기 payload)으로 구현했고, VII.1.2 이후
+  command enum에 등록·감싸는 것은 후속입니다.
+- 실행 순서: slot 투영(IX.3.2)이 필요해 IX.3.2 뒤에 수행했습니다.
+- "시각 의미"는 binding이 없는 현재 기준(구조·종류·실효 표시·payload bytes)으로 비교했습니다.
+
+## 남은 위험 / 한계
+
+- PropertyOverride 값의 node 속성 반영은 binding(Phase VIII) 이후입니다. 그때 detach는 override가 반영된
+  최종 값을 복제 node 속성에 굽는(bake) 단계가 필요합니다.
+- ReferenceIndex(인스턴스 → 컴포넌트 edge) 정리와 selection 갱신은 command 계층(VII)이 detach 적용 시 함께
+  처리해야 합니다.

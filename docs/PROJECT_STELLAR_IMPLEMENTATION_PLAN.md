@@ -808,7 +808,7 @@ tools/xtask/
 | IX.2.3 | `[ ]` | 공개 Property만 instance에서 override 가능하게 validator를 구현합니다. private·nested property 직접 접근은 거부합니다. | 직접 nested access fixture 실패. | IX.1.2, IX.2.1 |
 | IX.2.4 | `[ ]` | override 생성·변경·reset command를 구현합니다. reset은 map entry를 삭제하고 default로 돌아갑니다. | apply/inverse와 sparse 저장 확인. | IX.2.3, Phase VII |
 | IX.2.5 | `[x]` | 자유 구조 편집은 금지하고 definition이 허용한 Slot만 변경 가능하게 virtual subtree mutation validator를 구현합니다. | nested child delete/move 거부. | IX.2.2 |
-| IX.2.6 | `[ ]` | 명시적 detach command를 구현해 virtual subtree를 실제 nodes로 복제하고 ComponentRef를 제거합니다. 새 ID remap을 사용합니다. | detach 후 시각 의미 동일, undo 복원. | IX.2.2, III.1.5, Phase VII |
+| IX.2.6 | `[x]` | 명시적 detach command를 구현해 virtual subtree를 실제 nodes로 복제하고 ComponentRef를 제거합니다. 새 ID remap을 사용합니다. | detach 후 시각 의미 동일, undo 복원. | IX.2.2, III.1.5, Phase VII |
 
 ### IX.3 Slot
 

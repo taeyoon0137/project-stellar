@@ -27,3 +27,6 @@ pub mod slot_override;
 
 /// 가상 subtree 구조 편집 validator (IX.2.5).
 pub mod mutation;
+
+/// 명시적 detach command (IX.2.6).
+pub mod detach;
