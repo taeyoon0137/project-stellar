@@ -192,7 +192,7 @@ pub fn may_change_current_pointer(event: &FileWatchEvent) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::watcher::event::OverflowReason;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -223,7 +223,7 @@ mod tests {
         }
     }
 
-    const PROJECT: StableId = StableId::from_bytes([1; 16]);
+    pub(crate) const PROJECT: StableId = StableId::from_bytes([1; 16]);
 
     /// 실제 저장 파이프라인(V.5)으로 문서 chunk 하나를 가진 새 generation을 기록합니다.
     pub(crate) fn save_generation(

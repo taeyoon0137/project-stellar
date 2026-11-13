@@ -1272,7 +1272,7 @@ tools/xtask/
 | XIII.2.2 | `[x]` | macOS watcher adapter를 구현하고 프로젝트 root, 외부 symlink target allowlist를 감시합니다. | create/modify/delete/rename fixture 통과. | XIII.2.1 |
 | XIII.2.3 | `[!]` | Windows watcher adapter를 구현하고 동일 의미 event로 normalize합니다. | create/modify/delete/rename fixture 통과. | XIII.2.1 |
 | XIII.2.4 | `[~]` | Stellar 자신의 save가 만든 filesystem event를 generation/hash로 식별해 외부 변경으로 재처리하지 않게 합니다. | autosave 후 reload loop 0. | V.5.4, XIII.2.2, XIII.2.3 |
-| XIII.2.5 | `[ ]` | 짧은 시간의 다중 파일 event를 root manifest current pointer 변경 단위로 coalesce합니다. 개별 chunk event만으로 reload하지 않습니다. | 한 save가 한 external change batch. | V.4.3, XIII.2.4 |
+| XIII.2.5 | `[x]` | 짧은 시간의 다중 파일 event를 root manifest current pointer 변경 단위로 coalesce합니다. 개별 chunk event만으로 reload하지 않습니다. | 한 save가 한 external change batch. | V.4.3, XIII.2.4 |
 | XIII.2.6 | `[ ]` | watcher overflow 시 전체 project current pointer와 tracked files rescan을 요청합니다. 임의로 상태를 clean 처리하지 않습니다. | overflow fixture에서 rescan 실행. | XIII.2.1 |
 
 ### XIII.3 외부 변경 반영
