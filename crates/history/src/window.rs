@@ -192,6 +192,12 @@ impl WindowHistories {
             .collect()
     }
 
+    /// 창을 닫습니다(VII.5.4): 그 창의 history(undo·redo)와 선택을 폐기합니다. history는 세션 메모리
+    /// 전용이라 프로젝트 파일에 아무것도 기록하지 않습니다(§23.1). 열려 있지 않았으면 `false`.
+    pub fn close(&mut self, window: WindowSessionId) -> bool {
+        self.windows.remove(&window).is_some()
+    }
+
     /// 열린 창 수.
     pub fn len(&self) -> usize {
         self.windows.len()
@@ -486,5 +492,48 @@ mod tests {
         history.undo(&mut doc).unwrap();
         history.record_selection(&doc, &pick(&[13])).unwrap();
         assert_eq!(history.history().redo_len(), 0, "새 선택도 redo 갈래 폐기");
+    }
+
+    #[test]
+    fn closing_a_window_discards_history_and_selection() {
+        // 검증 기준(VII.5.4): reopen 후 history 비어 있음.
+        let mut histories = WindowHistories::new();
+        let (a, b) = (window(1), window(2));
+        let mut doc = small_state();
+        let mut doc_b = small_state();
+        let wa = histories.open(a);
+        for i in 0..3u64 {
+            let t = tx(
+                &doc,
+                1_000 + i,
+                Command::rename_node(sid(11), format!("이름{i}")),
+            );
+            wa.record_document(&mut doc, &t, None).unwrap();
+        }
+        wa.undo(&mut doc).unwrap();
+        wa.record_selection(&doc, &SetSelection::new(Selection::new([sid(12)], None)))
+            .unwrap();
+        let tb = tx(&doc_b, 2_000, Command::rename_node(sid(12), "B"));
+        histories
+            .open(b)
+            .record_document(&mut doc_b, &tb, None)
+            .unwrap();
+        let records_before_close = doc.model().to_records().unwrap();
+
+        assert!(histories.close(a));
+        assert!(histories.get(a).is_none());
+        assert!(!histories.close(a), "이미 닫힘");
+        // 창 닫기는 문서(프로젝트 저장 대상)를 바꾸지 않습니다.
+        assert_eq!(doc.model().to_records().unwrap(), records_before_close);
+        // 다른 창은 그대로.
+        assert_eq!(histories.get(b).unwrap().history().len(), 1);
+
+        // 같은 창 id로 다시 열면 history·선택이 비어 있습니다.
+        let reopened = histories.open(a);
+        assert!(reopened.history().is_empty());
+        assert_eq!(reopened.history().redo_len(), 0);
+        assert!(reopened.view().selection().is_empty());
+        assert_eq!(reopened.undo(&mut doc).unwrap(), None);
+        assert_eq!(histories.len(), 2);
     }
 }
