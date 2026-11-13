@@ -27,6 +27,15 @@ pub mod index;
 
 pub use index::{read_index_snapshot, IndexSnapshot, StagedEntry};
 
+/// blob content reader(`git cat-file --batch`, XIV.2.6).
+pub mod blob;
+
+/// 임시 virtual project 디렉터리 materialize(XIV.2.6).
+pub mod materialize;
+
+pub use blob::{read_blobs, BlobError};
+pub use materialize::{materialize_snapshot, MaterializeError, MaterializedSnapshot};
+
 /// snapshot 한 항목(경로·mode·object ID). gitlink(submodule)는 commit ID를 가집니다.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SnapshotEntry {
