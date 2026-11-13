@@ -12,7 +12,7 @@ use stellar_document::model::DocumentModel;
 
 use crate::change::ChangeSet;
 use crate::command::{Command, CommandError};
-use crate::edit::EditContext;
+use crate::guard::TransactionGuard;
 use crate::request::CommandRequest;
 
 /// command 실행 결과: 변경 집합(VII.1.4)과 undo용 역 command.
@@ -68,17 +68,31 @@ impl DocumentState {
 
     /// 요청 하나를 실행합니다: 검사(VII.1.3) → validate → invert → apply.
     ///
-    /// 성공하면 revision을 하나 올리고 변경 집합과 역 command를 반환합니다.
+    /// 성공하면 revision을 하나 올리고 변경 집합과 역 command를 반환합니다. apply가 도중에
+    /// 실패하면 transaction guard(VII.1.5)가 변경 전 상태로 되돌리고 revision을 유지합니다.
     pub fn execute(&mut self, request: &CommandRequest) -> Result<CommandOutcome, CommandError> {
         request.check_state(self)?;
         let new_revision = self.next_revision()?;
         request.command.validate(&self.model)?;
         let inverse = request.command.invert(&self.model)?;
-        let mut ctx = EditContext::new(&mut self.model);
-        request.command.apply(&mut ctx)?;
-        let changes = ctx.into_changes().finish(new_revision);
+        let mut guard = TransactionGuard::begin(&mut self.model);
+        if let Err(error) = request.command.apply(guard.ctx()) {
+            return Err(rollback_with(guard, error));
+        }
+        let changes = guard.commit().finish(new_revision);
         self.revision = new_revision;
         Ok(CommandOutcome { changes, inverse })
+    }
+}
+
+/// guard를 되돌리고 원래 오류를 반환합니다. 되돌리기도 실패하면 둘 다 보고합니다.
+pub(crate) fn rollback_with(guard: TransactionGuard<'_>, error: CommandError) -> CommandError {
+    match guard.rollback() {
+        Ok(()) => error,
+        Err(rollback) => CommandError::RollbackFailed {
+            original: Box::new(error),
+            rollback: Box::new(rollback),
+        },
     }
 }
 

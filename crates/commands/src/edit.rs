@@ -1,15 +1,21 @@
-//! command 적용 context (VII.1.2).
+//! command 적용 context (VII.1.2·VII.1.4·VII.1.5).
 //!
 //! [`Command::apply`](crate::command::Command::apply)는 문서 모델을 직접 받지 않고 이
-//! context의 **primitive 변경**만으로 문서를 바꿉니다. 모든 변경이 한 지점을 지나므로 이후
-//! 작업이 변경 기록(VII.1.4)과 되돌리기 journal(VII.1.5)을 여기에 붙입니다.
+//! context의 **primitive 변경**만으로 문서를 바꿉니다. 모든 변경이 한 지점을 지나므로 변경
+//! 기록(VII.1.4)과 되돌리기 journal(VII.1.5)이 여기에 붙습니다.
 //!
 //! primitive는 [`DocumentModel`]의 공개 변경 API와 1:1입니다: node 삽입, leaf 삭제, payload
 //! 교체(종류 유지), 표시 이름, modifier stack 교체.
 //!
-//! command는 의미 단위 변경(바뀐 node·속성·무효화)을 [`EditContext::changes`]에 기록합니다
-//! (VII.1.4). primitive 자체는 기록하지 않습니다 — 예를 들어 이동을 삭제·재삽입 primitive로
-//! 구현해도 결과는 "부모·순서 변경"으로 보고됩니다.
+//! - **변경 기록**: command는 의미 단위 변경(바뀐 node·속성·무효화)을 [`EditContext::changes`]에
+//!   기록합니다. primitive 자체는 기록하지 않습니다 — 예를 들어 이동을 삭제·재삽입 primitive로
+//!   구현해도 결과는 "부모·순서 변경"으로 보고됩니다.
+//! - **되돌리기 journal**: 성공한 primitive마다 그 역 primitive(삭제한 레코드, 이전 payload·
+//!   이름·stack)를 기록합니다. 전체 문서를 복제하지 않고, 바뀐 부분만 담습니다. 실패 시
+//!   [`EditContext::rollback`]이 journal을 역순으로 재생해 변경 전 모델 상태로 되돌립니다
+//!   (runtime 핸들은 새로 할당될 수 있으나 의미 상태 — 레코드·semantic snapshot — 는 같습니다).
+
+use std::fmt;
 
 use stellar_core_types::ids::StableId;
 use stellar_document::model::DocumentModel;
@@ -19,11 +25,53 @@ use stellar_document::records::{NodePayload, NodeRecord};
 use crate::change::ChangeRecorder;
 use crate::command::CommandError;
 
+/// 역 primitive(journal 항목).
+#[derive(Debug, Clone, PartialEq)]
+enum UndoOp {
+    /// 삽입을 되돌림: leaf 삭제.
+    Remove(StableId),
+    /// leaf 삭제를 되돌림: 레코드 재삽입 + stack 복원.
+    Reinsert(Box<NodeRecord>, Option<ModifierStack>),
+    /// payload 교체를 되돌림.
+    Payload(StableId, Box<NodePayload>),
+    /// 이름 변경을 되돌림.
+    Name(StableId, String),
+    /// stack 교체를 되돌림(`None`이면 stack 제거).
+    Stack(StableId, Option<ModifierStack>),
+}
+
+/// rollback 실패: journal 재생 중 모델이 역 primitive를 거부했습니다(내부 불일치 신호).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RollbackError {
+    /// 재생하지 못한 journal 항목 수.
+    pub failed_ops: usize,
+    /// 첫 실패 원인.
+    pub first: CommandError,
+}
+
+impl fmt::Display for RollbackError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "rollback 중 {}개 journal 항목 재생 실패: {}",
+            self.failed_ops, self.first
+        )
+    }
+}
+
+impl std::error::Error for RollbackError {}
+
 /// command 적용 중의 문서 변경 창구.
 #[derive(Debug)]
 pub struct EditContext<'a> {
     model: &'a mut DocumentModel,
     changes: ChangeRecorder,
+    journal: Vec<UndoOp>,
+    /// 테스트 fault injection: 이 수만큼 primitive가 성공한 뒤 다음 primitive가 실패합니다.
+    #[cfg(test)]
+    fail_after: Option<usize>,
+    #[cfg(test)]
+    primitive_count: usize,
 }
 
 impl<'a> EditContext<'a> {
@@ -32,6 +80,11 @@ impl<'a> EditContext<'a> {
         EditContext {
             model,
             changes: ChangeRecorder::new(),
+            journal: Vec::new(),
+            #[cfg(test)]
+            fail_after: None,
+            #[cfg(test)]
+            primitive_count: 0,
         }
     }
 
@@ -45,14 +98,42 @@ impl<'a> EditContext<'a> {
         &mut self.changes
     }
 
-    /// 지금까지의 변경 기록을 꺼냅니다.
-    pub fn into_changes(self) -> ChangeRecorder {
-        self.changes
+    /// journal 항목 수(성공한 primitive 수).
+    pub fn journal_len(&self) -> usize {
+        self.journal.len()
+    }
+
+    /// 테스트 전용: `count`개 primitive가 성공한 뒤 다음 primitive를 실패시킵니다.
+    #[cfg(test)]
+    pub(crate) fn inject_fault_after(&mut self, count: usize) {
+        self.fail_after = Some(count);
+    }
+
+    #[cfg(test)]
+    fn before_primitive(&mut self) -> Result<(), CommandError> {
+        if self.fail_after == Some(self.primitive_count) {
+            return Err(CommandError::Model(
+                stellar_document::model::ModelError::Inconsistent {
+                    id: StableId::NIL,
+                    reason: "primitive fault injection",
+                },
+            ));
+        }
+        self.primitive_count += 1;
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn before_primitive(&mut self) -> Result<(), CommandError> {
+        Ok(())
     }
 
     /// node를 삽입합니다.
     pub fn insert_node(&mut self, record: NodeRecord) -> Result<(), CommandError> {
+        self.before_primitive()?;
+        let id = record.id;
         self.model.insert_node(record)?;
+        self.journal.push(UndoOp::Remove(id));
         Ok(())
     }
 
@@ -61,8 +142,11 @@ impl<'a> EditContext<'a> {
         &mut self,
         id: StableId,
     ) -> Result<(NodeRecord, Option<ModifierStack>), CommandError> {
+        self.before_primitive()?;
         let stack = self.model.modifier_stack(id).cloned();
         let record = self.model.remove_leaf(id)?;
+        self.journal
+            .push(UndoOp::Reinsert(Box::new(record.clone()), stack.clone()));
         Ok((record, stack))
     }
 
@@ -72,17 +156,21 @@ impl<'a> EditContext<'a> {
         id: StableId,
         payload: NodePayload,
     ) -> Result<NodePayload, CommandError> {
+        self.before_primitive()?;
         let previous = self
             .model
             .payload(id)
             .cloned()
             .ok_or(CommandError::UnknownNode { id })?;
         self.model.set_payload(id, payload)?;
+        self.journal
+            .push(UndoOp::Payload(id, Box::new(previous.clone())));
         Ok(previous)
     }
 
     /// 표시 이름을 바꿉니다. 이전 이름을 반환합니다.
     pub fn set_display_name(&mut self, id: StableId, name: String) -> Result<String, CommandError> {
+        self.before_primitive()?;
         let previous = self
             .model
             .runtime_id(id)
@@ -90,6 +178,7 @@ impl<'a> EditContext<'a> {
             .map(|fields| fields.display_name)
             .ok_or(CommandError::UnknownNode { id })?;
         self.model.set_display_name(id, name)?;
+        self.journal.push(UndoOp::Name(id, previous.clone()));
         Ok(previous)
     }
 
@@ -98,8 +187,61 @@ impl<'a> EditContext<'a> {
         &mut self,
         stack: ModifierStack,
     ) -> Result<Option<ModifierStack>, CommandError> {
-        let previous = self.model.modifier_stack(stack.node).cloned();
+        self.before_primitive()?;
+        let owner = stack.node;
+        let previous = self.model.modifier_stack(owner).cloned();
         self.model.set_modifier_stack(stack)?;
+        self.journal.push(UndoOp::Stack(owner, previous.clone()));
         Ok(previous)
     }
+
+    /// 지금까지의 변경 기록을 꺼냅니다(journal은 버립니다).
+    pub fn into_changes(self) -> ChangeRecorder {
+        self.changes
+    }
+
+    /// 성공을 확정합니다. journal을 버리고 변경 기록을 반환합니다.
+    pub fn commit(self) -> ChangeRecorder {
+        self.changes
+    }
+
+    /// journal을 역순으로 재생해 context를 연 시점의 의미 상태로 되돌립니다.
+    ///
+    /// 각 역 primitive는 해당 primitive가 성공했던 상태에서 재생되므로 실패하지 않아야
+    /// 합니다. 실패하면(내부 불일치) 나머지도 계속 재생하고 실패 수와 첫 원인을 반환합니다.
+    pub fn rollback(&mut self) -> Result<(), RollbackError> {
+        let mut failed_ops = 0usize;
+        let mut first: Option<CommandError> = None;
+        while let Some(op) = self.journal.pop() {
+            if let Err(error) = undo(self.model, op) {
+                failed_ops += 1;
+                first.get_or_insert(error);
+            }
+        }
+        self.changes = ChangeRecorder::new();
+        match first {
+            None => Ok(()),
+            Some(first) => Err(RollbackError { failed_ops, first }),
+        }
+    }
+}
+
+fn undo(model: &mut DocumentModel, op: UndoOp) -> Result<(), CommandError> {
+    match op {
+        UndoOp::Remove(id) => {
+            model.remove_leaf(id)?;
+        }
+        UndoOp::Reinsert(record, stack) => {
+            model.insert_node(*record)?;
+            if let Some(stack) = stack {
+                model.set_modifier_stack(stack)?;
+            }
+        }
+        UndoOp::Payload(id, payload) => model.set_payload(id, *payload)?,
+        UndoOp::Name(id, name) => model.set_display_name(id, name)?,
+        UndoOp::Stack(owner, previous) => {
+            model.set_modifier_stack(previous.unwrap_or_else(|| ModifierStack::new(owner)))?;
+        }
+    }
+    Ok(())
 }

@@ -27,3 +27,6 @@ pub mod request;
 
 /// command 결과 change set (VII.1.4).
 pub mod change;
+
+/// 변경 전 상태로 되돌리는 transaction guard (VII.1.5).
+pub mod guard;
