@@ -1,4 +1,4 @@
-//! 프로젝트 경로 resolver (XIII.4.1).
+//! 프로젝트 경로 resolver (XIII.4.1, XIII.4.2).
 //!
 //! 프로젝트 상대 경로(`/` 구분)를 실제 파일 시스템 경로로 해석합니다. 파일·디렉터리 symlink를
 //! **그대로 허용**하며, target이 프로젝트 **내부든 외부든** 모두 읽을 수 있습니다(기술 아키텍처
@@ -13,11 +13,18 @@
 //!   target 안의 중간 링크, 외부 위치의 링크 포함)을 따라간 순서대로 기록한 [`ChainHop`] 목록.
 //! - **target 위치**: canonical root 기준 [`TargetLocation::Internal`]/[`TargetLocation::External`].
 //!
-//! cycle·최대 hop 검사(XIII.4.2), broken link diagnostic(XIII.4.3), 외부 target watcher 등록
-//! (XIII.4.4), 비신뢰 프로젝트의 외부 target 읽기 차단(XIII.4.5)은 후속 작업입니다. 현재는 OS
-//! 경로 해석(`canonicalize`)이 반환하는 오류를 [`ResolveError::Io`]로 그대로 돌려줍니다.
+//! 무한 순회 차단(XIII.4.2, 기술 아키텍처 19.3 "순환 참조 표시"·37.2 "순환 참조 탐지"):
+//! - **해석**: symlink를 직접 따라가며 (링크 위치, 남은 경로) 상태가 반복되면
+//!   [`ResolveError::SymlinkCycle`](self·two-node·deep cycle)로, hop이 [`MAX_SYMLINK_HOPS`]를
+//!   넘으면 [`ResolveError::TooManySymlinkHops`]로 거부합니다(OS 오류에 의존하지 않음).
+//! - **트리 순회**: [`PathResolver::walk_tree`]는 디렉터리 symlink를 따라 내려가되, 현재 경로의
+//!   조상 디렉터리를 다시 가리키는 디렉터리는 들어가지 않고 [`WalkIssue::DirectoryCycle`]로
+//!   표시합니다. 해석할 수 없는 항목은 [`WalkIssue::Unresolvable`]로 표시하고 순회를 계속합니다.
+//!
+//! broken link diagnostic(XIII.4.3), 외부 target watcher 등록(XIII.4.4), 비신뢰 프로젝트의 외부
+//! target 읽기 차단(XIII.4.5)은 후속 작업입니다.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -117,6 +124,12 @@ impl std::fmt::Display for InvalidPathReason {
     }
 }
 
+/// 경로 하나를 해석할 때 따라갈 수 있는 symlink hop 상한.
+///
+/// macOS 커널의 `MAXSYMLINKS`(32)와 같은 값입니다. OS가 거부하는 체인을 resolver가 받아들이지
+/// 않도록 맞춥니다.
+pub const MAX_SYMLINK_HOPS: usize = 32;
+
 /// 경로 해석·읽기 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
@@ -144,6 +157,20 @@ pub enum ResolveError {
         /// 요청 경로.
         path: String,
     },
+    /// symlink 순환(같은 링크에서 같은 남은 경로로 다시 돌아옴).
+    SymlinkCycle {
+        /// 요청 경로.
+        path: String,
+        /// 순환을 이루는 링크 위치(처음 반복된 링크부터 다시 만난 같은 링크까지, 양 끝 포함).
+        cycle: Vec<PathBuf>,
+    },
+    /// 따라간 symlink hop이 상한을 넘음(긴 체인 또는 남은 경로가 계속 늘어나는 순환).
+    TooManySymlinkHops {
+        /// 요청 경로.
+        path: String,
+        /// 적용한 hop 상한.
+        limit: usize,
+    },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -157,6 +184,12 @@ impl std::fmt::Display for ResolveError {
             }
             ResolveError::NotAFile { path } => write!(f, "파일이 아닙니다: {path:?}"),
             ResolveError::NotADirectory { path } => write!(f, "디렉터리가 아닙니다: {path:?}"),
+            ResolveError::SymlinkCycle { path, cycle } => {
+                write!(f, "symlink 순환 {path:?}: {cycle:?}")
+            }
+            ResolveError::TooManySymlinkHops { path, limit } => {
+                write!(f, "symlink hop이 상한 {limit}을 넘습니다: {path:?}")
+            }
         }
     }
 }
@@ -232,13 +265,15 @@ impl PathResolver {
                 reason,
             })?;
 
-        // OS 해석이 실패하면(없음·권한·순환 등) 그 오류를 그대로 돌려줍니다. 성공했다면 경로 체인은
-        // 유한하므로 아래 컴포넌트 단위 해석도 끝납니다.
         let lexical = components
             .iter()
             .fold(self.root.clone(), |path, component| path.join(component));
-        let target = std::fs::canonicalize(&lexical).map_err(|e| io_error(&lexical, &e))?;
-        let walk = self.walk(&components)?;
+        // symlink를 직접 따라가며 순환·hop 상한을 검사합니다(무한 순회 없음).
+        let walk = self.walk(project_path, &components)?;
+        // walk 결과는 symlink가 없는 실제 경로입니다. canonicalize는 대소문자 등 표기만 OS 기준으로
+        // 맞춥니다(링크를 따라가지 않음).
+        let target =
+            std::fs::canonicalize(&walk.resolved).map_err(|e| io_error(&walk.resolved, &e))?;
         let meta = std::fs::metadata(&target).map_err(|e| io_error(&target, &e))?;
         let kind = if meta.is_file() {
             TargetKind::File
@@ -277,9 +312,13 @@ impl PathResolver {
     ///
     /// 링크를 만나면 원문 target의 컴포넌트를 남은 컴포넌트 앞에 넣어 이어서 해석합니다(절대 target은
     /// `/`에서 다시 시작). 현재 위치는 항상 symlink가 없는 실제 경로이므로 `..`는 마지막 컴포넌트를
-    /// 제거하는 것과 같습니다. 호출 전에 OS 해석이 성공했으므로 체인은 유한하며, 그 사이 링크가
-    /// 바뀌는 경쟁에 대비해 [`WALK_STEP_GUARD`]로 반복을 제한합니다.
-    fn walk(&self, components: &[&str]) -> Result<Walk, ResolveError> {
+    /// 제거하는 것과 같습니다.
+    ///
+    /// 종료 보장: 링크를 만날 때마다 (링크 위치, 남은 컴포넌트) 상태를 기록해 같은 상태가 다시 나오면
+    /// [`ResolveError::SymlinkCycle`], 따라간 hop이 [`MAX_SYMLINK_HOPS`]에 이른 뒤 링크를 또 만나면
+    /// [`ResolveError::TooManySymlinkHops`]로 멈춥니다. 링크가 아닌 컴포넌트는 남은 목록을 줄이기만
+    /// 하고, 링크 확장은 hop 상한만큼만 일어나므로 반복 횟수는 유한합니다.
+    fn walk(&self, project_path: &str, components: &[&str]) -> Result<Walk, ResolveError> {
         let mut current = self.canonical_root.clone();
         // (컴포넌트, 요청 경로 컴포넌트 index — 링크 target에서 온 컴포넌트는 None)
         let mut pending: VecDeque<(OsString, Option<usize>)> = components
@@ -288,16 +327,10 @@ impl PathResolver {
             .map(|(index, c)| (OsString::from(c), Some(index)))
             .collect();
         let mut symlinks = Vec::new();
-        let mut chain = Vec::new();
-        let mut steps = 0usize;
+        let mut chain: Vec<ChainHop> = Vec::new();
+        // (링크 위치, 남은 컴포넌트) → 그 상태에서 기록한 hop index.
+        let mut seen: HashMap<(PathBuf, Vec<OsString>), usize> = HashMap::new();
         while let Some((component, request_index)) = pending.pop_front() {
-            steps += 1;
-            if steps > WALK_STEP_GUARD {
-                return Err(ResolveError::Io {
-                    path: current,
-                    kind: io::ErrorKind::Other,
-                });
-            }
             if component == "." {
                 continue;
             }
@@ -312,6 +345,26 @@ impl PathResolver {
                 current = candidate;
                 continue;
             }
+            let state = (
+                candidate.clone(),
+                pending.iter().map(|(c, _)| c.clone()).collect::<Vec<_>>(),
+            );
+            if let Some(&start) = seen.get(&state) {
+                let mut cycle: Vec<PathBuf> =
+                    chain[start..].iter().map(|h| h.link.clone()).collect();
+                cycle.push(candidate);
+                return Err(ResolveError::SymlinkCycle {
+                    path: project_path.to_string(),
+                    cycle,
+                });
+            }
+            if chain.len() >= MAX_SYMLINK_HOPS {
+                return Err(ResolveError::TooManySymlinkHops {
+                    path: project_path.to_string(),
+                    limit: MAX_SYMLINK_HOPS,
+                });
+            }
+            seen.insert(state, chain.len());
             let raw_target =
                 std::fs::read_link(&candidate).map_err(|e| io_error(&candidate, &e))?;
             if let Some(index) = request_index {
@@ -342,7 +395,83 @@ impl PathResolver {
                 pending.push_front((part, None));
             }
         }
-        Ok(Walk { symlinks, chain })
+        Ok(Walk {
+            resolved: current,
+            symlinks,
+            chain,
+        })
+    }
+
+    /// 프로젝트 root부터 트리를 순회합니다. 디렉터리 symlink(내부·외부)를 따라 내려가지만 무한
+    /// 순회하지 않습니다.
+    ///
+    /// - `include(path)`가 `false`인 항목(프로젝트 상대 경로)은 목록에 넣지 않고 내려가지도 않습니다.
+    /// - 현재 순회 경로의 조상 디렉터리를 다시 가리키는 디렉터리는 [`WalkIssue::DirectoryCycle`]로
+    ///   표시하고 들어가지 않습니다.
+    /// - 해석할 수 없는 항목(symlink 순환·hop 초과·없는 target 등)은 [`WalkIssue::Unresolvable`]로
+    ///   표시하고 나머지 순회를 계속합니다. 링크는 수정·삭제하지 않습니다.
+    /// - 결과 항목·문제는 프로젝트 상대 경로 순으로 정렬되어 결정론적입니다.
+    pub fn walk_tree(&self, include: impl Fn(&str) -> bool) -> Result<TreeWalk, ResolveError> {
+        let mut walk = TreeWalk::default();
+        // (프로젝트 상대 접두사, 실제 디렉터리, 조상 실제 디렉터리들)
+        let mut stack: Vec<(String, PathBuf, Vec<PathBuf>)> = vec![(
+            String::new(),
+            self.canonical_root.clone(),
+            vec![self.canonical_root.clone()],
+        )];
+        while let Some((prefix, dir, ancestors)) = stack.pop() {
+            let mut names = Vec::new();
+            for entry in std::fs::read_dir(&dir).map_err(|e| io_error(&dir, &e))? {
+                names.push(entry.map_err(|e| io_error(&dir, &e))?.file_name());
+            }
+            names.sort();
+            let mut subdirs = Vec::new();
+            for name in names {
+                let Some(name) = name.to_str() else {
+                    walk.issues.push(WalkIssue::NonUtf8Name {
+                        path: dir.join(&name),
+                    });
+                    continue;
+                };
+                let path = if prefix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{prefix}/{name}")
+                };
+                if !include(&path) {
+                    continue;
+                }
+                let resolved = match self.resolve(&path) {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        walk.issues.push(WalkIssue::Unresolvable { path, error });
+                        continue;
+                    }
+                };
+                if resolved.kind == TargetKind::Directory {
+                    if ancestors.contains(&resolved.target) {
+                        walk.issues.push(WalkIssue::DirectoryCycle {
+                            path,
+                            target: resolved.target,
+                        });
+                        continue;
+                    }
+                    let mut next = ancestors.clone();
+                    next.push(resolved.target.clone());
+                    subdirs.push((path.clone(), resolved.target.clone(), next));
+                }
+                walk.entries.push(WalkEntry {
+                    path,
+                    kind: resolved.kind,
+                    location: resolved.location,
+                    via_symlink: resolved.via_symlink(),
+                });
+            }
+            stack.extend(subdirs);
+        }
+        walk.entries.sort_by(|a, b| a.path.cmp(&b.path));
+        walk.issues.sort_by_key(WalkIssue::sort_key);
+        Ok(walk)
     }
 
     /// 프로젝트 상대 경로의 파일 내용을 읽습니다(내부·외부 symlink target 모두 허용).
@@ -376,13 +505,70 @@ impl PathResolver {
     }
 }
 
-/// OS 해석 성공 뒤 컴포넌트 단위 해석의 반복 상한(경쟁으로 링크가 바뀌는 경우의 방어).
-const WALK_STEP_GUARD: usize = 1 << 16;
-
 /// 컴포넌트 단위 해석 결과.
 struct Walk {
+    /// symlink가 없는 실제 경로.
+    resolved: PathBuf,
     symlinks: Vec<SymlinkHop>,
     chain: Vec<ChainHop>,
+}
+
+/// 트리 순회 항목.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalkEntry {
+    /// 프로젝트 상대 경로(`/` 구분).
+    pub path: String,
+    /// 실제 항목 종류.
+    pub kind: TargetKind,
+    /// 실제 위치(내부/외부).
+    pub location: TargetLocation,
+    /// 경로 체인에 symlink가 있는지.
+    pub via_symlink: bool,
+}
+
+/// 트리 순회에서 들어가지 않거나 해석하지 못한 항목.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WalkIssue {
+    /// 해석할 수 없는 항목(symlink 순환·hop 초과·없는 target 등). 순회는 계속합니다.
+    Unresolvable {
+        /// 프로젝트 상대 경로.
+        path: String,
+        /// 해석 오류.
+        error: ResolveError,
+    },
+    /// 현재 순회 경로의 조상 디렉터리를 다시 가리키는 디렉터리(들어가면 무한 순회).
+    DirectoryCycle {
+        /// 프로젝트 상대 경로.
+        path: String,
+        /// 가리키는 조상 디렉터리의 실제 경로.
+        target: PathBuf,
+    },
+    /// UTF-8이 아닌 이름(프로젝트 상대 경로로 표현할 수 없음).
+    NonUtf8Name {
+        /// 실제 경로.
+        path: PathBuf,
+    },
+}
+
+impl WalkIssue {
+    /// 정렬 키(프로젝트 상대 경로, UTF-8이 아닌 이름은 실제 경로의 손실 변환).
+    fn sort_key(&self) -> String {
+        match self {
+            WalkIssue::Unresolvable { path, .. } | WalkIssue::DirectoryCycle { path, .. } => {
+                path.clone()
+            }
+            WalkIssue::NonUtf8Name { path } => path.to_string_lossy().into_owned(),
+        }
+    }
+}
+
+/// 트리 순회 결과.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TreeWalk {
+    /// 방문한 항목(프로젝트 상대 경로 순).
+    pub entries: Vec<WalkEntry>,
+    /// 들어가지 않거나 해석하지 못한 항목(경로 순).
+    pub issues: Vec<WalkIssue>,
 }
 
 /// io 오류를 경로와 함께 [`ResolveError::Io`]로 변환합니다.
@@ -769,5 +955,234 @@ mod tests {
         let resolved = resolver.resolve("data/real.txt").unwrap();
         assert!(resolved.chain.is_empty());
         assert!(resolved.symlinks.is_empty());
+    }
+
+    /// 프로젝트 root 기준 링크 위치.
+    fn link_at(resolver: &PathResolver, rel: &str) -> PathBuf {
+        resolver.canonical_root().join(rel)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn self_cycle_is_an_error() {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        symlink("self", fx.project.join("self")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        assert_eq!(
+            resolver.resolve("self"),
+            Err(ResolveError::SymlinkCycle {
+                path: "self".to_string(),
+                cycle: vec![link_at(&resolver, "self"), link_at(&resolver, "self")],
+            })
+        );
+        // 읽기·목록도 같은 오류로 멈춤(무한 순회 없음).
+        assert!(matches!(
+            resolver.read("self"),
+            Err(ResolveError::SymlinkCycle { .. })
+        ));
+        assert!(matches!(
+            resolver.read_dir("self"),
+            Err(ResolveError::SymlinkCycle { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn two_node_cycle_is_an_error() {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        symlink("b", fx.project.join("a")).unwrap();
+        symlink("a", fx.project.join("b")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        assert_eq!(
+            resolver.resolve("a"),
+            Err(ResolveError::SymlinkCycle {
+                path: "a".to_string(),
+                cycle: vec![
+                    link_at(&resolver, "a"),
+                    link_at(&resolver, "b"),
+                    link_at(&resolver, "a"),
+                ],
+            })
+        );
+        // 순환 링크를 거치는 하위 경로도 오류.
+        assert!(matches!(
+            resolver.resolve("b/x"),
+            Err(ResolveError::SymlinkCycle { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deep_cycle_behind_a_chain_is_an_error() {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        let outside = std::fs::canonicalize(&fx.outside).unwrap();
+        // 진입 체인 e0 -> e1 -> ... -> e7 -> c0, 순환 c0 -> data/sub/c1 -> (외부) x -> c2 -> c0.
+        for i in 0..7 {
+            symlink(format!("e{}", i + 1), fx.project.join(format!("e{i}"))).unwrap();
+        }
+        symlink("c0", fx.project.join("e7")).unwrap();
+        symlink("data/sub/c1", fx.project.join("c0")).unwrap();
+        symlink(outside.join("x"), fx.project.join("data/sub/c1")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        symlink(resolver.canonical_root().join("c2"), outside.join("x")).unwrap();
+        symlink("c0", fx.project.join("c2")).unwrap();
+
+        match resolver.resolve("e0") {
+            Err(ResolveError::SymlinkCycle { path, cycle }) => {
+                assert_eq!(path, "e0");
+                assert_eq!(
+                    cycle,
+                    vec![
+                        link_at(&resolver, "c0"),
+                        link_at(&resolver, "data/sub/c1"),
+                        outside.join("x"),
+                        link_at(&resolver, "c2"),
+                        link_at(&resolver, "c0"),
+                    ]
+                );
+            }
+            other => panic!("SymlinkCycle이어야 함: {other:?}"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hop_limit_bounds_long_chains_and_long_cycles() {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        // 정확히 MAX_SYMLINK_HOPS hop인 비순환 체인은 허용: h0 -> h1 -> ... -> h31 -> data/real.txt.
+        for i in 0..MAX_SYMLINK_HOPS - 1 {
+            symlink(format!("h{}", i + 1), fx.project.join(format!("h{i}"))).unwrap();
+        }
+        symlink(
+            "data/real.txt",
+            fx.project.join(format!("h{}", MAX_SYMLINK_HOPS - 1)),
+        )
+        .unwrap();
+        // 한 hop 더 긴 체인은 거부.
+        symlink("h0", fx.project.join("over")).unwrap();
+        // 상한보다 긴 순환(40개): 반복 전에 hop 상한에서 멈춤.
+        let n = MAX_SYMLINK_HOPS + 8;
+        for i in 0..n {
+            symlink(
+                format!("r{}", (i + 1) % n),
+                fx.project.join(format!("r{i}")),
+            )
+            .unwrap();
+        }
+        // 남은 경로가 계속 늘어나 상태가 반복되지 않는 순환.
+        symlink("grow/x", fx.project.join("grow")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+
+        let resolved = resolver.resolve("h0").unwrap();
+        assert_eq!(resolved.chain.len(), MAX_SYMLINK_HOPS);
+        assert_eq!(resolver.read("h0").unwrap(), b"internal-bytes");
+        for path in ["over", "r0", "grow"] {
+            assert_eq!(
+                resolver.resolve(path),
+                Err(ResolveError::TooManySymlinkHops {
+                    path: path.to_string(),
+                    limit: MAX_SYMLINK_HOPS,
+                }),
+                "{path}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn revisiting_a_link_with_a_different_suffix_is_not_a_cycle() {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        // L -> data, data/x -> ../L/real.txt: L을 두 번 지나지만 남은 경로가 달라 유한합니다.
+        symlink("data", fx.project.join("L")).unwrap();
+        symlink("../L/real.txt", fx.project.join("data/x")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        let resolved = resolver.resolve("L/x").unwrap();
+        assert_eq!(resolver.read("L/x").unwrap(), b"internal-bytes");
+        let links: Vec<PathBuf> = resolved.chain.iter().map(|h| h.link.clone()).collect();
+        assert_eq!(
+            links,
+            vec![
+                link_at(&resolver, "L"),
+                link_at(&resolver, "data/x"),
+                link_at(&resolver, "L"),
+            ]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tree_walk_terminates_on_directory_and_link_cycles() {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        // 조상(root)을 가리키는 디렉터리 링크, 자기 순환 링크, 외부 디렉터리 링크.
+        symlink("../..", fx.project.join("data/sub/up")).unwrap();
+        symlink("loop", fx.project.join("loop")).unwrap();
+        symlink(fx.outside.join("shared"), fx.project.join("shared")).unwrap();
+        // 외부 디렉터리 안에서 프로젝트 root로 되돌아오는 링크.
+        symlink(&fx.project, fx.outside.join("shared/back")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+
+        let walk = resolver.walk_tree(|_| true).unwrap();
+        let paths: Vec<&str> = walk.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "data",
+                "data/real.txt",
+                "data/sub",
+                "shared",
+                "shared/asset.bin",
+                "shared/other.bin",
+            ]
+        );
+        assert_eq!(
+            walk.issues,
+            vec![
+                WalkIssue::DirectoryCycle {
+                    path: "data/sub/up".to_string(),
+                    target: resolver.canonical_root().to_path_buf(),
+                },
+                WalkIssue::Unresolvable {
+                    path: "loop".to_string(),
+                    error: ResolveError::SymlinkCycle {
+                        path: "loop".to_string(),
+                        cycle: vec![link_at(&resolver, "loop"), link_at(&resolver, "loop")],
+                    },
+                },
+                WalkIssue::DirectoryCycle {
+                    path: "shared/back".to_string(),
+                    target: resolver.canonical_root().to_path_buf(),
+                },
+            ]
+        );
+        let shared = walk.entries.iter().find(|e| e.path == "shared").unwrap();
+        assert_eq!(shared.location, TargetLocation::External);
+        assert!(shared.via_symlink);
+        // 조상 링크를 거친 유한 경로 해석은 그대로 허용.
+        assert_eq!(
+            resolver.read("data/sub/up/data/real.txt").unwrap(),
+            b"internal-bytes"
+        );
+        // 링크는 그대로 남음.
+        assert!(std::fs::symlink_metadata(fx.project.join("loop"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+
+    #[test]
+    fn tree_walk_respects_include_filter() {
+        let fx = fixture();
+        std::fs::create_dir_all(fx.project.join(".git/objects")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        let walk = resolver.walk_tree(|p| p != ".git").unwrap();
+        assert!(walk.entries.iter().all(|e| !e.path.starts_with(".git")));
+        assert!(walk.issues.is_empty());
+        assert_eq!(walk.entries.len(), 3);
     }
 }
