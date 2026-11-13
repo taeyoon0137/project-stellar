@@ -2281,7 +2281,7 @@ tools/xtask/
 | XXVIII.1.1 | `[ ]` | 공개 전 최소 두 개 major app version에서 format/migration 사용 데이터를 검토하고 변경 빈도 보고서를 작성합니다. | stability report. | G8 이후 누적 |
 | XXVIII.1.2 | `[x]` | canonical encoding, chunk envelope, generation manifest, YAML, StableId, unknown field, migration rules를 문서화합니다. | internal implementation과 spec fixture 일치. | Phase V |
 | XXVIII.1.3 | `[ ]` | semantic model과 Git diff/merge 규칙을 별도 normative section으로 작성합니다. | merge corpus와 spec mapping 완전. | Phase XIV |
-| XXVIII.1.4 | `[ ]` | 보안 한도, 최대 크기, parser 요구사항, malformed input behavior를 명시합니다. | fuzz corpus category 전부 문서 연결. | XVI.6 |
+| XXVIII.1.4 | `[x]` | 보안 한도, 최대 크기, parser 요구사항, malformed input behavior를 명시합니다. | fuzz corpus category 전부 문서 연결. | XVI.6 |
 
 ### XXVIII.2 Conformance Suite
 
