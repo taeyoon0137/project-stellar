@@ -5,3 +5,6 @@ pub mod token;
 
 /// 프로젝트·라이브러리·문서 scope 토큰 registry (VIII.5.2).
 pub mod registry;
+
+/// 토큰 dependency graph와 저장 전 cycle 거부 (VIII.5.3).
+pub mod token_graph;

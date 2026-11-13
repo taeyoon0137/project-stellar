@@ -746,7 +746,7 @@ tools/xtask/
 |---|---|---|---|---|
 | VIII.5.1 | `[x]` | `TokenSet`, `TokenDefinition`, `TokenName`, `TokenType`, default expression을 정의합니다. 참조는 StableId를 사용합니다. | rename 후 참조 유지. | VIII.2.5 |
 | VIII.5.2 | `[x]` | 프로젝트·라이브러리·문서 scope token registry를 구현하고 동일 이름 허용 여부와 ID 우선 resolution을 명시합니다. | scope shadowing fixture 통과. | VIII.5.1 |
-| VIII.5.3 | `[ ]` | token dependency graph를 구축하고 cycle을 저장 전 거부합니다. | A→B→A fixture 실패. | VIII.5.1, VIII.2.3 |
+| VIII.5.3 | `[x]` | token dependency graph를 구축하고 cycle을 저장 전 거부합니다. | A→B→A fixture 실패. | VIII.5.1, VIII.2.3 |
 | VIII.5.4 | `[ ]` | token value evaluation cache를 구현하고 dependency revision이 바뀐 token만 invalidate합니다. | 무관 token 변경 시 평가 count 0. | VIII.4.6, VIII.5.3 |
 | VIII.5.5 | `[ ]` | token 생성·삭제·rename·expression 변경 command를 구현합니다. inbound 참조가 있는 삭제는 orphan plan 없이는 거부합니다. | apply/inverse 및 ref policy 통과. | VIII.5.1, Phase VII |
 
