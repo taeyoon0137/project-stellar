@@ -9,6 +9,9 @@
 /// 엄격한 JSON reader·writer (XIX.1.1).
 pub mod json;
 
+/// MCP client 등록 정보 (XIX.9.8).
+pub mod connection_info;
+
 /// MCP stdio transport 프레이밍 (XIX.1.1).
 pub mod framing;
 
