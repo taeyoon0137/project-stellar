@@ -1,0 +1,75 @@
+//! macOS libSystem 최소 FFI 선언(PTY·세션·신호).
+//!
+//! 새 crate 의존 없이 필요한 C 함수와 상수만 선언합니다. 상수 값은 macOS SDK 헤더
+//! (`sys/fcntl.h`, `sys/ttycom.h`, `sys/signal.h`)와 같아야 하며 테스트로 고정합니다. 가변 인자
+//! 함수(`open`, `ioctl`)는 Apple arm64 호출 규약에서 고정 인자와 전달 방식이 다르므로 반드시 `...`로
+//! 선언합니다.
+
+use std::ffi::{c_char, c_int, c_ulong};
+
+/// `O_RDWR`.
+pub(crate) const O_RDWR: c_int = 0x0002;
+/// `O_NOCTTY`: 여는 프로세스의 controlling terminal로 만들지 않음.
+pub(crate) const O_NOCTTY: c_int = 0x0002_0000;
+/// `O_CLOEXEC`: fd를 만들 때 원자적으로 close-on-exec 설정.
+pub(crate) const O_CLOEXEC: c_int = 0x0100_0000;
+
+const IOC_VOID: u32 = 0x2000_0000;
+const IOC_OUT: u32 = 0x4000_0000;
+const IOC_IN: u32 = 0x8000_0000;
+const IOCPARM_MASK: u32 = 0x1fff;
+
+/// `<sys/ioccom.h>`의 `_IOC(inout, group, num, len)`.
+const fn ioc(inout: u32, group: u8, num: u8, len: usize) -> c_ulong {
+    (inout | (((len as u32) & IOCPARM_MASK) << 16) | ((group as u32) << 8) | num as u32) as c_ulong
+}
+
+/// `TIOCSCTTY = _IO('t', 97)`: controlling terminal로 만듦.
+pub(crate) const TIOCSCTTY: c_ulong = ioc(IOC_VOID, b't', 97, 0);
+/// `TIOCSWINSZ = _IOW('t', 103, struct winsize)`.
+pub(crate) const TIOCSWINSZ: c_ulong = ioc(IOC_IN, b't', 103, std::mem::size_of::<Winsize>());
+/// `TIOCOUTQ = _IOR('t', 115, int)`: 출력 queue 길이.
+pub(crate) const TIOCOUTQ: c_ulong = ioc(IOC_OUT, b't', 115, std::mem::size_of::<c_int>());
+
+/// `SIGHUP`.
+pub(crate) const SIGHUP: c_int = 1;
+/// `SIGKILL`.
+pub(crate) const SIGKILL: c_int = 9;
+/// `SIGCONT`(macOS 값).
+pub(crate) const SIGCONT: c_int = 19;
+
+/// `struct winsize`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Winsize {
+    pub(crate) ws_row: u16,
+    pub(crate) ws_col: u16,
+    pub(crate) ws_xpixel: u16,
+    pub(crate) ws_ypixel: u16,
+}
+
+extern "C" {
+    pub(crate) fn posix_openpt(oflag: c_int) -> c_int;
+    pub(crate) fn grantpt(fd: c_int) -> c_int;
+    pub(crate) fn unlockpt(fd: c_int) -> c_int;
+    pub(crate) fn ptsname_r(fd: c_int, buffer: *mut c_char, buflen: usize) -> c_int;
+    pub(crate) fn open(path: *const c_char, oflag: c_int, ...) -> c_int;
+    pub(crate) fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+    pub(crate) fn setsid() -> c_int;
+    pub(crate) fn kill(pid: c_int, sig: c_int) -> c_int;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn constants_match_macos_sdk_headers() {
+        assert_eq!(std::mem::size_of::<Winsize>(), 8);
+        assert_eq!(TIOCSCTTY, 0x2000_7461);
+        assert_eq!(TIOCSWINSZ, 0x8008_7467);
+        assert_eq!(TIOCOUTQ, 0x4004_7473);
+        assert_eq!((O_RDWR, O_NOCTTY, O_CLOEXEC), (2, 0x20000, 0x0100_0000));
+        assert_eq!((SIGHUP, SIGKILL, SIGCONT), (1, 9, 19));
+    }
+}

@@ -1,4 +1,4 @@
-//! 실행 요청과 실행기 경계 (XVIII.1.4).
+//! 실행 요청과 실행기 경계 (XVIII.1.4, XVIII.2.1).
 //!
 //! registry는 신뢰 gate·cwd·명령·환경을 확인한 뒤 [`LaunchRequest`]를 만들어 [`TerminalLauncher`]에
 //! 넘깁니다. 실제 PTY 생성과 child 실행은 플랫폼 실행기가 맡습니다(macOS POSIX PTY: XVIII.2.1).
@@ -6,9 +6,10 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use crate::size::TerminalSize;
 use crate::state::{StartFailure, TerminalExitStatus};
 
 /// 실행기에 넘기는 검증된 실행 요청.
@@ -19,6 +20,7 @@ pub struct LaunchRequest {
     arg0: Option<OsString>,
     cwd: PathBuf,
     env: Vec<(OsString, OsString)>,
+    size: TerminalSize,
 }
 
 impl LaunchRequest {
@@ -29,6 +31,7 @@ impl LaunchRequest {
         arg0: Option<OsString>,
         cwd: PathBuf,
         env: Vec<(OsString, OsString)>,
+        size: TerminalSize,
     ) -> LaunchRequest {
         LaunchRequest {
             program,
@@ -36,6 +39,7 @@ impl LaunchRequest {
             arg0,
             cwd,
             env,
+            size,
         }
     }
 
@@ -62,6 +66,11 @@ impl LaunchRequest {
     /// child 환경 전체(허용 목록 적용 결과, 이름 순).
     pub fn env(&self) -> &[(OsString, OsString)] {
         &self.env
+    }
+
+    /// PTY 초기 크기.
+    pub fn size(&self) -> TerminalSize {
+        self.size
     }
 }
 
@@ -155,6 +164,13 @@ pub trait TerminalProcess: fmt::Debug + Send {
 
     /// 프로세스 tree를 종료하고 결과를 돌려줍니다(유예 시간 상한 안에서 차단).
     fn terminate(&mut self) -> Result<ExitReport, TerminalIoError>;
+
+    /// 입력 bytes를 터미널에 씁니다(키보드 입력 등).
+    fn write_input(&mut self, bytes: &[u8]) -> Result<(), TerminalIoError>;
+
+    /// 출력을 읽는 독립 reader(별도 thread에서 읽도록 복제한 handle). 세션의 모든 프로세스가
+    /// 터미널을 닫으면 EOF(`Ok(0)`) 또는 오류로 끝납니다.
+    fn output_reader(&self) -> Result<Box<dyn Read + Send>, TerminalIoError>;
 }
 
 /// 터미널 child 실행기.

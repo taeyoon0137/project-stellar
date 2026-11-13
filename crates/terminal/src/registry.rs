@@ -26,6 +26,7 @@ use crate::launch::{
     ExitReport, LaunchError, LaunchRequest, TerminalIoError, TerminalLauncher, TerminalProcess,
 };
 use crate::profile::{ArgvCommand, ProfileCommand, TerminalProfile};
+use crate::size::TerminalSize;
 use crate::state::{TerminalProcessState, TerminationReason};
 
 /// 창 하나의 기본 세션 상한.
@@ -135,6 +136,8 @@ pub struct LaunchEnvironment<'a> {
     pub default_shell: &'a ArgvCommand,
     /// 상속 허용 변수의 현재 값을 읽는 함수(앱 프로세스 환경이면 [`process_env`]).
     pub env_lookup: fn(&str) -> Option<OsString>,
+    /// PTY 초기 크기(터미널 view 크기).
+    pub size: TerminalSize,
 }
 
 /// 앱 프로세스 환경에서 변수 값을 읽습니다.
@@ -300,6 +303,7 @@ impl TerminalRegistry {
             None,
             cwd.path().to_path_buf(),
             session.profile.environment.resolve(environment.env_lookup),
+            environment.size,
         );
         match launcher.launch(&request) {
             Ok(process) => {
@@ -429,6 +433,14 @@ pub(crate) mod tests {
                 remaining_processes: 0,
             })
         }
+
+        fn write_input(&mut self, _bytes: &[u8]) -> Result<(), TerminalIoError> {
+            Ok(())
+        }
+
+        fn output_reader(&self) -> Result<Box<dyn std::io::Read + Send>, TerminalIoError> {
+            Ok(Box::new(std::io::empty()))
+        }
     }
 
     impl Drop for FakeProcess {
@@ -489,6 +501,7 @@ pub(crate) mod tests {
             cwd: &context,
             default_shell: &shell,
             env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();
         let mut registry = TerminalRegistry::new(window(10));
@@ -531,6 +544,7 @@ pub(crate) mod tests {
             cwd: &context,
             default_shell: &shell,
             env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();
         let mut registry = TerminalRegistry::new(window(13));
@@ -609,6 +623,7 @@ pub(crate) mod tests {
             cwd: &context,
             default_shell: &shell,
             env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();
         let mut registry = TerminalRegistry::new(window(14));
@@ -665,6 +680,7 @@ pub(crate) mod tests {
             cwd: &context,
             default_shell: &shell,
             env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
         };
         let mut launcher = FakeLauncher::default();
         let mut registry = TerminalRegistry::new(window(15));

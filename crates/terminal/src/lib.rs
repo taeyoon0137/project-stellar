@@ -11,6 +11,8 @@
 //! - [`registry`]: 프로젝트 창별 다중 세션 registry와 시작 gate.
 //! - [`capability`]: 신뢰된 프로젝트에서만 시작하게 하는 capability token.
 //! - [`launch`]: 실행 요청과 실행기·프로세스 경계.
+//! - [`size`]: 터미널 행·열 크기.
+//! - `pty`(macOS): POSIX PTY 실행기.
 //!
 //! **저장하지 않는 상태**: 세션·profile 복사본·출력·프로세스 상태는 세션 메모리에만 있습니다.
 //! 프로젝트 저장과 복구 snapshot에 넣지 않으며(기술 아키텍처 22.3 "복구하지 않는 대상: 터미널
@@ -23,7 +25,10 @@ pub mod env;
 pub mod id;
 pub mod launch;
 pub mod profile;
+#[cfg(target_os = "macos")]
+pub mod pty;
 pub mod registry;
+pub mod size;
 pub mod state;
 
 #[cfg(test)]
