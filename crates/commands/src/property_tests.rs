@@ -8,6 +8,7 @@
 //! **등록 검사**: macro가 등록한 종류 목록이 [`CommandKind::ALL`]과 정확히 같아야 하며, 선택 event
 //! (VII.3)도 같은 macro로 등록합니다. 새 command 종류를 추가하면 생성기(`test_support::generate`의
 //! wildcard 없는 match)와 이 등록이 함께 갱신되어야 합니다.
+#![cfg(test)]
 
 use std::collections::BTreeSet;
 

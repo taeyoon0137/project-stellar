@@ -9,5 +9,13 @@ publish = false
 stellar-core-types = { path = "../core-types" }
 stellar-document = { path = "../document" }
 
+[features]
+# 테스트 전용 생성기·fuzz harness(VII.6)를 다른 crate의 테스트에 노출합니다. 기본값은 꺼져 있고
+# document의 test-support만 전달합니다. 다른 crate는 `[dev-dependencies]`에서만 켭니다(VI.10.4 검사).
+test-support = ["stellar-document/test-support"]
+
+[dev-dependencies]
+stellar-document = { path = "../document", features = ["test-support"] }
+
 [lints]
 workspace = true

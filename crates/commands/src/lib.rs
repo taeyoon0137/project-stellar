@@ -61,6 +61,7 @@ pub mod selection;
 
 /// 테스트 전용 command 생성기 (VII.6). 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
 /// command 왕복 property test (VII.6.1).
@@ -69,4 +70,5 @@ mod property_tests;
 
 /// 테스트 전용 command 실행 fuzz target (VII.6.3). 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod fuzz;

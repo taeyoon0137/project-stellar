@@ -4,6 +4,7 @@
 //! 기록한 뒤, **전체 undo**가 초기 상태로, 이어서 **전체 redo**가 최종 상태로 돌아오는지 확인합니다.
 //! 상태 비교는 semantic snapshot(VI.10.4)과 창 선택입니다. command 생성기는 commands crate의 테스트
 //! 전용 `test_support`(VII.6.1)를 씁니다.
+#![cfg(test)]
 
 use stellar_commands::document::test_support::random_document::{
     random_valid_document, SplitMix64,

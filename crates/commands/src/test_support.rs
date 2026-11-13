@@ -7,6 +7,7 @@
 //!
 //! 생성기는 현재 문서를 보고 **대체로 유효한** command를 만듭니다. 유효성은 command의 `validate`가
 //! 최종 판단하므로, 호출자는 실패한 후보를 건너뛰거나 [`random_valid_request`]를 씁니다.
+#![cfg(any(test, feature = "test-support"))]
 
 use stellar_core_types::clock::ManualClock;
 use stellar_core_types::color::{Color, ColorSpace};

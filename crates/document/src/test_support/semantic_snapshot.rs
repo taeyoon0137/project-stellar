@@ -802,6 +802,48 @@ mod tests {
         out
     }
 
+    /// 파일 첫 항목이 test 조건 inner attribute(`#![cfg(test)]`, `#![cfg(any(test, feature =
+    /// "test-support"))]`)인 파일은 전체가 테스트 전용입니다.
+    fn file_is_test_only(text: &str) -> bool {
+        text.lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && !l.starts_with("//"))
+            .is_some_and(|l| {
+                l == "#![cfg(test)]" || l == "#![cfg(any(test, feature = \"test-support\"))]"
+            })
+    }
+
+    /// `[features]` 본문에 test-support가 나오면, 그 정의가 `test-support = [..]` 한 줄이고
+    /// 각 항목이 `<crate>/test-support`이며 `default`가 test-support를 켜지 않는지.
+    fn features_only_forward_test_support(body: &str) -> bool {
+        for line in body.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') || !line.contains("test-support") {
+                continue;
+            }
+            let Some(value) = line.strip_prefix("test-support = [") else {
+                return false;
+            };
+            let Some(items) = value.strip_suffix(']') else {
+                return false;
+            };
+            let all_forward = items
+                .split(',')
+                .map(str::trim)
+                .filter(|i| !i.is_empty())
+                .all(|i| {
+                    let i = i.trim_matches('"');
+                    i.ends_with("/test-support") && !i.starts_with("dep:")
+                });
+            if !all_forward {
+                return false;
+            }
+        }
+        !body
+            .lines()
+            .map(str::trim)
+            .any(|l| l.starts_with("default") && l.contains("test-support"))
+    }
+
     /// 비테스트 소스(첫 `#[cfg(test)]` 앞)에서 `stellar_document`로 시작하는 경로·use 문이
     /// `test_support`에 닿는지. use group(`stellar_document::{.., test_support}`)도 잡도록 각
     /// 등장 위치부터 다음 `;`까지를 봅니다.
@@ -832,8 +874,15 @@ mod tests {
                     continue;
                 }
                 let body = manifest_section(&manifest, section);
+                let offending = if section == "features" {
+                    // 허용: 기본값이 아닌 `test-support` feature가 의존 crate의 test-support만
+                    // 전달하는 정의(다른 crate의 테스트가 dev-dependencies로 켤 때 필요).
+                    !features_only_forward_test_support(&body)
+                } else {
+                    body.contains("test-support")
+                };
                 assert!(
-                    !body.contains("test-support"),
+                    !offending,
                     "{}의 [{section}]가 test-support를 켭니다(dev-dependencies만 허용)",
                     member.display()
                 );
@@ -849,6 +898,9 @@ mod tests {
             rust_sources(&src, &mut files);
             for file in files {
                 let text = std::fs::read_to_string(&file).unwrap();
+                if file_is_test_only(&text) {
+                    continue;
+                }
                 let production = text.split("#[cfg(test)]").next().unwrap_or("");
                 assert!(
                     !references_document_test_support(production),

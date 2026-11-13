@@ -10,6 +10,7 @@
 //! 어떤 경로에서도 **panic·out-of-bounds가 없어야** 하며, 실행이 성공하면 문서는 전체 validator
 //! (VI.10.1)를 통과해야 합니다(command가 문서 불변식을 깨면 panic으로 드러남). 거부(오류)는 정상입니다.
 //! 장기 nightly 실행(XVI.6.7)이나 외부 fuzz 엔진 연결은 같은 함수를 호출하면 됩니다.
+#![cfg(any(test, feature = "test-support"))]
 
 use stellar_document::test_support::random_document::{random_valid_document, SplitMix64};
 use stellar_document::validate::validate_document;
