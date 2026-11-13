@@ -6,10 +6,17 @@
 //!
 //! [`Selection`]은 선택된 StableId의 **순서 있는 집합**(처음 선택한 순서, 중복 없음)과 primary
 //! selection(집합의 원소이거나 없음)입니다.
+//!
+//! 선택 변경은 문서 command가 아니라 history event [`SetSelection`](VII.3.2)입니다. 적용할 때 문서에
+//! 없는 id와 숨김 정책([`SelectionPolicy`])상 선택할 수 없는 id를 거르고, 이전 선택을 역 event로
+//! 돌려줍니다.
 
 use stellar_core_types::ids::StableId;
+use stellar_document::model::DocumentModel;
 
+use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::id::WindowSessionId;
+use crate::tree::parent_of;
 
 /// 순서 있는 선택 집합 + primary.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -102,10 +109,125 @@ impl WindowViewState {
     }
 
     /// 선택을 바꾸고 이전 선택을 반환합니다(검증·history는 selection command의 몫).
-    // SetSelection(VII.3.2)이 유일한 사용처가 되기 전까지는 테스트만 씁니다.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn replace_selection(&mut self, selection: Selection) -> Selection {
         std::mem::replace(&mut self.selection, selection)
+    }
+}
+
+impl Selection {
+    /// canonical bytes를 덧붙입니다: 수 `u32` + id* + primary(flag + id).
+    pub(crate) fn encode_into(&self, out: &mut Writer) {
+        out.len(self.ids.len());
+        for id in &self.ids {
+            out.id(*id);
+        }
+        out.opt_id(self.primary);
+    }
+
+    /// [`Selection::encode_into`]의 역. 형식을 정규화 규칙으로 다시 검사합니다.
+    pub(crate) fn decode_from(input: &mut Reader<'_>) -> Result<Selection, CommandCodecError> {
+        let count = input.len()?;
+        let mut ids = Vec::with_capacity(count);
+        for _ in 0..count {
+            ids.push(input.id()?);
+        }
+        let primary = input.opt_id()?;
+        let selection = Selection::new(ids.clone(), primary);
+        if selection.ids != ids || selection.primary != primary {
+            return Err(CommandCodecError::Malformed {
+                reason: "정규형이 아닌 선택",
+            });
+        }
+        Ok(selection)
+    }
+}
+
+/// 선택 가능 정책.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SelectionPolicy {
+    /// 숨김 node(자신 또는 조상이 숨김)도 선택할 수 있는지. 기본은 거부입니다.
+    pub include_hidden: bool,
+}
+
+impl SelectionPolicy {
+    /// `id`를 선택할 수 있는지: 문서에 있고, 숨김 정책을 통과해야 합니다.
+    pub fn is_selectable(&self, model: &DocumentModel, id: StableId) -> bool {
+        if !model.contains(id) {
+            return false;
+        }
+        if self.include_hidden {
+            return true;
+        }
+        let mut current = Some(id);
+        while let Some(node) = current {
+            let visible = model
+                .runtime_id(node)
+                .and_then(|handle| model.columns().get(handle))
+                .map(|fields| fields.visible);
+            if visible != Some(true) {
+                return false;
+            }
+            current = parent_of(model, node).flatten();
+        }
+        true
+    }
+}
+
+/// 선택 변경 history event(VII.3.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetSelection {
+    /// 요청 선택.
+    pub selection: Selection,
+}
+
+/// 적용된 선택 event: 실제로 적용한(걸러진) 정방향과 이전 선택으로의 역방향.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedSelection {
+    /// 걸러진 결과로 다시 적용하면 같은 선택이 되는 event.
+    pub forward: SetSelection,
+    /// 이전 선택으로 되돌리는 event.
+    pub inverse: SetSelection,
+}
+
+impl SetSelection {
+    /// 선택 event를 만듭니다.
+    pub fn new(selection: Selection) -> SetSelection {
+        SetSelection { selection }
+    }
+
+    /// 문서에 없거나 정책상 선택할 수 없는 id를 거른 선택(primary 규칙 재적용).
+    pub fn filtered(&self, model: &DocumentModel, policy: SelectionPolicy) -> Selection {
+        self.selection.retain(|id| policy.is_selectable(model, id))
+    }
+
+    /// view 상태에 적용합니다. 문서는 바꾸지 않습니다.
+    pub fn apply(
+        &self,
+        view: &mut WindowViewState,
+        model: &DocumentModel,
+        policy: SelectionPolicy,
+    ) -> AppliedSelection {
+        let selection = self.filtered(model, policy);
+        let previous = view.replace_selection(selection.clone());
+        AppliedSelection {
+            forward: SetSelection::new(selection),
+            inverse: SetSelection::new(previous),
+        }
+    }
+
+    /// canonical bytes.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Writer::new();
+        self.selection.encode_into(&mut out);
+        out.into_bytes()
+    }
+
+    /// [`SetSelection::encode`]의 역.
+    pub fn decode(bytes: &[u8]) -> Result<SetSelection, CommandCodecError> {
+        let mut input = Reader::new(bytes);
+        let selection = Selection::decode_from(&mut input)?;
+        input.expect_end()?;
+        Ok(SetSelection { selection })
     }
 }
 
@@ -171,5 +293,84 @@ mod tests {
         assert_eq!(kept.primary(), Some(sid(3)), "primary가 빠지면 마지막으로");
         assert!(kept.contains(sid(1)) && !kept.contains(sid(2)));
         assert!(Selection::empty().is_empty());
+    }
+
+    fn hidden_model() -> DocumentModel {
+        // small_model + 숨김 12, 12 아래 20(자신은 보임), 11 아래 숨김 21.
+        use crate::command::test_fixtures::frame;
+        let mut model = small_model();
+        let mut hidden = frame(12, Some(10), 0x20);
+        hidden.visible = false;
+        model.remove_leaf(sid(12)).unwrap();
+        model.insert_node(hidden).unwrap();
+        model.insert_node(frame(20, Some(12), 0x10)).unwrap();
+        let mut hidden_leaf = frame(21, Some(11), 0x20);
+        hidden_leaf.visible = false;
+        model.insert_node(hidden_leaf).unwrap();
+        model
+    }
+
+    #[test]
+    fn set_selection_filters_and_inverts() {
+        // 검증 기준(VII.3.2): apply/inverse와 primary selection 규칙 통과.
+        let model = hidden_model();
+        let mut view = WindowViewState::new(WindowSessionId::from_stable_id(sid(500)));
+        let policy = SelectionPolicy::default();
+        let first = SetSelection::new(Selection::new([sid(11), sid(13)], Some(sid(11))));
+        let applied = first.apply(&mut view, &model, policy);
+        assert_eq!(applied.inverse, SetSelection::new(Selection::empty()));
+        assert_eq!(view.selection().ids(), &[sid(11), sid(13)]);
+        assert_eq!(view.selection().primary(), Some(sid(11)));
+
+        // 없는 99, 숨김 12, 숨김 조상 아래 20, 숨김 21은 걸러집니다. primary(20)가 빠지면 마지막.
+        let request = SetSelection::new(Selection::new(
+            [sid(99), sid(12), sid(13), sid(20), sid(21), sid(10)],
+            Some(sid(20)),
+        ));
+        let applied = request.apply(&mut view, &model, policy);
+        assert_eq!(view.selection().ids(), &[sid(13), sid(10)]);
+        assert_eq!(view.selection().primary(), Some(sid(10)));
+        assert_eq!(applied.forward.selection, view.selection().clone());
+        // 걸러진 정방향을 다시 적용해도 같은 선택(redo 결정론).
+        let mut replay = WindowViewState::new(WindowSessionId::from_stable_id(sid(501)));
+        applied.forward.apply(&mut replay, &model, policy);
+        assert_eq!(replay.selection(), view.selection());
+        // 역방향은 이전 선택(primary 포함)으로 되돌립니다.
+        let back = applied.inverse.apply(&mut view, &model, policy);
+        assert_eq!(view.selection().ids(), &[sid(11), sid(13)]);
+        assert_eq!(view.selection().primary(), Some(sid(11)));
+        assert_eq!(back.inverse.selection.ids(), &[sid(13), sid(10)]);
+
+        // 숨김 허용 정책.
+        let permissive = SelectionPolicy {
+            include_hidden: true,
+        };
+        request.apply(&mut view, &model, permissive);
+        assert_eq!(
+            view.selection().ids(),
+            &[sid(12), sid(13), sid(20), sid(21), sid(10)]
+        );
+        assert_eq!(view.selection().primary(), Some(sid(20)));
+    }
+
+    #[test]
+    fn selection_codec_round_trips_and_rejects_non_canonical() {
+        let event = SetSelection::new(Selection::new([sid(3), sid(1), sid(2)], Some(sid(1))));
+        let bytes = event.encode();
+        assert_eq!(SetSelection::decode(&bytes).unwrap(), event);
+        assert_eq!(
+            SetSelection::decode(&SetSelection::new(Selection::empty()).encode()).unwrap(),
+            SetSelection::new(Selection::empty())
+        );
+        // 중복 id(정규형 아님) 거부.
+        let mut out = Writer::new();
+        out.len(2);
+        out.id(sid(1));
+        out.id(sid(1));
+        out.opt_id(Some(sid(1)));
+        assert!(SetSelection::decode(&out.into_bytes()).is_err());
+        let mut trailing = bytes;
+        trailing.push(0);
+        assert!(SetSelection::decode(&trailing).is_err());
     }
 }
