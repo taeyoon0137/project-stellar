@@ -713,7 +713,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| VIII.2.1 | `[ ]` | 모든 AST node에 StableId, node kind, typed child refs를 정의합니다. | ID uniqueness와 tree/DAG validation 통과. | VIII.1.1, III.1.1 |
+| VIII.2.1 | `[x]` | 모든 AST node에 StableId, node kind, typed child refs를 정의합니다. | ID uniqueness와 tree/DAG validation 통과. | VIII.1.1, III.1.1 |
 | VIII.2.2 | `[ ]` | Literal, Reference, Unary, Binary, Call, If, Match AST node를 구현합니다. | 각 node round-trip. | VIII.2.1 |
 | VIII.2.3 | `[ ]` | AST는 DAG 참조를 허용하되 cycle을 금지합니다. cycle detector를 구현합니다. | direct·indirect cycle fixture 실패. | VIII.2.2 |
 | VIII.2.4 | `[ ]` | type checker가 각 AST node의 inferred type과 오류 path를 반환하게 합니다. | nested 오류가 정확한 node StableId를 포함. | VIII.1.4, VIII.2.2 |
