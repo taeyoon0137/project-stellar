@@ -8,3 +8,24 @@ pub mod cache;
 
 /// 레이아웃 수치 rounding 정책과 logical subpixel 단위 (X.1.5).
 pub mod rounding;
+
+/// 레이아웃 좌표·크기 (X.1.1).
+pub mod geometry;
+
+/// 레이아웃 입력 속성 식별자 (X.1.1).
+pub mod property;
+
+/// 레이아웃 오류 (X.1.1).
+pub mod error;
+
+/// 레이아웃 입력 tree (X.1.1).
+pub mod input;
+
+/// 레이아웃 출력 box·결과 (X.1.1).
+pub mod output;
+
+/// canonical bytes writer/reader (crate 내부).
+mod codec;
+
+#[cfg(test)]
+mod test_support;
