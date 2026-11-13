@@ -5,7 +5,8 @@
 //!
 //! - [`variable`]: View 변수(IX.7.1) — StableId, 타입, default, 허용 enum 값.
 //! - [`condition`]: Variant 조건(IX.7.2) — 변수별 `Any` 또는 `Equals(value)`.
-//! - [`resolver`]: 일치 Variant 정렬(IX.7.4).
+//! - [`resolver`]: 일치 Variant 정렬·충돌·적용(IX.7.4~IX.7.6).
+//! - [`encapsulation`]: Variant override의 ComponentInstance 캡슐화 검사(IX.7.7).
 
 /// View 변수 (IX.7.1).
 pub mod variable;
@@ -15,3 +16,6 @@ pub mod condition;
 
 /// Variant resolver (IX.7.4~IX.7.6).
 pub mod resolver;
+
+/// Variant override의 ComponentInstance 캡슐화 검사 (IX.7.7).
+pub mod encapsulation;

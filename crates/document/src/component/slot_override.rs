@@ -279,7 +279,7 @@ pub fn validate_scene_slot_overrides(
 /// 아직 scene에 없는 record 집합(slot command 삽입 subtree) 안 인스턴스의 slot override를
 /// 검사합니다. `lookup`은 그 집합에서 node의 (종류, 부모)를, `owned_children`은 그 집합에서
 /// 인스턴스의 자식 전체를 줍니다.
-pub(super) fn validate_record_slot_overrides(
+pub(crate) fn validate_record_slot_overrides(
     library: &ComponentLibrary,
     payload: &ComponentInstancePayload,
     instance: StableId,
