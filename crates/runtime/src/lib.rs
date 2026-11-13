@@ -9,3 +9,6 @@ pub mod document_thread;
 
 /// UI→DocumentThread bounded command queue와 입력 우선순위 (XII.1.2).
 pub mod command_queue;
+
+/// RenderThread와 최신 scene snapshot lock-free handoff (XII.1.3).
+pub mod render_thread;
