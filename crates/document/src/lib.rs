@@ -73,3 +73,7 @@ pub mod record_codec;
 
 /// 런타임 문서 모델 (VI.10.2).
 pub mod model;
+
+/// 테스트 전용 지원 코드. 프로덕션 저장·로드 경로에서 사용하지 않습니다 (VI.10.4).
+#[doc(hidden)]
+pub mod test_support;
