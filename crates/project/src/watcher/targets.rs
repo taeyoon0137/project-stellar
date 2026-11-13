@@ -6,7 +6,8 @@
 //!
 //! - 감시할 target([`desired_external_targets`]): resolver(XIII.4) 트리 순회에서 프로젝트 안에서
 //!   밖으로 처음 넘어가는 항목의 실제 target. 외부 디렉터리 안의 하위 항목은 그 target root가 이미
-//!   포함하므로 따로 등록하지 않습니다.
+//!   포함하므로 따로 등록하지 않으며, 순회도 외부 디렉터리 안으로 내려가지 않습니다
+//!   ([`ExternalDescent::Stop`] — `~` 같은 큰 외부 target의 내용 전체를 훑지 않음).
 //! - **비신뢰 프로젝트**는 외부 target을 감시하지 않습니다. 외부 target의 하위 이름·변화는 외부 내용이며
 //!   capability matrix(XVI.7.1)의 외부 symlink 읽기가 금지이기 때문입니다.
 //! - 다시 맞추는 시점([`ExternalTargetSync::needs_resync`]): 넘침, 알려진 링크(또는 그 상위 경로)의
@@ -17,7 +18,9 @@ use std::path::{Path, PathBuf};
 
 use super::event::{FileWatchEvent, WatchPath, WatchRootId};
 use super::roots::WatchRoots;
-use crate::path_resolver::{ExternalAccess, PathResolver, ResolveError, TargetLocation};
+use crate::path_resolver::{
+    ExternalAccess, ExternalDescent, PathResolver, ResolveError, TargetLocation,
+};
 
 /// `.git`은 순회하지 않습니다.
 const GIT_DIR: &str = ".git";
@@ -34,24 +37,13 @@ pub fn desired_external_targets(resolver: &PathResolver) -> Result<ExternalTarge
     if resolver.external_access() == ExternalAccess::MetadataOnly {
         return Ok(ExternalTargets::default());
     }
-    let walk = resolver.walk_tree(|path| path.split('/').next() != Some(GIT_DIR))?;
-    let locations: BTreeMap<&str, TargetLocation> = walk
-        .entries
-        .iter()
-        .map(|entry| (entry.path.as_str(), entry.location))
-        .collect();
+    // 외부 디렉터리 안으로 내려가지 않으므로 외부 항목의 부모는 항상 프로젝트 안입니다.
+    let walk = resolver.walk_tree_with(ExternalDescent::Stop, |path| {
+        path.split('/').next() != Some(GIT_DIR)
+    })?;
     let mut targets = ExternalTargets::default();
     for entry in &walk.entries {
         if entry.location != TargetLocation::External {
-            continue;
-        }
-        // 부모가 이미 외부면 그 target root가 이 항목을 포함합니다.
-        let parent_external = entry
-            .path
-            .rsplit_once('/')
-            .and_then(|(parent, _)| locations.get(parent))
-            .is_some_and(|location| *location == TargetLocation::External);
-        if parent_external {
             continue;
         }
         let resolved = resolver.resolve(&entry.path)?;

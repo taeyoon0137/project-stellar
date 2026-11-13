@@ -19,7 +19,9 @@
 //!   넘으면 [`ResolveError::TooManySymlinkHops`]로 거부합니다(OS 오류에 의존하지 않음).
 //! - **트리 순회**: [`PathResolver::walk_tree`]는 디렉터리 symlink를 따라 내려가되, 현재 경로의
 //!   조상 디렉터리를 다시 가리키는 디렉터리는 들어가지 않고 [`WalkIssue::DirectoryCycle`]로
-//!   표시합니다. 해석할 수 없는 항목은 [`WalkIssue::Unresolvable`]로 표시하고 순회를 계속합니다.
+//!   표시합니다. 같은 실제 디렉터리는 한 번만 읽고 다른 경로는 [`WalkIssue::AlreadyTraversed`]로
+//!   표시하므로 symlink DAG에서도 작업량이 지수적으로 늘지 않습니다. 해석할 수 없는 항목은
+//!   [`WalkIssue::Unresolvable`]로 표시하고 순회를 계속합니다.
 //!
 //! broken link(XIII.4.3, 기술 아키텍처 19.3 "broken link 표시"): 링크 target(체인의 어느 hop이든)이
 //! 없으면 [`ResolveError::BrokenSymlink`]로 **어느 링크가 깨졌는지** 보고합니다. 링크가 없는 일반
@@ -555,38 +557,67 @@ impl PathResolver {
     }
 
     /// 프로젝트 root부터 트리를 순회합니다. 디렉터리 symlink(내부·외부)를 따라 내려가지만 무한
-    /// 순회하지 않습니다.
+    /// 순회하지 않습니다([`ExternalDescent::Follow`]로 [`PathResolver::walk_tree_with`]를 부름).
+    pub fn walk_tree(&self, include: impl Fn(&str) -> bool) -> Result<TreeWalk, ResolveError> {
+        self.walk_tree_with(ExternalDescent::Follow, include)
+    }
+
+    /// 프로젝트 root부터 트리를 순회합니다. 디렉터리 symlink(내부·외부)를 따라 내려가지만 무한
+    /// 순회하지 않고, 같은 실제 디렉터리의 목록은 **한 번만** 읽습니다.
     ///
     /// - `include(path)`가 `false`인 항목(프로젝트 상대 경로)은 목록에 넣지 않고 내려가지도 않습니다.
     /// - 현재 순회 경로의 조상 디렉터리를 다시 가리키는 디렉터리는 [`WalkIssue::DirectoryCycle`]로
     ///   표시하고 들어가지 않습니다.
+    /// - 이미 다른 경로로 목록을 읽은 실제 디렉터리(symlink DAG의 공유 디렉터리)는 항목으로 넣되
+    ///   다시 내려가지 않고 [`WalkIssue::AlreadyTraversed`]로 표시합니다. 따라서 작업량은 서로 다른
+    ///   실제 디렉터리의 항목 수에 비례합니다(링크 조합 수에 지수적으로 늘지 않음). symlink를 거치지
+    ///   않는 경로를 먼저, 그다음 symlink를 거친 경로를 너비 우선으로 읽으므로 공유 디렉터리는 실제
+    ///   위치(없으면 가장 짧은 링크 경로)로 한 번 나옵니다.
     /// - 해석할 수 없는 항목(symlink 순환·hop 초과·없는 target 등)은 [`WalkIssue::Unresolvable`]로
     ///   표시하고 나머지 순회를 계속합니다. 링크는 수정·삭제하지 않습니다.
     /// - 비신뢰 프로젝트([`ExternalAccess::MetadataOnly`])에서는 외부 디렉터리를 항목(metadata)으로만
     ///   넣고 목록을 읽지 않으며 [`WalkIssue::ExternalNotTraversed`]로 표시합니다.
+    /// - [`ExternalDescent::Stop`]이면 신뢰 상태와 무관하게 외부 디렉터리를 항목으로만 넣고 목록을
+    ///   읽지 않습니다(호출자가 고른 범위라 문제로 표시하지 않음).
     /// - 결과 항목·문제는 프로젝트 상대 경로 순으로 정렬되어 결정론적입니다.
-    pub fn walk_tree(&self, include: impl Fn(&str) -> bool) -> Result<TreeWalk, ResolveError> {
+    pub fn walk_tree_with(
+        &self,
+        external: ExternalDescent,
+        include: impl Fn(&str) -> bool,
+    ) -> Result<TreeWalk, ResolveError> {
         let mut walk = TreeWalk::default();
-        // (프로젝트 상대 접두사, 실제 디렉터리, 조상 실제 디렉터리들)
-        let mut stack: Vec<(String, PathBuf, Vec<PathBuf>)> = vec![(
-            String::new(),
-            self.canonical_root.clone(),
-            vec![self.canonical_root.clone()],
-        )];
-        while let Some((prefix, dir, ancestors)) = stack.pop() {
-            let names = list_content(&dir)?;
-            let mut subdirs = Vec::new();
+        // 실제 디렉터리 → 그 목록을 읽은 프로젝트 상대 경로(root는 빈 문자열).
+        let mut traversed: HashMap<PathBuf, String> = HashMap::new();
+        // symlink를 거치지 않는 디렉터리를 먼저 읽고, symlink를 거친 디렉터리는 그 뒤에 읽습니다.
+        let mut direct: VecDeque<PendingDir> = VecDeque::new();
+        let mut linked: VecDeque<PendingDir> = VecDeque::new();
+        direct.push_back(PendingDir {
+            path: String::new(),
+            target: self.canonical_root.clone(),
+            ancestors: vec![self.canonical_root.clone()],
+        });
+        while let Some(dir) = direct.pop_front().or_else(|| linked.pop_front()) {
+            if let Some(first) = traversed.get(&dir.target) {
+                walk.issues.push(WalkIssue::AlreadyTraversed {
+                    path: dir.path,
+                    target: dir.target,
+                    traversed_as: first.clone(),
+                });
+                continue;
+            }
+            traversed.insert(dir.target.clone(), dir.path.clone());
+            let names = list_content(&dir.target)?;
             for name in names {
                 let Some(name) = name.to_str() else {
                     walk.issues.push(WalkIssue::NonUtf8Name {
-                        path: dir.join(&name),
+                        path: dir.target.join(&name),
                     });
                     continue;
                 };
-                let path = if prefix.is_empty() {
+                let path = if dir.path.is_empty() {
                     name.to_string()
                 } else {
-                    format!("{prefix}/{name}")
+                    format!("{}/{name}", dir.path)
                 };
                 if !include(&path) {
                     continue;
@@ -598,39 +629,50 @@ impl PathResolver {
                         continue;
                     }
                 };
-                if resolved.kind == TargetKind::Directory {
-                    if self.check_content_access(&resolved).is_err() {
-                        walk.issues.push(WalkIssue::ExternalNotTraversed {
-                            path: path.clone(),
-                            target: resolved.target.clone(),
-                        });
-                        walk.entries.push(WalkEntry {
-                            path,
-                            kind: resolved.kind,
-                            location: resolved.location,
-                            via_symlink: resolved.via_symlink(),
-                        });
-                        continue;
-                    }
-                    if ancestors.contains(&resolved.target) {
-                        walk.issues.push(WalkIssue::DirectoryCycle {
-                            path,
-                            target: resolved.target,
-                        });
-                        continue;
-                    }
-                    let mut next = ancestors.clone();
-                    next.push(resolved.target.clone());
-                    subdirs.push((path.clone(), resolved.target.clone(), next));
-                }
-                walk.entries.push(WalkEntry {
-                    path,
+                let entry = WalkEntry {
+                    path: path.clone(),
                     kind: resolved.kind,
                     location: resolved.location,
                     via_symlink: resolved.via_symlink(),
-                });
+                };
+                if resolved.kind != TargetKind::Directory {
+                    walk.entries.push(entry);
+                    continue;
+                }
+                if self.check_content_access(&resolved).is_err() {
+                    walk.issues.push(WalkIssue::ExternalNotTraversed {
+                        path,
+                        target: resolved.target,
+                    });
+                    walk.entries.push(entry);
+                    continue;
+                }
+                if dir.ancestors.contains(&resolved.target) {
+                    walk.issues.push(WalkIssue::DirectoryCycle {
+                        path,
+                        target: resolved.target,
+                    });
+                    continue;
+                }
+                walk.entries.push(entry);
+                if external == ExternalDescent::Stop
+                    && resolved.location == TargetLocation::External
+                {
+                    continue;
+                }
+                let mut ancestors = dir.ancestors.clone();
+                ancestors.push(resolved.target.clone());
+                let pending = PendingDir {
+                    path,
+                    target: resolved.target,
+                    ancestors,
+                };
+                if resolved.chain.is_empty() {
+                    direct.push_back(pending);
+                } else {
+                    linked.push_back(pending);
+                }
             }
-            stack.extend(subdirs);
         }
         walk.entries.sort_by(|a, b| a.path.cmp(&b.path));
         walk.issues.sort_by_key(WalkIssue::sort_key);
@@ -735,6 +777,25 @@ enum Origin {
     Hop(usize),
 }
 
+/// 트리 순회에서 외부 디렉터리를 다루는 방식.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalDescent {
+    /// 외부 디렉터리 안으로도 내려갑니다(비신뢰 프로젝트 정책은 그대로 적용).
+    Follow,
+    /// 외부 디렉터리는 항목으로만 넣고 목록을 읽지 않습니다(외부 target root만 필요할 때).
+    Stop,
+}
+
+/// 목록을 읽을 차례를 기다리는 디렉터리.
+struct PendingDir {
+    /// 프로젝트 상대 경로(root는 빈 문자열).
+    path: String,
+    /// 실제 디렉터리.
+    target: PathBuf,
+    /// 이 경로의 조상 실제 디렉터리들(자신 포함).
+    ancestors: Vec<PathBuf>,
+}
+
 /// 컴포넌트 단위 해석 결과.
 struct Walk {
     /// symlink가 없는 실제 경로.
@@ -773,6 +834,15 @@ pub enum WalkIssue {
         /// 가리키는 조상 디렉터리의 실제 경로.
         target: PathBuf,
     },
+    /// 이미 다른 경로로 목록을 읽은 실제 디렉터리(항목으로는 포함, 다시 내려가지 않음).
+    AlreadyTraversed {
+        /// 프로젝트 상대 경로.
+        path: String,
+        /// 실제 디렉터리.
+        target: PathBuf,
+        /// 그 디렉터리를 읽은 프로젝트 상대 경로(root는 빈 문자열).
+        traversed_as: String,
+    },
     /// 비신뢰 프로젝트라 목록을 읽지 않은 외부 디렉터리(항목으로는 포함).
     ExternalNotTraversed {
         /// 프로젝트 상대 경로.
@@ -793,6 +863,7 @@ impl WalkIssue {
         match self {
             WalkIssue::Unresolvable { path, .. }
             | WalkIssue::DirectoryCycle { path, .. }
+            | WalkIssue::AlreadyTraversed { path, .. }
             | WalkIssue::ExternalNotTraversed { path, .. } => path.clone(),
             WalkIssue::NonUtf8Name { path } => path.to_string_lossy().into_owned(),
         }
@@ -867,7 +938,9 @@ impl SymlinkDiagnostic {
                 None,
                 Some(target.clone()),
             ),
-            WalkIssue::ExternalNotTraversed { .. } | WalkIssue::NonUtf8Name { .. } => return None,
+            WalkIssue::AlreadyTraversed { .. }
+            | WalkIssue::ExternalNotTraversed { .. }
+            | WalkIssue::NonUtf8Name { .. } => return None,
         };
         Some(SymlinkDiagnostic {
             kind,
@@ -1500,6 +1573,138 @@ mod tests {
         assert!(walk.entries.iter().all(|e| !e.path.starts_with(".git")));
         assert!(walk.issues.is_empty());
         assert_eq!(walk.entries.len(), 3);
+    }
+
+    /// 순회가 목록을 읽은 디렉터리(내용 접근 기록 중 디렉터리만).
+    fn listed_dirs() -> Vec<PathBuf> {
+        content_access::take()
+            .into_iter()
+            .filter(|path| path.is_dir())
+            .collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tree_walk_lists_each_shared_directory_once_in_a_symlink_dag() {
+        use std::os::unix::fs::symlink;
+        // 회귀(검토 지적): D0..D(n-1)의 각 D_k에 `a`·`b` 두 링크가 모두 D_(k+1)을 가리키면 경로 수가
+        // 2^n으로 늘어납니다. 같은 실제 디렉터리는 한 번만 읽어야 합니다.
+        const LEVELS: usize = 14;
+        let fx = fixture();
+        for k in 0..LEVELS {
+            std::fs::create_dir_all(fx.project.join(format!("D{k:02}"))).unwrap();
+        }
+        for k in 0..LEVELS - 1 {
+            for name in ["a", "b"] {
+                symlink(
+                    format!("../D{:02}", k + 1),
+                    fx.project.join(format!("D{k:02}/{name}")),
+                )
+                .unwrap();
+            }
+        }
+        std::fs::write(
+            fx.project.join(format!("D{:02}/leaf.txt", LEVELS - 1)),
+            b"x",
+        )
+        .unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        let _ = content_access::take();
+
+        let walk = resolver.walk_tree(|_| true).unwrap();
+        let listed = listed_dirs();
+        let mut unique = listed.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(listed.len(), unique.len(), "같은 디렉터리를 두 번 읽음");
+        // root, data, data/sub, D00..D13.
+        assert_eq!(listed.len(), 3 + LEVELS);
+        // 항목: data 3개 + D 디렉터리 + 링크 디렉터리 2개씩 + leaf. 지수적으로 늘지 않음.
+        assert_eq!(walk.entries.len(), 3 + LEVELS + 2 * (LEVELS - 1) + 1);
+        let leaf = format!("D{:02}/leaf.txt", LEVELS - 1);
+        assert!(walk.entries.iter().any(|e| e.path == leaf));
+        // 링크는 실제 위치로 이미 읽은 디렉터리를 가리킴(실제 경로 우선).
+        let canonical = resolver.canonical_root().to_path_buf();
+        let expected: Vec<WalkIssue> = (0..LEVELS - 1)
+            .flat_map(|k| {
+                let canonical = canonical.clone();
+                ["a", "b"].map(move |name| WalkIssue::AlreadyTraversed {
+                    path: format!("D{k:02}/{name}"),
+                    target: canonical.join(format!("D{:02}", k + 1)),
+                    traversed_as: format!("D{:02}", k + 1),
+                })
+            })
+            .collect();
+        assert_eq!(walk.issues, expected);
+        // 공유 디렉터리는 진단(문제)이 아님.
+        assert!(resolver.symlink_diagnostics(|_| true).unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_directory_reached_only_through_links_is_read_once_by_the_shortest_path() {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        // 외부 `shared`를 가리키는 링크 셋(깊이·이름이 다름).
+        std::fs::create_dir_all(fx.project.join("deep/er")).unwrap();
+        symlink(fx.outside.join("shared"), fx.project.join("zz")).unwrap();
+        symlink(fx.outside.join("shared"), fx.project.join("mm")).unwrap();
+        symlink(fx.outside.join("shared"), fx.project.join("deep/er/link")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        let _ = content_access::take();
+        let walk = resolver.walk_tree(|_| true).unwrap();
+        let shared = std::fs::canonicalize(fx.outside.join("shared")).unwrap();
+        let listed = listed_dirs();
+        assert_eq!(listed.iter().filter(|p| **p == shared).count(), 1);
+        let paths: Vec<&str> = walk.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                "data",
+                "data/real.txt",
+                "data/sub",
+                "deep",
+                "deep/er",
+                "deep/er/link",
+                "mm",
+                "mm/asset.bin",
+                "mm/other.bin",
+                "zz",
+            ]
+        );
+        let already = |path: &str| WalkIssue::AlreadyTraversed {
+            path: path.to_string(),
+            target: shared.clone(),
+            traversed_as: "mm".to_string(),
+        };
+        assert_eq!(walk.issues, vec![already("deep/er/link"), already("zz")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_descent_does_not_list_external_directories() {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        symlink(fx.outside.join("shared"), fx.project.join("shared")).unwrap();
+        symlink(&fx.outside, fx.project.join("parent")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        let _ = content_access::take();
+        let walk = resolver
+            .walk_tree_with(ExternalDescent::Stop, |_| true)
+            .unwrap();
+        let outside = std::fs::canonicalize(&fx.outside).unwrap();
+        assert!(
+            listed_dirs().iter().all(|p| !p.starts_with(&outside)),
+            "외부 디렉터리 목록을 읽음"
+        );
+        let external: Vec<&str> = walk
+            .entries
+            .iter()
+            .filter(|e| e.location == TargetLocation::External)
+            .map(|e| e.path.as_str())
+            .collect();
+        assert_eq!(external, vec!["parent", "shared"]);
+        assert!(walk.issues.is_empty(), "{:?}", walk.issues);
     }
 
     #[cfg(unix)]
