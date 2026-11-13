@@ -672,7 +672,7 @@ tools/xtask/
 | VII.4.1 | `[x]` | `HistoryEntry`에 origin, forward transaction, inverse transaction, grouping key, timestamp 대신 monotonic sequence를 정의합니다. | 직렬화는 세션 메모리 전용이며 project serializer에서 제외. | VII.1.6, II.3.3 |
 | VII.4.2 | `[x]` | pointer gesture begin/update/end API를 구현합니다. update는 같은 preview transaction을 교체하고 end에서 한 entry를 확정합니다. | drag 500 update가 history 1건. | VII.4.1 |
 | VII.4.3 | `[x]` | 텍스트 입력 grouping은 동일 Text node, 인접 caret, 입력 종류, 짧은 manual-clock interval 조건으로 합칩니다. interval 값은 config에 둡니다. | 조건별 merge/split fixture 통과. | VI.7.5, VII.4.1 |
-| VII.4.4 | `[ ]` | 키보드 이동·resize 반복은 같은 command signature와 interval 조건으로 합칩니다. | key repeat 20회 history 1건. | VII.4.1 |
+| VII.4.4 | `[x]` | 키보드 이동·resize 반복은 같은 command signature와 interval 조건으로 합칩니다. | key repeat 20회 history 1건. | VII.4.1 |
 | VII.4.5 | `[ ]` | slider/scrub begin/end grouping을 구현합니다. 취소 시 preview 전 상태로 돌아가고 history를 만들지 않습니다. | commit/cancel fixture 통과. | VII.4.2 |
 | VII.4.6 | `[ ]` | Selection event와 document edit를 동일 시간순 스택에 넣습니다. Undo는 마지막 종류와 무관하게 한 entry씩 되돌립니다. | selection→edit→selection 순서 undo fixture 통과. | VII.3.2, VII.4.1 |
 

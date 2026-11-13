@@ -667,6 +667,7 @@ mod tests {
             text_node(&mut doc, 20);
             let mut history = History::with_policy(HistoryGroupingPolicy::new(GroupingConfig {
                 text_merge_interval_nanos: 50 * MS,
+                ..GroupingConfig::default()
             }));
             let mut clock = ManualClock::new(0);
             type_char(&mut history, &mut doc, &clock, 20, 0, "a");
@@ -675,6 +676,138 @@ mod tests {
             clock.advance(60 * MS);
             type_char(&mut history, &mut doc, &clock, 20, 2, "c");
             assert_eq!(history.len(), 2, "50ms 설정: 40ms 병합, 60ms 분리");
+        }
+    }
+
+    mod keyboard {
+        //! 키보드 반복 grouping fixture(VII.4.4).
+
+        use super::super::test_fixtures::*;
+        use super::super::*;
+        use crate::entry::CommandSignature;
+        use stellar_commands::command::Command;
+        use stellar_commands::document::frame::keys as frame_keys;
+        use stellar_commands::document::records::NodePayload;
+        use stellar_commands::kind::CommandKind;
+        use stellar_commands::property::{PropertyValue, SetProperty};
+        use stellar_core_types::clock::ManualClock;
+        use stellar_core_types::value::{Size2, Transform2D};
+
+        const MS: u64 = 1_000_000;
+
+        fn x_of(doc: &DocumentState, id: u64) -> f32 {
+            match doc.model().payload(sid(id)) {
+                Some(NodePayload::Frame(frame)) => frame.transform.components().4,
+                _ => panic!("Frame"),
+            }
+        }
+
+        fn nudge(doc: &DocumentState, id: u64, step: u64) -> CommandTransaction {
+            let x = x_of(doc, id) + 1.0;
+            tx(
+                doc,
+                8_000 + step,
+                Command::SetProperty(SetProperty {
+                    node: sid(id),
+                    key: frame_keys::TRANSFORM,
+                    value: PropertyValue::Transform(
+                        Transform2D::new(1.0, 0.0, 0.0, 1.0, x, 0.0).unwrap(),
+                    ),
+                }),
+            )
+        }
+
+        fn press(
+            history: &mut History,
+            doc: &mut DocumentState,
+            clock: &ManualClock,
+            t: &CommandTransaction,
+        ) {
+            let key = GroupingKey::keyboard(t).expect("signature");
+            history.record_grouped(doc, t, key, clock).unwrap();
+        }
+
+        #[test]
+        fn key_repeat_twenty_times_is_one_entry() {
+            // 검증 기준(VII.4.4): key repeat 20회 history 1건.
+            let mut doc = small_state();
+            let before = doc.model().to_records().unwrap();
+            let mut history = History::new();
+            let mut clock = ManualClock::new(0);
+            for step in 0..20u64 {
+                let t = nudge(&doc, 11, step);
+                press(&mut history, &mut doc, &clock, &t);
+                clock.advance(33 * MS);
+            }
+            assert_eq!(history.len(), 1);
+            assert_eq!(x_of(&doc, 11), 20.0);
+            assert_eq!(
+                history.entries()[0].grouping,
+                Some(GroupingKey::KeyboardRepeat(CommandSignature {
+                    kind: CommandKind::SetProperty,
+                    target: sid(11),
+                    key: Some(frame_keys::TRANSFORM)
+                }))
+            );
+            let HistoryPayload::Document { inverse, .. } = &history.entries()[0].payload else {
+                panic!("문서 항목");
+            };
+            doc.execute_transaction(&inverse.rebased(doc.revision()))
+                .unwrap();
+            assert_eq!(
+                doc.model().to_records().unwrap(),
+                before,
+                "한 번의 역으로 20회 전부 원복"
+            );
+        }
+
+        #[test]
+        fn different_signature_or_pause_splits() {
+            let mut doc = small_state();
+            let mut history = History::new();
+            let mut clock = ManualClock::new(0);
+            for step in 0..3u64 {
+                let t = nudge(&doc, 11, step);
+                press(&mut history, &mut doc, &clock, &t);
+                clock.advance(30 * MS);
+            }
+            // 다른 대상(12) → 분리.
+            let t = nudge(&doc, 12, 10);
+            press(&mut history, &mut doc, &clock, &t);
+            assert_eq!(history.len(), 2);
+            // 같은 대상이라도 다른 속성(크기 조절) → 분리.
+            clock.advance(30 * MS);
+            let resize = tx(
+                &doc,
+                9_000,
+                Command::SetProperty(SetProperty {
+                    node: sid(12),
+                    key: frame_keys::SIZE,
+                    value: PropertyValue::Size(Size2::new(10.0, 10.0).unwrap()),
+                }),
+            );
+            press(&mut history, &mut doc, &clock, &resize);
+            assert_eq!(history.len(), 3);
+            // 간격 초과(0.5초) → 분리.
+            clock.advance(600 * MS);
+            let t = nudge(&doc, 11, 20);
+            press(&mut history, &mut doc, &clock, &t);
+            assert_eq!(history.len(), 4);
+            // signature: 요청이 둘 이상이거나 구조 command면 없음.
+            let two = nudge(&doc, 11, 30)
+                .with_command(doc.revision(), Command::rename_node(sid(11), "x"));
+            assert_eq!(CommandSignature::of(&two), None);
+            let rename = tx(&doc, 31, Command::rename_node(sid(11), "y"));
+            assert!(
+                CommandSignature::of(&rename).is_some(),
+                "이름 변경도 SetProperty signature"
+            );
+            let delete = tx(
+                &doc,
+                32,
+                Command::DeleteSubtree(stellar_commands::node_ops::DeleteSubtree { root: sid(13) }),
+            );
+            assert_eq!(GroupingKey::keyboard(&delete), None);
         }
     }
 }

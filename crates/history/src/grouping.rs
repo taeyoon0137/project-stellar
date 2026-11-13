@@ -7,26 +7,74 @@
 //! - **텍스트 입력(VII.4.3)**: 같은 Text node, 같은 입력 종류, 인접 caret(새 입력의 편집 전 caret
 //!   = 직전 입력의 편집 후 caret), 직전 입력 뒤 [`GroupingConfig::text_merge_interval_nanos`] 이내.
 //!
+//! - **키보드 이동·크기 조절 반복(VII.4.4)**: 같은 [`CommandSignature`](종류·대상·속성), 직전 입력 뒤
+//!   [`GroupingConfig::keyboard_repeat_interval_nanos`] 이내.
+//!
 //! 간격 값은 [`GroupingConfig`]에 둡니다. 기본값은 사용성 벤치마크 전 잠정값입니다.
 
-use crate::entry::GroupingKey;
+use stellar_commands::command::Command;
+use stellar_commands::transaction::CommandTransaction;
+
+use crate::entry::{CommandSignature, GroupingKey};
+
+impl CommandSignature {
+    /// 요청 하나짜리 속성·이동 transaction의 signature. 그 밖의 transaction은 반복 병합 대상이
+    /// 아니라 `None`입니다.
+    pub fn of(transaction: &CommandTransaction) -> Option<CommandSignature> {
+        let [request] = transaction.requests.as_slice() else {
+            return None;
+        };
+        let kind = request.command.kind();
+        match &request.command {
+            Command::SetProperty(command) => Some(CommandSignature {
+                kind,
+                target: command.node,
+                key: Some(command.key),
+            }),
+            Command::SetModifierProperty(command) => Some(CommandSignature {
+                kind,
+                target: command.modifier.stable_id(),
+                key: Some(command.key),
+            }),
+            Command::MoveNode(command) => Some(CommandSignature {
+                kind,
+                target: command.node,
+                key: None,
+            }),
+            _ => None,
+        }
+    }
+}
+
+impl GroupingKey {
+    /// 키보드 반복 입력의 grouping key(signature가 없으면 `None`).
+    pub fn keyboard(transaction: &CommandTransaction) -> Option<GroupingKey> {
+        CommandSignature::of(transaction).map(GroupingKey::KeyboardRepeat)
+    }
+}
 
 /// grouping 시간 조건 설정.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroupingConfig {
     /// 텍스트 연속 입력 병합 간격(ns). 직전 입력 뒤 이 시간 안의 입력만 합칩니다.
     pub text_merge_interval_nanos: u64,
+    /// 키보드 이동·크기 조절 반복 병합 간격(ns).
+    pub keyboard_repeat_interval_nanos: u64,
 }
 
 impl GroupingConfig {
     /// 기본 텍스트 병합 간격: 1초(잠정값).
     pub const DEFAULT_TEXT_MERGE_INTERVAL_NANOS: u64 = 1_000_000_000;
+
+    /// 기본 키보드 반복 병합 간격: 0.5초(잠정값, OS key repeat 간격보다 깁니다).
+    pub const DEFAULT_KEYBOARD_REPEAT_INTERVAL_NANOS: u64 = 500_000_000;
 }
 
 impl Default for GroupingConfig {
     fn default() -> GroupingConfig {
         GroupingConfig {
             text_merge_interval_nanos: GroupingConfig::DEFAULT_TEXT_MERGE_INTERVAL_NANOS,
+            keyboard_repeat_interval_nanos: GroupingConfig::DEFAULT_KEYBOARD_REPEAT_INTERVAL_NANOS,
         }
     }
 }
@@ -79,6 +127,9 @@ impl HistoryGroupingPolicy {
                     && prev_kind == kind
                     && prev_after == caret_before
                     && elapsed <= self.config.text_merge_interval_nanos
+            }
+            (GroupingKey::KeyboardRepeat(previous), GroupingKey::KeyboardRepeat(next)) => {
+                previous == next && elapsed <= self.config.keyboard_repeat_interval_nanos
             }
             _ => false,
         }
@@ -136,6 +187,7 @@ mod tests {
         // 간격 값은 설정을 따릅니다.
         let strict = HistoryGroupingPolicy::new(GroupingConfig {
             text_merge_interval_nanos: 10 * ms,
+            ..GroupingConfig::default()
         });
         assert!(!strict.should_merge(&typed, 0, &text(20, TextInputKind::Insert, 1, 2), 20 * ms));
         assert_eq!(strict.config().text_merge_interval_nanos, 10 * ms);
