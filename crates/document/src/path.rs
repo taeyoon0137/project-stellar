@@ -23,6 +23,16 @@ pub enum PathError {
         /// 원인.
         reason: &'static str,
     },
+    /// subpath가 MoveTo 없이 시작합니다(VI.6.2). index는 문제 command 위치입니다.
+    MissingMoveTo {
+        /// command index.
+        index: usize,
+    },
+    /// 알 수 없는 winding rule tag.
+    UnknownWinding {
+        /// 발견된 tag.
+        tag: u8,
+    },
 }
 
 impl fmt::Display for PathError {
@@ -31,6 +41,10 @@ impl fmt::Display for PathError {
             PathError::NonFinite => f.write_str("path 좌표가 유한하지 않습니다"),
             PathError::UnknownCommand { tag } => write!(f, "알 수 없는 path command tag: {tag}"),
             PathError::Malformed { reason } => write!(f, "Path binary 형식 위반: {reason}"),
+            PathError::MissingMoveTo { index } => {
+                write!(f, "command {index}: subpath는 MoveTo로 시작해야 합니다")
+            }
+            PathError::UnknownWinding { tag } => write!(f, "알 수 없는 winding rule tag: {tag}"),
         }
     }
 }
@@ -169,6 +183,121 @@ pub fn decode_commands(bytes: &[u8]) -> Result<Vec<PathCommand>, PathError> {
     Ok(commands)
 }
 
+/// 채우기 winding rule (VI.6.2). tag는 저장 포맷의 일부입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum WindingRule {
+    /// non-zero(기본).
+    #[default]
+    NonZero = 0,
+    /// even-odd.
+    EvenOdd = 1,
+}
+
+/// 하나의 subpath: MoveTo로 시작하는 command 구간과 닫힘 여부.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Subpath {
+    /// MoveTo를 포함한 command들(Close 제외).
+    pub commands: Vec<PathCommand>,
+    /// Close로 끝났는지.
+    pub closed: bool,
+}
+
+/// 검증된 path 데이터 (VI.6.2).
+///
+/// 불변식: 비어 있지 않다면 첫 command는 MoveTo이고, Close 다음에 이어지는
+/// command도 MoveTo여야 합니다(암묵적 subpath 재시작을 허용하지 않는 canonical
+/// 형식). 빈 path는 유효합니다.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PathData {
+    winding: WindingRule,
+    commands: Vec<PathCommand>,
+}
+
+/// command 목록이 subpath 규칙을 지키는지 검사합니다.
+pub fn validate_commands(commands: &[PathCommand]) -> Result<(), PathError> {
+    let mut in_subpath = false;
+    for (index, command) in commands.iter().enumerate() {
+        match command {
+            PathCommand::MoveTo(_) => in_subpath = true,
+            PathCommand::LineTo(_) | PathCommand::CubicTo { .. } => {
+                if !in_subpath {
+                    return Err(PathError::MissingMoveTo { index });
+                }
+            }
+            PathCommand::Close => {
+                if !in_subpath {
+                    return Err(PathError::MissingMoveTo { index });
+                }
+                in_subpath = false;
+            }
+        }
+    }
+    Ok(())
+}
+
+impl PathData {
+    /// 검증 후 path를 만듭니다.
+    pub fn new(winding: WindingRule, commands: Vec<PathCommand>) -> Result<PathData, PathError> {
+        validate_commands(&commands)?;
+        Ok(PathData { winding, commands })
+    }
+
+    /// winding rule.
+    pub fn winding(&self) -> WindingRule {
+        self.winding
+    }
+
+    /// command들.
+    pub fn commands(&self) -> &[PathCommand] {
+        &self.commands
+    }
+
+    /// subpath로 나눕니다.
+    pub fn subpaths(&self) -> Vec<Subpath> {
+        let mut out: Vec<Subpath> = Vec::new();
+        for command in &self.commands {
+            match command {
+                PathCommand::MoveTo(_) => out.push(Subpath {
+                    commands: vec![*command],
+                    closed: false,
+                }),
+                PathCommand::Close => {
+                    if let Some(last) = out.last_mut() {
+                        last.closed = true;
+                    }
+                }
+                _ => {
+                    if let Some(last) = out.last_mut() {
+                        last.commands.push(*command);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// canonical bytes: winding tag + command 인코딩.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = vec![self.winding as u8];
+        buf.extend_from_slice(&encode_commands(&self.commands));
+        buf
+    }
+
+    /// bytes에서 복원하고 subpath 규칙을 검증합니다.
+    pub fn decode(bytes: &[u8]) -> Result<PathData, PathError> {
+        let (&tag, rest) = bytes.split_first().ok_or(PathError::Malformed {
+            reason: "winding 없음",
+        })?;
+        let winding = match tag {
+            0 => WindingRule::NonZero,
+            1 => WindingRule::EvenOdd,
+            tag => return Err(PathError::UnknownWinding { tag }),
+        };
+        PathData::new(winding, decode_commands(rest)?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,5 +374,85 @@ mod tests {
         let mut trailing = bytes;
         trailing.push(0);
         assert!(decode_commands(&trailing).is_err());
+    }
+
+    #[test]
+    fn malformed_path_fixtures_fail() {
+        // 검증 기준(VI.6.2): malformed path fixture 실패.
+        let cases: Vec<(&str, Vec<PathCommand>, usize)> = vec![
+            ("LineTo로 시작", vec![PathCommand::LineTo(p(1.0, 1.0))], 0),
+            (
+                "CubicTo로 시작",
+                vec![PathCommand::CubicTo {
+                    c1: p(0.0, 0.0),
+                    c2: p(1.0, 1.0),
+                    to: p(2.0, 2.0),
+                }],
+                0,
+            ),
+            ("Close로 시작", vec![PathCommand::Close], 0),
+            (
+                "Close 뒤 MoveTo 없이 LineTo",
+                vec![
+                    PathCommand::MoveTo(p(0.0, 0.0)),
+                    PathCommand::LineTo(p(1.0, 0.0)),
+                    PathCommand::Close,
+                    PathCommand::LineTo(p(5.0, 5.0)),
+                ],
+                3,
+            ),
+            (
+                "Close 두 번",
+                vec![
+                    PathCommand::MoveTo(p(0.0, 0.0)),
+                    PathCommand::Close,
+                    PathCommand::Close,
+                ],
+                2,
+            ),
+        ];
+        for (name, commands, index) in cases {
+            assert_eq!(
+                PathData::new(WindingRule::NonZero, commands).unwrap_err(),
+                PathError::MissingMoveTo { index },
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn subpaths_and_winding_round_trip() {
+        let path = PathData::new(
+            WindingRule::EvenOdd,
+            vec![
+                PathCommand::MoveTo(p(0.0, 0.0)),
+                PathCommand::LineTo(p(10.0, 0.0)),
+                PathCommand::LineTo(p(10.0, 10.0)),
+                PathCommand::Close,
+                PathCommand::MoveTo(p(2.0, 2.0)),
+                PathCommand::LineTo(p(4.0, 4.0)),
+            ],
+        )
+        .unwrap();
+        let subpaths = path.subpaths();
+        assert_eq!(subpaths.len(), 2);
+        assert!(subpaths[0].closed);
+        assert_eq!(subpaths[0].commands.len(), 3);
+        assert!(!subpaths[1].closed, "열린 subpath");
+        let decoded = PathData::decode(&path.encode()).unwrap();
+        assert_eq!(decoded, path);
+        assert_eq!(decoded.winding(), WindingRule::EvenOdd);
+        // 빈 path는 유효.
+        assert!(PathData::new(WindingRule::NonZero, vec![])
+            .unwrap()
+            .subpaths()
+            .is_empty());
+        // 알 수 없는 winding tag.
+        let mut bytes = path.encode();
+        bytes[0] = 7;
+        assert_eq!(
+            PathData::decode(&bytes).unwrap_err(),
+            PathError::UnknownWinding { tag: 7 }
+        );
     }
 }
