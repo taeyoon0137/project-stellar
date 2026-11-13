@@ -22,6 +22,11 @@ pub mod tree;
 
 pub use tree::{read_tree_snapshot, resolve_tree, ResolvedTree, TreeSnapshot};
 
+/// Git index provider(XIV.2.5).
+pub mod index;
+
+pub use index::{read_index_snapshot, IndexSnapshot, StagedEntry};
+
 /// snapshot 한 항목(경로·mode·object ID). gitlink(submodule)는 commit ID를 가집니다.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SnapshotEntry {
