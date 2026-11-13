@@ -124,6 +124,16 @@ impl GitRunner {
         self
     }
 
+    /// 환경 allowlist에 이름을 **덧붙입니다**(이미 있으면 그대로). 값은 실행 시 현재 프로세스에서 읽습니다.
+    pub fn with_allowed_env(mut self, names: Vec<OsString>) -> GitRunner {
+        for name in names {
+            if !self.env_allowlist.contains(&name) {
+                self.env_allowlist.push(name);
+            }
+        }
+        self
+    }
+
     /// 자식 프로세스가 실제로 보게 될 환경 변수 값입니다(override 우선, 그다음 allowlist에 있는
     /// 현재 프로세스 값). allowlist에도 override에도 없으면 자식은 그 변수를 보지 못하므로 `None`.
     pub fn child_env_var(&self, name: &str) -> Option<OsString> {

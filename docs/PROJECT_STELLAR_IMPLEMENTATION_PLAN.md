@@ -1445,7 +1445,7 @@ tools/xtask/
 | XIV.9.3 | `[x]` | 새 GitHub remote 연결 전에 `git ls-remote`로 refs 존재 여부를 확인합니다. refs가 하나라도 있으면 최초 업로드 연결을 거부하고 Clone 안내 상태를 반환합니다. | empty/non-empty bare repo fixture 통과. | XIV.9.2 |
 | XIV.9.4 | `[x]` | empty remote만 `git remote add <name> <url>`로 등록합니다. 기본 remote name은 `origin`, 이미 있으면 호출자가 다른 이름을 제공해야 합니다. | origin exists fixture overwrite 없음. | XIV.9.3 |
 | XIV.9.5 | `[x]` | Push는 사용자가 선택한 existing remote/refspec을 시스템 Git으로 실행합니다. force push UI는 제공하지 않습니다. | normal push fixture 통과, force option API 없음. | XIV.9.1 |
-| XIV.9.6 | `[ ]` | credential helper/SSH agent prompt를 Git에 위임하고 Stellar는 token/key를 저장하지 않습니다. askpass bridge가 필요하면 입력 값은 메모리에서 즉시 폐기합니다. | credential log redaction·storage scan 통과. | XIV.9.5, II.3.2 |
+| XIV.9.6 | `[x]` | credential helper/SSH agent prompt를 Git에 위임하고 Stellar는 token/key를 저장하지 않습니다. askpass bridge가 필요하면 입력 값은 메모리에서 즉시 폐기합니다. | credential log redaction·storage scan 통과. | XIV.9.5, II.3.2 |
 | XIV.9.7 | `[ ]` | push 성공 후 remote tracking status를 갱신합니다. 실패 시 local commit/index를 변경하지 않습니다. | rejected push fixture local state 동일. | XIV.9.5 |
 
 ### XIV.10 3-way Semantic Merge 엔진
