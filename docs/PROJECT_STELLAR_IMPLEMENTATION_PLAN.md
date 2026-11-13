@@ -3,10 +3,10 @@
 - 기준 아키텍처: `PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`
 - 기준일: 2026-06-23
 - 현재 상태: `I.1.1`~`I.1.9` DEV-MAC 검증 완료(이력 정합화·`Task(...)` 일원화 반영). 다음 작업은 `I.1.10`(Bootstrap CI). Windows·CI 증거는 미확보
-- 원자 작업 수: 950개
-- 구현 Phase 수: 28개 (`I`~`XXVIII`)
+- 원자 작업 수: 1024개
+- 구현 Phase 수: 29개 (`I`~`XXIX`)
 - 초기 릴리스 범위: Phase `I`~`XVII`, G8 통과
-- 로드맵 범위: Phase `XVIII`~`XXVIII`
+- 로드맵 범위: Phase `XVIII`~`XXIX`
 - 이 문서는 세부 실행 계획만 포함하며 전체 기술 아키텍처를 중복 수록하지 않음
 
 ---
@@ -20,6 +20,7 @@
 - **2026-11-14 — Windows 지원 보류(ADR-0006):** 당분간 macOS만 지원합니다. Windows 전용 행은 `[!]`(사용자 결정 차단)로 표기하고, 양 플랫폼 비교 행은 ADR-0006의 판정 규칙(IEEE 기본 연산만 쓰는 결과는 macOS 증거로 `[x]`, 플랫폼 의존 결과는 `[~]`)을 따릅니다. 코어는 플랫폼 중립을 유지합니다.
 - **2026-11-14 — 커밋 규칙 정합:** 지침 우선순위상 위인 `AGENTS.md`에 맞춰 WBS 작업은 `Task(<WBS-ID>)`, WBS 밖 유지보수는 `Feat:`·`Docs:`·`Refactor:`·`Fix:`·`Chore:`·`Test:`를 허용합니다. 2026-06-23 "커밋 규칙 고정"을 대체하며, `cargo xtask validate-commit-message`와 CI commit subject 검사도 같은 기준을 씁니다.
 - **2026-11-14 — 제품 테스트 실행 위치:** 제품 crate 테스트는 CI에 추가하지 않고, 통합 시 로컬 `cargo xtask check-core`(workspace fmt·clippy·test·doctest)로 검증합니다. 행 지시의 "CI smoke"는 이 로컬 통합 검증을 뜻합니다(VI.10.5 문구 수정).
+- **2026-11-14 — 3계층 에이전트 도구 결정 반영(ADR-0005 Accepted):** 제품 소유자 결정에 따라 내장 에이전트는 사용자가 설치하고 직접 로그인한 공급자 공식 CLI를 공식 문서의 비대화형 인터페이스로만 실행하고, Stellar는 인증·자격 증명·사용량 중개에 참여하지 않습니다. 출력은 채팅 보기(기본)와 원문 보기를 함께 제공하고 공급자 출력 디코드는 표시 전용으로 격리합니다. 앱 없이 동작하는 읽기 전용 MCP backend를 신뢰된 고정 프로젝트에 한해 허용합니다. 에이전트 세션이 끊기거나 중지돼도 적용 변경은 자동 rollback하지 않고 출처 표시와 함께 남겨 사용자가 변경·세션 단위로 직접 되돌립니다. headless 명령의 실행 이름은 `stellar`이며 macOS 앱 첫 실행 때 명령 설치 화면을 제공합니다. 목적이 사라진 행은 폐기 표기 없이 삭제하는 규칙으로 바꿨습니다(3. 계획 변경 규칙). XIX.1.4, XIX.3.3, XIX.6.1, XIX.6.3, XIX.6.4, XIX.7.2와 Phase XIX 완료 조건을 그 자리에서 고쳤으며, XIX.1.6~XIX.1.9, XIX.6.7~XIX.6.10, XIX.9, XXIV.4, XXIV.5와 Phase XXIX를 추가했습니다.
 
 ---
 
@@ -46,7 +47,7 @@
 - `[~]`: 구현 또는 일부 환경 검증은 끝났으나 필수 증거·보고서·커밋 중 하나 이상이 미완료
 - `[ ]`: 미착수
 - `[!]`: 선행 조건, 외부 장비, 사용자 결정 때문에 차단
-- `cancelled`: `planning/task-status.yaml`에서만 사용하며 표에서는 `[ ]`로 재사용하지 않음
+- 폐기 표기는 두지 않습니다. 목적이 사라진 행은 계획서와 `planning/task-status.yaml`에서 삭제하고 이력은 Git으로 확인합니다(3. 계획 변경 규칙). ledger의 `cancelled` 상태 값은 XXIX.1.4에서 제거합니다.
 
 ### 1.2 원자적 작업 패키지 규칙
 
@@ -1829,7 +1830,6 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XVIII.5.1 | `[ ]` | Claude Code, Codex 등을 특별 파서 없이 일반 terminal profile command로 실행할 수 있게 합니다. | arbitrary CLI command smoke. | XVIII.4.5 |
-| XVIII.5.2 | `[ ]` | 공급자 출력 텍스트를 제품 상태로 해석하지 않는 architecture test를 추가합니다. | provider-specific parser module 없음. | XVIII.5.1 |
 | XVIII.5.3 | `[ ]` | 일반 Git worktree 생성·사용은 시스템 Git 기능으로 남기고 terminal cwd preset만 제공합니다. agent 전용 ShadowWorktree 타입을 만들지 않습니다. | type inventory 검사 통과. | XVIII.1.3, XIV.1.2 |
 
 **Phase XVIII 완료 조건:** 다중 PTY 세션이 양 플랫폼에서 동작하며 프로젝트 신뢰·종료 정책을 준수합니다.
@@ -1845,8 +1845,12 @@ tools/xtask/
 | XIX.1.1 | `[x]` | 별도 `tools/stellar-mcp` 실행 파일을 생성하고 stdin/stdout JSON-RPC 프레이밍을 구현합니다. stdout에는 프로토콜 메시지 외 로그를 쓰지 않습니다. | protocol smoke fixture. | G8 |
 | XIX.1.2 | `[x]` | 브리지가 실행 중 Stellar 앱을 찾는 로컬 IPC endpoint registry를 구현합니다. network port는 열지 않습니다. | app 없음/한 개/여러 개 fixture 통과. | XIX.1.1 |
 | XIX.1.3 | `[x]` | bridge↔app IPC에 session nonce와 OS 사용자 identity 검증을 적용합니다. | 다른 사용자·재사용 nonce 거부. | XIX.1.2 |
-| XIX.1.4 | `[ ]` | 한 bridge process가 한 agent session만 담당하고 종료 시 session permission을 폐기합니다. | disconnect cleanup 통과. | XIX.1.3 |
+| XIX.1.4 | `[ ]` | 한 bridge process는 한 MCP 연결 세션만 담당합니다. bridge가 끝나면 앱은 연결 종료 event를 한 번 기록합니다. 외부 클라이언트 세션은 그 시점에 XIX.6.4 종료 절차(권한·lease 해제, 자동 rollback 없음)를 시작하고, 앱이 시작한 세션의 권한·lease 수명은 AgentSession(XXIX.2.8)이 정합니다. | `[DEV-MAC]` 외부 bridge disconnect 후 session permission 0, 연결 종료 event 1회, 문서 revision 변화 0. | XIX.1.3 |
 | XIX.1.5 | `[x]` | MCP protocol version을 config에 고정하고 unsupported client version에 명확한 오류를 반환합니다. | version matrix fixture. | XIX.1.1 |
+| XIX.1.6 | `[ ]` | 앱 쪽 IPC가 데이터 교환 전에 연결 상대를 인증합니다(ADR-0005 §5, 아키텍처 37 신뢰 경계). 인증 기준과 방법은 Apple 공식 문서를 근거로 정해 보고서에 기록하고, 인증은 UI·Document 스레드 밖에서 합니다. | `[DEV-MAC]` 인증 실패 fixture에서 데이터 교환 0, UI·Document 스레드 호출 0. | XIX.1.3 |
+| XIX.1.7 | `[ ]` | `stellar-mcp` 쪽 IPC가 데이터 교환 전에 연결 상대를 XIX.1.6과 같은 기준으로 인증합니다(ADR-0005 §5). 실패 시 종료 코드는 XXIV.1.2 표를 따릅니다. | `[DEV-MAC]` 인증 실패 fixture에서 데이터 교환 0, 종료 코드가 XXIV.1.2 표와 일치. | XIX.1.6, XXIV.1.2 |
+| XIX.1.8 | `[ ]` | 앱이 시작한 bridge를 그 세션에만 결합합니다(아키텍처 31.3, ADR-0005 §5). 세션이 끝나면 결합 수단은 무효가 되고, 결합은 권한을 부여하지 않으며 XIX.3 승인을 대체하지 않습니다. 결합 수단과 검증 방법은 Apple 공식 문서와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 다른 세션·종료된 세션 결합 거부, 결합만으로 얻는 권한 0. | XIX.1.3, XVI.7.5 |
+| XIX.1.9 | `[ ]` | `stellar-mcp`가 표준 입력 EOF나 부모 프로세스 종료를 감지하면 스스로 종료합니다. 앱은 이를 연결 종료로 처리하고 XIX.1.4를 따릅니다. | `[DEV-MAC]` 부모 강제 종료 fixture에서 bridge 잔존 0. | XIX.1.1 |
 
 ### XIX.2 MCP Resources와 Tools
 
@@ -1864,7 +1868,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XIX.3.1 | `[ ]` | permission을 Read, Propose, Apply, Terminal, FileDelete, GitCommit, GitPush로 정의합니다. | enum golden test. | XIX.2.4 |
 | XIX.3.2 | `[ ]` | 권한을 ProjectIdentity+AgentSessionId별로 저장하고 app 재시작 후 유지하지 않습니다. | restart 후 permission 없음. | XIX.3.1, IV.2.3 |
-| XIX.3.3 | `[ ]` | trusted project이더라도 MCP 권한은 별도 승인 없이는 Read조차 허용하지 않는 기본 정책을 구현합니다. | first connect denied/prompt state. | XVI.7.2, XIX.3.2 |
+| XIX.3.3 | `[ ]` | 앱에 붙는 MCP 연결은 trusted project라도 첫 연결 승인 전에는 Read도 허용하지 않는 기본 정책을 구현합니다. 예외로 앱 없이 실행한 headless 읽기 backend는 실행 인자로 고정한 trusted project 하나에 한해 읽기·검증·dry-run을 승인 없이 허용하고(2026-11-14 제품 소유자 결정), 쓰기 권한을 주지 않으며, untrusted 프로젝트에서는 모든 tool을 거부합니다. 앱이 시작한 내장 세션의 첫 연결 승인 기록은 XXIX.3.5가 담당합니다. | `[DEV-MAC]` attached 첫 연결 denied/prompt state, headless untrusted fixture 전 tool 거부, headless 정책 결과에 쓰기 권한 0. | XVI.7.2, XIX.3.2 |
 | XIX.3.4 | `[ ]` | Apply, Terminal, GitCommit, GitPush 요청은 각각 독립 확인 상태를 반환합니다. 한 번의 Apply 승인으로 Push를 허용하지 않습니다. | permission escalation fixture 실패. | XIX.3.1 |
 
 ### XIX.4 에이전트 편집 선언과 하위 트리 잠금
@@ -1889,23 +1893,26 @@ tools/xtask/
 | XIX.5.4 | `[ ]` | 승인된 command는 일반 DocumentThread queue, Binding/Layout/Scene invalidation, autosave 경로로 적용됩니다. | user command와 trace 경로 동일. | XII.1.2, XIX.5.3 |
 | XIX.5.5 | `[ ]` | 한 agent edit lease 동안 여러 승인 batch를 임시 작업 그룹에 모으고 정상 CompleteAgentEdit에서 Undo entry 하나로 확정합니다. | 10 batch→history 1 entry. | VII.4.1, XIX.5.4 |
 
-### XIX.6 완료·취소·비정상 종료 롤백
+### XIX.6 완료·중단과 사용자 되돌리기
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIX.6.1 | `[ ]` | lease 시작 시 baseline inverse log 또는 transaction checkpoint를 생성합니다. full document clone은 금지합니다. | 1000 command rollback 정확. | XIX.5.5 |
+| XIX.6.1 | `[ ]` | 승인 batch마다 inverse transaction을 보존해 변경 단위·세션 단위 되돌리기(XIX.6.8, XIX.6.9)에 씁니다. full document clone은 금지합니다. | `[DEV-MAC]` 1000 command batch의 inverse를 역순 적용하면 baseline semantic snapshot 복원. | XIX.5.5 |
 | XIX.6.2 | `[ ]` | 정상 CompleteAgentEdit에서 변경 그룹을 history entry로 확정하고 lease를 해제합니다. | 완료 후 user edit 가능. | XIX.6.1 |
-| XIX.6.3 | `[ ]` | user CancelAgentEdit는 전체 변경을 원자적으로 rollback하고 history entry를 남기지 않습니다. | baseline semantic snapshot 복원. | XIX.6.1 |
-| XIX.6.4 | `[ ]` | MCP disconnect, bridge crash, agent process 종료 시 즉시 전체 rollback하고 lease를 해제합니다. | kill fixture baseline 복원. | XIX.1.4, XIX.6.3 |
-| XIX.6.5 | `[ ]` | rollback 결과가 중간 autosave보다 최신이면 rollback state를 저장하도록 autosave를 즉시 예약합니다. | 재실행 후 agent 중간 변경 없음. | XIII.1.5, XIX.6.4 |
+| XIX.6.3 | `[ ]` | user CancelAgentEdit(현재 세션 중지)는 rollback하지 않고 XIX.6.4 종료 절차를 따릅니다. 중지 후 세션 되돌리기는 종료 절차를 마친 뒤 XIX.6.9 세션 되돌리기 미리보기를 엽니다. 별도 rollback 경로는 두지 않습니다. | `[DEV-MAC]` 중지 fixture에서 적용 batch 유지·lease 0·중단 history entry 1, 중지하고 되돌리기 fixture에서 미리보기 승인 전 revision 변화 0. | XIX.6.4, XIX.6.9 |
+| XIX.6.4 | `[ ]` | 세션 종료(MCP disconnect, bridge crash, agent process 종료, 사용자 중지, 재연결 유예 초과, 신뢰 철회) 시 자동 rollback하지 않습니다. 적용 중인 transaction은 전부 적용 또는 전부 미적용으로 끝내고, 진행 중 작업 그룹을 "중단됨" history entry 하나로 확정하며, 적용된 batch의 출처 표시(XIX.6.7)를 유지하고, lease와 session permission을 즉시 해제하며, 미적용 제안은 폐기하고 대기 승인 요청은 거부로 닫습니다. | `[DEV-MAC]` kill fixture에서 적용 batch 유지, 출처 표시 존재, lease 0, permission 0, 대기 요청 0, history entry 1(중단 표시). | XIX.1.4, XIX.6.2, XIX.6.7 |
 | XIX.6.6 | `[ ]` | Interrupted Agent Task에는 내용 없이 session id, duration, error code만 local diagnostic으로 남깁니다. | project content 미포함. | XVI.8.1, XIX.6.4 |
+| XIX.6.7 | `[ ]` | 에이전트 변경 출처 색인 `AgentChangeProvenance`를 창 세션 메모리에 정의합니다. 적용된 batch마다 AgentSessionId, CLI가 보고한 세션 표시 이름, batch 순번, history sequence, VII.1.4 결과의 변경 StableId·PropertyPath 집합, 생성·삭제 노드, StableId+PropertyPath별 적용 직후 값 지문, 상태(완료·중단)를 기록합니다. batch command의 origin은 VII.1.1의 FutureAgent를 쓰고 VII 타입은 바꾸지 않습니다. 프로젝트 파일, Git, generation metadata, recovery snapshot, 진단, 텔레메트리에는 넣지 않으며 창을 닫으면 WindowHistory와 함께 버립니다. | `[DEV-MAC]` batch→StableId·PropertyPath 매핑 fixture 정확, 저장 bytes·recovery snapshot·진단에 출처 필드 0, 창 닫기 후 색인 0. | XIX.5.5, VII.1.1, VII.1.4, VII.4.1 |
+| XIX.6.8 | `[ ]` | 변경 단위 되돌리기를 구현합니다. 사용자가 고른 batch 하나의 inverse를 새 User origin CommandTransaction으로 만들어 DocumentThread에 적용하고 "에이전트 변경 되돌리기" history entry 하나를 남깁니다(Undo 가능). 전제조건은 StableId+PropertyPath별 현재 값과 적용 직후 값 지문의 일치입니다. 이후 변경된 속성, 에이전트가 만든 노드 아래 이후 추가된 자식·참조, 외부 inbound ref, 이미 삭제된 노드는 충돌로 분류해 기본 제외하고 목록으로 반환합니다. 충돌 항목은 사용자가 명시적으로 고른 경우에만 복원하며, 사용자 콘텐츠가 함께 사라지는 구조 충돌의 기본값은 현재 유지입니다. 승인 전 미리보기는 XIX.5.3 경로를 쓰고, 다른 활성 lease 범위와 겹치면 XIX.4.3에 따라 거부합니다. 결과는 일반 autosave 경로로 저장합니다. | `[DEV-MAC]` 비충돌 batch 되돌리기 후 해당 속성 baseline 일치, 이후 사용자 편집 속성 기본 보존, 되돌리기 Undo 후 재적용 일치, 미리보기 전후 revision 동일, 활성 lease 겹침 거부, 결과 autosave 예약. | XIX.6.7, XIX.6.1, XIX.4.3, XIX.5.3 |
+| XIX.6.9 | `[ ]` | 세션 단위 되돌리기를 구현합니다. 한 AgentSession의 남은 batch를 역순으로 XIX.6.8 규칙에 따라 하나의 CommandTransaction으로 합쳐 되돌리고 history entry 하나를 남깁니다. 전부 성공하거나 전부 미적용입니다. | `[DEV-MAC]` 10 batch 세션 되돌리기 후 비충돌 속성 baseline 일치, history entry 1, 충돌 목록 정확, 중간 실패 fixture에서 효과 0. | XIX.6.8 |
+| XIX.6.10 | `[ ]` | 출처 표시 상태 전이를 구현합니다. 사용자가 변경·세션 단위로 "유지"를 고르면 문서를 바꾸지 않고 표시만 지웁니다. 표시된 속성을 사용자·다른 세션·외부 변경이 다시 바꾸면 "이후 변경됨", 창 Undo로 에이전트 entry를 취소하면 "실행 취소됨", 되돌리기를 확정하면 "되돌림"이 되고, 그 Undo·Redo에 따라 이전 상태로 돌아갑니다. 이 동작은 사용자 UI 경로에서만 호출할 수 있습니다. | `[DEV-MAC]` 유지 전후 revision·저장 bytes·history 동일, Undo/Redo·되돌리기에 따른 상태 전이 fixture 통과. | XIX.6.8 |
 
 ### XIX.7 외부 파일 변경과 잠금
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XIX.7.1 | `[ ]` | external change batch를 semantic diff로 계산하고 locked subtree overlap을 판정합니다. | overlap/non-overlap fixture 통과. | XIII.3.4, XIX.4.2 |
-| XIX.7.2 | `[ ]` | overlap이면 agent task 전체 rollback·unlock 후 외부 변경을 일반 절차로 적용합니다. | policy fixture 통과. | XIX.7.1, XIX.6.4 |
+| XIX.7.2 | `[ ]` | overlap이면 agent 세션을 XIX.6.4 절차로 끝내고(자동 rollback 없음, lease 해제, 대기 제안 거부), 적용된 agent 변경은 출처 표시를 유지한 로컬 변경으로 XIII.3.4 reconciliation에 넣어 외부 변경을 반영합니다. 의미 충돌은 Semantic Conflict 경로로 보냅니다. | `[DEV-MAC]` overlap fixture에서 agent 변경 자동 삭제 0, 겹친 속성 Semantic Conflict 진입, lease 0. | XIX.7.1, XIX.6.4, XIII.3.4 |
 | XIX.7.3 | `[ ]` | non-overlap external change는 agent 작업을 유지한 채 적용합니다. | independent subtree fixture 통과. | XIX.7.1 |
 
 ### XIX.8 Worktree 관계 검증
@@ -1915,7 +1922,22 @@ tools/xtask/
 | XIX.8.1 | `[ ]` | MCP/agent model에 ShadowWorktree 전용 타입이 없는지 architecture inventory test를 추가합니다. | 일반 ProjectIdentity/Worktree만 존재. | XIX.5.1 |
 | XIX.8.2 | `[ ]` | agent가 terminal에서 직접 파일을 수정하면 일반 외부 파일 변경으로만 처리되고 MCP lease 보호를 우회할 수 있음을 UI 경고 상태로 표현합니다. | direct edit fixture external path 사용. | XVIII.5.1, XIII.3.4 |
 
-**Phase XIX 완료 조건:** 외부 에이전트가 MCP를 통해 일반 Command를 사용하고 잠금·완료·롤백 정책을 준수합니다.
+### XIX.9 L2 경계와 backend
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XIX.9.1 | `[ ]` | `stellar-local-ipc`(`crates/local-ipc`), `stellar-agent-protocol`(`crates/agent-protocol`), `stellar-mcp` library(`crates/mcp`)를 crate graph 정책과 crate 의존 그래프 문서에 등록합니다. agent-protocol과 local-ipc는 core-types만, mcp는 ops·agent-protocol·local-ipc·diagnostics만 의존합니다. `tools/stellar-mcp` 실행 파일이 library 진입점만 갖도록 XIX.1.1~XIX.1.3 구현을 이 경계로 옮깁니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, tools 진입점에 protocol 로직 0. | XIX.1.3, XXIV.4.2, XXIX.1.1 |
+| XIX.9.2 | `[ ]` | resource 목록(XIX.2.1)과 tool 목록(XIX.2.3)을 `stellar-agent-protocol`의 Rust 정의에서 생성합니다. CommandTransaction 입력 schema는 xtask가 VII.1.6 closed enum에서 생성해 `schemas/`에 두고 agent-protocol은 그 산출물만 포함합니다. tool 이름은 MCP 명세 규칙을 따르고 읽기·파괴 계열에 annotation을 붙입니다. Stellar 사용 안내는 MCP 명세에 따른 instructions로 제공합니다. `schemas/`는 보호 경로이므로 같은 변경에 ADR을 갱신합니다. | `[DEV-MAC]` catalog golden 일치, 생성 schema와 enum variant 일치, agent-protocol의 commands 의존 0. | XIX.9.1, XIX.2.1, XIX.2.3, XIX.5.1 |
+| XIX.9.3 | `[ ]` | `stellar-mcp` headless 읽기 backend를 구현합니다(2026-11-14 제품 소유자 결정). 실행 인자로 고정한 프로젝트 루트 하나만 다루고 tool 인자로 다른 경로를 지정할 수 없습니다. XVI.7 trust store에서 trusted가 확인되지 않으면 모든 tool을 거부합니다. 노출하는 것은 `stellar-ops`의 읽기·검증·dry-run tool뿐이고 쓰기 tool은 tools/list에 넣지 않습니다. | `[DEV-MAC]` untrusted fixture 전 tool 거부, 다른 경로 요청 거부, headless tools/list의 쓰기 tool 0, 실행 전후 프로젝트 파일 hash 동일. | XIX.9.2, XXIV.4.3, XVI.7.2, XIX.3.3 |
+| XIX.9.4 | `[ ]` | attached backend를 구현합니다. backend 선택은 앱이 기록한 목록이 아니라 endpoint 실시간 검증(XIX.1.7) 결과로 하고 세션 시작 시 고정합니다. 결합 단위는 WindowSessionId입니다. 외부 클라이언트는 첫 연결 승인 화면에서 창을 고르고, 앱이 시작한 세션은 시작한 창에 묶습니다. 모든 쓰기는 앱의 lease·승인·DocumentThread 경로로 보냅니다. | `[DEV-MAC]` backend 선택 matrix(앱 없음, 검증 실패, 검증 성공) fixture, 다중 창에서 결합 창 외 history 변화 0. | XIX.9.3, XIX.1.7, XIX.1.8, XIX.5.4, XII.2.1 |
+| XIX.9.5 | `[ ]` | tool 결과 종류를 Stellar 승인·lease 모델(XIX.3, XIX.4, 아키텍처 31.3~31.5)의 판정으로 정의합니다(ADR-0005 §3 결과 종류). 결과 범주는 XIX.3·XIX.4 판정을 그대로 나타내도록 이 작업에서 정해 보고서에 기록하며, 거부 사유는 Stellar 판정에서만 옵니다. 응답이 없거나 세션이 끝나면 대기 요청은 거부로 닫습니다. 오래 걸리는 호출과 클라이언트 취소는 MCP 명세를 따르고, 대기 상한은 실측과 MCP 명세로 정해 보고서에 기록합니다. | `[DEV-MAC]` 결과 종류 golden, 대기 상한 초과 fixture에서 거부, 세션 종료 후 대기 요청 0. | XIX.9.4, XIX.4.1 |
+| XIX.9.6 | `[ ]` | 프로젝트에서 온 문자열을 tool 결과에 넣을 때 아키텍처 37.1 신뢰 경계에 따라 데이터로만 다루고 지시로 해석되지 않게 합니다(ADR-0005 §3). 표현 방식은 MCP 명세를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 지시 형태 문자열을 담은 프로젝트 fixture에서 프로젝트 문자열이 지시로 해석되지 않음(결과 golden 일치). | XIX.9.2 |
+| XIX.9.7 | `[ ]` | MCP tool과 IPC 메시지 중 XVI.7 프로젝트 신뢰 상태, XIX.3 권한 상태, 다른 세션의 lease, 에이전트 모드, 앱 설정, terminal profile, 에이전트 변경 출처 표시·되돌리기(XIX.6.7~XIX.6.10), 명령줄 설치 상태(XXIV.5)에 쓰기 수단을 가진 것이 없음을 검사하는 inventory test를 추가합니다. | `[DEV-MAC]` 변경 불가 대상 쓰기 경로 inventory 0. | XIX.9.2, XIX.3.4, XIX.6.10 |
+| XIX.9.8 | `[ ]` | MCP 클라이언트 등록에 필요한 정보를 제공하되 다른 도구의 설정은 바꾸지 않습니다(ADR-0005 §3). 제공 방식은 MCP 명세를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 연결 정보 golden 일치, 다른 도구 설정 변경 0. | XIX.1.1 |
+| XIX.9.9 | `[ ]` | tool 결과 종류와 `stellar`·`stellar-mcp` 종료 코드의 대응을 XXIV.1.2 종료 코드 표에 맞춰 고정합니다. | `[DEV-MAC]` 대응표 golden 일치. | XIX.9.5, XXIV.1.2 |
+| XIX.9.10 | `[ ]` | MCP 경로의 자원 사용(호출량, payload 크기, 대기 시간)에 상한을 둡니다. 상한은 아키텍처 6.2~6.4 성능 계약과 Stellar 실측으로 정하고, 구체 한도 목록과 값은 보고서에 기록합니다. 상한을 넘으면 거부하거나 busy로 응답합니다. | `[DEV-MAC]` 한도 초과 fixture별 응답 일치, 한도 목록과 값 보고서 기록. | XIX.9.4 |
+
+**Phase XIX 완료 조건:** 외부 에이전트와 앱이 호스팅한 세션이 MCP를 통해 일반 Command를 사용하고 잠금·승인·완료 정책을 준수합니다. 세션이 끝나도 적용 변경은 출처 표시와 함께 남고 사용자가 변경·세션 단위로 되돌릴 수 있습니다. headless backend는 신뢰된 고정 프로젝트의 읽기만 제공하고 쓰기는 attached backend로만 일어납니다.
 
 ---
 
@@ -2137,6 +2159,29 @@ tools/xtask/
 | XXIV.3.2 | `[ ]` | semantic diff summary를 artifact로 생성하되 project text/name/path redaction option을 기본으로 합니다. | privacy fixture. | XIV.3.8, XXIV.1.2 |
 | XXIV.3.3 | `[ ]` | performance replay CLI를 reference runner에서 실행할 수 있게 합니다. | result schema identical. | XVI.2.2 |
 
+### XXIV.4 L1 확장과 실행 이름
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXIV.4.1 | `[ ]` | 사용자가 부르는 명령 이름을 `stellar`로 고정합니다(2026-11-14 제품 소유자 결정). `stellar-cli` package에 `[[bin]] name = "stellar"`를 추가하고 package·library 이름 `stellar-cli`는 유지합니다. help·usage·stderr 진단 접두어를 `stellar`로 바꾸고, XXIV.1.2 JSON 결과 schema 식별자와 fixture는 바꾸지 않습니다. | `[DEV-MAC]` `cargo build -p stellar-cli` 산출 실행 파일 이름 `stellar`, help snapshot이 `stellar` 사용, XXIV.1.2 JSON fixture 무변경, `cargo test -p stellar-cli` 통과. | XXIV.1.2 |
+| XXIV.4.2 | `[ ]` | headless 조회·편집 공용 library crate `stellar-ops`(`crates/ops`)를 추가하고 crate graph 정책과 문서에 등록합니다. 의존은 project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics만 허용하고 local-ipc, agent-protocol, mcp, agent-host, ffi는 금지합니다. 앱 없이 프로젝트를 열어 revision을 포함한 읽기 전용 snapshot을 반환합니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, 앱 미실행 snapshot fixture revision 일치. | XXIV.1.2, VII.1.6 |
+| XXIV.4.3 | `[ ]` | `stellar inspect`를 확장하고 `stellar query`를 추가합니다. 프로젝트 구조, 문서 트리(cursor 분할), 노드 속성, 토큰, 컴포넌트를 revision과 함께 JSON으로 출력합니다. XXIV.1.2의 기존 inspect 결과 필드는 호환을 유지합니다. 앱 없이 동작하며 파일을 쓰지 않습니다. | `[DEV-MAC]` JSON golden 일치, 20만 node 문서 page 분할 통과, 실행 전후 프로젝트 파일 hash 동일, 기존 inspect fixture 통과. | XXIV.4.1, XXIV.4.2 |
+| XXIV.4.4 | `[ ]` | `stellar apply`를 추가합니다. 파일이나 표준 입력으로 CommandTransaction JSON과 base revision을 받아 closed enum으로 검증한 뒤 세대 전환 저장으로 원자적으로 기록하고, generation metadata에 writer 종류 headless CLI를 남깁니다. `--dry-run`은 semantic diff만 출력합니다. storage는 보호 경로이므로 같은 변경에 ADR을 갱신합니다. | `[DEV-MAC]` dry-run 전후 revision 동일, base revision 불일치와 unknown command 거부, 적용 후 reopen semantic snapshot 일치, writer 종류 기록 확인. | XXIV.4.2, VII.1.6, XIV.3.8 |
+| XXIV.4.5 | `[ ]` | `stellar-ops` 쓰기 경로에 교차 프로세스 저장 잠금을 추가합니다. 잠금은 프로젝트·Git 밖의 OS 사용자 데이터에 두고, 잠금을 잡은 뒤 generation을 비교하고 교체하며, 잠금 사용 중이면 일시적 실패 종료 코드로 끝냅니다. Git merge driver 모드는 잠금 대상에서 제외합니다. 사용 OS API는 Apple 공식 문서를 근거로 보고서에 기록합니다. | `[DEV-MAC]` 동시 쓰기 fixture 손실 0, 잠금 경합 시 exit 75, merge driver 모드 잠금 미사용. | XXIV.4.4, IV.2.3 |
+| XXIV.4.6 | `[ ]` | 앱이 writer 종류가 앱 창이 아닌 generation을 감지하면 XII.7.5 두 선택지 대신 XIII.3.4 semantic reconciliation으로 처리합니다. 변경이 에이전트 lease와 겹치면 XIX.7.2 절차를 따릅니다. | `[DEV-MAC]` CLI writer generation fixture에서 두 선택지 alert 0, reconciliation 결과 snapshot 일치. | XXIV.4.5, XIII.3.4, XII.7.5 |
+| XXIV.4.7 | `[ ]` | `stellar`에 AI·MCP·모델·에이전트 관련 명령과 해당 crate로의 직접·전이 의존이 없음을 검사하는 inventory test를 추가합니다. | `[DEV-MAC]` help 명령 inventory와 전이 도달 금지 검사 통과. | XXIV.4.3, XXIV.4.4, XXIX.1.1 |
+
+### XXIV.5 macOS 번들 배포와 `stellar` 명령 설치
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXIV.5.1 | `[ ]` | macOS 앱 번들에 `stellar`를 helper로 넣습니다. 릴리스 서명 스크립트가 helper와 앱을 Apple 공식 코드 서명·공증 문서에 따라 서명하도록 바꾸고(helper에 앱 entitlement 없음), "중첩 서명 대상 없음" 전제를 고치며 helper에도 arm64·서명 검사를 적용합니다. 번들 안 배치와 구체 서명 옵션은 보고서에 기록합니다(ADR-0005 §7). | `[DEV-MAC]` `codesign --verify --strict` 통과, `[CI-MAC]` 공증 후 clean runner에서 helper `stellar --version` 실행. | XVI.9.4, XXIV.4.1 |
+| XXIV.5.2 | `[ ]` | 앱 없는 macOS headless·CI 머신용 `stellar` 단독 서명·공증 배포물을 만듭니다. `stellar-mcp`는 넣지 않습니다. | `[CI-MAC]` 앱 미설치 runner에서 `stellar validate` fixture 실행 성공. | XXIV.5.1 |
+| XXIV.5.3 | `[ ]` | 명령줄 설치 위치 결정을 구현합니다. 위치와 근거는 §37 보안 경계(최소 권한)와 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하고(ADR-0005 §7), 계산은 UI·Document 스레드 밖에서 합니다. | `[DEV-MAC]` 위치 결정 fixture가 보고서 정의와 일치, UI 스레드 호출 0. | XXIV.5.1 |
+| XXIV.5.4 | `[ ]` | `stellar` 명령 설치·제거 로직을 구현합니다(2026-11-14 제품 소유자 결정). 사용자 동의 뒤에만 파일을 바꾸고, 설치 방식과 안전 조건은 §37과 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 설치 상태는 OS 사용자 데이터에만 둡니다(ADR-0005 §7). | `[DEV-MAC]` 설치·제거 fixture 통과, 동의 없는 파일 변경 0. | XXIV.5.3 |
+| XXIV.5.5 | `[ ]` | 설치 상태 확인을 구현합니다. 확인 시점·방법과 확인 결과의 처리는 Apple 공식 문서와 각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 처리는 XXIV.5.4와 같은 조건을 지킵니다. 확인은 UI 스레드 밖에서 합니다. | `[DEV-MAC]` 상태 fixture 판정이 보고서 정의와 일치, 동의 없는 파일 변경 0. | XXIV.5.4 |
+| XXIV.5.6 | `[ ]` | macOS 첫 실행 명령줄 설치 화면을 구현합니다(2026-11-14 제품 소유자 결정). `stellar` helper를 포함한 빌드를 처음 실행하면 설치 화면을 제공하고, 사용자가 명시적으로 동의하기 전에는 파일을 만들거나 바꾸지 않습니다. 설치를 되돌리는 진입점도 제공합니다. 화면 구성과 진입점 배치는 HIG를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 첫 실행 설치 화면 표시, 동의 없는 파일 변경 0, 되돌리기 후 설치 항목 0, 키보드·VoiceOver smoke. | XXIV.5.5, XII.9.1, XII.6.5 |
+
 ---
 
 ## Phase XXV. 로드맵 — 세션 간 Undo 복원과 무결성 진단 패널
@@ -2257,6 +2302,86 @@ tools/xtask/
 
 ---
 
+## Phase XXIX. 로드맵 — 3계층 에이전트 도구와 내장 에이전트 패널
+
+### XXIX.1 계획·정책 검증 도구
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXIX.1.1 | `[ ]` | crate graph 검사기를 확장합니다. `[dependencies]` 외에 `[target.*.dependencies]`, `[build-dependencies]`, `[dev-dependencies]`의 내부 의존을 읽고, 지정한 crate 쌍 사이의 전이 도달을 금지하는 규칙(예: agent-host에서 commands·document 도달 금지)을 추가합니다. crate 의존 그래프 문서도 함께 갱신합니다. | `[DEV-MAC]` 전이 위반·target 의존 위반 fixture 거부, 현재 workspace 통과. | 없음 |
+| XXIX.1.2 | `[ ]` | XXIV.4, XIX.9, XXIX에 필요한 외부 crate(JSON 직렬화, JSON-RPC 프레이밍, IPC 상대 인증용 macOS binding, 필요하면 표시 서식 해석)를 `config/dependencies.yaml` 승인 항목으로 등록하고 `validate-dependencies` 검사 범위를 workspace 전체 직접 의존으로 넓힙니다. | `[DEV-MAC]` 미등록 의존 추가 fixture 실패, 현재 workspace 통과. | 없음 |
+| XXIX.1.3 | `[ ]` | `cargo xtask sync-plan`에 본문 ID 참조 검사를 추가합니다. 구현 지시·검증 셀과 Phase 완료 조건에 나온 WBS ID 형식 토큰이 계획서에 없으면 보고합니다. 범위 표기(`A~B`)는 양 끝 ID 존재만 검사하고, Roman Phase가 아닌 표기와 계획서 밖 문서는 검사하지 않습니다. | `[DEV-MAC]` 삭제된 ID를 참조하는 fixture 보고, 현재 계획서 종료 0. | 없음 |
+| XXIX.1.4 | `[ ]` | ledger 허용 상태에서 `cancelled`를 제거합니다(1.1 상태 표기, 2026-11-14 제품 소유자 결정). `TaskState`의 cancelled variant, collection 검증 허용 목록, evidence 검증 분기를 삭제하고 `cancelled` record는 unknown status로 거부합니다. 완료 행 I.2.1·I.2.7은 고치지 않습니다. | `[DEV-MAC]` cancelled record fixture 거부, 현재 ledger 통과, xtask fmt·clippy·test 통과. | 없음 |
+
+### XXIX.2 구독 CLI 호스트 코어와 출력 디코드
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXIX.2.1 | `[ ]` | `stellar-agent-host` crate(`crates/agent-host`)를 추가하고 crate graph에 등록합니다. 의존은 core-types, agent-protocol, local-ipc, diagnostics만 허용하고 document, commands, history, storage, ops로의 전이 도달을 금지합니다. 모델 제공자 API client, API key 필드, 자격 증명 저장, 모델 라우팅, 사용량 계량 타입이 없음을 inventory test로 고정합니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, 금지 타입 inventory 0. | XIX.9.1, XXIX.1.1 |
+| XXIX.2.2 | `[ ]` | 구독 CLI 실행 경로를 네트워크와 실제 계정 없이 테스트할 수 있는 테스트 대역을 만듭니다. XXIX.2.4~XXIX.2.13과 XXIX.6의 시나리오를 재현할 수 있어야 하며, 방식은 이 작업에서 정해 보고서에 기록합니다. | `[DEV-MAC]` 테스트 대역 self-test 통과, 네트워크와 실제 계정 사용 0. | XXIX.2.1 |
+| XXIX.2.3 | `[ ]` | 구독 CLI 실행 대상 지정을 구현합니다. 사용자가 확인한, 수정하지 않은 공식 CLI만 실행 대상으로 삼습니다(ADR-0005 §4.3 실행 대상 확인). 신원 확인 방법은 Apple 공식 문서와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. Stellar는 공급자 CLI를 설치·업데이트·수정하지 않습니다. | `[DEV-MAC]` 신원 확인 실패 fixture에서 실행 0, 확인 중 네트워크 호출 0, CLI 실행 파일 쓰기 0. | XXIX.2.2 |
+| XXIX.2.4 | `[ ]` | macOS 실행기를 구현합니다. 실행은 ADR-0005 §4.3 두 불변식(문서 변경은 Stellar MCP tool로만, 세션은 프로젝트 working tree와 사용자의 CLI·도구 설정에 흔적 없음)을 지키고, Stellar는 자격 증명을 다루거나 들여다보지 않습니다(아키텍처 31.1, 37.3). UI가 느려도 출력 수신을 멈추지 않습니다(ADR-0005 §6). 그 밖의 실행 세부와 timeout 값은 실측, Apple 공식 문서, 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 테스트 대역 세션에서 Stellar MCP tool 외 프로젝트 변경 0, 세션 전후 프로젝트·사용자 설정 hash 동일, 세션 종료 후 실행 흔적 0, timeout·취소 fixture 통과, UI 지연 fixture에서 출력 수신 정지 0. | XXIX.2.2, XVIII.2.4, XVI.7.5 |
+| XXIX.2.5 | `[ ]` | 구독 CLI 연결 상태를 각 CLI 공식 문서가 제공하는 방법으로만 판정합니다. CLI 자격 증명 저장 위치에는 접근하지 않습니다. 판정은 UI·Document 스레드 밖에서 하며, 판정할 수 없으면 사용 불가로 처리합니다(fail closed). CLI가 보고한 계정 식별 정보는 저장·로그·진단에 넣지 않습니다(XVI.8). 상태 정의와 판정 시점은 보고서에 기록합니다(ADR-0005 §4.1). | `[DEV-MAC]` 테스트 대역 상태 fixture 판정 일치, 판정 불가 fixture에서 사용 불가, CLI 자격 증명 저장 위치 접근 inventory 0, 진단·설정 저장소에 계정 식별 문자열 0. | XXIX.2.3, XXIX.2.4 |
+| XXIX.2.6 | `[ ]` | CLI 종류와 지원 버전 범위별 launch profile을 Stellar 소유 fixture로 관리합니다. 각 profile은 각 CLI 공식 문서의 비대화형 인터페이스와 구조화 출력 형식만 쓰고, 실행 설정, decoder profile 버전, 공급자 약관·공식 문서 검토 일자와 결과를 담습니다. profile은 ADR-0005 §4.3 두 불변식을 지키며, 각 불변식을 지키는 공식 설정과 그 밖의 실행 세부는 각 CLI 공식 문서와 Apple 공식 문서를 근거로 profile별 보고서에 기록합니다. 약관 검토상 허용이 명확하지 않은 CLI와 지원 범위 밖 버전은 실행하지 않습니다. | `[DEV-MAC]` profile별 테스트 대역 세션에서 Stellar MCP tool 외 프로젝트 변경 0, 세션 전후 프로젝트·사용자 설정 hash 동일, 비활성 profile과 지원 범위 밖 버전 실행 거부. | XXIX.2.4, XXIX.2.5, XIX.1.8 |
+| XXIX.2.7 | `[ ]` | 세션 실행 전 확인을 구현합니다. ADR-0005 §4.3 실행 대상 확인과 XXIX.2.5 연결 상태를 확인하고, 확인되지 않으면 실행하지 않습니다(fail closed). | `[DEV-MAC]` 확인 실패 fixture에서 실행 0, 정상 fixture에서 실행 1. | XXIX.2.6 |
+| XXIX.2.8 | `[ ]` | AgentSession 상태 기계를 구현합니다. 상태와 전이는 XIX.6.4 종료 절차와 아키텍처 31.5 수명 규칙을 표현하도록 이 작업에서 정해 보고서에 기록합니다. 앱이 시작한 세션의 lease와 권한은 AgentSession이 소유하고, XIX.1.8로 결합된 bridge가 다시 연결되면 같은 세션에 다시 묶으며, 재연결 유예를 둡니다. 세션은 사용자가 명시적으로 시작할 때만 만들고 사용자 동작 없이 시작·재개·재전송하지 않으며, CLI가 보고한 사용 한도·인증 오류는 그대로 전달하고 세션을 멈춥니다. 세션 중지, CLI 프로세스 종료, 유예 초과, 신뢰 철회 시 XIX.6.4 절차(자동 rollback 없음)로 끝내고 ADR-0005 §4.3 불변식에 따라 실행 흔적을 정리합니다. | `[DEV-MAC]` 상태 전이 matrix가 보고서 정의와 일치, 중지 후 적용 batch 유지·출처 표시 존재·lease 0·대기 제안 0, 재연결 fixture lease 유지, 유예 초과 fixture 중단됨 history entry 확정, 한도 오류 fixture 사용자 동작 없는 재전송 0. | XXIX.2.7, XIX.6.4 |
+| XXIX.2.9 | `[ ]` | 출력 디코더 테스트 fixture를 launch profile마다 둡니다. 원문 입력과 기대 `AgentChatItem` 목록(golden)으로 네트워크와 실제 계정 없이 결정적으로 실행하며(아키텍처 38), fixture에는 XVI.8 금지 정보를 넣지 않습니다. 정상 출력, 해석할 수 없는 출력, 입력 경계에 걸친 데이터를 포함하고, profile별 사례는 각 CLI 공식 문서를 근거로 보고서에 기록합니다. | `[DEV-MAC]` fixture 목록 golden, 기대 결과 파일 존재, fixture privacy scan(XVI.8) 0건. | XXIX.2.2, XXIX.2.6 |
+| XXIX.2.10 | `[ ]` | 채팅 보기 모델 `AgentChatItem` closed enum을 `stellar-agent-host`에 정의합니다. variant는 ADR-0005 §4.4 범위 안에서 이 작업에서 정해 보고서에 기록합니다. 이 타입은 CommandTransaction이나 document, commands, history, storage, ops 타입을 담지 않고 그 타입이나 승인 응답으로의 변환 함수를 갖지 않습니다. item당 표시 텍스트와 세션당 item 수에 상한을 둡니다. | `[DEV-MAC]` variant별 golden 직렬화 test 통과, 금지 타입·변환 함수 inventory 0. | XXIX.2.1 |
+| XXIX.2.11 | `[ ]` | 표시 전용 출력 디코더를 `stellar-agent-host` 계층 안에 격리해 구현합니다(2026-11-14 제품 소유자 결정). launch profile마다 버전이 붙은 decoder profile로 각 CLI 공식 문서의 구조화 출력만 해석하고, 디코드는 실패하면 닫힙니다(fail closed, 2026-11-14 제품 소유자 결정). 모듈 구성, 입출력, 실패 판정 기준은 보고서에 기록합니다. 같은 원문은 항상 같은 item 목록으로 디코드됩니다. | `[DEV-MAC]` XXIX.2.9 fixture 디코드 golden 일치, 해석 불가 fixture별 실패 판정 1, 반복 실행 결과 동일, agent-host 밖의 공급자 출력 해석 코드 0. | XXIX.2.9, XXIX.2.10, XXIX.1.1 |
+| XXIX.2.12 | `[ ]` | 원문 보기 버퍼를 구현합니다. CLI 출력을 수신한 그대로 담는 세션별 메모리 상한 버퍼이며, 상한을 넘으면 잘린 사실을 표시합니다. 제어 문자는 해석하지 않고 PTY·terminal emulation은 쓰지 않습니다. 디코더 성공·실패와 관계없이 보존하고 세션 메모리에만 둡니다. 상한 값은 실측으로 정합니다. | `[DEV-MAC]` 제어 문자 주입 fixture 무력화, 상한 초과 시 메모리 상한 유지와 잘림 표시, 진단·recovery snapshot에 내용 0. | XXIX.2.4 |
+| XXIX.2.13 | `[ ]` | 디코드 실패 판정을 세션 처리에 연결합니다. 실패 뒤 처리는 2026-11-14 결정(fail closed)과 XIX.6.4 절차(자동 rollback 없음)를 지키도록 이 작업에서 정해 보고서에 기록합니다. 디코드 실패 판정은 권한을 판단하지 않으며, 문서 접근 허용 여부는 앱의 권한·승인·lease 판정만 정합니다. | `[DEV-MAC]` 해석 불가 출력 fixture에서 처리 결과가 보고서 정의와 일치, 적용 변경 자동 삭제 0, 권한·lease 확대 0. | XXIX.2.11, XXIX.2.8 |
+
+### XXIX.3 FFI·승인·스레드·채팅 조립
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXIX.3.1 | `[ ]` | FFI를 확장합니다. 에이전트 세션 생성·메시지 전송·중지, 승인 응답, 채팅 item과 원문 버퍼 증분 event, 출처 색인 조회, 변경·세션 되돌리기와 표시 정리 함수, 버전이 매겨진 에이전트 event message를 추가하고 셸은 II.4.5 pull 방식 event 경로로 받습니다. stellar-ffi 허용 의존에 agent-host, agent-protocol, ops를 추가합니다. FFI는 보호 경로이므로 같은 변경에 ADR을 갱신합니다. | `[DEV-MAC]` 생성 header drift 없음, FFI smoke에서 세션 handle 누수 0. | XXIX.2.8, XXIX.2.10, XXIX.2.12, XIX.6.10 |
+| XXIX.3.2 | `[ ]` | 승인 요청을 ProjectIdentity 단위로 코어에 보관합니다. 첫 응답 하나만 유효하고, 창 닫힘, 응답 기한 초과, 세션 종료 시 거부가 기본입니다. 요청에는 Stellar 코어가 만든 semantic diff·validation·렌더 프리뷰를 승인 근거로 담습니다(XIX.5.3). | `[DEV-MAC]` 중복 응답 무시, 창 닫힘·기한 초과·세션 종료 거부 fixture, 동시 요청 순서 유지. | XXIX.3.1, XIX.4.1, XIX.3.4 |
+| XXIX.3.3 | `[ ]` | 에이전트 모드를 XIX.3.1 Read·Propose·Apply 권한 조합의 상한으로 매핑합니다(ADR-0005 §4.5). 모드는 권한을 부여하지 않고 상한으로만 작동하며, ADR-0005 Security 결정에 따라 사용자 UI에서만 바꿉니다. 내장 세션 카탈로그에서 Terminal과 FileDelete 계열 tool을 제외하고 GitCommit·GitPush는 개별 확인으로만 허용합니다. | `[DEV-MAC]` 모드별 permission matrix 통과, 내장 세션 tools/list의 terminal·파일 삭제 계열 0, tool 호출로 모드 변경 시도 거부. | XXIX.3.2, XIX.9.7 |
+| XXIX.3.4 | `[ ]` | 앱에 Agent Host·IPC I/O 스레드를 둡니다. 이 스레드는 문서를 쓰지 않습니다. 검증된 Command를 XII.1.2 queue에 사용자 입력보다 낮은 priority로 넣고 넘치면 busy를 반환합니다. lease 대상 계산과 batch 적용은 단일 점유 상한 안에서 나눠 처리하고, 디코드·원문 버퍼링·표시용 텍스트 준비는 이 스레드나 worker에서 합니다. | `[DEV-MAC]` 20만 node 문서 lease·batch trace에서 UI·Document 단일 점유와 사용자 입력 지연 증가가 예산 이내. | XXIX.3.1, XII.1.2, XIX.4.2 |
+| XXIX.3.5 | `[ ]` | 내장 세션 시작 전에 XVI.7.1 capability 검사를 적용해 untrusted 프로젝트에서는 시작하지 않습니다. 사용자가 대상 프로젝트, 실행할 CLI, 모드를 확인하는 시작 확인 데이터를 만들고 확인을 첫 연결 승인으로 기록합니다(아키텍처 31.3). 각 CLI를 처음 쓰기 전과 profile 약관 검토 결과가 바뀐 뒤에는 약관 고지 확인을 요구하고, 그 기록은 OS 사용자 데이터에 둡니다. 세션 중 신뢰가 철회되면 즉시 세션을 중지하고 XIX.6.4 절차를 따릅니다. | `[DEV-MAC]` untrusted 시작 0, 확인 기록 존재, 고지 미확인 시 시작 0, 검토 결과 변경 후 재고지, 철회 fixture에서 lease 0·대기 승인 0·적용 변경 자동 삭제 0. | XXIX.3.2, XVI.7.1, XIX.3.3, XXIX.2.7 |
+| XXIX.3.6 | `[ ]` | 채팅 item 조립을 구현합니다. 채팅 보기는 문서 상태나 승인 결과의 근거가 아니며, 문서 효과 표시는 Stellar 승인·출처 기록(XXIX.3.2, XIX.6.7)과 일치해야 합니다(아키텍처 31.3~31.5, 31.9). 원문과 채팅 기록은 세션 메모리에만 둡니다. | `[DEV-MAC]` 기록 fixture로 만든 item 목록 golden 일치, 승인·출처 기록과 어긋나는 문서 효과 표시 0. | XXIX.2.11, XXIX.3.2, XIX.9.5, XIX.6.7 |
+
+### XXIX.4 macOS 에이전트 UI
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXIX.4.1 | `[ ]` | macOS 프로젝트 창에 에이전트 패널 자리를 추가합니다. 캔버스 렌더 경로 밖의 네이티브 chrome에 두고 캔버스 위에 겹쳐 그리지 않으며, 배치와 표시 전환 방식은 HIG를 근거로 정해 보고서에 기록합니다(ADR-0005 §4.5). 패널 열기·닫기·크기 변경 중 캔버스 drawable 크기 전달은 frame 예산 안에서 묶어 처리합니다. | `[DEV-MAC]` 열기·닫기 반복 중 frame time trace가 예산 이내, 접근성 smoke 통과. | XII.9.1, XXIX.3.1 |
+| XXIX.4.2 | `[ ]` | macOS 에이전트 패널을 구현합니다. 창마다 하나이고 그 창에서 시작한 세션만 보여 줍니다(ADR-0005 §4.2). XXIX.2.8 상태와 출처 표시를 보여 주고 중지 동작을 제공하며, 배치는 HIG로 정해 보고서에 기록합니다. 입력은 여러 줄 입력과 IME 조합을 지원하는 네이티브 텍스트 컨트롤입니다. Stellar는 CLI 입력에 문서 내용을 넣지 않고, 노드 지정은 BeginAgentEdit target root 제안으로만 합니다(XIX.4 lease 모델). 패널을 숨겨도 세션과 승인 대기는 유지됩니다. | `[DEV-MAC]` 테스트 대역 세션 UI smoke, Stellar가 CLI 입력에 넣은 문서 내용 0, 노드 지정이 target root 제안으로만 전달, 패널 숨김 중 세션·승인 대기 유지. | XXIX.4.1, XXIX.3.3, XXIX.3.5 |
+| XXIX.4.3 | `[ ]` | 채팅 보기를 구현합니다(기본 보기). XXIX.3.6 item을 네이티브 텍스트 컨트롤로 그리며, 에이전트 텍스트를 신뢰하지 않는 입력으로 다뤄 표시 과정에서 네트워크 요청, 스크립트 실행, WebView 생성이 없게 합니다(ADR-0005 §4.4 표시 안전). 서식 범위는 이 작업에서 정해 보고서에 기록합니다. 프로젝트 문자열과 에이전트 텍스트는 출처를 구분해 표시합니다. 스트리밍 중 갱신은 UI 스레드 단일 점유 상한 안에서 묶어 반영합니다. | `[DEV-MAC]` 새 세션 기본 보기 채팅, 원격 리소스 요청 0, WebView 인스턴스 0, 1만 item 세션 스크롤 trace 예산 이내. | XXIX.4.2, XXIX.3.6 |
+| XXIX.4.4 | `[ ]` | 원문 보기와 보기 전환을 구현합니다. 원문 보기는 XXIX.2.12 버퍼를 읽기 전용 텍스트로 보여 주고 선택·복사를 지원합니다. 보기 전환은 세션마다 하며, 상태는 창 세션 메모리에만 두고 새 세션과 앱 재실행 후에는 채팅 보기로 시작합니다. 전환은 CLI 프로세스·권한·lease·승인 요청에 영향을 주지 않습니다. | `[DEV-MAC]` 보기 전환 후 item·원문 손실 0, 앱 재실행 후 기본 보기 채팅, 전환 전후 세션 상태 동일. | XXIX.4.2, XXIX.2.12 |
+| XXIX.4.5 | `[ ]` | macOS 승인 화면을 네이티브 chrome(패널, 창 sheet)에만 표시하고 캔버스와 플러그인 WebView에는 그리지 않습니다. Stellar 코어가 만든 semantic diff·validation·렌더 프리뷰를 승인 근거로 보여 줍니다(XIX.5.3). Terminal·FileDelete·GitCommit·GitPush 확인은 HIG 파괴적 동작 패턴을 따르고 VoiceOver로도 확정할 수 있어야 합니다. 화면 구성은 HIG를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 승인 화면에 코어 semantic diff·validation·렌더 프리뷰 표시, 캔버스 영역 승인 UI 0, VoiceOver 승인 경로 smoke. | XXIX.4.3 |
+| XXIX.4.6 | `[ ]` | 승인 전 제안 batch를 XII.3.7 transient preview로 캔버스에 겹쳐 보여 주고, 레이어 패널과 캔버스에 lease 잠금 표시를 모든 창에 그립니다. 미리보기는 revision을 바꾸지 않습니다. | `[DEV-MAC]` preview 전후 revision 동일, 다중 창 잠금 표시 일치. | XXIX.4.5, XII.3.7, XIX.5.3 |
+| XXIX.4.7 | `[ ]` | 세션 중지, 중지 후 그 세션 변경 되돌리기, 에이전트 lease 해제 동작을 공유 command ID로 제공합니다(ADR-0005 §4.5, 아키텍처 31.5). 중지와 lease 해제는 XIX.6.4 절차(적용 변경 유지·출처 표시, lease 해제)를 따르고, 중지 후 되돌리기는 XIX.6.3을 따릅니다. 메뉴·명령 팔레트 항목과 이름, 배치는 HIG를 근거로 정해 보고서에 기록합니다. 기능 이름과 아이콘에 공급자 이름이나 로고를 넣지 않습니다. | `[DEV-MAC]` lease 해제 후 해당 lease 0·적용 변경 자동 삭제 0, 중지 후 대기 제안 0, 중지 후 되돌리기 미리보기 승인 후 비충돌 속성 baseline 일치. | XXIX.4.2, XII.6.5, XIX.6.9 |
+| XXIX.4.8 | `[ ]` | macOS 설정에 내장 에이전트 설정 화면을 구현합니다. 구독 CLI 선택, 연결 상태(XXIX.2.5), 약관 고지와 확인 상태를 다루며, 화면 구성은 HIG와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. Stellar는 로그인 화면이나 로그인 흐름을 제공하지 않습니다(ADR-0005 §4.1). 비용과 사용량은 표시하지 않고, CLI 이름은 일반 텍스트로만 씁니다. | `[DEV-MAC]` 상태별 화면 snapshot, 사용량 표시 요소 0, 자격 증명 입력 요소 0, 화면 동작 중 CLI 자격 증명 저장 위치 접근 0. | XXIX.2.5, XXIX.4.1 |
+| XXIX.4.9 | `[ ]` | 활성 lease, 실행 중인 세션, 검토 대기 출처 표시가 있으면 macOS 창 닫기와 앱 종료 전에 확인합니다(ADR-0005 §4.5). 출처 표시는 창과 함께 사라지고 변경은 남는다는 점을 알리고, 사용자가 되돌리기를 고르면 XIX.6.9 미리보기를 거칩니다. 되돌리기 확인은 HIG 파괴적 동작 패턴을 따릅니다. | `[DEV-MAC]` 닫기 확인 fixture 통과, 미리보기 승인 전 revision 변화 0. | XXIX.4.2, XIX.6.7, XIX.6.9 |
+| XXIX.4.10 | `[ ]` | 에이전트 변경 출처 표시와 되돌리기 UI를 구현합니다. 레이어 패널 노드 행의 표지(색에만 의존하지 않는 기호와 접근성 레이블), 사용자가 켜고 끄는 캔버스 transient overlay(XII.4.4 방식, project snapshot·렌더 프리뷰·내보내기 산출물에 없음), 인스펙터의 속성 단위 출처 표시, 패널의 세션별 변경 목록(시각, semantic diff 요약, 상태, 대상 노드 이동)과 적용 변경 item 동작(캔버스에서 보기, 이 변경 되돌리기, 이 세션 변경 모두 되돌리기, 유지)을 둡니다. 되돌리기 전에 충돌 목록과 미리보기 sheet를 보여 주며 충돌 항목은 기본 제외하고 항목별로 고를 수 있습니다. | `[DEV-MAC]` 중단 세션 fixture에서 표시 노드 집합이 출처 색인과 일치, 되돌리기·유지 동작 smoke, overlay가 저장 bytes에 0, VoiceOver로 네 동작 접근 가능. | XXIX.4.3, XIX.6.10, XII.4.4 |
+| XXIX.4.11 | `[ ]` | 에이전트 패널의 접근성과 키보드 조작을 구현합니다(아키텍처 18 애플리케이션 자체 UI). 모든 item에 AppKit 접근성 role과 label을 주고 상태 변화를 보조 기술에 알리며, 패널의 모든 조작을 키보드만으로 할 수 있게 합니다. 시스템 대비와 동작 줄이기 설정을 따릅니다. | `[DEV-MAC]` VoiceOver automation smoke 통과, 키보드 전용 시나리오 통과. | XXIX.4.3, XXIX.4.4, XXIX.4.5, XII.8.1, XII.9.3 |
+
+### XXIX.5 `stellar-mcp` 번들 배포
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXIX.5.1 | `[ ]` | macOS 앱 번들에 `stellar-mcp`를 helper로 넣고 XXIV.5.1과 같은 규칙(Apple 공식 코드 서명·공증 문서, 앱 entitlement 없음)으로 서명합니다. 내장 에이전트 UI는 이 작업으로 노출하지 않습니다. | `[DEV-MAC]` `codesign --verify --strict` 통과, `[CI-MAC]` 공증 후 clean runner에서 helper `stellar-mcp`의 XIX.9.8 연결 정보 제공 동작 실행. | XXIV.5.1, XIX.9.4 |
+| XXIX.5.2 | `[ ]` | 번들된 `stellar-mcp`와 앱의 내부 IPC protocol 버전을 연결 시 협상하고, 불일치하면 연결하지 않고 XXIV.1.2 종료 코드 표에 따라 끝냅니다. | `[DEV-MAC]` 버전 불일치 fixture에서 연결 거부, 종료 코드가 XXIV.1.2 표와 일치. | XXIX.5.1, XIX.1.7 |
+
+### XXIX.6 E2E·불변식
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXIX.6.1 | `[ ]` | 테스트 대역(XXIX.2.2) 기반 E2E 시나리오 정의를 공통 fixture로 작성합니다. (1) 세션 시작, 범위 승인, batch 미리보기·적용, 완료, Undo 1회 복원. (2) 세션 중지 후 적용 변경 유지·출처 표시·lease 0·대기 제안 거부, 이어서 변경 단위 되돌리기와 세션 단위 되돌리기. (3) 재연결 중 lease 유지와 유예 초과 시 중단됨 history entry 확정(자동 rollback 없음). (4) 디코드 실패 후 적용 변경 유지와 권한·lease 확대 0. | `[DEV-MAC]` 시나리오 정의 golden, fixture 로더 test 통과. | XXIX.3.5, XXIX.2.8 |
+| XXIX.6.2 | `[ ]` | XXIX.6.1 시나리오를 macOS 앱에서 실행하는 E2E를 작성합니다. | `[DEV-MAC]` 완료 시 history entry 1, 중지 후 적용 batch 유지와 표시 노드 일치, 되돌리기 후 비충돌 속성 baseline 일치, 재연결 시나리오 lease 유지, 기본 보기 채팅. | XXIX.6.1, XXIX.4.6, XXIX.4.10 |
+| XXIX.6.3 | `[ ]` | macOS에서 앱이 프로젝트를 연 상태의 공존 E2E를 작성합니다. `stellar apply`가 semantic reconciliation으로 처리되는지(두 선택지 alert 없음), 앱이 열린 동안의 Git merge driver 실행, `stellar-mcp` attached·headless backend 선택, lease와 겹치는 외부 변경의 XIX.7.2 처리(자동 삭제 없음)를 다룹니다. | `[DEV-MAC]` 정책 결과 matrix 일치, merge driver 정상 fixture exit 0. | XXIX.6.2, XIX.9.4, XXIV.4.6, XIX.7.2, XXIV.2.1 |
+| XXIX.6.4 | `[ ]` | 에이전트 관련 필드(사용자 입력 문장, 채팅 item, 원문 버퍼 내용, CLI 표준 오류, CLI 실행 파일 경로, CLI가 보고한 계정 식별 정보, 세션 결합 수단, IPC 상대 정보, 출처 색인)를 XVI.8.2 금지 필드 scanner corpus와 XVI.8.6 schema inventory에 추가합니다. 진단, recovery snapshot, 텔레메트리에 이 필드가 들어가지 않고 앱 재시작 후 세션과 출처 표시가 복원되지 않음을 검사합니다. | `[DEV-MAC]` privacy scan 0건, 재시작 후 세션 0·출처 표시 0. | XXIX.6.2, XVI.8.2, XVI.8.6, XIII.8.2 |
+| XXIX.6.5 | `[ ]` | ADR-0005 §3 변경 불가 경로 inventory test를 추가합니다. 프로젝트 파일 편집이나 에이전트 경로로 XVI.7 프로젝트 신뢰 상태, XIX.3 권한 상태, 에이전트 모드, 에이전트 변경 출처 표시와 되돌리기를 바꾸는 경로가 없어야 합니다(ADR-0005 Security). | `[DEV-MAC]` 프로젝트 파일 변조 fixture에서 위 상태 변경 0, agent 경로의 출처 표시 정리·되돌리기 호출 0. | XIX.9.7, XXIX.3.3 |
+| XXIX.6.6 | `[ ]` | 출력 표시 격리 inventory test를 추가합니다. 터미널 경로(XVIII crate)와 다른 crate·셸·FFI에 공급자별 출력 parser가 없고 터미널 출력이 제품 상태로 해석되지 않음, 디코더가 agent-host 안에만 있음, 디코드 결과 타입에서 CommandTransaction·문서 변경·승인 응답으로 가는 경로 0, agent-host에서 commands·document 전이 도달 0을 함께 검사합니다. | `[DEV-MAC]` 네 검사 모두 0건, 위반 fixture 거부. | XXIX.3.6, XVIII.5.1, XXIX.1.1 |
+| XXIX.6.7 | `[ ]` | 스트리밍 부하 성능 게이트를 추가합니다. 테스트 대역이 최대 속도로 출력하는 동안 캔버스 인터랙션 지연이 6.2~6.4 계약을 지키고, UI 스레드 단일 점유가 2ms 이하이며, 원문 버퍼 상한으로 메모리가 제한되는지 측정합니다. | `[REF-MAC]` 스트리밍 중 인터랙션 trace가 예산 이내, 메모리 상한 유지, 출력 수신 정지 0. | XXIX.6.2, XVI.4.6 |
+| XXIX.6.8 | `[ ]` | launch profile별 릴리스 전 수동 검증 절차를 작성합니다. ADR-0005 §4.3 두 불변식과 디코드 결과를 확인하고 결과와 약관 검토 일자를 보고서에 기록합니다. 보고서에는 XVI.8 금지 정보를 넣지 않습니다. | `[DEV-MAC]` profile별 수동 검증 항목 전부 통과 기록, 보고서 privacy scan 0건. | XXIX.6.2, XXIX.2.6 |
+
+**Phase XXIX 완료 조건:** macOS에서 사용자가 시작한 구독 CLI 세션이 Stellar MCP tool만으로 lease·승인 정책을 지키며 편집하고, Stellar는 공급자 인증·자격 증명·사용량에 관여하지 않습니다. 세션이 끝나도 적용 변경은 출처 표시와 함께 남아 사용자가 변경·세션 단위로 직접 되돌릴 수 있고, 채팅 보기(기본)와 원문 보기가 동작하며, 공급자 출력 디코드는 표시 전용으로 격리됩니다.
+
+---
+
 ## 2. 작업 결과 검토 체크리스트
 
 각 원자적 작업을 병합하기 전에 검토자는 다음 항목만 순서대로 확인합니다.
@@ -2277,7 +2402,10 @@ tools/xtask/
 ## 3. 계획 변경 규칙
 
 - 작업을 더 크게 합치지 않습니다. 필요하면 더 작은 하위 ID를 추가합니다.
-- 기존 WBS ID의 의미를 바꾸지 않습니다. 폐기 시 `cancelled`로 남기고 대체 ID를 연결합니다.
+- 미착수(`[ ]`·`[!]`) 행은 결정 변경에 맞춰 그 자리에서 고칠 수 있습니다. 행의 주제가 바뀌면 고치지 말고 삭제한 뒤 새 ID를 추가합니다.
+- 목적이 사라진 행은 계획서와 ledger에서 삭제합니다. `cancelled` 같은 폐기 표기나 폐기 기록은 남기지 않으며 이력은 Git으로 확인합니다.
+- 삭제한 ID는 재사용하지 않습니다. 삭제·변경으로 깨진 선행 셀, 본문 ID 참조, ADR·아키텍처 문서의 ID 참조는 같은 변경에서 고칩니다.
+- 착수·완료된 행(`[~]`·`[x]`)과 다른 작업자가 진행 중인 행은 고치거나 삭제하지 않고 새 migration·refactor 행을 추가합니다.
 - architecture decision이 바뀌면 먼저 본문 아키텍처, ADR, 영향받는 WBS 선행 관계를 수정합니다.
 - 완료된 작업의 요구사항을 바꾸면 새 migration 또는 refactor WBS를 추가합니다.
 - 저비용 에이전트가 판단해야 하는 문장이 발견되면 해당 문장을 선택 규칙, 입력, 출력, 오류 조건으로 다시 작성한 뒤 실행합니다.
