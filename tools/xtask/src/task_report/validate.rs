@@ -12,6 +12,8 @@
 //! - 검증 환경: 완료 보고서의 환경 절에 검증 환경 코드(`DEV-MAC` 등)가 있어야 합니다.
 //! - 명령 표: 완료 보고서의 명령 절에 `| 명령 | … |` 또는 `| 검사 | … |` 표(header·구분 줄·데이터
 //!   줄)가 있고, header에 `결과` 또는 `종료 코드` 열이 있어야 합니다.
+//! - placeholder: 목록 항목·`- 키: 값`의 값·표 셀이 template placeholder(`<WBS-ID>`,
+//!   `` `<command>` `` 등) 하나뿐이면 안 됩니다. template을 복사만 한 보고서는 이 검사로 실패합니다.
 //!
 //! # 완료 보고서 절 별칭
 //!
@@ -266,6 +268,7 @@ pub fn validate_report(content: &str, kind: ReportKind, expected_id: &str) -> Ve
     }
 
     check_status(&lines, kind, &mut errors);
+    check_placeholders(&lines, &mut errors);
 
     if kind == ReportKind::Complete {
         let environment_evidence = report
@@ -530,6 +533,93 @@ fn check_status(lines: &[&str], kind: ReportKind, errors: &mut Vec<ReportError>)
             format!("상태 줄에 상태 표기({})가 없습니다", allowed.join(", ")),
         )),
     }
+}
+
+/// template placeholder가 그대로 남은 줄을 검사합니다(코드 펜스 밖).
+///
+/// 목록 항목 전체, `- 키: 값` 목록 항목의 값, 표 셀이 placeholder 하나뿐이면 채우지 않은 것으로
+/// 봅니다. 문장이나 인라인 코드 속 `<...>` 표기(예: `` `inspect <경로>` ``)는 세지 않습니다. 오류는
+/// 하나로 모으고 해당 줄 번호를 모두 적습니다.
+fn check_placeholders(lines: &[&str], errors: &mut Vec<ReportError>) {
+    let unfilled: Vec<String> = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| has_placeholder_value(line))
+        .map(|(index, _)| (index + 1).to_string())
+        .collect();
+    if !unfilled.is_empty() {
+        errors.push(ReportError::new(
+            "unfilled-placeholder",
+            format!(
+                "채우지 않은 template placeholder가 있습니다: 줄 {}",
+                unfilled.join(", ")
+            ),
+        ));
+    }
+}
+
+/// 줄의 목록 항목 값 또는 표 셀 중 placeholder 하나뿐인 값이 있는지 확인합니다.
+fn has_placeholder_value(line: &str) -> bool {
+    if let Some(cells) = table_cells(line) {
+        return cells.iter().any(|cell| is_placeholder(cell));
+    }
+    let trimmed = line.trim_start();
+    let Some(item) = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+    else {
+        return false;
+    };
+    if is_placeholder(item) {
+        return true;
+    }
+    // `- 키: 값` 형식이면 값만 봅니다. 키에 `<`가 있으면 placeholder 안의 `:`이므로 나누지 않습니다.
+    item.split_once(':')
+        .is_some_and(|(key, value)| !key.contains('<') && is_placeholder(value))
+}
+
+/// 값이 template placeholder 하나뿐인지(예: `<WBS-ID>`, `` `<command>` ``) 확인합니다.
+///
+/// 앞뒤 공백·끝 마침표·감싼 backtick을 걷어낸 값이 `<`로 시작해 `>`로 끝나고, 안쪽이 비어 있지 않으며
+/// `<`·`>`를 더 담지 않아야 합니다. autolink(`<https://…>`, `<a@b.c>`)와 HTML 주석·선언(`<!…>`)은
+/// placeholder가 아닙니다.
+fn is_placeholder(value: &str) -> bool {
+    let value = value.trim();
+    let value = value.strip_suffix('.').unwrap_or(value);
+    let value = value
+        .strip_prefix('`')
+        .and_then(|inner| inner.strip_suffix('`'))
+        .unwrap_or(value);
+    let Some(inner) = value
+        .strip_prefix('<')
+        .and_then(|rest| rest.strip_suffix('>'))
+    else {
+        return false;
+    };
+    !inner.trim().is_empty()
+        && !inner.contains(['<', '>'])
+        && !inner.starts_with('!')
+        && !is_autolink(inner)
+}
+
+/// `<`·`>` 안쪽이 CommonMark autolink(URI 또는 email)인지 확인합니다.
+///
+/// URI: 글자로 시작하는 2~32자 scheme(글자·숫자·`+`·`.`·`-`) 뒤에 `:`와 공백 없는 나머지.
+/// email: 공백 없이 `@`를 담은 값.
+fn is_autolink(inner: &str) -> bool {
+    if inner.contains(char::is_whitespace) {
+        return false;
+    }
+    if inner.contains('@') {
+        return true;
+    }
+    inner.split_once(':').is_some_and(|(scheme, _)| {
+        (2..=32).contains(&scheme.len())
+            && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '.' | '-'))
+    })
 }
 
 /// 상태 값에서 가장 먼저 나오는 상태 표기를 반환합니다.
@@ -1205,9 +1295,10 @@ mod tests {
         // validator 규칙의 대표 제목도 template 제목과 같습니다.
         let names: Vec<&str> = COMPLETE_SECTIONS.iter().map(|rule| rule.name).collect();
         assert_eq!(names, I_2_13_TEMPLATE_HEADINGS);
+        // 절 구성은 통과하고, 채우지 않은 placeholder만 실패 원인으로 남습니다.
         assert_eq!(
-            validate_report(&template.replace("<WBS-ID>", ID), ReportKind::Complete, ID),
-            Vec::new()
+            codes(&template.replace("<WBS-ID>", ID), ReportKind::Complete, ID),
+            vec!["unfilled-placeholder"]
         );
 
         // I.2.14 차단 보고서 template도 validator 규칙과 같은 절 구성입니다.
@@ -1221,13 +1312,72 @@ mod tests {
         let names: Vec<&str> = BLOCKED_SECTIONS.iter().map(|rule| rule.name).collect();
         assert_eq!(titles, names);
         assert_eq!(
-            validate_report(
+            codes(
                 &blocked.replace("<WBS-ID>", "I.2.4"),
                 ReportKind::Blocked,
                 "I.2.4"
             ),
-            Vec::new()
+            vec!["unfilled-placeholder"]
         );
+    }
+
+    #[test]
+    fn unfilled_template_placeholders_fail() {
+        // 목록 항목, `키: 값` 목록 항목의 값, 표 셀이 template placeholder 하나뿐이면 실패합니다.
+        for (from, to) in [
+            (
+                "## 차이(작업 지시와 다른 점)\n\n- 없음.\n",
+                "## 차이(작업 지시와 다른 점)\n\n- <작업 지시와 다른 점 또는 없음>\n",
+            ),
+            ("- 작업명: 제목\n", "- 작업명: <작업 내용 한 줄>\n"),
+            (
+                "- 상태: 완료 (`[x]`)\n",
+                "- 상태: <완료 (`[x]`) | 부분 완료 (`[~]`) — 미완료 사유>\n",
+            ),
+            (
+                "- `DEV-MAC`.\n",
+                "- 필수 실행 환경: <환경 코드: DEV-MAC | CI-MAC>\n",
+            ),
+            ("| fixture | 통과 |", "| fixture | <통과 또는 실패> |"),
+            (
+                "| `cargo test -p xtask` | 10 passed, 0 failed |",
+                "| `<command>` | 10 passed, 0 failed |",
+            ),
+        ] {
+            let content = complete_report().replace(from, to);
+            assert_ne!(content, complete_report(), "{from:?}");
+            let errors = validate_report(&content, ReportKind::Complete, ID);
+            assert_eq!(
+                errors.iter().map(|e| e.code).collect::<Vec<_>>(),
+                vec!["unfilled-placeholder"],
+                "{to:?}"
+            );
+        }
+
+        // 오류는 하나이고 placeholder가 남은 줄 번호를 모두 담습니다.
+        let content = complete_report()
+            .replace("- 작업명: 제목\n", "- 작업명: <제목>\n")
+            .replace("- 요약.\n", "- <요약>\n");
+        let errors = validate_report(&content, ReportKind::Complete, ID);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].message.contains("줄 4, 18"), "{errors:?}");
+
+        // 문장·인라인 코드 속 `<...>` 표기, autolink, 코드 펜스 안의 placeholder는 실패하지 않습니다.
+        for summary in [
+            "- `inspect <경로>` 명령을 추가했습니다.\n",
+            "- 커밋 제목 `Task(<WBS-ID>): <제목>` 형식.\n",
+            "- `Vec<u8>`\n",
+            "- <https://example.com/runs/1>\n",
+            "- <mailto:dev@example.com>\n",
+            "- 범위 <경로> 안\n",
+            "```text\n- <제목>\n| <a> | <b> |\n```\n",
+        ] {
+            let content = complete_report().replace("- 요약.\n", summary);
+            assert!(
+                validate_report(&content, ReportKind::Complete, ID).is_empty(),
+                "{summary:?}"
+            );
+        }
     }
 
     #[test]
