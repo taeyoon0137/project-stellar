@@ -58,3 +58,23 @@
 - 여러 content를 한 번에 넣어야 최소 개수를 만족하는 경우의 원자 적용은 CommandTransaction(VII.1.6)이
   필요합니다. 현재 Insert는 최대 개수만 검사하고, 최소 개수 미달 상태는 IX.3.2 validator가 보고합니다.
 - 삭제 content를 가리키던 다른 참조(ReferenceIndex) 처리 정책은 command 계층(VII.2.2)의 몫입니다.
+
+## 후속 수정 (리뷰 MAJOR 2: 적용 후 투영 기준 개수·가림 검사)
+
+- **결함**: `Insert`가 최대 개수만 검사해, default content를 보이던 slot에 처음 넣으면 1개짜리 override가 되어
+  최소 개수(2 이상)를 어기는 상태를 만들 수 있었습니다(위 "남은 위험"의 최소 개수 미달이 command로 생김).
+- **수정**: `Insert`·`Remove`는 **적용 후 content 목록**으로 cardinality(최소·최대)를 검사하고, 적용 후 payload에
+  nested slot host 가림 규칙(`check_hidden_slot_content`)을 적용해 위반이면 적용 전에 거부합니다
+  (`SlotCommandError::Projection`). 최소 개수가 2 이상인 slot은 이제 단일 `Insert`로 override를 시작할 수 없으며,
+  여러 content를 한 번에 넣는 원자 command는 VII.1.6 이후입니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-document` | unit 240, `component_detach` 6, `component_expansion_scale` 1, `component_slot_projection` 1, doctest 2 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| default 2개를 보이던 최소 2 slot에 첫 삽입 거부(`count: 1`)·scene 불변, 2개 override에 세 번째 삽입 통과(`first_insert_into_default_slot_checks_minimum_on_result`) | 통과 |
+| 안쪽 content가 있는데 바깥 slot 삽입 거부, 가려진 안쪽 slot 삽입 거부(각각 불변), 바깥을 default로 되돌린 뒤 안쪽 삽입 통과(`inserts_creating_hidden_slot_content_are_rejected`) | 통과 |

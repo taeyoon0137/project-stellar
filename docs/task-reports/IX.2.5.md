@@ -51,3 +51,22 @@
 
 - 실제 적용(command)은 slot content command(IX.3.3)와 Phase VII command 계층의 몫입니다.
 - variant 구조 override(IX.7.7)가 이 validator를 재사용하도록 연결하는 것은 후속입니다.
+
+## 후속 수정 (리뷰 MAJOR 2: 적용 후 투영 기준 개수·가림 검사)
+
+- **결함**: `Insert`·slot으로의 `Move`가 최대 개수만 검사해, default content를 보이던 slot에 처음 넣는 편집(1개짜리
+  override)이 최소 개수 2 이상을 어겨도 통과했습니다.
+- **수정**: 목적지·출발지 모두 **적용 후 content 목록**으로 최소·최대를 검사하고, 적용 후 payload에 nested slot host
+  가림 규칙을 적용합니다(`VirtualMutationError::Projection`). 같은 인스턴스의 다른 slot 사이 이동은 출발 slot에서 뺀
+  상태까지 합쳐 판정하므로, 안쪽 slot의 마지막 content를 바깥 slot으로 옮기는 편집은 허용됩니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-document` | unit 240 포함 전부 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+
+| 검사 | 결과 |
+|---|---|
+| default slot(최소 2)으로의 첫 삽입·이동 거부(`count: 1`), 2개 override에 삽입 통과·3개에서 초과 거부(`first_insert_or_move_into_default_slot_checks_minimum_on_result`) | 통과 |
+| 가려진 host 삽입·안쪽 content를 가리는 바깥 삽입 거부, 안쪽 마지막 content의 바깥 이동 허용·남으면 거부(`edits_creating_hidden_slot_content_are_rejected`) | 통과 |
+| 기존 IX.2.5 fixture(`nested_child_delete_and_move_are_rejected` 등 3개) | 통과(변경 없음) |

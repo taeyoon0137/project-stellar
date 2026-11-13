@@ -5,12 +5,16 @@
 //! 돌려줍니다.
 //!
 //! - [`SlotContentCommand::Insert`]: content subtree를 인스턴스 소유 node로 만들고(부모 =
-//!   인스턴스) slot의 지정 위치에 투영합니다. root 종류는 slot 허용 종류여야 하고 최대 개수를
-//!   넘을 수 없습니다.
-//! - [`SlotContentCommand::Remove`]: content subtree를 scene에서 지우고 투영에서 뺍니다. 최소
-//!   개수 아래로 내려갈 수 없습니다. `restore_default`면 마지막 content를 뺄 때 override
-//!   entry를 지워 default content로 돌아갑니다(최소 개수 검사 대신 default가 유효함).
+//!   인스턴스) slot의 지정 위치에 투영합니다. root 종류는 slot 허용 종류여야 합니다.
+//! - [`SlotContentCommand::Remove`]: content subtree를 scene에서 지우고 투영에서 뺍니다.
+//!   `restore_default`면 마지막 content를 뺄 때 override entry를 지워 default content로
+//!   돌아갑니다(개수 검사 대신 default가 유효함).
 //! - [`SlotContentCommand::Reorder`]: 투영 순서를 바꿉니다.
+//!
+//! 개수(cardinality)와 가림 규칙(nested slot host, IX.3.1)은 **적용 후 투영**에 대해
+//! 검사합니다. default content를 보이던 slot에 처음 삽입하면 override가 1개짜리로 바뀌므로,
+//! 최소 개수가 2 이상인 slot에는 단일 삽입이 거부됩니다. override된 바깥 slot에 가려진 slot에
+//! 넣거나, 안쪽 slot에 content가 있는데 바깥 slot에 넣는 것도 적용 전에 거부합니다.
 //!
 //! Phase VII command 계층이 생기면 이 enum을 그 closed enum의 한 갈래로 등록합니다.
 
@@ -19,11 +23,12 @@ use std::fmt;
 
 use stellar_core_types::ids::{RuntimeEntityId, StableId};
 
-use super::definition::{ComponentLibrary, ComponentSlotId};
+use super::definition::{ComponentEntry, ComponentLibrary, ComponentSlotId};
 use super::detach::SceneNodeRecord;
 use super::expansion::{ExpansionError, SceneIndex, ScenePayloads};
 use super::instance::{ComponentInstancePayload, InstancePayloadError, SlotOverride};
 use super::slot::{ComponentSlot, SlotError};
+use super::slot_override::{check_hidden_slot_content, SlotOverrideError};
 use crate::node_columns::{NodeColumns, NodeFields};
 use crate::node_kind::NodeKind;
 
@@ -119,6 +124,8 @@ pub enum SlotCommandError {
     },
     /// payload가 잘못됐습니다.
     Payload(InstancePayloadError),
+    /// 적용 후 투영이 slot override 규칙(가려진 slot content 등)을 어깁니다.
+    Projection(SlotOverrideError),
 }
 
 impl fmt::Display for SlotCommandError {
@@ -148,6 +155,7 @@ impl fmt::Display for SlotCommandError {
                 write!(f, "위치 {index}가 범위(개수 {len})를 벗어납니다")
             }
             SlotCommandError::Payload(err) => write!(f, "{err}"),
+            SlotCommandError::Projection(err) => write!(f, "적용 후 투영 규칙 위반: {err}"),
         }
     }
 }
@@ -163,8 +171,39 @@ impl From<ExpansionError> for SlotCommandError {
 /// command 대상 해석 결과.
 struct Target<'l> {
     payload: ComponentInstancePayload,
+    entry: &'l ComponentEntry,
     slot: &'l ComponentSlot,
     content: Option<Vec<StableId>>,
+}
+
+impl Target<'_> {
+    /// slot content를 `content`로 바꾼(`None`이면 override 제거) **적용 후** 투영이 개수·가림
+    /// 규칙을 지키는지 검사합니다. override를 지우면 default content가 보이며 그 유효성은 정의
+    /// 등록 때 이미 검증됐습니다.
+    fn check_result(
+        &self,
+        instance: StableId,
+        content: Option<&[StableId]>,
+    ) -> Result<(), SlotCommandError> {
+        let mut result = self.payload.clone();
+        match content {
+            Some(list) => {
+                if !self.slot.cardinality.allows(list.len()) {
+                    return Err(SlotCommandError::Rule(SlotError::CardinalityViolation {
+                        slot: self.slot.id,
+                        count: list.len(),
+                    }));
+                }
+                let over = SlotOverride::new(list.to_vec()).map_err(SlotCommandError::Payload)?;
+                result.set_slot_override(self.slot.id, over);
+            }
+            None => {
+                result.remove_slot_override(self.slot.id);
+            }
+        }
+        check_hidden_slot_content(self.entry, &result, instance)
+            .map_err(SlotCommandError::Projection)
+    }
 }
 
 fn resolve<'l>(
@@ -188,6 +227,7 @@ fn resolve<'l>(
     let content = payload.slot_override(slot).map(|o| o.content().to_vec());
     Ok(Target {
         payload,
+        entry,
         slot: slot_record,
         content,
     })
@@ -303,13 +343,10 @@ impl SlotContentCommand {
                         kind: root.record.kind,
                     }));
                 }
-                if target.slot.cardinality.is_full(len) {
-                    return Err(SlotCommandError::Rule(SlotError::CardinalityViolation {
-                        slot: *slot,
-                        count: len + 1,
-                    }));
-                }
-                Ok(())
+                // 적용 후 투영: default를 보이던 slot이면 1개짜리 override가 됩니다.
+                let mut result = target.content.clone().unwrap_or_default();
+                result.insert(*at, root_id);
+                target.check_result(*instance, Some(&result))
             }
             SlotContentCommand::Remove {
                 instance,
@@ -318,19 +355,14 @@ impl SlotContentCommand {
                 restore_default,
             } => {
                 let target = resolve(library, &index, *instance, *slot)?;
-                let content = target.content.unwrap_or_default();
+                let content = target.content.clone().unwrap_or_default();
                 if !content.contains(node) {
                     return Err(SlotCommandError::NotInSlot { node: *node });
                 }
-                let remaining = content.len() - 1;
-                let back_to_default = *restore_default && remaining == 0;
-                if !back_to_default && remaining < target.slot.cardinality.min() as usize {
-                    return Err(SlotCommandError::Rule(SlotError::CardinalityViolation {
-                        slot: *slot,
-                        count: remaining,
-                    }));
-                }
-                Ok(())
+                let remaining: Vec<StableId> =
+                    content.iter().copied().filter(|c| c != node).collect();
+                let back_to_default = *restore_default && remaining.is_empty();
+                target.check_result(*instance, (!back_to_default).then_some(&remaining[..]))
             }
             SlotContentCommand::Reorder {
                 instance,
@@ -931,5 +963,198 @@ mod tests {
                 .unwrap_err(),
             SlotCommandError::Expansion(ExpansionError::NodeNotFound { .. })
         ));
+    }
+
+    const PANEL: u64 = 1201;
+    const OUTER: u64 = 760;
+    const INNER: u64 = 761;
+    const PAIR: u64 = 762;
+
+    /// Panel(7): 700 ← 702(outer host, slot 760: Frame|Text 0..=3) ← 703(Frame default, inner
+    /// host, slot 761: Text 0..=2) ← 704(Text default); 705(pair host, slot 762: Text 2..=3)
+    /// ← 706, 707(Text default).
+    fn panel_library() -> ComponentLibrary {
+        let panel = ComponentRef::new(stable(7));
+        let mut tree = DefinitionTree::new(panel);
+        for (id, kind, parent, order) in [
+            (700, NodeKind::Frame, None, 0x80u8),
+            (702, NodeKind::Frame, Some(700), 0x40),
+            (703, NodeKind::Frame, Some(702), 0x40),
+            (704, NodeKind::Text, Some(703), 0x40),
+            (705, NodeKind::Frame, Some(700), 0x60),
+            (706, NodeKind::Text, Some(705), 0x20),
+            (707, NodeKind::Text, Some(705), 0x40),
+        ] {
+            tree.insert(DefinitionNode {
+                id: stable(id),
+                kind,
+                parent: parent.map(stable),
+                order_key: key(order),
+                visible: true,
+                locked: false,
+                display_name: String::new(),
+                payload: Vec::new(),
+            })
+            .unwrap();
+        }
+        let mut definition =
+            ComponentDefinition::new(stable(7), "Panel".into(), NodeRef::new(stable(700)));
+        for id in [OUTER, INNER, PAIR] {
+            definition.add_slot(slot(id)).unwrap();
+        }
+        let mut library = ComponentLibrary::new();
+        library.insert(definition, tree).unwrap();
+        for (id, host, kinds, cardinality, default) in [
+            (
+                OUTER,
+                702,
+                vec![NodeKind::Frame, NodeKind::Text],
+                SlotCardinality::at_most(3),
+                vec![703],
+            ),
+            (
+                INNER,
+                703,
+                vec![NodeKind::Text],
+                SlotCardinality::at_most(2),
+                vec![704],
+            ),
+            (
+                PAIR,
+                705,
+                vec![NodeKind::Text],
+                SlotCardinality::new(2, Some(3)).unwrap(),
+                vec![706, 707],
+            ),
+        ] {
+            library
+                .add_slot(
+                    panel,
+                    ComponentSlot::new(
+                        slot(id),
+                        NodeRef::new(stable(host)),
+                        kinds,
+                        cardinality,
+                        default
+                            .into_iter()
+                            .map(|d| NodeRef::new(stable(d)))
+                            .collect(),
+                    ),
+                )
+                .unwrap();
+        }
+        library
+    }
+
+    /// scene: 1000 ← 1201(Panel, override는 인자) ← `owned`(Text, 0x10부터 0x08 간격).
+    fn panel_scene(overrides: &[(u64, &[u64])], owned: &[u64]) -> (NodeColumns, ScenePayloads) {
+        let mut columns = NodeColumns::new();
+        let mk = |id: u64, kind, parent, order: u8| NodeFields {
+            stable_id: stable(id),
+            kind,
+            parent,
+            order_key: key(order),
+            visible: true,
+            locked: false,
+            display_name: String::new(),
+        };
+        let root = columns.insert(mk(1000, NodeKind::Frame, None, 0x80));
+        let instance = columns.insert(mk(PANEL, NodeKind::ComponentInstance, Some(root), 0x40));
+        for (i, id) in owned.iter().enumerate() {
+            columns.insert(mk(*id, NodeKind::Text, Some(instance), 0x10 + 8 * i as u8));
+        }
+        let mut payload = ComponentInstancePayload::new(ComponentRef::new(stable(7)));
+        for (id, content) in overrides {
+            payload.set_slot_override(
+                slot(*id),
+                SlotOverride::new(content.iter().copied().map(stable).collect()).unwrap(),
+            );
+        }
+        let mut payloads = ScenePayloads::new();
+        payloads.insert(stable(PANEL), payload.encode());
+        (columns, payloads)
+    }
+
+    fn panel_insert(slot_id: u64, id: u64, order: u8) -> SlotContentCommand {
+        SlotContentCommand::Insert {
+            instance: stable(PANEL),
+            slot: slot(slot_id),
+            index: 0,
+            nodes: vec![text(id, PANEL, order)],
+        }
+    }
+
+    #[test]
+    fn first_insert_into_default_slot_checks_minimum_on_result() {
+        // default 2개를 보이던 slot(최소 2)에 첫 삽입 → 1개짜리 override가 되므로 거부.
+        let library = panel_library();
+        let (mut columns, mut payloads) = panel_scene(&[], &[]);
+        let before = snapshot(&columns, &payloads);
+        let insert = panel_insert(PAIR, 2101, 0x70);
+        assert_eq!(
+            insert
+                .apply(&library, &mut columns, &mut payloads)
+                .unwrap_err(),
+            SlotCommandError::Rule(SlotError::CardinalityViolation {
+                slot: slot(PAIR),
+                count: 1,
+            })
+        );
+        assert_eq!(snapshot(&columns, &payloads), before, "거부 시 scene 불변");
+
+        // 이미 2개 override면 세 번째(최대 3)는 통과하고 투영 규칙도 유지.
+        let (mut columns, mut payloads) = panel_scene(&[(PAIR, &[1202, 1203])], &[1202, 1203]);
+        insert.apply(&library, &mut columns, &mut payloads).unwrap();
+        let index = SceneIndex::build(&columns, &payloads);
+        validate_scene_slot_overrides(&library, &index, stable(PANEL)).unwrap();
+    }
+
+    #[test]
+    fn inserts_creating_hidden_slot_content_are_rejected() {
+        let library = panel_library();
+        let hidden = SlotCommandError::Projection(SlotOverrideError::HiddenSlotContent {
+            instance: stable(PANEL),
+            slot: slot(INNER),
+            hidden_by: slot(OUTER),
+        });
+        let inner = panel_insert(INNER, 2101, 0x70);
+        let outer = panel_insert(OUTER, 2102, 0x78);
+
+        // 바깥 slot이 default면 안쪽 slot 삽입은 허용.
+        let (mut columns, mut payloads) = panel_scene(&[], &[]);
+        inner.apply(&library, &mut columns, &mut payloads).unwrap();
+        // 안쪽 content가 있는데 바깥 slot에 넣으면 안쪽 content가 가려짐 → 거부, 불변.
+        let before = snapshot(&columns, &payloads);
+        assert_eq!(
+            outer
+                .apply(&library, &mut columns, &mut payloads)
+                .unwrap_err(),
+            hidden
+        );
+        assert_eq!(snapshot(&columns, &payloads), before);
+
+        // 바깥 slot이 override된 상태에서 가려진 안쪽 slot에 넣기 → 거부, 불변.
+        let (mut columns, mut payloads) = panel_scene(&[(OUTER, &[1202])], &[1202]);
+        let before = snapshot(&columns, &payloads);
+        assert_eq!(
+            inner
+                .apply(&library, &mut columns, &mut payloads)
+                .unwrap_err(),
+            hidden
+        );
+        assert_eq!(snapshot(&columns, &payloads), before);
+
+        // 바깥 slot을 default로 되돌리면 안쪽 slot이 다시 보여 삽입 가능.
+        SlotContentCommand::Remove {
+            instance: stable(PANEL),
+            slot: slot(OUTER),
+            node: stable(1202),
+            restore_default: true,
+        }
+        .apply(&library, &mut columns, &mut payloads)
+        .unwrap();
+        inner.apply(&library, &mut columns, &mut payloads).unwrap();
+        let index = SceneIndex::build(&columns, &payloads);
+        validate_scene_slot_overrides(&library, &index, stable(PANEL)).unwrap();
     }
 }
