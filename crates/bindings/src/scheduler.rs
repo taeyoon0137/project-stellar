@@ -29,7 +29,10 @@ use stellar_expressions::types::TypeSpec;
 use stellar_expressions::vm::EvalLimits;
 
 use crate::binding::BindingSet;
-use crate::graph::{BindingCycle, DependencyGraph, DependencyNode, NodeIndex, Producer};
+use crate::graph::{
+    BindingCycle, DependencyGraph, DependencyNode, GraphBuildError, NodeIndex, Producer,
+    ProducerRecord,
+};
 use crate::registry::TokenRegistry;
 use crate::token::TokenTypes;
 
@@ -88,6 +91,8 @@ pub type NodeValue = Result<Option<TypedValue>, NodeEvalError>;
 pub enum SchedulerError {
     /// graph에 cycle이 있습니다.
     Cycle(BindingCycle),
+    /// graph 구성 실패(한 node에 producer 둘 등).
+    Graph(GraphBuildError),
     /// graph에 없는 node.
     UnknownNode(DependencyNode),
     /// source 값 변경 대상이 producer node입니다(표현식으로 값이 정해짐).
@@ -102,6 +107,7 @@ impl fmt::Display for SchedulerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SchedulerError::Cycle(cycle) => write!(f, "{cycle}"),
+            SchedulerError::Graph(error) => write!(f, "{error}"),
             SchedulerError::UnknownNode(node) => write!(f, "graph에 없는 node: {node}"),
             SchedulerError::NotASource(node) => write!(f, "{node}는 source node가 아닙니다"),
             SchedulerError::NotAProducer(node) => write!(f, "{node}는 producer node가 아닙니다"),
@@ -171,6 +177,55 @@ impl ReferenceTypes for TypeView<'_> {
     }
 }
 
+/// producer node 하나의 명세: `node`의 값을 `producer`의 `expression`이 만들고, 결과 선언 타입은 `value_type`입니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProducerSpec {
+    /// 값을 받는 node.
+    pub node: DependencyNode,
+    /// 값을 만드는 정의.
+    pub producer: Producer,
+    /// node 선언 타입(다른 표현식이 이 node를 읽을 때의 타입). 모르면 `None`.
+    pub value_type: Option<TypeSpec>,
+    /// 값을 계산하는 표현식.
+    pub expression: ExpressionAst,
+}
+
+/// registry의 모든 토큰 정의 명세(scope·ID 순).
+pub fn token_specs(tokens: &TokenRegistry) -> Vec<ProducerSpec> {
+    tokens
+        .tokens()
+        .map(|(_, definition)| ProducerSpec {
+            node: DependencyNode::Token(definition.id()),
+            producer: Producer::Token(definition.id()),
+            value_type: Some(definition.token_type().type_spec()),
+            expression: definition.default_expression().clone(),
+        })
+        .collect()
+}
+
+/// 정의 없는(orphan 기록만 남은) 토큰 node는 마지막 타입으로 보고, 그 밖은 `inner`에 맡기는 source 제공자.
+pub(crate) struct TokenAwareSources<'a> {
+    pub(crate) tokens: &'a TokenRegistry,
+    pub(crate) inner: &'a dyn SourceInputs,
+}
+
+impl SourceInputs for TokenAwareSources<'_> {
+    fn source_type(&self, node: &DependencyNode) -> Option<TypeSpec> {
+        match node {
+            DependencyNode::Token(token) => self
+                .tokens
+                .token_type_of(*token)
+                .map(|t| t.type_spec())
+                .or_else(|| self.inner.source_type(node)),
+            other => self.inner.source_type(other),
+        }
+    }
+
+    fn source_value(&self, node: &DependencyNode) -> Option<Option<TypedValue>> {
+        self.inner.source_value(node)
+    }
+}
+
 impl BindingEvaluator {
     /// graph를 만들고 비순환을 확인한 뒤 모든 node를 위상 순서로 평가합니다(기본 평가 한도).
     pub fn new(
@@ -188,40 +243,57 @@ impl BindingEvaluator {
         sources: &dyn SourceInputs,
         limits: EvalLimits,
     ) -> Result<BindingEvaluator, SchedulerError> {
-        let graph = DependencyGraph::build(tokens, bindings);
+        let mut specs = token_specs(tokens);
+        specs.extend(bindings.iter().map(|binding| ProducerSpec {
+            node: DependencyNode::Property(binding.target().clone()),
+            producer: Producer::Binding(binding.id()),
+            value_type: Some(binding.expected_type()),
+            expression: binding.source().clone(),
+        }));
+        let sources = TokenAwareSources {
+            tokens,
+            inner: sources,
+        };
+        BindingEvaluator::from_specs(specs, &sources, limits)
+    }
+
+    /// producer 명세로 만듭니다. graph 구성(producer 중복 거부) → 비순환 확인 → 위상 순위 → 컴파일 → 전체 평가.
+    pub fn from_specs(
+        specs: Vec<ProducerSpec>,
+        sources: &dyn SourceInputs,
+        limits: EvalLimits,
+    ) -> Result<BindingEvaluator, SchedulerError> {
+        let records: Vec<ProducerRecord> = specs
+            .iter()
+            .map(|spec| ProducerRecord {
+                node: spec.node.clone(),
+                producer: spec.producer,
+                dependencies: spec
+                    .expression
+                    .referenced_targets()
+                    .into_iter()
+                    .map(DependencyNode::from_target)
+                    .collect(),
+            })
+            .collect();
+        let graph = DependencyGraph::from_records(records).map_err(SchedulerError::Graph)?;
         graph.ensure_acyclic().map_err(SchedulerError::Cycle)?;
         let count = graph.node_count();
         let mut types = vec![None; count];
         let mut expressions = vec![None; count];
         let mut values: Vec<NodeValue> = vec![Err(NodeEvalError::MissingSource); count];
+        for spec in specs {
+            if let Some(index) = graph.index_of(&spec.node) {
+                types[index.get()] = spec.value_type;
+                expressions[index.get()] = Some(spec.expression);
+            }
+        }
         for index in graph.indices() {
-            let node = graph.node(index);
-            let at = index.get();
-            match graph.producer(index) {
-                Some(Producer::Token(token)) => {
-                    types[at] = tokens.token_type_of(token).map(|t| t.type_spec());
-                    expressions[at] = tokens
-                        .resolve(token)
-                        .map(|resolved| resolved.definition.default_expression().clone());
-                }
-                Some(Producer::Binding(id)) => {
-                    if let Some(binding) = bindings.get(id) {
-                        types[at] = Some(binding.expected_type());
-                        expressions[at] = Some(binding.source().clone());
-                    }
-                }
-                None => {
-                    // 정의 없는(삭제된) 토큰은 마지막 타입으로 보고 값은 source처럼 외부 값을 씁니다.
-                    types[at] = match node {
-                        DependencyNode::Token(token) => tokens
-                            .token_type_of(*token)
-                            .map(|t| t.type_spec())
-                            .or_else(|| sources.source_type(node)),
-                        _ => sources.source_type(node),
-                    };
-                    if let Some(value) = sources.source_value(node) {
-                        values[at] = Ok(value);
-                    }
+            if graph.producer(index).is_none() {
+                let node = graph.node(index);
+                types[index.get()] = sources.source_type(node);
+                if let Some(value) = sources.source_value(node) {
+                    values[index.get()] = Ok(value);
                 }
             }
         }

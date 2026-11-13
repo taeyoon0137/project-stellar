@@ -94,6 +94,8 @@ pub enum Producer {
     Token(TokenRef),
     /// 속성을 target으로 하는 binding의 source.
     Binding(BindingId),
+    /// orphan binding(VIII.8.1) target 속성의 선언 기본값(VIII.8.2). 값은 orphan의 ID로 구분합니다.
+    OrphanDefault(BindingId),
 }
 
 /// graph 안의 node 번호. node 정렬 순서와 같습니다.

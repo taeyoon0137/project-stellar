@@ -24,7 +24,9 @@ use stellar_expressions::ast::{ExprNodeId, NodePayload, ReferenceTarget};
 use stellar_expressions::typecheck::{ReferenceTypes, TypeError};
 use stellar_expressions::types::TypeSpec;
 
-use crate::binding::{check_source, BindingId, BindingSet, BindingTypeError, ValueBinding};
+use crate::binding::{
+    check_source, BindingId, BindingSet, BindingSetError, BindingTypeError, ValueBinding,
+};
 
 /// binding validator가 보는 현재 상태.
 pub trait BindingWorld {
@@ -231,6 +233,14 @@ impl BindingStore {
     /// binding이 없으면 `true`.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// live binding을 추가합니다. 같은 ID의 orphan이 있거나 live 모음 규칙(ID·target 유일)을 어기면 거부합니다.
+    pub fn insert_live(&mut self, binding: ValueBinding) -> Result<(), BindingSetError> {
+        if self.orphans.contains_key(&binding.id()) {
+            return Err(BindingSetError::DuplicateId(binding.id()));
+        }
+        self.live.insert(binding)
     }
 
     /// live binding을 검사해 깨진 binding을 orphan으로 옮기고, 새로 orphan이 된 ID를 돌려줍니다(ID 순). 아무것도

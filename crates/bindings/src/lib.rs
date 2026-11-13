@@ -35,3 +35,6 @@ pub mod environment_index;
 
 /// Orphaned Binding validator와 binding 저장소 (VIII.8.1).
 pub mod orphan;
+
+/// orphan binding 선언 기본값 fallback (VIII.8.2).
+pub mod fallback;
