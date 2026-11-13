@@ -4,6 +4,7 @@
 //! **같은 단계·순서·관찰자**([`WriteStage`]·[`WriteObserver`])를 씁니다.
 //!
 //! 1. 대상과 같은 디렉터리에 temp 생성(`create_new`, 같은 파일시스템 → rename이 atomic).
+//!    이름이 이미 있으면 새 이름으로 다시 만들고, 기존 항목은 열거나 지우지 않습니다.
 //! 2. body가 temp에 bytes를 streaming으로 기록(+검증).
 //! 3. flush → 4. `sync_all`(macOS는 std가 `F_FULLFSYNC`) → 5. temp → 대상 rename
 //! 6. 부모 디렉터리 sync(POSIX 전용).
@@ -16,8 +17,8 @@
 
 use std::fmt;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
-use std::path::Path;
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
 
 pub use stellar_storage::atomic_file::{NoopObserver, WriteObserver, WriteStage};
 
@@ -62,42 +63,78 @@ fn sync_parent_dir(_parent: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// temp 이름 충돌 시 새 이름으로 다시 시도하는 최대 횟수.
+pub(crate) const TEMP_NAME_ATTEMPTS: usize = 16;
+
+/// `names`를 차례로 `create_new`(`O_CREAT|O_EXCL`)로 열어 처음 성공한 temp 경로와 파일을
+/// 돌려줍니다.
+///
+/// 이미 있는 이름(다른 process의 temp, 미리 심어 둔 파일·symlink 등)은 **열거나 지우지 않고**
+/// 다음 이름으로 넘어갑니다(`O_EXCL`은 마지막 구성 요소 symlink도 따라가지 않음). 그래서 호출자가
+/// 정리할 temp는 항상 이 호출이 만든 항목뿐입니다. 모든 이름이 이미 있으면 `AlreadyExists`이고,
+/// 다른 오류는 그대로 돌려줍니다. `options`에는 `write(true).create_new(true)`가 있어야 합니다.
+pub(crate) fn create_new_temp(
+    options: &OpenOptions,
+    names: impl IntoIterator<Item = PathBuf>,
+) -> std::io::Result<(PathBuf, File)> {
+    for path in names {
+        match options.open(&path) {
+            Ok(file) => return Ok((path, file)),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        ErrorKind::AlreadyExists,
+        "사용 가능한 temp 이름이 없습니다",
+    ))
+}
+
 /// temp에 `body`로 streaming 기록한 뒤 flush → sync → atomic rename → 부모 sync합니다.
 ///
-/// `body`가 `Err`이면 rename하지 않습니다. 실패 시 temp는 최선 노력으로 제거합니다.
+/// `body`가 `Err`이면 rename하지 않습니다. rename 전 실패 시 **이 호출이 만든** temp만 최선
+/// 노력으로 제거합니다(temp 이름이 이미 있으면 다른 이름으로 만들고 기존 항목은 건드리지 않음).
 pub fn write_atomic_streamed<T, E>(
     target: &Path,
-    observer: &mut dyn WriteObserver,
-    body: impl FnOnce(&mut File) -> Result<T, E>,
-) -> Result<T, AtomicWriteError<E>> {
-    let temp = temp_path_for(target);
-    let result = write_steps(target, &temp, observer, body);
-    if result.is_err() {
-        // 우아한 실패 경로에서는 temp를 치웁니다(실패해도 무시 — 대상 불변식과 무관).
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
-}
-
-fn stage<E>(stage: WriteStage) -> impl FnOnce(std::io::Error) -> AtomicWriteError<E> {
-    move |error| AtomicWriteError::Stage { stage, error }
-}
-
-fn write_steps<T, E>(
-    target: &Path,
-    temp: &Path,
     observer: &mut dyn WriteObserver,
     body: impl FnOnce(&mut File) -> Result<T, E>,
 ) -> Result<T, AtomicWriteError<E>> {
     observer
         .before(WriteStage::CreateTemp)
         .map_err(stage(WriteStage::CreateTemp))?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(temp)
-        .map_err(stage(WriteStage::CreateTemp))?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    let names = (0..TEMP_NAME_ATTEMPTS).map(|_| temp_path_for(target));
+    let (temp, file) = create_new_temp(&options, names).map_err(stage(WriteStage::CreateTemp))?;
+    let staged = write_and_rename(target, &temp, file, observer, body);
+    if staged.is_err() {
+        // rename 전 실패: 이 호출이 만든 temp를 치웁니다(실패해도 무시 — 대상 불변식과 무관).
+        // rename 뒤에는 temp 이름에 아무 것도 없으므로 지우지 않습니다.
+        let _ = std::fs::remove_file(&temp);
+    }
+    let value = staged?;
 
+    observer
+        .before(WriteStage::SyncParentDir)
+        .map_err(stage(WriteStage::SyncParentDir))?;
+    if let Some(parent) = target.parent() {
+        sync_parent_dir(parent).map_err(stage(WriteStage::SyncParentDir))?;
+    }
+    Ok(value)
+}
+
+fn stage<E>(stage: WriteStage) -> impl FnOnce(std::io::Error) -> AtomicWriteError<E> {
+    move |error| AtomicWriteError::Stage { stage, error }
+}
+
+/// body 기록 → flush → sync → rename(이 호출이 만든 `temp`).
+fn write_and_rename<T, E>(
+    target: &Path,
+    temp: &Path,
+    mut file: File,
+    observer: &mut dyn WriteObserver,
+    body: impl FnOnce(&mut File) -> Result<T, E>,
+) -> Result<T, AtomicWriteError<E>> {
     observer
         .before(WriteStage::WriteBytes)
         .map_err(stage(WriteStage::WriteBytes))?;
@@ -118,13 +155,6 @@ fn write_steps<T, E>(
         .before(WriteStage::Rename)
         .map_err(stage(WriteStage::Rename))?;
     std::fs::rename(temp, target).map_err(stage(WriteStage::Rename))?;
-
-    observer
-        .before(WriteStage::SyncParentDir)
-        .map_err(stage(WriteStage::SyncParentDir))?;
-    if let Some(parent) = target.parent() {
-        sync_parent_dir(parent).map_err(stage(WriteStage::SyncParentDir))?;
-    }
     Ok(value)
 }
 
@@ -248,6 +278,54 @@ mod tests {
         assert_eq!(left.len(), 1);
         let name = left[0].file_name().unwrap().to_str().unwrap();
         assert!(name.starts_with(".a.bin.tmp-"), "{name}");
+    }
+
+    /// 미리 있는 temp 이름(다른 process temp·심어 둔 파일·symlink)은 건너뛰고 지우지 않습니다.
+    #[test]
+    fn existing_temp_entries_are_skipped_and_never_removed() {
+        let dir = TempDir::new("atomic-squat");
+        let victim = dir.path.join("victim");
+        std::fs::write(&victim, b"victim").unwrap();
+        let taken_file = dir.path.join(".a.bin.tmp-taken-0");
+        std::fs::write(&taken_file, b"other process").unwrap();
+        let taken_dir = dir.path.join(".a.bin.tmp-taken-1");
+        std::fs::create_dir(&taken_dir).unwrap();
+        let mut names = vec![taken_file.clone(), taken_dir.clone()];
+        #[cfg(unix)]
+        {
+            let taken_link = dir.path.join(".a.bin.tmp-taken-2");
+            std::os::unix::fs::symlink(&victim, &taken_link).unwrap();
+            names.push(taken_link);
+        }
+        let fresh = dir.path.join(".a.bin.tmp-fresh");
+        names.push(fresh.clone());
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+
+        let (path, _file) = create_new_temp(&options, names.clone()).unwrap();
+        assert_eq!(path, fresh, "처음 비어 있는 이름");
+        // 모든 이름이 차 있으면 AlreadyExists이며 아무 것도 지우거나 쓰지 않습니다.
+        let err = create_new_temp(&options, names.clone()).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&taken_file).unwrap(), b"other process");
+        assert!(taken_dir.is_dir());
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"victim",
+            "symlink를 통해 쓰지 않음"
+        );
+        #[cfg(unix)]
+        assert!(names[2]
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink());
+
+        // body 실패 시 정리는 이 호출이 만든 temp만 지웁니다(기존 항목 보존).
+        let target = dir.path.join("a.bin");
+        write_atomic_streamed(&target, &mut NoopObserver, |_| Err::<(), _>("실패")).unwrap_err();
+        assert_eq!(std::fs::read(&taken_file).unwrap(), b"other process");
+        assert!(taken_dir.is_dir());
     }
 
     #[test]

@@ -66,3 +66,15 @@
 - 실제 전원 차단·커널 crash는 재현하지 않았고 단계 직전 중단 주입과 panic으로 모사했습니다
   (storage V.2.5와 같은 검증 수준).
 - Windows의 부모 디렉터리 sync는 no-op입니다(Windows 지원은 현재 보류).
+
+## 후속 수정(보안 리뷰 반영): 만들지 않은 temp 항목을 지우지 않음
+
+- **문제**: `write_atomic_streamed`는 temp 생성(`create_new`)이 실패해도 실패 정리로 그 temp
+  이름의 `remove_file`을 호출했습니다. 이름이 이미 있으면(다른 process의 temp, 미리 심어 둔 항목)
+  이 호출이 만들지 않은 항목을 지울 수 있었습니다(출처 key 파일 리뷰 S2와 같은 유형).
+- **수정**: temp 생성은 `create_new_temp`로 새 이름(같은 `.<file>.tmp-<pid>-<n>` 형식, GC 해석과
+  호환)을 최대 16회 시도하고, 이미 있는 이름은 열거나 지우지 않습니다. 정리는 이 호출이 만든 temp에만,
+  rename 전 실패에서만 합니다(rename 뒤 `SyncParentDir` 실패에서는 지우지 않음).
+- **검증**: `existing_temp_entries_are_skipped_and_never_removed`(점유 파일·디렉터리·symlink 건너뛰기,
+  모두 점유 시 `AlreadyExists`, symlink 대상 불변, body 실패 정리 후에도 점유 항목 보존). 기존 단계
+  순서·중단 주입·강제 종료 테스트는 그대로 통과합니다.

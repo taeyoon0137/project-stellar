@@ -34,6 +34,7 @@ use std::path::{Component, Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::atomic_write::{create_new_temp, TEMP_NAME_ATTEMPTS};
 use crate::hash_stream::hmac_sha256;
 
 /// key 길이(byte).
@@ -444,43 +445,108 @@ impl OriginKeyFile {
 
     /// key를 읽고, 없으면 새로 만들어 기록합니다(처음 사용 시 생성).
     ///
-    /// temp 파일(`0600`)에 쓰고 sync한 뒤 hard link로 최종 이름을 만듭니다. 최종 이름이 이미
-    /// 있으면(다른 process가 먼저 만듦) 그 key를 씁니다 — 기존 key를 절대 덮어쓰지 않습니다.
-    /// 손상된 key 파일도 덮어쓰지 않고 오류로 돌려줍니다.
+    /// **이 호출이 새로 만든** temp 파일(`0600`, 예측할 수 없는 이름)에 쓰고 sync한 뒤 hard
+    /// link로 최종 이름을 만듭니다. temp 이름이 이미 있으면 다른 이름을 쓰며 기존 항목은 열거나
+    /// 지우지 않습니다. 최종 이름이 이미 있으면(다른 process가 먼저 만듦) 그 key를 다시 읽어
+    /// 씁니다 — 기존 key를 절대 덮어쓰지 않습니다. 손상된 key 파일도 덮어쓰지 않고 오류로
+    /// 돌려줍니다.
     pub fn load_or_create(&self) -> Result<OriginKey, OriginKeyError> {
-        if let Some(key) = self.load()? {
-            return Ok(key);
-        }
-        let io = |path: &Path, e: std::io::Error| OriginKeyError::Io {
-            path: path.to_path_buf(),
-            kind: e.kind(),
-        };
         let Some(dir) = self.path.parent() else {
             return Err(OriginKeyError::InvalidPath {
                 path: self.path.clone(),
             });
         };
-        create_private_dir_all(dir).map_err(|e| io(dir, e))?;
-        let key = OriginKey::generate()?;
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let temp = dir.join(format!(".{ORIGIN_KEY_FILE}.tmp-{}-{n}", std::process::id()));
-        let published = write_private_file(&temp, key.to_file_text().as_bytes())
-            .and_then(|()| std::fs::hard_link(&temp, &self.path));
+        for _ in 0..PUBLISH_ATTEMPTS {
+            if let Some(key) = self.load()? {
+                return Ok(key);
+            }
+            create_private_dir_all(dir).map_err(|e| key_io(dir, e))?;
+            let key = OriginKey::generate()?;
+            let names = temp_key_names(dir)?;
+            match self.publish(dir, &key, names)? {
+                Published::Created => return Ok(key),
+                // 다른 process가 먼저 최종 이름을 만들었습니다. 다시 읽습니다(손상이면 오류).
+                Published::AlreadyExists => continue,
+            }
+        }
+        // 최종 이름이 만들어졌다 사라지기를 반복합니다(동시 삭제 경합).
+        Err(OriginKeyError::Io {
+            path: self.path.clone(),
+            kind: ErrorKind::AlreadyExists,
+        })
+    }
+
+    /// `key`를 `names` 중 처음 비어 있는 이름의 새 temp에 쓰고 최종 이름으로 hard link합니다.
+    ///
+    /// temp 생성의 `AlreadyExists`(이름 점유)와 hard link의 `AlreadyExists`(최종 key 존재)를
+    /// 구분합니다. 앞의 것은 다음 이름으로 넘어가고, 뒤의 것만 [`Published::AlreadyExists`]입니다.
+    /// 정리(`remove_file`)는 이 호출이 만든 temp에만 합니다.
+    fn publish(
+        &self,
+        dir: &Path,
+        key: &OriginKey,
+        names: impl IntoIterator<Item = PathBuf>,
+    ) -> Result<Published, OriginKeyError> {
+        let (temp, mut file) =
+            create_new_temp(&private_new_file_options(), names).map_err(|e| key_io(dir, e))?;
+        let written = file
+            .write_all(key.to_file_text().as_bytes())
+            .and_then(|()| file.sync_all());
+        drop(file);
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&temp);
+            return Err(key_io(&temp, e));
+        }
+        let linked = std::fs::hard_link(&temp, &self.path);
         let _ = std::fs::remove_file(&temp);
-        match published {
+        match linked {
             Ok(()) => {
-                sync_dir(dir).map_err(|e| io(dir, e))?;
-                Ok(key)
+                sync_dir(dir).map_err(|e| key_io(dir, e))?;
+                Ok(Published::Created)
             }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                self.load()?.ok_or(OriginKeyError::Corrupt {
-                    path: self.path.clone(),
-                })
-            }
-            Err(e) => Err(io(&self.path, e)),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(Published::AlreadyExists),
+            Err(e) => Err(key_io(&self.path, e)),
         }
     }
+}
+
+/// 최종 이름 경합 뒤 다시 읽고 만드는 최대 횟수.
+const PUBLISH_ATTEMPTS: usize = 4;
+
+/// [`OriginKeyFile::publish`] 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Published {
+    /// 이 호출의 key로 최종 이름을 만들었습니다.
+    Created,
+    /// 최종 이름이 이미 있습니다(다른 process가 먼저 만듦 — 이 호출의 key는 버림).
+    AlreadyExists,
+}
+
+fn key_io(path: &Path, e: std::io::Error) -> OriginKeyError {
+    OriginKeyError::Io {
+        path: path.to_path_buf(),
+        kind: e.kind(),
+    }
+}
+
+/// 예측할 수 없는 temp 이름 후보(`.origin-key.tmp-<pid>-<n>-<random hex16>`).
+///
+/// 난수 suffix가 있어 같은 디렉터리에 이름을 미리 심어 두는 방식으로 temp 생성을 막거나
+/// 다른 항목을 지우게 할 수 없습니다.
+fn temp_key_names(dir: &Path) -> Result<Vec<PathBuf>, OriginKeyError> {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let mut nonce = [0u8; 8];
+    os_random(&mut nonce).map_err(|e| OriginKeyError::RandomUnavailable { kind: e.kind() })?;
+    let nonce: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
+    Ok((0..TEMP_NAME_ATTEMPTS)
+        .map(|_| {
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            dir.join(format!(
+                ".{ORIGIN_KEY_FILE}.tmp-{}-{n}-{nonce}",
+                std::process::id()
+            ))
+        })
+        .collect())
 }
 
 impl OriginKeyProvider for OriginKeyFile {
@@ -513,8 +579,8 @@ fn create_private_dir_all(dir: &Path) -> std::io::Result<()> {
     builder.create(dir)
 }
 
-/// 소유자 전용(`0600`) 새 파일에 기록하고 sync합니다.
-fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+/// 소유자 전용(`0600`) 새 파일 열기 옵션(`create_new` — 기존 항목·symlink를 열지 않음).
+fn private_new_file_options() -> std::fs::OpenOptions {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -522,7 +588,13 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    let mut file = options.open(path)?;
+    options
+}
+
+/// 소유자 전용(`0600`) 새 파일에 기록하고 sync합니다(테스트 fixture용).
+#[cfg(test)]
+fn write_private_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let mut file = private_new_file_options().open(path)?;
     file.write_all(bytes)?;
     file.sync_all()
 }
@@ -738,6 +810,116 @@ mod tests {
             );
             assert_eq!(std::fs::read_to_string(corrupt.path()).unwrap(), body);
         }
+    }
+
+    fn entry_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// 보안 리뷰 S2 재현: 예측 가능한 temp 이름에 미리 심어 둔 symlink fixture.
+    #[cfg(unix)]
+    #[test]
+    fn squatted_temp_names_neither_block_creation_nor_get_removed() {
+        let dir = TempDir::new("origin-key-squat");
+        let file = OriginKeyFile::in_data_dir(&dir.path.join("data")).unwrap();
+        let key_dir = file.path().parent().unwrap().to_path_buf();
+        create_private_dir_all(&key_dir).unwrap();
+        let victim = dir.path.join("victim");
+        std::fs::write(&victim, b"victim").unwrap();
+        // 이전 형식(`.origin-key.tmp-<pid>-<n>`)의 예측 가능한 이름을 점유합니다.
+        let squatters: Vec<PathBuf> = (0..32)
+            .map(|n| key_dir.join(format!(".{ORIGIN_KEY_FILE}.tmp-{}-{n}", std::process::id())))
+            .collect();
+        for squatter in &squatters {
+            std::os::unix::fs::symlink(&victim, squatter).unwrap();
+        }
+
+        let key = file.load_or_create().unwrap();
+        assert_eq!(file.load().unwrap(), Some(key));
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"victim",
+            "symlink로 쓰지 않음"
+        );
+        for squatter in &squatters {
+            assert!(
+                squatter
+                    .symlink_metadata()
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
+                "{squatter:?} 보존"
+            );
+        }
+        // 남은 항목은 key 파일과 점유 항목뿐입니다(이 호출의 temp는 정리).
+        assert_eq!(entry_names(&key_dir).len(), squatters.len() + 1);
+    }
+
+    /// temp 생성 충돌(이름 점유)과 hard link 충돌(최종 key 존재)을 구분합니다.
+    #[test]
+    fn temp_collision_is_not_mistaken_for_published_key() {
+        let dir = TempDir::new("origin-key-publish");
+        let file = OriginKeyFile::new(dir.path.join("k")).unwrap();
+        let taken = dir.path.join(".k.tmp-taken");
+        std::fs::write(&taken, b"other").unwrap();
+        let fresh = dir.path.join(".k.tmp-fresh");
+
+        // 점유된 이름뿐이면 AlreadyExists I/O 오류입니다(Corrupt 아님). 점유 항목은 보존합니다.
+        assert_eq!(
+            file.publish(&dir.path, &key(1), [taken.clone()])
+                .unwrap_err(),
+            OriginKeyError::Io {
+                path: dir.path.clone(),
+                kind: ErrorKind::AlreadyExists
+            }
+        );
+        assert_eq!(std::fs::read(&taken).unwrap(), b"other");
+        assert!(!file.path().exists());
+
+        // 점유된 이름은 건너뛰고 새 이름으로 만듭니다.
+        assert_eq!(
+            file.publish(&dir.path, &key(1), [taken.clone(), fresh.clone()])
+                .unwrap(),
+            Published::Created
+        );
+        assert_eq!(file.load().unwrap(), Some(key(1)));
+        assert!(!fresh.exists(), "이 호출의 temp는 정리");
+        assert_eq!(std::fs::read(&taken).unwrap(), b"other");
+
+        // 최종 이름이 이미 있으면(다른 process가 먼저 만듦) 덮어쓰지 않고 그대로 둡니다.
+        assert_eq!(
+            file.publish(&dir.path, &key(2), [fresh.clone()]).unwrap(),
+            Published::AlreadyExists
+        );
+        assert_eq!(file.load().unwrap(), Some(key(1)));
+        assert!(!fresh.exists());
+        assert_eq!(
+            entry_names(&dir.path),
+            vec![".k.tmp-taken".to_string(), "k".to_string()]
+        );
+    }
+
+    #[test]
+    fn temp_key_names_are_unpredictable_and_distinct() {
+        let dir = Path::new("/d");
+        let a = temp_key_names(dir).unwrap();
+        let b = temp_key_names(dir).unwrap();
+        assert_eq!(a.len(), TEMP_NAME_ATTEMPTS);
+        let prefix = format!(".{ORIGIN_KEY_FILE}.tmp-{}-", std::process::id());
+        for name in a.iter().chain(&b) {
+            let name = name.file_name().unwrap().to_str().unwrap();
+            let rest = name.strip_prefix(&prefix).unwrap();
+            let (_, nonce) = rest.split_once('-').unwrap();
+            assert_eq!(nonce.len(), 16, "{name}");
+        }
+        assert_ne!(a[0], b[0]);
+        assert_ne!(a[0], a[1]);
     }
 
     #[cfg(unix)]

@@ -192,3 +192,21 @@
 - **검증**: `cargo test -p stellar-assets` lib 116 passed + integration 1 passed + doctest
   4 passed(compile_fail 3, 실행 1), clippy 경고 0, fmt 통과, `validate-crate-graph` 통과,
   `cargo check -p stellar-project` 통과.
+
+## 후속 수정(보안 리뷰 반영): 출처 key 파일 temp 생성 충돌 구분
+
+- **문제**: `OriginKeyFile::load_or_create`가 예측 가능한 temp 이름(`.origin-key.tmp-<pid>-<n>`)을
+  쓰면서, temp 생성(`create_new`)의 `AlreadyExists`를 hard link의 `AlreadyExists`("다른 process가
+  먼저 key를 만듦")와 같은 분기로 처리했습니다. 이름을 미리 점유하면 다시 읽어도 key가 없어
+  잘못된 `Corrupt`를 돌려줬고, 이 호출이 만들지 않은 점유 항목을 무조건 `remove_file`했습니다.
+- **수정**: temp 이름에 매 호출 OS 난수 8 bytes suffix를 붙이고(`.origin-key.tmp-<pid>-<n>-<hex16>`),
+  `atomic_write::create_new_temp`로 후보 이름을 차례로 `create_new` 합니다. 이미 있는 이름은 열거나
+  지우지 않고 다음 이름으로 넘어가며, 모두 차 있으면 `Io { kind: AlreadyExists }`입니다.
+  hard link 단계의 `AlreadyExists`만 "이미 발행됨"으로 보고 다시 읽습니다(최대 4회, 손상 파일은
+  `Corrupt`). `remove_file`은 이 호출이 만든 temp에만 합니다.
+- **검증**: `squatted_temp_names_neither_block_creation_nor_get_removed`(이전 형식 이름 32개를
+  victim 파일 symlink로 점유 → 정상 생성, victim 불변, 점유 symlink 보존, temp 미잔류),
+  `temp_collision_is_not_mistaken_for_published_key`(점유 이름뿐이면 `AlreadyExists` I/O 오류,
+  점유 이름 건너뛰기, 최종 key가 있으면 덮어쓰지 않음), `temp_key_names_are_unpredictable_and_distinct`.
+  `cargo test -p stellar-assets` lib 133 passed + integration 1 passed + doctest 8 passed, clippy
+  경고 0, fmt 통과.
