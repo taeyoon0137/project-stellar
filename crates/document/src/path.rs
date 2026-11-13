@@ -447,6 +447,87 @@ impl IdentifiedPath {
     }
 }
 
+// --- bounds (VI.6.4) ---
+
+/// 3차 Bézier 한 축의 극값 파라미터(0 < t < 1).
+fn cubic_extrema_t(p0: f64, p1: f64, p2: f64, p3: f64) -> Vec<f64> {
+    // B'(t)/3 = a t² + b t + c.
+    let a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+    let b = 2.0 * (p0 - 2.0 * p1 + p2);
+    let c = p1 - p0;
+    let mut roots = Vec::new();
+    if a.abs() < 1e-12 {
+        if b.abs() > 1e-12 {
+            roots.push(-c / b);
+        }
+    } else {
+        let disc = b * b - 4.0 * a * c;
+        if disc >= 0.0 {
+            let sq = disc.sqrt();
+            roots.push((-b + sq) / (2.0 * a));
+            roots.push((-b - sq) / (2.0 * a));
+        }
+    }
+    roots.into_iter().filter(|t| *t > 0.0 && *t < 1.0).collect()
+}
+
+fn cubic_at(p0: f64, p1: f64, p2: f64, p3: f64, t: f64) -> f64 {
+    let u = 1.0 - t;
+    u * u * u * p0 + 3.0 * u * u * t * p1 + 3.0 * u * t * t * p2 + t * t * t * p3
+}
+
+/// path의 정확한 geometry bounds(control point가 아니라 곡선 자체).
+///
+/// cubic은 각 축 도함수의 근(극값)을 포함해 계산합니다. 빈 path는 `None`.
+pub fn path_bounds(commands: &[PathCommand]) -> Option<stellar_core_types::value::Rect> {
+    let mut min = (f64::INFINITY, f64::INFINITY);
+    let mut max = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    let mut include = |x: f64, y: f64| {
+        min = (min.0.min(x), min.1.min(y));
+        max = (max.0.max(x), max.1.max(y));
+    };
+    let mut current: Option<(f64, f64)> = None;
+    for command in commands {
+        match *command {
+            PathCommand::MoveTo(p) | PathCommand::LineTo(p) => {
+                let point = (p.x() as f64, p.y() as f64);
+                include(point.0, point.1);
+                current = Some(point);
+            }
+            PathCommand::CubicTo { c1, c2, to } => {
+                let start = current.unwrap_or((c1.x() as f64, c1.y() as f64));
+                let (x1, y1) = (c1.x() as f64, c1.y() as f64);
+                let (x2, y2) = (c2.x() as f64, c2.y() as f64);
+                let (x3, y3) = (to.x() as f64, to.y() as f64);
+                include(start.0, start.1);
+                include(x3, y3);
+                for t in cubic_extrema_t(start.0, x1, x2, x3) {
+                    include(
+                        cubic_at(start.0, x1, x2, x3, t),
+                        cubic_at(start.1, y1, y2, y3, t),
+                    );
+                }
+                for t in cubic_extrema_t(start.1, y1, y2, y3) {
+                    include(
+                        cubic_at(start.0, x1, x2, x3, t),
+                        cubic_at(start.1, y1, y2, y3, t),
+                    );
+                }
+                current = Some((x3, y3));
+            }
+            PathCommand::Close => {}
+        }
+    }
+    if min.0.is_infinite() {
+        return None;
+    }
+    let origin = Vec2::new(min.0 as f32, min.1 as f32).ok()?;
+    let size =
+        stellar_core_types::value::Size2::new((max.0 - min.0) as f32, (max.1 - min.1) as f32)
+            .ok()?;
+    Some(stellar_core_types::value::Rect::new(origin, size))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,6 +782,121 @@ mod tests {
                 IdentifiedPath::new(data, bad).unwrap_err(),
                 PathError::IdShapeMismatch { index: 0 }
             );
+        }
+    }
+
+    mod bounds {
+        use super::super::*;
+
+        fn p(x: f32, y: f32) -> Vec2 {
+            Vec2::new(x, y).unwrap()
+        }
+
+        fn assert_bounds(commands: &[PathCommand], expected: (f32, f32, f32, f32), tol: f32) {
+            let r = path_bounds(commands).expect("bounds");
+            let got = (
+                r.origin().x(),
+                r.origin().y(),
+                r.size().width(),
+                r.size().height(),
+            );
+            let e = [expected.0, expected.1, expected.2, expected.3];
+            for (a, b) in [got.0, got.1, got.2, got.3].iter().zip(e) {
+                assert!((a - b).abs() <= tol, "{got:?} vs {expected:?}");
+            }
+        }
+
+        #[test]
+        fn cubic_extrema_analytic_fixtures() {
+            // 검증 기준(VI.6.4): analytic reference fixture 허용 오차 통과.
+            // 아치: y 극값은 t=0.5에서 0.375·100·2 = 75 (control point 100이 아님).
+            let arch = [
+                PathCommand::MoveTo(p(0.0, 0.0)),
+                PathCommand::CubicTo {
+                    c1: p(0.0, 100.0),
+                    c2: p(100.0, 100.0),
+                    to: p(100.0, 0.0),
+                },
+            ];
+            assert_bounds(&arch, (0.0, 0.0, 100.0, 75.0), 1e-4);
+
+            // 옆으로 볼록: x(t) = 300·t(1−t) → t=0.5에서 최대 75 (control x=100이 아님).
+            let side = [
+                PathCommand::MoveTo(p(0.0, 0.0)),
+                PathCommand::CubicTo {
+                    c1: p(100.0, 0.0),
+                    c2: p(100.0, 100.0),
+                    to: p(0.0, 100.0),
+                },
+            ];
+            assert_bounds(&side, (0.0, 0.0, 75.0, 100.0), 1e-4);
+
+            // 비대칭 곡선: 독립 기준으로 10,001점 고밀도 샘플링과 비교.
+            let (p0, p1, p2, p3) = (
+                (0.0f64, 0.0f64),
+                (130.0, -40.0),
+                (-60.0, 90.0),
+                (40.0, 20.0),
+            );
+            let curve = [
+                PathCommand::MoveTo(p(p0.0 as f32, p0.1 as f32)),
+                PathCommand::CubicTo {
+                    c1: p(p1.0 as f32, p1.1 as f32),
+                    c2: p(p2.0 as f32, p2.1 as f32),
+                    to: p(p3.0 as f32, p3.1 as f32),
+                },
+            ];
+            let mut lo = (f64::INFINITY, f64::INFINITY);
+            let mut hi = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+            for i in 0..=10_000 {
+                let s = i as f64 / 10_000.0;
+                let u = 1.0 - s;
+                let bx = u * u * u * p0.0
+                    + 3.0 * u * u * s * p1.0
+                    + 3.0 * u * s * s * p2.0
+                    + s * s * s * p3.0;
+                let by = u * u * u * p0.1
+                    + 3.0 * u * u * s * p1.1
+                    + 3.0 * u * s * s * p2.1
+                    + s * s * s * p3.1;
+                lo = (lo.0.min(bx), lo.1.min(by));
+                hi = (hi.0.max(bx), hi.1.max(by));
+            }
+            assert_bounds(
+                &curve,
+                (
+                    lo.0 as f32,
+                    lo.1 as f32,
+                    (hi.0 - lo.0) as f32,
+                    (hi.1 - lo.1) as f32,
+                ),
+                1e-2,
+            );
+            // 극값이 control point hull보다 안쪽(control bbox와 다름).
+            let r = path_bounds(&curve).unwrap();
+            assert!(r.origin().y() > -40.0 && r.origin().y() + r.size().height() < 90.0);
+        }
+
+        #[test]
+        fn ellipse_path_bounds_equal_its_bounds() {
+            use crate::shape::EllipseParams;
+            use stellar_core_types::value::{Rect, Size2};
+            let ellipse = EllipseParams {
+                bounds: Rect::new(p(10.0, 20.0), Size2::new(200.0, 100.0).unwrap()),
+            };
+            assert_bounds(&ellipse.to_path(), (10.0, 20.0, 200.0, 100.0), 1e-3);
+        }
+
+        #[test]
+        fn lines_and_empty_path() {
+            let poly = [
+                PathCommand::MoveTo(p(5.0, 5.0)),
+                PathCommand::LineTo(p(-3.0, 8.0)),
+                PathCommand::LineTo(p(4.0, -2.0)),
+                PathCommand::Close,
+            ];
+            assert_bounds(&poly, (-3.0, -2.0, 8.0, 10.0), 0.0);
+            assert!(path_bounds(&[]).is_none());
         }
     }
 }

@@ -579,7 +579,7 @@ tools/xtask/
 | VI.6.1 | `[x]` | Path command에 MoveTo, LineTo, CubicTo, Close만 정의합니다. Quadratic은 import 단계에서 Cubic으로 정규화합니다. | command round-trip. | III.3.3 |
 | VI.6.2 | `[x]` | subpath와 winding rule을 정의하고 시작 MoveTo 없는 command를 거부합니다. | malformed path fixture 실패. | VI.6.1 |
 | VI.6.3 | `[x]` | Path point와 handle에 StableId를 부여해 개별 point diff가 가능하게 합니다. | point 삽입 후 기존 point ID 유지. | VI.6.1, III.1.1 |
-| VI.6.4 | `[ ]` | Path bounds 계산을 구현하고 cubic extrema를 포함합니다. | analytic reference fixture 허용 오차 통과. | VI.6.1 |
+| VI.6.4 | `[x]` | Path bounds 계산을 구현하고 cubic extrema를 포함합니다. | analytic reference fixture 허용 오차 통과. | VI.6.1 |
 | VI.6.5 | `[ ]` | Shape→Path 파괴 변환 계획을 구현합니다. 사용자가 명시한 command에서만 node kind를 바꾸고 StableId는 유지합니다. | 변환 전 렌더 geometry 동일. | VI.5.6, VI.6.1 |
 
 ### VI.7 Text
