@@ -4,6 +4,10 @@
 //! schema와 version**을 정의합니다. 이 형식은 project serializer(문서 chunk·manifest)와 별개이며, 기록
 //! 위치(ignored path·OS app data)와 복원 정책은 후속 작업(XXV.1.2~XXV.1.5)의 몫입니다.
 //!
+//! journal 하나는 창 history의 **복원 가능한 전체 상태**입니다: undo stack, redo stack, 다음 sequence와
+//! 그 상태가 기준으로 삼은 저장 세대([`JournalBase`]). undo stack 맨 위 상태의 문서가 base 세대 내용과
+//! 같아야 하며(기록 쪽 계약), 복원은 현재 세대가 base와 같을 때만 합니다(XXV.1.3).
+//!
 //! canonical 규칙(V.1): 고정 폭 little-endian, `u32` 길이 프리픽스, trailing bytes 거부.
 //!
 //! | 필드 | 형식 |
@@ -11,15 +15,29 @@
 //! | magic | `b"STLRHJNL"` 8바이트 |
 //! | format version | `u32` — reader가 지원하는 값과 **정확히** 같아야 함 |
 //! | schema version | `u32` — 기록 시점 schema |
-//! | minimum reader version | `u32` — 이 journal을 읽는 데 필요한 최소 schema(V.8.1과 같은 규칙) |
+//! | minimum reader version | `u32` — 이 journal을 읽는 데 필요한 최소 schema |
+//! | minimum writer version | `u32` — 이 journal을 이어 기록(수정 저장)해도 안전한 최소 schema |
 //! | window | 16바이트 [`WindowSessionId`] |
-//! | base generation | `u64` [`StorageGeneration`] — journal이 기준으로 삼은 저장 세대 |
-//! | 항목 수 | `u32` |
-//! | 항목 | `u32` 길이 + 항목 bytes |
+//! | base generation | `u64` [`StorageGeneration`] |
+//! | base manifest hash | 32바이트 — base 세대 manifest content hash(`design/current`가 가리키는 값) |
+//! | next sequence | `u64` — 복원한 history가 이어 할당할 다음 [`HistorySequence`] |
+//! | undo 항목 수 | `u32` + (`u32` 길이 + 항목 bytes)* — 오래된 것부터 |
+//! | redo 항목 수 | `u32` + (`u32` 길이 + 항목 bytes)* — 마지막이 다음 redo |
+//!
+//! version 규칙(V.8.1 `assess_compatibility`와 같음): 선언은 `minimum reader <= minimum writer <=
+//! schema`여야 하고, reader schema `A`가 `A < minimum reader`이면 거부, `A < minimum writer`이면 읽기
+//! 전용([`JournalAccess::ReadOnly`]: 복원은 할 수 있으나 이 reader가 같은 journal을 다시 쓰면 안 됨),
+//! 그 밖은 편집 가능입니다.
+//!
+//! sequence 무결성: undo는 엄격 증가, redo는 엄격 감소(맨 위가 가장 작음), 마지막 undo < 마지막 redo,
+//! next sequence > 모든 항목 sequence.
 //!
 //! 항목: sequence `u64` + origin([`CommandOrigin`] canonical) + grouping key(tag + 필드) + payload(tag 1
 //! 문서: 정방향·역방향 [`CommandTransaction`] bytes / tag 2 선택: 정방향·역방향 [`SetSelection`] bytes) +
 //! 선택 복원 정보(flag + 편집 전·후 선택). 모든 tag는 저장 계약이라 바꾸거나 재사용하지 않습니다.
+//!
+//! 개정(2026-11-14, 기록 경로 XXV.1.2 이전이라 기록된 journal 없음): redo stack, next sequence, minimum
+//! writer version, base manifest hash를 schema 1에 추가했습니다.
 
 use std::fmt;
 
@@ -36,6 +54,7 @@ use crate::entry::{
     CommandSignature, GroupingKey, HistoryEntry, HistoryPayload, HistorySequence, SelectionRestore,
     TextInputKind,
 };
+use crate::history::History;
 
 /// journal magic.
 pub const JOURNAL_MAGIC: [u8; 8] = *b"STLRHJNL";
@@ -45,6 +64,8 @@ pub const JOURNAL_FORMAT_VERSION: u32 = 1;
 pub const JOURNAL_SCHEMA_VERSION: u32 = 1;
 /// 이 writer가 기록하는 journal을 읽는 데 필요한 최소 schema 버전.
 pub const JOURNAL_MINIMUM_READER_VERSION: u32 = 1;
+/// 이 writer가 기록하는 journal을 이어 기록해도 안전한 최소 schema 버전.
+pub const JOURNAL_MINIMUM_WRITER_VERSION: u32 = 1;
 
 /// journal 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +84,7 @@ pub enum JournalError {
         /// 이 reader의 schema.
         reader: u32,
     },
-    /// 버전 선언 자체가 모순입니다(최소 reader > schema).
+    /// 버전 선언 자체가 모순입니다(`최소 reader <= 최소 writer <= schema` 위반).
     InvalidVersions,
     /// 입력이 부족하거나 형식이 아닙니다.
     Malformed {
@@ -100,6 +121,35 @@ impl From<CommandCodecError> for JournalError {
     }
 }
 
+/// journal이 기준으로 삼은 저장 세대. 두 값이 모두 같아야 같은 base입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct JournalBase {
+    /// 창이 기준으로 삼은 storage generation 번호(§22.2 BaseGeneration).
+    pub generation: StorageGeneration,
+    /// base 세대 manifest content hash(32바이트, `design/current`가 가리키는 값). history crate는
+    /// storage에 의존하지 않으므로 값을 해석하지 않고 같음만 비교합니다.
+    pub manifest_hash: [u8; 32],
+}
+
+impl JournalBase {
+    /// base를 만듭니다.
+    pub const fn new(generation: StorageGeneration, manifest_hash: [u8; 32]) -> JournalBase {
+        JournalBase {
+            generation,
+            manifest_hash,
+        }
+    }
+}
+
+/// reader가 journal을 어떻게 다룰 수 있는지(V.8.1 판정).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JournalAccess {
+    /// 복원하고 이어 기록할 수 있습니다.
+    Editable,
+    /// 복원만 할 수 있고 이 reader가 같은 journal을 다시 쓰면 안 됩니다.
+    ReadOnly,
+}
+
 /// journal header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JournalHeader {
@@ -109,32 +159,64 @@ pub struct JournalHeader {
     pub schema_version: u32,
     /// 읽는 데 필요한 최소 schema 버전.
     pub minimum_reader_version: u32,
+    /// 이어 기록(수정 저장)에 필요한 최소 schema 버전.
+    pub minimum_writer_version: u32,
     /// 기록한 창.
     pub window: WindowSessionId,
     /// journal이 기준으로 삼은 저장 세대.
-    pub base_generation: StorageGeneration,
+    pub base: JournalBase,
 }
 
 impl JournalHeader {
     /// 현재 writer 버전으로 header를 만듭니다.
-    pub fn current(window: WindowSessionId, base_generation: StorageGeneration) -> JournalHeader {
+    pub fn current(window: WindowSessionId, base: JournalBase) -> JournalHeader {
         JournalHeader {
             format_version: JOURNAL_FORMAT_VERSION,
             schema_version: JOURNAL_SCHEMA_VERSION,
             minimum_reader_version: JOURNAL_MINIMUM_READER_VERSION,
+            minimum_writer_version: JOURNAL_MINIMUM_WRITER_VERSION,
             window,
-            base_generation,
+            base,
         }
+    }
+
+    /// reader schema `reader_version`의 접근 판정(V.8.1). 읽을 수 없으면 오류입니다.
+    pub fn access(&self, reader_version: u32) -> Result<JournalAccess, JournalError> {
+        if self.format_version != JOURNAL_FORMAT_VERSION {
+            return Err(JournalError::UnsupportedFormat {
+                found: self.format_version,
+            });
+        }
+        if self.minimum_reader_version > self.minimum_writer_version
+            || self.minimum_writer_version > self.schema_version
+        {
+            return Err(JournalError::InvalidVersions);
+        }
+        if reader_version < self.minimum_reader_version {
+            return Err(JournalError::ReaderTooOld {
+                required: self.minimum_reader_version,
+                reader: reader_version,
+            });
+        }
+        Ok(if reader_version < self.minimum_writer_version {
+            JournalAccess::ReadOnly
+        } else {
+            JournalAccess::Editable
+        })
     }
 }
 
-/// 창 하나의 history journal.
+/// 창 하나의 history journal(복원 가능한 history 전체 상태).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HistoryJournal {
     /// header.
     pub header: JournalHeader,
-    /// 항목(오래된 것부터).
-    pub entries: Vec<HistoryEntry>,
+    /// 복원한 history가 이어 할당할 다음 sequence 값.
+    pub next_sequence: u64,
+    /// undo stack(오래된 것부터).
+    pub undo: Vec<HistoryEntry>,
+    /// redo stack(마지막이 다음 redo).
+    pub redo: Vec<HistoryEntry>,
 }
 
 // --- LE writer/reader ---
@@ -427,17 +509,89 @@ pub fn decode_entry(bytes: &[u8]) -> Result<HistoryEntry, JournalError> {
     })
 }
 
+fn malformed(reason: &'static str) -> JournalError {
+    JournalError::Malformed { reason }
+}
+
+/// undo·redo stack과 next sequence의 sequence 무결성을 검사합니다.
+fn check_sequences(
+    undo: &[HistoryEntry],
+    redo: &[HistoryEntry],
+    next_sequence: u64,
+) -> Result<(), JournalError> {
+    if undo.windows(2).any(|w| w[0].sequence >= w[1].sequence) {
+        return Err(malformed("undo sequence가 단조 증가하지 않습니다"));
+    }
+    if redo.windows(2).any(|w| w[0].sequence <= w[1].sequence) {
+        return Err(malformed("redo sequence가 단조 감소하지 않습니다"));
+    }
+    if let (Some(last_undo), Some(next_redo)) = (undo.last(), redo.last()) {
+        if last_undo.sequence >= next_redo.sequence {
+            return Err(malformed("redo 항목이 undo 항목보다 오래되었습니다"));
+        }
+    }
+    let newest = undo
+        .last()
+        .into_iter()
+        .chain(redo.first())
+        .map(|entry| entry.sequence.get())
+        .max()
+        .unwrap_or(0);
+    if next_sequence == 0 || next_sequence <= newest {
+        return Err(malformed(
+            "next sequence가 기록된 sequence보다 크지 않습니다",
+        ));
+    }
+    Ok(())
+}
+
+fn write_stack(out: &mut Out, entries: &[HistoryEntry]) {
+    out.len(entries.len());
+    for entry in entries {
+        out.bytes(&encode_entry(entry));
+    }
+}
+
+fn read_stack(input: &mut In<'_>) -> Result<Vec<HistoryEntry>, JournalError> {
+    let count = input.len()?;
+    let mut entries = Vec::with_capacity(count);
+    for _ in 0..count {
+        entries.push(decode_entry(input.bytes()?)?);
+    }
+    Ok(entries)
+}
+
 impl HistoryJournal {
-    /// 현재 버전 header와 항목으로 journal을 만듭니다.
+    /// 현재 버전 header로 journal을 만듭니다. sequence 무결성은 디코딩([`HistoryJournal::decode`])이
+    /// 검사합니다.
     pub fn new(
         window: WindowSessionId,
-        base_generation: StorageGeneration,
-        entries: Vec<HistoryEntry>,
+        base: JournalBase,
+        next_sequence: u64,
+        undo: Vec<HistoryEntry>,
+        redo: Vec<HistoryEntry>,
     ) -> HistoryJournal {
         HistoryJournal {
-            header: JournalHeader::current(window, base_generation),
-            entries,
+            header: JournalHeader::current(window, base),
+            next_sequence,
+            undo,
+            redo,
         }
+    }
+
+    /// 창 history의 현재 undo·redo stack과 다음 sequence를 담은 journal(현재 writer 버전).
+    pub fn capture(
+        window: WindowSessionId,
+        base: JournalBase,
+        history: &History,
+    ) -> HistoryJournal {
+        HistoryJournal::new(
+            window,
+            base,
+            history.next_sequence(),
+            history.entries().to_vec(),
+            history.redo_entries().to_vec(),
+        )
     }
 
     /// canonical bytes.
@@ -447,12 +601,13 @@ impl HistoryJournal {
         out.u32(self.header.format_version);
         out.u32(self.header.schema_version);
         out.u32(self.header.minimum_reader_version);
+        out.u32(self.header.minimum_writer_version);
         out.id(self.header.window.stable_id());
-        out.u64(self.header.base_generation.0);
-        out.len(self.entries.len());
-        for entry in &self.entries {
-            out.bytes(&encode_entry(entry));
-        }
+        out.u64(self.header.base.generation.0);
+        out.0.extend_from_slice(&self.header.base.manifest_hash);
+        out.u64(self.next_sequence);
+        write_stack(&mut out, &self.undo);
+        write_stack(&mut out, &self.redo);
         out.0
     }
 
@@ -461,7 +616,8 @@ impl HistoryJournal {
         HistoryJournal::decode_with_reader(bytes, JOURNAL_SCHEMA_VERSION)
     }
 
-    /// reader schema `reader_version`으로 디코딩합니다(버전 판정 검증용).
+    /// reader schema `reader_version`으로 디코딩합니다. 읽을 수 없으면(형식·선언 모순·reader가 낮음)
+    /// 오류이고, 읽기 전용 여부는 [`JournalHeader::access`]로 확인합니다.
     pub fn decode_with_reader(
         bytes: &[u8],
         reader_version: u32,
@@ -481,46 +637,36 @@ impl HistoryJournal {
         }
         let schema_version = input.u32()?;
         let minimum_reader_version = input.u32()?;
-        if minimum_reader_version > schema_version {
-            return Err(JournalError::InvalidVersions);
-        }
-        if reader_version < minimum_reader_version {
-            return Err(JournalError::ReaderTooOld {
-                required: minimum_reader_version,
-                reader: reader_version,
-            });
-        }
+        let minimum_writer_version = input.u32()?;
         let window = WindowSessionId::from_stable_id(input.id()?);
-        let base_generation = StorageGeneration(input.u64()?);
-        let count = input.len()?;
-        let mut entries = Vec::with_capacity(count);
-        let mut previous: Option<HistorySequence> = None;
-        for _ in 0..count {
-            let entry = decode_entry(input.bytes()?)?;
-            if previous.is_some_and(|p| p >= entry.sequence) {
-                return Err(JournalError::Malformed {
-                    reason: "sequence가 단조 증가하지 않습니다",
-                });
-            }
-            previous = Some(entry.sequence);
-            entries.push(entry);
-        }
+        let generation = StorageGeneration(input.u64()?);
+        let mut manifest_hash = [0u8; 32];
+        manifest_hash.copy_from_slice(input.take(32)?);
+        let header = JournalHeader {
+            format_version,
+            schema_version,
+            minimum_reader_version,
+            minimum_writer_version,
+            window,
+            base: JournalBase::new(generation, manifest_hash),
+        };
+        header.access(reader_version)?;
+        let next_sequence = input.u64()?;
+        let undo = read_stack(&mut input)?;
+        let redo = read_stack(&mut input)?;
         input.end()?;
+        check_sequences(&undo, &redo, next_sequence)?;
         Ok(HistoryJournal {
-            header: JournalHeader {
-                format_version,
-                schema_version,
-                minimum_reader_version,
-                window,
-                base_generation,
-            },
-            entries,
+            header,
+            next_sequence,
+            undo,
+            redo,
         })
     }
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::history::test_fixtures::{sid, small_state, tx};
     use crate::window::WindowHistory;
@@ -529,8 +675,13 @@ mod tests {
     use stellar_commands::kind::CommandKind;
     use stellar_core_types::clock::ManualClock;
 
-    /// 모든 grouping·payload 종류를 담은 창 history.
-    fn rich_history() -> WindowHistory {
+    /// 테스트 base(generation `n`, hash 바이트 `n`).
+    pub(crate) fn base(n: u8) -> JournalBase {
+        JournalBase::new(StorageGeneration(u64::from(n)), [n; 32])
+    }
+
+    /// 모든 grouping·payload 종류를 담은 창 history. 마지막 두 항목은 undo해 redo stack에 있습니다.
+    pub(crate) fn rich_history() -> WindowHistory {
         let mut history = WindowHistory::new(WindowSessionId::from_stable_id(sid(500)));
         let mut doc = small_state();
         let clock = ManualClock::new(0);
@@ -568,51 +719,139 @@ mod tests {
         let t = tx(&doc, 1_004, Command::rename_node(sid(11), "scrub"));
         history.update_preview(&mut doc, &t).unwrap();
         history.end_preview().unwrap();
+        history.undo(&mut doc).unwrap().unwrap();
+        history.undo(&mut doc).unwrap().unwrap();
         history
     }
 
-    #[test]
-    fn journal_round_trips_every_entry_kind() {
-        // 검증 기준(XXV.1.1): round-trip.
+    fn rich_journal() -> HistoryJournal {
         let history = rich_history();
-        let entries = history.history().entries().to_vec();
-        assert_eq!(entries.len(), 6);
+        HistoryJournal::capture(history.window(), base(42), history.history())
+    }
+
+    /// header 필드 위치(magic 8 + format 4 + schema 4 + 최소 reader 4 + 최소 writer 4).
+    const SCHEMA_AT: usize = 12;
+    const MIN_READER_AT: usize = 16;
+    const MIN_WRITER_AT: usize = 20;
+    /// window 16 + generation 8 + hash 32 뒤 next sequence.
+    const NEXT_SEQUENCE_AT: usize = 24 + 16 + 8 + 32;
+
+    fn set_u32(bytes: &mut [u8], at: usize, value: u32) {
+        bytes[at..at + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    #[test]
+    fn journal_round_trips_undo_redo_and_next_sequence() {
+        // 검증 기준(XXV.1.1): round-trip. 복원에 필요한 redo stack·next sequence·base도 왕복합니다.
+        let journal = rich_journal();
+        assert_eq!(journal.undo.len(), 4);
+        assert_eq!(journal.redo.len(), 2, "undo 2회 → redo stack");
+        assert_eq!(journal.next_sequence, 7);
         assert!(
-            entries.iter().any(|e| e.selection.is_some()),
+            journal.undo.iter().any(|e| e.selection.is_some()),
             "선택 복원 정보 포함"
         );
-        let journal = HistoryJournal::new(history.window(), StorageGeneration(42), entries.clone());
         let bytes = journal.encode();
         assert_eq!(&bytes[..8], b"STLRHJNL");
         let decoded = HistoryJournal::decode(&bytes).unwrap();
         assert_eq!(decoded, journal);
         assert_eq!(decoded.encode(), bytes, "재인코딩 동일");
-        assert_eq!(decoded.header.base_generation, StorageGeneration(42));
+        assert_eq!(decoded.header.base, base(42));
         assert_eq!(decoded.header.schema_version, JOURNAL_SCHEMA_VERSION);
-        for entry in &entries {
+        assert_eq!(
+            decoded.header.minimum_writer_version,
+            JOURNAL_MINIMUM_WRITER_VERSION
+        );
+        assert_eq!(
+            decoded.header.access(JOURNAL_SCHEMA_VERSION),
+            Ok(JournalAccess::Editable)
+        );
+        for entry in journal.undo.iter().chain(&journal.redo) {
             assert_eq!(&decode_entry(&encode_entry(entry)).unwrap(), entry);
         }
         // 추가 grouping 종류도 왕복합니다.
-        let mut area = entries[1].clone();
+        let mut area = journal.undo[1].clone();
         area.grouping = Some(GroupingKey::AreaSelection);
         assert_eq!(decode_entry(&encode_entry(&area)).unwrap(), area);
-        let mut no_key = entries[0].clone();
+        let mut no_key = journal.undo[0].clone();
         no_key.grouping = Some(GroupingKey::KeyboardRepeat(CommandSignature {
             kind: CommandKind::MoveNode,
             target: sid(11),
             key: None,
         }));
         assert_eq!(decode_entry(&encode_entry(&no_key)).unwrap(), no_key);
+        // 빈 history도 왕복합니다(next sequence 1).
+        let empty = HistoryJournal::capture(
+            WindowSessionId::from_stable_id(sid(501)),
+            base(1),
+            &History::new(),
+        );
+        assert_eq!(empty.next_sequence, 1);
+        assert_eq!(HistoryJournal::decode(&empty.encode()).unwrap(), empty);
     }
 
     #[test]
-    fn version_rules_and_malformed_input_are_rejected() {
-        let history = rich_history();
-        let journal = HistoryJournal::new(
-            history.window(),
-            StorageGeneration(1),
-            history.history().entries().to_vec(),
+    fn version_rules_follow_v81_matrix() {
+        // V.8.1과 같은 판정: format 정확 일치, reader < 최소 reader 거부, reader < 최소 writer 읽기 전용.
+        let bytes = rich_journal().encode();
+        let mut format = bytes.clone();
+        set_u32(&mut format, 8, 2);
+        assert_eq!(
+            HistoryJournal::decode(&format),
+            Err(JournalError::UnsupportedFormat { found: 2 })
         );
+        // 미래 writer: schema 5, 최소 reader 3, 최소 writer 4.
+        let mut future = bytes.clone();
+        set_u32(&mut future, SCHEMA_AT, 5);
+        set_u32(&mut future, MIN_READER_AT, 3);
+        set_u32(&mut future, MIN_WRITER_AT, 4);
+        for (reader, expected) in [
+            (5, Ok(JournalAccess::Editable)),
+            (4, Ok(JournalAccess::Editable)),
+            (3, Ok(JournalAccess::ReadOnly)),
+            (
+                2,
+                Err(JournalError::ReaderTooOld {
+                    required: 3,
+                    reader: 2,
+                }),
+            ),
+        ] {
+            let decoded = HistoryJournal::decode_with_reader(&future, reader);
+            match expected {
+                Ok(access) => {
+                    assert_eq!(
+                        decoded.unwrap().header.access(reader),
+                        Ok(access),
+                        "{reader}"
+                    )
+                }
+                Err(error) => assert_eq!(decoded, Err(error), "{reader}"),
+            }
+        }
+        assert_eq!(
+            HistoryJournal::decode(&future),
+            Err(JournalError::ReaderTooOld {
+                required: 3,
+                reader: 1
+            })
+        );
+        // 모순 선언: 최소 reader > 최소 writer, 최소 writer > schema.
+        let mut reader_above_writer = future.clone();
+        set_u32(&mut reader_above_writer, MIN_READER_AT, 5);
+        let mut writer_above_schema = future.clone();
+        set_u32(&mut writer_above_schema, MIN_WRITER_AT, 6);
+        for bad in [reader_above_writer, writer_above_schema] {
+            assert_eq!(
+                HistoryJournal::decode_with_reader(&bad, 9),
+                Err(JournalError::InvalidVersions)
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_input_and_sequence_integrity_are_rejected() {
+        let journal = rich_journal();
         let bytes = journal.encode();
         let mut bad = bytes.clone();
         bad[0] = b'X';
@@ -621,46 +860,46 @@ mod tests {
             HistoryJournal::decode(&bytes[..4]),
             Err(JournalError::BadMagic)
         );
-        let mut format = bytes.clone();
-        format[8..12].copy_from_slice(&2u32.to_le_bytes());
-        assert_eq!(
-            HistoryJournal::decode(&format),
-            Err(JournalError::UnsupportedFormat { found: 2 })
-        );
-        // 미래 writer(schema 3, 최소 reader 2) → 현재 reader(1) 거부, reader 2는 허용.
-        let mut future = bytes.clone();
-        future[12..16].copy_from_slice(&3u32.to_le_bytes());
-        future[16..20].copy_from_slice(&2u32.to_le_bytes());
-        assert_eq!(
-            HistoryJournal::decode(&future),
-            Err(JournalError::ReaderTooOld {
-                required: 2,
-                reader: 1
-            })
-        );
-        assert!(HistoryJournal::decode_with_reader(&future, 2).is_ok());
-        let mut contradictory = bytes.clone();
-        contradictory[16..20].copy_from_slice(&9u32.to_le_bytes());
-        assert_eq!(
-            HistoryJournal::decode_with_reader(&contradictory, 9),
-            Err(JournalError::InvalidVersions)
-        );
-        for cut in [20, 40, bytes.len() - 1] {
+        for cut in [20, 40, NEXT_SEQUENCE_AT + 4, bytes.len() - 1] {
             assert!(HistoryJournal::decode(&bytes[..cut]).is_err(), "절단 {cut}");
         }
         let mut trailing = bytes.clone();
         trailing.push(0);
         assert!(HistoryJournal::decode(&trailing).is_err());
-        // sequence 역순 항목 거부.
-        let mut entries = history.history().entries().to_vec();
-        entries.swap(0, 1);
-        let shuffled =
-            HistoryJournal::new(history.window(), StorageGeneration(1), entries).encode();
+
+        let rejected = |journal: HistoryJournal| HistoryJournal::decode(&journal.encode());
+        let reason = |reason| Err(JournalError::Malformed { reason });
+        // undo 역순.
+        let mut undo_swapped = journal.clone();
+        undo_swapped.undo.swap(0, 1);
         assert_eq!(
-            HistoryJournal::decode(&shuffled),
-            Err(JournalError::Malformed {
-                reason: "sequence가 단조 증가하지 않습니다"
-            })
+            rejected(undo_swapped),
+            reason("undo sequence가 단조 증가하지 않습니다")
         );
+        // redo 순서 뒤집힘(다음 redo가 가장 작아야 함).
+        let mut redo_swapped = journal.clone();
+        redo_swapped.redo.swap(0, 1);
+        assert_eq!(
+            rejected(redo_swapped),
+            reason("redo sequence가 단조 감소하지 않습니다")
+        );
+        // redo 항목이 undo 맨 위보다 오래됨.
+        let mut crossed = journal.clone();
+        let oldest = crossed.undo.remove(0);
+        crossed.redo.push(oldest);
+        assert_eq!(
+            rejected(crossed),
+            reason("redo 항목이 undo 항목보다 오래되었습니다")
+        );
+        // next sequence가 기록된 sequence 이하이거나 0.
+        for next in [0, 6] {
+            let mut stale = journal.clone();
+            stale.next_sequence = next;
+            assert_eq!(
+                rejected(stale),
+                reason("next sequence가 기록된 sequence보다 크지 않습니다"),
+                "next {next}"
+            );
+        }
     }
 }

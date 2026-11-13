@@ -108,6 +108,11 @@ impl History {
         self.redo.len()
     }
 
+    /// 다음 항목에 할당할 sequence 값(journal 기록용, XXV.1.1).
+    pub fn next_sequence(&self) -> u64 {
+        self.sequences.peek()
+    }
+
     /// 항목 수.
     pub fn len(&self) -> usize {
         self.entries.len()

@@ -61,6 +61,11 @@ impl SequenceAllocator {
         SequenceAllocator { next }
     }
 
+    /// 다음에 할당할 값(할당하지 않음, journal 기록용).
+    pub const fn peek(&self) -> u64 {
+        self.next
+    }
+
     /// 다음 sequence. 한계에 도달하면 오류입니다(되돌아가지 않음).
     pub fn allocate(&mut self) -> Result<HistorySequence, HistoryError> {
         let value = self.next;
