@@ -297,4 +297,3 @@ Accepted로 바꾸기 전에 제품 소유자가 정할 항목입니다.
 5. **계획서 `cancelled` 표기**: 대체되는 행을 표에서 `cancelled`로 표시하는 도구 지원(XXIX.1.x)을 도입할지 정합니다.
 6. **커밋 형식**: 계획서 개정 기록("`Task(...)`만 허용"), `AGENTS.md`(`Docs:`·`Chore:` 등 허용), `cargo xtask validate-commit-message`(`Task(...)`만 허용)가 서로 다릅니다. 하나로 맞춥니다.
 7. **PATH 노출**: macOS에서 앱 번들 안의 `stellar-cli`를 터미널에서 부르는 방법(사용자 승인 설치 명령, 수동 안내 등)을 정합니다.
-8. **이름**: `stellar-cli`라는 이름은 다른 생태계의 기존 CLI와 겹칠 수 있습니다. 배포 이름(실행 파일·패키지)을 확정합니다.
