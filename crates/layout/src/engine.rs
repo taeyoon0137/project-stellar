@@ -286,7 +286,10 @@ pub(crate) struct Engine<'a> {
     pub(crate) input: &'a LayoutInput,
     pub(crate) tree: TreeIndex,
     pub(crate) nodes: Vec<Prepared>,
-    memo: HashMap<(usize, ChildConstraint), LayoutSize>,
+    memo: HashMap<(usize, ChildConstraint, IntrinsicMode), LayoutSize>,
+    /// 지금 계산 중인 측정의 mode(X.4.5). container 측정이 자식 크기 해석에 그대로 전달합니다.
+    /// 배치 단계에서는 항상 `MaxContent`입니다.
+    mode: IntrinsicMode,
     /// 측정 결과 in-run memo((node index, 가용 크기, mode) → 측정값, X.7.2).
     measure_memo: HashMap<(usize, [Option<LayoutUnit>; 2], IntrinsicMode), IntrinsicSize>,
     /// node별 subtree input hash(입력 순서, X.7.2).
@@ -348,6 +351,7 @@ impl<'a> Engine<'a> {
             tree,
             nodes,
             memo: HashMap::new(),
+            mode: IntrinsicMode::MaxContent,
             measure_memo: HashMap::new(),
             subtree,
             cache,
@@ -417,13 +421,17 @@ impl<'a> Engine<'a> {
                 return self.call_measurer(index, available, mode, None);
             }
         }
-        let [width, height] = match &self.node(index).container {
+        // container 측정은 자식 크기 해석에 같은 mode를 전달합니다(X.4.5).
+        let saved = std::mem::replace(&mut self.mode, mode);
+        let extent = match &self.node(index).container {
             ContainerLayout::Free => free::measure(self, index, available),
             ContainerLayout::Stack(_) => stack::measure(self, index, available),
             ContainerLayout::Grid(_) => grid::measure(self, index, available),
             ContainerLayout::Overlay(_) => overlay::measure(self, index, available),
             ContainerLayout::Constraint => constraint::measure(self, index, available),
-        }?;
+        };
+        self.mode = saved;
+        let [width, height] = extent?;
         if content == PreparedContent::Measured(ContentKind::ComponentInstance) {
             // ComponentInstance: 자식(virtual subtree) extent를 측정기에 넘깁니다.
             return self.call_measurer(index, available, mode, Some([width, height]));
@@ -525,7 +533,7 @@ impl<'a> Engine<'a> {
         index: usize,
         constraint: ChildConstraint,
     ) -> Result<LayoutSize, LayoutError> {
-        if let Some(size) = self.memo.get(&(index, constraint)) {
+        if let Some(size) = self.memo.get(&(index, constraint, self.mode)) {
             return Ok(*size);
         }
         let prepared = &self.nodes[index];
@@ -606,8 +614,21 @@ impl<'a> Engine<'a> {
             ];
         }
         let size = size_of(id, resolved[0], resolved[1])?;
-        self.memo.insert((index, constraint), size);
+        self.memo.insert((index, constraint, self.mode), size);
         Ok(size)
+    }
+
+    /// `mode` 측정 기준으로 크기를 해석합니다(X.4.5, Grid content track 기여).
+    pub(crate) fn resolve_size_in(
+        &mut self,
+        index: usize,
+        constraint: ChildConstraint,
+        mode: IntrinsicMode,
+    ) -> Result<LayoutSize, LayoutError> {
+        let saved = std::mem::replace(&mut self.mode, mode);
+        let size = self.resolve_size(index, constraint);
+        self.mode = saved;
+        size
     }
 
     /// node 콘텐츠 extent(padding 제외). `inner`는 축별 content box 크기(indefinite면 `None`).
@@ -616,7 +637,7 @@ impl<'a> Engine<'a> {
         index: usize,
         inner: [Option<LayoutUnit>; 2],
     ) -> Result<[LayoutUnit; 2], LayoutError> {
-        let size = self.measure(index, inner, IntrinsicMode::MaxContent)?;
+        let size = self.measure(index, inner, self.mode)?;
         Ok([size.width, size.height])
     }
 

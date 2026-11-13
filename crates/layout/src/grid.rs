@@ -32,6 +32,11 @@
 //! - track sizing은 열 먼저(item 기여 = containing block indefinite 측정 크기), 그 다음 행(열 영역
 //!   너비가 정해진 측정 크기)입니다. item은 영역 시작에 놓이고 `Fill` 축은 영역을 채우며
 //!   `Percentage`는 영역 크기 기준입니다.
+//! - **콘텐츠 기반 track (X.4.5)**: 열 기여는 intrinsic 측정 hook([`crate::intrinsic`])으로 구한
+//!   min-content(`MinContent` 측정: 텍스트는 가장 넓은 단어, container는 자식 min-content 합성)와
+//!   max-content(한 줄) 두 값입니다. `MinContent` 경계는 min-content, `MaxContent` 경계는 max-content
+//!   기여를 씁니다. min-content 측정은 `MinContent` 경계 열이 있을 때만 합니다. 행 기여는 열 너비가
+//!   정해진 높이라 두 값이 같습니다. 텍스트를 열 너비에 맞춰 줄바꿈하려면 item 너비를 `Fill`로 둡니다.
 //!
 //! # 크기·작업량 상한
 //!
@@ -60,6 +65,7 @@ use crate::grid_tracks::{
     size_tracks, track_offsets, Breadth, Track, TrackError, TrackItem, WorkBudget, WorkExceeded,
 };
 use crate::input::{length_unit, ContainerLayout};
+use crate::intrinsic::IntrinsicMode;
 use crate::property::LayoutProperty;
 use crate::rounding::{LayoutUnit, LayoutUnitError};
 use crate::sizing::quantize_weight;
@@ -846,14 +852,36 @@ fn solve(
         .collect::<Result<Vec<_>, _>>()?;
     rows.resize(row_count, implicit);
 
-    // 열: item 콘텐츠 기여(containing block indefinite).
+    // 열: item 콘텐츠 기여(containing block indefinite). max-content 기여는 항상, min-content 기여는
+    // MinContent 경계 열이 있을 때만 측정합니다(X.4.5).
+    let needs_min = columns
+        .iter()
+        .any(|t| matches!(t.min, Breadth::MinContent) || matches!(t.max, Breadth::MinContent));
     let mut column_items = Vec::with_capacity(items.len());
     for item in &items {
-        let size = engine.resolve_size(item.child, ChildConstraint::UNCONSTRAINED)?;
+        let max = engine
+            .resolve_size_in(
+                item.child,
+                ChildConstraint::UNCONSTRAINED,
+                IntrinsicMode::MaxContent,
+            )?
+            .width();
+        let min = if needs_min {
+            engine
+                .resolve_size_in(
+                    item.child,
+                    ChildConstraint::UNCONSTRAINED,
+                    IntrinsicMode::MinContent,
+                )?
+                .width()
+        } else {
+            max
+        };
         column_items.push(TrackItem {
             start: item.column,
             span: item.column_span,
-            contribution: size.width(),
+            min_contribution: min,
+            max_contribution: max,
         });
     }
     let column_sizes = size_tracks(&columns, column_gap, inner[0], &column_items, &mut budget)
@@ -876,11 +904,13 @@ fn solve(
             fill: [Some(width), None],
             forced: [None, None],
         };
-        let size = engine.resolve_size(item.child, constraint)?;
+        // 너비가 정해진 높이는 mode와 무관해 두 기여가 같습니다.
+        let height = engine.resolve_size(item.child, constraint)?.height();
         row_items.push(TrackItem {
             start: item.row,
             span: item.row_span,
-            contribution: size.height(),
+            min_contribution: height,
+            max_contribution: height,
         });
     }
     let row_sizes =
@@ -1536,5 +1566,111 @@ mod tests {
         // 2000개 / 12열 = 행 167개(마지막 행 8개).
         assert_eq!(result.get(id(1)).unwrap().local_rect().height(), px(167));
         assert_eq!(unit_cell(&result, 2001), (7, 166, 1));
+    }
+
+    // --- content-based track sizing (X.4.5) ---
+
+    use crate::intrinsic::tests::{image, text};
+
+    /// 1행 grid(열 [MinContent, MaxContent, minmax(MinContent, MaxContent), 30], 행 MaxContent).
+    /// item: 열 1·2 text [30 20 50], 열 3 text [40 40], 열 4 image 64×48. 모두 Fill 너비·Hug 높이.
+    fn mixed(width: SizingMode) -> LayoutResult {
+        let grid = GridLayout::new(
+            vec![
+                TrackSize::MinContent,
+                TrackSize::MaxContent,
+                TrackSize::MinMax(TrackBreadth::MinContent, TrackBreadth::MaxContent),
+                fixed_track(30.0),
+            ],
+            vec![TrackSize::MaxContent],
+        );
+        let contents = [
+            text(&[30.0, 20.0, 50.0]),
+            text(&[30.0, 20.0, 50.0]),
+            text(&[40.0, 40.0]),
+            image(64.0, 48.0),
+        ];
+        let mut root = LayoutNode::new(id(1))
+            .with_sizing(width, SizingMode::HugContent)
+            .with_container(ContainerLayout::Grid(grid));
+        let mut nodes = Vec::new();
+        for (i, content) in contents.into_iter().enumerate() {
+            let n = i as u64 + 2;
+            root = root.with_child(id(n), key(i as u32 + 1));
+            nodes.push(
+                LayoutNode::new(id(n))
+                    .with_grid(GridItem::at(i as u16 + 1, 1, 1, 1))
+                    .with_sizing(SizingMode::Fill, SizingMode::HugContent)
+                    .with_content(content),
+            );
+        }
+        nodes.insert(0, root);
+        compute_layout(&LayoutInput::new(id(1), nodes)).unwrap()
+    }
+
+    #[test]
+    fn mixed_text_and_image_content_tracks() {
+        // 너비 400: min-content 열 = 가장 넓은 단어 50(세 줄 36), max-content 열 = 한 줄 110(12),
+        // minmax 열 = 40에서 남는 공간으로 85까지(한 줄 12), 고정 30 열의 image = 30 × 48/64 = 22.5.
+        let result = mixed(SizingMode::Fixed(len(400.0)));
+        assert_eq!(rect_px(&result, 2), (0.0, 0.0, 50.0, 36.0));
+        assert_eq!(rect_px(&result, 3), (50.0, 0.0, 110.0, 12.0));
+        assert_eq!(rect_px(&result, 4), (160.0, 0.0, 85.0, 12.0));
+        assert_eq!(rect_px(&result, 5), (245.0, 0.0, 30.0, 22.5));
+        // 행 MaxContent = 가장 높은 item(줄바꿈된 text 36).
+        assert_eq!(rect_px(&result, 1), (0.0, 0.0, 400.0, 36.0));
+
+        // 너비 250: base 합 230, 남는 20만 minmax 열에 → 60, text [40 40]은 두 줄(24).
+        let result = mixed(SizingMode::Fixed(len(250.0)));
+        assert_eq!(rect_px(&result, 4), (160.0, 0.0, 60.0, 24.0));
+        assert_eq!(rect_px(&result, 5), (220.0, 0.0, 30.0, 22.5));
+
+        // Hug 너비(indefinite): maximize 없음 → minmax 열은 min-content 40, grid 너비 = 50+110+40+30.
+        let result = mixed(SizingMode::HugContent);
+        assert_eq!(rect_px(&result, 4), (160.0, 0.0, 40.0, 24.0));
+        assert_eq!(rect_px(&result, 1), (0.0, 0.0, 230.0, 36.0));
+    }
+
+    #[test]
+    fn min_content_propagates_through_container_items_and_images() {
+        // 열 1(MinContent): Hug 가로 Stack(gap 4) 안 text [10 25]·[15 5] → min-content = 25 + 4 + 15 = 44
+        // (max-content였다면 40 + 4 + 25 = 69). 열 2(MinContent): image는 min = max = natural 20.
+        use crate::stack::StackLayout;
+        let grid = GridLayout::new(
+            vec![TrackSize::MinContent, TrackSize::MinContent],
+            vec![TrackSize::MaxContent],
+        );
+        let stack = StackLayout {
+            gap: len(4.0),
+            ..StackLayout::new(crate::geometry::Axis::Horizontal)
+        };
+        let hug = SizingMode::HugContent;
+        let nodes = vec![
+            LayoutNode::new(id(1))
+                .with_sizing(hug, hug)
+                .with_container(ContainerLayout::Grid(grid))
+                .with_child(id(2), key(1))
+                .with_child(id(5), key(2)),
+            LayoutNode::new(id(2))
+                .with_grid(GridItem::at(1, 1, 1, 1))
+                .with_sizing(hug, hug)
+                .with_container(ContainerLayout::Stack(stack))
+                .with_child(id(3), key(1))
+                .with_child(id(4), key(2)),
+            LayoutNode::new(id(3))
+                .with_sizing(hug, hug)
+                .with_content(text(&[10.0, 25.0])),
+            LayoutNode::new(id(4))
+                .with_sizing(hug, hug)
+                .with_content(text(&[15.0, 5.0])),
+            LayoutNode::new(id(5))
+                .with_grid(GridItem::at(2, 1, 1, 1))
+                .with_sizing(hug, hug)
+                .with_content(image(20.0, 10.0)),
+        ];
+        let result = compute_layout(&LayoutInput::new(id(1), nodes)).unwrap();
+        // 열 2 시작 = 열 1 너비 44.
+        assert_eq!(rect_px(&result, 5), (44.0, 0.0, 20.0, 10.0));
+        assert_eq!(result.get(id(1)).unwrap().local_rect().width(), px(64));
     }
 }

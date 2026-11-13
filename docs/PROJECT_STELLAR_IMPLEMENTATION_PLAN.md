@@ -950,7 +950,7 @@ tools/xtask/
 | X.4.2 | `[x]` | explicit row/column track sizing을 구현합니다. | fixed/fraction fixture 통과. | X.4.1 |
 | X.4.3 | `[x]` | grid item start/end, span과 gap을 구현합니다. invalid span은 오류입니다. | overlap 허용 정책과 invalid fixture 통과. | X.4.2 |
 | X.4.4 | `[x]` | auto placement를 row-major deterministic order로 구현합니다. | 삽입 순서와 visual OrderKey fixture 통과. | X.4.3 |
-| X.4.5 | `[ ]` | content-based track sizing을 텍스트·이미지 intrinsic size hook으로 연결합니다. | mixed content fixture 통과. | X.4.2, X.7.2 |
+| X.4.5 | `[x]` | content-based track sizing을 텍스트·이미지 intrinsic size hook으로 연결합니다. | mixed content fixture 통과. | X.4.2, X.7.2 |
 
 ### X.5 Overlay와 Anchor/Constraint
 

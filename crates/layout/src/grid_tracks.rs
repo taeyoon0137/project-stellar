@@ -8,16 +8,22 @@
 //! 각 track은 (최솟값, 최댓값) 쌍으로 봅니다: `Fixed(v)` = (v, v), `Fraction(f)` = (0, f fr),
 //! `MinContent`·`MaxContent` = (콘텐츠, 콘텐츠), `MinMax(a, b)` = (a, b).
 //!
-//! 1. **초기화**: base = 최솟값(고정 값 또는 span 1 item 기여 최댓값), limit = 최댓값(고정 값,
-//!    콘텐츠 기여, fr은 무한). limit < base면 limit = base.
+//! item은 축마다 **min-content 기여**와 **max-content 기여** 두 값을 줍니다(X.4.5). 텍스트는 가장 넓은
+//! 단어와 한 줄 폭, 이미지·고정 콘텐츠는 두 값이 같습니다([`crate::intrinsic`]). `MinContent` 경계는
+//! min-content 기여, `MaxContent` 경계는 max-content 기여를 씁니다.
+//!
+//! 1. **초기화**: base = 최솟값(고정 값 또는 span 1 item의 해당 기여 최댓값), limit = 최댓값(고정 값,
+//!    해당 콘텐츠 기여, fr은 무한). limit < base면 limit = base. 따라서 `minmax(min-content,
+//!    max-content)`는 min-content에서 시작해 공간이 남으면 max-content까지 늘어납니다.
 //! 2. **span 여러 칸 item**: fr track을 걸치지 않는 item의 기여가 걸친 track base 합 + gap보다 크면
 //!    부족분을 걸친 track 중 콘텐츠 최솟값 track(없으면 콘텐츠 최댓값 track)에 균등 분배합니다
-//!    (span 오름차순, 같은 span은 item 순서). 잔여 subpixel은 track 순서.
+//!    (span 오름차순, 같은 span은 item 순서). 대상 track 중 `MaxContent` 경계가 있으면 max-content
+//!    기여, 없으면 min-content 기여를 씁니다. 잔여 subpixel은 track 순서.
 //! 3. **maximize**: 가용 크기가 definite이고 남으면 base < limit인 비fr track을 limit까지 균등하게
 //!    늘립니다.
 //! 4. **fr**: 가용 크기가 definite면 남은 공간(가용 − gap − 비fr track 합)을 fr 비례로 나눕니다.
 //!    몫이 base보다 작은 fr track은 base로 고정하고 나머지로 다시 나눕니다. 잔여 subpixel은 track
-//!    순서. 가용 크기가 indefinite면 `fr 단위 = max(span 1 item 기여 / fr, base / fr)`로 정하고 각 fr
+//!    순서. 가용 크기가 indefinite면 `fr 단위 = max(span 1 item max-content 기여 / fr, base / fr)`로 정하고 각 fr
 //!    track을 `max(base, 단위 × fr)`로 둡니다.
 //!
 //! # 작업량 상한
@@ -133,19 +139,44 @@ pub(crate) struct TrackItem {
     pub(crate) start: usize,
     /// 걸친 track 수(1 이상).
     pub(crate) span: usize,
-    /// 이 축의 콘텐츠 기여 크기.
-    pub(crate) contribution: LayoutUnit,
+    /// 이 축의 min-content 기여 크기.
+    pub(crate) min_contribution: LayoutUnit,
+    /// 이 축의 max-content 기여 크기.
+    pub(crate) max_contribution: LayoutUnit,
 }
 
-/// track마다 그 track에 놓인 span 1 item의 기여 최댓값(item 목록 한 번 순회).
-fn single_span_contents(items: &[TrackItem], count: usize) -> Vec<LayoutUnit> {
-    let mut contents = vec![LayoutUnit::ZERO; count];
+impl TrackItem {
+    /// 두 기여가 같은 item(고정 콘텐츠 등).
+    #[cfg(test)]
+    pub(crate) const fn fixed(start: usize, span: usize, contribution: LayoutUnit) -> TrackItem {
+        TrackItem {
+            start,
+            span,
+            min_contribution: contribution,
+            max_contribution: contribution,
+        }
+    }
+}
+
+/// track마다 그 track에 놓인 span 1 item의 (min-content, max-content) 기여 최댓값(item 목록 한 번 순회).
+fn single_span_contents(items: &[TrackItem], count: usize) -> Vec<(LayoutUnit, LayoutUnit)> {
+    let mut contents = vec![(LayoutUnit::ZERO, LayoutUnit::ZERO); count];
     for item in items {
         if item.span == 1 && item.start < count {
-            contents[item.start] = contents[item.start].max(item.contribution);
+            let slot = &mut contents[item.start];
+            slot.0 = slot.0.max(item.min_contribution);
+            slot.1 = slot.1.max(item.max_contribution);
         }
     }
     contents
+}
+
+/// 경계가 쓰는 span 1 콘텐츠 기여.
+fn breadth_content(breadth: Breadth, single: (LayoutUnit, LayoutUnit)) -> LayoutUnit {
+    match breadth {
+        Breadth::MinContent => single.0,
+        _ => single.1,
+    }
 }
 
 /// track 크기(track 순서)를 계산합니다. `available`은 content 크기(indefinite면 `None`).
@@ -163,15 +194,16 @@ pub(crate) fn size_tracks(
     let mut base = Vec::with_capacity(count);
     let mut limit: Vec<Option<LayoutUnit>> = Vec::with_capacity(count);
     for (i, track) in tracks.iter().enumerate() {
-        let content = single[i];
         let lo = match track.min {
             Breadth::Fixed(value) => value,
-            Breadth::MinContent | Breadth::MaxContent => content,
+            Breadth::MinContent | Breadth::MaxContent => breadth_content(track.min, single[i]),
             Breadth::Fraction(_) => LayoutUnit::ZERO,
         };
         let hi = match track.max {
             Breadth::Fixed(value) => Some(value.max(lo)),
-            Breadth::MinContent | Breadth::MaxContent => Some(content.max(lo)),
+            Breadth::MinContent | Breadth::MaxContent => {
+                Some(breadth_content(track.max, single[i]).max(lo))
+            }
             Breadth::Fraction(_) => None,
         };
         base.push(lo);
@@ -204,10 +236,6 @@ pub(crate) fn size_tracks(
         for _ in 1..item.span {
             covered = covered.checked_add(gap)?;
         }
-        let deficit = item.contribution.checked_sub(covered)?;
-        if deficit <= LayoutUnit::ZERO {
-            continue;
-        }
         let mut targets: Vec<usize> = range
             .clone()
             .filter(|&i| tracks[i].min.is_content())
@@ -216,6 +244,19 @@ pub(crate) fn size_tracks(
             targets = range.filter(|&i| tracks[i].max.is_content()).collect();
         }
         if targets.is_empty() {
+            continue;
+        }
+        let wants_max = targets.iter().any(|&i| {
+            matches!(tracks[i].min, Breadth::MaxContent)
+                || matches!(tracks[i].max, Breadth::MaxContent)
+        });
+        let contribution = if wants_max {
+            item.max_contribution
+        } else {
+            item.min_contribution
+        };
+        let deficit = contribution.checked_sub(covered)?;
+        if deficit <= LayoutUnit::ZERO {
             continue;
         }
         for (i, add) in targets.iter().zip(distribute_equal(deficit, targets.len())) {
@@ -309,7 +350,7 @@ pub(crate) fn size_tracks(
             let mut best: Option<(i128, i128)> = None;
             for &i in &flexible {
                 let weight = i128::from(tracks[i].flex());
-                let content = single[i].max(base[i]);
+                let content = single[i].1.max(base[i]);
                 let candidate = (i128::from(content.raw()), weight);
                 best = match best {
                     Some((num, den)) if num * candidate.1 >= candidate.0 * den => Some((num, den)),
@@ -393,11 +434,7 @@ mod tests {
     }
 
     fn item(start: usize, span: usize, contribution: i32) -> TrackItem {
-        TrackItem {
-            start,
-            span,
-            contribution: px(contribution),
-        }
+        TrackItem::fixed(start, span, px(contribution))
     }
 
     fn raw(values: &[LayoutUnit]) -> Vec<i32> {
@@ -527,5 +564,55 @@ mod tests {
         let mut enough = WorkBudget::new(10_000);
         let sizes = size_tracks(&tracks, px(0), Some(px(1000)), &items, &mut enough).unwrap();
         assert!(sizes.iter().all(|s| *s == px(10)));
+    }
+
+    #[test]
+    fn min_and_max_content_contributions_feed_matching_breadths() {
+        // item 기여 (min 20, max 70): MinContent track 20, MaxContent track 70,
+        // minmax(min, max)는 20에서 가용 50까지 늘어남.
+        let both = |start: usize, span: usize| TrackItem {
+            start,
+            span,
+            min_contribution: px(20),
+            max_contribution: px(70),
+        };
+        let min_track = Track {
+            min: Breadth::MinContent,
+            max: Breadth::MinContent,
+        };
+        let range = Track {
+            min: Breadth::MinContent,
+            max: Breadth::MaxContent,
+        };
+        let sizes = size(
+            &[min_track, content(), range],
+            px(0),
+            None,
+            &[both(0, 1), both(1, 1), both(2, 1)],
+        )
+        .unwrap();
+        assert_eq!(as_px(&sizes), vec![20.0, 70.0, 20.0]);
+        let sizes = size(&[range], px(0), Some(px(50)), &[both(0, 1)]).unwrap();
+        assert_eq!(as_px(&sizes), vec![50.0]);
+        // span 2 item: 대상이 모두 MinContent면 min 기여(20 − base 10 → 5씩), MaxContent면 max 기여(70 − 10 → 30씩).
+        let sizes = size(
+            &[min_track, min_track],
+            px(0),
+            None,
+            &[both(0, 2), item(0, 1, 5), item(1, 1, 5)],
+        )
+        .unwrap();
+        assert_eq!(as_px(&sizes), vec![10.0, 10.0]);
+        let sizes = size(
+            &[content(), content()],
+            px(0),
+            None,
+            &[both(0, 2), item(0, 1, 5), item(1, 1, 5)],
+        )
+        .unwrap();
+        assert_eq!(as_px(&sizes), vec![35.0, 35.0]);
+        // indefinite fr 단위는 max-content 기여.
+        let sizes = size(&[fr(1)], px(0), None, &[both(0, 1)]).unwrap();
+        assert_eq!(as_px(&sizes), vec![70.0]);
     }
 }
