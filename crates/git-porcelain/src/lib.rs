@@ -1,6 +1,7 @@
-//! stellar-git-porcelain — System Git porcelain 골격.
+//! stellar-git-porcelain — System Git porcelain.
 //!
-//! document를 직접 수정하지 않고 snapshot 인터페이스(빈 trait)에만 의존합니다.
+//! document를 직접 수정하지 않습니다. Git 상태는 [`SnapshotSource`] 원천별 snapshot(파일 목록·
+//! blob·materialize된 임시 프로젝트 디렉터리)으로만 제공합니다.
 
 /// Git executable 탐색 (IV.3.1).
 pub mod discovery;
@@ -69,5 +70,7 @@ pub mod lfs;
 #[cfg(test)]
 mod test_support;
 
-/// Stellar 프로젝트 snapshot 인터페이스(골격용 빈 trait).
-pub trait SnapshotSource {}
+/// Git snapshot 원천과 provider(XIV.2.3~).
+pub mod snapshot;
+
+pub use snapshot::SnapshotSource;
