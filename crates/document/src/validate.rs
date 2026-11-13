@@ -14,8 +14,10 @@
 //! 5. **ref type**: 참조가 문서 안의 다른 종류 객체를 가리키지 않음(Frame clip은 Path
 //!    node, modifier 참조는 node). 대상이 없는 참조는 위반이 아니라 미해결 진단(III.2.4)
 //!    입니다.
-//! 6. **modifier**: stack 소유 node 존재·유일, Fragment modifier 금지(VI.9.6), 참조
-//!    cycle 금지(VI.9.5).
+//! 6. **modifier**: stack 소유 node 존재·유일, 빈 stack 레코드 금지, Fragment modifier
+//!    금지(VI.9.6), 참조 cycle 금지(VI.9.5). 런타임 모델은 빈 stack을 보관하지 않으므로
+//!    (stack 없음과 같음) 저장된 빈 stack 레코드는 비canonical입니다 — 받아들이면 load→save가
+//!    byte 안정적이지 않고 residency dirty 판정이 영구히 dirty가 됩니다.
 //! 7. **depth ≤ 64**: View root depth 0 기준 [`MAX_NODE_DEPTH`]까지 허용.
 //!
 //! 결정론: 검사는 레코드 순서와 StableId 순서로만 진행하므로 같은 입력은 같은 위반
@@ -260,6 +262,11 @@ pub enum DocumentViolation {
         /// 나중 stack 위치.
         stack: ViolationLocation,
     },
+    /// 항목이 없는 modifier stack 레코드입니다(stack 없음으로 저장해야 함).
+    EmptyModifierStack {
+        /// stack 위치.
+        stack: ViolationLocation,
+    },
     /// Fragment가 modifier를 가집니다(VI.9.6).
     ModifierOnFragment {
         /// modifier 위치.
@@ -303,7 +310,8 @@ impl DocumentViolation {
             | DocumentViolation::ModifierCycle { node, .. }
             | DocumentViolation::DepthExceeded { node, .. } => node.clone(),
             DocumentViolation::ModifierOwnerMissing { stack }
-            | DocumentViolation::DuplicateModifierStack { stack } => stack.clone(),
+            | DocumentViolation::DuplicateModifierStack { stack }
+            | DocumentViolation::EmptyModifierStack { stack } => stack.clone(),
         }
     }
 }
@@ -390,6 +398,10 @@ impl fmt::Display for DocumentViolation {
             DocumentViolation::DuplicateModifierStack { stack } => {
                 write!(f, "{stack}: 같은 node의 stack이 이미 있습니다")
             }
+            DocumentViolation::EmptyModifierStack { stack } => write!(
+                f,
+                "{stack}: 빈 stack 레코드는 저장할 수 없습니다(stack 없음으로 저장)"
+            ),
             DocumentViolation::ModifierOnFragment { location } => {
                 write!(f, "{location}: Fragment는 modifier를 가질 수 없습니다")
             }
@@ -871,6 +883,11 @@ impl Validator<'_> {
                 self.violations
                     .push(DocumentViolation::DuplicateModifierStack { stack: location });
                 continue;
+            }
+            if stack.entries().is_empty() {
+                self.violations.push(DocumentViolation::EmptyModifierStack {
+                    stack: location.clone(),
+                });
             }
             match self.kind_of(stack.node) {
                 None => self
@@ -1455,18 +1472,64 @@ mod tests {
                 },
             ]
         );
-        // 빈 stack은 Fragment도 허용합니다(modifier가 없음).
+        // 빈 stack 레코드는 Fragment에서도 modifier 위반이 아니라 빈 레코드 위반입니다.
         let mut records = fixture();
         records
             .modifier_stacks
             .push(ModifierStack::new(sid(FRAGMENT)));
-        assert!(validate_document(&records).is_ok());
+        assert_eq!(
+            violations(&records),
+            vec![DocumentViolation::EmptyModifierStack {
+                stack: ViolationLocation::ModifierStack {
+                    index: 2,
+                    owner: sid(FRAGMENT)
+                }
+            }]
+        );
+    }
+
+    #[test]
+    fn empty_modifier_stack_record_is_rejected() {
+        // 런타임 모델은 빈 stack을 보관하지 않으므로 저장된 빈 stack 레코드는 거부합니다
+        // (load→save byte 안정성).
+        let mut records = fixture();
+        records.modifier_stacks.push(ModifierStack::new(sid(TEXT)));
+        let found = violations(&records);
+        assert_eq!(
+            found,
+            vec![DocumentViolation::EmptyModifierStack {
+                stack: ViolationLocation::ModifierStack {
+                    index: 2,
+                    owner: sid(TEXT)
+                }
+            }]
+        );
+        assert!(found[0].to_string().contains("빈 stack"));
+        // 소유 node도 없으면 두 위반을 모두 보고합니다.
+        let mut records = fixture();
+        records.modifier_stacks.push(ModifierStack::new(sid(4_445)));
+        let location = ViolationLocation::ModifierStack {
+            index: 2,
+            owner: sid(4_445),
+        };
+        assert_eq!(
+            violations(&records),
+            vec![
+                DocumentViolation::EmptyModifierStack {
+                    stack: location.clone()
+                },
+                DocumentViolation::ModifierOwnerMissing { stack: location },
+            ]
+        );
     }
 
     #[test]
     fn modifier_stack_owner_violations() {
         let mut records = fixture();
-        records.modifier_stacks.push(ModifierStack::new(sid(4_444)));
+        // 소유 node 없는 stack(빈 레코드 위반과 섞이지 않게 항목 하나).
+        let mut orphan = ModifierStack::new(sid(4_444));
+        orphan.push_back(mid(110), ModifierKind::Opacity).unwrap();
+        records.modifier_stacks.push(orphan);
         records.modifier_stacks.push(ModifierStack::new(sid(RECT)));
         assert_eq!(
             violations(&records),

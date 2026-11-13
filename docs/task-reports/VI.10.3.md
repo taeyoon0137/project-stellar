@@ -67,3 +67,26 @@
 - 저장 round-trip 테스트는 chunk마다 fsync를 수행해 약 6~7초 걸립니다(디버그, `DEV-MAC`).
 - golden hash는 저장 형식 변경 감지용입니다. 의도한 스키마 변경 시 schema version 상승과
   migration(V.8)을 함께 하고 값을 갱신해야 합니다.
+
+## 후속 수정 (리뷰 minor: 저장된 빈 modifier stack 레코드)
+
+- **결함**: 런타임 모델은 빈 stack을 보관하지 않지만(`set_modifier_stack`이 제거), validator가 빈 stack 레코드를 허용해
+  그런 chunk가 로드되면 재직렬화 bytes가 저장 bytes와 달라졌습니다(load→save 불안정, residency dirty 판정이 영구 dirty).
+- **수정**: validator가 `DocumentViolation::EmptyModifierStack`으로 거부합니다(로드·저장 양쪽). 모델은 빈 stack을 만들지
+  않으므로 유효한 문서의 저장 결과는 바뀌지 않습니다(golden chunk hash 불변).
+- **기존 테스트 변경(명세 동작 변경)**: VI.10.1 테스트 `modifier_cycle_and_fragment_modifier_report_locations`의 "빈 stack은
+  Fragment도 허용" 단언을 `EmptyModifierStack` 위반으로 바꾸고, `modifier_stack_owner_violations`의 소유 node 없는 stack에
+  항목 하나를 넣어 같은 위반(소유 node 없음·중복)만 검사하게 했습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-document` | unit 245 포함 전부 passed, 0 failed |
+| `cargo test -p stellar-project` | unit 168, `document_residency` 3, `document_round_trip` 5, `document_serialize` 4, `restricted_yaml_fuzz` 4 passed, 0 failed |
+| `cargo clippy -p stellar-document -p stellar-project --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -p stellar-project -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| 빈 stack 레코드 위치 보고, 소유 node 없음과 함께 둘 다 보고(`empty_modifier_stack_record_is_rejected`) | 통과 |
+| 빈 stack 레코드를 넣은 subtree chunk 로드가 `Invalid(EmptyModifierStack)`, 정상 chunk는 로드 후 재직렬화 byte-identical(`stored_empty_modifier_stack_record_is_rejected`) | 통과 |
+| 100개 golden round-trip·golden chunk hash(`hundred_golden_documents_round_trip_semantically_equal`) | 통과(hash 불변) |

@@ -8,8 +8,9 @@ use common::golden::golden_document;
 use common::{id, TempDir};
 use stellar_core_types::ids::StableId;
 use stellar_document::model::{DocumentModel, LoadModelError};
+use stellar_document::modifier::ModifierStack;
 use stellar_document::record_codec::SubtreeRecords;
-use stellar_document::validate::validate_document;
+use stellar_document::validate::{validate_document, DocumentViolation};
 use stellar_project::document_io::load::{
     load_document, load_document_from_generation, LoadDocumentError, MemoryChunks,
 };
@@ -305,4 +306,41 @@ fn corrupted_chunk_models_are_rejected_with_typed_errors() {
         load_document(&serialized.manifest.payload[..10], &mut base()),
         Err(LoadDocumentError::Manifest(_))
     ));
+}
+
+#[test]
+fn stored_empty_modifier_stack_record_is_rejected() {
+    // 런타임 모델은 빈 stack을 보관하지 않으므로, 빈 stack 레코드가 든 chunk를 받아들이면
+    // 재직렬화 bytes가 저장 bytes와 달라(load→save 불안정) residency dirty 판정이 영구히
+    // dirty가 됩니다. validator가 로드 단계에서 거부합니다.
+    let original = golden_document(7);
+    let serialized = serialize_document(&original).unwrap();
+    let mut subtree = SubtreeRecords::decode(&serialized.subtrees[0].payload).unwrap();
+    let owners: BTreeSet<StableId> = subtree.modifier_stacks.iter().map(|s| s.node).collect();
+    let bare = subtree
+        .nodes
+        .iter()
+        .map(|n| n.id)
+        .find(|id| !owners.contains(id))
+        .expect("stack 없는 node");
+    subtree.modifier_stacks.push(ModifierStack::new(bare));
+    let mut chunks = MemoryChunks::new();
+    chunks.insert_document(&serialized);
+    chunks.insert(serialized.subtrees[0].chunk_id, subtree.encode());
+    match load_document(&serialized.manifest.payload, &mut chunks) {
+        Err(LoadDocumentError::Model(LoadModelError::Invalid(err))) => {
+            assert!(
+                err.violations
+                    .iter()
+                    .any(|v| matches!(v, DocumentViolation::EmptyModifierStack { .. })),
+                "{err}"
+            );
+        }
+        other => panic!("빈 stack 레코드 거부여야 함: {other:?}"),
+    }
+    // 정상 chunk는 그대로 로드되고 재직렬화가 byte-identical입니다.
+    let mut clean = MemoryChunks::new();
+    clean.insert_document(&serialized);
+    let loaded = load_document(&serialized.manifest.payload, &mut clean).unwrap();
+    assert_eq!(serialize_document(&loaded.model).unwrap(), serialized);
 }
