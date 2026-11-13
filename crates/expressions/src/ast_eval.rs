@@ -6,19 +6,26 @@
 //!
 //! `if`·`match`·`and`·`or`는 short-circuit입니다(VIII.4.3). 조건·대상·왼쪽 값을 먼저 평가한 뒤 선택된
 //! child만 평가하므로, 선택되지 않은 branch의 오류는 발생하지 않습니다.
+//!
+//! 평가는 bytecode evaluator와 같은 [`EvalLimits`] 안에서만 진행합니다: 처리한 작업 수(instruction budget 자리),
+//! 값 stack 깊이(push 전 검사), stack·memo가 보유한 값 bytes. 결과를 memo하는 node는 bytecode와 같이 부모가 둘
+//! 이상인 공유 node뿐입니다. 작업 stack은 AST node 수에 비례하므로(입력 크기) 별도 한도를 두지 않으며,
+//! `max_call_depth`(공유 block 중첩)는 bytecode 전용입니다. 작업 수와 명령 수는 단위가 달라 한도 근처에서는 두
+//! evaluator의 한도 오류 시점이 다를 수 있습니다.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use stellar_core_types::typed_value::TypedValue;
 
 use crate::ast::{ChildSlot, ExprNode, ExprNodeId, ExpressionAst, Literal, NodePayload};
 use crate::eval::{
-    apply_binary, apply_unary, load_reference, match_arm, short_circuit, truth, EvalError,
-    EvalErrorKind, ReferenceValues,
+    apply_binary, apply_unary, load_reference, match_arm, short_circuit, truth, value_heap_bytes,
+    BoundedStack, EvalError, EvalErrorKind, ReferenceValues,
 };
 use crate::function_eval::apply_function;
 use crate::ops::{BinaryOp, BinaryOpClass};
 use crate::typecheck::{type_check, ReferenceTypes};
+use crate::vm::EvalLimits;
 
 /// 평가 작업.
 enum Task {
@@ -36,19 +43,88 @@ enum Task {
     Finish(ExprNodeId),
 }
 
-/// AST를 직접 평가합니다. type 오류가 있으면 [`EvalErrorKind::IllTyped`]입니다.
+impl Task {
+    /// 작업 대상 node.
+    const fn node(&self) -> ExprNodeId {
+        match self {
+            Task::Eval(id)
+            | Task::Apply(id)
+            | Task::Branch(id)
+            | Task::Logic(id)
+            | Task::Select(id)
+            | Task::Finish(id) => *id,
+        }
+    }
+}
+
+/// 공유 node(부모 2개 이상) 결과 memo. 보관한 값의 bytes는 stack 계량에 예약합니다.
+struct Memo {
+    shared: BTreeSet<ExprNodeId>,
+    values: BTreeMap<ExprNodeId, Option<TypedValue>>,
+}
+
+impl Memo {
+    fn new(ast: &ExpressionAst) -> Memo {
+        let shared = ast
+            .parent_counts()
+            .into_iter()
+            .filter(|(_, parents)| *parents >= 2)
+            .map(|(id, _)| id)
+            .collect();
+        Memo {
+            shared,
+            values: BTreeMap::new(),
+        }
+    }
+
+    fn is_shared(&self, id: ExprNodeId) -> bool {
+        self.shared.contains(&id)
+    }
+
+    fn get(&self, id: ExprNodeId) -> Option<&Option<TypedValue>> {
+        self.values.get(&id)
+    }
+
+    /// 공유 node면 결과를 보관합니다(bytes 한도 검사 후 복제).
+    fn record(
+        &mut self,
+        id: ExprNodeId,
+        value: &Option<TypedValue>,
+        stack: &mut BoundedStack,
+    ) -> Result<(), EvalErrorKind> {
+        if self.is_shared(id) && !self.values.contains_key(&id) {
+            stack.hold(value_heap_bytes(value))?;
+            self.values.insert(id, value.clone());
+        }
+        Ok(())
+    }
+}
+
+/// 기본 한도([`EvalLimits::DEFAULT`])로 AST를 직접 평가합니다. type 오류가 있으면 [`EvalErrorKind::IllTyped`]입니다.
 pub fn evaluate_ast(
     ast: &ExpressionAst,
     types: &dyn ReferenceTypes,
     values: &dyn ReferenceValues,
 ) -> Result<Option<TypedValue>, EvalError> {
+    evaluate_ast_with_limits(ast, types, values, EvalLimits::DEFAULT)
+}
+
+/// 주어진 한도로 AST를 직접 평가합니다. `instruction_budget`은 처리한 작업 수, `max_stack_depth`는 값 stack 깊이,
+/// `max_value_bytes`는 stack·memo가 보유한 값 bytes 상한으로 씁니다.
+pub fn evaluate_ast_with_limits(
+    ast: &ExpressionAst,
+    types: &dyn ReferenceTypes,
+    values: &dyn ReferenceValues,
+    limits: EvalLimits,
+) -> Result<Option<TypedValue>, EvalError> {
     let report = type_check(ast, types);
     if let Some(error) = report.errors().first() {
         return Err(EvalError::new(Some(error.node), EvalErrorKind::IllTyped));
     }
-    let mut memo: BTreeMap<ExprNodeId, Option<TypedValue>> = BTreeMap::new();
-    let mut stack: Vec<Option<TypedValue>> = Vec::new();
+    let mut memo = Memo::new(ast);
+    let mut stack = BoundedStack::new(limits.max_stack_depth, limits.max_value_bytes);
     let mut tasks = vec![Task::Eval(ast.root())];
+    let mut processed: u64 = 0;
     let node_of = |id: ExprNodeId| {
         ast.node(id)
             .ok_or(EvalError::new(Some(id), EvalErrorKind::MalformedProgram))
@@ -60,30 +136,39 @@ pub fn evaluate_ast(
         ))
     };
     while let Some(task) = tasks.pop() {
+        if processed >= limits.instruction_budget {
+            return Err(EvalError::new(
+                Some(task.node()),
+                EvalErrorKind::InstructionBudgetExceeded {
+                    budget: limits.instruction_budget,
+                },
+            ));
+        }
+        processed += 1;
         match task {
             Task::Eval(id) => {
-                if let Some(value) = memo.get(&id) {
-                    stack.push(value.clone());
+                let fail = |kind| EvalError::new(Some(id), kind);
+                if let Some(value) = memo.get(id) {
+                    stack.push_clone(value).map_err(fail)?;
                     continue;
                 }
                 let node = node_of(id)?;
-                let fail = |kind| EvalError::new(Some(id), kind);
                 match node.payload() {
-                    NodePayload::Literal(Literal::Value(value)) => {
-                        memo.insert(id, Some(value.clone()));
-                        stack.push(Some(value.clone()));
-                    }
-                    NodePayload::Literal(Literal::Null(_)) => {
-                        memo.insert(id, None);
-                        stack.push(None);
+                    NodePayload::Literal(literal) => {
+                        let value = match literal {
+                            Literal::Value(value) => Some(value.clone()),
+                            Literal::Null(_) => None,
+                        };
+                        memo.record(id, &value, &mut stack).map_err(fail)?;
+                        stack.push(value).map_err(fail)?;
                     }
                     NodePayload::Reference(target) => {
                         let expected = report
                             .type_of(id)
                             .ok_or(fail(EvalErrorKind::MalformedProgram))?;
                         let value = load_reference(target, expected, values).map_err(fail)?;
-                        memo.insert(id, value.clone());
-                        stack.push(value);
+                        memo.record(id, &value, &mut stack).map_err(fail)?;
+                        stack.push(value).map_err(fail)?;
                     }
                     NodePayload::If => {
                         tasks.push(Task::Branch(id));
@@ -133,15 +218,15 @@ pub fn evaluate_ast(
                         apply_binary(*op, &lhs, &rhs).map_err(fail)?
                     }
                     NodePayload::Call(function) => {
-                        let arity = function.signature().arity();
-                        let start = stack.len().checked_sub(arity).ok_or_else(malformed)?;
-                        let args = stack.split_off(start);
+                        let args = stack
+                            .pop_many(function.signature().arity())
+                            .ok_or_else(malformed)?;
                         apply_function(*function, &args).map_err(fail)?
                     }
                     _ => return Err(malformed()),
                 };
-                memo.insert(id, value.clone());
-                stack.push(value);
+                memo.record(id, &value, &mut stack).map_err(fail)?;
+                stack.push(value).map_err(fail)?;
             }
             Task::Branch(id) => {
                 let node = node_of(id)?;
@@ -171,8 +256,8 @@ pub fn evaluate_ast(
                 match short_circuit(op, lhs) {
                     Some(result) => {
                         let value = Some(TypedValue::Boolean(result));
-                        memo.insert(id, value.clone());
-                        stack.push(value);
+                        memo.record(id, &value, &mut stack).map_err(fail)?;
+                        stack.push(value).map_err(fail)?;
                     }
                     None => {
                         tasks.push(Task::Finish(id));
@@ -197,11 +282,12 @@ pub fn evaluate_ast(
                 tasks.push(Task::Eval(child(node, taken)?));
             }
             Task::Finish(id) => {
-                let value = stack
-                    .last()
-                    .cloned()
-                    .ok_or(EvalError::new(Some(id), EvalErrorKind::MalformedProgram))?;
-                memo.insert(id, value);
+                let fail = |kind| EvalError::new(Some(id), kind);
+                let value = stack.last().ok_or(fail(EvalErrorKind::MalformedProgram))?;
+                if memo.is_shared(id) {
+                    let value = value.clone();
+                    memo.record(id, &value, &mut stack).map_err(fail)?;
+                }
             }
         }
     }
@@ -211,5 +297,131 @@ pub fn evaluate_ast(
             Some(ast.root()),
             EvalErrorKind::MalformedProgram,
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use stellar_core_types::ids::StableId;
+    use stellar_core_types::typed_value::TypedValue;
+    use stellar_core_types::value::FiniteF32;
+
+    use super::*;
+    use crate::ast::{ExprNode, ReferenceTarget};
+    use crate::bytecode::Program;
+    use crate::ops::{BinaryOp, UnaryOp};
+    use crate::types::TypeSpec;
+
+    fn id(n: u64) -> ExprNodeId {
+        ExprNodeId::new(StableId::new_v7(n, 0, n))
+    }
+
+    fn one() -> TypedValue {
+        TypedValue::Number(FiniteF32::ONE)
+    }
+
+    fn num(v: f32) -> TypedValue {
+        TypedValue::Number(FiniteF32::new(v).expect("유한"))
+    }
+
+    fn types() -> BTreeMap<ReferenceTarget, TypeSpec> {
+        BTreeMap::new()
+    }
+
+    fn values() -> BTreeMap<ReferenceTarget, Option<TypedValue>> {
+        BTreeMap::new()
+    }
+
+    /// `-(-(…(-1)))` 단항 chain(깊이 `depth`).
+    fn negate_chain(depth: u64) -> ExpressionAst {
+        let mut nodes: Vec<ExprNode> = (1..depth)
+            .map(|n| ExprNode::unary(id(n), UnaryOp::Negate, id(n + 1)))
+            .collect();
+        nodes.push(ExprNode::literal(id(depth), one()));
+        ExpressionAst::new(id(1), nodes).expect("유효")
+    }
+
+    #[test]
+    fn work_budget_stops_large_ast() {
+        // 회귀(VIII.4.5 리뷰): 이전에는 AST 기준 evaluator에 작업·깊이·메모리 한도가 없었습니다.
+        // node 1,000개 chain은 작업 1,999개(Eval 1,000 + Apply 999).
+        let ast = negate_chain(1_000);
+        let limited = |budget: u64| {
+            evaluate_ast_with_limits(
+                &ast,
+                &types(),
+                &values(),
+                EvalLimits {
+                    instruction_budget: budget,
+                    ..EvalLimits::DEFAULT
+                },
+            )
+        };
+        let error = limited(100).expect_err("작업 budget 초과");
+        assert_eq!(
+            error.kind,
+            EvalErrorKind::InstructionBudgetExceeded { budget: 100 }
+        );
+        assert!(error.node.is_some());
+        assert!(limited(1_998).is_err(), "1 부족");
+        assert_eq!(limited(1_999), Ok(Some(num(-1.0))), "경계 통과");
+        // 기본 한도 evaluate_ast는 bytecode 결과와 같습니다.
+        let program = Program::compile(&ast, &types()).expect("컴파일");
+        assert_eq!(
+            evaluate_ast(&ast, &types(), &values()),
+            program.evaluate(&values())
+        );
+    }
+
+    #[test]
+    fn value_stack_depth_limit_applies() {
+        // 1 + (1 + (… + 1)) — 값 stack 깊이 = depth + 1.
+        let depth = 300u64;
+        let mut nodes: Vec<ExprNode> = (1..=depth)
+            .map(|n| ExprNode::binary(id(n), BinaryOp::Add, id(10_000 + n), id(n + 1)))
+            .collect();
+        nodes.extend((1..=depth).map(|n| ExprNode::literal(id(10_000 + n), one())));
+        nodes.push(ExprNode::literal(id(depth + 1), one()));
+        let ast = ExpressionAst::new(id(1), nodes).expect("유효");
+        let with_depth = |limit: usize| {
+            evaluate_ast_with_limits(
+                &ast,
+                &types(),
+                &values(),
+                EvalLimits {
+                    max_stack_depth: limit,
+                    ..EvalLimits::DEFAULT
+                },
+            )
+        };
+        assert_eq!(
+            with_depth(300),
+            Err(EvalError::new(
+                Some(id(depth + 1)),
+                EvalErrorKind::StackLimitExceeded { limit: 300 }
+            ))
+        );
+        assert_eq!(with_depth(301), Ok(Some(num(301.0))), "경계 통과");
+    }
+
+    #[test]
+    fn only_shared_nodes_are_memoized() {
+        // (1 + 1) 공유 node는 memo하고 단독 node는 memo하지 않습니다.
+        let ast = ExpressionAst::new(
+            id(1),
+            vec![
+                ExprNode::binary(id(1), BinaryOp::Add, id(2), id(2)),
+                ExprNode::binary(id(2), BinaryOp::Add, id(3), id(4)),
+                ExprNode::literal(id(3), one()),
+                ExprNode::literal(id(4), one()),
+            ],
+        )
+        .expect("유효");
+        let memo = Memo::new(&ast);
+        assert!(memo.is_shared(id(2)));
+        assert!(!memo.is_shared(id(1)) && !memo.is_shared(id(3)));
+        assert_eq!(evaluate_ast(&ast, &types(), &values()), Ok(Some(num(4.0))));
     }
 }

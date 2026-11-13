@@ -14,6 +14,7 @@ use std::collections::BTreeMap;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::typed_value::TypedValue;
 use stellar_expressions::ast::{ExprNode, ExprNodeId, ExpressionAst, ReferenceTarget};
+use stellar_expressions::ast_eval::evaluate_ast;
 use stellar_expressions::bytecode::Program;
 use stellar_expressions::eval::{EvalErrorKind, MAX_STRING_BYTES};
 use stellar_expressions::functions::FunctionId;
@@ -161,6 +162,27 @@ fn bytecode_evaluation_of_shared_string_amplification_is_memory_bounded() {
         peak <= peak_bound(),
         "peak heap {peak} bytes > 상한 {} bytes",
         peak_bound()
+    );
+}
+
+#[test]
+fn ast_evaluation_of_shared_string_amplification_is_memory_bounded() {
+    let ast = nested_shared_concat(400);
+    let types = no_types();
+    let values = no_values();
+    let (result, peak) = measure(|| evaluate_ast(&ast, &types, &values));
+    let error = result.expect_err("값 bytes 상한 초과");
+    assert_eq!(
+        error.kind,
+        EvalErrorKind::ValueMemoryExceeded {
+            limit: EvalLimits::DEFAULT.max_value_bytes
+        }
+    );
+    // AST 기준 evaluator는 type 검사 결과(node별 타입)도 보유하므로 여유를 조금 더 둡니다.
+    assert!(
+        peak <= peak_bound() + 4 * MIB,
+        "peak heap {peak} bytes > 상한 {} bytes",
+        peak_bound() + 4 * MIB
     );
 }
 
