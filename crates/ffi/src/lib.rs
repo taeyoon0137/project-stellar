@@ -5,6 +5,9 @@
 //! handle별 `stellar_last_error`로 읽습니다.
 //! 모든 FFI 경계는 [`ffi_guard`]로 감싸 panic이 경계를 넘지 않고 `InternalPanic`으로 변환됩니다.
 
+/// 양 플랫폼 공통 입력 이벤트와 native timestamp 변환 (XII.3.1).
+pub mod input;
+
 use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, OnceLock};

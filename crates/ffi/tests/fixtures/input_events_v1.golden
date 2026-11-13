@@ -1,0 +1,28 @@
+# 양 플랫폼 공통 InputEvent golden fixture (XII.3.1, 레이아웃 버전 1).
+#
+# 각 줄: <fixture 이름> <직렬화 바이트 소문자 hex>
+# macOS(NSEvent.timestamp 초, mach_absolute_time tick)와 Windows(QPC tick) 원천에서 만든
+# 같은 논리 이벤트가 모두 이 바이트와 일치해야 합니다(crates/ffi/src/input.rs 테스트).
+#
+# 공통 기준: 코어 단조 시계 기준점 1_000_000_000ns. 이벤트 시각 = 기준점 + 경과 시간.
+# 레이아웃(little-endian):
+#   header : version u8 | kind u8 | timestamp_nanos u64
+#   1 pointer : phase u8 | button u8 | device u8 | click_count u8 | modifiers u8 | x f32 | y f32
+#   2 wheel   : phase u8 | unit u8 | modifiers u8 | x f32 | y f32 | dx f32 | dy f32
+#   3 key     : state u8 | repeat u8 | modifiers u8 | hid_usage u16
+#   4 text    : phase u8 | sel_start u32 | sel_end u32 | text_len u32 | text UTF-8
+#   5 focus   : focus u8
+#   6 resize  : width f32 | height f32 | scale f32
+pointer_down_primary 010140230e430000000001010101000000f14200808042
+pointer_up_primary_double_shift 0101807c814a0000000002010102010000f14200808042
+pointer_move_hover 0101c0d5f4510000000003000100000000024300008c42
+wheel_line_control 0102002f6859000000000102020000024300008c4200000000000040c0
+key_down_a_meta 01034088db60000000000100080400
+key_up_a 010380e14e68000000000200000400
+composition_start 0104c03ac26f0000000001000000000000000000000000
+composition_update_han 0104009435770000000002030000000300000003000000ed959c
+composition_commit_hangul 010440eda87e0000000003060000000600000006000000ed959ceab880
+composition_cancel 010480461c860000000004000000000000000000000000
+focus_gained 0105c09f8f8d0000000001
+focus_lost 010500f902950000000002
+resize_800x600_at_2x 01064052769c00000000000048440000164400000040
