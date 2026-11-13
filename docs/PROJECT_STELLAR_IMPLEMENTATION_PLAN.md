@@ -1010,7 +1010,7 @@ tools/xtask/
 | X.10.1 | `[x]` | shaped glyph runs를 width constraint에 맞춰 line으로 나누고 cluster를 쪼개지 않습니다. | narrow width, long word, CJK fixture 통과. | X.9.4, X.9.5 |
 | X.10.2 | `[x]` | line height, paragraph spacing, alignment을 적용합니다. | top/middle/bottom은 text box alignment와 분리하여 fixture화. | X.10.1, VI.7.3 |
 | X.10.3 | `[x]` | caret positions, selection rects, hit-test cluster mapping을 생성합니다. | BiDi caret fixture 통과. | X.10.1, X.9.3 |
-| X.10.4 | `[ ]` | Text intrinsic width/height와 baseline을 layout intrinsic hook에 연결합니다. | Stack baseline fixture 통과. | X.10.2, X.6.4 |
+| X.10.4 | `[!]` | Text intrinsic width/height와 baseline을 layout intrinsic hook에 연결합니다. | Stack baseline fixture 통과. | X.10.2, X.6.4 |
 | X.10.5 | `[ ]` | shaping·line layout cache key에 text hash, style hash, font face hash, width, locale, target profile을 포함합니다. | 한 입력 변경마다 예상 cache miss. | X.10.1, X.8.1 |
 | X.10.6 | `[ ]` | 텍스트 일부 편집 시 영향 paragraph와 이후 line만 재배치하는 incremental API를 구현합니다. | 첫 paragraph edit가 독립 두 번째 paragraph를 재shape하지 않습니다. | VI.7.5, X.10.5 |
 | X.10.7 | `[ ]` | macOS·Windows 동일 font files로 glyph IDs, advances, line breaks golden 비교를 CI에 추가합니다. | byte-identical logical layout. | X.10.6 |
