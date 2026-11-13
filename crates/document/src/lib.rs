@@ -40,3 +40,6 @@ pub mod frame_metadata;
 
 /// node 종류 capability validator (VI.3.2).
 pub mod capabilities;
+
+/// Fragment payload (VI.4).
+pub mod fragment;
