@@ -15,5 +15,8 @@ pub mod hash_stream;
 /// 에셋 content 파일 경로 (XIII.5.2).
 pub mod path;
 
-/// 에셋 저장소와 외부 파일 import (XIII.5.2).
+/// 에셋 저장소와 외부 파일 import (XIII.5.2), content dedup (XIII.5.3).
 pub mod store;
+
+/// `AssetId → AssetRecord` catalog (XIII.5.3).
+pub mod catalog;

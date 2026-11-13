@@ -135,9 +135,32 @@ impl AssetObjectPath {
         Path::new(ASSETS_DIR).join(&self.prefix)
     }
 
+    /// content hash가 들어갈 shard 디렉터리(`assets/<prefix>`, 확장자 무관).
+    pub fn shard_dir_for(hash: &ContentHash) -> PathBuf {
+        Path::new(ASSETS_DIR).join(&hash.digest_hex()[..2])
+    }
+
     /// 프로젝트 root 기준 상대 경로(`assets/<prefix>/<file>`)를 플랫폼 구분자로 만듭니다.
     pub fn to_relative_path(&self) -> PathBuf {
         self.relative_dir().join(&self.file_name)
+    }
+
+    /// shard 디렉터리 이름과 파일 이름이 content 파일 규칙에 **정확히**(canonical) 맞으면
+    /// 경로와 content hash를 복원합니다(XIII.5.3 dedup 조회·XIII.5.6 GC 용).
+    ///
+    /// temp 파일(`.`로 시작), 대문자 확장자, prefix 불일치, 알 수 없는 알고리즘 등은 `None`.
+    pub fn parse(prefix: &str, file_name: &str) -> Option<(AssetObjectPath, ContentHash)> {
+        let (stem, ext) = file_name.rsplit_once('.')?;
+        let extension = SafeExtension::new(ext).ok()?;
+        let (algorithm, hex) = stem.split_once('-')?;
+        let hash: ContentHash = format!("{algorithm}:{hex}").parse().ok()?;
+        let path = AssetObjectPath::new(&hash, &extension);
+        (path.prefix == prefix && path.file_name == file_name).then_some((path, hash))
+    }
+
+    /// 같은 content hash인지(확장자 무관).
+    pub fn has_hash(&self, hash: &ContentHash) -> bool {
+        AssetObjectPath::parse(&self.prefix, &self.file_name).is_some_and(|(_, h)| h == *hash)
     }
 }
 
@@ -226,6 +249,32 @@ mod tests {
                 expected,
                 "{path}"
             );
+        }
+    }
+
+    #[test]
+    fn parse_round_trips_canonical_names_only() {
+        let hash = ContentHash::compute(b"abc");
+        let path = AssetObjectPath::new(&hash, &SafeExtension::new("png").unwrap());
+        assert_eq!(
+            AssetObjectPath::parse(path.prefix(), path.file_name()),
+            Some((path.clone(), hash))
+        );
+        assert!(path.has_hash(&hash));
+        assert!(!path.has_hash(&ContentHash::compute(b"abd")));
+
+        let hex = hash.digest_hex();
+        for (prefix, name) in [
+            ("bb", path.file_name().to_string()),         // prefix 불일치
+            ("ba", format!("sha256-{hex}.PNG")),          // 비canonical 확장자
+            ("ba", format!("sha256-{hex}")),              // 확장자 없음
+            ("ba", format!(".sha256-{hex}.png.tmp-1-0")), // temp 파일
+            ("ba", format!("md5-{hex}.png")),             // 알 수 없는 알고리즘
+            ("ba", format!("sha256-{}.png", &hex[..63])), // 짧은 digest
+            ("ba", format!("sha256-{}.png", hex.to_uppercase())), // 대문자 hex
+            ("ba", "readme.txt".to_string()),
+        ] {
+            assert_eq!(AssetObjectPath::parse(prefix, &name), None, "{name}");
         }
     }
 }

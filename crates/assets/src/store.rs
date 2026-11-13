@@ -10,6 +10,15 @@
 //!    (import 도중 원본 변경) temp를 지우고 [`ImportError::SourceChanged`]로 실패합니다.
 //!    검증이 끝난 temp만 최종 이름으로 rename합니다.
 //!
+//! # dedup (XIII.5.3)
+//!
+//! hash pass 뒤 같은 shard 디렉터리에서 같은 content hash의 content 파일(확장자 무관)을
+//! 찾습니다. 크기까지 같은 파일이 있으면 copy pass를 **건너뛰고**(재복사·재기록 없음) 그
+//! 파일을 가리키는 새 record를 돌려줍니다([`ImportOutcome::Deduplicated`]). record는
+//! AssetId를 포함하지 않으므로 호출자가 새 AssetId로 같은 content를 참조할 수 있습니다
+//! ([`crate::catalog::AssetCatalog`]). 크기가 다른 같은 이름 파일(손상)은 재사용하지 않고
+//! copy pass의 atomic rename으로 교체합니다.
+//!
 //! 원본 위치는 optional metadata입니다([`ImportRequest::without_source_metadata`]로 생략).
 //! 기록할 때는 절대 로컬 경로가 아니라 프로젝트 상대 경로 또는 파일 이름+출처 지문만
 //! 남깁니다([`SourceMetadata::from_import_path`]).
@@ -20,7 +29,7 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use stellar_storage::hash::ParseContentHashError;
+use stellar_storage::hash::{ContentHash, ParseContentHashError};
 
 use crate::hash_stream::{hash_reader_with, StreamDigest, StreamHashError, STREAM_BUFFER_SIZE};
 use crate::media_type::MediaType;
@@ -34,6 +43,8 @@ pub enum ImportOperation {
     OpenSource,
     /// hash pass 읽기.
     HashSource,
+    /// 기존 content 파일 조회(dedup).
+    LocateContent,
     /// shard 디렉터리 생성.
     CreateDirectory,
     /// copy pass(읽기·temp 쓰기).
@@ -47,6 +58,7 @@ impl fmt::Display for ImportOperation {
         let name = match self {
             ImportOperation::OpenSource => "open-source",
             ImportOperation::HashSource => "hash-source",
+            ImportOperation::LocateContent => "locate-content",
             ImportOperation::CreateDirectory => "create-directory",
             ImportOperation::CopyContent => "copy-content",
             ImportOperation::Rename => "rename",
@@ -169,13 +181,24 @@ impl ImportRequest {
     }
 }
 
+/// content 파일을 새로 썼는지 여부.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ImportOutcome {
+    /// 같은 content가 없어 copy pass로 새로 기록했습니다.
+    Copied,
+    /// 같은 content hash·크기의 파일이 이미 있어 재복사하지 않았습니다(XIII.5.3).
+    Deduplicated,
+}
+
 /// import 결과.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedAsset {
     /// 새 에셋 record(보존 field 없음).
     pub record: AssetRecord,
-    /// 프로젝트 root 기준 content 파일 경로.
+    /// 프로젝트 root 기준 content 파일 경로. dedup이면 기존 파일(확장자가 요청과 다를 수 있음).
     pub object_path: AssetObjectPath,
+    /// 복사 여부.
+    pub outcome: ImportOutcome,
 }
 
 /// 프로젝트의 `assets/` content 저장소.
@@ -216,8 +239,17 @@ impl AssetStore {
 
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
         let digest = hash_source(&request.source, &mut buffer)?;
-        let object_path = AssetObjectPath::new(&digest.hash, &request.extension);
-        self.copy_content(&request.source, &digest, &object_path, &mut buffer)?;
+        let (object_path, outcome) = match self
+            .locate_content(&digest.hash, digest.size)
+            .map_err(|e| ImportError::io(ImportOperation::LocateContent, &e))?
+        {
+            Some(existing) => (existing, ImportOutcome::Deduplicated),
+            None => {
+                let object_path = AssetObjectPath::new(&digest.hash, &request.extension);
+                self.copy_content(&request.source, &digest, &object_path, &mut buffer)?;
+                (object_path, ImportOutcome::Copied)
+            }
+        };
 
         Ok(ImportedAsset {
             record: AssetRecord::new(
@@ -227,7 +259,50 @@ impl AssetStore {
                 source_metadata,
             ),
             object_path,
+            outcome,
         })
+    }
+
+    /// content hash·크기가 같은 기존 content 파일을 찾습니다(확장자 무관).
+    ///
+    /// 여러 개면 파일 이름 사전순 첫 번째입니다(결정론). shard 디렉터리가 없으면 `None`.
+    /// 크기가 다른 파일은 손상으로 보고 제외합니다(내용 전체 재hash는 하지 않음).
+    pub fn locate_content(
+        &self,
+        hash: &ContentHash,
+        size: u64,
+    ) -> std::io::Result<Option<AssetObjectPath>> {
+        let dir = self.root.join(AssetObjectPath::shard_dir_for(hash));
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e),
+        };
+        let prefix = &hash.digest_hex()[..2];
+        let mut found: Option<AssetObjectPath> = None;
+        for entry in entries {
+            let entry = entry?;
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                continue;
+            };
+            let Some((path, entry_hash)) = AssetObjectPath::parse(prefix, &name) else {
+                continue;
+            };
+            if entry_hash != *hash {
+                continue;
+            }
+            let metadata = entry.metadata()?;
+            if !metadata.is_file() || metadata.len() != size {
+                continue;
+            }
+            if found
+                .as_ref()
+                .is_none_or(|f| path.file_name() < f.file_name())
+            {
+                found = Some(path);
+            }
+        }
+        Ok(found)
     }
 
     /// copy pass: temp에 복사·재hash 검증 후 최종 이름으로 rename합니다.
@@ -376,7 +451,6 @@ mod tests {
     use super::test_support::{files_under, patterned, TempDir};
     use super::*;
     use crate::record::SourceLocation;
-    use stellar_storage::hash::ContentHash;
 
     fn png() -> MediaType {
         MediaType::new("image/png").unwrap()
@@ -482,6 +556,7 @@ mod tests {
             .import_file(&ImportRequest::new(&source, png()))
             .unwrap();
         assert!(default.object_path.file_name().ends_with(".bin"));
+        std::fs::write(&source, b"other data").unwrap();
         let explicit = fx
             .store
             .import_file(
@@ -490,7 +565,131 @@ mod tests {
             )
             .unwrap();
         assert!(explicit.object_path.file_name().ends_with(".png"));
-        assert_eq!(default.record.content_hash, explicit.record.content_hash);
+    }
+
+    /// dedup fixture: 서로 다른 경로·이름·확장자의 같은 bytes 3개와 다른 bytes 1개.
+    #[test]
+    fn same_content_is_stored_once_and_shared_by_new_asset_ids() {
+        use crate::catalog::AssetCatalog;
+        use crate::id::AssetId;
+
+        let fx = fixture();
+        let bytes = patterned(2 * STREAM_BUFFER_SIZE + 3, 4);
+        std::fs::create_dir_all(fx.outside.join("copy")).unwrap();
+        std::fs::create_dir_all(fx.project.join("images")).unwrap();
+        let sources = [
+            fx.outside.join("logo.png"),
+            fx.outside.join("copy").join("logo-final.png"),
+            fx.project.join("images").join("logo.jpeg"),
+        ];
+        for source in &sources {
+            std::fs::write(source, &bytes).unwrap();
+        }
+
+        let first = fx
+            .store
+            .import_file(&ImportRequest::new(&sources[0], png()))
+            .unwrap();
+        assert_eq!(first.outcome, ImportOutcome::Copied);
+        let content = fx.store.content_path(&first.object_path);
+        let before = std::fs::metadata(&content).unwrap();
+
+        let mut catalog = AssetCatalog::new();
+        let id = |n: u8| AssetId::from_bytes([n; 16]);
+        catalog.insert(id(1), first.record.clone()).unwrap();
+        for (n, source) in sources.iter().enumerate().skip(1) {
+            let again = fx
+                .store
+                .import_file(&ImportRequest::new(source, png()))
+                .unwrap();
+            assert_eq!(again.outcome, ImportOutcome::Deduplicated, "{source:?}");
+            // 확장자가 달라도(.jpeg) 기존 content 파일을 가리킵니다.
+            assert_eq!(again.object_path, first.object_path);
+            assert_eq!(again.record.content_hash, first.record.content_hash);
+            assert_ne!(again.record.source_metadata, first.record.source_metadata);
+            catalog.insert(id(n as u8 + 1), again.record).unwrap();
+        }
+
+        // 파일은 하나뿐이고 재기록되지 않았습니다(inode·mtime·내용 불변).
+        assert_eq!(
+            files_under(&fx.project.join("assets")),
+            vec![content.clone()]
+        );
+        let after = std::fs::metadata(&content).unwrap();
+        assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            assert_eq!(after.ino(), before.ino(), "rename 교체 없음");
+        }
+        assert_eq!(std::fs::read(&content).unwrap(), bytes);
+
+        // 새 AssetId 3개가 같은 content를 참조합니다.
+        assert_eq!(
+            catalog.ids_for_content(&first.record.content_hash),
+            vec![id(1), id(2), id(3)]
+        );
+        assert_eq!(catalog.content_hashes().len(), 1);
+
+        // 다른 bytes는 dedup되지 않습니다.
+        let other = fx.outside.join("other.png");
+        std::fs::write(&other, b"different").unwrap();
+        let distinct = fx
+            .store
+            .import_file(&ImportRequest::new(&other, png()))
+            .unwrap();
+        assert_eq!(distinct.outcome, ImportOutcome::Copied);
+        assert_eq!(files_under(&fx.project.join("assets")).len(), 2);
+    }
+
+    #[test]
+    fn damaged_existing_content_is_replaced_not_reused() {
+        let fx = fixture();
+        let bytes = b"real content".to_vec();
+        let source = fx.outside.join("a.png");
+        std::fs::write(&source, &bytes).unwrap();
+        let hash = ContentHash::compute(&bytes);
+        let object = AssetObjectPath::new(&hash, &SafeExtension::new("png").unwrap());
+        let content = fx.store.content_path(&object);
+        std::fs::create_dir_all(content.parent().unwrap()).unwrap();
+        std::fs::write(&content, b"trunc").unwrap(); // 같은 이름, 다른 크기(손상)
+
+        assert_eq!(
+            fx.store.locate_content(&hash, bytes.len() as u64).unwrap(),
+            None
+        );
+        let imported = fx
+            .store
+            .import_file(&ImportRequest::new(&source, png()))
+            .unwrap();
+        assert_eq!(imported.outcome, ImportOutcome::Copied);
+        assert_eq!(
+            std::fs::read(&content).unwrap(),
+            bytes,
+            "atomic 교체로 복구"
+        );
+    }
+
+    #[test]
+    fn locate_ignores_temp_foreign_and_missing_shards() {
+        let fx = fixture();
+        let hash = ContentHash::compute(b"zz");
+        assert_eq!(
+            fx.store.locate_content(&hash, 2).unwrap(),
+            None,
+            "shard 없음"
+        );
+        let dir = fx.project.join(AssetObjectPath::shard_dir_for(&hash));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = AssetObjectPath::new(&hash, &SafeExtension::new("png").unwrap());
+        let bin = AssetObjectPath::new(&hash, &SafeExtension::binary());
+        std::fs::write(dir.join(format!(".{}.tmp-1-0", png.file_name())), b"zz").unwrap();
+        std::fs::write(dir.join("readme.txt"), b"zz").unwrap();
+        assert_eq!(fx.store.locate_content(&hash, 2).unwrap(), None);
+        // 같은 hash가 여러 확장자로 있으면 이름 사전순 첫 번째(결정론).
+        std::fs::write(dir.join(png.file_name()), b"zz").unwrap();
+        std::fs::write(dir.join(bin.file_name()), b"zz").unwrap();
+        assert_eq!(fx.store.locate_content(&hash, 2).unwrap(), Some(bin));
     }
 
     #[test]
