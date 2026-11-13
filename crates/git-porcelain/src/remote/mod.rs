@@ -69,6 +69,23 @@ impl From<GatedRunError> for RemoteError {
     }
 }
 
+impl From<GitOpError> for RemoteError {
+    /// 공통 오류를 자격 증명을 가린 remote 오류로 바꿉니다(원시 stdout·stderr bytes는 버림).
+    fn from(e: GitOpError) -> RemoteError {
+        match e {
+            GitOpError::Gate(g) => RemoteError::Gate(g),
+            GitOpError::Git(f) => RemoteError::Failed {
+                exit_code: f.exit_code,
+                stderr_redacted: redact_credentials(&String::from_utf8_lossy(&f.stderr)),
+            },
+            GitOpError::Parse(p) => RemoteError::Parse {
+                command: p.command,
+                detail: p.detail,
+            },
+        }
+    }
+}
+
 /// 비영 종료 출력을 자격 증명을 가린 [`RemoteError::Failed`]로 만듭니다(원시 bytes는 버림).
 pub(crate) fn redacted_failure(output: &GitOutput) -> RemoteError {
     RemoteError::Failed {

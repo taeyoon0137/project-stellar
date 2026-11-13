@@ -56,6 +56,18 @@ pub enum ConnectError {
     InvalidGitHubUrl(GitHubUrlProblem),
     /// Git 실행·해석 실패.
     Remote(RemoteError),
+    /// 같은 이름의 remote가 이미 있음(덮어쓰지 않음, 호출자가 다른 이름을 제공해야 함).
+    RemoteNameTaken {
+        /// 이미 있는 이름.
+        name: String,
+    },
+    /// remote 이름 규칙 위반(Git 미실행).
+    InvalidRemoteName,
+    /// 원격에 기존 이력이 있어 최초 연결을 거부함(Clone 안내, remote 미등록).
+    RemoteHasHistory {
+        /// 원격 ref 수.
+        ref_count: usize,
+    },
 }
 
 impl std::fmt::Display for ConnectError {
@@ -66,6 +78,15 @@ impl std::fmt::Display for ConnectError {
             ),
             ConnectError::InvalidGitHubUrl(p) => write!(f, "GitHub URL 형식 오류: {p:?}"),
             ConnectError::Remote(e) => write!(f, "{e}"),
+            ConnectError::RemoteNameTaken { name } => write!(
+                f,
+                "remote '{name}'이(가) 이미 있습니다. 다른 이름을 지정하세요"
+            ),
+            ConnectError::InvalidRemoteName => f.write_str("사용할 수 없는 remote 이름입니다"),
+            ConnectError::RemoteHasHistory { ref_count } => write!(
+                f,
+                "원격 저장소에 기존 이력({ref_count}개 ref)이 있습니다. Clone해서 사용하세요"
+            ),
         }
     }
 }
@@ -154,9 +175,102 @@ pub fn check_initial_github_connection(
     })
 }
 
+/// 기본 remote 이름(XIV.9.4).
+pub const DEFAULT_REMOTE_NAME: &str = "origin";
+
+/// 빈 GitHub remote 등록 요청.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectRemoteRequest {
+    /// remote 이름(없으면 [`DEFAULT_REMOTE_NAME`]).
+    pub name: Option<String>,
+    /// GitHub URL.
+    pub url: RemoteUrl,
+}
+
+/// 등록된 remote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectedRemote {
+    /// 등록한 이름.
+    pub name: String,
+    /// 검증된 저장소.
+    pub repo: GitHubRepo,
+}
+
+/// remote 이름 규칙(영숫자·`.`·`_`·`-`, `-`·`.`로 시작 불가, `..`·`.lock` 끝 불가, 1~100자).
+///
+/// Git의 ref 이름 규칙보다 좁은 부분집합입니다. 최종 검증은 `git remote add`가 합니다.
+pub fn is_valid_remote_name(name: &str) -> bool {
+    (1..=100).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+        && !name.starts_with('-')
+        && !name.starts_with('.')
+        && !name.contains("..")
+        && !name.ends_with(".lock")
+}
+
+/// **빈** GitHub 저장소만 `git remote add -- <name> <url>`로 등록합니다(XIV.9.4).
+///
+/// 순서: GitHub URL 검증 → 이름 검증 → 기존 remote 이름 확인(있으면 덮어쓰지 않고
+/// [`ConnectError::RemoteNameTaken`]) → `ls-remote`(ref가 있으면 [`ConnectError::RemoteHasHistory`])
+/// → 등록. 실패한 단계 이후는 실행하지 않으며 Git config를 바꾸지 않습니다.
+pub fn connect_empty_github_remote(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    request: &ConnectRemoteRequest,
+) -> Result<ConnectedRemote, ConnectError> {
+    let repo = require_github(&request.url)?;
+    let name = request
+        .name
+        .clone()
+        .unwrap_or_else(|| DEFAULT_REMOTE_NAME.to_string());
+    if !is_valid_remote_name(&name) {
+        return Err(ConnectError::InvalidRemoteName);
+    }
+    let existing = super::list_remotes(git, worktree).map_err(RemoteError::from)?;
+    if existing.iter().any(|r| r.name == name) {
+        return Err(ConnectError::RemoteNameTaken { name });
+    }
+    if let RemoteRefsState::HasRefs { ref_count } = probe_remote_refs(git, worktree, &request.url)?
+    {
+        return Err(ConnectError::RemoteHasHistory { ref_count });
+    }
+    let output = git
+        .run(
+            &argv(["remote", "add", "--", name.as_str(), request.url.expose()]),
+            worktree,
+        )
+        .map_err(RemoteError::Gate)?;
+    if !output.success() {
+        return Err(ConnectError::Remote(redacted_failure(&output)));
+    }
+    Ok(ConnectedRemote { name, repo })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remote_name_rules() {
+        for ok in ["origin", "github", "up-stream_2", "a.b"] {
+            assert!(is_valid_remote_name(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "-x",
+            ".x",
+            "a..b",
+            "x.lock",
+            "a b",
+            "a/b",
+            "한글",
+            &"a".repeat(101),
+        ] {
+            assert!(!is_valid_remote_name(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn counts_ls_remote_lines() {
@@ -291,6 +405,139 @@ mod tests {
                 ),
                 Err(ConnectError::Remote(RemoteError::Failed { .. }))
             ));
+        }
+
+        #[test]
+        fn origin_exists_fixture_is_not_overwritten() {
+            let Some(git) = system_git() else {
+                return;
+            };
+            let dir = TempDir::new("connect-add");
+            let remotes = dir.path().join("remotes");
+            let runner = github_redirect_runner(git, &remotes);
+            init_bare(&runner, &remotes.join("acme/empty.git"));
+            init_bare(&runner, &remotes.join("acme/history.git"));
+            let work = dir.path().join("work");
+            std::fs::create_dir_all(&work).unwrap();
+            init_repo_with_identity(&runner, &work);
+            commit_file(&runner, &work, "a.txt", b"a\n");
+            git_ok(
+                &runner,
+                &work,
+                [
+                    "push",
+                    "-q",
+                    remotes.join("acme/history.git").to_str().unwrap(),
+                    "main",
+                ],
+            );
+            git_ok(
+                &runner,
+                &work,
+                ["remote", "add", "origin", "/srv/original.git"],
+            );
+            let config_before = std::fs::read(work.join(".git/config")).unwrap();
+
+            let gate = GatedGitRunner::new(runner.clone(), GitTrust::Trusted);
+            let url = RemoteUrl::new("https://github.com/acme/empty.git");
+            // 이름 생략 → origin → 이미 있음 → 덮어쓰지 않음.
+            let request = ConnectRemoteRequest {
+                name: None,
+                url: url.clone(),
+            };
+            assert_eq!(
+                connect_empty_github_remote(&gate, &work, &request),
+                Err(ConnectError::RemoteNameTaken {
+                    name: "origin".into()
+                })
+            );
+            assert_eq!(
+                std::fs::read(work.join(".git/config")).unwrap(),
+                config_before
+            );
+            let origin = git_ok(&runner, &work, ["remote", "get-url", "origin"]);
+            assert_eq!(
+                String::from_utf8_lossy(&origin.stdout).trim(),
+                "/srv/original.git"
+            );
+
+            // 기존 이력이 있는 원격은 다른 이름이어도 등록하지 않음.
+            let history = ConnectRemoteRequest {
+                name: Some("github".into()),
+                url: RemoteUrl::new("https://github.com/acme/history.git"),
+            };
+            assert!(matches!(
+                connect_empty_github_remote(&gate, &work, &history),
+                Err(ConnectError::RemoteHasHistory { ref_count }) if ref_count >= 1
+            ));
+            assert_eq!(
+                std::fs::read(work.join(".git/config")).unwrap(),
+                config_before
+            );
+
+            // 잘못된 이름은 Git 실행 없이 거부.
+            let before = runner.spawn_count();
+            let bad = ConnectRemoteRequest {
+                name: Some("-u".into()),
+                url: url.clone(),
+            };
+            assert_eq!(
+                connect_empty_github_remote(&gate, &work, &bad),
+                Err(ConnectError::InvalidRemoteName)
+            );
+            assert_eq!(runner.spawn_count(), before);
+
+            // 호출자가 다른 이름을 주면 빈 원격을 등록.
+            let ok = ConnectRemoteRequest {
+                name: Some("github".into()),
+                url,
+            };
+            let connected = connect_empty_github_remote(&gate, &work, &ok).unwrap();
+            assert_eq!(connected.name, "github");
+            assert_eq!(connected.repo.owner, "acme");
+            let got = git_ok(&runner, &work, ["config", "--get", "remote.github.url"]);
+            assert_eq!(
+                String::from_utf8_lossy(&got.stdout).trim(),
+                "https://github.com/acme/empty.git"
+            );
+            let origin = git_ok(&runner, &work, ["remote", "get-url", "origin"]);
+            assert_eq!(
+                String::from_utf8_lossy(&origin.stdout).trim(),
+                "/srv/original.git"
+            );
+        }
+
+        #[test]
+        fn default_name_is_origin_when_free() {
+            let Some(git) = system_git() else {
+                return;
+            };
+            let dir = TempDir::new("connect-default");
+            let remotes = dir.path().join("remotes");
+            let runner = github_redirect_runner(git, &remotes);
+            init_bare(&runner, &remotes.join("acme/empty.git"));
+            let work = dir.path().join("work");
+            std::fs::create_dir_all(&work).unwrap();
+            init_repo_with_identity(&runner, &work);
+            let gate = GatedGitRunner::new(runner.clone(), GitTrust::Trusted);
+            let connected = connect_empty_github_remote(
+                &gate,
+                &work,
+                &ConnectRemoteRequest {
+                    name: None,
+                    url: RemoteUrl::new("git@github.com:acme/empty.git"),
+                },
+            )
+            .unwrap();
+            assert_eq!(connected.name, DEFAULT_REMOTE_NAME);
+            let got = git_ok(&runner, &work, ["remote", "get-url", "origin"]);
+            // config에는 사용자가 준 GitHub URL 그대로(insteadOf 적용 전 원문).
+            let raw = git_ok(&runner, &work, ["config", "--get", "remote.origin.url"]);
+            assert_eq!(
+                String::from_utf8_lossy(&raw.stdout).trim(),
+                "git@github.com:acme/empty.git"
+            );
+            assert!(!got.stdout.is_empty());
         }
     }
 }
