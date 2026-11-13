@@ -11,3 +11,6 @@ pub mod thread_role;
 
 /// worker 전용 이미지 decoder interface와 decoded pixel format (XI.7.1).
 pub mod image_decode;
+
+/// missing/decoding asset placeholder (XI.7.4).
+pub mod placeholder;

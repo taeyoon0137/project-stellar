@@ -7,4 +7,4 @@
 pub mod geometry;
 
 pub use stellar_core_types::color::ColorSpace;
-pub use stellar_core_types::value::{FiniteF32, NonFiniteError, Vec2};
+pub use stellar_core_types::value::{FiniteF32, NonFiniteError, Size2, Vec2};
