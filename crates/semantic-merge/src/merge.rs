@@ -599,6 +599,61 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn different_values_conflict_preserves_all_three_values() {
+        // 11.name: base "a", ours "x", theirs "y". 11.visible: ours만 바꿈(자동 병합).
+        // 12.name: ours 삭제, theirs "z". 10.name: theirs만 바꿈.
+        let base = base();
+        let mut ours = edit(&base, 11, |o| {
+            set(o, keys::DISPLAY_NAME, text("x"));
+            set(o, keys::VISIBLE, SemanticValue::Bool(false));
+        });
+        ours = edit(&ours, 12, |o| {
+            o.remove_property(&o.path(&[keys::DISPLAY_NAME]));
+        });
+        let mut theirs = edit(&base, 11, |o| set(o, keys::DISPLAY_NAME, text("y")));
+        theirs = edit(&theirs, 12, |o| set(o, keys::DISPLAY_NAME, text("z")));
+        theirs = edit(&theirs, 10, |o| set(o, keys::DISPLAY_NAME, text("top")));
+        let result = run(&base, &ours, &theirs);
+
+        assert_eq!(result.conflicts.len(), 2, "{:?}", result.conflicts);
+        let name = |id| PropertyPath::with_keys(sid(id), vec![keys::DISPLAY_NAME]);
+        let first = &result.conflicts[0];
+        assert_eq!(first.kind, ConflictKind::PropertyValue);
+        assert_eq!(
+            (first.object, &first.target),
+            (sid(11), &ConflictTarget::Property(name(11)))
+        );
+        let values = first.property_values().unwrap();
+        assert_eq!(
+            (values.base, values.ours, values.theirs),
+            (Some(&text("a")), Some(&text("x")), Some(&text("y")))
+        );
+        let second = result.conflicts[1].property_values().unwrap();
+        assert_eq!(
+            (second.base, second.ours, second.theirs),
+            (Some(&text("b")), None, Some(&text("z")))
+        );
+        assert_eq!(
+            result.conflicts[1].provenance,
+            object_provenance(base.get(sid(12)).unwrap())
+        );
+
+        // candidate: conflict 경로는 base 값, 나머지는 병합.
+        let merged = |id, key| {
+            let object = result.merged.get(sid(id)).unwrap();
+            object.property(&object.path(&[key])).cloned()
+        };
+        assert_eq!(merged(11, keys::DISPLAY_NAME), Some(text("a")));
+        assert_eq!(merged(12, keys::DISPLAY_NAME), Some(text("b")));
+        assert_eq!(merged(11, keys::VISIBLE), Some(SemanticValue::Bool(false)));
+        assert_eq!(merged(10, keys::DISPLAY_NAME), Some(text("top")));
+
+        // 결과 bytes round-trip 후에도 conflict 기록이 같습니다.
+        let decoded = MergeResult::from_canonical_bytes(&result.to_canonical_bytes()).unwrap();
+        assert_eq!(decoded, result);
+    }
+
+    #[test]
     fn child_added_under_deleted_parent_is_conflict() {
         // ours: frame 11과 자식 13 삭제. theirs: 11 아래 새 자식 22 추가.
         let base = base();

@@ -134,10 +134,44 @@ pub struct SemanticConflict {
     pub theirs: SideState,
 }
 
+/// 속성 conflict의 세 값(XIV.10.4). `None`은 그쪽에 속성이 없음을 뜻합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PropertyValues<'a> {
+    /// 속성 경로.
+    pub path: &'a PropertyPath,
+    /// base 값.
+    pub base: Option<&'a SemanticValue>,
+    /// ours 값.
+    pub ours: Option<&'a SemanticValue>,
+    /// theirs 값.
+    pub theirs: Option<&'a SemanticValue>,
+}
+
 impl SemanticConflict {
     /// 소유 문서(프로젝트 범위면 `None`).
     pub fn document(&self) -> Option<StableId> {
         self.provenance.document()
+    }
+
+    /// 속성 대상 conflict의 base·ours·theirs 값(XIV.10.4).
+    ///
+    /// 대상이 속성이 아니거나 어느 쪽 상태가 속성 값이 아니면(객체 자체가 없는 등) `None`.
+    pub fn property_values(&self) -> Option<PropertyValues<'_>> {
+        let ConflictTarget::Property(path) = &self.target else {
+            return None;
+        };
+        fn value(side: &SideState) -> Option<Option<&SemanticValue>> {
+            match side {
+                SideState::Value(value) => Some(value.as_ref()),
+                _ => None,
+            }
+        }
+        Some(PropertyValues {
+            path,
+            base: value(&self.base)?,
+            ours: value(&self.ours)?,
+            theirs: value(&self.theirs)?,
+        })
     }
 }
 
@@ -462,6 +496,17 @@ pub(crate) mod tests {
             changes,
             conflicts,
         }
+    }
+
+    #[test]
+    fn property_values_accessor() {
+        let result = sample_result();
+        let values = result.conflicts[0].property_values().unwrap();
+        assert_eq!(values.base, Some(&text("a")));
+        assert_eq!(values.ours, Some(&text("b")));
+        assert_eq!(values.theirs, None);
+        assert_eq!(values.path.root(), sid(11));
+        assert!(result.conflicts[1].property_values().is_none(), "객체 대상");
     }
 
     #[test]
