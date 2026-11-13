@@ -606,7 +606,7 @@ tools/xtask/
 |---|---|---|---|---|
 | VI.9.1 | `[x]` | `ModifierId`를 StableId newtype으로 정의하고 ordered modifier list를 node payload와 분리 저장합니다. | ID와 순서 round-trip. | III.1.1, III.5.2 |
 | VI.9.2 | `[x]` | 초기 modifier kind를 Transform, Boolean, StrokeExpand, Corner, Mask, Clip, Fill, Stroke, Shadow, Blur, Blend, Opacity로 정의합니다. | numeric kind golden test. | VI.9.1 |
-| VI.9.3 | `[ ]` | 각 modifier에 enabled flag와 typed payload를 정의하고 disabled modifier는 평가에서 skip하되 저장에는 유지합니다. | enable/disable 결과 fixture 통과. | VI.9.2 |
+| VI.9.3 | `[x]` | 각 modifier에 enabled flag와 typed payload를 정의하고 disabled modifier는 평가에서 skip하되 저장에는 유지합니다. | enable/disable 결과 fixture 통과. | VI.9.2 |
 | VI.9.4 | `[ ]` | Boolean·Mask·Clip의 다른 NodeRef 의존성을 ReferenceIndex에 등록합니다. | 참조 추가·제거 시 inbound index 정확. | VI.2.5, VI.9.2 |
 | VI.9.5 | `[ ]` | modifier 참조 graph cycle detector를 구현합니다. direct/self/indirect cycle을 저장 전 거부합니다. | cycle fixture 전부 실패. | VI.9.4 |
 | VI.9.6 | `[ ]` | Fragment에 modifier 삽입을 거부합니다. | Fragment modifier command fixture 실패. | VI.4.2, VI.9.1 |
