@@ -24,6 +24,10 @@ pub use stellar_local_ipc as ipc;
 /// stderr 전용 로그 (XIX.1.1).
 pub mod log;
 
+/// 부모 프로세스 종료 감지 (XIX.1.9). macOS 전용(ADR-0006).
+#[cfg(target_os = "macos")]
+pub mod parent;
+
 /// MCP protocol version 고정과 협상 (XIX.1.5).
 pub mod protocol;
 
