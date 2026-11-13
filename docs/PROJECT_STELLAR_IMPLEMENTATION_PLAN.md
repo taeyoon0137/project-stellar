@@ -620,7 +620,7 @@ tools/xtask/
 |---|---|---|---|---|
 | VI.10.1 | `[x]` | 전체 document validator를 구현합니다: ID uniqueness, parent consistency, root count, OrderKey uniqueness, ref type, modifier cycle, depth≤64. | 각 불변식 위반 fixture가 정확한 위치 오류. | VI.1~VI.9 |
 | VI.10.2 | `[x]` | document→chunk model serializer를 구현하고 runtime ID를 저장하지 않습니다. | save bytes에 RuntimeEntityId pattern 없음. | VI.10.1, V.6.2 |
-| VI.10.3 | `[ ]` | chunk model→document loader를 구현하고 ID registry와 parent order를 재구축합니다. | 100개 golden document round-trip 의미 동일. | VI.10.2 |
+| VI.10.3 | `[x]` | chunk model→document loader를 구현하고 ID registry와 parent order를 재구축합니다. | 100개 golden document round-trip 의미 동일. | VI.10.2 |
 | VI.10.4 | `[ ]` | canonical semantic snapshot JSON을 테스트 전용으로 생성합니다. 프로덕션 저장에는 사용하지 않습니다. | 양 플랫폼 fixture diff가 byte-identical. | VI.10.3 |
 | VI.10.5 | `[ ]` | random valid document generator를 추가하고 1,000 seed round-trip property test를 CI smoke로 설정합니다. | panic, 데이터 손실, 비결정성 0건. | VI.10.3 |
 

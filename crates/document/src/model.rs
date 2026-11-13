@@ -1,4 +1,4 @@
-//! 런타임 문서 모델 (VI.10.2).
+//! 런타임 문서 모델 (VI.10.2·VI.10.3).
 //!
 //! 한 문서의 영속 내용을 runtime 구조로 보관합니다:
 //!
@@ -9,6 +9,8 @@
 //! **runtime 핸들은 이 모델 밖으로 영속되지 않습니다.** [`DocumentModel::to_records`]가 부모
 //! 핸들을 StableId로 바꾼 영속 레코드(VI.10)를 만들고, 직렬화는 그 레코드만 사용합니다.
 //! 핸들 값(slot·generation)은 삽입·삭제 이력에 따라 달라지지만 레코드는 같습니다.
+//! 로드는 [`DocumentModel::from_records`]가 레코드를 검증한 뒤 핸들을 새로 할당하며 ID
+//! registry와 부모·자식 순서를 재구축합니다(VI.10.3).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -20,6 +22,7 @@ use crate::modifier::{validate_modifier_owner, ModifierError, ModifierStack};
 use crate::node_columns::{NodeColumns, NodeFields};
 use crate::records::{DocumentRecords, NodePayload, NodeRecord};
 use crate::tree_ops::children_in_order;
+use crate::validate::{validate_document, DocumentDiagnostics, DocumentValidationError};
 
 /// 런타임 모델 조작 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,6 +96,26 @@ impl fmt::Display for ModelError {
 }
 
 impl std::error::Error for ModelError {}
+
+/// 레코드 → 런타임 모델 로드 오류(VI.10.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LoadModelError {
+    /// 레코드가 문서 불변식을 위반합니다(모델을 만들지 않음).
+    Invalid(DocumentValidationError),
+    /// 검증을 통과한 레코드를 모델에 넣지 못했습니다(버그 신호).
+    Model(ModelError),
+}
+
+impl fmt::Display for LoadModelError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LoadModelError::Invalid(e) => write!(f, "{e}"),
+            LoadModelError::Model(e) => write!(f, "문서 모델 재구축 실패: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for LoadModelError {}
 
 /// 한 문서의 런타임 모델.
 #[derive(Debug)]
@@ -294,6 +317,77 @@ impl DocumentModel {
         })
     }
 
+    /// 영속 레코드에서 런타임 모델을 만듭니다(VI.10.3).
+    ///
+    /// 1. 전체 validator(VI.10.1)를 먼저 실행해 위반이 있으면 모델을 만들지 않습니다.
+    /// 2. View 정의 순서로 각 root부터 pre-order(형제는 OrderKey, StableId 순)로 node를 넣어
+    ///    부모가 항상 먼저 할당되게 합니다 — 새 runtime 핸들, ID registry, 부모·자식 순서가
+    ///    입력 레코드 순서와 무관하게 결정론적으로 재구축됩니다.
+    /// 3. modifier stack을 소유 node에 붙입니다.
+    ///
+    /// 유효한 문서의 미해결 참조 진단을 함께 반환합니다.
+    pub fn from_records(
+        records: DocumentRecords,
+    ) -> Result<(DocumentModel, DocumentDiagnostics), LoadModelError> {
+        let diagnostics = validate_document(&records).map_err(LoadModelError::Invalid)?;
+        let DocumentRecords {
+            definition,
+            nodes,
+            modifier_stacks,
+        } = records;
+        let roots: Vec<StableId> = definition
+            .pages
+            .iter()
+            .flat_map(|p| p.views.iter().map(|v| v.root_frame))
+            .collect();
+        let mut model = DocumentModel::new(definition);
+
+        let mut by_id: BTreeMap<StableId, NodeRecord> = BTreeMap::new();
+        let mut children: BTreeMap<StableId, Vec<NodeRecord>> = BTreeMap::new();
+        for node in nodes {
+            match node.parent {
+                Some(parent) => children.entry(parent).or_default().push(node),
+                None => {
+                    by_id.insert(node.id, node);
+                }
+            }
+        }
+        for kids in children.values_mut() {
+            kids.sort_by(|a, b| (&a.order_key, a.id).cmp(&(&b.order_key, b.id)));
+        }
+        for root in roots {
+            let Some(record) = by_id.remove(&root) else {
+                continue;
+            };
+            let mut stack: Vec<NodeRecord> = vec![record];
+            while let Some(record) = stack.pop() {
+                let id = record.id;
+                model.insert_node(record).map_err(LoadModelError::Model)?;
+                if let Some(kids) = children.remove(&id) {
+                    stack.extend(kids.into_iter().rev());
+                }
+            }
+        }
+        if let Some((id, _)) = by_id.into_iter().next() {
+            return Err(LoadModelError::Model(ModelError::Inconsistent {
+                id,
+                reason: "View root가 아닌 부모 없는 node",
+            }));
+        }
+        if let Some((parent, _)) = children.into_iter().next() {
+            return Err(LoadModelError::Model(ModelError::Inconsistent {
+                id: parent,
+                reason: "root에서 닿지 않는 자식",
+            }));
+        }
+        for stack in modifier_stacks {
+            model
+                .set_modifier_stack(stack)
+                .map_err(LoadModelError::Model)?;
+        }
+        Ok((model, diagnostics))
+    }
+
     /// 전체 영속 레코드를 만듭니다(VI.10.2). runtime 핸들은 StableId로 바뀌어 결과에
     /// 남지 않으며, 결과는 canonical 순서(node·stack 모두 StableId 순)입니다.
     pub fn to_records(&self) -> Result<DocumentRecords, ModelError> {
@@ -488,5 +582,63 @@ mod tests {
             model.set_modifier_stack(ModifierStack::new(sid(77))),
             Err(ModelError::UnknownNode { id: sid(77) })
         );
+    }
+
+    #[test]
+    fn from_records_rebuilds_registry_and_child_order() {
+        // VI.10.3: ID registry와 parent order 재구축.
+        let mut model = DocumentModel::new(definition());
+        model.insert_node(record(10, None, 0x10, frame())).unwrap();
+        model
+            .insert_node(record(13, Some(10), 0x30, frame()))
+            .unwrap();
+        model
+            .insert_node(record(11, Some(10), 0x10, frame()))
+            .unwrap();
+        model
+            .insert_node(record(
+                12,
+                Some(13),
+                0x20,
+                NodePayload::Fragment(FragmentPayload),
+            ))
+            .unwrap();
+        let mut stack = ModifierStack::new(sid(11));
+        stack
+            .push_back(ModifierId::new(sid(60)), ModifierKind::Opacity)
+            .unwrap();
+        model.set_modifier_stack(stack).unwrap();
+        let records = model.to_records().unwrap();
+
+        // 입력 레코드 순서를 뒤집어도 같은 결과.
+        let mut reversed = records.clone();
+        reversed.nodes.reverse();
+        let (loaded, diagnostics) = DocumentModel::from_records(reversed).unwrap();
+        assert!(diagnostics.unresolved.is_empty());
+        assert_eq!(loaded.to_records().unwrap(), records);
+        assert_eq!(loaded.node_count(), 4);
+        for id in [10, 11, 12, 13] {
+            let handle = loaded.runtime_id(sid(id)).expect("registry 재구축");
+            assert_eq!(loaded.stable_id(handle), Some(sid(id)));
+        }
+        assert_eq!(loaded.children_in_order(sid(10)), vec![sid(11), sid(13)]);
+        assert_eq!(loaded.children_in_order(sid(13)), vec![sid(12)]);
+        assert!(loaded.modifier_stack(sid(11)).is_some());
+    }
+
+    #[test]
+    fn from_records_rejects_invalid_documents() {
+        let mut model = DocumentModel::new(definition());
+        model.insert_node(record(10, None, 0x10, frame())).unwrap();
+        model
+            .insert_node(record(11, Some(10), 0x10, frame()))
+            .unwrap();
+        let mut records = model.to_records().unwrap();
+        records.nodes[1].order_key = records.nodes[0].order_key.clone();
+        records.nodes.push(record(12, Some(10), 0x10, frame()));
+        match DocumentModel::from_records(records) {
+            Err(LoadModelError::Invalid(err)) => assert_eq!(err.violations.len(), 1),
+            other => panic!("검증 실패여야 함: {other:?}"),
+        }
     }
 }

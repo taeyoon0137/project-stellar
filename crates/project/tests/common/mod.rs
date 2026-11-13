@@ -1,6 +1,8 @@
 //! 문서 I/O 통합 테스트 공용 helper.
 #![allow(dead_code)]
 
+pub mod golden;
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
