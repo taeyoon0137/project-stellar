@@ -47,3 +47,6 @@ pub mod recovery_probe;
 
 /// 정상 종료 marker와 스냅샷 cleanup (V.9.4).
 pub mod recovery_shutdown;
+
+/// symlink를 그대로 허용하는 프로젝트 경로 resolver (XIII.4.1).
+pub mod path_resolver;

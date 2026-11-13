@@ -1288,7 +1288,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIII.4.1 | `[ ]` | 파일·디렉터리 symlink를 그대로 허용하는 path resolver를 구현합니다. 내부·외부 target 모두 허용합니다. | internal/external link read fixture 통과. | IV.2.3 |
+| XIII.4.1 | `[x]` | 파일·디렉터리 symlink를 그대로 허용하는 path resolver를 구현합니다. 내부·외부 target 모두 허용합니다. | internal/external link read fixture 통과. | IV.2.3 |
 | XIII.4.2 | `[ ]` | symlink cycle과 최대 hop을 검사해 무한 순회를 차단합니다. | self/two-node/deep cycle fixture 오류. | XIII.4.1 |
 | XIII.4.3 | `[ ]` | broken symlink는 삭제하지 않고 diagnostic으로 표시합니다. | broken link open 시 project의 다른 데이터 정상. | XIII.4.1 |
 | XIII.4.4 | `[ ]` | 외부 symlink target 변경을 watcher에 동적으로 등록·해제합니다. | target replace 후 event 수신. | XIII.2.2, XIII.2.3, XIII.4.1 |
