@@ -7,6 +7,9 @@
 //!   구체적인 group**만 값을 정합니다. 그 group 안에서 값이 서로 다르면 [`VariantConflict`]를 만들고 그 대상은
 //!   **적용하지 않습니다** — 정렬 순서(id)로 임의 선택하지 않습니다. 더 구체적인 Variant가 같은 대상을 지정하면
 //!   아래 group의 모호함은 해소됩니다(16장: "더 구체적인 Variant가 같은 속성을 지정하면 우선").
+//! - **적용**(IX.7.6): 구체 Variant 값이 일반 Variant 값을 덮어쓰고, 지정하지 않은 속성은 Base 또는 일반 Variant 값을
+//!   상속합니다. 정의되지 않은 조합(예: compact + processing)에는 추가 override가 없으므로 Base + 그 조합에 일치하는
+//!   일반 Variant만 적용됩니다. 충돌 대상은 Variant 값을 적용하지 않고 Base 값을 유지합니다.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -136,6 +139,76 @@ impl VariantResolution {
     pub fn is_ambiguous(&self) -> bool {
         !self.conflicts.is_empty()
     }
+
+    /// 적용 값을 하나의 희소 override로 합칩니다(충돌 대상 제외). scene·layout 생성이 base 위에 이 set을 적용합니다.
+    pub fn effective_overrides(&self) -> VariantOverrideSet {
+        let mut set = VariantOverrideSet::new();
+        for (key, (_, value)) in &self.applied {
+            match (key, value) {
+                (PatchKey::Property(path), PatchValue::Property(value)) => {
+                    set.set_property(path.clone(), value.clone());
+                }
+                (PatchKey::Structure(node), PatchValue::Structure(patch)) => {
+                    set.set_structure(*node, patch.clone());
+                }
+                (PatchKey::Slot(instance, slot), PatchValue::Slot(change)) => {
+                    set.set_slot(*instance, *slot, change.clone());
+                }
+                // key와 value 갈래는 resolve_variants가 항상 같게 만듭니다.
+                _ => {}
+            }
+        }
+        set
+    }
+}
+
+/// 속성 값의 출처.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueSource {
+    /// Base View 값.
+    Base,
+    /// 그 값을 정한 Variant.
+    Variant(ViewVariantId),
+}
+
+/// 적용 결과 속성 값.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedValue {
+    /// 값.
+    pub value: TypedValue,
+    /// 출처.
+    pub source: ValueSource,
+}
+
+/// Base 속성 값에 resolve 결과를 적용합니다(경로 오름차순). Base에 없는 경로라도 Variant가 지정하면 포함합니다.
+pub fn resolve_properties(
+    base: &BTreeMap<PropertyPath, TypedValue>,
+    resolution: &VariantResolution,
+) -> BTreeMap<PropertyPath, ResolvedValue> {
+    let mut out: BTreeMap<PropertyPath, ResolvedValue> = base
+        .iter()
+        .map(|(path, value)| {
+            (
+                path.clone(),
+                ResolvedValue {
+                    value: value.clone(),
+                    source: ValueSource::Base,
+                },
+            )
+        })
+        .collect();
+    for (key, (variant, value)) in &resolution.applied {
+        if let (PatchKey::Property(path), PatchValue::Property(value)) = (key, value) {
+            out.insert(
+                path.clone(),
+                ResolvedValue {
+                    value: value.clone(),
+                    source: ValueSource::Variant(*variant),
+                },
+            );
+        }
+    }
+    out
 }
 
 fn patches(variant: &ViewVariant) -> Vec<(PatchKey, PatchValue)> {
@@ -381,6 +454,98 @@ mod tests {
         assert_eq!(
             resolution.applied[&PatchKey::Property(padding(1))],
             (variant_id(COMPACT_ERROR), PatchValue::Property(number(4.0)))
+        );
+    }
+
+    // --- IX.7.6: 기술 아키텍처 16장 요구 예제 ---
+
+    fn color(node: u64) -> PropertyPath {
+        PropertyPath::with_keys(stable(node), vec![PropertyKey(0x0120)])
+    }
+
+    fn text(value: &str) -> TypedValue {
+        TypedValue::String(value.into())
+    }
+
+    /// compact: padding 8 / error: color "red" / compact+error: padding 4.
+    fn example_variants() -> Vec<ViewVariant> {
+        let mut error_variant = variant(ERROR, error());
+        error_variant.overrides.set_property(color(1), text("red"));
+        vec![
+            patched(COMPACT, compact(), 8.0),
+            error_variant,
+            patched(
+                COMPACT_ERROR,
+                compact().equals(vid(PAYMENT), payment(2)),
+                4.0,
+            ),
+        ]
+    }
+
+    fn example_base() -> BTreeMap<PropertyPath, TypedValue> {
+        [(padding(1), number(16.0)), (color(1), text("black"))]
+            .into_iter()
+            .collect()
+    }
+
+    fn resolved(assignment: &Assignment) -> BTreeMap<PropertyPath, (TypedValue, ValueSource)> {
+        let set = variable_set();
+        let resolution = resolve_variants(&example_variants(), assignment, &set);
+        assert!(!resolution.is_ambiguous());
+        resolve_properties(&example_base(), &resolution)
+            .into_iter()
+            .map(|(path, value)| (path, (value.value, value.source)))
+            .collect()
+    }
+
+    #[test]
+    fn specific_overrides_general_and_missing_combinations_use_general_only() {
+        // 검증 기준(IX.7.6): 요구 예제 fixture 통과.
+        let regular = |payment_value| {
+            Assignment::new()
+                .with(vid(DEVICE), device(1))
+                .with(vid(PAYMENT), payment_value)
+        };
+        let compact_with = |payment_value| {
+            Assignment::new()
+                .with(vid(DEVICE), device(0))
+                .with(vid(PAYMENT), payment_value)
+        };
+        // regular + idle: Base만.
+        let r = resolved(&regular(payment(0)));
+        assert_eq!(r[&padding(1)], (number(16.0), ValueSource::Base));
+        assert_eq!(r[&color(1)], (text("black"), ValueSource::Base));
+        // compact + processing: 정의되지 않은 조합 → Base + 일반 compact만.
+        let r = resolved(&compact_with(payment(1)));
+        assert_eq!(
+            r[&padding(1)],
+            (number(8.0), ValueSource::Variant(variant_id(COMPACT)))
+        );
+        assert_eq!(r[&color(1)], (text("black"), ValueSource::Base));
+        // regular + error: Base + 일반 error.
+        let r = resolved(&regular(payment(2)));
+        assert_eq!(r[&padding(1)], (number(16.0), ValueSource::Base));
+        assert_eq!(
+            r[&color(1)],
+            (text("red"), ValueSource::Variant(variant_id(ERROR)))
+        );
+        // compact + error: 구체 조합이 compact의 padding을 덮어쓰고, color는 일반 error 값을 상속.
+        let r = resolved(&compact_with(payment(2)));
+        assert_eq!(
+            r[&padding(1)],
+            (number(4.0), ValueSource::Variant(variant_id(COMPACT_ERROR)))
+        );
+        assert_eq!(
+            r[&color(1)],
+            (text("red"), ValueSource::Variant(variant_id(ERROR)))
+        );
+        // 합친 override set도 같은 결과를 담습니다.
+        let set = variable_set();
+        let effective = resolve_variants(&example_variants(), &compact_with(payment(2)), &set)
+            .effective_overrides();
+        assert_eq!(
+            effective.property_patches().collect::<Vec<_>>(),
+            vec![(&padding(1), &number(4.0)), (&color(1), &text("red"))]
         );
     }
 }
