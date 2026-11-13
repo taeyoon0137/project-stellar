@@ -10,7 +10,8 @@
 //! - 세션은 만든 순서(발급 순번)로 나열됩니다.
 //! - **시작 gate**([`TerminalRegistry::start`]): 신뢰된 프로젝트 창의 [`TerminalCapability`]를
 //!   가장 먼저 확인합니다. token이 없거나 다른 창의 것이면 cwd·명령·환경을 보지도 않고, 실행기를
-//!   호출하지 않습니다(untrusted spawn 0). 그다음 cwd 검증(XVIII.1.3), 명령·환경 구성, 실행 순입니다.
+//!   호출하지 않습니다(untrusted spawn 0). 그다음 cwd 검증(XVIII.1.3), 셸 해석(XVIII.2.2)·명령·환경
+//!   구성, 실행 순입니다.
 //! - 닫기([`TerminalRegistry::close`])는 실행 중인 child를 종료한 뒤 세션을 제거합니다.
 
 use std::collections::BTreeMap;
@@ -25,7 +26,8 @@ use crate::id::{SessionIdAllocator, TerminalSessionId};
 use crate::launch::{
     ExitReport, LaunchError, LaunchRequest, TerminalIoError, TerminalLauncher, TerminalProcess,
 };
-use crate::profile::{ArgvCommand, ProfileCommand, TerminalProfile};
+use crate::profile::{ProfileCommand, TerminalProfile};
+use crate::shell::{resolve_shell, ShellError, ShellSettings, UserShellSource};
 use crate::size::TerminalSize;
 use crate::state::{TerminalProcessState, TerminationReason};
 
@@ -98,6 +100,8 @@ pub enum StartError {
     },
     /// cwd 검증 실패.
     Cwd(CwdError),
+    /// 셸 설정을 실행할 수 없음(XVIII.2.2).
+    Shell(ShellError),
     /// PTY·child 생성 실패.
     Launch(LaunchError),
 }
@@ -120,6 +124,7 @@ impl fmt::Display for StartError {
                 write!(f, "이미 시작한 터미널 세션입니다(상태 {state})")
             }
             StartError::Cwd(err) => err.fmt(f),
+            StartError::Shell(err) => err.fmt(f),
             StartError::Launch(err) => err.fmt(f),
         }
     }
@@ -132,8 +137,10 @@ impl std::error::Error for StartError {}
 pub struct LaunchEnvironment<'a> {
     /// cwd 기준(프로젝트 루트·worktree root).
     pub cwd: &'a CwdContext,
-    /// [`ProfileCommand::DefaultShell`]이 실행할 셸 명령.
-    pub default_shell: &'a ArgvCommand,
+    /// [`ProfileCommand::DefaultShell`]이 실행할 셸 설정(XVIII.2.2).
+    pub shell: &'a ShellSettings,
+    /// 사용자 기본 셸 후보 공급자(실제 앱은 [`SystemShellSource`](crate::shell::SystemShellSource)).
+    pub shell_source: &'a dyn UserShellSource,
     /// 상속 허용 변수의 현재 값을 읽는 함수(앱 프로세스 환경이면 [`process_env`]).
     pub env_lookup: fn(&str) -> Option<OsString>,
     /// PTY 초기 크기(터미널 view 크기).
@@ -143,6 +150,14 @@ pub struct LaunchEnvironment<'a> {
 /// 앱 프로세스 환경에서 변수 값을 읽습니다.
 pub fn process_env(name: &str) -> Option<OsString> {
     std::env::var_os(name)
+}
+
+/// 이름 순 환경 목록에 값을 넣거나 바꿉니다.
+fn set_env(env: &mut Vec<(OsString, OsString)>, name: &str, value: &std::ffi::OsStr) {
+    match env.binary_search_by(|(key, _)| key.as_os_str().cmp(std::ffi::OsStr::new(name))) {
+        Ok(index) => env[index].1 = value.to_os_string(),
+        Err(index) => env.insert(index, (OsString::from(name), value.to_os_string())),
+    }
 }
 
 /// registry 안의 세션 하나.
@@ -293,16 +308,33 @@ impl TerminalRegistry {
             .cwd
             .resolve(&session.profile.cwd)
             .map_err(StartError::Cwd)?;
-        let command = match &session.profile.command {
-            ProfileCommand::DefaultShell => environment.default_shell,
-            ProfileCommand::Argv(command) => command,
+        let mut env = session.profile.environment.resolve(environment.env_lookup);
+        let (program, args, arg0) = match &session.profile.command {
+            ProfileCommand::DefaultShell => {
+                let shell = resolve_shell(environment.shell, environment.shell_source)
+                    .map_err(StartError::Shell)?;
+                // profile이 SHELL을 명시하지 않았으면 실제로 실행하는 셸을 알려 줍니다.
+                if session.profile.environment.assignment("SHELL").is_none() {
+                    set_env(&mut env, "SHELL", shell.program().as_os_str());
+                }
+                (
+                    shell.program().to_path_buf(),
+                    Vec::new(),
+                    Some(shell.arg0()),
+                )
+            }
+            ProfileCommand::Argv(command) => (
+                command.program().to_path_buf(),
+                command.args().to_vec(),
+                None,
+            ),
         };
         let request = LaunchRequest::new(
-            command.program().to_path_buf(),
-            command.args().to_vec(),
-            None,
+            program,
+            args,
+            arg0,
             cwd.path().to_path_buf(),
-            session.profile.environment.resolve(environment.env_lookup),
+            env,
             environment.size,
         );
         match launcher.launch(&request) {
@@ -372,9 +404,12 @@ pub(crate) mod tests {
     use super::*;
     use crate::capability::TerminalTrust;
     use crate::cwd::{CwdSelection, ExplicitCwd};
-    use crate::profile::ProfileName;
+    use crate::profile::{ArgvCommand, ProfileName};
+    use crate::shell::tests::FixedShellSource;
+    use crate::shell::{ShellChoice, ShellMode, ShellPathProblem};
     use crate::state::{StartFailure, TerminalExitStatus};
     use crate::test_support::TempDir;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use stellar_core_types::ids::StableId;
@@ -484,9 +519,17 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn sh() -> ArgvCommand {
-        ArgvCommand::new("/bin/sh", Vec::<String>::new()).unwrap()
+    pub(crate) fn sh() -> ShellSettings {
+        ShellSettings {
+            choice: ShellChoice::Custom(PathBuf::from("/bin/sh")),
+            mode: ShellMode::Login,
+        }
     }
+
+    pub(crate) const NO_SHELL_SOURCE: FixedShellSource = FixedShellSource {
+        account: None,
+        env: None,
+    };
 
     fn trusted(registry: &TerminalRegistry) -> TerminalCapability {
         TerminalCapability::grant(registry.window(), TerminalTrust::Trusted).unwrap()
@@ -499,7 +542,8 @@ pub(crate) mod tests {
         let shell = sh();
         let environment = LaunchEnvironment {
             cwd: &context,
-            default_shell: &shell,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
             env_lookup: fake_env,
             size: TerminalSize::DEFAULT,
         };
@@ -542,7 +586,8 @@ pub(crate) mod tests {
         let shell = sh();
         let environment = LaunchEnvironment {
             cwd: &context,
-            default_shell: &shell,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
             env_lookup: fake_env,
             size: TerminalSize::DEFAULT,
         };
@@ -569,11 +614,18 @@ pub(crate) mod tests {
         assert_eq!(launcher.counters.launches(), 2);
 
         let shell_request = &launcher.requests[0];
-        assert_eq!(shell_request.program(), shell.program());
+        assert_eq!(shell_request.program(), std::path::Path::new("/bin/sh"));
+        assert_eq!(shell_request.arg0(), Some(&OsString::from("-sh")));
         assert!(shell_request.args().is_empty());
         assert_eq!(shell_request.cwd(), dir.path());
-        let names: Vec<&OsString> = shell_request.env().iter().map(|(name, _)| name).collect();
-        assert_eq!(names, ["HOME", "PATH"]);
+        assert_eq!(
+            shell_request.env(),
+            [
+                (OsString::from("HOME"), OsString::from("/Users/example")),
+                (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
+                (OsString::from("SHELL"), OsString::from("/bin/sh")),
+            ]
+        );
 
         let agent_request = &launcher.requests[1];
         assert_eq!(
@@ -621,7 +673,8 @@ pub(crate) mod tests {
         let shell = sh();
         let environment = LaunchEnvironment {
             cwd: &context,
-            default_shell: &shell,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
             env_lookup: fake_env,
             size: TerminalSize::DEFAULT,
         };
@@ -678,7 +731,8 @@ pub(crate) mod tests {
         let shell = sh();
         let environment = LaunchEnvironment {
             cwd: &context,
-            default_shell: &shell,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
             env_lookup: fake_env,
             size: TerminalSize::DEFAULT,
         };
@@ -761,5 +815,126 @@ pub(crate) mod tests {
             first.session(id).unwrap().state(),
             TerminalProcessState::NotStarted
         );
+    }
+
+    #[test]
+    fn missing_shell_is_reported_without_spawning() {
+        let dir = TempDir::new();
+        let context = CwdContext::new(dir.path(), &[]).unwrap();
+        let missing = dir.path().join("no-such-shell");
+        let custom = ShellSettings {
+            choice: ShellChoice::Custom(missing.clone()),
+            mode: ShellMode::Login,
+        };
+        let user_default = ShellSettings::default();
+        let mut launcher = FakeLauncher::default();
+        let mut registry = TerminalRegistry::new(window(16));
+        let id = registry.create(profile("shell")).unwrap();
+
+        let environment = LaunchEnvironment {
+            cwd: &context,
+            shell: &custom,
+            shell_source: &NO_SHELL_SOURCE,
+            env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
+        };
+        assert_eq!(
+            registry.start(id, trusted(&registry), &environment, &mut launcher),
+            Err(StartError::Shell(ShellError::InvalidShell {
+                path: missing,
+                problem: ShellPathProblem::NotFound,
+            }))
+        );
+        let environment = LaunchEnvironment {
+            shell: &user_default,
+            ..environment
+        };
+        assert_eq!(
+            registry.start(id, trusted(&registry), &environment, &mut launcher),
+            Err(StartError::Shell(ShellError::NoDefaultShell))
+        );
+        assert_eq!(launcher.counters.launches(), 0);
+        assert_eq!(
+            registry.session(id).unwrap().state(),
+            TerminalProcessState::NotStarted
+        );
+
+        // argv profile은 셸 설정과 무관하게 시작합니다. 명시한 SHELL은 그대로 둡니다.
+        let mut argv = profile("argv");
+        argv.command = ProfileCommand::Argv(ArgvCommand::new("/bin/echo", ["x"]).unwrap());
+        let argv_id = registry.create(argv).unwrap();
+        registry
+            .start(argv_id, trusted(&registry), &environment, &mut launcher)
+            .unwrap();
+        assert_eq!(launcher.requests[0].arg0(), None);
+        let mut explicit = profile("explicit-shell-env");
+        explicit.environment.set("SHELL", "/custom/shell").unwrap();
+        let explicit_id = registry.create(explicit).unwrap();
+        let shell = sh();
+        let environment = LaunchEnvironment {
+            shell: &shell,
+            ..environment
+        };
+        registry
+            .start(explicit_id, trusted(&registry), &environment, &mut launcher)
+            .unwrap();
+        assert!(launcher.requests[1]
+            .env()
+            .iter()
+            .any(|(name, value)| name == "SHELL" && value == "/custom/shell"));
+    }
+
+    /// 실제 PTY에서 login/non-login 셸의 `$0`과 `SHELL`을 확인합니다.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn login_and_non_login_shells_run_in_pty() {
+        use crate::pty::tests::TIMEOUT;
+        use crate::pty::PtyLauncher;
+        use crate::test_support::OutputCollector;
+
+        let dir = TempDir::new();
+        let context = CwdContext::new(dir.path(), &[]).unwrap();
+        let mut launcher = PtyLauncher::with_grace(std::time::Duration::from_millis(500));
+        let mut registry = TerminalRegistry::new(window(17));
+        for (mode, expected) in [(ShellMode::Login, "-sh"), (ShellMode::NonLogin, "sh")] {
+            let settings = ShellSettings {
+                choice: ShellChoice::Custom(PathBuf::from("/bin/sh")),
+                mode,
+            };
+            let environment = LaunchEnvironment {
+                cwd: &context,
+                shell: &settings,
+                shell_source: &NO_SHELL_SOURCE,
+                env_lookup: fake_env,
+                size: TerminalSize::DEFAULT,
+            };
+            let mut shell_profile = profile("sh");
+            // 사용자 startup 파일을 읽지 않도록 HOME을 임시 디렉터리로 둡니다.
+            shell_profile
+                .environment
+                .set("HOME", dir.path().as_os_str())
+                .unwrap();
+            let id = registry.create(shell_profile).unwrap();
+            registry
+                .start(id, trusted(&registry), &environment, &mut launcher)
+                .unwrap();
+            let session = registry.session_mut(id).unwrap();
+            let process = session.process_mut().unwrap();
+            let mut output = OutputCollector::start(process.output_reader().unwrap());
+            process
+                .write_input(b"echo \"[$0][$SHELL]\"; exit 7\n")
+                .unwrap();
+            output.wait_for(&format!("[{expected}][/bin/sh]"), TIMEOUT);
+            let deadline = std::time::Instant::now() + TIMEOUT;
+            let report = loop {
+                if let Some(report) = process.poll_exit().unwrap() {
+                    break report;
+                }
+                assert!(std::time::Instant::now() < deadline);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            };
+            assert_eq!(report.status, TerminalExitStatus::Exited(7));
+            registry.close(id).unwrap();
+        }
     }
 }
