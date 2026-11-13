@@ -27,6 +27,7 @@ use stellar_core_types::ids::WindowSessionId;
 
 use crate::capability::{TerminalCapability, TerminalNotTrusted};
 use crate::cwd::{CwdContext, CwdError, ResolvedCwd};
+use crate::header::TerminalHeader;
 use crate::id::{SessionIdAllocator, TerminalSessionId};
 use crate::launch::{
     ExitReport, LaunchError, LaunchRequest, TerminalIoError, TerminalLauncher, TerminalProcess,
@@ -452,6 +453,24 @@ impl TerminalRegistry {
             .ok_or(RegistryError::UnknownSession)?;
         let process = session.process.as_mut().ok_or(RegistryError::NotRunning)?;
         process.resize(size).map_err(RegistryError::Process)
+    }
+
+    /// 세션 header metadata(XVIII.4.5). `context`는 창의 현재 cwd 기준, `observed_cwd`는 호출자가
+    /// 관찰한 현재 cwd(없으면 시작 cwd)입니다.
+    pub fn header(
+        &self,
+        id: TerminalSessionId,
+        context: &CwdContext,
+        observed_cwd: Option<&std::path::Path>,
+    ) -> Option<TerminalHeader> {
+        let session = self.sessions.get(&id)?;
+        Some(TerminalHeader::build(
+            session.profile.name.as_str(),
+            &session.profile.cwd,
+            session.cwd.as_ref(),
+            context,
+            observed_cwd,
+        ))
     }
 
     /// 세션(가변: 입력 쓰기 등).
@@ -1244,5 +1263,55 @@ pub(crate) mod tests {
             }
         }
         assert_eq!(launcher.spawn_count(), 40);
+    }
+
+    #[test]
+    fn registry_header_separates_general_and_worktree_sessions() {
+        use crate::header::{CwdWarning, HeaderScope};
+
+        let dir = TempDir::new();
+        let worktree = dir.mkdir("wt");
+        let context = CwdContext::new(dir.path(), std::slice::from_ref(&worktree)).unwrap();
+        let shell = sh();
+        let environment = LaunchEnvironment {
+            cwd: &context,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
+            env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
+        };
+        let mut launcher = FakeLauncher::default();
+        let mut registry = TerminalRegistry::new(window(21));
+        let general = registry.create(profile("general")).unwrap();
+        let mut bound = profile("bound");
+        bound.cwd = CwdSelection::WorktreeRoot(worktree.clone());
+        let bound = registry.create(bound).unwrap();
+        for id in [general, bound] {
+            registry
+                .start(id, trusted(&registry), &environment, &mut launcher)
+                .unwrap();
+        }
+        let general_header = registry.header(general, &context, None).unwrap();
+        assert_eq!(
+            general_header.scope,
+            HeaderScope::Project {
+                root: dir.path().to_path_buf()
+            }
+        );
+        let bound_header = registry.header(bound, &context, None).unwrap();
+        assert!(bound_header.scope.is_worktree());
+        assert_eq!(bound_header.title, "bound");
+        assert!(!bound_header.has_warning());
+        // worktree 터미널이 worktree 밖(프로젝트 루트)으로 이동하면 경고합니다.
+        let moved = registry.header(bound, &context, Some(dir.path())).unwrap();
+        assert_eq!(
+            moved.warnings,
+            [CwdWarning::OutsideBinding {
+                root: worktree.clone(),
+                cwd: dir.path().to_path_buf(),
+            }]
+        );
+        registry.close(bound).unwrap();
+        assert!(registry.header(bound, &context, None).is_none());
     }
 }

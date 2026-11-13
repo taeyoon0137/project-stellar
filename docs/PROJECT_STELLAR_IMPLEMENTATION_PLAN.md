@@ -1822,7 +1822,7 @@ tools/xtask/
 | XVIII.4.2 | `[ ]` | terminal screen buffer, scrollback, selection, clipboard 모델을 구현합니다. | 100만 line memory cap 유지. | XVIII.4.1 |
 | XVIII.4.3 | `[ ]` | macOS terminal view가 screen buffer를 표시하고 keyboard/IME input을 PTY로 전달합니다. | interactive smoke. | XVIII.2.3, XVIII.4.2 |
 | XVIII.4.4 | `[!]` | Windows terminal view를 연결합니다. | interactive smoke. | XVIII.3.3, XVIII.4.2 |
-| XVIII.4.5 | `[ ]` | 일반 terminal과 특정 worktree terminal의 header metadata를 분리 표시할 data model을 추가합니다. | wrong cwd session 경고. | XVIII.1.3 |
+| XVIII.4.5 | `[x]` | 일반 terminal과 특정 worktree terminal의 header metadata를 분리 표시할 data model을 추가합니다. | wrong cwd session 경고. | XVIII.1.3 |
 | XVIII.4.6 | `[ ]` | 창 종료 시 terminal을 복원하지 않고 종료하며 recovery snapshot에 output/process를 넣지 않는 검사를 추가합니다. | crash/relaunch 후 process 재연결 없음. | XIII.8.2, XVIII.4.3, XVIII.4.4 |
 
 ### XVIII.5 CLI 에이전트 실행

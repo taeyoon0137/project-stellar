@@ -13,6 +13,7 @@
 //! - [`launch`]: 실행 요청과 실행기·프로세스 경계.
 //! - [`size`]: 터미널 행·열 크기.
 //! - [`shell`]: 사용자 셸 설정(login/non-login).
+//! - [`header`]: 일반·worktree 터미널 header metadata와 잘못된 cwd 경고.
 //! - `pty`(macOS): POSIX PTY 실행기.
 //!
 //! **저장하지 않는 상태**: 세션·profile 복사본·출력·프로세스 상태는 세션 메모리에만 있습니다.
@@ -23,6 +24,7 @@
 pub mod capability;
 pub mod cwd;
 pub mod env;
+pub mod header;
 pub mod id;
 pub mod launch;
 pub mod profile;
