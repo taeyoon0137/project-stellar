@@ -2,10 +2,9 @@
 
 - WBS: XV.4.1
 - 작업명: resolver graph를 `stellar.lock.yaml`의 resolved entries와 dependency paths로 변환
-- 상태: 부분 완료 (`[~]`) — 변환과 형식 중립 트리(`DeclNode`) golden은 완료했지만, `stellar.lock.yaml`
-  **텍스트** canonical golden은 project crate의 canonical YAML writer(IV.1.5)·lock 모델(IV.1.6) 연결이
-  필요합니다.
-- 선행: IV.1.6(`[x]`), XV.2.6(이 lane에서 완료)
+- 상태: 완료 (`[x]`) — 2026-11-14 deps_wiring lane에서 `stellar.lock.yaml` **텍스트** canonical
+  golden을 추가했습니다(아래 "완료 보완"). 최초 작업 시점에는 `DeclNode` golden까지만 있어 `[~]`였습니다.
+- 선행: IV.1.6(`[x]`), XV.2.6(`[x]`, 2026-11-14 상태 복원)
 
 ## 필수 실행 환경
 
@@ -51,3 +50,37 @@
 
 - 아키텍처 20.3 예시는 `resolved`를 `name@version` 키 매핑으로 보여 주지만 IV.1.6 모델은 시퀀스입니다.
   이 작업은 IV.1.6(시퀀스)을 따랐습니다.
+
+## 완료 보완(deps_wiring lane, 2026-11-14)
+
+### 변경 파일 목록
+
+- `crates/project/src/lock.rs` — 테스트 `canonical_lock_text_golden_from_resolver_graph`와 golden
+  `CANONICAL_LOCK_GOLDEN`, resolver 입력 harness(`resolved_lock_text`).
+- `docs/task-reports/XV.4.1.md`(이 절), 계획서(XV.4.1 `[~]`→`[x]`).
+
+### 구현 요약
+
+- 선행 Fix 커밋으로 lock 형식이 하나가 됐습니다(ADR-0016). project `Lockfile`(IV.1.6)은 이 작업의
+  `LockEntry`를 resolved entry로 쓰고, `Lockfile::from_document(LockDocument::from_graph(..))`가
+  resolver 결과를 그대로 받습니다. 사용자 편집 필드를 받는 경로는 없습니다(IV.1.7).
+- golden 입력은 모두 실제 `stellar.yaml` **텍스트**입니다. 사용 프로젝트 선언(a: tag v1, b: branch
+  main)과 library 매니페스트(a → c v1, b → c v2)를 제한 loader와 `Manifest::from_yaml`이 읽습니다.
+  선택자 해석만 표 기반(결정적 commit)이고, 실제 Git 해석은 `manifest_source` 테스트가 다룹니다.
+
+### 실행한 명령 / 검증 (`DEV-MAC`)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-project` | lib 262 passed, 통합 17 passed, 0 failed |
+| `cargo clippy -p stellar-project --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-project -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| **canonical lock golden**: resolver 그래프 → `Lockfile::write_checked` 텍스트가 고정 golden(entry 4건, 키 순서·값·dependency path·전이 dependencies·`requested: {branch: main}`)과 byte 일치, 선언 순서 반대로도 byte 동일, golden을 다시 읽어 기록해도 동일(`canonical_lock_text_golden_from_resolver_graph`) | 통과 |
+
+### 차이
+
+- content hash는 node별 결정적 값(commit 번호)입니다. 검증된 cache entry hash 공급(XV.3.3·XV.3.4)이
+  아직 없기 때문이며, 이 작업 행의 범위(그래프 → resolved entries·dependency paths)에는 영향이 없습니다.

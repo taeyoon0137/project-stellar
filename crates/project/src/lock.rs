@@ -544,4 +544,127 @@ mod tests {
         assert_eq!(document.entries(), lock.resolved.as_slice());
         assert_eq!(Lockfile::from_document(document), lock);
     }
+
+    const URL_A: &str = "https://example.com/a.git";
+    const URL_B: &str = "https://example.com/b.git";
+    const URL_C: &str = "https://example.com/c.git";
+
+    /// root → a(tag v1), b(branch main); a → c v1; b → c v2. 실제 `stellar.yaml` 텍스트(사용
+    /// 프로젝트·library 모두 IV.1.1 parser)에서 출발해 resolver 그래프를 만들고 canonical lock
+    /// 텍스트로 기록합니다.
+    fn resolved_lock_text(root_order_ba: bool) -> String {
+        use crate::manifest_source::text_resolver::{
+            branch, entry_text, library_text, resolve_root, root_text, tag, TableSelectors,
+            TextManifests,
+        };
+
+        let mut manifests = TextManifests::default()
+            .with(URL_C, commit(0xc1), library_text(0x0c, 1, ""))
+            .with(URL_C, commit(0xc2), library_text(0x0c, 2, ""))
+            .with(
+                URL_A,
+                commit(0xa1),
+                library_text(0x0a, 1, &entry_text("c", 0x0c, URL_C, " v1")),
+            )
+            .with(
+                URL_B,
+                commit(0xb1),
+                library_text(0x0b, 1, &entry_text("c", 0x0c, URL_C, " v2")),
+            );
+        let mut selectors = TableSelectors::default()
+            .with(URL_A, tag("v1"), commit(0xa1))
+            .with(URL_B, branch("main"), commit(0xb1))
+            .with(URL_C, tag("v1"), commit(0xc1))
+            .with(URL_C, tag("v2"), commit(0xc2));
+        let a = entry_text("a", 0x0a, URL_A, " v1");
+        let b = entry_text("b", 0x0b, URL_B, "\n      branch: main");
+        let entries = if root_order_ba { b + &a } else { a + &b };
+        let graph = resolve_root(&root_text(&entries), &mut selectors, &mut manifests).unwrap();
+        // node content hash = commit 번호(실제 cache entry hash는 XV.3.3·XV.3.4 범위).
+        let hashes: std::collections::BTreeMap<_, _> = graph
+            .nodes()
+            .map(|n| {
+                let c = u8::from_str_radix(&n.key.commit.as_str()[..2], 16).unwrap();
+                (n.key.clone(), super::fixtures::hash(c))
+            })
+            .collect();
+        let document = LockDocument::from_graph(&graph, &hashes).unwrap();
+        Lockfile::from_document(document).write_checked().unwrap()
+    }
+
+    #[test]
+    fn canonical_lock_text_golden_from_resolver_graph() {
+        // XV.4.1: resolver 그래프 → stellar.lock.yaml resolved entries·dependency paths 텍스트 golden.
+        let text = resolved_lock_text(false);
+        assert_eq!(text, CANONICAL_LOCK_GOLDEN);
+        // 선언 순서를 바꿔도 byte 동일(XV.2.6), 다시 읽으면 같은 모델(IV.1.6 parser).
+        assert_eq!(resolved_lock_text(true), text);
+        let reloaded = Lockfile::from_yaml(&load_restricted(&text).unwrap()).unwrap();
+        assert_eq!(reloaded.write_checked().unwrap(), text);
+    }
+
+    /// root → a(v1), b(branch main); a → c v1; b → c v2의 canonical `stellar.lock.yaml`.
+    ///
+    /// entry는 edge마다 하나이고 LibraryId → commit → dependency path 순입니다. branch 선언은
+    /// `requested`에만 남고 `exact_commit`은 항상 40자 commit입니다(XV.1.2).
+    const CANONICAL_LOCK_GOLDEN: &str = r#"schema_version: "1"
+resolved:
+  -
+    logical_id: a
+    library_id: "0195c530-3acd-7bc1-8414-00000000000a"
+    source: git
+    repository: "https://example.com/a.git"
+    requested: v1
+    exact_commit: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+    content_hash: "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    schema_version: "1"
+    dependency_path:
+      - a
+    dependencies:
+      -
+        library_id: "0195c530-3acd-7bc1-8414-00000000000c"
+        exact_commit: c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1
+  -
+    logical_id: b
+    library_id: "0195c530-3acd-7bc1-8414-00000000000b"
+    source: git
+    repository: "https://example.com/b.git"
+    requested:
+      branch: main
+    exact_commit: b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1
+    content_hash: "sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+    schema_version: "1"
+    dependency_path:
+      - b
+    dependencies:
+      -
+        library_id: "0195c530-3acd-7bc1-8414-00000000000c"
+        exact_commit: c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2
+  -
+    logical_id: c
+    library_id: "0195c530-3acd-7bc1-8414-00000000000c"
+    source: git
+    repository: "https://example.com/c.git"
+    requested: v1
+    exact_commit: c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1
+    content_hash: "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1"
+    schema_version: "1"
+    dependency_path:
+      - a
+      - c
+    dependencies: []
+  -
+    logical_id: c
+    library_id: "0195c530-3acd-7bc1-8414-00000000000c"
+    source: git
+    repository: "https://example.com/c.git"
+    requested: v2
+    exact_commit: c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2
+    content_hash: "sha256:c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2"
+    schema_version: "2"
+    dependency_path:
+      - b
+      - c
+    dependencies: []
+"#;
 }
