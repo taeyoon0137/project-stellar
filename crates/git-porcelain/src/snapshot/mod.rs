@@ -36,6 +36,13 @@ pub mod materialize;
 pub use blob::{read_blobs, BlobError};
 pub use materialize::{materialize_snapshot, MaterializeError, MaterializedSnapshot};
 
+/// 디스크 저장 파일 기준 WorkingTree provider(XIV.2.7).
+pub mod working_tree;
+
+pub use working_tree::{
+    read_working_tree_snapshot, DiskProjectLoader, SnapshotBasis, WorkingTreeSnapshot,
+};
+
 /// snapshot 한 항목(경로·mode·object ID). gitlink(submodule)는 commit ID를 가집니다.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SnapshotEntry {

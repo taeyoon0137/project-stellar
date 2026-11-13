@@ -188,6 +188,11 @@ pub fn count_changes(entries: &[StatusEntry]) -> ChangeCounts {
 }
 
 impl RepositoryStatus {
+    /// 이 상태의 기준: 디스크에 **저장된** 파일(편집기 저장 대기 상태 제외, XIV.2.7).
+    pub fn basis(&self) -> crate::snapshot::SnapshotBasis {
+        crate::snapshot::SnapshotBasis::SavedFilesOnDisk
+    }
+
     /// `--branch`로 얻은 [`StatusReport`]와 진행 중 작업 목록에서 상태를 만듭니다.
     pub fn from_report(
         report: &StatusReport,
