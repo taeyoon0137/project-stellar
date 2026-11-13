@@ -1588,7 +1588,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XV.8.1 | `[ ]` | 최근 사용 시각과 lockfile reference set을 기준으로 cache GC 후보를 계산합니다. 삭제 임계치는 config에 둡니다. | active lock entry 후보 제외. | XV.3.6, XV.4.2 |
 | XV.8.2 | `[ ]` | 여러 project가 참조하는 cache entry는 마지막 참조가 사라질 때까지 삭제하지 않습니다. | two-project fixture 통과. | XV.8.1 |
-| XV.8.3 | `[ ]` | duplicate library version warning에 dependency paths와 예상 추가 용량을 포함합니다. repository URL은 표시 UI에만 local source로 전달하고 telemetry에는 제외합니다. | warning fixture 정확. | XV.2.5, XV.3.5 |
+| XV.8.3 | `[x]` | duplicate library version warning에 dependency paths와 예상 추가 용량을 포함합니다. repository URL은 표시 UI에만 local source로 전달하고 telemetry에는 제외합니다. | warning fixture 정확. | XV.2.5, XV.3.5 |
 | XV.8.4 | `[ ]` | 외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update. | semantic snapshot·lockfile golden 통과. | XV.1~XV.7 |
 
 **Phase XV 완료 조건:** 외부 library exact version 재현, 다중 버전 격리, 읽기 전용 정책, update 검토가 통과합니다.
