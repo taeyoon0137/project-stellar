@@ -38,7 +38,7 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ("stellar-renderer-metal", &["stellar-renderer-core"]),
         ("stellar-renderer-d3d12", &["stellar-renderer-core"]),
         ("stellar-storage", &[core]),
-        ("stellar-assets", &["stellar-storage"]),
+        ("stellar-assets", &["stellar-storage", core]),
         ("stellar-dependencies", &[core]),
         (
             "stellar-project",

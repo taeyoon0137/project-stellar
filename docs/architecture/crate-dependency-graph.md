@@ -21,7 +21,7 @@
 | `stellar-renderer-metal` | renderer-core |
 | `stellar-renderer-d3d12` | renderer-core |
 | `stellar-storage` | core-types |
-| `stellar-assets` | storage |
+| `stellar-assets` | storage, core-types |
 | `stellar-dependencies` | core-types |
 | `stellar-project` | core-types, document, storage, assets, dependencies, git-porcelain |
 | `stellar-semantic-diff` | document, core-types |
@@ -51,6 +51,7 @@ graph TD
   renderer_d3d12 --> renderer_core
   storage --> core_types
   assets --> storage
+  assets --> core_types
   dependencies --> core_types
   project --> document
   project --> storage
@@ -69,6 +70,7 @@ graph TD
 ## 규칙
 
 - `commands`와 `history`는 이미 `document`를 거쳐 `core-types`에 전이 의존하므로, StableId·WindowSessionId·DocumentRevision 같은 기본 타입을 직접 쓰도록 `core-types` 직접 의존을 허용합니다(2026-11-14, `semantic-diff` 선례와 같음).
+- `assets`도 같은 이유로 `core-types` 직접 의존을 허용합니다. AssetId는 계획서(XIII.5.1)대로 StableId newtype입니다(2026-11-14).
 - `git-porcelain`은 `document`를 직접 의존하지 않고 snapshot 인터페이스(빈 trait)에만 의존합니다.
 - 플랫폼 backend(`renderer-metal`/`renderer-d3d12`)는 공통 backend(`renderer-core`)를 역참조하지 않습니다.
 - 표에 없는 edge는 금지이며 `validate-crate-graph`가 `forbidden-edge`로 거부합니다.
