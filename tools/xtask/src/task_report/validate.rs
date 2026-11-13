@@ -1,17 +1,50 @@
 //! 작업 보고서 validator (I.2.15).
 //!
-//! 완료/차단 보고서의 필수 절(heading), WBS 일치, 상태 줄, 검증 환경 증거, 명령·검증 표를
-//! 검사합니다.
+//! # 검사 항목
 //!
-//! 완료 보고서의 절 구성은 `docs/task-reports/TEMPLATE.md`와 실제 보고서 관례(예:
-//! `VI.9.5.md`)를 따릅니다. 계획서 §1.2 규칙 11이 요구하는 기록(변경 파일 목록, 실행한 명령과
-//! 결과, 검증 환경 코드, 테스트 결과와 남은 경고 수, 작업 지시와 다른 점)마다 필수 절 하나를
-//! 두고, 초기 보고서가 같은 내용에 쓰던 heading 별칭도 그 절로 인정합니다. 차단 보고서는
-//! `docs/task-reports/BLOCKED_TEMPLATE.md`의 절 구성을 따릅니다.
+//! - 필수 절: 완료 보고서는 `docs/task-reports/TEMPLATE.md`(I.2.13)가 고정한 8개 절(WBS, 변경 파일,
+//!   명령과 종료 코드, 환경과 증거, 테스트, 성능, 차이, 남은 위험), 차단 보고서는
+//!   `docs/task-reports/BLOCKED_TEMPLATE.md`(I.2.14)의 6개 절이 있어야 합니다. 같은 `## ` 제목은
+//!   두 번 나올 수 없습니다.
+//! - WBS 일치: 머리 목록 또는 `## WBS` 절의 `WBS: <ID>`가 파일 이름의 ID와 같아야 합니다.
+//! - 상태 줄: `- 상태:` 줄이 하나이고, 첫 상태 표기가 완료 보고서는 `[x]`·`[~]`, 차단 보고서는
+//!   `[!]`입니다.
+//! - 검증 환경: 완료 보고서의 환경 절에 검증 환경 코드(`DEV-MAC` 등)가 있어야 합니다.
+//! - 명령 표: 완료 보고서의 명령 절에 `| 명령 | … |` 또는 `| 검사 | … |` 표(header·구분 줄·데이터
+//!   줄)가 있고, header에 `결과` 또는 `종료 코드` 열이 있어야 합니다.
+//!
+//! # 완료 보고서 절 별칭
+//!
+//! template 제목 외에, 실제 보고서 관례(예: `VI.9.5.md`)와 초기 보고서가 같은 기록에 쓰는 heading을
+//! 절마다 별칭으로 인정합니다(전체 목록은 `COMPLETE_SECTIONS`). heading 뒤의 ` (...)` 한정어(예:
+//! `` (`DEV-MAC`) ``)는 무시합니다.
+//!
+//! - WBS: `## WBS` 절 대신 제목 바로 아래 머리 목록의 `- WBS:` 줄.
+//! - 변경 파일 `변경 파일 목록`, 환경과 증거 `필수 실행 환경`, 차이 `차이(작업 지시와 다른 점)`·
+//!   `작업 지시와 다른 점`, 남은 위험 `남은 위험 / 한계`·`남은 위험 / 후속`·`남은 경고 수 / 한계`.
+//! - 명령과 종료 코드: `실행한 명령 / 검증`·`실행한 명령`·`실행한 검증`·`실행한 명령과 결정론 검증`.
+//! - 테스트·성능: `테스트 결과`·`남은 경고 수`(계획서 §1.2 규칙 11의 "테스트 결과와 남은 경고 수"),
+//!   `성능 수치`. 명령과 검증 결과를 한 절에 담는 관례(`실행한 명령 / 검증`·`실행한 검증`·
+//!   `실행한 명령과 결정론 검증`)를 쓰면 그 절이 테스트·성능 기록을 겸합니다.
+//!
+//! `남은 경고 수`는 경고 수 기록이므로 남은 위험 절로 인정하지 않습니다. 남은 위험 절이 관례가 되기
+//! 전에 작성되어 그 절이 없는 초기 보고서는 `task_report::legacy`에 고정한 ID만 통과합니다.
+//!
+//! # 검사하지 않는 것
+//!
+//! 계획서 §1.2 규칙 11과 I.2.15 작업 행이 요구하는 기록 중 다음은 내용 형식을 검사하지 않습니다.
+//! 기존 보고서 다수가 이 형식을 따르지 않아(예: `결과` 열만 있는 명령 표, `비0`·`—` 같은 종료 코드
+//! 표기) 소급 강제하지 않았습니다.
+//!
+//! - 명령별 종료 코드: `결과` 열만 있는 명령 표도 통과하고, 종료 코드 값의 형식은 보지 않습니다.
+//! - CI·LAB·REF 실행 URL과 artifact locator 형식, 성능 원시 결과 경로, 테스트 수·경고 수 값.
 //!
 //! 코드 펜스(```` ``` ````, `~~~`) 안의 줄은 heading·상태 줄·표로 세지 않습니다. 펜스의 열림·닫힘은
 //! CommonMark 규칙(같은 문자, 여는 줄 이상 길이, 닫는 줄에는 정보 문자열 없음)으로 판정합니다.
 
+use std::collections::HashSet;
+
+use super::legacy::is_legacy_report_without_risk_section;
 use crate::task_status::model::VerificationEnvironment;
 use crate::task_status::wbs_id::WbsId;
 
@@ -40,12 +73,12 @@ impl ReportError {
 
 /// 보고서 한 절(`## ` heading)의 규칙.
 struct SectionRule {
-    /// 대표 heading 제목(template과 오류 메시지에 쓰는 이름).
+    /// template heading 제목(오류 메시지에 쓰는 이름).
     name: &'static str,
-    /// 이 절로 인정하는 heading 제목(대표 제목과 초기 보고서 별칭).
+    /// 이 절로 인정하는 heading 제목(template 제목과 보고서 관례 별칭).
     accepted: &'static [&'static str],
-    /// 필수 여부. 선택 절은 중복만 검사합니다.
-    required: bool,
+    /// heading이 없을 때 이 절을 대신하는 기록.
+    fallback: Fallback,
 }
 
 impl SectionRule {
@@ -63,93 +96,143 @@ impl SectionRule {
     }
 }
 
-/// 완료 보고서 `필수 실행 환경` 절(검증 환경 코드를 담는 절).
-const ENVIRONMENT_SECTION: SectionRule = SectionRule {
-    name: "필수 실행 환경",
-    accepted: &["필수 실행 환경"],
-    required: true,
+/// heading이 없을 때 절을 대신하는 기록.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Fallback {
+    /// 대신하는 기록이 없습니다(heading 필수).
+    None,
+    /// 첫 `## ` heading 앞 머리 목록의 `- WBS:` 줄(보고서 관례).
+    PreambleWbs,
+    /// 명령과 검증 결과를 함께 담는 명령 절(`COMBINED_COMMANDS_SECTION`).
+    CombinedCommands,
+    /// 남은 위험 절이 관례가 되기 전의 초기 보고서(`task_report::legacy`에 고정한 ID).
+    LegacyReport,
+}
+
+/// 완료 보고서 `WBS` 절(WBS·작업명·상태·선행 머리 목록).
+const WBS_SECTION: SectionRule = SectionRule {
+    name: "WBS",
+    accepted: &["WBS"],
+    fallback: Fallback::PreambleWbs,
 };
 
-/// 완료 보고서 `실행한 명령 / 검증` 절(명령·검증 표를 담는 절).
+/// 완료 보고서 `명령과 종료 코드` 절(명령·검증 표를 담는 절).
 const COMMANDS_SECTION: SectionRule = SectionRule {
-    name: "실행한 명령 / 검증",
+    name: "명령과 종료 코드",
     accepted: &[
+        "명령과 종료 코드",
         "실행한 명령 / 검증",
         "실행한 명령",
         "실행한 검증",
         "실행한 명령과 결정론 검증",
     ],
-    required: true,
+    fallback: Fallback::None,
 };
 
-/// 완료 보고서 절 규칙(template 순서).
-const COMPLETE_SECTIONS: [SectionRule; 6] = [
-    ENVIRONMENT_SECTION,
+/// 명령과 검증 결과(테스트·성능 기록 포함)를 한 절에 담는 보고서 관례의 명령 절.
+const COMBINED_COMMANDS_SECTION: SectionRule = SectionRule {
+    name: "실행한 명령 / 검증",
+    accepted: &[
+        "실행한 명령 / 검증",
+        "실행한 검증",
+        "실행한 명령과 결정론 검증",
+    ],
+    fallback: Fallback::None,
+};
+
+/// 완료 보고서 `환경과 증거` 절(검증 환경 코드를 담는 절).
+const ENVIRONMENT_SECTION: SectionRule = SectionRule {
+    name: "환경과 증거",
+    accepted: &["환경과 증거", "필수 실행 환경"],
+    fallback: Fallback::None,
+};
+
+/// 완료 보고서 `남은 위험` 절. `남은 경고 수`(경고 수 기록)는 이 절로 인정하지 않습니다.
+const RISK_SECTION: SectionRule = SectionRule {
+    name: "남은 위험",
+    accepted: &[
+        "남은 위험",
+        "남은 위험 / 한계",
+        "남은 위험 / 후속",
+        "남은 경고 수 / 한계",
+    ],
+    fallback: Fallback::LegacyReport,
+};
+
+/// 완료 보고서 절 규칙(`TEMPLATE.md` 순서, I.2.13).
+const COMPLETE_SECTIONS: [SectionRule; 8] = [
+    WBS_SECTION,
     SectionRule {
-        name: "변경 파일 목록",
-        accepted: &["변경 파일 목록"],
-        required: true,
-    },
-    SectionRule {
-        name: "구현 요약",
-        accepted: &["구현 요약"],
-        required: false,
+        name: "변경 파일",
+        accepted: &["변경 파일", "변경 파일 목록"],
+        fallback: Fallback::None,
     },
     COMMANDS_SECTION,
+    ENVIRONMENT_SECTION,
     SectionRule {
-        name: "차이(작업 지시와 다른 점)",
+        name: "테스트",
         accepted: &[
+            "테스트",
+            "테스트 결과",
+            "남은 경고 수",
+            "남은 경고 수 / 한계",
+        ],
+        fallback: Fallback::CombinedCommands,
+    },
+    SectionRule {
+        name: "성능",
+        accepted: &["성능", "성능 수치"],
+        fallback: Fallback::CombinedCommands,
+    },
+    SectionRule {
+        name: "차이",
+        accepted: &[
+            "차이",
             "차이(작업 지시와 다른 점)",
             "작업 지시와 다른 점",
             "작업 지시와 다른 점 / 후속",
         ],
-        required: true,
+        fallback: Fallback::None,
     },
-    SectionRule {
-        name: "남은 위험 / 한계",
-        accepted: &[
-            "남은 위험 / 한계",
-            "남은 위험 / 후속",
-            "남은 경고 수",
-            "남은 경고 수 / 한계",
-        ],
-        required: true,
-    },
+    RISK_SECTION,
 ];
 
-/// 차단 보고서 절 규칙(`BLOCKED_TEMPLATE.md` 순서).
+/// 차단 보고서 절 규칙(`BLOCKED_TEMPLATE.md` 순서, I.2.14).
 const BLOCKED_SECTIONS: [SectionRule; 6] = [
     SectionRule {
         name: "WBS",
         accepted: &["WBS"],
-        required: true,
+        fallback: Fallback::None,
     },
     SectionRule {
         name: "실패 선행조건",
         accepted: &["실패 선행조건"],
-        required: true,
+        fallback: Fallback::None,
     },
     SectionRule {
         name: "재현 명령",
         accepted: &["재현 명령"],
-        required: true,
+        fallback: Fallback::None,
     },
     SectionRule {
         name: "필요한 결정과 환경",
         accepted: &["필요한 결정과 환경"],
-        required: true,
+        fallback: Fallback::None,
     },
     SectionRule {
         name: "변경되지 않은 파일",
         accepted: &["변경되지 않은 파일"],
-        required: true,
+        fallback: Fallback::None,
     },
     SectionRule {
         name: "재개 조건",
         accepted: &["재개 조건"],
-        required: true,
+        fallback: Fallback::None,
     },
 ];
+
+/// WBS 머리 목록 줄 접두어.
+const WBS_PREFIX: &str = "- WBS:";
 
 /// 상태 줄 접두어.
 const STATUS_PREFIX: &str = "- 상태:";
@@ -167,44 +250,46 @@ const COMMAND_TABLE_RESULT_COLUMNS: [&str; 2] = ["결과", "종료 코드"];
 pub fn validate_report(content: &str, kind: ReportKind, expected_id: &str) -> Vec<ReportError> {
     let mut errors = Vec::new();
     let lines = visible_lines(content);
-    let sections = split_sections(&lines);
+    let report = ParsedReport::parse(&lines);
 
     let rules: &[SectionRule] = match kind {
         ReportKind::Complete => &COMPLETE_SECTIONS,
         ReportKind::Blocked => &BLOCKED_SECTIONS,
     };
-    check_sections(&sections, rules, &mut errors);
+    check_sections(&report, rules, expected_id, &mut errors);
 
-    if !wbs_matches(&lines, expected_id) {
+    if !wbs_matches(report.wbs_lines(), expected_id) {
         errors.push(ReportError::new(
             "missing-wbs",
-            format!("WBS: {expected_id} 와 일치하는 항목이 없습니다"),
+            format!("머리 목록 또는 `## WBS` 절에 WBS: {expected_id} 와 일치하는 항목이 없습니다"),
         ));
     }
 
     check_status(&lines, kind, &mut errors);
 
     if kind == ReportKind::Complete {
-        let environment_evidence = sections_of(&sections, &ENVIRONMENT_SECTION)
+        let environment_evidence = report
+            .sections_of(&ENVIRONMENT_SECTION)
             .any(|section| has_environment_evidence(&section.body));
         if !environment_evidence {
             errors.push(ReportError::new(
                 "missing-environment",
                 format!(
-                    "`## {}` 절에 검증 환경 코드(예: DEV-MAC)가 없습니다",
-                    ENVIRONMENT_SECTION.name
+                    "환경 절(## {})에 검증 환경 코드(예: DEV-MAC)가 없습니다",
+                    ENVIRONMENT_SECTION.accepted.join(" | ")
                 ),
             ));
         }
 
-        let command_table = sections_of(&sections, &COMMANDS_SECTION)
+        let command_table = report
+            .sections_of(&COMMANDS_SECTION)
             .any(|section| has_command_table(&section.body));
         if !command_table {
             errors.push(ReportError::new(
                 "missing-command-table",
                 format!(
-                    "`## {}` 절에 `| 명령 | 결과 |` 또는 `| 검사 | 결과 |` 형식의 표가 없습니다",
-                    COMMANDS_SECTION.name
+                    "명령 절(## {})에 `| 명령 | 결과 |`·`| 명령 | 종료 코드 |`·`| 검사 | 결과 |` 형식의 표가 없습니다",
+                    COMMANDS_SECTION.accepted.join(" | ")
                 ),
             ));
         }
@@ -217,6 +302,62 @@ pub fn validate_report(content: &str, kind: ReportKind, expected_id: &str) -> Ve
 struct Section<'a> {
     title: &'a str,
     body: Vec<&'a str>,
+}
+
+/// 머리 목록과 `## ` 절로 나눈 보고서.
+struct ParsedReport<'a> {
+    /// 첫 `## ` heading 앞의 줄(`# ` 제목 줄 제외). 보고서 관례의 WBS 머리 목록이 여기 있습니다.
+    preamble: Vec<&'a str>,
+    sections: Vec<Section<'a>>,
+}
+
+impl<'a> ParsedReport<'a> {
+    /// 줄 목록을 머리 목록과 `## ` 절 단위로 나눕니다. `# ` heading은 직전 절을 끝냅니다.
+    fn parse(lines: &[&'a str]) -> Self {
+        let mut preamble = Vec::new();
+        let mut sections: Vec<Section<'a>> = Vec::new();
+        let mut in_section = false;
+        for &line in lines {
+            if let Some(title) = line.strip_prefix("## ") {
+                sections.push(Section {
+                    title: title.trim(),
+                    body: Vec::new(),
+                });
+                in_section = true;
+            } else if line.starts_with("# ") {
+                in_section = false;
+            } else if in_section {
+                if let Some(section) = sections.last_mut() {
+                    section.body.push(line);
+                }
+            } else if sections.is_empty() {
+                preamble.push(line);
+            }
+        }
+        ParsedReport { preamble, sections }
+    }
+
+    /// 규칙에 해당하는 절을 순서대로 반환합니다.
+    fn sections_of<'s>(&'s self, rule: &'s SectionRule) -> impl Iterator<Item = &'s Section<'a>> {
+        self.sections
+            .iter()
+            .filter(move |section| rule.matches(section.title))
+    }
+
+    /// 머리 목록과 `## WBS` 절 본문의 줄(WBS 기록이 있을 수 있는 자리)을 반환합니다.
+    fn wbs_lines(&self) -> impl Iterator<Item = &'a str> + '_ {
+        self.preamble.iter().copied().chain(
+            self.sections_of(&WBS_SECTION)
+                .flat_map(|section| section.body.iter().copied()),
+        )
+    }
+
+    /// 머리 목록에 `- WBS:` 줄이 있는지 확인합니다.
+    fn has_preamble_wbs(&self) -> bool {
+        self.preamble
+            .iter()
+            .any(|line| line.trim_start().starts_with(WBS_PREFIX))
+    }
 }
 
 /// 코드 펜스 안의 줄(펜스 구분 줄 포함)을 빈 줄로 바꾼 줄 목록을 반환합니다.
@@ -291,66 +432,52 @@ fn run_length(text: &str, marker: u8) -> usize {
     text.bytes().take_while(|byte| *byte == marker).count()
 }
 
-/// 줄 목록을 `## ` 절 단위로 나눕니다. `# ` heading은 직전 절을 끝냅니다.
-fn split_sections<'a>(lines: &[&'a str]) -> Vec<Section<'a>> {
-    let mut sections: Vec<Section<'a>> = Vec::new();
-    let mut in_section = false;
-    for line in lines {
-        if let Some(title) = line.strip_prefix("## ") {
-            sections.push(Section {
-                title: title.trim(),
-                body: Vec::new(),
-            });
-            in_section = true;
-        } else if line.starts_with("# ") {
-            in_section = false;
-        } else if in_section {
-            if let Some(section) = sections.last_mut() {
-                section.body.push(line);
-            }
-        }
-    }
-    sections
-}
-
-/// 규칙에 해당하는 절을 순서대로 반환합니다.
-fn sections_of<'s, 'a>(
-    sections: &'s [Section<'a>],
-    rule: &'s SectionRule,
-) -> impl Iterator<Item = &'s Section<'a>> + 's {
-    sections
-        .iter()
-        .filter(move |section| rule.matches(section.title))
-}
-
-/// 필수 절 누락과 같은 heading 제목의 중복을 검사합니다.
-fn check_sections(sections: &[Section<'_>], rules: &[SectionRule], errors: &mut Vec<ReportError>) {
+/// 필수 절 누락과 같은 `## ` 제목의 중복을 검사합니다.
+///
+/// 절은 허용 heading이 있거나, heading 대신 인정하는 기록(`Fallback`)이 있으면 있는 것으로 봅니다.
+fn check_sections(
+    report: &ParsedReport<'_>,
+    rules: &[SectionRule],
+    expected_id: &str,
+    errors: &mut Vec<ReportError>,
+) {
     for rule in rules {
-        let matched: Vec<&str> = sections_of(sections, rule)
-            .map(|section| section.title)
-            .collect();
-        if rule.required && matched.is_empty() {
+        let present = report.sections_of(rule).next().is_some()
+            || match rule.fallback {
+                Fallback::None => false,
+                Fallback::PreambleWbs => report.has_preamble_wbs(),
+                Fallback::CombinedCommands => report
+                    .sections_of(&COMBINED_COMMANDS_SECTION)
+                    .next()
+                    .is_some(),
+                Fallback::LegacyReport => is_legacy_report_without_risk_section(expected_id),
+            };
+        if !present {
             errors.push(ReportError::new(
                 "missing-heading",
-                format!("필수 heading 누락: ## {}", rule.name),
+                format!(
+                    "필수 heading 누락: ## {} (허용 제목: {})",
+                    rule.name,
+                    rule.accepted.join(", ")
+                ),
             ));
         }
-        for (index, title) in matched.iter().enumerate() {
-            if matched[..index].contains(title) {
-                continue;
-            }
-            if matched[index + 1..].contains(title) {
-                errors.push(ReportError::new(
-                    "duplicate-heading",
-                    format!("heading 중복: ## {title}"),
-                ));
-            }
+    }
+
+    let mut seen = HashSet::new();
+    let mut reported = HashSet::new();
+    for section in &report.sections {
+        if !seen.insert(section.title) && reported.insert(section.title) {
+            errors.push(ReportError::new(
+                "duplicate-heading",
+                format!("heading 중복: ## {}", section.title),
+            ));
         }
     }
 }
 
 /// `WBS: <id>` 형태의 줄에서 expected_id와 일치하는 항목이 있는지 확인합니다.
-fn wbs_matches(lines: &[&str], expected_id: &str) -> bool {
+fn wbs_matches<'a>(lines: impl IntoIterator<Item = &'a str>, expected_id: &str) -> bool {
     for line in lines {
         if let Some(rest) = line.split("WBS:").nth(1) {
             let token = rest.trim().trim_matches('`').split_whitespace().next();
@@ -468,13 +595,29 @@ fn is_separator_cell(cell: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::task_report::legacy::LEGACY_REPORTS_WITHOUT_RISK_SECTION;
+
+    /// fixture 보고서 ID(초기 보고서 고정 목록에 없는 ID).
+    const ID: &str = "VI.9.5";
+
+    /// I.2.13이 고정한 완료 보고서 template 절 제목(template 순서).
+    const I_2_13_TEMPLATE_HEADINGS: [&str; 8] = [
+        "WBS",
+        "변경 파일",
+        "명령과 종료 코드",
+        "환경과 증거",
+        "테스트",
+        "성능",
+        "차이",
+        "남은 위험",
+    ];
 
     /// 실제 보고서 관례(`VI.9.5.md` 구조)를 따르는 완료 보고서.
     fn complete_report() -> String {
         "\
-# 작업 보고서: I.1.1 제목
+# 작업 보고서: VI.9.5 제목
 
-- WBS: I.1.1
+- WBS: VI.9.5
 - 작업명: 제목
 - 상태: 완료 (`[x]`)
 - 선행: 없음
@@ -512,7 +655,55 @@ mod tests {
         .to_string()
     }
 
-    /// 초기 보고서 관례(별칭 heading)를 따르는 완료 보고서.
+    /// `TEMPLATE.md`(I.2.13)의 8개 절 제목을 그대로 쓰는 완료 보고서.
+    fn template_report() -> String {
+        "\
+# 작업 보고서: VI.9.5 제목
+
+## WBS
+
+- WBS: VI.9.5
+- 작업명: 제목
+- 상태: 완료 (`[x]`)
+- 선행: 없음
+
+## 변경 파일
+
+- `a.rs` (신규)
+
+## 명령과 종료 코드
+
+| 명령 | 종료 코드 |
+|---|---|
+| `cargo test -p xtask` | 0 |
+
+## 환경과 증거
+
+- 필수 실행 환경: DEV-MAC
+- 환경별 증거: 없음(로컬 검증)
+
+## 테스트
+
+- 10 passed, 0 failed, 경고 0
+
+## 성능
+
+- 해당 없음
+
+## 차이
+
+- 없음.
+
+## 남은 위험
+
+- 없음.
+"
+        .to_string()
+    }
+
+    /// 초기 보고서 관례(별칭 heading, 남은 위험 절 없음)를 따르는 완료 보고서.
+    ///
+    /// I.2.15는 초기 보고서 고정 목록에 있는 ID입니다.
     fn legacy_complete_report() -> String {
         "\
 # 작업 보고서: I.2.15 제목
@@ -543,6 +734,10 @@ mod tests {
 ## 남은 경고 수
 
 - 0
+
+## 성능 수치
+
+- 해당 없음
 
 ## 작업 지시와 다른 점 / 후속
 
@@ -592,33 +787,67 @@ mod tests {
             .collect()
     }
 
+    /// 저장소의 작업 보고서 디렉터리.
+    fn reports_dir() -> std::path::PathBuf {
+        std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/task-reports"
+        ))
+        .to_path_buf()
+    }
+
     #[test]
     fn valid_complete_report_passes() {
-        assert!(validate_report(&complete_report(), ReportKind::Complete, "I.1.1").is_empty());
-    }
-
-    #[test]
-    fn legacy_heading_aliases_pass() {
         assert_eq!(
-            validate_report(&legacy_complete_report(), ReportKind::Complete, "I.2.15"),
+            validate_report(&complete_report(), ReportKind::Complete, ID),
             Vec::new()
         );
-        let older = legacy_complete_report()
-            .replace(
-                "## 실행한 명령\n",
-                "## 실행한 명령 (`git check-attr` fixture)\n",
-            )
-            .replace("## 남은 경고 수\n", "## 남은 경고 수 / 한계\n")
-            .replace(
-                "## 작업 지시와 다른 점 / 후속\n",
-                "## 작업 지시와 다른 점\n",
-            );
-        assert!(validate_report(&older, ReportKind::Complete, "I.2.15").is_empty());
     }
 
     #[test]
-    fn missing_heading_fails() {
-        // 필수 절을 하나씩 지우면 각각 `missing-heading`이 됩니다(별칭이 남지 않도록 대표 제목만 사용).
+    fn template_layout_report_passes() {
+        assert_eq!(
+            validate_report(&template_report(), ReportKind::Complete, ID),
+            Vec::new()
+        );
+    }
+
+    #[test]
+    fn template_layout_requires_each_heading() {
+        // I.2.15 검증: template 절 heading을 하나씩 지운 fixture가 실패합니다.
+        for heading in [
+            "## 변경 파일\n",
+            "## 명령과 종료 코드\n",
+            "## 환경과 증거\n",
+            "## 테스트\n",
+            "## 성능\n",
+            "## 차이\n",
+            "## 남은 위험\n",
+        ] {
+            let content = template_report().replace(heading, "");
+            assert!(
+                codes(&content, ReportKind::Complete, ID).contains(&"missing-heading"),
+                "{heading} 제거가 실패하지 않았습니다"
+            );
+        }
+
+        // `## WBS` heading만 지우면 WBS 머리 목록이 제목 바로 아래에 남아 보고서 관례와 같아집니다.
+        let content = template_report().replace("## WBS\n\n", "");
+        assert_eq!(
+            validate_report(&content, ReportKind::Complete, ID),
+            Vec::new()
+        );
+        // WBS 줄까지 지우면 WBS 절과 WBS 일치가 모두 실패합니다.
+        let content = template_report().replace("## WBS\n\n- WBS: VI.9.5\n", "");
+        assert_eq!(
+            codes(&content, ReportKind::Complete, ID),
+            vec!["missing-heading", "missing-wbs"]
+        );
+    }
+
+    #[test]
+    fn established_layout_requires_each_heading() {
+        // 보고서 관례의 필수 절을 하나씩 지우면 각각 `missing-heading`이 됩니다.
         for heading in [
             "## 필수 실행 환경\n",
             "## 변경 파일 목록\n",
@@ -628,38 +857,131 @@ mod tests {
         ] {
             let content = complete_report().replace(heading, "");
             assert!(
-                codes(&content, ReportKind::Complete, "I.1.1").contains(&"missing-heading"),
+                codes(&content, ReportKind::Complete, ID).contains(&"missing-heading"),
                 "{heading} 제거가 실패하지 않았습니다"
             );
         }
+
+        // 머리 목록의 WBS 줄을 지우면 WBS 절이 없는 것으로 봅니다.
+        let content = complete_report().replace("- WBS: VI.9.5\n", "");
+        assert_eq!(
+            codes(&content, ReportKind::Complete, ID),
+            vec!["missing-heading", "missing-wbs"]
+        );
     }
 
     #[test]
     fn optional_summary_section_may_be_absent() {
         let content = complete_report().replace("## 구현 요약\n\n- 요약.\n\n", "");
-        assert!(validate_report(&content, ReportKind::Complete, "I.1.1").is_empty());
+        assert!(validate_report(&content, ReportKind::Complete, ID).is_empty());
     }
 
     #[test]
-    fn unknown_alias_does_not_satisfy_required_section() {
-        // 초기 template의 `## 차이`·`## 남은 위험`은 현재 관례가 아니므로 인정하지 않습니다.
+    fn combined_commands_section_covers_tests_and_performance() {
+        // 명령만 담는 `## 실행한 명령`이면 테스트·성능 절이 따로 있어야 합니다.
+        let commands_only =
+            complete_report().replace("## 실행한 명령 / 검증 (`DEV-MAC`)\n", "## 실행한 명령\n");
+        let errors = validate_report(&commands_only, ReportKind::Complete, ID);
+        assert_eq!(
+            errors.iter().map(|e| e.code).collect::<Vec<_>>(),
+            vec!["missing-heading", "missing-heading"]
+        );
+        assert!(errors[0].message.contains("## 테스트 "), "{errors:?}");
+        assert!(errors[1].message.contains("## 성능 "), "{errors:?}");
+
+        let with_records = commands_only.replace(
+            "## 차이(작업 지시와 다른 점)\n",
+            "## 테스트 결과\n\n- 10 passed\n\n## 성능 수치\n\n- 해당 없음\n\n## 차이(작업 지시와 다른 점)\n",
+        );
+        assert!(validate_report(&with_records, ReportKind::Complete, ID).is_empty());
+
+        // template의 `## 명령과 종료 코드`도 테스트·성능 기록을 겸하지 않습니다.
+        let template_commands = template_report().replace(
+            "## 테스트\n\n- 10 passed, 0 failed, 경고 0\n\n## 성능\n\n- 해당 없음\n\n",
+            "",
+        );
+        assert_eq!(
+            codes(&template_commands, ReportKind::Complete, ID),
+            vec!["missing-heading", "missing-heading"]
+        );
+    }
+
+    #[test]
+    fn warning_count_is_not_a_risk_section() {
+        // `남은 경고 수`는 경고 수 기록(테스트 절 별칭)이므로 남은 위험 절을 대신하지 못합니다.
+        let content = complete_report().replace("## 남은 위험 / 한계\n", "## 남은 경고 수\n");
+        let errors = validate_report(&content, ReportKind::Complete, ID);
+        assert_eq!(
+            errors.iter().map(|e| e.code).collect::<Vec<_>>(),
+            vec!["missing-heading"]
+        );
+        assert!(errors[0].message.contains("## 남은 위험 "), "{errors:?}");
+
+        // 한계를 함께 적는 `남은 경고 수 / 한계`는 남은 위험 절로 인정합니다.
+        let content =
+            complete_report().replace("## 남은 위험 / 한계\n", "## 남은 경고 수 / 한계\n");
+        assert!(validate_report(&content, ReportKind::Complete, ID).is_empty());
+    }
+
+    #[test]
+    fn legacy_layout_passes_only_for_frozen_reports() {
+        // 고정 목록에 있는 초기 보고서는 별칭 heading과 남은 위험 절 없는 구성으로 통과합니다.
+        assert_eq!(
+            validate_report(&legacy_complete_report(), ReportKind::Complete, "I.2.15"),
+            Vec::new()
+        );
+        let older = legacy_complete_report()
+            .replace(
+                "## 실행한 명령\n",
+                "## 실행한 명령 (`git check-attr` fixture)\n",
+            )
+            .replace(
+                "## 남은 경고 수\n",
+                "## 테스트 결과\n\n- 통과\n\n## 남은 경고 수\n",
+            )
+            .replace(
+                "## 작업 지시와 다른 점 / 후속\n",
+                "## 작업 지시와 다른 점\n",
+            );
+        assert!(validate_report(&older, ReportKind::Complete, "I.2.15").is_empty());
+
+        // 같은 구성의 새 보고서는 남은 위험 절이 없어 실패합니다.
+        let new_report = legacy_complete_report().replace("I.2.15", ID);
+        let errors = validate_report(&new_report, ReportKind::Complete, ID);
+        assert_eq!(
+            errors.iter().map(|e| e.code).collect::<Vec<_>>(),
+            vec!["missing-heading"]
+        );
+        assert!(errors[0].message.contains("## 남은 위험 "), "{errors:?}");
+    }
+
+    #[test]
+    fn unknown_heading_does_not_satisfy_required_section() {
         let content = complete_report()
-            .replace("## 차이(작업 지시와 다른 점)\n", "## 차이\n")
-            .replace("## 남은 위험 / 한계\n", "## 남은 위험\n");
-        let found = codes(&content, ReportKind::Complete, "I.1.1");
-        assert_eq!(found, vec!["missing-heading", "missing-heading"]);
+            .replace("## 차이(작업 지시와 다른 점)\n", "## 비고\n")
+            .replace("## 남은 위험 / 한계\n", "## 후속\n");
+        assert_eq!(
+            codes(&content, ReportKind::Complete, ID),
+            vec!["missing-heading", "missing-heading"]
+        );
     }
 
     #[test]
     fn duplicate_heading_fails() {
         let content = format!("{}\n## 변경 파일 목록\n\n- b.rs\n", complete_report());
         assert_eq!(
-            codes(&content, ReportKind::Complete, "I.1.1"),
+            codes(&content, ReportKind::Complete, ID),
             vec!["duplicate-heading"]
         );
         let content = format!("{}\n## 구현 요약\n\n- 다시.\n", complete_report());
         assert_eq!(
-            codes(&content, ReportKind::Complete, "I.1.1"),
+            codes(&content, ReportKind::Complete, ID),
+            vec!["duplicate-heading"]
+        );
+        // 같은 제목이 세 번 나와도 오류는 하나입니다.
+        let content = format!("{}\n## 비고\n\n## 비고\n\n## 비고\n", complete_report());
+        assert_eq!(
+            codes(&content, ReportKind::Complete, ID),
             vec!["duplicate-heading"]
         );
     }
@@ -670,7 +992,7 @@ mod tests {
             "{}\n## 실행한 명령 / 검증 (`CI-MAC`)\n\n| 명령 | 결과 |\n|---|---|\n| `cargo test` | 통과 |\n",
             complete_report()
         );
-        assert!(validate_report(&content, ReportKind::Complete, "I.1.1").is_empty());
+        assert!(validate_report(&content, ReportKind::Complete, ID).is_empty());
     }
 
     #[test]
@@ -679,7 +1001,7 @@ mod tests {
             "## 필수 실행 환경\n\n- `DEV-MAC`.\n",
             "```text\n## 필수 실행 환경\n\n- `DEV-MAC`.\n```\n",
         );
-        let found = codes(&content, ReportKind::Complete, "I.1.1");
+        let found = codes(&content, ReportKind::Complete, ID);
         assert!(found.contains(&"missing-heading"));
         assert!(found.contains(&"missing-environment"));
     }
@@ -696,7 +1018,7 @@ mod tests {
             "```\n```` x\n## 필수 실행 환경\n\n- `DEV-MAC`.\n```\n",
         ] {
             let content = complete_report().replace(section, fenced);
-            let found = codes(&content, ReportKind::Complete, "I.1.1");
+            let found = codes(&content, ReportKind::Complete, ID);
             assert!(found.contains(&"missing-heading"), "{fenced:?}: {found:?}");
             assert!(
                 found.contains(&"missing-environment"),
@@ -707,27 +1029,40 @@ mod tests {
         // 더 긴 닫는 줄은 펜스를 닫고, 그 뒤 절은 다시 보입니다.
         let content =
             complete_report().replace(section, &format!("```\n본문\n````` \t\n{section}"));
-        assert!(validate_report(&content, ReportKind::Complete, "I.1.1").is_empty());
+        assert!(validate_report(&content, ReportKind::Complete, ID).is_empty());
 
         // backtick이 정보 문자열에 있는 줄(인라인 코드)은 펜스를 열지 않습니다.
         let content = complete_report().replace(
             "- 작업명: 제목\n",
             "- 작업명: 제목\n```inline``` 코드 설명\n",
         );
-        assert!(validate_report(&content, ReportKind::Complete, "I.1.1").is_empty());
+        assert!(validate_report(&content, ReportKind::Complete, ID).is_empty());
     }
 
     #[test]
     fn missing_wbs_fails() {
-        let content = complete_report().replace("- WBS: I.1.1", "- WBS:");
+        let content = complete_report().replace("- WBS: VI.9.5", "- WBS:");
         assert_eq!(
-            codes(&content, ReportKind::Complete, "I.1.1"),
+            codes(&content, ReportKind::Complete, ID),
             vec!["missing-wbs"]
         );
         // 다른 ID를 가리키는 보고서도 실패합니다.
         assert_eq!(
-            codes(&complete_report(), ReportKind::Complete, "I.1.2"),
+            codes(&complete_report(), ReportKind::Complete, "VI.9.6"),
             vec!["missing-wbs"]
+        );
+    }
+
+    #[test]
+    fn wbs_outside_wbs_record_does_not_count() {
+        // 머리 목록·`## WBS` 절 밖의 `WBS:` 줄은 WBS 기록으로 세지 않습니다.
+        let content = complete_report().replace("- WBS: VI.9.5\n", "").replace(
+            "## 차이(작업 지시와 다른 점)\n\n- 없음.\n",
+            "## 차이(작업 지시와 다른 점)\n\n- WBS: VI.9.5\n",
+        );
+        assert_eq!(
+            codes(&content, ReportKind::Complete, ID),
+            vec!["missing-heading", "missing-wbs"]
         );
     }
 
@@ -735,18 +1070,18 @@ mod tests {
     fn missing_environment_evidence_fails() {
         let content = complete_report().replace("- `DEV-MAC`.", "- 로컬.");
         assert_eq!(
-            codes(&content, ReportKind::Complete, "I.1.1"),
+            codes(&content, ReportKind::Complete, ID),
             vec!["missing-environment"]
         );
     }
 
     #[test]
     fn environment_code_outside_environment_section_does_not_count() {
-        // 명령 절 heading에 `DEV-MAC`이 있어도 `필수 실행 환경` 절이 비면 실패합니다.
+        // 명령 절 heading에 `DEV-MAC`이 있어도 환경 절이 비면 실패합니다.
         let content = complete_report().replace("- `DEV-MAC`.", "- 미정.");
         assert!(content.contains("(`DEV-MAC`)"));
         assert_eq!(
-            codes(&content, ReportKind::Complete, "I.1.1"),
+            codes(&content, ReportKind::Complete, ID),
             vec!["missing-environment"]
         );
     }
@@ -754,25 +1089,25 @@ mod tests {
     #[test]
     fn status_line_rules() {
         let partial = complete_report().replace("완료 (`[x]`)", "부분 완료 (`[~]`) — CI 대기");
-        assert!(validate_report(&partial, ReportKind::Complete, "I.1.1").is_empty());
+        assert!(validate_report(&partial, ReportKind::Complete, ID).is_empty());
 
         let missing = complete_report().replace("- 상태: 완료 (`[x]`)\n", "");
         assert_eq!(
-            codes(&missing, ReportKind::Complete, "I.1.1"),
+            codes(&missing, ReportKind::Complete, ID),
             vec!["missing-status"]
         );
 
         let duplicate =
             complete_report().replace("- 선행: 없음\n", "- 선행: 없음\n- 상태: 완료 (`[x]`)\n");
         assert_eq!(
-            codes(&duplicate, ReportKind::Complete, "I.1.1"),
+            codes(&duplicate, ReportKind::Complete, ID),
             vec!["duplicate-status"]
         );
 
         for status in ["미착수 (`[ ]`)", "차단 (`[!]`)", "완료"] {
             let content = complete_report().replace("완료 (`[x]`)", status);
             assert_eq!(
-                codes(&content, ReportKind::Complete, "I.1.1"),
+                codes(&content, ReportKind::Complete, ID),
                 vec!["invalid-status"],
                 "{status}"
             );
@@ -780,7 +1115,7 @@ mod tests {
 
         // 첫 상태 표기가 기준입니다(뒤의 선행 상태 표기는 무시).
         let first_wins = complete_report().replace("완료 (`[x]`)", "`[~]` (선행 I.1.0 `[x]`)");
-        assert!(validate_report(&first_wins, ReportKind::Complete, "I.1.1").is_empty());
+        assert!(validate_report(&first_wins, ReportKind::Complete, ID).is_empty());
     }
 
     #[test]
@@ -808,7 +1143,7 @@ mod tests {
             ("fenced", fenced),
         ] {
             assert_eq!(
-                codes(&content, ReportKind::Complete, "I.1.1"),
+                codes(&content, ReportKind::Complete, ID),
                 vec!["missing-command-table"],
                 "{name}"
             );
@@ -820,13 +1155,13 @@ mod tests {
             &format!("## 구현 요약\n\n{table}"),
         );
         assert_eq!(
-            codes(&moved, ReportKind::Complete, "I.1.1"),
+            codes(&moved, ReportKind::Complete, ID),
             vec!["missing-command-table"]
         );
 
         // 검사 표 하나만 있어도 통과합니다.
         let checks_only = replaced("| 검사 | 결과 |\n|:--|--:|\n| fixture | 통과 |\n");
-        assert!(validate_report(&checks_only, ReportKind::Complete, "I.1.1").is_empty());
+        assert!(validate_report(&checks_only, ReportKind::Complete, ID).is_empty());
     }
 
     #[test]
@@ -846,39 +1181,45 @@ mod tests {
             codes(&content, ReportKind::Blocked, "I.2.4"),
             vec!["invalid-status"]
         );
+        // 차단 보고서는 `## WBS` 절이 필수입니다(머리 목록으로 대신하지 않음).
+        let content = blocked_report().replace("## WBS\n\n", "");
+        assert_eq!(
+            codes(&content, ReportKind::Blocked, "I.2.4"),
+            vec!["missing-heading"]
+        );
         // 차단 보고서는 명령 표·환경 절을 요구하지 않지만, 완료 보고서로 검사하면 실패합니다.
         assert!(!codes(&blocked_report(), ReportKind::Complete, "I.2.4").is_empty());
     }
 
     #[test]
-    fn report_templates_satisfy_validator() {
-        // template과 validator가 같은 절 구성을 유지하는지 고정합니다.
-        let complete = include_str!("../../../../docs/task-reports/TEMPLATE.md");
+    fn report_template_fixes_i_2_13_sections() {
+        // I.2.13 검증: TEMPLATE.md에 template 절 heading이 정확히 한 번씩, 이 순서로 있습니다.
+        let template = include_str!("../../../../docs/task-reports/TEMPLATE.md");
+        let lines = visible_lines(template);
+        let titles: Vec<&str> = ParsedReport::parse(&lines)
+            .sections
+            .iter()
+            .map(|section| section.title)
+            .collect();
+        assert_eq!(titles, I_2_13_TEMPLATE_HEADINGS);
+        // validator 규칙의 대표 제목도 template 제목과 같습니다.
+        let names: Vec<&str> = COMPLETE_SECTIONS.iter().map(|rule| rule.name).collect();
+        assert_eq!(names, I_2_13_TEMPLATE_HEADINGS);
         assert_eq!(
-            validate_report(
-                &complete.replace("<WBS-ID>", "I.1.1"),
-                ReportKind::Complete,
-                "I.1.1"
-            ),
+            validate_report(&template.replace("<WBS-ID>", ID), ReportKind::Complete, ID),
             Vec::new()
         );
-        // 선택 절을 포함한 모든 절이 대표 제목으로 정확히 한 번씩 있어야 합니다.
-        let lines = visible_lines(complete);
-        let sections = split_sections(&lines);
-        for rule in &COMPLETE_SECTIONS {
-            let titles: Vec<&str> = sections_of(&sections, rule)
-                .map(|section| section.title)
-                .collect();
-            assert_eq!(titles.len(), 1, "TEMPLATE.md의 ## {} 개수", rule.name);
-            assert!(
-                titles[0].starts_with(rule.name),
-                "TEMPLATE.md는 별칭이 아닌 대표 제목 ## {}을 써야 합니다",
-                rule.name
-            );
-        }
-        assert_eq!(sections.len(), COMPLETE_SECTIONS.len());
 
+        // I.2.14 차단 보고서 template도 validator 규칙과 같은 절 구성입니다.
         let blocked = include_str!("../../../../docs/task-reports/BLOCKED_TEMPLATE.md");
+        let lines = visible_lines(blocked);
+        let titles: Vec<&str> = ParsedReport::parse(&lines)
+            .sections
+            .iter()
+            .map(|section| section.title)
+            .collect();
+        let names: Vec<&str> = BLOCKED_SECTIONS.iter().map(|rule| rule.name).collect();
+        assert_eq!(titles, names);
         assert_eq!(
             validate_report(
                 &blocked.replace("<WBS-ID>", "I.2.4"),
@@ -887,5 +1228,57 @@ mod tests {
             ),
             Vec::new()
         );
+    }
+
+    #[test]
+    fn repository_reports_pass() {
+        // 저장소의 모든 완료·차단 보고서(template 제외)가 validator를 통과합니다.
+        let mut paths: Vec<std::path::PathBuf> = std::fs::read_dir(reports_dir())
+            .expect("docs/task-reports 디렉터리")
+            .map(|entry| entry.expect("디렉터리 항목").path())
+            .collect();
+        paths.sort();
+        let mut checked = 0usize;
+        let mut failures = Vec::new();
+        for path in paths {
+            let Some(file) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            let Some(stem) = file.strip_suffix(".md") else {
+                continue;
+            };
+            if stem == "TEMPLATE" || stem == "BLOCKED_TEMPLATE" {
+                continue;
+            }
+            let (kind, id) = match stem.strip_suffix("-blocked") {
+                Some(id) => (ReportKind::Blocked, id),
+                None => (ReportKind::Complete, stem),
+            };
+            let content = std::fs::read_to_string(&path).expect("보고서 읽기");
+            let errors = validate_report(&content, kind, id);
+            if !errors.is_empty() {
+                let messages: Vec<&str> = errors.iter().map(|e| e.message.as_str()).collect();
+                failures.push(format!("{file}: {messages:?}"));
+            }
+            checked += 1;
+        }
+        assert!(checked > 0, "검사한 보고서가 없습니다");
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    #[test]
+    fn legacy_reports_lack_risk_section() {
+        // 고정 목록은 남은 위험 절이 실제로 없는 초기 보고서만 담습니다.
+        for id in LEGACY_REPORTS_WITHOUT_RISK_SECTION {
+            let path = reports_dir().join(format!("{id}.md"));
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+            let lines = visible_lines(&content);
+            let report = ParsedReport::parse(&lines);
+            assert!(
+                report.sections_of(&RISK_SECTION).next().is_none(),
+                "{id}는 남은 위험 절이 있으므로 고정 목록에서 뺍니다"
+            );
+        }
     }
 }
