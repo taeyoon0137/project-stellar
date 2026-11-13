@@ -650,9 +650,14 @@ fn hash_source(
     result.map_err(|e| ImportError::stream(ImportOperation::HashSource, e))
 }
 
+/// temp 이름의 대상 이름 뒤 표식.
+const TEMP_MARKER: &str = ".tmp-";
+
 /// 대상과 같은 디렉터리에 만들 temp 파일 경로(`.<file>.tmp-<pid>-<n>`).
 ///
 /// `.`로 시작해 content 파일 이름 규칙(`<algorithm>-<hex>.<ext>`)과 겹치지 않습니다.
+/// `<pid>`·`<n>`은 선행 0 없는 10진수입니다. 이 형식의 해석은 [`parse_temp_file_name`]이
+/// 맡습니다(GC 정리 대상 판정, XIII.5.6) — 둘을 함께 바꿔야 합니다.
 pub(crate) fn temp_path_for(target: &Path) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -660,7 +665,33 @@ pub(crate) fn temp_path_for(target: &Path) -> PathBuf {
         .file_name()
         .map(|f| f.to_string_lossy().into_owned())
         .unwrap_or_else(|| "unnamed".to_string());
-    target.with_file_name(format!(".{file_name}.tmp-{}-{n}", std::process::id()))
+    target.with_file_name(format!(
+        ".{file_name}{TEMP_MARKER}{}-{n}",
+        std::process::id()
+    ))
+}
+
+/// [`temp_path_for`]가 content 파일(`assets/<prefix>/<canonical 이름>`)에 대해 만드는 temp 이름
+/// `.<canonical content 이름>.tmp-<pid>-<n>`이면 대상 content hash를 돌려줍니다.
+///
+/// 정확히 이 형식만 인정합니다: 대상 이름이 shard `prefix`의 canonical content 이름
+/// ([`AssetObjectPath::parse`])이고, `<pid>`는 `u32`, `<n>`은 `u64`의 선행 0 없는 10진수입니다.
+/// `.DS_Store.tmp-1-2`처럼 `.tmp-`만 포함한 다른 숨김 파일은 `None`입니다.
+pub(crate) fn parse_temp_file_name(prefix: &str, name: &str) -> Option<ContentHash> {
+    let rest = name.strip_prefix('.')?;
+    let (target, suffix) = rest.rsplit_once(TEMP_MARKER)?;
+    let (pid, counter) = suffix.split_once('-')?;
+    let canonical_decimal = |text: &str, value: u64| value.to_string() == text;
+    let pid_ok = pid
+        .parse::<u32>()
+        .is_ok_and(|v| canonical_decimal(pid, u64::from(v)));
+    let counter_ok = counter
+        .parse::<u64>()
+        .is_ok_and(|v| canonical_decimal(counter, v));
+    if !pid_ok || !counter_ok {
+        return None;
+    }
+    AssetObjectPath::parse(prefix, target).map(|(_, hash)| hash)
 }
 
 #[cfg(test)]
@@ -1290,6 +1321,24 @@ mod tests {
             .to_str()
             .unwrap()
             .starts_with(".sha256-ab.png.tmp-"));
+    }
+
+    #[test]
+    fn writer_temp_names_round_trip_through_parser() {
+        let hash = ContentHash::compute(b"temp");
+        let object = AssetObjectPath::new(&hash, &SafeExtension::new("png").unwrap());
+        let target = Path::new("/p").join(object.to_relative_path());
+        for _ in 0..3 {
+            let temp = temp_path_for(&target);
+            let name = temp.file_name().unwrap().to_str().unwrap();
+            assert_eq!(
+                parse_temp_file_name(object.prefix(), name),
+                Some(hash),
+                "{name}"
+            );
+            // 다른 shard에서는 인정하지 않습니다.
+            assert_eq!(parse_temp_file_name("zz", name), None);
+        }
     }
 
     #[test]

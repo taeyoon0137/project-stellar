@@ -75,3 +75,18 @@
 - **검증**: `symlinked_assets_root_or_shard_is_never_followed`(gc) — symlink shard·symlink
   `assets/` 모두 typed 오류, 프로젝트 밖 canonical 이름 파일과 프로젝트 안 orphan 모두 보존,
   비shard 이름 symlink는 무시하고 정상 sweep. 기존 GC 테스트는 `Ok` 결과로 같은 동작.
+
+## 후속 수정(리뷰 반영): temp 정리 대상을 writer 이름 형식과 정확히 일치
+
+- **문제**: GC가 `.`로 시작하고 `.tmp-`를 포함한 모든 숨김 파일을 stale temp로 보고 grace 이후
+  삭제했습니다. writer(XIII.5.4)의 실제 형식 `.<canonical 이름>.tmp-<pid>-<n>`보다 넓어
+  `.DS_Store.tmp-1-2` 같은 사용자 파일도 지울 수 있었습니다.
+- **수정**: writer(`store::temp_path_for`) 옆에 같은 형식의 해석기 `store::parse_temp_file_name`을
+  두고 GC가 그것만 씁니다. 인정 조건: 선행 `.` + **이 shard의 canonical content 이름**
+  (`AssetObjectPath::parse`) + `.tmp-` + 선행 0 없는 `u32` pid + `-` + 선행 0 없는 `u64` 순번.
+  표식 문자열은 상수 하나(`TEMP_MARKER`)로 writer와 공유합니다.
+- **검증**: `writer_temp_names_round_trip_through_parser`(writer 출력이 해석기로 같은 hash, 다른
+  shard는 거부), `shard_and_temp_name_rules`(비슷한 이름 16종 거부), `temp_cleanup_matches_writer_pattern_exactly`
+  (writer temp만 삭제, `.DS_Store.tmp-1-2`·`.notes.tmp-1-1`·순번 누락·선행 0·`.bak` 삽입 이름 보존).
+  `cargo test -p stellar-assets` lib 122 passed + integration 1 passed + doctest 7 passed,
+  clippy 경고 0, fmt 통과, `validate-crate-graph` 통과.

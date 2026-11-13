@@ -11,7 +11,9 @@
 //! - **sweep**: `assets/<prefix>/`의 canonical content 파일 중 mark에 없는 파일을 grace
 //!   period가 지난 뒤에만 삭제합니다([`sweep_unreferenced_assets`]). 같은 content를 여러
 //!   AssetId가 공유해도 hash 하나만 live이면 삭제하지 않습니다(live shared content 보호).
-//!   강제 종료로 남은 temp(`.…tmp-…`, XIII.5.4)는 grace 이후 정리합니다. 그 밖의 파일·
+//!   강제 종료로 남은 temp는 writer(XIII.5.4)가 만드는 이름
+//!   `.<이 shard의 canonical content 이름>.tmp-<pid>-<n>`과 **정확히** 같을 때만 grace 이후
+//!   정리합니다(`.tmp-`를 포함한 다른 숨김 파일은 사용자 파일로 보고 둠). 그 밖의 파일·
 //!   디렉터리·symlink는 절대 삭제하지 않습니다(사용자 파일 보호).
 //! - **symlink 디렉터리**: `assets/` 자체나 shard 이름(소문자 hex 2자)의 항목이 symlink면
 //!   따라가지 않고 아무 것도 삭제하지 않은 채 [`AssetGcError::SymlinkedAssetsDirectory`]를
@@ -33,6 +35,7 @@ use stellar_storage::hash::ContentHash;
 
 use crate::path::{assets_dir_state, AssetObjectPath, AssetsDirState, ASSETS_DIR};
 use crate::record::AssetRecord;
+use crate::store::parse_temp_file_name;
 
 /// 현재 project 참조에서 live content hash 집합을 만듭니다(mark).
 pub fn mark_live_content<'a>(
@@ -97,15 +100,16 @@ fn is_shard_name(name: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// XIII.5.4 temp 이름(`.<file>.tmp-<pid>-<n>`)인지.
-fn is_temp_name(name: &str) -> bool {
-    name.starts_with('.') && name.contains(".tmp-")
+/// XIII.5.4 writer가 이 shard의 content에 대해 만드는 temp 이름
+/// (`.<canonical content 이름>.tmp-<pid>-<n>`)과 **정확히** 같은지.
+fn is_temp_name(prefix: &str, name: &str) -> bool {
+    parse_temp_file_name(prefix, name).is_some()
 }
 
 fn classify(prefix: &str, name: &str) -> Entry {
     if let Some((_, hash)) = AssetObjectPath::parse(prefix, name) {
         Entry::Content(hash)
-    } else if is_temp_name(name) {
+    } else if is_temp_name(prefix, name) {
         Entry::Temp
     } else {
         Entry::Other
@@ -503,8 +507,73 @@ mod tests {
         for bad in ["0F", "g0", "abc", "a", ""] {
             assert!(!is_shard_name(bad), "{bad}");
         }
-        assert!(is_temp_name(".sha256-ab.png.tmp-12-3"));
-        assert!(!is_temp_name("sha256-ab.png"));
-        assert!(!is_temp_name(".DS_Store"));
+        let hash = ContentHash::compute(b"temp rule");
+        let content = AssetObjectPath::new(&hash, &crate::path::SafeExtension::new("png").unwrap());
+        let prefix = content.prefix();
+        let file = content.file_name();
+        assert!(is_temp_name(prefix, &format!(".{file}.tmp-12-3")));
+        assert!(is_temp_name(prefix, &format!(".{file}.tmp-0-0")));
+        for not_temp in [
+            file.to_string(),
+            ".DS_Store".to_string(),
+            ".DS_Store.tmp-1-2".to_string(),
+            ".notes.tmp-1-1".to_string(),
+            format!(".{file}.tmp-12"),
+            format!(".{file}.tmp-12-"),
+            format!(".{file}.tmp--3"),
+            format!(".{file}.tmp-a-3"),
+            format!(".{file}.tmp-01-3"),
+            format!(".{file}.tmp-12-03"),
+            format!(".{file}.tmp-1-2-3"),
+            format!(".{file}.tmp-+1-2"),
+            format!(".{file}.tmp-4294967296-1"), // pid는 u32
+            format!("{file}.tmp-1-2"),
+            format!(".{}.tmp-1-2", file.replace(".png", ".PNG")),
+            format!(".{file}.bak.tmp-1-2"),
+        ] {
+            assert!(!is_temp_name(prefix, &not_temp), "{not_temp}");
+        }
+        // 다른 shard의 content 이름이면 이 shard의 temp가 아닙니다.
+        let other = if prefix == "00" { "01" } else { "00" };
+        assert!(!is_temp_name(other, &format!(".{file}.tmp-12-3")));
+    }
+
+    /// GC는 writer temp 형식과 정확히 같은 숨김 파일만 정리합니다.
+    #[test]
+    fn temp_cleanup_matches_writer_pattern_exactly() {
+        let fx = fixture();
+        let (record, content) = import(&fx, "a.png", b"live");
+        let shard = content.parent().unwrap().to_path_buf();
+        let file = content.file_name().unwrap().to_str().unwrap().to_string();
+        let writer_temp = crate::store::temp_path_for(&content);
+        std::fs::write(&writer_temp, b"partial").unwrap();
+        let lookalikes: Vec<PathBuf> = [
+            ".DS_Store.tmp-1-2".to_string(),
+            ".notes.tmp-1-1".to_string(),
+            format!(".{file}.tmp-12"),
+            format!(".{file}.tmp-01-3"),
+            format!(".{file}.bak.tmp-1-2"),
+        ]
+        .iter()
+        .map(|name| shard.join(name))
+        .collect();
+        for path in &lookalikes {
+            std::fs::write(path, b"user file").unwrap();
+        }
+
+        let live = mark_live_content([&record]);
+        let (scheduler, start) = idle_scheduler();
+        let guard = scheduler
+            .try_begin_gc(start + Duration::from_secs(2))
+            .unwrap();
+        let outcome =
+            sweep_unreferenced_assets(&fx.project, &live, GRACE, later(), &guard).unwrap();
+        assert_eq!(outcome.deleted_temp, vec![writer_temp.clone()]);
+        assert!(!writer_temp.exists());
+        for path in &lookalikes {
+            assert!(path.exists(), "{path:?}");
+        }
+        assert_eq!(outcome.ignored, lookalikes.len());
+        assert!(content.exists());
     }
 }
