@@ -78,3 +78,23 @@
 - 원본을 두 번 읽으므로 대형 파일 import 시간은 1-pass 대비 약 2배입니다(pass 간 변경 검출과
   dedup 시 복사 생략을 위한 선택).
 - media type 허용 목록·최대 크기 검사는 XIII.5.7에서 연결합니다.
+
+## 후속 수정(리뷰 반영): symlink `assets/`·shard 디렉터리 거부
+
+- **문제**: import의 copy pass가 `create_dir_all(assets/<prefix>)` 뒤 그 안에 썼으므로, Git으로
+  commit된 symlink `assets/` 또는 shard 디렉터리가 content 쓰기를 프로젝트 밖으로 돌릴 수
+  있었습니다. dedup 조회도 symlink shard를 따라가 밖의 파일을 읽었습니다.
+- **수정**: `assets/`와 shard를 `lstat`(`path::assets_dir_state`)으로 한 단계씩 확인합니다.
+  symlink면 따라가지 않고 새 typed 오류 `ImportError::SymlinkedAssetsDirectory { path }`로
+  아무 것도 읽거나 쓰지 않습니다. 없으면 `create_dir`로 한 단계씩 만들고(동시 생성 경합은 다시
+  확인), 디렉터리가 아니면 `Io { CreateDirectory, NotADirectory }`입니다.
+  `AssetStore::locate_content`의 반환 타입은 `Result<_, ImportError>`로 바뀌었습니다(같은 typed
+  오류, I/O는 `LocateContent`).
+- **검증**: `symlinked_assets_root_or_shard_is_never_followed`(store) — symlink shard 안의 같은
+  content를 dedup으로 쓰지 않고 `locate_content`·import·copy pass 모두 typed 오류, 밖 디렉터리에
+  아무 것도 쓰지 않음, symlink `assets/`도 같은 오류, 실제 디렉터리로 되돌리면 정상 import.
+  `cargo test -p stellar-assets` lib 120 passed + integration 1 passed + doctest 7 passed,
+  clippy 경고 0, fmt 통과, `validate-crate-graph` 통과.
+- **남은 위험**: 확인과 쓰기 사이에 디렉터리를 symlink로 바꾸는 동시 공격(TOCTOU)은 `openat`
+  계열 없이 완전히 막지 못합니다. project root 자체의 symlink는 사용자가 연 경로이므로 허용합니다.
+  project root가 없으면 이제 `assets/`를 만들지 않고 `CreateDirectory` I/O 오류입니다.

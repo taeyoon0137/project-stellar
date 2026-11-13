@@ -24,6 +24,31 @@ pub const MAX_EXTENSION_LEN: usize = 16;
 /// unknown·비안전 확장자의 대체 값.
 pub const BINARY_EXTENSION: &str = "bin";
 
+/// `assets/` 또는 shard 디렉터리 상태(symlink를 따라가지 않고 판정).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AssetsDirState {
+    /// 없습니다.
+    Missing,
+    /// 실제 디렉터리입니다.
+    Directory,
+    /// symlink입니다(대상과 무관하게 따라가지 않음 — Git으로 commit된 symlink가 쓰기·삭제를
+    /// 프로젝트 밖으로 돌리지 못하게 함).
+    Symlink,
+    /// 디렉터리가 아닌 다른 항목입니다.
+    NotDirectory,
+}
+
+/// `lstat`으로 디렉터리 상태를 봅니다.
+pub(crate) fn assets_dir_state(path: &Path) -> std::io::Result<AssetsDirState> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Ok(AssetsDirState::Symlink),
+        Ok(metadata) if metadata.is_dir() => Ok(AssetsDirState::Directory),
+        Ok(_) => Ok(AssetsDirState::NotDirectory),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(AssetsDirState::Missing),
+        Err(e) => Err(e),
+    }
+}
+
 /// 확장자 형식 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExtensionError {

@@ -62,3 +62,16 @@
   누락하면 live content가 grace 이후 삭제될 수 있습니다.
 - Git이 추적하는 content 파일을 지우면 working tree 변경으로 보입니다(지시대로 Git history는
   고려하지 않음). 사용자가 커밋해야 저장소에서도 제거됩니다.
+
+## 후속 수정(리뷰 반영): symlink `assets/`·shard 디렉터리 거부
+
+- **문제**: `collect`가 `read_dir(project_root/assets)`로 symlink `assets/`를 따라갔습니다.
+  commit된 symlink가 grace 이후 canonical 이름 파일 삭제를 프로젝트 밖으로 돌릴 수 있었습니다.
+- **수정**: `sweep_unreferenced_assets`가 `Result<AssetSweepOutcome, AssetGcError>`를 돌려줍니다.
+  `assets/` 자체나 shard 이름(소문자 hex 2자) 항목이 symlink면(`lstat`·`DirEntry::file_type`,
+  따라가지 않음) `AssetGcError::SymlinkedAssetsDirectory { path }`입니다. 목록 수집이 삭제보다
+  먼저 끝나므로 오류 시 아무 것도 삭제하지 않습니다. shard 이름이 아닌 symlink는 기존처럼
+  무시합니다(사용자 파일).
+- **검증**: `symlinked_assets_root_or_shard_is_never_followed`(gc) — symlink shard·symlink
+  `assets/` 모두 typed 오류, 프로젝트 밖 canonical 이름 파일과 프로젝트 안 orphan 모두 보존,
+  비shard 이름 symlink는 무시하고 정상 sweep. 기존 GC 테스트는 `Ok` 결과로 같은 동작.

@@ -22,6 +22,13 @@
 //! pass로 새로 기록합니다(같은 이름이면 atomic rename으로 교체되어 복구). 재hash는 기존 파일을
 //! 한 번 읽지만 copy pass(쓰기·fsync)보다 가볍습니다.
 //!
+//! # symlink 디렉터리
+//!
+//! `assets/`와 shard 디렉터리(`assets/<prefix>`)는 Git으로 commit될 수 있으므로 symlink면
+//! 따라가지 않습니다. dedup 조회·copy pass 모두 `lstat`으로 확인하고
+//! [`ImportError::SymlinkedAssetsDirectory`]로 거부합니다(아무 것도 읽거나 쓰지 않음). 없는
+//! 디렉터리는 한 단계씩 `create_dir`로 만듭니다.
+//!
 //! 원본 위치는 optional metadata입니다([`ImportRequest::without_source_metadata`]로 생략).
 //! 기록할 때는 절대 로컬 경로가 아니라 프로젝트 상대 경로 또는 파일 이름+출처 지문만
 //! 남깁니다([`SourceMetadata::from_import_path`]). 출처 지문은 프로젝트 밖 기기 key의
@@ -41,7 +48,7 @@ use crate::atomic_write::{
 use crate::hash_stream::{hash_reader_with, StreamDigest, StreamHashError, STREAM_BUFFER_SIZE};
 use crate::media_type::MediaType;
 use crate::origin::{OriginKey, OriginKeyError, OriginKeyFile, OriginKeyProvider};
-use crate::path::{AssetObjectPath, SafeExtension};
+use crate::path::{assets_dir_state, AssetObjectPath, AssetsDirState, SafeExtension, ASSETS_DIR};
 use crate::policy::PolicyViolation;
 use crate::record::{AssetRecord, SourceLocation, SourceMetadata, SourceMetadataError};
 
@@ -104,6 +111,12 @@ pub enum ImportError {
     },
     /// import 정책 위반(예: 허용되지 않은 media type, XIII.5.7).
     Policy(PolicyViolation),
+    /// `assets/` 또는 shard 디렉터리가 symlink입니다. 따라가지 않고 아무 것도 읽거나 쓰지
+    /// 않습니다(commit된 symlink가 content 쓰기를 프로젝트 밖으로 돌리는 것을 막음).
+    SymlinkedAssetsDirectory {
+        /// symlink인 디렉터리 경로.
+        path: PathBuf,
+    },
 }
 
 impl ImportError {
@@ -140,6 +153,11 @@ impl fmt::Display for ImportError {
                 "에셋 원본이 최대 크기를 넘습니다: {size} bytes > {max} bytes"
             ),
             ImportError::Policy(e) => write!(f, "에셋 import 정책 위반: {e}"),
+            ImportError::SymlinkedAssetsDirectory { path } => write!(
+                f,
+                "에셋 디렉터리가 symlink라 따라가지 않습니다: {}",
+                path.display()
+            ),
         }
     }
 }
@@ -400,23 +418,21 @@ impl AssetStore {
 
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
         let digest = hash_source(&request.source, &mut buffer, request.max_size)?;
-        let (object_path, outcome) = match self
-            .locate_verified_content(&digest.hash, digest.size, &mut buffer)
-            .map_err(|e| ImportError::io(ImportOperation::LocateContent, &e))?
-        {
-            Some(existing) => (existing, ImportOutcome::Deduplicated),
-            None => {
-                let object_path = AssetObjectPath::new(&digest.hash, &request.extension);
-                self.copy_content(
-                    &request.source,
-                    &digest,
-                    &object_path,
-                    &mut buffer,
-                    observer,
-                )?;
-                (object_path, ImportOutcome::Copied)
-            }
-        };
+        let (object_path, outcome) =
+            match self.locate_verified_content(&digest.hash, digest.size, &mut buffer)? {
+                Some(existing) => (existing, ImportOutcome::Deduplicated),
+                None => {
+                    let object_path = AssetObjectPath::new(&digest.hash, &request.extension);
+                    self.copy_content(
+                        &request.source,
+                        &digest,
+                        &object_path,
+                        &mut buffer,
+                        observer,
+                    )?;
+                    (object_path, ImportOutcome::Copied)
+                }
+            };
 
         Ok(ImportedAsset {
             record: AssetRecord::new(
@@ -434,12 +450,13 @@ impl AssetStore {
     ///
     /// 이름(content hash)·크기가 맞는 후보를 파일 이름 사전순으로 **재hash**해 처음 일치하는
     /// 파일을 돌려줍니다(결정론). shard 디렉터리가 없으면 `None`. 크기·내용이 다르거나 읽을 수
-    /// 없는 후보는 손상으로 보고 재사용하지 않습니다.
+    /// 없는 후보는 손상으로 보고 재사용하지 않습니다. `assets/`나 shard 디렉터리가 symlink면
+    /// 따라가지 않고 [`ImportError::SymlinkedAssetsDirectory`]입니다.
     pub fn locate_content(
         &self,
         hash: &ContentHash,
         size: u64,
-    ) -> std::io::Result<Option<AssetObjectPath>> {
+    ) -> Result<Option<AssetObjectPath>, ImportError> {
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
         self.locate_verified_content(hash, size, &mut buffer)
     }
@@ -450,17 +467,28 @@ impl AssetStore {
         hash: &ContentHash,
         size: u64,
         buffer: &mut [u8],
-    ) -> std::io::Result<Option<AssetObjectPath>> {
+    ) -> Result<Option<AssetObjectPath>, ImportError> {
+        let locate_error = |e: std::io::Error| ImportError::io(ImportOperation::LocateContent, &e);
+        let assets = self.root.join(ASSETS_DIR);
         let dir = self.root.join(AssetObjectPath::shard_dir_for(hash));
+        for path in [&assets, &dir] {
+            match assets_dir_state(path).map_err(locate_error)? {
+                AssetsDirState::Directory => {}
+                AssetsDirState::Missing | AssetsDirState::NotDirectory => return Ok(None),
+                AssetsDirState::Symlink => {
+                    return Err(ImportError::SymlinkedAssetsDirectory { path: path.clone() })
+                }
+            }
+        }
         let entries = match std::fs::read_dir(&dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e),
+            Err(e) => return Err(locate_error(e)),
         };
         let prefix = &hash.digest_hex()[..2];
         let mut candidates: Vec<AssetObjectPath> = Vec::new();
         for entry in entries {
-            let entry = entry?;
+            let entry = entry.map_err(locate_error)?;
             let Some(name) = entry.file_name().to_str().map(str::to_string) else {
                 continue;
             };
@@ -471,7 +499,7 @@ impl AssetStore {
                 continue;
             }
             // DirEntry::metadata는 symlink를 따라가지 않습니다(symlink는 일반 파일 아님).
-            let metadata = entry.metadata()?;
+            let metadata = entry.metadata().map_err(locate_error)?;
             if !metadata.is_file() || metadata.len() != size {
                 continue;
             }
@@ -515,9 +543,12 @@ impl AssetStore {
         buffer: &mut [u8],
         observer: &mut dyn WriteObserver,
     ) -> Result<(), ImportError> {
-        let dir = self.root.join(object.relative_dir());
-        std::fs::create_dir_all(&dir)
-            .map_err(|e| ImportError::io(ImportOperation::CreateDirectory, &e))?;
+        // `assets/`와 shard를 한 단계씩 확인·생성합니다. symlink는 따라가지 않습니다
+        // (`create_dir_all`은 symlink 디렉터리를 그대로 통과하므로 쓰지 않음).
+        let assets = self.root.join(ASSETS_DIR);
+        ensure_real_dir(&assets)?;
+        let dir = assets.join(object.prefix());
+        ensure_real_dir(&dir)?;
         let target = dir.join(object.file_name());
         let mut input = open_source(source)?;
         write_atomic_streamed(&target, observer, |output| {
@@ -534,6 +565,33 @@ impl AssetStore {
             }
             AtomicWriteError::Body(e) => e,
         })
+    }
+}
+
+/// 실제 디렉터리를 보장합니다. 없으면 만들고(`create_dir`, 한 단계), symlink면 따라가지 않고
+/// [`ImportError::SymlinkedAssetsDirectory`], 디렉터리가 아니면 I/O 오류입니다.
+fn ensure_real_dir(path: &Path) -> Result<(), ImportError> {
+    let create_error = |e: std::io::Error| ImportError::io(ImportOperation::CreateDirectory, &e);
+    let state = assets_dir_state(path).map_err(create_error)?;
+    let state = match state {
+        AssetsDirState::Missing => match std::fs::create_dir(path) {
+            Ok(()) => return Ok(()),
+            // 동시에 다른 import가 만든 경우: 무엇이 생겼는지 다시 확인합니다.
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+                assets_dir_state(path).map_err(create_error)?
+            }
+            Err(e) => return Err(create_error(e)),
+        },
+        other => other,
+    };
+    match state {
+        AssetsDirState::Directory => Ok(()),
+        AssetsDirState::Symlink => Err(ImportError::SymlinkedAssetsDirectory {
+            path: path.to_path_buf(),
+        }),
+        AssetsDirState::Missing | AssetsDirState::NotDirectory => {
+            Err(create_error(std::io::Error::from(ErrorKind::NotADirectory)))
+        }
     }
 }
 
@@ -1036,6 +1094,74 @@ mod tests {
             .unwrap();
         assert_eq!(again.outcome, ImportOutcome::Deduplicated);
         assert_eq!(again.object_path, png_object);
+    }
+
+    /// commit된 symlink(`assets/` 또는 shard)가 content 쓰기·dedup 읽기를 프로젝트 밖으로
+    /// 돌리는 fixture.
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_assets_root_or_shard_is_never_followed() {
+        let fx = fixture();
+        let bytes = b"payload".to_vec();
+        let source = fx.outside.join("a.png");
+        std::fs::write(&source, &bytes).unwrap();
+        let hash = ContentHash::compute(&bytes);
+        let object = AssetObjectPath::new(&hash, &SafeExtension::new("png").unwrap());
+        let request = ImportRequest::new(&source, png());
+
+        // 1) shard가 symlink: 밖에 같은 content(dedup 미끼)가 있어도 읽지 않고, 쓰지도 않습니다.
+        let target = fx.outside.join("redirected-shard");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join(object.file_name()), &bytes).unwrap();
+        let shard = fx.project.join("assets").join(object.prefix());
+        std::os::unix::fs::symlink(&target, &shard).unwrap();
+        let expected = ImportError::SymlinkedAssetsDirectory {
+            path: shard.clone(),
+        };
+        assert_eq!(
+            fx.store
+                .locate_content(&hash, bytes.len() as u64)
+                .unwrap_err(),
+            expected
+        );
+        assert_eq!(fx.store.import_file(&request).unwrap_err(), expected);
+        assert_eq!(files_under(&target), vec![target.join(object.file_name())]);
+        // shard가 없을 때도 copy pass가 symlink를 통과해 만들지 않습니다(copy_content 직접).
+        std::fs::remove_file(target.join(object.file_name())).unwrap();
+        let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
+        let digest = hash_source(&source, &mut buffer, None).unwrap();
+        assert_eq!(
+            fx.store
+                .copy_content(&source, &digest, &object, &mut buffer, &mut NoopObserver)
+                .unwrap_err(),
+            expected
+        );
+        assert!(files_under(&target).is_empty(), "밖에 쓰지 않음");
+        std::fs::remove_file(&shard).unwrap();
+
+        // 2) `assets/` 자체가 symlink.
+        let outside_assets = fx.outside.join("redirected-assets");
+        std::fs::create_dir_all(&outside_assets).unwrap();
+        std::fs::remove_dir_all(fx.project.join("assets")).unwrap();
+        std::os::unix::fs::symlink(&outside_assets, fx.project.join("assets")).unwrap();
+        let err = fx.store.import_file(&request).unwrap_err();
+        assert_eq!(
+            err,
+            ImportError::SymlinkedAssetsDirectory {
+                path: fx.project.join("assets")
+            }
+        );
+        assert!(err.to_string().contains("symlink"));
+        assert!(files_under(&outside_assets).is_empty(), "밖에 쓰지 않음");
+
+        // 실제 디렉터리로 되돌리면 정상 import됩니다(없는 assets/·shard는 새로 만듦).
+        std::fs::remove_file(fx.project.join("assets")).unwrap();
+        let imported = fx.store.import_file(&request).unwrap();
+        assert_eq!(imported.outcome, ImportOutcome::Copied);
+        assert_eq!(
+            std::fs::read(fx.store.content_path(&object)).unwrap(),
+            bytes
+        );
     }
 
     #[test]
