@@ -340,7 +340,8 @@ fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), CacheIndexError> {
         let _ = std::fs::remove_file(&tmp);
         return Err(io(e));
     }
-    Ok(())
+    // rename 자체가 crash 뒤에도 남도록 부모 디렉터리 항목을 fsync합니다.
+    crate::cache_index::sync_dir(parent).map_err(io)
 }
 
 #[cfg(test)]

@@ -1,7 +1,8 @@
 //! 테스트 공용 도구(테스트 빌드 전용).
 //!
 //! drop 시 삭제되는 임시 디렉터리와, 머신 전역 Git 설정과 무관하게 실제 `git`을 실행하는
-//! [`SystemGit`](호출 기록 포함)을 제공합니다. 시스템 Git이 없으면 관련 테스트는 건너뜁니다.
+//! [`SystemGit`](호출 기록 포함)을 제공합니다. 시스템 Git이 없으면 관련 테스트는 실패합니다
+//! ([`ALLOW_MISSING_GIT_ENV`]`=1`일 때만 명시적으로 건너뜀).
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -82,15 +83,49 @@ pub(crate) struct SystemGit {
     pub(crate) calls: BTreeMap<String, usize>,
 }
 
+/// 시스템 Git이 없을 때 실제 Git fixture 테스트를 건너뛰도록 명시적으로 허용하는 환경 변수.
+pub(crate) const ALLOW_MISSING_GIT_ENV: &str = "STELLAR_ALLOW_MISSING_GIT";
+
+/// 시스템 Git이 없을 때의 처리.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MissingGit {
+    /// 건너뜀(사용자가 [`ALLOW_MISSING_GIT_ENV`]`=1`로 명시적으로 허용).
+    Skip,
+    /// 테스트 실패(기본값 — 검증 없이 통과하는 테스트를 만들지 않음, 계획 §1.2 규칙 6).
+    Fail,
+}
+
+/// 환경 변수 값으로 처리 방식을 정합니다(`1`만 건너뜀 허용).
+pub(crate) fn missing_git_policy(allow: Option<&std::ffi::OsStr>) -> MissingGit {
+    match allow {
+        Some(value) if value == "1" => MissingGit::Skip,
+        _ => MissingGit::Fail,
+    }
+}
+
 impl SystemGit {
-    /// 시스템 Git이 있으면 실행기를 만듭니다. `home`은 HOME으로 쓸 디렉터리입니다.
+    /// 시스템 Git 실행기를 만듭니다. `home`은 HOME으로 쓸 디렉터리입니다.
+    ///
+    /// Git이 없으면 기본적으로 **테스트를 실패**시킵니다. [`ALLOW_MISSING_GIT_ENV`]`=1`일 때만
+    /// 경고를 남기고 `None`을 반환해 호출 테스트가 건너뛰게 합니다(리뷰 P5).
     pub(crate) fn find(home: &Path) -> Option<SystemGit> {
-        let git = find_git();
-        if git.is_none() {
-            eprintln!("시스템 git 없음 — 실제 Git fixture 테스트를 건너뜁니다");
-        }
+        let Some(git) = find_git() else {
+            match missing_git_policy(std::env::var_os(ALLOW_MISSING_GIT_ENV).as_deref()) {
+                MissingGit::Skip => {
+                    eprintln!(
+                        "시스템 git 없음 — {ALLOW_MISSING_GIT_ENV}=1 이므로 실제 Git fixture \
+                         테스트를 건너뜁니다"
+                    );
+                    return None;
+                }
+                MissingGit::Fail => panic!(
+                    "실제 Git fixture 테스트에는 시스템 git이 필요합니다(PATH에 없음). \
+                     건너뛰려면 {ALLOW_MISSING_GIT_ENV}=1을 설정하세요"
+                ),
+            }
+        };
         Some(SystemGit {
-            git: git?,
+            git,
             home: home.to_path_buf(),
             calls: BTreeMap::new(),
         })
@@ -202,5 +237,27 @@ pub(crate) fn fixture_repo(git: &mut SystemGit, dir: &Path, name: &str) -> Fixtu
         path,
         first,
         second,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_git_fails_unless_explicitly_allowed() {
+        // 리뷰 P5 회귀: Git이 없을 때 조용히 통과하지 않습니다.
+        assert_eq!(missing_git_policy(None), MissingGit::Fail);
+        for value in ["", "0", "true", "yes"] {
+            assert_eq!(
+                missing_git_policy(Some(std::ffi::OsStr::new(value))),
+                MissingGit::Fail,
+                "{value:?}"
+            );
+        }
+        assert_eq!(
+            missing_git_policy(Some(std::ffi::OsStr::new("1"))),
+            MissingGit::Skip
+        );
     }
 }

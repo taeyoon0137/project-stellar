@@ -302,7 +302,24 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CacheIndexEr
         let _ = std::fs::remove_file(&tmp);
         return Err(io(e));
     }
-    Ok(())
+    // rename 자체가 crash 뒤에도 남도록 부모 디렉터리 항목을 fsync합니다.
+    sync_dir(parent).map_err(io)
+}
+
+/// 디렉터리 항목(생성·rename·삭제)을 디스크에 반영합니다.
+///
+/// Unix에서는 디렉터리를 열어 `fsync`합니다. Windows는 디렉터리 handle fsync를 같은 방식으로
+/// 지원하지 않으며 지원 보류 상태(ADR-0006)라 아무것도 하지 않습니다.
+pub(crate) fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::File::open(dir)?.sync_all()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
 }
 
 pub(crate) fn put_u32_bytes(
@@ -584,6 +601,23 @@ mod tests {
         assert!(CacheIndex::read_from(&app_data.path().join("none"))
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn atomic_write_syncs_parent_directory() {
+        // 리뷰 P7 회귀: rename 뒤 부모 디렉터리를 fsync합니다. 디렉터리를 열 수 없으면(없음)
+        // 성공으로 보고하지 않습니다.
+        let dir = TempDir::new("sync-dir");
+        assert!(sync_dir(dir.path()).is_ok());
+        assert!(sync_dir(&dir.path().join("missing")).is_err());
+        let path = dir.path().join("nested/index.stlcache");
+        write_atomic(&path, b"bytes").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"bytes");
+        let leftovers: Vec<String> = list_files(dir.path())
+            .into_iter()
+            .filter(|p| p.contains(".tmp-"))
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 
     #[test]
