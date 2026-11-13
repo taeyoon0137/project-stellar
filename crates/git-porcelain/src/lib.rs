@@ -29,5 +29,12 @@ pub mod reprobe;
 /// 저장소 porcelain 연산 (IV.4.4~).
 pub mod repo;
 
+/// 프로젝트 신뢰 gate (XIV.1.1).
+pub mod trust;
+
+/// 테스트 공용 도구(테스트 빌드 전용).
+#[cfg(test)]
+mod test_support;
+
 /// Stellar 프로젝트 snapshot 인터페이스(골격용 빈 trait).
 pub trait SnapshotSource {}

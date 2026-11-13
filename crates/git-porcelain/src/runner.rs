@@ -7,11 +7,15 @@
 //! - **환경 allowlist**: `env_clear` 후 허용 목록의 변수만 전달합니다.
 //! - **timeout**: 제한 시간을 넘으면 자식을 종료(kill)합니다.
 //! - **byte capture**: stdout/stderr를 원시 바이트로 캡처합니다(문자열 가정 없음).
+//! - **spawn 계측**: 실제 프로세스 생성 시도 횟수를 [`GitRunner::spawn_count`]로 셉니다(XIV.1.1).
+//!   trust gate가 프로세스를 하나도 만들지 않았음을 검증하는 데 사용합니다.
 
 use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -63,12 +67,15 @@ impl std::fmt::Display for GitRunError {
 impl std::error::Error for GitRunError {}
 
 /// argv·cwd·env allowlist·timeout으로 Git을 실행하는 실행기.
+///
+/// `Clone`한 실행기는 spawn 계측 카운터를 **공유**합니다(같은 실행기의 사본으로 취급).
 #[derive(Debug, Clone)]
 pub struct GitRunner {
     git_path: PathBuf,
     env_allowlist: Vec<OsString>,
     env_overrides: Vec<(OsString, OsString)>,
     timeout: Duration,
+    spawn_count: Arc<AtomicU64>,
 }
 
 impl GitRunner {
@@ -79,7 +86,15 @@ impl GitRunner {
             env_allowlist,
             env_overrides: Vec::new(),
             timeout,
+            spawn_count: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// 지금까지 이 실행기(및 사본)가 시도한 프로세스 생성 횟수(XIV.1.1 계측).
+    ///
+    /// spawn이 실패한 시도도 셉니다. 실행 전에 거부된 요청(trust gate 등)은 세지 않습니다.
+    pub fn spawn_count(&self) -> u64 {
+        self.spawn_count.load(Ordering::SeqCst)
     }
 
     /// 자식에 설정할 명시적 환경 변수(allowlist 이후 적용). Git 동작 제어(`GIT_CONFIG_GLOBAL`,
@@ -111,6 +126,7 @@ impl GitRunner {
             command.env(key, value);
         }
 
+        self.spawn_count.fetch_add(1, Ordering::SeqCst);
         let mut child = command
             .spawn()
             .map_err(|e| GitRunError::Spawn { kind: e.kind() })?;
@@ -301,6 +317,24 @@ mod tests {
         assert_eq!(result, Err(GitRunError::Timeout));
         // 10초 sleep을 기다리지 않고 빠르게 종료.
         assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn spawn_count_tracks_attempts_and_is_shared_by_clones() {
+        let dir = TempDir::new();
+        let runner = runner_for("/bin/echo", 5_000);
+        assert_eq!(runner.spawn_count(), 0);
+        runner.run(&argv(["a"]), &dir.path).unwrap();
+        let copy = runner.clone();
+        copy.run(&argv(["b"]), &dir.path).unwrap();
+        // 사본과 원본이 같은 카운터를 공유.
+        assert_eq!(runner.spawn_count(), 2);
+        assert_eq!(copy.spawn_count(), 2);
+        // 실패한 spawn 시도도 셉니다.
+        let missing = runner_for("/nonexistent/definitely/not/here", 5_000);
+        assert!(missing.run(&[], &dir.path).is_err());
+        assert_eq!(missing.spawn_count(), 1);
     }
 
     #[test]
