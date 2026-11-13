@@ -8,6 +8,7 @@
 //! - [`env`]: child 환경 변수 허용 목록.
 //! - [`cwd`]: 작업 디렉터리 선택.
 //! - [`state`]: child process 상태.
+//! - [`registry`]: 프로젝트 창별 다중 세션 registry.
 //!
 //! **저장하지 않는 상태**: 세션·profile 복사본·출력·프로세스 상태는 세션 메모리에만 있습니다.
 //! 프로젝트 저장과 복구 snapshot에 넣지 않으며(기술 아키텍처 22.3 "복구하지 않는 대상: 터미널
@@ -18,6 +19,7 @@ pub mod cwd;
 pub mod env;
 pub mod id;
 pub mod profile;
+pub mod registry;
 pub mod state;
 
 #[cfg(test)]
