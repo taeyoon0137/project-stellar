@@ -12,3 +12,6 @@ pub mod history;
 
 /// history grouping 정책 (VII.4.3~VII.4.5).
 pub mod grouping;
+
+/// 창별 history (VII.5).
+pub mod window;
