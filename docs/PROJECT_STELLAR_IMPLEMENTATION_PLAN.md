@@ -1300,7 +1300,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XIII.5.1 | `[x]` | `AssetId` StableId newtype과 `AssetRecord { content_hash, media_type, size, source_metadata }`를 정의합니다. | round-trip. | III.1.1, V.1.5 |
-| XIII.5.2 | `[ ]` | 외부 파일 import 시 streaming hash를 계산하고 `assets/<prefix>/<hash>.<safe-ext>`로 복사합니다. 원본 경로는 optional metadata입니다. | 대형 파일에서 전체 메모리 로드 없음. | XIII.5.1 |
+| XIII.5.2 | `[x]` | 외부 파일 import 시 streaming hash를 계산하고 `assets/<prefix>/<hash>.<safe-ext>`로 복사합니다. 원본 경로는 optional metadata입니다. | 대형 파일에서 전체 메모리 로드 없음. | XIII.5.1 |
 | XIII.5.3 | `[ ]` | 동일 content hash는 파일을 재복사하지 않고 새 AssetId가 같은 content를 참조할 수 있게 합니다. | dedup fixture 통과. | XIII.5.2 |
 | XIII.5.4 | `[ ]` | asset write도 temp+fsync+atomic rename을 사용합니다. | 중단 복사 후 partial final file 없음. | XIII.5.2, V.2.5 |
 | XIII.5.5 | `[ ]` | `UpdateFromSource`는 source metadata 경로를 다시 읽고 새 hash asset을 만든 뒤 AssetRecord 참조를 command로 변경합니다. | source 없으면 기존 asset 유지. | XIII.5.2, Phase VII |
