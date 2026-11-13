@@ -35,6 +35,8 @@ pub enum CommandKind {
     ConvertShapeToPath,
     /// node 레코드 복원(변환의 역, VII.2.7).
     RestoreNodeRecords,
+    /// subtree 복제 (VII.2.8).
+    DuplicateSubtree,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -54,6 +56,7 @@ impl CommandKind {
         CommandKind::ConvertFragmentToFrame,
         CommandKind::ConvertShapeToPath,
         CommandKind::RestoreNodeRecords,
+        CommandKind::DuplicateSubtree,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -73,6 +76,7 @@ impl CommandKind {
             CommandKind::ConvertFragmentToFrame => 0x0030,
             CommandKind::ConvertShapeToPath => 0x0031,
             CommandKind::RestoreNodeRecords => 0x0032,
+            CommandKind::DuplicateSubtree => 0x0040,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -104,6 +108,7 @@ impl CommandKind {
             CommandKind::ConvertFragmentToFrame => "convert-fragment-to-frame",
             CommandKind::ConvertShapeToPath => "convert-shape-to-path",
             CommandKind::RestoreNodeRecords => "restore-node-records",
+            CommandKind::DuplicateSubtree => "duplicate-subtree",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -156,6 +161,7 @@ mod tests {
                 (0x0030, "convert-fragment-to-frame"),
                 (0x0031, "convert-shape-to-path"),
                 (0x0032, "restore-node-records"),
+                (0x0040, "duplicate-subtree"),
             ]
         );
     }

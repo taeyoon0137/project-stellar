@@ -22,6 +22,7 @@ use stellar_core_types::revision::DocumentRevision;
 use stellar_document::model::{DocumentModel, ModelError};
 
 use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};
+use crate::duplicate::DuplicateSubtree;
 use crate::edit::EditContext;
 use crate::kind::CommandKind;
 use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
@@ -291,6 +292,8 @@ pub enum Command {
     ConvertShapeToPath(ConvertShapeToPath),
     /// node 레코드 복원(변환의 역, VII.2.7).
     RestoreNodeRecords(RestoreNodeRecords),
+    /// subtree 복제 (VII.2.8).
+    DuplicateSubtree(DuplicateSubtree),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -326,6 +329,7 @@ impl Command {
             Command::ConvertFragmentToFrame(_) => CommandKind::ConvertFragmentToFrame,
             Command::ConvertShapeToPath(_) => CommandKind::ConvertShapeToPath,
             Command::RestoreNodeRecords(_) => CommandKind::RestoreNodeRecords,
+            Command::DuplicateSubtree(_) => CommandKind::DuplicateSubtree,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -345,6 +349,7 @@ impl Command {
             Command::ConvertFragmentToFrame(command) => command.validate(model),
             Command::ConvertShapeToPath(command) => command.validate(model),
             Command::RestoreNodeRecords(command) => command.validate(model),
+            Command::DuplicateSubtree(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -372,6 +377,7 @@ impl Command {
             Command::RestoreNodeRecords(command) => {
                 command.invert(model).map(Command::RestoreNodeRecords)
             }
+            Command::DuplicateSubtree(command) => command.invert().map(Command::DeleteSubtree),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -391,6 +397,7 @@ impl Command {
             Command::ConvertFragmentToFrame(command) => command.apply(ctx),
             Command::ConvertShapeToPath(command) => command.apply(ctx),
             Command::RestoreNodeRecords(command) => command.apply(ctx),
+            Command::DuplicateSubtree(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

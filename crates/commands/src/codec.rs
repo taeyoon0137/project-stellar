@@ -20,6 +20,7 @@ use stellar_core_types::ids::StableId;
 
 use crate::command::Command;
 use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};
+use crate::duplicate::DuplicateSubtree;
 use crate::kind::CommandKind;
 use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
@@ -293,6 +294,7 @@ fn encode_payload(command: &Command, out: &mut Writer) {
         Command::ConvertFragmentToFrame(command) => command.encode_into(out),
         Command::ConvertShapeToPath(command) => command.encode_into(out),
         Command::RestoreNodeRecords(command) => command.encode_into(out),
+        Command::DuplicateSubtree(command) => command.encode_into(out),
         #[cfg(test)]
         Command::TestProbe(probe) => {
             out.id(probe.node);
@@ -345,6 +347,9 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         }
         CommandKind::RestoreNodeRecords => {
             RestoreNodeRecords::decode_from(input).map(Command::RestoreNodeRecords)
+        }
+        CommandKind::DuplicateSubtree => {
+            DuplicateSubtree::decode_from(input).map(Command::DuplicateSubtree)
         }
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {

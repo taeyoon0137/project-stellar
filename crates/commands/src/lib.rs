@@ -48,3 +48,6 @@ pub mod modifier_ops;
 
 /// node 종류 변환 command (VII.2.7).
 pub mod convert;
+
+/// `DuplicateSubtree` command (VII.2.8).
+pub mod duplicate;
