@@ -6,7 +6,7 @@
 //! - [`id`]: 세션 메모리 전용 식별자.
 //! - [`profile`]: argv 배열 명령·환경·cwd를 묶은 profile.
 //! - [`env`]: child 환경 변수 허용 목록.
-//! - [`cwd`]: 작업 디렉터리 선택.
+//! - [`cwd`]: 작업 디렉터리 선택·preset·검증.
 //! - [`state`]: child process 상태.
 //! - [`registry`]: 프로젝트 창별 다중 세션 registry.
 //!
@@ -21,6 +21,9 @@ pub mod id;
 pub mod profile;
 pub mod registry;
 pub mod state;
+
+#[cfg(test)]
+mod test_support;
 
 #[cfg(test)]
 mod tests {
