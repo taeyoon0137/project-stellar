@@ -26,13 +26,36 @@ pub(crate) enum ContentFx {
     Image { asset: u8, bounds: [f32; 4] },
 }
 
-/// clip 하나(rect clip만).
-#[derive(Debug, Clone, Copy)]
+/// clip 하나. `path`가 있으면 path clip(canonical geometry bytes), 없으면 rect clip입니다.
+#[derive(Debug, Clone)]
 pub(crate) struct ClipFx {
     pub rect: [f32; 4],
     pub radii: [f32; 4],
     /// clip local → world (a, b, c, d, tx, ty).
     pub transform: [f32; 6],
+    pub path: Option<Vec<u8>>,
+}
+
+/// 닫힌 다각형 path clip.
+pub(crate) fn path_clip(points: &[[f32; 2]]) -> ClipFx {
+    use stellar_scene::geometry::{PathCommand, PathGeometry};
+    use stellar_scene::Vec2;
+    let mut commands = Vec::new();
+    for (index, [x, y]) in points.iter().enumerate() {
+        let point = Vec2::new(*x, *y).unwrap();
+        commands.push(if index == 0 {
+            PathCommand::MoveTo(point)
+        } else {
+            PathCommand::LineTo(point)
+        });
+    }
+    commands.push(PathCommand::Close);
+    ClipFx {
+        rect: [0.0; 4],
+        radii: [0.0; 4],
+        transform: IDENTITY,
+        path: Some(PathGeometry::new(commands).unwrap().canonical_bytes()),
+    }
 }
 
 /// drop shadow(offset x, y, blur, 색).
@@ -181,6 +204,7 @@ pub(crate) fn rect_clip(rect: [f32; 4]) -> ClipFx {
         rect,
         radii: [0.0; 4],
         transform: IDENTITY,
+        path: None,
     }
 }
 
@@ -229,9 +253,18 @@ fn write_node(node: &NodeFx, z: &mut u64, out: &mut Vec<u8>) {
     put_f32s(out, &layout);
     out.extend_from_slice(&(node.clips.len() as u32).to_le_bytes());
     for clip in &node.clips {
-        out.push(1);
-        put_f32s(out, &clip.rect);
-        put_f32s(out, &clip.radii);
+        match &clip.path {
+            Some(geometry) => {
+                out.push(2);
+                out.push(0); // non-zero fill rule
+                out.extend_from_slice(geometry);
+            }
+            None => {
+                out.push(1);
+                put_f32s(out, &clip.rect);
+                put_f32s(out, &clip.radii);
+            }
+        }
         put_f32s(out, &clip.transform);
     }
     let layers = node.paint.fills.len() + node.paint.strokes.len();

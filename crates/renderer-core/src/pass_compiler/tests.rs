@@ -35,8 +35,15 @@ pub(crate) fn input<'a>(
         surface_format: TextureFormat::Bgra8Unorm,
         clear: ClearColor::TRANSPARENT,
         boundaries,
+        clip_caps: MSAA_CLIPS,
     }
 }
+
+/// 4x MSAA + 8-bit stencil.
+pub(crate) const MSAA_CLIPS: ClipCapabilities = ClipCapabilities {
+    stencil_bits: 8,
+    samples: crate::render_graph::SampleCount::X4,
+};
 
 pub(crate) fn id_of(node: &SceneNode) -> u8 {
     node.source().to_bytes()[0]
@@ -469,24 +476,43 @@ fn opaque_requires_pixel_aligned_device_rect() {
     let half_clip = rect(5, [0.0, 0.0, 4.0, 4.0], opaque(1.0, 0.0, 0.0))
         .with_clip(crate::test_scene::rect_clip([0.0, 0.0, 2.5, 2.0]));
     let translucent = rect(6, [0.0, 0.0, 4.0, 4.0], [1.0, 0.0, 0.0, 0.99]);
-    let scene = snapshot(&[aligned, half, rotated, clipped, half_clip, translucent]);
+    let tilted = rect(7, [0.0, 0.0, 4.0, 4.0], opaque(1.0, 0.0, 0.0))
+        .with_transform([0.8, 0.6, -0.6, 0.8, 8.0, 0.0]);
+    let rounded_clip =
+        rect(8, [0.0, 0.0, 4.0, 4.0], opaque(1.0, 0.0, 0.0)).with_clip(crate::test_scene::ClipFx {
+            radii: [1.0; 4],
+            ..crate::test_scene::rect_clip([0.0, 0.0, 2.0, 2.0])
+        });
+    let scene = snapshot(&[
+        aligned,
+        half,
+        rotated,
+        clipped,
+        half_clip,
+        translucent,
+        tilted,
+        rounded_clip,
+    ]);
     let all = nodes(&scene);
     let identity = viewport_with(32.0, 32.0, IDENTITY);
     let classes: Vec<PrimitiveClass> = all
         .iter()
-        .map(|node| classify_content(node, &identity))
+        .map(|node| classify_content(node, &identity, 0))
         .collect();
     use PrimitiveClass::{Opaque as O, Transparent as T};
-    assert_eq!(classes, vec![O, T, T, O, T, T]);
+    // 90° 회전은 축을 보존하고 pixel 경계에 놓여 opaque, 임의 회전·둥근 clip은 transparent.
+    assert_eq!(classes, vec![O, T, O, O, T, T, T, T]);
+    // layer 안쪽(clip을 건너뛴 위치)에서는 바깥 둥근 clip을 보지 않습니다.
+    assert_eq!(classify_content(&all[7], &identity, 1), O);
     // zoom 2배면 2.5는 5로 정렬되고, zoom 1.5배면 2는 3, 6은 9로 정렬되지만 4.5는 아닙니다.
     let zoom2 = viewport_with(64.0, 64.0, [2.0, 0.0, 0.0, 2.0, 0.0, 0.0]);
-    assert_eq!(classify_content(&all[1], &zoom2), O);
+    assert_eq!(classify_content(&all[1], &zoom2, 0), O);
     let zoom15 = viewport_with(64.0, 64.0, [1.5, 0.0, 0.0, 1.5, 0.0, 0.0]);
-    assert_eq!(classify_content(&all[0], &zoom15), O);
-    assert_eq!(classify_content(&all[1], &zoom15), T);
+    assert_eq!(classify_content(&all[0], &zoom15, 0), O);
+    assert_eq!(classify_content(&all[1], &zoom15, 0), T);
     // pan이 소수 pixel이면 정렬이 깨집니다.
     let pan = viewport_with(64.0, 64.0, [1.0, 0.0, 0.0, 1.0, 0.25, 0.0]);
-    assert_eq!(classify_content(&all[0], &pan), T);
+    assert_eq!(classify_content(&all[0], &pan, 0), T);
 }
 
 #[test]

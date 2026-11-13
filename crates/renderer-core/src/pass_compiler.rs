@@ -12,8 +12,9 @@
 //!   그대로 씁니다([`EffectBoundaries`]).
 //! - **opaque**: 그린 pixel이 모두 완전 불투명하고 가장자리 부분 coverage(AA)가 없는 primitive입니다.
 //!   모서리 없는 사각형, 최상위 paint layer가 alpha 1 fill, stroke·shadow·합성 효과 없음, world→device
-//!   변환이 축 정렬이고 사각형 네 변이 device pixel 경계에 정확히 놓임, clip은 같은 조건의 사각형
-//!   뿐이어야 합니다.
+//!   변환이 축을 보존하고 사각형 네 변이 device pixel 경계에 정확히 놓임, clip은 scissor로 정확히
+//!   표현되는 것뿐([`ClipAnalysis::is_scissor_exact`](crate::clip_plan::ClipAnalysis::is_scissor_exact))
+//!   이어야 합니다.
 //! - **transparent**: 나머지 전부(반투명 fill, 모서리·회전·소수 pixel 가장자리, stroke, shadow, text,
 //!   image, layer 합성).
 //!
@@ -29,6 +30,12 @@
 //!    오름차순)으로 depth test만 하고(write 없음) blend합니다. 가장 위 opaque보다 아래 draw는 test에서
 //!    빠지고 위 draw는 순서대로 쌓이므로 결과는 전체 painter 순서와 같습니다.
 //!
+//! ## clip (XI.4.3)
+//!
+//! draw마다 [`ClipPlan`](scissor/stencil/mask, [`crate::clip_plan`])을 붙입니다. 보이는 영역이 없는
+//! (`Culled`) draw는 만들지 않습니다. layer 안 draw는 경계 node **안쪽** clip만 담고, 경계 node를
+//! 자르는 바깥 clip은 layer 합성 draw가 담습니다(blur 같은 효과 뒤에 바깥 clip을 적용).
+//!
 //! snapshot은 명시적 stack으로 순회하므로 깊은 tree에서도 호출 stack을 쓰지 않습니다.
 
 use std::collections::HashSet;
@@ -36,10 +43,13 @@ use std::fmt;
 use std::sync::Arc;
 
 use stellar_scene::node::Visibility;
-use stellar_scene::stack::{ClipShape, Opacity, Paint, PaintLayer, SceneBlendMode};
+use stellar_scene::stack::{Opacity, Paint, PaintLayer, SceneBlendMode};
 use stellar_scene::visibility::{DrawList, Viewport};
 use stellar_scene::{SceneContent, SceneNode, SceneSnapshot, ZOrder};
 
+use crate::clip_plan::{
+    analyze_clip, axis_aligned_rect, decide_clip, surface_extent, ClipCapabilities, ClipPlan,
+};
 use crate::render_graph::{
     ClearColor, CompiledRenderGraph, GraphBuildError, ImportKind, LoadOp, PassId, PassKind,
     RenderGraphBuilder, RenderGraphError, ResourceVersion, StoreOp, TextureDesc, TextureFormat,
@@ -50,9 +60,6 @@ pub const LAYER_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 
 /// main target depth·stencil format.
 pub const DEPTH_FORMAT: TextureFormat = TextureFormat::Depth32FloatStencil8;
-
-/// pixel 경계 판정 허용 오차(device pixel).
-pub const PIXEL_EPSILON: f32 = 1.0 / 256.0;
 
 /// draw의 content 분류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -115,6 +122,8 @@ pub struct PlannedDraw {
     pub source: DrawSource,
     /// 접어 넣은 합성 불투명도(XI.4.4). 경계를 접지 않으면 1입니다.
     pub opacity: Opacity,
+    /// clip 적용 방식(XI.4.3). layer 안 draw는 경계 node 안쪽 clip만 담습니다.
+    pub clip: ClipPlan,
 }
 
 /// pass와 그 draw 목록.
@@ -223,6 +232,8 @@ pub struct CompileInput<'a> {
     pub clear: ClearColor,
     /// effect 경계 결정 방식.
     pub boundaries: EffectBoundaries,
+    /// clip 결정 capability(XI.4.3).
+    pub clip_caps: ClipCapabilities,
 }
 
 /// node가 합성 효과(layer 경계 후보)를 가지면 참입니다.
@@ -241,64 +252,31 @@ pub fn draws_content(node: &SceneNode) -> bool {
     }
 }
 
-fn near_integer(value: f32) -> bool {
-    (value - value.round()).abs() <= PIXEL_EPSILON
-}
-
-/// `local → world` 변환과 view를 합쳐 축 정렬 사각형이 device pixel 경계에 정확히 놓이면 참입니다.
-fn pixel_aligned(
-    (x, y, width, height): (f32, f32, f32, f32),
-    to_world: impl FnOnce() -> Option<(f32, f32, f32, f32, f32, f32)>,
-) -> bool {
-    let Some((a, b, c, d, tx, ty)) = to_world() else {
-        return false;
-    };
-    if b != 0.0 || c != 0.0 {
-        return false;
-    }
-    [
-        a * x + tx,
-        a * (x + width) + tx,
-        d * y + ty,
-        d * (y + height) + ty,
-    ]
-    .into_iter()
-    .all(|value| value.is_finite() && near_integer(value))
-}
-
-/// clip이 모두 모서리 없는 축 정렬 사각형이고 device pixel 경계에 놓이면 참입니다.
-pub fn clips_are_pixel_aligned_rects(node: &SceneNode, viewport: &Viewport) -> bool {
-    node.clip().iter_inner_first().all(|clip| match clip {
-        ClipShape::Rect {
-            rect,
-            radii,
-            transform,
-        } => {
-            radii.is_zero()
-                && pixel_aligned(
-                    (
-                        rect.origin().x(),
-                        rect.origin().y(),
-                        rect.size().width(),
-                        rect.size().height(),
-                    ),
-                    || {
-                        transform
-                            .then(&viewport.view())
-                            .ok()
-                            .map(|t| t.components())
-                    },
-                )
-        }
-        ClipShape::Path { .. } => false,
-    })
-}
-
-/// node 자기 내용의 분류(모듈 문서 규칙).
-pub fn classify_content(node: &SceneNode, viewport: &Viewport) -> PrimitiveClass {
+/// node 자기 내용의 분류(모듈 문서 규칙). `clip_from_depth`부터의 clip만 봅니다(XI.4.3).
+pub fn classify_content(
+    node: &SceneNode,
+    viewport: &Viewport,
+    clip_from_depth: usize,
+) -> PrimitiveClass {
     let SceneContent::Rect(primitive) = node.content() else {
         return PrimitiveClass::Transparent;
     };
+    let device_rect_aligned = node
+        .world_transform()
+        .then(&viewport.view())
+        .ok()
+        .and_then(|to_device| {
+            axis_aligned_rect(
+                (
+                    primitive.rect.origin().x(),
+                    primitive.rect.origin().y(),
+                    primitive.rect.size().width(),
+                    primitive.rect.size().height(),
+                ),
+                to_device.components(),
+            )
+        })
+        .is_some_and(|rect| rect.is_pixel_aligned());
     let paint = node.paint().get();
     let top_is_opaque_fill = matches!(
         paint.layers.last(),
@@ -313,21 +291,8 @@ pub fn classify_content(node: &SceneNode, viewport: &Viewport) -> PrimitiveClass
         && paint.shadows.is_empty()
         && !has_compositing_effect(node)
         && primitive.radii.is_zero()
-        && pixel_aligned(
-            (
-                primitive.rect.origin().x(),
-                primitive.rect.origin().y(),
-                primitive.rect.size().width(),
-                primitive.rect.size().height(),
-            ),
-            || {
-                node.world_transform()
-                    .then(&viewport.view())
-                    .ok()
-                    .map(|t| t.components())
-            },
-        )
-        && clips_are_pixel_aligned_rects(node, viewport);
+        && device_rect_aligned
+        && analyze_clip(node.clip(), clip_from_depth, viewport).is_scissor_exact();
     if opaque {
         PrimitiveClass::Opaque
     } else {
@@ -342,35 +307,45 @@ fn is_boundary(node: &SceneNode, boundaries: EffectBoundaries) -> bool {
     }
 }
 
+/// 순위가 정해지기 전 draw.
+#[derive(Debug, Clone)]
+struct Collected {
+    z: ZOrder,
+    class: PrimitiveClass,
+    source: DrawSource,
+    clip: ClipPlan,
+}
+
 /// 수집 중인 target(main 또는 layer)의 draw.
 struct Scope {
     layer: Option<LayerId>,
     /// 경계 node(main이면 None)와 그 subtree 마지막 z.
     boundary: Option<(Arc<SceneNode>, ZOrder)>,
-    draws: Vec<(ZOrder, PrimitiveClass, DrawSource)>,
+    /// 이 target 안 draw가 고려할 clip 시작 depth(경계 node 바깥 clip은 합성 단계에서 적용).
+    clip_depth: usize,
+    draws: Vec<Collected>,
 }
 
 /// 수집 결과 layer(아직 graph 없음).
 struct LayerDraft {
     node: Arc<SceneNode>,
     parent: Option<LayerId>,
-    draws: Vec<(ZOrder, PrimitiveClass, DrawSource)>,
+    draws: Vec<Collected>,
 }
 
-fn ranked(
-    draws: Vec<(ZOrder, PrimitiveClass, DrawSource)>,
-) -> Result<Vec<PlannedDraw>, FrameCompileError> {
+fn ranked(draws: Vec<Collected>) -> Result<Vec<PlannedDraw>, FrameCompileError> {
     draws
         .into_iter()
         .enumerate()
-        .map(|(index, (z, class, source))| {
+        .map(|(index, draw)| {
             let depth = u32::try_from(index + 1).map_err(|_| FrameCompileError::TooManyDraws)?;
             Ok(PlannedDraw {
-                z,
+                z: draw.z,
                 depth,
-                class,
-                source,
+                class: draw.class,
+                source: draw.source,
                 opacity: Opacity::OPAQUE,
+                clip: draw.clip,
             })
         })
         .collect()
@@ -387,10 +362,20 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
     };
 
     // 1. pre-order 순회로 draw를 target별로 모읍니다.
+    let (surface_width, surface_height) = surface_extent(input.viewport);
+    let clip_for = |node: &SceneNode, from_depth: usize| {
+        decide_clip(
+            &analyze_clip(node.clip(), from_depth, input.viewport),
+            surface_width,
+            surface_height,
+            input.clip_caps,
+        )
+    };
     let mut layers: Vec<LayerDraft> = Vec::new();
     let mut scopes: Vec<Scope> = vec![Scope {
         layer: None,
         boundary: None,
+        clip_depth: 0,
         draws: Vec::new(),
     }];
     let close_scope = |scopes: &mut Vec<Scope>, layers: &mut Vec<LayerDraft>| {
@@ -400,23 +385,26 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
         let (Some(layer), Some((node, _))) = (scope.layer, scope.boundary) else {
             return;
         };
-        let parent = scopes.last_mut();
-        if scope.draws.is_empty() {
-            // 아무것도 그리지 않는 layer는 만들지 않습니다(id는 비워 둠).
+        let Some(parent) = scopes.last_mut() else {
+            return;
+        };
+        // 경계 node 바깥 clip은 합성 draw에 적용합니다. 보이는 곳이 없으면 layer도 만들지 않습니다.
+        let clip = clip_for(&node, parent.clip_depth);
+        if scope.draws.is_empty() || clip == ClipPlan::Culled {
+            // 그릴 것이 없는 layer는 만들지 않습니다(id는 비워 둠).
             layers[layer.0 as usize].draws = Vec::new();
             return;
         }
         layers[layer.0 as usize].draws = scope.draws;
-        if let Some(parent) = parent {
-            parent.draws.push((
-                node.z(),
-                PrimitiveClass::Transparent,
-                DrawSource::Layer {
-                    layer,
-                    node: Arc::clone(&node),
-                },
-            ));
-        }
+        parent.draws.push(Collected {
+            z: node.z(),
+            class: PrimitiveClass::Transparent,
+            source: DrawSource::Layer {
+                layer,
+                node: Arc::clone(&node),
+            },
+            clip,
+        });
     };
 
     let mut stack: Vec<&Arc<SceneNode>> = input.snapshot.roots().collect();
@@ -441,15 +429,21 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
             scopes.push(Scope {
                 layer: Some(id),
                 boundary: Some((Arc::clone(node), node.last_z())),
+                clip_depth: node.clip().depth(),
                 draws: Vec::new(),
             });
         }
         if is_visible(node) && draws_content(node) {
-            let class = classify_content(node, input.viewport);
             if let Some(scope) = scopes.last_mut() {
-                scope
-                    .draws
-                    .push((node.z(), class, DrawSource::Content(Arc::clone(node))));
+                let clip = clip_for(node, scope.clip_depth);
+                if clip != ClipPlan::Culled {
+                    scope.draws.push(Collected {
+                        z: node.z(),
+                        class: classify_content(node, input.viewport, scope.clip_depth),
+                        source: DrawSource::Content(Arc::clone(node)),
+                        clip,
+                    });
+                }
             }
         }
         let start = stack.len();

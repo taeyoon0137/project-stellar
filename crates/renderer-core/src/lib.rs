@@ -36,6 +36,9 @@ pub mod frame_scheduler;
 /// scene primitive → opaque/transparent/effect pass compiler (XI.4.2).
 pub mod pass_compiler;
 
+/// clip stack → scissor/stencil/offscreen mask 계획 (XI.4.3).
+pub mod clip_plan;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;
