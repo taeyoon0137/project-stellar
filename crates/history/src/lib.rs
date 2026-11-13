@@ -19,3 +19,6 @@ pub mod window;
 /// random command sequence undo/redo property test (VII.6.2).
 #[cfg(test)]
 mod sequence_property;
+
+/// 영속 history journal schema (XXV.1.1, 로드맵).
+pub mod journal;

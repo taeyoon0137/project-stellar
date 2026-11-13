@@ -2190,7 +2190,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXV.1.1 | `[ ]` | session-only HistoryEntry의 stable journal schema와 version을 정의합니다. | round-trip. | Phase VII, V.8.1 |
+| XXV.1.1 | `[x]` | session-only HistoryEntry의 stable journal schema와 version을 정의합니다. | round-trip. | Phase VII, V.8.1 |
 | XXV.1.2 | `[ ]` | completed transaction과 inverse를 project-local ignored path 또는 OS app data 정책에 따라 기록합니다. Git 추적 금지 검사를 추가합니다. | `git status` 변화 없음. | XXV.1.1 |
 | XXV.1.3 | `[ ]` | 앱 재실행 후 current generation과 journal base가 같을 때만 history를 복원합니다. | mismatched base 봉인. | XXV.1.2 |
 | XXV.1.4 | `[ ]` | checkout/merge/rebase 등 기준점 변경 시 journal을 별도 sealed session으로 이동합니다. | history 혼합 없음. | XIV.2.2, XXV.1.3 |
