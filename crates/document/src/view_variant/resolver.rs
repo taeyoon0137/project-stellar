@@ -3,14 +3,22 @@
 //! - **matching·정렬**(IX.7.4): 현재 변수 할당과 조건이 맞는 모든 Variant를 찾아 **구체성 오름차순**(일반 → 구체),
 //!   같은 구체성은 Variant StableId 오름차순으로 정렬합니다. 적용 순서는 `Base → 일반 Variant → 더 구체적인 조합
 //!   Variant`입니다(기술 아키텍처 16장).
+//! - **충돌**(IX.7.5): 같은 patch 대상(PropertyPath·구조 patch node·(인스턴스, slot))을 지정한 Variant 중 **가장
+//!   구체적인 group**만 값을 정합니다. 그 group 안에서 값이 서로 다르면 [`VariantConflict`]를 만들고 그 대상은
+//!   **적용하지 않습니다** — 정렬 순서(id)로 임의 선택하지 않습니다. 더 구체적인 Variant가 같은 대상을 지정하면
+//!   아래 group의 모호함은 해소됩니다(16장: "더 구체적인 Variant가 같은 속성을 지정하면 우선").
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
+use stellar_core_types::property::PropertyPath;
+use stellar_core_types::typed_value::TypedValue;
 
 use super::condition::{Assignment, VariantCondition};
 use super::variable::ViewVariableSet;
-use crate::component::variant_override::VariantOverrideSet;
+use crate::component::definition::ComponentSlotId;
+use crate::component::variant_override::{SlotChange, StructurePatch, VariantOverrideSet};
 
 /// View Variant 식별자.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -77,6 +85,124 @@ pub fn matching_variants<'a>(
         .collect();
     matched.sort_by_key(|variant| (variant.specificity(), variant.id));
     matched
+}
+
+/// patch 대상.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PatchKey {
+    /// 속성 경로.
+    Property(PropertyPath),
+    /// 구조 patch 대상 node(Add면 새 node id).
+    Structure(StableId),
+    /// (인스턴스, slot).
+    Slot(StableId, ComponentSlotId),
+}
+
+/// patch 값.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PatchValue {
+    /// 속성 값.
+    Property(TypedValue),
+    /// 구조 patch.
+    Structure(StructurePatch),
+    /// slot change.
+    Slot(SlotChange),
+}
+
+/// 같은 구체성 Variant끼리 같은 대상을 다르게 지정한 충돌.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariantConflict {
+    /// 대상.
+    pub key: PatchKey,
+    /// 충돌한 group의 구체성.
+    pub specificity: usize,
+    /// 그 group에서 대상을 지정한 Variant(id 오름차순).
+    pub variants: Vec<ViewVariantId>,
+}
+
+/// resolve 결과.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct VariantResolution {
+    /// 적용 순서의 일치 Variant.
+    pub matched: Vec<ViewVariantId>,
+    /// 대상별 적용 값과 그 값을 정한 Variant(대상 오름차순). 충돌 대상은 없습니다.
+    pub applied: BTreeMap<PatchKey, (ViewVariantId, PatchValue)>,
+    /// 충돌(대상 오름차순).
+    pub conflicts: Vec<VariantConflict>,
+}
+
+impl VariantResolution {
+    /// 충돌이 있는지(모호한 조합).
+    pub fn is_ambiguous(&self) -> bool {
+        !self.conflicts.is_empty()
+    }
+}
+
+fn patches(variant: &ViewVariant) -> Vec<(PatchKey, PatchValue)> {
+    let overrides = &variant.overrides;
+    let mut out: Vec<(PatchKey, PatchValue)> = overrides
+        .property_patches()
+        .map(|(path, value)| {
+            (
+                PatchKey::Property(path.clone()),
+                PatchValue::Property(value.clone()),
+            )
+        })
+        .collect();
+    out.extend(overrides.structure_patches().map(|(node, patch)| {
+        (
+            PatchKey::Structure(node),
+            PatchValue::Structure(patch.clone()),
+        )
+    }));
+    out.extend(overrides.slot_changes().map(|(instance, slot, change)| {
+        (
+            PatchKey::Slot(instance, slot),
+            PatchValue::Slot(change.clone()),
+        )
+    }));
+    out
+}
+
+/// 할당과 맞는 Variant를 정렬하고 대상별 적용 값·충돌을 계산합니다.
+pub fn resolve_variants<'a>(
+    variants: impl IntoIterator<Item = &'a ViewVariant>,
+    assignment: &Assignment,
+    variables: &ViewVariableSet,
+) -> VariantResolution {
+    let matched = matching_variants(variants, assignment, variables);
+    // 대상 → (구체성, id, 값) 목록(적용 순서).
+    let mut by_key: BTreeMap<PatchKey, Vec<(usize, ViewVariantId, PatchValue)>> = BTreeMap::new();
+    for variant in &matched {
+        for (key, value) in patches(variant) {
+            by_key
+                .entry(key)
+                .or_default()
+                .push((variant.specificity(), variant.id, value));
+        }
+    }
+    let mut resolution = VariantResolution {
+        matched: matched.iter().map(|v| v.id).collect(),
+        ..VariantResolution::default()
+    };
+    for (key, entries) in by_key {
+        let Some(top) = entries.iter().map(|(spec, _, _)| *spec).max() else {
+            continue;
+        };
+        let group: Vec<&(usize, ViewVariantId, PatchValue)> =
+            entries.iter().filter(|(spec, _, _)| *spec == top).collect();
+        let first = group[0];
+        if group.iter().all(|(_, _, value)| *value == first.2) {
+            resolution.applied.insert(key, (first.1, first.2.clone()));
+        } else {
+            resolution.conflicts.push(VariantConflict {
+                key,
+                specificity: top,
+                variants: group.iter().map(|(_, id, _)| *id).collect(),
+            });
+        }
+    }
+    resolution
 }
 
 #[cfg(test)]
@@ -184,6 +310,77 @@ mod tests {
                 variant_id(DARK_ON),
                 variant_id(COMPACT_ERROR),
             ]
+        );
+    }
+
+    use stellar_core_types::property::PropertyKey;
+    use stellar_core_types::value::FiniteF32;
+
+    fn padding(node: u64) -> PropertyPath {
+        PropertyPath::with_keys(stable(node), vec![PropertyKey(0x0110)])
+    }
+
+    fn number(v: f32) -> TypedValue {
+        TypedValue::Number(FiniteF32::new(v).unwrap())
+    }
+
+    fn patched(ts: u64, condition: VariantCondition, value: f32) -> ViewVariant {
+        let mut v = variant(ts, condition);
+        v.overrides.set_property(padding(1), number(value));
+        v
+    }
+
+    #[test]
+    fn same_specificity_conflict_is_reported_and_not_applied() {
+        // 검증 기준(IX.7.5): ambiguity fixture 실패. compact(1)와 error(1)가 같은 padding을 8·12로 지정.
+        let set = variable_set();
+        let variants = vec![
+            patched(COMPACT, compact(), 8.0),
+            patched(ERROR, error(), 12.0),
+        ];
+        let compact_error = Assignment::new()
+            .with(vid(DEVICE), device(0))
+            .with(vid(PAYMENT), payment(2));
+        let resolution = resolve_variants(&variants, &compact_error, &set);
+        assert!(resolution.is_ambiguous());
+        assert_eq!(
+            resolution.conflicts,
+            vec![VariantConflict {
+                key: PatchKey::Property(padding(1)),
+                specificity: 1,
+                variants: vec![variant_id(COMPACT), variant_id(ERROR)],
+            }]
+        );
+        assert!(
+            resolution.applied.is_empty(),
+            "임의 순서로 적용하지 않음(id 순서상 앞인 값도 적용 안 함)"
+        );
+        // 한쪽만 일치하면 충돌 없음.
+        let regular_error = Assignment::new().with(vid(PAYMENT), payment(2));
+        let resolution = resolve_variants(&variants, &regular_error, &set);
+        assert!(!resolution.is_ambiguous());
+        assert_eq!(
+            resolution.applied[&PatchKey::Property(padding(1))],
+            (variant_id(ERROR), PatchValue::Property(number(12.0)))
+        );
+        // 같은 값이면 충돌이 아닙니다.
+        let same = vec![
+            patched(COMPACT, compact(), 8.0),
+            patched(ERROR, error(), 8.0),
+        ];
+        assert!(!resolve_variants(&same, &compact_error, &set).is_ambiguous());
+        // 더 구체적인 조합 Variant가 같은 대상을 지정하면 모호함이 해소됩니다.
+        let mut resolved = variants.clone();
+        resolved.push(patched(
+            COMPACT_ERROR,
+            compact().equals(vid(PAYMENT), payment(2)),
+            4.0,
+        ));
+        let resolution = resolve_variants(&resolved, &compact_error, &set);
+        assert!(!resolution.is_ambiguous());
+        assert_eq!(
+            resolution.applied[&PatchKey::Property(padding(1))],
+            (variant_id(COMPACT_ERROR), PatchValue::Property(number(4.0)))
         );
     }
 }
