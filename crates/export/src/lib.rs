@@ -9,6 +9,9 @@ pub mod request;
 /// 내보내기 입력 고정: scene snapshot·resource revision (XX.1.2).
 pub mod capture;
 
+/// SVG 벡터 변환 (XX.3).
+pub mod svg;
+
 /// 테스트 전용 scene fixture.
 #[cfg(test)]
 mod test_fixtures;
