@@ -20,6 +20,9 @@ pub mod typed_expr;
 /// ComponentProperty record (IX.1.2).
 pub mod property;
 
+/// 상태 머신 이벤트 종류 (IX.5.2).
+pub mod event;
+
 /// 컴포넌트 선언형 상태 머신 (IX.5).
 pub mod state_machine;
 
