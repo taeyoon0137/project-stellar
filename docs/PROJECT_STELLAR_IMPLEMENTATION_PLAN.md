@@ -1037,7 +1037,7 @@ tools/xtask/
 | XI.1.3 | `[x]` | DocumentRevision→SceneRevision mapping과 snapshot generation을 정의합니다. | 동일 document revision에서 동일 scene semantic hash. | II.3.4, XI.1.1 |
 | XI.1.4 | `[x]` | 이전 snapshot과 구조 공유하는 persistent collections를 도입합니다. 바뀐 subtree만 새 allocation을 갖게 합니다. | 단일 leaf 변경 시 shared node count 기준 통과. | XI.1.3 |
 | XI.1.5 | `[x]` | render thread가 `Arc<SceneSnapshot>` 또는 epoch-safe handle로 lock 없이 읽게 합니다. mutable reference는 노출하지 않습니다. | thread sanitizer 또는 동등 동시성 테스트 clean. | XI.1.4 |
-| XI.1.6 | `[ ]` | 오래된 snapshot을 renderer가 제출 전 감지해 폐기할 수 있는 revision check를 추가합니다. | 빠른 100 revision fixture에서 최신 결과만 present candidate. | XI.1.3 |
+| XI.1.6 | `[x]` | 오래된 snapshot을 renderer가 제출 전 감지해 폐기할 수 있는 revision check를 추가합니다. | 빠른 100 revision fixture에서 최신 결과만 present candidate. | XI.1.3 |
 
 ### XI.2 Scene 증분 빌더
 

@@ -30,6 +30,9 @@ pub mod revision;
 /// render thread용 읽기 전용 snapshot handle (XI.1.5).
 pub mod handle;
 
+/// 제출 전 오래된 snapshot 감지 (XI.1.6).
+pub mod freshness;
+
 /// 테스트 전용 scene fixture 생성기 (XI.1.2).
 #[cfg(test)]
 mod fixtures;
