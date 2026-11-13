@@ -2888,53 +2888,90 @@ tasks:
     verified_at: "2026-11-14T00:00:24+09:00"
   - id: "VI.9.6"
     title: "Fragment에 modifier 삽입을 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.4.2"
       - "VI.9.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.9.6.md"
+    commit: "ec0f8bd93a53937609f916c3e7bc1424ef8789bf"
+    report: "docs/task-reports/VI.9.6.md"
+    verified_at: "2026-11-14T01:06:11+09:00"
   - id: "VI.9.7"
     title: "modifier property metadata와 geometry/layout/paint invalidation class를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.9.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.9.7.md"
+    commit: "298077cf81ad88ee3f6f9310af1bb907d9ca6de0"
+    report: "docs/task-reports/VI.9.7.md"
+    verified_at: "2026-11-14T01:06:11+09:00"
   - id: "VI.10.1"
     title: "전체 document validator를 구현합니다: ID uniqueness, parent consistency, root count, OrderKey uniqueness, ref type, modifier cycle, depth≤64."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.10.1.md"
+    commit: "89ebb14662e455675c2508d10fbcd3c2746a1d05"
+    report: "docs/task-reports/VI.10.1.md"
+    verified_at: "2026-11-14T01:06:11+09:00"
   - id: "VI.10.2"
     title: "document→chunk model serializer를 구현하고 runtime ID를 저장하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.10.1"
       - "V.6.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.10.2.md"
+    commit: "2d08d26503b339147e9f730b02eb81ef28ff76c7"
+    report: "docs/task-reports/VI.10.2.md"
+    verified_at: "2026-11-14T01:06:29+09:00"
   - id: "VI.10.3"
     title: "chunk model→document loader를 구현하고 ID registry와 parent order를 재구축합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.10.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.10.3.md"
+    commit: "212c6d7c09184dccfb856b59ee1742cf1e7c5b82"
+    report: "docs/task-reports/VI.10.3.md"
+    verified_at: "2026-11-14T01:06:36+09:00"
   - id: "VI.10.4"
     title: "canonical semantic snapshot JSON을 테스트 전용으로 생성합니다. 프로덕션 저장에는 사용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.10.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.10.4.md"
+    commit: "1cbe204d60cab59312ca4701244e22b7b4659195"
+    report: "docs/task-reports/VI.10.4.md"
+    verified_at: "2026-11-14T01:06:36+09:00"
   - id: "VI.10.5"
     title: "random valid document generator를 추가하고 1,000 seed round-trip property test를 CI smoke로 설정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VI.10.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/VI.10.5.md"
   - id: "VII.1.1"
     title: "`CommandId`, `WindowSessionId`, `CommandOrigin`을 정의합니다. Origin은 User, System, Migration, FutureAgent를 포함하되 FutureAgent 동작은 구현하지 않습니다."
     status: not_started
@@ -5401,12 +5438,18 @@ tasks:
       - DEV-MAC
   - id: "XIII.5.1"
     title: "`AssetId` StableId newtype과 `AssetRecord { content_hash, media_type, size, source_metadata }`를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
       - "V.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.5.1.md"
+    commit: "622e1305beffa4c6408ba9e3a5e1e052836e7b6c"
+    report: "docs/task-reports/XIII.5.1.md"
+    verified_at: "2026-11-14T01:06:37+09:00"
   - id: "XIII.5.2"
     title: "외부 파일 import 시 streaming hash를 계산하고 `assets/<prefix>/<hash>.<safe-ext>`로 복사합니다. 원본 경로는 optional metadata입니다."
     status: not_started
@@ -6787,12 +6830,18 @@ tasks:
       - DEV-MAC
   - id: "XVI.5.5"
     title: "비활성 document chunk unload와 재로드를 구현합니다. document index와 unsaved dirty chunk는 unload하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.6.6"
       - "VI.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.5.5.md"
+    commit: "2c186ad95059776cddfa52d2f1a3f7d6eb50b6c7"
+    report: "docs/task-reports/XVI.5.5.md"
+    verified_at: "2026-11-14T01:06:37+09:00"
   - id: "XVI.5.6"
     title: "GPU OOM 직전 캐시 purge 후 재시도를 한 번만 수행하고 반복 loop를 금지합니다."
     status: not_started
