@@ -45,6 +45,9 @@ pub mod offscreen;
 /// draw item batching key와 순서 보존 batching (XI.4.5).
 pub mod batching;
 
+/// RenderGraph compile trace (XI.4.6).
+pub mod graph_trace;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;

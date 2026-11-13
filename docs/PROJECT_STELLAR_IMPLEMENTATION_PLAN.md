@@ -1071,7 +1071,7 @@ tools/xtask/
 | XI.4.3 | `[x]` | clip stack을 scissor, stencil, offscreen mask 중 하나로 계획하는 backend-neutral decision table을 구현합니다. | simple rect clip은 scissor 선택. | XI.4.1 |
 | XI.4.4 | `[x]` | blend/opacity/filter dependency를 분석해 필요한 최소 offscreen subtree 경계를 계산합니다. | nested opacity fixture expected pass graph. | VI.9.2, XI.4.2 |
 | XI.4.5 | `[x]` | draw item batching key를 pipeline, texture/atlas, clip state, blend state로 정의합니다. z-order를 바꾸는 batch는 금지합니다. | batch 후 render order 의미 동일. | XI.4.2 |
-| XI.4.6 | `[ ]` | RenderGraph compile 결과의 CPU 시간, pass count, draw count, batch count를 trace합니다. | trace fixture 통과. | XI.4.5, II.3.2 |
+| XI.4.6 | `[x]` | RenderGraph compile 결과의 CPU 시간, pass count, draw count, batch count를 trace합니다. | trace fixture 통과. | XI.4.5, II.3.2 |
 
 ### XI.5 GPU backend interface
 
