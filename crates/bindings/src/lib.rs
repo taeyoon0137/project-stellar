@@ -29,3 +29,6 @@ pub mod provenance;
 
 /// binding 생성·교체·삭제 command (VIII.6.6).
 pub mod binding_commands;
+
+/// 환경 입력 reverse index와 환경 변경 무효화 (VIII.7.3).
+pub mod environment_index;

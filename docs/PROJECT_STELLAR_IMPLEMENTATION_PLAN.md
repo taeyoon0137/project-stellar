@@ -767,7 +767,7 @@ tools/xtask/
 |---|---|---|---|---|
 | VIII.7.1 | `[x]` | environment key registry에 platform, OS/API version, color scheme, contrast, reduced motion, viewport, locale, density, interaction state를 정의합니다. | key numeric ID golden test. | VIII.1.1 |
 | VIII.7.2 | `[x]` | `EvaluationEnvironment`를 immutable map으로 정의하고 missing key의 기본값 정책을 key registry에 고정합니다. | missing·present fixture 통과. | VIII.7.1 |
-| VIII.7.3 | `[ ]` | environment 변경 시 해당 key를 참조한 expression만 invalidate하는 reverse index를 구현합니다. | color scheme 변경 시 viewport-only expression 미평가. | VIII.6.4, VIII.7.2 |
+| VIII.7.3 | `[x]` | environment 변경 시 해당 key를 참조한 expression만 invalidate하는 reverse index를 구현합니다. | color scheme 변경 시 viewport-only expression 미평가. | VIII.6.4, VIII.7.2 |
 
 ### VIII.8 Orphaned Binding과 기본값
 
