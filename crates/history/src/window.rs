@@ -743,4 +743,47 @@ mod tests {
         history.undo(&mut doc).unwrap().unwrap();
         assert!(history.view().selection().is_empty());
     }
+    #[test]
+    fn undo_redo_restore_recorded_selection_without_reapplying_hidden_filter() {
+        // 회귀(356e90a 전용 fixture, review FIX-NO-OWN-TEST): undo·redo는 기록 당시 선택을 그대로
+        // 복원합니다. 기록 뒤 숨김 처리된 node(와 숨김 조상 아래 자손)를 선택 정책으로 다시 거르면 안 됩니다.
+        let mut history = WindowHistory::new(window(7));
+        let mut doc = small_state();
+        let both = Selection::new([sid(11), sid(13)], Some(sid(13)));
+        history
+            .record_selection(&doc, &SetSelection::new(both.clone()))
+            .unwrap()
+            .unwrap();
+        // 11 숨김(13은 숨김 조상 아래). 선택은 그대로 남고 문서 항목의 복원 정보도 같습니다.
+        let hide = tx(&doc, 8_000, Command::set_visibility(sid(11), false));
+        history.record_document(&mut doc, &hide, None).unwrap();
+        assert_eq!(history.view().selection(), &both);
+        assert!(
+            both.ids()
+                .iter()
+                .all(|id| !SelectionPolicy::default().is_selectable(doc.model(), *id)),
+            "fixture 전제: 기본 정책으로는 둘 다 선택 불가"
+        );
+        history
+            .record_selection(&doc, &SetSelection::new(Selection::new([sid(12)], None)))
+            .unwrap()
+            .unwrap();
+        assert_eq!(history.history().len(), 3);
+
+        // 선택 항목 undo: 숨김 상태에서도 기록된 [11, 13](primary 13) 그대로.
+        history.undo(&mut doc).unwrap().unwrap();
+        assert_eq!(history.view().selection(), &both);
+        // 숨김 편집 undo: 편집 직전 선택.
+        history.undo(&mut doc).unwrap().unwrap();
+        assert_eq!(history.view().selection(), &both);
+        // 숨김 편집 redo: 편집 직후 선택(다시 숨김 상태) 그대로.
+        history.redo(&mut doc).unwrap().unwrap();
+        assert_eq!(history.view().selection(), &both);
+        // 선택 항목 redo.
+        history.redo(&mut doc).unwrap().unwrap();
+        assert_eq!(history.view().selection().ids(), &[sid(12)]);
+        // 재생은 새 항목을 만들지 않습니다.
+        assert_eq!(history.history().len(), 3);
+        assert_eq!(history.history().redo_len(), 0);
+    }
 }
