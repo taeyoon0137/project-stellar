@@ -177,6 +177,24 @@ pub(crate) fn sfnt_face(signature: [u8; 4], entries: &[NameEntry]) -> Vec<u8> {
     face_blob(signature, entries, &[], 0)
 }
 
+/// 추가 table이 있는 단일 face sfnt 파일.
+pub(crate) fn sfnt_face_with_tables(
+    signature: [u8; 4],
+    entries: &[NameEntry],
+    extra: &[ExtraTable],
+) -> Vec<u8> {
+    face_blob(signature, entries, extra, 0)
+}
+
+/// `fsType`만 의미 있는 최소 OS/2 table(`len` bytes, fsType은 offset 8).
+pub(crate) fn os2_table(fs_type: u16, len: usize) -> ExtraTable {
+    let mut bytes = vec![0u8; len];
+    if len >= 10 {
+        bytes[8..10].copy_from_slice(&fs_type.to_be_bytes());
+    }
+    (*b"OS/2", bytes)
+}
+
 /// TrueType collection(version 1.0) 파일. face마다 name table 하나.
 pub(crate) fn ttc(faces: &[Vec<NameEntry>]) -> Vec<u8> {
     let header_len = 12 + 4 * faces.len() as u32;

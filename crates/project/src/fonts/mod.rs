@@ -6,7 +6,8 @@
 //!
 //! - [`sfnt`]: 폰트 파일 container probe(형식, face 수, face 이름). 신뢰하지 않는 입력 기준으로
 //!   모든 offset·개수를 제한합니다.
-//! - [`license`]: 사용자 입력 라이선스 metadata.
+//! - [`license`]: 사용자 입력 라이선스 metadata와 라이선스·임베딩 상태(Stellar는 판정을 자동
+//!   확정하지 않음).
 //! - [`project_font`]: Project Font import(AssetStore 연결)와 record.
 //! - [`system`]: 시스템 폰트 discovery(원래 위치에서 hash·probe 후 등록, 복사 없음). macOS
 //!   adapter는 `system_macos`(CoreText)입니다.
@@ -16,7 +17,7 @@
 /// 폰트 파일 container probe (XIII.6.1).
 pub mod sfnt;
 
-/// 프로젝트 폰트 라이선스 metadata (XIII.6.1).
+/// 프로젝트 폰트 라이선스 metadata (XIII.6.1)와 라이선스·임베딩 상태 (XIII.6.6).
 pub mod license;
 
 /// Project Font import와 record (XIII.6.1).

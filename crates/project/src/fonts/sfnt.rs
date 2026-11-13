@@ -25,6 +25,12 @@
 //! name table은 렌더링에 필수가 아닌 metadata라서, 없거나 손상되었으면 그 face의 이름만 비우고
 //! face는 유지합니다(결정론: 같은 bytes는 항상 같은 결과).
 //!
+//! # 임베딩 권한 선언 (XIII.6.6)
+//!
+//! OS/2 table의 `fsType`(offset 8, `u16`)을 [`EmbeddingPermissions`]로 읽습니다. 폰트 제작자가 파일에
+//! 선언한 참고 정보이며, 라이선스 상태(`crate::fonts::license::FontLicenseState`)를 자동으로 바꾸지
+//! 않습니다. OS/2 table이 없거나 10 bytes보다 짧거나 파일 밖이면 `None`입니다.
+//!
 //! # 이름 선택 규칙(결정론)
 //!
 //! family는 nameID 16(typographic family), 없으면 1, subfamily는 17, 없으면 2, PostScript 이름은
@@ -59,6 +65,10 @@ const SIG_TTCF: [u8; 4] = *b"ttcf";
 const SIG_WOFF: [u8; 4] = *b"wOFF";
 const SIG_WOFF2: [u8; 4] = *b"wOF2";
 const TAG_NAME: [u8; 4] = *b"name";
+const TAG_OS2: [u8; 4] = *b"OS/2";
+/// OS/2 table에서 `fsType`까지 읽는 데 필요한 최소 길이(version, xAvgCharWidth, usWeightClass,
+/// usWidthClass, fsType).
+const OS2_FS_TYPE_END: u32 = 10;
 const TAG_GLYF: [u8; 4] = *b"glyf";
 const TAG_LOCA: [u8; 4] = *b"loca";
 
@@ -251,11 +261,65 @@ impl FontFaceNames {
     }
 }
 
+/// OS/2 `fsType` 사용 권한 수준(OpenType spec, 가장 덜 제한적인 bit 우선).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EmbeddingLevel {
+    /// 제한 없음(`0x0000`).
+    Installable,
+    /// 제한 라이선스 임베딩(`0x0002`).
+    RestrictedLicense,
+    /// 미리보기·인쇄만(`0x0004`).
+    PreviewAndPrint,
+    /// 편집 가능 임베딩(`0x0008`).
+    Editable,
+}
+
+/// 폰트 파일이 선언한 임베딩 권한(OS/2 `fsType` 원본 bits). 참고 정보입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EmbeddingPermissions(u16);
+
+impl EmbeddingPermissions {
+    /// 원본 `fsType` 값으로 만듭니다.
+    pub const fn from_fs_type(fs_type: u16) -> EmbeddingPermissions {
+        EmbeddingPermissions(fs_type)
+    }
+
+    /// 원본 `fsType` 값.
+    pub const fn fs_type(self) -> u16 {
+        self.0
+    }
+
+    /// 사용 권한 수준. 여러 bit가 켜져 있으면 가장 덜 제한적인 수준입니다(OpenType spec).
+    pub const fn level(self) -> EmbeddingLevel {
+        if self.0 & 0x0008 != 0 {
+            EmbeddingLevel::Editable
+        } else if self.0 & 0x0004 != 0 {
+            EmbeddingLevel::PreviewAndPrint
+        } else if self.0 & 0x0002 != 0 {
+            EmbeddingLevel::RestrictedLicense
+        } else {
+            EmbeddingLevel::Installable
+        }
+    }
+
+    /// subsetting 금지(`0x0100`).
+    pub const fn no_subsetting(self) -> bool {
+        self.0 & 0x0100 != 0
+    }
+
+    /// bitmap 임베딩만 허용(`0x0200`).
+    pub const fn bitmap_only(self) -> bool {
+        self.0 & 0x0200 != 0
+    }
+}
+
 /// face 하나의 probe 결과.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct FontFaceInfo {
     /// face 이름(WOFF·WOFF2나 name table이 없으면 비어 있음).
     pub names: FontFaceNames,
+    /// OS/2 `fsType` 임베딩 권한 선언(없거나 WOFF·WOFF2면 `None`). 참고 정보입니다(XIII.6.6).
+    pub embedding: Option<EmbeddingPermissions>,
 }
 
 /// 폰트 파일 probe 결과.
@@ -528,16 +592,31 @@ fn read_sfnt_face<R: Read + Seek>(
         u32::from(num_tables) * SFNT_TABLE_RECORD_LEN as u32,
     )?;
     let mut name_table: Option<(u64, u32)> = None;
+    let mut os2_table: Option<(u64, u32)> = None;
     for record in records.chunks_exact(SFNT_TABLE_RECORD_LEN as usize) {
-        if record[0..4] == TAG_NAME {
-            let offset = u32::from_be_bytes([record[8], record[9], record[10], record[11]]);
-            let length = u32::from_be_bytes([record[12], record[13], record[14], record[15]]);
-            // 같은 tag가 여러 번 나오면 첫 record를 씁니다(결정론).
-            if name_table.is_none() {
-                name_table = Some((u64::from(offset), length));
-            }
+        let slot = if record[0..4] == TAG_NAME {
+            &mut name_table
+        } else if record[0..4] == TAG_OS2 {
+            &mut os2_table
+        } else {
+            continue;
+        };
+        let offset = u32::from_be_bytes([record[8], record[9], record[10], record[11]]);
+        let length = u32::from_be_bytes([record[12], record[13], record[14], record[15]]);
+        // 같은 tag가 여러 번 나오면 첫 record를 씁니다(결정론).
+        if slot.is_none() {
+            *slot = Some((u64::from(offset), length));
         }
     }
+    let embedding = match os2_table {
+        Some((offset, length)) if length >= OS2_FS_TYPE_END => match file.u16_at(offset + 8) {
+            Ok(fs_type) => Some(EmbeddingPermissions::from_fs_type(fs_type)),
+            // OS/2 table이 파일 밖이면 선언 없음으로 봅니다(모듈 문서).
+            Err(FontParseError::Truncated { .. }) => None,
+            Err(e) => return Err(e),
+        },
+        _ => None,
+    };
     let names = match name_table {
         Some((offset, length)) if length <= MAX_NAME_TABLE_BYTES => {
             match file.vec_at(offset, length) {
@@ -549,7 +628,7 @@ fn read_sfnt_face<R: Read + Seek>(
         }
         _ => FontFaceNames::default(),
     };
-    Ok(FontFaceInfo { names })
+    Ok(FontFaceInfo { names, embedding })
 }
 
 /// WOFF 1.0: header만 검사합니다. collection을 지원하지 않는 형식이므로 face는 1개입니다.
@@ -1173,5 +1252,42 @@ mod tests {
     fn probe_is_deterministic() {
         let bytes = ttc(&family_faces("Fixture Sans"));
         assert_eq!(probe(&bytes), probe(&bytes));
+    }
+
+    #[test]
+    fn os2_fs_type_is_read_as_embedding_declaration() {
+        use crate::fonts::test_fixtures::{os2_table, sfnt_face_with_tables};
+        let names = &family_faces("Fixture Sans")[0];
+        let cases = [
+            (0x0000, EmbeddingLevel::Installable),
+            (0x0002, EmbeddingLevel::RestrictedLicense),
+            (0x0004, EmbeddingLevel::PreviewAndPrint),
+            (0x0008, EmbeddingLevel::Editable),
+            // 여러 bit면 가장 덜 제한적인 수준.
+            (0x000E, EmbeddingLevel::Editable),
+            (0x0306, EmbeddingLevel::PreviewAndPrint),
+        ];
+        for (fs_type, level) in cases {
+            let bytes = sfnt_face_with_tables(SIG_TRUETYPE, names, &[os2_table(fs_type, 96)]);
+            let face = &probe(&bytes).unwrap().faces[0];
+            let embedding = face.embedding.unwrap();
+            assert_eq!(embedding.fs_type(), fs_type);
+            assert_eq!(embedding.level(), level, "fsType {fs_type:#06x}");
+            assert_eq!(embedding.no_subsetting(), fs_type & 0x0100 != 0);
+            assert_eq!(embedding.bitmap_only(), fs_type & 0x0200 != 0);
+            // 이름 읽기는 그대로입니다.
+            assert_eq!(face.names.family(), Some("Fixture Sans"));
+        }
+        // OS/2 없음·너무 짧음·파일 밖이면 선언 없음.
+        assert_eq!(
+            probe(&sfnt_face(SIG_TRUETYPE, names)).unwrap().faces[0].embedding,
+            None
+        );
+        let short = sfnt_face_with_tables(SIG_TRUETYPE, names, &[os2_table(2, 9)]);
+        assert_eq!(probe(&short).unwrap().faces[0].embedding, None);
+        let mut outside = sfnt_face_with_tables(SIG_TRUETYPE, &[], &[os2_table(2, 96)]);
+        // table record(하나뿐) offset 필드를 파일 밖으로 옮깁니다.
+        outside[20..24].copy_from_slice(&0x00FF_FFFFu32.to_be_bytes());
+        assert_eq!(probe(&outside).unwrap().faces[0].embedding, None);
     }
 }

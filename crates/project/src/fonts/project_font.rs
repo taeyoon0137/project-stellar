@@ -22,11 +22,20 @@
 //! | 2 | font file hash | 예 | 길이 프리픽스 UTF-8 `sha256:<hex>` |
 //! | 3 | container 형식 | 예 | `u8` ([`FontFileFormat::tag`]) |
 //! | 4 | faces | 예 | `u32` LE 개수 + face마다 nested record(1 family, 2 subfamily, 3 PostScript — 모두 optional 문자열) |
-//! | 5 | 라이선스 metadata | 아니오 | nested record(1 이름, 2 URL, 3 저작권, 4 메모 — 모두 optional 문자열). 비어 있으면 생략 |
+//! | 5 | 라이선스 metadata | 아니오 | nested record(1 이름, 2 URL, 3 저작권, 4 메모 — optional 문자열, 5 라이선스·임베딩 상태 — optional `u8` [`FontLicenseState::tag`], `Unknown`이면 생략). 비어 있으면 생략 |
 //!
 //! decode는 절단·잔여 bytes·tag 중복/역순·unknown mandatory tag·known tag의 mandatory flag
-//! 불일치·필수 field 누락·형식과 맞지 않는 face 수·비canonical 값(빈 문자열, 빈 라이선스 record)을
-//! 거부합니다. unknown optional field는 무시합니다(R6 허용 정책).
+//! 불일치·필수 field 누락·형식과 맞지 않는 face 수·알 수 없는 라이선스 상태 tag·비canonical 값(빈
+//! 문자열, 빈 라이선스 record, 명시적 `Unknown` 상태)을 거부합니다. unknown optional field는
+//! 무시합니다(R6 허용 정책). 상태 field를 모르는 이전 reader는 상태를 `Unknown`으로 읽으므로 판정이
+//! 생기지 않는 쪽으로만 호환됩니다.
+//!
+//! # 라이선스·임베딩 상태 (XIII.6.6)
+//!
+//! import는 호출자가 넘긴 라이선스 입력(상태 포함)을 그대로 기록하고 상태를 스스로 정하지 않습니다.
+//! 폰트 파일의 OS/2 `fsType` 선언은 [`ImportedProjectFont::embedding`]으로 함께 돌려주지만 참고
+//! 정보이며 상태를 바꾸지 않습니다. 상태 변경은
+//! [`ProjectFontRecord::change_license_state`]([`FontLicenseState::transition`] 규칙)로만 합니다.
 
 use std::fmt;
 use std::fs::File;
@@ -42,10 +51,13 @@ use stellar_storage::canonical::encode::{CanonicalEncoder, EncodeError, Field};
 use stellar_text::font::{FontFaceRef, FontFileHash, FontSource, ParseFontFileHashError};
 use stellar_text::registry::{FontFaceKey, FontHandle, FontRegistry, FontRegistryError};
 
-use super::license::{validate_license_field, FontLicenseInfo, LicenseField, LicenseFieldError};
+use super::license::{
+    validate_license_field, FontLicenseInfo, FontLicenseState, LicenseChangeOrigin, LicenseField,
+    LicenseFieldError, LicenseTransitionError,
+};
 use super::sfnt::{
-    read_font_file, validate_face_name, FaceNameError, FontFaceNames, FontFileFormat, FontFileInfo,
-    FontParseError, MAX_FACES_PER_FILE,
+    read_font_file, validate_face_name, EmbeddingPermissions, FaceNameError, FontFaceNames,
+    FontFileFormat, FontFileInfo, FontParseError, MAX_FACES_PER_FILE,
 };
 
 const TAG_ASSET_ID: u32 = 1;
@@ -79,6 +91,8 @@ const LICENSE_TEXT_FIELDS: [(u32, LicenseField); 4] = [
     (3, LicenseField::Copyright),
     (4, LicenseField::Notes),
 ];
+/// 라이선스 nested record의 상태 field tag (XIII.6.6).
+const LICENSE_STATE: u32 = 5;
 
 /// record 생성·인코딩·디코딩 실패.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,6 +129,11 @@ pub enum ProjectFontRecordError {
     InvalidFaceName(FaceNameError),
     /// 라이선스 field 값이 잘못되었습니다.
     InvalidLicense(LicenseFieldError),
+    /// 알 수 없는 라이선스·임베딩 상태 tag입니다.
+    UnknownLicenseState {
+        /// 입력 tag.
+        tag: u8,
+    },
     /// canonical이 아닌 표현입니다(같은 값의 다른 bytes).
     NonCanonical {
         /// 위반 규칙.
@@ -147,6 +166,9 @@ impl fmt::Display for ProjectFontRecordError {
             }
             ProjectFontRecordError::InvalidFaceName(e) => write!(f, "{e}"),
             ProjectFontRecordError::InvalidLicense(e) => write!(f, "{e}"),
+            ProjectFontRecordError::UnknownLicenseState { tag } => {
+                write!(f, "알 수 없는 폰트 라이선스 상태 tag입니다: {tag}")
+            }
             ProjectFontRecordError::NonCanonical { reason } => {
                 write!(f, "프로젝트 폰트 record가 canonical이 아닙니다: {reason}")
             }
@@ -260,6 +282,20 @@ impl ProjectFontRecord {
     /// 라이선스 metadata를 바꿉니다(사용자 편집).
     pub fn set_license(&mut self, license: FontLicenseInfo) {
         self.license = license;
+    }
+
+    /// 라이선스·임베딩 상태 (XIII.6.6).
+    pub fn license_state(&self) -> FontLicenseState {
+        self.license.state()
+    }
+
+    /// 라이선스·임베딩 상태를 바꿉니다. 자동 경로는 `Unknown`으로만 바꿀 수 있습니다.
+    pub fn change_license_state(
+        &mut self,
+        to: FontLicenseState,
+        origin: LicenseChangeOrigin,
+    ) -> Result<(), LicenseTransitionError> {
+        self.license.change_state(to, origin)
     }
 
     /// canonical bytes.
@@ -444,11 +480,18 @@ fn required(fields: &[Field], tag: u32) -> Result<&[u8], ProjectFontRecordError>
 }
 
 fn encode_license(license: &FontLicenseInfo) -> Result<Vec<u8>, ProjectFontRecordError> {
-    let fields: Vec<Field> = LICENSE_TEXT_FIELDS
+    let mut fields: Vec<Field> = LICENSE_TEXT_FIELDS
         .iter()
         .filter_map(|(tag, field)| license.get(*field).map(|v| (*tag, v)))
         .map(|(tag, value)| optional_string(tag, value))
         .collect::<Result<_, _>>()?;
+    if license.state() != FontLicenseState::Unknown {
+        fields.push(Field {
+            tag: LICENSE_STATE,
+            mandatory: false,
+            payload: vec![license.state().tag()],
+        });
+    }
     let mut enc = CanonicalEncoder::new();
     enc.put_fields(&fields)?;
     Ok(enc.into_bytes())
@@ -458,6 +501,7 @@ fn decode_license(payload: &[u8]) -> Result<FontLicenseInfo, ProjectFontRecordEr
     let known: Vec<(u32, bool)> = LICENSE_TEXT_FIELDS
         .iter()
         .map(|(tag, _)| (*tag, false))
+        .chain([(LICENSE_STATE, false)])
         .collect();
     let mut dec = CanonicalDecoder::new(payload);
     let fields = take_known_fields(&mut dec, &known)?;
@@ -471,6 +515,22 @@ fn decode_license(payload: &[u8]) -> Result<FontLicenseInfo, ProjectFontRecordEr
                 .set(field, Some(value.to_string()))
                 .map_err(ProjectFontRecordError::InvalidLicense)?;
         }
+    }
+    if let Some(payload) = find(&fields, LICENSE_STATE) {
+        let mut state_dec = CanonicalDecoder::new(payload);
+        let tag = state_dec.take_u8()?;
+        state_dec.expect_end()?;
+        let state = FontLicenseState::from_tag(tag)
+            .ok_or(ProjectFontRecordError::UnknownLicenseState { tag })?;
+        if state == FontLicenseState::Unknown {
+            return Err(ProjectFontRecordError::NonCanonical {
+                reason: "Unknown 라이선스 상태는 field를 생략해야 합니다",
+            });
+        }
+        // 저장된 값은 이전에 기록된 결정을 복원하는 것이므로 새 판정이 아닙니다.
+        license
+            .change_state(state, LicenseChangeOrigin::User)
+            .map_err(|_| ProjectFontRecordError::UnknownLicenseState { tag })?;
     }
     if license.is_empty() {
         return Err(ProjectFontRecordError::NonCanonical {
@@ -553,6 +613,9 @@ pub struct ImportedProjectFont {
     pub font: ProjectFontRecord,
     /// 에셋 import 결과(`AssetCatalog`에 `font.asset_id()`로 넣을 record 포함).
     pub asset: ImportedAsset,
+    /// face별 OS/2 `fsType` 임베딩 권한 선언(index = face index). 참고 정보이며 라이선스 상태를
+    /// 바꾸지 않습니다(XIII.6.6).
+    pub embedding: Vec<Option<EmbeddingPermissions>>,
 }
 
 /// 파일 하나를 열어 probe합니다.
@@ -620,16 +683,25 @@ pub fn import_project_font(
     }
 
     let file_hash = FontFileHash::from_sha256_digest(*asset.record.content_hash.digest());
+    let embedding = stored.faces.iter().map(|face| face.embedding).collect();
     let faces = stored.faces.into_iter().map(|face| face.names).collect();
+    // 라이선스 입력(상태 포함)은 그대로 기록합니다. fsType 선언으로 상태를 정하지 않습니다.
     let font = ProjectFontRecord::new(asset_id, file_hash, stored.format, faces, license)
         .map_err(ProjectFontImportError::Record)?;
-    Ok(ImportedProjectFont { font, asset })
+    Ok(ImportedProjectFont {
+        font,
+        asset,
+        embedding,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fonts::test_fixtures::{family_faces, sfnt_face, ttc, TempDir, SIG_TRUETYPE};
+    use crate::fonts::sfnt::EmbeddingLevel;
+    use crate::fonts::test_fixtures::{
+        family_faces, os2_table, sfnt_face, sfnt_face_with_tables, ttc, TempDir, SIG_TRUETYPE,
+    };
     use stellar_assets::store::ImportOutcome;
     use stellar_storage::hash::ContentHash;
     use stellar_text::registry::InMemoryFontRegistry;
@@ -1064,5 +1136,115 @@ mod tests {
                 }
             ))
         );
+    }
+
+    #[test]
+    fn license_state_is_stored_and_never_determined_automatically() {
+        let project = TempDir::new("project");
+        let store = AssetStore::new(&project.path);
+        let names = &family_faces("Fixture Sans")[0];
+        // 파일이 "Restricted License"·"Installable"을 선언해도 상태는 Unknown으로 시작합니다.
+        for (fs_type, level) in [
+            (0x0002, EmbeddingLevel::RestrictedLicense),
+            (0x0000, EmbeddingLevel::Installable),
+        ] {
+            let source = project.path.join(format!("Fixture-{fs_type}.ttf"));
+            std::fs::write(
+                &source,
+                sfnt_face_with_tables(SIG_TRUETYPE, names, &[os2_table(fs_type, 96)]),
+            )
+            .unwrap();
+            let imported = import_project_font(
+                &store,
+                &shipped_policy(),
+                asset(4),
+                &source,
+                FontLicenseInfo::new(),
+            )
+            .unwrap();
+            assert_eq!(imported.font.license_state(), FontLicenseState::Unknown);
+            assert_eq!(imported.embedding.len(), 1);
+            assert_eq!(imported.embedding[0].map(|e| e.level()), Some(level));
+        }
+
+        // 자동 경로의 판정 시도는 거부되고 상태가 그대로입니다.
+        let mut record = sample_record();
+        for to in [
+            FontLicenseState::Allowed,
+            FontLicenseState::Restricted,
+            FontLicenseState::UserConfirmed,
+        ] {
+            assert_eq!(
+                record.change_license_state(to, LicenseChangeOrigin::Automatic),
+                Err(LicenseTransitionError::AutomaticDetermination {
+                    from: FontLicenseState::Unknown,
+                    to
+                })
+            );
+            assert_eq!(record.license_state(), FontLicenseState::Unknown);
+        }
+
+        // 사용자가 정한 상태는 canonical bytes에 저장되고 그대로 복원됩니다.
+        let unknown_bytes = record.encode().unwrap();
+        for state in [
+            FontLicenseState::Allowed,
+            FontLicenseState::Restricted,
+            FontLicenseState::UserConfirmed,
+        ] {
+            record
+                .change_license_state(state, LicenseChangeOrigin::User)
+                .unwrap();
+            let bytes = record.encode().unwrap();
+            assert_ne!(bytes, unknown_bytes);
+            let decoded = ProjectFontRecord::decode(&bytes).unwrap();
+            assert_eq!(decoded.license_state(), state);
+            assert_eq!(decoded, record);
+            assert_eq!(decoded.encode().unwrap(), bytes);
+        }
+        // 자동 초기화(Unknown)는 허용되고 상태 field가 다시 생략됩니다.
+        record
+            .change_license_state(FontLicenseState::Unknown, LicenseChangeOrigin::Automatic)
+            .unwrap();
+        assert_eq!(record.encode().unwrap(), unknown_bytes);
+
+        // 텍스트 입력 없이 상태만 있는 라이선스도 저장됩니다.
+        let mut bare = sample_record();
+        bare.set_license(FontLicenseInfo::new());
+        bare.change_license_state(FontLicenseState::Restricted, LicenseChangeOrigin::User)
+            .unwrap();
+        let decoded = ProjectFontRecord::decode(&bare.encode().unwrap()).unwrap();
+        assert_eq!(decoded.license_state(), FontLicenseState::Restricted);
+        assert_eq!(decoded.license().get(LicenseField::Name), None);
+    }
+
+    #[test]
+    fn decode_rejects_unknown_or_explicit_unknown_license_state() {
+        let license_with_state = |tag: u8| {
+            let mut enc = CanonicalEncoder::new();
+            enc.put_fields(&[
+                optional_string(1, "OFL").unwrap(),
+                Field {
+                    tag: LICENSE_STATE,
+                    mandatory: false,
+                    payload: vec![tag],
+                },
+            ])
+            .unwrap();
+            with_field(TAG_LICENSE, false, enc.into_bytes())
+        };
+        for tag in [0u8, 5, 0xFF] {
+            assert_eq!(
+                ProjectFontRecord::decode(&license_with_state(tag)),
+                Err(ProjectFontRecordError::UnknownLicenseState { tag })
+            );
+        }
+        assert!(matches!(
+            ProjectFontRecord::decode(&license_with_state(FontLicenseState::Unknown.tag())),
+            Err(ProjectFontRecordError::NonCanonical { .. })
+        ));
+        let decoded =
+            ProjectFontRecord::decode(&license_with_state(FontLicenseState::Allowed.tag()))
+                .unwrap();
+        assert_eq!(decoded.license_state(), FontLicenseState::Allowed);
     }
 }
