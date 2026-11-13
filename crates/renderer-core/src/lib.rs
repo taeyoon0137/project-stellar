@@ -14,3 +14,6 @@ pub mod image_decode;
 
 /// missing/decoding asset placeholder (XI.7.4).
 pub mod placeholder;
+
+/// content 기반 texture cache key (XI.7.3).
+pub mod texture_cache;
