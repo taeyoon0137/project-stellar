@@ -1077,7 +1077,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XI.5.1 | `[ ]` | `RendererBackend` trait에 device init, resize, resource create/update/destroy, encode, submit, present 예약, timestamp query를 정의합니다. | mock backend compile and call-order test. | XI.4.1 |
+| XI.5.1 | `[x]` | `RendererBackend` trait에 device init, resize, resource create/update/destroy, encode, submit, present 예약, timestamp query를 정의합니다. | mock backend compile and call-order test. | XI.4.1 |
 | XI.5.2 | `[ ]` | GPU handle을 generational ID로 감싸고 backend native pointer를 공통 scene에 노출하지 않습니다. | stale handle fixture 실패. | III.1.3, XI.5.1 |
 | XI.5.3 | `[ ]` | resource upload queue와 frame-local allocator interface를 정의합니다. | 3 frames-in-flight simulation에서 premature free 없음. | XI.5.2 |
 | XI.5.4 | `[ ]` | device lost/out-of-memory/error 분류와 복구 가능 여부를 구조화합니다. | mock backend error matrix 통과. | XI.5.1, II.3.1 |

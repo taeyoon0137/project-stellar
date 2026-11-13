@@ -21,6 +21,9 @@ pub mod texture_cache;
 /// backend 독립 Render Graph (XI.4.1).
 pub mod render_graph;
 
+/// GPU backend interface (XI.5.1).
+pub mod backend;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;
