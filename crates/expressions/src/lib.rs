@@ -14,3 +14,6 @@ pub mod logic;
 
 /// 함수 signature registry (VIII.1.4).
 pub mod functions;
+
+/// 닫힌 표현식 연산 집합과 연산 직렬화 (VIII.1.5).
+pub mod ops;
