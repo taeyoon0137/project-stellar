@@ -90,6 +90,7 @@ dependencies = [
 name = "stellar-commands"
 version = "0.0.0"
 dependencies = [
+ "stellar-core-types",
  "stellar-document",
 ]
 
