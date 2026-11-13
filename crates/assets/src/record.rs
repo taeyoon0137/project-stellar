@@ -195,6 +195,8 @@ pub enum SourceMetadataError {
         /// I/O 오류 종류.
         kind: std::io::ErrorKind,
     },
+    /// 프로젝트 내부 원본이어야 하는 경로가 symlink 등으로 프로젝트 밖으로 해석됩니다.
+    OutsideProject,
 }
 
 impl fmt::Display for SourceMetadataError {
@@ -224,6 +226,9 @@ impl fmt::Display for SourceMetadataError {
             }
             SourceMetadataError::Resolve { kind } => {
                 write!(f, "source·project 경로를 해석할 수 없습니다: {kind}")
+            }
+            SourceMetadataError::OutsideProject => {
+                f.write_str("프로젝트 내부 원본이 프로젝트 밖으로 해석됩니다")
             }
         }
     }

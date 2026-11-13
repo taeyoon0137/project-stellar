@@ -39,7 +39,7 @@ use crate::hash_stream::{hash_reader_with, StreamDigest, StreamHashError, STREAM
 use crate::media_type::MediaType;
 use crate::path::{AssetObjectPath, SafeExtension};
 use crate::policy::PolicyViolation;
-use crate::record::{AssetRecord, SourceMetadata, SourceMetadataError};
+use crate::record::{AssetRecord, SourceLocation, SourceMetadata, SourceMetadataError};
 
 /// 실패한 import 단계.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -150,6 +150,8 @@ pub struct ImportRequest {
     extension: SafeExtension,
     record_source: bool,
     max_size: Option<u64>,
+    /// 원본이 project root 안으로 해석되어야 합니다(내부 원본 `Update from Source`, XIII.5.5).
+    require_project_source: bool,
 }
 
 impl ImportRequest {
@@ -167,7 +169,18 @@ impl ImportRequest {
             extension,
             record_source: true,
             max_size: None,
+            require_project_source: false,
         }
+    }
+
+    /// 원본이 canonical project root 안으로 해석될 때만 import합니다(아무 것도 쓰기 전 검사).
+    ///
+    /// 프로젝트 내부 원본의 `Update from Source`가 씁니다. Git으로 들어온 record와 symlink가
+    /// 프로젝트 밖 파일을 `assets/`로 끌어오지 못하게 하며, 밖으로 해석되면
+    /// [`SourceMetadataError::OutsideProject`]로 실패합니다.
+    pub(crate) fn requiring_project_source(mut self) -> ImportRequest {
+        self.require_project_source = true;
+        self
     }
 
     /// 최대 단일 파일 크기(byte, 이 값까지 허용)를 지정합니다.
@@ -272,11 +285,17 @@ impl AssetStore {
         observer: &mut dyn WriteObserver,
     ) -> Result<ImportedAsset, ImportError> {
         // metadata를 먼저 만들어 기록할 수 없는 경로면 아무 것도 쓰기 전에 실패합니다.
-        let source_metadata = if request.record_source {
-            Some(
-                SourceMetadata::from_import_path(&self.root, &request.source)
-                    .map_err(ImportError::SourceMetadata)?,
-            )
+        let source_metadata = if request.record_source || request.require_project_source {
+            let metadata = SourceMetadata::from_import_path(&self.root, &request.source)
+                .map_err(ImportError::SourceMetadata)?;
+            if request.require_project_source
+                && !matches!(metadata.location(), SourceLocation::Project { .. })
+            {
+                return Err(ImportError::SourceMetadata(
+                    SourceMetadataError::OutsideProject,
+                ));
+            }
+            request.record_source.then_some(metadata)
         } else {
             None
         };

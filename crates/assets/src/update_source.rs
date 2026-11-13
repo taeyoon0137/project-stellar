@@ -4,11 +4,16 @@
 //! metadata의 원본을 다시 읽습니다. 동작:
 //!
 //! 1. record의 source metadata로 원본 경로를 정합니다.
-//!    - 프로젝트 내부: project root 기준 상대 경로.
+//!    - 프로젝트 내부: project root 기준 상대 경로. record는 Git에서 온 **신뢰할 수 없는 입력**
+//!      이므로, canonicalize(symlink 해석)한 경로가 canonical project root 안에 있어야 합니다.
+//!      밖으로 해석되면(저장소 안 symlink가 프로젝트 밖을 가리킴)
+//!      [`SourceUnavailable::OutsideProject`]이며 아무 것도 읽거나 쓰지 않습니다. 내부 원본은
+//!      외부 원본으로 바뀌지 않고, 새 record도 기록된 상대 경로를 그대로 유지합니다.
 //!    - 프로젝트 외부: 절대 경로를 기록하지 않으므로(XIII.5.1 후속 수정) 호출자가 후보 경로를
 //!      제시해야 하며, canonicalize한 경로의 출처 지문이 기록과 같아야 합니다.
 //! 2. 원본이 없거나(삭제·이동·디렉터리로 바뀜), metadata가 없거나, 외부 경로가 없거나 다른
-//!    출처면 [`UpdateFromSourceOutcome::SourceUnavailable`] — **기존 asset을 그대로 유지**합니다
+//!    출처이거나, 내부 원본이 프로젝트 밖으로 해석되면
+//!    [`UpdateFromSourceOutcome::SourceUnavailable`] — **기존 asset을 그대로 유지**합니다
 //!    (record·content 파일 모두 변경 없음).
 //! 3. 원본을 XIII.5.2~5.4 import(streaming hash·dedup·atomic write)로 다시 들여옵니다. hash가
 //!    같으면 [`UpdateFromSourceOutcome::Unchanged`].
@@ -30,7 +35,7 @@ use crate::catalog::{AssetCatalog, CatalogError};
 use crate::id::AssetId;
 use crate::path::AssetObjectPath;
 use crate::policy::AssetImportPolicy;
-use crate::record::{AssetRecord, SourceLocation};
+use crate::record::{AssetRecord, SourceLocation, SourceMetadata, SourceMetadataError};
 use crate::store::{AssetStore, ImportError, ImportOperation, ImportOutcome, ImportRequest};
 
 /// 원본을 쓸 수 없어 기존 asset을 유지한 이유.
@@ -46,6 +51,8 @@ pub enum SourceUnavailable {
     NotFound,
     /// 원본 경로가 일반 파일이 아닙니다.
     NotAFile,
+    /// 프로젝트 내부 원본이 symlink 등으로 프로젝트 밖으로 해석됩니다(읽지 않음).
+    OutsideProject,
 }
 
 impl fmt::Display for SourceUnavailable {
@@ -56,6 +63,7 @@ impl fmt::Display for SourceUnavailable {
             SourceUnavailable::OriginMismatch => "지정한 경로가 기록된 원본과 다릅니다",
             SourceUnavailable::NotFound => "원본 파일이 없습니다",
             SourceUnavailable::NotAFile => "원본이 일반 파일이 아닙니다",
+            SourceUnavailable::OutsideProject => "프로젝트 내부 원본이 프로젝트 밖을 가리킵니다",
         };
         f.write_str(text)
     }
@@ -140,14 +148,27 @@ impl AssetStore {
             Ok(path) => path,
             Err(reason) => return Ok(UpdateFromSourceOutcome::SourceUnavailable(reason)),
         };
-        let request = match policy {
+        let mut request = match policy {
             Some(policy) => policy
                 .request(&source, &current.media_type)
                 .map_err(ImportError::Policy)?,
             None => ImportRequest::new(&source, current.media_type.clone()),
         };
-        let imported = match self.import_file(&request) {
+        // 내부 원본: 확인 뒤 경로가 바뀌어도 import가 쓰기 전에 다시 거부합니다(방어 심층화).
+        let project_location = match current.source_metadata.as_ref().map(|m| m.location()) {
+            Some(SourceLocation::Project { relative_path }) => {
+                request = request.requiring_project_source();
+                Some(relative_path.clone())
+            }
+            _ => None,
+        };
+        let mut imported = match self.import_file(&request) {
             Ok(imported) => imported,
+            Err(ImportError::SourceMetadata(SourceMetadataError::OutsideProject)) => {
+                return Ok(UpdateFromSourceOutcome::SourceUnavailable(
+                    SourceUnavailable::OutsideProject,
+                ))
+            }
             // 확인과 재import 사이에 원본이 사라진 경우도 기존 asset 유지입니다.
             Err(ImportError::NotAFile) => {
                 return Ok(UpdateFromSourceOutcome::SourceUnavailable(
@@ -168,6 +189,12 @@ impl AssetStore {
             }
             Err(e) => return Err(e),
         };
+        if let Some(relative_path) = project_location {
+            // 내부 원본 위치는 기록된 상대 경로 그대로 둡니다(프로젝트 안 symlink를 거쳐도
+            // 위치가 바뀌지 않음). 보존 field는 이어받지 않습니다(XIII.5.1 후속 수정).
+            imported.record.source_metadata =
+                Some(SourceMetadata::project(relative_path).map_err(ImportError::SourceMetadata)?);
+        }
         if imported.record.content_hash == current.content_hash
             && imported.record.size == current.size
         {
@@ -205,19 +232,25 @@ impl AssetStore {
                 path.to_path_buf()
             }
         };
+        let open_error = |e: std::io::Error| ImportError::Io {
+            operation: ImportOperation::OpenSource,
+            kind: e.kind(),
+            message: e.to_string(),
+        };
         let resolved = match std::fs::canonicalize(&candidate) {
             Ok(path) => path,
             Err(e) if e.kind() == ErrorKind::NotFound => {
                 return Ok(Err(SourceUnavailable::NotFound))
             }
-            Err(e) => {
-                return Err(ImportError::Io {
-                    operation: ImportOperation::OpenSource,
-                    kind: e.kind(),
-                    message: e.to_string(),
-                })
-            }
+            Err(e) => return Err(open_error(e)),
         };
+        if matches!(metadata.location(), SourceLocation::Project { .. }) {
+            // 구성 요소 단위 비교(`/p/project-old`는 `/p/project` 안이 아님).
+            let root = std::fs::canonicalize(self.root()).map_err(open_error)?;
+            if !resolved.starts_with(&root) {
+                return Ok(Err(SourceUnavailable::OutsideProject));
+            }
+        }
         if matches!(metadata.location(), SourceLocation::External { .. })
             && !metadata.matches_external_origin(&resolved)
         {
@@ -493,6 +526,96 @@ mod tests {
             empty.apply_update(&update).unwrap_err(),
             CatalogError::UnknownAssetId(id())
         );
+    }
+
+    /// Git으로 들어온 record와 저장소 안 symlink가 프로젝트 밖 파일을 가리키는 공격 fixture.
+    #[cfg(unix)]
+    #[test]
+    fn project_source_symlink_escaping_project_is_rejected() {
+        let fx = fixture();
+        let secret_dir = fx.outside.join("home").join(".ssh");
+        std::fs::create_dir_all(&secret_dir).unwrap();
+        std::fs::write(secret_dir.join("id_rsa"), b"SECRET KEY").unwrap();
+        std::fs::write(fx.outside.join("secret.png"), b"SECRET PNG").unwrap();
+        // 디렉터리 symlink(project/link → ../outside/home/.ssh)와 파일 symlink.
+        std::os::unix::fs::symlink("../outside/home/.ssh", fx.project.join("link")).unwrap();
+        std::os::unix::fs::symlink(
+            "../../outside/secret.png",
+            fx.project.join("images").join("logo.png"),
+        )
+        .unwrap();
+
+        for relative in ["link/id_rsa", "images/logo.png"] {
+            let current = AssetRecord::new(
+                ContentHash::compute(b"old"),
+                png(),
+                3,
+                Some(SourceMetadata::project(relative).unwrap()),
+            );
+            assert_eq!(
+                fx.store.update_from_source(id(), &current, None).unwrap(),
+                UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::OutsideProject),
+                "{relative}"
+            );
+        }
+        // 프로젝트 밖 내용이 assets/로 복사되지 않았습니다.
+        assert!(files_under(&fx.project.join("assets")).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn import_guard_rejects_outside_source_before_writing() {
+        let fx = fixture();
+        let outside = fx.outside.join("a.png");
+        std::fs::write(&outside, b"outside").unwrap();
+        for request in [
+            ImportRequest::new(&outside, png()).requiring_project_source(),
+            ImportRequest::new(&outside, png())
+                .without_source_metadata()
+                .requiring_project_source(),
+        ] {
+            assert_eq!(
+                fx.store.import_file(&request).unwrap_err(),
+                ImportError::SourceMetadata(SourceMetadataError::OutsideProject)
+            );
+        }
+        assert!(files_under(&fx.project.join("assets")).is_empty());
+
+        // 내부 원본은 통과합니다.
+        let inside = fx.project.join("images").join("in.png");
+        std::fs::write(&inside, b"inside").unwrap();
+        let imported = fx
+            .store
+            .import_file(&ImportRequest::new(&inside, png()).requiring_project_source())
+            .unwrap();
+        assert!(matches!(
+            imported.record.source_metadata.unwrap().location(),
+            SourceLocation::Project { .. }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_source_symlink_inside_project_keeps_recorded_location() {
+        let fx = fixture();
+        let real = fx.project.join("images").join("real.png");
+        std::fs::write(&real, b"v1").unwrap();
+        std::os::unix::fs::symlink("real.png", fx.project.join("images").join("alias.png"))
+            .unwrap();
+        let current = AssetRecord::new(
+            ContentHash::compute(b"v1"),
+            png(),
+            2,
+            Some(SourceMetadata::project("images/alias.png").unwrap()),
+        );
+        std::fs::write(&real, b"v2").unwrap();
+        let outcome = fx.store.update_from_source(id(), &current, None).unwrap();
+        let UpdateFromSourceOutcome::Updated { update, .. } = outcome else {
+            panic!("Updated 기대: {outcome:?}");
+        };
+        // 프로젝트 내부 원본은 외부로 바뀌지 않고 기록된 상대 경로를 유지합니다.
+        assert_eq!(update.next.source_metadata, current.source_metadata);
+        assert_eq!(update.next.content_hash, ContentHash::compute(b"v2"));
     }
 
     #[test]

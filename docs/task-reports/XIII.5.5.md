@@ -74,3 +74,23 @@
   미적용).
 - undo가 가능한 동안 이전 content가 GC되지 않도록 history가 참조하는 record도 GC mark 입력에
   넣어야 합니다(XIII.5.6 문서에 명시).
+
+## 후속 수정(리뷰 반영): 내부 원본 symlink 탈출 차단
+
+- **문제**: 프로젝트 내부 원본(`SourceLocation::Project`)은 canonicalize 뒤 project root
+  안에 있는지 확인하지 않았습니다. record는 Git에서 온 신뢰할 수 없는 입력이므로, 저장소 안
+  symlink(예: `link → ../home/.ssh`)와 `link/id_rsa` 같은 record로 `Update from Source`가
+  프로젝트 밖 파일을 `assets/`로 복사할 수 있었고, 새 record의 위치도 조용히 외부로 바뀌었습니다.
+- **수정**: `resolve_source`가 canonicalize한 원본이 canonical project root 안(구성 요소 단위
+  `starts_with`)이 아니면 `SourceUnavailable::OutsideProject`를 돌려주고 아무 것도 읽거나
+  쓰지 않습니다. 방어 심층화로 내부 원본 재import 요청에 crate 내부 플래그
+  (`ImportRequest::requiring_project_source`)를 붙여, import가 쓰기 전에 다시 계산한 위치가
+  외부면 `SourceMetadataError::OutsideProject`로 실패합니다(확인 뒤 경로가 바뀌는 경우).
+  새 record는 기록된 상대 경로를 그대로 유지합니다(내부 → 외부 전환 없음, 보존 field 비상속).
+- **검증**: `project_source_symlink_escaping_project_is_rejected`(디렉터리·파일 symlink 모두
+  `OutsideProject`, `assets/` 비어 있음), `import_guard_rejects_outside_source_before_writing`,
+  `project_source_symlink_inside_project_keeps_recorded_location`. `cargo test -p stellar-assets`
+  lib 100 passed + integration 1 passed + doctest 2 passed, clippy 경고 0, fmt 통과,
+  `validate-crate-graph` 통과.
+- **남은 위험**: 확인과 파일 열기 사이에 경로 구성 요소를 symlink로 바꾸는 동시 공격(TOCTOU)은
+  `openat`/`O_NOFOLLOW` 없이 완전히 막지 못합니다. 위협 모델(커밋된 symlink)은 차단합니다.
