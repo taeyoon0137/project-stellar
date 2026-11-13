@@ -178,6 +178,11 @@ fn is_executable(_meta: &std::fs::Metadata) -> bool {
 }
 
 /// 작업 트리 파일 하나를 디스크에서 읽습니다(symlink는 대상 경로 바이트, 상위 symlink 거부).
+///
+/// 목록을 만든 뒤 파일이 symlink로 바뀌어도 root 밖을 읽지 않습니다. 일반·실행 파일은 마지막
+/// component를 `symlink_metadata`로 확인한 뒤 열고, 연 handle의 metadata가 같은 파일(unix: device·
+/// inode)인지 다시 확인합니다. 확인과 열기 사이에 symlink로 바뀌면 열린 대상이 달라지므로
+/// [`std::io::ErrorKind::InvalidInput`]으로 거부합니다.
 pub fn read_working_tree_file(
     worktree_root: &Path,
     file: &WorkingTreeFile,
@@ -202,8 +207,39 @@ pub fn read_working_tree_file(
             let target = std::fs::read_link(&local).map_err(|e| e.kind())?;
             Ok(os_bytes(target.as_os_str()))
         }
-        _ => std::fs::read(&local).map_err(|e| e.kind()),
+        _ => read_regular_no_follow(&local),
     }
+}
+
+/// 마지막 component를 따라가지 않고 일반 파일을 읽습니다(확인 → 열기 → 같은 파일 재확인).
+fn read_regular_no_follow(local: &Path) -> Result<Vec<u8>, std::io::ErrorKind> {
+    use std::io::Read;
+    let before = std::fs::symlink_metadata(local).map_err(|e| e.kind())?;
+    if !before.is_file() {
+        // symlink·디렉터리·특수 파일로 바뀜.
+        return Err(std::io::ErrorKind::InvalidInput);
+    }
+    let mut file = std::fs::File::open(local).map_err(|e| e.kind())?;
+    let opened = file.metadata().map_err(|e| e.kind())?;
+    if !opened.is_file() || !same_file(&before, &opened) {
+        return Err(std::io::ErrorKind::InvalidInput);
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).map_err(|e| e.kind())?;
+    Ok(bytes)
+}
+
+/// 두 metadata가 같은 파일을 가리키는지(device·inode).
+#[cfg(unix)]
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    a.dev() == b.dev() && a.ino() == b.ino()
+}
+
+/// unix 외 플랫폼은 안정된 file identity API가 없어 종류만 비교합니다(Windows 보류, ADR-0006).
+#[cfg(not(unix))]
+fn same_file(a: &std::fs::Metadata, b: &std::fs::Metadata) -> bool {
+    a.is_file() && b.is_file()
 }
 
 #[cfg(unix)]
@@ -242,6 +278,65 @@ pub fn read_working_tree_snapshot<L: DiskProjectLoader>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 목록 이후 일반 파일이 root 밖을 가리키는 symlink로 바뀌어도 밖의 내용을 읽지 않습니다(리뷰 G5 회귀).
+    #[cfg(unix)]
+    #[test]
+    fn regular_entry_replaced_by_symlink_is_not_followed() {
+        let dir = crate::test_support::TempDir::new("wt-final-symlink");
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        let outside = dir.path().join("outside-secret.txt");
+        std::fs::write(&outside, b"outside secret\n").unwrap();
+        std::fs::write(root.join("sub/a.txt"), b"inside\n").unwrap();
+        let listed = WorkingTreeFile {
+            path: GitPath::from_bytes(b"sub/a.txt"),
+            kind: WorkingTreeFileKind::Regular,
+            len: 7,
+        };
+        assert_eq!(read_working_tree_file(&root, &listed).unwrap(), b"inside\n");
+
+        // 목록 작성 뒤 같은 경로가 root 밖 symlink로 교체됨.
+        std::fs::remove_file(root.join("sub/a.txt")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("sub/a.txt")).unwrap();
+        assert_eq!(
+            read_working_tree_file(&root, &listed),
+            Err(std::io::ErrorKind::InvalidInput)
+        );
+        // 실행 파일 종류로 기록된 항목도 같습니다.
+        let executable = WorkingTreeFile {
+            kind: WorkingTreeFileKind::Executable,
+            ..listed.clone()
+        };
+        assert_eq!(
+            read_working_tree_file(&root, &executable),
+            Err(std::io::ErrorKind::InvalidInput)
+        );
+        // 디렉터리로 바뀐 경우도 거부.
+        std::fs::remove_file(root.join("sub/a.txt")).unwrap();
+        std::fs::create_dir(root.join("sub/a.txt")).unwrap();
+        assert_eq!(
+            read_working_tree_file(&root, &listed),
+            Err(std::io::ErrorKind::InvalidInput)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn same_file_compares_identity_not_content() {
+        let dir = crate::test_support::TempDir::new("wt-same-file");
+        let a = dir.path().join("a");
+        let b = dir.path().join("b");
+        std::fs::write(&a, b"same").unwrap();
+        std::fs::write(&b, b"same").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&b, &link).unwrap();
+        let meta = |p: &Path| std::fs::metadata(p).unwrap();
+        assert!(same_file(&meta(&a), &meta(&a)));
+        assert!(!same_file(&meta(&a), &meta(&b)));
+        // 확인 시점에 a였다가 열 때 symlink를 따라 b가 열리는 경우를 구분합니다.
+        assert!(!same_file(&meta(&a), &meta(&link)));
+    }
 
     #[cfg(unix)]
     mod real_git {
