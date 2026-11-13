@@ -24,6 +24,13 @@
 //!
 //! [`CheckedBackend`]가 이 계약을 실행 시 검사하는 wrapper입니다. 위반 호출은 내부 backend에
 //! 닿기 전에 [`BackendErrorKind::InvalidUsage`]로 거부됩니다.
+//!
+//! ## handle
+//!
+//! [`BufferHandle`]·[`TextureHandle`]은 generational ID입니다([`crate::gpu_handle`]). backend는
+//! native 객체를 [`HandleTable`](crate::gpu_handle::HandleTable)에 보관하고 handle을 그 table로만
+//! 해석합니다. 파괴된 resource의 handle은 stale로 실패하며(`From<HandleError> for BackendError`),
+//! device lost 뒤 새 device의 table은 epoch를 올려 이전 handle을 모두 무효로 만듭니다.
 
 use std::fmt;
 
@@ -40,6 +47,8 @@ pub mod command;
 /// 호출 순서 검사.
 mod call_order;
 
+/// GPU resource handle은 generational ID입니다(XI.5.2, [`crate::gpu_handle`]).
+pub use crate::gpu_handle::{BufferHandle, TextureHandle};
 pub use call_order::{
     BackendCall, CallOrderError, CallOrderState, CallOrderValidator, CheckedBackend,
 };
@@ -47,6 +56,8 @@ pub use command::{
     BlendState, DepthMode, DrawCommand, PassCommands, PipelineKey, ScissorRect, ShaderProgram,
     StencilMode, TextureSource,
 };
+
+use crate::gpu_handle::HandleError;
 
 /// 동시에 GPU에 올라갈 수 있는 frame 최대 수.
 pub const MAX_FRAMES_IN_FLIGHT: u8 = 3;
@@ -178,38 +189,6 @@ pub struct TextureRegion {
     pub width: u32,
     /// 높이.
     pub height: u32,
-}
-
-/// GPU buffer handle. native 객체가 아니라 backend가 해석하는 값입니다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct BufferHandle(u64);
-
-/// GPU texture handle. native 객체가 아니라 backend가 해석하는 값입니다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct TextureHandle(u64);
-
-impl BufferHandle {
-    /// backend가 발급한 값으로 handle을 만듭니다.
-    pub const fn from_raw(raw: u64) -> BufferHandle {
-        BufferHandle(raw)
-    }
-
-    /// handle 값.
-    pub const fn raw(&self) -> u64 {
-        self.0
-    }
-}
-
-impl TextureHandle {
-    /// backend가 발급한 값으로 handle을 만듭니다.
-    pub const fn from_raw(raw: u64) -> TextureHandle {
-        TextureHandle(raw)
-    }
-
-    /// handle 값.
-    pub const fn raw(&self) -> u64 {
-        self.0
-    }
 }
 
 /// frame 번호(엄격 증가).
@@ -425,6 +404,23 @@ impl fmt::Display for BackendError {
 }
 
 impl std::error::Error for BackendError {}
+
+impl From<HandleError> for BackendError {
+    /// 만료·다른 device·범위 밖 handle 사용은 공통 계층의 호출 오류입니다.
+    fn from(error: HandleError) -> BackendError {
+        let detail = match error {
+            HandleError::WrongEpoch { .. } => "이전 device 세대의 GPU handle",
+            HandleError::Stale { .. } => "파괴된 GPU handle",
+            HandleError::OutOfRange { .. } => "없는 GPU handle",
+            HandleError::Exhausted => "GPU handle 공간 소진",
+        };
+        let kind = match error {
+            HandleError::Exhausted => BackendErrorKind::OutOfHostMemory,
+            _ => BackendErrorKind::InvalidUsage,
+        };
+        BackendError::new(kind, detail)
+    }
+}
 
 /// platform GPU backend.
 ///

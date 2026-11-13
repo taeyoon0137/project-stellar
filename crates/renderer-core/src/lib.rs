@@ -24,6 +24,9 @@ pub mod render_graph;
 /// GPU backend interface (XI.5.1).
 pub mod backend;
 
+/// generational GPU handle (XI.5.2).
+pub mod gpu_handle;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;

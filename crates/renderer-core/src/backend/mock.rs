@@ -3,7 +3,7 @@
 //! 호출을 기록하고, GPU 실행을 테스트가 직접 진행시킵니다([`MockBackend::complete_next`]).
 //! 오류 주입([`MockBackend::fail_next`])으로 오류 경로를 재현합니다.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 
 use crate::backend::{
     BackendCall, BackendError, BackendErrorKind, BackendKind, BufferDesc, BufferHandle,
@@ -11,7 +11,20 @@ use crate::backend::{
     GpuProgress, GpuTextureDesc, GpuTimings, PassGpuTime, RendererBackend, SkipReason,
     SubmissionId, SurfaceSize, TextureHandle, TextureRegion, TimestampQuery,
 };
+use crate::gpu_handle::{BufferKind, HandleTable, TextureKind};
 use crate::render_graph::PassId;
+
+/// mock native buffer(실제 backend의 MTLBuffer 자리).
+#[derive(Debug)]
+pub(crate) struct MockNativeBuffer {
+    pub desc: BufferDesc,
+}
+
+/// mock native texture(실제 backend의 MTLTexture 자리).
+#[derive(Debug)]
+pub(crate) struct MockNativeTexture {
+    pub desc: GpuTextureDesc,
+}
 
 /// 제출된 submission 기록.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,9 +48,9 @@ pub(crate) struct MockBackend {
     pub no_drawable: bool,
     timestamps: bool,
     surface: SurfaceSize,
-    next_handle: u64,
-    buffers: BTreeSet<u64>,
-    textures: BTreeSet<u64>,
+    buffers: HandleTable<BufferKind, MockNativeBuffer>,
+    textures: HandleTable<TextureKind, MockNativeTexture>,
+    initialized_once: bool,
     open: Option<(FrameId, Vec<PassId>, bool)>,
     next_submission: u64,
     in_flight: VecDeque<MockSubmission>,
@@ -64,9 +77,9 @@ impl MockBackend {
                 width: 0,
                 height: 0,
             },
-            next_handle: 1,
-            buffers: BTreeSet::new(),
-            textures: BTreeSet::new(),
+            buffers: HandleTable::new(0),
+            textures: HandleTable::new(0),
+            initialized_once: false,
             open: None,
             next_submission: 1,
             in_flight: VecDeque::new(),
@@ -118,15 +131,11 @@ impl MockBackend {
         }
     }
 
-    fn issue(&mut self) -> u64 {
-        let handle = self.next_handle;
-        self.next_handle += 1;
-        handle
+    /// handle이 가리키는 mock native texture.
+    pub(crate) fn native_texture(&self, texture: TextureHandle) -> Option<&MockNativeTexture> {
+        self.textures.get(texture).ok()
     }
 }
-
-const UNKNOWN_HANDLE: BackendError =
-    BackendError::new(BackendErrorKind::InvalidUsage, "mock: 없는 handle");
 
 impl RendererBackend for MockBackend {
     fn kind(&self) -> BackendKind {
@@ -137,9 +146,12 @@ impl RendererBackend for MockBackend {
         self.enter(BackendCall::Init)?;
         self.surface = config.surface.size;
         self.timestamps = config.timestamps && self.caps.timestamp_query;
-        // 새 device: 이전 resource와 submission은 모두 사라집니다.
-        self.buffers.clear();
-        self.textures.clear();
+        // 새 device: 이전 resource와 submission은 모두 사라지고 이전 handle은 무효가 됩니다.
+        if self.initialized_once {
+            self.buffers.invalidate_all()?;
+            self.textures.invalidate_all()?;
+        }
+        self.initialized_once = true;
         self.open = None;
         self.in_flight.clear();
         self.next_submission = 1;
@@ -161,9 +173,7 @@ impl RendererBackend for MockBackend {
                 "mock: 0 크기 buffer",
             ));
         }
-        let handle = self.issue();
-        self.buffers.insert(handle);
-        Ok(BufferHandle::from_raw(handle))
+        Ok(self.buffers.insert(MockNativeBuffer { desc: *desc })?)
     }
 
     fn create_texture(&mut self, desc: &GpuTextureDesc) -> Result<TextureHandle, BackendError> {
@@ -174,20 +184,23 @@ impl RendererBackend for MockBackend {
                 "mock: 잘못된 texture descriptor",
             ));
         }
-        let handle = self.issue();
-        self.textures.insert(handle);
-        Ok(TextureHandle::from_raw(handle))
+        Ok(self.textures.insert(MockNativeTexture { desc: *desc })?)
     }
 
     fn update_buffer(
         &mut self,
         buffer: BufferHandle,
-        _offset: u64,
-        _data: &[u8],
+        offset: u64,
+        data: &[u8],
     ) -> Result<(), BackendError> {
         self.enter(BackendCall::UpdateBuffer)?;
-        if !self.buffers.contains(&buffer.raw()) {
-            return Err(UNKNOWN_HANDLE);
+        let native = self.buffers.get(buffer)?;
+        let end = offset.checked_add(data.len() as u64);
+        if end.is_none_or(|end| end > native.desc.size) {
+            return Err(BackendError::new(
+                BackendErrorKind::InvalidUsage,
+                "mock: buffer 범위 밖 쓰기",
+            ));
         }
         Ok(())
     }
@@ -199,25 +212,19 @@ impl RendererBackend for MockBackend {
         _data: &[u8],
     ) -> Result<(), BackendError> {
         self.enter(BackendCall::UpdateTexture)?;
-        if !self.textures.contains(&texture.raw()) {
-            return Err(UNKNOWN_HANDLE);
-        }
+        self.textures.get(texture)?;
         Ok(())
     }
 
     fn destroy_buffer(&mut self, buffer: BufferHandle) -> Result<(), BackendError> {
         self.enter(BackendCall::DestroyBuffer)?;
-        if !self.buffers.remove(&buffer.raw()) {
-            return Err(UNKNOWN_HANDLE);
-        }
+        self.buffers.remove(buffer)?;
         Ok(())
     }
 
     fn destroy_texture(&mut self, texture: TextureHandle) -> Result<(), BackendError> {
         self.enter(BackendCall::DestroyTexture)?;
-        if !self.textures.remove(&texture.raw()) {
-            return Err(UNKNOWN_HANDLE);
-        }
+        self.textures.remove(texture)?;
         Ok(())
     }
 

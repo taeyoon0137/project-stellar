@@ -2,6 +2,7 @@
 
 use super::mock::MockBackend;
 use super::*;
+use crate::gpu_handle::{HandleTable, TextureKind};
 use crate::placeholder::PLACEHOLDER_SAMPLER;
 use crate::render_graph::{
     ClearColor, CompiledRenderGraph, ImportKind, LoadOp, PassKind, RenderGraphBuilder, StoreOp,
@@ -81,6 +82,12 @@ fn texture_desc() -> GpuTextureDesc {
             render_target: false,
         },
     }
+}
+
+/// 다른 table이 발급한 texture handle(테스트 backend는 해석할 수 없음).
+fn foreign_texture() -> TextureHandle {
+    let mut table: HandleTable<TextureKind, ()> = HandleTable::new(99);
+    table.insert(()).unwrap()
 }
 
 fn violation(result: Result<impl std::fmt::Debug, BackendError>) -> CallOrderError {
@@ -410,7 +417,7 @@ fn encode_requests_are_validated() {
     );
     let wrong_kind = [ImportBinding {
         resource: ResourceId(0),
-        target: ImportTarget::Texture(TextureHandle::from_raw(1)),
+        target: ImportTarget::Texture(foreign_texture()),
     }];
     assert_eq!(
         violation(backend.encode(&FrameEncodeRequest {
@@ -559,11 +566,7 @@ fn device_lost_allows_only_reinit() {
 }
 
 #[test]
-fn backend_handles_are_plain_values() {
-    // handle은 native pointer가 아니라 backend가 해석하는 값입니다.
-    let handle = TextureHandle::from_raw(42);
-    assert_eq!(handle.raw(), 42);
-    assert_eq!(BufferHandle::from_raw(7).raw(), 7);
+fn backend_values_are_plain_values() {
     assert!(SurfaceSize {
         width: 0,
         height: 10
@@ -574,4 +577,91 @@ fn backend_handles_are_plain_values() {
     assert!(error.to_string().contains("Timeout"));
     let order = BackendError::call_order(CallOrderError::AlreadyInitialized);
     assert!(order.to_string().contains("init"));
+}
+
+#[test]
+fn stale_handles_fail_through_the_backend() {
+    // 검증 기준(XI.5.2): stale handle fixture 실패 — backend trait을 통해서도 실패합니다.
+    let mut backend = CheckedBackend::new(MockBackend::new());
+    backend.init(&device_config(8, 8)).unwrap();
+    let region = TextureRegion {
+        mip_level: 0,
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    let old = backend.create_texture(&texture_desc()).unwrap();
+    backend.destroy_texture(old).unwrap();
+    let new = backend.create_texture(&texture_desc()).unwrap();
+    // 같은 slot을 재사용하지만 generation이 다릅니다.
+    assert_eq!(old.index(), new.index());
+    assert_ne!(old, new);
+    let stale = backend.update_texture(old, region, &[0; 4]).unwrap_err();
+    assert_eq!(stale.kind(), BackendErrorKind::InvalidUsage);
+    assert_eq!(stale.detail(), "파괴된 GPU handle");
+    assert_eq!(
+        backend.destroy_texture(old).unwrap_err().detail(),
+        "파괴된 GPU handle"
+    );
+    backend.update_texture(new, region, &[0; 4]).unwrap();
+    assert_eq!(
+        backend
+            .inner()
+            .native_texture(new)
+            .map(|native| native.desc),
+        Some(texture_desc())
+    );
+    assert!(backend.inner().native_texture(old).is_none());
+
+    // 다른 table(다른 device)이 발급한 handle도 해석하지 않습니다.
+    assert_eq!(
+        backend
+            .update_texture(foreign_texture(), region, &[0; 4])
+            .unwrap_err()
+            .detail(),
+        "이전 device 세대의 GPU handle"
+    );
+
+    // device를 다시 만들면 이전 device의 handle은 모두 무효입니다.
+    let buffer = backend
+        .create_buffer(&BufferDesc {
+            size: 16,
+            usage: BufferUsage::Uniform,
+        })
+        .unwrap();
+    backend.inner_mut().fail_next = Some((BackendCall::Poll, BackendErrorKind::DeviceLost));
+    assert!(backend.poll().is_err());
+    backend.init(&device_config(8, 8)).unwrap();
+    assert_eq!(backend.inner().live_resources(), (0, 0));
+    assert_eq!(
+        backend
+            .update_buffer(buffer, 0, &[0; 4])
+            .unwrap_err()
+            .detail(),
+        "이전 device 세대의 GPU handle"
+    );
+    assert_eq!(
+        backend
+            .update_texture(new, region, &[0; 4])
+            .unwrap_err()
+            .detail(),
+        "이전 device 세대의 GPU handle"
+    );
+    let fresh = backend
+        .create_buffer(&BufferDesc {
+            size: 16,
+            usage: BufferUsage::Uniform,
+        })
+        .unwrap();
+    assert_ne!(fresh, buffer);
+    backend.update_buffer(fresh, 0, &[0; 16]).unwrap();
+    // buffer 범위 밖 쓰기는 거부합니다.
+    assert_eq!(
+        backend
+            .update_buffer(fresh, 8, &[0; 16])
+            .unwrap_err()
+            .kind(),
+        BackendErrorKind::InvalidUsage
+    );
 }
