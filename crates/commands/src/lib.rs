@@ -4,6 +4,10 @@
 //! 시스템·migration·향후 agent 모두 이 crate의 같은 command 경로를 지납니다(기술 아키텍처
 //! §31.4).
 
+/// command 공개 API가 노출하는 문서 모델 타입(`DocumentModel`, `NodeRecord` 등)을 하위 crate
+/// (history)가 직접 의존 edge 없이 이름 붙일 수 있도록 재수출합니다.
+pub use stellar_document as document;
+
 /// command 식별자와 출처 (VII.1.1).
 pub mod id;
 

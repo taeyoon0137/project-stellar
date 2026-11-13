@@ -153,6 +153,7 @@ name = "stellar-history"
 version = "0.0.0"
 dependencies = [
  "stellar-commands",
+ "stellar-core-types",
 ]
 
 [[package]]

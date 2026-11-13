@@ -669,7 +669,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| VII.4.1 | `[ ]` | `HistoryEntry`에 origin, forward transaction, inverse transaction, grouping key, timestamp 대신 monotonic sequence를 정의합니다. | 직렬화는 세션 메모리 전용이며 project serializer에서 제외. | VII.1.6, II.3.3 |
+| VII.4.1 | `[x]` | `HistoryEntry`에 origin, forward transaction, inverse transaction, grouping key, timestamp 대신 monotonic sequence를 정의합니다. | 직렬화는 세션 메모리 전용이며 project serializer에서 제외. | VII.1.6, II.3.3 |
 | VII.4.2 | `[ ]` | pointer gesture begin/update/end API를 구현합니다. update는 같은 preview transaction을 교체하고 end에서 한 entry를 확정합니다. | drag 500 update가 history 1건. | VII.4.1 |
 | VII.4.3 | `[ ]` | 텍스트 입력 grouping은 동일 Text node, 인접 caret, 입력 종류, 짧은 manual-clock interval 조건으로 합칩니다. interval 값은 config에 둡니다. | 조건별 merge/split fixture 통과. | VI.7.5, VII.4.1 |
 | VII.4.4 | `[ ]` | 키보드 이동·resize 반복은 같은 command signature와 interval 조건으로 합칩니다. | key repeat 20회 history 1건. | VII.4.1 |
