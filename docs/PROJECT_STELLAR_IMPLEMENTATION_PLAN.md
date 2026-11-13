@@ -1467,7 +1467,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XIV.11.1 | `[x]` | `git ls-files -u -z`를 읽어 stage 1(base), 2(ours), 3(theirs) blob과 mode를 path별로 수집합니다. | text/binary/rename conflict fixture parse. | XIV.2.5 |
-| XIV.11.2 | `[ ]` | conflict 관련 Stellar project 파일의 세 stage를 각각 virtual project snapshot으로 materialize합니다. conflict 없는 path는 current index/working 상태와 결합합니다. | base/ours/theirs project open. | XIV.2.6, XIV.11.1 |
+| XIV.11.2 | `[~]` | conflict 관련 Stellar project 파일의 세 stage를 각각 virtual project snapshot으로 materialize합니다. conflict 없는 path는 current index/working 상태와 결합합니다. | base/ours/theirs project open. | XIV.2.6, XIV.11.1 |
 | XIV.11.3 | `[ ]` | 세 snapshot을 Semantic Merge engine에 전달하고 raw file conflict와 semantic conflict mapping을 유지합니다. | conflict path→object mapping fixture 정확. | XIV.10.9, XIV.11.2 |
 | XIV.11.4 | `[ ]` | Stellar 파일이 아닌 conflict는 raw Git conflict로 표시하고 Semantic Merge로 해석하지 않습니다. | README conflict raw 유지. | XIV.11.1 |
 

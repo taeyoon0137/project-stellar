@@ -69,8 +69,11 @@ pub mod classify;
 /// Remote 목록·연결·push(XIV.9.*).
 pub mod remote;
 
-/// Git unmerged index 수집과 conflict materialize(XIV.11.*).
+/// Git unmerged index 수집(XIV.11.1).
 pub mod conflict;
+
+/// conflict base·ours·theirs virtual project snapshot(XIV.11.2).
+pub mod conflict_snapshot;
 
 /// Git LFS 설치 감지 (XIII.7.1).
 pub mod lfs;
