@@ -52,6 +52,9 @@ canonical 인코딩(V.1):
 - R1 little-endian, R2 고정 정수 폭(bool 1바이트), R3 `u32` LE 길이 프리픽스 UTF-8·바이트열,
   R4 정렬된 map key, R5 유한 float bits, R6 unknown field 정책을 따릅니다. 외부 의존성 없이
   구현합니다(V.1.2).
+- R1의 예외: `StableId`·`ChunkId`의 16바이트 raw 필드(manifest의 project id·root document id,
+  `ChunkPointer`의 chunk_id, ViewTree의 node `StableId`·subtree `ChunkId`)는 정수로 다루지 않고
+  UUID 바이트 순서(big-endian) 그대로 기록합니다(V.3.1, V.4.1, V.6.2).
 - map은 `u32` LE entry 수 + key 바이트 순서로 정렬된 entry입니다. 입력 삽입 순서는 결과에 영향이
   없고 중복 key는 거부합니다. decoder는 key가 엄격히 증가해야 하며 중복·역순을 거부합니다
   (V.1.2, V.1.3).
@@ -68,10 +71,10 @@ chunk(V.2, V.6.1):
 
 - `ChunkId`는 `StableId`를 감싸는 newtype입니다. 내용이 바뀌어도 유지되는 논리 식별자이며 원시
   `StableId`와 혼용할 수 없습니다(V.2.1, compile_fail doctest).
-- envelope header(format version 1)는 8바이트 magic(`CHUNK_MAGIC`) + format version `u32` LE +
-  kind `u32` LE + 비압축 길이 `u64` LE + payload hash(ADR-0004 문자열, 길이 프리픽스)입니다. 압축
-  필드는 없으며 압축을 도입하면 format version을 올립니다(V.2.2).
-- object 경로는 `design/objects/<prefix>/<algorithm>-<hex64>.<chunk 확장자>`입니다(확장자는
+- envelope header(format version 1)는 8바이트 magic `STARCHNK`(`CHUNK_MAGIC`) + format version
+  `u32` LE + kind `u32` LE + 비압축 길이 `u64` LE + payload hash(ADR-0004 문자열, 길이 프리픽스)
+  입니다. 압축 필드는 없으며 압축을 도입하면 format version을 올립니다(V.2.2).
+- object 경로는 `design/objects/<prefix>/<algorithm>-<hex64>.starchunk`입니다(확장자 상수
   `CHUNK_EXTENSION`). prefix는 digest hex 앞 2자입니다. 경로는 `ContentHash`에서만 생성되어 임의
   문자열 경로가 없습니다. 파일명은 `:` 대신 `-`를 씁니다(`:`는 Windows 파일명 금지 문자이며, 코어는
   ADR-0006에 따라 플랫폼 중립을 유지합니다)(V.2.3).

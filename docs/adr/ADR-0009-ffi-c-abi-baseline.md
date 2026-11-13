@@ -23,6 +23,7 @@ Accepted (소급, 2026-11-14). 이 ADR은 이미 구현된 결정을 소급 기�
 | II.4.5 | `e5584a1` | Core→Shell pull 이벤트 큐 |
 | II.4.6 | `ce9b66a` | C 헤더 생성과 drift 검사 |
 | II.5.4 | `1a6c5ef` | drawable 크기·scale 전달 함수 |
+| XII.3.1 | `76ce744` | 공통 `InputEvent`, native timestamp 단조 변환, golden fixture v1 |
 
 ## Decision
 
@@ -53,8 +54,11 @@ handle과 수명:
 
 panic:
 
-- 모든 `extern "C"` 함수를 `catch_unwind` guard로 감싸 panic을 `INTERNAL_PANIC`으로 바꿉니다.
-  정상 경로는 panic 없이 상태를 반환합니다(II.4.4, release abort 정책과 정합).
+- 모든 `extern "C"` 함수를 `catch_unwind` guard(`ffi_guard`)로 감쌉니다. 이 guard가 panic을
+  `INTERNAL_PANIC`으로 바꾸는 것은 unwind profile(dev/test)에서만입니다(II.4.4).
+- release profile은 `panic = "abort"`(II.1.3)이므로 `catch_unwind`가 잡을 unwinding이 없고,
+  panic은 셸 프로세스를 그대로 종료합니다. 따라서 프로덕션 경로는 panic을 일으키지 않고 상태 코드를
+  반환해야 하며, 이를 지키는 것은 guard가 아니라 II.1.3·II.4.4 테스트입니다.
 
 이벤트:
 
@@ -62,6 +66,36 @@ panic:
   큐는 `NO_ERROR`, buffer 부족은 `BUFFER_TOO_SMALL`이며 이 경우 이벤트를 꺼내지 않습니다(II.4.5).
 - callback 등록 API를 두지 않아 Core→Shell 재진입을 구조적으로 막습니다(II.4.5).
 - 이벤트 push는 Rust 전용 API(`enqueue_event`)이며 C ABI가 아닙니다.
+
+입력 이벤트(XII.3.1):
+
+- 공통 입력 이벤트는 `stellar-ffi`의 Rust 모듈 `input`에 둡니다. 이 커밋은 `extern "C"` 함수를
+  추가하지 않았고 C 헤더도 바뀌지 않습니다. 셸에서 코어로 넘기는 C ABI 경로는 XII.3.2·XII.3.3에서
+  연결합니다.
+- `InputEventKind`는 `Pointer`·`Wheel`·`Key`·`TextComposition`·`Focus`·`Resize` 여섯 종류로 닫힌
+  집합이며 kind tag는 순서대로 `1`~`6`입니다. 좌표·크기·wheel delta(point 단위)는 캔버스 view 기준
+  논리 point이고 원점은 좌상단, y는 아래로 증가합니다. key는 USB HID Keyboard/Keypad page(0x07)
+  usage(`u16`, 0 거부)이고, modifier는 `SHIFT`·`CONTROL`·`ALT`·`META`·`CAPS_LOCK` 5비트이며 정의되지
+  않은 bit는 거부합니다. text range는 이벤트 text의 UTF-8 byte offset입니다.
+- 시각은 `NativeTimestamp`(macOS `NSEvent.timestamp` 초, `mach_absolute_time` tick + timebase,
+  Windows QPC tick + frequency)를 nanosecond로 바꾼 뒤, `InputTimeDomain`이 같은 순간에 잡은
+  (native, `MonotonicClock::now_nanos`) 기준쌍으로 코어 단조 domain의 `MonotonicNanos`로 옮깁니다.
+  결과는 `[0, u64::MAX]`로 고정하고, 이전 결과보다 이르면 이전 결과로 고정해 변환 순서대로 단조
+  비감소입니다. NaN·음수·overflow·timebase 0은 거부하며 wall clock은 쓰지 않습니다(II.3.3).
+- 직렬화는 플랫폼 공통 little-endian 레이아웃이며 레이아웃 버전은 `INPUT_EVENT_SCHEMA_VERSION = 1`
+  입니다. header는 version `u8` + kind `u8` + timestamp nanos `u64`(10바이트)이고, payload는
+  다음과 같습니다.
+  - pointer: phase `u8` + button `u8` + device `u8` + click count `u8` + modifiers `u8` + x·y `f32`
+  - wheel: phase `u8` + unit `u8` + modifiers `u8` + x·y `f32` + dx·dy `f32`
+  - key: state `u8` + repeat `u8`(0/1) + modifiers `u8` + HID usage `u16`
+  - text composition: phase `u8` + selection start·end `u32` + text 길이 `u32` + UTF-8 text
+  - focus: focus `u8`
+  - resize: width·height `f32` + scale `f32`
+- decode는 다른 레이아웃 버전, 모르는 kind·tag, 절단, 남는 바이트, 비유한 float, 음수 크기, bool
+  0/1 외 값, 비 UTF-8을 거부하고, `InputEvent::new`와 같은 payload 규칙 검증을 거칩니다.
+- `crates/ffi/tests/fixtures/input_events_v1.golden`의 13건(6개 kind 모두 포함)이 레이아웃 v1의
+  기준 바이트입니다. macOS(초·mach tick)와 Windows(QPC tick) 원천에서 만든 같은 논리 이벤트는 이
+  바이트와 일치해야 합니다(XII.3.1).
 
 헤더:
 
@@ -93,7 +127,11 @@ panic:
 ## Consequences
 
 - 셸은 handle과 POD 인자만 다루고 Rust 타입 레이아웃에 의존하지 않습니다.
-- 모든 호출은 상태 코드로 끝나므로 panic이 셸 프로세스를 종료시키지 않습니다.
+- unwind profile(dev/test)에서는 경계 안 panic이 `INTERNAL_PANIC` 상태 코드로 끝납니다. release
+  (abort)에서는 panic이 셸 프로세스를 종료하므로, release의 경계 안전성은 프로덕션 경로에 panic이
+  없다는 사실과 이를 검증하는 II.1.3·II.4.4 테스트에 의존합니다.
+- 두 셸은 같은 논리 입력 이벤트를 같은 바이트로 만들어야 하며, golden fixture가 이를 회귀로부터
+  보호합니다.
 - 헤더와 Rust 표면의 정합은 고정 템플릿, 함수명 노출 단위테스트, 검토로 보장합니다. 자동 생성보다
   수동 동기화 부담이 있습니다.
 
@@ -101,7 +139,10 @@ panic:
 
 - FFI: 함수 시그니처와 `StellarStatus` 숫자는 셸 바인딩이 의존하는 계약입니다. 함수 추가는 헤더
   재생성과 drift 검사로 진행하고, 기존 시그니처·숫자 변경은 새 ADR이 필요합니다.
-- 파일 포맷: 영향 없음.
+- 입력 이벤트: 직렬화 레이아웃 v1(kind tag, 각 enum tag 값, 필드 순서·폭)과 golden fixture는
+  셸 변환 코드가 의존하는 계약입니다. 레이아웃을 바꾸면 `INPUT_EVENT_SCHEMA_VERSION`을 올리며, decode는
+  현재 버전이 아닌 바이트를 모두 거부합니다. 레이아웃 변경에는 새 ADR이 필요합니다.
+- 파일 포맷: 영향 없음. 입력 이벤트 바이트는 프로젝트 파일에 기록하지 않습니다.
 
 ## Performance
 

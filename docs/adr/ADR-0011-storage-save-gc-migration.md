@@ -55,9 +55,11 @@ Accepted (소급, 2026-11-14). 이 ADR은 이미 구현된 결정을 소급 기�
 
 GC 보존과 정리(V.7):
 
-- 보존 수치는 `config/storage-gc.yaml`(한 줄 `key: value`, 0·비정수·누락·미지 key 거부)에서
-  읽습니다. 현재 값은 `keep_recent_generations: 2`(current + 직전 정상 세대),
-  `grace_period_seconds: 86400`입니다(V.7.1).
+- 보존 수치는 `config/storage-gc.yaml`(한 줄 `key: value`)에서 읽습니다. 두 key 모두 필수이며
+  누락·미지 key·음이 아닌 정수가 아닌 값을 거부합니다. `keep_recent_generations`는 1 이상이어야
+  하고(0 거부), `grace_period_seconds`는 0을 포함한 음이 아닌 정수를 모두 받습니다. 현재 값은
+  `keep_recent_generations: 2`(current + 직전 정상 세대), `grace_period_seconds: 86400`입니다
+  (V.7.1).
 - 보존 세대는 current 세대(손상이어도 진단 자료로 보존), 정상 세대 중 최신
   `keep_recent_generations`개, fallback 복구에 선택될 세대(V.4.5)의 합집합입니다(V.7.1).
 - mark는 보존 manifest 자신의 hash와 그 manifest들이 가리키는 모든 chunk hash의 합집합입니다. 보존
@@ -86,7 +88,13 @@ GC 보존과 정리(V.7):
   전환하므로, 그 전까지 migration 결과는 어떤 reader에게도 보이지 않습니다(V.8.3, V.8.4).
 - Git commit을 만들지 않습니다. noop v1→v2 migration 뒤 Git 상태 변화는 `design/current` 수정과 새
   manifest 파일 추가 2건뿐이고 HEAD는 바뀌지 않습니다(V.8.5).
-- 제품 registry에 등록된 step은 현재 payload를 바꾸지 않는 noop v1→v2뿐입니다(V.8.3).
+- storage crate는 noop v1→v2를 테스트용 migration step으로 제공합니다(V.8.3). 제품 registry
+  (`product_registry()`)와 최신 storage 문서 스키마 버전 `LATEST_SCHEMA = 2`는 storage가 아니라
+  `tools/xtask/src/migration_fixtures.rs`에 정의되어 있고(V.8.6), 제품 registry에 등록된 step은
+  payload를 바꾸지 않는 이 noop v1→v2뿐입니다.
+- 여기서 말하는 스키마 버전은 generation manifest의 `schema_version`(storage 문서 스키마)입니다.
+  프로젝트 manifest `stellar.yaml`의 `CURRENT_SCHEMA_VERSION`(현재 1, project crate)과는 별개의
+  버전입니다.
 
 정하지 않은 사항:
 
@@ -117,7 +125,8 @@ GC 보존과 정리(V.7):
 
 - 파일 포맷: 새 포맷 요소는 없습니다(ADR-0010의 포맷만 사용). `config/storage-gc.yaml`의 key 이름은
   storage가 읽는 계약입니다.
-- 스키마: 현재 최신 스키마 버전은 2이고(noop step), 버전 판정 규칙은 위와 같습니다.
+- 스키마: 현재 최신 storage 문서 스키마 버전은 2입니다(`LATEST_SCHEMA`, V.8.6, noop step). 프로젝트
+  manifest 스키마(`CURRENT_SCHEMA_VERSION = 1`)와는 별개이며, 버전 판정 규칙은 위와 같습니다.
 - 공개 API·FFI: 영향 없음.
 
 ## Performance

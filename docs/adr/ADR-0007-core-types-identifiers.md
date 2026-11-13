@@ -39,7 +39,9 @@ Accepted (소급, 2026-11-14). 이 ADR은 이미 구현된 결정을 소급 기�
 - `stellar-core-types`는 외부 의존성 없이 표준 라이브러리만 사용합니다(II.2.1). 제품 crate 의존
   그래프에서 core-types는 어떤 제품 crate에도 의존하지 않습니다(II.2.8).
 - 서로 다른 의미의 식별자는 별도 newtype으로 분리해 혼용을 컴파일 단계에서 거부합니다. 혼용
-  거부는 rustdoc `compile_fail` doctest로 고정합니다(II.3.4, III.1.3, III.2.3).
+  거부는 rustdoc `compile_fail` doctest로 고정합니다(II.3.4, III.2.3).
+- III.1.3의 `compile_fail` doctest는 식별자 혼용이 아니라 `RuntimeEntityId` 필드의 `pub(crate)`
+  가시성(외부 crate에서 `slot` 접근 불가)을 고정합니다.
 
 오류·시간·revision(Phase II.3):
 
