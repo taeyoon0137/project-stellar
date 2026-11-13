@@ -7,18 +7,47 @@
 //! 기본값은 표현식이라 토큰 등을 참조할 수 있으며, scheduler(VIII.6.4)에서 [`Producer::OrphanDefault`] producer로
 //! 평가됩니다(위상 순서·증분 재평가·provenance 그대로). 같은 target에 live binding이 다시 생기면 live binding이
 //! 우선하고 기본값 producer는 만들지 않습니다.
+//!
+//! **손상된 기본값(VIII.8.3)**: 저장된 기본값([`StoredDefault`]: 선언 타입 + 저장된 canonical AST bytes)이 없거나,
+//! bytes를 디코드할 수 없거나, 선언 타입과 맞지 않으면 그 타입의 **안전값**([`safe_value`])을 쓰고
+//! [`CorruptionDiagnostic`]을 남깁니다. 열기는 실패하지 않으며, 저장된 bytes와 프로젝트 파일은 수정하지 않습니다
+//! (입력은 읽기 전용 참조로만 받습니다).
+//!
+//! | 타입 | 안전값 |
+//! |---|---|
+//! | `Optional<T>` | 값 없음(null) |
+//! | Boolean | `false` |
+//! | Number·Length·Percentage·Angle·Duration | 0 |
+//! | String | `""` |
+//! | Enum | 같은 enum 타입의 variant 0 |
+//! | Color | sRGB (0, 0, 0, 0) 투명 |
+//! | Gradient | stop 없음 |
+//! | Shadow | offset 0·blur 0·투명 |
+//! | Typography | 빈 payload |
+//! | ResourceRef | NIL `StableId` |
 
 use std::collections::BTreeMap;
+use std::fmt;
 
+use stellar_core_types::color::{Color, ColorSpace};
+use stellar_core_types::gradient::Gradient;
+use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyPath;
-use stellar_expressions::ast::ExpressionAst;
-use stellar_expressions::types::TypeSpec;
+use stellar_core_types::shadow::{BlurRadius, Shadow};
+use stellar_core_types::typed_value::{EnumValue, ResourceRef, TypedValue, TypographyValue};
+use stellar_core_types::value::{Angle, Duration, FiniteF32, Length, Percentage, Vec2};
+use stellar_expressions::ast::{ExprNode, ExprNodeId, ExpressionAst, ReferenceTarget};
+use stellar_expressions::codec::CodecError;
+use stellar_expressions::typecheck::ReferenceTypes;
+use stellar_expressions::types::{ExpressionType, TypeSpec};
 use stellar_expressions::vm::EvalLimits;
 
+use crate::binding::{check_source, BindingId, BindingTypeError};
 use crate::graph::{DependencyNode, Producer};
 use crate::orphan::{BindingStore, OrphanedBinding};
 use crate::registry::TokenRegistry;
 use crate::scheduler::{token_specs, BindingEvaluator, ProducerSpec, SchedulerError, SourceInputs};
+use crate::token::TokenTypes;
 
 /// 속성(Component Property)의 선언 기본값.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +137,238 @@ impl BindingEvaluator {
             inner: sources,
         };
         BindingEvaluator::from_specs(specs, &sources, limits)
+    }
+}
+
+/// 비-nullable 타입의 안전값(모듈 문서 표). 구성값이 모두 상수라 실패하지 않으며, 실패하면 `None`입니다.
+pub fn safe_value(value_type: ExpressionType) -> Option<TypedValue> {
+    let zero = FiniteF32::ZERO;
+    let transparent = Color::new(ColorSpace::Srgb, 0.0, 0.0, 0.0, 0.0).ok();
+    Some(match value_type {
+        ExpressionType::Boolean => TypedValue::Boolean(false),
+        ExpressionType::Number => TypedValue::Number(zero),
+        ExpressionType::String => TypedValue::String(String::new()),
+        ExpressionType::Enum(id) => TypedValue::Enum(EnumValue::new(id.raw(), 0)),
+        ExpressionType::Length => TypedValue::Length(Length::from_raw(zero)),
+        ExpressionType::Percentage => TypedValue::Percentage(Percentage::from_raw(zero)),
+        ExpressionType::Angle => TypedValue::Angle(Angle::from_raw(zero)),
+        ExpressionType::Duration => TypedValue::Duration(Duration::from_raw(zero)),
+        ExpressionType::Color => TypedValue::Color(transparent?),
+        ExpressionType::Gradient => TypedValue::Gradient(Gradient::new(Vec::new())),
+        ExpressionType::Shadow => {
+            TypedValue::Shadow(Shadow::new(Vec2::ZERO, BlurRadius::ZERO, transparent?))
+        }
+        ExpressionType::Typography => TypedValue::Typography(TypographyValue::default()),
+        ExpressionType::ResourceRef => TypedValue::ResourceRef(ResourceRef::new(StableId::NIL)),
+    })
+}
+
+/// 타입의 안전값 literal 표현식. `Optional`이면 null literal입니다. node ID는 `node`입니다.
+pub fn safe_literal(spec: TypeSpec, node: ExprNodeId) -> Option<ExpressionAst> {
+    let literal = if spec.is_optional() {
+        ExprNode::null(node, spec.value_type())
+    } else {
+        ExprNode::literal(node, safe_value(spec.value_type())?)
+    };
+    ExpressionAst::new(node, vec![literal]).ok()
+}
+
+/// 저장된 선언 기본값(프로젝트 파일에 기록된 그대로).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoredDefault {
+    /// 속성의 선언 타입.
+    pub declared_type: TypeSpec,
+    /// 기본값 표현식의 저장된 canonical AST bytes(VIII.2.5).
+    pub expression: Vec<u8>,
+}
+
+/// target 속성 → 저장된 선언 기본값 제공자.
+pub trait StoredDefaults {
+    /// 저장된 선언 기본값. 없으면 `None`.
+    fn stored_default(&self, target: &PropertyPath) -> Option<&StoredDefault>;
+}
+
+impl StoredDefaults for BTreeMap<PropertyPath, StoredDefault> {
+    fn stored_default(&self, target: &PropertyPath) -> Option<&StoredDefault> {
+        self.get(target)
+    }
+}
+
+/// 기본값 손상 종류.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DefaultCorruption {
+    /// 선언 기본값이 없습니다.
+    Missing,
+    /// 저장된 bytes를 표현식으로 디코드할 수 없습니다.
+    Malformed(CodecError),
+    /// 기본값 표현식이 선언 타입과 맞지 않습니다(또는 type 오류).
+    InvalidType(BindingTypeError),
+}
+
+impl fmt::Display for DefaultCorruption {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DefaultCorruption::Missing => f.write_str("선언 기본값이 없습니다"),
+            DefaultCorruption::Malformed(error) => write!(f, "기본값 bytes 손상: {error}"),
+            DefaultCorruption::InvalidType(error) => write!(f, "기본값 타입 오류: {error}"),
+        }
+    }
+}
+
+/// 기본값 손상 진단(VIII.8.3). 대체한 안전값을 함께 기록합니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorruptionDiagnostic {
+    /// orphan binding.
+    pub binding: BindingId,
+    /// target 속성.
+    pub target: PropertyPath,
+    /// 손상 종류.
+    pub corruption: DefaultCorruption,
+    /// 안전값을 만든 타입.
+    pub fallback_type: TypeSpec,
+    /// 대체한 안전값(`None` = null).
+    pub fallback: Option<TypedValue>,
+}
+
+impl fmt::Display for CorruptionDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "binding {}: {} — {} 안전값 사용",
+            self.binding, self.corruption, self.fallback_type
+        )
+    }
+}
+
+/// 저장된 기본값을 해석한 결과: 쓸 수 있는 선언 기본값(손상은 안전값 literal로 대체)과 진단.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResolvedDefaults {
+    defaults: BTreeMap<PropertyPath, DeclaredDefault>,
+    diagnostics: Vec<CorruptionDiagnostic>,
+}
+
+impl ResolvedDefaults {
+    /// 손상 진단(binding ID 순).
+    pub fn diagnostics(&self) -> &[CorruptionDiagnostic] {
+        &self.diagnostics
+    }
+}
+
+impl DeclaredDefaults for ResolvedDefaults {
+    fn declared_default(&self, target: &PropertyPath) -> Option<DeclaredDefault> {
+        self.defaults.get(target).cloned()
+    }
+}
+
+/// live binding이 없는 orphan target의 저장된 기본값을 해석합니다(orphan ID 순). 입력은 읽기만 합니다.
+pub fn resolve_stored_defaults(
+    store: &BindingStore,
+    stored: &dyn StoredDefaults,
+    references: &dyn ReferenceTypes,
+) -> ResolvedDefaults {
+    let mut resolved = ResolvedDefaults::default();
+    for orphan in store.orphans() {
+        if store.live().by_target(orphan.target()).is_some() {
+            continue;
+        }
+        let (declared_type, outcome) = match stored.stored_default(orphan.target()) {
+            None => (orphan.last_valid_type(), Err(DefaultCorruption::Missing)),
+            Some(default) => (
+                default.declared_type,
+                ExpressionAst::from_canonical_bytes(&default.expression)
+                    .map_err(DefaultCorruption::Malformed)
+                    .and_then(|ast| {
+                        check_source(default.declared_type, &ast, references)
+                            .map(|_| ast)
+                            .map_err(DefaultCorruption::InvalidType)
+                    }),
+            ),
+        };
+        let expression = match outcome {
+            Ok(ast) => ast,
+            Err(corruption) => {
+                let node = ExprNodeId::new(orphan.id().stable_id());
+                let Some(literal) = safe_literal(declared_type, node) else {
+                    continue;
+                };
+                let fallback = if declared_type.is_optional() {
+                    None
+                } else {
+                    safe_value(declared_type.value_type())
+                };
+                resolved.diagnostics.push(CorruptionDiagnostic {
+                    binding: orphan.id(),
+                    target: orphan.target().clone(),
+                    corruption,
+                    fallback_type: declared_type,
+                    fallback,
+                });
+                literal
+            }
+        };
+        resolved.defaults.insert(
+            orphan.target().clone(),
+            DeclaredDefault {
+                declared_type,
+                expression,
+            },
+        );
+    }
+    resolved
+}
+
+/// 저장소 기준 참조 타입: 토큰 = registry, 속성 = live binding 기대 타입 → orphan 마지막 유효 타입 → source,
+/// 그 밖 = source.
+struct StoreTypes<'a> {
+    tokens: &'a TokenRegistry,
+    store: &'a BindingStore,
+    sources: &'a dyn SourceInputs,
+}
+
+impl ReferenceTypes for StoreTypes<'_> {
+    fn reference_type(&self, target: &ReferenceTarget) -> Option<TypeSpec> {
+        let source = || {
+            self.sources
+                .source_type(&DependencyNode::from_target(target))
+        };
+        match target {
+            ReferenceTarget::Token(token) => self
+                .tokens
+                .token_type_of(*token)
+                .map(|t| t.type_spec())
+                .or_else(source),
+            ReferenceTarget::Property(path) => {
+                if let Some(binding) = self.store.live().by_target(path) {
+                    return Some(binding.expected_type());
+                }
+                self.store
+                    .orphans()
+                    .find(|orphan| orphan.target() == path)
+                    .map(OrphanedBinding::last_valid_type)
+                    .or_else(source)
+            }
+            _ => source(),
+        }
+    }
+}
+
+impl BindingEvaluator {
+    /// 저장된 기본값으로 orphan을 포함해 엽니다(VIII.8.3). 손상된 기본값은 안전값과 진단으로 대체하며 열기는
+    /// 실패하지 않습니다(cycle 등 graph 오류 제외). 입력 저장소·기본값은 수정하지 않습니다.
+    pub fn open_with_stored_defaults(
+        tokens: &TokenRegistry,
+        store: &BindingStore,
+        stored: &dyn StoredDefaults,
+        sources: &dyn SourceInputs,
+    ) -> Result<(BindingEvaluator, Vec<CorruptionDiagnostic>), SchedulerError> {
+        let types = StoreTypes {
+            tokens,
+            store,
+            sources,
+        };
+        let resolved = resolve_stored_defaults(store, stored, &types);
+        let evaluator = BindingEvaluator::with_orphans(tokens, store, &resolved, sources)?;
+        Ok((evaluator, resolved.diagnostics))
     }
 }
 
@@ -360,5 +621,158 @@ mod tests {
         assert!(live_again
             .insert_live(bind(1, 7, literal(910, px(1.0))))
             .is_err());
+    }
+
+    #[test]
+    fn safe_values_cover_every_type() {
+        let types = [
+            ExpressionType::Boolean,
+            ExpressionType::Number,
+            ExpressionType::String,
+            ExpressionType::Enum(stellar_expressions::types::EnumTypeId::new(77)),
+            ExpressionType::Length,
+            ExpressionType::Percentage,
+            ExpressionType::Angle,
+            ExpressionType::Duration,
+            ExpressionType::Color,
+            ExpressionType::Gradient,
+            ExpressionType::Shadow,
+            ExpressionType::Typography,
+            ExpressionType::ResourceRef,
+        ];
+        assert_eq!(types.len(), ExpressionType::VARIANT_COUNT);
+        for value_type in types {
+            let value = safe_value(value_type).expect("안전값");
+            assert!(value_type.matches(&value), "{value_type}");
+            let required = safe_literal(TypeSpec::required(value_type), x(1)).expect("literal");
+            let optional = safe_literal(TypeSpec::optional(value_type), x(1)).expect("literal");
+            assert!(matches!(
+                required.node(x(1)).map(|n| n.payload()),
+                Some(stellar_expressions::ast::NodePayload::Literal(
+                    stellar_expressions::ast::Literal::Value(_)
+                ))
+            ));
+            assert!(matches!(
+                optional.node(x(1)).map(|n| n.payload()),
+                Some(stellar_expressions::ast::NodePayload::Literal(
+                    stellar_expressions::ast::Literal::Null(_)
+                ))
+            ));
+        }
+    }
+
+    #[test]
+    fn malformed_default_fixture_opens_with_safe_values_and_diagnostics() {
+        let sources = StaticSources::new();
+        let tokens = registry(true);
+        // orphan 5개(o1~o5)를 만들기 위해 없는 토큰(99)을 참조하는 binding을 만듭니다.
+        let mut live = BindingSet::new();
+        for n in 1..=5u64 {
+            live.insert(bind(
+                10 + n,
+                10 + n,
+                apply(
+                    1_000 + n * 10,
+                    BinaryOp::Add,
+                    ReferenceTarget::Token(token(99)),
+                    px(1.0),
+                ),
+            ))
+            .expect("binding");
+        }
+        let mut store = BindingStore::new(live);
+        assert_eq!(store.orphan_broken(&World(&tokens)).len(), 5);
+        let valid = literal(500, px(4.0)).to_canonical_bytes().expect("직렬화");
+        let mut truncated = valid.clone();
+        truncated.truncate(valid.len() - 3);
+        let wrong_type = literal(
+            510,
+            TypedValue::Color(Color::new(ColorSpace::Srgb, 1.0, 0.0, 0.0, 1.0).expect("유효")),
+        )
+        .to_canonical_bytes()
+        .expect("직렬화");
+        let mut flipped = valid.clone();
+        flipped[0] ^= 0xFF; // version 손상.
+        let stored: BTreeMap<PropertyPath, StoredDefault> = BTreeMap::from([
+            (
+                prop(11),
+                StoredDefault {
+                    declared_type: length(),
+                    expression: valid.clone(),
+                },
+            ),
+            // prop(12): 기본값 없음.
+            (
+                prop(13),
+                StoredDefault {
+                    declared_type: length(),
+                    expression: truncated,
+                },
+            ),
+            (
+                prop(14),
+                StoredDefault {
+                    declared_type: length(),
+                    expression: wrong_type,
+                },
+            ),
+            (
+                prop(15),
+                StoredDefault {
+                    declared_type: TypeSpec::optional(ExpressionType::Color),
+                    expression: flipped,
+                },
+            ),
+        ]);
+        let before = stored.clone();
+        let store_before = store.clone();
+        let (evaluator, diagnostics) =
+            BindingEvaluator::open_with_stored_defaults(&tokens, &store, &stored, &sources)
+                .expect("손상 fixture도 열림");
+        // 파일(입력)은 수정하지 않습니다.
+        assert_eq!(stored, before);
+        assert_eq!(store, store_before);
+        // 값: 정상 기본값 4px, 나머지는 타입별 안전값.
+        assert_eq!(value(&evaluator, 11), Ok(Some(px(4.0))));
+        assert_eq!(value(&evaluator, 12), Ok(Some(px(0.0))));
+        assert_eq!(value(&evaluator, 13), Ok(Some(px(0.0))));
+        assert_eq!(value(&evaluator, 14), Ok(Some(px(0.0))));
+        assert_eq!(value(&evaluator, 15), Ok(None), "Optional은 null");
+        // 오류 표시: 손상 4건, binding ID 순, 원인 정확.
+        let summary: Vec<(u64, &str)> = diagnostics
+            .iter()
+            .map(|d| {
+                let kind = match d.corruption {
+                    DefaultCorruption::Missing => "missing",
+                    DefaultCorruption::Malformed(_) => "malformed",
+                    DefaultCorruption::InvalidType(_) => "invalid-type",
+                };
+                (d.target.root().timestamp_ms() - 2_000, kind)
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (12, "missing"),
+                (13, "malformed"),
+                (14, "invalid-type"),
+                (15, "malformed")
+            ]
+        );
+        assert_eq!(diagnostics[0].fallback, Some(px(0.0)));
+        assert_eq!(diagnostics[3].fallback, None);
+        assert_eq!(
+            diagnostics[3].fallback_type,
+            TypeSpec::optional(ExpressionType::Color)
+        );
+        assert!(diagnostics[2].to_string().contains("안전값"));
+        // 다시 열어도 같은 값·같은 진단(결정적).
+        let (again, again_diagnostics) =
+            BindingEvaluator::open_with_stored_defaults(&tokens, &store, &stored, &sources)
+                .expect("재열기");
+        assert_eq!(again_diagnostics, diagnostics);
+        for n in 11..=15 {
+            assert_eq!(value(&again, n), value(&evaluator, n));
+        }
     }
 }
