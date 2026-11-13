@@ -51,7 +51,7 @@ pub struct TreeSnapshot {
 }
 
 /// `git rev-parse -q --verify <rev>`: 있으면 ID, 없으면(종료 코드 1) `None`.
-fn verify_rev(
+pub(crate) fn verify_rev(
     git: &GatedGitRunner,
     worktree: &Path,
     rev: &str,

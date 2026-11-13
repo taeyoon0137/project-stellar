@@ -2107,7 +2107,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXIII.1.1 | `[ ]` | SourceRef에 branch, commit, tag, worktree, HEAD, Index, WorkingTree를 정의합니다. | source resolution fixture. | Phase XIV |
+| XXIII.1.1 | `[x]` | SourceRef에 branch, commit, tag, worktree, HEAD, Index, WorkingTree를 정의합니다. | source resolution fixture. | Phase XIV |
 | XXIII.1.2 | `[ ]` | 두 source의 공통 Git history가 있으면 시스템 Git `merge-base`로 base를 구합니다. 없으면 two-way comparison mode로 명시합니다. | related/unrelated fixture. | XXIII.1.1 |
 | XXIII.1.3 | `[ ]` | Source A/B/Base snapshot을 SnapshotProvider로 materialize하고 원본 worktree를 수정하지 않습니다. | source hash 보존. | XIV.2.6 |
 

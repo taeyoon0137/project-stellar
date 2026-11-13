@@ -84,6 +84,9 @@ pub mod refname;
 /// 로드맵 고급 Git 기능 core API(XXVI.*).
 pub mod advanced;
 
+/// 로드맵 Merge Composer source·snapshot(XXIII.1.*).
+pub mod composer;
+
 /// Git LFS 설치 감지·권고 (XIII.7.1~).
 pub mod lfs;
 
