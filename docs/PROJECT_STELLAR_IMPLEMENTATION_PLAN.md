@@ -1690,7 +1690,7 @@ tools/xtask/
 | XVI.9.2 | `[~]` | Rust core library와 resources를 app bundle에 포함하고 rpath/code signature 구조를 검증합니다. | clean machine launch smoke. | XVI.9.1 |
 | XVI.9.3 | `[x]` | Developer ID signing pipeline을 구성합니다. 로컬 개발 key를 repo에 저장하지 않습니다. | `codesign --verify --deep --strict` 통과. | XVI.9.2 |
 | XVI.9.4 | `[~]` | notarization submission과 ticket stapling pipeline을 구성합니다. | Gatekeeper clean machine 검증 통과. | XVI.9.3 |
-| XVI.9.5 | `[ ]` | Stable/Beta update feed를 분리하고 앱은 background check만 수행합니다. 다운로드·설치는 사용자 승인 후입니다. | channel isolation fixture. | XVI.9.2 |
+| XVI.9.5 | `[x]` | Stable/Beta update feed를 분리하고 앱은 background check만 수행합니다. 다운로드·설치는 사용자 승인 후입니다. | channel isolation fixture. | XVI.9.2 |
 | XVI.9.6 | `[ ]` | 업데이트 전 open project 상태를 저장·복구하고 강제 종료하지 않습니다. | dirty project update prompt fixture. | XIII.1.6, XVI.9.5 |
 
 ### XVI.10 Windows MSIX·서명·업데이트

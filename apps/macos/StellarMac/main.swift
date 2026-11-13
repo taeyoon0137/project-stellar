@@ -22,6 +22,11 @@ if CommandLine.arguments.contains("--input-check") {
     exit(InputCheck.run() ? 0 : 1)
 }
 
+// update 검사 모드: Stable/Beta 채널 격리와 승인 전 다운로드 금지를 headless로 검증하고 종료(XVI.9.5).
+if CommandLine.arguments.contains("--update-check") {
+    exit(UpdateCheck.run() ? 0 : 1)
+}
+
 // smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다(II.5.2).
 if CommandLine.arguments.contains("--smoke") {
     let host = RuntimeHost()
