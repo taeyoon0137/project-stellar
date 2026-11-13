@@ -2,8 +2,8 @@
 
 - WBS: XIV.11.2
 - 작업명: conflict 관련 Stellar project 파일의 세 stage를 각각 virtual project snapshot으로 materialize, conflict 없는 path는 current index 상태와 결합
-- 상태: 부분 완료 (`[~]`)
-- 선행: XIV.2.6(`[x]`, 이 lane), XIV.11.1(`[x]`, 이 lane)
+- 상태: 완료 (`[x]`) — 1차(git-porcelain lane)에서 `[~]`, 2차(project lane)에서 실제 프로젝트 loader로 여는 연결로 완료
+- 선행: XIV.2.6(`[x]`), XIV.11.1(`[x]`)
 
 ## 필수 실행 환경
 
@@ -11,41 +11,62 @@
 
 ## 변경 파일 목록
 
+1차(git-porcelain lane):
+
 - `crates/git-porcelain/src/conflict_snapshot.rs` (신규: `materialize_conflict_snapshots`, `side_entries`, `ConflictSnapshots`, `ConflictSide`, `ConflictSnapshotError`, 테스트)
 - `crates/git-porcelain/src/lib.rs` (`conflict_snapshot` 모듈)
-- `docs/task-reports/XIV.11.2.md`(신규), 계획서(XIV.11.2 `[ ]`→`[~]`)
+
+2차(project lane, 이 보고서 갱신):
+
+- `crates/project/src/conflict_open.rs` (신규: `open_conflict_projects`, `ConflictProjects`, `ConflictOpenError`, `CONFLICT_SESSION_PREFIX`)
+- `crates/project/src/lib.rs` (`pub mod conflict_open;` 추가)
+- `crates/project/tests/conflict_project_open.rs` (신규: 통합 테스트)
+- `docs/task-reports/XIV.11.2.md`(갱신), 계획서(XIV.11.2 `[~]`→`[x]`)
 
 ## 구현 요약
 
 - index stage 0(conflict 없는 경로, Git이 이미 병합해 stage한 결과)을 세 side 모두에 넣고, Stellar
   프로젝트 파일(XIV.4.4 분류)인 conflict 경로는 각 side의 stage blob(base=1, ours=2, theirs=3)을 넣습니다.
-  그 side에 stage가 없으면(삭제·미추가) 넣지 않습니다.
-- non-Stellar conflict 경로는 snapshot에 넣지 않고 `raw_conflicts`로 돌려줍니다(raw Git conflict).
-- 각 side는 XIV.2.6 materializer로 별도 임시 디렉터리(`.git` 없음)에 만듭니다. 작업 트리·index는 읽기만 합니다.
+  그 side에 stage가 없으면 넣지 않고, non-Stellar conflict 경로는 `raw_conflicts`로 돌려줍니다. 각 side는
+  XIV.2.6 materializer로 별도 임시 디렉터리(`.git` 없음)에 만듭니다. (1차)
+- **실제 project open(2차)**: `open_conflict_projects(git, worktree, temp_parent)`는 소유자 전용 session
+  root(`PrivateTempDir`, XVI.7.5)를 만들고 그 아래에 세 side를 materialize한 뒤, 각 디렉터리를 XIV.2.7의
+  `SavedProjectLoader`(`stellar.yaml` 검증 → current pointer → manifest → chunk 존재, V.4.4 + DocumentManifest
+  읽기)로 엽니다. side별 열기 결과(`Result<SavedProject, SavedProjectError>`)를 따로 보존해, 한 side에서
+  프로젝트가 지워졌거나 검증이 실패해도 다른 side와 conflict 목록을 계속 씁니다. 결과를 drop하면 세
+  snapshot과 session root가 지워집니다. 작업 트리·index는 읽기만 합니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
+2차(project lane):
+
 | 명령 | 결과 |
 |---|---|
-| `cargo test -p stellar-git-porcelain` | 191 passed, 0 failed |
-| `cargo clippy -p stellar-git-porcelain --all-targets -- -D warnings` | exit 0 |
-| `cargo fmt -p stellar-git-porcelain -- --check` | exit 0 |
+| `cargo fmt -p stellar-project` | 종료 코드 0 |
+| `cargo test -p stellar-project` | unit 266 passed; 통합 conflict_project_open 2, document_residency 3, document_round_trip 5, document_serialize 5, private_temp_snapshot 1 passed; restricted_yaml_fuzz는 이 실행에서 입력당 시간 상한(3s) 초과 1건으로 실패(아래 "남은 위험") → `cargo test -p stellar-project --test restricted_yaml_fuzz --test working_tree_project` 재실행 4 + 2 passed |
+| `cargo clippy -p stellar-project --all-targets -- -D warnings` | 종료 코드 0 (경고 0) |
+| `cargo fmt -p stellar-project -- --check` | 종료 코드 0 |
+
+1차(git-porcelain lane): `cargo test -p stellar-git-porcelain` 191 passed, clippy·fmt check exit 0.
 
 | 검사 | 결과 |
 |---|---|
-| **base/ours/theirs project open**(fixture loader): 실제 merge conflict(`design/current.stellarref` 양쪽 수정, tokens chunk 수정/삭제, `README.md` 양쪽 수정) → 세 디렉터리를 fixture loader로 열면 pointer가 각각 base/ours/theirs, tokens는 base·ours 내용이고 theirs에는 없음, 매니페스트 공통, README는 어느 snapshot에도 없음(raw conflict 목록에만), `.git` 없음(`base_ours_theirs_projects_open`) | 통과 |
-| conflict 없는 공통 chunk와 깨끗이 병합된 추가 chunk가 세 snapshot 모두 index stage 0 내용 | 통과 |
-| materialize 전후 작업 트리 bytes·`ls-files --stage` 동일 | 통과 |
+| **base/ours/theirs project open(실제 loader)**: 실제 저장 파이프라인(V.5)으로 저장한 프로젝트를 두 branch에서 같은 문서를 다르게 저장해 병합 → `design/current` conflict, `README.md` raw conflict. 세 side 모두 `SavedProjectLoader`로 열리고 generation 1/2/2, 문서 semantic snapshot이 각각 base·ours·theirs 문서와 같음, 매니페스트 공통, `.git`·README 없음(`base_ours_theirs_projects_open_with_the_real_loader`) | 통과 |
+| 같은 테스트: session root `0700`, 세 snapshot이 그 아래, 열기 전후 `ls-files --stage`·작업 트리 bytes 동일, drop 후 session·snapshot 삭제(임시 parent 비어 있음) | 통과 |
+| ours가 `stellar.yaml`을 지우고 theirs가 바꾼 modify/delete conflict → base·theirs는 열리고(각 이름) ours만 `ManifestRead(NotFound)`로 보존(`side_without_the_project_reports_its_own_open_error`) | 통과 |
+| (1차) fixture loader 기반 세 side 열기, stage 0 결합, 작업 트리·index 불변(`stellar-git-porcelain`) | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 
 - conflict 없는 경로는 index stage 0만 결합합니다(작업 트리의 미stage 변경은 넣지 않음). merge 중 Git이
-  병합 결과를 index에 기록하므로 index가 conflict 해결의 기준이라는 아키텍처 §26.3 원칙을 따랐습니다.
+  병합 결과를 index에 기록하므로 index가 conflict 해결의 기준이라는 아키텍처 §26.3 원칙을 따랐습니다. (1차)
+- 실제 loader 구현은 crate 그래프상 project crate에 있으므로 연결 함수도 project crate에 둡니다(2차).
 
 ## 남은 위험 / 한계
 
-- **`[~]` 사유**: "project open"은 테스트 fixture loader(매니페스트·pointer·chunk 읽기)로만 확인했습니다.
-  실제 프로젝트 열기 loader(V.4.4, storage crate)로 세 snapshot을 여는 통합 검증은 crate 경계상 project crate
-  통합 단계에서 필요합니다.
-- generation pointer와 chunk가 서로 다른 stage에서 와 섞이면 loader 검증이 실패할 수 있습니다(그 경우는
-  semantic merge 단계가 판단).
+- generation pointer와 chunk가 서로 다른 stage에서 와 섞이면 그 side 열기가 실패할 수 있습니다. 실패는
+  side별 결과로 보존되며 처리 방식은 semantic merge 단계(XIV.11.3)가 정합니다.
+- materializer 자체의 drop 정리는 git-porcelain 소관이며, project 쪽은 비공개 session root 정리로 보강합니다.
+- 이번 세션은 기계 부하가 매우 높았습니다(load average 약 170). 전체 `cargo test` 병렬 실행 중 이 작업과
+  무관한 timing 테스트(제한 YAML fuzz 입력당 3초 상한, FSEvents live)가 한 번씩 실패했고, 단독·재실행에서는
+  통과했습니다(YAML·watcher 코드는 이 작업에서 바꾸지 않음).

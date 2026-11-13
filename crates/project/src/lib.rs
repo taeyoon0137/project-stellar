@@ -74,3 +74,6 @@ pub mod saved_project;
 
 /// 비공개 임시 디렉터리와 정리 (XVI.7.5).
 pub mod private_temp;
+
+/// conflict 세 stage virtual project 열기 (XIV.11.2).
+pub mod conflict_open;
