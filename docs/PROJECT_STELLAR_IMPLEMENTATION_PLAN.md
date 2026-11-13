@@ -566,7 +566,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | VI.5.1 | `[x]` | ShapeKind에 Rectangle, Ellipse, Line, Polygon을 정의합니다. 별도 node kind를 늘리지 않습니다. | kind variant round-trip. | VI.2.1 |
-| VI.5.2 | `[ ]` | Rectangle 파라미터에 size와 개별 corner radius를 정의하고 radius를 bounds에 clamp하는 평가 함수를 구현합니다. 저장값은 원본을 유지합니다. | oversize radius reference fixture 통과. | VI.5.1, III.3.3 |
+| VI.5.2 | `[x]` | Rectangle 파라미터에 size와 개별 corner radius를 정의하고 radius를 bounds에 clamp하는 평가 함수를 구현합니다. 저장값은 원본을 유지합니다. | oversize radius reference fixture 통과. | VI.5.1, III.3.3 |
 | VI.5.3 | `[ ]` | Ellipse는 bounds로 정의하고 start/end angle을 지원하지 않는 초기 범위로 고정합니다. 해당 필드가 파일에 있으면 unknown field 정책을 따릅니다. | full ellipse path reference와 일치. | VI.5.1 |
 | VI.5.4 | `[ ]` | Line은 start/end point와 cap style을 정의합니다. zero-length line 정책을 점 cap으로 명시합니다. | cap별 bounds fixture 통과. | VI.5.1 |
 | VI.5.5 | `[ ]` | Polygon은 side count≥3, rotation, corner radius를 정의합니다. | 2 sides 거부, 3·4·100 sides path fixture 통과. | VI.5.1 |

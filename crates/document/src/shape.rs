@@ -5,6 +5,10 @@
 
 use std::fmt;
 
+use stellar_core_types::value::Size2;
+
+use crate::frame::CornerRadius;
+
 /// Shape payload 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShapeError {
@@ -78,6 +82,39 @@ impl ShapeKind {
     }
 }
 
+/// Rectangle 파라미터 (VI.5.2).
+///
+/// 저장값은 사용자가 지정한 **원본 radius**를 그대로 유지합니다. bounds를 넘는
+/// radius는 평가 단계([`RectangleParams::effective_corner_radius`])에서만
+/// clamp합니다 — 크기를 다시 키우면 원래 둥글기가 돌아옵니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RectangleParams {
+    /// 크기(비음수).
+    pub size: Size2,
+    /// 개별 corner radius(원본, 비음수).
+    pub corner_radius: CornerRadius,
+}
+
+impl RectangleParams {
+    /// 렌더·path 평가에 쓰는 실제 radius `(top_left, top_right, bottom_right,
+    /// bottom_left)`.
+    ///
+    /// 각 변에서 인접한 두 radius의 합이 변 길이를 넘으면, 모든 radius를 같은
+    /// 비율 `f = min(변 길이 / 인접 radius 합)`으로 줄입니다(형태 비율 보존).
+    pub fn effective_corner_radius(&self) -> (f32, f32, f32, f32) {
+        let (tl, tr, br, bl) = self.corner_radius.components();
+        let w = self.size.width();
+        let h = self.size.height();
+        let mut factor: f32 = 1.0;
+        for (side, sum) in [(w, tl + tr), (h, tr + br), (w, br + bl), (h, bl + tl)] {
+            if sum > side {
+                factor = factor.min(if sum > 0.0 { side / sum } else { 1.0 });
+            }
+        }
+        (tl * factor, tr * factor, br * factor, bl * factor)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -121,5 +158,43 @@ mod tests {
         for name in ["rectangle", "ellipse", "line", "polygon"] {
             assert!(NodeKind::ALL.iter().all(|k| k.name() != name));
         }
+    }
+
+    #[test]
+    fn oversize_radius_reference_fixture() {
+        // 검증 기준(VI.5.2): oversize radius reference fixture 통과.
+        // 100×50, 모든 radius 40 → 세로 변 합 80 > 50 → f = 0.625 → 25.
+        let params = RectangleParams {
+            size: Size2::new(100.0, 50.0).unwrap(),
+            corner_radius: CornerRadius::new(40.0, 40.0, 40.0, 40.0).unwrap(),
+        };
+        assert_eq!(params.effective_corner_radius(), (25.0, 25.0, 25.0, 25.0));
+        // 저장값은 원본 유지.
+        assert_eq!(params.corner_radius.components(), (40.0, 40.0, 40.0, 40.0));
+
+        // 비대칭: 200×100, tl=150, 나머지 0 → 위 변 150 ≤ 200, 왼 변 150 > 100 → f=2/3.
+        let params = RectangleParams {
+            size: Size2::new(200.0, 100.0).unwrap(),
+            corner_radius: CornerRadius::new(150.0, 0.0, 0.0, 0.0).unwrap(),
+        };
+        let (tl, tr, br, bl) = params.effective_corner_radius();
+        assert!((tl - 100.0).abs() < 1e-4, "tl={tl}");
+        assert_eq!((tr, br, bl), (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn fitting_radius_is_unchanged_and_zero_size_collapses() {
+        let params = RectangleParams {
+            size: Size2::new(100.0, 100.0).unwrap(),
+            corner_radius: CornerRadius::new(10.0, 20.0, 30.0, 40.0).unwrap(),
+        };
+        assert_eq!(params.effective_corner_radius(), (10.0, 20.0, 30.0, 40.0));
+        // 크기 0이면 실효 radius 0(원본은 유지).
+        let params = RectangleParams {
+            size: Size2::ZERO,
+            corner_radius: CornerRadius::new(8.0, 8.0, 8.0, 8.0).unwrap(),
+        };
+        assert_eq!(params.effective_corner_radius(), (0.0, 0.0, 0.0, 0.0));
+        assert_eq!(params.corner_radius.components(), (8.0, 8.0, 8.0, 8.0));
     }
 }
