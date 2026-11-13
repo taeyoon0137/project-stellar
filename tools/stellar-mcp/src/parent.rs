@@ -200,10 +200,11 @@ fn wait_exit(kq: &OwnedFd) -> bool {
     }
 }
 
+// 자식 프로세스를 띄우는 감시 테스트는 socket을 여는 unit test와 fd가 섞이지 않도록
+// `tests/parent_exit.rs`(별도 test 실행 파일)에 있습니다.
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::{Command, Stdio};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -212,38 +213,6 @@ mod tests {
         // struct kevent: uintptr_t, int16_t, uint16_t, uint32_t, intptr_t, void* (arm64: 32 byte).
         assert_eq!(std::mem::size_of::<sys::KEvent>(), 32);
         assert_eq!(std::mem::align_of::<sys::KEvent>(), 8);
-    }
-
-    #[test]
-    fn watched_process_exit_calls_back_once() {
-        let mut child = Command::new("/bin/sleep")
-            .arg("30")
-            .stdin(Stdio::null())
-            .spawn()
-            .unwrap();
-        let pid = i32::try_from(child.id()).unwrap();
-        let (tx, rx) = mpsc::channel();
-        assert!(watch_pid(pid, move || tx.send(()).unwrap()).unwrap());
-        assert!(
-            rx.recv_timeout(Duration::from_millis(200)).is_err(),
-            "살아 있는 동안 콜백 없음"
-        );
-        child.kill().unwrap();
-        child.wait().unwrap();
-        rx.recv_timeout(Duration::from_secs(5))
-            .expect("종료 후 콜백 호출");
-        assert!(
-            rx.recv_timeout(Duration::from_millis(100)).is_err(),
-            "콜백은 한 번"
-        );
-    }
-
-    #[test]
-    fn already_reaped_process_is_reported_gone() {
-        let mut child = Command::new("/usr/bin/true").spawn().unwrap();
-        let pid = i32::try_from(child.id()).unwrap();
-        child.wait().unwrap();
-        assert!(!watch_pid(pid, || {}).unwrap());
     }
 
     #[test]

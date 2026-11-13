@@ -8,15 +8,62 @@
 //!
 //! 테스트가 pipe 쓰기 끝을 계속 쥐고 있으므로 stellar-mcp의 stdin에는 EOF가 오지 않습니다. 이
 //! 상태에서 부모(sh)를 SIGKILL로 강제 종료하면 stellar-mcp가 부모 종료를 직접 감지해 끝나야 합니다.
+//!
+//! macOS에서는 pipe 생성과 close-on-exec 설정 사이에 다른 thread가 띄운 자식이 그 fd를 물려받을 수
+//! 있습니다. 그러면 EOF 검사가 흔들리므로 이 파일의 테스트는 [`SERIAL`]로 하나씩 실행합니다.
 
 #![cfg(target_os = "macos")]
 
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::{mpsc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use stellar_mcp::parent::watch_pid;
+
 const BIN: &str = env!("CARGO_BIN_EXE_stellar-mcp");
+
+/// 자식 프로세스를 띄우는 테스트를 직렬화합니다.
+static SERIAL: Mutex<()> = Mutex::new(());
+
+fn serial() -> MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[test]
+fn watched_process_exit_calls_back_once() {
+    let _serial = serial();
+    let mut child = Command::new("/bin/sleep")
+        .arg("30")
+        .stdin(Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = i32::try_from(child.id()).unwrap();
+    let (tx, rx) = mpsc::channel();
+    assert!(watch_pid(pid, move || tx.send(()).unwrap()).unwrap());
+    assert!(
+        rx.recv_timeout(Duration::from_millis(200)).is_err(),
+        "살아 있는 동안 콜백 없음"
+    );
+    child.kill().unwrap();
+    child.wait().unwrap();
+    rx.recv_timeout(Duration::from_secs(5))
+        .expect("종료 후 콜백 호출");
+    assert!(
+        rx.recv_timeout(Duration::from_millis(100)).is_err(),
+        "콜백은 한 번"
+    );
+}
+
+#[test]
+fn already_reaped_process_is_reported_gone() {
+    let _serial = serial();
+    let mut child = Command::new("/usr/bin/true").spawn().unwrap();
+    let pid = i32::try_from(child.id()).unwrap();
+    child.wait().unwrap();
+    assert!(!watch_pid(pid, || {}).unwrap());
+}
 
 struct TempDir(PathBuf);
 
@@ -72,6 +119,7 @@ fn wait_for_text(path: &PathBuf, needle: &str, limit: Duration) -> String {
 
 #[test]
 fn fixture_parent_force_kill_leaves_no_bridge() {
+    let _serial = serial();
     let tmp = TempDir::new("parent-kill");
     let out = tmp.0.join("bridge.out");
     let err = tmp.0.join("bridge.err");
@@ -135,6 +183,7 @@ exec 3<&- sleep 600 >/dev/null"#;
 
 #[test]
 fn stdin_eof_ends_bridge_with_exit_zero() {
+    let _serial = serial();
     let mut child = Command::new(BIN)
         .env_clear()
         .stdin(Stdio::piped())
