@@ -2203,7 +2203,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XXVI.4.1 | `[x]` | tags, notes, bisect, sparse-checkout, submodule 상태의 read UI를 우선 구현합니다. | fixture. | Phase XIV |
-| XXVI.4.2 | `[ ]` | 각 기능의 write UI는 별도 task/승인 후 추가하고 시스템 Git에서 가능하다는 이유만으로 자동 노출하지 않습니다. | feature flags default off. | XXVI.4.1 |
+| XXVI.4.2 | `[x]` | 각 기능의 write UI는 별도 task/승인 후 추가하고 시스템 Git에서 가능하다는 이유만으로 자동 노출하지 않습니다. | feature flags default off. | XXVI.4.1 |
 
 ---
 

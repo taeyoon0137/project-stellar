@@ -45,6 +45,9 @@ pub mod worktree_ops;
 /// tags·notes·bisect·sparse-checkout·submodule 읽기(XXVI.4.1).
 pub mod inspect;
 
+/// 고급 Git 쓰기 기능 feature flag(기본 비활성, XXVI.4.2).
+pub mod features;
+
 /// 명령의 파괴 수준.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DestructiveLevel {
