@@ -54,6 +54,8 @@ pub enum SlotContentCommand {
     /// ComponentInstance)여야 하고, 같은 부모의 형제끼리 OrderKey가 달라야 합니다. subtree 안
     /// ComponentInstance의 slot override는 그 subtree 안 자식만 투영 규칙(IX.3.2)대로 가리켜야
     /// 합니다 — `Remove`의 inverse가 nested 인스턴스와 그 slot content를 그대로 되살립니다.
+    /// library에 없는 컴포넌트를 참조하는 nested 인스턴스(미해결 참조, III.2.4)는 library
+    /// 디코딩과 같이 투영 검사를 건너뜁니다.
     Insert {
         /// scene 인스턴스.
         instance: StableId,
@@ -395,6 +397,13 @@ impl SlotContentCommand {
                         .collect();
                     if children.is_empty() && payload.slot_overrides().next().is_none() {
                         // 투영할 것이 없습니다(참조 컴포넌트가 미해결이어도 허용, III.2.4).
+                        continue;
+                    }
+                    if library.get(payload.component()).is_none() {
+                        // library에 없는 컴포넌트(외부·미해결 참조, III.2.4)는 오류가 아니라 진단
+                        // 대상입니다. library 디코딩([`ComponentLibrary::decode`])과 같은 규칙으로
+                        // 투영 검사를 건너뜁니다 — 그래야 그런 인스턴스를 담은 subtree를 지운
+                        // `Remove`의 inverse가 그대로 다시 적용됩니다.
                         continue;
                     }
                     validate_record_slot_overrides(
@@ -1185,6 +1194,52 @@ mod tests {
             .apply(&library, &mut columns, &mut payloads)
             .unwrap();
         assert_eq!(snapshot(&columns, &payloads), inserted);
+    }
+
+    #[test]
+    fn remove_inverse_restores_subtree_with_unresolved_nested_instance() {
+        // 회귀: 지운 subtree에 library에 없는 컴포넌트(99)를 참조하고 자식을 가진 nested
+        // 인스턴스가 있어도 Remove의 inverse(Insert)가 거부되지 않고 정확히 복원해야 합니다.
+        let library = panel_library();
+        // scene을 직접 구성합니다: PANEL(OUTER=[2101]) ← 2101(Frame) ← 2102(ref 99, slot
+        // 9999=[2103]) ← 2103(Text). 미해결 참조는 scene에 존재할 수 있습니다(진단 대상).
+        let (mut columns, mut payloads) = panel_scene(&[(OUTER, &[2101])], &[]);
+        let mut nested = ComponentInstancePayload::new(ComponentRef::new(stable(99)));
+        nested.set_slot_override(slot(9999), SlotOverride::new(vec![stable(2103)]).unwrap());
+        {
+            let map = handles(&columns);
+            let mk = |id: u64, kind, parent: RuntimeEntityId, order: u8| NodeFields {
+                stable_id: stable(id),
+                kind,
+                parent: Some(parent),
+                order_key: key(order),
+                visible: true,
+                locked: false,
+                display_name: String::new(),
+            };
+            let frame = columns.insert(mk(2101, NodeKind::Frame, map[&stable(PANEL)], 0x70));
+            let inner = columns.insert(mk(2102, NodeKind::ComponentInstance, frame, 0x40));
+            columns.insert(mk(2103, NodeKind::Text, inner, 0x40));
+        }
+        payloads.insert(stable(2102), nested.encode());
+        let before = snapshot(&columns, &payloads);
+
+        let inverse = SlotContentCommand::Remove {
+            instance: stable(PANEL),
+            slot: slot(OUTER),
+            node: stable(2101),
+            restore_default: false,
+        }
+        .apply(&library, &mut columns, &mut payloads)
+        .unwrap();
+        assert_eq!(columns.len(), 2);
+        let redo = inverse
+            .apply(&library, &mut columns, &mut payloads)
+            .unwrap();
+        assert_eq!(snapshot(&columns, &payloads), before);
+        // redo(다시 Remove)도 그대로 적용됩니다.
+        redo.apply(&library, &mut columns, &mut payloads).unwrap();
+        assert_eq!(columns.len(), 2);
     }
 
     const PANEL: u64 = 1201;

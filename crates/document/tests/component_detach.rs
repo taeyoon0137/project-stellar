@@ -697,3 +697,28 @@ fn undo_rejects_foreign_child_under_detached_subtree() {
     );
     assert_eq!(snapshot(&columns, &payloads), before);
 }
+
+#[test]
+fn undo_rejects_moved_content_reparented_outside_detached_subtree() {
+    // 리뷰 보강: detach로 slot host 복제본 아래로 옮긴 content(1102)가 그 뒤 복제 subtree 밖(scene
+    // root 1000)으로 옮겨지면, undo가 그 node를 인스턴스 아래로 되돌릴 근거가 없으므로 아무것도
+    // 바꾸지 않고 거부합니다(check_detached_shape의 moved 분기).
+    let library = nested_library();
+    let (mut columns, mut payloads) = nested_scene(&[(661, &[1102, 1103])]);
+    let record = detach_panel(&library, &mut columns, &mut payloads).unwrap();
+    let (moved, scene_root) = {
+        let index = SceneIndex::build(&columns, &payloads);
+        (
+            index.runtime_id(stable(1102)).unwrap(),
+            index.runtime_id(stable(1000)).unwrap(),
+        )
+    };
+    columns.set_parent(moved, Some(scene_root));
+    columns.set_order_key(moved, key(0x10));
+    let before = snapshot(&columns, &payloads);
+    assert_eq!(
+        undo_detach(&mut columns, &mut payloads, &record).unwrap_err(),
+        DetachError::StateMismatch { node: stable(1102) }
+    );
+    assert_eq!(snapshot(&columns, &payloads), before, "거부 시 scene 불변");
+}
