@@ -956,7 +956,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | X.5.1 | `[x]` | Overlay layout에서 모든 child가 같은 containing block을 사용하고 z-order는 OrderKey를 따르게 합니다. | overlay fixture 통과. | X.1.1 |
-| X.5.2 | `[ ]` | Anchor target을 parent edge, sibling edge, center, baseline로 정의하고 참조는 StableId를 사용합니다. | missing sibling은 diagnostic. | III.2.3, X.1.1 |
+| X.5.2 | `[x]` | Anchor target을 parent edge, sibling edge, center, baseline로 정의하고 참조는 StableId를 사용합니다. | missing sibling은 diagnostic. | III.2.3, X.1.1 |
 | X.5.3 | `[ ]` | constraint graph를 구축하고 cycle·underdetermined·overdetermined를 분류합니다. | 각 graph fixture 정확. | X.5.2 |
 | X.5.4 | `[ ]` | 초기 constraint solver는 equality와 priority 없는 필수 제약만 지원합니다. 지원하지 않는 priority 필드는 스키마에 넣지 않습니다. | deterministic solution fixture 통과. | X.5.3 |
 | X.5.5 | `[ ]` | constraint 변경 영향 범위를 connected component로 제한합니다. | 무관 component 재계산 0. | X.5.4 |

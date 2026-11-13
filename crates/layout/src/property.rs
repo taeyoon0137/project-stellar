@@ -30,6 +30,8 @@ pub enum LayoutProperty {
     Visibility,
     /// Grid item 열·행 위치 (X.4.3).
     GridPlacement,
+    /// Constraint 부모 안의 등식 제약 (X.5.2).
+    Constraints,
 }
 
 impl LayoutProperty {
@@ -47,6 +49,7 @@ impl LayoutProperty {
             LayoutProperty::Flex => "flex",
             LayoutProperty::Visibility => "visibility",
             LayoutProperty::GridPlacement => "grid-placement",
+            LayoutProperty::Constraints => "constraints",
         }
     }
 }

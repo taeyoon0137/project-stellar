@@ -22,6 +22,7 @@ use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::value::{Insets, Length, Percentage, Transform2D};
 
 use crate::codec::{Reader, Writer};
+use crate::constraint::{decode_constraints, encode_constraints, validate_constraints, Constraint};
 use crate::error::LayoutError;
 use crate::flex::{decode_flex, encode_flex, prepare_flex, validate_flex_combination, FlexItem};
 use crate::free::{
@@ -72,6 +73,8 @@ pub enum ContainerLayout {
     Grid(GridLayout),
     /// 모든 자식이 같은 containing block을 쓰는 겹침 배치(X.5.1).
     Overlay(OverlayLayout),
+    /// 자식 anchor·constraint 등식으로 배치(X.5).
+    Constraint,
 }
 
 /// leaf 콘텐츠의 intrinsic 크기와 baseline (X.1.1).
@@ -126,6 +129,8 @@ pub struct LayoutNode {
     pub visible: bool,
     /// Grid 부모 안의 열·행 위치(X.4.3). 다른 배치 방식의 자식에서는 무시합니다.
     pub grid: GridItem,
+    /// Constraint 부모 안의 필수 등식 제약(X.5.2). 다른 배치 방식의 자식에서는 무시합니다.
+    pub constraints: Vec<Constraint>,
 }
 
 impl LayoutNode {
@@ -144,7 +149,14 @@ impl LayoutNode {
             flex: FlexItem::default(),
             visible: true,
             grid: GridItem::default(),
+            constraints: Vec::new(),
         }
+    }
+
+    /// Constraint 부모 안의 제약을 추가합니다.
+    pub fn with_constraint(mut self, constraint: Constraint) -> LayoutNode {
+        self.constraints.push(constraint);
+        self
     }
 
     /// Grid 부모 안의 열·행 위치를 지정합니다.
@@ -342,7 +354,7 @@ impl LayoutInput {
                     ContainerLayout::Free => validate_anchor_combination(node)?,
                     ContainerLayout::Stack(stack) => validate_flex_combination(node, stack.axis)?,
                     ContainerLayout::Grid(grid) => validate_item(node.id, &node.grid, grid)?,
-                    ContainerLayout::Overlay(_) => {}
+                    ContainerLayout::Overlay(_) | ContainerLayout::Constraint => {}
                 }
             }
         }
@@ -422,7 +434,7 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
         ContainerLayout::Free => {}
         ContainerLayout::Stack(stack) => validate_stack(node.id, stack)?,
         ContainerLayout::Grid(grid) => validate_grid(node.id, grid)?,
-        ContainerLayout::Overlay(_) => {}
+        ContainerLayout::Overlay(_) | ContainerLayout::Constraint => {}
     }
     validate_sizing(node.id, Axis::Horizontal, node.width, is_root)?;
     validate_sizing(node.id, Axis::Vertical, node.height, is_root)?;
@@ -435,6 +447,7 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
     }
     validate_position_values(node)?;
     prepare_flex(node)?;
+    validate_constraints(node)?;
     Ok(())
 }
 
@@ -444,6 +457,7 @@ const CONTAINER_FREE: u8 = 0;
 const CONTAINER_STACK: u8 = 1;
 const CONTAINER_GRID: u8 = 2;
 const CONTAINER_OVERLAY: u8 = 3;
+const CONTAINER_CONSTRAINT: u8 = 4;
 
 const CONTENT_NONE: u8 = 0;
 const CONTENT_INTRINSIC: u8 = 1;
@@ -470,6 +484,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
             w.u8(CONTAINER_OVERLAY);
             encode_overlay(w, overlay);
         }
+        ContainerLayout::Constraint => w.u8(CONTAINER_CONSTRAINT),
     }
     w.insets(&node.padding);
     encode_sizing(w, node.width);
@@ -497,6 +512,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
     encode_flex(w, &node.flex);
     w.bool(node.visible);
     encode_item(w, &node.grid);
+    encode_constraints(w, &node.constraints);
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
@@ -529,6 +545,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         }
         CONTAINER_GRID => ContainerLayout::Grid(decode_grid(r)?),
         CONTAINER_OVERLAY => ContainerLayout::Overlay(decode_overlay(r)?),
+        CONTAINER_CONSTRAINT => ContainerLayout::Constraint,
         _ => {
             return Err(LayoutError::Malformed {
                 reason: "알 수 없는 container tag",
@@ -571,6 +588,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
     let flex = decode_flex(r)?;
     let visible = r.bool("visible flag")?;
     let grid = decode_item(r)?;
+    let constraints = decode_constraints(r)?;
     Ok(LayoutNode {
         id,
         children,
@@ -584,6 +602,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         flex,
         visible,
         grid,
+        constraints,
     })
 }
 

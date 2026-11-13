@@ -25,6 +25,29 @@ const RESULT_MAGIC: &[u8; 4] = b"SLYR";
 /// 결과 canonical bytes version.
 const RESULT_VERSION: u16 = 1;
 
+/// 레이아웃을 실패시키지 않는 진단 (X.5.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LayoutDiagnostic {
+    /// constraint의 sibling target이 같은 부모의 표시되는 자식이 아니어서 그 constraint를 제외했습니다.
+    MissingAnchorTarget {
+        /// constraint를 가진 node.
+        node: StableId,
+        /// 찾지 못한 target.
+        target: StableId,
+    },
+}
+
+impl std::fmt::Display for LayoutDiagnostic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LayoutDiagnostic::MissingAnchorTarget { node, target } => write!(
+                f,
+                "node {node}의 anchor target {target}이 같은 부모의 표시되는 형제가 아니라 제외했습니다"
+            ),
+        }
+    }
+}
+
 /// node 하나의 레이아웃 결과 (X.1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LayoutBox {

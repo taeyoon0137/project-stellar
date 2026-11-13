@@ -268,6 +268,10 @@ impl<'a> Engine<'a> {
             ContainerLayout::Stack(_) => stack::measure(self, index, inner),
             ContainerLayout::Grid(_) => grid::measure(self, index, inner),
             ContainerLayout::Overlay(_) => overlay::measure(self, index, inner),
+            ContainerLayout::Constraint => Err(LayoutError::UnsupportedFeature {
+                node: self.nodes[index].id,
+                feature: "Constraint 배치(X.5.4)",
+            }),
         }
     }
 
@@ -308,6 +312,12 @@ impl<'a> Engine<'a> {
             ContainerLayout::Stack(_) => stack::place(self, index, inner)?,
             ContainerLayout::Grid(_) => grid::place(self, index, inner)?,
             ContainerLayout::Overlay(_) => overlay::place(self, index, inner)?,
+            ContainerLayout::Constraint => {
+                return Err(LayoutError::UnsupportedFeature {
+                    node: id,
+                    feature: "Constraint 배치(X.5.4)",
+                })
+            }
         };
         let mut overflow = LayoutRect::at_origin(size);
         for (child, child_rect) in placements {

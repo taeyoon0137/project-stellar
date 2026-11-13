@@ -95,6 +95,20 @@ pub enum LayoutError {
         /// 사유.
         reason: &'static str,
     },
+    /// constraint 값·조합이 잘못되었습니다 (X.5).
+    InvalidConstraint {
+        /// 대상 node.
+        node: StableId,
+        /// 사유.
+        reason: &'static str,
+    },
+    /// 아직 구현하지 않은 레이아웃 기능을 사용했습니다.
+    UnsupportedFeature {
+        /// 대상 node.
+        node: StableId,
+        /// 기능 설명.
+        feature: &'static str,
+    },
     /// 레이아웃 결과 box의 불변식이 깨졌습니다.
     InvalidBox {
         /// 대상 node.
@@ -173,6 +187,15 @@ impl fmt::Display for LayoutError {
             }
             LayoutError::InvalidGrid { node, reason } => {
                 write!(f, "node {node}의 grid 설정이 잘못되었습니다: {reason}")
+            }
+            LayoutError::InvalidConstraint { node, reason } => {
+                write!(f, "node {node}의 constraint가 잘못되었습니다: {reason}")
+            }
+            LayoutError::UnsupportedFeature { node, feature } => {
+                write!(
+                    f,
+                    "node {node}: 지원하지 않는 레이아웃 기능입니다({feature})"
+                )
             }
             LayoutError::InvalidBox { node, reason } => {
                 write!(f, "node {node}의 레이아웃 box가 잘못되었습니다: {reason}")
