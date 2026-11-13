@@ -1,16 +1,19 @@
 //! MCP protocol version 고정과 협상 (XIX.1.5).
 //!
 //! 지원 version 목록은 코드가 아니라 `config/mcp-protocol.yaml`에 고정합니다. 실행 파일은 빌드 시
-//! 이 파일을 내장하므로 설치 위치와 무관하게 같은 목록을 씁니다. 협상 규칙:
+//! 이 파일을 내장하므로 설치 위치와 무관하게 같은 목록을 씁니다.
 //!
-//! - client가 보낸 `protocolVersion`이 목록에 **정확히** 있으면 그 version으로 응답합니다.
-//! - 없으면 `-32602`(invalid params)와 함께 요청 version·지원 목록을 `data`로 반환합니다. 서버
-//!   상태는 initialize 전으로 남아 client가 다른 version으로 다시 시도할 수 있습니다.
+//! 협상 규칙은 MCP 명세 2025-11-25 Lifecycle "Version Negotiation"을 따릅니다.
+//!
+//! - client가 보낸 `protocolVersion`이 목록에 **정확히** 있으면 그 version으로 응답합니다
+//!   ([`Negotiation::Accepted`]).
+//! - 없으면 오류 대신 서버가 지원하는 version 중 최신(선호, 목록 첫 항목)으로 응답합니다
+//!   ([`Negotiation::Offered`]). 명세상 서버는 지원하지 않는 요청에 "자신이 지원하는 다른
+//!   version"으로 응답해야 하고(MUST), 그 version을 지원하지 않는 client가 연결을 끊습니다.
+//! - `protocolVersion`이 문자열이 아니거나 없으면 version 협상이 아니라 params 형식 오류이므로
+//!   서버가 `-32602`로 거부합니다([`crate::server`]).
 
 use std::fmt;
-
-use crate::json::JsonValue;
-use crate::jsonrpc::{codes, RpcError};
 
 /// 내장 config 원문(`config/mcp-protocol.yaml`).
 pub const CONFIG_TEXT: &str = include_str!(concat!(
@@ -24,8 +27,8 @@ const VERSIONS_KEY: &str = "supported_versions";
 /// config의 선호(첫) version. 빌드 시 [`CONFIG_TEXT`]에서 계산합니다.
 pub const PREFERRED_VERSION: &str = first_version(CONFIG_TEXT);
 
-/// 오류 data에 되돌려 보내는 요청 version 최대 문자 수.
-const MAX_ECHO_CHARS: usize = 64;
+/// 로그에 남기는 요청 version 최대 문자 수.
+pub const MAX_ECHO_CHARS: usize = 64;
 
 /// config에서 `supported_versions:` 줄의 첫 항목을 찾습니다(빌드 시 평가 전용).
 ///
@@ -194,34 +197,47 @@ impl ProtocolConfig {
         self.versions.first().map_or("", String::as_str)
     }
 
-    /// client 요청 version을 협상합니다. 지원하면 그 version, 아니면 -32602 오류입니다.
-    pub fn negotiate(&self, requested: &str) -> Result<&str, RpcError> {
-        if let Some(version) = self.versions.iter().find(|v| *v == requested) {
-            return Ok(version);
+    /// client 요청 version을 협상합니다(MCP Lifecycle "Version Negotiation").
+    ///
+    /// 지원하면 그 version([`Negotiation::Accepted`]), 아니면 선호 version([`Negotiation::Offered`])
+    /// 입니다. 협상 자체는 실패하지 않습니다.
+    pub fn negotiate(&self, requested: &str) -> Negotiation<'_> {
+        match self.versions.iter().find(|v| *v == requested) {
+            Some(version) => Negotiation::Accepted(version),
+            None => Negotiation::Offered(self.preferred()),
         }
-        let echoed: String = if requested.chars().count() > MAX_ECHO_CHARS {
-            requested
-                .chars()
-                .take(MAX_ECHO_CHARS)
-                .chain(['…'])
-                .collect()
-        } else {
-            requested.to_string()
-        };
-        Err(RpcError::new(
-            codes::INVALID_PARAMS,
-            format!(
-                "지원하지 않는 MCP protocol version입니다(지원: {})",
-                self.versions.join(", ")
-            ),
-        )
-        .with_data(JsonValue::object(vec![
-            ("requested", JsonValue::string(echoed)),
-            (
-                "supported",
-                JsonValue::Array(self.versions.iter().map(JsonValue::string).collect()),
-            ),
-        ])))
+    }
+}
+
+/// version 협상 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Negotiation<'a> {
+    /// client 요청 version을 지원해 같은 version으로 응답합니다.
+    Accepted(&'a str),
+    /// client 요청 version을 지원하지 않아 서버 선호 version으로 응답합니다. 이 version을 지원하지
+    /// 않는 client는 연결을 끊습니다.
+    Offered(&'a str),
+}
+
+impl<'a> Negotiation<'a> {
+    /// 응답 `protocolVersion`에 넣을 version.
+    pub fn version(&self) -> &'a str {
+        match self {
+            Negotiation::Accepted(v) | Negotiation::Offered(v) => v,
+        }
+    }
+}
+
+/// 로그용으로 요청 version을 [`MAX_ECHO_CHARS`]자까지 자릅니다(넘으면 끝에 `…`).
+pub fn truncate_for_log(requested: &str) -> String {
+    if requested.chars().count() > MAX_ECHO_CHARS {
+        requested
+            .chars()
+            .take(MAX_ECHO_CHARS)
+            .chain(['…'])
+            .collect()
+    } else {
+        requested.to_string()
     }
 }
 
@@ -243,7 +259,6 @@ fn is_version(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::json::write;
 
     #[test]
     fn builtin_config_pins_exact_versions() {
@@ -255,35 +270,55 @@ mod tests {
     }
 
     #[test]
-    fn negotiation_accepts_only_exact_matches() {
+    fn negotiation_accepts_exact_matches_and_offers_preferred_otherwise() {
         let config = ProtocolConfig::builtin().unwrap();
-        assert_eq!(config.negotiate("2025-06-18").unwrap(), "2025-06-18");
-        assert_eq!(config.negotiate("2025-11-25").unwrap(), "2025-11-25");
-        let err = config.negotiate("2024-11-05").unwrap_err();
-        assert_eq!(err.code, codes::INVALID_PARAMS);
-        assert!(
-            err.message.contains("2025-11-25, 2025-06-18"),
-            "{}",
-            err.message
+        assert_eq!(
+            config.negotiate("2025-06-18"),
+            Negotiation::Accepted("2025-06-18")
         );
         assert_eq!(
-            write(err.data.as_ref().unwrap()),
-            r#"{"requested":"2024-11-05","supported":["2025-11-25","2025-06-18"]}"#
+            config.negotiate("2025-11-25"),
+            Negotiation::Accepted("2025-11-25")
         );
-        for near in [
+        // 미지원 version에는 오류 대신 선호(최신) version을 제안합니다(MCP Lifecycle).
+        for unsupported in [
+            "2024-11-05",
+            "2025-03-26",
+            "2099-01-01",
+            "1.0.0",
+            "",
             "2025-11-25 ",
             " 2025-11-25",
             "2025-11-25\n",
             "2025-11-2",
             "2025-11",
         ] {
-            assert!(config.negotiate(near).is_err(), "{near:?}");
+            let negotiation = config.negotiate(unsupported);
+            assert_eq!(
+                negotiation,
+                Negotiation::Offered("2025-11-25"),
+                "{unsupported:?}"
+            );
+            assert_eq!(negotiation.version(), config.preferred());
         }
-        // 긴 요청 version은 잘라서 되돌립니다.
+        // 다른 config에서는 그 config의 선호 version을 제안합니다.
+        let other =
+            ProtocolConfig::from_config_str("supported_versions: 2030-01-01, 2029-06-30").unwrap();
+        assert_eq!(
+            other.negotiate("2025-11-25"),
+            Negotiation::Offered("2030-01-01")
+        );
+        assert_eq!(
+            other.negotiate("2029-06-30"),
+            Negotiation::Accepted("2029-06-30")
+        );
+    }
+
+    #[test]
+    fn long_requested_versions_are_truncated_for_logs() {
         let long = "9".repeat(1000);
-        let data = config.negotiate(&long).unwrap_err().data.unwrap();
-        let echoed = data.get("requested").and_then(JsonValue::as_str).unwrap();
-        assert_eq!(echoed.chars().count(), MAX_ECHO_CHARS + 1);
+        assert_eq!(truncate_for_log(&long).chars().count(), MAX_ECHO_CHARS + 1);
+        assert_eq!(truncate_for_log("2024-11-05"), "2024-11-05");
     }
 
     #[test]

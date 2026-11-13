@@ -15,8 +15,10 @@
 //! 로그만 남기고 무시합니다.
 //!
 //! `initialize`의 `protocolVersion`은 `config/mcp-protocol.yaml`에 고정한 목록으로 협상합니다
-//! (XIX.1.5, [`crate::protocol`]). 지원하지 않는 version은 `-32602`로 거부하고 initialize 전
-//! 상태를 유지합니다.
+//! (XIX.1.5, [`crate::protocol`]). MCP Lifecycle "Version Negotiation"에 따라 지원하지 않는
+//! version 요청에는 오류 대신 서버 선호 version으로 응답하고, 그 version을 쓸지는 client가
+//! 정합니다. `protocolVersion`이 문자열이 아니면 `-32602`로 거부하고 initialize 전 상태를
+//! 유지합니다.
 
 use std::io::{self, BufRead, Write};
 
@@ -24,7 +26,9 @@ use crate::framing::{read_frame, write_frame, Frame};
 use crate::json::{self, JsonLimits, JsonValue};
 use crate::jsonrpc::{classify, codes, response_err, response_ok, Incoming, RpcError};
 use crate::log::Logger;
-use crate::protocol::{ProtocolConfig, ProtocolConfigError, PREFERRED_VERSION};
+use crate::protocol::{
+    truncate_for_log, Negotiation, ProtocolConfig, ProtocolConfigError, PREFERRED_VERSION,
+};
 
 /// 서버 이름(`serverInfo.name`).
 pub const SERVER_NAME: &str = "stellar-mcp";
@@ -185,14 +189,17 @@ impl Server {
                 format!("protocol version config 오류: {e}"),
             )
         })?;
-        let version = match config.negotiate(requested) {
-            Ok(version) => version.to_string(),
-            Err(error) => {
-                log.warn("지원하지 않는 protocol version 요청을 거부합니다");
-                return Err(error);
+        let negotiation = config.negotiate(requested);
+        let version = negotiation.version().to_string();
+        match negotiation {
+            Negotiation::Accepted(_) => {
+                log.info(&format!("initialize 수락(protocol version {version})"));
             }
-        };
-        log.info(&format!("initialize 수락(protocol version {version})"));
+            Negotiation::Offered(_) => log.warn(&format!(
+                "요청 protocol version {:?}을 지원하지 않아 {version}으로 응답합니다",
+                truncate_for_log(requested)
+            )),
+        }
         self.phase = Phase::Initialized;
         Ok(JsonValue::object(vec![
             ("protocolVersion", JsonValue::string(version)),
@@ -364,21 +371,35 @@ mod tests {
     }
 
     #[test]
-    fn negotiation_uses_the_given_config_and_keeps_state_on_rejection() {
+    fn negotiation_uses_the_given_config() {
         let config =
             ProtocolConfig::from_config_str("supported_versions: 2030-01-01, 2029-06-30").unwrap();
-        let mut server = Server::with_config(config);
-        // 내장 선호 version이라도 이 config에 없으면 거부하고 initialize 전 상태를 유지합니다.
-        let reply = handle(&mut server, INIT).unwrap();
-        assert!(reply.contains("-32602") && reply.contains("2030-01-01, 2029-06-30"));
-        assert_eq!(server.phase(), Phase::AwaitingInitialize);
-        let retry = INIT.replace("2025-11-25", "2029-06-30");
-        let reply = handle(&mut server, &retry).unwrap();
+        // 지원 목록에 있는 version은 그대로 응답합니다.
+        let mut server = Server::with_config(config.clone());
+        let exact = INIT.replace("2025-11-25", "2029-06-30");
+        let reply = handle(&mut server, &exact).unwrap();
         assert!(
             reply.contains("\"protocolVersion\":\"2029-06-30\""),
             "{reply}"
         );
         assert_eq!(server.phase(), Phase::Initialized);
+
+        // 내장 선호 version이라도 이 config에 없으면 오류 대신 이 config의 선호 version으로
+        // 응답합니다(MCP Lifecycle "Version Negotiation"). 사용 여부는 client가 정합니다.
+        let mut server = Server::with_config(config);
+        let mut log = Logger::new(Vec::new());
+        let reply = server
+            .handle_frame(INIT.as_bytes(), &mut log)
+            .map(|v| write(&v))
+            .unwrap();
+        assert!(!reply.contains("\"error\""), "{reply}");
+        assert!(
+            reply.contains("\"protocolVersion\":\"2030-01-01\""),
+            "{reply}"
+        );
+        assert_eq!(server.phase(), Phase::Initialized);
+        let log = String::from_utf8(log.into_inner()).unwrap();
+        assert!(log.contains("\"2025-11-25\"을 지원하지 않아"), "{log}");
     }
 
     #[test]
