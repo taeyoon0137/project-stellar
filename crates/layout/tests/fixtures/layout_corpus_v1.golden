@@ -1,0 +1,12 @@
+# X.11.1 레이아웃 적합성 corpus golden.
+# 생성: stellar_layout::corpus::generate_corpus(50) (배치 방식별 50개, 결정적 seed)
+# 비교: crates/layout/tests/layout_corpus.rs
+# 형식: inputs = 입력 canonical bytes hash, 이후 배치 방식별 fixture·box·진단 수와 결과 bytes digest
+#       (primary FNV-1a 64 - check 다항식 hash). 값이 바뀌면 레이아웃 결과 계약이 바뀐 것입니다.
+schema=1
+inputs=b0cb91d5ccf87bd4-02a227b6a2e3a9f0
+free fixtures=50 boxes=235 diagnostics=0 digest=3e991d4b150429e0-1479ad896fff68f0
+stack fixtures=50 boxes=262 diagnostics=0 digest=a567a0a4d34226fd-000ae68720107809
+grid fixtures=50 boxes=260 diagnostics=0 digest=e365d5b8b6de6757-09c13dbce75fae6e
+overlay fixtures=50 boxes=190 diagnostics=0 digest=e125901b88535c15-00f2916b23761864
+constraint fixtures=50 boxes=224 diagnostics=35 digest=71718e90912e0e5b-1565b08191f0ab78

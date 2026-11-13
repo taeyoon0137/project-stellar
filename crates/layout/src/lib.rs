@@ -57,6 +57,9 @@ pub mod constraint;
 /// layout worker result guard (X.7.5).
 pub mod guard;
 
+/// 레이아웃 적합성 fixture corpus (X.11.1).
+pub mod corpus;
+
 /// canonical bytes writer/reader (crate 내부).
 mod codec;
 
