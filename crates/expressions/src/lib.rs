@@ -35,3 +35,6 @@ pub mod graph_view;
 
 /// GUI socket 타입과 연결 가능 여부 (VIII.3.2).
 pub mod sockets;
+
+/// GUI block 추가·연결·삭제 command plan (VIII.3.3).
+pub mod edit_plan;
