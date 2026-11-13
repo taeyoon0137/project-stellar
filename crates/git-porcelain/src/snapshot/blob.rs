@@ -92,14 +92,17 @@ pub fn parse_cat_file_batch(
             .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
             .and_then(|s| s.parse().ok())
             .ok_or_else(|| parse_error("잘못된 크기", header))?;
-        if rest.len() < size + 1 {
-            return Err(parse_error("content가 잘림", header));
-        }
-        let content = rest[..size].to_vec();
+        // 크기는 신뢰할 수 없는 출력이므로 `size + 1`을 overflow 없이 계산하고, 남은 바이트보다
+        // 크면 해석 오류로 돌려줍니다(slice 범위 panic 방지).
+        let end = match size.checked_add(1) {
+            Some(end) if end <= rest.len() => end,
+            _ => return Err(parse_error("content가 잘림", header)),
+        };
         if rest[size] != b'\n' {
             return Err(parse_error("content 뒤 LF 없음", header));
         }
-        rest = &rest[size + 1..];
+        let content = rest[..size].to_vec();
+        rest = &rest[end..];
         if kind != ObjectKind::Blob {
             return Err(BlobError::NotABlob {
                 oid: oid.clone(),
@@ -201,6 +204,20 @@ mod tests {
             (format!("{a} blob\n").into_bytes(), vec![a.clone()]),
             (format!("{a} blob 1").into_bytes(), vec![a.clone()]),
             (Vec::new(), vec![a.clone()]),
+            // 크기 overflow·과대 크기는 panic 없이 해석 오류(리뷰 G1 회귀).
+            (
+                format!("{a} blob {}\nabc\n", usize::MAX).into_bytes(),
+                vec![a.clone()],
+            ),
+            (
+                format!("{a} blob {}\nabc\n", usize::MAX - 1).into_bytes(),
+                vec![a.clone()],
+            ),
+            (
+                format!("{a} blob 18446744073709551616\nabc\n").into_bytes(),
+                vec![a.clone()],
+            ),
+            (format!("{a} blob 4\nabc\n").into_bytes(), vec![a.clone()]),
         ] {
             assert!(
                 matches!(
