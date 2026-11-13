@@ -1,4 +1,4 @@
-//! Grid 배치 (X.4.1~X.4.3).
+//! Grid 배치 (X.4.1~X.4.4).
 //!
 //! # track 타입
 //!
@@ -15,7 +15,13 @@
 //!
 //! - item은 [`GridItem`]으로 열·행 위치를 정합니다. 축마다 `Span { start, span }`(시작 line +
 //!   칸 수) 또는 `Lines { start, end }`(시작·끝 line)이며 line 번호는 1부터입니다. `Auto`는 자동
-//!   배치(X.4.4)입니다.
+//!   배치입니다.
+//!
+//! # 자동 배치 (X.4.4)
+//!
+//! row-major sparse 알고리즘을 visual order(OrderKey)로 적용합니다: 명시 item → 행만 명시된 item →
+//! cursor 자동 배치 순입니다. 자동 item은 점유된 칸을 피하고, 열이 모자라면 다음 행으로, 행은
+//! `implicit_row` 크기 암시 행으로 늘어납니다. 삽입 순서와 StableId는 결과에 영향을 주지 않습니다.
 //! - **invalid span은 오류**: span 0, line 0, 끝 ≤ 시작, 열 범위가 명시 열을 넘음 →
 //!   [`LayoutError::InvalidGrid`]. 행 범위가 명시 행을 넘으면 `implicit_row` 크기의 암시 행을
 //!   만듭니다.
@@ -521,33 +527,165 @@ fn area_extent(
     Ok(total)
 }
 
-/// item을 track에 배치합니다. 명시 위치 item은 그대로 놓고(겹침 허용), 자동 위치 item은 X.4.4
-/// 자동 배치가 처리합니다.
+/// 점유된 grid cell(행 수는 필요에 따라 늘어남).
+struct Occupancy {
+    columns: usize,
+    cells: Vec<bool>,
+}
+
+impl Occupancy {
+    fn new(columns: usize) -> Occupancy {
+        Occupancy {
+            columns,
+            cells: Vec::new(),
+        }
+    }
+
+    fn is_free(&self, row: usize, column: usize, row_span: usize, column_span: usize) -> bool {
+        if column + column_span > self.columns {
+            return false;
+        }
+        for r in row..row + row_span {
+            for c in column..column + column_span {
+                if self
+                    .cells
+                    .get(r * self.columns + c)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn occupy(&mut self, item: &PlacedItem) {
+        let needed = (item.row + item.row_span) * self.columns;
+        if self.cells.len() < needed {
+            self.cells.resize(needed, false);
+        }
+        for r in item.row..item.row + item.row_span {
+            for c in item.column..item.column + item.column_span {
+                self.cells[r * self.columns + c] = true;
+            }
+        }
+    }
+}
+
+/// 자동 배치 행 탐색 상한(무한 루프 방지). 행 index는 `u16` line 범위 안이어야 합니다.
+const MAX_AUTO_ROWS: usize = u16::MAX as usize;
+
+/// item을 track에 배치합니다 (X.4.3, X.4.4).
+///
+/// 1. 열·행이 모두 명시된 item을 그대로 놓습니다(겹침 허용).
+/// 2. 행만 명시된 item을 visual order로 그 행의 가장 앞 빈 열에 놓습니다.
+/// 3. 나머지(열만 명시 또는 완전 자동)를 visual order로 row-major cursor를 따라 놓습니다
+///    (sparse): 완전 자동은 cursor부터 열을 늘리며 맞는 빈 칸을 찾고 줄 끝이면 다음 행 첫 열로,
+///    열만 명시된 item은 그 열이 cursor 열보다 앞이면 다음 행부터 맞는 행을 찾습니다. 놓은 뒤
+///    cursor는 그 item의 끝 열입니다.
+///
+/// 자동 배치 item은 서로·명시 item과 겹치지 않습니다. 순서는 StableId·삽입 순서가 아니라 visual
+/// order(OrderKey)입니다. 결과는 visual order입니다.
 fn place_items(
     engine: &Engine<'_>,
     id: StableId,
     children: &[usize],
+    columns: usize,
 ) -> Result<Vec<PlacedItem>, LayoutError> {
-    let mut placed = Vec::with_capacity(children.len());
-    for &child in children {
+    let no_space = || invalid(id, "grid 자동 배치 공간이 없습니다");
+    let mut placed: Vec<Option<PlacedItem>> = vec![None; children.len()];
+    let mut occupancy = Occupancy::new(columns);
+    let spans = |child: usize| {
         let item = engine.node(child).grid;
-        match (item.column.start_index(), item.row.start_index()) {
-            (Some(column), Some(row)) => placed.push(PlacedItem {
+        (
+            item,
+            usize::from(item.column.span()),
+            usize::from(item.row.span()),
+        )
+    };
+    // 1) 명시 item.
+    for (slot, &child) in children.iter().enumerate() {
+        let (item, column_span, row_span) = spans(child);
+        if let (Some(column), Some(row)) = (item.column.start_index(), item.row.start_index()) {
+            let p = PlacedItem {
                 child,
                 column,
-                column_span: usize::from(item.column.span()),
+                column_span,
                 row,
-                row_span: usize::from(item.row.span()),
-            }),
-            _ => {
-                return Err(LayoutError::UnsupportedFeature {
-                    node: id,
-                    feature: "grid 자동 배치(X.4.4)",
-                })
-            }
+                row_span,
+            };
+            occupancy.occupy(&p);
+            placed[slot] = Some(p);
         }
     }
-    Ok(placed)
+    // 2) 행 고정 item.
+    for (slot, &child) in children.iter().enumerate() {
+        let (item, column_span, row_span) = spans(child);
+        if let (None, Some(row)) = (item.column.start_index(), item.row.start_index()) {
+            let column = (0..columns)
+                .find(|&c| occupancy.is_free(row, c, row_span, column_span))
+                .ok_or_else(no_space)?;
+            let p = PlacedItem {
+                child,
+                column,
+                column_span,
+                row,
+                row_span,
+            };
+            occupancy.occupy(&p);
+            placed[slot] = Some(p);
+        }
+    }
+    // 3) cursor 자동 배치.
+    let (mut cursor_row, mut cursor_column) = (0usize, 0usize);
+    for (slot, &child) in children.iter().enumerate() {
+        let (item, column_span, row_span) = spans(child);
+        if item.row.start_index().is_some() {
+            continue;
+        }
+        let (row, column) = match item.column.start_index() {
+            Some(column) => {
+                if column < cursor_column {
+                    cursor_row += 1;
+                }
+                let row = (cursor_row..MAX_AUTO_ROWS)
+                    .find(|&r| occupancy.is_free(r, column, row_span, column_span))
+                    .ok_or_else(no_space)?;
+                (row, column)
+            }
+            None => {
+                let (mut row, mut column) = (cursor_row, cursor_column);
+                loop {
+                    if row >= MAX_AUTO_ROWS {
+                        return Err(no_space());
+                    }
+                    if column + column_span > columns {
+                        row += 1;
+                        column = 0;
+                        continue;
+                    }
+                    if occupancy.is_free(row, column, row_span, column_span) {
+                        break;
+                    }
+                    column += 1;
+                }
+                (row, column)
+            }
+        };
+        let p = PlacedItem {
+            child,
+            column,
+            column_span,
+            row,
+            row_span,
+        };
+        occupancy.occupy(&p);
+        placed[slot] = Some(p);
+        cursor_row = row;
+        cursor_column = column + column_span;
+    }
+    placed.into_iter().map(|p| p.ok_or_else(no_space)).collect()
 }
 
 /// track sizing과 item 배치를 계산합니다. `inner`는 content 크기(indefinite면 `None`).
@@ -569,7 +707,7 @@ fn solve(
     let column_gap = length_unit(id, LayoutProperty::ContainerLayout, grid.column_gap, false)?;
     let row_gap = length_unit(id, LayoutProperty::ContainerLayout, grid.row_gap, false)?;
     let children = engine.children(index);
-    let items = place_items(engine, id, &children)?;
+    let items = place_items(engine, id, &children, grid.columns.len())?;
 
     let columns = grid
         .columns
@@ -1010,5 +1148,115 @@ mod tests {
         let input = LayoutInput::new(id(1), vec![node]);
         assert_eq!(LayoutInput::decode(&input.encode()).unwrap(), input);
         assert_eq!(GridItem::default().column, GridPlacement::Auto { span: 1 });
+    }
+
+    fn auto(span: u16) -> GridPlacement {
+        GridPlacement::Auto { span }
+    }
+
+    /// 3열(각 10) × 암시 행(10) grid, gap 0, padding 0. 자식은 (StableId, OrderKey 순번, 위치).
+    fn auto_grid(children: &[(u64, u32, GridItem)]) -> LayoutResult {
+        let grid = GridLayout {
+            implicit_row: fixed_track(10.0),
+            ..GridLayout::new(vec![fixed_track(10.0); 3], vec![])
+        };
+        let mut root = LayoutNode::new(id(1))
+            .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+            .with_container(ContainerLayout::Grid(grid));
+        let mut nodes = Vec::new();
+        for (n, order, item) in children {
+            root = root.with_child(id(*n), key(*order));
+            nodes.push(
+                LayoutNode::new(id(*n))
+                    .with_grid(*item)
+                    .with_sizing(SizingMode::Fill, SizingMode::Fill),
+            );
+        }
+        nodes.insert(0, root);
+        compute_layout(&LayoutInput::new(id(1), nodes)).unwrap()
+    }
+
+    /// node의 (열, 행) cell 위치와 너비(칸 수).
+    fn cell(result: &LayoutResult, n: u64) -> (i32, i32, i32) {
+        let r = result.get(id(n)).unwrap().local_rect();
+        (r.x().raw() / 640, r.y().raw() / 640, r.width().raw() / 640)
+    }
+
+    #[test]
+    fn auto_placement_follows_visual_order_key_not_insertion() {
+        let one = GridItem {
+            column: auto(1),
+            row: auto(1),
+        };
+        // 삽입 순서 id 2..6, OrderKey 5,3,1,4,2 → visual order: 4, 6, 3, 5, 2.
+        let children = [
+            (2, 5, one),
+            (3, 3, one),
+            (4, 1, one),
+            (5, 4, one),
+            (6, 2, one),
+        ];
+        let result = auto_grid(&children);
+        assert_eq!(cell(&result, 4), (0, 0, 1));
+        assert_eq!(cell(&result, 6), (1, 0, 1));
+        assert_eq!(cell(&result, 3), (2, 0, 1));
+        assert_eq!(cell(&result, 5), (0, 1, 1));
+        assert_eq!(cell(&result, 2), (1, 1, 1));
+        // 삽입 순서를 바꿔도(같은 OrderKey) 결과 bytes 동일.
+        let mut shuffled = children;
+        shuffled.reverse();
+        assert_eq!(auto_grid(&shuffled).encode(), result.encode());
+        // 결과 box 순서도 visual order.
+        let order: Vec<_> = result.boxes().iter().skip(1).map(|b| b.id()).collect();
+        assert_eq!(order, vec![id(4), id(6), id(3), id(5), id(2)]);
+    }
+
+    #[test]
+    fn auto_placement_skips_occupied_cells_row_major() {
+        // 명시 item (열 2, 행 1) → cell (1, 0) 점유.
+        let explicit = GridItem::at(2, 1, 1, 1);
+        let span2 = GridItem {
+            column: auto(2),
+            row: auto(1),
+        };
+        let one = GridItem {
+            column: auto(1),
+            row: auto(1),
+        };
+        // 행만 명시(행 4): 그 행 첫 빈 열.
+        let row_locked = GridItem {
+            column: auto(1),
+            row: GridPlacement::Span { start: 4, span: 1 },
+        };
+        // 열만 명시(열 1): cursor 이후 그 열이 비는 첫 행.
+        let column_locked = GridItem {
+            column: GridPlacement::Span { start: 1, span: 1 },
+            row: auto(1),
+        };
+        let full = GridItem {
+            column: auto(3),
+            row: auto(1),
+        };
+        let result = auto_grid(&[
+            (2, 1, explicit),
+            (3, 2, span2),
+            (4, 3, one),
+            (5, 4, row_locked),
+            (6, 5, column_locked),
+            (7, 6, full),
+        ]);
+        assert_eq!(cell(&result, 2), (1, 0, 1));
+        // span 2: 행 0은 열 1이 점유 → 행 1 열 0.
+        assert_eq!(cell(&result, 3), (0, 1, 2));
+        // 다음 자동 item은 cursor(행 1, 열 2)부터 → (2, 1). 행 0의 빈 칸은 sparse로 남음.
+        assert_eq!(cell(&result, 4), (2, 1, 1));
+        // 행 고정은 cursor와 무관하게 행 3(0부터)의 첫 열.
+        assert_eq!(cell(&result, 5), (0, 3, 1));
+        // 열 고정(열 0 < cursor 열 3) → 다음 행(2)부터, 열 0이 빈 첫 행 = 2.
+        assert_eq!(cell(&result, 6), (0, 2, 1));
+        // 3칸 item: cursor (2, 1)부터 → 행 2는 열 0 점유·열 1부터 3칸 불가 → 행 3은 열 0 점유 → 행 4.
+        assert_eq!(cell(&result, 7), (0, 4, 3));
+        // 암시 행 5개(0~4) → Hug 높이 50.
+        assert_eq!(result.get(id(1)).unwrap().local_rect().height(), px(50));
     }
 }
