@@ -42,6 +42,9 @@ pub mod worktree;
 /// worktree add/remove/move/lock/unlock/prune/repair(XXVI.3.2).
 pub mod worktree_ops;
 
+/// tags·notes·bisect·sparse-checkout·submodule 읽기(XXVI.4.1).
+pub mod inspect;
+
 /// 명령의 파괴 수준.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DestructiveLevel {
