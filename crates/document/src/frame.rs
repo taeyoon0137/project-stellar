@@ -369,6 +369,66 @@ impl FramePayload {
     }
 }
 
+// --- size·반전 정책 (VI.3.3) ---
+//
+// width/height는 항상 비음수입니다. 시각적 반전(mirror)은 음수 size가 아니라
+// 행렬식이 음수인 local transform으로만 표현합니다. 사용자가 반대 방향으로
+// 끌어 만든 signed extent는 [`signed_extent_to_size_and_mirror`]로 "양수 size +
+// 반전 transform"으로 정규화합니다.
+
+/// signed extent(음수 가능)를 비음수 size와 반전 transform으로 정규화합니다.
+///
+/// 음수 축은 그 축의 scale -1로 표현되며, 결과 box는 원래 signed extent가
+/// 덮던 영역(`[min(0,w), max(0,w)] × [min(0,h), max(0,h)]`)을 그대로 덮습니다.
+pub fn signed_extent_to_size_and_mirror(
+    width: f32,
+    height: f32,
+) -> Result<(Size2, Transform2D), FrameError> {
+    if !width.is_finite() || !height.is_finite() {
+        return Err(FrameError::NonFinite);
+    }
+    let size = Size2::new(width.abs(), height.abs()).map_err(|_| FrameError::NonFinite)?;
+    let sx = if width < 0.0 { -1.0 } else { 1.0 };
+    let sy = if height < 0.0 { -1.0 } else { 1.0 };
+    let mirror = Transform2D::new(sx, 0.0, 0.0, sy, 0.0, 0.0)?;
+    Ok((size, mirror))
+}
+
+impl FramePayload {
+    /// size를 설정합니다. 음수는 거부합니다 — 반전은 transform으로 표현합니다.
+    pub fn set_size(&mut self, width: f32, height: f32) -> Result<(), FrameError> {
+        self.size = Size2::new(width, height).map_err(|e| match e {
+            stellar_core_types::value::SizeError::NonFinite => FrameError::NonFinite,
+            stellar_core_types::value::SizeError::Negative => {
+                FrameError::Negative { field: "size" }
+            }
+        })?;
+        Ok(())
+    }
+
+    /// local transform이 반전(행렬식 < 0)을 포함하는지.
+    pub fn is_mirrored(&self) -> bool {
+        self.transform.determinant() < 0.0
+    }
+
+    /// frame을 자기 bounds 안에서 좌우 반전합니다. size는 그대로 비음수입니다.
+    ///
+    /// local 좌표에서 `x → width − x` 반전을 먼저 적용한 뒤 기존 transform을
+    /// 적용하므로 부모 좌표계에서 차지하는 영역은 변하지 않습니다.
+    pub fn mirror_horizontally(&mut self) -> Result<(), FrameError> {
+        let flip = Transform2D::new(-1.0, 0.0, 0.0, 1.0, self.size.width(), 0.0)?;
+        self.transform = flip.then(&self.transform)?;
+        Ok(())
+    }
+
+    /// frame을 자기 bounds 안에서 상하 반전합니다. size는 그대로 비음수입니다.
+    pub fn mirror_vertically(&mut self) -> Result<(), FrameError> {
+        let flip = Transform2D::new(1.0, 0.0, 0.0, -1.0, 0.0, self.size.height())?;
+        self.transform = flip.then(&self.transform)?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,5 +521,86 @@ mod tests {
         let mut bad_clip = bytes;
         bad_clip[32] = 9;
         assert!(FramePayload::decode(&bad_clip).is_err());
+    }
+
+    #[test]
+    fn negative_size_is_rejected_but_mirror_transform_is_allowed() {
+        // 검증 기준(VI.3.3): 음수 size 거부, mirror transform 허용.
+        let mut frame = FramePayload::default();
+        assert_eq!(
+            frame.set_size(-10.0, 20.0).unwrap_err(),
+            FrameError::Negative { field: "size" }
+        );
+        assert_eq!(
+            frame.set_size(f32::NAN, 1.0).unwrap_err(),
+            FrameError::NonFinite
+        );
+        assert_eq!(frame.size, Size2::ZERO, "거부 시 size 불변");
+
+        frame.set_size(100.0, 50.0).unwrap();
+        assert!(!frame.is_mirrored());
+        frame.mirror_horizontally().unwrap();
+        assert!(frame.is_mirrored(), "반전은 transform으로 허용");
+        assert_eq!(
+            frame.size,
+            Size2::new(100.0, 50.0).unwrap(),
+            "size는 비음수 유지"
+        );
+
+        // 반전 frame도 저장·복원됩니다.
+        let decoded = FramePayload::decode(&frame.encode()).unwrap();
+        assert!(decoded.is_mirrored());
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn mirror_keeps_occupied_region() {
+        use stellar_core_types::value::Vec2;
+        let mut frame = FramePayload::default();
+        frame.set_size(100.0, 50.0).unwrap();
+        frame.transform = Transform2D::new(1.0, 0.0, 0.0, 1.0, 30.0, 40.0).unwrap();
+        let corners_before: Vec<(f32, f32)> = [(0.0, 0.0), (100.0, 50.0)]
+            .iter()
+            .map(|(x, y)| {
+                let p = frame.transform.apply(Vec2::new(*x, *y).unwrap()).unwrap();
+                (p.x(), p.y())
+            })
+            .collect();
+        frame.mirror_horizontally().unwrap();
+        // 반전 후 local (0,0)은 오른쪽 끝, (100,50)은 왼쪽 아래 끝으로 — 영역 동일.
+        let left_top = frame
+            .transform
+            .apply(Vec2::new(100.0, 0.0).unwrap())
+            .unwrap();
+        let right_bottom = frame
+            .transform
+            .apply(Vec2::new(0.0, 50.0).unwrap())
+            .unwrap();
+        assert_eq!((left_top.x(), left_top.y()), corners_before[0]);
+        assert_eq!((right_bottom.x(), right_bottom.y()), corners_before[1]);
+        // 두 번 반전하면 원래 transform.
+        frame.mirror_horizontally().unwrap();
+        assert_eq!(
+            frame.transform,
+            Transform2D::new(1.0, 0.0, 0.0, 1.0, 30.0, 40.0).unwrap()
+        );
+        assert!(!frame.is_mirrored());
+    }
+
+    #[test]
+    fn signed_extent_normalizes_to_positive_size_and_mirror() {
+        let (size, mirror) = signed_extent_to_size_and_mirror(-80.0, 30.0).unwrap();
+        assert_eq!(size, Size2::new(80.0, 30.0).unwrap());
+        assert!(mirror.determinant() < 0.0);
+        let (size, mirror) = signed_extent_to_size_and_mirror(-80.0, -30.0).unwrap();
+        assert_eq!(size, Size2::new(80.0, 30.0).unwrap());
+        // 두 축 반전은 180° 회전과 같아 행렬식은 양수.
+        assert!(mirror.determinant() > 0.0);
+        let (_, identity) = signed_extent_to_size_and_mirror(5.0, 5.0).unwrap();
+        assert_eq!(identity, Transform2D::identity());
+        assert_eq!(
+            signed_extent_to_size_and_mirror(f32::INFINITY, 1.0).unwrap_err(),
+            FrameError::NonFinite
+        );
     }
 }

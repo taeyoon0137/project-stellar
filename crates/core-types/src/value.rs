@@ -402,6 +402,21 @@ impl Transform2D {
         // 결과가 비유한이면(오버플로) None.
         Transform2D::new(ia, ib, ic, id, itx, ity).ok()
     }
+
+    /// 합성: `self`를 먼저 적용한 뒤 `next`를 적용하는 변환(`next ∘ self`).
+    /// 결과가 비유한이면(오버플로) 오류입니다.
+    pub fn then(&self, next: &Transform2D) -> Result<Transform2D, NonFiniteError> {
+        let (sa, sb, sc, sd, stx, sty) = self.components();
+        let (na, nb, nc, nd, ntx, nty) = next.components();
+        Transform2D::new(
+            na * sa + nc * sb,
+            nb * sa + nd * sb,
+            na * sc + nc * sd,
+            nb * sc + nd * sd,
+            na * stx + nc * sty + ntx,
+            nb * stx + nd * sty + nty,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -413,6 +428,21 @@ mod tests {
         let mut hasher = DefaultHasher::new();
         value.hash(&mut hasher);
         hasher.finish()
+    }
+
+    #[test]
+    fn transform_then_composes_in_application_order() {
+        // translate(10, 0) 후 scale(2): 점 (1, 1) → (11, 1) → (22, 2).
+        let translate = Transform2D::new(1.0, 0.0, 0.0, 1.0, 10.0, 0.0).unwrap();
+        let scale = Transform2D::new(2.0, 0.0, 0.0, 2.0, 0.0, 0.0).unwrap();
+        let composed = translate.then(&scale).unwrap();
+        let p = composed.apply(Vec2::new(1.0, 1.0).unwrap()).unwrap();
+        assert_eq!((p.x(), p.y()), (22.0, 2.0));
+        // 항등과의 합성은 원본.
+        assert_eq!(translate.then(&Transform2D::identity()).unwrap(), translate);
+        // 오버플로는 오류.
+        let huge = Transform2D::new(f32::MAX, 0.0, 0.0, 1.0, 0.0, 0.0).unwrap();
+        assert!(huge.then(&huge).is_err());
     }
 
     #[test]
