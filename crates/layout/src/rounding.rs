@@ -16,9 +16,11 @@
 //!    정의한 정수 캐스트만 사용하고, 플랫폼 수학 라이브러리 함수(`round` 등)에 의존하지
 //!    않습니다. 따라서 macOS·Windows에서 bit 단위로 같은 결과를 냅니다.
 //!
-//! `1/64`은 2의 거듭제곱이라 [`LayoutUnit::to_px_f32`] 값에 dyadic 배율(1.5 = 3/2, 1.25, 2 등)을
-//! 곱해도 크기가 약 87,000 px 이하이면 f32에서 반올림 오차가 생기지 않습니다. 렌더 단계 snapping의
-//! 입력도 플랫폼 간 동일하게 유지됩니다.
+//! `1/64`은 2의 거듭제곱이라 [`LayoutUnit::to_px_f32`] 값(`raw/64`)에 기약 dyadic 배율 `m/2^k`
+//! (`m` 홀수)를 곱한 값은 `|raw|·m ≤ 2^24`, 즉 `|px| ≤ 2^18/m`이면 f32에서 반올림 오차 없이
+//! 정확합니다(충분 조건). 경계는 배율의 홀수 인자 `m`에 따라 다릅니다: 1.5(= 3/2, `m = 3`)는 약
+//! 87,381 px, 1.25(= 5/4, `m = 5`)는 약 52,428 px, 2(`m = 1`)는 262,144 px입니다. 경계를 넘어도
+//! f32 곱은 IEEE-754 기본 연산이라 플랫폼 간 결정적이지만, 정확한 유리수 값과는 다를 수 있습니다.
 
 use std::fmt;
 
@@ -346,6 +348,38 @@ mod tests {
             assert_eq!(f64::from(device), exact, "{}: device exact", case.name);
         }
         assert_eq!(ROUNDING_FIXTURE.len(), 8);
+    }
+
+    #[test]
+    fn dyadic_scale_exactness_bound_depends_on_odd_factor() {
+        // (배율 분자 m, 분모 2^k): |raw|·m ≤ 2^24이면 to_px_f32 × 배율이 정확한 유리수와 같습니다.
+        for (m, k) in [(3_i64, 1_u32), (5, 2), (1, 1)] {
+            let scale = m as f32 / (1_u32 << k) as f32;
+            let bound = (1_i64 << 24) / m;
+            let exact = |raw: i64| raw as f64 * m as f64 / f64::from(64_u32 << k);
+            for raw in [1, bound - 1, bound, -bound] {
+                let unit = LayoutUnit::from_raw(i32::try_from(raw).unwrap());
+                let device = unit.to_px_f32().get() * scale;
+                assert_eq!(
+                    f64::from(device),
+                    exact(raw),
+                    "m={m}, raw={raw}: 경계 안 정확"
+                );
+            }
+            // 경계 바로 위의 홀수 raw는 유효 비트가 24를 넘어 정확하지 않습니다(충분 조건이 최적).
+            let over = if (bound + 1) % 2 == 1 {
+                bound + 1
+            } else {
+                bound + 2
+            };
+            let unit = LayoutUnit::from_raw(i32::try_from(over).unwrap());
+            let device = unit.to_px_f32().get() * scale;
+            assert_ne!(f64::from(device), exact(over), "m={m}, raw={over}: 경계 밖");
+        }
+        // px 경계: 1.5 → 2^18/3 ≈ 87,381 px, 1.25 → 2^18/5 ≈ 52,428 px, 2 → 262,144 px.
+        assert_eq!((1_i64 << 24) / 3 / 64, 87_381);
+        assert_eq!((1_i64 << 24) / 5 / 64, 52_428);
+        assert_eq!((1_i64 << 24) / 64, 262_144);
     }
 
     #[test]
