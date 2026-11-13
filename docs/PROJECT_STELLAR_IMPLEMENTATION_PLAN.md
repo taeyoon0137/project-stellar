@@ -1268,7 +1268,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIII.2.1 | `[ ]` | 플랫폼 독립 `ProjectFileWatcher` event에 create, modify, remove, rename, overflow를 정의합니다. | event model round-trip. | Phase XII |
+| XIII.2.1 | `[x]` | 플랫폼 독립 `ProjectFileWatcher` event에 create, modify, remove, rename, overflow를 정의합니다. | event model round-trip. | Phase XII |
 | XIII.2.2 | `[ ]` | macOS watcher adapter를 구현하고 프로젝트 root, 외부 symlink target allowlist를 감시합니다. | create/modify/delete/rename fixture 통과. | XIII.2.1 |
 | XIII.2.3 | `[!]` | Windows watcher adapter를 구현하고 동일 의미 event로 normalize합니다. | create/modify/delete/rename fixture 통과. | XIII.2.1 |
 | XIII.2.4 | `[ ]` | Stellar 자신의 save가 만든 filesystem event를 generation/hash로 식별해 외부 변경으로 재처리하지 않게 합니다. | autosave 후 reload loop 0. | V.5.4, XIII.2.2, XIII.2.3 |

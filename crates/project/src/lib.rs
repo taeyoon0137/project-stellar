@@ -59,3 +59,6 @@ pub mod document_io;
 
 /// 프로젝트 신뢰 capability matrix (XVI.7.1).
 pub mod capability;
+
+/// 프로젝트 파일 감시기 (XIII.2).
+pub mod watcher;
