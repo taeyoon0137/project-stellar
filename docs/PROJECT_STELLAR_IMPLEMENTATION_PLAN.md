@@ -681,7 +681,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | VII.5.1 | `[x]` | `WindowHistory`를 WindowSessionId별로 생성하고 다른 창 entry를 포함하지 않습니다. | 창 A/B 교차 편집에서 stack 분리. | VII.4.6 |
-| VII.5.2 | `[ ]` | Undo는 해당 창의 inverse transaction을 현재 창의 in-memory document state에 적용합니다. 다른 창과 모델을 공유하지 않는 현재 정책을 반영합니다. | 각 창 독립 snapshot fixture 통과. | VII.5.1 |
+| VII.5.2 | `[x]` | Undo는 해당 창의 inverse transaction을 현재 창의 in-memory document state에 적용합니다. 다른 창과 모델을 공유하지 않는 현재 정책을 반영합니다. | 각 창 독립 snapshot fixture 통과. | VII.5.1 |
 | VII.5.3 | `[ ]` | Redo stack은 Undo 후 같은 창에서 새 command가 확정되면 폐기합니다. 다른 창 저장 변화는 해당 창 history를 즉시 폐기하지 않습니다. | branch history fixture 통과. | VII.5.2 |
 | VII.5.4 | `[ ]` | 창 닫기 시 WindowHistory와 selection을 폐기하고 project 파일에는 기록하지 않습니다. | reopen 후 history 비어 있음. | VII.5.1 |
 | VII.5.5 | `[ ]` | Undo/Redo 중 생성되는 selection restoration은 새 history entry를 만들지 않게 reentrancy guard를 추가합니다. | undo 100회 후 stack size 예상 일치. | VII.5.2 |

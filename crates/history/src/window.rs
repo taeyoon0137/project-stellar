@@ -134,7 +134,11 @@ impl WindowHistory {
         self.history.cancel_preview(doc)
     }
 
-    /// 이 창의 마지막 항목 하나를 이 창의 문서·선택에 되돌립니다.
+    /// 이 창의 마지막 항목 하나를 이 창의 문서·선택에 되돌립니다(VII.5.2).
+    ///
+    /// 역 transaction은 **이 창의 인메모리 문서 상태**(`doc`)에만 적용합니다. 창끼리 문서 모델을 공유하지
+    /// 않으므로(§22.2) 다른 창의 문서·revision과 무관하며, 역 transaction은 이 창 문서의 현재 revision으로
+    /// rebase해 실행합니다.
     pub fn undo(&mut self, doc: &mut DocumentState) -> Result<Option<UndoOutcome>, HistoryError> {
         self.history
             .undo(doc, &mut self.view, self.selection_policy)
@@ -279,5 +283,106 @@ mod tests {
         // 이미 열린 창을 다시 열면 기존 history.
         assert_eq!(histories.open(a).history().len(), 6);
         assert_eq!(histories.open(a).window(), a);
+    }
+
+    fn snapshot(doc: &DocumentState) -> String {
+        stellar_commands::document::test_support::semantic_snapshot::model_snapshot_json(
+            doc.model(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn undo_applies_to_each_windows_own_document() {
+        // 검증 기준(VII.5.2): 각 창 독립 snapshot fixture 통과.
+        use stellar_commands::document::frame::keys as frame_keys;
+        use stellar_commands::node_ops::{DeleteSubtree, MoveNode};
+        use stellar_commands::property::{PropertyValue, SetProperty};
+        use stellar_core_types::order_key::OrderKey;
+        use stellar_core_types::value::Size2;
+
+        let mut histories = WindowHistories::new();
+        let (a, b) = (window(1), window(2));
+        let mut doc_a = small_state();
+        let mut doc_b = small_state();
+        let original = snapshot(&doc_a);
+
+        // A: 크기 변경 후 subtree 삭제. B: 이동.
+        let resize = tx(
+            &doc_a,
+            1_000,
+            Command::SetProperty(SetProperty {
+                node: sid(12),
+                key: frame_keys::SIZE,
+                value: PropertyValue::Size(Size2::new(64.0, 32.0).unwrap()),
+            }),
+        );
+        histories
+            .open(a)
+            .record_document(&mut doc_a, &resize, None)
+            .unwrap();
+        let a_resized = snapshot(&doc_a);
+        let delete = tx(
+            &doc_a,
+            1_001,
+            Command::DeleteSubtree(DeleteSubtree { root: sid(11) }),
+        );
+        histories
+            .open(a)
+            .record_document(&mut doc_a, &delete, None)
+            .unwrap();
+        let a_final = snapshot(&doc_a);
+        let mv = tx(
+            &doc_b,
+            2_000,
+            Command::MoveNode(MoveNode {
+                node: sid(13),
+                new_parent: sid(12),
+                order_key: OrderKey::from_bytes(vec![0x10]).unwrap(),
+            }),
+        );
+        histories
+            .open(b)
+            .record_document(&mut doc_b, &mv, None)
+            .unwrap();
+        let b_final = snapshot(&doc_b);
+        assert_ne!(
+            doc_a.revision(),
+            doc_b.revision(),
+            "창마다 revision이 따로 흐름"
+        );
+
+        // A undo 2회: A 문서만 단계별 원복, B 문서 그대로.
+        histories
+            .get_mut(a)
+            .unwrap()
+            .undo(&mut doc_a)
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot(&doc_a), a_resized);
+        assert_eq!(snapshot(&doc_b), b_final);
+        histories
+            .get_mut(a)
+            .unwrap()
+            .undo(&mut doc_a)
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot(&doc_a), original);
+        assert_eq!(snapshot(&doc_b), b_final);
+        // B undo: B 문서만 원복, A 문서 그대로.
+        histories
+            .get_mut(b)
+            .unwrap()
+            .undo(&mut doc_b)
+            .unwrap()
+            .unwrap();
+        assert_eq!(snapshot(&doc_b), original);
+        assert_eq!(snapshot(&doc_a), original);
+        assert_ne!(a_final, b_final);
+        // 더 되돌릴 것이 없음.
+        assert_eq!(
+            histories.get_mut(a).unwrap().undo(&mut doc_a).unwrap(),
+            None
+        );
     }
 }
