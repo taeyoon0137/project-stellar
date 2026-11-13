@@ -32,7 +32,9 @@ use crate::geometry::Axis;
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
 use crate::sizing::{validate_sizing, SIZING_FILL, SIZING_FIXED, SIZING_HUG, SIZING_PERCENTAGE};
-use crate::stack::{decode_stack, encode_stack, validate_stack, StackLayout};
+use crate::stack::{
+    decode_stack, decode_stack_wrap, encode_stack, encode_stack_wrap, validate_stack, StackLayout,
+};
 
 pub use crate::sizing::SizingMode;
 
@@ -424,6 +426,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
         ContainerLayout::Stack(stack) => {
             w.u8(CONTAINER_STACK);
             encode_stack(w, &stack);
+            encode_stack_wrap(w, &stack);
         }
     }
     w.insets(&node.padding);
@@ -475,7 +478,11 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
     }
     let container = match r.u8()? {
         CONTAINER_FREE => ContainerLayout::Free,
-        CONTAINER_STACK => ContainerLayout::Stack(decode_stack(r)?),
+        CONTAINER_STACK => {
+            let mut stack = decode_stack(r)?;
+            decode_stack_wrap(r, &mut stack)?;
+            ContainerLayout::Stack(stack)
+        }
         _ => {
             return Err(LayoutError::Malformed {
                 reason: "알 수 없는 container tag",

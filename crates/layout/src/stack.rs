@@ -1,4 +1,4 @@
-//! Stack(Flex 계열) 배치 (X.3.1, X.3.2).
+//! Stack(Flex 계열) 배치 (X.3.1~X.3.4).
 //!
 //! [`StackLayout`]은 자식을 한 축(main axis)을 따라 차례로 놓는 container 설정입니다.
 //!
@@ -29,6 +29,15 @@
 //! 남는(모자란) 공간을 분배하고, indefinite(main Hug 측정)면 base(hypothetical) 크기를 씁니다. 분배
 //! 잔여 subpixel은 child visual order 앞에서부터 줍니다. main 축 `Fill`은 `grow 1, shrink 1, basis 0`
 //! 입니다. 분배 뒤 자식은 정해진 main 크기(forced)로 다시 해석되어 cross 크기가 확정됩니다.
+//!
+//! # wrap과 여러 줄 정렬 (X.3.4)
+//!
+//! `wrap = Wrap`이고 content main이 definite면, visual order로 자식 hypothetical main 크기(+ gap)를
+//! 누적하다 content main을 넘기 직전에 줄을 바꿉니다(줄마다 최소 한 자식). 줄마다 grow·shrink를 따로
+//! 분배하고, 줄 cross 크기는 그 줄 자식 cross 최댓값입니다. 줄 사이 간격은 `cross_gap`이며, 줄
+//! 묶음은 `line_alignment`(align-content)로 content cross 안에 정렬합니다. `Stretch`는 남는 cross
+//! 공간을 줄에 균등 분배(잔여는 줄 순서)합니다. 자식은 자기 줄 안에서 `cross_alignment`를 따릅니다.
+//! `NoWrap`(기본)은 한 줄이며 그 줄의 cross 크기는 content cross 전체입니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::value::{FiniteF32, Length};
@@ -85,6 +94,36 @@ pub enum CrossAlignment {
     Stretch,
 }
 
+/// 줄 바꿈 (X.3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum StackWrap {
+    /// 한 줄.
+    #[default]
+    NoWrap,
+    /// content main을 넘기면 다음 줄.
+    Wrap,
+}
+
+/// 여러 줄의 cross 정렬(align-content) (X.3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum LineAlignment {
+    /// cross 시작.
+    #[default]
+    Start,
+    /// 가운데.
+    Center,
+    /// cross 끝.
+    End,
+    /// 줄 사이 균등.
+    SpaceBetween,
+    /// 줄마다 앞뒤 반 칸.
+    SpaceAround,
+    /// 양 끝과 줄 사이 균등.
+    SpaceEvenly,
+    /// 남는 공간을 줄 cross 크기에 균등 분배.
+    Stretch,
+}
+
 /// Stack container 설정 (X.3.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StackLayout {
@@ -98,6 +137,12 @@ pub struct StackLayout {
     pub main_alignment: MainAlignment,
     /// cross 정렬.
     pub cross_alignment: CrossAlignment,
+    /// 줄 바꿈(X.3.4).
+    pub wrap: StackWrap,
+    /// 줄 사이 cross 간격(비음수, X.3.4).
+    pub cross_gap: Length,
+    /// 여러 줄 cross 정렬(X.3.4).
+    pub line_alignment: LineAlignment,
 }
 
 impl StackLayout {
@@ -109,6 +154,9 @@ impl StackLayout {
             gap: Length::from_raw(FiniteF32::ZERO),
             main_alignment: MainAlignment::Start,
             cross_alignment: CrossAlignment::Start,
+            wrap: StackWrap::NoWrap,
+            cross_gap: Length::from_raw(FiniteF32::ZERO),
+            line_alignment: LineAlignment::Start,
         }
     }
 }
@@ -212,21 +260,88 @@ pub(crate) fn decode_stack(r: &mut Reader<'_>) -> Result<StackLayout, LayoutErro
     let main_alignment = main_alignment_from_tag(r.u8()?)?;
     let cross_alignment = cross_alignment_from_tag(r.u8()?)?;
     Ok(StackLayout {
-        axis,
-        direction,
-        gap,
         main_alignment,
         cross_alignment,
+        direction,
+        gap,
+        ..StackLayout::new(axis)
     })
 }
 
-/// Stack 설정 값을 검증합니다(gap 비음수·범위).
-pub(crate) fn validate_stack(node: StableId, stack: &StackLayout) -> Result<(), LayoutError> {
-    length_unit(node, LayoutProperty::ContainerLayout, stack.gap, false)?;
+const fn wrap_tag(wrap: StackWrap) -> u8 {
+    match wrap {
+        StackWrap::NoWrap => 0,
+        StackWrap::Wrap => 1,
+    }
+}
+
+const fn line_alignment_tag(alignment: LineAlignment) -> u8 {
+    match alignment {
+        LineAlignment::Start => 0,
+        LineAlignment::Center => 1,
+        LineAlignment::End => 2,
+        LineAlignment::SpaceBetween => 3,
+        LineAlignment::SpaceAround => 4,
+        LineAlignment::SpaceEvenly => 5,
+        LineAlignment::Stretch => 6,
+    }
+}
+
+fn line_alignment_from_tag(tag: u8) -> Result<LineAlignment, LayoutError> {
+    match tag {
+        0 => Ok(LineAlignment::Start),
+        1 => Ok(LineAlignment::Center),
+        2 => Ok(LineAlignment::End),
+        3 => Ok(LineAlignment::SpaceBetween),
+        4 => Ok(LineAlignment::SpaceAround),
+        5 => Ok(LineAlignment::SpaceEvenly),
+        6 => Ok(LineAlignment::Stretch),
+        _ => Err(LayoutError::Malformed {
+            reason: "알 수 없는 line alignment tag",
+        }),
+    }
+}
+
+/// wrap 설정 canonical bytes(`wrap u8, cross_gap f32, line_alignment u8`, X.3.4). 기본 Stack
+/// bytes([`encode_stack`]) 뒤에 이어 씁니다.
+pub(crate) fn encode_stack_wrap(w: &mut Writer, stack: &StackLayout) {
+    w.u8(wrap_tag(stack.wrap));
+    w.length(stack.cross_gap);
+    w.u8(line_alignment_tag(stack.line_alignment));
+}
+
+/// wrap 설정 canonical bytes를 읽어 `stack`에 채웁니다.
+pub(crate) fn decode_stack_wrap(
+    r: &mut Reader<'_>,
+    stack: &mut StackLayout,
+) -> Result<(), LayoutError> {
+    stack.wrap = match r.u8()? {
+        0 => StackWrap::NoWrap,
+        1 => StackWrap::Wrap,
+        _ => {
+            return Err(LayoutError::Malformed {
+                reason: "알 수 없는 wrap tag",
+            })
+        }
+    };
+    stack.cross_gap = r.length("stack cross gap")?;
+    stack.line_alignment = line_alignment_from_tag(r.u8()?)?;
     Ok(())
 }
 
-// --- 배치 알고리즘 (X.3.2) ---
+/// Stack 설정 값을 검증합니다(gap·cross gap 비음수·범위).
+pub(crate) fn validate_stack(node: StableId, stack: &StackLayout) -> Result<(), LayoutError> {
+    length_unit(node, LayoutProperty::ContainerLayout, stack.gap, false)?;
+    length_unit(
+        node,
+        LayoutProperty::ContainerLayout,
+        stack.cross_gap,
+        false,
+    )?;
+    Ok(())
+}
+
+// --- 배치 알고리즘 (X.3.2~X.3.4) ---
 
 /// Stack 계산에 쓰는 변환된 설정.
 #[derive(Debug, Clone, Copy)]
@@ -234,6 +349,7 @@ struct StackUnits {
     main: Axis,
     cross: Axis,
     gap: LayoutUnit,
+    cross_gap: LayoutUnit,
     config: StackLayout,
 }
 
@@ -242,6 +358,7 @@ fn stack_units(id: StableId, stack: &StackLayout) -> Result<StackUnits, LayoutEr
         main: stack.axis,
         cross: stack.axis.cross(),
         gap: length_unit(id, LayoutProperty::ContainerLayout, stack.gap, false)?,
+        cross_gap: length_unit(id, LayoutProperty::ContainerLayout, stack.cross_gap, false)?,
         config: *stack,
     })
 }
@@ -258,30 +375,26 @@ fn stack_of(engine: &Engine<'_>, index: usize) -> Result<StackUnits, LayoutError
     }
 }
 
-/// 자식 하나의 base 제약(main 크기 분배 전). cross 축 Fill은 cross 크기를 채우고, `Stretch`
-/// 정렬은 cross가 HugContent인 자식을 cross 크기로 늘립니다.
+/// 자식 하나의 base 제약(main 크기 분배 전). `cb`는 content box 크기(Percentage 기준),
+/// `cross_target`은 cross 축 `Fill`이 채우고 `Stretch` 정렬이 HugContent 자식을 늘릴 line cross
+/// 크기입니다(`None`이면 콘텐츠 크기).
 fn child_constraint(
     engine: &Engine<'_>,
     child: usize,
     units: &StackUnits,
-    inner: [Option<LayoutUnit>; 2],
+    cb: [Option<LayoutUnit>; 2],
+    cross_target: Option<LayoutUnit>,
 ) -> ChildConstraint {
-    let main = units.main.index();
     let cross = units.cross.index();
     let mut fill = [None, None];
-    fill[cross] = inner[cross];
+    fill[cross] = cross_target;
     let mut forced = [None, None];
     if units.config.cross_alignment == CrossAlignment::Stretch
         && engine.nodes[child].sizing[cross] == AxisSizing::Hug
     {
-        forced[cross] = inner[cross];
+        forced[cross] = cross_target;
     }
-    fill[main] = None;
-    ChildConstraint {
-        cb: inner,
-        fill,
-        forced,
-    }
+    ChildConstraint { cb, fill, forced }
 }
 
 /// 자식들의 main 크기 합 + gap.
@@ -300,22 +413,22 @@ fn main_total(
     Ok(total)
 }
 
-/// 한 줄 자식들의 최종 크기(visual order). main 크기는 grow·shrink·basis로 분배합니다(X.3.3).
-fn line_sizes(
+/// 자식들의 flex 입력(base, factor)과 base 제약.
+fn flex_inputs(
     engine: &mut Engine<'_>,
     id: StableId,
     children: &[usize],
     units: &StackUnits,
-    inner: [Option<LayoutUnit>; 2],
-) -> Result<Vec<LayoutSize>, LayoutError> {
+    cb: [Option<LayoutUnit>; 2],
+    cross_target: Option<LayoutUnit>,
+) -> Result<Vec<(FlexInput, ChildConstraint)>, LayoutError> {
     let main = units.main.index();
     let mut inputs = Vec::with_capacity(children.len());
-    let mut constraints = Vec::with_capacity(children.len());
     for &child in children {
-        let constraint = child_constraint(engine, child, units, inner);
+        let constraint = child_constraint(engine, child, units, cb, cross_target);
         let flex = engine.nodes[child].flex;
         let main_fill = engine.nodes[child].sizing[main] == AxisSizing::Fill;
-        let base = match (flex.basis, inner[main]) {
+        let base = match (flex.basis, cb[main]) {
             (PreparedBasis::Length(value), _) => value,
             (PreparedBasis::Percentage(percent), Some(extent)) => {
                 extent.checked_mul_percent(percent).map_err(at(id))?
@@ -328,35 +441,173 @@ fn line_sizes(
         } else {
             (flex.grow, flex.shrink)
         };
-        inputs.push(FlexInput {
+        let input = FlexInput {
             base,
             grow,
             shrink,
             min: LayoutUnit::ZERO,
             max: None,
-        });
-        constraints.push(constraint);
+        };
+        inputs.push((input, constraint));
     }
-    let main_sizes: Vec<LayoutUnit> = match inner[main] {
+    Ok(inputs)
+}
+
+/// 한 줄 자식들의 최종 크기(visual order). main 크기는 grow·shrink·basis로 분배합니다(X.3.3).
+fn line_sizes(
+    engine: &mut Engine<'_>,
+    id: StableId,
+    children: &[usize],
+    units: &StackUnits,
+    cb: [Option<LayoutUnit>; 2],
+    cross_target: Option<LayoutUnit>,
+) -> Result<Vec<LayoutSize>, LayoutError> {
+    let main = units.main.index();
+    let inputs = flex_inputs(engine, id, children, units, cb, cross_target)?;
+    let flex: Vec<FlexInput> = inputs.iter().map(|(input, _)| *input).collect();
+    let main_sizes: Vec<LayoutUnit> = match cb[main] {
         Some(extent) => {
             let mut gaps = LayoutUnit::ZERO;
             for _ in 1..children.len() {
                 gaps = gaps.checked_add(units.gap).map_err(at(id))?;
             }
             let available = extent.checked_sub(gaps).map_err(at(id))?;
-            resolve_flexible_lengths(available, &inputs).map_err(at(id))?
+            resolve_flexible_lengths(available, &flex).map_err(at(id))?
         }
-        None => inputs
-            .iter()
-            .map(|input| input.base.max(input.min))
-            .collect(),
+        None => flex.iter().map(|input| input.base.max(input.min)).collect(),
     };
     let mut sizes = Vec::with_capacity(children.len());
-    for ((&child, mut constraint), main_size) in children.iter().zip(constraints).zip(main_sizes) {
+    for (&child, ((_, mut constraint), main_size)) in
+        children.iter().zip(inputs.into_iter().zip(main_sizes))
+    {
         constraint.forced[main] = Some(main_size);
         sizes.push(engine.resolve_size(child, constraint)?);
     }
     Ok(sizes)
+}
+
+/// 배치된 한 줄.
+#[derive(Debug, Clone)]
+struct Line {
+    children: Vec<usize>,
+    sizes: Vec<LayoutSize>,
+    /// line cross 크기.
+    cross: LayoutUnit,
+}
+
+/// 자식을 줄로 나누고 각 줄의 크기를 정합니다(X.3.4).
+///
+/// - `NoWrap` 또는 content main이 indefinite면 한 줄입니다. 한 줄의 cross 크기는 content cross가
+///   definite면 그 값, 아니면 자식 cross 최댓값입니다.
+/// - `Wrap`은 hypothetical main 크기(+ gap)가 content main을 넘기 직전에 줄을 바꿉니다(줄마다 최소
+///   한 자식). 줄 cross 크기는 그 줄 자식 cross 최댓값이고, `LineAlignment::Stretch`면 남는 cross
+///   공간을 줄에 균등 분배합니다(잔여는 줄 순서). 줄 cross 확정 뒤 cross `Fill`·Stretch 자식을 그
+///   크기로 다시 해석합니다.
+fn build_lines(
+    engine: &mut Engine<'_>,
+    id: StableId,
+    children: &[usize],
+    units: &StackUnits,
+    cb: [Option<LayoutUnit>; 2],
+) -> Result<Vec<Line>, LayoutError> {
+    let main = units.main.index();
+    let cross = units.cross.index();
+    let wrapping = units.config.wrap == StackWrap::Wrap && cb[main].is_some();
+    if !wrapping {
+        let sizes = line_sizes(engine, id, children, units, cb, cb[cross])?;
+        let line_cross = match cb[cross] {
+            Some(extent) => extent,
+            None => max_cross(&sizes, units),
+        };
+        return Ok(vec![Line {
+            children: children.to_vec(),
+            sizes,
+            cross: line_cross,
+        }]);
+    }
+    let extent = cb[main].unwrap_or(LayoutUnit::ZERO);
+    // 1) hypothetical main 크기로 줄 나누기.
+    let inputs = flex_inputs(engine, id, children, units, cb, None)?;
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut used = LayoutUnit::ZERO;
+    for (&child, (input, _)) in children.iter().zip(&inputs) {
+        let hypothetical = input.base.max(input.min);
+        let start_new = match groups.last() {
+            None => true,
+            Some(current) if current.is_empty() => false,
+            Some(_) => {
+                let next = used
+                    .checked_add(units.gap)
+                    .and_then(|u| u.checked_add(hypothetical))
+                    .map_err(at(id))?;
+                next > extent
+            }
+        };
+        if start_new {
+            groups.push(vec![child]);
+            used = hypothetical;
+        } else if let Some(current) = groups.last_mut() {
+            current.push(child);
+            used = used
+                .checked_add(units.gap)
+                .and_then(|u| u.checked_add(hypothetical))
+                .map_err(at(id))?;
+        }
+    }
+    // 2) 줄별 분배(stretch 전)로 줄 cross 크기.
+    let mut crosses = Vec::with_capacity(groups.len());
+    for group in &groups {
+        let sizes = line_sizes(engine, id, group, units, cb, None)?;
+        crosses.push(max_cross(&sizes, units));
+    }
+    // 3) LineAlignment::Stretch: 남는 cross 공간을 줄에 균등 분배.
+    if units.config.line_alignment == LineAlignment::Stretch {
+        if let Some(cross_extent) = cb[cross] {
+            let used = lines_total(id, &crosses, units)?;
+            let free = cross_extent.checked_sub(used).map_err(at(id))?;
+            if free > LayoutUnit::ZERO {
+                let extra = distribute_equal(free, crosses.len());
+                for (line_cross, add) in crosses.iter_mut().zip(extra) {
+                    *line_cross = line_cross.checked_add(add).map_err(at(id))?;
+                }
+            }
+        }
+    }
+    // 4) 줄 cross 확정 뒤 최종 크기.
+    let mut lines = Vec::with_capacity(groups.len());
+    for (group, line_cross) in groups.into_iter().zip(crosses) {
+        let sizes = line_sizes(engine, id, &group, units, cb, Some(line_cross))?;
+        lines.push(Line {
+            children: group,
+            sizes,
+            cross: line_cross,
+        });
+    }
+    Ok(lines)
+}
+
+fn max_cross(sizes: &[LayoutSize], units: &StackUnits) -> LayoutUnit {
+    sizes
+        .iter()
+        .map(|size| size.get(units.cross))
+        .max()
+        .unwrap_or(LayoutUnit::ZERO)
+}
+
+/// 줄 cross 크기 합 + cross gap.
+fn lines_total(
+    id: StableId,
+    crosses: &[LayoutUnit],
+    units: &StackUnits,
+) -> Result<LayoutUnit, LayoutError> {
+    let mut total = LayoutUnit::ZERO;
+    for (i, line_cross) in crosses.iter().enumerate() {
+        if i > 0 {
+            total = total.checked_add(units.cross_gap).map_err(at(id))?;
+        }
+        total = total.checked_add(*line_cross).map_err(at(id))?;
+    }
+    Ok(total)
 }
 
 /// Stack container의 content extent(Hug 측정).
@@ -368,14 +619,19 @@ pub(crate) fn measure(
     let id = engine.nodes[index].id;
     let units = stack_of(engine, index)?;
     let children = engine.children(index);
-    let sizes = line_sizes(engine, id, &children, &units, inner)?;
+    let lines = build_lines(engine, id, &children, &units, inner)?;
     let mut extent = [LayoutUnit::ZERO; 2];
-    extent[units.main.index()] = main_total(id, &sizes, &units)?;
-    extent[units.cross.index()] = sizes
-        .iter()
-        .map(|size| size.get(units.cross))
-        .max()
-        .unwrap_or(LayoutUnit::ZERO);
+    for line in &lines {
+        extent[units.main.index()] =
+            extent[units.main.index()].max(main_total(id, &line.sizes, &units)?);
+    }
+    let crosses: Vec<LayoutUnit> = if lines.len() == 1 {
+        // 한 줄: cross extent는 자식 cross 최댓값(definite cross의 줄 크기가 아님).
+        vec![max_cross(&lines[0].sizes, &units)]
+    } else {
+        lines.iter().map(|line| line.cross).collect()
+    };
+    extent[units.cross.index()] = lines_total(id, &crosses, &units)?;
     Ok(extent)
 }
 
@@ -417,20 +673,17 @@ fn main_spacing(
         MainAlignment::SpaceEvenly => {
             // 양 끝 포함 count+1칸: 첫 칸은 시작 offset, 나머지는 각 자식 뒤.
             let slots = distribute_equal(free, count + 1);
-            (
-                slots[0],
-                zeros,
-                slots[1..count]
-                    .iter()
-                    .copied()
-                    .chain([LayoutUnit::ZERO])
-                    .collect(),
-            )
+            let after = slots[1..count]
+                .iter()
+                .copied()
+                .chain([LayoutUnit::ZERO])
+                .collect();
+            (slots[0], zeros, after)
         }
     })
 }
 
-/// cross 정렬에 따른 cross 위치(content box 기준).
+/// cross 정렬에 따른 cross 위치(line 기준).
 fn cross_position(
     alignment: CrossAlignment,
     extent: LayoutUnit,
@@ -441,6 +694,45 @@ fn cross_position(
         CrossAlignment::Center => extent.checked_sub(size)?.checked_div_round(2),
         CrossAlignment::End => extent.checked_sub(size),
     }
+}
+
+/// line alignment(align-content)에 따른 줄 시작 offset 목록(content cross 기준).
+///
+/// `NoWrap`(한 줄이 content cross 전체)이면 offset은 0입니다. `Wrap`이면 줄이 하나여도 정렬합니다.
+fn line_offsets(
+    id: StableId,
+    lines: &[Line],
+    units: &StackUnits,
+    cross_extent: LayoutUnit,
+) -> Result<Vec<LayoutUnit>, LayoutError> {
+    if units.config.wrap == StackWrap::NoWrap {
+        return Ok(vec![LayoutUnit::ZERO; lines.len()]);
+    }
+    let crosses: Vec<LayoutUnit> = lines.iter().map(|line| line.cross).collect();
+    let free = cross_extent
+        .checked_sub(lines_total(id, &crosses, units)?)
+        .map_err(at(id))?;
+    let alignment = match units.config.line_alignment {
+        LineAlignment::Start | LineAlignment::Stretch => MainAlignment::Start,
+        LineAlignment::Center => MainAlignment::Center,
+        LineAlignment::End => MainAlignment::End,
+        LineAlignment::SpaceBetween => MainAlignment::SpaceBetween,
+        LineAlignment::SpaceAround => MainAlignment::SpaceAround,
+        LineAlignment::SpaceEvenly => MainAlignment::SpaceEvenly,
+    };
+    let (offset, before, after) = main_spacing(alignment, free, lines.len()).map_err(at(id))?;
+    let mut offsets = Vec::with_capacity(lines.len());
+    let mut cursor = offset;
+    for (i, line) in lines.iter().enumerate() {
+        cursor = cursor.checked_add(before[i]).map_err(at(id))?;
+        offsets.push(cursor);
+        cursor = cursor
+            .checked_add(line.cross)
+            .and_then(|c| c.checked_add(after[i]))
+            .and_then(|c| c.checked_add(units.cross_gap))
+            .map_err(at(id))?;
+    }
+    Ok(offsets)
 }
 
 /// Stack container의 자식 배치. 각 자식의 rect(부모 local 좌표)를 visual order로 반환합니다.
@@ -454,53 +746,56 @@ pub(crate) fn place(
     let units = stack_of(engine, index)?;
     let inner_axes = [Some(inner.width()), Some(inner.height())];
     let children = engine.children(index);
-    let sizes = line_sizes(engine, id, &children, &units, inner_axes)?;
+    let lines = build_lines(engine, id, &children, &units, inner_axes)?;
     let main_extent = inner.get(units.main);
-    let cross_extent = inner.get(units.cross);
-    let free = main_extent
-        .checked_sub(main_total(id, &sizes, &units)?)
-        .map_err(at(id))?;
-    let (offset, before, after) =
-        main_spacing(units.config.main_alignment, free, children.len()).map_err(at(id))?;
+    let offsets = line_offsets(id, &lines, &units, inner.get(units.cross))?;
 
     let mut placements = Vec::with_capacity(children.len());
-    let mut cursor = offset;
-    for (i, (&child, size)) in children.iter().zip(&sizes).enumerate() {
-        cursor = cursor.checked_add(before[i]).map_err(at(id))?;
-        let main_size = size.get(units.main);
-        let forward = cursor;
-        cursor = cursor
-            .checked_add(main_size)
-            .and_then(|c| c.checked_add(after[i]))
-            .and_then(|c| c.checked_add(units.gap))
+    for (line, line_offset) in lines.iter().zip(offsets) {
+        let free = main_extent
+            .checked_sub(main_total(id, &line.sizes, &units)?)
             .map_err(at(id))?;
-        let main_pos = match units.config.direction {
-            StackDirection::Forward => forward,
-            // Reverse: main 끝을 시작으로 삼아 정방향 배치를 거울상으로 뒤집습니다.
-            StackDirection::Reverse => main_extent
-                .checked_sub(forward)
-                .and_then(|p| p.checked_sub(main_size))
-                .map_err(at(id))?,
-        };
-        let cross_pos = cross_position(
-            units.config.cross_alignment,
-            cross_extent,
-            size.get(units.cross),
-        )
-        .map_err(at(id))?;
-        let main_abs = padding
-            .start(units.main)
-            .checked_add(main_pos)
+        let (offset, before, after) =
+            main_spacing(units.config.main_alignment, free, line.children.len()).map_err(at(id))?;
+        let mut cursor = offset;
+        for (i, (&child, size)) in line.children.iter().zip(&line.sizes).enumerate() {
+            cursor = cursor.checked_add(before[i]).map_err(at(id))?;
+            let main_size = size.get(units.main);
+            let forward = cursor;
+            cursor = cursor
+                .checked_add(main_size)
+                .and_then(|c| c.checked_add(after[i]))
+                .and_then(|c| c.checked_add(units.gap))
+                .map_err(at(id))?;
+            let main_pos = match units.config.direction {
+                StackDirection::Forward => forward,
+                // Reverse: main 끝을 시작으로 삼아 정방향 배치를 거울상으로 뒤집습니다.
+                StackDirection::Reverse => main_extent
+                    .checked_sub(forward)
+                    .and_then(|p| p.checked_sub(main_size))
+                    .map_err(at(id))?,
+            };
+            let cross_pos = cross_position(
+                units.config.cross_alignment,
+                line.cross,
+                size.get(units.cross),
+            )
+            .and_then(|p| p.checked_add(line_offset))
             .map_err(at(id))?;
-        let cross_abs = padding
-            .start(units.cross)
-            .checked_add(cross_pos)
-            .map_err(at(id))?;
-        let (x, y) = match units.main {
-            Axis::Horizontal => (main_abs, cross_abs),
-            Axis::Vertical => (cross_abs, main_abs),
-        };
-        placements.push((child, LayoutRect::from_origin_size(x, y, *size)));
+            let main_abs = padding
+                .start(units.main)
+                .checked_add(main_pos)
+                .map_err(at(id))?;
+            let cross_abs = padding
+                .start(units.cross)
+                .checked_add(cross_pos)
+                .map_err(at(id))?;
+            let (x, y) = match units.main {
+                Axis::Horizontal => (main_abs, cross_abs),
+                Axis::Vertical => (cross_abs, main_abs),
+            };
+            placements.push((child, LayoutRect::from_origin_size(x, y, *size)));
+        }
     }
     Ok(placements)
 }
@@ -1054,5 +1349,252 @@ mod tests {
             let input = LayoutInput::new(id(1), vec![parent(), node]);
             assert_eq!(LayoutInput::decode(&input.encode()).unwrap(), input);
         }
+    }
+
+    /// 가로 wrap Stack: (너비, 높이 sizing, 설정, 자식 (너비 sizing, 높이 sizing, flex)).
+    fn wrap_row(
+        width: SizingMode,
+        height: SizingMode,
+        stack: StackLayout,
+        children: &[(SizingMode, SizingMode, FlexItem)],
+    ) -> LayoutResult {
+        let mut root = LayoutNode::new(id(1))
+            .with_sizing(width, height)
+            .with_container(ContainerLayout::Stack(stack));
+        let mut nodes = Vec::new();
+        for (i, (w, h, item)) in children.iter().enumerate() {
+            let n = i as u64 + 2;
+            root = root.with_child(id(n), key(i as u32 + 1));
+            nodes.push(LayoutNode::new(id(n)).with_sizing(*w, *h).with_flex(*item));
+        }
+        nodes.insert(0, root);
+        compute_layout(&LayoutInput::new(id(1), nodes)).unwrap()
+    }
+
+    fn fx(value: f32) -> SizingMode {
+        SizingMode::Fixed(len(value))
+    }
+
+    /// 자식 (x, y, w, h) px 목록.
+    fn boxes_px(result: &LayoutResult, count: usize) -> Vec<(f64, f64, f64, f64)> {
+        (0..count)
+            .map(|i| {
+                let r = result.get(id(i as u64 + 2)).unwrap().local_rect();
+                (
+                    r.x().to_px_f64(),
+                    r.y().to_px_f64(),
+                    r.width().to_px_f64(),
+                    r.height().to_px_f64(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn line_break_fixture() {
+        // 너비 100, gap 10, cross gap 5. 줄: [40, 40] | [40, 30] | [100](정확히 맞음) | [120](단독 넘침).
+        let stack = StackLayout {
+            gap: len(10.0),
+            cross_gap: len(5.0),
+            wrap: StackWrap::Wrap,
+            ..StackLayout::new(Axis::Horizontal)
+        };
+        let none = FlexItem::default();
+        let result = wrap_row(
+            fx(100.0),
+            SizingMode::HugContent,
+            stack,
+            &[
+                (fx(40.0), fx(10.0), none),
+                (fx(40.0), fx(20.0), none),
+                (fx(40.0), fx(15.0), none),
+                (fx(30.0), fx(10.0), none),
+                (fx(100.0), fx(5.0), none),
+                (fx(120.0), fx(8.0), none),
+            ],
+        );
+        assert_eq!(
+            boxes_px(&result, 6),
+            vec![
+                (0.0, 0.0, 40.0, 10.0),
+                (50.0, 0.0, 40.0, 20.0),
+                (0.0, 25.0, 40.0, 15.0),
+                (50.0, 25.0, 30.0, 10.0),
+                (0.0, 45.0, 100.0, 5.0),
+                (0.0, 55.0, 120.0, 8.0),
+            ]
+        );
+        // Hug 높이 = 줄 cross 20 + 15 + 5 + 8 + cross gap 5×3.
+        assert_eq!(
+            result.get(id(1)).unwrap().local_rect().height().to_px_f64(),
+            63.0
+        );
+        // main Hug(indefinite)면 wrap하지 않고 한 줄.
+        let single = wrap_row(
+            SizingMode::HugContent,
+            SizingMode::HugContent,
+            stack,
+            &[(fx(40.0), fx(10.0), none), (fx(80.0), fx(20.0), none)],
+        );
+        assert_eq!(
+            boxes_px(&single, 2),
+            vec![(0.0, 0.0, 40.0, 10.0), (50.0, 0.0, 80.0, 20.0)]
+        );
+    }
+
+    #[test]
+    fn align_content_fixture() {
+        // 높이 90 고정, 줄 [a 60×20, c 30×Fill] | [b 60×30], cross gap 10 → 사용 60, 남음 30.
+        let none = FlexItem::default();
+        let children = [
+            (fx(60.0), fx(20.0), none),
+            (fx(30.0), SizingMode::Fill, none),
+            (fx(60.0), fx(30.0), none),
+        ];
+        // (정렬, 줄 1 y, 줄 2 y, 줄 1 cross(c 높이)).
+        let cases = [
+            (LineAlignment::Start, 0.0, 30.0, 20.0),
+            (LineAlignment::Center, 15.0, 45.0, 20.0),
+            (LineAlignment::End, 30.0, 60.0, 20.0),
+            (LineAlignment::SpaceBetween, 0.0, 60.0, 20.0),
+            (LineAlignment::SpaceAround, 7.5, 52.5, 20.0),
+            (LineAlignment::SpaceEvenly, 10.0, 50.0, 20.0),
+            // Stretch: 남은 30을 줄에 15씩 → 줄 cross 35, 45.
+            (LineAlignment::Stretch, 0.0, 45.0, 35.0),
+        ];
+        for (line_alignment, first, second, fill_height) in cases {
+            let stack = StackLayout {
+                cross_gap: len(10.0),
+                wrap: StackWrap::Wrap,
+                line_alignment,
+                ..StackLayout::new(Axis::Horizontal)
+            };
+            let result = wrap_row(fx(100.0), fx(90.0), stack, &children);
+            let boxes = boxes_px(&result, 3);
+            assert_eq!(boxes[0].1, first, "{line_alignment:?} 줄 1");
+            assert_eq!(
+                boxes[1],
+                (60.0, first, 30.0, fill_height),
+                "{line_alignment:?} Fill"
+            );
+            assert_eq!(boxes[2].1, second, "{line_alignment:?} 줄 2");
+        }
+        // 줄 안 cross 정렬: Center면 줄 1(cross 20) 안의 높이 10 자식은 +5.
+        let stack = StackLayout {
+            wrap: StackWrap::Wrap,
+            cross_alignment: CrossAlignment::Center,
+            ..StackLayout::new(Axis::Horizontal)
+        };
+        let result = wrap_row(
+            fx(100.0),
+            SizingMode::HugContent,
+            stack,
+            &[
+                (fx(60.0), fx(20.0), none),
+                (fx(30.0), fx(10.0), none),
+                (fx(60.0), fx(4.0), none),
+            ],
+        );
+        assert_eq!(
+            boxes_px(&result, 3),
+            vec![
+                (0.0, 0.0, 60.0, 20.0),
+                (60.0, 5.0, 30.0, 10.0),
+                (0.0, 20.0, 60.0, 4.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn wrapped_lines_flex_independently_and_reverse() {
+        // grow 1인 40×3을 너비 100에: 줄 [40, 40] free 20 → 50/50, 줄 [40] → 100.
+        let grow = FlexItem::new(
+            Scalar::new(1.0).unwrap(),
+            Scalar::new(0.0).unwrap(),
+            FlexBasis::Auto,
+        );
+        let children = [(fx(40.0), fx(10.0), grow); 3];
+        let stack = StackLayout {
+            wrap: StackWrap::Wrap,
+            ..StackLayout::new(Axis::Horizontal)
+        };
+        let result = wrap_row(fx(100.0), SizingMode::HugContent, stack, &children);
+        assert_eq!(
+            boxes_px(&result, 3),
+            vec![
+                (0.0, 0.0, 50.0, 10.0),
+                (50.0, 0.0, 50.0, 10.0),
+                (0.0, 10.0, 100.0, 10.0)
+            ]
+        );
+        // Reverse: 줄마다 main 축 거울상(줄 순서는 유지).
+        let reverse = StackLayout {
+            direction: StackDirection::Reverse,
+            ..stack
+        };
+        let none = FlexItem::default();
+        let result = wrap_row(
+            fx(100.0),
+            SizingMode::HugContent,
+            reverse,
+            &[
+                (fx(40.0), fx(10.0), none),
+                (fx(40.0), fx(10.0), none),
+                (fx(40.0), fx(10.0), none),
+            ],
+        );
+        assert_eq!(
+            boxes_px(&result, 3),
+            vec![
+                (60.0, 0.0, 40.0, 10.0),
+                (20.0, 0.0, 40.0, 10.0),
+                (60.0, 10.0, 40.0, 10.0)
+            ]
+        );
+    }
+
+    #[test]
+    fn wrap_fields_bytes_golden_and_validation() {
+        let stack = StackLayout {
+            wrap: StackWrap::Wrap,
+            cross_gap: len(5.0),
+            line_alignment: LineAlignment::Stretch,
+            ..StackLayout::new(Axis::Horizontal)
+        };
+        let mut w = Writer::new();
+        encode_stack_wrap(&mut w, &stack);
+        assert_eq!(w.finish(), vec![1, 0x00, 0x00, 0xa0, 0x40, 6]);
+        let tags: Vec<u8> = [
+            LineAlignment::Start,
+            LineAlignment::Center,
+            LineAlignment::End,
+            LineAlignment::SpaceBetween,
+            LineAlignment::SpaceAround,
+            LineAlignment::SpaceEvenly,
+            LineAlignment::Stretch,
+        ]
+        .iter()
+        .map(|a| line_alignment_tag(*a))
+        .collect();
+        assert_eq!(tags, vec![0, 1, 2, 3, 4, 5, 6]);
+        assert!(line_alignment_from_tag(7).is_err());
+        let input = LayoutInput::new(
+            id(1),
+            vec![LayoutNode::new(id(1)).with_container(ContainerLayout::Stack(stack))],
+        );
+        assert_eq!(LayoutInput::decode(&input.encode()).unwrap(), input);
+        let negative = LayoutInput::new(
+            id(1),
+            vec![
+                LayoutNode::new(id(1)).with_container(ContainerLayout::Stack(StackLayout {
+                    cross_gap: len(-2.0),
+                    ..stack
+                })),
+            ],
+        );
+        assert!(matches!(
+            negative.validate(),
+            Err(LayoutError::NegativeValue { .. })
+        ));
     }
 }
