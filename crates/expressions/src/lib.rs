@@ -41,3 +41,15 @@ pub mod edit_plan;
 
 /// AST 검증 오류의 GUI block·socket 매핑 (VIII.3.4).
 pub mod gui_diagnostics;
+
+/// 평가 공통 오류·참조 입력·값 의미 (VIII.4.1).
+pub mod eval;
+
+/// bytecode 내부 포맷과 compiler (VIII.4.1).
+pub mod bytecode;
+
+/// bytecode evaluator (VIII.4.1).
+pub mod vm;
+
+/// AST 기준 evaluator (VIII.4.1).
+pub mod ast_eval;
