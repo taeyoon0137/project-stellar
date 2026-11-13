@@ -166,6 +166,26 @@ impl TextPayload {
         self.content.as_str()
     }
 
+    /// 빈 텍스트 node를 만듭니다(VI.7.4).
+    ///
+    /// 빈 내용도 **유효한 node**입니다 — 내용을 모두 지워도 node는 남고, 삭제는
+    /// node 삭제 command로만 일어납니다. 빈 텍스트에도 paragraph 하나(커서가 놓일
+    /// 자리)와 그 style이 유지됩니다.
+    pub fn empty(paragraph_style: u32) -> TextPayload {
+        TextPayload {
+            content: UserText::new(""),
+            paragraphs: vec![Paragraph {
+                style: paragraph_style,
+            }],
+            style_runs: Vec::new(),
+        }
+    }
+
+    /// 내용이 비어 있는지(node 삭제 여부와 무관).
+    pub fn is_empty(&self) -> bool {
+        self.content.as_str().is_empty()
+    }
+
     /// paragraph 목록.
     pub fn paragraphs(&self) -> &[Paragraph] {
         &self.paragraphs
@@ -719,5 +739,31 @@ mod tests {
             ParagraphStyleError::LetterSpacingOutOfRange
         );
         assert!(with(LineHeight::Auto, 10.01).validate().is_err());
+    }
+
+    #[test]
+    fn empty_text_is_a_valid_node_and_round_trips() {
+        // 검증 기준(VI.7.4): empty content 저장·복원.
+        let empty = TextPayload::empty(7);
+        assert!(empty.is_empty());
+        assert_eq!(
+            empty.paragraphs(),
+            &[Paragraph { style: 7 }],
+            "paragraph style 유지"
+        );
+        let decoded = TextPayload::decode(&empty.encode()).unwrap();
+        assert_eq!(decoded, empty);
+        assert!(decoded.is_empty());
+        // new 경로로도 같은 빈 payload를 만들 수 있음(빈 내용 거부하지 않음).
+        let via_new =
+            TextPayload::new(UserText::new(""), vec![Paragraph { style: 7 }], vec![]).unwrap();
+        assert_eq!(via_new, empty);
+        // 빈 내용에 범위 밖 run은 여전히 거부.
+        assert!(TextPayload::new(
+            UserText::new(""),
+            vec![Paragraph { style: 0 }],
+            vec![run(0, 1, 0)]
+        )
+        .is_err());
     }
 }
