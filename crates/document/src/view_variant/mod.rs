@@ -4,6 +4,10 @@
 //! 변수 조건에 맞는 **Variant override**를 작성합니다(기술 아키텍처 16장).
 //!
 //! - [`variable`]: View 변수(IX.7.1) — StableId, 타입, default, 허용 enum 값.
+//! - [`condition`]: Variant 조건(IX.7.2) — 변수별 `Any` 또는 `Equals(value)`.
 
 /// View 변수 (IX.7.1).
 pub mod variable;
+
+/// VariantCondition (IX.7.2).
+pub mod condition;
