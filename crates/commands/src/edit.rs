@@ -199,10 +199,18 @@ impl<'a> EditContext<'a> {
     /// 레코드를 반환합니다. 자손과 modifier stack은 그대로 유지합니다(composite primitive).
     ///
     /// `DocumentModel`이 공통 필드 제자리 변경을 공개하지 않으므로, 이름·같은 종류 payload만
-    /// 바뀌면 해당 primitive를 쓰고, 그 밖의 변경은 subtree를 자손부터 지운 뒤 새 레코드와
-    /// 원래 자손·stack을 다시 넣습니다(비용 O(subtree)). 모든 단계가 journal에 남아 실패 시
-    /// 함께 되돌려집니다. 결과 문서의 유효성(부모 종류·OrderKey·modifier 소유)은 호출하는
+    /// 바뀌면 해당 primitive를 쓰고(이름 변경은 이미 제자리 O(log N)), 그 밖의 변경은 subtree를
+    /// 자손부터 지운 뒤 새 레코드와 원래 자손·stack을 다시 넣습니다. 모든 단계가 journal에 남아 실패
+    /// 시 함께 되돌려집니다. 결과 문서의 유효성(부모 종류·OrderKey·modifier 소유)은 호출하는
     /// command가 먼저 검증합니다.
+    ///
+    /// **비용 한계(review PERF-REWRITE, 2026-11-14)**: 구조 경로는 `ChildIndex` 구성 O(N)에 더해
+    /// `DocumentModel::remove_leaf`가 node마다 전체 column을 훑어 자식을 확인하므로 약
+    /// O(subtree × N)입니다. 표시·잠금·부모·순서 변경이 이 경로를 지납니다. 제자리 갱신은
+    /// `NodeColumns`의 `set_visible`·`set_locked`·`set_order_key`·`set_parent`를 감싼 `DocumentModel`
+    /// primitive가 있어야 안전하게 만들 수 있는데(runtime 핸들·ID registry를 그대로 두는 경로), 그 API는
+    /// document crate 작업이라 commands 범위에서는 추가하지 않았습니다. 추가되면 이 함수의 표시·잠금
+    /// 분기를 그 primitive와 대응 `UndoOp`로 바꾸면 됩니다.
     pub fn replace_record(&mut self, record: NodeRecord) -> Result<NodeRecord, CommandError> {
         let id = record.id;
         let previous = self
