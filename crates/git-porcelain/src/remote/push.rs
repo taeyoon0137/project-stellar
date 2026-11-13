@@ -37,26 +37,7 @@ pub enum RefspecProblem {
 }
 
 fn valid_ref(name: &str) -> bool {
-    let body = name
-        .strip_prefix("refs/heads/")
-        .or_else(|| name.strip_prefix("refs/tags/"));
-    let Some(body) = body else {
-        return false;
-    };
-    !body.is_empty()
-        && !body.starts_with('/')
-        && !body.ends_with('/')
-        && !body.ends_with('.')
-        && !body.ends_with(".lock")
-        && !body.contains("..")
-        && !body.contains("//")
-        && !body.contains("@{")
-        && !body.split('/').any(|c| c.starts_with('.'))
-        && !body.chars().any(|c| {
-            c.is_control()
-                || c.is_whitespace()
-                || matches!(c, ':' | '~' | '^' | '?' | '*' | '[' | '\\')
-        })
+    crate::refname::is_valid_branch_or_tag_ref(name)
 }
 
 impl PushRefspec {

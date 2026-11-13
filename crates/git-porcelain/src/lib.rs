@@ -75,6 +75,12 @@ pub mod conflict;
 /// conflict base·ours·theirs virtual project snapshot(XIV.11.2).
 pub mod conflict_snapshot;
 
+/// ref 이름 검증(Git ref 규칙의 안전한 부분집합).
+pub mod refname;
+
+/// 로드맵 고급 Git 기능 core API(XXVI.*).
+pub mod advanced;
+
 /// Git LFS 설치 감지 (XIII.7.1).
 pub mod lfs;
 
