@@ -815,7 +815,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | IX.3.1 | `[x]` | `ComponentSlot`에 StableId, host FrameRef, allowed node kinds, cardinality, default content refs를 정의합니다. | host가 definition 밖이면 거부. | IX.1.1 |
-| IX.3.2 | `[ ]` | Slot override는 instance가 소유한 nodes를 slot에 투영하도록 정의하고 definition tree 안으로 parent를 직접 바꾸지 않습니다. | save/load 후 ownership 유지. | IX.3.1, IX.2.1 |
+| IX.3.2 | `[x]` | Slot override는 instance가 소유한 nodes를 slot에 투영하도록 정의하고 definition tree 안으로 parent를 직접 바꾸지 않습니다. | save/load 후 ownership 유지. | IX.3.1, IX.2.1 |
 | IX.3.3 | `[ ]` | slot content 삽입·삭제·재정렬 command를 구현합니다. allowed kind/cardinality를 검증합니다. | invalid kind·overflow fixture 실패. | IX.3.2, Phase VII |
 
 ### IX.4 명시적 Property Drilling

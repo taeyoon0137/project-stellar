@@ -21,3 +21,6 @@ pub mod expansion;
 
 /// ComponentSlot (IX.3.1).
 pub mod slot;
+
+/// Slot override 투영 규칙 (IX.3.2).
+pub mod slot_override;

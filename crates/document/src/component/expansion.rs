@@ -11,6 +11,7 @@
 //!   node 속성에 반영하는 binding은 Phase VIII의 몫입니다.
 //! - expansion은 공유 참조만 보유하며 변경 API가 없습니다(읽기 전용).
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
@@ -69,6 +70,11 @@ pub enum ExpansionError {
         /// 요청 id.
         id: ExpandedNodeId,
     },
+    /// 인스턴스 소유 node가 어떤 slot에도 투영되지 않았습니다(IX.3.2).
+    NotProjected {
+        /// node.
+        node: StableId,
+    },
 }
 
 impl fmt::Display for ExpansionError {
@@ -97,6 +103,12 @@ impl fmt::Display for ExpansionError {
             ),
             ExpansionError::NotInExpansion { id } => {
                 write!(f, "{id:?}는 이 expansion에 속하지 않습니다")
+            }
+            ExpansionError::NotProjected { node } => {
+                write!(
+                    f,
+                    "인스턴스 소유 node {node}가 어떤 slot에도 투영되지 않았습니다"
+                )
             }
         }
     }
@@ -225,6 +237,11 @@ pub enum ExpandedNodeId {
         /// 정의 tree node.
         source: StableId,
     },
+    /// 인스턴스가 소유한 실제 scene node(slot 투영, IX.3.2).
+    ///
+    /// scene에서 부모는 인스턴스(또는 그 소유 node) 그대로이고, expansion에서만 slot host
+    /// 아래에 투영됩니다.
+    Owned(StableId),
 }
 
 impl ExpandedNodeId {
@@ -234,11 +251,23 @@ impl ExpandedNodeId {
     }
 }
 
+/// expansion node의 내용 출처.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NodeSource<'a> {
+    /// 정의 node 참조(복제 없음).
+    Definition(&'a DefinitionNode),
+    /// 인스턴스 소유 scene node.
+    Owned {
+        fields: NodeFields,
+        payload: Option<&'a [u8]>,
+    },
+}
+
 /// expansion 안 node 한 개(읽기 전용).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpandedNode<'a> {
     id: ExpandedNodeId,
-    definition: &'a DefinitionNode,
+    source: NodeSource<'a>,
 }
 
 impl<'a> ExpandedNode<'a> {
@@ -247,38 +276,68 @@ impl<'a> ExpandedNode<'a> {
         &self.id
     }
 
-    /// 원본 정의 node — 복제본이 아니라 library 저장소의 참조입니다.
+    /// 원본 정의 node — 복제본이 아니라 library 저장소의 참조입니다. 인스턴스 소유 node면
+    /// `None`.
     pub fn definition_node(&self) -> Option<&'a DefinitionNode> {
-        Some(self.definition)
+        match &self.source {
+            NodeSource::Definition(node) => Some(node),
+            NodeSource::Owned { .. } => None,
+        }
+    }
+
+    /// 인스턴스 소유 scene node면 그 공통 필드.
+    pub fn owned_fields(&self) -> Option<&NodeFields> {
+        match &self.source {
+            NodeSource::Definition(_) => None,
+            NodeSource::Owned { fields, .. } => Some(fields),
+        }
     }
 
     /// node 종류.
     pub fn kind(&self) -> NodeKind {
-        self.definition.kind
+        match &self.source {
+            NodeSource::Definition(node) => node.kind,
+            NodeSource::Owned { fields, .. } => fields.kind,
+        }
     }
 
     /// 표시 여부.
     pub fn visible(&self) -> bool {
-        self.definition.visible
+        match &self.source {
+            NodeSource::Definition(node) => node.visible,
+            NodeSource::Owned { fields, .. } => fields.visible,
+        }
     }
 
     /// 잠금 여부.
     pub fn locked(&self) -> bool {
-        self.definition.locked
+        match &self.source {
+            NodeSource::Definition(node) => node.locked,
+            NodeSource::Owned { fields, .. } => fields.locked,
+        }
     }
 
     /// 표시 이름.
-    pub fn display_name(&self) -> &'a str {
-        &self.definition.display_name
+    pub fn display_name(&self) -> &str {
+        match &self.source {
+            NodeSource::Definition(node) => &node.display_name,
+            NodeSource::Owned { fields, .. } => &fields.display_name,
+        }
     }
 
-    /// 종류별 payload bytes.
+    /// 종류별 payload bytes(scene node에 payload가 없으면 `None`).
     pub fn payload(&self) -> Option<&'a [u8]> {
-        Some(&self.definition.payload)
+        match &self.source {
+            NodeSource::Definition(node) => Some(&node.payload),
+            NodeSource::Owned { payload, .. } => *payload,
+        }
     }
 }
 
 /// 한 scene 인스턴스의 읽기 전용 가상 subtree.
+///
+/// 범위는 인스턴스의 시각 subtree 전체입니다: 정의 tree의 가상 투영, slot에 투영된 인스턴스
+/// 소유 node(`Owned`), 그 소유 node가 다시 ComponentInstance이면 그 정의의 가상 투영까지.
 #[derive(Debug, Clone)]
 pub struct InstanceExpansion<'a> {
     library: &'a ComponentLibrary,
@@ -352,6 +411,49 @@ impl<'a> InstanceExpansion<'a> {
         self.payload.property_override(key)
     }
 
+    /// scene node가 이 인스턴스의 scene 후손(인스턴스 자신 제외)인지.
+    fn is_scene_descendant(&self, id: StableId) -> bool {
+        let mut current = self.scene.parent(id);
+        let mut steps = 0usize;
+        while let Some(parent) = current {
+            if parent == self.instance {
+                return true;
+            }
+            steps += 1;
+            if steps > self.scene.len() {
+                return false;
+            }
+            current = self.scene.parent(parent);
+        }
+        false
+    }
+
+    /// chain 첫 원소(scene 인스턴스)가 펼치는 컴포넌트.
+    fn scene_entry(&self, instance: StableId) -> Result<&'a ComponentEntry, ExpansionError> {
+        if instance == self.instance {
+            return Ok(self.entry);
+        }
+        if !self.is_scene_descendant(instance) {
+            return Err(self.not_in(&[instance], StableId::NIL));
+        }
+        let payload = self.scene.instance_payload(instance)?;
+        self.library
+            .get(payload.component())
+            .ok_or_else(|| unresolved(instance, payload.component()))
+    }
+
+    /// scene 인스턴스 payload(이 expansion의 인스턴스면 차용).
+    fn scene_payload(
+        &self,
+        instance: StableId,
+    ) -> Result<Cow<'_, ComponentInstancePayload>, ExpansionError> {
+        if instance == self.instance {
+            Ok(Cow::Borrowed(&self.payload))
+        } else {
+            Ok(Cow::Owned(self.scene.instance_payload(instance)?))
+        }
+    }
+
     /// 인스턴스 chain을 따라 마지막 인스턴스가 펼치는 컴포넌트 정의를 찾습니다.
     pub(crate) fn resolve_chain(
         &self,
@@ -360,14 +462,26 @@ impl<'a> InstanceExpansion<'a> {
         let (first, rest) = instances
             .split_first()
             .ok_or_else(|| self.not_in(instances, StableId::NIL))?;
-        if *first != self.instance {
-            return Err(self.not_in(instances, StableId::NIL));
-        }
-        let mut entry = self.entry;
+        let mut entry = self.scene_entry(*first)?;
         for nested in rest {
             entry = self.nested_entry(entry, *nested)?;
         }
         Ok(entry)
+    }
+
+    /// chain 마지막 인스턴스의 payload.
+    fn chain_payload(
+        &self,
+        instances: &[StableId],
+    ) -> Result<Cow<'_, ComponentInstancePayload>, ExpansionError> {
+        match instances.split_last() {
+            Some((only, [])) => self.scene_payload(*only),
+            Some((last, outer)) => {
+                let owner = self.resolve_chain(outer)?;
+                Ok(Cow::Owned(self.nested_payload(owner, *last)?))
+            }
+            None => Err(self.not_in(instances, StableId::NIL)),
+        }
     }
 
     /// 정의 tree 안 nested instance node의 payload.
@@ -410,7 +524,18 @@ impl<'a> InstanceExpansion<'a> {
         }
     }
 
-    /// node 내용을 읽습니다. 정의 node 참조를 그대로 돌려줍니다(복제 없음).
+    fn owned_fields(&self, id: StableId) -> Result<NodeFields, ExpansionError> {
+        if !self.is_scene_descendant(id) {
+            return Err(ExpansionError::NotInExpansion {
+                id: ExpandedNodeId::Owned(id),
+            });
+        }
+        self.scene
+            .fields(id)
+            .ok_or(ExpansionError::NodeNotFound { id })
+    }
+
+    /// node 내용을 읽습니다. 정의 node는 참조를 그대로 돌려줍니다(복제 없음).
     pub fn node(&self, id: &ExpandedNodeId) -> Result<ExpandedNode<'a>, ExpansionError> {
         match id {
             ExpandedNodeId::Virtual { instances, source } => {
@@ -421,16 +546,40 @@ impl<'a> InstanceExpansion<'a> {
                     .ok_or_else(|| self.not_in(instances, *source))?;
                 Ok(ExpandedNode {
                     id: id.clone(),
-                    definition,
+                    source: NodeSource::Definition(definition),
+                })
+            }
+            ExpandedNodeId::Owned(node) => {
+                let fields = self.owned_fields(*node)?;
+                Ok(ExpandedNode {
+                    id: id.clone(),
+                    source: NodeSource::Owned {
+                        fields,
+                        payload: self.scene.payload(*node),
+                    },
                 })
             }
         }
     }
 
+    /// slot에 투영된 content id 목록. chain이 scene 인스턴스 하나면 소유 scene node, nested
+    /// 인스턴스면 바깥 정의의 node입니다.
+    fn projected(instances: &[StableId], content: &[StableId]) -> Vec<ExpandedNodeId> {
+        match instances.split_last() {
+            Some((_, [])) | None => content.iter().map(|c| ExpandedNodeId::Owned(*c)).collect(),
+            Some((_, outer)) => content
+                .iter()
+                .map(|c| ExpandedNodeId::virtual_node(outer.to_vec(), *c))
+                .collect(),
+        }
+    }
+
     /// 자식 목록(시각 순서).
     ///
-    /// nested ComponentInstance의 자식은 그 정의 root의 가상 투영 하나입니다. 재귀 정의와
-    /// 중첩 상한 초과는 거부합니다.
+    /// - nested ComponentInstance의 자식은 그 정의 root의 가상 투영 하나입니다.
+    /// - slot host는 인스턴스가 slot을 override했으면 투영된 content, 아니면 default content
+    ///   (정의 tree 자식)입니다.
+    /// - 재귀 정의와 중첩 상한 초과는 거부합니다.
     pub fn children(&self, id: &ExpandedNodeId) -> Result<Vec<ExpandedNodeId>, ExpansionError> {
         match id {
             ExpandedNodeId::Virtual { instances, source } => {
@@ -449,11 +598,33 @@ impl<'a> InstanceExpansion<'a> {
                         nested.definition().root.id(),
                     )]);
                 }
+                if let Some(slot) = entry.slot_for_host(*source) {
+                    let payload = self.chain_payload(instances)?;
+                    if let Some(content) = payload.slot_override(slot.id) {
+                        return Ok(Self::projected(instances, content.content()));
+                    }
+                }
                 Ok(entry
                     .tree()
                     .children(*source)
                     .iter()
                     .map(|child| ExpandedNodeId::virtual_node(instances.clone(), *child))
+                    .collect())
+            }
+            ExpandedNodeId::Owned(node) => {
+                let fields = self.owned_fields(*node)?;
+                if fields.kind == NodeKind::ComponentInstance {
+                    let entry = self.scene_entry(*node)?;
+                    return Ok(vec![ExpandedNodeId::virtual_node(
+                        vec![*node],
+                        entry.definition().root.id(),
+                    )]);
+                }
+                Ok(self
+                    .scene
+                    .children(*node)
+                    .iter()
+                    .map(|child| ExpandedNodeId::Owned(*child))
                     .collect())
             }
         }
@@ -480,7 +651,24 @@ impl<'a> InstanceExpansion<'a> {
         Ok(())
     }
 
+    /// `content`가 들어 있는 slot의 host(인스턴스 payload 기준). 없으면 투영되지 않은 node.
+    fn projection_host(
+        entry: &ComponentEntry,
+        payload: &ComponentInstancePayload,
+        content: StableId,
+    ) -> Result<StableId, ExpansionError> {
+        payload
+            .slot_overrides()
+            .find(|(_, over)| over.position(content).is_some())
+            .and_then(|(slot, _)| entry.slot(slot))
+            .map(|slot| slot.host.id())
+            .ok_or(ExpansionError::NotProjected { node: content })
+    }
+
     /// 부모 id. 가상 root의 부모는 scene 인스턴스 자신이라 `None`입니다.
+    ///
+    /// slot에 투영된 node의 부모는 (scene·정의 tree의 실제 부모가 아니라) 투영 위치인 slot
+    /// host입니다.
     pub fn parent(&self, id: &ExpandedNodeId) -> Result<Option<ExpandedNodeId>, ExpansionError> {
         match id {
             ExpandedNodeId::Virtual { instances, source } => {
@@ -490,17 +678,54 @@ impl<'a> InstanceExpansion<'a> {
                     .node(*source)
                     .ok_or_else(|| self.not_in(instances, *source))?;
                 match node.parent {
-                    Some(parent) => Ok(Some(ExpandedNodeId::virtual_node(
-                        instances.clone(),
-                        parent,
-                    ))),
+                    Some(parent) => {
+                        let parent_node = entry
+                            .tree()
+                            .node(parent)
+                            .ok_or_else(|| self.not_in(instances, parent))?;
+                        if parent_node.kind == NodeKind::ComponentInstance {
+                            // nested 인스턴스의 slot content → 그 정의의 slot host에 투영.
+                            let payload = self.nested_payload(entry, parent)?;
+                            let nested = self.nested_entry(entry, parent)?;
+                            let host = Self::projection_host(nested, &payload, *source)?;
+                            let mut chain = instances.clone();
+                            chain.push(parent);
+                            return Ok(Some(ExpandedNodeId::virtual_node(chain, host)));
+                        }
+                        Ok(Some(ExpandedNodeId::virtual_node(
+                            instances.clone(),
+                            parent,
+                        )))
+                    }
                     None => match instances.split_last() {
                         Some((nested, outer)) if !outer.is_empty() => {
                             Ok(Some(ExpandedNodeId::virtual_node(outer.to_vec(), *nested)))
                         }
+                        Some((only, _)) if *only != self.instance => {
+                            Ok(Some(ExpandedNodeId::Owned(*only)))
+                        }
                         _ => Ok(None),
                     },
                 }
+            }
+            ExpandedNodeId::Owned(node) => {
+                self.owned_fields(*node)?;
+                let parent = self
+                    .scene
+                    .parent(*node)
+                    .ok_or(ExpansionError::NodeNotFound { id: *node })?;
+                let parent_kind = self
+                    .scene
+                    .fields(parent)
+                    .map(|f| f.kind)
+                    .ok_or(ExpansionError::NodeNotFound { id: parent })?;
+                if parent_kind == NodeKind::ComponentInstance {
+                    let entry = self.scene_entry(parent)?;
+                    let payload = self.scene_payload(parent)?;
+                    let host = Self::projection_host(entry, &payload, *node)?;
+                    return Ok(Some(ExpandedNodeId::virtual_node(vec![parent], host)));
+                }
+                Ok(Some(ExpandedNodeId::Owned(parent)))
             }
         }
     }
@@ -631,6 +856,8 @@ mod tests {
             .into_iter()
             .map(|id| match id {
                 ExpandedNodeId::Virtual { instances, source } => (instances.len(), source),
+                // IX.3.2에서 추가된 variant: chain 길이 0으로 표시(이 fixture에는 slot이 없음).
+                ExpandedNodeId::Owned(node) => (0, node),
             })
             .collect()
     }
