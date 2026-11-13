@@ -1645,7 +1645,7 @@ tools/xtask/
 | XVI.5.2 | `[ ]` | cache priority를 Document/CurrentScene(비축출), VisibleGlyph/Geometry, NearViewport, BackgroundThumbnail 순으로 정의합니다. | eviction order fixture 통과. | XI.6.5, XI.7.3 |
 | XVI.5.3 | `[ ]` | glyph, tessellation, image mipmap, thumbnail cache가 공통 budget manager에 usage를 등록하게 합니다. | total usage 일치. | XVI.5.1, XVI.5.2 |
 | XVI.5.4 | `[ ]` | memory pressure event에서 낮은 priority부터 증분 eviction하고 단일 UI thread 구간 2ms를 넘지 않게 chunking합니다. | simulated pressure에서 latency/usage 기준 통과. | XVI.5.3 |
-| XVI.5.5 | `[ ]` | 비활성 document chunk unload와 재로드를 구현합니다. document index와 unsaved dirty chunk는 unload하지 않습니다. | inactive reload semantic snapshot 동일. | V.6.6, VI.1.4 |
+| XVI.5.5 | `[x]` | 비활성 document chunk unload와 재로드를 구현합니다. document index와 unsaved dirty chunk는 unload하지 않습니다. | inactive reload semantic snapshot 동일. | V.6.6, VI.1.4 |
 | XVI.5.6 | `[ ]` | GPU OOM 직전 캐시 purge 후 재시도를 한 번만 수행하고 반복 loop를 금지합니다. | mock OOM retry count=1. | XI.5.4, XVI.5.4 |
 
 ### XVI.6 파서·저장·Command Fuzzing

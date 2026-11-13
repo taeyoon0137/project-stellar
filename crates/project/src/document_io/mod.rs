@@ -1,4 +1,4 @@
-//! 문서 ↔ chunk model 입출력 (VI.10.2·VI.10.3).
+//! 문서 ↔ chunk model 입출력 (VI.10.2·VI.10.3·XVI.5.5).
 //!
 //! document crate는 storage에 의존하지 않으므로, 문서 영속 레코드(VI.10)를 storage의 chunk
 //! 단위(V.6.1 kind, V.6.2 ViewTree)로 옮기는 매핑은 둘 다 의존할 수 있는 이 crate가
@@ -32,6 +32,9 @@ pub mod serialize;
 
 /// chunk model → document loader (VI.10.3).
 pub mod load;
+
+/// 비활성 문서 chunk unload와 재로드 (XVI.5.5).
+pub mod residency;
 
 /// 문서 chunk payload 스키마 version. chunk pointer(V.3.1)에 기록됩니다.
 pub const DOCUMENT_CHUNK_SCHEMA_VERSION: u32 = 1;
