@@ -78,3 +78,24 @@
 |---|---|
 | default 2개를 보이던 최소 2 slot에 첫 삽입 거부(`count: 1`)·scene 불변, 2개 override에 세 번째 삽입 통과(`first_insert_into_default_slot_checks_minimum_on_result`) | 통과 |
 | 안쪽 content가 있는데 바깥 slot 삽입 거부, 가려진 안쪽 slot 삽입 거부(각각 불변), 바깥을 default로 되돌린 뒤 안쪽 삽입 통과(`inserts_creating_hidden_slot_content_are_rejected`) | 통과 |
+
+## 후속 수정 (리뷰 minor: Insert subtree 형태 검증)
+
+- **결함**: `Insert`는 content root와 인스턴스 자식 사이 OrderKey만 검사해, 삽입 subtree 안 같은 부모의 형제 OrderKey
+  중복과 leaf 종류(예: Text) 아래 자식을 받아들였습니다.
+- **수정**: subtree 안 부모별 형제 OrderKey 중복을 `DuplicateOrderKey`로, leaf(Shape·Path·Text·Image) 부모를
+  `ParentNotContainer`로 거부합니다. ComponentInstance 부모는 허용하되(그 자식 = slot content), subtree 안 인스턴스의
+  slot override가 subtree 안 자기 자식만 투영 규칙대로 가리키는지 검사합니다(`Projection`). `Remove`의 inverse가 nested
+  인스턴스와 그 slot content를 되살려야 하므로 인스턴스 부모 자체를 금지하지 않았습니다. 투영할 것이 없는 인스턴스는
+  참조 컴포넌트가 미해결이어도 이전처럼 허용합니다(III.2.4).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-document` | unit 243, `component_detach` 6, `component_expansion_scale` 1, `component_slot_projection` 1, doctest 2 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| Text 부모 거부, subtree 안 형제 key 중복 거부, 다른 부모 아래 같은 key 허용(`insert_subtree_parents_and_sibling_keys_are_validated`) | 통과 |
+| subtree 안 nested 인스턴스의 미투영 자식·subtree 밖 content 거부, 유효 subtree 삽입 후 두 인스턴스 투영 통과, Remove inverse로 snapshot 복원(`nested_instance_subtree_is_validated_and_remove_inverse_restores_it`) | 통과 |

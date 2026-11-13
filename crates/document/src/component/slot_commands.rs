@@ -28,9 +28,12 @@ use super::detach::SceneNodeRecord;
 use super::expansion::{ExpansionError, SceneIndex, ScenePayloads};
 use super::instance::{ComponentInstancePayload, InstancePayloadError, SlotOverride};
 use super::slot::{ComponentSlot, SlotError};
-use super::slot_override::{check_hidden_slot_content, SlotOverrideError};
+use super::slot_override::{
+    check_hidden_slot_content, validate_record_slot_overrides, SlotOverrideError,
+};
 use crate::node_columns::{NodeColumns, NodeFields};
 use crate::node_kind::NodeKind;
+use crate::validate::can_have_children;
 
 /// 삽입·복원할 scene node 하나(필드 + payload).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +50,10 @@ pub enum SlotContentCommand {
     /// content subtree를 만들어 slot `index` 위치에 투영합니다.
     ///
     /// `nodes[0]`이 content root(부모 = 인스턴스)이고, 나머지는 부모가 앞선 record인 자손입니다.
+    /// 자손의 부모는 자식을 가질 수 있는 종류(Frame·Fragment, 또는 slot content를 소유하는
+    /// ComponentInstance)여야 하고, 같은 부모의 형제끼리 OrderKey가 달라야 합니다. subtree 안
+    /// ComponentInstance의 slot override는 그 subtree 안 자식만 투영 규칙(IX.3.2)대로 가리켜야
+    /// 합니다 — `Remove`의 inverse가 nested 인스턴스와 그 slot content를 그대로 되살립니다.
     Insert {
         /// scene 인스턴스.
         instance: StableId,
@@ -105,7 +112,16 @@ pub enum SlotCommandError {
         /// id.
         id: StableId,
     },
-    /// 인스턴스 자식 사이 OrderKey가 중복됩니다.
+    /// 삽입 record의 부모가 자식을 가질 수 없는 종류입니다(leaf: Shape·Path·Text·Image).
+    ParentNotContainer {
+        /// 자식 record.
+        node: StableId,
+        /// 부모 record.
+        parent: StableId,
+        /// 부모 종류.
+        parent_kind: NodeKind,
+    },
+    /// 형제 사이 OrderKey가 중복됩니다(인스턴스 자식, 또는 삽입 subtree 안 같은 부모의 자식).
     DuplicateOrderKey {
         /// node.
         node: StableId,
@@ -145,8 +161,17 @@ impl fmt::Display for SlotCommandError {
                 write!(f, "삽입 record {node}의 부모가 잘못됐습니다")
             }
             SlotCommandError::DuplicateId { id } => write!(f, "이미 있는 StableId: {id}"),
+            SlotCommandError::ParentNotContainer {
+                node,
+                parent,
+                parent_kind,
+            } => write!(
+                f,
+                "삽입 record {node}의 부모 {parent}({})는 자식을 가질 수 없습니다",
+                parent_kind.name()
+            ),
             SlotCommandError::DuplicateOrderKey { node } => {
-                write!(f, "인스턴스 자식 OrderKey가 중복됩니다({node})")
+                write!(f, "형제 OrderKey가 중복됩니다({node})")
             }
             SlotCommandError::NotInSlot { node } => {
                 write!(f, "node {node}는 이 slot에 투영돼 있지 않습니다")
@@ -306,26 +331,80 @@ impl SlotContentCommand {
                 if *at > len {
                     return Err(SlotCommandError::IndexOutOfRange { index: *at, len });
                 }
-                let mut seen = BTreeSet::new();
+                // 앞선 record의 종류(부모 판정)와 부모별 형제 OrderKey(중복 판정).
+                let mut kinds: HashMap<StableId, NodeKind> = HashMap::new();
+                let mut sibling_keys: HashMap<StableId, BTreeSet<&[u8]>> = HashMap::new();
                 for (i, node) in nodes.iter().enumerate() {
                     let id = node.record.stable_id;
-                    if index.fields(id).is_some() || !seen.insert(id) {
+                    if index.fields(id).is_some() || kinds.contains_key(&id) {
                         return Err(SlotCommandError::DuplicateId { id });
                     }
-                    let parent_ok = if i == 0 {
-                        node.record.parent == Some(*instance)
+                    if i == 0 {
+                        if node.record.parent != Some(*instance) {
+                            return Err(SlotCommandError::InvalidParent { node: id });
+                        }
                     } else {
-                        node.record
+                        let parent = node
+                            .record
                             .parent
-                            .is_some_and(|p| seen.contains(&p) && p != id)
-                    };
-                    if !parent_ok {
-                        return Err(SlotCommandError::InvalidParent { node: id });
+                            .filter(|p| *p != id)
+                            .ok_or(SlotCommandError::InvalidParent { node: id })?;
+                        let parent_kind = *kinds
+                            .get(&parent)
+                            .ok_or(SlotCommandError::InvalidParent { node: id })?;
+                        if !can_have_children(parent_kind)
+                            && parent_kind != NodeKind::ComponentInstance
+                        {
+                            return Err(SlotCommandError::ParentNotContainer {
+                                node: id,
+                                parent,
+                                parent_kind,
+                            });
+                        }
+                        if !sibling_keys
+                            .entry(parent)
+                            .or_default()
+                            .insert(node.record.order_key.as_bytes())
+                        {
+                            return Err(SlotCommandError::DuplicateOrderKey { node: id });
+                        }
                     }
                     if node.record.kind == NodeKind::ComponentInstance {
                         ComponentInstancePayload::decode(node.payload.as_deref().unwrap_or(&[]))
                             .map_err(SlotCommandError::Payload)?;
                     }
+                    kinds.insert(id, node.record.kind);
+                }
+                // subtree 안 인스턴스: slot override가 subtree 안 자기 자식만 투영해야 합니다.
+                let records: HashMap<StableId, (NodeKind, Option<StableId>)> = nodes
+                    .iter()
+                    .map(|n| (n.record.stable_id, (n.record.kind, n.record.parent)))
+                    .collect();
+                for node in nodes
+                    .iter()
+                    .filter(|n| n.record.kind == NodeKind::ComponentInstance)
+                {
+                    let id = node.record.stable_id;
+                    let payload =
+                        ComponentInstancePayload::decode(node.payload.as_deref().unwrap_or(&[]))
+                            .map_err(SlotCommandError::Payload)?;
+                    let children: Vec<StableId> = nodes
+                        .iter()
+                        .filter(|n| n.record.parent == Some(id))
+                        .map(|n| n.record.stable_id)
+                        .collect();
+                    if children.is_empty() && payload.slot_overrides().next().is_none() {
+                        // 투영할 것이 없습니다(참조 컴포넌트가 미해결이어도 허용, III.2.4).
+                        continue;
+                    }
+                    validate_record_slot_overrides(
+                        library,
+                        &payload,
+                        id,
+                        |n| records.get(&n).copied(),
+                        &children,
+                    )
+                    .map_err(SlotCommandError::Projection)?;
                 }
                 let root_id = root.record.stable_id;
                 if index
@@ -963,6 +1042,149 @@ mod tests {
                 .unwrap_err(),
             SlotCommandError::Expansion(ExpansionError::NodeNotFound { .. })
         ));
+    }
+
+    fn rec(id: u64, kind: NodeKind, parent: u64, order: u8, payload: Vec<u8>) -> SlotNodeRecord {
+        SlotNodeRecord {
+            record: SceneNodeRecord {
+                stable_id: stable(id),
+                kind,
+                parent: Some(stable(parent)),
+                order_key: key(order),
+                visible: true,
+                locked: false,
+                display_name: format!("new{id}"),
+            },
+            payload: Some(payload),
+        }
+    }
+
+    #[test]
+    fn insert_subtree_parents_and_sibling_keys_are_validated() {
+        let library = library();
+        let (columns, payloads) = scene(&[1002, 1003]);
+        let insert = |nodes: Vec<SlotNodeRecord>| {
+            SlotContentCommand::Insert {
+                instance: stable(INSTANCE),
+                slot: slot(BODY),
+                index: 0,
+                nodes,
+            }
+            .validate(&library, &columns, &payloads)
+        };
+        let frame = |id, parent, order| rec(id, NodeKind::Frame, parent, order, vec![]);
+        // leaf(Text) 아래 자식.
+        assert_eq!(
+            insert(vec![
+                frame(2001, INSTANCE, 0x70),
+                text(2002, 2001, 0x40),
+                text(2003, 2002, 0x40),
+            ])
+            .unwrap_err(),
+            SlotCommandError::ParentNotContainer {
+                node: stable(2003),
+                parent: stable(2002),
+                parent_kind: NodeKind::Text,
+            }
+        );
+        // subtree 안 같은 부모의 형제 OrderKey 중복.
+        assert_eq!(
+            insert(vec![
+                frame(2001, INSTANCE, 0x70),
+                text(2002, 2001, 0x40),
+                text(2003, 2001, 0x40),
+            ])
+            .unwrap_err(),
+            SlotCommandError::DuplicateOrderKey { node: stable(2003) }
+        );
+        // 다른 부모 아래 같은 key는 허용.
+        insert(vec![
+            frame(2001, INSTANCE, 0x70),
+            frame(2002, 2001, 0x40),
+            text(2003, 2002, 0x40),
+        ])
+        .unwrap();
+    }
+
+    #[test]
+    fn nested_instance_subtree_is_validated_and_remove_inverse_restores_it() {
+        let library = panel_library();
+        let panel = ComponentRef::new(stable(7));
+        let nested_payload = |content: &[u64]| {
+            let mut payload = ComponentInstancePayload::new(panel);
+            if !content.is_empty() {
+                payload.set_slot_override(
+                    slot(INNER),
+                    SlotOverride::new(content.iter().copied().map(stable).collect()).unwrap(),
+                );
+            }
+            payload.encode()
+        };
+        let subtree = |content: &[u64], with_child: bool| {
+            let mut nodes = vec![
+                rec(2101, NodeKind::Frame, PANEL, 0x70, vec![]),
+                rec(
+                    2102,
+                    NodeKind::ComponentInstance,
+                    2101,
+                    0x40,
+                    nested_payload(content),
+                ),
+            ];
+            if with_child {
+                nodes.push(text(2103, 2102, 0x40));
+            }
+            SlotContentCommand::Insert {
+                instance: stable(PANEL),
+                slot: slot(OUTER),
+                index: 0,
+                nodes,
+            }
+        };
+        let (mut columns, mut payloads) = panel_scene(&[], &[]);
+        // nested 인스턴스 자식이 투영되지 않음 / override가 subtree 밖 node를 가리킴.
+        assert_eq!(
+            subtree(&[], true)
+                .validate(&library, &columns, &payloads)
+                .unwrap_err(),
+            SlotCommandError::Projection(SlotOverrideError::UnprojectedOwnedNode {
+                instance: stable(2102),
+                node: stable(2103),
+            })
+        );
+        assert_eq!(
+            subtree(&[2199], false)
+                .validate(&library, &columns, &payloads)
+                .unwrap_err(),
+            SlotCommandError::Projection(SlotOverrideError::ContentNotFound {
+                instance: stable(2102),
+                node: stable(2199),
+            })
+        );
+
+        // 유효한 nested 인스턴스 subtree 삽입 → 두 인스턴스 모두 투영 규칙 통과.
+        subtree(&[2103], true)
+            .apply(&library, &mut columns, &mut payloads)
+            .unwrap();
+        let inserted = snapshot(&columns, &payloads);
+        let index = SceneIndex::build(&columns, &payloads);
+        validate_scene_slot_overrides(&library, &index, stable(PANEL)).unwrap();
+        validate_scene_slot_overrides(&library, &index, stable(2102)).unwrap();
+        drop(index);
+        // Remove의 inverse(Insert)가 nested 인스턴스와 그 slot content를 그대로 되살립니다.
+        let inverse = SlotContentCommand::Remove {
+            instance: stable(PANEL),
+            slot: slot(OUTER),
+            node: stable(2101),
+            restore_default: true,
+        }
+        .apply(&library, &mut columns, &mut payloads)
+        .unwrap();
+        assert_eq!(columns.len(), 2);
+        inverse
+            .apply(&library, &mut columns, &mut payloads)
+            .unwrap();
+        assert_eq!(snapshot(&columns, &payloads), inserted);
     }
 
     const PANEL: u64 = 1201;

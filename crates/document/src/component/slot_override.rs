@@ -276,6 +276,29 @@ pub fn validate_scene_slot_overrides(
     )
 }
 
+/// 아직 scene에 없는 record 집합(slot command 삽입 subtree) 안 인스턴스의 slot override를
+/// 검사합니다. `lookup`은 그 집합에서 node의 (종류, 부모)를, `owned_children`은 그 집합에서
+/// 인스턴스의 자식 전체를 줍니다.
+pub(super) fn validate_record_slot_overrides(
+    library: &ComponentLibrary,
+    payload: &ComponentInstancePayload,
+    instance: StableId,
+    lookup: impl Fn(StableId) -> Option<(NodeKind, Option<StableId>)>,
+    owned_children: &[StableId],
+) -> Result<(), SlotOverrideError> {
+    let entry = library
+        .get(payload.component())
+        .ok_or(ExpansionError::UnresolvedComponent(
+            payload.component().unresolved_at(
+                stellar_core_types::property::PropertyPath::with_keys(
+                    instance,
+                    vec![super::instance::keys::COMPONENT_REF],
+                ),
+            ),
+        ))?;
+    check_projection(entry, payload, instance, lookup, owned_children)
+}
+
 /// 컴포넌트 정의 tree 안 nested 인스턴스들의 slot override를 검사합니다.
 ///
 /// nested 인스턴스의 content는 같은 정의 tree에서 부모가 그 인스턴스인 node여야 합니다.
