@@ -88,3 +88,15 @@ pub(crate) fn init_repo_with_identity(runner: &GitRunner, dir: &Path) {
     git_ok(runner, dir, ["config", "user.name", "Test User"]);
     git_ok(runner, dir, ["config", "user.email", "test@example.com"]);
 }
+
+/// 파일 하나를 커밋합니다.
+pub(crate) fn commit_file(runner: &GitRunner, dir: &Path, name: &str, contents: &[u8]) {
+    std::fs::write(dir.join(name), contents).unwrap();
+    git_ok(runner, dir, ["add", "--", name]);
+    git_ok(runner, dir, ["commit", "-q", "-m", "fixture"]);
+}
+
+/// symlink를 해석한 실경로(macOS `/var`→`/private/var` 차이 흡수).
+pub(crate) fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap()
+}

@@ -32,6 +32,9 @@ pub mod repo;
 /// 프로젝트 신뢰 gate (XIV.1.1).
 pub mod trust;
 
+/// 저장소 위치 판별 (XIV.1.2).
+pub mod location;
+
 /// 테스트 공용 도구(테스트 빌드 전용).
 #[cfg(test)]
 mod test_support;

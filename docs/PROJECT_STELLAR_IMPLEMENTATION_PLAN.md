@@ -1351,7 +1351,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XIV.1.1 | `[x]` | trusted project에서만 GitRunner를 활성화하고 untrusted 상태에서는 모든 Git command request를 `ProjectNotTrusted`로 거부합니다. | 악성 repo fixture에서 process spawn count 0. | IV.5.3, IV.3.4 |
-| XIV.1.2 | `[ ]` | `git rev-parse --show-toplevel`, `--git-dir`, `--git-common-dir`, `--is-inside-work-tree`를 실행해 worktree root와 gitfile 구조를 읽습니다. 경로를 직접 추측하지 않습니다. | 일반 repo와 linked worktree fixture 통과. | IV.3.4 |
+| XIV.1.2 | `[x]` | `git rev-parse --show-toplevel`, `--git-dir`, `--git-common-dir`, `--is-inside-work-tree`를 실행해 worktree root와 gitfile 구조를 읽습니다. 경로를 직접 추측하지 않습니다. | 일반 repo와 linked worktree fixture 통과. | IV.3.4 |
 | XIV.1.3 | `[ ]` | Git capability probe에 porcelain v2, pathspec-from-file, update-index --index-info, worktree, LFS availability를 기록합니다. 초기 UI가 쓰지 않는 기능도 capability로만 저장합니다. | 서로 다른 Git fixture output parse. | IV.3.2 |
 | XIV.1.4 | `[ ]` | Git command cancellation을 구현합니다. child process와 자식 프로세스 tree를 플랫폼 안전 방식으로 종료하고 partial app state를 성공으로 처리하지 않습니다. | long-running fixture cancel 후 process 잔존 0. | IV.3.3 |
 | XIV.1.5 | `[ ]` | stdout/stderr decoding은 UTF-8 우선, raw bytes 보존, invalid sequence replacement 표시를 구분합니다. machine parse는 `-z` 또는 stable format만 사용합니다. | non-UTF8 filename fixture 처리. | IV.3.4 |
