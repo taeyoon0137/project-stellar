@@ -1,4 +1,4 @@
-//! 축별 크기 결정 방식 (X.6.1).
+//! 축별 크기 결정 방식과 min/max clamp (X.6.1, X.6.2).
 //!
 //! [`SizingMode`]는 node 한 축의 border-box 크기를 정하는 방식입니다.
 //!
@@ -18,6 +18,21 @@
 //! 부모 크기 계산(측정)에는 자신의 콘텐츠 크기로 기여하고, 부모 크기가 정해진 뒤 그 크기에
 //! 대해 다시 해석됩니다(순환 없음). 다른 속성과의 조합 규칙(anchor 과다 제약, flex basis 충돌,
 //! 비율 등)은 해당 속성 작업이 추가합니다.
+//!
+//! # min/max clamp (X.6.2)
+//!
+//! [`SizeLimits`]의 축별 min/max는 **모든 배치 방식에서 같은 순서**로 최종 크기에 적용합니다:
+//!
+//! 1. sizing mode(또는 부모가 정한 forced 크기: Stack 분배·Stretch, Grid 영역, Constraint 해 등)로
+//!    값을 정합니다.
+//! 2. 그 값에 `max`를 먼저, `min`을 나중에 적용합니다: `max(min, min(값, max))`.
+//! 3. `HugContent` 축은 콘텐츠 extent + padding을 구한 뒤 같은 clamp를 적용합니다(definite 축은
+//!    clamp한 값으로 content box를 정해 자식을 측정).
+//!
+//! clamp는 엔진의 단일 크기 해석 함수에서만 하므로 Free·Stack·Grid·Overlay·Constraint가 같은 규칙을
+//! 씁니다. Stack grow·shrink 분배는 같은 min/max를 freeze 반복에 넣어 분배 결과가 이미 clamp된
+//! 상태가 되게 합니다(X.3.3). `min > max`는 [`LayoutError::InvalidSizing`], 음수는
+//! [`LayoutError::NegativeValue`]입니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::value::{FiniteF32, Length, Percentage};
@@ -26,6 +41,7 @@ use crate::error::LayoutError;
 use crate::geometry::Axis;
 use crate::input::length_unit;
 use crate::property::LayoutProperty;
+use crate::rounding::LayoutUnit;
 
 /// 한 축의 크기 결정 방식 (X.6.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -107,6 +123,113 @@ pub(crate) fn validate_sizing(
         });
     }
     Ok(())
+}
+
+// --- min/max clamp (X.6.2) ---
+
+/// 축별 최소·최대 크기 (X.6.2). 값은 비음수이고 `min ≤ max`여야 합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct SizeLimits {
+    /// 최소 너비.
+    pub min_width: Option<Length>,
+    /// 최대 너비.
+    pub max_width: Option<Length>,
+    /// 최소 높이.
+    pub min_height: Option<Length>,
+    /// 최대 높이.
+    pub max_height: Option<Length>,
+}
+
+impl SizeLimits {
+    /// 축의 (min, max).
+    pub const fn axis(&self, axis: Axis) -> (Option<Length>, Option<Length>) {
+        match axis {
+            Axis::Horizontal => (self.min_width, self.max_width),
+            Axis::Vertical => (self.min_height, self.max_height),
+        }
+    }
+}
+
+/// 변환된 한 축 min/max.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct AxisLimits {
+    pub(crate) min: LayoutUnit,
+    pub(crate) max: Option<LayoutUnit>,
+}
+
+impl AxisLimits {
+    /// `max(min, min(value, max))` — 최대를 먼저, 최소를 나중에 적용합니다(검증으로 min ≤ max).
+    pub(crate) fn clamp(&self, value: LayoutUnit) -> LayoutUnit {
+        let capped = match self.max {
+            Some(max) => value.min(max),
+            None => value,
+        };
+        capped.max(self.min)
+    }
+}
+
+/// min/max를 검증·변환합니다.
+pub(crate) fn prepare_limits(
+    node: StableId,
+    limits: &SizeLimits,
+) -> Result<[AxisLimits; 2], LayoutError> {
+    let mut out = [AxisLimits::default(); 2];
+    for axis in Axis::BOTH {
+        let property = axis_property(axis);
+        let (min, max) = limits.axis(axis);
+        let min = match min {
+            Some(length) => length_unit(node, property, length, false)?,
+            None => LayoutUnit::ZERO,
+        };
+        let max = match max {
+            Some(length) => Some(length_unit(node, property, length, false)?),
+            None => None,
+        };
+        if max.is_some_and(|max| min > max) {
+            return Err(LayoutError::InvalidSizing {
+                node,
+                axis,
+                reason: "min이 max보다 큽니다",
+            });
+        }
+        out[axis.index()] = AxisLimits { min, max };
+    }
+    Ok(out)
+}
+
+/// min/max canonical bytes(min_width, max_width, min_height, max_height 순, flag + f32).
+pub(crate) fn encode_limits(w: &mut crate::codec::Writer, limits: &SizeLimits) {
+    for value in [
+        limits.min_width,
+        limits.max_width,
+        limits.min_height,
+        limits.max_height,
+    ] {
+        match value {
+            Some(length) => {
+                w.bool(true);
+                w.length(length);
+            }
+            None => w.bool(false),
+        }
+    }
+}
+
+/// min/max canonical bytes를 읽습니다.
+pub(crate) fn decode_limits(r: &mut crate::codec::Reader<'_>) -> Result<SizeLimits, LayoutError> {
+    let mut values = [None; 4];
+    for value in &mut values {
+        if r.bool("size limit flag")? {
+            *value = Some(r.length("size limit")?);
+        }
+    }
+    let [min_width, max_width, min_height, max_height] = values;
+    Ok(SizeLimits {
+        min_width,
+        max_width,
+        min_height,
+        max_height,
+    })
 }
 
 #[cfg(test)]
@@ -217,5 +340,223 @@ mod tests {
         assert!(SizingMode::Fill.depends_on_containing_block());
         assert!(!SizingMode::HugContent.depends_on_containing_block());
         assert_eq!(SizingMode::default(), SizingMode::Fixed(len(0.0)));
+    }
+
+    use crate::constraint::{AnchorEdge, AnchorTarget, Constraint};
+    use crate::engine::compute_layout;
+    use crate::grid::{GridItem, GridLayout, TrackSize};
+    use crate::input::ContainerLayout;
+    use crate::output::LayoutResult;
+    use crate::overlay::OverlayLayout;
+    use crate::stack::{CrossAlignment, StackLayout};
+    use crate::test_support::px;
+
+    fn limits(
+        min_w: Option<f32>,
+        max_w: Option<f32>,
+        min_h: Option<f32>,
+        max_h: Option<f32>,
+    ) -> SizeLimits {
+        SizeLimits {
+            min_width: min_w.map(len),
+            max_width: max_w.map(len),
+            min_height: min_h.map(len),
+            max_height: max_h.map(len),
+        }
+    }
+
+    /// 100×60 root(container)와 자식들.
+    fn run(container: ContainerLayout, children: Vec<LayoutNode>) -> LayoutResult {
+        let mut root = LayoutNode::new(id(1))
+            .with_fixed_size(len(100.0), len(60.0))
+            .with_container(container);
+        for (i, child) in children.iter().enumerate() {
+            root = root.with_child(child.id, key(i as u32 + 1));
+        }
+        let mut nodes = vec![root];
+        nodes.extend(children);
+        compute_layout(&LayoutInput::new(id(1), nodes)).unwrap()
+    }
+
+    fn size_px(result: &LayoutResult, n: u64) -> (f64, f64) {
+        let r = result.get(id(n)).unwrap().local_rect();
+        (r.width().to_px_f64(), r.height().to_px_f64())
+    }
+
+    #[test]
+    fn min_greater_than_max_and_negative_limits_are_rejected() {
+        let node =
+            |l: SizeLimits| LayoutInput::new(id(1), vec![LayoutNode::new(id(1)).with_limits(l)]);
+        assert!(matches!(
+            node(limits(Some(50.0), Some(40.0), None, None)).validate(),
+            Err(LayoutError::InvalidSizing {
+                axis: Axis::Horizontal,
+                ..
+            })
+        ));
+        assert!(matches!(
+            node(limits(None, None, Some(10.0), Some(9.5))).validate(),
+            Err(LayoutError::InvalidSizing {
+                axis: Axis::Vertical,
+                ..
+            })
+        ));
+        assert!(matches!(
+            node(limits(Some(-1.0), None, None, None)).validate(),
+            Err(LayoutError::NegativeValue { .. })
+        ));
+        // 경계: min == max 허용, round-trip.
+        let equal = node(limits(Some(40.0), Some(40.0), Some(0.0), None));
+        assert_eq!(equal.validate(), Ok(()));
+        assert_eq!(LayoutInput::decode(&equal.encode()).unwrap(), equal);
+    }
+
+    #[test]
+    fn boundary_fixture_in_free_and_root() {
+        // root Fixed 100 + max 80 → 80. Free 자식: Fixed 50/max 40 → 40, Fill(영역 20)/min 30 → 30,
+        // Hug(intrinsic 70)/max 50 → 50, 값이 경계와 같으면 그대로(min = max = 25).
+        let root = LayoutNode::new(id(1))
+            .with_fixed_size(len(100.0), len(60.0))
+            .with_limits(limits(None, Some(80.0), None, None))
+            .with_child(id(2), key(1))
+            .with_child(id(3), key(2))
+            .with_child(id(4), key(3))
+            .with_child(id(5), key(4));
+        let fixed = LayoutNode::new(id(2))
+            .with_fixed_size(len(50.0), len(10.0))
+            .with_limits(limits(None, Some(40.0), None, None));
+        let fill = LayoutNode::new(id(3))
+            .with_sizing(SizingMode::Fill, SizingMode::Fixed(len(10.0)))
+            .with_position(len(60.0), len(0.0))
+            .with_limits(limits(Some(30.0), None, None, None));
+        let hug = LayoutNode::new(id(4))
+            .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+            .with_content(crate::input::LayoutContent::Intrinsic(
+                crate::input::IntrinsicContent {
+                    width: len(70.0),
+                    height: len(5.0),
+                    baseline: None,
+                },
+            ))
+            .with_limits(limits(None, Some(50.0), Some(5.0), Some(5.0)));
+        let exact = LayoutNode::new(id(5))
+            .with_fixed_size(len(25.0), len(25.0))
+            .with_limits(limits(Some(25.0), Some(25.0), Some(25.0), Some(25.0)));
+        let result = compute_layout(&LayoutInput::new(
+            id(1),
+            vec![root, fixed, fill, hug, exact],
+        ))
+        .unwrap();
+        assert_eq!(size_px(&result, 1), (80.0, 60.0));
+        assert_eq!(size_px(&result, 2), (40.0, 10.0));
+        // root 너비 80 → Fill 영역 80 − 60 = 20 → min 30.
+        assert_eq!(size_px(&result, 3), (30.0, 10.0));
+        assert_eq!(size_px(&result, 4), (50.0, 5.0));
+        assert_eq!(size_px(&result, 5), (25.0, 25.0));
+    }
+
+    #[test]
+    fn boundary_fixture_in_stack_grid_overlay_and_constraint() {
+        let fill = || SizingMode::Fill;
+        // Stack grow: Fill 3개 in 100, 첫 자식 max 20 → 20/40/40.
+        let stack = ContainerLayout::Stack(StackLayout::new(Axis::Horizontal));
+        let child = |n: u64, l: SizeLimits| {
+            LayoutNode::new(id(n))
+                .with_sizing(fill(), SizingMode::Fixed(len(10.0)))
+                .with_limits(l)
+        };
+        let result = run(
+            stack.clone(),
+            vec![
+                child(2, limits(None, Some(20.0), None, None)),
+                child(3, SizeLimits::default()),
+                child(4, SizeLimits::default()),
+            ],
+        );
+        assert_eq!(
+            [
+                size_px(&result, 2).0,
+                size_px(&result, 3).0,
+                size_px(&result, 4).0
+            ],
+            [20.0, 40.0, 40.0]
+        );
+        // Stack shrink: Fixed 100 두 개 shrink 1 in 100 → 50/50, 첫 자식 min 70 → 70/30.
+        let shrinker = |n: u64, l: SizeLimits| {
+            LayoutNode::new(id(n))
+                .with_fixed_size(len(100.0), len(10.0))
+                .with_flex(crate::flex::FlexItem::new(
+                    stellar_core_types::value::Scalar::new(0.0).unwrap(),
+                    stellar_core_types::value::Scalar::new(1.0).unwrap(),
+                    crate::flex::FlexBasis::Auto,
+                ))
+                .with_limits(l)
+        };
+        let result = run(
+            stack,
+            vec![
+                shrinker(2, limits(Some(70.0), None, None, None)),
+                shrinker(3, SizeLimits::default()),
+            ],
+        );
+        assert_eq!([size_px(&result, 2).0, size_px(&result, 3).0], [70.0, 30.0]);
+        // Stack Stretch cross(60) + max_height 30 → 30.
+        let stretch = ContainerLayout::Stack(StackLayout {
+            cross_alignment: CrossAlignment::Stretch,
+            ..StackLayout::new(Axis::Horizontal)
+        });
+        let hug = LayoutNode::new(id(2))
+            .with_sizing(SizingMode::Fixed(len(10.0)), SizingMode::HugContent)
+            .with_limits(limits(None, None, None, Some(30.0)));
+        assert_eq!(size_px(&run(stretch, vec![hug]), 2), (10.0, 30.0));
+
+        // Grid: 영역 60×60(1열 1행) Fill + max 45 / min 70.
+        let grid = ContainerLayout::Grid(GridLayout::new(
+            vec![TrackSize::Fixed(len(60.0))],
+            vec![TrackSize::Fixed(len(60.0))],
+        ));
+        let item = LayoutNode::new(id(2))
+            .with_grid(GridItem::at(1, 1, 1, 1))
+            .with_sizing(fill(), fill())
+            .with_limits(limits(None, Some(45.0), Some(70.0), None));
+        assert_eq!(size_px(&run(grid, vec![item]), 2), (45.0, 70.0));
+
+        // Overlay: Fill(100×60) + max_width 80, min_height 70 → 80×70.
+        let overlay = LayoutNode::new(id(2))
+            .with_sizing(fill(), fill())
+            .with_limits(limits(None, Some(80.0), Some(70.0), None));
+        assert_eq!(
+            size_px(
+                &run(
+                    ContainerLayout::Overlay(OverlayLayout::default()),
+                    vec![overlay]
+                ),
+                2
+            ),
+            (80.0, 70.0)
+        );
+
+        // Constraint: Left = 0, Right = parent.Right → Fill 100 → max 70.
+        let constrained = LayoutNode::new(id(2))
+            .with_sizing(fill(), SizingMode::Fixed(len(10.0)))
+            .with_constraint(Constraint::new(
+                AnchorEdge::Left,
+                AnchorTarget::Parent(AnchorEdge::Left),
+                len(0.0),
+            ))
+            .with_constraint(Constraint::new(
+                AnchorEdge::Right,
+                AnchorTarget::Parent(AnchorEdge::Right),
+                len(0.0),
+            ))
+            .with_constraint(Constraint::new(
+                AnchorEdge::Top,
+                AnchorTarget::Parent(AnchorEdge::Top),
+                len(0.0),
+            ))
+            .with_limits(limits(None, Some(70.0), None, None));
+        let result = run(ContainerLayout::Constraint, vec![constrained]);
+        assert_eq!(size_px(&result, 2), (70.0, 10.0));
+        assert_eq!(result.get(id(2)).unwrap().local_rect().x(), px(0));
     }
 }

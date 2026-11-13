@@ -37,6 +37,7 @@ use crate::grid::{
 use crate::overlay::{decode_overlay, encode_overlay, OverlayLayout};
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
+use crate::sizing::{decode_limits, encode_limits, prepare_limits, SizeLimits};
 use crate::sizing::{validate_sizing, SIZING_FILL, SIZING_FIXED, SIZING_HUG, SIZING_PERCENTAGE};
 use crate::stack::{
     decode_stack, decode_stack_wrap, encode_stack, encode_stack_wrap, validate_stack, StackLayout,
@@ -131,6 +132,8 @@ pub struct LayoutNode {
     pub grid: GridItem,
     /// Constraint 부모 안의 필수 등식 제약(X.5.2). 다른 배치 방식의 자식에서는 무시합니다.
     pub constraints: Vec<Constraint>,
+    /// 축별 최소·최대 크기(X.6.2). 모든 배치 방식의 최종 크기에 적용합니다.
+    pub limits: SizeLimits,
 }
 
 impl LayoutNode {
@@ -150,7 +153,14 @@ impl LayoutNode {
             visible: true,
             grid: GridItem::default(),
             constraints: Vec::new(),
+            limits: SizeLimits::default(),
         }
+    }
+
+    /// 축별 최소·최대 크기를 지정합니다.
+    pub fn with_limits(mut self, limits: SizeLimits) -> LayoutNode {
+        self.limits = limits;
+        self
     }
 
     /// Constraint 부모 안의 제약을 추가합니다.
@@ -438,6 +448,7 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
     }
     validate_sizing(node.id, Axis::Horizontal, node.width, is_root)?;
     validate_sizing(node.id, Axis::Vertical, node.height, is_root)?;
+    prepare_limits(node.id, &node.limits)?;
     if let LayoutContent::Intrinsic(content) = node.content {
         length_unit(node.id, LayoutProperty::Content, content.width, false)?;
         length_unit(node.id, LayoutProperty::Content, content.height, false)?;
@@ -513,6 +524,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
     w.bool(node.visible);
     encode_item(w, &node.grid);
     encode_constraints(w, &node.constraints);
+    encode_limits(w, &node.limits);
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
@@ -589,6 +601,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
     let visible = r.bool("visible flag")?;
     let grid = decode_item(r)?;
     let constraints = decode_constraints(r)?;
+    let limits = decode_limits(r)?;
     Ok(LayoutNode {
         id,
         children,
@@ -603,6 +616,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         visible,
         grid,
         constraints,
+        limits,
     })
 }
 

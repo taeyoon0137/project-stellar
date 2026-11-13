@@ -28,6 +28,7 @@ use crate::output::{LayoutBox, LayoutDiagnostic, LayoutResult};
 use crate::overlay;
 use crate::property::LayoutProperty;
 use crate::rounding::{LayoutUnit, LayoutUnitError};
+use crate::sizing::{prepare_limits, AxisLimits};
 use crate::stack;
 
 /// 입력 전체를 레이아웃합니다.
@@ -117,6 +118,8 @@ pub(crate) struct Prepared {
     pub(crate) anchors: [PreparedAnchors; 2],
     /// Stack 자식 grow·shrink·basis.
     pub(crate) flex: PreparedFlex,
+    /// 축별 min/max(X.6.2).
+    pub(crate) limits: [AxisLimits; 2],
 }
 
 /// 결과 box 조립 전 값.
@@ -206,11 +209,12 @@ impl<'a> Engine<'a> {
         let prepared = &self.nodes[index];
         let id = prepared.id;
         let padding = prepared.padding;
+        let limits = prepared.limits;
         let mut definite = [None, None];
         for axis in Axis::BOTH {
             let i = axis.index();
             if let Some(forced) = constraint.forced[i] {
-                definite[i] = Some(forced);
+                definite[i] = Some(limits[i].clamp(forced));
                 continue;
             }
             definite[i] = match prepared.sizing[i] {
@@ -223,6 +227,8 @@ impl<'a> Engine<'a> {
                     None => None,
                 },
             };
+            // X.6.2: definite 값은 clamp한 뒤 content box 계산에 씁니다.
+            definite[i] = definite[i].map(|value| limits[i].clamp(value));
         }
         let mut resolved = [LayoutUnit::ZERO; 2];
         if definite.iter().any(Option::is_none) {
@@ -242,9 +248,11 @@ impl<'a> Engine<'a> {
                 let i = axis.index();
                 resolved[i] = match definite[i] {
                     Some(value) => value,
-                    None => content[i]
-                        .checked_add(padding.sum(axis).map_err(at(id))?)
-                        .map_err(at(id))?,
+                    None => limits[i].clamp(
+                        content[i]
+                            .checked_add(padding.sum(axis).map_err(at(id))?)
+                            .map_err(at(id))?,
+                    ),
                 };
             }
         } else {
@@ -368,6 +376,7 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
     };
     let anchors = free::prepare_position(node)?;
     let flex = prepare_flex(node)?;
+    let limits = prepare_limits(node.id, &node.limits)?;
     Ok(Prepared {
         id: node.id,
         padding,
@@ -375,6 +384,7 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
         intrinsic,
         anchors,
         flex,
+        limits,
     })
 }
 

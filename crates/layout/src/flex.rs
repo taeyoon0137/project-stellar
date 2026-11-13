@@ -13,7 +13,7 @@
 //!
 //! # 분배 (reference flex 알고리즘 축약)
 //!
-//! 1. hypothetical main = base를 [min, max]로 clamp(min 기본 0, max 없음).
+//! 1. hypothetical main = base를 자식 main 축 [min, max](X.6.2, 기본 0·없음)로 clamp.
 //! 2. content main − gap 합 − hypothetical 합 > 0이면 grow, 아니면 shrink 모드입니다. factor가 0이거나
 //!    base가 이미 clamp된 방향으로 벗어난 자식은 hypothetical 크기로 고정(frozen)합니다.
 //! 3. 남은 공간(사용 가능 − frozen 크기 − 비고정 base 합)을 grow 모드는 grow factor, shrink 모드는
@@ -209,7 +209,8 @@ pub(crate) struct FlexInput {
 }
 
 impl FlexInput {
-    fn clamp(&self, value: LayoutUnit) -> LayoutUnit {
+    /// min/max clamp(X.6.2와 같은 순서: max 먼저, min 나중).
+    pub(crate) fn clamp(&self, value: LayoutUnit) -> LayoutUnit {
         let upper = match self.max {
             Some(max) => value.min(max),
             None => value,

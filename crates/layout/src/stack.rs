@@ -449,12 +449,13 @@ fn flex_inputs(
         } else {
             (flex.grow, flex.shrink)
         };
+        let limits = engine.nodes[child].limits[main];
         let input = FlexInput {
             base,
             grow,
             shrink,
-            min: LayoutUnit::ZERO,
-            max: None,
+            min: limits.min,
+            max: limits.max,
         };
         inputs.push((input, constraint));
     }
@@ -482,7 +483,7 @@ fn line_sizes(
             let available = extent.checked_sub(gaps).map_err(at(id))?;
             resolve_flexible_lengths(available, &flex).map_err(at(id))?
         }
-        None => flex.iter().map(|input| input.base.max(input.min)).collect(),
+        None => flex.iter().map(|input| input.clamp(input.base)).collect(),
     };
     let mut sizes = Vec::with_capacity(children.len());
     for (&child, ((_, mut constraint), main_size)) in
@@ -539,7 +540,7 @@ fn build_lines(
     let mut groups: Vec<Vec<usize>> = Vec::new();
     let mut used = LayoutUnit::ZERO;
     for (&child, (input, _)) in children.iter().zip(&inputs) {
-        let hypothetical = input.base.max(input.min);
+        let hypothetical = input.clamp(input.base);
         let start_new = match groups.last() {
             None => true,
             Some(current) if current.is_empty() => false,
