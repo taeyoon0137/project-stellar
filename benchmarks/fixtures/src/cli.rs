@@ -5,6 +5,10 @@
 use stellar_storage::hash::ContentHash;
 
 use crate::error::FixtureError;
+use crate::limits::{
+    component_instances, deep_document, nesting_chain, validate_component_fixture, visible_nodes,
+    COMPONENT_INSTANCES_TARGET, NESTING_TARGET, VISIBLE_NODES_TARGET,
+};
 use crate::synthetic::{generate_synthetic, ScaleTier, SyntheticSpec};
 use crate::GENERATOR_VERSION;
 
@@ -20,9 +24,14 @@ pub struct Request {
     pub seed: u64,
 }
 
+/// 규모 상한 fixture 이름(XVI.3.2).
+const LIMIT_FIXTURES: [&str; 4] = ["visible-20k", "components-50k", "nesting-64", "deep-64"];
+
 /// 지원하는 fixture 이름.
 pub fn fixture_names() -> Vec<&'static str> {
-    ScaleTier::ALL.iter().map(|t| t.name()).collect()
+    let mut names: Vec<&'static str> = ScaleTier::ALL.iter().map(|t| t.name()).collect();
+    names.extend(LIMIT_FIXTURES);
+    names
 }
 
 /// 사용법 문자열.
@@ -121,22 +130,68 @@ fn json_string(value: &str) -> String {
 
 /// 요청한 fixture를 생성합니다.
 pub fn run(request: &Request) -> Result<Report, FixtureError> {
-    let tier = ScaleTier::from_name(&request.fixture).ok_or(FixtureError::InvalidSpec {
-        reason: "알 수 없는 fixture",
-    })?;
-    let summary = generate_synthetic(&SyntheticSpec::tier(tier, request.seed), |_| Ok(()))?;
-    Ok(Report {
-        fixture: summary.name,
-        seed: summary.seed,
+    let seed = request.seed;
+    let report = |metrics: Vec<(&'static str, u64)>, content_hash: ContentHash| Report {
+        fixture: request.fixture.clone(),
+        seed,
         generator_version: GENERATOR_VERSION,
-        metrics: vec![
-            ("documents", summary.documents as u64),
-            ("nodes", summary.nodes as u64),
-            ("chunks", summary.chunks),
-            ("payload_bytes", summary.payload_bytes),
-        ],
-        content_hash: summary.content_hash,
-    })
+        metrics,
+        content_hash,
+    };
+    match request.fixture.as_str() {
+        "visible-20k" => {
+            let fixture = visible_nodes(seed, VISIBLE_NODES_TARGET)?;
+            Ok(report(
+                vec![
+                    ("nodes", fixture.built.model.node_count() as u64),
+                    ("visible_nodes", fixture.visible_nodes as u64),
+                    ("hidden_nodes", fixture.hidden_nodes as u64),
+                    ("offscreen_nodes", fixture.offscreen_nodes as u64),
+                ],
+                fixture.content_hash,
+            ))
+        }
+        "components-50k" | "nesting-64" => {
+            let fixture = if request.fixture == "nesting-64" {
+                nesting_chain(seed, NESTING_TARGET)?
+            } else {
+                component_instances(seed, COMPONENT_INSTANCES_TARGET)?
+            };
+            let validation = validate_component_fixture(&fixture)?;
+            Ok(report(
+                vec![
+                    ("scene_nodes", fixture.columns.len() as u64),
+                    ("instances", validation.instances as u64),
+                    ("definition_nodes", validation.definition_nodes as u64),
+                    ("virtual_nodes", validation.virtual_nodes as u64),
+                    ("max_instance_chain", validation.max_instance_chain as u64),
+                ],
+                fixture.content_hash,
+            ))
+        }
+        "deep-64" => {
+            let fixture = deep_document(seed, NESTING_TARGET as u32)?;
+            Ok(report(
+                vec![("nodes", fixture.built.model.node_count() as u64)],
+                fixture.content_hash,
+            ))
+        }
+        name => {
+            let tier = ScaleTier::from_name(name).ok_or(FixtureError::InvalidSpec {
+                reason: "알 수 없는 fixture",
+            })?;
+            let summary = generate_synthetic(&SyntheticSpec::tier(tier, seed), |_| Ok(()))?;
+            Ok(report(
+                vec![
+                    ("documents", summary.documents as u64),
+                    ("nodes", summary.nodes as u64),
+                    ("chunks", summary.chunks),
+                    ("payload_bytes", summary.payload_bytes),
+                ],
+                summary.content_hash,
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -163,6 +218,10 @@ mod tests {
                 seed: 42
             })
         );
+        for name in fixture_names() {
+            assert!(parse_args(&args(&[name])).is_ok(), "{name}");
+        }
+        assert_eq!(fixture_names().len(), 7);
         for bad in [
             &[][..],
             &["unknown"][..],

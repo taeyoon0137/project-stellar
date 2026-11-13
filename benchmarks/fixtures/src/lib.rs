@@ -6,6 +6,7 @@
 //! (`stellar_project::document_io`)로 chunk model을 만든 뒤 그 결과로 content hash를 계산합니다.
 //!
 //! - [`synthetic`]: 1만·20만·프로젝트 100만 node 규모 fixture(XVI.3.1).
+//! - [`limits`]: 가시 node 2만·컴포넌트 인스턴스 5만·중첩 64 fixture(XVI.3.2).
 //! - [`split`]: fixture의 chunk split 계획 요약(V.6.4 planner 연결).
 //! - [`digest`]: fixture content hash.
 //!
@@ -37,6 +38,9 @@ pub mod synthetic;
 
 /// chunk split 계획 요약 (V.6.4).
 pub mod split;
+
+/// 규모 상한 fixture: 가시 2만, 인스턴스 5만, 중첩 64 (XVI.3.2).
+pub mod limits;
 
 /// on-demand 생성 CLI 인자 해석과 실행.
 pub mod cli;

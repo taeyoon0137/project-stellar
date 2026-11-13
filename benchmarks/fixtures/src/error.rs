@@ -5,6 +5,8 @@
 
 use std::fmt;
 
+use stellar_document::component::definition::ComponentDefinitionError;
+use stellar_document::component::expansion::ExpansionError;
 use stellar_document::definitions::DefinitionError;
 use stellar_document::model::{LoadModelError, ModelError};
 use stellar_document::record_codec::PartitionError;
@@ -38,6 +40,10 @@ pub enum FixtureError {
     SplitTree(SplitTreeError),
     /// split planner 실패.
     Split(SplitError),
+    /// 컴포넌트 정의·library 구성 또는 round-trip 실패.
+    Component(ComponentDefinitionError),
+    /// 인스턴스 expansion 실패(미해결·재귀·중첩 상한·payload).
+    Expansion(ExpansionError),
 }
 
 impl fmt::Display for FixtureError {
@@ -54,6 +60,8 @@ impl fmt::Display for FixtureError {
             FixtureError::Partition(e) => write!(f, "subtree 분할: {e}"),
             FixtureError::SplitTree(e) => write!(f, "split 입력: {e}"),
             FixtureError::Split(e) => write!(f, "split 계획: {e}"),
+            FixtureError::Component(e) => write!(f, "컴포넌트 정의: {e}"),
+            FixtureError::Expansion(e) => write!(f, "인스턴스 expansion: {e}"),
         }
     }
 }
