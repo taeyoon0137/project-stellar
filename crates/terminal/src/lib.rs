@@ -8,16 +8,20 @@
 //! - [`env`]: child 환경 변수 허용 목록.
 //! - [`cwd`]: 작업 디렉터리 선택·preset·검증.
 //! - [`state`]: child process 상태.
-//! - [`registry`]: 프로젝트 창별 다중 세션 registry.
+//! - [`registry`]: 프로젝트 창별 다중 세션 registry와 시작 gate.
+//! - [`capability`]: 신뢰된 프로젝트에서만 시작하게 하는 capability token.
+//! - [`launch`]: 실행 요청과 실행기·프로세스 경계.
 //!
 //! **저장하지 않는 상태**: 세션·profile 복사본·출력·프로세스 상태는 세션 메모리에만 있습니다.
 //! 프로젝트 저장과 복구 snapshot에 넣지 않으며(기술 아키텍처 22.3 "복구하지 않는 대상: 터미널
 //! 프로세스와 출력", ADR-0019 결정 2), 이 crate는 저장소·프로젝트·문서 crate와 직렬화 crate에
 //! 의존하지 않습니다(테스트로 고정).
 
+pub mod capability;
 pub mod cwd;
 pub mod env;
 pub mod id;
+pub mod launch;
 pub mod profile;
 pub mod registry;
 pub mod state;
