@@ -44,6 +44,7 @@ use std::ffi::OsString;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+use crate::capability::{capability_level, CapabilityLevel, ProjectCapability};
 use crate::identity::ProjectIdentity;
 use crate::trust::TrustStatus;
 
@@ -276,10 +277,12 @@ pub enum ExternalAccess {
 
 impl ExternalAccess {
     /// 프로젝트 신뢰 상태에 맞는 정책. 신뢰되지 않으면 [`ExternalAccess::MetadataOnly`]입니다.
+    ///
+    /// 값은 capability matrix(XVI.7.1)의 외부 symlink target 읽기 행에서 얻습니다.
     pub fn from_trust(trust: TrustStatus) -> ExternalAccess {
-        match trust {
-            TrustStatus::Trusted => ExternalAccess::Allowed,
-            TrustStatus::NotTrusted => ExternalAccess::MetadataOnly,
+        match capability_level(ProjectCapability::ReadExternalSymlinkTarget, trust) {
+            CapabilityLevel::Allowed => ExternalAccess::Allowed,
+            CapabilityLevel::Restricted | CapabilityLevel::Denied => ExternalAccess::MetadataOnly,
         }
     }
 }
