@@ -17,7 +17,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use stellar_core_types::typed_value::TypedValue;
 
-use crate::ast::{ChildSlot, ExprNode, ExprNodeId, ExpressionAst, Literal, NodePayload};
+use crate::ast::{
+    ChildSlot, ExprNode, ExprNodeId, ExpressionAst, Literal, NodePayload, ReferenceTarget,
+};
 use crate::eval::{
     apply_binary, apply_unary, load_reference, match_arm, short_circuit, truth, value_heap_bytes,
     BoundedStack, EvalError, EvalErrorKind, ReferenceValues,
@@ -117,6 +119,59 @@ pub fn evaluate_ast_with_limits(
     values: &dyn ReferenceValues,
     limits: EvalLimits,
 ) -> Result<Option<TypedValue>, EvalError> {
+    run(ast, types, values, limits, None)
+}
+
+/// 평가 중 실제로 읽은 참조 하나(VIII.6.5 provenance).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ReferenceRead {
+    /// 참조 node.
+    pub node: ExprNodeId,
+    /// 읽은 대상.
+    pub target: ReferenceTarget,
+}
+
+/// 평가 중 선택한 branch 하나(VIII.6.5 provenance).
+///
+/// `if`는 `Then`/`Else`, `match`는 `Arm(i)`/`Default`, `and`·`or`는 왼쪽만으로 결과가 정해지면 `Lhs`, 오른쪽까지
+/// 평가하면 `Rhs`입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BranchDecision {
+    /// 선택 node.
+    pub node: ExprNodeId,
+    /// 선택된 slot.
+    pub taken: ChildSlot,
+}
+
+/// 평가 경로: 실제로 읽은 참조와 선택한 branch(평가 순서). short-circuit으로 평가하지 않은 branch의 참조는 없습니다.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct EvaluationPath {
+    /// 읽은 참조(공유 node는 한 번).
+    pub reads: Vec<ReferenceRead>,
+    /// 선택한 branch.
+    pub branches: Vec<BranchDecision>,
+}
+
+/// AST를 평가하면서 평가 경로(읽은 참조·선택 branch)를 함께 기록합니다(VIII.6.5). 값 의미와 한도는
+/// [`evaluate_ast_with_limits`]와 같습니다. 평가가 실패해도 실패 지점까지의 경로를 돌려줍니다.
+pub fn evaluate_ast_traced(
+    ast: &ExpressionAst,
+    types: &dyn ReferenceTypes,
+    values: &dyn ReferenceValues,
+    limits: EvalLimits,
+) -> (Result<Option<TypedValue>, EvalError>, EvaluationPath) {
+    let mut path = EvaluationPath::default();
+    let result = run(ast, types, values, limits, Some(&mut path));
+    (result, path)
+}
+
+fn run(
+    ast: &ExpressionAst,
+    types: &dyn ReferenceTypes,
+    values: &dyn ReferenceValues,
+    limits: EvalLimits,
+    mut path: Option<&mut EvaluationPath>,
+) -> Result<Option<TypedValue>, EvalError> {
     let report = type_check(ast, types);
     if let Some(error) = report.errors().first() {
         return Err(EvalError::new(Some(error.node), EvalErrorKind::IllTyped));
@@ -167,6 +222,12 @@ pub fn evaluate_ast_with_limits(
                             .type_of(id)
                             .ok_or(fail(EvalErrorKind::MalformedProgram))?;
                         let value = load_reference(target, expected, values).map_err(fail)?;
+                        if let Some(path) = path.as_deref_mut() {
+                            path.reads.push(ReferenceRead {
+                                node: id,
+                                target: target.clone(),
+                            });
+                        }
                         memo.record(id, &value, &mut stack).map_err(fail)?;
                         stack.push(value).map_err(fail)?;
                     }
@@ -238,6 +299,9 @@ pub fn evaluate_ast_with_limits(
                 } else {
                     ChildSlot::Else
                 };
+                if let Some(path) = path.as_deref_mut() {
+                    path.branches.push(BranchDecision { node: id, taken });
+                }
                 tasks.push(Task::Finish(id));
                 tasks.push(Task::Eval(child(node, taken)?));
             }
@@ -253,6 +317,14 @@ pub fn evaluate_ast_with_limits(
                     },
                     _ => return Err(fail(EvalErrorKind::MalformedProgram)),
                 };
+                if let Some(path) = path.as_deref_mut() {
+                    let taken = if short_circuit(op, lhs).is_some() {
+                        ChildSlot::Lhs
+                    } else {
+                        ChildSlot::Rhs
+                    };
+                    path.branches.push(BranchDecision { node: id, taken });
+                }
                 match short_circuit(op, lhs) {
                     Some(result) => {
                         let value = Some(TypedValue::Boolean(result));
@@ -278,6 +350,9 @@ pub fn evaluate_ast_with_limits(
                     ),
                     None => ChildSlot::Default,
                 };
+                if let Some(path) = path.as_deref_mut() {
+                    path.branches.push(BranchDecision { node: id, taken });
+                }
                 tasks.push(Task::Finish(id));
                 tasks.push(Task::Eval(child(node, taken)?));
             }
@@ -423,5 +498,94 @@ mod tests {
         assert!(memo.is_shared(id(2)));
         assert!(!memo.is_shared(id(1)) && !memo.is_shared(id(3)));
         assert_eq!(evaluate_ast(&ast, &types(), &values()), Ok(Some(num(4.0))));
+    }
+
+    #[test]
+    fn traced_evaluation_records_reads_and_branches() {
+        use crate::ast::EnvironmentKey;
+        let flag = ReferenceTarget::Environment(EnvironmentKey::new(1));
+        let a = ReferenceTarget::Environment(EnvironmentKey::new(2));
+        let b = ReferenceTarget::Environment(EnvironmentKey::new(3));
+        let c = ReferenceTarget::Environment(EnvironmentKey::new(4));
+        // ((if flag then a else b) == 1) and (flag or c)
+        let ast = ExpressionAst::new(
+            id(1),
+            vec![
+                ExprNode::binary(id(1), BinaryOp::And, id(2), id(7)),
+                ExprNode::binary(id(2), BinaryOp::Equal, id(3), id(6)),
+                ExprNode::if_else(id(3), id(4), id(5), id(8)),
+                ExprNode::reference(id(4), flag.clone()),
+                ExprNode::reference(id(5), a.clone()),
+                ExprNode::literal(id(6), one()),
+                ExprNode::binary(id(7), BinaryOp::Or, id(9), id(10)),
+                ExprNode::reference(id(8), b.clone()),
+                ExprNode::reference(id(9), flag.clone()),
+                ExprNode::reference(id(10), c.clone()),
+            ],
+        )
+        .expect("유효");
+        let types = BTreeMap::from([
+            (
+                flag.clone(),
+                TypeSpec::required(crate::types::ExpressionType::Boolean),
+            ),
+            (
+                a.clone(),
+                TypeSpec::required(crate::types::ExpressionType::Number),
+            ),
+            (
+                b.clone(),
+                TypeSpec::required(crate::types::ExpressionType::Number),
+            ),
+            (
+                c.clone(),
+                TypeSpec::required(crate::types::ExpressionType::Boolean),
+            ),
+        ]);
+        let values = BTreeMap::from([
+            (flag.clone(), Some(TypedValue::Boolean(true))),
+            (a.clone(), Some(one())),
+            (b.clone(), Some(num(5.0))),
+            (c, Some(TypedValue::Boolean(false))),
+        ]);
+        let (value, path) = evaluate_ast_traced(&ast, &types, &values, EvalLimits::DEFAULT);
+        let value = value.expect("평가");
+        assert_eq!(value, Some(TypedValue::Boolean(true)));
+        assert_eq!(value, evaluate_ast(&ast, &types, &values).expect("평가"));
+        // b(Else branch)와 c(or의 오른쪽)는 읽지 않습니다.
+        assert_eq!(
+            path.reads,
+            vec![
+                ReferenceRead {
+                    node: id(4),
+                    target: flag.clone()
+                },
+                ReferenceRead {
+                    node: id(5),
+                    target: a
+                },
+                ReferenceRead {
+                    node: id(9),
+                    target: flag
+                },
+            ]
+        );
+        assert_eq!(
+            path.branches,
+            vec![
+                BranchDecision {
+                    node: id(3),
+                    taken: ChildSlot::Then
+                },
+                BranchDecision {
+                    node: id(1),
+                    taken: ChildSlot::Rhs
+                },
+                BranchDecision {
+                    node: id(7),
+                    taken: ChildSlot::Lhs
+                },
+            ]
+        );
     }
 }

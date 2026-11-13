@@ -758,7 +758,7 @@ tools/xtask/
 | VIII.6.2 | `[x]` | binding dependency graph가 token, property, component property, environment input을 공통 node로 표현하게 합니다. | dependency 종류별 fixture 통과. | VIII.6.1, VIII.5.3 |
 | VIII.6.3 | `[x]` | binding cycle detector를 구현하고 Property A↔B, token↔property cycle을 모두 탐지합니다. | mixed cycle fixture 실패. | VIII.6.2 |
 | VIII.6.4 | `[x]` | source 변경 시 영향받는 binding만 topological order로 재평가하는 scheduler를 구현합니다. | 무관 subtree 평가 count 0, 순서 deterministic. | VIII.6.2, VIII.4.6 |
-| VIII.6.5 | `[ ]` | evaluated value provenance chain에 token, expression node, component property, environment branch를 기록합니다. | 최종값→원본 chain fixture 정확. | VIII.6.4 |
+| VIII.6.5 | `[x]` | evaluated value provenance chain에 token, expression node, component property, environment branch를 기록합니다. | 최종값→원본 chain fixture 정확. | VIII.6.4 |
 | VIII.6.6 | `[ ]` | binding 생성·교체·삭제 command를 구현합니다. type mismatch는 command validate에서 거부합니다. | apply/inverse와 invalid type fixture 통과. | VIII.6.1, Phase VII |
 
 ### VIII.7 환경 입력과 Target 조건

@@ -23,3 +23,6 @@ pub mod graph;
 
 /// 영향받는 binding만 위상 순서로 재평가하는 scheduler (VIII.6.4).
 pub mod scheduler;
+
+/// 평가 값 provenance chain (VIII.6.5).
+pub mod provenance;
