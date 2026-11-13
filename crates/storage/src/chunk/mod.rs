@@ -32,4 +32,10 @@ pub mod kinds;
 /// ViewTree chunk payload 스키마 (V.6.2).
 pub mod view_tree;
 
+/// chunk 크기 예산 config reader (V.6.4).
+pub mod budget;
+
+/// 의미 경계 기반 chunk split planner (V.6.4).
+pub mod split;
+
 pub use id::ChunkId;

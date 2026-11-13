@@ -5,6 +5,7 @@
 #
 # 현재 항목:
 #   color: 색공간 transfer 함수(encode/decode) 정확도 예산 (III.4.2 / ADR-0002)
+#   storage: chunk 분할 임계치 (V.6.4 / ADR-0012)
 # 추후 항목:
 #   T0~T5 상호작용 타이밍 예산은 XVI.4.1에서 같은 파일에 추가됩니다.
 
@@ -13,3 +14,10 @@ color:
   # 상한입니다(정규화 채널 값 기준). 8-bit 양자화(1/255 ≈ 3.9e-3)보다 충분히 작습니다.
   # 근거와 transfer 곡선 선택: ADR-0002.
   transfer_abs_tolerance: 1.0e-5
+
+storage:
+  # chunk 분할 임계치(bytes) = 256 KiB. envelope 비압축 payload 길이(ADR-0010) 기준이며,
+  # 의미 경계로 나눈 chunk의 payload가 이 값을 넘으면 split planner(V.6.4)가 분할합니다.
+  # 근거: ADR-0012. reader(stellar-storage `chunk::budget`)는 이 절을 엄격하게 검사합니다.
+  # 값은 10진 양의 정수만 허용합니다(밑줄·단위·선행 0 금지).
+  chunk_split_threshold_bytes: 262144

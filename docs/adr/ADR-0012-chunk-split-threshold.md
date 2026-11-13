@@ -49,10 +49,25 @@ V.6.4가 이 값을 `config/performance-budgets.yaml`에 기록하고 split plan
 - V.6.4가 이 값을 `config/performance-budgets.yaml`에 기록합니다. key 이름과 위치는 V.6.4에서
   정합니다.
 
+V.6.4 구현 기록(2026-11-14):
+
+- 위치와 key: `config/performance-budgets.yaml`의 최상위 `storage:` 절, key
+  `chunk_split_threshold_bytes`(전체 경로 `storage.chunk_split_threshold_bytes`), 값 `262144`입니다.
+- reader는 `stellar-storage`의 `chunk::budget::ChunkBudget`입니다. 다른 최상위 절은 건너뛰고
+  `storage:` 절만 엄격하게 검사합니다. 절·key 누락, 중복, 알 수 없는 key, 공백 2칸이 아닌 들여쓰기,
+  10진 양의 정수가 아닌 값(부호·밑줄·단위·선행 0 포함)을 거부합니다.
+- 비교는 `payload > 262144`일 때만 분할합니다. 같으면 분할하지 않습니다.
+- 분할 후보는 tree root와 의미 경계 노드에서 판정하며, region 안의 가장 가까운 의미 경계 자손을
+  region이 큰 순서(같으면 입력 순서)로 분리합니다. 저장 경로의 split은 이전 layout의 chunk root를
+  유지하고 병합하지 않습니다.
+- 임계치보다 큰 단일 노드: 노드를 바이트 단위로 여러 chunk에 쪼개지 않습니다. 의미 경계로 더 나눌
+  수 없는 region은 분리 가능한 의미 경계 후보를 모두 분리한 뒤 chunk 하나로 두고 `oversized`로
+  표시합니다. 오류가 아니며 저장을 막지 않습니다.
+
 이 ADR이 정하지 않는 사항:
 
 - 작은 인접 chunk의 병합 기준(V.6.5)은 정하지 않습니다.
-- 의미 경계가 임계치보다 큰 단일 노드를 어떻게 나눌지는 split planner 설계(V.6.4)에서 정합니다.
+- 의미 경계가 임계치보다 큰 단일 노드의 처리는 V.6.4가 정했습니다(위 구현 기록).
 
 ## Alternatives
 
