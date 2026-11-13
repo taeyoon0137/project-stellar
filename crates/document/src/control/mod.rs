@@ -20,6 +20,9 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::typed_value::{TypedValue, ValueDecodeError};
 use stellar_expressions::types::{ExpressionType, TypeSpec};
 
+/// Button 계약 (IX.6.2).
+pub mod button;
+
 use crate::component::codec::{
     put_bool, put_bytes, put_count, put_id, put_u16, put_u8, Malformed, Reader,
 };
@@ -582,6 +585,149 @@ impl ContractIssue {
     /// 심각도.
     pub fn severity(&self) -> Severity {
         self.problem.severity()
+    }
+}
+
+/// 종류 검사기가 쓰는 field 검사 도우미.
+pub(crate) struct FieldChecker<'a> {
+    pub(crate) frame: StableId,
+    pub(crate) contract: &'a ControlContract,
+    pub(crate) scope: &'a dyn ContractScope,
+    pub(crate) issues: Vec<ContractIssue>,
+}
+
+impl<'a> FieldChecker<'a> {
+    pub(crate) fn new(
+        frame: StableId,
+        contract: &'a ControlContract,
+        scope: &'a dyn ContractScope,
+    ) -> FieldChecker<'a> {
+        FieldChecker {
+            frame,
+            contract,
+            scope,
+            issues: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push(&mut self, field: Option<ContractField>, problem: ContractProblem) {
+        self.issues.push(ContractIssue {
+            frame: self.frame,
+            field,
+            problem,
+        });
+    }
+
+    /// field 값(없고 `required`면 MissingRequired).
+    pub(crate) fn get(
+        &mut self,
+        field: ContractField,
+        required: bool,
+    ) -> Option<&'a ContractValue> {
+        let value = self.contract.semantic.field(field);
+        if value.is_none() && required {
+            self.push(Some(field), ContractProblem::MissingRequired);
+        }
+        value
+    }
+
+    fn wrong_kind(&mut self, field: ContractField, expected: &[ValueKind], found: ValueKind) {
+        self.push(
+            Some(field),
+            ContractProblem::WrongValueKind {
+                expected: expected.to_vec(),
+                found,
+            },
+        );
+    }
+
+    /// 값 field(상수·Property·상태): 비-nullable 부분 타입이 `expected`여야 합니다. `writable`이면 상태 변수만
+    /// 허용합니다.
+    pub(crate) fn value(
+        &mut self,
+        field: ContractField,
+        required: bool,
+        expected: ExpressionType,
+        writable: bool,
+    ) {
+        let Some(value) = self.get(field, required) else {
+            return;
+        };
+        let kind = value.kind();
+        if !matches!(
+            kind,
+            ValueKind::Constant | ValueKind::Property | ValueKind::State
+        ) {
+            self.wrong_kind(
+                field,
+                &[ValueKind::Constant, ValueKind::Property, ValueKind::State],
+                kind,
+            );
+            return;
+        }
+        let found = value.value_type(self.scope);
+        match found {
+            None => self.push(Some(field), ContractProblem::UnresolvedReference),
+            Some(spec) if spec.value_type() != expected => self.push(
+                Some(field),
+                ContractProblem::TypeMismatch {
+                    expected,
+                    found: Some(spec),
+                },
+            ),
+            Some(_) => {
+                if writable && kind != ValueKind::State {
+                    self.push(Some(field), ContractProblem::NotWritable);
+                }
+            }
+        }
+    }
+
+    /// action field: 선언된 semantic action이어야 합니다.
+    pub(crate) fn action(&mut self, field: ContractField, required: bool) {
+        let Some(value) = self.get(field, required) else {
+            return;
+        };
+        match value {
+            ContractValue::Action(action) => {
+                if !self.scope.has_action(*action) {
+                    self.push(Some(field), ContractProblem::UnresolvedReference);
+                }
+            }
+            other => self.wrong_kind(field, &[ValueKind::Action], other.kind()),
+        }
+    }
+
+    /// 상호작용 계약이 `event`를 처리해야 합니다.
+    pub(crate) fn requires_event(&mut self, event: EventKind) {
+        if !self.contract.interaction.handles(event) {
+            self.push(None, ContractProblem::MissingInteraction { event });
+        }
+    }
+
+    /// 상호작용 계약이 focus 가능해야 합니다.
+    pub(crate) fn requires_focus(&mut self) {
+        if !self.contract.interaction.focusable {
+            self.push(None, ContractProblem::NotFocusable);
+        }
+    }
+
+    /// `known`에 없는 field를 UnknownField로 보고합니다.
+    pub(crate) fn unknown_fields(&mut self, known: &[ContractField]) {
+        let unknown: Vec<ContractField> = self
+            .contract
+            .semantic
+            .fields()
+            .map(|(field, _)| field)
+            .filter(|field| !known.contains(field))
+            .collect();
+        for field in unknown {
+            self.push(Some(field), ContractProblem::UnknownField);
+        }
+    }
+
+    pub(crate) fn finish(self) -> Vec<ContractIssue> {
+        self.issues
     }
 }
 
