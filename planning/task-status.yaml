@@ -7032,28 +7032,28 @@ tasks:
       - DEV-MAC
   - id: "XVIII.3.1"
     title: "ConPTY create와 child process spawn wrapper를 구현합니다. 기본 profile은 PowerShell입니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVIII.1.2"
     required_environments:
       - DEV-MAC
   - id: "XVIII.3.2"
     title: "사용자 지정 shell profile과 argv를 shell string이 아닌 배열로 저장합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVIII.3.1"
     required_environments:
       - DEV-MAC
   - id: "XVIII.3.3"
     title: "resize API를 연결합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVIII.3.1"
     required_environments:
       - DEV-MAC
   - id: "XVIII.3.4"
     title: "job object 또는 동등 process tree 정리로 app close 시 child를 종료합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVIII.3.1"
     required_environments:

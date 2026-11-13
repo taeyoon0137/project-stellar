@@ -1806,10 +1806,10 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XVIII.3.1 | `[ ]` | ConPTY create와 child process spawn wrapper를 구현합니다. 기본 profile은 PowerShell입니다. | `Write-Output` fixture. | XVIII.1.2 |
-| XVIII.3.2 | `[ ]` | 사용자 지정 shell profile과 argv를 shell string이 아닌 배열로 저장합니다. | quoting fixture 통과. | XVIII.3.1 |
-| XVIII.3.3 | `[ ]` | resize API를 연결합니다. | columns/rows fixture. | XVIII.3.1 |
-| XVIII.3.4 | `[ ]` | job object 또는 동등 process tree 정리로 app close 시 child를 종료합니다. | orphan process 0. | XVIII.3.1 |
+| XVIII.3.1 | `[!]` | ConPTY create와 child process spawn wrapper를 구현합니다. 기본 profile은 PowerShell입니다. | `Write-Output` fixture. | XVIII.1.2 |
+| XVIII.3.2 | `[!]` | 사용자 지정 shell profile과 argv를 shell string이 아닌 배열로 저장합니다. | quoting fixture 통과. | XVIII.3.1 |
+| XVIII.3.3 | `[!]` | resize API를 연결합니다. | columns/rows fixture. | XVIII.3.1 |
+| XVIII.3.4 | `[!]` | job object 또는 동등 process tree 정리로 app close 시 child를 종료합니다. | orphan process 0. | XVIII.3.1 |
 
 ### XVIII.4 Terminal emulator와 UI
 
