@@ -257,6 +257,103 @@ impl EllipseParams {
     }
 }
 
+/// 선 끝 모양 (VI.5.4). tag는 저장 포맷의 일부입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum LineCap {
+    /// 끝점에서 자름(기본).
+    #[default]
+    Butt = 0,
+    /// 반원 끝.
+    Round = 1,
+    /// 반폭만큼 연장한 사각 끝.
+    Square = 2,
+}
+
+/// Line 파라미터 (VI.5.4).
+///
+/// **zero-length 정책**: 시작점과 끝점이 같으면 선 방향이 없으므로 "점 cap"으로
+/// 그립니다 — Round는 지름 = 선 두께인 원, Square는 한 변 = 선 두께인 축 정렬
+/// 정사각형, Butt는 면적이 없어 아무것도 그리지 않습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineParams {
+    /// 시작점.
+    pub start: Vec2,
+    /// 끝점.
+    pub end: Vec2,
+    /// 끝 모양.
+    pub cap: LineCap,
+}
+
+fn bounds_of(points: &[(f32, f32)]) -> Option<Rect> {
+    let (mut min_x, mut min_y) = (f32::INFINITY, f32::INFINITY);
+    let (mut max_x, mut max_y) = (f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for (x, y) in points {
+        min_x = min_x.min(*x);
+        min_y = min_y.min(*y);
+        max_x = max_x.max(*x);
+        max_y = max_y.max(*y);
+    }
+    let origin = Vec2::new(min_x, min_y).ok()?;
+    let size = Size2::new(max_x - min_x, max_y - min_y).ok()?;
+    Some(Rect::new(origin, size))
+}
+
+impl LineParams {
+    /// 선 길이가 0인지.
+    pub fn is_zero_length(&self) -> bool {
+        self.start == self.end
+    }
+
+    /// 두께 `width`(비음수)로 stroke했을 때의 bounds. 그릴 것이 없으면 `None`.
+    pub fn stroked_bounds(&self, width: f32) -> Option<Rect> {
+        let h = width.max(0.0) / 2.0;
+        let (sx, sy) = (self.start.x(), self.start.y());
+        let (ex, ey) = (self.end.x(), self.end.y());
+        if self.is_zero_length() {
+            // 점 cap 정책.
+            return match self.cap {
+                LineCap::Butt => None,
+                LineCap::Round | LineCap::Square => {
+                    bounds_of(&[(sx - h, sy - h), (sx + h, sy + h)])
+                }
+            };
+        }
+        let len = ((ex - sx).powi(2) + (ey - sy).powi(2)).sqrt();
+        let (dx, dy) = ((ex - sx) / len, (ey - sy) / len);
+        let (nx, ny) = (-dy * h, dx * h);
+        match self.cap {
+            LineCap::Butt => bounds_of(&[
+                (sx + nx, sy + ny),
+                (sx - nx, sy - ny),
+                (ex + nx, ey + ny),
+                (ex - nx, ey - ny),
+            ]),
+            LineCap::Square => {
+                let (ox, oy) = (dx * h, dy * h);
+                bounds_of(&[
+                    (sx - ox + nx, sy - oy + ny),
+                    (sx - ox - nx, sy - oy - ny),
+                    (ex + ox + nx, ey + oy + ny),
+                    (ex + ox - nx, ey + oy - ny),
+                ])
+            }
+            LineCap::Round => bounds_of(&[
+                (sx.min(ex) - h, sy.min(ey) - h),
+                (sx.max(ex) + h, sy.max(ey) + h),
+            ]),
+        }
+    }
+
+    /// 중심선 path(Stroke 확장은 modifier 단계, VI.9).
+    pub fn to_path(&self) -> Vec<PathCommand> {
+        vec![
+            PathCommand::MoveTo(self.start),
+            PathCommand::LineTo(self.end),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -418,6 +515,88 @@ mod tests {
             ShapeError::MissingField {
                 tag: ELLIPSE_FIELD_BOUNDS
             }
+        );
+    }
+
+    fn assert_rect(actual: Option<Rect>, expected: (f32, f32, f32, f32)) {
+        let r = actual.expect("bounds가 있어야 함");
+        let got = (
+            r.origin().x(),
+            r.origin().y(),
+            r.size().width(),
+            r.size().height(),
+        );
+        for (a, e) in [got.0, got.1, got.2, got.3]
+            .iter()
+            .zip([expected.0, expected.1, expected.2, expected.3])
+        {
+            assert!((a - e).abs() < 1e-4, "{got:?} vs {expected:?}");
+        }
+    }
+
+    fn line(sx: f32, sy: f32, ex: f32, ey: f32, cap: LineCap) -> LineParams {
+        LineParams {
+            start: Vec2::new(sx, sy).unwrap(),
+            end: Vec2::new(ex, ey).unwrap(),
+            cap,
+        }
+    }
+
+    #[test]
+    fn cap_bounds_fixtures() {
+        // 검증 기준(VI.5.4): cap별 bounds fixture.
+        // 수평 (0,0)-(10,0), 두께 2.
+        assert_rect(
+            line(0.0, 0.0, 10.0, 0.0, LineCap::Butt).stroked_bounds(2.0),
+            (0.0, -1.0, 10.0, 2.0),
+        );
+        assert_rect(
+            line(0.0, 0.0, 10.0, 0.0, LineCap::Square).stroked_bounds(2.0),
+            (-1.0, -1.0, 12.0, 2.0),
+        );
+        assert_rect(
+            line(0.0, 0.0, 10.0, 0.0, LineCap::Round).stroked_bounds(2.0),
+            (-1.0, -1.0, 12.0, 2.0),
+        );
+        // 대각 (0,0)-(3,4), 길이 5, 두께 2: butt 모서리 x[-0.8,3.8], y[-0.6,4.6].
+        assert_rect(
+            line(0.0, 0.0, 3.0, 4.0, LineCap::Butt).stroked_bounds(2.0),
+            (-0.8, -0.6, 4.6, 5.2),
+        );
+        // square는 방향으로 반폭 연장: x[-1.4,4.4], y[-1.4,5.4].
+        assert_rect(
+            line(0.0, 0.0, 3.0, 4.0, LineCap::Square).stroked_bounds(2.0),
+            (-1.4, -1.4, 5.8, 6.8),
+        );
+        // round는 끝점 bbox를 반폭만큼 확장.
+        assert_rect(
+            line(0.0, 0.0, 3.0, 4.0, LineCap::Round).stroked_bounds(2.0),
+            (-1.0, -1.0, 5.0, 6.0),
+        );
+    }
+
+    #[test]
+    fn zero_length_line_uses_point_cap_policy() {
+        let at = |cap| line(5.0, 5.0, 5.0, 5.0, cap);
+        assert!(at(LineCap::Round).is_zero_length());
+        assert_rect(at(LineCap::Round).stroked_bounds(4.0), (3.0, 3.0, 4.0, 4.0));
+        assert_rect(
+            at(LineCap::Square).stroked_bounds(4.0),
+            (3.0, 3.0, 4.0, 4.0),
+        );
+        assert_eq!(
+            at(LineCap::Butt).stroked_bounds(4.0),
+            None,
+            "butt 점은 그리지 않음"
+        );
+    }
+
+    #[test]
+    fn line_path_is_center_line() {
+        let l = line(1.0, 2.0, 3.0, 4.0, LineCap::Butt);
+        assert_eq!(
+            l.to_path(),
+            vec![PathCommand::MoveTo(l.start), PathCommand::LineTo(l.end)]
         );
     }
 }
