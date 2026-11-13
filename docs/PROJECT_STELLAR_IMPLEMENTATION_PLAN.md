@@ -849,7 +849,7 @@ tools/xtask/
 |---|---|---|---|---|
 | IX.6.1 | `[x]` | Control을 node kind가 아닌 Frame에 부착하는 `SemanticContract`와 `InteractionContract`로 정의합니다. | contract 제거 후 일반 Frame으로 유지. | VI.3.1, IX.5.2 |
 | IX.6.2 | `[x]` | Button contract에 activate, focused, disabled, pressed 의미를 정의합니다. | 필수 action 누락 diagnostic. | IX.6.1 |
-| IX.6.3 | `[ ]` | TextInput contract에 editable value, placeholder, focus, IME input 의미를 정의합니다. | editable binding type이 string이 아니면 오류. | IX.6.1, VI.7.1 |
+| IX.6.3 | `[x]` | TextInput contract에 editable value, placeholder, focus, IME input 의미를 정의합니다. | editable binding type이 string이 아니면 오류. | IX.6.1, VI.7.1 |
 | IX.6.4 | `[ ]` | Modal contract에 overlay, focus scope, dismiss event 의미를 정의합니다. | focus scope root 누락 diagnostic. | IX.6.1 |
 | IX.6.5 | `[ ]` | List contract에 collection, item identity, selection mode, navigation 의미를 정의합니다. | duplicate item identity fixture 오류. | IX.6.1 |
 | IX.6.6 | `[ ]` | SingleSelectionGroup contract를 추가해 List+Button 합성 Radio UI를 표현합니다. 별도 RadioButton node는 만들지 않습니다. | 한 번에 둘 이상 selected인 runtime state 거부. | IX.6.2, IX.6.5 |

@@ -23,6 +23,9 @@ use stellar_expressions::types::{ExpressionType, TypeSpec};
 /// Button 계약 (IX.6.2).
 pub mod button;
 
+/// TextInput 계약 (IX.6.3).
+pub mod text_input;
+
 use crate::component::codec::{
     put_bool, put_bytes, put_count, put_id, put_u16, put_u8, Malformed, Reader,
 };
