@@ -68,3 +68,10 @@ dependencies:
     approval: approved
     purpose: "UAX #29 grapheme cluster 분절 (stellar-text X.9.3~, ADR-0016)"
     replaceable: true
+  - name: unicode-linebreak
+    ecosystem: cargo
+    version: "0.1.5"
+    license: "Apache-2.0"
+    approval: approved
+    purpose: "UAX #14 줄바꿈 기회 기본 알고리즘 (stellar-text X.9.4, ADR-0016)"
+    replaceable: true

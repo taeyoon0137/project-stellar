@@ -27,5 +27,8 @@ pub mod bidi;
 /// script·language·direction itemization (X.9.2).
 pub mod itemize;
 
+/// 공통 줄바꿈 기회 계산 (X.9.4).
+pub mod line_break;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;
