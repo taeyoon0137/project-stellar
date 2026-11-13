@@ -22,3 +22,6 @@ pub mod build;
 
 /// SemanticChange 모델 (XIV.3.2).
 pub mod change;
+
+/// snapshot diff (XIV.3.3~XIV.3.8).
+pub mod diff;
