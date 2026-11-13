@@ -13,6 +13,7 @@ use crate::bytecode::{Instr, Program};
 use crate::eval::{
     apply_binary, apply_unary, load_reference, truth, EvalError, EvalErrorKind, ReferenceValues,
 };
+use crate::function_eval::apply_function;
 
 /// 평가 실행 기록.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -117,6 +118,14 @@ impl Program {
                     let lhs = stack.pop().ok_or_else(|| malformed(node))?;
                     stack.push(apply_binary(op, &lhs, &rhs).map_err(fail)?);
                 }
+                Instr::Call { function, argc } => {
+                    let start = stack
+                        .len()
+                        .checked_sub(usize::from(argc))
+                        .ok_or_else(|| malformed(node))?;
+                    let args = stack.split_off(start);
+                    stack.push(apply_function(function, &args).map_err(fail)?);
+                }
                 Instr::Return => {
                     let value = stack.pop().ok_or_else(|| malformed(node))?;
                     let finished = frames.pop().ok_or_else(|| malformed(node))?;
@@ -150,7 +159,7 @@ mod tests {
     use crate::ast::{EnvironmentKey, ExprNode, ExprNodeId, ExpressionAst, ReferenceTarget};
     use crate::ast_eval::evaluate_ast;
     use crate::bytecode::CompileError;
-    use crate::ops::{BinaryOp, NodeKind};
+    use crate::ops::BinaryOp;
     use crate::types::{EnumTypeId, ExpressionType, TypeSpec};
 
     fn id(n: u8) -> ExprNodeId {
@@ -363,22 +372,24 @@ mod tests {
             Program::compile(&ill, &types()),
             Err(CompileError::TypeErrors(errors)) if errors.len() == 1
         ));
-        // 함수 호출 의미는 VIII.4.4 전까지 미지원.
+        // VIII.4.4부터 함수 호출도 컴파일·평가합니다(미지원 node 없음).
         let call = ExpressionAst::new(
             id(1),
             vec![
                 ExprNode::call(id(1), FunctionId::Abs, &[id(2)]),
-                ExprNode::literal(id(2), len(1.0)),
+                ExprNode::literal(id(2), len(-1.0)),
             ],
         )
         .expect("유효");
-        assert_eq!(
-            Program::compile(&call, &types()),
-            Err(CompileError::UnsupportedNode {
-                node: id(1),
-                kind: NodeKind::Call
-            })
-        );
+        let program = Program::compile(&call, &types()).expect("컴파일");
+        assert_eq!(program.evaluate(&BTreeMap::new()), Ok(Some(len(1.0))));
+        assert!(program.blocks()[0].code().iter().any(|instr| matches!(
+            instr,
+            Instr::Call {
+                function: FunctionId::Abs,
+                argc: 1
+            }
+        )));
     }
 
     // --- VIII.4.2: literal·산술·비교·논리 ---

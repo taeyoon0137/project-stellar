@@ -16,6 +16,7 @@ use crate::eval::{
     apply_binary, apply_unary, load_reference, match_arm, short_circuit, truth, EvalError,
     EvalErrorKind, ReferenceValues,
 };
+use crate::function_eval::apply_function;
 use crate::ops::{BinaryOp, BinaryOpClass};
 use crate::typecheck::{type_check, ReferenceTypes};
 
@@ -105,7 +106,16 @@ pub fn evaluate_ast(
                         tasks.push(Task::Eval(child(node, ChildSlot::Rhs)?));
                         tasks.push(Task::Eval(child(node, ChildSlot::Lhs)?));
                     }
-                    NodePayload::Call(_) => return Err(fail(EvalErrorKind::UnsupportedNode)),
+                    NodePayload::Call(function) => {
+                        tasks.push(Task::Apply(id));
+                        for index in (0..function.signature().arity()).rev() {
+                            let slot = ChildSlot::Argument(
+                                u16::try_from(index)
+                                    .map_err(|_| fail(EvalErrorKind::MalformedProgram))?,
+                            );
+                            tasks.push(Task::Eval(child(node, slot)?));
+                        }
+                    }
                 }
             }
             Task::Apply(id) => {
@@ -121,6 +131,12 @@ pub fn evaluate_ast(
                         let rhs = stack.pop().ok_or_else(malformed)?;
                         let lhs = stack.pop().ok_or_else(malformed)?;
                         apply_binary(*op, &lhs, &rhs).map_err(fail)?
+                    }
+                    NodePayload::Call(function) => {
+                        let arity = function.signature().arity();
+                        let start = stack.len().checked_sub(arity).ok_or_else(malformed)?;
+                        let args = stack.split_off(start);
+                        apply_function(*function, &args).map_err(fail)?
                     }
                     _ => return Err(malformed()),
                 };

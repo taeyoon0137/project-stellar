@@ -53,3 +53,6 @@ pub mod vm;
 
 /// AST 기준 evaluator (VIII.4.1).
 pub mod ast_eval;
+
+/// color·string·수치 함수 evaluator (VIII.4.4).
+pub mod function_eval;

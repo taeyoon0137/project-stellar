@@ -13,6 +13,7 @@ use stellar_core_types::value::{Angle, Duration, FiniteF32, Length, Percentage};
 
 use crate::arithmetic::{arithmetic_rule, ArithmeticOp};
 use crate::ast::{ExprNodeId, ReferenceTarget};
+use crate::functions::FunctionId;
 use crate::logic::{ComparisonOp, LogicalOp};
 use crate::ops::{BinaryOp, BinaryOpClass, UnaryOp};
 use crate::types::{ExpressionType, TypeSpec};
@@ -49,12 +50,48 @@ pub enum EvalErrorKind {
     MalformedProgram,
     /// AST 기준 evaluator에 type 오류가 있는 AST가 주어졌습니다.
     IllTyped,
-    /// 이 단계에서 아직 평가 의미가 없는 node 종류입니다(함수 호출 의미는 VIII.4.4).
-    UnsupportedNode,
-    /// 0으로 나누기 또는 0에 대한 나머지(VIII.4.2).
+    /// 0으로 나누기 또는 0에 대한 나머지(VIII.4.2). `remap`의 빈 입력 범위 포함(VIII.4.4).
     DivisionByZero,
     /// 결과가 유한 범위를 벗어났습니다(overflow, VIII.4.2).
     NonFiniteResult,
+    /// 함수 인자 값이 허용 범위 밖입니다(VIII.4.4).
+    InvalidArgument {
+        /// 호출한 함수.
+        function: FunctionId,
+        /// 인자 위치.
+        argument: u16,
+        /// 위반 내용.
+        issue: ArgumentIssue,
+    },
+    /// 문자열 결과가 [`MAX_STRING_BYTES`]를 넘습니다(VIII.4.4).
+    StringTooLong,
+}
+
+/// 문자열 함수 결과의 최대 UTF-8 byte 수(VIII.4.4). 공유 node로 결합을 반복해도 메모리가 폭증하지 않게 합니다.
+pub const MAX_STRING_BYTES: usize = 1 << 20;
+
+/// 함수 인자 값 위반 내용(VIII.4.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ArgumentIssue {
+    /// 범위 하한이 상한보다 큽니다(`clamp`).
+    InvertedRange,
+    /// 값이 허용 구간 밖입니다(`mix`의 t·`with_alpha`의 alpha는 [0, 1], `format_number` 자릿수는 0~9).
+    OutOfRange,
+    /// 정수여야 하는 값이 정수가 아닙니다(`format_number` 자릿수).
+    NotInteger,
+    /// 빈 검색 문자열(`replace`).
+    EmptySearch,
+}
+
+impl fmt::Display for ArgumentIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ArgumentIssue::InvertedRange => "하한이 상한보다 큽니다",
+            ArgumentIssue::OutOfRange => "허용 구간 밖입니다",
+            ArgumentIssue::NotInteger => "정수가 아닙니다",
+            ArgumentIssue::EmptySearch => "빈 검색 문자열입니다",
+        })
+    }
 }
 
 impl fmt::Display for EvalErrorKind {
@@ -67,9 +104,16 @@ impl fmt::Display for EvalErrorKind {
             EvalErrorKind::OperandTypeMismatch => f.write_str("연산 값의 타입이 규칙과 다릅니다"),
             EvalErrorKind::MalformedProgram => f.write_str("program 내부 불변식 위반"),
             EvalErrorKind::IllTyped => f.write_str("type 오류가 있는 AST는 평가할 수 없습니다"),
-            EvalErrorKind::UnsupportedNode => f.write_str("아직 평가할 수 없는 node 종류입니다"),
             EvalErrorKind::DivisionByZero => f.write_str("0으로 나눌 수 없습니다"),
             EvalErrorKind::NonFiniteResult => f.write_str("결과가 유한 범위를 벗어났습니다"),
+            EvalErrorKind::InvalidArgument {
+                function,
+                argument,
+                issue,
+            } => write!(f, "{function}의 인자 {argument}: {issue}"),
+            EvalErrorKind::StringTooLong => {
+                write!(f, "문자열 결과가 {MAX_STRING_BYTES} bytes를 넘습니다")
+            }
         }
     }
 }
@@ -150,7 +194,7 @@ pub fn match_arm(scrutinee: &Option<TypedValue>, patterns: &[TypedValue]) -> Opt
 // 결과 `-0.0`은 `FiniteF32` 규칙대로 `+0.0`으로 정규화합니다.
 
 /// 수치·단위 값의 내부 f32와 타입.
-fn numeric(value: &Option<TypedValue>) -> Result<(ExpressionType, f32), EvalErrorKind> {
+pub(crate) fn numeric(value: &Option<TypedValue>) -> Result<(ExpressionType, f32), EvalErrorKind> {
     match value {
         Some(TypedValue::Number(v)) => Ok((ExpressionType::Number, v.get())),
         Some(TypedValue::Length(v)) => Ok((ExpressionType::Length, v.get())),

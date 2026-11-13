@@ -1,4 +1,4 @@
-//! 표현식 bytecode 내부 포맷과 compiler (VIII.4.1~VIII.4.3).
+//! 표현식 bytecode 내부 포맷과 compiler (VIII.4.1~VIII.4.4).
 //!
 //! 검증·type 검사를 통과한 AST를 stack bytecode [`Program`]으로 컴파일합니다. bytecode는 **저장하지 않는
 //! 실행 캐시**입니다. 직렬화 형식·안정 번호가 없고, 원본은 항상 canonical AST(VIII.2.5)이며 필요할 때마다
@@ -34,7 +34,8 @@ use std::fmt::Write as _;
 use stellar_core_types::typed_value::TypedValue;
 
 use crate::ast::{ChildSlot, ExprNodeId, ExpressionAst, Literal, NodePayload, ReferenceTarget};
-use crate::ops::{BinaryOp, NodeKind, UnaryOp};
+use crate::functions::FunctionId;
+use crate::ops::{BinaryOp, UnaryOp};
 use crate::typecheck::{type_check, ReferenceTypes, TypeError};
 use crate::types::TypeSpec;
 
@@ -65,6 +66,13 @@ pub enum Instr {
     Unary(UnaryOp),
     /// `[lhs, rhs]`를 pop하고 이항 연산 결과를 push(VIII.4.2).
     Binary(BinaryOp),
+    /// 인자 `argc`개를 pop(signature 순서)하고 함수 결과를 push(VIII.4.4).
+    Call {
+        /// 등록 함수.
+        function: FunctionId,
+        /// 인자 수.
+        argc: u16,
+    },
     /// stack top을 block 결과로 반환.
     Return,
 }
@@ -99,13 +107,6 @@ impl CodeBlock {
 pub enum CompileError {
     /// type 오류가 있는 AST는 컴파일하지 않습니다.
     TypeErrors(Vec<TypeError>),
-    /// 이 단계에서 아직 지원하지 않는 node 종류입니다.
-    UnsupportedNode {
-        /// node.
-        node: ExprNodeId,
-        /// 종류.
-        kind: NodeKind,
-    },
     /// table 크기가 `u32`를 넘습니다.
     TooLarge,
 }
@@ -119,9 +120,6 @@ impl fmt::Display for CompileError {
                     "type 오류 {}개가 있어 컴파일할 수 없습니다",
                     errors.len()
                 )
-            }
-            CompileError::UnsupportedNode { node, kind } => {
-                write!(f, "아직 컴파일할 수 없는 node 종류 {kind}: {node}")
             }
             CompileError::TooLarge => f.write_str("program table이 너무 큽니다"),
         }
@@ -432,11 +430,16 @@ impl Compiler<'_> {
                     stack.push(Task::Visit(child(ChildSlot::Rhs)?));
                     stack.push(Task::Visit(child(ChildSlot::Lhs)?));
                 }
-                NodePayload::Call(_) => {
-                    return Err(CompileError::UnsupportedNode {
-                        node: id,
-                        kind: node.kind(),
-                    })
+                NodePayload::Call(function) => {
+                    let arity = function.signature().arity();
+                    let argc = u16::try_from(arity).map_err(|_| CompileError::TooLarge)?;
+                    stack.push(emit(Instr::Call {
+                        function: *function,
+                        argc,
+                    }));
+                    for index in (0..argc).rev() {
+                        stack.push(Task::Visit(child(ChildSlot::Argument(index))?));
+                    }
                 }
             }
         }
