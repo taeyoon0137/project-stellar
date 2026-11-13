@@ -161,6 +161,82 @@ impl DependencyGraph {
         self.edges.iter().filter(move |e| &e.child == key)
     }
 
+    /// edge 경로를 선언 순서와 무관한 canonical 경로로 다시 씁니다(XV.2.6).
+    ///
+    /// dedup된 node의 하위 edge는 처음 도달한 경로를 물려받으므로 탐색 순서에 따라 달라질 수
+    /// 있습니다. 각 node의 canonical 경로를 root에서의 최소 경로(길이 → 사전식)로 정하고, edge
+    /// 경로를 `canonical(부모) + 선언 이름`으로 바꿉니다. edge 집합(부모, 이름, 자식)은 각 node를
+    /// 한 번만 전개하므로 선언 순서와 무관하고, 따라서 결과 경로도 결정적입니다.
+    pub(crate) fn canonicalize_paths(&mut self) {
+        let mut children: BTreeMap<Option<&DependencyNodeKey>, Vec<usize>> = BTreeMap::new();
+        for (i, edge) in self.edges.iter().enumerate() {
+            children.entry(edge.parent.as_ref()).or_default().push(i);
+        }
+        let mut best: BTreeMap<DependencyNodeKey, DependencyPath> = BTreeMap::new();
+        let mut queue: BTreeSet<(usize, DependencyPath, DependencyNodeKey)> = BTreeSet::new();
+        let push = |queue: &mut BTreeSet<_>, prefix: &DependencyPath, edge: &DependencyEdge| {
+            if let Some(name) = edge.path.last() {
+                let path = prefix.child(name);
+                queue.insert((path.len(), path, edge.child.clone()));
+            }
+        };
+        for &i in children.get(&None).into_iter().flatten() {
+            push(&mut queue, &DependencyPath::root(), &self.edges[i]);
+        }
+        // (길이, 경로) 최소 우선 — 경로를 늘리면 항상 커지므로 처음 확정된 경로가 최소입니다.
+        while let Some((_, path, node)) = queue.pop_first() {
+            if best.contains_key(&node) {
+                continue;
+            }
+            for &i in children.get(&Some(&node)).into_iter().flatten() {
+                if !best.contains_key(&self.edges[i].child) {
+                    push(&mut queue, &path, &self.edges[i]);
+                }
+            }
+            best.insert(node, path);
+        }
+        for edge in &mut self.edges {
+            let prefix = match &edge.parent {
+                None => Some(DependencyPath::root()),
+                Some(parent) => best.get(parent).cloned(),
+            };
+            if let (Some(prefix), Some(name)) = (prefix, edge.path.last().cloned()) {
+                edge.path = prefix.child(&name);
+            }
+        }
+    }
+
+    /// resolver 결과를 LibraryId → commit → dependency path 순으로 정렬한 entry 목록(XV.2.6).
+    ///
+    /// edge 하나가 entry 하나입니다(같은 library가 서로 다른 경로·버전으로 여러 번 등장 가능).
+    pub fn sorted_entries(&self) -> Vec<ResolvedEntry> {
+        let mut entries: Vec<ResolvedEntry> = self
+            .edges
+            .iter()
+            .map(|edge| {
+                let node = self.nodes.get(&edge.child);
+                ResolvedEntry {
+                    key: edge.child.clone(),
+                    path: edge.path.clone(),
+                    requested: edge.requested.clone(),
+                    repository: edge.repository.clone(),
+                    schema_version: node.map(|n| n.schema_version).unwrap_or_default(),
+                    dependencies: node
+                        .map(|n| n.dependencies.iter().cloned().collect())
+                        .unwrap_or_default(),
+                }
+            })
+            .collect();
+        entries.sort_by(|a, b| {
+            (&a.key.library_id, &a.key.commit, &a.path).cmp(&(
+                &b.key.library_id,
+                &b.key.commit,
+                &b.path,
+            ))
+        });
+        entries
+    }
+
     /// 같은 LibraryId의 resolved commit이 둘 이상인 library마다 경고 하나(XV.2.5).
     ///
     /// 다중 버전은 오류가 아닙니다(아키텍처 30.3: 버전별 격리, 자동 단일 버전 통합 금지). 결과는
@@ -191,6 +267,23 @@ impl DependencyGraph {
             })
             .collect()
     }
+}
+
+/// 정렬된 resolver 결과 한 건(lockfile resolved entry의 원천, XV.2.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedEntry {
+    /// resolved node.
+    pub key: DependencyNodeKey,
+    /// canonical dependency path.
+    pub path: DependencyPath,
+    /// 선언 선택자.
+    pub requested: VersionSelector,
+    /// 선언 repository.
+    pub repository: RepositoryUrl,
+    /// commit 매니페스트 schema version.
+    pub schema_version: u32,
+    /// 직접 의존 node(전이 의존성, 정렬).
+    pub dependencies: Vec<DependencyNodeKey>,
 }
 
 /// 다중 버전 경고의 버전 하나.
@@ -288,6 +381,89 @@ mod tests {
         catalog.publish(B, 2, "v1", 0xb1, vec![decl("c", 3, C, "v1")]);
         let graph = resolve(&catalog, &[decl("a", 1, A, "v1"), decl("b", 2, B, "v1")]).unwrap();
         assert!(graph.duplicate_library_versions().is_empty());
+    }
+
+    const D: &str = "https://e.com/d.git";
+
+    /// root → a, b; a → c v1; b → (c v1, x = c v2); c v1 → d. `reverse`면 모든 선언 순서를 뒤집습니다.
+    fn shared_descendant_catalog(reverse: bool) -> Catalog {
+        let order = |mut v: Vec<crate::declaration::DependencyDeclaration>| {
+            if reverse {
+                v.reverse();
+            }
+            v
+        };
+        let mut catalog = Catalog::default();
+        catalog.publish(D, 4, "v1", 0xd1, vec![]);
+        catalog.publish(C, 3, "v1", 0xc1, vec![decl("d", 4, D, "v1")]);
+        catalog.publish(C, 3, "v2", 0xc2, vec![]);
+        catalog.publish(A, 1, "v1", 0xa1, vec![decl("c", 3, C, "v1")]);
+        catalog.publish(
+            B,
+            2,
+            "v1",
+            0xb1,
+            order(vec![decl("c", 3, C, "v1"), decl("x", 3, C, "v2")]),
+        );
+        catalog
+    }
+
+    fn summary(
+        entries: &[ResolvedEntry],
+    ) -> Vec<(DependencyNodeKey, String, Vec<DependencyNodeKey>)> {
+        entries
+            .iter()
+            .map(|e| (e.key.clone(), e.path.to_string(), e.dependencies.clone()))
+            .collect()
+    }
+
+    #[test]
+    fn sorted_output_is_independent_of_declaration_order() {
+        let forward_root = [decl("a", 1, A, "v1"), decl("b", 2, B, "v1")];
+        let reverse_root = [decl("b", 2, B, "v1"), decl("a", 1, A, "v1")];
+        let forward = resolve(&shared_descendant_catalog(false), &forward_root).unwrap();
+        let reversed = resolve(&shared_descendant_catalog(true), &reverse_root).unwrap();
+        // 탐색 순서(edge 기록 순서)는 다르지만 정렬 결과·경고는 동일.
+        assert_ne!(forward.edges(), reversed.edges());
+        assert_eq!(forward.sorted_entries(), reversed.sorted_entries());
+        assert_eq!(
+            forward.duplicate_library_versions(),
+            reversed.duplicate_library_versions()
+        );
+
+        let key = |lib: u8, c: u8| DependencyNodeKey::new(library(lib), commit(c));
+        // LibraryId → commit → path 정렬, d의 경로는 최소 경로 `a > c > d`(b 경유 선 탐색이어도).
+        assert_eq!(
+            summary(&forward.sorted_entries()),
+            [
+                (key(1, 0xa1), "a".to_string(), vec![key(3, 0xc1)]),
+                (
+                    key(2, 0xb1),
+                    "b".to_string(),
+                    vec![key(3, 0xc1), key(3, 0xc2)]
+                ),
+                (key(3, 0xc1), "a > c".to_string(), vec![key(4, 0xd1)]),
+                (key(3, 0xc1), "b > c".to_string(), vec![key(4, 0xd1)]),
+                (key(3, 0xc2), "b > x".to_string(), vec![]),
+                (key(4, 0xd1), "a > c > d".to_string(), vec![]),
+            ]
+        );
+    }
+
+    #[test]
+    fn canonical_path_prefers_shorter_then_lexicographic() {
+        // root → z → q, root → q 직접: q 하위 r의 경로는 짧은 `q > r`.
+        const Q: &str = "https://e.com/q.git";
+        const R: &str = "https://e.com/r.git";
+        const Z: &str = "https://e.com/z.git";
+        let mut catalog = Catalog::default();
+        catalog.publish(R, 6, "v1", 0x61, vec![]);
+        catalog.publish(Q, 5, "v1", 0x51, vec![decl("r", 6, R, "v1")]);
+        catalog.publish(Z, 7, "v1", 0x71, vec![decl("q", 5, Q, "v1")]);
+        let graph = resolve(&catalog, &[decl("z", 7, Z, "v1"), decl("q", 5, Q, "v1")]).unwrap();
+        let r = DependencyNodeKey::new(library(6), commit(0x61));
+        let into_r: Vec<String> = graph.edges_to(&r).map(|e| e.path.to_string()).collect();
+        assert_eq!(into_r, ["q > r"]);
     }
 
     #[test]

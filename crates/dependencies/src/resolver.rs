@@ -233,6 +233,8 @@ where
             next: 0,
         });
     }
+    // dedup된 node 하위 edge 경로를 선언 순서와 무관하게 고정합니다(XV.2.6).
+    graph.canonicalize_paths();
     Ok(graph)
 }
 
