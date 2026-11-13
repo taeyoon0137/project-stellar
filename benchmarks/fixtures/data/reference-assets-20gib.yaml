@@ -1,0 +1,40 @@
+schema: "stellar-bench-assets/1"
+generator_version: "1"
+environment: REF-MAC
+seed: "1"
+total_bytes: "21474836480"
+block_bytes: "65536"
+assets: "3821"
+classes:
+  -
+    name: png
+    media_type: "image/png"
+    count: "1515"
+    total_bytes: "6442450944"
+    largest_bytes: "8385252"
+  -
+    name: jpeg
+    media_type: "image/jpeg"
+    count: "580"
+    total_bytes: "7516192768"
+    largest_bytes: "25112245"
+  -
+    name: svg
+    media_type: "image/svg+xml"
+    count: "1623"
+    total_bytes: "214748364"
+    largest_bytes: "262140"
+  -
+    name: font
+    media_type: "font/otf"
+    count: "92"
+    total_bytes: "858993459"
+    largest_bytes: "16659798"
+  -
+    name: video
+    media_type: "video/mp4"
+    count: "11"
+    total_bytes: "6442450945"
+    largest_bytes: "1062594454"
+entries_digest: "sha256:f9762859f553222a46f3fa9b6804634e038d19ecb1918f89f110885896afaa20"
+materialize: "cargo run -p stellar-bench-fixtures --release -- assets-20gib --out <dir>"

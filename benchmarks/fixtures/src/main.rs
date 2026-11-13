@@ -10,7 +10,7 @@
 use std::process::ExitCode;
 use std::time::Instant;
 
-use stellar_bench_fixtures::cli::{parse_args, run, usage};
+use stellar_bench_fixtures::cli::{execute, parse_args, usage, Output};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -22,9 +22,13 @@ fn main() -> ExitCode {
         }
     };
     let started = Instant::now();
-    match run(&request) {
-        Ok(report) => {
+    match execute(&request) {
+        Ok(Output::Json(report)) => {
             println!("{}", report.to_json(Some(started.elapsed().as_millis())));
+            ExitCode::SUCCESS
+        }
+        Ok(Output::Text(text)) => {
+            print!("{text}");
             ExitCode::SUCCESS
         }
         Err(error) => {

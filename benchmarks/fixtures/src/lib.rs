@@ -8,6 +8,7 @@
 //! - [`synthetic`]: 1만·20만·프로젝트 100만 node 규모 fixture(XVI.3.1).
 //! - [`limits`]: 가시 node 2만·컴포넌트 인스턴스 5만·중첩 64 fixture(XVI.3.2).
 //! - [`workload`]: text·image·effect·constraint-heavy fixture와 계측값(XVI.3.3).
+//! - [`asset_provider`]: 20 GiB sparse synthetic asset provider와 기준 장비 manifest(XVI.3.4).
 //! - [`split`]: fixture의 chunk split 계획 요약(V.6.4 planner 연결).
 //! - [`digest`]: fixture content hash.
 //!
@@ -45,6 +46,9 @@ pub mod limits;
 
 /// 병목 특성별 workload fixture (XVI.3.3).
 pub mod workload;
+
+/// sparse synthetic asset provider와 기준 장비 manifest (XVI.3.4).
+pub mod asset_provider;
 
 /// on-demand 생성 CLI 인자 해석과 실행.
 pub mod cli;

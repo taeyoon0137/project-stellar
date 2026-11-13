@@ -1,9 +1,15 @@
 //! on-demand 생성 CLI의 인자 해석과 실행(바이너리는 얇은 wrapper).
 //!
-//! 인자는 `<fixture> [--seed <u64>]`뿐입니다. 알 수 없는 인자·중복·잘못된 숫자는 거부합니다.
+//! 인자는 `<fixture> [--seed <u64>] [--out <dir>]`입니다. `--out`은 `assets-20gib`에서만 쓰며
+//! 기준 asset set을 그 디렉터리에 파일로 씁니다. 알 수 없는 인자·중복·잘못된 숫자는 거부합니다.
+
+use std::path::PathBuf;
 
 use stellar_storage::hash::ContentHash;
 
+use crate::asset_provider::{
+    materialize_set, AssetManifest, SyntheticAssetSet, REFERENCE_TOTAL_BYTES,
+};
 use crate::error::FixtureError;
 use crate::limits::{
     component_instances, deep_document, nesting_chain, validate_component_fixture, visible_nodes,
@@ -26,6 +32,8 @@ pub struct Request {
     pub fixture: String,
     /// seed.
     pub seed: u64,
+    /// `assets-20gib`의 파일 출력 디렉터리(없거나 빈 디렉터리여야 함).
+    pub out: Option<PathBuf>,
 }
 
 /// 규모 상한 fixture 이름(XVI.3.2).
@@ -43,7 +51,38 @@ pub fn fixture_names() -> Vec<&'static str> {
     names.extend(LIMIT_FIXTURES);
     names.extend(DocumentWorkload::ALL.iter().map(|w| w.name()));
     names.push(CONSTRAINT_FIXTURE);
+    names.extend([ASSET_FIXTURE, ASSET_MANIFEST_FIXTURE]);
     names
+}
+
+/// 20 GiB 기준 asset set 요약 fixture 이름(XVI.3.4).
+const ASSET_FIXTURE: &str = "assets-20gib";
+
+/// 기준 장비 asset manifest YAML 출력 이름(XVI.3.4).
+const ASSET_MANIFEST_FIXTURE: &str = "assets-manifest";
+
+/// CLI 출력.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Output {
+    /// 요약 JSON 한 줄.
+    Json(Report),
+    /// 그대로 출력할 텍스트(manifest YAML).
+    Text(String),
+}
+
+/// 요청을 실행합니다. `assets-manifest`는 기준 장비 manifest YAML을, 나머지는 요약을 냅니다.
+pub fn execute(request: &Request) -> Result<Output, FixtureError> {
+    if request.fixture == ASSET_MANIFEST_FIXTURE {
+        let set = SyntheticAssetSet::generate(request.seed, REFERENCE_TOTAL_BYTES)
+            .map_err(FixtureError::Asset)?;
+        let text = set.manifest().to_yaml().map_err(FixtureError::Asset)?;
+        // 출력이 다시 읽히고 재생성 결과와 같은지 확인한 뒤 냅니다.
+        AssetManifest::parse(&text)
+            .and_then(|m| m.verify())
+            .map_err(FixtureError::Asset)?;
+        return Ok(Output::Text(text));
+    }
+    run(request).map(Output::Json)
 }
 
 /// 문서 계측값 지표(접두어별 정적 이름).
@@ -102,7 +141,7 @@ fn profile_metrics(profile: &DocumentProfile, baseline: bool) -> Vec<(&'static s
 /// 사용법 문자열.
 pub fn usage() -> String {
     format!(
-        "사용법: stellar-bench-fixtures <fixture> [--seed <u64>]\nfixture: {}",
+        "사용법: stellar-bench-fixtures <fixture> [--seed <u64>] [--out <dir>(assets-20gib 전용)]\nfixture: {}",
         fixture_names().join(", ")
     )
 }
@@ -111,6 +150,7 @@ pub fn usage() -> String {
 pub fn parse_args(args: &[String]) -> Result<Request, String> {
     let mut fixture: Option<String> = None;
     let mut seed: Option<u64> = None;
+    let mut out: Option<PathBuf> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         if arg == "--seed" {
@@ -122,6 +162,15 @@ pub fn parse_args(args: &[String]) -> Result<Request, String> {
                 .parse::<u64>()
                 .map_err(|_| format!("--seed 값이 u64가 아닙니다: {value:?}"))?;
             seed = Some(parsed);
+        } else if arg == "--out" {
+            if out.is_some() {
+                return Err("--out이 두 번 있습니다".to_string());
+            }
+            let value = iter.next().ok_or("--out 값이 없습니다")?;
+            if value.is_empty() || value.starts_with('-') {
+                return Err(format!("--out 경로가 잘못됐습니다: {value:?}"));
+            }
+            out = Some(PathBuf::from(value));
         } else if arg.starts_with('-') {
             return Err(format!("알 수 없는 옵션: {arg:?}"));
         } else if fixture.is_some() {
@@ -132,9 +181,14 @@ pub fn parse_args(args: &[String]) -> Result<Request, String> {
             return Err(format!("알 수 없는 fixture: {arg:?}"));
         }
     }
+    let fixture = fixture.ok_or("fixture 이름이 없습니다")?;
+    if out.is_some() && fixture != ASSET_FIXTURE {
+        return Err(format!("--out은 {ASSET_FIXTURE}에서만 쓸 수 있습니다"));
+    }
     Ok(Request {
-        fixture: fixture.ok_or("fixture 이름이 없습니다")?,
+        fixture,
         seed: seed.unwrap_or(DEFAULT_SEED),
+        out,
     })
 }
 
@@ -257,6 +311,34 @@ pub fn run(request: &Request) -> Result<Report, FixtureError> {
             }
             Ok(report(metrics, fixture.content_hash))
         }
+        ASSET_FIXTURE => {
+            let set = SyntheticAssetSet::generate(seed, REFERENCE_TOTAL_BYTES)
+                .map_err(FixtureError::Asset)?;
+            let mut metrics = vec![
+                ("assets", set.assets.len() as u64),
+                ("total_bytes", set.sum_bytes()),
+                (
+                    "largest_bytes",
+                    set.assets.iter().map(|a| a.size).max().unwrap_or(0),
+                ),
+            ];
+            for class in set.classes() {
+                let (count, bytes) = match class.name.as_str() {
+                    "png" => ("png_count", "png_bytes"),
+                    "jpeg" => ("jpeg_count", "jpeg_bytes"),
+                    "svg" => ("svg_count", "svg_bytes"),
+                    "font" => ("font_count", "font_bytes"),
+                    _ => ("video_count", "video_bytes"),
+                };
+                metrics.push((count, class.count));
+                metrics.push((bytes, class.total_bytes));
+            }
+            if let Some(dir) = &request.out {
+                let written = materialize_set(&set, dir).map_err(FixtureError::Asset)?;
+                metrics.push(("materialized_bytes", written));
+            }
+            Ok(report(metrics, set.entries_digest()))
+        }
         CONSTRAINT_FIXTURE => {
             let fixture = constraint_heavy(seed, WORKLOAD_NODES)?;
             let profile = profile_constraints(&fixture)?;
@@ -312,20 +394,26 @@ mod tests {
             parse_args(&args(&["nodes-10k"])),
             Ok(Request {
                 fixture: "nodes-10k".into(),
-                seed: DEFAULT_SEED
+                seed: DEFAULT_SEED,
+                out: None,
             })
         );
         assert_eq!(
             parse_args(&args(&["--seed", "42", "project-1m"])),
             Ok(Request {
                 fixture: "project-1m".into(),
-                seed: 42
+                seed: 42,
+                out: None,
             })
+        );
+        assert_eq!(
+            parse_args(&args(&["assets-20gib", "--out", "/tmp/x"])).map(|r| r.out),
+            Ok(Some(PathBuf::from("/tmp/x")))
         );
         for name in fixture_names() {
             assert!(parse_args(&args(&[name])).is_ok(), "{name}");
         }
-        assert_eq!(fixture_names().len(), 11);
+        assert_eq!(fixture_names().len(), 13);
         for bad in [
             &[][..],
             &["unknown"][..],
@@ -334,6 +422,10 @@ mod tests {
             &["nodes-10k", "--seed", "-1"][..],
             &["nodes-10k", "--seed", "1", "--seed", "2"][..],
             &["nodes-10k", "--verbose"][..],
+            &["nodes-10k", "--out", "/tmp/x"][..],
+            &["assets-20gib", "--out"][..],
+            &["assets-20gib", "--out", "--seed"][..],
+            &["assets-20gib", "--out", "a", "--out", "b"][..],
         ] {
             assert!(parse_args(&args(bad)).is_err(), "{bad:?}");
         }

@@ -5,6 +5,7 @@
 
 use std::fmt;
 
+use crate::asset_provider::AssetFixtureError;
 use stellar_document::component::definition::ComponentDefinitionError;
 use stellar_document::component::expansion::ExpansionError;
 use stellar_document::definitions::DefinitionError;
@@ -47,6 +48,8 @@ pub enum FixtureError {
     Expansion(ExpansionError),
     /// 레이아웃 입력 검증 또는 배치 실패.
     Layout(LayoutError),
+    /// synthetic asset provider·manifest 실패.
+    Asset(AssetFixtureError),
 }
 
 impl fmt::Display for FixtureError {
@@ -66,6 +69,7 @@ impl fmt::Display for FixtureError {
             FixtureError::Component(e) => write!(f, "컴포넌트 정의: {e}"),
             FixtureError::Expansion(e) => write!(f, "인스턴스 expansion: {e}"),
             FixtureError::Layout(e) => write!(f, "레이아웃: {e}"),
+            FixtureError::Asset(e) => write!(f, "{e}"),
         }
     }
 }
