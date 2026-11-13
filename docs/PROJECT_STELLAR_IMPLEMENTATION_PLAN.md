@@ -1499,7 +1499,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIV.14.1 | `[ ]` | 임시 local bare repo와 working repo를 만드는 Git fixture harness를 작성합니다. 외부 네트워크를 사용하지 않습니다. | macOS/Windows 동일 scenario 생성. | XIV.1.2 |
+| XIV.14.1 | `[~]` | 임시 local bare repo와 working repo를 만드는 Git fixture harness를 작성합니다. 외부 네트워크를 사용하지 않습니다. | macOS/Windows 동일 scenario 생성. | XIV.1.2 |
 | XIV.14.2 | `[ ]` | partial same-chunk property staging, unstage, commit scenario를 fixture로 만듭니다. | HEAD/Index/WT expected values 일치. | XIV.6.6, XIV.7.3, XIV.8.4 |
 | XIV.14.3 | `[ ]` | component/token dependency staging scenario를 만듭니다. | invalid partial 차단, dependency 승인 후 성공. | XIV.5.4 |
 | XIV.14.4 | `[ ]` | branch merge conflict를 시스템 Git으로 만든 뒤 Semantic Conflict 해결·git add까지 통합 실행합니다. | unmerged entries 0, merge state 유지. | XIV.12.5 |

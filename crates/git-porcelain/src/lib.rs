@@ -91,6 +91,13 @@ pub mod lfs;
 #[cfg(test)]
 mod test_support;
 
+/// Git 통합 fixture harness(XIV.14.1).
+///
+/// 이 crate의 unit test와, 기본값이 꺼진 `test-support` feature를 `[dev-dependencies]`에서 켠 crate의
+/// 테스트에서만 빌드됩니다.
+#[cfg(any(test, feature = "test-support"))]
+pub mod fixture;
+
 /// Git snapshot 원천과 provider(XIV.2.3~).
 pub mod snapshot;
 
