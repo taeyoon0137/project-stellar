@@ -859,7 +859,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| IX.7.1 | `[ ]` | ViewVariable에 StableId, type, default value, allowed enum values를 정의합니다. | invalid enum default 거부. | VI.1.2, VIII.1.1 |
+| IX.7.1 | `[x]` | ViewVariable에 StableId, type, default value, allowed enum values를 정의합니다. | invalid enum default 거부. | VI.1.2, VIII.1.1 |
 | IX.7.2 | `[ ]` | VariantCondition은 변수별 `Any` 또는 `Equals(value)`만 저장합니다. `Any`와 실제 nullable 값은 별도 tag로 구분합니다. | ExplicitNull/Any fixture 구분. | IX.7.1 |
 | IX.7.3 | `[x]` | VariantOverrideSet에 sparse property patches, node add/delete/move/replace, slot changes를 정의합니다. | round-trip·reference validation. | VI.2, IX.3 |
 | IX.7.4 | `[ ]` | 현재 변수 assignment와 일치하는 모든 variant를 찾고 specificity 순으로 정렬하는 resolver를 구현합니다. | 일반+구체 조합 fixture 순서 정확. | IX.7.2 |
