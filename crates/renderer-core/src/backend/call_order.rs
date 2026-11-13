@@ -41,10 +41,32 @@ pub enum BackendCall {
     SchedulePresent,
     /// `submit`.
     Submit,
+    /// `discard`.
+    Discard,
     /// `poll`.
     Poll,
     /// `query_timestamps`.
     QueryTimestamps,
+}
+
+impl BackendCall {
+    /// 모든 호출 종류.
+    pub const ALL: [BackendCall; 14] = [
+        BackendCall::Init,
+        BackendCall::Resize,
+        BackendCall::CreateBuffer,
+        BackendCall::CreateTexture,
+        BackendCall::UpdateBuffer,
+        BackendCall::UpdateTexture,
+        BackendCall::DestroyBuffer,
+        BackendCall::DestroyTexture,
+        BackendCall::Encode,
+        BackendCall::SchedulePresent,
+        BackendCall::Submit,
+        BackendCall::Discard,
+        BackendCall::Poll,
+        BackendCall::QueryTimestamps,
+    ];
 }
 
 /// validator 상태.
@@ -250,12 +272,14 @@ impl CallOrderValidator {
             (CallOrderState::Uninitialized, call) => Err(CallOrderError::NotInitialized { call }),
             (CallOrderState::Lost, call) => Err(CallOrderError::DeviceLost { call }),
             (_, BackendCall::Poll | BackendCall::QueryTimestamps) => Ok(()),
-            (CallOrderState::FrameOpen, BackendCall::SchedulePresent | BackendCall::Submit) => {
-                Ok(())
-            }
-            (CallOrderState::Idle, BackendCall::SchedulePresent | BackendCall::Submit) => {
-                Err(CallOrderError::NoOpenFrame { call })
-            }
+            (
+                CallOrderState::FrameOpen,
+                BackendCall::SchedulePresent | BackendCall::Submit | BackendCall::Discard,
+            ) => Ok(()),
+            (
+                CallOrderState::Idle,
+                BackendCall::SchedulePresent | BackendCall::Submit | BackendCall::Discard,
+            ) => Err(CallOrderError::NoOpenFrame { call }),
             (CallOrderState::FrameOpen, call) => Err(CallOrderError::FrameOpen { call }),
             (CallOrderState::Idle, _) => Ok(()),
         }
@@ -411,6 +435,20 @@ impl CallOrderValidator {
         }
         self.last_submission = Some(submission);
         Ok(())
+    }
+
+    /// `discard` 호출 전 검사.
+    pub fn before_discard(&self, frame: &EncodedFrame) -> Result<(), CallOrderError> {
+        self.open_frame(BackendCall::Discard, frame.frame())
+            .map(|_| ())
+    }
+
+    /// `discard` 결과 기록. frame은 성공·실패와 무관하게 닫힙니다.
+    pub fn after_discard(&mut self) {
+        self.open = None;
+        if self.state == CallOrderState::FrameOpen {
+            self.state = CallOrderState::Idle;
+        }
     }
 
     /// `query_timestamps` 호출 전 검사.
@@ -578,6 +616,15 @@ impl<B: RendererBackend> RendererBackend for CheckedBackend<B> {
         self.validator
             .after_submit(result.as_ref().map(|id| *id).map_err(|e| e.kind()))
             .map_err(BackendError::call_order)?;
+        self.observe(result)
+    }
+
+    fn discard(&mut self, frame: EncodedFrame) -> Result<(), BackendError> {
+        self.validator
+            .before_discard(&frame)
+            .map_err(BackendError::call_order)?;
+        let result = self.inner.discard(frame);
+        self.validator.after_discard();
         self.observe(result)
     }
 

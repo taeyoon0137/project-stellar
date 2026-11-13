@@ -30,6 +30,13 @@ pub mod gpu_handle;
 /// resource upload queue와 frame-local allocator (XI.5.3).
 pub mod frame_resources;
 
+/// present queue 깊이 ≤ 1 frame scheduler (XI.5.5).
+pub mod frame_scheduler;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;
+
+/// 테스트 전용 scene fixture.
+#[cfg(test)]
+pub(crate) mod test_scene;

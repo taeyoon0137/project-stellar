@@ -10,7 +10,8 @@
 //! ```text
 //! init ─▶ { resize | create_* | update_* | destroy_* | poll | query_timestamps }*
 //!      ─▶ encode ─┬─▶ (Skipped: frame 없음, 다시 대기)
-//!                 └─▶ Encoded ─▶ [schedule_present] ─▶ submit ─▶ (대기로 복귀)
+//!                 └─▶ Encoded ─▶ [schedule_present] ─┬─▶ submit ─▶ (대기로 복귀)
+//!                                                    └─▶ discard ─▶ (대기로 복귀, GPU 미제출)
 //! ```
 //!
 //! - `init`이 가장 먼저이며 한 번입니다. device 재생성이 필요한 오류(`DeviceLost`·`Internal`,
@@ -480,6 +481,10 @@ pub trait RendererBackend {
 
     /// encode한 frame을 GPU queue에 제출합니다. 예약한 present도 이때 확정됩니다.
     fn submit(&mut self, frame: EncodedFrame) -> Result<SubmissionId, BackendError>;
+
+    /// encode한 frame을 제출하지 않고 버립니다(제출 직전 오래된 snapshot으로 판정된 경우, XI.5.5).
+    /// 예약한 present와 얻은 drawable도 함께 놓습니다. GPU는 이 frame을 보지 않습니다.
+    fn discard(&mut self, frame: EncodedFrame) -> Result<(), BackendError>;
 
     /// GPU 완료·present 진행을 조회합니다(대기하지 않음).
     fn poll(&mut self) -> Result<GpuProgress, BackendError>;

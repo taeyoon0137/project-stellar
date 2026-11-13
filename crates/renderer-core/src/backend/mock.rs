@@ -56,6 +56,8 @@ pub(crate) struct MockBackend {
     in_flight: VecDeque<MockSubmission>,
     completed: Vec<MockSubmission>,
     progress: GpuProgress,
+    /// 제출하지 않고 버린 frame.
+    pub discarded: Vec<FrameId>,
 }
 
 impl MockBackend {
@@ -85,6 +87,7 @@ impl MockBackend {
             in_flight: VecDeque::new(),
             completed: Vec::new(),
             progress: GpuProgress::default(),
+            discarded: Vec::new(),
         }
     }
 
@@ -283,6 +286,21 @@ impl RendererBackend for MockBackend {
             passes,
         });
         Ok(id)
+    }
+
+    fn discard(&mut self, frame: EncodedFrame) -> Result<(), BackendError> {
+        let open = self.open.take();
+        self.enter(BackendCall::Discard)?;
+        match open {
+            Some((open_frame, _, _)) if open_frame == frame.frame() => {
+                self.discarded.push(open_frame);
+                Ok(())
+            }
+            _ => Err(BackendError::new(
+                BackendErrorKind::InvalidUsage,
+                "mock: 열린 frame 없음",
+            )),
+        }
     }
 
     fn poll(&mut self) -> Result<GpuProgress, BackendError> {

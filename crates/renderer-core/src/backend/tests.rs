@@ -665,3 +665,50 @@ fn stale_handles_fail_through_the_backend() {
         BackendErrorKind::InvalidUsage
     );
 }
+
+#[test]
+fn discard_closes_the_open_frame_without_submitting() {
+    let graph = surface_graph();
+    let mut backend = CheckedBackend::new(MockBackend::new());
+    backend.init(&device_config(8, 8)).unwrap();
+    assert_eq!(
+        violation(backend.discard(EncodedFrame::new(FrameId(1), 1))),
+        CallOrderError::NoOpenFrame {
+            call: BackendCall::Discard
+        }
+    );
+    let request = FrameEncodeRequest {
+        frame: FrameId(1),
+        graph: &graph,
+        passes: &[],
+        imports: &SURFACE_IMPORT,
+    };
+    let EncodeOutcome::Encoded(frame) = backend.encode(&request).unwrap() else {
+        panic!("encode되어야 합니다");
+    };
+    // present를 예약한 뒤에도 버릴 수 있습니다.
+    backend.schedule_present(&frame).unwrap();
+    assert_eq!(
+        violation(backend.discard(EncodedFrame::new(FrameId(9), 9))),
+        CallOrderError::FrameMismatch {
+            open: FrameId(1),
+            given: FrameId(9)
+        }
+    );
+    backend.discard(frame).unwrap();
+    assert_eq!(backend.validator().state(), CallOrderState::Idle);
+    assert_eq!(backend.validator().last_submission(), None);
+    assert_eq!(backend.inner().discarded, vec![FrameId(1)]);
+    assert_eq!(backend.inner().in_flight(), 0);
+    // 버린 뒤 다음 frame을 정상 제출합니다.
+    let EncodeOutcome::Encoded(next) = backend
+        .encode(&FrameEncodeRequest {
+            frame: FrameId(2),
+            ..request
+        })
+        .unwrap()
+    else {
+        panic!("encode되어야 합니다");
+    };
+    assert_eq!(backend.submit(next).unwrap(), SubmissionId(1));
+}

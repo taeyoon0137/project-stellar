@@ -1081,7 +1081,7 @@ tools/xtask/
 | XI.5.2 | `[x]` | GPU handle을 generational ID로 감싸고 backend native pointer를 공통 scene에 노출하지 않습니다. | stale handle fixture 실패. | III.1.3, XI.5.1 |
 | XI.5.3 | `[x]` | resource upload queue와 frame-local allocator interface를 정의합니다. | 3 frames-in-flight simulation에서 premature free 없음. | XI.5.2 |
 | XI.5.4 | `[x]` | device lost/out-of-memory/error 분류와 복구 가능 여부를 구조화합니다. | mock backend error matrix 통과. | XI.5.1, II.3.1 |
-| XI.5.5 | `[ ]` | present queue depth를 최대 1로 유지하는 frame scheduler를 구현합니다. 새 snapshot이 오면 아직 제출 전 오래된 frame을 drop합니다. | slow GPU simulation에서 queue depth≤1. | XI.5.1, XI.1.6 |
+| XI.5.5 | `[x]` | present queue depth를 최대 1로 유지하는 frame scheduler를 구현합니다. 새 snapshot이 오면 아직 제출 전 오래된 frame을 drop합니다. | slow GPU simulation에서 queue depth≤1. | XI.5.1, XI.1.6 |
 
 ### XI.6 Geometry·Tessellation·Glyph cache
 

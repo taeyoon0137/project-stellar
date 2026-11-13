@@ -342,7 +342,10 @@ mod tests {
                 height: 1,
             };
             let mut open = None;
-            if matches!(call, BackendCall::SchedulePresent | BackendCall::Submit) {
+            if matches!(
+                call,
+                BackendCall::SchedulePresent | BackendCall::Submit | BackendCall::Discard
+            ) {
                 let frame = self.next_request();
                 let request = FrameEncodeRequest {
                     frame,
@@ -396,6 +399,7 @@ mod tests {
                     result
                 }
                 BackendCall::Submit => backend.submit(open.take().unwrap()).map(|_| ()),
+                BackendCall::Discard => backend.discard(open.take().unwrap()),
                 BackendCall::Poll => backend.poll().map(|_| ()),
                 BackendCall::QueryTimestamps => {
                     backend.query_timestamps(submitted.unwrap()).map(|_| ())
@@ -459,23 +463,8 @@ mod tests {
     #[test]
     fn mock_backend_error_matrix() {
         // 검증 기준(XI.5.4): mock backend error matrix 통과.
-        let calls = [
-            BackendCall::Init,
-            BackendCall::Resize,
-            BackendCall::CreateBuffer,
-            BackendCall::CreateTexture,
-            BackendCall::UpdateBuffer,
-            BackendCall::UpdateTexture,
-            BackendCall::DestroyBuffer,
-            BackendCall::DestroyTexture,
-            BackendCall::Encode,
-            BackendCall::SchedulePresent,
-            BackendCall::Submit,
-            BackendCall::Poll,
-            BackendCall::QueryTimestamps,
-        ];
         let mut cases = 0;
-        for call in calls {
+        for call in BackendCall::ALL {
             for kind in BackendErrorKind::ALL {
                 let mut harness = Harness::new();
                 let error = harness.fail(call, kind);
@@ -508,7 +497,8 @@ mod tests {
                 cases += 1;
             }
         }
-        assert_eq!(cases, 13 * 9);
+        assert_eq!(cases, BackendCall::ALL.len() * BackendErrorKind::ALL.len());
+        assert_eq!(cases, 14 * 9);
     }
 
     #[test]
