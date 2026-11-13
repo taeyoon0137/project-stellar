@@ -81,7 +81,7 @@ pub mod refname;
 /// 로드맵 고급 Git 기능 core API(XXVI.*).
 pub mod advanced;
 
-/// Git LFS 설치 감지 (XIII.7.1).
+/// Git LFS 설치 감지·권고 (XIII.7.1~).
 pub mod lfs;
 
 /// 테스트 공용 도구(테스트 빌드 전용).

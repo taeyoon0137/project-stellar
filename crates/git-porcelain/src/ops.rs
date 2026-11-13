@@ -92,6 +92,16 @@ pub(crate) fn run_ok(
     require_success(git.run(args, cwd)?)
 }
 
+/// gate를 거쳐 stdin 입력과 함께 실행하고 성공 출력을 반환합니다(비영 종료는 [`GitOpError::Git`]).
+pub(crate) fn run_ok_with_input(
+    git: &GatedGitRunner,
+    cwd: &Path,
+    args: &[OsString],
+    input: &[u8],
+) -> Result<GitOutput, GitOpError> {
+    require_success(git.run_with_input(args, cwd, input)?)
+}
+
 /// 종료 코드 0을 요구합니다.
 pub(crate) fn require_success(output: GitOutput) -> Result<GitOutput, GitOpError> {
     if output.success() {
