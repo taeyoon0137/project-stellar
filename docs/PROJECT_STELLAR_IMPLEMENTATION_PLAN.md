@@ -660,7 +660,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| VII.3.1 | `[ ]` | 선택 상태를 document model이 아니라 `WindowViewState`에 저장합니다. selected StableId ordered set와 primary selection을 정의합니다. | 선택이 save bytes에 포함되지 않습니다. | VII.1.1, VI.1.4 |
+| VII.3.1 | `[x]` | 선택 상태를 document model이 아니라 `WindowViewState`에 저장합니다. selected StableId ordered set와 primary selection을 정의합니다. | 선택이 save bytes에 포함되지 않습니다. | VII.1.1, VI.1.4 |
 | VII.3.2 | `[ ]` | `SetSelection` history event를 구현하고 존재하지 않거나 숨김 정책상 선택 불가 ID를 걸러냅니다. | apply/inverse와 primary selection 규칙 통과. | VII.3.1 |
 | VII.3.3 | `[ ]` | 영역 선택 중간 상태는 transient preview로 유지하고 pointer up 때 최종 SetSelection 한 건만 생성하는 grouping API를 추가합니다. | 1,000 move event에서 history 1건. | VII.3.2 |
 | VII.3.4 | `[ ]` | node 삭제 시 각 WindowViewState에서 삭제된 ID를 selection에서 제거하는 system event를 적용하되 사용자 history 항목은 만들지 않습니다. | 여러 창 fixture에서 stale selection 없음. | VII.2.2, VII.3.2 |
