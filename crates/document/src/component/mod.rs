@@ -30,3 +30,6 @@ pub mod mutation;
 
 /// 명시적 detach command (IX.2.6).
 pub mod detach;
+
+/// Slot content 삽입·삭제·재정렬 command (IX.3.3).
+pub mod slot_commands;
