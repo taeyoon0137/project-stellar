@@ -4,7 +4,7 @@
 //! - `reported_done`: report 필요.
 //! - `not_started`: commit·report·evidence가 없어야 함.
 //!
-//! 그 밖의 상태(in_progress, blocked, cancelled)는 본 단계에서 추가 제약을 두지 않습니다.
+//! 그 밖의 상태(in_progress, blocked)는 본 단계에서 추가 제약을 두지 않습니다.
 
 use crate::task_status::model::{TaskState, TaskStatusRecord};
 
@@ -87,7 +87,7 @@ pub fn validate_evidence(record: &TaskStatusRecord) -> Vec<EvidenceError> {
                 ));
             }
         }
-        TaskState::InProgress | TaskState::Blocked | TaskState::Cancelled => {}
+        TaskState::InProgress | TaskState::Blocked => {}
     }
 
     errors

@@ -1,8 +1,9 @@
 //! 레코드 집합 검증 (I.2.7).
 //!
 //! task ID 중복과 같은 ID의 title mismatch를 검사합니다.
-//! 허용 상태(not_started, in_progress, reported_done, verified, blocked, cancelled)는
+//! 허용 상태(not_started, in_progress, reported_done, verified, blocked)는
 //! `TaskState` 타입과 decoder(I.2.5)에서 이미 강제되므로 여기서는 ID·title만 검사합니다.
+//! `cancelled`는 XXIX.1.4에서 허용 목록에서 제거되어 decoder가 unknown status로 거부합니다.
 //! 선행 graph(I.2.8)와 증거 규칙(I.2.9)은 다루지 않습니다.
 
 use crate::task_status::model::TaskStatusRecord;
@@ -94,6 +95,16 @@ mod tests {
     fn unknown_status_rejected_at_decode() {
         // 허용하지 않는 상태는 decoder 경계에서 거부됩니다.
         let value = load_restricted("tasks:\n  - id: I.1.1\n    status: implemented\n").unwrap();
+        let err = decode_collection(&value).unwrap_err();
+        assert_eq!(err.code, "unknown-status");
+    }
+
+    #[test]
+    fn cancelled_record_rejected_as_unknown_status() {
+        // XXIX.1.4: 폐기 표기는 두지 않으므로 `cancelled`는 허용 상태가 아닙니다.
+        let value =
+            load_restricted("tasks:\n  - id: I.1.1\n    title: \"a\"\n    status: cancelled\n")
+                .unwrap();
         let err = decode_collection(&value).unwrap_err();
         assert_eq!(err.code, "unknown-status");
     }

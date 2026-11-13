@@ -4,6 +4,9 @@
 //! 이 모듈은 표준 라이브러리 외 어떤 것도 import 하지 않습니다.
 
 /// 작업 상태. `planning/task-status.yaml`의 `status` 값과 1:1 대응합니다.
+///
+/// 폐기 상태는 두지 않습니다. 목적이 사라진 행은 계획서와 ledger에서 삭제합니다
+/// (XXIX.1.4, 2026-11-14 제품 소유자 결정). `cancelled` 토큰은 알 수 없는 상태로 거부됩니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskState {
     NotStarted,
@@ -11,18 +14,16 @@ pub enum TaskState {
     ReportedDone,
     Verified,
     Blocked,
-    Cancelled,
 }
 
 impl TaskState {
     /// 허용되는 모든 상태.
-    pub const ALL: [TaskState; 6] = [
+    pub const ALL: [TaskState; 5] = [
         TaskState::NotStarted,
         TaskState::InProgress,
         TaskState::ReportedDone,
         TaskState::Verified,
         TaskState::Blocked,
-        TaskState::Cancelled,
     ];
 
     /// 직렬화 토큰.
@@ -33,7 +34,6 @@ impl TaskState {
             TaskState::ReportedDone => "reported_done",
             TaskState::Verified => "verified",
             TaskState::Blocked => "blocked",
-            TaskState::Cancelled => "cancelled",
         }
     }
 
@@ -164,6 +164,9 @@ mod tests {
         }
         assert_eq!(TaskState::from_token("implemented"), None);
         assert_eq!(TaskState::from_token(""), None);
+        // XXIX.1.4: 폐기 상태 값은 제거되었습니다.
+        assert_eq!(TaskState::from_token("cancelled"), None);
+        assert_eq!(TaskState::ALL.len(), 5);
     }
 
     #[test]
