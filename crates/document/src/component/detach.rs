@@ -9,6 +9,11 @@
 //!   재매핑합니다.
 //! - override된 slot의 default content는 복제하지 않고, 인스턴스 소유 slot content를 복제된
 //!   slot host 아래로 실제 reparent합니다(투영 순서 = 자식 순서).
+//! - nested slot host(IX.3.1): 바깥 slot이 override되지 않았으면 그 default content와 안쪽
+//!   slot host가 복제되고 안쪽 slot content가 그 복제 host 아래로 옮겨집니다. 바깥 slot이
+//!   override되면 안쪽 host는 가려져 복제되지 않습니다 — 가려진 slot의 content는 투영
+//!   validator가 거부하고, 적용 전에 인스턴스의 모든 소유 node가 옮겨질 자리를 갖는지 다시
+//!   확인해 부모 핸들이 끊긴 node를 남기지 않습니다.
 //! - nested 인스턴스는 한 단계만 풀립니다 — 정의 tree 안 nested 인스턴스는 실제 인스턴스
 //!   node로 복제되어 계속 자기 정의를 참조합니다.
 //! - [`detach_instance`]는 되돌리기 정보([`DetachRecord`])를 돌려주고 [`undo_detach`]가 그
@@ -17,7 +22,7 @@
 //! Phase VII command 계층(closed enum, revision, history)이 생기면 이 함수 쌍을 그 command의
 //! apply/invert로 등록합니다.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use stellar_core_types::clock::MonotonicClock;
@@ -45,9 +50,14 @@ pub enum DetachError {
         /// 원인.
         error: InstancePayloadError,
     },
+    /// 인스턴스 소유 node가 복제 subtree 안에 옮겨질 자리(보이는 slot host)가 없습니다.
+    UnplacedContent {
+        /// node.
+        node: StableId,
+    },
     /// undo 시점 scene이 detach 직후 상태와 다릅니다.
     StateMismatch {
-        /// 기대한 node.
+        /// 기대와 다른 node.
         node: StableId,
     },
 }
@@ -60,6 +70,10 @@ impl fmt::Display for DetachError {
             DetachError::Payload { node, error } => {
                 write!(f, "nested 인스턴스 {node} payload 오류: {error}")
             }
+            DetachError::UnplacedContent { node } => write!(
+                f,
+                "인스턴스 소유 node {node}를 옮길 slot host가 detach 결과에 없습니다"
+            ),
             DetachError::StateMismatch { node } => write!(
                 f,
                 "undo할 수 없습니다: node {node}가 detach 직후 상태가 아닙니다"
@@ -190,7 +204,7 @@ pub fn detach_instance<C: MonotonicClock>(
     clock: &C,
 ) -> Result<DetachRecord, DetachError> {
     // --- 계획: scene을 읽기만 합니다 ---
-    let (record_instance, instance_payload, payload) = {
+    let (record_instance, instance_payload, payload, owned_children) = {
         let index = SceneIndex::build(columns, payloads);
         let payload = index.instance_payload(instance)?;
         validate_scene_slot_overrides(library, &index, instance)?;
@@ -207,7 +221,7 @@ pub fn detach_instance<C: MonotonicClock>(
             display_name: fields.display_name,
         };
         let bytes = index.payload(instance).unwrap_or_default().to_vec();
-        (record, bytes, payload)
+        (record, bytes, payload, index.children(instance).to_vec())
     };
     let entry = library.get(payload.component()).ok_or_else(|| {
         ExpansionError::UnresolvedComponent(payload.component().unresolved_at(
@@ -238,6 +252,15 @@ pub fn detach_instance<C: MonotonicClock>(
             Some(content) => projections.push((id, content.content().to_vec())),
             None => stack.extend(tree.children(id).iter().rev().copied()),
         }
+    }
+    // 인스턴스의 모든 소유 node는 복제된(보이는) slot host 아래로 옮겨져야 합니다. 하나라도
+    // 자리가 없으면 적용 전에 거부합니다(부모 핸들이 끊긴 node 방지).
+    let placed: HashSet<StableId> = projections
+        .iter()
+        .flat_map(|(_, content)| content.iter().copied())
+        .collect();
+    if let Some(node) = owned_children.iter().find(|c| !placed.contains(*c)) {
+        return Err(DetachError::UnplacedContent { node: *node });
     }
     let mut remap = IdRemapTable::clone_ids(&copies, generator, clock);
     remap.insert(root_id, instance);
@@ -332,14 +355,49 @@ pub fn detach_instance<C: MonotonicClock>(
     })
 }
 
+/// detach 직후 구조인지 확인합니다: 복제 subtree(root 복제본 + 복제 node) 아래에는 복제 node와
+/// 옮긴 content만 있고, 옮긴 content는 여전히 복제 subtree 안에 있어야 합니다. 그렇지 않으면
+/// undo가 node를 지우거나 다시 붙일 때 부모 핸들이 끊긴 node가 생깁니다.
+fn check_detached_shape(
+    columns: &NodeColumns,
+    payloads: &ScenePayloads,
+    record: &DetachRecord,
+) -> Result<(), DetachError> {
+    let index = SceneIndex::build(columns, payloads);
+    let subtree: HashSet<StableId> = record
+        .created
+        .iter()
+        .copied()
+        .chain(std::iter::once(record.instance.stable_id))
+        .collect();
+    let moved: HashSet<StableId> = record.moved.iter().map(|m| m.node).collect();
+    for id in &subtree {
+        if let Some(child) = index
+            .children(*id)
+            .iter()
+            .find(|c| !subtree.contains(*c) && !moved.contains(*c))
+        {
+            return Err(DetachError::StateMismatch { node: *child });
+        }
+    }
+    for node in &moved {
+        if !index.parent(*node).is_some_and(|p| subtree.contains(&p)) {
+            return Err(DetachError::StateMismatch { node: *node });
+        }
+    }
+    Ok(())
+}
+
 /// detach를 되돌립니다. scene이 detach 직후 상태가 아니면 아무것도 바꾸지 않고 거부합니다.
+///
+/// 사전 조건: 복제 node·root 복제본·옮긴 content·원래 부모가 모두 있고, 복제 subtree 아래에
+/// 그 밖의 node가 없으며, 옮긴 content가 복제 subtree 안에 있어야 합니다.
 pub fn undo_detach(
     columns: &mut NodeColumns,
     payloads: &mut ScenePayloads,
     record: &DetachRecord,
 ) -> Result<(), DetachError> {
     let mut map = handles(columns);
-    // 사전 조건: 복제 node, root 복제본, 옮긴 content, 원래 부모가 모두 있어야 합니다.
     for id in record
         .created
         .iter()
@@ -351,6 +409,7 @@ pub fn undo_detach(
             return Err(DetachError::StateMismatch { node: *id });
         }
     }
+    check_detached_shape(columns, payloads, record)?;
     for id in record.created.iter().rev() {
         if let Some(handle) = map.remove(id) {
             columns.remove(handle);

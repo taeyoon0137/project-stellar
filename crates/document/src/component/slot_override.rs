@@ -9,6 +9,9 @@
 //! - 정의 tree 안 nested 인스턴스의 slot content는 그 정의 tree에서 부모가 nested 인스턴스
 //!   node인 node입니다.
 //! - override가 없으면 slot host의 default content(정의 tree 자식)가 보입니다.
+//! - nested slot host(IX.3.1): 바깥 slot이 override되면 그 default content 안의 안쪽 slot은
+//!   가려집니다. 가려진 slot의 override는 비어 있어야 합니다 — content가 있으면 보이지 않는
+//!   소유 node가 생기고 detach(IX.2.6)가 그 node를 둘 곳이 없습니다.
 //!
 //! 저장되는 것은 payload의 node 참조 목록뿐이라 save/load 후에도 소유 관계(부모 = 인스턴스)와
 //! 투영이 그대로 유지됩니다. 이 모듈의 validator는 그 불변식을 검사합니다.
@@ -22,7 +25,7 @@ use stellar_core_types::reference::ComponentRef;
 use super::definition::{ComponentEntry, ComponentLibrary, ComponentSlotId};
 use super::expansion::{ExpansionError, SceneIndex};
 use super::instance::{ComponentInstancePayload, InstancePayloadError};
-use super::slot::SlotError;
+use super::slot::{ComponentSlot, SlotError};
 use crate::node_kind::NodeKind;
 
 /// slot override 투영 규칙 위반.
@@ -72,6 +75,15 @@ pub enum SlotOverrideError {
         /// 원인.
         error: SlotError,
     },
+    /// override된 바깥 slot에 가려진 안쪽 slot(nested slot host)이 content를 가집니다.
+    HiddenSlotContent {
+        /// 인스턴스.
+        instance: StableId,
+        /// 가려진 slot.
+        slot: ComponentSlotId,
+        /// 가린 바깥 slot(가장 가까운 override된 slot).
+        hidden_by: ComponentSlotId,
+    },
     /// 인스턴스·정의를 해석할 수 없습니다.
     Expansion(ExpansionError),
 }
@@ -111,6 +123,16 @@ impl fmt::Display for SlotOverrideError {
             SlotOverrideError::Rule { instance, error } => {
                 write!(f, "인스턴스 {instance} slot 규칙 위반: {error}")
             }
+            SlotOverrideError::HiddenSlotContent {
+                instance,
+                slot,
+                hidden_by,
+            } => write!(
+                f,
+                "인스턴스 {instance}의 slot {}은 override된 slot {}에 가려져 content를 가질 수 없습니다",
+                slot.stable_id(),
+                hidden_by.stable_id()
+            ),
             SlotOverrideError::Expansion(err) => write!(f, "{err}"),
         }
     }
@@ -122,6 +144,50 @@ impl From<ExpansionError> for SlotOverrideError {
     fn from(err: ExpansionError) -> SlotOverrideError {
         SlotOverrideError::Expansion(err)
     }
+}
+
+/// `payload` 기준으로 `slot`을 가리는 바깥 slot(가장 가까운 override된 enclosing slot).
+///
+/// `None`이면 slot host가 투영 결과에 보입니다. override 자체(빈 목록 포함)가 default content를
+/// 대체하므로, override가 있기만 하면 가립니다.
+pub fn hiding_slot(
+    entry: &ComponentEntry,
+    payload: &ComponentInstancePayload,
+    slot: &ComponentSlot,
+) -> Option<ComponentSlotId> {
+    entry
+        .enclosing_slots(slot.host.id())
+        .into_iter()
+        .find(|outer| payload.slot_override(outer.id).is_some())
+        .map(|outer| outer.id)
+}
+
+/// `payload`가 가려진 slot에 content를 두지 않는지 검사합니다(nested slot host 규칙).
+///
+/// 투영 validator와 slot command·구조 편집 validator가 **적용 후** payload에 같은 규칙을
+/// 적용합니다. 정의에 없는 slot은 건너뜁니다(그 검사는 [`validate_scene_slot_overrides`]의
+/// 몫입니다).
+pub fn check_hidden_slot_content(
+    entry: &ComponentEntry,
+    payload: &ComponentInstancePayload,
+    instance: StableId,
+) -> Result<(), SlotOverrideError> {
+    for (slot_id, content) in payload.slot_overrides() {
+        if content.is_empty() {
+            continue;
+        }
+        let Some(slot) = entry.slot(slot_id) else {
+            continue;
+        };
+        if let Some(hidden_by) = hiding_slot(entry, payload, slot) {
+            return Err(SlotOverrideError::HiddenSlotContent {
+                instance,
+                slot: slot_id,
+                hidden_by,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// 공통 투영 검사. `lookup`은 인스턴스와 같은 tree에서 node의 (종류, 부모)를 찾고,
@@ -163,6 +229,7 @@ fn check_projection(
         slot.check_content(checked)
             .map_err(|error| SlotOverrideError::Rule { instance, error })?;
     }
+    check_hidden_slot_content(entry, payload, instance)?;
     if let Some(node) = owned_children.iter().find(|c| !projected.contains(*c)) {
         return Err(SlotOverrideError::UnprojectedOwnedNode {
             instance,
@@ -175,8 +242,9 @@ fn check_projection(
 /// scene 인스턴스의 slot override가 투영 규칙을 지키는지 검사합니다.
 ///
 /// content는 scene에서 부모가 인스턴스인 node여야 하고(정의 tree node나 다른 부모의 node는
-/// 거부), 각 slot의 종류·개수 규칙을 지켜야 하며, 인스턴스의 자식은 모두 어떤 slot에
-/// 정확히 한 번 투영돼야 합니다.
+/// 거부), 각 slot의 종류·개수 규칙을 지켜야 하며, override된 바깥 slot에 가려진 slot은
+/// content를 가질 수 없고([`SlotOverrideError::HiddenSlotContent`]), 인스턴스의 자식은 모두
+/// 보이는 slot에 정확히 한 번 투영돼야 합니다.
 pub fn validate_scene_slot_overrides(
     library: &ComponentLibrary,
     scene: &SceneIndex<'_>,
@@ -594,6 +662,110 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Panel(5): 500 ← 502(outer host, slot 660: Frame|Text) ← 503(Frame default, inner host,
+    /// slot 661: Text) ← 504(Text default).
+    /// Shell(6): 600 ← 601(Panel 인스턴스, override는 인자) ← 602(Text), 603(Text).
+    fn nested_host_library(overrides: &[(u64, &[u64])]) -> ComponentLibrary {
+        let panel = ComponentRef::new(stable(5));
+        let mut library = ComponentLibrary::new();
+        let mut tree = DefinitionTree::new(panel);
+        tree.insert(def_node(500, NodeKind::Frame, None, 0x80, vec![]))
+            .unwrap();
+        tree.insert(def_node(502, NodeKind::Frame, Some(500), 0x40, vec![]))
+            .unwrap();
+        tree.insert(def_node(503, NodeKind::Frame, Some(502), 0x40, vec![]))
+            .unwrap();
+        tree.insert(def_node(504, NodeKind::Text, Some(503), 0x40, vec![]))
+            .unwrap();
+        let mut definition =
+            ComponentDefinition::new(stable(5), "Panel".into(), NodeRef::new(stable(500)));
+        definition.add_slot(slot_id(660)).unwrap();
+        definition.add_slot(slot_id(661)).unwrap();
+        library.insert(definition, tree).unwrap();
+        for (slot, host, kinds, default) in [
+            (660, 502, vec![NodeKind::Frame, NodeKind::Text], 503),
+            (661, 503, vec![NodeKind::Text], 504),
+        ] {
+            library
+                .add_slot(
+                    panel,
+                    ComponentSlot::new(
+                        slot_id(slot),
+                        NodeRef::new(stable(host)),
+                        kinds,
+                        SlotCardinality::unbounded(),
+                        vec![NodeRef::new(stable(default))],
+                    ),
+                )
+                .unwrap();
+        }
+        let mut nested = ComponentInstancePayload::new(panel);
+        for (slot, content) in overrides {
+            nested.set_slot_override(
+                slot_id(*slot),
+                SlotOverride::new(content.iter().copied().map(stable).collect()).unwrap(),
+            );
+        }
+        let shell = ComponentRef::new(stable(6));
+        let mut shell_tree = DefinitionTree::new(shell);
+        shell_tree
+            .insert(def_node(600, NodeKind::Frame, None, 0x80, vec![]))
+            .unwrap();
+        shell_tree
+            .insert(def_node(
+                601,
+                NodeKind::ComponentInstance,
+                Some(600),
+                0x40,
+                nested.encode(),
+            ))
+            .unwrap();
+        shell_tree
+            .insert(def_node(602, NodeKind::Text, Some(601), 0x20, vec![]))
+            .unwrap();
+        shell_tree
+            .insert(def_node(603, NodeKind::Text, Some(601), 0x40, vec![]))
+            .unwrap();
+        library
+            .insert(
+                ComponentDefinition::new(stable(6), "Shell".into(), NodeRef::new(stable(600))),
+                shell_tree,
+            )
+            .unwrap();
+        library
+    }
+
+    #[test]
+    fn hidden_nested_slot_content_is_rejected_in_definitions() {
+        let shell = ComponentRef::new(stable(6));
+        // 안쪽 slot만 override(바깥 default가 보임) → 유효.
+        validate_definition_slot_overrides(&nested_host_library(&[(661, &[602, 603])]), shell)
+            .unwrap();
+        // 바깥 slot이 override되면 안쪽 slot의 content는 가려짐 → 거부.
+        let hidden = nested_host_library(&[(660, &[602]), (661, &[603])]);
+        assert_eq!(
+            validate_definition_slot_overrides(&hidden, shell).unwrap_err(),
+            SlotOverrideError::HiddenSlotContent {
+                instance: stable(601),
+                slot: slot_id(661),
+                hidden_by: slot_id(660),
+            }
+        );
+        // 가려진 slot의 빈 override는 허용.
+        validate_definition_slot_overrides(
+            &nested_host_library(&[(660, &[602, 603]), (661, &[])]),
+            shell,
+        )
+        .unwrap();
+        // helper: 바깥 override가 있을 때만 가림.
+        let entry = hidden.get(ComponentRef::new(stable(5))).unwrap();
+        let inner = entry.slot(slot_id(661)).unwrap();
+        let mut payload = ComponentInstancePayload::new(ComponentRef::new(stable(5)));
+        assert_eq!(hiding_slot(entry, &payload, inner), None);
+        payload.set_slot_override(slot_id(660), SlotOverride::empty());
+        assert_eq!(hiding_slot(entry, &payload, inner), Some(slot_id(660)));
     }
 
     #[test]

@@ -11,6 +11,12 @@
 //! - allowed node kinds와 cardinality(최소·최대 개수)는 default content와 override 양쪽에
 //!   적용됩니다.
 //! - 한 host에는 slot이 하나뿐입니다(투영 위치 모호성 방지).
+//! - **nested slot host**: slot host는 다른 slot의 default content 안(그 host의 자손)에 둘 수
+//!   있습니다. 바깥 slot을 인스턴스가 override하면 default content 전체가 가려지므로, 그 안의
+//!   안쪽 slot도 함께 가려집니다. 가려진 slot은 content를 가질 수 없습니다(빈 override만 허용)
+//!   — 투영 validator(IX.3.2)·slot command(IX.3.3)·구조 편집 validator(IX.2.5)가 이 규칙을
+//!   강제하므로 detach(IX.2.6)는 보이지 않는 소유 node를 남기지 않습니다.
+//!   [`ComponentEntry::enclosing_slots`]가 host를 품은 바깥 slot을 찾습니다.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -21,7 +27,7 @@ use stellar_core_types::reference::{ComponentRef, NodeRef};
 use super::codec::{
     capacity_hint, put_count, put_id, put_kind, put_u32, put_u8, Malformed, Reader,
 };
-use super::definition::{ComponentLibrary, ComponentSlotId, DefinitionTree};
+use super::definition::{ComponentEntry, ComponentLibrary, ComponentSlotId, DefinitionTree};
 use crate::node_kind::NodeKind;
 
 /// Slot 정의·검증 오류.
@@ -468,11 +474,40 @@ impl ComponentSlot {
     }
 }
 
+impl ComponentEntry {
+    /// `host`를 default content 안에 품은 바깥 slot들(가까운 조상 host부터).
+    ///
+    /// `host`의 엄격한 조상 중 slot host인 node마다 그 slot을 돌려줍니다. 비어 있으면
+    /// nested slot host가 아닙니다. 바깥 slot 중 하나라도 override되면 `host`는 가려집니다.
+    pub fn enclosing_slots(&self, host: StableId) -> Vec<&ComponentSlot> {
+        let tree = self.tree();
+        let mut out = Vec::new();
+        let mut current = tree.node(host).and_then(|node| node.parent);
+        // 정의 tree는 삽입 규칙상 cycle이 없지만, 상한을 둬 종료를 보장합니다.
+        let mut steps = 0usize;
+        while let Some(id) = current {
+            if let Some(slot) = self.slot_for_host(id) {
+                out.push(slot);
+            }
+            steps += 1;
+            if steps > tree.len() {
+                break;
+            }
+            current = tree.node(id).and_then(|node| node.parent);
+        }
+        out
+    }
+}
+
 impl ComponentLibrary {
     /// 컴포넌트에 slot record를 추가합니다.
     ///
     /// slot은 정의 Slot 목록에 선언돼 있어야 하고, 정의 tree에 대해 유효해야 하며, 다른
     /// slot과 host를 공유할 수 없습니다. 실패 시 library는 변경되지 않습니다.
+    ///
+    /// host가 다른 slot의 default content 안에 있는 nested slot host도 등록할 수 있습니다
+    /// (모듈 문서의 가림 규칙 적용). 등록 순서는 결과에 영향을 주지 않습니다 — 바깥·안쪽 slot을
+    /// 어느 순서로 넣어도 같은 [`ComponentEntry::enclosing_slots`] 관계가 됩니다.
     pub fn add_slot(
         &mut self,
         component: ComponentRef,
@@ -768,6 +803,66 @@ mod tests {
         let decoded = ComponentLibrary::decode(&lib_bytes).unwrap();
         assert_eq!(decoded, library);
         assert_eq!(decoded.encode(), lib_bytes);
+    }
+
+    #[test]
+    fn nested_slot_host_is_registered_with_enclosing_relation() {
+        // nested slot host: 바깥 slot(600, host 110)의 default content 안 Frame(111)이 안쪽
+        // slot(601)의 host. 등록 순서와 무관하게 같은 관계가 됩니다.
+        let build = |inner_first: bool| {
+            let mut tree = DefinitionTree::new(ComponentRef::new(stable(5)));
+            tree.insert(node(500, NodeKind::Frame, None, 0x80)).unwrap();
+            tree.insert(node(110, NodeKind::Frame, Some(500), 0x40))
+                .unwrap();
+            tree.insert(node(111, NodeKind::Frame, Some(110), 0x40))
+                .unwrap();
+            tree.insert(node(112, NodeKind::Text, Some(111), 0x40))
+                .unwrap();
+            let mut definition =
+                ComponentDefinition::new(stable(5), "Nested".into(), NodeRef::new(stable(500)));
+            definition.add_slot(slot_id(600)).unwrap();
+            definition.add_slot(slot_id(601)).unwrap();
+            let mut library = ComponentLibrary::new();
+            library.insert(definition, tree).unwrap();
+            let outer = ComponentSlot::new(
+                slot_id(600),
+                NodeRef::new(stable(110)),
+                [NodeKind::Frame, NodeKind::Text],
+                SlotCardinality::unbounded(),
+                vec![NodeRef::new(stable(111))],
+            );
+            let inner = ComponentSlot::new(
+                slot_id(601),
+                NodeRef::new(stable(111)),
+                [NodeKind::Text],
+                SlotCardinality::at_most(2),
+                vec![NodeRef::new(stable(112))],
+            );
+            let component = ComponentRef::new(stable(5));
+            if inner_first {
+                library.add_slot(component, inner.clone()).unwrap();
+                library.add_slot(component, outer.clone()).unwrap();
+            } else {
+                library.add_slot(component, outer.clone()).unwrap();
+                library.add_slot(component, inner.clone()).unwrap();
+            }
+            library.validate_slots(component).unwrap();
+            library
+        };
+        for library in [build(false), build(true)] {
+            let entry = library.get(ComponentRef::new(stable(5))).unwrap();
+            let ids = |host: u64| -> Vec<ComponentSlotId> {
+                entry
+                    .enclosing_slots(stable(host))
+                    .iter()
+                    .map(|s| s.id)
+                    .collect()
+            };
+            assert_eq!(ids(111), vec![slot_id(600)], "안쪽 host는 바깥 slot에 품김");
+            assert!(ids(110).is_empty(), "바깥 host는 nested가 아님");
+            assert!(ids(9_999).is_empty(), "없는 node");
+        }
+        assert_eq!(build(false).encode(), build(true).encode());
     }
 
     #[test]

@@ -11,13 +11,17 @@ use stellar_document::component::definition::{
     ComponentDefinition, ComponentLibrary, ComponentPropertyId, ComponentSlotId, DefinitionNode,
     DefinitionTree,
 };
-use stellar_document::component::detach::{detach_instance, undo_detach};
+use stellar_document::component::detach::{
+    detach_instance, undo_detach, DetachError, DetachRecord,
+};
 use stellar_document::component::expansion::{
     ExpandedNodeId, ExpansionError, InstanceExpansion, SceneIndex, ScenePayloads,
 };
 use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey, SlotOverride};
 use stellar_document::component::slot::{ComponentSlot, SlotCardinality};
-use stellar_document::component::slot_override::validate_scene_slot_overrides;
+use stellar_document::component::slot_override::{
+    validate_scene_slot_overrides, SlotOverrideError,
+};
 use stellar_document::node_columns::{NodeColumns, NodeFields};
 use stellar_document::node_kind::NodeKind;
 
@@ -432,4 +436,264 @@ fn detach_is_deterministic_for_same_seed() {
         (snapshot(&columns, &payloads), record.remap().to_vec())
     };
     assert_eq!(run(), run());
+}
+
+// --- nested slot host (리뷰 수정: 가려진 안쪽 slot content) ---
+
+const PANEL_INSTANCE: u64 = 1101;
+
+/// Panel(5): 500 ← 501(Text), 502(outer host, slot 660: Frame|Text 0..=3)
+///           ← 503(Frame default, inner host, slot 661: Text 0..=2) ← 504(Text default).
+///
+/// 안쪽 host 503은 바깥 slot 660의 default content 안에 있습니다(nested slot host).
+fn nested_library() -> ComponentLibrary {
+    let mut library = ComponentLibrary::new();
+    let mut panel = DefinitionTree::new(component(5));
+    for (id, kind, parent, order) in [
+        (500, NodeKind::Frame, None, 0x80u8),
+        (501, NodeKind::Text, Some(500), 0x20),
+        (502, NodeKind::Frame, Some(500), 0x40),
+        (503, NodeKind::Frame, Some(502), 0x40),
+        (504, NodeKind::Text, Some(503), 0x40),
+    ] {
+        panel
+            .insert(def_node(id, kind, parent, order, vec![(id - 450) as u8]))
+            .unwrap();
+    }
+    let mut definition =
+        ComponentDefinition::new(stable(5), "Panel".into(), NodeRef::new(stable(500)));
+    definition.add_slot(slot(660)).unwrap();
+    definition.add_slot(slot(661)).unwrap();
+    library.insert(definition, panel).unwrap();
+    library
+        .add_slot(
+            component(5),
+            ComponentSlot::new(
+                slot(660),
+                NodeRef::new(stable(502)),
+                [NodeKind::Frame, NodeKind::Text],
+                SlotCardinality::at_most(3),
+                vec![NodeRef::new(stable(503))],
+            ),
+        )
+        .unwrap();
+    library
+        .add_slot(
+            component(5),
+            ComponentSlot::new(
+                slot(661),
+                NodeRef::new(stable(503)),
+                [NodeKind::Text],
+                SlotCardinality::at_most(2),
+                vec![NodeRef::new(stable(504))],
+            ),
+        )
+        .unwrap();
+    library
+}
+
+/// scene: 1000 ← 1101(Panel) ← 1102(Text 0x20), 1103(Text 0x40). slot override는 인자로.
+fn nested_scene(overrides: &[(u64, &[u64])]) -> (NodeColumns, ScenePayloads) {
+    let mut columns = NodeColumns::new();
+    let insert = |columns: &mut NodeColumns, id: u64, kind: NodeKind, parent, order: u8| {
+        columns.insert(NodeFields {
+            stable_id: stable(id),
+            kind,
+            parent,
+            order_key: key(order),
+            visible: true,
+            locked: false,
+            display_name: String::new(),
+        })
+    };
+    let root = insert(&mut columns, 1000, NodeKind::Frame, None, 0x80);
+    let instance = insert(
+        &mut columns,
+        PANEL_INSTANCE,
+        NodeKind::ComponentInstance,
+        Some(root),
+        0x40,
+    );
+    insert(&mut columns, 1102, NodeKind::Text, Some(instance), 0x20);
+    insert(&mut columns, 1103, NodeKind::Text, Some(instance), 0x40);
+    let mut payload = ComponentInstancePayload::new(component(5));
+    for (slot_id, content) in overrides {
+        payload.set_slot_override(
+            slot(*slot_id),
+            SlotOverride::new(content.iter().copied().map(stable).collect()).unwrap(),
+        );
+    }
+    let mut payloads = ScenePayloads::new();
+    payloads.insert(stable(PANEL_INSTANCE), payload.encode());
+    payloads.insert(stable(1102), vec![0xB2]);
+    payloads.insert(stable(1103), vec![0xB3]);
+    (columns, payloads)
+}
+
+fn expansion_visual(
+    library: &ComponentLibrary,
+    columns: &NodeColumns,
+    payloads: &ScenePayloads,
+) -> Vec<Visual> {
+    let index = SceneIndex::build(columns, payloads);
+    let expansion = InstanceExpansion::new(library, &index, stable(PANEL_INSTANCE)).unwrap();
+    let mut out = Vec::new();
+    visual_of_expansion(&expansion, &expansion.root(), 0, true, &mut out);
+    out
+}
+
+fn scene_visual(
+    library: &ComponentLibrary,
+    columns: &NodeColumns,
+    payloads: &ScenePayloads,
+) -> Vec<Visual> {
+    let index = SceneIndex::build(columns, payloads);
+    let mut out = Vec::new();
+    visual_of_scene(library, &index, stable(PANEL_INSTANCE), 0, true, &mut out);
+    out
+}
+
+fn detach_panel(
+    library: &ComponentLibrary,
+    columns: &mut NodeColumns,
+    payloads: &mut ScenePayloads,
+) -> Result<DetachRecord, DetachError> {
+    let clock = ManualClock::new(1_700_000_000_000 * 1_000_000);
+    let mut generator = StableIdGenerator::new(77);
+    detach_instance(
+        columns,
+        payloads,
+        library,
+        stable(PANEL_INSTANCE),
+        &mut generator,
+        &clock,
+    )
+}
+
+fn copy_of(record: &DetachRecord, old: u64) -> Option<StableId> {
+    record
+        .remap()
+        .iter()
+        .find(|(o, _)| *o == stable(old))
+        .map(|(_, n)| *n)
+}
+
+#[test]
+fn nested_slot_host_content_is_reparented_and_undo_restores() {
+    // 바깥 slot(660)은 default, 안쪽 slot(661)만 override: 안쪽 host 복제본 아래로 content 이동.
+    let library = nested_library();
+    let (mut columns, mut payloads) = nested_scene(&[(661, &[1103, 1102])]);
+    {
+        let index = SceneIndex::build(&columns, &payloads);
+        validate_scene_slot_overrides(&library, &index, stable(PANEL_INSTANCE)).unwrap();
+    }
+    let before_snapshot = snapshot(&columns, &payloads);
+    let before_visual = expansion_visual(&library, &columns, &payloads);
+
+    let record = detach_panel(&library, &mut columns, &mut payloads).unwrap();
+    assert_eq!(
+        scene_visual(&library, &columns, &payloads),
+        before_visual,
+        "detach 후 시각 의미 동일"
+    );
+    let inner_host = copy_of(&record, 503).unwrap();
+    let index = SceneIndex::build(&columns, &payloads);
+    assert_eq!(
+        index.children(inner_host),
+        &[stable(1103), stable(1102)],
+        "안쪽 host 복제본 아래 투영 순서대로"
+    );
+    assert_eq!(index.parent(inner_host), copy_of(&record, 502));
+    assert!(
+        copy_of(&record, 504).is_none(),
+        "override된 slot의 default 미복제"
+    );
+    drop(index);
+
+    undo_detach(&mut columns, &mut payloads, &record).unwrap();
+    assert_eq!(snapshot(&columns, &payloads), before_snapshot);
+    let index = SceneIndex::build(&columns, &payloads);
+    validate_scene_slot_overrides(&library, &index, stable(PANEL_INSTANCE)).unwrap();
+}
+
+#[test]
+fn hidden_nested_slot_content_is_rejected_before_detach() {
+    // 바깥 slot(660)을 override하면 안쪽 host(503)는 가려집니다. 가려진 slot(661)에 content가
+    // 있으면 투영 validator가 거부하고 detach는 scene을 바꾸지 않습니다(수정 전에는 1103이 끊긴
+    // 부모 핸들로 남고 undo가 복원하지 못했습니다).
+    let library = nested_library();
+    let (mut columns, mut payloads) = nested_scene(&[(660, &[1102]), (661, &[1103])]);
+    let expected = SlotOverrideError::HiddenSlotContent {
+        instance: stable(PANEL_INSTANCE),
+        slot: slot(661),
+        hidden_by: slot(660),
+    };
+    {
+        let index = SceneIndex::build(&columns, &payloads);
+        assert_eq!(
+            validate_scene_slot_overrides(&library, &index, stable(PANEL_INSTANCE)).unwrap_err(),
+            expected
+        );
+    }
+    let before = snapshot(&columns, &payloads);
+    assert_eq!(
+        detach_panel(&library, &mut columns, &mut payloads).unwrap_err(),
+        DetachError::Slots(expected)
+    );
+    assert_eq!(snapshot(&columns, &payloads), before, "거부 시 scene 불변");
+}
+
+#[test]
+fn empty_hidden_override_detaches_and_undo_restores() {
+    // 가려진 slot의 빈 override는 허용됩니다(옮길 content가 없음).
+    let library = nested_library();
+    let (mut columns, mut payloads) = nested_scene(&[(660, &[1102, 1103]), (661, &[])]);
+    {
+        let index = SceneIndex::build(&columns, &payloads);
+        validate_scene_slot_overrides(&library, &index, stable(PANEL_INSTANCE)).unwrap();
+    }
+    let before_snapshot = snapshot(&columns, &payloads);
+    let before_visual = expansion_visual(&library, &columns, &payloads);
+    let record = detach_panel(&library, &mut columns, &mut payloads).unwrap();
+    assert_eq!(scene_visual(&library, &columns, &payloads), before_visual);
+    assert!(
+        copy_of(&record, 503).is_none() && copy_of(&record, 504).is_none(),
+        "가려진 안쪽 host·default는 복제하지 않음"
+    );
+    let index = SceneIndex::build(&columns, &payloads);
+    assert_eq!(
+        index.children(copy_of(&record, 502).unwrap()),
+        &[stable(1102), stable(1103)]
+    );
+    drop(index);
+    undo_detach(&mut columns, &mut payloads, &record).unwrap();
+    assert_eq!(snapshot(&columns, &payloads), before_snapshot);
+}
+
+#[test]
+fn undo_rejects_foreign_child_under_detached_subtree() {
+    // detach 뒤 복제 subtree 아래에 다른 node가 생기면 undo가 그 node를 고아로 만들 수 있으므로
+    // 아무것도 바꾸지 않고 거부합니다.
+    let library = nested_library();
+    let (mut columns, mut payloads) = nested_scene(&[(661, &[1102, 1103])]);
+    let record = detach_panel(&library, &mut columns, &mut payloads).unwrap();
+    let host_copy = copy_of(&record, 502).unwrap();
+    let handle = SceneIndex::build(&columns, &payloads)
+        .runtime_id(host_copy)
+        .unwrap();
+    columns.insert(NodeFields {
+        stable_id: stable(1199),
+        kind: NodeKind::Text,
+        parent: Some(handle),
+        order_key: key(0x70),
+        visible: true,
+        locked: false,
+        display_name: String::new(),
+    });
+    let before = snapshot(&columns, &payloads);
+    assert_eq!(
+        undo_detach(&mut columns, &mut payloads, &record).unwrap_err(),
+        DetachError::StateMismatch { node: stable(1199) }
+    );
+    assert_eq!(snapshot(&columns, &payloads), before);
 }

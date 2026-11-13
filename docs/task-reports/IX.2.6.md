@@ -66,3 +66,35 @@
   최종 값을 복제 node 속성에 굽는(bake) 단계가 필요합니다.
 - ReferenceIndex(인스턴스 → 컴포넌트 edge) 정리와 selection 갱신은 command 계층(VII)이 detach 적용 시 함께
   처리해야 합니다.
+
+## 후속 수정 (리뷰 MAJOR 1: nested slot host)
+
+- **결함**: 안쪽 slot host가 바깥 slot의 default content 안에 있고(nested slot host) 바깥·안쪽 slot이 모두
+  override되면, 순회가 바깥 host에서 멈춰 안쪽 slot content가 reparent되지 않았습니다. 그 node는 지워진
+  인스턴스 핸들을 부모로 가진 채 남았고 `undo_detach`가 복원하지 못했습니다.
+- **모델**: nested slot host는 허용합니다. 바깥 slot이 override되면(빈 override 포함) 그 default content 안의
+  안쪽 slot은 가려지며, 가려진 slot은 content를 가질 수 없습니다(빈 override만 허용). `ComponentEntry::enclosing_slots`,
+  `slot_override::hiding_slot`·`check_hidden_slot_content`로 판정하고, `validate_scene_slot_overrides`·
+  `validate_definition_slot_overrides`가 `SlotOverrideError::HiddenSlotContent`로 거부합니다. `add_slot`은
+  nested host를 등록 순서와 무관하게 받으며 문서에 가림 규칙을 명시했습니다.
+- **detach**: 위 validator로 적용 전에 거부하고, 추가로 인스턴스의 모든 소유 node가 복제된(보이는) host 아래로
+  옮겨질 자리를 갖는지 적용 전에 확인합니다(`DetachError::UnplacedContent`, 방어적 검사).
+- **undo**: 복제 subtree 아래에 복제 node·옮긴 content 외의 node가 있거나 옮긴 content가 subtree 밖으로 나갔으면
+  아무것도 바꾸지 않고 `StateMismatch`로 거부합니다(고아 node 방지).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-document` | unit 236, `component_detach` 6, `component_expansion_scale` 1, `component_slot_projection` 1, doctest 2 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| 안쪽 slot만 override: 안쪽 host 복제본 아래 투영 순서로 이동, 시각 의미 동일, undo 후 snapshot 동일(`nested_slot_host_content_is_reparented_and_undo_restores`) | 통과 |
+| 바깥·안쪽 모두 override(가려진 content): validator `HiddenSlotContent`, detach 거부·scene 불변(`hidden_nested_slot_content_is_rejected_before_detach`). 새 검사를 끄면 이 테스트가 실패함을 확인 | 통과 |
+| 가려진 slot의 빈 override: detach·undo 정상(`empty_hidden_override_detaches_and_undo_restores`) | 통과 |
+| detach 뒤 복제 subtree에 외부 node 추가 시 undo 거부·불변(`undo_rejects_foreign_child_under_detached_subtree`) | 통과 |
+| 정의 tree 안 nested 인스턴스의 가려진 content 거부, `hiding_slot` 판정(`hidden_nested_slot_content_is_rejected_in_definitions`) | 통과 |
+| nested host 등록 순서 무관·`enclosing_slots` 관계(`nested_slot_host_is_registered_with_enclosing_relation`) | 통과 |
+
+- 남은 한계: slot command·구조 편집 validator의 적용 후 가림 검사는 별도 수정(MAJOR 2)에서 다룹니다.
