@@ -36,6 +36,7 @@ use stellar_core_types::reference::AssetRef;
 use stellar_core_types::value::{FiniteF32, Rect, Transform2D};
 
 use crate::geometry::{FillRule, PathGeometry};
+use crate::persistent::PersistentVec;
 use crate::stack::{ClipStackRef, PaintStackRef};
 
 /// scene 값 생성 오류.
@@ -499,9 +500,49 @@ pub struct SceneNodeSpec {
     pub hit: HitTestMeta,
 }
 
+/// 구조 공유 갱신(XI.1.4) 오류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneEditError {
+    /// 경로가 비어 있습니다.
+    EmptyPath,
+    /// 경로의 `level`번째 index가 범위 밖입니다.
+    PathOutOfRange {
+        /// 경로 단계(0 = 최상위).
+        level: usize,
+        /// 범위 밖 index.
+        index: usize,
+    },
+    /// 갱신 결과가 z-order 불변식을 어깁니다.
+    Tree(SceneTreeError),
+}
+
+impl fmt::Display for SceneEditError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SceneEditError::EmptyPath => f.write_str("scene 갱신 경로가 비어 있습니다"),
+            SceneEditError::PathOutOfRange { level, index } => {
+                write!(
+                    f,
+                    "scene 갱신 경로 {level}단계 index {index}가 범위 밖입니다"
+                )
+            }
+            SceneEditError::Tree(error) => write!(f, "scene tree 오류: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for SceneEditError {}
+
+impl From<SceneTreeError> for SceneEditError {
+    fn from(error: SceneTreeError) -> SceneEditError {
+        SceneEditError::Tree(error)
+    }
+}
+
 /// 불변 scene node.
 ///
-/// 자식은 `Arc<SceneNode>`로 보관해 같은 subtree를 여러 snapshot이 공유할 수 있습니다.
+/// 자식은 [`PersistentVec`]에 `Arc<SceneNode>`로 보관해 같은 subtree와 자식 목록 chunk를 여러
+/// snapshot이 공유할 수 있습니다(XI.1.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SceneNode {
     source: StableId,
@@ -512,7 +553,7 @@ pub struct SceneNode {
     paint: PaintStackRef,
     z: ZOrder,
     hit: HitTestMeta,
-    children: Arc<[Arc<SceneNode>]>,
+    children: PersistentVec<Arc<SceneNode>>,
     subtree_len: u64,
     last_z: ZOrder,
 }
@@ -541,23 +582,26 @@ impl SceneNode {
             last_z = child.last_z;
             subtree_len = subtree_len.saturating_add(child.subtree_len);
         }
-        Ok(SceneNode {
-            source: spec.source,
-            content: spec.content,
-            world_transform: spec.world_transform,
-            layout_rect: spec.layout_rect,
-            clip: spec.clip,
-            paint: spec.paint,
-            z: spec.z,
-            hit: spec.hit,
-            children: children.into(),
+        Ok(SceneNode::assemble(
+            spec,
+            PersistentVec::from_vec(children),
             subtree_len,
             last_z,
-        })
+        ))
     }
 
     /// 자식 없는 node.
     pub fn leaf(spec: SceneNodeSpec) -> SceneNode {
+        let z = spec.z;
+        SceneNode::assemble(spec, PersistentVec::new(), 1, z)
+    }
+
+    fn assemble(
+        spec: SceneNodeSpec,
+        children: PersistentVec<Arc<SceneNode>>,
+        subtree_len: u64,
+        last_z: ZOrder,
+    ) -> SceneNode {
         SceneNode {
             source: spec.source,
             content: spec.content,
@@ -567,9 +611,104 @@ impl SceneNode {
             paint: spec.paint,
             z: spec.z,
             hit: spec.hit,
-            children: Arc::from(Vec::new()),
-            subtree_len: 1,
-            last_z: spec.z,
+            children,
+            subtree_len,
+            last_z,
+        }
+    }
+
+    /// 자기 field만 바꾸고 자식 목록은 그대로 공유하는 새 node(XI.1.4).
+    ///
+    /// 단일 property 편집처럼 subtree가 바뀌지 않는 갱신에 씁니다. 새 z-order가 첫 자식보다
+    /// 앞서지 않으면 거부합니다.
+    pub fn with_spec(&self, spec: SceneNodeSpec) -> Result<SceneNode, SceneTreeError> {
+        let last_z = match (self.children.get(0), self.children.last()) {
+            (Some(first), Some(last)) => {
+                check_z_follows(spec.z, first.z)?;
+                last.last_z
+            }
+            _ => spec.z,
+        };
+        Ok(SceneNode::assemble(
+            spec,
+            self.children.clone(),
+            self.subtree_len,
+            last_z,
+        ))
+    }
+
+    /// `index`번째 자식을 바꾼 새 node(XI.1.4). 다른 자식과 자식 목록 chunk는 공유합니다.
+    ///
+    /// 새 자식 subtree가 앞 형제(또는 자신)와 뒤 형제 사이 z-order 범위에 맞지 않으면 거부합니다.
+    pub fn with_child_replaced(
+        &self,
+        index: usize,
+        child: Arc<SceneNode>,
+    ) -> Result<SceneNode, SceneEditError> {
+        let old = self
+            .children
+            .get(index)
+            .ok_or(SceneEditError::PathOutOfRange { level: 0, index })?;
+        let previous = match index.checked_sub(1) {
+            Some(prev) => self
+                .children
+                .get(prev)
+                .map_or(self.z, |sibling| sibling.last_z),
+            None => self.z,
+        };
+        check_z_follows(previous, child.z)?;
+        if let Some(next) = self.children.get(index + 1) {
+            check_z_follows(child.last_z, next.z)?;
+        }
+        let last_z = if index + 1 == self.children.len() {
+            child.last_z
+        } else {
+            self.last_z
+        };
+        let subtree_len = self
+            .subtree_len
+            .saturating_sub(old.subtree_len)
+            .saturating_add(child.subtree_len);
+        let children = self
+            .children
+            .set(index, child)
+            .ok_or(SceneEditError::PathOutOfRange { level: 0, index })?;
+        Ok(SceneNode {
+            children,
+            subtree_len,
+            last_z,
+            ..self.clone_fields()
+        })
+    }
+
+    /// 자식을 제외한 field 복사본(자식 목록은 O(1) 공유 복제).
+    fn clone_fields(&self) -> SceneNode {
+        SceneNode {
+            source: self.source,
+            content: self.content.clone(),
+            world_transform: self.world_transform,
+            layout_rect: self.layout_rect,
+            clip: self.clip.clone(),
+            paint: self.paint.clone(),
+            z: self.z,
+            hit: self.hit,
+            children: self.children.clone(),
+            subtree_len: self.subtree_len,
+            last_z: self.last_z,
+        }
+    }
+
+    /// 자기 field를 [`SceneNodeSpec`]으로 돌려줍니다(자식 제외).
+    pub fn spec(&self) -> SceneNodeSpec {
+        SceneNodeSpec {
+            source: self.source,
+            content: self.content.clone(),
+            world_transform: self.world_transform,
+            layout_rect: self.layout_rect,
+            clip: self.clip.clone(),
+            paint: self.paint.clone(),
+            z: self.z,
+            hit: self.hit,
         }
     }
 
@@ -629,8 +768,13 @@ impl SceneNode {
     }
 
     /// 자식들(paint 순서).
-    pub fn children(&self) -> impl DoubleEndedIterator<Item = &Arc<SceneNode>> + '_ {
+    pub fn children(&self) -> crate::persistent::Iter<'_, Arc<SceneNode>> {
         self.children.iter()
+    }
+
+    /// 자식 목록(구조 공유 vector).
+    pub const fn child_list(&self) -> &PersistentVec<Arc<SceneNode>> {
+        &self.children
     }
 
     /// 자신을 포함한 subtree node 수.

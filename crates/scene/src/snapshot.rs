@@ -11,14 +11,15 @@
 //! 본문 bytes([`crate::codec`])의 FNV-1a 128 hash입니다. 같은 내용은 `Arc` 공유 구조·생성
 //! 순서·scene revision과 무관하게 같은 hash가 됩니다. 변경 감지용이며 보안 hash가 아닙니다.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fmt;
 use std::sync::Arc;
 
 use stellar_core_types::revision::{DocumentRevision, SceneRevision};
 
 use crate::codec::{write_body, ByteSink};
-use crate::node::{check_z_follows, SceneNode, SceneResourceRef, SceneTreeError};
+use crate::node::{check_z_follows, SceneEditError, SceneNode, SceneResourceRef, SceneTreeError};
+use crate::persistent::PersistentVec;
 
 /// snapshot 내용의 semantic hash(FNV-1a 128).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -58,12 +59,23 @@ impl ByteSink for Fnv1a128 {
     }
 }
 
+/// 두 snapshot 사이 구조 공유 통계(XI.1.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SharingStats {
+    /// 새 snapshot의 전체 node 수.
+    pub total_nodes: u64,
+    /// 이전 snapshot과 같은 allocation(`Arc`)을 공유하는 node 수.
+    pub shared_nodes: u64,
+    /// 새로 할당된 node 수.
+    pub new_nodes: u64,
+}
+
 /// 불변 scene snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SceneSnapshot {
     document_revision: DocumentRevision,
     scene_revision: SceneRevision,
-    roots: Arc<[Arc<SceneNode>]>,
+    roots: PersistentVec<Arc<SceneNode>>,
     node_count: u64,
 }
 
@@ -86,9 +98,84 @@ impl SceneSnapshot {
         Ok(SceneSnapshot {
             document_revision,
             scene_revision,
-            roots: roots.into(),
+            roots: PersistentVec::from_vec(roots),
             node_count,
         })
+    }
+
+    /// `path`(최상위 index, 자식 index, …) 위치의 node를 `node`로 바꾼 새 snapshot(XI.1.4).
+    ///
+    /// root에서 대상까지의 조상 node만 새로 할당하고(path copying), 나머지 node·자식 목록
+    /// chunk·clip·paint는 이 snapshot과 공유합니다. 이 snapshot은 바뀌지 않습니다. 새 subtree의
+    /// z-order가 앞뒤 node 사이에 맞지 않으면 거부하며, 검사는 경로 주변만 봅니다.
+    pub fn replace_node(
+        &self,
+        document_revision: DocumentRevision,
+        scene_revision: SceneRevision,
+        path: &[usize],
+        node: Arc<SceneNode>,
+    ) -> Result<SceneSnapshot, SceneEditError> {
+        let (&root_index, rest) = path.split_first().ok_or(SceneEditError::EmptyPath)?;
+        let old_root = self
+            .roots
+            .get(root_index)
+            .ok_or(SceneEditError::PathOutOfRange {
+                level: 0,
+                index: root_index,
+            })?;
+        let new_root = replace_below(old_root, rest, node, 1)?;
+        if let Some(previous) = root_index.checked_sub(1).and_then(|i| self.roots.get(i)) {
+            check_z_follows(previous.last_z(), new_root.z())?;
+        }
+        if let Some(next) = self.roots.get(root_index + 1) {
+            check_z_follows(new_root.last_z(), next.z())?;
+        }
+        let node_count = self
+            .node_count
+            .saturating_sub(old_root.subtree_len())
+            .saturating_add(new_root.subtree_len());
+        let roots = self
+            .roots
+            .set(root_index, new_root)
+            .ok_or(SceneEditError::PathOutOfRange {
+                level: 0,
+                index: root_index,
+            })?;
+        Ok(SceneSnapshot {
+            document_revision,
+            scene_revision,
+            roots,
+            node_count,
+        })
+    }
+
+    /// `previous`와의 구조 공유 통계. 공유 subtree는 내려가지 않고 크기만 셉니다.
+    pub fn sharing_with(&self, previous: &SceneSnapshot) -> SharingStats {
+        let seen: HashSet<*const SceneNode> = previous
+            .iter_preorder()
+            .map(|node| node as *const SceneNode)
+            .collect();
+        let mut shared_nodes = 0u64;
+        let mut new_nodes = 0u64;
+        let mut stack: Vec<&Arc<SceneNode>> = self.roots.iter().collect();
+        while let Some(node) = stack.pop() {
+            if seen.contains(&Arc::as_ptr(node)) {
+                shared_nodes = shared_nodes.saturating_add(node.subtree_len());
+            } else {
+                new_nodes += 1;
+                stack.extend(node.children());
+            }
+        }
+        SharingStats {
+            total_nodes: self.node_count,
+            shared_nodes,
+            new_nodes,
+        }
+    }
+
+    /// 최상위 node 목록(구조 공유 vector).
+    pub const fn root_list(&self) -> &PersistentVec<Arc<SceneNode>> {
+        &self.roots
     }
 
     /// 이 snapshot을 만든 document revision.
@@ -112,7 +199,7 @@ impl SceneSnapshot {
     }
 
     /// 최상위 node들(paint 순서).
-    pub fn roots(&self) -> impl DoubleEndedIterator<Item = &Arc<SceneNode>> + '_ {
+    pub fn roots(&self) -> crate::persistent::Iter<'_, Arc<SceneNode>> {
         self.roots.iter()
     }
 
@@ -125,9 +212,9 @@ impl SceneSnapshot {
     ///
     /// 재귀 없이 명시적 stack을 써서 깊은 tree에서도 호출 stack을 소모하지 않습니다.
     pub fn iter_preorder(&self) -> PreOrder<'_> {
-        PreOrder {
-            stack: self.roots.iter().rev().map(|root| &**root).collect(),
-        }
+        let mut stack: Vec<&SceneNode> = self.roots.iter().map(|root| &**root).collect();
+        stack.reverse();
+        PreOrder { stack }
     }
 
     /// snapshot이 참조하는 외부 resource 집합(정렬, 중복 제거).
@@ -156,10 +243,36 @@ impl<'a> Iterator for PreOrder<'a> {
 
     fn next(&mut self) -> Option<&'a SceneNode> {
         let node = self.stack.pop()?;
-        self.stack
-            .extend(node.children().rev().map(|child| &**child));
+        // 자식을 역순으로 쌓아 paint 순서대로 꺼냅니다.
+        let start = self.stack.len();
+        self.stack.extend(node.children().map(|child| &**child));
+        self.stack[start..].reverse();
         Some(node)
     }
+}
+
+/// `node` 아래 `path` 위치를 `replacement`로 바꾼 새 node(경로 복사).
+fn replace_below(
+    node: &Arc<SceneNode>,
+    path: &[usize],
+    replacement: Arc<SceneNode>,
+    level: usize,
+) -> Result<Arc<SceneNode>, SceneEditError> {
+    let Some((&index, rest)) = path.split_first() else {
+        return Ok(replacement);
+    };
+    let child = node
+        .child(index)
+        .ok_or(SceneEditError::PathOutOfRange { level, index })?;
+    let new_child = replace_below(child, rest, replacement, level + 1)?;
+    node.with_child_replaced(index, new_child)
+        .map(Arc::new)
+        .map_err(|error| match error {
+            SceneEditError::PathOutOfRange { index, .. } => {
+                SceneEditError::PathOutOfRange { level, index }
+            }
+            other => other,
+        })
 }
 
 #[cfg(test)]
@@ -272,6 +385,196 @@ mod tests {
         let empty = SceneSnapshot::new(DocumentRevision(1), SceneRevision(1), Vec::new()).unwrap();
         assert_ne!(empty.semantic_hash(), snapshot.semantic_hash());
         assert_eq!(format!("{}", SceneSemanticHash(0xAB)).len(), 32);
+    }
+
+    fn node_at<'a>(snapshot: &'a SceneSnapshot, path: &[usize]) -> &'a Arc<SceneNode> {
+        let mut node = snapshot.root(path[0]).expect("root");
+        for &index in &path[1..] {
+            node = node.child(index).expect("child");
+        }
+        node
+    }
+
+    fn repainted(node: &SceneNode) -> SceneNodeSpec {
+        let mut spec = node.spec();
+        spec.paint = crate::stack::PaintStackRef::new(crate::stack::PaintStack {
+            layers: vec![crate::stack::PaintLayer::Fill(fixtures::solid(
+                0.1, 0.2, 0.3, 1.0,
+            ))],
+            ..crate::stack::PaintStack::empty()
+        });
+        spec
+    }
+
+    #[test]
+    fn single_leaf_edit_shares_every_other_node() {
+        // 검증 기준(XI.1.4): 단일 leaf 변경 시 shared node count.
+        // 최상위 8 × frame 8 × frame 8 × leaf 8 = 4680 node, leaf depth 3.
+        let base = fixtures::generate(fixtures::FixtureConfig {
+            seed: 0x14,
+            roots: 8,
+            children: 8,
+            depth: 3,
+        });
+        assert_eq!(base.node_count(), 8 * (1 + 8 + 64 + 512));
+        let path = [3, 2, 5, 7];
+        let old_leaf = Arc::clone(node_at(&base, &path));
+        let new_leaf = Arc::new(SceneNode::leaf(repainted(&old_leaf)));
+        let base_hash = base.semantic_hash();
+
+        let mut map = crate::revision::SceneRevisionMap::new();
+        map.next(DocumentRevision(1)).unwrap();
+        let next = map
+            .derive(&base, DocumentRevision(2), &path, Arc::clone(&new_leaf))
+            .unwrap();
+        assert_eq!(next.scene_revision(), SceneRevision(2));
+        assert_eq!(next.node_count(), base.node_count());
+
+        // 새 allocation은 leaf와 그 조상 3개(경로 길이 4)뿐입니다.
+        let stats = next.sharing_with(&base);
+        assert_eq!(
+            stats,
+            SharingStats {
+                total_nodes: 4680,
+                shared_nodes: 4676,
+                new_nodes: 4
+            }
+        );
+        // 형제 subtree는 같은 Arc를 가리킵니다.
+        assert!(Arc::ptr_eq(
+            node_at(&next, &[3, 2, 5, 6]),
+            node_at(&base, &[3, 2, 5, 6])
+        ));
+        assert!(Arc::ptr_eq(
+            node_at(&next, &[3, 1]),
+            node_at(&base, &[3, 1])
+        ));
+        assert!(Arc::ptr_eq(node_at(&next, &[4]), node_at(&base, &[4])));
+        assert!(Arc::ptr_eq(node_at(&next, &path), &new_leaf));
+        // clip stack도 공유됩니다(leaf spec을 그대로 복사).
+        assert!(node_at(&next, &path).clip().ptr_eq(old_leaf.clip()));
+
+        // 이전 snapshot은 그대로입니다.
+        assert!(Arc::ptr_eq(node_at(&base, &path), &old_leaf));
+        assert_eq!(base.semantic_hash(), base_hash);
+        assert_ne!(next.semantic_hash(), base_hash);
+        // 같은 내용을 처음부터 다시 만든 것과 값이 같습니다(결정론).
+        assert_eq!(
+            crate::codec::decode(&crate::codec::encode(&next)).unwrap(),
+            next
+        );
+    }
+
+    #[test]
+    fn frame_property_edit_keeps_children_shared() {
+        let base = fixtures::generate(fixtures::FixtureConfig {
+            seed: 0x15,
+            roots: 2,
+            children: 8,
+            depth: 3,
+        });
+        let path = [1, 4];
+        let frame = node_at(&base, &path);
+        let edited = Arc::new(frame.with_spec(repainted(frame)).unwrap());
+        assert_eq!(edited.subtree_len(), frame.subtree_len());
+        let next = base
+            .replace_node(DocumentRevision(2), SceneRevision(2), &path, edited)
+            .unwrap();
+        // frame과 최상위 조상만 새로 할당, frame의 자식 subtree는 모두 공유.
+        assert_eq!(next.sharing_with(&base).new_nodes, 2);
+        assert!(Arc::ptr_eq(
+            node_at(&next, &[1, 4, 0]),
+            node_at(&base, &[1, 4, 0])
+        ));
+    }
+
+    #[test]
+    fn wide_frame_child_edit_copies_one_chunk_path() {
+        // 자식 5000개 frame에서 자식 하나를 바꾸면 자식 목록 leaf chunk 157개 중 1개만 새로 만듭니다.
+        let children: Vec<Arc<SceneNode>> = (0..5_000u64)
+            .map(|i| leaf(i + 10, i + 2, 1.0, 1.0))
+            .collect();
+        let frame = Arc::new(
+            SceneNode::new(spec(1, fixtures::rect_content(10.0, 10.0), 1), children).unwrap(),
+        );
+        let base = SceneSnapshot::new(DocumentRevision(1), SceneRevision(1), vec![frame]).unwrap();
+        let target = node_at(&base, &[0, 2_500]);
+        let replacement = Arc::new(SceneNode::leaf(repainted(target)));
+        let next = base
+            .replace_node(
+                DocumentRevision(2),
+                SceneRevision(2),
+                &[0, 2_500],
+                replacement,
+            )
+            .unwrap();
+        let stats = next.sharing_with(&base);
+        assert_eq!((stats.new_nodes, stats.shared_nodes), (2, 4_999));
+        let old_list = base.root(0).unwrap().child_list();
+        let new_list = next.root(0).unwrap().child_list();
+        assert_eq!(
+            new_list.shared_leaf_chunks(old_list),
+            5_000usize.div_ceil(32) - 1
+        );
+    }
+
+    #[test]
+    fn replacement_must_fit_z_range_and_path() {
+        let base = fixtures::generate(fixtures::FixtureConfig {
+            seed: 0x16,
+            roots: 2,
+            children: 3,
+            depth: 2,
+        });
+        let path = [0, 1, 1];
+        let target = node_at(&base, &path);
+        let next_sibling_z = node_at(&base, &[0, 1, 2]).z();
+        // 다음 형제의 z와 겹치는 leaf는 거부합니다.
+        let mut clash = target.spec();
+        clash.z = next_sibling_z;
+        assert_eq!(
+            base.replace_node(
+                DocumentRevision(2),
+                SceneRevision(2),
+                &path,
+                Arc::new(SceneNode::leaf(clash))
+            ),
+            Err(SceneEditError::Tree(SceneTreeError::ZOrderNotIncreasing {
+                previous: next_sibling_z,
+                next: next_sibling_z
+            }))
+        );
+        let same = Arc::clone(target);
+        assert_eq!(
+            base.replace_node(
+                DocumentRevision(2),
+                SceneRevision(2),
+                &[0, 1, 9],
+                same.clone()
+            ),
+            Err(SceneEditError::PathOutOfRange { level: 2, index: 9 })
+        );
+        assert_eq!(
+            base.replace_node(DocumentRevision(2), SceneRevision(2), &[5], same.clone()),
+            Err(SceneEditError::PathOutOfRange { level: 0, index: 5 })
+        );
+        assert_eq!(
+            base.replace_node(DocumentRevision(2), SceneRevision(2), &[], same.clone()),
+            Err(SceneEditError::EmptyPath)
+        );
+        // 마지막 최상위 subtree의 끝이 늘어나도 다음 root와 겹치면 거부합니다.
+        let last_of_first_root = node_at(&base, &[0, 2, 2]);
+        let mut grow = last_of_first_root.spec();
+        grow.z = ZOrder(node_at(&base, &[1]).z().0 + 1);
+        assert!(matches!(
+            base.replace_node(
+                DocumentRevision(2),
+                SceneRevision(2),
+                &[0, 2, 2],
+                Arc::new(SceneNode::leaf(grow))
+            ),
+            Err(SceneEditError::Tree(_))
+        ));
     }
 
     #[test]

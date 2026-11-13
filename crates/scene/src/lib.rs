@@ -9,6 +9,9 @@
 /// Scene path geometry (XI.6.1).
 pub mod geometry;
 
+/// 구조 공유 persistent vector (XI.1.4).
+pub mod persistent;
+
 /// Scene node와 resource 참조 (XI.1.1, XI.1.2).
 pub mod node;
 

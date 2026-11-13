@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use stellar_core_types::revision::{DocumentRevision, SceneRevision};
 
-use crate::node::{SceneNode, SceneTreeError};
+use crate::node::{SceneEditError, SceneNode, SceneTreeError};
 use crate::snapshot::SceneSnapshot;
 
 /// snapshot 하나에 붙는 revision 쌍.
@@ -64,6 +64,8 @@ pub enum SceneGenerateError {
     Revision(SceneRevisionError),
     /// scene tree 불변식 위반.
     Tree(SceneTreeError),
+    /// 구조 공유 갱신 실패(XI.1.4).
+    Edit(SceneEditError),
 }
 
 impl fmt::Display for SceneGenerateError {
@@ -71,6 +73,7 @@ impl fmt::Display for SceneGenerateError {
         match self {
             SceneGenerateError::Revision(error) => write!(f, "scene revision 오류: {error}"),
             SceneGenerateError::Tree(error) => write!(f, "scene tree 오류: {error}"),
+            SceneGenerateError::Edit(error) => write!(f, "scene 갱신 오류: {error}"),
         }
     }
 }
@@ -141,6 +144,24 @@ impl SceneRevisionMap {
         let stamp = self.peek(document).map_err(SceneGenerateError::Revision)?;
         let snapshot = SceneSnapshot::new(stamp.document, stamp.scene, roots)
             .map_err(SceneGenerateError::Tree)?;
+        self.last = Some(stamp);
+        Ok(snapshot)
+    }
+
+    /// `base`의 `path` 위치 node만 바꾼 새 세대 snapshot을 만듭니다(XI.1.4, 구조 공유).
+    ///
+    /// 갱신이 실패하면 revision을 소비하지 않습니다.
+    pub fn derive(
+        &mut self,
+        base: &SceneSnapshot,
+        document: DocumentRevision,
+        path: &[usize],
+        node: Arc<SceneNode>,
+    ) -> Result<SceneSnapshot, SceneGenerateError> {
+        let stamp = self.peek(document).map_err(SceneGenerateError::Revision)?;
+        let snapshot = base
+            .replace_node(stamp.document, stamp.scene, path, node)
+            .map_err(SceneGenerateError::Edit)?;
         self.last = Some(stamp);
         Ok(snapshot)
     }
