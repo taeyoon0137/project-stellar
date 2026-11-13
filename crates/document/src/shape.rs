@@ -142,6 +142,52 @@ impl RectangleParams {
         }
         (tl * factor, tr * factor, br * factor, bl * factor)
     }
+
+    /// 사각형 path(shape local 원점 기준). 실효 radius가 0인 모서리는 직각,
+    /// 양수면 1/4 원호를 cubic(κ)으로 근사합니다. 위 변 왼쪽에서 시작해 y-down
+    /// 기준 시계 방향으로 그리고 닫습니다.
+    pub fn to_path(&self) -> Vec<PathCommand> {
+        let (tl, tr, br, bl) = self.effective_corner_radius();
+        let w = self.size.width();
+        let h = self.size.height();
+        let p = |x: f32, y: f32| Vec2::new(x, y).expect("finite rectangle");
+        let k = CIRCLE_KAPPA;
+        let mut path = vec![PathCommand::MoveTo(p(tl, 0.0))];
+        path.push(PathCommand::LineTo(p(w - tr, 0.0)));
+        if tr > 0.0 {
+            path.push(PathCommand::CubicTo {
+                c1: p(w - tr + k * tr, 0.0),
+                c2: p(w, tr - k * tr),
+                to: p(w, tr),
+            });
+        }
+        path.push(PathCommand::LineTo(p(w, h - br)));
+        if br > 0.0 {
+            path.push(PathCommand::CubicTo {
+                c1: p(w, h - br + k * br),
+                c2: p(w - br + k * br, h),
+                to: p(w - br, h),
+            });
+        }
+        path.push(PathCommand::LineTo(p(bl, h)));
+        if bl > 0.0 {
+            path.push(PathCommand::CubicTo {
+                c1: p(bl - k * bl, h),
+                c2: p(0.0, h - bl + k * bl),
+                to: p(0.0, h - bl),
+            });
+        }
+        path.push(PathCommand::LineTo(p(0.0, tl)));
+        if tl > 0.0 {
+            path.push(PathCommand::CubicTo {
+                c1: p(0.0, tl - k * tl),
+                c2: p(tl - k * tl, 0.0),
+                to: p(tl, 0.0),
+            });
+        }
+        path.push(PathCommand::Close);
+        path
+    }
 }
 
 /// 저장 계층이 파싱한 tagged field 하나(canonical R6 형식의 의미 단위).
@@ -486,6 +532,45 @@ impl PolygonParams {
     }
 }
 
+/// 도형 geometry: 종류별 파라미터 (VI.5.6).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ShapeGeometry {
+    /// 사각형.
+    Rectangle(RectangleParams),
+    /// 타원.
+    Ellipse(EllipseParams),
+    /// 직선.
+    Line(LineParams),
+    /// 정다각형.
+    Polygon(PolygonParams),
+}
+
+impl ShapeGeometry {
+    /// 도형 종류.
+    pub fn kind(&self) -> ShapeKind {
+        match self {
+            ShapeGeometry::Rectangle(_) => ShapeKind::Rectangle,
+            ShapeGeometry::Ellipse(_) => ShapeKind::Ellipse,
+            ShapeGeometry::Line(_) => ShapeKind::Line,
+            ShapeGeometry::Polygon(_) => ShapeKind::Polygon,
+        }
+    }
+}
+
+/// Shape를 Path geometry로 평가하는 **순수 함수**입니다(VI.5.6).
+///
+/// node를 Path로 바꾸지 않습니다 — 렌더·hit test·boolean이 쓰는 geometry만
+/// 계산합니다. 같은 입력은 항상 bit 단위로 같은 command를 냅니다. 파괴 변환
+/// (Shape node → Path node)은 사용자 명시 command만 수행합니다(VI.6.5).
+pub fn evaluate_shape_path(geometry: &ShapeGeometry) -> Vec<PathCommand> {
+    match geometry {
+        ShapeGeometry::Rectangle(params) => params.to_path(),
+        ShapeGeometry::Ellipse(params) => params.to_path(),
+        ShapeGeometry::Line(params) => params.to_path(),
+        ShapeGeometry::Polygon(params) => params.to_path(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -806,5 +891,77 @@ mod tests {
         // 과도한 radius는 변 절반으로 clamp되어도 유한 path.
         let clamped = polygon(3, 0.0, 10_000.0).unwrap().to_path();
         assert_eq!(clamped.len(), 1 + 3 + 2 + 1);
+    }
+
+    fn sample_geometries() -> Vec<ShapeGeometry> {
+        vec![
+            ShapeGeometry::Rectangle(RectangleParams {
+                size: Size2::new(120.0, 80.0).unwrap(),
+                corner_radius: CornerRadius::new(0.0, 12.0, 30.0, 6.5).unwrap(),
+            }),
+            ShapeGeometry::Ellipse(EllipseParams {
+                bounds: rect(-10.0, 5.0, 33.3, 77.7),
+            }),
+            ShapeGeometry::Line(line(0.5, 0.25, 99.0, -42.0, LineCap::Round)),
+            ShapeGeometry::Polygon(polygon(7, 13.0, 4.0).unwrap()),
+        ]
+    }
+
+    #[test]
+    fn evaluation_is_bit_stable() {
+        // 검증 기준(VI.5.6): 동일 입력 bit-stable path commands.
+        use crate::path::encode_commands;
+        for geometry in sample_geometries() {
+            let first = encode_commands(&evaluate_shape_path(&geometry));
+            for _ in 0..100 {
+                assert_eq!(
+                    encode_commands(&evaluate_shape_path(&geometry)),
+                    first,
+                    "{}",
+                    geometry.kind().name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rectangle_path_golden() {
+        // 사칙연산만 쓰는 사각형 path는 플랫폼 간에도 bit 동일해야 합니다.
+        let square = RectangleParams {
+            size: Size2::new(10.0, 20.0).unwrap(),
+            corner_radius: CornerRadius::ZERO,
+        };
+        let p = |x: f32, y: f32| Vec2::new(x, y).unwrap();
+        assert_eq!(
+            square.to_path(),
+            vec![
+                PathCommand::MoveTo(p(0.0, 0.0)),
+                PathCommand::LineTo(p(10.0, 0.0)),
+                PathCommand::LineTo(p(10.0, 20.0)),
+                PathCommand::LineTo(p(0.0, 20.0)),
+                PathCommand::LineTo(p(0.0, 0.0)),
+                PathCommand::Close,
+            ]
+        );
+        // 둥근 모서리 4개: MoveTo + 4 LineTo + 4 Cubic + Close.
+        let rounded = RectangleParams {
+            size: Size2::new(100.0, 50.0).unwrap(),
+            corner_radius: CornerRadius::new(40.0, 40.0, 40.0, 40.0).unwrap(),
+        };
+        let path = rounded.to_path();
+        assert_eq!(path.len(), 10);
+        // 실효 radius 25로 clamp된 시작점.
+        assert_eq!(path[0], PathCommand::MoveTo(p(25.0, 0.0)));
+    }
+
+    #[test]
+    fn evaluation_does_not_convert_the_node() {
+        // 순수 평가: geometry 값 자체는 그대로(kind 유지).
+        for geometry in sample_geometries() {
+            let before = geometry;
+            let _ = evaluate_shape_path(&geometry);
+            assert_eq!(geometry, before);
+            assert_ne!(geometry.kind().name(), "path");
+        }
     }
 }

@@ -570,7 +570,7 @@ tools/xtask/
 | VI.5.3 | `[x]` | Ellipse는 bounds로 정의하고 start/end angle을 지원하지 않는 초기 범위로 고정합니다. 해당 필드가 파일에 있으면 unknown field 정책을 따릅니다. | full ellipse path reference와 일치. | VI.5.1 |
 | VI.5.4 | `[x]` | Line은 start/end point와 cap style을 정의합니다. zero-length line 정책을 점 cap으로 명시합니다. | cap별 bounds fixture 통과. | VI.5.1 |
 | VI.5.5 | `[x]` | Polygon은 side count≥3, rotation, corner radius를 정의합니다. | 2 sides 거부, 3·4·100 sides path fixture 통과. | VI.5.1 |
-| VI.5.6 | `[ ]` | Shape를 Path geometry로 평가하는 순수 함수를 구현합니다. node를 Path로 변환하지 않습니다. | 동일 입력 bit-stable path commands. | VI.5.2~VI.5.5 |
+| VI.5.6 | `[x]` | Shape를 Path geometry로 평가하는 순수 함수를 구현합니다. node를 Path로 변환하지 않습니다. | 동일 입력 bit-stable path commands. | VI.5.2~VI.5.5 |
 
 ### VI.6 Path
 
