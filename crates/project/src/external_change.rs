@@ -13,6 +13,12 @@
 //! - [`ExternalChangePending`]: 세 snapshot을 함께 보존한 대기 상태. 세 hash는
 //!   [`ExternalChangePending::hashes`]로 기록합니다.
 //!
+//! 대기 중 자동 저장 중지(XIII.3.3): Semantic Reconciliation(XIII.3.4) 전에는 대기 상태에서
+//! [`WindowExternalState::autosave_gate`]가 `Suspended`이고, 저장 경로
+//! ([`WindowExternalState::run_guarded_save`])는 아무 파일도 쓰지 않고 거부합니다. 셸에는 해결 선택지가
+//! 없는 읽기 전용 alert([`ExternalChangeAlert`])만 한 번 돌려줍니다. 어느 쪽 버전으로도 자동 overwrite하지
+//! 않으므로 대기 중 current pointer는 바뀌지 않습니다.
+//!
 //! 로컬 변경이 없는 창의 reload(XIII.3.1)와 reconciliation(XIII.3.4)은 이 상태 위에서 연결합니다.
 
 use std::path::{Path, PathBuf};
@@ -23,7 +29,9 @@ use stellar_storage::chunk::planner::LogicalChunkState;
 use stellar_storage::generation::loader::{verify_generation, LoadError, LoadedGeneration};
 use stellar_storage::generation::manifest::GenerationManifest;
 use stellar_storage::hash::ContentHash;
-use stellar_storage::save::plan::{build_save_plan, SavePlanError};
+use stellar_storage::save::cancel::{run_save, CancelToken, SaveRunError};
+use stellar_storage::save::commit::SavedGenerationState;
+use stellar_storage::save::plan::{build_save_plan, SavePlan, SavePlanError};
 
 /// 디스크의 완성된 generation snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,7 +250,49 @@ pub struct WindowExternalState {
     root: PathBuf,
     project_id: StableId,
     state: WindowDiskState,
+    /// 아직 셸에 전달하지 않은 alert가 있는지.
+    alert_due: bool,
 }
+
+/// 자동 저장 허용 여부.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutosaveGate {
+    /// 자동 저장 가능.
+    Allowed,
+    /// 외부 변경 대기 중이라 자동 저장 중지.
+    Suspended,
+}
+
+/// 외부 변경 대기 alert. 해결 선택지가 없는 읽기 전용 알림입니다(reconciliation은 XIII.3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExternalChangeAlert {
+    /// 보존된 세 snapshot hash.
+    pub hashes: SnapshotHashes,
+    /// 읽기 전용 알림(항상 `true`): 셸은 저장·덮어쓰기 선택지를 제공하지 않습니다.
+    pub read_only: bool,
+}
+
+/// 저장 거부·실패.
+#[derive(Debug)]
+pub enum GuardedSaveError {
+    /// 외부 변경 대기 중이라 저장하지 않음(파일을 쓰지 않음).
+    ExternalChangePending(SnapshotHashes),
+    /// 저장 파이프라인 실패(V.5).
+    Save(SaveRunError),
+}
+
+impl std::fmt::Display for GuardedSaveError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GuardedSaveError::ExternalChangePending(_) => {
+                f.write_str("외부 변경 대기 중에는 저장하지 않습니다(자동 덮어쓰기 금지)")
+            }
+            GuardedSaveError::Save(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for GuardedSaveError {}
 
 impl WindowExternalState {
     /// 연 generation을 base로 clean 상태에서 시작합니다.
@@ -251,6 +301,7 @@ impl WindowExternalState {
             root: root.to_path_buf(),
             project_id: base.manifest.project_id,
             state: WindowDiskState::Clean { base },
+            alert_due: false,
         }
     }
 
@@ -320,8 +371,55 @@ impl WindowExternalState {
             external_disk: external,
         };
         let hashes = pending.hashes();
+        // 새 외부 generation(새 정보)일 때만 alert를 다시 냅니다.
+        let previous_external = self.pending().map(|p| p.external_disk.manifest_hash);
+        if previous_external != Some(hashes.external_disk) {
+            self.alert_due = true;
+        }
         self.state = WindowDiskState::ExternalChangePending(Box::new(pending));
         Ok(ExternalChangeDecision::Pending(hashes))
+    }
+
+    /// 자동 저장 허용 여부. 외부 변경 대기 중이면 `Suspended`입니다.
+    pub fn autosave_gate(&self) -> AutosaveGate {
+        if self.pending().is_some() {
+            AutosaveGate::Suspended
+        } else {
+            AutosaveGate::Allowed
+        }
+    }
+
+    /// 셸에 보낼 읽기 전용 alert를 꺼냅니다. 같은 대기 상태에서는 한 번만 나옵니다.
+    pub fn take_alert(&mut self) -> Option<ExternalChangeAlert> {
+        if !self.alert_due {
+            return None;
+        }
+        let hashes = self.pending()?.hashes();
+        self.alert_due = false;
+        Some(ExternalChangeAlert {
+            hashes,
+            read_only: true,
+        })
+    }
+
+    /// 저장 경로: 대기 중이면 아무 파일도 쓰지 않고 거부하고, 아니면 저장 파이프라인(V.5)을 실행해
+    /// 성공 시 새 base로 clean 상태가 됩니다.
+    pub fn run_guarded_save(
+        &mut self,
+        plan: &SavePlan,
+        memory: &mut SavedGenerationState,
+        cancel: &CancelToken,
+    ) -> Result<(), GuardedSaveError> {
+        if let Some(pending) = self.pending() {
+            return Err(GuardedSaveError::ExternalChangePending(pending.hashes()));
+        }
+        run_save(&self.root, plan, memory, cancel).map_err(GuardedSaveError::Save)?;
+        if let Some((_, hash)) = memory.saved() {
+            if let Ok(base) = DiskSnapshot::load(&self.root, &hash, self.project_id) {
+                self.mark_saved(base);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -528,5 +626,115 @@ pub(crate) mod tests {
             decision,
             ExternalChangeDecision::Pending(hashes) if hashes.external_disk == sc.external.manifest_hash
         ));
+    }
+
+    /// 디렉터리 트리의 (상대 경로 → bytes) snapshot.
+    fn tree_bytes(root: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+        fn walk(root: &Path, dir: &Path, out: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let rel = path.strip_prefix(root).unwrap().to_path_buf();
+                if path.is_dir() {
+                    walk(root, &path, out);
+                } else {
+                    out.insert(rel, std::fs::read(&path).unwrap());
+                }
+            }
+        }
+        let mut out = std::collections::BTreeMap::new();
+        walk(root, root, &mut out);
+        out
+    }
+
+    #[test]
+    fn pending_state_suspends_autosave_and_never_moves_current_pointer() {
+        use stellar_storage::generation::current::{current_pointer_path, read_current_pointer};
+        let mut sc = scenario();
+        sc.window.mark_dirty();
+        assert_eq!(sc.window.autosave_gate(), AutosaveGate::Allowed);
+        assert_eq!(sc.window.take_alert(), None);
+        sc.window
+            .on_external_generation(&sc.external.manifest_hash, |base| {
+                MemorySnapshot::capture(base, memory_edit(b"local"), roots())
+            })
+            .unwrap();
+        let before_pointer = std::fs::read(current_pointer_path(&sc.dir.path)).unwrap();
+        let before_tree = tree_bytes(&sc.dir.path);
+
+        // 자동 저장 중지, 읽기 전용 alert 한 번.
+        assert_eq!(sc.window.autosave_gate(), AutosaveGate::Suspended);
+        let alert = sc.window.take_alert().unwrap();
+        assert!(alert.read_only);
+        assert_eq!(alert.hashes, sc.window.pending().unwrap().hashes());
+        assert_eq!(sc.window.take_alert(), None, "반복 알림 없음");
+
+        // 메모리 상태로(창의 base 위) 저장하려 해도 거부: 어떤 파일도 쓰지 않음.
+        let base = sc.base.clone();
+        let plan =
+            build_save_plan(Some(&base), PROJECT, 1, &memory_edit(b"local"), roots()).unwrap();
+        let mut memory = SavedGenerationState::new(Some((1, sc.base.manifest_hash)));
+        for _ in 0..3 {
+            assert!(matches!(
+                sc.window
+                    .run_guarded_save(&plan, &mut memory, &CancelToken::new()),
+                Err(GuardedSaveError::ExternalChangePending(_))
+            ));
+        }
+        assert_eq!(
+            std::fs::read(current_pointer_path(&sc.dir.path)).unwrap(),
+            before_pointer,
+            "pending 중 current pointer 변경"
+        );
+        assert_eq!(
+            tree_bytes(&sc.dir.path),
+            before_tree,
+            "pending 중 파일 기록"
+        );
+        assert_eq!(
+            read_current_pointer(&sc.dir.path).unwrap(),
+            sc.external.manifest_hash
+        );
+        // 저장소 자체의 optimistic check(V.5.2)도 같은 계획을 거부함(이중 방어).
+        assert!(matches!(
+            run_save(&sc.dir.path, &plan, &mut memory, &CancelToken::new()),
+            Err(SaveRunError::Exec(_))
+        ));
+        assert_eq!(
+            std::fs::read(current_pointer_path(&sc.dir.path)).unwrap(),
+            before_pointer
+        );
+
+        // 더 새 외부 generation은 새 정보이므로 alert를 다시 냄.
+        let mut other = SavedGenerationState::new(Some((2, sc.external.manifest_hash)));
+        let newer = save_generation(&sc.dir.path, Some(&sc.external), b"newer", &mut other);
+        sc.window
+            .on_external_generation(&newer.manifest_hash, |base| {
+                MemorySnapshot::capture(base, memory_edit(b"local"), roots())
+            })
+            .unwrap();
+        assert_eq!(
+            sc.window.take_alert().map(|a| a.hashes.external_disk),
+            Some(newer.manifest_hash)
+        );
+    }
+
+    #[test]
+    fn guarded_save_works_outside_pending_state() {
+        let sc = scenario();
+        // 외부 generation을 base로 다시 연 clean 창은 저장 가능.
+        let mut window =
+            WindowExternalState::open(&sc.dir.path, DiskSnapshot::from(sc.external.clone()));
+        window.mark_dirty();
+        assert_eq!(window.autosave_gate(), AutosaveGate::Allowed);
+        let ext = sc.external.clone();
+        let plan =
+            build_save_plan(Some(&ext), PROJECT, 1, &memory_edit(b"saved"), roots()).unwrap();
+        let mut memory = SavedGenerationState::new(Some((2, sc.external.manifest_hash)));
+        window
+            .run_guarded_save(&plan, &mut memory, &CancelToken::new())
+            .unwrap();
+        assert!(matches!(window.state(), WindowDiskState::Clean { .. }));
+        assert_eq!(window.base().generation(), 3);
+        assert_eq!(window.take_alert(), None);
     }
 }
