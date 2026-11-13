@@ -30,6 +30,8 @@
 | `stellar-target-profile` | core-types |
 | `stellar-accessibility` | core-types |
 | `stellar-diagnostics` | core-types |
+| `stellar-export` | core-types, scene |
+| `stellar-terminal` | core-types |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core |
 | `stellar-ffi` | core-types, runtime |
 
@@ -69,6 +71,9 @@ graph TD
   target_profile --> core_types
   accessibility --> core_types
   diagnostics --> core_types
+  export --> core_types
+  export --> scene
+  terminal --> core_types
   runtime --> core_types
   runtime --> document
   runtime --> commands

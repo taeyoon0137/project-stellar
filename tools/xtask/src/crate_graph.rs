@@ -59,6 +59,9 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ("stellar-target-profile", &[core]),
         ("stellar-accessibility", &[core]),
         ("stellar-diagnostics", &[core]),
+        // 로드맵 crate(ADR-0019): 내보내기(Phase XX)와 내장 터미널 코어(Phase XVIII).
+        ("stellar-export", &[core, "stellar-scene"]),
+        ("stellar-terminal", &[core]),
         // 앱 프로세스 runtime(ADR-0013): thread 구성과 document thread event loop.
         (
             "stellar-runtime",

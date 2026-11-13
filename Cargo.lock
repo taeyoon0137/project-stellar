@@ -62,6 +62,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-bench-fixtures"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+ "stellar-document",
+ "stellar-project",
+ "stellar-storage",
+]
+
+[[package]]
 name = "stellar-bindings"
 version = "0.0.0"
 dependencies = [
@@ -105,6 +115,14 @@ name = "stellar-document"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
+]
+
+[[package]]
+name = "stellar-export"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+ "stellar-scene",
 ]
 
 [[package]]
@@ -220,6 +238,13 @@ dependencies = [
 
 [[package]]
 name = "stellar-target-profile"
+version = "0.0.0"
+dependencies = [
+ "stellar-core-types",
+]
+
+[[package]]
+name = "stellar-terminal"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
