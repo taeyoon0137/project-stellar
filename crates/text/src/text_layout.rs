@@ -362,6 +362,8 @@ pub struct PositionedLine {
     pub width: TextUnit,
     /// glyph(visual 순서).
     pub glyphs: Vec<PlacedGlyph>,
+    /// BiDi visual 순서와 logical cluster mapping(caret·hit test용, X.10.3).
+    pub order: LineOrder,
 }
 
 /// text box 레이아웃 결과 (X.10.2).
@@ -476,6 +478,7 @@ pub fn compose_text(
                 x: TextUnit::from_i64(x)?,
                 width: TextUnit::from_i64(i64::from(line.line.width.raw()) + shift)?,
                 glyphs,
+                order: line.order.clone(),
             });
             y += i64::from(line.height.raw());
         }

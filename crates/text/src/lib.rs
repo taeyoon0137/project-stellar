@@ -45,5 +45,8 @@ pub mod line_layout;
 /// 줄 높이·paragraph 간격·가로 정렬·text box 세로 정렬 (X.10.2).
 pub mod text_layout;
 
+/// caret 위치·선택 사각형·hit test cluster mapping (X.10.3).
+pub mod caret;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;
