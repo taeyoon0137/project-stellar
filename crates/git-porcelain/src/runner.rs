@@ -21,11 +21,14 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::cancel::{terminate_process_tree, GitCancelToken};
+
+/// stderr 조각을 받는 콜백.
+type StderrSink<'a> = &'a mut dyn FnMut(&[u8]);
 
 /// Git 실행 결과(원시 바이트 보존).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,7 +177,7 @@ impl GitRunner {
 
     /// 주어진 argv와 cwd로 Git을 실행합니다(shell 미사용). stdout/stderr를 캡처합니다.
     pub fn run(&self, args: &[OsString], cwd: &Path) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, None, None)
+        self.run_inner(args, cwd, None, None, None)
     }
 
     /// `input` 바이트를 자식 stdin으로 전달하며 실행합니다(XIV.8.2). 전달 후 stdin을 닫습니다.
@@ -186,7 +189,7 @@ impl GitRunner {
         cwd: &Path,
         input: &[u8],
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, Some(input), None)
+        self.run_inner(args, cwd, Some(input), None, None)
     }
 
     /// 취소 가능한 실행(XIV.1.4). `cancel`이 취소되면 프로세스 tree를 종료하고
@@ -198,7 +201,21 @@ impl GitRunner {
         cwd: &Path,
         cancel: &GitCancelToken,
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, None, Some(cancel))
+        self.run_inner(args, cwd, None, Some(cancel), None)
+    }
+
+    /// 취소 가능하게 실행하며 stderr 조각을 도착하는 대로 `on_stderr`에 전달합니다(XXVI.1.2 진행률).
+    ///
+    /// 콜백은 호출 스레드에서 호출됩니다. 완료 결과의 `stderr`에도 같은 바이트 전체가 담깁니다.
+    /// 취소·timeout이면 [`GitRunner::run_cancellable`]과 같이 tree를 종료하고 오류를 반환합니다.
+    pub fn run_streaming_stderr(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        cancel: &GitCancelToken,
+        on_stderr: &mut dyn FnMut(&[u8]),
+    ) -> Result<GitOutput, GitRunError> {
+        self.run_inner(args, cwd, None, Some(cancel), Some(on_stderr))
     }
 
     fn run_inner(
@@ -207,6 +224,7 @@ impl GitRunner {
         cwd: &Path,
         input: Option<&[u8]>,
         cancel: Option<&GitCancelToken>,
+        mut on_stderr: Option<StderrSink<'_>>,
     ) -> Result<GitOutput, GitRunError> {
         let cancelled = || cancel.is_some_and(GitCancelToken::is_cancelled);
         if cancelled() {
@@ -256,11 +274,39 @@ impl GitRunner {
             let _ = stdout_pipe.read_to_end(&mut buf);
             buf
         });
+        // streaming이면 stderr 조각을 channel로도 보냅니다(호출 스레드가 콜백 실행).
+        let (chunk_tx, chunk_rx) = match on_stderr {
+            Some(_) => {
+                let (tx, rx) = mpsc::channel::<Vec<u8>>();
+                (Some(tx), Some(rx))
+            }
+            None => (None, None),
+        };
         let err_thread = thread::spawn(move || {
             let mut buf = Vec::new();
-            let _ = stderr_pipe.read_to_end(&mut buf);
+            let mut chunk = [0u8; 4096];
+            loop {
+                match stderr_pipe.read(&mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        buf.extend_from_slice(&chunk[..n]);
+                        if let Some(tx) = &chunk_tx {
+                            let _ = tx.send(chunk[..n].to_vec());
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(_) => break,
+                }
+            }
             buf
         });
+        let mut forward = |rx: &Option<mpsc::Receiver<Vec<u8>>>| {
+            if let (Some(rx), Some(cb)) = (rx, on_stderr.as_mut()) {
+                while let Ok(piece) = rx.try_recv() {
+                    cb(&piece);
+                }
+            }
+        };
         // stdin 입력은 별도 스레드로 쓰고 닫습니다(자식이 출력하며 읽는 경우의 교착 방지).
         // 자식이 다 읽지 않고 끝나면 쓰기 오류(BrokenPipe)가 나지만 결과는 종료 코드로 판단합니다.
         let in_thread = match (input, child.stdin.take()) {
@@ -280,6 +326,7 @@ impl GitRunner {
                 Ok(None) if cancelled() => GitRunError::Cancelled,
                 Ok(None) if Instant::now() >= deadline => GitRunError::Timeout,
                 Ok(None) => {
+                    forward(&chunk_rx);
                     thread::sleep(Duration::from_millis(5));
                     continue;
                 }
@@ -301,6 +348,8 @@ impl GitRunner {
 
         let stdout = out_thread.join().unwrap_or_default();
         let stderr = err_thread.join().unwrap_or_default();
+        // drain 스레드가 끝난 뒤 남은 조각까지 전달합니다.
+        forward(&chunk_rx);
         Ok(GitOutput {
             exit_code: status.code(),
             stdout,
@@ -555,6 +604,31 @@ mod tests {
         assert_eq!(runner.child_env_var("GIT_DIR"), None);
         isolated.run(&[], &dir.path).unwrap();
         assert_eq!(runner.spawn_count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streaming_stderr_delivers_chunks_before_exit_and_keeps_full_output() {
+        let dir = TempDir::new();
+        let runner = runner_for("/bin/sh", 5_000);
+        let script = "printf 'step 1\\r' >&2; sleep 0.3; printf 'step 2\\n' >&2; printf out";
+        let mut seen: Vec<(Instant, Vec<u8>)> = Vec::new();
+        let start = Instant::now();
+        let out = runner
+            .run_streaming_stderr(
+                &argv(["-c", script]),
+                &dir.path,
+                &GitCancelToken::new(),
+                &mut |chunk| seen.push((Instant::now(), chunk.to_vec())),
+            )
+            .unwrap();
+        assert!(out.success());
+        assert_eq!(out.stdout, b"out");
+        assert_eq!(out.stderr, b"step 1\rstep 2\n");
+        let joined: Vec<u8> = seen.iter().flat_map(|(_, c)| c.clone()).collect();
+        assert_eq!(joined, out.stderr);
+        // 첫 조각은 프로세스 종료(≥0.3초) 전에 전달됨.
+        assert!(seen[0].0.duration_since(start) < Duration::from_millis(300));
     }
 
     #[test]

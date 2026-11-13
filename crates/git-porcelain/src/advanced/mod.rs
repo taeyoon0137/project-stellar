@@ -21,6 +21,9 @@ use crate::trust::GatedGitRunner;
 /// branch 목록·전환·생성·삭제(XXVI.1.1).
 pub mod branch;
 
+/// fetch와 진행률(XXVI.1.2).
+pub mod fetch;
+
 /// 명령의 파괴 수준.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DestructiveLevel {

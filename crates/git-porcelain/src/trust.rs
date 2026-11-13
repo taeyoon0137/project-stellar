@@ -187,6 +187,20 @@ impl GatedGitRunner {
             .map_err(GatedRunError::Run)
     }
 
+    /// trusted일 때만 stderr를 streaming하며 취소 가능하게 실행합니다(XXVI.1.2). untrusted면 프로세스를
+    /// 만들지 않습니다.
+    pub fn run_streaming_stderr(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        cancel: &GitCancelToken,
+        on_stderr: &mut dyn FnMut(&[u8]),
+    ) -> Result<GitOutput, GatedRunError> {
+        self.runner()?
+            .run_streaming_stderr(args, cwd, cancel, on_stderr)
+            .map_err(GatedRunError::Run)
+    }
+
     /// 내부 실행기의 프로세스 생성 시도 횟수(gate 거부는 세지 않음).
     pub fn spawn_count(&self) -> u64 {
         self.runner.spawn_count()
