@@ -83,6 +83,31 @@ impl std::fmt::Display for GitRunError {
 
 impl std::error::Error for GitRunError {}
 
+/// allowlist 변수 값을 읽어 올 부모 환경.
+#[derive(Debug, Clone)]
+enum ParentEnv {
+    /// 현재 프로세스 환경(`std::env::var_os`).
+    Process,
+    /// 고정 값(테스트 전용). 병렬 테스트가 프로세스 환경을 바꾸지 않고(`set_var`는 다른 스레드의
+    /// `getenv`와 경쟁) allowlist 동작을 검증하는 데 씁니다.
+    #[cfg(test)]
+    Fixed(Arc<Vec<(OsString, OsString)>>),
+}
+
+impl ParentEnv {
+    fn var(&self, name: &OsStr) -> Option<OsString> {
+        match self {
+            ParentEnv::Process => std::env::var_os(name),
+            #[cfg(test)]
+            ParentEnv::Fixed(vars) => vars
+                .iter()
+                .rev()
+                .find(|(key, _)| key.as_os_str() == name)
+                .map(|(_, value)| value.clone()),
+        }
+    }
+}
+
 /// argv·cwd·env allowlist·timeout으로 Git을 실행하는 실행기.
 ///
 /// `Clone`한 실행기는 spawn 계측 카운터를 **공유**합니다(같은 실행기의 사본으로 취급).
@@ -91,6 +116,7 @@ pub struct GitRunner {
     git_path: PathBuf,
     env_allowlist: Vec<OsString>,
     env_overrides: Vec<(OsString, OsString)>,
+    parent_env: ParentEnv,
     timeout: Duration,
     spawn_count: Arc<AtomicU64>,
 }
@@ -102,9 +128,17 @@ impl GitRunner {
             git_path,
             env_allowlist,
             env_overrides: Vec::new(),
+            parent_env: ParentEnv::Process,
             timeout,
             spawn_count: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// allowlist 값을 현재 프로세스 환경 대신 `vars`에서 읽는 사본(테스트 전용, 카운터 공유).
+    #[cfg(test)]
+    pub(crate) fn with_parent_env_for_test(mut self, vars: Vec<(OsString, OsString)>) -> GitRunner {
+        self.parent_env = ParentEnv::Fixed(Arc::new(vars));
+        self
     }
 
     /// 지금까지 이 실행기(및 사본)가 시도한 프로세스 생성 횟수(XIV.1.1 계측).
@@ -138,7 +172,7 @@ impl GitRunner {
     }
 
     /// 자식 프로세스가 실제로 보게 될 환경 변수 값입니다(override 우선, 그다음 allowlist에 있는
-    /// 현재 프로세스 값). allowlist에도 override에도 없으면 자식은 그 변수를 보지 못하므로 `None`.
+    /// 부모(현재 프로세스) 값). allowlist에도 override에도 없으면 자식은 그 변수를 보지 못하므로 `None`.
     pub fn child_env_var(&self, name: &str) -> Option<OsString> {
         if let Some((_, value)) = self
             .env_overrides
@@ -153,7 +187,7 @@ impl GitRunner {
             .iter()
             .any(|key| key.as_os_str() == OsStr::new(name))
         {
-            return std::env::var_os(name);
+            return self.parent_env.var(OsStr::new(name));
         }
         None
     }
@@ -246,7 +280,7 @@ impl GitRunner {
         // 환경 allowlist: 전부 지우고 허용 변수만 전달.
         command.env_clear();
         for name in &self.env_allowlist {
-            if let Some(value) = std::env::var_os(name) {
+            if let Some(value) = self.parent_env.var(name) {
                 command.env(name, value);
             }
         }
@@ -467,21 +501,27 @@ mod tests {
         );
     }
 
+    /// 부모 환경 fixture(프로세스 환경을 바꾸지 않음 — 병렬 테스트의 `getenv`와 경쟁 없음).
+    fn parent_env(vars: &[(&str, &str)]) -> Vec<(OsString, OsString)> {
+        vars.iter()
+            .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+            .collect()
+    }
+
     #[cfg(unix)]
     #[test]
     fn env_allowlist_filters_environment() {
         let dir = TempDir::new();
-        let pid = std::process::id();
-        let allowed = format!("STELLAR_TEST_ALLOWED_{pid}");
-        let blocked = format!("STELLAR_TEST_BLOCKED_{pid}");
-        std::env::set_var(&allowed, "yes-allowed");
-        std::env::set_var(&blocked, "secret-blocked");
-
+        let allowed = "STELLAR_TEST_ALLOWED";
         let runner = GitRunner::new(
             PathBuf::from("/usr/bin/env"),
-            vec![OsString::from(&allowed)],
+            vec![OsString::from(allowed)],
             Duration::from_millis(5_000),
-        );
+        )
+        .with_parent_env_for_test(parent_env(&[
+            (allowed, "yes-allowed"),
+            ("STELLAR_TEST_BLOCKED", "secret-blocked"),
+        ]));
         let out = runner.run(&[], &dir.path).unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
 
@@ -493,9 +533,22 @@ mod tests {
             !stdout.contains("secret-blocked"),
             "차단 변수 노출(보안 결함): {stdout}"
         );
+    }
 
-        std::env::remove_var(&allowed);
-        std::env::remove_var(&blocked);
+    #[test]
+    fn process_parent_env_is_read_without_mutation() {
+        // 기본 부모 환경은 현재 프로세스 환경입니다. cargo test는 PATH를 설정하므로 그대로 읽힙니다.
+        let runner = GitRunner::new(
+            PathBuf::from("/nonexistent"),
+            vec![OsString::from("PATH")],
+            Duration::from_millis(5_000),
+        );
+        assert_eq!(runner.child_env_var("PATH"), std::env::var_os("PATH"));
+        // fixture 부모 환경은 같은 이름이면 마지막 값을 씁니다.
+        let fixed = runner
+            .clone()
+            .with_parent_env_for_test(parent_env(&[("PATH", "/a"), ("PATH", "/b")]));
+        assert_eq!(fixed.child_env_var("PATH"), Some(OsString::from("/b")));
     }
 
     #[cfg(unix)]
@@ -544,16 +597,17 @@ mod tests {
     #[test]
     fn added_env_keeps_overrides_and_child_env_var_matches_child() {
         let dir = TempDir::new();
-        let pid = std::process::id();
-        let allowed = format!("STELLAR_CHILD_ENV_ALLOWED_{pid}");
-        let hidden = format!("STELLAR_CHILD_ENV_HIDDEN_{pid}");
-        std::env::set_var(&allowed, "from-process");
-        std::env::set_var(&hidden, "not-passed");
+        let allowed = "STELLAR_CHILD_ENV_ALLOWED";
+        let hidden = "STELLAR_CHILD_ENV_HIDDEN";
         let runner = GitRunner::new(
             PathBuf::from("/usr/bin/env"),
-            vec![OsString::from(&allowed)],
+            vec![OsString::from(allowed)],
             Duration::from_millis(5_000),
         )
+        .with_parent_env_for_test(parent_env(&[
+            (allowed, "from-process"),
+            (hidden, "not-passed"),
+        ]))
         .with_env_overrides(vec![
             (OsString::from("STELLAR_A"), OsString::from("1")),
             (OsString::from("STELLAR_KEEP"), OsString::from("kept")),
@@ -561,10 +615,10 @@ mod tests {
         .with_added_env(vec![(OsString::from("STELLAR_A"), OsString::from("2"))]);
 
         assert_eq!(
-            runner.child_env_var(&allowed),
+            runner.child_env_var(allowed),
             Some(OsString::from("from-process"))
         );
-        assert_eq!(runner.child_env_var(&hidden), None);
+        assert_eq!(runner.child_env_var(hidden), None);
         assert_eq!(runner.child_env_var("STELLAR_A"), Some(OsString::from("2")));
         assert_eq!(
             runner.child_env_var("STELLAR_KEEP"),
@@ -582,8 +636,6 @@ mod tests {
         assert!(!stdout.contains("STELLAR_A=1\n"), "{stdout}");
         assert!(stdout.contains("STELLAR_KEEP=kept"), "{stdout}");
         assert!(!stdout.contains("not-passed"), "{stdout}");
-        std::env::remove_var(&allowed);
-        std::env::remove_var(&hidden);
     }
 
     #[cfg(unix)]
