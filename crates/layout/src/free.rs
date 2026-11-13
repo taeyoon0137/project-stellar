@@ -303,7 +303,11 @@ fn child_constraint(
             None => None,
         };
     }
-    Ok(ChildConstraint { cb: inner, fill })
+    Ok(ChildConstraint {
+        cb: inner,
+        fill,
+        forced: [None, None],
+    })
 }
 
 /// 한 축의 위치(content box 기준). `extent`는 content 크기입니다.

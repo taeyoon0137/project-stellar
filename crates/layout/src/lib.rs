@@ -39,5 +39,8 @@ pub mod stack;
 /// canonical bytes writer/reader (crate 내부).
 mod codec;
 
+/// 공간 분배와 잔여 subpixel 처리 (crate 내부).
+mod distribute;
+
 #[cfg(test)]
 mod test_support;

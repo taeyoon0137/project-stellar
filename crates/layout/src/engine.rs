@@ -24,6 +24,7 @@ use crate::input::{
 use crate::output::{LayoutBox, LayoutResult};
 use crate::property::LayoutProperty;
 use crate::rounding::{LayoutUnit, LayoutUnitError};
+use crate::stack;
 
 /// 입력 전체를 레이아웃합니다.
 pub fn compute_layout(input: &LayoutInput) -> Result<LayoutResult, LayoutError> {
@@ -47,6 +48,8 @@ pub(crate) struct ChildConstraint {
     pub(crate) cb: [Option<LayoutUnit>; 2],
     /// `Fill`이 채울 크기. `None`이면 `Fill`은 콘텐츠 크기(Hug)로 해석합니다.
     pub(crate) fill: [Option<LayoutUnit>; 2],
+    /// 부모가 sizing mode와 무관하게 정한 크기(Stretch 등).
+    pub(crate) forced: [Option<LayoutUnit>; 2],
 }
 
 impl ChildConstraint {
@@ -54,6 +57,7 @@ impl ChildConstraint {
     pub(crate) const UNCONSTRAINED: ChildConstraint = ChildConstraint {
         cb: [None, None],
         fill: [None, None],
+        forced: [None, None],
     };
 }
 
@@ -80,6 +84,14 @@ pub(crate) struct Padding {
 }
 
 impl Padding {
+    /// 축 방향 시작 쪽 padding.
+    pub(crate) const fn start(&self, axis: Axis) -> LayoutUnit {
+        match axis {
+            Axis::Horizontal => self.left,
+            Axis::Vertical => self.top,
+        }
+    }
+
     /// 축 방향 양쪽 padding 합.
     pub(crate) fn sum(&self, axis: Axis) -> Result<LayoutUnit, LayoutUnitError> {
         match axis {
@@ -181,6 +193,10 @@ impl<'a> Engine<'a> {
         let mut definite = [None, None];
         for axis in Axis::BOTH {
             let i = axis.index();
+            if let Some(forced) = constraint.forced[i] {
+                definite[i] = Some(forced);
+                continue;
+            }
             definite[i] = match prepared.sizing[i] {
                 AxisSizing::Fixed(value) => Some(value),
                 AxisSizing::Fill => constraint.fill[i],
@@ -237,10 +253,7 @@ impl<'a> Engine<'a> {
         }
         match self.node(index).container {
             ContainerLayout::Free => free::measure(self, index, inner),
-            ContainerLayout::Stack(_) => Err(LayoutError::UnsupportedFeature {
-                node: self.nodes[index].id,
-                feature: "Stack 배치(X.3.2)",
-            }),
+            ContainerLayout::Stack(_) => stack::measure(self, index, inner),
         }
     }
 
@@ -278,12 +291,7 @@ impl<'a> Engine<'a> {
 
         let placements = match self.node(index).container {
             ContainerLayout::Free => free::place(self, index, inner)?,
-            ContainerLayout::Stack(_) => {
-                return Err(LayoutError::UnsupportedFeature {
-                    node: id,
-                    feature: "Stack 배치(X.3.2)",
-                })
-            }
+            ContainerLayout::Stack(_) => stack::place(self, index, inner)?,
         };
         let mut overflow = LayoutRect::at_origin(size);
         for (child, child_rect) in placements {
