@@ -24,3 +24,6 @@ pub mod state;
 
 /// base revision과 precondition을 포함한 command 요청 (VII.1.3).
 pub mod request;
+
+/// command 결과 change set (VII.1.4).
+pub mod change;

@@ -639,7 +639,7 @@ tools/xtask/
 | VII.1.1 | `[x]` | `CommandId`, `WindowSessionId`, `CommandOrigin`을 정의합니다. Origin은 User, System, Migration, FutureAgent를 포함하되 FutureAgent 동작은 구현하지 않습니다. | round-trip·타입 혼용 compile-fail. | Phase VI |
 | VII.1.2 | `[x]` | `Command` trait 대신 직렬화 가능한 closed enum을 사용하고 `validate`, `apply`, `invert` 인터페이스를 정의합니다. | unknown command kind 거부. | VII.1.1 |
 | VII.1.3 | `[x]` | 모든 command에 base DocumentRevision과 precondition 목록을 포함합니다. | revision mismatch fixture 실패. | II.3.4, VII.1.2 |
-| VII.1.4 | `[ ]` | command 결과에 changed nodes, changed properties, invalidation classes, new revision을 반환합니다. | 단일 property command expected change set 일치. | VII.1.2, VI.9.7 |
+| VII.1.4 | `[x]` | command 결과에 changed nodes, changed properties, invalidation classes, new revision을 반환합니다. | 단일 property command expected change set 일치. | VII.1.2, VI.9.7 |
 | VII.1.5 | `[ ]` | apply 도중 오류가 나면 변경 전 arena state로 되돌리는 transaction guard를 구현합니다. 전체 document clone은 금지합니다. | 중간 실패 fault injection 후 semantic snapshot 동일. | VII.1.4 |
 | VII.1.6 | `[ ]` | 여러 command를 묶는 `CommandTransaction`을 구현하고 전부 성공하거나 전부 롤백하게 합니다. | 두 번째 command 실패 시 첫 번째 효과 없음. | VII.1.5 |
 

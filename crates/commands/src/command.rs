@@ -34,6 +34,8 @@ pub enum CommandError {
     },
     /// 문서 모델이 변경을 거부했습니다.
     Model(ModelError),
+    /// revision 카운터가 한계에 도달했습니다.
+    RevisionOverflow,
     /// command가 기준으로 삼은 revision과 현재 문서 revision이 다릅니다(VII.1.3).
     RevisionMismatch {
         /// command의 base revision.
@@ -55,6 +57,7 @@ impl fmt::Display for CommandError {
         match self {
             CommandError::UnknownNode { id } => write!(f, "node {id}가 없습니다"),
             CommandError::Model(error) => write!(f, "문서 모델 오류: {error}"),
+            CommandError::RevisionOverflow => f.write_str("문서 revision이 한계에 도달했습니다"),
             CommandError::RevisionMismatch { expected, actual } => write!(
                 f,
                 "base revision {}이 현재 문서 revision {}과 다릅니다",
@@ -169,6 +172,12 @@ impl TestProbe {
 
     fn apply(&self, ctx: &mut EditContext<'_>) -> Result<(), CommandError> {
         ctx.set_display_name(self.node, self.name.clone())?;
+        ctx.changes().node_property(
+            self.node,
+            crate::change::node_keys::DISPLAY_NAME,
+            crate::change::node_field_invalidation(crate::change::node_keys::DISPLAY_NAME)
+                .unwrap_or_default(),
+        );
         if self.fail_after_apply {
             return Err(TestProbe::injected_fault(self.node));
         }
