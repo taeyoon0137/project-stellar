@@ -458,10 +458,14 @@ pub trait RendererBackend {
         data: &[u8],
     ) -> Result<(), BackendError>;
 
-    /// buffer를 파괴합니다. GPU가 아직 쓰는 중이면 backend가 해제를 미룹니다.
+    /// buffer를 파괴합니다.
+    ///
+    /// 공통 계층은 이 buffer를 참조한 마지막 submission이 GPU에서 끝난 뒤에만 호출합니다
+    /// ([`DeferredRelease`](crate::frame_resources::DeferredRelease), XI.5.3). backend는 즉시
+    /// 해제해도 됩니다.
     fn destroy_buffer(&mut self, buffer: BufferHandle) -> Result<(), BackendError>;
 
-    /// texture를 파괴합니다. GPU가 아직 쓰는 중이면 backend가 해제를 미룹니다.
+    /// texture를 파괴합니다. 호출 시점 계약은 [`RendererBackend::destroy_buffer`]와 같습니다.
     fn destroy_texture(&mut self, texture: TextureHandle) -> Result<(), BackendError>;
 
     /// graph를 command buffer로 encode합니다. surface frame이면 drawable을 얻습니다.

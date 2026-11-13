@@ -27,6 +27,9 @@ pub mod backend;
 /// generational GPU handle (XI.5.2).
 pub mod gpu_handle;
 
+/// resource upload queue와 frame-local allocator (XI.5.3).
+pub mod frame_resources;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;
