@@ -20,3 +20,6 @@ pub mod binding;
 
 /// 토큰·속성·Component Property·환경 입력 통합 dependency graph (VIII.6.2).
 pub mod graph;
+
+/// 영향받는 binding만 위상 순서로 재평가하는 scheduler (VIII.6.4).
+pub mod scheduler;
