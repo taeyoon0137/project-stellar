@@ -11,3 +11,6 @@ pub mod arithmetic;
 
 /// 비교·논리·조건식 type rule (VIII.1.3).
 pub mod logic;
+
+/// 함수 signature registry (VIII.1.4).
+pub mod functions;

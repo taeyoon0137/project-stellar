@@ -1,4 +1,4 @@
-//! type rule 공통 오류 (VIII.1.2, VIII.1.3).
+//! type rule 공통 오류 (VIII.1.2, VIII.1.3, VIII.1.4).
 //!
 //! 산술·비교·논리·조건식 rule은 위반 시 [`TypeRuleError`]를 반환합니다. 오류는 **어느 피연산자
 //! 위치**([`OperandPosition`])가 잘못되었는지, 그 위치의 실제 타입과 기대 조건을 함께 담습니다.
@@ -31,6 +31,8 @@ pub enum OperandPosition {
     Arm(u16),
     /// `match`의 기본 branch(VIII.1.3).
     Default,
+    /// 함수 호출의 `index`번째 인자(VIII.1.4).
+    Argument(u16),
 }
 
 impl fmt::Display for OperandPosition {
@@ -46,6 +48,7 @@ impl fmt::Display for OperandPosition {
             OperandPosition::Pattern(index) => write!(f, "match pattern {index}"),
             OperandPosition::Arm(index) => write!(f, "match arm {index}"),
             OperandPosition::Default => f.write_str("match 기본 branch"),
+            OperandPosition::Argument(index) => write!(f, "인자 {index}"),
         }
     }
 }
