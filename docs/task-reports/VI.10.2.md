@@ -75,3 +75,27 @@
 - 문서 간 node id 충돌은 문서별 validator 범위 밖입니다. 같은 프로젝트의 두 문서가 같은 node
   id를 쓰면 subtree ChunkId가 겹쳐 generation manifest 검증(V.3.2)에서 저장이 거부됩니다.
 - Text style 표·layout 정의는 아직 문서 resource 스키마가 없어 저장 대상이 아닙니다.
+
+## 후속 수정 (리뷰 minor: ChunkId 계열·문서 domain 분리)
+
+- **결함**: 문서 ChunkId를 원시 StableId에서 그대로 만들었습니다(manifest = 문서 id, ViewTree = View id, subtree = root
+  node id). 계열 사이(같은 id가 다른 계열 객체에 쓰일 때)와 문서 사이(복제 문서처럼 같은 View·node id를 가진 두 문서)에서
+  ChunkId가 겹칠 수 있었습니다(위 "남은 위험"의 문서 간 node id 충돌).
+- **수정(저장 형식 변경)**: ChunkId = `SHA-256("stellar/document-chunk-id/v1\0" ‖ 계열 tag(manifest 1·ViewTree 2·subtree 3)
+  ‖ 문서 StableId ‖ 객체 StableId)`의 앞 16바이트를 RFC 9562 UUIDv8(version 8, variant 0b10)로 만든 값입니다.
+  `view_tree_chunk_id`·`subtree_chunk_id`는 문서 id를 함께 받습니다. version 8은 StableId(v7)를 그대로 쓰는 다른 ChunkId와
+  같은 값이 될 수 없습니다. loader는 저장된 참조만 따르므로 로드 경로 변경은 없습니다.
+- **golden 갱신(의도)**: `document_round_trip`의 `GOLDEN_CHUNKS_HASH`를 갱신했습니다(ChunkId와 그것을 담는 manifest·ViewTree
+  payload 변경, subtree payload 불변). 유도 golden 3개는 독립 구현(Python `hashlib`)으로 같은 값을 교차 확인했습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-project` | unit 168, `document_residency` 3, `document_round_trip` 5, `document_serialize` 5, `restricted_yaml_fuzz` 4 passed, 0 failed |
+| `cargo clippy -p stellar-project --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-project -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| 같은 StableId에서 계열·문서가 다르면 ChunkId 6개 모두 다름, 원시 StableId 미사용, UUIDv8·variant, 유도 golden 3개, View·node id가 같은 두 문서의 chunk 집합 불교차(`chunk_ids_are_domain_separated_by_family_and_document`) | 통과 |
+| 100개 golden round-trip·재직렬화 byte-identical·갱신된 golden hash, lazy 로드(`document_round_trip`) | 통과 |
+| residency dirty 판정·unload/reload(`document_residency`, 새 subtree ChunkId 기대값) | 통과 |

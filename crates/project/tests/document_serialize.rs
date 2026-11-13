@@ -5,6 +5,7 @@ mod common;
 use common::{
     contains_bytes, id, insert_churned, rich_model, rich_nodes, rich_stacks, runtime_parts, TempDir,
 };
+use std::collections::BTreeSet;
 use stellar_core_types::ids::StableId;
 use stellar_document::frame::FramePayload;
 use stellar_document::model::DocumentModel;
@@ -15,6 +16,8 @@ use stellar_project::document_io::serialize::{
     manifest_chunk_id, serialize_document, subtree_chunk_id, view_tree_chunk_id, SerializeError,
 };
 use stellar_project::document_io::DOCUMENT_CHUNK_SCHEMA_VERSION;
+
+use stellar_storage::chunk::id::ChunkId;
 use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
 use stellar_storage::chunk::path::ChunkObjectPath;
 use stellar_storage::chunk::store::{ChunkStore, WriteOutcome};
@@ -156,14 +159,14 @@ fn chunk_model_has_manifest_view_trees_and_subtrees() {
         .enumerate()
     {
         assert_eq!(tree_chunk.kind, KIND_VIEW_TREE);
-        assert_eq!(tree_chunk.chunk_id, view_tree_chunk_id(views[i]));
+        assert_eq!(tree_chunk.chunk_id, view_tree_chunk_id(id(2, 1), views[i]));
         assert_eq!(decoded.view_trees[i].chunk, tree_chunk.chunk_id);
         let tree = ViewTreeChunk::decode(&tree_chunk.payload).unwrap();
         assert_eq!(tree.view_root, roots[i]);
         assert_eq!(tree.subtrees.len(), 1, "초기 정책: View당 subtree 하나");
         assert_eq!(tree.subtrees[0].root_node, roots[i]);
         assert_eq!(tree.subtrees[0].chunk, subtree_chunk.chunk_id);
-        assert_eq!(subtree_chunk.chunk_id, subtree_chunk_id(roots[i]));
+        assert_eq!(subtree_chunk.chunk_id, subtree_chunk_id(id(2, 1), roots[i]));
         assert_eq!(subtree_chunk.kind, KIND_VIEW_TREE);
         let subtree = SubtreeRecords::decode(&subtree_chunk.payload).unwrap();
         assert_eq!(subtree.root, roots[i]);
@@ -205,4 +208,68 @@ fn invalid_document_produces_no_chunks() {
         serialize_document(&nil),
         Err(SerializeError::Invalid(_))
     ));
+}
+
+#[test]
+fn chunk_ids_are_domain_separated_by_family_and_document() {
+    // 같은 StableId에서 유도해도 계열(manifest·ViewTree·subtree)·문서가 다르면 ChunkId가
+    // 다르고, 원시 StableId를 그대로 쓰지 않습니다(UUIDv8).
+    let x = id(5, 1);
+    let other = id(6, 1);
+    let derived = [
+        manifest_chunk_id(x),
+        view_tree_chunk_id(x, x),
+        subtree_chunk_id(x, x),
+        manifest_chunk_id(other),
+        view_tree_chunk_id(other, x),
+        subtree_chunk_id(other, x),
+    ];
+    let unique: BTreeSet<ChunkId> = derived.iter().copied().collect();
+    assert_eq!(unique.len(), derived.len(), "계열·문서별로 서로 다름");
+    for chunk in derived {
+        assert_ne!(chunk, ChunkId::from_stable_id(x), "원시 StableId 미사용");
+        assert_eq!(chunk.stable_id().version(), 8, "UUIDv8");
+        assert_eq!(chunk.stable_id().variant(), 0b10, "RFC 9562 variant");
+    }
+    // 유도 규칙 golden — 저장 형식의 일부이므로 의도한 형식 변경일 때만 갱신합니다.
+    // 값은 SHA-256(domain ‖ family ‖ 문서 ‖ 객체)를 독립 구현(Python hashlib)으로 계산해
+    // 교차 확인했습니다.
+    assert_eq!(
+        manifest_chunk_id(x).to_string(),
+        "7661e0d5-da0d-8fa8-8447-e95858fe5228",
+        "manifest"
+    );
+    assert_eq!(
+        view_tree_chunk_id(x, id(5, 3)).to_string(),
+        "9af9620e-b26a-81ba-88bc-a674c2d1689a",
+        "ViewTree"
+    );
+    assert_eq!(
+        subtree_chunk_id(x, id(5, 10)).to_string(),
+        "192a8036-69b2-8e1f-9a05-685f097b6515",
+        "subtree"
+    );
+
+    // 실제 문서: View·node id가 같은 두 문서(복제 등)의 chunk 집합이 겹치지 않습니다.
+    let a = rich_model(1, 0);
+    let mut definition = common::rich_definition(1);
+    definition.id = id(9, 1);
+    let mut b = DocumentModel::new(definition);
+    for record in rich_nodes(1) {
+        b.insert_node(record).unwrap();
+    }
+    for stack in rich_stacks(1) {
+        b.set_modifier_stack(stack).unwrap();
+    }
+    let chunk_set = |model: &DocumentModel| -> BTreeSet<ChunkId> {
+        serialize_document(model)
+            .unwrap()
+            .chunks()
+            .into_iter()
+            .map(|c| c.chunk_id)
+            .collect()
+    };
+    let (set_a, set_b) = (chunk_set(&a), chunk_set(&b));
+    assert_eq!(set_a.len(), 7);
+    assert!(set_a.is_disjoint(&set_b), "다른 문서의 ChunkId와 충돌 없음");
 }

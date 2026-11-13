@@ -6,19 +6,20 @@
 //!
 //! 한 문서의 chunk model:
 //!
-//! | chunk | kind | 논리 ChunkId | payload |
+//! | chunk | kind | 논리 ChunkId 유도 입력 | payload |
 //! |---|---|---|---|
-//! | DocumentManifest | `KIND_DOCUMENT_MANIFEST` | 문서 StableId | 문서 정의 + View별 ViewTree ChunkId ([`manifest`]) |
-//! | ViewTree | `KIND_VIEW_TREE` | View StableId | storage `ViewTreeChunk`(root Frame + subtree 참조) |
-//! | subtree | `KIND_VIEW_TREE` | subtree root node StableId | document `SubtreeRecords`(node 레코드 + modifier stack) |
+//! | DocumentManifest | `KIND_DOCUMENT_MANIFEST` | (manifest 계열, 문서 StableId) | 문서 정의 + View별 ViewTree ChunkId ([`manifest`]) |
+//! | ViewTree | `KIND_VIEW_TREE` | (ViewTree 계열, 문서, View StableId) | storage `ViewTreeChunk`(root Frame + subtree 참조) |
+//! | subtree | `KIND_VIEW_TREE` | (subtree 계열, 문서, subtree root node StableId) | document `SubtreeRecords`(node 레코드 + modifier stack) |
 //!
 //! subtree 내용 chunk는 별도 kind 없이 ViewTree 계열 kind를 씁니다(V.6.2 lazy loader와 같은
 //! 관례). 어떤 payload로 해석할지는 참조 경로(manifest → ViewTree → subtree)가 정합니다.
 //!
-//! **ChunkId 유도**: 각 chunk의 논리 id는 그 chunk가 담는 의미 객체의 StableId에서 유도합니다.
-//! 같은 문서는 언제나 같은 ChunkId 집합을 만들므로 바뀐 chunk만 새 hash가 됩니다(V.3.3).
-//! validator(VI.10.1)가 문서 안 id 유일성을 보장하므로 한 문서의 ChunkId는 서로 다릅니다.
-//! loader는 유도 규칙을 가정하지 않고 저장된 참조만 따릅니다.
+//! **ChunkId 유도**: 각 chunk의 논리 id는 `SHA-256(domain ‖ 계열 tag ‖ 문서 StableId ‖ 객체
+//! StableId)`의 앞 16바이트를 UUIDv8 형식으로 만든 값입니다([`serialize::manifest_chunk_id`]
+//! 등). 계열 tag와 문서 id로 계열·문서 사이 충돌을 분리하고, version 8은 StableId(v7)를 그대로
+//! 쓰는 다른 ChunkId와 겹치지 않습니다. 같은 문서는 언제나 같은 ChunkId 집합을 만들므로 바뀐
+//! chunk만 새 hash가 됩니다(V.3.3). loader는 유도 규칙을 가정하지 않고 저장된 참조만 따릅니다.
 //!
 //! **runtime ID 비저장**: 직렬화는 [`DocumentModel::to_records`](stellar_document::model::DocumentModel::to_records)가
 //! 만든 StableId 레코드만 인코딩합니다. runtime 핸들(`RuntimeEntityId`)은 레코드 타입에

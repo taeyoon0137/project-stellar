@@ -169,6 +169,7 @@ fn unsaved_dirty_document_is_never_unloaded() {
     let edited_snapshot = model_snapshot_json(model).unwrap();
     let view_a_root = common::id(2, 10);
     let expected_dirty = vec![stellar_project::document_io::serialize::subtree_chunk_id(
+        ids[1],
         view_a_root,
     )];
     assert_eq!(

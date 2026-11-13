@@ -28,8 +28,11 @@ const GOLDEN_COUNT: u64 = 100;
 
 /// 100개 golden 문서 chunk model 전체(ChunkId + payload)의 content hash. 저장 형식이 바뀌면
 /// 이 값이 바뀝니다 — 의도한 스키마 변경일 때만 갱신합니다.
+///
+/// 갱신 이력: ChunkId 유도를 계열·문서 domain 분리(UUIDv8)로 바꾸며 갱신했습니다. ChunkId 자체와
+/// 그것을 담는 manifest·ViewTree payload가 바뀌고 subtree payload는 그대로입니다.
 const GOLDEN_CHUNKS_HASH: &str =
-    "sha256:98dd5e6d897e2b87052533598055314cee1dfb481f02f4a177013850435d62c5";
+    "sha256:92947ed0bee1f444a1590c622820b909b8c6bf962ab09e0b98ef888290e999e8";
 
 /// 의미 동일성: 영속 레코드, 모든 node의 자식 순서, ID registry 왕복.
 fn assert_semantically_equal(original: &DocumentModel, loaded: &DocumentModel, label: &str) {

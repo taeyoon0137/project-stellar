@@ -17,6 +17,7 @@ use stellar_storage::chunk::id::ChunkId;
 use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
 use stellar_storage::chunk::planner::LogicalChunkState;
 use stellar_storage::chunk::view_tree::{SubtreeRef, ViewTreeChunk, ViewTreeError};
+use stellar_storage::hash::ContentHash;
 
 use super::manifest::{DocumentManifestChunk, ManifestChunkError, ViewTreeRef};
 use super::DOCUMENT_CHUNK_SCHEMA_VERSION;
@@ -99,19 +100,58 @@ impl fmt::Display for SerializeError {
 
 impl std::error::Error for SerializeError {}
 
-/// DocumentManifest chunk의 논리 id(문서 StableId에서 유도).
+/// 문서 ChunkId 유도의 domain 분리 prefix. 바꾸면 모든 문서 ChunkId가 바뀌는 저장 형식의
+/// 일부입니다.
+const CHUNK_ID_DOMAIN: &[u8] = b"stellar/document-chunk-id/v1\0";
+
+/// 문서 chunk 계열(family) tag. 숫자 값은 저장 형식의 일부입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum ChunkFamily {
+    /// DocumentManifest.
+    Manifest = 1,
+    /// View의 ViewTree.
+    ViewTree = 2,
+    /// subtree 내용.
+    Subtree = 3,
+}
+
+/// `SHA-256(domain ‖ family ‖ 문서 id ‖ 객체 id)`의 앞 16바이트를 RFC 9562 UUIDv8(사용자
+/// 정의) 형식으로 만든 ChunkId.
+///
+/// - **계열 분리**: family tag가 달라 manifest·ViewTree·subtree는 같은 StableId에서 유도돼도
+///   서로 다른 ChunkId가 됩니다.
+/// - **문서 분리**: 문서 StableId를 함께 넣어, 같은 View·node id가 다른 문서에 있어도(복제 등)
+///   ChunkId가 겹치지 않습니다.
+/// - **다른 도메인과 분리**: version nibble 8은 StableId(v7)를 그대로 쓰는 다른 ChunkId와 같은
+///   값이 될 수 없습니다.
+fn derive_chunk_id(family: ChunkFamily, document: StableId, object: StableId) -> ChunkId {
+    let mut input = Vec::with_capacity(CHUNK_ID_DOMAIN.len() + 1 + 32);
+    input.extend_from_slice(CHUNK_ID_DOMAIN);
+    input.push(family as u8);
+    input.extend_from_slice(&document.to_bytes());
+    input.extend_from_slice(&object.to_bytes());
+    let digest = ContentHash::compute(&input);
+    let mut bytes = [0u8; 16];
+    bytes.copy_from_slice(&digest.digest()[..16]);
+    bytes[6] = (bytes[6] & 0x0F) | 0x80; // version 8
+    bytes[8] = (bytes[8] & 0x3F) | 0x80; // variant 0b10
+    ChunkId::from_bytes(bytes)
+}
+
+/// DocumentManifest chunk의 논리 id(manifest 계열, 문서 StableId에서 유도).
 pub fn manifest_chunk_id(document: StableId) -> ChunkId {
-    ChunkId::from_stable_id(document)
+    derive_chunk_id(ChunkFamily::Manifest, document, document)
 }
 
-/// ViewTree chunk의 논리 id(View StableId에서 유도).
-pub fn view_tree_chunk_id(view: StableId) -> ChunkId {
-    ChunkId::from_stable_id(view)
+/// ViewTree chunk의 논리 id(ViewTree 계열, 문서·View StableId에서 유도).
+pub fn view_tree_chunk_id(document: StableId, view: StableId) -> ChunkId {
+    derive_chunk_id(ChunkFamily::ViewTree, document, view)
 }
 
-/// subtree chunk의 논리 id(subtree root node StableId에서 유도).
-pub fn subtree_chunk_id(root_node: StableId) -> ChunkId {
-    ChunkId::from_stable_id(root_node)
+/// subtree chunk의 논리 id(subtree 계열, 문서·subtree root node StableId에서 유도).
+pub fn subtree_chunk_id(document: StableId, root_node: StableId) -> ChunkId {
+    derive_chunk_id(ChunkFamily::Subtree, document, root_node)
 }
 
 fn chunk(chunk_id: ChunkId, kind: ChunkKindCode, payload: Vec<u8>) -> SerializedChunk {
@@ -137,7 +177,7 @@ pub fn serialize_records(records: &DocumentRecords) -> Result<SerializedDocument
     let mut subtrees = Vec::new();
     let mut refs = Vec::new();
     for (view, subtree) in records.view_subtrees().map_err(SerializeError::Partition)? {
-        let subtree_id = subtree_chunk_id(subtree.root);
+        let subtree_id = subtree_chunk_id(document_id, subtree.root);
         let tree = ViewTreeChunk {
             view_root: subtree.root,
             subtrees: vec![SubtreeRef {
@@ -145,7 +185,7 @@ pub fn serialize_records(records: &DocumentRecords) -> Result<SerializedDocument
                 chunk: subtree_id,
             }],
         };
-        let tree_id = view_tree_chunk_id(view);
+        let tree_id = view_tree_chunk_id(document_id, view);
         view_trees.push(chunk(
             tree_id,
             KIND_VIEW_TREE,
