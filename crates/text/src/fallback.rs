@@ -436,6 +436,20 @@ mod tests {
                 duplicate: 1
             })
         );
+        // 항목 안의 -0.0 axis 값도 non-canonical로 거부합니다(X.8.1 decode 규칙 상속).
+        let entry = FontFaceRef::new(FontSource::Project, hash(4), 0, vec![axis("slnt", 2.0)]);
+        let mut negative_zero = vec![1, 0, 0, 0];
+        negative_zero.extend_from_slice(&entry.encode());
+        // chain 개수 4 bytes + 항목 안 첫 axis 값 offset 45.
+        negative_zero[4 + 45..4 + 49].copy_from_slice(&(-0.0f32).to_le_bytes());
+        assert_eq!(
+            FontFallbackChain::decode(&negative_zero),
+            Err(FallbackChainError::Record(
+                FontRecordError::NonCanonicalAxisValue {
+                    tag: crate::font::tests::tag("slnt")
+                }
+            ))
+        );
         let err = FallbackChainError::Record(FontRecordError::Truncated);
         assert!(std::error::Error::source(&err).is_some());
         assert!(err.to_string().contains("부족"));

@@ -19,8 +19,9 @@
 //! { [4] axis tag, f32 value } × 개수   — tag 오름차순, tag당 하나
 //! ```
 //!
-//! decode는 canonical이 아닌 입력(정렬 위반·중복 tag·비유한 값·알 수 없는 tag·잔여 bytes)을
-//! 거부하므로, 같은 값은 항상 같은 bytes 하나로만 표현됩니다.
+//! decode는 canonical이 아닌 입력(정렬 위반·중복 tag·비유한 값·음의 0(`-0.0`)·알 수 없는 tag·
+//! 잔여 bytes)을 거부하므로, 같은 값은 항상 같은 bytes 하나로만 표현됩니다. 생성자는 `-0.0`을
+//! `+0.0`으로 정규화하므로 canonical bytes에는 `-0.0`이 나타나지 않습니다.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -281,6 +282,11 @@ pub enum FontRecordError {
         /// 문제 axis.
         tag: OpenTypeTag,
     },
+    /// axis 값이 canonical 형식이 아닙니다(`-0.0`). canonical bytes는 `+0.0`만 씁니다.
+    NonCanonicalAxisValue {
+        /// 문제 axis.
+        tag: OpenTypeTag,
+    },
     /// variation axis가 tag 오름차순·중복 없음 규칙을 어깁니다.
     NonCanonicalVariations,
 }
@@ -303,6 +309,12 @@ impl fmt::Display for FontRecordError {
             }
             FontRecordError::NonFiniteAxisValue { tag } => {
                 write!(f, "variation axis {tag} 값이 유한하지 않습니다")
+            }
+            FontRecordError::NonCanonicalAxisValue { tag } => {
+                write!(
+                    f,
+                    "variation axis {tag} 값이 canonical 형식이 아닙니다(-0.0은 +0.0으로 기록)"
+                )
             }
             FontRecordError::NonCanonicalVariations => f.write_str(
                 "variation axis가 tag 오름차순이 아니거나 같은 tag가 두 번 이상 나옵니다",
@@ -410,7 +422,13 @@ impl FontFaceRef {
         for _ in 0..count {
             let bytes = reader.take_array::<4>()?;
             let tag = OpenTypeTag::new(bytes).ok_or(FontRecordError::InvalidAxisTag { bytes })?;
-            let value = FiniteF32::from_le_bytes(reader.take_array::<4>()?)
+            let value_bytes = reader.take_array::<4>()?;
+            // `FiniteF32::from_le_bytes`는 -0.0을 +0.0으로 정규화해 받아들이므로, 같은 값의 두 번째
+            // bytes 형태가 생기지 않도록 여기서 먼저 거부합니다.
+            if u32::from_le_bytes(value_bytes) == NEGATIVE_ZERO_BITS {
+                return Err(FontRecordError::NonCanonicalAxisValue { tag });
+            }
+            let value = FiniteF32::from_le_bytes(value_bytes)
                 .map_err(|_| FontRecordError::NonFiniteAxisValue { tag })?;
             if previous.is_some_and(|prev| prev >= tag) {
                 return Err(FontRecordError::NonCanonicalVariations);
@@ -426,6 +444,9 @@ impl FontFaceRef {
         })
     }
 }
+
+/// `-0.0f32`의 bit 패턴. canonical bytes에는 나타나지 않습니다.
+const NEGATIVE_ZERO_BITS: u32 = 0x8000_0000;
 
 /// canonical binary를 앞에서부터 읽는 crate 내부 reader.
 pub(crate) struct ByteReader<'a> {
@@ -663,6 +684,27 @@ pub(crate) mod tests {
                 bytes: [0x00, b'p', b's', b'z']
             })
         );
+    }
+
+    #[test]
+    fn decode_rejects_negative_zero_axis_value() {
+        // 생성자는 -0.0을 +0.0으로 정규화하므로 canonical bytes에는 -0.0(00 00 00 80)이 없습니다.
+        // decode가 이를 조용히 +0.0으로 바꿔 받아들이면 같은 값이 두 bytes 형태를 갖게 됩니다.
+        let face = FontFaceRef::new(FontSource::Project, hash(3), 0, vec![axis("slnt", 1.0)]);
+        let mut bytes = face.encode();
+        bytes[45..49].copy_from_slice(&(-0.0f32).to_le_bytes());
+        assert_eq!(&bytes[45..49], &[0x00, 0x00, 0x00, 0x80]);
+        assert_eq!(
+            FontFaceRef::decode(&bytes),
+            Err(FontRecordError::NonCanonicalAxisValue { tag: tag("slnt") })
+        );
+        // +0.0은 canonical이며 round-trip합니다.
+        bytes[45..49].copy_from_slice(&0.0f32.to_le_bytes());
+        let decoded = FontFaceRef::decode(&bytes).expect("+0.0은 canonical");
+        assert_eq!(decoded.encode(), bytes);
+        assert!(FontRecordError::NonCanonicalAxisValue { tag: tag("slnt") }
+            .to_string()
+            .contains("slnt"));
     }
 
     #[test]
