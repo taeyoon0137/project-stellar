@@ -5,6 +5,10 @@
 - 상태: 완료 (`[x]`)
 - 선행: I.1.1 (`[x]`)
 
+## 필수 실행 환경
+
+- `DEV-MAC`. (보고서 형식 보완: 계획서 작업 행 `[DEV-MAC]`·ledger `required_environments` 기준)
+
 ## 변경 파일 목록
 
 - `scripts/source_inventory.sh` (신규, 결정론적 인벤토리 생성 스크립트)
@@ -21,6 +25,10 @@
 - 정렬은 `LC_ALL=C sort`로 고정해 로케일 비의존.
 
 ## 실행한 명령과 결정론 검증
+
+| 명령 | 결과 |
+|---|---|
+| `./scripts/source_inventory.sh` (동일 상태에서 2회 연속 실행) | 두 결과가 바이트 단위로 동일(diff 없음) |
 
 - `./scripts/source_inventory.sh` (스테이징 후 재생성으로 신규 파일 반영)
 - 결정론 검증: 동일 상태에서 두 번 연속 실행 후 결과 비교 → 차이 없음(아래 "테스트 결과").

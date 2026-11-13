@@ -5,6 +5,10 @@
 - 상태: 완료 (`[x]`)
 - 선행: 없음
 
+## 필수 실행 환경
+
+- `DEV-MAC`. (보고서 형식 보완: 계획서 작업 행 `[DEV-MAC]`·ledger `required_environments` 기준)
+
 ## 변경 파일 목록
 
 - `docs/status/repository-baseline.md` (신규)
@@ -13,9 +17,11 @@
 
 ## 실행한 명령
 
-- `git rev-parse --show-toplevel` → 종료 코드 0
-- `git status --porcelain=v2` → 종료 코드 0
-- `git log -1 --format=%H` → 종료 코드 0
+| 명령 | 종료 코드 |
+|---|---|
+| `git rev-parse --show-toplevel` | 0 |
+| `git status --porcelain=v2` | 0 |
+| `git log -1 --format=%H` | 0 |
 
 ## 테스트 결과
 

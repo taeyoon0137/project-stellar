@@ -36,6 +36,13 @@
 
 - 실제 GitHub Actions 양 runner 성공, Windows job, 그리고 task ledger·commit subject·dependency·ADR 정책을 각각 깨뜨린 fixture branch에서 해당 job 실패는 push 후 CI에서만 확인 가능. 확보 후 `[x]`로 승격.
 
+## 차이(작업 지시와 다른 점)
+
+(보고서 형식 보완: 아래 "CI 증거 (승격)" 절과 Fix `7444764` 기준)
+
+- commit subject·ADR 정책 단계는 PR 이벤트에서만 실행되도록 한정했습니다(Fix `7444764`).
+- 정책 위반 시 job 실패는 별도 fixture branch 대신 실제 위반 런으로 실증했으며, 기록된 범위는 ADR 정책과 commit subject 두 가지입니다.
+
 ## 남은 위험 / 후속
 
 - commit-subject 검사는 `Task(...)` 전용이라 부트스트랩의 `Docs:`/`Chore:` 유지보수 커밋과 충돌합니다. CI 도입 시 `BASELINE_REF`를 유지보수 커밋 이후로 설정해야 합니다(I.2.17 보고서와 동일 이슈).

@@ -5,6 +5,10 @@
 - 상태: 완료 (`[x]`)
 - 선행: I.1.1 (`[x]`)
 
+## 필수 실행 환경
+
+- `DEV-MAC`. (보고서 형식 보완: 계획서 작업 행 `[DEV-MAC]`·ledger `required_environments` 기준)
+
 ## 변경 파일 목록
 
 - `docs/status/repository-baseline.md` (브랜치·remote 절 추가)
@@ -13,8 +17,11 @@
 
 ## 실행한 명령
 
-- `git branch --show-current` → 종료 코드 0, 결과 `develop`
-- `git remote -v` → 종료 코드 0, 결과 `origin https://github.com/taeyoon0137/project-stellar.git`
+| 명령 | 결과 | 종료 코드 |
+|---|---|---|
+| `git branch --show-current` | `develop` | 0 |
+| `git remote -v` | `origin https://github.com/taeyoon0137/project-stellar.git` | 0 |
+
 - Git 설정 변경: 없음 (조회만 수행)
 
 ## 테스트 결과

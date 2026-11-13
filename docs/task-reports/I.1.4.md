@@ -5,6 +5,18 @@
 - 상태: 완료 (`[x]`)
 - 선행: I.1.1 (`[x]`)
 
+## 필수 실행 환경
+
+- `DEV-MAC`. (보고서 형식 보완: 계획서 작업 행 `[DEV-MAC]`·ledger `required_environments` 기준)
+
+## 변경 파일 목록
+
+(보고서 형식 보완: 커밋 `daa1f73`의 변경 파일 기준)
+
+- `.gitattributes` (규칙 추가)
+- `docs/task-reports/I.1.4.md` (신규, 본 보고서)
+- `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md` (상태 열 갱신: I.1.4 `[ ]` → `[x]`)
+
 ## 문서화된 규칙
 
 | 분류 | 패턴 | 속성 | 근거 |
@@ -22,6 +34,10 @@
 - **`.stargen`/`.stellarref` 분류 보류**: 문서에 text/binary 구분이 확정되어 있지 않아 임의 분류하지 않음. 현재 `* text=auto`가 적용되며 Git이 바이너리 콘텐츠를 자동 판별. 파일 포맷 구현 단계에서 확정.
 
 ## 실행한 명령 (`git check-attr -a -- <fixture>`)
+
+| 명령 | 결과 |
+|---|---|
+| `git check-attr -a -- <fixture>` (아래 fixture 경로별) | 모든 결과가 문서화된 규칙과 일치(아래 출력) |
 
 ```
 scripts/readme_update.sh                       → text: set,  eol: lf

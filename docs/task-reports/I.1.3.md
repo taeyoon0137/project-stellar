@@ -5,6 +5,10 @@
 - 상태: 완료 (`[x]`)
 - 선행: I.1.1 (`[x]`)
 
+## 필수 실행 환경
+
+- `DEV-MAC`. (보고서 형식 보완: 계획서 작업 행 `[DEV-MAC]`·ledger `required_environments` 기준)
+
 ## 변경 파일 목록
 
 - `.gitignore` (누락 항목 추가: `build/`, `.stellar/cache/`)
@@ -30,6 +34,11 @@
 - **복구 스냅샷**: 아키텍처 §19 기준 프로젝트 폴더 밖(OS Application Support / App Data)에 저장되어 저장소에 나타나지 않으므로 별도 패턴 불필요.
 
 ## 실행한 명령 (`git check-ignore -v` fixture)
+
+| 명령 | 결과 |
+|---|---|
+| `git check-ignore -v <경로>` (무시 대상 14개) | 전부 종료 코드 0, 매칭 규칙은 아래 출력 |
+| `git check-ignore -v <경로>` (추적 대상 5개) | 전부 종료 코드 1(미무시) |
 
 무시되어야 하는 경로 — 전부 종료 코드 0, 매칭 규칙 확인:
 
