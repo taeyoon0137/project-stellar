@@ -20,6 +20,10 @@
 //! diff를 쓰지 않으므로 bit가 다른 유한 float은 항상 변경입니다. 한쪽에만 있는 경로는
 //! `None` ↔ 값 변경입니다.
 //!
+//! **결정론(XIV.3.8)**: 결과는 [`canonical_order`](문서, 객체, 속성 경로, 변경 종류)로 정렬된
+//! [`SemanticDiff`]이며 canonical bytes를 가집니다. snapshot이 StableId map이라 입력 레코드·
+//! builder 호출 순서와 무관하게 같은 bytes가 나옵니다.
+//!
 //! 두 snapshot을 StableId 오름차순으로 한 번 merge-join하므로 비용은 객체·속성 수에 선형입니다.
 
 use std::cmp::Ordering;
@@ -28,6 +32,7 @@ use std::collections::BTreeMap;
 use stellar_core_types::property::PropertyPath;
 
 use crate::change::{Position, PositionChange, PropertyChange, Provenance, SemanticChange};
+use crate::codec::{self, DecodeError};
 use crate::keys;
 use crate::snapshot::{NodeKind, ObjectKind, Origin, SemanticObject, SemanticSnapshot};
 use crate::value::SemanticValue;
@@ -49,10 +54,9 @@ pub fn object_provenance(object: &SemanticObject) -> Provenance {
 
 /// `base`에서 `target`으로 가는 의미 변경 목록.
 ///
-/// 현재 범위: StableId 대응에 따른 객체 추가·삭제(XIV.3.3), 같은 정체성 객체의 속성
-/// 변경(XIV.3.4), 이동·재정렬(XIV.3.5). 출력은 StableId 오름차순(같은 객체 안에서는 위치 변경,
-/// 속성 경로 오름차순)이며 같은 id의 삭제가 추가보다 앞섭니다.
-pub fn diff(base: &SemanticSnapshot, target: &SemanticSnapshot) -> Vec<SemanticChange> {
+/// StableId 대응에 따른 객체 추가·삭제(XIV.3.3), 같은 정체성 객체의 속성 변경(XIV.3.4),
+/// 이동·재정렬(XIV.3.5)을 계산하고 [`canonical_order`]로 정렬해 반환합니다(XIV.3.8).
+pub fn diff(base: &SemanticSnapshot, target: &SemanticSnapshot) -> SemanticDiff {
     let mut changes = Vec::new();
     let mut left = base.objects().peekable();
     let mut right = target.objects().peekable();
@@ -81,7 +85,76 @@ pub fn diff(base: &SemanticSnapshot, target: &SemanticSnapshot) -> Vec<SemanticC
             }
         }
     }
-    changes
+    SemanticDiff::new(changes)
+}
+
+/// 변경의 결정론적 정렬 순서(XIV.3.8).
+///
+/// key: (문서 — 프로젝트 범위(`None`)가 먼저, 객체 StableId, 속성 경로 — 객체 단위 변경
+/// (`None`)이 먼저, 변경 종류 code). 남은 동률(예: 같은 객체를 두 번 다루는 비정상 목록)은
+/// 변경 canonical bytes로 깨므로 전순서입니다. 객체 경로는 diff 양쪽에서 바뀔 수 있는 tree
+/// 경로 대신 불변 StableId를 씁니다.
+pub fn canonical_order(a: &SemanticChange, b: &SemanticChange) -> Ordering {
+    a.document()
+        .cmp(&b.document())
+        .then_with(|| a.object_id().cmp(&b.object_id()))
+        .then_with(|| a.property_path().cmp(&b.property_path()))
+        .then_with(|| a.kind().code().cmp(&b.kind().code()))
+        .then_with(|| codec::change_bytes(a).cmp(&codec::change_bytes(b)))
+}
+
+/// canonical 순서로 정렬된 변경 목록(XIV.3.8).
+///
+/// 만드는 방법과 무관하게 같은 변경 집합은 같은 순서·같은 bytes가 됩니다. 슬라이스로
+/// 역참조됩니다.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SemanticDiff {
+    changes: Vec<SemanticChange>,
+}
+
+impl SemanticDiff {
+    /// 변경 목록을 canonical 순서로 정렬해 만듭니다.
+    pub fn new(mut changes: Vec<SemanticChange>) -> SemanticDiff {
+        changes.sort_by(canonical_order);
+        SemanticDiff { changes }
+    }
+
+    /// 변경 목록(canonical 순서).
+    pub fn changes(&self) -> &[SemanticChange] {
+        &self.changes
+    }
+
+    /// 변경 목록을 꺼냅니다.
+    pub fn into_changes(self) -> Vec<SemanticChange> {
+        self.changes
+    }
+
+    /// canonical bytes([`codec`] 형식, 헤더 `SDIF`).
+    pub fn to_canonical_bytes(&self) -> Vec<u8> {
+        codec::diff_to_bytes(&self.changes)
+    }
+
+    /// canonical bytes를 읽습니다. canonical 순서가 아니면 거부합니다.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<SemanticDiff, DecodeError> {
+        let changes = codec::diff_from_bytes(bytes)?;
+        if changes
+            .windows(2)
+            .any(|pair| canonical_order(&pair[0], &pair[1]) != Ordering::Less)
+        {
+            return Err(DecodeError::NonCanonicalOrder {
+                field: "diff.changes",
+            });
+        }
+        Ok(SemanticDiff { changes })
+    }
+}
+
+impl std::ops::Deref for SemanticDiff {
+    type Target = [SemanticChange];
+
+    fn deref(&self) -> &[SemanticChange] {
+        &self.changes
+    }
 }
 
 /// 같은 StableId 객체 한 쌍을 비교합니다.
@@ -265,6 +338,7 @@ mod tests {
         let SemanticChange::AddObject(added) = &changes[1] else {
             panic!("AddObject 기대");
         };
+        assert_eq!(added.object.id(), sid(21));
         assert_eq!(added.object.kind(), ObjectKind::Node(NodeKind::Shape));
         assert_eq!(added.provenance, Provenance::Document { document: sid(1) });
         let SemanticChange::RemoveObject(removed) = &changes[0] else {
@@ -284,8 +358,8 @@ mod tests {
         assert_eq!(
             summary,
             vec![
-                (SemanticChangeKind::RemoveObject, sid(13)),
                 (SemanticChangeKind::AddObject, sid(13)),
+                (SemanticChangeKind::RemoveObject, sid(13)),
             ]
         );
     }
@@ -664,6 +738,148 @@ mod tests {
             *changes[0].provenance(),
             Provenance::Document { document: sid(1) }
         );
+    }
+
+    /// 같은 내용을 다른 입력 순서로 만든 snapshot.
+    fn build_shuffled(records: &DocumentRecords, seed: u64) -> SemanticSnapshot {
+        let mut rng = SplitMix64::new(seed);
+        let mut shuffled = records.clone();
+        for i in (1..shuffled.nodes.len()).rev() {
+            let j = rng.below(i as u64 + 1) as usize;
+            shuffled.nodes.swap(i, j);
+        }
+        shuffled.modifier_stacks.reverse();
+        let mut builder = SnapshotBuilder::new();
+        builder
+            .add_asset(&crate::build::AssetEntry {
+                id: sid(990),
+                content_hash: vec![1; 32],
+                media_type: "image/png".into(),
+            })
+            .unwrap();
+        builder.add_document(&shuffled).unwrap();
+        builder.finish()
+    }
+
+    fn build_plain(records: &DocumentRecords) -> SemanticSnapshot {
+        let mut builder = SnapshotBuilder::new();
+        builder.add_document(records).unwrap();
+        builder
+            .add_asset(&crate::build::AssetEntry {
+                id: sid(990),
+                content_hash: vec![1; 32],
+                media_type: "image/png".into(),
+            })
+            .unwrap();
+        builder.finish()
+    }
+
+    #[test]
+    fn diff_bytes_ignore_input_order() {
+        for seed in 0..30 {
+            let a = random_valid_document(seed).to_records().unwrap();
+            let b = random_valid_document(seed + 1000).to_records().unwrap();
+            let expected = diff(&build_plain(&a), &build_plain(&b)).to_canonical_bytes();
+            let shuffled = diff(&build_shuffled(&a, seed), &build_shuffled(&b, seed + 7));
+            assert_eq!(shuffled.to_canonical_bytes(), expected, "seed {seed}");
+
+            // 변경 목록 순서를 섞어 다시 만들어도 같은 bytes.
+            let mut changes = shuffled.into_changes();
+            changes.reverse();
+            let mid = changes.len() / 2;
+            changes.rotate_left(mid);
+            assert_eq!(SemanticDiff::new(changes).to_canonical_bytes(), expected);
+        }
+    }
+
+    #[test]
+    fn canonical_order_key_is_document_object_path_kind() {
+        let base = head_records();
+        let mut target = base.clone();
+        let rect = target.nodes.iter_mut().find(|n| n.id == sid(11)).unwrap();
+        rect.parent = Some(sid(13));
+        rect.visible = false;
+        rect.locked = true;
+        target
+            .nodes
+            .push(node(14, Some(10), 0xE0, "dot", rect_payload()));
+        let mut builder = SnapshotBuilder::new();
+        builder.add_document(&target).unwrap();
+        builder
+            .add_token(&TokenEntry {
+                id: sid(5),
+                document: None,
+                name: "t".into(),
+                value_type: 1,
+                value: None,
+                expression: None,
+            })
+            .unwrap();
+        let changes = diff(&build(&base), &builder.finish());
+        let keys: Vec<_> = changes
+            .iter()
+            .map(|c| {
+                (
+                    c.document(),
+                    c.object_id(),
+                    c.property_path().map(|p| p.keys()[0]),
+                    c.kind(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            keys,
+            vec![
+                // 프로젝트 범위 token이 먼저.
+                (None, sid(5), None, SemanticChangeKind::AddToken),
+                // 같은 객체: 위치 변경 → 속성 경로 오름차순(VISIBLE 0xE001 < LOCKED 0xE002).
+                (Some(sid(1)), sid(11), None, SemanticChangeKind::MoveObject),
+                (
+                    Some(sid(1)),
+                    sid(11),
+                    Some(keys::VISIBLE),
+                    SemanticChangeKind::SetProperty
+                ),
+                (
+                    Some(sid(1)),
+                    sid(11),
+                    Some(keys::LOCKED),
+                    SemanticChangeKind::SetProperty
+                ),
+                (Some(sid(1)), sid(14), None, SemanticChangeKind::AddObject),
+            ]
+        );
+    }
+
+    #[test]
+    fn diff_bytes_round_trip_and_reject_non_canonical_order() {
+        let base = build(&head_records());
+        let mut records = head_records();
+        records.nodes.retain(|n| n.id != sid(13));
+        records.nodes[1].display_name = "renamed".into();
+        let changes = diff(&base, &build(&records));
+        assert!(changes.len() >= 2);
+        let bytes = changes.to_canonical_bytes();
+        assert_eq!(SemanticDiff::from_canonical_bytes(&bytes).unwrap(), changes);
+
+        let mut reversed: Vec<u8> = Vec::new();
+        reversed.extend_from_slice(&bytes[..6]);
+        let mut list = changes.changes().to_vec();
+        list.reverse();
+        codec::put_changes(&mut reversed, &list);
+        assert_eq!(
+            SemanticDiff::from_canonical_bytes(&reversed),
+            Err(DecodeError::NonCanonicalOrder {
+                field: "diff.changes"
+            })
+        );
+        for cut in 0..bytes.len() {
+            assert!(SemanticDiff::from_canonical_bytes(&bytes[..cut]).is_err());
+        }
+    }
+
+    fn rect_payload() -> NodePayload {
+        rect(2.0, 2.0)
     }
 
     #[test]
