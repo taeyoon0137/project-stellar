@@ -1,6 +1,7 @@
-//! diff 적용 (XIV.3.9).
+//! diff 적용 (XIV.3.9)과 역변경 (XIV.3.10).
 //!
 //! base snapshot에 변경 목록을 적용해 target snapshot을 재현합니다: `apply(diff(A, B), A) == B`.
+//! 역변경은 각 변경의 이전·이후 상태를 맞바꾼 목록입니다: `apply(inverse(diff(A, B)), B) == A`.
 //!
 //! - **목록 순서와 무관**: 삭제 → 추가 → 위치 → 속성 단계로 적용하므로 같은 객체의 교체(삭제 +
 //!   추가)도 정렬 순서와 관계없이 동작합니다.
@@ -22,6 +23,7 @@ use stellar_core_types::property::PropertyPath;
 use crate::change::{
     ObjectChange, Position, PositionChange, PropertyChange, SemanticChange, SemanticChangeKind,
 };
+use crate::diff::SemanticDiff;
 use crate::snapshot::{SemanticSnapshot, SnapshotError};
 
 /// 변경 적용 오류.
@@ -183,6 +185,51 @@ fn plan(changes: &[SemanticChange]) -> Result<Phases<'_>, ApplyError> {
         }
     }
     Ok(phases)
+}
+
+impl SemanticChange {
+    /// 역변경(XIV.3.10): 추가 ↔ 삭제, 위치 from ↔ to, 속성 old ↔ new. 종류 분류와 출처는
+    /// 유지됩니다. `change.inverse().inverse() == change`입니다.
+    pub fn inverse(&self) -> SemanticChange {
+        let swap_position = |c: &PositionChange| PositionChange {
+            provenance: c.provenance,
+            object: c.object,
+            from: c.to.clone(),
+            to: c.from.clone(),
+        };
+        let swap_property = |c: &PropertyChange| PropertyChange {
+            provenance: c.provenance,
+            path: c.path.clone(),
+            old: c.new.clone(),
+            new: c.old.clone(),
+        };
+        match self {
+            SemanticChange::AddObject(c) => SemanticChange::RemoveObject(c.clone()),
+            SemanticChange::RemoveObject(c) => SemanticChange::AddObject(c.clone()),
+            SemanticChange::AddToken(c) => SemanticChange::RemoveToken(c.clone()),
+            SemanticChange::RemoveToken(c) => SemanticChange::AddToken(c.clone()),
+            SemanticChange::MoveObject(c) => SemanticChange::MoveObject(swap_position(c)),
+            SemanticChange::ReorderObject(c) => SemanticChange::ReorderObject(swap_position(c)),
+            SemanticChange::SetProperty(c) => SemanticChange::SetProperty(swap_property(c)),
+            SemanticChange::ChangeToken(c) => SemanticChange::ChangeToken(swap_property(c)),
+            SemanticChange::ComponentInterfaceChange(c) => {
+                SemanticChange::ComponentInterfaceChange(swap_property(c))
+            }
+            SemanticChange::AssetRefChange(c) => SemanticChange::AssetRefChange(swap_property(c)),
+        }
+    }
+}
+
+/// 변경 목록의 역변경(XIV.3.10). 결과는 canonical 순서로 정렬됩니다.
+pub fn inverse(changes: &[SemanticChange]) -> SemanticDiff {
+    SemanticDiff::new(changes.iter().map(SemanticChange::inverse).collect())
+}
+
+impl SemanticDiff {
+    /// 역변경 diff(XIV.3.10).
+    pub fn inverse(&self) -> SemanticDiff {
+        inverse(self.changes())
+    }
 }
 
 /// `base`에 `changes`를 적용한 새 snapshot을 반환합니다.
@@ -393,6 +440,62 @@ pub(crate) mod tests {
         ] {
             assert!(mutated_kinds.contains(&kind), "{kind:?} 미생성");
         }
+    }
+
+    #[test]
+    fn apply_inverse_restores_base() {
+        for seed in 0..200 {
+            let a = build(&random_valid_document(seed).to_records().unwrap());
+            let b = build(&random_valid_document(seed + 20_000).to_records().unwrap());
+            let mutated = mutate(&a, seed ^ 0xABCD);
+            for (from, to) in [(&a, &b), (&a, &mutated), (&mutated, &a)] {
+                let forward = diff(from, to);
+                let backward = forward.inverse();
+                assert_eq!(apply(to, &backward).unwrap(), *from, "seed {seed}");
+                // 역의 역은 원래 diff, 역은 반대 방향 diff와 같은 bytes(instance 없는 문서).
+                assert_eq!(backward.inverse(), forward, "seed {seed}");
+                assert_eq!(
+                    backward.to_canonical_bytes(),
+                    diff(to, from).to_canonical_bytes(),
+                    "seed {seed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn inverse_swaps_each_change() {
+        let base = build(&head_records());
+        let mut records = head_records();
+        records.nodes[1].order_key = OrderKey::from_bytes(vec![0xA0]).unwrap();
+        records.nodes[2].display_name = "photo-2".into();
+        records.nodes.retain(|n| n.id != sid(13));
+        let target = build(&records);
+        let forward = diff(&base, &target);
+        let kinds: Vec<_> = forward.iter().map(|c| c.kind()).collect();
+        let backward: Vec<_> = forward.iter().map(|c| c.inverse().kind()).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                SemanticChangeKind::ReorderObject,
+                SemanticChangeKind::SetProperty,
+                SemanticChangeKind::RemoveObject,
+            ]
+        );
+        assert_eq!(
+            backward,
+            vec![
+                SemanticChangeKind::ReorderObject,
+                SemanticChangeKind::SetProperty,
+                SemanticChangeKind::AddObject,
+            ]
+        );
+        for change in forward.iter() {
+            assert_eq!(change.inverse().inverse(), *change);
+            assert_eq!(change.inverse().provenance(), change.provenance());
+        }
+        // 역변경을 base에 적용하면 stale로 거부됩니다(target 기준 변경).
+        assert!(apply(&base, &forward.inverse()).is_err());
     }
 
     #[test]
