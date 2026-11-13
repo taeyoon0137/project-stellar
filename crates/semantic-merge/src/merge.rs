@@ -25,6 +25,11 @@
 //! type-change-vs-value-change, 그 밖은 property-value입니다. 양쪽이 같은 StableId를 서로 다르게
 //! 정의(추가·교체)하면 inconsistent-definition입니다.
 //!
+//! **순서(XIV.10.6)**: 같은 parent에 양쪽이 독립적으로 삽입한 자식은 모두 받아들입니다. 같은
+//! 간격에 삽입해 같은 OrderKey가 나오면 `(OrderKey, StableId)` 순서를 유지한 채 key를 유일하게
+//! 다시 매깁니다. 같은 child를 양쪽이 다른 위치로 옮기면 conflicting-reorder이고, 서로 다른
+//! 객체의 이동이 합쳐져 parent cycle이 생기면 그 이동들도 conflicting-reorder로 되돌립니다.
+//!
 //! **구조 정합**: 한쪽이 삭제한 parent 아래에 다른 쪽이 객체를 추가·이동해 candidate에 parent
 //! 없는 객체가 생기면, 그 parent 삭제를 받아들이지 않고 delete-vs-modify conflict로 바꿉니다
 //! (입력 자체에 이미 있던 고아는 건드리지 않습니다).
@@ -34,6 +39,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use stellar_semantic_diff::apply::apply;
 use stellar_semantic_diff::change::{Position, SemanticChange, SemanticChangeKind};
 use stellar_semantic_diff::core_types::ids::StableId;
+use stellar_semantic_diff::core_types::order_key::OrderKey;
 use stellar_semantic_diff::core_types::property::PropertyPath;
 use stellar_semantic_diff::diff::{diff, object_provenance, SemanticDiff};
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
@@ -221,6 +227,23 @@ impl<'a> Merger<'a> {
         });
     }
 
+    /// 객체 위치 conflict(conflicting-reorder).
+    fn position_conflict(&mut self, id: StableId) {
+        let input = self.input;
+        let Some(owner) = input.base.get(id).or_else(|| input.ours.get(id)) else {
+            return;
+        };
+        self.conflicts.push(SemanticConflict {
+            kind: ConflictKind::ConflictingReorder,
+            provenance: object_provenance(owner),
+            object: id,
+            target: ConflictTarget::Position,
+            base: position_state(&input.base, id),
+            ours: position_state(&input.ours, id),
+            theirs: position_state(&input.theirs, id),
+        });
+    }
+
     fn merge_object(&mut self, id: StableId, ours: &Edits<'_>, theirs: &Edits<'_>) {
         let input = self.input;
         if !ours.structure.is_empty() && ours.structure == theirs.structure {
@@ -242,15 +265,8 @@ impl<'a> Merger<'a> {
             (Some(change), Some(other)) if same_position(change, other) => {
                 self.accepted.push(change.clone())
             }
-            (Some(change), Some(_)) => self.conflicts.push(SemanticConflict {
-                kind: ConflictKind::ConflictingReorder,
-                provenance: *change.provenance(),
-                object: id,
-                target: ConflictTarget::Position,
-                base: position_state(&input.base, id),
-                ours: position_state(&input.ours, id),
-                theirs: position_state(&input.theirs, id),
-            }),
+            // 같은 child를 양쪽이 다른 위치로(XIV.10.6).
+            (Some(_), Some(_)) => self.position_conflict(id),
             (None, None) => {}
         }
         let paths: BTreeSet<&PropertyPath> = ours
@@ -302,6 +318,109 @@ impl<'a> Merger<'a> {
     }
 }
 
+/// candidate에서 merge가 만든 parent cycle을 찾습니다(cycle 구성 객체, 오름차순).
+///
+/// 받아들인 MoveObject가 하나도 없는 cycle은 입력에 이미 있던 것이므로 무시합니다. parent
+/// 사슬은 반복문으로 따라가며 방문 집합으로 끝을 보장합니다(재귀 없음).
+fn merge_cycle(
+    merged: &SemanticSnapshot,
+    accepted: &[SemanticChange],
+) -> Option<BTreeSet<StableId>> {
+    let moved: BTreeSet<StableId> = accepted
+        .iter()
+        .filter(|c| c.kind() == SemanticChangeKind::MoveObject)
+        .map(SemanticChange::object_id)
+        .collect();
+    let mut settled = BTreeSet::new();
+    for start in moved.iter().copied() {
+        if settled.contains(&start) {
+            continue;
+        }
+        let mut chain = Vec::new();
+        let mut on_chain = BTreeSet::new();
+        let mut current = Some(start);
+        while let Some(id) = current {
+            if settled.contains(&id) {
+                break;
+            }
+            if !on_chain.insert(id) {
+                let first = chain.iter().position(|c| *c == id).unwrap_or(0);
+                let cycle: BTreeSet<StableId> = chain[first..].iter().copied().collect();
+                if cycle.iter().any(|c| moved.contains(c)) {
+                    return Some(cycle);
+                }
+                break;
+            }
+            chain.push(id);
+            current = merged.get(id).and_then(|o| o.parent());
+        }
+        settled.extend(chain);
+    }
+    None
+}
+
+/// 독립 삽입이 같은 parent에서 같은 OrderKey를 받은 경우를 결정론적으로 풉니다(XIV.10.6).
+///
+/// `OrderKey::between`은 결정론적이라 두 branch가 같은 이웃 사이에 삽입하면 같은 key가 나옵니다
+/// (III.5.4 fixture). 순서는 `(OrderKey, StableId)`로 이미 정해지므로, 같은 key 묶음에서 StableId가
+/// 가장 작은 객체는 key를 유지하고, merge가 새로 배치했으며(base와 parent·key가 다름) 앞선 묶음
+/// 구성원과의 충돌이 어느 한 입력에도 이미 있던 것이 아닌(서로 다른 쪽에서 온) 객체만 그 다음
+/// 다른 key와의 사이 key로 옮깁니다. 시각 순서는 그대로이고 형제 key가 유일해집니다(문서
+/// validator VI.10.1의 OrderKey 유일성). 입력에 이미 있던 충돌은 바꾸지 않습니다.
+fn rekey_independent_insertions(input: &MergeInput, merged: &mut SemanticSnapshot) {
+    let base = &input.base;
+    let at = |side: &SemanticSnapshot, id: StableId, parent: StableId, key: &OrderKey| {
+        side.get(id)
+            .is_some_and(|o| o.parent() == Some(parent) && o.order_key() == Some(key))
+    };
+    let mut siblings: BTreeMap<StableId, Vec<(OrderKey, StableId)>> = BTreeMap::new();
+    for object in merged.objects() {
+        if let (Some(parent), Some(key)) = (object.parent(), object.order_key()) {
+            siblings
+                .entry(parent)
+                .or_default()
+                .push((key.clone(), object.id()));
+        }
+    }
+    let placed_by_merge = |id: StableId, parent: StableId, key: &OrderKey| {
+        base.get(id)
+            .is_none_or(|o| o.parent() != Some(parent) || o.order_key() != Some(key))
+    };
+    let mut updates: Vec<(StableId, StableId, OrderKey)> = Vec::new();
+    for (parent, mut children) in siblings {
+        children.sort();
+        let mut start = 0;
+        while start < children.len() {
+            let mut end = start + 1;
+            while end < children.len() && children[end].0 == children[start].0 {
+                end += 1;
+            }
+            let next = children.get(end).map(|(key, _)| key.clone());
+            let mut previous = children[start].0.clone();
+            for (offset, (key, id)) in children[start + 1..end].iter().enumerate() {
+                let earlier = &children[start..start + 1 + offset];
+                let preexisting = [&input.ours, &input.theirs].into_iter().any(|side| {
+                    at(side, *id, parent, key)
+                        && earlier.iter().all(|(_, e)| at(side, *e, parent, key))
+                });
+                if placed_by_merge(*id, parent, key) && !preexisting {
+                    let fresh = OrderKey::between(Some(&previous), next.as_ref());
+                    updates.push((*id, parent, fresh.clone()));
+                    previous = fresh;
+                }
+            }
+            start = end;
+        }
+    }
+    for (id, parent, key) in updates {
+        if let Some(mut object) = merged.remove(id) {
+            object.set_position(Some(parent), Some(key));
+            // 같은 id를 막 지웠으므로 다시 넣기는 실패하지 않습니다.
+            let _ = merged.insert(object);
+        }
+    }
+}
+
 /// 3-way merge를 실행합니다.
 pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
     let ours_diff = diff(&input.base, &input.ours);
@@ -348,6 +467,24 @@ pub fn merge(input: &MergeInput) -> Result<MergeResult, MergeError> {
         merger.object_conflict(kind, parent);
         merged = apply(&input.base, &merger.accepted).map_err(MergeError::Apply)?;
     }
+
+    // 서로 다른 객체의 독립 이동이 parent cycle을 만들면 그 이동들을 conflicting-reorder로
+    // 되돌립니다(XIV.10.6). 되돌릴 때마다 받아들인 변경이 줄어 유한 번에 끝납니다.
+    while let Some(cycle) = merge_cycle(&merged, &merger.accepted) {
+        let before = merger.accepted.len();
+        merger.accepted.retain(|change| {
+            !(cycle.contains(&change.object_id())
+                && change.kind() == SemanticChangeKind::MoveObject)
+        });
+        if merger.accepted.len() == before {
+            break;
+        }
+        for id in cycle {
+            merger.position_conflict(id);
+        }
+        merged = apply(&input.base, &merger.accepted).map_err(MergeError::Apply)?;
+    }
+    rekey_independent_insertions(input, &mut merged);
 
     let mut conflicts = merger.conflicts;
     conflicts.sort_by(|a, b| {
@@ -868,6 +1005,135 @@ pub(crate) mod tests {
             SideState::Object(Box::new(move_11(&base).get(sid(11)).unwrap().clone()))
         );
         assert_eq!(result.merged.get(sid(11)), base.get(sid(11)));
+    }
+
+    #[test]
+    fn order_key_merge_fixtures_pass() {
+        use stellar_semantic_diff::core_types::order_key_merge_fixtures::fixtures;
+        for fixture in fixtures() {
+            fixture.validate().unwrap();
+            let child =
+                |c: &stellar_semantic_diff::core_types::order_key_merge_fixtures::OrderedChild| {
+                    SemanticObject::new(
+                        c.id,
+                        stellar_semantic_diff::snapshot::ObjectKind::Node(
+                            stellar_semantic_diff::snapshot::NodeKind::Fragment,
+                        ),
+                        stellar_semantic_diff::snapshot::Origin::Document(sid(1)),
+                    )
+                    .with_position(Some(sid(10)), Some(c.key.clone()))
+                };
+            let mut base = snapshot(vec![node(10, None, 0x80, &[])]);
+            for c in &fixture.base {
+                base.insert(child(c)).unwrap();
+            }
+            let (mut ours, mut theirs) = (base.clone(), base.clone());
+            for c in &fixture.branch_a_inserts {
+                ours.insert(child(c)).unwrap();
+            }
+            for c in &fixture.branch_b_inserts {
+                theirs.insert(child(c)).unwrap();
+            }
+            let result = run(&base, &ours, &theirs);
+            assert!(
+                result.is_clean(),
+                "{}: {:?}",
+                fixture.name,
+                result.conflicts
+            );
+            assert_eq!(
+                result.merged.children(sid(10)),
+                fixture.expected_merged,
+                "{}",
+                fixture.name
+            );
+            // 형제 key 유일(독립 삽입이 같은 key를 받아도).
+            let keys: BTreeSet<_> = result
+                .merged
+                .children(sid(10))
+                .into_iter()
+                .map(|id| result.merged.get(id).unwrap().order_key().cloned())
+                .collect();
+            assert_eq!(
+                keys.len(),
+                fixture.expected_merged.len(),
+                "{}",
+                fixture.name
+            );
+            // base 자식은 key를 바꾸지 않습니다.
+            for c in &fixture.base {
+                assert_eq!(result.merged.get(c.id).unwrap().order_key(), Some(&c.key));
+            }
+        }
+    }
+
+    #[test]
+    fn conflicting_reorder_of_same_child() {
+        let base = base();
+        // 같은 parent 안에서 서로 다른 key.
+        let ours = edit(&base, 12, |o| {
+            o.set_position(Some(sid(10)), Some(key(0x10)))
+        });
+        let theirs = edit(&base, 12, |o| {
+            o.set_position(Some(sid(10)), Some(key(0xF0)))
+        });
+        let result = run(&base, &ours, &theirs);
+        assert_eq!(result.conflicts.len(), 1);
+        let conflict = &result.conflicts[0];
+        assert_eq!(
+            (conflict.kind, &conflict.target),
+            (ConflictKind::ConflictingReorder, &ConflictTarget::Position)
+        );
+        assert_eq!(
+            conflict.ours,
+            SideState::Position(Position {
+                parent: Some(sid(10)),
+                order_key: Some(key(0x10))
+            })
+        );
+        assert_eq!(
+            result.merged.get(sid(12)),
+            base.get(sid(12)),
+            "candidate는 base 위치"
+        );
+        // 같은 재정렬은 conflict가 아닙니다.
+        assert!(run(&base, &ours, &ours).is_clean());
+        // 다른 child의 재정렬은 독립입니다.
+        let other = edit(&base, 11, |o| {
+            o.set_position(Some(sid(10)), Some(key(0xF8)))
+        });
+        assert!(run(&base, &ours, &other).is_clean());
+    }
+
+    #[test]
+    fn independent_moves_forming_a_cycle_are_conflicts() {
+        // ours: 12를 11 아래로. theirs: 11을 12 아래로. 각자는 유효하지만 합치면 cycle.
+        let base = base();
+        let ours = edit(&base, 12, |o| {
+            o.set_position(Some(sid(11)), Some(key(0x20)))
+        });
+        let theirs = edit(&base, 11, |o| {
+            o.set_position(Some(sid(12)), Some(key(0x20)))
+        });
+        let result = run(&base, &ours, &theirs);
+        let kinds: Vec<_> = result
+            .conflicts
+            .iter()
+            .map(|c| (c.kind, c.object))
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                (ConflictKind::ConflictingReorder, sid(11)),
+                (ConflictKind::ConflictingReorder, sid(12)),
+            ]
+        );
+        assert_eq!(result.merged, base);
+        // cycle이 없으면 독립 이동은 그대로 병합됩니다.
+        let theirs = edit(&base, 13, |o| {
+            o.set_position(Some(sid(12)), Some(key(0x20)))
+        });
+        assert!(run(&base, &ours, &theirs).is_clean());
     }
 
     #[test]
