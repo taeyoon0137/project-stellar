@@ -227,7 +227,7 @@ fn component_os(c: &[u8]) -> Option<&std::ffi::OsStr> {
 }
 
 /// `parent` 아래에 0700 권한의 새 고유 디렉터리를 만듭니다.
-fn create_unique_root(parent: &Path) -> Result<PathBuf, MaterializeError> {
+pub(crate) fn create_unique_root(parent: &Path) -> Result<PathBuf, MaterializeError> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let io = |e: std::io::Error| MaterializeError::Io {
         path: None,
@@ -434,9 +434,103 @@ pub fn materialize_snapshot(
     Ok(snapshot)
 }
 
+/// 경로·종류 목록을 새 임시 디렉터리에 materialize하되 내용은 `read`가 항목마다 공급합니다(Git 실행 없음,
+/// XXIII.1.3 작업 트리 source).
+///
+/// [`materialize_snapshot`]과 같은 안전 규칙(먼저 모든 경로·종류 검증, `.git` 거부, `create_new`, 상위
+/// symlink 거부, 실패 시 전체 삭제)을 씁니다. 종류는 일반·실행 파일과 symlink만 허용합니다. symlink 내용은
+/// 대상 경로 바이트입니다. 내용을 한 항목씩 읽어 쓰므로 전체를 메모리에 모으지 않습니다.
+pub(crate) fn materialize_with<F>(
+    entries: &[(GitPath, FileModeKind)],
+    parent: &Path,
+    mut read: F,
+) -> Result<MaterializedSnapshot, MaterializeError>
+where
+    F: FnMut(usize, &GitPath, FileModeKind) -> Result<Vec<u8>, MaterializeError>,
+{
+    for (path, kind) in entries {
+        validate_snapshot_path(path.as_bytes()).map_err(|reason| MaterializeError::UnsafePath {
+            path: path.clone(),
+            reason,
+        })?;
+        if !matches!(
+            kind,
+            FileModeKind::Regular | FileModeKind::Executable | FileModeKind::Symlink
+        ) {
+            return Err(MaterializeError::UnsupportedMode { path: path.clone() });
+        }
+    }
+    let mut snapshot = MaterializedSnapshot {
+        root: create_unique_root(parent)?,
+        keep: false,
+        files: 0,
+        symlinks: 0,
+        skipped_gitlinks: Vec::new(),
+    };
+    for (index, (path, kind)) in entries.iter().enumerate() {
+        let components = validate_snapshot_path(path.as_bytes()).map_err(|reason| {
+            MaterializeError::UnsafePath {
+                path: path.clone(),
+                reason,
+            }
+        })?;
+        let target = ensure_parent_dirs(&snapshot.root, &components, path)?;
+        let bytes = read(index, path, *kind)?;
+        match kind {
+            FileModeKind::Symlink => {
+                write_symlink(&target, &bytes, path)?;
+                snapshot.symlinks += 1;
+            }
+            FileModeKind::Executable => {
+                write_file(&target, &bytes, true, path)?;
+                snapshot.files += 1;
+            }
+            _ => {
+                write_file(&target, &bytes, false, path)?;
+                snapshot.files += 1;
+            }
+        }
+    }
+    Ok(snapshot)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn materialize_with_writes_supplied_contents_and_validates_first() {
+        let parent = std::env::temp_dir();
+        let entries = vec![
+            (GitPath::from_bytes(b"a/b.txt"), FileModeKind::Regular),
+            (GitPath::from_bytes(b"run.sh"), FileModeKind::Executable),
+        ];
+        let snap =
+            materialize_with(&entries, &parent, |i, _, _| Ok(format!("{i}").into_bytes())).unwrap();
+        assert_eq!(std::fs::read(snap.root().join("a/b.txt")).unwrap(), b"0");
+        assert_eq!(std::fs::read(snap.root().join("run.sh")).unwrap(), b"1");
+        assert_eq!((snap.files(), snap.symlinks()), (2, 0));
+        assert!(!snap.root().join(".git").exists());
+        // 검증 실패면 디렉터리를 만들지 않고 read도 호출하지 않습니다.
+        let mut calls = 0;
+        let bad = vec![
+            (GitPath::from_bytes(b"ok.txt"), FileModeKind::Regular),
+            (GitPath::from_bytes(b".git/config"), FileModeKind::Regular),
+        ];
+        assert!(matches!(
+            materialize_with(&bad, &parent, |_, _, _| {
+                calls += 1;
+                Ok(Vec::new())
+            }),
+            Err(MaterializeError::UnsafePath { .. })
+        ));
+        let tree = vec![(GitPath::from_bytes(b"dir"), FileModeKind::Tree)];
+        assert!(matches!(
+            materialize_with(&tree, &parent, |_, _, _| Ok(Vec::new())),
+            Err(MaterializeError::UnsupportedMode { .. })
+        ));
+        assert_eq!(calls, 0);
+    }
 
     #[test]
     fn unsafe_paths_are_rejected() {

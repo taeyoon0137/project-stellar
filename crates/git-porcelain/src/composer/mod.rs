@@ -13,3 +13,11 @@ pub use source::{resolve_source, ResolvedSource, SourceError, SourceRef, Worktre
 pub mod base;
 
 pub use base::{comparison_mode, ComparisonMode, TwoWayReason};
+
+/// Source A·B·Base snapshot materialize(XXIII.1.3).
+pub mod snapshot;
+
+pub use snapshot::{
+    materialize_source, materialize_sources, ComposerSnapshotError, ComposerSnapshots,
+    SourceSnapshot,
+};
