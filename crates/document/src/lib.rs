@@ -34,3 +34,6 @@ pub mod tree_stats;
 
 /// Frame payload (VI.3.1).
 pub mod frame;
+
+/// node 종류 capability validator (VI.3.2).
+pub mod capabilities;
