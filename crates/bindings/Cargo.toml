@@ -7,6 +7,7 @@ publish = false
 
 [dependencies]
 stellar-core-types = { path = "../core-types" }
+stellar-expressions = { path = "../expressions" }
 
 [lints]
 workspace = true

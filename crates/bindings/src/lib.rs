@@ -1,1 +1,4 @@
-//! stellar-bindings — Project Stellar 코어 골격. core-types만 직접 의존합니다(구현은 후속).
+//! stellar-bindings — Project Stellar 토큰과 통합 Binding Graph. core-types와 expressions만 직접 의존합니다.
+
+/// 토큰 정의·이름·타입·TokenSet (VIII.5.1).
+pub mod token;
