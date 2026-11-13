@@ -1,4 +1,7 @@
-//! bytecode evaluator (VIII.4.1~VIII.4.3).
+//! bytecode evaluator (VIII.4.1~VIII.4.5).
+//!
+//! 평가는 [`EvalLimits`]의 instruction budget, frame(공유 block 중첩) 깊이, operand stack 깊이 안에서만
+//! 진행합니다(VIII.4.5). 한도를 넘는 비정상적으로 큰 표현식은 typed 오류로 종료하며 Rust stack을 쓰지 않습니다.
 //!
 //! `if`·`match`·`and`·`or`는 compiler가 만든 jump로 short-circuit 실행합니다(VIII.4.3). 선택되지 않은 branch의
 //! 명령·공유 block은 실행하지 않으므로 그 안의 오류도 발생하지 않습니다.
@@ -24,21 +27,58 @@ pub struct EvalTrace {
     pub block_runs: u64,
 }
 
+/// 평가 자원 제한 (VIII.4.5).
+///
+/// evaluator는 Rust 재귀 없이 명시적 frame stack으로 실행하며, 아래 한도를 넘으면 typed 오류로 즉시 종료합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EvalLimits {
+    /// 한 번의 평가에서 실행할 수 있는 최대 명령 수.
+    pub instruction_budget: u64,
+    /// 동시에 열 수 있는 최대 frame 수(root block 포함). 공유 block 중첩 깊이 제한입니다.
+    pub max_call_depth: usize,
+    /// operand stack 최대 깊이.
+    pub max_stack_depth: usize,
+}
+
+impl EvalLimits {
+    /// 기본 한도: 명령 1,000,000개, frame 256개, operand 65,536개.
+    pub const DEFAULT: EvalLimits = EvalLimits {
+        instruction_budget: 1_000_000,
+        max_call_depth: 256,
+        max_stack_depth: 65_536,
+    };
+}
+
+impl Default for EvalLimits {
+    fn default() -> EvalLimits {
+        EvalLimits::DEFAULT
+    }
+}
+
 struct Frame {
     block: usize,
     pc: usize,
 }
 
 impl Program {
-    /// 참조 값으로 program을 평가합니다.
+    /// 기본 한도([`EvalLimits::DEFAULT`])로 program을 평가합니다.
     pub fn evaluate(&self, values: &dyn ReferenceValues) -> Result<Option<TypedValue>, EvalError> {
         self.evaluate_traced(values).map(|(value, _)| value)
     }
 
-    /// 평가하고 실행 기록을 함께 돌려줍니다.
+    /// 기본 한도로 평가하고 실행 기록을 함께 돌려줍니다.
     pub fn evaluate_traced(
         &self,
         values: &dyn ReferenceValues,
+    ) -> Result<(Option<TypedValue>, EvalTrace), EvalError> {
+        self.evaluate_with_limits(values, EvalLimits::DEFAULT)
+    }
+
+    /// 주어진 한도로 평가하고 실행 기록을 함께 돌려줍니다(VIII.4.5).
+    pub fn evaluate_with_limits(
+        &self,
+        values: &dyn ReferenceValues,
+        limits: EvalLimits,
     ) -> Result<(Option<TypedValue>, EvalTrace), EvalError> {
         let mut trace = EvalTrace::default();
         let mut stack: Vec<Option<TypedValue>> = Vec::new();
@@ -56,6 +96,22 @@ impl Program {
                 .ok_or_else(|| malformed(None))?;
             let instr = *block.code().get(frame.pc).ok_or_else(|| malformed(None))?;
             let node = block.sources().get(frame.pc).copied();
+            if trace.instructions >= limits.instruction_budget {
+                return Err(EvalError::new(
+                    node,
+                    EvalErrorKind::InstructionBudgetExceeded {
+                        budget: limits.instruction_budget,
+                    },
+                ));
+            }
+            if stack.len() > limits.max_stack_depth {
+                return Err(EvalError::new(
+                    node,
+                    EvalErrorKind::StackLimitExceeded {
+                        limit: limits.max_stack_depth,
+                    },
+                ));
+            }
             frame.pc += 1;
             trace.instructions += 1;
             let fail = |kind| EvalError::new(node, kind);
@@ -79,6 +135,11 @@ impl Program {
                     match slot {
                         Some(value) => stack.push(value.clone()),
                         None => {
+                            if frames.len() >= limits.max_call_depth {
+                                return Err(fail(EvalErrorKind::CallDepthExceeded {
+                                    limit: limits.max_call_depth,
+                                }));
+                            }
                             trace.block_runs += 1;
                             frames.push(Frame {
                                 block: index as usize,
@@ -1060,5 +1121,193 @@ mod short_circuit_tests {
             Err(EvalError::new(Some(id(90)), EvalErrorKind::DivisionByZero))
         );
         assert_eq!(trace, EvalTrace::default(), "오류 시 trace 없음");
+    }
+}
+
+/// VIII.4.5 instruction budget·call depth·stack 한도 fixture.
+#[cfg(test)]
+mod limit_tests {
+    use std::collections::BTreeMap;
+
+    use stellar_core_types::ids::StableId;
+    use stellar_core_types::typed_value::TypedValue;
+    use stellar_core_types::value::FiniteF32;
+
+    use super::*;
+    use crate::ast::{ExprNode, ExprNodeId, ExpressionAst, ReferenceTarget};
+    use crate::ops::{BinaryOp, UnaryOp};
+    use crate::types::TypeSpec;
+
+    fn id(n: u64) -> ExprNodeId {
+        ExprNodeId::new(StableId::new_v7(n, 0, n))
+    }
+
+    fn one() -> TypedValue {
+        TypedValue::Number(FiniteF32::ONE)
+    }
+
+    fn minus_one() -> TypedValue {
+        TypedValue::Number(FiniteF32::new(-1.0).expect("유한"))
+    }
+
+    fn compile(ast: &ExpressionAst) -> Program {
+        let types: BTreeMap<ReferenceTarget, TypeSpec> = BTreeMap::new();
+        Program::compile(ast, &types).expect("컴파일")
+    }
+
+    /// `-(-(…(-1)))` 단항 chain(공유 없음, 깊이 `depth`).
+    fn negate_chain(depth: u64) -> ExpressionAst {
+        let mut nodes: Vec<ExprNode> = (1..depth)
+            .map(|n| ExprNode::unary(id(n), UnaryOp::Negate, id(n + 1)))
+            .collect();
+        nodes.push(ExprNode::literal(id(depth), one()));
+        ExpressionAst::new(id(1), nodes).expect("유효")
+    }
+
+    #[test]
+    fn huge_ast_stops_at_instruction_budget() {
+        // 30만 node AST는 명령 30만+1개 → budget 10만에서 typed 오류로 종료.
+        let ast = negate_chain(300_000);
+        let program = compile(&ast);
+        assert_eq!(program.instruction_count(), 300_001);
+        let limits = EvalLimits {
+            instruction_budget: 100_000,
+            ..EvalLimits::DEFAULT
+        };
+        let error = program
+            .evaluate_with_limits(&BTreeMap::new(), limits)
+            .expect_err("budget 초과");
+        assert_eq!(
+            error.kind,
+            EvalErrorKind::InstructionBudgetExceeded { budget: 100_000 }
+        );
+        assert!(error.node.is_some(), "중단 지점 node 기록");
+        // 같은 program도 budget이 충분하면 정상 종료(재귀 없이 깊이 30만 처리).
+        let (value, trace) = program
+            .evaluate_with_limits(
+                &BTreeMap::new(),
+                EvalLimits {
+                    instruction_budget: 300_001,
+                    ..EvalLimits::DEFAULT
+                },
+            )
+            .expect("budget 정확히 충분");
+        assert_eq!(value, Some(minus_one()), "홀수(299,999) 번 부호 반전");
+        assert_eq!(trace.instructions, 300_001);
+        // budget이 1 모자라면 실패(경계 정확).
+        assert!(matches!(
+            program.evaluate_with_limits(
+                &BTreeMap::new(),
+                EvalLimits {
+                    instruction_budget: 300_000,
+                    ..EvalLimits::DEFAULT
+                }
+            ),
+            Err(EvalError {
+                kind: EvalErrorKind::InstructionBudgetExceeded { budget: 300_000 },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn default_budget_stops_abnormally_large_program() {
+        // 기본 budget(100만)보다 긴 program은 기본 평가에서도 제한 오류.
+        let ast = negate_chain(1_000_001);
+        let program = compile(&ast);
+        assert!(matches!(
+            program.evaluate(&BTreeMap::new()),
+            Err(EvalError {
+                kind: EvalErrorKind::InstructionBudgetExceeded { budget: 1_000_000 },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn deeply_nested_shared_blocks_stop_at_call_depth() {
+        // n_i = n_(i+1) + n_(i+1) (모든 연산 node가 공유 → 별도 block, 중첩 깊이 = 단계 수).
+        let shared_chain = |levels: u64| {
+            let mut nodes: Vec<ExprNode> = (1..=levels)
+                .map(|n| ExprNode::binary(id(n), BinaryOp::Add, id(n + 1), id(n + 1)))
+                .collect();
+            nodes.push(ExprNode::literal(id(levels + 1), one()));
+            ExpressionAst::new(id(1), nodes).expect("유효")
+        };
+        let ast = shared_chain(300);
+        let program = compile(&ast);
+        assert_eq!(program.blocks().len(), 300, "root + 공유 연산 299개");
+        let error = program.evaluate(&BTreeMap::new()).expect_err("깊이 초과");
+        assert_eq!(error.kind, EvalErrorKind::CallDepthExceeded { limit: 256 });
+        // 한도 안의 중첩은 정상(2^99 규모 경로를 캐시로 선형 실행).
+        let ast = shared_chain(100);
+        let (value, trace) = compile(&ast)
+            .evaluate_traced(&BTreeMap::new())
+            .expect("깊이 100 허용");
+        assert_eq!(
+            value,
+            Some(TypedValue::Number(
+                FiniteF32::new(2.0f32.powi(100)).expect("유한")
+            ))
+        );
+        assert_eq!(trace.block_runs, 100, "공유 block은 각 1회");
+        // 한도를 낮추면 같은 program도 거부.
+        assert!(matches!(
+            compile(&ast).evaluate_with_limits(
+                &BTreeMap::new(),
+                EvalLimits {
+                    max_call_depth: 50,
+                    ..EvalLimits::DEFAULT
+                }
+            ),
+            Err(EvalError {
+                kind: EvalErrorKind::CallDepthExceeded { limit: 50 },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn right_nested_expression_stops_at_stack_limit() {
+        // 1 + (1 + (1 + …)) — 왼쪽 값이 쌓여 operand stack 깊이 = node 수.
+        let depth = 70_000u64;
+        let mut nodes: Vec<ExprNode> = (1..=depth)
+            .map(|n| ExprNode::binary(id(n), BinaryOp::Add, id(1_000_000), id(n + 1)))
+            .collect();
+        nodes.push(ExprNode::literal(id(depth + 1), one()));
+        nodes.push(ExprNode::literal(id(1_000_000), one()));
+        let ast = ExpressionAst::new(id(1), nodes).expect("유효");
+        let program = compile(&ast);
+        assert!(matches!(
+            program.evaluate(&BTreeMap::new()),
+            Err(EvalError {
+                kind: EvalErrorKind::StackLimitExceeded { limit: 65_536 },
+                ..
+            })
+        ));
+        let (value, _) = program
+            .evaluate_with_limits(
+                &BTreeMap::new(),
+                EvalLimits {
+                    max_stack_depth: 80_000,
+                    ..EvalLimits::DEFAULT
+                },
+            )
+            .expect("한도 상향 시 정상");
+        assert_eq!(
+            value,
+            Some(TypedValue::Number(FiniteF32::new(70_001.0).expect("유한")))
+        );
+    }
+
+    #[test]
+    fn ordinary_expressions_fit_default_limits() {
+        assert_eq!(EvalLimits::default(), EvalLimits::DEFAULT);
+        let ast = negate_chain(10_000);
+        let (value, trace) = compile(&ast)
+            .evaluate_traced(&BTreeMap::new())
+            .expect("정상");
+        assert_eq!(value, Some(minus_one()), "홀수(9,999) 번 부호 반전");
+        assert!(trace.instructions < EvalLimits::DEFAULT.instruction_budget);
     }
 }

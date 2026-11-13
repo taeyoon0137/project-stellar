@@ -65,6 +65,21 @@ pub enum EvalErrorKind {
     },
     /// 문자열 결과가 [`MAX_STRING_BYTES`]를 넘습니다(VIII.4.4).
     StringTooLong,
+    /// 실행 명령 수가 instruction budget에 도달했습니다(VIII.4.5).
+    InstructionBudgetExceeded {
+        /// 적용한 budget.
+        budget: u64,
+    },
+    /// 공유 block 중첩(frame) 깊이 한도를 넘었습니다(VIII.4.5).
+    CallDepthExceeded {
+        /// 적용한 한도.
+        limit: usize,
+    },
+    /// operand stack 깊이 한도를 넘었습니다(VIII.4.5).
+    StackLimitExceeded {
+        /// 적용한 한도.
+        limit: usize,
+    },
 }
 
 /// 문자열 함수 결과의 최대 UTF-8 byte 수(VIII.4.4). 공유 node로 결합을 반복해도 메모리가 폭증하지 않게 합니다.
@@ -113,6 +128,15 @@ impl fmt::Display for EvalErrorKind {
             } => write!(f, "{function}의 인자 {argument}: {issue}"),
             EvalErrorKind::StringTooLong => {
                 write!(f, "문자열 결과가 {MAX_STRING_BYTES} bytes를 넘습니다")
+            }
+            EvalErrorKind::InstructionBudgetExceeded { budget } => {
+                write!(f, "명령 {budget}개 budget을 넘었습니다")
+            }
+            EvalErrorKind::CallDepthExceeded { limit } => {
+                write!(f, "공유 block 중첩 깊이 {limit}을 넘었습니다")
+            }
+            EvalErrorKind::StackLimitExceeded { limit } => {
+                write!(f, "operand stack 깊이 {limit}을 넘었습니다")
             }
         }
     }

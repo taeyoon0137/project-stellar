@@ -736,7 +736,7 @@ tools/xtask/
 | VIII.4.2 | `[x]` | literal·산술·비교·논리 evaluator를 구현합니다. division by zero는 typed evaluation error입니다. | table-driven test 통과. | VIII.4.1 |
 | VIII.4.3 | `[x]` | if·match short-circuit 평가를 구현해 선택되지 않은 branch 오류가 실행되지 않게 합니다. | short-circuit fixture 통과. | VIII.4.2 |
 | VIII.4.4 | `[x]` | color·string·수치 함수 evaluator를 구현합니다. | reference value fixture 통과. | VIII.4.2, VIII.1.4 |
-| VIII.4.5 | `[ ]` | evaluator에 instruction budget과 recursion 없는 call depth limit를 적용합니다. | 비정상적으로 큰 AST가 제한 오류로 종료. | VIII.4.1 |
+| VIII.4.5 | `[x]` | evaluator에 instruction budget과 recursion 없는 call depth limit를 적용합니다. | 비정상적으로 큰 AST가 제한 오류로 종료. | VIII.4.1 |
 | VIII.4.6 | `[ ]` | 동일 input environment와 bytecode가 bit-stable TypedValue를 반환하는 결정론 테스트를 양 플랫폼에서 실행합니다. | macOS/Windows fixture bytes 동일. | VIII.4.4 |
 
 ### VIII.5 토큰 모델
