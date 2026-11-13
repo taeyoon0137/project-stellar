@@ -56,3 +56,6 @@ pub mod ast_eval;
 
 /// color·string·수치 함수 evaluator (VIII.4.4).
 pub mod function_eval;
+
+/// 환경 입력 key registry (VIII.7.1).
+pub mod environment;

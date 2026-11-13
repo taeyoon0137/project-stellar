@@ -172,7 +172,7 @@ pub enum Literal {
     Null(ExpressionType),
 }
 
-/// 환경 입력 key의 numeric ID. key registry는 VIII.7.1이 정의합니다.
+/// 환경 입력 key의 numeric ID. key registry는 [`crate::environment`](VIII.7.1)가 정의합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EnvironmentKey(u32);
 
