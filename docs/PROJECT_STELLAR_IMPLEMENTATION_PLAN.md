@@ -1000,7 +1000,7 @@ tools/xtask/
 | X.9.2 | `[x]` | script/language/direction itemization을 구현합니다. 입력 문자열과 style run을 shaping runs로 분할합니다. | Latin+Arabic+한글 mixed fixture 통과. | X.9.1, VI.7.2 |
 | X.9.3 | `[x]` | Unicode BiDi 알고리즘 구현 또는 승인 dependency wrapper를 추가합니다. visual order와 logical cluster mapping을 모두 유지합니다. | 공식 또는 고정 BiDi corpus 통과. | X.9.2 |
 | X.9.4 | `[x]` | line break opportunity 계산을 공통 엔진으로 구현하고 locale 입력을 명시합니다. | 한글·일본어·영문·공백 fixture 통과. | X.9.2 |
-| X.9.5 | `[ ]` | font fallback을 grapheme/script run 단위로 적용하고 missing glyph cluster 정보를 보존합니다. | emoji, CJK fallback fixture 통과. | X.8.3, X.9.2 |
+| X.9.5 | `[x]` | font fallback을 grapheme/script run 단위로 적용하고 missing glyph cluster 정보를 보존합니다. | emoji, CJK fallback fixture 통과. | X.8.3, X.9.2 |
 | X.9.6 | `[ ]` | OpenType feature와 variation axes를 shaping input에 적용합니다. | liga on/off, variable axis fixture 결과 차이 예상 일치. | X.9.1, VI.7.2 |
 
 ### X.10 텍스트 레이아웃

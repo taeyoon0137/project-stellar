@@ -30,5 +30,8 @@ pub mod itemize;
 /// 공통 줄바꿈 기회 계산 (X.9.4).
 pub mod line_break;
 
+/// grapheme 단위 font fallback과 missing glyph cluster (X.9.5).
+pub mod font_runs;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;
