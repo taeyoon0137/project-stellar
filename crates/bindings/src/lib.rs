@@ -38,3 +38,6 @@ pub mod orphan;
 
 /// orphan binding 선언 기본값 fallback (VIII.8.2).
 pub mod fallback;
+
+/// orphaned binding 재연결·명시 삭제 command (VIII.8.4).
+pub mod orphan_commands;

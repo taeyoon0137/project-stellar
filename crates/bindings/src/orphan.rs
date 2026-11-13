@@ -243,6 +243,18 @@ impl BindingStore {
         self.live.insert(binding)
     }
 
+    pub(crate) fn live_mut(&mut self) -> &mut BindingSet {
+        &mut self.live
+    }
+
+    pub(crate) fn insert_orphan(&mut self, orphan: OrphanedBinding) {
+        self.orphans.insert(orphan.id(), orphan);
+    }
+
+    pub(crate) fn remove_orphan(&mut self, id: BindingId) -> Option<OrphanedBinding> {
+        self.orphans.remove(&id)
+    }
+
     /// live binding을 검사해 깨진 binding을 orphan으로 옮기고, 새로 orphan이 된 ID를 돌려줍니다(ID 순). 아무것도
     /// 삭제하지 않습니다.
     pub fn orphan_broken(&mut self, world: &dyn BindingWorld) -> Vec<BindingId> {

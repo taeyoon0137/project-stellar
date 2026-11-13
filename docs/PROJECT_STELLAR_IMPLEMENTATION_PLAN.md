@@ -776,7 +776,7 @@ tools/xtask/
 | VIII.8.1 | `[x]` | target/source ref가 사라진 binding을 삭제하지 않고 `OrphanedBinding`으로 변환하는 validator를 구현합니다. 원래 ID·타입·path·원인을 보존합니다. | 삭제·타입 변경 fixture 정보 보존. | VIII.6.1, III.2.4 |
 | VIII.8.2 | `[x]` | orphaned binding 평가 결과는 대상 Component Property의 선언된 기본값을 사용하게 합니다. 마지막 계산값 저장은 금지합니다. | 재실행 후 동일 기본값. | VIII.8.1 |
 | VIII.8.3 | `[x]` | 기본값이 없거나 잘못된 파일은 타입별 안전값과 corruption diagnostic을 사용하되 프로젝트 파일을 자동 수정하지 않습니다. | malformed fixture open 가능·오류 표시. | VIII.8.2 |
-| VIII.8.4 | `[ ]` | orphaned binding 재연결과 명시 삭제 command를 구현합니다. | 재연결 후 live value, undo 후 orphan 상태. | VIII.8.1, Phase VII |
+| VIII.8.4 | `[x]` | orphaned binding 재연결과 명시 삭제 command를 구현합니다. | 재연결 후 live value, undo 후 orphan 상태. | VIII.8.1, Phase VII |
 
 ### VIII.9 성능·결정론 검증
 
