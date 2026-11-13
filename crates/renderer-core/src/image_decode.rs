@@ -8,6 +8,10 @@
 //! UI·Document·Render thread에는 decoder를 호출할 수단이 없습니다. 실제 decoder(platform
 //! codec 등)는 이 trait를 구현하고, worker pool은 [`decode_on_worker`]로 실행합니다.
 //!
+//! scope는 만들 때 thread의 Worker 역할을 pin하므로(`thread_role` 역할 pin), scope를 든 채 역할
+//! guard를 놓고 같은 thread를 UI·Document·Render로 다시 bind할 수 없습니다. 역할 해제는 마지막
+//! scope가 drop될 때까지 미뤄집니다.
+//!
 //! ## decoded pixel format
 //!
 //! 출력은 [`DecodedPixelFormat::Rgba8Unorm`] 하나로 고정합니다.
@@ -35,11 +39,10 @@
 //!   넘어가지 않습니다.
 
 use std::fmt;
-use std::marker::PhantomData;
 
 use stellar_scene::ColorSpace;
 
-use crate::thread_role::{current_thread_role, ThreadRole};
+use crate::thread_role::{pin_current_role, RolePin, ThreadRole};
 
 /// decoded pixel format. 모듈 문서의 규약을 따릅니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -291,6 +294,10 @@ impl Default for DecodeLimits {
 
 /// worker thread에서만 얻을 수 있는 decode 권한 표식. `!Send`·`!Sync`입니다.
 ///
+/// 살아 있는 동안 현재 thread의 [`ThreadRole::Worker`] 역할을 pin합니다. 역할 guard가 먼저
+/// drop되어도 마지막 scope가 drop될 때까지 역할이 해제되지 않으므로, scope가 있는 thread는
+/// 항상 worker입니다.
+///
 /// ```compile_fail
 /// use stellar_renderer_core::image_decode::DecodeWorkerScope;
 /// fn assert_send<T: Send>() {}
@@ -298,18 +305,15 @@ impl Default for DecodeLimits {
 /// ```
 #[derive(Debug)]
 pub struct DecodeWorkerScope {
-    _not_send: PhantomData<*const ()>,
+    _pin: RolePin,
 }
 
 impl DecodeWorkerScope {
-    /// 현재 thread가 [`ThreadRole::Worker`]면 scope를 반환합니다.
+    /// 현재 thread가 [`ThreadRole::Worker`]면 역할을 pin한 scope를 반환합니다.
     pub fn current() -> Result<DecodeWorkerScope, ImageDecodeError> {
-        match current_thread_role() {
-            Some(ThreadRole::Worker) => Ok(DecodeWorkerScope {
-                _not_send: PhantomData,
-            }),
-            role => Err(ImageDecodeError::NotOnWorkerThread { role }),
-        }
+        pin_current_role(ThreadRole::Worker)
+            .map(|pin| DecodeWorkerScope { _pin: pin })
+            .map_err(|role| ImageDecodeError::NotOnWorkerThread { role })
     }
 }
 
@@ -363,7 +367,7 @@ pub fn decode_on_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::thread_role::bind_thread_role;
+    use crate::thread_role::{bind_thread_role, current_thread_role};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
@@ -566,6 +570,34 @@ mod tests {
         // worker thread.
         let ok = on_worker(move || decode_on_worker(&PpmDecoder, &input, &DecodeLimits::DEFAULT));
         assert_eq!(ok.unwrap().pixel(0, 0), Some([1, 2, 3, 255]));
+    }
+
+    #[test]
+    fn scope_pins_worker_role_until_dropped() {
+        thread::spawn(|| {
+            let guard = bind_thread_role(ThreadRole::Worker).unwrap();
+            let scope = DecodeWorkerScope::current().unwrap();
+            drop(guard);
+            // scope를 든 채 render thread로 다시 bind할 수 없습니다.
+            assert_eq!(current_thread_role(), Some(ThreadRole::Worker));
+            assert!(bind_thread_role(ThreadRole::Render).is_err());
+            // scope가 살아 있는 동안 decoder 호출은 여전히 worker 역할에서 일어납니다.
+            let header = PpmDecoder.probe(&ppm(1, 1, &[1, 2, 3]), &scope).unwrap();
+            assert_eq!((header.width, header.height), (1, 1));
+            assert_eq!(current_thread_role(), Some(ThreadRole::Worker));
+            drop(scope);
+            // 마지막 scope drop에서 역할이 해제되고, 이후에는 scope를 얻을 수 없습니다.
+            assert_eq!(current_thread_role(), None);
+            let _render = bind_thread_role(ThreadRole::Render).unwrap();
+            assert_eq!(
+                DecodeWorkerScope::current().unwrap_err(),
+                ImageDecodeError::NotOnWorkerThread {
+                    role: Some(ThreadRole::Render)
+                }
+            );
+        })
+        .join()
+        .unwrap();
     }
 
     /// 결정론적 LCG.
