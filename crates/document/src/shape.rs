@@ -33,6 +33,13 @@ pub enum ShapeError {
         /// field tag.
         tag: u32,
     },
+    /// polygon 변 수가 허용 범위(3..=MAX_POLYGON_SIDES)를 벗어납니다.
+    InvalidSideCount {
+        /// 요청한 변 수.
+        sides: u32,
+    },
+    /// corner radius가 음수이거나 비유한입니다.
+    InvalidCornerRadius,
 }
 
 impl fmt::Display for ShapeError {
@@ -44,6 +51,13 @@ impl fmt::Display for ShapeError {
                 write!(f, "알 수 없는 mandatory field입니다: {tag}")
             }
             ShapeError::MissingField { tag } => write!(f, "필수 field가 없습니다: {tag}"),
+            ShapeError::InvalidSideCount { sides } => write!(
+                f,
+                "polygon 변 수는 3..={MAX_POLYGON_SIDES}이어야 합니다: {sides}"
+            ),
+            ShapeError::InvalidCornerRadius => {
+                f.write_str("corner radius는 비음수 유한 값이어야 합니다")
+            }
         }
     }
 }
@@ -354,6 +368,124 @@ impl LineParams {
     }
 }
 
+/// polygon 변 수 상한(파일 입력 방어용).
+pub const MAX_POLYGON_SIDES: u32 = 1000;
+
+/// 정다각형 파라미터 (VI.5.5).
+///
+/// 꼭짓점은 bounds에 내접하는 타원 위에 놓입니다. 회전 0°에서 첫 꼭짓점은 위쪽
+/// 가운데이며, y-down 좌표 기준 시계 방향으로 이어집니다.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PolygonParams {
+    bounds: Rect,
+    sides: u32,
+    rotation_degrees: f32,
+    corner_radius: f32,
+}
+
+impl PolygonParams {
+    /// 검증된 polygon을 만듭니다. 변 수 < 3(또는 상한 초과), 비유한 회전, 음수
+    /// radius는 거부합니다.
+    pub fn new(
+        bounds: Rect,
+        sides: u32,
+        rotation: stellar_core_types::value::Angle,
+        corner_radius: f32,
+    ) -> Result<PolygonParams, ShapeError> {
+        if !(3..=MAX_POLYGON_SIDES).contains(&sides) {
+            return Err(ShapeError::InvalidSideCount { sides });
+        }
+        if !corner_radius.is_finite() || corner_radius < 0.0 {
+            return Err(ShapeError::InvalidCornerRadius);
+        }
+        Ok(PolygonParams {
+            bounds,
+            sides,
+            rotation_degrees: rotation.get(),
+            corner_radius,
+        })
+    }
+
+    /// 변 수.
+    pub fn sides(&self) -> u32 {
+        self.sides
+    }
+
+    /// 꼭짓점 좌표(첫 꼭짓점부터 시계 방향).
+    pub fn vertices(&self) -> Vec<(f32, f32)> {
+        let o = self.bounds.origin();
+        let s = self.bounds.size();
+        let (rx, ry) = (s.width() as f64 / 2.0, s.height() as f64 / 2.0);
+        let (cx, cy) = (o.x() as f64 + rx, o.y() as f64 + ry);
+        let n = self.sides as f64;
+        (0..self.sides)
+            .map(|i| {
+                let theta =
+                    (-90.0 + self.rotation_degrees as f64 + 360.0 * i as f64 / n).to_radians();
+                (
+                    (cx + rx * theta.cos()) as f32,
+                    (cy + ry * theta.sin()) as f32,
+                )
+            })
+            .collect()
+    }
+
+    /// polygon path. corner radius가 0이면 직선 polygon, 양수면 각 꼭짓점을
+    /// 원호(cubic 근사)로 둥글립니다. 인접 변 길이의 절반을 넘는 radius는
+    /// 평가에서 clamp합니다(저장값은 원본 유지).
+    pub fn to_path(&self) -> Vec<PathCommand> {
+        let vertices = self.vertices();
+        let p = |x: f32, y: f32| Vec2::new(x, y).expect("finite polygon");
+        let n = vertices.len();
+        if self.corner_radius == 0.0 {
+            let mut path = vec![PathCommand::MoveTo(p(vertices[0].0, vertices[0].1))];
+            for v in &vertices[1..] {
+                path.push(PathCommand::LineTo(p(v.0, v.1)));
+            }
+            path.push(PathCommand::Close);
+            return path;
+        }
+        let mut path = Vec::with_capacity(2 * n + 1);
+        for i in 0..n {
+            let (vx, vy) = vertices[i];
+            let (px, py) = vertices[(i + n - 1) % n];
+            let (nx, ny) = vertices[(i + 1) % n];
+            let (ax, ay) = (px - vx, py - vy);
+            let (bx, by) = (nx - vx, ny - vy);
+            let la = (ax * ax + ay * ay).sqrt();
+            let lb = (bx * bx + by * by).sqrt();
+            let cos_alpha = ((ax * bx + ay * by) / (la * lb)).clamp(-1.0, 1.0);
+            let alpha = cos_alpha.acos(); // 내각.
+            let tan_half = (alpha / 2.0).tan();
+            let mut t = if tan_half > 0.0 {
+                self.corner_radius / tan_half
+            } else {
+                0.0
+            };
+            t = t.min(la / 2.0).min(lb / 2.0);
+            let r = t * tan_half; // clamp 후 실효 radius.
+            let phi = std::f32::consts::PI - alpha; // 회전각.
+            let handle = (4.0 / 3.0) * (phi / 4.0).tan() * r;
+            let start = (vx + ax / la * t, vy + ay / la * t);
+            let end = (vx + bx / lb * t, vy + by / lb * t);
+            let c1 = (start.0 - ax / la * handle, start.1 - ay / la * handle);
+            let c2 = (end.0 - bx / lb * handle, end.1 - by / lb * handle);
+            if i == 0 {
+                path.push(PathCommand::MoveTo(p(start.0, start.1)));
+            } else {
+                path.push(PathCommand::LineTo(p(start.0, start.1)));
+            }
+            path.push(PathCommand::CubicTo {
+                c1: p(c1.0, c1.1),
+                c2: p(c2.0, c2.1),
+                to: p(end.0, end.1),
+            });
+        }
+        path.push(PathCommand::Close);
+        path
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -598,5 +730,81 @@ mod tests {
             l.to_path(),
             vec![PathCommand::MoveTo(l.start), PathCommand::LineTo(l.end)]
         );
+    }
+
+    fn polygon(sides: u32, rotation: f32, radius: f32) -> Result<PolygonParams, ShapeError> {
+        PolygonParams::new(
+            rect(0.0, 0.0, 100.0, 100.0),
+            sides,
+            stellar_core_types::value::Angle::new(rotation).unwrap(),
+            radius,
+        )
+    }
+
+    #[test]
+    fn two_sides_are_rejected() {
+        // 검증 기준(VI.5.5): 2 sides 거부.
+        assert_eq!(
+            polygon(2, 0.0, 0.0).unwrap_err(),
+            ShapeError::InvalidSideCount { sides: 2 }
+        );
+        assert!(polygon(MAX_POLYGON_SIDES + 1, 0.0, 0.0).is_err());
+        assert_eq!(
+            polygon(3, 0.0, -1.0).unwrap_err(),
+            ShapeError::InvalidCornerRadius
+        );
+    }
+
+    #[test]
+    fn three_four_and_hundred_side_path_fixtures() {
+        // 검증 기준(VI.5.5): 3·4·100 sides path fixture 통과.
+        for sides in [3u32, 4, 100] {
+            let poly = polygon(sides, 0.0, 0.0).unwrap();
+            let path = poly.to_path();
+            // MoveTo + (n−1) LineTo + Close.
+            assert_eq!(path.len(), sides as usize + 1, "{sides} sides");
+            assert!(matches!(path[0], PathCommand::MoveTo(_)));
+            assert_eq!(path.last(), Some(&PathCommand::Close));
+            // 모든 꼭짓점이 반지름 50 원 위.
+            for (x, y) in poly.vertices() {
+                let d = ((x - 50.0).powi(2) + (y - 50.0).powi(2)).sqrt();
+                assert!((d - 50.0).abs() < 1e-3, "{sides} sides: d={d}");
+            }
+            // 첫 꼭짓점은 위쪽 가운데.
+            let (x0, y0) = poly.vertices()[0];
+            assert!((x0 - 50.0).abs() < 1e-4 && y0.abs() < 1e-4);
+        }
+        // 4 sides(회전 0)는 다이아몬드: (50,0),(100,50),(50,100),(0,50).
+        let diamond = polygon(4, 0.0, 0.0).unwrap().vertices();
+        let expected = [(50.0, 0.0), (100.0, 50.0), (50.0, 100.0), (0.0, 50.0)];
+        for ((x, y), (ex, ey)) in diamond.iter().zip(expected) {
+            assert!((x - ex).abs() < 1e-4 && (y - ey).abs() < 1e-4);
+        }
+        // 결정론.
+        assert_eq!(
+            polygon(100, 0.0, 0.0).unwrap().to_path(),
+            polygon(100, 0.0, 0.0).unwrap().to_path()
+        );
+    }
+
+    #[test]
+    fn rotation_and_corner_radius_shape_the_path() {
+        // 45° 회전한 4각형은 축 정렬 정사각형.
+        let square = polygon(4, 45.0, 0.0).unwrap().vertices();
+        let half = 50.0 * std::f32::consts::FRAC_1_SQRT_2;
+        assert!((square[0].0 - (50.0 + half)).abs() < 1e-3);
+        assert!((square[0].1 - (50.0 - half)).abs() < 1e-3);
+
+        // 둥근 모서리: MoveTo + n·Cubic + (n−1)·LineTo + Close.
+        let rounded = polygon(4, 45.0, 10.0).unwrap().to_path();
+        assert_eq!(rounded.len(), 1 + 4 + 3 + 1);
+        let cubics = rounded
+            .iter()
+            .filter(|c| matches!(c, PathCommand::CubicTo { .. }))
+            .count();
+        assert_eq!(cubics, 4);
+        // 과도한 radius는 변 절반으로 clamp되어도 유한 path.
+        let clamped = polygon(3, 0.0, 10_000.0).unwrap().to_path();
+        assert_eq!(clamped.len(), 1 + 3 + 2 + 1);
     }
 }
