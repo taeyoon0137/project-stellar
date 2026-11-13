@@ -653,7 +653,7 @@ tools/xtask/
 | VII.2.4 | `[x]` | `SetProperty`를 구현합니다. metadata registry로 type과 invalidation을 검사합니다. | 잘못된 PropertyKey/type 거부. | VII.1.4, VI.3.5 |
 | VII.2.5 | `[x]` | `SetVisibility`, `SetLocked`, `RenameNode`를 별도 command가 아니라 SetProperty specialization으로 노출합니다. | 동일 core patch 경로 사용 확인. | VII.2.4 |
 | VII.2.6 | `[x]` | `InsertModifier`, `RemoveModifier`, `MoveModifier`, `SetModifierProperty`를 각각 구현합니다. | 각 apply/inverse fixture 통과. | VI.9.1~VI.9.7, VII.1.6 |
-| VII.2.7 | `[ ]` | `ConvertFragmentToFrame`과 `ConvertShapeToPath` command를 구현해 Phase VI 변환 계획을 적용합니다. | undo 후 원본 bytes 의미 복원. | VI.4.4, VI.6.5, VII.1.6 |
+| VII.2.7 | `[x]` | `ConvertFragmentToFrame`과 `ConvertShapeToPath` command를 구현해 Phase VI 변환 계획을 적용합니다. | undo 후 원본 bytes 의미 복원. | VI.4.4, VI.6.5, VII.1.6 |
 | VII.2.8 | `[ ]` | `DuplicateSubtree`를 구현하고 IdRemapTable로 내부 ID/참조를 새로 생성합니다. | 원본과 중복 ID 없음, 내부 참조 새 subtree. | III.1.5, VII.2.1 |
 
 ### VII.3 선택 상태 Command

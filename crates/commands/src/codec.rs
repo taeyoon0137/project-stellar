@@ -19,6 +19,7 @@ use std::fmt;
 use stellar_core_types::ids::StableId;
 
 use crate::command::Command;
+use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};
 use crate::kind::CommandKind;
 use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
 use crate::node_ops::{DeleteSubtree, InsertNode, MoveNode};
@@ -289,6 +290,9 @@ fn encode_payload(command: &Command, out: &mut Writer) {
         Command::RemoveModifier(command) => command.encode_into(out),
         Command::MoveModifier(command) => command.encode_into(out),
         Command::SetModifierProperty(command) => command.encode_into(out),
+        Command::ConvertFragmentToFrame(command) => command.encode_into(out),
+        Command::ConvertShapeToPath(command) => command.encode_into(out),
+        Command::RestoreNodeRecords(command) => command.encode_into(out),
         #[cfg(test)]
         Command::TestProbe(probe) => {
             out.id(probe.node);
@@ -332,6 +336,15 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         CommandKind::MoveModifier => MoveModifier::decode_from(input).map(Command::MoveModifier),
         CommandKind::SetModifierProperty => {
             SetModifierProperty::decode_from(input).map(Command::SetModifierProperty)
+        }
+        CommandKind::ConvertFragmentToFrame => {
+            ConvertFragmentToFrame::decode_from(input).map(Command::ConvertFragmentToFrame)
+        }
+        CommandKind::ConvertShapeToPath => {
+            ConvertShapeToPath::decode_from(input).map(Command::ConvertShapeToPath)
+        }
+        CommandKind::RestoreNodeRecords => {
+            RestoreNodeRecords::decode_from(input).map(Command::RestoreNodeRecords)
         }
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {

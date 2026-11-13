@@ -21,6 +21,7 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::revision::DocumentRevision;
 use stellar_document::model::{DocumentModel, ModelError};
 
+use crate::convert::{ConvertFragmentToFrame, ConvertShapeToPath, RestoreNodeRecords};
 use crate::edit::EditContext;
 use crate::kind::CommandKind;
 use crate::modifier_ops::{InsertModifier, MoveModifier, RemoveModifier, SetModifierProperty};
@@ -125,6 +126,22 @@ pub enum CommandError {
         /// 요청 key.
         key: stellar_core_types::property::PropertyKey,
     },
+    /// 변환 대상 종류가 아닙니다(VII.2.7).
+    ConversionKind {
+        /// 대상 node.
+        node: StableId,
+        /// 변환이 요구하는 종류.
+        expected: stellar_document::node_kind::NodeKind,
+        /// 실제 종류.
+        found: stellar_document::node_kind::NodeKind,
+    },
+    /// 변환이 자식의 시각 위치를 보존할 수 없습니다(위치 필드 없는 자식, VII.2.7).
+    ConversionNotRepresentable {
+        /// 변환 대상.
+        node: StableId,
+        /// 옮길 수 없는 자손.
+        child: StableId,
+    },
     /// View root는 이 command로 삭제·이동할 수 없습니다.
     ViewRoot {
         /// 대상 node.
@@ -206,6 +223,20 @@ impl fmt::Display for CommandError {
             CommandError::PropertyNotSettable { key } => {
                 write!(f, "속성 {:#06x}는 이 command로 설정할 수 없습니다", key.0)
             }
+            CommandError::ConversionKind {
+                node,
+                expected,
+                found,
+            } => write!(
+                f,
+                "node {node}는 {}이 아니라 {}라 변환할 수 없습니다",
+                expected.name(),
+                found.name()
+            ),
+            CommandError::ConversionNotRepresentable { node, child } => write!(
+                f,
+                "node {node} 변환은 자손 {child}의 위치를 보존할 수 없습니다"
+            ),
             CommandError::ViewRoot { node } => {
                 write!(f, "View root {node}는 삭제·이동할 수 없습니다")
             }
@@ -254,6 +285,12 @@ pub enum Command {
     MoveModifier(MoveModifier),
     /// modifier 속성 변경 (VII.2.6).
     SetModifierProperty(SetModifierProperty),
+    /// Fragment → Frame 변환 (VII.2.7).
+    ConvertFragmentToFrame(ConvertFragmentToFrame),
+    /// Shape → Path 변환 (VII.2.7).
+    ConvertShapeToPath(ConvertShapeToPath),
+    /// node 레코드 복원(변환의 역, VII.2.7).
+    RestoreNodeRecords(RestoreNodeRecords),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -286,6 +323,9 @@ impl Command {
             Command::RemoveModifier(_) => CommandKind::RemoveModifier,
             Command::MoveModifier(_) => CommandKind::MoveModifier,
             Command::SetModifierProperty(_) => CommandKind::SetModifierProperty,
+            Command::ConvertFragmentToFrame(_) => CommandKind::ConvertFragmentToFrame,
+            Command::ConvertShapeToPath(_) => CommandKind::ConvertShapeToPath,
+            Command::RestoreNodeRecords(_) => CommandKind::RestoreNodeRecords,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -302,6 +342,9 @@ impl Command {
             Command::RemoveModifier(command) => command.validate(model),
             Command::MoveModifier(command) => command.validate(model),
             Command::SetModifierProperty(command) => command.validate(model),
+            Command::ConvertFragmentToFrame(command) => command.validate(model),
+            Command::ConvertShapeToPath(command) => command.validate(model),
+            Command::RestoreNodeRecords(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
         }
@@ -320,6 +363,15 @@ impl Command {
             Command::SetModifierProperty(command) => {
                 command.invert(model).map(Command::SetModifierProperty)
             }
+            Command::ConvertFragmentToFrame(command) => {
+                command.invert(model).map(Command::RestoreNodeRecords)
+            }
+            Command::ConvertShapeToPath(command) => {
+                command.invert(model).map(Command::RestoreNodeRecords)
+            }
+            Command::RestoreNodeRecords(command) => {
+                command.invert(model).map(Command::RestoreNodeRecords)
+            }
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
@@ -336,6 +388,9 @@ impl Command {
             Command::RemoveModifier(command) => command.apply(ctx),
             Command::MoveModifier(command) => command.apply(ctx),
             Command::SetModifierProperty(command) => command.apply(ctx),
+            Command::ConvertFragmentToFrame(command) => command.apply(ctx),
+            Command::ConvertShapeToPath(command) => command.apply(ctx),
+            Command::RestoreNodeRecords(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),
         }

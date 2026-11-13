@@ -29,6 +29,12 @@ pub enum CommandKind {
     MoveModifier,
     /// modifier 속성 변경 (VII.2.6).
     SetModifierProperty,
+    /// Fragment → Frame 변환 (VII.2.7).
+    ConvertFragmentToFrame,
+    /// Shape → Path 변환 (VII.2.7).
+    ConvertShapeToPath,
+    /// node 레코드 복원(변환의 역, VII.2.7).
+    RestoreNodeRecords,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -45,6 +51,9 @@ impl CommandKind {
         CommandKind::RemoveModifier,
         CommandKind::MoveModifier,
         CommandKind::SetModifierProperty,
+        CommandKind::ConvertFragmentToFrame,
+        CommandKind::ConvertShapeToPath,
+        CommandKind::RestoreNodeRecords,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -61,6 +70,9 @@ impl CommandKind {
             CommandKind::RemoveModifier => 0x0021,
             CommandKind::MoveModifier => 0x0022,
             CommandKind::SetModifierProperty => 0x0023,
+            CommandKind::ConvertFragmentToFrame => 0x0030,
+            CommandKind::ConvertShapeToPath => 0x0031,
+            CommandKind::RestoreNodeRecords => 0x0032,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -89,6 +101,9 @@ impl CommandKind {
             CommandKind::RemoveModifier => "remove-modifier",
             CommandKind::MoveModifier => "move-modifier",
             CommandKind::SetModifierProperty => "set-modifier-property",
+            CommandKind::ConvertFragmentToFrame => "convert-fragment-to-frame",
+            CommandKind::ConvertShapeToPath => "convert-shape-to-path",
+            CommandKind::RestoreNodeRecords => "restore-node-records",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -138,6 +153,9 @@ mod tests {
                 (0x0021, "remove-modifier"),
                 (0x0022, "move-modifier"),
                 (0x0023, "set-modifier-property"),
+                (0x0030, "convert-fragment-to-frame"),
+                (0x0031, "convert-shape-to-path"),
+                (0x0032, "restore-node-records"),
             ]
         );
     }
