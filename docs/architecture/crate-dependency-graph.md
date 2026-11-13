@@ -10,8 +10,8 @@
 |---|---|
 | `stellar-core-types` | (없음) |
 | `stellar-document` | core-types |
-| `stellar-commands` | document |
-| `stellar-history` | commands |
+| `stellar-commands` | document, core-types |
+| `stellar-history` | commands, core-types |
 | `stellar-expressions` | core-types |
 | `stellar-bindings` | core-types |
 | `stellar-layout` | core-types |
@@ -38,7 +38,9 @@
 graph TD
   document --> core_types
   commands --> document
+  commands --> core_types
   history --> commands
+  history --> core_types
   expressions --> core_types
   bindings --> core_types
   layout --> core_types
@@ -66,6 +68,7 @@ graph TD
 
 ## 규칙
 
+- `commands`와 `history`는 이미 `document`를 거쳐 `core-types`에 전이 의존하므로, StableId·WindowSessionId·DocumentRevision 같은 기본 타입을 직접 쓰도록 `core-types` 직접 의존을 허용합니다(2026-11-14, `semantic-diff` 선례와 같음).
 - `git-porcelain`은 `document`를 직접 의존하지 않고 snapshot 인터페이스(빈 trait)에만 의존합니다.
 - 플랫폼 backend(`renderer-metal`/`renderer-d3d12`)는 공통 backend(`renderer-core`)를 역참조하지 않습니다.
 - 표에 없는 edge는 금지이며 `validate-crate-graph`가 `forbidden-edge`로 거부합니다.
