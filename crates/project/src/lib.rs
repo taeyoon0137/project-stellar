@@ -68,3 +68,6 @@ pub mod external_change;
 
 /// 지연 자동 저장 정책 (XIII.1.1).
 pub mod autosave;
+
+/// 디스크에 저장된 프로젝트 loader와 Git snapshot 연결 (XIV.2.7).
+pub mod saved_project;
