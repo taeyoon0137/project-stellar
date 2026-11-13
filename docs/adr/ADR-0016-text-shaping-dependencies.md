@@ -86,7 +86,8 @@ validator는 직접 의존성만 검사하므로 이 표로 검토 기록을 남
 - 부정: 정책 validator(`cargo xtask validate-dependencies`)는 현재 `cargo tree -p xtask`의 직접
   의존성만 수집합니다(`tools/xtask/src/commands.rs`). 제품 crate의 승인 항목은 `unused-approval`로
   보고되므로, workspace 전체 직접 의존성을 수집하도록 validator 범위를 넓히는 후속 수정이
-  필요합니다(이 ADR 범위 밖).
+  필요합니다(이 ADR 범위 밖). 실제 승인 목록을 `["yaml-rust2"]`만으로 검증하는 xtask 단위 테스트
+  (`real_dependencies_file_parses`)도 같은 이유로 함께 고쳐야 합니다.
 
 ## Compatibility
 

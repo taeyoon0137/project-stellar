@@ -77,7 +77,9 @@
   `harfrust`를 `unused-approval`로 보고하고 종료 코드 65로 실패합니다. CI `bootstrap.yml`도 이 명령을
   실행합니다. 승인 목록은 workspace 실제 직접 의존성과 정확히 일치하므로, validator가 workspace 전체
   (`cargo tree --workspace` 또는 `cargo metadata`)를 수집하도록 고치는 `Fix:`가 필요합니다. 이 lane의
-  허용 경로 밖이라 수정하지 않았습니다.
+  허용 경로 밖이라 수정하지 않았습니다. 같은 원인으로 `tools/xtask/src/dependencies.rs`의 단위 테스트
+  `real_dependencies_file_parses`(실제 승인 목록을 직접 의존성 `["yaml-rust2"]`만으로 검증)도 실패해 `cargo xtask
+  check-core`의 test 단계가 실패합니다(X.10.7 보고서에 실행 결과). 두 곳을 함께 고쳐야 합니다.
 - 전이 의존성 중 Zlib(foldhash)·Unicode-3.0(yoke, zerofrom, unicode-ident) 라이선스는 자동 허용
   목록 밖이며 ADR-0016 표에 기록만 했습니다.
 - `harfrust`는 0.x입니다. 갱신 시 X.10.7 golden을 다시 검증해야 합니다.
