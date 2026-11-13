@@ -2991,238 +2991,425 @@ tasks:
     verified_at: "2026-11-14T01:06:37+09:00"
   - id: "VII.1.1"
     title: "`CommandId`, `WindowSessionId`, `CommandOrigin`을 정의합니다. Origin은 User, System, Migration, FutureAgent를 포함하되 FutureAgent 동작은 구현하지 않습니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.1.1.md"
+    commit: "952c054ba3aa771798c0cdb938c6d920ba1bf084"
+    report: "docs/task-reports/VII.1.1.md"
+    verified_at: "2026-11-14T02:39:37+09:00"
   - id: "VII.1.2"
     title: "`Command` trait 대신 직렬화 가능한 closed enum을 사용하고 `validate`, `apply`, `invert` 인터페이스를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.1.2.md"
+    commit: "cb6ae0326e1c87fe065664b4b3bb222f77ca31aa"
+    report: "docs/task-reports/VII.1.2.md"
+    verified_at: "2026-11-14T02:39:37+09:00"
   - id: "VII.1.3"
     title: "모든 command에 base DocumentRevision과 precondition 목록을 포함합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.3.4"
       - "VII.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.1.3.md"
+    commit: "8cea6fec859e8e30784a9138827e2ef935123e14"
+    report: "docs/task-reports/VII.1.3.md"
+    verified_at: "2026-11-14T02:39:37+09:00"
   - id: "VII.1.4"
     title: "command 결과에 changed nodes, changed properties, invalidation classes, new revision을 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.2"
       - "VI.9.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.1.4.md"
+    commit: "967a5d9732f80d0e9093171389886784c49fc672"
+    report: "docs/task-reports/VII.1.4.md"
+    verified_at: "2026-11-14T02:39:37+09:00"
   - id: "VII.1.5"
     title: "apply 도중 오류가 나면 변경 전 arena state로 되돌리는 transaction guard를 구현합니다. 전체 document clone은 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.1.5.md"
+    commit: "1aa037e34938ec9ec2a60287664e0c8738ed4335"
+    report: "docs/task-reports/VII.1.5.md"
+    verified_at: "2026-11-14T02:39:37+09:00"
   - id: "VII.1.6"
     title: "여러 command를 묶는 `CommandTransaction`을 구현하고 전부 성공하거나 전부 롤백하게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.1.6.md"
+    commit: "35b1f984e6991a47cffa18d3dfcfc3bee69d9bac"
+    report: "docs/task-reports/VII.1.6.md"
+    verified_at: "2026-11-14T02:39:37+09:00"
   - id: "VII.2.1"
     title: "`InsertNode`를 구현합니다. caller가 StableId를 제공하며 duplicate, invalid parent, invalid OrderKey를 검증합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.6"
       - "VI.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.2.1.md"
+    commit: "04b9daa6f2503b714977260e7364bb4254b79ed8"
+    report: "docs/task-reports/VII.2.1.md"
+    verified_at: "2026-11-14T02:39:38+09:00"
   - id: "VII.2.2"
     title: "`DeleteSubtree`를 구현합니다. 삭제 전 subtree와 내부 참조를 inverse payload에 보존합니다. 외부 inbound ref가 있으면 정책 오류를 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.2.1"
       - "VI.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.2.2.md"
+    commit: "be91c30e5e4d5e42b47150b68c5d89db92212f13"
+    report: "docs/task-reports/VII.2.2.md"
+    verified_at: "2026-11-14T02:39:38+09:00"
   - id: "VII.2.3"
     title: "`MoveNode`를 구현합니다. parent와 OrderKey를 함께 변경하고 cycle·cross-view를 검증합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.2.3.md"
+    commit: "1e1ab4145c1fa7bd7094ffe00c2984ace389ae79"
+    report: "docs/task-reports/VII.2.3.md"
+    verified_at: "2026-11-14T02:39:38+09:00"
   - id: "VII.2.4"
     title: "`SetProperty`를 구현합니다. metadata registry로 type과 invalidation을 검사합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.4"
       - "VI.3.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.2.4.md"
+    commit: "dff0871f3089cf1cb5e32bacbfa6444372f79a01"
+    report: "docs/task-reports/VII.2.4.md"
+    verified_at: "2026-11-14T02:39:38+09:00"
   - id: "VII.2.5"
     title: "`SetVisibility`, `SetLocked`, `RenameNode`를 별도 command가 아니라 SetProperty specialization으로 노출합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.2.5.md"
+    commit: "1d655fb17e8ec8269992a08e495f29e520b66da0"
+    report: "docs/task-reports/VII.2.5.md"
+    verified_at: "2026-11-14T02:39:38+09:00"
   - id: "VII.2.6"
     title: "`InsertModifier`, `RemoveModifier`, `MoveModifier`, `SetModifierProperty`를 각각 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.2.6.md"
+    commit: "8f39887e4888fce39f3464133e53a225c77907ca"
+    report: "docs/task-reports/VII.2.6.md"
+    verified_at: "2026-11-14T02:39:38+09:00"
   - id: "VII.2.7"
     title: "`ConvertFragmentToFrame`과 `ConvertShapeToPath` command를 구현해 Phase VI 변환 계획을 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.4.4"
       - "VI.6.5"
       - "VII.1.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.2.7.md"
+    commit: "4c86ce387614f7127a4034b9f080646ce6ae60a8"
+    report: "docs/task-reports/VII.2.7.md"
+    verified_at: "2026-11-14T02:39:38+09:00"
   - id: "VII.2.8"
     title: "`DuplicateSubtree`를 구현하고 IdRemapTable로 내부 ID/참조를 새로 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.5"
       - "VII.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.2.8.md"
+    commit: "a39ea944834d158a8f7802d007d710e1c458cd0e"
+    report: "docs/task-reports/VII.2.8.md"
+    verified_at: "2026-11-14T02:39:38+09:00"
   - id: "VII.3.1"
     title: "선택 상태를 document model이 아니라 `WindowViewState`에 저장합니다. selected StableId ordered set와 primary selection을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.1"
       - "VI.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.3.1.md"
+    commit: "55bce67cabf9c03490e5ee891c45937666acaa91"
+    report: "docs/task-reports/VII.3.1.md"
+    verified_at: "2026-11-14T02:39:38+09:00"
   - id: "VII.3.2"
     title: "`SetSelection` history event를 구현하고 존재하지 않거나 숨김 정책상 선택 불가 ID를 걸러냅니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.3.2.md"
+    commit: "df687804c6da75ca1f5268975c47fc66e7edbe08"
+    report: "docs/task-reports/VII.3.2.md"
+    verified_at: "2026-11-14T02:39:39+09:00"
   - id: "VII.3.3"
     title: "영역 선택 중간 상태는 transient preview로 유지하고 pointer up 때 최종 SetSelection 한 건만 생성하는 grouping API를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.3.3.md"
+    commit: "6b8d87357e79b4d51d993295e20e96fc7cd95eb3"
+    report: "docs/task-reports/VII.3.3.md"
+    verified_at: "2026-11-14T02:39:39+09:00"
   - id: "VII.3.4"
     title: "node 삭제 시 각 WindowViewState에서 삭제된 ID를 selection에서 제거하는 system event를 적용하되 사용자 history 항목은 만들지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.2.2"
       - "VII.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.3.4.md"
+    commit: "40334058b07e0c30d84899c17fb01bc28d891fbb"
+    report: "docs/task-reports/VII.3.4.md"
+    verified_at: "2026-11-14T02:39:39+09:00"
   - id: "VII.4.1"
     title: "`HistoryEntry`에 origin, forward transaction, inverse transaction, grouping key, timestamp 대신 monotonic sequence를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.6"
       - "II.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.4.1.md"
+    commit: "91d646b00f7491339cb209c883111c9b0b9c94c4"
+    report: "docs/task-reports/VII.4.1.md"
+    verified_at: "2026-11-14T02:39:39+09:00"
   - id: "VII.4.2"
     title: "pointer gesture begin/update/end API를 구현합니다. update는 같은 preview transaction을 교체하고 end에서 한 entry를 확정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.4.2.md"
+    commit: "5488c16702f6457b36a956a7e1004468c3aa613a"
+    report: "docs/task-reports/VII.4.2.md"
+    verified_at: "2026-11-14T02:39:39+09:00"
   - id: "VII.4.3"
     title: "텍스트 입력 grouping은 동일 Text node, 인접 caret, 입력 종류, 짧은 manual-clock interval 조건으로 합칩니다. interval 값은 config에 둡니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.7.5"
       - "VII.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.4.3.md"
+    commit: "6fc43f95c25c7ed5edb69aac83a98618ed294fdc"
+    report: "docs/task-reports/VII.4.3.md"
+    verified_at: "2026-11-14T02:39:39+09:00"
   - id: "VII.4.4"
     title: "키보드 이동·resize 반복은 같은 command signature와 interval 조건으로 합칩니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.4.4.md"
+    commit: "83b4bce84db195fe90d94bee7bff7c3ee170779f"
+    report: "docs/task-reports/VII.4.4.md"
+    verified_at: "2026-11-14T02:39:39+09:00"
   - id: "VII.4.5"
     title: "slider/scrub begin/end grouping을 구현합니다. 취소 시 preview 전 상태로 돌아가고 history를 만들지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.4.5.md"
+    commit: "4376b56661d5f3ede4ccf988c408e1a29c1c5317"
+    report: "docs/task-reports/VII.4.5.md"
+    verified_at: "2026-11-14T02:39:39+09:00"
   - id: "VII.4.6"
     title: "Selection event와 document edit를 동일 시간순 스택에 넣습니다. Undo는 마지막 종류와 무관하게 한 entry씩 되돌립니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.3.2"
       - "VII.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.4.6.md"
+    commit: "7bc022c00138a3576e6704beea888bc571c8bffc"
+    report: "docs/task-reports/VII.4.6.md"
+    verified_at: "2026-11-14T02:39:40+09:00"
   - id: "VII.5.1"
     title: "`WindowHistory`를 WindowSessionId별로 생성하고 다른 창 entry를 포함하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.4.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.5.1.md"
+    commit: "f6e17c89f4c2e9467a1a7309f334d2c8443fb7b2"
+    report: "docs/task-reports/VII.5.1.md"
+    verified_at: "2026-11-14T02:39:40+09:00"
   - id: "VII.5.2"
     title: "Undo는 해당 창의 inverse transaction을 현재 창의 in-memory document state에 적용합니다. 다른 창과 모델을 공유하지 않는 현재 정책을 반영합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.5.2.md"
+    commit: "658331c49b22db3ee5cc2b278e36526a64821879"
+    report: "docs/task-reports/VII.5.2.md"
+    verified_at: "2026-11-14T02:39:40+09:00"
   - id: "VII.5.3"
     title: "Redo stack은 Undo 후 같은 창에서 새 command가 확정되면 폐기합니다. 다른 창 저장 변화는 해당 창 history를 즉시 폐기하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.5.3.md"
+    commit: "a6cf62ea5115a1e4a66f5822845c82f0dfcf6154"
+    report: "docs/task-reports/VII.5.3.md"
+    verified_at: "2026-11-14T02:39:40+09:00"
   - id: "VII.5.4"
     title: "창 닫기 시 WindowHistory와 selection을 폐기하고 project 파일에는 기록하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.5.4.md"
+    commit: "d310b6d5c73c4ef220f4315d4b23857e8c08f14a"
+    report: "docs/task-reports/VII.5.4.md"
+    verified_at: "2026-11-14T02:39:40+09:00"
   - id: "VII.5.5"
     title: "Undo/Redo 중 생성되는 selection restoration은 새 history entry를 만들지 않게 reentrancy guard를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.5.5.md"
+    commit: "8a70bc4721aa2ed0dc82eeb986569eccedf5e290"
+    report: "docs/task-reports/VII.5.5.md"
+    verified_at: "2026-11-14T02:39:40+09:00"
   - id: "VII.6.1"
     title: "각 command에 `apply(forward); apply(inverse)`가 원본 semantic snapshot으로 돌아오는 property test macro를 작성합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.6.1.md"
+    commit: "24dc07cbafeb8b0fb320f20983f9e73eba9ba978"
+    report: "docs/task-reports/VII.6.1.md"
+    verified_at: "2026-11-14T02:39:40+09:00"
   - id: "VII.6.2"
     title: "random valid command sequence 1,000개를 생성하고 전체 undo 후 초기 상태, 전체 redo 후 최종 상태를 확인합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.6.1"
       - "VII.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VII.6.2.md"
+    commit: "25ed7d3afd6d0082ff1c0d06f9b5f68a1bc4d39a"
+    report: "docs/task-reports/VII.6.2.md"
+    verified_at: "2026-11-14T02:39:40+09:00"
   - id: "VII.6.3"
     title: "command 실행 중 panic·out-of-bounds가 없는 fuzz target을 추가합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VII.1.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/VII.6.3.md"
   - id: "VIII.1.1"
     title: "`ExpressionType`을 TypedValue와 1:1 대응하도록 정의하고 nullable은 일반 타입과 별도 `Optional<T>`로 표현합니다."
     status: verified
@@ -9068,11 +9255,17 @@ tasks:
       - DEV-MAC
   - id: "XXV.1.1"
     title: "session-only HistoryEntry의 stable journal schema와 version을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXV.1.1.md"
+    commit: "406b55181d5bb387ec54eefaaae9390fa88ad085"
+    report: "docs/task-reports/XXV.1.1.md"
+    verified_at: "2026-11-14T02:39:41+09:00"
   - id: "XXV.1.2"
     title: "completed transaction과 inverse를 project-local ignored path 또는 OS app data 정책에 따라 기록합니다. Git 추적 금지 검사를 추가합니다."
     status: not_started
