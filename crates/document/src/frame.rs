@@ -14,7 +14,11 @@ use std::fmt;
 
 use stellar_core_types::color::Color;
 use stellar_core_types::ids::StableId;
+use stellar_core_types::property::PropertyPath;
+use stellar_core_types::reference::{NodeRef, UnresolvedRef};
 use stellar_core_types::value::{FiniteF32, NonFiniteError, Size2, Transform2D};
+
+use crate::node_kind::NodeKind;
 
 /// Frame payload 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,27 +55,84 @@ impl From<NonFiniteError> for FrameError {
     }
 }
 
-/// clipping 방식.
+/// clipping 방식 (VI.3.1, VI.3.4).
 ///
-/// VI.3.4에서 별도 PathRef clip 형식이 추가됩니다. 숫자 tag는 저장 포맷의
-/// 일부입니다.
+/// 숫자 tag는 저장 포맷의 일부입니다: 0 = 없음, 1 = frame bounds, 2 = PathRef.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[repr(u8)]
 pub enum Clipping {
     /// clip하지 않음.
-    Disabled = 0,
-    /// frame bounds로 clip(기본).
+    Disabled,
+    /// clip path가 없을 때의 기본: frame bounds로 clip.
     #[default]
-    FrameBounds = 1,
+    FrameBounds,
+    /// 별도 Path node의 geometry로 clip. 대상이 없으면 미해결 진단이 됩니다.
+    Path(NodeRef),
 }
 
-impl Clipping {
-    fn from_u8(value: u8) -> Option<Clipping> {
-        match value {
-            0 => Some(Clipping::Disabled),
-            1 => Some(Clipping::FrameBounds),
-            _ => None,
-        }
+const CLIP_TAG_DISABLED: u8 = 0;
+const CLIP_TAG_FRAME_BOUNDS: u8 = 1;
+const CLIP_TAG_PATH: u8 = 2;
+
+/// Frame 속성 key (VI.3.4·VI.3.5 공용). 숫자 값은 저장·진단 경로의 일부입니다.
+pub mod keys {
+    use stellar_core_types::property::PropertyKey;
+
+    /// size.
+    pub const SIZE: PropertyKey = PropertyKey(0x0101);
+    /// local transform.
+    pub const TRANSFORM: PropertyKey = PropertyKey(0x0102);
+    /// clipping.
+    pub const CLIPPING: PropertyKey = PropertyKey(0x0103);
+    /// background.
+    pub const BACKGROUND: PropertyKey = PropertyKey(0x0104);
+    /// border.
+    pub const BORDER: PropertyKey = PropertyKey(0x0105);
+    /// corner radius.
+    pub const CORNER_RADIUS: PropertyKey = PropertyKey(0x0106);
+    /// layout mode 참조.
+    pub const LAYOUT_MODE: PropertyKey = PropertyKey(0x0107);
+}
+
+/// clip 해석 결과 (VI.3.4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClipResolution {
+    /// clip 없음.
+    None,
+    /// frame bounds clip.
+    FrameBounds,
+    /// 해석된 Path node clip.
+    Path(NodeRef),
+    /// clip 대상이 없음 — invalid node가 아니라 미해결 진단입니다(III.2.4).
+    Unresolved(UnresolvedRef),
+    /// clip 대상이 Path node가 아닙니다.
+    NotAPath {
+        /// 참조된 node.
+        target: NodeRef,
+        /// 실제 종류.
+        kind: NodeKind,
+    },
+}
+
+/// frame의 clip을 해석합니다.
+///
+/// `lookup`은 StableId로 node 종류를 찾습니다(없으면 `None`). PathRef 대상이
+/// 없으면 frame을 거부하지 않고 `PropertyPath(frame, CLIPPING)` 위치의
+/// [`UnresolvedRef`]로 보고합니다.
+pub fn resolve_clip(
+    frame_id: StableId,
+    clipping: Clipping,
+    lookup: impl Fn(StableId) -> Option<NodeKind>,
+) -> ClipResolution {
+    match clipping {
+        Clipping::Disabled => ClipResolution::None,
+        Clipping::FrameBounds => ClipResolution::FrameBounds,
+        Clipping::Path(target) => match lookup(target.id()) {
+            None => ClipResolution::Unresolved(
+                target.unresolved_at(PropertyPath::with_keys(frame_id, vec![keys::CLIPPING])),
+            ),
+            Some(NodeKind::Path) => ClipResolution::Path(target),
+            Some(kind) => ClipResolution::NotAPath { target, kind },
+        },
     }
 }
 
@@ -250,7 +311,14 @@ impl FramePayload {
         for component in [a, b, c, d, tx, ty] {
             put_f32(&mut buf, component);
         }
-        buf.push(self.clipping as u8);
+        match self.clipping {
+            Clipping::Disabled => buf.push(CLIP_TAG_DISABLED),
+            Clipping::FrameBounds => buf.push(CLIP_TAG_FRAME_BOUNDS),
+            Clipping::Path(target) => {
+                buf.push(CLIP_TAG_PATH);
+                buf.extend_from_slice(&target.id().to_bytes());
+            }
+        }
         match &self.background {
             Some(color) => {
                 buf.push(1);
@@ -298,9 +366,20 @@ impl FramePayload {
         let ty = reader.take_f32()?;
         let transform = Transform2D::new(a, b, c, d, tx, ty)?;
 
-        let clipping = Clipping::from_u8(reader.take_u8()?).ok_or(FrameError::Malformed {
-            reason: "알 수 없는 clipping tag",
-        })?;
+        let clipping = match reader.take_u8()? {
+            CLIP_TAG_DISABLED => Clipping::Disabled,
+            CLIP_TAG_FRAME_BOUNDS => Clipping::FrameBounds,
+            CLIP_TAG_PATH => {
+                let mut id = [0u8; 16];
+                id.copy_from_slice(reader.take(16)?);
+                Clipping::Path(NodeRef::new(StableId::from_bytes(id)))
+            }
+            _ => {
+                return Err(FrameError::Malformed {
+                    reason: "알 수 없는 clipping tag",
+                })
+            }
+        };
 
         let background = match reader.take_u8()? {
             0 => None,
@@ -601,6 +680,75 @@ mod tests {
         assert_eq!(
             signed_extent_to_size_and_mirror(f32::INFINITY, 1.0).unwrap_err(),
             FrameError::NonFinite
+        );
+    }
+
+    #[test]
+    fn clip_forms_round_trip() {
+        for clipping in [
+            Clipping::Disabled,
+            Clipping::FrameBounds,
+            Clipping::Path(NodeRef::new(stable(77))),
+        ] {
+            let payload = FramePayload {
+                clipping,
+                ..FramePayload::default()
+            };
+            assert_eq!(FramePayload::decode(&payload.encode()).unwrap(), payload);
+        }
+    }
+
+    #[test]
+    fn missing_clip_ref_is_unresolved_diagnostic() {
+        // 검증 기준(VI.3.4): missing clip ref는 unresolved diagnostic.
+        use stellar_core_types::reference::ExpectedRefType;
+        let frame_id = stable(1);
+        let missing = NodeRef::new(stable(99));
+        let resolution = resolve_clip(frame_id, Clipping::Path(missing), |_| None);
+        let ClipResolution::Unresolved(unresolved) = resolution else {
+            panic!("미해결 진단이어야 함: {resolution:?}");
+        };
+        assert_eq!(unresolved.original_id(), stable(99));
+        assert_eq!(unresolved.expected(), ExpectedRefType::Node);
+        assert_eq!(
+            unresolved.location(),
+            &PropertyPath::with_keys(frame_id, vec![keys::CLIPPING])
+        );
+    }
+
+    #[test]
+    fn clip_resolution_forms() {
+        let frame_id = stable(1);
+        let path_node = stable(10);
+        let rect_node = stable(11);
+        let lookup = |id: StableId| {
+            if id == path_node {
+                Some(NodeKind::Path)
+            } else if id == rect_node {
+                Some(NodeKind::Shape)
+            } else {
+                None
+            }
+        };
+        // clip path 없음 → frame bounds(기본).
+        assert_eq!(
+            resolve_clip(frame_id, Clipping::default(), lookup),
+            ClipResolution::FrameBounds
+        );
+        assert_eq!(
+            resolve_clip(frame_id, Clipping::Disabled, lookup),
+            ClipResolution::None
+        );
+        assert_eq!(
+            resolve_clip(frame_id, Clipping::Path(NodeRef::new(path_node)), lookup),
+            ClipResolution::Path(NodeRef::new(path_node))
+        );
+        assert_eq!(
+            resolve_clip(frame_id, Clipping::Path(NodeRef::new(rect_node)), lookup),
+            ClipResolution::NotAPath {
+                target: NodeRef::new(rect_node),
+                kind: NodeKind::Shape
+            }
         );
     }
 }
