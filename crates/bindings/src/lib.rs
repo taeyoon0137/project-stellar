@@ -26,3 +26,6 @@ pub mod scheduler;
 
 /// 평가 값 provenance chain (VIII.6.5).
 pub mod provenance;
+
+/// binding 생성·교체·삭제 command (VIII.6.6).
+pub mod binding_commands;
