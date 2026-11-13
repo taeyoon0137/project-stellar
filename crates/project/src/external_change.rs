@@ -20,6 +20,10 @@
 //! 않으므로 대기 중 current pointer는 바뀌지 않습니다.
 //!
 //! 로컬 변경이 없는 창의 reload(XIII.3.1)와 reconciliation(XIII.3.4)은 이 상태 위에서 연결합니다.
+//!
+//! agent lock(XIII.3.5): 잠금된 agent subtree와 외부 변경의 충돌 정책은 로드맵 Phase R3에서 연결합니다.
+//! 초기 릴리스에는 agent lock 상태·feature가 **없으며**, 대기 상태는 위 세 snapshot만 보존하고 외부 변경
+//! 판단은 agent 잠금을 참고하지 않습니다(테스트가 상태 구조와 crate 소스·feature 목록으로 확인).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -736,5 +740,68 @@ pub(crate) mod tests {
         assert!(matches!(window.state(), WindowDiskState::Clean { .. }));
         assert_eq!(window.base().generation(), 3);
         assert_eq!(window.take_alert(), None);
+    }
+
+    /// 초기 릴리스(R3 이전) 빌드에 agent lock 상태가 없음을 확인합니다(XIII.3.5).
+    #[test]
+    fn initial_release_build_keeps_no_agent_state() {
+        // 1) 대기 상태는 세 snapshot만 가짐: 필드가 늘면 이 완전 분해가 컴파일되지 않습니다.
+        let sc = scenario();
+        let pending = ExternalChangePending {
+            loaded_base: DiskSnapshot::from(sc.base.clone()),
+            current_memory: MemorySnapshot::capture(
+                &DiskSnapshot::from(sc.base.clone()),
+                memory_edit(b"m"),
+                roots(),
+            )
+            .unwrap(),
+            external_disk: DiskSnapshot::from(sc.external.clone()),
+        };
+        let ExternalChangePending {
+            loaded_base: _,
+            current_memory: _,
+            external_disk: _,
+        } = pending;
+        // 창 상태 변형도 세 가지뿐(새 변형이 생기면 이 match가 컴파일되지 않습니다).
+        let variant = |state: &WindowDiskState| match state {
+            WindowDiskState::Clean { .. } => 0,
+            WindowDiskState::Dirty { .. } => 1,
+            WindowDiskState::ExternalChangePending(_) => 2,
+        };
+        assert_eq!(variant(sc.window.state()), 0);
+
+        // 2) crate 소스에 agent lock 상태 식별자가 없음(검사 문자열은 이 파일과 겹치지 않게 조합).
+        let forbidden = [
+            concat!("Agent", "Lock"),
+            concat!("agent", "_lock"),
+            concat!("Locked", "Subtree"),
+            concat!("locked", "_subtree"),
+            concat!("Agent", "Edit"),
+        ];
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut stack = vec![src];
+        let mut scanned = 0;
+        while let Some(dir) = stack.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    scanned += 1;
+                    for word in forbidden {
+                        assert!(!text.contains(word), "{word} in {path:?}");
+                    }
+                }
+            }
+        }
+        assert!(scanned > 10);
+
+        // 3) agent lock feature가 없음(feature off가 유일한 빌드).
+        let manifest =
+            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"))
+                .unwrap();
+        assert!(!manifest.to_ascii_lowercase().contains("agent"));
+        assert!(!manifest.contains("[features]"));
     }
 }

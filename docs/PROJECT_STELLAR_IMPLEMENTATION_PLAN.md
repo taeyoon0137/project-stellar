@@ -1283,7 +1283,7 @@ tools/xtask/
 | XIII.3.2 | `[x]` | 로컬 변경이 있으면 LoadedBase, CurrentMemory, ExternalDisk snapshot을 보존한 `ExternalChangePending` 상태를 생성합니다. | 세 snapshot hash 기록. | XIII.2.5, V.4.4 |
 | XIII.3.3 | `[x]` | Semantic Reconciliation 구현 전에는 pending 상태에서 autosave를 중지하고 read-only alert만 반환합니다. 자동 overwrite를 금지합니다. | pending 중 current pointer 미변경. | XIII.3.2 |
 | XIII.3.4 | `[ ]` | Phase XIV Semantic Merge 완료 후 세 snapshot reconciliation을 연결하고 겹치지 않는 변경만 자동 적용합니다. | non-overlap fixture 자동, overlap conflict. | XIII.3.2, XIV.10.9 |
-| XIII.3.5 | `[ ]` | 잠금된 agent subtree와 외부 변경 충돌 정책은 로드맵 Phase R3에서 연결하며 초기 릴리스에는 agent lock 코드가 비활성임을 검증합니다. | feature off build에 agent state 없음. | XIII.3.2 |
+| XIII.3.5 | `[x]` | 잠금된 agent subtree와 외부 변경 충돌 정책은 로드맵 Phase R3에서 연결하며 초기 릴리스에는 agent lock 코드가 비활성임을 검증합니다. | feature off build에 agent state 없음. | XIII.3.2 |
 
 ### XIII.4 심볼릭 링크
 
