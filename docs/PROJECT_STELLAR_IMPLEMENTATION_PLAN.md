@@ -1431,7 +1431,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XIV.8.1 | `[ ]` | staged snapshot이 valid Stellar project인지 commit 전에 재검증합니다. invalid하면 Git commit을 실행하지 않습니다. | invalid index fixture process spawn 0. | XIV.6.5, VI.10.1 |
 | XIV.8.2 | `[x]` | commit message를 temp file 또는 stdin으로 시스템 Git에 전달하고 shell escaping에 의존하지 않습니다. | multiline/unicode message fixture 통과. | IV.3.3 |
-| XIV.8.3 | `[ ]` | user.name/email 미설정 오류를 구조화해 UI가 안내할 수 있게 합니다. Stellar가 전역 config를 자동 수정하지 않습니다. | missing identity fixture 통과. | IV.4.5 |
+| XIV.8.3 | `[x]` | user.name/email 미설정 오류를 구조화해 UI가 안내할 수 있게 합니다. Stellar가 전역 config를 자동 수정하지 않습니다. | missing identity fixture 통과. | IV.4.5 |
 | XIV.8.4 | `[ ]` | commit 성공 후 HEAD, index, status를 다시 조회하고 자동 push하지 않습니다. | commit hash 변경, staged diff 0. | XIV.8.1~XIV.8.3 |
 | XIV.8.5 | `[ ]` | commit hook/filter가 실행될 수 있으므로 trusted project에서만 commit을 허용하고 Git 결과를 그대로 반환합니다. hook 실패를 우회하지 않습니다. | failing hook fixture commit 없음. | XIV.1.1, XIV.8.4 |
 
