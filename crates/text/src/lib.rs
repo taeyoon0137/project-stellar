@@ -42,5 +42,8 @@ pub mod paragraph;
 /// shaping 결과의 너비 기반 줄 나누기 (X.10.1).
 pub mod line_layout;
 
+/// 줄 높이·paragraph 간격·가로 정렬·text box 세로 정렬 (X.10.2).
+pub mod text_layout;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;

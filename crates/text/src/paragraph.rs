@@ -176,6 +176,7 @@ pub struct ShapedParagraph {
     segments: Vec<Segment>,
     missing: Vec<MissingGlyphCluster>,
     default_metrics: ScaledLineMetrics,
+    default_font_size: Option<FontSize>,
 }
 
 impl ShapedParagraph {
@@ -207,6 +208,11 @@ impl ShapedParagraph {
     /// 빈 paragraph·glyph 없는 줄에 쓰는 metric(첫 style 첫 사용 가능 face 기준).
     pub fn default_metrics(&self) -> ScaledLineMetrics {
         self.default_metrics
+    }
+
+    /// 빈 줄의 글꼴 크기(첫 span style, style이 없으면 `None`).
+    pub fn default_font_size(&self) -> Option<FontSize> {
+        self.default_font_size
     }
 
     /// segment 경계 offset인지(0과 텍스트 끝 포함).
@@ -324,7 +330,7 @@ pub fn shape_paragraph<S: FaceSource + ?Sized>(
         });
     }
 
-    let default_metrics = default_metrics(input, styles, faces)?;
+    let (default_metrics, default_font_size) = default_metrics(input, styles, faces)?;
     Ok(ShapedParagraph {
         text: text.to_string(),
         itemization,
@@ -332,6 +338,7 @@ pub fn shape_paragraph<S: FaceSource + ?Sized>(
         segments,
         missing,
         default_metrics,
+        default_font_size,
     })
 }
 
@@ -340,23 +347,25 @@ fn default_metrics<S: FaceSource + ?Sized>(
     input: &ParagraphInput<'_>,
     styles: &[TextStyleSpec<'_>],
     faces: &S,
-) -> Result<ScaledLineMetrics, UnitError> {
+) -> Result<(ScaledLineMetrics, Option<FontSize>), UnitError> {
     let style = input
         .spans
         .first()
-        .and_then(|s| styles.get(s.style as usize))
+        .and_then(|s| usize::try_from(s.style).ok())
+        .and_then(|s| styles.get(s))
         .or_else(|| styles.first());
     let Some(style) = style else {
-        return Ok(ScaledLineMetrics::default());
+        return Ok((ScaledLineMetrics::default(), None));
     };
     let face = style
         .chain
         .available()
         .find_map(|(_, handle)| faces.face(handle));
-    match face {
-        Some(face) => scale_metrics(face.line_metrics(), style.font_size, face.units_per_em()),
-        None => Ok(ScaledLineMetrics::default()),
-    }
+    let metrics = match face {
+        Some(face) => scale_metrics(face.line_metrics(), style.font_size, face.units_per_em())?,
+        None => ScaledLineMetrics::default(),
+    };
+    Ok((metrics, Some(style.font_size)))
 }
 
 /// run 하나를 shaping cluster segment로 나눕니다. glyph가 없는 run은 grapheme segment(폭 0)입니다.
@@ -402,9 +411,9 @@ fn push_segments(
 pub(crate) mod tests {
     use super::*;
     use crate::font_runs::tests::FontSet;
-    use crate::test_fonts::{cjk_spec, latin_liga_spec};
+    use crate::test_fonts::{cjk_spec, latin_liga_spec, latin_rtl_spec};
 
-    /// Latin(liga) → CJK chain, 16px 단일 style fixture.
+    /// Latin(liga) → CJK → Latin+히브리어·아랍어 chain, 16px 단일 style fixture.
     pub(crate) struct Fixture {
         pub set: FontSet,
         pub chain: crate::fallback::FontFallbackChain,
@@ -412,8 +421,8 @@ pub(crate) mod tests {
 
     impl Fixture {
         pub(crate) fn new() -> Fixture {
-            let set = FontSet::new(&[latin_liga_spec(), cjk_spec()]);
-            let chain = set.chain(&[0, 1]);
+            let set = FontSet::new(&[latin_liga_spec(), cjk_spec(), latin_rtl_spec()]);
+            let chain = set.chain(&[0, 1, 2]);
             Fixture { set, chain }
         }
 
