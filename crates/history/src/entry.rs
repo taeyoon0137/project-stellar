@@ -172,6 +172,10 @@ pub enum HistoryError {
     Transaction(TransactionError),
     /// sequence 한계.
     SequenceOverflow,
+    /// preview(gesture·scrub)가 진행 중이라 다른 기록·preview를 시작할 수 없습니다.
+    PreviewActive,
+    /// 진행 중인 preview가 없습니다.
+    NoPreview,
 }
 
 impl fmt::Display for HistoryError {
@@ -179,6 +183,8 @@ impl fmt::Display for HistoryError {
         match self {
             HistoryError::Transaction(error) => write!(f, "{error}"),
             HistoryError::SequenceOverflow => f.write_str("history sequence가 한계에 도달했습니다"),
+            HistoryError::PreviewActive => f.write_str("진행 중인 preview가 있습니다"),
+            HistoryError::NoPreview => f.write_str("진행 중인 preview가 없습니다"),
         }
     }
 }

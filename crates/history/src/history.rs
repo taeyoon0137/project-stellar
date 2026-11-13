@@ -2,18 +2,40 @@
 //!
 //! [`History`]는 확정된 [`HistoryEntry`]를 시간순으로 쌓습니다. 문서 편집은 transaction을
 //! 실행한 뒤 정방향·역방향을 함께 기록합니다.
+//!
+//! **preview(VII.4.2)**: pointer gesture(drag·resize·rotate)는 `begin → update* → end`로 한
+//! 항목을 만듭니다. `update`는 직전 preview transaction을 되돌리고 새 transaction을 적용하는 일을
+//! **한 원자 transaction**으로 수행하므로 문서에는 항상 마지막 preview만 반영되고 history에는
+//! 아무것도 쌓이지 않습니다. `end`에서 마지막 preview를 한 항목으로 확정합니다.
 
 use stellar_commands::change::ChangeSet;
 use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
 
-use crate::entry::{GroupingKey, HistoryEntry, HistoryError, HistoryPayload, SequenceAllocator};
+use crate::entry::{
+    GroupingKey, HistoryEntry, HistoryError, HistoryPayload, HistorySequence, SequenceAllocator,
+};
+
+/// 적용 중인 preview transaction과 그 역(gesture 시작 전 상태로 되돌림).
+#[derive(Debug, Clone)]
+struct AppliedPreview {
+    forward: CommandTransaction,
+    inverse: CommandTransaction,
+}
+
+/// 진행 중인 preview 조작.
+#[derive(Debug, Clone)]
+struct Preview {
+    key: GroupingKey,
+    applied: Option<AppliedPreview>,
+}
 
 /// 창 하나의 history.
 #[derive(Debug, Clone, Default)]
 pub struct History {
     entries: Vec<HistoryEntry>,
     sequences: SequenceAllocator,
+    preview: Option<Preview>,
 }
 
 impl History {
@@ -45,6 +67,9 @@ impl History {
         transaction: &CommandTransaction,
         grouping: Option<GroupingKey>,
     ) -> Result<ChangeSet, HistoryError> {
+        if self.preview.is_some() {
+            return Err(HistoryError::PreviewActive);
+        }
         let mut sequences = self.sequences.clone();
         let sequence = sequences.allocate()?;
         let applied = doc.execute_transaction(transaction)?;
@@ -59,6 +84,79 @@ impl History {
             },
         });
         Ok(applied.changes)
+    }
+
+    /// preview가 진행 중인지.
+    pub fn preview_active(&self) -> bool {
+        self.preview.is_some()
+    }
+
+    /// preview 조작을 시작합니다(pointer down). 문서는 바뀌지 않습니다.
+    pub fn begin_preview(&mut self, key: GroupingKey) -> Result<(), HistoryError> {
+        if self.preview.is_some() {
+            return Err(HistoryError::PreviewActive);
+        }
+        self.preview = Some(Preview { key, applied: None });
+        Ok(())
+    }
+
+    /// pointer gesture(drag·resize·rotate)를 시작합니다(VII.4.2).
+    pub fn begin_pointer_gesture(&mut self, gesture: u64) -> Result<(), HistoryError> {
+        self.begin_preview(GroupingKey::PointerGesture { gesture })
+    }
+
+    /// preview transaction을 교체합니다(pointer move).
+    ///
+    /// 직전 preview의 역과 새 transaction을 **한 transaction**으로 실행하므로, 실패하면 문서와
+    /// preview가 모두 이전 상태로 남습니다. 새 transaction의 base revision은 현재 문서 revision이어야
+    /// 합니다.
+    pub fn update_preview(
+        &mut self,
+        doc: &mut DocumentState,
+        transaction: &CommandTransaction,
+    ) -> Result<ChangeSet, HistoryError> {
+        let preview = self.preview.as_mut().ok_or(HistoryError::NoPreview)?;
+        let mut combined = CommandTransaction::new(transaction.id, transaction.origin);
+        if let Some(previous) = &preview.applied {
+            combined
+                .requests
+                .extend(previous.inverse.rebased(doc.revision()).requests);
+        }
+        combined
+            .requests
+            .extend(transaction.requests.iter().cloned());
+        let applied = doc.execute_transaction(&combined)?;
+        // 결합 역 transaction의 앞쪽 n개가 새 transaction의 역입니다(역순 실행).
+        let mut inverse = applied.inverse;
+        inverse.requests.truncate(transaction.requests.len());
+        preview.applied = Some(AppliedPreview {
+            forward: transaction.clone(),
+            inverse,
+        });
+        Ok(applied.changes)
+    }
+
+    /// preview를 끝내고(pointer up) 마지막 preview를 **한 항목**으로 확정합니다. update가 한 번도
+    /// 없었으면 기록할 것이 없어 `None`입니다.
+    pub fn end_preview(&mut self) -> Result<Option<HistorySequence>, HistoryError> {
+        let preview = self.preview.as_ref().ok_or(HistoryError::NoPreview)?;
+        let Some(applied) = preview.applied.clone() else {
+            self.preview = None;
+            return Ok(None);
+        };
+        let sequence = self.sequences.allocate()?;
+        let key = preview.key;
+        self.preview = None;
+        self.entries.push(HistoryEntry {
+            sequence,
+            origin: applied.forward.origin,
+            grouping: Some(key),
+            payload: HistoryPayload::Document {
+                forward: applied.forward,
+                inverse: applied.inverse,
+            },
+        });
+        Ok(Some(sequence))
     }
 }
 
@@ -233,5 +331,111 @@ mod tests {
         }
         assert_eq!(after, before);
         assert_eq!(history.len(), 1);
+    }
+
+    fn transform(x: f32, y: f32) -> stellar_commands::property::PropertyValue {
+        stellar_commands::property::PropertyValue::Transform(
+            stellar_core_types::value::Transform2D::new(1.0, 0.0, 0.0, 1.0, x, y).unwrap(),
+        )
+    }
+
+    fn drag(
+        doc: &DocumentState,
+        step: u64,
+        x: f32,
+    ) -> stellar_commands::transaction::CommandTransaction {
+        tx(
+            doc,
+            1_000 + step,
+            Command::SetProperty(stellar_commands::property::SetProperty {
+                node: sid(11),
+                key: stellar_commands::document::frame::keys::TRANSFORM,
+                value: transform(x, x / 2.0),
+            }),
+        )
+    }
+
+    fn snapshot(doc: &DocumentState) -> String {
+        stellar_commands::document::test_support::semantic_snapshot::model_snapshot_json(
+            doc.model(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn drag_with_500_updates_records_one_entry() {
+        // 검증 기준(VII.4.2): drag 500 update가 history 1건.
+        let mut doc = small_state();
+        let before = snapshot(&doc);
+        let mut history = History::new();
+        history.begin_pointer_gesture(1).unwrap();
+        for step in 0..500u64 {
+            let t = drag(&doc, step, step as f32);
+            history.update_preview(&mut doc, &t).unwrap();
+            assert!(history.is_empty(), "update 중에는 항목 없음");
+        }
+        let sequence = history.end_preview().unwrap().unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(sequence.get(), 1);
+        let entry = &history.entries()[0];
+        assert_eq!(
+            entry.grouping,
+            Some(GroupingKey::PointerGesture { gesture: 1 })
+        );
+        // 문서에는 마지막 preview만 반영됩니다.
+        let record = doc.model().record(sid(11)).unwrap();
+        let stellar_commands::document::records::NodePayload::Frame(frame) = record.payload else {
+            panic!("Frame");
+        };
+        assert_eq!(frame.transform.components().4, 499.0);
+        // 항목의 역은 gesture 시작 전 상태로 되돌립니다.
+        let HistoryPayload::Document { inverse, forward } = &entry.payload else {
+            panic!("문서 항목");
+        };
+        assert_eq!(forward.requests.len(), 1);
+        assert_eq!(inverse.requests.len(), 1);
+        doc.execute_transaction(&inverse.rebased(doc.revision()))
+            .unwrap();
+        assert_eq!(snapshot(&doc), before);
+    }
+
+    #[test]
+    fn update_replaces_previous_preview_instead_of_accumulating() {
+        use stellar_commands::node_ops::InsertNode;
+        let mut doc = small_state();
+        let mut history = History::new();
+        history.begin_pointer_gesture(7).unwrap();
+        for step in 0..20u64 {
+            // 매 update가 다른 node를 넣는 preview: 교체가 아니라 누적이면 node가 쌓입니다.
+            let t = tx(
+                &doc,
+                2_000 + step,
+                Command::InsertNode(InsertNode::single(frame(100 + step, Some(12), 0x10))),
+            );
+            history.update_preview(&mut doc, &t).unwrap();
+            assert_eq!(doc.model().node_count(), 5, "항상 마지막 preview 하나만");
+            assert!(doc.model().contains(sid(100 + step)));
+        }
+        // 실패한 update는 이전 preview를 유지합니다.
+        let bad = tx(&doc, 3_000, Command::rename_node(sid(99), "x"));
+        assert!(history.update_preview(&mut doc, &bad).is_err());
+        assert!(doc.model().contains(sid(119)));
+        // preview 중에는 일반 기록·새 preview를 시작할 수 없습니다.
+        let other = tx(&doc, 3_001, Command::rename_node(sid(11), "x"));
+        assert_eq!(
+            history.record_document(&mut doc, &other, None),
+            Err(HistoryError::PreviewActive)
+        );
+        assert_eq!(
+            history.begin_pointer_gesture(8),
+            Err(HistoryError::PreviewActive)
+        );
+        history.end_preview().unwrap();
+        assert_eq!(history.len(), 1);
+        // update 없는 gesture는 기록하지 않습니다.
+        history.begin_pointer_gesture(9).unwrap();
+        assert_eq!(history.end_preview().unwrap(), None);
+        assert_eq!(history.len(), 1);
+        assert_eq!(history.end_preview(), Err(HistoryError::NoPreview));
     }
 }
