@@ -10,11 +10,14 @@
 //!   종료하고 [`GitRunError::Cancelled`]를 반환합니다(XIV.1.4). 부분 출력은 성공으로 돌려주지
 //!   않습니다.
 //! - **byte capture**: stdout/stderr를 원시 바이트로 캡처합니다(문자열 가정 없음).
+//! - **stdin 입력**: [`GitRunner::run_with_input`]은 바이트를 자식 stdin으로 전달합니다(XIV.8.2).
+//!   commit message처럼 사용자 텍스트를 argv·shell escaping 없이 넘길 때 사용합니다. 그 밖의
+//!   실행은 stdin을 비워(null) 둡니다.
 //! - **spawn 계측**: 실제 프로세스 생성 시도 횟수를 [`GitRunner::spawn_count`]로 셉니다(XIV.1.1).
 //!   trust gate가 프로세스를 하나도 만들지 않았음을 검증하는 데 사용합니다.
 
 use std::ffi::{OsStr, OsString};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -117,7 +120,19 @@ impl GitRunner {
 
     /// 주어진 argv와 cwd로 Git을 실행합니다(shell 미사용). stdout/stderr를 캡처합니다.
     pub fn run(&self, args: &[OsString], cwd: &Path) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, None)
+        self.run_inner(args, cwd, None, None)
+    }
+
+    /// `input` 바이트를 자식 stdin으로 전달하며 실행합니다(XIV.8.2). 전달 후 stdin을 닫습니다.
+    ///
+    /// 입력은 argv나 shell을 거치지 않으므로 quote·escape가 필요 없습니다.
+    pub fn run_with_input(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: &[u8],
+    ) -> Result<GitOutput, GitRunError> {
+        self.run_inner(args, cwd, Some(input), None)
     }
 
     /// 취소 가능한 실행(XIV.1.4). `cancel`이 취소되면 프로세스 tree를 종료하고
@@ -129,13 +144,14 @@ impl GitRunner {
         cwd: &Path,
         cancel: &GitCancelToken,
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, Some(cancel))
+        self.run_inner(args, cwd, None, Some(cancel))
     }
 
     fn run_inner(
         &self,
         args: &[OsString],
         cwd: &Path,
+        input: Option<&[u8]>,
         cancel: Option<&GitCancelToken>,
     ) -> Result<GitOutput, GitRunError> {
         let cancelled = || cancel.is_some_and(GitCancelToken::is_cancelled);
@@ -147,7 +163,11 @@ impl GitRunner {
         command
             .args(args)
             .current_dir(cwd)
-            .stdin(Stdio::null())
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -187,6 +207,17 @@ impl GitRunner {
             let _ = stderr_pipe.read_to_end(&mut buf);
             buf
         });
+        // stdin 입력은 별도 스레드로 쓰고 닫습니다(자식이 출력하며 읽는 경우의 교착 방지).
+        // 자식이 다 읽지 않고 끝나면 쓰기 오류(BrokenPipe)가 나지만 결과는 종료 코드로 판단합니다.
+        let in_thread = match (input, child.stdin.take()) {
+            (Some(bytes), Some(mut stdin_pipe)) => {
+                let bytes = bytes.to_vec();
+                Some(thread::spawn(move || {
+                    let _ = stdin_pipe.write_all(&bytes);
+                }))
+            }
+            _ => None,
+        };
 
         let deadline = Instant::now() + self.timeout;
         let status = loop {
@@ -202,10 +233,17 @@ impl GitRunner {
             };
             // 중단: tree 종료 후 파이프가 닫히면 drain 스레드도 끝납니다. 부분 출력은 버립니다.
             terminate_process_tree(&mut child);
+            if let Some(handle) = in_thread {
+                let _ = handle.join();
+            }
             let _ = out_thread.join();
             let _ = err_thread.join();
             return Err(interrupted);
         };
+
+        if let Some(handle) = in_thread {
+            let _ = handle.join();
+        }
 
         let stdout = out_thread.join().unwrap_or_default();
         let stderr = err_thread.join().unwrap_or_default();
@@ -377,6 +415,18 @@ mod tests {
         let missing = runner_for("/nonexistent/definitely/not/here", 5_000);
         assert!(missing.run(&[], &dir.path).is_err());
         assert_eq!(missing.spawn_count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn input_bytes_reach_stdin_verbatim_without_shell() {
+        let dir = TempDir::new();
+        let runner = runner_for("/bin/cat", 5_000);
+        let input = "줄1 $(touch PWNED) `id`\n; rm -rf x | y && z\n'\"\n".as_bytes();
+        let out = runner.run_with_input(&[], &dir.path, input).unwrap();
+        assert!(out.success());
+        assert_eq!(out.stdout, input);
+        assert!(!dir.path.join("PWNED").exists());
     }
 
     #[test]

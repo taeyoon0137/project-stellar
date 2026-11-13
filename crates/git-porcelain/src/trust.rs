@@ -89,6 +89,18 @@ impl GatedGitRunner {
         self.runner()?.run(args, cwd).map_err(GatedRunError::Run)
     }
 
+    /// trusted일 때만 stdin 입력과 함께 실행합니다(XIV.8.2). untrusted면 프로세스를 만들지 않습니다.
+    pub fn run_with_input(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: &[u8],
+    ) -> Result<GitOutput, GatedRunError> {
+        self.runner()?
+            .run_with_input(args, cwd, input)
+            .map_err(GatedRunError::Run)
+    }
+
     /// trusted일 때만 취소 가능한 실행을 합니다(XIV.1.4). untrusted면 프로세스를 만들지 않습니다.
     pub fn run_cancellable(
         &self,

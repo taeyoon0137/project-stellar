@@ -44,6 +44,9 @@ pub mod location;
 /// Git capability probe (XIV.1.3).
 pub mod capability;
 
+/// 커밋 실행 (XIV.8.2~).
+pub mod commit;
+
 /// 테스트 공용 도구(테스트 빌드 전용).
 #[cfg(test)]
 mod test_support;
