@@ -12,11 +12,70 @@
 use std::path::Path;
 
 use crate::ops::{run_ok, GitOpError, ParseFailure};
-use crate::runner::argv;
-use crate::trust::GatedGitRunner;
+use crate::runner::{argv, GitOutput};
+use crate::trust::{GatedGitRunner, GatedRunError};
 
 /// GitHub URL 형식 검증(XIV.9.2).
 pub mod github;
+
+/// 새 GitHub remote 최초 연결 검사와 등록(XIV.9.3~XIV.9.4).
+pub mod connect;
+
+/// URL이 들어갈 수 있는 remote 명령 실패(stderr는 자격 증명을 가린 텍스트만 보존).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RemoteError {
+    /// trust gate 거부 또는 Git 실행 실패.
+    Gate(GatedRunError),
+    /// Git 명령 비영 종료(stderr는 [`redact_credentials`] 적용 후 lossy 텍스트).
+    Failed {
+        /// 종료 코드.
+        exit_code: Option<i32>,
+        /// 자격 증명을 가린 stderr.
+        stderr_redacted: String,
+    },
+    /// 출력 해석 실패(원시 출력은 보존하지 않음).
+    Parse {
+        /// 명령 종류.
+        command: &'static str,
+        /// 설명.
+        detail: String,
+    },
+}
+
+impl std::fmt::Display for RemoteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RemoteError::Gate(e) => write!(f, "{e}"),
+            RemoteError::Failed {
+                exit_code,
+                stderr_redacted,
+            } => write!(
+                f,
+                "Git remote 명령 비영 종료(code={exit_code:?}): {}",
+                stderr_redacted.trim()
+            ),
+            RemoteError::Parse { command, detail } => {
+                write!(f, "git {command} 출력 해석 실패: {detail}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RemoteError {}
+
+impl From<GatedRunError> for RemoteError {
+    fn from(e: GatedRunError) -> RemoteError {
+        RemoteError::Gate(e)
+    }
+}
+
+/// 비영 종료 출력을 자격 증명을 가린 [`RemoteError::Failed`]로 만듭니다(원시 bytes는 버림).
+pub(crate) fn redacted_failure(output: &GitOutput) -> RemoteError {
+    RemoteError::Failed {
+        exit_code: output.exit_code,
+        stderr_redacted: redact_credentials(&String::from_utf8_lossy(&output.stderr)),
+    }
+}
 
 /// 민감값으로 다루는 remote URL.
 #[derive(Clone, PartialEq, Eq, Hash)]

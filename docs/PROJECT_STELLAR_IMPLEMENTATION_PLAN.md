@@ -1442,7 +1442,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XIV.9.1 | `[x]` | existing remote 목록을 `git remote -v`의 안정 parse 방식으로 읽고 fetch/push URL을 구분합니다. URL은 민감값으로 처리합니다. | multiple remote fixture 통과. | XIV.1.5 |
 | XIV.9.2 | `[x]` | GitHub URL 형식 검증은 HTTPS/SSH canonical patterns만 확인하고 API 호출은 하지 않습니다. | github/non-github fixture 분류. | XIV.9.1 |
-| XIV.9.3 | `[ ]` | 새 GitHub remote 연결 전에 `git ls-remote`로 refs 존재 여부를 확인합니다. refs가 하나라도 있으면 최초 업로드 연결을 거부하고 Clone 안내 상태를 반환합니다. | empty/non-empty bare repo fixture 통과. | XIV.9.2 |
+| XIV.9.3 | `[x]` | 새 GitHub remote 연결 전에 `git ls-remote`로 refs 존재 여부를 확인합니다. refs가 하나라도 있으면 최초 업로드 연결을 거부하고 Clone 안내 상태를 반환합니다. | empty/non-empty bare repo fixture 통과. | XIV.9.2 |
 | XIV.9.4 | `[ ]` | empty remote만 `git remote add <name> <url>`로 등록합니다. 기본 remote name은 `origin`, 이미 있으면 호출자가 다른 이름을 제공해야 합니다. | origin exists fixture overwrite 없음. | XIV.9.3 |
 | XIV.9.5 | `[ ]` | Push는 사용자가 선택한 existing remote/refspec을 시스템 Git으로 실행합니다. force push UI는 제공하지 않습니다. | normal push fixture 통과, force option API 없음. | XIV.9.1 |
 | XIV.9.6 | `[ ]` | credential helper/SSH agent prompt를 Git에 위임하고 Stellar는 token/key를 저장하지 않습니다. askpass bridge가 필요하면 입력 값은 메모리에서 즉시 폐기합니다. | credential log redaction·storage scan 통과. | XIV.9.5, II.3.2 |

@@ -72,6 +72,43 @@ pub(crate) fn hermetic_runner_with_timeout(git: PathBuf, timeout: Duration) -> G
     ])
 }
 
+/// GitHub URL을 로컬 디렉터리 `base` 아래 bare 저장소로 바꾸는 hermetic 실행기(네트워크 미사용).
+///
+/// `url.<base>/.insteadOf`로 `https://github.com/`·`git@github.com:`·`ssh://git@github.com/`를
+/// `base/`로 바꾸고, `GIT_ALLOW_PROTOCOL=file`로 로컬 전송 외 프로토콜을 Git이 거부하게 합니다.
+#[cfg(unix)]
+pub(crate) fn github_redirect_runner(git: PathBuf, base: &Path) -> GitRunner {
+    let key = format!("url.{}/.insteadOf", base.display());
+    let mut env = vec![
+        (OsString::from("GIT_CONFIG_COUNT"), OsString::from("3")),
+        (OsString::from("GIT_ALLOW_PROTOCOL"), OsString::from("file")),
+    ];
+    for (i, prefix) in [
+        "https://github.com/",
+        "git@github.com:",
+        "ssh://git@github.com/",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        env.push((
+            OsString::from(format!("GIT_CONFIG_KEY_{i}")),
+            OsString::from(&key),
+        ));
+        env.push((
+            OsString::from(format!("GIT_CONFIG_VALUE_{i}")),
+            OsString::from(prefix),
+        ));
+    }
+    hermetic_runner(git).with_added_env(env)
+}
+
+/// `dir`에 빈 bare 저장소(`main`)를 만듭니다.
+pub(crate) fn init_bare(runner: &GitRunner, dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    git_ok(runner, dir, ["init", "-q", "--bare", "-b", "main"]);
+}
+
 /// fixture 구성용 Git 실행(성공을 강제).
 pub(crate) fn git_ok<I, S>(runner: &GitRunner, dir: &Path, args: I) -> GitOutput
 where
