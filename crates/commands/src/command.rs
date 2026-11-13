@@ -88,6 +88,13 @@ pub enum CommandError {
     },
     /// modifier 참조 cycle.
     ModifierCycle(stellar_document::modifier::ModifierCycle),
+    /// subtree 밖 node가 삭제 대상 subtree 안 node를 참조합니다(삭제 정책 오류, VII.2.2).
+    ExternalReference {
+        /// 참조되는 subtree 안 node.
+        target: StableId,
+        /// 참조하는 subtree 밖 node.
+        from: StableId,
+    },
     /// View root는 이 command로 삭제·이동할 수 없습니다.
     ViewRoot {
         /// 대상 node.
@@ -149,6 +156,10 @@ impl fmt::Display for CommandError {
                 write!(f, "node {owner}의 modifier: {error}")
             }
             CommandError::ModifierCycle(cycle) => write!(f, "{cycle}"),
+            CommandError::ExternalReference { target, from } => write!(
+                f,
+                "subtree 밖 node {from}가 삭제 대상 {target}를 참조합니다(참조를 먼저 정리해야 합니다)"
+            ),
             CommandError::ViewRoot { node } => {
                 write!(f, "View root {node}는 삭제·이동할 수 없습니다")
             }

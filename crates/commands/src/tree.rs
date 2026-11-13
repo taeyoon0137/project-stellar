@@ -8,9 +8,11 @@ use std::collections::BTreeMap;
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
+use stellar_document::frame::Clipping;
 use stellar_document::model::DocumentModel;
 use stellar_document::node_kind::NodeKind;
 use stellar_document::records::NodePayload;
+use stellar_document::reference_index::ReferenceIndex;
 
 /// node의 부모. 바깥 `None`은 node 없음, 안쪽 `None`은 View root.
 pub(crate) fn parent_of(model: &DocumentModel, id: StableId) -> Option<Option<StableId>> {
@@ -95,6 +97,40 @@ impl ChildIndex {
     pub(crate) fn children(&self, parent: StableId) -> &[StableId] {
         self.children.get(&parent).map_or(&[], Vec::as_slice)
     }
+
+    /// `root`부터 pre-order(형제는 OrderKey 순) subtree.
+    pub(crate) fn subtree(&self, root: StableId) -> Vec<StableId> {
+        let mut out = Vec::new();
+        let mut stack = vec![root];
+        while let Some(id) = stack.pop() {
+            out.push(id);
+            stack.extend(self.children(id).iter().rev().copied());
+        }
+        out
+    }
+}
+
+/// 문서의 node 간 참조 index(VI.2.5): Frame clip 대상과 modifier 참조(VI.9.4, 비활성 포함).
+/// 간선은 참조를 가진 node → 대상 node입니다. NIL 참조는 제외합니다.
+pub(crate) fn reference_index(model: &DocumentModel) -> ReferenceIndex {
+    let mut index = ReferenceIndex::new();
+    for id in node_ids(model) {
+        if let Some(NodePayload::Frame(frame)) = model.payload(id) {
+            if let Clipping::Path(target) = frame.clipping {
+                if target.id() != StableId::NIL {
+                    index.add_reference(id, target.id());
+                }
+            }
+        }
+        if let Some(stack) = model.modifier_stack(id) {
+            for entry in stack.entries() {
+                for target in entry.payload.referenced_nodes() {
+                    index.add_reference(id, target);
+                }
+            }
+        }
+    }
+    index
 }
 
 /// path payload의 point·handle id.

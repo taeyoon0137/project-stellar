@@ -3,7 +3,8 @@
 //! - [`InsertNode`] (VII.2.1): caller가 StableId를 정한 node(또는 그 node를 root로 하는
 //!   pre-order subtree)를 삽입합니다. 중복 id, 잘못된 부모, 형제 OrderKey 충돌, 깊이 초과,
 //!   참조 종류 불일치, modifier 소유·cycle 위반을 적용 전에 거부합니다.
-//! - [`DeleteSubtree`]: node를 지웁니다. InsertNode의 역 command입니다.
+//! - [`DeleteSubtree`] (VII.2.2): subtree를 지웁니다. 역 command는 subtree와 내부 참조를 담은
+//!   InsertNode이고, 외부 inbound 참조가 있으면 정책 오류로 거부합니다. InsertNode의 역입니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,7 +21,9 @@ use stellar_document::validate::{can_have_children, MAX_NODE_DEPTH};
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::command::CommandError;
 use crate::edit::EditContext;
-use crate::tree::{depth_of, id_owners, kind_of, parent_of, path_element_ids, ChildIndex, IdOwner};
+use crate::tree::{
+    depth_of, id_owners, kind_of, parent_of, path_element_ids, reference_index, ChildIndex, IdOwner,
+};
 
 /// node(또는 subtree) 삽입.
 ///
@@ -300,48 +303,71 @@ pub(crate) fn existing_stacks(model: &DocumentModel) -> Vec<ModifierStack> {
         .collect()
 }
 
-/// node 삭제. 현재는 자식 없는 node만 지웁니다(InsertNode의 역).
+/// node subtree 삭제 (VII.2.2).
+///
+/// root와 모든 자손을 지웁니다. 역 command는 삭제 전 subtree 레코드(pre-order)와 그
+/// modifier stack을 담은 [`InsertNode`]라, subtree **안**의 참조(clip·modifier 참조)가 그대로
+/// 보존·복원됩니다. subtree **밖**의 node가 subtree 안 node를 참조하면 삭제하지 않고
+/// [`CommandError::ExternalReference`] 정책 오류를 반환합니다 — 참조를 먼저 정리해야 합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeleteSubtree {
-    /// 지울 node.
+    /// 지울 subtree root.
     pub root: StableId,
 }
 
 impl DeleteSubtree {
-    pub(crate) fn validate(&self, model: &DocumentModel) -> Result<(), CommandError> {
+    /// 삭제 대상 subtree(pre-order)를 검증과 함께 구합니다.
+    fn subtree(&self, model: &DocumentModel) -> Result<Vec<StableId>, CommandError> {
         match parent_of(model, self.root) {
             None => Err(CommandError::UnknownNode { id: self.root }),
             Some(None) => Err(CommandError::ViewRoot { node: self.root }),
-            Some(Some(_)) => {
-                if model.children_in_order(self.root).is_empty() {
-                    Ok(())
-                } else {
-                    Err(CommandError::Model(
-                        stellar_document::model::ModelError::HasChildren { id: self.root },
-                    ))
-                }
-            }
+            Some(Some(_)) => Ok(ChildIndex::build(model).subtree(self.root)),
         }
     }
 
-    pub(crate) fn invert(&self, model: &DocumentModel) -> Result<InsertNode, CommandError> {
-        let record = model
-            .record(self.root)
-            .ok_or(CommandError::UnknownNode { id: self.root })?;
-        Ok(InsertNode {
-            nodes: vec![record],
-            modifier_stacks: model
-                .modifier_stack(self.root)
-                .cloned()
+    pub(crate) fn validate(&self, model: &DocumentModel) -> Result<(), CommandError> {
+        let subtree = self.subtree(model)?;
+        let members: BTreeSet<StableId> = subtree.iter().copied().collect();
+        let references = reference_index(model);
+        for target in &subtree {
+            if let Some(from) = references
+                .inbound(*target)
                 .into_iter()
-                .collect(),
+                .find(|from| !members.contains(from))
+            {
+                return Err(CommandError::ExternalReference {
+                    target: *target,
+                    from,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn invert(&self, model: &DocumentModel) -> Result<InsertNode, CommandError> {
+        let subtree = self.subtree(model)?;
+        let mut nodes = Vec::with_capacity(subtree.len());
+        let mut modifier_stacks = Vec::new();
+        for id in subtree {
+            nodes.push(model.record(id).ok_or(CommandError::UnknownNode { id })?);
+            if let Some(stack) = model.modifier_stack(id) {
+                modifier_stacks.push(stack.clone());
+            }
+        }
+        Ok(InsertNode {
+            nodes,
+            modifier_stacks,
         })
     }
 
     pub(crate) fn apply(&self, ctx: &mut EditContext<'_>) -> Result<(), CommandError> {
+        let subtree = self.subtree(ctx.model())?;
         let parent = parent_of(ctx.model(), self.root).flatten();
-        ctx.remove_leaf(self.root)?;
-        ctx.changes().removed(self.root);
+        // 자손부터(역 pre-order) leaf로 지웁니다.
+        for id in subtree.into_iter().rev() {
+            ctx.remove_leaf(id)?;
+            ctx.changes().removed(id);
+        }
         if let Some(parent) = parent {
             ctx.changes().structure(parent);
         }
@@ -681,5 +707,148 @@ mod tests {
         let bytes = encode_command(&delete);
         assert_eq!(&bytes[..2], &[0x02, 0x00]);
         assert_eq!(decode_command(&bytes).unwrap(), delete);
+    }
+
+    fn path_record(id: u64, parent: u64, key: u8) -> NodeRecord {
+        let data = PathData::new(
+            WindingRule::NonZero,
+            vec![
+                PathCommand::MoveTo(Vec2::new(0.0, 0.0).unwrap()),
+                PathCommand::LineTo(Vec2::new(4.0, 2.0).unwrap()),
+            ],
+        )
+        .unwrap();
+        let mut next = id * 100;
+        let path = IdentifiedPath::assign(data, &mut || {
+            next += 1;
+            sid(next)
+        });
+        let mut record = frame(id, Some(parent), key);
+        record.payload = NodePayload::Path(path);
+        record
+    }
+
+    #[test]
+    fn delete_subtree_preserves_internal_references_and_rejects_external() {
+        // 검증 기준(VII.2.2): delete→undo semantic snapshot 동일.
+        let mut state = DocumentState::new(small_model());
+        let mut clipped = frame(22, Some(20), 0x20);
+        clipped.payload = NodePayload::Frame(FramePayload {
+            clipping: Clipping::Path(NodeRef::new(sid(21))),
+            ..FramePayload::default()
+        });
+        let mut stack = ModifierStack::new(sid(22));
+        stack
+            .insert(ModifierEntry {
+                id: ModifierId::new(sid(70)),
+                order: OrderKey::between(None, None),
+                kind: ModifierKind::Mask,
+                enabled: false,
+                payload: ModifierPayload::Mask {
+                    source: NodeRef::new(sid(21)),
+                },
+            })
+            .unwrap();
+        run(
+            &mut state,
+            Command::InsertNode(InsertNode {
+                nodes: vec![
+                    frame(20, Some(10), 0x90),
+                    path_record(21, 20, 0x10),
+                    clipped,
+                ],
+                modifier_stacks: vec![stack],
+            }),
+        )
+        .unwrap();
+        let before = snapshot(&state);
+
+        // 21만 지우면 subtree 밖 22가 참조 → 정책 오류, 문서 불변.
+        assert_eq!(
+            run(
+                &mut state,
+                Command::DeleteSubtree(DeleteSubtree { root: sid(21) })
+            ),
+            Err(CommandError::ExternalReference {
+                target: sid(21),
+                from: sid(22)
+            })
+        );
+        assert_eq!(snapshot(&state), before);
+
+        // 참조가 모두 subtree 안이면 삭제되고, undo가 내부 참조까지 복원합니다.
+        let request = CommandRequest::at(
+            &state,
+            Command::DeleteSubtree(DeleteSubtree { root: sid(20) }),
+        );
+        let outcome = state.execute(&request).unwrap();
+        assert_eq!(
+            outcome.changes.removed_nodes(),
+            vec![sid(20), sid(21), sid(22)]
+        );
+        assert_eq!(outcome.changes.changed_nodes(), vec![sid(10)]);
+        for id in [20, 21, 22] {
+            assert!(!state.model().contains(sid(id)));
+        }
+        let Command::InsertNode(restore) = &outcome.inverse else {
+            panic!("InsertNode여야 함");
+        };
+        assert_eq!(
+            restore.nodes.iter().map(|n| n.id).collect::<Vec<_>>(),
+            vec![sid(20), sid(21), sid(22)],
+            "pre-order"
+        );
+        assert_eq!(restore.modifier_stacks.len(), 1);
+        run(&mut state, outcome.inverse).unwrap();
+        assert_eq!(snapshot(&state), before);
+    }
+
+    #[test]
+    fn delete_undo_round_trips_on_random_documents() {
+        use stellar_document::test_support::random_document::random_valid_document;
+        let (mut deleted, mut rejected) = (0, 0);
+        for seed in 0..150u64 {
+            let mut state = DocumentState::new(random_valid_document(seed));
+            let before = snapshot(&state);
+            let before_records = state.model().to_records().unwrap();
+            let candidates: Vec<StableId> = crate::tree::node_ids(state.model())
+                .into_iter()
+                .filter(|id| parent_of(state.model(), *id).flatten().is_some())
+                .collect();
+            for target in candidates.into_iter().step_by(3) {
+                if !state.model().contains(target) {
+                    continue;
+                }
+                let subtree = ChildIndex::build(state.model()).subtree(target);
+                let request = CommandRequest::at(
+                    &state,
+                    Command::DeleteSubtree(DeleteSubtree { root: target }),
+                );
+                match state.execute(&request) {
+                    Ok(outcome) => {
+                        deleted += 1;
+                        let mut expected = subtree.clone();
+                        expected.sort();
+                        assert_eq!(outcome.changes.removed_nodes(), expected);
+                        run(&mut state, outcome.inverse).unwrap();
+                        // 레코드가 같으면 semantic snapshot도 같습니다(snapshot은 레코드의 함수).
+                        assert_eq!(
+                            state.model().to_records().unwrap(),
+                            before_records,
+                            "seed {seed} {target}"
+                        );
+                    }
+                    Err(CommandError::ExternalReference { target: t, from }) => {
+                        rejected += 1;
+                        assert!(subtree.contains(&t) && !subtree.contains(&from));
+                        assert_eq!(state.model().to_records().unwrap(), before_records);
+                    }
+                    Err(other) => panic!("seed {seed}: {other}"),
+                }
+            }
+            assert_eq!(snapshot(&state), before, "seed {seed}");
+        }
+        assert!(deleted > 300, "삭제 {deleted}");
+        assert!(rejected > 20, "정책 거부 {rejected}");
     }
 }
