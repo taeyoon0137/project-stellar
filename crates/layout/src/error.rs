@@ -11,6 +11,31 @@ use crate::geometry::Axis;
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnitError;
 
+/// 레이아웃 계산의 크기·작업량 상한 종류.
+///
+/// 상한은 신뢰할 수 없는 입력이 계산 시간·메모리를 무한히 늘리지 못하게 하는 결정적 값입니다.
+/// 같은 입력은 플랫폼·빌드와 무관하게 같은 상한에 걸립니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LayoutLimit {
+    /// grid line 번호가 `u16` 범위를 넘습니다. 한 축의 track은
+    /// [`crate::grid::MAX_GRID_TRACKS`]개(line 1~65535)까지입니다.
+    GridLines,
+    /// grid cell 수(열 × 행)가 [`crate::grid::MAX_GRID_CELLS`]를 넘습니다.
+    GridCells,
+    /// grid 배치·track sizing 작업량이 [`crate::grid::MAX_GRID_WORK`]를 넘습니다.
+    GridWork,
+}
+
+impl fmt::Display for LayoutLimit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            LayoutLimit::GridLines => "grid line 범위(u16)",
+            LayoutLimit::GridCells => "grid cell 수",
+            LayoutLimit::GridWork => "grid 배치 작업량",
+        })
+    }
+}
+
 /// 레이아웃 오류 (X.1.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LayoutError {
@@ -94,6 +119,13 @@ pub enum LayoutError {
         node: StableId,
         /// 사유.
         reason: &'static str,
+    },
+    /// 계산 크기·작업량 상한을 넘었습니다.
+    LimitExceeded {
+        /// 상한에 걸린 node.
+        node: StableId,
+        /// 상한 종류.
+        limit: LayoutLimit,
     },
     /// constraint 값·조합이 잘못되었습니다 (X.5).
     InvalidConstraint {
@@ -187,6 +219,9 @@ impl fmt::Display for LayoutError {
             }
             LayoutError::InvalidGrid { node, reason } => {
                 write!(f, "node {node}의 grid 설정이 잘못되었습니다: {reason}")
+            }
+            LayoutError::LimitExceeded { node, limit } => {
+                write!(f, "node {node}의 레이아웃이 {limit} 상한을 넘습니다")
             }
             LayoutError::InvalidConstraint { node, reason } => {
                 write!(f, "node {node}의 constraint가 잘못되었습니다: {reason}")

@@ -31,18 +31,50 @@
 //! - track sizing은 열 먼저(item 기여 = containing block indefinite 측정 크기), 그 다음 행(열 영역
 //!   너비가 정해진 측정 크기)입니다. item은 영역 시작에 놓이고 `Fill` 축은 영역을 채우며
 //!   `Percentage`는 영역 크기 기준입니다.
+//!
+//! # 크기·작업량 상한
+//!
+//! 신뢰할 수 없는 입력이 계산 시간·메모리를 무한히 늘리지 못하도록 결정적 상한을 둡니다. 넘으면
+//! [`LayoutError::LimitExceeded`]입니다.
+//!
+//! - **line 범위** ([`LayoutLimit::GridLines`]): line 번호는 `u16`이라 한 축의 track은 최대
+//!   [`MAX_GRID_TRACKS`]개(line 1~65535)입니다. 명시 track 수, 명시 item의 끝 line, 자동 배치가 만드는
+//!   암시 행의 끝 line이 모두 이 범위 안이어야 합니다. 자동 item이 범위 안에 들어갈 자리가 없으면
+//!   "공간 없음"이 아니라 이 상한 오류입니다.
+//! - **cell 수** ([`LayoutLimit::GridCells`]): 열 × 행(명시·암시 포함)은 [`MAX_GRID_CELLS`] 이하입니다.
+//!   명시 track·명시 item은 검증([`LayoutInput::validate`](crate::input::LayoutInput::validate))에서,
+//!   자동 배치가 늘린 행은 계산 중에 검사합니다.
+//! - **작업량** ([`LayoutLimit::GridWork`]): 한 번의 grid 계산에서 cell 검사·점유·track sizing 반복은
+//!   [`MAX_GRID_WORK`] 단위까지입니다. 자동 배치는 점유 cell을 만나면 그 cell을 포함하는 시작 위치를
+//!   건너뛰므로(결과는 순차 탐색과 같음) 일반 입력은 상한에 한참 못 미칩니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::value::{FiniteF32, Length, Scalar};
 
 use crate::codec::{Reader, Writer};
 use crate::engine::{at, ChildConstraint, Engine};
-use crate::error::LayoutError;
+use crate::error::{LayoutError, LayoutLimit};
 use crate::geometry::{LayoutRect, LayoutSize};
-use crate::grid_tracks::{size_tracks, track_offsets, Breadth, Track, TrackItem};
+use crate::grid_tracks::{
+    size_tracks, track_offsets, Breadth, Track, TrackError, TrackItem, WorkBudget, WorkExceeded,
+};
 use crate::input::{length_unit, ContainerLayout};
 use crate::property::LayoutProperty;
 use crate::rounding::{LayoutUnit, LayoutUnitError};
+
+/// 한 축의 최대 track 수(line 1~`u16::MAX`).
+pub const MAX_GRID_TRACKS: usize = u16::MAX as usize - 1;
+
+/// grid 하나의 최대 cell 수(열 × 명시·암시 행).
+pub const MAX_GRID_CELLS: usize = 1 << 20;
+
+/// grid 계산 한 번의 최대 작업량(cell 검사·점유·track sizing 반복 단위).
+pub const MAX_GRID_WORK: u64 = 1 << 24;
+
+/// 상한 오류.
+fn limit(node: StableId, limit: LayoutLimit) -> LayoutError {
+    LayoutError::LimitExceeded { node, limit }
+}
 
 /// `MinMax`의 한쪽 경계 (X.4.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -159,6 +191,12 @@ pub(crate) fn validate_track(node: StableId, track: TrackSize) -> Result<(), Lay
 pub(crate) fn validate_grid(node: StableId, grid: &GridLayout) -> Result<(), LayoutError> {
     if grid.columns.is_empty() {
         return Err(invalid(node, "열 track이 하나 이상 필요합니다"));
+    }
+    if grid.columns.len() > MAX_GRID_TRACKS || grid.rows.len() > MAX_GRID_TRACKS {
+        return Err(limit(node, LayoutLimit::GridLines));
+    }
+    if grid.columns.len().saturating_mul(grid.rows.len().max(1)) > MAX_GRID_CELLS {
+        return Err(limit(node, LayoutLimit::GridCells));
     }
     for track in grid.columns.iter().chain(&grid.rows) {
         validate_track(node, *track)?;
@@ -374,6 +412,9 @@ fn validate_placement(node: StableId, placement: GridPlacement) -> Result<(), La
 }
 
 /// Grid 부모의 item 위치를 검증합니다. 열 범위는 명시 열 안이어야 합니다(행은 암시 행 허용).
+///
+/// 행 끝 line은 `u16` 범위 안([`MAX_GRID_TRACKS`] 이하 track)이어야 하고, 명시 행 위치가 만드는
+/// cell 수(열 × 끝 행)는 [`MAX_GRID_CELLS`] 이하여야 합니다. 자동 행은 끝 행을 span으로 봅니다.
 pub(crate) fn validate_item(
     node: StableId,
     item: &GridItem,
@@ -388,8 +429,11 @@ pub(crate) fn validate_item(
         return Err(invalid(node, "열 범위가 명시 열을 벗어납니다"));
     }
     let row_end = item.row.start_index().unwrap_or(0) + usize::from(item.row.span());
-    if row_end > usize::from(u16::MAX) {
-        return Err(invalid(node, "행 범위가 너무 큽니다"));
+    if row_end > MAX_GRID_TRACKS {
+        return Err(limit(node, LayoutLimit::GridLines));
+    }
+    if columns.saturating_mul(row_end) > MAX_GRID_CELLS {
+        return Err(limit(node, LayoutLimit::GridCells));
     }
     Ok(())
 }
@@ -510,24 +554,20 @@ struct GridSolution {
     items: Vec<PlacedItem>,
 }
 
-/// 영역 크기(걸친 track 합 + 사이 gap).
-fn area_extent(
+/// 영역 크기(걸친 track 합 + 사이 gap). `offsets`는 [`track_offsets`] 결과라 O(1)입니다.
+fn span_extent(
+    offsets: &[LayoutUnit],
     sizes: &[LayoutUnit],
     start: usize,
     span: usize,
-    gap: LayoutUnit,
 ) -> Result<LayoutUnit, LayoutUnitError> {
-    let mut total = LayoutUnit::ZERO;
-    for (i, size) in sizes[start..start + span].iter().enumerate() {
-        if i > 0 {
-            total = total.checked_add(gap)?;
-        }
-        total = total.checked_add(*size)?;
-    }
-    Ok(total)
+    let last = start + span - 1;
+    offsets[last]
+        .checked_add(sizes[last])?
+        .checked_sub(offsets[start])
 }
 
-/// 점유된 grid cell(행 수는 필요에 따라 늘어남).
+/// 점유된 grid cell. 행 수는 필요에 따라 늘어나며 열 × 행은 [`MAX_GRID_CELLS`] 이하입니다.
 struct Occupancy {
     columns: usize,
     cells: Vec<bool>,
@@ -541,27 +581,41 @@ impl Occupancy {
         }
     }
 
-    fn is_free(&self, row: usize, column: usize, row_span: usize, column_span: usize) -> bool {
-        if column + column_span > self.columns {
-            return false;
-        }
-        for r in row..row + row_span {
-            for c in column..column + column_span {
-                if self
-                    .cells
-                    .get(r * self.columns + c)
-                    .copied()
-                    .unwrap_or(false)
-                {
-                    return false;
+    /// 영역 안의 점유 cell 하나(가장 아래 행, 그 행의 가장 오른쪽 열)를 찾습니다. 없으면 `None`.
+    /// 저장된 행 밖은 비어 있습니다. 검사한 cell 수만큼 예산을 소모합니다.
+    fn conflict(
+        &self,
+        area: (usize, usize, usize, usize),
+        budget: &mut WorkBudget,
+    ) -> Result<Option<(usize, usize)>, WorkExceeded> {
+        let (row, column, row_span, column_span) = area;
+        let stored_rows = self.cells.len() / self.columns;
+        let last = (row + row_span).min(stored_rows);
+        for r in (row..last).rev() {
+            budget.charge(column_span)?;
+            for c in (column..column + column_span).rev() {
+                if self.cells[r * self.columns + c] {
+                    return Ok(Some((r, c)));
                 }
             }
         }
-        true
+        Ok(None)
     }
 
-    fn occupy(&mut self, item: &PlacedItem) {
-        let needed = (item.row + item.row_span) * self.columns;
+    /// item 영역을 점유합니다. 늘어난 행으로 cell 수 상한을 넘으면 오류입니다.
+    fn occupy(
+        &mut self,
+        id: StableId,
+        item: &PlacedItem,
+        budget: &mut WorkBudget,
+    ) -> Result<(), LayoutError> {
+        let needed = (item.row + item.row_span).saturating_mul(self.columns);
+        if needed > MAX_GRID_CELLS {
+            return Err(limit(id, LayoutLimit::GridCells));
+        }
+        budget
+            .charge(item.row_span.saturating_mul(item.column_span))
+            .map_err(|_| limit(id, LayoutLimit::GridWork))?;
         if self.cells.len() < needed {
             self.cells.resize(needed, false);
         }
@@ -570,11 +624,9 @@ impl Occupancy {
                 self.cells[r * self.columns + c] = true;
             }
         }
+        Ok(())
     }
 }
-
-/// 자동 배치 행 탐색 상한(무한 루프 방지). 행 index는 `u16` line 범위 안이어야 합니다.
-const MAX_AUTO_ROWS: usize = u16::MAX as usize;
 
 /// item을 track에 배치합니다 (X.4.3, X.4.4).
 ///
@@ -587,13 +639,20 @@ const MAX_AUTO_ROWS: usize = u16::MAX as usize;
 ///
 /// 자동 배치 item은 서로·명시 item과 겹치지 않습니다. 순서는 StableId·삽입 순서가 아니라 visual
 /// order(OrderKey)입니다. 결과는 visual order입니다.
+///
+/// 탐색 중 점유 cell `(r, c)`를 만나면 그 cell을 포함하는 시작 위치(열 탐색은 열 `c`까지, 행 탐색은
+/// 행 `r`까지)를 건너뜁니다. 건너뛴 위치는 모두 점유 cell과 겹치므로 결과는 한 칸씩 탐색한 것과
+/// 같습니다. 자동 item의 끝 line이 `u16` 범위를 넘어야만 놓을 수 있으면
+/// [`LayoutLimit::GridLines`]입니다.
 fn place_items(
     engine: &Engine<'_>,
     id: StableId,
     children: &[usize],
     columns: usize,
+    budget: &mut WorkBudget,
 ) -> Result<Vec<PlacedItem>, LayoutError> {
     let no_space = || invalid(id, "grid 자동 배치 공간이 없습니다");
+    let work = |_: WorkExceeded| limit(id, LayoutLimit::GridWork);
     let mut placed: Vec<Option<PlacedItem>> = vec![None; children.len()];
     let mut occupancy = Occupancy::new(columns);
     let spans = |child: usize| {
@@ -615,7 +674,7 @@ fn place_items(
                 row,
                 row_span,
             };
-            occupancy.occupy(&p);
+            occupancy.occupy(id, &p, budget)?;
             placed[slot] = Some(p);
         }
     }
@@ -623,17 +682,28 @@ fn place_items(
     for (slot, &child) in children.iter().enumerate() {
         let (item, column_span, row_span) = spans(child);
         if let (None, Some(row)) = (item.column.start_index(), item.row.start_index()) {
-            let column = (0..columns)
-                .find(|&c| occupancy.is_free(row, c, row_span, column_span))
-                .ok_or_else(no_space)?;
+            let mut column = 0;
+            let found = loop {
+                if column + column_span > columns {
+                    break None;
+                }
+                budget.charge(1).map_err(work)?;
+                match occupancy
+                    .conflict((row, column, row_span, column_span), budget)
+                    .map_err(work)?
+                {
+                    None => break Some(column),
+                    Some((_, occupied)) => column = occupied + 1,
+                }
+            };
             let p = PlacedItem {
                 child,
-                column,
+                column: found.ok_or_else(no_space)?,
                 column_span,
                 row,
                 row_span,
             };
-            occupancy.occupy(&p);
+            occupancy.occupy(id, &p, budget)?;
             placed[slot] = Some(p);
         }
     }
@@ -649,26 +719,41 @@ fn place_items(
                 if column < cursor_column {
                     cursor_row += 1;
                 }
-                let row = (cursor_row..MAX_AUTO_ROWS)
-                    .find(|&r| occupancy.is_free(r, column, row_span, column_span))
-                    .ok_or_else(no_space)?;
+                let mut row = cursor_row;
+                loop {
+                    if row + row_span > MAX_GRID_TRACKS {
+                        return Err(limit(id, LayoutLimit::GridLines));
+                    }
+                    budget.charge(1).map_err(work)?;
+                    match occupancy
+                        .conflict((row, column, row_span, column_span), budget)
+                        .map_err(work)?
+                    {
+                        None => break,
+                        Some((occupied, _)) => row = occupied + 1,
+                    }
+                }
                 (row, column)
             }
             None => {
                 let (mut row, mut column) = (cursor_row, cursor_column);
                 loop {
-                    if row >= MAX_AUTO_ROWS {
-                        return Err(no_space());
+                    if row + row_span > MAX_GRID_TRACKS {
+                        return Err(limit(id, LayoutLimit::GridLines));
                     }
                     if column + column_span > columns {
                         row += 1;
                         column = 0;
                         continue;
                     }
-                    if occupancy.is_free(row, column, row_span, column_span) {
-                        break;
+                    budget.charge(1).map_err(work)?;
+                    match occupancy
+                        .conflict((row, column, row_span, column_span), budget)
+                        .map_err(work)?
+                    {
+                        None => break,
+                        Some((_, occupied)) => column = occupied + 1,
                     }
-                    column += 1;
                 }
                 (row, column)
             }
@@ -680,7 +765,7 @@ fn place_items(
             row,
             row_span,
         };
-        occupancy.occupy(&p);
+        occupancy.occupy(id, &p, budget)?;
         placed[slot] = Some(p);
         cursor_row = row;
         cursor_column = column + column_span;
@@ -707,7 +792,12 @@ fn solve(
     let column_gap = length_unit(id, LayoutProperty::ContainerLayout, grid.column_gap, false)?;
     let row_gap = length_unit(id, LayoutProperty::ContainerLayout, grid.row_gap, false)?;
     let children = engine.children(index);
-    let items = place_items(engine, id, &children, grid.columns.len())?;
+    let mut budget = WorkBudget::new(MAX_GRID_WORK);
+    let items = place_items(engine, id, &children, grid.columns.len(), &mut budget)?;
+    let track_error = |error: TrackError| match error {
+        TrackError::Arithmetic(error) => LayoutError::Arithmetic { node: id, error },
+        TrackError::WorkLimit => limit(id, LayoutLimit::GridWork),
+    };
 
     let columns = grid
         .columns
@@ -738,14 +828,21 @@ fn solve(
             contribution: size.width(),
         });
     }
-    let column_sizes =
-        size_tracks(&columns, column_gap, inner[0], &column_items).map_err(at(id))?;
+    let column_sizes = size_tracks(&columns, column_gap, inner[0], &column_items, &mut budget)
+        .map_err(track_error)?;
+    let (column_offsets, column_extent) =
+        track_offsets(&column_sizes, column_gap).map_err(at(id))?;
 
     // 행: 열 영역 너비가 정해진 뒤의 높이 기여.
     let mut row_items = Vec::with_capacity(items.len());
     for item in &items {
-        let width = area_extent(&column_sizes, item.column, item.column_span, column_gap)
-            .map_err(at(id))?;
+        let width = span_extent(
+            &column_offsets,
+            &column_sizes,
+            item.column,
+            item.column_span,
+        )
+        .map_err(at(id))?;
         let constraint = ChildConstraint {
             cb: [Some(width), None],
             fill: [Some(width), None],
@@ -758,10 +855,8 @@ fn solve(
             contribution: size.height(),
         });
     }
-    let row_sizes = size_tracks(&rows, row_gap, inner[1], &row_items).map_err(at(id))?;
-
-    let (column_offsets, column_extent) =
-        track_offsets(&column_sizes, column_gap).map_err(at(id))?;
+    let row_sizes =
+        size_tracks(&rows, row_gap, inner[1], &row_items, &mut budget).map_err(track_error)?;
     let (row_offsets, row_extent) = track_offsets(&row_sizes, row_gap).map_err(at(id))?;
     Ok(GridSolution {
         column_offsets,
@@ -792,24 +887,22 @@ pub(crate) fn place(
     let id = engine.nodes[index].id;
     let padding = engine.nodes[index].padding;
     let solution = solve(engine, index, [Some(inner.width()), Some(inner.height())])?;
-    let (column_gap, row_gap) = match &engine.node(index).container {
-        ContainerLayout::Grid(grid) => (
-            length_unit(id, LayoutProperty::ContainerLayout, grid.column_gap, false)?,
-            length_unit(id, LayoutProperty::ContainerLayout, grid.row_gap, false)?,
-        ),
-        _ => (LayoutUnit::ZERO, LayoutUnit::ZERO),
-    };
     let mut placements = Vec::with_capacity(solution.items.len());
     for item in &solution.items {
-        let width = area_extent(
+        let width = span_extent(
+            &solution.column_offsets,
             &solution.column_sizes,
             item.column,
             item.column_span,
-            column_gap,
         )
         .map_err(at(id))?;
-        let height =
-            area_extent(&solution.row_sizes, item.row, item.row_span, row_gap).map_err(at(id))?;
+        let height = span_extent(
+            &solution.row_offsets,
+            &solution.row_sizes,
+            item.row,
+            item.row_span,
+        )
+        .map_err(at(id))?;
         let constraint = ChildConstraint {
             cb: [Some(width), Some(height)],
             fill: [Some(width), Some(height)],
@@ -1258,5 +1351,147 @@ mod tests {
         assert_eq!(cell(&result, 7), (0, 4, 3));
         // 암시 행 5개(0~4) → Hug 높이 50.
         assert_eq!(result.get(id(1)).unwrap().local_rect().height(), px(50));
+    }
+
+    /// 열 `columns`개(각 1px)·암시 행 1px grid와 (StableId, 위치) 자식.
+    fn limit_input(columns: usize, children: &[(u64, GridItem)]) -> LayoutInput {
+        let grid = GridLayout {
+            implicit_row: fixed_track(1.0),
+            ..GridLayout::new(vec![fixed_track(1.0); columns], vec![])
+        };
+        let mut root = LayoutNode::new(id(1))
+            .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+            .with_container(ContainerLayout::Grid(grid));
+        let mut nodes = Vec::new();
+        for (i, (n, item)) in children.iter().enumerate() {
+            root = root.with_child(id(*n), key(i as u32 + 1));
+            nodes.push(
+                LayoutNode::new(id(*n))
+                    .with_grid(*item)
+                    .with_sizing(SizingMode::Fill, SizingMode::Fill),
+            );
+        }
+        nodes.insert(0, root);
+        LayoutInput::new(id(1), nodes)
+    }
+
+    /// 1px cell grid에서 node의 (열, 행) 위치와 너비(칸 수).
+    fn unit_cell(result: &LayoutResult, n: u64) -> (i32, i32, i32) {
+        let r = result.get(id(n)).unwrap().local_rect();
+        (r.x().raw() / 64, r.y().raw() / 64, r.width().raw() / 64)
+    }
+
+    fn exceeded(node: u64, limit: LayoutLimit) -> Result<(), LayoutError> {
+        Err(LayoutError::LimitExceeded {
+            node: id(node),
+            limit,
+        })
+    }
+
+    #[test]
+    fn auto_placement_past_u16_line_range_is_limit_error() {
+        // 리뷰 재현: 1열, 명시 item이 마지막 행(line 65534..65535)을 점유, 자동 item은 행 65534칸.
+        // 이전에는 수 초 탐색 뒤 "공간 없음"이었습니다. 지금은 점유 cell을 건너뛰어 곧바로 line 범위
+        // 상한 오류입니다(자동 item을 놓으려면 끝 line이 65535를 넘어야 함).
+        let last_row = GridItem::at(1, 65534, 1, 1);
+        let tall = GridItem {
+            column: auto(1),
+            row: auto(65534),
+        };
+        let input = limit_input(1, &[(2, last_row), (3, tall)]);
+        assert_eq!(input.validate(), Ok(()));
+        let started = std::time::Instant::now();
+        assert_eq!(
+            compute_layout(&input).map(|_| ()),
+            exceeded(1, LayoutLimit::GridLines)
+        );
+        // 결정적 상한이라 시간 단언은 하지 않지만 debug에서도 즉시 끝나야 합니다(참고용).
+        assert!(started.elapsed() < std::time::Duration::from_secs(30));
+        // 끝 line이 u16을 넘는 명시·자동 item은 검증 단계에서 거부합니다.
+        for item in [
+            GridItem::at(1, 65535, 1, 1),
+            GridItem {
+                column: auto(1),
+                row: auto(65535),
+            },
+        ] {
+            assert_eq!(
+                limit_input(1, &[(2, item)]).validate(),
+                exceeded(2, LayoutLimit::GridLines)
+            );
+        }
+        // 끝 line 65535(행 65534개)까지는 허용하고 암시 행은 그 범위 안에서 만들어집니다.
+        let fits = limit_input(1, &[(2, GridItem::at(1, 65534, 1, 1))]);
+        let result = compute_layout(&fits).unwrap();
+        assert_eq!(result.get(id(1)).unwrap().local_rect().height(), px(65534));
+        // 자동 item이 line 범위 끝에 꼭 맞으면 놓입니다.
+        let edge = limit_input(
+            1,
+            &[
+                (2, GridItem::at(1, 1, 1, 1)),
+                (
+                    3,
+                    GridItem {
+                        column: auto(1),
+                        row: auto(65533),
+                    },
+                ),
+            ],
+        );
+        let result = compute_layout(&edge).unwrap();
+        assert_eq!(unit_cell(&result, 3), (0, 1, 1));
+    }
+
+    #[test]
+    fn grid_cell_and_track_counts_are_bounded() {
+        // 열 20000개 + 행 65534의 명시 item → 13억 cell 할당 대신 검증 단계 cell 상한 오류.
+        let wide = limit_input(20_000, &[(2, GridItem::at(1, 65534, 1, 1))]);
+        assert_eq!(wide.validate(), exceeded(2, LayoutLimit::GridCells));
+        // 명시 track 수·명시 cell 수 상한.
+        let too_many = GridLayout::new(vec![fixed_track(1.0); MAX_GRID_TRACKS + 1], vec![]);
+        assert_eq!(
+            grid_input(too_many).validate(),
+            exceeded(1, LayoutLimit::GridLines)
+        );
+        let too_big = GridLayout::new(vec![fixed_track(1.0); 2048], vec![fixed_track(1.0); 1024]);
+        assert_eq!(
+            grid_input(too_big).validate(),
+            exceeded(1, LayoutLimit::GridCells)
+        );
+        // 자동 배치가 늘린 행이 cell 상한을 넘으면 계산 중 오류(각 item은 검증을 통과).
+        let block = GridItem {
+            column: auto(100),
+            row: auto(6000),
+        };
+        let input = limit_input(100, &[(2, block), (3, block)]);
+        assert_eq!(input.validate(), Ok(()));
+        assert_eq!(
+            compute_layout(&input).map(|_| ()),
+            exceeded(1, LayoutLimit::GridCells)
+        );
+    }
+
+    #[test]
+    fn grid_work_is_bounded() {
+        // 겹침이 허용된 명시 item 17개가 각각 1024×1024 cell 전체를 점유 → 점유 작업량이
+        // MAX_GRID_WORK(2^24)를 넘어 작업량 상한 오류.
+        let full = GridItem::at(1, 1, 1024, 1024);
+        let children: Vec<(u64, GridItem)> = (2..19).map(|n| (n, full)).collect();
+        let input = limit_input(1024, &children);
+        assert_eq!(input.validate(), Ok(()));
+        assert_eq!(
+            compute_layout(&input).map(|_| ()),
+            exceeded(1, LayoutLimit::GridWork)
+        );
+        // 일반 크기 grid(12열, 자동 item 2000개)는 상한과 무관하게 계산됩니다.
+        let one = GridItem {
+            column: auto(1),
+            row: auto(1),
+        };
+        let many: Vec<(u64, GridItem)> = (2..2002).map(|n| (n, one)).collect();
+        let result = compute_layout(&limit_input(12, &many)).unwrap();
+        // 2000개 / 12열 = 행 167개(마지막 행 8개).
+        assert_eq!(result.get(id(1)).unwrap().local_rect().height(), px(167));
+        assert_eq!(unit_cell(&result, 2001), (7, 166, 1));
     }
 }

@@ -19,9 +19,72 @@
 //!    몫이 base보다 작은 fr track은 base로 고정하고 나머지로 다시 나눕니다. 잔여 subpixel은 track
 //!    순서. 가용 크기가 indefinite면 `fr 단위 = max(span 1 item 기여 / fr, base / fr)`로 정하고 각 fr
 //!    track을 `max(base, 단위 × fr)`로 둡니다.
+//!
+//! # 작업량 상한
+//!
+//! track sizing은 반복(maximize·fr freeze) 한 바퀴마다 track 수만큼, span 여러 칸 item은 걸친 track
+//! 수만큼 [`WorkBudget`]을 소모합니다. 상한을 넘으면 [`TrackError::WorkLimit`]입니다. span 1 기여는
+//! item 목록을 한 번만 훑어 미리 모으므로 track 수 × item 수 비용이 들지 않습니다.
 
 use crate::distribute::{distribute_equal, distribute_weighted};
 use crate::rounding::{LayoutUnit, LayoutUnitError};
+
+/// grid 계산 한 번의 결정적 작업량 상한 (crate 내부).
+///
+/// 단위는 cell 검사·track 갱신 같은 기본 연산 하나입니다. 같은 입력은 플랫폼·빌드와 무관하게 같은
+/// 양을 소모하므로 상한 초과 여부도 결정적입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WorkBudget {
+    remaining: u64,
+}
+
+/// 작업량 상한을 넘었습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct WorkExceeded;
+
+impl WorkBudget {
+    /// `limit` 단위의 예산.
+    pub(crate) const fn new(limit: u64) -> WorkBudget {
+        WorkBudget { remaining: limit }
+    }
+
+    /// `units`만큼 소모합니다. 남은 양보다 많으면 오류이며 남은 양은 0이 됩니다.
+    pub(crate) fn charge(&mut self, units: usize) -> Result<(), WorkExceeded> {
+        // usize → u64는 지원 플랫폼(64비트)에서 손실이 없습니다.
+        let units = units as u64;
+        match self.remaining.checked_sub(units) {
+            Some(rest) => {
+                self.remaining = rest;
+                Ok(())
+            }
+            None => {
+                self.remaining = 0;
+                Err(WorkExceeded)
+            }
+        }
+    }
+}
+
+/// track sizing 오류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrackError {
+    /// 수치 범위 오류.
+    Arithmetic(LayoutUnitError),
+    /// 작업량 상한 초과.
+    WorkLimit,
+}
+
+impl From<LayoutUnitError> for TrackError {
+    fn from(error: LayoutUnitError) -> TrackError {
+        TrackError::Arithmetic(error)
+    }
+}
+
+impl From<WorkExceeded> for TrackError {
+    fn from(_: WorkExceeded) -> TrackError {
+        TrackError::WorkLimit
+    }
+}
 
 /// track 경계(변환됨).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,14 +137,15 @@ pub(crate) struct TrackItem {
     pub(crate) contribution: LayoutUnit,
 }
 
-/// track `i`에 놓인 span 1 item의 기여 최댓값.
-fn single_span_content(items: &[TrackItem], index: usize) -> LayoutUnit {
-    items
-        .iter()
-        .filter(|item| item.span == 1 && item.start == index)
-        .map(|item| item.contribution)
-        .max()
-        .unwrap_or(LayoutUnit::ZERO)
+/// track마다 그 track에 놓인 span 1 item의 기여 최댓값(item 목록 한 번 순회).
+fn single_span_contents(items: &[TrackItem], count: usize) -> Vec<LayoutUnit> {
+    let mut contents = vec![LayoutUnit::ZERO; count];
+    for item in items {
+        if item.span == 1 && item.start < count {
+            contents[item.start] = contents[item.start].max(item.contribution);
+        }
+    }
+    contents
 }
 
 /// track 크기(track 순서)를 계산합니다. `available`은 content 크기(indefinite면 `None`).
@@ -90,13 +154,16 @@ pub(crate) fn size_tracks(
     gap: LayoutUnit,
     available: Option<LayoutUnit>,
     items: &[TrackItem],
-) -> Result<Vec<LayoutUnit>, LayoutUnitError> {
+    budget: &mut WorkBudget,
+) -> Result<Vec<LayoutUnit>, TrackError> {
     let count = tracks.len();
+    budget.charge(count.saturating_add(items.len()))?;
+    let single = single_span_contents(items, count);
     // 1) 초기화.
     let mut base = Vec::with_capacity(count);
     let mut limit: Vec<Option<LayoutUnit>> = Vec::with_capacity(count);
     for (i, track) in tracks.iter().enumerate() {
-        let content = single_span_content(items, i);
+        let content = single[i];
         let lo = match track.min {
             Breadth::Fixed(value) => value,
             Breadth::MinContent | Breadth::MaxContent => content,
@@ -127,6 +194,8 @@ pub(crate) fn size_tracks(
         .collect();
     spanning.sort_by_key(|item| item.span);
     for item in spanning {
+        // 걸친 track 합·대상 선택(위 fr 검사 포함)은 span에 비례합니다.
+        budget.charge(item.span.saturating_mul(2))?;
         let range = item.start..item.start + item.span;
         let mut covered = LayoutUnit::ZERO;
         for i in range.clone() {
@@ -160,6 +229,7 @@ pub(crate) fn size_tracks(
     // 3) maximize: 남는 공간으로 비fr track을 limit까지.
     if let Some(extent) = available {
         for _ in 0..=count {
+            budget.charge(count)?;
             let mut used = gaps_total;
             for value in &base {
                 used = used.checked_add(*value)?;
@@ -191,19 +261,24 @@ pub(crate) fn size_tracks(
     if flexible.is_empty() {
         return Ok(base);
     }
+    let mut is_flexible = vec![false; count];
+    for &i in &flexible {
+        is_flexible[i] = true;
+    }
     match available {
         Some(extent) => {
             let mut inflexible = vec![false; count];
             for _ in 0..=count {
+                budget.charge(count)?;
                 let mut leftover = extent.checked_sub(gaps_total)?;
                 for i in 0..count {
-                    if !flexible.contains(&i) || inflexible[i] {
+                    if !is_flexible[i] || inflexible[i] {
                         leftover = leftover.checked_sub(base[i])?;
                     }
                 }
                 let weights: Vec<u64> = (0..count)
                     .map(|i| {
-                        if flexible.contains(&i) && !inflexible[i] {
+                        if is_flexible[i] && !inflexible[i] {
                             tracks[i].flex()
                         } else {
                             0
@@ -234,7 +309,7 @@ pub(crate) fn size_tracks(
             let mut best: Option<(i128, i128)> = None;
             for &i in &flexible {
                 let weight = i128::from(tracks[i].flex());
-                let content = single_span_content(items, i).max(base[i]);
+                let content = single[i].max(base[i]);
                 let candidate = (i128::from(content.raw()), weight);
                 best = match best {
                     Some((num, den)) if num * candidate.1 >= candidate.0 * den => Some((num, den)),
@@ -242,7 +317,7 @@ pub(crate) fn size_tracks(
                 };
             }
             if let Some((num, den)) = best {
-                let out_of_range = |_| LayoutUnitError::OutOfRange;
+                let out_of_range = |_| TrackError::Arithmetic(LayoutUnitError::OutOfRange);
                 let unit = LayoutUnit::from_raw(i32::try_from(num).map_err(out_of_range)?);
                 let den = i64::try_from(den).map_err(out_of_range)?;
                 for &i in &flexible {
@@ -278,6 +353,22 @@ mod tests {
 
     fn px(value: i32) -> LayoutUnit {
         LayoutUnit::from_px_int(value).unwrap()
+    }
+
+    /// 넉넉한 예산으로 track sizing.
+    fn size(
+        tracks: &[Track],
+        gap: LayoutUnit,
+        available: Option<LayoutUnit>,
+        items: &[TrackItem],
+    ) -> Result<Vec<LayoutUnit>, TrackError> {
+        size_tracks(
+            tracks,
+            gap,
+            available,
+            items,
+            &mut WorkBudget::new(u64::MAX),
+        )
     }
 
     fn fixed(value: i32) -> Track {
@@ -321,19 +412,19 @@ mod tests {
     fn fixed_and_fraction_fixture() {
         // [100, 1fr, 2fr], 가용 400, gap 10 → 남은 280 px = 17920 subpixel을 1:2.
         // 5973.33 → 5973(+잔여 1 → 5974), 11946.67 → 11946.
-        let sizes = size_tracks(&[fixed(100), fr(1), fr(2)], px(10), Some(px(400)), &[]).unwrap();
+        let sizes = size(&[fixed(100), fr(1), fr(2)], px(10), Some(px(400)), &[]).unwrap();
         assert_eq!(raw(&sizes), vec![6400, 5974, 11946]);
         let (offsets, extent) = track_offsets(&sizes, px(10)).unwrap();
         assert_eq!(raw(&offsets), vec![0, 6400 + 640, 6400 + 640 + 5974 + 640]);
         assert_eq!(extent, px(400));
         // 고정 track만: 가용보다 커도 줄이지 않음(넘침).
-        let sizes = size_tracks(&[fixed(300), fixed(200)], px(0), Some(px(400)), &[]).unwrap();
+        let sizes = size(&[fixed(300), fixed(200)], px(0), Some(px(400)), &[]).unwrap();
         assert_eq!(as_px(&sizes), vec![300.0, 200.0]);
         // fr만, 가용 300, gap 0 → 1:1:1 = 100.
-        let sizes = size_tracks(&[fr(1), fr(1), fr(1)], px(0), Some(px(300)), &[]).unwrap();
+        let sizes = size(&[fr(1), fr(1), fr(1)], px(0), Some(px(300)), &[]).unwrap();
         assert_eq!(as_px(&sizes), vec![100.0, 100.0, 100.0]);
         // 고정이 가용을 다 쓰면 fr은 0.
-        let sizes = size_tracks(&[fixed(400), fr(1)], px(0), Some(px(300)), &[]).unwrap();
+        let sizes = size(&[fixed(400), fr(1)], px(0), Some(px(300)), &[]).unwrap();
         assert_eq!(as_px(&sizes), vec![400.0, 0.0]);
     }
 
@@ -344,21 +435,21 @@ mod tests {
             min: Breadth::Fixed(px(150)),
             max: Breadth::Fraction(64),
         };
-        let sizes = size_tracks(&[track, fr(1)], px(0), Some(px(200)), &[]).unwrap();
+        let sizes = size(&[track, fr(1)], px(0), Some(px(200)), &[]).unwrap();
         assert_eq!(as_px(&sizes), vec![150.0, 50.0]);
         // maximize: minmax(20, 50) + 고정 10 in 100 → 50까지 늘어나고 나머지는 빈 공간.
         let growable = Track {
             min: Breadth::Fixed(px(20)),
             max: Breadth::Fixed(px(50)),
         };
-        let sizes = size_tracks(&[growable, fixed(10)], px(0), Some(px(100)), &[]).unwrap();
+        let sizes = size(&[growable, fixed(10)], px(0), Some(px(100)), &[]).unwrap();
         assert_eq!(as_px(&sizes), vec![50.0, 10.0]);
     }
 
     #[test]
     fn content_tracks_and_spanning_items() {
         // content track: span 1 기여 최댓값. span 2 item(70)은 부족분 10을 두 content track에 5씩.
-        let sizes = size_tracks(
+        let sizes = size(
             &[content(), content(), fixed(20)],
             px(0),
             None,
@@ -372,7 +463,7 @@ mod tests {
         .unwrap();
         assert_eq!(as_px(&sizes), vec![35.0, 35.0, 20.0]);
         // fr를 걸친 span item은 intrinsic 단계에서 무시.
-        let sizes = size_tracks(
+        let sizes = size(
             &[content(), fr(1)],
             px(0),
             Some(px(100)),
@@ -389,17 +480,17 @@ mod tests {
             min: Breadth::MinContent,
             max: Breadth::Fixed(px(100)),
         };
-        let sizes = size_tracks(&[track], px(0), Some(px(80)), &[item(0, 1, 30)]).unwrap();
+        let sizes = size(&[track], px(0), Some(px(80)), &[item(0, 1, 30)]).unwrap();
         assert_eq!(as_px(&sizes), vec![80.0]);
         // indefinite면 base(콘텐츠 30) 그대로.
-        let sizes = size_tracks(&[track], px(0), None, &[item(0, 1, 30)]).unwrap();
+        let sizes = size(&[track], px(0), None, &[item(0, 1, 30)]).unwrap();
         assert_eq!(as_px(&sizes), vec![30.0]);
     }
 
     #[test]
     fn indefinite_fraction_uses_largest_fr_unit() {
         // 가용 indefinite: 1fr(기여 30), 2fr(기여 40) → 단위 max(30/1, 40/2) = 30 → 30, 60.
-        let sizes = size_tracks(
+        let sizes = size(
             &[fr(1), fr(2)],
             px(5),
             None,
@@ -408,7 +499,33 @@ mod tests {
         .unwrap();
         assert_eq!(as_px(&sizes), vec![30.0, 60.0]);
         // item이 없으면 0.
-        let sizes = size_tracks(&[fr(1), fixed(7)], px(0), None, &[]).unwrap();
+        let sizes = size(&[fr(1), fixed(7)], px(0), None, &[]).unwrap();
         assert_eq!(as_px(&sizes), vec![0.0, 7.0]);
+    }
+
+    #[test]
+    fn work_budget_is_deterministic_and_bounded() {
+        let mut budget = WorkBudget::new(5);
+        assert_eq!(budget.charge(3), Ok(()));
+        assert_eq!(budget.charge(3), Err(WorkExceeded));
+        // 초과 뒤에는 남은 양이 0이라 계속 실패합니다.
+        assert_eq!(budget.charge(1), Err(WorkExceeded));
+        assert_eq!(budget.charge(0), Ok(()));
+        // track sizing은 track·item 수에 비례해 소모하고 상한을 넘으면 WorkLimit입니다.
+        let tracks = vec![fr(1); 100];
+        let items: Vec<TrackItem> = (0..100).map(|i| item(i, 1, 1)).collect();
+        assert_eq!(
+            size_tracks(
+                &tracks,
+                px(0),
+                Some(px(1000)),
+                &items,
+                &mut WorkBudget::new(150)
+            ),
+            Err(TrackError::WorkLimit)
+        );
+        let mut enough = WorkBudget::new(10_000);
+        let sizes = size_tracks(&tracks, px(0), Some(px(1000)), &items, &mut enough).unwrap();
+        assert!(sizes.iter().all(|s| *s == px(10)));
     }
 }
