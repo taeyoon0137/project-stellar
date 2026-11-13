@@ -20,6 +20,9 @@ pub mod typed_expr;
 /// ComponentProperty record (IX.1.2).
 pub mod property;
 
+/// 컴포넌트 선언형 상태 머신 (IX.5).
+pub mod state_machine;
+
 /// ComponentInstance node payload (IX.2.1).
 pub mod instance;
 

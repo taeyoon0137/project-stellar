@@ -27,6 +27,7 @@ use super::override_rules::{check_definition_overrides, PropertyOverrideError};
 use super::property::{ComponentProperty, ComponentPropertyError};
 use super::slot::{ComponentSlot, SlotError};
 use super::slot_override::SlotOverrideError;
+use super::state_machine::{StateMachine, StateMachineError};
 use crate::node_kind::NodeKind;
 
 /// Component Property의 안정 식별자. node·slot 식별자와 타입이 섞이지 않습니다.
@@ -139,6 +140,14 @@ pub enum ComponentDefinitionError {
     /// 정의 tree 안 nested 인스턴스의 PropertyOverride가 규칙을 어깁니다(IX.2.3, library 디코딩
     /// 경로).
     PropertyOverride(PropertyOverrideError),
+    /// 상태 머신 정의가 잘못됐습니다(IX.5, library 디코딩 경로).
+    StateMachine(StateMachineError),
+}
+
+impl From<StateMachineError> for ComponentDefinitionError {
+    fn from(err: StateMachineError) -> ComponentDefinitionError {
+        ComponentDefinitionError::StateMachine(err)
+    }
 }
 
 impl From<ComponentPropertyError> for ComponentDefinitionError {
@@ -198,6 +207,7 @@ impl fmt::Display for ComponentDefinitionError {
             ComponentDefinitionError::PropertyOverride(err) => {
                 write!(f, "nested 인스턴스 property override 오류: {err}")
             }
+            ComponentDefinitionError::StateMachine(err) => write!(f, "상태 머신 오류: {err}"),
         }
     }
 }
@@ -668,13 +678,14 @@ impl ComponentDefinition {
 }
 
 /// library에 등록된 컴포넌트 한 개: 정의 + 정의 tree + Slot record(IX.3.1) + Property
-/// record(IX.1.2).
+/// record(IX.1.2) + 상태 머신(IX.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentEntry {
     definition: ComponentDefinition,
     tree: DefinitionTree,
     slots: BTreeMap<ComponentSlotId, ComponentSlot>,
     properties: BTreeMap<ComponentPropertyId, ComponentProperty>,
+    state_machine: StateMachine,
 }
 
 impl ComponentEntry {
@@ -715,6 +726,14 @@ impl ComponentEntry {
         &mut self,
     ) -> &mut BTreeMap<ComponentPropertyId, ComponentProperty> {
         &mut self.properties
+    }
+
+    pub(super) fn state_machine_ref(&self) -> &StateMachine {
+        &self.state_machine
+    }
+
+    pub(super) fn state_machine_mut(&mut self) -> &mut StateMachine {
+        &mut self.state_machine
     }
 }
 
@@ -772,6 +791,7 @@ impl ComponentLibrary {
                 tree,
                 slots: BTreeMap::new(),
                 properties: BTreeMap::new(),
+                state_machine: StateMachine::new(),
             },
         );
         Ok(())
@@ -836,6 +856,7 @@ impl ComponentLibrary {
             for property in entry.properties.values() {
                 property.encode_into(&mut buf);
             }
+            entry.state_machine.encode_into(&mut buf);
         }
         buf
     }
@@ -866,6 +887,13 @@ impl ComponentLibrary {
             for _ in 0..property_count {
                 let property = ComponentProperty::decode_from(&mut reader)?;
                 library.add_property(component, property)?;
+            }
+            let entry = library
+                .get(component)
+                .ok_or(ComponentDefinitionError::NotFound { id: component.id() })?;
+            let machine = StateMachine::decode_from(&mut reader, entry)?;
+            if let Some(entry) = library.entry_mut(component) {
+                *entry.state_machine_mut() = machine;
             }
         }
         reader.expect_end()?;
