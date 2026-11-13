@@ -1,10 +1,13 @@
 //! node별 layout input hash와 output cache (X.1.4).
 //!
-//! - [`LayoutInputHash`]: node 하나의 layout 입력(크기 모드·제약·자식 결과 등)을 요약한 64비트
-//!   값입니다. [`LayoutInputHasher`]가 고정 알고리즘(FNV-1a 64)과 canonical little-endian
-//!   바이트로 계산하므로 같은 입력은 플랫폼·실행과 무관하게 같은 hash를 만듭니다.
+//! - [`LayoutInputHash`]: node 하나의 layout 입력(크기 모드·제약·자식 결과 등)을 요약한 값입니다.
+//!   [`LayoutInputHasher`]가 같은 canonical little-endian 바이트열에 서로 독립인 두 고정 알고리즘을
+//!   적용합니다: primary는 FNV-1a 64(xor·곱 mod 2^64), check는 Mersenne 소수 `2^61 - 1` 위의
+//!   다항식 hash입니다. 같은 입력은 플랫폼·실행과 무관하게 같은 두 값을 만듭니다.
 //! - [`LayoutCache`]: node([`StableId`])별로 마지막 입력 hash, 계산한 [`LayoutRevision`],
-//!   output을 보관합니다. 같은 입력 hash로 조회하면 cache hit입니다.
+//!   output을 보관합니다. primary **와** check가 모두 같아야 cache hit입니다. 따라서 64비트
+//!   primary가 우연히 충돌해도 독립 check hash가 다르면 miss로 처리되어 다른 입력의 output을
+//!   재사용하지 않습니다.
 //!
 //! 이 hash는 **런타임 cache key 전용**이며 저장하지 않습니다. 저장용 콘텐츠 해시(V.1.5
 //! `ContentHash`)를 대신하지 않습니다. output 타입은 generic이라 `LayoutResult`(X.1.1)가
@@ -18,36 +21,61 @@ use stellar_core_types::value::{FiniteF32, Length};
 
 use crate::revision::LayoutRevision;
 
-/// node 하나의 layout 입력을 요약한 64비트 hash (X.1.4).
+/// node 하나의 layout 입력을 요약한 hash (X.1.4).
+///
+/// 서로 독립인 두 64비트 값(primary FNV-1a 64, check 다항식 hash)으로 이루어집니다. 비교·cache
+/// 조회는 두 값을 모두 사용합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct LayoutInputHash(u64);
+pub struct LayoutInputHash {
+    primary: u64,
+    check: u64,
+}
 
 impl LayoutInputHash {
-    /// raw 64비트 값으로부터 만듭니다(테스트·진단용).
+    /// primary 64비트 값으로부터 만듭니다(테스트·진단용, check는 0).
     pub const fn from_raw(raw: u64) -> LayoutInputHash {
-        LayoutInputHash(raw)
+        LayoutInputHash {
+            primary: raw,
+            check: 0,
+        }
     }
 
-    /// raw 64비트 값.
+    /// primary·check 두 값으로부터 만듭니다(테스트·진단용).
+    pub const fn from_parts(primary: u64, check: u64) -> LayoutInputHash {
+        LayoutInputHash { primary, check }
+    }
+
+    /// primary(FNV-1a 64) 값.
     pub const fn raw(&self) -> u64 {
-        self.0
+        self.primary
+    }
+
+    /// 독립 check hash 값(`2^61 - 1` 미만).
+    pub const fn check(&self) -> u64 {
+        self.check
     }
 }
 
 impl fmt::Display for LayoutInputHash {
+    /// 진단 표시용 요약으로 primary 64비트만 16진수로 씁니다(동일성 판정에는 쓰지 않음).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:016x}", self.0)
+        write!(f, "{:016x}", self.primary)
     }
 }
 
-/// 결정적 layout input hasher (FNV-1a 64).
+/// 결정적 layout input hasher (primary FNV-1a 64 + 독립 check 다항식 hash).
 ///
 /// 모든 다중 바이트 값은 little-endian으로 공급하고, float은 [`FiniteF32`] 비트(`-0.0`은 `+0.0`
 /// 으로 정규화됨)를 사용합니다. 가변 길이 바이트열은 `u64` LE 길이 프리픽스를 붙여 경계를
 /// 모호하지 않게 합니다. 필드 순서가 다르면 다른 hash가 됩니다(순서는 호출자가 고정).
+///
+/// check hash는 `h ← (h·B + byte + 1) mod (2^61 - 1)`(`h₀ = 0`, 고정 기수 `B`)입니다. 소수체
+/// 위의 다항식이라 FNV-1a(2^64 위의 xor·곱)와 대수 구조가 달라 두 값이 동시에 충돌할 가능성이
+/// 독립적으로 줄어듭니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LayoutInputHasher {
     state: u64,
+    check: u64,
 }
 
 impl LayoutInputHasher {
@@ -55,19 +83,30 @@ impl LayoutInputHasher {
     const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     /// FNV-1a 64 prime.
     const PRIME: u64 = 0x0000_0100_0000_01b3;
+    /// check hash 법(Mersenne 소수 2^61 - 1).
+    const CHECK_MODULUS: u64 = (1 << 61) - 1;
+    /// check hash 고정 기수(`CHECK_MODULUS` 미만).
+    const CHECK_BASE: u64 = 0x0d6f_1c9b_7a35_e2c1;
 
     /// 빈 hasher를 만듭니다.
     pub const fn new() -> LayoutInputHasher {
         LayoutInputHasher {
             state: LayoutInputHasher::OFFSET_BASIS,
+            check: 0,
         }
     }
 
-    /// 바이트를 그대로(프리픽스 없이) 섞습니다.
+    /// 바이트를 그대로(프리픽스 없이) 두 hash에 섞습니다.
     fn mix(&mut self, bytes: &[u8]) {
         for byte in bytes {
             self.state ^= u64::from(*byte);
             self.state = self.state.wrapping_mul(LayoutInputHasher::PRIME);
+            // 두 피연산자가 2^61 미만이라 u128 곱이 넘치지 않고, 나머지는 2^61 - 1 미만입니다.
+            let next = (u128::from(self.check) * u128::from(LayoutInputHasher::CHECK_BASE)
+                + u128::from(*byte)
+                + 1)
+                % u128::from(LayoutInputHasher::CHECK_MODULUS);
+            self.check = next as u64;
         }
     }
 
@@ -125,14 +164,17 @@ impl LayoutInputHasher {
         self
     }
 
-    /// 다른 input hash(예: 자식 결과 요약)를 섞습니다.
+    /// 다른 input hash(예: 자식 결과 요약)의 primary·check를 차례로 섞습니다.
     pub fn write_hash(&mut self, hash: LayoutInputHash) -> &mut LayoutInputHasher {
-        self.write_u64(hash.raw())
+        self.write_u64(hash.raw()).write_u64(hash.check())
     }
 
     /// 지금까지 섞은 입력의 hash.
     pub const fn finish(&self) -> LayoutInputHash {
-        LayoutInputHash(self.state)
+        LayoutInputHash {
+            primary: self.state,
+            check: self.check,
+        }
     }
 }
 
@@ -251,8 +293,8 @@ impl std::error::Error for LayoutCacheError {}
 /// node별 layout output cache (X.1.4).
 ///
 /// node마다 entry 하나(마지막으로 계산한 입력 hash·revision·output)를 보관합니다. 조회는 입력
-/// hash가 같을 때만 hit입니다. 순회 API는 제공하지 않으므로 내부 map 순서가 결과에 영향을
-/// 주지 않습니다.
+/// hash의 primary와 check가 모두 같을 때만 hit입니다. 순회 API는 제공하지 않으므로 내부 map
+/// 순서가 결과에 영향을 주지 않습니다.
 #[derive(Debug, Clone)]
 pub struct LayoutCache<T> {
     entries: HashMap<StableId, LayoutCacheEntry<T>>,
@@ -511,6 +553,43 @@ mod tests {
             foobar.write_u8(*byte);
         }
         assert_eq!(foobar.finish().raw(), 0x8594_4171_f739_67e8);
+    }
+
+    #[test]
+    fn primary_collision_with_different_check_misses_cache() {
+        // primary 64비트가 같아도 독립 check hash가 다르면 다른 입력으로 보고 miss입니다.
+        let mut cache = LayoutCache::new();
+        let id = node(11);
+        let cached = LayoutInputHash::from_parts(0x1234_5678_9abc_def0, 1);
+        let colliding = LayoutInputHash::from_parts(0x1234_5678_9abc_def0, 2);
+        assert_eq!(cached.raw(), colliding.raw());
+        assert_ne!(cached, colliding);
+        cache.insert(id, cached, LayoutRevision(1), "a").unwrap();
+        assert_eq!(
+            cache.lookup(id, colliding),
+            CacheLookup::Miss(CacheMissReason::InputChanged { cached })
+        );
+        assert!(cache.lookup(id, cached).is_hit());
+        assert_eq!(cache.stats(), LayoutCacheStats { hits: 1, misses: 1 });
+    }
+
+    #[test]
+    fn check_hash_matches_fixed_vectors() {
+        // check = 다항식 hash mod 2^61 - 1 golden. 알고리즘·기수 고정.
+        assert_eq!(LayoutInputHasher::new().finish().check(), 0);
+        let mut a = LayoutInputHasher::new();
+        a.write_u8(b'a');
+        assert_eq!(a.finish().check(), 0x62);
+        let mut foobar = LayoutInputHasher::new();
+        for byte in b"foobar" {
+            foobar.write_u8(*byte);
+        }
+        assert_eq!(foobar.finish().check(), 0x0750_0c23_d436_ac1a);
+        // 실제 입력은 두 값이 모두 결정적이고, check는 법 미만입니다.
+        let hash = input_hash(120.0, 40.0, 3);
+        assert_eq!(hash, input_hash(120.0, 40.0, 3));
+        assert!(hash.check() < (1 << 61) - 1);
+        assert_eq!(LayoutInputHash::from_raw(5).check(), 0);
     }
 
     #[test]
