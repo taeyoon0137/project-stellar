@@ -717,7 +717,7 @@ tools/xtask/
 | VIII.2.2 | `[x]` | Literal, Reference, Unary, Binary, Call, If, Match AST node를 구현합니다. | 각 node round-trip. | VIII.2.1 |
 | VIII.2.3 | `[x]` | AST는 DAG 참조를 허용하되 cycle을 금지합니다. cycle detector를 구현합니다. | direct·indirect cycle fixture 실패. | VIII.2.2 |
 | VIII.2.4 | `[x]` | type checker가 각 AST node의 inferred type과 오류 path를 반환하게 합니다. | nested 오류가 정확한 node StableId를 포함. | VIII.1.4, VIII.2.2 |
-| VIII.2.5 | `[ ]` | canonical AST serializer는 map 순서가 아니라 child slot 순서를 사용합니다. | GUI 생성 순서가 다른 동등 AST bytes 동일. | VIII.2.2, V.1.2 |
+| VIII.2.5 | `[x]` | canonical AST serializer는 map 순서가 아니라 child slot 순서를 사용합니다. | GUI 생성 순서가 다른 동등 AST bytes 동일. | VIII.2.2, V.1.2 |
 
 ### VIII.3 GUI 편집용 Projection
 

@@ -1,10 +1,17 @@
-//! Expression AST node 직렬화 (VIII.2.2).
+//! Expression AST 직렬화 — node 형식(VIII.2.2)과 canonical AST 형식(VIII.2.5).
 //!
 //! canonical primitive 규칙(V.1.1: 다중 바이트 little-endian, 고정 폭 정수, `u32` LE 길이 프리픽스)을
-//! 따르는 node 단위 binary 형식입니다. 리터럴 값은 `TypedValue`의 안정 직렬화(III.3.5)를 길이 프리픽스
-//! blob으로 감싸 그대로 씁니다.
+//! 따르는 binary 형식입니다. 리터럴 값은 `TypedValue`의 안정 직렬화(III.3.5)를 길이 프리픽스 blob으로
+//! 감싸 그대로 씁니다.
+//!
+//! **canonical AST**는 node를 map·삽입 순서가 아니라 root에서 시작하는 **child slot 순서 전위 순회**
+//! 순서로 기록합니다. 공유(DAG) node는 처음 방문할 때 한 번만 기록하고, 이후에는 child 참조의 ID로만
+//! 가리킵니다. 따라서 GUI가 node를 만든 순서·child를 연결한 순서와 무관하게 같은 AST는 같은 bytes가
+//! 됩니다. 디코더는 다시 직렬화한 bytes가 입력과 같을 때만 받아들여(비-canonical 순서 거부) 한 AST에
+//! 한 표현만 존재하게 합니다.
 //!
 //! ```text
+//! ast       := version:u16 (= 1) ++ node_count:u32 ++ node*   (첫 node = root, 전위 slot 순서)
 //! node      := id[16] ++ op[3] ++ payload ++ child_count:u32 ++ child*
 //! op        := kind:u8 ++ operand:u16            (ExpressionOp::encode, VIII.1.5)
 //! child     := slot_tag:u8 ++ slot_index:u16 ++ target_id[16]   (slot 오름차순, 중복 없음)
@@ -30,8 +37,8 @@ use stellar_core_types::reference::TokenRef;
 use stellar_core_types::typed_value::{TypedValue, ValueDecodeError};
 
 use crate::ast::{
-    ChildRef, ChildSlot, EnvironmentKey, ExprNode, ExprNodeId, Literal, NodePayload,
-    ReferenceTarget,
+    AstError, ChildRef, ChildSlot, EnvironmentKey, ExprNode, ExprNodeId, ExpressionAst, Literal,
+    NodePayload, ReferenceTarget,
 };
 use crate::ops::{ClosedOpError, ExpressionOp};
 use crate::types::{EnumTypeId, ExpressionType};
@@ -65,8 +72,14 @@ pub enum CodecError {
     /// PropertyPath bytes가 canonical 형식이 아닙니다.
     InvalidPropertyPath,
     /// child가 slot 오름차순이 아니거나 같은 slot이 반복되거나, 값 bytes가 canonical 형식이 아닙니다
-    /// (예: `-0.0`).
+    /// (예: `-0.0`). AST 형식에서는 node 기록 순서가 canonical 전위 순서가 아닌 경우도 포함합니다.
     NonCanonical,
+    /// 지원하지 않는 AST 형식 버전(VIII.2.5).
+    UnsupportedVersion(u16),
+    /// node가 없는 AST(VIII.2.5).
+    EmptyAst,
+    /// 디코드한 node들이 AST 구조 검증을 통과하지 못했습니다(VIII.2.5).
+    Ast(AstError),
 }
 
 impl fmt::Display for CodecError {
@@ -89,6 +102,11 @@ impl fmt::Display for CodecError {
             CodecError::NonCanonical => {
                 f.write_str("canonical 형식이 아닙니다(child 순서·값 bytes)")
             }
+            CodecError::UnsupportedVersion(version) => {
+                write!(f, "지원하지 않는 AST 형식 버전: {version}")
+            }
+            CodecError::EmptyAst => f.write_str("node가 없는 AST입니다"),
+            CodecError::Ast(err) => write!(f, "AST 구조 오류: {err}"),
         }
     }
 }
@@ -131,6 +149,81 @@ impl ExprNode {
         let node = read_node(&mut reader)?;
         reader.finish()?;
         Ok(node)
+    }
+}
+
+/// canonical AST 형식 버전(VIII.2.5).
+pub const AST_FORMAT_VERSION: u16 = 1;
+
+impl ExpressionAst {
+    /// canonical 순서: root에서 child slot 순서로 전위 순회하며 처음 방문한 순서(VIII.2.5).
+    ///
+    /// 공유 node는 한 번만 나타납니다. 명시적 stack을 쓰므로 깊은 AST에서도 재귀하지 않습니다.
+    pub fn canonical_order(&self) -> Vec<ExprNodeId> {
+        let mut order = Vec::with_capacity(self.len());
+        let mut seen = std::collections::BTreeSet::new();
+        let mut stack = vec![self.root()];
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            order.push(id);
+            if let Some(node) = self.node(id) {
+                stack.extend(
+                    node.children()
+                        .iter()
+                        .rev()
+                        .map(|child| child.target)
+                        .filter(|target| !seen.contains(target)),
+                );
+            }
+        }
+        order
+    }
+
+    /// canonical AST bytes(VIII.2.5). 삽입·연결 순서와 무관하게 같은 AST는 같은 bytes입니다.
+    pub fn to_canonical_bytes(&self) -> Result<Vec<u8>, CodecError> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&AST_FORMAT_VERSION.to_le_bytes());
+        let order = self.canonical_order();
+        write_len(&mut out, order.len())?;
+        for id in order {
+            if let Some(node) = self.node(id) {
+                write_node(&mut out, node)?;
+            }
+        }
+        Ok(out)
+    }
+
+    /// [`ExpressionAst::to_canonical_bytes`]의 역(VIII.2.5).
+    ///
+    /// 각 node는 닫힌 연산 집합·payload 규칙으로 디코드하고(VIII.2.2), 전체는 AST 구조 검증(ID 유일성,
+    /// slot 구성, 도달성, cycle 금지)을 거칩니다. 다시 직렬화한 bytes가 입력과 다르면(비-canonical node
+    /// 순서) 거부합니다.
+    pub fn from_canonical_bytes(bytes: &[u8]) -> Result<ExpressionAst, CodecError> {
+        let mut reader = Reader::new(bytes);
+        let version = reader.u16()?;
+        if version != AST_FORMAT_VERSION {
+            return Err(CodecError::UnsupportedVersion(version));
+        }
+        let count = reader.u32()?;
+        if count == 0 {
+            return Err(CodecError::EmptyAst);
+        }
+        let mut nodes = Vec::new();
+        for _ in 0..count {
+            nodes.push(read_node(&mut reader)?);
+        }
+        reader.finish()?;
+        let root = nodes
+            .first()
+            .map(ExprNode::id)
+            .ok_or(CodecError::EmptyAst)?;
+        let ast = ExpressionAst::new(root, nodes).map_err(CodecError::Ast)?;
+        if ast.to_canonical_bytes()? != bytes {
+            return Err(CodecError::NonCanonical);
+        }
+        Ok(ast)
     }
 }
 
@@ -621,5 +714,301 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod ast_tests {
+    use stellar_core_types::color::{Color, ColorSpace};
+    use stellar_core_types::typed_value::EnumValue;
+    use stellar_core_types::value::{FiniteF32, Length};
+
+    use super::*;
+    use crate::functions::FunctionId;
+    use crate::ops::{BinaryOp, UnaryOp};
+
+    fn id(n: u8) -> ExprNodeId {
+        ExprNodeId::new(StableId::from_bytes([n; 16]))
+    }
+
+    fn number(value: f32) -> TypedValue {
+        TypedValue::Number(FiniteF32::new(value).expect("유한"))
+    }
+
+    fn color(r: f32) -> TypedValue {
+        TypedValue::Color(Color::new(ColorSpace::Srgb, r, 0.2, 0.3, 1.0).expect("색"))
+    }
+
+    /// if/and/less/match/call과 공유 node(11, 13, 14)를 포함한 AST의 node 목록(생성 순서 임의).
+    fn fixture_nodes() -> Vec<ExprNode> {
+        let token_len = ReferenceTarget::Token(TokenRef::new(StableId::from_bytes([0xA1; 16])));
+        let token_enum = ReferenceTarget::Token(TokenRef::new(StableId::from_bytes([0xA2; 16])));
+        vec![
+            ExprNode::if_else(id(1), id(2), id(3), id(4)),
+            ExprNode::binary(id(2), BinaryOp::And, id(5), id(6)),
+            ExprNode::binary(id(5), BinaryOp::Less, id(7), id(8)),
+            ExprNode::reference(id(7), token_len),
+            ExprNode::literal(id(8), TypedValue::Length(Length::new(100.0).expect("유한"))),
+            ExprNode::reference(id(6), ReferenceTarget::Environment(EnvironmentKey::new(1))),
+            ExprNode::match_on(
+                id(3),
+                id(9),
+                vec![
+                    (TypedValue::Enum(EnumValue::new(5, 0)), id(10)),
+                    (TypedValue::Enum(EnumValue::new(5, 1)), id(11)),
+                ],
+                id(12),
+            ),
+            ExprNode::reference(id(9), token_enum),
+            ExprNode::call(id(10), FunctionId::Mix, &[id(11), id(13), id(14)]),
+            ExprNode::literal(id(11), color(0.1)),
+            ExprNode::literal(id(13), color(0.9)),
+            ExprNode::literal(id(14), number(0.5)),
+            ExprNode::call(id(12), FunctionId::WithAlpha, &[id(13), id(14)]),
+            ExprNode::call(id(4), FunctionId::ToSrgb, &[id(11)]),
+        ]
+    }
+
+    fn fixture() -> ExpressionAst {
+        ExpressionAst::new(id(1), fixture_nodes()).expect("유효한 AST")
+    }
+
+    /// 결정적 PRNG(SplitMix64).
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+
+        fn shuffle<T>(&mut self, items: &mut [T]) {
+            for i in (1..items.len()).rev() {
+                let j = (self.next() % (i as u64 + 1)) as usize;
+                items.swap(i, j);
+            }
+        }
+    }
+
+    #[test]
+    fn gui_creation_order_does_not_change_bytes() {
+        let expected = fixture().to_canonical_bytes().expect("직렬화");
+        let mut rng = Rng(0x0005_EED5);
+        let mut distinct_orders = std::collections::BTreeSet::new();
+        for _ in 0..1_000 {
+            // node 생성(삽입) 순서와 각 node의 child 연결 순서를 모두 섞습니다.
+            let mut nodes: Vec<ExprNode> = fixture_nodes()
+                .into_iter()
+                .map(|node| {
+                    let mut children = node.children().to_vec();
+                    rng.shuffle(&mut children);
+                    ExprNode::new(node.id(), node.payload().clone(), children)
+                })
+                .collect();
+            rng.shuffle(&mut nodes);
+            distinct_orders.insert(nodes.iter().map(ExprNode::id).collect::<Vec<_>>());
+            let ast = ExpressionAst::new(id(1), nodes).expect("유효한 AST");
+            assert_eq!(ast.to_canonical_bytes().expect("직렬화"), expected);
+        }
+        assert!(
+            distinct_orders.len() > 900,
+            "실제로 서로 다른 생성 순서를 시험"
+        );
+    }
+
+    #[test]
+    fn canonical_order_follows_child_slots() {
+        let order = fixture().canonical_order();
+        // 전위 slot 순서: if → cond(and → less → token, 100px → env) → then(match → scrutinee →
+        // arm0(mix → c1 → c2 → 0.5) → arm1(c1 공유, 생략) → default(with_alpha)) → else(to_srgb).
+        let expected: Vec<ExprNodeId> = [1, 2, 5, 7, 8, 6, 3, 9, 10, 11, 13, 14, 12, 4]
+            .into_iter()
+            .map(id)
+            .collect();
+        assert_eq!(order, expected);
+    }
+
+    #[test]
+    fn canonical_bytes_golden() {
+        // 1 + 2. 기대 bytes는 encoder를 쓰지 않고 형식 정의에서 직접 조립합니다.
+        let ast = ExpressionAst::new(
+            id(1),
+            vec![
+                ExprNode::literal(id(3), number(2.0)),
+                ExprNode::binary(id(1), BinaryOp::Add, id(2), id(3)),
+                ExprNode::literal(id(2), number(1.0)),
+            ],
+        )
+        .expect("유효");
+        let mut expected = vec![0x01, 0x00, 0x03, 0x00, 0x00, 0x00];
+        expected.extend([0x01; 16]);
+        expected.extend([0x04, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00]);
+        expected.extend([0x02, 0x00, 0x00]);
+        expected.extend([0x02; 16]);
+        expected.extend([0x03, 0x00, 0x00]);
+        expected.extend([0x03; 16]);
+        expected.extend([0x02; 16]);
+        expected.extend([0x01, 0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00]);
+        expected.extend([0x02, 0x00, 0x00, 0x80, 0x3F, 0x00, 0x00, 0x00, 0x00]);
+        expected.extend([0x03; 16]);
+        expected.extend([0x01, 0x00, 0x00, 0x01, 0x05, 0x00, 0x00, 0x00]);
+        expected.extend([0x02, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00]);
+        assert_eq!(ast.to_canonical_bytes().expect("직렬화"), expected);
+    }
+
+    #[test]
+    fn canonical_bytes_round_trip() {
+        let ast = fixture();
+        let bytes = ast.to_canonical_bytes().expect("직렬화");
+        let decoded = ExpressionAst::from_canonical_bytes(&bytes).expect("역직렬화");
+        assert_eq!(decoded, ast);
+        assert_eq!(decoded.canonical_order(), ast.canonical_order());
+        assert_eq!(decoded.to_canonical_bytes().expect("재직렬화"), bytes);
+    }
+
+    #[test]
+    fn different_asts_have_different_bytes() {
+        let base = fixture().to_canonical_bytes().expect("직렬화");
+        // 연산자 하나만 바꿈(and → or).
+        let changed: Vec<ExprNode> = fixture_nodes()
+            .into_iter()
+            .map(|node| {
+                if node.id() == id(2) {
+                    ExprNode::binary(id(2), BinaryOp::Or, id(5), id(6))
+                } else {
+                    node
+                }
+            })
+            .collect();
+        let changed = ExpressionAst::new(id(1), changed).expect("유효");
+        assert_ne!(changed.to_canonical_bytes().expect("직렬화"), base);
+        // Lhs/Rhs 교환은 다른 의미 → 다른 bytes.
+        let a = ExpressionAst::new(
+            id(1),
+            vec![
+                ExprNode::binary(id(1), BinaryOp::Subtract, id(2), id(3)),
+                ExprNode::literal(id(2), number(1.0)),
+                ExprNode::literal(id(3), number(2.0)),
+            ],
+        )
+        .expect("유효");
+        let b = ExpressionAst::new(
+            id(1),
+            vec![
+                ExprNode::binary(id(1), BinaryOp::Subtract, id(3), id(2)),
+                ExprNode::literal(id(2), number(1.0)),
+                ExprNode::literal(id(3), number(2.0)),
+            ],
+        )
+        .expect("유효");
+        assert_ne!(
+            a.to_canonical_bytes().expect("직렬화"),
+            b.to_canonical_bytes().expect("직렬화")
+        );
+    }
+
+    /// node 기록 순서를 직접 정해 AST bytes를 조립합니다(비-canonical·악성 입력 생성용).
+    fn raw_ast(nodes: &[ExprNode]) -> Vec<u8> {
+        let mut out = AST_FORMAT_VERSION.to_le_bytes().to_vec();
+        out.extend_from_slice(&(nodes.len() as u32).to_le_bytes());
+        for node in nodes {
+            out.extend(node.to_bytes().expect("직렬화"));
+        }
+        out
+    }
+
+    #[test]
+    fn non_canonical_and_malicious_bytes_are_rejected() {
+        let add = ExprNode::binary(id(1), BinaryOp::Add, id(2), id(3));
+        let one = ExprNode::literal(id(2), number(1.0));
+        let two = ExprNode::literal(id(3), number(2.0));
+        // 정상 순서는 통과.
+        assert!(ExpressionAst::from_canonical_bytes(&raw_ast(&[
+            add.clone(),
+            one.clone(),
+            two.clone()
+        ]))
+        .is_ok());
+        // Rhs를 Lhs보다 먼저 기록 → 비-canonical.
+        assert_eq!(
+            ExpressionAst::from_canonical_bytes(&raw_ast(&[add.clone(), two.clone(), one.clone()])),
+            Err(CodecError::NonCanonical)
+        );
+        // AST 안의 미지 연산(가상 반복 kind 0x08).
+        let mut malicious = raw_ast(&[add.clone(), one.clone(), two.clone()]);
+        malicious[6 + 16] = 0x08;
+        assert_eq!(
+            ExpressionAst::from_canonical_bytes(&malicious),
+            Err(CodecError::Op(ClosedOpError::UnknownNodeKind(0x08)))
+        );
+        // AST 안의 미등록 함수 ID.
+        let call = ExprNode::call(id(1), FunctionId::Abs, &[id(2)]);
+        let mut unknown_fn = raw_ast(&[call, one.clone()]);
+        unknown_fn[6 + 17..6 + 19].copy_from_slice(&0x0F00u16.to_le_bytes());
+        assert_eq!(
+            ExpressionAst::from_canonical_bytes(&unknown_fn),
+            Err(CodecError::Op(ClosedOpError::UnknownFunction(0x0F00)))
+        );
+        // cycle bytes.
+        let cyclic = raw_ast(&[
+            ExprNode::unary(id(1), UnaryOp::Negate, id(2)),
+            ExprNode::unary(id(2), UnaryOp::Negate, id(1)),
+        ]);
+        assert_eq!(
+            ExpressionAst::from_canonical_bytes(&cyclic),
+            Err(CodecError::Ast(AstError::Cycle {
+                path: vec![id(1), id(2), id(1)]
+            }))
+        );
+        // 중복 node ID.
+        assert_eq!(
+            ExpressionAst::from_canonical_bytes(&raw_ast(&[add.clone(), one.clone(), one.clone()])),
+            Err(CodecError::Ast(AstError::DuplicateNodeId(id(2))))
+        );
+        // 버전·빈 AST·잉여·절단.
+        let mut version = raw_ast(std::slice::from_ref(&one));
+        version[0] = 2;
+        assert_eq!(
+            ExpressionAst::from_canonical_bytes(&version),
+            Err(CodecError::UnsupportedVersion(2))
+        );
+        assert_eq!(
+            ExpressionAst::from_canonical_bytes(&raw_ast(&[])),
+            Err(CodecError::EmptyAst)
+        );
+        let mut trailing = raw_ast(std::slice::from_ref(&one));
+        trailing.push(0);
+        assert_eq!(
+            ExpressionAst::from_canonical_bytes(&trailing),
+            Err(CodecError::TrailingBytes)
+        );
+        let full = fixture().to_canonical_bytes().expect("직렬화");
+        for cut in 0..full.len() {
+            assert!(ExpressionAst::from_canonical_bytes(&full[..cut]).is_err());
+        }
+        // node 수를 과장해도 할당 없이 Truncated.
+        let mut inflated = raw_ast(&[one]);
+        inflated[2..6].copy_from_slice(&u32::MAX.to_le_bytes());
+        assert_eq!(
+            ExpressionAst::from_canonical_bytes(&inflated),
+            Err(CodecError::Truncated)
+        );
+    }
+
+    #[test]
+    fn deep_ast_serializes_without_recursion() {
+        let depth: u64 = 100_000;
+        let node_id = |n: u64| ExprNodeId::new(StableId::new_v7(n, 0, n));
+        let mut nodes: Vec<ExprNode> = (1..depth)
+            .map(|n| ExprNode::unary(node_id(n), UnaryOp::Negate, node_id(n + 1)))
+            .collect();
+        nodes.push(ExprNode::literal(node_id(depth), number(1.0)));
+        let ast = ExpressionAst::new(node_id(1), nodes).expect("유효");
+        let bytes = ast.to_canonical_bytes().expect("직렬화");
+        let decoded = ExpressionAst::from_canonical_bytes(&bytes).expect("역직렬화");
+        assert_eq!(decoded.len(), depth as usize);
     }
 }

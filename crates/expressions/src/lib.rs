@@ -21,7 +21,7 @@ pub mod ops;
 /// Expression AST node·payload·child 참조·구조 검증 (VIII.2.1, VIII.2.2).
 pub mod ast;
 
-/// AST node binary 직렬화 (VIII.2.2).
+/// AST node binary 직렬화와 canonical AST serializer (VIII.2.2, VIII.2.5).
 pub mod codec;
 
 /// AST cycle detector (VIII.2.3).
