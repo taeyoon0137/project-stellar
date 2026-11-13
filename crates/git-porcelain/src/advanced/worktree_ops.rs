@@ -170,6 +170,22 @@ impl std::fmt::Display for RemoveError {
 
 impl std::error::Error for RemoveError {}
 
+/// [`plan_remove`]가 만드는 모양(`worktree remove -- <path>`)과 **정확히** 같은지(allowlist).
+///
+/// Git parse-options는 모호하지 않은 long option 약어(`--forc`)와 반복 short flag(`-ff`)도
+/// `--force`로 받아들이므로, force 플래그 이름을 찾는 denylist로는 막을 수 없습니다. 그래서 argv
+/// 전체가 허용 모양과 일치할 때만 실행합니다. `--` 뒤의 경로는 option으로 해석되지 않습니다.
+fn is_plain_remove(plan: &CommandPlan) -> bool {
+    matches!(
+        plan.args(),
+        [worktree, remove, separator, path]
+            if worktree == "worktree"
+                && remove == "remove"
+                && separator == "--"
+                && !path.is_empty()
+    )
+}
+
 /// 확인된 remove plan을 실행합니다. Git이 거부하면 그 결과를 [`RemoveError::RefusedByGit`]로 그대로 돌려줍니다.
 ///
 /// 이 API에는 force 경로가 없습니다. untracked·변경 파일이 있는 worktree는 사용자가 직접 정리한 뒤 다시
@@ -180,9 +196,7 @@ pub fn remove_worktree(
     plan: &CommandPlan,
     confirmation: Option<&super::Confirmation>,
 ) -> Result<(), RemoveError> {
-    let is_remove = plan.args().get(1).is_some_and(|a| a == "remove")
-        && !plan.args().iter().any(|a| a == "--force" || a == "-f");
-    if !is_remove {
+    if !is_plain_remove(plan) {
         return Err(RemoveError::Plan(PlanError::InvalidInput(
             "remove plan 아님",
         )));
@@ -281,9 +295,51 @@ mod tests {
             .args()
             .iter()
             .any(|a| a == "--force" || a == "-f"));
+        assert!(is_plain_remove(&plan_remove(p).unwrap()));
         assert!(plan_add(p, &AddTarget::ExistingBranch("-f".into())).is_err());
         assert!(plan_add(Path::new(""), &AddTarget::Detached("HEAD".into())).is_err());
         assert!(plan_lock(p, Some("a\nb")).is_err());
+    }
+
+    /// force 약어·반복·다른 subcommand plan은 allowlist가 거부하고 프로세스를 만들지 않습니다(리뷰 G2 회귀).
+    #[test]
+    fn hand_built_force_variants_are_rejected_before_spawn() {
+        use crate::advanced::Confirmation;
+        use crate::runner::GitRunner;
+        use crate::trust::GitTrust;
+
+        let runner = GitRunner::new(
+            PathBuf::from("/nonexistent/git"),
+            Vec::new(),
+            std::time::Duration::from_secs(5),
+        );
+        let gate = GatedGitRunner::new(runner.clone(), GitTrust::Trusted);
+        let cwd = std::env::temp_dir();
+        let variants: Vec<Vec<&str>> = vec![
+            vec!["worktree", "remove", "--force", "--", "/wt/x"],
+            vec!["worktree", "remove", "--forc", "--", "/wt/x"],
+            vec!["worktree", "remove", "--fo", "--", "/wt/x"],
+            vec!["worktree", "remove", "-ff", "--", "/wt/x"],
+            vec!["worktree", "remove", "-f", "-f", "--", "/wt/x"],
+            vec!["worktree", "remove", "--force=1", "--", "/wt/x"],
+            vec!["worktree", "remove", "/wt/x", "--force"],
+            vec!["worktree", "remove", "--", "/wt/x", "--force"],
+            vec!["worktree", "remove", "--"],
+            vec!["worktree", "remove", "--", ""],
+            vec!["worktree", "prune"],
+            vec!["-c", "x=y", "worktree", "remove", "--", "/wt/x"],
+        ];
+        for args in variants {
+            let plan = CommandPlan::new(argv(args.clone()), DestructiveLevel::DiscardsWork);
+            assert!(
+                matches!(
+                    remove_worktree(&gate, &cwd, &plan, Some(&Confirmation::confirm(&plan))),
+                    Err(RemoveError::Plan(PlanError::InvalidInput(_)))
+                ),
+                "{args:?}"
+            );
+        }
+        assert_eq!(runner.spawn_count(), 0);
     }
 
     #[cfg(unix)]
@@ -432,16 +488,25 @@ mod tests {
             ));
             assert!(wt.join("stellar.yaml").exists());
 
-            // force plan은 이 API로 실행할 수 없음(수동 조립도 거부).
-            let forced = CommandPlan::new(
-                argv(["worktree", "remove", "--force", "--", wt.to_str().unwrap()]),
-                DestructiveLevel::DiscardsWork,
-            );
-            assert!(matches!(
-                remove_worktree(&gate, &repo, &forced, Some(&Confirmation::confirm(&forced))),
-                Err(RemoveError::Plan(PlanError::InvalidInput(_)))
-            ));
-            assert!(wt.exists());
+            // force plan은 이 API로 실행할 수 없음(crate 내부 수동 조립도 거부). Git이 `--force`로
+            // 받아들이는 약어(`--forc`)·반복(`-ff`)도 같습니다.
+            let wt_arg = wt.to_str().unwrap();
+            for flags in [
+                vec!["--force"],
+                vec!["--forc"],
+                vec!["-ff"],
+                vec!["-f", "-f"],
+            ] {
+                let mut args = vec!["worktree", "remove"];
+                args.extend(flags);
+                args.extend(["--", wt_arg]);
+                let forced = CommandPlan::new(argv(args), DestructiveLevel::DiscardsWork);
+                assert!(matches!(
+                    remove_worktree(&gate, &repo, &forced, Some(&Confirmation::confirm(&forced))),
+                    Err(RemoveError::Plan(PlanError::InvalidInput(_)))
+                ));
+                assert!(wt.join("stellar.yaml").exists());
+            }
 
             // 정리 후에는 제거 성공.
             crate::test_support::git_ok(&runner, &wt, ["checkout", "--", "stellar.yaml"]);

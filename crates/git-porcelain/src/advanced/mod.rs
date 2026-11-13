@@ -75,7 +75,11 @@ pub struct CommandPlan {
 
 impl CommandPlan {
     /// argv와 수준으로 계획을 만듭니다.
-    pub fn new(args: Vec<OsString>, level: DestructiveLevel) -> CommandPlan {
+    ///
+    /// crate 내부 전용입니다. 파괴 수준은 argv를 만든 `plan_*` 함수가 정하며, 외부 호출자가 임의
+    /// argv에 낮은 수준(예: `reset --hard`를 [`DestructiveLevel::Safe`])을 붙여 확인을 우회할 수
+    /// 없습니다.
+    pub(crate) fn new(args: Vec<OsString>, level: DestructiveLevel) -> CommandPlan {
         CommandPlan { args, level }
     }
 
@@ -140,6 +144,25 @@ impl Confirmation {
         }
     }
 }
+
+/// [`CommandPlan`]은 crate 밖에서 직접 조립할 수 없습니다(`plan_*` 함수로만 생성, 컴파일 실패).
+///
+/// ```compile_fail
+/// use stellar_git_porcelain::advanced::{CommandPlan, DestructiveLevel};
+/// let args = vec![std::ffi::OsString::from("reset"), std::ffi::OsString::from("--hard")];
+/// let _ = CommandPlan::new(args, DestructiveLevel::Safe);
+/// ```
+///
+/// 같은 import로 `plan_*` 함수가 만든 plan은 사용할 수 있습니다.
+///
+/// ```
+/// use stellar_git_porcelain::advanced::worktree_ops::plan_prune;
+/// use stellar_git_porcelain::advanced::{CommandPlan, DestructiveLevel};
+/// let plan: CommandPlan = plan_prune();
+/// assert_eq!(plan.level(), DestructiveLevel::DiscardsRefs);
+/// ```
+#[cfg(doctest)]
+struct CommandPlanConstructionDocs;
 
 /// plan 실행 실패.
 #[derive(Debug, Clone, PartialEq, Eq)]
