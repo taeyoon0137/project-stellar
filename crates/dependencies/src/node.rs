@@ -131,6 +131,12 @@ pub enum ValueError {
     InvalidSelector,
     /// content hash 형식(`sha256:<64자리 소문자 hex>`) 위반.
     InvalidContentHash,
+    /// 음이 아닌 10진 정수가 아님.
+    InvalidInteger,
+    /// 지원하지 않는 schema version.
+    UnsupportedVersion,
+    /// 다른 필드와 모순(예: `logical_id`가 dependency path 마지막 이름과 다름).
+    Inconsistent,
 }
 
 impl fmt::Display for ValueError {
@@ -156,6 +162,9 @@ impl fmt::Display for ValueError {
             ValueError::InvalidContentHash => {
                 f.write_str("content hash는 'sha256:<64자리 소문자 16진수>'여야 합니다")
             }
+            ValueError::InvalidInteger => f.write_str("음이 아닌 10진 정수가 아닙니다"),
+            ValueError::UnsupportedVersion => f.write_str("지원하지 않는 schema version입니다"),
+            ValueError::Inconsistent => f.write_str("다른 필드와 모순됩니다"),
         }
     }
 }
@@ -180,6 +189,28 @@ pub(crate) fn expect_mapping<'a>(
         path: path.to_string(),
         expected: "mapping",
     })
+}
+
+/// 시퀀스를 기대합니다.
+pub(crate) fn expect_sequence<'a>(
+    node: &'a DeclNode,
+    path: &str,
+) -> Result<&'a [DeclNode], SchemaError> {
+    node.as_sequence().ok_or_else(|| SchemaError::WrongType {
+        path: path.to_string(),
+        expected: "sequence",
+    })
+}
+
+/// 엄격한 음이 아닌 10진 `u32`(선행 `+`·공백·선행 0 금지, "0"은 허용).
+pub(crate) fn parse_u32_strict(text: &str) -> Option<u32> {
+    if text.is_empty() || !text.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if text.len() > 1 && text.starts_with('0') {
+        return None;
+    }
+    text.parse().ok()
 }
 
 /// 스칼라를 기대합니다.
