@@ -7,7 +7,7 @@
 #
 # 검사(하나라도 어긋나면 실패):
 #  1. 번들 구조 allowlist: Contents/{Info.plist, PkgInfo, MacOS/StellarMac, _CodeSignature/CodeResources,
-#     Resources/**}만 허용(빌드 중간물·dSYM·헤더·staticlib 혼입 금지)
+#     CodeResources(stapled 공증 ticket), Resources/**}만 허용(빌드 중간물·dSYM·헤더·staticlib 혼입 금지)
 #  2. Mach-O 파일은 Contents/MacOS/StellarMac 하나(Rust 코어는 staticlib으로 실행 파일에 포함)
 #  3. 동적 링크는 시스템 경로(/usr/lib, /System/Library)만, @rpath·빌드 경로 의존 없음
 #  4. LC_RPATH는 없거나 @executable_path/@loader_path 상대 경로만
@@ -54,6 +54,7 @@ while IFS= read -r entry; do
   case "$entry" in
     Contents | Contents/Info.plist | Contents/PkgInfo | Contents/MacOS | Contents/MacOS/StellarMac) ;;
     Contents/_CodeSignature | Contents/_CodeSignature/CodeResources) ;;
+    Contents/CodeResources) ;; # stapler가 붙인 공증 ticket(XVI.9.4)
     Contents/Resources | Contents/Resources/*) ;;
     *) fail "허용되지 않은 번들 항목: $entry" ;;
   esac
