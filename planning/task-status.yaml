@@ -3515,9 +3515,15 @@ tasks:
       - DEV-MAC
   - id: "IX.1.1"
     title: "`ComponentDefinition` resource에 StableId, root FrameRef, 공개 Property 목록, Slot 목록, local token scope를 정의합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.1.1.md"
+    commit: "8c24d62a7f2f368e50060971e54907fd2658de99"
+    report: "docs/task-reports/IX.1.1.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.1.2"
     title: "`ComponentProperty`에 StableId, 이름, type, 필수 default expression, 공개 여부를 정의합니다. default 없는 property는 생성 불가입니다."
     status: not_started
@@ -3544,19 +3550,31 @@ tasks:
       - DEV-MAC
   - id: "IX.2.1"
     title: "ComponentInstance node payload에 ComponentRef, sparse PropertyOverride map, SlotOverride map을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.1.1"
       - "VI.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.2.1.md"
+    commit: "c8806ad6fe8588ffe82181713adad878ad87be48"
+    report: "docs/task-reports/IX.2.1.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.2.2"
     title: "instance expansion view를 구현해 definition tree와 instance override를 합성한 read-only virtual subtree를 제공합니다. 실제 node 복제는 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.2.2.md"
+    commit: "6ae1f5e7c8410e5d4d5fb4a3e34dc7751f5a95cd"
+    report: "docs/task-reports/IX.2.2.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.2.3"
     title: "공개 Property만 instance에서 override 가능하게 validator를 구현합니다. private·nested property 직접 접근은 거부합니다."
     status: not_started
@@ -3574,41 +3592,71 @@ tasks:
       - DEV-MAC
   - id: "IX.2.5"
     title: "자유 구조 편집은 금지하고 definition이 허용한 Slot만 변경 가능하게 virtual subtree mutation validator를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.2.5.md"
+    commit: "3bf41401308b2f2202c764359da333ea36f4560b"
+    report: "docs/task-reports/IX.2.5.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.2.6"
     title: "명시적 detach command를 구현해 virtual subtree를 실제 nodes로 복제하고 ComponentRef를 제거합니다. 새 ID remap을 사용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.2.2"
       - "III.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.2.6.md"
+    commit: "2ad96e19e9517eccac7585d6a96520d42515f925"
+    report: "docs/task-reports/IX.2.6.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.3.1"
     title: "`ComponentSlot`에 StableId, host FrameRef, allowed node kinds, cardinality, default content refs를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.3.1.md"
+    commit: "afe1273e21ae12c7df0df9b3b29c50f118e131ec"
+    report: "docs/task-reports/IX.3.1.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.3.2"
     title: "Slot override는 instance가 소유한 nodes를 slot에 투영하도록 정의하고 definition tree 안으로 parent를 직접 바꾸지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.3.1"
       - "IX.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.3.2.md"
+    commit: "11efc30d2b65c5ea4d58c5102824c1ba6fce6cb3"
+    report: "docs/task-reports/IX.3.2.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.3.3"
     title: "slot content 삽입·삭제·재정렬 command를 구현합니다. allowed kind/cardinality를 검증합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.3.3.md"
+    commit: "e661cc290675c4babc7c49fff3622df1bdea416a"
+    report: "docs/task-reports/IX.3.3.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.4.1"
     title: "component boundary를 넘는 binding은 각 경계의 ComponentProperty StableId chain을 필수로 갖게 합니다."
     status: not_started
@@ -3774,9 +3822,15 @@ tasks:
       - DEV-MAC
   - id: "IX.7.3"
     title: "VariantOverrideSet에 sparse property patches, node add/delete/move/replace, slot changes를 정의합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.7.3.md"
+    commit: "d3ec45771e5c7c04b65ca87e945d274b4c66bf44"
+    report: "docs/task-reports/IX.7.3.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.7.4"
     title: "현재 변수 assignment와 일치하는 모든 variant를 찾고 specificity 순으로 정렬하는 resolver를 구현합니다."
     status: not_started
@@ -7288,23 +7342,41 @@ tasks:
       - DEV-MAC
   - id: "XIX.1.1"
     title: "별도 `tools/stellar-mcp` 실행 파일을 생성하고 stdin/stdout JSON-RPC 프레이밍을 구현합니다. stdout에는 프로토콜 메시지 외 로그를 쓰지 않습니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.1.1.md"
+    commit: "a1f928922813a06269dd8b9eb9701b92b60a5c50"
+    report: "docs/task-reports/XIX.1.1.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "XIX.1.2"
     title: "브리지가 실행 중 Stellar 앱을 찾는 로컬 IPC endpoint registry를 구현합니다. network port는 열지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.1.2.md"
+    commit: "6dadc243490896ec550282fe2bb542aebe8ef521"
+    report: "docs/task-reports/XIX.1.2.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "XIX.1.3"
     title: "bridge↔app IPC에 session nonce와 OS 사용자 identity 검증을 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.1.3.md"
+    commit: "f14f5b637760061e2016cb497a6b0fa0b8980104"
+    report: "docs/task-reports/XIX.1.3.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "XIX.1.4"
     title: "한 bridge process가 한 agent session만 담당하고 종료 시 session permission을 폐기합니다."
     status: not_started
@@ -7314,11 +7386,17 @@ tasks:
       - DEV-MAC
   - id: "XIX.1.5"
     title: "MCP protocol version을 config에 고정하고 unsupported client version에 명확한 오류를 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.1.5.md"
+    commit: "6eb977b3e2c84fb807b6af66a4ca31e079286cf0"
+    report: "docs/task-reports/XIX.1.5.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "XIX.2.1"
     title: "read resources에 project structure, current document, selection, components, tokens, target profile, Git status를 정의합니다."
     status: not_started
@@ -8039,16 +8117,28 @@ tasks:
       - DEV-MAC
   - id: "XXIV.1.1"
     title: "`stellar-cli`를 app UI와 분리된 binary로 생성하고 core crate만 사용합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.1.1.md"
+    commit: "0aa0c22c375c20dcbc9a815700b91f2cf4278d87"
+    report: "docs/task-reports/XXIV.1.1.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "XXIV.1.2"
     title: "exit code와 machine-readable JSON output schema를 정의합니다. stdout/stderr 역할을 분리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.1.2.md"
+    commit: "69e7c91d7bef0bd56dadfbd9dd441bfa4f3a64f3"
+    report: "docs/task-reports/XXIV.1.2.md"
+    verified_at: "2026-11-14T01:09:48+09:00"
   - id: "XXIV.1.3"
     title: "`validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다."
     status: not_started
