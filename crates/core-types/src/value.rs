@@ -27,6 +27,9 @@ impl FiniteF32 {
     /// 0 값(정규화된 양의 0).
     pub const ZERO: FiniteF32 = FiniteF32(0.0);
 
+    /// 1 값.
+    pub const ONE: FiniteF32 = FiniteF32(1.0);
+
     /// 유한 값이면 `FiniteF32`를, 아니면 오류를 반환합니다. `-0.0`은 `0.0`으로 정규화합니다.
     pub fn new(value: f32) -> Result<FiniteF32, NonFiniteError> {
         if !value.is_finite() {

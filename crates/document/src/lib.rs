@@ -52,3 +52,6 @@ pub mod path;
 
 /// Text payload (VI.7).
 pub mod text;
+
+/// Image payload (VI.8).
+pub mod image;
