@@ -27,6 +27,9 @@ pub mod fetch;
 /// pull 전략 선택(XXVI.1.3).
 pub mod pull;
 
+/// stash list/create/apply/pop/drop(XXVI.2.1).
+pub mod stash;
+
 /// 명령의 파괴 수준.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DestructiveLevel {
