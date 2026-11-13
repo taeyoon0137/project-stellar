@@ -4,8 +4,27 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// 실제 PTY를 여는 테스트의 공유/배타 lock. fd 누수 검사처럼 열린 tty 수를 세는 테스트만 배타로
+/// 잡고, 나머지 PTY 테스트는 공유로 잡아 서로 병렬로 돕니다.
+static PTY_TESTS: RwLock<()> = RwLock::new(());
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn pty_shared() -> RwLockReadGuard<'static, ()> {
+    PTY_TESTS
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn pty_exclusive() -> RwLockWriteGuard<'static, ()> {
+    PTY_TESTS
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// 테스트가 끝나면 지우는 임시 디렉터리. 경로는 canonical(symlink 해석)입니다.
 pub(crate) struct TempDir {

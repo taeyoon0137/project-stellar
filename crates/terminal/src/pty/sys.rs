@@ -1,11 +1,12 @@
-//! macOS libSystem 최소 FFI 선언(PTY·세션·신호).
+//! macOS libSystem 최소 FFI 선언(PTY·세션·신호·프로세스 목록).
 //!
 //! 새 crate 의존 없이 필요한 C 함수와 상수만 선언합니다. 상수 값은 macOS SDK 헤더
-//! (`sys/fcntl.h`, `sys/ttycom.h`, `sys/signal.h`)와 같아야 하며 테스트로 고정합니다. 가변 인자
+//! (`sys/fcntl.h`, `sys/ttycom.h`, `sys/signal.h`, `sys/wait.h`, `sys/proc_info.h`)와 같아야 하며
+//! 테스트로 고정합니다. 가변 인자
 //! 함수(`open`, `ioctl`)는 Apple arm64 호출 규약에서 고정 인자와 전달 방식이 다르므로 반드시 `...`로
 //! 선언합니다.
 
-use std::ffi::{c_char, c_int, c_ulong};
+use std::ffi::{c_char, c_int, c_long, c_ulong, c_void};
 
 /// `O_RDWR`.
 pub(crate) const O_RDWR: c_int = 0x0002;
@@ -40,6 +41,57 @@ pub(crate) const SIGKILL: c_int = 9;
 /// `SIGCONT`(macOS 값).
 pub(crate) const SIGCONT: c_int = 19;
 
+/// `idtype_t::P_PID`.
+pub(crate) const P_PID: c_int = 1;
+/// `WNOHANG`.
+pub(crate) const WNOHANG: c_int = 0x01;
+/// `WEXITED`.
+pub(crate) const WEXITED: c_int = 0x04;
+/// `WNOWAIT`: 상태를 보고하되 회수하지 않음(zombie 유지).
+pub(crate) const WNOWAIT: c_int = 0x20;
+/// `CLD_EXITED`.
+pub(crate) const CLD_EXITED: c_int = 1;
+/// `CLD_KILLED`.
+pub(crate) const CLD_KILLED: c_int = 2;
+/// `CLD_DUMPED`.
+pub(crate) const CLD_DUMPED: c_int = 3;
+/// `PROC_ALL_PIDS`(`proc_listpids` 종류).
+pub(crate) const PROC_ALL_PIDS: u32 = 1;
+
+/// `siginfo_t`(macOS `sys/signal.h`).
+#[repr(C)]
+#[derive(Debug)]
+pub(crate) struct SigInfo {
+    pub(crate) si_signo: c_int,
+    pub(crate) si_errno: c_int,
+    pub(crate) si_code: c_int,
+    pub(crate) si_pid: c_int,
+    pub(crate) si_uid: u32,
+    pub(crate) si_status: c_int,
+    pub(crate) si_addr: *mut c_void,
+    pub(crate) si_value: usize,
+    pub(crate) si_band: c_long,
+    pub(crate) pad: [c_ulong; 7],
+}
+
+impl SigInfo {
+    /// 0으로 채운 값.
+    pub(crate) fn zeroed() -> SigInfo {
+        SigInfo {
+            si_signo: 0,
+            si_errno: 0,
+            si_code: 0,
+            si_pid: 0,
+            si_uid: 0,
+            si_status: 0,
+            si_addr: std::ptr::null_mut(),
+            si_value: 0,
+            si_band: 0,
+            pad: [0; 7],
+        }
+    }
+}
+
 /// `struct winsize`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -59,6 +111,14 @@ extern "C" {
     pub(crate) fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
     pub(crate) fn setsid() -> c_int;
     pub(crate) fn kill(pid: c_int, sig: c_int) -> c_int;
+    pub(crate) fn getsid(pid: c_int) -> c_int;
+    pub(crate) fn waitid(idtype: c_int, id: u32, infop: *mut SigInfo, options: c_int) -> c_int;
+    pub(crate) fn proc_listpids(
+        kind: u32,
+        typeinfo: u32,
+        buffer: *mut c_void,
+        buffersize: c_int,
+    ) -> c_int;
 }
 
 #[cfg(test)]
@@ -74,5 +134,9 @@ mod tests {
         assert_eq!(TIOCOUTQ, 0x4004_7473);
         assert_eq!((O_RDWR, O_NOCTTY, O_CLOEXEC), (2, 0x20000, 0x0100_0000));
         assert_eq!((SIGHUP, SIGKILL, SIGCONT), (1, 9, 19));
+        assert_eq!(std::mem::size_of::<SigInfo>(), 104);
+        assert_eq!((P_PID, WNOHANG, WEXITED, WNOWAIT), (1, 1, 4, 0x20));
+        assert_eq!((CLD_EXITED, CLD_KILLED, CLD_DUMPED), (1, 2, 3));
+        assert_eq!(PROC_ALL_PIDS, 1);
     }
 }

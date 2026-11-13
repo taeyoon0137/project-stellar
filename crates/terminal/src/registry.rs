@@ -1,4 +1,4 @@
-//! 프로젝트 창별 터미널 세션 registry (XVIII.1.2, XVIII.1.4).
+//! 프로젝트 창별 터미널 세션 registry (XVIII.1.2, XVIII.1.4, XVIII.2.4).
 //!
 //! 프로젝트 창 하나([`WindowSessionId`])가 registry 하나를 가지고, 그 안에 여러 터미널 세션을
 //! 둡니다(기술 아키텍처 32 "프로젝트 창별 다중 세션"). registry는 세션 메모리에만 있으며 창을 닫으면
@@ -13,6 +13,11 @@
 //!   호출하지 않습니다(untrusted spawn 0). 그다음 cwd 검증(XVIII.1.3), 셸 해석(XVIII.2.2)·명령·환경
 //!   구성, 실행 순입니다.
 //! - 닫기([`TerminalRegistry::close`])는 실행 중인 child를 종료한 뒤 세션을 제거합니다.
+//! - **프로세스 tree 정리**(XVIII.2.4): child 스스로 종료·외부 신호 종료는 [`TerminalRegistry::poll`]이
+//!   비차단으로 정리하고 세션을 `Finished{ChildExited}`로 남깁니다. 취소([`TerminalRegistry::cancel`])는
+//!   tree를 종료하고 `Finished{Cancelled}`로 남깁니다. 창·앱 종료([`TerminalRegistry::close_all`],
+//!   registry drop)는 모든 세션에 먼저 종료를 요청한 뒤 기다려 전체 시간이 세션 하나의 유예 상한과
+//!   비슷합니다. 터미널은 복원하지 않습니다(기술 아키텍처 32 "창 종료 시 프로세스 종료").
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -377,6 +382,64 @@ impl TerminalRegistry {
         self.sessions.get(&id)
     }
 
+    /// 실행 중 세션의 종료를 비차단으로 확인하고 정리를 진행합니다. 이번에 끝난 세션 식별자를
+    /// 돌려줍니다. 끝난 세션은 사용자가 닫을 때까지 `Finished{ChildExited}`로 남고 child handle은
+    /// 해제됩니다. OS 호출 오류는 다음 호출에서 다시 확인합니다.
+    pub fn poll(&mut self) -> Vec<TerminalSessionId> {
+        let mut finished = Vec::new();
+        for session in self.sessions.values_mut() {
+            let Some(process) = session.process.as_mut() else {
+                continue;
+            };
+            if let Ok(Some(report)) = process.poll_exit() {
+                session.process = None;
+                session.record_exit(report, TerminationReason::ChildExited);
+                finished.push(session.id);
+            }
+        }
+        finished
+    }
+
+    /// 실행을 취소합니다. 프로세스 tree를 종료하고 세션은 `Finished{Cancelled}`로 남깁니다.
+    pub fn cancel(&mut self, id: TerminalSessionId) -> Result<TerminalProcessState, RegistryError> {
+        let session = self
+            .sessions
+            .get_mut(&id)
+            .ok_or(RegistryError::UnknownSession)?;
+        if session.process.is_none() {
+            return Err(RegistryError::NotRunning);
+        }
+        session
+            .finish(TerminationReason::Cancelled)
+            .map_err(RegistryError::Terminate)?;
+        Ok(session.state)
+    }
+
+    /// 모든 세션을 닫고 제거합니다(창·앱 종료). 각 세션의 최종 상태를 만든 순서로 돌려줍니다.
+    pub fn close_all(
+        &mut self,
+        reason: TerminationReason,
+    ) -> Vec<(
+        TerminalSessionId,
+        Result<TerminalProcessState, RegistryError>,
+    )> {
+        for session in self.sessions.values_mut() {
+            if let Some(process) = session.process.as_mut() {
+                process.begin_terminate();
+            }
+        }
+        std::mem::take(&mut self.sessions)
+            .into_values()
+            .map(|mut session| {
+                let result = session
+                    .finish(reason)
+                    .map(|()| session.state)
+                    .map_err(RegistryError::Terminate);
+                (session.id, result)
+            })
+            .collect()
+    }
+
     /// 실행 중 세션의 터미널 크기를 바꿉니다(XVIII.2.3, winsize ioctl).
     pub fn resize(
         &mut self,
@@ -416,6 +479,13 @@ impl TerminalRegistry {
         self.ids
             .decode(handle)
             .filter(|id| self.sessions.contains_key(id))
+    }
+}
+
+impl Drop for TerminalRegistry {
+    /// 창이 닫히면 남은 세션의 프로세스 tree를 모두 종료합니다.
+    fn drop(&mut self) {
+        let _ = self.close_all(TerminationReason::AppClosed);
     }
 }
 
@@ -925,6 +995,7 @@ pub(crate) mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn login_and_non_login_shells_run_in_pty() {
+        let _pty = crate::test_support::pty_shared();
         use crate::pty::tests::TIMEOUT;
         use crate::pty::PtyLauncher;
         use crate::test_support::OutputCollector;
@@ -1010,5 +1081,168 @@ pub(crate) mod tests {
             registry.resize(id, size),
             Err(RegistryError::UnknownSession)
         );
+    }
+
+    /// 실제 PTY 세션 registry 환경.
+    #[cfg(target_os = "macos")]
+    fn tree_profile(name: &str, tail: &str) -> TerminalProfile {
+        let mut tree = profile(name);
+        let script = format!("{}; {tail}", crate::pty::tests::TREE_SCRIPT);
+        tree.command =
+            ProfileCommand::Argv(ArgvCommand::new("/bin/sh", ["-c", script.as_str()]).unwrap());
+        tree
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn registry_cleans_up_on_child_exit_cancel_and_app_close() {
+        use crate::pty::tests::{wait_gone, wait_tree_ready, KillOnDrop, TIMEOUT};
+        use crate::pty::PtyLauncher;
+        use crate::test_support::{pty_shared, OutputCollector};
+
+        let _pty = pty_shared();
+        let dir = TempDir::new();
+        let context = CwdContext::new(dir.path(), &[]).unwrap();
+        let shell = sh();
+        let environment = LaunchEnvironment {
+            cwd: &context,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
+            env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
+        };
+        let mut launcher = PtyLauncher::with_grace(std::time::Duration::from_millis(300));
+        let mut registry = TerminalRegistry::new(window(19));
+        let exiting = registry
+            .create(tree_profile("exit", "read line; exit 3"))
+            .unwrap();
+        let cancelled = registry
+            .create(tree_profile("cancel", "while :; do /bin/sleep 1; done"))
+            .unwrap();
+        let app_a = registry
+            .create(tree_profile("app-a", "while :; do /bin/sleep 1; done"))
+            .unwrap();
+        let app_b = registry
+            .create(tree_profile("app-b", "while :; do /bin/sleep 1; done"))
+            .unwrap();
+        let mut pids = std::collections::BTreeMap::new();
+        let mut guards = Vec::new();
+        for id in [exiting, cancelled, app_a, app_b] {
+            let leader = registry
+                .start(id, trusted(&registry), &environment, &mut launcher)
+                .unwrap();
+            let process = registry.session(id).unwrap().process().unwrap();
+            let mut output = OutputCollector::start(process.output_reader().unwrap());
+            let mut found = wait_tree_ready(&mut output);
+            found.push(i32::try_from(leader).unwrap());
+            guards.push(KillOnDrop(found.clone()));
+            pids.insert(id, found);
+        }
+
+        // child 종료: poll이 세션 전체를 정리하고 Finished{ChildExited}로 남깁니다.
+        registry
+            .session_mut(exiting)
+            .unwrap()
+            .process_mut()
+            .unwrap()
+            .write_input(b"\n")
+            .unwrap();
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        while !registry.poll().contains(&exiting) {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            registry.session(exiting).unwrap().state(),
+            TerminalProcessState::Finished {
+                status: TerminalExitStatus::Exited(3),
+                reason: TerminationReason::ChildExited,
+                remaining_processes: 0,
+            }
+        );
+        assert!(registry.session(exiting).unwrap().process().is_none());
+        wait_gone(&pids[&exiting]);
+
+        // 취소: tree 종료 후 Finished{Cancelled}.
+        let state = registry.cancel(cancelled).unwrap();
+        assert!(matches!(
+            state,
+            TerminalProcessState::Finished {
+                reason: TerminationReason::Cancelled,
+                remaining_processes: 0,
+                ..
+            }
+        ));
+        assert_eq!(registry.cancel(cancelled), Err(RegistryError::NotRunning));
+        wait_gone(&pids[&cancelled]);
+
+        // 창·앱 종료: registry drop이 남은 세션의 tree를 모두 정리합니다.
+        let started = std::time::Instant::now();
+        drop(registry);
+        // 두 세션을 함께 요청한 뒤 기다리므로 세션 하나의 상한 안에 끝납니다.
+        assert!(started.elapsed() < std::time::Duration::from_millis(300) + crate::pty::KILL_WAIT);
+        wait_gone(&pids[&app_a]);
+        wait_gone(&pids[&app_b]);
+        drop(guards);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn twenty_pty_sessions_create_and_close_without_leaks() {
+        use crate::pty::tests::{alive, tty_fd_count};
+        use crate::pty::PtyLauncher;
+        use crate::test_support::pty_exclusive;
+
+        let _pty = pty_exclusive();
+        let dir = TempDir::new();
+        let context = CwdContext::new(dir.path(), &[]).unwrap();
+        let shell = sh();
+        let environment = LaunchEnvironment {
+            cwd: &context,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
+            env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
+        };
+        let mut launcher = PtyLauncher::with_grace(std::time::Duration::from_millis(300));
+        let mut registry = TerminalRegistry::new(window(20));
+        let baseline = tty_fd_count();
+        for round in 0..2 {
+            let mut leaders = Vec::new();
+            let ids: Vec<TerminalSessionId> = (0..20)
+                .map(|n| {
+                    let mut sleeper = profile(&format!("s{round}-{n}"));
+                    sleeper.command =
+                        ProfileCommand::Argv(ArgvCommand::new("/bin/sleep", ["300"]).unwrap());
+                    registry.create(sleeper).unwrap()
+                })
+                .collect();
+            for id in &ids {
+                leaders.push(
+                    registry
+                        .start(*id, trusted(&registry), &environment, &mut launcher)
+                        .unwrap(),
+                );
+            }
+            // 세션마다 master + 보관 slave.
+            assert_eq!(tty_fd_count(), baseline + 40);
+            for id in &ids {
+                let state = registry.close(*id).unwrap();
+                assert!(matches!(
+                    state,
+                    TerminalProcessState::Finished {
+                        reason: TerminationReason::Closed,
+                        remaining_processes: 0,
+                        ..
+                    }
+                ));
+            }
+            assert!(registry.is_empty());
+            assert_eq!(tty_fd_count(), baseline);
+            for pid in leaders {
+                assert!(!alive(i32::try_from(pid).unwrap()), "{pid}");
+            }
+        }
+        assert_eq!(launcher.spawn_count(), 40);
     }
 }

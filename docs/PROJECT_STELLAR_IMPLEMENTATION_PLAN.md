@@ -1803,7 +1803,7 @@ tools/xtask/
 | XVIII.2.1 | `[x]` | POSIX PTY create와 child process spawn wrapper를 구현합니다. | `/bin/echo` output fixture. | XVIII.1.2 |
 | XVIII.2.2 | `[x]` | 사용자 기본 shell과 login/non-login profile을 설정에서 선택하게 합니다. | shell path 없음 오류 처리. | XVIII.2.1 |
 | XVIII.2.3 | `[x]` | resize를 winsize ioctl로 전달합니다. | columns/rows 확인 fixture. | XVIII.2.1 |
-| XVIII.2.4 | `[ ]` | child exit, signal, cancellation, app close 시 process tree 정리를 구현합니다. | orphan process 0. | XVIII.2.1 |
+| XVIII.2.4 | `[x]` | child exit, signal, cancellation, app close 시 process tree 정리를 구현합니다. | orphan process 0. | XVIII.2.1 |
 
 ### XVIII.3 Windows ConPTY
 
