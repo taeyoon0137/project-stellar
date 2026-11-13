@@ -24,6 +24,7 @@ use crate::input::{
     length_unit, ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode, TreeIndex,
 };
 use crate::output::{LayoutBox, LayoutResult};
+use crate::overlay;
 use crate::property::LayoutProperty;
 use crate::rounding::{LayoutUnit, LayoutUnitError};
 use crate::stack;
@@ -266,6 +267,7 @@ impl<'a> Engine<'a> {
             ContainerLayout::Free => free::measure(self, index, inner),
             ContainerLayout::Stack(_) => stack::measure(self, index, inner),
             ContainerLayout::Grid(_) => grid::measure(self, index, inner),
+            ContainerLayout::Overlay(_) => overlay::measure(self, index, inner),
         }
     }
 
@@ -305,6 +307,7 @@ impl<'a> Engine<'a> {
             ContainerLayout::Free => free::place(self, index, inner)?,
             ContainerLayout::Stack(_) => stack::place(self, index, inner)?,
             ContainerLayout::Grid(_) => grid::place(self, index, inner)?,
+            ContainerLayout::Overlay(_) => overlay::place(self, index, inner)?,
         };
         let mut overflow = LayoutRect::at_origin(size);
         for (child, child_rect) in placements {

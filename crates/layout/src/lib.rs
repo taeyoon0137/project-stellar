@@ -48,6 +48,9 @@ pub mod grid;
 /// Grid track sizing (X.4.2, crate 내부).
 mod grid_tracks;
 
+/// Overlay 배치 (X.5.1).
+pub mod overlay;
+
 /// canonical bytes writer/reader (crate 내부).
 mod codec;
 
