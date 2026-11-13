@@ -926,7 +926,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | X.2.1 | `[x]` | Free layout에서 자식 local position과 size를 그대로 사용하고 parent padding·content origin을 적용합니다. | 기본 위치 fixture 통과. | X.1.1 |
-| X.2.2 | `[ ]` | absolute anchors left/right/top/bottom과 fixed size 조합의 해석 순서를 정의합니다. over-constrained 입력은 명시 우선순위가 아니라 오류로 처리합니다. | 가능한 조합 matrix와 오류 fixture 통과. | X.2.1 |
+| X.2.2 | `[x]` | absolute anchors left/right/top/bottom과 fixed size 조합의 해석 순서를 정의합니다. over-constrained 입력은 명시 우선순위가 아니라 오류로 처리합니다. | 가능한 조합 matrix와 오류 fixture 통과. | X.2.1 |
 | X.2.3 | `[ ]` | percentage position/size를 containing block content rect 기준으로 계산합니다. | nested percentage fixture 통과. | X.2.1, III.3.2 |
 | X.2.4 | `[ ]` | local transform은 layout rect 계산 후 적용하고 flow size에는 영향을 주지 않는 초기 정책을 구현합니다. | rotated child가 sibling flow를 바꾸지 않습니다. | X.2.1 |
 

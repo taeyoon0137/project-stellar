@@ -16,7 +16,7 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::value::Insets;
 
 use crate::error::LayoutError;
-use crate::free;
+use crate::free::{self, PreparedAnchors};
 use crate::geometry::{Axis, LayoutRect, LayoutSize};
 use crate::input::{
     length_unit, ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode, TreeIndex,
@@ -97,8 +97,8 @@ pub(crate) struct Prepared {
     pub(crate) sizing: [AxisSizing; 2],
     /// intrinsic 콘텐츠 (너비, 높이, baseline).
     pub(crate) intrinsic: Option<([LayoutUnit; 2], Option<LayoutUnit>)>,
-    /// Free 배치 위치 (x, y).
-    pub(crate) position: [LayoutUnit; 2],
+    /// Free 배치 anchor (가로, 세로).
+    pub(crate) anchors: [PreparedAnchors; 2],
 }
 
 /// 결과 box 조립 전 값.
@@ -327,16 +327,13 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
             Some(([width, height], baseline))
         }
     };
-    let position = [
-        length_unit(node.id, LayoutProperty::Position, node.position.x, true)?,
-        length_unit(node.id, LayoutProperty::Position, node.position.y, true)?,
-    ];
+    let anchors = free::prepare_position(node)?;
     Ok(Prepared {
         id: node.id,
         padding,
         sizing,
         intrinsic,
-        position,
+        anchors,
     })
 }
 

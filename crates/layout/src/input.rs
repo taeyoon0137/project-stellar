@@ -23,7 +23,10 @@ use stellar_core_types::value::{Insets, Length, Percentage};
 
 use crate::codec::{Reader, Writer};
 use crate::error::LayoutError;
-use crate::free::FreePosition;
+use crate::free::{
+    decode_position, encode_position, validate_anchor_combination, validate_position_values,
+    AxisAnchors, FreePosition,
+};
 use crate::geometry::Axis;
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
@@ -97,7 +100,7 @@ pub struct LayoutNode {
     pub height: SizingMode,
     /// 콘텐츠.
     pub content: LayoutContent,
-    /// Free 부모 안에서의 local position(X.2.1).
+    /// Free 부모 안에서의 위치 anchor(X.2.1, X.2.2). 다른 배치 방식의 자식에서는 무시합니다.
     pub position: FreePosition,
 }
 
@@ -116,9 +119,18 @@ impl LayoutNode {
         }
     }
 
-    /// Free 부모 안에서의 local position을 지정합니다.
+    /// Free 부모 안에서의 local position(시작 anchor `(x, y)`)을 지정합니다.
     pub fn with_position(mut self, x: Length, y: Length) -> LayoutNode {
-        self.position = FreePosition { x, y };
+        self.position = FreePosition::at(x, y);
+        self
+    }
+
+    /// Free 부모 안에서의 위치 anchor를 지정합니다.
+    pub fn with_anchors(mut self, horizontal: AxisAnchors, vertical: AxisAnchors) -> LayoutNode {
+        self.position = FreePosition {
+            horizontal,
+            vertical,
+        };
         self
     }
 
@@ -273,6 +285,11 @@ impl LayoutInput {
 
         for (position, node) in self.nodes.iter().enumerate() {
             validate_node_values(node, position == root)?;
+            if let Some(parent_index) = parent[position] {
+                if self.nodes[parent_index].container == ContainerLayout::Free {
+                    validate_anchor_combination(node)?;
+                }
+            }
         }
         Ok(TreeIndex {
             index,
@@ -355,8 +372,7 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
             length_unit(node.id, LayoutProperty::Content, baseline, true)?;
         }
     }
-    length_unit(node.id, LayoutProperty::Position, node.position.x, true)?;
-    length_unit(node.id, LayoutProperty::Position, node.position.y, true)?;
+    validate_position_values(node)?;
     Ok(())
 }
 
@@ -395,8 +411,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
             }
         }
     }
-    w.length(node.position.x);
-    w.length(node.position.y);
+    encode_position(w, &node.position);
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
@@ -453,10 +468,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
             })
         }
     };
-    let position = FreePosition {
-        x: r.length("position x")?,
-        y: r.length("position y")?,
-    };
+    let position = decode_position(r)?;
     Ok(LayoutNode {
         id,
         children,

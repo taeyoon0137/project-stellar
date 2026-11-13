@@ -81,6 +81,13 @@ pub enum LayoutError {
         /// 사유.
         reason: &'static str,
     },
+    /// 한 축의 제약이 과다합니다(양 끝 anchor + definite 크기 등, X.2.2).
+    OverConstrained {
+        /// 대상 node.
+        node: StableId,
+        /// 축.
+        axis: Axis,
+    },
     /// 아직 구현하지 않은 레이아웃 기능을 사용했습니다.
     UnsupportedFeature {
         /// 대상 node.
@@ -157,6 +164,12 @@ impl fmt::Display for LayoutError {
             }
             LayoutError::InvalidSizing { node, axis, reason } => {
                 write!(f, "node {node}의 {axis} sizing이 잘못되었습니다: {reason}")
+            }
+            LayoutError::OverConstrained { node, axis } => {
+                write!(
+                    f,
+                    "node {node}의 {axis} 배치 제약이 과다합니다(우선순위로 해소하지 않음)"
+                )
             }
             LayoutError::UnsupportedFeature { node, feature } => {
                 write!(
