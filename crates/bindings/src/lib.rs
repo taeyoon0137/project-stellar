@@ -41,3 +41,6 @@ pub mod fallback;
 
 /// orphaned binding 재연결·명시 삭제 command (VIII.8.4).
 pub mod orphan_commands;
+
+/// 대규모 synthetic token/binding graph 생성기 (VIII.9.1).
+pub mod synthetic;

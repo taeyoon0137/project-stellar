@@ -782,7 +782,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| VIII.9.1 | `[ ]` | 100만 token/binding edge synthetic graph 생성기를 추가합니다. 활성 document 한도 fixture는 20만 node 기준으로 별도 생성합니다. | 생성 결과 seed-deterministic. | VIII.6.4 |
+| VIII.9.1 | `[x]` | 100만 token/binding edge synthetic graph 생성기를 추가합니다. 활성 document 한도 fixture는 20만 node 기준으로 별도 생성합니다. | 생성 결과 seed-deterministic. | VIII.6.4 |
 | VIII.9.2 | `[ ]` | 단일 token 변경의 evaluation count와 duration을 측정하는 benchmark를 추가합니다. | 결과 JSON에 affected/visited/evaluated count 존재. | VIII.9.1 |
 | VIII.9.3 | `[ ]` | 양 플랫폼 evaluator golden corpus를 CI에 추가합니다. | 모든 result bytes 동일. | VIII.4.6, VIII.8.3 |
 
