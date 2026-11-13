@@ -9,7 +9,8 @@
 //! 두고, 초기 보고서가 같은 내용에 쓰던 heading 별칭도 그 절로 인정합니다. 차단 보고서는
 //! `docs/task-reports/BLOCKED_TEMPLATE.md`의 절 구성을 따릅니다.
 //!
-//! 코드 펜스(```` ``` ````, `~~~`) 안의 줄은 heading·상태 줄·표로 세지 않습니다.
+//! 코드 펜스(```` ``` ````, `~~~`) 안의 줄은 heading·상태 줄·표로 세지 않습니다. 펜스의 열림·닫힘은
+//! CommonMark 규칙(같은 문자, 여는 줄 이상 길이, 닫는 줄에는 정보 문자열 없음)으로 판정합니다.
 
 use crate::task_status::model::VerificationEnvironment;
 use crate::task_status::wbs_id::WbsId;
@@ -220,34 +221,74 @@ struct Section<'a> {
 
 /// 코드 펜스 안의 줄(펜스 구분 줄 포함)을 빈 줄로 바꾼 줄 목록을 반환합니다.
 ///
-/// 줄을 지우지 않고 비우므로 펜스 앞뒤 줄이 인접한 것처럼 보이지 않습니다.
+/// 줄을 지우지 않고 비우므로 펜스 앞뒤 줄이 인접한 것처럼 보이지 않습니다. 닫히지 않은 펜스는
+/// 문서 끝까지 이어집니다(CommonMark).
 fn visible_lines(content: &str) -> Vec<&str> {
-    let mut fence: Option<&'static str> = None;
+    let mut open: Option<Fence> = None;
     content
         .lines()
-        .map(|line| {
-            let trimmed = line.trim_start();
-            match fence {
-                Some(marker) => {
-                    if trimmed.starts_with(marker) {
-                        fence = None;
-                    }
+        .map(|line| match open {
+            Some(fence) => {
+                if fence.is_closed_by(line) {
+                    open = None;
+                }
+                ""
+            }
+            None => match Fence::opened_by(line) {
+                Some(fence) => {
+                    open = Some(fence);
                     ""
                 }
-                None => {
-                    if let Some(marker) = ["```", "~~~"]
-                        .into_iter()
-                        .find(|marker| trimmed.starts_with(marker))
-                    {
-                        fence = Some(marker);
-                        ""
-                    } else {
-                        line
-                    }
-                }
-            }
+                None => line,
+            },
         })
         .collect()
+}
+
+/// 열린 코드 펜스(펜스 문자와 여는 줄의 펜스 길이).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Fence {
+    marker: u8,
+    len: usize,
+}
+
+impl Fence {
+    /// 줄이 코드 펜스를 여는지 확인합니다.
+    ///
+    /// CommonMark 규칙: `` ` `` 또는 `~`가 3개 이상 이어지고, backtick 펜스의 정보 문자열에는
+    /// backtick이 없어야 합니다(있으면 인라인 코드). 목록 안 펜스를 위해 들여쓰기는 제한하지
+    /// 않습니다.
+    fn opened_by(line: &str) -> Option<Fence> {
+        let trimmed = line.trim_start();
+        let marker = *trimmed.as_bytes().first()?;
+        if marker != b'`' && marker != b'~' {
+            return None;
+        }
+        let len = run_length(trimmed, marker);
+        if len < 3 {
+            return None;
+        }
+        let info = &trimmed[len..];
+        if marker == b'`' && info.contains('`') {
+            return None;
+        }
+        Some(Fence { marker, len })
+    }
+
+    /// 줄이 이 펜스를 닫는지 확인합니다.
+    ///
+    /// CommonMark 규칙: 같은 펜스 문자가 여는 줄 이상 이어지고, 그 뒤에는 공백만 있어야 합니다
+    /// (정보 문자열이 있는 줄은 닫는 줄이 아닙니다).
+    fn is_closed_by(self, line: &str) -> bool {
+        let trimmed = line.trim_start();
+        let len = run_length(trimmed, self.marker);
+        len >= self.len && trimmed[len..].trim().is_empty()
+    }
+}
+
+/// 문자열 앞에서 ASCII 문자 `marker`가 이어지는 개수(바이트 수와 같음)를 반환합니다.
+fn run_length(text: &str, marker: u8) -> usize {
+    text.bytes().take_while(|byte| *byte == marker).count()
 }
 
 /// 줄 목록을 `## ` 절 단위로 나눕니다. `# ` heading은 직전 절을 끝냅니다.
@@ -641,6 +682,39 @@ mod tests {
         let found = codes(&content, ReportKind::Complete, "I.1.1");
         assert!(found.contains(&"missing-heading"));
         assert!(found.contains(&"missing-environment"));
+    }
+
+    #[test]
+    fn fence_closes_only_on_matching_bare_fence() {
+        // CommonMark: 닫는 줄은 여는 줄과 같은 문자로 같거나 더 길고, 정보 문자열이 없어야 합니다.
+        // 펜스 안의 정보 문자열 있는 줄·더 짧은 펜스·다른 문자 펜스는 펜스를 닫지 않습니다.
+        let section = "## 필수 실행 환경\n\n- `DEV-MAC`.\n";
+        for fenced in [
+            "```text\n```rust\n## 필수 실행 환경\n\n- `DEV-MAC`.\n```\n",
+            "````text\n```\n## 필수 실행 환경\n\n- `DEV-MAC`.\n````\n",
+            "~~~\n```\n## 필수 실행 환경\n\n- `DEV-MAC`.\n~~~\n",
+            "```\n```` x\n## 필수 실행 환경\n\n- `DEV-MAC`.\n```\n",
+        ] {
+            let content = complete_report().replace(section, fenced);
+            let found = codes(&content, ReportKind::Complete, "I.1.1");
+            assert!(found.contains(&"missing-heading"), "{fenced:?}: {found:?}");
+            assert!(
+                found.contains(&"missing-environment"),
+                "{fenced:?}: {found:?}"
+            );
+        }
+
+        // 더 긴 닫는 줄은 펜스를 닫고, 그 뒤 절은 다시 보입니다.
+        let content =
+            complete_report().replace(section, &format!("```\n본문\n````` \t\n{section}"));
+        assert!(validate_report(&content, ReportKind::Complete, "I.1.1").is_empty());
+
+        // backtick이 정보 문자열에 있는 줄(인라인 코드)은 펜스를 열지 않습니다.
+        let content = complete_report().replace(
+            "- 작업명: 제목\n",
+            "- 작업명: 제목\n```inline``` 코드 설명\n",
+        );
+        assert!(validate_report(&content, ReportKind::Complete, "I.1.1").is_empty());
     }
 
     #[test]
