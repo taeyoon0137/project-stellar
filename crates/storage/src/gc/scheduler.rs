@@ -163,35 +163,72 @@ mod tests {
     #[test]
     fn concurrent_saves_block_gc() {
         // 검증 기준(V.7.4): save 중 GC 시작하지 않는 동시성 테스트.
+        //
+        // 위반은 "이미 진행 중인 저장이 있는데 GC가 시작된 경우"만입니다. GC 시작 뒤에
+        // 시작한 저장은 허용됩니다(grace period가 새 chunk를 보호, V.7.3). 그래서
+        // `gate`로 관찰 시점을 고정합니다:
+        // - 저장 스레드는 read lock 안에서 guard를 잡고 counter를 올립니다.
+        // - GC 스레드는 write lock을 잡은 동안 시작을 시도하므로, 그 순간 counter는
+        //   이미 시작된 저장을 모두 포함하고 새 저장은 시작되지 않습니다.
+        // - counter는 guard를 놓기 전에 내리므로 counter > 0이면 guard가 살아 있습니다
+        //   (거짓 양성 없음).
         let t0 = Instant::now();
         let scheduler = GcScheduler::new(Duration::ZERO, t0);
         let saves_active = AtomicUsize::new(0);
         let violation = AtomicBool::new(false);
+        let gate = std::sync::RwLock::new(());
+        let savers_done = AtomicUsize::new(0);
+        // 저장 중 GC 시도가 실제로 겹쳤는지(검사가 공허하지 않은지) 셉니다.
+        let overlapped_attempts = AtomicUsize::new(0);
+        const SAVERS: usize = 4;
 
         std::thread::scope(|scope| {
-            // 저장 스레드 4개: 반복해서 저장 guard를 잡았다 놓습니다.
-            for _ in 0..4 {
+            // 저장 스레드: guard를 잡은 채 잠시 머물러 GC 시도와 겹치게 합니다.
+            for _ in 0..SAVERS {
                 scope.spawn(|| {
                     for _ in 0..200 {
-                        let _guard = scheduler.begin_save(Instant::now());
-                        saves_active.fetch_add(1, Ordering::SeqCst);
-                        std::hint::spin_loop();
+                        let guard = {
+                            let _read = gate.read().expect("poisoned");
+                            let guard = scheduler.begin_save(Instant::now());
+                            saves_active.fetch_add(1, Ordering::SeqCst);
+                            guard
+                        };
+                        for _ in 0..200 {
+                            std::hint::spin_loop();
+                        }
+                        std::thread::yield_now();
                         saves_active.fetch_sub(1, Ordering::SeqCst);
+                        drop(guard);
                     }
+                    savers_done.fetch_add(1, Ordering::SeqCst);
                 });
             }
-            // GC 스레드: 계속 시작을 시도하고, 성공 순간 저장이 진행 중이면 위반.
+            // GC 스레드: 저장이 모두 끝날 때까지 시작을 시도하고, 성공 순간 이미 시작된
+            // 저장이 남아 있으면 위반입니다.
             scope.spawn(|| {
-                for _ in 0..2_000 {
+                while savers_done.load(Ordering::SeqCst) < SAVERS {
+                    let _write = gate.write().expect("poisoned");
+                    let active_before = saves_active.load(Ordering::SeqCst);
+                    if active_before > 0 {
+                        overlapped_attempts.fetch_add(1, Ordering::SeqCst);
+                    }
                     if let Some(_gc) = scheduler.try_begin_gc(Instant::now()) {
+                        // write lock 동안 새 저장은 시작되지 않으므로, 여기서 counter > 0인
+                        // 저장은 GC 시작 전부터 guard를 잡고 있던 저장입니다.
                         if saves_active.load(Ordering::SeqCst) > 0 {
                             violation.store(true, Ordering::SeqCst);
                         }
                     }
+                    drop(_write);
+                    std::thread::yield_now();
                 }
             });
         });
 
+        assert!(
+            overlapped_attempts.load(Ordering::SeqCst) > 0,
+            "저장 진행 중 GC 시도가 한 번도 겹치지 않아 검사가 공허합니다"
+        );
         assert!(
             !violation.load(Ordering::SeqCst),
             "저장 진행 중에 GC가 시작되었습니다"
