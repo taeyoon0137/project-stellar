@@ -52,3 +52,27 @@
 ## 남은 위험 / 한계
 
 - command invalidation → dirty set 변환(X.7.1)은 선행 VII.1.4 미완료로 이 lane에서 연결하지 않았습니다.
+
+## 후속 수정 (리뷰 minor: HugContent node의 DescendantConstraint 자기 크기 변경)
+
+- **결함**: Padding·Children·ContainerLayout은 `DescendantConstraint`("자식 배치를 다시 계산")로만 분류됐지만,
+  `HugContent` node에서는 이 속성이 node 자신의 크기도 바꾸고 그 변화가 부모 배치까지 전파됩니다. class 하나만 보는
+  ancestor 전파(X.7.3)는 under-invalidation이 될 수 있었습니다.
+- **수정** (`crates/layout/src/property.rs`): registry class(속성당 기본 class 하나)는 그대로 두고, node 상태를 보는
+  `dirty_classes(property, node) -> DirtyClassSet`를 추가했습니다. `DescendantConstraint` 속성은
+  `size_may_depend_on_content(node)`(한 축이라도 `Fixed`가 아님: HugContent, 또는 containing block이 indefinite일 때
+  콘텐츠 크기로 측정되는 Fill·Percentage)이면 `SelfSize`를 함께 포함합니다. 부모 문맥 없이 판단하므로 보수적이며
+  (over-invalidation만 허용), `SelfSize`는 "크기가 실제로 바뀌면" 전파하는 class라 비용은 재측정 한 번입니다.
+  편집 전후 node 상태 양쪽으로 물어 합집합을 써야 함을 문서화했습니다. `DirtyClassSet`는 고정 순서 bit 집합입니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo fmt -p stellar-layout` | 종료 코드 0 |
+| `cargo test -p stellar-layout` | unit 126 + `layout_corpus` 2 + doctest 2 passed, 0 failed |
+| `cargo clippy -p stellar-layout --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-layout -- --check` | 종료 코드 0 |
+
+| 검사 | 결과 |
+|---|---|
+| Hug node padding 0 → 5에서 자기 너비 변경, Fixed 너비 node는 불변(근거 fixture), 두 축 Fixed는 `{DescendantConstraint}`, Hug·Fill·Percentage 축 node는 `{SelfSize, DescendantConstraint}`, 나머지 class는 registry class 하나, 집합 연산(`descendant_constraint_on_content_sized_node_includes_self_size`) | 통과 |
+| 기존 registry 고정 테스트(`dirty_classes_are_fixed` 등) | 통과(registry 변경 없음) |

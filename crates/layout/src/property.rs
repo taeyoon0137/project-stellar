@@ -15,6 +15,16 @@
 //! | `DescendantConstraint` | node가 자식에게 주는 제약(자식 목록·배치 방식·content box)이 바뀜 | children, container-layout, padding |
 //! | `PaintOnly` | 레이아웃 값이 바뀌지 않음(렌더만) | transform |
 //!
+//! ## 콘텐츠 크기 node의 자기 크기 변경
+//!
+//! registry class는 속성 하나의 **기본** 범위입니다. `DescendantConstraint` 속성(children,
+//! container-layout, padding)은 node 크기가 콘텐츠로 정해질 수 있으면(`HugContent` 축, 또는 containing
+//! block이 indefinite일 때 콘텐츠 크기로 측정되는 `Fill`·`Percentage` 축) node **자신의 크기**도 바꾸고,
+//! 그 변화는 부모 배치까지 전파됩니다. [`dirty_classes`]는 node 상태를 보고 이때 `SelfSize`를 함께
+//! 반환합니다. ancestor 전파(X.7.3)는 class 하나([`dirty_class`])가 아니라 이 집합을 써야 under-
+//! invalidation이 없습니다. 두 축이 모두 `Fixed`면 콘텐츠가 크기에 영향을 주지 않으므로 기본 class만
+//! 반환합니다(aspect ratio는 두 축이 definite면 적용되지 않음, X.6.3).
+//!
 //! **누락 검사**: [`node_properties`]는 `LayoutNode`를 `..` 없이 구조 분해하므로 node에 필드가 추가되면
 //! 컴파일이 실패합니다. 테스트는 그 목록과 registry가 1:1인지 검사합니다. [`dirty_class`]는 enum 전체를
 //! match하므로 class 없는 속성은 컴파일되지 않습니다.
@@ -25,7 +35,7 @@
 
 use std::fmt;
 
-use crate::input::LayoutNode;
+use crate::input::{LayoutNode, SizingMode};
 
 /// 레이아웃 입력 속성 (X.1.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -95,7 +105,8 @@ pub enum DirtyClass {
     SelfSize,
     /// 부모 배치 안에서 node의 위치·참여가 바뀜. 부모가 자식을 다시 배치합니다.
     ParentFlow,
-    /// node가 자식에게 주는 제약이 바뀜. node의 자식 배치를 다시 계산합니다.
+    /// node가 자식에게 주는 제약이 바뀜. node의 자식 배치를 다시 계산합니다. 콘텐츠 크기 node에서는
+    /// 자기 크기도 바뀔 수 있어 [`dirty_classes`]가 `SelfSize`를 함께 반환합니다.
     DescendantConstraint,
     /// 레이아웃 결과가 바뀌지 않음(렌더 단계만). layout queue에 넣지 않습니다.
     PaintOnly,
@@ -125,6 +136,83 @@ pub const fn dirty_class(property: LayoutProperty) -> DirtyClass {
             DirtyClass::DescendantConstraint
         }
         LayoutProperty::Transform => DirtyClass::PaintOnly,
+    }
+}
+
+/// dirty class 집합(고정 순서 SelfSize, ParentFlow, DescendantConstraint, PaintOnly).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct DirtyClassSet(u8);
+
+impl DirtyClassSet {
+    /// 빈 집합.
+    pub const EMPTY: DirtyClassSet = DirtyClassSet(0);
+
+    const fn bit(class: DirtyClass) -> u8 {
+        match class {
+            DirtyClass::SelfSize => 1,
+            DirtyClass::ParentFlow => 2,
+            DirtyClass::DescendantConstraint => 4,
+            DirtyClass::PaintOnly => 8,
+        }
+    }
+
+    /// class 하나의 집합.
+    pub const fn of(class: DirtyClass) -> DirtyClassSet {
+        DirtyClassSet(DirtyClassSet::bit(class))
+    }
+
+    /// class를 더한 집합.
+    pub const fn with(self, class: DirtyClass) -> DirtyClassSet {
+        DirtyClassSet(self.0 | DirtyClassSet::bit(class))
+    }
+
+    /// class 포함 여부.
+    pub const fn contains(self, class: DirtyClass) -> bool {
+        self.0 & DirtyClassSet::bit(class) != 0
+    }
+
+    /// 레이아웃 재계산이 필요한 class가 있는지 여부.
+    pub const fn affects_layout(self) -> bool {
+        self.0 & !DirtyClassSet::bit(DirtyClass::PaintOnly) != 0
+    }
+
+    /// 포함된 class(고정 순서).
+    pub fn iter(self) -> impl Iterator<Item = DirtyClass> {
+        [
+            DirtyClass::SelfSize,
+            DirtyClass::ParentFlow,
+            DirtyClass::DescendantConstraint,
+            DirtyClass::PaintOnly,
+        ]
+        .into_iter()
+        .filter(move |class| self.contains(*class))
+    }
+}
+
+/// node 크기가 콘텐츠로 정해질 수 있는지 여부(한 축이라도 `Fixed`가 아님).
+///
+/// `HugContent`는 항상, `Fill`·`Percentage`는 containing block이 indefinite일 때 콘텐츠 크기로
+/// 측정됩니다(X.6.1). 부모 문맥 없이 판단하므로 보수적입니다(over-invalidation만 허용).
+pub fn size_may_depend_on_content(node: &LayoutNode) -> bool {
+    !matches!(
+        (node.width, node.height),
+        (SizingMode::Fixed(_), SizingMode::Fixed(_))
+    )
+}
+
+/// node 상태를 고려한 속성 변경의 dirty class 집합.
+///
+/// 기본은 registry class 하나([`dirty_class`])입니다. `DescendantConstraint` 속성은
+/// [`size_may_depend_on_content`]인 node에서 `SelfSize`를 함께 포함합니다. `node`는 변경 전후 중 한쪽이
+/// 아니라 **양쪽** 상태로 각각 물어 합집합을 써야 합니다(예: sizing을 Fixed → Hug로 바꾸는 편집은 그
+/// 자체가 SelfSize).
+pub fn dirty_classes(property: LayoutProperty, node: &LayoutNode) -> DirtyClassSet {
+    let class = dirty_class(property);
+    let set = DirtyClassSet::of(class);
+    if class == DirtyClass::DescendantConstraint && size_may_depend_on_content(node) {
+        set.with(DirtyClass::SelfSize)
+    } else {
+        set
     }
 }
 
@@ -285,6 +373,95 @@ mod tests {
         assert_eq!(of(DirtyClass::PaintOnly), vec![LayoutProperty::Transform]);
         assert!(!DirtyClass::PaintOnly.affects_layout());
         assert!(DirtyClass::ParentFlow.affects_layout());
+    }
+
+    #[test]
+    fn descendant_constraint_on_content_sized_node_includes_self_size() {
+        // 리뷰 후속: HugContent node의 padding·children·container 변경은 자기 크기도 바꿉니다.
+        use crate::engine::compute_layout;
+        use crate::input::{ContainerLayout, LayoutInput, SizingMode};
+        use crate::stack::StackLayout;
+        use crate::test_support::{key, len};
+        use stellar_core_types::value::{Insets, Percentage};
+
+        let hug = SizingMode::HugContent;
+        let fixed = SizingMode::Fixed(len(50.0));
+        let build = |width: SizingMode, padding: f32| {
+            LayoutInput::new(
+                id(1),
+                vec![
+                    LayoutNode::new(id(1))
+                        .with_fixed_size(len(200.0), len(200.0))
+                        .with_child(id(2), key(1)),
+                    LayoutNode::new(id(2))
+                        .with_sizing(width, hug)
+                        .with_padding(Insets::new(padding, padding, padding, padding).unwrap())
+                        .with_container(ContainerLayout::Stack(StackLayout::new(
+                            crate::geometry::Axis::Horizontal,
+                        )))
+                        .with_child(id(3), key(1)),
+                    LayoutNode::new(id(3)).with_fixed_size(len(10.0), len(10.0)),
+                ],
+            )
+        };
+        let width_of = |input: &LayoutInput| {
+            compute_layout(input)
+                .unwrap()
+                .get(id(2))
+                .unwrap()
+                .local_rect()
+                .width()
+        };
+        // Hug node: padding 변경 → 자기 너비 변경(부모 배치에 전파될 수 있음).
+        assert_ne!(width_of(&build(hug, 0.0)), width_of(&build(hug, 5.0)));
+        // Fixed 너비: 그 축은 padding과 무관(세로는 Hug라 여전히 콘텐츠 의존).
+        assert_eq!(width_of(&build(fixed, 0.0)), width_of(&build(fixed, 5.0)));
+
+        let node = |width: SizingMode, height: SizingMode| {
+            LayoutNode::new(id(1)).with_sizing(width, height)
+        };
+        let both_fixed = node(fixed, fixed);
+        let descendant = DirtyClassSet::of(DirtyClass::DescendantConstraint);
+        let with_self = descendant.with(DirtyClass::SelfSize);
+        for property in [
+            LayoutProperty::Padding,
+            LayoutProperty::Children,
+            LayoutProperty::ContainerLayout,
+        ] {
+            assert_eq!(dirty_classes(property, &both_fixed), descendant);
+            for content_sized in [
+                node(hug, fixed),
+                node(fixed, hug),
+                node(SizingMode::Fill, fixed),
+                node(
+                    fixed,
+                    SizingMode::Percentage(Percentage::new(50.0).unwrap()),
+                ),
+            ] {
+                assert_eq!(dirty_classes(property, &content_sized), with_self);
+            }
+        }
+        // 다른 class는 node 상태와 무관하게 registry class 하나.
+        let hug_node = node(hug, hug);
+        for metadata in &LAYOUT_PROPERTIES {
+            if metadata.class != DirtyClass::DescendantConstraint {
+                assert_eq!(
+                    dirty_classes(metadata.property, &hug_node),
+                    DirtyClassSet::of(metadata.class)
+                );
+            }
+        }
+        // 집합 연산.
+        assert_eq!(
+            with_self.iter().collect::<Vec<_>>(),
+            vec![DirtyClass::SelfSize, DirtyClass::DescendantConstraint]
+        );
+        assert!(with_self.affects_layout());
+        assert!(!DirtyClassSet::of(DirtyClass::PaintOnly).affects_layout());
+        assert!(!DirtyClassSet::EMPTY.affects_layout());
+        assert!(!with_self.contains(DirtyClass::ParentFlow));
+        assert!(size_may_depend_on_content(&hug_node));
+        assert!(!size_may_depend_on_content(&both_fixed));
     }
 
     #[test]
