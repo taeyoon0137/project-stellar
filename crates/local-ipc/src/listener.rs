@@ -417,7 +417,12 @@ mod tests {
             instance: id(1),
             socket_path: app.socket_path().to_path_buf(),
         };
-        let session = connect(&endpoint, &mut NonceLedger::new()).unwrap();
+        let session = connect(
+            &endpoint,
+            &PeerPolicy::for_current_process().unwrap(),
+            &mut NonceLedger::new(),
+        )
+        .unwrap();
         let event = app.events().recv_timeout(WAIT).unwrap();
         assert_eq!(event.thread(), app.io_thread());
         assert_ne!(

@@ -12,6 +12,13 @@ pub mod json;
 /// MCP client 등록 정보 (XIX.9.8).
 pub mod connection_info;
 
+/// 종료 코드: XXIV.1.2 표와 같은 값·이름 (XIX.1.7).
+pub mod exit;
+
+/// 실행 중 앱 연결과 브리지 측 인증 (XIX.1.7). macOS 전용(ADR-0006).
+#[cfg(target_os = "macos")]
+pub mod attach;
+
 /// MCP stdio transport 프레이밍 (XIX.1.1).
 pub mod framing;
 

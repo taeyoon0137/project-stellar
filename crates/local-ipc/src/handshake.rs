@@ -1,19 +1,20 @@
-//! bridge↔app IPC handshake: 같은 OS 사용자 확인과 session nonce (XIX.1.3).
+//! bridge↔app IPC handshake: 상대 인증과 session nonce (XIX.1.3, XIX.1.7).
 //!
 //! ## 브리지 측 순서
 //!
-//! 1. 연결 직후, **어떤 데이터도 보내기 전에** 커널 peer 자격 증명(`getpeereid`)으로 앱 프로세스의
-//!    effective uid가 브리지와 같은지 확인합니다. 다르거나 확인할 수 없으면 아무것도 쓰지 않고
-//!    연결을 닫습니다.
+//! 1. 연결 직후, **어떤 데이터도 보내기 전에** 앱을 인증합니다. [`bridge_handshake`]·[`connect`]는
+//!    앱 측(XIX.1.6)과 같은 기준 [`PeerPolicy`]와 같은 함수 [`authenticate`]를 씁니다: 같은 OS
+//!    사용자(`getpeereid`, audit token)와 코드 서명 신원. 실패하거나 확인할 수 없으면 아무것도
+//!    쓰지 않고 연결을 닫습니다([`HandshakeError::Unauthenticated`]).
 //! 2. 새 client nonce(128 bit, OS CSPRNG)를 만들어 `STELLAR-IPC/1 HELLO <client-nonce>`를 보냅니다.
 //! 3. 앱 응답 `STELLAR-IPC/1 WELCOME <client-nonce> <session-nonce>`를 읽습니다. client nonce
 //!    echo가 다르면 [`HandshakeError::NonceMismatch`], session nonce가 이 브리지가 이미 본
 //!    값(client nonce 포함)이면 [`HandshakeError::NonceReused`]입니다. `STELLAR-IPC/1 REJECT
 //!    <reason>`이면 [`HandshakeError::Rejected`]입니다.
 //!
-//! ## 앱 측 계약
+//! ## 앱 측 계약([`crate::listener`]가 구현)
 //!
-//! - accept 직후 같은 방식으로 상대 uid를 확인하고, 다르면 아무것도 쓰지 않고 닫습니다.
+//! - accept 직후 같은 기준으로 상대를 인증하고, 실패하면 아무것도 읽거나 쓰지 않고 닫습니다.
 //! - 본 client nonce를 기억해 재사용이면 `REJECT nonce-reused`로 거부합니다.
 //! - session마다 새 session nonce를 만듭니다.
 //! - HELLO 없이 닫히는 연결(registry 탐색의 생존 확인)은 오류 없이 무시합니다.
@@ -25,8 +26,8 @@ use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
+use crate::auth::{authenticate, AuthError, PeerPolicy};
 use crate::nonce::{Nonce, NonceLedger};
-use crate::os;
 use crate::registry::Endpoint;
 
 /// handshake protocol 표지.
@@ -118,6 +119,9 @@ pub enum HandshakeError {
         /// io 오류 종류.
         kind: io::ErrorKind,
     },
+    /// 상대가 인증 기준([`PeerPolicy`])을 만족하지 않거나 확인할 수 없습니다(데이터를 보내지 않고
+    /// 닫음, XIX.1.7).
+    Unauthenticated(AuthError),
     /// 상대가 응답 없이 연결을 닫았습니다.
     Closed,
     /// 응답 대기 시간이 지났습니다.
@@ -150,6 +154,7 @@ impl fmt::Display for HandshakeError {
             HandshakeError::PeerIdentity { kind } => {
                 write!(f, "IPC 상대 사용자를 확인할 수 없습니다: {kind:?}")
             }
+            HandshakeError::Unauthenticated(e) => write!(f, "IPC 상대 인증 실패: {e}"),
             HandshakeError::Closed => write!(f, "IPC 상대가 응답 없이 연결을 닫았습니다"),
             HandshakeError::TimedOut => write!(f, "IPC handshake 응답 시간이 지났습니다"),
             HandshakeError::Malformed => write!(f, "IPC handshake 메시지 형식이 잘못되었습니다"),
@@ -275,11 +280,29 @@ impl Session {
     }
 }
 
-/// 연결된 stream에서 브리지 측 handshake를 수행합니다.
+/// 연결된 stream에서 브리지 측 handshake를 수행합니다(XIX.1.7).
 ///
-/// `peer_uid`는 상대 uid를 얻는 함수입니다(실행 경로는 [`os::peer_uid`]). 실패하면 stream을 닫습니다.
-pub fn bridge_handshake<F>(
-    mut stream: UnixStream,
+/// 데이터를 보내기 전에 앱을 `policy`로 인증합니다(앱 측 XIX.1.6과 같은 기준). 실패하면 아무것도
+/// 쓰지 않고 stream을 닫습니다.
+pub fn bridge_handshake(
+    stream: UnixStream,
+    policy: &PeerPolicy,
+    ledger: &mut NonceLedger,
+    timeout: Duration,
+) -> Result<Session, HandshakeError> {
+    // 1. 데이터를 보내기 전에 상대를 인증합니다.
+    let peer = authenticate(&stream, policy).map_err(|e| match e {
+        // 앱이 이미 연결을 닫아 자격 증명을 읽을 수 없으면(ENOTCONN) 응답 없는 종료와 같습니다.
+        AuthError::Credentials(c) if c.peer_closed() => HandshakeError::Closed,
+        e => HandshakeError::Unauthenticated(e),
+    })?;
+    exchange_nonces(stream, peer.euid, ledger, timeout)
+}
+
+/// 상대 uid만 주입 함수로 확인하는 handshake(XIX.1.3 오류 경로 테스트용).
+#[cfg(test)]
+pub(crate) fn bridge_handshake_with_uid<F>(
+    stream: UnixStream,
     expected_uid: u32,
     peer_uid: F,
     ledger: &mut NonceLedger,
@@ -288,8 +311,17 @@ pub fn bridge_handshake<F>(
 where
     F: FnOnce(&UnixStream) -> io::Result<u32>,
 {
-    // 1. 데이터를 보내기 전에 상대 사용자를 확인합니다.
     let actual = verify_peer(&stream, expected_uid, peer_uid)?;
+    exchange_nonces(stream, actual, ledger, timeout)
+}
+
+/// 인증을 마친 stream에서 HELLO/WELCOME nonce를 교환합니다.
+fn exchange_nonces(
+    mut stream: UnixStream,
+    peer_uid: u32,
+    ledger: &mut NonceLedger,
+    timeout: Duration,
+) -> Result<Session, HandshakeError> {
     set_timeouts(&stream, timeout)?;
 
     // 2. 새 client nonce를 기록하고 보냅니다.
@@ -316,7 +348,7 @@ where
                 stream,
                 client_nonce: client,
                 session_nonce: session,
-                peer_uid: actual,
+                peer_uid,
             })
         }
         Some(Message::Reject { reason }) => Err(HandshakeError::Rejected { reason }),
@@ -324,21 +356,21 @@ where
     }
 }
 
-/// endpoint에 연결해 현재 사용자 기준으로 handshake합니다.
-pub fn connect(endpoint: &Endpoint, ledger: &mut NonceLedger) -> Result<Session, HandshakeError> {
+/// endpoint에 연결해 `policy`로 앱을 인증한 뒤 handshake합니다(XIX.1.7).
+pub fn connect(
+    endpoint: &Endpoint,
+    policy: &PeerPolicy,
+    ledger: &mut NonceLedger,
+) -> Result<Session, HandshakeError> {
     let stream = UnixStream::connect(&endpoint.socket_path).map_err(|e| classify_io(&e))?;
-    bridge_handshake(
-        stream,
-        os::current_uid(),
-        os::peer_uid,
-        ledger,
-        DEFAULT_TIMEOUT,
-    )
+    bridge_handshake(stream, policy, ledger, DEFAULT_TIMEOUT)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::code_identity::{CodeIdentityError, CodeRule};
+    use crate::os;
     use crate::registry::{InstanceId, Registry};
     use crate::test_support::{
         register, secure_registry, spawn_app, AppBehavior, AppOutcome, TempDir,
@@ -346,6 +378,46 @@ mod tests {
 
     fn n(byte: u8) -> Nonce {
         Nonce::from_bytes([byte; 16])
+    }
+
+    /// 현재 프로세스 기준(앱 측과 같은 기준).
+    fn policy() -> PeerPolicy {
+        PeerPolicy::for_current_process().unwrap()
+    }
+
+    #[test]
+    fn bridge_rejects_app_failing_policy_before_sending_any_data() {
+        // 실제 Security framework 판정: 상대(이 테스트 프로세스, ad-hoc 서명)는 `anchor apple`을
+        // 만족하지 않습니다. 브리지는 HELLO를 보내지 않고 nonce도 만들지 않습니다.
+        let (bridge, mut app_side) = UnixStream::pair().unwrap();
+        let strict =
+            PeerPolicy::new(os::current_uid(), CodeRule::Custom("anchor apple".into())).unwrap();
+        let mut ledger = NonceLedger::new();
+        let err = bridge_handshake(bridge, &strict, &mut ledger, DEFAULT_TIMEOUT).unwrap_err();
+        assert_eq!(
+            err,
+            HandshakeError::Unauthenticated(AuthError::Code(CodeIdentityError::RequirementFailed))
+        );
+        let mut received = Vec::new();
+        app_side.read_to_end(&mut received).unwrap();
+        assert!(received.is_empty(), "거부 전 어떤 데이터도 보내지 않음");
+        assert!(ledger.is_empty());
+
+        // 다른 사용자 기준도 같은 경로로 거부합니다.
+        let (bridge, mut app_side) = UnixStream::pair().unwrap();
+        let other = PeerPolicy::new(
+            os::current_uid().wrapping_add(1),
+            CodeRule::DevelopmentSigned,
+        )
+        .unwrap();
+        let err = bridge_handshake(bridge, &other, &mut ledger, DEFAULT_TIMEOUT).unwrap_err();
+        assert!(matches!(
+            err,
+            HandshakeError::Unauthenticated(AuthError::UserMismatch { .. })
+        ));
+        let mut received = Vec::new();
+        app_side.read_to_end(&mut received).unwrap();
+        assert!(received.is_empty());
     }
 
     fn app(
@@ -399,7 +471,7 @@ mod tests {
         // registry 탐색의 생존 확인 연결은 앱이 무시합니다.
         assert_eq!(registry.discover().unwrap().discovery.endpoints().len(), 1);
         let mut ledger = NonceLedger::new();
-        let session = connect(&endpoint, &mut ledger).unwrap();
+        let session = connect(&endpoint, &policy(), &mut ledger).unwrap();
         assert_eq!(session.peer_uid(), os::current_uid());
         let outcomes = handle.join().unwrap();
         assert_eq!(
@@ -421,7 +493,7 @@ mod tests {
         // (a) 상대 uid가 다른 사용자로 보고되는 경우(다른 사용자 프로세스를 대신함).
         let (bridge, mut app_side) = UnixStream::pair().unwrap();
         let mut ledger = NonceLedger::new();
-        let err = bridge_handshake(
+        let err = bridge_handshake_with_uid(
             bridge,
             uid,
             |_| Ok(uid.wrapping_add(1)),
@@ -443,7 +515,7 @@ mod tests {
 
         // (b) 실제 getpeereid 결과가 기대 사용자와 다른 경우.
         let (bridge, mut app_side) = UnixStream::pair().unwrap();
-        let err = bridge_handshake(
+        let err = bridge_handshake_with_uid(
             bridge,
             uid.wrapping_add(1),
             os::peer_uid,
@@ -458,7 +530,7 @@ mod tests {
 
         // (c) 자격 증명을 확인할 수 없으면 역시 보내지 않습니다.
         let (bridge, mut app_side) = UnixStream::pair().unwrap();
-        let err = bridge_handshake(
+        let err = bridge_handshake_with_uid(
             bridge,
             uid,
             |_| Err(io::Error::from(io::ErrorKind::PermissionDenied)),
@@ -477,7 +549,7 @@ mod tests {
         let tmp = TempDir::new();
         let (_registry, endpoint, handle) = app(&tmp, AppBehavior::ForeignPeer, 1);
         let mut ledger = NonceLedger::new();
-        let err = connect(&endpoint, &mut ledger).unwrap_err();
+        let err = connect(&endpoint, &policy(), &mut ledger).unwrap_err();
         assert_eq!(err, HandshakeError::Closed, "앱은 응답 없이 닫음");
         assert_eq!(handle.join().unwrap(), vec![AppOutcome::RejectedPeer]);
     }
@@ -511,7 +583,7 @@ mod tests {
     fn bridge_maps_app_rejection() {
         let tmp = TempDir::new();
         let (_registry, endpoint, handle) = app(&tmp, AppBehavior::Reject("nonce-reused"), 1);
-        let err = connect(&endpoint, &mut NonceLedger::new()).unwrap_err();
+        let err = connect(&endpoint, &policy(), &mut NonceLedger::new()).unwrap_err();
         assert_eq!(
             err,
             HandshakeError::Rejected {
@@ -526,15 +598,15 @@ mod tests {
         let tmp = TempDir::new();
         let (_registry, endpoint, handle) = app(&tmp, AppBehavior::FixedSession(n(5)), 3);
         let mut ledger = NonceLedger::new();
-        let first = connect(&endpoint, &mut ledger).unwrap();
+        let first = connect(&endpoint, &policy(), &mut ledger).unwrap();
         assert_eq!(first.session_nonce(), n(5));
         // 같은 session nonce를 다시 주는 앱(재전송)은 거부합니다.
         assert_eq!(
-            connect(&endpoint, &mut ledger).unwrap_err(),
+            connect(&endpoint, &policy(), &mut ledger).unwrap_err(),
             HandshakeError::NonceReused
         );
         // 장부가 거부의 근거입니다: 새 장부에서는 같은 값도 처음 보는 nonce입니다.
-        assert!(connect(&endpoint, &mut NonceLedger::new()).is_ok());
+        assert!(connect(&endpoint, &policy(), &mut NonceLedger::new()).is_ok());
         handle.join().unwrap();
     }
 
@@ -543,7 +615,7 @@ mod tests {
         let tmp = TempDir::new();
         let (_registry, endpoint, handle) = app(&tmp, AppBehavior::WrongEcho, 1);
         assert_eq!(
-            connect(&endpoint, &mut NonceLedger::new()).unwrap_err(),
+            connect(&endpoint, &policy(), &mut NonceLedger::new()).unwrap_err(),
             HandshakeError::NonceMismatch
         );
         handle.join().unwrap();
@@ -551,7 +623,7 @@ mod tests {
         let tmp = TempDir::new();
         let (_registry, endpoint, handle) = app(&tmp, AppBehavior::ClientAsSession, 1);
         assert_eq!(
-            connect(&endpoint, &mut NonceLedger::new()).unwrap_err(),
+            connect(&endpoint, &policy(), &mut NonceLedger::new()).unwrap_err(),
             HandshakeError::NonceReused
         );
         handle.join().unwrap();
@@ -567,18 +639,17 @@ mod tests {
             let tmp = TempDir::new();
             let (_registry, endpoint, handle) = app(&tmp, behavior, 1);
             assert_eq!(
-                connect(&endpoint, &mut NonceLedger::new()).unwrap_err(),
+                connect(&endpoint, &policy(), &mut NonceLedger::new()).unwrap_err(),
                 expected
             );
             handle.join().unwrap();
         }
 
-        // 응답하지 않는 앱은 timeout으로 끝납니다.
+        // 인증은 통과했지만 응답하지 않는 앱은 timeout으로 끝납니다.
         let (bridge, app_side) = UnixStream::pair().unwrap();
         let err = bridge_handshake(
             bridge,
-            os::current_uid(),
-            os::peer_uid,
+            &policy(),
             &mut NonceLedger::new(),
             Duration::from_millis(100),
         )
