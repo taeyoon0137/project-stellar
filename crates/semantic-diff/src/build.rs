@@ -11,6 +11,7 @@
 //! | [`ComponentLibrary`] | `Component`, 정의 tree `Node`(Origin::Component), `ComponentSlot` |
 //! | [`TokenEntry`] | `Token` |
 //! | [`AssetEntry`] | `Asset` |
+//! | [`InstanceNode`] | scene ComponentInstance `Node`(override 항목별 속성) |
 //!
 //! node payload는 필드별 속성으로 펼쳐 같은 객체의 서로 다른 필드 변경이 따로 비교·병합되게
 //! 합니다(XIV.3.4, XIV.10.2). 단, Path·Text는 내부 offset·point id가 서로 묶여 있어 payload
@@ -62,6 +63,30 @@ pub struct TokenEntry {
     pub value: Option<TypedValue>,
     /// 값 expression root node.
     pub expression: Option<StableId>,
+}
+
+/// scene ComponentInstance node 입력(XIV.3.6).
+///
+/// 문서 레코드(`DocumentRecords`)는 아직 ComponentInstance payload variant가 없어 instance
+/// node를 담지 못하므로 별도 입력으로 받습니다. 공통 필드는 [`NodeRecord`]와 같습니다.
+///
+/// [`NodeRecord`]: stellar_document::records::NodeRecord
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstanceNode {
+    /// node StableId.
+    pub id: StableId,
+    /// 부모 node.
+    pub parent: Option<StableId>,
+    /// 형제 순서 키.
+    pub order_key: OrderKey,
+    /// 표시 여부.
+    pub visible: bool,
+    /// 잠금 여부.
+    pub locked: bool,
+    /// 표시 이름.
+    pub display_name: String,
+    /// 정의 참조와 sparse override.
+    pub payload: ComponentInstancePayload,
 }
 
 /// asset record 입력.
@@ -215,6 +240,24 @@ impl SnapshotBuilder {
             }
         }
         self.commit(objects)
+    }
+
+    /// 문서 scene의 ComponentInstance node를 추가합니다(XIV.3.6). override는 항목마다 속성
+    /// 하나(`PROPERTY_OVERRIDES` + override key segment, `SLOT_OVERRIDES` + slot segment)입니다.
+    pub fn add_instance(
+        &mut self,
+        document: StableId,
+        instance: &InstanceNode,
+    ) -> Result<(), SnapshotError> {
+        let mut object = node_object(
+            instance.id,
+            NodeKind::ComponentInstance,
+            Origin::Document(document),
+            (instance.parent, instance.order_key.clone()),
+            (instance.visible, instance.locked, &instance.display_name),
+        )?;
+        project_instance(&mut object, &instance.payload)?;
+        self.commit(vec![object])
     }
 
     /// token을 추가합니다.

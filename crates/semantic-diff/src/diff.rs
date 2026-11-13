@@ -10,6 +10,10 @@
 //! (byte 사전순)이며 레코드 배열 순서·chunk·파일 배치는 snapshot에 없으므로 저장 chunk 이동만
 //! 있는 경우 변경이 0입니다. 위치 변경은 같은 객체의 속성 변경보다 앞에 둡니다.
 //!
+//! **출처(XIV.3.6)**: 컴포넌트 정의(정의 resource·정의 tree·Slot) 변경은 ComponentDefinition,
+//! scene 인스턴스의 Property·Slot override 변경은 InstanceOverride 출처를 가집니다. 같은 값
+//! 변화라도 어디서 바뀌었는지 구분됩니다([`property_provenance`]).
+//!
 //! **속성 비교는 `StableId + PropertyPath` 단위입니다(XIV.3.4).** 같은 정체성 객체의 속성 map을
 //! 경로 오름차순으로 merge-join해 값이 다른 경로마다 변경 하나를 냅니다. 값 비교는
 //! canonical 비교([`SemanticValue::canonical_eq`])이며 float은 bit 단위입니다 — epsilon
@@ -24,7 +28,8 @@ use std::collections::BTreeMap;
 use stellar_core_types::property::PropertyPath;
 
 use crate::change::{Position, PositionChange, PropertyChange, Provenance, SemanticChange};
-use crate::snapshot::{Origin, SemanticObject, SemanticSnapshot};
+use crate::keys;
+use crate::snapshot::{NodeKind, ObjectKind, Origin, SemanticObject, SemanticSnapshot};
 use crate::value::SemanticValue;
 
 /// 객체의 기본 출처(범위에서 유도).
@@ -113,12 +118,53 @@ fn diff_matched(base: &SemanticObject, target: &SemanticObject, out: &mut Vec<Se
         out.push(SemanticChange::property(
             target.kind(),
             PropertyChange {
-                provenance,
+                provenance: property_provenance(base, target, path),
                 path: path.clone(),
                 old: old.cloned(),
                 new: new.cloned(),
             },
         ));
+    }
+}
+
+/// 속성 변경의 출처(XIV.3.6).
+///
+/// 문서 scene의 ComponentInstance node에서 `PROPERTY_OVERRIDES`·`SLOT_OVERRIDES` 아래 경로는
+/// 인스턴스 override이고, 출처에 인스턴스와 참조 컴포넌트(이후 값 우선, 없으면 이전 값)를
+/// 담습니다. 정의 참조 교체(`COMPONENT_REF`)와 공통 필드는 scene 변경입니다. 컴포넌트 정의
+/// tree 안 nested instance의 override는 정의의 일부이므로 ComponentDefinition입니다.
+pub fn property_provenance(
+    base: &SemanticObject,
+    target: &SemanticObject,
+    path: &PropertyPath,
+) -> Provenance {
+    let default = object_provenance(target);
+    let (Origin::Document(document), ObjectKind::Node(NodeKind::ComponentInstance)) =
+        (target.origin(), target.kind())
+    else {
+        return default;
+    };
+    let first = path.keys().first().copied();
+    if first != Some(keys::instance::PROPERTY_OVERRIDES)
+        && first != Some(keys::instance::SLOT_OVERRIDES)
+    {
+        return default;
+    }
+    let reference = PropertyPath::with_keys(target.id(), vec![keys::instance::COMPONENT_REF]);
+    let component =
+        [target, base]
+            .into_iter()
+            .find_map(|object| match object.property(&reference) {
+                Some(SemanticValue::Id(component)) => Some(*component),
+                _ => None,
+            });
+    match component {
+        Some(component) => Provenance::InstanceOverride {
+            document,
+            instance: target.id(),
+            component,
+        },
+        None => default,
     }
 }
 
@@ -168,17 +214,22 @@ fn changed_properties<'a>(
 mod tests {
     use super::*;
     use crate::build::tests::{build, head_records, key, node, rect, sid};
-    use crate::build::{SnapshotBuilder, TokenEntry};
+    use crate::build::{InstanceNode, SnapshotBuilder, TokenEntry};
     use crate::change::SemanticChangeKind;
-    use crate::keys;
-    use crate::snapshot::{NodeKind, ObjectKind};
     use stellar_core_types::color::{Color, ColorSpace};
     use stellar_core_types::ids::StableId;
+    use stellar_core_types::property::PathSegment;
     use stellar_core_types::reference::AssetRef;
+    use stellar_core_types::reference::{ComponentRef, NodeRef};
     use stellar_core_types::typed_value::TypedValue;
     use stellar_core_types::value::{FiniteF32, Size2, Transform2D};
+    use stellar_document::component::definition::{
+        ComponentDefinition, ComponentLibrary, ComponentPropertyId, DefinitionNode, DefinitionTree,
+    };
+    use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey};
     use stellar_document::frame::{Clipping, FramePayload};
     use stellar_document::modifier::{ModifierEntry, ModifierStack};
+    use stellar_document::record_codec::encode_payload;
     use stellar_document::record_codec::{decode_node_record, encode_node_record};
     use stellar_document::records::{DocumentRecords, NodePayload};
     use stellar_document::test_support::random_document::{random_valid_document, SplitMix64};
@@ -493,6 +544,126 @@ mod tests {
                 "seed {seed}: chunk 이동만으로 semantic change가 생겼습니다"
             );
         }
+    }
+
+    /// 컴포넌트 300(root frame 301, 공개 Property 310)과 그 인스턴스 400을 담은 snapshot.
+    fn component_project(def_width: f32, override_value: Option<f32>) -> SemanticSnapshot {
+        let mut library = ComponentLibrary::new();
+        let mut definition =
+            ComponentDefinition::new(sid(300), "Button".into(), NodeRef::new(sid(301)));
+        definition
+            .add_property(ComponentPropertyId::new(sid(310)))
+            .unwrap();
+        let mut tree = DefinitionTree::new(ComponentRef::new(sid(300)));
+        let frame = FramePayload {
+            size: Size2::new(def_width, 20.0).unwrap(),
+            ..Default::default()
+        };
+        tree.insert(DefinitionNode {
+            id: sid(301),
+            kind: NodeKind::Frame,
+            parent: None,
+            order_key: key(0x80),
+            visible: true,
+            locked: false,
+            display_name: String::new(),
+            payload: encode_payload(&NodePayload::Frame(frame)),
+        })
+        .unwrap();
+        library.insert(definition, tree).unwrap();
+
+        let mut payload = ComponentInstancePayload::new(ComponentRef::new(sid(300)));
+        if let Some(value) = override_value {
+            payload.set_property_override(
+                OverrideKey::direct(ComponentPropertyId::new(sid(310))),
+                TypedValue::Number(FiniteF32::new(value).unwrap()),
+            );
+        }
+        let records = head_records();
+        let mut builder = SnapshotBuilder::new();
+        builder.add_document(&records).unwrap();
+        builder.add_component_library(sid(1), &library).unwrap();
+        builder
+            .add_instance(
+                sid(1),
+                &InstanceNode {
+                    id: sid(400),
+                    parent: Some(sid(10)),
+                    order_key: key(0xE0),
+                    visible: true,
+                    locked: false,
+                    display_name: "button".into(),
+                    payload,
+                },
+            )
+            .unwrap();
+        builder.finish()
+    }
+
+    #[test]
+    fn definition_change_and_instance_override_have_distinct_provenance() {
+        let base = component_project(100.0, None);
+        // 정의 root 크기 변경 + 인스턴스 override 추가를 한 번에.
+        let target = component_project(120.0, Some(2.0));
+        let changes = diff(&base, &target);
+        assert_eq!(changes.len(), 2, "{changes:?}");
+        let by_object = |id| changes.iter().find(|c| c.object_id() == id).unwrap();
+
+        let definition = by_object(sid(301));
+        assert_eq!(definition.kind(), SemanticChangeKind::SetProperty);
+        assert_eq!(
+            *definition.provenance(),
+            Provenance::ComponentDefinition {
+                document: sid(1),
+                component: sid(300)
+            }
+        );
+
+        let instance = by_object(sid(400));
+        assert_eq!(instance.kind(), SemanticChangeKind::SetProperty);
+        assert_eq!(
+            *instance.provenance(),
+            Provenance::InstanceOverride {
+                document: sid(1),
+                instance: sid(400),
+                component: sid(300)
+            }
+        );
+        let path = instance.property_path().unwrap();
+        assert_eq!(path.keys(), &[keys::instance::PROPERTY_OVERRIDES]);
+        assert_eq!(
+            path.tail(),
+            Some(&PathSegment::Key(sid(310).to_string())),
+            "override 항목 단위 경로"
+        );
+
+        // override 값만 바꾸면 변경 1개, 출처는 인스턴스 override.
+        let changes = diff(&target, &component_project(120.0, Some(3.0)));
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(
+            changes[0].provenance(),
+            Provenance::InstanceOverride { .. }
+        ));
+    }
+
+    #[test]
+    fn instance_scene_fields_are_document_changes() {
+        let base = component_project(100.0, Some(1.0));
+        let mut target = base.clone();
+        let mut instance = target.remove(sid(400)).unwrap();
+        instance
+            .set_property(
+                instance.path(&[keys::DISPLAY_NAME]),
+                SemanticValue::Text("primary".into()),
+            )
+            .unwrap();
+        target.insert(instance).unwrap();
+        let changes = diff(&base, &target);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            *changes[0].provenance(),
+            Provenance::Document { document: sid(1) }
+        );
     }
 
     #[test]
