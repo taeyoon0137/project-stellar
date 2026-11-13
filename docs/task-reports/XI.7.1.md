@@ -72,3 +72,29 @@
   (아키텍처 §37.2)으로 각 구현을 다시 검증해야 합니다. process 격리는 XVI.7.4 범위입니다.
 - `DecodeLimits` 기본값은 초기값입니다. 메모리 벤치마크(XVI) 후 조정이 필요합니다.
 - 역할 guard를 `mem::forget`하면 해당 thread에 역할이 남습니다(안전성 문제는 아니며 정책 위반).
+- 아래 후속 수정 이후에는 `DecodeWorkerScope`(역할 pin)를 `mem::forget`해도 역할이 영구히 남습니다.
+  그 thread는 다른 역할로 다시 bind할 수 없게 되며(`AlreadyBound`), 이는 의도한 fail-closed
+  동작입니다. worker pool은 scope를 forget하지 않아야 합니다.
+
+## 후속 수정 (리뷰 반영)
+
+`9e8aaed`(`Fix: decode worker scope가 thread 역할을 pin해 역할 전환 차단`)가 이 작업의 동작을
+바꿨지만 보고서에 반영되지 않았다는 리뷰 지적에 따라 내용을 추가합니다(코드 변경 없음, 문서만 변경).
+
+- **문제**: 최초 구현에서는 `DecodeWorkerScope`가 만들어진 시점에만 역할을 확인했습니다. worker
+  thread가 scope를 든 채 역할 guard를 drop하고 같은 thread를 Render 등으로 다시 bind하면, scope로
+  decoder를 계속 호출할 수 있었습니다(worker 전용 계약 우회).
+- **변경**: `thread_role`에 crate 내부 역할 pin(`pin_current_role`, `RolePin`, `!Send`)을 추가했습니다.
+  `DecodeWorkerScope::current()`는 Worker 역할을 pin한 scope를 돌려줍니다. pin이 하나라도 남아 있으면
+  `ThreadRoleGuard` drop은 역할 해제를 마지막 pin drop까지 미루고, 그 동안 다른 역할 bind는
+  `AlreadyBound`입니다. 따라서 scope가 살아 있는 thread의 역할은 항상 Worker입니다.
+- **fail-closed 경로**: pin(scope)을 `mem::forget`하면 pin 수가 줄지 않아 역할이 영구히 남습니다.
+  역할을 잘못 풀어 주는 쪽이 아니라 계속 막는 쪽으로 실패합니다. 이 동작은 `thread_role` 모듈 문서
+  "역할 pin" 절에도 적혀 있습니다.
+- **검증**(그 commit 기준): `scope_pins_worker_role_until_dropped`(scope를 든 채 guard drop 후 Render bind
+  거부, 마지막 scope drop에서 해제), `pinned_role_outlives_guard_until_last_pin_drops`(pin 여러 개),
+  `pin_requires_matching_role_and_unpinned_guard_releases_immediately`가 추가됐습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-renderer-core` (보고서 갱신 시점 `8bac854`) | 38 passed, 0 failed; doctest 1 passed(compile_fail) |
