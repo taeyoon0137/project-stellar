@@ -1516,7 +1516,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XV.1.1 | `[x]` | `stellar.yaml` dependency entry에 logical name, library id, source kind Git, repository URL, version selector(tag/commit/branch), optional local override를 정의합니다. | schema round-trip. | IV.1.1, Phase XIV |
-| XV.1.2 | `[ ]` | branch selector는 개발 편의 선언으로 허용하되 lockfile에는 항상 exact commit을 기록하게 합니다. | branch resolve 후 lock exact hash. | XV.1.1 |
+| XV.1.2 | `[x]` | branch selector는 개발 편의 선언으로 허용하되 lockfile에는 항상 exact commit을 기록하게 합니다. | branch resolve 후 lock exact hash. | XV.1.1 |
 | XV.1.3 | `[ ]` | 같은 logical name 중복, 같은 LibraryId 다른 selector, 다른 LibraryId 같은 URL을 구분해 validation합니다. | conflict matrix fixture 통과. | XV.1.1 |
 | XV.1.4 | `[ ]` | dependency URL과 local override path를 telemetry 민감값으로 분류합니다. | diagnostic/telemetry redaction 통과. | II.3.2, XV.1.1 |
 

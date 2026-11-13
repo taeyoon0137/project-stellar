@@ -9,3 +9,6 @@ pub mod node;
 
 /// `stellar.yaml` 의존성 선언 모델 (XV.1.1).
 pub mod declaration;
+
+/// version 선택자 해석 계약과 lock pin (XV.1.2).
+pub mod selection;
