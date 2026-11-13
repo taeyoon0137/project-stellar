@@ -1660,7 +1660,7 @@ tools/xtask/
 | XVI.6.4 | `[ ]` | expression AST/typechecker/evaluator fuzz target을 추가합니다. | instruction budget 작동, panic 0. | VIII.4.5 |
 | XVI.6.5 | `[x]` | Semantic Diff/apply/inverse fuzz target을 추가합니다. | valid A/B에서 apply(diff)==B. | XIV.3.10 |
 | XVI.6.6 | `[ ]` | Semantic Merge fuzz target을 추가해 결과 valid 또는 명시 conflict/error만 허용합니다. | invalid silent merge 0. | XIV.10.8 |
-| XVI.6.7 | `[ ]` | command sequence fuzz target을 장기 nightly job으로 추가합니다. | crash seed 자동 artifact 저장. | VII.6.3 |
+| XVI.6.7 | `[~]` | command sequence fuzz target을 장기 nightly job으로 추가합니다. | crash seed 자동 artifact 저장. | VII.6.3 |
 
 ### XVI.7 프로젝트 신뢰와 외부 실행 보안
 

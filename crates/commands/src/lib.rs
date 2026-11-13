@@ -72,3 +72,9 @@ mod property_tests;
 #[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
 pub mod fuzz;
+
+/// 테스트 전용 command sequence fuzz target과 장기 실행 harness (XVI.6.7). 프로덕션 경로에서 사용하지
+/// 않습니다.
+#[doc(hidden)]
+#[cfg(any(test, feature = "test-support"))]
+pub mod sequence_fuzz;
