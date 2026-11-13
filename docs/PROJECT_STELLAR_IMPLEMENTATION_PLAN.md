@@ -550,7 +550,7 @@ tools/xtask/
 | VI.3.2 | `[x]` | Frame만 자식의 layout containing block과 좌표계를 만들 수 있게 capability validator를 추가합니다. | Fragment가 containing block으로 사용되면 오류. | VI.3.1 |
 | VI.3.3 | `[x]` | width/height가 음수가 되지 않게 하고 transform을 통한 반전과 size 음수를 구분합니다. | 음수 size 거부, mirror transform 허용. | VI.3.1 |
 | VI.3.4 | `[x]` | clip path가 없을 때 frame bounds clip, 별도 PathRef clip 두 형식을 정의합니다. | missing clip ref는 unresolved diagnostic. | VI.3.1, III.2.4 |
-| VI.3.5 | `[ ]` | Frame property metadata registry를 작성해 각 PropertyKey, 타입, 기본값, layout/paint invalidation 범위를 고정합니다. | registry와 실제 payload 필드 누락 검사 통과. | VI.3.1, III.2.1 |
+| VI.3.5 | `[x]` | Frame property metadata registry를 작성해 각 PropertyKey, 타입, 기본값, layout/paint invalidation 범위를 고정합니다. | registry와 실제 payload 필드 누락 검사 통과. | VI.3.1, III.2.1 |
 
 ### VI.4 Fragment
 
