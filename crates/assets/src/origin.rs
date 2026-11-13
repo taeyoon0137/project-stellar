@@ -88,6 +88,24 @@ pub enum OriginKeyError {
         /// 파일 권한 bits(`0o777` mask).
         mode: u32,
     },
+    /// key 파일 소유자가 현재 사용자(effective uid)가 아닙니다(Unix).
+    ForeignOwner {
+        /// 문제된 경로.
+        path: PathBuf,
+        /// 파일 소유자 uid.
+        owner: u32,
+        /// 현재 사용자 uid.
+        expected: u32,
+    },
+    /// key 디렉터리가 안전하지 않습니다. 실제 디렉터리(symlink 아님)이고 현재 사용자 소유이며
+    /// group·other 쓰기 권한이 없어야 합니다 — 다른 사용자가 key를 지우거나 바꿔 같은 기기
+    /// 확인을 깨뜨리지 못하게 합니다(Unix). key를 읽거나 만들지 않습니다.
+    InsecureDirectory {
+        /// 문제된 디렉터리.
+        path: PathBuf,
+        /// 사유.
+        issue: KeyDirectoryIssue,
+    },
     /// OS 난수를 얻을 수 없습니다.
     RandomUnavailable {
         /// I/O 오류 종류.
@@ -100,6 +118,42 @@ pub enum OriginKeyError {
         /// I/O 오류 종류.
         kind: ErrorKind,
     },
+}
+
+/// key 디렉터리가 안전하지 않은 사유([`OriginKeyError::InsecureDirectory`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum KeyDirectoryIssue {
+    /// symlink입니다(따라가지 않음).
+    Symlink,
+    /// 디렉터리가 아닙니다.
+    NotADirectory,
+    /// 소유자가 현재 사용자(effective uid)가 아닙니다.
+    ForeignOwner {
+        /// 디렉터리 소유자 uid.
+        owner: u32,
+        /// 현재 사용자 uid.
+        expected: u32,
+    },
+    /// group 또는 other 쓰기 권한이 있습니다.
+    GroupOrOtherWritable {
+        /// 디렉터리 권한 bits(`0o777` mask).
+        mode: u32,
+    },
+}
+
+impl fmt::Display for KeyDirectoryIssue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            KeyDirectoryIssue::Symlink => f.write_str("symlink"),
+            KeyDirectoryIssue::NotADirectory => f.write_str("디렉터리가 아님"),
+            KeyDirectoryIssue::ForeignOwner { owner, expected } => {
+                write!(f, "소유자 uid {owner}, 현재 사용자 uid {expected}")
+            }
+            KeyDirectoryIssue::GroupOrOtherWritable { mode } => {
+                write!(f, "group/other 쓰기 권한 {mode:o}")
+            }
+        }
+    }
 }
 
 impl fmt::Display for OriginKeyError {
@@ -119,6 +173,18 @@ impl fmt::Display for OriginKeyError {
             OriginKeyError::InsecurePermissions { path, mode } => write!(
                 f,
                 "출처 key 파일 권한이 너무 넓습니다({mode:o}, 0600 필요): {path:?}"
+            ),
+            OriginKeyError::ForeignOwner {
+                path,
+                owner,
+                expected,
+            } => write!(
+                f,
+                "출처 key 파일 소유자가 현재 사용자가 아닙니다(uid {owner}, 현재 {expected}): {path:?}"
+            ),
+            OriginKeyError::InsecureDirectory { path, issue } => write!(
+                f,
+                "출처 key 디렉터리가 안전하지 않습니다({issue}): {path:?}"
             ),
             OriginKeyError::RandomUnavailable { kind } => {
                 write!(f, "OS 난수를 얻을 수 없습니다: {kind}")
@@ -400,33 +466,35 @@ impl OriginKeyFile {
         Ok(())
     }
 
-    /// 기존 key를 읽습니다. 파일이 없으면 `None`(만들지 않음).
+    /// key 디렉터리(key 파일의 부모).
+    fn dir(&self) -> Result<&Path, OriginKeyError> {
+        self.path
+            .parent()
+            .ok_or_else(|| OriginKeyError::InvalidPath {
+                path: self.path.clone(),
+            })
+    }
+
+    /// 기존 key를 읽습니다. 디렉터리나 파일이 없으면 `None`(만들지 않음).
+    ///
+    /// key 디렉터리는 실제 디렉터리·현재 사용자 소유·group/other 쓰기 없음이어야 하고
+    /// ([`OriginKeyError::InsecureDirectory`]), key 파일은 symlink가 아닌 일반 파일·현재 사용자
+    /// 소유·`0600` 이하여야 합니다([`OriginKeyError::Corrupt`]·[`OriginKeyError::ForeignOwner`]·
+    /// [`OriginKeyError::InsecurePermissions`]).
     pub fn load(&self) -> Result<Option<OriginKey>, OriginKeyError> {
         let io = |e: std::io::Error| OriginKeyError::Io {
             path: self.path.clone(),
             kind: e.kind(),
         };
+        if check_key_dir(self.dir()?)?.is_none() {
+            return Ok(None);
+        }
         let metadata = match std::fs::symlink_metadata(&self.path) {
             Ok(metadata) => metadata,
             Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
             Err(e) => return Err(io(e)),
         };
-        if !metadata.is_file() {
-            return Err(OriginKeyError::Corrupt {
-                path: self.path.clone(),
-            });
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = metadata.permissions().mode() & 0o777;
-            if mode & 0o077 != 0 {
-                return Err(OriginKeyError::InsecurePermissions {
-                    path: self.path.clone(),
-                    mode,
-                });
-            }
-        }
+        check_key_file(&self.path, &metadata, current_uid())?;
         let mut text = String::new();
         std::fs::File::open(&self.path)
             .and_then(|mut file| file.read_to_string(&mut text))
@@ -451,16 +519,16 @@ impl OriginKeyFile {
     /// 씁니다 — 기존 key를 절대 덮어쓰지 않습니다. 손상된 key 파일도 덮어쓰지 않고 오류로
     /// 돌려줍니다.
     pub fn load_or_create(&self) -> Result<OriginKey, OriginKeyError> {
-        let Some(dir) = self.path.parent() else {
-            return Err(OriginKeyError::InvalidPath {
-                path: self.path.clone(),
-            });
-        };
+        let dir = self.dir()?;
         for _ in 0..PUBLISH_ATTEMPTS {
             if let Some(key) = self.load()? {
                 return Ok(key);
             }
             create_private_dir_all(dir).map_err(|e| key_io(dir, e))?;
+            // 만든 직후에도 확인합니다(`create_dir_all`은 기존 symlink 디렉터리를 그대로 통과).
+            if check_key_dir(dir)?.is_none() {
+                return Err(key_io(dir, std::io::Error::from(ErrorKind::NotFound)));
+            }
             let key = OriginKey::generate()?;
             let names = temp_key_names(dir)?;
             match self.publish(dir, &key, names)? {
@@ -567,7 +635,108 @@ fn os_random(_buf: &mut [u8]) -> std::io::Result<()> {
     Err(std::io::Error::from(ErrorKind::Unsupported))
 }
 
-/// 소유자 전용(`0700`) 디렉터리를 만듭니다(이미 있으면 그대로).
+#[cfg(unix)]
+mod sys {
+    extern "C" {
+        /// `uid_t geteuid(void)`(`<unistd.h>`).
+        pub fn geteuid() -> u32;
+    }
+}
+
+/// 현재 프로세스의 effective 사용자 id.
+#[cfg(unix)]
+fn current_uid() -> u32 {
+    // SAFETY: geteuid는 인자가 없고 항상 성공하며 메모리를 읽거나 쓰지 않습니다.
+    unsafe { sys::geteuid() }
+}
+
+/// 비Unix에는 uid가 없습니다(Windows 지원 보류 — 소유자 검사 생략).
+#[cfg(not(unix))]
+fn current_uid() -> u32 {
+    0
+}
+
+/// key 디렉터리 metadata(`lstat`)의 보안 문제. 없으면 `None`.
+fn key_dir_issue(metadata: &std::fs::Metadata, expected_uid: u32) -> Option<KeyDirectoryIssue> {
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        return Some(KeyDirectoryIssue::Symlink);
+    }
+    if !file_type.is_dir() {
+        return Some(KeyDirectoryIssue::NotADirectory);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.uid() != expected_uid {
+            return Some(KeyDirectoryIssue::ForeignOwner {
+                owner: metadata.uid(),
+                expected: expected_uid,
+            });
+        }
+        let mode = metadata.mode() & 0o777;
+        if mode & 0o022 != 0 {
+            return Some(KeyDirectoryIssue::GroupOrOtherWritable { mode });
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = expected_uid;
+    None
+}
+
+/// key 디렉터리를 `lstat`으로 확인합니다(따라가지 않음). 없으면 `Ok(None)`, 안전하면 그
+/// metadata입니다.
+fn check_key_dir(dir: &Path) -> Result<Option<std::fs::Metadata>, OriginKeyError> {
+    let metadata = match std::fs::symlink_metadata(dir) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(key_io(dir, e)),
+    };
+    match key_dir_issue(&metadata, current_uid()) {
+        None => Ok(Some(metadata)),
+        Some(issue) => Err(OriginKeyError::InsecureDirectory {
+            path: dir.to_path_buf(),
+            issue,
+        }),
+    }
+}
+
+/// key 파일 metadata를 확인합니다: symlink 아닌 일반 파일, `expected_uid` 소유, `0600` 이하.
+fn check_key_file(
+    path: &Path,
+    metadata: &std::fs::Metadata,
+    expected_uid: u32,
+) -> Result<(), OriginKeyError> {
+    if !metadata.file_type().is_file() {
+        return Err(OriginKeyError::Corrupt {
+            path: path.to_path_buf(),
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.uid() != expected_uid {
+            return Err(OriginKeyError::ForeignOwner {
+                path: path.to_path_buf(),
+                owner: metadata.uid(),
+                expected: expected_uid,
+            });
+        }
+        let mode = metadata.mode() & 0o777;
+        if mode & 0o077 != 0 {
+            return Err(OriginKeyError::InsecurePermissions {
+                path: path.to_path_buf(),
+                mode,
+            });
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = expected_uid;
+    Ok(())
+}
+
+/// 소유자 전용(`0700`) 디렉터리를 만듭니다(이미 있으면 그대로 — 호출자가 [`check_key_dir`]로
+/// 확인).
 fn create_private_dir_all(dir: &Path) -> std::io::Result<()> {
     let mut builder = std::fs::DirBuilder::new();
     builder.recursive(true);
@@ -937,6 +1106,104 @@ mod tests {
                 mode: 0o644
             }
         );
+    }
+
+    /// 보안 리뷰 S3 재현: 넓은 권한의 기존 key 디렉터리(예: `0777`) fixture.
+    #[cfg(unix)]
+    #[test]
+    fn insecure_key_directory_is_rejected() {
+        use std::os::unix::fs::PermissionsExt;
+        let set_mode = |path: &Path, mode: u32| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        let dir = TempDir::new("origin-key-dir");
+        let file = OriginKeyFile::in_data_dir(&dir.path.join("data")).unwrap();
+        let key_dir = file.path().parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(&key_dir).unwrap();
+        for mode in [0o777, 0o770, 0o730, 0o702, 0o1777] {
+            set_mode(&key_dir, mode);
+            let expected = OriginKeyError::InsecureDirectory {
+                path: key_dir.clone(),
+                issue: KeyDirectoryIssue::GroupOrOtherWritable { mode: mode & 0o777 },
+            };
+            assert_eq!(file.load().unwrap_err(), expected, "{mode:o}");
+            assert_eq!(file.load_or_create().unwrap_err(), expected, "{mode:o}");
+            assert!(!file.path().exists(), "넓은 디렉터리에 key를 만들지 않음");
+        }
+        // 쓰기가 닫힌 디렉터리(읽기만 열린 0755 포함)는 허용합니다.
+        for mode in [0o755, 0o700] {
+            set_mode(&key_dir, mode);
+            let key = file.load_or_create().unwrap();
+            assert_eq!(file.load().unwrap(), Some(key));
+        }
+        // key를 만든 뒤 디렉터리가 넓어지면 읽기도 거부합니다.
+        set_mode(&key_dir, 0o777);
+        assert!(matches!(
+            file.load().unwrap_err(),
+            OriginKeyError::InsecureDirectory { .. }
+        ));
+        set_mode(&key_dir, 0o700);
+
+        // key 디렉터리가 symlink면 따라가지 않습니다(`create_dir_all`도 통과시키지 않음).
+        let real = dir.path.join("real-assets");
+        create_private_dir_all(&real).unwrap();
+        let linked_data = dir.path.join("linked");
+        create_private_dir_all(&linked_data).unwrap();
+        std::os::unix::fs::symlink(&real, linked_data.join(ORIGIN_KEY_DIR)).unwrap();
+        let via_link = OriginKeyFile::in_data_dir(&linked_data).unwrap();
+        let expected = OriginKeyError::InsecureDirectory {
+            path: linked_data.join(ORIGIN_KEY_DIR),
+            issue: KeyDirectoryIssue::Symlink,
+        };
+        assert_eq!(via_link.load().unwrap_err(), expected);
+        assert_eq!(via_link.load_or_create().unwrap_err(), expected);
+        assert!(entry_names(&real).is_empty(), "symlink 대상에 쓰지 않음");
+
+        // key 디렉터리 자리에 파일이 있으면 디렉터리가 아닙니다.
+        let file_data = dir.path.join("file-data");
+        create_private_dir_all(&file_data).unwrap();
+        std::fs::write(file_data.join(ORIGIN_KEY_DIR), b"x").unwrap();
+        let blocked = OriginKeyFile::in_data_dir(&file_data).unwrap();
+        assert_eq!(
+            blocked.load_or_create().unwrap_err(),
+            OriginKeyError::InsecureDirectory {
+                path: file_data.join(ORIGIN_KEY_DIR),
+                issue: KeyDirectoryIssue::NotADirectory,
+            }
+        );
+    }
+
+    /// 소유자 검사(다른 uid는 root 없이 만들 수 없으므로 기대 uid를 바꿔 판정 함수를 검사).
+    #[cfg(unix)]
+    #[test]
+    fn foreign_owned_key_directory_and_file_are_rejected() {
+        let dir = TempDir::new("origin-key-owner");
+        let file = OriginKeyFile::new(dir.path.join("k")).unwrap();
+        write_private_file(file.path(), key(4).to_file_text().as_bytes()).unwrap();
+        let me = current_uid();
+        let other = me.wrapping_add(1);
+
+        let dir_meta = std::fs::symlink_metadata(&dir.path).unwrap();
+        assert_eq!(key_dir_issue(&dir_meta, me), None);
+        assert_eq!(
+            key_dir_issue(&dir_meta, other),
+            Some(KeyDirectoryIssue::ForeignOwner {
+                owner: me,
+                expected: other
+            })
+        );
+        let file_meta = std::fs::symlink_metadata(file.path()).unwrap();
+        check_key_file(file.path(), &file_meta, me).unwrap();
+        assert_eq!(
+            check_key_file(file.path(), &file_meta, other).unwrap_err(),
+            OriginKeyError::ForeignOwner {
+                path: file.path().to_path_buf(),
+                owner: me,
+                expected: other
+            }
+        );
+        // 실제 경로(현재 사용자 소유)는 그대로 읽힙니다.
+        assert_eq!(file.load().unwrap(), Some(key(4)));
     }
 
     #[test]

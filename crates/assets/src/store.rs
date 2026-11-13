@@ -725,6 +725,13 @@ pub(crate) mod test_support {
                 .join(format!("stellar-assets-{tag}-{}-{n}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).unwrap();
+            // umask와 무관하게 소유자 전용으로 둡니다(출처 key 디렉터리 검사가 group/other 쓰기를
+            // 거부하므로, key 디렉터리로 쓰는 테스트가 umask에 따라 달라지지 않게 함).
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
+            }
             // macOS temp_dir는 symlink(/var → /private/var)이므로 해석된 경로를 씁니다.
             TempDir {
                 path: std::fs::canonicalize(&path).unwrap(),

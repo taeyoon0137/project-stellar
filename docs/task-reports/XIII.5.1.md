@@ -210,3 +210,26 @@
   점유 이름 건너뛰기, 최종 key가 있으면 덮어쓰지 않음), `temp_key_names_are_unpredictable_and_distinct`.
   `cargo test -p stellar-assets` lib 133 passed + integration 1 passed + doctest 8 passed, clippy
   경고 0, fmt 통과.
+
+## 후속 수정(보안 리뷰 반영): 출처 key 디렉터리·파일 소유자와 권한 검사
+
+- **문제**: key 파일 권한(`0600`)만 확인했습니다. `<data_dir>/assets`는 없을 때만 `0700`으로
+  만들었고, 이미 있는 넓은 권한 디렉터리(예: `0777`)와 파일 소유자(uid)는 확인하지 않았습니다.
+  다른 로컬 사용자가 그 디렉터리에서 key를 지우거나 바꿔 같은 기기 확인을 깨뜨릴 수 있었습니다
+  (읽기는 불가, DoS).
+- **수정**: `load`·`load_or_create`가 key 디렉터리를 `lstat`으로 확인합니다. symlink, 디렉터리
+  아님, 현재 사용자(effective uid, `geteuid` 최소 `extern "C"` 선언 — 저장소 `stellar-mcp` 선례와
+  같은 방식)가 아닌 소유자, group/other 쓰기 bit(`0o022`)이면 새 typed 오류
+  `OriginKeyError::InsecureDirectory { path, issue: KeyDirectoryIssue }`로 key를 읽거나 만들지
+  않습니다. `create_dir_all` 뒤에도 다시 확인합니다(기존 symlink 디렉터리를 통과하므로). key 파일은
+  기존 검사(일반 파일·`0600`)에 소유자 검사(`OriginKeyError::ForeignOwner`)를 더했습니다. 읽기만 열린
+  디렉터리(`0755`)는 허용합니다.
+- **테스트 환경**: 테스트 temp 디렉터리(`TempDir`)를 umask와 무관하게 `0700`으로 둡니다(key 디렉터리로
+  쓰는 테스트가 umask에 따라 달라지지 않게 함).
+- **검증**: `insecure_key_directory_is_rejected`(`0777`·`0770`·`0730`·`0702`·`1777`은 읽기·생성 모두
+  거부하고 key를 만들지 않음, `0755`·`0700` 허용, 생성 뒤 넓어지면 읽기 거부, symlink 디렉터리·파일
+  자리 거부), `foreign_owned_key_directory_and_file_are_rejected`(다른 uid는 root 없이 만들 수 없어
+  기대 uid를 바꿔 판정 함수를 검사). `cargo test -p stellar-assets` lib 135 passed + integration 1
+  passed + doctest 8 passed, clippy 경고 0, fmt 통과.
+- **남은 위험**: key 디렉터리의 상위(`data_dir` 이상)는 확인하지 않습니다(셸이 정한 사용자 전용 앱
+  데이터 영역 전제). 비Unix는 소유자·권한 검사를 하지 않습니다(Windows 지원 보류).
