@@ -1,4 +1,4 @@
-//! 프로젝트 경로 resolver (XIII.4.1, XIII.4.2).
+//! 프로젝트 경로 resolver (XIII.4.1, XIII.4.2, XIII.4.3).
 //!
 //! 프로젝트 상대 경로(`/` 구분)를 실제 파일 시스템 경로로 해석합니다. 파일·디렉터리 symlink를
 //! **그대로 허용**하며, target이 프로젝트 **내부든 외부든** 모두 읽을 수 있습니다(기술 아키텍처
@@ -21,8 +21,15 @@
 //!   조상 디렉터리를 다시 가리키는 디렉터리는 들어가지 않고 [`WalkIssue::DirectoryCycle`]로
 //!   표시합니다. 해석할 수 없는 항목은 [`WalkIssue::Unresolvable`]로 표시하고 순회를 계속합니다.
 //!
-//! broken link diagnostic(XIII.4.3), 외부 target watcher 등록(XIII.4.4), 비신뢰 프로젝트의 외부
-//! target 읽기 차단(XIII.4.5)은 후속 작업입니다.
+//! broken link(XIII.4.3, 기술 아키텍처 19.3 "broken link 표시"): 링크 target(체인의 어느 hop이든)이
+//! 없으면 [`ResolveError::BrokenSymlink`]로 **어느 링크가 깨졌는지** 보고합니다. 링크가 없는 일반
+//! 경로의 부재는 지금처럼 [`ResolveError::Io`](`NotFound`)입니다. resolver는 깨진 링크를 **삭제·수정하지
+//! 않으며**, [`PathResolver::symlink_diagnostics`]가 트리 전체의 깨진 링크·순환을
+//! [`SymlinkDiagnostic`]으로 모아 표시용으로 돌려줍니다. 깨진 링크가 있어도 다른 경로의 해석·읽기와
+//! 프로젝트 열기는 영향을 받지 않습니다.
+//!
+//! 외부 target watcher 등록(XIII.4.4), 비신뢰 프로젝트의 외부 target 읽기 차단(XIII.4.5)은 후속
+//! 작업입니다.
 
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
@@ -171,6 +178,15 @@ pub enum ResolveError {
         /// 적용한 hop 상한.
         limit: usize,
     },
+    /// 깨진 symlink: 링크의 원문 target이 가리키는 경로가 없음(링크 자체는 그대로 둠).
+    BrokenSymlink {
+        /// 요청 경로.
+        path: String,
+        /// 깨진 링크의 실제 위치.
+        link: PathBuf,
+        /// 링크에 기록된 원문 target.
+        raw_target: PathBuf,
+    },
 }
 
 impl std::fmt::Display for ResolveError {
@@ -190,6 +206,14 @@ impl std::fmt::Display for ResolveError {
             ResolveError::TooManySymlinkHops { path, limit } => {
                 write!(f, "symlink hop이 상한 {limit}을 넘습니다: {path:?}")
             }
+            ResolveError::BrokenSymlink {
+                path,
+                link,
+                raw_target,
+            } => write!(
+                f,
+                "깨진 symlink {path:?}: {link:?} -> {raw_target:?} 대상이 없습니다"
+            ),
         }
     }
 }
@@ -320,17 +344,17 @@ impl PathResolver {
     /// 하고, 링크 확장은 hop 상한만큼만 일어나므로 반복 횟수는 유한합니다.
     fn walk(&self, project_path: &str, components: &[&str]) -> Result<Walk, ResolveError> {
         let mut current = self.canonical_root.clone();
-        // (컴포넌트, 요청 경로 컴포넌트 index — 링크 target에서 온 컴포넌트는 None)
-        let mut pending: VecDeque<(OsString, Option<usize>)> = components
+        // (컴포넌트, 출처 — 요청 경로 컴포넌트 index 또는 이 컴포넌트를 만든 hop index)
+        let mut pending: VecDeque<(OsString, Origin)> = components
             .iter()
             .enumerate()
-            .map(|(index, c)| (OsString::from(c), Some(index)))
+            .map(|(index, c)| (OsString::from(c), Origin::Request(index)))
             .collect();
         let mut symlinks = Vec::new();
         let mut chain: Vec<ChainHop> = Vec::new();
         // (링크 위치, 남은 컴포넌트) → 그 상태에서 기록한 hop index.
         let mut seen: HashMap<(PathBuf, Vec<OsString>), usize> = HashMap::new();
-        while let Some((component, request_index)) = pending.pop_front() {
+        while let Some((component, origin)) = pending.pop_front() {
             if component == "." {
                 continue;
             }
@@ -339,8 +363,25 @@ impl PathResolver {
                 continue;
             }
             let candidate = current.join(&component);
-            let meta =
-                std::fs::symlink_metadata(&candidate).map_err(|e| io_error(&candidate, &e))?;
+            let meta = match std::fs::symlink_metadata(&candidate) {
+                Ok(meta) => meta,
+                Err(e) => {
+                    // 링크 target에서 온 컴포넌트가 없으면 그 링크가 깨진 것입니다.
+                    let missing = matches!(
+                        e.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+                    );
+                    if let (true, Origin::Hop(hop)) = (missing, origin) {
+                        let broken = &chain[hop];
+                        return Err(ResolveError::BrokenSymlink {
+                            path: project_path.to_string(),
+                            link: broken.link.clone(),
+                            raw_target: broken.raw_target.clone(),
+                        });
+                    }
+                    return Err(io_error(&candidate, &e));
+                }
+            };
             if !meta.file_type().is_symlink() {
                 current = candidate;
                 continue;
@@ -367,12 +408,13 @@ impl PathResolver {
             seen.insert(state, chain.len());
             let raw_target =
                 std::fs::read_link(&candidate).map_err(|e| io_error(&candidate, &e))?;
-            if let Some(index) = request_index {
+            if let Origin::Request(index) = origin {
                 symlinks.push(SymlinkHop {
                     link: components[..=index].join("/"),
                     raw_target: raw_target.clone(),
                 });
             }
+            let hop = chain.len();
             chain.push(ChainHop {
                 link: candidate,
                 raw_target: raw_target.clone(),
@@ -392,7 +434,7 @@ impl PathResolver {
                 }
             }
             for part in expanded.into_iter().rev() {
-                pending.push_front((part, None));
+                pending.push_front((part, Origin::Hop(hop)));
             }
         }
         Ok(Walk {
@@ -474,6 +516,21 @@ impl PathResolver {
         Ok(walk)
     }
 
+    /// 트리를 순회해 깨진 링크·순환 링크를 표시용 진단으로 모읍니다(경로 순).
+    ///
+    /// 링크는 삭제·수정하지 않습니다. `include`는 [`PathResolver::walk_tree`]와 같습니다.
+    pub fn symlink_diagnostics(
+        &self,
+        include: impl Fn(&str) -> bool,
+    ) -> Result<Vec<SymlinkDiagnostic>, ResolveError> {
+        Ok(self
+            .walk_tree(include)?
+            .issues
+            .iter()
+            .filter_map(SymlinkDiagnostic::from_issue)
+            .collect())
+    }
+
     /// 프로젝트 상대 경로의 파일 내용을 읽습니다(내부·외부 symlink target 모두 허용).
     pub fn read(&self, project_path: &str) -> Result<Vec<u8>, ResolveError> {
         let resolved = self.resolve(project_path)?;
@@ -503,6 +560,15 @@ impl PathResolver {
         names.sort();
         Ok(names)
     }
+}
+
+/// 해석 대기 컴포넌트의 출처.
+#[derive(Debug, Clone, Copy)]
+enum Origin {
+    /// 요청 경로의 컴포넌트(index).
+    Request(usize),
+    /// 체인의 hop(index)이 원문 target에서 만든 컴포넌트.
+    Hop(usize),
 }
 
 /// 컴포넌트 단위 해석 결과.
@@ -559,6 +625,85 @@ impl WalkIssue {
             }
             WalkIssue::NonUtf8Name { path } => path.to_string_lossy().into_owned(),
         }
+    }
+}
+
+/// symlink 진단 종류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SymlinkDiagnosticKind {
+    /// 깨진 링크(target 없음).
+    Broken,
+    /// 링크 순환.
+    Cycle,
+    /// hop 상한 초과.
+    TooManyHops,
+    /// 조상 디렉터리를 다시 가리키는 디렉터리 링크(순회하지 않음).
+    DirectoryCycle,
+}
+
+impl SymlinkDiagnosticKind {
+    /// 고정 진단 코드.
+    pub fn code(self) -> &'static str {
+        match self {
+            SymlinkDiagnosticKind::Broken => "symlink-broken",
+            SymlinkDiagnosticKind::Cycle => "symlink-cycle",
+            SymlinkDiagnosticKind::TooManyHops => "symlink-too-many-hops",
+            SymlinkDiagnosticKind::DirectoryCycle => "symlink-directory-cycle",
+        }
+    }
+}
+
+/// 표시용 symlink 진단 하나. 링크를 고치거나 지우는 동작은 포함하지 않습니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymlinkDiagnostic {
+    /// 진단 종류.
+    pub kind: SymlinkDiagnosticKind,
+    /// 문제가 드러난 항목의 프로젝트 상대 경로.
+    pub path: String,
+    /// 문제 링크의 실제 위치(깨진 링크, 순환을 다시 만난 링크). 없으면 `None`.
+    pub link: Option<PathBuf>,
+    /// 문제 링크의 원문 target 또는 순환 디렉터리의 실제 target. 없으면 `None`.
+    pub target: Option<PathBuf>,
+}
+
+impl SymlinkDiagnostic {
+    /// 트리 순회 문제를 진단으로 바꿉니다. symlink와 무관한 문제(일반 I/O 등)는 `None`.
+    pub fn from_issue(issue: &WalkIssue) -> Option<SymlinkDiagnostic> {
+        let (kind, path, link, target) = match issue {
+            WalkIssue::Unresolvable { path, error } => match error {
+                ResolveError::BrokenSymlink {
+                    link, raw_target, ..
+                } => (
+                    SymlinkDiagnosticKind::Broken,
+                    path,
+                    Some(link.clone()),
+                    Some(raw_target.clone()),
+                ),
+                ResolveError::SymlinkCycle { cycle, .. } => (
+                    SymlinkDiagnosticKind::Cycle,
+                    path,
+                    cycle.last().cloned(),
+                    None,
+                ),
+                ResolveError::TooManySymlinkHops { .. } => {
+                    (SymlinkDiagnosticKind::TooManyHops, path, None, None)
+                }
+                _ => return None,
+            },
+            WalkIssue::DirectoryCycle { path, target } => (
+                SymlinkDiagnosticKind::DirectoryCycle,
+                path,
+                None,
+                Some(target.clone()),
+            ),
+            WalkIssue::NonUtf8Name { .. } => return None,
+        };
+        Some(SymlinkDiagnostic {
+            kind,
+            path: path.clone(),
+            link,
+            target,
+        })
     }
 }
 
@@ -1184,5 +1329,155 @@ mod tests {
         assert!(walk.entries.iter().all(|e| !e.path.starts_with(".git")));
         assert!(walk.issues.is_empty());
         assert_eq!(walk.entries.len(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn broken_links_are_reported_with_the_broken_hop() {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        symlink("data/missing.txt", fx.project.join("broken")).unwrap();
+        symlink("nowhere", fx.project.join("broken-dir")).unwrap();
+        // 파일을 디렉터리처럼 가리키는 링크.
+        symlink("data/real.txt/x", fx.project.join("through-file")).unwrap();
+        // 체인 중간이 깨진 경우: head -> mid -> (없음). 깨진 hop은 mid.
+        symlink("gone", fx.project.join("mid")).unwrap();
+        symlink("mid", fx.project.join("head")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        let root = resolver.canonical_root().to_path_buf();
+
+        for (path, link, raw) in [
+            ("broken", "broken", "data/missing.txt"),
+            ("broken-dir/inner.txt", "broken-dir", "nowhere"),
+            ("through-file", "through-file", "data/real.txt/x"),
+            ("head", "mid", "gone"),
+        ] {
+            assert_eq!(
+                resolver.resolve(path),
+                Err(ResolveError::BrokenSymlink {
+                    path: path.to_string(),
+                    link: root.join(link),
+                    raw_target: PathBuf::from(raw),
+                }),
+                "{path}"
+            );
+        }
+        // 링크가 없는 일반 경로의 부재, 정상 링크 아래 없는 항목은 broken link가 아님.
+        symlink("data", fx.project.join("ok-dir")).unwrap();
+        for path in ["data/missing.txt", "ok-dir/missing.txt"] {
+            assert!(
+                matches!(
+                    resolver.resolve(path),
+                    Err(ResolveError::Io {
+                        kind: io::ErrorKind::NotFound,
+                        ..
+                    })
+                ),
+                "{path}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_with_broken_links_opens_and_other_data_is_intact() {
+        use crate::probe::{probe_project, safe_probe};
+        use crate::root::MANIFEST_FILE;
+        use crate::trust::TrustStatus;
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        std::fs::create_dir_all(fx.project.join(".git")).unwrap();
+        std::fs::write(
+            fx.project.join(MANIFEST_FILE),
+            "schema_version: 1\nproject:\n  id: 0195c530-3acd-7bc1-8414-c213f61cb965\n  name: Demo\ntarget_profiles: []\ndependencies: {}\n",
+        )
+        .unwrap();
+        symlink("data/missing.txt", fx.project.join("broken")).unwrap();
+        symlink(
+            fx.outside.join("deleted-dir"),
+            fx.project.join("data/ext-broken"),
+        )
+        .unwrap();
+        symlink("loop", fx.project.join("loop")).unwrap();
+        let before = list(&fx.project);
+        let raw_before = std::fs::read_link(fx.project.join("broken")).unwrap();
+
+        // 프로젝트 열기(probe)는 깨진 링크와 무관하게 성공.
+        probe_project(&fx.project).unwrap();
+        safe_probe(&fx.project, TrustStatus::NotTrusted).unwrap();
+
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        // 다른 데이터는 정상적으로 읽힘.
+        assert_eq!(resolver.read("data/real.txt").unwrap(), b"internal-bytes");
+        let walk = resolver.walk_tree(|p| p != ".git").unwrap();
+        let paths: Vec<&str> = walk.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["data", "data/real.txt", "data/sub", MANIFEST_FILE]
+        );
+
+        // 깨진 링크·순환은 진단으로 표시.
+        let diagnostics = resolver.symlink_diagnostics(|p| p != ".git").unwrap();
+        let root = resolver.canonical_root().to_path_buf();
+        assert_eq!(
+            diagnostics,
+            vec![
+                SymlinkDiagnostic {
+                    kind: SymlinkDiagnosticKind::Broken,
+                    path: "broken".to_string(),
+                    link: Some(root.join("broken")),
+                    target: Some(PathBuf::from("data/missing.txt")),
+                },
+                SymlinkDiagnostic {
+                    kind: SymlinkDiagnosticKind::Broken,
+                    path: "data/ext-broken".to_string(),
+                    link: Some(root.join("data/ext-broken")),
+                    target: Some(fx.outside.join("deleted-dir")),
+                },
+                SymlinkDiagnostic {
+                    kind: SymlinkDiagnosticKind::Cycle,
+                    path: "loop".to_string(),
+                    link: Some(root.join("loop")),
+                    target: None,
+                },
+            ]
+        );
+        assert_eq!(diagnostics[0].kind.code(), "symlink-broken");
+
+        // 깨진 링크를 삭제·수정하지 않음.
+        assert_eq!(list(&fx.project), before);
+        assert_eq!(
+            std::fs::read_link(fx.project.join("broken")).unwrap(),
+            raw_before
+        );
+        assert!(
+            std::fs::symlink_metadata(fx.project.join("data/ext-broken"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn diagnostic_kinds_have_stable_codes() {
+        assert_eq!(SymlinkDiagnosticKind::Broken.code(), "symlink-broken");
+        assert_eq!(SymlinkDiagnosticKind::Cycle.code(), "symlink-cycle");
+        assert_eq!(
+            SymlinkDiagnosticKind::TooManyHops.code(),
+            "symlink-too-many-hops"
+        );
+        assert_eq!(
+            SymlinkDiagnosticKind::DirectoryCycle.code(),
+            "symlink-directory-cycle"
+        );
+        // symlink와 무관한 문제는 진단이 아님.
+        let io_issue = WalkIssue::Unresolvable {
+            path: "x".to_string(),
+            error: ResolveError::Io {
+                path: PathBuf::from("/x"),
+                kind: io::ErrorKind::PermissionDenied,
+            },
+        };
+        assert_eq!(SymlinkDiagnostic::from_issue(&io_issue), None);
     }
 }
