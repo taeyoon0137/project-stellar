@@ -837,7 +837,7 @@ tools/xtask/
 |---|---|---|---|---|
 | IX.5.1 | `[x]` | component local state variable에 StableId, name, type, initial expression을 정의합니다. | initial type mismatch 거부. | VIII.2.5, IX.1.1 |
 | IX.5.2 | `[x]` | EventKind에 Activate, Input, Focus, Blur, Key, SelectionChange, Open, Close를 정의합니다. | kind golden test. | IX.5.1 |
-| IX.5.3 | `[ ]` | Transition에 source event, condition expression, ordered actions를 정의합니다. action은 state set과 semantic action emit으로 제한합니다. | file/network action 표현 불가. | IX.5.2, VIII.2.5 |
+| IX.5.3 | `[x]` | Transition에 source event, condition expression, ordered actions를 정의합니다. action은 state set과 semantic action emit으로 제한합니다. | file/network action 표현 불가. | IX.5.2, VIII.2.5 |
 | IX.5.4 | `[ ]` | runtime state store를 preview session별로 유지하고 project 저장에는 definition·initial state만 포함합니다. | preview 조작 후 save bytes 동일. | IX.5.1 |
 | IX.5.5 | `[ ]` | 이벤트 dispatch와 condition 평가, action commit을 원자적으로 구현합니다. | action 중 오류 시 state 변화 없음. | IX.5.3, IX.5.4 |
 | IX.5.6 | `[ ]` | nested component state는 직접 수정할 수 없고 공개 Property/Event chain을 통해서만 연결되게 validator를 구현합니다. | direct nested state write fixture 실패. | IX.4.2, IX.5.3 |

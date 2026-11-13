@@ -284,6 +284,17 @@ pub(crate) mod test_util {
         );
         ExpressionAst::new(root, nodes).unwrap()
     }
+
+    /// `op operand` AST.
+    pub(crate) fn unary(
+        op: stellar_expressions::ops::UnaryOp,
+        operand: ExpressionAst,
+    ) -> ExpressionAst {
+        let root = fresh_id();
+        let mut nodes = vec![ExprNode::unary(root, op, operand.root())];
+        nodes.extend(operand.nodes().iter().cloned());
+        ExpressionAst::new(root, nodes).unwrap()
+    }
 }
 
 #[cfg(test)]
