@@ -251,9 +251,8 @@ impl History {
         &mut self,
         doc: &mut DocumentState,
         view: &mut WindowViewState,
-        policy: SelectionPolicy,
     ) -> Result<Option<UndoOutcome>, HistoryError> {
-        self.undo_with(doc, view, policy, |_, _, _| {})
+        self.undo_with(doc, view, |_, _, _| {})
     }
 
     /// [`History::undo`]와 같고, 선택을 복원한 직후 `on_selection_restored`를 **reentrancy guard 안에서**
@@ -263,13 +262,12 @@ impl History {
         &mut self,
         doc: &mut DocumentState,
         view: &mut WindowViewState,
-        policy: SelectionPolicy,
         on_selection_restored: F,
     ) -> Result<Option<UndoOutcome>, HistoryError>
     where
         F: FnMut(&mut History, &mut WindowViewState, &DocumentState),
     {
-        self.replay(doc, view, policy, Direction::Undo, on_selection_restored)
+        self.replay(doc, view, Direction::Undo, on_selection_restored)
     }
 
     /// 마지막으로 되돌린 항목을 다시 적용합니다(VII.5.3). 문서 항목은 정방향을 현재 revision으로
@@ -280,9 +278,8 @@ impl History {
         &mut self,
         doc: &mut DocumentState,
         view: &mut WindowViewState,
-        policy: SelectionPolicy,
     ) -> Result<Option<UndoOutcome>, HistoryError> {
-        self.redo_with(doc, view, policy, |_, _, _| {})
+        self.redo_with(doc, view, |_, _, _| {})
     }
 
     /// [`History::redo`]와 같고 선택 복원 직후 hook을 reentrancy guard 안에서 부릅니다(VII.5.5).
@@ -290,13 +287,12 @@ impl History {
         &mut self,
         doc: &mut DocumentState,
         view: &mut WindowViewState,
-        policy: SelectionPolicy,
         on_selection_restored: F,
     ) -> Result<Option<UndoOutcome>, HistoryError>
     where
         F: FnMut(&mut History, &mut WindowViewState, &DocumentState),
     {
-        self.replay(doc, view, policy, Direction::Redo, on_selection_restored)
+        self.replay(doc, view, Direction::Redo, on_selection_restored)
     }
 
     /// undo·redo 재생 중인지(VII.5.5).
@@ -322,7 +318,6 @@ impl History {
         &mut self,
         doc: &mut DocumentState,
         view: &mut WindowViewState,
-        policy: SelectionPolicy,
         direction: Direction,
         mut on_selection_restored: F,
     ) -> Result<Option<UndoOutcome>, HistoryError>
@@ -364,11 +359,12 @@ impl History {
                 }
             }
             HistoryPayload::Selection { forward, inverse } => {
+                // 기록 당시의 선택 상태를 그대로 복원합니다(숨김 정책 재적용 없음, VII.5.5).
                 let event = match direction {
                     Direction::Undo => inverse,
                     Direction::Redo => forward,
                 };
-                event.apply(view, doc.model(), policy);
+                view.restore_selection(&event.selection, doc.model());
                 None
             }
         };
@@ -378,7 +374,7 @@ impl History {
                 Direction::Undo => restore.before.clone(),
                 Direction::Redo => restore.after.clone(),
             };
-            SetSelection::new(selection).apply(view, doc.model(), policy);
+            view.restore_selection(&selection, doc.model());
         }
         self.replaying = true;
         on_selection_restored(self, view, doc);
@@ -1185,7 +1181,6 @@ mod tests {
             let mut doc = small_state();
             let mut view = WindowViewState::new(WindowSessionId::from_stable_id(sid(500)));
             let mut history = History::new();
-            let policy = SelectionPolicy::default();
             let original_name = doc.model().record(sid(11)).unwrap().display_name;
 
             select(&mut history, &mut view, &doc, &[11]);
@@ -1202,12 +1197,12 @@ mod tests {
             assert_eq!(sequences, vec![1, 2, 3]);
 
             // 1) 마지막 선택을 되돌림 → [11], 문서 그대로.
-            let outcome = history.undo(&mut doc, &mut view, policy).unwrap().unwrap();
+            let outcome = history.undo(&mut doc, &mut view).unwrap().unwrap();
             assert!(outcome.entry.is_selection() && outcome.changes.is_none());
             assert_eq!(view.selection().ids(), &[sid(11)]);
             assert_eq!(doc.model().record(sid(11)).unwrap().display_name, "편집");
             // 2) 편집을 되돌림 → 이름 원복, 선택 그대로.
-            let outcome = history.undo(&mut doc, &mut view, policy).unwrap().unwrap();
+            let outcome = history.undo(&mut doc, &mut view).unwrap().unwrap();
             assert!(outcome.entry.is_document());
             assert_eq!(
                 doc.model().record(sid(11)).unwrap().display_name,
@@ -1215,10 +1210,10 @@ mod tests {
             );
             assert_eq!(view.selection().ids(), &[sid(11)]);
             // 3) 첫 선택을 되돌림 → 빈 선택.
-            history.undo(&mut doc, &mut view, policy).unwrap().unwrap();
+            history.undo(&mut doc, &mut view).unwrap().unwrap();
             assert!(view.selection().is_empty());
             assert!(history.is_empty());
-            assert_eq!(history.undo(&mut doc, &mut view, policy).unwrap(), None);
+            assert_eq!(history.undo(&mut doc, &mut view).unwrap(), None);
         }
 
         #[test]
@@ -1245,20 +1240,20 @@ mod tests {
                 Some(HistorySequence::from_u64(3))
             );
             assert!(view.selection().is_empty(), "없는 id는 걸러짐");
-            history.undo(&mut doc, &mut view, policy).unwrap();
+            history.undo(&mut doc, &mut view).unwrap();
             assert_eq!(view.selection().ids(), &[sid(20)]);
-            history.undo(&mut doc, &mut view, policy).unwrap(); // 선택 [20] 기록 되돌림
+            history.undo(&mut doc, &mut view).unwrap(); // 선택 [20] 기록 되돌림
             assert!(view.selection().is_empty());
             select(&mut history, &mut view, &doc, &[20, 12]);
             let entries_before = history.len();
             // 선택 기록을 되돌리고, 삽입을 되돌리면 20은 문서·선택에서 사라집니다.
-            history.undo(&mut doc, &mut view, policy).unwrap();
+            history.undo(&mut doc, &mut view).unwrap();
             SetSelection::new(Selection::new([sid(20), sid(12)], None)).apply(
                 &mut view,
                 doc.model(),
                 policy,
             );
-            history.undo(&mut doc, &mut view, policy).unwrap();
+            history.undo(&mut doc, &mut view).unwrap();
             assert!(!doc.model().contains(sid(20)));
             assert_eq!(view.selection().ids(), &[sid(12)], "삭제된 id만 정리");
             assert_eq!(

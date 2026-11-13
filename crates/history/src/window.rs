@@ -157,8 +157,7 @@ impl WindowHistory {
 
     /// 이 창에서 마지막으로 되돌린 항목을 다시 적용합니다(VII.5.3).
     pub fn redo(&mut self, doc: &mut DocumentState) -> Result<Option<UndoOutcome>, HistoryError> {
-        self.history
-            .redo(doc, &mut self.view, self.selection_policy)
+        self.history.redo(doc, &mut self.view)
     }
 
     /// undo하고, 선택 복원 직후 `on_selection_restored`(UI 선택 변경 알림)를 reentrancy guard 안에서
@@ -171,12 +170,8 @@ impl WindowHistory {
     where
         F: FnMut(&mut History, &mut WindowViewState, &DocumentState),
     {
-        self.history.undo_with(
-            doc,
-            &mut self.view,
-            self.selection_policy,
-            on_selection_restored,
-        )
+        self.history
+            .undo_with(doc, &mut self.view, on_selection_restored)
     }
 
     /// redo하고 선택 복원 직후 hook을 reentrancy guard 안에서 부릅니다(VII.5.5).
@@ -188,12 +183,8 @@ impl WindowHistory {
     where
         F: FnMut(&mut History, &mut WindowViewState, &DocumentState),
     {
-        self.history.redo_with(
-            doc,
-            &mut self.view,
-            self.selection_policy,
-            on_selection_restored,
-        )
+        self.history
+            .redo_with(doc, &mut self.view, on_selection_restored)
     }
 
     /// 이 창의 마지막 항목 하나를 이 창의 문서·선택에 되돌립니다(VII.5.2).
@@ -202,8 +193,7 @@ impl WindowHistory {
     /// 않으므로(§22.2) 다른 창의 문서·revision과 무관하며, 역 transaction은 이 창 문서의 현재 revision으로
     /// rebase해 실행합니다.
     pub fn undo(&mut self, doc: &mut DocumentState) -> Result<Option<UndoOutcome>, HistoryError> {
-        self.history
-            .undo(doc, &mut self.view, self.selection_policy)
+        self.history.undo(doc, &mut self.view)
     }
 }
 

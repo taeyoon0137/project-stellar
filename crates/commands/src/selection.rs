@@ -165,6 +165,15 @@ impl WindowViewState {
         std::mem::replace(&mut self.selection, selection)
     }
 
+    /// undo·redo가 기록해 둔 선택 상태를 **그대로** 복원하고 이전 선택을 반환합니다(VII.5.5).
+    ///
+    /// 사용자 선택(`SetSelection::apply`)과 달리 숨김 정책을 다시 적용하지 않습니다 — 복원 대상은 그 시점의
+    /// 실제 view 상태이기 때문입니다. 문서에 더 없는 id만 뺍니다. history에 기록하지 않는 경로입니다.
+    pub fn restore_selection(&mut self, selection: &Selection, model: &DocumentModel) -> Selection {
+        let restored = selection.retain(|id| model.contains(id));
+        self.replace_selection(restored)
+    }
+
     /// 화면에 보일 선택: 영역 선택 중이면 transient preview, 아니면 확정 선택.
     pub fn displayed_selection(&self) -> &Selection {
         self.area
