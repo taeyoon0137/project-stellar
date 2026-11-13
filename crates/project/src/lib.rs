@@ -71,3 +71,6 @@ pub mod autosave;
 
 /// 디스크에 저장된 프로젝트 loader와 Git snapshot 연결 (XIV.2.7).
 pub mod saved_project;
+
+/// 비공개 임시 디렉터리와 정리 (XVI.7.5).
+pub mod private_temp;

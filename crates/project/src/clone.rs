@@ -6,12 +6,12 @@
 //! 접근합니다(실제 git 실행 시에만). 따라서 로그·telemetry·보고서에 URL 원문이 새지 않습니다.
 
 use std::fmt;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::path::PathBuf;
 
 use stellar_git_porcelain::repo::{git_clone, RepoError};
 use stellar_git_porcelain::runner::GitRunner;
 
+use crate::private_temp::{sweep_stale_private_temps, PrivateTempDir, PrivateTempError};
 use crate::probe::{probe_project, ProbeError, ProjectProbe};
 use crate::root::MANIFEST_FILE;
 
@@ -103,6 +103,8 @@ pub enum CloneError {
     },
     /// clone된 Stellar repo의 ProjectProbe 실패(손상 매니페스트 등, IV.6.4).
     Probe(ProbeError),
+    /// 비공개 staging 디렉터리를 만들지 못함(XVI.7.5, git 미실행).
+    Staging(PrivateTempError),
 }
 
 impl fmt::Display for CloneError {
@@ -112,46 +114,51 @@ impl fmt::Display for CloneError {
             CloneError::Clone(e) => write!(f, "git clone 실패: {e}"),
             CloneError::Rename { kind } => write!(f, "최종 폴더 rename 실패: {kind:?}"),
             CloneError::Probe(e) => write!(f, "clone된 프로젝트 probe 실패: {e}"),
+            CloneError::Staging(e) => write!(f, "clone staging 디렉터리 생성 실패: {e}"),
         }
     }
 }
 
 impl std::error::Error for CloneError {}
 
-/// 임시 폴더로 clone한 뒤 성공 시 최종 폴더로 rename 합니다(IV.6.2).
+/// clone staging 디렉터리 접두사(부모 디렉터리 아래, [`PrivateTempDir`]).
+pub const CLONE_STAGING_PREFIX: &str = ".stellar-clone-tmp";
+
+/// staging 디렉터리 안에서 git이 만드는 checkout 이름.
+const STAGING_CHECKOUT: &str = "checkout";
+
+/// 임시 폴더로 clone한 뒤 성공 시 최종 폴더로 rename 합니다(IV.6.2, XVI.7.5).
 ///
-/// `git clone -- <url> <temp>`를 부모 디렉터리 아래 임시 폴더로 실행하고, **성공하면** 최종
-/// 폴더로 rename 합니다. **실패·취소 시** 임시 폴더를 제거하므로 **최종 폴더는 존재하지
-/// 않습니다.**
+/// 부모 디렉터리 아래에 소유자 전용(`0700`) staging 디렉터리를 만들고 그 안으로
+/// `git clone -- <url> <staging>/checkout`을 실행합니다. clone 중의 내용(비공개 저장소일 수 있음)은
+/// 다른 사용자가 목록·내용 어디에도 접근할 수 없습니다. **성공하면** checkout을 최종 폴더로 rename
+/// 합니다(같은 파일 시스템). **실패·취소·panic 시** staging을 강화 정리(읽기 전용 하위 디렉터리 포함)로
+/// 지우므로 **최종 폴더는 존재하지 않습니다.** 시작할 때 비정상 종료로 남은 이전 staging
+/// ([`sweep_stale_private_temps`])을 먼저 정리합니다.
 pub fn clone_project(request: &CloneRequest, runner: &GitRunner) -> Result<PathBuf, CloneError> {
     let target = request.target_path();
     if target.exists() {
         return Err(CloneError::TargetExists);
     }
-    let temp = unique_temp(&request.parent_dir);
+    // 이전 비정상 종료의 잔여 staging 정리(실패해도 clone은 계속).
+    let _ = sweep_stale_private_temps(&request.parent_dir, CLONE_STAGING_PREFIX);
+    let staging = PrivateTempDir::create_in(&request.parent_dir, CLONE_STAGING_PREFIX)
+        .map_err(CloneError::Staging)?;
+    let checkout = staging.path().join(STAGING_CHECKOUT);
 
-    match git_clone(runner, request.url.expose(), &temp) {
+    match git_clone(runner, request.url.expose(), &checkout) {
         Ok(()) => {
-            if let Err(e) = std::fs::rename(&temp, &target) {
-                // rename 실패 시 임시 폴더 정리(최종 폴더는 생기지 않음).
-                let _ = std::fs::remove_dir_all(&temp);
+            if let Err(e) = std::fs::rename(&checkout, &target) {
+                // rename 실패: staging은 drop 시 정리(최종 폴더는 생기지 않음).
                 return Err(CloneError::Rename { kind: e.kind() });
             }
+            // 빈 staging(표식만 남음) 정리. 실패해도 다음 clone의 잔여 정리가 지웁니다.
+            let _ = staging.cleanup();
             Ok(target)
         }
-        Err(e) => {
-            // clone 실패: git이 만든 부분 임시 폴더를 제거.
-            let _ = std::fs::remove_dir_all(&temp);
-            Err(CloneError::Clone(e))
-        }
+        // clone 실패: git이 만든 부분 checkout은 staging drop 시 정리.
+        Err(e) => Err(CloneError::Clone(e)),
     }
-}
-
-/// 부모 아래 고유한 임시 폴더 경로(아직 생성하지 않음; git clone이 생성).
-fn unique_temp(parent: &Path) -> PathBuf {
-    static COUNTER: AtomicUsize = AtomicUsize::new(0);
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    parent.join(format!(".stellar-clone-tmp-{}-{n}", std::process::id()))
 }
 
 /// clone 후 열기 분류 결과.
@@ -274,6 +281,7 @@ mod tests {
 mod git_clone_tests {
     use super::*;
     use std::ffi::OsString;
+    use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
     use stellar_git_porcelain::discovery::{discover_git, GitDiscoveryConfig};
@@ -369,6 +377,109 @@ mod git_clone_tests {
         // 최종 폴더 없음, 임시 폴더도 정리됨(부모 비어 있음).
         assert!(!parent.join("cloned").exists());
         assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    /// 실제 git 앞에서 clone 대상의 부모(staging) 권한과 목록을 기록하는 대리 실행 파일.
+    fn recording_git(real_git: &Path, dir: &Path) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let record = dir.join("staging-record.txt");
+        let script = dir.join("recording-git.sh");
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nfor last; do :; done\nparent=$(dirname \"$last\")\n\
+                 ls -ld \"$parent\" > '{record}'\nls -a \"$parent\" >> '{record}'\n\
+                 exec '{git}' \"$@\"\n",
+                record = record.display(),
+                git = real_git.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (script, record)
+    }
+
+    #[test]
+    fn clone_runs_inside_an_owner_only_staging_directory() {
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let work = temp_dir();
+        let source = work.join("source");
+        make_source_repo(&hermetic_runner(git.clone()), &source);
+        let (script, record) = recording_git(&git, &work);
+        let runner = hermetic_runner(script);
+        let parent = work.join("dest-parent");
+        std::fs::create_dir_all(&parent).unwrap();
+
+        let req = CloneRequest {
+            url: SensitiveUrl::new(source.to_string_lossy().into_owned()),
+            parent_dir: parent.clone(),
+            folder_name: "cloned".to_string(),
+        };
+        let final_path = clone_project(&req, &runner).unwrap();
+        // git이 실행되는 동안 clone 대상의 부모는 소유자 전용(drwx------) staging이었음.
+        let observed = std::fs::read_to_string(&record).unwrap();
+        assert!(observed.starts_with("drwx------"), "{observed}");
+        assert!(
+            observed.contains(".stellar-clone-tmp-"),
+            "staging 안에서 clone: {observed}"
+        );
+        assert!(
+            observed.contains(crate::private_temp::PRIVATE_TEMP_MARKER),
+            "{observed}"
+        );
+        // 끝나면 최종 폴더만 남고 staging은 정리됨.
+        assert!(final_path.join("file.txt").is_file());
+        let names: Vec<_> = std::fs::read_dir(&parent)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("cloned")]);
+
+        let _ = std::fs::remove_dir_all(&work);
+    }
+
+    #[test]
+    fn clone_sweeps_stale_staging_left_by_a_dead_process() {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(git) = discover_git(&GitDiscoveryConfig::default()) else {
+            return;
+        };
+        let runner = hermetic_runner(git);
+        let work = temp_dir();
+        let source = work.join("source");
+        make_source_repo(&runner, &source);
+        let parent = work.join("dest-parent");
+        // 비정상 종료한 process(존재하지 않는 pid)가 남긴 staging.
+        let stale = parent.join(format!("{CLONE_STAGING_PREFIX}-99999999-0-0"));
+        std::fs::create_dir_all(stale.join("checkout/.git")).unwrap();
+        std::fs::write(stale.join(crate::private_temp::PRIVATE_TEMP_MARKER), b"").unwrap();
+        std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // 사용자 파일은 건드리지 않음.
+        std::fs::write(parent.join("notes.txt"), b"user").unwrap();
+
+        let req = CloneRequest {
+            url: SensitiveUrl::new(source.to_string_lossy().into_owned()),
+            parent_dir: parent.clone(),
+            folder_name: "cloned".to_string(),
+        };
+        clone_project(&req, &runner).unwrap();
+        assert!(!stale.exists(), "잔여 staging 정리");
+        let mut names: Vec<_> = std::fs::read_dir(&parent)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec![
+                std::ffi::OsString::from("cloned"),
+                std::ffi::OsString::from("notes.txt")
+            ]
+        );
 
         let _ = std::fs::remove_dir_all(&work);
     }
