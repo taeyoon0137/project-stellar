@@ -2308,7 +2308,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXIX.1.1 | `[ ]` | crate graph 검사기를 확장합니다. `[dependencies]` 외에 `[target.*.dependencies]`, `[build-dependencies]`, `[dev-dependencies]`의 내부 의존을 읽고, 지정한 crate 쌍 사이의 전이 도달을 금지하는 규칙(예: agent-host에서 commands·document 도달 금지)을 추가합니다. crate 의존 그래프 문서도 함께 갱신합니다. | `[DEV-MAC]` 전이 위반·target 의존 위반 fixture 거부, 현재 workspace 통과. | 없음 |
+| XXIX.1.1 | `[~]` | crate graph 검사기를 확장합니다. `[dependencies]` 외에 `[target.*.dependencies]`, `[build-dependencies]`, `[dev-dependencies]`의 내부 의존을 읽고, 지정한 crate 쌍 사이의 전이 도달을 금지하는 규칙(예: agent-host에서 commands·document 도달 금지)을 추가합니다. crate 의존 그래프 문서도 함께 갱신합니다. | `[DEV-MAC]` 전이 위반·target 의존 위반 fixture 거부, 현재 workspace 통과. | 없음 |
 | XXIX.1.2 | `[ ]` | XXIV.4, XIX.9, XXIX에 필요한 외부 crate(JSON 직렬화, JSON-RPC 프레이밍, IPC 상대 인증용 macOS binding, 필요하면 표시 서식 해석)를 `config/dependencies.yaml` 승인 항목으로 등록하고 `validate-dependencies` 검사 범위를 workspace 전체 직접 의존으로 넓힙니다. | `[DEV-MAC]` 미등록 의존 추가 fixture 실패, 현재 workspace 통과. | 없음 |
 | XXIX.1.3 | `[ ]` | `cargo xtask sync-plan`에 본문 ID 참조 검사를 추가합니다. 구현 지시·검증 셀과 Phase 완료 조건에 나온 WBS ID 형식 토큰이 계획서에 없으면 보고합니다. 범위 표기(`A~B`)는 양 끝 ID 존재만 검사하고, Roman Phase가 아닌 표기와 계획서 밖 문서는 검사하지 않습니다. | `[DEV-MAC]` 삭제된 ID를 참조하는 fixture 보고, 현재 계획서 종료 0. | 없음 |
 | XXIX.1.4 | `[ ]` | ledger 허용 상태에서 `cancelled`를 제거합니다(1.1 상태 표기, 2026-11-14 제품 소유자 결정). `TaskState`의 cancelled variant, collection 검증 허용 목록, evidence 검증 분기를 삭제하고 `cancelled` record는 unknown status로 거부합니다. 완료 행 I.2.1·I.2.7은 고치지 않습니다. | `[DEV-MAC]` cancelled record fixture 거부, 현재 ledger 통과, xtask fmt·clippy·test 통과. | 없음 |

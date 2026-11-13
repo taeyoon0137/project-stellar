@@ -9,7 +9,8 @@ use std::process::Command;
 use crate::adr_policy::check_adr_policy;
 use crate::check_core::run_check_core;
 use crate::commit_message::validate_commit_subject;
-use crate::crate_graph::check_crate_graph;
+use crate::crate_graph::check_workspace_graph;
+use crate::crate_graph::manifest::scan_workspace;
 use crate::dependencies::validate_dependencies;
 use crate::ffi_header::generate_header;
 use crate::pr_body::validate_pr_body;
@@ -341,8 +342,13 @@ fn cmd_sync_plan(repo_root: &Path) -> Result<(), i32> {
 }
 
 fn cmd_validate_crate_graph(repo_root: &Path) -> Result<(), i32> {
-    let edges = read_crate_edges(repo_root)?;
-    let violations = check_crate_graph(&edges);
+    // XXIX.1.1: crates/*와 tools/stellar-* manifest의 모든 의존 표를 읽고 전이 도달도 검사합니다.
+    let graph = scan_workspace(repo_root).map_err(|e| match e.code {
+        "missing-crates-dir" => usage_err(&e.message),
+        "io" => internal(&e.message),
+        code => policy_err(&[format!("{code}: {}", e.message)]),
+    })?;
+    let violations = check_workspace_graph(&graph);
     if violations.is_empty() {
         Ok(())
     } else {
@@ -378,55 +384,6 @@ fn cmd_generate_ffi_header(repo_root: &Path, rest: &[String]) -> Result<(), i32>
             Err(e) => Err(internal(&e)),
         }
     }
-}
-
-/// `crates/*/Cargo.toml`에서 내부(stellar-*) 직접 의존 edge를 추출합니다.
-fn read_crate_edges(repo_root: &Path) -> Result<Vec<(String, String)>, i32> {
-    let dir = repo_root.join("crates");
-    let entries = std::fs::read_dir(&dir).map_err(|_| usage_err("crates 디렉터리 없음"))?;
-    let mut edges = Vec::new();
-    for entry in entries.flatten() {
-        let manifest_path = entry.path().join("Cargo.toml");
-        if !manifest_path.is_file() {
-            continue;
-        }
-        let text = std::fs::read_to_string(&manifest_path).map_err(|_| EXIT_INTERNAL)?;
-        let Some(name) = manifest_package_name(&text) else {
-            continue;
-        };
-        for dep in manifest_internal_deps(&text) {
-            edges.push((name.clone(), dep));
-        }
-    }
-    Ok(edges)
-}
-
-fn manifest_package_name(text: &str) -> Option<String> {
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("name = ") {
-            return Some(rest.trim().trim_matches('"').to_string());
-        }
-    }
-    None
-}
-
-fn manifest_internal_deps(text: &str) -> Vec<String> {
-    let Some(after) = text.split("[dependencies]").nth(1) else {
-        return Vec::new();
-    };
-    let section = after.split("\n[").next().unwrap_or(after);
-    section
-        .lines()
-        .filter_map(|line| {
-            let key = line.split('=').next()?.trim();
-            if key.starts_with("stellar-") {
-                Some(key.to_string())
-            } else {
-                None
-            }
-        })
-        .collect()
 }
 
 /// `cargo tree`로 xtask의 직접 의존성 이름을 수집합니다.
@@ -524,5 +481,11 @@ mod tests {
     fn validate_versions_and_status_on_real_files() {
         assert_eq!(run(&args(&["validate-versions"]), &root()), EXIT_OK);
         assert_eq!(run(&args(&["validate-task-status"]), &root()), EXIT_OK);
+    }
+
+    #[test]
+    fn validate_crate_graph_on_real_workspace() {
+        // XXIX.1.1: crates/*와 tools/stellar-*의 모든 의존 표와 전이 도달 규칙을 통과합니다.
+        assert_eq!(run(&args(&["validate-crate-graph"]), &root()), EXIT_OK);
     }
 }

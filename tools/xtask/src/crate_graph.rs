@@ -1,7 +1,18 @@
-//! crate 의존 방향 정책 (II.2.8).
+//! crate 의존 방향 정책 (II.2.8, XXIX.1.1).
 //!
 //! 제품 crate 간 허용된 직접 의존 edge를 정의하고, 실제 edge가 정책을 벗어나면(역방향·금지)
 //! 보고합니다. `docs/architecture/crate-dependency-graph.md`와 동일한 방향을 인코딩합니다.
+//!
+//! XXIX.1.1 확장:
+//! - [`manifest`]: `crates/*`와 `tools/stellar-*` manifest의 `[dependencies]`·`[build-dependencies]`·
+//!   `[dev-dependencies]`·`[target.<spec>.*]` 표에서 내부 의존을 읽습니다.
+//! - [`reach`]: 모든 표의 직접 edge를 이 정책으로 검사하고, ADR-0005 §8의 전이 도달 금지
+//!   규칙([`reach::FORBIDDEN_REACH`])을 적용합니다.
+
+pub mod manifest;
+pub mod reach;
+
+pub use reach::check_workspace_graph;
 
 use std::collections::HashMap;
 
@@ -148,31 +159,20 @@ mod tests {
         assert!(codes.contains(&"forbidden-edge"));
     }
 
-    /// `tools/<dir>/Cargo.toml`의 `[dependencies]`에서 내부(stellar-*) 의존 edge를 읽습니다.
+    /// `tools/<dir>/Cargo.toml`의 모든 의존 표에서 내부(stellar-*) 의존 edge를 읽습니다
+    /// (XXIX.1.1 manifest 해석기 사용).
     fn tool_edges(dir: &str) -> Vec<(String, String)> {
         let path = format!("{}/../{dir}/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
         let text = std::fs::read_to_string(&path).unwrap();
-        let name = text
-            .lines()
-            .find_map(|l| l.trim().strip_prefix("name = "))
-            .map(|n| n.trim().trim_matches('"').to_string())
-            .unwrap();
-        let mut inside = false;
-        let mut edges = Vec::new();
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with('[') {
-                inside = trimmed == "[dependencies]";
-                continue;
-            }
-            if let (true, Some((key, _))) = (inside, trimmed.split_once('=')) {
-                let key = key.trim();
-                if key.starts_with("stellar-") {
-                    edges.push((name.clone(), key.to_string()));
-                }
-            }
-        }
-        edges
+        let parsed = manifest::parse_manifest(&text).unwrap();
+        let name = parsed.package.clone().unwrap();
+        parsed
+            .deps
+            .iter()
+            .map(|dep| dep.resolved_name(&std::collections::BTreeMap::new()))
+            .filter(|dep| dep.starts_with(manifest::INTERNAL_PREFIX))
+            .map(|dep| (name.clone(), dep))
+            .collect()
     }
 
     #[test]
