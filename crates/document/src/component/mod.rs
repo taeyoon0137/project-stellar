@@ -29,6 +29,9 @@ pub mod override_rules;
 /// 인스턴스 PropertyOverride 생성·변경·reset command (IX.2.4).
 pub mod override_commands;
 
+/// nested instance property 직접 수정 금지 (IX.4.2).
+pub mod encapsulation;
+
 /// 인스턴스 expansion view (IX.2.2).
 pub mod expansion;
 
