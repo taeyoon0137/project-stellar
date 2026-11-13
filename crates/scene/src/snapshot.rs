@@ -3,13 +3,16 @@
 //! [`SceneSnapshot`]은 한 시점의 scene 전체입니다. document thread가 만들고 render thread가
 //! 읽기만 합니다(아키텍처 §9.3). 최상위 node 목록([`SceneSnapshot::roots`])은 paint 순서이며,
 //! 같은 subtree를 이전 snapshot과 `Arc`로 공유할 수 있습니다.
+//!
+//! 최상위 node 사이에서도 z-order 불변식(pre-order 엄격 증가, [`crate::node`] 문서)을
+//! 검사합니다. 각 node는 생성 시 직접 자식을 검사했으므로 snapshot 전체가 불변식을 만족합니다.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use stellar_core_types::revision::{DocumentRevision, SceneRevision};
 
-use crate::node::{SceneNode, SceneResourceRef};
+use crate::node::{check_z_follows, SceneNode, SceneResourceRef, SceneTreeError};
 
 /// 불변 scene snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,20 +25,26 @@ pub struct SceneSnapshot {
 
 impl SceneSnapshot {
     /// revision과 최상위 node(paint 순서)로 snapshot을 만듭니다.
+    ///
+    /// 최상위 subtree 사이에서 z-order가 엄격히 증가하지 않으면 거부합니다.
     pub fn new(
         document_revision: DocumentRevision,
         scene_revision: SceneRevision,
         roots: Vec<Arc<SceneNode>>,
-    ) -> SceneSnapshot {
-        let node_count = roots
-            .iter()
-            .fold(0u64, |sum, root| sum.saturating_add(root.subtree_len()));
-        SceneSnapshot {
+    ) -> Result<SceneSnapshot, SceneTreeError> {
+        let mut node_count = 0u64;
+        for (index, root) in roots.iter().enumerate() {
+            if index > 0 {
+                check_z_follows(roots[index - 1].last_z(), root.z())?;
+            }
+            node_count = node_count.saturating_add(root.subtree_len());
+        }
+        Ok(SceneSnapshot {
             document_revision,
             scene_revision,
             roots: roots.into(),
             node_count,
-        }
+        })
     }
 
     /// 이 snapshot을 만든 document revision.
@@ -105,39 +114,38 @@ impl<'a> Iterator for PreOrder<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node::{
-        CornerRadii, RectPrimitive, SceneContent, SceneNodeSpec, TextLayoutKey, TextPrimitive,
-    };
-    use stellar_core_types::ids::StableId;
-    use stellar_core_types::value::{Rect, Size2, Vec2};
+    use crate::fixtures::{self, leaf, rect, spec};
+    use crate::node::{SceneContent, SceneNodeSpec, TextLayoutKey, TextPrimitive, ZOrder};
 
-    fn node(n: u8, children: Vec<Arc<SceneNode>>) -> Arc<SceneNode> {
-        let rect = Rect::new(Vec2::ZERO, Size2::new(1.0, 1.0).unwrap());
-        Arc::new(SceneNode::new(
-            SceneNodeSpec {
-                source: StableId::from_bytes([n; 16]),
-                content: SceneContent::Rect(RectPrimitive {
-                    rect,
-                    radii: CornerRadii::ZERO,
-                }),
-            },
-            children,
-        ))
+    fn node(n: u8, z: u64, children: Vec<Arc<SceneNode>>) -> Arc<SceneNode> {
+        Arc::new(
+            SceneNode::new(
+                spec(n as u64, fixtures::rect_content(1.0, 1.0), z),
+                children,
+            )
+            .unwrap(),
+        )
+    }
+
+    fn source_byte(node: &SceneNode) -> u8 {
+        node.source().to_bytes()[15]
     }
 
     #[test]
     fn preorder_visits_parent_before_children_in_paint_order() {
         // 1(2, 3(4)), 5
-        let tree = node(1, vec![node(2, vec![]), node(3, vec![node(4, vec![])])]);
+        let tree = node(
+            1,
+            1,
+            vec![node(2, 2, vec![]), node(3, 3, vec![node(4, 4, vec![])])],
+        );
         let snapshot = SceneSnapshot::new(
             DocumentRevision(7),
             SceneRevision(3),
-            vec![tree, node(5, vec![])],
-        );
-        let order: Vec<u8> = snapshot
-            .iter_preorder()
-            .map(|n| n.source().to_bytes()[0])
-            .collect();
+            vec![tree, node(5, 5, vec![])],
+        )
+        .unwrap();
+        let order: Vec<u8> = snapshot.iter_preorder().map(source_byte).collect();
         assert_eq!(order, vec![1, 2, 3, 4, 5]);
         assert_eq!(snapshot.node_count(), 5);
         assert_eq!(snapshot.root_count(), 2);
@@ -146,21 +154,35 @@ mod tests {
     }
 
     #[test]
+    fn z_order_must_increase_across_roots() {
+        let a = node(1, 1, vec![node(2, 9, vec![])]);
+        let b = node(3, 5, vec![]);
+        assert_eq!(
+            SceneSnapshot::new(DocumentRevision(1), SceneRevision(1), vec![a, b]).unwrap_err(),
+            SceneTreeError::ZOrderNotIncreasing {
+                previous: ZOrder(9),
+                next: ZOrder(5)
+            }
+        );
+    }
+
+    #[test]
     fn resource_refs_are_sorted_and_deduplicated() {
-        let text = |key: u8| {
+        let text = |key: u8, z: u64| {
             Arc::new(SceneNode::leaf(SceneNodeSpec {
-                source: StableId::from_bytes([key; 16]),
                 content: SceneContent::Text(TextPrimitive {
                     layout: TextLayoutKey::from_bytes([key; 16]),
-                    bounds: Rect::new(Vec2::ZERO, Size2::ZERO),
+                    bounds: rect(0.0, 0.0, 0.0, 0.0),
                 }),
+                ..spec(key as u64, fixtures::rect_content(1.0, 1.0), z)
             }))
         };
         let snapshot = SceneSnapshot::new(
             DocumentRevision(1),
             SceneRevision(1),
-            vec![text(3), text(1), text(3), node(9, vec![])],
-        );
+            vec![text(3, 1), text(1, 2), text(3, 3), leaf(9, 4, 1.0, 1.0)],
+        )
+        .unwrap();
         let refs: Vec<SceneResourceRef> = snapshot.resource_refs().into_iter().collect();
         assert_eq!(
             refs,

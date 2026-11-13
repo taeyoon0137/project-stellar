@@ -9,8 +9,11 @@
 /// Scene path geometry (XI.6.1).
 pub mod geometry;
 
-/// Scene node와 resource 참조 (XI.1.1).
+/// Scene node와 resource 참조 (XI.1.1, XI.1.2).
 pub mod node;
+
+/// Clip stack과 paint stack (XI.1.2).
+pub mod stack;
 
 /// 불변 Scene Snapshot (XI.1.1).
 pub mod snapshot;
@@ -18,8 +21,13 @@ pub mod snapshot;
 /// Scene snapshot canonical serialization (XI.1.1).
 pub mod codec;
 
-pub use node::{SceneContent, SceneNode, SceneNodeSpec, SceneResourceRef};
+/// 테스트 전용 scene fixture 생성기 (XI.1.2).
+#[cfg(test)]
+mod fixtures;
+
+pub use node::{SceneContent, SceneNode, SceneNodeSpec, SceneResourceRef, ZOrder};
 pub use snapshot::SceneSnapshot;
+pub use stack::{ClipStackRef, PaintStackRef};
 
 pub use stellar_core_types::color::ColorSpace;
 pub use stellar_core_types::value::{FiniteF32, NonFiniteError, Size2, Vec2};

@@ -8,40 +8,57 @@
 //! finite만 허용하고 `-0.0`은 `0.0`으로 정규화된 값을 씁니다.
 //!
 //! ```text
-//! snapshot : magic "STSN" | version u8(=1) | document_revision u64 | scene_revision u64
-//!            | root_count u32 | node*            (node는 pre-order)
-//! node     : source [u8;16] | content | child_count u32
-//! content  : tag u8 + payload
-//!   1 rect : rect | radii(tl, tr, br, bl f32)
-//!   2 path : fill_rule u8 | geometry(PathGeometry::canonical_bytes)
-//!   3 text : layout key [u8;16] | bounds rect
-//!   4 image: asset [u8;16] | bounds rect | fit u8 | crop(x, y, w, h f32) | sampling u8
-//!            | color_space u8(0 = 없음, 그 외 ColorSpace tag)
-//! rect     : x f32 | y f32 | width f32 | height f32
+//! snapshot   : magic "STSN" | version u8(=1) | document_revision u64 | scene_revision u64
+//!              | root_count u32 | node*            (node는 pre-order)
+//! node       : source [u8;16] | content | world_transform | layout_rect rect | clip_stack
+//!              | paint_stack | z u64 | visibility u8 | pointer_events u8 | child_count u32
+//! content    : tag u8 + payload
+//!   1 rect   : rect | radii
+//!   2 path   : fill_rule u8 | geometry(PathGeometry::canonical_bytes)
+//!   3 text   : layout key [u8;16] | bounds rect
+//!   4 image  : asset [u8;16] | bounds rect | fit u8 | crop(x, y, w, h f32) | sampling u8
+//!              | color_space u8(0 = 없음, 그 외 ColorSpace tag)
+//! clip_stack : depth u32 | clip*                   (바깥쪽 → 안쪽)
+//! clip       : tag u8 + payload
+//!   1 rect   : rect | radii | transform
+//!   2 path   : fill_rule u8 | geometry | transform
+//! paint_stack: layer_count u32 | layer* | shadow_count u32 | Shadow::to_bytes(29)*
+//!              | opacity f32 | blend u8 | layer_blur f32
+//! layer      : 1 fill: paint | 2 stroke: paint | width f32 | align u8 | cap u8
+//! paint      : 1 solid: Color::to_bytes(17)
+//! rect       : x f32 | y f32 | width f32 | height f32
+//! radii      : top_left f32 | top_right f32 | bottom_right f32 | bottom_left f32
+//! transform  : a f32 | b f32 | c f32 | d f32 | tx f32 | ty f32
 //! ```
 //!
 //! decode는 신뢰하지 않는 입력을 가정합니다. 잘린 입력·잉여 bytes·미지 tag·비유한 값·
-//! 음수 크기·잘못된 crop·subpath 규칙 위반을 구조화 오류로 거부하고 panic하지 않으며,
-//! 깊은 tree도 재귀 없이 처리합니다.
+//! 음수 크기·잘못된 crop·subpath 규칙 위반·z-order 불변식 위반을 구조화 오류로 거부하고
+//! panic하지 않으며, 깊은 tree도 재귀 없이 처리합니다.
 
 use std::fmt;
 use std::sync::Arc;
 
-use stellar_core_types::color::ColorSpace;
+use stellar_core_types::color::{Color, ColorError, ColorSpace};
 use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::AssetRef;
 use stellar_core_types::revision::{DocumentRevision, SceneRevision};
-use stellar_core_types::value::{Rect, Size2, SizeError, Vec2};
+use stellar_core_types::shadow::{BlurError, BlurRadius, Shadow, ShadowError};
+use stellar_core_types::value::{Rect, Size2, SizeError, Transform2D, Vec2};
 
 use crate::geometry::{
     FillRule, PathCommand, PathGeometry, PathGeometryError, TAG_CLOSE, TAG_CUBIC, TAG_LINE,
     TAG_MOVE,
 };
 use crate::node::{
-    CornerRadii, ImageCrop, ImageFit, ImagePrimitive, ImageSampling, PathPrimitive, RectPrimitive,
-    SceneContent, SceneNode, SceneNodeSpec, SceneValueError, TextLayoutKey, TextPrimitive,
+    CornerRadii, HitTestMeta, ImageCrop, ImageFit, ImagePrimitive, ImageSampling, PathPrimitive,
+    PointerEvents, RectPrimitive, SceneContent, SceneNode, SceneNodeSpec, SceneTreeError,
+    SceneValueError, TextLayoutKey, TextPrimitive, Visibility, ZOrder,
 };
 use crate::snapshot::SceneSnapshot;
+use crate::stack::{
+    ClipShape, ClipStackRef, Opacity, Paint, PaintLayer, PaintStack, PaintStackRef, SceneBlendMode,
+    StrokeAlign, StrokeCap, StrokeLayer,
+};
 
 /// canonical bytes 시작 magic.
 pub const SCENE_CODEC_MAGIC: [u8; 4] = *b"STSN";
@@ -53,6 +70,14 @@ const CONTENT_RECT: u8 = 1;
 const CONTENT_PATH: u8 = 2;
 const CONTENT_TEXT: u8 = 3;
 const CONTENT_IMAGE: u8 = 4;
+
+const CLIP_RECT: u8 = 1;
+const CLIP_PATH: u8 = 2;
+
+const LAYER_FILL: u8 = 1;
+const LAYER_STROKE: u8 = 2;
+
+const PAINT_SOLID: u8 = 1;
 
 const COLOR_SPACE_NONE: u8 = 0;
 
@@ -94,8 +119,14 @@ pub enum SceneCodecError {
     },
     /// 값 규칙 위반(비유한·음수·범위 밖).
     InvalidValue(SceneValueError),
+    /// 색상 규칙 위반.
+    InvalidColor(ColorError),
+    /// 그림자 규칙 위반.
+    InvalidShadow(ShadowError),
     /// path subpath 규칙 위반.
     InvalidPath(PathGeometryError),
+    /// z-order 불변식 위반.
+    InvalidTree(SceneTreeError),
 }
 
 impl fmt::Display for SceneCodecError {
@@ -113,7 +144,10 @@ impl fmt::Display for SceneCodecError {
                 write!(f, "{field}의 알 수 없는 tag: {tag}")
             }
             SceneCodecError::InvalidValue(error) => write!(f, "잘못된 scene 값: {error}"),
+            SceneCodecError::InvalidColor(error) => write!(f, "잘못된 색상: {error}"),
+            SceneCodecError::InvalidShadow(error) => write!(f, "잘못된 그림자: {error}"),
             SceneCodecError::InvalidPath(error) => write!(f, "잘못된 path: {error}"),
+            SceneCodecError::InvalidTree(error) => write!(f, "잘못된 scene tree: {error}"),
         }
     }
 }
@@ -123,6 +157,12 @@ impl std::error::Error for SceneCodecError {}
 impl From<SceneValueError> for SceneCodecError {
     fn from(error: SceneValueError) -> SceneCodecError {
         SceneCodecError::InvalidValue(error)
+    }
+}
+
+impl From<SceneTreeError> for SceneCodecError {
+    fn from(error: SceneTreeError) -> SceneCodecError {
+        SceneCodecError::InvalidTree(error)
     }
 }
 
@@ -152,9 +192,16 @@ pub(crate) fn write_body<S: ByteSink + ?Sized>(snapshot: &SceneSnapshot, out: &m
     }
 }
 
-fn write_node<S: ByteSink + ?Sized>(node: &SceneNode, out: &mut S) {
+/// node 하나(자식 제외, 자식 수 포함)를 씁니다.
+pub(crate) fn write_node<S: ByteSink + ?Sized>(node: &SceneNode, out: &mut S) {
     out.put(&node.source().to_bytes());
     write_content(node.content(), out);
+    put_transform(out, node.world_transform());
+    put_rect(out, node.layout_rect());
+    write_clip_stack(node.clip(), out);
+    write_paint_stack(node.paint().get(), out);
+    out.put(&node.z().0.to_le_bytes());
+    out.put(&[node.hit().visibility.tag(), node.hit().pointer_events.tag()]);
     out.put(&(node.child_count() as u32).to_le_bytes());
 }
 
@@ -163,10 +210,7 @@ fn write_content<S: ByteSink + ?Sized>(content: &SceneContent, out: &mut S) {
         SceneContent::Rect(rect) => {
             out.put(&[CONTENT_RECT]);
             put_rect(out, rect.rect);
-            let (tl, tr, br, bl) = rect.radii.components();
-            for v in [tl, tr, br, bl] {
-                put_f32(out, v);
-            }
+            put_radii(out, rect.radii);
         }
         SceneContent::Path(path) => {
             out.put(&[CONTENT_PATH]);
@@ -193,6 +237,68 @@ fn write_content<S: ByteSink + ?Sized>(content: &SceneContent, out: &mut S) {
     }
 }
 
+fn write_clip_stack<S: ByteSink + ?Sized>(clip: &ClipStackRef, out: &mut S) {
+    out.put(&(clip.depth() as u32).to_le_bytes());
+    for shape in clip.to_outer_first() {
+        match shape {
+            ClipShape::Rect {
+                rect,
+                radii,
+                transform,
+            } => {
+                out.put(&[CLIP_RECT]);
+                put_rect(out, *rect);
+                put_radii(out, *radii);
+                put_transform(out, *transform);
+            }
+            ClipShape::Path {
+                geometry,
+                fill_rule,
+                transform,
+            } => {
+                out.put(&[CLIP_PATH]);
+                out.put(&[fill_rule.tag()]);
+                geometry.write_canonical(out);
+                put_transform(out, *transform);
+            }
+        }
+    }
+}
+
+fn write_paint_stack<S: ByteSink + ?Sized>(paint: &PaintStack, out: &mut S) {
+    out.put(&(paint.layers.len() as u32).to_le_bytes());
+    for layer in &paint.layers {
+        match layer {
+            PaintLayer::Fill(fill) => {
+                out.put(&[LAYER_FILL]);
+                put_paint(out, *fill);
+            }
+            PaintLayer::Stroke(stroke) => {
+                out.put(&[LAYER_STROKE]);
+                put_paint(out, stroke.paint());
+                put_f32(out, stroke.width());
+                out.put(&[stroke.align().tag(), stroke.cap().tag()]);
+            }
+        }
+    }
+    out.put(&(paint.shadows.len() as u32).to_le_bytes());
+    for shadow in &paint.shadows {
+        out.put(&shadow.to_bytes());
+    }
+    put_f32(out, paint.opacity.get());
+    out.put(&[paint.blend.tag()]);
+    put_f32(out, paint.layer_blur.get());
+}
+
+fn put_paint<S: ByteSink + ?Sized>(out: &mut S, paint: Paint) {
+    match paint {
+        Paint::Solid(color) => {
+            out.put(&[PAINT_SOLID]);
+            out.put(&color.to_bytes());
+        }
+    }
+}
+
 pub(crate) fn put_f32<S: ByteSink + ?Sized>(out: &mut S, value: f32) {
     out.put(&value.to_le_bytes());
 }
@@ -202,6 +308,20 @@ pub(crate) fn put_rect<S: ByteSink + ?Sized>(out: &mut S, rect: Rect) {
     put_f32(out, rect.origin().y());
     put_f32(out, rect.size().width());
     put_f32(out, rect.size().height());
+}
+
+fn put_radii<S: ByteSink + ?Sized>(out: &mut S, radii: CornerRadii) {
+    let (tl, tr, br, bl) = radii.components();
+    for v in [tl, tr, br, bl] {
+        put_f32(out, v);
+    }
+}
+
+pub(crate) fn put_transform<S: ByteSink + ?Sized>(out: &mut S, transform: Transform2D) {
+    let (a, b, c, d, tx, ty) = transform.components();
+    for v in [a, b, c, d, tx, ty] {
+        put_f32(out, v);
+    }
 }
 
 // --- decode ---
@@ -267,6 +387,26 @@ impl<'a> Reader<'a> {
         Ok(Rect::new(origin, size))
     }
 
+    pub(crate) fn radii(&mut self) -> Result<CornerRadii, SceneCodecError> {
+        let tl = self.f32("corner radius")?;
+        let tr = self.f32("corner radius")?;
+        let br = self.f32("corner radius")?;
+        let bl = self.f32("corner radius")?;
+        Ok(CornerRadii::new(tl, tr, br, bl)?)
+    }
+
+    pub(crate) fn transform(
+        &mut self,
+        field: &'static str,
+    ) -> Result<Transform2D, SceneCodecError> {
+        let mut v = [0f32; 6];
+        for slot in &mut v {
+            *slot = self.f32(field)?;
+        }
+        Transform2D::new(v[0], v[1], v[2], v[3], v[4], v[5])
+            .map_err(|_| SceneValueError::NonFinite { field }.into())
+    }
+
     pub(crate) fn remaining(&self) -> usize {
         self.input.len() - self.pos
     }
@@ -301,7 +441,11 @@ pub fn decode(bytes: &[u8]) -> Result<SceneSnapshot, SceneCodecError> {
             extra: reader.remaining(),
         });
     }
-    Ok(SceneSnapshot::new(document_revision, scene_revision, roots))
+    Ok(SceneSnapshot::new(
+        document_revision,
+        scene_revision,
+        roots,
+    )?)
 }
 
 /// subtree 하나를 명시적 stack으로 읽습니다(재귀 없음).
@@ -320,7 +464,7 @@ fn read_subtree(reader: &mut Reader<'_>) -> Result<Arc<SceneNode>, SceneCodecErr
         let Some(done) = stack.pop() else {
             return Err(SceneCodecError::Truncated);
         };
-        let node = Arc::new(SceneNode::new(done.spec, done.children));
+        let node = Arc::new(SceneNode::new(done.spec, done.children)?);
         match stack.last_mut() {
             Some(parent) => parent.children.push(node),
             None => return Ok(node),
@@ -331,9 +475,37 @@ fn read_subtree(reader: &mut Reader<'_>) -> Result<Arc<SceneNode>, SceneCodecErr
 fn read_pending(reader: &mut Reader<'_>) -> Result<Pending, SceneCodecError> {
     let source = StableId::from_bytes(reader.take()?);
     let content = read_content(reader)?;
+    let world_transform = reader.transform("world transform")?;
+    let layout_rect = reader.rect("layout rect")?;
+    let clip = read_clip_stack(reader)?;
+    let paint = read_paint_stack(reader)?;
+    let z = ZOrder(reader.u64()?);
+    let visibility_tag = reader.u8()?;
+    let visibility = Visibility::from_tag(visibility_tag).ok_or(SceneCodecError::UnknownTag {
+        field: "visibility",
+        tag: visibility_tag,
+    })?;
+    let pointer_tag = reader.u8()?;
+    let pointer_events =
+        PointerEvents::from_tag(pointer_tag).ok_or(SceneCodecError::UnknownTag {
+            field: "pointer events",
+            tag: pointer_tag,
+        })?;
     let remaining = reader.u32()?;
     Ok(Pending {
-        spec: SceneNodeSpec { source, content },
+        spec: SceneNodeSpec {
+            source,
+            content,
+            world_transform,
+            layout_rect,
+            clip,
+            paint: PaintStackRef::new(paint),
+            z,
+            hit: HitTestMeta {
+                visibility,
+                pointer_events,
+            },
+        },
         remaining,
         children: Vec::new(),
     })
@@ -343,21 +515,11 @@ fn read_content(reader: &mut Reader<'_>) -> Result<SceneContent, SceneCodecError
     match reader.u8()? {
         CONTENT_RECT => {
             let rect = reader.rect("rect")?;
-            let tl = reader.f32("corner radius")?;
-            let tr = reader.f32("corner radius")?;
-            let br = reader.f32("corner radius")?;
-            let bl = reader.f32("corner radius")?;
-            Ok(SceneContent::Rect(RectPrimitive {
-                rect,
-                radii: CornerRadii::new(tl, tr, br, bl)?,
-            }))
+            let radii = reader.radii()?;
+            Ok(SceneContent::Rect(RectPrimitive { rect, radii }))
         }
         CONTENT_PATH => {
-            let tag = reader.u8()?;
-            let fill_rule = FillRule::from_tag(tag).ok_or(SceneCodecError::UnknownTag {
-                field: "fill rule",
-                tag,
-            })?;
+            let fill_rule = read_fill_rule(reader)?;
             let geometry = read_geometry(reader)?;
             Ok(SceneContent::Path(PathPrimitive {
                 geometry,
@@ -415,6 +577,112 @@ fn read_content(reader: &mut Reader<'_>) -> Result<SceneContent, SceneCodecError
     }
 }
 
+fn read_fill_rule(reader: &mut Reader<'_>) -> Result<FillRule, SceneCodecError> {
+    let tag = reader.u8()?;
+    FillRule::from_tag(tag).ok_or(SceneCodecError::UnknownTag {
+        field: "fill rule",
+        tag,
+    })
+}
+
+fn read_clip_stack(reader: &mut Reader<'_>) -> Result<ClipStackRef, SceneCodecError> {
+    let depth = reader.u32()?;
+    let mut clip = ClipStackRef::none();
+    for _ in 0..depth {
+        let shape = match reader.u8()? {
+            CLIP_RECT => ClipShape::Rect {
+                rect: reader.rect("clip rect")?,
+                radii: reader.radii()?,
+                transform: reader.transform("clip transform")?,
+            },
+            CLIP_PATH => ClipShape::Path {
+                fill_rule: read_fill_rule(reader)?,
+                geometry: read_geometry(reader)?,
+                transform: reader.transform("clip transform")?,
+            },
+            tag => {
+                return Err(SceneCodecError::UnknownTag {
+                    field: "clip shape",
+                    tag,
+                })
+            }
+        };
+        clip = clip.push(shape);
+    }
+    Ok(clip)
+}
+
+fn read_paint_stack(reader: &mut Reader<'_>) -> Result<PaintStack, SceneCodecError> {
+    let layer_count = reader.u32()?;
+    let mut layers = Vec::new();
+    for _ in 0..layer_count {
+        let layer = match reader.u8()? {
+            LAYER_FILL => PaintLayer::Fill(read_paint(reader)?),
+            LAYER_STROKE => {
+                let paint = read_paint(reader)?;
+                let width = reader.f32("stroke width")?;
+                let align_tag = reader.u8()?;
+                let align =
+                    StrokeAlign::from_tag(align_tag).ok_or(SceneCodecError::UnknownTag {
+                        field: "stroke align",
+                        tag: align_tag,
+                    })?;
+                let cap_tag = reader.u8()?;
+                let cap = StrokeCap::from_tag(cap_tag).ok_or(SceneCodecError::UnknownTag {
+                    field: "stroke cap",
+                    tag: cap_tag,
+                })?;
+                PaintLayer::Stroke(StrokeLayer::new(paint, width, align, cap)?)
+            }
+            tag => {
+                return Err(SceneCodecError::UnknownTag {
+                    field: "paint layer",
+                    tag,
+                })
+            }
+        };
+        layers.push(layer);
+    }
+    let shadow_count = reader.u32()?;
+    let mut shadows = Vec::new();
+    for _ in 0..shadow_count {
+        shadows.push(Shadow::from_bytes(reader.take()?).map_err(SceneCodecError::InvalidShadow)?);
+    }
+    let opacity = Opacity::new(reader.f32("opacity")?)?;
+    let blend_tag = reader.u8()?;
+    let blend = SceneBlendMode::from_tag(blend_tag).ok_or(SceneCodecError::UnknownTag {
+        field: "blend mode",
+        tag: blend_tag,
+    })?;
+    let layer_blur = BlurRadius::new(reader.f32("layer blur")?).map_err(|error| match error {
+        BlurError::NonFinite => SceneValueError::NonFinite {
+            field: "layer blur",
+        },
+        BlurError::Negative => SceneValueError::Negative {
+            field: "layer blur",
+        },
+    })?;
+    Ok(PaintStack {
+        layers,
+        shadows,
+        opacity,
+        blend,
+        layer_blur,
+    })
+}
+
+fn read_paint(reader: &mut Reader<'_>) -> Result<Paint, SceneCodecError> {
+    match reader.u8()? {
+        PAINT_SOLID => Ok(Paint::Solid(
+            Color::from_bytes(reader.take()?).map_err(SceneCodecError::InvalidColor)?,
+        )),
+        tag => Err(SceneCodecError::UnknownTag {
+            field: "paint",
+            tag,
+        }),
+    }
+}
+
 /// [`PathGeometry::canonical_bytes`] 형식을 읽습니다.
 pub(crate) fn read_geometry(reader: &mut Reader<'_>) -> Result<PathGeometry, SceneCodecError> {
     let count = reader.u64()?;
@@ -445,35 +713,45 @@ pub(crate) fn read_geometry(reader: &mut Reader<'_>) -> Result<PathGeometry, Sce
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fixtures::{self, id, p, rect, solid, spec, FixtureConfig};
 
-    fn rect(x: f32, y: f32, w: f32, h: f32) -> Rect {
-        Rect::new(Vec2::new(x, y).unwrap(), Size2::new(w, h).unwrap())
-    }
-
-    fn p(x: f32, y: f32) -> Vec2 {
-        Vec2::new(x, y).unwrap()
-    }
-
-    fn id(n: u8) -> StableId {
-        StableId::from_bytes([n; 16])
-    }
-
-    fn spec(n: u8, content: SceneContent) -> SceneNodeSpec {
-        SceneNodeSpec {
-            source: id(n),
-            content,
-        }
-    }
-
-    fn rect_content(w: f32) -> SceneContent {
-        SceneContent::Rect(RectPrimitive {
-            rect: rect(0.0, 0.0, w, w / 2.0),
-            radii: CornerRadii::new(1.0, 2.0, 3.0, 4.0).unwrap(),
-        })
-    }
-
-    /// 모든 content 종류와 중첩을 포함한 snapshot.
+    /// 모든 content·clip·paint 종류와 중첩을 포함한 snapshot.
     fn sample_snapshot() -> SceneSnapshot {
+        fixtures::small()
+    }
+
+    /// 단일 leaf snapshot(기본 spec).
+    fn one(content: SceneContent) -> Vec<u8> {
+        encode(
+            &SceneSnapshot::new(
+                DocumentRevision(1),
+                SceneRevision(1),
+                vec![Arc::new(SceneNode::leaf(spec(1, content, 1)))],
+            )
+            .unwrap(),
+        )
+    }
+
+    // node content는 header(25) + source(16) 다음 offset 41에서 시작합니다.
+    const CONTENT: usize = 25 + 16;
+    // rect content 길이: tag 1 + rect 16 + radii 16.
+    const RECT_CONTENT_LEN: usize = 1 + 16 + 16;
+
+    #[test]
+    fn snapshot_round_trips_through_canonical_bytes() {
+        // 검증 기준(XI.1.1): core snapshot round-trip serialization.
+        let snapshot = sample_snapshot();
+        let bytes = encode(&snapshot);
+        let decoded = decode(&bytes).expect("decode");
+        assert_eq!(decoded, snapshot);
+        // canonical: 다시 인코딩하면 같은 bytes.
+        assert_eq!(encode(&decoded), bytes);
+        assert_eq!(decoded.node_count(), snapshot.node_count());
+        assert_eq!(decoded.resource_refs(), snapshot.resource_refs());
+    }
+
+    #[test]
+    fn every_content_kind_round_trips() {
         let path = SceneContent::Path(PathPrimitive {
             geometry: PathGeometry::new(vec![
                 PathCommand::MoveTo(p(0.0, 0.0)),
@@ -502,51 +780,18 @@ mod tests {
             sampling: ImageSampling::Nearest,
             color_space: Some(ColorSpace::DisplayP3),
         });
-        let image_no_space = SceneContent::Image(ImagePrimitive {
-            asset: AssetRef::new(id(0x45)),
-            bounds: rect(0.0, 0.0, 8.0, 8.0),
-            fit: ImageFit::None,
-            crop: ImageCrop::FULL,
-            sampling: ImageSampling::Linear,
-            color_space: None,
-        });
-        let inner = SceneNode::new(
-            spec(3, rect_content(20.0)),
-            vec![
-                Arc::new(SceneNode::leaf(spec(4, path))),
-                Arc::new(SceneNode::leaf(spec(5, text))),
-            ],
-        );
-        let root = SceneNode::new(
-            spec(1, rect_content(100.0)),
-            vec![Arc::new(SceneNode::leaf(spec(2, image))), Arc::new(inner)],
-        );
-        SceneSnapshot::new(
-            DocumentRevision(42),
-            SceneRevision(7),
-            vec![
-                Arc::new(root),
-                Arc::new(SceneNode::leaf(spec(6, image_no_space))),
-            ],
-        )
-    }
-
-    #[test]
-    fn snapshot_round_trips_through_canonical_bytes() {
-        // 검증 기준(XI.1.1): core snapshot round-trip serialization.
-        let snapshot = sample_snapshot();
-        let bytes = encode(&snapshot);
-        let decoded = decode(&bytes).expect("decode");
-        assert_eq!(decoded, snapshot);
-        // canonical: 다시 인코딩하면 같은 bytes.
-        assert_eq!(encode(&decoded), bytes);
-        assert_eq!(decoded.node_count(), 6);
-        assert_eq!(decoded.resource_refs(), snapshot.resource_refs());
+        for content in [fixtures::rect_content(3.0, 4.0), path, text, image] {
+            let bytes = one(content.clone());
+            let decoded = decode(&bytes).unwrap();
+            assert_eq!(decoded.root(0).unwrap().content(), &content);
+            assert_eq!(encode(&decoded), bytes);
+        }
     }
 
     #[test]
     fn header_bytes_are_hand_checked() {
-        let empty = SceneSnapshot::new(DocumentRevision(0x0102), SceneRevision(3), Vec::new());
+        let empty =
+            SceneSnapshot::new(DocumentRevision(0x0102), SceneRevision(3), Vec::new()).unwrap();
         let bytes = encode(&empty);
         let mut expected = b"STSN".to_vec();
         expected.push(1);
@@ -556,28 +801,43 @@ mod tests {
         assert_eq!(bytes, expected);
         assert_eq!(decode(&bytes).unwrap(), empty);
 
-        // leaf rect node 하나: source 16 + tag 1 + rect 16 + radii 16 + child count 4.
-        let one = SceneSnapshot::new(
-            DocumentRevision(1),
-            SceneRevision(1),
-            vec![Arc::new(SceneNode::leaf(spec(9, rect_content(8.0))))],
-        );
-        let bytes = encode(&one);
+        // 기본 spec leaf rect 하나:
+        // source 16 | content 33 | transform 24 | layout 16 | clip depth 4
+        // | paint(layer 4 + shadow 4 + opacity 4 + blend 1 + blur 4) | z 8 | hit 2 | child 4.
+        let bytes = one(fixtures::rect_content(8.0, 2.0));
         let node = &bytes[25..];
-        assert_eq!(node.len(), 16 + 1 + 16 + 16 + 4);
-        assert_eq!(&node[..16], &[9; 16]);
+        assert_eq!(node.len(), 16 + 33 + 24 + 16 + 4 + 17 + 8 + 2 + 4);
+        assert_eq!(&node[..16], &id(1).to_bytes());
         assert_eq!(node[16], CONTENT_RECT);
         assert_eq!(&node[17 + 8..17 + 12], &8.0f32.to_le_bytes());
-        assert_eq!(&node[node.len() - 4..], &[0, 0, 0, 0]);
+        // 항등 transform.
+        let t = &node[49..73];
+        assert_eq!(&t[..4], &1.0f32.to_le_bytes());
+        assert_eq!(&t[12..16], &1.0f32.to_le_bytes());
+        // opacity 1.0, blend Normal(0), blur 0.
+        let paint = &node[93..110];
+        assert_eq!(&paint[8..12], &1.0f32.to_le_bytes());
+        assert_eq!(paint[12], 0);
+        // z = 1, visible·auto, 자식 0.
+        assert_eq!(&node[110..118], &1u64.to_le_bytes());
+        assert_eq!(&node[118..120], &[0, 0]);
+        assert_eq!(&node[120..], &[0, 0, 0, 0]);
     }
 
     #[test]
     fn deep_tree_round_trips_without_recursion() {
-        let mut node = Arc::new(SceneNode::leaf(spec(0, rect_content(1.0))));
-        for _ in 0..1_000 {
-            node = Arc::new(SceneNode::new(spec(0, rect_content(1.0)), vec![node]));
+        let mut node = Arc::new(SceneNode::leaf(spec(
+            0,
+            fixtures::rect_content(1.0, 1.0),
+            1_001,
+        )));
+        for z in (1..=1_000u64).rev() {
+            node = Arc::new(
+                SceneNode::new(spec(0, fixtures::rect_content(1.0, 1.0), z), vec![node]).unwrap(),
+            );
         }
-        let snapshot = SceneSnapshot::new(DocumentRevision(1), SceneRevision(1), vec![node]);
+        let snapshot =
+            SceneSnapshot::new(DocumentRevision(1), SceneRevision(1), vec![node]).unwrap();
         let bytes = encode(&snapshot);
         let decoded = decode(&bytes).unwrap();
         assert_eq!(decoded.node_count(), 1_001);
@@ -601,28 +861,18 @@ mod tests {
 
     #[test]
     fn malformed_values_are_rejected() {
-        let one = |content: SceneContent| {
-            encode(&SceneSnapshot::new(
-                DocumentRevision(1),
-                SceneRevision(1),
-                vec![Arc::new(SceneNode::leaf(spec(1, content)))],
-            ))
-        };
-        // node content는 header(25) + source(16) 다음 offset 41에서 시작합니다.
-        const CONTENT: usize = 25 + 16;
-
-        let mut bad_magic = one(rect_content(4.0));
+        let mut bad_magic = one(fixtures::rect_content(4.0, 4.0));
         bad_magic[0] = b'X';
         assert_eq!(decode(&bad_magic), Err(SceneCodecError::BadMagic));
 
-        let mut bad_version = one(rect_content(4.0));
+        let mut bad_version = one(fixtures::rect_content(4.0, 4.0));
         bad_version[4] = 2;
         assert_eq!(
             decode(&bad_version),
             Err(SceneCodecError::UnsupportedVersion { version: 2 })
         );
 
-        let mut bad_tag = one(rect_content(4.0));
+        let mut bad_tag = one(fixtures::rect_content(4.0, 4.0));
         bad_tag[CONTENT] = 9;
         assert_eq!(
             decode(&bad_tag),
@@ -632,7 +882,7 @@ mod tests {
             })
         );
 
-        let mut nan = one(rect_content(4.0));
+        let mut nan = one(fixtures::rect_content(4.0, 4.0));
         nan[CONTENT + 1..CONTENT + 5].copy_from_slice(&f32::NAN.to_le_bytes());
         assert_eq!(
             decode(&nan),
@@ -641,7 +891,7 @@ mod tests {
             }))
         );
 
-        let mut negative = one(rect_content(4.0));
+        let mut negative = one(fixtures::rect_content(4.0, 4.0));
         negative[CONTENT + 9..CONTENT + 13].copy_from_slice(&(-1.0f32).to_le_bytes());
         assert_eq!(
             decode(&negative),
@@ -650,7 +900,7 @@ mod tests {
             }))
         );
 
-        let mut negative_radius = one(rect_content(4.0));
+        let mut negative_radius = one(fixtures::rect_content(4.0, 4.0));
         negative_radius[CONTENT + 17..CONTENT + 21].copy_from_slice(&(-1.0f32).to_le_bytes());
         assert_eq!(
             decode(&negative_radius),
@@ -659,13 +909,138 @@ mod tests {
             }))
         );
 
+        // content 다음 fields: transform 24 | layout 16 | clip depth 4 | paint 17 | z 8 | hit 2.
+        let after = CONTENT + RECT_CONTENT_LEN;
+        let mut nan_transform = one(fixtures::rect_content(4.0, 4.0));
+        nan_transform[after..after + 4].copy_from_slice(&f32::INFINITY.to_le_bytes());
+        assert_eq!(
+            decode(&nan_transform),
+            Err(SceneCodecError::InvalidValue(SceneValueError::NonFinite {
+                field: "world transform"
+            }))
+        );
+        let clip_at = after + 24 + 16;
+        let mut bad_clip = one(fixtures::rect_content(4.0, 4.0));
+        bad_clip[clip_at..clip_at + 4].copy_from_slice(&1u32.to_le_bytes());
+        bad_clip.insert(clip_at + 4, 7);
+        assert_eq!(
+            decode(&bad_clip),
+            Err(SceneCodecError::UnknownTag {
+                field: "clip shape",
+                tag: 7
+            })
+        );
+        let paint_at = clip_at + 4;
+        let mut bad_opacity = one(fixtures::rect_content(4.0, 4.0));
+        bad_opacity[paint_at + 8..paint_at + 12].copy_from_slice(&2.0f32.to_le_bytes());
+        assert_eq!(
+            decode(&bad_opacity),
+            Err(SceneCodecError::InvalidValue(SceneValueError::OutOfRange {
+                field: "opacity"
+            }))
+        );
+        let mut bad_blend = one(fixtures::rect_content(4.0, 4.0));
+        bad_blend[paint_at + 12] = 6;
+        assert_eq!(
+            decode(&bad_blend),
+            Err(SceneCodecError::UnknownTag {
+                field: "blend mode",
+                tag: 6
+            })
+        );
+        let mut negative_blur = one(fixtures::rect_content(4.0, 4.0));
+        negative_blur[paint_at + 13..paint_at + 17].copy_from_slice(&(-1.0f32).to_le_bytes());
+        assert_eq!(
+            decode(&negative_blur),
+            Err(SceneCodecError::InvalidValue(SceneValueError::Negative {
+                field: "layer blur"
+            }))
+        );
+        let hit_at = paint_at + 17 + 8;
+        let mut bad_visibility = one(fixtures::rect_content(4.0, 4.0));
+        bad_visibility[hit_at] = 2;
+        assert_eq!(
+            decode(&bad_visibility),
+            Err(SceneCodecError::UnknownTag {
+                field: "visibility",
+                tag: 2
+            })
+        );
+        let mut bad_pointer = one(fixtures::rect_content(4.0, 4.0));
+        bad_pointer[hit_at + 1] = 2;
+        assert_eq!(
+            decode(&bad_pointer),
+            Err(SceneCodecError::UnknownTag {
+                field: "pointer events",
+                tag: 2
+            })
+        );
+
+        // stroke·fill layer와 색상 검증.
+        let stroked = {
+            let mut s = spec(1, fixtures::rect_content(4.0, 4.0), 1);
+            s.paint = PaintStackRef::new(PaintStack {
+                layers: vec![
+                    PaintLayer::Fill(solid(1.0, 0.0, 0.0, 1.0)),
+                    PaintLayer::Stroke(
+                        StrokeLayer::new(
+                            solid(0.0, 0.0, 1.0, 0.5),
+                            2.0,
+                            StrokeAlign::Inside,
+                            StrokeCap::Round,
+                        )
+                        .unwrap(),
+                    ),
+                ],
+                ..PaintStack::empty()
+            });
+            encode(
+                &SceneSnapshot::new(
+                    DocumentRevision(1),
+                    SceneRevision(1),
+                    vec![Arc::new(SceneNode::leaf(s))],
+                )
+                .unwrap(),
+            )
+        };
+        assert!(decode(&stroked).is_ok());
+        // 첫 layer: tag(1) | paint tag(1) | color(17): color 알파를 2.0으로.
+        let color_at = paint_at + 4 + 2;
+        let mut bad_alpha = stroked.clone();
+        bad_alpha[color_at + 13..color_at + 17].copy_from_slice(&2.0f32.to_le_bytes());
+        assert_eq!(
+            decode(&bad_alpha),
+            Err(SceneCodecError::InvalidColor(ColorError::AlphaOutOfRange))
+        );
+        let mut bad_layer = stroked.clone();
+        bad_layer[paint_at + 4] = 9;
+        assert_eq!(
+            decode(&bad_layer),
+            Err(SceneCodecError::UnknownTag {
+                field: "paint layer",
+                tag: 9
+            })
+        );
+        // 둘째 layer(stroke): tag | paint 18 | width 4 | align | cap.
+        let stroke_at = paint_at + 4 + 1 + 18;
+        let mut bad_cap = stroked.clone();
+        bad_cap[stroke_at + 1 + 18 + 4 + 1] = 3;
+        assert_eq!(
+            decode(&bad_cap),
+            Err(SceneCodecError::UnknownTag {
+                field: "stroke cap",
+                tag: 3
+            })
+        );
+
         let path = |fill: u8, commands: &[u8]| {
-            let mut bytes = one(rect_content(1.0));
+            let mut bytes = one(fixtures::rect_content(1.0, 1.0));
+            let tail = bytes.split_off(CONTENT + RECT_CONTENT_LEN);
             bytes.truncate(CONTENT);
             bytes.push(CONTENT_PATH);
             bytes.push(fill);
             bytes.extend_from_slice(commands);
-            bytes.extend_from_slice(&0u32.to_le_bytes());
+            bytes.extend_from_slice(&tail);
             bytes
         };
         let mut line_first = 1u64.to_le_bytes().to_vec();
@@ -694,10 +1069,9 @@ mod tests {
                 tag: 7
             })
         );
-        // 거대한 command 개수는 미리 할당하지 않고 잘림 오류가 됩니다.
-        let mut huge = path(0, &u64::MAX.to_le_bytes());
-        huge.truncate(huge.len() - 4);
-        assert_eq!(decode(&huge), Err(SceneCodecError::Truncated));
+        // 거대한 command 개수는 미리 할당하지 않고 오류가 됩니다.
+        let huge = path(0, &u64::MAX.to_le_bytes());
+        assert!(decode(&huge).is_err());
 
         let image = || {
             one(SceneContent::Image(ImagePrimitive {
@@ -749,29 +1123,55 @@ mod tests {
     }
 
     #[test]
+    fn z_order_violation_is_rejected_on_decode() {
+        // 부모 z 5, 자식 z 3인 bytes를 직접 만들어 decode가 거부하는지 확인합니다.
+        let parent = SceneNode::new(
+            spec(1, fixtures::rect_content(1.0, 1.0), 5),
+            vec![fixtures::leaf(2, 6, 1.0, 1.0)],
+        )
+        .unwrap();
+        let snapshot = SceneSnapshot::new(
+            DocumentRevision(1),
+            SceneRevision(1),
+            vec![Arc::new(parent)],
+        )
+        .unwrap();
+        let mut bytes = encode(&snapshot);
+        let node_len = (bytes.len() - 25) / 2;
+        let child_z_at = 25 + node_len + node_len - 4 - 2 - 8;
+        bytes[child_z_at..child_z_at + 8].copy_from_slice(&3u64.to_le_bytes());
+        assert_eq!(
+            decode(&bytes),
+            Err(SceneCodecError::InvalidTree(
+                SceneTreeError::ZOrderNotIncreasing {
+                    previous: ZOrder(5),
+                    next: ZOrder(3)
+                }
+            ))
+        );
+    }
+
+    #[test]
     fn negative_zero_is_canonical() {
-        let a = SceneSnapshot::new(
-            DocumentRevision(1),
-            SceneRevision(1),
-            vec![Arc::new(SceneNode::leaf(spec(
-                1,
-                SceneContent::Rect(RectPrimitive {
-                    rect: rect(-0.0, 0.0, 1.0, 1.0),
-                    radii: CornerRadii::new(-0.0, 0.0, 0.0, 0.0).unwrap(),
-                }),
-            )))],
-        );
-        let b = SceneSnapshot::new(
-            DocumentRevision(1),
-            SceneRevision(1),
-            vec![Arc::new(SceneNode::leaf(spec(
-                1,
-                SceneContent::Rect(RectPrimitive {
-                    rect: rect(0.0, 0.0, 1.0, 1.0),
-                    radii: CornerRadii::ZERO,
-                }),
-            )))],
-        );
-        assert_eq!(encode(&a), encode(&b));
+        let make = |x: f32, radius: f32| {
+            let content = SceneContent::Rect(RectPrimitive {
+                rect: rect(x, 0.0, 1.0, 1.0),
+                radii: CornerRadii::new(radius, 0.0, 0.0, 0.0).unwrap(),
+            });
+            one(content)
+        };
+        assert_eq!(make(-0.0, -0.0), make(0.0, 0.0));
+    }
+
+    #[test]
+    fn larger_fixture_round_trips() {
+        let snapshot = fixtures::generate(FixtureConfig {
+            seed: 77,
+            roots: 3,
+            children: 4,
+            depth: 3,
+        });
+        let bytes = encode(&snapshot);
+        assert_eq!(decode(&bytes).unwrap(), snapshot);
     }
 }
