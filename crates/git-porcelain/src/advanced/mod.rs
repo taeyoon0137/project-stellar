@@ -36,8 +36,11 @@ pub mod reset;
 /// reflog 조회와 선택 항목 복구(XXVI.2.4).
 pub mod reflog;
 
-/// Git worktree 목록·관리(XXVI.3.*).
+/// Git worktree 목록(XXVI.3.1).
 pub mod worktree;
+
+/// worktree add/remove/move/lock/unlock/prune/repair(XXVI.3.2).
+pub mod worktree_ops;
 
 /// 명령의 파괴 수준.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
