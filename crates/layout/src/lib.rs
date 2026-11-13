@@ -54,6 +54,9 @@ pub mod overlay;
 /// Anchor·Constraint 배치 (X.5).
 pub mod constraint;
 
+/// layout worker result guard (X.7.5).
+pub mod guard;
+
 /// canonical bytes writer/reader (crate 내부).
 mod codec;
 
