@@ -1,1 +1,7 @@
-//! stellar-layout — Project Stellar 코어 골격. core-types만 직접 의존합니다(구현은 후속).
+//! stellar-layout — Project Stellar 결정론적 레이아웃 엔진. core-types만 직접 의존합니다.
+
+/// layout revision newtype (X.1.4).
+pub mod revision;
+
+/// node별 layout input hash와 output cache (X.1.4).
+pub mod cache;
