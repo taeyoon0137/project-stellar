@@ -363,7 +363,9 @@ impl Default for Opacity {
 
 /// node의 paint stack.
 ///
-/// - `layers`: node 내용에 아래 → 위 순서로 칠합니다.
+/// - `layers`: node content geometry(Rect·Path는 그 도형, Text는 glyph 윤곽, Image는 배치
+///   상자)에 아래 → 위 순서로 칠합니다. 이미지 픽셀·text run 색 같은 content 고유 모습이 있으면
+///   그 **위**에 칠합니다.
 /// - `shadows`: 모든 layer **아래**에 목록 순서대로 그리는 drop shadow입니다.
 /// - `opacity`·`blend`·`layer_blur`: node와 그 subtree를 합성한 결과 전체에 적용합니다
 ///   (offscreen 경계 판단은 render graph, XI.4.4).
