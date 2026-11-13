@@ -26,3 +26,6 @@ pub mod codec;
 
 /// AST cycle detector (VIII.2.3).
 pub mod cycle;
+
+/// AST type checker (VIII.2.4).
+pub mod typecheck;
