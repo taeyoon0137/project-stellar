@@ -49,3 +49,6 @@ pub mod shape;
 
 /// Path command (VI.6).
 pub mod path;
+
+/// Text payload (VI.7).
+pub mod text;
