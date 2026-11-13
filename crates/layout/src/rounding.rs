@@ -222,6 +222,12 @@ impl fmt::Display for LayoutUnit {
     }
 }
 
+/// 정수 나눗셈 `numerator / denominator`를 가장 가까운 subpixel로 반올림합니다(ties away from
+/// zero, crate 내부). `|numerator|`와 `|denominator|`는 `2^125` 미만이어야 합니다.
+pub(crate) fn div_round(numerator: i128, denominator: i128) -> Result<LayoutUnit, LayoutUnitError> {
+    div_round_half_away_from_zero(numerator, denominator).and_then(to_unit)
+}
+
 /// `i128` 중간값을 `LayoutUnit` 범위로 좁힙니다.
 fn to_unit(value: i128) -> Result<LayoutUnit, LayoutUnitError> {
     i32::try_from(value)

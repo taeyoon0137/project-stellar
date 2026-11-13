@@ -17,13 +17,17 @@ use stellar_core_types::ids::StableId;
 
 use crate::codec::{Reader, Writer};
 use crate::error::LayoutError;
-use crate::geometry::LayoutRect;
+use crate::geometry::{Axis, LayoutRect};
 use crate::rounding::LayoutUnit;
 
 /// 결과 canonical bytes magic.
 const RESULT_MAGIC: &[u8; 4] = b"SLYR";
 /// 결과 canonical bytes version.
 const RESULT_VERSION: u16 = 1;
+
+/// 진단 tag.
+const DIAGNOSTIC_MISSING_TARGET: u8 = 0;
+const DIAGNOSTIC_UNDERDETERMINED: u8 = 1;
 
 /// 레이아웃을 실패시키지 않는 진단 (X.5.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,6 +39,13 @@ pub enum LayoutDiagnostic {
         /// 찾지 못한 target.
         target: StableId,
     },
+    /// constraint가 한 축의 위치·크기를 다 정하지 못해 fallback(콘텐츠 크기, 위치 0)을 썼습니다(X.5.4).
+    UnderdeterminedConstraint {
+        /// 대상 node.
+        node: StableId,
+        /// 축.
+        axis: Axis,
+    },
 }
 
 impl std::fmt::Display for LayoutDiagnostic {
@@ -43,6 +54,10 @@ impl std::fmt::Display for LayoutDiagnostic {
             LayoutDiagnostic::MissingAnchorTarget { node, target } => write!(
                 f,
                 "node {node}의 anchor target {target}이 같은 부모의 표시되는 형제가 아니라 제외했습니다"
+            ),
+            LayoutDiagnostic::UnderdeterminedConstraint { node, axis } => write!(
+                f,
+                "node {node}의 {axis} constraint가 부족해 fallback 위치·크기를 사용했습니다"
             ),
         }
     }
@@ -115,12 +130,13 @@ impl LayoutBox {
 pub struct LayoutResult {
     boxes: Vec<LayoutBox>,
     index: HashMap<StableId, usize>,
+    diagnostics: Vec<LayoutDiagnostic>,
 }
 
 impl PartialEq for LayoutResult {
     fn eq(&self, other: &LayoutResult) -> bool {
-        // index는 boxes에서 파생되므로 boxes만 비교합니다.
-        self.boxes == other.boxes
+        // index는 boxes에서 파생되므로 boxes와 진단만 비교합니다.
+        self.boxes == other.boxes && self.diagnostics == other.diagnostics
     }
 }
 
@@ -129,6 +145,14 @@ impl Eq for LayoutResult {}
 impl LayoutResult {
     /// box 목록으로 결과를 만듭니다. 같은 node의 box가 둘 이상이면 오류입니다.
     pub fn new(boxes: Vec<LayoutBox>) -> Result<LayoutResult, LayoutError> {
+        LayoutResult::with_diagnostics(boxes, Vec::new())
+    }
+
+    /// box 목록과 진단으로 결과를 만듭니다(X.5.4). 같은 node의 box가 둘 이상이면 오류입니다.
+    pub fn with_diagnostics(
+        boxes: Vec<LayoutBox>,
+        diagnostics: Vec<LayoutDiagnostic>,
+    ) -> Result<LayoutResult, LayoutError> {
         let mut index = HashMap::with_capacity(boxes.len());
         for (position, layout_box) in boxes.iter().enumerate() {
             if index.insert(layout_box.id, position).is_some() {
@@ -137,7 +161,16 @@ impl LayoutResult {
                 });
             }
         }
-        Ok(LayoutResult { boxes, index })
+        Ok(LayoutResult {
+            boxes,
+            index,
+            diagnostics,
+        })
+    }
+
+    /// 비치명 진단(배치 순서).
+    pub fn diagnostics(&self) -> &[LayoutDiagnostic] {
+        &self.diagnostics
     }
 
     /// 모든 box(pre-order).
@@ -179,6 +212,21 @@ impl LayoutResult {
             }
             encode_rect(&mut w, &layout_box.overflow);
         }
+        w.len(self.diagnostics.len());
+        for diagnostic in &self.diagnostics {
+            match diagnostic {
+                LayoutDiagnostic::MissingAnchorTarget { node, target } => {
+                    w.u8(DIAGNOSTIC_MISSING_TARGET);
+                    w.id(*node);
+                    w.id(*target);
+                }
+                LayoutDiagnostic::UnderdeterminedConstraint { node, axis } => {
+                    w.u8(DIAGNOSTIC_UNDERDETERMINED);
+                    w.id(*node);
+                    w.u8(axis.index() as u8);
+                }
+            }
+        }
         w.finish()
     }
 
@@ -200,8 +248,37 @@ impl LayoutResult {
             let overflow = decode_rect(&mut r)?;
             boxes.push(LayoutBox::new(id, rect, content, baseline, overflow)?);
         }
+        let count = r.len(18)?;
+        let mut diagnostics = Vec::with_capacity(count);
+        for _ in 0..count {
+            let diagnostic = match r.u8()? {
+                DIAGNOSTIC_MISSING_TARGET => LayoutDiagnostic::MissingAnchorTarget {
+                    node: r.id()?,
+                    target: r.id()?,
+                },
+                DIAGNOSTIC_UNDERDETERMINED => {
+                    let node = r.id()?;
+                    let axis = match r.u8()? {
+                        0 => Axis::Horizontal,
+                        1 => Axis::Vertical,
+                        _ => {
+                            return Err(LayoutError::Malformed {
+                                reason: "알 수 없는 진단 axis",
+                            })
+                        }
+                    };
+                    LayoutDiagnostic::UnderdeterminedConstraint { node, axis }
+                }
+                _ => {
+                    return Err(LayoutError::Malformed {
+                        reason: "알 수 없는 진단 tag",
+                    })
+                }
+            };
+            diagnostics.push(diagnostic);
+        }
         r.expect_end()?;
-        LayoutResult::new(boxes)
+        LayoutResult::with_diagnostics(boxes, diagnostics)
     }
 }
 

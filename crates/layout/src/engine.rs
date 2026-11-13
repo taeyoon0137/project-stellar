@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::value::{FiniteF32, Insets};
 
+use crate::constraint;
 use crate::error::LayoutError;
 use crate::flex::{prepare_flex, PreparedFlex};
 use crate::free::{self, PreparedAnchors};
@@ -23,7 +24,7 @@ use crate::grid;
 use crate::input::{
     length_unit, ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode, TreeIndex,
 };
-use crate::output::{LayoutBox, LayoutResult};
+use crate::output::{LayoutBox, LayoutDiagnostic, LayoutResult};
 use crate::overlay;
 use crate::property::LayoutProperty;
 use crate::rounding::{LayoutUnit, LayoutUnitError};
@@ -41,7 +42,7 @@ pub fn compute_layout(input: &LayoutInput) -> Result<LayoutResult, LayoutError> 
         .into_iter()
         .map(|p| LayoutBox::new(p.id, p.rect, p.content, p.baseline, p.overflow))
         .collect::<Result<Vec<_>, _>>()?;
-    LayoutResult::new(boxes)
+    LayoutResult::with_diagnostics(boxes, engine.diagnostics)
 }
 
 /// 부모 배치 방식이 자식 크기 해석에 주는 축별 제약.
@@ -134,6 +135,8 @@ pub(crate) struct Engine<'a> {
     pub(crate) tree: TreeIndex,
     pub(crate) nodes: Vec<Prepared>,
     memo: HashMap<(usize, ChildConstraint), LayoutSize>,
+    /// 레이아웃을 실패시키지 않는 진단(배치 순서대로).
+    pub(crate) diagnostics: Vec<LayoutDiagnostic>,
 }
 
 /// 수치 오류를 node 문맥과 함께 레이아웃 오류로 바꿉니다.
@@ -170,6 +173,7 @@ impl<'a> Engine<'a> {
             tree,
             nodes,
             memo: HashMap::new(),
+            diagnostics: Vec::new(),
         })
     }
 
@@ -268,10 +272,7 @@ impl<'a> Engine<'a> {
             ContainerLayout::Stack(_) => stack::measure(self, index, inner),
             ContainerLayout::Grid(_) => grid::measure(self, index, inner),
             ContainerLayout::Overlay(_) => overlay::measure(self, index, inner),
-            ContainerLayout::Constraint => Err(LayoutError::UnsupportedFeature {
-                node: self.nodes[index].id,
-                feature: "Constraint 배치(X.5.4)",
-            }),
+            ContainerLayout::Constraint => constraint::measure(self, index, inner),
         }
     }
 
@@ -312,12 +313,7 @@ impl<'a> Engine<'a> {
             ContainerLayout::Stack(_) => stack::place(self, index, inner)?,
             ContainerLayout::Grid(_) => grid::place(self, index, inner)?,
             ContainerLayout::Overlay(_) => overlay::place(self, index, inner)?,
-            ContainerLayout::Constraint => {
-                return Err(LayoutError::UnsupportedFeature {
-                    node: id,
-                    feature: "Constraint 배치(X.5.4)",
-                })
-            }
+            ContainerLayout::Constraint => constraint::place(self, index, inner)?,
         };
         let mut overflow = LayoutRect::at_origin(size);
         for (child, child_rect) in placements {

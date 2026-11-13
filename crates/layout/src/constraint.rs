@@ -1,4 +1,4 @@
-//! Anchor·Constraint 배치 (X.5.2, X.5.3).
+//! Anchor·Constraint 배치 (X.5.2~X.5.4).
 //!
 //! # anchor target
 //!
@@ -26,6 +26,15 @@
 //! [`ConstraintClass`]: 순환(`Cycle`) → 등식 수 > rank(`Overdetermined`) → rank < 미지수
 //! (`Underdetermined`) → `Determined` 순으로 정합니다. 의존 순서(target 먼저)와 무방향 연결 요소도
 //! 함께 구합니다.
+//!
+//! # solver (X.5.4)
+//!
+//! 초기 solver는 **priority 없는 필수 등식**만 지원합니다(스키마에 priority·부등식 필드가 없음).
+//! 축마다 의존 순서대로 각 형제의 등식을 2배 단위 정수로 세우고 정확히 풀어 마지막에 한 번 반올림합니다
+//! (ties away from zero). 가로를 먼저 풀고, 정해진 너비로 높이를 측정한 뒤 세로를 풉니다.
+//! `Cycle`·`Overdetermined`는 오류, `Underdetermined`는 진단 + fallback(미정 크기 = 콘텐츠 크기,
+//! 미정 위치 = 첫 등식 또는 0)입니다. Fill 크기가 음수로 풀리면 0으로 자릅니다. 같은 입력은 항상 같은
+//! 해를 냅니다(형제 입력 순서·삽입 순서 무관).
 
 use std::collections::HashMap;
 
@@ -33,12 +42,13 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::value::Length;
 
 use crate::codec::{Reader, Writer};
+use crate::engine::{at, AxisSizing, ChildConstraint, Engine};
 use crate::error::LayoutError;
-use crate::geometry::Axis;
+use crate::geometry::{Axis, LayoutRect, LayoutSize};
 use crate::input::{length_unit, LayoutNode};
 use crate::output::LayoutDiagnostic;
 use crate::property::LayoutProperty;
-use crate::rounding::LayoutUnit;
+use crate::rounding::{div_round, LayoutUnit};
 
 /// anchor edge (X.5.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -488,6 +498,309 @@ pub(crate) fn build_axis_graph(
     }
 }
 
+// --- solver (X.5.4) ---
+
+/// 형제 한 축의 solver 입력.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AxisInput {
+    /// constraint로 크기를 정하는지(`Fill`).
+    pub(crate) size_unknown: bool,
+    /// 크기가 정해진 형제의 크기, 또는 미정 크기 fallback(콘텐츠 크기).
+    pub(crate) size: LayoutUnit,
+    /// 형제 top에서 첫 baseline까지(세로 축, 콘텐츠 baseline이 있을 때).
+    pub(crate) baseline: Option<LayoutUnit>,
+}
+
+/// 형제 한 축의 해(content box 기준 시작 위치와 크기).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AxisSolution {
+    pub(crate) start: LayoutUnit,
+    pub(crate) size: LayoutUnit,
+}
+
+fn wide(value: LayoutUnit) -> i128 {
+    i128::from(value.raw())
+}
+
+/// 해의 edge 값(2배 단위).
+fn edge_value_doubled(
+    edge: AnchorEdge,
+    solution: AxisSolution,
+    baseline: Option<LayoutUnit>,
+) -> i128 {
+    let start = wide(solution.start);
+    let size = wide(solution.size);
+    match edge {
+        AnchorEdge::Left | AnchorEdge::Top => 2 * start,
+        AnchorEdge::Right | AnchorEdge::Bottom => 2 * (start + size),
+        AnchorEdge::CenterX | AnchorEdge::CenterY => 2 * start + size,
+        AnchorEdge::Baseline => match baseline {
+            Some(b) => 2 * (start + wide(b)),
+            None => 2 * (start + size),
+        },
+    }
+}
+
+/// 부모 content box edge 값(2배 단위). `extent`는 content 크기입니다.
+fn parent_value_doubled(edge: AnchorEdge, extent: LayoutUnit) -> i128 {
+    match edge {
+        AnchorEdge::Left | AnchorEdge::Top | AnchorEdge::Baseline => 0,
+        AnchorEdge::Right | AnchorEdge::Bottom => 2 * wide(extent),
+        AnchorEdge::CenterX | AnchorEdge::CenterY => wide(extent),
+    }
+}
+
+/// 한 축을 의존 순서대로 풉니다 (X.5.4).
+///
+/// - `Cycle` → [`LayoutError::ConstraintCycle`], `Overdetermined` → [`LayoutError::OverConstrained`].
+/// - `Determined`: 크기가 정해졌으면 등식 하나로 시작 위치를, `Fill`이면 독립 등식 두 개(Cramer)로
+///   시작·크기를 정확한 정수 연산으로 구하고 마지막에 한 번 반올림합니다(ties away from zero). 음수
+///   크기는 0으로 자릅니다.
+/// - `Underdetermined`: [`LayoutDiagnostic::UnderdeterminedConstraint`]를 남기고, 미정 크기는 콘텐츠
+///   크기로, 미정 위치는 첫 등식(없으면 content 시작 0)으로 정합니다.
+///
+/// `only`가 있으면 그 형제들만 풉니다(연결 요소 단위 재계산, X.5.5). 나머지 형제 해는 `solved`에
+/// 이미 있어야 합니다.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn solve_axis(
+    ids: &[StableId],
+    axis: Axis,
+    extent: LayoutUnit,
+    constraints: &[ResolvedConstraint],
+    inputs: &[AxisInput],
+    graph: &AxisGraph,
+    only: Option<&[usize]>,
+    solved: &mut [Option<AxisSolution>],
+    diagnostics: &mut Vec<LayoutDiagnostic>,
+) -> Result<(), LayoutError> {
+    let in_scope = |i: usize| only.is_none_or(|members| members.contains(&i));
+    for (i, class) in graph.classes.iter().enumerate() {
+        if !in_scope(i) {
+            continue;
+        }
+        match class {
+            ConstraintClass::Cycle => {
+                return Err(LayoutError::ConstraintCycle { node: ids[i], axis })
+            }
+            ConstraintClass::Overdetermined => {
+                return Err(LayoutError::OverConstrained { node: ids[i], axis })
+            }
+            ConstraintClass::Determined | ConstraintClass::Underdetermined => {}
+        }
+    }
+    for &i in &graph.order {
+        if !in_scope(i) {
+            continue;
+        }
+        let input = inputs[i];
+        let at_node = at(ids[i]);
+        // 이 형제의 등식: (a, b, rhs) — a·start + b·size = rhs (2배 단위).
+        let mut equations: Vec<Equation> = Vec::new();
+        for constraint in constraints.iter().filter(|c| c.child == i) {
+            let target = match constraint.target {
+                ResolvedTarget::Parent(edge) => parent_value_doubled(edge, extent),
+                ResolvedTarget::Sibling(j, edge) => {
+                    let solution =
+                        solved[j].ok_or(LayoutError::ConstraintCycle { node: ids[i], axis })?;
+                    edge_value_doubled(edge, solution, inputs[j].baseline)
+                }
+            };
+            let (a, b) = edge_coefficients(constraint.edge, input.baseline.is_some());
+            let mut rhs = target + 2 * wide(constraint.offset);
+            if constraint.edge == AnchorEdge::Baseline {
+                if let Some(baseline) = input.baseline {
+                    rhs -= 2 * wide(baseline);
+                }
+            }
+            equations.push((i128::from(a), i128::from(b), rhs));
+        }
+        let determined = graph.classes[i] == ConstraintClass::Determined;
+        if !determined {
+            diagnostics.push(LayoutDiagnostic::UnderdeterminedConstraint { node: ids[i], axis });
+        }
+        let solution = if determined && input.size_unknown {
+            // 독립 등식 두 개(rank 2).
+            let (e1, e2) = independent_pair(&equations)
+                .ok_or(LayoutError::OverConstrained { node: ids[i], axis })?;
+            let det = e1.0 * e2.1 - e2.0 * e1.1;
+            let start = div_round(e1.2 * e2.1 - e2.2 * e1.1, det).map_err(&at_node)?;
+            let size = div_round(e1.0 * e2.2 - e2.0 * e1.2, det).map_err(&at_node)?;
+            AxisSolution {
+                start,
+                size: size.max(LayoutUnit::ZERO),
+            }
+        } else {
+            // 크기가 정해짐(또는 미정 크기는 콘텐츠 크기 fallback): 첫 등식으로 시작 위치.
+            let size = input.size;
+            let start = match equations.first() {
+                Some(&(a, b, rhs)) => div_round(rhs - b * wide(size), a).map_err(&at_node)?,
+                None => LayoutUnit::ZERO,
+            };
+            AxisSolution { start, size }
+        };
+        solved[i] = Some(solution);
+    }
+    Ok(())
+}
+
+/// 등식 `a·start + b·size = rhs`(2배 단위) 계수 `(a, b, rhs)`.
+type Equation = (i128, i128, i128);
+
+/// 행렬식이 0이 아닌 첫 등식 쌍.
+fn independent_pair(equations: &[Equation]) -> Option<(Equation, Equation)> {
+    for (k, a) in equations.iter().enumerate() {
+        for b in &equations[k + 1..] {
+            if a.0 * b.1 - b.0 * a.1 != 0 {
+                return Some((*a, *b));
+            }
+        }
+    }
+    None
+}
+
+// --- 엔진 연결 (X.5.4) ---
+
+/// 형제 visual order index 목록과 constraint 해석.
+struct ConstraintScene {
+    children: Vec<usize>,
+    ids: Vec<StableId>,
+    resolved: Vec<ResolvedConstraint>,
+}
+
+fn scene(engine: &mut Engine<'_>, index: usize) -> Result<ConstraintScene, LayoutError> {
+    let children = engine.children(index);
+    let ids: Vec<StableId> = children.iter().map(|&c| engine.nodes[c].id).collect();
+    let siblings: Vec<SiblingConstraints<'_>> = children
+        .iter()
+        .map(|&c| SiblingConstraints {
+            id: engine.nodes[c].id,
+            constraints: &engine.node(c).constraints,
+        })
+        .collect();
+    let (resolved, diagnostics) = resolve_targets(&siblings)?;
+    engine.diagnostics.extend(diagnostics);
+    Ok(ConstraintScene {
+        children,
+        ids,
+        resolved,
+    })
+}
+
+/// Constraint container의 content extent(Hug 측정): indefinite 축은 자식 크기 최댓값입니다
+/// (위치는 부모 크기에 의존하므로 측정에 쓰지 않음).
+pub(crate) fn measure(
+    engine: &mut Engine<'_>,
+    index: usize,
+    inner: [Option<LayoutUnit>; 2],
+) -> Result<[LayoutUnit; 2], LayoutError> {
+    let mut extent = [LayoutUnit::ZERO; 2];
+    let constraint = ChildConstraint {
+        cb: inner,
+        fill: [None, None],
+        forced: [None, None],
+    };
+    for child in engine.children(index) {
+        let size = engine.resolve_size(child, constraint)?;
+        for axis in Axis::BOTH {
+            extent[axis.index()] = extent[axis.index()].max(size.get(axis));
+        }
+    }
+    Ok(extent)
+}
+
+/// Constraint container의 자식 배치. 가로를 먼저 풀고(정해진 너비로 높이를 측정한 뒤) 세로를
+/// 풉니다. 결과는 visual order입니다.
+pub(crate) fn place(
+    engine: &mut Engine<'_>,
+    index: usize,
+    inner: LayoutSize,
+) -> Result<Vec<(usize, LayoutRect)>, LayoutError> {
+    let padding = engine.nodes[index].padding;
+    let scene = scene(engine, index)?;
+    let count = scene.children.len();
+    let cb = [Some(inner.width()), Some(inner.height())];
+    let mut solutions: [Vec<Option<AxisSolution>>; 2] = [vec![None; count], vec![None; count]];
+    for axis in Axis::BOTH {
+        let a = axis.index();
+        let mut inputs = Vec::with_capacity(count);
+        for (k, &child) in scene.children.iter().enumerate() {
+            let mut forced = [None, None];
+            if axis == Axis::Vertical {
+                forced[0] = solutions[0][k].map(|s| s.size);
+            }
+            let measured = engine.resolve_size(
+                child,
+                ChildConstraint {
+                    cb,
+                    fill: [None, None],
+                    forced,
+                },
+            )?;
+            let baseline = match (axis, engine.nodes[child].intrinsic) {
+                (Axis::Vertical, Some((_, Some(b)))) => Some(
+                    engine.nodes[child]
+                        .padding
+                        .top
+                        .checked_add(b)
+                        .map_err(at(scene.ids[k]))?,
+                ),
+                _ => None,
+            };
+            inputs.push(AxisInput {
+                size_unknown: engine.nodes[child].sizing[a] == AxisSizing::Fill,
+                size: measured.get(axis),
+                baseline,
+            });
+        }
+        let axis_constraints: Vec<ResolvedConstraint> = scene
+            .resolved
+            .iter()
+            .filter(|c| c.edge.axis() == axis)
+            .copied()
+            .collect();
+        let size_unknown: Vec<bool> = inputs.iter().map(|i| i.size_unknown).collect();
+        let has_baseline: Vec<bool> = inputs.iter().map(|i| i.baseline.is_some()).collect();
+        let graph = build_axis_graph(count, &axis_constraints, &size_unknown, &has_baseline);
+        let mut diagnostics = Vec::new();
+        solve_axis(
+            &scene.ids,
+            axis,
+            inner.get(axis),
+            &axis_constraints,
+            &inputs,
+            &graph,
+            None,
+            &mut solutions[a],
+            &mut diagnostics,
+        )?;
+        engine.diagnostics.extend(diagnostics);
+    }
+    let mut placements = Vec::with_capacity(count);
+    for (k, &child) in scene.children.iter().enumerate() {
+        let (Some(h), Some(v)) = (solutions[0][k], solutions[1][k]) else {
+            return Err(LayoutError::ConstraintCycle {
+                node: scene.ids[k],
+                axis: Axis::Horizontal,
+            });
+        };
+        let size = engine.resolve_size(
+            child,
+            ChildConstraint {
+                cb,
+                fill: [None, None],
+                forced: [Some(h.size), Some(v.size)],
+            },
+        )?;
+        let x = padding
+            .left
+            .checked_add(h.start)
+            .map_err(at(scene.ids[k]))?;
+        let y = padding.top.checked_add(v.start).map_err(at(scene.ids[k]))?;
+        placements.push((child, LayoutRect::from_origin_size(x, y, size)));
+    }
+    Ok(placements)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -771,5 +1084,198 @@ mod tests {
         assert_eq!(graph.order, vec![1, 2, 0]);
         assert_eq!(graph.classes, vec![Determined; 3]);
         assert_eq!(graph.components, vec![vec![0, 1, 2]]);
+    }
+
+    use crate::engine::compute_layout;
+    use crate::input::{ContainerLayout, IntrinsicContent, LayoutContent, SizingMode};
+    use crate::output::LayoutResult;
+    use crate::test_support::key;
+    use stellar_core_types::value::Insets;
+
+    fn left(target: AnchorTarget, offset: f32) -> Constraint {
+        Constraint::new(AnchorEdge::Left, target, len(offset))
+    }
+
+    fn edge(e: AnchorEdge, target: AnchorTarget, offset: f32) -> Constraint {
+        Constraint::new(e, target, len(offset))
+    }
+
+    fn of_parent(e: AnchorEdge) -> AnchorTarget {
+        AnchorTarget::Parent(e)
+    }
+
+    /// Constraint root(300×100, padding 10 → content 280×80) + 자식들(OrderKey는 목록 순서).
+    fn constraint_layout(
+        width: f32,
+        children: Vec<LayoutNode>,
+    ) -> Result<LayoutResult, LayoutError> {
+        let mut root = LayoutNode::new(id(1))
+            .with_sizing(SizingMode::Fixed(len(width)), SizingMode::Fixed(len(100.0)))
+            .with_padding(Insets::new(10.0, 10.0, 10.0, 10.0).unwrap())
+            .with_container(ContainerLayout::Constraint);
+        for (i, child) in children.iter().enumerate() {
+            root = root.with_child(child.id, key(i as u32 + 1));
+        }
+        let mut nodes = vec![root];
+        nodes.extend(children);
+        compute_layout(&LayoutInput::new(id(1), nodes))
+    }
+
+    fn rect_px(result: &LayoutResult, n: u64) -> (f64, f64, f64, f64) {
+        let r = result.get(id(n)).unwrap().local_rect();
+        (
+            r.x().to_px_f64(),
+            r.y().to_px_f64(),
+            r.width().to_px_f64(),
+            r.height().to_px_f64(),
+        )
+    }
+
+    fn text(n: u64, height: f32, baseline: Option<f32>) -> LayoutNode {
+        LayoutNode::new(id(n))
+            .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+            .with_content(LayoutContent::Intrinsic(IntrinsicContent {
+                width: len(30.0),
+                height: len(height),
+                baseline: baseline.map(len),
+            }))
+    }
+
+    #[test]
+    fn deterministic_solution_fixture() {
+        // A: 고정 50×20, Left = parent.Left + 10, Top = parent.Top + 5.
+        // B: Fill 너비 × 고정 30, Left = A.Right + 8, Right = parent.Right − 12, CenterY = A.CenterY.
+        let a = LayoutNode::new(id(2))
+            .with_fixed_size(len(50.0), len(20.0))
+            .with_constraint(left(of_parent(AnchorEdge::Left), 10.0))
+            .with_constraint(edge(AnchorEdge::Top, of_parent(AnchorEdge::Top), 5.0));
+        let b = LayoutNode::new(id(3))
+            .with_sizing(SizingMode::Fill, SizingMode::Fixed(len(30.0)))
+            .with_constraint(left(
+                AnchorTarget::Sibling {
+                    node: id(2),
+                    edge: AnchorEdge::Right,
+                },
+                8.0,
+            ))
+            .with_constraint(edge(AnchorEdge::Right, of_parent(AnchorEdge::Right), -12.0))
+            .with_constraint(edge(
+                AnchorEdge::CenterY,
+                AnchorTarget::Sibling {
+                    node: id(2),
+                    edge: AnchorEdge::CenterY,
+                },
+                0.0,
+            ));
+        // B가 visual order 앞이어도(A를 참조) 의존 순서로 풉니다.
+        let result = constraint_layout(300.0, vec![b.clone(), a.clone()]).unwrap();
+        assert_eq!(rect_px(&result, 2), (20.0, 15.0, 50.0, 20.0));
+        // B: x = 10 + 68, 오른쪽 = 280 − 12 → 너비 200, y: A 중심 15 − 15 = 0 → 10.
+        assert_eq!(rect_px(&result, 3), (78.0, 10.0, 200.0, 30.0));
+        assert!(result.diagnostics().is_empty());
+        // 반복·형제 순서와 무관하게 같은 bytes.
+        let again = constraint_layout(300.0, vec![b, a]).unwrap();
+        assert_eq!(again.encode(), result.encode());
+    }
+
+    #[test]
+    fn center_tie_and_baseline_solutions_are_exact() {
+        // content 너비 100 + 1/64 px(6401 subpixel), 너비 50 → CenterX 시작 1600.5 → 1601(ties away).
+        let centered = LayoutNode::new(id(2))
+            .with_fixed_size(len(50.0), len(10.0))
+            .with_constraint(edge(
+                AnchorEdge::CenterX,
+                of_parent(AnchorEdge::CenterX),
+                0.0,
+            ))
+            .with_constraint(edge(AnchorEdge::Top, of_parent(AnchorEdge::Top), 0.0));
+        let result = constraint_layout(120.0 + 1.0 / 64.0, vec![centered]).unwrap();
+        assert_eq!(
+            result.get(id(2)).unwrap().local_rect().x().raw(),
+            640 + 1601
+        );
+
+        // baseline: A(높이 16, baseline 12) Top = 0. B(높이 24, baseline 20) Baseline = A.Baseline →
+        // top −8. C(baseline 없음, 높이 10) Baseline = A.Baseline → bottom fallback → top 2.
+        let a = text(2, 16.0, Some(12.0))
+            .with_constraint(left(of_parent(AnchorEdge::Left), 0.0))
+            .with_constraint(edge(AnchorEdge::Top, of_parent(AnchorEdge::Top), 0.0));
+        let a_baseline = AnchorTarget::Sibling {
+            node: id(2),
+            edge: AnchorEdge::Baseline,
+        };
+        let b = text(3, 24.0, Some(20.0))
+            .with_constraint(left(of_parent(AnchorEdge::Left), 40.0))
+            .with_constraint(edge(AnchorEdge::Baseline, a_baseline, 0.0));
+        let c = text(4, 10.0, None)
+            .with_constraint(left(of_parent(AnchorEdge::Left), 80.0))
+            .with_constraint(edge(AnchorEdge::Baseline, a_baseline, 0.0));
+        let result = constraint_layout(300.0, vec![a, b, c]).unwrap();
+        assert_eq!(rect_px(&result, 2).1, 10.0);
+        assert_eq!(rect_px(&result, 3).1, 10.0 - 8.0);
+        assert_eq!(rect_px(&result, 4).1, 10.0 + 2.0);
+    }
+
+    #[test]
+    fn errors_and_diagnostics_from_classification() {
+        let fixed = |n: u64| LayoutNode::new(id(n)).with_fixed_size(len(10.0), len(10.0));
+        // Overdetermined → OverConstrained 오류.
+        let over = fixed(2)
+            .with_constraint(left(of_parent(AnchorEdge::Left), 0.0))
+            .with_constraint(edge(AnchorEdge::Right, of_parent(AnchorEdge::Right), 0.0));
+        assert_eq!(
+            constraint_layout(300.0, vec![over]),
+            Err(LayoutError::OverConstrained {
+                node: id(2),
+                axis: Axis::Horizontal
+            })
+        );
+        // Cycle → ConstraintCycle 오류.
+        let sib = |n: u64, e: AnchorEdge| AnchorTarget::Sibling {
+            node: id(n),
+            edge: e,
+        };
+        let a = fixed(2).with_constraint(left(sib(3, AnchorEdge::Right), 0.0));
+        let b = fixed(3).with_constraint(left(sib(2, AnchorEdge::Right), 0.0));
+        assert!(matches!(
+            constraint_layout(300.0, vec![a, b]),
+            Err(LayoutError::ConstraintCycle {
+                axis: Axis::Horizontal,
+                ..
+            })
+        ));
+        // Underdetermined → 진단 + fallback(위치 0, Fill 크기 = 콘텐츠).
+        let under = LayoutNode::new(id(2))
+            .with_sizing(SizingMode::Fill, SizingMode::Fixed(len(10.0)))
+            .with_constraint(left(of_parent(AnchorEdge::Left), 5.0));
+        let missing = fixed(3)
+            .with_constraint(left(sib(9, AnchorEdge::Right), 0.0))
+            .with_constraint(edge(AnchorEdge::Top, of_parent(AnchorEdge::Top), 0.0));
+        let result = constraint_layout(300.0, vec![under, missing]).unwrap();
+        assert_eq!(rect_px(&result, 2), (15.0, 10.0, 0.0, 10.0));
+        assert_eq!(rect_px(&result, 3), (10.0, 10.0, 10.0, 10.0));
+        assert_eq!(
+            result.diagnostics(),
+            &[
+                LayoutDiagnostic::MissingAnchorTarget {
+                    node: id(3),
+                    target: id(9)
+                },
+                LayoutDiagnostic::UnderdeterminedConstraint {
+                    node: id(2),
+                    axis: Axis::Horizontal
+                },
+                LayoutDiagnostic::UnderdeterminedConstraint {
+                    node: id(3),
+                    axis: Axis::Horizontal
+                },
+                LayoutDiagnostic::UnderdeterminedConstraint {
+                    node: id(2),
+                    axis: Axis::Vertical
+                },
+            ]
+        );
+        // 진단은 결과 bytes로 round-trip.
+        assert_eq!(LayoutResult::decode(&result.encode()).unwrap(), result);
     }
 }

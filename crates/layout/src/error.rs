@@ -102,12 +102,12 @@ pub enum LayoutError {
         /// 사유.
         reason: &'static str,
     },
-    /// 아직 구현하지 않은 레이아웃 기능을 사용했습니다.
-    UnsupportedFeature {
-        /// 대상 node.
+    /// constraint sibling 참조가 순환합니다 (X.5.4).
+    ConstraintCycle {
+        /// 순환에 속한 node.
         node: StableId,
-        /// 기능 설명.
-        feature: &'static str,
+        /// 축.
+        axis: Axis,
     },
     /// 레이아웃 결과 box의 불변식이 깨졌습니다.
     InvalidBox {
@@ -191,11 +191,8 @@ impl fmt::Display for LayoutError {
             LayoutError::InvalidConstraint { node, reason } => {
                 write!(f, "node {node}의 constraint가 잘못되었습니다: {reason}")
             }
-            LayoutError::UnsupportedFeature { node, feature } => {
-                write!(
-                    f,
-                    "node {node}: 지원하지 않는 레이아웃 기능입니다({feature})"
-                )
+            LayoutError::ConstraintCycle { node, axis } => {
+                write!(f, "node {node}의 {axis} constraint 참조가 순환합니다")
             }
             LayoutError::InvalidBox { node, reason } => {
                 write!(f, "node {node}의 레이아웃 box가 잘못되었습니다: {reason}")

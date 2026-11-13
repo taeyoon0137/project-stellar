@@ -52,8 +52,6 @@ mod grid_tracks;
 pub mod overlay;
 
 /// Anchor·Constraint 배치 (X.5).
-// 엔진 연결(X.5.4) 전까지 crate 내부 해석 함수는 단위 테스트에서만 호출합니다.
-#[cfg_attr(not(test), allow(dead_code))]
 pub mod constraint;
 
 /// canonical bytes writer/reader (crate 내부).
