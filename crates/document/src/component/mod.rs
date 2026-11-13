@@ -26,6 +26,9 @@ pub mod event;
 /// 컴포넌트 선언형 상태 머신 (IX.5).
 pub mod state_machine;
 
+/// preview session별 runtime 상태 store (IX.5.4).
+pub mod state_store;
+
 /// ComponentInstance node payload (IX.2.1).
 pub mod instance;
 
