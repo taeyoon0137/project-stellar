@@ -31,5 +31,14 @@ pub mod git;
 /// 시스템 Git 기반 version 선택자 해석 (XV.2.4).
 pub mod git_refs;
 
+/// library cache entry content hash 문자열 (XV.3.1).
+pub mod content_hash;
+
+/// 사용자별 library cache root (XV.3.1).
+pub mod cache_root;
+
+/// library cache index (XV.3.1).
+pub mod cache_index;
+
 #[cfg(test)]
 pub(crate) mod test_support;

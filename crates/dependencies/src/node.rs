@@ -129,6 +129,8 @@ pub enum ValueError {
     InvalidRefName,
     /// version 선택자는 `tag`·`branch`·`commit` 중 정확히 하나여야 함.
     InvalidSelector,
+    /// content hash 형식(`sha256:<64자리 소문자 hex>`) 위반.
+    InvalidContentHash,
 }
 
 impl fmt::Display for ValueError {
@@ -150,6 +152,9 @@ impl fmt::Display for ValueError {
             ValueError::InvalidRefName => f.write_str("Git ref 이름 규칙을 위반합니다"),
             ValueError::InvalidSelector => {
                 f.write_str("version은 tag·branch·commit 중 정확히 하나여야 합니다")
+            }
+            ValueError::InvalidContentHash => {
+                f.write_str("content hash는 'sha256:<64자리 소문자 16진수>'여야 합니다")
             }
         }
     }
