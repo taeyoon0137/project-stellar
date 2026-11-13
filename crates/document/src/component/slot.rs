@@ -551,7 +551,9 @@ impl ComponentLibrary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::definition::{ComponentDefinition, DefinitionNode};
+    use crate::component::definition::{
+        ComponentDefinition, ComponentDefinitionError, DefinitionNode,
+    };
     use stellar_core_types::order_key::OrderKey;
 
     fn stable(ts: u64) -> StableId {
@@ -799,6 +801,24 @@ mod tests {
 
         let mut library = library();
         library.add_slot(card(), slot).unwrap();
+        // 선언된 601에 record가 없으면 디코딩이 거부합니다(validate_slots).
+        assert_eq!(
+            ComponentLibrary::decode(&library.encode()).unwrap_err(),
+            ComponentDefinitionError::Slot(SlotError::MissingSlotRecord { slot: slot_id(601) })
+        );
+        // root(100)를 host로 하는 601(default = 101, 102; nested host 102 포함)을 채우면 왕복.
+        library
+            .add_slot(
+                card(),
+                ComponentSlot::new(
+                    slot_id(601),
+                    NodeRef::new(stable(100)),
+                    [NodeKind::Text, NodeKind::Frame],
+                    SlotCardinality::unbounded(),
+                    vec![NodeRef::new(stable(101)), NodeRef::new(stable(102))],
+                ),
+            )
+            .unwrap();
         let lib_bytes = library.encode();
         let decoded = ComponentLibrary::decode(&lib_bytes).unwrap();
         assert_eq!(decoded, library);

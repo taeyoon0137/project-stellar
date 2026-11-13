@@ -22,7 +22,9 @@ use std::fmt;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::ComponentRef;
 
-use super::definition::{ComponentEntry, ComponentLibrary, ComponentSlotId};
+use super::definition::{
+    ComponentDefinitionError, ComponentEntry, ComponentLibrary, ComponentSlotId,
+};
 use super::expansion::{ExpansionError, SceneIndex};
 use super::instance::{ComponentInstancePayload, InstancePayloadError};
 use super::slot::{ComponentSlot, SlotError};
@@ -281,6 +283,16 @@ pub fn validate_definition_slot_overrides(
     library: &ComponentLibrary,
     component: ComponentRef,
 ) -> Result<(), SlotOverrideError> {
+    check_definition_slot_overrides(library, component, false)
+}
+
+/// [`validate_definition_slot_overrides`] 본체. `skip_unresolved`면 library에 없는 컴포넌트를
+/// 참조하는 nested 인스턴스(외부·미해결 참조)는 건너뜁니다.
+fn check_definition_slot_overrides(
+    library: &ComponentLibrary,
+    component: ComponentRef,
+    skip_unresolved: bool,
+) -> Result<(), SlotOverrideError> {
     let entry = library
         .get(component)
         .ok_or(ExpansionError::NodeNotFound { id: component.id() })?;
@@ -295,17 +307,20 @@ pub fn validate_definition_slot_overrides(
                 error,
             },
         )?;
-        let nested =
-            library
-                .get(payload.component())
-                .ok_or(ExpansionError::UnresolvedComponent(
-                    payload.component().unresolved_at(
-                        stellar_core_types::property::PropertyPath::with_keys(
-                            node.id,
-                            vec![super::instance::keys::COMPONENT_REF],
-                        ),
+        let Some(nested) = library.get(payload.component()) else {
+            if skip_unresolved {
+                continue;
+            }
+            return Err(
+                ExpansionError::UnresolvedComponent(payload.component().unresolved_at(
+                    stellar_core_types::property::PropertyPath::with_keys(
+                        node.id,
+                        vec![super::instance::keys::COMPONENT_REF],
                     ),
-                ))?;
+                ))
+                .into(),
+            );
+        };
         check_projection(
             nested,
             &payload,
@@ -315,6 +330,23 @@ pub fn validate_definition_slot_overrides(
         )?;
     }
     Ok(())
+}
+
+impl ComponentLibrary {
+    /// 로드된 library 전체의 slot 불변식을 검사합니다(library 디코딩 경로).
+    ///
+    /// 모든 컴포넌트가 들어온 뒤에 실행해야 합니다 — nested 인스턴스가 StableId 순서상 뒤에
+    /// 오는 컴포넌트를 참조할 수 있습니다.
+    pub(super) fn validate_loaded_slots(&self) -> Result<(), ComponentDefinitionError> {
+        for entry in self.iter() {
+            self.validate_slots(entry.definition().reference())?;
+        }
+        for entry in self.iter() {
+            check_definition_slot_overrides(self, entry.definition().reference(), true)
+                .map_err(ComponentDefinitionError::SlotOverride)?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -766,6 +798,59 @@ mod tests {
         assert_eq!(hiding_slot(entry, &payload, inner), None);
         payload.set_slot_override(slot_id(660), SlotOverride::empty());
         assert_eq!(hiding_slot(entry, &payload, inner), Some(slot_id(660)));
+    }
+
+    #[test]
+    fn library_decode_validates_nested_instance_slot_overrides() {
+        // 유효한 library는 왕복합니다.
+        let valid = fixture_library(true);
+        assert_eq!(ComponentLibrary::decode(&valid.encode()).unwrap(), valid);
+        // 투영하지 않은 nested 소유 node가 있는 bytes는 거부합니다.
+        assert_eq!(
+            ComponentLibrary::decode(&fixture_library(false).encode()).unwrap_err(),
+            ComponentDefinitionError::SlotOverride(SlotOverrideError::UnprojectedOwnedNode {
+                instance: stable(301),
+                node: stable(302),
+            })
+        );
+        // 가려진 slot에 content가 있는 nested 인스턴스도 거부합니다.
+        let hidden = nested_host_library(&[(660, &[602]), (661, &[603])]);
+        assert!(matches!(
+            ComponentLibrary::decode(&hidden.encode()).unwrap_err(),
+            ComponentDefinitionError::SlotOverride(SlotOverrideError::HiddenSlotContent { .. })
+        ));
+
+        // library 밖 컴포넌트를 참조하는 nested 인스턴스(외부·미해결 참조)는 디코딩을 막지
+        // 않습니다. 엄격 검사 함수는 미해결로 보고합니다.
+        let external = ComponentRef::new(stable(99));
+        let mut tree = DefinitionTree::new(ComponentRef::new(stable(8)));
+        tree.insert(def_node(800, NodeKind::Frame, None, 0x80, vec![]))
+            .unwrap();
+        tree.insert(def_node(
+            801,
+            NodeKind::ComponentInstance,
+            Some(800),
+            0x40,
+            ComponentInstancePayload::new(external).encode(),
+        ))
+        .unwrap();
+        let mut library = ComponentLibrary::new();
+        library
+            .insert(
+                ComponentDefinition::new(stable(8), "Host".into(), NodeRef::new(stable(800))),
+                tree,
+            )
+            .unwrap();
+        assert_eq!(
+            ComponentLibrary::decode(&library.encode()).unwrap(),
+            library
+        );
+        assert!(matches!(
+            validate_definition_slot_overrides(&library, ComponentRef::new(stable(8))),
+            Err(SlotOverrideError::Expansion(
+                ExpansionError::UnresolvedComponent(_)
+            ))
+        ));
     }
 
     #[test]

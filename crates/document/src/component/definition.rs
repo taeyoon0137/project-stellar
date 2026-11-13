@@ -24,6 +24,7 @@ use super::codec::{
     put_str, Malformed, Reader,
 };
 use super::slot::{ComponentSlot, SlotError};
+use super::slot_override::SlotOverrideError;
 use crate::node_kind::NodeKind;
 
 /// Component Property의 안정 식별자. node·slot 식별자와 타입이 섞이지 않습니다.
@@ -128,6 +129,9 @@ pub enum ComponentDefinitionError {
     },
     /// slot record가 잘못됐습니다(IX.3.1, library 디코딩 경로).
     Slot(SlotError),
+    /// 정의 tree 안 nested 인스턴스의 slot override가 투영 규칙을 어깁니다(IX.3.2, library
+    /// 디코딩 경로).
+    SlotOverride(SlotOverrideError),
 }
 
 impl From<SlotError> for ComponentDefinitionError {
@@ -174,6 +178,9 @@ impl fmt::Display for ComponentDefinitionError {
                 write!(f, "컴포넌트 정의 binary 형식 위반: {reason}")
             }
             ComponentDefinitionError::Slot(err) => write!(f, "slot 오류: {err}"),
+            ComponentDefinitionError::SlotOverride(err) => {
+                write!(f, "nested 인스턴스 slot override 오류: {err}")
+            }
         }
     }
 }
@@ -800,6 +807,11 @@ impl ComponentLibrary {
     }
 
     /// binary bytes에서 디코딩하고 등록 규칙으로 재검증합니다. 비canonical 입력은 거부합니다.
+    ///
+    /// 모든 컴포넌트가 로드된 뒤 선언 Slot마다 record가 있는지([`ComponentLibrary::validate_slots`])와
+    /// 정의 tree 안 nested 인스턴스의 slot override 투영 규칙(IX.3.2)을 검사합니다. nested
+    /// 인스턴스가 이 library에 없는 컴포넌트를 참조하면(외부·미해결 참조, III.2.4) 그 인스턴스의
+    /// 투영 검사는 건너뜁니다 — 참조 해석 계층이 진단합니다.
     pub fn decode(bytes: &[u8]) -> Result<ComponentLibrary, ComponentDefinitionError> {
         let mut reader = Reader::new(bytes);
         let count = reader.count()?;
@@ -821,6 +833,7 @@ impl ComponentLibrary {
                 reason: "component library가 canonical 순서가 아님",
             });
         }
+        library.validate_loaded_slots()?;
         Ok(library)
     }
 }
@@ -1064,6 +1077,25 @@ mod tests {
         let mut library = ComponentLibrary::new();
         library.insert(def, tree_a).unwrap();
         library.insert(definition(2, 200), tree(2, 200)).unwrap();
+        // 선언 slot(600)에 record가 없는 library는 디코딩에서 거부됩니다(validate_slots).
+        assert_eq!(
+            ComponentLibrary::decode(&library.encode()).unwrap_err(),
+            ComponentDefinitionError::Slot(SlotError::MissingSlotRecord {
+                slot: ComponentSlotId::new(stable(600)),
+            })
+        );
+        library
+            .add_slot(
+                ComponentRef::new(stable(1)),
+                ComponentSlot::new(
+                    ComponentSlotId::new(stable(600)),
+                    NodeRef::new(stable(100)),
+                    [NodeKind::Text, NodeKind::Shape],
+                    crate::component::slot::SlotCardinality::unbounded(),
+                    vec![NodeRef::new(stable(102)), NodeRef::new(stable(101))],
+                ),
+            )
+            .unwrap();
         let lib_bytes = library.encode();
         let lib_decoded = ComponentLibrary::decode(&lib_bytes).unwrap();
         assert_eq!(lib_decoded, library);

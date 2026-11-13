@@ -60,3 +60,24 @@
 - "host = slot 전용 컨테이너" 규칙(고정 자식과 slot 영역 혼합 불가)은 설계 선택입니다. 혼합이
   필요해지면 별도 host Frame을 두는 방식으로 표현합니다.
 - 정의 tree 편집 후 slot 재검증(default content 동기화)은 정의 편집 command(Phase VII 연동) 몫입니다.
+
+## 후속 수정 (리뷰 minor: library 디코딩 경로의 slot 불변식)
+
+- **결함**: `ComponentLibrary::decode`가 slot record를 `add_slot`으로 재검증만 하고, 선언 Slot마다 record가 있는지
+  (`validate_slots`)와 정의 tree 안 nested 인스턴스의 slot override 투영 규칙(IX.3.2)은 검사하지 않았습니다.
+- **수정**: 모든 컴포넌트를 읽은 뒤 두 검사를 실행합니다(`ComponentDefinitionError::Slot`·`SlotOverride`). nested
+  인스턴스가 library 밖 컴포넌트를 참조하면(외부·미해결 참조, III.2.4) 그 인스턴스의 투영 검사는 건너뜁니다.
+- **기존 테스트 변경**: `definition_and_library_round_trip`(IX.1.1)·`slot_and_library_round_trip`(IX.3.1)은 record
+  없는 선언 Slot을 가진 library를 왕복시켰습니다. 이제 그 bytes는 거부되므로, 거부를 단언한 뒤 record를 채워 왕복하도록
+  바꿨습니다(명세 동작 변경).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-document` | unit 241, `component_detach` 6, `component_expansion_scale` 1, `component_slot_projection` 1, doctest 2 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| record 없는 선언 Slot bytes 거부(`MissingSlotRecord`) 후 record를 채우면 왕복(`slot_and_library_round_trip`, `definition_and_library_round_trip`) | 통과 |
+| 투영하지 않은 nested 소유 node·가려진 slot content를 가진 library bytes 거부, 외부 컴포넌트 참조 nested 인스턴스는 디코딩 허용(`library_decode_validates_nested_instance_slot_overrides`) | 통과 |
