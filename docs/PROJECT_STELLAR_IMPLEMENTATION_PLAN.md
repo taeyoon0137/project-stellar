@@ -1949,7 +1949,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XX.1.1 | `[ ]` | `ExportRequest`에 View/selection source, TargetProfile, scale, background, output path, format PNG/SVG를 정의합니다. | schema validation. | G8, Phase XI |
+| XX.1.1 | `[x]` | `ExportRequest`에 View/selection source, TargetProfile, scale, background, output path, format PNG/SVG를 정의합니다. | schema validation. | G8, Phase XI |
 | XX.1.2 | `[ ]` | export는 immutable SceneSnapshot과 고정 font/assets revision을 캡처해 작업 중 document 변화와 분리합니다. | export 중 edit가 결과에 섞이지 않습니다. | XI.1.5 |
 | XX.1.3 | `[ ]` | unsupported target capability와 missing resource를 export 전 진단하고 user confirmation 없이는 진행하지 않습니다. | diagnostic fixture. | IX.10.8, XIII.6.7 |
 
