@@ -87,7 +87,44 @@ impl Selection {
 pub struct WindowViewState {
     window: WindowSessionId,
     selection: Selection,
+    area: Option<AreaPreview>,
 }
+
+/// 영역 선택 방식.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AreaSelectionMode {
+    /// 영역에 걸린 node로 선택을 교체합니다.
+    Replace,
+    /// 시작 전 선택에 영역에 걸린 node를 더합니다.
+    Add,
+}
+
+/// 진행 중인 영역 선택의 transient preview. history·저장 대상이 아닙니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AreaPreview {
+    mode: AreaSelectionMode,
+    current: Selection,
+}
+
+/// 영역 선택 API 오류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AreaSelectionError {
+    /// 이미 영역 선택이 진행 중입니다.
+    AlreadyActive,
+    /// 진행 중인 영역 선택이 없습니다.
+    NotActive,
+}
+
+impl std::fmt::Display for AreaSelectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AreaSelectionError::AlreadyActive => f.write_str("영역 선택이 이미 진행 중입니다"),
+            AreaSelectionError::NotActive => f.write_str("진행 중인 영역 선택이 없습니다"),
+        }
+    }
+}
+
+impl std::error::Error for AreaSelectionError {}
 
 impl WindowViewState {
     /// 빈 선택의 view 상태.
@@ -95,6 +132,7 @@ impl WindowViewState {
         WindowViewState {
             window,
             selection: Selection::empty(),
+            area: None,
         }
     }
 
@@ -111,6 +149,69 @@ impl WindowViewState {
     /// 선택을 바꾸고 이전 선택을 반환합니다(검증·history는 selection command의 몫).
     pub(crate) fn replace_selection(&mut self, selection: Selection) -> Selection {
         std::mem::replace(&mut self.selection, selection)
+    }
+
+    /// 화면에 보일 선택: 영역 선택 중이면 transient preview, 아니면 확정 선택.
+    pub fn displayed_selection(&self) -> &Selection {
+        self.area
+            .as_ref()
+            .map_or(&self.selection, |area| &area.current)
+    }
+
+    /// 영역 선택이 진행 중인지.
+    pub fn area_selection_active(&self) -> bool {
+        self.area.is_some()
+    }
+
+    /// pointer down: 영역 선택 preview를 시작합니다(VII.3.3). 확정 선택은 바뀌지 않습니다.
+    pub fn begin_area_selection(
+        &mut self,
+        mode: AreaSelectionMode,
+    ) -> Result<(), AreaSelectionError> {
+        if self.area.is_some() {
+            return Err(AreaSelectionError::AlreadyActive);
+        }
+        self.area = Some(AreaPreview {
+            mode,
+            current: self.selection.clone(),
+        });
+        Ok(())
+    }
+
+    /// pointer move: 영역에 걸린 node로 preview만 교체합니다. history event를 만들지 않습니다.
+    pub fn update_area_selection(
+        &mut self,
+        hits: impl IntoIterator<Item = StableId>,
+    ) -> Result<(), AreaSelectionError> {
+        let base = self.selection.clone();
+        let area = self.area.as_mut().ok_or(AreaSelectionError::NotActive)?;
+        area.current = match area.mode {
+            AreaSelectionMode::Replace => Selection::new(hits, None),
+            AreaSelectionMode::Add => {
+                let ids: Vec<StableId> = base.ids().iter().copied().chain(hits).collect();
+                Selection::new(ids, base.primary())
+            }
+        };
+        Ok(())
+    }
+
+    /// pointer up: preview를 끝내고 기록할 **최종 SetSelection 하나**를 돌려줍니다. 확정 선택과
+    /// 같으면 기록할 것이 없어 `None`입니다. 반환 event의 적용·기록은 history가 합니다.
+    pub fn finish_area_selection(&mut self) -> Result<Option<SetSelection>, AreaSelectionError> {
+        let area = self.area.take().ok_or(AreaSelectionError::NotActive)?;
+        if area.current == self.selection {
+            Ok(None)
+        } else {
+            Ok(Some(SetSelection::new(area.current)))
+        }
+    }
+
+    /// 영역 선택 취소: preview를 버리고 아무 event도 만들지 않습니다.
+    pub fn cancel_area_selection(&mut self) -> Result<(), AreaSelectionError> {
+        self.area
+            .take()
+            .map(|_| ())
+            .ok_or(AreaSelectionError::NotActive)
     }
 }
 
@@ -372,5 +473,72 @@ mod tests {
         let mut trailing = bytes;
         trailing.push(0);
         assert!(SetSelection::decode(&trailing).is_err());
+    }
+
+    #[test]
+    fn area_selection_produces_one_event_for_many_moves() {
+        // 검증 기준(VII.3.3): 1,000 move event에서 history 1건.
+        let model = small_model();
+        let policy = SelectionPolicy::default();
+        let mut view = WindowViewState::new(WindowSessionId::from_stable_id(sid(500)));
+        let mut history: Vec<SetSelection> = Vec::new();
+        view.begin_area_selection(AreaSelectionMode::Replace)
+            .unwrap();
+        let candidates = [sid(11), sid(12), sid(13)];
+        for step in 0..1_000usize {
+            let hits = candidates.iter().copied().take(1 + step % 3);
+            view.update_area_selection(hits).unwrap();
+            // preview는 보이지만 확정 선택·history는 그대로입니다.
+            assert!(view.selection().is_empty());
+            assert!(!view.displayed_selection().is_empty());
+        }
+        assert!(history.is_empty());
+        if let Some(event) = view.finish_area_selection().unwrap() {
+            event.apply(&mut view, &model, policy);
+            history.push(event);
+        }
+        assert_eq!(history.len(), 1, "1,000 move → history 1건");
+        // 마지막 move(999 % 3 = 0 → 1개)가 최종 선택.
+        assert_eq!(view.selection().ids(), &[sid(11)]);
+        assert!(!view.area_selection_active());
+        assert_eq!(view.displayed_selection(), view.selection());
+    }
+
+    #[test]
+    fn area_selection_add_cancel_and_no_change() {
+        let model = small_model();
+        let policy = SelectionPolicy::default();
+        let mut view = WindowViewState::new(WindowSessionId::from_stable_id(sid(500)));
+        SetSelection::new(Selection::new([sid(12)], None)).apply(&mut view, &model, policy);
+        // Add 모드: 기존 선택 + 영역.
+        view.begin_area_selection(AreaSelectionMode::Add).unwrap();
+        assert_eq!(
+            view.begin_area_selection(AreaSelectionMode::Add),
+            Err(AreaSelectionError::AlreadyActive)
+        );
+        view.update_area_selection([sid(13), sid(12)]).unwrap();
+        assert_eq!(view.displayed_selection().ids(), &[sid(12), sid(13)]);
+        assert_eq!(view.displayed_selection().primary(), Some(sid(12)));
+        let event = view.finish_area_selection().unwrap().unwrap();
+        assert_eq!(event.selection.ids(), &[sid(12), sid(13)]);
+        // 취소는 event 없음, 확정 선택 유지.
+        view.begin_area_selection(AreaSelectionMode::Replace)
+            .unwrap();
+        view.update_area_selection([sid(11)]).unwrap();
+        view.cancel_area_selection().unwrap();
+        assert_eq!(view.selection().ids(), &[sid(12)]);
+        assert_eq!(
+            view.cancel_area_selection(),
+            Err(AreaSelectionError::NotActive)
+        );
+        assert_eq!(
+            view.update_area_selection([sid(11)]),
+            Err(AreaSelectionError::NotActive)
+        );
+        // 결과가 확정 선택과 같으면 기록할 것이 없습니다.
+        view.begin_area_selection(AreaSelectionMode::Replace)
+            .unwrap();
+        view.update_area_selection([sid(12)]).unwrap();
+        assert_eq!(view.finish_area_selection().unwrap(), None);
     }
 }
