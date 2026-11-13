@@ -27,6 +27,9 @@ pub mod output;
 /// 축별 크기 결정 방식 (X.6.1).
 pub mod sizing;
 
+/// content intrinsic 측정 hook (X.6.4).
+pub mod intrinsic;
+
 /// 레이아웃 엔진 진입점 (X.2.1).
 pub mod engine;
 

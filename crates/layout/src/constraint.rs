@@ -742,15 +742,9 @@ pub(crate) fn place(
                     forced,
                 },
             )?;
-            let baseline = match (axis, engine.nodes[child].intrinsic) {
-                (Axis::Vertical, Some((_, Some(b)))) => Some(
-                    engine.nodes[child]
-                        .padding
-                        .top
-                        .checked_add(b)
-                        .map_err(at(scene.ids[k]))?,
-                ),
-                _ => None,
+            let baseline = match axis {
+                Axis::Vertical => engine.border_baseline(child, measured)?,
+                Axis::Horizontal => None,
             };
             inputs.push(AxisInput {
                 size_unknown: engine.nodes[child].sizing[a] == AxisSizing::Fill,

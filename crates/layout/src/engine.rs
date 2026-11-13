@@ -34,6 +34,10 @@ use crate::input::{
     length_unit, ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode, TreeIndex,
     MAX_LAYOUT_DEPTH,
 };
+use crate::intrinsic::{
+    ContentKind, ContentMeasurer, DefaultMeasurer, IntrinsicMeasure, IntrinsicMode, IntrinsicSize,
+    MeasureRequest,
+};
 use crate::output::{LayoutBox, LayoutDiagnostic, LayoutResult};
 use crate::overlay;
 use crate::property::LayoutProperty;
@@ -49,21 +53,32 @@ pub const INLINE_LAYOUT_DEPTH: usize = 32;
 /// [`INLINE_LAYOUT_DEPTH`]보다 깊은 tree를 계산하는 전용 thread의 stack 크기(level당 64 KiB).
 pub const DEEP_LAYOUT_STACK_BYTES: usize = MAX_LAYOUT_DEPTH * 64 * 1024;
 
-/// 입력 전체를 레이아웃합니다.
+/// 입력 전체를 기본 측정기([`DefaultMeasurer`])로 레이아웃합니다.
 ///
 /// tree 깊이가 [`INLINE_LAYOUT_DEPTH`]를 넘으면 [`DEEP_LAYOUT_STACK_BYTES`] stack의 전용 thread에서
 /// 계산합니다(결과는 같음). 그 thread를 만들 수 없으면 [`LayoutError::DeepStackUnavailable`]입니다.
 pub fn compute_layout(input: &LayoutInput) -> Result<LayoutResult, LayoutError> {
+    compute_layout_with(input, &DefaultMeasurer)
+}
+
+/// 입력 전체를 주어진 콘텐츠 측정기로 레이아웃합니다 (X.6.4).
+///
+/// [`LayoutContent::Measured`] 콘텐츠는 `measurer`로 측정합니다. 깊은 tree 처리는
+/// [`compute_layout`]과 같습니다.
+pub fn compute_layout_with(
+    input: &LayoutInput,
+    measurer: &dyn ContentMeasurer,
+) -> Result<LayoutResult, LayoutError> {
     let tree = input.tree()?;
     if tree.depth <= INLINE_LAYOUT_DEPTH {
-        return compute_validated(input, tree);
+        return compute_validated(input, tree, measurer);
     }
     let depth = tree.depth;
     std::thread::scope(|scope| {
         let worker = std::thread::Builder::new()
             .name("stellar-layout-deep".to_owned())
             .stack_size(DEEP_LAYOUT_STACK_BYTES)
-            .spawn_scoped(scope, move || compute_validated(input, tree))
+            .spawn_scoped(scope, move || compute_validated(input, tree, measurer))
             .map_err(|_| LayoutError::DeepStackUnavailable { depth })?;
         match worker.join() {
             Ok(result) => result,
@@ -74,8 +89,12 @@ pub fn compute_layout(input: &LayoutInput) -> Result<LayoutResult, LayoutError> 
 }
 
 /// 검증된 tree를 현재 thread에서 레이아웃합니다.
-fn compute_validated(input: &LayoutInput, tree: TreeIndex) -> Result<LayoutResult, LayoutError> {
-    let mut engine = Engine::new(input, tree)?;
+fn compute_validated(
+    input: &LayoutInput,
+    tree: TreeIndex,
+    measurer: &dyn ContentMeasurer,
+) -> Result<LayoutResult, LayoutError> {
+    let mut engine = Engine::new(input, tree, measurer)?;
     let root = engine.tree.root;
     let size = engine.resolve_size(root, ChildConstraint::UNCONSTRAINED)?;
     let mut pending = Vec::with_capacity(input.nodes.len());
@@ -147,14 +166,25 @@ impl Padding {
     }
 }
 
+/// 변환된 콘텐츠.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreparedContent {
+    /// 콘텐츠 없음(container).
+    None,
+    /// 고정 intrinsic (너비·높이, baseline).
+    Fixed([LayoutUnit; 2], Option<LayoutUnit>),
+    /// 측정기로 측정(X.6.4).
+    Measured(ContentKind),
+}
+
 /// 변환된 node 입력.
 #[derive(Debug, Clone)]
 pub(crate) struct Prepared {
     pub(crate) id: StableId,
     pub(crate) padding: Padding,
     pub(crate) sizing: [AxisSizing; 2],
-    /// intrinsic 콘텐츠 (너비, 높이, baseline).
-    pub(crate) intrinsic: Option<([LayoutUnit; 2], Option<LayoutUnit>)>,
+    /// 콘텐츠.
+    pub(crate) content: PreparedContent,
     /// Free 배치 anchor (가로, 세로).
     pub(crate) anchors: [PreparedAnchors; 2],
     /// Stack 자식 grow·shrink·basis.
@@ -181,6 +211,10 @@ pub(crate) struct Engine<'a> {
     pub(crate) tree: TreeIndex,
     pub(crate) nodes: Vec<Prepared>,
     memo: HashMap<(usize, ChildConstraint), LayoutSize>,
+    /// 측정 콘텐츠 결과 memo((node index, 가용 크기, mode) → 측정값).
+    content_memo: HashMap<(usize, [Option<LayoutUnit>; 2], IntrinsicMode), IntrinsicSize>,
+    /// 콘텐츠 측정기(X.6.4).
+    measurer: &'a dyn ContentMeasurer,
     /// 레이아웃을 실패시키지 않는 진단(배치 순서대로).
     pub(crate) diagnostics: Vec<LayoutDiagnostic>,
 }
@@ -208,7 +242,11 @@ pub(crate) fn size_of(
 }
 
 impl<'a> Engine<'a> {
-    fn new(input: &'a LayoutInput, tree: TreeIndex) -> Result<Engine<'a>, LayoutError> {
+    fn new(
+        input: &'a LayoutInput,
+        tree: TreeIndex,
+        measurer: &'a dyn ContentMeasurer,
+    ) -> Result<Engine<'a>, LayoutError> {
         let nodes = input
             .nodes
             .iter()
@@ -219,8 +257,84 @@ impl<'a> Engine<'a> {
             tree,
             nodes,
             memo: HashMap::new(),
+            content_memo: HashMap::new(),
+            measurer,
             diagnostics: Vec::new(),
         })
+    }
+
+    /// 측정 콘텐츠를 측정합니다(같은 요청은 한 계산에서 한 번만 측정기에 보냄). 결과 크기는 비음수로
+    /// 검증합니다. `subtree`는 ComponentInstance 자식 extent입니다.
+    fn measure_content(
+        &mut self,
+        index: usize,
+        available: [Option<LayoutUnit>; 2],
+        mode: IntrinsicMode,
+        subtree: Option<[LayoutUnit; 2]>,
+    ) -> Result<IntrinsicSize, LayoutError> {
+        if let Some(size) = self.content_memo.get(&(index, available, mode)) {
+            return Ok(*size);
+        }
+        let node = self.node(index);
+        let LayoutContent::Measured(content) = &node.content else {
+            return Err(LayoutError::InvalidBox {
+                node: node.id,
+                reason: "측정 콘텐츠가 아닙니다",
+            });
+        };
+        let kind = content.kind();
+        let request = MeasureRequest {
+            node: node.id,
+            kind,
+            available,
+            mode,
+            subtree,
+        };
+        let failed = |reason| LayoutError::ContentMeasure {
+            node: node.id,
+            kind,
+            reason,
+        };
+        let size = self
+            .measurer
+            .measure(&request, content)
+            .map_err(|error| failed(error.reason))?;
+        if size.width < LayoutUnit::ZERO || size.height < LayoutUnit::ZERO {
+            return Err(failed("측정 결과 크기가 음수입니다"));
+        }
+        self.content_memo.insert((index, available, mode), size);
+        Ok(size)
+    }
+
+    /// node top 기준 첫 baseline(border box 좌표). `size`는 node border-box 크기입니다.
+    ///
+    /// 고정 intrinsic은 그 baseline, 측정 콘텐츠는 content 너비가 정해진 측정의 baseline에 위쪽
+    /// padding을 더한 값입니다. container는 `None`입니다(X.3.6·X.10.4 소관).
+    pub(crate) fn border_baseline(
+        &mut self,
+        index: usize,
+        size: LayoutSize,
+    ) -> Result<Option<LayoutUnit>, LayoutError> {
+        let prepared = &self.nodes[index];
+        let id = prepared.id;
+        let padding = prepared.padding;
+        let baseline = match prepared.content {
+            PreparedContent::None | PreparedContent::Measured(ContentKind::ComponentInstance) => {
+                None
+            }
+            PreparedContent::Fixed(_, baseline) => baseline,
+            PreparedContent::Measured(_) => {
+                let width =
+                    sub_floor_zero(size.width(), padding.sum(Axis::Horizontal).map_err(at(id))?)
+                        .map_err(at(id))?;
+                self.measure_content(index, [Some(width), None], IntrinsicMode::MaxContent, None)?
+                    .baseline
+            }
+        };
+        match baseline {
+            Some(baseline) => Ok(Some(padding.top.checked_add(baseline).map_err(at(id))?)),
+            None => Ok(None),
+        }
     }
 
     /// node 원본 입력.
@@ -337,16 +451,28 @@ impl<'a> Engine<'a> {
         index: usize,
         inner: [Option<LayoutUnit>; 2],
     ) -> Result<[LayoutUnit; 2], LayoutError> {
-        if let Some((size, _)) = self.nodes[index].intrinsic {
-            return Ok(size);
+        let mode = IntrinsicMode::MaxContent;
+        match self.nodes[index].content {
+            PreparedContent::Fixed(size, _) => return Ok(size),
+            PreparedContent::Measured(kind) if !kind.allows_children() => {
+                let size = self.measure_content(index, inner, mode, None)?;
+                return Ok([size.width, size.height]);
+            }
+            PreparedContent::None | PreparedContent::Measured(_) => {}
         }
-        match &self.node(index).container {
+        let extent = match &self.node(index).container {
             ContainerLayout::Free => free::measure(self, index, inner),
             ContainerLayout::Stack(_) => stack::measure(self, index, inner),
             ContainerLayout::Grid(_) => grid::measure(self, index, inner),
             ContainerLayout::Overlay(_) => overlay::measure(self, index, inner),
             ContainerLayout::Constraint => constraint::measure(self, index, inner),
+        }?;
+        if self.nodes[index].content == PreparedContent::Measured(ContentKind::ComponentInstance) {
+            // ComponentInstance: 자식(virtual subtree) extent를 측정기에 넘깁니다.
+            let size = self.measure_content(index, inner, mode, Some(extent))?;
+            return Ok([size.width, size.height]);
         }
+        Ok(extent)
     }
 
     /// node를 `rect`(부모 local 좌표)에 놓고 자손을 배치합니다. 자신의 overflow bounds를 반환합니다.
@@ -368,10 +494,7 @@ impl<'a> Engine<'a> {
                 .map_err(at(id))?;
         let inner = size_of(id, inner_width, inner_height)?;
         let content = LayoutRect::from_origin_size(padding.left, padding.top, inner);
-        let baseline = match prepared.intrinsic {
-            Some((_, Some(baseline))) => Some(padding.top.checked_add(baseline).map_err(at(id))?),
-            _ => None,
-        };
+        let baseline = self.border_baseline(index, size)?;
         let slot = out.len();
         out.push(PendingBox {
             id,
@@ -422,8 +545,8 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
             SizingMode::Percentage(percent) => AxisSizing::Percentage(percent.raw()),
         };
     }
-    let intrinsic = match node.content {
-        LayoutContent::None => None,
+    let content = match &node.content {
+        LayoutContent::None => PreparedContent::None,
         LayoutContent::Intrinsic(content) => {
             let width = length_unit(node.id, LayoutProperty::Content, content.width, false)?;
             let height = length_unit(node.id, LayoutProperty::Content, content.height, false)?;
@@ -436,8 +559,9 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
                 )?),
                 None => None,
             };
-            Some(([width, height], baseline))
+            PreparedContent::Fixed([width, height], baseline)
         }
+        LayoutContent::Measured(content) => PreparedContent::Measured(content.kind()),
     };
     let anchors = free::prepare_position(node)?;
     let flex = prepare_flex(node)?;
@@ -447,7 +571,7 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
         id: node.id,
         padding,
         sizing,
-        intrinsic,
+        content,
         anchors,
         flex,
         limits,
@@ -541,7 +665,7 @@ mod tests {
             }
             // 결과는 계산 thread와 무관합니다(같은 tree를 큰 stack에서 직접 계산한 bytes와 동일).
             let direct = on_thread(DEEP_LAYOUT_STACK_BYTES, || {
-                compute_validated(&input, input.tree().unwrap())
+                compute_validated(&input, input.tree().unwrap(), &DefaultMeasurer)
             })
             .unwrap();
             assert_eq!(direct.encode(), result.encode());

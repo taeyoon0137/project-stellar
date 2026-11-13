@@ -34,6 +34,9 @@ use crate::grid::{
     decode_grid, decode_item, encode_grid, encode_item, validate_grid, validate_item, GridItem,
     GridLayout,
 };
+use crate::intrinsic::{
+    decode_measured, encode_measured, validate_measured, IntrinsicMeasure, MeasuredContent,
+};
 use crate::overlay::{decode_overlay, encode_overlay, OverlayLayout};
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
@@ -100,13 +103,26 @@ pub struct IntrinsicContent {
 }
 
 /// node 콘텐츠 (X.1.1).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum LayoutContent {
     /// intrinsic 콘텐츠 없음(container 또는 내용 크기 없는 leaf).
     #[default]
     None,
-    /// intrinsic 콘텐츠 leaf. 자식을 가질 수 없습니다.
+    /// 미리 측정된 고정 intrinsic 콘텐츠 leaf. 자식을 가질 수 없습니다.
     Intrinsic(IntrinsicContent),
+    /// 계산 중 측정하는 콘텐츠(X.6.4). `ComponentInstance`만 자식을 가질 수 있습니다.
+    Measured(MeasuredContent),
+}
+
+impl LayoutContent {
+    /// 자식을 가질 수 없는 leaf 콘텐츠인지 여부.
+    pub fn is_leaf(&self) -> bool {
+        match self {
+            LayoutContent::None => false,
+            LayoutContent::Intrinsic(_) => true,
+            LayoutContent::Measured(content) => !content.kind().allows_children(),
+        }
+    }
 }
 
 /// 레이아웃 node 하나의 입력 (X.1.1).
@@ -325,7 +341,7 @@ impl LayoutInput {
         let mut parent: Vec<Option<usize>> = vec![None; self.nodes.len()];
         let mut children: Vec<Vec<usize>> = Vec::with_capacity(self.nodes.len());
         for (position, node) in self.nodes.iter().enumerate() {
-            if !node.children.is_empty() && matches!(node.content, LayoutContent::Intrinsic(_)) {
+            if !node.children.is_empty() && node.content.is_leaf() {
                 return Err(LayoutError::ChildrenOnContentLeaf { node: node.id });
             }
             let mut ordered: Vec<(&OrderKey, StableId, usize)> =
@@ -471,12 +487,16 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
     validate_sizing(node.id, Axis::Vertical, node.height, is_root)?;
     prepare_limits(node.id, &node.limits)?;
     prepare_ratio(node.id, node.aspect_ratio)?;
-    if let LayoutContent::Intrinsic(content) = node.content {
-        length_unit(node.id, LayoutProperty::Content, content.width, false)?;
-        length_unit(node.id, LayoutProperty::Content, content.height, false)?;
-        if let Some(baseline) = content.baseline {
-            length_unit(node.id, LayoutProperty::Content, baseline, true)?;
+    match &node.content {
+        LayoutContent::None => {}
+        LayoutContent::Intrinsic(content) => {
+            length_unit(node.id, LayoutProperty::Content, content.width, false)?;
+            length_unit(node.id, LayoutProperty::Content, content.height, false)?;
+            if let Some(baseline) = content.baseline {
+                length_unit(node.id, LayoutProperty::Content, baseline, true)?;
+            }
         }
+        LayoutContent::Measured(content) => validate_measured(node.id, content)?,
     }
     validate_position_values(node)?;
     prepare_flex(node)?;
@@ -494,6 +514,7 @@ const CONTAINER_CONSTRAINT: u8 = 4;
 
 const CONTENT_NONE: u8 = 0;
 const CONTENT_INTRINSIC: u8 = 1;
+const CONTENT_MEASURED: u8 = 2;
 
 fn encode_node(w: &mut Writer, node: &LayoutNode) {
     w.id(node.id);
@@ -522,7 +543,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
     w.insets(&node.padding);
     encode_sizing(w, node.width);
     encode_sizing(w, node.height);
-    match node.content {
+    match &node.content {
         LayoutContent::None => w.u8(CONTENT_NONE),
         LayoutContent::Intrinsic(content) => {
             w.u8(CONTENT_INTRINSIC);
@@ -535,6 +556,10 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
                 }
                 None => w.bool(false),
             }
+        }
+        LayoutContent::Measured(content) => {
+            w.u8(CONTENT_MEASURED);
+            encode_measured(w, content);
         }
     }
     encode_position(w, &node.position);
@@ -606,6 +631,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
                 baseline,
             })
         }
+        CONTENT_MEASURED => LayoutContent::Measured(decode_measured(r)?),
         _ => {
             return Err(LayoutError::Malformed {
                 reason: "알 수 없는 content tag",

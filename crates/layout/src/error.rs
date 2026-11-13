@@ -8,6 +8,7 @@ use std::fmt;
 use stellar_core_types::ids::StableId;
 
 use crate::geometry::Axis;
+use crate::intrinsic::ContentKind;
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnitError;
 
@@ -154,6 +155,15 @@ pub enum LayoutError {
         /// 축.
         axis: Axis,
     },
+    /// 콘텐츠 intrinsic 측정이 실패했거나 결과가 잘못되었습니다 (X.6.4).
+    ContentMeasure {
+        /// 측정 node.
+        node: StableId,
+        /// 콘텐츠 종류.
+        kind: ContentKind,
+        /// 사유.
+        reason: &'static str,
+    },
     /// 레이아웃 결과 box의 불변식이 깨졌습니다.
     InvalidBox {
         /// 대상 node.
@@ -253,6 +263,9 @@ impl fmt::Display for LayoutError {
             }
             LayoutError::ConstraintCycle { node, axis } => {
                 write!(f, "node {node}의 {axis} constraint 참조가 순환합니다")
+            }
+            LayoutError::ContentMeasure { node, kind, reason } => {
+                write!(f, "node {node}의 {kind} 콘텐츠 측정 실패: {reason}")
             }
             LayoutError::InvalidBox { node, reason } => {
                 write!(f, "node {node}의 레이아웃 box가 잘못되었습니다: {reason}")
