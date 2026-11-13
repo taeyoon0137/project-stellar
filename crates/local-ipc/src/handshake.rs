@@ -210,12 +210,18 @@ pub fn write_message(stream: &mut UnixStream, message: &Message) -> Result<(), H
 }
 
 /// 읽기·쓰기 timeout을 설정합니다(0은 1 ms로 올림).
+///
+/// macOS `setsockopt(2)`는 상대가 이미 닫아 shut down된 socket에 `EINVAL`을 돌려주므로, 이 경우는
+/// [`HandshakeError::Closed`]로 분류합니다(인자 자체는 항상 유효한 timeout입니다).
 pub fn set_timeouts(stream: &UnixStream, timeout: Duration) -> Result<(), HandshakeError> {
     let timeout = timeout.max(Duration::from_millis(1));
     stream
         .set_read_timeout(Some(timeout))
         .and_then(|()| stream.set_write_timeout(Some(timeout)))
-        .map_err(|e| classify_io(&e))
+        .map_err(|e| match e.kind() {
+            io::ErrorKind::InvalidInput => HandshakeError::Closed,
+            _ => classify_io(&e),
+        })
 }
 
 /// 상대가 기대한 OS 사용자인지 확인합니다. 이 함수는 stream에 쓰지 않습니다.

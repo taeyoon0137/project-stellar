@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::thread::{JoinHandle, ThreadId};
 
 use crate::auth::{authenticate, AuthError, AuthenticatedPeer, PeerPolicy};
+use crate::code_identity::{CodeIdentityError, ERR_NO_SUCH_CODE};
 use crate::handshake::{
     read_line, set_timeouts, write_message, HandshakeError, Message, DEFAULT_TIMEOUT,
 };
@@ -78,10 +79,16 @@ impl AppEndpoint {
     /// [`ListenError::InUse`], listener 없는 잔재면 지우고 다시 엽니다.
     pub fn bind(registry: &Registry, instance: InstanceId) -> Result<AppEndpoint, ListenError> {
         if !registry.verify().map_err(ListenError::Registry)? {
-            std::fs::DirBuilder::new()
+            // 다른 instance가 동시에 만들었으면 AlreadyExists입니다. 그 경우도 아래 verify가 소유자·
+            // 권한·symlink를 다시 검사합니다.
+            match std::fs::DirBuilder::new()
                 .mode(0o700)
                 .create(registry.dir())
-                .map_err(|e| io_err(&e))?;
+            {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(io_err(&e)),
+            }
         }
         if !registry.verify().map_err(ListenError::Registry)? {
             return Err(ListenError::Io {
@@ -283,8 +290,12 @@ fn accept_loop(
             break;
         }
         let event = match authenticate(&stream, &policy) {
-            // 이미 닫힌 상대(registry 탐색의 생존 확인)는 데이터를 주고받을 수 없으므로 무시합니다.
+            // 이미 닫힌 상대(registry 탐색의 생존 확인)나 이미 종료된 상대 프로세스
+            // (`errSecCSNoSuchCode`)와는 데이터를 주고받을 수 없으므로 이벤트 없이 닫습니다.
             Err(AuthError::Credentials(e)) if e.peer_closed() => None,
+            Err(AuthError::Code(CodeIdentityError::Unverifiable {
+                status: ERR_NO_SUCH_CODE,
+            })) => None,
             // 인증 전에는 읽거나 쓰지 않았으므로 그대로 닫습니다.
             Err(error) => Some(ListenerEvent::Rejected { error, thread }),
             Ok(peer) => match serve_handshake(stream, peer, &mut ledger) {
@@ -307,8 +318,8 @@ fn serve_handshake(
     peer: AuthenticatedPeer,
     ledger: &mut NonceLedger,
 ) -> Result<Option<AppConnection>, HandshakeError> {
-    set_timeouts(&stream, DEFAULT_TIMEOUT)?;
-    let line = match read_line(&mut stream) {
+    // timeout 설정 중이나 HELLO 전에 상대가 닫으면 탐색 연결과 같이 조용히 끝냅니다.
+    let line = match set_timeouts(&stream, DEFAULT_TIMEOUT).and_then(|()| read_line(&mut stream)) {
         Err(HandshakeError::Closed) => return Ok(None),
         other => other?,
     };
@@ -338,7 +349,7 @@ fn serve_handshake(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::code_identity::{CodeIdentityError, CodeRule};
+    use crate::code_identity::CodeRule;
     use crate::handshake::{connect, Message};
     use crate::os;
     use crate::test_support::TempDir;
@@ -481,43 +492,6 @@ mod tests {
                 "{expected}: 연결 전달 0"
             );
         }
-    }
-
-    #[test]
-    fn fixture_foreign_program_is_rejected_by_current_process_policy() {
-        // 실제 다른 프로그램(Apple platform binary `/usr/bin/nc`)이 endpoint에 연결합니다. 같은
-        // 사용자이지만 실행 기준(자기 서명에서 정한 규칙)을 만족하지 않아 데이터 교환 없이 닫힙니다.
-        use std::process::{Command, Stdio};
-        let tmp = TempDir::new();
-        let app = listener(&tmp, PeerPolicy::for_current_process().unwrap());
-        let mut nc = Command::new("/usr/bin/nc")
-            .arg("-U")
-            .arg(app.socket_path())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-        let event = app.events().recv_timeout(WAIT).unwrap();
-        assert_eq!(event.thread(), app.io_thread());
-        assert!(
-            matches!(
-                event,
-                ListenerEvent::Rejected {
-                    error: AuthError::Code(CodeIdentityError::RequirementFailed),
-                    ..
-                }
-            ),
-            "{event:?}"
-        );
-        drop(nc.stdin.take());
-        let _ = nc.kill();
-        let output = nc.wait_with_output().unwrap();
-        assert!(output.stdout.is_empty(), "nc가 받은 byte 0");
-        assert!(app
-            .events()
-            .recv_timeout(Duration::from_millis(100))
-            .is_err());
     }
 
     #[test]

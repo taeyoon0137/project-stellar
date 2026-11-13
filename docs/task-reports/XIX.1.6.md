@@ -65,6 +65,12 @@
 - "다른 OS 사용자" 거부는 DEV-MAC에서 다른 계정 프로세스를 만들 수 없어 기대 uid를 바꿔 재현했습니다. 대신 코드 서명 거부는 실제 Security framework 판정과 실제 다른 프로그램(`/usr/bin/nc`)으로 검증했습니다.
 - XIX.1.3의 test double(`test_support.rs`)은 handshake 오류 경로 테스트용으로 남겼습니다.
 
+## 후속 변경(같은 lane, `Fix:` 커밋)
+
+- `fixture_foreign_program_is_rejected_by_current_process_policy`를 `crates/local-ipc/tests/foreign_peer.rs`(별도 test 실행 파일)로 옮겼습니다. macOS에서 socket 생성과 close-on-exec 설정 사이에 띄운 `nc`가 다른 unit test의 listener fd를 물려받아 stale 판정이 흔들린 것을 확인했기 때문입니다. unit test는 41개, 통합 1개가 됩니다.
+- 앱 측 I/O 스레드가 다음을 이벤트 없이 닫도록 고쳤습니다: timeout 설정 중 상대가 닫은 연결(`setsockopt` `EINVAL` → `Closed`), 인증 중 상대 프로세스가 이미 끝난 연결(`errSecCSNoSuchCode`). 둘 다 데이터를 주고받을 수 없는 연결이며, 짧게 실행된 브리지의 registry 탐색 연결에서 발생했습니다.
+- 두 앱 instance가 동시에 registry 디렉터리를 만들 때 `AlreadyExists`를 오류로 보던 경합을 고쳤습니다(이후 소유자·권한·symlink 검사는 그대로).
+
 ## 남은 위험 / 한계
 
 - 서명 빌드 규칙(같은 Team ID)의 수락 경로는 서명 인증서가 없는 DEV-MAC에서 실행할 수 없습니다. 요구 사항 문자열 컴파일과 ad-hoc 코드 거부만 검증했고, 수락 경로는 서명 helper 작업(XXIV.5.1, XXIX.5.1)에서 확인해야 합니다.
