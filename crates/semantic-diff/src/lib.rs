@@ -19,3 +19,6 @@ pub mod snapshot;
 
 /// 영속 레코드 → snapshot 구성 (XIV.3.1).
 pub mod build;
+
+/// SemanticChange 모델 (XIV.3.2).
+pub mod change;
