@@ -26,6 +26,9 @@ pub mod instance;
 /// 인스턴스 PropertyOverride validator (IX.2.3).
 pub mod override_rules;
 
+/// 인스턴스 PropertyOverride 생성·변경·reset command (IX.2.4).
+pub mod override_commands;
+
 /// 인스턴스 expansion view (IX.2.2).
 pub mod expansion;
 
