@@ -1,7 +1,17 @@
 //! 엄격한 JSON reader·writer (XIX.1.1).
 //!
-//! JSON-RPC 메시지용으로 외부 crate 없이 RFC 8259 JSON을 다룹니다. `stellar-cli`와 코드를
-//! 공유하지 않는 이 도구 전용 사본입니다(브리지가 headless 도구에 의존하지 않도록 분리). reader는 다음을 거부합니다.
+//! JSON-RPC 메시지용으로 외부 crate 없이 RFC 8259 JSON을 다룹니다.
+//!
+//! ## 의도적 사본
+//!
+//! 이 파일은 `tools/stellar-cli/src/json.rs`와 module 문서(`//!`)만 다르고 본문이 같은 사본입니다.
+//! ADR-0005 §8 허용 의존에서 L1(`stellar-cli`)과 L2(`stellar-mcp`)가 함께 의존할 수 있는 crate는
+//! `stellar-ops`·`stellar-diagnostics`뿐이고 JSON codec은 둘 중 어느 책임도 아닙니다. 공용 crate를
+//! 새로 두려면 두 도구의 허용 edge를 바꾸는 ADR 개정이 필요하므로(외부 JSON crate 도입은
+//! XXIX.1.2), 그때까지 사본을 유지합니다. 한쪽만 고치는 일이 없도록 두 crate의 `json_copy_sync`
+//! 테스트가 본문 byte 일치를 검사합니다. 수정은 두 파일에 같이 합니다.
+//!
+//! reader는 다음을 거부합니다.
 //!
 //! - 입력 크기 제한([`JsonLimits::max_bytes`]) 초과, 중첩 깊이 제한([`JsonLimits::max_depth`]) 초과
 //! - 문법 오류(후행 쉼표, 따옴표 없는 키, 주석, `NaN`·`Infinity`, 선행 0, BOM 등)

@@ -1,6 +1,17 @@
 //! 엄격한 JSON reader·writer (XXIV.1.2).
 //!
-//! 외부 crate 없이 RFC 8259 JSON을 다룹니다. reader는 다음을 거부합니다.
+//! 결과 envelope용으로 외부 crate 없이 RFC 8259 JSON을 다룹니다.
+//!
+//! ## 의도적 사본
+//!
+//! 이 파일은 `tools/stellar-mcp/src/json.rs`와 module 문서(`//!`)만 다르고 본문이 같은 사본입니다.
+//! ADR-0005 §8 허용 의존에서 L1(`stellar-cli`)과 L2(`stellar-mcp`)가 함께 의존할 수 있는 crate는
+//! `stellar-ops`·`stellar-diagnostics`뿐이고 JSON codec은 둘 중 어느 책임도 아닙니다. 공용 crate를
+//! 새로 두려면 두 도구의 허용 edge를 바꾸는 ADR 개정이 필요하므로(외부 JSON crate 도입은
+//! XXIX.1.2), 그때까지 사본을 유지합니다. 한쪽만 고치는 일이 없도록 두 crate의 `json_copy_sync`
+//! 테스트가 본문 byte 일치를 검사합니다. 수정은 두 파일에 같이 합니다.
+//!
+//! reader는 다음을 거부합니다.
 //!
 //! - 입력 크기 제한([`JsonLimits::max_bytes`]) 초과, 중첩 깊이 제한([`JsonLimits::max_depth`]) 초과
 //! - 문법 오류(후행 쉼표, 따옴표 없는 키, 주석, `NaN`·`Infinity`, 선행 0, BOM 등)
@@ -52,6 +63,11 @@ impl JsonNumber {
     /// 원문 표기.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// 소수점·지수 없는 정수 표기인지 확인합니다(범위 무관).
+    pub fn is_integer(&self) -> bool {
+        !self.0.contains(['.', 'e', 'E'])
     }
 
     /// 소수점·지수 없는 정수 표기이고 `i64` 범위이면 값을 반환합니다.
@@ -629,6 +645,8 @@ mod tests {
             Some(9007199254740993)
         );
         assert_eq!(p("1.0").unwrap().as_i64(), None, "소수 표기는 정수 아님");
+        assert!(JsonNumber("123456789012345678901234567890".into()).is_integer());
+        assert!(!JsonNumber("1e3".into()).is_integer());
     }
 
     #[test]
