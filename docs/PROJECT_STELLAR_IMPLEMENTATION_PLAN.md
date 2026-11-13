@@ -1365,7 +1365,7 @@ tools/xtask/
 | XIV.2.1 | `[x]` | `git status --porcelain=v2 -z --branch` parser를 구현합니다. ordinary, rename/copy, unmerged, untracked, ignored를 구분합니다. | fixture corpus 전부 parse. | XIV.1.5 |
 | XIV.2.2 | `[x]` | `RepositoryStatus`에 HEAD, upstream 상태, staged/unstaged/untracked counts, conflict state를 정의합니다. | detached HEAD·unborn branch fixture 통과. | XIV.2.1 |
 | XIV.2.3 | `[x]` | `SnapshotSource`를 Head(commit), Index, WorkingTree, Commit(hash), Tree(hash)로 정의합니다. | type round-trip. | XIV.2.2 |
-| XIV.2.4 | `[ ]` | HEAD/commit tree의 파일 목록과 mode/blob ID를 `git ls-tree -rz`로 읽는 provider를 구현합니다. | symlink·executable·unicode path fixture 통과. | XIV.2.3 |
+| XIV.2.4 | `[x]` | HEAD/commit tree의 파일 목록과 mode/blob ID를 `git ls-tree -rz`로 읽는 provider를 구현합니다. | symlink·executable·unicode path fixture 통과. | XIV.2.3 |
 | XIV.2.5 | `[ ]` | index의 stage 0 파일 목록과 blob ID를 `git ls-files --stage -z`로 읽는 provider를 구현합니다. unmerged entry는 별도 conflict provider로 넘깁니다. | partial staged fixture 정확. | XIV.2.3 |
 | XIV.2.6 | `[ ]` | blob content를 `git cat-file --batch`로 읽고 temp virtual project filesystem에 materialize합니다. `.git`은 생성하지 않습니다. | binary chunk·symlink fixture bytes 동일. | XIV.2.4, XIV.2.5 |
 | XIV.2.7 | `[ ]` | WorkingTree provider는 disk project loader를 사용하고 저장 대기 memory state와 구분합니다. Git status는 저장된 file 기준임을 명시합니다. | unsaved memory edit가 Git status에 나타나지 않는 fixture. | V.4.4, XIV.2.3 |

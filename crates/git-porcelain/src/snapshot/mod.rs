@@ -13,7 +13,81 @@
 //! 원천은 텍스트 spec(`head`, `index`, `worktree`, `commit:<oid>`, `tree:<oid>`)으로 왕복 변환할 수
 //! 있습니다. object ID는 검증된 [`ObjectId`](소문자 16진수 40·64자)만 허용합니다.
 
-use crate::object::ObjectId;
+use crate::decode::GitPath;
+use crate::object::{FileMode, FileModeKind, ObjectId};
+use crate::ops::GitOpError;
+
+/// HEAD·commit·tree 파일 목록 provider(XIV.2.4).
+pub mod tree;
+
+pub use tree::{read_tree_snapshot, resolve_tree, ResolvedTree, TreeSnapshot};
+
+/// snapshot 한 항목(경로·mode·object ID). gitlink(submodule)는 commit ID를 가집니다.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct SnapshotEntry {
+    /// 저장소 root 기준 경로(원시 바이트, `/` 구분).
+    pub path: GitPath,
+    /// file mode.
+    pub mode: FileMode,
+    /// blob ID(gitlink면 submodule commit ID).
+    pub oid: ObjectId,
+}
+
+impl SnapshotEntry {
+    /// mode 종류.
+    pub fn kind(&self) -> Option<FileModeKind> {
+        self.mode.kind()
+    }
+
+    /// submodule gitlink인지(materialize 대상 아님).
+    pub fn is_gitlink(&self) -> bool {
+        self.mode == FileMode::GITLINK
+    }
+}
+
+/// snapshot provider 실패.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SnapshotError {
+    /// Git 실행·해석 실패.
+    Op(GitOpError),
+    /// provider가 다루지 않는 원천 종류.
+    WrongSourceKind {
+        /// 기대한 종류.
+        expected: SnapshotSourceKind,
+        /// 받은 원천.
+        source: SnapshotSource,
+    },
+    /// 지정한 commit·tree가 없거나 종류가 다름.
+    ObjectNotFound {
+        /// 요청한 원천.
+        source: SnapshotSource,
+    },
+}
+
+impl std::fmt::Display for SnapshotError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SnapshotError::Op(e) => write!(f, "{e}"),
+            SnapshotError::WrongSourceKind { expected, source } => {
+                write!(
+                    f,
+                    "{source} 원천은 {expected:?} provider로 읽을 수 없습니다"
+                )
+            }
+            SnapshotError::ObjectNotFound { source } => {
+                write!(f, "{source} object가 없거나 종류가 다릅니다")
+            }
+        }
+    }
+}
+
+impl std::error::Error for SnapshotError {}
+
+impl From<GitOpError> for SnapshotError {
+    fn from(e: GitOpError) -> SnapshotError {
+        SnapshotError::Op(e)
+    }
+}
 
 /// snapshot 원천.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
