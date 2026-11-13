@@ -1032,7 +1032,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XI.1.1 | `[ ]` | `scene`에 `SceneNode`, `SceneResourceRef`, `SceneSnapshot`을 정의합니다. Document Node와 GPU 객체를 직접 포함하지 않습니다. | core snapshot round-trip 테스트용 serialization 통과. | Phase X |
+| XI.1.1 | `[x]` | `scene`에 `SceneNode`, `SceneResourceRef`, `SceneSnapshot`을 정의합니다. Document Node와 GPU 객체를 직접 포함하지 않습니다. | core snapshot round-trip 테스트용 serialization 통과. | Phase X |
 | XI.1.2 | `[ ]` | Scene node에 world transform, layout rect, clip stack ref, paint stack ref, z-order, hit-test metadata를 정의합니다. | fixture 생성 통과. | XI.1.1 |
 | XI.1.3 | `[ ]` | DocumentRevision→SceneRevision mapping과 snapshot generation을 정의합니다. | 동일 document revision에서 동일 scene semantic hash. | II.3.4, XI.1.1 |
 | XI.1.4 | `[ ]` | 이전 snapshot과 구조 공유하는 persistent collections를 도입합니다. 바뀐 subtree만 새 allocation을 갖게 합니다. | 단일 leaf 변경 시 shared node count 기준 통과. | XI.1.3 |

@@ -11,11 +11,29 @@
 //! - 모든 좌표는 [`Vec2`](finite, `-0.0`→`0.0` 정규화)라 [`PathGeometry::canonical_bytes`]가
 //!   bit-stable합니다.
 //! - command 목록은 `Arc`로 보관해 변경되지 않은 geometry를 snapshot 간에 구조적으로 공유합니다.
+//!
+//! ## document path 모델과의 대응
+//!
+//! 이 모듈은 document `path` 모듈(VI.6)과 의미가 같아야 합니다. 변환 계층은 아래 표대로
+//! 값만 옮기며, 검증 규칙이 같으므로 document에서 유효한 path는 여기서도 유효합니다.
+//!
+//! | document (VI.6) | scene | 비고 |
+//! |---|---|---|
+//! | `PathCommand::{MoveTo, LineTo, CubicTo, Close}` | [`PathCommand`] 같은 variant | command tag 1~4도 동일 |
+//! | `validate_commands`(VI.6.2) | [`PathGeometry::new`] | 첫 command MoveTo, Close 다음은 MoveTo |
+//! | `PathError::MissingMoveTo { index }` | [`PathGeometryError::MissingMoveTo`] | 같은 index |
+//! | `WindingRule::{NonZero = 0, EvenOdd = 1}` | [`FillRule`] | [`FillRule::tag`]도 0/1로 동일 |
+//! | Shape 평가(VI.5.6) 결과 | [`FillRule::NonZero`] + [`PathGeometry`] | Shape는 NonZero |
+//!
+//! canonical bytes만 다릅니다. document 저장 bytes는 command 개수를 `u32`로, 이 모듈의
+//! cache key bytes는 `u64`로 기록합니다(저장 포맷이 아니라 renderer cache key 원본).
 
 use std::fmt;
 use std::sync::Arc;
 
 use stellar_core_types::value::Vec2;
+
+use crate::codec::ByteSink;
 
 /// Scene path command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -37,10 +55,10 @@ pub enum PathCommand {
     Close,
 }
 
-const TAG_MOVE: u8 = 1;
-const TAG_LINE: u8 = 2;
-const TAG_CUBIC: u8 = 3;
-const TAG_CLOSE: u8 = 4;
+pub(crate) const TAG_MOVE: u8 = 1;
+pub(crate) const TAG_LINE: u8 = 2;
+pub(crate) const TAG_CUBIC: u8 = 3;
+pub(crate) const TAG_CLOSE: u8 = 4;
 
 /// 채우기 규칙. document path의 winding rule(VI.6.2)에 대응하며, Shape는 `NonZero`를 씁니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -50,6 +68,25 @@ pub enum FillRule {
     NonZero,
     /// even-odd.
     EvenOdd,
+}
+
+impl FillRule {
+    /// 안정 numeric tag. document `WindingRule`의 저장 tag와 같습니다(NonZero=0, EvenOdd=1).
+    pub const fn tag(self) -> u8 {
+        match self {
+            FillRule::NonZero => 0,
+            FillRule::EvenOdd => 1,
+        }
+    }
+
+    /// tag에서 복원합니다. 미지 tag는 `None`.
+    pub const fn from_tag(tag: u8) -> Option<FillRule> {
+        match tag {
+            0 => Some(FillRule::NonZero),
+            1 => Some(FillRule::EvenOdd),
+            _ => None,
+        }
+    }
 }
 
 /// path geometry 생성 오류.
@@ -131,33 +168,38 @@ impl PathGeometry {
     /// 목록은 항상 같은 bytes가 되며, cache key(renderer-core)의 원본 데이터로 씁니다.
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut buf = Vec::with_capacity(8 + self.commands.len() * 9);
-        buf.extend_from_slice(&(self.commands.len() as u64).to_le_bytes());
+        self.write_canonical(&mut buf);
+        buf
+    }
+
+    /// [`PathGeometry::canonical_bytes`]와 같은 bytes를 `out`에 씁니다(snapshot codec·hash 공용).
+    pub(crate) fn write_canonical<S: ByteSink + ?Sized>(&self, out: &mut S) {
+        out.put(&(self.commands.len() as u64).to_le_bytes());
         for command in self.commands.iter() {
             match *command {
                 PathCommand::MoveTo(p) => {
-                    buf.push(TAG_MOVE);
-                    put_point(&mut buf, p);
+                    out.put(&[TAG_MOVE]);
+                    put_point(out, p);
                 }
                 PathCommand::LineTo(p) => {
-                    buf.push(TAG_LINE);
-                    put_point(&mut buf, p);
+                    out.put(&[TAG_LINE]);
+                    put_point(out, p);
                 }
                 PathCommand::CubicTo { c1, c2, to } => {
-                    buf.push(TAG_CUBIC);
-                    put_point(&mut buf, c1);
-                    put_point(&mut buf, c2);
-                    put_point(&mut buf, to);
+                    out.put(&[TAG_CUBIC]);
+                    put_point(out, c1);
+                    put_point(out, c2);
+                    put_point(out, to);
                 }
-                PathCommand::Close => buf.push(TAG_CLOSE),
+                PathCommand::Close => out.put(&[TAG_CLOSE]),
             }
         }
-        buf
     }
 }
 
-fn put_point(buf: &mut Vec<u8>, p: Vec2) {
-    buf.extend_from_slice(&p.x().to_le_bytes());
-    buf.extend_from_slice(&p.y().to_le_bytes());
+fn put_point<S: ByteSink + ?Sized>(out: &mut S, p: Vec2) {
+    out.put(&p.x().to_le_bytes());
+    out.put(&p.y().to_le_bytes());
 }
 
 #[cfg(test)]
@@ -196,6 +238,18 @@ mod tests {
             PathCommand::LineTo(p(6.0, 5.0)),
         ])
         .is_ok());
+    }
+
+    #[test]
+    fn fill_rule_tags_match_document_winding_rule() {
+        // document WindingRule 저장 tag(NonZero=0, EvenOdd=1)와 같은 값.
+        assert_eq!(FillRule::NonZero.tag(), 0);
+        assert_eq!(FillRule::EvenOdd.tag(), 1);
+        for rule in [FillRule::NonZero, FillRule::EvenOdd] {
+            assert_eq!(FillRule::from_tag(rule.tag()), Some(rule));
+        }
+        assert_eq!(FillRule::from_tag(2), None);
+        assert_eq!(FillRule::default(), FillRule::NonZero);
     }
 
     #[test]
