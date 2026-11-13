@@ -13,6 +13,10 @@
 //!
 //! notification에는 응답하지 않습니다. client가 보낸 response는 서버가 request를 보내지 않으므로
 //! 로그만 남기고 무시합니다.
+//!
+//! `initialize`의 `protocolVersion`은 `config/mcp-protocol.yaml`에 고정한 목록으로 협상합니다
+//! (XIX.1.5, [`crate::protocol`]). 지원하지 않는 version은 `-32602`로 거부하고 initialize 전
+//! 상태를 유지합니다.
 
 use std::io::{self, BufRead, Write};
 
@@ -20,11 +24,13 @@ use crate::framing::{read_frame, write_frame, Frame};
 use crate::json::{self, JsonLimits, JsonValue};
 use crate::jsonrpc::{classify, codes, response_err, response_ok, Incoming, RpcError};
 use crate::log::Logger;
+use crate::protocol::{ProtocolConfig, ProtocolConfigError, PREFERRED_VERSION};
 
 /// 서버 이름(`serverInfo.name`).
 pub const SERVER_NAME: &str = "stellar-mcp";
-/// 응답하는 MCP protocol version.
-pub const PROTOCOL_VERSION: &str = "2025-11-25";
+/// 선호 MCP protocol version. 코드에 값을 두지 않고 빌드 시 `config/mcp-protocol.yaml`의 첫
+/// 항목에서 가져옵니다(XIX.1.5).
+pub const PROTOCOL_VERSION: &str = PREFERRED_VERSION;
 /// 수신 메시지 최대 byte 수.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// 수신 JSON 최대 중첩 깊이.
@@ -45,6 +51,7 @@ pub enum Phase {
 #[derive(Debug)]
 pub struct Server {
     phase: Phase,
+    protocol: Result<ProtocolConfig, ProtocolConfigError>,
 }
 
 impl Default for Server {
@@ -54,10 +61,22 @@ impl Default for Server {
 }
 
 impl Server {
-    /// `initialize` 대기 상태의 서버.
+    /// 내장 protocol config를 쓰는 `initialize` 대기 상태의 서버.
+    ///
+    /// 내장 config가 잘못되면 initialize가 `-32603`으로 실패합니다. 실행 파일은 시작 시 config를
+    /// 먼저 검사해 이 경우 종료 코드 78로 끝납니다.
     pub fn new() -> Server {
         Server {
             phase: Phase::AwaitingInitialize,
+            protocol: ProtocolConfig::builtin(),
+        }
+    }
+
+    /// 주어진 protocol config를 쓰는 서버.
+    pub fn with_config(config: ProtocolConfig) -> Server {
+        Server {
+            phase: Phase::AwaitingInitialize,
+            protocol: Ok(config),
         }
     }
 
@@ -160,12 +179,23 @@ impl Server {
                 "initialize params에 protocolVersion 문자열이 필요합니다",
             ));
         };
-        log.info(&format!(
-            "initialize 수락(client 요청 version {requested}, 응답 version {PROTOCOL_VERSION})"
-        ));
+        let config = self.protocol.as_ref().map_err(|e| {
+            RpcError::new(
+                codes::INTERNAL_ERROR,
+                format!("protocol version config 오류: {e}"),
+            )
+        })?;
+        let version = match config.negotiate(requested) {
+            Ok(version) => version.to_string(),
+            Err(error) => {
+                log.warn("지원하지 않는 protocol version 요청을 거부합니다");
+                return Err(error);
+            }
+        };
+        log.info(&format!("initialize 수락(protocol version {version})"));
         self.phase = Phase::Initialized;
         Ok(JsonValue::object(vec![
-            ("protocolVersion", JsonValue::string(PROTOCOL_VERSION)),
+            ("protocolVersion", JsonValue::string(version)),
             ("capabilities", JsonValue::Object(Vec::new())),
             (
                 "serverInfo",
@@ -331,5 +361,34 @@ mod tests {
         let log = String::from_utf8(log.into_inner()).unwrap();
         assert!(log.lines().all(|l| l.starts_with("stellar-mcp: ")), "{log}");
         assert!(log.contains("입력 종료"));
+    }
+
+    #[test]
+    fn negotiation_uses_the_given_config_and_keeps_state_on_rejection() {
+        let config =
+            ProtocolConfig::from_config_str("supported_versions: 2030-01-01, 2029-06-30").unwrap();
+        let mut server = Server::with_config(config);
+        // 내장 선호 version이라도 이 config에 없으면 거부하고 initialize 전 상태를 유지합니다.
+        let reply = handle(&mut server, INIT).unwrap();
+        assert!(reply.contains("-32602") && reply.contains("2030-01-01, 2029-06-30"));
+        assert_eq!(server.phase(), Phase::AwaitingInitialize);
+        let retry = INIT.replace("2025-11-25", "2029-06-30");
+        let reply = handle(&mut server, &retry).unwrap();
+        assert!(
+            reply.contains("\"protocolVersion\":\"2029-06-30\""),
+            "{reply}"
+        );
+        assert_eq!(server.phase(), Phase::Initialized);
+    }
+
+    #[test]
+    fn broken_config_fails_initialize_without_panic() {
+        let mut server = Server {
+            phase: Phase::AwaitingInitialize,
+            protocol: Err(ProtocolConfigError::Empty),
+        };
+        let reply = handle(&mut server, INIT).unwrap();
+        assert!(reply.contains("-32603"), "{reply}");
+        assert_eq!(server.phase(), Phase::AwaitingInitialize);
     }
 }

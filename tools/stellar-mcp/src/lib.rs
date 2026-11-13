@@ -18,5 +18,8 @@ pub mod jsonrpc;
 /// stderr 전용 로그 (XIX.1.1).
 pub mod log;
 
+/// MCP protocol version 고정과 협상 (XIX.1.5).
+pub mod protocol;
+
 /// MCP stdio 서버 루프 (XIX.1.1).
 pub mod server;

@@ -1,0 +1,10 @@
+# MCP protocol version 고정 (XIX.1.5).
+#
+# stellar-mcp가 빌드 시 내장해 읽습니다. 형식은 `key: value` 한 줄씩만
+# 허용합니다(중첩 없음).
+
+# 지원하는 MCP protocol version 목록. 쉼표로 구분하고 `YYYY-MM-DD` 정확 일치만
+# 허용합니다(범위·와일드카드 없음). 첫 항목이 선호 version입니다.
+# initialize 요청의 protocolVersion이 목록에 없으면 -32602 오류와 지원 목록을
+# 반환합니다. batch를 요구하는 version(2025-03-26 이전)은 넣지 않습니다.
+supported_versions: 2025-11-25, 2025-06-18
