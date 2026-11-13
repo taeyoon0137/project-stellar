@@ -21,3 +21,6 @@ pub mod sensitivity;
 
 /// 의존성 resolver 그래프 (XV.2).
 pub mod graph;
+
+/// 전이 의존성 resolver (XV.2.2).
+pub mod resolver;
