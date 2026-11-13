@@ -29,3 +29,6 @@ pub mod cycle;
 
 /// AST type checker (VIII.2.4).
 pub mod typecheck;
+
+/// GUI 편집용 block·edge projection (VIII.3.1).
+pub mod graph_view;
