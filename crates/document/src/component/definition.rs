@@ -23,6 +23,7 @@ use super::codec::{
     capacity_hint, put_bool, put_bytes, put_count, put_id, put_kind, put_opt_id, put_order_key,
     put_str, Malformed, Reader,
 };
+use super::override_rules::{check_definition_overrides, PropertyOverrideError};
 use super::property::{ComponentProperty, ComponentPropertyError};
 use super::slot::{ComponentSlot, SlotError};
 use super::slot_override::SlotOverrideError;
@@ -135,6 +136,9 @@ pub enum ComponentDefinitionError {
     SlotOverride(SlotOverrideError),
     /// property record가 잘못됐습니다(IX.1.2, library 디코딩 경로).
     Property(ComponentPropertyError),
+    /// 정의 tree 안 nested 인스턴스의 PropertyOverride가 규칙을 어깁니다(IX.2.3, library 디코딩
+    /// 경로).
+    PropertyOverride(PropertyOverrideError),
 }
 
 impl From<ComponentPropertyError> for ComponentDefinitionError {
@@ -191,6 +195,9 @@ impl fmt::Display for ComponentDefinitionError {
                 write!(f, "nested 인스턴스 slot override 오류: {err}")
             }
             ComponentDefinitionError::Property(err) => write!(f, "property 오류: {err}"),
+            ComponentDefinitionError::PropertyOverride(err) => {
+                write!(f, "nested 인스턴스 property override 오류: {err}")
+            }
         }
     }
 }
@@ -837,7 +844,8 @@ impl ComponentLibrary {
     ///
     /// 모든 컴포넌트가 로드된 뒤 선언 Slot·Property마다 record가 있는지
     /// ([`ComponentLibrary::validate_slots`], [`ComponentLibrary::validate_properties`])와
-    /// 정의 tree 안 nested 인스턴스의 slot override 투영 규칙(IX.3.2)을 검사합니다. nested
+    /// 정의 tree 안 nested 인스턴스의 slot override 투영 규칙(IX.3.2)과 PropertyOverride 규칙(IX.2.3)을
+    /// 검사합니다. nested
     /// 인스턴스가 이 library에 없는 컴포넌트를 참조하면(외부·미해결 참조, III.2.4) 그 인스턴스의
     /// 투영 검사는 건너뜁니다 — 참조 해석 계층이 진단합니다.
     pub fn decode(bytes: &[u8]) -> Result<ComponentLibrary, ComponentDefinitionError> {
@@ -869,6 +877,10 @@ impl ComponentLibrary {
         library.validate_loaded_slots()?;
         for entry in library.iter() {
             library.validate_properties(entry.definition().reference())?;
+        }
+        for entry in library.iter() {
+            check_definition_overrides(&library, entry.definition().reference(), true)
+                .map_err(ComponentDefinitionError::PropertyOverride)?;
         }
         Ok(library)
     }

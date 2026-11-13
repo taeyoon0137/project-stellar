@@ -23,6 +23,9 @@ pub mod property;
 /// ComponentInstance node payload (IX.2.1).
 pub mod instance;
 
+/// 인스턴스 PropertyOverride validator (IX.2.3).
+pub mod override_rules;
+
 /// 인스턴스 expansion view (IX.2.2).
 pub mod expansion;
 
