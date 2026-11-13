@@ -33,7 +33,9 @@ use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::shape::{
     evaluate_shape_path, EllipseParams, LineParams, PolygonParams, ShapeGeometry,
 };
-use stellar_document::validate::can_have_children;
+use stellar_document::validate::{
+    can_have_children, validate_document, DocumentValidationError, DocumentViolation,
+};
 
 use crate::change::{node_field_invalidation, node_keys};
 use crate::codec::{CommandCodecError, Reader, Writer};
@@ -377,10 +379,56 @@ impl ConvertShapeToPath {
     }
 }
 
+/// `replacements`로 같은 id의 node 레코드를 바꾼 **결과 문서**가 전체 validator(VI.10.1)에서 새 위반을
+/// 만들지 않는지 확인합니다. 문서를 바꾸지 않습니다.
+///
+/// 결과 레코드를 한 번 만들어(O(N)) 검사합니다. 이미 있던 위반은 이 command의 책임이 아니므로, 결과에
+/// 위반이 있을 때만 변경 전 문서를 다시 검사해 **새로 생긴 위반**만 오류로 보고합니다(이미 잘못된 문서의
+/// 다른 부분 수정은 막지 않음).
+pub(crate) fn ensure_no_new_violations(
+    model: &DocumentModel,
+    replacements: &[NodeRecord],
+) -> Result<(), CommandError> {
+    let by_id: BTreeMap<StableId, &NodeRecord> = replacements.iter().map(|r| (r.id, r)).collect();
+    let mut records = model.to_records()?;
+    let mut originals: Vec<(usize, NodeRecord)> = Vec::with_capacity(by_id.len());
+    for (index, node) in records.nodes.iter_mut().enumerate() {
+        if let Some(record) = by_id.get(&node.id) {
+            originals.push((index, std::mem::replace(node, (*record).clone())));
+        }
+    }
+    let Err(after) = validate_document(&records) else {
+        return Ok(());
+    };
+    for (index, original) in originals {
+        records.nodes[index] = original;
+    }
+    let existing = validate_document(&records)
+        .err()
+        .map(|error| error.violations)
+        .unwrap_or_default();
+    let introduced: Vec<DocumentViolation> = after
+        .violations
+        .into_iter()
+        .filter(|violation| !existing.contains(violation))
+        .collect();
+    if introduced.is_empty() {
+        Ok(())
+    } else {
+        Err(CommandError::InvalidResult(Box::new(
+            DocumentValidationError {
+                violations: introduced,
+            },
+        )))
+    }
+}
+
 /// 지정 node 레코드(종류 포함)를 통째로 되돌립니다(변환 command의 역).
 ///
 /// 각 레코드의 node가 있어야 하고 부모·OrderKey는 현재와 같아야 합니다. 바뀐 종류가 자식·modifier
 /// stack·들어오는 clip 참조와 맞는지, 새 payload의 clip 대상과 path element id가 유효한지 검사합니다.
+/// View root(부모 없는 node)는 Frame이 아닌 종류로 바꿀 수 없습니다. 마지막으로 **적용 결과 문서**를
+/// 전체 validator(VI.10.1)로 검사해, 대상 검사가 놓친 불변식 위반도 변경 전에 거부합니다.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RestoreNodeRecords {
     /// 되돌릴 레코드(같은 id의 기존 node를 대체).
@@ -430,6 +478,14 @@ impl RestoreNodeRecords {
                 });
             }
             let kind = record.kind();
+            // View root는 Frame이어야 합니다(VI.10.1 root 규칙). 부모는 바꿀 수 없으므로 부모 없는
+            // 레코드는 현재도 root입니다.
+            if record.parent.is_none() && kind != NodeKind::Frame && current.kind() != kind {
+                return Err(CommandError::RootKind {
+                    node: record.id,
+                    found: kind,
+                });
+            }
             if !index.children(record.id).is_empty() && !can_have_children(kind) {
                 return Err(CommandError::InvalidParent {
                     node: index.children(record.id)[0],
@@ -486,7 +542,7 @@ impl RestoreNodeRecords {
                 }
             }
         }
-        Ok(())
+        ensure_no_new_violations(model, &self.records)
     }
 
     pub(crate) fn invert(&self, model: &DocumentModel) -> Result<RestoreNodeRecords, CommandError> {
@@ -922,5 +978,95 @@ mod tests {
         let bytes = encode_command(&command);
         assert_eq!(&bytes[..2], &0x0032u16.to_le_bytes());
         assert_eq!(decode_command(&bytes).unwrap(), command);
+    }
+    #[test]
+    fn restore_records_rejects_view_root_kind_change() {
+        // 회귀(review RESTORE-ROOT-KIND): View root(10)를 Frame이 아닌 종류로 바꾸는 복원은 검증 단계에서
+        // 거부되고 문서는 그대로입니다. 바이트로 디코딩한 command(agent·journal 재생 경로)도 같습니다.
+        use stellar_document::image::ImagePayload;
+        let mut state = DocumentState::new(small_model());
+        let before = snapshot(&state);
+        let revision = state.revision();
+        let payloads = [
+            NodePayload::Fragment(FragmentPayload),
+            NodePayload::Text(TextPayload::empty(0)),
+            ellipse(0.0, 0.0, 4.0, 4.0),
+            NodePayload::Image(ImagePayload::new(
+                stellar_core_types::reference::AssetRef::new(sid(90)),
+                Size2::new(4.0, 4.0).unwrap(),
+            )),
+        ];
+        for payload in payloads {
+            let found = payload.kind();
+            let mut root = state.model().record(sid(10)).unwrap();
+            root.payload = payload;
+            let command = Command::RestoreNodeRecords(RestoreNodeRecords {
+                records: vec![root],
+            });
+            let decoded = decode_command(&encode_command(&command)).unwrap();
+            for candidate in [command, decoded] {
+                assert_eq!(
+                    candidate.validate(state.model()),
+                    Err(CommandError::RootKind {
+                        node: sid(10),
+                        found
+                    })
+                );
+                assert_eq!(
+                    run(&mut state, candidate),
+                    Err(CommandError::RootKind {
+                        node: sid(10),
+                        found
+                    })
+                );
+            }
+            assert_eq!(snapshot(&state), before, "{found:?}: 문서 불변");
+            assert_eq!(state.revision(), revision);
+            stellar_document::validate::validate_document(&state.model().to_records().unwrap())
+                .expect("문서는 계속 유효");
+        }
+        // root의 공통 필드(이름·표시)만 바꾸는 복원은 허용됩니다.
+        let mut renamed = state.model().record(sid(10)).unwrap();
+        renamed.display_name = "root".into();
+        renamed.visible = false;
+        run(
+            &mut state,
+            Command::RestoreNodeRecords(RestoreNodeRecords {
+                records: vec![renamed],
+            }),
+        )
+        .unwrap();
+        assert_eq!(state.model().record(sid(10)).unwrap().display_name, "root");
+    }
+
+    #[test]
+    fn result_validator_backstop_rejects_new_violations_only() {
+        // 결과 문서 전체 validator(VI.10.1) backstop: 대상 검사를 우회한 레코드 집합도 새 위반이 있으면
+        // 거부합니다. 기존 위반을 그대로 두는 복원은 막지 않습니다(이미 잘못된 문서의 부분 수정 허용).
+        let model = small_model();
+        let mut root = model.record(sid(10)).unwrap();
+        root.payload = NodePayload::Fragment(FragmentPayload);
+        let Err(CommandError::InvalidResult(error)) =
+            ensure_no_new_violations(&model, std::slice::from_ref(&root))
+        else {
+            panic!("RootNotFrame 위반으로 거부되어야 합니다");
+        };
+        assert!(error.violations.iter().any(|v| matches!(
+            v,
+            stellar_document::validate::DocumentViolation::RootNotFrame { .. }
+        )));
+        let mut renamed = model.record(sid(11)).unwrap();
+        renamed.display_name = "ok".into();
+        ensure_no_new_violations(&model, &[renamed]).unwrap();
+
+        // root가 이미 Fragment인(잘못된) 문서: 다른 node 복원은 새 위반이 없어 허용.
+        let mut broken = DocumentModel::new(crate::command::test_fixtures::definition());
+        let mut fragment_root = frame(10, None, 0x10);
+        fragment_root.payload = NodePayload::Fragment(FragmentPayload);
+        broken.insert_node(fragment_root).unwrap();
+        broken.insert_node(frame(11, Some(10), 0x10)).unwrap();
+        let mut child = broken.record(sid(11)).unwrap();
+        child.display_name = "수정".into();
+        ensure_no_new_violations(&broken, &[child]).unwrap();
     }
 }

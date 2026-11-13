@@ -394,6 +394,10 @@ pub fn generate(
             let mut record = model.record(node)?;
             record.display_name = format!("복원 {}", rng.below(1000));
             record.visible = !record.visible;
+            // 종류 변경도 섞습니다(View root 종류 변경 등 불변식 위반 후보는 validate가 거부해야 함).
+            if rng.one_in(3) {
+                record.payload = random_payload(rng);
+            }
             Some(Command::RestoreNodeRecords(RestoreNodeRecords {
                 records: vec![record],
             }))

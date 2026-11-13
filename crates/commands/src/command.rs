@@ -148,6 +148,15 @@ pub enum CommandError {
         /// 대상 node.
         node: StableId,
     },
+    /// View root는 Frame이어야 합니다(레코드 복원이 root 종류를 바꾸려 함, VI.10.1 root 규칙).
+    RootKind {
+        /// 대상 root node.
+        node: StableId,
+        /// 요청한 종류.
+        found: stellar_document::node_kind::NodeKind,
+    },
+    /// 적용 결과 문서가 전체 validator(VI.10.1)를 통과하지 못합니다(새로 생길 위반 목록).
+    InvalidResult(Box<stellar_document::validate::DocumentValidationError>),
     /// 적용 실패 후 되돌리기마저 실패했습니다(내부 불일치 신호, VII.1.5).
     RollbackFailed {
         /// 원래 실패 원인.
@@ -240,6 +249,14 @@ impl fmt::Display for CommandError {
             ),
             CommandError::ViewRoot { node } => {
                 write!(f, "View root {node}는 삭제·이동할 수 없습니다")
+            }
+            CommandError::RootKind { node, found } => write!(
+                f,
+                "View root {node}는 Frame이어야 합니다({}로 바꿀 수 없음)",
+                found.name()
+            ),
+            CommandError::InvalidResult(error) => {
+                write!(f, "적용 결과 문서가 불변식을 위반합니다: {error}")
             }
             CommandError::RollbackFailed { original, rollback } => {
                 write!(f, "{original} (되돌리기 실패: {rollback})")
