@@ -148,10 +148,14 @@ impl WindowHistory {
         Ok(sequence)
     }
 
-    /// preview 취소(VII.4.5).
+    /// preview 취소(VII.4.5). 문서를 preview 전 상태로 되돌리고, preview 중 삭제 정리로 줄었을 수 있는
+    /// 선택도 preview 시작 전 선택으로 복원합니다(기록 없음, 문서에 없는 id만 제외). 되돌리기가 실패하면
+    /// 선택과 preview 시작 선택을 그대로 둡니다.
     pub fn cancel_preview(&mut self, doc: &mut DocumentState) -> Result<(), HistoryError> {
         self.history.cancel_preview(doc)?;
-        self.preview_selection = None;
+        if let Some(selection) = self.preview_selection.take() {
+            self.view.restore_selection(&selection, doc.model());
+        }
         Ok(())
     }
 
@@ -687,5 +691,56 @@ mod tests {
         // redo → 편집 직후 선택.
         history.redo(&mut doc).unwrap();
         assert_eq!(history.view().selection().ids(), &[sid(12)]);
+    }
+    #[test]
+    fn cancel_preview_restores_selection_from_before_the_preview() {
+        // 회귀(review PREVIEW-CANCEL-SELECTION): preview가 선택된 node를 지워 선택이 정리돼도, 취소하면
+        // 문서와 함께 preview 시작 전 선택이 돌아옵니다. history 항목은 생기지 않습니다.
+        use stellar_commands::node_ops::DeleteSubtree;
+        let mut history = WindowHistory::new(window(6));
+        let mut doc = small_state();
+        let before_doc = snapshot(&doc);
+        let pick = SetSelection::new(Selection::new([sid(13), sid(12)], Some(sid(13))));
+        history.record_selection(&doc, &pick).unwrap();
+        let selected = history.view().selection().clone();
+        assert_eq!(selected.ids(), &[sid(13), sid(12)]);
+        let entries = history.history().len();
+
+        for begin_scrub in [false, true] {
+            if begin_scrub {
+                history.begin_scrub(7).unwrap();
+            } else {
+                history.begin_pointer_gesture(7).unwrap();
+            }
+            // 13을 포함한 subtree(11) 삭제 preview → 선택에서 13 정리.
+            let t = tx(
+                &doc,
+                7_000,
+                Command::DeleteSubtree(DeleteSubtree { root: sid(11) }),
+            );
+            history.update_preview(&mut doc, &t).unwrap();
+            assert_eq!(history.view().selection().ids(), &[sid(12)]);
+            // 다른 preview로 교체(12 삭제): 13은 문서에 돌아오지만 선택은 정리된 채이고 12도 빠집니다.
+            // 취소 기준은 그래도 preview 시작 전 선택입니다.
+            let t = tx(
+                &doc,
+                7_001,
+                Command::DeleteSubtree(DeleteSubtree { root: sid(12) }),
+            );
+            history.update_preview(&mut doc, &t).unwrap();
+            assert!(history.view().selection().is_empty());
+
+            history.cancel_preview(&mut doc).unwrap();
+            assert_eq!(snapshot(&doc), before_doc, "문서 원복");
+            assert_eq!(
+                history.view().selection(),
+                &selected,
+                "preview 전 선택 복원(primary 포함)"
+            );
+            assert_eq!(history.history().len(), entries, "취소는 기록하지 않음");
+        }
+        // 취소 뒤 undo는 마지막 선택 항목을 되돌립니다.
+        history.undo(&mut doc).unwrap().unwrap();
+        assert!(history.view().selection().is_empty());
     }
 }
