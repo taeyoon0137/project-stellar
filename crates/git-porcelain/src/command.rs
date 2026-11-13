@@ -8,6 +8,7 @@
 
 use std::borrow::Cow;
 
+use crate::decode::GitText;
 use crate::runner::GitOutput;
 
 /// Git 명령 결과(exit code·stdout·stderr 보존).
@@ -50,6 +51,16 @@ impl GitCommandResult {
     /// stderr를 UTF-8 lossy 문자열로 봅니다.
     pub fn stderr_lossy(&self) -> Cow<'_, str> {
         String::from_utf8_lossy(&self.output.stderr)
+    }
+
+    /// stdout을 UTF-8 우선 디코딩합니다(원시 바이트 보존, 대체 문자 여부 구분, XIV.1.5).
+    pub fn stdout_text(&self) -> GitText {
+        GitText::from_bytes(&self.output.stdout)
+    }
+
+    /// stderr를 UTF-8 우선 디코딩합니다(원시 바이트 보존, 대체 문자 여부 구분, XIV.1.5).
+    pub fn stderr_text(&self) -> GitText {
+        GitText::from_bytes(&self.output.stderr)
     }
 
     /// 성공이면 결과를, 비영 종료면 [`GitCommandFailure`]를 반환합니다.

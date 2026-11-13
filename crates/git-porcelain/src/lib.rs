@@ -17,6 +17,9 @@ pub mod cancel;
 /// Git 명령 결과 (IV.3.4).
 pub mod command;
 
+/// Git 출력 디코딩 (XIV.1.5).
+pub mod decode;
+
 /// Git 설치 상태 머신 (IV.3.5).
 pub mod install_state;
 

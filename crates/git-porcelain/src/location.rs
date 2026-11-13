@@ -17,6 +17,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::command::{GitCommandFailure, GitCommandResult};
+use crate::decode::path_from_git_bytes;
 use crate::runner::argv;
 use crate::trust::{GatedGitRunner, GatedRunError};
 
@@ -179,24 +180,11 @@ pub fn parse_path_output(query: &'static str, raw: &[u8]) -> Result<PathBuf, Loc
     if bytes.is_empty() {
         return Err(unexpected());
     }
-    let path = path_from_bytes(bytes).ok_or_else(unexpected)?;
+    let path = path_from_git_bytes(bytes).ok_or_else(unexpected)?;
     if !path.is_absolute() {
         return Err(unexpected());
     }
     Ok(path)
-}
-
-/// Git이 출력한 경로 바이트를 경로로 변환합니다(unix: 원시 바이트, Windows: UTF-8).
-#[cfg(unix)]
-fn path_from_bytes(bytes: &[u8]) -> Option<PathBuf> {
-    use std::os::unix::ffi::OsStrExt;
-    Some(PathBuf::from(std::ffi::OsStr::from_bytes(bytes)))
-}
-
-/// Git이 출력한 경로 바이트를 경로로 변환합니다(unix: 원시 바이트, Windows: UTF-8).
-#[cfg(not(unix))]
-fn path_from_bytes(bytes: &[u8]) -> Option<PathBuf> {
-    std::str::from_utf8(bytes).ok().map(PathBuf::from)
 }
 
 /// worktree root의 `.git` 항목 구조를 관찰합니다(symlink를 따르지 않음).
