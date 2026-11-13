@@ -12,7 +12,7 @@ pub mod rounding;
 /// 레이아웃 좌표·크기 (X.1.1).
 pub mod geometry;
 
-/// 레이아웃 입력 속성 식별자 (X.1.1).
+/// 레이아웃 입력 속성 식별자와 dirty class registry (X.1.1, X.1.3).
 pub mod property;
 
 /// 레이아웃 오류 (X.1.1).
