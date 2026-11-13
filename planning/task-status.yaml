@@ -5532,12 +5532,18 @@ tasks:
     verified_at: "2026-11-14T02:08:22+09:00"
   - id: "XII.1.3"
     title: "RenderThread를 구현하고 최신 SceneSnapshot을 lock-free handoff로 수신합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.1.5"
       - "XII.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.1.3.md"
+    commit: "31b3f2f2e285662eeca0312af321202d110f7d63"
+    report: "docs/task-reports/XII.1.3.md"
+    verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XII.1.4"
     title: "worker pool을 text shaping, tessellation, image decode, save serialization class로 나누거나 priority tag로 구분합니다."
     status: not_started
@@ -6227,20 +6233,32 @@ tasks:
     verified_at: "2026-11-14T01:47:34+09:00"
   - id: "XIII.6.1"
     title: "Project Font import를 AssetStore와 연결하고 font file hash, face count, licensing metadata 입력 필드를 기록합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.5.2"
       - "X.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.6.1.md"
+    commit: "c28e932e504dd0caaf3da50d92bffb302cb0a654"
+    report: "docs/task-reports/XIII.6.1.md"
+    verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XIII.6.2"
     title: "macOS system font discovery adapter를 구현하고 실제 file/face를 FontRegistry에 등록합니다. 프로젝트에 복사하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.8.2"
       - "II.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.6.2.md"
+    commit: "6efc6edaec938d97e555bdc96c20ad16c8d5a6db"
+    report: "docs/task-reports/XIII.6.2.md"
+    verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XIII.6.3"
     title: "Windows DirectWrite 또는 승인 API로 system font discovery adapter를 구현합니다."
     status: blocked
@@ -6251,23 +6269,36 @@ tasks:
       - DEV-MAC
   - id: "XIII.6.4"
     title: "External Font는 관리형 패키지의 고정 hash/face를 참조하는 인터페이스만 구현하고 다운로드 서비스는 제공하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.6.4.md"
+    commit: "383803892bee4e4d252debcb7737f38bd6ef39ca"
+    report: "docs/task-reports/XIII.6.4.md"
+    verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XIII.6.5"
     title: "font file hash가 예상과 다르면 같은 family name이어도 다른 face로 처리하고 재현성 경고를 생성합니다."
-    status: not_started
+    status: reported_done
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIII.6.5.md"
   - id: "XIII.6.6"
     title: "라이선스·임베딩 상태는 Unknown, Allowed, Restricted, UserConfirmed로 저장하고 Stellar가 법적 판정을 자동 확정하지 않게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.6.6.md"
+    commit: "f9f0a2178202dcfae58d40dbe847435719f4f7e1"
+    report: "docs/task-reports/XIII.6.6.md"
+    verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XIII.6.7"
     title: "missing font에서 명시 fallback chain만 적용하고 줄바꿈 변경 진단을 생성합니다."
     status: not_started
@@ -6531,13 +6562,18 @@ tasks:
     verified_at: "2026-11-14T02:14:03+09:00"
   - id: "XIV.2.7"
     title: "WorkingTree provider는 disk project loader를 사용하고 저장 대기 memory state와 구분합니다. Git status는 저장된 file 기준임을 명시합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "V.4.4"
       - "XIV.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.2.7.md"
+    commit: "92197eae2c1e7ad4f6de0cfbd2b6867f0a75da8e"
     report: "docs/task-reports/XIV.2.7.md"
+    verified_at: "2026-11-14T03:11:58+09:00"
   - id: "XIV.2.8"
     title: "Git UI를 열기 전 pending autosave를 flush할지 호출자에게 상태를 반환합니다. 자동으로 사용자의 memory edit를 저장하지 않습니다."
     status: not_started
@@ -7000,13 +7036,18 @@ tasks:
     verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.11.2"
     title: "conflict 관련 Stellar project 파일의 세 stage를 각각 virtual project snapshot으로 materialize합니다. conflict 없는 path는 current index/working 상태와 결합합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.2.6"
       - "XIV.11.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.11.2.md"
+    commit: "81f73d43c8ffe01a2f6b7d41928da4fb792d928f"
     report: "docs/task-reports/XIV.11.2.md"
+    verified_at: "2026-11-14T03:11:58+09:00"
   - id: "XIV.11.3"
     title: "세 snapshot을 Semantic Merge engine에 전달하고 raw file conflict와 semantic conflict mapping을 유지합니다."
     status: not_started
@@ -7807,12 +7848,18 @@ tasks:
       - DEV-MAC
   - id: "XVI.7.5"
     title: "temp directory permissions와 cleanup을 강화하고 다른 사용자 접근을 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.2.6"
       - "IV.6.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.7.5.md"
+    commit: "d6bc80ba98e2ffe8bb594a6fa2d7b52953c8ee3d"
+    report: "docs/task-reports/XVI.7.5.md"
+    verified_at: "2026-11-14T03:11:58+09:00"
   - id: "XVI.8.1"
     title: "로컬 diagnostic store에 app crash, renderer error, performance trace, feature failure count schema를 정의합니다."
     status: not_started
@@ -8595,16 +8642,28 @@ tasks:
       - DEV-MAC
   - id: "XX.1.1"
     title: "`ExportRequest`에 View/selection source, TargetProfile, scale, background, output path, format PNG/SVG를 정의합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XX.1.1.md"
+    commit: "d1f9c9e39e883e9ebcb6c0848d0cfd4cf7f11293"
+    report: "docs/task-reports/XX.1.1.md"
+    verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XX.1.2"
     title: "export는 immutable SceneSnapshot과 고정 font/assets revision을 캡처해 작업 중 document 변화와 분리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XX.1.2.md"
+    commit: "8877bdd0746d90c2267fb9cd8670350873ccbfad"
+    report: "docs/task-reports/XX.1.2.md"
+    verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XX.1.3"
     title: "unsupported target capability와 missing resource를 export 전 진단하고 user confirmation 없이는 진행하지 않습니다."
     status: not_started
@@ -8645,11 +8704,17 @@ tasks:
       - DEV-MAC
   - id: "XX.3.1"
     title: "Scene primitive→SVG element mapping table을 정의합니다. Frame/Shape/Path/Image/clip/gradient 기본 지원을 명시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XX.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XX.3.1.md"
+    commit: "ce8ae31f0d81e4641e750937e326f1641b500b89"
+    report: "docs/task-reports/XX.3.1.md"
+    verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XX.3.2"
     title: "모든 Text glyph run을 outline Path로 변환합니다. `<text>` 요소와 font embedding은 생성하지 않습니다."
     status: not_started
@@ -8660,11 +8725,17 @@ tasks:
       - DEV-MAC
   - id: "XX.3.3"
     title: "SVG id는 StableId에서 deterministic safe id로 생성하고 collision을 검사합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XX.3.3.md"
+    commit: "aff8c94a13c2c3622e806d297f674b556adc0aa5"
+    report: "docs/task-reports/XX.3.3.md"
+    verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XX.3.4"
     title: "SVG로 정확히 표현 가능한 gradient, clip, mask, opacity를 vector로 기록합니다."
     status: not_started
@@ -9546,9 +9617,15 @@ tasks:
       - DEV-MAC
   - id: "XXVIII.1.2"
     title: "canonical encoding, chunk envelope, generation manifest, YAML, StableId, unknown field, migration rules를 문서화합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVIII.1.2.md"
+    commit: "274eee7cf1487498c84ad4ed3f3155bc0f2b37cd"
+    report: "docs/task-reports/XXVIII.1.2.md"
+    verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XXVIII.1.3"
     title: "semantic model과 Git diff/merge 규칙을 별도 normative section으로 작성합니다."
     status: not_started
@@ -9556,9 +9633,15 @@ tasks:
       - DEV-MAC
   - id: "XXVIII.1.4"
     title: "보안 한도, 최대 크기, parser 요구사항, malformed input behavior를 명시합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVIII.1.4.md"
+    commit: "4406c72628aa7901163a2b140abf6752fd6f89da"
+    report: "docs/task-reports/XXVIII.1.4.md"
+    verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XXVIII.2.1"
     title: "valid/invalid binary/YAML golden corpus를 라이선스와 함께 공개 가능한 형태로 정리합니다. project content는 synthetic만 사용합니다."
     status: not_started
@@ -9582,11 +9665,17 @@ tasks:
       - DEV-MAC
   - id: "XXVIII.2.4"
     title: "version compatibility matrix와 deprecation policy를 공개합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.8.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXVIII.2.4.md"
+    commit: "de430170b5845fa586c8792775622e0d8daf6f85"
+    report: "docs/task-reports/XXVIII.2.4.md"
+    verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XXVIII.3.1"
     title: "공개 format version을 동결하고 이후 incompatible change는 major format bump와 migration을 요구하도록 governance를 적용합니다."
     status: not_started
@@ -9610,24 +9699,43 @@ tasks:
       - DEV-MAC
   - id: "XXIX.1.1"
     title: "crate graph 검사기를 확장합니다. `[dependencies]` 외에 `[target.*.dependencies]`, `[build-dependencies]`, `[dev-dependencies]`의 내부 의존을 읽고, 지정한 crate 쌍 사이의 전이 도달을 금지하는 규칙(예: agent-host에서 commands·document 도달 금지)을 추가합니다. crate 의존 그래프 문서도 함께 갱신합니다."
-    status: not_started
+    status: reported_done
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIX.1.1.md"
   - id: "XXIX.1.2"
     title: "XXIV.4, XIX.9, XXIX에 필요한 외부 crate(JSON 직렬화, JSON-RPC 프레이밍, IPC 상대 인증용 macOS binding, 필요하면 표시 서식 해석)를 `config/dependencies.yaml` 승인 항목으로 등록하고 `validate-dependencies` 검사 범위를 workspace 전체 직접 의존으로 넓힙니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.1.2.md"
+    commit: "975bf0a178ba367f647d36025d563370c477d2b9"
+    report: "docs/task-reports/XXIX.1.2.md"
+    verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XXIX.1.3"
     title: "`cargo xtask sync-plan`에 본문 ID 참조 검사를 추가합니다. 구현 지시·검증 셀과 Phase 완료 조건에 나온 WBS ID 형식 토큰이 계획서에 없으면 보고합니다. 범위 표기(`A~B`)는 양 끝 ID 존재만 검사하고, Roman Phase가 아닌 표기와 계획서 밖 문서는 검사하지 않습니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.1.3.md"
+    commit: "8818c7b0c84f06dbb93f6bdfd8f3c304b000a064"
+    report: "docs/task-reports/XXIX.1.3.md"
+    verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XXIX.1.4"
     title: "ledger 허용 상태에서 `cancelled`를 제거합니다(1.1 상태 표기, 2026-11-14 제품 소유자 결정). `TaskState`의 cancelled variant, collection 검증 허용 목록, evidence 검증 분기를 삭제하고 `cancelled` record는 unknown status로 거부합니다. 완료 행 I.2.1·I.2.7은 고치지 않습니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIX.1.4.md"
+    commit: "a5e2c0d66c592d5f9ed9bdbdd9343e91f70beb6a"
+    report: "docs/task-reports/XXIX.1.4.md"
+    verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XXIX.2.1"
     title: "`stellar-agent-host` crate(`crates/agent-host`)를 추가하고 crate graph에 등록합니다. 의존은 core-types, agent-protocol, local-ipc, diagnostics만 허용하고 document, commands, history, storage, ops로의 전이 도달을 금지합니다. 모델 제공자 API client, API key 필드, 자격 증명 저장, 모델 라우팅, 사용량 계량 타입이 없음을 inventory test로 고정합니다."
     status: not_started
