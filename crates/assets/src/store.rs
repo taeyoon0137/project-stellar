@@ -14,11 +14,13 @@
 //! # dedup (XIII.5.3)
 //!
 //! hash pass 뒤 같은 shard 디렉터리에서 같은 content hash의 content 파일(확장자 무관)을
-//! 찾습니다. 크기까지 같은 파일이 있으면 copy pass를 **건너뛰고**(재복사·재기록 없음) 그
-//! 파일을 가리키는 새 record를 돌려줍니다([`ImportOutcome::Deduplicated`]). record는
-//! AssetId를 포함하지 않으므로 호출자가 새 AssetId로 같은 content를 참조할 수 있습니다
-//! ([`crate::catalog::AssetCatalog`]). 크기가 다른 같은 이름 파일(손상)은 재사용하지 않고
-//! copy pass의 atomic rename으로 교체합니다.
+//! 찾습니다. 이름과 크기가 맞는 후보는 **내용을 다시 hash해** 같을 때만 재사용합니다. 그런
+//! 파일이 있으면 copy pass를 **건너뛰고**(재복사·재기록 없음) 그 파일을 가리키는 새 record를
+//! 돌려줍니다([`ImportOutcome::Deduplicated`]). record는 AssetId를 포함하지 않으므로 호출자가
+//! 새 AssetId로 같은 content를 참조할 수 있습니다([`crate::catalog::AssetCatalog`]). 크기나
+//! 내용이 다른 같은 이름 파일(bit rot·잘못 commit된 파일 등 손상)은 재사용하지 않고 copy
+//! pass로 새로 기록합니다(같은 이름이면 atomic rename으로 교체되어 복구). 재hash는 기존 파일을
+//! 한 번 읽지만 copy pass(쓰기·fsync)보다 가볍습니다.
 //!
 //! 원본 위치는 optional metadata입니다([`ImportRequest::without_source_metadata`]로 생략).
 //! 기록할 때는 절대 로컬 경로가 아니라 프로젝트 상대 경로 또는 파일 이름+출처 지문만
@@ -234,7 +236,8 @@ impl ImportRequest {
 pub enum ImportOutcome {
     /// 같은 content가 없어 copy pass로 새로 기록했습니다.
     Copied,
-    /// 같은 content hash·크기의 파일이 이미 있어 재복사하지 않았습니다(XIII.5.3).
+    /// 같은 content hash·크기이고 재hash로 내용이 확인된 파일이 이미 있어 재복사하지
+    /// 않았습니다(XIII.5.3).
     Deduplicated,
 }
 
@@ -352,7 +355,7 @@ impl AssetStore {
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
         let digest = hash_source(&request.source, &mut buffer, request.max_size)?;
         let (object_path, outcome) = match self
-            .locate_content(&digest.hash, digest.size)
+            .locate_verified_content(&digest.hash, digest.size, &mut buffer)
             .map_err(|e| ImportError::io(ImportOperation::LocateContent, &e))?
         {
             Some(existing) => (existing, ImportOutcome::Deduplicated),
@@ -381,14 +384,26 @@ impl AssetStore {
         })
     }
 
-    /// content hash·크기가 같은 기존 content 파일을 찾습니다(확장자 무관).
+    /// 내용이 확인된 같은 content의 기존 파일을 찾습니다(확장자 무관).
     ///
-    /// 여러 개면 파일 이름 사전순 첫 번째입니다(결정론). shard 디렉터리가 없으면 `None`.
-    /// 크기가 다른 파일은 손상으로 보고 제외합니다(내용 전체 재hash는 하지 않음).
+    /// 이름(content hash)·크기가 맞는 후보를 파일 이름 사전순으로 **재hash**해 처음 일치하는
+    /// 파일을 돌려줍니다(결정론). shard 디렉터리가 없으면 `None`. 크기·내용이 다르거나 읽을 수
+    /// 없는 후보는 손상으로 보고 재사용하지 않습니다.
     pub fn locate_content(
         &self,
         hash: &ContentHash,
         size: u64,
+    ) -> std::io::Result<Option<AssetObjectPath>> {
+        let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
+        self.locate_verified_content(hash, size, &mut buffer)
+    }
+
+    /// [`AssetStore::locate_content`]의 buffer 재사용 버전(import hash pass buffer).
+    fn locate_verified_content(
+        &self,
+        hash: &ContentHash,
+        size: u64,
+        buffer: &mut [u8],
     ) -> std::io::Result<Option<AssetObjectPath>> {
         let dir = self.root.join(AssetObjectPath::shard_dir_for(hash));
         let entries = match std::fs::read_dir(&dir) {
@@ -397,7 +412,7 @@ impl AssetStore {
             Err(e) => return Err(e),
         };
         let prefix = &hash.digest_hex()[..2];
-        let mut found: Option<AssetObjectPath> = None;
+        let mut candidates: Vec<AssetObjectPath> = Vec::new();
         for entry in entries {
             let entry = entry?;
             let Some(name) = entry.file_name().to_str().map(str::to_string) else {
@@ -409,18 +424,39 @@ impl AssetStore {
             if entry_hash != *hash {
                 continue;
             }
+            // DirEntry::metadata는 symlink를 따라가지 않습니다(symlink는 일반 파일 아님).
             let metadata = entry.metadata()?;
             if !metadata.is_file() || metadata.len() != size {
                 continue;
             }
-            if found
-                .as_ref()
-                .is_none_or(|f| path.file_name() < f.file_name())
-            {
-                found = Some(path);
+            candidates.push(path);
+        }
+        candidates.sort();
+        for candidate in candidates {
+            if self.content_matches(&candidate, hash, size, buffer) {
+                return Ok(Some(candidate));
             }
         }
-        Ok(found)
+        Ok(None)
+    }
+
+    /// 기존 content 파일을 다시 hash해 기대 hash·크기와 같은지 확인합니다.
+    ///
+    /// 읽기 실패도 "확인할 수 없음"이므로 재사용하지 않습니다(copy pass가 새로 기록).
+    fn content_matches(
+        &self,
+        object: &AssetObjectPath,
+        hash: &ContentHash,
+        size: u64,
+        buffer: &mut [u8],
+    ) -> bool {
+        let Ok(mut file) = File::open(self.content_path(object)) else {
+            return false;
+        };
+        match hash_reader_with(&mut file, buffer, |_| Ok(())) {
+            Ok(digest) => digest.hash == *hash && digest.size == size,
+            Err(_) => false,
+        }
     }
 
     /// copy pass: streaming atomic write(XIII.5.4)로 temp에 복사·재hash 검증 후
@@ -892,6 +928,59 @@ mod tests {
             bytes,
             "atomic 교체로 복구"
         );
+    }
+
+    /// 같은 이름·**같은 크기**로 손상된 기존 파일(bit rot, 잘못 commit된 파일) fixture.
+    #[test]
+    fn same_size_corrupted_content_is_not_reused() {
+        let fx = fixture();
+        let bytes = patterned(STREAM_BUFFER_SIZE + 7, 3);
+        let source = fx.outside.join("a.png");
+        std::fs::write(&source, &bytes).unwrap();
+        let hash = ContentHash::compute(&bytes);
+        let size = bytes.len() as u64;
+        let mut corrupted = bytes.clone();
+        corrupted[STREAM_BUFFER_SIZE] ^= 0x01; // 1 bit 변경, 크기 동일
+        let png_object = AssetObjectPath::new(&hash, &SafeExtension::new("png").unwrap());
+        let png_path = fx.store.content_path(&png_object);
+        std::fs::create_dir_all(png_path.parent().unwrap()).unwrap();
+        std::fs::write(&png_path, &corrupted).unwrap();
+
+        assert_eq!(fx.store.locate_content(&hash, size).unwrap(), None);
+        let imported = fx
+            .store
+            .import_file(&ImportRequest::new(&source, png()))
+            .unwrap();
+        assert_eq!(
+            imported.outcome,
+            ImportOutcome::Copied,
+            "손상 파일 재사용 안 함"
+        );
+        assert_eq!(imported.object_path, png_object);
+        assert_eq!(
+            std::fs::read(&png_path).unwrap(),
+            bytes,
+            "atomic 교체로 복구"
+        );
+        assert_eq!(
+            fx.store.locate_content(&hash, size).unwrap(),
+            Some(png_object.clone())
+        );
+
+        // 사전순으로 앞선 다른 확장자 후보(.bin)가 손상되어 있어도 건너뛰고 확인된 파일을 씁니다.
+        let bin_object = AssetObjectPath::new(&hash, &SafeExtension::binary());
+        assert!(bin_object < png_object);
+        std::fs::write(fx.store.content_path(&bin_object), &corrupted).unwrap();
+        assert_eq!(
+            fx.store.locate_content(&hash, size).unwrap(),
+            Some(png_object.clone())
+        );
+        let again = fx
+            .store
+            .import_file(&ImportRequest::new(&source, png()))
+            .unwrap();
+        assert_eq!(again.outcome, ImportOutcome::Deduplicated);
+        assert_eq!(again.object_path, png_object);
     }
 
     #[test]

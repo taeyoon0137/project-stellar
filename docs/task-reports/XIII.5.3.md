@@ -56,12 +56,30 @@
 
 ## 남은 위험 / 한계
 
-- dedup 판정은 이름(hash)과 크기만 확인하고 기존 파일 내용을 다시 hash하지 않습니다. 같은
+- ~~dedup 판정은 이름(hash)과 크기만 확인하고 기존 파일 내용을 다시 hash하지 않습니다. 같은
   크기로 손상된 파일은 재사용될 수 있으며, 무결성 검사는 별도 검증 작업(예: open 시 sample
-  hash)이 필요합니다.
+  hash)이 필요합니다.~~ → 후속 수정으로 재사용 전 재hash합니다(아래 절).
 - 같은 content가 다른 확장자로 요청되면 기존 파일의 확장자를 그대로 씁니다. 파일 확장자가
   record의 media type과 다를 수 있으므로 소비자는 확장자가 아니라 record의 media type을
   기준으로 해석해야 합니다.
 - `AssetCatalog`는 메모리 index이며 문서 저장·command 연결은 상위 계층 작업입니다.
 - 동시에 두 import가 같은 content를 처음 쓰면 둘 다 `Copied`가 될 수 있습니다(같은 bytes의
   atomic rename이라 결과는 안전).
+
+## 후속 수정(리뷰 반영): dedup 재사용 전 내용 재hash
+
+- **문제**: `locate_content`가 canonical 이름과 크기만 보고 기존 파일을 재사용했습니다. 같은
+  크기로 손상된 파일(bit rot, 협업자가 잘못 commit한 파일)이 그 hash의 content로 참조될 수
+  있었습니다.
+- **수정**: 이름·크기가 맞는 후보를 파일 이름 사전순으로 **다시 hash**해(import hash pass
+  buffer 재사용, 64 KiB streaming) hash·크기가 모두 같은 첫 파일만 재사용합니다. 내용이 다르거나
+  읽을 수 없는 후보는 손상으로 보고 건너뛰며, 확인된 파일이 없으면 copy pass로 새로 기록합니다
+  (요청 확장자와 같은 이름의 손상 파일은 atomic rename으로 교체되어 복구). 공개
+  `AssetStore::locate_content` 시그니처는 그대로이고 같은 검증을 합니다.
+- **검증**: `same_size_corrupted_content_is_not_reused` — 1 bit만 바꾼 같은 크기 파일을
+  `locate_content`가 거부, import는 `Copied`로 복구, 사전순으로 앞선 손상 `.bin` 후보를 건너뛰고
+  확인된 `.png`를 `Deduplicated`로 재사용. 기존 dedup fixture(inode·mtime 불변)도 통과.
+  `cargo test -p stellar-assets` lib 117 passed + integration 1 passed + doctest 4 passed,
+  clippy 경고 0, fmt 통과, `validate-crate-graph` 통과.
+- **남은 위험**: dedup hit마다 기존 파일을 한 번 더 읽습니다(대형 에셋은 시간 증가, 쓰기·fsync는
+  여전히 생략). 요청과 다른 확장자의 손상 파일은 복구하지 않고 남깁니다(재사용 대상에서만 제외).
