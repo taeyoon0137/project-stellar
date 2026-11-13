@@ -146,15 +146,18 @@ impl FromStr for ContentHash {
                 actual: hex.len(),
             });
         }
+        // byte 길이가 맞아도 다중 byte 문자가 섞이면 2 byte slice가 문자 경계를 자를 수
+        // 있으므로(XVI.6.2 fuzz 발견), slice 전에 모든 문자를 앞에서부터 검사합니다.
+        if let Some(found) = hex
+            .chars()
+            .find(|c| !(c.is_ascii_digit() || ('a'..='f').contains(c)))
+        {
+            return Err(ParseContentHashError::InvalidHexDigit { found });
+        }
         let mut digest = [0u8; 32];
         for (i, byte) in digest.iter_mut().enumerate() {
+            // 위 검사로 hex는 ASCII뿐이라 모든 byte 위치가 문자 경계입니다.
             let pair = &hex[i * 2..i * 2 + 2];
-            for c in pair.chars() {
-                let is_lower_hex = c.is_ascii_digit() || ('a'..='f').contains(&c);
-                if !is_lower_hex {
-                    return Err(ParseContentHashError::InvalidHexDigit { found: c });
-                }
-            }
             *byte = u8::from_str_radix(pair, 16).expect("소문자 hex 검증 완료");
         }
         Ok(ContentHash { algorithm, digest })
@@ -232,6 +235,22 @@ mod tests {
         hex.push('g');
         let err = format!("sha256:{hex}").parse::<ContentHash>().unwrap_err();
         assert_eq!(err, ParseContentHashError::InvalidHexDigit { found: 'g' });
+    }
+
+    #[test]
+    fn parse_rejects_multibyte_character_without_panic() {
+        // XVI.6.2 fuzz 발견 회귀: byte 길이는 64지만 2·3·4 byte 문자가 hex 자리에 있으면
+        // 문자 경계를 자르지 않고 그 문자를 InvalidHexDigit로 보고해야 합니다.
+        for c in ['é', '€', '😀'] {
+            for prefix in 0..=(64 - c.len_utf8()) {
+                let mut hex = "a".repeat(prefix);
+                hex.push(c);
+                hex.push_str(&"a".repeat(64 - prefix - c.len_utf8()));
+                assert_eq!(hex.len(), 64);
+                let err = format!("sha256:{hex}").parse::<ContentHash>().unwrap_err();
+                assert_eq!(err, ParseContentHashError::InvalidHexDigit { found: c });
+            }
+        }
     }
 
     #[test]

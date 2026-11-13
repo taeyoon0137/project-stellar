@@ -1,0 +1,4 @@
+# target: stream
+# expect: err
+# f32 quiet NaN bits.
+090000c0 7f

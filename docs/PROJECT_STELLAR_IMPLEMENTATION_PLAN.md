@@ -1654,7 +1654,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XVI.6.1 | `[x]` | restricted YAML parser fuzz target을 추가합니다. | panic, hang, excessive allocation corpus 0. | IV.1.4 |
-| XVI.6.2 | `[ ]` | chunk envelope/canonical decoder fuzz target을 추가합니다. | malformed input panic 0. | V.2.6 |
+| XVI.6.2 | `[x]` | chunk envelope/canonical decoder fuzz target을 추가합니다. | malformed input panic 0. | V.2.6 |
 | XVI.6.3 | `[ ]` | document loader/validator fuzz target을 추가합니다. | invalid refs/cycles 처리, panic 0. | VI.10.3 |
 | XVI.6.4 | `[ ]` | expression AST/typechecker/evaluator fuzz target을 추가합니다. | instruction budget 작동, panic 0. | VIII.4.5 |
 | XVI.6.5 | `[ ]` | Semantic Diff/apply/inverse fuzz target을 추가합니다. | valid A/B에서 apply(diff)==B. | XIV.3.10 |

@@ -1,0 +1,4 @@
+# target: stream
+# expect: err
+# f64 -0.0 bits(비canonical).
+0a000000 00000000 80

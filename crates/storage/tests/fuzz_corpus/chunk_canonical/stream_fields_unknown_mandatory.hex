@@ -1,0 +1,4 @@
+# target: stream
+# expect: err
+# unknown mandatory tag 99.
+0e010000 00630000 00010000 0000
