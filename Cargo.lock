@@ -143,6 +143,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-mcp"
+version = "0.0.0"
+
+[[package]]
 name = "stellar-project"
 version = "0.0.0"
 dependencies = [

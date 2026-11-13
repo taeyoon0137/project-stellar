@@ -1,0 +1,13 @@
+[package]
+name = "stellar-mcp"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# L2 MCP stdio 브리지(XIX.1.1): 외부 crate와 FFI crate에 의존하지 않습니다.
+# network port를 열지 않으며, 로컬 IPC만 사용합니다.
+[dependencies]
+
+[lints]
+workspace = true

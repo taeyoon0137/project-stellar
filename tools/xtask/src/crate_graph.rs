@@ -70,6 +70,9 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-diagnostics",
             ],
         ),
+        // MCP stdio 브리지(XIX.1.1, `tools/stellar-mcp`): FFI·GUI crate에 의존하지 않습니다.
+        // headless 도구(stellar-cli)는 이 브리지에 의존할 수 없습니다(위 항목에 없음).
+        ("stellar-mcp", &[core, "stellar-diagnostics"]),
     ];
     entries.iter().map(|(k, v)| (*k, v.to_vec())).collect()
 }
@@ -163,6 +166,23 @@ mod tests {
             "stellar-renderer-metal",
         ] {
             let codes: Vec<&str> = check_crate_graph(&[edge("stellar-cli", forbidden)])
+                .iter()
+                .map(|v| v.code)
+                .collect();
+            assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
+        }
+    }
+
+    #[test]
+    fn stellar_mcp_never_depends_on_ffi_or_gui() {
+        // XIX.1.1: 실제 manifest의 내부 의존이 정책을 따릅니다.
+        assert!(check_crate_graph(&tool_edges("stellar-mcp")).is_empty());
+        for forbidden in [
+            "stellar-ffi",
+            "stellar-renderer-core",
+            "stellar-renderer-metal",
+        ] {
+            let codes: Vec<&str> = check_crate_graph(&[edge("stellar-mcp", forbidden)])
                 .iter()
                 .map(|v| v.code)
                 .collect();
