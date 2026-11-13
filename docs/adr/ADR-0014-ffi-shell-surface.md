@@ -49,6 +49,19 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    `Instant` 기반이며 기준점을 첫 `stellar_runtime_create`에서 고정합니다(runtime 생성 뒤 발생한 입력이
    0으로 눌리지 않게). wall clock은 쓰지 않습니다(II.3.3).
 
+### XII.3.4 — 입력 대기열 coalescing
+
+1. **끝 항목과만 병합**: runtime 입력 대기열(`crates/ffi/src/input_queue.rs`)은 새 이벤트를 아직 꺼내지 않은
+   마지막 항목과만 병합합니다. pointer down/up·cancel, key, text composition, focus, resize는 병합하지 않으므로
+   이들의 상대 순서와 앞뒤 move/wheel과의 순서는 바뀌지 않습니다.
+2. **pointer move**: 둘 다 `Move`이고 button·device·modifier가 같으면 최신 이벤트(위치·시각)만 남깁니다.
+3. **wheel**: 같은 phase(`Changed`·`Momentum`·`Discrete`)·단위·modifier면 delta를 더하고 위치·시각은 최신 값을
+   씁니다. `Began`·`Ended`는 gesture 경계라 병합하지 않고, `f32` 합이 비유한이면 병합하지 않습니다.
+4. **`out_queued` 의미**: 시그니처는 그대로이고, 끝 항목에 병합된 이벤트도 "대기열에 반영"으로 보아 1을 씁니다
+   (무시된 이벤트만 0). 헤더 주석을 이에 맞췄습니다.
+5. **용량**: `STELLAR_INPUT_QUEUE_CAPACITY`는 항목 수입니다. 가득 찬 상태에서도 끝 항목과 병합되는 move/wheel은
+   받고, 병합할 수 없는 이벤트만 `STELLAR_QUEUE_FULL`로 버립니다.
+
 ## Alternatives
 
 - **Swift에서 `InputEvent` 바이트를 직접 인코딩**: 인코더가 두 벌이 되고 변환 규칙을 Rust 테스트·CI에서
@@ -59,13 +72,19 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
   DocumentThread 도입 시 재검토합니다.
 - **셸이 코어 callback을 받아 push**: II.4.5가 callback 재진입을 금지합니다. 셸→코어 방향은 동기
   호출로 충분합니다.
+- **대기열 전체를 훑어 같은 종류를 병합(XII.3.4)**: 사이에 낀 down/up·key를 건너뛰어 병합하면 순서가
+  바뀝니다. 끝 항목 병합만 채택합니다.
+- **wheel도 최신 값만 유지(XII.3.4)**: scroll 거리가 사라집니다. delta 합을 채택합니다.
 
 ## Consequences
 
 - 긍정: macOS 이벤트 해석이 순수 Rust 함수라 golden fixture로 결정론적으로 검증되고, Windows 셸이
   같은 대기열·`poll_input`을 재사용할 수 있습니다.
 - 긍정: 구조체 크기·버전 검사로 셸과 코어의 레이아웃 불일치를 실행 전에 잡습니다.
-- 부정: 소비자가 없는 동안 실행 중인 앱의 대기열은 4096개에서 `STELLAR_QUEUE_FULL`로 입력을 버립니다.
+- 부정: 소비자가 없는 동안 실행 중인 앱의 대기열은 병합할 수 없는 이벤트(click·key 등)가 4096개 쌓이면
+  `STELLAR_QUEUE_FULL`로 입력을 버립니다. 연속 move/wheel은 병합되어 상한에 닿지 않습니다(XII.3.4).
+- 부정: 병합된 move의 중간 위치와 개별 시각은 남지 않습니다. 입력 지연(T0) 측정은 XII.3.5에서 병합 전
+  수신 시각 기준으로 정합니다.
 - 부정: macOS 전용 구조체가 공통 헤더에 들어갑니다. Windows 재개 시 별도 구조체를 추가합니다.
 
 ## Compatibility
@@ -77,7 +96,7 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
 
 ## Performance
 
-- 제출 1회는 registry mutex 1회, 104 byte 복사, O(1) 변환입니다. 입력 전달 단계 예산(§6.2, 목표
+- 제출 1회는 registry mutex 1회, 104 byte 복사, O(1) 변환과 끝 항목 1개 비교(병합)입니다. 입력 전달 단계 예산(§6.2, 목표
   0.15ms)에 대한 측정은 T0/T1 trace 작업(XII.3.5)에서 합니다.
 
 ## Security

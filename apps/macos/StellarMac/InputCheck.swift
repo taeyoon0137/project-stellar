@@ -1,7 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 
-/// macOS mouse·trackpad·keyboard 이벤트 → 공통 InputEvent 변환을 headless로 검증합니다(XII.3.2).
+/// macOS mouse·trackpad·keyboard 이벤트 → 공통 InputEvent 변환과 대기열 coalescing을 headless로 검증합니다(XII.3.2, XII.3.4).
 ///
 /// 앱 창(`CanvasWindowController`)을 화면에 표시하지 않고 만든 뒤 합성 `NSEvent`를 `CanvasView`에
 /// 전달하고(mouse·scroll은 창 hit test로 찾은 view의 처리기, key는 창 `sendEvent` → first responder),
@@ -13,6 +13,7 @@ import Carbon.HIToolbox
 /// - key: Carbon `kVK_*` 상수 → HID usage, repeat, flagsChanged 좌우 Shift
 /// - scroll: trackpad(precise·phase·momentum)와 일반 wheel(line)의 단위·부호
 /// - 시각: 코어 단조 domain 간격이 native 간격과 같음
+/// - coalescing(XII.3.4): down → 10,000 drag → up이 down·최신 drag 1개·up으로 남음
 /// 실제 HID 장치 입력과 사람 조작은 하지 않습니다.
 enum InputCheck {
     private struct CheckFailure: Error {
@@ -333,7 +334,49 @@ enum InputCheck {
         try check(ignored.status == STELLAR_OK && ignored.queued == 0, "mouseEntered가 대기열에 들어감")
         try check(stellarPoll(handle) == nil, "mouseEntered 후 대기열이 비어 있지 않음")
 
-        return "\(count) events (coordinate flip, modifiers, click count 1-3, buttons, scroll, keys, flagsChanged)"
+        // 8) coalescing(XII.3.4): down → 10,000 drag → up을 꺼내지 않고 연속 제출하면
+        //    대기열에는 down, 최신 drag 1개, up만 남습니다.
+        let dragCount = 10_000
+        guard let content = window.contentView else { throw CheckFailure(message: "contentView 없음") }
+        func submitDirect(_ event: NSEvent) throws {
+            let pointInSuperview = content.superview?.convert(event.locationInWindow, from: nil)
+                ?? event.locationInWindow
+            guard let hit = content.hitTest(pointInSuperview), hit === canvas else {
+                throw CheckFailure(message: "coalescing: hit test가 캔버스가 아님")
+            }
+            switch event.type {
+            case .leftMouseDown: hit.mouseDown(with: event)
+            case .leftMouseDragged: hit.mouseDragged(with: event)
+            case .leftMouseUp: hit.mouseUp(with: event)
+            default: throw CheckFailure(message: "coalescing: 지원하지 않는 이벤트 \(event.type)")
+            }
+        }
+        let base = now + 8
+        // divider 근처(캔버스 왼쪽 가장자리)는 split view가 hit test를 가져가므로 안쪽 좌표를 씁니다.
+        try submitDirect(try mouse(.leftMouseDown, at: windowPoint(20, 21), time: base))
+        for index in 0..<dragCount {
+            let viewX = 20 + CGFloat(index % 300)
+            try submitDirect(
+                try mouse(.leftMouseDragged, at: windowPoint(viewX, 22), clicks: 1, time: base + Double(index) * 1e-5))
+        }
+        try submitDirect(try mouse(.leftMouseUp, at: windowPoint(25, 26), time: base + 1))
+        var drained: [InputBytes] = []
+        while let bytes = stellarPoll(handle) {
+            drained.append(InputBytes(bytes: bytes))
+        }
+        try check(drained.count == 3, "coalescing: \(dragCount) drag 후 이벤트 \(drained.count)개(기대 3)")
+        let lastX = Float(20 + (dragCount - 1) % 300)
+        try expectPointer(
+            drained[0], "coalescing down", phase: phaseDown, button: buttonPrimary, clicks: 1, modifiers: 0, x: 20, y: 21)
+        try expectPointer(
+            drained[1], "coalescing drag", phase: phaseMove, button: buttonPrimary, clicks: 0, modifiers: 0, x: lastX,
+            y: 22)
+        try expectPointer(
+            drained[2], "coalescing up", phase: phaseUp, button: buttonPrimary, clicks: 1, modifiers: 0, x: 25, y: 26)
+        count += drained.count
+
+        return "\(count) events (coordinate flip, modifiers, click count 1-3, buttons, scroll, keys, flagsChanged, "
+            + "\(dragCount) drag→1)"
     }
 
     private static func expectWheel(

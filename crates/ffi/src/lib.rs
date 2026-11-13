@@ -9,6 +9,8 @@
 pub mod input;
 /// macOS `NSEvent` → 공통 입력 이벤트 adapter (XII.3.2).
 pub mod input_macos;
+/// 셸→코어 입력 대기열과 연속 move/wheel coalescing (XII.3.4).
+pub mod input_queue;
 
 use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -17,8 +19,9 @@ use std::time::Instant;
 
 use stellar_core_types::clock::MonotonicClock;
 
-use crate::input::{InputEvent, InputTimeDomain, NativeTimestamp};
+use crate::input::{InputTimeDomain, NativeTimestamp};
 use crate::input_macos::{convert_mac_event, StellarMacEvent};
+use crate::input_queue::{InputQueue, PushOutcome};
 
 /// 버전 문자열(NUL 종료에 의존하지 않는 바이트 시퀀스).
 const VERSION: &str = "0.0.0";
@@ -83,8 +86,8 @@ struct Runtime {
     label: Option<String>,
     events: VecDeque<(u32, Vec<u8>)>,
     drawable: Option<Drawable>,
-    /// 셸이 제출한 입력 이벤트(FIFO, 용량 [`INPUT_QUEUE_CAPACITY`]).
-    input: VecDeque<InputEvent>,
+    /// 셸이 제출한 입력 이벤트(FIFO, 용량 [`INPUT_QUEUE_CAPACITY`], 연속 move/wheel 병합).
+    input: InputQueue,
     /// native 입력 시각 → 코어 단조 domain 변환기(첫 입력에서 기준점을 잡음).
     input_domain: Option<InputTimeDomain>,
 }
@@ -96,7 +99,7 @@ impl Runtime {
             label: None,
             events: VecDeque::new(),
             drawable: None,
-            input: VecDeque::new(),
+            input: InputQueue::new(INPUT_QUEUE_CAPACITY),
             input_domain: None,
         }
     }
@@ -469,6 +472,7 @@ pub unsafe extern "C" fn stellar_runtime_drawable_size(
 ///
 /// - 첫 입력에서 `receive_uptime`(셸 수신 시각)과 코어 단조 시계로 시간 domain 기준점을 잡습니다.
 /// - 공통 집합에 없는 이벤트(enter/exit, gesture, 표에 없는 key 등)는 넣지 않고 `out_queued = 0`.
+/// - 대기열에 반영되면 `out_queued = 1`입니다. 끝 항목과 병합된 연속 move/wheel도 반영으로 셉니다(XII.3.4).
 /// - 규칙 위반은 `InvalidArgument`, 대기열이 가득 차면 `QueueFull`(둘 다 last error 설정, 입력은 버림).
 ///
 /// # Safety
@@ -517,18 +521,19 @@ pub unsafe extern "C" fn stellar_runtime_submit_mac_event(
         };
         match convert_mac_event(&raw, domain) {
             Ok(None) => StellarStatus::Ok,
-            Ok(Some(input)) => {
-                if rt.input.len() >= INPUT_QUEUE_CAPACITY {
+            Ok(Some(input)) => match rt.input.push(input) {
+                PushOutcome::Queued | PushOutcome::Coalesced => {
+                    write_queued(1);
+                    StellarStatus::Ok
+                }
+                PushOutcome::Full => {
                     rt.last_error = Some((
                         StellarStatus::QueueFull,
                         format!("입력 대기열이 가득 찼습니다({INPUT_QUEUE_CAPACITY})"),
                     ));
-                    return StellarStatus::QueueFull;
+                    StellarStatus::QueueFull
                 }
-                rt.input.push_back(input);
-                write_queued(1);
-                StellarStatus::Ok
-            }
+            },
             Err(error) => {
                 rt.last_error = Some((StellarStatus::InvalidArgument, error.to_string()));
                 StellarStatus::InvalidArgument
@@ -570,7 +575,7 @@ pub unsafe extern "C" fn stellar_runtime_poll_input(
         if buf_len < bytes.len() {
             return StellarStatus::BufferTooSmall;
         }
-        rt.input.pop_front();
+        rt.input.pop();
         let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
         out[..bytes.len()].copy_from_slice(&bytes);
         unsafe { write_len(out_written, bytes.len()) };
@@ -910,7 +915,7 @@ mod tests {
 
     mod mac_input {
         use super::*;
-        use crate::input::{InputEventKind, PointerButton, PointerPhase};
+        use crate::input::{InputEvent, InputEventKind, PointerButton, PointerPhase};
         use crate::input_macos::{event_type, MAC_EVENT_VERSION};
 
         fn mac_event(event_type: u32, timestamp: f64) -> StellarMacEvent {
@@ -982,6 +987,41 @@ mod tests {
                 250_000_000
             );
             assert_eq!(poll(h), Err(StellarStatus::NoError));
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn ten_thousand_mac_drags_poll_as_latest_one_between_down_and_up() {
+            // XII.3.4: down → 10,000 drag → up 제출이 down, 최신 drag 1개, up 순서로 읽힙니다.
+            let h = create();
+            let down = mac_event(event_type::LEFT_MOUSE_DOWN, 10.0);
+            assert_eq!(submit(h, &down), (StellarStatus::Ok, 1));
+            for i in 0..10_000u32 {
+                let mut drag =
+                    mac_event(event_type::LEFT_MOUSE_DRAGGED, 10.0 + f64::from(i) * 1e-4);
+                drag.x = f64::from(i);
+                drag.y = f64::from(i) * 0.5;
+                assert_eq!(submit(h, &drag), (StellarStatus::Ok, 1));
+            }
+            let up = mac_event(event_type::LEFT_MOUSE_UP, 11.5);
+            assert_eq!(submit(h, &up), (StellarStatus::Ok, 1));
+
+            let events: Vec<InputEvent> = std::iter::from_fn(|| poll(h).ok()).collect();
+            let pointers: Vec<_> = events
+                .iter()
+                .map(|event| match event.kind() {
+                    InputEventKind::Pointer(pointer) => *pointer,
+                    other => panic!("pointer가 아님: {other:?}"),
+                })
+                .collect();
+            let phases: Vec<PointerPhase> = pointers.iter().map(|p| p.phase).collect();
+            assert_eq!(
+                phases,
+                [PointerPhase::Down, PointerPhase::Move, PointerPhase::Up]
+            );
+            assert_eq!(pointers[1].position.x(), 9_999.0);
+            assert_eq!(pointers[1].position.y(), 4_999.5);
+            assert_eq!(pointers[1].button, PointerButton::Primary);
             assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
         }
 
