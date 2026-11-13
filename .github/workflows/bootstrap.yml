@@ -4,6 +4,7 @@ name: bootstrap
 # 고정 Rust toolchain에서 xtask 검증과 Phase I 정책 검사를 실행합니다.
 # production crate build나 앱 build는 포함하지 않습니다.
 # Windows job은 compile/headless 증거이며 Windows 11 UI·D3D12 증거가 아닙니다.
+# Windows job은 ADR-0006에 따라 현재 비활성입니다.
 
 on:
   push:
@@ -21,7 +22,8 @@ permissions:
 jobs:
   bootstrap-macos:
     name: bootstrap (CI-MAC)
-    runs-on: macos-14
+    # macos-14 러너 구성은 GitHub에서 더 이상 지원되지 않아 job이 시작 전에 취소됩니다(2026-11-14 확인).
+    runs-on: macos-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -95,6 +97,8 @@ jobs:
         run: ./scripts/macos/smoke.sh
 
   bootstrap-windows:
+    # ADR-0006(2026-11-14): Windows 지원과 CI-WIN 요구를 보류합니다. 재개할 때 이 조건을 지웁니다.
+    if: ${{ false }}
     name: bootstrap (CI-WIN)
     runs-on: windows-2022
     steps:
