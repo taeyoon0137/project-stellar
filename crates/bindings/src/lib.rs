@@ -32,3 +32,6 @@ pub mod binding_commands;
 
 /// 환경 입력 reverse index와 환경 변경 무효화 (VIII.7.3).
 pub mod environment_index;
+
+/// Orphaned Binding validator와 binding 저장소 (VIII.8.1).
+pub mod orphan;
