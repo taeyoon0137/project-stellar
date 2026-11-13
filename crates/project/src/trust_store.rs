@@ -9,10 +9,15 @@
 //!   디렉터리이며, OS 기본 위치의 base는 [`os_user_data_base`]로 구합니다.
 //! - 형식: 제한 YAML(IV.1)의 canonical writer로 기록합니다. 항목은 canonical target 순으로
 //!   정렬되어 결정론적입니다.
-//! - 기록: 같은 디렉터리의 임시 파일에 쓴 뒤 rename으로 교체합니다(부분 기록 노출 없음). Unix에서는
-//!   소유자 전용 권한(`0600`)으로 만듭니다.
+//! - 기록: 같은 디렉터리의 임시 파일에 쓴 뒤 rename으로 교체하고 부모 디렉터리를 sync합니다(부분
+//!   기록 노출 없음, rename 항목 내구성). Unix에서는 `trust/` 디렉터리를 소유자 전용(`0700`), 파일을
+//!   소유자 전용(`0600`)으로 만듭니다.
+//! - 동시 갱신: grant/revoke는 **프로세스 간 배타 잠금**(Unix: `trust/` 디렉터리 fd의 `flock(2)`)을
+//!   잡은 뒤 파일을 **다시 읽어** 변경을 적용하고 기록합니다. 여러 인스턴스(창·프로세스)가 오래된
+//!   메모리 상태로 덮어써 철회된 신뢰를 되살리는 lost update가 없습니다.
 //! - 판정: canonical target이 일치하고 **project id도 일치**할 때만 `Trusted`입니다. 같은 경로에
-//!   다른 프로젝트가 놓이면 신뢰가 이어지지 않습니다.
+//!   다른 프로젝트가 놓이면 신뢰가 이어지지 않습니다. revoke도 project id가 일치하는 기록만
+//!   제거합니다.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -117,11 +122,7 @@ impl FileTrustStore {
     /// 파일이 손상되었으면 오류를 반환합니다(빈 목록으로 덮어쓰지 않음).
     pub fn open(data_dir: &Path) -> Result<FileTrustStore, TrustStoreError> {
         let file = data_dir.join(TRUST_DIR).join(TRUST_FILE);
-        let entries = match std::fs::read_to_string(&file) {
-            Ok(text) => parse_entries(&text)?,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
-            Err(e) => return Err(io_error(&file, &e)),
-        };
+        let entries = read_entries(&file)?;
         Ok(FileTrustStore { file, entries })
     }
 
@@ -143,7 +144,16 @@ impl FileTrustStore {
         }
     }
 
-    /// identity를 신뢰합니다(grant). 기록에 성공한 뒤에만 메모리 상태를 바꿉니다.
+    /// 다른 인스턴스가 기록한 최신 신뢰 목록을 다시 읽습니다.
+    pub fn reload(&mut self) -> Result<(), TrustStoreError> {
+        self.entries = read_entries(&self.file)?;
+        Ok(())
+    }
+
+    /// identity를 신뢰합니다(grant).
+    ///
+    /// 배타 잠금 아래에서 파일을 다시 읽어 항목을 추가하고 기록합니다. 기록에 성공한 뒤에만 메모리
+    /// 상태를 바꿉니다(메모리는 잠금 아래 읽은 최신 목록으로 갱신).
     pub fn grant(&mut self, identity: &ProjectIdentity) -> Result<(), TrustStoreError> {
         let key = trust_key(identity);
         if key.to_str().is_none() {
@@ -151,51 +161,167 @@ impl FileTrustStore {
                 path: key.to_path_buf(),
             });
         }
-        let mut next = self.entries.clone();
-        next.insert(key.to_path_buf(), identity.project_id());
-        self.persist(&next)?;
-        self.entries = next;
-        Ok(())
+        let id = identity.project_id();
+        self.update(|entries| entries.insert(key.to_path_buf(), id) != Some(id))
     }
 
-    /// identity의 신뢰를 철회합니다(revoke). 기록이 없으면 파일을 건드리지 않습니다.
+    /// identity의 신뢰를 철회합니다(revoke).
+    ///
+    /// canonical target과 **project id가 모두 일치하는** 기록만 제거합니다. 배타 잠금 아래에서 파일을
+    /// 다시 읽으므로 다른 인스턴스의 변경을 덮어쓰지 않습니다. 제거할 기록이 없으면 파일을 쓰지 않고,
+    /// 신뢰 목록 디렉터리가 아예 없으면 아무것도 만들지 않습니다.
     pub fn revoke(&mut self, identity: &ProjectIdentity) -> Result<(), TrustStoreError> {
         let key = trust_key(identity);
-        if !self.entries.contains_key(key) {
+        let id = identity.project_id();
+        if !self.dir()?.exists() {
+            // 디렉터리가 없으면 기록도 없습니다(잠금·디렉터리를 만들지 않음).
+            self.entries.clear();
             return Ok(());
         }
-        let mut next = self.entries.clone();
-        next.remove(key);
-        self.persist(&next)?;
-        self.entries = next;
-        Ok(())
-    }
-
-    /// 신뢰 목록을 임시 파일 + rename으로 기록합니다.
-    fn persist(&self, entries: &BTreeMap<PathBuf, StableId>) -> Result<(), TrustStoreError> {
-        let text = render_entries(entries)?;
-        let dir = match self.file.parent() {
-            Some(dir) => dir,
-            None => {
-                return Err(TrustStoreError::Io {
-                    path: self.file.clone(),
-                    kind: io::ErrorKind::InvalidInput,
-                })
+        self.update(|entries| {
+            if entries.get(key) == Some(&id) {
+                entries.remove(key);
+                true
+            } else {
+                false
             }
-        };
-        std::fs::create_dir_all(dir).map_err(|e| io_error(dir, &e))?;
+        })
+    }
 
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let temp = dir.join(format!(".{TRUST_FILE}.tmp-{}-{n}", std::process::id()));
-        let result = write_private_file(&temp, text.as_bytes())
-            .and_then(|()| std::fs::rename(&temp, &self.file));
-        if let Err(e) = result {
-            let _ = std::fs::remove_file(&temp);
-            return Err(io_error(&self.file, &e));
+    /// 신뢰 목록 디렉터리(`<data_dir>/trust`).
+    fn dir(&self) -> Result<&Path, TrustStoreError> {
+        self.file.parent().ok_or_else(|| TrustStoreError::Io {
+            path: self.file.clone(),
+            kind: io::ErrorKind::InvalidInput,
+        })
+    }
+
+    /// 배타 잠금 → 최신 목록 재읽기 → 변경 → (바뀌었으면) 원자적 기록 → 메모리 갱신.
+    ///
+    /// `change`는 목록을 실제로 바꿨는지 반환합니다.
+    fn update(
+        &mut self,
+        change: impl FnOnce(&mut BTreeMap<PathBuf, StableId>) -> bool,
+    ) -> Result<(), TrustStoreError> {
+        let dir = self.dir()?.to_path_buf();
+        ensure_private_dir(&dir)?;
+        let lock = StoreLock::acquire(&dir)?;
+        let mut latest = read_entries(&self.file)?;
+        if change(&mut latest) {
+            let text = render_entries(&latest)?;
+            persist(&self.file, &dir, &text, &lock)?;
         }
+        drop(lock);
+        self.entries = latest;
         Ok(())
     }
+}
+
+/// 신뢰 목록 파일을 읽습니다. 없으면 빈 목록, 손상되었으면 오류(덮어쓰지 않음).
+fn read_entries(file: &Path) -> Result<BTreeMap<PathBuf, StableId>, TrustStoreError> {
+    match std::fs::read_to_string(file) {
+        Ok(text) => parse_entries(&text),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(BTreeMap::new()),
+        Err(e) => Err(io_error(file, &e)),
+    }
+}
+
+/// 신뢰 목록 디렉터리를 소유자 전용(`0700`)으로 준비합니다. 이미 있으면 더 넓은 권한을 좁힙니다.
+fn ensure_private_dir(dir: &Path) -> Result<(), TrustStoreError> {
+    if let Some(parent) = dir.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| io_error(parent, &e))?;
+    }
+    let mut builder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    match builder.create(dir) {
+        Ok(()) => {}
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(e) => return Err(io_error(dir, &e)),
+    }
+    let meta = std::fs::metadata(dir).map_err(|e| io_error(dir, &e))?;
+    if !meta.is_dir() {
+        return Err(TrustStoreError::Io {
+            path: dir.to_path_buf(),
+            kind: io::ErrorKind::NotADirectory,
+        });
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| io_error(dir, &e))?;
+        }
+    }
+    Ok(())
+}
+
+/// 신뢰 목록 갱신용 프로세스 간 배타 잠금. drop 시(파일 닫힘) 해제됩니다.
+///
+/// Unix에서는 신뢰 목록 디렉터리 자체의 fd에 `flock(2)`(std `File::lock`)을 겁니다. 목록 파일은
+/// rename으로 교체되므로 파일이 아닌 디렉터리를 잠가야 교체 후에도 같은 잠금 대상이 유지되고, 잠금용
+/// 파일을 따로 남기지 않습니다. 그 밖의 플랫폼은 디렉터리 안의 고정 잠금 파일을 씁니다.
+struct StoreLock {
+    handle: std::fs::File,
+}
+
+/// Unix 외 플랫폼의 잠금 파일 이름.
+#[cfg(not(unix))]
+const LOCK_FILE: &str = ".trusted-projects.lock";
+
+impl StoreLock {
+    /// 배타 잠금을 얻을 때까지 기다립니다.
+    fn acquire(dir: &Path) -> Result<StoreLock, TrustStoreError> {
+        let handle = open_lock_handle(dir).map_err(|e| io_error(dir, &e))?;
+        handle.lock().map_err(|e| io_error(dir, &e))?;
+        Ok(StoreLock { handle })
+    }
+
+    /// rename 항목의 내구성을 위해 디렉터리를 sync합니다(Unix 전용, 그 밖에는 no-op).
+    fn sync_dir(&self, dir: &Path) -> Result<(), TrustStoreError> {
+        #[cfg(unix)]
+        {
+            self.handle.sync_all().map_err(|e| io_error(dir, &e))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (&self.handle, dir);
+            Ok(())
+        }
+    }
+}
+
+#[cfg(unix)]
+fn open_lock_handle(dir: &Path) -> io::Result<std::fs::File> {
+    std::fs::File::open(dir)
+}
+
+#[cfg(not(unix))]
+fn open_lock_handle(dir: &Path) -> io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(dir.join(LOCK_FILE))
+}
+
+/// 신뢰 목록을 임시 파일 + rename + 디렉터리 sync로 기록합니다(잠금 보유 중에만 호출).
+fn persist(file: &Path, dir: &Path, text: &str, lock: &StoreLock) -> Result<(), TrustStoreError> {
+    static COUNTER: AtomicUsize = AtomicUsize::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let temp = dir.join(format!(".{TRUST_FILE}.tmp-{}-{n}", std::process::id()));
+    let result =
+        write_private_file(&temp, text.as_bytes()).and_then(|()| std::fs::rename(&temp, file));
+    if let Err(e) = result {
+        let _ = std::fs::remove_file(&temp);
+        return Err(io_error(file, &e));
+    }
+    lock.sync_dir(dir)
 }
 
 /// 소유자 전용 권한으로 새 파일을 만들어 내용을 쓰고 디스크에 동기화합니다.
@@ -589,5 +715,135 @@ mod tests {
         }
         // 환경 변수가 없으면 None(추측하지 않음).
         assert_eq!(user_data_base_from(env(&[])), None);
+    }
+
+    /// 서로 다른 project id로 `count`개의 프로젝트 폴더를 만들고 identity를 반환합니다.
+    fn many_identities(fx: &Fixture, count: usize) -> Vec<ProjectIdentity> {
+        (0..count)
+            .map(|i| {
+                let path = fx.dir.path.join(format!("p{i}"));
+                std::fs::create_dir_all(&path).unwrap();
+                ProjectIdentity::new(StableId::new_v7(100 + i as u64, 1, 1), &path).unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn stale_instance_never_resurrects_revoked_trust() {
+        let fx = fixture();
+        let ids = many_identities(&fx, 3);
+        let (a, b, c) = (&ids[0], &ids[1], &ids[2]);
+
+        // 두 인스턴스(예: 두 창·두 프로세스)가 같은 저장소를 엽니다.
+        let mut first = FileTrustStore::open(&fx.data).unwrap();
+        first.grant(a).unwrap();
+        let mut second = FileTrustStore::open(&fx.data).unwrap();
+        assert_eq!(second.status(a), TrustStatus::Trusted);
+
+        // first가 a를 철회한 뒤, a를 Trusted로 기억하는 second가 b를 grant.
+        first.revoke(a).unwrap();
+        second.grant(b).unwrap();
+        // second의 오래된 메모리(a 포함)가 기록되지 않았고, 메모리도 최신으로 갱신됨.
+        assert_eq!(second.status(a), TrustStatus::NotTrusted);
+        let disk = FileTrustStore::open(&fx.data).unwrap();
+        assert_eq!(disk.status(a), TrustStatus::NotTrusted, "철회된 신뢰 부활");
+        assert_eq!(disk.status(b), TrustStatus::Trusted);
+
+        // 반대 방향: second가 b를 철회한 뒤 b를 기억하는 first가 c를 grant.
+        assert_eq!(first.status(b), TrustStatus::NotTrusted); // first는 아직 b를 모름
+        first.reload().unwrap();
+        assert_eq!(first.status(b), TrustStatus::Trusted);
+        second.revoke(b).unwrap();
+        first.grant(c).unwrap();
+        let disk = FileTrustStore::open(&fx.data).unwrap();
+        assert_eq!(disk.status(a), TrustStatus::NotTrusted);
+        assert_eq!(disk.status(b), TrustStatus::NotTrusted, "철회된 신뢰 부활");
+        assert_eq!(disk.status(c), TrustStatus::Trusted);
+        // revoke는 다른 인스턴스의 grant를 지우지 않음.
+        assert_eq!(disk.trusted_targets(), vec![c.canonical_target()]);
+    }
+
+    #[test]
+    fn concurrent_instances_do_not_lose_updates() {
+        let fx = fixture();
+        const THREADS: usize = 8;
+        const PER_THREAD: usize = 4;
+        let ids = many_identities(&fx, THREADS * PER_THREAD);
+        let data = fx.data.clone();
+        std::thread::scope(|scope| {
+            for chunk in ids.chunks(PER_THREAD) {
+                let data = data.clone();
+                scope.spawn(move || {
+                    // 스레드마다 독립 인스턴스(별도 open file description → 별도 잠금 경쟁).
+                    for id in chunk {
+                        let mut store = FileTrustStore::open(&data).unwrap();
+                        store.grant(id).unwrap();
+                    }
+                });
+            }
+        });
+        let store = FileTrustStore::open(&fx.data).unwrap();
+        assert_eq!(store.trusted_targets().len(), THREADS * PER_THREAD);
+        for id in &ids {
+            assert_eq!(store.status(id), TrustStatus::Trusted);
+        }
+
+        // 동시 revoke(짝수)와 재조회: 홀수만 남고 짝수는 되살아나지 않음.
+        std::thread::scope(|scope| {
+            for (i, id) in ids.iter().enumerate() {
+                let data = data.clone();
+                scope.spawn(move || {
+                    let mut store = FileTrustStore::open(&data).unwrap();
+                    if i % 2 == 0 {
+                        store.revoke(id).unwrap();
+                    } else {
+                        store.grant(id).unwrap();
+                    }
+                });
+            }
+        });
+        let store = FileTrustStore::open(&fx.data).unwrap();
+        for (i, id) in ids.iter().enumerate() {
+            let expected = if i % 2 == 0 {
+                TrustStatus::NotTrusted
+            } else {
+                TrustStatus::Trusted
+            };
+            assert_eq!(store.status(id), expected, "index {i}");
+        }
+    }
+
+    #[test]
+    fn revoke_only_removes_matching_project_id() {
+        let fx = fixture();
+        let original = identity(&fx.project);
+        let mut store = FileTrustStore::open(&fx.data).unwrap();
+        store.grant(&original).unwrap();
+        let before = std::fs::read(store.file_path()).unwrap();
+
+        // 같은 경로의 다른 project id로 revoke해도 원래 기록은 남음(파일도 불변).
+        let impostor = ProjectIdentity::new(StableId::new_v7(9, 9, 9), &fx.project).unwrap();
+        store.revoke(&impostor).unwrap();
+        assert_eq!(std::fs::read(store.file_path()).unwrap(), before);
+        let reopened = FileTrustStore::open(&fx.data).unwrap();
+        assert_eq!(reopened.status(&original), TrustStatus::Trusted);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trust_dir_is_owner_only_and_tightened() {
+        use std::os::unix::fs::PermissionsExt;
+        let fx = fixture();
+        let mut store = FileTrustStore::open(&fx.data).unwrap();
+        store.grant(&identity(&fx.project)).unwrap();
+        let dir = fx.data.join(TRUST_DIR);
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+
+        // 이전에 넓은 권한으로 만들어진 디렉터리는 다음 기록 때 좁혀짐.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        store.revoke(&identity(&fx.project)).unwrap();
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(store.file_path()), 0o600);
     }
 }
