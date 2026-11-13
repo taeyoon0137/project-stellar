@@ -1,4 +1,4 @@
-//! type rule 공통 오류 (VIII.1.2).
+//! type rule 공통 오류 (VIII.1.2, VIII.1.3).
 //!
 //! 산술·비교·논리·조건식 rule은 위반 시 [`TypeRuleError`]를 반환합니다. 오류는 **어느 피연산자
 //! 위치**([`OperandPosition`])가 잘못되었는지, 그 위치의 실제 타입과 기대 조건을 함께 담습니다.
@@ -17,6 +17,20 @@ pub enum OperandPosition {
     Lhs,
     /// 이항 연산의 오른쪽 피연산자.
     Rhs,
+    /// `if`의 조건(VIII.1.3).
+    Condition,
+    /// `if`의 참 branch(VIII.1.3).
+    Then,
+    /// `if`의 거짓 branch(VIII.1.3).
+    Else,
+    /// `match`의 검사 대상(VIII.1.3).
+    Scrutinee,
+    /// `match`의 `index`번째 arm pattern(VIII.1.3).
+    Pattern(u16),
+    /// `match`의 `index`번째 arm 값(VIII.1.3).
+    Arm(u16),
+    /// `match`의 기본 branch(VIII.1.3).
+    Default,
 }
 
 impl fmt::Display for OperandPosition {
@@ -25,6 +39,61 @@ impl fmt::Display for OperandPosition {
             OperandPosition::Operand => f.write_str("피연산자"),
             OperandPosition::Lhs => f.write_str("왼쪽 피연산자"),
             OperandPosition::Rhs => f.write_str("오른쪽 피연산자"),
+            OperandPosition::Condition => f.write_str("조건"),
+            OperandPosition::Then => f.write_str("참 branch"),
+            OperandPosition::Else => f.write_str("거짓 branch"),
+            OperandPosition::Scrutinee => f.write_str("match 대상"),
+            OperandPosition::Pattern(index) => write!(f, "match pattern {index}"),
+            OperandPosition::Arm(index) => write!(f, "match arm {index}"),
+            OperandPosition::Default => f.write_str("match 기본 branch"),
+        }
+    }
+}
+
+/// 타입 분류(VIII.1.3). 개별 타입을 나열할 수 없는 조건(예: 모든 enum 타입)을 표현합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TypeClass {
+    /// `==`·`!=`로 비교할 수 있는 타입. 합성 값(Gradient·Shadow·Typography)을 제외한 전부이며
+    /// nullable도 허용합니다.
+    Equatable,
+    /// `<`·`<=`·`>`·`>=`로 비교할 수 있는 비-nullable 수치·단위 타입.
+    Ordered,
+    /// `match` 대상이 될 수 있는 비-nullable 이산 타입(Boolean·Number·String·Enum).
+    Matchable,
+}
+
+impl TypeClass {
+    /// 비-nullable 타입이 이 분류에 속하는지 여부.
+    pub const fn contains(&self, value_type: ExpressionType) -> bool {
+        match self {
+            TypeClass::Equatable => !matches!(
+                value_type,
+                ExpressionType::Gradient | ExpressionType::Shadow | ExpressionType::Typography
+            ),
+            TypeClass::Ordered => matches!(
+                value_type,
+                ExpressionType::Number
+                    | ExpressionType::Length
+                    | ExpressionType::Percentage
+                    | ExpressionType::Angle
+                    | ExpressionType::Duration
+            ),
+            TypeClass::Matchable => matches!(
+                value_type,
+                ExpressionType::Boolean
+                    | ExpressionType::Number
+                    | ExpressionType::String
+                    | ExpressionType::Enum(_)
+            ),
+        }
+    }
+
+    /// 진단용 이름.
+    pub const fn name(&self) -> &'static str {
+        match self {
+            TypeClass::Equatable => "동등 비교 가능 타입",
+            TypeClass::Ordered => "순서 비교 가능 수치·단위 타입",
+            TypeClass::Matchable => "match 가능 이산 타입(Boolean·Number·String·Enum)",
         }
     }
 }
@@ -35,6 +104,14 @@ pub enum Expectation {
     /// 나열된 비-nullable 타입 중 하나여야 합니다(오름차순, 중복 없음). 빈 목록은 이 연산에서
     /// 앞선 피연산자와 짝이 되는 타입이 없음을 뜻합니다.
     OneOf(Vec<ExpressionType>),
+    /// 이 분류의 타입이어야 합니다(VIII.1.3). `Equatable` 외에는 비-nullable이어야 합니다.
+    Class(TypeClass),
+    /// 앞선 branch의 타입과 같거나 명시적 공통 타입이 있어야 합니다(VIII.1.3).
+    CommonWith(TypeSpec),
+    /// 앞선 pattern과 다른 값이어야 합니다(VIII.1.3).
+    DistinctPattern,
+    /// `match`에는 arm이 하나 이상 있어야 합니다(VIII.1.3).
+    AtLeastOneArm,
 }
 
 impl fmt::Display for Expectation {
@@ -50,6 +127,10 @@ impl fmt::Display for Expectation {
                 }
                 Ok(())
             }
+            Expectation::Class(class) => f.write_str(class.name()),
+            Expectation::CommonWith(spec) => write!(f, "{spec}와 같은 타입 또는 공통 타입"),
+            Expectation::DistinctPattern => f.write_str("앞선 pattern과 다른 값"),
+            Expectation::AtLeastOneArm => f.write_str("arm 1개 이상"),
         }
     }
 }
@@ -80,6 +161,19 @@ impl TypeRuleError {
             expected: Expectation::OneOf(allowed),
         }
     }
+
+    /// 임의 조건 위반을 만듭니다.
+    pub const fn new(
+        position: OperandPosition,
+        found: TypeSpec,
+        expected: Expectation,
+    ) -> TypeRuleError {
+        TypeRuleError {
+            position,
+            found,
+            expected,
+        }
+    }
 }
 
 impl fmt::Display for TypeRuleError {
@@ -97,6 +191,7 @@ impl std::error::Error for TypeRuleError {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::EnumTypeId;
 
     #[test]
     fn one_of_sorts_and_dedups() {
@@ -125,6 +220,59 @@ mod tests {
         assert_eq!(
             none.to_string(),
             "왼쪽 피연산자: Optional<Length> 타입은 허용되지 않습니다(기대: 허용 타입 없음)"
+        );
+    }
+
+    #[test]
+    fn type_classes_are_stable() {
+        let all = [
+            ExpressionType::Boolean,
+            ExpressionType::Number,
+            ExpressionType::String,
+            ExpressionType::Enum(EnumTypeId::new(4)),
+            ExpressionType::Length,
+            ExpressionType::Percentage,
+            ExpressionType::Angle,
+            ExpressionType::Duration,
+            ExpressionType::Color,
+            ExpressionType::Gradient,
+            ExpressionType::Shadow,
+            ExpressionType::Typography,
+            ExpressionType::ResourceRef,
+        ];
+        let names = |class: TypeClass| -> Vec<&'static str> {
+            all.iter()
+                .filter(|t| class.contains(**t))
+                .map(|t| t.name())
+                .collect()
+        };
+        assert_eq!(
+            names(TypeClass::Equatable),
+            vec![
+                "Boolean",
+                "Number",
+                "String",
+                "Enum",
+                "Length",
+                "Percentage",
+                "Angle",
+                "Duration",
+                "Color",
+                "ResourceRef"
+            ]
+        );
+        assert_eq!(
+            names(TypeClass::Ordered),
+            vec!["Number", "Length", "Percentage", "Angle", "Duration"]
+        );
+        assert_eq!(
+            names(TypeClass::Matchable),
+            vec!["Boolean", "Number", "String", "Enum"]
+        );
+        assert_eq!(OperandPosition::Arm(2).to_string(), "match arm 2");
+        assert_eq!(
+            Expectation::CommonWith(TypeSpec::required(ExpressionType::Length)).to_string(),
+            "Length와 같은 타입 또는 공통 타입"
         );
     }
 }

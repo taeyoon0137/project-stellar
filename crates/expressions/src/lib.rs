@@ -8,3 +8,6 @@ pub mod rules;
 
 /// 산술 type rule table (VIII.1.2).
 pub mod arithmetic;
+
+/// 비교·논리·조건식 type rule (VIII.1.3).
+pub mod logic;

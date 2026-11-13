@@ -705,7 +705,7 @@ tools/xtask/
 |---|---|---|---|---|
 | VIII.1.1 | `[x]` | `ExpressionType`을 TypedValue와 1:1 대응하도록 정의하고 nullable은 일반 타입과 별도 `Optional<T>`로 표현합니다. | type mapping 완전성 검사. | III.3.5 |
 | VIII.1.2 | `[x]` | 산술 type rule table을 코드와 문서로 정의합니다: length+length, length×scalar 등 허용 조합만 등록합니다. | 모든 허용·금지 조합 table-driven test. | VIII.1.1 |
-| VIII.1.3 | `[ ]` | 비교·논리·조건식의 type rule을 정의합니다. `if` 두 branch 타입은 같거나 명시적 공통 타입이어야 합니다. | mismatch fixture 오류 위치 정확. | VIII.1.1 |
+| VIII.1.3 | `[x]` | 비교·논리·조건식의 type rule을 정의합니다. `if` 두 branch 타입은 같거나 명시적 공통 타입이어야 합니다. | mismatch fixture 오류 위치 정확. | VIII.1.1 |
 | VIII.1.4 | `[ ]` | color, string, min/max/clamp/round/lerp/remap 함수 signature registry를 정의합니다. | unknown 함수·인자 수·타입 오류 fixture 실패. | VIII.1.2, III.4.2 |
 | VIII.1.5 | `[ ]` | 파일·네트워크·시간·난수·반복·재귀를 표현식 모델에 넣을 수 없게 closed AST로 유지합니다. | serialized malicious unknown op 거부. | VIII.1.1 |
 
