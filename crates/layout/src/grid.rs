@@ -542,8 +542,44 @@ struct GridSolution {
     column_sizes: Vec<LayoutUnit>,
     row_offsets: Vec<LayoutUnit>,
     row_sizes: Vec<LayoutUnit>,
+    /// 열·행 track(암시 행 포함).
+    tracks: [Vec<Track>; 2],
     extent: [LayoutUnit; 2],
     items: Vec<PlacedItem>,
+}
+
+/// item 영역 한 축의 크기가 무엇으로 정해지는지 (X.6.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct AreaDependence {
+    /// 걸친 track 중 콘텐츠 기반 경계(MinContent·MaxContent)를 가진 track이 있습니다.
+    pub(crate) content: bool,
+    /// 걸친 track 중 fr track이 있습니다(grid 축이 indefinite면 item 기여로 정해짐).
+    pub(crate) flexible: bool,
+}
+
+/// track 목록의 (콘텐츠 기반, fr) 누적 개수. 영역 의존성을 O(1)로 계산합니다.
+fn dependence_prefix(tracks: &[Track]) -> Vec<(usize, usize)> {
+    let mut prefix = Vec::with_capacity(tracks.len() + 1);
+    let mut acc = (0usize, 0usize);
+    prefix.push(acc);
+    for track in tracks {
+        if track.min.is_content() || track.max.is_content() {
+            acc.0 += 1;
+        }
+        if track.is_flexible() {
+            acc.1 += 1;
+        }
+        prefix.push(acc);
+    }
+    prefix
+}
+
+fn area_dependence(prefix: &[(usize, usize)], start: usize, span: usize) -> AreaDependence {
+    let (lo, hi) = (prefix[start], prefix[start + span]);
+    AreaDependence {
+        content: hi.0 > lo.0,
+        flexible: hi.1 > lo.1,
+    }
 }
 
 /// 영역 크기(걸친 track 합 + 사이 gap). `offsets`는 [`track_offsets`] 결과라 O(1)입니다.
@@ -855,6 +891,7 @@ fn solve(
         column_sizes,
         row_offsets,
         row_sizes,
+        tracks: [columns, rows],
         extent: [column_extent, row_extent],
         items,
     })
@@ -879,6 +916,20 @@ pub(crate) fn place(
     let id = engine.nodes[index].id;
     let padding = engine.nodes[index].padding;
     let solution = solve(engine, index, [Some(inner.width()), Some(inner.height())])?;
+    // X.6.5: 자식 HugContent 순환 검사에 쓸 item 영역 의존성.
+    let prefix = [
+        dependence_prefix(&solution.tracks[0]),
+        dependence_prefix(&solution.tracks[1]),
+    ];
+    for item in &solution.items {
+        engine.grid_areas.insert(
+            item.child,
+            [
+                area_dependence(&prefix[0], item.column, item.column_span),
+                area_dependence(&prefix[1], item.row, item.row_span),
+            ],
+        );
+    }
     let mut placements = Vec::with_capacity(solution.items.len());
     for item in &solution.items {
         let width = span_extent(

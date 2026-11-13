@@ -28,6 +28,17 @@ const RESULT_VERSION: u16 = 1;
 /// 진단 tag.
 const DIAGNOSTIC_MISSING_TARGET: u8 = 0;
 const DIAGNOSTIC_UNDERDETERMINED: u8 = 1;
+const DIAGNOSTIC_HUG_CYCLE: u8 = 2;
+
+fn decode_axis(r: &mut Reader<'_>) -> Result<Axis, LayoutError> {
+    match r.u8()? {
+        0 => Ok(Axis::Horizontal),
+        1 => Ok(Axis::Vertical),
+        _ => Err(LayoutError::Malformed {
+            reason: "알 수 없는 진단 axis",
+        }),
+    }
+}
 
 /// 레이아웃을 실패시키지 않는 진단 (X.5.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -46,6 +57,17 @@ pub enum LayoutDiagnostic {
         /// 축.
         axis: Axis,
     },
+    /// HugContent 순환(X.6.5): `node`의 `Percentage` 크기가 콘텐츠 크기 조상 `ancestor`의 크기에
+    /// 비례하는데 `ancestor`의 크기는 다시 `node`의 측정 기여로 정해집니다(무한 상호 의존).
+    /// 엔진은 `node`가 콘텐츠 크기로 기여하게 해 순환을 끊습니다(백분율 기준이 기여와 달라짐).
+    HugContentCycle {
+        /// 콘텐츠로 크기가 정해지는 조상(Hug node 또는 콘텐츠 기반 track을 가진 Grid).
+        ancestor: StableId,
+        /// `Percentage` 크기 node.
+        node: StableId,
+        /// 축.
+        axis: Axis,
+    },
 }
 
 impl std::fmt::Display for LayoutDiagnostic {
@@ -58,6 +80,14 @@ impl std::fmt::Display for LayoutDiagnostic {
             LayoutDiagnostic::UnderdeterminedConstraint { node, axis } => write!(
                 f,
                 "node {node}의 {axis} constraint가 부족해 fallback 위치·크기를 사용했습니다"
+            ),
+            LayoutDiagnostic::HugContentCycle {
+                ancestor,
+                node,
+                axis,
+            } => write!(
+                f,
+                "node {node}의 {axis} 백분율 크기와 콘텐츠 크기 조상 {ancestor}가 서로 의존해 콘텐츠 크기로 순환을 끊었습니다"
             ),
         }
     }
@@ -225,6 +255,16 @@ impl LayoutResult {
                     w.id(*node);
                     w.u8(axis.index() as u8);
                 }
+                LayoutDiagnostic::HugContentCycle {
+                    ancestor,
+                    node,
+                    axis,
+                } => {
+                    w.u8(DIAGNOSTIC_HUG_CYCLE);
+                    w.id(*ancestor);
+                    w.id(*node);
+                    w.u8(axis.index() as u8);
+                }
             }
         }
         w.finish()
@@ -258,16 +298,18 @@ impl LayoutResult {
                 },
                 DIAGNOSTIC_UNDERDETERMINED => {
                     let node = r.id()?;
-                    let axis = match r.u8()? {
-                        0 => Axis::Horizontal,
-                        1 => Axis::Vertical,
-                        _ => {
-                            return Err(LayoutError::Malformed {
-                                reason: "알 수 없는 진단 axis",
-                            })
-                        }
-                    };
+                    let axis = decode_axis(&mut r)?;
                     LayoutDiagnostic::UnderdeterminedConstraint { node, axis }
+                }
+                DIAGNOSTIC_HUG_CYCLE => {
+                    let ancestor = r.id()?;
+                    let node = r.id()?;
+                    let axis = decode_axis(&mut r)?;
+                    LayoutDiagnostic::HugContentCycle {
+                        ancestor,
+                        node,
+                        axis,
+                    }
                 }
                 _ => {
                     return Err(LayoutError::Malformed {

@@ -100,7 +100,7 @@ pub(crate) enum Breadth {
 }
 
 impl Breadth {
-    const fn is_content(self) -> bool {
+    pub(crate) const fn is_content(self) -> bool {
         matches!(self, Breadth::MinContent | Breadth::MaxContent)
     }
 }
@@ -121,7 +121,7 @@ impl Track {
         }
     }
 
-    const fn is_flexible(self) -> bool {
+    pub(crate) const fn is_flexible(self) -> bool {
         matches!(self.max, Breadth::Fraction(_))
     }
 }

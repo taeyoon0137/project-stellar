@@ -167,6 +167,14 @@ pub(crate) struct PreparedAnchors {
     pub(crate) end: Option<PreparedOffset>,
 }
 
+impl PreparedAnchors {
+    /// 이 축에서 부모 Hug extent(측정)에 기여하는지 여부. 끝 anchor·백분율 시작 anchor 자식은 부모
+    /// 크기 기준이라 기여하지 않습니다.
+    pub(crate) fn contributes_to_extent(&self) -> bool {
+        self.end.is_none() && !self.start.is_some_and(PreparedOffset::is_relative)
+    }
+}
+
 /// 없는 anchor를 0으로 보고 offset 값을 해석합니다.
 fn offset_or_zero(
     offset: Option<PreparedOffset>,
@@ -337,8 +345,7 @@ pub(crate) fn measure(
         let size = engine.resolve_size(child, constraint)?;
         for axis in Axis::BOTH {
             let i = axis.index();
-            let relative_start = anchors[i].start.is_some_and(PreparedOffset::is_relative);
-            if anchors[i].end.is_some() || relative_start {
+            if !anchors[i].contributes_to_extent() {
                 // 끝 anchor·백분율 시작 anchor 자식은 부모 크기 기준이라 extent에 기여하지 않습니다.
                 continue;
             }

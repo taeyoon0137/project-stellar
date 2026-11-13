@@ -29,7 +29,7 @@ use crate::error::LayoutError;
 use crate::flex::{prepare_flex, PreparedFlex};
 use crate::free::{self, PreparedAnchors};
 use crate::geometry::{Axis, LayoutRect, LayoutSize};
-use crate::grid;
+use crate::grid::{self, AreaDependence};
 use crate::input::{
     length_unit, ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode, TreeIndex,
     MAX_LAYOUT_DEPTH,
@@ -98,7 +98,12 @@ fn compute_validated(
     let root = engine.tree.root;
     let size = engine.resolve_size(root, ChildConstraint::UNCONSTRAINED)?;
     let mut pending = Vec::with_capacity(input.nodes.len());
-    engine.arrange(root, LayoutRect::at_origin(size), &mut pending)?;
+    engine.arrange(
+        root,
+        LayoutRect::at_origin(size),
+        [None, None],
+        &mut pending,
+    )?;
     let boxes = pending
         .into_iter()
         .map(|p| LayoutBox::new(p.id, p.rect, p.content, p.baseline, p.overflow))
@@ -195,6 +200,9 @@ pub(crate) struct Prepared {
     pub(crate) ratio: Option<PreparedRatio>,
 }
 
+/// HugContent 순환 검사(X.6.5)용 축별 콘텐츠 크기 조상.
+type CycleLink = [Option<StableId>; 2];
+
 /// 결과 box 조립 전 값.
 #[derive(Debug, Clone, Copy)]
 struct PendingBox {
@@ -215,6 +223,8 @@ pub(crate) struct Engine<'a> {
     content_memo: HashMap<(usize, [Option<LayoutUnit>; 2], IntrinsicMode), IntrinsicSize>,
     /// 콘텐츠 측정기(X.6.4).
     measurer: &'a dyn ContentMeasurer,
+    /// Grid item(node index)의 영역 축별 의존성(X.6.5, Grid 배치가 기록).
+    pub(crate) grid_areas: HashMap<usize, [AreaDependence; 2]>,
     /// 레이아웃을 실패시키지 않는 진단(배치 순서대로).
     pub(crate) diagnostics: Vec<LayoutDiagnostic>,
 }
@@ -259,6 +269,7 @@ impl<'a> Engine<'a> {
             memo: HashMap::new(),
             content_memo: HashMap::new(),
             measurer,
+            grid_areas: HashMap::new(),
             diagnostics: Vec::new(),
         })
     }
@@ -475,17 +486,96 @@ impl<'a> Engine<'a> {
         Ok(extent)
     }
 
+    /// node 자신의 크기가 콘텐츠로 정해지는 조상(축별, X.6.5). `link`는 node의 containing block이
+    /// 측정 기여를 통해 의존하는 콘텐츠 크기 조상입니다.
+    ///
+    /// - `HugContent` 축: node 자신(비율로 다른 `Fixed` 축에서 정해지면 제외).
+    /// - `Fill`·`Percentage` 축: containing block을 그대로 따르므로 `link`.
+    /// - `Fixed` 축: 없음.
+    fn content_source(&self, index: usize, link: CycleLink) -> CycleLink {
+        let prepared = &self.nodes[index];
+        let mut own = [None, None];
+        for axis in Axis::BOTH {
+            let i = axis.index();
+            own[i] = match prepared.sizing[i] {
+                AxisSizing::Hug => {
+                    let other = prepared.sizing[1 - i];
+                    if prepared.ratio.is_some() && matches!(other, AxisSizing::Fixed(_)) {
+                        None
+                    } else {
+                        Some(prepared.id)
+                    }
+                }
+                AxisSizing::Fill | AxisSizing::Percentage(_) => link[i],
+                AxisSizing::Fixed(_) => None,
+            };
+        }
+        own
+    }
+
+    /// 자식의 containing block이 측정 기여를 통해 의존하는 콘텐츠 크기 조상(축별, X.6.5).
+    ///
+    /// Free는 부모 extent에 기여하는 자식(끝 anchor·백분율 시작 anchor 없음)만, Stack·Overlay·
+    /// Constraint는 모든 자식이 부모 콘텐츠 box를 따릅니다. Grid item은 영역 track이 콘텐츠 기반이면
+    /// Grid 자신, fr track이면 Grid 축의 콘텐츠 크기 조상을 따릅니다.
+    fn child_link(&self, parent: usize, child: usize, own: CycleLink) -> CycleLink {
+        let mut link = [None, None];
+        for axis in Axis::BOTH {
+            let i = axis.index();
+            link[i] = match &self.node(parent).container {
+                ContainerLayout::Free => {
+                    if self.nodes[child].anchors[i].contributes_to_extent() {
+                        own[i]
+                    } else {
+                        None
+                    }
+                }
+                ContainerLayout::Stack(_)
+                | ContainerLayout::Overlay(_)
+                | ContainerLayout::Constraint => own[i],
+                ContainerLayout::Grid(_) => {
+                    let area = self.grid_areas.get(&child).copied().unwrap_or_default()[i];
+                    if area.content {
+                        Some(self.nodes[parent].id)
+                    } else if area.flexible {
+                        own[i]
+                    } else {
+                        None
+                    }
+                }
+            };
+        }
+        link
+    }
+
     /// node를 `rect`(부모 local 좌표)에 놓고 자손을 배치합니다. 자신의 overflow bounds를 반환합니다.
+    ///
+    /// `link`는 HugContent 순환 검사(X.6.5)용 축별 콘텐츠 크기 조상입니다.
     fn arrange(
         &mut self,
         index: usize,
         rect: LayoutRect,
+        link: CycleLink,
         out: &mut Vec<PendingBox>,
     ) -> Result<LayoutRect, LayoutError> {
         let prepared = &self.nodes[index];
         let id = prepared.id;
         let padding = prepared.padding;
+        let sizing = prepared.sizing;
         let size = rect.size();
+        // X.6.5: Percentage 축이 자신의 측정 기여로 크기가 정해지는 조상에 비례하면 순환입니다.
+        for axis in Axis::BOTH {
+            if let (AxisSizing::Percentage(_), Some(ancestor)) =
+                (sizing[axis.index()], link[axis.index()])
+            {
+                self.diagnostics.push(LayoutDiagnostic::HugContentCycle {
+                    ancestor,
+                    node: id,
+                    axis,
+                });
+            }
+        }
+        let own = self.content_source(index, link);
         let inner_width =
             sub_floor_zero(size.width(), padding.sum(Axis::Horizontal).map_err(at(id))?)
                 .map_err(at(id))?;
@@ -513,7 +603,8 @@ impl<'a> Engine<'a> {
         };
         let mut overflow = LayoutRect::at_origin(size);
         for (child, child_rect) in placements {
-            let child_overflow = self.arrange(child, child_rect, out)?;
+            let child_link = self.child_link(index, child, own);
+            let child_overflow = self.arrange(child, child_rect, child_link, out)?;
             let moved = child_overflow
                 .translated(child_rect.x(), child_rect.y())
                 .map_err(at(id))?;
@@ -686,5 +777,189 @@ mod tests {
             Err(LayoutError::DepthLimitExceeded { .. })
         ));
         assert_eq!(DEEP_LAYOUT_STACK_BYTES, 16 << 20);
+    }
+
+    // --- HugContent 순환 (X.6.5) ---
+
+    use crate::free::{AxisAnchors, Offset};
+    use crate::grid::GridItem;
+    use crate::intrinsic::{MeasuredContent, ShapeIntrinsic};
+    use stellar_core_types::value::Percentage;
+
+    fn pct(value: f32) -> SizingMode {
+        SizingMode::Percentage(Percentage::new(value).unwrap())
+    }
+
+    fn shape(width: f32, height: f32) -> LayoutContent {
+        LayoutContent::Measured(MeasuredContent::Shape(ShapeIntrinsic {
+            width: len(width),
+            height: len(height),
+        }))
+    }
+
+    fn cycle(ancestor: u64, node: u64, axis: Axis) -> LayoutDiagnostic {
+        LayoutDiagnostic::HugContentCycle {
+            ancestor: id(ancestor),
+            node: id(node),
+            axis,
+        }
+    }
+
+    /// root(id 1, sizing·container) 아래 자식들.
+    fn tree(
+        root_sizing: (SizingMode, SizingMode),
+        container: ContainerLayout,
+        children: Vec<LayoutNode>,
+    ) -> LayoutResult {
+        let mut root = LayoutNode::new(id(1))
+            .with_sizing(root_sizing.0, root_sizing.1)
+            .with_container(container);
+        for (i, child) in children.iter().enumerate() {
+            root = root.with_child(child.id, key(i as u32 + 1));
+        }
+        let mut nodes = vec![root];
+        nodes.extend(children);
+        compute_layout(&LayoutInput::new(id(1), nodes)).unwrap()
+    }
+
+    #[test]
+    fn parent_child_hug_cycle_fixture_is_reported() {
+        let hug = SizingMode::HugContent;
+        // parent Hug 너비 ↔ child 50% 너비: child는 콘텐츠 40으로 기여 → parent 40 → child 50% = 20.
+        let child = LayoutNode::new(id(2))
+            .with_sizing(pct(50.0), SizingMode::Fixed(len(10.0)))
+            .with_content(shape(40.0, 10.0));
+        let result = tree((hug, hug), ContainerLayout::Free, vec![child]);
+        assert_eq!(result.diagnostics(), &[cycle(1, 2, Axis::Horizontal)][..]);
+        let parent = result.get(id(1)).unwrap().local_rect();
+        let child = result.get(id(2)).unwrap().local_rect();
+        assert_eq!((parent.width(), child.width()), (px(40), px(20)));
+        // 진단 bytes 왕복.
+        let bytes = result.encode();
+        assert_eq!(LayoutResult::decode(&bytes).unwrap(), result);
+        assert!(cycle(1, 2, Axis::Vertical).to_string().contains("순환"));
+    }
+
+    #[test]
+    fn non_cycles_are_not_reported() {
+        let hug = SizingMode::HugContent;
+        let fixed = SizingMode::Fixed(len(100.0));
+        let leaf = |n: u64, width: SizingMode| {
+            LayoutNode::new(id(n))
+                .with_sizing(width, SizingMode::Fixed(len(10.0)))
+                .with_content(shape(40.0, 10.0))
+        };
+        // definite parent의 Percentage.
+        assert!(tree(
+            (fixed, fixed),
+            ContainerLayout::Free,
+            vec![leaf(2, pct(50.0))]
+        )
+        .diagnostics()
+        .is_empty());
+        // Hug parent의 Fill은 stretch(고정점)라 순환이 아님.
+        assert!(tree(
+            (hug, hug),
+            ContainerLayout::Free,
+            vec![leaf(2, SizingMode::Fill)]
+        )
+        .diagnostics()
+        .is_empty());
+        // Free에서 끝 anchor 자식은 parent extent에 기여하지 않아 순환이 아님.
+        let anchored = leaf(2, pct(50.0)).with_anchors(
+            AxisAnchors {
+                start: None,
+                end: Some(Offset::Length(len(0.0))),
+            },
+            AxisAnchors::NONE,
+        );
+        assert!(tree((hug, hug), ContainerLayout::Free, vec![anchored])
+            .diagnostics()
+            .is_empty());
+        // Fixed 중간 node가 사슬을 끊습니다.
+        let middle = LayoutNode::new(id(2))
+            .with_fixed_size(len(80.0), len(20.0))
+            .with_child(id(3), key(1));
+        let mut nodes = vec![
+            LayoutNode::new(id(1))
+                .with_sizing(hug, hug)
+                .with_child(id(2), key(1)),
+            middle,
+            leaf(3, pct(50.0)),
+        ];
+        assert!(compute_layout(&LayoutInput::new(id(1), nodes.clone()))
+            .unwrap()
+            .diagnostics()
+            .is_empty());
+        // 중간 node를 Fill로 바꾸면 Hug root까지 사슬이 이어집니다(조상 = root).
+        nodes[1] = nodes[1]
+            .clone()
+            .with_sizing(SizingMode::Fill, SizingMode::Fixed(len(20.0)));
+        assert_eq!(
+            compute_layout(&LayoutInput::new(id(1), nodes.clone()))
+                .unwrap()
+                .diagnostics(),
+            &[cycle(1, 3, Axis::Horizontal)][..]
+        );
+        // 중간 node가 Hug면 가장 가까운 콘텐츠 크기 조상(중간 node)이 보고됩니다.
+        nodes[1] = nodes[1]
+            .clone()
+            .with_sizing(hug, SizingMode::Fixed(len(20.0)));
+        assert_eq!(
+            compute_layout(&LayoutInput::new(id(1), nodes))
+                .unwrap()
+                .diagnostics(),
+            &[cycle(2, 3, Axis::Horizontal)][..]
+        );
+    }
+
+    #[test]
+    fn stack_and_grid_hug_cycles() {
+        let hug = SizingMode::HugContent;
+        // 가로 Hug Stack: cross(세로) 50% 자식 → 세로 순환.
+        let child = LayoutNode::new(id(2))
+            .with_sizing(SizingMode::Fixed(len(10.0)), pct(50.0))
+            .with_content(shape(10.0, 30.0));
+        let result = tree(
+            (hug, hug),
+            ContainerLayout::Stack(StackLayout::new(Axis::Horizontal)),
+            vec![child],
+        );
+        assert_eq!(result.diagnostics(), &[cycle(1, 2, Axis::Vertical)][..]);
+
+        // Grid: 고정 크기 grid라도 MaxContent 열의 50% item은 track ↔ item 순환.
+        let item = |track_column: u16| {
+            LayoutNode::new(id(2))
+                .with_grid(GridItem::at(track_column, 1, 1, 1))
+                .with_sizing(pct(50.0), SizingMode::Fixed(len(5.0)))
+                .with_content(shape(30.0, 5.0))
+        };
+        let grid = || {
+            ContainerLayout::Grid(GridLayout::new(
+                vec![
+                    TrackSize::MaxContent,
+                    TrackSize::Fixed(len(40.0)),
+                    TrackSize::Fraction(Scalar::new(1.0).unwrap()),
+                ],
+                vec![TrackSize::Fixed(len(5.0))],
+            ))
+        };
+        let fixed = SizingMode::Fixed(len(200.0));
+        assert_eq!(
+            tree((fixed, fixed), grid(), vec![item(1)]).diagnostics(),
+            &[cycle(1, 2, Axis::Horizontal)][..]
+        );
+        // 고정 track은 순환이 아님.
+        assert!(tree((fixed, fixed), grid(), vec![item(2)])
+            .diagnostics()
+            .is_empty());
+        // fr track: grid 너비가 definite면 순환이 아니고, Hug면 grid가 조상인 순환.
+        assert!(tree((fixed, fixed), grid(), vec![item(3)])
+            .diagnostics()
+            .is_empty());
+        assert_eq!(
+            tree((hug, fixed), grid(), vec![item(3)]).diagnostics(),
+            &[cycle(1, 2, Axis::Horizontal)][..]
+        );
     }
 }

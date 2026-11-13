@@ -5,8 +5,8 @@
 #       (primary FNV-1a 64 - check 다항식 hash). 값이 바뀌면 레이아웃 결과 계약이 바뀐 것입니다.
 schema=1
 inputs=b0cb91d5ccf87bd4-02a227b6a2e3a9f0
-free fixtures=50 boxes=235 diagnostics=0 digest=3e991d4b150429e0-1479ad896fff68f0
-stack fixtures=50 boxes=262 diagnostics=0 digest=a567a0a4d34226fd-000ae68720107809
-grid fixtures=50 boxes=260 diagnostics=0 digest=e365d5b8b6de6757-09c13dbce75fae6e
-overlay fixtures=50 boxes=190 diagnostics=0 digest=e125901b88535c15-00f2916b23761864
+free fixtures=50 boxes=235 diagnostics=9 digest=5ee192076cc75599-0f1ba46e8d778f5a
+stack fixtures=50 boxes=262 diagnostics=39 digest=52e982ce92441801-181fb3fba8a23936
+grid fixtures=50 boxes=260 diagnostics=60 digest=1da907eaeca17f3c-0cd429c9fbe45c0f
+overlay fixtures=50 boxes=190 diagnostics=4 digest=998e964e70784c98-118c00650151b919
 constraint fixtures=50 boxes=224 diagnostics=35 digest=71718e90912e0e5b-1565b08191f0ab78
