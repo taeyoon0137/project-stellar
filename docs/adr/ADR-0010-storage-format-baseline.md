@@ -127,8 +127,8 @@ generation manifest와 열기(V.4, V.6.6):
 
 정하지 않은 사항:
 
-- chunk 분할 임계치(V.6.4)와 작은 chunk 병합 기준(V.6.5)은 정하지 않았습니다. 분할 임계치 제안은
-  ADR-0012(Proposed)에 있으며 제품 소유자 승인 전입니다.
+- chunk 분할 임계치(V.6.4)와 작은 chunk 병합 기준(V.6.5)은 이 ADR이 아니라 ADR-0012(Accepted,
+  2026-11-14)가 정합니다.
 - §21.2는 current pointer를 `current.stellarref`라고 부르지만 구현(V.4.3)은 `design/current`를
   씁니다. 이 ADR은 구현 상태를 기록할 뿐 둘 중 어느 쪽으로 맞출지 정하지 않습니다.
 - ViewTree 외 kind의 payload 스키마와 압축 도입 여부는 정하지 않았습니다.
@@ -162,7 +162,7 @@ generation manifest와 열기(V.4, V.6.6):
 
 - 열기 비용은 manifest 크기와 chunk 파일 존재 확인에 비례하며 payload 전체 읽기를 포함하지 않습니다.
 - 내부 SHA-256(ADR-0004)과 파일별 `sync_all`이 저장 시간에 포함됩니다. chunk 크기 측정(V.6.3)은
-  ADR-0012의 입력입니다. 성능 예산 파일은 변경하지 않습니다.
+  ADR-0012의 입력입니다. 성능 예산 파일의 chunk 임계치 항목은 ADR-0012(V.6.4)가 추가했습니다.
 
 ## Security
 
