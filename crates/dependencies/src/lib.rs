@@ -49,5 +49,8 @@ pub mod entry_validation;
 /// cache index privacy mode와 local source config (XV.3.5).
 pub mod cache_privacy;
 
+/// resolver 그래프 → lock resolved entry 변환 (XV.4.1).
+pub mod lock;
+
 #[cfg(test)]
 pub(crate) mod test_support;
