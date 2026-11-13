@@ -28,7 +28,7 @@
 - **타입 강제**: 두 민감 타입은 `Debug`가 `<redacted>`만 출력하고 `Display`가 없어 `format!`에 쓸 수
   없습니다(compile_fail doctest). 원문은 II.3.2 `Sensitive::reveal`과 같은 이름의 `reveal()`로만
   얻습니다. 선언 전체 `Debug`도 자동으로 가려집니다.
-- **진단·telemetry 요약**: `DeclarationDiagnostic`(Display에 `repository=<redacted>`), 
+- **진단·telemetry 요약**: `DeclarationDiagnostic`(Display에 `repository=<redacted>`),
   `DeclarationTelemetry`(정적 문자열·불리언만 — II.3.2 `TelemetryEvent`와 같은 원칙).
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
