@@ -488,6 +488,10 @@ mod tests {
         );
         assert_eq!(
             run(&args(&["validate-commit-message", "Docs: x"]), &root()),
+            EXIT_OK
+        );
+        assert_eq!(
+            run(&args(&["validate-commit-message", "Style: x"]), &root()),
             EXIT_POLICY
         );
         assert_eq!(

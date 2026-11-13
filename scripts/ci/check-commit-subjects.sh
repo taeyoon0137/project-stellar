@@ -2,7 +2,8 @@
 #
 # check-commit-subjects.sh (I.4.4)
 #   기준 commit 이후 모든 non-merge commit subject를 `cargo xtask validate-commit-message`로
-#   검사합니다. 예외 prefix는 없습니다(Task(<WBS-ID>): <제목>만 허용).
+#   검사합니다. 허용 형식은 AGENTS.md 커밋 원칙과 같습니다:
+#   Task(<WBS-ID>): <제목> 또는 <Feat|Docs|Refactor|Fix|Chore|Test>: <제목>.
 #
 #   범위 결정:
 #     - PR: origin/<base>..HEAD

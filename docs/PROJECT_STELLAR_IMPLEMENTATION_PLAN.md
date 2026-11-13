@@ -18,6 +18,7 @@
 - **2026-06-23 — 커밋 규칙 고정:** 모든 작업 커밋 제목은 예외 없이 `Task(<WBS-ID>): <작업명>`을 사용합니다. `Docs:`, `Chore:`, 소문자 `task(...)`와 임의 유지보수 prefix는 허용하지 않습니다.
 - **2026-06-23 — I.2.1 원자화:** `I.2.1`은 TaskStatus Rust 데이터 모델만 정의합니다. YAML 파싱, 레코드 검증, 그래프 검증, 증거 검증, 계획 동기화는 별도 WBS로 분리했습니다.
 - **2026-11-14 — Windows 지원 보류(ADR-0006):** 당분간 macOS만 지원합니다. Windows 전용 행은 `[!]`(사용자 결정 차단)로 표기하고, 양 플랫폼 비교 행은 ADR-0006의 판정 규칙(IEEE 기본 연산만 쓰는 결과는 macOS 증거로 `[x]`, 플랫폼 의존 결과는 `[~]`)을 따릅니다. 코어는 플랫폼 중립을 유지합니다.
+- **2026-11-14 — 커밋 규칙 정합:** 지침 우선순위상 위인 `AGENTS.md`에 맞춰 WBS 작업은 `Task(<WBS-ID>)`, WBS 밖 유지보수는 `Feat:`·`Docs:`·`Refactor:`·`Fix:`·`Chore:`·`Test:`를 허용합니다. 2026-06-23 "커밋 규칙 고정"을 대체하며, `cargo xtask validate-commit-message`와 CI commit subject 검사도 같은 기준을 씁니다.
 
 ---
 
@@ -55,13 +56,13 @@
 5. 테스트 또는 재현 fixture를 먼저 추가하고 요구사항이 실패하는 것을 확인한 뒤 구현합니다. 단순 문서·설정 작업은 작업 행의 결정적 검증 명령을 먼저 정의합니다.
 6. `TODO`, `unimplemented!`, 빈 함수, 항상 성공하는 테스트를 남기지 않습니다. 의도적인 placeholder는 이름에 `Stub`을 포함하고 제한을 검증하는 테스트를 둡니다.
 7. 오류는 구조화된 타입 또는 명시된 종료 코드로 반환합니다. stderr 문자열만 남기고 성공 처리하지 않습니다.
-8. 성공 커밋 제목은 예외 없이 다음 정규식을 만족해야 합니다.
+8. 커밋 제목은 `AGENTS.md` 커밋 원칙에 따라 다음 정규식을 만족해야 합니다(Git이 만드는 `Revert "..."` 제목은 예외).
 
 ```regex
-^Task\([IVXLCDM]+\.[1-9][0-9]*\.[1-9][0-9]*\): .+$
+^(Task\([IVXLCDM]+\.[1-9][0-9]*\.[1-9][0-9]*\)|Feat|Docs|Refactor|Fix|Chore|Test): .+$
 ```
 
-9. `Docs:`, `Chore:`, `Fix:`, 소문자 `task(...)`, 승인되지 않은 prefix와 WBS 없는 커밋을 금지합니다. 병합 전 rebase 또는 squash로 모든 작업 커밋을 위 형식으로 정리합니다.
+9. WBS 작업 커밋은 반드시 `Task(<WBS-ID>): <제목>`을 씁니다. `Feat:`·`Docs:`·`Refactor:`·`Fix:`·`Chore:`·`Test:`는 WBS에 속하지 않는 유지보수 변경에만 씁니다. 소문자 `task(...)`와 그 밖의 prefix는 금지하고, `fixup!`·`squash!` 커밋은 병합 전 rebase 또는 squash로 정리합니다.
 10. 실패 시 기능 코드는 커밋하지 않고 `docs/task-reports/<WBS-ID>-blocked.md`만 작성합니다.
 11. 완료 보고서 `docs/task-reports/<WBS-ID>.md`에는 다음을 기록합니다.
     - 변경 파일 목록
@@ -190,7 +191,7 @@ tools/xtask/
 | I.2.14 | `[x]` | `docs/task-reports/BLOCKED_TEMPLATE.md`를 생성합니다. 실패 선행조건, 재현 명령, 필요한 결정·환경, 변경되지 않은 파일, 재개 조건을 고정합니다. | `[DEV-MAC]` 필수 heading fixture 통과. | I.2.13 |
 | I.2.15 | `[x]` | `tools/xtask/src/task_report/validate.rs`에 완료·blocked 보고서 validator를 구현합니다. template heading, WBS 일치, 검증 환경, 명령 종료 코드, artifact locator 형식을 검사합니다. | `[DEV-MAC]` heading·WBS·evidence를 하나씩 제거한 fixture가 실패. | I.2.13, I.2.14 |
 | I.2.16 | `[x]` | `.github/pull_request_template.md`에 WBS ID, 변경 경로, 명령·환경 증거, 파일 포맷·성능·보안 영향, 보고서 링크를 추가합니다. validator는 별도 함수로 구현하고 WBS 없는 body를 거부합니다. | `[DEV-MAC]` 정상 body 2개 통과, WBS·증거·보고서 각각 누락 fixture 실패. | I.2.15 |
-| I.2.17 | `[x]` | `tools/xtask/src/commit_message.rs`에 exact commit subject validator를 구현합니다. 허용 형식은 `Task(<WBS-ID>): <비어 있지 않은 제목>` 하나뿐입니다. merge·revert·Docs·Chore·소문자 task 예외를 만들지 않습니다. | `[DEV-MAC]` 올바른 Roman ID 3개 통과; lowercase, Arabic Phase, Docs, Chore, 빈 제목, malformed ID fixture 실패. | I.2.2 |
+| I.2.17 | `[x]` | `tools/xtask/src/commit_message.rs`에 commit subject validator를 구현합니다. 허용 형식은 `Task(<WBS-ID>): <비어 있지 않은 제목>`과 `AGENTS.md` 유지보수 형식 `<Feat·Docs·Refactor·Fix·Chore·Test>: <비어 있지 않은 제목>`입니다. Git `Revert "..."` 외에 merge·fixup·소문자 task 예외를 만들지 않습니다. | `[DEV-MAC]` 올바른 Roman ID 3개와 유지보수 prefix 6개 통과; lowercase, Arabic Phase, 미승인 prefix, 빈 제목, malformed ID fixture 실패. | I.2.2 |
 
 ### I.3 버전·의존성·ADR 정책
 
