@@ -160,6 +160,71 @@ impl DependencyGraph {
     ) -> impl Iterator<Item = &'a DependencyEdge> + 'a {
         self.edges.iter().filter(move |e| &e.child == key)
     }
+
+    /// 같은 LibraryId의 resolved commit이 둘 이상인 library마다 경고 하나(XV.2.5).
+    ///
+    /// 다중 버전은 오류가 아닙니다(아키텍처 30.3: 버전별 격리, 자동 단일 버전 통합 금지). 결과는
+    /// LibraryId 순, 각 경고의 버전은 commit 순, 경로는 경로 순으로 정렬합니다.
+    pub fn duplicate_library_versions(&self) -> Vec<DuplicateLibraryVersionWarning> {
+        let mut by_library: BTreeMap<LibraryId, Vec<&DependencyNodeKey>> = BTreeMap::new();
+        for key in self.nodes.keys() {
+            by_library.entry(key.library_id).or_default().push(key);
+        }
+        by_library
+            .into_iter()
+            .filter(|(_, keys)| keys.len() > 1)
+            .map(|(library_id, keys)| DuplicateLibraryVersionWarning {
+                library_id,
+                versions: keys
+                    .into_iter()
+                    .map(|key| {
+                        let mut paths: Vec<DependencyPath> =
+                            self.edges_to(key).map(|e| e.path.clone()).collect();
+                        paths.sort();
+                        paths.dedup();
+                        DuplicateVersion {
+                            commit: key.commit.clone(),
+                            paths,
+                        }
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+}
+
+/// 다중 버전 경고의 버전 하나.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateVersion {
+    /// resolved commit.
+    pub commit: CommitId,
+    /// 이 버전에 도달한 dependency path(정렬).
+    pub paths: Vec<DependencyPath>,
+}
+
+/// 같은 LibraryId가 여러 resolved commit으로 그래프에 존재함(경고, XV.2.5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DuplicateLibraryVersionWarning {
+    /// library 식별자.
+    pub library_id: LibraryId,
+    /// 버전별 commit과 경로(commit 순).
+    pub versions: Vec<DuplicateVersion>,
+}
+
+impl fmt::Display for DuplicateLibraryVersionWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "library {}가 {}개 버전으로 함께 로드됩니다",
+            self.library_id,
+            self.versions.len()
+        )?;
+        for version in &self.versions {
+            let paths: Vec<String> = version.paths.iter().map(ToString::to_string).collect();
+            write!(f, "; {} ← {}", version.commit, paths.join(", "))?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -167,8 +232,63 @@ mod tests {
     use std::collections::{BTreeMap, HashSet};
 
     use super::*;
-    use crate::declaration::fixtures::{commit, library};
+    use crate::declaration::fixtures::{commit, decl, library};
     use crate::declaration::{LogicalName, RefName, VersionSelector};
+    use crate::resolver::fake::{resolve, Catalog};
+
+    const A: &str = "https://e.com/a.git";
+    const B: &str = "https://e.com/b.git";
+    const C: &str = "https://e.com/c.git";
+
+    fn path(names: &[&str]) -> DependencyPath {
+        DependencyPath::from_names(names.iter().map(|n| LogicalName::new(n).unwrap()).collect())
+    }
+
+    #[test]
+    fn two_versions_of_one_library_yield_exactly_one_warning() {
+        // root → a → c v1, root → b → c v2.
+        let mut catalog = Catalog::default();
+        catalog.publish(C, 3, "v1", 0xc1, vec![]);
+        catalog.publish(C, 3, "v2", 0xc2, vec![]);
+        catalog.publish(A, 1, "v1", 0xa1, vec![decl("c", 3, C, "v1")]);
+        catalog.publish(B, 2, "v1", 0xb1, vec![decl("c", 3, C, "v2")]);
+        let graph = resolve(&catalog, &[decl("a", 1, A, "v1"), decl("b", 2, B, "v1")])
+            .expect("다중 버전은 오류가 아님");
+        assert_eq!(graph.node_count(), 4);
+
+        let warnings = graph.duplicate_library_versions();
+        assert_eq!(
+            warnings,
+            [DuplicateLibraryVersionWarning {
+                library_id: library(3),
+                versions: vec![
+                    DuplicateVersion {
+                        commit: commit(0xc1),
+                        paths: vec![path(&["a", "c"])],
+                    },
+                    DuplicateVersion {
+                        commit: commit(0xc2),
+                        paths: vec![path(&["b", "c"])],
+                    },
+                ],
+            }]
+        );
+        let text = warnings[0].to_string();
+        assert!(text.contains("2개 버전"));
+        assert!(text.contains("a > c") && text.contains("b > c"));
+        assert!(!text.contains("e.com"));
+    }
+
+    #[test]
+    fn single_version_paths_produce_no_warning() {
+        // diamond(같은 버전) → 경고 없음.
+        let mut catalog = Catalog::default();
+        catalog.publish(C, 3, "v1", 0xc1, vec![]);
+        catalog.publish(A, 1, "v1", 0xa1, vec![decl("c", 3, C, "v1")]);
+        catalog.publish(B, 2, "v1", 0xb1, vec![decl("c", 3, C, "v1")]);
+        let graph = resolve(&catalog, &[decl("a", 1, A, "v1"), decl("b", 2, B, "v1")]).unwrap();
+        assert!(graph.duplicate_library_versions().is_empty());
+    }
 
     #[test]
     fn same_library_two_versions_are_distinct_keys() {
