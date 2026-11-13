@@ -318,6 +318,11 @@ impl<K: Ord, C: PartialEq, V> LayoutCache<K, C, V> {
         }
     }
 
+    /// hit·miss를 세지 않고 key의 값을 봅니다.
+    pub fn peek(&self, key: &K) -> Option<&V> {
+        self.entries.get(key).map(|(_, value)| value)
+    }
+
     /// 항목을 넣습니다(같은 key는 바꿈).
     pub fn insert(&mut self, key: K, check: C, value: V) {
         self.entries.insert(key, (check, value));

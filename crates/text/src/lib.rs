@@ -51,5 +51,8 @@ pub mod caret;
 /// shaping·줄 레이아웃 cache key (X.10.5).
 pub mod cache;
 
+/// paragraph 단위 증분 텍스트 레이아웃 (X.10.6).
+pub mod incremental;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;

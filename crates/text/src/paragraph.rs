@@ -64,6 +64,8 @@ pub enum TextLayoutError {
     },
     /// 너비 제약이 음수입니다.
     NegativeWidth,
+    /// 증분 레이아웃이 방금 채운 cache 항목을 찾지 못했습니다(내부 불변식 위반, panic 대신 오류).
+    CacheEntryMissing,
 }
 
 impl fmt::Display for TextLayoutError {
@@ -77,6 +79,9 @@ impl fmt::Display for TextLayoutError {
                 write!(f, "paragraph 텍스트 {offset} 위치에 '\\n'이 있습니다")
             }
             TextLayoutError::NegativeWidth => f.write_str("너비 제약은 음수일 수 없습니다"),
+            TextLayoutError::CacheEntryMissing => {
+                f.write_str("증분 레이아웃 cache 항목이 없습니다(내부 불변식 위반)")
+            }
         }
     }
 }
