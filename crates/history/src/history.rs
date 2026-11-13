@@ -11,6 +11,8 @@
 //! 취소된 조작은 기록하지 않음).
 
 use stellar_commands::change::ChangeSet;
+use stellar_commands::id::CommandOrigin;
+use stellar_commands::selection::{SelectionPolicy, SetSelection, WindowViewState};
 use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
 use stellar_core_types::clock::MonotonicClock;
@@ -25,6 +27,15 @@ use crate::grouping::HistoryGroupingPolicy;
 struct AppliedPreview {
     forward: CommandTransaction,
     inverse: CommandTransaction,
+}
+
+/// undo 한 번의 결과(VII.4.6).
+#[derive(Debug, Clone, PartialEq)]
+pub struct UndoOutcome {
+    /// 되돌린 항목.
+    pub entry: HistoryEntry,
+    /// 문서 항목이면 역 transaction의 change set, 선택 항목이면 `None`.
+    pub changes: Option<ChangeSet>,
 }
 
 /// 마지막 항목에 이어 합칠 수 있는 입력 묶음(VII.4.3~).
@@ -159,6 +170,76 @@ impl History {
             last_nanos: now,
         });
         Ok(applied.changes)
+    }
+
+    /// 선택 변경 event를 view 상태에 적용하고 문서 편집과 **같은 시간순 stack**에 한 항목으로
+    /// 기록합니다(VII.4.6). 걸러진 결과가 현재 선택과 같으면 기록하지 않고 `None`입니다.
+    pub fn record_selection(
+        &mut self,
+        view: &mut WindowViewState,
+        doc: &DocumentState,
+        event: &SetSelection,
+        policy: SelectionPolicy,
+        origin: CommandOrigin,
+    ) -> Result<Option<HistorySequence>, HistoryError> {
+        if self.preview.is_some() {
+            return Err(HistoryError::PreviewActive);
+        }
+        if event.filtered(doc.model(), policy) == *view.selection() {
+            return Ok(None);
+        }
+        let sequence = self.sequences.allocate()?;
+        let applied = event.apply(view, doc.model(), policy);
+        self.open_group = None;
+        self.entries.push(HistoryEntry {
+            sequence,
+            origin,
+            grouping: None,
+            payload: HistoryPayload::Selection {
+                forward: applied.forward,
+                inverse: applied.inverse,
+            },
+        });
+        Ok(Some(sequence))
+    }
+
+    /// 마지막 항목 하나를 종류와 무관하게 되돌립니다(VII.4.6).
+    ///
+    /// 문서 항목은 역 transaction을 현재 revision으로 rebase해 실행하고, 그 결과 사라진 node를 선택에서
+    /// 정리합니다(system event, 항목 없음). 선택 항목은 이전 선택으로 되돌립니다. 되돌릴 항목이 없으면
+    /// `None`, 역 실행이 실패하면 항목을 stack에 그대로 두고 오류를 반환합니다.
+    pub fn undo(
+        &mut self,
+        doc: &mut DocumentState,
+        view: &mut WindowViewState,
+        policy: SelectionPolicy,
+    ) -> Result<Option<UndoOutcome>, HistoryError> {
+        if self.preview.is_some() {
+            return Err(HistoryError::PreviewActive);
+        }
+        let Some(entry) = self.entries.pop() else {
+            return Ok(None);
+        };
+        self.open_group = None;
+        let changes = match &entry.payload {
+            HistoryPayload::Document { inverse, .. } => {
+                match doc.execute_transaction(&inverse.rebased(doc.revision())) {
+                    Ok(applied) => {
+                        view.prune_removed(&applied.changes);
+                        Some(applied.changes)
+                    }
+                    Err(error) => {
+                        self.entries.push(entry);
+                        return Err(error.into());
+                    }
+                }
+            }
+            HistoryPayload::Selection { inverse, .. } => {
+                inverse.apply(view, doc.model(), policy);
+                None
+            }
+        };
+        Ok(Some(UndoOutcome { entry, changes }))
     }
 
     /// preview가 진행 중인지.
@@ -917,6 +998,124 @@ mod tests {
             let t = tx(&doc, 11_001, Command::rename_node(sid(12), "다음"));
             history.record_document(&mut doc, &t, None).unwrap();
             assert_eq!(history.len(), 2);
+        }
+    }
+
+    mod unified {
+        //! 선택·문서 편집 통합 stack fixture(VII.4.6).
+
+        use super::super::test_fixtures::*;
+        use super::super::*;
+        use stellar_commands::command::Command;
+        use stellar_commands::id::WindowSessionId;
+        use stellar_commands::node_ops::InsertNode;
+        use stellar_commands::selection::Selection;
+
+        fn select(
+            history: &mut History,
+            view: &mut WindowViewState,
+            doc: &DocumentState,
+            ids: &[u64],
+        ) -> Option<HistorySequence> {
+            let event = SetSelection::new(Selection::new(ids.iter().map(|i| sid(*i)), None));
+            history
+                .record_selection(
+                    view,
+                    doc,
+                    &event,
+                    SelectionPolicy::default(),
+                    CommandOrigin::User,
+                )
+                .unwrap()
+        }
+
+        #[test]
+        fn selection_edit_selection_undo_in_order() {
+            // 검증 기준(VII.4.6): selection→edit→selection 순서 undo fixture 통과.
+            let mut doc = small_state();
+            let mut view = WindowViewState::new(WindowSessionId::from_stable_id(sid(500)));
+            let mut history = History::new();
+            let policy = SelectionPolicy::default();
+            let original_name = doc.model().record(sid(11)).unwrap().display_name;
+
+            select(&mut history, &mut view, &doc, &[11]);
+            let t = tx(&doc, 12_000, Command::rename_node(sid(11), "편집"));
+            history.record_document(&mut doc, &t, None).unwrap();
+            select(&mut history, &mut view, &doc, &[12, 13]);
+            let kinds: Vec<bool> = history
+                .entries()
+                .iter()
+                .map(HistoryEntry::is_selection)
+                .collect();
+            assert_eq!(kinds, vec![true, false, true], "같은 시간순 stack");
+            let sequences: Vec<u64> = history.entries().iter().map(|e| e.sequence.get()).collect();
+            assert_eq!(sequences, vec![1, 2, 3]);
+
+            // 1) 마지막 선택을 되돌림 → [11], 문서 그대로.
+            let outcome = history.undo(&mut doc, &mut view, policy).unwrap().unwrap();
+            assert!(outcome.entry.is_selection() && outcome.changes.is_none());
+            assert_eq!(view.selection().ids(), &[sid(11)]);
+            assert_eq!(doc.model().record(sid(11)).unwrap().display_name, "편집");
+            // 2) 편집을 되돌림 → 이름 원복, 선택 그대로.
+            let outcome = history.undo(&mut doc, &mut view, policy).unwrap().unwrap();
+            assert!(outcome.entry.is_document());
+            assert_eq!(
+                doc.model().record(sid(11)).unwrap().display_name,
+                original_name
+            );
+            assert_eq!(view.selection().ids(), &[sid(11)]);
+            // 3) 첫 선택을 되돌림 → 빈 선택.
+            history.undo(&mut doc, &mut view, policy).unwrap().unwrap();
+            assert!(view.selection().is_empty());
+            assert!(history.is_empty());
+            assert_eq!(history.undo(&mut doc, &mut view, policy).unwrap(), None);
+        }
+
+        #[test]
+        fn unchanged_selection_is_not_recorded_and_undo_prunes_removed_nodes() {
+            let mut doc = small_state();
+            let mut view = WindowViewState::new(WindowSessionId::from_stable_id(sid(500)));
+            let mut history = History::new();
+            let policy = SelectionPolicy::default();
+            // 삽입한 node를 선택한 뒤 삽입을 undo하면 선택에서도 사라집니다(system 정리, 항목 없음).
+            let t = tx(
+                &doc,
+                13_000,
+                Command::InsertNode(InsertNode::single(frame(20, Some(12), 0x10))),
+            );
+            history.record_document(&mut doc, &t, None).unwrap();
+            select(&mut history, &mut view, &doc, &[20]);
+            assert_eq!(
+                select(&mut history, &mut view, &doc, &[20]),
+                None,
+                "같은 선택은 기록 안 함"
+            );
+            assert_eq!(
+                select(&mut history, &mut view, &doc, &[99]),
+                Some(HistorySequence::from_u64(3))
+            );
+            assert!(view.selection().is_empty(), "없는 id는 걸러짐");
+            history.undo(&mut doc, &mut view, policy).unwrap();
+            assert_eq!(view.selection().ids(), &[sid(20)]);
+            history.undo(&mut doc, &mut view, policy).unwrap(); // 선택 [20] 기록 되돌림
+            assert!(view.selection().is_empty());
+            select(&mut history, &mut view, &doc, &[20, 12]);
+            let entries_before = history.len();
+            // 선택 기록을 되돌리고, 삽입을 되돌리면 20은 문서·선택에서 사라집니다.
+            history.undo(&mut doc, &mut view, policy).unwrap();
+            SetSelection::new(Selection::new([sid(20), sid(12)], None)).apply(
+                &mut view,
+                doc.model(),
+                policy,
+            );
+            history.undo(&mut doc, &mut view, policy).unwrap();
+            assert!(!doc.model().contains(sid(20)));
+            assert_eq!(view.selection().ids(), &[sid(12)], "삭제된 id만 정리");
+            assert_eq!(
+                history.len(),
+                entries_before - 2,
+                "정리는 항목을 만들지 않음"
+            );
         }
     }
 }
