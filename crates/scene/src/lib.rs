@@ -45,6 +45,9 @@ pub mod spatial;
 /// viewport·clip 기반 가시 후보 계산 (XI.3.2).
 pub mod visibility;
 
+/// broad-phase hit test (XI.3.3).
+pub mod hit_test;
+
 /// 테스트 전용 scene fixture 생성기 (XI.1.2).
 #[cfg(test)]
 mod fixtures;
