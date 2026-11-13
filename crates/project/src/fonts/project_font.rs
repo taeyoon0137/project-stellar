@@ -697,6 +697,11 @@ pub fn import_project_font(
 
 #[cfg(test)]
 mod tests {
+
+    /// 외부 원본 import에는 기기별 출처 key가 필요합니다(XIII.5.1 보안 수정). 테스트는 매번 새 key를 씁니다.
+    fn test_origin_key() -> stellar_assets::origin::OriginKey {
+        stellar_assets::origin::OriginKey::generate().expect("출처 key 생성")
+    }
     use super::*;
     use crate::fonts::sfnt::EmbeddingLevel;
     use crate::fonts::test_fixtures::{
@@ -771,7 +776,7 @@ mod tests {
         let bytes = ttc(&family_faces("Fixture Sans"));
         let source = outside.path.join("Fixture Sans.ttc");
         std::fs::write(&source, &bytes).unwrap();
-        let store = AssetStore::new(&project.path);
+        let store = AssetStore::new(&project.path).with_origin_key(test_origin_key());
 
         let imported =
             import_project_font(&store, &shipped_policy(), asset(1), &source, license()).unwrap();
@@ -838,7 +843,7 @@ mod tests {
             sfnt_face(SIG_TRUETYPE, &family_faces("Fixture Sans")[0]),
         )
         .unwrap();
-        let store = AssetStore::new(&project.path);
+        let store = AssetStore::new(&project.path).with_origin_key(test_origin_key());
         let imported = import_project_font(
             &store,
             &shipped_policy(),
@@ -856,7 +861,7 @@ mod tests {
     #[test]
     fn non_fonts_and_disallowed_types_are_rejected_before_writing() {
         let project = TempDir::new("project");
-        let store = AssetStore::new(&project.path);
+        let store = AssetStore::new(&project.path).with_origin_key(test_origin_key());
         let text = project.path.join("notes.ttf");
         std::fs::write(&text, b"not a font at all").unwrap();
         assert_eq!(
@@ -1141,7 +1146,7 @@ mod tests {
     #[test]
     fn license_state_is_stored_and_never_determined_automatically() {
         let project = TempDir::new("project");
-        let store = AssetStore::new(&project.path);
+        let store = AssetStore::new(&project.path).with_origin_key(test_origin_key());
         let names = &family_faces("Fixture Sans")[0];
         // 파일이 "Restricted License"·"Installable"을 선언해도 상태는 Unknown으로 시작합니다.
         for (fs_type, level) in [

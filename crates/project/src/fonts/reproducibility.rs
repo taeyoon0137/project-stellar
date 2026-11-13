@@ -236,6 +236,11 @@ pub fn check_font_reproducibility<R: FontRegistry + ?Sized>(
 
 #[cfg(test)]
 mod tests {
+
+    /// 외부 원본 import에는 기기별 출처 key가 필요합니다(XIII.5.1 보안 수정). 테스트는 매번 새 key를 씁니다.
+    fn test_origin_key() -> stellar_assets::origin::OriginKey {
+        stellar_assets::origin::OriginKey::generate().expect("출처 key 생성")
+    }
     use super::*;
     use crate::fonts::license::FontLicenseInfo;
     use crate::fonts::project_font::import_project_font;
@@ -273,7 +278,7 @@ mod tests {
         let source = project.path.join("FixtureSans-Regular.ttf");
         std::fs::write(&source, &original).unwrap();
         let record = import_project_font(
-            &AssetStore::new(&project.path),
+            &AssetStore::new(&project.path).with_origin_key(test_origin_key()),
             &shipped_policy(),
             AssetId::from_bytes([1; 16]),
             &source,
