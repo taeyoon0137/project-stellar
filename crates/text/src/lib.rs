@@ -48,5 +48,8 @@ pub mod text_layout;
 /// caret 위치·선택 사각형·hit test cluster mapping (X.10.3).
 pub mod caret;
 
+/// shaping·줄 레이아웃 cache key (X.10.5).
+pub mod cache;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;
