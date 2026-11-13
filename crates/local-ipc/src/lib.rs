@@ -24,6 +24,22 @@ pub mod nonce;
 #[cfg(target_os = "macos")]
 pub mod handshake;
 
+/// 연결 상대 자격 증명: effective uid와 audit token (XIX.1.6).
+#[cfg(target_os = "macos")]
+pub mod peer;
+
+/// 연결 상대 코드 서명 신원 검사 (XIX.1.6).
+#[cfg(target_os = "macos")]
+pub mod code_identity;
+
+/// IPC 연결 상대 인증 기준 (XIX.1.6).
+#[cfg(target_os = "macos")]
+pub mod auth;
+
+/// 앱 측 IPC endpoint와 IPC I/O 스레드 (XIX.1.6).
+#[cfg(target_os = "macos")]
+pub mod listener;
+
 /// 앱 측 IPC test double (XIX.1.2, XIX.1.3).
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) mod test_support;
