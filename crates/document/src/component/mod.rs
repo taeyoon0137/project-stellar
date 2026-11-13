@@ -33,3 +33,6 @@ pub mod detach;
 
 /// Slot content 삽입·삭제·재정렬 command (IX.3.3).
 pub mod slot_commands;
+
+/// View Variant 희소 patch 묶음 (IX.7.3).
+pub mod variant_override;
