@@ -6,6 +6,11 @@
 //! (XV.2.6). [`DeclNode`] 형식은 다음과 같고, 텍스트 기록은 project crate의 canonical YAML
 //! writer(IV.1.5)가 담당합니다.
 //!
+//! `stellar.lock.yaml` entry 형식은 이 모델 하나뿐입니다(ADR-0016). project의 IV.1.6 `Lockfile`은
+//! [`LockEntry`]를 resolved entry 타입으로 쓰고 [`LockDocument::from_node`]로 검증합니다. IV.1.6의
+//! 여섯 필드 이름(`logical_id`, `source`, `exact_commit`, `content_hash`, `schema_version`,
+//! `dependency_path`)은 그대로 유지합니다.
+//!
 //! ```yaml
 //! schema_version: 1
 //! resolved:
@@ -297,6 +302,11 @@ impl LockDocument {
     /// entry(정렬 순).
     pub fn entries(&self) -> &[LockEntry] {
         &self.entries
+    }
+
+    /// entry 소유권을 넘깁니다(정렬 순).
+    pub fn into_entries(self) -> Vec<LockEntry> {
+        self.entries
     }
 
     /// canonical [`DeclNode`] 문서(`schema_version`, `resolved`).

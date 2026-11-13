@@ -28,9 +28,11 @@ use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use stellar_dependencies::content_hash::ContentHashText;
 use stellar_dependencies::declaration::{
     LogicalName, RefName, RepositoryUrl, SourceKind, VersionSelector,
 };
+use stellar_dependencies::graph::DependencyPath;
 use stellar_project::lock::{Lockfile, ResolvedDependency};
 use stellar_project::manifest::{Dependency, Manifest, ProjectMeta, TargetProfile};
 use stellar_project::yaml::loader::{
@@ -503,12 +505,23 @@ fn model_seeds() -> Vec<Vec<u8>> {
     let lock = Lockfile {
         schema_version: 1,
         resolved: vec![ResolvedDependency {
-            logical_id: "design-system".to_string(),
-            source: "git".to_string(),
-            exact_commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
-            content_hash: "sha256:00ff".to_string(),
+            library_id: "0195c530-3acd-7bc1-8414-c213f61cb966"
+                .parse()
+                .expect("library id"),
+            source: SourceKind::Git,
+            repository: RepositoryUrl::new("https://example.invalid/design-system.git")
+                .expect("url"),
+            requested: VersionSelector::Tag(RefName::new("v2.4.0").expect("tag")),
+            exact_commit: "0123456789abcdef0123456789abcdef01234567"
+                .parse()
+                .expect("commit"),
+            content_hash: ContentHashText::from_sha256_digest([0x00; 32]),
             schema_version: 1,
-            dependency_path: vec!["icons".to_string(), "design-system".to_string()],
+            dependency_path: DependencyPath::from_names(vec![
+                LogicalName::new("icons").expect("name"),
+                LogicalName::new("design-system").expect("name"),
+            ]),
+            dependencies: Vec::new(),
         }],
     };
     vec![
