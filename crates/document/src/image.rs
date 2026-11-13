@@ -7,8 +7,9 @@ use std::fmt;
 
 use stellar_core_types::color::ColorSpace;
 use stellar_core_types::ids::StableId;
-use stellar_core_types::reference::AssetRef;
-use stellar_core_types::value::{FiniteF32, Size2};
+use stellar_core_types::property::{PropertyKey, PropertyPath};
+use stellar_core_types::reference::{AssetRef, UnresolvedRef};
+use stellar_core_types::value::{FiniteF32, Rect, Size2, Vec2};
 
 /// Image payload 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,6 +208,48 @@ impl ImagePayload {
     }
 }
 
+// --- 누락 asset (VI.8.2) ---
+
+/// Image 속성 key: asset 참조(진단 위치).
+pub const IMAGE_PROP_ASSET: PropertyKey = PropertyKey(0x0601);
+
+/// asset 해석 결과.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImageResolution {
+    /// asset이 있어 그릴 수 있음.
+    Ready(AssetRef),
+    /// asset이 없음 — node는 **유효**하며, 이는 missing resource 진단입니다.
+    /// 렌더러는 placeholder를 같은 bounds에 그립니다.
+    MissingResource(UnresolvedRef),
+}
+
+impl ImagePayload {
+    /// asset 존재 여부를 해석합니다. `asset_exists`는 asset store 조회입니다.
+    ///
+    /// 누락은 invalid node가 아니라 `PropertyPath(image, ASSET)` 위치의 미해결 참조
+    /// 진단(III.2.4)입니다.
+    pub fn resolve_asset(
+        &self,
+        image_id: StableId,
+        asset_exists: impl Fn(StableId) -> bool,
+    ) -> ImageResolution {
+        if asset_exists(self.asset.id()) {
+            ImageResolution::Ready(self.asset)
+        } else {
+            ImageResolution::MissingResource(
+                self.asset
+                    .unresolved_at(PropertyPath::with_keys(image_id, vec![IMAGE_PROP_ASSET])),
+            )
+        }
+    }
+
+    /// layout bounds(shape local 원점 기준). asset 존재 여부와 **무관**하게 payload의
+    /// 배치 상자 크기에서만 계산하므로 asset이 사라져도 layout이 흔들리지 않습니다.
+    pub fn layout_bounds(&self) -> Rect {
+        Rect::new(Vec2::ZERO, self.size)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,5 +295,32 @@ mod tests {
             ImagePayload::decode(&nan).unwrap_err(),
             ImageError::NonFinite
         );
+    }
+
+    #[test]
+    fn missing_asset_keeps_layout_bounds() {
+        // 검증 기준(VI.8.2): 에셋 누락 전후 layout bounds 동일.
+        use stellar_core_types::reference::ExpectedRefType;
+        let image_id = StableId::new_v7(9, 0, 9);
+        let payload = ImagePayload::new(asset(1), Size2::new(320.0, 180.0).unwrap());
+
+        let present = payload.resolve_asset(image_id, |_| true);
+        assert_eq!(present, ImageResolution::Ready(asset(1)));
+        let bounds_present = payload.layout_bounds();
+
+        let missing = payload.resolve_asset(image_id, |_| false);
+        let ImageResolution::MissingResource(unresolved) = missing else {
+            panic!("missing resource 진단이어야 함");
+        };
+        assert_eq!(unresolved.original_id(), asset(1).id());
+        assert_eq!(unresolved.expected(), ExpectedRefType::Asset);
+        assert_eq!(
+            unresolved.location(),
+            &PropertyPath::with_keys(image_id, vec![IMAGE_PROP_ASSET])
+        );
+        // node는 유효하게 남고 bounds는 그대로.
+        assert_eq!(payload.layout_bounds(), bounds_present);
+        assert_eq!(bounds_present.size(), Size2::new(320.0, 180.0).unwrap());
+        assert!(ImagePayload::decode(&payload.encode()).is_ok());
     }
 }
