@@ -22,6 +22,8 @@ pub enum CatalogError {
     DuplicateAssetId(AssetId),
     /// 등록되지 않은 AssetId입니다.
     UnknownAssetId(AssetId),
+    /// 변경의 `previous`가 현재 record와 다릅니다(이미 적용됐거나 다른 변경이 먼저 적용됨).
+    StaleUpdate(AssetId),
 }
 
 impl fmt::Display for CatalogError {
@@ -29,6 +31,9 @@ impl fmt::Display for CatalogError {
         match self {
             CatalogError::DuplicateAssetId(id) => write!(f, "이미 등록된 AssetId입니다: {id}"),
             CatalogError::UnknownAssetId(id) => write!(f, "등록되지 않은 AssetId입니다: {id}"),
+            CatalogError::StaleUpdate(id) => {
+                write!(f, "현재 record와 맞지 않는 변경입니다: {id}")
+            }
         }
     }
 }
@@ -59,6 +64,11 @@ impl AssetCatalog {
     /// AssetId의 record.
     pub fn get(&self, id: &AssetId) -> Option<&AssetRecord> {
         self.records.get(id)
+    }
+
+    /// 등록된 AssetId의 record를 교체합니다(검사는 호출자 — `apply_update`, XIII.5.5).
+    pub(crate) fn replace(&mut self, id: AssetId, record: AssetRecord) {
+        self.records.insert(id, record);
     }
 
     /// AssetId를 제거하고 record를 돌려줍니다. content 파일은 건드리지 않습니다(GC 담당).

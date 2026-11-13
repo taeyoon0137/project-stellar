@@ -23,3 +23,6 @@ pub mod catalog;
 
 /// 에셋 streaming atomic write — temp+fsync+atomic rename (XIII.5.4).
 pub mod atomic_write;
+
+/// `Update from Source` — 원본 재import와 AssetRecord 참조 변경 값 (XIII.5.5).
+pub mod update_source;
