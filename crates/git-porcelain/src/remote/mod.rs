@@ -15,6 +15,9 @@ use crate::ops::{run_ok, GitOpError, ParseFailure};
 use crate::runner::argv;
 use crate::trust::GatedGitRunner;
 
+/// GitHub URL 형식 검증(XIV.9.2).
+pub mod github;
+
 /// 민감값으로 다루는 remote URL.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct RemoteUrl(String);
