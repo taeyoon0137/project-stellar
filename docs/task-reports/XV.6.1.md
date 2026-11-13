@@ -59,3 +59,10 @@
 ## 상태 정정(통합 리뷰, 2026-11-14)
 
 - `[x]` → `[~]`: XV.1.1과 같은 이유로 실제 stellar.yaml 파서 연결이 남았습니다.
+
+## 상태 복원(deps_wiring lane, 2026-11-14)
+
+- `[~]` → `[x]`: 엄격 선행 XV.1.1 `[x]`.
+- 실제 파서 경로 검증: 실제 파서가 읽은 `local_override`를 `Manifest::local_overrides`가 logical name → root로 매핑하고, 프로젝트 내부 대상·형식 위반(`\`, 빈 component, `.` component)을 경로와 함께 거부(`manifest::tests::local_override_schema_is_validated_through_stellar_yaml_parser`).
+- 공통 근거: `Fix: stellar.yaml 의존성 선언을 실제 매니페스트 파서에 연결`(리뷰 P2), `Fix: stellar.lock.yaml entry 형식을 IV.1.6 모델 하나로 통합`(리뷰 P3, ADR-0016), `Fix: resolver library 매니페스트 읽기를 실제 stellar.yaml 파서로 연결`.
+- 실행(`DEV-MAC`): `cargo test -p stellar-project` lib 261 passed·통합 17 passed, `cargo test -p stellar-dependencies` 57 passed·doctest 1 passed, `cargo clippy -p stellar-project -p stellar-dependencies --all-targets -- -D warnings` 경고 0, `cargo fmt -p stellar-project -p stellar-dependencies -- --check` 통과.

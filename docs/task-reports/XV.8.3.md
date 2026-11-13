@@ -56,3 +56,10 @@
 ## 상태 정정(통합 리뷰, 2026-11-14)
 
 - `[x]` → `[~]`: 엄격 선행 사슬에 `[~]` 행(XV.1.1 등)이 있어 함께 `[~]`로 둡니다. 이 행 자체의 검증은 dependencies crate 안에서 통과했습니다.
+
+## 상태 복원(deps_wiring lane, 2026-11-14)
+
+- `[~]` → `[x]`: 엄격 선행 XV.2.5·XV.3.5 `[x]`.
+- 실제 파서 경로 검증: 경고 상세(경로·예상 추가 용량·UI/telemetry 분리)는 파서와 무관하며 기존 warning fixture가 계속 통과합니다(`warning_fixture_has_paths_and_expected_additional_size`).
+- 공통 근거: `Fix: stellar.yaml 의존성 선언을 실제 매니페스트 파서에 연결`(리뷰 P2), `Fix: stellar.lock.yaml entry 형식을 IV.1.6 모델 하나로 통합`(리뷰 P3, ADR-0016), `Fix: resolver library 매니페스트 읽기를 실제 stellar.yaml 파서로 연결`.
+- 실행(`DEV-MAC`): `cargo test -p stellar-project` lib 261 passed·통합 17 passed, `cargo test -p stellar-dependencies` 57 passed·doctest 1 passed, `cargo clippy -p stellar-project -p stellar-dependencies --all-targets -- -D warnings` 경고 0, `cargo fmt -p stellar-project -p stellar-dependencies -- --check` 통과.
