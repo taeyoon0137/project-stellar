@@ -10,6 +10,10 @@ use crate::limits::{
     COMPONENT_INSTANCES_TARGET, NESTING_TARGET, VISIBLE_NODES_TARGET,
 };
 use crate::synthetic::{generate_synthetic, ScaleTier, SyntheticSpec};
+use crate::workload::{
+    constraint_heavy, profile_constraints, profile_document, workload_document, DocumentProfile,
+    DocumentWorkload,
+};
 use crate::GENERATOR_VERSION;
 
 /// 기본 seed.
@@ -27,11 +31,72 @@ pub struct Request {
 /// 규모 상한 fixture 이름(XVI.3.2).
 const LIMIT_FIXTURES: [&str; 4] = ["visible-20k", "components-50k", "nesting-64", "deep-64"];
 
+/// workload fixture node 수(기준 tier `nodes-10k`와 같은 규모, XVI.3.3).
+pub const WORKLOAD_NODES: usize = 10_000;
+
+/// constraint-heavy fixture 이름.
+const CONSTRAINT_FIXTURE: &str = "constraint-heavy";
+
 /// 지원하는 fixture 이름.
 pub fn fixture_names() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = ScaleTier::ALL.iter().map(|t| t.name()).collect();
     names.extend(LIMIT_FIXTURES);
+    names.extend(DocumentWorkload::ALL.iter().map(|w| w.name()));
+    names.push(CONSTRAINT_FIXTURE);
     names
+}
+
+/// 문서 계측값 지표(접두어별 정적 이름).
+fn profile_metrics(profile: &DocumentProfile, baseline: bool) -> Vec<(&'static str, u64)> {
+    let values = [
+        profile.nodes as u64,
+        profile.text_nodes as u64,
+        profile.text_scalars,
+        profile.style_runs,
+        profile.image_nodes as u64,
+        profile.distinct_assets as u64,
+        profile.image_pixels,
+        profile.modifiers as u64,
+        profile.effect_modifiers as u64,
+        profile.geometry_modifiers as u64,
+        profile.payload_bytes,
+        profile.text_payload_bytes,
+        profile.modifier_bytes,
+    ];
+    let names: [&'static str; 13] = if baseline {
+        [
+            "baseline_nodes",
+            "baseline_text_nodes",
+            "baseline_text_scalars",
+            "baseline_style_runs",
+            "baseline_image_nodes",
+            "baseline_distinct_assets",
+            "baseline_image_pixels",
+            "baseline_modifiers",
+            "baseline_effect_modifiers",
+            "baseline_geometry_modifiers",
+            "baseline_payload_bytes",
+            "baseline_text_payload_bytes",
+            "baseline_modifier_bytes",
+        ]
+    } else {
+        [
+            "nodes",
+            "text_nodes",
+            "text_scalars",
+            "style_runs",
+            "image_nodes",
+            "distinct_assets",
+            "image_pixels",
+            "modifiers",
+            "effect_modifiers",
+            "geometry_modifiers",
+            "payload_bytes",
+            "text_payload_bytes",
+            "modifier_bytes",
+        ]
+    };
+    names.into_iter().zip(values).collect()
 }
 
 /// 사용법 문자열.
@@ -169,6 +234,45 @@ pub fn run(request: &Request) -> Result<Report, FixtureError> {
                 fixture.content_hash,
             ))
         }
+        name if DocumentWorkload::ALL.iter().any(|w| w.name() == name) => {
+            let workload = DocumentWorkload::ALL
+                .into_iter()
+                .find(|w| w.name() == name)
+                .ok_or(FixtureError::InvalidSpec {
+                    reason: "알 수 없는 fixture",
+                })?;
+            let fixture = workload_document(workload, seed, WORKLOAD_NODES)?;
+            let mut metrics = profile_metrics(&profile_document(&fixture.built.model)?, false);
+            // 같은 규모·seed의 기준 synthetic 문서 계측값을 함께 냅니다.
+            let mut baseline = None;
+            generate_synthetic(
+                &SyntheticSpec::custom("baseline", seed, vec![WORKLOAD_NODES]),
+                |doc| {
+                    baseline = Some(profile_document(&doc.built.model)?);
+                    Ok(())
+                },
+            )?;
+            if let Some(baseline) = baseline {
+                metrics.extend(profile_metrics(&baseline, true));
+            }
+            Ok(report(metrics, fixture.content_hash))
+        }
+        CONSTRAINT_FIXTURE => {
+            let fixture = constraint_heavy(seed, WORKLOAD_NODES)?;
+            let profile = profile_constraints(&fixture)?;
+            Ok(report(
+                vec![
+                    ("nodes", profile.nodes as u64),
+                    ("constrained_nodes", profile.constrained_nodes as u64),
+                    ("constraints", profile.constraints as u64),
+                    ("sibling_constraints", profile.sibling_constraints as u64),
+                    ("max_component", profile.max_component as u64),
+                    ("laid_out", profile.laid_out as u64),
+                    ("diagnostics", profile.diagnostics as u64),
+                ],
+                fixture.content_hash,
+            ))
+        }
         "deep-64" => {
             let fixture = deep_document(seed, NESTING_TARGET as u32)?;
             Ok(report(
@@ -221,7 +325,7 @@ mod tests {
         for name in fixture_names() {
             assert!(parse_args(&args(&[name])).is_ok(), "{name}");
         }
-        assert_eq!(fixture_names().len(), 7);
+        assert_eq!(fixture_names().len(), 11);
         for bad in [
             &[][..],
             &["unknown"][..],

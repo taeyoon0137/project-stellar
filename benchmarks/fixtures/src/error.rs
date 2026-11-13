@@ -10,6 +10,7 @@ use stellar_document::component::expansion::ExpansionError;
 use stellar_document::definitions::DefinitionError;
 use stellar_document::model::{LoadModelError, ModelError};
 use stellar_document::record_codec::PartitionError;
+use stellar_layout::error::LayoutError;
 use stellar_project::document_io::serialize::SerializeError;
 use stellar_storage::chunk::split::{SplitError, SplitTreeError};
 
@@ -44,6 +45,8 @@ pub enum FixtureError {
     Component(ComponentDefinitionError),
     /// 인스턴스 expansion 실패(미해결·재귀·중첩 상한·payload).
     Expansion(ExpansionError),
+    /// 레이아웃 입력 검증 또는 배치 실패.
+    Layout(LayoutError),
 }
 
 impl fmt::Display for FixtureError {
@@ -62,6 +65,7 @@ impl fmt::Display for FixtureError {
             FixtureError::Split(e) => write!(f, "split 계획: {e}"),
             FixtureError::Component(e) => write!(f, "컴포넌트 정의: {e}"),
             FixtureError::Expansion(e) => write!(f, "인스턴스 expansion: {e}"),
+            FixtureError::Layout(e) => write!(f, "레이아웃: {e}"),
         }
     }
 }

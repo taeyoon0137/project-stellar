@@ -10,6 +10,7 @@ stellar-core-types = { path = "../../crates/core-types" }
 stellar-document = { path = "../../crates/document" }
 stellar-storage = { path = "../../crates/storage" }
 stellar-project = { path = "../../crates/project" }
+stellar-layout = { path = "../../crates/layout" }
 
 [lints]
 workspace = true

@@ -1625,7 +1625,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XVI.3.1 | `[x]` | 1만, 20만, 프로젝트 전체 100만 node synthetic fixture generator를 구현합니다. 파일을 직접 Git에 대량 저장하지 않고 seed+generator version으로 재현합니다. | 같은 seed content hash 동일. | VI.10.5, V.6.4 |
 | XVI.3.2 | `[x]` | 2만 visible node, 5만 component instance, 중첩 64 fixture를 각각 생성합니다. | validator pass. | IX.2.2, VI.10.1 |
-| XVI.3.3 | `[ ]` | text-heavy, image-heavy, effect-heavy, token-heavy, constraint-heavy fixture를 분리합니다. | 각 fixture가 목표 병목 특성을 계측값으로 확인. | Phase X, Phase XI |
+| XVI.3.3 | `[~]` | text-heavy, image-heavy, effect-heavy, token-heavy, constraint-heavy fixture를 분리합니다. | 각 fixture가 목표 병목 특성을 계측값으로 확인. | Phase X, Phase XI |
 | XVI.3.4 | `[ ]` | project asset 20GB는 CI에 실제 포함하지 않고 sparse synthetic asset provider와 별도 reference device test data manifest로 구성합니다. | provider가 size/stream behavior 재현. | XIII.5.2 |
 
 ### XVI.4 성능 판정기
