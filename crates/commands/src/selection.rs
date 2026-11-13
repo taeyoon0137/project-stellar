@@ -14,6 +14,7 @@
 use stellar_core_types::ids::StableId;
 use stellar_document::model::DocumentModel;
 
+use crate::change::ChangeSet;
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::id::WindowSessionId;
 use crate::tree::parent_of;
@@ -88,6 +89,19 @@ pub struct WindowViewState {
     window: WindowSessionId,
     selection: Selection,
     area: Option<AreaPreview>,
+}
+
+/// 삭제된 node를 선택에서 지운 system event(VII.3.4). 사용자 history 항목이 아닙니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionPruned {
+    /// 정리한 창.
+    pub window: WindowSessionId,
+    /// 선택에서 빠진 id(원래 선택 순서).
+    pub removed: Vec<StableId>,
+    /// 정리 전 선택.
+    pub before: Selection,
+    /// 정리 후 선택.
+    pub after: Selection,
 }
 
 /// 영역 선택 방식.
@@ -204,6 +218,47 @@ impl WindowViewState {
         } else {
             Ok(Some(SetSelection::new(area.current)))
         }
+    }
+
+    /// node 삭제 결과(change set의 removed nodes)를 선택에서 지웁니다(VII.3.4).
+    ///
+    /// 사용자 history 항목이 아니라 **system event**([`SelectionPruned`])를 돌려줍니다. 진행 중인 영역
+    /// 선택 preview도 함께 정리합니다. 지울 것이 없으면 `None`입니다.
+    pub fn prune_removed(&mut self, changes: &ChangeSet) -> Option<SelectionPruned> {
+        let removed = changes.removed_nodes();
+        if removed.is_empty() {
+            return None;
+        }
+        self.prune_where(|id| !removed.contains(&id))
+    }
+
+    /// 문서에 더 없는 id를 선택에서 지웁니다(재로드·외부 변경 반영 후, VII.3.4). system event입니다.
+    pub fn prune_missing(&mut self, model: &DocumentModel) -> Option<SelectionPruned> {
+        self.prune_where(|id| model.contains(id))
+    }
+
+    fn prune_where(&mut self, keep: impl Fn(StableId) -> bool) -> Option<SelectionPruned> {
+        if let Some(area) = self.area.as_mut() {
+            area.current = area.current.retain(&keep);
+        }
+        let after = self.selection.retain(&keep);
+        if after == self.selection {
+            return None;
+        }
+        let removed: Vec<StableId> = self
+            .selection
+            .ids()
+            .iter()
+            .copied()
+            .filter(|id| !after.contains(*id))
+            .collect();
+        let before = std::mem::replace(&mut self.selection, after.clone());
+        Some(SelectionPruned {
+            window: self.window,
+            removed,
+            before,
+            after,
+        })
     }
 
     /// 영역 선택 취소: preview를 버리고 아무 event도 만들지 않습니다.
@@ -540,5 +595,85 @@ mod tests {
             .unwrap();
         view.update_area_selection([sid(12)]).unwrap();
         assert_eq!(view.finish_area_selection().unwrap(), None);
+    }
+
+    #[test]
+    fn deletion_prunes_every_window_without_user_history() {
+        // 검증 기준(VII.3.4): 여러 창 fixture에서 stale selection 없음.
+        use crate::command::Command;
+        use crate::id::{CommandId, CommandOrigin};
+        use crate::node_ops::DeleteSubtree;
+        use crate::request::CommandRequest;
+        use crate::state::DocumentState;
+        use crate::transaction::CommandTransaction;
+
+        let policy = SelectionPolicy::default();
+        // 창마다 독립 문서 상태(§22.2). A·B는 같은 문서를 열었고 C는 다른 node를 선택.
+        let mut docs: Vec<DocumentState> =
+            (0..3).map(|_| DocumentState::new(small_model())).collect();
+        let mut views: Vec<WindowViewState> = (0..3u64)
+            .map(|i| WindowViewState::new(WindowSessionId::from_stable_id(sid(500 + i))))
+            .collect();
+        let selections = [
+            Selection::new([sid(13), sid(12)], Some(sid(13))),
+            Selection::new([sid(11), sid(13)], Some(sid(11))),
+            Selection::new([sid(12)], None),
+        ];
+        for ((view, doc), selection) in views.iter_mut().zip(&docs).zip(selections) {
+            SetSelection::new(selection).apply(view, doc.model(), policy);
+        }
+        // B는 영역 선택 preview 중에도 13을 담고 있습니다.
+        views[1]
+            .begin_area_selection(AreaSelectionMode::Add)
+            .unwrap();
+        views[1].update_area_selection([sid(13), sid(12)]).unwrap();
+
+        // 창 A에서 11 subtree(11, 13) 삭제.
+        let delete = Command::DeleteSubtree(DeleteSubtree { root: sid(11) });
+        let tx = CommandTransaction::single(
+            CommandId::from_stable_id(sid(900)),
+            CommandOrigin::User,
+            CommandRequest::at(&docs[0], delete.clone()),
+        );
+        let applied = docs[0].execute_transaction(&tx).unwrap();
+        // 정리 결과는 SetSelection(사용자 history event)이 아니라 SelectionPruned system event입니다.
+        let mut system_events: Vec<SelectionPruned> = Vec::new();
+        system_events.extend(views[0].prune_removed(&applied.changes));
+        // B는 A의 저장 generation을 다시 읽은 뒤(같은 삭제가 반영된 문서) 누락 id를 정리합니다.
+        let reload = CommandTransaction::single(
+            CommandId::from_stable_id(sid(901)),
+            CommandOrigin::System,
+            CommandRequest::at(&docs[1], delete),
+        );
+        docs[1].execute_transaction(&reload).unwrap();
+        system_events.extend(views[1].prune_missing(docs[1].model()));
+        // C의 문서·선택에는 삭제가 없습니다.
+        assert_eq!(views[2].prune_missing(docs[2].model()), None);
+
+        assert_eq!(system_events.len(), 2);
+        assert_eq!(system_events[0].removed, vec![sid(13)]);
+        assert_eq!(system_events[0].after.ids(), &[sid(12)]);
+        assert_eq!(
+            system_events[0].after.primary(),
+            Some(sid(12)),
+            "primary 재적용"
+        );
+        assert_eq!(system_events[1].removed, vec![sid(11), sid(13)]);
+        assert!(system_events[1].after.is_empty());
+        // 어떤 창에도 stale id가 없습니다(preview 포함).
+        for (view, doc) in views.iter().zip(&docs) {
+            for id in view.selection().ids() {
+                assert!(doc.model().contains(*id), "stale {id}");
+            }
+            for id in view.displayed_selection().ids() {
+                assert!(doc.model().contains(*id), "stale preview {id}");
+            }
+        }
+        assert_eq!(views[1].displayed_selection().ids(), &[sid(12)]);
+        assert_eq!(views[2].selection().ids(), &[sid(12)]);
+        // 삭제가 없는 change set은 아무것도 하지 않습니다.
+        let rename = CommandRequest::at(&docs[2], Command::rename_node(sid(12), "x"));
+        let outcome = docs[2].execute(&rename).unwrap();
+        assert_eq!(views[2].prune_removed(&outcome.changes), None);
     }
 }
