@@ -5,13 +5,20 @@
 //! 배치되고, 인스턴스는 정의를 복제하지 않고 참조합니다.
 //!
 //! 값은 core-types의 [`TypedValue`](stellar_core_types::typed_value::TypedValue)를
-//! 사용합니다. 표현식·binding(Phase VIII)은 이 crate의 의존 대상이 아니므로 여기서
-//! 다루지 않습니다.
+//! 사용합니다. Property default·상태 변수 initial처럼 타입이 선언된 표현식 위치는
+//! `stellar-expressions`의 AST·type checker·evaluator(Phase VIII)를 그대로 씁니다. 값 binding
+//! 그래프(VIII.6)는 `stellar-bindings`의 몫입니다.
 
 mod codec;
 
 /// ComponentDefinition resource와 정의 tree (IX.1.1).
 pub mod definition;
+
+/// 타입이 확인된 표현식 위치 (IX.1.2·IX.5 공용).
+pub mod typed_expr;
+
+/// ComponentProperty record (IX.1.2).
+pub mod property;
 
 /// ComponentInstance node payload (IX.2.1).
 pub mod instance;

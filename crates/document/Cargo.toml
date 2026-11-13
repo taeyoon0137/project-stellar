@@ -7,6 +7,9 @@ publish = false
 
 [dependencies]
 stellar-core-types = { path = "../core-types" }
+# 타입이 선언된 표현식 위치(Property default·상태 변수 initial·transition 조건)의 AST·type
+# checker·evaluator(Phase VIII). crate 그래프가 document → expressions를 허용합니다.
+stellar-expressions = { path = "../expressions" }
 
 [features]
 # 테스트 전용 지원 코드(`test_support`, VI.10.4). 기본값은 꺼져 있어 프로덕션 빌드에 포함되지

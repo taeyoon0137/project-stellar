@@ -23,6 +23,7 @@ use super::codec::{
     capacity_hint, put_bool, put_bytes, put_count, put_id, put_kind, put_opt_id, put_order_key,
     put_str, Malformed, Reader,
 };
+use super::property::{ComponentProperty, ComponentPropertyError};
 use super::slot::{ComponentSlot, SlotError};
 use super::slot_override::SlotOverrideError;
 use crate::node_kind::NodeKind;
@@ -132,6 +133,14 @@ pub enum ComponentDefinitionError {
     /// 정의 tree 안 nested 인스턴스의 slot override가 투영 규칙을 어깁니다(IX.3.2, library
     /// 디코딩 경로).
     SlotOverride(SlotOverrideError),
+    /// property record가 잘못됐습니다(IX.1.2, library 디코딩 경로).
+    Property(ComponentPropertyError),
+}
+
+impl From<ComponentPropertyError> for ComponentDefinitionError {
+    fn from(err: ComponentPropertyError) -> ComponentDefinitionError {
+        ComponentDefinitionError::Property(err)
+    }
 }
 
 impl From<SlotError> for ComponentDefinitionError {
@@ -181,6 +190,7 @@ impl fmt::Display for ComponentDefinitionError {
             ComponentDefinitionError::SlotOverride(err) => {
                 write!(f, "nested 인스턴스 slot override 오류: {err}")
             }
+            ComponentDefinitionError::Property(err) => write!(f, "property 오류: {err}"),
         }
     }
 }
@@ -650,12 +660,14 @@ impl ComponentDefinition {
     }
 }
 
-/// library에 등록된 컴포넌트 한 개: 정의 + 정의 tree + Slot record(IX.3.1).
+/// library에 등록된 컴포넌트 한 개: 정의 + 정의 tree + Slot record(IX.3.1) + Property
+/// record(IX.1.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ComponentEntry {
     definition: ComponentDefinition,
     tree: DefinitionTree,
     slots: BTreeMap<ComponentSlotId, ComponentSlot>,
+    properties: BTreeMap<ComponentPropertyId, ComponentProperty>,
 }
 
 impl ComponentEntry {
@@ -686,6 +698,16 @@ impl ComponentEntry {
 
     pub(super) fn insert_slot(&mut self, slot: ComponentSlot) {
         self.slots.insert(slot.id, slot);
+    }
+
+    pub(super) fn properties_map(&self) -> &BTreeMap<ComponentPropertyId, ComponentProperty> {
+        &self.properties
+    }
+
+    pub(super) fn properties_map_mut(
+        &mut self,
+    ) -> &mut BTreeMap<ComponentPropertyId, ComponentProperty> {
+        &mut self.properties
     }
 }
 
@@ -742,6 +764,7 @@ impl ComponentLibrary {
                 definition,
                 tree,
                 slots: BTreeMap::new(),
+                properties: BTreeMap::new(),
             },
         );
         Ok(())
@@ -802,13 +825,18 @@ impl ComponentLibrary {
             for slot in entry.slots.values() {
                 slot.encode_into(&mut buf);
             }
+            put_count(&mut buf, entry.properties.len());
+            for property in entry.properties.values() {
+                property.encode_into(&mut buf);
+            }
         }
         buf
     }
 
     /// binary bytes에서 디코딩하고 등록 규칙으로 재검증합니다. 비canonical 입력은 거부합니다.
     ///
-    /// 모든 컴포넌트가 로드된 뒤 선언 Slot마다 record가 있는지([`ComponentLibrary::validate_slots`])와
+    /// 모든 컴포넌트가 로드된 뒤 선언 Slot·Property마다 record가 있는지
+    /// ([`ComponentLibrary::validate_slots`], [`ComponentLibrary::validate_properties`])와
     /// 정의 tree 안 nested 인스턴스의 slot override 투영 규칙(IX.3.2)을 검사합니다. nested
     /// 인스턴스가 이 library에 없는 컴포넌트를 참조하면(외부·미해결 참조, III.2.4) 그 인스턴스의
     /// 투영 검사는 건너뜁니다 — 참조 해석 계층이 진단합니다.
@@ -826,6 +854,11 @@ impl ComponentLibrary {
                 let slot = ComponentSlot::decode_from(&mut reader)?;
                 library.add_slot(component, slot)?;
             }
+            let property_count = reader.count()?;
+            for _ in 0..property_count {
+                let property = ComponentProperty::decode_from(&mut reader)?;
+                library.add_property(component, property)?;
+            }
         }
         reader.expect_end()?;
         if library.encode() != bytes {
@@ -834,6 +867,9 @@ impl ComponentLibrary {
             });
         }
         library.validate_loaded_slots()?;
+        for entry in library.iter() {
+            library.validate_properties(entry.definition().reference())?;
+        }
         Ok(library)
     }
 }
@@ -1096,6 +1132,26 @@ mod tests {
                 ),
             )
             .unwrap();
+        // 선언 property(500·501)에도 record가 있어야 합니다(IX.1.2).
+        for (id, name) in [(500, "a"), (501, "b")] {
+            library
+                .add_property(
+                    ComponentRef::new(stable(1)),
+                    crate::component::property::ComponentProperty::new(
+                        ComponentPropertyId::new(stable(id)),
+                        name.to_string(),
+                        stellar_expressions::types::TypeSpec::required(
+                            stellar_expressions::types::ExpressionType::Boolean,
+                        ),
+                        crate::component::typed_expr::test_util::literal(
+                            stellar_core_types::typed_value::TypedValue::Boolean(true),
+                        ),
+                        crate::component::property::PropertyVisibility::Public,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
         let lib_bytes = library.encode();
         let lib_decoded = ComponentLibrary::decode(&lib_bytes).unwrap();
         assert_eq!(lib_decoded, library);

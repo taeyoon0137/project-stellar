@@ -797,7 +797,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | IX.1.1 | `[x]` | `ComponentDefinition` resource에 StableId, root FrameRef, 공개 Property 목록, Slot 목록, local token scope를 정의합니다. | root가 component 밖 node를 가리키면 거부. | Phase VIII, Phase VI |
-| IX.1.2 | `[ ]` | `ComponentProperty`에 StableId, 이름, type, 필수 default expression, 공개 여부를 정의합니다. default 없는 property는 생성 불가입니다. | default type mismatch 거부. | IX.1.1, VIII.2.5 |
+| IX.1.2 | `[x]` | `ComponentProperty`에 StableId, 이름, type, 필수 default expression, 공개 여부를 정의합니다. default 없는 property는 생성 불가입니다. | default type mismatch 거부. | IX.1.1, VIII.2.5 |
 | IX.1.3 | `[ ]` | Property 생성·rename·default 변경·삭제 command를 구현합니다. inbound drilling이 있는 삭제는 orphan 정보를 생성합니다. | apply/inverse 및 orphan fixture 통과. | IX.1.2, VIII.8.1, Phase VII |
 | IX.1.4 | `[ ]` | component property의 runtime evaluated value를 instance별로 캐시하고 definition revision과 override revision으로 invalidate합니다. | 한 instance override 변경 시 다른 instance cache 유지. | IX.1.2, VIII.6.4 |
 

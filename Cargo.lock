@@ -218,6 +218,7 @@ name = "stellar-document"
 version = "0.0.0"
 dependencies = [
  "stellar-core-types",
+ "stellar-expressions",
 ]
 
 [[package]]
