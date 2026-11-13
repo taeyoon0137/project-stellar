@@ -42,6 +42,9 @@ pub mod clip_plan;
 /// blend/opacity/filter 의존 분석과 최소 offscreen 경계 (XI.4.4).
 pub mod offscreen;
 
+/// draw item batching key와 순서 보존 batching (XI.4.5).
+pub mod batching;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;
