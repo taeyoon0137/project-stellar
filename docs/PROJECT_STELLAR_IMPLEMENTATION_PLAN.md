@@ -862,7 +862,7 @@ tools/xtask/
 | IX.7.1 | `[x]` | ViewVariable에 StableId, type, default value, allowed enum values를 정의합니다. | invalid enum default 거부. | VI.1.2, VIII.1.1 |
 | IX.7.2 | `[x]` | VariantCondition은 변수별 `Any` 또는 `Equals(value)`만 저장합니다. `Any`와 실제 nullable 값은 별도 tag로 구분합니다. | ExplicitNull/Any fixture 구분. | IX.7.1 |
 | IX.7.3 | `[x]` | VariantOverrideSet에 sparse property patches, node add/delete/move/replace, slot changes를 정의합니다. | round-trip·reference validation. | VI.2, IX.3 |
-| IX.7.4 | `[ ]` | 현재 변수 assignment와 일치하는 모든 variant를 찾고 specificity 순으로 정렬하는 resolver를 구현합니다. | 일반+구체 조합 fixture 순서 정확. | IX.7.2 |
+| IX.7.4 | `[x]` | 현재 변수 assignment와 일치하는 모든 variant를 찾고 specificity 순으로 정렬하는 resolver를 구현합니다. | 일반+구체 조합 fixture 순서 정확. | IX.7.2 |
 | IX.7.5 | `[ ]` | 동일 specificity variant가 같은 PropertyPath를 다르게 override하면 conflict diagnostic을 생성하고 임의 순서로 적용하지 않습니다. | ambiguity fixture 실패. | IX.7.4 |
 | IX.7.6 | `[ ]` | 구체 variant가 일반 variant 값을 덮어쓰고 존재하지 않는 조합은 추가 override 없이 base+일반 variant만 적용하게 합니다. | 요구 예제 fixture 통과. | IX.7.4 |
 | IX.7.7 | `[ ]` | variant structure override도 ComponentInstance 내부 캡슐화를 침범하지 못하게 validator를 연결합니다. | nested direct override fixture 실패. | IX.7.3, IX.2.5 |
