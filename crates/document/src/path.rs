@@ -528,6 +528,41 @@ pub fn path_bounds(commands: &[PathCommand]) -> Option<stellar_core_types::value
     Some(stellar_core_types::value::Rect::new(origin, size))
 }
 
+// --- Shape → Path 파괴 변환 계획 (VI.6.5) ---
+
+/// Shape node를 Path node로 바꾸는 변환 계획.
+///
+/// **사용자가 명시한 command(`ConvertShapeToPath`, VII.2.7)에서만** 적용합니다 —
+/// 렌더·hit test는 VI.5.6 순수 평가를 쓰며 node kind를 바꾸지 않습니다. 계획은
+/// StableId를 유지하고, 변환 전 렌더 geometry와 같은 command를 담습니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShapeToPathPlan {
+    /// 유지되는 node StableId.
+    pub stable_id: StableId,
+    /// 새 node kind(항상 Path).
+    pub new_kind: crate::node_kind::NodeKind,
+    /// 새 Path payload(point·handle id 부여 완료).
+    pub path: IdentifiedPath,
+}
+
+/// Shape geometry로부터 파괴 변환 계획을 만듭니다(순수 함수).
+///
+/// `next_id`는 새 point·handle id 생성기입니다. path는 VI.5.6 평가 결과 그대로라
+/// 변환 전후 렌더 geometry가 같습니다.
+pub fn plan_shape_to_path(
+    stable_id: StableId,
+    geometry: &crate::shape::ShapeGeometry,
+    next_id: &mut dyn FnMut() -> StableId,
+) -> Result<ShapeToPathPlan, PathError> {
+    let commands = crate::shape::evaluate_shape_path(geometry);
+    let data = PathData::new(WindingRule::NonZero, commands)?;
+    Ok(ShapeToPathPlan {
+        stable_id,
+        new_kind: crate::node_kind::NodeKind::Path,
+        path: IdentifiedPath::assign(data, next_id),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -897,6 +932,81 @@ mod tests {
             ];
             assert_bounds(&poly, (-3.0, -2.0, 8.0, 10.0), 0.0);
             assert!(path_bounds(&[]).is_none());
+        }
+    }
+
+    mod shape_conversion {
+        use super::super::*;
+        use crate::frame::CornerRadius;
+        use crate::node_kind::NodeKind;
+        use crate::shape::{
+            evaluate_shape_path, EllipseParams, LineCap, LineParams, RectangleParams, ShapeGeometry,
+        };
+        use stellar_core_types::value::{Rect, Size2};
+
+        fn p(x: f32, y: f32) -> Vec2 {
+            Vec2::new(x, y).unwrap()
+        }
+
+        fn ids() -> impl FnMut() -> StableId {
+            let mut n = 0u64;
+            move || {
+                n += 1;
+                StableId::new_v7(50_000 + n, 0, n)
+            }
+        }
+
+        #[test]
+        fn conversion_keeps_id_and_render_geometry() {
+            // 검증 기준(VI.6.5): 변환 전 렌더 geometry 동일.
+            let node = StableId::new_v7(7, 0, 7);
+            let geometries = [
+                ShapeGeometry::Rectangle(RectangleParams {
+                    size: Size2::new(80.0, 40.0).unwrap(),
+                    corner_radius: CornerRadius::new(6.0, 6.0, 0.0, 12.0).unwrap(),
+                }),
+                ShapeGeometry::Ellipse(EllipseParams {
+                    bounds: Rect::new(p(0.0, 0.0), Size2::new(30.0, 60.0).unwrap()),
+                }),
+                ShapeGeometry::Line(LineParams {
+                    start: p(0.0, 0.0),
+                    end: p(10.0, 5.0),
+                    cap: LineCap::Round,
+                }),
+            ];
+            for geometry in geometries {
+                let mut gen = ids();
+                let plan = plan_shape_to_path(node, &geometry, &mut gen).unwrap();
+                assert_eq!(plan.stable_id, node, "StableId 유지");
+                assert_eq!(plan.new_kind, NodeKind::Path);
+                assert_eq!(
+                    plan.path.data().commands(),
+                    evaluate_shape_path(&geometry).as_slice(),
+                    "{}: 렌더 geometry 동일",
+                    geometry.kind().name()
+                );
+                assert_eq!(
+                    path_bounds(plan.path.data().commands()),
+                    path_bounds(&evaluate_shape_path(&geometry))
+                );
+                // 모든 point에 id 부여.
+                assert!(plan
+                    .path
+                    .ids()
+                    .iter()
+                    .all(|i| i.point.is_some() || i.handles.is_none()));
+            }
+        }
+
+        #[test]
+        fn planning_is_pure() {
+            let geometry = ShapeGeometry::Ellipse(EllipseParams {
+                bounds: Rect::new(p(1.0, 1.0), Size2::new(2.0, 2.0).unwrap()),
+            });
+            let before = geometry;
+            let mut gen = ids();
+            let _ = plan_shape_to_path(StableId::new_v7(1, 0, 1), &geometry, &mut gen).unwrap();
+            assert_eq!(geometry, before, "원본 geometry 불변");
         }
     }
 }
