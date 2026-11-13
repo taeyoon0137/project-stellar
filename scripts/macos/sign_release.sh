@@ -68,7 +68,7 @@ if ! xcodebuild -version >/dev/null 2>&1; then
 fi
 
 # --- 빌드: Rust 코어 release staticlib → Xcode Release(서명은 아래에서 한 번만) ---
-cargo build --manifest-path "$REPO_ROOT/Cargo.toml" -p stellar-ffi --release --locked
+cargo build --manifest-path "$REPO_ROOT/Cargo.toml" -p stellar-ffi --release --locked --target aarch64-apple-darwin
 
 DERIVED="$REPO_ROOT/apps/macos/build"
 xcodebuild \

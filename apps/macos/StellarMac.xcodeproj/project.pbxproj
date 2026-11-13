@@ -132,7 +132,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nexport PATH=\"$HOME/.cargo/bin:$PATH\"\nif ! command -v cargo >/dev/null 2>&1; then\n  echo \"error: cargo not found in PATH\" >&2\n  exit 1\nfi\ncd \"$SRCROOT/../..\"\ncargo build -p stellar-ffi\n";
+			shellScript = "set -e\nexport PATH=\"$HOME/.cargo/bin:$PATH\"\nif ! command -v cargo >/dev/null 2>&1; then\n  echo \"error: cargo not found in PATH\" >&2\n  exit 1\nfi\ncd \"$SRCROOT/../..\"\n# Release는 arm64 전용 release staticlib(lockfile 고정)을 링크합니다(XVI.9.1).\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n  cargo build -p stellar-ffi --release --locked --target aarch64-apple-darwin\nelse\n  cargo build -p stellar-ffi\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -177,6 +177,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				ONLY_ACTIVE_ARCH = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_VERSION = 5.0;
@@ -225,7 +226,7 @@
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../crates/ffi/include";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = "";
-				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../target/release";
+				LIBRARY_SEARCH_PATHS = "$(SRCROOT)/../../target/aarch64-apple-darwin/release";
 				MARKETING_VERSION = 0.0.0;
 				OTHER_LDFLAGS = (
 					"-lstellar_ffi",

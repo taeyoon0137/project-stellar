@@ -1686,7 +1686,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XVI.9.1 | `[ ]` | Release configuration, bundle identifier, minimum macOS 26, arm64-only 설정을 고정합니다. | built binary architecture arm64 only. | Phase XII |
+| XVI.9.1 | `[x]` | Release configuration, bundle identifier, minimum macOS 26, arm64-only 설정을 고정합니다. | built binary architecture arm64 only. | Phase XII |
 | XVI.9.2 | `[ ]` | Rust core library와 resources를 app bundle에 포함하고 rpath/code signature 구조를 검증합니다. | clean machine launch smoke. | XVI.9.1 |
 | XVI.9.3 | `[ ]` | Developer ID signing pipeline을 구성합니다. 로컬 개발 key를 repo에 저장하지 않습니다. | `codesign --verify --deep --strict` 통과. | XVI.9.2 |
 | XVI.9.4 | `[ ]` | notarization submission과 ticket stapling pipeline을 구성합니다. | Gatekeeper clean machine 검증 통과. | XVI.9.3 |
