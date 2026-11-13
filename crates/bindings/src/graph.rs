@@ -277,6 +277,139 @@ impl DependencyGraph {
     }
 }
 
+/// 통합 graph의 cycle(VIII.6.3). 경로는 시작 node로 닫힙니다(`[a, …, a]`, 자기 참조는 `[a, a]`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BindingCycle {
+    /// cycle 경로.
+    pub path: Vec<DependencyNode>,
+}
+
+impl fmt::Display for BindingCycle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("binding cycle: ")?;
+        for (index, node) in self.path.iter().enumerate() {
+            if index > 0 {
+                f.write_str(" → ")?;
+            }
+            write!(f, "{node}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for BindingCycle {}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mark {
+    Unvisited,
+    Open,
+    Done,
+}
+
+impl DependencyGraph {
+    /// 첫 cycle을 찾습니다(VIII.6.3). 토큰·속성·Component Property·환경 입력이 섞인 cycle도 같은 방식으로 찾습니다.
+    ///
+    /// 반복(비재귀) 3색 DFS이며 node·간선을 번호(= node 정렬) 순으로 방문해 같은 graph는 같은 경로를 보고합니다.
+    pub fn find_cycle(&self) -> Option<BindingCycle> {
+        let mut marks = vec![Mark::Unvisited; self.nodes.len()];
+        for start in 0..self.nodes.len() {
+            if marks[start] != Mark::Unvisited {
+                continue;
+            }
+            marks[start] = Mark::Open;
+            // (node, 다음에 볼 dependency 위치)
+            let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+            while let Some(&(at, next)) = stack.last() {
+                let Some(child) = self.dependencies[at].get(next).map(NodeIndex::get) else {
+                    marks[at] = Mark::Done;
+                    stack.pop();
+                    continue;
+                };
+                if let Some(top) = stack.last_mut() {
+                    top.1 += 1;
+                }
+                match marks[child] {
+                    Mark::Done => {}
+                    Mark::Open => {
+                        let from = stack
+                            .iter()
+                            .position(|(open, _)| *open == child)
+                            .unwrap_or(0);
+                        let mut path: Vec<DependencyNode> = stack[from..]
+                            .iter()
+                            .map(|(open, _)| self.nodes[*open].clone())
+                            .collect();
+                        path.push(self.nodes[child].clone());
+                        return Some(BindingCycle { path });
+                    }
+                    Mark::Unvisited => {
+                        marks[child] = Mark::Open;
+                        stack.push((child, 0));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// cycle이 없으면 `Ok`, 있으면 첫 cycle 오류입니다(저장·적용 전 거부용).
+    pub fn ensure_acyclic(&self) -> Result<(), BindingCycle> {
+        match self.find_cycle() {
+            Some(cycle) => Err(cycle),
+            None => Ok(()),
+        }
+    }
+
+    /// `node`가 `new_dependencies`를 읽도록 바꾸면 생기는 cycle(있으면). 경로는 `[node, …, node]`입니다.
+    ///
+    /// 바꾸기 전 graph에서 새 dependency가 `node`에 도달하는지 반복 BFS(번호 순)로 확인합니다. graph에 없는 node는
+    /// 아직 아무것도 읽지 않으므로 cycle에 들 수 없습니다.
+    pub fn cycle_if_dependencies(
+        &self,
+        node: &DependencyNode,
+        new_dependencies: &BTreeSet<DependencyNode>,
+    ) -> Option<BindingCycle> {
+        if new_dependencies.contains(node) {
+            return Some(BindingCycle {
+                path: vec![node.clone(), node.clone()],
+            });
+        }
+        let target = self.index_of(node)?;
+        let mut parent: BTreeMap<NodeIndex, Option<NodeIndex>> = BTreeMap::new();
+        let mut queue: std::collections::VecDeque<NodeIndex> = std::collections::VecDeque::new();
+        for dep in new_dependencies {
+            if let Some(index) = self.index_of(dep) {
+                if parent.insert(index, None).is_none() {
+                    queue.push_back(index);
+                }
+            }
+        }
+        while let Some(current) = queue.pop_front() {
+            for &dep in self.dependencies(current) {
+                if dep == target {
+                    let mut chain = vec![current];
+                    let mut at = current;
+                    while let Some(Some(up)) = parent.get(&at) {
+                        chain.push(*up);
+                        at = *up;
+                    }
+                    chain.reverse();
+                    let mut path = Vec::with_capacity(chain.len() + 2);
+                    path.push(node.clone());
+                    path.extend(chain.into_iter().map(|i| self.node(i).clone()));
+                    path.push(node.clone());
+                    return Some(BindingCycle { path });
+                }
+                if let std::collections::btree_map::Entry::Vacant(slot) = parent.entry(dep) {
+                    slot.insert(Some(current));
+                    queue.push_back(dep);
+                }
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use stellar_core_types::property::PropertyKey;
@@ -530,5 +663,143 @@ mod tests {
         for node in a.nodes() {
             assert_eq!(&DependencyNode::from_target(&node.to_target()), node);
         }
+    }
+
+    /// 순수 구조 fixture: (node, producer 번호, 읽는 node) 목록으로 graph를 만듭니다.
+    fn graph_of(edges: &[(DependencyNode, Vec<DependencyNode>)]) -> DependencyGraph {
+        let records = edges
+            .iter()
+            .enumerate()
+            .map(|(i, (node, deps))| ProducerRecord {
+                node: node.clone(),
+                producer: match node {
+                    DependencyNode::Token(t) => Producer::Token(*t),
+                    _ => Producer::Binding(BindingId::new(sid(9_000 + i as u64))),
+                },
+                dependencies: deps.clone(),
+            })
+            .collect();
+        DependencyGraph::from_records(records).expect("구성")
+    }
+
+    #[test]
+    fn property_and_token_property_cycles_are_detected() {
+        use DependencyNode as N;
+        let a = N::Property(prop(1));
+        let b = N::Property(prop(2));
+        let t = N::Token(token(1));
+        // Property A ↔ B.
+        let graph = graph_of(&[(a.clone(), vec![b.clone()]), (b.clone(), vec![a.clone()])]);
+        assert_eq!(
+            graph.ensure_acyclic(),
+            Err(BindingCycle {
+                path: vec![a.clone(), b.clone(), a.clone()]
+            })
+        );
+        // token ↔ property: 토큰 T가 속성 A를 읽고, A의 binding이 T를 읽습니다.
+        let graph = graph_of(&[(t.clone(), vec![a.clone()]), (a.clone(), vec![t.clone()])]);
+        assert_eq!(
+            graph.find_cycle().map(|c| c.path),
+            Some(vec![t.clone(), a.clone(), t.clone()])
+        );
+        // 자기 참조 속성.
+        let graph = graph_of(&[(a.clone(), vec![a.clone()])]);
+        assert_eq!(
+            graph.find_cycle().map(|c| c.path),
+            Some(vec![a.clone(), a.clone()])
+        );
+    }
+
+    #[test]
+    fn mixed_cycle_fixture_fails_and_acyclic_passes() {
+        use DependencyNode as N;
+        let p1 = N::Property(prop(1));
+        let p2 = N::Property(prop(2));
+        let t1 = N::Token(token(1));
+        let t2 = N::Token(token(2));
+        let env7 = N::Environment(env(7));
+        let cp = N::ComponentProperty(component_property(1));
+        // p1 → t1 → t2 → p2 → p1 (환경·Component Property는 cycle 밖의 source).
+        let edges: Vec<(DependencyNode, Vec<DependencyNode>)> = vec![
+            (p1.clone(), vec![t1.clone(), cp.clone()]),
+            (t1.clone(), vec![t2.clone(), env7.clone()]),
+            (t2.clone(), vec![p2.clone()]),
+            (p2.clone(), vec![p1.clone(), env7.clone()]),
+        ];
+        let graph = graph_of(&edges);
+        assert_eq!(
+            graph.find_cycle().map(|c| c.path),
+            Some(vec![
+                t1.clone(),
+                t2.clone(),
+                p2.clone(),
+                p1.clone(),
+                t1.clone()
+            ])
+        );
+        // 실제 registry·binding fixture(VIII.6.2)는 비순환입니다.
+        let (registry, bindings) = fixture();
+        assert_eq!(
+            DependencyGraph::build(&registry, &bindings).ensure_acyclic(),
+            Ok(())
+        );
+        // 변경 전 예측: prop(1)의 binding이 prop(2)를 읽게 하면 prop1 → prop2 → prop1.
+        let graph = DependencyGraph::build(&registry, &bindings);
+        assert_eq!(
+            graph
+                .cycle_if_dependencies(&p1, &BTreeSet::from([p2.clone()]))
+                .map(|c| c.path),
+            Some(vec![p1.clone(), p2.clone(), p1.clone()])
+        );
+        // token1이 prop(3)를 읽어도 prop(3)는 token1에 도달하지 않습니다.
+        assert!(graph
+            .cycle_if_dependencies(&t1, &BTreeSet::from([N::Property(prop(3))]))
+            .is_none());
+        // token2가 prop(1)을 읽으면 token2 → prop1 → token2.
+        assert_eq!(
+            graph
+                .cycle_if_dependencies(&t2, &BTreeSet::from([p1.clone()]))
+                .map(|c| c.path),
+            Some(vec![t2.clone(), p1.clone(), t2])
+        );
+        assert!(graph
+            .cycle_if_dependencies(&p1, &BTreeSet::from([p1.clone()]))
+            .is_some());
+    }
+
+    #[test]
+    fn long_mixed_chain_is_checked_without_recursion() {
+        use DependencyNode as N;
+        let n = 50_000u64;
+        let node = |i: u64| {
+            if i.is_multiple_of(2) {
+                N::Token(token(i))
+            } else {
+                N::Property(prop(i))
+            }
+        };
+        let mut edges: Vec<(DependencyNode, Vec<DependencyNode>)> =
+            (0..n).map(|i| (node(i), vec![node(i + 1)])).collect();
+        edges.push((node(n), vec![]));
+        let records: Vec<ProducerRecord> = edges
+            .iter()
+            .enumerate()
+            .map(|(i, (node, deps))| ProducerRecord {
+                node: node.clone(),
+                producer: Producer::Binding(BindingId::new(sid(10_000_000 + i as u64))),
+                dependencies: deps.clone(),
+            })
+            .collect();
+        let graph = DependencyGraph::from_records(records.clone()).expect("구성");
+        assert!(graph.find_cycle().is_none());
+        let mut cyclic = records;
+        if let Some(last) = cyclic.last_mut() {
+            last.dependencies = vec![node(0)];
+        }
+        let cycle = DependencyGraph::from_records(cyclic)
+            .expect("구성")
+            .find_cycle()
+            .expect("cycle");
+        assert_eq!(cycle.path.len(), n as usize + 2);
     }
 }
