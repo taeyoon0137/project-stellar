@@ -13,21 +13,29 @@
 //!
 //! kind별 slot 구성:
 //!
-//! | kind | slot |
-//! |---|---|
-//! | Literal, Reference | 없음 |
-//! | Unary | `Operand` |
-//! | Binary | `Lhs`, `Rhs` |
-//! | Call | `Argument(0)`, …, `Argument(n-1)` (연속) |
-//! | If | `Condition`, `Then`, `Else` |
-//! | Match | `Scrutinee`, `Arm(0)`, …, `Arm(n-1)` (연속, n ≥ 1), `Default` |
+//! kind별 payload(VIII.2.2)와 slot 구성:
+//!
+//! | kind | payload | slot |
+//! |---|---|---|
+//! | Literal | [`Literal`] (값 또는 `Optional<T>`의 null) | 없음 |
+//! | Reference | [`ReferenceTarget`] (token·property·component property·환경 입력) | 없음 |
+//! | Unary | [`UnaryOp`] | `Operand` |
+//! | Binary | [`BinaryOp`] | `Lhs`, `Rhs` |
+//! | Call | [`FunctionId`] | `Argument(0)`, …, `Argument(arity-1)` (signature 인자 수와 정확히 같음) |
+//! | If | 없음 | `Condition`, `Then`, `Else` |
+//! | Match | arm별 pattern 값 `n`개(n ≥ 1) | `Scrutinee`, `Arm(0)`, …, `Arm(n-1)`, `Default` |
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
+use stellar_core_types::property::PropertyPath;
+use stellar_core_types::reference::TokenRef;
+use stellar_core_types::typed_value::TypedValue;
 
-use crate::ops::NodeKind;
+use crate::functions::FunctionId;
+use crate::ops::{BinaryOp, ExpressionOp, NodeKind, UnaryOp};
+use crate::types::ExpressionType;
 
 /// 표현식 AST node 식별자. node의 [`StableId`]를 감싼 typed ID입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -157,21 +165,220 @@ impl ChildRef {
     }
 }
 
-/// AST node 하나 (VIII.2.1).
+/// 리터럴 값 (VIII.2.2).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Literal {
+    /// 값(타입은 값의 [`ExpressionType::of`]).
+    Value(TypedValue),
+    /// `Optional<T>`의 값 없음. `T`를 함께 기록합니다.
+    Null(ExpressionType),
+}
+
+/// 환경 입력 key의 numeric ID. key registry는 VIII.7.1이 정의합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct EnvironmentKey(u32);
+
+impl EnvironmentKey {
+    /// numeric key ID로 만듭니다.
+    pub const fn new(raw: u32) -> EnvironmentKey {
+        EnvironmentKey(raw)
+    }
+
+    /// numeric key ID.
+    pub const fn raw(&self) -> u32 {
+        self.0
+    }
+}
+
+/// 참조 대상 (VIII.2.2). 이름이 아니라 StableId·PropertyPath·numeric key로 가리킵니다.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ReferenceTarget {
+    /// 디자인 토큰.
+    Token(TokenRef),
+    /// 다른 속성 값.
+    Property(PropertyPath),
+    /// Component Property(StableId).
+    ComponentProperty(StableId),
+    /// 환경 입력(플랫폼·상태 등).
+    Environment(EnvironmentKey),
+}
+
+impl ReferenceTarget {
+    /// 안정 numeric tag(직렬화 포맷 계약).
+    pub const fn tag(&self) -> u8 {
+        match self {
+            ReferenceTarget::Token(_) => 0x01,
+            ReferenceTarget::Property(_) => 0x02,
+            ReferenceTarget::ComponentProperty(_) => 0x03,
+            ReferenceTarget::Environment(_) => 0x04,
+        }
+    }
+}
+
+impl fmt::Display for ReferenceTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ReferenceTarget::Token(token) => write!(f, "token {}", token.id()),
+            ReferenceTarget::Property(path) => write!(f, "property {}", path.root()),
+            ReferenceTarget::ComponentProperty(id) => write!(f, "component property {id}"),
+            ReferenceTarget::Environment(key) => write!(f, "environment {}", key.raw()),
+        }
+    }
+}
+
+/// node 종류별 payload (VIII.2.2). child는 payload가 아니라 [`ChildRef`]로 연결합니다.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum NodePayload {
+    /// 리터럴.
+    Literal(Literal),
+    /// 참조.
+    Reference(ReferenceTarget),
+    /// 단항 연산(`Operand` slot).
+    Unary(UnaryOp),
+    /// 이항 연산(`Lhs`, `Rhs` slot).
+    Binary(BinaryOp),
+    /// 함수 호출(`Argument(0..arity)` slot).
+    Call(FunctionId),
+    /// `if`(`Condition`, `Then`, `Else` slot).
+    If,
+    /// `match`. arm별 pattern 값(`Arm(i)` slot과 index로 대응), `Scrutinee`·`Default` slot.
+    Match(Vec<TypedValue>),
+}
+
+impl NodePayload {
+    /// node 종류.
+    pub const fn kind(&self) -> NodeKind {
+        self.op().kind()
+    }
+
+    /// node 연산.
+    pub const fn op(&self) -> ExpressionOp {
+        match self {
+            NodePayload::Literal(_) => ExpressionOp::Literal,
+            NodePayload::Reference(_) => ExpressionOp::Reference,
+            NodePayload::Unary(op) => ExpressionOp::Unary(*op),
+            NodePayload::Binary(op) => ExpressionOp::Binary(*op),
+            NodePayload::Call(function) => ExpressionOp::Call(*function),
+            NodePayload::If => ExpressionOp::If,
+            NodePayload::Match(_) => ExpressionOp::Match,
+        }
+    }
+}
+
+/// AST node 하나 (VIII.2.1, VIII.2.2).
 ///
 /// child 목록은 생성 시 slot 순서로 정렬해 보관하므로, 연결 순서가 달라도 같은 node가 됩니다.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExprNode {
     id: ExprNodeId,
-    kind: NodeKind,
+    payload: NodePayload,
     children: Vec<ChildRef>,
 }
 
 impl ExprNode {
     /// node를 만듭니다. `children`은 slot 순서로 정렬됩니다. 구성 검증은 [`ExpressionAst::new`]가 합니다.
-    pub fn new(id: ExprNodeId, kind: NodeKind, mut children: Vec<ChildRef>) -> ExprNode {
+    pub fn new(id: ExprNodeId, payload: NodePayload, mut children: Vec<ChildRef>) -> ExprNode {
         children.sort();
-        ExprNode { id, kind, children }
+        ExprNode {
+            id,
+            payload,
+            children,
+        }
+    }
+
+    /// 값 리터럴 node.
+    pub fn literal(id: ExprNodeId, value: TypedValue) -> ExprNode {
+        ExprNode::new(id, NodePayload::Literal(Literal::Value(value)), Vec::new())
+    }
+
+    /// `Optional<value_type>`의 값 없음(null) 리터럴 node.
+    pub fn null(id: ExprNodeId, value_type: ExpressionType) -> ExprNode {
+        ExprNode::new(
+            id,
+            NodePayload::Literal(Literal::Null(value_type)),
+            Vec::new(),
+        )
+    }
+
+    /// 참조 node.
+    pub fn reference(id: ExprNodeId, target: ReferenceTarget) -> ExprNode {
+        ExprNode::new(id, NodePayload::Reference(target), Vec::new())
+    }
+
+    /// 단항 연산 node.
+    pub fn unary(id: ExprNodeId, op: UnaryOp, operand: ExprNodeId) -> ExprNode {
+        ExprNode::new(
+            id,
+            NodePayload::Unary(op),
+            vec![ChildRef::new(ChildSlot::Operand, operand)],
+        )
+    }
+
+    /// 이항 연산 node.
+    pub fn binary(id: ExprNodeId, op: BinaryOp, lhs: ExprNodeId, rhs: ExprNodeId) -> ExprNode {
+        ExprNode::new(
+            id,
+            NodePayload::Binary(op),
+            vec![
+                ChildRef::new(ChildSlot::Lhs, lhs),
+                ChildRef::new(ChildSlot::Rhs, rhs),
+            ],
+        )
+    }
+
+    /// 함수 호출 node. `args`는 인자 순서입니다.
+    pub fn call(id: ExprNodeId, function: FunctionId, args: &[ExprNodeId]) -> ExprNode {
+        let children = args
+            .iter()
+            .enumerate()
+            .map(|(index, &arg)| {
+                ChildRef::new(
+                    ChildSlot::Argument(u16::try_from(index).unwrap_or(u16::MAX)),
+                    arg,
+                )
+            })
+            .collect();
+        ExprNode::new(id, NodePayload::Call(function), children)
+    }
+
+    /// `if` node.
+    pub fn if_else(
+        id: ExprNodeId,
+        condition: ExprNodeId,
+        then_branch: ExprNodeId,
+        else_branch: ExprNodeId,
+    ) -> ExprNode {
+        ExprNode::new(
+            id,
+            NodePayload::If,
+            vec![
+                ChildRef::new(ChildSlot::Condition, condition),
+                ChildRef::new(ChildSlot::Then, then_branch),
+                ChildRef::new(ChildSlot::Else, else_branch),
+            ],
+        )
+    }
+
+    /// `match` node. `arms`는 (pattern 값, arm 값 node) 목록입니다.
+    pub fn match_on(
+        id: ExprNodeId,
+        scrutinee: ExprNodeId,
+        arms: Vec<(TypedValue, ExprNodeId)>,
+        default: ExprNodeId,
+    ) -> ExprNode {
+        let mut patterns = Vec::with_capacity(arms.len());
+        let mut children = vec![
+            ChildRef::new(ChildSlot::Scrutinee, scrutinee),
+            ChildRef::new(ChildSlot::Default, default),
+        ];
+        for (index, (pattern, value)) in arms.into_iter().enumerate() {
+            patterns.push(pattern);
+            children.push(ChildRef::new(
+                ChildSlot::Arm(u16::try_from(index).unwrap_or(u16::MAX)),
+                value,
+            ));
+        }
+        ExprNode::new(id, NodePayload::Match(patterns), children)
     }
 
     /// node 식별자.
@@ -181,7 +388,17 @@ impl ExprNode {
 
     /// node 종류.
     pub const fn kind(&self) -> NodeKind {
-        self.kind
+        self.payload.kind()
+    }
+
+    /// kind별 payload.
+    pub const fn payload(&self) -> &NodePayload {
+        &self.payload
+    }
+
+    /// node 연산(kind + operator·함수 ID).
+    pub const fn op(&self) -> ExpressionOp {
+        self.payload.op()
     }
 
     /// child 참조(slot 순서).
@@ -351,6 +568,17 @@ impl ExpressionAst {
         counts
     }
 
+    /// AST가 참조하는 대상 전체(중복 제거, 정렬). 의존성 분석(토큰·binding graph)에 씁니다.
+    pub fn referenced_targets(&self) -> BTreeSet<&ReferenceTarget> {
+        self.nodes
+            .iter()
+            .filter_map(|node| match &node.payload {
+                NodePayload::Reference(target) => Some(target),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// root에서 도달 가능한 node 집합(명시적 stack, 공유·순환 참조에서도 종료).
     fn reachable_from_root(&self) -> BTreeSet<ExprNodeId> {
         let mut seen = BTreeSet::new();
@@ -391,16 +619,19 @@ fn validate_slots(node: &ExprNode) -> Result<(), AstError> {
             });
         }
     }
-    let fixed: &[ChildSlot] = match node.kind {
-        NodeKind::Literal | NodeKind::Reference => &[],
-        NodeKind::Unary => &[ChildSlot::Operand],
-        NodeKind::Binary => &[ChildSlot::Lhs, ChildSlot::Rhs],
-        NodeKind::If => &[ChildSlot::Condition, ChildSlot::Then, ChildSlot::Else],
-        NodeKind::Call => return validate_sequence(node, SequenceSlot::Argument, 0),
-        NodeKind::Match => {
+    let fixed: &[ChildSlot] = match &node.payload {
+        NodePayload::Literal(_) | NodePayload::Reference(_) => &[],
+        NodePayload::Unary(_) => &[ChildSlot::Operand],
+        NodePayload::Binary(_) => &[ChildSlot::Lhs, ChildSlot::Rhs],
+        NodePayload::If => &[ChildSlot::Condition, ChildSlot::Then, ChildSlot::Else],
+        NodePayload::Call(function) => {
+            return validate_sequence(node, SequenceSlot::Argument, function.signature().arity())
+        }
+        NodePayload::Match(patterns) => {
             require(node, ChildSlot::Scrutinee)?;
             require(node, ChildSlot::Default)?;
-            return validate_sequence(node, SequenceSlot::Arm, 1);
+            // arm은 1개 이상이어야 합니다(pattern이 없으면 Arm(0)이 비어 있는 것으로 보고).
+            return validate_sequence(node, SequenceSlot::Arm, patterns.len().max(1));
         }
     };
     for child in &node.children {
@@ -441,14 +672,12 @@ impl SequenceSlot {
     }
 }
 
-/// 순번 slot이 0부터 빈틈없이 이어지고, 그 외 slot은 Match의 고정 slot뿐인지 검사합니다.
-fn validate_sequence(node: &ExprNode, kind: SequenceSlot, minimum: usize) -> Result<(), AstError> {
-    let mut expected: u16 = 0;
+/// 순번 slot이 `0..exact`를 빈틈없이 정확히 채우고, 그 외 slot은 Match의 고정 slot뿐인지 검사합니다.
+fn validate_sequence(node: &ExprNode, kind: SequenceSlot, exact: usize) -> Result<(), AstError> {
     let mut count = 0usize;
     for child in &node.children {
         match kind.index_of(child.slot) {
-            Some(index) if index == expected => {
-                expected = expected.wrapping_add(1);
+            Some(index) if usize::from(index) == count && count < exact => {
                 count += 1;
             }
             Some(_) => {
@@ -469,10 +698,10 @@ fn validate_sequence(node: &ExprNode, kind: SequenceSlot, minimum: usize) -> Res
             }
         }
     }
-    if count < minimum {
+    if count < exact {
         return Err(AstError::MissingSlot {
             node: node.id,
-            slot: kind.slot(0),
+            slot: kind.slot(u16::try_from(count).unwrap_or(u16::MAX)),
         });
     }
     Ok(())
@@ -498,13 +727,13 @@ mod tests {
     }
 
     fn leaf(n: u64) -> ExprNode {
-        ExprNode::new(id(n), NodeKind::Literal, vec![])
+        ExprNode::literal(id(n), TypedValue::Boolean(true))
     }
 
     fn binary(n: u64, lhs: u64, rhs: u64) -> ExprNode {
         ExprNode::new(
             id(n),
-            NodeKind::Binary,
+            NodePayload::Binary(BinaryOp::Add),
             vec![
                 ChildRef::new(ChildSlot::Lhs, id(lhs)),
                 ChildRef::new(ChildSlot::Rhs, id(rhs)),
@@ -572,7 +801,7 @@ mod tests {
         // Binary에 Rhs 없음.
         let half = ExprNode::new(
             id(10),
-            NodeKind::Binary,
+            NodePayload::Binary(BinaryOp::Add),
             vec![ChildRef::new(ChildSlot::Lhs, id(1))],
         );
         assert_eq!(
@@ -585,7 +814,7 @@ mod tests {
         // Literal에 child.
         let literal_with_child = ExprNode::new(
             id(10),
-            NodeKind::Literal,
+            NodePayload::Literal(Literal::Value(TypedValue::Boolean(true))),
             vec![ChildRef::new(ChildSlot::Operand, id(1))],
         );
         assert_eq!(
@@ -598,7 +827,7 @@ mod tests {
         // 같은 slot 두 번.
         let twice = ExprNode::new(
             id(10),
-            NodeKind::Unary,
+            NodePayload::Unary(UnaryOp::Not),
             vec![
                 ChildRef::new(ChildSlot::Operand, id(1)),
                 ChildRef::new(ChildSlot::Operand, id(2)),
@@ -618,7 +847,7 @@ mod tests {
         let call = |slots: Vec<ChildSlot>| {
             ExprNode::new(
                 id(10),
-                NodeKind::Call,
+                NodePayload::Call(FunctionId::Min),
                 slots
                     .into_iter()
                     .enumerate()
@@ -644,7 +873,7 @@ mod tests {
         // Match: Scrutinee + Arm(0..) + Default, arm 최소 1개.
         let matched = ExprNode::new(
             id(10),
-            NodeKind::Match,
+            NodePayload::Match(vec![TypedValue::Boolean(true)]),
             vec![
                 ChildRef::new(ChildSlot::Default, id(3)),
                 ChildRef::new(ChildSlot::Arm(0), id(2)),
@@ -654,7 +883,7 @@ mod tests {
         assert!(ExpressionAst::new(id(10), vec![matched, leaf(1), leaf(2), leaf(3)]).is_ok());
         let no_arm = ExprNode::new(
             id(10),
-            NodeKind::Match,
+            NodePayload::Match(vec![]),
             vec![
                 ChildRef::new(ChildSlot::Default, id(3)),
                 ChildRef::new(ChildSlot::Scrutinee, id(1)),
@@ -674,7 +903,7 @@ mod tests {
         let a = ExpressionAst::new(id(10), vec![binary(10, 1, 2), leaf(1), leaf(2)]).expect("유효");
         let reversed_children = ExprNode::new(
             id(10),
-            NodeKind::Binary,
+            NodePayload::Binary(BinaryOp::Add),
             vec![
                 ChildRef::new(ChildSlot::Rhs, id(2)),
                 ChildRef::new(ChildSlot::Lhs, id(1)),
@@ -718,5 +947,115 @@ mod tests {
         assert_eq!(sorted, slots.to_vec());
         assert!(ChildSlot::Arm(1) < ChildSlot::Arm(2));
         assert!(ChildSlot::Arm(9) < ChildSlot::Default);
+    }
+
+    #[test]
+    fn constructors_build_each_node_kind() {
+        let number = |v: f32| {
+            TypedValue::Number(stellar_core_types::value::FiniteF32::new(v).expect("유한"))
+        };
+        let token = ReferenceTarget::Token(TokenRef::new(StableId::new_v7(5, 1, 2)));
+        let nodes = vec![
+            ExprNode::match_on(
+                id(10),
+                id(9),
+                vec![(number(1.0), id(1)), (number(2.0), id(2))],
+                id(3),
+            ),
+            ExprNode::if_else(id(9), id(8), id(1), id(2)),
+            ExprNode::call(id(8), FunctionId::Clamp, &[id(7), id(1), id(2)]),
+            ExprNode::binary(id(7), BinaryOp::Add, id(6), id(1)),
+            ExprNode::unary(id(6), UnaryOp::Negate, id(5)),
+            ExprNode::reference(id(5), token.clone()),
+            ExprNode::literal(id(1), number(1.0)),
+            ExprNode::literal(id(2), number(2.0)),
+            ExprNode::null(id(3), ExpressionType::Number),
+        ];
+        // 타입은 아직 검사하지 않습니다(VIII.2.4). 구조만 검증.
+        let ast = ExpressionAst::new(id(10), nodes).expect("구조 유효");
+        let kinds: Vec<NodeKind> = ast.nodes().iter().map(ExprNode::kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                NodeKind::Match,
+                NodeKind::If,
+                NodeKind::Call,
+                NodeKind::Binary,
+                NodeKind::Unary,
+                NodeKind::Reference,
+                NodeKind::Literal,
+                NodeKind::Literal,
+                NodeKind::Literal,
+            ]
+        );
+        assert_eq!(
+            ast.node(id(8)).map(ExprNode::op),
+            Some(ExpressionOp::Call(FunctionId::Clamp))
+        );
+        assert_eq!(
+            ast.node(id(10)).and_then(|n| n.child(ChildSlot::Arm(1))),
+            Some(id(2))
+        );
+        assert_eq!(
+            ast.referenced_targets().into_iter().collect::<Vec<_>>(),
+            vec![&token]
+        );
+    }
+
+    #[test]
+    fn call_arity_and_match_arms_are_structural() {
+        // clamp는 인자 3개: 2개면 Argument(2)가 비어 있음.
+        let short = ExprNode::call(id(10), FunctionId::Clamp, &[id(1), id(2)]);
+        assert_eq!(
+            ExpressionAst::new(id(10), vec![short, leaf(1), leaf(2)]),
+            Err(AstError::MissingSlot {
+                node: id(10),
+                slot: ChildSlot::Argument(2),
+            })
+        );
+        // abs는 인자 1개: 2개면 Argument(1)이 허용되지 않음.
+        let long = ExprNode::call(id(10), FunctionId::Abs, &[id(1), id(2)]);
+        assert_eq!(
+            ExpressionAst::new(id(10), vec![long, leaf(1), leaf(2)]),
+            Err(AstError::UnexpectedSlot {
+                node: id(10),
+                slot: ChildSlot::Argument(1),
+            })
+        );
+        // pattern 2개인데 arm slot 1개.
+        let missing_arm = ExprNode::new(
+            id(10),
+            NodePayload::Match(vec![TypedValue::Boolean(true), TypedValue::Boolean(false)]),
+            vec![
+                ChildRef::new(ChildSlot::Scrutinee, id(1)),
+                ChildRef::new(ChildSlot::Arm(0), id(2)),
+                ChildRef::new(ChildSlot::Default, id(3)),
+            ],
+        );
+        assert_eq!(
+            ExpressionAst::new(id(10), vec![missing_arm, leaf(1), leaf(2), leaf(3)]),
+            Err(AstError::MissingSlot {
+                node: id(10),
+                slot: ChildSlot::Arm(1),
+            })
+        );
+        // pattern 1개인데 arm slot 2개.
+        let extra_arm = ExprNode::new(
+            id(10),
+            NodePayload::Match(vec![TypedValue::Boolean(true)]),
+            vec![
+                ChildRef::new(ChildSlot::Scrutinee, id(1)),
+                ChildRef::new(ChildSlot::Arm(0), id(2)),
+                ChildRef::new(ChildSlot::Arm(1), id(2)),
+                ChildRef::new(ChildSlot::Default, id(3)),
+            ],
+        );
+        assert_eq!(
+            ExpressionAst::new(id(10), vec![extra_arm, leaf(1), leaf(2), leaf(3)]),
+            Err(AstError::UnexpectedSlot {
+                node: id(10),
+                slot: ChildSlot::Arm(1),
+            })
+        );
     }
 }

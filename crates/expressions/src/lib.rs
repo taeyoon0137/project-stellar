@@ -18,5 +18,8 @@ pub mod functions;
 /// 닫힌 표현식 연산 집합과 연산 직렬화 (VIII.1.5).
 pub mod ops;
 
-/// Expression AST node·child 참조·구조 검증 (VIII.2.1).
+/// Expression AST node·payload·child 참조·구조 검증 (VIII.2.1, VIII.2.2).
 pub mod ast;
+
+/// AST node binary 직렬화 (VIII.2.2).
+pub mod codec;
