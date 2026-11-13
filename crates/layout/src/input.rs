@@ -29,6 +29,7 @@ use crate::free::{
     AxisAnchors, FreePosition,
 };
 use crate::geometry::Axis;
+use crate::grid::{decode_grid, encode_grid, validate_grid, GridLayout};
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
 use crate::sizing::{validate_sizing, SIZING_FILL, SIZING_FIXED, SIZING_HUG, SIZING_PERCENTAGE};
@@ -63,6 +64,8 @@ pub enum ContainerLayout {
     Free,
     /// 한 축을 따라 차례로 배치(X.3).
     Stack(StackLayout),
+    /// 열·행 track 격자 배치(X.4).
+    Grid(GridLayout),
 }
 
 /// leaf 콘텐츠의 intrinsic 크기와 baseline (X.1.1).
@@ -323,6 +326,7 @@ impl LayoutInput {
                 match &self.nodes[parent_index].container {
                     ContainerLayout::Free => validate_anchor_combination(node)?,
                     ContainerLayout::Stack(stack) => validate_flex_combination(node, stack.axis)?,
+                    ContainerLayout::Grid(_) => {}
                 }
             }
         }
@@ -401,6 +405,7 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
     match &node.container {
         ContainerLayout::Free => {}
         ContainerLayout::Stack(stack) => validate_stack(node.id, stack)?,
+        ContainerLayout::Grid(grid) => validate_grid(node.id, grid)?,
     }
     validate_sizing(node.id, Axis::Horizontal, node.width, is_root)?;
     validate_sizing(node.id, Axis::Vertical, node.height, is_root)?;
@@ -420,6 +425,7 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
 
 const CONTAINER_FREE: u8 = 0;
 const CONTAINER_STACK: u8 = 1;
+const CONTAINER_GRID: u8 = 2;
 
 const CONTENT_NONE: u8 = 0;
 const CONTENT_INTRINSIC: u8 = 1;
@@ -431,12 +437,16 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
         w.id(child.id);
         w.order_key(&child.order_key);
     }
-    match node.container {
+    match &node.container {
         ContainerLayout::Free => w.u8(CONTAINER_FREE),
         ContainerLayout::Stack(stack) => {
             w.u8(CONTAINER_STACK);
-            encode_stack(w, &stack);
-            encode_stack_wrap(w, &stack);
+            encode_stack(w, stack);
+            encode_stack_wrap(w, stack);
+        }
+        ContainerLayout::Grid(grid) => {
+            w.u8(CONTAINER_GRID);
+            encode_grid(w, grid);
         }
     }
     w.insets(&node.padding);
@@ -494,6 +504,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
             decode_stack_wrap(r, &mut stack)?;
             ContainerLayout::Stack(stack)
         }
+        CONTAINER_GRID => ContainerLayout::Grid(decode_grid(r)?),
         _ => {
             return Err(LayoutError::Malformed {
                 reason: "알 수 없는 container tag",

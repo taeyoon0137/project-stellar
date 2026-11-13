@@ -42,6 +42,9 @@ pub mod transform;
 /// Stack 자식 grow·shrink·basis (X.3.3).
 pub mod flex;
 
+/// Grid 배치 (X.4).
+pub mod grid;
+
 /// canonical bytes writer/reader (crate 내부).
 mod codec;
 

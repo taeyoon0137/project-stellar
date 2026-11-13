@@ -261,9 +261,13 @@ impl<'a> Engine<'a> {
         if let Some((size, _)) = self.nodes[index].intrinsic {
             return Ok(size);
         }
-        match self.node(index).container {
+        match &self.node(index).container {
             ContainerLayout::Free => free::measure(self, index, inner),
             ContainerLayout::Stack(_) => stack::measure(self, index, inner),
+            ContainerLayout::Grid(_) => Err(LayoutError::UnsupportedFeature {
+                node: self.nodes[index].id,
+                feature: "Grid 배치(X.4.3)",
+            }),
         }
     }
 
@@ -299,9 +303,15 @@ impl<'a> Engine<'a> {
             overflow: LayoutRect::at_origin(size),
         });
 
-        let placements = match self.node(index).container {
+        let placements = match &self.node(index).container {
             ContainerLayout::Free => free::place(self, index, inner)?,
             ContainerLayout::Stack(_) => stack::place(self, index, inner)?,
+            ContainerLayout::Grid(_) => {
+                return Err(LayoutError::UnsupportedFeature {
+                    node: id,
+                    feature: "Grid 배치(X.4.3)",
+                })
+            }
         };
         let mut overflow = LayoutRect::at_origin(size);
         for (child, child_rect) in placements {

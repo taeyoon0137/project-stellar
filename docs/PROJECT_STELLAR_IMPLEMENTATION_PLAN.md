@@ -945,7 +945,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| X.4.1 | `[ ]` | Grid track 타입 Fixed, Fraction, MinContent, MaxContent, MinMax를 정의합니다. | type validation. | X.1.1 |
+| X.4.1 | `[x]` | Grid track 타입 Fixed, Fraction, MinContent, MaxContent, MinMax를 정의합니다. | type validation. | X.1.1 |
 | X.4.2 | `[ ]` | explicit row/column track sizing을 구현합니다. | fixed/fraction fixture 통과. | X.4.1 |
 | X.4.3 | `[ ]` | grid item start/end, span과 gap을 구현합니다. invalid span은 오류입니다. | overlap 허용 정책과 invalid fixture 통과. | X.4.2 |
 | X.4.4 | `[ ]` | auto placement를 row-major deterministic order로 구현합니다. | 삽입 순서와 visual OrderKey fixture 통과. | X.4.3 |
