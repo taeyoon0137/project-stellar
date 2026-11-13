@@ -1,4 +1,4 @@
-//! 프로젝트 경로 resolver (XIII.4.1, XIII.4.2, XIII.4.3).
+//! 프로젝트 경로 resolver (XIII.4.1, XIII.4.2, XIII.4.3, XIII.4.5).
 //!
 //! 프로젝트 상대 경로(`/` 구분)를 실제 파일 시스템 경로로 해석합니다. 파일·디렉터리 symlink를
 //! **그대로 허용**하며, target이 프로젝트 **내부든 외부든** 모두 읽을 수 있습니다(기술 아키텍처
@@ -28,8 +28,16 @@
 //! [`SymlinkDiagnostic`]으로 모아 표시용으로 돌려줍니다. 깨진 링크가 있어도 다른 경로의 해석·읽기와
 //! 프로젝트 열기는 영향을 받지 않습니다.
 //!
-//! 외부 target watcher 등록(XIII.4.4), 비신뢰 프로젝트의 외부 target 읽기 차단(XIII.4.5)은 후속
-//! 작업입니다.
+//! 비신뢰 프로젝트(XIII.4.5, 기술 아키텍처 19.3·37.1): [`ExternalAccess::MetadataOnly`]인 resolver는
+//! 최종 target이 프로젝트 **밖**인 경로의 **내용**(파일 bytes, 디렉터리 항목)을 읽지 않고
+//! [`ResolveError::ExternalTargetNotTrusted`]로 거부합니다. 경로 해석에 필요한 metadata(`lstat`,
+//! `readlink`, `stat`)만 사용하며, [`PathResolver::external_target_info`]로 target 경로·종류만
+//! 제한적으로 보여 줍니다. 내용 접근은 [`PathResolver::read`]·[`PathResolver::read_dir`]·
+//! [`PathResolver::walk_tree`]의 디렉터리 목록 한 곳(`open_content`·`list_content`)으로만 일어나며
+//! 그 직전에 정책을 검사합니다. 프로젝트 열기 경로는 [`PathResolver::for_project`]로 신뢰 상태를
+//! 넘겨 만듭니다.
+//!
+//! 외부 target watcher 등록(XIII.4.4)은 후속 작업입니다.
 
 use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
@@ -37,6 +45,7 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use crate::identity::ProjectIdentity;
+use crate::trust::TrustStatus;
 
 /// 해석된 target이 프로젝트 root 기준 어디에 있는지.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,6 +187,13 @@ pub enum ResolveError {
         /// 적용한 hop 상한.
         limit: usize,
     },
+    /// 비신뢰 프로젝트에서 프로젝트 밖 target의 내용 접근을 거부함(내용을 열지 않음).
+    ExternalTargetNotTrusted {
+        /// 요청 경로.
+        path: String,
+        /// 해석된 외부 target 경로(metadata).
+        target: PathBuf,
+    },
     /// 깨진 symlink: 링크의 원문 target이 가리키는 경로가 없음(링크 자체는 그대로 둠).
     BrokenSymlink {
         /// 요청 경로.
@@ -206,6 +222,10 @@ impl std::fmt::Display for ResolveError {
             ResolveError::TooManySymlinkHops { path, limit } => {
                 write!(f, "symlink hop이 상한 {limit}을 넘습니다: {path:?}")
             }
+            ResolveError::ExternalTargetNotTrusted { path, target } => write!(
+                f,
+                "신뢰되지 않은 프로젝트에서는 외부 target 내용을 읽지 않습니다: {path:?} -> {target:?}"
+            ),
             ResolveError::BrokenSymlink {
                 path,
                 link,
@@ -245,6 +265,40 @@ pub fn split_project_path(path: &str) -> Result<Vec<&str>, InvalidPathReason> {
     Ok(components)
 }
 
+/// 프로젝트 밖 target의 내용 접근 정책.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalAccess {
+    /// 외부 target 내용을 읽을 수 있음(신뢰된 프로젝트).
+    Allowed,
+    /// 외부 target은 경로 metadata만 해석하고 내용은 읽지 않음(신뢰되지 않은 프로젝트).
+    MetadataOnly,
+}
+
+impl ExternalAccess {
+    /// 프로젝트 신뢰 상태에 맞는 정책. 신뢰되지 않으면 [`ExternalAccess::MetadataOnly`]입니다.
+    pub fn from_trust(trust: TrustStatus) -> ExternalAccess {
+        match trust {
+            TrustStatus::Trusted => ExternalAccess::Allowed,
+            TrustStatus::NotTrusted => ExternalAccess::MetadataOnly,
+        }
+    }
+}
+
+/// 외부 target의 제한된 metadata(내용·크기·시간 정보 없음).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalTargetInfo {
+    /// 요청 경로(프로젝트 상대).
+    pub path: String,
+    /// target 위치.
+    pub location: TargetLocation,
+    /// target 종류.
+    pub kind: TargetKind,
+    /// 해석된 target 경로.
+    pub target: PathBuf,
+    /// 요청 경로에서 처음 만난 링크의 원문 target(링크가 없으면 `None`).
+    pub raw_target: Option<PathBuf>,
+}
+
 /// symlink를 그대로 허용하는 프로젝트 경로 resolver.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PathResolver {
@@ -252,23 +306,76 @@ pub struct PathResolver {
     root: PathBuf,
     /// symlink를 해석한 실제 root(내부/외부 판정 기준).
     canonical_root: PathBuf,
+    /// 외부 target 내용 접근 정책.
+    external_access: ExternalAccess,
 }
 
 impl PathResolver {
     /// 열린 root 경로로 resolver를 만듭니다. root가 없으면 실패합니다.
+    ///
+    /// 외부 target 정책은 [`ExternalAccess::Allowed`]입니다. 열린 프로젝트에는 신뢰 상태를 반영하는
+    /// [`PathResolver::for_project`] 또는 [`PathResolver::with_trust`]를 씁니다.
     pub fn new(root: &Path) -> io::Result<PathResolver> {
         Ok(PathResolver {
             root: std::path::absolute(root)?,
             canonical_root: std::fs::canonicalize(root)?,
+            external_access: ExternalAccess::Allowed,
         })
     }
 
-    /// [`ProjectIdentity`]의 root path와 canonical target으로 resolver를 만듭니다.
+    /// [`ProjectIdentity`]의 root path와 canonical target으로 resolver를 만듭니다(정책은
+    /// [`PathResolver::new`]와 같음).
     pub fn from_identity(identity: &ProjectIdentity) -> PathResolver {
         PathResolver {
             root: identity.root_path().to_path_buf(),
             canonical_root: identity.canonical_target().to_path_buf(),
+            external_access: ExternalAccess::Allowed,
         }
+    }
+
+    /// 열린 프로젝트의 resolver. 신뢰되지 않은 프로젝트는 외부 target 내용을 읽지 않습니다.
+    pub fn for_project(identity: &ProjectIdentity, trust: TrustStatus) -> PathResolver {
+        PathResolver::from_identity(identity).with_trust(trust)
+    }
+
+    /// 신뢰 상태에 맞게 외부 target 정책을 바꾼 resolver.
+    pub fn with_trust(mut self, trust: TrustStatus) -> PathResolver {
+        self.external_access = ExternalAccess::from_trust(trust);
+        self
+    }
+
+    /// 외부 target 내용 접근 정책.
+    pub fn external_access(&self) -> ExternalAccess {
+        self.external_access
+    }
+
+    /// 경로를 해석해 target의 제한된 metadata를 반환합니다. 내용은 열지 않으므로 신뢰 상태와
+    /// 무관하게 사용할 수 있습니다.
+    pub fn external_target_info(
+        &self,
+        project_path: &str,
+    ) -> Result<ExternalTargetInfo, ResolveError> {
+        let resolved = self.resolve(project_path)?;
+        Ok(ExternalTargetInfo {
+            path: resolved.project_path,
+            location: resolved.location,
+            kind: resolved.kind,
+            target: resolved.target,
+            raw_target: resolved.chain.first().map(|hop| hop.raw_target.clone()),
+        })
+    }
+
+    /// 내용 접근 직전 정책 검사: 비신뢰 프로젝트에서 외부 target이면 거부합니다.
+    fn check_content_access(&self, resolved: &ResolvedPath) -> Result<(), ResolveError> {
+        if self.external_access == ExternalAccess::MetadataOnly
+            && resolved.location == TargetLocation::External
+        {
+            return Err(ResolveError::ExternalTargetNotTrusted {
+                path: resolved.project_path.clone(),
+                target: resolved.target.clone(),
+            });
+        }
+        Ok(())
     }
 
     /// lexical root.
@@ -452,6 +559,8 @@ impl PathResolver {
     ///   표시하고 들어가지 않습니다.
     /// - 해석할 수 없는 항목(symlink 순환·hop 초과·없는 target 등)은 [`WalkIssue::Unresolvable`]로
     ///   표시하고 나머지 순회를 계속합니다. 링크는 수정·삭제하지 않습니다.
+    /// - 비신뢰 프로젝트([`ExternalAccess::MetadataOnly`])에서는 외부 디렉터리를 항목(metadata)으로만
+    ///   넣고 목록을 읽지 않으며 [`WalkIssue::ExternalNotTraversed`]로 표시합니다.
     /// - 결과 항목·문제는 프로젝트 상대 경로 순으로 정렬되어 결정론적입니다.
     pub fn walk_tree(&self, include: impl Fn(&str) -> bool) -> Result<TreeWalk, ResolveError> {
         let mut walk = TreeWalk::default();
@@ -462,11 +571,7 @@ impl PathResolver {
             vec![self.canonical_root.clone()],
         )];
         while let Some((prefix, dir, ancestors)) = stack.pop() {
-            let mut names = Vec::new();
-            for entry in std::fs::read_dir(&dir).map_err(|e| io_error(&dir, &e))? {
-                names.push(entry.map_err(|e| io_error(&dir, &e))?.file_name());
-            }
-            names.sort();
+            let names = list_content(&dir)?;
             let mut subdirs = Vec::new();
             for name in names {
                 let Some(name) = name.to_str() else {
@@ -491,6 +596,19 @@ impl PathResolver {
                     }
                 };
                 if resolved.kind == TargetKind::Directory {
+                    if self.check_content_access(&resolved).is_err() {
+                        walk.issues.push(WalkIssue::ExternalNotTraversed {
+                            path: path.clone(),
+                            target: resolved.target.clone(),
+                        });
+                        walk.entries.push(WalkEntry {
+                            path,
+                            kind: resolved.kind,
+                            location: resolved.location,
+                            via_symlink: resolved.via_symlink(),
+                        });
+                        continue;
+                    }
                     if ancestors.contains(&resolved.target) {
                         walk.issues.push(WalkIssue::DirectoryCycle {
                             path,
@@ -532,6 +650,9 @@ impl PathResolver {
     }
 
     /// 프로젝트 상대 경로의 파일 내용을 읽습니다(내부·외부 symlink target 모두 허용).
+    ///
+    /// 비신뢰 프로젝트에서 외부 target이면 파일을 열지 않고
+    /// [`ResolveError::ExternalTargetNotTrusted`]를 반환합니다.
     pub fn read(&self, project_path: &str) -> Result<Vec<u8>, ResolveError> {
         let resolved = self.resolve(project_path)?;
         if resolved.kind != TargetKind::File {
@@ -539,10 +660,14 @@ impl PathResolver {
                 path: project_path.to_string(),
             });
         }
-        std::fs::read(&resolved.target).map_err(|e| io_error(&resolved.target, &e))
+        self.check_content_access(&resolved)?;
+        open_content(&resolved.target)
     }
 
     /// 프로젝트 상대 경로의 디렉터리 항목 이름을 정렬해 반환합니다(디렉터리 symlink 허용).
+    ///
+    /// 비신뢰 프로젝트에서 외부 target이면 목록을 읽지 않고
+    /// [`ResolveError::ExternalTargetNotTrusted`]를 반환합니다.
     pub fn read_dir(&self, project_path: &str) -> Result<Vec<OsString>, ResolveError> {
         let resolved = self.resolve(project_path)?;
         if resolved.kind != TargetKind::Directory {
@@ -550,15 +675,51 @@ impl PathResolver {
                 path: project_path.to_string(),
             });
         }
-        let entries =
-            std::fs::read_dir(&resolved.target).map_err(|e| io_error(&resolved.target, &e))?;
-        let mut names = Vec::new();
-        for entry in entries {
-            let entry = entry.map_err(|e| io_error(&resolved.target, &e))?;
-            names.push(entry.file_name());
-        }
-        names.sort();
-        Ok(names)
+        self.check_content_access(&resolved)?;
+        list_content(&resolved.target)
+    }
+}
+
+/// 파일 내용 접근(유일한 지점). 호출 전에 정책 검사를 마쳐야 합니다.
+fn open_content(path: &Path) -> Result<Vec<u8>, ResolveError> {
+    content_access::record(path);
+    std::fs::read(path).map_err(|e| io_error(path, &e))
+}
+
+/// 디렉터리 내용(항목 이름) 접근(유일한 지점). 이름 순으로 정렬해 반환합니다.
+fn list_content(dir: &Path) -> Result<Vec<OsString>, ResolveError> {
+    content_access::record(dir);
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(|e| io_error(dir, &e))? {
+        names.push(entry.map_err(|e| io_error(dir, &e))?.file_name());
+    }
+    names.sort();
+    Ok(names)
+}
+
+/// 내용 접근 기록(테스트 빌드에서만 기록, 그 외에는 빈 함수).
+mod content_access {
+    use std::path::Path;
+
+    #[cfg(test)]
+    thread_local! {
+        static LOG: std::cell::RefCell<Vec<std::path::PathBuf>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// 내용 접근 직전에 호출됩니다.
+    #[cfg(test)]
+    pub(super) fn record(path: &Path) {
+        LOG.with(|log| log.borrow_mut().push(path.to_path_buf()));
+    }
+
+    #[cfg(not(test))]
+    pub(super) fn record(_path: &Path) {}
+
+    /// 현재 스레드의 기록을 꺼내고 비웁니다.
+    #[cfg(test)]
+    pub(super) fn take() -> Vec<std::path::PathBuf> {
+        LOG.with(|log| std::mem::take(&mut *log.borrow_mut()))
     }
 }
 
@@ -609,6 +770,13 @@ pub enum WalkIssue {
         /// 가리키는 조상 디렉터리의 실제 경로.
         target: PathBuf,
     },
+    /// 비신뢰 프로젝트라 목록을 읽지 않은 외부 디렉터리(항목으로는 포함).
+    ExternalNotTraversed {
+        /// 프로젝트 상대 경로.
+        path: String,
+        /// 외부 target 경로(metadata).
+        target: PathBuf,
+    },
     /// UTF-8이 아닌 이름(프로젝트 상대 경로로 표현할 수 없음).
     NonUtf8Name {
         /// 실제 경로.
@@ -620,9 +788,9 @@ impl WalkIssue {
     /// 정렬 키(프로젝트 상대 경로, UTF-8이 아닌 이름은 실제 경로의 손실 변환).
     fn sort_key(&self) -> String {
         match self {
-            WalkIssue::Unresolvable { path, .. } | WalkIssue::DirectoryCycle { path, .. } => {
-                path.clone()
-            }
+            WalkIssue::Unresolvable { path, .. }
+            | WalkIssue::DirectoryCycle { path, .. }
+            | WalkIssue::ExternalNotTraversed { path, .. } => path.clone(),
             WalkIssue::NonUtf8Name { path } => path.to_string_lossy().into_owned(),
         }
     }
@@ -696,7 +864,7 @@ impl SymlinkDiagnostic {
                 None,
                 Some(target.clone()),
             ),
-            WalkIssue::NonUtf8Name { .. } => return None,
+            WalkIssue::ExternalNotTraversed { .. } | WalkIssue::NonUtf8Name { .. } => return None,
         };
         Some(SymlinkDiagnostic {
             kind,
@@ -1479,5 +1647,182 @@ mod tests {
             },
         };
         assert_eq!(SymlinkDiagnostic::from_issue(&io_issue), None);
+    }
+
+    /// 외부 파일·디렉터리 링크와, 외부를 거쳐 내부로 돌아오는 링크를 가진 fixture.
+    #[cfg(unix)]
+    fn untrusted_fixture() -> Fixture {
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        symlink(fx.outside.join("secret.txt"), fx.project.join("ext.txt")).unwrap();
+        symlink(fx.outside.join("shared"), fx.project.join("shared")).unwrap();
+        symlink(fx.project.join("data/real.txt"), fx.outside.join("back-in")).unwrap();
+        symlink(fx.outside.join("back-in"), fx.project.join("via-ext")).unwrap();
+        fx
+    }
+
+    /// 기록된 내용 접근 중 `outside` 아래 경로.
+    fn external_accesses(fx: &Fixture) -> Vec<PathBuf> {
+        let outside = std::fs::canonicalize(&fx.outside).unwrap();
+        content_access::take()
+            .into_iter()
+            .filter(|p| p.starts_with(&outside) || p.starts_with(&fx.outside))
+            .collect()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_project_never_reads_external_target_content() {
+        let fx = untrusted_fixture();
+        let identity = ProjectIdentity::new(
+            stellar_core_types::ids::StableId::new_v7(1, 0, 1),
+            &fx.project,
+        )
+        .unwrap();
+        let untrusted = PathResolver::for_project(&identity, TrustStatus::NotTrusted);
+        assert_eq!(untrusted.external_access(), ExternalAccess::MetadataOnly);
+        let _ = content_access::take();
+
+        let secret = std::fs::canonicalize(fx.outside.join("secret.txt")).unwrap();
+        assert_eq!(
+            untrusted.read("ext.txt"),
+            Err(ResolveError::ExternalTargetNotTrusted {
+                path: "ext.txt".to_string(),
+                target: secret.clone(),
+            })
+        );
+        for path in ["shared", "shared/asset.bin"] {
+            assert!(matches!(
+                if path == "shared" {
+                    untrusted.read_dir(path).map(|_| ())
+                } else {
+                    untrusted.read(path).map(|_| ())
+                },
+                Err(ResolveError::ExternalTargetNotTrusted { .. })
+            ));
+        }
+        let walk = untrusted.walk_tree(|_| true).unwrap();
+        // 외부 target 내용에 대한 접근 기록 0.
+        assert_eq!(external_accesses(&fx), Vec::<PathBuf>::new());
+
+        // 내부 데이터, 외부 링크를 거쳐 내부로 돌아오는 경로는 그대로 읽힘.
+        assert_eq!(untrusted.read("data/real.txt").unwrap(), b"internal-bytes");
+        assert_eq!(untrusted.read("via-ext").unwrap(), b"internal-bytes");
+        // 외부 디렉터리는 항목(metadata)으로만 나오고 하위 항목은 없음.
+        let paths: Vec<&str> = walk.entries.iter().map(|e| e.path.as_str()).collect();
+        assert!(paths.contains(&"shared") && paths.contains(&"ext.txt"));
+        assert!(!paths.iter().any(|p| p.starts_with("shared/")));
+        assert!(walk.issues.contains(&WalkIssue::ExternalNotTraversed {
+            path: "shared".to_string(),
+            target: std::fs::canonicalize(fx.outside.join("shared")).unwrap(),
+        }));
+
+        // 같은 동작을 신뢰된 resolver로 하면 외부 내용 접근이 기록됨(기록 장치 자체 검증).
+        let trusted = PathResolver::for_project(&identity, TrustStatus::Trusted);
+        assert_eq!(trusted.read("ext.txt").unwrap(), b"external-bytes");
+        let trusted_walk = trusted.walk_tree(|_| true).unwrap();
+        assert!(trusted_walk
+            .entries
+            .iter()
+            .any(|e| e.path == "shared/asset.bin"));
+        assert!(!external_accesses(&fx).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_project_shows_limited_target_metadata() {
+        let fx = untrusted_fixture();
+        let untrusted = PathResolver::new(&fx.project)
+            .unwrap()
+            .with_trust(TrustStatus::NotTrusted);
+        let _ = content_access::take();
+        let info = untrusted.external_target_info("ext.txt").unwrap();
+        assert_eq!(
+            info,
+            ExternalTargetInfo {
+                path: "ext.txt".to_string(),
+                location: TargetLocation::External,
+                kind: TargetKind::File,
+                target: std::fs::canonicalize(fx.outside.join("secret.txt")).unwrap(),
+                raw_target: Some(fx.outside.join("secret.txt")),
+            }
+        );
+        let dir = untrusted.external_target_info("shared").unwrap();
+        assert_eq!(dir.kind, TargetKind::Directory);
+        assert_eq!(dir.location, TargetLocation::External);
+        let internal = untrusted.external_target_info("data/real.txt").unwrap();
+        assert_eq!(internal.location, TargetLocation::Internal);
+        assert_eq!(internal.raw_target, None);
+        // metadata 조회는 내용 접근이 아님.
+        assert!(content_access::take().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_reads_do_not_open_fifo_or_unreadable_targets() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let fx = fixture();
+        // 열면(open) 쓰는 쪽이 올 때까지 막히는 FIFO, 권한 0의 파일.
+        let pipe = fx.outside.join("pipe");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&pipe)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let locked = fx.outside.join("locked.bin");
+        std::fs::write(&locked, b"x").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        symlink(&pipe, fx.project.join("pipe")).unwrap();
+        symlink(&locked, fx.project.join("locked")).unwrap();
+        let untrusted = PathResolver::new(&fx.project)
+            .unwrap()
+            .with_trust(TrustStatus::NotTrusted);
+
+        let (tx, rx) = mpsc::channel();
+        let worker = untrusted.clone();
+        std::thread::spawn(move || {
+            let info = worker.external_target_info("pipe");
+            let read = worker.read("pipe");
+            let locked = worker.read("locked");
+            let _ = tx.send((info, read, locked));
+        });
+        // FIFO를 열었다면 여기서 시간 초과로 실패합니다.
+        let (info, read, locked_read) = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("FIFO target을 열어 막힘");
+        let info = info.unwrap();
+        assert_eq!(info.kind, TargetKind::Other);
+        assert_eq!(info.location, TargetLocation::External);
+        // FIFO는 파일이 아니므로 NotAFile(열지 않음), 권한 0 파일은 권한 오류가 아닌 정책 거부.
+        assert_eq!(
+            read,
+            Err(ResolveError::NotAFile {
+                path: "pipe".to_string()
+            })
+        );
+        assert!(matches!(
+            locked_read,
+            Err(ResolveError::ExternalTargetNotTrusted { .. })
+        ));
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[test]
+    fn trust_maps_to_external_access_policy() {
+        assert_eq!(
+            ExternalAccess::from_trust(TrustStatus::Trusted),
+            ExternalAccess::Allowed
+        );
+        assert_eq!(
+            ExternalAccess::from_trust(TrustStatus::NotTrusted),
+            ExternalAccess::MetadataOnly
+        );
+        let fx = fixture();
+        assert_eq!(
+            PathResolver::new(&fx.project).unwrap().external_access(),
+            ExternalAccess::Allowed
+        );
     }
 }

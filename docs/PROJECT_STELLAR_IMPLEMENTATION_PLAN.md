@@ -1293,7 +1293,7 @@ tools/xtask/
 | XIII.4.2 | `[x]` | symlink cycle과 최대 hop을 검사해 무한 순회를 차단합니다. | self/two-node/deep cycle fixture 오류. | XIII.4.1 |
 | XIII.4.3 | `[x]` | broken symlink는 삭제하지 않고 diagnostic으로 표시합니다. | broken link open 시 project의 다른 데이터 정상. | XIII.4.1 |
 | XIII.4.4 | `[ ]` | 외부 symlink target 변경을 watcher에 동적으로 등록·해제합니다. | target replace 후 event 수신. | XIII.2.2, XIII.2.3, XIII.4.1 |
-| XIII.4.5 | `[ ]` | 신뢰되지 않은 프로젝트에서는 외부 symlink target을 읽지 않고 target path metadata만 제한적으로 표시합니다. | target content access syscall 없음. | IV.5.3, XIII.4.1 |
+| XIII.4.5 | `[x]` | 신뢰되지 않은 프로젝트에서는 외부 symlink target을 읽지 않고 target path metadata만 제한적으로 표시합니다. | target content access syscall 없음. | IV.5.3, XIII.4.1 |
 
 ### XIII.5 에셋 저장소
 
