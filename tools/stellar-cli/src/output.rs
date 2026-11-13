@@ -5,7 +5,9 @@
 //! - **stdout**: 명령이 실행되면(성공·실패 모두) 결과 envelope JSON 문서 **정확히 한 개**와 개행
 //!   하나만 씁니다. 다른 텍스트는 쓰지 않습니다. 예외는 사용자가 요청한 도움말(`help`)뿐입니다.
 //! - **stderr**: 사람이 읽는 진단만 씁니다. 형식은 계약이 아니며 경로 같은 지역 정보를 담을 수
-//!   있습니다. stdout JSON에는 경로를 넣지 않습니다.
+//!   있습니다. stdout JSON에는 경로를 넣지 않습니다. 줄 접두어는 실행 이름 `stellar`입니다
+//!   (XXIV.4.1, [`PROGRAM`]).
+//! - schema 식별자 `stellar-cli/result`는 실행 이름과 무관한 계약이라 XXIV.4.1에서도 바꾸지 않습니다.
 //! - 사용법 오류(64)는 명령이 실행되지 않은 상태이므로 stdout에 아무것도 쓰지 않고 stderr로만
 //!   안내합니다.
 //!
@@ -25,6 +27,7 @@
 //! | `error` | `{"code", "message"}`, 성공이면 `null` |
 //! | `diagnostics` | `{"severity", "code", "message"}` 배열(비어 있을 수 있음) |
 
+use crate::cli::PROGRAM;
 use crate::exit::ExitStatus;
 use crate::json::JsonValue;
 
@@ -197,7 +200,7 @@ pub fn stderr_text(command: &str, error: Option<&CliError>, diagnostics: &[Diagn
     let mut out = String::new();
     if let Some(e) = error {
         out.push_str(&format!(
-            "stellar-cli {command}: 오류({}): {}",
+            "{PROGRAM} {command}: 오류({}): {}",
             e.code, e.message
         ));
         if let Some(context) = &e.context {
@@ -207,7 +210,7 @@ pub fn stderr_text(command: &str, error: Option<&CliError>, diagnostics: &[Diagn
     }
     for d in diagnostics {
         out.push_str(&format!(
-            "stellar-cli {command}: {}({}): {}\n",
+            "{PROGRAM} {command}: {}({}): {}\n",
             d.severity.name(),
             d.code,
             d.message

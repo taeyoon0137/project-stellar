@@ -1,7 +1,8 @@
-//! stellar-cli 실행 파일 진입점 (XXIV.1.1).
+//! `stellar` 실행 파일 진입점 (XXIV.1.1, XXIV.4.1).
 //!
-//! 인자 해석과 명령 실행은 라이브러리 [`stellar_cli::cli::run`]에 위임합니다. UTF-8이 아닌
-//! 인자는 panic 없이 사용법 오류로 처리합니다.
+//! package `stellar-cli`의 실행 파일 이름은 `stellar`입니다(`Cargo.toml` `[[bin]]`). 인자 해석과
+//! 명령 실행은 라이브러리 [`stellar_cli::cli::run`]에 위임합니다. UTF-8이 아닌 인자는 panic 없이
+//! 사용법 오류로 처리합니다.
 
 use std::io::Write;
 use std::process::ExitCode;
@@ -19,10 +20,11 @@ fn main() -> ExitCode {
         match arg.into_string() {
             Ok(text) => args.push(text),
             Err(raw) => {
+                let program = cli::PROGRAM;
                 let _ = writeln!(
                     err,
-                    "stellar-cli: UTF-8이 아닌 인자는 지원하지 않습니다: {raw:?}\n\
-                     `stellar-cli --help`로 사용법을 확인하세요."
+                    "{program}: UTF-8이 아닌 인자는 지원하지 않습니다: {raw:?}\n\
+                     `{program} --help`로 사용법을 확인하세요."
                 );
                 return ExitCode::from(exit_byte(cli::EXIT_USAGE));
             }

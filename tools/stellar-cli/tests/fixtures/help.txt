@@ -1,0 +1,30 @@
+stellar — Project Stellar headless 도구
+
+사용법:
+    stellar <명령> [인자]
+
+명령:
+    help     이 도움말을 표시합니다
+    version  도구 이름·버전을 JSON으로 출력합니다
+    inspect  <경로>의 프로젝트 root와 stellar.yaml을 읽기 전용으로 검사해 JSON으로 출력합니다
+
+출력:
+    stdout  명령 결과 JSON 한 줄(schema "stellar-cli/result" v1). 도움말만 텍스트입니다.
+    stderr  사람이 읽는 진단. 사용법 오류는 stderr에만 씁니다.
+
+종료 코드:
+     0  ok           성공
+     1  failure      도메인 실패(검증 진단 등)
+    64  usage        사용법 오류
+    65  dataerr      입력 데이터 형식 오류
+    66  noinput      입력 없음·읽을 수 없음
+    69  unavailable  필요한 기능 사용 불가
+    70  software     내부 오류
+    73  cantcreat    출력 생성 불가
+    74  ioerr        입출력 오류
+    75  tempfail     일시적 실패(재시도 가능)
+    76  protocol     프로토콜 오류
+    77  noperm       권한 부족
+    78  config       설정 오류
+
+앱 UI·GUI·네트워크 없이 동작합니다. `stellar --help`로 이 도움말을 다시 볼 수 있습니다.

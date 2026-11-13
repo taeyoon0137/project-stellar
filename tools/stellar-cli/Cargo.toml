@@ -5,6 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
+# 사용자가 부르는 명령 이름은 `stellar`입니다(XXIV.4.1, ADR-0005 §2). package·library 이름은
+# `stellar-cli`로 유지하고 실행 파일 이름만 정합니다. 결과 JSON schema 식별자는 바꾸지 않습니다.
+[[bin]]
+name = "stellar"
+path = "src/main.rs"
+
 # L1 headless 도구(XXIV.1.1): 앱 UI·GUI·네트워크 없이 core crate만 사용합니다.
 # AI·MCP·모델·agent 관련 crate와 외부 crate를 직접 의존성으로 두지 않습니다.
 [dependencies]

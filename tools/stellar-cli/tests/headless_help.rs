@@ -1,8 +1,8 @@
-//! XXIV.1.1 검증: headless 환경에서 도움말 실행, core crate만 의존.
+//! XXIV.1.1·XXIV.4.1 검증: headless 환경에서 도움말 실행, core crate만 의존, 실행 이름 `stellar`.
 //!
-//! 빌드된 `stellar-cli` 실행 파일을 환경 변수를 모두 지운 상태(HOME·PATH·DISPLAY·TMPDIR 없음),
-//! 빈 작업 디렉터리, 닫힌 stdin으로 실행합니다. 앱·GUI·네트워크·프로젝트 없이 도움말이 성공해야
-//! 합니다.
+//! 빌드된 `stellar` 실행 파일(package `stellar-cli`)을 환경 변수를 모두 지운 상태(HOME·PATH·
+//! DISPLAY·TMPDIR 없음), 빈 작업 디렉터리, 닫힌 stdin으로 실행합니다. 앱·GUI·네트워크·프로젝트
+//! 없이 도움말이 성공해야 하고, 도움말은 `tests/fixtures/help.txt` snapshot과 같아야 합니다.
 
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -29,15 +29,36 @@ impl Drop for TempDir {
     }
 }
 
+/// 빌드된 실행 파일(XXIV.4.1: `[[bin]] name = "stellar"`).
+const STELLAR: &str = env!("CARGO_BIN_EXE_stellar");
+
+/// help snapshot(XXIV.4.1).
+const HELP_SNAPSHOT: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/help.txt"
+));
+
 /// 환경 변수를 지우고 빈 디렉터리에서 실행하는 headless 명령.
 fn headless(dir: &TempDir, args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_stellar-cli"))
+    Command::new(STELLAR)
         .args(args)
         .env_clear()
         .current_dir(&dir.path)
         .stdin(Stdio::null())
         .output()
-        .expect("stellar-cli 실행")
+        .expect("stellar 실행")
+}
+
+#[test]
+fn built_executable_is_named_stellar() {
+    // package·library 이름은 stellar-cli로 두고 실행 파일 이름만 stellar입니다.
+    let name = std::path::Path::new(STELLAR)
+        .file_name()
+        .and_then(|n| n.to_str());
+    assert_eq!(name, Some("stellar"));
+    assert_eq!(env!("CARGO_PKG_NAME"), "stellar-cli");
+    // 이전 실행 이름 stellar-cli는 더 이상 빌드되지 않습니다.
+    assert_eq!(option_env!("CARGO_BIN_EXE_stellar-cli"), None);
 }
 
 #[test]
@@ -47,12 +68,22 @@ fn help_runs_without_app_gui_or_environment() {
         let output = headless(&dir, &[flag]);
         assert_eq!(output.status.code(), Some(0), "{flag}");
         let stdout = String::from_utf8(output.stdout).expect("UTF-8 도움말");
-        assert!(stdout.contains("사용법:"), "{flag}: {stdout}");
-        assert!(stdout.contains("stellar-cli <명령>"), "{flag}");
+        assert_eq!(stdout, HELP_SNAPSHOT, "{flag}: help snapshot");
+        assert!(stdout.contains("stellar <명령>"), "{flag}");
         assert!(output.stderr.is_empty(), "{flag}: stderr는 비어야 함");
     }
     // 실행이 작업 디렉터리에 아무것도 만들지 않습니다(설정·캐시 파일 없음).
     assert_eq!(std::fs::read_dir(&dir.path).unwrap().count(), 0);
+}
+
+#[test]
+fn help_uses_stellar_except_the_result_schema_id() {
+    // 사용자가 부르는 이름은 stellar입니다. `stellar-cli`는 바꾸지 않는 결과 schema 식별자
+    // (`stellar-cli/result`, XXIV.1.2)에만 남습니다.
+    let rest = HELP_SNAPSHOT.replace("stellar-cli/result", "");
+    assert!(!rest.contains("stellar-cli"), "{HELP_SNAPSHOT}");
+    assert!(HELP_SNAPSHOT.contains("\"stellar-cli/result\""));
+    assert!(HELP_SNAPSHOT.contains("`stellar --help`"));
 }
 
 #[test]
@@ -62,7 +93,9 @@ fn usage_errors_exit_64_with_hint_on_stderr() {
         let output = headless(&dir, args);
         assert_eq!(output.status.code(), Some(64), "{args:?}");
         let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(stderr.contains("--help"), "{args:?}: {stderr}");
+        assert!(stderr.starts_with("stellar: "), "{args:?}: {stderr}");
+        assert!(stderr.contains("`stellar --help`"), "{args:?}: {stderr}");
+        assert!(!stderr.contains("stellar-cli"), "{args:?}: {stderr}");
     }
 }
 
@@ -73,7 +106,7 @@ fn non_utf8_argument_is_usage_error_without_panic() {
     use std::os::unix::ffi::OsStrExt;
 
     let dir = TempDir::new("non-utf8");
-    let output = Command::new(env!("CARGO_BIN_EXE_stellar-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_stellar"))
         .arg(OsStr::from_bytes(&[0x66, 0xff, 0x6f]))
         .env_clear()
         .current_dir(&dir.path)

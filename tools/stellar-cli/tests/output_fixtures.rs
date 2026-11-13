@@ -63,7 +63,7 @@ struct Run {
 }
 
 fn run(args: &[&str]) -> Run {
-    let output = Command::new(env!("CARGO_BIN_EXE_stellar-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_stellar"))
         .args(args)
         .env_clear()
         .stdin(Stdio::null())
@@ -192,6 +192,13 @@ fn check(run: &Run, fixture: &str, expected: ExitStatus, private: &[&Path]) {
             "{fixture}: stderr에 오류 코드 {code}: {}",
             run.stderr
         );
+        // XXIV.4.1: stderr 진단 접두어는 실행 이름 `stellar`입니다.
+        for line in run.stderr.lines() {
+            assert!(
+                line.starts_with("stellar ") && !line.starts_with("stellar-cli"),
+                "{fixture}: stderr 접두어: {line}"
+            );
+        }
     }
     for path in private {
         let text = path.display().to_string();

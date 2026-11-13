@@ -15,6 +15,10 @@ use crate::exit::ExitStatus;
 use crate::json;
 use crate::output::{self, CliError, Success};
 
+/// 사용자가 부르는 실행 이름(XXIV.4.1). 도움말·사용법·stderr 진단 접두어에 씁니다. package·library
+/// 이름(`stellar-cli`)과 결과 schema 식별자([`crate::output::SCHEMA_ID`])는 바꾸지 않습니다.
+pub const PROGRAM: &str = "stellar";
+
 /// 성공 종료 코드([`ExitStatus::Ok`]).
 pub const EXIT_OK: i32 = 0;
 /// 사용법 오류 종료 코드(sysexits `EX_USAGE`, [`ExitStatus::Usage`]).
@@ -39,9 +43,9 @@ const VERSION_ALIASES: [&str; 3] = ["version", "--version", "-V"];
 
 /// 도움말 문자열. 각 명령이 정확히 한 번 나타납니다.
 pub fn usage() -> String {
-    let mut out = String::from(
-        "stellar-cli — Project Stellar headless 도구\n\n\
-         사용법:\n    stellar-cli <명령> [인자]\n\n명령:\n",
+    let mut out = format!(
+        "{PROGRAM} — Project Stellar headless 도구\n\n\
+         사용법:\n    {PROGRAM} <명령> [인자]\n\n명령:\n"
     );
     let width = COMMANDS
         .iter()
@@ -64,9 +68,9 @@ pub fn usage() -> String {
             status.summary()
         ));
     }
-    out.push_str(
-        "\n앱 UI·GUI·네트워크 없이 동작합니다. `stellar-cli --help`로 이 도움말을 다시 볼 수 있습니다.\n",
-    );
+    out.push_str(&format!(
+        "\n앱 UI·GUI·네트워크 없이 동작합니다. `{PROGRAM} --help`로 이 도움말을 다시 볼 수 있습니다.\n"
+    ));
     out
 }
 
@@ -86,7 +90,7 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         return match out.write_all(usage().as_bytes()).and_then(|()| out.flush()) {
             Ok(()) => EXIT_OK,
             Err(e) => {
-                let _ = writeln!(err, "stellar-cli: 도움말 출력 실패: {e}");
+                let _ = writeln!(err, "{PROGRAM}: 도움말 출력 실패: {e}");
                 EXIT_IOERR
             }
         };
@@ -126,7 +130,7 @@ fn emit(
     let mut line = json::write(&document);
     line.push('\n');
     if let Err(e) = out.write_all(line.as_bytes()).and_then(|()| out.flush()) {
-        let _ = writeln!(err, "stellar-cli {command}: 결과 출력 실패: {e}");
+        let _ = writeln!(err, "{PROGRAM} {command}: 결과 출력 실패: {e}");
         return EXIT_IOERR;
     }
     let _ = err.write_all(stderr.as_bytes());
@@ -137,7 +141,7 @@ fn emit(
 fn usage_error(err: &mut dyn Write, message: &str) -> i32 {
     let _ = writeln!(
         err,
-        "stellar-cli: {message}\n`stellar-cli --help`로 사용법을 확인하세요."
+        "{PROGRAM}: {message}\n`{PROGRAM} --help`로 사용법을 확인하세요."
     );
     EXIT_USAGE
 }

@@ -4,9 +4,11 @@
 //! 동작하며 AI·모델·agent 코드나 의존성을 두지 않습니다. 상위 계층(MCP 브리지 등)은 이 도구를
 //! 감쌀 수 있지만, 이 도구는 상위 계층에 의존하지 않습니다.
 //!
-//! 실행 파일(`main.rs`)은 인자를 [`cli::run`]에 넘기고 반환된 종료 코드로 끝납니다.
+//! 사용자가 부르는 명령 이름은 `stellar`입니다(XXIV.4.1, ADR-0005 §2). package·library 이름은
+//! `stellar-cli`로 유지하고 실행 파일만 `stellar`로 빌드합니다. 실행 파일(`main.rs`)은 인자를
+//! [`cli::run`]에 넘기고 반환된 종료 코드로 끝납니다.
 
-/// 명령 registry와 도움말 (XXIV.1.1, XXIV.1.2).
+/// 명령 registry와 도움말 (XXIV.1.1, XXIV.1.2, XXIV.4.1).
 pub mod cli;
 
 /// 명령 구현 (XXIV.1.2).
