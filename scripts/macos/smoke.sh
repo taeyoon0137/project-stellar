@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# macOS 셸 smoke/lifecycle/canvas/text input test (II.5.2, II.5.3, II.5.4, XII.5.1).
+# macOS 셸 smoke/lifecycle/canvas/text input/input test (II.5.2, II.5.3, II.5.4, XII.5.1, XII.3.2).
 # StellarMac 앱을 Debug로 빌드한 뒤:
 #  - --smoke: FFI로 코어 버전을 읽고 종료 코드 0
 #  - --lifecycle-check: runtime create/destroy가 1:1인지 확인하고 종료 코드 0
 #  - --canvas-check: drawable pixel == point × scale 및 코어 round-trip 확인
 #  - --text-input-check: 네이티브 UI 텍스트 컨트롤의 undo/IME(marked text) smoke
+#  - --input-check: mouse·trackpad·keyboard NSEvent → 공통 InputEvent 변환
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -84,5 +85,8 @@ echo "text 구조 ok: ${NATIVE_UI_SOURCES[*]}"
 
 # text input: NSTextView/NSTextField/NSSearchField의 native undo/redo + IME marked text.
 "$APP" --text-input-check
+
+# input: mouse·trackpad·keyboard NSEvent → 공통 InputEvent(coordinate·modifier·double click 등, XII.3.2).
+"$APP" --input-check
 
 echo "smoke OK"

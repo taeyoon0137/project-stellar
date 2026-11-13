@@ -1180,7 +1180,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XII.3.1 | `[x]` | 공통 `InputEvent`에 pointer, wheel, key, text composition, focus, resize를 정의하고 native timestamp를 monotonic domain으로 변환합니다. | 양 플랫폼 event fixture schema 동일. | II.3.3 |
-| XII.3.2 | `[ ]` | macOS mouse/trackpad/keyboard 이벤트를 InputEvent로 변환합니다. | coordinate, modifiers, double click fixture 통과. | II.5.4, XII.3.1 |
+| XII.3.2 | `[x]` | macOS mouse/trackpad/keyboard 이벤트를 InputEvent로 변환합니다. | coordinate, modifiers, double click fixture 통과. | II.5.4, XII.3.1 |
 | XII.3.3 | `[!]` | Windows pointer/mouse/keyboard 이벤트를 InputEvent로 변환합니다. | DPI scaling, modifiers, double click fixture 통과. | II.6.4, XII.3.1 |
 | XII.3.4 | `[ ]` | 연속 pointer move/wheel event coalescing을 구현하되 pointer down/up과 key event 순서를 바꾸지 않습니다. | 10,000 move→최신 1개, down/up 보존. | XII.3.1 |
 | XII.3.5 | `[ ]` | InputEvent 수신 T0 trace를 찍고 DocumentThread hit-test request까지 queue latency를 측정합니다. | trace에 T0/T1 후보 timestamp 존재. | XI.3.4, XII.1.2 |

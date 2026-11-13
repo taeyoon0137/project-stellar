@@ -22,8 +22,44 @@ typedef enum StellarStatus {
     STELLAR_NO_ERROR = 4,
     STELLAR_INTERNAL = 5,
     STELLAR_INVALID_UTF8 = 6,
-    STELLAR_INTERNAL_PANIC = 7
+    STELLAR_INTERNAL_PANIC = 7,
+    STELLAR_INVALID_ARGUMENT = 8,
+    STELLAR_QUEUE_FULL = 9
 } StellarStatus;
+
+/* 셸→코어 입력 대기열 용량(이벤트 수). 가득 차면 STELLAR_QUEUE_FULL. */
+#define STELLAR_INPUT_QUEUE_CAPACITY 4096
+
+/* StellarMacEvent 레이아웃 버전. */
+#define STELLAR_MAC_EVENT_VERSION 1
+
+/* macOS NSEvent 원시 필드(고정 104 byte). 이벤트 종류에 해당하지 않는 필드는 0으로 채웁니다. */
+typedef struct StellarMacEvent {
+    uint32_t version;           /* STELLAR_MAC_EVENT_VERSION */
+    uint32_t event_type;        /* NSEvent.EventType.rawValue */
+    uint16_t key_code;          /* NSEvent.keyCode (keyDown/keyUp/flagsChanged) */
+    int16_t subtype;            /* NSEvent.subtype.rawValue (mouse) */
+    uint8_t is_repeat;          /* NSEvent.isARepeat (keyDown, 0/1) */
+    uint8_t has_precise_deltas; /* NSEvent.hasPreciseScrollingDeltas (scrollWheel, 0/1) */
+    uint16_t reserved;          /* 0 */
+    uint64_t modifier_flags;    /* NSEvent.modifierFlags.rawValue */
+    double timestamp;           /* NSEvent.timestamp (초) */
+    double receive_uptime;      /* 셸 수신 시각 ProcessInfo.systemUptime (초) */
+    double x;                   /* 캔버스 view 논리 point, 좌상단 원점 */
+    double y;                   /* 캔버스 view 논리 point, 아래로 증가 */
+    int64_t click_count;        /* NSEvent.clickCount (mouse down/up) */
+    int64_t button_number;      /* NSEvent.buttonNumber (mouse) */
+    double scrolling_delta_x;   /* NSEvent.scrollingDeltaX (scrollWheel) */
+    double scrolling_delta_y;   /* NSEvent.scrollingDeltaY (scrollWheel) */
+    uint64_t phase;             /* NSEvent.phase.rawValue (scrollWheel) */
+    uint64_t momentum_phase;    /* NSEvent.momentumPhase.rawValue (scrollWheel) */
+} StellarMacEvent;
+
+#ifdef __cplusplus
+static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
+#else
+_Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
+#endif
 
 /* runtime을 생성하고 handle을 out_handle에 씁니다. */
 StellarStatus stellar_runtime_create(uint64_t *out_handle);
@@ -51,6 +87,12 @@ StellarStatus stellar_runtime_set_drawable_size(uint64_t handle, uint32_t pixel_
 
 /* 마지막으로 전달된 drawable 픽셀 크기와 scale을 읽습니다(미설정 시 STELLAR_NO_ERROR). */
 StellarStatus stellar_runtime_drawable_size(uint64_t handle, uint32_t *out_pixel_width, uint32_t *out_pixel_height, double *out_scale);
+
+/* macOS NSEvent 원시 필드를 공통 입력 이벤트로 변환해 입력 대기열에 넣습니다(out_queued: 넣은 수 0 또는 1). */
+StellarStatus stellar_runtime_submit_mac_event(uint64_t handle, const StellarMacEvent *event, uint32_t *out_queued);
+
+/* 입력 대기열의 다음 공통 입력 이벤트 직렬화 바이트를 읽습니다(FIFO, 빈 대기열은 STELLAR_NO_ERROR). */
+StellarStatus stellar_runtime_poll_input(uint64_t handle, uint8_t *buf, size_t buf_len, size_t *out_written);
 
 /* 살아 있는 runtime handle 수(진단용). */
 uint64_t stellar_runtime_live_count(void);

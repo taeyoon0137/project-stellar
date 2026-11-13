@@ -1,0 +1,23 @@
+# macOS NSEvent → 공통 InputEvent golden fixture (XII.3.2, InputEvent 레이아웃 버전 1).
+#
+# 각 줄: <fixture 이름> <직렬화 바이트 소문자 hex>
+# crates/ffi/src/input_macos.rs 테스트가 같은 원시 NSEvent 필드 열을 한 시간 domain으로 순서대로
+# 변환해 이 바이트와 비교합니다(coordinate·modifier·double click·key·flagsChanged·scroll).
+#
+# 공통 기준: 셸 수신 기준 NSEvent.timestamp 100초 ↔ 코어 단조 시계 1_000_000_000ns.
+# 레이아웃은 crates/ffi/tests/fixtures/input_events_v1.golden 머리말과 같습니다.
+left_down_single 010140230e430000000001010101000000f14200808042
+left_up_single 0101807c814a0000000002010101000000f14200808042
+left_down_double_shift_command 0101c0d5f4510000000001010102090000f14200808042
+left_up_double_shift_command 0101002f68590000000002010102090000f14200808042
+left_dragged 01014088db600000000003010100000000024300008c42
+mouse_moved_outside_view 010180e14e680000000003000100000000b0c0000000c0
+right_down_control_option_caps 0101c03ac26f000000000102010116000020410000a041
+key_down_a_command 010300943577000000000100080400
+key_down_a_repeat 010340eda87e000000000101000400
+key_up_a 010380461c86000000000200000400
+flags_left_shift_down 0103c09f8f8d00000000010001e100
+flags_left_shift_up 010300f9029500000000020000e100
+scroll_trackpad_began 01024052769c00000000020100000020420000f041000040c00000a040
+scroll_trackpad_momentum 010280abe9a300000000050100000020420000f0410000000000002040
+scroll_wheel_line 0102c0045dab00000000010200000020420000f04100000000000000c0

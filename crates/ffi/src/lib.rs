@@ -7,10 +7,18 @@
 
 /// 양 플랫폼 공통 입력 이벤트와 native timestamp 변환 (XII.3.1).
 pub mod input;
+/// macOS `NSEvent` → 공통 입력 이벤트 adapter (XII.3.2).
+pub mod input_macos;
 
 use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
+
+use stellar_core_types::clock::MonotonicClock;
+
+use crate::input::{InputEvent, InputTimeDomain, NativeTimestamp};
+use crate::input_macos::{convert_mac_event, StellarMacEvent};
 
 /// 버전 문자열(NUL 종료에 의존하지 않는 바이트 시퀀스).
 const VERSION: &str = "0.0.0";
@@ -35,6 +43,30 @@ pub enum StellarStatus {
     InvalidUtf8 = 6,
     /// FFI 경계에서 잡힌 panic.
     InternalPanic = 7,
+    /// 입력 값이 규칙에 맞지 않음(세부는 `stellar_last_error`).
+    InvalidArgument = 8,
+    /// 고정 용량 큐가 가득 참(입력은 버려지고 상태만 반환).
+    QueueFull = 9,
+}
+
+/// 셸→코어 입력 이벤트 대기열 용량(이벤트 수).
+///
+/// 소비자(DocumentThread, XII.1.2)가 생기기 전에도 메모리가 무한히 늘지 않도록 고정합니다.
+pub const INPUT_QUEUE_CAPACITY: usize = 4096;
+
+/// 코어 단조 시계: 프로세스에서 처음 읽은 시점 이후 경과 nanoseconds(`Instant` 기반).
+///
+/// 모든 runtime이 같은 기준점을 공유하므로 runtime 간 입력 시각을 비교할 수 있습니다.
+/// 기준점은 첫 `stellar_runtime_create`에서 고정합니다. 그래야 runtime 생성 뒤에 발생한
+/// native 입력이 기준점 이전(0으로 고정)으로 눌리지 않습니다.
+struct InstantClock;
+
+impl MonotonicClock for InstantClock {
+    fn now_nanos(&self) -> u64 {
+        static ORIGIN: OnceLock<Instant> = OnceLock::new();
+        let elapsed = ORIGIN.get_or_init(Instant::now).elapsed().as_nanos();
+        u64::try_from(elapsed).unwrap_or(u64::MAX)
+    }
 }
 
 /// 셸이 전달한 drawable(backing) 픽셀 크기와 backing scale.
@@ -51,6 +83,23 @@ struct Runtime {
     label: Option<String>,
     events: VecDeque<(u32, Vec<u8>)>,
     drawable: Option<Drawable>,
+    /// 셸이 제출한 입력 이벤트(FIFO, 용량 [`INPUT_QUEUE_CAPACITY`]).
+    input: VecDeque<InputEvent>,
+    /// native 입력 시각 → 코어 단조 domain 변환기(첫 입력에서 기준점을 잡음).
+    input_domain: Option<InputTimeDomain>,
+}
+
+impl Runtime {
+    fn new() -> Runtime {
+        Runtime {
+            last_error: None,
+            label: None,
+            events: VecDeque::new(),
+            drawable: None,
+            input: VecDeque::new(),
+            input_domain: None,
+        }
+    }
 }
 
 struct RegistryInner {
@@ -101,15 +150,9 @@ pub unsafe extern "C" fn stellar_runtime_create(out_handle: *mut u64) -> Stellar
         };
         let handle = reg.next;
         reg.next = reg.next.wrapping_add(1);
-        reg.live.insert(
-            handle,
-            Runtime {
-                last_error: None,
-                label: None,
-                events: VecDeque::new(),
-                drawable: None,
-            },
-        );
+        reg.live.insert(handle, Runtime::new());
+        // 코어 단조 시계 기준점을 첫 runtime 생성 시점으로 고정합니다(입력 시각 domain).
+        let _ = InstantClock.now_nanos();
         unsafe { *out_handle = handle };
         StellarStatus::Ok
     })
@@ -422,6 +465,119 @@ pub unsafe extern "C" fn stellar_runtime_drawable_size(
     })
 }
 
+/// macOS 셸이 받은 `NSEvent` 원시 필드를 공통 입력 이벤트로 변환해 입력 대기열에 넣습니다(XII.3.2).
+///
+/// - 첫 입력에서 `receive_uptime`(셸 수신 시각)과 코어 단조 시계로 시간 domain 기준점을 잡습니다.
+/// - 공통 집합에 없는 이벤트(enter/exit, gesture, 표에 없는 key 등)는 넣지 않고 `out_queued = 0`.
+/// - 규칙 위반은 `InvalidArgument`, 대기열이 가득 차면 `QueueFull`(둘 다 last error 설정, 입력은 버림).
+///
+/// # Safety
+/// `event`는 `StellarMacEvent` 읽기가 유효한 포인터여야 하고, `out_queued`는 null이거나 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_runtime_submit_mac_event(
+    handle: u64,
+    event: *const StellarMacEvent,
+    out_queued: *mut u32,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if event.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let raw = unsafe { *event };
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let write_queued = |count: u32| {
+            if !out_queued.is_null() {
+                unsafe { *out_queued = count };
+            }
+        };
+        write_queued(0);
+        let domain = match rt.input_domain.as_mut() {
+            Some(domain) => domain,
+            None => {
+                let anchor = InputTimeDomain::new(
+                    NativeTimestamp::MacEventSeconds(raw.receive_uptime),
+                    &InstantClock,
+                );
+                match anchor {
+                    Ok(domain) => rt.input_domain.insert(domain),
+                    Err(error) => {
+                        rt.last_error = Some((
+                            StellarStatus::InvalidArgument,
+                            format!("입력 시각 기준점 오류: {error}"),
+                        ));
+                        return StellarStatus::InvalidArgument;
+                    }
+                }
+            }
+        };
+        match convert_mac_event(&raw, domain) {
+            Ok(None) => StellarStatus::Ok,
+            Ok(Some(input)) => {
+                if rt.input.len() >= INPUT_QUEUE_CAPACITY {
+                    rt.last_error = Some((
+                        StellarStatus::QueueFull,
+                        format!("입력 대기열이 가득 찼습니다({INPUT_QUEUE_CAPACITY})"),
+                    ));
+                    return StellarStatus::QueueFull;
+                }
+                rt.input.push_back(input);
+                write_queued(1);
+                StellarStatus::Ok
+            }
+            Err(error) => {
+                rt.last_error = Some((StellarStatus::InvalidArgument, error.to_string()));
+                StellarStatus::InvalidArgument
+            }
+        }
+    })
+}
+
+/// 입력 대기열의 다음 공통 입력 이벤트를 직렬화 바이트(`InputEvent::encode`)로 읽습니다(FIFO).
+///
+/// 빈 대기열은 `NoError`. `buf`가 null이면 필요한 길이만 보고하고 꺼내지 않습니다.
+/// buffer가 작으면 `BufferTooSmall`(꺼내지 않음). 성공 시 이벤트를 꺼냅니다.
+///
+/// # Safety
+/// `buf`는 null이거나 `buf_len` 바이트 쓰기가 유효해야 하고, `out_written`은 null이거나 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_runtime_poll_input(
+    handle: u64,
+    buf: *mut u8,
+    buf_len: usize,
+    out_written: *mut usize,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(front) = rt.input.front() else {
+            unsafe { write_len(out_written, 0) };
+            return StellarStatus::NoError;
+        };
+        let bytes = front.encode();
+        if buf.is_null() {
+            unsafe { write_len(out_written, bytes.len()) };
+            return StellarStatus::Ok;
+        }
+        if buf_len < bytes.len() {
+            return StellarStatus::BufferTooSmall;
+        }
+        rt.input.pop_front();
+        let out = unsafe { std::slice::from_raw_parts_mut(buf, buf_len) };
+        out[..bytes.len()].copy_from_slice(&bytes);
+        unsafe { write_len(out_written, bytes.len()) };
+        StellarStatus::Ok
+    })
+}
+
 /// 현재 살아 있는 runtime handle 수(누수 검증용 진단 helper).
 #[no_mangle]
 pub extern "C" fn stellar_runtime_live_count() -> u64 {
@@ -709,5 +865,196 @@ mod tests {
         assert_eq!(kind, 9);
         assert_eq!(&buf[..written], b"hello");
         assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn header_declares_every_extern_fn_and_shared_constant() {
+        // 생성 헤더(템플릿)가 Rust C ABI 표면·상수와 어긋나지 않는지 검사합니다.
+        let header = include_str!("../include/stellar_ffi.h");
+        let source = include_str!("lib.rs");
+        let mut names = Vec::new();
+        for line in source.lines() {
+            let line = line.trim_start();
+            let rest = line
+                .strip_prefix("pub unsafe extern \"C\" fn ")
+                .or_else(|| line.strip_prefix("pub extern \"C\" fn "));
+            if let Some(rest) = rest {
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                names.push(name);
+            }
+        }
+        assert!(names.len() >= 12, "extern fn 수집 실패: {names:?}");
+        for name in &names {
+            assert!(
+                header.contains(&format!(" {name}(")),
+                "헤더에 {name} 선언 없음"
+            );
+        }
+        assert!(header.contains(&format!(
+            "#define STELLAR_INPUT_QUEUE_CAPACITY {INPUT_QUEUE_CAPACITY}\n"
+        )));
+        assert!(header.contains(&format!(
+            "#define STELLAR_MAC_EVENT_VERSION {}\n",
+            crate::input_macos::MAC_EVENT_VERSION
+        )));
+        assert!(header.contains("STELLAR_INVALID_ARGUMENT = 8"));
+        assert!(header.contains("STELLAR_QUEUE_FULL = 9"));
+        assert!(header.contains(&format!(
+            "sizeof(StellarMacEvent) == {}",
+            std::mem::size_of::<StellarMacEvent>()
+        )));
+    }
+
+    mod mac_input {
+        use super::*;
+        use crate::input::{InputEventKind, PointerButton, PointerPhase};
+        use crate::input_macos::{event_type, MAC_EVENT_VERSION};
+
+        fn mac_event(event_type: u32, timestamp: f64) -> StellarMacEvent {
+            StellarMacEvent {
+                version: MAC_EVENT_VERSION,
+                event_type,
+                timestamp,
+                receive_uptime: timestamp,
+                x: 12.5,
+                y: 8.0,
+                click_count: 2,
+                ..StellarMacEvent::default()
+            }
+        }
+
+        fn submit(h: u64, event: &StellarMacEvent) -> (StellarStatus, u32) {
+            let mut queued = 7u32;
+            let status = unsafe { stellar_runtime_submit_mac_event(h, event, &mut queued) };
+            (status, queued)
+        }
+
+        fn poll(h: u64) -> Result<InputEvent, StellarStatus> {
+            let mut need = 0usize;
+            let status =
+                unsafe { stellar_runtime_poll_input(h, std::ptr::null_mut(), 0, &mut need) };
+            if status != StellarStatus::Ok {
+                return Err(status);
+            }
+            let mut buf = vec![0u8; need];
+            let mut written = 0usize;
+            let status =
+                unsafe { stellar_runtime_poll_input(h, buf.as_mut_ptr(), buf.len(), &mut written) };
+            if status != StellarStatus::Ok {
+                return Err(status);
+            }
+            Ok(InputEvent::decode(&buf[..written]).expect("decode"))
+        }
+
+        fn last_error(h: u64) -> String {
+            let mut buf = [0u8; 256];
+            let mut written = 0usize;
+            let status =
+                unsafe { stellar_last_error(h, buf.as_mut_ptr(), buf.len(), &mut written) };
+            assert_eq!(status, StellarStatus::Ok);
+            String::from_utf8(buf[..written].to_vec()).expect("utf8")
+        }
+
+        #[test]
+        fn submitted_mac_events_are_polled_in_order() {
+            let h = create();
+            assert_eq!(poll(h), Err(StellarStatus::NoError));
+            let down = mac_event(event_type::LEFT_MOUSE_DOWN, 50.0);
+            let up = mac_event(event_type::LEFT_MOUSE_UP, 50.25);
+            assert_eq!(submit(h, &down), (StellarStatus::Ok, 1));
+            assert_eq!(submit(h, &up), (StellarStatus::Ok, 1));
+            let first = poll(h).expect("down");
+            let second = poll(h).expect("up");
+            for (event, phase) in [(&first, PointerPhase::Down), (&second, PointerPhase::Up)] {
+                let InputEventKind::Pointer(pointer) = event.kind() else {
+                    panic!("pointer가 아님");
+                };
+                assert_eq!(pointer.phase, phase);
+                assert_eq!(pointer.button, PointerButton::Primary);
+                assert_eq!(pointer.click_count, 2);
+            }
+            // 같은 domain: 두 이벤트 간격은 native 간격(0.25초)과 같습니다.
+            assert_eq!(
+                second.timestamp().get() - first.timestamp().get(),
+                250_000_000
+            );
+            assert_eq!(poll(h), Err(StellarStatus::NoError));
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn ignored_and_invalid_mac_events() {
+            let h = create();
+            // 공통 집합 밖 이벤트는 넣지 않습니다.
+            assert_eq!(
+                submit(h, &mac_event(event_type::MOUSE_ENTERED, 1.0)),
+                (StellarStatus::Ok, 0)
+            );
+            assert_eq!(poll(h), Err(StellarStatus::NoError));
+            // 규칙 위반은 InvalidArgument + handle별 last error.
+            let mut bad = mac_event(event_type::LEFT_MOUSE_DOWN, 1.0);
+            bad.click_count = 0;
+            assert_eq!(submit(h, &bad), (StellarStatus::InvalidArgument, 0));
+            assert!(last_error(h).contains("click count"));
+            assert_eq!(poll(h), Err(StellarStatus::NoError));
+            // null 이벤트·알 수 없는 handle.
+            assert_eq!(
+                unsafe {
+                    stellar_runtime_submit_mac_event(h, std::ptr::null(), std::ptr::null_mut())
+                },
+                StellarStatus::NullPointer
+            );
+            let event = mac_event(event_type::MOUSE_MOVED, 1.0);
+            assert_eq!(
+                unsafe { stellar_runtime_submit_mac_event(999_999, &event, std::ptr::null_mut()) },
+                StellarStatus::InvalidHandle
+            );
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn invalid_receive_uptime_does_not_anchor() {
+            let h = create();
+            let mut event = mac_event(event_type::MOUSE_MOVED, 1.0);
+            event.receive_uptime = f64::NAN;
+            assert_eq!(submit(h, &event), (StellarStatus::InvalidArgument, 0));
+            assert!(last_error(h).contains("기준점"));
+            // 올바른 수신 시각이 오면 그때 기준점을 잡습니다.
+            event.receive_uptime = 1.0;
+            assert_eq!(submit(h, &event), (StellarStatus::Ok, 1));
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn input_queue_is_bounded_and_poll_keeps_event_on_small_buffer() {
+            let h = create();
+            let mut event = mac_event(event_type::KEY_DOWN, 1.0);
+            event.key_code = 0x00;
+            for _ in 0..INPUT_QUEUE_CAPACITY {
+                assert_eq!(submit(h, &event).0, StellarStatus::Ok);
+            }
+            assert_eq!(submit(h, &event), (StellarStatus::QueueFull, 0));
+            assert!(last_error(h).contains("가득"));
+            // 작은 buffer는 꺼내지 않습니다.
+            let mut small = [0u8; 2];
+            let mut written = 0usize;
+            assert_eq!(
+                unsafe {
+                    stellar_runtime_poll_input(h, small.as_mut_ptr(), small.len(), &mut written)
+                },
+                StellarStatus::BufferTooSmall
+            );
+            let mut drained = 0usize;
+            while poll(h).is_ok() {
+                drained += 1;
+            }
+            assert_eq!(drained, INPUT_QUEUE_CAPACITY);
+            // 비운 뒤에는 다시 받습니다.
+            assert_eq!(submit(h, &event), (StellarStatus::Ok, 1));
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
     }
 }
