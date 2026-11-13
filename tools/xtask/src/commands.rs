@@ -338,7 +338,7 @@ fn cmd_sync_plan(repo_root: &Path) -> Result<(), i32> {
         Err(policy_err(
             &problems
                 .iter()
-                .map(|p| p.code.to_string())
+                .map(|p| format!("{}: {}", p.code, p.message))
                 .collect::<Vec<_>>(),
         ))
     }
