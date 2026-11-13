@@ -1,0 +1,534 @@
+//! 통합 binding dependency graph (VIII.6.2).
+//!
+//! 토큰·속성·Component Property·환경 입력을 하나의 node 타입 [`DependencyNode`]로 표현합니다(아키텍처 §14.2
+//! `ValueNode`). 간선 `a → b`는 "a의 값이 b를 읽는다"(a가 b에 의존)입니다.
+//!
+//! - 토큰 node는 그 토큰 정의가 값을 만들고(producer = [`Producer::Token`]), default expression의 참조로 간선을 냅니다.
+//! - 속성 node는 그 속성을 target으로 하는 binding이 값을 만들고(producer = [`Producer::Binding`]), binding source의
+//!   참조로 간선을 냅니다. binding이 없는 속성은 외부에서 값이 주어지는 source node입니다.
+//! - Component Property와 환경 입력 node는 binding graph 밖에서 값이 주어지는 source node입니다(producer 없음).
+//!
+//! node는 [`DependencyNode`] 정렬 순서로 [`NodeIndex`]를 받으므로 index 순서 = node 정렬 순서이고, 간선 목록도 index
+//! 오름차순입니다. 같은 입력은 항상 같은 graph가 됩니다. 인접 목록은 index 기반 `Vec`이라 대규모 graph(VIII.9.1)에서도
+//! 순회가 가볍습니다.
+
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
+use stellar_core_types::ids::StableId;
+use stellar_core_types::property::PropertyPath;
+use stellar_core_types::reference::TokenRef;
+use stellar_expressions::ast::{EnvironmentKey, ReferenceTarget};
+
+use crate::binding::{BindingId, BindingSet};
+use crate::registry::TokenRegistry;
+
+/// 통합 graph의 node.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DependencyNode {
+    /// 디자인 토큰.
+    Token(TokenRef),
+    /// 속성 값.
+    Property(PropertyPath),
+    /// Component Property(StableId).
+    ComponentProperty(StableId),
+    /// 환경 입력.
+    Environment(EnvironmentKey),
+}
+
+impl DependencyNode {
+    /// node 종류.
+    pub const fn kind(&self) -> DependencyKind {
+        match self {
+            DependencyNode::Token(_) => DependencyKind::Token,
+            DependencyNode::Property(_) => DependencyKind::Property,
+            DependencyNode::ComponentProperty(_) => DependencyKind::ComponentProperty,
+            DependencyNode::Environment(_) => DependencyKind::Environment,
+        }
+    }
+
+    /// 표현식 참조 대상에 대응하는 node.
+    pub fn from_target(target: &ReferenceTarget) -> DependencyNode {
+        match target {
+            ReferenceTarget::Token(token) => DependencyNode::Token(*token),
+            ReferenceTarget::Property(path) => DependencyNode::Property(path.clone()),
+            ReferenceTarget::ComponentProperty(id) => DependencyNode::ComponentProperty(*id),
+            ReferenceTarget::Environment(key) => DependencyNode::Environment(*key),
+        }
+    }
+
+    /// node에 대응하는 표현식 참조 대상.
+    pub fn to_target(&self) -> ReferenceTarget {
+        match self {
+            DependencyNode::Token(token) => ReferenceTarget::Token(*token),
+            DependencyNode::Property(path) => ReferenceTarget::Property(path.clone()),
+            DependencyNode::ComponentProperty(id) => ReferenceTarget::ComponentProperty(*id),
+            DependencyNode::Environment(key) => ReferenceTarget::Environment(*key),
+        }
+    }
+}
+
+impl fmt::Display for DependencyNode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_target())
+    }
+}
+
+/// node 종류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DependencyKind {
+    /// 토큰.
+    Token,
+    /// 속성.
+    Property,
+    /// Component Property.
+    ComponentProperty,
+    /// 환경 입력.
+    Environment,
+}
+
+/// node 값을 만드는 정의.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Producer {
+    /// 토큰 정의의 default expression.
+    Token(TokenRef),
+    /// 속성을 target으로 하는 binding의 source.
+    Binding(BindingId),
+}
+
+/// graph 안의 node 번호. node 정렬 순서와 같습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NodeIndex(u32);
+
+impl NodeIndex {
+    /// 0부터 시작하는 번호.
+    pub const fn get(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// graph 구성 입력 하나: `node`의 값을 `producer`가 `dependencies`를 읽어 만듭니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProducerRecord {
+    /// 값을 받는 node.
+    pub node: DependencyNode,
+    /// 값을 만드는 정의.
+    pub producer: Producer,
+    /// 읽는 node.
+    pub dependencies: Vec<DependencyNode>,
+}
+
+/// graph 구성 오류.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum GraphBuildError {
+    /// 같은 node에 producer가 둘 이상 있습니다.
+    DuplicateProducer(DependencyNode),
+    /// node 수가 `u32` 범위를 넘습니다.
+    TooManyNodes,
+}
+
+impl fmt::Display for GraphBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GraphBuildError::DuplicateProducer(node) => {
+                write!(f, "node {node}에 producer가 둘 이상 있습니다")
+            }
+            GraphBuildError::TooManyNodes => f.write_str("node 수가 u32 범위를 넘습니다"),
+        }
+    }
+}
+
+impl std::error::Error for GraphBuildError {}
+
+/// 통합 dependency graph (VIII.6.2).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DependencyGraph {
+    nodes: Vec<DependencyNode>,
+    index: BTreeMap<DependencyNode, NodeIndex>,
+    dependencies: Vec<Vec<NodeIndex>>,
+    dependents: Vec<Vec<NodeIndex>>,
+    producers: Vec<Option<Producer>>,
+    edge_count: usize,
+}
+
+impl DependencyGraph {
+    /// 토큰 registry와 binding 모음으로 graph를 만듭니다.
+    pub fn build(tokens: &TokenRegistry, bindings: &BindingSet) -> DependencyGraph {
+        let mut records = Vec::with_capacity(tokens.len() + bindings.len());
+        for (_, definition) in tokens.tokens() {
+            records.push(ProducerRecord {
+                node: DependencyNode::Token(definition.id()),
+                producer: Producer::Token(definition.id()),
+                dependencies: definition
+                    .references()
+                    .iter()
+                    .map(DependencyNode::from_target)
+                    .collect(),
+            });
+        }
+        for binding in bindings.iter() {
+            records.push(ProducerRecord {
+                node: DependencyNode::Property(binding.target().clone()),
+                producer: Producer::Binding(binding.id()),
+                dependencies: binding
+                    .references()
+                    .iter()
+                    .map(DependencyNode::from_target)
+                    .collect(),
+            });
+        }
+        // 토큰 ID는 registry에서 유일하고 binding target은 BindingSet에서 유일하므로 producer 중복은 없습니다.
+        DependencyGraph::from_records(records).unwrap_or_default()
+    }
+
+    /// 구성 입력으로 graph를 만듭니다. 한 node에 producer가 둘이면 거부합니다.
+    pub fn from_records(records: Vec<ProducerRecord>) -> Result<DependencyGraph, GraphBuildError> {
+        let mut all: BTreeSet<&DependencyNode> = BTreeSet::new();
+        for record in &records {
+            all.insert(&record.node);
+            all.extend(record.dependencies.iter());
+        }
+        if u32::try_from(all.len()).is_err() {
+            return Err(GraphBuildError::TooManyNodes);
+        }
+        let nodes: Vec<DependencyNode> = all.into_iter().cloned().collect();
+        let index: BTreeMap<DependencyNode, NodeIndex> = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, node)| (node.clone(), NodeIndex(i as u32)))
+            .collect();
+        let count = nodes.len();
+        let mut dependencies: Vec<Vec<NodeIndex>> = vec![Vec::new(); count];
+        let mut producers: Vec<Option<Producer>> = vec![None; count];
+        for record in &records {
+            let at = index[&record.node].get();
+            if producers[at].is_some() {
+                return Err(GraphBuildError::DuplicateProducer(record.node.clone()));
+            }
+            producers[at] = Some(record.producer);
+            let mut deps: Vec<NodeIndex> =
+                record.dependencies.iter().map(|dep| index[dep]).collect();
+            deps.sort_unstable();
+            deps.dedup();
+            dependencies[at] = deps;
+        }
+        let mut dependents: Vec<Vec<NodeIndex>> = vec![Vec::new(); count];
+        let mut edge_count = 0;
+        for (from, deps) in dependencies.iter().enumerate() {
+            edge_count += deps.len();
+            for dep in deps {
+                dependents[dep.get()].push(NodeIndex(from as u32));
+            }
+        }
+        // from을 오름차순으로 돌았으므로 dependents도 오름차순입니다.
+        Ok(DependencyGraph {
+            nodes,
+            index,
+            dependencies,
+            dependents,
+            producers,
+            edge_count,
+        })
+    }
+
+    /// node 수.
+    pub fn node_count(&self) -> usize {
+        self.nodes.len()
+    }
+
+    /// 간선 수(중복 제거 후).
+    pub fn edge_count(&self) -> usize {
+        self.edge_count
+    }
+
+    /// node의 번호.
+    pub fn index_of(&self, node: &DependencyNode) -> Option<NodeIndex> {
+        self.index.get(node).copied()
+    }
+
+    /// 번호의 node.
+    pub fn node(&self, index: NodeIndex) -> &DependencyNode {
+        &self.nodes[index.get()]
+    }
+
+    /// 모든 node(정렬 순서 = 번호 순).
+    pub fn nodes(&self) -> &[DependencyNode] {
+        &self.nodes
+    }
+
+    /// `index`가 읽는 node(번호 오름차순).
+    pub fn dependencies(&self, index: NodeIndex) -> &[NodeIndex] {
+        &self.dependencies[index.get()]
+    }
+
+    /// `index`를 읽는 node(번호 오름차순).
+    pub fn dependents(&self, index: NodeIndex) -> &[NodeIndex] {
+        &self.dependents[index.get()]
+    }
+
+    /// `index`의 값을 만드는 정의. source node는 `None`.
+    pub fn producer(&self, index: NodeIndex) -> Option<Producer> {
+        self.producers[index.get()]
+    }
+
+    /// 모든 번호(오름차순).
+    pub fn indices(&self) -> impl Iterator<Item = NodeIndex> {
+        (0..self.nodes.len() as u32).map(NodeIndex)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use stellar_core_types::property::PropertyKey;
+    use stellar_core_types::reference::NodeRef;
+    use stellar_core_types::typed_value::TypedValue;
+    use stellar_core_types::value::FiniteF32;
+    use stellar_expressions::ast::{ExprNode, ExprNodeId, ExpressionAst};
+    use stellar_expressions::ops::BinaryOp;
+    use stellar_expressions::types::{ExpressionType, TypeSpec};
+
+    use super::*;
+    use crate::binding::{ScopeOwner, ValueBinding};
+    use crate::registry::TokenScope;
+    use crate::token::{TokenDefinition, TokenName, TokenSet, TokenSetId, TokenType};
+
+    fn sid(n: u64) -> StableId {
+        StableId::new_v7(n, 0, n)
+    }
+
+    fn token(n: u64) -> TokenRef {
+        TokenRef::new(sid(1_000 + n))
+    }
+
+    fn prop(n: u64) -> PropertyPath {
+        PropertyPath::new(sid(2_000 + n)).push(PropertyKey(1))
+    }
+
+    fn env(n: u32) -> EnvironmentKey {
+        EnvironmentKey::new(n)
+    }
+
+    fn component_property(n: u64) -> StableId {
+        sid(3_000 + n)
+    }
+
+    /// 참조 대상들의 합(대상 1개면 그 참조, 0개면 1).
+    fn sum(base: u64, targets: &[ReferenceTarget]) -> ExpressionAst {
+        let node = |k: u64| ExprNodeId::new(sid(base * 100 + k));
+        let mut nodes: Vec<ExprNode> = targets
+            .iter()
+            .enumerate()
+            .map(|(i, t)| ExprNode::reference(node(50 + i as u64), t.clone()))
+            .collect();
+        match targets.len() {
+            0 => {
+                nodes.push(ExprNode::literal(
+                    node(0),
+                    TypedValue::Number(FiniteF32::ONE),
+                ));
+                ExpressionAst::new(node(0), nodes).expect("유효")
+            }
+            1 => ExpressionAst::new(node(50), nodes).expect("유효"),
+            n => {
+                // node(i) = ref(i) + node(i+1), 마지막 덧셈은 ref(n-1).
+                for i in 0..(n - 1) as u64 {
+                    let rest = if i as usize == n - 2 {
+                        node(50 + i + 1)
+                    } else {
+                        node(i + 1)
+                    };
+                    nodes.push(ExprNode::binary(node(i), BinaryOp::Add, node(50 + i), rest));
+                }
+                ExpressionAst::new(node(0), nodes).expect("유효")
+            }
+        }
+    }
+
+    fn define(n: u64, targets: &[ReferenceTarget]) -> TokenDefinition {
+        TokenDefinition::new(
+            token(n),
+            TokenName::new(&format!("t{n}")).expect("이름"),
+            TokenType::new(ExpressionType::Number),
+            sum(n, targets),
+        )
+    }
+
+    fn bind(n: u64, target: PropertyPath, refs: &[ReferenceTarget]) -> ValueBinding {
+        ValueBinding::new(
+            BindingId::new(sid(4_000 + n)),
+            target,
+            sum(100 + n, refs),
+            TypeSpec::required(ExpressionType::Number),
+            ScopeOwner::Node(NodeRef::new(sid(5_000 + n))),
+        )
+    }
+
+    /// 종류별 dependency fixture.
+    ///
+    /// - token1: 상수, token2 = token1 + env(7)
+    /// - prop(1) ← binding1 = token2
+    /// - prop(2) ← binding2 = prop(1) + prop(9)(binding 없는 source 속성)
+    /// - prop(3) ← binding3 = component property 1 + env(7)
+    fn fixture() -> (TokenRegistry, BindingSet) {
+        let mut set = TokenSet::new(TokenSetId::new(sid(1)));
+        set.insert(define(1, &[])).expect("t1");
+        set.insert(define(
+            2,
+            &[
+                ReferenceTarget::Token(token(1)),
+                ReferenceTarget::Environment(env(7)),
+            ],
+        ))
+        .expect("t2");
+        let mut registry = TokenRegistry::new();
+        registry.add_scope(TokenScope::Project, set).expect("scope");
+        let mut bindings = BindingSet::new();
+        bindings
+            .insert(bind(1, prop(1), &[ReferenceTarget::Token(token(2))]))
+            .expect("b1");
+        bindings
+            .insert(bind(
+                2,
+                prop(2),
+                &[
+                    ReferenceTarget::Property(prop(1)),
+                    ReferenceTarget::Property(prop(9)),
+                ],
+            ))
+            .expect("b2");
+        bindings
+            .insert(bind(
+                3,
+                prop(3),
+                &[
+                    ReferenceTarget::ComponentProperty(component_property(1)),
+                    ReferenceTarget::Environment(env(7)),
+                ],
+            ))
+            .expect("b3");
+        (registry, bindings)
+    }
+
+    fn deps_of(graph: &DependencyGraph, node: &DependencyNode) -> Vec<DependencyNode> {
+        let index = graph.index_of(node).expect("node");
+        graph
+            .dependencies(index)
+            .iter()
+            .map(|i| graph.node(*i).clone())
+            .collect()
+    }
+
+    fn dependents_of(graph: &DependencyGraph, node: &DependencyNode) -> Vec<DependencyNode> {
+        let index = graph.index_of(node).expect("node");
+        graph
+            .dependents(index)
+            .iter()
+            .map(|i| graph.node(*i).clone())
+            .collect()
+    }
+
+    #[test]
+    fn every_dependency_kind_is_a_common_node() {
+        let (registry, bindings) = fixture();
+        let graph = DependencyGraph::build(&registry, &bindings);
+        use DependencyNode as N;
+        // 토큰 → 토큰·환경.
+        assert_eq!(
+            deps_of(&graph, &N::Token(token(2))),
+            vec![N::Token(token(1)), N::Environment(env(7))]
+        );
+        // 속성 → 토큰.
+        assert_eq!(
+            deps_of(&graph, &N::Property(prop(1))),
+            vec![N::Token(token(2))]
+        );
+        // 속성 → 속성(binding 있는 것·없는 source).
+        assert_eq!(
+            deps_of(&graph, &N::Property(prop(2))),
+            vec![N::Property(prop(1)), N::Property(prop(9))]
+        );
+        // 속성 → Component Property·환경.
+        assert_eq!(
+            deps_of(&graph, &N::Property(prop(3))),
+            vec![
+                N::ComponentProperty(component_property(1)),
+                N::Environment(env(7))
+            ]
+        );
+        // 역방향: 환경 입력을 읽는 node.
+        assert_eq!(
+            dependents_of(&graph, &N::Environment(env(7))),
+            vec![N::Token(token(2)), N::Property(prop(3))]
+        );
+        // producer: 토큰·binding, source node는 없음.
+        let producer = |n: &N| graph.producer(graph.index_of(n).expect("node"));
+        assert_eq!(
+            producer(&N::Token(token(1))),
+            Some(Producer::Token(token(1)))
+        );
+        assert_eq!(
+            producer(&N::Property(prop(2))),
+            Some(Producer::Binding(BindingId::new(sid(4_002))))
+        );
+        assert_eq!(producer(&N::Property(prop(9))), None);
+        assert_eq!(producer(&N::Environment(env(7))), None);
+        assert_eq!(producer(&N::ComponentProperty(component_property(1))), None);
+        // node 8개(토큰 2, 속성 4, Component Property 1, 환경 1), 간선 7개.
+        let kinds: Vec<DependencyKind> = graph.nodes().iter().map(DependencyNode::kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                DependencyKind::Token,
+                DependencyKind::Token,
+                DependencyKind::Property,
+                DependencyKind::Property,
+                DependencyKind::Property,
+                DependencyKind::Property,
+                DependencyKind::ComponentProperty,
+                DependencyKind::Environment,
+            ]
+        );
+        assert_eq!(graph.edge_count(), 7);
+    }
+
+    #[test]
+    fn graph_is_deterministic_and_rejects_duplicate_producers() {
+        let (registry, bindings) = fixture();
+        let a = DependencyGraph::build(&registry, &bindings);
+        let mut records: Vec<ProducerRecord> = a
+            .indices()
+            .filter_map(|i| {
+                a.producer(i).map(|producer| ProducerRecord {
+                    node: a.node(i).clone(),
+                    producer,
+                    dependencies: a
+                        .dependencies(i)
+                        .iter()
+                        .rev()
+                        .map(|d| a.node(*d).clone())
+                        .collect(),
+                })
+            })
+            .collect();
+        records.reverse();
+        let b = DependencyGraph::from_records(records.clone()).expect("구성");
+        assert_eq!(a, b, "입력 순서와 무관");
+        for i in a.indices() {
+            assert!(a.dependencies(i).windows(2).all(|w| w[0] < w[1]));
+            assert!(a.dependents(i).windows(2).all(|w| w[0] < w[1]));
+        }
+        let duplicate = records[0].clone();
+        records.push(ProducerRecord {
+            producer: Producer::Token(token(99)),
+            ..duplicate.clone()
+        });
+        assert_eq!(
+            DependencyGraph::from_records(records),
+            Err(GraphBuildError::DuplicateProducer(duplicate.node))
+        );
+        // 참조 대상 ↔ node 변환은 왕복합니다.
+        for node in a.nodes() {
+            assert_eq!(&DependencyNode::from_target(&node.to_target()), node);
+        }
+    }
+}

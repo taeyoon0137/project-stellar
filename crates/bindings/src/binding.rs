@@ -22,7 +22,7 @@
 //! 디코더는 미지 tag·잘림·잉여 bytes를 거부하고, 다시 인코딩한 bytes가 입력과 같을 때만 받아들입니다(한 binding에 한
 //! 표현). 길이 프리픽스는 남은 입력보다 길면 할당 전에 거부합니다.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
@@ -302,6 +302,117 @@ impl ValueBinding {
             return Err(BindingCodecError::NonCanonical);
         }
         Ok(binding)
+    }
+}
+
+/// binding 모음 편집 오류.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum BindingSetError {
+    /// 같은 ID의 binding이 이미 있습니다.
+    DuplicateId(BindingId),
+    /// 같은 target 속성에 binding이 이미 있습니다(속성 하나에 binding 하나).
+    DuplicateTarget {
+        /// target 속성.
+        target: PropertyPath,
+        /// 이미 있는 binding.
+        existing: BindingId,
+    },
+    /// binding이 없습니다.
+    UnknownBinding(BindingId),
+    /// 교체는 같은 target·owner를 유지해야 합니다.
+    TargetChanged(BindingId),
+}
+
+impl fmt::Display for BindingSetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BindingSetError::DuplicateId(id) => write!(f, "binding ID가 중복됩니다: {id}"),
+            BindingSetError::DuplicateTarget { existing, .. } => {
+                write!(f, "target 속성에 binding {existing}이 이미 있습니다")
+            }
+            BindingSetError::UnknownBinding(id) => write!(f, "binding이 없습니다: {id}"),
+            BindingSetError::TargetChanged(id) => {
+                write!(f, "binding {id} 교체가 target·owner를 바꿉니다")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BindingSetError {}
+
+/// binding 모음(VIII.6.2). ID 색인과 target 색인을 함께 유지하며, 속성 하나에는 binding이 하나만 있습니다.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BindingSet {
+    bindings: BTreeMap<BindingId, ValueBinding>,
+    by_target: BTreeMap<PropertyPath, BindingId>,
+}
+
+impl BindingSet {
+    /// 빈 모음.
+    pub fn new() -> BindingSet {
+        BindingSet::default()
+    }
+
+    /// binding을 추가합니다. ID·target이 이미 있으면 거부합니다.
+    pub fn insert(&mut self, binding: ValueBinding) -> Result<(), BindingSetError> {
+        if self.bindings.contains_key(&binding.id) {
+            return Err(BindingSetError::DuplicateId(binding.id));
+        }
+        if let Some(existing) = self.by_target.get(&binding.target) {
+            return Err(BindingSetError::DuplicateTarget {
+                target: binding.target.clone(),
+                existing: *existing,
+            });
+        }
+        self.by_target.insert(binding.target.clone(), binding.id);
+        self.bindings.insert(binding.id, binding);
+        Ok(())
+    }
+
+    /// binding을 제거하고 돌려줍니다.
+    pub fn remove(&mut self, id: BindingId) -> Option<ValueBinding> {
+        let binding = self.bindings.remove(&id)?;
+        self.by_target.remove(&binding.target);
+        Some(binding)
+    }
+
+    /// 같은 target·owner의 binding으로 교체하고 이전 binding을 돌려줍니다.
+    pub fn replace(&mut self, binding: ValueBinding) -> Result<ValueBinding, BindingSetError> {
+        let current = self
+            .bindings
+            .get_mut(&binding.id)
+            .ok_or(BindingSetError::UnknownBinding(binding.id))?;
+        if current.target != binding.target || current.scope_owner != binding.scope_owner {
+            return Err(BindingSetError::TargetChanged(binding.id));
+        }
+        Ok(std::mem::replace(current, binding))
+    }
+
+    /// ID로 찾습니다.
+    pub fn get(&self, id: BindingId) -> Option<&ValueBinding> {
+        self.bindings.get(&id)
+    }
+
+    /// target 속성으로 찾습니다.
+    pub fn by_target(&self, target: &PropertyPath) -> Option<&ValueBinding> {
+        self.by_target
+            .get(target)
+            .and_then(|id| self.bindings.get(id))
+    }
+
+    /// 모든 binding(ID 순).
+    pub fn iter(&self) -> impl Iterator<Item = &ValueBinding> {
+        self.bindings.values()
+    }
+
+    /// binding 수.
+    pub fn len(&self) -> usize {
+        self.bindings.len()
+    }
+
+    /// binding이 없으면 `true`.
+    pub fn is_empty(&self) -> bool {
+        self.bindings.is_empty()
     }
 }
 
@@ -683,5 +794,52 @@ mod tests {
             TypeSpec::required(ExpressionType::Number),
             TypeSpec::optional(ExpressionType::Number)
         ));
+    }
+
+    #[test]
+    fn binding_set_keeps_one_binding_per_target() {
+        let mut set = BindingSet::new();
+        let [a, b, c] = <[ValueBinding; 3]>::try_from(samples()).expect("3개");
+        // samples는 모두 같은 ID라 ID를 바꿔 씁니다.
+        let b = ValueBinding {
+            id: BindingId::new(sid(78)),
+            ..b
+        };
+        set.insert(a.clone()).expect("a");
+        set.insert(b.clone()).expect("b");
+        assert_eq!(
+            set.insert(c.clone()),
+            Err(BindingSetError::DuplicateId(a.id()))
+        );
+        let same_target = ValueBinding {
+            id: BindingId::new(sid(79)),
+            ..a.clone()
+        };
+        assert_eq!(
+            set.insert(same_target),
+            Err(BindingSetError::DuplicateTarget {
+                target: a.target().clone(),
+                existing: a.id()
+            })
+        );
+        assert_eq!(
+            set.by_target(b.target()).map(ValueBinding::id),
+            Some(b.id())
+        );
+        // 교체는 target·owner 유지.
+        let moved = ValueBinding {
+            target: c.target().clone(),
+            ..a.clone()
+        };
+        assert_eq!(
+            set.replace(moved),
+            Err(BindingSetError::TargetChanged(a.id()))
+        );
+        let retyped = a.with_source(source(), TypeSpec::optional(ExpressionType::Length));
+        assert_eq!(set.replace(retyped.clone()), Ok(a.clone()));
+        assert_eq!(set.get(a.id()), Some(&retyped));
+        assert_eq!(set.remove(a.id()), Some(retyped));
+        assert!(set.by_target(a.target()).is_none());
+        assert_eq!(set.len(), 1);
     }
 }

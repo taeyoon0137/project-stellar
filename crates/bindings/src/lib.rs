@@ -17,3 +17,6 @@ pub mod token_commands;
 
 /// Value Binding 정의·직렬화·type 검증 (VIII.6.1).
 pub mod binding;
+
+/// 토큰·속성·Component Property·환경 입력 통합 dependency graph (VIII.6.2).
+pub mod graph;
