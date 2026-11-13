@@ -588,7 +588,7 @@ tools/xtask/
 |---|---|---|---|---|
 | VI.7.1 | `[x]` | Text payload에 UTF-8 content, paragraph list, style runs를 정의합니다. run 경계는 byte index가 아니라 Unicode scalar/grapheme 정책을 명시한 text index 타입을 사용합니다. | 한글 조합, emoji ZWJ, surrogate 불가 fixture round-trip. | VI.2.2, III.3.4 |
 | VI.7.2 | `[x]` | style run에 typography ref, fill, OpenType features, variation axes를 정의합니다. | overlapping run을 canonical non-overlap run으로 normalize. | VI.7.1, III.3.5 |
-| VI.7.3 | `[ ]` | paragraph alignment, line height, letter spacing, wrapping mode를 정의합니다. 실제 layout은 Phase X에서 구현합니다. | 기본값·경계값 validation 통과. | VI.7.1 |
+| VI.7.3 | `[x]` | paragraph alignment, line height, letter spacing, wrapping mode를 정의합니다. 실제 layout은 Phase X에서 구현합니다. | 기본값·경계값 validation 통과. | VI.7.1 |
 | VI.7.4 | `[ ]` | 빈 텍스트도 유효 node로 유지하고 삭제와 구분합니다. | empty content 저장·복원. | VI.7.1 |
 | VI.7.5 | `[ ]` | 텍스트 내용 변경 시 style run range를 보존·축소·확장하는 deterministic edit helper를 구현합니다. | 삽입·삭제·replace fixture 통과. | VI.7.2 |
 
