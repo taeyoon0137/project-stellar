@@ -46,5 +46,8 @@ pub mod mirror;
 /// library cache entry 검증 (XV.3.4).
 pub mod entry_validation;
 
+/// cache index privacy mode와 local source config (XV.3.5).
+pub mod cache_privacy;
+
 #[cfg(test)]
 pub(crate) mod test_support;

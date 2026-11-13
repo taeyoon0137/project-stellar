@@ -7,7 +7,7 @@
 //! ```text
 //! magic        8  b"STLDCIDX"
 //! version      u16 LE (= 1)
-//! mode         u8      (0 = plain: repository URL 원문)
+//! mode         u8      (0 = plain: repository URL 원문, 1 = private: keyed identifier — XV.3.5)
 //! entry_count  u32 LE
 //! entry*       (repository 비교 키, commit) 오름차순, 중복 금지
 //!   repository   u32 LE 길이 + UTF-8
@@ -305,7 +305,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), CacheIndexEr
     Ok(())
 }
 
-fn put_u32_bytes(
+pub(crate) fn put_u32_bytes(
     out: &mut Vec<u8>,
     bytes: &[u8],
     field: &'static str,
@@ -316,7 +316,7 @@ fn put_u32_bytes(
     Ok(())
 }
 
-fn put_u8_bytes(
+pub(crate) fn put_u8_bytes(
     out: &mut Vec<u8>,
     bytes: &[u8],
     field: &'static str,
