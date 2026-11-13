@@ -74,6 +74,11 @@ impl Writer {
         self.buf.push(value);
     }
 
+    /// 길이 프리픽스 없이 bytes를 그대로 덧붙입니다(자체 framing을 가진 값).
+    pub(crate) fn raw(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
+
     pub(crate) fn bool(&mut self, value: bool) {
         self.buf.push(u8::from(value));
     }
@@ -223,6 +228,11 @@ impl<'a> Reader<'a> {
             });
         }
         Ok(len)
+    }
+
+    /// 아직 읽지 않은 입력(소비하지 않음).
+    pub(crate) fn rest(&self) -> &'a [u8] {
+        &self.input[self.pos..]
     }
 
     pub(crate) fn remaining(&self) -> usize {

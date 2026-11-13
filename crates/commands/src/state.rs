@@ -70,17 +70,12 @@ impl DocumentState {
     ///
     /// 성공하면 revision을 하나 올리고 변경 집합과 역 command를 반환합니다. apply가 도중에
     /// 실패하면 transaction guard(VII.1.5)가 변경 전 상태로 되돌리고 revision을 유지합니다.
+    /// 요청 하나짜리 transaction(VII.1.6)과 같은 경로입니다.
     pub fn execute(&mut self, request: &CommandRequest) -> Result<CommandOutcome, CommandError> {
-        request.check_state(self)?;
-        let new_revision = self.next_revision()?;
-        request.command.validate(&self.model)?;
-        let inverse = request.command.invert(&self.model)?;
-        let mut guard = TransactionGuard::begin(&mut self.model);
-        if let Err(error) = request.command.apply(guard.ctx()) {
-            return Err(rollback_with(guard, error));
-        }
-        let changes = guard.commit().finish(new_revision);
-        self.revision = new_revision;
+        let (changes, mut inverses) = self
+            .run_requests(std::slice::from_ref(request))
+            .map_err(|failure| failure.error)?;
+        let inverse = inverses.pop().ok_or(CommandError::EmptyTransaction)?;
         Ok(CommandOutcome { changes, inverse })
     }
 }

@@ -30,3 +30,6 @@ pub mod change;
 
 /// 변경 전 상태로 되돌리는 transaction guard (VII.1.5).
 pub mod guard;
+
+/// 전부 성공하거나 전부 롤백하는 `CommandTransaction` (VII.1.6).
+pub mod transaction;

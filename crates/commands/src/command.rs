@@ -36,6 +36,8 @@ pub enum CommandError {
     Model(ModelError),
     /// revision 카운터가 한계에 도달했습니다.
     RevisionOverflow,
+    /// 요청이 없는 transaction입니다(VII.1.6).
+    EmptyTransaction,
     /// 적용 실패 후 되돌리기마저 실패했습니다(내부 불일치 신호, VII.1.5).
     RollbackFailed {
         /// 원래 실패 원인.
@@ -65,6 +67,7 @@ impl fmt::Display for CommandError {
             CommandError::UnknownNode { id } => write!(f, "node {id}가 없습니다"),
             CommandError::Model(error) => write!(f, "문서 모델 오류: {error}"),
             CommandError::RevisionOverflow => f.write_str("문서 revision이 한계에 도달했습니다"),
+            CommandError::EmptyTransaction => f.write_str("요청이 없는 transaction입니다"),
             CommandError::RollbackFailed { original, rollback } => {
                 write!(f, "{original} (되돌리기 실패: {rollback})")
             }
