@@ -305,6 +305,10 @@ final class AgentApprovalCellView: AgentConversationCellView {
     private(set) var agentNoteLabel: NSTextField?
     private(set) var agentProvenanceLabel: NSTextField?
     private var request: AgentApprovalRequest?
+    /// 응답을 보냈고 코어 갱신을 기다리는 중인지. 이 동안 승인·거부를 다시 보내지 않습니다.
+    private(set) var isAwaitingUpdate = false
+
+    var approvalID: AgentApprovalID? { request?.approvalID }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -338,7 +342,7 @@ final class AgentApprovalCellView: AgentConversationCellView {
         cardView.needsDisplay = true
     }
 
-    func configure(request: AgentApprovalRequest) {
+    func configure(request: AgentApprovalRequest, awaitingUpdate: Bool = false) {
         self.request = request
         var rows: [NSView] = []
         approveButton = nil
@@ -417,7 +421,17 @@ final class AgentApprovalCellView: AgentConversationCellView {
             "\(AgentPanelText.approvalNeeded), \(AgentPanelText.approvalKindTitle(request.kind)): \(request.summary). "
                 + "\(AgentPanelText.validationSection): \(AgentPanelText.validationTitle(request.validation)). "
                 + AgentPanelText.approvalStatusTitle(request.status))
-        if request.status == .pending {
+        setAwaitingUpdate(awaitingUpdate)
+        cardView.needsDisplay = true
+    }
+
+    /// 응답 대기 상태를 반영합니다. 대기 중에는 승인·거부 버튼과 접근성 동작을 끕니다(배치는 그대로).
+    func setAwaitingUpdate(_ awaiting: Bool) {
+        isAwaitingUpdate = awaiting
+        approveButton?.isEnabled = !awaiting
+        declineButton?.isEnabled = !awaiting
+        guard let request else { return }
+        if request.status == .pending && !awaiting {
             setAccessibilityCustomActions([
                 NSAccessibilityCustomAction(
                     name: request.kind.requiresSensitiveConfirmation
@@ -434,7 +448,6 @@ final class AgentApprovalCellView: AgentConversationCellView {
         } else {
             setAccessibilityCustomActions(nil)
         }
-        cardView.needsDisplay = true
     }
 
     private func sectionLabel(_ text: String) -> NSTextField {
@@ -523,12 +536,12 @@ final class AgentApprovalCellView: AgentConversationCellView {
     }
 
     @objc private func approve(_ sender: Any?) {
-        guard let request, request.status == .pending else { return }
+        guard let request, request.status == .pending, !isAwaitingUpdate else { return }
         actions?.conversationRequestsDecision(.approve, for: request)
     }
 
     @objc private func decline(_ sender: Any?) {
-        guard let request, request.status == .pending else { return }
+        guard let request, request.status == .pending, !isAwaitingUpdate else { return }
         actions?.conversationRequestsDecision(.decline, for: request)
     }
 

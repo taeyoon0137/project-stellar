@@ -129,6 +129,30 @@ enum AgentPanelText {
     static let sessionEndedBar = "Session ended. Agent changes stay applied and marked."
     static let modelToolTip = "Model reported by the CLI"
 
+    // 빈·진행·오류 상태(명세 4장).
+    static let checkAgain = "Check Again"
+    static let noCLITitle = "No agent CLI found"
+    static let noCLIMessage = "Install a supported coding agent CLI and sign in with it using its own instructions. "
+        + "Stellar runs the CLI you already use and doesn’t store keys or sign-in data."
+    static let unsupportedVersionTitle = "This CLI version isn’t supported"
+    static let authenticationRequiredMessage = "Sign in with the CLI’s own instructions. Stellar doesn’t take part in sign-in."
+    static let openSignInTerminal = "Open Sign-In Terminal…"
+    static let untrustedTitle = "Trust this project to use the agent"
+    static let untrustedMessage = "Agent sessions start only in trusted projects."
+    static let reviewProjectTrust = "Review Project Trust…"
+    static let startSessionTitle = "Edit with your agent CLI"
+
+    static func unsupportedVersionMessage(_ cliName: String) -> String {
+        "Stellar runs only CLI versions it has verified. Update \(cliName), then check again."
+    }
+
+    static func authenticationRequiredTitle(_ cliName: String) -> String { "Sign in to \(cliName)" }
+
+    static func startSessionMessage(_ cliName: String) -> String {
+        "Start a session to ask \(cliName) to inspect this project and propose edits. "
+            + "Changes the agent applies stay marked so you can revert them."
+    }
+
     static func modelLabel(_ name: String) -> String { "Model: \(name)" }
 
     static func modeTitle(_ mode: AgentPermissionMode) -> String {

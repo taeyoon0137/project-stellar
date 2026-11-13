@@ -72,7 +72,7 @@
 |---|---|---|
 | 사용자 메시지 | 사용자 입력. 그대로 CLI에 전달 | "You" + 본문 |
 | 에이전트 메시지 | CLI 출력의 표시 전용 디코드 | "Agent"(응답 중이면 "Agent — responding") + 본문 |
-| 도구 단계 | **Stellar 자체 tool 호출 기록**. CLI 출력을 해석한 것이 아님 | 상태 기호 + "Done · Stellar record" + 단계 이름 + 요약 |
+| 도구 단계 | **Stellar 자체 tool 호출 기록**. CLI 출력을 해석한 것이 아님. 문서 변경은 Stellar MCP tool로만 일어나고 셸에는 공급자 출력 해석 코드가 없기 때문입니다 [ADR-0005 결정 4.3 불변식 1, 4.4 디코더 위치·문서 변경 경로 금지] | 상태 기호 + "Done · Stellar record" + 단계 이름 + 요약 |
 | 승인 카드 | 주 내용은 **코어 생성**(요약, semantic diff, validation, 잠금 범위). 에이전트 설명은 보조 | 3.3절 |
 | 에이전트 적용 변경 | 코어 변경 기록 | "Applied by agent"(+ Reverted / Can’t revert automatically) + 요약 + [Revert] |
 | Stellar 알림 | 셸 고정 문구 | "Stellar" + 세션 시작·모드 변경·세션 종료·lease 해제 |
@@ -109,6 +109,8 @@
 
 - 여러 줄 `NSTextView`(plain text, undo, IME, 맞춤법). 내용에 맞춰 2~8줄 사이로 높이를 바꿉니다. [아키텍처 §11.2] [가이드 5.2, 6.5]
 - 보내기(아이콘 버튼)와 중지(아이콘 버튼). 비어 있을 때 안내 문구를 보이고, 접근성으로는 placeholder 값으로 노출합니다.
+- 안내 문구는 hit test에서 빠져 클릭을 받지 않습니다. 문구 위를 눌러도 입력창이 포커스를 받습니다.
+- 보낸 뒤 입력창은 텍스트 시스템 경로(`shouldChangeText` → 교체 → `didChangeText`)로 비웁니다. 지우기도 Undo 기록에 남으므로 Command-Z는 보낸 문장을 입력창에 되살립니다. `string`을 직접 바꾸면 이전 타이핑 Undo가 없는 범위를 가리켜 Undo에서 앱이 종료되므로 쓰지 않습니다. [아키텍처 §11.2] [가이드 5.2]
 
 ## 4. 상태
 
@@ -132,7 +134,7 @@
 |---|---|---|
 | 보내기 | `sendMessage(text)` (앞뒤 공백 제거, 빈 문장은 보내지 않음) | 없음 |
 | 중지 | `stopSession` | 없음(자동 롤백이 없어 되돌릴 수 없는 결과가 없음) |
-| 일반 승인·거부 | `respondToApproval(id, approve/decline)` | 없음. 버튼에 키 등가 없음 |
+| 일반 승인·거부 | `respondToApproval(id, approve/decline)`. 보낸 뒤 코어 갱신(`itemUpdated`)이 올 때까지 카드의 승인·거부 버튼과 접근성 동작을 끕니다(빠른 두 번 클릭이 여러 응답이 되지 않게) | 없음. 버튼에 키 등가 없음 |
 | 민감 승인(Git commit·push) | `respondToApproval(id, approve)` | 경고 sheet: Cancel이 Return 기본, 확인 버튼은 `hasDestructiveAction`·키 등가 없음 |
 | 미리보기 | `previewApproval(id)` | 없음 |
 | 변경 하나 되돌리기 | `revertChange(id)` | 없음 |
@@ -155,12 +157,13 @@
 |---|---|
 | Return | 보내기. IME 조합 중에는 조합 확정이 우선 |
 | Shift-Return, Option-Return | 줄바꿈 |
-| Command-Return | 보내기(보내기 버튼 키 등가) |
-| Command-Period | 세션 중지(중지 버튼 키 등가, macOS 취소 관례) |
-| Tab / Shift-Tab | CLI 팝업 → 더 보기 → 보기 전환 → 모드 → 대화 기록 → (원문 텍스트) → (빈 상태 버튼) → 입력창 → 중지 → 보내기. 숨긴 뷰는 건너뜀 |
+| Command-Return | 보내기. 패널 안에 포커스가 있을 때만 |
+| Command-Period | 세션 중지(macOS 취소 관례). 패널 안에 포커스가 있고 세션이 활성일 때만 |
+| Tab / Shift-Tab | CLI 팝업 → 더 보기 → 보기 전환 → 모드 → 대화 기록 → (원문 텍스트) → (빈 상태 버튼) → 입력창 → 중지 → 보내기. 숨긴 뷰는 건너뜀. 입력창에서도 Tab은 포커스를 옮기고, 탭 문자는 Option-Tab으로 넣음 |
 | 화살표 | 대화 기록 행 이동(시스템 목록 동작, 행 전체 하이라이트) |
 | Command-C | 선택한 행 복사(입력창·원문 보기에서는 시스템 텍스트 복사) |
 
+- Command-Return·Command-Period는 버튼 키 등가로 두지 않습니다. 버튼 키 등가는 창의 key equivalent 탐색이 창 전체 뷰를 훑으므로 캔버스·레이어 목록·다른 패널에서 눌러도 발동합니다. 패널 루트 뷰(`AgentPanelRootView`)가 first responder가 패널 하위일 때만 처리하고, 아니면 탐색을 넘깁니다. [가이드 8.1, 8.2]
 - 승인·되돌리기에는 키 등가를 두지 않습니다. 키보드 사용자는 포커스한 버튼을 Space로 누르거나 Full Keyboard Access를 씁니다. 키보드 기본 동작만으로 승인되지 않게 하기 위해서입니다. [ADR-0005 결정 4.5] [가이드 8.1, 8.2]
 - 메뉴 막대 연결(통합 시): 컨트롤러가 first responder action과 `NSMenuItemValidation`을 이미 구현합니다. `showAgentChatView:`, `showAgentRawTextView:`, `startAgentSession:`, `stopAgentSession:`, `revertAllAgentSessionChanges:`, `releaseAllAgentLeases:`, `copy:`. 메뉴 위치·단축키는 메뉴 WBS가 정합니다. [가이드 8.1] [계획 XII.6.5]
 
@@ -215,7 +218,7 @@ protocol AgentPanelSource: AnyObject {
 
 - **스냅샷** `AgentPanelSnapshot`: 세대 번호, 헤더(`AgentSessionHeader`), 단계(`AgentPanelPhase`), 대화 기록 항목 배열, 원문 텍스트, 세션 변경 집계.
 - **이벤트** `AgentPanelEvent`(세대 번호 + 변경): `reset(스냅샷)`, `headerChanged`, `phaseChanged`, `itemsAppended`, `itemUpdated`, `rawTextAppended`, `changeSummaryChanged`, `attentionRequested(kind)`.
-  - 세대가 현재와 다른 증분 이벤트는 버립니다. `reset`은 더 새로운 세대일 때만 받습니다. [아키텍처 §9.2] [가이드 9]
+  - 세대가 현재와 다른 증분 이벤트는 버립니다. `reset`은 스냅샷 세대가 현재보다 새롭고 이벤트 세대와 같을 때만 받습니다. 같은 세대 `reset`을 다시 받으면 증분으로 쌓은 기록과 원문 텍스트가 지워지기 때문입니다. [아키텍처 §9.2] [가이드 9]
   - 셸은 콜백을 등록하지 않고 꺼내 씁니다. 통합 시 앱 이벤트 펌프가 `AgentPanelViewController.pumpEvents()`를 부릅니다. [ADR-0009 "callback 등록 API 없음"]
 - **명령** `AgentPanelCommand`: 5장 표의 명령들. 결과는 이벤트로 돌아옵니다.
 - **식별자**: `AgentItemID`, `AgentApprovalID`, `AgentChangeID`, `AgentCLIID`는 코어가 발급하는 불투명 `UInt64`입니다.
@@ -228,7 +231,7 @@ protocol AgentPanelSource: AnyObject {
 - 모든 프로토콜 호출은 메인 스레드에서 즉시 반환해야 합니다. CLI 프로세스, IPC, diff 계산은 구현체가 다른 스레드에서 처리합니다. [아키텍처 §6.3, §6.4, §9.2] [ADR-0005 결정 6]
 - 한 번의 런 루프에서 이벤트를 최대 `maxEventsPerPass`개 적용하고 나머지는 다음 런 루프로 넘깁니다. [아키텍처 §6.3 "단일 점유 2ms"]
 - 대화 기록은 보이는 행만 만들고, 패널 폭이 바뀌면 다음 런 루프에 한 번만 보이는 행을 다시 잽니다. [가이드 9]
-- 입력창 높이 계산은 짧은 입력에만 전체 레이아웃을 강제합니다. 긴 붙여넣기는 최대 높이를 바로 씁니다.
+- 입력창 높이 계산은 짧은 입력에만 전체 레이아웃을 강제합니다. 긴 붙여넣기는 최대 높이를 바로 씁니다. text view가 TextKit 1로 내려간 경우(`textLayoutManager`가 nil)에도 layout manager의 사용 영역으로 같은 방식으로 잽니다.
 - 원문 텍스트는 끝에 이어 붙이기만 합니다. 보관 상한(오래된 줄 정리)은 코어 연결 때 정합니다(14장).
 
 ## 11. 검사(`AgentPanelUICheck`)
@@ -237,11 +240,16 @@ protocol AgentPanelSource: AnyObject {
 
 - 모든 SF Symbol 이름이 해석됨. 알림 문구에 샘플 프로젝트 데이터가 없음.
 - 확인 alert 구성: 민감 확인은 Cancel이 Return 기본, 확인 버튼은 파괴적 표시·키 등가 없음. 시작 확인에 프로젝트·CLI·모드 포함.
-- 활성 세션(Light, Dark 각각): 채팅 보기 기본, 처음 표시에서 마지막 항목이 보임, 헤더 값, 핵심 컨트롤 접근성 레이블·도움말 태그, 보내기·중지 키 등가, 모든 행을 차례로 화면에 들여와 모호한 Auto Layout 없음·여러 줄 레이블 폭과 잘림·행 여백 과다 없음·행 접근성 레이블, 승인 카드 구성(민감·일반·처리됨, 에이전트 설명 출처 표시), 변경 행 되돌리기 버튼, 접근성 표시 설정 경로와 그리기.
-- 상호작용: 민감 승인은 확인 거부 시 명령 없음·확인 시 명령, 일반 승인은 확인 없이 명령, 개별·세션 되돌리기, Return 보내기와 IME 조합 중 Return 제외, 원문 텍스트 보기 전환·이어 붙이기, 문맥 메뉴, 중지 후 변경 집계 유지(자동 롤백 없음)·대기 승인 만료·주의 요청, 새 세션 시작 확인과 세대 교체.
+- 활성 세션(Light, Dark 각각): 채팅 보기 기본, 처음 표시에서 마지막 항목이 보임, 헤더 값, 핵심 컨트롤 접근성 레이블·도움말 태그, 보내기·중지 버튼에 창 전체 키 등가 없음, 모든 행을 차례로 화면에 들여와 모호한 Auto Layout 없음·여러 줄 레이블 폭과 잘림·행 여백 과다 없음·행 접근성 레이블, 승인 카드 구성(민감·일반·처리됨, 에이전트 설명 출처 표시), 변경 행 되돌리기 버튼, 접근성 표시 설정 경로와 그리기.
+- 상호작용: 민감 승인은 확인 거부 시 명령 없음·확인 시 명령, 일반 승인은 확인 없이 명령·같은 카드 두 번째 응답 없음, 개별·세션 되돌리기, Return 보내기와 IME 조합 중 Return 제외, 보낸 뒤 Undo가 종료 없이 보낸 문장을 되살림(회귀 검사), 안내 문구 위 hit test가 입력창, 입력창 Tab이 탭 문자를 넣지 않음, 원문 텍스트 보기 전환·이어 붙이기, 문맥 메뉴, 중지 후 변경 집계 유지(자동 롤백 없음)·주의 요청, 새 세션 시작 확인과 세대 교체.
+- 중지 시 대기 승인 만료: 승인하지 않은 두 카드(Git commit, 편집)가 Expired가 되고 응답 버튼·접근성 동작이 사라짐.
+- 단축키 범위: 같은 창의 패널 밖 텍스트 필드에 포커스가 있으면 Command-Return·Command-Period를 처리하지 않고 명령도 없음. 입력창 포커스에서 Command-Return 보내기, 대화 기록 포커스에서 Command-Period 중지.
+- reset 세대 규칙: 같은 세대 reset과 이벤트·스냅샷 세대가 어긋난 reset은 버리고, 새 세대 reset만 적용.
 - 빈·진행·오류 7종: 상태 뷰 표시, 기대 동작 버튼, 동작 버튼이 명령을 보냄, 모호성 없음, 그리기.
 
-이번 작업에서는 기존 파일을 고치지 않았으므로 실행 인자와 smoke 연결은 통합 때 합니다(14장). 결과 예: `agent-panel-ui ok: light 12행·레이블 36개; dark 12행·레이블 36개; 상호작용 7개 명령; 빈·진행·오류 7종`.
+실행 인자와 smoke 연결은 `main.swift`·`scripts/macos/smoke.sh`를 고치는 통합 작업에서 합니다(14장). 그 전에는 이 폴더 파일만 함께 컴파일한 별도 실행 파일로 돌립니다. 결과 예(2026-11-14): `agent-panel-ui ok: light 12행·레이블 36개; dark 12행·레이블 36개; 상호작용 7개 명령; 중지 시 대기 승인 2건 만료; 단축키 범위(패널 밖 무시, 안에서 보내기·중지); reset 세대 규칙; 빈·진행·오류 7종`.
+
+회귀 검사 확인(2026-11-14): 수정마다 하나씩 되돌린 사본에서 검사가 실패함을 확인했습니다. 입력창을 `string = ""`로 비우면 Undo에서 NSException으로 종료, 안내 문구 hit test를 되살리면 "안내 문구 위 클릭 대상이 입력창이 아님", 포커스 확인을 빼면 "패널 밖 포커스에서 패널 단축키가 처리됨", 같은 세대 reset을 받으면 "같은 세대 reset이 증분 기록을 지움", 응답 대기 확인을 빼면 "같은 승인에 응답이 여러 번 나감".
 
 ## 12. 잠정 수치
 

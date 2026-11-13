@@ -1,5 +1,51 @@
 import AppKit
 
+/// 패널 루트 뷰. 패널 단축키(Command-Return 보내기, Command-Period 세션 중지)를 패널 안에 포커스가 있을 때만
+/// 처리합니다.
+///
+/// 버튼 키 등가는 창의 key equivalent 탐색이 창 전체 뷰를 훑으므로 캔버스·레이어 목록·다른 패널에서 눌러도
+/// 발동합니다. 이 뷰는 first responder가 자신의 하위일 때만 반응하고, 아니면 탐색을 그대로 넘깁니다(가이드 8.1, 8.2).
+final class AgentPanelRootView: NSView {
+    /// 패널 단축키 처리. 처리했으면 true.
+    var shortcutHandler: ((AgentPanelShortcut) -> Bool)?
+
+    /// first responder가 이 패널 안에 있는지. field editor는 편집 중인 필드의 하위로 붙으므로 함께 판정됩니다.
+    var containsFirstResponder: Bool {
+        guard let responder = window?.firstResponder as? NSView else { return false }
+        return responder === self || responder.isDescendant(of: self)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let shortcut = AgentPanelShortcut(event: event), containsFirstResponder,
+            shortcutHandler?(shortcut) == true
+        {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
+/// 패널 단축키(명세 6장).
+enum AgentPanelShortcut: Equatable {
+    case send
+    case stopSession
+
+    init?(event: NSEvent) {
+        guard event.type == .keyDown,
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function]) == .command,
+            let characters = event.charactersIgnoringModifiers
+        else { return nil }
+        switch characters {
+        case "\r", "\u{3}":  // Return, keypad Enter
+            self = .send
+        case ".":
+            self = .stopSession
+        default:
+            return nil
+        }
+    }
+}
+
 /// 내장 에이전트 패널(로드맵, 가이드 6.5). 인스펙터 영역 탭 후보 자리에 넣을 수 있는 view controller입니다.
 ///
 /// 구성(위→아래): 헤더(CLI·연결 상태·보기 전환·모드), 대화 기록(채팅 보기 기본 / 원문 텍스트 보기),
@@ -20,6 +66,8 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
     /// 현재 상태. 원문 텍스트는 text view만 보관하므로 `rawText`는 비워 둡니다.
     private(set) var model: AgentPanelSnapshot
     private var rowForItem: [AgentItemID: Int] = [:]
+    /// 응답을 보냈지만 코어 갱신(itemUpdated)이 아직 오지 않은 승인. 같은 카드에서 두 번 응답하지 않게 막습니다.
+    private(set) var approvalsAwaitingUpdate: Set<AgentApprovalID> = []
     private(set) var displayMode: AgentConversationDisplayMode = .chat
 
     private(set) var headerView: AgentPanelHeaderView!
@@ -71,10 +119,11 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
     // MARK: - View
 
     override func loadView() {
-        let root = NSView()
+        let root = AgentPanelRootView()
         root.setAccessibilityElement(true)
         root.setAccessibilityRole(.group)
         root.setAccessibilityLabel(AgentPanelText.panelTitle)
+        root.shortcutHandler = { [weak self] shortcut in self?.handleShortcut(shortcut) ?? false }
 
         headerView = AgentPanelHeaderView()
         configureHeader()
@@ -225,6 +274,20 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
         rawTextView = textView
     }
 
+    /// 패널 단축키. 루트 뷰가 패널 안 포커스를 확인한 뒤에만 부릅니다.
+    private func handleShortcut(_ shortcut: AgentPanelShortcut) -> Bool {
+        switch shortcut {
+        case .send:
+            // 패널 안에서 누른 보내기는 보낼 수 없더라도 다른 패널로 넘기지 않습니다(submit이 경고음을 냄).
+            composerView.submit()
+            return true
+        case .stopSession:
+            guard model.header.isSessionActive else { return false }
+            stopAgentSession(nil)
+            return true
+        }
+    }
+
     /// 패널 안 Tab 순서: 헤더 → 대화 기록 → 입력창 → 중지 → 보내기. 숨긴 뷰는 AppKit이 건너뜁니다.
     private func configureKeyViewLoop() {
         headerView.cliPopUp.nextKeyView = headerView.moreButton
@@ -287,7 +350,9 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
     /// 이벤트 하나를 적용합니다. 헤더·빈 상태 등 크롬 갱신이 필요하면 true.
     private func apply(_ event: AgentPanelEvent) -> Bool {
         if case .reset(let snapshot) = event.change {
-            guard snapshot.generation >= model.generation else { return false }
+            // reset은 더 새로운 세대일 때만 받습니다(명세 9장). 같은 세대 reset이 다시 오면 증분 이벤트로 쌓은
+            // 기록·원문 텍스트를 지우게 되므로 버립니다. 이벤트 세대와 스냅샷 세대가 다르면 잘못된 이벤트로 봅니다.
+            guard snapshot.generation > model.generation, event.generation == snapshot.generation else { return false }
             applySnapshot(snapshot)
             return false
         }
@@ -324,6 +389,7 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
         model = snapshot
         model.rawText = ""
         rowForItem = [:]
+        approvalsAwaitingUpdate = []
         for (row, item) in snapshot.items.enumerated() {
             rowForItem[item.id] = row
         }
@@ -394,6 +460,10 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
     private func updateItem(_ item: AgentConversationItem) {
         guard let row = rowForItem[item.id], row < model.items.count else { return }
         model.items[row] = item
+        // 코어가 승인 카드의 최신 상태를 보냈으므로 로컬 응답 대기 표시를 풉니다(거부되어 대기로 남으면 다시 응답 가능).
+        if case .approval(let request) = item.content {
+            approvalsAwaitingUpdate.remove(request.approvalID)
+        }
         let rows = IndexSet(integer: row)
         tableView.reloadData(forRowIndexes: rows, columnIndexes: IndexSet(integer: 0))
         NSAnimationContext.runAnimationGroup { context in
@@ -483,43 +553,42 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
             return AgentPanelEmptyState(
                 symbolName: AgentPanelSymbol.failed, title: AgentPanelText.failureTitle(reason),
                 message: AgentPanelText.failureMessage(reason),
-                actionTitle: retry == .startSession ? AgentPanelText.startNewSession : "Check Again",
+                actionTitle: retry == .startSession ? AgentPanelText.startNewSession : AgentPanelText.checkAgain,
                 action: retry == .startSession && !canStartSession ? nil : retry, showsProgress: false)
         case .ready:
             break
         }
         guard let cli = header.selectedCLI else {
             return AgentPanelEmptyState(
-                symbolName: AgentPanelSymbol.noCLI, title: "No agent CLI found",
-                message: "Install a supported coding agent CLI and sign in with it using its own instructions. "
-                    + "Stellar runs the CLI you already use and doesn’t store keys or sign-in data.",
-                actionTitle: "Check Again", action: .refreshInstalledCLIs, showsProgress: false)
+                symbolName: AgentPanelSymbol.noCLI, title: AgentPanelText.noCLITitle,
+                message: AgentPanelText.noCLIMessage,
+                actionTitle: AgentPanelText.checkAgain, action: .refreshInstalledCLIs, showsProgress: false)
         }
         switch cli.availability {
         case .unsupportedVersion:
             return AgentPanelEmptyState(
-                symbolName: AgentPanelSymbol.unsupportedVersion, title: "This CLI version isn’t supported",
-                message: "Stellar runs only CLI versions it has verified. Update \(cli.displayName), then check again.",
-                actionTitle: "Check Again", action: .refreshInstalledCLIs, showsProgress: false)
+                symbolName: AgentPanelSymbol.unsupportedVersion, title: AgentPanelText.unsupportedVersionTitle,
+                message: AgentPanelText.unsupportedVersionMessage(cli.displayName),
+                actionTitle: AgentPanelText.checkAgain, action: .refreshInstalledCLIs, showsProgress: false)
         case .authenticationRequired:
             return AgentPanelEmptyState(
-                symbolName: AgentPanelSymbol.authenticationRequired, title: "Sign in to \(cli.displayName)",
-                message: "Sign in with the CLI’s own instructions. Stellar doesn’t take part in sign-in.",
-                actionTitle: "Open Sign-In Terminal…", action: .openSignInTerminal, showsProgress: false)
+                symbolName: AgentPanelSymbol.authenticationRequired,
+                title: AgentPanelText.authenticationRequiredTitle(cli.displayName),
+                message: AgentPanelText.authenticationRequiredMessage,
+                actionTitle: AgentPanelText.openSignInTerminal, action: .openSignInTerminal, showsProgress: false)
         case .ready:
             break
         }
         if !header.projectTrusted {
             return AgentPanelEmptyState(
-                symbolName: AgentPanelSymbol.untrusted, title: "Trust this project to use the agent",
-                message: "Agent sessions start only in trusted projects.",
-                actionTitle: "Review Project Trust…", action: .reviewProjectTrust, showsProgress: false)
+                symbolName: AgentPanelSymbol.untrusted, title: AgentPanelText.untrustedTitle,
+                message: AgentPanelText.untrustedMessage,
+                actionTitle: AgentPanelText.reviewProjectTrust, action: .reviewProjectTrust, showsProgress: false)
         }
         if header.connection == .noSession || header.connection == .ended {
             return AgentPanelEmptyState(
-                symbolName: AgentPanelSymbol.startSession, title: "Edit with your agent CLI",
-                message: "Start a session to ask \(cli.displayName) to inspect this project and propose edits. "
-                    + "Changes the agent applies stay marked so you can revert them.",
+                symbolName: AgentPanelSymbol.startSession, title: AgentPanelText.startSessionTitle,
+                message: AgentPanelText.startSessionMessage(cli.displayName),
                 actionTitle: AgentPanelText.startSessionMenu, action: .startSession, showsProgress: false)
         }
         return nil
@@ -653,16 +722,31 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
     // MARK: - AgentConversationActions
 
     func conversationRequestsDecision(_ decision: AgentApprovalDecision, for request: AgentApprovalRequest) {
-        guard request.status == .pending else { return }
+        guard request.status == .pending, !approvalsAwaitingUpdate.contains(request.approvalID) else { return }
         let command = AgentPanelCommand.respondToApproval(request.approvalID, decision)
         if decision == .approve && request.kind.requiresSensitiveConfirmation {
             // 민감 확인은 파괴적 동작 확인 패턴의 sheet를 거칩니다(ADR-0005 결정 4.5).
             confirm(.sensitiveApproval(request.kind)) { [weak self] in
-                self?.send(command)
+                self?.sendDecision(command, for: request.approvalID)
             }
         } else {
-            send(command)
+            sendDecision(command, for: request.approvalID)
         }
+    }
+
+    /// 응답을 한 번만 보내고, 코어 갱신이 올 때까지 카드의 승인·거부 버튼을 끕니다.
+    /// 빠른 두 번 클릭이나 승인 직후 거부가 여러 응답 명령으로 나가지 않게 합니다(첫 응답만 유효, ADR-0005 결정 4.5).
+    private func sendDecision(_ command: AgentPanelCommand, for approvalID: AgentApprovalID) {
+        guard !approvalsAwaitingUpdate.contains(approvalID) else { return }
+        approvalsAwaitingUpdate.insert(approvalID)
+        // 보이는 카드만 그 자리에서 버튼을 끕니다. 화면 밖 카드는 다시 그릴 때 대기 상태를 반영합니다.
+        tableView.enumerateAvailableRowViews { rowView, _ in
+            guard let cell = rowView.view(atColumn: 0) as? AgentApprovalCellView,
+                cell.approvalID == approvalID
+            else { return }
+            cell.setAwaitingUpdate(true)
+        }
+        send(command)
     }
 
     func conversationRequestsPreview(_ approvalID: AgentApprovalID) {
@@ -686,7 +770,7 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
         case .approval(let request):
             let cell = dequeue(AgentApprovalCellView.reuseIdentifier) { AgentApprovalCellView(frame: .zero) }
             cell.actions = self
-            cell.configure(request: request)
+            cell.configure(request: request, awaitingUpdate: approvalsAwaitingUpdate.contains(request.approvalID))
             return cell
         case .appliedChange(let change):
             let cell = dequeue(AgentChangeCellView.reuseIdentifier) { AgentChangeCellView(frame: .zero) }
@@ -744,7 +828,8 @@ final class AgentPanelViewController: NSViewController, NSTableViewDataSource, N
         }
         add(AgentPanelText.copy, .copy)
         switch model.items[row].content {
-        case .approval(let request) where request.status == .pending:
+        case .approval(let request) where request.status == .pending
+            && !approvalsAwaitingUpdate.contains(request.approvalID):
             menu.addItem(.separator())
             add(request.kind.requiresSensitiveConfirmation ? AgentPanelText.approveSensitive : AgentPanelText.approve,
                 .approve)

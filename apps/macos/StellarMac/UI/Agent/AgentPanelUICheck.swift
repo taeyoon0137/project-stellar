@@ -7,7 +7,10 @@ import AppKit
 /// - 핵심 컨트롤의 접근성 레이블·도움말 태그가 있는지
 /// - 채팅 보기가 기본이고 원문 텍스트 보기로 전환되는지
 /// - 승인 카드의 주 내용과 에이전트 설명(출처 표시)이 분리되는지, 민감 확인이 키보드 기본 동작만으로 승인되지 않는지
-/// - 개별·세션 되돌리기, 중지(자동 롤백 없음), 보내기(IME 조합 중 Return 제외)가 명령으로 나가는지
+/// - 개별·세션 되돌리기, 중지(자동 롤백 없음·대기 승인 만료), 보내기(IME 조합 중 Return 제외)가 명령으로 나가는지
+/// - 보낸 뒤 입력창 Undo가 종료 없이 보낸 문장을 되살리는지, 안내 문구 클릭이 입력창으로 가는지, Tab이 포커스를 옮기는지
+/// - Command-Return·Command-Period가 패널 안 포커스에서만 동작하는지(창 전체 키 등가 없음)
+/// - 같은 승인 카드에 응답이 한 번만 나가는지, reset이 더 새로운 세대에서만 적용되는지
 /// - 빈·진행·오류 상태가 다음 동작과 함께 보이는지
 /// - 알림 문구에 프로젝트 데이터가 없는지
 /// 를 확인합니다. Light·Dark 두 외형에서 그리기 경로도 한 번씩 실행합니다.
@@ -35,6 +38,9 @@ enum AgentPanelUICheck {
             report.append(try checkActiveSession(appearance: .aqua))
             report.append(try checkActiveSession(appearance: .darkAqua))
             report.append(try checkInteractions())
+            report.append(try checkStopExpiresPendingApprovals())
+            report.append(try checkShortcutScope())
+            report.append(try checkResetGeneration())
             report.append(try checkEmptyStates())
         } catch let failure as CheckFailure {
             FileHandle.standardError.write(Data("agent-panel-ui 실패: \(failure.message)\n".utf8))
@@ -129,6 +135,28 @@ enum AgentPanelUICheck {
         func close() {
             window.close()
         }
+    }
+
+    /// 단축키 이벤트(⌘Return, ⌘.).
+    private static func commandKey(_ characters: String, keyCode: UInt16, window: NSWindow) -> NSEvent? {
+        NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.command],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+            characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)
+    }
+
+    /// 순서대로 꺼내 주는 시험용 원천(세대 규칙 검사용).
+    private final class ScriptedSource: AgentPanelSource {
+        let snapshot: AgentPanelSnapshot
+        var events: [AgentPanelEvent] = []
+
+        init(snapshot: AgentPanelSnapshot) {
+            self.snapshot = snapshot
+        }
+
+        func currentSnapshot() -> AgentPanelSnapshot { snapshot }
+        func pollEvent() -> AgentPanelEvent? { events.isEmpty ? nil : events.removeFirst() }
+        func perform(_ command: AgentPanelCommand) {}
     }
 
     // MARK: - 공통 검사 도구
@@ -294,12 +322,11 @@ enum AgentPanelUICheck {
             try require(!(button.toolTip ?? "").isEmpty, "아이콘 버튼 도움말 태그 없음")
         }
         try require(!(header.moreButton.toolTip ?? "").isEmpty, "더 보기 도움말 태그 없음")
+        // ⌘Return·⌘.은 패널 루트 뷰가 포커스를 확인해 처리합니다. 버튼 키 등가는 창 전체에서 발동하므로 두지 않습니다.
         try require(
-            composer.sendButton.keyEquivalent == "\r" && composer.sendButton.keyEquivalentModifierMask == .command,
-            "보내기 키 등가(⌘Return)")
-        try require(
-            composer.stopButton.keyEquivalent == "." && composer.stopButton.keyEquivalentModifierMask == .command,
-            "중지 키 등가(⌘.)")
+            composer.sendButton.keyEquivalent.isEmpty && composer.stopButton.keyEquivalent.isEmpty,
+            "보내기·중지 버튼에 창 전체 키 등가가 있음")
+        try require(controller.view is AgentPanelRootView, "패널 루트 뷰가 단축키 범위 뷰가 아님")
         try require(composer.stopButton.isEnabled, "활성 세션에서 중지 비활성")
 
         // 세션 변경 막대.
@@ -385,12 +412,30 @@ enum AgentPanelUICheck {
         try require(harness.approvalCell(2)?.approveButton == nil, "승인 후 카드가 갱신되지 않음")
 
         // 2) 일반 승인은 확인 화면 없이 바로 명령으로 나갑니다(첫 응답만 유효).
+        //    코어 갱신 전 두 번째 클릭·거부는 명령으로 나가지 않습니다(카드 버튼이 꺼짐).
         let presentedBefore = presenter.presented.count
-        harness.approvalCell(3)?.approveButton?.performClick(nil)
+        guard let editCard = harness.approvalCell(3), let editApprove = editCard.approveButton,
+            case .approval(let editRequest)? = controller.model.items.first(where: {
+                if case .approval(let request) = $0.content { return request.approvalID.rawValue == 3 }
+                return false
+            })?.content
+        else { throw CheckFailure(message: "편집 승인 카드 없음") }
+        editApprove.performClick(nil)
         try require(presenter.presented.count == presentedBefore, "일반 승인에 확인 화면이 뜸")
         try require(
             harness.commands.last == .respondToApproval(AgentApprovalID(rawValue: 3), .approve), "일반 승인 명령 없음")
+        try require(
+            !editApprove.isEnabled && editCard.declineButton?.isEnabled == false, "응답 뒤 카드 버튼이 켜져 있음")
+        editApprove.performClick(nil)
+        // 셀을 거치지 않고 컨트롤러에 바로 요청해도 두 번째 응답은 나가지 않습니다(검사는 메인 스레드에서 실행).
+        MainActor.assumeIsolated { controller.conversationRequestsDecision(.decline, for: editRequest) }
+        let responses = harness.commands.filter {
+            if case .respondToApproval(let id, _) = $0 { return id.rawValue == 3 }
+            return false
+        }
+        try require(responses.count == 1, "같은 승인에 응답이 여러 번 나감 \(responses)")
         harness.settle()
+        try require(controller.approvalsAwaitingUpdate.isEmpty, "코어 갱신 뒤에도 응답 대기 표시가 남음")
         try require(controller.model.changeSummary.appliedCount == 4, "승인 후 변경 집계 갱신 없음")
 
         // 3) 개별 되돌리기.
@@ -407,14 +452,49 @@ enum AgentPanelUICheck {
         try require(!controller.sessionBar.revertAllButton.isEnabled, "되돌릴 변경이 없는데 세션 되돌리기 활성")
 
         // 5) 보내기: Return은 보내고, IME 조합 중 Return은 조합 확정에 남겨 둡니다.
+        //    입력은 텍스트 시스템 경로(insertText)로 넣어 실제 타이핑처럼 Undo 기록을 남깁니다.
         let composer = controller.composerView
         let textView = composer.textView
-        textView.string = "Hello"
-        composer.textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+        harness.window.makeFirstResponder(textView)
+        textView.insertText("Hello", replacementRange: NSRange(location: NSNotFound, length: 0))
+        harness.settle()  // 타이핑 Undo 묶음을 닫습니다(런 루프 한 번).
         try require(composer.sendButton.isEnabled, "입력 후 보내기 비활성")
         let handled = composer.textView(textView, doCommandBy: #selector(NSResponder.insertNewline(_:)))
         try require(handled && harness.commands.last == .sendMessage("Hello"), "Return 보내기 명령 없음")
         try require(textView.string.isEmpty, "보낸 뒤 입력창이 비지 않음")
+        harness.settle()
+
+        // 5-1) 회귀: 보낸 뒤 ⌘Z가 종료되지 않고 보낸 문장을 되살립니다. 입력을 텍스트 시스템 밖에서 비우면
+        //      이전 타이핑 Undo가 없는 범위를 가리켜 NSRangeException으로 프로세스가 끝납니다.
+        guard let undoManager = textView.undoManager else { throw CheckFailure(message: "입력창 Undo 관리자 없음") }
+        try require(undoManager.canUndo, "보낸 뒤 입력창 Undo 기록 없음")
+        undoManager.undo()
+        try require(textView.string == "Hello", "Undo가 보낸 문장을 되살리지 않음 '\(textView.string)'")
+        undoManager.undo()
+        try require(textView.string.isEmpty, "두 번째 Undo가 타이핑을 되돌리지 않음 '\(textView.string)'")
+        undoManager.redo()
+        undoManager.redo()
+        try require(textView.string.isEmpty, "Redo 뒤 입력창 상태 '\(textView.string)'")
+        harness.settle()
+
+        // 5-2) 안내 문구 위 클릭은 입력창으로 갑니다(안내 문구가 클릭을 가로채지 않음).
+        let placeholder = composer.placeholderLabel
+        try require(!placeholder.isHidden, "빈 입력창에 안내 문구가 없음")
+        let pointInWindow = placeholder.convert(NSPoint(x: placeholder.bounds.midX, y: placeholder.bounds.midY), to: nil)
+        let hit = harness.window.contentView?.hitTest(pointInWindow)
+        // 창은 mouseDown의 hit test 대상이 first responder를 받을 수 있으면 그 뷰에 포커스를 줍니다. 화면에 띄우지
+        // 않은 창은 key 창이 되지 않아 실제 클릭 전달은 검사하지 않고, 대상과 포커스 가능 여부를 확인합니다.
+        try require(
+            hit.map { $0 === textView || $0.isDescendant(of: textView) } == true,
+            "안내 문구 위 클릭 대상이 입력창이 아님: \(hit.map { String(describing: type(of: $0)) } ?? "nil")")
+        try require(textView.acceptsFirstResponder, "입력창이 포커스를 받을 수 없음")
+
+        // 5-3) Tab은 탭 문자를 넣지 않고 다음 컨트롤로 포커스를 옮깁니다(명세 6장).
+        try require(textView.nextKeyView === composer.stopButton, "입력창 다음 key view가 중지 버튼이 아님")
+        // (버튼이 key view가 되는지는 시스템 키보드 탐색 설정에 따르므로 포커스 위치는 검사하지 않습니다.)
+        let tabHandled = composer.textView(textView, doCommandBy: #selector(NSResponder.insertTab(_:)))
+        try require(tabHandled && !textView.string.contains("\t"), "Tab이 입력창에 탭 문자를 넣음")
+        harness.window.makeFirstResponder(textView)
         let countBeforeIME = harness.commands.count
         textView.setMarkedText(
             "ㅎ", selectedRange: NSRange(location: 1, length: 0),
@@ -466,9 +546,7 @@ enum AgentPanelUICheck {
         try require(!controller.requiresConfirmationBeforeClosing, "종료된 세션인데 닫기 확인 필요")
         let stopItem = NSMenuItem(title: "", action: #selector(AgentPanelViewController.stopAgentSession(_:)), keyEquivalent: "")
         try require(!controller.validateMenuItem(stopItem), "종료된 세션에서 중지 메뉴 활성")
-        if let pending = harness.approvalCell(3) {
-            try require(pending.approveButton == nil, "세션 종료 후에도 승인 대기")
-        }
+        // 대기 승인 만료는 승인하지 않은 카드가 남은 세션에서 따로 검사합니다(checkStopExpiresPendingApprovals).
 
         // 9) 새 세션: 시작 확인(프로젝트·CLI·모드)을 거쳐 새 세대로 교체됩니다.
         try require(controller.canStartSession, "종료 후 새 세션 시작 불가")
@@ -482,6 +560,129 @@ enum AgentPanelUICheck {
         try require(controller.requiresConfirmationBeforeClosing, "활성 세션인데 닫기 확인 불필요")
         try requireNoAmbiguity(harness.window.contentView!, "새 세션")
         return "상호작용 \(harness.commands.count)개 명령"
+    }
+
+    /// 세션을 중지하면 대기 중인 승인(2: Git commit, 3: 편집)이 거부로 정리되고 카드에서 버튼이 사라집니다.
+    private static func checkStopExpiresPendingApprovals() throws -> String {
+        let harness = Harness(scenario: .activeSession)
+        defer { harness.close() }
+        let controller = harness.controller
+        let pendingIDs: [UInt64] = [2, 3]
+        func status(_ id: UInt64) -> AgentApprovalStatus? {
+            for item in controller.model.items {
+                if case .approval(let request) = item.content, request.approvalID.rawValue == id { return request.status }
+            }
+            return nil
+        }
+        for id in pendingIDs {
+            try require(status(id) == .pending, "중지 전 승인 \(id)이 대기 상태가 아님")
+            try require(harness.approvalCell(id)?.approveButton != nil, "중지 전 승인 \(id) 카드에 버튼 없음")
+        }
+        controller.composerView.stopButton.performClick(nil)
+        harness.settle()
+        try require(controller.model.header.connection == .ended, "중지 후 연결 상태")
+        for id in pendingIDs {
+            try require(status(id) == .expired, "중지 후 승인 \(id) 상태 \(String(describing: status(id)))")
+            guard let card = harness.approvalCell(id) else { throw CheckFailure(message: "중지 후 승인 \(id) 카드 없음") }
+            try require(
+                card.approveButton == nil && card.declineButton == nil && card.accessibilityCustomActions() == nil,
+                "중지 후 승인 \(id) 카드에 응답 수단이 남음")
+        }
+        try require(
+            !harness.commands.contains { if case .respondToApproval = $0 { return true }; return false },
+            "중지가 승인 응답 명령을 보냄")
+        return "중지 시 대기 승인 \(pendingIDs.count)건 만료"
+    }
+
+    /// ⌘Return·⌘.은 패널 안에 포커스가 있을 때만 동작합니다. 패널 밖(같은 창의 다른 컨트롤)에서는 넘깁니다.
+    private static func checkShortcutScope() throws -> String {
+        let stub = AgentSessionStub(scenario: .activeSession)
+        let controller = AgentPanelViewController(source: stub)
+        controller.confirmationPresenter = RecordingPresenter()
+        let outside = NSTextField(string: "")
+        outside.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView()
+        let size = NSSize(width: typicalSize.width, height: typicalSize.height + 40)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled, .closable, .resizable],
+            backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = container
+        let panel = controller.view
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(outside)
+        container.addSubview(panel)
+        NSLayoutConstraint.activate([
+            outside.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+            outside.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            outside.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            panel.topAnchor.constraint(equalTo: outside.bottomAnchor, constant: 8),
+            panel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            panel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            panel.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        container.layoutSubtreeIfNeeded()
+        controller.pumpEvents()
+
+        guard let send = commandKey("\r", keyCode: 36, window: window),
+            let stop = commandKey(".", keyCode: 47, window: window)
+        else { throw CheckFailure(message: "단축키 이벤트 생성 실패") }
+        let textView = controller.composerView.textView
+        textView.insertText("Scoped", replacementRange: NSRange(location: NSNotFound, length: 0))
+
+        // 패널 밖 포커스: 넘기고 명령을 보내지 않습니다.
+        window.makeFirstResponder(outside)
+        let outsideSend = window.performKeyEquivalent(with: send)
+        let outsideStop = window.performKeyEquivalent(with: stop)
+        try require(!outsideSend && !outsideStop, "패널 밖 포커스에서 패널 단축키가 처리됨")
+        try require(stub.performedCommands.isEmpty, "패널 밖 포커스에서 명령이 나감 \(stub.performedCommands)")
+
+        // 입력창 포커스: ⌘Return 보내기.
+        window.makeFirstResponder(textView)
+        try require(window.performKeyEquivalent(with: send), "입력창 포커스에서 ⌘Return 미처리")
+        try require(stub.performedCommands == [.sendMessage("Scoped")], "⌘Return 보내기 명령 \(stub.performedCommands)")
+        try require(textView.string.isEmpty, "⌘Return 보낸 뒤 입력창이 비지 않음")
+
+        // 대화 기록 포커스(패널 안): ⌘. 세션 중지.
+        window.makeFirstResponder(controller.tableView)
+        try require(window.performKeyEquivalent(with: stop), "대화 기록 포커스에서 ⌘. 미처리")
+        try require(stub.performedCommands.last == .stopSession, "⌘. 중지 명령 \(stub.performedCommands)")
+        return "단축키 범위(패널 밖 무시, 안에서 보내기·중지)"
+    }
+
+    /// reset은 더 새로운 세대에서만 적용합니다. 같은 세대 reset과 세대가 어긋난 reset은 버립니다(명세 9장).
+    private static func checkResetGeneration() throws -> String {
+        let initial = AgentSessionStub.makeSnapshot(.activeSession)
+        let source = ScriptedSource(snapshot: initial)
+        let controller = AgentPanelViewController(source: source)
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: typicalSize), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentViewController = controller
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let extra = AgentConversationItem(id: AgentItemID(rawValue: 9_001), content: .userMessage("Incremental"))
+        source.events = [
+            AgentPanelEvent(generation: initial.generation, change: .itemsAppended([extra])),
+            AgentPanelEvent(generation: initial.generation, change: .reset(initial)),
+        ]
+        controller.pumpEvents()
+        try require(controller.model.items.count == initial.items.count + 1, "같은 세대 reset이 증분 기록을 지움")
+
+        var next = initial
+        next.generation = initial.generation + 1
+        next.items = [AgentConversationItem(id: AgentItemID(rawValue: 1), content: .notice(.leasesReleased))]
+        source.events = [AgentPanelEvent(generation: initial.generation, change: .reset(next))]
+        controller.pumpEvents()
+        try require(controller.model.generation == initial.generation, "이벤트·스냅샷 세대가 어긋난 reset이 적용됨")
+
+        source.events = [AgentPanelEvent(generation: next.generation, change: .reset(next))]
+        controller.pumpEvents()
+        try require(
+            controller.model.generation == next.generation && controller.model.items.count == 1, "새 세대 reset 미적용")
+        return "reset 세대 규칙"
     }
 
     private static func checkEmptyStates() throws -> String {
