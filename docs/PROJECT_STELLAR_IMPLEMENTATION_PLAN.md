@@ -1305,7 +1305,7 @@ tools/xtask/
 | XIII.5.4 | `[x]` | asset write도 temp+fsync+atomic rename을 사용합니다. | 중단 복사 후 partial final file 없음. | XIII.5.2, V.2.5 |
 | XIII.5.5 | `[~]` | `UpdateFromSource`는 source metadata 경로를 다시 읽고 새 hash asset을 만든 뒤 AssetRecord 참조를 command로 변경합니다. | source 없으면 기존 asset 유지. | XIII.5.2, Phase VII |
 | XIII.5.6 | `[x]` | project에서 참조되지 않는 asset content GC를 generation/chunk GC와 별도 mark-sweep으로 구현합니다. Git tracked history는 고려하지 않고 current project refs만 다룹니다. | live shared content 미삭제. | XIII.5.3, V.7.4 |
-| XIII.5.7 | `[ ]` | import 허용 media type과 최대 단일 파일 크기 정책을 config에 정의합니다. unknown type은 binary asset으로 저장 가능 여부를 명시합니다. | boundary fixture 통과. | XIII.5.1 |
+| XIII.5.7 | `[x]` | import 허용 media type과 최대 단일 파일 크기 정책을 config에 정의합니다. unknown type은 binary asset으로 저장 가능 여부를 명시합니다. | boundary fixture 통과. | XIII.5.1 |
 
 ### XIII.6 프로젝트·시스템·외부 폰트
 

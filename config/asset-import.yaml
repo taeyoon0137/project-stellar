@@ -1,0 +1,30 @@
+# 에셋 import 정책 (XIII.5.7).
+#
+# assets crate의 AssetImportPolicy가 읽습니다. 형식은 `key: value` 한 줄씩만
+# 허용합니다(중첩 없음). `media_type`만 여러 줄 반복할 수 있습니다.
+
+# 단일 파일 최대 크기(byte). 이 값과 같은 크기까지 허용하고, 1 byte라도 크면 거부합니다.
+# 512 MiB는 잠정값입니다(프로젝트 에셋 총량 기준 상한 20GB, 아키텍처 5절). 저장소
+# 벤치마크(Git·LFS 임계치, 아키텍처 29.2) 후 재조정합니다.
+max_file_size_bytes: 536870912
+
+# 허용 목록에 없는 media type의 처리.
+# - store_as_binary: binary asset으로 저장합니다. record media type은
+#   application/octet-stream, 저장 확장자는 bin입니다(Stellar가 내용을 해석하지 않음).
+# - reject: import를 거부합니다.
+unknown_media_type: store_as_binary
+
+# 허용 media type과 저장 확장자: `media_type: <type/subtype> <safe-ext>`.
+# 저장 확장자는 원본 파일 확장자가 아니라 이 표를 따릅니다.
+media_type: image/png png
+media_type: image/jpeg jpg
+media_type: image/gif gif
+media_type: image/webp webp
+media_type: image/avif avif
+media_type: image/svg+xml svg
+media_type: font/ttf ttf
+media_type: font/otf otf
+media_type: font/woff woff
+media_type: font/woff2 woff2
+media_type: font/collection ttc
+media_type: application/octet-stream bin

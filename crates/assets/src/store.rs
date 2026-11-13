@@ -38,6 +38,7 @@ use crate::atomic_write::{
 use crate::hash_stream::{hash_reader_with, StreamDigest, StreamHashError, STREAM_BUFFER_SIZE};
 use crate::media_type::MediaType;
 use crate::path::{AssetObjectPath, SafeExtension};
+use crate::policy::PolicyViolation;
 use crate::record::{AssetRecord, SourceMetadata, SourceMetadataError};
 
 /// 실패한 import 단계.
@@ -90,6 +91,15 @@ pub enum ImportError {
     SourceMetadata(SourceMetadataError),
     /// digest를 content hash로 만들 수 없습니다(발생하지 않아야 함).
     Hash(ParseContentHashError),
+    /// 원본이 요청의 최대 단일 파일 크기를 넘습니다(XIII.5.7). 아무 것도 쓰지 않습니다.
+    TooLarge {
+        /// 확인한 크기(byte). streaming 중 초과를 발견하면 그때까지 읽은 크기입니다.
+        size: u64,
+        /// 허용 최대 크기(byte, 이 값까지 허용).
+        max: u64,
+    },
+    /// import 정책 위반(예: 허용되지 않은 media type, XIII.5.7).
+    Policy(PolicyViolation),
 }
 
 impl ImportError {
@@ -121,6 +131,11 @@ impl fmt::Display for ImportError {
                 write!(f, "에셋 원본 위치를 기록할 수 없습니다: {e}")
             }
             ImportError::Hash(e) => write!(f, "에셋 content hash를 만들 수 없습니다: {e}"),
+            ImportError::TooLarge { size, max } => write!(
+                f,
+                "에셋 원본이 최대 크기를 넘습니다: {size} bytes > {max} bytes"
+            ),
+            ImportError::Policy(e) => write!(f, "에셋 import 정책 위반: {e}"),
         }
     }
 }
@@ -134,12 +149,15 @@ pub struct ImportRequest {
     media_type: MediaType,
     extension: SafeExtension,
     record_source: bool,
+    max_size: Option<u64>,
 }
 
 impl ImportRequest {
     /// 원본 경로와 media type으로 요청을 만듭니다.
     ///
-    /// 확장자는 원본 확장자를 정규화한 값(비안전하면 `bin`)이고, 원본 위치를 기록합니다.
+    /// 확장자는 원본 확장자를 정규화한 값(비안전하면 `bin`)이고, 원본 위치를 기록하며,
+    /// 크기 제한은 없습니다. config 정책을 적용하려면
+    /// [`AssetImportPolicy::request`](crate::policy::AssetImportPolicy::request)를 씁니다.
     pub fn new(source: impl Into<PathBuf>, media_type: MediaType) -> ImportRequest {
         let source = source.into();
         let extension = SafeExtension::from_source_path(&source);
@@ -148,7 +166,19 @@ impl ImportRequest {
             media_type,
             extension,
             record_source: true,
+            max_size: None,
         }
+    }
+
+    /// 최대 단일 파일 크기(byte, 이 값까지 허용)를 지정합니다.
+    pub fn with_max_size(mut self, max_size: u64) -> ImportRequest {
+        self.max_size = Some(max_size);
+        self
+    }
+
+    /// 최대 단일 파일 크기.
+    pub fn max_size(&self) -> Option<u64> {
+        self.max_size
     }
 
     /// 저장 확장자를 지정합니다.
@@ -252,7 +282,7 @@ impl AssetStore {
         };
 
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
-        let digest = hash_source(&request.source, &mut buffer)?;
+        let digest = hash_source(&request.source, &mut buffer, request.max_size)?;
         let (object_path, outcome) = match self
             .locate_content(&digest.hash, digest.size)
             .map_err(|e| ImportError::io(ImportOperation::LocateContent, &e))?
@@ -357,8 +387,8 @@ impl AssetStore {
     }
 }
 
-/// 원본을 열고 일반 파일인지 확인합니다.
-fn open_source(path: &Path) -> Result<File, ImportError> {
+/// 원본을 열고 일반 파일인지 확인합니다. 파일과 현재 크기를 돌려줍니다.
+fn open_source_with_len(path: &Path) -> Result<(File, u64), ImportError> {
     let file = File::open(path).map_err(|e| ImportError::io(ImportOperation::OpenSource, &e))?;
     let metadata = file
         .metadata()
@@ -366,14 +396,41 @@ fn open_source(path: &Path) -> Result<File, ImportError> {
     if !metadata.is_file() {
         return Err(ImportError::NotAFile);
     }
-    Ok(file)
+    Ok((file, metadata.len()))
 }
 
-/// hash pass.
-fn hash_source(path: &Path, buffer: &mut [u8]) -> Result<StreamDigest, ImportError> {
-    let mut file = open_source(path)?;
-    hash_reader_with(&mut file, buffer, |_| Ok(()))
-        .map_err(|e| ImportError::stream(ImportOperation::HashSource, e))
+/// 원본을 열고 일반 파일인지 확인합니다.
+fn open_source(path: &Path) -> Result<File, ImportError> {
+    open_source_with_len(path).map(|(file, _)| file)
+}
+
+/// hash pass. `max_size`를 넘으면 읽기 전(메타데이터 크기) 또는 읽는 도중(파일이 커진 경우)
+/// [`ImportError::TooLarge`]로 멈춥니다.
+fn hash_source(
+    path: &Path,
+    buffer: &mut [u8],
+    max_size: Option<u64>,
+) -> Result<StreamDigest, ImportError> {
+    let (mut file, len) = open_source_with_len(path)?;
+    if let Some(max) = max_size {
+        if len > max {
+            return Err(ImportError::TooLarge { size: len, max });
+        }
+    }
+    let mut seen = 0u64;
+    let mut exceeded = false;
+    let result = hash_reader_with(&mut file, buffer, |chunk| {
+        seen += chunk.len() as u64;
+        if max_size.is_some_and(|max| seen > max) {
+            exceeded = true;
+            return Err(std::io::Error::other("최대 크기 초과"));
+        }
+        Ok(())
+    });
+    if let (true, Some(max)) = (exceeded, max_size) {
+        return Err(ImportError::TooLarge { size: seen, max });
+    }
+    result.map_err(|e| ImportError::stream(ImportOperation::HashSource, e))
 }
 
 /// 대상과 같은 디렉터리에 만들 temp 파일 경로(`.<file>.tmp-<pid>-<n>`).
@@ -769,7 +826,7 @@ mod tests {
         let source = fx.outside.join("a.png");
         std::fs::write(&source, b"first").unwrap();
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
-        let digest = hash_source(&source, &mut buffer).unwrap();
+        let digest = hash_source(&source, &mut buffer, None).unwrap();
         // hash pass 후 원본이 바뀐 상황.
         std::fs::write(&source, b"second").unwrap();
         let object = AssetObjectPath::new(&digest.hash, &SafeExtension::new("png").unwrap());

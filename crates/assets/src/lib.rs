@@ -29,3 +29,6 @@ pub mod update_source;
 
 /// asset content GC — generation/chunk GC와 별도 mark-sweep (XIII.5.6).
 pub mod gc;
+
+/// 에셋 import 정책 — 허용 media type·최대 크기·unknown type 처리 (XIII.5.7).
+pub mod policy;

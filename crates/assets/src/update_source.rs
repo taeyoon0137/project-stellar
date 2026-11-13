@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use crate::catalog::{AssetCatalog, CatalogError};
 use crate::id::AssetId;
 use crate::path::AssetObjectPath;
+use crate::policy::AssetImportPolicy;
 use crate::record::{AssetRecord, SourceLocation};
 use crate::store::{AssetStore, ImportError, ImportOperation, ImportOutcome, ImportRequest};
 
@@ -110,11 +111,41 @@ impl AssetStore {
         current: &AssetRecord,
         external_source: Option<&Path>,
     ) -> Result<UpdateFromSourceOutcome, ImportError> {
+        self.update_from_source_inner(asset_id, current, external_source, None)
+    }
+
+    /// [`AssetStore::update_from_source`]에 import 정책(XIII.5.7)을 적용한 버전.
+    ///
+    /// 원본이 최대 크기를 넘으면 [`ImportError::TooLarge`], media type이 더 이상 허용되지
+    /// 않으면 [`ImportError::Policy`]이며, 두 경우 모두 아무 것도 쓰지 않아 기존 asset이
+    /// 유지됩니다.
+    pub fn update_from_source_with_policy(
+        &self,
+        asset_id: AssetId,
+        current: &AssetRecord,
+        external_source: Option<&Path>,
+        policy: &AssetImportPolicy,
+    ) -> Result<UpdateFromSourceOutcome, ImportError> {
+        self.update_from_source_inner(asset_id, current, external_source, Some(policy))
+    }
+
+    fn update_from_source_inner(
+        &self,
+        asset_id: AssetId,
+        current: &AssetRecord,
+        external_source: Option<&Path>,
+        policy: Option<&AssetImportPolicy>,
+    ) -> Result<UpdateFromSourceOutcome, ImportError> {
         let source = match self.resolve_source(current, external_source)? {
             Ok(path) => path,
             Err(reason) => return Ok(UpdateFromSourceOutcome::SourceUnavailable(reason)),
         };
-        let request = ImportRequest::new(&source, current.media_type.clone());
+        let request = match policy {
+            Some(policy) => policy
+                .request(&source, &current.media_type)
+                .map_err(ImportError::Policy)?,
+            None => ImportRequest::new(&source, current.media_type.clone()),
+        };
         let imported = match self.import_file(&request) {
             Ok(imported) => imported,
             // 확인과 재import 사이에 원본이 사라진 경우도 기존 asset 유지입니다.
