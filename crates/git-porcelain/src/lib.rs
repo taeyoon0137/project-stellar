@@ -11,6 +11,9 @@ pub mod version;
 /// 보안 Git 실행기 (IV.3.3).
 pub mod runner;
 
+/// Git 명령 취소와 프로세스 tree 종료 (XIV.1.4).
+pub mod cancel;
+
 /// Git 명령 결과 (IV.3.4).
 pub mod command;
 

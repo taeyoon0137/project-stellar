@@ -48,10 +48,16 @@ pub(crate) fn system_git() -> Option<PathBuf> {
 /// 머신 global/system config와 무관하게 동작하는 실행기(PATH·HOME만 전달).
 #[cfg(unix)]
 pub(crate) fn hermetic_runner(git: PathBuf) -> GitRunner {
+    hermetic_runner_with_timeout(git, Duration::from_secs(30))
+}
+
+/// 제한 시간을 지정한 hermetic 실행기.
+#[cfg(unix)]
+pub(crate) fn hermetic_runner_with_timeout(git: PathBuf, timeout: Duration) -> GitRunner {
     GitRunner::new(
         git,
         vec![OsString::from("PATH"), OsString::from("HOME")],
-        Duration::from_secs(30),
+        timeout,
     )
     .with_env_overrides(vec![
         (

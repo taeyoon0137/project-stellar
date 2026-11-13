@@ -14,6 +14,7 @@
 use std::ffi::OsString;
 use std::path::Path;
 
+use crate::cancel::GitCancelToken;
 use crate::runner::{GitOutput, GitRunError, GitRunner};
 
 /// Git 실행 관점의 프로젝트 신뢰 상태(호출자가 project trust store에서 변환해 공급).
@@ -86,6 +87,18 @@ impl GatedGitRunner {
     /// trusted일 때만 Git을 실행합니다. untrusted면 **프로세스를 만들지 않고** 거부합니다.
     pub fn run(&self, args: &[OsString], cwd: &Path) -> Result<GitOutput, GatedRunError> {
         self.runner()?.run(args, cwd).map_err(GatedRunError::Run)
+    }
+
+    /// trusted일 때만 취소 가능한 실행을 합니다(XIV.1.4). untrusted면 프로세스를 만들지 않습니다.
+    pub fn run_cancellable(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        cancel: &GitCancelToken,
+    ) -> Result<GitOutput, GatedRunError> {
+        self.runner()?
+            .run_cancellable(args, cwd, cancel)
+            .map_err(GatedRunError::Run)
     }
 
     /// 내부 실행기의 프로세스 생성 시도 횟수(gate 거부는 세지 않음).

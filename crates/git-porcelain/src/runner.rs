@@ -5,7 +5,10 @@
 //!   (`;`, `&&`, `$(...)`, `|`, `` ` ``)는 명령으로 해석되지 않고 리터럴 인자로 전달됩니다.
 //! - **cwd**: 작업 디렉터리를 명시합니다(상속에 의존하지 않음).
 //! - **환경 allowlist**: `env_clear` 후 허용 목록의 변수만 전달합니다.
-//! - **timeout**: 제한 시간을 넘으면 자식을 종료(kill)합니다.
+//! - **timeout**: 제한 시간을 넘으면 자식과 자식 프로세스 tree를 종료합니다.
+//! - **취소**: [`GitRunner::run_cancellable`]은 [`GitCancelToken`] 취소를 관찰하면 프로세스 tree를
+//!   종료하고 [`GitRunError::Cancelled`]를 반환합니다(XIV.1.4). 부분 출력은 성공으로 돌려주지
+//!   않습니다.
 //! - **byte capture**: stdout/stderr를 원시 바이트로 캡처합니다(문자열 가정 없음).
 //! - **spawn 계측**: 실제 프로세스 생성 시도 횟수를 [`GitRunner::spawn_count`]로 셉니다(XIV.1.1).
 //!   trust gate가 프로세스를 하나도 만들지 않았음을 검증하는 데 사용합니다.
@@ -18,6 +21,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+use crate::cancel::{terminate_process_tree, GitCancelToken};
 
 /// Git 실행 결과(원시 바이트 보존).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,13 +50,18 @@ pub enum GitRunError {
         /// io 오류 종류.
         kind: std::io::ErrorKind,
     },
-    /// 제한 시간 초과(자식을 종료함).
+    /// 제한 시간 초과(자식 프로세스 tree를 종료함).
     Timeout,
     /// 종료 대기 중 io 오류.
     Wait {
         /// io 오류 종류.
         kind: std::io::ErrorKind,
     },
+    /// 취소 요청으로 중단함(자식 프로세스 tree를 종료함, XIV.1.4). 부분 출력은 버립니다.
+    ///
+    /// Git이 중단 전에 저장소를 일부 변경했을 수 있으므로, 호출자는 이 결과를 성공으로 취급하지
+    /// 말고 필요하면 저장소 상태를 다시 조회해야 합니다.
+    Cancelled,
 }
 
 impl std::fmt::Display for GitRunError {
@@ -60,6 +70,7 @@ impl std::fmt::Display for GitRunError {
             GitRunError::Spawn { kind } => write!(f, "Git 프로세스 생성 실패: {kind:?}"),
             GitRunError::Timeout => f.write_str("Git 실행 제한 시간 초과"),
             GitRunError::Wait { kind } => write!(f, "Git 종료 대기 오류: {kind:?}"),
+            GitRunError::Cancelled => f.write_str("Git 실행이 취소되었습니다"),
         }
     }
 }
@@ -106,6 +117,32 @@ impl GitRunner {
 
     /// 주어진 argv와 cwd로 Git을 실행합니다(shell 미사용). stdout/stderr를 캡처합니다.
     pub fn run(&self, args: &[OsString], cwd: &Path) -> Result<GitOutput, GitRunError> {
+        self.run_inner(args, cwd, None)
+    }
+
+    /// 취소 가능한 실행(XIV.1.4). `cancel`이 취소되면 프로세스 tree를 종료하고
+    /// [`GitRunError::Cancelled`]를 반환합니다. 실행 전에 이미 취소되어 있으면 프로세스를 만들지
+    /// 않습니다. Git이 취소 관찰 전에 스스로 끝났다면 그 결과를 그대로 반환합니다.
+    pub fn run_cancellable(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        cancel: &GitCancelToken,
+    ) -> Result<GitOutput, GitRunError> {
+        self.run_inner(args, cwd, Some(cancel))
+    }
+
+    fn run_inner(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        cancel: Option<&GitCancelToken>,
+    ) -> Result<GitOutput, GitRunError> {
+        let cancelled = || cancel.is_some_and(GitCancelToken::is_cancelled);
+        if cancelled() {
+            return Err(GitRunError::Cancelled);
+        }
+
         let mut command = Command::new(&self.git_path);
         command
             .args(args)
@@ -124,6 +161,12 @@ impl GitRunner {
         // 명시적 override(allowlist 이후 적용).
         for (key, value) in &self.env_overrides {
             command.env(key, value);
+        }
+        // 자식을 새 process group의 leader로 시작해 tree 전체를 종료할 수 있게 합니다.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
         }
 
         self.spawn_count.fetch_add(1, Ordering::SeqCst);
@@ -147,22 +190,21 @@ impl GitRunner {
 
         let deadline = Instant::now() + self.timeout;
         let status = loop {
-            match child
-                .try_wait()
-                .map_err(|e| GitRunError::Wait { kind: e.kind() })?
-            {
-                Some(status) => break status,
-                None => {
-                    if Instant::now() >= deadline {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        let _ = out_thread.join();
-                        let _ = err_thread.join();
-                        return Err(GitRunError::Timeout);
-                    }
+            let interrupted = match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if cancelled() => GitRunError::Cancelled,
+                Ok(None) if Instant::now() >= deadline => GitRunError::Timeout,
+                Ok(None) => {
                     thread::sleep(Duration::from_millis(5));
+                    continue;
                 }
-            }
+                Err(e) => GitRunError::Wait { kind: e.kind() },
+            };
+            // 중단: tree 종료 후 파이프가 닫히면 drain 스레드도 끝납니다. 부분 출력은 버립니다.
+            terminate_process_tree(&mut child);
+            let _ = out_thread.join();
+            let _ = err_thread.join();
+            return Err(interrupted);
         };
 
         let stdout = out_thread.join().unwrap_or_default();
