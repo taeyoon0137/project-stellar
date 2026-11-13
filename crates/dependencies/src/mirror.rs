@@ -87,6 +87,19 @@ impl fmt::Display for MirrorError {
 
 impl std::error::Error for MirrorError {}
 
+/// repository의 mirror 경로(`<cache root>/mirrors/<key>.git`). 디스크는 건드리지 않습니다.
+///
+/// [`MirrorCache`]와 같은 root·keyer를 쓰면 같은 경로입니다. 이미 fetch된 mirror를 읽기만 하는
+/// 쪽(예: commit의 library 매니페스트 읽기)이 fetch 세션 없이 경로를 얻을 때 씁니다.
+pub fn mirror_path<K: RepositoryKeyer + ?Sized>(
+    root: &LibraryCacheRoot,
+    keyer: &K,
+    repository: &RepositoryUrl,
+) -> PathBuf {
+    let key = keyer.repository_key(repository);
+    root.mirrors_dir().join(format!("{key}.git"))
+}
+
 /// repository별 bare mirror cache.
 pub struct MirrorCache<R, K> {
     root: LibraryCacheRoot,
@@ -113,8 +126,7 @@ impl<R: GitCommandRunner, K: RepositoryKeyer> MirrorCache<R, K> {
 
     /// repository의 mirror 경로(`mirrors/<key>.git`).
     pub fn mirror_dir(&self, repository: &RepositoryUrl) -> PathBuf {
-        let key = self.keyer.repository_key(repository);
-        self.root.mirrors_dir().join(format!("{key}.git"))
+        mirror_path(&self.root, &self.keyer, repository)
     }
 
     /// 이 세션에서 fetch를 마친 repository key.
