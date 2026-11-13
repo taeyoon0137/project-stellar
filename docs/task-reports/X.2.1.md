@@ -57,3 +57,33 @@
 
 - 레이아웃 재귀 깊이는 `MAX_LAYOUT_DEPTH`(256)로 제한됩니다(X.1.1 검증).
 - 증분 재계산(X.7)은 아직 없으며 `compute_layout`은 매번 전체 tree를 계산합니다.
+
+## 후속 수정 (리뷰 minor: 깊이 한계에서 debug stack overflow)
+
+- **결함**: `MAX_LAYOUT_DEPTH`(256)를 재귀 상한으로 문서화했지만, 깊이 256 Hug Stack(wrap+flex)·Grid 사슬의
+  `compute_layout`은 debug 빌드 기본 2 MiB thread에서 stack overflow로 abort했습니다(release는 정상). 한계 깊이에서
+  `compute_layout`을 실행하는 테스트가 없었습니다.
+- **측정**(`DEV-MAC`, 임시 scratch 테스트, 커밋하지 않음): 깊이 64 사슬의 최소 stack을 이분 탐색한 결과 level당
+  debug 약 14 KiB(wrap Stack)·9.5 KiB(Grid)·5.8 KiB(Free), release 약 1.9 KiB·1.3 KiB·0.6 KiB였습니다.
+- **수정** (`crates/layout/src/engine.rs`, `input.rs`, `error.rs`): 검증된 tree의 최대 깊이를 `TreeIndex::depth`로
+  기록합니다. 깊이가 `INLINE_LAYOUT_DEPTH`(32) 이하면 호출 thread에서, 더 깊으면 `DEEP_LAYOUT_STACK_BYTES`
+  (= 256 level × 64 KiB = 16 MiB) stack의 전용 scoped thread에서 계산합니다. 계산 결과는 thread와 무관하며, 계산 중
+  panic은 호출 thread에서 다시 일으킵니다. thread를 만들 수 없으면 `LayoutError::DeepStackUnavailable { depth }`입니다.
+  `MAX_LAYOUT_DEPTH`(256)는 바꾸지 않았습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo fmt -p stellar-layout` | 종료 코드 0 |
+| `cargo test -p stellar-layout` | unit 124 + `layout_corpus` 2 + doctest 2 passed, 0 failed |
+| `cargo clippy -p stellar-layout --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-layout -- --check` | 종료 코드 0 |
+
+| 검사 | 결과 |
+|---|---|
+| 깊이 256 wrap Stack·Grid·Free 사슬을 debug 2 MiB thread에서 계산 → 성공, 모든 Hug 10×10, 큰 stack에서 직접 계산한 bytes와 동일(`max_depth_chain_does_not_overflow_default_thread_stack`) | 통과 |
+| 같은 테스트를 `INLINE_LAYOUT_DEPTH = 1000`(전용 thread 미사용)으로 임시 변경해 실행 → "thread has overflowed its stack" abort 재현 후 원복 | 수정 전 결함 재현 확인 |
+| 깊이 32 사슬은 1 MiB thread에서 호출 thread 계산 성공, 깊이 257은 계산 전 `DepthLimitExceeded`(`inline_depth_chain_runs_on_caller_thread_stack`) | 통과 |
+
+- **남은 한계**: 깊은 tree(깊이 33 이상) 계산은 thread 하나를 만들고 join합니다. 이후 측정 hook(X.6.4)을 엔진에 넘길 때는
+  전용 thread에서도 쓸 수 있도록 `Sync`여야 합니다. level당 stack이 64 KiB를 넘도록 frame이 커지면 이 상수를 다시
+  측정해야 합니다.

@@ -49,6 +49,10 @@ use crate::stack::{
 pub use crate::sizing::SizingMode;
 
 /// 레이아웃 재귀가 허용하는 최대 tree 깊이(root = 0).
+///
+/// 엔진은 깊이에 비례해 재귀합니다. [`crate::engine::INLINE_LAYOUT_DEPTH`]보다 깊은 tree는
+/// [`crate::engine::DEEP_LAYOUT_STACK_BYTES`] stack을 가진 전용 thread에서 계산하므로, 이 깊이까지는
+/// 호출 thread의 stack 크기·빌드 설정(debug/release)과 무관하게 stack overflow 없이 끝납니다.
 pub const MAX_LAYOUT_DEPTH: usize = 256;
 
 /// 입력 canonical bytes magic.
@@ -286,6 +290,8 @@ pub(crate) struct TreeIndex {
     pub(crate) children: Vec<Vec<usize>>,
     /// root index.
     pub(crate) root: usize,
+    /// tree 최대 깊이(root = 0, [`MAX_LAYOUT_DEPTH`] 이하).
+    pub(crate) depth: usize,
 }
 
 impl LayoutInput {
@@ -346,6 +352,7 @@ impl LayoutInput {
         // root에서 반복 DFS로 도달 가능성과 깊이를 검사합니다.
         let mut visited = vec![false; self.nodes.len()];
         let mut stack = vec![(root, 0usize)];
+        let mut max_depth = 0usize;
         while let Some((current, depth)) = stack.pop() {
             if depth > MAX_LAYOUT_DEPTH {
                 return Err(LayoutError::DepthLimitExceeded {
@@ -353,6 +360,7 @@ impl LayoutInput {
                     limit: MAX_LAYOUT_DEPTH,
                 });
             }
+            max_depth = max_depth.max(depth);
             visited[current] = true;
             for &child in &children[current] {
                 stack.push((child, depth + 1));
@@ -385,6 +393,7 @@ impl LayoutInput {
             parent,
             children,
             root,
+            depth: max_depth,
         })
     }
 

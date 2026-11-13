@@ -78,6 +78,11 @@ pub enum LayoutError {
         /// 허용 최대 깊이.
         limit: usize,
     },
+    /// 깊은 tree를 계산할 전용 stack thread를 만들 수 없습니다(자원 부족).
+    DeepStackUnavailable {
+        /// tree 깊이.
+        depth: usize,
+    },
     /// intrinsic 콘텐츠를 가진 leaf에 자식이 있습니다.
     ChildrenOnContentLeaf {
         /// 대상 node.
@@ -195,6 +200,12 @@ impl fmt::Display for LayoutError {
             }
             LayoutError::DepthLimitExceeded { node, limit } => {
                 write!(f, "node {node}가 레이아웃 최대 깊이 {limit}를 넘습니다")
+            }
+            LayoutError::DeepStackUnavailable { depth } => {
+                write!(
+                    f,
+                    "깊이 {depth} tree를 계산할 레이아웃 stack thread를 만들 수 없습니다"
+                )
             }
             LayoutError::ChildrenOnContentLeaf { node } => {
                 write!(f, "intrinsic 콘텐츠 leaf {node}는 자식을 가질 수 없습니다")

@@ -9,6 +9,15 @@
 //! 4. 결과는 pre-order(부모 다음 자식, 자식은 visual order) [`LayoutBox`] 목록입니다.
 //!
 //! 같은 node·같은 제약의 크기 해석은 한 계산 안에서 memo하여 중첩 Hug의 반복 측정을 막습니다.
+//!
+//! # 재귀 깊이와 stack
+//!
+//! 크기 해석·배치는 tree 깊이에 비례해 재귀합니다(배치 → 크기 해석 → 측정 → 자식 크기 해석).
+//! level당 stack 사용량은 빌드 설정에 따라 크게 다르므로(측정값: release 약 2 KiB, debug 약 14 KiB)
+//! 깊이가 [`INLINE_LAYOUT_DEPTH`] 이하인 tree만 호출 thread에서 계산하고, 그보다 깊은 tree는
+//! [`DEEP_LAYOUT_STACK_BYTES`] stack을 가진 전용 thread에서 계산한 뒤 결과를 돌려줍니다. 전용 stack은
+//! [`MAX_LAYOUT_DEPTH`] level × 64 KiB라 검증을 통과한 모든 깊이에서 overflow가 나지 않습니다. 계산
+//! 결과는 어느 thread에서 계산했는지와 무관합니다.
 
 use std::collections::HashMap;
 
@@ -23,6 +32,7 @@ use crate::geometry::{Axis, LayoutRect, LayoutSize};
 use crate::grid;
 use crate::input::{
     length_unit, ContainerLayout, LayoutContent, LayoutInput, LayoutNode, SizingMode, TreeIndex,
+    MAX_LAYOUT_DEPTH,
 };
 use crate::output::{LayoutBox, LayoutDiagnostic, LayoutResult};
 use crate::overlay;
@@ -31,9 +41,40 @@ use crate::rounding::{LayoutUnit, LayoutUnitError};
 use crate::sizing::{prepare_limits, prepare_ratio, AxisLimits, PreparedRatio};
 use crate::stack;
 
+/// 호출 thread에서 바로 계산하는 최대 tree 깊이. 더 깊으면 전용 stack thread에서 계산합니다.
+///
+/// debug 빌드에서도 이 깊이는 기본 thread stack(2 MiB)의 4분의 1 안팎만 씁니다.
+pub const INLINE_LAYOUT_DEPTH: usize = 32;
+
+/// [`INLINE_LAYOUT_DEPTH`]보다 깊은 tree를 계산하는 전용 thread의 stack 크기(level당 64 KiB).
+pub const DEEP_LAYOUT_STACK_BYTES: usize = MAX_LAYOUT_DEPTH * 64 * 1024;
+
 /// 입력 전체를 레이아웃합니다.
+///
+/// tree 깊이가 [`INLINE_LAYOUT_DEPTH`]를 넘으면 [`DEEP_LAYOUT_STACK_BYTES`] stack의 전용 thread에서
+/// 계산합니다(결과는 같음). 그 thread를 만들 수 없으면 [`LayoutError::DeepStackUnavailable`]입니다.
 pub fn compute_layout(input: &LayoutInput) -> Result<LayoutResult, LayoutError> {
     let tree = input.tree()?;
+    if tree.depth <= INLINE_LAYOUT_DEPTH {
+        return compute_validated(input, tree);
+    }
+    let depth = tree.depth;
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new()
+            .name("stellar-layout-deep".to_owned())
+            .stack_size(DEEP_LAYOUT_STACK_BYTES)
+            .spawn_scoped(scope, move || compute_validated(input, tree))
+            .map_err(|_| LayoutError::DeepStackUnavailable { depth })?;
+        match worker.join() {
+            Ok(result) => result,
+            // 계산 중 panic은 호출 thread에서 그대로 다시 일으킵니다.
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
+/// 검증된 tree를 현재 thread에서 레이아웃합니다.
+fn compute_validated(input: &LayoutInput, tree: TreeIndex) -> Result<LayoutResult, LayoutError> {
     let mut engine = Engine::new(input, tree)?;
     let root = engine.tree.root;
     let size = engine.resolve_size(root, ChildConstraint::UNCONSTRAINED)?;
@@ -430,4 +471,96 @@ fn prepare_padding(node: StableId, insets: &Insets) -> Result<Padding, LayoutErr
         bottom: convert(bottom)?,
         left: convert(left)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::flex::{FlexBasis, FlexItem};
+    use crate::grid::{GridLayout, TrackSize};
+    use crate::stack::{StackLayout, StackWrap};
+    use crate::test_support::{id, key, len, px};
+    use stellar_core_types::value::Scalar;
+
+    /// 깊이 `depth` 사슬(root = 0). container는 Hug이고 마지막 leaf는 10×10 고정입니다.
+    /// `kind`: 0 = wrap Stack(자식 flex grow·shrink 1), 1 = MaxContent Grid, 2 = Free.
+    fn chain(depth: usize, kind: u8) -> LayoutInput {
+        let one = Scalar::new(1.0).unwrap();
+        let mut nodes = Vec::new();
+        for n in 0..=depth as u64 {
+            let container = match kind {
+                0 => ContainerLayout::Stack(StackLayout {
+                    wrap: StackWrap::Wrap,
+                    ..StackLayout::new(Axis::Horizontal)
+                }),
+                1 => ContainerLayout::Grid(GridLayout::new(vec![TrackSize::MaxContent], vec![])),
+                _ => ContainerLayout::Free,
+            };
+            let mut node = LayoutNode::new(id(n + 1))
+                .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+                .with_container(container);
+            if n > 0 && kind == 0 {
+                node = node.with_flex(FlexItem::new(one, one, FlexBasis::Auto));
+            }
+            if n < depth as u64 {
+                node = node.with_child(id(n + 2), key(1));
+            } else {
+                node = node.with_fixed_size(len(10.0), len(10.0));
+            }
+            nodes.push(node);
+        }
+        LayoutInput::new(id(1), nodes)
+    }
+
+    /// `stack` byte stack을 가진 thread에서 `f`를 실행합니다.
+    fn on_thread<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> T {
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(stack)
+                .spawn_scoped(scope, f)
+                .unwrap()
+                .join()
+                .unwrap()
+        })
+    }
+
+    #[test]
+    fn max_depth_chain_does_not_overflow_default_thread_stack() {
+        // 리뷰 재현: 깊이 256 Hug Stack(wrap+flex)·Grid 사슬은 debug 빌드 2 MiB thread에서 stack
+        // overflow로 abort했습니다. 지금은 전용 stack thread에서 계산해 모든 빌드에서 끝납니다.
+        const DEFAULT_THREAD_STACK: usize = 2 << 20;
+        for kind in [0u8, 1, 2] {
+            let input = chain(MAX_LAYOUT_DEPTH, kind);
+            assert_eq!(input.tree().unwrap().depth, MAX_LAYOUT_DEPTH);
+            let result = on_thread(DEFAULT_THREAD_STACK, || compute_layout(&input)).unwrap();
+            assert_eq!(result.boxes().len(), MAX_LAYOUT_DEPTH + 1);
+            // Hug 사슬은 모두 leaf 크기 10×10.
+            for node in [1u64, 2, MAX_LAYOUT_DEPTH as u64 + 1] {
+                let rect = result.get(id(node)).unwrap().local_rect();
+                assert_eq!((rect.width(), rect.height()), (px(10), px(10)), "{kind}");
+            }
+            // 결과는 계산 thread와 무관합니다(같은 tree를 큰 stack에서 직접 계산한 bytes와 동일).
+            let direct = on_thread(DEEP_LAYOUT_STACK_BYTES, || {
+                compute_validated(&input, input.tree().unwrap())
+            })
+            .unwrap();
+            assert_eq!(direct.encode(), result.encode());
+        }
+    }
+
+    #[test]
+    fn inline_depth_chain_runs_on_caller_thread_stack() {
+        // INLINE_LAYOUT_DEPTH 이하는 호출 thread에서 계산합니다. 1 MiB thread에서도 끝나야 합니다.
+        for kind in [0u8, 1, 2] {
+            let input = chain(INLINE_LAYOUT_DEPTH, kind);
+            let result = on_thread(1 << 20, || compute_layout(&input)).unwrap();
+            assert_eq!(result.boxes().len(), INLINE_LAYOUT_DEPTH + 1);
+        }
+        // 깊이 초과는 계산 전에 검증 오류(재귀하지 않음).
+        assert!(matches!(
+            compute_layout(&chain(MAX_LAYOUT_DEPTH + 1, 2)),
+            Err(LayoutError::DepthLimitExceeded { .. })
+        ));
+        assert_eq!(DEEP_LAYOUT_STACK_BYTES, 16 << 20);
+    }
 }
