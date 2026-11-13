@@ -859,28 +859,28 @@ tasks:
     verified_at: "2026-06-26T12:24:49+09:00"
   - id: "II.6.1"
     title: "`apps/windows`에 Windows 11 x64, C++/WinRT, WinUI 3 앱 솔루션을 생성합니다. ARM64 configuration은 만들지 않습니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.4.6"
     required_environments:
       - DEV-MAC
   - id: "II.6.2"
     title: "Rust library를 Debug 빌드에 연결하고 앱 시작 시 `stellar_runtime_version`을 호출합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.6.1"
     required_environments:
       - DEV-MAC
   - id: "II.6.3"
     title: "`App`, `MainWindow`, 빈 CanvasHost custom control을 추가하고 종료 시 runtime destroy를 한 번 호출합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.6.2"
     required_environments:
       - DEV-MAC
   - id: "II.6.4"
     title: "DPI 변경과 logical/physical pixel size를 core에 전달하는 이벤트를 추가합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.6.3"
     required_environments:
@@ -900,14 +900,14 @@ tasks:
     verified_at: "2026-06-26T12:39:30+09:00"
   - id: "II.7.2"
     title: "Windows x64 CI job에 Rust core, FFI header drift, MSBuild Debug build를 연결합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.6.4"
     required_environments:
       - DEV-MAC
   - id: "II.7.3"
     title: "양 플랫폼 smoke artifact가 같은 core version과 ABI version을 보고하는 검사를 추가합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.7.1"
       - "II.7.2"
@@ -2300,328 +2300,592 @@ tasks:
     verified_at: "2026-07-11T15:17:19+09:00"
   - id: "VI.1.1"
     title: "`document`에 `ProjectDocumentIndex`, `DocumentDefinition`, `PageDefinition`, `ViewDefinition` 타입을 추가합니다. 각 타입은 고유 StableId와 표시 이름을 가집니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.1.1.md"
+    commit: "c5670ecfe296d6852b01aedcbf9ad78a4c2d768e"
+    report: "docs/task-reports/VI.1.1.md"
+    verified_at: "2026-07-11T15:19:58+09:00"
   - id: "VI.1.2"
     title: "Document→Page→View 소유 관계를 명시하고 한 View는 정확히 하나의 root Frame을 갖게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.1.2.md"
+    commit: "cab256860d9dabfe9317091f48a799891f17f4af"
+    report: "docs/task-reports/VI.1.2.md"
+    verified_at: "2026-07-11T15:21:57+09:00"
   - id: "VI.1.3"
     title: "표시 이름은 비어 있을 수 있지만 ID와 저장 경로에 사용하지 않도록 API를 분리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.1.3.md"
+    commit: "191f4a0f7523bb44f875c7756df1ad94f8de2402"
+    report: "docs/task-reports/VI.1.3.md"
+    verified_at: "2026-07-11T15:23:48+09:00"
   - id: "VI.1.4"
     title: "현재 열려 있는 문서와 저장된 문서 index를 분리하는 `OpenDocumentSet` 런타임 타입을 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.1.1"
       - "III.6.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.1.4.md"
+    commit: "c2d86e395f2e3fafcffcecc200e1877ca1c5947c"
+    report: "docs/task-reports/VI.1.4.md"
+    verified_at: "2026-07-11T15:25:23+09:00"
   - id: "VI.1.5"
     title: "최대 10개 열린 문서 제한을 config로 검사하고 초과 시 기존 문서를 자동 닫지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.1.5.md"
+    commit: "60855d82a36f363e2ddf8f3ccea752b832825a64"
+    report: "docs/task-reports/VI.1.5.md"
+    verified_at: "2026-07-11T15:26:50+09:00"
   - id: "VI.2.1"
     title: "`NodeKind`에 Frame, Fragment, Shape, Path, Text, Image, ComponentInstance를 정의합니다. ComponentDefinition은 scene node가 아닌 resource로 유지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.2.1.md"
+    commit: "d78bfde5009d8a67437bdb6158384cd83fca9b85"
+    report: "docs/task-reports/VI.2.1.md"
+    verified_at: "2026-07-11T15:27:57+09:00"
   - id: "VI.2.2"
     title: "공통 Node column에 StableId, kind, parent RuntimeEntityId, OrderKey, visible, locked, display name을 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.6.2"
       - "VI.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.2.2.md"
+    commit: "cd7f2afa65e16dbdafcfd0ea0477ac287cf07a0d"
+    report: "docs/task-reports/VI.2.2.md"
+    verified_at: "2026-07-11T15:29:42+09:00"
   - id: "VI.2.3"
     title: "parent-child 삽입 validator를 구현합니다. 자기 자신·자손을 부모로 지정하거나 다른 View root로 무단 이동하는 것을 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.2.3.md"
+    commit: "4b9b40aa0908c1c10d405778ff1d40308c08fd41"
+    report: "docs/task-reports/VI.2.3.md"
+    verified_at: "2026-07-11T15:31:05+09:00"
   - id: "VI.2.4"
     title: "자식 조회는 OrderKey 정렬 결과를 반환하고 arena 삽입 순서에 의존하지 않게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.2.2"
       - "III.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.2.4.md"
+    commit: "43d938e0d378998af2da64e99dd3f28c168d002a"
+    report: "docs/task-reports/VI.2.4.md"
+    verified_at: "2026-07-11T15:33:07+09:00"
   - id: "VI.2.5"
     title: "node 삭제 전 참조 inbound 목록을 조회하는 `ReferenceIndex` 인터페이스를 추가합니다. 삭제 정책은 command 단계에서 처리합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.2.3"
       - "VI.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.2.5.md"
+    commit: "4ca05da6f5b164bae6bcd3bd4ef8fd99016ec509"
+    report: "docs/task-reports/VI.2.5.md"
+    verified_at: "2026-07-11T15:34:41+09:00"
   - id: "VI.2.6"
     title: "node count와 depth 계산을 O(1) 또는 incremental metadata로 유지할 수 있는 훅을 추가합니다. 실제 성능 최적화는 후속 작업입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.2.6.md"
+    commit: "06f7e8959c099d43a4ede5a469315eac389ba700"
+    report: "docs/task-reports/VI.2.6.md"
+    verified_at: "2026-07-11T15:36:15+09:00"
   - id: "VI.3.1"
     title: "Frame payload에 size, local transform, clipping, background, border, corner radius, layout mode 참조를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.2.2"
       - "III.3.3"
       - "III.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.3.1.md"
+    commit: "c9b314516396e0ba51223819e165a125f0bf515d"
+    report: "docs/task-reports/VI.3.1.md"
+    verified_at: "2026-07-11T15:40:13+09:00"
   - id: "VI.3.2"
     title: "Frame만 자식의 layout containing block과 좌표계를 만들 수 있게 capability validator를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.3.2.md"
+    commit: "d70c6645b2987395df0c6037c5c85d5acc19223d"
+    report: "docs/task-reports/VI.3.2.md"
+    verified_at: "2026-11-13T23:21:54+09:00"
   - id: "VI.3.3"
     title: "width/height가 음수가 되지 않게 하고 transform을 통한 반전과 size 음수를 구분합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.3.3.md"
+    commit: "488cfc6e7529cacdbfd260c6379ba9f92bd640b1"
+    report: "docs/task-reports/VI.3.3.md"
+    verified_at: "2026-11-13T23:23:18+09:00"
   - id: "VI.3.4"
     title: "clip path가 없을 때 frame bounds clip, 별도 PathRef clip 두 형식을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.3.1"
       - "III.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.3.4.md"
+    commit: "ef8d2bc9f2ec393cf4415fb7aab64c286b9b7466"
+    report: "docs/task-reports/VI.3.4.md"
+    verified_at: "2026-11-13T23:24:56+09:00"
   - id: "VI.3.5"
     title: "Frame property metadata registry를 작성해 각 PropertyKey, 타입, 기본값, layout/paint invalidation 범위를 고정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.3.1"
       - "III.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.3.5.md"
+    commit: "2fbc5bcf68cc8616ee7cd8255b727b060ca5f4ee"
+    report: "docs/task-reports/VI.3.5.md"
+    verified_at: "2026-11-13T23:26:47+09:00"
   - id: "VI.4.1"
     title: "Fragment payload는 별도 렌더·layout 필드를 갖지 않는 zero-size marker로 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.4.1.md"
+    commit: "b5c1479d227ab5534ccb1b8c7a1c2067f5957746"
+    report: "docs/task-reports/VI.4.1.md"
+    verified_at: "2026-11-13T23:27:37+09:00"
   - id: "VI.4.2"
     title: "Fragment에 transform, opacity, blend, mask, filter, fill, border, padding 설정을 시도하면 validation 오류를 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.4.2.md"
+    commit: "d4c17411234fa4175cc2baecc0f86e96cb8dd804"
+    report: "docs/task-reports/VI.4.2.md"
+    verified_at: "2026-11-13T23:28:49+09:00"
   - id: "VI.4.3"
     title: "Fragment의 visual bounds는 가시 자식 bounds의 union으로 계산하는 read-only helper를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.4.3.md"
+    commit: "80b9d7da98a880000f4f0fc041cadd6019f1afc4"
+    report: "docs/task-reports/VI.4.3.md"
+    verified_at: "2026-11-13T23:29:44+09:00"
   - id: "VI.4.4"
     title: "Fragment→Frame 변환용 순수 변환 계획을 구현합니다. 새 Frame은 Fragment StableId를 유지하고 필요한 기본 payload를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.4.1"
       - "VI.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.4.4.md"
+    commit: "e4f7031941905204752c1497e2ebca0e7a0cf4d1"
+    report: "docs/task-reports/VI.4.4.md"
+    verified_at: "2026-11-13T23:31:08+09:00"
   - id: "VI.5.1"
     title: "ShapeKind에 Rectangle, Ellipse, Line, Polygon을 정의합니다. 별도 node kind를 늘리지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.5.1.md"
+    commit: "d349cbe86864564b225e40707c959701c95fe97a"
+    report: "docs/task-reports/VI.5.1.md"
+    verified_at: "2026-11-13T23:31:58+09:00"
   - id: "VI.5.2"
     title: "Rectangle 파라미터에 size와 개별 corner radius를 정의하고 radius를 bounds에 clamp하는 평가 함수를 구현합니다. 저장값은 원본을 유지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.5.1"
       - "III.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.5.2.md"
+    commit: "11348cd8e0582c6fec47b2c5dae980d33cd20f71"
+    report: "docs/task-reports/VI.5.2.md"
+    verified_at: "2026-11-13T23:32:37+09:00"
   - id: "VI.5.3"
     title: "Ellipse는 bounds로 정의하고 start/end angle을 지원하지 않는 초기 범위로 고정합니다. 해당 필드가 파일에 있으면 unknown field 정책을 따릅니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.5.3.md"
+    commit: "3a18382d0411d7355f6fe9e11611142ac293a52a"
+    report: "docs/task-reports/VI.5.3.md"
+    verified_at: "2026-11-13T23:34:36+09:00"
   - id: "VI.5.4"
     title: "Line은 start/end point와 cap style을 정의합니다. zero-length line 정책을 점 cap으로 명시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.5.4.md"
+    commit: "a7d38ed889586b6da96810032ccaf830e169cd6f"
+    report: "docs/task-reports/VI.5.4.md"
+    verified_at: "2026-11-13T23:35:26+09:00"
   - id: "VI.5.5"
     title: "Polygon은 side count≥3, rotation, corner radius를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.5.5.md"
+    commit: "4b4fba1ff49ab8226ea72811b9e11e5af4f27989"
+    report: "docs/task-reports/VI.5.5.md"
+    verified_at: "2026-11-13T23:36:47+09:00"
   - id: "VI.5.6"
     title: "Shape를 Path geometry로 평가하는 순수 함수를 구현합니다. node를 Path로 변환하지 않습니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.5.6.md"
+    commit: "136076143307f7566e1170318afd40318a3922e6"
+    report: "docs/task-reports/VI.5.6.md"
+    verified_at: "2026-11-13T23:41:23+09:00"
   - id: "VI.6.1"
     title: "Path command에 MoveTo, LineTo, CubicTo, Close만 정의합니다. Quadratic은 import 단계에서 Cubic으로 정규화합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.6.1.md"
+    commit: "c341dce5ac1e9427a4968bb466aacac7556b85d5"
+    report: "docs/task-reports/VI.6.1.md"
+    verified_at: "2026-11-13T23:33:31+09:00"
   - id: "VI.6.2"
     title: "subpath와 winding rule을 정의하고 시작 MoveTo 없는 command를 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.6.2.md"
+    commit: "4cbfeb085298473499358cda286fe2a3538caee7"
+    report: "docs/task-reports/VI.6.2.md"
+    verified_at: "2026-11-13T23:42:12+09:00"
   - id: "VI.6.3"
     title: "Path point와 handle에 StableId를 부여해 개별 point diff가 가능하게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.6.1"
       - "III.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.6.3.md"
+    commit: "1919935b65972523c1223a9157f6b4ded6c2591f"
+    report: "docs/task-reports/VI.6.3.md"
+    verified_at: "2026-11-13T23:43:16+09:00"
   - id: "VI.6.4"
     title: "Path bounds 계산을 구현하고 cubic extrema를 포함합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.6.4.md"
+    commit: "99e4478e95370b46ee60c7456c1ea1e91fcf8186"
+    report: "docs/task-reports/VI.6.4.md"
+    verified_at: "2026-11-13T23:44:54+09:00"
   - id: "VI.6.5"
     title: "Shape→Path 파괴 변환 계획을 구현합니다. 사용자가 명시한 command에서만 node kind를 바꾸고 StableId는 유지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.5.6"
       - "VI.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.6.5.md"
+    commit: "1e45125a5704050ef84130eb028f5512e621e615"
+    report: "docs/task-reports/VI.6.5.md"
+    verified_at: "2026-11-13T23:45:32+09:00"
   - id: "VI.7.1"
     title: "Text payload에 UTF-8 content, paragraph list, style runs를 정의합니다. run 경계는 byte index가 아니라 Unicode scalar/grapheme 정책을 명시한 text index 타입을 사용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.2.2"
       - "III.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.7.1.md"
+    commit: "35caa8ba9de50bfeb6907af6364dff91cb8e2cd4"
+    report: "docs/task-reports/VI.7.1.md"
+    verified_at: "2026-11-13T23:47:08+09:00"
   - id: "VI.7.2"
     title: "style run에 typography ref, fill, OpenType features, variation axes를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.7.1"
       - "III.3.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.7.2.md"
+    commit: "21475e6099075d28e4b53ec6a0d8d8d27db6332b"
+    report: "docs/task-reports/VI.7.2.md"
+    verified_at: "2026-11-13T23:48:03+09:00"
   - id: "VI.7.3"
     title: "paragraph alignment, line height, letter spacing, wrapping mode를 정의합니다. 실제 layout은 Phase X에서 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.7.3.md"
+    commit: "b2a39503ee0e26b7246c789f63f6faa59bf783d4"
+    report: "docs/task-reports/VI.7.3.md"
+    verified_at: "2026-11-13T23:49:03+09:00"
   - id: "VI.7.4"
     title: "빈 텍스트도 유효 node로 유지하고 삭제와 구분합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.7.4.md"
+    commit: "7b0a2c8cc5925053b0c0c727875eb348a95f6843"
+    report: "docs/task-reports/VI.7.4.md"
+    verified_at: "2026-11-13T23:49:34+09:00"
   - id: "VI.7.5"
     title: "텍스트 내용 변경 시 style run range를 보존·축소·확장하는 deterministic edit helper를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.7.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.7.5.md"
+    commit: "29b0ad839a538bcce16585b1e33156f8f67e75c2"
+    report: "docs/task-reports/VI.7.5.md"
+    verified_at: "2026-11-13T23:50:58+09:00"
   - id: "VI.8.1"
     title: "Image payload에 AssetRef, fit mode, crop rect, sampling mode, color space override를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.2.2"
       - "III.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.8.1.md"
+    commit: "ec94b15ab8c9ae23b19835ccf7cc60d59dba2102"
+    report: "docs/task-reports/VI.8.1.md"
+    verified_at: "2026-11-13T23:52:11+09:00"
   - id: "VI.8.2"
     title: "missing AssetRef 상태를 invalid node가 아니라 missing resource diagnostic으로 표현하고 placeholder bounds는 유지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.8.1"
       - "III.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.8.2.md"
+    commit: "339f9812df1c4061bac9e88af2191e2ea7b74235"
+    report: "docs/task-reports/VI.8.2.md"
+    verified_at: "2026-11-13T23:52:53+09:00"
   - id: "VI.8.3"
     title: "crop rect는 normalized 0..1 범위로 clamp 평가하되 저장값 validation에서 범위 밖을 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.8.3.md"
+    commit: "8d49803218f933699036c8e34ee986d49350170f"
+    report: "docs/task-reports/VI.8.3.md"
+    verified_at: "2026-11-13T23:54:03+09:00"
   - id: "VI.9.1"
     title: "`ModifierId`를 StableId newtype으로 정의하고 ordered modifier list를 node payload와 분리 저장합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.1"
       - "III.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.9.1.md"
+    commit: "e342af53c8119f94c55987a8d0aadebe5aaad3b8"
+    report: "docs/task-reports/VI.9.1.md"
+    verified_at: "2026-11-13T23:55:13+09:00"
   - id: "VI.9.2"
     title: "초기 modifier kind를 Transform, Boolean, StrokeExpand, Corner, Mask, Clip, Fill, Stroke, Shadow, Blur, Blend, Opacity로 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.9.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.9.2.md"
+    commit: "7d87a8f22a72fba681d9a8b64591c68a67c31b45"
+    report: "docs/task-reports/VI.9.2.md"
+    verified_at: "2026-11-13T23:56:14+09:00"
   - id: "VI.9.3"
     title: "각 modifier에 enabled flag와 typed payload를 정의하고 disabled modifier는 평가에서 skip하되 저장에는 유지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.9.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.9.3.md"
+    commit: "9980137b669d6068ab6a8830c138db193fefd0a6"
+    report: "docs/task-reports/VI.9.3.md"
+    verified_at: "2026-11-13T23:58:15+09:00"
   - id: "VI.9.4"
     title: "Boolean·Mask·Clip의 다른 NodeRef 의존성을 ReferenceIndex에 등록합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.2.5"
       - "VI.9.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.9.4.md"
+    commit: "e38afa739f5ab555736a51dd10d00be2aa14acc9"
+    report: "docs/task-reports/VI.9.4.md"
+    verified_at: "2026-11-13T23:59:25+09:00"
   - id: "VI.9.5"
     title: "modifier 참조 graph cycle detector를 구현합니다. direct/self/indirect cycle을 저장 전 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.9.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VI.9.5.md"
+    commit: "8a5662b15300c8867bd0a63d0bdf892fdf4b9a59"
+    report: "docs/task-reports/VI.9.5.md"
+    verified_at: "2026-11-14T00:00:24+09:00"
   - id: "VI.9.6"
     title: "Fragment에 modifier 삽입을 거부합니다."
     status: not_started
@@ -4417,7 +4681,7 @@ tasks:
       - DEV-MAC
   - id: "XI.9.1"
     title: "`renderer-d3d12`에서 adapter, device, command queue, swap chain을 Windows 11 x64에 초기화합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XI.5.1"
       - "II.6.4"
@@ -4425,14 +4689,14 @@ tasks:
       - DEV-MAC
   - id: "XI.9.2"
     title: "resize, back buffer, frame fence를 구현합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XI.9.1"
     required_environments:
       - DEV-MAC
   - id: "XI.9.3"
     title: "descriptor heap, upload/default buffer, texture resource mapping을 구현합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XI.5.3"
       - "XI.9.1"
@@ -4440,14 +4704,14 @@ tasks:
       - DEV-MAC
   - id: "XI.9.4"
     title: "root signature, pipeline state, shader cache를 구현합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XI.9.3"
     required_environments:
       - DEV-MAC
   - id: "XI.9.5"
     title: "RenderGraph command list encoding, execute, Present 예약을 구현합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XI.4.6"
       - "XI.9.4"
@@ -4455,14 +4719,14 @@ tasks:
       - DEV-MAC
   - id: "XI.9.6"
     title: "timestamp query heap을 연결해 pass별 GPU 시간을 측정합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XI.9.5"
     required_environments:
       - DEV-MAC
   - id: "XI.9.7"
     title: "device removed, out-of-memory, swap chain failure 처리 테스트를 추가합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XI.5.4"
       - "XI.9.5"
@@ -4621,7 +4885,7 @@ tasks:
       - DEV-MAC
   - id: "XII.2.3"
     title: "Windows `MainWindow`가 한 ProjectWindowSession handle을 소유하도록 연결합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.6.3"
       - "XII.2.1"
@@ -4660,7 +4924,7 @@ tasks:
       - DEV-MAC
   - id: "XII.3.3"
     title: "Windows pointer/mouse/keyboard 이벤트를 InputEvent로 변환합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.6.4"
       - "XII.3.1"
@@ -4706,7 +4970,7 @@ tasks:
       - DEV-MAC
   - id: "XII.4.2"
     title: "Windows CanvasHost HWND/SwapChainPanel 또는 선택된 native surface를 D3D12 backend에 연결합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XI.9.2"
       - "XII.2.3"
@@ -4737,7 +5001,7 @@ tasks:
       - DEV-MAC
   - id: "XII.5.2"
     title: "Windows 레이어명·검색·일반 필드에 TextBox/RichEditBox를 사용합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.6.3"
     required_environments:
@@ -4759,7 +5023,7 @@ tasks:
       - DEV-MAC
   - id: "XII.5.5"
     title: "Windows CoreText/TSF 또는 승인된 WinUI input adapter를 구현해 composition을 common session과 연결합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XII.5.3"
     required_environments:
@@ -4834,7 +5098,7 @@ tasks:
       - DEV-MAC
   - id: "XII.7.4"
     title: "Windows에서 ContentDialog 또는 native equivalent로 두 선택지를 표시합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XII.7.2"
     required_environments:
@@ -4871,7 +5135,7 @@ tasks:
       - DEV-MAC
   - id: "XII.8.2"
     title: "Windows UI Automation properties와 keyboard focus order를 지정합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XII.2.3"
     required_environments:
@@ -4894,7 +5158,7 @@ tasks:
       - DEV-MAC
   - id: "XII.9.2"
     title: "Windows 앱 셸의 navigation, command bar, pane, dialog가 WinUI 3 Fluent control과 system theme를 사용하도록 theme capability layer를 구현합니다. 캔버스 문서 렌더링에는 적용하지 않습니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XII.2.3"
       - "XII.8.2"
@@ -4981,7 +5245,7 @@ tasks:
       - DEV-MAC
   - id: "XIII.2.3"
     title: "Windows watcher adapter를 구현하고 동일 의미 event로 normalize합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XIII.2.1"
     required_environments:
@@ -5156,7 +5420,7 @@ tasks:
       - DEV-MAC
   - id: "XIII.6.3"
     title: "Windows DirectWrite 또는 승인 API로 system font discovery adapter를 구현합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "X.8.2"
       - "II.6.3"
@@ -5269,7 +5533,7 @@ tasks:
       - DEV-MAC
   - id: "XIII.8.6"
     title: "Windows Application Recovery/Restart callback을 연결해 준비된 snapshot flush를 시도합니다. callback에서 무거운 full serialization은 금지합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XIII.8.2"
       - "II.6.3"
@@ -5875,7 +6139,7 @@ tasks:
       - DEV-MAC
   - id: "XIV.13.6"
     title: "Windows 최소 Git panel을 동일 기능으로 연결합니다."
-    status: not_started
+    status: blocked
     required_environments:
       - DEV-MAC
   - id: "XIV.13.7"
@@ -6301,7 +6565,7 @@ tasks:
       - DEV-MAC
   - id: "XVI.2.4"
     title: "Windows full replay runner를 구현합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVI.2.2"
       - "XII.4.2"
@@ -6617,33 +6881,33 @@ tasks:
       - DEV-MAC
   - id: "XVI.10.1"
     title: "Release x64 MSIX packaging, Windows 11 minimum, package identity를 고정합니다."
-    status: not_started
+    status: blocked
     required_environments:
       - DEV-MAC
   - id: "XVI.10.2"
     title: "Rust DLL/static linkage와 VC runtime 정책을 고정하고 missing dependency가 없게 합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVI.10.1"
     required_environments:
       - DEV-MAC
   - id: "XVI.10.3"
     title: "code signing pipeline을 구성하고 certificate secret을 CI secret store에만 둡니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVI.10.1"
     required_environments:
       - DEV-MAC
   - id: "XVI.10.4"
     title: "Stable/Beta package feed를 분리하고 사용자 승인형 update flow를 구현합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVI.10.3"
     required_environments:
       - DEV-MAC
   - id: "XVI.10.5"
     title: "update 전 dirty project save/recovery 상태를 처리하고 강제 종료하지 않습니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XIII.1.6"
       - "XVI.10.4"
@@ -6820,7 +7084,7 @@ tasks:
       - DEV-MAC
   - id: "XVIII.4.4"
     title: "Windows terminal view를 연결합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVIII.3.3"
       - "XVIII.4.2"
@@ -7257,7 +7521,7 @@ tasks:
       - DEV-MAC
   - id: "XX.5.2"
     title: "Windows export command를 연결합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XX.2.3"
       - "XX.4.3"
@@ -7298,7 +7562,7 @@ tasks:
       - DEV-MAC
   - id: "XXI.2.2"
     title: "Windows WebView2 environment/profile을 plugin별 격리합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XXI.1.2"
     required_environments:
@@ -7857,33 +8121,33 @@ tasks:
       - DEV-MAC
   - id: "XXVII.1.1"
     title: "Rust target과 Windows solution에 ARM64 configuration을 추가합니다."
-    status: not_started
+    status: blocked
     required_environments:
       - DEV-MAC
   - id: "XXVII.1.2"
     title: "FFI type size/alignment와 ABI version을 x64/ARM64에서 비교합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "II.4.6"
     required_environments:
       - DEV-MAC
   - id: "XXVII.1.3"
     title: "D3D12 adapter/device code의 architecture assumption을 제거합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XI.9.7"
     required_environments:
       - DEV-MAC
   - id: "XXVII.2.1"
     title: "모든 native dependency의 ARM64 artifact를 검증하고 미지원 dependency를 대체하지 말고 blocker report로 남깁니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XXVII.1.1"
     required_environments:
       - DEV-MAC
   - id: "XXVII.2.2"
     title: "ARM64 MSIX package와 update channel artifact를 추가합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XXVII.1.3"
       - "XVI.10.4"
@@ -7891,7 +8155,7 @@ tasks:
       - DEV-MAC
   - id: "XXVII.2.3"
     title: "ARM64 기준 성능 장치를 별도로 지정하고 x64 기준과 다른 보장 여부를 문서화합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XVI.4.6"
     required_environments:
