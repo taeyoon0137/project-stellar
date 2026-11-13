@@ -1,4 +1,4 @@
-//! OS 사용자 식별과 사용자별 디렉터리 (XIX.1.2).
+//! OS 사용자 식별과 사용자별 디렉터리 (XIX.1.2, XIX.1.3).
 //!
 //! libc crate 없이 필요한 함수만 최소 `extern "C"`로 선언합니다(macOS `<unistd.h>`). 모든 호출은
 //! 인자·반환값을 검사하는 안전한 wrapper로만 노출합니다.
@@ -6,6 +6,8 @@
 use std::ffi::OsString;
 use std::io;
 use std::os::unix::ffi::OsStringExt;
+use std::os::unix::io::AsRawFd;
+use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
 mod sys {
@@ -14,6 +16,8 @@ mod sys {
         pub fn geteuid() -> u32;
         /// `size_t confstr(int name, char *buf, size_t len)`.
         pub fn confstr(name: i32, buf: *mut u8, len: usize) -> usize;
+        /// `int getpeereid(int socket, uid_t *euid, gid_t *egid)`.
+        pub fn getpeereid(socket: i32, euid: *mut u32, egid: *mut u32) -> i32;
     }
 
     /// `<unistd.h>` `_CS_DARWIN_USER_TEMP_DIR`.
@@ -24,6 +28,22 @@ mod sys {
 pub fn current_uid() -> u32 {
     // SAFETY: geteuid는 인자가 없고 항상 성공하며 메모리를 읽거나 쓰지 않습니다.
     unsafe { sys::geteuid() }
+}
+
+/// 연결된 Unix domain socket 상대 프로세스의 effective 사용자 id(XIX.1.3).
+///
+/// 커널이 연결 시점에 기록한 자격 증명이므로 상대가 위조할 수 없습니다.
+pub fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
+    let mut uid: u32 = u32::MAX;
+    let mut gid: u32 = u32::MAX;
+    // SAFETY: fd는 `stream`이 소유한 열린 socket이고(호출 동안 살아 있음), 두 포인터는 쓰기 가능한
+    // 지역 변수를 가리킵니다.
+    let rc = unsafe { sys::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
+    if rc == 0 {
+        Ok(uid)
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 /// 현재 사용자의 임시 디렉터리(`_CS_DARWIN_USER_TEMP_DIR`).
@@ -80,5 +100,12 @@ mod tests {
         assert!(meta.is_dir());
         assert_eq!(meta.uid(), current_uid());
         assert_eq!(meta.mode() & 0o077, 0, "다른 사용자 접근 불가");
+    }
+
+    #[test]
+    fn peer_uid_of_same_user_socket_pair_is_current_uid() {
+        let (a, b) = UnixStream::pair().unwrap();
+        assert_eq!(peer_uid(&a).unwrap(), current_uid());
+        assert_eq!(peer_uid(&b).unwrap(), current_uid());
     }
 }
