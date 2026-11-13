@@ -22,3 +22,10 @@ mod sequence_property;
 
 /// 영속 history journal schema (XXV.1.1, 로드맵).
 pub mod journal;
+
+/// history journal 기록 위치와 기록 (XXV.1.2, 로드맵).
+pub mod journal_store;
+
+/// journal 저장 테스트 공용 fixture(임시 디렉터리·hermetic Git).
+#[cfg(test)]
+mod test_fs;

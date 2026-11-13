@@ -545,6 +545,48 @@ fn check_sequences(
     Ok(())
 }
 
+/// header 고정 길이(magic 8 + version 4×4 + window 16 + generation 8 + manifest hash 32).
+pub const JOURNAL_HEADER_LEN: usize = 8 + 4 * 4 + 16 + 8 + 32;
+
+/// header를 읽습니다. format version 불일치는 그 뒤 layout을 알 수 없으므로 바로 거부합니다.
+fn read_header(input: &mut In<'_>) -> Result<JournalHeader, JournalError> {
+    if input.take(8).map_err(|_| JournalError::BadMagic)? != JOURNAL_MAGIC {
+        return Err(JournalError::BadMagic);
+    }
+    let format_version = input.u32()?;
+    if format_version != JOURNAL_FORMAT_VERSION {
+        return Err(JournalError::UnsupportedFormat {
+            found: format_version,
+        });
+    }
+    let schema_version = input.u32()?;
+    let minimum_reader_version = input.u32()?;
+    let minimum_writer_version = input.u32()?;
+    let window = WindowSessionId::from_stable_id(input.id()?);
+    let generation = StorageGeneration(input.u64()?);
+    let mut manifest_hash = [0u8; 32];
+    manifest_hash.copy_from_slice(input.take(32)?);
+    Ok(JournalHeader {
+        format_version,
+        schema_version,
+        minimum_reader_version,
+        minimum_writer_version,
+        window,
+        base: JournalBase::new(generation, manifest_hash),
+    })
+}
+
+impl JournalHeader {
+    /// journal bytes 앞부분([`JOURNAL_HEADER_LEN`] 이상)에서 header만 읽습니다(덮어쓰기 가능 여부 판정용).
+    /// 버전 판정은 하지 않으므로 [`JournalHeader::access`]로 확인합니다.
+    pub fn decode_prefix(bytes: &[u8]) -> Result<JournalHeader, JournalError> {
+        read_header(&mut In {
+            input: bytes,
+            pos: 0,
+        })
+    }
+}
+
 fn write_stack(out: &mut Out, entries: &[HistoryEntry]) {
     out.len(entries.len());
     for entry in entries {
@@ -626,30 +668,7 @@ impl HistoryJournal {
             input: bytes,
             pos: 0,
         };
-        if input.take(8).map_err(|_| JournalError::BadMagic)? != JOURNAL_MAGIC {
-            return Err(JournalError::BadMagic);
-        }
-        let format_version = input.u32()?;
-        if format_version != JOURNAL_FORMAT_VERSION {
-            return Err(JournalError::UnsupportedFormat {
-                found: format_version,
-            });
-        }
-        let schema_version = input.u32()?;
-        let minimum_reader_version = input.u32()?;
-        let minimum_writer_version = input.u32()?;
-        let window = WindowSessionId::from_stable_id(input.id()?);
-        let generation = StorageGeneration(input.u64()?);
-        let mut manifest_hash = [0u8; 32];
-        manifest_hash.copy_from_slice(input.take(32)?);
-        let header = JournalHeader {
-            format_version,
-            schema_version,
-            minimum_reader_version,
-            minimum_writer_version,
-            window,
-            base: JournalBase::new(generation, manifest_hash),
-        };
+        let header = read_header(&mut input)?;
         header.access(reader_version)?;
         let next_sequence = input.u64()?;
         let undo = read_stack(&mut input)?;
