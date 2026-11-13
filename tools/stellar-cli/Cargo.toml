@@ -6,8 +6,10 @@ rust-version.workspace = true
 publish = false
 
 # L1 headless 도구(XXIV.1.1): 앱 UI·GUI·네트워크 없이 core crate만 사용합니다.
-# AI·MCP·모델·agent 관련 crate와 외부 crate를 의존성으로 두지 않습니다.
+# AI·MCP·모델·agent 관련 crate와 외부 crate를 직접 의존성으로 두지 않습니다.
 [dependencies]
+# 읽기 전용 프로젝트 검사(`inspect`, XXIV.1.2): root 검증·stellar.yaml probe.
+stellar-project = { path = "../../crates/project" }
 
 [lints]
 workspace = true

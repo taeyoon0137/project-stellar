@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stellar-cli/result/v1",
+  "title": "stellar-cli 결과 envelope v1 (XXIV.1.2)",
+  "description": "명령이 실행되면 stdout에 이 envelope 한 개와 개행 하나만 씁니다. 사람용 진단은 stderr에 씁니다. 사용법 오류(64)는 stdout에 쓰지 않습니다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "schema_version",
+    "command",
+    "ok",
+    "exit_code",
+    "exit_name",
+    "result",
+    "error",
+    "diagnostics"
+  ],
+  "properties": {
+    "schema": { "const": "stellar-cli/result" },
+    "schema_version": { "const": 1 },
+    "command": { "type": "string" },
+    "ok": { "type": "boolean" },
+    "exit_code": { "enum": [0, 1, 64, 65, 66, 69, 70, 73, 74, 75, 76, 77, 78] },
+    "exit_name": {
+      "enum": [
+        "ok",
+        "failure",
+        "usage",
+        "dataerr",
+        "noinput",
+        "unavailable",
+        "software",
+        "cantcreat",
+        "ioerr",
+        "tempfail",
+        "protocol",
+        "noperm",
+        "config"
+      ]
+    },
+    "result": { "type": ["object", "null"] },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "type": "string" },
+            "message": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "code", "message"],
+        "properties": {
+          "severity": { "enum": ["error", "warning", "info"] },
+          "code": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

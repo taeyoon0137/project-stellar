@@ -1,23 +1,41 @@
-//! 명령 registry와 도움말 (XXIV.1.1).
+//! 명령 registry와 도움말 (XXIV.1.1, XXIV.1.2).
 //!
 //! 인자 해석은 순수 함수 [`run`]이 담당합니다. 출력 대상(stdout·stderr)을 인자로 받으므로
-//! 테스트는 메모리 버퍼로 실행할 수 있습니다. 도움말은 사용자가 요청한 결과이므로 stdout에,
-//! 사용법 오류 안내는 stderr에 씁니다.
+//! 테스트는 메모리 버퍼로 실행할 수 있습니다. stdout·stderr 역할과 결과 JSON 스키마는
+//! [`crate::output`]에 정의합니다. 요약하면 다음과 같습니다.
+//!
+//! - 도움말: 사용자가 요청한 결과이므로 stdout에 텍스트로 씁니다.
+//! - 명령 실행(성공·실패): stdout에 결과 envelope JSON 한 줄, 사람용 진단은 stderr.
+//! - 사용법 오류(64): stdout에 아무것도 쓰지 않고 stderr로만 안내합니다.
 
 use std::io::Write;
 
-/// 성공 종료 코드.
+use crate::commands;
+use crate::exit::ExitStatus;
+use crate::json;
+use crate::output::{self, CliError, Success};
+
+/// 성공 종료 코드([`ExitStatus::Ok`]).
 pub const EXIT_OK: i32 = 0;
-/// 사용법 오류 종료 코드(sysexits `EX_USAGE`).
+/// 사용법 오류 종료 코드(sysexits `EX_USAGE`, [`ExitStatus::Usage`]).
 pub const EXIT_USAGE: i32 = 64;
-/// 출력 기록 실패 종료 코드(sysexits `EX_IOERR`).
+/// 출력 기록 실패 종료 코드(sysexits `EX_IOERR`, [`ExitStatus::IoErr`]).
 pub const EXIT_IOERR: i32 = 74;
 
 /// 등록된 명령: (이름, 한 줄 설명). 도움말에 이 순서로 나타납니다.
-pub const COMMANDS: &[(&str, &str)] = &[("help", "이 도움말을 표시합니다")];
+pub const COMMANDS: &[(&str, &str)] = &[
+    ("help", "이 도움말을 표시합니다"),
+    ("version", "도구 이름·버전을 JSON으로 출력합니다"),
+    (
+        "inspect",
+        "<경로>의 프로젝트 root와 stellar.yaml을 읽기 전용으로 검사해 JSON으로 출력합니다",
+    ),
+];
 
 /// 도움말로 인식하는 인자.
 const HELP_ALIASES: [&str; 3] = ["help", "--help", "-h"];
+/// `version`으로 인식하는 인자.
+const VERSION_ALIASES: [&str; 3] = ["version", "--version", "-V"];
 
 /// 도움말 문자열. 각 명령이 정확히 한 번 나타납니다.
 pub fn usage() -> String {
@@ -32,6 +50,19 @@ pub fn usage() -> String {
         .unwrap_or(0);
     for (name, summary) in COMMANDS {
         out.push_str(&format!("    {name:<width$}  {summary}\n"));
+    }
+    out.push_str(
+        "\n출력:\n    \
+         stdout  명령 결과 JSON 한 줄(schema \"stellar-cli/result\" v1). 도움말만 텍스트입니다.\n    \
+         stderr  사람이 읽는 진단. 사용법 오류는 stderr에만 씁니다.\n\n종료 코드:\n",
+    );
+    for status in ExitStatus::ALL {
+        out.push_str(&format!(
+            "    {:>2}  {:<11}  {}\n",
+            status.code(),
+            status.name(),
+            status.summary()
+        ));
     }
     out.push_str(
         "\n앱 UI·GUI·네트워크 없이 동작합니다. `stellar-cli --help`로 이 도움말을 다시 볼 수 있습니다.\n",
@@ -60,7 +91,46 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
             }
         };
     }
-    usage_error(err, &format!("알 수 없는 명령: {command}"))
+    let (name, outcome) = if VERSION_ALIASES.contains(&command.as_str()) {
+        ("version", commands::version(rest))
+    } else if command == "inspect" {
+        ("inspect", commands::inspect(rest))
+    } else {
+        return usage_error(err, &format!("알 수 없는 명령: {command}"));
+    };
+    emit(name, outcome, out, err)
+}
+
+/// 명령 결과를 stdout(JSON)·stderr(진단)로 내보내고 종료 코드를 반환합니다.
+fn emit(
+    command: &str,
+    outcome: Result<Success, CliError>,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+) -> i32 {
+    let (document, status, stderr) = match &outcome {
+        Ok(success) => (
+            output::success_envelope(command, success),
+            ExitStatus::Ok,
+            output::stderr_text(command, None, &success.diagnostics),
+        ),
+        Err(e) if e.status == ExitStatus::Usage => {
+            return usage_error(err, &format!("{command}: {}", e.message));
+        }
+        Err(e) => (
+            output::error_envelope(command, e),
+            e.status,
+            output::stderr_text(command, Some(e), &e.diagnostics),
+        ),
+    };
+    let mut line = json::write(&document);
+    line.push('\n');
+    if let Err(e) = out.write_all(line.as_bytes()).and_then(|()| out.flush()) {
+        let _ = writeln!(err, "stellar-cli {command}: 결과 출력 실패: {e}");
+        return EXIT_IOERR;
+    }
+    let _ = err.write_all(stderr.as_bytes());
+    i32::from(status.code())
 }
 
 /// 사용법 오류를 stderr에 알리고 [`EXIT_USAGE`]를 반환합니다.
@@ -135,5 +205,57 @@ mod tests {
         let code = run(&["--help".to_string()], &mut Broken, &mut err);
         assert_eq!(code, EXIT_IOERR);
         assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn exit_constants_match_exit_status() {
+        assert_eq!(EXIT_OK, i32::from(ExitStatus::Ok.code()));
+        assert_eq!(EXIT_USAGE, i32::from(ExitStatus::Usage.code()));
+        assert_eq!(EXIT_IOERR, i32::from(ExitStatus::IoErr.code()));
+    }
+
+    #[test]
+    fn usage_lists_every_exit_code() {
+        let text = usage();
+        for status in ExitStatus::ALL {
+            assert!(
+                text.lines().any(
+                    |l| l.trim_start().starts_with(&format!("{} ", status.code()))
+                        && l.contains(status.name())
+                ),
+                "{status:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn command_usage_errors_write_nothing_to_stdout() {
+        for args in [
+            &["version", "extra"][..],
+            &["inspect"][..],
+            &["inspect", "--json", "x"][..],
+            &["inspect", "--bogus"][..],
+            &["inspect", "a", "b"][..],
+        ] {
+            let (code, out, err) = run_args(args);
+            assert_eq!(code, EXIT_USAGE, "{args:?}");
+            assert!(out.is_empty(), "{args:?}: 사용법 오류는 stdout에 쓰지 않음");
+            assert!(err.contains("--help"), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn version_aliases_emit_one_json_line() {
+        for alias in VERSION_ALIASES {
+            let (code, out, err) = run_args(&[alias]);
+            assert_eq!(code, EXIT_OK, "{alias}");
+            assert!(err.is_empty(), "{alias}");
+            assert_eq!(out.matches('\n').count(), 1, "{alias}: 정확히 한 줄");
+            let doc = json::parse(out.trim_end(), json::JsonLimits::default()).unwrap();
+            assert_eq!(
+                doc.get("command").and_then(json::JsonValue::as_str),
+                Some("version")
+            );
+        }
     }
 }

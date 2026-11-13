@@ -1,0 +1,16 @@
+schema_version: 1
+project:
+  id: 0195c530-3acd-7bc1-8414-c213f61cb965
+  name: Fixture Project
+target_profiles:
+  - id: apple-desktop
+    platform: apple
+    minimum_os: "26.0"
+  - id: web-modern
+    platform: web
+    baseline: modern
+dependencies:
+  design-system:
+    source: git
+    repository: https://example.com/design-system.git
+    version: v2.4.0

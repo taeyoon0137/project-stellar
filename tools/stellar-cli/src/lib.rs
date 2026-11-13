@@ -6,5 +6,17 @@
 //!
 //! 실행 파일(`main.rs`)은 인자를 [`cli::run`]에 넘기고 반환된 종료 코드로 끝납니다.
 
-/// 명령 registry와 도움말 (XXIV.1.1).
+/// 명령 registry와 도움말 (XXIV.1.1, XXIV.1.2).
 pub mod cli;
+
+/// 명령 구현 (XXIV.1.2).
+pub mod commands;
+
+/// 종료 코드 (XXIV.1.2).
+pub mod exit;
+
+/// 엄격한 JSON reader·writer (XXIV.1.2).
+pub mod json;
+
+/// 결과 envelope와 stdout/stderr 역할 (XXIV.1.2).
+pub mod output;

@@ -71,6 +71,9 @@ dependencies = [
 [[package]]
 name = "stellar-cli"
 version = "0.0.0"
+dependencies = [
+ "stellar-project",
+]
 
 [[package]]
 name = "stellar-commands"

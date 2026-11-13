@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"inspect","ok":false,"exit_code":65,"exit_name":"dataerr","result":null,"error":{"code":"manifest-schema","message":"stellar.yaml 스키마 오류"},"diagnostics":[{"severity":"error","code":"schema","message":"알 수 없는 키: <root>.extra"}]}

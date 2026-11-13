@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"inspect","ok":false,"exit_code":1,"exit_name":"failure","result":null,"error":{"code":"not-a-stellar-project","message":"Stellar 프로젝트 root가 아닙니다"},"diagnostics":[{"severity":"error","code":"missing-git","message":"같은 경로에 .git(디렉터리 또는 gitfile)이 없습니다"}]}

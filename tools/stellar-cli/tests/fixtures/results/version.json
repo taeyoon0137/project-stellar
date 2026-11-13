@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"version","ok":true,"exit_code":0,"exit_name":"ok","result":{"name":"stellar-cli","version":"0.0.0","output_schema_version":1},"error":null,"diagnostics":[]}

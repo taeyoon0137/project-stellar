@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"inspect","ok":false,"exit_code":77,"exit_name":"noperm","result":null,"error":{"code":"manifest-read","message":"stellar.yaml을 읽을 수 없습니다: PermissionDenied"},"diagnostics":[]}

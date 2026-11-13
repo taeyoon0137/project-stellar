@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"inspect","ok":false,"exit_code":66,"exit_name":"noinput","result":null,"error":{"code":"no-input","message":"입력 경로가 없습니다"},"diagnostics":[]}
