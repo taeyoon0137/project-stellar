@@ -1643,7 +1643,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XVI.5.1 | `[ ]` | CPU/GPU memory budget provider interface를 정의하고 OS별 available memory 정보를 normalized bucket으로 반환합니다. | mock low/medium/high fixture. | Phase XI, Phase XII |
+| XVI.5.1 | `[x]` | CPU/GPU memory budget provider interface를 정의하고 OS별 available memory 정보를 normalized bucket으로 반환합니다. | mock low/medium/high fixture. | Phase XI, Phase XII |
 | XVI.5.2 | `[ ]` | cache priority를 Document/CurrentScene(비축출), VisibleGlyph/Geometry, NearViewport, BackgroundThumbnail 순으로 정의합니다. | eviction order fixture 통과. | XI.6.5, XI.7.3 |
 | XVI.5.3 | `[ ]` | glyph, tessellation, image mipmap, thumbnail cache가 공통 budget manager에 usage를 등록하게 합니다. | total usage 일치. | XVI.5.1, XVI.5.2 |
 | XVI.5.4 | `[ ]` | memory pressure event에서 낮은 priority부터 증분 eviction하고 단일 UI thread 구간 2ms를 넘지 않게 chunking합니다. | simulated pressure에서 latency/usage 기준 통과. | XVI.5.3 |

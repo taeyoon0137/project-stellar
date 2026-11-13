@@ -3,6 +3,9 @@
 //! 프로젝트 내용·텍스트·경로 같은 민감 데이터는 [`Sensitive`]에만 담을 수 있고,
 //! 비민감 [`TelemetryEvent`]의 기본 필드에는 넣을 수 없습니다(타입으로 강제).
 
+/// CPU/GPU 메모리 예산 provider와 정규화 bucket (XVI.5.1).
+pub mod memory;
+
 /// 민감 데이터(프로젝트 내용·텍스트·경로) 래퍼.
 ///
 /// telemetry 기본 필드에 직접 넣을 수 없고, [`SensitiveDiagnostic`]를 통해서만 다룹니다.
