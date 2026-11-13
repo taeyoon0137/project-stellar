@@ -22,6 +22,8 @@ pub enum LayoutProperty {
     Content,
     /// Free 부모 안에서의 local position (X.2.1).
     Position,
+    /// local transform (X.2.4).
+    Transform,
 }
 
 impl LayoutProperty {
@@ -35,6 +37,7 @@ impl LayoutProperty {
             LayoutProperty::Height => "height",
             LayoutProperty::Content => "content",
             LayoutProperty::Position => "position",
+            LayoutProperty::Transform => "transform",
         }
     }
 }

@@ -19,7 +19,7 @@ use std::collections::HashMap;
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
-use stellar_core_types::value::{Insets, Length, Percentage};
+use stellar_core_types::value::{Insets, Length, Percentage, Transform2D};
 
 use crate::codec::{Reader, Writer};
 use crate::error::LayoutError;
@@ -105,6 +105,8 @@ pub struct LayoutNode {
     pub content: LayoutContent,
     /// Free 부모 안에서의 위치 anchor(X.2.1, X.2.2). 다른 배치 방식의 자식에서는 무시합니다.
     pub position: FreePosition,
+    /// local transform(X.2.4). 레이아웃 계산에 참여하지 않고 layout rect 확정 뒤 적용합니다.
+    pub transform: Transform2D,
 }
 
 impl LayoutNode {
@@ -119,7 +121,14 @@ impl LayoutNode {
             height: SizingMode::default(),
             content: LayoutContent::None,
             position: FreePosition::default(),
+            transform: Transform2D::identity(),
         }
+    }
+
+    /// local transform을 지정합니다.
+    pub fn with_transform(mut self, transform: Transform2D) -> LayoutNode {
+        self.transform = transform;
+        self
     }
 
     /// Free 부모 안에서의 local position(시작 anchor `(x, y)`)을 지정합니다.
@@ -424,6 +433,10 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
         }
     }
     encode_position(w, &node.position);
+    let (a, b, c, d, tx, ty) = node.transform.components();
+    for component in [a, b, c, d, tx, ty] {
+        w.bytes(&component.to_le_bytes());
+    }
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
@@ -482,6 +495,13 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         }
     };
     let position = decode_position(r)?;
+    let mut components = [0.0f32; 6];
+    for component in &mut components {
+        *component = r.finite("transform")?.get();
+    }
+    let [a, b, c, d, tx, ty] = components;
+    let transform = Transform2D::new(a, b, c, d, tx, ty)
+        .map_err(|_| LayoutError::NonFinite { field: "transform" })?;
     Ok(LayoutNode {
         id,
         children,
@@ -491,6 +511,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         height,
         content,
         position,
+        transform,
     })
 }
 

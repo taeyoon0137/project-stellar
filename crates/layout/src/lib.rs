@@ -36,6 +36,9 @@ pub mod free;
 /// Stack(Flex 계열) 배치 (X.3).
 pub mod stack;
 
+/// local transform 적용 정책 (X.2.4).
+pub mod transform;
+
 /// canonical bytes writer/reader (crate 내부).
 mod codec;
 
