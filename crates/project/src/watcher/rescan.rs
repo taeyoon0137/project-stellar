@@ -19,7 +19,7 @@ use stellar_storage::hash::ContentHash;
 use super::coalesce::{ChangeCoalescer, ExternalChange};
 use super::event::{FileWatchEvent, OverflowReason};
 use super::own_save::{current_pointer_watch_path, OwnSaveLedger};
-use crate::path_resolver::{PathResolver, ResolveError, TargetKind};
+use crate::path_resolver::{PathResolver, ResolveError, TargetKind, WalkIssue};
 
 /// 저장소 영역 밖에서 제외하는 최상위 이름(Git 내부).
 const GIT_DIR: &str = ".git";
@@ -63,6 +63,10 @@ pub struct TrackedFiles {
 
 impl TrackedFiles {
     /// 저장소 영역과 `.git` 밖의 모든 파일을 resolver로 훑어 snapshot을 만듭니다.
+    ///
+    /// 목록을 읽지 못한 하위 디렉터리(권한 없음 등)는 실패로 끝내지 않고 그 디렉터리 경로를
+    /// [`FileFingerprint::Unreadable`]로 기록합니다(읽을 수 있게 되거나 사라지면 변화로 나옵니다).
+    /// 프로젝트 root 목록을 읽지 못할 때만 `Err`입니다.
     pub fn capture(resolver: &PathResolver) -> Result<TrackedFiles, ResolveError> {
         let pointer = current_pointer_watch_path();
         let storage_dir = pointer
@@ -87,6 +91,11 @@ impl TrackedFiles {
                 Err(error) => FileFingerprint::Unreadable(error.to_string()),
             };
             files.insert(entry.path, fingerprint);
+        }
+        for issue in walk.issues {
+            if let WalkIssue::DirectoryUnreadable { path, error } = issue {
+                files.insert(path, FileFingerprint::Unreadable(error.to_string()));
+            }
         }
         Ok(TrackedFiles { files })
     }
@@ -182,6 +191,11 @@ impl OverflowRecovery {
 
     /// rescan을 실행합니다: current pointer를 바로 확인하고 tracked files를 다시 훑어 기준과
     /// 비교합니다. 모두 성공해야 `Synced`가 되며, 실패하면 `RescanPending`을 유지합니다.
+    ///
+    /// 실패할 수 있는 tracked files 캡처를 **먼저** 하고, 그다음 current pointer를 확인합니다. pointer
+    /// 확인은 마지막 관찰 값을 바꾸므로, 캡처가 실패했을 때 이미 확인한 외부 generation을 결과와 함께
+    /// 버리면 재시도에서 `Unchanged`로 보여 다시 보고되지 않습니다. 실패하면 coalescer·기준·상태
+    /// 어느 것도 바꾸지 않습니다(rescan 횟수만 셈).
     pub fn run_rescan(
         &mut self,
         coalescer: &mut ChangeCoalescer,
@@ -189,8 +203,8 @@ impl OverflowRecovery {
         resolver: &PathResolver,
     ) -> Result<RescanOutcome, ResolveError> {
         self.rescans += 1;
-        let pointer_changes = coalescer.rescan_pointer(ledger);
         let current = TrackedFiles::capture(resolver)?;
+        let pointer_changes = coalescer.rescan_pointer(ledger);
         let changed_files = self.baseline.changed_paths(&current);
         self.baseline = current;
         self.state = WatchState::Synced;
@@ -345,6 +359,86 @@ mod tests {
             .run_rescan(&mut coalescer, &fx.ledger, &resolver)
             .is_ok());
         assert_eq!(recovery.state(), WatchState::Synced);
+    }
+
+    #[test]
+    fn failed_rescan_keeps_the_pointer_change_for_the_retry() {
+        // 회귀(검토 지적): 캡처 실패로 rescan이 실패해도, 그 사이 확인했어야 할 외부 generation은
+        // 재시도에서 보고되어야 합니다.
+        let fx = fixture();
+        let resolver = PathResolver::new(&fx.dir.path).unwrap();
+        let mut coalescer =
+            ChangeCoalescer::new(&fx.dir.path, PROJECT, Some(fx.base.manifest_hash), WINDOW);
+        let mut recovery = OverflowRecovery::new(TrackedFiles::capture(&resolver).unwrap());
+        let mut other = SavedGenerationState::new(fx.memory.saved());
+        let external = save_generation(&fx.dir.path, Some(&fx.base), b"lost", &mut other);
+        recovery.on_events(&[FileWatchEvent::Overflow(OverflowReason::EventsDropped)]);
+
+        // 캡처 실패(root를 읽을 수 없음): pointer 관찰 값도 바뀌지 않아야 함.
+        let gone = fx.dir.path.join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        let broken = PathResolver::new(&gone).unwrap();
+        std::fs::remove_dir_all(&gone).unwrap();
+        assert!(recovery
+            .run_rescan(&mut coalescer, &fx.ledger, &broken)
+            .is_err());
+        assert_eq!(coalescer.current_pointer(), Some(fx.base.manifest_hash));
+        assert_eq!(
+            recovery.state(),
+            WatchState::RescanPending(OverflowReason::EventsDropped)
+        );
+
+        let outcome = recovery
+            .run_rescan(&mut coalescer, &fx.ledger, &resolver)
+            .unwrap();
+        assert!(
+            matches!(
+                outcome.pointer_changes.as_slice(),
+                [ExternalChange::Generation { manifest_hash, .. }]
+                    if *manifest_hash == external.manifest_hash
+            ),
+            "{:?}",
+            outcome.pointer_changes
+        );
+        assert_eq!(recovery.state(), WatchState::Synced);
+        assert_eq!(recovery.rescans(), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_subdirectory_does_not_block_the_rescan() {
+        use std::os::unix::fs::PermissionsExt;
+        let fx = fixture();
+        let locked = fx.dir.path.join("assets/locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::write(locked.join("hidden.png"), b"h").unwrap();
+        let resolver = PathResolver::new(&fx.dir.path).unwrap();
+        let mut coalescer =
+            ChangeCoalescer::new(&fx.dir.path, PROJECT, Some(fx.base.manifest_hash), WINDOW);
+        let mut recovery = OverflowRecovery::new(TrackedFiles::capture(&resolver).unwrap());
+        assert!(recovery.baseline.get("assets/locked/hidden.png").is_some());
+
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            // 권한 검사가 없는 환경(root)에서는 건너뜀.
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+        std::fs::write(fx.dir.path.join("stellar.yaml"), b"schema_version: 2\n").unwrap();
+        recovery.on_events(&[FileWatchEvent::Overflow(OverflowReason::QueueFull)]);
+        let outcome = recovery.run_rescan(&mut coalescer, &fx.ledger, &resolver);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let outcome = outcome.unwrap();
+        assert_eq!(recovery.state(), WatchState::Synced);
+        // 읽을 수 없게 된 디렉터리와 그 안의 기존 파일, 그리고 다른 변경이 모두 보고됨.
+        assert_eq!(
+            outcome.changed_files,
+            vec!["assets/locked", "assets/locked/hidden.png", "stellar.yaml"]
+        );
+        assert!(matches!(
+            recovery.baseline.get("assets/locked"),
+            Some(FileFingerprint::Unreadable(_))
+        ));
     }
 
     #[cfg(unix)]

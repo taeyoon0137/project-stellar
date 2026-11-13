@@ -575,6 +575,8 @@ impl PathResolver {
     ///   위치(없으면 가장 짧은 링크 경로)로 한 번 나옵니다.
     /// - 해석할 수 없는 항목(symlink 순환·hop 초과·없는 target 등)은 [`WalkIssue::Unresolvable`]로
     ///   표시하고 나머지 순회를 계속합니다. 링크는 수정·삭제하지 않습니다.
+    /// - 목록을 읽지 못한 하위 디렉터리(권한 없음 등)는 [`WalkIssue::DirectoryUnreadable`]로 표시하고
+    ///   나머지 순회를 계속합니다. root 목록을 읽지 못할 때만 `Err`입니다.
     /// - 비신뢰 프로젝트([`ExternalAccess::MetadataOnly`])에서는 외부 디렉터리를 항목(metadata)으로만
     ///   넣고 목록을 읽지 않으며 [`WalkIssue::ExternalNotTraversed`]로 표시합니다.
     /// - [`ExternalDescent::Stop`]이면 신뢰 상태와 무관하게 외부 디렉터리를 항목으로만 넣고 목록을
@@ -606,7 +608,19 @@ impl PathResolver {
                 continue;
             }
             traversed.insert(dir.target.clone(), dir.path.clone());
-            let names = list_content(&dir.target)?;
+            let names = match list_content(&dir.target) {
+                Ok(names) => names,
+                // root 목록을 못 읽으면 순회 자체가 실패입니다.
+                Err(error) if dir.path.is_empty() => return Err(error),
+                // 하위 디렉터리 하나(권한 없음 등) 때문에 전체 순회를 멈추지 않습니다.
+                Err(error) => {
+                    walk.issues.push(WalkIssue::DirectoryUnreadable {
+                        path: dir.path,
+                        error,
+                    });
+                    continue;
+                }
+            };
             for name in names {
                 let Some(name) = name.to_str() else {
                     walk.issues.push(WalkIssue::NonUtf8Name {
@@ -843,6 +857,13 @@ pub enum WalkIssue {
         /// 그 디렉터리를 읽은 프로젝트 상대 경로(root는 빈 문자열).
         traversed_as: String,
     },
+    /// 목록을 읽지 못한 하위 디렉터리(권한 없음 등, 항목으로는 포함). 순회는 계속합니다.
+    DirectoryUnreadable {
+        /// 프로젝트 상대 경로.
+        path: String,
+        /// 목록 읽기 오류.
+        error: ResolveError,
+    },
     /// 비신뢰 프로젝트라 목록을 읽지 않은 외부 디렉터리(항목으로는 포함).
     ExternalNotTraversed {
         /// 프로젝트 상대 경로.
@@ -864,6 +885,7 @@ impl WalkIssue {
             WalkIssue::Unresolvable { path, .. }
             | WalkIssue::DirectoryCycle { path, .. }
             | WalkIssue::AlreadyTraversed { path, .. }
+            | WalkIssue::DirectoryUnreadable { path, .. }
             | WalkIssue::ExternalNotTraversed { path, .. } => path.clone(),
             WalkIssue::NonUtf8Name { path } => path.to_string_lossy().into_owned(),
         }
@@ -939,6 +961,7 @@ impl SymlinkDiagnostic {
                 Some(target.clone()),
             ),
             WalkIssue::AlreadyTraversed { .. }
+            | WalkIssue::DirectoryUnreadable { .. }
             | WalkIssue::ExternalNotTraversed { .. }
             | WalkIssue::NonUtf8Name { .. } => return None,
         };
@@ -1678,6 +1701,58 @@ mod tests {
             traversed_as: "mm".to_string(),
         };
         assert_eq!(walk.issues, vec![already("deep/er/link"), already("zz")]);
+    }
+
+    /// 디렉터리 권한을 `mode`로 바꿉니다. 이 프로세스가 그래도 목록을 읽을 수 있으면(root 실행 등)
+    /// `false`입니다.
+    #[cfg(unix)]
+    fn make_unlistable(dir: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(dir).is_ok() {
+            std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+            return false;
+        }
+        true
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_subdirectory_is_an_issue_and_the_walk_continues() {
+        use std::os::unix::fs::PermissionsExt;
+        let fx = fixture();
+        std::fs::create_dir_all(fx.project.join("locked")).unwrap();
+        std::fs::write(fx.project.join("locked/hidden.txt"), b"h").unwrap();
+        std::fs::write(fx.project.join("zz.txt"), b"z").unwrap();
+        let locked = fx.project.join("locked");
+        if !make_unlistable(&locked) {
+            return; // 권한 검사가 없는 환경(root)에서는 건너뜀.
+        }
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        let walk = resolver.walk_tree(|_| true);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let walk = walk.unwrap();
+        let paths: Vec<&str> = walk.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            vec!["data", "data/real.txt", "data/sub", "locked", "zz.txt"]
+        );
+        assert!(matches!(
+            walk.issues.as_slice(),
+            [WalkIssue::DirectoryUnreadable {
+                path,
+                error: ResolveError::Io {
+                    kind: io::ErrorKind::PermissionDenied,
+                    ..
+                },
+            }] if path == "locked"
+        ));
+        // root를 읽지 못하면 순회 실패.
+        let gone = fx.project.join("gone");
+        std::fs::create_dir_all(&gone).unwrap();
+        let broken = PathResolver::new(&gone).unwrap();
+        std::fs::remove_dir_all(&gone).unwrap();
+        assert!(broken.walk_tree(|_| true).is_err());
     }
 
     #[cfg(unix)]
