@@ -37,7 +37,10 @@ use crate::grid::{
 use crate::overlay::{decode_overlay, encode_overlay, OverlayLayout};
 use crate::property::LayoutProperty;
 use crate::rounding::LayoutUnit;
-use crate::sizing::{decode_limits, encode_limits, prepare_limits, SizeLimits};
+use crate::sizing::{
+    decode_limits, decode_ratio, encode_limits, encode_ratio, prepare_limits, prepare_ratio,
+    AspectRatio, SizeLimits,
+};
 use crate::sizing::{validate_sizing, SIZING_FILL, SIZING_FIXED, SIZING_HUG, SIZING_PERCENTAGE};
 use crate::stack::{
     decode_stack, decode_stack_wrap, encode_stack, encode_stack_wrap, validate_stack, StackLayout,
@@ -134,6 +137,8 @@ pub struct LayoutNode {
     pub constraints: Vec<Constraint>,
     /// 축별 최소·최대 크기(X.6.2). 모든 배치 방식의 최종 크기에 적용합니다.
     pub limits: SizeLimits,
+    /// 너비 : 높이 비율(X.6.3). 한 축만 definite일 때 다른 축을 정합니다.
+    pub aspect_ratio: Option<AspectRatio>,
 }
 
 impl LayoutNode {
@@ -154,7 +159,14 @@ impl LayoutNode {
             grid: GridItem::default(),
             constraints: Vec::new(),
             limits: SizeLimits::default(),
+            aspect_ratio: None,
         }
+    }
+
+    /// 너비 : 높이 비율을 지정합니다.
+    pub fn with_aspect_ratio(mut self, ratio: AspectRatio) -> LayoutNode {
+        self.aspect_ratio = Some(ratio);
+        self
     }
 
     /// 축별 최소·최대 크기를 지정합니다.
@@ -449,6 +461,7 @@ fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutEr
     validate_sizing(node.id, Axis::Horizontal, node.width, is_root)?;
     validate_sizing(node.id, Axis::Vertical, node.height, is_root)?;
     prepare_limits(node.id, &node.limits)?;
+    prepare_ratio(node.id, node.aspect_ratio)?;
     if let LayoutContent::Intrinsic(content) = node.content {
         length_unit(node.id, LayoutProperty::Content, content.width, false)?;
         length_unit(node.id, LayoutProperty::Content, content.height, false)?;
@@ -525,6 +538,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
     encode_item(w, &node.grid);
     encode_constraints(w, &node.constraints);
     encode_limits(w, &node.limits);
+    encode_ratio(w, node.aspect_ratio);
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
@@ -602,6 +616,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
     let grid = decode_item(r)?;
     let constraints = decode_constraints(r)?;
     let limits = decode_limits(r)?;
+    let aspect_ratio = decode_ratio(r)?;
     Ok(LayoutNode {
         id,
         children,
@@ -617,6 +632,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         grid,
         constraints,
         limits,
+        aspect_ratio,
     })
 }
 

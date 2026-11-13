@@ -28,7 +28,7 @@ use crate::output::{LayoutBox, LayoutDiagnostic, LayoutResult};
 use crate::overlay;
 use crate::property::LayoutProperty;
 use crate::rounding::{LayoutUnit, LayoutUnitError};
-use crate::sizing::{prepare_limits, AxisLimits};
+use crate::sizing::{prepare_limits, prepare_ratio, AxisLimits, PreparedRatio};
 use crate::stack;
 
 /// 입력 전체를 레이아웃합니다.
@@ -120,6 +120,8 @@ pub(crate) struct Prepared {
     pub(crate) flex: PreparedFlex,
     /// 축별 min/max(X.6.2).
     pub(crate) limits: [AxisLimits; 2],
+    /// 너비 : 높이 비율(X.6.3).
+    pub(crate) ratio: Option<PreparedRatio>,
 }
 
 /// 결과 box 조립 전 값.
@@ -229,6 +231,28 @@ impl<'a> Engine<'a> {
             };
             // X.6.2: definite 값은 clamp한 뒤 content box 계산에 씁니다.
             definite[i] = definite[i].map(|value| limits[i].clamp(value));
+        }
+        if let Some(ratio) = prepared.ratio {
+            // X.6.3: 한 축만 definite면 비율로 다른 축을 정하고, 둘 다 indefinite면 가로를
+            // intrinsic(콘텐츠) 크기로 정한 뒤 비율을 적용합니다. 둘 다 definite면 적용하지 않습니다.
+            if definite == [None, None] {
+                let content = self.content_extent(index, [None, None])?;
+                let width = content[0]
+                    .checked_add(padding.sum(Axis::Horizontal).map_err(at(id))?)
+                    .map_err(at(id))?;
+                definite[0] = Some(limits[0].clamp(width));
+            }
+            match definite {
+                [Some(width), None] => {
+                    let height = ratio.height_for(width).map_err(at(id))?;
+                    definite[1] = Some(limits[1].clamp(height.max(LayoutUnit::ZERO)));
+                }
+                [None, Some(height)] => {
+                    let width = ratio.width_for(height).map_err(at(id))?;
+                    definite[0] = Some(limits[0].clamp(width.max(LayoutUnit::ZERO)));
+                }
+                _ => {}
+            }
         }
         let mut resolved = [LayoutUnit::ZERO; 2];
         if definite.iter().any(Option::is_none) {
@@ -377,6 +401,7 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
     let anchors = free::prepare_position(node)?;
     let flex = prepare_flex(node)?;
     let limits = prepare_limits(node.id, &node.limits)?;
+    let ratio = prepare_ratio(node.id, node.aspect_ratio)?;
     Ok(Prepared {
         id: node.id,
         padding,
@@ -385,6 +410,7 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
         anchors,
         flex,
         limits,
+        ratio,
     })
 }
 

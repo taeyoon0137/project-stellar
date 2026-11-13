@@ -32,6 +32,8 @@ pub enum LayoutProperty {
     GridPlacement,
     /// Constraint 부모 안의 등식 제약 (X.5.2).
     Constraints,
+    /// 너비 : 높이 비율 (X.6.3).
+    AspectRatio,
 }
 
 impl LayoutProperty {
@@ -50,6 +52,7 @@ impl LayoutProperty {
             LayoutProperty::Visibility => "visibility",
             LayoutProperty::GridPlacement => "grid-placement",
             LayoutProperty::Constraints => "constraints",
+            LayoutProperty::AspectRatio => "aspect-ratio",
         }
     }
 }

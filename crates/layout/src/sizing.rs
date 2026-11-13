@@ -1,4 +1,4 @@
-//! 축별 크기 결정 방식과 min/max clamp (X.6.1, X.6.2).
+//! 축별 크기 결정 방식, min/max clamp, aspect ratio (X.6.1~X.6.3).
 //!
 //! [`SizingMode`]는 node 한 축의 border-box 크기를 정하는 방식입니다.
 //!
@@ -33,15 +33,23 @@
 //! 씁니다. Stack grow·shrink 분배는 같은 min/max를 freeze 반복에 넣어 분배 결과가 이미 clamp된
 //! 상태가 되게 합니다(X.3.3). `min > max`는 [`LayoutError::InvalidSizing`], 음수는
 //! [`LayoutError::NegativeValue`]입니다.
+//!
+//! # aspect ratio (X.6.3)
+//!
+//! [`AspectRatio`] `w : h`는 두 축 중 **한 축만 definite**일 때 적용합니다: definite 축 값(clamp 후)에서
+//! 다른 축을 `× h / w` 또는 `× w / h`로 정하고(한 번 반올림) 그 축도 clamp합니다. 두 축이 모두
+//! definite면 적용하지 않습니다(각 축 크기 그대로). 두 축이 모두 indefinite(`HugContent` 등)면
+//! 가로를 intrinsic(콘텐츠) 크기로 정해 definite로 만든 뒤 비율로 세로를 정합니다. 순서는 sizing mode →
+//! definite 축 clamp → 비율로 다른 축 → 그 축 clamp입니다.
 
 use stellar_core_types::ids::StableId;
-use stellar_core_types::value::{FiniteF32, Length, Percentage};
+use stellar_core_types::value::{FiniteF32, Length, Percentage, Scalar};
 
 use crate::error::LayoutError;
 use crate::geometry::Axis;
 use crate::input::length_unit;
 use crate::property::LayoutProperty;
-use crate::rounding::LayoutUnit;
+use crate::rounding::{LayoutUnit, LayoutUnitError};
 
 /// 한 축의 크기 결정 방식 (X.6.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -230,6 +238,95 @@ pub(crate) fn decode_limits(r: &mut crate::codec::Reader<'_>) -> Result<SizeLimi
         min_height,
         max_height,
     })
+}
+
+// --- aspect ratio (X.6.3) ---
+
+/// 너비 : 높이 비율 (X.6.3). 두 값 모두 양수입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AspectRatio {
+    /// 너비 쪽 값.
+    pub width: Scalar,
+    /// 높이 쪽 값.
+    pub height: Scalar,
+}
+
+impl AspectRatio {
+    /// `width : height` 비율.
+    pub const fn new(width: Scalar, height: Scalar) -> AspectRatio {
+        AspectRatio { width, height }
+    }
+}
+
+/// 변환된 비율(1/64 정수 `width : height`, 둘 다 양수).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PreparedRatio {
+    pub(crate) width: i64,
+    pub(crate) height: i64,
+}
+
+impl PreparedRatio {
+    /// 너비로부터 높이(`width × h / w`, 한 번 반올림).
+    pub(crate) fn height_for(&self, width: LayoutUnit) -> Result<LayoutUnit, LayoutUnitError> {
+        width.checked_mul_ratio(self.height, self.width)
+    }
+
+    /// 높이로부터 너비(`height × w / h`, 한 번 반올림).
+    pub(crate) fn width_for(&self, height: LayoutUnit) -> Result<LayoutUnit, LayoutUnitError> {
+        height.checked_mul_ratio(self.width, self.height)
+    }
+}
+
+/// 비율을 검증·변환합니다(각 값이 1/64 단위로 0보다 커야 함).
+pub(crate) fn prepare_ratio(
+    node: StableId,
+    ratio: Option<AspectRatio>,
+) -> Result<Option<PreparedRatio>, LayoutError> {
+    let Some(ratio) = ratio else {
+        return Ok(None);
+    };
+    let convert = |value: Scalar| -> Result<i64, LayoutError> {
+        let unit = LayoutUnit::from_px(value.raw()).map_err(|_| LayoutError::OutOfRange {
+            node,
+            property: LayoutProperty::AspectRatio,
+        })?;
+        if unit.raw() <= 0 {
+            return Err(LayoutError::InvalidSizing {
+                node,
+                axis: Axis::Horizontal,
+                reason: "aspect ratio 값은 1/128보다 큰 양수여야 합니다",
+            });
+        }
+        Ok(i64::from(unit.raw()))
+    };
+    Ok(Some(PreparedRatio {
+        width: convert(ratio.width)?,
+        height: convert(ratio.height)?,
+    }))
+}
+
+/// 비율 canonical bytes(flag + width f32 + height f32).
+pub(crate) fn encode_ratio(w: &mut crate::codec::Writer, ratio: Option<AspectRatio>) {
+    match ratio {
+        Some(ratio) => {
+            w.bool(true);
+            w.finite(ratio.width.raw());
+            w.finite(ratio.height.raw());
+        }
+        None => w.bool(false),
+    }
+}
+
+/// 비율 canonical bytes를 읽습니다.
+pub(crate) fn decode_ratio(
+    r: &mut crate::codec::Reader<'_>,
+) -> Result<Option<AspectRatio>, LayoutError> {
+    if !r.bool("aspect ratio flag")? {
+        return Ok(None);
+    }
+    let width = Scalar::from_raw(r.finite("aspect ratio")?);
+    let height = Scalar::from_raw(r.finite("aspect ratio")?);
+    Ok(Some(AspectRatio { width, height }))
 }
 
 #[cfg(test)]
@@ -558,5 +655,136 @@ mod tests {
         let result = run(ContainerLayout::Constraint, vec![constrained]);
         assert_eq!(size_px(&result, 2), (70.0, 10.0));
         assert_eq!(result.get(id(2)).unwrap().local_rect().x(), px(0));
+    }
+
+    fn ratio(w: f32, h: f32) -> AspectRatio {
+        AspectRatio::new(
+            stellar_core_types::value::Scalar::new(w).unwrap(),
+            stellar_core_types::value::Scalar::new(h).unwrap(),
+        )
+    }
+
+    /// 200×80 Free root 안의 비율 자식 하나를 계산해 (너비, 높이) px를 돌려줍니다.
+    fn ratio_child(
+        width: SizingMode,
+        height: SizingMode,
+        aspect: AspectRatio,
+        limits: SizeLimits,
+        content: Option<(f32, f32)>,
+    ) -> (f64, f64) {
+        let mut child = LayoutNode::new(id(2))
+            .with_sizing(width, height)
+            .with_aspect_ratio(aspect)
+            .with_limits(limits);
+        if let Some((w, h)) = content {
+            child = child.with_content(crate::input::LayoutContent::Intrinsic(
+                crate::input::IntrinsicContent {
+                    width: len(w),
+                    height: len(h),
+                    baseline: None,
+                },
+            ));
+        }
+        let result = run_free(vec![child]);
+        size_px(&result, 2)
+    }
+
+    fn run_free(children: Vec<LayoutNode>) -> LayoutResult {
+        let mut root = LayoutNode::new(id(1)).with_fixed_size(len(200.0), len(80.0));
+        for (i, child) in children.iter().enumerate() {
+            root = root.with_child(child.id, key(i as u32 + 1));
+        }
+        let mut nodes = vec![root];
+        nodes.extend(children);
+        compute_layout(&LayoutInput::new(id(1), nodes)).unwrap()
+    }
+
+    /// (가로 sizing, 세로 sizing, intrinsic 콘텐츠, 기대 (너비, 높이)).
+    type RatioCase = (SizingMode, SizingMode, Option<(f32, f32)>, (f64, f64));
+
+    #[test]
+    fn ratio_matrix_fixture() {
+        let two_one = ratio(2.0, 1.0);
+        let none = SizeLimits::default();
+        let fixed = |v: f32| SizingMode::Fixed(len(v));
+        let hug = SizingMode::HugContent;
+        // (가로, 세로, 콘텐츠, 기대 크기).
+        let cases: [RatioCase; 8] = [
+            // 가로만 definite → 세로 = 100 / 2.
+            (fixed(100.0), hug, None, (100.0, 50.0)),
+            // 세로만 definite → 가로 = 30 × 2.
+            (hug, fixed(30.0), None, (60.0, 30.0)),
+            // Fill(200) definite → 세로 100.
+            (SizingMode::Fill, hug, None, (200.0, 100.0)),
+            // Percentage 25% of 200 = 50 → 세로 25.
+            (pct(25.0), hug, None, (50.0, 25.0)),
+            // 세로 Fill(80)만 definite → 가로 160.
+            (hug, SizingMode::Fill, None, (160.0, 80.0)),
+            // 두 축 definite → 비율 미적용.
+            (fixed(100.0), fixed(20.0), None, (100.0, 20.0)),
+            // 두 축 indefinite → 가로 intrinsic 30, 세로 = 15(콘텐츠 높이 40 무시).
+            (hug, hug, Some((30.0, 40.0)), (30.0, 15.0)),
+            // 두 축 indefinite, 콘텐츠 없음 → 0 × 0.
+            (hug, hug, None, (0.0, 0.0)),
+        ];
+        for (width, height, content, expected) in cases {
+            assert_eq!(
+                ratio_child(width, height, two_one, none, content),
+                expected,
+                "{width:?} × {height:?}"
+            );
+        }
+        // 순서: definite 축 clamp 뒤 비율, 그 다음 다른 축 clamp.
+        assert_eq!(
+            ratio_child(
+                fixed(100.0),
+                hug,
+                two_one,
+                limits(None, Some(60.0), None, None),
+                None
+            ),
+            (60.0, 30.0)
+        );
+        assert_eq!(
+            ratio_child(
+                fixed(100.0),
+                hug,
+                two_one,
+                limits(None, None, None, Some(20.0)),
+                None
+            ),
+            (100.0, 20.0)
+        );
+        // 3 : 1, 너비 100 → 높이 33.33 → 2133 subpixel(한 번 반올림).
+        let child = LayoutNode::new(id(2))
+            .with_sizing(fixed(100.0), hug)
+            .with_aspect_ratio(ratio(3.0, 1.0));
+        let result = run_free(vec![child]);
+        assert_eq!(result.get(id(2)).unwrap().local_rect().height().raw(), 2133);
+    }
+
+    #[test]
+    fn ratio_follows_stack_main_size_and_validates() {
+        // 가로 Stack에서 grow로 정해진 main 너비(forced)가 definite → 세로는 비율로.
+        let root = LayoutNode::new(id(1))
+            .with_fixed_size(len(120.0), len(100.0))
+            .with_container(ContainerLayout::Stack(StackLayout::new(Axis::Horizontal)))
+            .with_child(id(2), key(1));
+        let child = LayoutNode::new(id(2))
+            .with_sizing(SizingMode::Fill, SizingMode::HugContent)
+            .with_aspect_ratio(ratio(2.0, 1.0));
+        let input = LayoutInput::new(id(1), vec![root, child]);
+        let result = compute_layout(&input).unwrap();
+        assert_eq!(size_px(&result, 2), (120.0, 60.0));
+        assert_eq!(LayoutInput::decode(&input.encode()).unwrap(), input);
+        // 0·음수·너무 작은 비율 거부.
+        for bad in [ratio(0.0, 1.0), ratio(1.0, -2.0), ratio(0.001, 1.0)] {
+            let input =
+                LayoutInput::new(id(1), vec![LayoutNode::new(id(1)).with_aspect_ratio(bad)]);
+            assert!(
+                matches!(input.validate(), Err(LayoutError::InvalidSizing { .. })),
+                "{bad:?}"
+            );
+        }
     }
 }
