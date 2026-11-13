@@ -55,3 +55,6 @@ pub mod text;
 
 /// Image payload (VI.8).
 pub mod image;
+
+/// Modifier stack (VI.9).
+pub mod modifier;
