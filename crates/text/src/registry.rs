@@ -4,16 +4,19 @@
 //!   출처(Project·System·External)나 경로와 무관하게 같은 face로 봅니다. variation axes는 face를
 //!   바꾸지 않는 instance 설정이라 key에 넣지 않습니다.
 //! - [`FontHandle`]: registry가 발급하는 런타임 handle입니다. 저장하지 않으며 같은 registry
-//!   안에서만 의미가 있습니다.
+//!   안에서만 의미가 있습니다. handle은 발급한 registry의 정체성([`RegistryId`])을 함께 담으므로,
+//!   다른 registry(clone 포함)에 넘기면 index가 맞아도 조회되지 않고 `None`이 됩니다.
 //! - [`FontRegistry`]: face 등록·조회 인터페이스입니다. 같은 key를 다시 등록하면 기존 handle을
 //!   돌려줍니다(dedup). 플랫폼 font discovery(Phase XIII)는 이 인터페이스로 face를 등록합니다.
-//! - [`InMemoryFontRegistry`]: 결정론적 기본 구현입니다. handle은 최초 등록 순서대로 0부터
-//!   발급되고, 조회 경로는 `BTreeMap`이라 실행마다 같은 결과를 냅니다.
+//! - [`InMemoryFontRegistry`]: 결정론적 기본 구현입니다. handle index는 최초 등록 순서대로 0부터
+//!   발급되고, 조회 경로는 `BTreeMap`이라 실행마다 같은 결과를 냅니다. registry 정체성은 process
+//!   안에서만 고유한 런타임 값이며 저장·비교 결과(face 순서, index)에 영향을 주지 않습니다.
 //!
 //! registry는 폰트 bytes를 읽거나 hash를 계산하지 않습니다. 호출자가 계산한 key만 다룹니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::font::{FontFaceRef, FontFileHash, FontSource};
 
@@ -56,14 +59,42 @@ impl fmt::Display for FontFaceKey {
     }
 }
 
-/// registry가 발급한 런타임 face handle. 저장하지 않습니다.
+/// registry 런타임 정체성. process 안에서 registry 인스턴스마다 고유합니다. 저장하지 않습니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct FontHandle(u32);
+pub struct RegistryId(u64);
+
+impl RegistryId {
+    /// 새 고유 정체성을 발급합니다. 값은 실행 순서에 따라 달라지므로 저장·golden에 쓰지 않습니다.
+    pub fn fresh() -> RegistryId {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        // 정체성은 고유성만 필요하므로 Relaxed로 충분합니다. u64는 실사용에서 넘치지 않습니다.
+        RegistryId(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+/// registry가 발급한 런타임 face handle. 저장하지 않습니다.
+///
+/// 발급한 registry의 정체성을 포함하므로 다른 registry의 handle과 index가 같아도 같지 않습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FontHandle {
+    registry: RegistryId,
+    index: u32,
+}
 
 impl FontHandle {
-    /// raw 값(진단·테스트용).
+    /// registry 구현이 handle을 만듭니다. `index`는 그 registry 안의 위치입니다.
+    pub const fn new(registry: RegistryId, index: u32) -> FontHandle {
+        FontHandle { registry, index }
+    }
+
+    /// 발급한 registry의 정체성.
+    pub const fn registry(&self) -> RegistryId {
+        self.registry
+    }
+
+    /// registry 안 index(진단·테스트용). 최초 등록 순서대로 0부터입니다.
     pub const fn raw(&self) -> u32 {
-        self.0
+        self.index
     }
 }
 
@@ -147,12 +178,36 @@ pub trait FontRegistry {
 }
 
 /// 결정론적 메모리 registry (X.8.2 기본 구현).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Clone`은 내용을 복사하고 **새 정체성**을 줍니다. 원본과 clone은 이후 따로 등록할 수 있으므로,
+/// 한쪽 handle이 다른 쪽의 다른 face를 가리키지 않게 합니다. `PartialEq`는 내용(face 순서·출처·
+/// 용량)만 비교합니다.
+#[derive(Debug)]
 pub struct InMemoryFontRegistry {
+    id: RegistryId,
     faces: Vec<RegisteredFace>,
-    index: BTreeMap<FontFaceKey, FontHandle>,
+    index: BTreeMap<FontFaceKey, u32>,
     max_faces: u32,
 }
+
+impl Clone for InMemoryFontRegistry {
+    fn clone(&self) -> InMemoryFontRegistry {
+        InMemoryFontRegistry {
+            id: RegistryId::fresh(),
+            faces: self.faces.clone(),
+            index: self.index.clone(),
+            max_faces: self.max_faces,
+        }
+    }
+}
+
+impl PartialEq for InMemoryFontRegistry {
+    fn eq(&self, other: &InMemoryFontRegistry) -> bool {
+        self.faces == other.faces && self.max_faces == other.max_faces
+    }
+}
+
+impl Eq for InMemoryFontRegistry {}
 
 impl Default for InMemoryFontRegistry {
     fn default() -> InMemoryFontRegistry {
@@ -169,18 +224,25 @@ impl InMemoryFontRegistry {
     /// 최대 face 수를 제한한 빈 registry를 만듭니다.
     pub fn with_max_faces(max_faces: u32) -> InMemoryFontRegistry {
         InMemoryFontRegistry {
+            id: RegistryId::fresh(),
             faces: Vec::new(),
             index: BTreeMap::new(),
             max_faces,
         }
     }
 
+    /// 이 registry의 정체성.
+    pub fn id(&self) -> RegistryId {
+        self.id
+    }
+
     /// 등록된 face를 handle 순서(최초 등록 순서)로 순회합니다.
     pub fn iter(&self) -> impl Iterator<Item = (FontHandle, &RegisteredFace)> + '_ {
+        // face 수는 등록 경로에서 u32 범위로 제한됩니다.
         self.faces
             .iter()
             .enumerate()
-            .map(|(i, face)| (FontHandle(i as u32), face))
+            .map(|(i, face)| (FontHandle::new(self.id, i as u32), face))
     }
 }
 
@@ -190,9 +252,9 @@ impl FontRegistry for InMemoryFontRegistry {
         source: FontSource,
         key: FontFaceKey,
     ) -> Result<FontHandle, FontRegistryError> {
-        if let Some(&handle) = self.index.get(&key) {
-            self.faces[handle.0 as usize].sources.insert(source);
-            return Ok(handle);
+        if let Some(&index) = self.index.get(&key) {
+            self.faces[index as usize].sources.insert(source);
+            return Ok(FontHandle::new(self.id, index));
         }
         let next = u32::try_from(self.faces.len())
             .ok()
@@ -200,21 +262,25 @@ impl FontRegistry for InMemoryFontRegistry {
             .ok_or(FontRegistryError::CapacityExceeded {
                 max_faces: self.max_faces,
             })?;
-        let handle = FontHandle(next);
         self.faces.push(RegisteredFace {
             key,
             sources: BTreeSet::from([source]),
         });
-        self.index.insert(key, handle);
-        Ok(handle)
+        self.index.insert(key, next);
+        Ok(FontHandle::new(self.id, next))
     }
 
     fn lookup(&self, key: FontFaceKey) -> Option<FontHandle> {
-        self.index.get(&key).copied()
+        self.index
+            .get(&key)
+            .map(|&index| FontHandle::new(self.id, index))
     }
 
     fn face(&self, handle: FontHandle) -> Option<&RegisteredFace> {
-        self.faces.get(handle.0 as usize)
+        if handle.registry != self.id {
+            return None;
+        }
+        self.faces.get(handle.index as usize)
     }
 
     fn len(&self) -> usize {
@@ -302,13 +368,13 @@ mod tests {
         let mut registry = InMemoryFontRegistry::default();
         assert!(registry.is_empty());
         assert_eq!(registry.lookup(key(1, 0)), None);
-        assert_eq!(registry.face(FontHandle(0)), None);
+        assert_eq!(registry.face(FontHandle::new(registry.id(), 0)), None);
         let handle = registry
             .register(FontSource::Project, key(1, 0))
             .expect("등록");
         assert_eq!(registry.lookup(key(1, 0)), Some(handle));
         assert!(!registry.is_empty());
-        assert_eq!(registry.face(FontHandle(1)), None);
+        assert_eq!(registry.face(FontHandle::new(registry.id(), 1)), None);
     }
 
     #[test]
@@ -347,6 +413,37 @@ mod tests {
         assert!(FontRegistryError::CapacityExceeded { max_faces: 1 }
             .to_string()
             .contains("최대 1개"));
+    }
+
+    #[test]
+    fn handle_from_another_registry_is_rejected() {
+        let mut a = InMemoryFontRegistry::new();
+        let mut b = InMemoryFontRegistry::new();
+        let ha = a.register(FontSource::Project, key(1, 0)).expect("a");
+        let hb = b.register(FontSource::Project, key(2, 0)).expect("b");
+        // 두 registry 모두 첫 handle의 index는 0이지만 서로 다른 handle입니다.
+        assert_eq!((ha.raw(), hb.raw()), (0, 0));
+        assert_ne!(ha, hb);
+        // 다른 registry가 발급한 handle은 index가 맞아도 조회되지 않습니다.
+        assert_eq!(b.face(ha), None);
+        assert_eq!(a.face(hb), None);
+        assert_eq!(b.face(hb).map(RegisteredFace::key), Some(key(2, 0)));
+        assert_eq!(a.face(ha).map(RegisteredFace::key), Some(key(1, 0)));
+
+        // clone은 내용은 같지만 새 정체성을 받습니다. 이후 두 registry가 따로 등록해도 한쪽 handle이
+        // 다른 쪽의 엉뚱한 face를 가리키지 않습니다.
+        let mut c = a.clone();
+        assert_eq!(c, a);
+        assert_eq!(c.face(ha), None);
+        let hc = c.lookup(key(1, 0)).expect("clone도 같은 key를 가짐");
+        assert_ne!(hc, ha);
+        assert_eq!(c.face(hc).map(RegisteredFace::key), Some(key(1, 0)));
+        let a_next = a.register(FontSource::System, key(3, 0)).expect("a 다음");
+        let c_next = c.register(FontSource::System, key(4, 0)).expect("c 다음");
+        assert_eq!((a_next.raw(), c_next.raw()), (1, 1));
+        assert_eq!(c.face(a_next), None);
+        assert_eq!(a.face(c_next), None);
+        assert_ne!(c, a);
     }
 
     #[test]
