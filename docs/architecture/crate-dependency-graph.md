@@ -31,6 +31,7 @@
 | `stellar-accessibility` | core-types |
 | `stellar-diagnostics` | core-types |
 | `stellar-export` | core-types, scene |
+| `stellar-local-ipc` | core-types |
 | `stellar-terminal` | core-types |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core |
 | `stellar-ffi` | core-types, runtime |
@@ -73,6 +74,7 @@ graph TD
   accessibility --> core_types
   diagnostics --> core_types
   export --> core_types
+  local_ipc --> core_types
   export --> scene
   terminal --> core_types
   runtime --> core_types

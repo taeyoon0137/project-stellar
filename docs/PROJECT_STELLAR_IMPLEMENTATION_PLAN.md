@@ -1846,7 +1846,7 @@ tools/xtask/
 | XIX.1.2 | `[x]` | 브리지가 실행 중 Stellar 앱을 찾는 로컬 IPC endpoint registry를 구현합니다. network port는 열지 않습니다. | app 없음/한 개/여러 개 fixture 통과. | XIX.1.1 |
 | XIX.1.3 | `[x]` | bridge↔app IPC에 session nonce와 OS 사용자 identity 검증을 적용합니다. | 다른 사용자·재사용 nonce 거부. | XIX.1.2 |
 | XIX.1.4 | `[x]` | 한 bridge process는 한 MCP 연결 세션만 담당합니다. bridge가 끝나면 앱은 연결 종료 event를 한 번 기록합니다. 외부 클라이언트 세션은 그 시점에 XIX.6.4 종료 절차(권한·lease 해제, 자동 rollback 없음)를 시작하고, 앱이 시작한 세션의 권한·lease 수명은 AgentSession(XXIX.2.8)이 정합니다. | `[DEV-MAC]` 외부 bridge disconnect 후 session permission 0, 연결 종료 event 1회, 문서 revision 변화 0. | XIX.1.3 |
-| XIX.1.5 | `[x]` | MCP protocol version을 config에 고정하고 unsupported client version에 명확한 오류를 반환합니다. | version matrix fixture. | XIX.1.1 |
+| XIX.1.5 | `[x]` | MCP protocol version을 config에 고정하고, 지원하지 않는 client version 요청에는 MCP 수명주기 명세대로 지원하는 version으로 응답합니다(client가 계속할지 정함). 형식이 틀린 요청은 명확한 오류를 반환합니다. | version matrix fixture. | XIX.1.1 |
 | XIX.1.6 | `[x]` | 앱 쪽 IPC가 데이터 교환 전에 연결 상대를 인증합니다(ADR-0005 §5, 아키텍처 37 신뢰 경계). 인증 기준과 방법은 Apple 공식 문서를 근거로 정해 보고서에 기록하고, 인증은 UI·Document 스레드 밖에서 합니다. | `[DEV-MAC]` 인증 실패 fixture에서 데이터 교환 0, UI·Document 스레드 호출 0. | XIX.1.3 |
 | XIX.1.7 | `[x]` | `stellar-mcp` 쪽 IPC가 데이터 교환 전에 연결 상대를 XIX.1.6과 같은 기준으로 인증합니다(ADR-0005 §5). 실패 시 종료 코드는 XXIV.1.2 표를 따릅니다. | `[DEV-MAC]` 인증 실패 fixture에서 데이터 교환 0, 종료 코드가 XXIV.1.2 표와 일치. | XIX.1.6, XXIV.1.2 |
 | XIX.1.8 | `[ ]` | 앱이 시작한 bridge를 그 세션에만 결합합니다(아키텍처 31.3, ADR-0005 §5). 세션이 끝나면 결합 수단은 무효가 되고, 결합은 권한을 부여하지 않으며 XIX.3 승인을 대체하지 않습니다. 결합 수단과 검증 방법은 Apple 공식 문서와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 다른 세션·종료된 세션 결합 거부, 결합만으로 얻는 권한 0. | XIX.1.3, XVI.7.5 |

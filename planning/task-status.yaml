@@ -6323,34 +6323,58 @@ tasks:
     verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIII.7.2"
     title: "에셋 크기·확장자 기반 LFS 권고 정책을 config에서 읽고 import 후 경고만 생성합니다. 자동 `.gitattributes` 수정은 하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.5.7"
       - "XIII.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.7.2.md"
+    commit: "bf29d5386197e7868c4e417d818e0ebdb1579ecb"
+    report: "docs/task-reports/XIII.7.2.md"
+    verified_at: "2026-11-14T03:30:15+09:00"
   - id: "XIII.7.3"
     title: "사용자 승인 API가 호출된 경우에만 `git lfs track` 또는 동등 시스템 Git 명령으로 `.gitattributes`를 수정합니다. 직접 파일 문법을 재구현하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.7.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.7.3.md"
+    commit: "4a4f102057d1fae238f1789007a9859f6d32c5cf"
+    report: "docs/task-reports/XIII.7.3.md"
+    verified_at: "2026-11-14T03:30:15+09:00"
   - id: "XIII.7.4"
     title: "기존 history migration은 지원하지 않고 요청 시 UnsupportedOperation을 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.7.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.7.4.md"
+    commit: "548cd7cd4a137e81f30c44ce6bf038df740e5cda"
+    report: "docs/task-reports/XIII.7.4.md"
+    verified_at: "2026-11-14T03:30:15+09:00"
   - id: "XIII.7.5"
     title: "LFS pointer만 있고 object가 없는 asset을 missing LFS diagnostic으로 구분합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.7.1"
       - "XIII.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.7.5.md"
+    commit: "536170a40a368c25754f1eebd2dfb7a815b79f10"
+    report: "docs/task-reports/XIII.7.5.md"
+    verified_at: "2026-11-14T03:30:15+09:00"
   - id: "XIII.8.1"
     title: "dirty document revision이 바뀔 때 recovery snapshot write를 debounce해 OS app data에 기록합니다. project Git 폴더에는 기록하지 않습니다."
     status: not_started
@@ -6475,12 +6499,18 @@ tasks:
     verified_at: "2026-11-14T00:38:30+09:00"
   - id: "XIV.1.6"
     title: "Git command trace에는 command kind, duration, exit code만 기록하고 URL, branch, path, commit hash는 telemetry에서 제외합니다. 로컬 debug log도 redaction 규칙을 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.3.2"
       - "XIV.1.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.1.6.md"
+    commit: "2c4b3acbe4608896306f76569e63c4fde86d0645"
+    report: "docs/task-reports/XIV.1.6.md"
+    verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XIV.2.1"
     title: "`git status --porcelain=v2 -z --branch` parser를 구현합니다. ordinary, rename/copy, unmerged, untracked, ignored를 구분합니다."
     status: verified
@@ -7162,11 +7192,12 @@ tasks:
       - DEV-MAC
   - id: "XIV.14.1"
     title: "임시 local bare repo와 working repo를 만드는 Git fixture harness를 작성합니다. 외부 네트워크를 사용하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIV.1.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIV.14.1.md"
   - id: "XIV.14.2"
     title: "partial same-chunk property staging, unstage, commit scenario를 fixture로 만듭니다."
     status: not_started
@@ -7620,32 +7651,51 @@ tasks:
       - DEV-MAC
   - id: "XVI.3.1"
     title: "1만, 20만, 프로젝트 전체 100만 node synthetic fixture generator를 구현합니다. 파일을 직접 Git에 대량 저장하지 않고 seed+generator version으로 재현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.10.5"
       - "V.6.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.3.1.md"
+    commit: "1c69754c816b849e9607bde756bd5959ffc3e159"
+    report: "docs/task-reports/XVI.3.1.md"
+    verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XVI.3.2"
     title: "2만 visible node, 5만 component instance, 중첩 64 fixture를 각각 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.2.2"
       - "VI.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.3.2.md"
+    commit: "ed091c24df1dc6bd68769066ce7b0275628db357"
+    report: "docs/task-reports/XVI.3.2.md"
+    verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XVI.3.3"
     title: "text-heavy, image-heavy, effect-heavy, token-heavy, constraint-heavy fixture를 분리합니다."
-    status: not_started
+    status: reported_done
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.3.3.md"
   - id: "XVI.3.4"
     title: "project asset 20GB는 CI에 실제 포함하지 않고 sparse synthetic asset provider와 별도 reference device test data manifest로 구성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.3.4.md"
+    commit: "48684c4c2899d10c991507762b922ebd168ccd66"
+    report: "docs/task-reports/XVI.3.4.md"
+    verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XVI.4.1"
     title: "`config/performance-budgets.yaml`에 T0~T5 단계 목표·상한, p50/p95/p99, GPU p99, queue depth를 기록합니다."
     status: not_started
@@ -7692,9 +7742,15 @@ tasks:
       - DEV-MAC
   - id: "XVI.5.1"
     title: "CPU/GPU memory budget provider interface를 정의하고 OS별 available memory 정보를 normalized bucket으로 반환합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.5.1.md"
+    commit: "31843df0d58547ef126acc2ad84ca6658807d289"
+    report: "docs/task-reports/XVI.5.1.md"
+    verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XVI.5.2"
     title: "cache priority를 Document/CurrentScene(비축출), VisibleGlyph/Geometry, NearViewport, BackgroundThumbnail 순으로 정의합니다."
     status: not_started
@@ -8052,60 +8108,108 @@ tasks:
       - DEV-MAC
   - id: "XVIII.1.1"
     title: "`TerminalSessionId`, profile, cwd, environment allowlist, process state를 정의합니다. project 저장·recovery snapshot에는 포함하지 않습니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVIII.1.1.md"
+    commit: "d166c72733581344890ddfd15fe1c383857b877b"
+    report: "docs/task-reports/XVIII.1.1.md"
+    verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XVIII.1.2"
     title: "프로젝트 창당 여러 terminal session registry를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVIII.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVIII.1.2.md"
+    commit: "da5ac960552c6f989a882688360a1c465889ca6e"
+    report: "docs/task-reports/XVIII.1.2.md"
+    verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.1.3"
     title: "terminal cwd는 project root 또는 사용자가 선택한 worktree root를 preset으로 제공하고 임의 cwd도 명시 입력으로 허용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.1.2"
       - "XVIII.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVIII.1.3.md"
+    commit: "3243657bb0816963897c0105f05e7b383ebeaff9"
+    report: "docs/task-reports/XVIII.1.3.md"
+    verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.1.4"
     title: "terminal은 trusted project에서만 시작되게 capability check를 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVI.7.1"
       - "XVIII.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVIII.1.4.md"
+    commit: "79abf87d0f22c1f744a78146840e85a2de716d87"
+    report: "docs/task-reports/XVIII.1.4.md"
+    verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.2.1"
     title: "POSIX PTY create와 child process spawn wrapper를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVIII.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVIII.2.1.md"
+    commit: "5da58ea0a1b956a6345ee8115dcaba928da46e3e"
+    report: "docs/task-reports/XVIII.2.1.md"
+    verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.2.2"
     title: "사용자 기본 shell과 login/non-login profile을 설정에서 선택하게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVIII.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVIII.2.2.md"
+    commit: "44a231a906c17e72968f03f4e580d281dd76bd63"
+    report: "docs/task-reports/XVIII.2.2.md"
+    verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.2.3"
     title: "resize를 winsize ioctl로 전달합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVIII.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVIII.2.3.md"
+    commit: "d268d2960f99c4f50dabf45a209b863399206967"
+    report: "docs/task-reports/XVIII.2.3.md"
+    verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.2.4"
     title: "child exit, signal, cancellation, app close 시 process tree 정리를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVIII.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVIII.2.4.md"
+    commit: "47adb5f1d8bb4031ecd73609595e8220635ebebc"
+    report: "docs/task-reports/XVIII.2.4.md"
+    verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.3.1"
     title: "ConPTY create와 child process spawn wrapper를 구현합니다. 기본 profile은 PowerShell입니다."
     status: blocked
@@ -8168,11 +8272,17 @@ tasks:
       - DEV-MAC
   - id: "XVIII.4.5"
     title: "일반 terminal과 특정 worktree terminal의 header metadata를 분리 표시할 data model을 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XVIII.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVIII.4.5.md"
+    commit: "c8a3dcf9c6bb4ed837664641d177e47b3d85c2e5"
+    report: "docs/task-reports/XVIII.4.5.md"
+    verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.4.6"
     title: "창 종료 시 terminal을 복원하지 않고 종료하며 recovery snapshot에 output/process를 넣지 않는 검사를 추가합니다."
     status: not_started
@@ -8236,13 +8346,19 @@ tasks:
     verified_at: "2026-11-14T01:09:48+09:00"
   - id: "XIX.1.4"
     title: "한 bridge process는 한 MCP 연결 세션만 담당합니다. bridge가 끝나면 앱은 연결 종료 event를 한 번 기록합니다. 외부 클라이언트 세션은 그 시점에 XIX.6.4 종료 절차(권한·lease 해제, 자동 rollback 없음)를 시작하고, 앱이 시작한 세션의 권한·lease 수명은 AgentSession(XXIX.2.8)이 정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.1.4.md"
+    commit: "312bbc4ef5fcf0ce08514680fc043f9aab073b91"
+    report: "docs/task-reports/XIX.1.4.md"
+    verified_at: "2026-11-14T03:30:18+09:00"
   - id: "XIX.1.5"
-    title: "MCP protocol version을 config에 고정하고 unsupported client version에 명확한 오류를 반환합니다."
+    title: "MCP protocol version을 config에 고정하고, 지원하지 않는 client version 요청에는 MCP 수명주기 명세대로 지원하는 version으로 응답합니다(client가 계속할지 정함). 형식이 틀린 요청은 명확한 오류를 반환합니다."
     status: verified
     depends_on:
       - "XIX.1.1"
@@ -8256,19 +8372,31 @@ tasks:
     verified_at: "2026-11-14T01:09:48+09:00"
   - id: "XIX.1.6"
     title: "앱 쪽 IPC가 데이터 교환 전에 연결 상대를 인증합니다(ADR-0005 §5, 아키텍처 37 신뢰 경계). 인증 기준과 방법은 Apple 공식 문서를 근거로 정해 보고서에 기록하고, 인증은 UI·Document 스레드 밖에서 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.1.6.md"
+    commit: "0b6bb91923d4ae5769e3d8a3a2b55b2ef5007b12"
+    report: "docs/task-reports/XIX.1.6.md"
+    verified_at: "2026-11-14T03:30:18+09:00"
   - id: "XIX.1.7"
     title: "`stellar-mcp` 쪽 IPC가 데이터 교환 전에 연결 상대를 XIX.1.6과 같은 기준으로 인증합니다(ADR-0005 §5). 실패 시 종료 코드는 XXIV.1.2 표를 따릅니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.1.6"
       - "XXIV.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.1.7.md"
+    commit: "a75e63d72266d2a66eb8c448a146d95221c57494"
+    report: "docs/task-reports/XIX.1.7.md"
+    verified_at: "2026-11-14T03:30:18+09:00"
   - id: "XIX.1.8"
     title: "앱이 시작한 bridge를 그 세션에만 결합합니다(아키텍처 31.3, ADR-0005 §5). 세션이 끝나면 결합 수단은 무효가 되고, 결합은 권한을 부여하지 않으며 XIX.3 승인을 대체하지 않습니다. 결합 수단과 검증 방법은 Apple 공식 문서와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다."
     status: not_started
@@ -8279,11 +8407,17 @@ tasks:
       - DEV-MAC
   - id: "XIX.1.9"
     title: "`stellar-mcp`가 표준 입력 EOF나 부모 프로세스 종료를 감지하면 스스로 종료합니다. 앱은 이를 연결 종료로 처리하고 XIX.1.4를 따릅니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.1.9.md"
+    commit: "873fc6702e766dd69bb0efe78e54613b360b09ba"
+    report: "docs/task-reports/XIX.1.9.md"
+    verified_at: "2026-11-14T03:30:18+09:00"
   - id: "XIX.2.1"
     title: "read resources에 project structure, current document, selection, components, tokens, target profile, Git status를 정의합니다."
     status: not_started
@@ -8620,11 +8754,17 @@ tasks:
       - DEV-MAC
   - id: "XIX.9.8"
     title: "MCP 클라이언트 등록에 필요한 정보를 제공하되 다른 도구의 설정은 바꾸지 않습니다(ADR-0005 §3). 제공 방식은 MCP 명세를 근거로 정해 보고서에 기록합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIX.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIX.9.8.md"
+    commit: "8905511114da61184f92a19137d1ecebf69b4341"
+    report: "docs/task-reports/XIX.9.8.md"
+    verified_at: "2026-11-14T03:30:18+09:00"
   - id: "XIX.9.9"
     title: "tool 결과 종류와 `stellar`·`stellar-mcp` 종료 코드의 대응을 XXIV.1.2 종료 코드 표에 맞춰 고정합니다."
     status: not_started
@@ -9063,23 +9203,41 @@ tasks:
       - DEV-MAC
   - id: "XXIII.1.1"
     title: "SourceRef에 branch, commit, tag, worktree, HEAD, Index, WorkingTree를 정의합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.1.1.md"
+    commit: "a720d97c641c31be5d2300ff5f9f2fd48eff6a71"
+    report: "docs/task-reports/XXIII.1.1.md"
+    verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XXIII.1.2"
     title: "두 source의 공통 Git history가 있으면 시스템 Git `merge-base`로 base를 구합니다. 없으면 two-way comparison mode로 명시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIII.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.1.2.md"
+    commit: "96baa49e1e896abd0df1febffac2b6da14572009"
+    report: "docs/task-reports/XXIII.1.2.md"
+    verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XXIII.1.3"
     title: "Source A/B/Base snapshot을 SnapshotProvider로 materialize하고 원본 worktree를 수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.2.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIII.1.3.md"
+    commit: "309ae3717ce0e0cbd8b43a9e20deb011fd98ea0b"
+    report: "docs/task-reports/XXIII.1.3.md"
+    verified_at: "2026-11-14T03:30:16+09:00"
   - id: "XXIII.2.1"
     title: "SemanticMergeEngine 결과를 독립 `CandidateSnapshot C`로 생성합니다."
     status: not_started
@@ -9222,11 +9380,17 @@ tasks:
       - DEV-MAC
   - id: "XXIV.4.1"
     title: "사용자가 부르는 명령 이름을 `stellar`로 고정합니다(2026-11-14 제품 소유자 결정). `stellar-cli` package에 `[[bin]] name = \"stellar\"`를 추가하고 package·library 이름 `stellar-cli`는 유지합니다. help·usage·stderr 진단 접두어를 `stellar`로 바꾸고, XXIV.1.2 JSON 결과 schema 식별자와 fixture는 바꾸지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXIV.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXIV.4.1.md"
+    commit: "48a6b75472f337ea65c22b8a5e81b839120ce82e"
+    report: "docs/task-reports/XXIV.4.1.md"
+    verified_at: "2026-11-14T03:30:18+09:00"
   - id: "XXIV.4.2"
     title: "headless 조회·편집 공용 library crate `stellar-ops`(`crates/ops`)를 추가하고 crate graph 정책과 문서에 등록합니다. 의존은 project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics만 허용하고 local-ipc, agent-protocol, mcp-core, agent-host, ffi는 금지합니다. 앱 없이 프로젝트를 열어 revision을 포함한 읽기 전용 snapshot을 반환합니다."
     status: not_started
