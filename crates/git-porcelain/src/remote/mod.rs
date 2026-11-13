@@ -21,6 +21,9 @@ pub mod github;
 /// 새 GitHub remote 최초 연결 검사와 등록(XIV.9.3~XIV.9.4).
 pub mod connect;
 
+/// 기존 remote로 push(XIV.9.5~).
+pub mod push;
+
 /// URL이 들어갈 수 있는 remote 명령 실패(stderr는 자격 증명을 가린 텍스트만 보존).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteError {
