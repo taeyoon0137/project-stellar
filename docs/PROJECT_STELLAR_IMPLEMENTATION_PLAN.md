@@ -1791,7 +1791,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XVIII.1.1 | `[ ]` | `TerminalSessionId`, profile, cwd, environment allowlist, process state를 정의합니다. project 저장·recovery snapshot에는 포함하지 않습니다. | round-trip은 세션 메모리 전용. | G8 |
+| XVIII.1.1 | `[x]` | `TerminalSessionId`, profile, cwd, environment allowlist, process state를 정의합니다. project 저장·recovery snapshot에는 포함하지 않습니다. | round-trip은 세션 메모리 전용. | G8 |
 | XVIII.1.2 | `[ ]` | 프로젝트 창당 여러 terminal session registry를 구현합니다. | 20 session create/close 누수 없음. | XVIII.1.1 |
 | XVIII.1.3 | `[ ]` | terminal cwd는 project root 또는 사용자가 선택한 worktree root를 preset으로 제공하고 임의 cwd도 명시 입력으로 허용합니다. | cwd validation fixture 통과. | XIV.1.2, XVIII.1.1 |
 | XVIII.1.4 | `[ ]` | terminal은 trusted project에서만 시작되게 capability check를 연결합니다. | untrusted spawn 0. | XVI.7.1, XVIII.1.2 |
