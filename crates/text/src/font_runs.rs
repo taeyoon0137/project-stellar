@@ -9,6 +9,9 @@
 //!   하나도 없으면 run은 face 없이 남습니다.
 //! - [`shape_font_runs`]: run마다 shaping하고, shaping 결과 `.notdef` glyph가 나온 cluster도 missing
 //!   으로 보존합니다(cmap에는 있지만 glyph가 없는 경우 등).
+//! - **feature·variation (X.9.6)**: style의 [`ShapingStyle`] feature를 run shaping에 넘기고, variation은
+//!   선택된 chain 항목([`crate::font::FontFaceRef`])의 axes 위에 style axes를 덮어(같은 tag는 style 우선)
+//!   face instance를 만듭니다.
 //! - Default_Ignorable 문자(ZWJ, variation selector, BiDi 제어 등)는 coverage 판단에서 제외합니다.
 //!   무시 문자만으로 된 cluster는 앞 cluster의 face를 따릅니다.
 
@@ -19,9 +22,41 @@ use std::ops::Range;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::fallback::{FallbackSelection, ResolvedFallbackChain};
+use crate::font::FontVariation;
 use crate::itemize::TextItem;
 use crate::registry::FontHandle;
-use crate::shaping::{shape, FontFace, GlyphId, ShapeError, ShapeRequest, ShapedRun};
+use crate::shaping::{
+    canonical_features, canonical_variations, shape, FontFace, FontFeature, GlyphId, ShapeError,
+    ShapeRequest, ShapedRun,
+};
+
+/// style 하나의 OpenType feature·variation 설정 (X.9.6). 문서 style run(VI.7.2)의 feature·variation을
+/// 옮긴 값이며 canonical 형식(tag 오름차순, tag당 하나, 마지막 값 우선)입니다.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct ShapingStyle {
+    features: Vec<FontFeature>,
+    variations: Vec<FontVariation>,
+}
+
+impl ShapingStyle {
+    /// canonical 형식으로 만듭니다.
+    pub fn new(features: Vec<FontFeature>, variations: Vec<FontVariation>) -> ShapingStyle {
+        ShapingStyle {
+            features: canonical_features(features),
+            variations: canonical_variations(variations),
+        }
+    }
+
+    /// feature(정렬됨).
+    pub fn features(&self) -> &[FontFeature] {
+        &self.features
+    }
+
+    /// variation(정렬됨).
+    pub fn variations(&self) -> &[FontVariation] {
+        &self.variations
+    }
+}
 
 /// registry handle에 대응하는 로드된 face를 주는 저장소.
 pub trait FaceSource {
@@ -281,33 +316,77 @@ pub struct ShapedFontRun {
     pub shaped: Option<ShapedRun>,
 }
 
-/// font run마다 item의 script·방향·언어로 shaping하고, `.notdef` cluster를 missing에 더합니다.
+/// font run마다 item의 script·방향·언어와 style feature·variation으로 shaping하고, `.notdef` cluster를
+/// missing에 더합니다.
 ///
-/// 반환하는 missing 목록은 할당 단계 missing과 shaping 단계 missing을 합쳐 시작 offset 오름차순으로
-/// 정렬하고, 같은 범위는 할당 단계 원인 하나만 남깁니다.
+/// `chains[style]`·`styles[style]`이 item style의 fallback chain과 shaping 설정입니다. 반환하는 missing
+/// 목록은 할당 단계 missing과 shaping 단계 missing을 합쳐 시작 offset 오름차순으로 정렬하고, 같은
+/// 범위는 할당 단계 원인 하나만 남깁니다.
 pub fn shape_font_runs<S: FaceSource + ?Sized>(
     text: &str,
     items: &[TextItem],
     assignment: &FontAssignment,
+    chains: &[ResolvedFallbackChain<'_>],
+    styles: &[ShapingStyle],
     faces: &S,
 ) -> Result<(Vec<ShapedFontRun>, Vec<MissingGlyphCluster>), FontRunError> {
     let mut missing = assignment.missing.clone();
     let mut shaped_runs = Vec::with_capacity(assignment.runs.len());
+    // 같은 (face, axes) instance는 한 번만 만듭니다.
+    let mut instances: BTreeMap<(FontHandle, Vec<FontVariation>), FontFace> = BTreeMap::new();
     for run in &assignment.runs {
         let item = items
             .get(run.item)
             .ok_or(FontRunError::InvalidItem { item: run.item })?;
-        let face = match run.face {
-            RunFace::Face { handle, .. } => faces.face(handle),
-            RunFace::None => None,
+        let style_index = usize::try_from(item.style).ok();
+        let unknown_style = FontRunError::UnknownStyle {
+            item: run.item,
+            style: item.style,
         };
-        let Some(face) = face else {
+        let style = style_index
+            .and_then(|s| styles.get(s))
+            .ok_or(unknown_style.clone())?;
+        let chain = style_index
+            .and_then(|s| chains.get(s))
+            .ok_or(unknown_style)?;
+        let RunFace::Face {
+            chain_index,
+            handle,
+        } = run.face
+        else {
             shaped_runs.push(ShapedFontRun {
                 run: run.clone(),
                 shaped: None,
             });
             continue;
         };
+        let Some(base) = faces.face(handle) else {
+            shaped_runs.push(ShapedFontRun {
+                run: run.clone(),
+                shaped: None,
+            });
+            continue;
+        };
+        let entry_axes = chain
+            .chain()
+            .faces()
+            .get(chain_index)
+            .map(|f| f.variations().to_vec())
+            .unwrap_or_default();
+        let axes = canonical_variations(
+            entry_axes
+                .into_iter()
+                .chain(style.variations().iter().copied()),
+        );
+        let face = instances
+            .entry((handle, axes))
+            .or_insert_with_key(|(_, axes)| {
+                if axes.is_empty() {
+                    base.clone()
+                } else {
+                    base.with_variations(axes)
+                }
+            });
         let shaped = shape(
             face,
             &ShapeRequest {
@@ -316,6 +395,7 @@ pub fn shape_font_runs<S: FaceSource + ?Sized>(
                 direction: item.direction(),
                 script: item.script,
                 language: item.language.as_ref(),
+                features: style.features(),
             },
         )?;
         for range in notdef_clusters(&shaped) {
@@ -359,10 +439,14 @@ pub(crate) mod tests {
     use super::*;
     use crate::bidi::BaseDirection;
     use crate::fallback::FontFallbackChain;
+    use crate::font::tests::{axis, tag};
     use crate::font::{FontFaceRef, FontSource};
     use crate::itemize::{itemize, StyleSpan};
     use crate::registry::{FontFaceKey, FontRegistry, InMemoryFontRegistry};
-    use crate::test_fonts::{cjk_spec, emoji_spec, latin_rtl_spec, latin_spec, FontSpec};
+    use crate::test_fonts::{
+        cjk_spec, emoji_spec, latin_liga_spec, latin_rtl_spec, latin_spec, variable_latin_spec,
+        FontSpec,
+    };
 
     /// 테스트 font 집합: 이름별 (registry handle, face ref).
     pub(crate) struct FontSet {
@@ -446,8 +530,15 @@ pub(crate) mod tests {
             ]
         );
         assert!(assignment.missing.is_empty());
-        let (shaped, missing) =
-            shape_font_runs(text, &items.items, &assignment, &set.faces).expect("shape");
+        let (shaped, missing) = shape_font_runs(
+            text,
+            &items.items,
+            &assignment,
+            &resolved,
+            &[ShapingStyle::default()],
+            &set.faces,
+        )
+        .expect("shape");
         assert!(missing.is_empty());
         // emoji run의 glyph advance는 emoji 폰트 값(1200)입니다.
         let emoji = shaped[1].shaped.as_ref().expect("shaped");
@@ -503,8 +594,15 @@ pub(crate) mod tests {
             .map(|m| (m.range.clone(), m.reason))
             .collect();
         assert_eq!(missing, vec![(1..4, MissingReason::NoCoveringFace)]);
-        let (shaped, missing) =
-            shape_font_runs(text, &items.items, &assignment, &set.faces).expect("shape");
+        let (shaped, missing) = shape_font_runs(
+            text,
+            &items.items,
+            &assignment,
+            &resolved,
+            &[ShapingStyle::default()],
+            &set.faces,
+        )
+        .expect("shape");
         // shaping 단계의 .notdef는 이미 기록된 cluster라 중복 기록하지 않습니다.
         assert_eq!(missing.len(), 1);
         let glyphs: Vec<u32> = shaped
@@ -559,8 +657,15 @@ pub(crate) mod tests {
             vec![("가".to_string(), None), ("a".to_string(), None)]
         );
         assert_eq!(assignment.missing.len(), 2);
-        let (shaped, _) =
-            shape_font_runs(text, &items.items, &assignment, &set.faces).expect("shape");
+        let (shaped, _) = shape_font_runs(
+            text,
+            &items.items,
+            &assignment,
+            &resolved,
+            &[ShapingStyle::default()],
+            &set.faces,
+        )
+        .expect("shape");
         assert!(shaped[0].shaped.is_none());
     }
 
@@ -581,6 +686,111 @@ pub(crate) mod tests {
         assert!(is_default_ignorable('\u{200D}'));
         assert!(is_default_ignorable('\u{FE0F}'));
         assert!(!is_default_ignorable('a'));
+    }
+
+    fn advances(shaped: &[ShapedFontRun]) -> Vec<i32> {
+        shaped
+            .iter()
+            .flat_map(|r| {
+                r.shaped
+                    .as_ref()
+                    .map(|s| s.glyphs.clone())
+                    .unwrap_or_default()
+            })
+            .map(|g| g.x_advance)
+            .collect()
+    }
+
+    #[test]
+    fn style_features_and_chain_or_style_variations_reach_shaping() {
+        let set = FontSet::new(&[variable_latin_spec(), latin_liga_spec()]);
+        let text = "ab";
+        let spans = vec![
+            StyleSpan {
+                range: 0..1,
+                style: 0,
+                language: None,
+            },
+            StyleSpan {
+                range: 1..2,
+                style: 1,
+                language: None,
+            },
+        ];
+        let items = itemize(text, &spans, BaseDirection::LeftToRight).expect("items");
+        // style 0: chain 항목이 wght 900. style 1: 같은 항목 + style이 wght 650으로 덮어씀.
+        let bold_ref = FontFaceRef::new(
+            FontSource::Project,
+            set.refs[0].file_hash(),
+            0,
+            vec![axis("wght", 900.0)],
+        );
+        let chain = FontFallbackChain::new(vec![bold_ref]).expect("chain");
+        let resolved = [chain.resolve(&set.registry), chain.resolve(&set.registry)];
+        let styles = [
+            ShapingStyle::default(),
+            ShapingStyle::new(vec![], vec![axis("wght", 650.0)]),
+        ];
+        let assignment = assign_fonts(text, &items.items, &resolved, &set.faces).expect("assign");
+        let (shaped, _) = shape_font_runs(
+            text,
+            &items.items,
+            &assignment,
+            &resolved,
+            &styles,
+            &set.faces,
+        )
+        .expect("shape");
+        assert_eq!(advances(&shaped), vec![600, 550]);
+
+        // style feature: liga=0이면 "fi" ligature가 풀립니다.
+        let text = "fi";
+        let items = itemize(
+            text,
+            &[StyleSpan {
+                range: 0..2,
+                style: 0,
+                language: None,
+            }],
+            BaseDirection::LeftToRight,
+        )
+        .expect("items");
+        let liga_chain = set.chain(&[1]);
+        let resolved = [liga_chain.resolve(&set.registry)];
+        let assignment = assign_fonts(text, &items.items, &resolved, &set.faces).expect("assign");
+        let on = shape_font_runs(
+            text,
+            &items.items,
+            &assignment,
+            &resolved,
+            &[ShapingStyle::default()],
+            &set.faces,
+        )
+        .expect("on");
+        let off_style = ShapingStyle::new(
+            vec![FontFeature {
+                tag: tag("liga"),
+                value: 0,
+            }],
+            vec![],
+        );
+        let off = shape_font_runs(
+            text,
+            &items.items,
+            &assignment,
+            &resolved,
+            &[off_style],
+            &set.faces,
+        )
+        .expect("off");
+        assert_eq!(advances(&on.0), vec![550]);
+        assert_eq!(advances(&off.0), vec![300, 300]);
+        // style 표가 짧으면 typed error.
+        assert_eq!(
+            shape_font_runs(text, &items.items, &assignment, &resolved, &[], &set.faces)
+                .map(|_| ()),
+            Err(FontRunError::UnknownStyle { item: 0, style: 0 })
+        );
     }
 
     #[test]

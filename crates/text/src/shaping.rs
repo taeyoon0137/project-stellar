@@ -13,17 +13,57 @@
 //!   부분 범위를 shaping해도 paragraph 좌표를 유지해 줄바꿈·caret 계층이 그대로 씁니다.
 //! - **glyph 순서**: HarfBuzz와 같이 **visual 순서**(왼쪽→오른쪽)입니다. RTL run은 첫 glyph가
 //!   논리상 마지막 문자에 해당합니다.
+//! - **OpenType feature·variation (X.9.6)**: [`ShapeRequest::features`]는 run 전체에 적용할 feature
+//!   설정(예: `liga=0`)이고, variable font axis 값은 [`FontFace::with_variations`]로 만든 instance에
+//!   담깁니다. 둘 다 canonical(tag 오름차순, tag당 하나) 형식으로 다룹니다.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::ops::Range;
 
-use harfrust::font::{Font, Kind};
+use harfrust::font::{Font, Kind, Variation};
 use harfrust::{
-    Buffer, BufferFlags, ClusterLevel, Direction, Language, Script, ShapeOptions, ShaperFont, Tag,
+    Buffer, BufferFlags, ClusterLevel, Direction, Feature, Language, Script, ShapeOptions,
+    ShaperFont, Tag,
 };
 
 /// shaping 문맥으로 run 앞뒤에서 넘기는 최대 문자 수(HarfBuzz context 길이 5 이상).
 const CONTEXT_CHARS: usize = 8;
+
+use crate::font::{FontVariation, OpenTypeTag};
+
+/// OpenType feature 설정 하나(예: `liga` = 0이면 끔, `ss01` = 1이면 켬).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FontFeature {
+    /// feature tag.
+    pub tag: OpenTypeTag,
+    /// 값(0 = 끔, 1 = 켬, 그 외 = 대체 glyph 번호 등 feature별 의미).
+    pub value: u32,
+}
+
+/// feature 목록을 canonical 형식(tag 오름차순, 같은 tag는 마지막 값 우선)으로 만듭니다.
+pub fn canonical_features(features: impl IntoIterator<Item = FontFeature>) -> Vec<FontFeature> {
+    let mut map = BTreeMap::new();
+    for feature in features {
+        map.insert(feature.tag, feature.value);
+    }
+    map.into_iter()
+        .map(|(tag, value)| FontFeature { tag, value })
+        .collect()
+}
+
+/// variation 목록을 canonical 형식(tag 오름차순, 같은 tag는 마지막 값 우선)으로 만듭니다.
+pub fn canonical_variations(
+    variations: impl IntoIterator<Item = FontVariation>,
+) -> Vec<FontVariation> {
+    let mut map = BTreeMap::new();
+    for variation in variations {
+        map.insert(variation.tag, variation.value);
+    }
+    map.into_iter()
+        .map(|(tag, value)| FontVariation { tag, value })
+        .collect()
+}
 
 /// 폰트 안 glyph 번호.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -305,6 +345,7 @@ pub struct FontFace {
     units_per_em: u16,
     glyph_count: u32,
     line_metrics: LineMetrics,
+    variations: Vec<FontVariation>,
 }
 
 impl fmt::Debug for FontFace {
@@ -314,6 +355,7 @@ impl fmt::Debug for FontFace {
             .field("units_per_em", &self.units_per_em)
             .field("glyph_count", &self.glyph_count)
             .field("line_metrics", &self.line_metrics)
+            .field("variations", &self.variations)
             .finish_non_exhaustive()
     }
 }
@@ -338,7 +380,40 @@ impl FontFace {
             line_metrics,
             face_index,
             font,
+            variations: Vec::new(),
         })
+    }
+
+    /// variable font axis 값을 적용한 instance를 만듭니다 (X.9.6). 폰트 bytes는 공유합니다.
+    ///
+    /// 값은 canonical 형식으로 정리되고(tag 오름차순, 같은 tag는 마지막 값 우선), 폰트에 없는 axis는
+    /// 무시되며 axis 범위 밖 값은 범위로 제한됩니다(OpenType 정규화 규칙). 빈 목록은 기본 instance입니다.
+    /// 줄 metric은 instance 위치에서 다시 읽습니다.
+    pub fn with_variations(&self, variations: &[FontVariation]) -> FontFace {
+        let variations = canonical_variations(variations.iter().copied());
+        let font = self
+            .font
+            .instance_builder()
+            .variations(
+                variations
+                    .iter()
+                    .map(|v| Variation::new(Tag::new(&v.tag.bytes()), v.value.get())),
+            )
+            .build();
+        let line_metrics = select_line_metrics(font.metrics(), self.units_per_em);
+        FontFace {
+            font,
+            face_index: self.face_index,
+            units_per_em: self.units_per_em,
+            glyph_count: self.glyph_count,
+            line_metrics,
+            variations,
+        }
+    }
+
+    /// 이 instance에 적용된 variation(canonical). 기본 instance는 빈 목록입니다.
+    pub fn variations(&self) -> &[FontVariation] {
+        &self.variations
     }
 
     /// face index.
@@ -432,6 +507,9 @@ pub struct ShapeRequest<'a> {
     pub script: ScriptTag,
     /// 언어(없으면 언어별 형태 규칙을 쓰지 않음).
     pub language: Option<&'a LanguageTag>,
+    /// run 전체에 적용할 OpenType feature 설정(X.9.6). 폰트 기본 feature(`liga` 등)는 명시하지 않으면
+    /// 켜진 상태입니다.
+    pub features: &'a [FontFeature],
 }
 
 /// shaping 결과 glyph 하나(font unit).
@@ -550,6 +628,7 @@ pub fn shape(face: &FontFace, request: &ShapeRequest<'_>) -> Result<ShapedRun, S
         direction,
         script,
         language,
+        features,
     } = *request;
     check_range(text, range)?;
     let segment = &text[range.clone()];
@@ -574,11 +653,14 @@ pub fn shape(face: &FontFace, request: &ShapeRequest<'_>) -> Result<ShapedRun, S
     }
     buffer.set_flags(flags);
 
+    let engine_features: Vec<Feature> = canonical_features(features.iter().copied())
+        .iter()
+        .map(|f| Feature::new(Tag::new(&f.tag.bytes()), f.value, ..))
+        .collect();
     let shaper = ShaperFont::new(face.engine_font());
-    harfrust::shape(&shaper, &mut buffer, ShapeOptions::new()).map_err(|err| {
-        ShapeError::Engine {
-            reason: err.to_string(),
-        }
+    let options = ShapeOptions::new().features(&engine_features);
+    harfrust::shape(&shaper, &mut buffer, options).map_err(|err| ShapeError::Engine {
+        reason: err.to_string(),
     })?;
     if !buffer.allocation_successful() {
         return Err(ShapeError::Engine {
@@ -634,7 +716,10 @@ fn context_after(text: &str, offset: usize) -> &str {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::test_fonts::{latin_advance, latin_rtl_spec, latin_spec};
+    use crate::font::tests::{axis, tag};
+    use crate::test_fonts::{
+        latin_advance, latin_liga_spec, latin_rtl_spec, latin_spec, variable_latin_spec,
+    };
 
     pub(crate) fn latin_face() -> FontFace {
         FontFace::from_bytes(latin_spec().build(), 0).expect("합성 Latin 폰트")
@@ -647,6 +732,7 @@ pub(crate) mod tests {
             direction: TextDirection::LeftToRight,
             script: ScriptTag::LATIN,
             language: None,
+            features: &[],
         }
     }
 
@@ -837,6 +923,171 @@ pub(crate) mod tests {
         assert_eq!(fixed_to_units(-0x0001_8000), -2);
         assert_eq!(fixed_to_units(0x0001_7FFF), 1);
         assert_eq!(fixed_to_units(i64::MAX), i32::MAX);
+    }
+
+    fn glyph_summary(run: &ShapedRun) -> Vec<(u32, u32, i32)> {
+        run.glyphs
+            .iter()
+            .map(|g| (g.glyph.raw(), g.cluster, g.x_advance))
+            .collect()
+    }
+
+    #[test]
+    fn liga_on_off_fixture() {
+        let spec = latin_liga_spec();
+        let face = FontFace::from_bytes(spec.build(), 0).expect("liga 폰트");
+        let text = "office fit";
+        let glyph = |c: char| u32::from(spec.glyph_of(u32::from(c)));
+        // ligature glyph id: ASCII 95개 + .notdef 뒤 첫 추가 glyph가 fi(96), 다음이 ffi(97).
+        let (fi, ffi) = (96, 97);
+
+        // 기본(liga 켜짐): "ffi" → ffi ligature(cluster 1), "fi" → fi ligature(cluster 7).
+        let on = shape(&face, &request(text)).expect("liga on");
+        assert_eq!(
+            glyph_summary(&on),
+            vec![
+                (glyph('o'), 0, 500),
+                (ffi, 1, 800),
+                (glyph('c'), 4, 500),
+                (glyph('e'), 5, 500),
+                (glyph(' '), 6, 250),
+                (fi, 7, 550),
+                (glyph('t'), 9, 300),
+            ]
+        );
+        // 명시적으로 켜도 같은 결과.
+        let liga_on = [FontFeature {
+            tag: tag("liga"),
+            value: 1,
+        }];
+        assert_eq!(
+            shape(
+                &face,
+                &ShapeRequest {
+                    features: &liga_on,
+                    ..request(text)
+                }
+            )
+            .expect("liga=1"),
+            on
+        );
+
+        // liga=0: 모든 문자가 개별 glyph.
+        let liga_off = [FontFeature {
+            tag: tag("liga"),
+            value: 0,
+        }];
+        let off = shape(
+            &face,
+            &ShapeRequest {
+                features: &liga_off,
+                ..request(text)
+            },
+        )
+        .expect("liga off");
+        let expected_off: Vec<(u32, u32, i32)> = text
+            .char_indices()
+            .map(|(i, c)| (glyph(c), i as u32, i32::from(latin_advance(u32::from(c)))))
+            .collect();
+        assert_eq!(glyph_summary(&off), expected_off);
+        // 예상 차이: glyph 수 7 vs 10, 폭 3400 vs 3550.
+        assert_eq!((on.glyphs.len(), off.glyphs.len()), (7, 10));
+        assert_eq!((on.total_x_advance(), off.total_x_advance()), (3400, 3550));
+
+        // feature 목록은 canonical: 같은 tag는 마지막 값 우선.
+        let both = [liga_on[0], liga_off[0]];
+        assert_eq!(
+            shape(
+                &face,
+                &ShapeRequest {
+                    features: &both,
+                    ..request(text)
+                }
+            )
+            .expect("마지막 값 우선"),
+            off
+        );
+    }
+
+    #[test]
+    fn variable_axis_fixture() {
+        let base = FontFace::from_bytes(variable_latin_spec().build(), 0).expect("variable 폰트");
+        let width = |face: &FontFace| {
+            shape(face, &request("ab"))
+                .expect("shape")
+                .glyphs
+                .iter()
+                .map(|g| g.x_advance)
+                .collect::<Vec<_>>()
+        };
+        // 기본 instance(wght 400): 500씩.
+        assert_eq!(width(&base), vec![500, 500]);
+        assert!(base.variations().is_empty());
+        // wght 900(정규화 1.0): HVAR delta +100 → 600.
+        let bold = base.with_variations(&[axis("wght", 900.0)]);
+        assert_eq!(width(&bold), vec![600, 600]);
+        assert_eq!(bold.variations(), &[axis("wght", 900.0)]);
+        // wght 650(정규화 0.5): +50.
+        assert_eq!(
+            width(&base.with_variations(&[axis("wght", 650.0)])),
+            vec![550, 550]
+        );
+        // 기본값 아래(wght 300): region이 0..1이라 변화 없음.
+        assert_eq!(
+            width(&base.with_variations(&[axis("wght", 300.0)])),
+            vec![500, 500]
+        );
+        // 범위 밖(1000)은 최대값으로 제한.
+        assert_eq!(
+            width(&base.with_variations(&[axis("wght", 1000.0)])),
+            vec![600, 600]
+        );
+        // 폰트에 없는 axis는 무시.
+        assert_eq!(
+            width(&base.with_variations(&[axis("wdth", 50.0)])),
+            vec![500, 500]
+        );
+        // 같은 tag는 마지막 값 우선, 결과는 canonical.
+        let last = base.with_variations(&[axis("wght", 900.0), axis("wght", 650.0)]);
+        assert_eq!(width(&last), vec![550, 550]);
+        assert_eq!(last.variations(), &[axis("wght", 650.0)]);
+        // instance는 metric·glyph 수를 유지합니다(이 폰트에는 MVAR 없음).
+        assert_eq!(bold.line_metrics(), base.line_metrics());
+        assert_eq!(bold.glyph_count(), base.glyph_count());
+    }
+
+    #[test]
+    fn canonical_feature_and_variation_lists() {
+        let features = canonical_features([
+            FontFeature {
+                tag: tag("liga"),
+                value: 1,
+            },
+            FontFeature {
+                tag: tag("kern"),
+                value: 0,
+            },
+            FontFeature {
+                tag: tag("liga"),
+                value: 0,
+            },
+        ]);
+        assert_eq!(
+            features,
+            vec![
+                FontFeature {
+                    tag: tag("kern"),
+                    value: 0
+                },
+                FontFeature {
+                    tag: tag("liga"),
+                    value: 0
+                }
+            ]
+        );
+        let variations =
+            canonical_variations([axis("wght", 1.0), axis("opsz", 2.0), axis("wght", 3.0)]);
+        assert_eq!(variations, vec![axis("opsz", 2.0), axis("wght", 3.0)]);
     }
 
     #[test]
