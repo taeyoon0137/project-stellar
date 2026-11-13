@@ -20,7 +20,7 @@ Accepted (2026-11-14, 제품 소유자 결정). 제안 당시의 열린 질문�
   4. **세션 종료**: 세션이 끊기거나, 비정상 종료되거나, 중지돼도 적용된 변경을 즉시 되돌리지 않습니다. 변경에 출처 표시를 남기고 사용자가 직접 되돌립니다(§4.2).
   5. **계획서 폐기 기록 없음**: 목적이 사라진 행은 폐기 표기 없이 삭제하고 이력은 Git으로 확인합니다.
   6. **커밋 형식**: `AGENTS.md` 기준으로 이미 맞췄습니다(계획서 개정 기록 "2026-11-14 — 커밋 규칙 정합").
-  7. **명령 이름과 설치**: headless 명령은 `stellar`로 실행하고, `stellar`를 쓸 수 없는 경우에만 `stellar-cli`로 대체합니다. 앱 첫 실행 때 이 명령을 사용자 셸 PATH에 설치하는 화면을 제공하고, 사용자가 동의할 때만 설치합니다(macOS, §2, §7).
+  7. **명령 이름과 설치**: headless 명령은 `stellar`로 실행하고, `stellar`를 쓸 수 없는 경우에만 `stellar-cli`로 대체합니다(판정 조건은 §2). 앱 첫 실행 때 이 명령을 사용자 셸 PATH에 설치하는 화면을 제공하고, 사용자가 동의할 때만 설치합니다(macOS, §2, §7).
 - 계획서의 기존 행 XIX.1.4, XIX.3.3, XIX.6.1, XIX.6.3, XIX.6.4, XIX.7.2는 이 결정과 의미가 충돌합니다. 모두 미착수 행이므로 2026-11-14 개정한 계획 변경 규칙에 따라 그 자리에서 고치고, 목적이 사라진 행은 삭제합니다.
 - 이 ADR은 §4.3을 바꾸지 않습니다. §31의 경계를 명확히 하고 확장합니다.
 - Windows 지원은 ADR-0006에 따라 보류하므로 이 ADR의 플랫폼 항목은 macOS만 다룹니다. L1·L2 library 경계는 플랫폼 중립으로 둡니다.
@@ -45,6 +45,7 @@ Accepted (2026-11-14, 제품 소유자 결정). 제안 당시의 열린 질문�
 
 - **실행 이름**
   - 사용자가 부르는 명령은 `stellar`입니다. Cargo package 이름은 `stellar-cli`로 두고 실행 파일 이름(`[[bin]]`)만 `stellar`로 정합니다.
+  - **대체 이름 규칙(2026-11-14 제품 소유자 결정)**: 명령줄 설치 위치(사용자 셸 PATH 안)에 Stellar가 설치한 자기 링크가 아닌 다른 프로그램의 `stellar`가 이미 있을 때만 `stellar-cli`라는 이름으로 설치합니다. 그 기존 파일은 덮어쓰지 않습니다. 이 경우를 제외하면 항상 `stellar`로 설치합니다. 판정과 설치는 XXIV.5에서 구현합니다(§7).
   - XXIV.1.2의 JSON 결과 schema 식별자와 fixture는 바꾸지 않습니다.
   - 문서, 도움말, 종료 코드 설명은 `stellar <명령>`으로 표기합니다.
 - **명령**
@@ -87,7 +88,7 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 
 - **위치**
   - `tools/stellar-mcp` 실행 파일(XIX.1.1)은 진입점만 갖습니다.
-  - 로직은 `crates/mcp`의 `stellar-mcp` library에 둡니다.
+  - 로직은 `crates/mcp-core`의 `stellar-mcp-core` library에 둡니다. 실행 파일 package `tools/stellar-mcp`는 실행 이름 `stellar-mcp`를 유지합니다.
   - 공용 정의는 `stellar-agent-protocol`에 둡니다.
 - **backend**: 세션을 시작할 때 고정합니다.
   - **headless 읽기 backend**(2026-11-14 제품 소유자 결정으로 허용)
@@ -144,7 +145,7 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 - **연결 상태**: CLI 사용 가능 여부의 판정은 XXIX.2.5 구현 작업에서 각 CLI 공식 문서를 근거로 정하고, CLI가 보고한 정보의 취급은 XVI.8 개인정보 규칙을 따릅니다.
 - **약관 검토와 활성 목록**
   - launch profile마다 공급자 약관·공식 문서의 검토 일자와 검토 결과를 기록합니다. 공급자 문서와 약관은 자주 바뀌므로 검토 일자는 정기적으로 갱신합니다.
-  - Stellar의 실행 조건은 2026-11-14 확인한 각 공급자 공식 약관·사용 정책의 범위 안에 있도록 정했습니다.
+  - Stellar의 실행 조건은 2026-11-14 확인한 각 공급자 공식 약관·사용 정책의 범위 안에 머물도록 설계했습니다. 실제로 그 범위 안에 있는지의 최종 확인은 Consequences의 릴리스 위험 항목으로 남기며, Stellar를 추후 오픈소스로 공개할 예정이라는 점을 그 판단의 입력으로 둡니다.
   - 각 공급자 공식 약관·사용 정책이 2026-11-14 결정 1의 실행 방식(사용자가 직접 로그인한 공식 CLI를 Stellar가 비대화형으로 실행)을 명확히 허용하지 않거나 검토가 끝나지 않은 CLI는 profile 활성 목록에 넣지 않습니다(각 공급자 공식 약관).
   - 활성 목록에 없는 CLI는 사용자가 내장 터미널에서 일반 terminal profile 명령으로 직접 실행할 수 있습니다(XVIII.5.1).
   - 배포 주체의 상용 약관 동의 여부는 설계 결정이 아니라 릴리스 위험으로 다룹니다(Consequences).
@@ -277,6 +278,7 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 - **명령줄 설치(macOS, 2026-11-14 제품 소유자 결정)**: 앱 UI에서 제공합니다.
   - **첫 실행 제안**: `stellar` helper를 포함한 빌드를 처음 실행할 때 명령을 사용자 셸 PATH에 설치하는 화면을 제공합니다.
   - **동의**: 사용자가 명시적으로 동의하기 전에는 어떤 파일도 만들거나 바꾸지 않습니다.
+  - **설치 이름**: 기본은 `stellar`입니다. 설치 위치에 다른 프로그램의 `stellar`가 이미 있으면(Stellar 자기 링크 제외) 덮어쓰지 않고 `stellar-cli`로 설치합니다(§2 대체 이름 규칙).
   - **설치 조건**: 설치 위치, 제거 방법과 안전 조건은 §37 보안 경계(최소 권한)와 Apple·각 셸 공식 문서를 근거로 XXIV.5 구현 작업에서 정하고 보고서에 기록합니다.
   - **기록**: 설치 상태는 앱 사용자 설정(OS 사용자 데이터)에만 두고 프로젝트, Git, 텔레메트리에는 남기지 않습니다. MCP와 에이전트 경로에는 설치 상태를 바꾸는 수단이 없습니다(§3 변경 불가 경로).
 - **비밀 관리**: 서명 인증서, 팀 식별자, 공증 자격 증명은 저장소에 두지 않습니다.
@@ -285,15 +287,18 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 
 | crate | 위치 | 허용 직접 의존 | 전이적으로도 도달 금지 |
 |---|---|---|---|
-| `stellar-ops` | `crates/ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics | local-ipc, agent-protocol, mcp, agent-host, ffi |
-| `stellar-cli`(package, 실행 이름 `stellar`) | XXIV.1.1이 정한 위치 | ops, diagnostics | local-ipc, agent-protocol, mcp, agent-host |
+| `stellar-ops` | `crates/ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics | local-ipc, agent-protocol, mcp-core, agent-host, ffi |
+| `stellar-cli`(package, 실행 이름 `stellar`) | XXIV.1.1이 정한 위치 | ops, diagnostics | local-ipc, agent-protocol, mcp-core, agent-host |
 | `stellar-local-ipc` | `crates/local-ipc` | core-types | document, commands, ops |
 | `stellar-agent-protocol` | `crates/agent-protocol` | core-types | commands, document, ops, agent-host |
-| `stellar-mcp`(library) | `crates/mcp` | ops, agent-protocol, local-ipc, diagnostics | agent-host, ffi |
+| `stellar-mcp-core`(library) | `crates/mcp-core` | ops, agent-protocol, local-ipc, diagnostics | agent-host, runtime, ffi |
 | `stellar-agent-host` | `crates/agent-host` | core-types, agent-protocol, local-ipc, diagnostics | document, commands, history, storage, ops |
-| `stellar-ffi` | `crates/ffi` | core-types, agent-host, agent-protocol, ops, 에이전트 편집 구현 crate | (타입 변환 금지 inventory로 보완) |
+| `stellar-runtime` | `crates/runtime` | ADR-0013 §2 목록에 더해 agent-host, agent-protocol, ops, 에이전트 편집 구현 crate | mcp-core |
+| `stellar-ffi` | `crates/ffi` | core-types, runtime(ADR-0013 §2) | (타입 변환 금지 inventory로 보완) |
 
-- attached tool 호출은 `stellar-agent-protocol`이 정의한 host trait로 처리하고, 앱 runtime이 구현합니다.
+- attached tool 호출은 `stellar-agent-protocol`이 정의한 host trait로 처리하고, `stellar-runtime`이 구현합니다.
+- FFI 경계는 ADR-0013을 따릅니다. `stellar-ffi`는 core-types와 runtime에만 의존하고, 에이전트 기능은 agent-host와 ops를 품은 `stellar-runtime`을 거쳐 도달합니다. runtime 허용 의존의 추가는 XXIX.3.1에서 적용합니다.
+- 실행 파일 package `stellar-mcp`(`tools/stellar-mcp`)는 진입점만 갖고 `stellar-mcp-core`에 의존합니다(XIX.9.1).
 - XIX.4~XIX.6의 구현 crate는 그 작업에서 정하되, `stellar-agent-host`에서 그 crate로 도달하지 않게 합니다.
 - 공급자 출력 디코드는 `stellar-agent-host` 안에만 둡니다(§4.4).
 - `render_preview`는 attached 전용입니다.
@@ -311,7 +316,7 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 - **원문 보기만 제공하는 방식**: 단계·승인·미리보기·적용 변경을 대화 흐름 안에서 보여 줄 수 없습니다. 원문 보기는 디코더 실패에도 정보를 잃지 않는 보조 보기로 유지하고, 기본은 채팅 보기로 합니다(2026-11-14 결정).
 - **세션이 끊기면 즉시 자동 rollback하는 방식**: 사용자가 검토하려던 작업이 연결 문제만으로 사라집니다. 적용분을 유지하고 출처를 표시해 사용자가 직접 되돌리게 합니다(2026-11-14 결정).
 - **되돌리기를 history 포인터 이동이나 Undo 기록 없는 rollback으로 두는 방식**: 에이전트 변경과 lease 밖 사용자 편집이 섞여 개별 batch를 되돌릴 수 없고, 되돌리기 자체를 Undo할 수 없습니다. 일반 사용자 Command로 둡니다.
-- **`stellar-cli`를 명령 이름으로 쓰는 방식**: 사용자가 부르는 이름이 길어집니다. 실행 이름은 `stellar`, package 이름은 `stellar-cli`로 분리합니다(2026-11-14 결정).
+- **`stellar-cli`를 기본 명령 이름으로 쓰는 방식**: 사용자가 부르는 이름이 길어집니다. 기본 실행 이름은 `stellar`, package 이름은 `stellar-cli`로 분리하고, `stellar-cli`는 §2 대체 이름 규칙에 해당할 때의 설치 이름으로만 씁니다(2026-11-14 결정).
 - **관리자 권한이 필요한 시스템 위치에 설치하는 방식**: §37 보안 경계의 최소 권한 원칙에 맞지 않습니다. 기본으로 채택하지 않습니다.
 - **`stellar` 명령을 실행 중 앱의 얇은 클라이언트로 만드는 방식**: 파일이 원본이고 CI와 merge driver가 앱 없이 돌아야 한다는 조건에 맞지 않습니다. 채택하지 않습니다.
 - **headless backend에서 쓰기를 허용하는 방식**: 앱의 승인·lease를 우회하고, 쓰기 허용 스위치가 에이전트가 고칠 수 있는 파일에 남게 됩니다. 채택하지 않습니다.
@@ -330,7 +335,7 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 - **유지보수 비용**: CLI 갱신은 launch profile 갱신 작업을 요구하고, profile의 약관 검토 일자도 정기적으로 갱신해야 합니다.
 - **부정**: 출처 표시는 창을 닫거나, 앱을 다시 시작하거나, 비정상 종료 복구를 거치면 사라집니다. 그 뒤에는 Git semantic status로만 확인할 수 있습니다.
 - **부정**: 공급자 조건에 따라 활성 목록에 넣을 수 있는 CLI가 없거나 적을 수 있습니다. 그 경우에도 내장 터미널 경로는 남습니다.
-- **릴리스 위험(제품 소유자 법무 확인 필요)**: 2026-11-14 확인한 공개 공급자 문서 중에는 자사 CLI를 제품 안에서 실행하는 배포 주체에게 그 공급자의 상용 약관 동의를 요구하는 곳이 있고, 프로그램 실행용 인증을 상용·호스팅 서비스에 허용하지 않는다고 적은 곳이 있습니다. Stellar가 이 조건에 해당하는지는 설계 결정이 아니라 릴리스 전에 제품 소유자가 법무 검토로 확인할 항목입니다. 확인 전에는 해당 CLI를 활성 목록에 넣지 않습니다(§4.1).
+- **릴리스 위험(제품 소유자 법무 확인 필요)**: 2026-11-14 확인한 공개 공급자 문서 중에는 자사 CLI를 제품 안에서 실행하는 배포 주체에게 그 공급자의 상용 약관 동의를 요구하는 곳이 있고, 프로그램 실행용 인증을 상용·호스팅 서비스에 허용하지 않는다고 적은 곳이 있습니다. Stellar가 이 조건에 해당하는지는 설계 결정이 아니라 릴리스 전에 제품 소유자가 법무 검토로 확인할 항목입니다. Stellar를 추후 오픈소스로 공개할 예정이라는 점을 이 판단의 입력으로 포함합니다. 확인 전에는 해당 CLI를 활성 목록에 넣지 않습니다(§4.1).
 
 ## Compatibility
 
@@ -368,4 +373,4 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 4. 2026-11-14 제품 소유자 지시(최대 병렬 진행)에 따라 L1 골격(XXIV.1.1~XXIV.1.2)과 L2 골격(XIX.1.1~XIX.1.3, XIX.1.5)은 G8 이전에 착수합니다. 이 골격에는 쓰기 tool과 내장 에이전트가 없습니다.
 5. G8 이후: Phase XVIII → XXIV 나머지(L1, XXIV.4 실행 이름·확장, XXIV.5 번들·명령줄 설치) → XIX 나머지(XIX.1.4, XIX.1.6~XIX.1.9, XIX.2~XIX.9, L2) → XXIX.2~XXIX.3(L3 코어·FFI) → XXIX.4(macOS UI) → XXIX.5(`stellar-mcp` 번들) → XXIX.6(E2E·불변식). XXIX.1(계획·정책 도구)은 선행이 없어 언제든 착수할 수 있습니다.
 
-모두 초기 릴리스 빌드에는 노출하지 않습니다.
+노출 기준은 §7과 같습니다. AI와 무관한 L1 `stellar` 명령과 명령줄 설치 화면은 준비되는 대로 앱에 포함할 수 있고, L2(`stellar-mcp`)와 L3(내장 에이전트)는 해당 Phase가 끝나기 전에는 노출하지 않습니다.
