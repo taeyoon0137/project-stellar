@@ -918,7 +918,7 @@ tools/xtask/
 | X.1.2 | `[ ]` | layout tree view는 Fragment를 flatten하고 ComponentInstance virtual subtree와 View Variant 적용 결과를 읽도록 합니다. 원본 document를 수정하지 않습니다. | flatten 전후 visual child order fixture 통과. | VI.4.1, IX.2.2, IX.7.6 |
 | X.1.3 | `[ ]` | layout property registry에 각 속성의 dirty class를 SelfSize, ParentFlow, DescendantConstraint, PaintOnly로 분류합니다. | 모든 layout property에 class가 존재. | VI.3.5 |
 | X.1.4 | `[x]` | LayoutRevision과 node별 input hash/output cache 타입을 정의합니다. | 동일 input hash에서 cache hit. | II.3.4 |
-| X.1.5 | `[ ]` | 레이아웃 수치의 rounding 정책을 logical subpixel 단위로 고정하고 pixel snapping은 렌더 단계로 분리합니다. | 1/3, scale 1.5 fixture가 양 플랫폼 동일. | III.3.1 |
+| X.1.5 | `[x]` | 레이아웃 수치의 rounding 정책을 logical subpixel 단위로 고정하고 pixel snapping은 렌더 단계로 분리합니다. | 1/3, scale 1.5 fixture가 양 플랫폼 동일. | III.3.1 |
 
 ### X.2 자유 배치·절대 좌표
 

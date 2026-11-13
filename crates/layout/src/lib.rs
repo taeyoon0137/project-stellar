@@ -5,3 +5,6 @@ pub mod revision;
 
 /// node별 layout input hash와 output cache (X.1.4).
 pub mod cache;
+
+/// 레이아웃 수치 rounding 정책과 logical subpixel 단위 (X.1.5).
+pub mod rounding;
