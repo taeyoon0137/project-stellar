@@ -13,6 +13,7 @@ use std::path::Path;
 
 use crate::lock::{Lockfile, CURRENT_LOCK_SCHEMA_VERSION};
 use crate::manifest::{Manifest, ProjectMeta, CURRENT_SCHEMA_VERSION};
+#[cfg(test)]
 use crate::yaml::write_canonical;
 
 /// 기본 `.gitignore` 내용(고정).
@@ -53,17 +54,22 @@ pub fn empty_lockfile() -> Lockfile {
 }
 
 /// staging 디렉터리에 기본 scaffold를 생성합니다(staging은 이미 존재해야 함).
+///
+/// 매니페스트·잠금 파일은 loader 제한을 강제하는 writer로 만듭니다. 제한 loader가 다시 읽지 못할
+/// 내용(예: 선읽기 상한을 넘는 프로젝트 이름)이면 파일을 쓰지 않고 `InvalidData` 오류를 반환합니다.
 pub fn write_default_scaffold(
     staging: &Path,
     project_name: &str,
     project_id: &str,
 ) -> io::Result<()> {
-    let manifest = default_manifest(project_name, project_id);
-    std::fs::write(
-        staging.join("stellar.yaml"),
-        write_canonical(&manifest.to_yaml()),
-    )?;
-    std::fs::write(staging.join("stellar.lock.yaml"), empty_lockfile().write())?;
+    let manifest_text = default_manifest(project_name, project_id)
+        .write()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let lock_text = empty_lockfile()
+        .write_checked()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    std::fs::write(staging.join("stellar.yaml"), manifest_text)?;
+    std::fs::write(staging.join("stellar.lock.yaml"), lock_text)?;
     std::fs::write(staging.join(".gitignore"), DEFAULT_GITIGNORE)?;
     std::fs::write(staging.join(".gitattributes"), DEFAULT_GITATTRIBUTES)?;
     std::fs::create_dir(staging.join("design"))?;
@@ -164,5 +170,15 @@ mod tests {
         let lock_value = crate::yaml::load_restricted(&lock_text).unwrap();
         let lock = Lockfile::from_yaml(&lock_value).unwrap();
         assert_eq!(lock, empty_lockfile());
+    }
+
+    #[test]
+    fn scaffold_refuses_content_the_loader_cannot_reload() {
+        let dir = TempDir::new();
+        let name = "n".repeat(crate::yaml::loader::MAX_EVENT_LOOKAHEAD_CHARS + 1);
+        let err = write_default_scaffold(&dir.path, &name, ID).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        // 다시 열 수 없는 매니페스트를 남기지 않음(아무 파일도 쓰지 않음).
+        assert_eq!(std::fs::read_dir(&dir.path).unwrap().count(), 0);
     }
 }

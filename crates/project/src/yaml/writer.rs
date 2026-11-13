@@ -14,10 +14,152 @@
 //!
 //! round-trip 보강(XVI.6.1 fuzz 결과): 제어·비출력·줄 구분 문자는 더블쿼트 안에서 `\uXXXX`로
 //! 기록하고, 렌더링 길이가 implicit key 상한(1024자)을 넘는 키는 explicit key(`? `)로 기록합니다.
+//!
+//! 제한 강제: 파일로 기록하는 writer(매니페스트·잠금 파일·신뢰 목록)는
+//! [`write_canonical_checked`]를 씁니다. 제한 loader(IV.1.2)가 거부하는 구조(중복 키·merge key·
+//! 비스칼라 키·중첩 깊이 초과)와 크기(입력 상한·이벤트 선읽기 상한)를 기록 **전에** 거부하고,
+//! 출력이 loader로 같은 값으로 다시 읽히는지 확인하므로 기록된 파일은 항상 다시 열립니다.
 
-use crate::yaml::YamlValue;
+use std::collections::HashSet;
+
+use crate::yaml::loader::{LoaderError, MAX_INPUT_BYTES, MAX_NESTING_DEPTH};
+use crate::yaml::{load_restricted, YamlValue};
+
+/// 제한 강제 writer 오류. 이 오류가 나면 아무 텍스트도 반환하지 않습니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteError {
+    /// 매핑 키가 스칼라가 아님(loader `non-scalar-key`).
+    NonScalarKey {
+        /// 문제 위치(`a.b[0]` 형식, 최상위는 빈 문자열).
+        path: String,
+    },
+    /// merge key `<<`(loader `merge-key`).
+    MergeKey {
+        /// 문제 매핑 위치.
+        path: String,
+    },
+    /// 같은 매핑 안의 중복 키(loader `duplicate-key`).
+    DuplicateKey {
+        /// 문제 매핑 위치.
+        path: String,
+        /// 중복된 키.
+        key: String,
+    },
+    /// 컨테이너 중첩 깊이가 [`MAX_NESTING_DEPTH`]를 넘음(loader `nesting-too-deep`).
+    NestingTooDeep {
+        /// 문제 위치.
+        path: String,
+    },
+    /// 출력이 [`MAX_INPUT_BYTES`]를 넘음(loader `input-too-large`).
+    OutputTooLarge {
+        /// 출력 bytes.
+        bytes: usize,
+    },
+    /// 출력을 제한 loader가 다시 읽지 못함(예: 선읽기 상한을 넘는 긴 스칼라).
+    NotReloadable(LoaderError),
+    /// 다시 읽은 값이 기록하려던 값과 다름.
+    RoundTripMismatch,
+}
+
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WriteError::NonScalarKey { path } => {
+                write!(f, "매핑 키는 스칼라만 기록할 수 있습니다: {path:?}")
+            }
+            WriteError::MergeKey { path } => {
+                write!(f, "merge key(<<)는 기록할 수 없습니다: {path:?}")
+            }
+            WriteError::DuplicateKey { path, key } => {
+                write!(f, "중복 매핑 키는 기록할 수 없습니다: {path:?}의 {key:?}")
+            }
+            WriteError::NestingTooDeep { path } => write!(
+                f,
+                "컨테이너 중첩 깊이가 상한 {MAX_NESTING_DEPTH}을 넘습니다: {path:?}"
+            ),
+            WriteError::OutputTooLarge { bytes } => write!(
+                f,
+                "출력이 {bytes} bytes로 상한 {MAX_INPUT_BYTES} bytes를 넘습니다"
+            ),
+            WriteError::NotReloadable(e) => write!(f, "출력을 다시 읽을 수 없습니다: {e}"),
+            WriteError::RoundTripMismatch => {
+                f.write_str("출력을 다시 읽은 값이 원래 값과 다릅니다")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WriteError {}
+
+/// loader 제한을 강제하는 canonical writer.
+///
+/// 1. 구조 검사(반복 순회, 재귀 없음): 비스칼라 키·`<<` 키·중복 키·중첩 깊이.
+/// 2. [`write_canonical`]로 렌더링.
+/// 3. 출력 크기 상한 검사.
+/// 4. 제한 loader로 다시 읽어 같은 값인지 확인(선읽기 상한 등 나머지 loader 제한 포함).
+pub fn write_canonical_checked(value: &YamlValue) -> Result<String, WriteError> {
+    check_structure(value)?;
+    let text = write_canonical(value);
+    if text.len() > MAX_INPUT_BYTES {
+        return Err(WriteError::OutputTooLarge { bytes: text.len() });
+    }
+    let reloaded = load_restricted(&text).map_err(WriteError::NotReloadable)?;
+    if reloaded != *value {
+        return Err(WriteError::RoundTripMismatch);
+    }
+    Ok(text)
+}
+
+/// loader가 거부하는 구조를 찾습니다. 깊이 상한을 넘는 트리도 재귀 없이 순회합니다.
+fn check_structure(root: &YamlValue) -> Result<(), WriteError> {
+    // (값, 이 값이 컨테이너일 때의 중첩 깊이, 위치)
+    let mut stack: Vec<(&YamlValue, usize, String)> = vec![(root, 1, String::new())];
+    while let Some((value, depth, path)) = stack.pop() {
+        match value {
+            YamlValue::Scalar(_) => {}
+            YamlValue::Sequence(items) => {
+                if depth > MAX_NESTING_DEPTH {
+                    return Err(WriteError::NestingTooDeep { path });
+                }
+                for (index, item) in items.iter().enumerate() {
+                    stack.push((item, depth + 1, format!("{path}[{index}]")));
+                }
+            }
+            YamlValue::Mapping(pairs) => {
+                if depth > MAX_NESTING_DEPTH {
+                    return Err(WriteError::NestingTooDeep { path });
+                }
+                let mut seen: HashSet<&str> = HashSet::with_capacity(pairs.len());
+                for (key, child) in pairs {
+                    let YamlValue::Scalar(key) = key else {
+                        return Err(WriteError::NonScalarKey { path });
+                    };
+                    if key == "<<" {
+                        return Err(WriteError::MergeKey { path });
+                    }
+                    if !seen.insert(key.as_str()) {
+                        return Err(WriteError::DuplicateKey {
+                            path,
+                            key: key.clone(),
+                        });
+                    }
+                    let child_path = if path.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{path}.{key}")
+                    };
+                    stack.push((child, depth + 1, child_path));
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 /// [`YamlValue`]를 canonical YAML 텍스트로 기록합니다(trailing newline 포함).
+///
+/// 렌더링만 수행하며 loader 제한을 검사하지 않습니다. 파일로 기록하는 경로는
+/// [`write_canonical_checked`]를 사용합니다.
 pub fn write_canonical(value: &YamlValue) -> String {
     let mut out = String::new();
     match value {
@@ -449,5 +591,144 @@ mod tests {
             YamlValue::scalar("v"),
         )]));
         assert!(text.starts_with("? ") && text.ends_with("\n: v\n"));
+    }
+
+    fn map(pairs: Vec<(YamlValue, YamlValue)>) -> YamlValue {
+        YamlValue::Mapping(pairs)
+    }
+
+    /// 컨테이너 `depth`개가 중첩된 트리(맨 안쪽은 스칼라).
+    fn nested(depth: usize) -> YamlValue {
+        let mut value = YamlValue::scalar("leaf");
+        for i in 0..depth {
+            value = if i % 2 == 0 {
+                YamlValue::Sequence(vec![value])
+            } else {
+                map(vec![(YamlValue::scalar("k"), value)])
+            };
+        }
+        value
+    }
+
+    /// 깊은 트리의 재귀 drop(stack overflow)을 피하려고 바깥부터 해체합니다.
+    fn dismantle(mut value: YamlValue) {
+        loop {
+            value = match value {
+                YamlValue::Sequence(mut items) if !items.is_empty() => items.swap_remove(0),
+                YamlValue::Mapping(mut pairs) if !pairs.is_empty() => pairs.swap_remove(0).1,
+                _ => break,
+            };
+        }
+    }
+
+    #[test]
+    fn checked_writer_rejects_structures_the_loader_rejects() {
+        let dup = map(vec![(
+            YamlValue::scalar("deps"),
+            map(vec![
+                (YamlValue::scalar("a"), YamlValue::scalar("1")),
+                (YamlValue::scalar("a"), YamlValue::scalar("2")),
+            ]),
+        )]);
+        // 검사 없는 writer 출력은 loader가 실제로 거부함(기록하면 다시 열 수 없음).
+        assert!(load_restricted(&write_canonical(&dup)).is_err());
+        assert_eq!(
+            write_canonical_checked(&dup),
+            Err(WriteError::DuplicateKey {
+                path: "deps".to_string(),
+                key: "a".to_string()
+            })
+        );
+
+        let merge = map(vec![(YamlValue::scalar("<<"), YamlValue::scalar("x"))]);
+        assert!(load_restricted(&write_canonical(&merge)).is_err());
+        assert_eq!(
+            write_canonical_checked(&merge),
+            Err(WriteError::MergeKey {
+                path: String::new()
+            })
+        );
+
+        let complex_key = YamlValue::Sequence(vec![map(vec![(
+            YamlValue::Sequence(vec![]),
+            YamlValue::scalar("x"),
+        )])]);
+        assert_eq!(
+            write_canonical_checked(&complex_key),
+            Err(WriteError::NonScalarKey {
+                path: "[0]".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn checked_writer_enforces_nesting_depth_limit() {
+        let at_limit = nested(MAX_NESTING_DEPTH);
+        let text = write_canonical_checked(&at_limit).unwrap();
+        assert_eq!(load_restricted(&text).unwrap(), at_limit);
+
+        let over = nested(MAX_NESTING_DEPTH + 1);
+        assert!(load_restricted(&write_canonical(&over)).is_err());
+        assert!(matches!(
+            write_canonical_checked(&over),
+            Err(WriteError::NestingTooDeep { .. })
+        ));
+        // 매우 깊은 트리도 검사 단계에서 stack overflow 없이 거부(렌더링 전).
+        let very_deep = nested(100_000);
+        assert!(matches!(
+            write_canonical_checked(&very_deep),
+            Err(WriteError::NestingTooDeep { .. })
+        ));
+        dismantle(very_deep);
+    }
+
+    #[test]
+    fn checked_writer_enforces_size_limits() {
+        use crate::yaml::loader::{LoaderErrorKind, MAX_EVENT_LOOKAHEAD_CHARS};
+        // 이벤트 선읽기 상한을 넘는 스칼라: loader가 거부하므로 기록하지 않음.
+        let long = map(vec![(
+            YamlValue::scalar("k"),
+            YamlValue::scalar("a".repeat(MAX_EVENT_LOOKAHEAD_CHARS + 1)),
+        )]);
+        assert!(load_restricted(&write_canonical(&long)).is_err());
+        match write_canonical_checked(&long) {
+            Err(WriteError::NotReloadable(e)) => {
+                assert_eq!(e.kind, LoaderErrorKind::LookaheadTooLarge)
+            }
+            other => panic!("NotReloadable이어야 함: {other:?}"),
+        }
+        // 상한보다 짧은 스칼라는 기록·재로드됨.
+        let fits = map(vec![(
+            YamlValue::scalar("k"),
+            YamlValue::scalar("a".repeat(MAX_EVENT_LOOKAHEAD_CHARS / 2)),
+        )]);
+        assert_eq!(
+            load_restricted(&write_canonical_checked(&fits).unwrap()).unwrap(),
+            fits
+        );
+
+        // 전체 출력 크기 상한.
+        let item = "b".repeat(MAX_EVENT_LOOKAHEAD_CHARS / 2);
+        let count = MAX_INPUT_BYTES / item.len() + 1;
+        let big = YamlValue::Sequence(vec![YamlValue::scalar(item); count]);
+        assert!(load_restricted(&write_canonical(&big)).is_err());
+        assert!(matches!(
+            write_canonical_checked(&big),
+            Err(WriteError::OutputTooLarge { .. })
+        ));
+    }
+
+    #[test]
+    fn checked_writer_output_equals_unchecked_for_valid_trees() {
+        for tree in [
+            sample_tree(),
+            full_manifest().to_yaml(),
+            minimal_manifest().to_yaml(),
+        ] {
+            assert_eq!(
+                write_canonical_checked(&tree).unwrap(),
+                write_canonical(&tree)
+            );
+        }
     }
 }

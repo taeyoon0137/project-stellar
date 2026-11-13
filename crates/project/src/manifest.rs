@@ -137,6 +137,14 @@ impl Manifest {
         YamlValue::Mapping(top)
     }
 
+    /// 매니페스트를 loader 제한을 강제하며 canonical 텍스트로 기록합니다.
+    ///
+    /// 제한 loader가 다시 읽지 못할 출력(같은 이름의 의존성 → 중복 키, `<<` 이름, 크기·선읽기 상한
+    /// 초과)은 텍스트를 만들지 않고 [`WriteError`](crate::yaml::WriteError)로 거부합니다.
+    pub fn write(&self) -> Result<String, crate::yaml::WriteError> {
+        crate::yaml::write_canonical_checked(&self.to_yaml())
+    }
+
     /// [`YamlValue`] 트리에서 매니페스트를 만듭니다. 알 수 없는 키와 타입 불일치를 거부합니다.
     pub fn from_yaml(value: &YamlValue) -> Result<Manifest, ManifestError> {
         let top = expect_mapping(value, "<root>")?;
@@ -570,5 +578,50 @@ mod tests {
                 expected: "mapping"
             })
         );
+    }
+
+    #[test]
+    fn checked_write_rejects_manifests_that_would_not_reload() {
+        let dep = |name: &str| Dependency {
+            name: name.to_string(),
+            source: "git".to_string(),
+            repository: "git@example.com:lib.git".to_string(),
+            version: "v1".to_string(),
+        };
+        let base = Manifest {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            project: ProjectMeta {
+                id: "0195c530-3acd-7bc1-8414-c213f61cb965".to_string(),
+                name: "Demo".to_string(),
+            },
+            target_profiles: Vec::new(),
+            dependencies: vec![dep("design-system")],
+        };
+        // 정상 매니페스트는 기록 후 같은 모델로 다시 열림.
+        let text = base.write().unwrap();
+        let reloaded = Manifest::from_yaml(&crate::yaml::load_restricted(&text).unwrap()).unwrap();
+        assert_eq!(reloaded, base);
+
+        // 같은 이름의 의존성 → 중복 매핑 키.
+        let mut dup = base.clone();
+        dup.dependencies.push(dep("design-system"));
+        assert!(matches!(
+            dup.write(),
+            Err(crate::yaml::WriteError::DuplicateKey { .. })
+        ));
+        // `<<` 이름 → merge key.
+        let mut merge = base.clone();
+        merge.dependencies = vec![dep("<<")];
+        assert!(matches!(
+            merge.write(),
+            Err(crate::yaml::WriteError::MergeKey { .. })
+        ));
+        // 선읽기 상한을 넘는 이름.
+        let mut long = base.clone();
+        long.project.name = "n".repeat(crate::yaml::loader::MAX_EVENT_LOOKAHEAD_CHARS + 1);
+        assert!(matches!(
+            long.write(),
+            Err(crate::yaml::WriteError::NotReloadable(_))
+        ));
     }
 }

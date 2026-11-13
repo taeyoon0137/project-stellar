@@ -12,4 +12,4 @@ pub mod writer;
 
 pub use loader::{load_restricted, LoaderError, LoaderErrorKind};
 pub use value::YamlValue;
-pub use writer::write_canonical;
+pub use writer::{write_canonical, write_canonical_checked, WriteError};

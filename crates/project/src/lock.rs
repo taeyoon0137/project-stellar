@@ -104,8 +104,17 @@ impl Lockfile {
     ///
     /// 입력은 resolver 결과를 담은 [`Lockfile`]뿐이며, 사용자 편집 필드를 받는 경로가 없습니다.
     /// 고정 필드 모델만 직렬화하므로 알려진 필드 외에는 기록될 수 없습니다(IV.1.7).
+    /// loader 제한은 검사하지 않으므로 파일로 기록할 때는 [`Lockfile::write_checked`]를 씁니다.
     pub fn write(&self) -> String {
         crate::yaml::write_canonical(&self.to_yaml())
+    }
+
+    /// 잠금 파일을 loader 제한을 강제하며 canonical 텍스트로 기록합니다.
+    ///
+    /// 파일로 기록하는 경로는 이 함수를 씁니다. 제한 loader가 다시 읽지 못할 출력(크기·선읽기 상한
+    /// 초과 등)은 텍스트를 만들지 않고 [`WriteError`](crate::yaml::WriteError)로 거부합니다.
+    pub fn write_checked(&self) -> Result<String, crate::yaml::WriteError> {
+        crate::yaml::write_canonical_checked(&self.to_yaml())
     }
 
     /// [`YamlValue`] 트리에서 잠금 파일을 만듭니다. 알 수 없는 키·타입 불일치를 거부합니다.
@@ -489,5 +498,40 @@ mod tests {
                 expected: "sequence"
             })
         );
+    }
+
+    #[test]
+    fn checked_write_rejects_lockfiles_that_would_not_reload() {
+        let lock = multi_version_lock();
+        let text = lock.write_checked().unwrap();
+        assert_eq!(text, lock.write());
+        assert_eq!(
+            Lockfile::from_yaml(&load_restricted(&text).unwrap()).unwrap(),
+            lock
+        );
+
+        // 선읽기 상한을 넘는 필드.
+        let mut long = multi_version_lock();
+        long.resolved[0].content_hash =
+            "h".repeat(crate::yaml::loader::MAX_EVENT_LOOKAHEAD_CHARS + 1);
+        assert!(load_restricted(&long.write()).is_err());
+        assert!(long.write_checked().is_err());
+
+        // 입력 크기 상한을 넘는 잠금 파일.
+        let mut big = multi_version_lock();
+        let template = big.resolved[0].clone();
+        let segment = "p".repeat(crate::yaml::loader::MAX_EVENT_LOOKAHEAD_CHARS / 2);
+        big.resolved = (0..80)
+            .map(|_| {
+                let mut entry = template.clone();
+                entry.dependency_path = vec![segment.clone(), segment.clone()];
+                entry
+            })
+            .collect();
+        assert!(load_restricted(&big.write()).is_err());
+        assert!(matches!(
+            big.write_checked(),
+            Err(crate::yaml::WriteError::OutputTooLarge { .. })
+        ));
     }
 }

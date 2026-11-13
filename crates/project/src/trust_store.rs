@@ -30,7 +30,7 @@ use stellar_core_types::ids::StableId;
 use crate::identity::{parse_project_id, ProjectIdentity};
 use crate::trust::{trust_key, TrustStatus};
 use crate::yaml::scalar;
-use crate::yaml::{load_restricted, write_canonical, LoaderError, YamlValue};
+use crate::yaml::{load_restricted, write_canonical_checked, LoaderError, WriteError, YamlValue};
 
 /// 신뢰 목록 하위 디렉터리 이름.
 pub const TRUST_DIR: &str = "trust";
@@ -61,6 +61,8 @@ pub enum TrustStoreError {
         /// 문제된 경로.
         path: PathBuf,
     },
+    /// 새 목록이 제한 loader 상한을 넘어 다시 읽을 수 없으므로 기록하지 않음(기존 파일 유지).
+    Write(WriteError),
 }
 
 impl std::fmt::Display for TrustStoreError {
@@ -77,6 +79,7 @@ impl std::fmt::Display for TrustStoreError {
                     "UTF-8이 아닌 경로는 신뢰 목록에 기록할 수 없습니다: {path:?}"
                 )
             }
+            TrustStoreError::Write(e) => write!(f, "신뢰 목록을 기록할 수 없습니다: {e}"),
         }
     }
 }
@@ -339,7 +342,15 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> io::Result<()> {
 }
 
 /// 신뢰 목록을 canonical YAML로 렌더링합니다(target 정렬 순).
+///
+/// loader 제한을 강제하는 writer를 쓰므로, 상한을 넘어 다시 읽을 수 없는 목록은
+/// [`TrustStoreError::Write`]로 거부되고 파일은 바뀌지 않습니다.
 fn render_entries(entries: &BTreeMap<PathBuf, StableId>) -> Result<String, TrustStoreError> {
+    write_canonical_checked(&entries_tree(entries)?).map_err(TrustStoreError::Write)
+}
+
+/// 신뢰 목록의 YAML 값 트리.
+fn entries_tree(entries: &BTreeMap<PathBuf, StableId>) -> Result<YamlValue, TrustStoreError> {
     let mut items = Vec::with_capacity(entries.len());
     for (target, id) in entries {
         let Some(target_text) = target.to_str() else {
@@ -362,7 +373,7 @@ fn render_entries(entries: &BTreeMap<PathBuf, StableId>) -> Result<String, Trust
         ),
         (YamlValue::scalar("trusted"), YamlValue::Sequence(items)),
     ]);
-    Ok(write_canonical(&root))
+    Ok(root)
 }
 
 /// 신뢰 목록 텍스트를 파싱합니다. 알 수 없는 키·중복 target·형식 오류는 손상으로 거부합니다.
@@ -845,5 +856,57 @@ mod tests {
         store.revoke(&identity(&fx.project)).unwrap();
         assert_eq!(mode(&dir), 0o700);
         assert_eq!(mode(store.file_path()), 0o600);
+    }
+
+    #[test]
+    fn update_exceeding_loader_limit_is_refused_and_file_kept() {
+        use crate::yaml::loader::{MAX_EVENT_LOOKAHEAD_CHARS, MAX_INPUT_BYTES};
+        use crate::yaml::write_canonical;
+        let fx = fixture();
+        let long_target = |i: usize| {
+            PathBuf::from(format!(
+                "/{}{i:04}",
+                "d".repeat(MAX_EVENT_LOOKAHEAD_CHARS - 100)
+            ))
+        };
+        let size = |entries: &BTreeMap<PathBuf, StableId>| {
+            write_canonical(&entries_tree(entries).unwrap()).len()
+        };
+        // 다음 항목 하나를 더하면 입력 상한을 넘는 지점까지 목록을 채움.
+        let mut entries = BTreeMap::new();
+        let mut i = 0;
+        loop {
+            entries.insert(long_target(i), StableId::new_v7(i as u64 + 1, 1, 1));
+            if size(&entries) > MAX_INPUT_BYTES {
+                entries.remove(&long_target(i));
+                break;
+            }
+            i += 1;
+        }
+        let file = fx.data.join(TRUST_DIR).join(TRUST_FILE);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, render_entries(&entries).unwrap()).unwrap();
+        let before = std::fs::read(&file).unwrap();
+
+        let mut store = FileTrustStore::open(&fx.data).unwrap();
+        let count = store.trusted_targets().len();
+        let result = store.update(|e| {
+            e.insert(long_target(i), StableId::new_v7(9_999, 1, 1));
+            true
+        });
+        assert!(matches!(
+            result,
+            Err(TrustStoreError::Write(WriteError::OutputTooLarge { .. }))
+        ));
+        // 다시 읽을 수 없는 파일을 쓰지 않음: 기존 파일·메모리 상태 유지, 재열기 가능.
+        assert_eq!(std::fs::read(&file).unwrap(), before);
+        assert_eq!(store.trusted_targets().len(), count);
+        assert_eq!(
+            FileTrustStore::open(&fx.data)
+                .unwrap()
+                .trusted_targets()
+                .len(),
+            count
+        );
     }
 }
