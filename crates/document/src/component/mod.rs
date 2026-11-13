@@ -35,6 +35,9 @@ pub mod state_dispatch;
 /// nested 컴포넌트 상태 캡슐화 validator (IX.5.6).
 pub mod state_encapsulation;
 
+/// 상태 머신 진단 (IX.5.7).
+pub mod state_diagnostics;
+
 /// ComponentInstance node payload (IX.2.1).
 pub mod instance;
 

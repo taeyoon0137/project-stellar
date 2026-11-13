@@ -11,6 +11,7 @@
 //! program(VIII.4.1)을 [`EvalLimits`] 한도(VIII.4.5)로 실행합니다 — 재귀 없이 끝나며 비정상적으로 큰
 //! AST는 제한 오류로 종료합니다.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use stellar_core_types::typed_value::TypedValue;
@@ -132,8 +133,7 @@ impl CheckedExpression {
         if let Some(target) = ast.referenced_targets().into_iter().next() {
             return Err(ExpressionCheckError::ForbiddenReference(target.clone()));
         }
-        let none: std::collections::BTreeMap<ReferenceTarget, TypeSpec> =
-            std::collections::BTreeMap::new();
+        let none: BTreeMap<ReferenceTarget, TypeSpec> = BTreeMap::new();
         CheckedExpression::new(ast, declared, &none)
     }
 
@@ -155,6 +155,48 @@ impl CheckedExpression {
     /// root 추론 타입(선언 타입에 대입 가능).
     pub fn result_type(&self) -> TypeSpec {
         self.program.result_type()
+    }
+
+    /// node StableId를 무시한 구조 bytes: canonical 순서(VIII.2.5)의 위치 번호로 node id를 바꾼 AST의
+    /// canonical bytes입니다. GUI가 같은 식을 다른 node id로 두 번 만들어도 같은 값입니다(의미 비교용).
+    pub fn structural_bytes(&self) -> Vec<u8> {
+        use stellar_expressions::ast::{ChildRef, ExprNode, ExprNodeId};
+        let order = self.ast.canonical_order();
+        let renamed = |index: usize| {
+            let mut bytes = [0u8; 16];
+            bytes[8..].copy_from_slice(&(index as u64).to_le_bytes());
+            ExprNodeId::new(stellar_core_types::ids::StableId::from_bytes(bytes))
+        };
+        let index: BTreeMap<ExprNodeId, ExprNodeId> = order
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (*id, renamed(i)))
+            .collect();
+        let nodes: Vec<ExprNode> = order
+            .iter()
+            .filter_map(|id| self.ast.node(*id))
+            .map(|node| {
+                let children = node
+                    .children()
+                    .iter()
+                    .map(|child| {
+                        ChildRef::new(
+                            child.slot,
+                            index.get(&child.target).copied().unwrap_or(child.target),
+                        )
+                    })
+                    .collect();
+                ExprNode::new(
+                    index.get(&node.id()).copied().unwrap_or(node.id()),
+                    node.payload().clone(),
+                    children,
+                )
+            })
+            .collect();
+        ExpressionAst::new(renamed(0), nodes)
+            .ok()
+            .and_then(|ast| ast.to_canonical_bytes().ok())
+            .unwrap_or_else(|| self.canonical.clone())
     }
 
     /// 참조 대상 목록(중복 없음, 정렬).
@@ -347,6 +389,23 @@ mod tests {
             ),
             Err(ExpressionCheckError::ForbiddenReference(target))
         );
+    }
+
+    #[test]
+    fn structural_bytes_ignore_node_ids() {
+        let number = |v: f32| TypedValue::Number(FiniteF32::new(v).unwrap());
+        let spec = TypeSpec::required(ExpressionType::Number);
+        let make = |v: f32| {
+            CheckedExpression::closed(
+                binary(BinaryOp::Add, literal(number(1.0)), literal(number(v))),
+                spec,
+            )
+            .unwrap()
+        };
+        let (a, b, c) = (make(2.0), make(2.0), make(3.0));
+        assert_ne!(a.canonical_bytes(), b.canonical_bytes(), "node id가 다름");
+        assert_eq!(a.structural_bytes(), b.structural_bytes());
+        assert_ne!(a.structural_bytes(), c.structural_bytes());
     }
 
     #[test]
