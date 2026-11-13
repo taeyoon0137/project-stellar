@@ -754,7 +754,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| VIII.6.1 | `[ ]` | `ValueBinding`에 target PropertyPath, source expression root, expected type, scope owner를 정의합니다. | round-trip·type validation. | III.2.2, VIII.2.5 |
+| VIII.6.1 | `[x]` | `ValueBinding`에 target PropertyPath, source expression root, expected type, scope owner를 정의합니다. | round-trip·type validation. | III.2.2, VIII.2.5 |
 | VIII.6.2 | `[ ]` | binding dependency graph가 token, property, component property, environment input을 공통 node로 표현하게 합니다. | dependency 종류별 fixture 통과. | VIII.6.1, VIII.5.3 |
 | VIII.6.3 | `[ ]` | binding cycle detector를 구현하고 Property A↔B, token↔property cycle을 모두 탐지합니다. | mixed cycle fixture 실패. | VIII.6.2 |
 | VIII.6.4 | `[ ]` | source 변경 시 영향받는 binding만 topological order로 재평가하는 scheduler를 구현합니다. | 무관 subtree 평가 count 0, 순서 deterministic. | VIII.6.2, VIII.4.6 |

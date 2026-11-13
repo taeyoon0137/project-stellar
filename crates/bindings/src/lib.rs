@@ -14,3 +14,6 @@ pub mod token_cache;
 
 /// 토큰 생성·삭제·rename·expression 변경 command (VIII.5.5).
 pub mod token_commands;
+
+/// Value Binding 정의·직렬화·type 검증 (VIII.6.1).
+pub mod binding;
