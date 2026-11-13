@@ -37,9 +37,9 @@ dependencies policy에 등록하고 `text` crate에 안전 wrapper를 구현합�
 3. **줄바꿈: `unicode-linebreak` `=0.1.5` (Apache-2.0)**. UAX #14 기본 알고리즘(Unicode 15.0)이며
    SA(복합 문맥) 문자는 AL로 해석합니다(사전 기반 태국어 등 분절 없음). locale별 tailoring은
    `stellar-text`가 결과 위에 명시적으로 적용합니다. X.9.4에서 도입합니다.
-4. **grapheme cluster: `unicode-segmentation` (MIT OR Apache-2.0)**. UAX #29 extended grapheme
-   cluster로 fallback·줄바꿈·caret이 cluster를 쪼개지 않게 합니다. 정확한 버전은 도입 작업
-   (X.9.3)에서 아래 6번 규칙으로 고정하고 이 ADR과 승인 목록에 기록합니다.
+4. **grapheme cluster: `unicode-segmentation` `=1.13.3` (MIT OR Apache-2.0)**. UAX #29 extended
+   grapheme cluster(Unicode 17.0, 2026-06-01 공개, crate가 `deny(unsafe_code)`)로 BiDi 재배치·
+   fallback·줄바꿈·caret이 cluster를 쪼개지 않게 합니다. X.9.3에서 도입합니다.
 5. **wrapper 경계**: `stellar-text` 공개 API는 위 crate의 타입을 노출하지 않습니다(`GlyphId`,
    `ScriptTag`, `LanguageTag`, `TextDirection` 등 자체 타입). `stellar-text`도
    `#![forbid(unsafe_code)]`입니다. 엔진을 바꿔도 호출자 API는 유지됩니다.
@@ -47,8 +47,8 @@ dependencies policy에 등록하고 `text` crate에 안전 wrapper를 구현합�
    버전을 고릅니다(예: `harfrust` 0.16.0은 2026-11-12 공개라 2026-10-22의 0.15.0을 씀).
 7. **결정론 계약**: shaping 결과는 font unit 정수 advance·offset과 glyph id이고, px 변환은
    `stellar-text`가 정수 산술(1/64 px subpixel, 레이아웃 `LayoutUnit`과 같은 격자)로 합니다. 각
-   crate의 Unicode 데이터 버전(BiDi 16.0, 줄바꿈 15.0 등)은 테스트로 고정해, 갱신이 golden 변경과
-   함께 의도적으로만 일어나게 합니다.
+   crate의 Unicode 데이터 버전(BiDi 16.0, 줄바꿈 15.0, grapheme 17.0)은 테스트로 고정해, 갱신이
+   golden 변경과 함께 의도적으로만 일어나게 합니다.
 
 ### 전이 의존성과 라이선스(2026-11-14 `cargo metadata` 기준, `harfrust` 0.15.0)
 
@@ -81,8 +81,8 @@ validator는 직접 의존성만 검사하므로 이 표로 검토 기록을 남
 - 긍정: C toolchain 없이 macOS·Windows에서 같은 코드로 같은 결과를 냅니다. `unsafe`가 없습니다.
 - 긍정: HarfBuzz와 같은 shaping 규칙(OpenType GSUB/GPOS, 복합 script shaper)을 씁니다.
 - 부정: `harfrust`는 0.x이고 릴리스가 잦습니다. 갱신은 golden(X.10.7) 재검증과 함께 합니다.
-- 부정: crate마다 Unicode 데이터 버전이 다릅니다(BiDi 16.0, 줄바꿈 15.0). 최신 문자의 줄바꿈
-  속성은 15.0 기준입니다.
+- 부정: crate마다 Unicode 데이터 버전이 다릅니다(BiDi 16.0, 줄바꿈 15.0, grapheme 17.0). 최신
+  문자의 줄바꿈 속성은 15.0 기준입니다.
 - 부정: 정책 validator(`cargo xtask validate-dependencies`)는 현재 `cargo tree -p xtask`의 직접
   의존성만 수집합니다(`tools/xtask/src/commands.rs`). 제품 crate의 승인 항목은 `unused-approval`로
   보고되므로, workspace 전체 직접 의존성을 수집하도록 validator 범위를 넓히는 후속 수정이

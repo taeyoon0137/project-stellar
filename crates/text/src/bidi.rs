@@ -1,10 +1,15 @@
-//! Unicode BiDi 처리 (X.9.2 level 해석).
+//! Unicode BiDi 처리 (X.9.2 level 해석, X.9.3 줄 재배치·cluster mapping).
 //!
-//! UAX #9 구현은 승인 의존성 `unicode-bidi`(ADR-0016)에 맡기고, 결과를 crate 자체 타입
-//! ([`BidiLevel`], [`BidiParagraph`])으로 감쌉니다.
+//! UAX #9 해석(X1~I2)은 승인 의존성 `unicode-bidi`(ADR-0016)에 맡기고, 결과를 crate 자체 타입
+//! ([`BidiLevel`], [`BidiParagraph`], [`LineOrder`])으로 감쌉니다.
 //!
 //! - [`BidiParagraph::analyze`]: paragraph 텍스트의 byte마다 resolved embedding level(UAX #9
 //!   X1~I2, 줄 단위 L1 이전)을 계산합니다. shaping itemization(X.9.2)은 이 level로 방향을 나눕니다.
+//! - [`BidiParagraph::line_order`] (X.9.3): 줄 하나에 L1(줄 끝·구분자 앞 공백을 문단 level로)과
+//!   L2(가장 높은 level부터 연속 구간 뒤집기)를 적용해 **visual 순서**를 만들고, **logical cluster
+//!   mapping**(visual 위치 ↔ 논리 cluster index)을 양방향으로 유지합니다. cluster는 UAX #29 extended
+//!   grapheme cluster이며 재배치의 최소 단위라, 결합 부호가 base 문자와 떨어지지 않습니다(L3 효과).
+//!   L4(거울 glyph)는 shaping 엔진이 RTL run에서 처리합니다.
 //! - 기준 방향은 [`BaseDirection`]으로 명시합니다. `Auto`는 첫 strong 문자(P2·P3)로 정하고 strong
 //!   문자가 없으면 LTR입니다. 실행 환경 locale이나 UI 방향을 암묵적으로 쓰지 않습니다.
 //! - 문단 구분 문자(UAX #9 class B: U+2029 등)가 텍스트 안에 있으면 그 지점에서 BiDi paragraph가
@@ -13,7 +18,8 @@
 use std::fmt;
 use std::ops::Range;
 
-use unicode_bidi::{BidiInfo, Level};
+use unicode_bidi::{BidiClass, BidiInfo, Level};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::shaping::TextDirection;
 
@@ -76,8 +82,108 @@ impl fmt::Debug for BidiLevel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BidiParagraph {
     levels: Vec<BidiLevel>,
+    classes: Vec<BidiClass>,
     paragraphs: Vec<(Range<usize>, BidiLevel)>,
     base_level: BidiLevel,
+}
+
+/// 줄 재배치 입력 오류.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BidiError {
+    /// 해석한 텍스트와 길이가 다른 텍스트가 들어왔습니다.
+    TextMismatch {
+        /// 해석 시 byte 길이.
+        analyzed: usize,
+        /// 입력 byte 길이.
+        given: usize,
+    },
+    /// 줄 범위가 텍스트를 벗어나거나 문자 경계가 아닙니다.
+    InvalidLine {
+        /// 시작.
+        start: usize,
+        /// 끝.
+        end: usize,
+    },
+}
+
+impl fmt::Display for BidiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BidiError::TextMismatch { analyzed, given } => write!(
+                f,
+                "BiDi 해석 텍스트 길이 {analyzed}와 입력 길이 {given}이(가) 다릅니다"
+            ),
+            BidiError::InvalidLine { start, end } => {
+                write!(
+                    f,
+                    "줄 범위 {start}..{end}이(가) 텍스트 문자 경계가 아닙니다"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for BidiError {}
+
+/// 줄 안에서 같은 level을 가진 연속 논리 구간(visual 순서로 나열).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VisualRun {
+    /// paragraph 안 byte 범위(논리 순서로 연속).
+    pub range: Range<usize>,
+    /// L1 적용 level.
+    pub level: BidiLevel,
+}
+
+/// 줄 하나의 visual 순서와 logical cluster mapping (X.9.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineOrder {
+    line: Range<usize>,
+    clusters: Vec<Range<usize>>,
+    levels: Vec<BidiLevel>,
+    visual_to_logical: Vec<usize>,
+    logical_to_visual: Vec<usize>,
+    runs: Vec<VisualRun>,
+}
+
+impl LineOrder {
+    /// 줄 byte 범위.
+    pub fn line(&self) -> Range<usize> {
+        self.line.clone()
+    }
+
+    /// 논리 순서 cluster(grapheme) byte 범위.
+    pub fn clusters(&self) -> &[Range<usize>] {
+        &self.clusters
+    }
+
+    /// 논리 cluster별 L1 적용 level.
+    pub fn cluster_levels(&self) -> &[BidiLevel] {
+        &self.levels
+    }
+
+    /// visual 위치(왼쪽→오른쪽) → 논리 cluster index.
+    pub fn visual_to_logical(&self) -> &[usize] {
+        &self.visual_to_logical
+    }
+
+    /// 논리 cluster index → visual 위치.
+    pub fn logical_to_visual(&self) -> &[usize] {
+        &self.logical_to_visual
+    }
+
+    /// visual 순서 run.
+    pub fn visual_runs(&self) -> &[VisualRun] {
+        &self.runs
+    }
+
+    /// byte offset을 포함하는 논리 cluster index(줄 밖이면 `None`).
+    pub fn cluster_at(&self, offset: usize) -> Option<usize> {
+        let index = self.clusters.partition_point(|c| c.end <= offset);
+        self.clusters
+            .get(index)
+            .filter(|c| c.start <= offset)
+            .map(|_| index)
+    }
 }
 
 impl BidiParagraph {
@@ -90,6 +196,7 @@ impl BidiParagraph {
         };
         let info = BidiInfo::new(text, default_level);
         let levels = info.levels.iter().map(|l| BidiLevel(l.number())).collect();
+        let classes = info.original_classes.clone();
         let paragraphs: Vec<(Range<usize>, BidiLevel)> = info
             .paragraphs
             .iter()
@@ -104,6 +211,7 @@ impl BidiParagraph {
             });
         BidiParagraph {
             levels,
+            classes,
             paragraphs,
             base_level,
         }
@@ -133,6 +241,175 @@ impl BidiParagraph {
     pub fn has_rtl(&self) -> bool {
         self.levels.iter().any(BidiLevel::is_rtl)
     }
+
+    /// 줄 `line`에 L1을 적용한 byte별 level(줄 길이만큼). `text`는 해석한 텍스트여야 합니다.
+    pub fn line_levels(&self, text: &str, line: Range<usize>) -> Result<Vec<BidiLevel>, BidiError> {
+        self.check_line(text, &line)?;
+        let mut out = self.levels[line.clone()].to_vec();
+        // BiDi paragraph 경계마다 따로 L1을 적용합니다.
+        for (para_range, para_level) in &self.paragraphs {
+            let start = para_range.start.max(line.start);
+            let end = para_range.end.min(line.end);
+            if start >= end {
+                continue;
+            }
+            let base = start - line.start;
+            apply_l1(
+                &text[start..end],
+                &self.classes[start..end],
+                &mut out[base..base + (end - start)],
+                *para_level,
+            );
+        }
+        Ok(out)
+    }
+
+    /// 줄 `line`의 visual 순서와 logical cluster mapping을 만듭니다 (X.9.3).
+    pub fn line_order(&self, text: &str, line: Range<usize>) -> Result<LineOrder, BidiError> {
+        let byte_levels = self.line_levels(text, line.clone())?;
+        let clusters: Vec<Range<usize>> = text[line.clone()]
+            .grapheme_indices(true)
+            .map(|(i, g)| line.start + i..line.start + i + g.len())
+            .collect();
+        let levels: Vec<BidiLevel> = clusters
+            .iter()
+            .map(|c| byte_levels[c.start - line.start])
+            .collect();
+
+        // 논리 순서 level run(cluster index 범위).
+        let mut logical_runs: Vec<Range<usize>> = Vec::new();
+        for (i, level) in levels.iter().enumerate() {
+            match logical_runs.last_mut() {
+                Some(run) if levels[run.start] == *level => run.end = i + 1,
+                _ => logical_runs.push(i..i + 1),
+            }
+        }
+        let run_order = reorder_runs(&logical_runs, &levels);
+
+        let mut visual_to_logical = Vec::with_capacity(clusters.len());
+        let mut runs = Vec::with_capacity(run_order.len());
+        for &r in &run_order {
+            let run = &logical_runs[r];
+            let level = levels[run.start];
+            if level.is_rtl() {
+                visual_to_logical.extend(run.clone().rev());
+            } else {
+                visual_to_logical.extend(run.clone());
+            }
+            runs.push(VisualRun {
+                range: clusters[run.start].start..clusters[run.end - 1].end,
+                level,
+            });
+        }
+        let mut logical_to_visual = vec![0; clusters.len()];
+        for (visual, &logical) in visual_to_logical.iter().enumerate() {
+            logical_to_visual[logical] = visual;
+        }
+        Ok(LineOrder {
+            line,
+            clusters,
+            levels,
+            visual_to_logical,
+            logical_to_visual,
+            runs,
+        })
+    }
+
+    fn check_line(&self, text: &str, line: &Range<usize>) -> Result<(), BidiError> {
+        if text.len() != self.levels.len() {
+            return Err(BidiError::TextMismatch {
+                analyzed: self.levels.len(),
+                given: text.len(),
+            });
+        }
+        let valid = line.start <= line.end
+            && line.end <= text.len()
+            && text.is_char_boundary(line.start)
+            && text.is_char_boundary(line.end);
+        if valid {
+            Ok(())
+        } else {
+            Err(BidiError::InvalidLine {
+                start: line.start,
+                end: line.end,
+            })
+        }
+    }
+}
+
+/// UAX #9 L1: 구분자(S·B)와 그 앞 공백·isolate 서식 문자열, 줄 끝 공백열을 문단 level로 되돌립니다.
+/// 보존된 explicit 서식 문자(LRE 등)·BN은 앞 문자 level을 따릅니다(`unicode-bidi`와 같은 규칙).
+fn apply_l1(text: &str, classes: &[BidiClass], levels: &mut [BidiLevel], para: BidiLevel) {
+    use BidiClass::{B, BN, FSI, LRE, LRI, LRO, PDF, PDI, RLE, RLI, RLO, S, WS};
+    let mut reset_from: Option<usize> = Some(0);
+    let mut prev = para;
+    for (i, c) in text.char_indices() {
+        let len = c.len_utf8();
+        let mut reset_to = None;
+        match classes[i] {
+            B | S => {
+                reset_to = Some(i + len);
+                if reset_from.is_none() {
+                    reset_from = Some(i);
+                }
+            }
+            WS | FSI | LRI | RLI | PDI => {
+                if reset_from.is_none() {
+                    reset_from = Some(i);
+                }
+            }
+            RLE | LRE | RLO | LRO | PDF | BN => {
+                if reset_from.is_none() {
+                    reset_from = Some(i);
+                }
+                for level in &mut levels[i..i + len] {
+                    *level = prev;
+                }
+            }
+            _ => reset_from = None,
+        }
+        if let (Some(from), Some(to)) = (reset_from, reset_to) {
+            for level in &mut levels[from..to] {
+                *level = para;
+            }
+            reset_from = None;
+        }
+        prev = levels[i];
+    }
+    if let Some(from) = reset_from {
+        for level in &mut levels[from..] {
+            *level = para;
+        }
+    }
+}
+
+/// UAX #9 L2: 가장 높은 level부터 가장 낮은 홀수 level까지, 그 level 이상인 연속 run 구간을
+/// 뒤집습니다. 반환값은 visual 순서의 run index입니다. level은 126 이하라 반복 횟수가 유한합니다.
+fn reorder_runs(runs: &[Range<usize>], levels: &[BidiLevel]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..runs.len()).collect();
+    let run_level = |r: usize| levels[runs[r].start].number();
+    let Some(max) = (0..runs.len()).map(run_level).max() else {
+        return order;
+    };
+    let min = (0..runs.len()).map(run_level).min().unwrap_or(0);
+    let lowest_odd = if min % 2 == 1 { min } else { min + 1 };
+    let mut level = max;
+    while level >= lowest_odd {
+        let mut i = 0;
+        while i < order.len() {
+            if run_level(order[i]) < level {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            while i < order.len() && run_level(order[i]) >= level {
+                i += 1;
+            }
+            order[start..i].reverse();
+        }
+        level -= 1;
+    }
+    order
 }
 
 #[cfg(test)]
@@ -187,10 +464,249 @@ mod tests {
         assert_eq!(empty.level_at(0), BidiLevel::RTL);
     }
 
+    /// 고정 BiDi corpus 항목: (입력, 기준 방향, cluster별 L1 level, visual 순서의 논리 cluster index).
+    ///
+    /// 기대값은 UAX #9 규칙을 손으로 적용해 정했습니다(주석에 적용 규칙). 문자는 escape로 적어
+    /// 편집기 BiDi 표시와 무관하게 읽을 수 있게 했습니다. א=U+05D0, ב=U+05D1, ג=U+05D2(R),
+    /// ا=U+0627, ب=U+0628, ت=U+062A(AL).
+    type CorpusCase = (&'static str, BaseDirection, &'static [u8], &'static [usize]);
+
+    const CORPUS: &[CorpusCase] = &[
+        // 1. LTR 문자만.
+        ("abc", BaseDirection::LeftToRight, &[0, 0, 0], &[0, 1, 2]),
+        // 2. LTR 문단의 R 문자: I1로 level 1, L2로 뒤집힘.
+        (
+            "\u{5D0}\u{5D1}\u{5D2}",
+            BaseDirection::LeftToRight,
+            &[1, 1, 1],
+            &[2, 1, 0],
+        ),
+        // 3. Auto: 첫 strong R → 문단 level 1.
+        (
+            "\u{5D0}\u{5D1}\u{5D2}",
+            BaseDirection::Auto,
+            &[1, 1, 1],
+            &[2, 1, 0],
+        ),
+        // 4. L 공백 R: 공백은 L·R 사이 중립(N2) → 문단 level 0.
+        (
+            "abc \u{5D0}\u{5D1}\u{5D2}",
+            BaseDirection::LeftToRight,
+            &[0, 0, 0, 0, 1, 1, 1],
+            &[0, 1, 2, 3, 6, 5, 4],
+        ),
+        // 5. RTL 문단의 L 단어: I2로 level 2, L2 두 번 뒤집기.
+        (
+            "\u{5D0}\u{5D1}\u{5D2} abc",
+            BaseDirection::RightToLeft,
+            &[1, 1, 1, 1, 2, 2, 2],
+            &[4, 5, 6, 3, 2, 1, 0],
+        ),
+        // 6. L 뒤 EN: W7로 L.
+        (
+            "abc 123 \u{5D0}\u{5D1}\u{5D2}",
+            BaseDirection::LeftToRight,
+            &[0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1],
+            &[0, 1, 2, 3, 4, 5, 6, 7, 10, 9, 8],
+        ),
+        // 7. RTL 문단의 R 뒤 EN: EN 유지, I2로 level 2. 공백은 R·EN(N1에서 R) 사이라 1.
+        (
+            "\u{5D0}\u{5D1}\u{5D2} 123",
+            BaseDirection::RightToLeft,
+            &[1, 1, 1, 1, 2, 2, 2],
+            &[4, 5, 6, 3, 2, 1, 0],
+        ),
+        // 8. AL 뒤 EN: W2로 AN, I2로 level 2.
+        (
+            "\u{627}\u{628}\u{62A} 12",
+            BaseDirection::RightToLeft,
+            &[1, 1, 1, 1, 2, 2],
+            &[4, 5, 3, 2, 1, 0],
+        ),
+        // 9. 줄 끝 공백은 L1로 문단 level(0).
+        (
+            "\u{5D0}\u{5D1}\u{5D2}  ",
+            BaseDirection::LeftToRight,
+            &[1, 1, 1, 0, 0],
+            &[2, 1, 0, 3, 4],
+        ),
+        // 10. RTL 문단 줄 끝 공백도 L1로 문단 level(1).
+        (
+            "abc  ",
+            BaseDirection::RightToLeft,
+            &[2, 2, 2, 1, 1],
+            &[4, 3, 0, 1, 2],
+        ),
+        // 11. N0: 괄호 안 R만 있고 앞 문맥 L → 괄호는 문단 방향(L).
+        (
+            "a(\u{5D1})c",
+            BaseDirection::LeftToRight,
+            &[0, 0, 1, 0, 0],
+            &[0, 1, 2, 3, 4],
+        ),
+        // 12. N0: RTL 문단, 괄호 안 L만, 앞 문맥 R → 괄호는 문단 방향(R).
+        (
+            "\u{5D0}\u{5D1}(cd)",
+            BaseDirection::RightToLeft,
+            &[1, 1, 1, 2, 2, 1],
+            &[5, 3, 4, 2, 1, 0],
+        ),
+        // 13. RLI…PDI isolate: 내부는 level 1, isolate 문자는 바깥 중립(L 사이 → 0).
+        (
+            "a\u{2067}\u{5D1}\u{2069}c",
+            BaseDirection::LeftToRight,
+            &[0, 0, 1, 0, 0],
+            &[0, 1, 2, 3, 4],
+        ),
+        // 14. W4: EN CS EN → EN. RTL 문단에서 level 2, 숫자 순서 유지.
+        ("1,2", BaseDirection::RightToLeft, &[2, 2, 2], &[0, 1, 2]),
+        // 15. L R L 혼합.
+        (
+            "abc \u{5D0}\u{5D1}\u{5D2} def",
+            BaseDirection::LeftToRight,
+            &[0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0],
+            &[0, 1, 2, 3, 6, 5, 4, 7, 8, 9, 10],
+        ),
+        // 16. RTL 문단의 L 단어 뒤 EN: W7로 L, 사이 공백도 L·L 사이라 L(level 2).
+        (
+            "\u{5D0}\u{5D1}\u{5D2} abc 123",
+            BaseDirection::RightToLeft,
+            &[1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2],
+            &[4, 5, 6, 7, 8, 9, 10, 3, 2, 1, 0],
+        ),
+        // 17. 결합 부호(U+05BC NSM)는 base와 한 cluster: cluster 2개를 뒤집어도 부호가 붙어 있습니다.
+        (
+            "\u{5D0}\u{5BC}\u{5D1}",
+            BaseDirection::RightToLeft,
+            &[1, 1],
+            &[1, 0],
+        ),
+        // 18. 빈 줄.
+        ("", BaseDirection::RightToLeft, &[], &[]),
+        // 19. 구분자(TAB, class S)는 L1로 문단 level: RTL 문단 "abc<TAB>def".
+        (
+            "abc\tdef",
+            BaseDirection::RightToLeft,
+            &[2, 2, 2, 1, 2, 2, 2],
+            &[4, 5, 6, 3, 0, 1, 2],
+        ),
+    ];
+
+    #[test]
+    fn fixed_bidi_corpus_passes() {
+        for (index, (text, base, levels, order)) in CORPUS.iter().enumerate() {
+            let para = BidiParagraph::analyze(text, *base);
+            let line = para.line_order(text, 0..text.len()).expect("줄");
+            let got_levels: Vec<u8> = line.cluster_levels().iter().map(|l| l.number()).collect();
+            assert_eq!(&got_levels, levels, "corpus {} levels: {text:?}", index + 1);
+            assert_eq!(
+                line.visual_to_logical(),
+                *order,
+                "corpus {} order: {text:?}",
+                index + 1
+            );
+            // 양방향 mapping이 서로 역함수입니다.
+            for (visual, &logical) in line.visual_to_logical().iter().enumerate() {
+                assert_eq!(line.logical_to_visual()[logical], visual);
+            }
+            // visual run은 줄 전체를 정확히 한 번씩 덮습니다.
+            let covered: usize = line.visual_runs().iter().map(|r| r.range.len()).sum();
+            assert_eq!(covered, text.len());
+        }
+    }
+
+    #[test]
+    fn corpus_agrees_with_reference_reordering() {
+        // cluster가 문자 하나인 항목은 `unicode-bidi`의 L1(reordered_levels)·L2(reorder_visual)
+        // 결과와 문자 단위로 일치해야 합니다.
+        for (text, base, _, _) in CORPUS.iter().filter(|c| c.0 != "\u{5D0}\u{5BC}\u{5D1}") {
+            let default_level = match base {
+                BaseDirection::LeftToRight => Some(Level::ltr()),
+                BaseDirection::RightToLeft => Some(Level::rtl()),
+                BaseDirection::Auto => None,
+            };
+            let info = BidiInfo::new(text, default_level);
+            let para = BidiParagraph::analyze(text, *base);
+            let line = para.line_order(text, 0..text.len()).expect("줄");
+            let Some(reference_para) = info.paragraphs.first() else {
+                assert!(line.clusters().is_empty());
+                continue;
+            };
+            let reference = info.reordered_levels_per_char(reference_para, 0..text.len());
+            let ours: Vec<u8> = line.cluster_levels().iter().map(|l| l.number()).collect();
+            let theirs: Vec<u8> = reference.iter().map(|l| l.number()).collect();
+            assert_eq!(ours, theirs, "{text:?}");
+            assert_eq!(
+                line.visual_to_logical(),
+                BidiInfo::reorder_visual(&reference).as_slice(),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn visual_runs_and_cluster_lookup() {
+        let text = "abc \u{5D0}\u{5D1} def";
+        let para = BidiParagraph::analyze(text, BaseDirection::LeftToRight);
+        let line = para.line_order(text, 0..text.len()).expect("줄");
+        let runs: Vec<(Range<usize>, u8)> = line
+            .visual_runs()
+            .iter()
+            .map(|r| (r.range.clone(), r.level.number()))
+            .collect();
+        assert_eq!(runs, vec![(0..4, 0), (4..8, 1), (8..12, 0)]);
+        assert_eq!(line.cluster_at(5), Some(4));
+        assert_eq!(line.cluster_at(4), Some(4));
+        assert_eq!(line.cluster_at(12), None);
+        // 부분 줄: 둘째 줄 "\u{5D0}\u{5D1} def"만 재배치.
+        let second = para.line_order(text, 4..12).expect("부분 줄");
+        assert_eq!(second.line(), 4..12);
+        assert_eq!(second.visual_to_logical(), &[1, 0, 2, 3, 4, 5]);
+        assert_eq!(second.clusters()[0], 4..6);
+    }
+
+    #[test]
+    fn line_order_rejects_invalid_input() {
+        let text = "a\u{5D0}";
+        let para = BidiParagraph::analyze(text, BaseDirection::LeftToRight);
+        assert_eq!(
+            para.line_order("ab", 0..2).map(|_| ()),
+            Err(BidiError::TextMismatch {
+                analyzed: 3,
+                given: 2
+            })
+        );
+        assert_eq!(
+            para.line_order(text, 0..2).map(|_| ()),
+            Err(BidiError::InvalidLine { start: 0, end: 2 })
+        );
+        assert_eq!(
+            para.line_levels(text, 0..9).map(|_| ()),
+            Err(BidiError::InvalidLine { start: 0, end: 9 })
+        );
+        assert!(BidiError::InvalidLine { start: 0, end: 9 }
+            .to_string()
+            .contains("0..9"));
+    }
+
+    #[test]
+    fn deep_embedding_is_bounded() {
+        // explicit embedding 깊이는 UAX #9 상한(125)으로 제한되고 재배치는 유한 반복입니다.
+        let text = format!("{}a\u{5D0}", "\u{202B}\u{202A}".repeat(200));
+        let para = BidiParagraph::analyze(&text, BaseDirection::LeftToRight);
+        let line = para.line_order(&text, 0..text.len()).expect("줄");
+        assert!(line
+            .cluster_levels()
+            .iter()
+            .all(|l| l.number() <= BidiLevel::MAX));
+        assert_eq!(line.visual_to_logical().len(), line.clusters().len());
+    }
+
     #[test]
     fn unicode_data_version_is_pinned() {
         // ADR-0016 Decision 7: Unicode 데이터 갱신은 golden 재검증과 함께 의도적으로만 합니다.
         assert_eq!(unicode_bidi::UNICODE_VERSION, (16, 0, 0));
+        assert_eq!(unicode_segmentation::UNICODE_VERSION, (17, 0, 0));
     }
 
     #[test]

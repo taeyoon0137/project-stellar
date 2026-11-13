@@ -21,7 +21,7 @@ pub mod missing_font;
 /// 공통 shaping 엔진 wrapper (X.9.1).
 pub mod shaping;
 
-/// Unicode BiDi level 해석 (X.9.2).
+/// Unicode BiDi level 해석 (X.9.2), 줄 재배치·logical cluster mapping (X.9.3).
 pub mod bidi;
 
 /// script·language·direction itemization (X.9.2).

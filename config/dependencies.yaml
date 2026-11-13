@@ -61,3 +61,10 @@ dependencies:
     approval: approved
     purpose: "Unicode BiDi(UAX #9) level 해석·재배치 (stellar-text X.9.2~X.9.3, ADR-0016)"
     replaceable: true
+  - name: unicode-segmentation
+    ecosystem: cargo
+    version: "1.13.3"
+    license: "MIT OR Apache-2.0"
+    approval: approved
+    purpose: "UAX #29 grapheme cluster 분절 (stellar-text X.9.3~, ADR-0016)"
+    replaceable: true

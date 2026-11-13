@@ -10,6 +10,7 @@ stellar-core-types = { path = "../core-types" }
 # 승인 외부 의존성(ADR-0016, config/dependencies.yaml). 정확한 버전으로 고정합니다.
 harfrust = { version = "=0.15.0", default-features = false, features = ["std"] }
 unicode-bidi = { version = "=0.3.18", default-features = false, features = ["hardcoded-data", "std"] }
+unicode-segmentation = "=1.13.3"
 
 [lints]
 workspace = true
