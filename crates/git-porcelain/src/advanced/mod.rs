@@ -36,6 +36,9 @@ pub mod reset;
 /// reflog 조회와 선택 항목 복구(XXVI.2.4).
 pub mod reflog;
 
+/// Git worktree 목록·관리(XXVI.3.*).
+pub mod worktree;
+
 /// 명령의 파괴 수준.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DestructiveLevel {
