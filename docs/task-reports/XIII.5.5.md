@@ -119,3 +119,43 @@
   `update_from_selected_source(asset_id, current, selected, policy)`가 import 정책을 필수로
   받습니다. 정책 없는 변형과 `update_from_source_with_policy`·
   `update_from_selected_source_with_policy`는 제거했습니다(XIII.5.7 후속 수정).
+
+## 후속 수정(보안 리뷰 반영): 내부 원본 경로 경계 — 보호 영역과 호출자 정책
+
+- **문제**: 내부 원본 판정이 "canonical project root 안"뿐이었습니다. commit된(신뢰할 수 없는)
+  record가 `.git/config`(credential URL)·Git이 무시하는 `.env` 같은 root 안 로컬 비밀을 원본으로
+  지정하면 `Update from Source`가 그 내용을 tracked `assets/`로 복사했습니다(리뷰 재현:
+  `SourceMetadata::project(".git/config")` → `Updated`, credential이 든 content 파일 생성).
+- **수정** (`crates/assets/src/project_source.rs` 신규, `update_source.rs`·`store.rs` 변경):
+  - **고정 거부**(`protected_project_path`·`protected_area`): 기록 경로(파일 시스템 접근 전)와
+    canonicalize한 해석 경로(project root 기준) 양쪽에서 어느 위치든 `.git` 구성 요소,
+    첫 구성 요소 `design/`·`.stellar/`(Stellar 저장 디렉터리), `assets/`를 거부합니다
+    → `SourceUnavailable::ProtectedPath(ProtectedArea)`. 비교는 ASCII 대소문자 무시, HFS+ 무시
+    code point(U+200C 등) 제거, 끝 `.`·공백 제거 뒤 합니다. 프로젝트 안 symlink로 보호 영역을
+    가리키는 경우도 해석 경로에서 걸립니다.
+  - **호출자 정책 필수**: `update_from_source`가 `project_sources: &dyn ProjectSourcePolicy`를
+    받습니다. 고정 거부를 통과한 내부 원본은 정책이 `ProjectSourceDecision::Allow`를 돌려줘야
+    읽고, 아니면 `SourceUnavailable::DeniedByPolicy`입니다. 정책에는 기록 경로·해석 경로·
+    canonical 절대 경로를 넘깁니다(`ProjectSourceCandidate`). 신뢰되지 않은 프로젝트용
+    `DenyProjectSources`(모두 거부)를 제공하고, project 계층이 신뢰 매트릭스와
+    `git check-ignore`를 이 trait로 연결합니다(이 crate는 Git을 실행하지 않음, 판정 실패는
+    `Deny`로 처리하도록 문서화).
+  - **판정 경로 고정**: import 요청에 판정을 통과한 해석 상대 경로를 넘기고
+    (`requiring_project_source(approved)`), import 시점에 다른 내부 파일로 해석되면
+    `ImportError::SourceChanged`, 밖이면 `OutsideProject`로 아무 것도 쓰지 않습니다.
+  - 사용자가 직접 고른 경로(첫 import, `update_from_selected_source`)와 외부 원본(기기 key
+    지문)은 이 판정 밖이며, 그 경계를 모듈 문서에 적었습니다.
+- **검증**: `committed_record_cannot_copy_git_metadata_or_storage_into_assets`(`.git/config`·
+  `.git/HEAD`·`.GIT/config`·`.g\u{200c}it/config`·중첩 `vendor/lib/.git/config`·`design/`·
+  `Design/`·`.stellar/`·기존 `assets/` content 모두 `ProtectedPath`, 허용 정책이어도 거부, 정책
+  미호출, `assets/` 불변), `project_symlink_into_protected_area_is_rejected`(파일·디렉터리
+  symlink로 `.git`·`design/` 지정), `project_sources_require_explicit_policy_allow`
+  (`DenyProjectSources`는 일반 이미지도 거부, check-ignore 모사 정책이 symlink 해석 경로
+  `.env`를 거부, 허용 경로만 복사), `import_guard_rejects_outside_source_before_writing`(판정 경로와
+  다른 내부 파일은 `SourceChanged`), `project_source` 모듈 단위 테스트 4건과 doctest 1건.
+  `cargo test -p stellar-assets` lib 129 passed + integration 1 passed + doctest 8 passed,
+  `cargo clippy -p stellar-assets --all-targets -- -D warnings` 경고 0, `cargo fmt -p
+  stellar-assets -- --check` 통과, `cargo check -p stellar-project` 통과.
+- **남은 위험**: project 계층의 실제 정책(신뢰 매트릭스·`git check-ignore`) 연결은 아직 없습니다.
+  NTFS 8.3 짧은 이름·ADS 표기는 다루지 않습니다(Windows 지원 보류). 판정과 열기 사이 경로 교체
+  (TOCTOU)는 별도 후속 수정(S4)에서 다룹니다.

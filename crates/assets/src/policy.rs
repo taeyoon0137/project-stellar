@@ -329,7 +329,9 @@ impl AssetImportPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::test_support::{files_under, shipped_policy, test_store, TempDir};
+    use crate::store::test_support::{
+        files_under, shipped_policy, test_store, AllowProjectSources, TempDir,
+    };
     use crate::store::{AssetStore, ImportError};
     use crate::update_source::UpdateFromSourceOutcome;
     use stellar_storage::hash::ContentHash;
@@ -694,7 +696,7 @@ mod tests {
         let before = files_under(&fx.project.join("assets"));
         assert_eq!(
             fx.store
-                .update_from_source(id, &current, None, &policy)
+                .update_from_source(id, &current, None, &policy, &AllowProjectSources)
                 .unwrap_err(),
             ImportError::TooLarge {
                 size: 1001,
@@ -707,7 +709,7 @@ mod tests {
         std::fs::write(&source, vec![2u8; 1000]).unwrap();
         assert!(matches!(
             fx.store
-                .update_from_source(id, &current, None, &policy)
+                .update_from_source(id, &current, None, &policy, &AllowProjectSources)
                 .unwrap(),
             UpdateFromSourceOutcome::Updated { .. }
         ));
@@ -719,7 +721,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             fx.store
-                .update_from_source(id, &current, None, &strict)
+                .update_from_source(id, &current, None, &strict, &AllowProjectSources)
                 .unwrap_err(),
             ImportError::Policy(PolicyViolation::MediaTypeNotAllowed {
                 media_type: media("image/png")

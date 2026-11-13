@@ -96,7 +96,8 @@ pub enum ImportError {
     },
     /// 원본이 일반 파일이 아닙니다(디렉터리 등).
     NotAFile,
-    /// hash pass와 copy pass의 내용이 다릅니다(import 도중 원본 변경).
+    /// hash pass와 copy pass의 내용이 다릅니다(import 도중 원본 변경). 판정을 통과한 내부
+    /// 원본 경로가 import 시점에 다른 파일로 해석될 때도 같습니다(XIII.5.5).
     SourceChanged,
     /// 원본 위치를 metadata로 기록할 수 없습니다.
     SourceMetadata(SourceMetadataError),
@@ -217,8 +218,9 @@ pub struct ImportRequest {
     extension: SafeExtension,
     record_source: bool,
     max_size: Option<u64>,
-    /// 원본이 project root 안으로 해석되어야 합니다(내부 원본 `Update from Source`, XIII.5.5).
-    require_project_source: bool,
+    /// 원본이 project root 안의 **이 상대 경로**로 해석되어야 합니다(내부 원본
+    /// `Update from Source`가 판정을 통과시킨 경로, XIII.5.5).
+    require_project_source: Option<String>,
 }
 
 impl ImportRequest {
@@ -237,17 +239,23 @@ impl ImportRequest {
             extension,
             record_source: true,
             max_size: None,
-            require_project_source: false,
+            require_project_source: None,
         }
     }
 
-    /// 원본이 canonical project root 안으로 해석될 때만 import합니다(아무 것도 쓰기 전 검사).
+    /// 원본이 canonical project root 안의 `approved_relative`(`/` 구분)로 해석될 때만
+    /// import합니다(아무 것도 쓰기 전 검사).
     ///
-    /// 프로젝트 내부 원본의 `Update from Source`가 씁니다. Git으로 들어온 record와 symlink가
-    /// 프로젝트 밖 파일을 `assets/`로 끌어오지 못하게 하며, 밖으로 해석되면
-    /// [`SourceMetadataError::OutsideProject`]로 실패합니다.
-    pub(crate) fn requiring_project_source(mut self) -> ImportRequest {
-        self.require_project_source = true;
+    /// 프로젝트 내부 원본의 `Update from Source`가 고정 거부·호출자 정책
+    /// ([`crate::project_source`])을 통과한 경로를 넘깁니다. Git으로 들어온 record와 symlink가
+    /// 판정 뒤 다른 파일을 `assets/`로 끌어오지 못하게 합니다. 밖으로 해석되면
+    /// [`SourceMetadataError::OutsideProject`], 안이지만 다른 경로면
+    /// [`ImportError::SourceChanged`]로 실패합니다.
+    pub(crate) fn requiring_project_source(
+        mut self,
+        approved_relative: impl Into<String>,
+    ) -> ImportRequest {
+        self.require_project_source = Some(approved_relative.into());
         self
     }
 
@@ -397,19 +405,24 @@ impl AssetStore {
         observer: &mut dyn WriteObserver,
     ) -> Result<ImportedAsset, ImportError> {
         // metadata를 먼저 만들어 기록할 수 없는 경로면 아무 것도 쓰기 전에 실패합니다.
-        let source_metadata = if request.record_source || request.require_project_source {
+        let source_metadata = if request.record_source || request.require_project_source.is_some() {
             let metadata = SourceMetadata::from_import_path(
                 &self.root,
                 &request.source,
                 &StoreOriginKey(self),
             )
             .map_err(ImportError::SourceMetadata)?;
-            if request.require_project_source
-                && !matches!(metadata.location(), SourceLocation::Project { .. })
-            {
-                return Err(ImportError::SourceMetadata(
-                    SourceMetadataError::OutsideProject,
-                ));
+            if let Some(approved) = &request.require_project_source {
+                match metadata.location() {
+                    SourceLocation::Project { relative_path } if relative_path == approved => {}
+                    // 판정한 뒤 경로가 바뀌었습니다(다른 내부 파일 — 판정을 다시 해야 함).
+                    SourceLocation::Project { .. } => return Err(ImportError::SourceChanged),
+                    SourceLocation::External { .. } => {
+                        return Err(ImportError::SourceMetadata(
+                            SourceMetadataError::OutsideProject,
+                        ))
+                    }
+                }
             }
             request.record_source.then_some(metadata)
         } else {
@@ -763,6 +776,18 @@ pub(crate) mod test_support {
     /// 테스트 key를 설정한 저장소(외부 원본 기록 가능).
     pub fn test_store(project_root: &Path) -> super::AssetStore {
         super::AssetStore::new(project_root).with_origin_key(test_origin_key())
+    }
+
+    /// 고정 거부를 통과한 모든 내부 원본을 허용하는 테스트 정책(신뢰된 프로젝트 모사).
+    pub struct AllowProjectSources;
+
+    impl crate::project_source::ProjectSourcePolicy for AllowProjectSources {
+        fn decide(
+            &self,
+            _candidate: &crate::project_source::ProjectSourceCandidate<'_>,
+        ) -> crate::project_source::ProjectSourceDecision {
+            crate::project_source::ProjectSourceDecision::Allow
+        }
     }
 
     /// 패턴으로 채운 bytes.
