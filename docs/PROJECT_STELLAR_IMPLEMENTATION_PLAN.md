@@ -1384,7 +1384,7 @@ tools/xtask/
 | XIV.3.6 | `[x]` | component definition과 instance override diff를 별도 provenance와 함께 생성합니다. | definition change와 instance override 구분. | IX.1, IX.2 |
 | XIV.3.7 | `[x]` | variant·binding·expression AST는 StableId node 단위로 diff하고 전체 blob 변경으로 축약하지 않습니다. | AST 한 operator 변경 fixture 1 change. | VIII.2.1, IX.7.3 |
 | XIV.3.8 | `[x]` | semantic changes를 deterministic sort key로 정렬합니다: document, object path, property path, change kind. | 입력 map 순서가 달라도 diff bytes 동일. | XIV.3.2 |
-| XIV.3.9 | `[ ]` | diff apply 함수를 구현해 base snapshot에 change list를 적용하고 target snapshot을 재현합니다. | `apply(diff(A,B), A)==B` property test. | XIV.3.8 |
+| XIV.3.9 | `[x]` | diff apply 함수를 구현해 base snapshot에 change list를 적용하고 target snapshot을 재현합니다. | `apply(diff(A,B), A)==B` property test. | XIV.3.8 |
 | XIV.3.10 | `[ ]` | diff inverse를 구현합니다. | apply inverse 후 A 복원. | XIV.3.9 |
 
 ### XIV.4 Status 분류

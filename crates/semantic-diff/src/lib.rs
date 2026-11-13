@@ -28,3 +28,6 @@ pub mod diff;
 
 /// snapshot·change canonical 인코딩 (XIV.3.8).
 pub mod codec;
+
+/// diff 적용 (XIV.3.9~XIV.3.10).
+pub mod apply;

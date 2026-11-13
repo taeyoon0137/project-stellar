@@ -346,6 +346,11 @@ impl SemanticSnapshot {
         self.objects.get(&id)
     }
 
+    /// 객체(가변). 변경 적용(XIV.3.9) 내부에서만 씁니다.
+    pub(crate) fn get_mut(&mut self, id: StableId) -> Option<&mut SemanticObject> {
+        self.objects.get_mut(&id)
+    }
+
     /// 객체가 있는지.
     pub fn contains(&self, id: StableId) -> bool {
         self.objects.contains_key(&id)
