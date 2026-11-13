@@ -12,6 +12,13 @@
 //! | [`TokenEntry`] | `Token` |
 //! | [`AssetEntry`] | `Asset` |
 //! | [`InstanceNode`] | scene ComponentInstance `Node`(override 항목별 속성) |
+//! | [`ExpressionNodeEntry`] | `ExpressionNode`(AST node마다 객체 하나) |
+//! | [`VariantEntry`] | `Variant`(patch 항목마다 속성 하나) |
+//!
+//! **AST·Variant는 StableId node 단위입니다(XIV.3.7).** expression AST는 node마다 객체이고
+//! (payload·child ref 속성), Variant override 묶음은 대상 PropertyPath·node·slot마다 속성
+//! 하나라서 operator 하나·patch 하나의 변경이 전체 blob 변경으로 축약되지 않습니다. binding의
+//! expression도 binding을 owner로 하는 AST node 객체로 같은 경로를 탑니다.
 //!
 //! node payload는 필드별 속성으로 펼쳐 같은 객체의 서로 다른 필드 변경이 따로 비교·병합되게
 //! 합니다(XIV.3.4, XIV.10.2). 단, Path·Text는 내부 offset·point id가 서로 묶여 있어 payload
@@ -26,6 +33,7 @@ use stellar_core_types::typed_value::TypedValue;
 use stellar_core_types::value::{FiniteF32, Rect, Size2, Transform2D, Vec2};
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey};
+use stellar_document::component::variant_override::VariantOverrideSet;
 use stellar_document::definitions::DocumentDefinition;
 use stellar_document::frame::{Clipping, FramePayload};
 use stellar_document::image::{FitMode, ImagePayload, SamplingMode};
@@ -87,6 +95,38 @@ pub struct InstanceNode {
     pub display_name: String,
     /// 정의 참조와 sparse override.
     pub payload: ComponentInstancePayload,
+}
+
+/// expression AST node 입력(XIV.3.7).
+///
+/// semantic-diff는 expressions crate에 의존하지 않으므로(II.2.8) caller가 AST node의 canonical
+/// payload bytes와 typed child ref(slot code, 대상 id)를 옮겨 담습니다. AST는 DAG일 수 있고
+/// 공유 node도 객체 하나입니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpressionNodeEntry {
+    /// AST node StableId.
+    pub id: StableId,
+    /// AST를 소유한 객체(token·binding·variant 등). snapshot에서 parent가 됩니다.
+    pub owner: StableId,
+    /// 소유 문서. `None`이면 프로젝트 범위.
+    pub document: Option<StableId>,
+    /// node 종류·operator·literal·reference의 canonical payload bytes.
+    pub payload: Vec<u8>,
+    /// typed child ref(slot code, 대상 node) — slot 순서.
+    pub children: Vec<(u32, StableId)>,
+}
+
+/// View Variant override 묶음 입력(XIV.3.7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VariantEntry {
+    /// Variant StableId.
+    pub id: StableId,
+    /// 소유 문서.
+    pub document: StableId,
+    /// 소유 객체(View 등). snapshot에서 parent가 됩니다.
+    pub owner: StableId,
+    /// sparse override.
+    pub overrides: VariantOverrideSet,
 }
 
 /// asset record 입력.
@@ -298,6 +338,78 @@ impl SnapshotBuilder {
             object.path(&[keys::ASSET_MEDIA_TYPE]),
             SemanticValue::Text(asset.media_type.clone()),
         )?;
+        self.commit(vec![object])
+    }
+
+    /// expression AST node들을 추가합니다(XIV.3.7). 묶음 전체가 원자적입니다.
+    pub fn add_expression_nodes(
+        &mut self,
+        nodes: &[ExpressionNodeEntry],
+    ) -> Result<(), SnapshotError> {
+        let mut objects = Vec::with_capacity(nodes.len());
+        for node in nodes {
+            let origin = node.document.map_or(Origin::Project, Origin::Document);
+            let mut object = SemanticObject::new(node.id, ObjectKind::ExpressionNode, origin)
+                .with_position(Some(node.owner), None);
+            put(
+                &mut object,
+                keys::EXPR_PAYLOAD,
+                SemanticValue::Bytes(node.payload.clone()),
+            )?;
+            let mut children = Vec::with_capacity(4 + node.children.len() * 20);
+            children.extend_from_slice(&(node.children.len() as u32).to_le_bytes());
+            for (slot, target) in &node.children {
+                children.extend_from_slice(&slot.to_le_bytes());
+                children.extend_from_slice(&target.to_bytes());
+            }
+            put(
+                &mut object,
+                keys::EXPR_CHILDREN,
+                SemanticValue::Bytes(children),
+            )?;
+            objects.push(object);
+        }
+        self.commit(objects)
+    }
+
+    /// View Variant override 묶음을 추가합니다(XIV.3.7).
+    ///
+    /// Property patch는 대상 경로마다 TypedValue 속성, 구조 patch·slot change는 항목마다 그
+    /// 항목 하나만 담은 [`VariantOverrideSet`]의 canonical 인코딩(Bytes)입니다.
+    pub fn add_variant(&mut self, variant: &VariantEntry) -> Result<(), SnapshotError> {
+        let mut object = SemanticObject::new(
+            variant.id,
+            ObjectKind::Variant,
+            Origin::Document(variant.document),
+        )
+        .with_position(Some(variant.owner), None);
+        for (path, value) in variant.overrides.property_patches() {
+            let segment: String = path
+                .to_canonical_bytes()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            let key = object
+                .path(&[keys::VARIANT_PROPERTY_PATCH])
+                .with_key_segment(&segment);
+            object.insert_property(key, SemanticValue::Typed(value.clone()))?;
+        }
+        for (node, patch) in variant.overrides.structure_patches() {
+            let mut single = VariantOverrideSet::new();
+            single.set_structure(node, patch.clone());
+            let key = object
+                .path(&[keys::VARIANT_STRUCTURE_PATCH])
+                .with_key_segment(&node.to_string());
+            object.insert_property(key, SemanticValue::Bytes(single.encode()))?;
+        }
+        for (instance, slot, change) in variant.overrides.slot_changes() {
+            let mut single = VariantOverrideSet::new();
+            single.set_slot(instance, slot, change.clone());
+            let key = object
+                .path(&[keys::VARIANT_SLOT_CHANGE])
+                .with_key_segment(&format!("{instance}/{}", slot.stable_id()));
+            object.insert_property(key, SemanticValue::Bytes(single.encode()))?;
+        }
         self.commit(vec![object])
     }
 
@@ -721,12 +833,13 @@ fn modifier_object(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use stellar_core_types::property::PropertyPath;
+    use stellar_core_types::property::{PathSegment, PropertyPath};
     use stellar_core_types::reference::{AssetRef, ComponentRef, NodeRef};
     use stellar_core_types::value::FiniteF32;
     use stellar_document::component::definition::{
         ComponentDefinition, ComponentPropertyId, DefinitionNode, DefinitionTree,
     };
+    use stellar_document::component::variant_override::StructurePatch;
     use stellar_document::definitions::{PageDefinition, ViewDefinition};
     use stellar_document::fragment::FragmentPayload;
     use stellar_document::frame::FramePayload;
@@ -926,6 +1039,110 @@ pub(crate) mod tests {
                 "seed {seed}"
             );
         }
+    }
+
+    /// `a + b` AST: root 600(Binary op) ← Lhs 601(literal), Rhs 602(token ref). owner = token 200.
+    fn ast(operator: u8) -> Vec<ExpressionNodeEntry> {
+        let entry =
+            |id: u64, payload: Vec<u8>, children: Vec<(u32, StableId)>| ExpressionNodeEntry {
+                id: sid(id),
+                owner: sid(200),
+                document: None,
+                payload,
+                children,
+            };
+        vec![
+            entry(
+                600,
+                vec![0x04, operator],
+                vec![(1, sid(601)), (2, sid(602))],
+            ),
+            entry(601, vec![0x01, 0x02, 0, 0, 0x80, 0x3F], vec![]),
+            entry(602, vec![0x02, 0x01], vec![]),
+        ]
+    }
+
+    fn snapshot_of(
+        nodes: &[ExpressionNodeEntry],
+        variant: &VariantOverrideSet,
+    ) -> SemanticSnapshot {
+        let mut builder = SnapshotBuilder::new();
+        builder.add_expression_nodes(nodes).unwrap();
+        builder
+            .add_variant(&VariantEntry {
+                id: sid(700),
+                document: sid(1),
+                owner: sid(3),
+                overrides: variant.clone(),
+            })
+            .unwrap();
+        builder.finish()
+    }
+
+    #[test]
+    fn ast_operator_change_is_one_node_change() {
+        let variant = VariantOverrideSet::new();
+        let base = snapshot_of(&ast(0x01), &variant);
+        let target = snapshot_of(&ast(0x02), &variant);
+        let changes = crate::diff::diff(&base, &target);
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(changes[0].object_id(), sid(600));
+        assert_eq!(
+            changes[0].property_path(),
+            Some(&PropertyPath::with_keys(sid(600), vec![keys::EXPR_PAYLOAD]))
+        );
+        // child 교체도 그 node의 child ref 변경 하나입니다.
+        let mut swapped = ast(0x01);
+        swapped[0].children.reverse();
+        let changes = crate::diff::diff(&base, &snapshot_of(&swapped, &variant));
+        assert_eq!(changes.len(), 1);
+        assert_eq!(
+            changes[0].property_path().unwrap().keys(),
+            &[keys::EXPR_CHILDREN]
+        );
+        assert_eq!(base.get(sid(601)).unwrap().parent(), Some(sid(200)));
+    }
+
+    #[test]
+    fn variant_patch_change_is_one_entry_change() {
+        let width = PropertyPath::with_keys(sid(11), vec![keys::RECT_SIZE]);
+        let height = PropertyPath::with_keys(sid(12), vec![keys::IMAGE_SIZE]);
+        let number = |v: f32| TypedValue::Number(FiniteF32::new(v).unwrap());
+        let mut base_set = VariantOverrideSet::new();
+        base_set.set_property(width.clone(), number(1.0));
+        base_set.set_property(height.clone(), number(2.0));
+        base_set.set_structure(sid(13), StructurePatch::Delete);
+        let mut target_set = base_set.clone();
+        target_set.set_property(width, number(5.0));
+        let nodes = ast(0x01);
+        let changes = crate::diff::diff(
+            &snapshot_of(&nodes, &base_set),
+            &snapshot_of(&nodes, &target_set),
+        );
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(changes[0].object_id(), sid(700));
+        assert_eq!(
+            changes[0].property_path().unwrap().keys(),
+            &[keys::VARIANT_PROPERTY_PATCH]
+        );
+
+        // 구조 patch 하나 변경 → 그 node 항목 하나.
+        let mut moved = base_set.clone();
+        moved.set_structure(
+            sid(13),
+            StructurePatch::Move {
+                parent: sid(10),
+                order_key: key(0x10),
+            },
+        );
+        let changes = crate::diff::diff(
+            &snapshot_of(&nodes, &base_set),
+            &snapshot_of(&nodes, &moved),
+        );
+        assert_eq!(changes.len(), 1);
+        let path = changes[0].property_path().unwrap();
+        assert_eq!(path.keys(), &[keys::VARIANT_STRUCTURE_PATCH]);
+        assert_eq!(path.tail(), Some(&PathSegment::Key(sid(13).to_string())));
     }
 
     #[test]

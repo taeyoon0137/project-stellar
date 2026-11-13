@@ -134,6 +134,22 @@ pub const ASSET_CONTENT_HASH: PropertyKey = PropertyKey(0xE901);
 /// asset media type.
 pub const ASSET_MEDIA_TYPE: PropertyKey = PropertyKey(0xE902);
 
+// --- Expression AST node (0xEAxx) ---
+
+/// AST node payload(종류·operator·literal·reference, expressions canonical 인코딩).
+pub const EXPR_PAYLOAD: PropertyKey = PropertyKey(0xEA01);
+/// AST node의 typed child ref 목록(`u32` 개수 + (`u32` slot code + 16바이트 id)*, slot 순서).
+pub const EXPR_CHILDREN: PropertyKey = PropertyKey(0xEA02);
+
+// --- View Variant override (0xEBxx) ---
+
+/// Property patch. 마지막 segment는 대상 `PropertyPath` canonical bytes의 소문자 hex입니다.
+pub const VARIANT_PROPERTY_PATCH: PropertyKey = PropertyKey(0xEB01);
+/// node 구조 patch. 마지막 segment는 대상 node StableId입니다.
+pub const VARIANT_STRUCTURE_PATCH: PropertyKey = PropertyKey(0xEB02);
+/// Slot change. 마지막 segment는 `인스턴스 StableId/slot StableId`입니다.
+pub const VARIANT_SLOT_CHANGE: PropertyKey = PropertyKey(0xEB03);
+
 /// 값이 asset 참조인 속성 key. 이 key의 변경은 `AssetRefChange`로 분류합니다.
 pub const ASSET_REFERENCE_KEYS: [PropertyKey; 1] = [IMAGE_ASSET];
 
@@ -201,6 +217,11 @@ mod tests {
             ("token.expression", TOKEN_EXPRESSION),
             ("asset.content_hash", ASSET_CONTENT_HASH),
             ("asset.media_type", ASSET_MEDIA_TYPE),
+            ("expr.payload", EXPR_PAYLOAD),
+            ("expr.children", EXPR_CHILDREN),
+            ("variant.property_patch", VARIANT_PROPERTY_PATCH),
+            ("variant.structure_patch", VARIANT_STRUCTURE_PATCH),
+            ("variant.slot_change", VARIANT_SLOT_CHANGE),
         ]
     }
 
