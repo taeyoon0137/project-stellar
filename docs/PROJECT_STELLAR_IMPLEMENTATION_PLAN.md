@@ -726,7 +726,7 @@ tools/xtask/
 | VIII.3.1 | `[x]` | AST를 GUI block 목록과 edge 목록으로 읽는 `ExpressionGraphView`를 구현합니다. 별도 원본 상태를 만들지 않습니다. | AST→view→AST 의미 동일. | VIII.2.5 |
 | VIII.3.2 | `[x]` | GUI에서 허용 가능한 child socket 타입과 연결 가능 여부 API를 추가합니다. | 잘못된 socket 연결 거부. | VIII.2.4 |
 | VIII.3.3 | `[x]` | block 추가·연결·삭제를 command plan으로 생성하는 API를 추가합니다. 실제 UI는 Phase XII에서 연결합니다. | 각 plan 적용 후 valid AST. | VIII.3.2, Phase VII |
-| VIII.3.4 | `[ ]` | AST validation 오류를 GUI block ID와 socket ID로 매핑합니다. | 오류 위치 fixture 정확. | VIII.3.1, VIII.2.4 |
+| VIII.3.4 | `[x]` | AST validation 오류를 GUI block ID와 socket ID로 매핑합니다. | 오류 위치 fixture 정확. | VIII.3.1, VIII.2.4 |
 
 ### VIII.4 Bytecode와 평가기
 

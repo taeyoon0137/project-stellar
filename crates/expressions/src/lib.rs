@@ -38,3 +38,6 @@ pub mod sockets;
 
 /// GUI block 추가·연결·삭제 command plan (VIII.3.3).
 pub mod edit_plan;
+
+/// AST 검증 오류의 GUI block·socket 매핑 (VIII.3.4).
+pub mod gui_diagnostics;
