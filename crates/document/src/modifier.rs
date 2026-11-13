@@ -719,6 +719,40 @@ impl ModifierStack {
     }
 }
 
+// --- 참조 의존성 등록 (VI.9.4) ---
+
+impl ModifierPayload {
+    /// 이 payload가 참조하는 다른 node들(Boolean 피연산, Mask/Clip 원본).
+    /// NIL 참조(대상 미지정)는 제외합니다.
+    pub fn referenced_nodes(&self) -> Vec<StableId> {
+        let ids: Vec<StableId> = match self {
+            ModifierPayload::Boolean { operands, .. } => operands.iter().map(|r| r.id()).collect(),
+            ModifierPayload::Mask { source } | ModifierPayload::Clip { source } => {
+                vec![source.id()]
+            }
+            _ => Vec::new(),
+        };
+        ids.into_iter().filter(|id| *id != StableId::NIL).collect()
+    }
+}
+
+impl ModifierStack {
+    /// stack의 모든 modifier 참조를 소유 node 기준으로 ReferenceIndex에 맞춥니다.
+    ///
+    /// 소유 node의 기존 outbound edge를 전부 지우고 현재 참조로 다시 등록합니다 —
+    /// 참조 추가·제거·modifier 삭제 후 호출하면 inbound index가 정확해집니다.
+    /// 비활성 modifier의 참조도 등록합니다(저장에 남아 있어 대상 삭제 시 영향이
+    /// 있으므로).
+    pub fn sync_references(&self, index: &mut crate::reference_index::ReferenceIndex) {
+        index.remove_all_from(self.node);
+        for entry in &self.entries {
+            for target in entry.payload.referenced_nodes() {
+                index.add_reference(self.node, target);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -935,5 +969,72 @@ mod tests {
             ),
             Err(ModifierError::InvalidPayload { .. })
         ));
+    }
+
+    #[test]
+    fn reference_index_tracks_modifier_dependencies() {
+        // 검증 기준(VI.9.4): 참조 추가·제거 시 inbound index 정확.
+        use crate::reference_index::ReferenceIndex;
+        let owner = StableId::new_v7(1, 0, 1);
+        let a = StableId::new_v7(50, 0, 50);
+        let b = StableId::new_v7(51, 0, 51);
+        let mask_src = StableId::new_v7(52, 0, 52);
+        let mut index = ReferenceIndex::new();
+        let mut stack = ModifierStack::new(owner);
+
+        // Boolean(a, b) + Mask(mask_src) 추가.
+        stack.push_back(id(10), ModifierKind::Boolean).unwrap();
+        stack
+            .set_payload(
+                id(10),
+                ModifierPayload::Boolean {
+                    op: BooleanOp::Union,
+                    operands: vec![NodeRef::new(a), NodeRef::new(b)],
+                },
+            )
+            .unwrap();
+        stack.push_back(id(11), ModifierKind::Mask).unwrap();
+        stack.sync_references(&mut index);
+        // Mask는 아직 NIL → 등록 안 됨.
+        assert_eq!(index.inbound(a), vec![owner]);
+        assert_eq!(index.inbound(b), vec![owner]);
+        assert!(!index.has_inbound(mask_src));
+
+        stack
+            .set_payload(
+                id(11),
+                ModifierPayload::Mask {
+                    source: NodeRef::new(mask_src),
+                },
+            )
+            .unwrap();
+        stack.sync_references(&mut index);
+        assert_eq!(index.inbound(mask_src), vec![owner]);
+
+        // 피연산 b 제거 → b inbound 사라짐.
+        stack
+            .set_payload(
+                id(10),
+                ModifierPayload::Boolean {
+                    op: BooleanOp::Union,
+                    operands: vec![NodeRef::new(a)],
+                },
+            )
+            .unwrap();
+        stack.sync_references(&mut index);
+        assert!(!index.has_inbound(b));
+        assert_eq!(index.inbound(a), vec![owner]);
+
+        // 비활성 modifier 참조도 유지.
+        stack.set_enabled(id(11), false).unwrap();
+        stack.sync_references(&mut index);
+        assert_eq!(index.inbound(mask_src), vec![owner]);
+
+        // modifier 삭제 → 참조 제거, 다른 node의 참조는 유지.
+        index.add_reference(StableId::new_v7(2, 0, 2), a);
+        stack.remove(id(10)).unwrap();
+        stack.sync_references(&mut index);
+        assert_eq!(index.inbound(a), vec![StableId::new_v7(2, 0, 2)]);
+        assert_eq!(index.edge_count(), 2);
     }
 }
