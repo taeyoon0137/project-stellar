@@ -171,6 +171,48 @@ impl LayoutUnit {
     pub fn checked_div_round(self, divisor: i32) -> Result<LayoutUnit, LayoutUnitError> {
         div_round_half_away_from_zero(i128::from(self.0), i128::from(divisor)).and_then(to_unit)
     }
+
+    /// 백분율 `percent`%(f32, `50` = 50%)를 곱하고 가장 가까운 subpixel로 한 번만 반올림합니다
+    /// (ties away from zero, X.2.3).
+    ///
+    /// f32 백분율을 정확한 유리수 `m·2^e`(비트 분해)로 바꿔 `raw·m·2^e / 100`을 `i128` 정수로
+    /// 계산하므로 float 곱의 중간 반올림이 없고 플랫폼 간 같은 값입니다.
+    pub fn checked_mul_percent(self, percent: FiniteF32) -> Result<LayoutUnit, LayoutUnitError> {
+        let (mantissa, exponent) = decompose_f32(percent.get());
+        let numerator = i128::from(self.0) * i128::from(mantissa);
+        if numerator == 0 {
+            return Ok(LayoutUnit::ZERO);
+        }
+        if exponent >= 0 {
+            // |numerator| < 2^55. 지수가 60을 넘으면 결과가 2^115/100 이상이라 범위 밖입니다.
+            if exponent > 60 {
+                return Err(LayoutUnitError::OutOfRange);
+            }
+            div_round_half_away_from_zero(numerator << exponent, 100).and_then(to_unit)
+        } else {
+            let shift = -exponent;
+            // |numerator| < 2^55 < 100·2^100 / 2 이면 결과는 0으로 반올림됩니다.
+            if shift > 100 {
+                return Ok(LayoutUnit::ZERO);
+            }
+            div_round_half_away_from_zero(numerator, 100_i128 << shift).and_then(to_unit)
+        }
+    }
+}
+
+/// 유한 f32를 정확한 `(mantissa, exponent)`로 분해합니다(`value = mantissa · 2^exponent`).
+fn decompose_f32(value: f32) -> (i64, i32) {
+    let bits = value.to_bits();
+    let negative = bits >> 31 == 1;
+    let biased = ((bits >> 23) & 0xff) as i32;
+    let fraction = i64::from(bits & 0x007f_ffff);
+    let (mantissa, exponent) = if biased == 0 {
+        // 0과 subnormal: fraction · 2^-149.
+        (fraction, -149)
+    } else {
+        (fraction | 0x0080_0000, biased - 150)
+    };
+    (if negative { -mantissa } else { mantissa }, exponent)
 }
 
 impl fmt::Display for LayoutUnit {
@@ -572,6 +614,70 @@ mod tests {
         }
         // 큰 raw도 f64 변환은 정확.
         assert_eq!(LayoutUnit::MAX.to_px_f64() * 64.0, f64::from(i32::MAX));
+    }
+
+    #[test]
+    fn percent_multiplication_is_exact_and_rounds_once() {
+        let hundred = LayoutUnit::from_px_int(100).unwrap();
+        // 50% of 100 px = 3200 subpixel.
+        assert_eq!(
+            hundred.checked_mul_percent(finite(50.0)).unwrap().raw(),
+            3200
+        );
+        // f32 33.333332% of 100 px = 2133.33… → 2133(1/3 px 정책과 같음).
+        assert_eq!(
+            hundred
+                .checked_mul_percent(finite(100.0 / 3.0))
+                .unwrap()
+                .raw(),
+            2133
+        );
+        // 12.5% of 21 subpixel = 2.625 → 3, 음수 백분율 대칭.
+        let third = LayoutUnit::from_raw(21);
+        assert_eq!(third.checked_mul_percent(finite(12.5)).unwrap().raw(), 3);
+        assert_eq!(third.checked_mul_percent(finite(-12.5)).unwrap().raw(), -3);
+        // 정확히 중간: 50% of 1 subpixel = 0.5 → 1, -50% → -1.
+        let one = LayoutUnit::from_raw(1);
+        assert_eq!(one.checked_mul_percent(finite(50.0)).unwrap().raw(), 1);
+        assert_eq!(one.checked_mul_percent(finite(-50.0)).unwrap().raw(), -1);
+        // 0.1%(f32 0.1은 0.1보다 약간 큼) of 6400 → 6.4000001 → 6.
+        assert_eq!(hundred.checked_mul_percent(finite(0.1)).unwrap().raw(), 6);
+        // 0%, 아주 작은 값, subnormal은 0. 큰 값은 범위 오류.
+        assert_eq!(
+            hundred.checked_mul_percent(finite(0.0)).unwrap(),
+            LayoutUnit::ZERO
+        );
+        assert_eq!(
+            hundred.checked_mul_percent(finite(1.0e-30)).unwrap(),
+            LayoutUnit::ZERO
+        );
+        assert_eq!(
+            LayoutUnit::MAX
+                .checked_mul_percent(finite(f32::from_bits(1)))
+                .unwrap(),
+            LayoutUnit::ZERO
+        );
+        assert_eq!(
+            one.checked_mul_percent(finite(1.0e30)),
+            Err(LayoutUnitError::OutOfRange)
+        );
+        assert_eq!(
+            LayoutUnit::MAX.checked_mul_percent(finite(200.0)),
+            Err(LayoutUnitError::OutOfRange)
+        );
+        assert_eq!(
+            LayoutUnit::MAX.checked_mul_percent(finite(100.0)).unwrap(),
+            LayoutUnit::MAX
+        );
+        // f64 기준값과 비교(정확 계산이 float 왕복과 일치하는 구간).
+        for (raw, percent) in [(6400, 37.5_f32), (-777, 66.0), (123_456, 0.75)] {
+            let exact = f64::from(raw) * f64::from(percent) / 100.0;
+            let got = LayoutUnit::from_raw(raw)
+                .checked_mul_percent(finite(percent))
+                .unwrap()
+                .raw();
+            assert!((f64::from(got) - exact).abs() <= 0.5, "{raw} × {percent}%");
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 
 use stellar_core_types::ids::StableId;
-use stellar_core_types::value::Insets;
+use stellar_core_types::value::{FiniteF32, Insets};
 
 use crate::error::LayoutError;
 use crate::free::{self, PreparedAnchors};
@@ -66,8 +66,8 @@ pub(crate) enum AxisSizing {
     Fill,
     /// 콘텐츠 크기.
     Hug,
-    /// 백분율(미지원 — X.2.3).
-    Percentage,
+    /// containing block content 크기의 백분율(X.2.3).
+    Percentage(FiniteF32),
 }
 
 /// 변환된 padding.
@@ -185,12 +185,11 @@ impl<'a> Engine<'a> {
                 AxisSizing::Fixed(value) => Some(value),
                 AxisSizing::Fill => constraint.fill[i],
                 AxisSizing::Hug => None,
-                AxisSizing::Percentage => {
-                    return Err(LayoutError::UnsupportedFeature {
-                        node: id,
-                        feature: "Percentage 크기",
-                    })
-                }
+                AxisSizing::Percentage(percent) => match constraint.cb[i] {
+                    Some(base) => Some(base.checked_mul_percent(percent).map_err(at(id))?),
+                    // containing block이 indefinite면 콘텐츠 크기로 측정합니다(X.6.1).
+                    None => None,
+                },
             };
         }
         let mut resolved = [LayoutUnit::ZERO; 2];
@@ -307,7 +306,7 @@ fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
             }
             SizingMode::Fill => AxisSizing::Fill,
             SizingMode::HugContent => AxisSizing::Hug,
-            SizingMode::Percentage(_) => AxisSizing::Percentage,
+            SizingMode::Percentage(percent) => AxisSizing::Percentage(percent.raw()),
         };
     }
     let intrinsic = match node.content {

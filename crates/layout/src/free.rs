@@ -1,4 +1,4 @@
-//! 자유 배치(Free layout) (X.2.1, X.2.2).
+//! 자유 배치(Free layout) (X.2.1, X.2.2, X.2.3).
 //!
 //! # 규칙
 //!
@@ -36,9 +36,20 @@
 //! 최댓값(0 이상)입니다. 끝 anchor 자식은 부모 끝을 기준으로 놓이므로 부모 크기에 기여하지
 //! 않습니다. 측정 중 자식 `Fill`은 콘텐츠 크기로 기여합니다.
 //!
+//! # 백분율 (X.2.3)
+//!
+//! 백분율 offset([`Offset::Percentage`])과 백분율 크기(`SizingMode::Percentage`)는 **containing
+//! block = 부모 content rect** 크기의 해당 축 값 기준입니다(가로 offset·너비는 content 너비, 세로는
+//! content 높이). 계산은 [`LayoutUnit::checked_mul_percent`]로 정확한 유리수에서 한 번만
+//! 반올림합니다. 중첩된 경우 각 단계의 content rect가 다음 단계의 기준입니다.
+//!
+//! 부모가 `HugContent`인 축에서는 containing block이 아직 정해지지 않았으므로, 백분율 offset 자식은
+//! Hug extent에 기여하지 않고(끝 anchor와 같음), 백분율 크기 자식은 콘텐츠 크기로 기여한 뒤 확정된
+//! content rect 기준으로 다시 해석됩니다.
+//!
 //! anchor는 Free 부모의 자식에서만 해석하며, 다른 배치 방식의 자식에서는 무시합니다.
 
-use stellar_core_types::value::Length;
+use stellar_core_types::value::{FiniteF32, Length, Percentage};
 
 use crate::codec::{Reader, Writer};
 use crate::engine::{at, sub_floor_zero, ChildConstraint, Engine};
@@ -53,6 +64,8 @@ use crate::rounding::{LayoutUnit, LayoutUnitError};
 pub enum Offset {
     /// 길이(음수 허용).
     Length(Length),
+    /// containing block content 크기의 백분율(음수 허용, `50` = 50%, X.2.3).
+    Percentage(Percentage),
 }
 
 /// 한 축의 시작·끝 anchor (X.2.2).
@@ -128,14 +141,22 @@ impl FreePosition {
 pub(crate) enum PreparedOffset {
     /// 길이.
     Length(LayoutUnit),
+    /// 백분율.
+    Percentage(FiniteF32),
 }
 
 impl PreparedOffset {
     /// content 크기 `extent` 기준 offset 값.
-    fn resolve(self, _extent: Option<LayoutUnit>) -> Result<LayoutUnit, LayoutUnitError> {
+    fn resolve(self, extent: LayoutUnit) -> Result<LayoutUnit, LayoutUnitError> {
         match self {
             PreparedOffset::Length(value) => Ok(value),
+            PreparedOffset::Percentage(percent) => extent.checked_mul_percent(percent),
         }
+    }
+
+    /// containing block 크기에 의존하는지 여부.
+    const fn is_relative(self) -> bool {
+        matches!(self, PreparedOffset::Percentage(_))
     }
 }
 
@@ -149,7 +170,7 @@ pub(crate) struct PreparedAnchors {
 /// 없는 anchor를 0으로 보고 offset 값을 해석합니다.
 fn offset_or_zero(
     offset: Option<PreparedOffset>,
-    extent: Option<LayoutUnit>,
+    extent: LayoutUnit,
 ) -> Result<LayoutUnit, LayoutUnitError> {
     match offset {
         Some(offset) => offset.resolve(extent),
@@ -168,6 +189,9 @@ pub(crate) fn prepare_position(node: &LayoutNode) -> Result<[PreparedAnchors; 2]
                 length,
                 true,
             )?))),
+            Some(Offset::Percentage(percent)) => {
+                Ok(Some(PreparedOffset::Percentage(percent.raw())))
+            }
         }
     };
     let mut out = [PreparedAnchors::default(); 2];
@@ -204,6 +228,7 @@ pub(crate) fn validate_anchor_combination(node: &LayoutNode) -> Result<(), Layou
 }
 
 const OFFSET_LENGTH: u8 = 0;
+const OFFSET_PERCENTAGE: u8 = 1;
 
 fn encode_offset(w: &mut Writer, offset: Option<Offset>) {
     match offset {
@@ -212,6 +237,11 @@ fn encode_offset(w: &mut Writer, offset: Option<Offset>) {
             w.bool(true);
             w.u8(OFFSET_LENGTH);
             w.length(length);
+        }
+        Some(Offset::Percentage(percent)) => {
+            w.bool(true);
+            w.u8(OFFSET_PERCENTAGE);
+            w.finite(percent.raw());
         }
     }
 }
@@ -222,6 +252,9 @@ fn decode_offset(r: &mut Reader<'_>) -> Result<Option<Offset>, LayoutError> {
     }
     match r.u8()? {
         OFFSET_LENGTH => Ok(Some(Offset::Length(r.length("anchor offset")?))),
+        OFFSET_PERCENTAGE => Ok(Some(Offset::Percentage(Percentage::from_raw(
+            r.finite("anchor offset")?,
+        )))),
         _ => Err(LayoutError::Malformed {
             reason: "알 수 없는 offset tag",
         }),
@@ -263,8 +296,8 @@ fn child_constraint(
         let i = axis.index();
         fill[i] = match inner[i] {
             Some(extent) => {
-                let start = offset_or_zero(anchors[i].start, inner[i])?;
-                let end = offset_or_zero(anchors[i].end, inner[i])?;
+                let start = offset_or_zero(anchors[i].start, extent)?;
+                let end = offset_or_zero(anchors[i].end, extent)?;
                 Some(sub_floor_zero(extent.checked_sub(start)?, end)?)
             }
             None => None,
@@ -280,10 +313,8 @@ fn axis_position(
     size: LayoutUnit,
 ) -> Result<LayoutUnit, LayoutUnitError> {
     match (anchors.start, anchors.end) {
-        (Some(start), _) => start.resolve(Some(extent)),
-        (None, Some(end)) => extent
-            .checked_sub(end.resolve(Some(extent))?)?
-            .checked_sub(size),
+        (Some(start), _) => start.resolve(extent),
+        (None, Some(end)) => extent.checked_sub(end.resolve(extent)?)?.checked_sub(size),
         (None, None) => Ok(LayoutUnit::ZERO),
     }
 }
@@ -302,11 +333,12 @@ pub(crate) fn measure(
         let size = engine.resolve_size(child, constraint)?;
         for axis in Axis::BOTH {
             let i = axis.index();
-            if anchors[i].end.is_some() {
-                // 끝 anchor 자식은 부모 끝 기준이라 extent에 기여하지 않습니다.
+            let relative_start = anchors[i].start.is_some_and(PreparedOffset::is_relative);
+            if anchors[i].end.is_some() || relative_start {
+                // 끝 anchor·백분율 시작 anchor 자식은 부모 크기 기준이라 extent에 기여하지 않습니다.
                 continue;
             }
-            let start = offset_or_zero(anchors[i].start, inner[i]).map_err(at(id))?;
+            let start = offset_or_zero(anchors[i].start, LayoutUnit::ZERO).map_err(at(id))?;
             let end = start.checked_add(size.get(axis)).map_err(at(id))?;
             extent[i] = extent[i].max(end);
         }
@@ -689,5 +721,113 @@ mod tests {
                 property: LayoutProperty::Position
             })
         );
+    }
+
+    fn pct(value: f32) -> Percentage {
+        Percentage::new(value).unwrap()
+    }
+
+    fn pct_anchor(start: Option<f32>, end: Option<f32>) -> AxisAnchors {
+        AxisAnchors {
+            start: start.map(|v| Offset::Percentage(pct(v))),
+            end: end.map(|v| Offset::Percentage(pct(v))),
+        }
+    }
+
+    #[test]
+    fn nested_percentage_fixture_uses_containing_block_content_rect() {
+        // root 400×200, padding 20 → content 360×160.
+        let root = LayoutNode::new(id(1))
+            .with_fixed_size(len(400.0), len(200.0))
+            .with_padding(Insets::new(20.0, 20.0, 20.0, 20.0).unwrap())
+            .with_child(id(2), key(1))
+            .with_child(id(5), key(2));
+        // A: 50%×50%, 시작 (10%, 25%) → 180×80 at (36, 40); padding 10 → content 160×60.
+        let a = LayoutNode::new(id(2))
+            .with_sizing(
+                SizingMode::Percentage(pct(50.0)),
+                SizingMode::Percentage(pct(50.0)),
+            )
+            .with_anchors(pct_anchor(Some(10.0), None), pct_anchor(Some(25.0), None))
+            .with_padding(Insets::new(10.0, 10.0, 10.0, 10.0).unwrap())
+            .with_child(id(3), key(1));
+        // B(A 안): 25%×100%, 시작 (50%, 0) → 40×60 at (80, 0).
+        let b = LayoutNode::new(id(3))
+            .with_sizing(
+                SizingMode::Percentage(pct(25.0)),
+                SizingMode::Percentage(pct(100.0)),
+            )
+            .with_anchors(pct_anchor(Some(50.0), None), AxisAnchors::start(len(0.0)))
+            .with_child(id(4), key(1));
+        // C(B 안): 너비 33.333332%(f32 100/3) of 40 px, 끝 anchor 10%, 높이 Fill.
+        let c = LayoutNode::new(id(4))
+            .with_sizing(SizingMode::Percentage(pct(100.0 / 3.0)), SizingMode::Fill)
+            .with_anchors(pct_anchor(None, Some(10.0)), AxisAnchors::NONE);
+        // D(root 안): 시작 (-5%, 100%), 너비 100%, 높이 10.
+        let d = LayoutNode::new(id(5))
+            .with_sizing(
+                SizingMode::Percentage(pct(100.0)),
+                SizingMode::Fixed(len(10.0)),
+            )
+            .with_anchors(pct_anchor(Some(-5.0), None), pct_anchor(Some(100.0), None));
+        let input = LayoutInput::new(id(1), vec![root, a, b, c, d]);
+        let result = compute_layout(&input).unwrap();
+        assert_eq!(
+            result.get(id(2)).unwrap().local_rect(),
+            rect(56, 60, 180, 80)
+        );
+        assert_eq!(
+            result.get(id(2)).unwrap().content_rect(),
+            rect(10, 10, 160, 60)
+        );
+        assert_eq!(
+            result.get(id(3)).unwrap().local_rect(),
+            rect(90, 10, 40, 60)
+        );
+        // C: 너비 2560 × 33.333332% = 853.33 → 853, x = 2560 − 256 − 853 = 1451 subpixel.
+        let c_rect = result.get(id(4)).unwrap().local_rect();
+        assert_eq!(
+            (
+                c_rect.x().raw(),
+                c_rect.y().raw(),
+                c_rect.width().raw(),
+                c_rect.height().raw()
+            ),
+            (1451, 0, 853, 60 * 64)
+        );
+        // D: x = 20 + (−18), y = 20 + 160.
+        assert_eq!(
+            result.get(id(5)).unwrap().local_rect(),
+            rect(2, 180, 360, 10)
+        );
+        // 입력 round-trip(백분율 offset·크기 포함).
+        assert_eq!(LayoutInput::decode(&input.encode()).unwrap(), input);
+    }
+
+    #[test]
+    fn percentage_children_of_hug_parent_resolve_after_parent_size() {
+        // Hug root: 고정 자식 100×20이 크기를 정하고, 백분율 자식은 측정에서 콘텐츠(30×10)로
+        // 기여(가로)하거나 백분율 시작 anchor라 기여하지 않습니다(세로).
+        let root = LayoutNode::new(id(1))
+            .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+            .with_child(id(2), key(1))
+            .with_child(id(3), key(2));
+        let fixed = LayoutNode::new(id(2)).with_fixed_size(len(100.0), len(20.0));
+        let relative = LayoutNode::new(id(3))
+            .with_sizing(
+                SizingMode::Percentage(pct(50.0)),
+                SizingMode::Percentage(pct(50.0)),
+            )
+            .with_anchors(AxisAnchors::start(len(0.0)), pct_anchor(Some(50.0), None))
+            .with_child(id(4), key(1));
+        let grandchild = LayoutNode::new(id(4)).with_fixed_size(len(30.0), len(10.0));
+        let result = compute_layout(&LayoutInput::new(
+            id(1),
+            vec![root, fixed, relative, grandchild],
+        ))
+        .unwrap();
+        assert_eq!(result.get(id(1)).unwrap().local_rect(), rect(0, 0, 100, 20));
+        assert_eq!(result.get(id(3)).unwrap().local_rect(), rect(0, 10, 50, 10));
+        assert_eq!(result.get(id(4)).unwrap().local_rect(), rect(0, 0, 30, 10));
     }
 }
