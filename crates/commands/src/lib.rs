@@ -33,3 +33,9 @@ pub mod guard;
 
 /// 전부 성공하거나 전부 롤백하는 `CommandTransaction` (VII.1.6).
 pub mod transaction;
+
+/// command 검증용 문서 조회 helper (VII.2).
+pub(crate) mod tree;
+
+/// node 구조 command: InsertNode·DeleteSubtree (VII.2.1~).
+pub mod node_ops;

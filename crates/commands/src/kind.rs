@@ -4,9 +4,8 @@
 //! 종류의 숫자 값은 command 직렬화(VII.1.2)·history journal(XXV.1)의 일부이므로 한 번 정한
 //! 값은 바꾸거나 재사용하지 않습니다. 디코딩은 registry에 없는 값을 거부합니다.
 //!
-//! registry는 비어 있는 상태로 시작하고, 각 문서 command 작업(VII.2.x)이 자기 종류를 명시
-//! 번호로 등록합니다. `0x0000`은 영구 예약(유효한 종류가 아님)입니다. 테스트 빌드에만
-//! 존재하는 `TestProbe`(`0xFFF0`)는 command 계층 자체(transaction guard 등)를 검증하는
+//! 각 문서 command 작업(VII.2.x)이 자기 종류를 명시 번호로 등록합니다. `0x0000`은 영구
+//! 예약(유효한 종류가 아님)입니다. 테스트 빌드에만 존재하는 `TestProbe`(`0xFFF0`)는 command 계층 자체(transaction guard 등)를 검증하는
 //! fault-injection용 test double이며 [`CommandKind::ALL`]에 포함되지 않습니다.
 
 use std::fmt;
@@ -14,6 +13,10 @@ use std::fmt;
 /// command 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CommandKind {
+    /// node(subtree) 삽입 (VII.2.1).
+    InsertNode,
+    /// node subtree 삭제 (VII.2.1·VII.2.2).
+    DeleteSubtree,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -21,7 +24,7 @@ pub enum CommandKind {
 
 impl CommandKind {
     /// 프로덕션 registry에 등록된 모든 종류(번호 오름차순).
-    pub const ALL: &'static [CommandKind] = &[];
+    pub const ALL: &'static [CommandKind] = &[CommandKind::InsertNode, CommandKind::DeleteSubtree];
 
     /// 영구 예약 값(유효한 종류가 아님).
     pub const RESERVED: u16 = 0x0000;
@@ -29,6 +32,8 @@ impl CommandKind {
     /// 안정적인 숫자 값.
     pub fn as_u16(self) -> u16 {
         match self {
+            CommandKind::InsertNode => 0x0001,
+            CommandKind::DeleteSubtree => 0x0002,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -49,6 +54,8 @@ impl CommandKind {
     /// 진단용 이름.
     pub fn name(self) -> &'static str {
         match self {
+            CommandKind::InsertNode => "insert-node",
+            CommandKind::DeleteSubtree => "delete-subtree",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -79,6 +86,18 @@ mod tests {
         for kind in CommandKind::ALL {
             assert_eq!(CommandKind::from_u16(kind.as_u16()), Some(*kind));
         }
+    }
+
+    #[test]
+    fn registry_numbers_are_golden() {
+        let golden: Vec<(u16, &str)> = CommandKind::ALL
+            .iter()
+            .map(|k| (k.as_u16(), k.name()))
+            .collect();
+        assert_eq!(
+            golden,
+            vec![(0x0001, "insert-node"), (0x0002, "delete-subtree")]
+        );
     }
 
     #[test]

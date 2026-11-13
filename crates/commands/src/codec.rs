@@ -20,6 +20,7 @@ use stellar_core_types::ids::StableId;
 
 use crate::command::Command;
 use crate::kind::CommandKind;
+use crate::node_ops::{DeleteSubtree, InsertNode};
 
 /// command 직렬화 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,15 +53,11 @@ impl fmt::Display for CommandCodecError {
 impl std::error::Error for CommandCodecError {}
 
 /// canonical byte writer.
-// 프로덕션 variant는 VII.2.x가 등록합니다. 그 전까지 일부 helper는 쓰이지 않습니다.
-#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub(crate) struct Writer {
     buf: Vec<u8>,
 }
 
-// 프로덕션 variant는 VII.2.x가 등록합니다. 그 전까지 일부 helper는 쓰이지 않습니다.
-#[allow(dead_code)]
 impl Writer {
     pub(crate) fn new() -> Writer {
         Writer { buf: Vec::new() }
@@ -79,6 +76,8 @@ impl Writer {
         self.buf.extend_from_slice(bytes);
     }
 
+    // SetProperty(VII.2.4) 전까지는 테스트 probe만 씁니다.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn bool(&mut self, value: bool) {
         self.buf.push(u8::from(value));
     }
@@ -116,6 +115,8 @@ impl Writer {
         self.buf.extend_from_slice(bytes);
     }
 
+    // SetProperty(VII.2.4) 전까지는 테스트 probe만 씁니다.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn str(&mut self, text: &str) {
         self.bytes(text.as_bytes());
     }
@@ -133,16 +134,12 @@ fn len_u32(len: usize) -> u32 {
 }
 
 /// canonical byte reader.
-// 프로덕션 variant는 VII.2.x가 등록합니다. 그 전까지 일부 helper는 쓰이지 않습니다.
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct Reader<'a> {
     input: &'a [u8],
     pos: usize,
 }
 
-// 프로덕션 variant는 VII.2.x가 등록합니다. 그 전까지 일부 helper는 쓰이지 않습니다.
-#[allow(dead_code)]
 impl<'a> Reader<'a> {
     pub(crate) fn new(input: &'a [u8]) -> Reader<'a> {
         Reader { input, pos: 0 }
@@ -212,6 +209,8 @@ impl<'a> Reader<'a> {
         self.take(len)
     }
 
+    // SetProperty(VII.2.4) 전까지는 테스트 probe만 씁니다.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn string(&mut self) -> Result<String, CommandCodecError> {
         let bytes = self.bytes()?;
         String::from_utf8(bytes.to_vec()).map_err(|_| CommandCodecError::Malformed {
@@ -258,9 +257,6 @@ pub fn encode_command(command: &Command) -> Vec<u8> {
 }
 
 /// command를 writer에 덧붙입니다.
-// 프로덕션 registry가 비어 있는 동안(VII.2.1 전) 프로덕션 빌드에서 `Command`는 값이 없는
-// 타입이라 kind 이후 코드가 도달 불가로 판정됩니다.
-#[cfg_attr(not(test), allow(unreachable_code))]
 pub(crate) fn encode_command_into(command: &Command, out: &mut Writer) {
     let mut payload = Writer::new();
     encode_payload(command, &mut payload);
@@ -269,10 +265,11 @@ pub(crate) fn encode_command_into(command: &Command, out: &mut Writer) {
 }
 
 fn encode_payload(command: &Command, out: &mut Writer) {
-    let _ = &out;
-    match *command {
+    match command {
+        Command::InsertNode(command) => command.encode_into(out),
+        Command::DeleteSubtree(command) => command.encode_into(out),
         #[cfg(test)]
-        Command::TestProbe(ref probe) => {
+        Command::TestProbe(probe) => {
             out.id(probe.node);
             out.str(&probe.name);
             out.bool(probe.fail_after_apply);
@@ -300,8 +297,9 @@ pub(crate) fn decode_command_from(reader: &mut Reader<'_>) -> Result<Command, Co
 }
 
 fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, CommandCodecError> {
-    let _ = &input;
     match kind {
+        CommandKind::InsertNode => InsertNode::decode_from(input).map(Command::InsertNode),
+        CommandKind::DeleteSubtree => DeleteSubtree::decode_from(input).map(Command::DeleteSubtree),
         #[cfg(test)]
         CommandKind::TestProbe => Ok(Command::TestProbe(crate::command::TestProbe {
             node: input.id()?,

@@ -647,7 +647,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| VII.2.1 | `[ ]` | `InsertNode`를 구현합니다. caller가 StableId를 제공하며 duplicate, invalid parent, invalid OrderKey를 검증합니다. | apply/inverse round-trip. | VII.1.6, VI.2.3 |
+| VII.2.1 | `[x]` | `InsertNode`를 구현합니다. caller가 StableId를 제공하며 duplicate, invalid parent, invalid OrderKey를 검증합니다. | apply/inverse round-trip. | VII.1.6, VI.2.3 |
 | VII.2.2 | `[ ]` | `DeleteSubtree`를 구현합니다. 삭제 전 subtree와 내부 참조를 inverse payload에 보존합니다. 외부 inbound ref가 있으면 정책 오류를 반환합니다. | delete→undo semantic snapshot 동일. | VII.2.1, VI.2.5 |
 | VII.2.3 | `[ ]` | `MoveNode`를 구현합니다. parent와 OrderKey를 함께 변경하고 cycle·cross-view를 검증합니다. | move→undo, reorder fixture 통과. | VII.2.1 |
 | VII.2.4 | `[ ]` | `SetProperty`를 구현합니다. metadata registry로 type과 invalidation을 검사합니다. | 잘못된 PropertyKey/type 거부. | VII.1.4, VI.3.5 |

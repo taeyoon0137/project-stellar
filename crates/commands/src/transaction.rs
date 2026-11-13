@@ -91,8 +91,6 @@ impl CommandTransaction {
     }
 
     /// `base`를 기준 revision으로 하는 command를 덧붙입니다(precondition 없음).
-    // 프로덕션 registry가 비어 있는 동안(VII.2.1 전) `Command`는 값이 없는 타입입니다.
-    #[cfg_attr(not(test), allow(unreachable_code))]
     pub fn with_command(self, base: DocumentRevision, command: Command) -> CommandTransaction {
         self.with_request(CommandRequest::new(base, command))
     }

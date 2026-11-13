@@ -23,6 +23,7 @@ use stellar_document::model::{DocumentModel, ModelError};
 
 use crate::edit::EditContext;
 use crate::kind::CommandKind;
+use crate::node_ops::{DeleteSubtree, InsertNode};
 
 /// command 검증·적용 오류.
 #[derive(Debug, Clone, PartialEq)]
@@ -38,6 +39,60 @@ pub enum CommandError {
     RevisionOverflow,
     /// 요청이 없는 transaction입니다(VII.1.6).
     EmptyTransaction,
+    /// 요청 형식이 잘못되었습니다(빈 삽입, 범위 밖 stack 등).
+    InvalidRequest {
+        /// 원인.
+        reason: &'static str,
+    },
+    /// 영속 id로 NIL을 쓸 수 없습니다.
+    NilId,
+    /// id가 문서나 요청 안에서 이미 쓰입니다.
+    DuplicateId {
+        /// 중복 id.
+        id: StableId,
+    },
+    /// 부모가 없거나, 자식을 가질 수 없는 종류이거나, 허용되지 않는 위치입니다.
+    InvalidParent {
+        /// 대상 node.
+        node: StableId,
+        /// 요청한 부모(`None`이면 부모 없음).
+        parent: Option<StableId>,
+    },
+    /// 같은 부모의 형제가 이미 이 OrderKey를 씁니다.
+    DuplicateOrderKey {
+        /// 부모.
+        parent: StableId,
+        /// 대상 node.
+        node: StableId,
+    },
+    /// 최대 node 깊이를 넘습니다.
+    DepthExceeded {
+        /// 대상 node.
+        node: StableId,
+        /// 결과 깊이.
+        depth: u32,
+    },
+    /// 참조 대상이 기대 종류가 아닙니다.
+    ReferenceTypeMismatch {
+        /// 참조를 가진 node.
+        owner: StableId,
+        /// 참조 대상.
+        target: StableId,
+    },
+    /// modifier 규칙 위반.
+    Modifier {
+        /// 소유 node.
+        owner: StableId,
+        /// 원인.
+        error: stellar_document::modifier::ModifierError,
+    },
+    /// modifier 참조 cycle.
+    ModifierCycle(stellar_document::modifier::ModifierCycle),
+    /// View root는 이 command로 삭제·이동할 수 없습니다.
+    ViewRoot {
+        /// 대상 node.
+        node: StableId,
+    },
     /// 적용 실패 후 되돌리기마저 실패했습니다(내부 불일치 신호, VII.1.5).
     RollbackFailed {
         /// 원래 실패 원인.
@@ -68,6 +123,35 @@ impl fmt::Display for CommandError {
             CommandError::Model(error) => write!(f, "문서 모델 오류: {error}"),
             CommandError::RevisionOverflow => f.write_str("문서 revision이 한계에 도달했습니다"),
             CommandError::EmptyTransaction => f.write_str("요청이 없는 transaction입니다"),
+            CommandError::InvalidRequest { reason } => write!(f, "잘못된 요청: {reason}"),
+            CommandError::NilId => f.write_str("NIL은 영속 id로 쓸 수 없습니다"),
+            CommandError::DuplicateId { id } => write!(f, "id {id}가 이미 쓰입니다"),
+            CommandError::InvalidParent { node, parent } => match parent {
+                Some(parent) => write!(f, "node {node}의 부모로 {parent}를 쓸 수 없습니다"),
+                None => write!(f, "node {node}에 부모가 필요합니다"),
+            },
+            CommandError::DuplicateOrderKey { parent, node } => {
+                write!(
+                    f,
+                    "부모 {parent} 아래 node {node}의 OrderKey가 형제와 같습니다"
+                )
+            }
+            CommandError::DepthExceeded { node, depth } => {
+                write!(f, "node {node}의 깊이 {depth}가 최대를 넘습니다")
+            }
+            CommandError::ReferenceTypeMismatch { owner, target } => {
+                write!(
+                    f,
+                    "node {owner}의 참조 대상 {target}의 종류가 맞지 않습니다"
+                )
+            }
+            CommandError::Modifier { owner, error } => {
+                write!(f, "node {owner}의 modifier: {error}")
+            }
+            CommandError::ModifierCycle(cycle) => write!(f, "{cycle}"),
+            CommandError::ViewRoot { node } => {
+                write!(f, "View root {node}는 삭제·이동할 수 없습니다")
+            }
             CommandError::RollbackFailed { original, rollback } => {
                 write!(f, "{original} (되돌리기 실패: {rollback})")
             }
@@ -97,6 +181,10 @@ impl From<ModelError> for CommandError {
 /// variant는 문서 command 작업(VII.2.x)이 [`CommandKind`] 번호와 함께 등록합니다.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
+    /// node(subtree) 삽입 (VII.2.1).
+    InsertNode(InsertNode),
+    /// node subtree 삭제 (VII.2.1·VII.2.2).
+    DeleteSubtree(DeleteSubtree),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -105,7 +193,9 @@ pub enum Command {
 impl Command {
     /// command 종류.
     pub fn kind(&self) -> CommandKind {
-        match *self {
+        match self {
+            Command::InsertNode(_) => CommandKind::InsertNode,
+            Command::DeleteSubtree(_) => CommandKind::DeleteSubtree,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
         }
@@ -113,28 +203,31 @@ impl Command {
 
     /// 현재 문서에 적용 가능한지 검사합니다. 문서를 바꾸지 않습니다.
     pub fn validate(&self, model: &DocumentModel) -> Result<(), CommandError> {
-        let _ = model;
-        match *self {
+        match self {
+            Command::InsertNode(command) => command.validate(model),
+            Command::DeleteSubtree(command) => command.validate(model),
             #[cfg(test)]
-            Command::TestProbe(ref probe) => probe.validate(model),
+            Command::TestProbe(probe) => probe.validate(model),
         }
     }
 
     /// 적용 전 문서 `model`을 기준으로, 이 command의 효과를 되돌리는 command를 만듭니다.
     pub fn invert(&self, model: &DocumentModel) -> Result<Command, CommandError> {
-        let _ = model;
-        match *self {
+        match self {
+            Command::InsertNode(command) => command.invert().map(Command::DeleteSubtree),
+            Command::DeleteSubtree(command) => command.invert(model).map(Command::InsertNode),
             #[cfg(test)]
-            Command::TestProbe(ref probe) => probe.invert(model).map(Command::TestProbe),
+            Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
         }
     }
 
     /// context의 primitive 변경으로 command를 적용합니다.
     pub fn apply(&self, ctx: &mut EditContext<'_>) -> Result<(), CommandError> {
-        let _ = &ctx;
-        match *self {
+        match self {
+            Command::InsertNode(command) => command.apply(ctx),
+            Command::DeleteSubtree(command) => command.apply(ctx),
             #[cfg(test)]
-            Command::TestProbe(ref probe) => probe.apply(ctx),
+            Command::TestProbe(probe) => probe.apply(ctx),
         }
     }
 }
