@@ -32,6 +32,9 @@ pub mod state_store;
 /// 이벤트 dispatch·조건 평가·action commit (IX.5.5).
 pub mod state_dispatch;
 
+/// nested 컴포넌트 상태 캡슐화 validator (IX.5.6).
+pub mod state_encapsulation;
+
 /// ComponentInstance node payload (IX.2.1).
 pub mod instance;
 

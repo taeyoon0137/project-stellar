@@ -153,6 +153,8 @@ pub enum StateMachineError {
         /// 원인.
         error: ExpressionCheckError,
     },
+    /// nested 컴포넌트 상태 캡슐화 위반(IX.5.6).
+    Encapsulation(super::state_encapsulation::StateEncapsulationError),
     /// 표현식 bytes가 잘못됐습니다.
     Codec(CodecError),
     /// 입력이 부족하거나 형식이 아닙니다.
@@ -224,6 +226,7 @@ impl fmt::Display for StateMachineError {
                 transition.stable_id(),
                 variable.stable_id()
             ),
+            StateMachineError::Encapsulation(err) => write!(f, "{err}"),
             StateMachineError::Codec(err) => write!(f, "상태 머신 표현식 bytes 오류: {err}"),
             StateMachineError::Malformed { reason } => {
                 write!(f, "상태 머신 binary 형식 위반: {reason}")

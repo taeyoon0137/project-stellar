@@ -910,6 +910,7 @@ impl ComponentLibrary {
             check_definition_overrides(&library, entry.definition().reference(), true)
                 .map_err(ComponentDefinitionError::PropertyOverride)?;
         }
+        library.validate_loaded_state_machines()?;
         Ok(library)
     }
 }
