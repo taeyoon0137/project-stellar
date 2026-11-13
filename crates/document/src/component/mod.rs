@@ -24,3 +24,6 @@ pub mod slot;
 
 /// Slot override 투영 규칙 (IX.3.2).
 pub mod slot_override;
+
+/// 가상 subtree 구조 편집 validator (IX.2.5).
+pub mod mutation;

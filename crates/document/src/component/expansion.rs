@@ -470,7 +470,7 @@ impl<'a> InstanceExpansion<'a> {
     }
 
     /// chain 마지막 인스턴스의 payload.
-    fn chain_payload(
+    pub(crate) fn chain_payload(
         &self,
         instances: &[StableId],
     ) -> Result<Cow<'_, ComponentInstancePayload>, ExpansionError> {
