@@ -1045,7 +1045,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XI.2.1 | `[ ]` | layout/binding/modifier invalidation을 scene dirty set으로 변환합니다. | paint-only, geometry, subtree dirty fixture 정확. | VII.1.4, X.7.1, VI.9.7 |
 | XI.2.2 | `[x]` | Frame, Shape, Path, Text, Image를 scene primitives로 변환하는 builder를 각각 별도 함수로 구현합니다. | node kind별 golden scene snapshot. | XI.1.2, Phase VI |
-| XI.2.3 | `[ ]` | Fragment를 scene node로 생성하지 않고 자식을 부모 scene scope에 flatten합니다. | Fragment 유무 scene primitive 동일. | VI.4.1, XI.2.2 |
+| XI.2.3 | `[x]` | Fragment를 scene node로 생성하지 않고 자식을 부모 scene scope에 flatten합니다. | Fragment 유무 scene primitive 동일. | VI.4.1, XI.2.2 |
 | XI.2.4 | `[ ]` | ComponentInstance virtual subtree와 View Variant 적용 결과를 scene으로 생성합니다. | IX.9 fixture scene snapshot 통과. | IX.2.2, IX.7.6, XI.2.2 |
 | XI.2.5 | `[ ]` | dirty subtree만 재빌드하고 변경되지 않은 scene node/resource refs를 공유합니다. | 단일 property edit rebuild count 예상 일치. | XI.1.4, XI.2.1 |
 | XI.2.6 | `[ ]` | scene build duration과 rebuilt node count를 diagnostics trace에 기록합니다. 내용·이름은 기록하지 않습니다. | trace schema 테스트 통과. | II.3.2, XI.2.5 |

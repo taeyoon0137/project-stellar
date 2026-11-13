@@ -22,6 +22,16 @@
 //! - **stroke 정렬**: 상자형 content(Frame, Image)는 [`StrokeAlign::Inside`](크기 상자 안),
 //!   선형 content(Shape, Path, Text)는 [`StrokeAlign::Center`](document Line의 중심선 규칙)입니다.
 //! - **clip**: node는 부모 scope의 clip을 받습니다. Frame은 자기 clip을 **자식 scope**에만 겁니다.
+//!
+//! ## Fragment flatten (XI.2.3)
+//!
+//! Fragment는 렌더·layout 필드가 없고 좌표계도 만들지 않는 marker입니다(아키텍처 §12.4, VI.4).
+//! 그래서 scene node를 만들지 않습니다. [`SceneBuilder::begin_fragment`]가 연 scope는 부모와 같은
+//! world transform·clip을 쓰고, [`SceneBuilder::finish_fragment`]가 모은 자식을 **부모 scope에 그대로
+//! 이어 붙입니다**. Fragment는 z-order도 받지 않으므로, Fragment가 있든 없든 자식의 primitive·순서·
+//! z-order가 같습니다. Fragment가 가질 수 있는 상태 중 렌더에 영향을 주는 것은 표시·잠금뿐이며,
+//! 이는 자식의 실효 visibility·pointer-events에 반영됩니다(Fragment 대신 자식마다 숨김·잠금을
+//! 준 것과 같은 결과).
 
 use std::fmt;
 use std::sync::Arc;
@@ -226,6 +236,42 @@ pub struct TextInput {
     pub layout: TextLayoutKey,
     /// text local layout 상자.
     pub size: Size2,
+}
+
+/// Fragment 입력. document Fragment는 공통 column(표시·잠금 등) 외 필드가 없습니다(VI.4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FragmentInput {
+    /// 원본 document node(scene에는 남지 않음).
+    pub source: StableId,
+    /// document `visible`.
+    pub visible: bool,
+    /// document `locked`.
+    pub locked: bool,
+}
+
+/// [`SceneBuilder::begin_fragment`]가 연 Fragment scope. 자식을 [`FragmentScope::scope_mut`]에
+/// 쌓은 뒤 [`SceneBuilder::finish_fragment`]로 부모에 펼칩니다.
+#[derive(Debug)]
+pub struct FragmentScope {
+    source: StableId,
+    children: SceneScope,
+}
+
+impl FragmentScope {
+    /// 원본 Fragment node.
+    pub const fn source(&self) -> StableId {
+        self.source
+    }
+
+    /// 자식 scope.
+    pub fn scope_mut(&mut self) -> &mut SceneScope {
+        &mut self.children
+    }
+
+    /// 자식 scope(읽기).
+    pub fn scope(&self) -> &SceneScope {
+        &self.children
+    }
 }
 
 /// Image 입력(document `ImagePayload`).
@@ -504,6 +550,28 @@ impl SceneBuilder {
             StrokeAlign::Inside,
             StrokeCap::Butt,
         )
+    }
+
+    /// Fragment scope를 엽니다(XI.2.3). scene node·z-order를 만들지 않고, 부모의 world
+    /// transform·clip을 그대로 물려주며 Fragment의 숨김·잠금만 자식 상태에 더합니다.
+    pub fn begin_fragment(&self, parent: &SceneScope, input: &FragmentInput) -> FragmentScope {
+        FragmentScope {
+            source: input.source,
+            children: SceneScope {
+                world: parent.world,
+                clip: parent.clip.clone(),
+                hidden: parent.hidden || !input.visible,
+                locked: parent.locked || input.locked,
+                nodes: Vec::new(),
+            },
+        }
+    }
+
+    /// Fragment 자식을 순서대로 `parent` scope에 이어 붙입니다. 붙인 node 수를 돌려줍니다.
+    pub fn finish_fragment(&self, parent: &mut SceneScope, fragment: FragmentScope) -> usize {
+        let count = fragment.children.nodes.len();
+        parent.nodes.extend(fragment.children.nodes);
+        count
     }
 
     /// 최상위 scope를 닫고 snapshot 최상위 node 목록을 돌려줍니다.

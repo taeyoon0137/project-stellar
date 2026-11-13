@@ -454,3 +454,195 @@ fn invalid_inputs_are_structured_errors() {
     // 실패한 node는 scope에 추가되지 않습니다.
     assert_eq!(root.nodes().len(), 1);
 }
+
+// --- Fragment flatten (XI.2.3) ---
+
+/// 자식 leaf 배치 방식.
+#[derive(Clone, Copy)]
+enum Wrap {
+    /// Fragment 없이 그대로.
+    Plain,
+    /// 표시·비잠금 Fragment.
+    Fragment,
+    /// 숨긴 Fragment(자식은 표시 상태).
+    HiddenFragment,
+    /// 잠긴 Fragment(자식은 비잠금).
+    LockedFragment,
+    /// Fragment 없이 자식마다 숨김.
+    HiddenChildren,
+    /// Fragment 없이 자식마다 잠금.
+    LockedChildren,
+}
+
+/// frame { shape, [path, text, [image]], image } — 대괄호 구간이 `wrap` 대상입니다.
+fn build_with(wrap: Wrap) -> SceneSnapshot {
+    let mut builder = SceneBuilder::new();
+    let mut root = builder.root_scope();
+    let mut frame = builder
+        .begin_frame(&root, &frame_input(1, 10.0, 20.0, FrameClipInput::Bounds))
+        .expect("frame");
+    builder
+        .build_shape(frame.scope_mut(), &shape_input(2))
+        .expect("shape");
+
+    let (fragment_visible, fragment_locked) = match wrap {
+        Wrap::HiddenFragment => (false, false),
+        Wrap::LockedFragment => (true, true),
+        _ => (true, false),
+    };
+    let child_state = |input: &mut NodeInput| match wrap {
+        Wrap::HiddenChildren => input.visible = false,
+        Wrap::LockedChildren => input.locked = true,
+        _ => {}
+    };
+    let mut path = path_input(3);
+    child_state(&mut path.node);
+    let mut text = text_input(4);
+    child_state(&mut text.node);
+    let mut image = image_input(5);
+    child_state(&mut image.node);
+
+    let use_fragment = matches!(
+        wrap,
+        Wrap::Fragment | Wrap::HiddenFragment | Wrap::LockedFragment
+    );
+    if use_fragment {
+        let mut outer_fragment = builder.begin_fragment(
+            frame.scope(),
+            &FragmentInput {
+                source: id(90),
+                visible: fragment_visible,
+                locked: fragment_locked,
+            },
+        );
+        builder
+            .build_path(outer_fragment.scope_mut(), &path)
+            .expect("path");
+        builder
+            .build_text(outer_fragment.scope_mut(), &text)
+            .expect("text");
+        // 중첩 Fragment.
+        let mut inner_fragment = builder.begin_fragment(
+            outer_fragment.scope(),
+            &FragmentInput {
+                source: id(91),
+                visible: true,
+                locked: false,
+            },
+        );
+        builder
+            .build_image(inner_fragment.scope_mut(), &image)
+            .expect("image");
+        assert_eq!(
+            builder.finish_fragment(outer_fragment.scope_mut(), inner_fragment),
+            1
+        );
+        assert_eq!(
+            builder.finish_fragment(frame.scope_mut(), outer_fragment),
+            3
+        );
+    } else {
+        builder.build_path(frame.scope_mut(), &path).expect("path");
+        builder.build_text(frame.scope_mut(), &text).expect("text");
+        builder
+            .build_image(frame.scope_mut(), &image)
+            .expect("image");
+    }
+    builder
+        .build_image(frame.scope_mut(), &image_input(6))
+        .expect("image");
+    builder.finish_frame(&mut root, frame).expect("finish");
+    SceneSnapshot::new(DocumentRevision(1), SceneRevision(1), builder.finish(root))
+        .expect("snapshot")
+}
+
+#[test]
+fn fragment_presence_does_not_change_scene_primitives() {
+    // 검증 기준(XI.2.3): Fragment 유무 scene primitive 동일.
+    let plain = build_with(Wrap::Plain);
+    let fragment = build_with(Wrap::Fragment);
+    assert_eq!(fragment, plain);
+    assert_eq!(codec::encode(&fragment), codec::encode(&plain));
+    assert_eq!(fragment.semantic_hash(), plain.semantic_hash());
+    // Fragment는 scene node가 되지 않고 자식은 Frame의 직접 자식입니다.
+    assert_eq!(fragment.node_count(), 6);
+    assert!(fragment
+        .iter_preorder()
+        .all(|node| node.source() != id(90) && node.source() != id(91)));
+    let frame = fragment.root(0).expect("frame");
+    let sources: Vec<StableId> = frame.children().map(|child| child.source()).collect();
+    assert_eq!(sources, vec![id(2), id(3), id(4), id(5), id(6)]);
+    // Fragment 안 자식도 Frame clip을 그대로 받습니다(Fragment는 clip을 더하지 않음).
+    let clipped: Vec<usize> = frame.children().map(|child| child.clip().depth()).collect();
+    assert_eq!(clipped, vec![1; 5]);
+    assert!(frame
+        .children()
+        .all(|child| child.clip().ptr_eq(frame.child(0).unwrap().clip())));
+}
+
+#[test]
+fn fragment_visibility_and_lock_flatten_into_children() {
+    // 숨긴 Fragment = 자식마다 숨김, 잠긴 Fragment = 자식마다 잠금.
+    assert_eq!(
+        build_with(Wrap::HiddenFragment),
+        build_with(Wrap::HiddenChildren)
+    );
+    assert_eq!(
+        build_with(Wrap::LockedFragment),
+        build_with(Wrap::LockedChildren)
+    );
+    let hidden = build_with(Wrap::HiddenFragment);
+    let frame = hidden.root(0).unwrap();
+    let visibility: Vec<Visibility> = frame
+        .children()
+        .map(|child| child.hit().visibility)
+        .collect();
+    assert_eq!(
+        visibility,
+        vec![
+            Visibility::Visible,
+            Visibility::Hidden,
+            Visibility::Hidden,
+            Visibility::Hidden,
+            Visibility::Visible
+        ]
+    );
+}
+
+#[test]
+fn root_level_and_empty_fragments_flatten() {
+    let mut builder = SceneBuilder::new();
+    let mut root = builder.root_scope();
+    let empty = builder.begin_fragment(
+        &root,
+        &FragmentInput {
+            source: id(1),
+            visible: true,
+            locked: false,
+        },
+    );
+    assert_eq!(builder.finish_fragment(&mut root, empty), 0);
+    let mut fragment = builder.begin_fragment(
+        &root,
+        &FragmentInput {
+            source: id(2),
+            visible: true,
+            locked: false,
+        },
+    );
+    assert_eq!(fragment.source(), id(2));
+    builder
+        .build_path(fragment.scope_mut(), &path_input(3))
+        .expect("path");
+    builder
+        .build_text(fragment.scope_mut(), &text_input(4))
+        .expect("text");
+    assert_eq!(builder.finish_fragment(&mut root, fragment), 2);
+    // 빈 Fragment는 z-order를 소비하지 않습니다.
+    assert_eq!(builder.built_count(), 2);
+    let snapshot =
+        SceneSnapshot::new(DocumentRevision(1), SceneRevision(1), builder.finish(root)).unwrap();
+    assert_eq!(snapshot.root_count(), 2);
+    let zs: Vec<u64> = snapshot.iter_preorder().map(|node| node.z().0).collect();
+    assert_eq!(zs, vec![1, 2]);
+}
