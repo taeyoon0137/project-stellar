@@ -6,3 +6,6 @@
 
 /// merge 입력·결과·conflict 모델 (XIV.10.1).
 pub mod model;
+
+/// 3-way merge 엔진 (XIV.10.2~).
+pub mod merge;
