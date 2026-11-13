@@ -15,6 +15,15 @@
 //! - document thread는 [`ThreadRole::Document`]로 bind되어 worker 전용 작업(XI.7.1)을 거부하고,
 //!   document thread에서의 blocking 대기([`JobTicket::wait`])도 거부합니다(자기 대기 deadlock 방지).
 //!
+//! ## 강제 범위의 한계
+//!
+//! 타입으로 강제하는 범위는 **[`DocumentThread`]가 소유한 문서**뿐입니다. `stellar-document`의
+//! [`Document`]·[`OpenDocumentSet`]은 공개 생성자(`Document::new`, `OpenDocumentSet::new`)와 가변
+//! 접근(`OpenDocumentSet::document_mut`)을 가지므로, `stellar-document`에 직접 의존할 수 있는
+//! crate는 다른 thread에서 별도 문서를 만들고 바꿀 수 있습니다. 그런 문서는 이 runtime의 열린
+//! 문서가 아니며 셸에 보이지 않습니다. 셸 경로는 crate 의존 정책(`ffi → document` 금지,
+//! ADR-0013)으로만 이 thread를 거치도록 보장합니다.
+//!
 //! # 수신함 (XII.1.2)
 //!
 //! 수신함은 우선순위별 bounded lane을 가진 [`CommandQueue`]입니다. 처리 순서와 overflow 정책은
@@ -832,29 +841,45 @@ mod tests {
         assert_eq!(doc.shutdown().unwrap().jobs_run, 1);
     }
 
-    #[test]
-    fn concurrent_senders_mutate_only_through_the_single_writer() {
-        // 4개 thread가 동시에 job을 보내도 변경은 document thread 하나가 순차 적용합니다.
-        let doc = DocumentThread::spawn().unwrap();
+    /// command lane에 job을 접수합니다. lane이 차 있으면(`QueueFull`) 자리가 날 때까지 다시
+    /// 시도합니다. 테스트가 lane 용량과 무관하게 단일 작성자 동작만 검사하도록 합니다.
+    fn submit_retrying<F, T>(sender: &DocumentSender, make_job: impl Fn() -> F) -> JobTicket<T>
+    where
+        F: FnOnce(&mut DocumentContext) -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        loop {
+            match sender.submit(make_job()) {
+                Ok(ticket) => return ticket,
+                Err(SubmitError::QueueFull { .. }) => thread::yield_now(),
+                Err(error) => panic!("job 접수 실패: {error}"),
+            }
+        }
+    }
+
+    /// `threads`개 thread가 각각 `jobs_per_thread`개 변경 job을 동시에 보내고, 변경이 document
+    /// thread 하나에서 순차 적용됐는지 검사합니다.
+    fn assert_single_writer(capacity: QueueCapacity, threads: u64, jobs_per_thread: u64) {
+        let doc = DocumentThread::spawn_with(capacity).unwrap();
         let sender = doc.sender();
         let handle = sender
             .submit(|ctx| ctx.open_document(stable(1)).handle())
             .unwrap()
             .wait()
             .unwrap();
-        let senders: Vec<_> = (0..4u64)
+        let senders: Vec<_> = (0..threads)
             .map(|t| {
                 let sender = sender.clone();
                 thread::spawn(move || {
-                    let tickets: Vec<_> = (0..250u64)
+                    let tickets: Vec<_> = (0..jobs_per_thread)
                         .map(|i| {
-                            sender
-                                .submit(move |ctx| {
+                            submit_retrying(&sender, || {
+                                move |ctx: &mut DocumentContext| {
                                     let mut doc = ctx.document_mut(handle).expect("열린 문서");
-                                    doc.insert_node(fields(t * 1_000 + i + 10));
+                                    doc.insert_node(fields(t * 1_000_000 + i + 10));
                                     (t, doc.revision())
-                                })
-                                .unwrap()
+                                }
+                            })
                         })
                         .collect();
                     tickets
@@ -869,19 +894,20 @@ mod tests {
             applied.extend(sender_thread.join().unwrap());
         }
         // 같은 sender의 job은 접수 순서대로 적용됩니다.
-        for t in 0..4u64 {
+        for t in 0..threads {
             let revisions: Vec<u64> = applied
                 .iter()
                 .filter(|(owner, _)| *owner == t)
                 .map(|(_, revision)| revision.0)
                 .collect();
-            assert_eq!(revisions.len(), 250);
+            assert_eq!(revisions.len() as u64, jobs_per_thread);
             assert!(revisions.windows(2).all(|pair| pair[0] < pair[1]));
         }
-        // 단일 작성자: 1000개 변경이 서로 다른 revision 1..=1000을 하나씩 받습니다.
+        // 단일 작성자: 모든 변경이 서로 다른 revision 1..=total을 하나씩 받습니다.
+        let total = threads * jobs_per_thread;
         let mut revisions: Vec<u64> = applied.iter().map(|(_, revision)| revision.0).collect();
         revisions.sort_unstable();
-        assert_eq!(revisions, (1..=1_000).collect::<Vec<u64>>());
+        assert_eq!(revisions, (1..=total).collect::<Vec<u64>>());
         let (count, revision) = sender
             .submit(move |ctx| {
                 (
@@ -892,9 +918,23 @@ mod tests {
             .unwrap()
             .wait()
             .unwrap();
-        assert_eq!(count, Some(1_000));
-        assert_eq!(revision, Some(DocumentRevision(1_000)));
+        assert_eq!(count, usize::try_from(total).ok());
+        assert_eq!(revision, Some(DocumentRevision(total)));
         doc.shutdown().unwrap();
+    }
+
+    #[test]
+    fn concurrent_senders_mutate_only_through_the_single_writer() {
+        // 4개 thread가 동시에 job을 보내도 변경은 document thread 하나가 순차 적용합니다.
+        assert_single_writer(QueueCapacity::default(), 4, 250);
+    }
+
+    #[test]
+    fn single_writer_holds_when_the_command_lane_is_smaller_than_the_load() {
+        // 회귀(R5): 접수 수가 command lane 용량을 넘어도 `QueueFull` panic 없이 단일 작성자
+        // 동작만 검사합니다. lane 8개에 4×300 = 1,200건(기본 용량 1024도 초과)을 보냅니다.
+        let capacity = QueueCapacity::new(4, 8, 4).unwrap();
+        assert_single_writer(capacity, 4, 300);
     }
 
     #[test]

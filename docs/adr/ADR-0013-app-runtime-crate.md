@@ -39,7 +39,9 @@ Render(불변 scene snapshot 읽기), Worker Pool로 나누고 "문서 모델에
 3. **document thread = 유일한 작성자(XII.1.1)**:
    - 열린 문서 집합은 document thread 안에서 만들어지고 밖으로 나가지 않습니다. 다른 thread는
      job(`FnOnce(&mut DocumentContext) -> T + Send + 'static`)을 보내기만 하고, job은 document
-     thread에서 접수 순서대로 하나씩 실행되며 결과는 소유 값으로만 돌아옵니다.
+     thread에서 하나씩 실행되며 결과는 소유 값으로만 돌아옵니다. 실행 순서는 같은 우선순위 lane
+     안에서만 접수 순서이고, lane 사이에는 우선순위 순서(4번)를 따르므로 접수 순서가 보존되지
+     않습니다.
    - `DocumentContext`와 문서 변경 view `DocumentMut`는 `!Send`·`!Sync`이고 공개 생성자가
      없습니다. 공개 API는 `&mut Document`를 내보내지 않습니다. 성공한 변경마다 문서별
      `DocumentRevision`을 1 올립니다(§9.2 "문서 세대"와 이후 worker 결과 검증의 기준).
@@ -88,6 +90,10 @@ Render(불변 scene snapshot 읽기), Worker Pool로 나누고 "문서 모델에
   필요합니다.
 - 부정: 사람용 의존 문서 `docs/architecture/crate-dependency-graph.md`는 이 ADR과 같은 commit에서
   갱신하지 않았으므로 후속 문서 변경으로 맞춰야 합니다(강제 기준은 `crate_graph.rs`).
+- 한계: 타입 강제는 `DocumentThread`가 소유한 문서에만 적용됩니다. `stellar-document`의 `Document`·
+  `OpenDocumentSet`은 공개 생성자와 가변 접근(`OpenDocumentSet::document_mut`)을 가지므로
+  `stellar-document`에 직접 의존할 수 있는 crate는 다른 thread에서 별도 문서를 만들고 바꿀 수
+  있습니다. 셸 경로는 crate 의존 정책(`ffi → document` 금지)으로만 보호됩니다.
 
 ## Compatibility
 
