@@ -7,7 +7,7 @@
 //!
 //! - **Git 객체를 직접 파싱하지 않음**: `ls-tree -r -l -z --full-tree`와 `cat-file --batch` 출력만
 //!   해석합니다(XIV.2.6과 같은 방식). 원시 blob bytes를 쓰며 filter·textconv를 적용하지 않습니다.
-//! - **content address**: entry 이름은 아래 canonical listing의 SHA-256입니다(ADR-0017). 같은
+//! - **content address**: entry 이름은 아래 canonical listing의 SHA-256입니다(ADR-0022). 같은
 //!   내용이면 commit·repository가 달라도 같은 entry를 씁니다(아키텍처 30.3 "같은 콘텐츠는 공용
 //!   캐시에서 중복 제거").
 //!

@@ -61,7 +61,7 @@
 
 ### 구현 요약
 
-- 선행 Fix 커밋으로 lock 형식이 하나가 됐습니다(ADR-0016). project `Lockfile`(IV.1.6)은 이 작업의
+- 선행 Fix 커밋으로 lock 형식이 하나가 됐습니다(ADR-0021). project `Lockfile`(IV.1.6)은 이 작업의
   `LockEntry`를 resolved entry로 쓰고, `Lockfile::from_document(LockDocument::from_graph(..))`가
   resolver 결과를 그대로 받습니다. 사용자 편집 필드를 받는 경로는 없습니다(IV.1.7).
 - golden 입력은 모두 실제 `stellar.yaml` **텍스트**입니다. 사용 프로젝트 선언(a: tag v1, b: branch

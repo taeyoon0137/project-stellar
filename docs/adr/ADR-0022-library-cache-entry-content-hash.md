@@ -1,4 +1,4 @@
-# ADR-0017: library cache entry 범위와 content hash
+# ADR-0022: library cache entry 범위와 content hash
 
 ## Status
 

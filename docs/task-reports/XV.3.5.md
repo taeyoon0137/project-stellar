@@ -61,5 +61,5 @@
 
 - `[~]` → `[x]`: 엄격 선행 XV.1.4·XV.3.1 `[x]`.
 - 실제 파서 경로 검증: privacy index·local source config 검증은 파서와 무관하며 기존 테스트가 계속 통과합니다(`exported_diagnostic_and_private_index_contain_no_url`, `files_are_separate_and_source_config_is_owner_only`). owner-only 쓰기에 부모 디렉터리 fsync를 추가했습니다(리뷰 P7).
-- 공통 근거: `Fix: stellar.yaml 의존성 선언을 실제 매니페스트 파서에 연결`(리뷰 P2), `Fix: stellar.lock.yaml entry 형식을 IV.1.6 모델 하나로 통합`(리뷰 P3, ADR-0016), `Fix: resolver library 매니페스트 읽기를 실제 stellar.yaml 파서로 연결`.
+- 공통 근거: `Fix: stellar.yaml 의존성 선언을 실제 매니페스트 파서에 연결`(리뷰 P2), `Fix: stellar.lock.yaml entry 형식을 IV.1.6 모델 하나로 통합`(리뷰 P3, ADR-0021), `Fix: resolver library 매니페스트 읽기를 실제 stellar.yaml 파서로 연결`.
 - 실행(`DEV-MAC`): `cargo test -p stellar-project` lib 261 passed·통합 17 passed, `cargo test -p stellar-dependencies` 57 passed·doctest 1 passed, `cargo clippy -p stellar-project -p stellar-dependencies --all-targets -- -D warnings` 경고 0, `cargo fmt -p stellar-project -p stellar-dependencies -- --check` 통과.

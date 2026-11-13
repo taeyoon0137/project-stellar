@@ -1,4 +1,4 @@
-# ADR-0016: `stellar.yaml` 의존성 entry와 `stellar.lock.yaml` entry 형식 단일화
+# ADR-0021: `stellar.yaml` 의존성 entry와 `stellar.lock.yaml` entry 형식 단일화
 
 ## Status
 

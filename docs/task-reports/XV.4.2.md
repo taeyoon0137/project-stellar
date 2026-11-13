@@ -62,4 +62,4 @@
 
 ## 상태 유지(deps_wiring lane, 2026-11-14)
 
-- `[~]` 유지: 엄격 선행 XV.3.4가 아직 `[~]`입니다(실제 ProjectProbe·storage validator 연결은 project crate의 probe/adapter 파일이 필요하며 이 lane의 허용 경로 밖). lock entry 필드·validator는 이제 실제 `stellar.lock.yaml` 파서(`Lockfile::from_yaml`)가 그대로 씁니다(ADR-0016, `lock::tests::rejects_missing_field_in_resolved`).
+- `[~]` 유지: 엄격 선행 XV.3.4가 아직 `[~]`입니다(실제 ProjectProbe·storage validator 연결은 project crate의 probe/adapter 파일이 필요하며 이 lane의 허용 경로 밖). lock entry 필드·validator는 이제 실제 `stellar.lock.yaml` 파서(`Lockfile::from_yaml`)가 그대로 씁니다(ADR-0021, `lock::tests::rejects_missing_field_in_resolved`).

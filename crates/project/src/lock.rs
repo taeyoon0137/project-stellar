@@ -4,7 +4,7 @@
 //! 표현합니다. `resolved`는 **시퀀스**라 같은 라이브러리가 서로 다른 경로/버전으로 여러 번 등장할 수
 //! 있습니다(다중 버전).
 //!
-//! 잠금 파일 형식은 하나뿐입니다(ADR-0016). resolved entry의 스키마와 값 규칙은 의존성 모델
+//! 잠금 파일 형식은 하나뿐입니다(ADR-0021). resolved entry의 스키마와 값 규칙은 의존성 모델
 //! [`stellar_dependencies::lock`](XV.4.1·XV.4.2)이 정의하고, 이 모듈은 제한 YAML 텍스트와 그 모델
 //! 사이를 연결합니다([`crate::manifest_node`]). IV.1.6의 여섯 필드(logical ID, source, exact
 //! commit, content hash, schema version, dependency path)는 같은 이름으로 유지하고, resolver가
@@ -315,7 +315,7 @@ mod tests {
             resolved: Vec::new(),
         };
         assert_eq!(Lockfile::from_yaml(&lock.to_yaml()).unwrap(), lock);
-        // scaffold가 쓰는 빈 잠금 파일 텍스트는 그대로 유효(ADR-0016 호환).
+        // scaffold가 쓰는 빈 잠금 파일 텍스트는 그대로 유효(ADR-0021 호환).
         assert_eq!(
             parse("schema_version: \"1\"\nresolved: []\n").unwrap(),
             lock

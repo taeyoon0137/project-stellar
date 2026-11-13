@@ -22,7 +22,7 @@
 - `crates/dependencies/src/lib.rs` — 모듈 등록.
 - `crates/dependencies/src/test_support.rs` — `SystemGit` stdin 실행, 테스트 digest `FakeSha256`.
 - `crates/project/src/manifest_source.rs` — 테스트 실행기 `TestGit`의 새 trait 메서드 구현(테스트 전용).
-- `docs/adr/ADR-0017-library-cache-entry-content-hash.md`(신규).
+- `docs/adr/ADR-0022-library-cache-entry-content-hash.md`(신규).
 - `docs/task-reports/XV.3.3.md`(신규), 계획서(XV.3.3 `[ ]`→`[x]`).
 
 ## 구현 요약
@@ -34,7 +34,7 @@
   `ls-tree -r -l -z --full-tree`, `cat-file --batch`(256개·64 MiB 단위) 출력만 해석합니다. XIV.2.6과
   같은 방식이고 Git 객체를 직접 파싱하지 않습니다. batch 해석은 크기 overflow 없이 경계를 검사합니다
   (git lane 리뷰 G1과 같은 결함을 처음부터 피함).
-- **content address(ADR-0017)**: `stellar-library-entry 1` listing(mode, size, 파일 SHA-256, path —
+- **content address(ADR-0022)**: `stellar-library-entry 1` listing(mode, size, 파일 SHA-256, path —
   path byte 순)의 SHA-256이 entry 이름(`entries/sha256-<hex>`)이자 lock `content_hash`입니다.
 - **immutable 공개**: staging 디렉터리에 쓰고 `rename` 한 번으로 공개한 뒤 `entries/`를 fsync합니다.
   파일은 0444/0555입니다. 실패하거나 같은 내용이 이미 있으면 staging을 지웁니다(drop guard).

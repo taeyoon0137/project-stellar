@@ -19,7 +19,7 @@
 ## 구현 요약
 
 - **입력은 resolver 결과뿐**: `write_resolved_lockfile(project_root, &LockDocument)`.
-  `Lockfile::from_document` → `write_checked`(모델 규칙·제한 loader 재로드 검사, ADR-0016)로 텍스트를
+  `Lockfile::from_document` → `write_checked`(모델 규칙·제한 loader 재로드 검사, ADR-0021)로 텍스트를
   만듭니다. 사용자 편집 필드를 받는 경로가 없습니다(IV.1.7). 텍스트를 만들 수 없으면 파일을 건드리지
   않습니다.
 - **별도 project file transaction**: `design/` generation을 쓰는 문서 자동 저장(XIII.1)과 경로·상태를
