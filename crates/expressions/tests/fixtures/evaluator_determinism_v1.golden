@@ -1,0 +1,24 @@
+# 표현식 evaluator 결정론 golden corpus (VIII.4.6, 버전 1).
+#
+# 각 줄: <case 이름> <분류> <결과>
+# - 분류 ieee: IEEE-754 기본 연산(+ - * /)·정확 연산(fmod, abs, round, floor, ceil)·정수 연산만 사용.
+#   구성상 플랫폼과 무관하게 같은 bytes여야 합니다(ADR-0006 규칙 4).
+# - 분류 libm: 색 transfer 곡선의 powf(libm 초월함수)를 사용. 현재 macOS 기준 bytes이며 Windows 재개 시
+#   같은 bytes인지 다시 검증해야 합니다.
+# - 결과: value:<TypedValue::to_bytes 소문자 hex> | null | error:<EvalErrorKind>
+#
+# case 정의와 검사: crates/expressions/tests/evaluator_determinism.rs
+arith_length_ratio ieee value:02654d5940
+angle_remainder_negative ieee value:070080b5c2
+division_by_zero ieee error:DivisionByZero
+overflow ieee error:NonFiniteResult
+numeric_functions ieee value:0600801142
+conditional_optional ieee value:0500004441
+conditional_null_branch ieee null
+comparison_logic ieee value:0100
+string_functions ieee value:030000001ceab084eab2a920302e36363770782c20ebb0b0ec9ca820302e363637
+format_number_exact_decimal ieee value:030000000b302e313030303030303031
+with_alpha ieee value:09020000803e0000003f0000403fcdcccc3e
+mix_linear_light libm value:0901e677503ffb51833ee5c8cb3eae47613f
+to_display_p3 libm value:09029fdd3d3febacaa3ef608fe3e6666663f
+to_srgb_out_of_gamut libm value:0901acff39c08856823fdcd50bbf0000803f
