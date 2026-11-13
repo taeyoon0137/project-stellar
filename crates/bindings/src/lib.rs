@@ -8,3 +8,6 @@ pub mod registry;
 
 /// 토큰 dependency graph와 저장 전 cycle 거부 (VIII.5.3).
 pub mod token_graph;
+
+/// 토큰 값 평가 cache (VIII.5.4).
+pub mod token_cache;

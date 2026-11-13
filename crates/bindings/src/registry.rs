@@ -150,11 +150,25 @@ pub enum ReferenceIssue {
 }
 
 /// scope별 TokenSet registry (VIII.5.2).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// 토큰마다 값 revision(VIII.5.4)을 둡니다. 정의 추가와 default expression 교체는 그 토큰의 revision을 새 값으로
+/// 올리고, rename은 값에 영향이 없으므로 올리지 않습니다. revision은 registry 안에서 단조 증가하며 저장하지 않습니다.
+/// 동등성(`PartialEq`)은 revision과 무관하게 scope별 TokenSet 내용만 비교합니다.
+#[derive(Debug, Clone, Default)]
 pub struct TokenRegistry {
     sets: BTreeMap<TokenScope, TokenSet>,
     owners: BTreeMap<TokenRef, TokenScope>,
+    revisions: BTreeMap<TokenRef, u64>,
+    last_revision: u64,
 }
+
+impl PartialEq for TokenRegistry {
+    fn eq(&self, other: &TokenRegistry) -> bool {
+        self.sets == other.sets
+    }
+}
+
+impl Eq for TokenRegistry {}
 
 impl TokenRegistry {
     /// 빈 registry.
@@ -177,9 +191,21 @@ impl TokenRegistry {
         }
         for definition in set.iter() {
             self.owners.insert(definition.id(), scope);
+            self.bump(definition.id());
         }
         self.sets.insert(scope, set);
         Ok(())
+    }
+
+    /// 토큰 값 revision을 새 값으로 올립니다.
+    fn bump(&mut self, token: TokenRef) {
+        self.last_revision += 1;
+        self.revisions.insert(token, self.last_revision);
+    }
+
+    /// 토큰 값 revision(VIII.5.4). 정의 추가·default expression 교체 때 바뀌고 rename에는 그대로입니다.
+    pub fn value_revision(&self, token: TokenRef) -> Option<u64> {
+        self.revisions.get(&token).copied()
     }
 
     /// scope를 제거하고 TokenSet을 돌려줍니다.
@@ -187,6 +213,7 @@ impl TokenRegistry {
         let set = self.sets.remove(&scope)?;
         for definition in set.iter() {
             self.owners.remove(&definition.id());
+            self.revisions.remove(&definition.id());
         }
         Some(set)
     }
@@ -345,12 +372,14 @@ impl TokenRegistry {
         let id = definition.id();
         set.insert(definition)?;
         self.owners.insert(id, scope);
+        self.bump(id);
         Ok(())
     }
 
     /// 토큰을 제거하고 scope와 정의를 돌려줍니다.
     pub fn remove(&mut self, token: TokenRef) -> Option<(TokenScope, TokenDefinition)> {
         let scope = self.owners.remove(&token)?;
+        self.revisions.remove(&token);
         let definition = self.sets.get_mut(&scope)?.remove(token)?;
         Some((scope, definition))
     }
@@ -368,7 +397,9 @@ impl TokenRegistry {
         expression: ExpressionAst,
     ) -> Result<ExpressionAst, RegistryError> {
         let set = self.set_of_mut(token)?;
-        Ok(set.replace_expression(token, expression)?)
+        let previous = set.replace_expression(token, expression)?;
+        self.bump(token);
+        Ok(previous)
     }
 
     /// `token`을 default expression에서 참조하는 모든 토큰(ID 순).
