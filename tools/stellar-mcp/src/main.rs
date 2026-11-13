@@ -96,7 +96,8 @@ fn watch_parent(_log: &mut Logger<io::Stderr>) -> Result<(), Exit> {
     Ok(())
 }
 
-/// 실행 중 앱을 인증하고 연결합니다(XIX.1.7). 연결은 MCP 세션이 끝날 때까지 유지합니다.
+/// 실행 중 앱을 인증하고 연결합니다(XIX.1.7). 연결은 MCP 세션이 끝날 때까지 유지하고, 앱이 연결을
+/// 닫으면 이 bridge의 하나뿐인 세션도 끝냅니다(XIX.1.4).
 #[cfg(target_os = "macos")]
 fn attach(
     instance: Option<&str>,
@@ -104,6 +105,7 @@ fn attach(
 ) -> Result<stellar_local_ipc::handshake::Session, Exit> {
     use stellar_local_ipc::nonce::NonceLedger;
     use stellar_local_ipc::registry::InstanceId;
+    use stellar_mcp::attach::watch_app_connection;
 
     let wanted = match instance.map(InstanceId::parse) {
         None => None,
@@ -114,11 +116,21 @@ fn attach(
         }
     };
     match stellar_mcp::attach::attach(wanted.as_ref(), &mut NonceLedger::new()) {
-        Ok((endpoint, session)) => {
+        Ok((endpoint, mut session)) => {
             log.info(&format!(
                 "Stellar 앱 instance {}에 인증 후 연결했습니다",
                 endpoint.instance
             ));
+            let on_end = |end: stellar_mcp::attach::AppConnectionEnd| {
+                let status = end.exit();
+                Logger::new(io::stderr())
+                    .warn(&format!("{end}: MCP 세션을 끝냅니다({})", status.name));
+                std::process::exit(i32::from(status.code));
+            };
+            if let Err(e) = watch_app_connection(&mut session, on_end) {
+                log.error(&format!("앱 연결 감시를 시작할 수 없습니다: {e}"));
+                return Err(exit::SOFTWARE);
+            }
             Ok(session)
         }
         Err(e) => {

@@ -122,6 +122,8 @@ fn bridge_and_internal_dependencies_use_no_network_sockets() {
     .iter()
     .map(|parts| parts.concat())
     .collect();
+    // `Shutdown`은 Unix domain socket의 `shutdown(2)` 방향 값이라 network socket이 아닙니다.
+    let allowed_shutdown = ["std::", "net::", "Shutdown"].concat();
     let mut unix_ipc_uses = 0;
     for crate_dir in dependency_closure() {
         let mut stack = vec![crate_dir.join("src")];
@@ -132,7 +134,9 @@ fn bridge_and_internal_dependencies_use_no_network_sockets() {
                     stack.push(path);
                     continue;
                 }
-                let text = std::fs::read_to_string(&path).unwrap();
+                let text = std::fs::read_to_string(&path)
+                    .unwrap()
+                    .replace(&allowed_shutdown, "");
                 for pattern in &forbidden {
                     assert!(
                         !text.contains(pattern.as_str()),

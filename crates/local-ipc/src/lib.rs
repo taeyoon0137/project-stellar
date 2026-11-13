@@ -40,6 +40,10 @@ pub mod auth;
 #[cfg(target_os = "macos")]
 pub mod listener;
 
+/// 앱 측 bridge 연결 수명과 연결 종료 event (XIX.1.4).
+#[cfg(target_os = "macos")]
+pub mod session;
+
 /// 앱 측 IPC test double (XIX.1.2, XIX.1.3).
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) mod test_support;

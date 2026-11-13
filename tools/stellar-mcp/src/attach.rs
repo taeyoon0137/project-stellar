@@ -18,8 +18,16 @@
 //!
 //! backend 자동 선택(앱 없음이면 headless 등)은 XIX.9.4 범위이며, 이 module은 명시적 `--attach`만
 //! 다룹니다.
+//!
+//! ## 한 bridge = 한 세션 (XIX.1.4)
+//!
+//! bridge process 하나는 MCP 연결 세션 하나만 담당하고, 그 세션은 앱 연결 하나에 묶입니다. 그래서
+//! 연결은 프로세스 수명 동안 한 번만 맺고 다시 연결하지 않습니다. [`watch_app_connection`]이 앱
+//! 연결을 감시하다 앱이 닫으면 MCP 세션도 끝냅니다(69 `unavailable`). bridge가 끝나면 OS가 socket을
+//! 닫으므로 앱은 연결 종료 event를 한 번 기록합니다(`stellar_local_ipc::session`).
 
 use std::fmt;
+use std::io::{self, Read};
 
 use stellar_local_ipc::auth::{AuthError, PeerPolicy};
 use stellar_local_ipc::handshake::{connect, HandshakeError, Session};
@@ -113,6 +121,71 @@ pub fn attach_with(
     Ok((endpoint, session))
 }
 
+/// 앱 연결이 끝난 이유(XIX.1.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppConnectionEnd {
+    /// 앱이 연결을 닫았습니다.
+    Closed,
+    /// handshake 뒤 정의되지 않은 data를 받았습니다.
+    UnexpectedData,
+    /// 읽기 오류.
+    ReadError {
+        /// io 오류 종류.
+        kind: io::ErrorKind,
+    },
+}
+
+impl AppConnectionEnd {
+    /// XXIV.1.2 표에 따른 종료 상태.
+    pub fn exit(self) -> Exit {
+        match self {
+            AppConnectionEnd::Closed => exit::UNAVAILABLE,
+            AppConnectionEnd::UnexpectedData => exit::PROTOCOL,
+            AppConnectionEnd::ReadError { .. } => exit::IOERR,
+        }
+    }
+}
+
+impl fmt::Display for AppConnectionEnd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AppConnectionEnd::Closed => write!(f, "Stellar 앱이 연결을 닫았습니다"),
+            AppConnectionEnd::UnexpectedData => {
+                write!(f, "Stellar 앱이 정의되지 않은 IPC 메시지를 보냈습니다")
+            }
+            AppConnectionEnd::ReadError { kind } => {
+                write!(f, "Stellar 앱 연결 읽기 오류: {kind:?}")
+            }
+        }
+    }
+}
+
+/// 앱 연결을 감시하는 thread를 시작합니다(XIX.1.4). 연결이 끝나면 `on_end`를 한 번 호출합니다.
+///
+/// handshake 뒤 bridge↔app 메시지는 아직 정의되지 않았으므로(XIX.9.4) data를 받아도 끝냅니다.
+pub fn watch_app_connection<F>(session: &mut Session, on_end: F) -> io::Result<()>
+where
+    F: FnOnce(AppConnectionEnd) + Send + 'static,
+{
+    let mut reader = session.stream().try_clone()?;
+    reader.set_read_timeout(None)?;
+    std::thread::Builder::new()
+        .name("stellar-mcp-app-watch".into())
+        .spawn(move || {
+            let mut buf = [0u8; 64];
+            let end = loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break AppConnectionEnd::Closed,
+                    Ok(_) => break AppConnectionEnd::UnexpectedData,
+                    Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                    Err(e) => break AppConnectionEnd::ReadError { kind: e.kind() },
+                }
+            };
+            on_end(end);
+        })?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,6 +220,62 @@ mod tests {
 
     fn registry(tmp: &TempDir) -> Registry {
         Registry::at(tmp.0.join("r"), os::current_uid())
+    }
+
+    #[test]
+    fn app_connection_end_is_reported_once_with_table_exit() {
+        use stellar_local_ipc::session::{
+            ConnectionClosed, ConnectionMonitor, SessionOrigin, SessionTermination,
+        };
+        struct NoTermination;
+        impl SessionTermination for NoTermination {
+            fn begin_external_termination(&self, _closed: &ConnectionClosed) {}
+        }
+
+        let tmp = TempDir::new("watch");
+        let reg = registry(&tmp);
+        let endpoint = AppEndpoint::bind(&reg, id(6)).unwrap();
+        let policy = PeerPolicy::for_current_process().unwrap();
+        let app = AppListener::spawn(endpoint, policy.clone()).unwrap();
+        let (_endpoint, mut session) =
+            attach_with(&reg, &policy, None, &mut NonceLedger::new()).unwrap();
+        let connection = match app
+            .events()
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+        {
+            ListenerEvent::Connected { connection, .. } => connection,
+            other => panic!("{other:?}"),
+        };
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let monitor = ConnectionMonitor::watch(
+            connection,
+            SessionOrigin::External,
+            tx,
+            std::sync::Arc::new(NoTermination),
+        )
+        .unwrap();
+
+        let (end_tx, end_rx) = std::sync::mpsc::channel();
+        watch_app_connection(&mut session, move |end| end_tx.send(end).unwrap()).unwrap();
+        assert!(end_rx
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err());
+        // 앱이 연결을 닫으면 bridge 세션도 끝납니다.
+        drop(monitor);
+        let end = end_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        assert_eq!(end, AppConnectionEnd::Closed);
+        assert_eq!(end.exit(), exit::UNAVAILABLE);
+        assert_eq!(AppConnectionEnd::UnexpectedData.exit(), exit::PROTOCOL);
+        assert_eq!(
+            AppConnectionEnd::ReadError {
+                kind: std::io::ErrorKind::Other
+            }
+            .exit(),
+            exit::IOERR
+        );
     }
 
     #[test]
