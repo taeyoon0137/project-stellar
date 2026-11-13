@@ -43,5 +43,8 @@ pub mod cache_index;
 /// repository별 bare mirror cache (XV.3.2).
 pub mod mirror;
 
+/// library cache entry 검증 (XV.3.4).
+pub mod entry_validation;
+
 #[cfg(test)]
 pub(crate) mod test_support;
