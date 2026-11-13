@@ -112,6 +112,9 @@ pub struct LayoutNode {
     pub transform: Transform2D,
     /// Stack 부모 main 축의 grow·shrink·basis(X.3.3). 다른 배치 방식의 자식에서는 무시합니다.
     pub flex: FlexItem,
+    /// 표시 여부(X.3.5). `false`면 부모 배치에서 제외되고 subtree가 결과에 포함되지 않습니다.
+    /// root에는 적용하지 않습니다(root는 항상 배치).
+    pub visible: bool,
 }
 
 impl LayoutNode {
@@ -128,7 +131,14 @@ impl LayoutNode {
             position: FreePosition::default(),
             transform: Transform2D::identity(),
             flex: FlexItem::default(),
+            visible: true,
         }
+    }
+
+    /// 표시 여부를 지정합니다.
+    pub fn with_visible(mut self, visible: bool) -> LayoutNode {
+        self.visible = visible;
+        self
     }
 
     /// Stack 부모 main 축의 grow·shrink·basis를 지정합니다.
@@ -453,6 +463,7 @@ fn encode_node(w: &mut Writer, node: &LayoutNode) {
         w.bytes(&component.to_le_bytes());
     }
     encode_flex(w, &node.flex);
+    w.bool(node.visible);
 }
 
 fn encode_sizing(w: &mut Writer, mode: SizingMode) {
@@ -523,6 +534,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
     let transform = Transform2D::new(a, b, c, d, tx, ty)
         .map_err(|_| LayoutError::NonFinite { field: "transform" })?;
     let flex = decode_flex(r)?;
+    let visible = r.bool("visible flag")?;
     Ok(LayoutNode {
         id,
         children,
@@ -534,6 +546,7 @@ fn decode_node(r: &mut Reader<'_>) -> Result<LayoutNode, LayoutError> {
         position,
         transform,
         flex,
+        visible,
     })
 }
 

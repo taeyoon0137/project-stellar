@@ -176,9 +176,16 @@ impl<'a> Engine<'a> {
         &self.input.nodes[index]
     }
 
-    /// visual order 자식 index 목록.
+    /// 레이아웃에 참여하는(표시되는) 자식 index 목록(visual order, X.3.5).
+    ///
+    /// `visible = false` 자식은 모든 배치 방식에서 flow·Hug 측정·overflow에서 빠지고, 그 subtree는
+    /// 결과에 포함되지 않습니다.
     pub(crate) fn children(&self, index: usize) -> Vec<usize> {
-        self.tree.children[index].clone()
+        self.tree.children[index]
+            .iter()
+            .copied()
+            .filter(|&child| self.input.nodes[child].visible)
+            .collect()
     }
 
     /// 제약 아래에서 node의 border-box 크기를 해석합니다.

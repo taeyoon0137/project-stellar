@@ -938,7 +938,7 @@ tools/xtask/
 | X.3.2 | `[x]` | 고정 크기 child의 순방향 배치와 gap 계산을 구현합니다. | horizontal/vertical/reverse fixture 통과. | X.3.1 |
 | X.3.3 | `[x]` | grow, shrink, basis를 구현하고 분배 잔여값 처리 순서를 StableId가 아닌 child visual order로 고정합니다. | reference flex fixture 통과. | X.3.2 |
 | X.3.4 | `[x]` | wrap과 multi-line cross alignment를 구현합니다. | line break·align-content fixture 통과. | X.3.3 |
-| X.3.5 | `[ ]` | hidden child와 zero-size child 처리 규칙을 구현합니다. hidden은 flow에서 제외하고 zero-size는 gap 참여 정책을 명시합니다. | fixture 통과. | X.3.2 |
+| X.3.5 | `[x]` | hidden child와 zero-size child 처리 규칙을 구현합니다. hidden은 flow에서 제외하고 zero-size는 gap 참여 정책을 명시합니다. | fixture 통과. | X.3.2 |
 | X.3.6 | `[ ]` | baseline alignment hook을 추가하고 Text baseline이 없는 node는 bottom edge fallback을 사용합니다. | mixed text/image fixture 통과. | X.3.2, X.10.4 |
 
 ### X.4 Grid

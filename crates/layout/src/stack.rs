@@ -38,6 +38,14 @@
 //! 묶음은 `line_alignment`(align-content)로 content cross 안에 정렬합니다. `Stretch`는 남는 cross
 //! 공간을 줄에 균등 분배(잔여는 줄 순서)합니다. 자식은 자기 줄 안에서 `cross_alignment`를 따릅니다.
 //! `NoWrap`(기본)은 한 줄이며 그 줄의 cross 크기는 content cross 전체입니다.
+//!
+//! # hidden·zero-size 자식 (X.3.5)
+//!
+//! - **hidden**(`visible = false`) 자식은 flow에서 완전히 제외합니다: 크기·gap·grow 분배·줄 바꿈·
+//!   Hug 측정·overflow에 참여하지 않고, 그 subtree는 결과에 없습니다(모든 배치 방식 공통).
+//! - **zero-size**(main 크기 0) 자식은 flow에 참여하는 일반 자식입니다. 양옆 gap을 그대로 받고,
+//!   main 정렬 분배의 칸 하나를 차지합니다. 즉 gap은 표시되는 이웃 자식 쌍마다 하나씩이며, 크기 0은
+//!   gap을 접지 않습니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::value::{FiniteF32, Length};
@@ -1596,5 +1604,143 @@ mod tests {
             negative.validate(),
             Err(LayoutError::NegativeValue { .. })
         ));
+    }
+
+    /// 가로 Stack 자식 (StableId, 너비 sizing, 표시 여부). OrderKey는 목록 순서.
+    fn visibility_row(
+        width: SizingMode,
+        stack: StackLayout,
+        children: &[(u64, SizingMode, bool)],
+    ) -> LayoutResult {
+        let mut root = LayoutNode::new(id(1))
+            .with_sizing(width, SizingMode::HugContent)
+            .with_container(ContainerLayout::Stack(stack));
+        let mut nodes = Vec::new();
+        for (i, (n, w, visible)) in children.iter().enumerate() {
+            root = root.with_child(id(*n), key(i as u32 + 1));
+            nodes.push(
+                LayoutNode::new(id(*n))
+                    .with_sizing(*w, SizingMode::Fixed(len(10.0)))
+                    .with_visible(*visible),
+            );
+        }
+        nodes.insert(0, root);
+        compute_layout(&LayoutInput::new(id(1), nodes)).unwrap()
+    }
+
+    fn x_w(result: &LayoutResult, n: u64) -> (f64, f64) {
+        let r = result.get(id(n)).unwrap().local_rect();
+        (r.x().to_px_f64(), r.width().to_px_f64())
+    }
+
+    #[test]
+    fn hidden_children_are_excluded_from_flow() {
+        let stack = StackLayout {
+            gap: len(10.0),
+            ..StackLayout::new(Axis::Horizontal)
+        };
+        // A(30) hidden B(40) C(20): B는 크기·gap 모두 제외 → C는 30 + 10.
+        let result = visibility_row(
+            SizingMode::HugContent,
+            stack,
+            &[
+                (2, fx(30.0), true),
+                (3, fx(40.0), false),
+                (4, fx(20.0), true),
+            ],
+        );
+        assert_eq!(x_w(&result, 4), (40.0, 20.0));
+        assert!(result.get(id(3)).is_none(), "hidden box 없음");
+        assert_eq!(result.len(), 3);
+        assert_eq!(
+            result.get(id(1)).unwrap().local_rect().width().to_px_f64(),
+            60.0
+        );
+        // hidden Fill 자식은 grow 분배에 참여하지 않음 → 보이는 Fill이 100 전체.
+        let result = visibility_row(
+            fx(100.0),
+            stack,
+            &[(2, SizingMode::Fill, false), (3, SizingMode::Fill, true)],
+        );
+        assert_eq!(x_w(&result, 3), (0.0, 100.0));
+        // wrap 줄 바꿈에서도 제외: 너비 50에 [30, hidden 40, 10] → 한 줄(30 + 10 + 10).
+        let wrap = StackLayout {
+            wrap: StackWrap::Wrap,
+            ..stack
+        };
+        let result = visibility_row(
+            fx(50.0),
+            wrap,
+            &[
+                (2, fx(30.0), true),
+                (3, fx(40.0), false),
+                (4, fx(10.0), true),
+            ],
+        );
+        assert_eq!(result.get(id(4)).unwrap().local_rect().y().to_px_f64(), 0.0);
+        assert_eq!(x_w(&result, 4), (40.0, 10.0));
+    }
+
+    #[test]
+    fn zero_size_children_keep_gaps() {
+        let stack = StackLayout {
+            gap: len(10.0),
+            ..StackLayout::new(Axis::Horizontal)
+        };
+        // A(30) Z(0) C(20): Z는 flow 참여, 양옆 gap 유지 → Z 40, C 50, Hug 70.
+        let result = visibility_row(
+            SizingMode::HugContent,
+            stack,
+            &[(2, fx(30.0), true), (3, fx(0.0), true), (4, fx(20.0), true)],
+        );
+        assert_eq!(x_w(&result, 3), (40.0, 0.0));
+        assert_eq!(x_w(&result, 4), (50.0, 20.0));
+        assert_eq!(
+            result.get(id(1)).unwrap().local_rect().width().to_px_f64(),
+            70.0
+        );
+        // SpaceBetween에서 zero-size도 칸 하나: 너비 110, 크기 30+0+20, gap 10×2 → 남음 40 → 사이 20씩.
+        let between = StackLayout {
+            main_alignment: MainAlignment::SpaceBetween,
+            ..stack
+        };
+        let result = visibility_row(
+            fx(110.0),
+            between,
+            &[(2, fx(30.0), true), (3, fx(0.0), true), (4, fx(20.0), true)],
+        );
+        assert_eq!(x_w(&result, 3), (60.0, 0.0));
+        assert_eq!(x_w(&result, 4), (90.0, 20.0));
+    }
+
+    #[test]
+    fn hidden_subtree_is_omitted_in_all_layouts_and_round_trips() {
+        // Free Hug 부모: hidden 자식(넓음)은 extent·overflow에 기여하지 않고 subtree가 빠집니다.
+        let root = LayoutNode::new(id(1))
+            .with_sizing(SizingMode::HugContent, SizingMode::HugContent)
+            .with_child(id(2), key(1))
+            .with_child(id(3), key(2));
+        let shown = LayoutNode::new(id(2)).with_fixed_size(len(10.0), len(10.0));
+        let hidden = LayoutNode::new(id(3))
+            .with_fixed_size(len(500.0), len(500.0))
+            .with_position(len(-50.0), len(0.0))
+            .with_visible(false)
+            .with_child(id(4), key(1));
+        let grandchild = LayoutNode::new(id(4)).with_fixed_size(len(1.0), len(1.0));
+        let input = LayoutInput::new(id(1), vec![root, shown, hidden, grandchild]);
+        let result = compute_layout(&input).unwrap();
+        let root_box = result.get(id(1)).unwrap();
+        assert_eq!(root_box.local_rect().width().to_px_f64(), 10.0);
+        assert_eq!(root_box.overflow_bounds(), root_box.local_rect());
+        assert!(result.get(id(3)).is_none() && result.get(id(4)).is_none());
+        // visible flag round-trip, root의 visible=false는 무시(항상 배치).
+        assert_eq!(LayoutInput::decode(&input.encode()).unwrap(), input);
+        let hidden_root = LayoutInput::new(
+            id(1),
+            vec![LayoutNode::new(id(1))
+                .with_fixed_size(len(5.0), len(5.0))
+                .with_visible(false)],
+        );
+        assert_eq!(compute_layout(&hidden_root).unwrap().len(), 1);
     }
 }

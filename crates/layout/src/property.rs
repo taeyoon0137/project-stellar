@@ -26,6 +26,8 @@ pub enum LayoutProperty {
     Transform,
     /// Stack 자식 grow·shrink·basis (X.3.3).
     Flex,
+    /// 표시 여부 (X.3.5).
+    Visibility,
 }
 
 impl LayoutProperty {
@@ -41,6 +43,7 @@ impl LayoutProperty {
             LayoutProperty::Position => "position",
             LayoutProperty::Transform => "transform",
             LayoutProperty::Flex => "flex",
+            LayoutProperty::Visibility => "visibility",
         }
     }
 }
