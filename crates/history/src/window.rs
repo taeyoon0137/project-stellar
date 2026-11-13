@@ -134,6 +134,12 @@ impl WindowHistory {
         self.history.cancel_preview(doc)
     }
 
+    /// 이 창에서 마지막으로 되돌린 항목을 다시 적용합니다(VII.5.3).
+    pub fn redo(&mut self, doc: &mut DocumentState) -> Result<Option<UndoOutcome>, HistoryError> {
+        self.history
+            .redo(doc, &mut self.view, self.selection_policy)
+    }
+
     /// 이 창의 마지막 항목 하나를 이 창의 문서·선택에 되돌립니다(VII.5.2).
     ///
     /// 역 transaction은 **이 창의 인메모리 문서 상태**(`doc`)에만 적용합니다. 창끼리 문서 모델을 공유하지
@@ -172,6 +178,18 @@ impl WindowHistories {
     /// 열린 창의 history(변경).
     pub fn get_mut(&mut self, window: WindowSessionId) -> Option<&mut WindowHistory> {
         self.windows.get_mut(&window)
+    }
+
+    /// 창 `saved_by`가 새 generation을 저장했음을 알립니다(VII.5.3).
+    ///
+    /// 다른 창의 history는 **즉시 폐기하지 않습니다** — 그 창들은 저장 충돌·재로드 정책(§22.2, XII.7)에서
+    /// 처리하도록 stale 후보 목록만 돌려줍니다. 저장한 창 자신은 목록에 없습니다.
+    pub fn on_generation_saved(&self, saved_by: WindowSessionId) -> Vec<WindowSessionId> {
+        self.windows
+            .keys()
+            .copied()
+            .filter(|window| *window != saved_by)
+            .collect()
     }
 
     /// 열린 창 수.
@@ -384,5 +402,89 @@ mod tests {
             histories.get_mut(a).unwrap().undo(&mut doc_a).unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn redo_branch_is_discarded_by_new_commit_but_not_by_other_window_save() {
+        // 검증 기준(VII.5.3): branch history fixture 통과.
+        let mut histories = WindowHistories::new();
+        let (a, b) = (window(1), window(2));
+        let mut doc_a = small_state();
+        let mut doc_b = small_state();
+        histories.open(b);
+        let original = snapshot(&doc_a);
+        let mut states = vec![original.clone()];
+        for (i, name) in ["e1", "e2", "e3"].iter().enumerate() {
+            let t = tx(
+                &doc_a,
+                1_000 + i as u64,
+                Command::rename_node(sid(11), *name),
+            );
+            histories
+                .open(a)
+                .record_document(&mut doc_a, &t, None)
+                .unwrap();
+            states.push(snapshot(&doc_a));
+        }
+        let wa = histories.get_mut(a).unwrap();
+        wa.undo(&mut doc_a).unwrap();
+        wa.undo(&mut doc_a).unwrap();
+        assert_eq!(snapshot(&doc_a), states[1]);
+        assert_eq!(wa.history().redo_len(), 2);
+
+        // 다른 창(B)의 저장은 A의 history를 폐기하지 않습니다.
+        let stale = histories.on_generation_saved(b);
+        assert_eq!(stale, vec![a]);
+        let wa = histories.get_mut(a).unwrap();
+        assert_eq!(wa.history().len(), 1);
+        assert_eq!(wa.history().redo_len(), 2);
+        // B 자신의 편집도 A의 redo에 영향이 없습니다.
+        let tb = tx(&doc_b, 2_000, Command::rename_node(sid(12), "B"));
+        histories
+            .get_mut(b)
+            .unwrap()
+            .record_document(&mut doc_b, &tb, None)
+            .unwrap();
+        let wa = histories.get_mut(a).unwrap();
+        assert_eq!(wa.history().redo_len(), 2);
+
+        // redo 한 번 → e2 상태, 다시 undo.
+        wa.redo(&mut doc_a).unwrap().unwrap();
+        assert_eq!(snapshot(&doc_a), states[2]);
+        wa.undo(&mut doc_a).unwrap();
+        assert_eq!(snapshot(&doc_a), states[1]);
+
+        // 같은 창에서 새 command(e4) 확정 → redo 갈래(e2, e3) 폐기.
+        let t = tx(&doc_a, 1_010, Command::rename_node(sid(12), "e4"));
+        wa.record_document(&mut doc_a, &t, None).unwrap();
+        assert_eq!(wa.history().redo_len(), 0);
+        assert_eq!(wa.redo(&mut doc_a).unwrap(), None);
+        assert_eq!(wa.history().len(), 2, "e1, e4");
+        // 끝까지 undo하면 원래 문서.
+        wa.undo(&mut doc_a).unwrap();
+        wa.undo(&mut doc_a).unwrap();
+        assert_eq!(snapshot(&doc_a), original);
+        // 끝까지 redo하면 e1 → e4 순서로 재적용.
+        wa.redo(&mut doc_a).unwrap();
+        wa.redo(&mut doc_a).unwrap();
+        assert_eq!(doc_a.model().record(sid(11)).unwrap().display_name, "e1");
+        assert_eq!(doc_a.model().record(sid(12)).unwrap().display_name, "e4");
+    }
+
+    #[test]
+    fn selection_entries_redo_and_new_selection_discards_branch() {
+        let mut history = WindowHistory::new(window(3));
+        let mut doc = small_state();
+        let pick =
+            |ids: &[u64]| SetSelection::new(Selection::new(ids.iter().map(|i| sid(*i)), None));
+        history.record_selection(&doc, &pick(&[11])).unwrap();
+        history.record_selection(&doc, &pick(&[12])).unwrap();
+        history.undo(&mut doc).unwrap();
+        assert_eq!(history.view().selection().ids(), &[sid(11)]);
+        history.redo(&mut doc).unwrap();
+        assert_eq!(history.view().selection().ids(), &[sid(12)]);
+        history.undo(&mut doc).unwrap();
+        history.record_selection(&doc, &pick(&[13])).unwrap();
+        assert_eq!(history.history().redo_len(), 0, "새 선택도 redo 갈래 폐기");
     }
 }

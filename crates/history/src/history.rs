@@ -56,6 +56,7 @@ struct Preview {
 #[derive(Debug, Clone, Default)]
 pub struct History {
     entries: Vec<HistoryEntry>,
+    redo: Vec<HistoryEntry>,
     sequences: SequenceAllocator,
     preview: Option<Preview>,
     policy: HistoryGroupingPolicy,
@@ -81,9 +82,19 @@ impl History {
         self.policy
     }
 
-    /// 확정된 항목(오래된 것부터).
+    /// 확정된 항목(오래된 것부터). undo stack입니다.
     pub fn entries(&self) -> &[HistoryEntry] {
         &self.entries
+    }
+
+    /// redo stack(다음에 redo할 항목이 마지막).
+    pub fn redo_entries(&self) -> &[HistoryEntry] {
+        &self.redo
+    }
+
+    /// redo 가능한 항목 수.
+    pub fn redo_len(&self) -> usize {
+        self.redo.len()
     }
 
     /// 항목 수.
@@ -112,6 +123,8 @@ impl History {
         let applied = doc.execute_transaction(transaction)?;
         self.sequences = sequences;
         self.open_group = None;
+        // 같은 창에서 새 command가 확정되면 redo 갈래는 폐기됩니다(VII.5.3).
+        self.redo.clear();
         self.entries.push(HistoryEntry {
             sequence,
             origin: transaction.origin,
@@ -151,6 +164,7 @@ impl History {
             return Ok(changes);
         }
         let applied = doc.execute_transaction(transaction)?;
+        self.redo.clear();
         if let Some(HistoryEntry {
             grouping,
             payload: HistoryPayload::Document { forward, inverse },
@@ -191,6 +205,7 @@ impl History {
         let sequence = self.sequences.allocate()?;
         let applied = event.apply(view, doc.model(), policy);
         self.open_group = None;
+        self.redo.clear();
         self.entries.push(HistoryEntry {
             sequence,
             origin,
@@ -239,6 +254,45 @@ impl History {
                 None
             }
         };
+        self.redo.push(entry.clone());
+        Ok(Some(UndoOutcome { entry, changes }))
+    }
+
+    /// 마지막으로 되돌린 항목을 다시 적용합니다(VII.5.3). 문서 항목은 정방향을 현재 revision으로
+    /// rebase해 실행하고, 선택 항목은 정방향 선택을 적용합니다. 다시 적용할 항목이 없으면 `None`,
+    /// 실행이 실패하면 항목을 redo stack에 그대로 두고 오류를 반환합니다.
+    pub fn redo(
+        &mut self,
+        doc: &mut DocumentState,
+        view: &mut WindowViewState,
+        policy: SelectionPolicy,
+    ) -> Result<Option<UndoOutcome>, HistoryError> {
+        if self.preview.is_some() {
+            return Err(HistoryError::PreviewActive);
+        }
+        let Some(entry) = self.redo.pop() else {
+            return Ok(None);
+        };
+        self.open_group = None;
+        let changes = match &entry.payload {
+            HistoryPayload::Document { forward, .. } => {
+                match doc.execute_transaction(&forward.rebased(doc.revision())) {
+                    Ok(applied) => {
+                        view.prune_removed(&applied.changes);
+                        Some(applied.changes)
+                    }
+                    Err(error) => {
+                        self.redo.push(entry);
+                        return Err(error.into());
+                    }
+                }
+            }
+            HistoryPayload::Selection { forward, .. } => {
+                forward.apply(view, doc.model(), policy);
+                None
+            }
+        };
+        self.entries.push(entry.clone());
         Ok(Some(UndoOutcome { entry, changes }))
     }
 
@@ -322,6 +376,7 @@ impl History {
         let key = preview.key;
         self.preview = None;
         self.open_group = None;
+        self.redo.clear();
         self.entries.push(HistoryEntry {
             sequence,
             origin: applied.forward.origin,
