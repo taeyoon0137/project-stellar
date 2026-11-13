@@ -35,6 +35,9 @@ pub mod list;
 /// SingleSelectionGroup 계약 (IX.6.6).
 pub mod selection_group;
 
+/// contract 유효성 registry와 target export hint (IX.6.7).
+pub mod registry;
+
 use crate::component::codec::{
     put_bool, put_bytes, put_count, put_id, put_u16, put_u8, Malformed, Reader,
 };
