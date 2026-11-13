@@ -14,6 +14,7 @@
 use std::path::Path;
 
 use crate::command::{GitCommandFailure, GitCommandResult};
+use crate::lfs::classify_lfs_output;
 use crate::runner::{argv, GitOutput, GitRunError, GitRunner};
 use crate::version::{parse_git_version_output, GitVersion};
 
@@ -130,9 +131,11 @@ impl GitCapabilities {
     }
 }
 
-/// `git lfs version` 결과가 LFS 사용 가능을 뜻하는지(종료 코드 0 + `git-lfs/` 출력).
+/// `git lfs version` 결과가 LFS 사용 가능을 뜻하는지(종료 코드 0 + `git-lfs/<version>` 출력).
+///
+/// 판정은 LFS 설치 감지(XIII.7.1, [`classify_lfs_output`])와 같은 기준을 씁니다.
 pub fn lfs_available_from_output(output: &GitOutput) -> bool {
-    output.success() && output.stdout.starts_with(b"git-lfs/")
+    classify_lfs_output(output).is_installed()
 }
 
 /// capability probe 실패.
