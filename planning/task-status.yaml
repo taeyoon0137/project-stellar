@@ -2086,18 +2086,30 @@ tasks:
     verified_at: "2026-07-10T13:50:05+09:00"
   - id: "V.6.4"
     title: "승인된 임계치를 `config/versions.yaml`이 아니라 `config/performance-budgets.yaml`에 기록하고 split planner를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.6.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.6.4.md"
+    commit: "b19aa59369fc3b7509c4f20a27ef13bcf42e9669"
+    report: "docs/task-reports/V.6.4.md"
+    verified_at: "2026-11-14T01:51:47+09:00"
   - id: "V.6.5"
     title: "작은 인접 chunk를 idle 작업에서 merge하는 planner를 구현하되 current save와 동시에 실행되지 않게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "V.6.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/V.6.5.md"
+    commit: "35e2300845dffbba8417fc59490c5c91b0e163b7"
+    report: "docs/task-reports/V.6.5.md"
+    verified_at: "2026-11-14T01:51:47+09:00"
   - id: "V.6.6"
     title: "프로젝트 열기에서 DocumentManifest까지만 먼저 읽고 ViewTree subtree는 요청 시 읽는 lazy loader를 구현합니다."
     status: verified
