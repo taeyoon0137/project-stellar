@@ -18,15 +18,24 @@ use stellar_commands::transaction::CommandTransaction;
 use stellar_core_types::clock::MonotonicClock;
 
 use crate::entry::{
-    GroupingKey, HistoryEntry, HistoryError, HistoryPayload, HistorySequence, SequenceAllocator,
+    GroupingKey, HistoryEntry, HistoryError, HistoryPayload, HistorySequence, SelectionRestore,
+    SequenceAllocator,
 };
 use crate::grouping::HistoryGroupingPolicy;
+use stellar_commands::selection::Selection;
 
 /// 적용 중인 preview transaction과 그 역(gesture 시작 전 상태로 되돌림).
 #[derive(Debug, Clone)]
 struct AppliedPreview {
     forward: CommandTransaction,
     inverse: CommandTransaction,
+}
+
+/// 재생 방향.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Direction {
+    Undo,
+    Redo,
 }
 
 /// undo 한 번의 결과(VII.4.6).
@@ -61,6 +70,8 @@ pub struct History {
     preview: Option<Preview>,
     policy: HistoryGroupingPolicy,
     open_group: Option<OpenGroup>,
+    /// undo·redo 재생 중인지(VII.5.5 reentrancy guard).
+    replaying: bool,
 }
 
 impl History {
@@ -115,6 +126,9 @@ impl History {
         transaction: &CommandTransaction,
         grouping: Option<GroupingKey>,
     ) -> Result<ChangeSet, HistoryError> {
+        if self.replaying {
+            return Err(HistoryError::Replaying);
+        }
         if self.preview.is_some() {
             return Err(HistoryError::PreviewActive);
         }
@@ -133,6 +147,7 @@ impl History {
                 forward: transaction.clone(),
                 inverse: applied.inverse,
             },
+            selection: None,
         });
         Ok(applied.changes)
     }
@@ -147,6 +162,9 @@ impl History {
         key: GroupingKey,
         clock: &C,
     ) -> Result<ChangeSet, HistoryError> {
+        if self.replaying {
+            return Err(HistoryError::Replaying);
+        }
         if self.preview.is_some() {
             return Err(HistoryError::PreviewActive);
         }
@@ -196,6 +214,10 @@ impl History {
         policy: SelectionPolicy,
         origin: CommandOrigin,
     ) -> Result<Option<HistorySequence>, HistoryError> {
+        // undo·redo가 복원한 선택에 반응한 재진입 기록은 새 항목을 만들지 않습니다(VII.5.5).
+        if self.replaying {
+            return Ok(None);
+        }
         if self.preview.is_some() {
             return Err(HistoryError::PreviewActive);
         }
@@ -214,6 +236,7 @@ impl History {
                 forward: applied.forward,
                 inverse: applied.inverse,
             },
+            selection: None,
         });
         Ok(Some(sequence))
     }
@@ -221,78 +244,149 @@ impl History {
     /// 마지막 항목 하나를 종류와 무관하게 되돌립니다(VII.4.6).
     ///
     /// 문서 항목은 역 transaction을 현재 revision으로 rebase해 실행하고, 그 결과 사라진 node를 선택에서
-    /// 정리합니다(system event, 항목 없음). 선택 항목은 이전 선택으로 되돌립니다. 되돌릴 항목이 없으면
-    /// `None`, 역 실행이 실패하면 항목을 stack에 그대로 두고 오류를 반환합니다.
+    /// 정리합니다(system event, 항목 없음). 선택 복원 정보가 있으면 편집 직전 선택을 복원합니다(VII.5.5).
+    /// 선택 항목은 이전 선택으로 되돌립니다. 되돌릴 항목이 없으면 `None`, 역 실행이 실패하면 항목을
+    /// stack에 그대로 두고 오류를 반환합니다.
     pub fn undo(
         &mut self,
         doc: &mut DocumentState,
         view: &mut WindowViewState,
         policy: SelectionPolicy,
     ) -> Result<Option<UndoOutcome>, HistoryError> {
-        if self.preview.is_some() {
-            return Err(HistoryError::PreviewActive);
-        }
-        let Some(entry) = self.entries.pop() else {
-            return Ok(None);
-        };
-        self.open_group = None;
-        let changes = match &entry.payload {
-            HistoryPayload::Document { inverse, .. } => {
-                match doc.execute_transaction(&inverse.rebased(doc.revision())) {
-                    Ok(applied) => {
-                        view.prune_removed(&applied.changes);
-                        Some(applied.changes)
-                    }
-                    Err(error) => {
-                        self.entries.push(entry);
-                        return Err(error.into());
-                    }
-                }
-            }
-            HistoryPayload::Selection { inverse, .. } => {
-                inverse.apply(view, doc.model(), policy);
-                None
-            }
-        };
-        self.redo.push(entry.clone());
-        Ok(Some(UndoOutcome { entry, changes }))
+        self.undo_with(doc, view, policy, |_, _, _| {})
+    }
+
+    /// [`History::undo`]와 같고, 선택을 복원한 직후 `on_selection_restored`를 **reentrancy guard 안에서**
+    /// 부릅니다(VII.5.5). UI의 선택 변경 알림을 본뜬 hook으로, 그 안에서 `record_selection`을 불러도 새
+    /// 항목이 생기지 않고 문서 기록은 [`HistoryError::Replaying`]으로 거부됩니다.
+    pub fn undo_with<F>(
+        &mut self,
+        doc: &mut DocumentState,
+        view: &mut WindowViewState,
+        policy: SelectionPolicy,
+        on_selection_restored: F,
+    ) -> Result<Option<UndoOutcome>, HistoryError>
+    where
+        F: FnMut(&mut History, &mut WindowViewState, &DocumentState),
+    {
+        self.replay(doc, view, policy, Direction::Undo, on_selection_restored)
     }
 
     /// 마지막으로 되돌린 항목을 다시 적용합니다(VII.5.3). 문서 항목은 정방향을 현재 revision으로
-    /// rebase해 실행하고, 선택 항목은 정방향 선택을 적용합니다. 다시 적용할 항목이 없으면 `None`,
-    /// 실행이 실패하면 항목을 redo stack에 그대로 두고 오류를 반환합니다.
+    /// rebase해 실행하고(선택 복원 정보가 있으면 편집 직후 선택 복원), 선택 항목은 정방향 선택을
+    /// 적용합니다. 다시 적용할 항목이 없으면 `None`, 실행이 실패하면 항목을 redo stack에 그대로 두고
+    /// 오류를 반환합니다.
     pub fn redo(
         &mut self,
         doc: &mut DocumentState,
         view: &mut WindowViewState,
         policy: SelectionPolicy,
     ) -> Result<Option<UndoOutcome>, HistoryError> {
+        self.redo_with(doc, view, policy, |_, _, _| {})
+    }
+
+    /// [`History::redo`]와 같고 선택 복원 직후 hook을 reentrancy guard 안에서 부릅니다(VII.5.5).
+    pub fn redo_with<F>(
+        &mut self,
+        doc: &mut DocumentState,
+        view: &mut WindowViewState,
+        policy: SelectionPolicy,
+        on_selection_restored: F,
+    ) -> Result<Option<UndoOutcome>, HistoryError>
+    where
+        F: FnMut(&mut History, &mut WindowViewState, &DocumentState),
+    {
+        self.replay(doc, view, policy, Direction::Redo, on_selection_restored)
+    }
+
+    /// undo·redo 재생 중인지(VII.5.5).
+    pub fn is_replaying(&self) -> bool {
+        self.replaying
+    }
+
+    /// 마지막 문서 항목의 선택 복원 정보를 기록합니다(창 history 전용). 이미 있으면(병합) 편집 직전
+    /// 선택은 처음 값을 유지하고 직후 선택만 갱신합니다.
+    pub(crate) fn note_selection(&mut self, before: Selection, after: Selection) {
+        if let Some(entry) = self.entries.last_mut() {
+            if !entry.is_document() {
+                return;
+            }
+            match &mut entry.selection {
+                Some(restore) => restore.after = after,
+                None => entry.selection = Some(SelectionRestore { before, after }),
+            }
+        }
+    }
+
+    fn replay<F>(
+        &mut self,
+        doc: &mut DocumentState,
+        view: &mut WindowViewState,
+        policy: SelectionPolicy,
+        direction: Direction,
+        mut on_selection_restored: F,
+    ) -> Result<Option<UndoOutcome>, HistoryError>
+    where
+        F: FnMut(&mut History, &mut WindowViewState, &DocumentState),
+    {
         if self.preview.is_some() {
             return Err(HistoryError::PreviewActive);
         }
-        let Some(entry) = self.redo.pop() else {
+        if self.replaying {
+            return Err(HistoryError::Replaying);
+        }
+        let source = match direction {
+            Direction::Undo => &mut self.entries,
+            Direction::Redo => &mut self.redo,
+        };
+        let Some(entry) = source.pop() else {
             return Ok(None);
         };
         self.open_group = None;
         let changes = match &entry.payload {
-            HistoryPayload::Document { forward, .. } => {
-                match doc.execute_transaction(&forward.rebased(doc.revision())) {
+            HistoryPayload::Document { forward, inverse } => {
+                let transaction = match direction {
+                    Direction::Undo => inverse,
+                    Direction::Redo => forward,
+                };
+                match doc.execute_transaction(&transaction.rebased(doc.revision())) {
                     Ok(applied) => {
                         view.prune_removed(&applied.changes);
                         Some(applied.changes)
                     }
                     Err(error) => {
-                        self.redo.push(entry);
+                        match direction {
+                            Direction::Undo => self.entries.push(entry),
+                            Direction::Redo => self.redo.push(entry),
+                        }
                         return Err(error.into());
                     }
                 }
             }
-            HistoryPayload::Selection { forward, .. } => {
-                forward.apply(view, doc.model(), policy);
+            HistoryPayload::Selection { forward, inverse } => {
+                let event = match direction {
+                    Direction::Undo => inverse,
+                    Direction::Redo => forward,
+                };
+                event.apply(view, doc.model(), policy);
                 None
             }
         };
-        self.entries.push(entry.clone());
+        // 선택 복원: 문서 항목의 복원 정보만 적용하며 history에 기록하지 않습니다.
+        if let Some(restore) = &entry.selection {
+            let selection = match direction {
+                Direction::Undo => restore.before.clone(),
+                Direction::Redo => restore.after.clone(),
+            };
+            SetSelection::new(selection).apply(view, doc.model(), policy);
+        }
+        self.replaying = true;
+        on_selection_restored(self, view, doc);
+        self.replaying = false;
+        match direction {
+            Direction::Undo => self.redo.push(entry.clone()),
+            Direction::Redo => self.entries.push(entry.clone()),
+        }
         Ok(Some(UndoOutcome { entry, changes }))
     }
 
@@ -385,6 +479,7 @@ impl History {
                 forward: applied.forward,
                 inverse: applied.inverse,
             },
+            selection: None,
         });
         Ok(Some(sequence))
     }

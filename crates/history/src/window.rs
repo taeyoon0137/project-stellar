@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 
 use stellar_commands::change::ChangeSet;
 use stellar_commands::id::{CommandOrigin, WindowSessionId};
-use stellar_commands::selection::{SelectionPolicy, SetSelection, WindowViewState};
+use stellar_commands::selection::{Selection, SelectionPolicy, SetSelection, WindowViewState};
 use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
 use stellar_core_types::clock::MonotonicClock;
@@ -25,6 +25,8 @@ pub struct WindowHistory {
     history: History,
     view: WindowViewState,
     selection_policy: SelectionPolicy,
+    /// preview 시작 시점 선택(확정 항목의 선택 복원 정보).
+    preview_selection: Option<Selection>,
 }
 
 impl WindowHistory {
@@ -40,6 +42,7 @@ impl WindowHistory {
             history: History::with_policy(policy),
             view: WindowViewState::new(window),
             selection_policy: SelectionPolicy::default(),
+            preview_selection: None,
         }
     }
 
@@ -70,8 +73,11 @@ impl WindowHistory {
         transaction: &CommandTransaction,
         grouping: Option<GroupingKey>,
     ) -> Result<ChangeSet, HistoryError> {
+        let before = self.view.selection().clone();
         let changes = self.history.record_document(doc, transaction, grouping)?;
         self.view.prune_removed(&changes);
+        self.history
+            .note_selection(before, self.view.selection().clone());
         Ok(changes)
     }
 
@@ -83,8 +89,11 @@ impl WindowHistory {
         key: GroupingKey,
         clock: &C,
     ) -> Result<ChangeSet, HistoryError> {
+        let before = self.view.selection().clone();
         let changes = self.history.record_grouped(doc, transaction, key, clock)?;
         self.view.prune_removed(&changes);
+        self.history
+            .note_selection(before, self.view.selection().clone());
         Ok(changes)
     }
 
@@ -105,12 +114,16 @@ impl WindowHistory {
 
     /// pointer gesture 시작(VII.4.2).
     pub fn begin_pointer_gesture(&mut self, gesture: u64) -> Result<(), HistoryError> {
-        self.history.begin_pointer_gesture(gesture)
+        self.history.begin_pointer_gesture(gesture)?;
+        self.preview_selection = Some(self.view.selection().clone());
+        Ok(())
     }
 
     /// slider·scrub 시작(VII.4.5).
     pub fn begin_scrub(&mut self, control: u64) -> Result<(), HistoryError> {
-        self.history.begin_scrub(control)
+        self.history.begin_scrub(control)?;
+        self.preview_selection = Some(self.view.selection().clone());
+        Ok(())
     }
 
     /// preview 교체(VII.4.2).
@@ -126,18 +139,61 @@ impl WindowHistory {
 
     /// preview 확정(VII.4.2).
     pub fn end_preview(&mut self) -> Result<Option<HistorySequence>, HistoryError> {
-        self.history.end_preview()
+        let sequence = self.history.end_preview()?;
+        let before = self.preview_selection.take();
+        if let (Some(_), Some(before)) = (sequence, before) {
+            self.history
+                .note_selection(before, self.view.selection().clone());
+        }
+        Ok(sequence)
     }
 
     /// preview 취소(VII.4.5).
     pub fn cancel_preview(&mut self, doc: &mut DocumentState) -> Result<(), HistoryError> {
-        self.history.cancel_preview(doc)
+        self.history.cancel_preview(doc)?;
+        self.preview_selection = None;
+        Ok(())
     }
 
     /// 이 창에서 마지막으로 되돌린 항목을 다시 적용합니다(VII.5.3).
     pub fn redo(&mut self, doc: &mut DocumentState) -> Result<Option<UndoOutcome>, HistoryError> {
         self.history
             .redo(doc, &mut self.view, self.selection_policy)
+    }
+
+    /// undo하고, 선택 복원 직후 `on_selection_restored`(UI 선택 변경 알림)를 reentrancy guard 안에서
+    /// 부릅니다(VII.5.5).
+    pub fn undo_with<F>(
+        &mut self,
+        doc: &mut DocumentState,
+        on_selection_restored: F,
+    ) -> Result<Option<UndoOutcome>, HistoryError>
+    where
+        F: FnMut(&mut History, &mut WindowViewState, &DocumentState),
+    {
+        self.history.undo_with(
+            doc,
+            &mut self.view,
+            self.selection_policy,
+            on_selection_restored,
+        )
+    }
+
+    /// redo하고 선택 복원 직후 hook을 reentrancy guard 안에서 부릅니다(VII.5.5).
+    pub fn redo_with<F>(
+        &mut self,
+        doc: &mut DocumentState,
+        on_selection_restored: F,
+    ) -> Result<Option<UndoOutcome>, HistoryError>
+    where
+        F: FnMut(&mut History, &mut WindowViewState, &DocumentState),
+    {
+        self.history.redo_with(
+            doc,
+            &mut self.view,
+            self.selection_policy,
+            on_selection_restored,
+        )
     }
 
     /// 이 창의 마지막 항목 하나를 이 창의 문서·선택에 되돌립니다(VII.5.2).
@@ -535,5 +591,111 @@ mod tests {
         assert!(reopened.view().selection().is_empty());
         assert_eq!(reopened.undo(&mut doc).unwrap(), None);
         assert_eq!(histories.len(), 2);
+    }
+
+    #[test]
+    fn selection_restoration_during_undo_creates_no_entries() {
+        // 검증 기준(VII.5.5): undo 100회 후 stack size 예상 일치.
+        let mut history = WindowHistory::new(window(4));
+        let mut doc = small_state();
+        let pick =
+            |ids: &[u64]| SetSelection::new(Selection::new(ids.iter().map(|i| sid(*i)), None));
+        let targets = [11u64, 12, 13];
+        let mut recorded = 0usize;
+        for step in 0..100u64 {
+            let node = targets[(step % 3) as usize];
+            if step % 2 == 0 {
+                if history
+                    .record_selection(&doc, &pick(&[node]))
+                    .unwrap()
+                    .is_some()
+                {
+                    recorded += 1;
+                }
+            } else {
+                let t = tx(
+                    &doc,
+                    3_000 + step,
+                    Command::rename_node(sid(node), format!("이름{step}")),
+                );
+                history.record_document(&mut doc, &t, None).unwrap();
+                recorded += 1;
+            }
+        }
+        assert_eq!(recorded, 100);
+        assert_eq!(history.history().len(), 100);
+
+        // UI 선택 변경 알림이 복원된 선택을 다시 기록하려 해도(재진입) 항목이 생기지 않습니다.
+        let mut echoes = 0usize;
+        for undone in 1..=100usize {
+            history
+                .undo_with(&mut doc, |inner, view, doc| {
+                    assert!(inner.is_replaying());
+                    let echo = SetSelection::new(view.selection().clone());
+                    let other = SetSelection::new(Selection::new([sid(10)], None));
+                    for event in [echo, other] {
+                        let result = inner
+                            .record_selection(
+                                view,
+                                doc,
+                                &event,
+                                SelectionPolicy::default(),
+                                CommandOrigin::User,
+                            )
+                            .unwrap();
+                        assert_eq!(result, None);
+                        echoes += 1;
+                    }
+                    // 재생 중 문서 편집 기록은 거부됩니다.
+                    let t = tx(doc, 9_999, Command::rename_node(sid(10), "x"));
+                    let mut scratch = small_state();
+                    assert_eq!(
+                        inner.record_document(&mut scratch, &t, None),
+                        Err(HistoryError::Replaying)
+                    );
+                })
+                .unwrap()
+                .unwrap();
+            assert_eq!(history.history().len(), 100 - undone);
+            assert_eq!(history.history().redo_len(), undone);
+            assert!(!history.history().is_replaying());
+        }
+        assert_eq!(echoes, 200);
+        assert!(history.view().selection().is_empty());
+        // redo 100회도 대칭입니다.
+        for redone in 1..=100usize {
+            history.redo_with(&mut doc, |_, _, _| {}).unwrap().unwrap();
+            assert_eq!(history.history().len(), redone);
+            assert_eq!(history.history().redo_len(), 100 - redone);
+        }
+    }
+
+    #[test]
+    fn undo_restores_selection_from_before_the_edit() {
+        use stellar_commands::node_ops::DeleteSubtree;
+        let mut history = WindowHistory::new(window(5));
+        let mut doc = small_state();
+        let pick =
+            |ids: &[u64]| SetSelection::new(Selection::new(ids.iter().map(|i| sid(*i)), None));
+        history.record_selection(&doc, &pick(&[13, 12])).unwrap();
+        // 선택된 13을 포함한 subtree 삭제 → 선택에서 정리(system), 항목은 삭제 1건만.
+        let t = tx(
+            &doc,
+            4_000,
+            Command::DeleteSubtree(DeleteSubtree { root: sid(11) }),
+        );
+        history.record_document(&mut doc, &t, None).unwrap();
+        assert_eq!(history.view().selection().ids(), &[sid(12)]);
+        assert_eq!(history.history().len(), 2);
+        let restore = history.history().entries()[1].selection.clone().unwrap();
+        assert_eq!(restore.before.ids(), &[sid(13), sid(12)]);
+        assert_eq!(restore.after.ids(), &[sid(12)]);
+        // 삭제 undo → node 복원과 함께 편집 직전 선택(13 포함) 복원, 새 항목 없음.
+        history.undo(&mut doc).unwrap();
+        assert_eq!(history.view().selection().ids(), &[sid(13), sid(12)]);
+        assert_eq!(history.history().len(), 1);
+        // redo → 편집 직후 선택.
+        history.redo(&mut doc).unwrap();
+        assert_eq!(history.view().selection().ids(), &[sid(12)]);
     }
 }

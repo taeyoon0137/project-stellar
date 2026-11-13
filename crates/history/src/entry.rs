@@ -17,7 +17,7 @@ use std::fmt;
 
 use stellar_commands::id::CommandOrigin;
 use stellar_commands::kind::CommandKind;
-use stellar_commands::selection::SetSelection;
+use stellar_commands::selection::{Selection, SetSelection};
 use stellar_commands::transaction::{CommandTransaction, TransactionError};
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyKey;
@@ -140,6 +140,15 @@ pub enum HistoryPayload {
     },
 }
 
+/// 문서 항목의 선택 복원 정보(VII.5.5): 편집 직전·직후 창 선택.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectionRestore {
+    /// undo 시 복원할 선택(편집 직전).
+    pub before: Selection,
+    /// redo 시 복원할 선택(편집 직후, 삭제 정리 반영).
+    pub after: Selection,
+}
+
 /// history 항목(세션 메모리 전용).
 #[derive(Debug, Clone, PartialEq)]
 pub struct HistoryEntry {
@@ -151,6 +160,8 @@ pub struct HistoryEntry {
     pub grouping: Option<GroupingKey>,
     /// 내용.
     pub payload: HistoryPayload,
+    /// 문서 항목의 선택 복원 정보(창 history가 기록, 없으면 복원하지 않음).
+    pub selection: Option<SelectionRestore>,
 }
 
 impl HistoryEntry {
@@ -176,6 +187,8 @@ pub enum HistoryError {
     PreviewActive,
     /// 진행 중인 preview가 없습니다.
     NoPreview,
+    /// undo·redo 재생 중이라 새 문서 편집을 기록할 수 없습니다(VII.5.5 reentrancy guard).
+    Replaying,
 }
 
 impl fmt::Display for HistoryError {
@@ -185,6 +198,9 @@ impl fmt::Display for HistoryError {
             HistoryError::SequenceOverflow => f.write_str("history sequence가 한계에 도달했습니다"),
             HistoryError::PreviewActive => f.write_str("진행 중인 preview가 있습니다"),
             HistoryError::NoPreview => f.write_str("진행 중인 preview가 없습니다"),
+            HistoryError::Replaying => {
+                f.write_str("undo·redo 재생 중에는 새 편집을 기록할 수 없습니다")
+            }
         }
     }
 }
