@@ -2,9 +2,8 @@
 
 ## Status
 
-Proposed (2026-11-14). 제품 소유자 승인 대기 중입니다. 이 ADR은 V.6.3 측정 자료를 바탕으로 한
-권고이며 아직 결정이 아닙니다. 승인 전에는 V.6.4를 착수하지 않고 `config/performance-budgets.yaml`도
-바꾸지 않습니다.
+Accepted (2026-11-14, 제품 소유자가 벤치마크 추천값으로 확정). V.6.3 측정 자료를 바탕으로 한 값이며,
+V.6.4가 이 값을 `config/performance-budgets.yaml`에 기록하고 split planner를 구현합니다.
 
 ## Context
 
@@ -42,12 +41,12 @@ Proposed (2026-11-14). 제품 소유자 승인 대기 중입니다. 이 ADR은 V
 
 ## Decision
 
-제안(미승인):
+결정:
 
 - chunk 분할 임계치를 **256KiB(262,144 bytes)**로 둡니다. 기준 값은 envelope의 비압축 payload 길이
   (ADR-0010)입니다. 의미 경계로 나눈 chunk의 payload가 이 값을 넘으면 split planner가 분할 대상으로
   봅니다.
-- 승인되면 V.6.4가 이 값을 `config/performance-budgets.yaml`에 기록합니다. key 이름과 위치는 V.6.4에서
+- V.6.4가 이 값을 `config/performance-budgets.yaml`에 기록합니다. key 이름과 위치는 V.6.4에서
   정합니다.
 
 이 ADR이 정하지 않는 사항:
@@ -68,12 +67,11 @@ Proposed (2026-11-14). 제품 소유자 승인 대기 중입니다. 이 ADR은 V
 
 ## Consequences
 
-- 승인 시: 임계치 이하로 유지되는 chunk에서는 단일 편집의 재기록·Git 증가량이 256KiB 수준으로
+- 임계치 이하로 유지되는 chunk에서는 단일 편집의 재기록·Git 증가량이 256KiB 수준으로
   제한되고, 같은 데이터의 파일 수는 64KiB 후보의 1/4입니다.
 - 근거의 한계: 1회 측정, 단일 환경, 비압축성 합성 데이터, loose object 기준이며, 증분 저장 시간은
-  직접 재지 않았습니다. 실제 문서 분포와 다를 수 있습니다. 승인 전에 실제 문서 형태의 fixture로 다시
-  재야 할지는 제품 소유자가 정합니다.
-- 미승인 상태가 이어지면 V.6.4와 그 후속(V.6.5, XVI.3.1)이 계속 차단됩니다.
+  직접 재지 않았습니다. 실제 문서 분포와 다를 수 있습니다. 실제 문서 형태의 fixture(XVI.3.x)가 생기면
+  다시 재고, 차이가 크면 새 ADR로 값을 바꿉니다.
 
 ## Compatibility
 
@@ -83,7 +81,7 @@ Proposed (2026-11-14). 제품 소유자 승인 대기 중입니다. 이 ADR은 V
 
 ## Performance
 
-- 승인되면 `config/performance-budgets.yaml`에 새 항목이 생깁니다(V.6.4 작업, 같은 diff에 ADR 필요).
+- `config/performance-budgets.yaml`에 새 항목이 생깁니다(V.6.4 작업, 같은 diff에 ADR 필요).
 - 위 표의 상대 비교가 근거이며, 절대값은 측정 환경에 따라 달라집니다.
 
 ## Security
