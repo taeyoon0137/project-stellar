@@ -74,7 +74,9 @@ pub(crate) mod sim {
         h
     }
 
-    /// 합성: 빈 backdrop 위 Normal은 불투명도만 곱하고, 그 외는 순서 의존 hash입니다.
+    /// 합성. blur는 원본 내용을 바꾼 뒤(opacity·blend보다 먼저) 적용됩니다. 빈 backdrop 위에서는
+    /// blend와 무관하게 불투명도만 곱하고(빈 backdrop 위 blend 결과는 원본), 그 외는 순서 의존
+    /// hash입니다.
     pub(crate) fn composite(
         dst: Cell,
         src: (u64, u32),
@@ -82,17 +84,21 @@ pub(crate) mod sim {
         blend: u8,
         blur: f32,
     ) -> Cell {
+        let content = if blur > 0.0 {
+            hash(&[src.0, u64::from(blur.to_bits())])
+        } else {
+            src.0
+        };
         let alpha = f32::from_bits(src.1) * opacity;
         match dst {
-            None if blur == 0.0 => Some((src.0, alpha_bits(alpha))),
-            _ => Some((
+            None => Some((content, alpha_bits(alpha))),
+            Some(dst) => Some((
                 hash(&[
-                    dst.map_or(0, |d| d.0),
-                    u64::from(dst.map_or(0, |d| d.1)),
-                    src.0,
+                    dst.0,
+                    u64::from(dst.1),
+                    content,
                     u64::from(alpha_bits(alpha)),
                     u64::from(blend),
-                    u64::from(blur.to_bits()),
                 ]),
                 alpha_bits(1.0),
             )),
@@ -169,14 +175,21 @@ pub(crate) mod sim {
     }
 
     /// layer를 합성합니다.
+    /// layer를 합성합니다. 경계 node 자기 blend가 Normal이면 접힌 `folded_blend`를 씁니다.
     pub(crate) fn composite_layer(
         grid: &mut [Cell],
         layer: &[Cell],
         node: &SceneNode,
         opacity: f32,
+        folded_blend: u8,
         pass: impl Fn(usize) -> bool,
     ) {
-        let (own_opacity, blend, blur) = effects(node);
+        let (own_opacity, own_blend, blur) = effects(node);
+        let blend = if own_blend == 0 {
+            folded_blend
+        } else {
+            own_blend
+        };
         for (cell, value) in layer.iter().enumerate() {
             if let Some(value) = value {
                 if pass(cell) {
@@ -198,7 +211,7 @@ pub(crate) mod sim {
                 for child in node.children() {
                     eval(child, &mut layer);
                 }
-                composite_layer(grid, &layer, node, 1.0, |_| true);
+                composite_layer(grid, &layer, node, 1.0, 0, |_| true);
             } else {
                 if shown && draws_content(node) {
                     paint_content(grid, node, 1.0, 0, |_| true);
@@ -241,6 +254,8 @@ pub(crate) mod sim {
                         assert!(draw.depth < last, "opaque pass는 앞 → 뒤 순서여야 합니다");
                         last = draw.depth;
                         assert_eq!(draw.class, PrimitiveClass::Opaque);
+                        assert_eq!(draw.opacity, Opacity::OPAQUE);
+                        assert_eq!(draw.blend, SceneBlendMode::Normal);
                         let DrawSource::Content(node) = &draw.source else {
                             panic!("opaque pass에 layer 합성");
                         };
@@ -281,19 +296,24 @@ pub(crate) mod sim {
     ) {
         match &draw.source {
             DrawSource::Content(node) => {
-                // layer 경계가 아닌 node의 합성 효과는 draw에 접혀 있습니다(XI.4.4).
-                let blend = if layer_nodes.contains_key(&node.z()) {
-                    0
-                } else {
-                    node.paint().get().blend.tag()
-                };
-                paint_content(grid, node, draw.opacity.get(), blend, pass);
+                // layer 경계 node의 효과는 합성에서, 접힌 효과는 draw opacity·blend로 적용됩니다.
+                if layer_nodes.contains_key(&node.z()) {
+                    assert_eq!(draw.opacity, Opacity::OPAQUE);
+                }
+                paint_content(grid, node, draw.opacity.get(), draw.blend.tag(), pass);
             }
             DrawSource::Layer { layer, node } => {
                 let content = layers
                     .get(layer)
                     .expect("layer는 합성 전에 그려져야 합니다");
-                composite_layer(grid, content, node, draw.opacity.get(), pass);
+                composite_layer(
+                    grid,
+                    content,
+                    node,
+                    draw.opacity.get(),
+                    draw.blend.tag(),
+                    pass,
+                );
             }
         }
     }

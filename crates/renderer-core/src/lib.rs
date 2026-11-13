@@ -39,6 +39,9 @@ pub mod pass_compiler;
 /// clip stack → scissor/stencil/offscreen mask 계획 (XI.4.3).
 pub mod clip_plan;
 
+/// blend/opacity/filter 의존 분석과 최소 offscreen 경계 (XI.4.4).
+pub mod offscreen;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;

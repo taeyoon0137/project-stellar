@@ -6,10 +6,11 @@
 //! ## 분류
 //!
 //! - **effect**: node와 subtree를 합성한 결과에 효과를 거는 node(합성 불투명도 < 1, Normal이 아닌
-//!   blend, layer blur > 0)는 **offscreen layer** 경계입니다. node 자기 내용과 자손을 layer texture에
-//!   painter 순서로 그리는 effect pass를 따로 만들고, 부모 쪽에는 그 layer를 node z 위치에서 합성하는
-//!   draw 하나만 남깁니다. layer 경계의 최소화는 XI.4.4가 담당하며, 이 compiler는 결정된 경계를
-//!   그대로 씁니다([`EffectBoundaries`]).
+//!   blend, layer blur > 0)는 **offscreen layer** 경계 후보입니다. 경계면 node 자기 내용과 자손을
+//!   layer texture에 painter 순서로 그리는 effect pass를 따로 만들고, 부모 쪽에는 그 layer를 node z
+//!   위치에서 합성하는 draw 하나만 남깁니다. 기본값([`EffectBoundaries::Minimal`], XI.4.4)은 결과가
+//!   같음이 보장되는 효과를 layer 없이 draw의 `opacity`·`blend`에 접고 필요한 경계만 둡니다
+//!   ([`crate::offscreen`]). 접힌 효과가 걸린 draw는 opaque가 아닙니다.
 //! - **opaque**: 그린 pixel이 모두 완전 불투명하고 가장자리 부분 coverage(AA)가 없는 primitive입니다.
 //!   모서리 없는 사각형, 최상위 paint layer가 alpha 1 fill, stroke·shadow·합성 효과 없음, world→device
 //!   변환이 축을 보존하고 사각형 네 변이 device pixel 경계에 정확히 놓임, clip은 scissor로 정확히
@@ -50,6 +51,7 @@ use stellar_scene::{SceneContent, SceneNode, SceneSnapshot, ZOrder};
 use crate::clip_plan::{
     analyze_clip, axis_aligned_rect, decide_clip, surface_extent, ClipCapabilities, ClipPlan,
 };
+use crate::offscreen::{plan_boundaries, BoundaryPlan};
 use crate::render_graph::{
     ClearColor, CompiledRenderGraph, GraphBuildError, ImportKind, LoadOp, PassId, PassKind,
     RenderGraphBuilder, RenderGraphError, ResourceVersion, StoreOp, TextureDesc, TextureFormat,
@@ -122,6 +124,8 @@ pub struct PlannedDraw {
     pub source: DrawSource,
     /// 접어 넣은 합성 불투명도(XI.4.4). 경계를 접지 않으면 1입니다.
     pub opacity: Opacity,
+    /// 접어 넣은 blend(XI.4.4). layer 합성 draw는 경계 node 자기 blend가 Normal일 때만 이 값을 씁니다.
+    pub blend: SceneBlendMode,
     /// clip 적용 방식(XI.4.3). layer 안 draw는 경계 node 안쪽 clip만 담습니다.
     pub clip: ClipPlan,
 }
@@ -213,8 +217,11 @@ impl std::error::Error for FrameCompileError {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum EffectBoundaries {
     /// 합성 효과가 있는 모든 node를 layer 경계로 둡니다.
-    #[default]
     Conservative,
+    /// 결과가 같음이 보장되면 효과를 draw에 접고 필요한 최소 경계만 둡니다(XI.4.4,
+    /// [`crate::offscreen`]).
+    #[default]
+    Minimal,
 }
 
 /// compile 입력.
@@ -301,10 +308,33 @@ pub fn classify_content(
 }
 
 /// layer 경계로 둘지 결정합니다.
-fn is_boundary(node: &SceneNode, boundaries: EffectBoundaries) -> bool {
-    match boundaries {
-        EffectBoundaries::Conservative => has_compositing_effect(node),
+fn is_boundary(node: &SceneNode, plan: Option<&BoundaryPlan>) -> bool {
+    match plan {
+        None => has_compositing_effect(node),
+        Some(plan) => plan.is_boundary(node.z()),
     }
+}
+
+/// layer 없이 draw에 접은 효과(XI.4.4).
+#[derive(Debug, Clone, Copy)]
+struct Fold {
+    last_z: ZOrder,
+    opacity: f32,
+    blend: SceneBlendMode,
+}
+
+/// scope 안 접힌 효과의 합(opacity 곱, Normal이 아닌 blend). 분석은 한 scope 안 경로에 Normal 외
+/// blend 접기를 하나만 허용합니다.
+fn folded(folds: &[Fold]) -> (Opacity, SceneBlendMode) {
+    let product = folds.iter().map(|fold| fold.opacity).product::<f32>();
+    // [0, 1] 값의 곱이라 항상 범위 안입니다.
+    let opacity = Opacity::new(product).unwrap_or(Opacity::OPAQUE);
+    let blend = folds
+        .iter()
+        .map(|fold| fold.blend)
+        .find(|blend| *blend != SceneBlendMode::Normal)
+        .unwrap_or_default();
+    (opacity, blend)
 }
 
 /// 순위가 정해지기 전 draw.
@@ -314,6 +344,8 @@ struct Collected {
     class: PrimitiveClass,
     source: DrawSource,
     clip: ClipPlan,
+    opacity: Opacity,
+    blend: SceneBlendMode,
 }
 
 /// 수집 중인 target(main 또는 layer)의 draw.
@@ -323,6 +355,8 @@ struct Scope {
     boundary: Option<(Arc<SceneNode>, ZOrder)>,
     /// 이 target 안 draw가 고려할 clip 시작 depth(경계 node 바깥 clip은 합성 단계에서 적용).
     clip_depth: usize,
+    /// 이 target 안 현재 경로의 접힌 효과(바깥 → 안).
+    folds: Vec<Fold>,
     draws: Vec<Collected>,
 }
 
@@ -344,7 +378,8 @@ fn ranked(draws: Vec<Collected>) -> Result<Vec<PlannedDraw>, FrameCompileError> 
                 depth,
                 class: draw.class,
                 source: draw.source,
-                opacity: Opacity::OPAQUE,
+                opacity: draw.opacity,
+                blend: draw.blend,
                 clip: draw.clip,
             })
         })
@@ -359,6 +394,14 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
     let is_visible = |node: &SceneNode| {
         node.hit().visibility == Visibility::Visible
             && visible.as_ref().is_none_or(|set| set.contains(&node.z()))
+    };
+
+    // 0. 효과 경계 결정(XI.4.4): 접을 수 있는 효과는 layer 없이 draw에 접습니다.
+    let boundary_plan = match input.boundaries {
+        EffectBoundaries::Conservative => None,
+        EffectBoundaries::Minimal => {
+            Some(plan_boundaries(input.snapshot, input.viewport, is_visible))
+        }
     };
 
     // 1. pre-order 순회로 draw를 target별로 모읍니다.
@@ -376,6 +419,7 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
         layer: None,
         boundary: None,
         clip_depth: 0,
+        folds: Vec::new(),
         draws: Vec::new(),
     }];
     let close_scope = |scopes: &mut Vec<Scope>, layers: &mut Vec<LayerDraft>| {
@@ -396,6 +440,8 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
             return;
         }
         layers[layer.0 as usize].draws = scope.draws;
+        // 경계 node를 감싸는 접힌 효과(부모 target 쪽)는 합성 draw에 접습니다.
+        let (opacity, blend) = folded(&parent.folds);
         parent.draws.push(Collected {
             z: node.z(),
             class: PrimitiveClass::Transparent,
@@ -404,6 +450,8 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
                 node: Arc::clone(&node),
             },
             clip,
+            opacity,
+            blend,
         });
     };
 
@@ -418,8 +466,19 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
         {
             close_scope(&mut scopes, &mut layers);
         }
+        // 현재 target에서 끝난 접힌 효과를 뺍니다.
+        if let Some(scope) = scopes.last_mut() {
+            while scope
+                .folds
+                .last()
+                .is_some_and(|fold| fold.last_z < node.z())
+            {
+                scope.folds.pop();
+            }
+        }
         let shown = node.hit().visibility == Visibility::Visible;
-        if shown && is_boundary(node, input.boundaries) {
+        let effect = shown && has_compositing_effect(node);
+        if effect && is_boundary(node, boundary_plan.as_ref()) {
             let id = LayerId(layers.len() as u32);
             layers.push(LayerDraft {
                 node: Arc::clone(node),
@@ -430,18 +489,38 @@ pub fn compile_frame(input: &CompileInput<'_>) -> Result<FramePlan, FrameCompile
                 layer: Some(id),
                 boundary: Some((Arc::clone(node), node.last_z())),
                 clip_depth: node.clip().depth(),
+                folds: Vec::new(),
                 draws: Vec::new(),
             });
+        } else if effect {
+            // 접힌 효과: subtree draw에 opacity·blend를 곱해 넣습니다.
+            let paint = node.paint().get();
+            if let Some(scope) = scopes.last_mut() {
+                scope.folds.push(Fold {
+                    last_z: node.last_z(),
+                    opacity: paint.opacity.get(),
+                    blend: paint.blend,
+                });
+            }
         }
         if is_visible(node) && draws_content(node) {
             if let Some(scope) = scopes.last_mut() {
                 let clip = clip_for(node, scope.clip_depth);
                 if clip != ClipPlan::Culled {
+                    let (opacity, blend) = folded(&scope.folds);
+                    // 접힌 효과가 걸린 draw는 불투명 덮어쓰기가 아닙니다.
+                    let class = if opacity < Opacity::OPAQUE || blend != SceneBlendMode::Normal {
+                        PrimitiveClass::Transparent
+                    } else {
+                        classify_content(node, input.viewport, scope.clip_depth)
+                    };
                     scope.draws.push(Collected {
                         z: node.z(),
-                        class: classify_content(node, input.viewport, scope.clip_depth),
+                        class,
                         source: DrawSource::Content(Arc::clone(node)),
                         clip,
+                        opacity,
+                        blend,
                     });
                 }
             }
