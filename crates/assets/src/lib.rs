@@ -9,6 +9,9 @@ pub mod media_type;
 /// `AssetRecord` 에셋 record와 canonical 인코딩 (XIII.5.1).
 pub mod record;
 
+/// 외부 원본 출처 지문 — 기기별 비밀 key의 HMAC (XIII.5.1 후속 수정).
+pub mod origin;
+
 /// streaming content hash (XIII.5.2).
 pub mod hash_stream;
 

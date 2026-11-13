@@ -69,7 +69,8 @@
 - Phase VII에서 `AssetRecordUpdate`를 closed command enum(VII.1.2)의 variant로 감싸고
   validate/apply/invert와 history에 연결해야 `[x]`가 됩니다.
 - 외부 원본의 후보 경로를 어디서 얻을지(파일 선택 UI, Git 밖 로컬 캐시 등)는 셸·project
-  계층의 결정입니다. 기록된 지문은 비밀이 아니므로 후보 경로가 맞는지만 확인합니다.
+  계층의 결정입니다. ~~기록된 지문은 비밀이 아니므로 후보 경로가 맞는지만 확인합니다.~~
+  → 정정: 지문은 기기별 비밀 key의 HMAC입니다(아래 "후속 수정: 기기 key 출처 지문").
 - media type 허용·최대 크기 정책은 XIII.5.7에서 import 경로에 연결합니다(이 작업 시점에는
   미적용).
 - undo가 가능한 동안 이전 content가 GC되지 않도록 history가 참조하는 record도 GC mark 입력에
@@ -94,3 +95,20 @@
   `validate-crate-graph` 통과.
 - **남은 위험**: 확인과 파일 열기 사이에 경로 구성 요소를 symlink로 바꾸는 동시 공격(TOCTOU)은
   `openat`/`O_NOFOLLOW` 없이 완전히 막지 못합니다. 위협 모델(커밋된 symlink)은 차단합니다.
+
+## 후속 수정(리뷰 반영): 기기 key 출처 지문과 다른 기기 원본
+
+- 외부 원본 지문이 기기별 비밀 key의 HMAC으로 바뀌었습니다(XIII.5.1 후속 수정 2차).
+  `resolve_source`는 store의 key로 지문을 확인합니다.
+  - 같은 key·같은 경로: 기존과 같이 갱신. 같은 key·다른 경로: `OriginMismatch`.
+  - **다른 key**(다른 기기에서 기록, 또는 key 교체): 어떤 후보 경로로도 확인할 수 없으므로
+    후보 경로 유무와 관계없이 `SourceUnavailable::OriginUnverifiable`을 돌려줍니다. 셸은
+    사용자에게 원본 파일을 다시 선택받아 새 `AssetStore::update_from_selected_source`
+    (정책 버전 `update_from_selected_source_with_policy`)를 호출합니다. 명시 선택이므로
+    지문 확인 없이 쓰고, 새 record에는 이 기기 key의 지문을 기록합니다. record·Git·캐시에서
+    온 경로를 이 API에 넘기지 않도록 문서에 명시했습니다.
+  - store에 key가 없으면 외부 원본 갱신은 `ImportError::SourceMetadata(OriginKey(
+    Unconfigured))` 오류입니다.
+- 검증: `external_source_from_other_machine_requires_user_selection`(정확한 원래 경로로도
+  `OriginUnverifiable`, 파일 변경 없음 → 사용자 선택으로 갱신 → 이후 이 기기 후보 경로로 확인,
+  없는 경로·디렉터리 선택은 `NotFound`·`NotAFile`), `external_source_without_configured_key_is_an_error`.

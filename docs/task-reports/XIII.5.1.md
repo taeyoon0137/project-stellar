@@ -88,8 +88,11 @@
   worktree·프로젝트 이동에서 재현 가능") 이제 원본 위치를 `SourceLocation`으로 기록합니다.
   - 프로젝트 내부: project root 기준 `/` 상대 경로만(`SourceMetadata::project`). 빈 경로·
     NUL·`\`·선행 `/`·빈 구성 요소·`.`·`..`는 생성과 디코딩 모두에서 거부합니다.
-  - 프로젝트 외부: 파일 이름과 비가역 출처 지문(`external_origin_fingerprint` =
+  - 프로젝트 외부: 파일 이름과 ~~비가역~~ 출처 지문(`external_origin_fingerprint` =
     domain 구분 prefix + 해석된 절대 경로 bytes의 SHA-256)만(`SourceMetadata::external`).
+    → **정정**: key 없는 SHA-256은 비가역이 아닙니다. 파일 이름과 함께 commit되므로 누구나
+    `/Users/<이름>/Downloads/<파일 이름>` 같은 후보를 계산해 맞춰 볼 수 있습니다(사전 공격).
+    아래 "후속 수정(리뷰 반영 2차)"에서 기기별 비밀 key의 HMAC으로 바꿨습니다.
   - `from_import_path`는 root·원본을 canonicalize(symlink 해석)한 뒤 구성 요소 단위로
     포함 여부를 판정합니다(`/work/project-old`는 `/work/project`의 내부가 아님).
     UTF-8로 표현할 수 없는 경로는 기록하지 않고 `NonUtf8Path`로 거부합니다.
@@ -121,3 +124,47 @@
     `UnknownMandatoryTag`·모든 절단 길이)와 known field 결과가 storage decoder와 같음을
     `record_reader_agrees_with_storage_take_fields`로 고정했습니다.
   - 검증: `cargo test -p stellar-assets` 45 passed + doctest 2 passed, clippy 경고 0, fmt 통과.
+
+## 후속 수정(리뷰 반영 2차): 외부 원본 출처 지문을 기기 key HMAC으로 교체
+
+- **문제**: 외부 원본 지문이 key 없는 `SHA-256(domain ‖ 절대 경로)`였습니다. Git에 commit된
+  record에 파일 이름과 함께 남으므로, 저장소만 가진 사람도 후보 경로를 계산해 맞춰 보는
+  사전 공격으로 사용자 이름·디렉터리를 알아낼 수 있었습니다. 위 1차 수정 절과 모듈 문서의
+  "비가역·경로를 복원할 수 없음" 서술은 보장을 과장했습니다(위 본문에 정정 표시).
+- **수정** (`crates/assets/src/origin.rs` 신규, `hash_stream.rs`·`record.rs`·`store.rs` 변경):
+  - `hash_stream::hmac_sha256` — 기존 in-crate SHA-256 위의 HMAC-SHA-256(RFC 2104).
+    RFC 4231 test case 1·2·3·4·6·7과 64 bytes key 경계 vector로 고정(값은 로컬
+    `openssl`·Python `hmac`으로 교차 확인).
+  - `OriginKey`(32 bytes OS 난수, `Debug`는 key 식별자만 표시)와 `OriginKeyFile` — 프로젝트
+    밖 OS 사용자 데이터 영역 `<data_dir>/assets/origin-key`(신뢰 저장소 XVI.7.2와 같은 base,
+    `data_dir`은 셸이 정함). 처음 필요할 때(외부 원본을 기록·확인할 때) `0600` temp에 쓰고
+    sync한 뒤 hard link로 만들며, 이미 있으면 그 key를 씁니다(덮어쓰지 않음). 손상 파일·
+    `0600`보다 넓은 권한·project root 안 경로(symlink 경유 포함)는 명시 오류입니다.
+  - `OriginFingerprint` = key 식별자(`HMAC(key, id domain)` 앞 8 bytes) + `HMAC(key,
+    "stellar.asset.source-origin.v2\0" ‖ 경로 bytes)`. record tag 3 payload 형식이
+    `hmac-sha256:<key-id hex16>:<mac hex64>`(93자)로 바뀌었고, 이전 `sha256:<hex>` 형식은
+    `InvalidOriginFingerprint(UnknownScheme)`로 거부합니다. 이전 형식은 이 lane의 미병합
+    커밋에서만 만들어졌고 저장소에 그 형식의 fixture 파일이 없어 의도적으로 호환을 두지
+    않았습니다(golden layout 테스트 길이를 갱신).
+  - `SourceMetadata::from_resolved_paths`·`from_import_path`가 `&dyn OriginKeyProvider`를
+    받고 외부 원본일 때만 key를 요청합니다(내부 원본은 key 파일을 만들지 않음).
+    `matches_external_origin`·`check_external_origin`(→ `OriginCheck::{Matches,
+    DifferentOrigin, ForeignKey, NotExternal}`)이 이 기기 key를 받습니다.
+  - `AssetStore::new`는 key가 없습니다. 외부 원본을 기록·확인하려면
+    `with_origin_key_file`(또는 테스트용 `with_origin_key`)로 지정해야 하며, 없으면
+    `SourceMetadataError::OriginKey(OriginKeyError::Unconfigured)`로 아무 것도 쓰기 전에
+    실패합니다.
+- **보장 범위(정확한 서술)**: key가 없는 사람은 지문으로 경로 추측을 확인할 수 없습니다.
+  key 파일을 읽을 수 있는 같은 기기 사용자는 확인할 수 있으므로 "복원 불가능한 값"이 아니라
+  "key 없이 검증할 수 없는 값"입니다. key 식별자는 경로 정보가 없지만 같은 기기에서 만든
+  record끼리 연결할 수 있게 합니다. 다른 기기에서는 같은 출처를 확인할 수 없습니다
+  (XIII.5.5 `SourceUnavailable::OriginUnverifiable` → 사용자에게 원본을 다시 선택받음).
+- **검증**: `committed_fingerprint_does_not_confirm_guessed_paths_without_key`(이전 key 없는
+  hash·추측 key로 확인 불가), `fingerprint_is_keyed_domain_separated_and_path_sensitive`,
+  `fingerprint_string_round_trips_strictly`, key 파일 생성·재사용·`0600`·손상 비덮어쓰기·
+  넓은 권한 거부·프로젝트 안 경로 거부 테스트, store의 key 미설정·첫 외부 사용 시 생성·
+  프로젝트 안 key 파일 거부 테스트. `cargo test -p stellar-assets` lib 115 passed +
+  integration 1 passed + doctest 2 passed, clippy 경고 0, fmt 통과, `validate-crate-graph` 통과.
+- **남은 위험**: 비Unix의 OS 난수는 아직 없습니다(`RandomUnavailable`, Windows 지원 보류).
+  key는 메모리에서 지우지(zeroize) 않습니다. key 파일 위치(`data_dir`)를 셸이 연결해야 실제
+  외부 원본 import가 동작합니다.

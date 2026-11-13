@@ -172,7 +172,7 @@ mod tests {
     use crate::catalog::AssetCatalog;
     use crate::id::AssetId;
     use crate::media_type::MediaType;
-    use crate::store::test_support::{files_under, TempDir};
+    use crate::store::test_support::{files_under, test_store, TempDir};
     use crate::store::{AssetStore, ImportRequest};
     use std::time::Instant;
     use stellar_storage::gc::scheduler::GcScheduler;
@@ -192,7 +192,7 @@ mod tests {
         let outside = dir.path.join("outside");
         std::fs::create_dir_all(project.join("assets")).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
-        let store = AssetStore::new(&project);
+        let store = test_store(&project);
         Fixture {
             _dir: dir,
             project,

@@ -10,7 +10,11 @@
 //!      [`SourceUnavailable::OutsideProject`]이며 아무 것도 읽거나 쓰지 않습니다. 내부 원본은
 //!      외부 원본으로 바뀌지 않고, 새 record도 기록된 상대 경로를 그대로 유지합니다.
 //!    - 프로젝트 외부: 절대 경로를 기록하지 않으므로(XIII.5.1 후속 수정) 호출자가 후보 경로를
-//!      제시해야 하며, canonicalize한 경로의 출처 지문이 기록과 같아야 합니다.
+//!      제시해야 하며, canonicalize한 경로의 출처 지문이 이 기기 key로 기록과 같아야 합니다
+//!      ([`crate::origin`]). 지문이 **다른 기기 key**로 기록되었으면 어떤 후보 경로로도 확인할
+//!      수 없으므로 [`SourceUnavailable::OriginUnverifiable`]입니다. 이때 셸은 사용자에게
+//!      원본 파일을 다시 선택받아 [`AssetStore::update_from_selected_source`]를 호출합니다
+//!      (명시 선택이므로 지문 확인 없이 쓰고, 새 record에는 이 기기 key의 지문을 기록).
 //! 2. 원본이 없거나(삭제·이동·디렉터리로 바뀜), metadata가 없거나, 외부 경로가 없거나 다른
 //!    출처이거나, 내부 원본이 프로젝트 밖으로 해석되면
 //!    [`UpdateFromSourceOutcome::SourceUnavailable`] — **기존 asset을 그대로 유지**합니다
@@ -33,6 +37,7 @@ use std::path::{Path, PathBuf};
 
 use crate::catalog::{AssetCatalog, CatalogError};
 use crate::id::AssetId;
+use crate::origin::OriginCheck;
 use crate::path::AssetObjectPath;
 use crate::policy::AssetImportPolicy;
 use crate::record::{AssetRecord, SourceLocation, SourceMetadata, SourceMetadataError};
@@ -45,8 +50,12 @@ pub enum SourceUnavailable {
     NoSourceMetadata,
     /// 외부 원본인데 호출자가 후보 경로를 주지 않았습니다.
     ExternalPathRequired,
-    /// 제시한 외부 경로의 출처 지문이 기록과 다릅니다.
+    /// 제시한 외부 경로의 출처 지문이 기록과 다릅니다(같은 기기 key, 다른 경로).
     OriginMismatch,
+    /// 외부 원본 지문이 다른 기기(또는 바뀐 key)로 기록되어 이 기기에서 확인할 수 없습니다.
+    /// 사용자에게 원본 파일을 다시 선택받아 [`AssetStore::update_from_selected_source`]로
+    /// 갱신해야 합니다.
+    OriginUnverifiable,
     /// 원본 파일이 없습니다.
     NotFound,
     /// 원본 경로가 일반 파일이 아닙니다.
@@ -61,6 +70,9 @@ impl fmt::Display for SourceUnavailable {
             SourceUnavailable::NoSourceMetadata => "원본 정보가 없습니다",
             SourceUnavailable::ExternalPathRequired => "외부 원본 경로를 지정해야 합니다",
             SourceUnavailable::OriginMismatch => "지정한 경로가 기록된 원본과 다릅니다",
+            SourceUnavailable::OriginUnverifiable => {
+                "다른 기기에서 기록된 원본이라 확인할 수 없습니다. 원본 파일을 다시 선택하세요"
+            }
             SourceUnavailable::NotFound => "원본 파일이 없습니다",
             SourceUnavailable::NotAFile => "원본이 일반 파일이 아닙니다",
             SourceUnavailable::OutsideProject => "프로젝트 내부 원본이 프로젝트 밖을 가리킵니다",
@@ -109,6 +121,17 @@ pub enum UpdateFromSourceOutcome {
     SourceUnavailable(SourceUnavailable),
 }
 
+/// 재import할 원본을 정하는 방법.
+#[derive(Debug, Clone, Copy)]
+enum SourceChoice<'a> {
+    /// record의 source metadata(외부면 지문으로 확인할 후보 경로).
+    Recorded {
+        external_candidate: Option<&'a Path>,
+    },
+    /// 사용자가 이번 실행에서 직접 고른 경로(지문 확인 없음).
+    Selected(&'a Path),
+}
+
 impl AssetStore {
     /// source metadata의 원본을 다시 읽어 새 hash asset을 만듭니다(참조 변경은 반환만).
     ///
@@ -119,7 +142,37 @@ impl AssetStore {
         current: &AssetRecord,
         external_source: Option<&Path>,
     ) -> Result<UpdateFromSourceOutcome, ImportError> {
-        self.update_from_source_inner(asset_id, current, external_source, None)
+        let choice = SourceChoice::Recorded {
+            external_candidate: external_source,
+        };
+        self.update_from_source_inner(asset_id, current, choice, None)
+    }
+
+    /// 사용자가 **직접 고른** 원본 경로로 갱신합니다(출처 지문 확인 없음).
+    ///
+    /// [`SourceUnavailable::OriginUnverifiable`](다른 기기에서 기록) 등으로 사용자에게 원본을
+    /// 다시 선택받은 뒤에만 호출합니다. record·Git·캐시에서 온 경로를 넘기지 않습니다(그 경우는
+    /// [`AssetStore::update_from_source`]의 후보 경로). 새 record의 source metadata는 고른
+    /// 경로에서 새로 만듭니다(외부면 이 기기 key의 지문).
+    pub fn update_from_selected_source(
+        &self,
+        asset_id: AssetId,
+        current: &AssetRecord,
+        selected: &Path,
+    ) -> Result<UpdateFromSourceOutcome, ImportError> {
+        self.update_from_source_inner(asset_id, current, SourceChoice::Selected(selected), None)
+    }
+
+    /// [`AssetStore::update_from_selected_source`]에 import 정책(XIII.5.7)을 적용한 버전.
+    pub fn update_from_selected_source_with_policy(
+        &self,
+        asset_id: AssetId,
+        current: &AssetRecord,
+        selected: &Path,
+        policy: &AssetImportPolicy,
+    ) -> Result<UpdateFromSourceOutcome, ImportError> {
+        let choice = SourceChoice::Selected(selected);
+        self.update_from_source_inner(asset_id, current, choice, Some(policy))
     }
 
     /// [`AssetStore::update_from_source`]에 import 정책(XIII.5.7)을 적용한 버전.
@@ -134,17 +187,26 @@ impl AssetStore {
         external_source: Option<&Path>,
         policy: &AssetImportPolicy,
     ) -> Result<UpdateFromSourceOutcome, ImportError> {
-        self.update_from_source_inner(asset_id, current, external_source, Some(policy))
+        let choice = SourceChoice::Recorded {
+            external_candidate: external_source,
+        };
+        self.update_from_source_inner(asset_id, current, choice, Some(policy))
     }
 
     fn update_from_source_inner(
         &self,
         asset_id: AssetId,
         current: &AssetRecord,
-        external_source: Option<&Path>,
+        choice: SourceChoice<'_>,
         policy: Option<&AssetImportPolicy>,
     ) -> Result<UpdateFromSourceOutcome, ImportError> {
-        let source = match self.resolve_source(current, external_source)? {
+        let resolved = match choice {
+            SourceChoice::Recorded { external_candidate } => {
+                self.resolve_source(current, external_candidate)?
+            }
+            SourceChoice::Selected(path) => resolve_file(path)?,
+        };
+        let source = match resolved {
             Ok(path) => path,
             Err(reason) => return Ok(UpdateFromSourceOutcome::SourceUnavailable(reason)),
         };
@@ -154,8 +216,13 @@ impl AssetStore {
                 .map_err(ImportError::Policy)?,
             None => ImportRequest::new(&source, current.media_type.clone()),
         };
-        // 내부 원본: 확인 뒤 경로가 바뀌어도 import가 쓰기 전에 다시 거부합니다(방어 심층화).
-        let project_location = match current.source_metadata.as_ref().map(|m| m.location()) {
+        // 기록된 내부 원본: 확인 뒤 경로가 바뀌어도 import가 쓰기 전에 다시 거부합니다(방어
+        // 심층화). 사용자가 고른 경로는 새 위치로 기록합니다.
+        let recorded = match choice {
+            SourceChoice::Recorded { .. } => current.source_metadata.as_ref(),
+            SourceChoice::Selected(_) => None,
+        };
+        let project_location = match recorded.map(|m| m.location()) {
             Some(SourceLocation::Project { relative_path }) => {
                 request = request.requiring_project_source();
                 Some(relative_path.clone())
@@ -220,22 +287,24 @@ impl AssetStore {
         let Some(metadata) = &current.source_metadata else {
             return Ok(Err(SourceUnavailable::NoSourceMetadata));
         };
-        let candidate = match metadata.location() {
+        let (candidate, origin_key) = match metadata.location() {
             SourceLocation::Project { .. } => match metadata.project_path(self.root()) {
-                Some(path) => path,
+                Some(path) => (path, None),
                 None => return Ok(Err(SourceUnavailable::NotFound)),
             },
-            SourceLocation::External { .. } => {
+            SourceLocation::External { origin, .. } => {
+                let key = self
+                    .origin_key()
+                    .map_err(|e| ImportError::SourceMetadata(SourceMetadataError::OriginKey(e)))?;
+                // 다른 기기 key의 지문은 어떤 후보 경로로도 확인할 수 없습니다.
+                if origin.key_id() != key.key_id() {
+                    return Ok(Err(SourceUnavailable::OriginUnverifiable));
+                }
                 let Some(path) = external_source else {
                     return Ok(Err(SourceUnavailable::ExternalPathRequired));
                 };
-                path.to_path_buf()
+                (path.to_path_buf(), Some(key))
             }
-        };
-        let open_error = |e: std::io::Error| ImportError::Io {
-            operation: ImportOperation::OpenSource,
-            kind: e.kind(),
-            message: e.to_string(),
         };
         let resolved = match std::fs::canonicalize(&candidate) {
             Ok(path) => path,
@@ -251,15 +320,38 @@ impl AssetStore {
                 return Ok(Err(SourceUnavailable::OutsideProject));
             }
         }
-        if matches!(metadata.location(), SourceLocation::External { .. })
-            && !metadata.matches_external_origin(&resolved)
-        {
-            return Ok(Err(SourceUnavailable::OriginMismatch));
+        if let Some(key) = &origin_key {
+            match metadata.check_external_origin(key, &resolved) {
+                OriginCheck::Matches => {}
+                OriginCheck::ForeignKey => return Ok(Err(SourceUnavailable::OriginUnverifiable)),
+                OriginCheck::DifferentOrigin | OriginCheck::NotExternal => {
+                    return Ok(Err(SourceUnavailable::OriginMismatch))
+                }
+            }
         }
         if !resolved.is_file() {
             return Ok(Err(SourceUnavailable::NotAFile));
         }
         Ok(Ok(resolved))
+    }
+}
+
+/// 원본 열기 단계 I/O 오류.
+fn open_error(e: std::io::Error) -> ImportError {
+    ImportError::Io {
+        operation: ImportOperation::OpenSource,
+        kind: e.kind(),
+        message: e.to_string(),
+    }
+}
+
+/// 사용자가 고른 경로를 해석합니다. 없거나 일반 파일이 아니면 `Ok(Err(reason))`.
+fn resolve_file(path: &Path) -> Result<Result<PathBuf, SourceUnavailable>, ImportError> {
+    match std::fs::canonicalize(path) {
+        Ok(resolved) if resolved.is_file() => Ok(Ok(resolved)),
+        Ok(_) => Ok(Err(SourceUnavailable::NotAFile)),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(Err(SourceUnavailable::NotFound)),
+        Err(e) => Err(open_error(e)),
     }
 }
 
@@ -286,7 +378,8 @@ impl AssetCatalog {
 mod tests {
     use super::*;
     use crate::media_type::MediaType;
-    use crate::store::test_support::{files_under, TempDir};
+    use crate::origin::OriginKey;
+    use crate::store::test_support::{files_under, test_origin_key, test_store, TempDir};
     use stellar_storage::hash::ContentHash;
 
     struct Fixture {
@@ -302,7 +395,7 @@ mod tests {
         let outside = dir.path.join("outside");
         std::fs::create_dir_all(project.join("images")).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
-        let store = AssetStore::new(&project);
+        let store = test_store(&project);
         Fixture {
             _dir: dir,
             project,
@@ -467,7 +560,7 @@ mod tests {
             .source_metadata
             .as_ref()
             .unwrap()
-            .matches_external_origin(&source));
+            .matches_external_origin(&test_origin_key(), &source));
 
         std::fs::remove_file(&source).unwrap();
         assert_eq!(
@@ -475,6 +568,85 @@ mod tests {
                 .update_from_source(id(), &current, Some(&source))
                 .unwrap(),
             UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::NotFound)
+        );
+    }
+
+    /// 다른 기기(다른 key)에서 기록된 외부 원본 fixture.
+    #[test]
+    fn external_source_from_other_machine_requires_user_selection() {
+        let fx = fixture();
+        let source = fx.outside.join("brand.png");
+        // 다른 기기가 같은 경로에서 import해 commit한 record.
+        let other_machine =
+            AssetStore::new(&fx.project).with_origin_key(OriginKey::from_bytes([0x99; 32]));
+        std::fs::write(&source, b"v1").unwrap();
+        let current = other_machine
+            .import_file(&ImportRequest::new(&source, png()))
+            .unwrap()
+            .record;
+        std::fs::write(&source, b"v2").unwrap();
+        let before = files_under(&fx.project.join("assets"));
+
+        // 이 기기에서는 정확히 같은 경로를 주어도 확인할 수 없습니다(경로 추측 확인 불가).
+        for candidate in [None, Some(source.as_path())] {
+            assert_eq!(
+                fx.store
+                    .update_from_source(id(), &current, candidate)
+                    .unwrap(),
+                UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::OriginUnverifiable),
+                "{candidate:?}"
+            );
+        }
+        assert_eq!(files_under(&fx.project.join("assets")), before, "변경 없음");
+
+        // 사용자가 원본을 다시 고르면 갱신하고, 새 record는 이 기기 key의 지문을 씁니다.
+        let outcome = fx
+            .store
+            .update_from_selected_source(id(), &current, &source)
+            .unwrap();
+        let UpdateFromSourceOutcome::Updated { update, .. } = outcome else {
+            panic!("Updated 기대: {outcome:?}");
+        };
+        assert_eq!(update.next.content_hash, ContentHash::compute(b"v2"));
+        let next_source = update.next.source_metadata.as_ref().unwrap();
+        assert!(next_source.matches_external_origin(&test_origin_key(), &source));
+        // 이후에는 이 기기에서 후보 경로로 확인됩니다.
+        std::fs::write(&source, b"v3").unwrap();
+        assert!(matches!(
+            fx.store
+                .update_from_source(id(), &update.next, Some(&source))
+                .unwrap(),
+            UpdateFromSourceOutcome::Updated { .. }
+        ));
+
+        // 고른 경로가 없거나 파일이 아니면 기존 asset 유지입니다.
+        assert_eq!(
+            fx.store
+                .update_from_selected_source(id(), &current, &fx.outside.join("missing.png"))
+                .unwrap(),
+            UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::NotFound)
+        );
+        assert_eq!(
+            fx.store
+                .update_from_selected_source(id(), &current, &fx.outside)
+                .unwrap(),
+            UpdateFromSourceOutcome::SourceUnavailable(SourceUnavailable::NotAFile)
+        );
+    }
+
+    #[test]
+    fn external_source_without_configured_key_is_an_error() {
+        let fx = fixture();
+        let source = fx.outside.join("brand.png");
+        let current = import(&fx, &source, b"v1");
+        let unkeyed = AssetStore::new(&fx.project);
+        assert_eq!(
+            unkeyed
+                .update_from_source(id(), &current, Some(&source))
+                .unwrap_err(),
+            ImportError::SourceMetadata(SourceMetadataError::OriginKey(
+                crate::origin::OriginKeyError::Unconfigured
+            ))
         );
     }
 

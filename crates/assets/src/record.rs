@@ -21,16 +21,19 @@
 //! |---|---|---|---|
 //! | 1 | location kind | 예 | `u8` (1 = 프로젝트 내부, 2 = 프로젝트 외부) |
 //! | 2 | path | 예 | 길이 프리픽스 UTF-8 — 내부: project root 기준 `/` 상대 경로, 외부: 파일 이름만 |
-//! | 3 | origin fingerprint | 예(외부 전용) | 길이 프리픽스 UTF-8 (`sha256:<hex>`). 내부 kind에는 금지 |
+//! | 3 | origin fingerprint | 예(외부 전용) | 길이 프리픽스 UTF-8 (`hmac-sha256:<key-id hex16>:<mac hex64>`). 내부 kind에는 금지 |
 //!
 //! # 원본 경로 기록 정책(privacy·이식성)
 //!
 //! record는 Git에 commit되므로 import한 사용자의 **절대 로컬 경로를 그대로 기록하지
 //! 않습니다**(아키텍처 29.1 "clone·worktree·프로젝트 이동에서 재현 가능").
 //! - 원본이 프로젝트 안에 있으면 project root 기준 상대 경로(`/` 구분)만 기록합니다.
-//! - 프로젝트 밖이면 파일 이름과 비가역 출처 지문(domain 구분 prefix + 해석된 절대 경로의
-//!   SHA-256)만 기록합니다. 지문에서 경로를 복원할 수 없으며, `Update from Source`
-//!   (XIII.5.5)가 호출자가 제시한 경로가 같은 출처인지 확인하는 데만 씁니다.
+//! - 프로젝트 밖이면 파일 이름과 출처 지문만 기록합니다. 지문은 프로젝트 밖에 둔 기기별 비밀
+//!   key의 HMAC-SHA-256입니다([`crate::origin`]). key가 없는 사람은 지문으로 경로 추측(예:
+//!   `/Users/<이름>/Downloads/<파일 이름>`)을 확인할 수 없습니다. 다만 key를 가진 같은 기기
+//!   사용자는 확인할 수 있으므로 "경로를 복원할 수 없는 비가역 값"이 아니라 "key 없이 검증할 수
+//!   없는 값"입니다. `Update from Source`(XIII.5.5)가 같은 기기에서 후보 경로가 같은 출처인지
+//!   확인하는 데만 씁니다.
 //!
 //! # 엄격한 디코딩
 //!
@@ -58,6 +61,10 @@ use stellar_storage::canonical::encode::{CanonicalEncoder, EncodeError, Field};
 use stellar_storage::hash::{ContentHash, ParseContentHashError};
 
 use crate::media_type::{MediaType, MediaTypeError};
+use crate::origin::{
+    OriginCheck, OriginFingerprint, OriginKey, OriginKeyError, OriginKeyProvider,
+    ParseOriginFingerprintError,
+};
 
 /// AssetRecord field tag.
 const TAG_CONTENT_HASH: u32 = 1;
@@ -73,9 +80,6 @@ const TAG_SOURCE_ORIGIN: u32 = 3;
 /// SourceMetadata location kind 값.
 const SOURCE_KIND_PROJECT: u8 = 1;
 const SOURCE_KIND_EXTERNAL: u8 = 2;
-
-/// 외부 출처 지문의 domain 구분 prefix(다른 용도의 SHA-256 값과 섞이지 않게 합니다).
-const EXTERNAL_ORIGIN_DOMAIN: &[u8] = b"stellar.asset.source-origin.v1\0";
 
 /// known field의 (tag, mandatory flag).
 const ASSET_RECORD_FIELDS: [(u32, bool); 4] = [
@@ -197,6 +201,8 @@ pub enum SourceMetadataError {
     },
     /// 프로젝트 내부 원본이어야 하는 경로가 symlink 등으로 프로젝트 밖으로 해석됩니다.
     OutsideProject,
+    /// 외부 원본 출처 지문용 기기 key를 얻을 수 없습니다.
+    OriginKey(OriginKeyError),
 }
 
 impl fmt::Display for SourceMetadataError {
@@ -230,6 +236,7 @@ impl fmt::Display for SourceMetadataError {
             SourceMetadataError::OutsideProject => {
                 f.write_str("프로젝트 내부 원본이 프로젝트 밖으로 해석됩니다")
             }
+            SourceMetadataError::OriginKey(e) => write!(f, "출처 key를 쓸 수 없습니다: {e}"),
         }
     }
 }
@@ -261,6 +268,8 @@ pub enum AssetRecordError {
     },
     /// content hash 문자열이 ADR-0004 형식이 아닙니다.
     InvalidContentHash(ParseContentHashError),
+    /// 외부 원본 출처 지문 문자열 형식이 잘못되었습니다.
+    InvalidOriginFingerprint(ParseOriginFingerprintError),
     /// media type 형식이 잘못되었습니다.
     InvalidMediaType(MediaTypeError),
     /// media type이 canonical(소문자) 형태가 아닙니다.
@@ -302,6 +311,9 @@ impl fmt::Display for AssetRecordError {
             ),
             AssetRecordError::InvalidContentHash(e) => {
                 write!(f, "content hash 형식이 잘못되었습니다: {e}")
+            }
+            AssetRecordError::InvalidOriginFingerprint(e) => {
+                write!(f, "출처 지문 형식이 잘못되었습니다: {e}")
             }
             AssetRecordError::InvalidMediaType(e) => {
                 write!(f, "media type 형식이 잘못되었습니다: {e}")
@@ -350,12 +362,12 @@ pub enum SourceLocation {
         /// 상대 경로(예: `images/logo.png`).
         relative_path: String,
     },
-    /// 프로젝트 밖의 원본 — 파일 이름과 비가역 출처 지문만 기록합니다.
+    /// 프로젝트 밖의 원본 — 파일 이름과 기기 key 출처 지문만 기록합니다.
     External {
         /// 원본 파일 이름(디렉터리 없음).
         file_name: String,
-        /// [`external_origin_fingerprint`] 값.
-        origin: ContentHash,
+        /// [`OriginFingerprint::compute`] 값(기기별 key의 HMAC).
+        origin: OriginFingerprint,
     },
 }
 
@@ -387,7 +399,7 @@ impl SourceMetadata {
     /// 프로젝트 외부 원본(파일 이름 + 출처 지문)으로 만듭니다.
     pub fn external(
         file_name: impl Into<String>,
-        origin: ContentHash,
+        origin: OriginFingerprint,
     ) -> Result<SourceMetadata, SourceMetadataError> {
         let file_name = file_name.into();
         validate_file_name(&file_name)?;
@@ -397,12 +409,14 @@ impl SourceMetadata {
         })
     }
 
-    /// 이미 해석된(절대·정규화) project root와 원본 경로로 만듭니다(파일 I/O 없음).
+    /// 이미 해석된(절대·정규화) project root와 원본 경로로 만듭니다.
     ///
-    /// 원본이 root 아래면 상대 경로를, 아니면 파일 이름과 출처 지문을 기록합니다.
+    /// 원본이 root 아래면 상대 경로를, 아니면 파일 이름과 출처 지문을 기록합니다. `keys`는
+    /// 외부 원본일 때만 호출됩니다(파일 공급원이면 그때 key 파일을 만들 수 있음).
     pub fn from_resolved_paths(
         project_root: &Path,
         source: &Path,
+        keys: &dyn OriginKeyProvider,
     ) -> Result<SourceMetadata, SourceMetadataError> {
         for path in [project_root, source] {
             if !path.is_absolute() {
@@ -429,7 +443,9 @@ impl SourceMetadata {
             Err(_) => {
                 let name = source.file_name().ok_or(SourceMetadataError::EmptyPath)?;
                 let name = name.to_str().ok_or(SourceMetadataError::NonUtf8Path)?;
-                SourceMetadata::external(name, external_origin_fingerprint(source))
+                validate_file_name(name)?;
+                let key = keys.origin_key().map_err(SourceMetadataError::OriginKey)?;
+                SourceMetadata::external(name, OriginFingerprint::compute(&key, source))
             }
         }
     }
@@ -439,11 +455,12 @@ impl SourceMetadata {
     pub fn from_import_path(
         project_root: &Path,
         source: &Path,
+        keys: &dyn OriginKeyProvider,
     ) -> Result<SourceMetadata, SourceMetadataError> {
         let resolve = |p: &Path| {
             std::fs::canonicalize(p).map_err(|e| SourceMetadataError::Resolve { kind: e.kind() })
         };
-        SourceMetadata::from_resolved_paths(&resolve(project_root)?, &resolve(source)?)
+        SourceMetadata::from_resolved_paths(&resolve(project_root)?, &resolve(source)?, keys)
     }
 
     /// 원본 위치.
@@ -476,14 +493,19 @@ impl SourceMetadata {
         }
     }
 
-    /// 해석된 절대 경로가 기록된 외부 출처와 같은지(지문 비교). 내부 원본은 `false`.
-    pub fn matches_external_origin(&self, resolved_source: &Path) -> bool {
+    /// 해석된 절대 경로가 기록된 외부 출처와 같은지 이 기기 key로 판정합니다.
+    ///
+    /// 다른 기기 key로 기록된 지문은 [`OriginCheck::ForeignKey`]입니다(확인 불가).
+    pub fn check_external_origin(&self, key: &OriginKey, resolved_source: &Path) -> OriginCheck {
         match &self.location {
-            SourceLocation::External { origin, .. } => {
-                *origin == external_origin_fingerprint(resolved_source)
-            }
-            SourceLocation::Project { .. } => false,
+            SourceLocation::External { origin, .. } => origin.check(key, resolved_source),
+            SourceLocation::Project { .. } => OriginCheck::NotExternal,
         }
+    }
+
+    /// [`SourceMetadata::check_external_origin`]이 [`OriginCheck::Matches`]인지.
+    pub fn matches_external_origin(&self, key: &OriginKey, resolved_source: &Path) -> bool {
+        self.check_external_origin(key, resolved_source) == OriginCheck::Matches
     }
 
     /// nested record payload bytes.
@@ -565,25 +587,15 @@ impl SourceMetadata {
                     record: kind,
                     tag: TAG_SOURCE_ORIGIN,
                 })?;
-                let origin: ContentHash = take_string_payload(origin)?
+                let origin: OriginFingerprint = take_string_payload(origin)?
                     .parse()
-                    .map_err(AssetRecordError::InvalidContentHash)?;
+                    .map_err(AssetRecordError::InvalidOriginFingerprint)?;
                 SourceMetadata::external(path, origin)
                     .map_err(AssetRecordError::InvalidSourceMetadata)
             }
             value => Err(AssetRecordError::InvalidSourceKind { value }),
         }
     }
-}
-
-/// 해석된 절대 원본 경로의 비가역 출처 지문.
-///
-/// `SHA-256(domain prefix ‖ 경로의 OS encoded bytes)`입니다. 경로를 복원할 수 없지만,
-/// 후보 경로를 알면 같은지 확인할 수 있습니다(같은 출처 판정 전용 — 비밀 값이 아닙니다).
-pub fn external_origin_fingerprint(resolved_source: &Path) -> ContentHash {
-    let mut input = EXTERNAL_ORIGIN_DOMAIN.to_vec();
-    input.extend_from_slice(resolved_source.as_os_str().as_encoded_bytes());
-    ContentHash::compute(&input)
 }
 
 fn check_common(text: &str) -> Result<(), SourceMetadataError> {
@@ -845,6 +857,24 @@ fn required_payload(
 mod tests {
     use super::*;
 
+    /// 테스트용 기기 key.
+    fn key() -> OriginKey {
+        OriginKey::from_bytes([0x5a; 32])
+    }
+
+    fn fingerprint(path: &str) -> OriginFingerprint {
+        OriginFingerprint::compute(&key(), Path::new(path))
+    }
+
+    /// 호출되면 실패하는 key 공급원(내부 원본은 key를 요구하지 않아야 함).
+    struct NoKey;
+
+    impl OriginKeyProvider for NoKey {
+        fn origin_key(&self) -> Result<OriginKey, OriginKeyError> {
+            Err(OriginKeyError::Unconfigured)
+        }
+    }
+
     fn project_source(path: &str) -> SourceMetadata {
         SourceMetadata::project(path).unwrap()
     }
@@ -946,7 +976,7 @@ mod tests {
 
     #[test]
     fn round_trip_with_external_source_metadata() {
-        let origin = external_origin_fingerprint(Path::new("/Users/someone/Desktop/logo.png"));
+        let origin = fingerprint("/Users/someone/Desktop/logo.png");
         let mut original = record(None);
         original.source_metadata = Some(SourceMetadata::external("logo.png", origin).unwrap());
         let bytes = original.encode().unwrap();
@@ -1027,15 +1057,17 @@ mod tests {
         expected_source.extend_from_slice(b"a.png");
         assert_eq!(with_source, expected_source);
 
-        // 외부 원본: kind 2 + 파일 이름 + tag 3 지문(71자 문자열).
-        let origin = external_origin_fingerprint(Path::new("/elsewhere/a.png"));
+        // 외부 원본: kind 2 + 파일 이름 + tag 3 지문(93자 문자열
+        // `hmac-sha256:<key-id 16>:<mac 64>`).
+        let origin = fingerprint("/elsewhere/a.png");
+        assert_eq!(origin.to_string().len(), 93);
         let mut external = record(None);
         external.source_metadata = Some(SourceMetadata::external("a.png", origin).unwrap());
         let bytes = external.encode().unwrap();
         let mut expected_external = expected.clone();
         expected_external[0] = 0x04;
         expected_external.extend_from_slice(&[0x04, 0x00, 0x00, 0x00, 0x00]);
-        expected_external.extend_from_slice(&[0x74, 0x00, 0x00, 0x00]); // payload 116 bytes
+        expected_external.extend_from_slice(&[0x8a, 0x00, 0x00, 0x00]); // payload 138 bytes
         expected_external.extend_from_slice(&[0x03, 0x00, 0x00, 0x00]); // nested field 수 3
         expected_external.extend_from_slice(&[0x01, 0x00, 0x00, 0x00, 0x01]);
         expected_external.extend_from_slice(&[0x01, 0x00, 0x00, 0x00, 0x02]); // kind 2: 외부
@@ -1044,8 +1076,8 @@ mod tests {
         expected_external.extend_from_slice(&[0x05, 0x00, 0x00, 0x00]);
         expected_external.extend_from_slice(b"a.png");
         expected_external.extend_from_slice(&[0x03, 0x00, 0x00, 0x00, 0x01]); // tag 3
-        expected_external.extend_from_slice(&[0x4b, 0x00, 0x00, 0x00]); // payload 75 bytes
-        expected_external.extend_from_slice(&[0x47, 0x00, 0x00, 0x00]); // 문자열 71 bytes
+        expected_external.extend_from_slice(&[0x61, 0x00, 0x00, 0x00]); // payload 97 bytes
+        expected_external.extend_from_slice(&[0x5d, 0x00, 0x00, 0x00]); // 문자열 93 bytes
         expected_external.extend_from_slice(origin.to_string().as_bytes());
         assert_eq!(bytes, expected_external);
     }
@@ -1244,7 +1276,7 @@ mod tests {
 
     #[test]
     fn source_kind_and_origin_combinations_are_validated() {
-        let origin = external_origin_fingerprint(Path::new("/x/a.png")).to_string();
+        let origin = fingerprint("/x/a.png").to_string();
         let origin_field = field(TAG_SOURCE_ORIGIN, true, string_payload(&origin).unwrap());
         let path = field(TAG_SOURCE_PATH, true, string_payload("a.png").unwrap());
 
@@ -1281,23 +1313,32 @@ mod tests {
             AssetRecordError::Decode(DecodeError::TrailingBytes { remaining: 1 })
         );
 
-        // 지문 문자열이 hash 형식이 아님.
-        let source = source_payload(&[
-            field(TAG_SOURCE_KIND, true, vec![SOURCE_KIND_EXTERNAL]),
-            path,
-            field(
-                TAG_SOURCE_ORIGIN,
-                true,
-                string_payload("sha256:00").unwrap(),
+        // 지문 문자열이 keyed 지문 형식이 아님. 이전(key 없는) `sha256:<hex64>` 형식도
+        // 의도적으로 거부합니다(XIII.5.1 후속 수정 2차 — wire 형식 변경).
+        let unkeyed_v1 = format!("sha256:{}", ContentHash::compute(b"x").digest_hex());
+        let (head, _) = origin.rsplit_once(':').unwrap();
+        for (text, expected) in [
+            (
+                "sha256:00".to_string(),
+                ParseOriginFingerprintError::UnknownScheme,
             ),
-        ]);
-        assert_eq!(
-            decode_with_source(source).unwrap_err(),
-            AssetRecordError::InvalidContentHash(ParseContentHashError::InvalidLength {
-                expected: 64,
-                actual: 2
-            })
-        );
+            (unkeyed_v1, ParseOriginFingerprintError::UnknownScheme),
+            (
+                format!("{head}:00"),
+                ParseOriginFingerprintError::InvalidLength,
+            ),
+        ] {
+            let source = source_payload(&[
+                field(TAG_SOURCE_KIND, true, vec![SOURCE_KIND_EXTERNAL]),
+                path.clone(),
+                field(TAG_SOURCE_ORIGIN, true, string_payload(&text).unwrap()),
+            ]);
+            assert_eq!(
+                decode_with_source(source).unwrap_err(),
+                AssetRecordError::InvalidOriginFingerprint(expected),
+                "{text}"
+            );
+        }
     }
 
     #[test]
@@ -1474,7 +1515,7 @@ mod tests {
 
     #[test]
     fn invalid_external_file_names_are_rejected() {
-        let origin = external_origin_fingerprint(Path::new("/x/a.png"));
+        let origin = fingerprint("/x/a.png");
         for (name, expected) in [
             ("", SourceMetadataError::EmptyPath),
             ("a\0.png", SourceMetadataError::ContainsNul),
@@ -1509,9 +1550,13 @@ mod tests {
     #[test]
     fn resolved_paths_inside_project_become_relative() {
         let root = Path::new("/work/project");
-        let source =
-            SourceMetadata::from_resolved_paths(root, Path::new("/work/project/images/로고.png"))
-                .unwrap();
+        // 내부 원본은 key를 요구하지 않습니다(NoKey는 호출되면 실패).
+        let source = SourceMetadata::from_resolved_paths(
+            root,
+            Path::new("/work/project/images/로고.png"),
+            &NoKey,
+        )
+        .unwrap();
         assert_eq!(
             source.location(),
             &SourceLocation::Project {
@@ -1522,37 +1567,54 @@ mod tests {
             source.project_path(root).unwrap(),
             Path::new("/work/project/images/로고.png")
         );
-        assert!(!source.matches_external_origin(Path::new("/work/project/images/로고.png")));
+        assert!(!source.matches_external_origin(&key(), Path::new("/work/project/images/로고.png")));
+        assert_eq!(
+            source.check_external_origin(&key(), Path::new("/work/project/images/로고.png")),
+            OriginCheck::NotExternal
+        );
 
         // root 자체는 원본 파일이 될 수 없습니다.
         assert_eq!(
-            SourceMetadata::from_resolved_paths(root, root).unwrap_err(),
+            SourceMetadata::from_resolved_paths(root, root, &NoKey).unwrap_err(),
             SourceMetadataError::EmptyPath
         );
         // 접두 문자열만 같은 형제 디렉터리는 외부입니다(구성 요소 단위 비교).
         let sibling =
-            SourceMetadata::from_resolved_paths(root, Path::new("/work/project-old/a.png"))
+            SourceMetadata::from_resolved_paths(root, Path::new("/work/project-old/a.png"), &key())
                 .unwrap();
         assert!(matches!(
             sibling.location(),
             SourceLocation::External { .. }
         ));
+        // 외부 원본은 key가 없으면 기록하지 않습니다.
+        assert_eq!(
+            SourceMetadata::from_resolved_paths(root, Path::new("/work/project-old/a.png"), &NoKey)
+                .unwrap_err(),
+            SourceMetadataError::OriginKey(OriginKeyError::Unconfigured)
+        );
     }
 
     #[test]
     fn resolved_paths_outside_project_keep_only_file_name_and_fingerprint() {
         let root = Path::new("/work/project");
         let outside = Path::new("/Users/someone/Desktop/브랜드/logo.png");
-        let source = SourceMetadata::from_resolved_paths(root, outside).unwrap();
+        let source = SourceMetadata::from_resolved_paths(root, outside, &key()).unwrap();
         assert_eq!(
             source.location(),
             &SourceLocation::External {
                 file_name: "logo.png".to_string(),
-                origin: external_origin_fingerprint(outside),
+                origin: OriginFingerprint::compute(&key(), outside),
             }
         );
-        assert!(source.matches_external_origin(outside));
-        assert!(!source.matches_external_origin(Path::new("/Users/other/Desktop/브랜드/logo.png")));
+        assert!(source.matches_external_origin(&key(), outside));
+        assert!(!source
+            .matches_external_origin(&key(), Path::new("/Users/other/Desktop/브랜드/logo.png")));
+        // 다른 기기(key)에서는 같은 경로라도 확인할 수 없습니다.
+        let other_machine = OriginKey::from_bytes([0x11; 32]);
+        assert_eq!(
+            source.check_external_origin(&other_machine, outside),
+            OriginCheck::ForeignKey
+        );
         assert_eq!(source.project_path(root), None);
 
         // 기록 bytes에 디렉터리 경로가 남지 않습니다(privacy).
@@ -1566,24 +1628,6 @@ mod tests {
             );
         }
         assert!(bytes.windows(8).any(|w| w == b"logo.png"));
-    }
-
-    #[test]
-    fn fingerprint_is_domain_separated_and_path_sensitive() {
-        let a = Path::new("/a/logo.png");
-        assert_eq!(
-            external_origin_fingerprint(a),
-            external_origin_fingerprint(a)
-        );
-        assert_ne!(
-            external_origin_fingerprint(a),
-            external_origin_fingerprint(Path::new("/b/logo.png"))
-        );
-        // 경로 bytes의 단순 SHA-256과 다릅니다(domain prefix).
-        assert_ne!(
-            external_origin_fingerprint(a),
-            ContentHash::compute(b"/a/logo.png")
-        );
     }
 
     #[test]
@@ -1608,7 +1652,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                SourceMetadata::from_resolved_paths(root, source).unwrap_err(),
+                SourceMetadata::from_resolved_paths(root, source, &key()).unwrap_err(),
                 expected,
                 "{root:?} {source:?}"
             );
@@ -1625,7 +1669,7 @@ mod tests {
         let outside = Path::new("/elsewhere").join(OsStr::from_bytes(b"\xfe.png"));
         for source in [inside, outside] {
             assert_eq!(
-                SourceMetadata::from_resolved_paths(root, &source).unwrap_err(),
+                SourceMetadata::from_resolved_paths(root, &source, &key()).unwrap_err(),
                 SourceMetadataError::NonUtf8Path
             );
         }
@@ -1650,6 +1694,7 @@ mod tests {
                 .join("..")
                 .join("images")
                 .join("a.png"),
+            &NoKey,
         )
         .unwrap();
         assert_eq!(
@@ -1659,13 +1704,15 @@ mod tests {
             }
         );
 
-        let external = SourceMetadata::from_import_path(&project, &outside.join("b.png")).unwrap();
+        let external =
+            SourceMetadata::from_import_path(&project, &outside.join("b.png"), &key()).unwrap();
         let resolved = std::fs::canonicalize(outside.join("b.png")).unwrap();
-        assert!(external.matches_external_origin(&resolved));
+        assert!(external.matches_external_origin(&key(), &resolved));
         assert_eq!(external.file_name(), "b.png");
 
         assert_eq!(
-            SourceMetadata::from_import_path(&project, &outside.join("missing.png")).unwrap_err(),
+            SourceMetadata::from_import_path(&project, &outside.join("missing.png"), &key())
+                .unwrap_err(),
             SourceMetadataError::Resolve {
                 kind: std::io::ErrorKind::NotFound
             }

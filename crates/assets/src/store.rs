@@ -22,7 +22,8 @@
 //!
 //! 원본 위치는 optional metadata입니다([`ImportRequest::without_source_metadata`]로 생략).
 //! 기록할 때는 절대 로컬 경로가 아니라 프로젝트 상대 경로 또는 파일 이름+출처 지문만
-//! 남깁니다([`SourceMetadata::from_import_path`]).
+//! 남깁니다([`SourceMetadata::from_import_path`]). 출처 지문은 프로젝트 밖 기기 key의
+//! HMAC이며([`crate::origin`]), key는 [`AssetStore::with_origin_key_file`]로 지정합니다.
 
 use std::fmt;
 use std::fs::File;
@@ -37,6 +38,7 @@ use crate::atomic_write::{
 };
 use crate::hash_stream::{hash_reader_with, StreamDigest, StreamHashError, STREAM_BUFFER_SIZE};
 use crate::media_type::MediaType;
+use crate::origin::{OriginKey, OriginKeyError, OriginKeyFile, OriginKeyProvider};
 use crate::path::{AssetObjectPath, SafeExtension};
 use crate::policy::PolicyViolation;
 use crate::record::{AssetRecord, SourceLocation, SourceMetadata, SourceMetadataError};
@@ -247,23 +249,66 @@ pub struct ImportedAsset {
     pub outcome: ImportOutcome,
 }
 
+/// 외부 원본 출처 지문용 기기 key 공급원(XIII.5.1 후속 수정, [`crate::origin`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum OriginKeySource {
+    /// 설정 없음 — 외부 원본을 기록·확인하면 [`OriginKeyError::Unconfigured`].
+    Unconfigured,
+    /// 이미 읽은 key.
+    Key(OriginKey),
+    /// OS 사용자 데이터 영역의 key 파일(처음 필요할 때 생성).
+    File(OriginKeyFile),
+}
+
 /// 프로젝트의 `assets/` content 저장소.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetStore {
     root: PathBuf,
+    origin_key: OriginKeySource,
 }
 
 impl AssetStore {
     /// 프로젝트 root로 저장소를 엽니다(파일 I/O 없음).
+    ///
+    /// 출처 key가 없으므로 프로젝트 밖 원본의 위치를 기록하거나 확인할 수 없습니다.
+    /// 외부 원본을 다루려면 [`AssetStore::with_origin_key_file`]로 key 파일을 지정합니다.
     pub fn new(project_root: impl Into<PathBuf>) -> AssetStore {
         AssetStore {
             root: project_root.into(),
+            origin_key: OriginKeySource::Unconfigured,
         }
+    }
+
+    /// 프로젝트 밖 OS 사용자 데이터 영역의 출처 key 파일을 씁니다.
+    ///
+    /// 파일은 외부 원본을 처음 기록·확인할 때 만들어지며(`0600`), project root 안이면
+    /// [`OriginKeyError::InsideProject`]로 거부합니다.
+    pub fn with_origin_key_file(mut self, file: OriginKeyFile) -> AssetStore {
+        self.origin_key = OriginKeySource::File(file);
+        self
+    }
+
+    /// 이미 읽은 출처 key를 씁니다(테스트·key를 직접 관리하는 호출자용).
+    pub fn with_origin_key(mut self, key: OriginKey) -> AssetStore {
+        self.origin_key = OriginKeySource::Key(key);
+        self
     }
 
     /// 프로젝트 root.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// 이 기기의 출처 key. 파일 공급원은 프로젝트 밖인지 확인한 뒤 읽거나 만듭니다.
+    pub(crate) fn origin_key(&self) -> Result<OriginKey, OriginKeyError> {
+        match &self.origin_key {
+            OriginKeySource::Unconfigured => Err(OriginKeyError::Unconfigured),
+            OriginKeySource::Key(key) => Ok(key.clone()),
+            OriginKeySource::File(file) => {
+                file.ensure_outside(&self.root)?;
+                file.load_or_create()
+            }
+        }
     }
 
     /// content 파일의 실제 경로.
@@ -286,8 +331,12 @@ impl AssetStore {
     ) -> Result<ImportedAsset, ImportError> {
         // metadata를 먼저 만들어 기록할 수 없는 경로면 아무 것도 쓰기 전에 실패합니다.
         let source_metadata = if request.record_source || request.require_project_source {
-            let metadata = SourceMetadata::from_import_path(&self.root, &request.source)
-                .map_err(ImportError::SourceMetadata)?;
+            let metadata = SourceMetadata::from_import_path(
+                &self.root,
+                &request.source,
+                &StoreOriginKey(self),
+            )
+            .map_err(ImportError::SourceMetadata)?;
             if request.require_project_source
                 && !matches!(metadata.location(), SourceLocation::Project { .. })
             {
@@ -406,6 +455,15 @@ impl AssetStore {
     }
 }
 
+/// store의 key 공급원을 metadata 생성에 넘기는 내부 어댑터(key를 공개 API로 노출하지 않음).
+struct StoreOriginKey<'a>(&'a AssetStore);
+
+impl OriginKeyProvider for StoreOriginKey<'_> {
+    fn origin_key(&self) -> Result<OriginKey, OriginKeyError> {
+        self.0.origin_key()
+    }
+}
+
 /// 원본을 열고 일반 파일인지 확인합니다. 파일과 현재 크기를 돌려줍니다.
 fn open_source_with_len(path: &Path) -> Result<(File, u64), ImportError> {
     let file = File::open(path).map_err(|e| ImportError::io(ImportOperation::OpenSource, &e))?;
@@ -517,6 +575,16 @@ pub(crate) mod test_support {
         out
     }
 
+    /// 테스트용 기기 출처 key.
+    pub fn test_origin_key() -> crate::origin::OriginKey {
+        crate::origin::OriginKey::from_bytes([0x42; 32])
+    }
+
+    /// 테스트 key를 설정한 저장소(외부 원본 기록 가능).
+    pub fn test_store(project_root: &Path) -> super::AssetStore {
+        super::AssetStore::new(project_root).with_origin_key(test_origin_key())
+    }
+
     /// 패턴으로 채운 bytes.
     pub fn patterned(len: usize, seed: u8) -> Vec<u8> {
         (0..len)
@@ -527,9 +595,8 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
-    use super::test_support::{files_under, patterned, TempDir};
+    use super::test_support::{files_under, patterned, test_origin_key, test_store, TempDir};
     use super::*;
-    use crate::record::SourceLocation;
 
     fn png() -> MediaType {
         MediaType::new("image/png").unwrap()
@@ -548,7 +615,7 @@ mod tests {
         let outside = dir.path.join("outside");
         std::fs::create_dir_all(project.join("assets")).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
-        let store = AssetStore::new(&project);
+        let store = test_store(&project);
         Fixture {
             _dir: dir,
             project,
@@ -585,7 +652,7 @@ mod tests {
         // 외부 원본은 파일 이름과 출처 지문만 기록합니다.
         let source_meta = imported.record.source_metadata.as_ref().unwrap();
         assert_eq!(source_meta.file_name(), "Logo.PNG");
-        assert!(source_meta.matches_external_origin(&source));
+        assert!(source_meta.matches_external_origin(&test_origin_key(), &source));
         // 원본은 그대로이고, temp 파일이 남지 않습니다.
         assert_eq!(std::fs::read(&source).unwrap(), bytes);
         assert_eq!(files_under(&fx.project.join("assets")), vec![content]);
@@ -611,6 +678,84 @@ mod tests {
             }
         );
         assert!(imported.object_path.file_name().ends_with(".svg"));
+    }
+
+    #[test]
+    fn external_source_metadata_requires_origin_key() {
+        let fx = fixture();
+        let unkeyed = AssetStore::new(&fx.project);
+        let outside = fx.outside.join("a.png");
+        std::fs::write(&outside, b"outside").unwrap();
+        assert_eq!(
+            unkeyed
+                .import_file(&ImportRequest::new(&outside, png()))
+                .unwrap_err(),
+            ImportError::SourceMetadata(SourceMetadataError::OriginKey(
+                OriginKeyError::Unconfigured
+            ))
+        );
+        assert!(files_under(&fx.project.join("assets")).is_empty());
+        // 내부 원본·metadata 생략은 key가 필요 없습니다.
+        assert!(unkeyed
+            .import_file(&ImportRequest::new(&outside, png()).without_source_metadata())
+            .is_ok());
+        std::fs::create_dir_all(fx.project.join("images")).unwrap();
+        let inside = fx.project.join("images").join("b.png");
+        std::fs::write(&inside, b"inside").unwrap();
+        assert!(unkeyed
+            .import_file(&ImportRequest::new(&inside, png()))
+            .is_ok());
+    }
+
+    #[test]
+    fn origin_key_file_is_created_on_first_external_use_outside_project() {
+        let fx = fixture();
+        let data = fx._dir.path.join("user-data");
+        let file = OriginKeyFile::in_data_dir(&data).unwrap();
+        let store = AssetStore::new(&fx.project).with_origin_key_file(file.clone());
+
+        std::fs::create_dir_all(fx.project.join("images")).unwrap();
+        let inside = fx.project.join("images").join("in.png");
+        std::fs::write(&inside, b"inside").unwrap();
+        store
+            .import_file(&ImportRequest::new(&inside, png()))
+            .unwrap();
+        assert!(!file.path().exists(), "내부 원본은 key를 만들지 않음");
+
+        let outside = fx.outside.join("out.png");
+        std::fs::write(&outside, b"outside").unwrap();
+        let imported = store
+            .import_file(&ImportRequest::new(&outside, png()))
+            .unwrap();
+        let key = file.load().unwrap().expect("처음 외부 원본에서 생성");
+        assert!(imported
+            .record
+            .source_metadata
+            .unwrap()
+            .matches_external_origin(&key, &outside));
+        // key 파일은 프로젝트 밖에만 있고 프로젝트에는 key 사본이 없습니다.
+        assert!(!file.path().starts_with(&fx.project));
+    }
+
+    #[test]
+    fn origin_key_file_inside_project_is_rejected() {
+        let fx = fixture();
+        let file = OriginKeyFile::new(fx.project.join(".stellar").join("origin-key")).unwrap();
+        let store = AssetStore::new(&fx.project).with_origin_key_file(file.clone());
+        let outside = fx.outside.join("a.png");
+        std::fs::write(&outside, b"outside").unwrap();
+        assert_eq!(
+            store
+                .import_file(&ImportRequest::new(&outside, png()))
+                .unwrap_err(),
+            ImportError::SourceMetadata(SourceMetadataError::OriginKey(
+                OriginKeyError::InsideProject {
+                    path: file.path().to_path_buf()
+                }
+            ))
+        );
+        assert!(!file.path().exists());
+        assert!(files_under(&fx.project.join("assets")).is_empty());
     }
 
     #[test]

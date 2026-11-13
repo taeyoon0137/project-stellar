@@ -167,6 +167,42 @@ impl StreamingHasher {
     }
 }
 
+/// SHA-256 block 크기(byte). HMAC key padding 단위입니다.
+const SHA256_BLOCK_LEN: usize = 64;
+
+/// HMAC-SHA-256(RFC 2104, FIPS 198-1)을 위의 SHA-256으로 계산합니다.
+///
+/// block 크기(64 bytes)보다 긴 key는 먼저 SHA-256으로 줄입니다. 외부 원본 출처 지문
+/// ([`crate::origin`])의 keyed hash로 쓰며, RFC 4231 test vector로 고정합니다.
+pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    let mut block_key = [0u8; SHA256_BLOCK_LEN];
+    if key.len() > SHA256_BLOCK_LEN {
+        let mut hasher = StreamingHasher::new();
+        hasher.update(key);
+        block_key[..32].copy_from_slice(&hasher.finish_digest());
+    } else {
+        block_key[..key.len()].copy_from_slice(key);
+    }
+    let mut inner_pad = [0x36u8; SHA256_BLOCK_LEN];
+    let mut outer_pad = [0x5cu8; SHA256_BLOCK_LEN];
+    for ((inner, outer), k) in inner_pad
+        .iter_mut()
+        .zip(outer_pad.iter_mut())
+        .zip(block_key)
+    {
+        *inner ^= k;
+        *outer ^= k;
+    }
+    let mut inner = StreamingHasher::new();
+    inner.update(&inner_pad);
+    inner.update(message);
+    let inner_digest = inner.finish_digest();
+    let mut outer = StreamingHasher::new();
+    outer.update(&outer_pad);
+    outer.update(&inner_digest);
+    outer.finish_digest()
+}
+
 /// streaming 읽기 결과.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StreamDigest {
@@ -297,6 +333,58 @@ mod tests {
         assert_eq!(digest.size, total);
         assert_eq!(reader.max_request, STREAM_BUFFER_SIZE, "buffer 크기 고정");
         assert_eq!(digest.hash, ContentHash::compute(&copied));
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    #[test]
+    fn hmac_matches_rfc_4231_vectors() {
+        let key4: Vec<u8> = (1u8..=25).collect();
+        let cases: [(&[u8], &[u8], &str); 6] = [
+            (
+                &[0x0b; 20],
+                b"Hi There",
+                "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+            ),
+            (
+                b"Jefe",
+                b"what do ya want for nothing?",
+                "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+            ),
+            (
+                &[0xaa; 20],
+                &[0xdd; 50],
+                "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe",
+            ),
+            (
+                &key4,
+                &[0xcd; 50],
+                "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b",
+            ),
+            // block보다 긴 key(131 bytes)는 먼저 hash합니다.
+            (
+                &[0xaa; 131],
+                b"Test Using Larger Than Block-Size Key - Hash Key First",
+                "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54",
+            ),
+            (
+                &[0xaa; 131],
+                b"This is a test using a larger than block-size key and a larger than \
+                  block-size data. The key needs to be hashed before being used by the \
+                  HMAC algorithm.",
+                "9b09ffa71b942fcb27635fbcd5b0e944bfdc63644f0713938a7f51535c3a35e2",
+            ),
+        ];
+        for (key, message, expected) in cases {
+            assert_eq!(hex(&hmac_sha256(key, message)), expected);
+        }
+        // 정확히 block 크기인 key와 빈 message(경계).
+        assert_eq!(
+            hex(&hmac_sha256(&[b'k'; 64], b"")),
+            "83026a325aaee70e36cfe607536aa1054104ad1077c36134810d4ccded1ccd3b"
+        );
     }
 
     #[test]

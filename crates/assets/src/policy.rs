@@ -326,7 +326,7 @@ impl AssetImportPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::test_support::{files_under, TempDir};
+    use crate::store::test_support::{files_under, test_store, TempDir};
     use crate::store::{AssetStore, ImportError};
     use crate::update_source::UpdateFromSourceOutcome;
     use stellar_storage::hash::ContentHash;
@@ -547,7 +547,7 @@ mod tests {
         let outside = dir.path.join("outside");
         std::fs::create_dir_all(project.join("images")).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
-        let store = AssetStore::new(&project);
+        let store = test_store(&project);
         Fixture {
             _dir: dir,
             project,
