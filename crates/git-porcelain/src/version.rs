@@ -2,9 +2,18 @@
 //!
 //! 발견한 Git executable을 `--version` argv로 실행(shell 미사용)해 semantic version을 파싱하고
 //! raw output을 보존합니다. **최소 버전은 강제하지 않습니다**(지원 버전 정책은 IV.3.5).
+//!
+//! 실행은 [`GitRunner`]를 거칩니다: 빈 환경 allowlist(`env_clear`), 제한 시간
+//! [`VERSION_PROBE_TIMEOUT`], 중립 디렉터리(시스템 임시 디렉터리)에서 저장소 탐색을 끈 채
+//! ([`GitRunner::isolated_from_repositories`]) 실행합니다.
 
 use std::path::Path;
-use std::process::Command;
+use std::time::Duration;
+
+use crate::runner::{argv, GitRunError, GitRunner};
+
+/// `git --version` probe 제한 시간.
+pub const VERSION_PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// 파싱한 Git semantic version과 raw output.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +48,8 @@ pub enum VersionProbeError {
         /// raw output(보존).
         raw: String,
     },
+    /// 실행 중단(제한 시간 초과·종료 대기 오류 등).
+    Interrupted(GitRunError),
 }
 
 impl std::fmt::Display for VersionProbeError {
@@ -53,6 +64,7 @@ impl std::fmt::Display for VersionProbeError {
             VersionProbeError::Unparseable { raw } => {
                 write!(f, "Git 버전 파싱 불가: {raw:?}")
             }
+            VersionProbeError::Interrupted(e) => write!(f, "Git --version 실행 중단: {e}"),
         }
     }
 }
@@ -75,14 +87,19 @@ pub fn parse_git_version_output(raw: &str) -> Option<(u32, u32, u32)> {
 
 /// Git executable을 `--version`으로 실행해 버전을 probe합니다.
 pub fn probe_git_version(git_path: &Path) -> Result<GitVersion, VersionProbeError> {
-    let output = Command::new(git_path)
-        .arg("--version")
-        .output()
-        .map_err(|e| VersionProbeError::SpawnFailed { kind: e.kind() })?;
+    let neutral = std::env::temp_dir();
+    let runner = GitRunner::new(git_path.to_path_buf(), Vec::new(), VERSION_PROBE_TIMEOUT)
+        .isolated_from_repositories(&neutral);
+    let output = runner
+        .run(&argv(["--version"]), &neutral)
+        .map_err(|e| match e {
+            GitRunError::Spawn { kind } => VersionProbeError::SpawnFailed { kind },
+            other => VersionProbeError::Interrupted(other),
+        })?;
 
-    if !output.status.success() {
+    if !output.success() {
         return Err(VersionProbeError::NonZeroExit {
-            code: output.status.code(),
+            code: output.exit_code,
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
     }

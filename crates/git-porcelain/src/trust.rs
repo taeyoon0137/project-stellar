@@ -6,8 +6,21 @@
 //! [`GatedRunError::ProjectNotTrusted`]로 거부합니다.
 //!
 //! 신뢰 상태의 원본은 project crate의 trust store(IV.5.2)입니다. git-porcelain은 project crate에
-//! 의존할 수 없으므로, 호출자가 그 상태를 [`GitTrust`]로 변환해 공급합니다. 저장소 단위 Git
-//! 연산(XIV.*)은 모두 [`GatedGitRunner`]를 받으므로 gate를 우회한 실행 경로가 없습니다.
+//! 의존할 수 없으므로, 호출자가 그 상태를 [`GitTrust`]로 변환해 공급합니다.
+//!
+//! 이 crate의 Git 실행 경로는 다음 세 가지뿐이며, 모두 [`GitRunner`](argv, 환경 allowlist,
+//! timeout, 취소)를 거칩니다.
+//!
+//! 1. **기존 저장소 연산**(위치 판별·status·snapshot·commit·remote 등 XIV.* 이후 연산): 공개 API가
+//!    [`GatedGitRunner`]만 받으므로 trust gate를 거치지 않고는 실행할 수 없습니다.
+//! 2. **bootstrap 연산**([`repo`](crate::repo)의 init·add·최초 commit·clone): [`GitExec`]를 받아
+//!    [`GatedGitRunner`]로도 호출할 수 있습니다. 다만 프로젝트 생성·clone 흐름(project crate)은
+//!    아직 신뢰 상태가 없는 단계라 [`GitRunner`]를 직접 넘깁니다. 대상은 Stellar가 방금 만든 빈
+//!    디렉터리이거나 새로 clone하는 경로이므로 저장소가 지정한 config·hooks가 아직 없습니다.
+//!    **즉 gate를 거치지 않는 경로가 존재하며**, 기존 저장소에 이 경로를 쓰면 안 됩니다.
+//! 3. **환경 probe**(버전·capability·LFS): 저장소 밖 중립 디렉터리에서
+//!    [`GitRunner::isolated_from_repositories`]로 저장소 탐색을 끈 채 실행하므로 gate 대상이
+//!    아닙니다.
 //!
 //! 신뢰 등록은 Git 전역 설정을 변경하지 않습니다(gate는 메모리 상태만 가집니다).
 
@@ -16,6 +29,67 @@ use std::path::Path;
 
 use crate::cancel::GitCancelToken;
 use crate::runner::{GitOutput, GitRunError, GitRunner};
+
+mod sealed {
+    /// [`super::GitExec`] 외부 구현 차단.
+    pub trait Sealed {}
+    impl Sealed for crate::runner::GitRunner {}
+    impl Sealed for super::GatedGitRunner {}
+}
+
+/// bootstrap 연산이 받는 Git 실행 경로([`GatedGitRunner`] 또는 [`GitRunner`]).
+///
+/// 외부에서 구현할 수 없습니다(sealed). [`GatedGitRunner`] 구현은 trust gate를 적용하고,
+/// [`GitRunner`] 구현은 gate 없이 실행합니다(모듈 문서의 bootstrap 경로).
+pub trait GitExec: sealed::Sealed {
+    /// argv·cwd로 Git을 실행합니다. `input`이 있으면 stdin으로 전달합니다.
+    fn exec(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: Option<&[u8]>,
+    ) -> Result<GitOutput, GatedRunError>;
+
+    /// 자식 Git 프로세스가 보게 될 환경 변수 값([`GitRunner::child_env_var`]).
+    fn child_env_var(&self, name: &str) -> Option<OsString>;
+}
+
+impl GitExec for GitRunner {
+    fn exec(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: Option<&[u8]>,
+    ) -> Result<GitOutput, GatedRunError> {
+        match input {
+            Some(bytes) => self.run_with_input(args, cwd, bytes),
+            None => self.run(args, cwd),
+        }
+        .map_err(GatedRunError::Run)
+    }
+
+    fn child_env_var(&self, name: &str) -> Option<OsString> {
+        GitRunner::child_env_var(self, name)
+    }
+}
+
+impl GitExec for GatedGitRunner {
+    fn exec(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: Option<&[u8]>,
+    ) -> Result<GitOutput, GatedRunError> {
+        match input {
+            Some(bytes) => self.run_with_input(args, cwd, bytes),
+            None => self.run(args, cwd),
+        }
+    }
+
+    fn child_env_var(&self, name: &str) -> Option<OsString> {
+        self.runner.child_env_var(name)
+    }
+}
 
 /// Git 실행 관점의 프로젝트 신뢰 상태(호출자가 project trust store에서 변환해 공급).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

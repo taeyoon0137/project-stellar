@@ -8,8 +8,10 @@
 //!   locale·버전마다 바뀌는 출력은 해석하지 않습니다.
 //! - LFS는 Git 버전과 무관한 별도 도구이므로 `git lfs version` 실행 결과로 판정합니다.
 //!
-//! probe는 저장소가 아닌 **중립 디렉터리**(시스템 임시 디렉터리)에서 실행합니다. 저장소 안에서
-//! 실행하면 LFS 미설치 시 저장소 config의 alias가 실행될 수 있기 때문입니다.
+//! probe는 **중립 디렉터리**(시스템 임시 디렉터리)에서 [`GitRunner::isolated_from_repositories`]로
+//! 저장소 탐색을 끈 채(`GIT_DIR`=null device, `GIT_CEILING_DIRECTORIES`) 실행합니다. 저장소 config를
+//! 읽으면 LFS 미설치 시 저장소 config의 alias가 실행될 수 있기 때문입니다. 임시 디렉터리가 우연히
+//! 저장소 안에 있어도 그 저장소를 발견하지 않습니다.
 
 use std::path::Path;
 
@@ -171,11 +173,12 @@ pub fn probe_git_capabilities(runner: &GitRunner) -> Result<GitCapabilities, Cap
     probe_git_capabilities_in(runner, &std::env::temp_dir())
 }
 
-/// 지정한 중립 디렉터리에서 capability를 probe합니다.
+/// 지정한 중립 디렉터리에서 저장소 탐색을 끈 채 capability를 probe합니다.
 fn probe_git_capabilities_in(
     runner: &GitRunner,
     neutral_cwd: &Path,
 ) -> Result<GitCapabilities, CapabilityProbeError> {
+    let runner = runner.isolated_from_repositories(neutral_cwd);
     let version_output = runner
         .run(&argv(["--version"]), neutral_cwd)
         .map_err(CapabilityProbeError::Run)?;
@@ -372,6 +375,58 @@ mod tests {
             let c = probe_git_capabilities(&runner).expect("probe");
             assert_eq!(c.supported(), &GitCapability::ALL);
             assert_eq!(c.version().raw, "git version 2.42.0.windows.2");
+        }
+
+        #[test]
+        fn probe_inside_repository_does_not_discover_it() {
+            let Some(git) = system_git() else {
+                return;
+            };
+            let dir = TempDir::new("cap-guard");
+            let empty = dir.path().join("empty-bin");
+            std::fs::create_dir_all(&empty).unwrap();
+            let repo = dir.path().join("repo");
+            std::fs::create_dir_all(repo.join("sub")).unwrap();
+            let marker = dir.path().join("PWNED_alias");
+            let runner = GitRunner::new(git, Vec::new(), Duration::from_secs(30))
+                .with_env_overrides(vec![
+                    (OsString::from("PATH"), empty.as_os_str().to_os_string()),
+                    (
+                        OsString::from("GIT_CONFIG_GLOBAL"),
+                        OsString::from("/dev/null"),
+                    ),
+                    (
+                        OsString::from("GIT_CONFIG_SYSTEM"),
+                        OsString::from("/dev/null"),
+                    ),
+                ]);
+            let alias = format!("!/usr/bin/touch '{}'", marker.display());
+            for args in [
+                vec!["init", "-q"],
+                vec!["config", "alias.lfs", alias.as_str()],
+            ] {
+                assert!(runner.run(&argv(args), &repo).unwrap().success());
+            }
+            let exec_path = runner.run(&argv(["--exec-path"]), dir.path()).unwrap();
+            let exec_dir = String::from_utf8_lossy(&exec_path.stdout)
+                .trim()
+                .to_string();
+            if Path::new(&exec_dir).join("git-lfs").exists() {
+                return; // exec-path의 git-lfs가 alias보다 먼저 쓰이는 배포판은 건너뜀.
+            }
+
+            // 대조군: guard 없이 저장소 하위에서 실행하면 저장소 alias가 실행됨.
+            runner
+                .run(&argv(["lfs", "version"]), &repo.join("sub"))
+                .unwrap();
+            assert!(marker.exists(), "대조군에서 alias가 실행되지 않음");
+            std::fs::remove_file(&marker).unwrap();
+
+            for cwd in [repo.clone(), repo.join("sub")] {
+                let caps = probe_git_capabilities_in(&runner, &cwd).expect("probe");
+                assert!(!caps.supports(GitCapability::Lfs));
+                assert!(!marker.exists(), "probe가 저장소 alias를 실행함: {cwd:?}");
+            }
         }
 
         #[test]

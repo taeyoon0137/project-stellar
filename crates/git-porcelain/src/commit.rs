@@ -8,61 +8,23 @@
 //! 않습니다(주석처럼 보이는 `#` 줄·공백 보존). hooks는 Git이 그대로 실행하며 우회하지 않습니다.
 //! 모든 실행은 trust gate(XIV.1.1)를 거칩니다.
 //!
-//! 커밋 전에 `user.name`/`user.email`(Git 유효 config)을 확인하고, 누락되면 `git commit`을
-//! 실행하지 않고 [`CommitError::MissingIdentity`]로 누락 항목을 구조화해 반환합니다(XIV.8.3).
+//! 커밋 전에 author·committer identity(Git과 같은 순서: 환경 변수 → `author.*`/`committer.*` →
+//! `user.*` → `EMAIL`)를 확인하고, 누락되면 `git commit`을 실행하지 않고
+//! [`CommitError::MissingIdentity`]로 누락 항목을 구조화해 반환합니다(XIV.8.3).
 //! Stellar는 global·local Git config를 **자동으로 수정하지 않습니다**. 설정은 UI 안내에 따라
 //! 사용자가 직접 합니다.
 
 use std::path::Path;
 
 use crate::command::{GitCommandFailure, GitCommandResult};
+use crate::identity::{resolve_commit_identity, IdentityReadError};
 use crate::runner::argv;
 use crate::trust::{GatedGitRunner, GatedRunError};
 
 /// commit message 전달 argv(message 자체는 포함하지 않음).
 pub const COMMIT_FROM_STDIN_ARGS: [&str; 3] = ["commit", "--file=-", "--cleanup=verbatim"];
 
-/// commit identity config key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IdentityKey {
-    /// `user.name`.
-    UserName,
-    /// `user.email`.
-    UserEmail,
-}
-
-impl IdentityKey {
-    /// Git config key 문자열.
-    pub fn config_key(self) -> &'static str {
-        match self {
-            IdentityKey::UserName => "user.name",
-            IdentityKey::UserEmail => "user.email",
-        }
-    }
-}
-
-/// 누락된 commit identity(UI 안내용 구조). 최소 한 항목은 누락입니다.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MissingIdentity {
-    /// `user.name` 누락.
-    pub name_missing: bool,
-    /// `user.email` 누락.
-    pub email_missing: bool,
-}
-
-impl MissingIdentity {
-    /// 누락된 key 목록(`user.name` → `user.email` 순서).
-    pub fn missing_keys(&self) -> Vec<IdentityKey> {
-        let mut keys = Vec::new();
-        if self.name_missing {
-            keys.push(IdentityKey::UserName);
-        }
-        if self.email_missing {
-            keys.push(IdentityKey::UserEmail);
-        }
-        keys
-    }
-}
+pub use crate::identity::{IdentityKey, MissingIdentity};
 
 /// 커밋 실패.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,46 +86,19 @@ pub fn commit_with_message(
     Ok(())
 }
 
-/// 커밋 전에 `user.name`/`user.email`이 Git 유효 config에 있는지 확인합니다(읽기 전용).
+/// 커밋 전에 author·committer identity가 명시적으로 설정되어 있는지 확인합니다(읽기 전용).
 ///
-/// 둘 다 있으면 `None`, 하나라도 없으면 누락 항목을 반환합니다. config를 쓰지 않습니다.
+/// 해석 순서는 Git과 같습니다(`GIT_AUTHOR_*`/`GIT_COMMITTER_*` 환경 → `author.*`/`committer.*` →
+/// `user.*` → `EMAIL`, [`crate::identity`] 참고). 모두 있으면 `None`, 하나라도 없으면 누락 항목을
+/// 반환합니다. config를 쓰지 않습니다.
 pub fn check_commit_identity(
     git: &GatedGitRunner,
     worktree: &Path,
 ) -> Result<Option<MissingIdentity>, CommitError> {
-    let name_missing = !identity_value_present(git, worktree, IdentityKey::UserName)?;
-    let email_missing = !identity_value_present(git, worktree, IdentityKey::UserEmail)?;
-    if name_missing || email_missing {
-        Ok(Some(MissingIdentity {
-            name_missing,
-            email_missing,
-        }))
-    } else {
-        Ok(None)
-    }
-}
-
-/// `git config --get <key>`가 비어 있지 않은 값을 주는지 확인합니다.
-///
-/// 종료 코드 1은 key 없음(누락)입니다. 그 밖의 비영 종료(손상된 config 등)는 누락으로 숨기지 않고
-/// [`CommitError::Git`]으로 반환합니다.
-fn identity_value_present(
-    git: &GatedGitRunner,
-    worktree: &Path,
-    key: IdentityKey,
-) -> Result<bool, CommitError> {
-    let output = git
-        .run(&argv(["config", "--get", key.config_key()]), worktree)
-        .map_err(CommitError::Gate)?;
-    match output.exit_code {
-        Some(0) => Ok(!String::from_utf8_lossy(&output.stdout).trim().is_empty()),
-        Some(1) => Ok(false),
-        _ => Err(CommitError::Git(GitCommandFailure {
-            exit_code: output.exit_code,
-            stdout: output.stdout,
-            stderr: output.stderr,
-        })),
-    }
+    resolve_commit_identity(git, worktree).map_err(|e| match e {
+        IdentityReadError::Gate(gate) => CommitError::Gate(gate),
+        IdentityReadError::Git(failure) => CommitError::Git(failure),
+    })
 }
 
 #[cfg(test)]
@@ -461,6 +396,110 @@ mod tests {
                 }
                 other => panic!("예상과 다른 결과: {other:?}"),
             }
+        }
+
+        fn log_format(gate: &GatedGitRunner, repo: &Path, format: &str) -> String {
+            let arg = format!("--format={format}");
+            let out = git_ok(gate.runner().unwrap(), repo, ["log", "-1", arg.as_str()]);
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+
+        #[test]
+        fn author_and_committer_config_resolve_identity_like_git() {
+            // user.* 없이 author.*/committer.*만 있어도 Git은 커밋합니다 → 누락으로 보지 않음.
+            let Some(git) = system_git() else {
+                return;
+            };
+            let dir = TempDir::new("commit-rolecfg");
+            let repo = dir.path().join("repo");
+            std::fs::create_dir_all(&repo).unwrap();
+            let global = dir.path().join("global.gitconfig");
+            std::fs::write(
+                &global,
+                b"[author]\n\tname = Author Cfg\n\temail = author@example.com\n\
+                  [committer]\n\tname = Committer Cfg\n\temail = committer@example.com\n",
+            )
+            .unwrap();
+            let runner = runner_with_global(git, &global);
+            repo_without_identity(&runner, &repo);
+            let gate = GatedGitRunner::new(runner, GitTrust::Trusted);
+
+            assert_eq!(check_commit_identity(&gate, &repo), Ok(None));
+            commit_with_message(&gate, &repo, "role config\n").expect("commit");
+            assert_eq!(
+                log_format(&gate, &repo, "%an <%ae>|%cn <%ce>"),
+                "Author Cfg <author@example.com>|Committer Cfg <committer@example.com>"
+            );
+        }
+
+        #[test]
+        fn author_only_config_reports_missing_committer_identity() {
+            // committer가 해석되지 않으면 Git도 커밋하지 않으므로 누락으로 보고하고 commit은 미실행.
+            let Some(git) = system_git() else {
+                return;
+            };
+            let dir = TempDir::new("commit-authoronly");
+            let repo = dir.path().join("repo");
+            std::fs::create_dir_all(&repo).unwrap();
+            let global = dir.path().join("global.gitconfig");
+            std::fs::write(
+                &global,
+                b"[author]\n\tname = Author Cfg\n\temail = author@example.com\n",
+            )
+            .unwrap();
+            let setup = runner_with_global(git.clone(), &global);
+            repo_without_identity(&setup, &repo);
+            let runner = runner_with_global(git, &global);
+            let gate = GatedGitRunner::new(runner.clone(), GitTrust::Trusted);
+            let missing = MissingIdentity {
+                name_missing: true,
+                email_missing: true,
+            };
+            assert_eq!(
+                commit_with_message(&gate, &repo, "x\n"),
+                Err(CommitError::MissingIdentity(missing))
+            );
+            assert_eq!(runner.spawn_count(), 2, "git commit이 실행됨");
+        }
+
+        #[test]
+        fn identity_env_seen_by_child_counts_and_hidden_env_does_not() {
+            let Some(git) = system_git() else {
+                return;
+            };
+            let dir = TempDir::new("commit-envident");
+            let repo = dir.path().join("repo");
+            std::fs::create_dir_all(&repo).unwrap();
+            let global = dir.path().join("global.gitconfig");
+            std::fs::write(&global, b"").unwrap();
+            let base = runner_with_global(git, &global);
+            repo_without_identity(&base, &repo);
+
+            // allowlist·override에 없는 환경 변수는 자식이 보지 못하므로 identity가 아님.
+            let gate = GatedGitRunner::new(base.clone(), GitTrust::Trusted);
+            assert_eq!(
+                check_commit_identity(&gate, &repo),
+                Ok(Some(MissingIdentity {
+                    name_missing: true,
+                    email_missing: true,
+                }))
+            );
+
+            // 자식에 전달되는 GIT_AUTHOR_*/GIT_COMMITTER_*는 Git처럼 identity로 인정.
+            let env = |k: &str, v: &str| (std::ffi::OsString::from(k), std::ffi::OsString::from(v));
+            let with_env = base.with_added_env(vec![
+                env("GIT_AUTHOR_NAME", "Env Author"),
+                env("GIT_AUTHOR_EMAIL", "env-author@example.com"),
+                env("GIT_COMMITTER_NAME", "Env Committer"),
+                env("GIT_COMMITTER_EMAIL", "env-committer@example.com"),
+            ]);
+            let gate = GatedGitRunner::new(with_env, GitTrust::Trusted);
+            assert_eq!(check_commit_identity(&gate, &repo), Ok(None));
+            commit_with_message(&gate, &repo, "env identity\n").expect("commit");
+            assert_eq!(
+                log_format(&gate, &repo, "%an <%ae>|%cn <%ce>"),
+                "Env Author <env-author@example.com>|Env Committer <env-committer@example.com>"
+            );
         }
     }
 

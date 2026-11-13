@@ -9,8 +9,11 @@
 //! 플랫폼별 tree 종료:
 //! - **unix**: Git을 새 process group의 leader로 시작하고(`process_group(0)`), 종료 시 group 전체에
 //!   먼저 `SIGTERM`을 보내 Git이 lock 파일(`index.lock` 등)을 정리할 기회를 준 뒤, 유예 시간이
-//!   지나면 group 전체에 `SIGKILL`을 보냅니다. 유예 시간 안에 Git이 끝나도 group에 남은 자식을
-//!   정리하기 위해 `SIGKILL`은 항상 보냅니다.
+//!   지나도 Git이 끝나지 않으면 group 전체에 `SIGKILL`을 보냅니다. group 신호는 **leader(Git)를
+//!   아직 회수(wait)하지 않은 동안에만** 보냅니다. 회수 전에는 leader의 pid가 예약되어 있어
+//!   pgid가 다른 process group에 재사용될 수 없지만, 회수 뒤에는 재사용된 무관한 group에 신호가
+//!   갈 수 있기 때문입니다. 그래서 유예 시간 안에 Git이 끝나 회수되면 group에 더 이상 신호를 보내지
+//!   않습니다(`SIGTERM`을 무시하고 Git보다 오래 사는 자손은 이 경우 강제 종료되지 않습니다).
 //! - **Windows**: `taskkill /PID <pid> /T /F`(argv, shell 없음)로 자식 tree까지 강제 종료합니다.
 //! - 그 밖의 플랫폼: 직접 자식만 종료합니다.
 
@@ -75,23 +78,53 @@ mod platform {
         let _ = unsafe { kill(-pgid, signal) };
     }
 
+    /// leader 회수 상태. group 신호는 [`LeaderState::Unreaped`]일 때만 보냅니다.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum LeaderState {
+        /// 아직 회수하지 않음(실행 중이거나 zombie): pgid가 예약되어 있어 group 신호가 안전함.
+        Unreaped,
+        /// 회수함: pgid가 재사용될 수 있으므로 group 신호 금지.
+        Reaped,
+        /// 상태 조회 실패: 회수 여부를 알 수 없으므로 group 신호 금지.
+        Unknown,
+    }
+
+    /// 회수하지 않은 leader의 group에만 신호를 보냅니다.
+    fn signal_group_if_unreaped(state: LeaderState, pgid: i32, signal: i32) -> bool {
+        if state != LeaderState::Unreaped {
+            return false;
+        }
+        signal_group(pgid, signal);
+        true
+    }
+
+    /// `try_wait`로 leader 상태를 봅니다(종료했으면 이때 회수됩니다).
+    fn poll_leader(child: &mut Child) -> LeaderState {
+        match child.try_wait() {
+            Ok(None) => LeaderState::Unreaped,
+            Ok(Some(_)) => LeaderState::Reaped,
+            Err(_) => LeaderState::Unknown,
+        }
+    }
+
     pub(super) fn terminate_process_tree(child: &mut Child) {
         // 자식은 process_group(0)으로 시작했으므로 pgid == 자식 pid.
         let pgid = i32::try_from(child.id()).unwrap_or(0);
-        signal_group(pgid, SIGTERM);
+        // 호출 시점의 leader는 아직 회수 전입니다(호출자가 방금 `try_wait`에서 None을 봄).
+        let mut state = poll_leader(child);
+        signal_group_if_unreaped(state, pgid, SIGTERM);
         let grace_deadline = Instant::now() + TERMINATE_GRACE;
-        loop {
-            match child.try_wait() {
-                Ok(None) if Instant::now() < grace_deadline => {
-                    thread::sleep(Duration::from_millis(5));
-                }
-                _ => break,
-            }
+        while state == LeaderState::Unreaped && Instant::now() < grace_deadline {
+            thread::sleep(Duration::from_millis(5));
+            state = poll_leader(child);
         }
-        // group에 남은 프로세스(Git이 끝난 뒤의 손자 포함)를 강제 종료.
-        signal_group(pgid, SIGKILL);
-        let _ = child.kill();
-        let _ = child.wait();
+        // 유예 시간이 지나도 leader가 살아 있으면(회수 전) group 전체를 강제 종료.
+        if signal_group_if_unreaped(state, pgid, SIGKILL) {
+            let _ = child.kill();
+        }
+        if state != LeaderState::Reaped {
+            let _ = child.wait();
+        }
     }
 
     /// 테스트용: pid가 아직 존재하는지(`kill(pid, 0)`).
@@ -102,6 +135,39 @@ mod platform {
         }
         // SAFETY: 신호 0은 존재·권한 검사만 하고 아무 신호도 보내지 않습니다.
         unsafe { kill(pid, 0) == 0 }
+    }
+
+    #[cfg(test)]
+    mod leader_state_tests {
+        use super::*;
+
+        #[test]
+        fn group_signal_only_while_unreaped() {
+            // pgid 0은 signal_group이 보내지 않으므로 판정 로직만 검사합니다.
+            assert!(signal_group_if_unreaped(LeaderState::Unreaped, 0, SIGTERM));
+            assert!(!signal_group_if_unreaped(LeaderState::Reaped, 0, SIGKILL));
+            assert!(!signal_group_if_unreaped(LeaderState::Unknown, 0, SIGKILL));
+        }
+
+        #[test]
+        fn reaped_leader_group_is_not_signalled_again() {
+            // 이미 끝나 회수된 자식에 대해 호출해도 group 신호 없이 반환합니다.
+            use std::os::unix::process::CommandExt;
+            let mut child = std::process::Command::new("/usr/bin/true")
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            let pgid = i32::try_from(child.id()).unwrap();
+            let _ = child.wait();
+            assert_eq!(poll_leader(&mut child), LeaderState::Reaped);
+            // 회수 뒤에는 같은 pgid로 신호를 보내지 않음(재사용 group 오발송 방지).
+            assert!(!signal_group_if_unreaped(
+                poll_leader(&mut child),
+                pgid,
+                SIGKILL
+            ));
+            terminate_process_tree(&mut child);
+        }
     }
 }
 

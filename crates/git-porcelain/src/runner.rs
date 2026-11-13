@@ -118,6 +118,50 @@ impl GitRunner {
         self
     }
 
+    /// 기존 override를 유지한 채 override를 **덧붙입니다**(같은 이름이면 나중 값이 이깁니다).
+    pub fn with_added_env(mut self, extra: Vec<(OsString, OsString)>) -> GitRunner {
+        self.env_overrides.extend(extra);
+        self
+    }
+
+    /// 자식 프로세스가 실제로 보게 될 환경 변수 값입니다(override 우선, 그다음 allowlist에 있는
+    /// 현재 프로세스 값). allowlist에도 override에도 없으면 자식은 그 변수를 보지 못하므로 `None`.
+    pub fn child_env_var(&self, name: &str) -> Option<OsString> {
+        if let Some((_, value)) = self
+            .env_overrides
+            .iter()
+            .rev()
+            .find(|(key, _)| key.as_os_str() == OsStr::new(name))
+        {
+            return Some(value.clone());
+        }
+        if self
+            .env_allowlist
+            .iter()
+            .any(|key| key.as_os_str() == OsStr::new(name))
+        {
+            return std::env::var_os(name);
+        }
+        None
+    }
+
+    /// 저장소를 **발견하지 않도록** 고정한 사본을 만듭니다(spawn 계측 카운터 공유).
+    ///
+    /// 중립 디렉터리에서 실행하는 환경 probe(버전·capability·LFS)용입니다. `GIT_DIR`을 저장소가
+    /// 될 수 없는 null device로 지정해 Git의 상위 디렉터리 탐색 자체를 끄고, 그 위에
+    /// `GIT_CEILING_DIRECTORIES`를 `neutral_cwd`로 지정해 상위 탐색 경계를 한 번 더 둡니다. 그래서
+    /// 임시 디렉터리가 우연히 저장소 안에 있어도 그 저장소의 config(alias·fsmonitor 등)를 읽지
+    /// 않습니다.
+    pub fn isolated_from_repositories(&self, neutral_cwd: &Path) -> GitRunner {
+        self.clone().with_added_env(vec![
+            (OsString::from("GIT_DIR"), OsString::from(NULL_DEVICE)),
+            (
+                OsString::from("GIT_CEILING_DIRECTORIES"),
+                neutral_cwd.as_os_str().to_os_string(),
+            ),
+        ])
+    }
+
     /// 주어진 argv와 cwd로 Git을 실행합니다(shell 미사용). stdout/stderr를 캡처합니다.
     pub fn run(&self, args: &[OsString], cwd: &Path) -> Result<GitOutput, GitRunError> {
         self.run_inner(args, cwd, None, None)
@@ -254,6 +298,14 @@ impl GitRunner {
         })
     }
 }
+
+/// 저장소가 될 수 없는 null device 경로(저장소 탐색 차단용 `GIT_DIR` 값).
+#[cfg(unix)]
+pub const NULL_DEVICE: &str = "/dev/null";
+
+/// 저장소가 될 수 없는 null device 경로(저장소 탐색 차단용 `GIT_DIR` 값).
+#[cfg(not(unix))]
+pub const NULL_DEVICE: &str = "NUL";
 
 /// `&[&str]`을 argv(`Vec<OsString>`)로 만드는 헬퍼.
 pub fn argv<I, S>(args: I) -> Vec<OsString>
@@ -427,6 +479,72 @@ mod tests {
         assert!(out.success());
         assert_eq!(out.stdout, input);
         assert!(!dir.path.join("PWNED").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn added_env_keeps_overrides_and_child_env_var_matches_child() {
+        let dir = TempDir::new();
+        let pid = std::process::id();
+        let allowed = format!("STELLAR_CHILD_ENV_ALLOWED_{pid}");
+        let hidden = format!("STELLAR_CHILD_ENV_HIDDEN_{pid}");
+        std::env::set_var(&allowed, "from-process");
+        std::env::set_var(&hidden, "not-passed");
+        let runner = GitRunner::new(
+            PathBuf::from("/usr/bin/env"),
+            vec![OsString::from(&allowed)],
+            Duration::from_millis(5_000),
+        )
+        .with_env_overrides(vec![
+            (OsString::from("STELLAR_A"), OsString::from("1")),
+            (OsString::from("STELLAR_KEEP"), OsString::from("kept")),
+        ])
+        .with_added_env(vec![(OsString::from("STELLAR_A"), OsString::from("2"))]);
+
+        assert_eq!(
+            runner.child_env_var(&allowed),
+            Some(OsString::from("from-process"))
+        );
+        assert_eq!(runner.child_env_var(&hidden), None);
+        assert_eq!(runner.child_env_var("STELLAR_A"), Some(OsString::from("2")));
+        assert_eq!(
+            runner.child_env_var("STELLAR_KEEP"),
+            Some(OsString::from("kept"))
+        );
+
+        // 실제 자식 환경도 같은 값을 봅니다.
+        let out = runner.run(&[], &dir.path).unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            stdout.contains(&format!("{allowed}=from-process")),
+            "{stdout}"
+        );
+        assert!(stdout.contains("STELLAR_A=2\n"), "{stdout}");
+        assert!(!stdout.contains("STELLAR_A=1\n"), "{stdout}");
+        assert!(stdout.contains("STELLAR_KEEP=kept"), "{stdout}");
+        assert!(!stdout.contains("not-passed"), "{stdout}");
+        std::env::remove_var(&allowed);
+        std::env::remove_var(&hidden);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn isolated_runner_sets_discovery_guards_and_shares_counter() {
+        let dir = TempDir::new();
+        let runner = runner_for("/usr/bin/env", 5_000);
+        let isolated = runner.isolated_from_repositories(&dir.path);
+        assert_eq!(
+            isolated.child_env_var("GIT_DIR"),
+            Some(OsString::from(NULL_DEVICE))
+        );
+        assert_eq!(
+            isolated.child_env_var("GIT_CEILING_DIRECTORIES"),
+            Some(dir.path.as_os_str().to_os_string())
+        );
+        // 원본은 바뀌지 않음.
+        assert_eq!(runner.child_env_var("GIT_DIR"), None);
+        isolated.run(&[], &dir.path).unwrap();
+        assert_eq!(runner.spawn_count(), 1);
     }
 
     #[test]

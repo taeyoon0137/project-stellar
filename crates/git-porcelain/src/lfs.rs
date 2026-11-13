@@ -102,9 +102,11 @@ pub fn probe_lfs(runner: &GitRunner) -> Result<LfsInstallation, GitRunError> {
     probe_lfs_in(runner, &std::env::temp_dir())
 }
 
-/// 지정한 중립 디렉터리에서 `git lfs version`을 실행합니다.
+/// 지정한 중립 디렉터리에서 저장소 탐색을 끈 채 `git lfs version`을 실행합니다.
 fn probe_lfs_in(runner: &GitRunner, neutral_cwd: &Path) -> Result<LfsInstallation, GitRunError> {
-    let output = runner.run(&argv(["lfs", "version"]), neutral_cwd)?;
+    let output = runner
+        .isolated_from_repositories(neutral_cwd)
+        .run(&argv(["lfs", "version"]), neutral_cwd)?;
     Ok(classify_lfs_output(&output))
 }
 
@@ -315,6 +317,52 @@ mod tests {
                     stderr: b"git: 'lfs' is not a git command. See 'git --help'.\n".to_vec(),
                 }
             );
+        }
+
+        /// `alias.lfs`가 실행되면 marker를 만드는 저장소(`repo/sub` 하위 디렉터리 포함).
+        fn repo_with_lfs_alias(git: &Path, dir: &Path, marker: &Path) -> PathBuf {
+            let repo = dir.join("repo");
+            std::fs::create_dir_all(repo.join("sub")).unwrap();
+            let setup = git_with_path(git.to_path_buf(), dir);
+            let alias = format!("!/usr/bin/touch '{}'", marker.display());
+            for args in [
+                vec!["init", "-q"],
+                vec!["config", "alias.lfs", alias.as_str()],
+            ] {
+                assert!(setup.run(&argv(args), &repo).unwrap().success());
+            }
+            repo
+        }
+
+        #[test]
+        fn probe_inside_repository_does_not_discover_it() {
+            let Some(git) = system_git() else {
+                return;
+            };
+            if exec_path_has_lfs(&git) {
+                return; // exec-path의 git-lfs가 alias보다 먼저 쓰이는 배포판은 건너뜀.
+            }
+            let dir = TempDir::new("lfs-guard");
+            let empty = dir.path().join("empty-bin");
+            std::fs::create_dir_all(&empty).unwrap();
+            let marker = dir.path().join("PWNED_alias");
+            let repo = repo_with_lfs_alias(&git, dir.path(), &marker);
+            let runner = git_with_path(git, &empty);
+
+            // 대조군: guard 없이 저장소 안에서 실행하면 저장소 alias가 실행됨(fixture가 실제로 악성).
+            runner.run(&argv(["lfs", "version"]), &repo).unwrap();
+            assert!(marker.exists(), "대조군에서 alias가 실행되지 않음");
+            std::fs::remove_file(&marker).unwrap();
+
+            // 중립 cwd가 저장소 root이거나 그 하위여도 probe는 저장소를 발견하지 않음.
+            for cwd in [repo.clone(), repo.join("sub")] {
+                let state = probe_lfs_in(&runner, &cwd).expect("probe");
+                assert!(
+                    matches!(state, LfsInstallation::NotInstalled { .. }),
+                    "{state:?}"
+                );
+                assert!(!marker.exists(), "probe가 저장소 alias를 실행함: {cwd:?}");
+            }
         }
 
         #[test]

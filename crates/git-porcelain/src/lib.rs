@@ -47,6 +47,9 @@ pub mod capability;
 /// 커밋 실행 (XIV.8.2~).
 pub mod commit;
 
+/// commit identity 해석(IV.4.5·XIV.8.3 공통).
+pub mod identity;
+
 /// Git LFS 설치 감지 (XIII.7.1).
 pub mod lfs;
 
