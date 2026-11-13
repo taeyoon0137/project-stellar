@@ -5,14 +5,18 @@
 //! reload → …" 고리가 생깁니다. 이를 막기 위해:
 //!
 //! - [`OwnSaveLedger`]: 이 session이 pointer 전환까지 성공한 저장의 (generation, manifest hash)를
-//!   최근 [`OWN_SAVE_HISTORY`]개 기록합니다.
+//!   최근 [`OWN_SAVE_HISTORY`]개 기록합니다. 가장 최근 기록([`OwnSaveLedger::latest`])이 창의
+//!   현재 saved generation입니다.
 //! - [`CurrentPointerTracker`]: 감시 event가 current pointer를 바꿨을 수 있으면
 //!   ([`may_change_current_pointer`]) 디스크의 pointer를 다시 읽어 마지막으로 본 값과 비교하고,
-//!   새 hash가 ledger에 있으면 [`PointerObservation::OwnSave`], 없으면
+//!   새 hash가 **가장 최근 자기 저장**이면 [`PointerObservation::OwnSave`], 아니면
 //!   [`PointerObservation::External`]로 판정합니다.
 //!
 //! 판정은 파일 이름·시각이 아니라 content-addressed manifest hash(ADR-0004)로 하므로, 다른 프로세스가
-//! 같은 hash의 manifest를 만들었다면 내용이 같아 다시 읽을 필요도 없습니다.
+//! 창의 현재 saved generation과 같은 hash의 manifest를 만들었다면 내용이 같아 다시 읽을 필요도
+//! 없습니다. 반대로 외부 도구(git checkout·reset·stash 등)가 pointer를 이 session이 **예전에**
+//! 저장한 generation으로 되돌리면, 디스크는 창의 현재 saved generation과 다르므로 외부 변경입니다
+//! (예전 자기 저장 기록은 자기 저장 판정에 쓰지 않음).
 
 use std::collections::VecDeque;
 use std::io;
@@ -50,33 +54,54 @@ impl OwnSaveLedger {
         OwnSaveLedger::default()
     }
 
-    /// pointer 전환에 성공한 저장을 기록합니다. 오래된 기록부터 버립니다.
+    /// pointer 전환에 성공한 저장을 기록합니다. 이 기록이 가장 최근 자기 저장이 되며, 오래된
+    /// 기록부터 버립니다.
+    ///
+    /// 같은 manifest hash가 이미 있으면 그 기록을 가장 최근으로 옮깁니다(같은 hash로 다시 전환한
+    /// 저장도 현재 saved generation입니다). 처음 기록한 generation 번호는 유지합니다.
     pub fn record(&mut self, generation: u64, manifest_hash: ContentHash) {
-        if self.find(&manifest_hash).is_some() {
-            return;
-        }
+        let save = match self
+            .recent
+            .iter()
+            .position(|save| save.manifest_hash == manifest_hash)
+            .and_then(|index| self.recent.remove(index))
+        {
+            Some(existing) => existing,
+            None => OwnSave {
+                generation,
+                manifest_hash,
+            },
+        };
         if self.recent.len() == OWN_SAVE_HISTORY {
             self.recent.pop_front();
         }
-        self.recent.push_back(OwnSave {
-            generation,
-            manifest_hash,
-        });
+        self.recent.push_back(save);
     }
 
     /// 저장 commit(V.5.4) 뒤의 in-memory saved generation을 기록합니다.
+    ///
+    /// 창의 in-memory saved generation이 바뀔 때마다(자기 저장 commit, 외부 generation reload 반영)
+    /// 호출해 [`OwnSaveLedger::latest`]가 창의 현재 saved generation을 가리키게 합니다.
     pub fn record_saved(&mut self, state: &SavedGenerationState) {
         if let Some((generation, hash)) = state.saved() {
             self.record(generation, hash);
         }
     }
 
-    /// manifest hash가 자기 저장인지 찾습니다.
+    /// manifest hash가 최근 기록(가장 최근이 아니어도) 중 자기 저장인지 찾습니다.
+    ///
+    /// pointer 판정에는 쓰지 않습니다. 예전 자기 저장으로 되돌아간 pointer는 외부 변경이기 때문입니다
+    /// ([`OwnSaveLedger::latest`] 참고).
     pub fn find(&self, manifest_hash: &ContentHash) -> Option<OwnSave> {
         self.recent
             .iter()
             .find(|save| save.manifest_hash == *manifest_hash)
             .copied()
+    }
+
+    /// 가장 최근 자기 저장(창의 현재 saved generation). 기록이 없으면 `None`.
+    pub fn latest(&self) -> Option<OwnSave> {
+        self.recent.back().copied()
     }
 
     /// 기록 수.
@@ -95,9 +120,10 @@ impl OwnSaveLedger {
 pub enum PointerObservation {
     /// 마지막으로 본 값과 같음(다시 읽을 필요 없음).
     Unchanged,
-    /// 이 session의 저장이 만든 값.
+    /// 이 session의 가장 최근 저장이 만든 값.
     OwnSave(OwnSave),
-    /// 다른 writer(외부 에디터·Git·다른 창 등)가 만든 새 값.
+    /// 다른 writer(외부 에디터·Git·다른 창 등)가 만든 새 값. 이 session이 예전에 저장한
+    /// generation으로 되돌아간 값도 포함합니다.
     External {
         /// 새 manifest hash.
         manifest_hash: ContentHash,
@@ -138,14 +164,18 @@ impl CurrentPointerTracker {
     }
 
     /// 디스크의 pointer를 다시 읽어 판정합니다. 새 값이면 마지막 관찰 값을 갱신합니다.
+    ///
+    /// 새 값이 ledger의 **가장 최근** 자기 저장일 때만 [`PointerObservation::OwnSave`]입니다. 예전
+    /// 자기 저장 hash로 되돌아간 값은 창이 보여 주는 generation과 다르므로
+    /// [`PointerObservation::External`]입니다.
     pub fn observe(&mut self, ledger: &OwnSaveLedger) -> PointerObservation {
         match read_current_pointer(&self.root) {
             Ok(hash) if self.last_seen == Some(hash) => PointerObservation::Unchanged,
             Ok(hash) => {
                 self.last_seen = Some(hash);
-                match ledger.find(&hash) {
-                    Some(save) => PointerObservation::OwnSave(save),
-                    None => PointerObservation::External {
+                match ledger.latest() {
+                    Some(save) if save.manifest_hash == hash => PointerObservation::OwnSave(save),
+                    _ => PointerObservation::External {
                         manifest_hash: hash,
                     },
                 }
@@ -253,10 +283,22 @@ pub(crate) mod tests {
         for (i, hash) in hashes.iter().enumerate() {
             ledger.record(i as u64 + 1, *hash);
         }
-        ledger.record(999, hashes[5]); // 중복 기록은 무시
+        assert_eq!(
+            ledger.latest().map(|s| s.manifest_hash),
+            Some(hashes[OWN_SAVE_HISTORY])
+        );
+        // 중복 기록은 새 항목을 만들지 않고 가장 최근으로 옮김(처음 generation 유지).
+        ledger.record(999, hashes[5]);
         assert_eq!(ledger.len(), OWN_SAVE_HISTORY);
         assert_eq!(ledger.find(&hashes[0]), None, "가장 오래된 기록 제거");
         assert_eq!(ledger.find(&hashes[5]).map(|s| s.generation), Some(6));
+        assert_eq!(
+            ledger.latest(),
+            Some(OwnSave {
+                generation: 6,
+                manifest_hash: hashes[5]
+            })
+        );
         let mut state = SavedGenerationState::new(Some((70, hashes[0])));
         ledger.record_saved(&state);
         assert!(ledger.find(&hashes[0]).is_some());
@@ -304,6 +346,50 @@ pub(crate) mod tests {
         ));
         std::fs::remove_file(&pointer).unwrap();
         assert_eq!(tracker.observe(&ledger), PointerObservation::Missing);
+    }
+
+    #[test]
+    fn pointer_reverted_to_an_older_own_save_is_external() {
+        use stellar_storage::generation::current::write_current_pointer;
+        // 회귀(검토 지적): 외부 도구(git checkout·reset·stash)가 pointer를 이 session이 예전에
+        // 저장한 generation으로 되돌리면 창(B)과 디스크(A)가 달라지므로 외부 변경이어야 합니다.
+        let dir = TempDir::new();
+        let mut memory = SavedGenerationState::new(None);
+        let mut ledger = OwnSaveLedger::new();
+        let a = save_generation(&dir.path, None, b"A", &mut memory);
+        ledger.record_saved(&memory);
+        let b = save_generation(&dir.path, Some(&a), b"B", &mut memory);
+        ledger.record_saved(&memory);
+        let mut tracker = CurrentPointerTracker::new(&dir.path, Some(b.manifest_hash));
+
+        write_current_pointer(&dir.path, &a.manifest_hash).unwrap();
+        assert_eq!(
+            tracker.observe(&ledger),
+            PointerObservation::External {
+                manifest_hash: a.manifest_hash
+            }
+        );
+        // 예전 자기 저장 기록 자체는 남아 있음(판정에만 쓰지 않음).
+        assert!(ledger.find(&a.manifest_hash).is_some());
+
+        // 창이 A를 reload해 saved generation으로 반영한 뒤 pointer가 B로 돌아가면 그것도 외부 변경.
+        let adopted = SavedGenerationState::new(Some((a.manifest.generation, a.manifest_hash)));
+        ledger.record_saved(&adopted);
+        write_current_pointer(&dir.path, &b.manifest_hash).unwrap();
+        assert_eq!(
+            tracker.observe(&ledger),
+            PointerObservation::External {
+                manifest_hash: b.manifest_hash
+            }
+        );
+
+        // 창의 현재 saved generation과 같은 값은 자기 저장.
+        let c = save_generation(&dir.path, Some(&b), b"C", &mut memory);
+        ledger.record_saved(&memory);
+        assert!(matches!(
+            tracker.observe(&ledger),
+            PointerObservation::OwnSave(save) if save.manifest_hash == c.manifest_hash
+        ));
     }
 
     #[test]

@@ -335,6 +335,33 @@ mod tests {
     }
 
     #[test]
+    fn pointer_reverted_to_an_older_own_save_is_an_external_generation() {
+        use stellar_storage::generation::current::write_current_pointer;
+        let dir = TempDir::new();
+        let mut memory = SavedGenerationState::new(None);
+        let mut ledger = OwnSaveLedger::new();
+        let a = save_generation(&dir.path, None, b"A", &mut memory);
+        ledger.record_saved(&memory);
+        let b = save_generation(&dir.path, Some(&a), b"B", &mut memory);
+        ledger.record_saved(&memory);
+        let mut coalescer = ChangeCoalescer::new(&dir.path, PROJECT, Some(b.manifest_hash), WINDOW);
+
+        // git checkout·reset이 pointer를 이 session의 예전 저장(A)으로 되돌림.
+        write_current_pointer(&dir.path, &a.manifest_hash).unwrap();
+        coalescer.push(&[FileWatchEvent::Modified(p("design/current"))], 0);
+        let changes = coalescer.poll(WINDOW, &ledger);
+        assert!(
+            matches!(
+                changes.as_slice(),
+                [ExternalChange::Generation { manifest_hash, generation: 1, .. }]
+                    if *manifest_hash == a.manifest_hash
+            ),
+            "{changes:?}"
+        );
+        assert_eq!(coalescer.current_pointer(), Some(a.manifest_hash));
+    }
+
+    #[test]
     fn saves_within_one_window_coalesce_and_separate_saves_do_not() {
         let dir = TempDir::new();
         let mut memory = SavedGenerationState::new(None);
