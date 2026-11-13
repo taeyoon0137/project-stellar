@@ -38,4 +38,7 @@ pub mod budget;
 /// 의미 경계 기반 chunk split planner (V.6.4).
 pub mod split;
 
+/// 작은 인접 chunk의 idle 병합 planner (V.6.5).
+pub mod merge;
+
 pub use id::ChunkId;

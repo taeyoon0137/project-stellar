@@ -8,6 +8,10 @@
 //! - 사용자 활동은 [`GcScheduler::note_activity`]로 기록하고, 마지막 활동 이후
 //!   idle threshold가 지나야 GC를 시작할 수 있습니다.
 //! - GC 자체도 한 번에 하나만 실행됩니다(`GcGuard`).
+//! - idle chunk 병합(V.6.5)도 같은 `GcGuard`를 잡고 실행하므로 GC와 동시에 돌지
+//!   않습니다. 저장은 guard와 무관하게 언제든 시작할 수 있고, idle 작업은
+//!   [`GcGuard::save_started_since`]로 그 사이 저장이 시작됐는지 확인해 결과를
+//!   폐기합니다.
 //!
 //! 시각은 인자로 주입해(단조 `Instant`) 테스트를 결정론적으로 만듭니다.
 
@@ -20,6 +24,8 @@ struct State {
     active_saves: usize,
     gc_running: bool,
     last_activity: Instant,
+    /// 저장 시작마다 1씩 증가하는 번호(wrapping).
+    save_epoch: u64,
 }
 
 /// GC 시작 조건 판정자.
@@ -46,6 +52,20 @@ impl Drop for SaveGuard<'_> {
 #[derive(Debug)]
 pub struct GcGuard<'a> {
     scheduler: &'a GcScheduler,
+    /// guard를 잡은 시점의 저장 번호.
+    save_epoch_at_start: u64,
+}
+
+impl GcGuard<'_> {
+    /// guard를 잡은 뒤 저장이 하나라도 시작됐는지 여부입니다.
+    ///
+    /// guard는 활성 저장이 없을 때만 잡히므로, 참이면 이 idle 작업과 겹친 저장이
+    /// 있었다는 뜻입니다(그 저장이 이미 끝났어도 참). 결과가 저장과 겹치면 안 되는
+    /// 작업(V.6.5 chunk 병합)은 이 값이 참이면 결과를 폐기합니다.
+    pub fn save_started_since(&self) -> bool {
+        let state = self.scheduler.state.lock().expect("poisoned");
+        state.save_epoch != self.save_epoch_at_start
+    }
 }
 
 impl Drop for GcGuard<'_> {
@@ -65,6 +85,7 @@ impl GcScheduler {
                 active_saves: 0,
                 gc_running: false,
                 last_activity: now,
+                save_epoch: 0,
             }),
         }
     }
@@ -82,6 +103,7 @@ impl GcScheduler {
     pub fn begin_save(&self, now: Instant) -> SaveGuard<'_> {
         let mut state = self.state.lock().expect("poisoned");
         state.active_saves += 1;
+        state.save_epoch = state.save_epoch.wrapping_add(1);
         if now > state.last_activity {
             state.last_activity = now;
         }
@@ -99,7 +121,10 @@ impl GcScheduler {
             return None;
         }
         state.gc_running = true;
-        Some(GcGuard { scheduler: self })
+        Some(GcGuard {
+            scheduler: self,
+            save_epoch_at_start: state.save_epoch,
+        })
     }
 }
 
@@ -158,6 +183,21 @@ mod tests {
         assert!(scheduler.try_begin_gc(idle_time).is_none());
         drop(first);
         assert!(scheduler.try_begin_gc(idle_time).is_some());
+    }
+
+    #[test]
+    fn guard_reports_saves_started_after_it() {
+        let t0 = Instant::now();
+        let scheduler = GcScheduler::new(Duration::ZERO, t0);
+        let gc = scheduler.try_begin_gc(t0).unwrap();
+        assert!(!gc.save_started_since());
+        // 저장이 시작되면, 그 저장이 끝나도 guard가 끝날 때까지 참입니다.
+        drop(scheduler.begin_save(t0));
+        assert!(gc.save_started_since());
+        drop(gc);
+        // 새 guard는 새 시작점부터 셉니다.
+        let gc = scheduler.try_begin_gc(t0).unwrap();
+        assert!(!gc.save_started_since());
     }
 
     #[test]

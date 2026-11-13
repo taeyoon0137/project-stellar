@@ -18,6 +18,7 @@ color:
 storage:
   # chunk 분할 임계치(bytes) = 256 KiB. envelope 비압축 payload 길이(ADR-0010) 기준이며,
   # 의미 경계로 나눈 chunk의 payload가 이 값을 넘으면 split planner(V.6.4)가 분할합니다.
+  # idle chunk 병합(V.6.5)은 병합 결과가 이 값 이하일 때만 합칩니다(별도 병합 수치 없음).
   # 근거: ADR-0012. reader(stellar-storage `chunk::budget`)는 이 절을 엄격하게 검사합니다.
   # 값은 10진 양의 정수만 허용합니다(밑줄·단위·선행 0 금지).
   chunk_split_threshold_bytes: 262144
