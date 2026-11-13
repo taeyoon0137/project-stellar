@@ -174,7 +174,7 @@ pub struct LfsAdviceReport {
 }
 
 /// 확장자 형식: 소문자 ASCII 영숫자 1..=[`MAX_EXTENSION_LEN`].
-fn valid_extension(ext: &str) -> bool {
+pub(crate) fn valid_extension(ext: &str) -> bool {
     !ext.is_empty()
         && ext.len() <= MAX_EXTENSION_LEN
         && ext

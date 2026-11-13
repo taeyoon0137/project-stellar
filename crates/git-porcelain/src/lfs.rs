@@ -20,6 +20,9 @@ pub mod attr;
 /// import 후 LFS 권고 경고(XIII.7.2).
 pub mod advice;
 
+/// 사용자 승인 후 `git lfs track` 적용(XIII.7.3).
+pub mod track;
+
 use crate::runner::{argv, GitOutput, GitRunError, GitRunner};
 
 /// Git LFS 버전과 raw output.

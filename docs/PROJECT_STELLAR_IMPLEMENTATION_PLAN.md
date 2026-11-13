@@ -1326,7 +1326,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XIII.7.1 | `[x]` | `git lfs version`을 시스템 Git 환경에서 실행해 설치 상태와 버전을 읽습니다. | installed/not installed fixture. | IV.3.4 |
 | XIII.7.2 | `[x]` | 에셋 크기·확장자 기반 LFS 권고 정책을 config에서 읽고 import 후 경고만 생성합니다. 자동 `.gitattributes` 수정은 하지 않습니다. | threshold boundary fixture. | XIII.5.7, XIII.7.1 |
-| XIII.7.3 | `[ ]` | 사용자 승인 API가 호출된 경우에만 `git lfs track` 또는 동등 시스템 Git 명령으로 `.gitattributes`를 수정합니다. 직접 파일 문법을 재구현하지 않습니다. | 승인 없음 변경 0, 승인 후 Git 결과 검증. | XIII.7.2 |
+| XIII.7.3 | `[x]` | 사용자 승인 API가 호출된 경우에만 `git lfs track` 또는 동등 시스템 Git 명령으로 `.gitattributes`를 수정합니다. 직접 파일 문법을 재구현하지 않습니다. | 승인 없음 변경 0, 승인 후 Git 결과 검증. | XIII.7.2 |
 | XIII.7.4 | `[ ]` | 기존 history migration은 지원하지 않고 요청 시 UnsupportedOperation을 반환합니다. | 이력 변경 명령 실행 0. | XIII.7.3 |
 | XIII.7.5 | `[ ]` | LFS pointer만 있고 object가 없는 asset을 missing LFS diagnostic으로 구분합니다. | 일반 missing file과 다른 오류 코드. | XIII.7.1, XIII.5.1 |
 
