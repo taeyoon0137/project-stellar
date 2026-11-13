@@ -1313,7 +1313,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XIII.6.1 | `[x]` | Project Font import를 AssetStore와 연결하고 font file hash, face count, licensing metadata 입력 필드를 기록합니다. | multi-face font fixture 등록. | XIII.5.2, X.8.1 |
-| XIII.6.2 | `[ ]` | macOS system font discovery adapter를 구현하고 실제 file/face를 FontRegistry에 등록합니다. 프로젝트에 복사하지 않습니다. | 알려진 system face 조회 smoke. | X.8.2, II.5.3 |
+| XIII.6.2 | `[x]` | macOS system font discovery adapter를 구현하고 실제 file/face를 FontRegistry에 등록합니다. 프로젝트에 복사하지 않습니다. | 알려진 system face 조회 smoke. | X.8.2, II.5.3 |
 | XIII.6.3 | `[!]` | Windows DirectWrite 또는 승인 API로 system font discovery adapter를 구현합니다. | 알려진 system face 조회 smoke. | X.8.2, II.6.3 |
 | XIII.6.4 | `[ ]` | External Font는 관리형 패키지의 고정 hash/face를 참조하는 인터페이스만 구현하고 다운로드 서비스는 제공하지 않습니다. | missing external package diagnostic. | X.8.1 |
 | XIII.6.5 | `[ ]` | font file hash가 예상과 다르면 같은 family name이어도 다른 face로 처리하고 재현성 경고를 생성합니다. | same name/different hash fixture 통과. | XIII.6.1~XIII.6.4 |

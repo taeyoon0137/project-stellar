@@ -8,6 +8,8 @@
 //!   모든 offset·개수를 제한합니다.
 //! - [`license`]: 사용자 입력 라이선스 metadata.
 //! - [`project_font`]: Project Font import(AssetStore 연결)와 record.
+//! - [`system`]: 시스템 폰트 discovery(원래 위치에서 hash·probe 후 등록, 복사 없음). macOS
+//!   adapter는 `system_macos`(CoreText)입니다.
 
 /// 폰트 파일 container probe (XIII.6.1).
 pub mod sfnt;
@@ -17,6 +19,13 @@ pub mod license;
 
 /// Project Font import와 record (XIII.6.1).
 pub mod project_font;
+
+/// 시스템 폰트 discovery (XIII.6.2).
+pub mod system;
+
+/// macOS CoreText 시스템 폰트 locator (XIII.6.2).
+#[cfg(target_os = "macos")]
+pub mod system_macos;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures;
