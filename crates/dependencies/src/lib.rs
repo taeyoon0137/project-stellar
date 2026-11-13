@@ -46,6 +46,9 @@ pub mod mirror;
 /// content-addressed immutable library cache entry (XV.3.3).
 pub mod cache_entry;
 
+/// cache read lock과 fetch/write lock 분리 (XV.3.6).
+pub mod cache_lock;
+
 /// library cache entry 검증 (XV.3.4).
 pub mod entry_validation;
 

@@ -35,6 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::cache_index::{sync_dir, CacheIndexError};
+use crate::cache_lock::{CacheLockError, CacheLockGuard, CacheLocks};
 use crate::cache_privacy::{LocalSourceConfig, PrivateCacheIndex, PrivateIndexEntry};
 use crate::cache_root::LibraryCacheRoot;
 use crate::content_hash::ContentHashText;
@@ -168,6 +169,32 @@ pub struct MaterializedEntry {
     pub reuse: EntryReuse,
 }
 
+/// 공유 read lock을 보유한 채 연 entry(XV.3.6). drop하면 lock이 풀립니다.
+#[derive(Debug)]
+pub struct OpenedEntry {
+    content_hash: ContentHashText,
+    dir: PathBuf,
+    size_bytes: u64,
+    _read_lock: CacheLockGuard,
+}
+
+impl OpenedEntry {
+    /// entry content hash.
+    pub fn content_hash(&self) -> &ContentHashText {
+        &self.content_hash
+    }
+
+    /// entry 디렉터리(읽기 전용).
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Stellar project files 총 크기(byte).
+    pub fn size_bytes(&self) -> u64 {
+        self.size_bytes
+    }
+}
+
 /// materialize할 수 없는 tree 항목 종류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnsupportedEntryKind {
@@ -239,6 +266,8 @@ pub enum MaterializeError {
     BlobMismatch,
     /// cache index 읽기·쓰기 실패.
     Index(CacheIndexError),
+    /// cache lock 실패(XV.3.6).
+    Lock(CacheLockError),
     /// 파일 시스템 실패.
     Io {
         /// 단계.
@@ -278,6 +307,7 @@ impl fmt::Display for MaterializeError {
             }
             MaterializeError::BlobMismatch => f.write_str("cat-file 응답이 tree 항목과 다릅니다"),
             MaterializeError::Index(e) => write!(f, "cache index 오류: {e}"),
+            MaterializeError::Lock(e) => write!(f, "{e}"),
             MaterializeError::Io { stage, kind } => write!(f, "cache entry {stage} 실패: {kind:?}"),
         }
     }
@@ -618,24 +648,15 @@ impl<H: Sha256Digest, K: RepositoryKeyer> LibraryEntryStore<H, K> {
         R: GitCommandRunner + ?Sized,
         F: FetchedRefs + ?Sized,
     {
-        let index_path = self.root.index_path();
-        let mut index =
-            PrivateCacheIndex::read_from(&index_path).map_err(MaterializeError::Index)?;
         let key = self.keyer.repository_key(repository);
-        if let Some(hit) = index.get(&self.keyer, repository, commit).cloned() {
-            let dir = self.entry_dir(&hit.content_hash);
-            if dir.is_dir() {
-                index.touch(&key, commit, now_unix_ms);
-                index
-                    .write_to(&index_path)
-                    .map_err(MaterializeError::Index)?;
-                return Ok(MaterializedEntry {
-                    content_hash: hit.content_hash,
-                    dir,
-                    size_bytes: hit.size_bytes,
-                    reuse: EntryReuse::CommitHit,
-                });
-            }
+        if let Some(hit) = self.lookup(repository, commit)? {
+            self.touch(&key, commit, now_unix_ms)?;
+            return Ok(MaterializedEntry {
+                dir: self.entry_dir(&hit.content_hash),
+                content_hash: hit.content_hash,
+                size_bytes: hit.size_bytes,
+                reuse: EntryReuse::CommitHit,
+            });
         }
 
         let git_dir = mirrors
@@ -692,6 +713,12 @@ impl<H: Sha256Digest, K: RepositoryKeyer> LibraryEntryStore<H, K> {
             }
         };
 
+        // index·source config read-modify-write는 짧은 index lock 안에서(XV.3.6). 다른 프로세스의
+        // 갱신을 잃지 않도록 lock을 잡은 뒤 다시 읽습니다.
+        let _index_lock = self.locks().index().map_err(MaterializeError::Lock)?;
+        let index_path = self.root.index_path();
+        let mut index =
+            PrivateCacheIndex::read_from(&index_path).map_err(MaterializeError::Index)?;
         index.upsert(PrivateIndexEntry {
             repository_key: key.clone(),
             commit: commit.clone(),
@@ -719,6 +746,61 @@ impl<H: Sha256Digest, K: RepositoryKeyer> LibraryEntryStore<H, K> {
             size_bytes: total,
             reuse,
         })
+    }
+
+    /// cache lock 디렉터리(XV.3.6).
+    pub fn locks(&self) -> CacheLocks {
+        CacheLocks::new(&self.root)
+    }
+
+    /// 최근 사용 시각을 index lock 안에서 갱신합니다.
+    fn touch(
+        &self,
+        key: &crate::mirror::RepositoryKey,
+        commit: &CommitId,
+        now_unix_ms: u64,
+    ) -> Result<(), MaterializeError> {
+        let _index_lock = self.locks().index().map_err(MaterializeError::Lock)?;
+        let index_path = self.root.index_path();
+        let mut index =
+            PrivateCacheIndex::read_from(&index_path).map_err(MaterializeError::Index)?;
+        if index.touch(key, commit, now_unix_ms) {
+            index
+                .write_to(&index_path)
+                .map_err(MaterializeError::Index)?;
+        }
+        Ok(())
+    }
+
+    /// 이미 materialize된 `(repository, commit)` entry를 **공유 read lock**을 잡고 엽니다(XV.3.6).
+    ///
+    /// Git·fetch lock을 쓰지 않으므로 다른 프로세스가 fetch·materialize 중이어도 기다리지 않습니다.
+    /// entry 삭제(XV.8)는 read lock이 하나라도 있으면 진행하지 못합니다. lock을 잡은 뒤 디렉터리가
+    /// 사라졌으면(그 사이 삭제) `None`입니다.
+    pub fn open_entry(
+        &self,
+        repository: &RepositoryUrl,
+        commit: &CommitId,
+        now_unix_ms: u64,
+    ) -> Result<Option<OpenedEntry>, MaterializeError> {
+        let Some(hit) = self.lookup(repository, commit)? else {
+            return Ok(None);
+        };
+        let guard = self
+            .locks()
+            .read_entry(&hit.content_hash)
+            .map_err(MaterializeError::Lock)?;
+        let dir = self.entry_dir(&hit.content_hash);
+        if !dir.is_dir() {
+            return Ok(None);
+        }
+        self.touch(&self.keyer.repository_key(repository), commit, now_unix_ms)?;
+        Ok(Some(OpenedEntry {
+            content_hash: hit.content_hash,
+            dir,
+            size_bytes: hit.size_bytes,
+            _read_lock: guard,
+        }))
     }
 
     fn git<R: GitCommandRunner + ?Sized>(

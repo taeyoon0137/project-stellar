@@ -141,6 +141,16 @@ impl<R: GitCommandRunner, K: RepositoryKeyer> MirrorCache<R, K> {
         if self.fetched.contains(&key) {
             return Ok(dir);
         }
+        // 같은 mirror를 여러 프로세스가 동시에 init·fetch하지 않도록 repository fetch lock을
+        // fetch 동안만 잡습니다(XV.3.6). entry를 읽는 쪽은 이 lock을 쓰지 않습니다.
+        let _fetch_lock = crate::cache_lock::CacheLocks::new(&self.root)
+            .fetch(&key)
+            .map_err(|e| MirrorError::Io {
+                kind: match e {
+                    crate::cache_lock::CacheLockError::Io { kind } => kind,
+                    crate::cache_lock::CacheLockError::Busy => std::io::ErrorKind::WouldBlock,
+                },
+            })?;
         let mirrors = self.root.mirrors_dir();
         std::fs::create_dir_all(&mirrors).map_err(|e| MirrorError::Io { kind: e.kind() })?;
         if !dir.join("HEAD").is_file() {
