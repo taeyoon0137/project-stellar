@@ -114,11 +114,13 @@ Git Working Tree는 마지막 커밋과 현재 저장 상태의 차이를 나타
 | 플랫폼 | 최소 운영체제 | CPU 아키텍처 | 초기 지원 |
 |---|---|---|---|
 | macOS | macOS 26.0 | Apple silicon `arm64` | 지원 |
-| Windows | Windows 11 | `x64` | 지원 |
+| Windows | Windows 11 | `x64` | 보류(ADR-0006) |
 | Windows | Windows 11 | `ARM64` | 로드맵 |
 | macOS | macOS 26.0 | Intel `x86_64` | 미지원 |
 
 구형 운영체제용 호환 계층은 제공하지 않습니다.
+
+2026-11-14 결정(ADR-0006)으로 Windows 지원은 보류합니다. 당분간 macOS만 지원하며, 코어는 플랫폼 중립을 유지해 재개할 수 있게 둡니다.
 
 ### 5.2 성능 기준 하드웨어
 

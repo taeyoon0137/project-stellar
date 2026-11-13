@@ -17,6 +17,7 @@
 - **2026-06-23 — 검증 환경 책임 분리:** macOS 개발자가 Windows 검증을 로컬에서 대신하지 않도록 `DEV-MAC`, `CI-MAC`, `CI-WIN`, `LAB-WIN`, `REF-MAC`, `REF-WIN`의 책임과 증거 조건을 고정했습니다.
 - **2026-06-23 — 커밋 규칙 고정:** 모든 작업 커밋 제목은 예외 없이 `Task(<WBS-ID>): <작업명>`을 사용합니다. `Docs:`, `Chore:`, 소문자 `task(...)`와 임의 유지보수 prefix는 허용하지 않습니다.
 - **2026-06-23 — I.2.1 원자화:** `I.2.1`은 TaskStatus Rust 데이터 모델만 정의합니다. YAML 파싱, 레코드 검증, 그래프 검증, 증거 검증, 계획 동기화는 별도 WBS로 분리했습니다.
+- **2026-11-14 — Windows 지원 보류(ADR-0006):** 당분간 macOS만 지원합니다. Windows 전용 행은 `[!]`(사용자 결정 차단)로 표기하고, 양 플랫폼 비교 행은 ADR-0006의 판정 규칙(IEEE 기본 연산만 쓰는 결과는 macOS 증거로 `[x]`, 플랫폼 의존 결과는 `[~]`)을 따릅니다. 코어는 플랫폼 중립을 유지합니다.
 
 ---
 
@@ -273,18 +274,18 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| II.6.1 | `[ ]` | `apps/windows`에 Windows 11 x64, C++/WinRT, WinUI 3 앱 솔루션을 생성합니다. ARM64 configuration은 만들지 않습니다. | `msbuild ... /p:Configuration=Debug /p:Platform=x64` 통과. | II.4.6 |
-| II.6.2 | `[ ]` | Rust library를 Debug 빌드에 연결하고 앱 시작 시 `stellar_runtime_version`을 호출합니다. | packaged/unpackaged 개발 실행 중 하나를 고정하고 smoke test 통과. | II.6.1 |
-| II.6.3 | `[ ]` | `App`, `MainWindow`, 빈 CanvasHost custom control을 추가하고 종료 시 runtime destroy를 한 번 호출합니다. | lifecycle test에서 handle 누수 없음. | II.6.2 |
-| II.6.4 | `[ ]` | DPI 변경과 logical/physical pixel size를 core에 전달하는 이벤트를 추가합니다. | 100%, 150%, 200% DPI fixture의 physical size가 정확합니다. | II.6.3 |
+| II.6.1 | `[!]` | `apps/windows`에 Windows 11 x64, C++/WinRT, WinUI 3 앱 솔루션을 생성합니다. ARM64 configuration은 만들지 않습니다. | `msbuild ... /p:Configuration=Debug /p:Platform=x64` 통과. | II.4.6 |
+| II.6.2 | `[!]` | Rust library를 Debug 빌드에 연결하고 앱 시작 시 `stellar_runtime_version`을 호출합니다. | packaged/unpackaged 개발 실행 중 하나를 고정하고 smoke test 통과. | II.6.1 |
+| II.6.3 | `[!]` | `App`, `MainWindow`, 빈 CanvasHost custom control을 추가하고 종료 시 runtime destroy를 한 번 호출합니다. | lifecycle test에서 handle 누수 없음. | II.6.2 |
+| II.6.4 | `[!]` | DPI 변경과 logical/physical pixel size를 core에 전달하는 이벤트를 추가합니다. | 100%, 150%, 200% DPI fixture의 physical size가 정확합니다. | II.6.3 |
 
 ### II.7 양 플랫폼 빌드 게이트
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | II.7.1 | `[x]` | macOS arm64 CI job에 Rust core, FFI header drift, Xcode Debug build를 연결합니다. | clean runner에서 성공. | II.5.4 |
-| II.7.2 | `[ ]` | Windows x64 CI job에 Rust core, FFI header drift, MSBuild Debug build를 연결합니다. | clean runner에서 성공. | II.6.4 |
-| II.7.3 | `[ ]` | 양 플랫폼 smoke artifact가 같은 core version과 ABI version을 보고하는 검사를 추가합니다. | 버전 mismatch fixture에서 CI 실패. | II.7.1, II.7.2 |
+| II.7.2 | `[!]` | Windows x64 CI job에 Rust core, FFI header drift, MSBuild Debug build를 연결합니다. | clean runner에서 성공. | II.6.4 |
+| II.7.3 | `[!]` | 양 플랫폼 smoke artifact가 같은 core version과 ABI version을 보고하는 검사를 추가합니다. | 버전 mismatch fixture에서 CI 실패. | II.7.1, II.7.2 |
 
 **Phase II 완료 조건:** G1 통과.
 
@@ -1115,13 +1116,13 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XI.9.1 | `[ ]` | `renderer-d3d12`에서 adapter, device, command queue, swap chain을 Windows 11 x64에 초기화합니다. | Windows smoke clear frame 통과. | XI.5.1, II.6.4 |
-| XI.9.2 | `[ ]` | resize, back buffer, frame fence를 구현합니다. | resize/minimize/restore fixture crash 없음. | XI.9.1 |
-| XI.9.3 | `[ ]` | descriptor heap, upload/default buffer, texture resource mapping을 구현합니다. | triangle render fixture 통과. | XI.5.3, XI.9.1 |
-| XI.9.4 | `[ ]` | root signature, pipeline state, shader cache를 구현합니다. | known shader fixture 렌더. | XI.9.3 |
-| XI.9.5 | `[ ]` | RenderGraph command list encoding, execute, Present 예약을 구현합니다. | T0-T5 trace에 submit/present timestamp 존재. | XI.4.6, XI.9.4 |
-| XI.9.6 | `[ ]` | timestamp query heap을 연결해 pass별 GPU 시간을 측정합니다. | simple scene GPU duration report. | XI.9.5 |
-| XI.9.7 | `[ ]` | device removed, out-of-memory, swap chain failure 처리 테스트를 추가합니다. | 앱 crash 없이 error event 발생. | XI.5.4, XI.9.5 |
+| XI.9.1 | `[!]` | `renderer-d3d12`에서 adapter, device, command queue, swap chain을 Windows 11 x64에 초기화합니다. | Windows smoke clear frame 통과. | XI.5.1, II.6.4 |
+| XI.9.2 | `[!]` | resize, back buffer, frame fence를 구현합니다. | resize/minimize/restore fixture crash 없음. | XI.9.1 |
+| XI.9.3 | `[!]` | descriptor heap, upload/default buffer, texture resource mapping을 구현합니다. | triangle render fixture 통과. | XI.5.3, XI.9.1 |
+| XI.9.4 | `[!]` | root signature, pipeline state, shader cache를 구현합니다. | known shader fixture 렌더. | XI.9.3 |
+| XI.9.5 | `[!]` | RenderGraph command list encoding, execute, Present 예약을 구현합니다. | T0-T5 trace에 submit/present timestamp 존재. | XI.4.6, XI.9.4 |
+| XI.9.6 | `[!]` | timestamp query heap을 연결해 pass별 GPU 시간을 측정합니다. | simple scene GPU duration report. | XI.9.5 |
+| XI.9.7 | `[!]` | device removed, out-of-memory, swap chain failure 처리 테스트를 추가합니다. | 앱 crash 없이 error event 발생. | XI.5.4, XI.9.5 |
 
 ### XI.10 공통 색상·블렌드·효과
 
@@ -1168,7 +1169,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XII.2.1 | `[ ]` | `ProjectWindowSession` core type에 ProjectIdentity, WindowSessionId, 독립 document state, view state, history, loaded generation을 정의합니다. | 두 session이 서로 state를 공유하지 않습니다. | IV.2.3, VII.5.1, V.4.4 |
 | XII.2.2 | `[ ]` | macOS `NSWindowController`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.5.3, XII.2.1 |
-| XII.2.3 | `[ ]` | Windows `MainWindow`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.6.3, XII.2.1 |
+| XII.2.3 | `[!]` | Windows `MainWindow`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.6.3, XII.2.1 |
 | XII.2.4 | `[ ]` | 같은 project path를 여러 창에서 열 수 있게 하되 각 창이 독립 base generation과 memory model을 로드하게 합니다. | 한 창 edit가 다른 창에 즉시 나타나지 않습니다. | XII.2.2, XII.2.3 |
 | XII.2.5 | `[ ]` | 창별 열린 tab, active view, viewport, selection을 WindowViewState에 연결합니다. | 창간 상태 격리. | VII.3.1, XII.2.1 |
 
@@ -1178,7 +1179,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XII.3.1 | `[ ]` | 공통 `InputEvent`에 pointer, wheel, key, text composition, focus, resize를 정의하고 native timestamp를 monotonic domain으로 변환합니다. | 양 플랫폼 event fixture schema 동일. | II.3.3 |
 | XII.3.2 | `[ ]` | macOS mouse/trackpad/keyboard 이벤트를 InputEvent로 변환합니다. | coordinate, modifiers, double click fixture 통과. | II.5.4, XII.3.1 |
-| XII.3.3 | `[ ]` | Windows pointer/mouse/keyboard 이벤트를 InputEvent로 변환합니다. | DPI scaling, modifiers, double click fixture 통과. | II.6.4, XII.3.1 |
+| XII.3.3 | `[!]` | Windows pointer/mouse/keyboard 이벤트를 InputEvent로 변환합니다. | DPI scaling, modifiers, double click fixture 통과. | II.6.4, XII.3.1 |
 | XII.3.4 | `[ ]` | 연속 pointer move/wheel event coalescing을 구현하되 pointer down/up과 key event 순서를 바꾸지 않습니다. | 10,000 move→최신 1개, down/up 보존. | XII.3.1 |
 | XII.3.5 | `[ ]` | InputEvent 수신 T0 trace를 찍고 DocumentThread hit-test request까지 queue latency를 측정합니다. | trace에 T0/T1 후보 timestamp 존재. | XI.3.4, XII.1.2 |
 | XII.3.6 | `[ ]` | Pan, Zoom, Select, Drag, Resize, Rotate interaction state machine을 각 도구별 closed enum으로 구현합니다. | cancel/complete fixture 통과. | XI.3.5, Phase VII |
@@ -1189,7 +1190,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XII.4.1 | `[ ]` | macOS CanvasHost의 CAMetalLayer를 Metal backend에 연결하고 scale/size lifecycle을 전달합니다. | resize, display scale change 렌더 통과. | XI.8.2, XII.2.2 |
-| XII.4.2 | `[ ]` | Windows CanvasHost HWND/SwapChainPanel 또는 선택된 native surface를 D3D12 backend에 연결합니다. | resize, DPI change 렌더 통과. | XI.9.2, XII.2.3 |
+| XII.4.2 | `[!]` | Windows CanvasHost HWND/SwapChainPanel 또는 선택된 native surface를 D3D12 backend에 연결합니다. | resize, DPI change 렌더 통과. | XI.9.2, XII.2.3 |
 | XII.4.3 | `[ ]` | viewport pan/zoom matrix를 scene camera 입력으로 연결하고 document geometry는 변경하지 않습니다. | pan/zoom 후 save bytes 동일. | XII.2.5, XI.2.2 |
 | XII.4.4 | `[ ]` | selection overlay와 handles를 transient scene layer로 렌더합니다. | project snapshot에 overlay node 없음. | XI.3.5, XII.4.3 |
 
@@ -1198,10 +1199,10 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XII.5.1 | `[ ]` | macOS 레이어명·검색·일반 필드에 NSTextField/NSTextView를 사용하고 core text engine을 호출하지 않습니다. | native undo/IME smoke test. | II.5.3 |
-| XII.5.2 | `[ ]` | Windows 레이어명·검색·일반 필드에 TextBox/RichEditBox를 사용합니다. | native undo/IME smoke test. | II.6.3 |
+| XII.5.2 | `[!]` | Windows 레이어명·검색·일반 필드에 TextBox/RichEditBox를 사용합니다. | native undo/IME smoke test. | II.6.3 |
 | XII.5.3 | `[ ]` | 캔버스 Text node 편집용 common editing session을 정의하고 native IME composition event만 받아 Phase X layout으로 표시합니다. | 한글 조합 중간·확정 fixture 통과. | X.10.3, XII.3.1 |
 | XII.5.4 | `[ ]` | macOS text input client adapter를 구현해 marked text, selection range, candidate rect를 common session과 연결합니다. | 한글·일본어 IME manual automation fixture 통과. | XII.5.3 |
-| XII.5.5 | `[ ]` | Windows CoreText/TSF 또는 승인된 WinUI input adapter를 구현해 composition을 common session과 연결합니다. | 한글·일본어 IME fixture 통과. | XII.5.3 |
+| XII.5.5 | `[!]` | Windows CoreText/TSF 또는 승인된 WinUI input adapter를 구현해 composition을 common session과 연결합니다. | 한글·일본어 IME fixture 통과. | XII.5.3 |
 | XII.5.6 | `[ ]` | native overlay text control로 캔버스 Text를 렌더하지 않는 것을 검사하는 구조 테스트를 추가합니다. | editing 중에도 glyph layout source가 common text engine. | XII.5.4, XII.5.5 |
 
 ### XII.6 최소 애플리케이션 명령 연결
@@ -1221,7 +1222,7 @@ tools/xtask/
 | XII.7.1 | `[ ]` | 각 WindowSession이 load 당시 base generation/hash를 유지하고 save 전에 disk current와 비교하게 합니다. | 두 창 동시 fixture에서 두 번째 save가 Stale 상태. | XII.2.4, V.5.2 |
 | XII.7.2 | `[ ]` | stale save 시 선택지 두 개만 반환하는 core result를 정의합니다: UseCurrentWindow, UseLatestDisk. Semantic merge 옵션은 포함하지 않습니다. | enum golden test. | XII.7.1 |
 | XII.7.3 | `[ ]` | macOS에서 단순 native alert로 두 선택지를 표시합니다. 시각적 diff를 열지 않습니다. | 선택별 core call smoke test. | XII.7.2 |
-| XII.7.4 | `[ ]` | Windows에서 ContentDialog 또는 native equivalent로 두 선택지를 표시합니다. | 선택별 core call smoke test. | XII.7.2 |
+| XII.7.4 | `[!]` | Windows에서 ContentDialog 또는 native equivalent로 두 선택지를 표시합니다. | 선택별 core call smoke test. | XII.7.2 |
 | XII.7.5 | `[ ]` | UseCurrentWindow는 새 save plan을 현재 disk generation 위에 전체 window snapshot으로 생성해 덮어씁니다. | 선택 후 disk가 window snapshot과 동일. | XII.7.2, V.5.4 |
 | XII.7.6 | `[ ]` | UseLatestDisk는 로컬 미저장 state와 해당 창 history를 폐기하고 최신 generation을 다시 로드합니다. | reload 후 local changes/history 없음. | XII.7.2, VII.5.4 |
 | XII.7.7 | `[ ]` | 자동 저장 중 stale가 감지되면 auto-save를 중지하고 같은 alert를 한 번만 요청합니다. | 반복 알림 없음, 선택 전 write 없음. | XII.7.1 |
@@ -1231,7 +1232,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XII.8.1 | `[ ]` | macOS native UI controls에 label, role, keyboard focus order를 지정하고 CanvasHost는 선택 상태·도구 상태를 접근성으로 노출합니다. | VoiceOver automation smoke 통과. | XII.2.2, XII.6 |
-| XII.8.2 | `[ ]` | Windows UI Automation properties와 keyboard focus order를 지정합니다. | Narrator/UIA automation smoke 통과. | XII.2.3, XII.6 |
+| XII.8.2 | `[!]` | Windows UI Automation properties와 keyboard focus order를 지정합니다. | Narrator/UIA automation smoke 통과. | XII.2.3, XII.6 |
 | XII.8.3 | `[ ]` | 디자인 문서 접근성 snapshot을 preview inspector가 읽을 수 있는 bridge를 추가합니다. 상세 inspector UX는 제외합니다. | IX.9 fixture의 역할 tree 읽기 가능. | IX.8.6, II.4.5 |
 
 **Phase XII 완료 조건:** 네이티브 두 앱에서 프로젝트 생성·열기, 기본 편집, 렌더링, 창별 Undo, 다중 창 충돌 선택이 작동합니다.
@@ -1243,7 +1244,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XII.9.1 | `[ ]` | macOS 앱 셸의 toolbar, sidebar, inspector, dialog가 macOS 26 AppKit/SwiftUI native material과 control을 사용하도록 theme capability layer를 구현합니다. 캔버스 문서 렌더링에는 적용하지 않습니다. | UI hierarchy에 승인되지 않은 WebView/커스텀 모사 control이 없고 native accessibility smoke 통과. | XII.2.2, XII.8.1 |
-| XII.9.2 | `[ ]` | Windows 앱 셸의 navigation, command bar, pane, dialog가 WinUI 3 Fluent control과 system theme를 사용하도록 theme capability layer를 구현합니다. 캔버스 문서 렌더링에는 적용하지 않습니다. | UI hierarchy와 accessibility smoke 통과. | XII.2.3, XII.8.2 |
+| XII.9.2 | `[!]` | Windows 앱 셸의 navigation, command bar, pane, dialog가 WinUI 3 Fluent control과 system theme를 사용하도록 theme capability layer를 구현합니다. 캔버스 문서 렌더링에는 적용하지 않습니다. | UI hierarchy와 accessibility smoke 통과. | XII.2.3, XII.8.2 |
 | XII.9.3 | `[ ]` | ShellTheme event를 dark/light, high contrast, reduced motion, accent change로 normalize해 앱 UI와 canvas EvaluationEnvironment에 분리 전달합니다. | theme change 후 앱 UI와 document preview의 target environment event가 각각 한 번 발생. | VIII.7.2, XII.9.1, XII.9.2 |
 | XII.9.4 | `[ ]` | macOS와 Windows 앱 셸의 visual snapshot은 동일할 필요가 없지만 native control usage, keyboard navigation, contrast를 platform별 test로 검증합니다. | platform UI conformance report 생성. | XII.9.1~XII.9.3 |
 
@@ -1267,7 +1268,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XIII.2.1 | `[ ]` | 플랫폼 독립 `ProjectFileWatcher` event에 create, modify, remove, rename, overflow를 정의합니다. | event model round-trip. | Phase XII |
 | XIII.2.2 | `[ ]` | macOS watcher adapter를 구현하고 프로젝트 root, 외부 symlink target allowlist를 감시합니다. | create/modify/delete/rename fixture 통과. | XIII.2.1 |
-| XIII.2.3 | `[ ]` | Windows watcher adapter를 구현하고 동일 의미 event로 normalize합니다. | create/modify/delete/rename fixture 통과. | XIII.2.1 |
+| XIII.2.3 | `[!]` | Windows watcher adapter를 구현하고 동일 의미 event로 normalize합니다. | create/modify/delete/rename fixture 통과. | XIII.2.1 |
 | XIII.2.4 | `[ ]` | Stellar 자신의 save가 만든 filesystem event를 generation/hash로 식별해 외부 변경으로 재처리하지 않게 합니다. | autosave 후 reload loop 0. | V.5.4, XIII.2.2, XIII.2.3 |
 | XIII.2.5 | `[ ]` | 짧은 시간의 다중 파일 event를 root manifest current pointer 변경 단위로 coalesce합니다. 개별 chunk event만으로 reload하지 않습니다. | 한 save가 한 external change batch. | V.4.3, XIII.2.4 |
 | XIII.2.6 | `[ ]` | watcher overflow 시 전체 project current pointer와 tracked files rescan을 요청합니다. 임의로 상태를 clean 처리하지 않습니다. | overflow fixture에서 rescan 실행. | XIII.2.1 |
@@ -1310,7 +1311,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XIII.6.1 | `[ ]` | Project Font import를 AssetStore와 연결하고 font file hash, face count, licensing metadata 입력 필드를 기록합니다. | multi-face font fixture 등록. | XIII.5.2, X.8.1 |
 | XIII.6.2 | `[ ]` | macOS system font discovery adapter를 구현하고 실제 file/face를 FontRegistry에 등록합니다. 프로젝트에 복사하지 않습니다. | 알려진 system face 조회 smoke. | X.8.2, II.5.3 |
-| XIII.6.3 | `[ ]` | Windows DirectWrite 또는 승인 API로 system font discovery adapter를 구현합니다. | 알려진 system face 조회 smoke. | X.8.2, II.6.3 |
+| XIII.6.3 | `[!]` | Windows DirectWrite 또는 승인 API로 system font discovery adapter를 구현합니다. | 알려진 system face 조회 smoke. | X.8.2, II.6.3 |
 | XIII.6.4 | `[ ]` | External Font는 관리형 패키지의 고정 hash/face를 참조하는 인터페이스만 구현하고 다운로드 서비스는 제공하지 않습니다. | missing external package diagnostic. | X.8.1 |
 | XIII.6.5 | `[ ]` | font file hash가 예상과 다르면 같은 family name이어도 다른 face로 처리하고 재현성 경고를 생성합니다. | same name/different hash fixture 통과. | XIII.6.1~XIII.6.4 |
 | XIII.6.6 | `[ ]` | 라이선스·임베딩 상태는 Unknown, Allowed, Restricted, UserConfirmed로 저장하고 Stellar가 법적 판정을 자동 확정하지 않게 합니다. | 상태 transition fixture 통과. | XIII.6.1 |
@@ -1335,7 +1336,7 @@ tools/xtask/
 | XIII.8.3 | `[ ]` | 앱 시작 시 최신 snapshot probe 결과를 shell에 반환하고 사용자가 복구 또는 폐기를 선택하게 합니다. | 두 선택 fixture 통과. | V.9.3, XII.2.2, XII.2.3 |
 | XIII.8.4 | `[ ]` | 복구 선택 시 새 in-memory WindowSession을 만들고 disk current를 즉시 덮어쓰지 않습니다. 다음 autosave/save에서 일반 working tree 변경으로 기록합니다. | open 직후 disk bytes 미변경. | XIII.8.3 |
 | XIII.8.5 | `[ ]` | macOS state restoration과 앱 종료 통지를 연결해 창·탭 metadata 복원을 지원합니다. 실제 document state는 Stellar snapshot에서 읽습니다. | crash/relaunch automation 통과. | XIII.8.3, II.5.3 |
-| XIII.8.6 | `[ ]` | Windows Application Recovery/Restart callback을 연결해 준비된 snapshot flush를 시도합니다. callback에서 무거운 full serialization은 금지합니다. | forced crash integration test에서 snapshot 발견. | XIII.8.2, II.6.3 |
+| XIII.8.6 | `[!]` | Windows Application Recovery/Restart callback을 연결해 준비된 snapshot flush를 시도합니다. callback에서 무거운 full serialization은 금지합니다. | forced crash integration test에서 snapshot 발견. | XIII.8.2, II.6.3 |
 | XIII.8.7 | `[ ]` | 정상 종료 후 관련 recovery snapshot을 삭제합니다. 삭제 실패는 다음 시작에서 stale 판정으로 무시합니다. | normal close 후 prompt 없음. | V.9.4, XIII.8.3 |
 
 **Phase XIII 완료 조건:** autosave, external change 감지, asset/font 재현성, LFS 경고, 비정상 종료 복구가 통합 테스트를 통과합니다.
@@ -1488,7 +1489,7 @@ tools/xtask/
 | XIV.13.3 | `[ ]` | FFI에 commit, existing remote connect, push API를 추가합니다. raw credentials를 FFI 구조체에 저장하지 않습니다. | smoke fixture 통과. | XIV.8.5, XIV.9.7 |
 | XIV.13.4 | `[ ]` | FFI에 semantic conflicts, base/ours/theirs values, resolution apply API를 추가합니다. | conflict corpus bridge round-trip. | XIV.12.6 |
 | XIV.13.5 | `[ ]` | macOS 최소 Git panel은 Status/Diff, Stage/Unstage, Commit, Push, Conflict resolution 기능만 core API에 연결합니다. | UI automation smoke. | XIV.13.1~XIV.13.4 |
-| XIV.13.6 | `[ ]` | Windows 최소 Git panel을 동일 기능으로 연결합니다. | UI automation smoke. | XIV.13.1~XIV.13.4 |
+| XIV.13.6 | `[!]` | Windows 최소 Git panel을 동일 기능으로 연결합니다. | UI automation smoke. | XIV.13.1~XIV.13.4 |
 | XIV.13.7 | `[ ]` | Branch, Pull, Fetch, Merge, Rebase, Stash, Worktree, Remote 관리 전용 UI가 초기 빌드에 노출되지 않는 feature inventory test를 추가합니다. 시스템 Git 자체 사용은 차단하지 않습니다. | 초기 메뉴/command registry에 미포함. | XIV.13.5, XIV.13.6 |
 
 ### XIV.14 Git 통합 corpus
@@ -1611,7 +1612,7 @@ tools/xtask/
 | XVI.2.1 | `[ ]` | 입력 재생 파일에 초기 project fixture hash, viewport, InputEvent sequence, ManualClock timeline을 정의합니다. | round-trip. | XII.3.1, XVI.1.1 |
 | XVI.2.2 | `[ ]` | core-only replay runner를 구현해 UI 없이 command/layout/scene 단계까지 재생합니다. | 동일 replay 두 번 semantic/trace event count 동일. | XVI.2.1 |
 | XVI.2.3 | `[ ]` | macOS full replay runner를 구현해 native input injection 또는 app test bridge로 T5까지 측정합니다. | 결과 JSON 생성. | XVI.2.2, XII.4.1 |
-| XVI.2.4 | `[ ]` | Windows full replay runner를 구현합니다. | 결과 JSON 생성. | XVI.2.2, XII.4.2 |
+| XVI.2.4 | `[!]` | Windows full replay runner를 구현합니다. | 결과 JSON 생성. | XVI.2.2, XII.4.2 |
 | XVI.2.5 | `[ ]` | Pan, Zoom, Drag, Resize, Rotate, Hover, Select, Text Edit, Token Propagation, Component Update, Variant Change, Undo, Redo replay를 각각 만듭니다. | 모든 scenario 최소 1,000 sample 생성. | XVI.2.3, XVI.2.4 |
 | XVI.2.6 | `[ ]` | warm cache와 cold cache setup을 분리하고 결과 metadata에 명시합니다. | cache setup이 실제 hit/miss count와 일치. | XI.6.5, XI.7.3, XVI.2.5 |
 
@@ -1694,11 +1695,11 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XVI.10.1 | `[ ]` | Release x64 MSIX packaging, Windows 11 minimum, package identity를 고정합니다. | clean Windows install/uninstall smoke. | Phase XII |
-| XVI.10.2 | `[ ]` | Rust DLL/static linkage와 VC runtime 정책을 고정하고 missing dependency가 없게 합니다. | clean VM launch. | XVI.10.1 |
-| XVI.10.3 | `[ ]` | code signing pipeline을 구성하고 certificate secret을 CI secret store에만 둡니다. | signature verification 통과. | XVI.10.1 |
-| XVI.10.4 | `[ ]` | Stable/Beta package feed를 분리하고 사용자 승인형 update flow를 구현합니다. | channel isolation fixture. | XVI.10.3 |
-| XVI.10.5 | `[ ]` | update 전 dirty project save/recovery 상태를 처리하고 강제 종료하지 않습니다. | dirty project fixture 통과. | XIII.1.6, XVI.10.4 |
+| XVI.10.1 | `[!]` | Release x64 MSIX packaging, Windows 11 minimum, package identity를 고정합니다. | clean Windows install/uninstall smoke. | Phase XII |
+| XVI.10.2 | `[!]` | Rust DLL/static linkage와 VC runtime 정책을 고정하고 missing dependency가 없게 합니다. | clean VM launch. | XVI.10.1 |
+| XVI.10.3 | `[!]` | code signing pipeline을 구성하고 certificate secret을 CI secret store에만 둡니다. | signature verification 통과. | XVI.10.1 |
+| XVI.10.4 | `[!]` | Stable/Beta package feed를 분리하고 사용자 승인형 update flow를 구현합니다. | channel isolation fixture. | XVI.10.3 |
+| XVI.10.5 | `[!]` | update 전 dirty project save/recovery 상태를 처리하고 강제 종료하지 않습니다. | dirty project fixture 통과. | XIII.1.6, XVI.10.4 |
 
 ### XVI.11 초기 릴리스 End-to-End Gate
 
@@ -1817,7 +1818,7 @@ tools/xtask/
 | XVIII.4.1 | `[ ]` | 승인된 terminal parser/emulator dependency를 등록하고 VT sequence corpus를 테스트합니다. | 기본 cursor/color/erase fixture 통과. | I.3.2, XVIII.2.1, XVIII.3.1 |
 | XVIII.4.2 | `[ ]` | terminal screen buffer, scrollback, selection, clipboard 모델을 구현합니다. | 100만 line memory cap 유지. | XVIII.4.1 |
 | XVIII.4.3 | `[ ]` | macOS terminal view가 screen buffer를 표시하고 keyboard/IME input을 PTY로 전달합니다. | interactive smoke. | XVIII.2.3, XVIII.4.2 |
-| XVIII.4.4 | `[ ]` | Windows terminal view를 연결합니다. | interactive smoke. | XVIII.3.3, XVIII.4.2 |
+| XVIII.4.4 | `[!]` | Windows terminal view를 연결합니다. | interactive smoke. | XVIII.3.3, XVIII.4.2 |
 | XVIII.4.5 | `[ ]` | 일반 terminal과 특정 worktree terminal의 header metadata를 분리 표시할 data model을 추가합니다. | wrong cwd session 경고. | XVIII.1.3 |
 | XVIII.4.6 | `[ ]` | 창 종료 시 terminal을 복원하지 않고 종료하며 recovery snapshot에 output/process를 넣지 않는 검사를 추가합니다. | crash/relaunch 후 process 재연결 없음. | XIII.8.2, XVIII.4.3, XVIII.4.4 |
 
@@ -1960,7 +1961,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XX.5.1 | `[ ]` | macOS native export command와 progress/cancel을 연결합니다. | UI smoke. | XX.2.3, XX.4.3 |
-| XX.5.2 | `[ ]` | Windows export command를 연결합니다. | UI smoke. | XX.2.3, XX.4.3 |
+| XX.5.2 | `[!]` | Windows export command를 연결합니다. | UI smoke. | XX.2.3, XX.4.3 |
 | XX.5.3 | `[ ]` | export가 interaction T0~T5 경로를 차단하지 않는 background workload benchmark를 추가합니다. | export 중 interaction p99 gate 유지 또는 명시 resource policy 통과. | XVI.4.4 |
 
 **Phase XX 완료 조건:** PNG와 텍스트 outline·부분 래스터화 SVG가 결정론적으로 생성됩니다.
@@ -1984,7 +1985,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XXI.2.1 | `[ ]` | macOS WKWebView를 plugin별 별도 data store/process pool 정책으로 생성합니다. | cookie/storage isolation fixture. | XXI.1.2 |
-| XXI.2.2 | `[ ]` | Windows WebView2 environment/profile을 plugin별 격리합니다. | storage isolation fixture. | XXI.1.2 |
+| XXI.2.2 | `[!]` | Windows WebView2 environment/profile을 plugin별 격리합니다. | storage isolation fixture. | XXI.1.2 |
 | XXI.2.3 | `[ ]` | plugin HTML은 local package origin만 기본 허용하고 network는 권한 없이는 차단합니다. | CSP/network denial fixture. | XXI.2.1, XXI.2.2 |
 | XXI.2.4 | `[ ]` | native app UI와 canvas rendering path에 WebView를 사용하지 않는 inventory test를 유지합니다. | plugin panel 외 WebView 0. | XXI.2.1, XXI.2.2 |
 
@@ -2210,17 +2211,17 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXVII.1.1 | `[ ]` | Rust target과 Windows solution에 ARM64 configuration을 추가합니다. | ARM64 compile. | G8 |
-| XXVII.1.2 | `[ ]` | FFI type size/alignment와 ABI version을 x64/ARM64에서 비교합니다. | public ABI layout 동일 또는 명시 version bump. | II.4.6 |
-| XXVII.1.3 | `[ ]` | D3D12 adapter/device code의 architecture assumption을 제거합니다. | ARM64 device smoke. | XI.9.7 |
+| XXVII.1.1 | `[!]` | Rust target과 Windows solution에 ARM64 configuration을 추가합니다. | ARM64 compile. | G8 |
+| XXVII.1.2 | `[!]` | FFI type size/alignment와 ABI version을 x64/ARM64에서 비교합니다. | public ABI layout 동일 또는 명시 version bump. | II.4.6 |
+| XXVII.1.3 | `[!]` | D3D12 adapter/device code의 architecture assumption을 제거합니다. | ARM64 device smoke. | XI.9.7 |
 
 ### XXVII.2 의존성과 패키징
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXVII.2.1 | `[ ]` | 모든 native dependency의 ARM64 artifact를 검증하고 미지원 dependency를 대체하지 말고 blocker report로 남깁니다. | dependency audit. | XXVII.1.1 |
-| XXVII.2.2 | `[ ]` | ARM64 MSIX package와 update channel artifact를 추가합니다. | clean device install. | XXVII.1.3, XVI.10.4 |
-| XXVII.2.3 | `[ ]` | ARM64 기준 성능 장치를 별도로 지정하고 x64 기준과 다른 보장 여부를 문서화합니다. | performance report. | XVI.4.6 |
+| XXVII.2.1 | `[!]` | 모든 native dependency의 ARM64 artifact를 검증하고 미지원 dependency를 대체하지 말고 blocker report로 남깁니다. | dependency audit. | XXVII.1.1 |
+| XXVII.2.2 | `[!]` | ARM64 MSIX package와 update channel artifact를 추가합니다. | clean device install. | XXVII.1.3, XVI.10.4 |
+| XXVII.2.3 | `[!]` | ARM64 기준 성능 장치를 별도로 지정하고 x64 기준과 다른 보장 여부를 문서화합니다. | performance report. | XVI.4.6 |
 
 ---
 
