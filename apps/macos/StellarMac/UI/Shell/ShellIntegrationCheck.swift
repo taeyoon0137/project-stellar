@@ -84,7 +84,7 @@ private final class ShellIntegrationCheckRunner {
         expect(appRecords() == recordsBefore, "검사가 앱의 실제 창 autosave 기록을 바꿈")
 
         if failures.isEmpty {
-            print("shell-integration ok: \(checks) checks (menu, welcome, open via core, window composition, tools, restore, close)")
+            print("shell-integration ok: \(checks) checks (menu, welcome, create and open via core, window composition, tools, restore, close)")
             return true
         }
         for failure in failures {
@@ -118,7 +118,7 @@ private final class ShellIntegrationCheckRunner {
         expect(NSApp.mainMenu === menu, "메인 메뉴가 앱에 설치되지 않음")
         let router = coordinator.applicationRouter
         for (command, enabled) in [
-            (ShellCommand.openProject, true), (.settings, true), (.newProject, false), (.cloneProject, false),
+            (ShellCommand.openProject, true), (.settings, true), (.newProject, true), (.cloneProject, false),
         ] {
             guard let entry = item(command, in: menu) else {
                 expect(false, "\(command.rawValue) 메뉴 항목 없음")
@@ -300,16 +300,64 @@ private final class ShellIntegrationCheckRunner {
         if case .notStellarProject? = coordinator.welcomeData.currentSnapshot().notice?.kind {} else {
             expect(false, "시작 창 열기 실패가 'Stellar 프로젝트 아님' 안내가 아님")
         }
-        coordinator.welcomeData.send(.createProject(parentDirectory: fixtureRoot.path, folderName: "New"))
-        if case .operationFailed? = coordinator.welcomeData.currentSnapshot().notice?.kind {} else {
-            expect(false, "New Project 미지원 안내 없음")
-        }
-        expect(FileManager.default.fileExists(atPath: fixtureRoot.appendingPathComponent("New").path) == false,
-               "미지원 New Project가 폴더를 만듦")
+        checkNewProject(coordinator, pump: pump)
 
         // 설정 창.
         coordinator.showSettings()
         expect(coordinator.settingsController?.window?.contentViewController != nil, "설정 창 없음")
+    }
+
+    private func checkNewProject(_ coordinator: ShellAppCoordinator, pump: ShellRuntimeEventPump) {
+        let name = "새 디자인"
+        let folder = fixtureRoot.appendingPathComponent(name)
+        let create = WelcomeCommand.createProject(parentDirectory: fixtureRoot.path, folderName: name)
+        // 실제 메뉴 action과 시작 창의 이름 패널을 사용하고, 파일 선택 응답만 주입합니다.
+        coordinator.showWelcome()
+        guard let welcome = coordinator.welcomeController?.welcomeViewController,
+              let menu = NSApp.mainMenu, let entry = item(.newProject, in: menu), let action = entry.action else {
+            expect(false, "New Project 메뉴나 시작 창이 없음")
+            return
+        }
+        if let notice = coordinator.welcomeData.currentSnapshot().notice {
+            coordinator.welcomeData.send(.dismissNotice(id: notice.id))
+        }
+        welcome.renderNow()
+        var location: URL?
+        var panelCount = 0
+        welcome.chooseNewProjectLocation = { panel, _, completion in
+            panelCount += 1
+            self.expect(panel.title == WelcomeStrings.newProjectPanelTitle, "새 프로젝트 이름 패널이 아님")
+            completion(location)
+        }
+        expect(NSApp.sendAction(action, to: entry.target, from: entry) && panelCount == 1,
+               "New Project 메뉴가 이름 패널을 열지 않음")
+        expect(pump.pendingRequestCount == 0 && !FileManager.default.fileExists(atPath: folder.path), "취소했는데 생성이 진행됨")
+        location = folder
+        expect(NSApp.sendAction(action, to: entry.target, from: entry) && panelCount == 2,
+               "New Project 메뉴에서 두 번째 이름 패널을 열지 못함")
+        expect(coordinator.welcomeData.currentSnapshot().activity?.kind == .creating, "생성 진행 표시 없음")
+        coordinator.welcomeData.send(create)
+        expect(pump.pendingRequestCount == 1, "중복 생성 요청이 접수됨")
+        expect(pump.waitForPendingRequests(timeout: 10), "프로젝트 생성과 열기를 완료하지 못함")
+        let session = coordinator.projectWindows.first?.windowController.windowSession
+        expect(coordinator.projectWindows.count == 1 && session?.documentID != nil && session?.openedGeneration == 1,
+               "새 프로젝트 창에 최초 문서와 generation 1이 없음")
+        for path in [".git", "stellar.yaml", "design/current"] {
+            expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent(path).path), "새 프로젝트 파일 누락: \(path)")
+        }
+        coordinator.projectWindows.first?.window?.close()
+        expect(pump.waitForPendingRequests(timeout: 10), "새 프로젝트 창을 닫지 못함")
+        coordinator.welcomeData.send(create)
+        if case .folderAlreadyExists? = coordinator.welcomeData.currentSnapshot().notice?.kind {} else {
+            expect(false, "기존 폴더에 대한 중복 생성 안내가 없음")
+        }
+        expect(pump.pendingRequestCount == 0, "같은 폴더를 다시 생성하려 함")
+        coordinator.openProject(atPath: folder.path, origin: .application)
+        expect(pump.waitForPendingRequests(timeout: 10), "생성한 프로젝트 재열기 실패")
+        expect(session?.documentID != nil && coordinator.projectWindows.first?.windowController.windowSession?.documentID == session?.documentID,
+               "재열기에서 최초 문서의 ID가 바뀜")
+        coordinator.projectWindows.first?.window?.close()
+        expect(pump.waitForPendingRequests(timeout: 10), "재열기 창을 닫지 못함")
     }
 
     /// 열기 중 창 닫기: 복원(Try Again·Locate Folder…도 같은 경로) 열기가 끝나기 전에 창을 닫으면, 늦게 온

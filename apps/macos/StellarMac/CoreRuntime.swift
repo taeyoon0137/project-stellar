@@ -21,6 +21,16 @@ enum CoreRuntime {
 
     // MARK: - 프로젝트 session (XII.6.2)
 
+    static func createProject(handle: UInt64, path: String) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let bytes = Array(path.utf8)
+        let status = bytes.withUnsafeBufferPointer { raw in
+            stellar_project_create(handle, raw.baseAddress, raw.count, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     /// 프로젝트 폴더 열기를 요청합니다. 기다리지 않고 request id를 돌려줍니다.
     ///
     /// 결과는 `pollEvent(handle:)`로 꺼내는 `.projectOpened` 또는 `.requestFailed` 하나입니다. 빈 경로·상대 경로·NUL은
@@ -220,6 +230,7 @@ struct CoreGitName: Equatable {
 }
 
 enum CoreRuntimeEvent: Equatable {
+    case projectCreated(request: UInt64, gitState: UInt32)
     case projectOpened(request: UInt64, project: UInt64, projectID: UUID, name: String, root: String)
     case projectClosed(request: UInt64, project: UInt64, closedDocuments: UInt32)
     case projectTrust(request: UInt64, project: UInt64, trusted: Bool)
@@ -244,7 +255,7 @@ enum CoreRuntimeEvent: Equatable {
     /// event가 완료한 요청 id. 해석하지 못한 event는 nil입니다.
     var request: UInt64? {
         switch self {
-        case .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _), .projectTrust(let request, _, _),
+        case .projectCreated(let request, _), .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _), .projectTrust(let request, _, _),
              .gitNames(let request, _, _, _, _), .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
              .requestFailed(let request, _, _), .windowSessionOpened(let request, _, _, _, _, _),
              .windowSessionClosed(let request, _), .windowViewChanged(let request, _),
@@ -261,6 +272,9 @@ enum CoreRuntimeEvent: Equatable {
         guard reader.u32() == UInt32(STELLAR_EVENT_SCHEMA_VERSION) else { return .undecodable(kind: kind) }
         let event: CoreRuntimeEvent?
         switch kind {
+        case UInt32(STELLAR_EVENT_PROJECT_CREATED):
+            guard let request = reader.u64(), let gitState = reader.u32() else { return .undecodable(kind: kind) }
+            event = .projectCreated(request: request, gitState: gitState)
         case UInt32(STELLAR_EVENT_PROJECT_OPENED):
             event = reader.u64().flatMap { request in
                 reader.u64().flatMap { project in

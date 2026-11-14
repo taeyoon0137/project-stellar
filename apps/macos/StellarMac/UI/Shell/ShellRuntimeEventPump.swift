@@ -28,6 +28,14 @@ final class ShellRuntimeEventPump {
     /// timer가 켜져 있는지(검사용).
     var isPolling: Bool { timer != nil }
 
+    @discardableResult
+    func createProject(
+        path: String,
+        completion: @escaping (CoreRuntimeEvent) -> Void
+    ) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.createProject(handle: runtimeHandle, path: path), completion)
+    }
+
     /// 프로젝트 열기를 요청하고 완료 event를 `completion`으로 받습니다.
     @discardableResult
     func openProject(
