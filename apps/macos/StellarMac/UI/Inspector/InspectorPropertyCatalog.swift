@@ -242,8 +242,10 @@ enum InspectorPropertyCatalog {
 
     static func shapeSection(_ kind: InspectorShapeKind) -> InspectorSectionTemplate {
         let convert = InspectorRowTemplate(id: "convert", label: "", fields: [
+            // 파라메트릭 정보를 잃는 명시적 파괴 변환입니다(아키텍처 §12.6).
             InspectorFieldTemplate("shape.convertToPath", label: "Convert to Path",
-                                   control: .action(title: "Convert to Path", symbolName: nil), bindable: false),
+                                   control: .action(title: "Convert to Path", symbolName: nil, destructive: true),
+                                   bindable: false),
         ])
         switch kind {
         case .rectangle:
@@ -449,9 +451,10 @@ enum InspectorPropertyCatalog {
                                    control: .readOnly, bindable: false),
         ]),
         InspectorRowTemplate(id: "detach", label: "", fields: [
-            // 자유 편집은 명시적 Detach로만 엽니다(아키텍처 §15.1, IX.2.6).
+            // 자유 편집은 명시적 Detach로만 엽니다(아키텍처 §15.1, IX.2.6). 정의와의 연결을 끊는 파괴 동작입니다.
             InspectorFieldTemplate("component.detach", label: "Detach Instance",
-                                   control: .action(title: "Detach Instance", symbolName: nil), bindable: false),
+                                   control: .action(title: "Detach Instance", symbolName: nil, destructive: true),
+                                   bindable: false),
         ]),
     ])
 

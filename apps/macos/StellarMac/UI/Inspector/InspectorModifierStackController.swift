@@ -57,6 +57,8 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
         }
         removeButton.title = ""
         removeButton.bezelStyle = .push
+        // modifier 삭제는 파괴 동작입니다(가이드 5.1).
+        removeButton.hasDestructiveAction = true
         removeButton.controlSize = InspectorMetrics.controlSize
         removeButton.target = self
         removeButton.action = #selector(removeSelected(_:))

@@ -75,7 +75,8 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         case .segmented(let choices): buildSegmented(choices)
         case .text(let placeholder): buildText(placeholder)
         case .readOnly: buildReadOnly()
-        case .action(let title, let symbolName): buildAction(title: title, symbolName: symbolName)
+        case .action(let title, let symbolName, let destructive):
+            buildAction(title: title, symbolName: symbolName, destructive: destructive)
         }
     }
 
@@ -227,9 +228,11 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         flexibleViews.append(label)
     }
 
-    private func buildAction(title: String, symbolName: String?) {
+    private func buildAction(title: String, symbolName: String?, destructive: Bool) {
         // 편의 생성자(sizeToFit 호출)를 피하고 기본 생성 후 구성합니다.
         let button = NSButton()
+        // 파괴 변환은 시스템 파괴 동작 표시를 쓰고, 기본(Return) 버튼으로 만들지 않습니다(가이드 5.1).
+        button.hasDestructiveAction = destructive
         if title.isEmpty, let symbolName, let image = InspectorSymbols.image(symbolName, label: field.label) {
             button.title = ""
             button.image = image

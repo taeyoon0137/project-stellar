@@ -230,7 +230,9 @@ enum InspectorControl: Equatable {
     /// 선택 가능한 읽기 전용 레이블.
     case readOnly
     /// 명령 버튼(`NSButton`). 아이콘만 있으면 `title`은 비우고 필드 `label`을 접근성 레이블로 씁니다.
-    case action(title: String, symbolName: String?)
+    /// `destructive`는 되돌리기 어려운 파괴 변환(Path로 변환, Detach)이며 `hasDestructiveAction`으로
+    /// 표시합니다(가이드 5.1).
+    case action(title: String, symbolName: String?, destructive: Bool = false)
 }
 
 /// Value Binding 상태(아키텍처 §14.2). 지금은 표시용 placeholder이며 편집 UI는 후속 작업입니다.

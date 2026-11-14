@@ -49,6 +49,7 @@ enum InspectorUICheck {
 
     private static func checkScenarios(_ report: inout [String]) throws {
         var checkedControls = 0
+        var destructiveFound: Set<String> = []
         for appearance in [NSAppearance.Name.aqua, .darkAqua] {
             for scenario in InspectorStubDataSource.Scenario.allCases {
                 let harness = Harness(scenario: scenario, appearance: appearance)
@@ -57,11 +58,15 @@ enum InspectorUICheck {
                 try checkLayout(harness, label: label)
                 checkedControls += try checkAccessibility(harness, label: label)
                 try checkStructure(harness, scenario: scenario, label: label)
+                destructiveFound.formUnion(try checkDestructiveButtons(harness, label: label))
                 try checkKeyViewChain(harness, label: label)
             }
         }
+        try require(destructiveFound == destructiveButtonIDs,
+                    "파괴 동작 버튼 누락: \(destructiveButtonIDs.subtracting(destructiveFound).sorted())")
         report.append("\(InspectorStubDataSource.Scenario.allCases.count) scenarios × light/dark")
         report.append("\(checkedControls) labeled controls")
+        report.append("\(destructiveFound.count) destructive buttons")
     }
 
     private static func checkLayout(_ harness: Harness, label: String) throws {
@@ -158,6 +163,24 @@ enum InspectorUICheck {
         default:
             break
         }
+    }
+
+    /// 파괴 동작 버튼(Path로 변환, Detach, modifier 삭제)만 `hasDestructiveAction`이고 기본 버튼이 아님(가이드 5.1).
+    static let destructiveButtonIDs: Set<String> = ["shape.convertToPath", "component.detach", "modifiers.remove"]
+
+    /// 찾은 파괴 동작 버튼 id를 돌려줍니다(모든 장면을 합쳐 빠진 것이 없는지 확인).
+    private static func checkDestructiveButtons(_ harness: Harness, label: String) throws -> Set<String> {
+        var found: Set<String> = []
+        for view in visibleViews(in: harness.controller.view) {
+            guard let button = view as? NSButton, let id = button.identifier?.rawValue else { continue }
+            try require(button.hasDestructiveAction == destructiveButtonIDs.contains(id),
+                        "\(label): \(id) 파괴 동작 표시 \(button.hasDestructiveAction)")
+            if button.hasDestructiveAction {
+                try require(button.keyEquivalent != "\r", "\(label): 파괴 동작 \(id)이 기본 버튼임")
+                found.insert(id)
+            }
+        }
+        return found
     }
 
     private static func checkKeyViewChain(_ harness: Harness, label: String) throws {

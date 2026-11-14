@@ -143,7 +143,7 @@
 | Polygon | 변 수 | `shape.polygon.sides` | `sides: u32` | 수치 필드 + `NSStepper` | 정수 3–1000 |
 | Polygon | 회전 | `shape.polygon.rotation` | `rotation_degrees` | 수치 필드 + `NSStepper` | ° |
 | Polygon | 모서리 | `shape.polygon.cornerRadius` | `corner_radius` | 수치 필드 + `NSStepper` | px, ≥ 0 |
-| 공통 | Path로 변환 | `shape.convertToPath` | `plan_shape_to_path`(명시적 파괴 변환) | `NSButton` | [아키텍처 §12.6] |
+| 공통 | Path로 변환 | `shape.convertToPath` | `plan_shape_to_path`(명시적 파괴 변환) | `NSButton`(`hasDestructiveAction`) | [아키텍처 §12.6] [가이드 5.1] |
 
 - 도형 종류 자체는 바꾸지 않습니다(문서 모델에 종류 변경 command가 없음). Rectangle payload에는 위치가 없어 위치 행을 두지 않습니다.
 - Shape·Path·Text 속성은 문서 모델에 `PropertyKey`가 아직 없어 key 없이 경로만 둡니다(9장).
@@ -192,7 +192,7 @@
 | 속성 | 경로 | 모델(key) | 컨트롤 |
 |---|---|---|---|
 | 정의 | `component.definition` | `ComponentRef`(0x0A01) | 읽기 전용 |
-| Detach | `component.detach` | `detach_instance`(IX.2.6) | `NSButton` |
+| Detach | `component.detach` | `detach_instance`(IX.2.6) | `NSButton`(`hasDestructiveAction`) |
 | 공개 Property | `component.property.<id>` | `property_overrides`(0x0A02), 값 `TypedValue` | 아래 표 |
 | 공개 Slot | `component.slot.<id>` | `slot_overrides`(0x0A03), `SlotCardinality` | 읽기 전용 요약(개수·범위) |
 
@@ -234,6 +234,7 @@
 
 - 목록 행은 활성 체크박스, 종류 아이콘, 종류 이름, 코어가 만든 요약 문자열입니다. 행을 고르면 목록 아래에 그 modifier의 파라미터 행이 나옵니다.
 - 추가 메뉴의 새 항목 기본값은 `ModifierPayload::default_for`를 따릅니다. 참조형(Boolean·Mask·Clip)은 대상 지정 전까지 미해결입니다. [아키텍처 §12.6]
+- 삭제(`−`) 버튼은 파괴 동작이므로 `hasDestructiveAction = true`입니다. 인스펙터의 파괴 동작 버튼(Path로 변환, Detach, modifier 삭제)은 모두 이 표시를 쓰고 기본(Return) 버튼으로 만들지 않습니다. Fragment의 Frame으로 변환은 속성을 잃지 않으므로 파괴 동작이 아닙니다. [가이드 5.1] [HIG Buttons]
 - 다중 선택에서는 stack을 편집하지 않고 "Select a single layer…" 안내만 둡니다.
 
 ## 6. 상호작용과 단축키
@@ -382,7 +383,7 @@ protocol InspectorDataSource: AnyObject {
 `InspectorUICheck.run()`(통합 시 `scripts/macos/smoke.sh`에 연결)이 화면 밖 창에서 다음을 확인합니다.
 
 - 사용한 SF Symbols 이름이 모두 시스템에 있음(현재 41개).
-- Stub 17개 장면 × Light·Dark: Auto Layout 모호성 없음, 내용이 인스펙터 폭을 넓히지 않음, 컨트롤이 패널 여백 안에 있음, 크기 0 컨트롤 없음, 조작 컨트롤의 접근성 레이블, 장면별 섹션 구성, key view 순서 연결.
+- Stub 17개 장면 × Light·Dark: Auto Layout 모호성 없음, 내용이 인스펙터 폭을 넓히지 않음, 컨트롤이 패널 여백 안에 있음, 크기 0 컨트롤 없음, 조작 컨트롤의 접근성 레이블, 장면별 섹션 구성, 파괴 동작 버튼 3종만 `hasDestructiveAction`이고 기본 버튼이 아님, key view 순서 연결.
 - 상호작용: 수치 확정·clamp·Escape 되돌리기·화살표 키, stepper, switch와 의존 필드, popup·동적 선택지, 색 well, segmented, 줄 높이 Auto, disclosure와 key view 제외, 오래된 세대 무시, 선택 종류 전환, modifier 선택·배율 변환·추가·활성·이동(Command-Option-↑)·삭제, 혼합 값 상대 조정(Shift-↑), Fragment 변환, 잠금 → 안내 → Unlock, 페이지 재사용 상한·재생성·접힘 상태 공유, 편집 중 선택 변경 시 이전 세대로 확정.
 - Stub 한계: 혼합 값 상대 조정을 적용하지 않음, Value Binding 요청에 snapshot을 내지 않음. [계획 1.2 규칙 6]
 - 반영 시간 참고값(8.3절)을 출력합니다. 판정 기준은 아닙니다.
