@@ -334,9 +334,24 @@ StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, 
 StellarStatus stellar_window_session_fit_root(uint64_t handle, uint64_t session, double width, double height, uint64_t *out_request);
 /* Pan active viewport content in screen points; completes with WINDOW_VIEW_CHANGED or REQUEST_FAILED. */
 StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);
-/* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
+/* 한 게시 시점의 선택. 기존 창·뷰 info의 고정 레이아웃과 독립적입니다. */
+typedef struct StellarSelectionTarget {
+    uint64_t session;
+    uint64_t revision;
+    uint64_t history_sequence;
+    uint64_t selection_count;
+    uint8_t view[16];
+} StellarSelectionTarget;
+#define STELLAR_SELECTION_DELETE 1
+#define STELLAR_SELECTION_DUPLICATE 2
+/* 활성 View가 없으면 STELLAR_NO_ERROR, 열려 있지 않은 창이면 STELLAR_INVALID_ARGUMENT입니다. */
+StellarStatus stellar_window_selection_target(uint64_t handle, uint64_t session, StellarSelectionTarget *out);
+/* NULL/0은 위 target의 선택 전체, ids가 있으면 순서와 무관하게 실제 선택 전체와 일치해야 합니다. */
+StellarStatus stellar_window_edit_selection(uint64_t handle, const StellarSelectionTarget *target, uint32_t action, const uint8_t *ids, size_t count, uint64_t *out_request);
+/* 기존 호출자는 요청 접수 시점의 게시 선택을 사용합니다. */
 StellarStatus stellar_window_session_delete_selection(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint64_t *out_request);
 StellarStatus stellar_window_session_duplicate_selection(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint64_t *out_request);
+/* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
 StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float dx, float dy, uint64_t *out_request);
 StellarStatus stellar_window_session_resize_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float width, float height, uint64_t *out_request);
 /* 선택한 Free Frame 배경. space가 0이면 제거합니다. */
