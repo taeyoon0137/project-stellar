@@ -100,6 +100,7 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-assets",
                 "stellar-renderer-core",
                 "stellar-scene",
+                "stellar-text",
                 "stellar-ops",
                 "stellar-git-porcelain",
             ],
@@ -372,6 +373,7 @@ mod tests {
             edge("stellar-runtime", "stellar-renderer-core"),
             // ADR-0028: 창 session scene camera(XII.4.3).
             edge("stellar-runtime", "stellar-scene"),
+            edge("stellar-runtime", "stellar-text"),
         ];
         assert!(check_crate_graph(&edges).is_empty());
     }

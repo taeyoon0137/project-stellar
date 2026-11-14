@@ -43,3 +43,9 @@ pub mod clock;
 
 /// revision newtype (II.3.4).
 pub mod revision;
+
+/// 프로젝트와 공통 shaper가 공유하는 font face identity.
+pub mod font;
+
+/// CSS longhand typography record.
+pub mod typography;

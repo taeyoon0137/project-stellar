@@ -161,6 +161,24 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleteSession = reopened.windowController.windowSession,
               reopened.selectNodes([node]), pump.waitForPendingRequests(timeout: 10) else { return fail("삭제 선택") }
         let deleteCanvas = reopened.canvasHost.canvasView
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        reopened.subtreePasteboard = board
+        let clipboardDepth = deleteSession.info?.undo_depth
+        guard reopened.router.dispatch(.copy) else { return fail("선택 복사 요청") }
+        let clipboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
+        let deadline = Date().addingTimeInterval(5)
+        while board.availableType(from: [clipboardType]) == nil && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        guard board.data(forType: clipboardType)?.isEmpty == false,
+              clipboardDepth == deleteSession.info?.undo_depth,
+              action(reopened, .delete), action(reopened, .paste),
+              let pasted = at(30, in: deleteCanvas), pasted != node,
+              action(reopened, .undo), at(30, in: deleteCanvas) != pasted,
+              action(reopened, .redo), at(30, in: deleteCanvas) == pasted,
+              action(reopened, .undo), action(reopened, .undo), at(30, in: deleteCanvas) == node
+        else { return fail("원본 삭제 후 pasteboard 복제·Undo·Redo") }
         // Duplicate 메뉴(⌘D)도 실제 창의 선택과 동일한 history를 사용합니다.
         let beforeDuplicate = deleteSession.info
         guard action(reopened, .duplicate), let copy = at(30, in: deleteCanvas), copy != node,
@@ -180,6 +198,32 @@ enum ShellCanvasMoveCheck {
         }
         let layerDuplicate = SidebarCommand.duplicate([SidebarStableID(node)])
         guard awaitLayerAction(layerDuplicate) else { return fail("Layers 복제 활성") }
+        // 실제 선택만 바꾸고 셸을 갱신하지 않아 같은 revision·같은 개수의 오래된 메뉴와 Layers를 재현합니다.
+        guard let sibling = reopened.sidebarSource.snapshot.layers.topLevelIDs.first(where: { $0.uuid != node })?.uuid else {
+            return fail("다른 형제 레이어")
+        }
+        for command in [ShellCommand.delete, .duplicate] {
+            let layerCommand: SidebarCommand = command == .delete ? .delete([SidebarStableID(node)]) : layerDuplicate
+            for fromLayers in [true, false] {
+                guard awaitLayerAction(layerCommand), let shown = deleteSession.selectionTarget,
+                      deleteSession.select([sibling], completion: { _ in }), pump.waitForPendingRequests(timeout: 10),
+                      let changed = deleteSession.selectionTarget, changed.revision == shown.revision,
+                      changed.selection_count == shown.selection_count, changed.history_sequence != shown.history_sequence,
+                      let before = deleteSession.info else { return fail("같은 revision·개수의 선택 전환") }
+                let previousRequest = reopened.lastSessionCommandEvent?.request
+                if fromLayers { reopened.sidebarSource.perform(layerCommand) }
+                else { guard reopened.router.dispatch(command) else { return fail("오래된 메뉴 명령 제출") } }
+                guard pump.waitForPendingRequests(timeout: 10),
+                      case .requestFailed(let request, let failure, _) = reopened.lastSessionCommandEvent, request != previousRequest,
+                      Int32(bitPattern: failure) == STELLAR_FAILURE_UNKNOWN_VIEW,
+                      deleteSession.info?.revision == before.revision, deleteSession.info?.undo_depth == before.undo_depth,
+                      deleteSession.info?.has_unsaved_changes == before.has_unsaved_changes,
+                      deleteSession.selectionTarget?.history_sequence == changed.history_sequence,
+                      action(reopened, .undo), deleteSession.selectionTarget?.history_sequence == shown.history_sequence
+                else { return fail("오래된 선택의 삭제·복제 거부 및 Undo 선택 복원") }
+            }
+        }
+        guard awaitLayerAction(layerDuplicate) else { return fail("선택 복원 후 Layers 복제 활성") }
         reopened.sidebarSource.perform(layerDuplicate)
         guard pump.waitForPendingRequests(timeout: 10), let layerCopy = at(30, in: deleteCanvas), layerCopy != node,
               action(reopened, .undo), at(30, in: deleteCanvas) == node
@@ -210,7 +254,7 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleted = open(path), deleted !== reopened,
               deleted.windowController.windowSession?.info?.generation == deletedGeneration,
               at(30, in: deleted.canvasHost.canvasView) != node else { return fail("삭제 저장 재열기") }
-        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen")
+        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
         return true
     }
 }

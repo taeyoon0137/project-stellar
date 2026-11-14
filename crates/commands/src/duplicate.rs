@@ -27,7 +27,7 @@ use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::command::CommandError;
 use crate::edit::EditContext;
 use crate::node_ops::{decode_order_key, DeleteSubtree, InsertNode};
-use crate::tree::{path_element_ids, ChildIndex};
+use crate::tree::path_element_ids;
 
 /// subtree 복제.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +40,17 @@ pub struct DuplicateSubtree {
     pub order_key: OrderKey,
     /// old → new id 쌍(old id 오름차순).
     pub remap: Vec<(StableId, StableId)>,
+}
+
+/// 모델이 유지하는 자식 인덱스로 복제 대상만 pre-order 순회합니다.
+fn subtree_nodes(model: &DocumentModel, root: StableId) -> Vec<StableId> {
+    let mut nodes = Vec::new();
+    let mut pending = vec![root];
+    while let Some(node) = pending.pop() {
+        nodes.push(node);
+        pending.extend(model.children_in_order(node).into_iter().rev());
+    }
+    nodes
 }
 
 /// subtree의 모든 영속 id(node, modifier, path element), 오름차순.
@@ -61,7 +72,10 @@ fn remap_ref(table: &IdRemapTable, target: NodeRef) -> NodeRef {
     NodeRef::new(table.remap(target.id()))
 }
 
-fn remap_payload(table: &IdRemapTable, payload: &NodePayload) -> Result<NodePayload, CommandError> {
+pub(crate) fn remap_payload(
+    table: &IdRemapTable,
+    payload: &NodePayload,
+) -> Result<NodePayload, CommandError> {
     Ok(match payload {
         NodePayload::Frame(frame) => {
             let mut frame = frame.clone();
@@ -114,7 +128,10 @@ fn remap_payload(table: &IdRemapTable, payload: &NodePayload) -> Result<NodePayl
     })
 }
 
-fn remap_modifier_payload(table: &IdRemapTable, payload: &ModifierPayload) -> ModifierPayload {
+pub(crate) fn remap_modifier_payload(
+    table: &IdRemapTable,
+    payload: &ModifierPayload,
+) -> ModifierPayload {
     match payload {
         ModifierPayload::Boolean { op, operands } => ModifierPayload::Boolean {
             op: *op,
@@ -143,7 +160,7 @@ impl DuplicateSubtree {
         if !model.contains(source) {
             return Err(CommandError::UnknownNode { id: source });
         }
-        let nodes = ChildIndex::build(model).subtree(source);
+        let nodes = subtree_nodes(model, source);
         let olds = subtree_ids(model, &nodes);
         let table = IdRemapTable::clone_ids(&olds, generator, clock);
         let remap = olds.iter().map(|old| (*old, table.remap(*old))).collect();
@@ -168,7 +185,7 @@ impl DuplicateSubtree {
         if !model.contains(self.source) {
             return Err(CommandError::UnknownNode { id: self.source });
         }
-        let nodes = ChildIndex::build(model).subtree(self.source);
+        let nodes = subtree_nodes(model, self.source);
         let expected = subtree_ids(model, &nodes);
         let olds: Vec<StableId> = self.remap.iter().map(|(old, _)| *old).collect();
         if olds != expected {
@@ -305,6 +322,38 @@ mod tests {
     use stellar_document::modifier::ModifierKind;
     use stellar_document::path::{PathCommand, PathData, WindingRule};
     use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
+
+    #[test]
+    fn planning_small_subtree_in_large_document_preserves_remap() {
+        let mut model = small_model();
+        for id in 1000..5000 {
+            let mut unrelated = frame(id, Some(11), 0x10);
+            let mut bytes = id.to_be_bytes().to_vec();
+            bytes.push(1);
+            unrelated.order_key = OrderKey::from_bytes(bytes).unwrap();
+            model.insert_node(unrelated).unwrap();
+        }
+        let clock = ManualClock::new(100);
+        let started = std::time::Instant::now();
+        for seed in 0..128 {
+            let command = DuplicateSubtree::plan(
+                &model,
+                sid(13),
+                sid(11),
+                key(0x70),
+                &mut StableIdGenerator::new(seed),
+                &clock,
+            )
+            .unwrap();
+            assert_eq!(command.remap.len(), 1);
+            assert_eq!(command.remap[0].0, sid(13));
+            assert_ne!(command.copy_root(), Some(sid(13)));
+        }
+        eprintln!(
+            "128 small-subtree plans in 4,000 unrelated nodes: {:?}",
+            started.elapsed()
+        );
+    }
 
     fn snapshot(state: &DocumentState) -> String {
         model_snapshot_json(state.model()).expect("snapshot")

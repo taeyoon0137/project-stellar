@@ -68,7 +68,7 @@ enum ShellComponentCreateCheck {
             guard let viewRoot = canvas.frameHit(at: center)?.id else { return fail("view root") }
             func insert(_ parent: UUID, _ rect: CGRect, rectangle: Bool = false) -> Bool {
                 guard let state = session.info else { return false }
-                let hit = CanvasFrameHit(isRectangle: false, id: parent, revision: state.revision,
+                let hit = CanvasFrameHit(isInstance: false, isRectangle: false, id: parent, revision: state.revision,
                     viewID: UUID(uuid: camera.active_view), localToWorld: .identity,
                     parentToWorld: .identity, worldToView: .identity)
                 var applied = false

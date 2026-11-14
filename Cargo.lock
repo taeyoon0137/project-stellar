@@ -371,6 +371,7 @@ dependencies = [
 name = "stellar-runtime"
 version = "0.0.0"
 dependencies = [
+ "stellar-assets",
  "stellar-commands",
  "stellar-core-types",
  "stellar-document",
@@ -381,6 +382,7 @@ dependencies = [
  "stellar-renderer-core",
  "stellar-scene",
  "stellar-storage",
+ "stellar-text",
 ]
 
 [[package]]

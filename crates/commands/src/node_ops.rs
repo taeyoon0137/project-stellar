@@ -270,7 +270,7 @@ impl InsertNode {
 
     pub(crate) fn decode_from(input: &mut Reader<'_>) -> Result<InsertNode, CommandCodecError> {
         let count = input.len()?;
-        let mut nodes = Vec::with_capacity(count);
+        let mut nodes = Vec::new();
         for _ in 0..count {
             nodes.push(decode_node_record(input.bytes()?).map_err(|_| {
                 CommandCodecError::Malformed {
@@ -279,7 +279,7 @@ impl InsertNode {
             })?);
         }
         let count = input.len()?;
-        let mut modifier_stacks = Vec::with_capacity(count);
+        let mut modifier_stacks = Vec::new();
         for _ in 0..count {
             modifier_stacks.push(ModifierStack::decode(input.bytes()?).map_err(|_| {
                 CommandCodecError::Malformed {

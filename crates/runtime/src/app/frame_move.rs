@@ -7,10 +7,16 @@ use stellar_commands::document::{
     records::NodePayload,
 };
 use stellar_commands::id::{CommandId, CommandOrigin};
+use stellar_commands::modifier_ops::{InsertModifier, SetModifierProperty};
 use stellar_commands::property::{PropertyValue, SetProperty};
 use stellar_commands::transaction::CommandTransaction;
 use stellar_core_types::color::Color;
+use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::value::{Size2, Transform2D, Vec2};
+use stellar_document::model::DocumentModel;
+use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierKind, ModifierPayload};
+use stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX;
+use stellar_document::shape::ShapeGeometry;
 
 #[derive(Clone, Copy)]
 enum FrameEdit {
@@ -116,34 +122,72 @@ fn edit_selected(
         return Err(stale());
     }
     let model = window.document().ok_or_else(stale)?.model();
-    let target = editable_frame(model, view, node).ok_or_else(stale)?;
-    let (key, value) = match edit {
-        FrameEdit::Move(delta) => {
-            let (a, b, c, d, x, y) = target.transform.components();
-            let next =
-                Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).map_err(|_| stale())?;
-            if next == target.transform {
+    let command_id = command_id(window.window(), request);
+    let command =
+        if let (FrameEdit::Move(delta), Some(NodePayload::Shape(ShapeGeometry::Rectangle(_)))) =
+            (edit, model.payload(node))
+        {
+            if delta == Vec2::ZERO {
                 return Ok(());
             }
-            (keys::TRANSFORM, PropertyValue::Transform(next))
-        }
-        FrameEdit::Resize(size) => {
-            if size == target.size {
-                return Ok(());
+            editable_ancestry(model, view, node, true).ok_or_else(stale)?;
+            let stack = model.modifier_stack(node);
+            let style = crate::canvas::shape::rectangle_style(stack).ok_or_else(stale)?;
+            if let Some((modifier, last)) = style.last_transform {
+                let next = translated(last, delta).ok_or_else(stale)?;
+                if next == last {
+                    return Ok(());
+                }
+                Command::SetModifierProperty(SetModifierProperty {
+                    node,
+                    modifier,
+                    key: TRANSFORM_MATRIX,
+                    value: PropertyValue::Transform(next),
+                })
+            } else {
+                let transform = translated(Transform2D::identity(), delta).ok_or_else(stale)?;
+                let order = OrderKey::between(
+                    None,
+                    stack.and_then(|s| s.entries().first()).map(|e| &e.order),
+                );
+                Command::InsertModifier(InsertModifier {
+                    node,
+                    entry: ModifierEntry {
+                        id: ModifierId::new(StableId::from_bytes(command_id.to_bytes())),
+                        order,
+                        kind: ModifierKind::Transform,
+                        enabled: true,
+                        payload: ModifierPayload::Transform(transform),
+                    },
+                })
             }
-            (keys::SIZE, PropertyValue::Size(size))
-        }
-        FrameEdit::Background(color) => {
-            if target.background == color {
-                return Ok(());
-            }
-            (keys::BACKGROUND, PropertyValue::OptionalColor(color))
-        }
-    };
-    let command = Command::SetProperty(SetProperty { node, key, value });
+        } else {
+            let target = editable_frame(model, view, node).ok_or_else(stale)?;
+            let (key, value) = match edit {
+                FrameEdit::Move(delta) => {
+                    let next = translated(target.transform, delta).ok_or_else(stale)?;
+                    if next == target.transform {
+                        return Ok(());
+                    }
+                    (keys::TRANSFORM, PropertyValue::Transform(next))
+                }
+                FrameEdit::Resize(size) => {
+                    if size == target.size {
+                        return Ok(());
+                    }
+                    (keys::SIZE, PropertyValue::Size(size))
+                }
+                FrameEdit::Background(color) => {
+                    if target.background == color {
+                        return Ok(());
+                    }
+                    (keys::BACKGROUND, PropertyValue::OptionalColor(color))
+                }
+            };
+            Command::SetProperty(SetProperty { node, key, value })
+        };
     let transaction =
-        CommandTransaction::new(command_id(window.window(), request), CommandOrigin::User)
-            .with_command(revision, command);
+        CommandTransaction::new(command_id, CommandOrigin::User).with_command(revision, command);
     window.apply(&transaction).map_err(view_failure)?;
     Ok(())
 }
@@ -153,6 +197,24 @@ pub(super) fn editable_frame(
     view: StableId,
     node: StableId,
 ) -> Option<&stellar_document::frame::FramePayload> {
+    let Some(NodePayload::Frame(target)) = model.payload(node) else {
+        return None;
+    };
+    editable_ancestry(model, view, node, false)?;
+    Some(target)
+}
+
+fn translated(current: Transform2D, delta: Vec2) -> Option<Transform2D> {
+    let (a, b, c, d, x, y) = current.components();
+    Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).ok()
+}
+
+fn editable_ancestry(
+    model: &DocumentModel,
+    view: StableId,
+    node: StableId,
+    rectangle: bool,
+) -> Option<()> {
     let root = model
         .definition()
         .pages
@@ -160,21 +222,23 @@ pub(super) fn editable_frame(
         .flat_map(|page| &page.views)
         .find(|v| v.id == view)?
         .root_frame;
-    let Some(NodePayload::Frame(target)) = model.payload(node) else {
-        return None;
-    };
     let mut current = node;
     loop {
         let fields = model
             .runtime_id(current)
             .and_then(|id| model.columns().get(id))?;
-        if !fields.visible || fields.locked || model.modifier_stack(current).is_some() {
+        if !fields.visible
+            || fields.locked
+            || (!(rectangle && current == node) && model.modifier_stack(current).is_some())
+        {
             return None;
         }
         match model.payload(current) {
             Some(NodePayload::Frame(frame))
                 if frame.layout_mode.is_none() && !matches!(frame.clipping, Clipping::Path(_)) => {}
             Some(NodePayload::Fragment(_)) => {}
+            Some(NodePayload::Shape(ShapeGeometry::Rectangle(_)))
+                if rectangle && current == node => {}
             _ => return None,
         }
         if current == root {
@@ -182,7 +246,7 @@ pub(super) fn editable_frame(
         }
         current = fields.parent.and_then(|id| model.stable_id(id))?;
     }
-    Some(target)
+    Some(())
 }
 
 /// 요청 순번은 runtime 안에서만 유일하므로 창의 영속 ID와 함께 식별합니다.
@@ -273,6 +337,132 @@ mod tests {
         let reopened = ProjectWindowSession::load(identity(project.path()), window(2)).unwrap();
         assert_eq!(transform_of(&reopened, node), translated);
         assert_eq!(reopened.generation_number(), 2);
+    }
+
+    #[test]
+    fn rectangle_translation_preserves_geometry_and_other_modifier_entries() {
+        use stellar_document::frame::CornerRadius;
+        use stellar_document::modifier::ModifierStack;
+        use stellar_document::records::NodeRecord;
+        use stellar_document::shape::RectangleParams;
+        let delta = Vec2::new(7.0, -3.0).unwrap();
+        let before = Transform2D::new(0.0, 2.0, -0.5, 0.0, -11.0, 8.0).unwrap();
+        for has_transform in [false, true] {
+            let mut model = sample_document();
+            let parent = sid(11);
+            let id = sid(30);
+            let order_key = model.next_child_order_key(parent);
+            let payload = NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+                size: Size2::new(40., 12.).unwrap(),
+                corner_radius: CornerRadius::ZERO,
+            }));
+            model
+                .insert_node(NodeRecord {
+                    id,
+                    parent: Some(parent),
+                    order_key,
+                    visible: true,
+                    locked: false,
+                    display_name: "Rectangle".into(),
+                    payload: payload.clone(),
+                })
+                .unwrap();
+            let mut stack = ModifierStack::new(id);
+            let first = ModifierId::new(sid(31));
+            let last = ModifierId::new(sid(32));
+            if has_transform {
+                stack.push_back(first, ModifierKind::Transform).unwrap();
+                stack
+                    .set_payload(
+                        first,
+                        ModifierPayload::Transform(
+                            Transform2D::new(2., 0., 0., 1., 3., 4.).unwrap(),
+                        ),
+                    )
+                    .unwrap();
+                stack.push_back(last, ModifierKind::Transform).unwrap();
+                stack
+                    .set_payload(last, ModifierPayload::Transform(before))
+                    .unwrap();
+            }
+            stack
+                .push_back(ModifierId::new(sid(33)), ModifierKind::Fill)
+                .unwrap();
+            let disabled = ModifierId::new(sid(34));
+            stack.push_back(disabled, ModifierKind::Transform).unwrap();
+            stack.set_enabled(disabled, false).unwrap();
+            model.set_modifier_stack(stack.clone()).unwrap();
+            let dir = saved_project_with("rectangle-move-stack", &[&model]);
+            let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+            session.select(Selection::new([id], None)).unwrap();
+            let revision = session.revision();
+            assert!(edit_selected(
+                &mut session,
+                RequestId(11),
+                sid(3),
+                revision,
+                id,
+                FrameEdit::Move(delta)
+            )
+            .is_ok());
+            let changed = session
+                .document()
+                .unwrap()
+                .model()
+                .modifier_stack(id)
+                .unwrap()
+                .clone();
+            let mut expected = stack.clone();
+            if has_transform {
+                expected
+                    .set_payload(
+                        last,
+                        ModifierPayload::Transform(translated(before, delta).unwrap()),
+                    )
+                    .unwrap();
+            } else {
+                let inserted = &changed.entries()[0];
+                assert_eq!(
+                    inserted.payload,
+                    ModifierPayload::Transform(translated(Transform2D::identity(), delta).unwrap())
+                );
+                expected.insert(inserted.clone()).unwrap();
+            }
+            assert_eq!(changed, expected);
+            assert_eq!(session.view().selection().ids(), [id]);
+            assert!(session.undo().unwrap());
+            assert_eq!(
+                session.document().unwrap().model().modifier_stack(id),
+                Some(&stack)
+            );
+            assert!(session.redo().unwrap());
+            session.save_now().unwrap();
+            let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+            assert_eq!(
+                reopened.document().unwrap().model().payload(id),
+                Some(&payload)
+            );
+            assert_eq!(
+                reopened.document().unwrap().model().modifier_stack(id),
+                Some(&expected)
+            );
+            model.replace_flags(parent, true, true).unwrap();
+            let locked = saved_project_with("rectangle-move-locked", &[&model]);
+            let mut session =
+                ProjectWindowSession::load(identity(locked.path()), window(1)).unwrap();
+            session.select(Selection::new([id], None)).unwrap();
+            let revision = session.revision();
+            assert!(edit_selected(
+                &mut session,
+                RequestId(12),
+                sid(3),
+                revision,
+                id,
+                FrameEdit::Move(delta)
+            )
+            .is_err());
+            assert!(!session.has_unsaved_changes());
+        }
     }
 
     #[test]

@@ -198,7 +198,7 @@ typedef struct StellarWindowSessionInfo {
 /* v1: 좌상단 원점 logical point. world/camera는 CGAffineTransform 순서 (a,b,c,d,tx,ty). */
 typedef struct StellarCanvasColor { uint32_t space; float rgba[4]; } StellarCanvasColor; /* 0 없음, 1 sRGB, 2 Display P3 */
 typedef struct StellarCanvasFrame {
-    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target, bit2 Rectangle Shape */
+    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target, bit2 Rectangle Shape, bit3 component instance */
     float world[6], size[2], radii[4]; /* TL,TR,BR,BL */
     StellarCanvasColor fill, border; float border_width;
 } StellarCanvasFrame;
@@ -287,6 +287,8 @@ StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_
  * 0, u32 legacy chunk count, u32 row count, rows (UUID, root UUID, u32 nodes, f32 width, f32 height,
  * length-prefixed UTF-8 name, filename, hash); or 1, length-prefixed UTF-8 error.
  * out_len reports required bytes. STELLAR_BUFFER_TOO_SMALL means retry with a larger buffer. */
+/* Queues a background component source read and a WINDOW_VIEW_CHANGED event. */
+StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t session, uint64_t *out_request);
 StellarStatus stellar_window_component_library(uint64_t handle, uint64_t session, uint8_t *buf, size_t capacity, size_t *out_len);
 
 /* Conditional root-size edit on a worker. id is 16 bytes; hash is the source SHA-256 shown by the library.
@@ -342,9 +344,27 @@ StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, 
 StellarStatus stellar_window_session_fit_root(uint64_t handle, uint64_t session, double width, double height, uint64_t *out_request);
 /* Pan active viewport content in screen points; completes with WINDOW_VIEW_CHANGED or REQUEST_FAILED. */
 StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);
-/* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
+/* 한 게시 시점의 선택. 기존 창·뷰 info의 고정 레이아웃과 독립적입니다. */
+typedef struct StellarSelectionTarget {
+    uint64_t session;
+    uint64_t revision;
+    uint64_t history_sequence;
+    uint64_t selection_count;
+    uint8_t view[16];
+} StellarSelectionTarget;
+#define STELLAR_SELECTION_DELETE 1
+#define STELLAR_SELECTION_DUPLICATE 2
+/* 활성 View가 없으면 STELLAR_NO_ERROR, 열려 있지 않은 창이면 STELLAR_INVALID_ARGUMENT입니다. */
+StellarStatus stellar_window_selection_target(uint64_t handle, uint64_t session, StellarSelectionTarget *out);
+/* NULL/0은 위 target의 선택 전체, ids가 있으면 순서와 무관하게 실제 선택 전체와 일치해야 합니다. */
+StellarStatus stellar_window_edit_selection(uint64_t handle, const StellarSelectionTarget *target, uint32_t action, const uint8_t *ids, size_t count, uint64_t *out_request);
+/* Clipboard subtree data uses caller-owned byte buffers. */
+StellarStatus stellar_window_session_copy_subtree(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint8_t *bytes, size_t capacity, size_t *out_len);
+StellarStatus stellar_window_session_paste_subtree(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, const uint8_t *bytes, size_t len, uint64_t *out_request);
+/* 기존 호출자는 요청 접수 시점의 게시 선택을 사용합니다. */
 StellarStatus stellar_window_session_delete_selection(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint64_t *out_request);
 StellarStatus stellar_window_session_duplicate_selection(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint64_t *out_request);
+/* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
 StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float dx, float dy, uint64_t *out_request);
 StellarStatus stellar_window_session_resize_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float width, float height, uint64_t *out_request);
 /* 선택한 Free Frame 배경. space가 0이면 제거합니다. */
@@ -363,6 +383,14 @@ StellarStatus stellar_window_canvas(uint64_t handle, uint64_t session, float wid
 /* 셸 worker 전용. 활성 View/revision의 직계 자식을 앞에서부터 조회합니다.
  * rows: STELLAR_LAYER_PAGE_SIZE개 caller buffer. 플래그 bit 0 표시, 1 잠금, 2 자식 있음.
  * UTF-8 text는 페이지·View·행 이름 순서. BUFFER_TOO_SMALL은 info.text_len만큼 확보해 재호출합니다. */
+/* Text composition. Begin and preview run on the window worker.
+ * Begin uses document Unicode scalar offsets. Mark uses UTF-16 offsets within marked text.
+ * One transient token per window. Commit reports its request result via the event queue. */
+StellarStatus stellar_text_begin(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint32_t start, uint32_t end, uint64_t *out_token);
+StellarStatus stellar_text_mark(uint64_t handle, uint64_t session, uint64_t token, const uint8_t *text, size_t len, uint32_t start, uint32_t count);
+StellarStatus stellar_text_preview(uint64_t handle, uint64_t session, uint64_t token, uint8_t *buf, size_t capacity, size_t *out_len);
+StellarStatus stellar_text_commit(uint64_t handle, uint64_t session, uint64_t token, const uint8_t *text, size_t len, uint64_t *out_request);
+StellarStatus stellar_text_cancel(uint64_t handle, uint64_t session, uint64_t token);
 StellarStatus stellar_window_layer_rename(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, const uint8_t *name, size_t name_len, uint64_t *out_request);
 StellarStatus stellar_window_layer_page(uint64_t handle, uint64_t session, const StellarLayerQuery *query, StellarLayerInfo *info, StellarLayerRow *rows, uint8_t *text, size_t capacity);
 

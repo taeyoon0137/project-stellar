@@ -307,6 +307,15 @@ impl ProjectWindowSession {
             .map_or(DocumentRevision(0), DocumentState::revision)
     }
 
+    /// 현재 history 위치. Undo/Redo는 해당 항목의 sequence로 복귀하고 새 분기는 새 sequence를 받습니다.
+    pub(crate) fn history_sequence(&self) -> u64 {
+        self.history
+            .history()
+            .entries()
+            .last()
+            .map_or(0, |entry| entry.sequence.get())
+    }
+
     /// 마지막 저장 뒤 문서가 바뀌었는지(O(1)). 선택·viewport는 문서 revision을 바꾸지 않습니다.
     pub fn has_unsaved_changes(&self) -> bool {
         self.document

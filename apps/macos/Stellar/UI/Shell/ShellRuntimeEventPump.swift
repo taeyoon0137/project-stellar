@@ -46,6 +46,12 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.openProject(handle: runtimeHandle, path: path), completion)
     }
 
+    func pasteSubtree(session: UInt64, view: UUID, revision: UInt64, data: Data,
+                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.pasteSubtree(handle: runtimeHandle, session: session, view: view,
+            parent: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)), revision: revision, data: data), completion)
+    }
+
     /// 프로젝트 session 닫기를 요청합니다. 완료 event는 `completion`이 없으면 버립니다.
     @discardableResult
     func closeProject(
@@ -126,14 +132,9 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.createComponent(handle: runtimeHandle, session: session, name: name, selection: selection), completion)
     }
 
-    func deleteSelection(session: UInt64, view: UUID, revision: UInt64,
-                         completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.deleteSelection(handle: runtimeHandle, session: session, view: view, revision: revision), completion)
-    }
-
-    func duplicateSelection(session: UInt64, view: UUID, revision: UInt64,
-                         completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.duplicateSelection(handle: runtimeHandle, session: session, view: view, revision: revision), completion)
+    func editSelection(target: StellarSelectionTarget, action: UInt32, ids: [UUID]?,
+                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.editSelection(handle: runtimeHandle, target: target, action: action, ids: ids), completion)
     }
 
     func insertFrame(session: UInt64, parent: CanvasFrameHit, rect: CGRect, rectangle: Bool,
@@ -164,6 +165,13 @@ final class ShellRuntimeEventPump {
             return register(CoreRuntime.setFrameBackground(handle: runtimeHandle, session: frame.session, view: frame.view,
                                                            node: frame.node, revision: frame.revision, background: color), completion)
         }
+    }
+
+    func reloadComponentCanvas(_ session: UInt64, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_reload_component_canvas(runtimeHandle, session, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return register(.success(request), completion)
     }
 
     private func register(

@@ -633,6 +633,7 @@ mod tests {
         assert_eq!((h.position.offset, h.cluster), (0, None));
         assert!(hit_test(
             &TextLayout {
+                runs: vec![],
                 lines: vec![],
                 width: TextUnit::ZERO,
                 height: TextUnit::ZERO,

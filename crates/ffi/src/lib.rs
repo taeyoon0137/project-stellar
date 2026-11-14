@@ -22,6 +22,7 @@ pub mod input_macos;
 /// 셸→코어 입력 대기열과 연속 move/wheel coalescing (XII.3.4).
 pub mod input_queue;
 mod sidebar;
+mod text_input;
 /// 창 session C ABI (XII.2.2).
 pub mod window_session;
 
@@ -106,6 +107,7 @@ struct Runtime {
     drawable: Option<Drawable>,
     /// 셸이 제출한 입력 이벤트(FIFO, 용량 [`INPUT_QUEUE_CAPACITY`], 연속 move/wheel 병합).
     input: InputQueue,
+    text_inputs: text_input::TextInputs,
     /// native 입력 시각 → 코어 단조 domain 변환기(검증을 통과한 첫 입력에서 기준점을 잡음).
     input_domain: Option<InputTimeDomain>,
     /// 프로젝트·문서 요청을 처리하는 앱 runtime(첫 요청에서 시작).
@@ -120,6 +122,7 @@ impl Runtime {
             events: VecDeque::new(),
             drawable: None,
             input: InputQueue::new(INPUT_QUEUE_CAPACITY),
+            text_inputs: text_input::TextInputs::default(),
             input_domain: None,
             app: None,
         }
@@ -1646,9 +1649,13 @@ mod tests {
             "stellar_window_session_resize_frame",
             "stellar_window_session_set_frame_background",
             "stellar_window_session_insert_frame",
+            "stellar_window_selection_target",
+            "stellar_window_edit_selection",
             "stellar_window_session_delete_selection",
             "stellar_window_session_duplicate_selection",
             "stellar_window_session_insert_rectangle",
+            "stellar_window_session_paste_subtree",
+            "stellar_window_session_copy_subtree",
             "stellar_command_code",
             "stellar_window_view_info",
         ] {

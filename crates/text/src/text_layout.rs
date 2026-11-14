@@ -146,9 +146,22 @@ pub struct ParagraphLine {
     pub metrics: ScaledLineMetrics,
 }
 
+/// Glyph 번호를 해석할 face와 style. glyph마다 복제하지 않고 run별로 보관합니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacedRun {
+    /// 실제 shaping instance. 해당 run에 사용 가능한 face가 없으면 None.
+    pub face: Option<crate::font::FontFaceRef>,
+    /// shaping에 사용한 글꼴 크기.
+    pub size: FontSize,
+    /// 입력 style index.
+    pub style: u32,
+}
+
 /// paragraph 하나의 줄 목록 (X.10.2 1단계 결과, 캐시 단위).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParagraphLines {
+    /// glyph의 run index 순서.
+    pub runs: std::sync::Arc<[PlacedRun]>,
     /// 줄.
     pub lines: Vec<ParagraphLine>,
     /// 가로 정렬.
@@ -201,6 +214,15 @@ pub fn lay_out_paragraph(
         });
     }
     Ok(ParagraphLines {
+        runs: shaped
+            .runs()
+            .iter()
+            .map(|run| PlacedRun {
+                face: run.instance.clone(),
+                size: run.font_size,
+                style: run.style,
+            })
+            .collect(),
         lines,
         align: style.align,
         base_level: bidi.base_level(),
@@ -439,6 +461,8 @@ pub struct PositionedLine {
 /// text box 레이아웃 결과 (X.10.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextLayout {
+    /// paragraph 및 glyph run index로 찾는 shaping 결과.
+    pub runs: Vec<std::sync::Arc<[PlacedRun]>>,
     /// 모든 줄(paragraph 순서).
     pub lines: Vec<PositionedLine>,
     /// box 너비(지정값 또는 내용 너비).
@@ -611,6 +635,7 @@ pub fn compose_text(
         }
     }
     Ok(TextLayout {
+        runs: paragraphs.iter().map(|p| p.runs.clone()).collect(),
         lines,
         width: box_width,
         height: TextUnit::from_i64(box_height)?,

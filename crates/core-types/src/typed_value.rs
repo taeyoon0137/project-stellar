@@ -5,11 +5,7 @@
 //! 모든 variant는 [`TypedValue::to_bytes`] ↔ [`TypedValue::from_bytes`]로 정확히 round-trip
 //! 합니다.
 //!
-//! `Typography`만 아직 정식 정의되지 않았습니다(VI.7.2/X.8.1). III.3.5에서는 그 **tag 위치와
-//! round-trip envelope만** 고정하고, 구체 구조는 후속 작업이 채웁니다. 그때까지는 불투명
-//! (opaque) byte payload placeholder([`TypographyValue`])로 둡니다. `Color`(III.4.1)·
-//! `Gradient`(III.4.3)·`Shadow`(III.4.4)는 정식 타입으로 교체되었으며 type tag
-//! (`0x09`/`0x0A`/`0x0B`)는 유지됩니다.
+//! Typography는 인식 가능한 버전만 구조화해 읽고 기존 blob을 그대로 보존합니다.
 
 use std::fmt;
 
@@ -62,37 +58,36 @@ impl EnumValue {
     }
 }
 
-/// 아직 정식 정의되지 않은 payload의 placeholder를 정의합니다. 불투명 byte buffer를
-/// 보존하며 round-trip만 보장합니다. 정식 타입은 명시한 후속 작업이 대체합니다.
-macro_rules! define_opaque_placeholder {
-    ($name:ident, $doc:literal) => {
-        #[doc = $doc]
-        #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-        pub struct $name(Vec<u8>);
+/// Typography type tag의 원본 bytes. 알 수 없는 기존 형식은 읽기와 저장 동안 그대로 유지합니다.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct TypographyValue(Vec<u8>);
 
-        impl $name {
-            /// 불투명 payload bytes로부터 만듭니다.
-            pub fn new(bytes: Vec<u8>) -> $name {
-                $name(bytes)
-            }
-
-            /// slice로부터 만듭니다.
-            pub fn from_slice(bytes: &[u8]) -> $name {
-                $name(bytes.to_vec())
-            }
-
-            /// 보존된 payload bytes.
-            pub fn as_bytes(&self) -> &[u8] {
-                &self.0
-            }
-        }
-    };
+impl TypographyValue {
+    /// 기존 또는 새 payload envelope의 원본 bytes.
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+    /// bytes를 복사해 보존합니다.
+    pub fn from_slice(bytes: &[u8]) -> Self {
+        Self::new(bytes.to_vec())
+    }
+    /// 원본 payload.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+    /// 검증된 longhand로부터 canonical payload를 만듭니다.
+    pub fn from_record(
+        record: &crate::typography::Typography,
+    ) -> Result<Self, crate::typography::TypographyError> {
+        Ok(Self::new(record.encode()?))
+    }
+    /// 인식하는 형식만 해석합니다. 실패해도 원본 bytes는 유지합니다.
+    pub fn record(
+        &self,
+    ) -> Result<crate::typography::Typography, crate::typography::TypographyError> {
+        crate::typography::Typography::decode(self.as_bytes())
+    }
 }
-
-define_opaque_placeholder!(
-    TypographyValue,
-    "타이포그래피 값 placeholder. 정식 정의는 VI.7.2/X.8.1. 현재는 tag와 round-trip만 고정."
-);
 
 /// 타입드 값 union (III.3.5).
 ///
@@ -122,7 +117,7 @@ pub enum TypedValue {
     Gradient(Gradient),
     /// 그림자(III.4.4).
     Shadow(Shadow),
-    /// 타이포그래피(placeholder, VI.7.2/X.8.1).
+    /// 타이포그래피 원본(IX.11.11).
     Typography(TypographyValue),
     /// 리소스 참조.
     ResourceRef(ResourceRef),

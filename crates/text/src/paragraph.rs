@@ -141,6 +141,8 @@ pub struct ScaledLineMetrics {
 /// shaping된 glyph run(한 item 안 같은 face 구간).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GlyphRun {
+    /// 실제 glyph를 낸 face와 variation 좌표.
+    pub instance: Option<crate::font::FontFaceRef>,
     /// paragraph byte 범위.
     pub range: Range<usize>,
     /// itemization item index.
@@ -294,8 +296,8 @@ pub fn shape_paragraph<S: FaceSource + ?Sized>(
                 style: item.style,
             })?;
         let size = spec.font_size;
-        let (glyphs, metrics) = match (&shaped_run.shaped, shaped_run.run.face) {
-            (Some(shaped), RunFace::Face { handle, .. }) => {
+        let (glyphs, metrics) = match &shaped_run.shaped {
+            Some(shaped) => {
                 let upem = shaped.units_per_em;
                 let mut glyphs = Vec::with_capacity(shaped.glyphs.len());
                 for g in &shaped.glyphs {
@@ -307,11 +309,7 @@ pub fn shape_paragraph<S: FaceSource + ?Sized>(
                         y_offset: size.scale(i64::from(g.y_offset), upem)?,
                     });
                 }
-                let metrics = match faces.face(handle) {
-                    Some(face) => scale_metrics(face.line_metrics(), size, upem)?,
-                    None => ScaledLineMetrics::default(),
-                };
-                (glyphs, metrics)
+                (glyphs, scale_metrics(shaped.metrics, size, upem)?)
             }
             _ => (Vec::new(), ScaledLineMetrics::default()),
         };
@@ -324,6 +322,7 @@ pub fn shape_paragraph<S: FaceSource + ?Sized>(
             &mut segments,
         )?;
         runs.push(GlyphRun {
+            instance: shaped_run.instance,
             range: shaped_run.run.range.clone(),
             item: shaped_run.run.item,
             style: item.style,
@@ -366,12 +365,21 @@ fn default_metrics<S: FaceSource + ?Sized>(
     let Some(style) = style else {
         return Ok((ScaledLineMetrics::default(), None));
     };
-    let face = style
-        .chain
-        .available()
-        .find_map(|(_, handle)| faces.face(handle));
+    let face = style.chain.available().find_map(|(index, handle)| {
+        faces
+            .face(handle)
+            .zip(style.chain.face_for_handle(index, handle))
+    });
     let metrics = match face {
-        Some(face) => scale_metrics(face.line_metrics(), style.font_size, face.units_per_em())?,
+        Some((base, reference)) => {
+            let axes = style.shaping.effective_axes(reference);
+            let metrics = if base.variations() == axes {
+                base.line_metrics()
+            } else {
+                base.with_variations(&axes).line_metrics()
+            };
+            scale_metrics(metrics, style.font_size, base.units_per_em())?
+        }
         None => ScaledLineMetrics::default(),
     };
     Ok((metrics, Some(style.font_size)))

@@ -120,6 +120,29 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    API가 없습니다. 정책 변경(ADR-0013 갱신) 또는 project의 시스템 Git facade가 생기면 같은 요청·event
    규칙으로 추가합니다.
 
+### 로컬 개발 — subtree Paste 전달
+
+`stellar_window_session_paste_subtree(handle, session, view[16], parent[16], revision,
+bytes, len, out_request)`는 플랫폼 pasteboard 데이터를 소유 복사하여 기존 runtime Paste에
+전달합니다. 길이는 1 byte~16 MiB이며 복사 전에 검사합니다. null 입력은 `NULL_POINTER`,
+범위 밖 길이는 `INVALID_ARGUMENT`, 존재하지 않는 handle은 `INVALID_HANDLE`입니다.
+동기 거부는 `out_request`를 0으로 초기화하며, 접수 후 입력 buffer는 해제할 수 있습니다.
+완료는 기존 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다. document thread에서
+같은 문서 출처·active View·revision·목적 컨테이너(Frame·Fragment)와 조상 잠금·프로젝트 신뢰를 검사하고,
+새 ID와 일반 창 history·선택·Undo/Redo를 기존 Paste 경로로 적용합니다.
+기존 event schema와 ABI 구조체는 변경하지 않습니다. 부모가 NIL이면 현재 선택한 컨테이너(Frame·Fragment) 안,
+그 외 단일 선택의 부모 아래, 선택이 없으면 active View root 아래를 목적지로 정합니다.
+다중 선택은 자동 목적지를 결정하지 않고 거부합니다.
+
+`stellar_window_session_copy_subtree`는 셸 worker 전용 읽기 API입니다. registry lock을 놓고
+문서 ticket을 기다린 뒤 caller-owned buffer에 최대 16 MiB를 씁니다. 단일 선택·신뢰·revision·
+View·잠금을 검사하며 history를 바꾸지 않습니다. 복사 불가 상태는 `NO_ERROR`와 길이 0,
+출력 부족은 `BUFFER_TOO_SMALL`과 필요한 길이를 반환합니다.
+macOS는 `xyz.taeyoon.stellar.node-subtree.v1` pasteboard type을 쓰며 같은 문서 출처만 지원합니다.
+Copy 결과가 도착하기 전에 pasteboard가 바뀌거나 창이 닫히면 덮어쓰지 않습니다.
+텍스트 field editor에서는 표준 AppKit Copy/Paste 응답자 체인을 유지합니다.
+
+
 ## Alternatives
 
 - **Swift에서 `InputEvent` 바이트를 직접 인코딩**: 인코더가 두 벌이 되고 변환 규칙을 Rust 테스트·CI에서
@@ -194,3 +217,9 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
 ## Migration
 
 - 새 ABI이므로 기존 데이터·코드 마이그레이션은 없습니다. 셸은 재생성한 `stellar_ffi.h`를 사용합니다.
+
+### 캔버스 Text 조합과 문서 편집
+
+- 창의 worker에서 `stellar_text_begin`으로 현재 선택한 Text, 활성 View, 문서 revision, 대체할 Unicode scalar 범위를 전달합니다. 같은 창의 새 입력은 새 토큰을 발급하고 이전 조합을 취소합니다.
+- `stellar_text_mark`는 marked text 안의 UTF-16 선택을 공통 좌표로 변환합니다. surrogate pair 중간은 기존 조합을 보존하며 거부합니다. `stellar_text_preview`는 호출자 버퍼에 미확정 본문을 씁니다. 문단과 run을 포함한 레이아웃용 preview는 runtime의 동일한 편집 세션에서 얻습니다.
+- `stellar_text_commit`은 신뢰·View·선택·revision을 다시 확인해 단일 ReplaceText를 창 history에 기록합니다. 값이 같으면 history를 추가하지 않습니다. `stellar_text_cancel` 또는 창 닫기는 미확정 본문을 버립니다.

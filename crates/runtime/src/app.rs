@@ -134,8 +134,12 @@ mod instance_place;
 pub use instance_place::InstancePlacement;
 mod node_delete;
 mod node_duplicate;
+mod node_paste;
 pub mod sidebar;
+/// 캔버스의 미확정 입력과 한 번의 본문 확정.
+pub mod text_input;
 pub use git_names::{GitNameRow, SelectionOperation};
+pub use node_delete::{SelectionEdit, SelectionEditTarget};
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
@@ -977,6 +981,8 @@ pub struct WindowSessionSummary {
     pub redo_depth: u32,
     /// 선택된 node 수.
     pub selection_len: u32,
+    /// Undo 스택 끝의 sequence. 문서 revision이 같은 선택 변경도 구분합니다.
+    pub history_sequence: u64,
     /// 표시 중인 primary 선택.
     pub primary_selection: Option<StableId>,
     /// 현재 확정된 단일 선택이 Frame일 때 그 ID. viewport 가시성과 독립적입니다.
@@ -1410,6 +1416,7 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         undo_depth: clamp(session.history().history().len()),
         redo_depth: clamp(session.history().history().redo_entries().len()),
         selection_len: clamp(session.view().selection().len()),
+        history_sequence: session.history_sequence(),
         primary_selection: session.view().displayed_selection().primary(),
         selected_frame: match session.view().selection().ids() {
             [node]
@@ -1838,10 +1845,21 @@ impl AppRuntime {
                 }
             }
             session.trust = store.status(identity);
+            let trusted = session.trust == TrustStatus::Trusted;
+            if !trusted {
+                for window in ctx
+                    .app_sessions_mut()
+                    .windows
+                    .values_mut()
+                    .filter(|w| w.project == project)
+                {
+                    window.canvas.update_library(request.0, None);
+                }
+            }
             Ok(RuntimeEvent::ProjectTrust {
                 request,
                 project,
-                trusted: session.trust == TrustStatus::Trusted,
+                trusted,
             })
         })
     }

@@ -38,7 +38,7 @@
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
 | `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile |
 | `stellar-cli` | ops, diagnostics |
-| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, ops, git-porcelain |
+| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain |
 | `stellar-ffi` | core-types, runtime |
 
 ## Mermaid
@@ -118,6 +118,7 @@ graph TD
   runtime --> assets
   runtime --> renderer_core
   runtime --> scene
+  runtime --> text
   runtime --> ops
   runtime --> git_porcelain
   ffi --> core_types

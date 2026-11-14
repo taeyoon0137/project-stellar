@@ -84,17 +84,28 @@ final class ShellWindowSessionHandle {
         pump.closeWindowSession(session, completion: completion)
     }
 
-    func deleteSelection(completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
-        guard !isClosed, !isClosing, let view = viewInfo, view.has_view == 1, let info else { return false }
-        return track { done in
-            pump.deleteSelection(session: session, view: UUID(uuid: view.active_view), revision: info.revision, completion: done)
-        } completion: { completion($0) }
+    var selectionTarget: StellarSelectionTarget? {
+        guard !isClosed else { return nil }
+        return CoreRuntime.selectionTarget(handle: pump.runtimeHandle, session: session)
     }
 
-    func duplicateSelection(completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+    func editSelection(_ target: StellarSelectionTarget, command: ShellCommand, ids: [UUID]?,
+                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed, !isClosing, target.session == session else { return false }
+        let action: UInt32
+        switch command {
+        case .delete: action = UInt32(STELLAR_SELECTION_DELETE)
+        case .duplicate: action = UInt32(STELLAR_SELECTION_DUPLICATE)
+        default: return false
+        }
+        return track({ pump.editSelection(target: target, action: action, ids: ids, completion: $0) }, completion: completion)
+    }
+
+    func pasteSubtree(_ data: Data, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
         guard !isClosed, !isClosing, let view = viewInfo, view.has_view == 1, let info else { return false }
         return track { done in
-            pump.duplicateSelection(session: session, view: UUID(uuid: view.active_view), revision: info.revision, completion: done)
+            pump.pasteSubtree(session: session, view: UUID(uuid: view.active_view), revision: info.revision,
+                              data: data, completion: done)
         } completion: { completion($0) }
     }
 
@@ -442,6 +453,7 @@ final class ShellProjectWindow {
     let gitSource = ShellGitDataSource()
     var componentLibrary: ShellComponentLibrary?
     let sidebarSource = ShellSidebarSource()
+    private var displayedSelection: StellarSelectionTarget?
     let inspectorSource = ShellFrameInspectorSource()
     /// 창 도구 모델 → 하단 도구 막대(셸 프레임 snapshot 도구 목록) 구독.
     private var toolsObservation: ToolsMenuObservation?
@@ -494,6 +506,7 @@ final class ShellProjectWindow {
         gitSource.trustDidChange = { [weak self] trusted in
             self?.dataSource.updateTrust(trusted)
             self?.sidebarSource.trusted = trusted
+            self?.reloadComponentCanvas()
             self?.refreshSessionCommands()
             if !trusted {
                 _ = self?.canvasHost.canvasView.cancelFrameGesture?()
@@ -510,10 +523,12 @@ final class ShellProjectWindow {
                 if case .windowViewChanged = event { completion(true) } else { completion(false) }
             }
         }
-        sidebarSource.duplicate = { [weak self] in _ = self?.router.dispatch(.duplicate) }
-        sidebarSource.canDuplicate = { [weak self] in self?.toolsModel.snapshot.enabledCommands.contains(.duplicate) == true }
-        sidebarSource.delete = { [weak self] in _ = self?.router.dispatch(.delete) }
-        sidebarSource.canDelete = { [weak self] in self?.toolsModel.snapshot.enabledCommands.contains(.delete) == true }
+        sidebarSource.editSelection = { [weak self] command, target, ids in
+            _ = self?.editSelection(command, target: target, ids: ids)
+        }
+        sidebarSource.canEditSelection = { [weak self] command in
+            self?.toolsModel.snapshot.enabledCommands.contains(command) == true
+        }
         sidebarSource.select = { [weak self] ids in _ = self?.selectNodes(ids) }
         sidebarSource.rename = { [weak self] view, revision, id, name in
             guard let self, let session = self.windowController.windowSession, !session.isClosed, !session.isClosing,
@@ -619,13 +634,18 @@ final class ShellProjectWindow {
     }
 
     /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
+    var subtreePasteboard: NSPasteboard = .general
+    private static let subtreePasteboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
+    private let clipboardQueue = DispatchQueue(label: "xyz.taeyoon.stellar.clipboard", qos: .userInitiated)
+
     func refreshSessionCommands() {
         let session = windowController.windowSession
         canvasHost.canvasView.frameSession = session?.session
         refreshInspector()
         let view = session?.viewInfo
         let info = session?.info
-        sidebarSource.refresh(runtime: dataSource.session?.pump.runtimeHandle, session: session, info: info, view: view)
+        displayedSelection = session?.selectionTarget
+        sidebarSource.refresh(runtime: dataSource.session?.pump.runtimeHandle, session: session, target: displayedSelection)
         if let drag = frameDrag,
            info?.revision != drag.hit.revision || view.map({ UUID(uuid: $0.active_view) }) != drag.hit.viewID ||
            view?.center_x != drag.viewport.center_x || view?.center_y != drag.viewport.center_y ||
@@ -636,8 +656,9 @@ final class ShellProjectWindow {
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
         if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .componentLibrary]) }
         if gitSource.trusted, selectedComponentFrame != nil { commands.insert(.componentFromSelection) }
-        if gitSource.trusted, (info?.selection_count ?? 0) > 0 { commands.insert(.delete) }
-        if gitSource.trusted, info?.selection_count == 1 { commands.insert(.duplicate) }
+        if gitSource.trusted, (displayedSelection?.selection_count ?? 0) > 0 { commands.insert(.delete) }
+        if gitSource.trusted, displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy]) }
+        if gitSource.trusted, view?.has_view == 1 { commands.insert(.paste) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
 
@@ -650,26 +671,57 @@ final class ShellProjectWindow {
     /// 메뉴·단축키는 응답자 체인으로 key 창의 router가 받으므로 여기 오는 명령은 언제나 이 창(활성 창)의 것입니다.
     @discardableResult
     func performSessionCommand(_ command: ShellCommand) -> Bool {
-        if command == .delete {
-            guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession else { return false }
+        if command == .copy {
+            guard gitSource.trusted, !router.isTextEditing,
+                  let session = windowController.windowSession, !session.isClosing, !session.isClosed,
+                  session.pendingCommandCount == 0,
+                  let info = session.info, let view = session.viewInfo, view.has_view == 1,
+                  let runtime = dataSource.session?.pump.runtimeHandle else { return false }
+            let changeCount = subtreePasteboard.changeCount
+            let sessionID = session.session
+            clipboardQueue.async { [weak self, weak session] in
+                let data = CoreRuntime.copySubtree(handle: runtime, session: sessionID,
+                                                   view: UUID(uuid: view.active_view), revision: info.revision)
+                DispatchQueue.main.async { [weak self, weak session] in
+                    guard let self, let session, self.windowController.windowSession === session,
+                          !session.isClosed, !session.isClosing, self.gitSource.trusted,
+                          self.subtreePasteboard.changeCount == changeCount, let data else { return }
+                    let item = NSPasteboardItem()
+                    item.setData(data, forType: Self.subtreePasteboardType)
+                    self.subtreePasteboard.clearContents()
+                    self.subtreePasteboard.writeObjects([item])
+                }
+            }
+            return true
+        }
+        if command == .paste {
+            guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession,
+                  session.pendingCommandCount == 0,
+                  let data = subtreePasteboard.data(forType: Self.subtreePasteboardType),
+                  !data.isEmpty, data.count <= 16 * 1024 * 1024 else { return false }
             _ = canvasHost.canvasView.cancelFrameGesture?()
-            return session.deleteSelection { [weak self, weak session] event in
+            return session.pasteSubtree(data) { [weak self, weak session] event in
                 guard let self, self.windowController.windowSession === session else { return }
                 self.finishSessionCommand(command, event: event)
             }
         }
-        if command == .duplicate {
-            guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession else { return false }
-            _ = canvasHost.canvasView.cancelFrameGesture?()
-            return session.duplicateSelection { [weak self, weak session] event in
-                guard let self, self.windowController.windowSession === session else { return }
-                self.finishSessionCommand(command, event: event)
-            }
+        if command == .delete || command == .duplicate {
+            guard let target = displayedSelection else { return false }
+            return editSelection(command, target: target, ids: nil)
         }
         guard let code = coreCommandIDs.coreCommandID(for: command), let session = windowController.windowSession else {
             return false
         }
         return session.perform(coreCommand: code) { [weak self, weak session] event in
+            guard let self, self.windowController.windowSession === session else { return }
+            self.finishSessionCommand(command, event: event)
+        }
+    }
+
+    private func editSelection(_ command: ShellCommand, target: StellarSelectionTarget, ids: [UUID]?) -> Bool {
+        guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession else { return false }
+        _ = canvasHost.canvasView.cancelFrameGesture?()
+        return session.editSelection(target, command: command, ids: ids) { [weak self, weak session] event in
             guard let self, self.windowController.windowSession === session else { return }
             self.finishSessionCommand(command, event: event)
         }
@@ -816,7 +868,8 @@ final class ShellProjectWindow {
         canvasHost.canvasView.frameSession = nil
         inspectorSource.refresh(nil, trusted: false)
         gitSource.attach(nil)
-        sidebarSource.refresh(runtime: nil, session: nil, info: nil, view: nil)
+        displayedSelection = nil
+        sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()
         windowController.windowSession?.close()
         windowController.windowSession = nil
@@ -832,7 +885,8 @@ final class ShellProjectWindow {
         canvasHost.canvasView.frameSession = nil
         inspectorSource.refresh(nil, trusted: false)
         gitSource.attach(nil)
-        sidebarSource.refresh(runtime: nil, session: nil, info: nil, view: nil)
+        displayedSelection = nil
+        sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()
         windowController.windowSession?.close()
         dataSource.session?.close()

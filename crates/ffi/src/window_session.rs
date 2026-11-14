@@ -12,7 +12,9 @@
 //! [`stellar_command_code`]에 물어 코드를 얻고, 단축키는 각 운영체제 관례대로 셸 메뉴에 둡니다.
 
 use stellar_core_types::ids::StableId;
-use stellar_runtime::app::{AppRuntime, ProjectSessionId, WindowSessionHandle};
+use stellar_runtime::app::{
+    AppRuntime, ProjectSessionId, SelectionEdit, SelectionEditTarget, WindowSessionHandle,
+};
 use stellar_runtime::app_command::AppCommand;
 
 use crate::{ffi_guard, registry, StellarStatus};
@@ -178,6 +180,9 @@ pub unsafe extern "C" fn stellar_window_session_close(
             Ok(app) => app.close_window_session(WindowSessionHandle(session)),
             Err(status) => return status,
         };
+        if result.is_ok() {
+            rt.text_inputs.close(session);
+        }
         unsafe { rt.finish_request(result, out_request) }
     })
 }
@@ -318,6 +323,125 @@ pub unsafe extern "C" fn stellar_window_session_pan(
     })
 }
 
+/// 표시된 선택의 문서 편집 기준(기존 창·뷰 ABI와 독립).
+#[derive(Debug, Default, Clone, Copy)]
+#[repr(C)]
+pub struct StellarSelectionTarget {
+    session: u64,
+    revision: u64,
+    history_sequence: u64,
+    selection_count: u64,
+    view: [u8; 16],
+}
+
+/// 한 번 게시된 snapshot에서 선택과 활성 View를 함께 읽습니다.
+/// # Safety
+/// `out`은 대상 구조체 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_selection_target(
+    handle: u64,
+    session: u64,
+    out: *mut StellarSelectionTarget,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { out.write(StellarSelectionTarget::default()) };
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let state = rt.app.as_ref().map(AppRuntime::state);
+        let Some(summary) = state
+            .as_ref()
+            .and_then(|s| s.window(WindowSessionHandle(session)))
+        else {
+            return StellarStatus::InvalidArgument;
+        };
+        let Some(view) = summary.active_view else {
+            return StellarStatus::NoError;
+        };
+        unsafe {
+            out.write(StellarSelectionTarget {
+                session,
+                revision: summary.revision.0,
+                history_sequence: summary.history_sequence,
+                selection_count: u64::from(summary.selection_len),
+                view: view.to_bytes(),
+            })
+        };
+        StellarStatus::Ok
+    })
+}
+
+/// 표시된 선택에 문서 명령을 접수합니다. Layers 요청은 대상 ID도 함께 고정합니다.
+/// # Safety
+/// `target`은 구조체 하나, `ids`는 null 또는 `count * 16`바이트를 읽을 수 있어야 합니다.
+/// `out_request`는 null 또는 쓰기가 가능한 u64 포인터입니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_edit_selection(
+    handle: u64,
+    target: *const StellarSelectionTarget,
+    action: u32,
+    ids: *const [u8; 16],
+    count: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        let Some(target) = (unsafe { target.as_ref() }) else {
+            return StellarStatus::NullPointer;
+        };
+        let edit = match action {
+            1 => SelectionEdit::Delete,
+            2 => SelectionEdit::Duplicate,
+            _ => return StellarStatus::InvalidArgument,
+        };
+        if ids.is_null() && count != 0 {
+            return StellarStatus::NullPointer;
+        }
+        if count > isize::MAX as usize / 16 {
+            return StellarStatus::InvalidArgument;
+        }
+        let ids = if ids.is_null() {
+            None
+        } else {
+            if count == 0 || count as u64 != target.selection_count {
+                return StellarStatus::InvalidArgument;
+            }
+            Some(
+                unsafe { std::slice::from_raw_parts(ids, count) }
+                    .iter()
+                    .copied()
+                    .map(StableId::from_bytes)
+                    .collect(),
+            )
+        };
+        let target = SelectionEditTarget {
+            session: WindowSessionHandle(target.session),
+            view: StableId::from_bytes(target.view),
+            revision: stellar_core_types::revision::DocumentRevision(target.revision),
+            history_sequence: target.history_sequence,
+        };
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.edit_selection(target, edit, ids),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 /// 현재 창 선택을 하나의 삭제 transaction으로 적용합니다.
 /// # Safety
 /// `view`는 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
@@ -355,7 +479,7 @@ pub unsafe extern "C" fn stellar_window_session_delete_selection(
     })
 }
 
-/// 현재 창의 단일 선택 subtree를 복제합니다.
+/// 현재 창의 선택한 subtree를 복제합니다.
 /// # Safety
 /// `view`는 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
 #[no_mangle]
@@ -385,6 +509,115 @@ pub unsafe extern "C" fn stellar_window_session_duplicate_selection(
                 WindowSessionHandle(session),
                 view,
                 stellar_core_types::revision::DocumentRevision(revision),
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// Worker-only read: copies one selected subtree into a caller-owned buffer.
+/// # Safety
+/// `view` reads 16 bytes; `out_len` writes one usize; `bytes` writes `capacity` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_copy_subtree(
+    handle: u64,
+    session: u64,
+    view: *const u8,
+    revision: u64,
+    bytes: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if view.is_null() || out_len.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            out_len.write(0);
+        }
+        let view = StableId::from_bytes(
+            unsafe { std::slice::from_raw_parts(view, 16) }
+                .try_into()
+                .unwrap(),
+        );
+        let ticket = {
+            let Ok(reg) = registry().lock() else {
+                return StellarStatus::Internal;
+            };
+            let Some(app) = reg.live.get(&handle).and_then(|rt| rt.app.as_ref()) else {
+                return StellarStatus::InvalidHandle;
+            };
+            match app.copy_selected_subtree(
+                WindowSessionHandle(session),
+                view,
+                stellar_core_types::revision::DocumentRevision(revision),
+            ) {
+                Ok(ticket) => ticket,
+                Err(stellar_runtime::document_thread::SubmitError::QueueFull { .. }) => {
+                    return StellarStatus::QueueFull
+                }
+                Err(_) => return StellarStatus::InvalidHandle,
+            }
+        };
+        let data = match ticket.wait() {
+            Ok(Some(data)) => data,
+            Ok(None) => return StellarStatus::NoError,
+            Err(_) => return StellarStatus::Internal,
+        };
+        unsafe {
+            out_len.write(data.len());
+        }
+        if data.len() > capacity || bytes.is_null() {
+            return StellarStatus::BufferTooSmall;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(data.as_ptr(), bytes, data.len());
+        }
+        StellarStatus::Ok
+    })
+}
+
+/// 플랫폼 pasteboard의 subtree bytes를 복사해 창의 일반 history로 전달합니다.
+/// 최대 16 MiB이며, 구조·출처·신뢰·revision·목적 부모는 document thread에서 검사합니다.
+/// # Safety
+/// `view`와 `parent`는 각각 16 byte, `bytes`는 `len` byte를 읽을 수 있어야 합니다.
+/// `out_request`는 null 또는 쓰기 가능해야 합니다. 반환 후 입력 buffer를 해제해도 됩니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_paste_subtree(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    parent: *const [u8; 16],
+    revision: u64,
+    bytes: *const u8,
+    len: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        // Reject the size before reading or copying any foreign buffer.
+        if len == 0 || len > 16 * 1024 * 1024 {
+            return StellarStatus::InvalidArgument;
+        }
+        if view.is_null() || parent.is_null() || bytes.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.paste_node_subtree(
+                WindowSessionHandle(session),
+                StableId::from_bytes(unsafe { *view }),
+                stellar_core_types::revision::DocumentRevision(revision),
+                StableId::from_bytes(unsafe { *parent }),
+                unsafe { std::slice::from_raw_parts(bytes, len) }.to_vec(),
             ),
             Err(status) => return status,
         };
@@ -1002,6 +1235,55 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn copy_subtree_rejects_invalid_pointers_and_handle() {
+        let view = [0u8; 16];
+        let mut len = 99;
+        assert_eq!(
+            unsafe {
+                stellar_window_session_copy_subtree(
+                    0,
+                    0,
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut len,
+                )
+            },
+            StellarStatus::NullPointer
+        );
+        assert_eq!(
+            unsafe {
+                stellar_window_session_copy_subtree(
+                    0,
+                    0,
+                    view.as_ptr(),
+                    0,
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null_mut(),
+                )
+            },
+            StellarStatus::NullPointer
+        );
+        assert_eq!(
+            unsafe {
+                stellar_window_session_copy_subtree(
+                    0,
+                    0,
+                    view.as_ptr(),
+                    0,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut len,
+                )
+            },
+            StellarStatus::InvalidHandle
+        );
+        assert_eq!(len, 0);
+    }
+
+    #[test]
     fn info_layout_is_fixed() {
         assert_eq!(std::mem::size_of::<StellarWindowSessionInfo>(), 88);
         assert_eq!(std::mem::align_of::<StellarWindowSessionInfo>(), 8);
@@ -1013,6 +1295,8 @@ pub(crate) mod tests {
             std::mem::offset_of!(StellarWindowSessionInfo, window_id),
             56
         );
+        assert_eq!(std::mem::size_of::<StellarSelectionTarget>(), 48);
+        assert_eq!(std::mem::offset_of!(StellarSelectionTarget, view), 32);
         assert_eq!(WINDOW_SESSION_INFO_VERSION, 2);
         assert_eq!(std::mem::size_of::<StellarWindowViewInfo>(), 56);
         assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, center_x), 16);
@@ -1259,6 +1543,128 @@ pub(crate) mod tests {
             unsafe { stellar_window_session_select(h, a, std::ptr::null(), 1, &mut request) },
             StellarStatus::NullPointer
         );
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn paste_subtree_rejects_invalid_buffers_before_reading() {
+        let id = [0u8; 16];
+        let byte = [0u8];
+        for (view, parent, bytes, len, expected) in [
+            (
+                id.as_ptr(),
+                id.as_ptr(),
+                byte.as_ptr(),
+                0,
+                StellarStatus::InvalidArgument,
+            ),
+            (
+                id.as_ptr(),
+                id.as_ptr(),
+                byte.as_ptr(),
+                16 * 1024 * 1024 + 1,
+                StellarStatus::InvalidArgument,
+            ),
+            (
+                std::ptr::null(),
+                id.as_ptr(),
+                byte.as_ptr(),
+                1,
+                StellarStatus::NullPointer,
+            ),
+            (
+                id.as_ptr(),
+                std::ptr::null(),
+                byte.as_ptr(),
+                1,
+                StellarStatus::NullPointer,
+            ),
+            (
+                id.as_ptr(),
+                id.as_ptr(),
+                std::ptr::null(),
+                1,
+                StellarStatus::NullPointer,
+            ),
+            (
+                id.as_ptr(),
+                id.as_ptr(),
+                byte.as_ptr(),
+                1,
+                StellarStatus::InvalidHandle,
+            ),
+        ] {
+            let mut request = 99;
+            assert_eq!(
+                unsafe {
+                    stellar_window_session_paste_subtree(
+                        0,
+                        0,
+                        view.cast(),
+                        parent.cast(),
+                        0,
+                        bytes,
+                        len,
+                        &mut request,
+                    )
+                },
+                expected
+            );
+            assert_eq!(request, 0);
+        }
+    }
+
+    #[test]
+    fn paste_subtree_ffi_routes_untrusted_request_without_changing_history() {
+        let fixture = FixtureProject::copy("paste-untrusted");
+        let h = create();
+        let session = open_window(h, open_project(h, &fixture.path));
+        let before = info(h, session).unwrap();
+        let view = StableId::new_v7(3, 0, 3).to_bytes();
+        let parent = StableId::new_v7(10, 0, 10).to_bytes();
+        let mut copied_len = 99;
+        assert_eq!(
+            unsafe {
+                stellar_window_session_copy_subtree(
+                    h,
+                    session,
+                    view.as_ptr(),
+                    before.revision,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut copied_len,
+                )
+            },
+            StellarStatus::NoError
+        );
+        assert_eq!(copied_len, 0);
+        let mut bytes = vec![0u8];
+        let mut request = 0;
+        assert_eq!(
+            unsafe {
+                stellar_window_session_paste_subtree(
+                    h,
+                    session,
+                    &view,
+                    &parent,
+                    before.revision,
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    &mut request,
+                )
+            },
+            StellarStatus::Ok
+        );
+        assert_ne!(request, 0);
+        bytes.clear();
+        drop(bytes);
+        assert!(matches!(next_event(h), RuntimeEvent::RequestFailed {
+            request: got, failure: RequestFailure::TrustUnavailable, ..
+        } if got == RequestId(request)));
+        let after = info(h, session).unwrap();
+        assert_eq!(after.revision, before.revision);
+        assert_eq!(after.undo_depth, before.undo_depth);
+        assert_eq!(after.selection_count, before.selection_count);
         assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
     }
 

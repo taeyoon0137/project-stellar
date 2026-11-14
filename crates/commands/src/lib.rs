@@ -59,6 +59,9 @@ pub mod convert;
 /// `DuplicateSubtree` command (VII.2.8).
 pub mod duplicate;
 
+/// 원본과 독립적인 subtree 클립보드와 Paste 계획.
+pub mod paste;
+
 /// 창별 선택 상태와 selection command (VII.3).
 pub mod selection;
 

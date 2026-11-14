@@ -290,7 +290,7 @@ enum ShellFrameInsertCheck {
             let found = center.flatMap { layers.snapshot.layers.rows[SidebarStableID($0.id)] }
             return fail("R 도구·부모 clip·실제 Shape 레이어: tool=\(reopened.toolsModel.snapshot.activeTool) selected=\(center?.isRectangle == true) parent=\(parentHit?.id == child) kind=\(String(describing: found?.kind))/\(String(describing: found?.shapeKind))")
         }
-        func blackShape(_ owner: ShellProjectWindow) -> Bool {
+        func blackShape(_ owner: ShellProjectWindow, moved: Bool = false) -> Bool {
             guard let window = owner.window else { return false }
             let view = owner.canvasHost.canvasView
             guard let image = ShellVisibleFramesCheck.bitmap(view, in: window) else { return false }
@@ -303,7 +303,9 @@ enum ShellFrameInsertCheck {
                 image.getPixel(&pixel, atX: col, y: row)
                 return Array(pixel.prefix(3))
             }
-            return sample(112, 90) == [0, 0, 0] && sample(128, 92) == [255, 255, 255]
+            let interior = moved ? sample(95, 75) : sample(112, 90)
+            return interior == [0, 0, 0] && sample(128, 92) == [255, 255, 255]
+
         }
         guard blackShape(reopened), reopened.performSessionCommand(.undo), wait(),
               shown.frameHit(at: viewPoint(112, 90, canvas: shown))?.id == child,
@@ -325,7 +327,33 @@ enum ShellFrameInsertCheck {
               awaitSidebar({ again.sidebarSource.snapshot.primarySelection?.uuid == paintedShape.id }) else {
             return fail("저장된 Shape 픽셀·안정 ID·클릭 선택")
         }
-        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, optional fill, P3/alpha, invalid input, undo/redo, trust and reopen; R Rectangle Shape, clip, pixels and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
+        guard let movedSession = again.windowController.windowSession, let beforeMove = movedSession.info,
+              key(9, "v", canvas: visibleShape), pointer(.leftMouseDown, 112, 90, canvas: visibleShape),
+              pointer(.leftMouseDragged, 92, 75, canvas: visibleShape), movedSession.info?.revision == beforeMove.revision,
+              pointer(.leftMouseUp, 92, 75, canvas: visibleShape), wait(),
+              movedSession.info?.undo_depth == beforeMove.undo_depth + 1,
+              visibleShape.frameHit(at: viewPoint(95, 75, canvas: visibleShape))?.id == paintedShape.id,
+              visibleShape.frameHit(at: viewPoint(117, 90, canvas: visibleShape))?.id == child,
+              blackShape(again, moved: true), again.performSessionCommand(.undo), wait(),
+              visibleShape.frameHit(at: viewPoint(95, 75, canvas: visibleShape))?.id == child, blackShape(again),
+              again.performSessionCommand(.redo), wait(), blackShape(again, moved: true),
+              again.performSessionCommand(.saveNow), wait(), let savedShapeWindow = again.window else {
+            return fail("V Rectangle 이동·Undo/Redo·저장")
+        }
+        savedShapeWindow.close()
+        guard wait() else { return fail("이동 후 닫기") }
+        app.openProject(atPath: path, origin: .application)
+        guard wait(), let restored = app.projectWindow(forPath: path), restored !== again else { return fail("이동 후 재열기") }
+        restored.window?.setContentSize(NSSize(width: 1300, height: 800))
+        restored.window?.contentView?.layoutSubtreeIfNeeded()
+        let restoredCanvas = restored.canvasHost.canvasView
+        guard blackShape(restored, moved: true),
+              restoredCanvas.frameHit(at: viewPoint(95, 75, canvas: restoredCanvas))?.id == paintedShape.id,
+              restoredCanvas.frameHit(at: viewPoint(117, 90, canvas: restoredCanvas))?.id == child,
+              loadShapeRow(restored, paintedShape.id)?.shapeKind == .rectangle else {
+            return fail("Rectangle 이동 위치·Shape 종류·픽셀 재열기")
+        }
+        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, optional fill, P3/alpha, invalid input, undo/redo, trust and reopen; R Rectangle Shape, V move, clip, pixels and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
         return true
     }
 }
