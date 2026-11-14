@@ -742,6 +742,39 @@ impl HistoryJournal {
         (out.0, compaction)
     }
 
+    /// journal bytes에서 항목 수(undo, redo)만 셉니다(XXV.1.5 retention 판정). 항목은 디코딩·할당하지 않고
+    /// 길이 프리픽스만큼 건너뛰며(buffer 밖이면 seek), redo 항목은 읽지 않습니다. 이 형식이 아니거나
+    /// (magic·format version) 중간에 끝나면 `Ok(None)`입니다. 버전 접근·항목 내용·sequence 무결성은 검사하지
+    /// 않습니다([`HistoryJournal::decode`]의 몫).
+    pub(crate) fn read_entry_counts<R: std::io::Read + std::io::Seek>(
+        reader: &mut std::io::BufReader<R>,
+    ) -> std::io::Result<Option<(usize, usize)>> {
+        use std::io::Read;
+        fn count<R: Read>(reader: &mut R) -> std::io::Result<u32> {
+            let mut raw = [0u8; 4];
+            reader.read_exact(&mut raw)?;
+            Ok(u32::from_le_bytes(raw))
+        }
+        let mut prefix = [0u8; JOURNAL_HEADER_LEN + 8];
+        let counts = (|| -> std::io::Result<Option<(usize, usize)>> {
+            reader.read_exact(&mut prefix)?;
+            if JournalHeader::decode_prefix(&prefix).is_err() {
+                return Ok(None);
+            }
+            let undo = count(reader)? as usize;
+            for _ in 0..undo {
+                let len = count(reader)?;
+                reader.seek_relative(i64::from(len))?;
+            }
+            let redo = count(reader)? as usize;
+            Ok(Some((undo, redo)))
+        })();
+        match counts {
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+            other => other,
+        }
+    }
+
     /// [`HistoryJournal::encode_bounded`]과 같은 규칙으로 이 journal 자체를 줄입니다.
     pub fn compact(&mut self, max_bytes: u64, max_entries: usize) -> JournalCompaction {
         let undo: Vec<Vec<u8>> = self.undo.iter().map(encode_entry).collect();

@@ -11,6 +11,8 @@
 //! 2. **active journal 봉인**: 프로젝트 journal 디렉터리의 active journal을 **열려 있지 않은 창 것까지
 //!    모두** `sealed/<window>.<순번>.<작업 token>.stlhjnl`로 옮깁니다(bytes 보존, 자동 복원 없음, XXV.1.3과
 //!    같은 봉인 경로). 그래서 같은 base로 되돌아와도(A→B→A) 봉인 전 session을 다시 복원하지 않습니다.
+//!    봉인 session 경계(XXV.1.5)는 모두 봉인한 뒤 한 번 적용하며, 이 호출에서 봉인한 session은 지우지 않아
+//!    결과([`BaseChangeOutcome::sealed`])의 경로가 모두 남습니다.
 //!
 //! 순서는 1 → 2입니다. 봉인 중 I/O가 실패해도 메모리 session은 이미 나뉘어 이후 기록이 섞이지 않으며,
 //! 창 없이 다시 부르면 남은 active journal만 봉인합니다.
@@ -150,11 +152,21 @@ impl JournalStore {
         }
         sessions.sort();
         let mut sealed = Vec::new();
-        for window in self.list_active()? {
-            if let Some(journal) = self.seal(window, SealReason::BaseChanged(kind))? {
-                sealed.push(journal);
+        let result = self.list_active().and_then(|active| {
+            for window in active {
+                if let Some(journal) = self.seal_unpruned(window, SealReason::BaseChanged(kind))? {
+                    sealed.push(journal);
+                }
             }
+            Ok(())
+        });
+        // 봉인 session 경계는 끝에 한 번 적용하고 이 호출에서 봉인한 session은 모두 지킵니다(창마다 정리하면
+        // 뒤 창의 봉인이 앞 창의 봉인을 지울 수 있음). 중간에 실패해도 이미 봉인한 것까지 정리합니다.
+        if !sealed.is_empty() {
+            let keep: Vec<&std::path::Path> = sealed.iter().map(|s| s.path.as_path()).collect();
+            self.prune_after_seal(&keep);
         }
+        result?;
         Ok(BaseChangeOutcome { sessions, sealed })
     }
 }

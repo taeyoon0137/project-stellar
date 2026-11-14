@@ -68,3 +68,26 @@
 - 같은 journal 디렉터리를 쓰는 다른 프로세스가 동시에 기록 중이면 1시간 유예보다 오래 걸린 임시 파일이 지워질 수 있습니다. 이때 그
   기록은 rename 실패 오류가 되며 기존 journal은 손상되지 않습니다.
 - compaction은 기록 시점 비용으로 항목을 모두 한 번 인코딩합니다(O(journal 크기), XXV.1.2와 같음).
+
+## 후속 수정(리뷰 반영): 봉인 묶음 정리·항목 상한 compaction·봉인 목록 파일 종류
+
+- **SEAL-BATCH-PRUNE**: `seal_for_base_change`가 창마다 봉인하고 그때마다 정리해서, 한 호출이 봉인 session 상한보다
+  많은 창을 봉인하면 뒤 창의 봉인이 같은 호출에서 앞서 봉인한 session을 지웠습니다. 그러면 `BaseChangeOutcome.sealed`에
+  없는 경로가 남았습니다. 이제 정리하지 않는 내부 봉인(`seal_unpruned`)으로 모두 봉인한 뒤, 그 호출에서 봉인한 session을
+  모두 지키며 한 번만 정리합니다. 중간에 실패해도 이미 봉인한 것까지 정리합니다. 공개 `seal`(XXV.1.3 복원 경로 포함)은
+  한 호출에 하나를 봉인하므로 기존처럼 그 session을 지키며 정리합니다. 묶음이 상한보다 크면 그 묶음은 남기고 다음
+  `apply_retention`이 상한을 맞춥니다.
+- **COMPACT-ACTIVE-ENTRIES**: `apply_retention`은 bytes 상한을 넘을 때만 기존 active journal을 줄였습니다. 이제 항목 상한을
+  넘어도 줄입니다. 항목 수는 항목을 디코딩하지 않고 길이 프리픽스로 셉니다(`HistoryJournal::read_entry_counts`). 길이로 보아
+  상한을 넘을 수 없는 파일(항목마다 프리픽스 4 bytes)은 열지 않습니다.
+- **SEALED-LIST-NO-FILETYPE**: `list_sealed`가 파일 종류를 보지 않아, `sealed/`에 봉인 이름 형식인 디렉터리가 있으면 정리가
+  `remove_file` 오류로 중단되었습니다. symlink는 대상 파일 길이로 세었습니다. 이제 일반 파일만 봉인 session으로 세고
+  지웁니다(`list_active`와 같은 규칙, symlink는 따라가지 않음). 다만 봉인 순번은 형식이 같은 모든 이름을 피해 정합니다.
+  그래서 rename이 기존 디렉터리·symlink와 충돌하지 않습니다.
+
+| 검사 | 결과 |
+|---|---|
+| 이전 봉인 1개(1일) + active 3개, 봉인 상한 1로 checkout 봉인: 결과 3개 경로가 모두 남고 `list_sealed` = 결과, 이전 봉인만 삭제. 다음 정리 뒤 봉인 1개·`within_budget`(`one_base_change_keeps_every_session_it_sealed`). 수정 전에는 첫 창의 봉인 경로가 없어 실패 | 통과 |
+| 기본 정책으로 기록한 항목 40개(undo 30·redo 10) journal을 항목 상한 12로 정리: bytes 상한 안이어도 compaction(undo 24·redo 4 버림, 6·6 유지), 수정 시각 유지, 상한 안 journal은 그대로, 재적용 변화 0. helper는 정상 (30, 10), undo 구간 잘림·형식 아님·다른 format version은 `None`(`retention_compacts_existing_journal_over_entry_cap`). 수정 전에는 `compacted`가 비어 실패 | 통과 |
+| `sealed/`에 봉인 이름 형식 디렉터리(순번 1)와 외부 64 KiB 파일을 가리키는 symlink(순번 2): 새 봉인은 순번 3, `list_sealed`는 그 파일만, 봉인 상한 0으로 정리해도 오류 없이 그 파일만 삭제·`total_bytes` 0, 디렉터리·symlink·대상 유지(`sealed_listing_counts_only_regular_files`). 수정 전에는 `list_sealed`가 3개를 돌려 실패 | 통과 |
+| 검사 민감도(커밋하지 않은 임시 변경): 봉인 순번을 일반 파일만으로 계산 → 위 test 실패 | 확인 |

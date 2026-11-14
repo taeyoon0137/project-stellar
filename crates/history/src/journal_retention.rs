@@ -4,7 +4,9 @@
 //!
 //! - **journal 하나**: 기록할 때마다(`JournalStore::write`) 항목 수·bytes 상한을 넘으면 현재 위치에서 가장 먼
 //!   항목부터 버립니다([`HistoryJournal::encode_bounded`]). 남은 항목은 현재 위치 앞뒤로 연속이라 그대로
-//!   undo·redo할 수 있습니다. 메모리 history는 줄이지 않습니다(세션 안 undo는 그대로).
+//!   undo·redo할 수 있습니다. 메모리 history는 줄이지 않습니다(세션 안 undo는 그대로). 이미 있는 active
+//!   journal도 정리 때 두 상한 중 하나라도 넘으면 같은 규칙으로 다시 기록합니다(느슨한 정책으로 기록된
+//!   journal 포함, 항목 수는 항목을 디코딩하지 않고 길이 프리픽스로 셈).
 //! - **나이**: 봉인 session은 봉인 시각(파일 수정 시각, 봉인 때 갱신)부터 `max_sealed_age`, 열려 있지 않은
 //!   창의 active journal은 마지막 기록부터 `max_active_age`가 지나면 지웁니다. 크래시로 남은 임시 파일은
 //!   `temp_grace`가 지나면 지웁니다.
@@ -15,19 +17,23 @@
 //!   max_journal_bytes)` 이하입니다.
 //!
 //! 정리 시점: [`JournalStore::apply_retention`]을 프로젝트를 열 때(그리고 caller가 원할 때) 부릅니다. 봉인
-//! 경로(XXV.1.3·XXV.1.4)는 봉인할 때마다 봉인 session 경계를 바로 적용합니다(방금 봉인한 session은 유지,
-//! best-effort). journal 디렉터리의 다른 파일(guard `.gitignore`, 사용자가 둔 파일)은 세지도 지우지도
-//! 않습니다. 나이는 파일 수정 시각(wall clock)으로 재며, 미래 시각은 나이 0으로 봅니다.
+//! 경로(XXV.1.3·XXV.1.4)는 봉인 호출마다 봉인 session 경계를 바로 적용합니다. 그 호출에서 봉인한 session은
+//! 모두 유지합니다(XXV.1.4가 한 번에 여러 창을 봉인해도 서로 지우지 않음, best-effort). journal 디렉터리의
+//! 다른 파일(guard `.gitignore`, 사용자가 둔 파일, 이름이 형식과 같아도 일반 파일이 아닌 디렉터리·symlink)은
+//! 세지도 지우지도 않습니다. 나이는 파일 수정 시각(wall clock)으로 재며, 미래 시각은 나이 0으로 봅니다.
 //!
 //! 기본값은 잠정치입니다. 실제 사용 데이터·디스크 사용량 측정으로 조정합니다.
 
 use std::collections::BTreeSet;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use stellar_commands::id::WindowSessionId;
 
-use crate::journal::{JournalAccess, JournalCompaction, JOURNAL_EMPTY_LEN, JOURNAL_SCHEMA_VERSION};
+use crate::journal::{
+    HistoryJournal, JournalAccess, JournalCompaction, JOURNAL_EMPTY_LEN, JOURNAL_SCHEMA_VERSION,
+};
 use crate::journal_restore::SealedJournal;
 use crate::journal_store::{JournalStore, JournalStoreError, TEMP_MARKER};
 
@@ -127,6 +133,21 @@ fn age(now: SystemTime, modified: SystemTime) -> Duration {
     now.duration_since(modified).unwrap_or(Duration::ZERO)
 }
 
+/// active journal이 항목 상한 `max_entries`를 넘는지. 길이 `len`으로 넘을 수 없으면(항목마다 길이 프리픽스
+/// 4 bytes) 파일을 열지 않고, 아니면 항목 수만 셉니다. 이 형식으로 셀 수 없으면 `false`(그대로 둠)입니다.
+fn exceeds_entry_cap(path: &Path, len: u64, max_entries: usize) -> Result<bool, JournalStoreError> {
+    let min_len_over_cap = (max_entries as u64)
+        .saturating_add(1)
+        .saturating_mul(4)
+        .saturating_add(JOURNAL_EMPTY_LEN as u64);
+    if len < min_len_over_cap {
+        return Ok(false);
+    }
+    let mut reader = BufReader::new(std::fs::File::open(path)?);
+    Ok(HistoryJournal::read_entry_counts(&mut reader)?
+        .is_some_and(|(undo, redo)| undo.saturating_add(redo) > max_entries))
+}
+
 /// 파일을 지웁니다. 이미 없으면 성공입니다.
 fn remove_file(path: &Path) -> Result<(), JournalStoreError> {
     match std::fs::remove_file(path) {
@@ -179,12 +200,12 @@ impl JournalStore {
         Ok(total)
     }
 
-    /// 봉인 session에 나이·개수·전체 bytes 경계를 적용합니다. `keep`(방금 봉인한 파일)은 지우지 않고,
+    /// 봉인 session에 나이·개수·전체 bytes 경계를 적용합니다. `keep`(방금 봉인한 파일들)은 지우지 않고,
     /// `other_bytes`는 전체 bytes 상한 계산에 더할 active journal bytes입니다.
     fn prune_sealed(
         &self,
         now: SystemTime,
-        keep: Option<&Path>,
+        keep: &[&Path],
         other_bytes: u64,
     ) -> Result<SealedPrune, JournalStoreError> {
         let retention = self.retention().clone();
@@ -192,7 +213,7 @@ impl JournalStore {
         let mut sealed = Vec::new();
         for journal in self.list_sealed()? {
             let info = file_info(&journal.path, now)?;
-            let kept = keep == Some(journal.path.as_path());
+            let kept = keep.contains(&journal.path.as_path());
             if !kept && age(now, info.modified) > retention.max_sealed_age {
                 remove_file(&journal.path)?;
                 removed.push(journal);
@@ -223,12 +244,12 @@ impl JournalStore {
         })
     }
 
-    /// 봉인 직후 봉인 session 경계를 적용합니다(방금 봉인한 `path`는 유지). 실패해도 봉인은 끝났으므로
+    /// 봉인 직후 봉인 session 경계를 적용합니다(방금 봉인한 `keep`은 모두 유지). 실패해도 봉인은 끝났으므로
     /// 무시하고, 다음 [`JournalStore::apply_retention`]이 다시 정리합니다.
-    pub(crate) fn prune_after_seal(&self, path: &Path) {
+    pub(crate) fn prune_after_seal(&self, keep: &[&Path]) {
         let _ = self
             .active_bytes()
-            .and_then(|active| self.prune_sealed(SystemTime::now(), Some(path), active));
+            .and_then(|active| self.prune_sealed(SystemTime::now(), keep, active));
     }
 
     /// 상한을 넘는 active journal을 다시 기록해 줄입니다. 읽을 수 없거나 이 writer가 이어 기록할 수 없으면
@@ -278,7 +299,9 @@ impl JournalStore {
                 report.removed_active.push(window);
                 continue;
             }
-            if info.len > retention.max_journal_bytes {
+            if info.len > retention.max_journal_bytes
+                || exceeds_entry_cap(&path, info.len, retention.max_journal_entries)?
+            {
                 if let Some(compaction) = self.compact_active(window, info.modified)? {
                     report.compacted.push((window, compaction));
                     info = file_info(&path, now)?;
@@ -289,7 +312,7 @@ impl JournalStore {
         let mut active_bytes: u64 = active.iter().map(|(_, _, info)| info.len).sum();
 
         // 봉인 session: 나이·개수·전체 bytes.
-        let pruned = self.prune_sealed(now, None, active_bytes)?;
+        let pruned = self.prune_sealed(now, &[], active_bytes)?;
         report.removed_sealed = pruned.removed;
 
         // 그래도 넘치면 열려 있지 않은 창의 가장 오래된 active journal부터.
@@ -325,7 +348,6 @@ mod tests {
     use crate::grouping::HistoryGroupingPolicy;
     use crate::history::test_fixtures::{sid, small_state, tx};
     use crate::journal::tests::base;
-    use crate::journal::HistoryJournal;
     use crate::journal_base_change::BaseChangeKind;
     use crate::journal_restore::{RestoreOutcome, SealReason};
     use crate::journal_store::JournalLocation;
@@ -696,5 +718,159 @@ mod tests {
                 .retention(),
             &JournalRetention::default()
         );
+    }
+
+    #[test]
+    fn one_base_change_keeps_every_session_it_sealed() {
+        // 한 번의 기준점 변경이 봉인 session 상한보다 많은 창을 봉인해도, 그 호출에서 봉인한 session은 서로를
+        // 지우지 않습니다(결과의 경로가 모두 남음). 이전 호출의 봉인 session만 정리됩니다.
+        let project = TempDir::new("retention-batch");
+        let store = JournalStore::open(project.path(), JournalLocation::ProjectLocal).unwrap();
+        let now = SystemTime::now();
+        let earlier = window(43);
+        store
+            .record_save_point(&session(earlier, 2, 0).0, base(5))
+            .unwrap();
+        let old = store
+            .seal(earlier, SealReason::BaseMismatch)
+            .unwrap()
+            .unwrap();
+        set_age(&old.path, now, DAY);
+        let windows = [window(40), window(41), window(42)];
+        for w in windows {
+            store
+                .record_save_point(&session(w, 3, 0).0, base(5))
+                .unwrap();
+        }
+        let store = store
+            .with_retention(small(JournalRetention {
+                max_sealed_sessions: 1,
+                ..JournalRetention::default()
+            }))
+            .unwrap();
+        let outcome = store
+            .seal_for_base_change(BaseChangeKind::Checkout, std::iter::empty())
+            .unwrap();
+        assert_eq!(
+            outcome.sealed.iter().map(|s| s.window).collect::<Vec<_>>(),
+            windows
+        );
+        for sealed in &outcome.sealed {
+            assert!(sealed.path.is_file(), "{:?}", sealed.window);
+        }
+        assert_eq!(store.list_sealed().unwrap(), outcome.sealed);
+        assert!(!old.path.exists(), "이전 호출의 봉인 session은 정리");
+        // 다음 정리가 상한을 다시 맞춥니다.
+        let report = store.apply_retention(now, &[]).unwrap();
+        assert_eq!(report.sealed_sessions, 1);
+        assert!(report.within_budget);
+    }
+
+    #[test]
+    fn retention_compacts_existing_journal_over_entry_cap() {
+        // 느슨한 정책으로 기록된 journal은 bytes 상한 안이어도 항목 상한을 넘으면 정리 때 줄입니다.
+        let project = TempDir::new("retention-entries");
+        let store = JournalStore::open(project.path(), JournalLocation::ProjectLocal).unwrap();
+        let now = SystemTime::now();
+        let many = window(50);
+        let few = window(51);
+        let (history, _, _) = session(many, 40, 10);
+        let full = HistoryJournal::capture(many, base(5), history.history());
+        store.record_save_point(&history, base(5)).unwrap();
+        store
+            .record_save_point(&session(few, 3, 0).0, base(5))
+            .unwrap();
+        for w in [many, few] {
+            set_age(&store.journal_path(w), now, DAY * 2);
+        }
+        let store = store
+            .with_retention(small(JournalRetention {
+                max_journal_entries: 12,
+                ..JournalRetention::default()
+            }))
+            .unwrap();
+        assert!(
+            std::fs::metadata(store.journal_path(many)).unwrap().len()
+                <= store.retention().max_journal_bytes
+        );
+        let report = store.apply_retention(now, &[many]).unwrap();
+        assert_eq!(report.compacted, vec![(many, compaction_of(&full, 12))]);
+        let journal = store.read(many).unwrap().unwrap();
+        assert_eq!((journal.undo.len(), journal.redo.len()), (6, 6));
+        assert_eq!(
+            std::fs::metadata(store.journal_path(many))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            now - DAY * 2,
+            "compaction은 나이를 바꾸지 않음"
+        );
+        assert_eq!(store.read(few).unwrap().unwrap().undo.len(), 3);
+        assert!(store
+            .apply_retention(now, &[many])
+            .unwrap()
+            .compacted
+            .is_empty());
+
+        // 항목 수만 세는 helper: 정상, undo 구간에서 잘림, 형식 아님, 다른 format version.
+        let counts = |bytes: &[u8]| {
+            HistoryJournal::read_entry_counts(&mut BufReader::new(std::io::Cursor::new(
+                bytes.to_vec(),
+            )))
+            .unwrap()
+        };
+        let bytes = full.encode();
+        assert_eq!(counts(&bytes), Some((30, 10)));
+        assert_eq!(counts(&bytes[..JOURNAL_EMPTY_LEN + 10]), None);
+        assert_eq!(counts(b"garbage"), None);
+        let mut foreign = crate::journal::JOURNAL_MAGIC.to_vec();
+        foreign.extend_from_slice(&(crate::journal::JOURNAL_FORMAT_VERSION + 1).to_le_bytes());
+        foreign.resize(bytes.len(), 0);
+        assert_eq!(counts(&foreign), None);
+    }
+
+    #[test]
+    fn sealed_listing_counts_only_regular_files() {
+        // 봉인 이름 형식인 디렉터리·symlink는 세지도 지우지도 않습니다. 순번은 이름을 피해 정합니다.
+        let project = TempDir::new("retention-sealed-types");
+        let store = JournalStore::open(project.path(), JournalLocation::ProjectLocal).unwrap();
+        let w = window(60);
+        let sealed_dir = store.sealed_dir();
+        let dir_entry = sealed_dir.join(format!("{w}.000001.checkout.stlhjnl"));
+        std::fs::create_dir_all(&dir_entry).unwrap();
+        #[cfg(unix)]
+        let link_entry = {
+            let outside = TempDir::new("retention-sealed-outside");
+            let target = outside.path().join("big.bin");
+            std::fs::write(&target, vec![0u8; 64 << 10]).unwrap();
+            let link = sealed_dir.join(format!("{w}.000002.checkout.stlhjnl"));
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            (link, target, outside)
+        };
+        store
+            .record_save_point(&session(w, 2, 0).0, base(5))
+            .unwrap();
+        let sealed = store.seal(w, SealReason::BaseMismatch).unwrap().unwrap();
+        #[cfg(unix)]
+        assert_eq!(sealed.index, 3, "기존 이름과 겹치지 않는 순번");
+        assert!(sealed.path.is_file());
+        assert_eq!(store.list_sealed().unwrap(), vec![sealed.clone()]);
+        let store = store
+            .with_retention(JournalRetention {
+                max_sealed_sessions: 0,
+                ..JournalRetention::default()
+            })
+            .unwrap();
+        let report = store.apply_retention(SystemTime::now(), &[]).unwrap();
+        assert_eq!(report.removed_sealed, vec![sealed.clone()]);
+        assert_eq!((report.sealed_sessions, report.total_bytes), (0, 0));
+        assert!(!sealed.path.exists());
+        assert!(dir_entry.is_dir(), "디렉터리 유지");
+        #[cfg(unix)]
+        {
+            let (link, target, _outside) = link_entry;
+            assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+            assert!(target.is_file(), "symlink 대상 유지");
+        }
     }
 }
