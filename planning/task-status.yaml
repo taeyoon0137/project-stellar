@@ -4740,7 +4740,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.16"
-    title: "TokenName과 ContextKey 이름에서 CSS custom property 이름을 결정론적으로 파생합니다. 속성 모델 10장 규칙(구분자 치환, identifier escape, 토큰 `--`·ContextKey `--context-` 접두사, 토큰과 ContextKey를 합친 집합 기준 충돌 진단, 충돌 시 StableId 32자리 hex 접미사)을 이름·종류·StableId만 받는 순수 함수로 구현하고 parser의 `var()` 해석에 연결합니다. 토큰 `@property` 선언 텍스트는 `inherits: true`로 만듭니다(10장 등록 속성 정책). ContextKey 입력은 IX.12.1 resource가 생기면 연결하고, 그 전에는 같은 함수에 합성 입력을 넣어 검증합니다."
+    title: "TokenName과 ContextKey 이름에서 CSS custom property 이름을 결정론적으로 파생합니다. 속성 모델 10장 규칙(구분자 치환, identifier escape, 토큰 `--`·ContextKey `--context-` 접두사, 토큰과 ContextKey를 합친 집합 기준 충돌 진단, 충돌 시 StableId 32자리 hex 접미사)을 이름·종류·StableId만 받는 순수 함수로 구현하고 parser의 `var()` 해석에 연결합니다. 토큰 `@property` 선언 텍스트는 `inherits: true`로 만듭니다(10장 등록 속성 정책). ContextKey 입력은 로드맵 XXX.7.1의 `ContextKey` resource가 생기면 연결하고, 그 전에는 같은 함수에 합성 입력을 넣어 검증합니다."
     status: not_started
     depends_on:
       - "IX.11.13"
@@ -4817,111 +4817,13 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.12.1"
-    title: "`ContextKey` resource에 StableId, 이름, TypeSpec, 필수 default expression, scope(프로젝트·라이브러리·문서)를 정의합니다. default는 닫힌 식이어야 하며 default 없는 key는 만들 수 없습니다. 참조는 StableId로 하고 저장 형식은 착수 시 ADR로 고정합니다."
+    title: "Component Context 저장에 쓸 numeric 번호와 확장 위치를 예약하는 ADR을 작성하고 registry 예약 상수로 고정합니다. 대상은 ReferenceTarget의 Context tag(현재 tag는 `crates/expressions/src/ast.rs`의 0x01\\~0x04), `ContextKey`·`ContextProvision` record를 담을 chunk kind(현재 `crates/storage/src/chunk/kinds.rs`의 1\\~6이며 모르는 required kind는 V.2.7 규칙으로 오류) 또는 기존 chunk 안의 record kind, ComponentDefinition 공개 인터페이스의 `ContextRequirement` 목록과 Slot의 공개 Context key 목록(ADR-0025 결정 3.11)이 들어갈 확장 위치입니다. 예약 번호는 다른 용도로 쓰지 않습니다. encoder·decoder 동작은 바꾸지 않습니다."
     status: not_started
     depends_on:
-      - "IX.1.2"
-      - "VIII.5.2"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.2"
-    title: "node에 붙는 `ContextProvision`(provider node StableId, ContextKey ref, value expression)과 ComponentDefinition 공개 인터페이스의 `ContextRequirement`(ContextKey ref)를 정의합니다. provision은 소유 definition·View 안의 node에만 붙고, 자기 트리 안의 ComponentInstance node에는 붙일 수 있습니다."
-    status: not_started
-    depends_on:
-      - "IX.12.1"
+      - "VIII.2.2"
+      - "V.6.1"
       - "IX.1.1"
-      - "IX.2.1"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.3"
-    title: "ReferenceTarget에 Context 종류를 추가하고 binding dependency graph가 ContextKey와 ContextProvision을 공통 node로 표현하게 합니다. 기존 ReferenceTarget 번호와 bytes는 바꾸지 않습니다."
-    status: not_started
-    depends_on:
-      - "IX.12.2"
-      - "VIII.6.2"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.4"
-    title: "Context 해석기를 구현합니다. instance expansion view의 펼친 트리에서 소비 지점의 가장 가까운 조상 provision을 쓰고, 없으면 key default를 씁니다. provision 값 식이 같은 key를 읽으면 바깥 조상 값으로 해석합니다. 조상 탐색 결과는 runtime index로 캐시합니다."
-    status: not_started
-    depends_on:
-      - "IX.12.3"
-      - "IX.2.2"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.5"
-    title: "Context validator를 구현합니다. ComponentDefinition 안의 선언 없는 소비와 타입 불일치는 오류, 존재하지 않는 key의 provision은 orphan, 쓰지 않는 requirement는 경고, default 해석과 shadowing은 정보 진단입니다. 서로 다른 key가 서로를 읽는 cycle은 binding cycle detector로 저장 전 거부합니다."
-    status: not_started
-    depends_on:
-      - "IX.12.4"
-      - "VIII.6.3"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.6"
-    title: "provision 값·위치 변경 시 영향받는 소비 binding만 topological order로 재평가하도록 binding scheduler에 연결합니다."
-    status: not_started
-    depends_on:
-      - "IX.12.4"
-      - "VIII.6.4"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.7"
-    title: "evaluated value provenance chain에 ContextKey와 provision node StableId를 기록합니다. default로 해석된 경우도 표시합니다."
-    status: not_started
-    depends_on:
-      - "IX.12.4"
-      - "VIII.6.5"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.8"
-    title: "ContextKey 생성·rename·default 변경·삭제, provision 생성·값 변경·삭제, requirement 추가·삭제 command를 구현합니다. 소비가 있는 key 삭제는 소비 binding을 OrphanedBinding으로 바꾸고, provision만 삭제하면 default로 해석합니다."
-    status: not_started
-    depends_on:
-      - "IX.12.5"
-      - "VIII.8.1"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.9"
-    title: "View Variant와 Target Profile override가 provision 값을 PropertyPath로 덮어쓰도록 resolver를 연결합니다. 우선순위는 기존 공통값→profile override→variant override 규칙을 따릅니다."
-    status: not_started
-    depends_on:
-      - "IX.12.4"
-      - "IX.7.6"
-      - "IX.10.7"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.10"
-    title: "Semantic Diff·Merge에 Context를 연결합니다. ContextKey·provision·requirement를 StableId 단위로 diff하고, provision 삭제 대 소비 추가와 key 타입 변경 대 provision 값 변경을 전용 conflict로 분류합니다(아키텍처 27.1)."
-    status: not_started
-    depends_on:
-      - "IX.12.8"
-      - "XIV.3.7"
-      - "XIV.10.5"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.11"
-    title: "인스펙터용 Context 조회 API를 구현합니다. 선택 속성의 binding이 Context 소비이면 key, 해석된 값, 제공한 provision node 경로를 반환하고, Value Binding 선택기 후보로 그 위치에서 소비 가능한 key와 선언 필요 여부를 반환합니다. 실제 UI는 IX.12.12에서 연결합니다."
-    status: not_started
-    depends_on:
-      - "IX.12.7"
-      - "IX.12.5"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.12"
-    title: "macOS 인스펙터에 Context를 연결합니다. Value Binding 선택기에 Context를 연결원 종류 하나로 보여 주고, 제공한 조상 node로 이동하는 동작과 ComponentDefinition 인터페이스의 requirement 목록을 네이티브 컨트롤로 표시합니다. Context를 별도 기능 패널로 나누지 않습니다(아키텍처 14.2)."
-    status: not_started
-    depends_on:
-      - "IX.12.11"
-      - "XII.9.1"
-    required_environments:
-      - DEV-MAC
-  - id: "IX.12.13"
-    title: "통합 fixture를 만듭니다. 테마 Context가 10단계 nested component를 중간 Property 없이 통과하고, 중간 단계 shadowing과 외부 library key 소비를 포함합니다."
-    status: not_started
-    depends_on:
-      - "IX.12.9"
-      - "IX.12.10"
-      - "IX.9.2"
+      - "IX.3.1"
     required_environments:
       - DEV-MAC
   - id: "X.1.1"
@@ -10446,11 +10348,14 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.1.1"
-    title: "resolved View를 CSS 기반 속성 record, layout, semantics, state, Context 선언·provision·소비, tokens, target capability가 포함된 `CodegenIR`로 변환합니다(ADR-0025 결정 4.1). CSS 문자열을 다시 parse하지 않고 타입 있는 속성 record를 그대로 씁니다."
+    title: "resolved View를 CSS 기반 속성 record, layout, semantics, state, Context 선언·provision·소비, tokens, target capability가 포함된 `CodegenIR`로 변환합니다(ADR-0025 결정 4.1). CSS 문자열을 다시 parse하지 않고 타입 있는 속성 record(IX.11.6 layout record, IX.11.11 Typography record)를 그대로 쓰며, target capability는 IX.11.19 matrix에서 읽습니다."
     status: not_started
     depends_on:
       - "IX.10.8"
-      - "IX.12.4"
+      - "IX.11.6"
+      - "IX.11.11"
+      - "IX.11.19"
+      - "XXX.7.4"
     required_environments:
       - DEV-MAC
   - id: "XXII.1.2"
@@ -10468,11 +10373,14 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.1.4"
-    title: "CSS 기반 속성×TargetProfile 매핑 table을 capability registry에 기록하고 IR lowering이 이 table만 참조하게 합니다. 1:1이 아닌 항목(modifier stack 선형화, 블렌드 합성 색공간 차이, 자유 배치 anchor→CSS inset 변환, Stellar와 대상 플랫폼의 기본값 차이)은 lowering 규칙과 진단을 한 쌍으로 정의합니다(ADR-0025 결정 4.2)."
+    title: "IX.11.19 capability matrix와 IX.11.18 modifier stack 선형화 계획을 코드 생성용으로 확장합니다. 더하는 것은 Apple·Android profile의 lowering 규칙, Context·`MotionSpec` 항목의 profile kind별 상태와 lowering 규칙뿐입니다. Web의 CSS 속성 매핑과 modifier 선형화는 IX.11.18·IX.11.19 결과를 그대로 쓰고 다시 정의하지 않습니다. 비Web 항목 중 1:1이 아닌 것(modifier 적용 순서, 블렌드 합성 색공간 차이, 자유 배치·constraint, Stellar와 대상 플랫폼의 기본값 차이, timing function 종류)은 lowering 규칙과 진단을 한 쌍으로 정의하고, IR lowering은 이 matrix만 참조합니다. 상태 어휘는 IX.10.5의 Native·Approximated·Unsupported·Deprecated이며 IX.11 CSS 매핑 상태와의 대응은 ADR-0025 결정 1.3을 따릅니다(ADR-0025 결정 4.2)."
     status: not_started
     depends_on:
       - "XXII.1.2"
-      - "IX.10.5"
+      - "IX.11.6"
+      - "IX.11.18"
+      - "IX.11.19"
+      - "XXX.1.1"
     required_environments:
       - DEV-MAC
   - id: "XXII.1.5"
@@ -10492,16 +10400,19 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.2.2"
-    title: "CSS 기반 layout 속성을 같은 이름의 CSS 속성(flex, grid, position·inset)으로 출력하고, XXII.1.4 lowering 규칙이 있는 항목만 변환합니다. 불가능한 constraint는 diagnostic 처리합니다."
+    title: "IX.11.6 layout record의 CSS 기반 layout 속성을 같은 이름의 CSS 속성(flex, grid, position·inset)으로 출력합니다. 이름·값 형태가 다른 항목은 IX.11.19 matrix와 속성 모델 4장의 변환 규칙으로만 변환하고, 불가능한 constraint는 diagnostic 처리합니다."
     status: not_started
     depends_on:
       - "XXII.2.1"
-      - "XXII.1.4"
+      - "IX.11.6"
+      - "IX.11.19"
     required_environments:
       - DEV-MAC
   - id: "XXII.2.3"
-    title: "token을 CSS custom property 또는 generated constants로 내보냅니다."
+    title: "token을 CSS custom property 또는 generated constants로 내보냅니다. CSS 이름은 IX.11.16 파생 규칙, 등록 방식은 속성 모델 10장을 따릅니다."
     status: not_started
+    depends_on:
+      - "IX.11.16"
     required_environments:
       - DEV-MAC
   - id: "XXII.2.4"
@@ -10512,11 +10423,13 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.2.5"
-    title: "Context를 Web 출력으로 낮춥니다. CSS로 표현 가능한 스타일 값은 등록된 CSS custom property 상속으로, 그 밖의 값은 생성 코드의 context 구조로 내보냅니다(ADR-0025 결정 4.3)."
+    title: "Context를 Web 출력으로 낮춥니다. CSS로 표현 가능한 스타일 값은 등록된 CSS custom property 상속으로, 그 밖의 값은 생성 코드의 context 구조로 내보냅니다(ADR-0025 결정 4.3). 등록 속성은 토큰과 같은 속성 모델 10장 정책(`inherits: true`)을 씁니다. ContextKey의 CSS 이름은 IX.11.16 파생 규칙으로 만들고, 같은 export scope의 토큰 이름·아래 깊이 이름과 한 이름 공간에서 충돌을 검사·진단합니다. 같은 key를 다시 읽는 provision은 자기 참조 `var()`로 내보내지 않습니다(CSS에서는 cycle이 되어 guaranteed-invalid 값이 됨). 대신 그 key의 provision마다 펼친 트리의 provision 깊이 d(자기를 포함한 조상 provision 수, key default는 0)를 붙인 custom property에 값을 쓰고 key 이름으로 다시 공급하며, 값 식 안의 같은 key 읽기는 깊이 d-1 이름으로 바꿉니다. 같은 provision이 instance 위치마다 다른 깊이를 가져 규칙 하나로 낼 수 없으면 그 key를 생성 코드 context 구조로 내보내고 정보 진단을 냅니다. slot host에서는 Slot이 공개하지 않았고 컴포넌트 안에 provision이 있는 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
     status: not_started
     depends_on:
       - "XXII.2.3"
       - "XXII.1.1"
+      - "IX.11.16"
+      - "XXX.7.4"
     required_environments:
       - DEV-MAC
   - id: "XXII.2.6"
@@ -10535,10 +10448,11 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.3.2"
-    title: "common layout을 platform layout code로 변환하고 unsupported constraint를 diagnostic합니다."
+    title: "common layout을 platform layout code로 변환하고 unsupported constraint를 diagnostic합니다. 변환과 진단은 XXII.1.4 matrix 규칙만 씁니다."
     status: not_started
     depends_on:
       - "XXII.3.1"
+      - "XXII.1.4"
     required_environments:
       - DEV-MAC
   - id: "XXII.3.3"
@@ -10550,7 +10464,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.3.4"
-    title: "Context를 Apple dialect의 Environment 값으로, 상태 머신과 `MotionSpec`을 dialect의 상태·animation API로 내보냅니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다."
+    title: "Context를 Apple dialect의 Environment 값으로, 상태 머신과 `MotionSpec`을 dialect의 상태·animation API로 내보냅니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다. Environment가 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
     status: not_started
     depends_on:
       - "XXII.3.1"
@@ -10566,14 +10480,15 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.4.2"
-    title: "layout, control semantics, accessibility를 Compose API로 매핑합니다."
+    title: "layout, control semantics, accessibility를 Compose API로 매핑합니다. layout 변환과 진단은 XXII.1.4 matrix 규칙만 씁니다."
     status: not_started
     depends_on:
       - "IX.8.6"
+      - "XXII.1.4"
     required_environments:
       - DEV-MAC
   - id: "XXII.4.3"
-    title: "Context를 CompositionLocal로, 상태 머신과 `MotionSpec`을 Compose 상태·animation API로 내보냅니다. 값 변경 빈도에 따라 추적형과 비추적형 local을 고르는 규칙을 고정합니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다."
+    title: "Context를 CompositionLocal로, 상태 머신과 `MotionSpec`을 Compose 상태·animation API로 내보냅니다. 값 변경 빈도에 따라 추적형과 비추적형 local을 고르는 규칙을 고정합니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다. CompositionLocal이 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
     status: not_started
     depends_on:
       - "XXII.4.1"
@@ -11252,10 +11167,11 @@ tasks:
     report: "docs/task-reports/XXVIII.2.4.md"
     verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XXVIII.3.1"
-    title: "공개 format version을 동결하고 이후 incompatible change는 major format bump와 migration을 요구하도록 governance를 적용합니다."
+    title: "공개 format version을 동결하고 이후 incompatible change는 major format bump와 migration을 요구하도록 governance를 적용합니다. IX.12.1이 예약한 Component Context 번호는 동결 명세에 예약 항목으로 표시합니다."
     status: not_started
     depends_on:
       - "XXVIII.2.4"
+      - "IX.12.1"
     required_environments:
       - DEV-MAC
   - id: "XXVIII.3.2"
@@ -11661,11 +11577,12 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXX.1.2"
-    title: "프로토타입 socket 종류 State와 Pulse를 정의하고 expression socket 연결 가능 API를 확장합니다. State와 Pulse의 직접 연결은 거부하고 등록된 변환 node(상태 변화→펄스, 펄스→상태 토글·카운터)만 허용합니다."
+    title: "프로토타입 socket 종류 State와 Pulse를 정의하고 expression socket 연결 가능 API를 확장합니다. State와 Pulse의 직접 연결은 거부하고 등록된 변환 node(상태 변화→펄스, 펄스→상태 토글·카운터)만 허용합니다. 속성 입력 포트의 State socket 타입은 registry 항목의 CSS 값 문법을 ADR-0025 결정 1.2 대응으로 바꾼 `ExpressionType` 하나이며, 대응이 없는 값 문법의 속성은 포트로 노출하지 않고 진단합니다."
     status: not_started
     depends_on:
       - "VIII.3.2"
       - "IX.5.2"
+      - "IX.11.1"
     required_environments:
       - DEV-MAC
   - id: "XXX.1.3"
@@ -11674,11 +11591,13 @@ tasks:
     depends_on:
       - "XXX.1.1"
       - "XXX.1.2"
-      - "IX.12.3"
+      - "XXX.7.3"
+      - "IX.11.2"
+      - "IX.11.3"
     required_environments:
       - DEV-MAC
   - id: "XXX.1.4"
-    title: "EventKind에 hover, pointer down·up, drag(변위), scroll, long press를 추가하는 확장을 ADR로 고정한 뒤 구현합니다. 제스처 판정 임계값은 논리 tick 단위로 registry에 고정하고 기존 kind 번호는 바꾸지 않습니다."
+    title: "EventKind에 hover, pointer down·up, drag(변위), scroll, long press를 추가하는 확장을 ADR로 고정한 뒤 구현합니다. 현재 EventKind payload는 `TypeSpec` 하나(`crates/document/src/component/event.rs`의 `payload_type`)이고 `TypedValue`에는 2D 값이 없습니다(`crates/core-types/src/typed_value.rs`). 그래서 ADR은 drag·scroll 변위 payload를 2D 값 타입 추가(`TypedValue`·`ExpressionType` variant와 tag 추가)와 축별 이벤트(x·y 각각 `Length` payload, 같은 tick 안에서 x 다음 y) 중 하나로 정합니다. drag 끝 이벤트는 spring 초기 속도(XXX.3.2)에 쓸 축별 release velocity(px/tick)를 싣고, velocity는 registry에 고정한 개수만큼의 마지막 tick 변위를 IEEE 기본 연산으로 평균해 계산합니다. 제스처 판정 임계값은 논리 tick 단위로 registry에 고정하고 기존 kind 번호는 바꾸지 않습니다."
     status: not_started
     depends_on:
       - "IX.5.2"
@@ -11732,7 +11651,7 @@ tasks:
     depends_on:
       - "XXX.2.3"
       - "IX.4.5"
-      - "IX.12.8"
+      - "XXX.7.8"
     required_environments:
       - DEV-MAC
   - id: "XXX.2.5"
@@ -11742,7 +11661,7 @@ tasks:
       - "XXX.2.1"
       - "VIII.3.4"
       - "IX.5.7"
-      - "IX.12.5"
+      - "XXX.7.5"
     required_environments:
       - DEV-MAC
   - id: "XXX.3.1"
@@ -11754,7 +11673,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXX.3.2"
-    title: "timing function evaluator를 구현합니다. cubic-bezier는 고정 반복 횟수 해법, spring은 고정 step 적분 또는 닫힌 식을 쓰고 결과는 tick의 순수 함수입니다."
+    title: "timing function evaluator를 구현합니다. cubic-bezier는 고정 반복 횟수 해법, spring은 고정 step 적분을 쓰고 결과는 tick의 순수 함수입니다. 계산은 IEEE-754 기본 연산(사칙연산·`sqrt`)만 씁니다. `exp`·`sin`·`cos`·`pow` 같은 libm 초월함수가 필요한 닫힌 식은 ADR-0006 기준으로 플랫폼 의존 결과가 되므로 쓰지 않습니다."
     status: not_started
     depends_on:
       - "XXX.1.1"
@@ -11836,6 +11755,8 @@ tasks:
     depends_on:
       - "XXX.5.1"
       - "XXX.2.3"
+      - "IX.11.2"
+      - "IX.11.3"
     required_environments:
       - DEV-MAC
   - id: "XXX.5.3"
@@ -11868,7 +11789,7 @@ tasks:
     depends_on:
       - "XXX.3.6"
       - "XXX.2.4"
-      - "IX.12.13"
+      - "XXX.7.13"
     required_environments:
       - DEV-MAC
   - id: "XXX.6.2"
@@ -11885,5 +11806,118 @@ tasks:
     depends_on:
       - "XXX.1.3"
       - "XXX.3.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.1"
+    title: "`ContextKey` resource에 StableId, 이름, TypeSpec, 필수 default expression, scope(프로젝트·라이브러리·문서)를 정의합니다. default는 닫힌 식이어야 하며 default 없는 key는 만들 수 없습니다. 참조는 StableId로 합니다. 번호는 IX.12.1 예약 값을 쓰고 나머지 저장 형식은 착수 시 ADR로 고정합니다."
+    status: not_started
+    depends_on:
+      - "IX.12.1"
+      - "IX.1.2"
+      - "VIII.5.2"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.2"
+    title: "node에 붙는 `ContextProvision`(provider node StableId, ContextKey ref, value expression), ComponentDefinition 공개 인터페이스의 `ContextRequirement`(ContextKey ref), Slot의 공개 Context key 목록(ADR-0025 결정 3.11)을 정의합니다. provision은 소유 definition·View 안의 node에만 붙고, 자기 트리 안의 ComponentInstance node에는 붙일 수 있습니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.1"
+      - "IX.1.1"
+      - "IX.2.1"
+      - "IX.3.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.3"
+    title: "ReferenceTarget에 Context 종류를 IX.12.1이 예약한 tag로 추가하고 binding dependency graph가 ContextKey와 ContextProvision을 공통 node로 표현하게 합니다. 기존 ReferenceTarget tag(`crates/expressions/src/ast.rs`의 Token·Property·ComponentProperty·Environment)와 bytes는 바꾸지 않습니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.2"
+      - "VIII.6.2"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.4"
+    title: "Context 해석기를 구현합니다. instance expansion view의 펼친 트리에서 소비 지점의 가장 가까운 조상 provision을 쓰고, 없으면 key default를 씁니다. provision 값 식이 같은 key를 읽으면 바깥 조상 값으로 해석합니다. slot 콘텐츠는 작성 scope 기준으로 해석합니다. slot host에 이르면 컴포넌트 내부 조상을 건너뛰고 instance node로 이어 올라가며, Slot 공개 목록에 있는 key만 slot host부터 컴포넌트 내부 조상 provision을 찾습니다(ADR-0025 결정 3.11). 조상 탐색 결과는 runtime index로 캐시합니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.3"
+      - "IX.2.2"
+      - "IX.3.2"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.5"
+    title: "Context validator를 구현합니다. ComponentDefinition 안의 선언 없는 소비(그 정의가 작성한 slot 콘텐츠 안의 소비 포함)와 타입 불일치는 오류, 존재하지 않는 key의 provision과 Slot 공개 목록 항목은 orphan, 쓰지 않는 requirement는 경고, default 해석과 shadowing은 정보 진단입니다. 서로 다른 key가 서로를 읽는 cycle은 binding cycle detector로 저장 전 거부합니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.4"
+      - "VIII.6.3"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.6"
+    title: "Context 해석 결과를 바꾸는 변경에서 영향받는 소비 binding만 topological order로 재평가하도록 binding scheduler에 연결합니다. 무효화 조건은 provision 추가·삭제·값 변경, ContextKey default 변경, 소비 node나 그 조상의 reparent·이동·삭제, instance의 ComponentRef 교체, slot 콘텐츠 삽입·삭제·재정렬, Slot 공개 목록 변경, View Variant 구조 patch(node add·delete·move·replace, slot change)의 적용·해제, Fragment 묶기·풀기입니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.4"
+      - "VIII.6.4"
+      - "IX.7.3"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.7"
+    title: "evaluated value provenance chain에 ContextKey와 provision node StableId를 기록합니다. default로 해석된 경우와 slot 공개 목록을 거친 경우도 표시합니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.4"
+      - "VIII.6.5"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.8"
+    title: "ContextKey 생성·rename·default 변경·삭제, provision 생성·값 변경·삭제, requirement 추가·삭제, Slot 공개 목록 추가·삭제 command를 구현합니다. 소비가 있는 key 삭제는 소비 binding을 OrphanedBinding으로 바꾸고, provision만 삭제하면 default로 해석합니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.5"
+      - "VIII.8.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.9"
+    title: "View Variant와 Target Profile override가 provision 값을 PropertyPath로 덮어쓰도록 resolver를 연결합니다. 우선순위는 기존 공통값→profile override→variant override 규칙을 따릅니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.4"
+      - "IX.7.6"
+      - "IX.10.7"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.10"
+    title: "Semantic Diff·Merge에 Context를 연결합니다. ContextKey·provision·requirement·Slot 공개 목록을 StableId 단위로 diff하고, provision 삭제 대 소비 추가와 key 타입 변경 대 provision 값 변경을 전용 conflict로 분류합니다(아키텍처 27.1)."
+    status: not_started
+    depends_on:
+      - "XXX.7.8"
+      - "XIV.3.7"
+      - "XIV.10.5"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.11"
+    title: "인스펙터용 Context 조회 API를 구현합니다. 선택 속성의 binding이 Context 소비이면 key, 해석된 값, 제공한 provision node 경로를 반환하고, Value Binding 선택기 후보로 그 위치에서 소비 가능한 key와 선언 필요 여부를 반환합니다. 실제 UI는 XXX.7.12에서 연결합니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.7"
+      - "XXX.7.5"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.12"
+    title: "macOS 인스펙터에 Context를 연결합니다. Value Binding 선택기에 Context를 연결원 종류 하나로 보여 주고, 제공한 조상 node로 이동하는 동작, ComponentDefinition 인터페이스의 requirement 목록, Slot 공개 목록을 네이티브 컨트롤로 표시합니다. Context를 별도 기능 패널로 나누지 않습니다(아키텍처 14.2)."
+    status: not_started
+    depends_on:
+      - "XXX.7.11"
+      - "XII.9.1"
+      - "IX.11.17"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.7.13"
+    title: "통합 fixture를 만듭니다. 테마 Context가 10단계 nested component를 중간 Property 없이 통과하고, 중간 단계 shadowing, 외부 library key 소비, slot 콘텐츠의 공개·비공개 key 해석을 포함합니다."
+    status: not_started
+    depends_on:
+      - "XXX.7.9"
+      - "XXX.7.10"
+      - "IX.9.2"
     required_environments:
       - DEV-MAC

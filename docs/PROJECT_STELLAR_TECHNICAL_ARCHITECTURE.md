@@ -67,7 +67,6 @@ Git Working Tree는 마지막 커밋과 현재 저장 상태의 차이를 나타
 - 프로젝트 폴더 생성·열기·Clone
 - 문서, Frame, Fragment, 그래픽, 텍스트, 이미지 편집
 - 컴포넌트, Property, Slot, 토큰, Binding, 조건식
-- 선언형 Component Context(14.5, ADR-0025)
 - View 변수와 Nullable 조합형 Variant
 - 공통 레이아웃·상태·접근성 의미 모델
 - Metal 및 Direct3D 12 렌더링
@@ -87,8 +86,9 @@ Git Working Tree는 마지막 커밋과 현재 저장 상태의 차이를 나타
 - 외부 에이전트의 문서 편집, 잠금, 출처 표시와 사용자 되돌리기
 - PNG·SVG 내보내기
 - HTML/CSS/JavaScript 및 Rust/WASM 플러그인 런타임
-- Web·Apple·Android 코드 생성(CSS 기반 속성·Context·상태 머신·Motion 입력, ADR-0025)
+- Web·Apple·Android 코드 생성(CSS 기반 속성·Context·상태 머신·Motion 입력, ADR-0024, ADR-0025)
 - CSS 기반 속성과 상태 머신 위의 노드 기반 프로토타이핑 편집기(ADR-0025)
+- 선언형 Component Context(14.5, ADR-0025). 초기 출시에는 저장 번호 예약만 포함
 - 임의의 두 스냅샷을 조합해 제3의 결과를 만드는 Merge Composer
 - Headless `stellar` 명령과 CI 도구(AI와 무관한 L1이므로 준비되는 대로 앱에 포함할 수 있음, ADR-0005 §7)
 - 사용자 구독 CLI를 연결하는 내장 에이전트 패널(ADR-0005, 해당 Phase가 끝난 뒤 노출)
@@ -729,11 +729,12 @@ Stellar는 최종 값이 어떤 토큰, 조건, Property, Provider를 거쳤는�
 
 Property Drilling 경계는 일반 레이어가 아니라 `ComponentDefinition` 경계입니다.
 
-- 컴포넌트 경계를 넘는 값은 공개 Component Property를 통해서만 전달
+- 컴포넌트 경계를 넘는 Property 값은 공개 Component Property를 통해서만 전달
 - Nested Instance의 Property를 상위 인스턴스에서 직접 편집 금지
 - 상위 ComponentDefinition에 Property를 만들고 하위 Property에 명시적으로 Binding
-- 여러 경계를 통과하면 모든 경계에 Property가 존재해야 함
+- Property 값이 여러 경계를 통과하면 모든 경계에 Property가 존재해야 함
 - 일반 Frame·Fragment는 Drilling 경계가 아님
+- 예외: 14.5의 Component Context는 경계마다 Property를 두지 않고, 읽는 컴포넌트가 공개 인터페이스에 선언한 `ContextRequirement`로만 경계를 넘음(ADR-0025)
 
 UI는 필요한 Property와 Binding 체인의 생성을 자동화할 수 있으나, 내부 모델에는 명시적 인터페이스로 저장합니다.
 
@@ -760,13 +761,14 @@ Property 삭제 또는 타입 변경으로 연결이 깨지면 자동 삭제하�
 
 ### 14.5 Component Context
 
-Context는 하위 트리로 값을 공급·소비하는 **선언된 인터페이스**입니다. 14.3의 경계 규칙과 15.1의 암묵적 참조 금지는 그대로 유지됩니다(ADR-0025).
+Context는 하위 트리로 값을 공급·소비하는 **선언된 인터페이스**입니다. 14.3의 "경계마다 Property" 규칙은 Property 값에 적용되고, Context는 이 절의 `ContextRequirement` 선언으로만 경계를 넘습니다(14.3의 예외). 15.1의 암묵적 참조 금지는 유지되며, 선언된 Context 소비는 암묵적 참조가 아닙니다(ADR-0025). 로드맵 기능이며 초기 출시에는 저장 번호 예약만 포함합니다(4.2).
 
 - `ContextKey`: StableId, 이름, 타입, 필수 기본값을 가진 resource. 토큰과 같은 scope(프로젝트·라이브러리·문서)
 - 제공: node에 붙는 `ContextProvision`이 key 하나에 값 하나를 연결하고, 펼친 instance 트리 기준 하위 트리에 적용
 - 소비 선언: ComponentDefinition 안에서 Context를 읽으려면 공개 인터페이스에 `ContextRequirement`를 선언. 중간 컴포넌트는 다시 선언하지 않음
 - 소비: Value Binding의 연결원 종류 하나
 - 해석: 가장 가까운 조상 provision 우선, 없으면 key 기본값. 안쪽 provision이 바깥을 가림. provision 값이 같은 key를 읽으면 바깥 값
+- Slot 콘텐츠: 작성 scope 기준으로 해석. slot host에서 컴포넌트 내부 조상을 건너뛰고 instance 위치로 이어 올라감. 컴포넌트 내부 provision은 Slot이 공개 인터페이스에 선언한 공개 key만 slot 콘텐츠에 보임
 - cycle은 Binding cycle 검사로 저장 전 거부
 - 출처 경로에 provision node를 기록하고 UI는 제공한 조상으로 이동할 수 있어야 함
 
@@ -909,7 +911,7 @@ Base View
 - 생성 코드의 역수입과 자동 동기화는 하지 않음
 - 동일 입력에서 결정론적 생성
 - 변환 불가·근사 변환 진단
-- 입력은 CSS 기반 속성, Context, 상태 머신, Motion 정의이며 속성별 매핑은 Capability registry가 관리(ADR-0025)
+- 입력은 CSS 기반 속성, Context, 상태 머신, Motion 정의이며 속성별 매핑은 Capability registry가 관리. CSS 속성 어휘·의미와 Web 매핑은 ADR-0024, 코드 생성 입력과 Context·Motion 매핑은 ADR-0025를 따름
 
 ---
 
