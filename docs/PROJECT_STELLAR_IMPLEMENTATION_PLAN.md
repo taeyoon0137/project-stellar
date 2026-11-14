@@ -1226,9 +1226,9 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XII.3.2 | `[x]` | macOS mouse/trackpad/keyboard 이벤트를 InputEvent로 변환합니다. | coordinate, modifiers, double click fixture 통과. | II.5.4, XII.3.1 |
 | XII.3.3 | `[!]` | Windows pointer/mouse/keyboard 이벤트를 InputEvent로 변환합니다. | DPI scaling, modifiers, double click fixture 통과. | II.6.4, XII.3.1 |
 | XII.3.4 | `[x]` | 연속 pointer move/wheel event coalescing을 구현하되 pointer down/up과 key event 순서를 바꾸지 않습니다. | 10,000 move→최신 1개, down/up 보존. | XII.3.1 |
-| XII.3.5 | `[ ]` | InputEvent 수신 T0 trace를 찍고 DocumentThread hit-test request까지 queue latency를 측정합니다. | trace에 T0/T1 후보 timestamp 존재. | XI.3.4, XII.1.2 |
-| XII.3.6 | `[ ]` | Pan, Zoom, Select, Drag, Resize, Rotate interaction state machine을 각 도구별 closed enum으로 구현합니다. | cancel/complete fixture 통과. | XI.3.5, Phase VII |
-| XII.3.7 | `[ ]` | interaction preview는 transient state로 Scene builder에 주입하고 pointer up에서만 CommandTransaction을 확정합니다. | drag 중 project model revision 불필요 증가 없음 또는 정의된 preview revision만 사용. | VII.4.2, XI.2.1 |
+| XII.3.5 | `[~]` | InputEvent 수신 T0 trace를 찍고 DocumentThread hit-test request까지 queue latency를 측정합니다. | trace에 T0/T1 후보 timestamp 존재. | XI.3.4, XII.1.2 |
+| XII.3.6 | `[x]` | Pan, Zoom, Select, Drag, Resize, Rotate interaction state machine을 각 도구별 closed enum으로 구현합니다. | cancel/complete fixture 통과. | XI.3.5, Phase VII |
+| XII.3.7 | `[!]` | interaction preview는 transient state로 Scene builder에 주입하고 pointer up에서만 CommandTransaction을 확정합니다. | drag 중 project model revision 불필요 증가 없음 또는 정의된 preview revision만 사용. | VII.4.2, XI.2.1 |
 
 ### XII.4 Canvas surface와 renderer 연결
 

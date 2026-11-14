@@ -6603,22 +6603,29 @@ tasks:
     verified_at: "2026-11-14T02:08:22+09:00"
   - id: "XII.3.5"
     title: "InputEvent 수신 T0 trace를 찍고 DocumentThread hit-test request까지 queue latency를 측정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XI.3.4"
       - "XII.1.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.3.5.md"
   - id: "XII.3.6"
     title: "Pan, Zoom, Select, Drag, Resize, Rotate interaction state machine을 각 도구별 closed enum으로 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.3.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.3.6.md"
+    commit: "7b5cf84ba5ab63d0e27f11caa783a69ba90dad89"
+    report: "docs/task-reports/XII.3.6.md"
+    verified_at: "2026-11-14T16:47:05+09:00"
   - id: "XII.3.7"
     title: "interaction preview는 transient state로 Scene builder에 주입하고 pointer up에서만 CommandTransaction을 확정합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "VII.4.2"
       - "XI.2.1"

@@ -33,6 +33,7 @@ use stellar_runtime::app::{
 use crate::input::{InputTimeDomain, NativeTimestamp};
 use crate::input_macos::{convert_mac_event, StellarMacEvent};
 use crate::input_queue::{InputQueue, PushOutcome};
+use stellar_runtime::input_trace::InputReceipt;
 
 /// 버전 문자열(NUL 종료에 의존하지 않는 바이트 시퀀스).
 const VERSION: &str = "0.0.0";
@@ -550,6 +551,8 @@ pub unsafe extern "C" fn stellar_runtime_submit_mac_event(
     out_queued: *mut u32,
 ) -> StellarStatus {
     ffi_guard(move || {
+        // T0 후보(XII.3.5): 잠금과 변환 전에 코어 경계 수신 시각을 기록합니다.
+        let received = InstantClock.now_nanos();
         if event.is_null() {
             return StellarStatus::NullPointer;
         }
@@ -594,19 +597,22 @@ pub unsafe extern "C" fn stellar_runtime_submit_mac_event(
         }
         match converted {
             Ok(None) => StellarStatus::Ok,
-            Ok(Some(input)) => match rt.input.push(input) {
-                PushOutcome::Queued | PushOutcome::Coalesced => {
-                    write_queued(1);
-                    StellarStatus::Ok
+            Ok(Some(input)) => {
+                let receipt = InputReceipt::new(input.timestamp().get(), received);
+                match rt.input.push_received(input, receipt) {
+                    PushOutcome::Queued | PushOutcome::Coalesced => {
+                        write_queued(1);
+                        StellarStatus::Ok
+                    }
+                    PushOutcome::Full => {
+                        rt.last_error = Some((
+                            StellarStatus::QueueFull,
+                            format!("입력 대기열이 가득 찼습니다({INPUT_QUEUE_CAPACITY})"),
+                        ));
+                        StellarStatus::QueueFull
+                    }
                 }
-                PushOutcome::Full => {
-                    rt.last_error = Some((
-                        StellarStatus::QueueFull,
-                        format!("입력 대기열이 가득 찼습니다({INPUT_QUEUE_CAPACITY})"),
-                    ));
-                    StellarStatus::QueueFull
-                }
-            },
+            }
             Err(error) => {
                 rt.last_error = Some((StellarStatus::InvalidArgument, error.to_string()));
                 StellarStatus::InvalidArgument
@@ -1839,6 +1845,67 @@ mod tests {
             assert_eq!(pointers[1].position.x(), 9_999.0);
             assert_eq!(pointers[1].position.y(), 4_999.5);
             assert_eq!(pointers[1].button, PointerButton::Primary);
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn submitted_events_carry_t0_into_document_thread_hit_test_trace() {
+            // XII.3.5: 셸 이벤트 수신 때 찍은 T0 후보가 병합을 거쳐 document thread hit-test request
+            // trace까지 이어집니다(같은 프로세스 단조 시계).
+            use std::sync::Arc;
+            use stellar_runtime::document_thread::DocumentThread;
+            use stellar_runtime::input_trace::TraceClock;
+
+            let h = create();
+            let before = InstantClock.now_nanos();
+            assert_eq!(
+                submit(h, &mac_event(event_type::LEFT_MOUSE_DOWN, 20.0)).0,
+                StellarStatus::Ok
+            );
+            for i in 0..100u32 {
+                let drag = mac_event(event_type::LEFT_MOUSE_DRAGGED, 20.0 + f64::from(i) * 1e-3);
+                assert_eq!(submit(h, &drag).0, StellarStatus::Ok);
+            }
+            assert_eq!(
+                submit(h, &mac_event(event_type::LEFT_MOUSE_UP, 20.2)).0,
+                StellarStatus::Ok
+            );
+            let after = InstantClock.now_nanos();
+            let queued: Vec<_> = {
+                let mut reg = registry().lock().expect("registry");
+                let rt = reg.live.get_mut(&h).expect("runtime");
+                std::iter::from_fn(|| rt.input.pop_received()).collect()
+            };
+            assert_eq!(queued.len(), 3);
+            let merged: Vec<u32> = queued.iter().map(|(_, r)| r.merged()).collect();
+            assert_eq!(merged, [0, 99, 0]);
+            let received: Vec<u64> = queued.iter().map(|(_, r)| r.received()).collect();
+            assert!(received.windows(2).all(|pair| pair[0] <= pair[1]));
+            assert!(before <= received[0] && received[2] <= after);
+
+            let clock: TraceClock = Arc::new(InstantClock);
+            let doc = DocumentThread::spawn().expect("document thread");
+            let sender = doc.sender();
+            for (event, receipt) in queued {
+                let class = event.queue_class();
+                let trace = sender
+                    .submit_hit_test(class, receipt, &clock, |_ctx| ())
+                    .expect("submit")
+                    .ticket
+                    .wait()
+                    .expect("hit test")
+                    .trace;
+                assert_eq!(trace.class, class);
+                assert_eq!(
+                    trace.t0_candidates(),
+                    [receipt.event_time(), receipt.received()]
+                );
+                let [started, finished] = trace.t1_candidates();
+                assert!(receipt.received() <= trace.enqueued);
+                assert!(trace.enqueued <= started && started <= finished);
+                assert_eq!(trace.queue_latency_nanos(), started - receipt.received());
+            }
+            doc.shutdown().expect("shutdown");
             assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
         }
 

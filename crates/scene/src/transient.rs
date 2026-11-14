@@ -81,6 +81,60 @@ impl Edge {
     }
 }
 
+/// 선택 상자에서 크기를 조절할 수 있는 축. 가로 축은 top_left → top_right, 세로 축은 top_left →
+/// bottom_left입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ResizeAxes {
+    horizontal: bool,
+    vertical: bool,
+}
+
+impl ResizeAxes {
+    /// 상자 꼭짓점 `[top_left, top_right, bottom_right, bottom_left]`의 축. 길이가 0인 축(수평·수직 선의
+    /// 상자)은 조절할 수 없습니다. 두 축 모두 길이가 있어도 서로 평행하면(면적 0) 축 좌표계를 정할 수
+    /// 없으므로 어느 축도 조절할 수 없습니다.
+    pub fn of(quad: &[Vec2; 4]) -> ResizeAxes {
+        let [tl, tr, _, bl] = *quad;
+        let (ux, uy) = (tr.x() - tl.x(), tr.y() - tl.y());
+        let (vx, vy) = (bl.x() - tl.x(), bl.y() - tl.y());
+        let horizontal = ux != 0.0 || uy != 0.0;
+        let vertical = vx != 0.0 || vy != 0.0;
+        if horizontal && vertical && ux * vy - uy * vx == 0.0 {
+            return ResizeAxes {
+                horizontal: false,
+                vertical: false,
+            };
+        }
+        ResizeAxes {
+            horizontal,
+            vertical,
+        }
+    }
+
+    /// 가로 축(왼쪽·오른쪽 변이 바꾸는 축)을 조절할 수 있으면 참입니다.
+    pub const fn horizontal(&self) -> bool {
+        self.horizontal
+    }
+
+    /// 세로 축(위·아래 변이 바꾸는 축)을 조절할 수 있으면 참입니다.
+    pub const fn vertical(&self) -> bool {
+        self.vertical
+    }
+
+    /// 변 handle이 바꾸는 축을 조절할 수 있으면 참입니다.
+    pub const fn edge(&self, edge: Edge) -> bool {
+        match edge {
+            Edge::Top | Edge::Bottom => self.vertical,
+            Edge::Left | Edge::Right => self.horizontal,
+        }
+    }
+
+    /// 모서리 handle이 바꾸는 두 축 중 하나라도 조절할 수 있으면 참입니다.
+    pub const fn corner(&self) -> bool {
+        self.horizontal || self.vertical
+    }
+}
+
 /// modifier control point 식별자. 의미(어느 modifier의 몇 번째 점인지)는 layer를 만드는 쪽이 정합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ControlPointId(
@@ -318,12 +372,17 @@ impl TransientLayer {
 
     /// 선택 상자(world 꼭짓점 `[top_left, top_right, bottom_right, bottom_left]`)의 회전 영역 4개,
     /// 변 4개, 모서리 4개 handle을 추가합니다. 회전한 node의 상자도 그대로 받습니다.
+    ///
+    /// 크기를 조절할 수 없는 축([`ResizeAxes::of`])의 handle은 만들지 않습니다. 수평 선 상자(높이 0)는
+    /// 위·아래 변이 없고, 점 상자는 변과 모서리가 모두 없습니다. 그래서 선 위를 누르면 변 handle이 아니라
+    /// node가 맞습니다.
     pub fn push_selection_box(
         &mut self,
         target: StableId,
         quad: [Vec2; 4],
         metrics: HandleMetrics,
     ) {
+        let axes = ResizeAxes::of(&quad);
         for corner in Corner::ALL {
             self.push(TransientHandle {
                 kind: HandleKind::Rotate(corner),
@@ -336,6 +395,9 @@ impl TransientLayer {
             });
         }
         for edge in Edge::ALL {
+            if !axes.edge(edge) {
+                continue;
+            }
             let i = edge.index();
             self.push(TransientHandle {
                 kind: HandleKind::ResizeEdge(edge),
@@ -348,6 +410,9 @@ impl TransientLayer {
             });
         }
         for corner in Corner::ALL {
+            if !axes.corner() {
+                continue;
+            }
             self.push(TransientHandle {
                 kind: HandleKind::ResizeCorner(corner),
                 target,

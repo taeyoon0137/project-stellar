@@ -13,10 +13,17 @@
 //!   더하고 위치·시각은 최신 값을 씁니다(scroll 거리 보존). gesture 경계인 `Began`·`Ended`는 병합하지
 //!   않습니다. 합이 `f32` 범위를 넘으면 병합하지 않고 따로 넣습니다.
 //! - 그 밖의 조합은 병합하지 않습니다.
+//!
+//! # 수신 기록 (XII.3.5)
+//!
+//! 항목마다 T0 후보([`InputReceipt`]: 운영체제 이벤트 시각, 코어 수신 시각)를 함께 보관합니다. 병합하면
+//! 이벤트 값은 최신으로 바뀌지만 receipt는 묶음에서 **가장 이른** 값을 유지하고 병합 수를 셉니다
+//! ([`InputReceipt::absorb`]). 아직 반영되지 않은 가장 오래된 입력 기준으로 지연을 재기 위해서입니다.
 
 use std::collections::VecDeque;
 
 use stellar_core_types::value::Vec2;
+use stellar_runtime::input_trace::InputReceipt;
 
 use crate::input::{InputEvent, InputEventKind, PointerPhase, WheelPhase};
 
@@ -31,10 +38,17 @@ pub enum PushOutcome {
     Full,
 }
 
+/// 대기열 항목: 이벤트와 그 수신 기록.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Queued {
+    event: InputEvent,
+    receipt: InputReceipt,
+}
+
 /// 용량 고정 FIFO 입력 대기열.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InputQueue {
-    events: VecDeque<InputEvent>,
+    events: VecDeque<Queued>,
     capacity: usize,
     coalesced: u64,
 }
@@ -49,11 +63,20 @@ impl InputQueue {
         }
     }
 
-    /// 이벤트를 넣습니다. 끝 항목과 병합할 수 있으면 병합하고, 아니면 용량 안에서 새 항목으로 넣습니다.
+    /// 이벤트를 넣습니다. 수신 시각을 따로 재지 않은 호출자(재생·테스트)용이며, 이벤트 시각을 수신
+    /// 시각으로 씁니다. 셸 경계는 [`InputQueue::push_received`]를 씁니다.
     pub fn push(&mut self, event: InputEvent) -> PushOutcome {
+        let time = event.timestamp().get();
+        self.push_received(event, InputReceipt::new(time, time))
+    }
+
+    /// 수신 기록과 함께 이벤트를 넣습니다. 끝 항목과 병합할 수 있으면 병합하고(receipt는 이른 값 유지),
+    /// 아니면 용량 안에서 새 항목으로 넣습니다.
+    pub fn push_received(&mut self, event: InputEvent, receipt: InputReceipt) -> PushOutcome {
         if let Some(last) = self.events.back_mut() {
-            if let Some(merged) = coalesce(last, &event) {
-                *last = merged;
+            if let Some(merged) = coalesce(&last.event, &event) {
+                last.event = merged;
+                last.receipt = last.receipt.absorb(receipt);
                 self.coalesced = self.coalesced.saturating_add(1);
                 return PushOutcome::Coalesced;
             }
@@ -61,18 +84,30 @@ impl InputQueue {
         if self.events.len() >= self.capacity {
             return PushOutcome::Full;
         }
-        self.events.push_back(event);
+        self.events.push_back(Queued { event, receipt });
         PushOutcome::Queued
     }
 
     /// 가장 오래된 이벤트.
     pub fn front(&self) -> Option<&InputEvent> {
-        self.events.front()
+        self.events.front().map(|queued| &queued.event)
+    }
+
+    /// 가장 오래된 이벤트의 수신 기록.
+    pub fn front_receipt(&self) -> Option<InputReceipt> {
+        self.events.front().map(|queued| queued.receipt)
     }
 
     /// 가장 오래된 이벤트를 꺼냅니다.
     pub fn pop(&mut self) -> Option<InputEvent> {
-        self.events.pop_front()
+        self.pop_received().map(|(event, _)| event)
+    }
+
+    /// 가장 오래된 이벤트를 수신 기록과 함께 꺼냅니다.
+    pub fn pop_received(&mut self) -> Option<(InputEvent, InputReceipt)> {
+        self.events
+            .pop_front()
+            .map(|queued| (queued.event, queued.receipt))
     }
 
     /// 대기 중 이벤트 수.
@@ -456,5 +491,57 @@ mod tests {
             )),
             PushOutcome::Queued
         );
+    }
+
+    #[test]
+    fn merged_entries_keep_the_earliest_receipt() {
+        // XII.3.5: 병합 항목의 T0 후보는 묶음에서 가장 이른 값이고, 병합 수를 셉니다.
+        let mut queue = InputQueue::new(8);
+        let receipt = |t: u64| InputReceipt::new(t, t + 1_000);
+        queue.push_received(
+            pointer(1, PointerPhase::Down, PointerButton::Primary, v(0.0, 0.0)),
+            receipt(1),
+        );
+        for t in 2..=101 {
+            queue.push_received(
+                pointer(
+                    t,
+                    PointerPhase::Move,
+                    PointerButton::Primary,
+                    v(t as f32, 0.0),
+                ),
+                receipt(t),
+            );
+        }
+        queue.push_received(
+            pointer(102, PointerPhase::Up, PointerButton::Primary, v(101.0, 0.0)),
+            receipt(102),
+        );
+        assert_eq!(queue.len(), 3);
+        assert_eq!(queue.front_receipt(), Some(receipt(1)));
+
+        let (down, down_receipt) = queue.pop_received().expect("down");
+        assert_eq!(pointer_of(&down).phase, PointerPhase::Down);
+        assert_eq!(down_receipt, receipt(1));
+        let (moved, move_receipt) = queue.pop_received().expect("move");
+        // 이벤트는 최신 값, receipt는 첫 move 값과 병합 수 99.
+        assert_eq!(pointer_of(&moved).position, v(101.0, 0.0));
+        assert_eq!(moved.timestamp().get(), 101);
+        assert_eq!(
+            (
+                move_receipt.event_time(),
+                move_receipt.received(),
+                move_receipt.merged()
+            ),
+            (2, 1_002, 99)
+        );
+        let (_, up_receipt) = queue.pop_received().expect("up");
+        assert_eq!(up_receipt, receipt(102));
+        assert!(queue.pop_received().is_none());
+        assert_eq!(queue.front_receipt(), None);
+
+        // 수신 시각 없이 넣으면 이벤트 시각을 수신 시각으로 씁니다.
+        queue.push(key(7, KeyState::Down));
+        assert_eq!(queue.front_receipt(), Some(InputReceipt::new(7, 7)));
     }
 }

@@ -54,6 +54,8 @@ pub mod narrow_phase;
 /// selection handle·modifier control point transient hit-test layer (XI.3.5).
 pub mod transient;
 
+pub mod interaction;
+
 /// 테스트 전용 scene fixture 생성기 (XI.1.2).
 #[cfg(test)]
 mod fixtures;
