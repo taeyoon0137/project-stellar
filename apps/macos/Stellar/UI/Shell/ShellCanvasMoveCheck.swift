@@ -170,8 +170,16 @@ enum ShellCanvasMoveCheck {
               action(reopened, .redo), at(30, in: deleteCanvas) == copy,
               action(reopened, .undo), at(30, in: deleteCanvas) == node
         else { return fail("단일 선택 복제·Undo·Redo") }
+        // 재생된 Undo가 끝나도 Layers의 새 페이지는 worker에서 도착합니다.
+        func awaitLayerAction(_ command: SidebarCommand) -> Bool {
+            let deadline = Date().addingTimeInterval(5)
+            while !reopened.sidebarSource.validate(command).isAllowed && Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            return reopened.sidebarSource.validate(command).isAllowed
+        }
         let layerDuplicate = SidebarCommand.duplicate([SidebarStableID(node)])
-        guard reopened.sidebarSource.validate(layerDuplicate).isAllowed else { return fail("Layers 복제 활성") }
+        guard awaitLayerAction(layerDuplicate) else { return fail("Layers 복제 활성") }
         reopened.sidebarSource.perform(layerDuplicate)
         guard pump.waitForPendingRequests(timeout: 10), let layerCopy = at(30, in: deleteCanvas), layerCopy != node,
               action(reopened, .undo), at(30, in: deleteCanvas) == node
@@ -190,7 +198,7 @@ enum ShellCanvasMoveCheck {
         }
         // Layers의 삭제 요청도 같은 transaction으로 이어집니다.
         let layerDelete = SidebarCommand.delete([SidebarStableID(node)])
-        guard reopened.sidebarSource.validate(layerDelete).isAllowed else { return fail("Layers 삭제 활성") }
+        guard awaitLayerAction(layerDelete) else { return fail("Layers 삭제 활성") }
         reopened.sidebarSource.perform(layerDelete)
         guard pump.waitForPendingRequests(timeout: 10), at(30, in: deleteCanvas) != node,
               action(reopened, .undo), at(30, in: deleteCanvas) == node,
