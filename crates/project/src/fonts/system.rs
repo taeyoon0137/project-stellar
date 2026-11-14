@@ -237,10 +237,17 @@ impl SystemFontCatalog {
 }
 
 /// 재hash 판단용 파일 상태.
+///
+/// 크기·mtime만으로는 같은 크기로 바꾸고 mtime을 보존한 교체(`cp -p`, `touch -r`, 일부 installer)를
+/// 놓칩니다. unix에서는 device·inode와 inode 변경 시각(ctime)도 비교합니다. ctime은 내용·metadata가
+/// 바뀌면 커널이 현재 시각으로 갱신하고 사용자 공간에서 임의 값으로 되돌릴 수 없습니다. 교체(rename)는
+/// inode가 바뀝니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FileStamp {
     len: u64,
     modified: Option<SystemTime>,
+    /// unix: (device, inode, ctime 초, ctime 나노초). 비-unix(ADR-0006 보류)는 `None`.
+    inode: Option<(u64, u64, i64, i64)>,
 }
 
 impl FileStamp {
@@ -248,8 +255,25 @@ impl FileStamp {
         FileStamp {
             len: metadata.len(),
             modified: metadata.modified().ok(),
+            inode: inode_stamp(metadata),
         }
     }
+}
+
+#[cfg(unix)]
+fn inode_stamp(metadata: &Metadata) -> Option<(u64, u64, i64, i64)> {
+    use std::os::unix::fs::MetadataExt;
+    Some((
+        metadata.dev(),
+        metadata.ino(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+    ))
+}
+
+#[cfg(not(unix))]
+fn inode_stamp(_metadata: &Metadata) -> Option<(u64, u64, i64, i64)> {
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -601,6 +625,44 @@ mod tests {
         assert_eq!(discovery.files_hashed(), 2);
         assert_eq!(changed.faces()[0].key().file_hash(), hash_of(&second));
         assert_ne!(changed.faces()[0].handle(), catalog.faces()[0].handle());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn same_size_rewrite_with_preserved_mtime_is_rehashed() {
+        let dir = TempDir::new("system");
+        let path = dir.path.join("a.ttf");
+        let first = sfnt_face(SIG_TRUETYPE, &family_faces("Fixture Sans")[0]);
+        std::fs::write(&path, &first).unwrap();
+        let modified = std::fs::metadata(&path).unwrap().modified().unwrap();
+        let mut discovery = SystemFontDiscovery::new(SystemFontLimits::default());
+        let mut registry = InMemoryFontRegistry::new();
+        let catalog = discovery.register_files([path.clone()], &mut registry);
+        assert_eq!(discovery.files_hashed(), 1);
+
+        // 같은 크기 다른 내용으로 제자리에서 다시 쓰고 mtime을 되돌립니다(`cp -p`·`touch -r`과 같은 효과).
+        let mut second = first.clone();
+        let last = second.len() - 1;
+        second[last] ^= 0xFF;
+        std::fs::write(&path, &second).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        let metadata = std::fs::metadata(&path).unwrap();
+        assert_eq!(metadata.len(), first.len() as u64);
+        assert_eq!(metadata.modified().unwrap(), modified);
+
+        // ctime이 바뀌어 다시 hash하고 새 hash의 face로 등록합니다(이전 hash 재사용 없음).
+        let changed = discovery.register_files([path.clone()], &mut registry);
+        assert_eq!(discovery.files_hashed(), 2);
+        assert_eq!(changed.faces()[0].key().file_hash(), hash_of(&second));
+        assert_ne!(
+            changed.faces()[0].key().file_hash(),
+            catalog.faces()[0].key().file_hash()
+        );
     }
 
     #[test]

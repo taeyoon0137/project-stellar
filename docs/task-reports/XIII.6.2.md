@@ -74,3 +74,16 @@
 - face 수는 파일 단위로 registry에 등록되므로 registry 상한 도중 실패하면 앞 face 일부가 registry에
   남을 수 있습니다(catalog에는 넣지 않음).
 - Windows adapter(XIII.6.3)는 ADR-0006으로 `[!]`입니다.
+
+## 후속 수정(리뷰 반영): cache가 같은 크기·보존된 mtime 교체를 놓치지 않음
+
+- **문제**: cache 판정이 (크기, 수정 시각)만 봐서, 같은 크기로 다시 쓰고 mtime을 보존한 파일(`cp -p`,
+  `touch -r`, 일부 installer)은 이전 hash를 그대로 써 다른 내용에 이전 `FontFaceKey`를 등록했습니다.
+- **수정**(`crates/project/src/fonts/system.rs`): unix에서 cache stamp에 device·inode·ctime(초·나노초)을
+  더합니다. ctime은 내용·metadata 변경 시 커널이 갱신하고 사용자 공간에서 되돌릴 수 없으며, rename 교체는
+  inode가 바뀝니다. 비-unix(ADR-0006 보류)는 기존 판정 그대로입니다.
+- **검증**: `same_size_rewrite_with_preserved_mtime_is_rehashed`(같은 크기 재기록 + `set_modified`로 mtime
+  복원 → 재hash, 새 hash face). 실제 system scan(release, `--ignored full_system_scan`, 이 수정 포함):
+  548 파일, 932 face, skip 0, 첫 scan 8.50 s, cache 재scan 34.7 ms(재hash 0, 확장 stamp로도 cache 적중).
+- **남은 한계**: registry 상한 도중 실패 시 앞 face가 registry에 남는 문제는 `FontRegistry`에 해제 API가
+  없어(text crate 범위) 그대로입니다.
