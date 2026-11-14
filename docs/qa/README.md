@@ -52,9 +52,9 @@ QA0부터 진행합니다. 앞 단계에서 막히는 문제(앱이 뜨지 않�
 |---|---|---|
 | Home | Desktop(1440 × 1024) | Header(Logo 타원, Title 텍스트), Hero(Hero Image, Headline 두 줄 한글·영문, Get Started 사각형), Cards(Card 1\~3: 그림자, Thumbnail, Caption), Accent (Hidden) 숨김 타원, Footer (Locked) 잠금 사각형 |
 | Home | Mobile(390 × 844) | Header(Title), Hero Image, Headline("안녕하세요, Stellar"), Button |
-| Components | Buttons(800 × 600) | Button / Primary·Secondary(테두리 Frame + Label), Icon Group(Fragment: Dot, Square), Divider 선, Hexagon 다각형, Star path |
+| Components | Buttons(800 × 600) | Button / Primary·Secondary(테두리 Frame + Label), Icon Group(Fragment: Dot, Square), Divider 선(Stroke), Hexagon 다각형(Fill·Stroke), Star path |
 
-- 도형·텍스트·이미지는 Transform·Fill modifier로 위치와 색을 가집니다. 인스펙터 Modifiers 섹션 확인용입니다.
+- 도형·텍스트·이미지는 Transform·Fill modifier로 위치와 색을 가집니다. Divider 선은 Fill 없이 Stroke(두께 1), Hexagon은 Fill과 Stroke(두께 2)를 함께 가집니다. 인스펙터 Modifiers 섹션 확인용입니다.
 - 이미지 원본은 저장소의 README 히어로 이미지(`assets/docs/hero.jpg`)를 `assets/<prefix>/<hash>.jpg`로 복사한 것입니다.
 - 한계: Component 정의·인스턴스는 문서 저장 포맷에 아직 표현할 수 없어 넣지 못했습니다. "Components" 페이지의 버튼은 일반 Frame입니다. 에셋 catalog(asset id → 파일)도 아직 프로젝트에 저장되지 않아 이미지 레이어의 asset 참조는 복사한 파일과 이어져 있지 않습니다.
 

@@ -450,11 +450,25 @@ impl<'a> Builder<'a> {
         at: (f32, f32),
         fill: Option<Color>,
     ) -> Result<StableId, String> {
+        let extra = fill
+            .map(|color| ModifierPayload::Fill { color })
+            .into_iter()
+            .collect();
+        self.placed_with(parent, name, payload, at, extra)
+    }
+
+    /// 위치(Transform) 뒤에 `extra` modifier를 차례로 붙인 node를 추가합니다.
+    fn placed_with(
+        &mut self,
+        parent: StableId,
+        name: &str,
+        payload: NodePayload,
+        at: (f32, f32),
+        extra: Vec<ModifierPayload>,
+    ) -> Result<StableId, String> {
         let id = self.add(Some(parent), name, payload);
         let mut payloads = vec![ModifierPayload::Transform(translation(at.0, at.1)?)];
-        if let Some(color) = fill {
-            payloads.push(ModifierPayload::Fill { color });
-        }
+        payloads.extend(extra);
         self.modifiers(id, payloads)?;
         Ok(id)
     }
@@ -711,7 +725,8 @@ fn sample_document(ids: &mut Ids, asset: AssetRef) -> Result<DocumentRecords, St
         (360.0, 52.0),
         Some(warm),
     )?;
-    b.placed(
+    // 선은 Fill 없이 Stroke로 그립니다.
+    b.placed_with(
         buttons,
         "Divider",
         NodePayload::Shape(ShapeGeometry::Line(LineParams {
@@ -720,7 +735,10 @@ fn sample_document(ids: &mut Ids, asset: AssetRef) -> Result<DocumentRecords, St
             cap: LineCap::Round,
         })),
         (40.0, 240.0),
-        None,
+        vec![ModifierPayload::Stroke {
+            color: ink,
+            width: finite(1.0)?,
+        }],
     )?;
     let polygon = PolygonParams::new(
         Rect::new(Vec2::ZERO, size(96.0, 96.0)?),
@@ -729,12 +747,19 @@ fn sample_document(ids: &mut Ids, asset: AssetRef) -> Result<DocumentRecords, St
         0.0,
     )
     .map_err(|e| format!("다각형 오류: {e:?}"))?;
-    b.placed(
+    // Fill과 Stroke를 함께 가진 도형(인스펙터 Modifiers 확인용).
+    b.placed_with(
         buttons,
         "Hexagon",
         NodePayload::Shape(ShapeGeometry::Polygon(polygon)),
         (40.0, 280.0),
-        Some(warm),
+        vec![
+            ModifierPayload::Fill { color: warm },
+            ModifierPayload::Stroke {
+                color: ink,
+                width: finite(2.0)?,
+            },
+        ],
     )?;
     let star = PathData::new(
         WindingRule::NonZero,

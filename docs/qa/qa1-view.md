@@ -61,7 +61,7 @@
 | QA1-52 | Headline(Text) 선택 | Layer · Text · Character · Paragraph · Modifiers. **구현 대기** |
 | QA1-53 | Hero Image 선택 | Layer · Image(fit Cover) · Modifiers. 누락 에셋이면 진단 아이콘. **구현 대기** |
 | QA1-54 | Icon Group(Fragment) 선택 | Layer · Fragment 안내와 Convert to Frame. Modifier 섹션 없음. **구현 대기** |
-| QA1-55 | Hexagon, Star 선택 | 도형 섹션 제목이 Polygon, path는 Path 섹션. **구현 대기** |
+| QA1-55 | Divider, Hexagon, Star 선택 | 도형 섹션 제목이 Line·Polygon, path는 Path 섹션. Modifiers에 Divider는 Transform·Stroke(두께 1), Hexagon은 Transform·Fill·Stroke(두께 2). **구현 대기** |
 | QA1-56 | Card 1\~3 다중 선택(⌘-클릭) | 같은 값은 그대로, 다른 값은 혼합 표시. **구현 대기** |
 | QA1-57 | Footer (Locked) 선택 | 잠금 안내와 Unlock 버튼, 속성 필드는 비활성(이름·표시·잠금만 편집 가능). **구현 대기** |
 | QA1-58 | 선택 해제(Esc, 빈 곳 클릭) | 인스펙터 "No Selection". **구현 대기**. 지금: 항상 "No Selection" |
