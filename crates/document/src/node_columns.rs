@@ -8,6 +8,11 @@
 //! 살아 있는 핸들의 column 인덱스를 얻습니다. 모든 column은 항상 같은 길이를 유지합니다
 //! (새 slot은 모든 column에 함께 push, 재사용 slot은 모든 column을 덮어쓰며, 길이는 줄이지
 //! 않습니다).
+//!
+//! 파생 column `child_count`는 slot별로 **이 핸들을 부모로 가리키는 live node 수**를 유지합니다.
+//! 삽입·부모 변경·제거가 갱신하므로 자식 유무를 전체 순회 없이 O(1)로 답합니다(leaf 삭제의 자식 확인,
+//! posthoc CMD-DELETE-QUADRATIC). 부모 핸들이 그 시점에 live가 아니면(stale) 세지 않습니다 — stale
+//! 핸들은 generation 때문에 다시 live가 되지 않으므로 순회 결과와 항상 같습니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::ids::{RuntimeEntityAllocator, RuntimeEntityId};
@@ -46,6 +51,8 @@ pub struct NodeColumns {
     visible: Vec<bool>,
     locked: Vec<bool>,
     display_name: Vec<String>,
+    /// slot별 live 자식 수(파생 column, 모듈 문서 참조).
+    child_count: Vec<usize>,
     /// slot별 현재 live 핸들(순회용, column과 같은 길이).
     handle_by_slot: Vec<Option<RuntimeEntityId>>,
     len: usize,
@@ -63,8 +70,23 @@ impl NodeColumns {
             visible: Vec::new(),
             locked: Vec::new(),
             display_name: Vec::new(),
+            child_count: Vec::new(),
             handle_by_slot: Vec::new(),
             len: 0,
+        }
+    }
+
+    /// `parent`가 live면 그 자식 수를 하나 늘리거나(`increment`) 줄입니다.
+    fn adjust_child_count(&mut self, parent: Option<RuntimeEntityId>, increment: bool) {
+        let Some(slot) = parent.and_then(|p| self.alloc.live_slot(p)) else {
+            return;
+        };
+        let count = &mut self.child_count[slot];
+        if increment {
+            *count += 1;
+        } else {
+            debug_assert!(*count > 0, "자식 수 음수");
+            *count = count.saturating_sub(1);
         }
     }
 
@@ -73,6 +95,7 @@ impl NodeColumns {
     pub fn insert(&mut self, fields: NodeFields) -> RuntimeEntityId {
         let id = self.alloc.allocate();
         let slot = self.alloc.live_slot(id).expect("갓 할당한 핸들은 live");
+        let parent = fields.parent;
         if slot == self.stable_id.len() {
             self.stable_id.push(fields.stable_id);
             self.kind.push(fields.kind);
@@ -81,6 +104,7 @@ impl NodeColumns {
             self.visible.push(fields.visible);
             self.locked.push(fields.locked);
             self.display_name.push(fields.display_name);
+            self.child_count.push(0);
             self.handle_by_slot.push(Some(id));
         } else {
             self.stable_id[slot] = fields.stable_id;
@@ -90,9 +114,11 @@ impl NodeColumns {
             self.visible[slot] = fields.visible;
             self.locked[slot] = fields.locked;
             self.display_name[slot] = fields.display_name;
+            self.child_count[slot] = 0;
             self.handle_by_slot[slot] = Some(id);
         }
         self.len += 1;
+        self.adjust_child_count(parent, true);
         id
     }
 
@@ -114,11 +140,18 @@ impl NodeColumns {
     pub fn set_parent(&mut self, id: RuntimeEntityId, parent: Option<RuntimeEntityId>) -> bool {
         match self.alloc.live_slot(id) {
             Some(slot) => {
-                self.parent[slot] = parent;
+                let previous = std::mem::replace(&mut self.parent[slot], parent);
+                self.adjust_child_count(previous, false);
+                self.adjust_child_count(parent, true);
                 true
             }
             None => false,
         }
+    }
+
+    /// 이 핸들을 부모로 가리키는 live node 수(O(1)). stale 핸들이면 `None`.
+    pub fn child_count(&self, id: RuntimeEntityId) -> Option<usize> {
+        self.alloc.live_slot(id).map(|slot| self.child_count[slot])
     }
 
     /// 순서 키를 갱신합니다. stale 핸들이면 `false`.
@@ -176,9 +209,11 @@ impl NodeColumns {
         let Some(slot) = self.alloc.live_slot(id) else {
             return false;
         };
+        let parent = self.parent[slot];
         self.handle_by_slot[slot] = None;
         self.alloc.deallocate(id);
         self.len -= 1;
+        self.adjust_child_count(parent, false);
         true
     }
 
@@ -188,7 +223,10 @@ impl NodeColumns {
     /// 자식 순서는 [`children_in_order`](crate::tree_ops::children_in_order)를
     /// 사용하세요(VI.2.4).
     pub fn iter_live(&self) -> impl Iterator<Item = RuntimeEntityId> + '_ {
-        self.handle_by_slot.iter().filter_map(|h| *h)
+        self.handle_by_slot.iter().filter_map(|h| *h).inspect(|_| {
+            // 전체 순회 작업량 계수(테스트 빌드에서만, `op_count`).
+            crate::op_count::tick(1);
+        })
     }
 
     /// 살아 있는 node 수.
@@ -227,6 +265,7 @@ mod tests {
             && c.visible.len() == n
             && c.locked.len() == n
             && c.display_name.len() == n
+            && c.child_count.len() == n
             && c.handle_by_slot.len() == n
     }
 
@@ -343,5 +382,55 @@ mod tests {
         assert!(columns_aligned(&c));
         assert!(c.get(a).is_none(), "옛 핸들 무효");
         assert_eq!(c.get(b).unwrap().stable_id, StableId::new_v7(2, 0, 2));
+    }
+
+    /// 전체 순회로 센 자식 수(파생 column 비교 기준).
+    fn scanned_children(c: &NodeColumns, parent: RuntimeEntityId) -> usize {
+        c.iter_live()
+            .filter(|id| c.get(*id).and_then(|f| f.parent) == Some(parent))
+            .count()
+    }
+
+    #[test]
+    fn child_count_matches_full_scan_under_random_edits() {
+        // posthoc CMD-DELETE-QUADRATIC: 파생 자식 수는 삽입·부모 변경·제거(자식이 남은 부모 제거와 slot
+        // 재사용 포함) 뒤에도 전체 순회 결과와 같아야 합니다.
+        let mut c = NodeColumns::new();
+        let mut live: Vec<RuntimeEntityId> = Vec::new();
+        let mut rng: u64 = 0x5EED_C0DE_1234_5678;
+        let mut next = || {
+            rng ^= rng << 13;
+            rng ^= rng >> 7;
+            rng ^= rng << 17;
+            rng
+        };
+        for seed in 0..3_000u64 {
+            let r = next();
+            let pick = |r: u64, live: &[RuntimeEntityId]| live[(r as usize >> 8) % live.len()];
+            match r % 4 {
+                0 | 1 => {
+                    let parent = (!live.is_empty() && r % 8 != 0).then(|| pick(r, &live));
+                    live.push(c.insert(fields(seed, parent)));
+                }
+                2 if !live.is_empty() => {
+                    let node = pick(r, &live);
+                    let parent = (r % 16 != 2).then(|| pick(next(), &live));
+                    assert!(c.set_parent(node, parent));
+                }
+                _ if !live.is_empty() => {
+                    // 자식이 있어도 column 수준에서는 지울 수 있습니다(자식의 부모는 stale).
+                    let index = (r as usize >> 8) % live.len();
+                    assert!(c.remove(live.swap_remove(index)));
+                }
+                _ => {}
+            }
+        }
+        assert!(live.len() > 100);
+        for id in &live {
+            assert_eq!(c.child_count(*id), Some(scanned_children(&c, *id)));
+        }
+        let gone = c.insert(fields(9_999, None));
+        c.remove(gone);
+        assert_eq!(c.child_count(gone), None, "stale 핸들");
     }
 }

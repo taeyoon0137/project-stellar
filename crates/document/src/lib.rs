@@ -81,6 +81,10 @@ pub mod record_codec;
 /// 런타임 문서 모델 (VI.10.2).
 pub mod model;
 
+/// 내부 루프 작업량 계수기(테스트 빌드에서만 셈, 성능 회귀 검사용).
+#[doc(hidden)]
+pub mod op_count;
+
 /// 테스트 전용 지원 코드. 프로덕션 저장·로드 경로에서 사용하지 않습니다 (VI.10.4).
 ///
 /// 이 crate의 unit test와, 기본값이 꺼진 `test-support` feature를 `[dev-dependencies]`에서
