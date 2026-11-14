@@ -1,0 +1,28 @@
+//! stellar-ops — headless 조회·편집 공용 library (XXIV.4.2, ADR-0005 §1·§8).
+//!
+//! L1 계층입니다. 실행 중 앱 없이 core crate로 프로젝트 폴더를 직접 열어 조회·검증·편집합니다.
+//! `stellar` 명령(package `stellar-cli`)과 L2 MCP backend가 같은 구현을 in-process로 호출합니다.
+//!
+//! - 의존 방향: 이 crate는 project, document, commands, history, storage, semantic-diff,
+//!   semantic-merge, diagnostics에만 직접 의존할 수 있고, local-ipc·agent-protocol·mcp-core·
+//!   agent-host·ffi에는 전이적으로도 도달하지 않습니다(`cargo xtask validate-crate-graph`).
+//! - AI·MCP·모델·에이전트 관련 코드를 두지 않습니다.
+//! - 읽기 경로([`snapshot`])는 프로젝트 파일을 만들거나 바꾸지 않습니다.
+//!
+//! 결과 타입은 출력 형식(JSON 등)과 무관한 Rust 값입니다. 출력 형식은 호출자가 정합니다.
+
+/// StableId·PropertyPath 등 core 값 타입(semantic-diff 재노출 경유, 직접 edge 없음).
+pub use stellar_semantic_diff::core_types;
+
+/// 디스크 generation 기준 프로젝트 revision (XXIV.4.2).
+pub mod revision;
+
+/// 프로젝트 열기 오류 (XXIV.4.2).
+pub mod error;
+
+/// 앱 없이 연 읽기 전용 프로젝트 snapshot (XXIV.4.2).
+pub mod snapshot;
+
+/// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
+#[doc(hidden)]
+pub mod test_support;

@@ -111,6 +111,22 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         // bridge↔app 로컬 IPC(ADR-0005 §8, `crates/local-ipc`): core-types만 허용합니다.
         // document·commands·ops에 도달하지 않습니다.
         ("stellar-local-ipc", &[core]),
+        // L1 headless 조회·편집 공용 library(XXIV.4.2, ADR-0005 §8, `crates/ops`).
+        // local-ipc·agent-protocol·mcp-core·agent-host·ffi는 직접 edge가 없고 전이 도달도
+        // `reach::FORBIDDEN_REACH`가 막습니다.
+        (
+            "stellar-ops",
+            &[
+                "stellar-project",
+                "stellar-document",
+                "stellar-commands",
+                "stellar-history",
+                "stellar-storage",
+                "stellar-semantic-diff",
+                "stellar-semantic-merge",
+                "stellar-diagnostics",
+            ],
+        ),
     ];
     entries.iter().map(|(k, v)| (*k, v.to_vec())).collect()
 }
@@ -248,6 +264,55 @@ mod tests {
             .map(|v| v.code)
             .collect();
         assert_eq!(codes, vec!["forbidden-edge"]);
+    }
+
+    #[test]
+    fn ops_edges_follow_adr_0005() {
+        // XXIV.4.2, ADR-0005 §8: ops의 실제 manifest 의존이 허용 목록 안에 있습니다.
+        let path = format!("{}/../../crates/ops/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let parsed = manifest::parse_manifest(&text).unwrap();
+        assert_eq!(parsed.package.as_deref(), Some("stellar-ops"));
+        let edges: Vec<(String, String)> = parsed
+            .deps
+            .iter()
+            .map(|dep| dep.resolved_name(&std::collections::BTreeMap::new()))
+            .filter(|dep| dep.starts_with(manifest::INTERNAL_PREFIX))
+            .map(|dep| ("stellar-ops".to_string(), dep))
+            .collect();
+        assert!(!edges.is_empty());
+        assert!(check_crate_graph(&edges).is_empty(), "{edges:?}");
+        for allowed in [
+            "stellar-project",
+            "stellar-document",
+            "stellar-commands",
+            "stellar-history",
+            "stellar-storage",
+            "stellar-semantic-diff",
+            "stellar-semantic-merge",
+            "stellar-diagnostics",
+        ] {
+            assert!(
+                check_crate_graph(&[edge("stellar-ops", allowed)]).is_empty(),
+                "{allowed}"
+            );
+        }
+        for forbidden in [
+            "stellar-local-ipc",
+            "stellar-agent-protocol",
+            "stellar-mcp-core",
+            "stellar-mcp",
+            "stellar-agent-host",
+            "stellar-ffi",
+            "stellar-runtime",
+            "stellar-cli",
+        ] {
+            let codes: Vec<&str> = check_crate_graph(&[edge("stellar-ops", forbidden)])
+                .iter()
+                .map(|v| v.code)
+                .collect();
+            assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
+        }
     }
 
     #[test]

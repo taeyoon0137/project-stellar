@@ -294,6 +294,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-ops"
+version = "0.0.0"
+dependencies = [
+ "stellar-document",
+ "stellar-project",
+ "stellar-semantic-diff",
+ "stellar-storage",
+]
+
+[[package]]
 name = "stellar-project"
 version = "0.0.0"
 dependencies = [
