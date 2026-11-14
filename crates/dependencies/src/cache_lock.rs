@@ -263,6 +263,14 @@ mod tests {
         }
     }
 
+    /// 내용을 임시 파일에 쓴 뒤 `rename`으로 공개합니다. 부모가 [`wait_for`]로 파일을 본 순간 내용이
+    /// 이미 완전합니다(`fs::write`는 생성과 쓰기 사이에 빈 파일이 보일 수 있음).
+    fn publish(path: &Path, contents: &str) {
+        let staging = path.with_extension("staging");
+        std::fs::write(&staging, contents).unwrap();
+        std::fs::rename(&staging, path).unwrap();
+    }
+
     fn store(root: &LibraryCacheRoot) -> LibraryEntryStore<FakeSha256, FnvKeyer> {
         LibraryEntryStore::new(root.clone(), FakeSha256, FnvKeyer::new(3))
     }
@@ -288,7 +296,7 @@ mod tests {
                     .expect("materialize된 entry");
                 let bytes = std::fs::read(opened.dir().join("stellar.yaml")).unwrap();
                 assert_eq!(bytes, b"schema_version: 1\n");
-                std::fs::write(&ready, opened.content_hash().as_str()).unwrap();
+                publish(&ready, opened.content_hash().as_str());
                 wait_for(&release);
                 drop(opened);
             }
@@ -296,7 +304,7 @@ mod tests {
             "fetch" => {
                 let key = FnvKeyer::new(3).repository_key(&url);
                 let guard = locks.fetch(&key).unwrap();
-                std::fs::write(&ready, "fetch").unwrap();
+                publish(&ready, "fetch");
                 wait_for(&release);
                 drop(guard);
             }

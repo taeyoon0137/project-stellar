@@ -30,3 +30,10 @@ debug = false
 # panic 정책(II.1.3): release는 abort. 테스트는 profile.test(unwind)를 사용합니다.
 # 자세한 내용은 docs/architecture/panic-policy.md 참조.
 panic = "abort"
+
+# host 산출물(build script·proc-macro와 그 의존성)은 release에서도 strip하지 않습니다(XVI.9.1 후속).
+# macOS에서 MACOSX_DEPLOYMENT_TARGET이 12.0 이상이면 proc-macro dylib이 chained fixups로 링크되고, 기본 strip(debuginfo)이
+# 그 dylib를 깨뜨려 새 target에서 rustc가 proc-macro를 읽지 못합니다(E0463). 앱에 링크되는 산출물은 영향이 없습니다.
+# Xcode phase도 같은 값을 환경 변수로 넘깁니다. 회귀 검사: scripts/macos/release_proc_macro_check.sh
+[profile.release.build-override]
+strip = "none"

@@ -22,7 +22,7 @@ use stellar_git_porcelain::conflict_snapshot::ConflictSide;
 use stellar_git_porcelain::runner::GitRunner;
 use stellar_git_porcelain::trust::{GatedGitRunner, GitTrust};
 use stellar_project::conflict_open::open_conflict_projects;
-use stellar_project::saved_project::{SavedProject, SavedProjectError};
+use stellar_project::saved_project::{SavedProject, SavedProjectError, StorageEntryProblem};
 
 /// 문서 0번 node 이름만 바꾼 rich 문서.
 fn renamed(name: &str) -> DocumentModel {
@@ -229,6 +229,63 @@ fn side_without_the_project_reports_its_own_open_error() {
         "{:?}",
         projects.ours
     );
+    drop(projects);
+    assert_eq!(std::fs::read_dir(&temp_parent).unwrap().count(), 0);
+}
+
+#[test]
+fn theirs_storage_symlink_outside_the_snapshot_is_not_followed() {
+    let Some(runner) = hermetic_runner() else {
+        return;
+    };
+    // theirs가 design/current를 snapshot 밖 절대 경로 symlink로 바꾼 뒤 병합 → current conflict.
+    let dir = TempDir::new("stellar-conflict-open-symlink");
+    let repo = dir.path.join("repo");
+    let temp_parent = dir.path.join("tmp");
+    let outside = dir.path.join("outside-pointer");
+    std::fs::create_dir_all(&repo).unwrap();
+    std::fs::create_dir_all(&temp_parent).unwrap();
+    init_repo(&runner, &repo);
+    write_manifest(&repo, "Symlink");
+    save_documents(&repo, &[&rich_model(1, 0)]);
+    commit_all(&runner, &repo, "base");
+
+    git_ok(&runner, &repo, ["checkout", "-q", "-b", "theirs"]);
+    save_documents(&repo, &[&renamed("theirs edit")]);
+    let pointer = repo.join("design").join("current");
+    std::fs::copy(&pointer, &outside).unwrap();
+    std::fs::remove_file(&pointer).unwrap();
+    std::os::unix::fs::symlink(&outside, &pointer).unwrap();
+    commit_all(&runner, &repo, "theirs");
+
+    git_ok(&runner, &repo, ["checkout", "-q", "main"]);
+    save_documents(&repo, &[&renamed("ours edit")]);
+    commit_all(&runner, &repo, "ours");
+    assert!(!git_any(&runner, &repo, ["merge", "--no-edit", "theirs"]).success());
+
+    let gate = GatedGitRunner::new(runner, GitTrust::Trusted);
+    let projects = open_conflict_projects(&gate, &repo, &temp_parent).unwrap();
+    let theirs_pointer = projects
+        .root(ConflictSide::Theirs)
+        .join("design")
+        .join("current");
+    assert!(
+        std::fs::symlink_metadata(&theirs_pointer)
+            .unwrap()
+            .file_type()
+            .is_symlink(),
+        "materialize는 symlink를 그대로 둠"
+    );
+    // theirs는 snapshot 밖 파일을 읽지 않고 거부, 다른 side는 정상.
+    match &projects.theirs {
+        Err(SavedProjectError::StorageEntry { path, problem }) => {
+            assert_eq!(path, "design/current");
+            assert_eq!(*problem, StorageEntryProblem::Symlink);
+        }
+        other => panic!("theirs가 symlink 거부가 아님: {other:?}"),
+    }
+    // file↔symlink 종류 conflict에서 Git은 한쪽을 다른 이름(`design/current~HEAD`)으로 기록하므로
+    // base·ours side 구성은 Git이 정합니다. 이 테스트는 비신뢰 symlink가 있는 theirs만 검사합니다.
     drop(projects);
     assert_eq!(std::fs::read_dir(&temp_parent).unwrap().count(), 0);
 }

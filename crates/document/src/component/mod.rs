@@ -20,6 +20,12 @@ pub mod typed_expr;
 /// ComponentProperty record (IX.1.2).
 pub mod property;
 
+/// Property 생성·rename·default 변경·삭제 command (IX.1.3).
+pub mod property_commands;
+
+/// Property runtime 평가 값 instance별 캐시 (IX.1.4).
+pub mod property_cache;
+
 /// 상태 머신 이벤트 종류 (IX.5.2).
 pub mod event;
 
@@ -49,6 +55,15 @@ pub mod override_commands;
 
 /// nested instance property 직접 수정 금지 (IX.4.2).
 pub mod encapsulation;
+
+/// 컴포넌트 경계를 넘는 drilling binding (IX.4.1).
+pub mod drilling;
+
+/// Property drilling 계획 (IX.4.3).
+pub mod drilling_plan;
+
+/// 승인된 DrillingPlan의 transaction 적용 (IX.4.5).
+pub mod drilling_apply;
 
 /// 인스턴스 expansion view (IX.2.2).
 pub mod expansion;

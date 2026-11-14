@@ -16,17 +16,18 @@
 //! # cache key
 //!
 //! [`MeasureKey`] = (node [`StableId`], subtree input hash, 축별 가용 content 크기, mode, 측정기 revision).
-//! subtree input hash는 [`subtree_hashes`]가 post-order(자식 먼저, 반복)로 구합니다: node canonical bytes
-//! (입력 canonical bytes의 node 부분) + 자식 수 + visual order 자식 subtree hash입니다. 측정은 subtree 밖의 값에
-//! 의존하지 않으므로(부모 문맥은 요청의 가용 크기로만 들어옴) 이 key가 같으면 결과가 같습니다. hash는
-//! [`LayoutInputHasher`](primary·check 두 값) 기반 런타임 key이며 저장하지 않습니다.
+//! subtree input hash는 [`subtree_hashes`]가 post-order(자식 먼저, 반복)로 구합니다: node 자신의 hash(입력
+//! canonical bytes의 node 부분의 hash) + 자식 수 + visual order 자식 subtree hash입니다. node 자신의 hash를 따로
+//! 두므로 증분 레이아웃(X.7.3)은 바뀐 node와 조상만 다시 합성합니다. 측정은 subtree 밖의 값에 의존하지 않으므로
+//! (부모 문맥은 요청의 가용 크기로만 들어옴) 이 key가 같으면 결과가 같습니다. hash는 [`LayoutInputHasher`]
+//! (primary·check 두 값) 기반 런타임 key이며 저장하지 않습니다.
 
 use std::collections::HashMap;
 
 use stellar_core_types::ids::StableId;
 
 use crate::cache::{LayoutCacheStats, LayoutInputHash, LayoutInputHasher};
-use crate::input::{node_bytes, LayoutInput, TreeIndex};
+use crate::input::{node_bytes, LayoutInput, LayoutNode, TreeIndex};
 use crate::intrinsic::{IntrinsicMode, IntrinsicSize};
 use crate::rounding::LayoutUnit;
 
@@ -45,9 +46,39 @@ pub struct MeasureKey {
     pub measurer: u64,
 }
 
+/// node 자신의 입력 hash(자식 subtree와 무관, node canonical bytes 기준).
+pub(crate) fn node_hash(node: &LayoutNode) -> LayoutInputHash {
+    let mut hasher = LayoutInputHasher::new();
+    hasher.write_bytes(&node_bytes(node));
+    hasher.finish()
+}
+
+/// node 자신의 hash와 visual order 자식 subtree hash를 합성한 subtree hash.
+pub(crate) fn combine_subtree(
+    own: LayoutInputHash,
+    children: impl ExactSizeIterator<Item = LayoutInputHash>,
+) -> LayoutInputHash {
+    let mut hasher = LayoutInputHasher::new();
+    hasher.write_hash(own);
+    hasher.write_u64(children.len() as u64);
+    for child in children {
+        hasher.write_hash(child);
+    }
+    hasher.finish()
+}
+
 /// 모든 node의 subtree input hash(입력 `nodes` 순서). 검증된 tree에서 post-order로 반복 계산합니다.
 pub(crate) fn subtree_hashes(input: &LayoutInput, tree: &TreeIndex) -> Vec<LayoutInputHash> {
-    let count = input.nodes.len();
+    let own: Vec<LayoutInputHash> = input.nodes.iter().map(node_hash).collect();
+    subtree_hashes_from(&own, tree)
+}
+
+/// node 자신의 hash(`own`, 입력 순서)로 모든 subtree hash를 계산합니다.
+pub(crate) fn subtree_hashes_from(
+    own: &[LayoutInputHash],
+    tree: &TreeIndex,
+) -> Vec<LayoutInputHash> {
+    let count = own.len();
     // pre-order 목록을 만든 뒤 역순으로 처리하면 자식이 항상 부모보다 먼저 계산됩니다.
     let mut order = Vec::with_capacity(count);
     let mut stack = vec![tree.root];
@@ -57,27 +88,31 @@ pub(crate) fn subtree_hashes(input: &LayoutInput, tree: &TreeIndex) -> Vec<Layou
     }
     let mut hashes = vec![LayoutInputHash::from_parts(0, 0); count];
     for &index in order.iter().rev() {
-        let mut hasher = LayoutInputHasher::new();
-        hasher.write_bytes(&node_bytes(&input.nodes[index]));
         let children = &tree.children[index];
-        hasher.write_u64(children.len() as u64);
-        for &child in children {
-            hasher.write_hash(hashes[child]);
-        }
-        hashes[index] = hasher.finish();
+        hashes[index] = combine_subtree(own[index], children.iter().map(|&child| hashes[child]));
     }
     hashes
+}
+
+/// node 하나의 측정 결과(같은 subtree hash·측정기 revision).
+#[derive(Debug, Clone)]
+struct NodeMeasures {
+    subtree: LayoutInputHash,
+    measurer: u64,
+    sizes: HashMap<([Option<LayoutUnit>; 2], IntrinsicMode), IntrinsicSize>,
 }
 
 /// 계산 간 측정 cache (X.7.2).
 ///
 /// [`crate::engine::compute_layout_cached`]에 같은 cache를 넘기면 이전 계산의 측정 결과를 key가 같을 때
-/// 재사용합니다. 계산이 성공하면 현재 입력에 없는 node·subtree hash가 바뀐 node·다른 측정기 revision의
+/// 재사용합니다. node마다 한 subtree hash·측정기 revision의 결과만 보관하며, 다른 hash로 저장하면 그 node의
+/// 이전 결과를 버립니다. 계산이 성공하면 현재 입력에 없는 node·subtree hash가 바뀐 node·다른 측정기 revision의
 /// entry를 지워 크기를 현재 입력의 측정 수로 제한합니다. 순회 API가 없어 내부 map 순서는 결과에 영향을
 /// 주지 않습니다.
 #[derive(Debug, Clone, Default)]
 pub struct MeasureCache {
-    entries: HashMap<MeasureKey, IntrinsicSize>,
+    nodes: HashMap<StableId, NodeMeasures>,
+    len: usize,
     stats: LayoutCacheStats,
 }
 
@@ -89,17 +124,18 @@ impl MeasureCache {
 
     /// entry 수.
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.len
     }
 
     /// 비어 있는지 여부.
     pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
+        self.len == 0
     }
 
     /// 모든 entry를 지웁니다(집계는 유지).
     pub fn clear(&mut self) {
-        self.entries.clear();
+        self.nodes.clear();
+        self.len = 0;
     }
 
     /// 지금까지의 hit/miss 집계.
@@ -109,7 +145,11 @@ impl MeasureCache {
 
     /// key의 측정 결과를 찾고 hit/miss를 집계합니다.
     pub(crate) fn get(&mut self, key: &MeasureKey) -> Option<IntrinsicSize> {
-        let found = self.entries.get(key).copied();
+        let found = self
+            .nodes
+            .get(&key.node)
+            .filter(|entry| entry.subtree == key.subtree && entry.measurer == key.measurer)
+            .and_then(|entry| entry.sizes.get(&(key.available, key.mode)).copied());
         match found {
             Some(_) => self.stats.hits = self.stats.hits.saturating_add(1),
             None => self.stats.misses = self.stats.misses.saturating_add(1),
@@ -117,9 +157,33 @@ impl MeasureCache {
         found
     }
 
-    /// 측정 결과를 저장합니다.
+    /// 측정 결과를 저장합니다. 같은 node의 다른 subtree hash·revision 결과는 버립니다.
     pub(crate) fn insert(&mut self, key: MeasureKey, size: IntrinsicSize) {
-        self.entries.insert(key, size);
+        let entry = self.nodes.entry(key.node).or_insert_with(|| NodeMeasures {
+            subtree: key.subtree,
+            measurer: key.measurer,
+            sizes: HashMap::new(),
+        });
+        if entry.subtree != key.subtree || entry.measurer != key.measurer {
+            self.len -= entry.sizes.len();
+            entry.sizes.clear();
+            entry.subtree = key.subtree;
+            entry.measurer = key.measurer;
+        }
+        if entry
+            .sizes
+            .insert((key.available, key.mode), size)
+            .is_none()
+        {
+            self.len += 1;
+        }
+    }
+
+    /// node의 모든 entry를 지웁니다(증분 레이아웃에서 삭제된 node, X.7.3).
+    pub(crate) fn remove_node(&mut self, node: StableId) {
+        if let Some(entry) = self.nodes.remove(&node) {
+            self.len -= entry.sizes.len();
+        }
     }
 
     /// 현재 입력(node → subtree hash)과 측정기 revision에 맞지 않는 entry를 지웁니다.
@@ -128,9 +192,15 @@ impl MeasureCache {
         current: &HashMap<StableId, LayoutInputHash>,
         measurer: u64,
     ) {
-        self.entries.retain(|key, _| {
-            key.measurer == measurer && current.get(&key.node) == Some(&key.subtree)
+        let mut removed = 0;
+        self.nodes.retain(|node, entry| {
+            let keep = entry.measurer == measurer && current.get(node) == Some(&entry.subtree);
+            if !keep {
+                removed += entry.sizes.len();
+            }
+            keep
         });
+        self.len -= removed;
     }
 }
 

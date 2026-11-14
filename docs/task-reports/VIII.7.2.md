@@ -50,3 +50,11 @@
 - viewport 기본값(1280×800)은 Target Profile 미지정 미리보기용 결정입니다. Target Profile(IX.10)이 생기면 profile별
   기본 viewport로 덮어쓸 수 있습니다.
 - 기본값 정책은 숫자 registry와 같은 계약이라 변경 시 ADR 기록이 필요합니다(이 lane 허용 경로 밖).
+
+## 후속 기록 (사후 리뷰 EB-4: ADR-0026)
+
+이 작업이 고정한 missing key 기본값 정책을
+`docs/adr/ADR-0026-binding-storage-and-environment-registry.md`(5절)에 Accepted(소급)로
+기록했습니다. 문서만 변경했고 코드는 바꾸지 않았습니다. 기본값을 바꾸려면 ADR을 갱신하거나
+대체해야 합니다. Target Profile(IX.10)별 viewport 같은 값은 `missing_default`를 바꾸지 않습니다.
+호출자가 `EvaluationEnvironment`에 명시 값으로 넣습니다.

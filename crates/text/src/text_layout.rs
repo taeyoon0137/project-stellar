@@ -23,7 +23,9 @@ use std::ops::Range;
 use crate::bidi::{BidiLevel, LineOrder};
 use crate::line_break::BreakOpportunity;
 use crate::line_layout::{break_lines, LineBreak, WrapMode};
-use crate::paragraph::{ScaledLineMetrics, ShapedParagraph, TextLayoutError};
+use crate::paragraph::{
+    GlyphRun, PositionedGlyph, ScaledLineMetrics, ShapedParagraph, TextLayoutError,
+};
 use crate::shaping::GlyphId;
 use crate::units::{FontSize, TextUnit, UnitError};
 
@@ -158,19 +160,34 @@ pub struct ParagraphLines {
 }
 
 /// paragraph를 줄로 나누고 줄 높이·baseline·visual glyph를 정합니다 (X.10.2 1단계).
+///
+/// 줄마다 하는 일은 그 줄의 크기(glyph·segment·run 수)에 비례합니다. run·segment·BiDi paragraph는 논리
+/// 순서로 정렬되어 있어 줄과 겹치는 구간을 이분 탐색으로 찾고, run glyph는 cluster 정렬 표([`ClusterIndex`])
+/// 로 찾습니다. paragraph 전체 비용은 O(n log n)입니다.
 pub fn lay_out_paragraph(
     shaped: &ShapedParagraph,
     breaks: &[BreakOpportunity],
     style: &ParagraphLayoutStyle,
     max_width: Option<TextUnit>,
 ) -> Result<ParagraphLines, TextLayoutError> {
-    let breaks_out = break_lines(shaped, breaks, max_width, style.wrap)?;
     let bidi = &shaped.itemization().bidi;
+    // 아래 이분 탐색이 기대는 불변식을 쓰는 곳에서도 확인합니다(debug 빌드, paragraph당 O(n) 한 번).
+    // 깨지면 잘못된 배치를 조용히 내지 않고 panic합니다.
+    let len = shaped.text().len();
+    crate::tiling::debug_assert_tiles("glyph run", shaped.runs().iter().map(|r| &r.range), len);
+    crate::tiling::debug_assert_tiles("segment", shaped.segments().iter().map(|s| &s.range), len);
+    crate::tiling::debug_assert_tiles(
+        "BiDi paragraph",
+        bidi.paragraphs().iter().map(|(range, _)| range),
+        len,
+    );
+    let breaks_out = break_lines(shaped, breaks, max_width, style.wrap)?;
+    let index = ClusterIndex::new(shaped.runs());
     let mut lines = Vec::with_capacity(breaks_out.len());
     let mut total = 0i64;
     for line in breaks_out {
         let order = bidi.line_order(shaped.text(), line.range.clone())?;
-        let glyphs = place_glyphs(shaped, &line, &order)?;
+        let glyphs = place_glyphs(shaped, &index, &line, &order)?;
         let (metrics, max_size) = line_metrics(shaped, &line.range);
         let (height, baseline) = line_box(metrics, max_size, style.line_height)?;
         total += i64::from(height.raw());
@@ -191,9 +208,63 @@ pub fn lay_out_paragraph(
     })
 }
 
+/// run마다 glyph를 (cluster, glyph index) 오름차순으로 정렬한 표. 줄 조각에 든 glyph를 run glyph 전체를
+/// 훑지 않고 이분 탐색으로 찾습니다.
+struct ClusterIndex(Vec<Vec<(u32, usize)>>);
+
+impl ClusterIndex {
+    fn new(runs: &[GlyphRun]) -> ClusterIndex {
+        ClusterIndex(
+            runs.iter()
+                .map(|run| {
+                    let mut sorted: Vec<(u32, usize)> = run
+                        .glyphs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, g)| (g.cluster, i))
+                        .collect();
+                    sorted.sort_unstable();
+                    sorted
+                })
+                .collect(),
+        )
+    }
+
+    /// run `run`에서 cluster가 `piece` 안에 있는 glyph index. run glyph 순서(run 방향 visual 순서)입니다.
+    fn glyphs_in(&self, run: usize, piece: &Range<usize>) -> Vec<usize> {
+        let Some(sorted) = self.0.get(run) else {
+            return Vec::new();
+        };
+        let lo = sorted.partition_point(|&(cluster, _)| (cluster as usize) < piece.start);
+        let hi = sorted.partition_point(|&(cluster, _)| (cluster as usize) < piece.end);
+        let mut picked: Vec<usize> = sorted[lo..hi].iter().map(|&(_, i)| i).collect();
+        crate::op_count::tick(picked.len());
+        picked.sort_unstable();
+        picked
+    }
+}
+
+/// `range`와 겹치는 run과 그 index(논리 순서). run은 paragraph를 논리 순서로 빈틈·겹침 없이 나누므로(범위
+/// 오름차순, `shape_paragraph` 불변식) 첫 run을 이분 탐색하고 겹치는 동안만 훑습니다. 불변식은 debug 빌드에서
+/// `shape_paragraph`와 [`lay_out_paragraph`]가 확인합니다(`crate::tiling`).
+fn overlapping_runs<'a>(
+    runs: &'a [GlyphRun],
+    range: &Range<usize>,
+) -> impl Iterator<Item = (usize, &'a GlyphRun)> + 'a {
+    let first = runs.partition_point(|run| run.range.end <= range.start);
+    let end = range.end;
+    runs[first..]
+        .iter()
+        .enumerate()
+        .map(move |(i, run)| (first + i, run))
+        .take_while(move |(_, run)| run.range.start < end)
+        .inspect(|_| crate::op_count::tick(1))
+}
+
 /// 줄의 visual 순서 glyph를 줄 시작 기준으로 놓습니다.
 fn place_glyphs(
     shaped: &ShapedParagraph,
+    index: &ClusterIndex,
     line: &LineBreak,
     order: &LineOrder,
 ) -> Result<Vec<LineGlyph>, TextLayoutError> {
@@ -205,9 +276,7 @@ fn place_glyphs(
     let mut pen = 0i64;
     for visual in order.visual_runs() {
         // visual run 안의 glyph run 조각: 논리 순서, RTL이면 역순.
-        let mut pieces: Vec<(usize, Range<usize>)> = runs
-            .iter()
-            .enumerate()
+        let mut pieces: Vec<(usize, Range<usize>)> = overlapping_runs(runs, &visual.range)
             .filter_map(|(i, run)| {
                 let start = run.range.start.max(visual.range.start);
                 let end = run.range.end.min(visual.range.end);
@@ -219,10 +288,10 @@ fn place_glyphs(
         }
         for (run_index, piece) in pieces {
             let run = &runs[run_index];
-            let mut glyphs: Vec<_> = run
-                .glyphs
-                .iter()
-                .filter(|g| piece.contains(&(g.cluster as usize)))
+            let mut glyphs: Vec<&PositionedGlyph> = index
+                .glyphs_in(run_index, &piece)
+                .into_iter()
+                .filter_map(|i| run.glyphs.get(i))
                 .collect();
             // run glyph는 run 방향 visual 순서입니다. 조각 level 방향이 다르면(L1로 바뀐 공백) 뒤집습니다.
             if run.level.is_rtl() != visual.level.is_rtl() {
@@ -259,14 +328,19 @@ fn place_glyphs(
     Ok(out)
 }
 
-/// 줄 끝 hanging 공백 byte 길이.
+/// 줄 끝 hanging 공백 byte 길이. segment는 논리 순서로 빈틈없이 이어지므로(범위 오름차순) 줄 끝 segment를
+/// 이분 탐색하고, 거기서 거꾸로 줄 안 공백 segment인 동안만 훑습니다. 불변식은 debug 빌드에서
+/// [`lay_out_paragraph`]가 확인합니다.
 fn trailing_len(shaped: &ShapedParagraph, line: &LineBreak) -> usize {
-    shaped
-        .segments()
+    let segments = shaped.segments();
+    let end = segments.partition_point(|s| s.range.end <= line.range.end);
+    segments[..end]
         .iter()
         .rev()
-        .filter(|s| s.range.end <= line.range.end && s.range.start >= line.range.start)
-        .take_while(|s| s.is_whitespace)
+        .take_while(|s| {
+            crate::op_count::tick(1);
+            s.range.start >= line.range.start && s.is_whitespace
+        })
         .map(|s| s.range.len())
         .sum()
 }
@@ -278,11 +352,7 @@ fn line_metrics(
 ) -> (ScaledLineMetrics, Option<FontSize>) {
     let mut metrics: Option<ScaledLineMetrics> = None;
     let mut size: Option<FontSize> = None;
-    for run in shaped
-        .runs()
-        .iter()
-        .filter(|r| r.range.start < range.end && range.start < r.range.end)
-    {
+    for (_, run) in overlapping_runs(shaped.runs(), range) {
         let m = metrics.get_or_insert(run.metrics);
         m.ascent = m.ascent.max(run.metrics.ascent);
         m.descent = m.descent.min(run.metrics.descent);
@@ -790,6 +860,101 @@ pub(crate) mod tests {
         // 내용이 box보다 크면 Middle·Bottom은 위로 넘칩니다.
         assert_eq!(top_of(VerticalAlign::Middle, 10), (-192, -192, 0));
         assert_eq!(top_of(VerticalAlign::Bottom, 10), (-384, -384, 0));
+    }
+
+    #[test]
+    fn paragraph_layout_work_is_linear_in_text_length() {
+        // posthoc TS-2 회귀: 줄·visual run마다 run 전체, run glyph 전체, segment 전체, BiDi paragraph 전체를
+        // 훑으면 작업량이 (줄 수 × paragraph 크기)로 커집니다. 40px 폭에서 줄이 많이 생기는 세 입력:
+        // 단일 run Latin, 글자마다 run이 바뀌는 Latin·CJK, 줄마다 BiDi paragraph가 바뀌는 U+2029 구분.
+        let fx = Fixture::new();
+        let style = ParagraphLayoutStyle::default();
+        for (unit, min_lines_per_unit) in [("abcd ", 1), ("a日", 0), ("a\u{2029}", 1)] {
+            let work = |repeat: usize| {
+                let text = unit.repeat(repeat);
+                let shaped = fx.shape(&text, 16, BaseDirection::LeftToRight);
+                let opportunities = breaks(&text);
+                let (laid, units) = crate::op_count::measure(|| {
+                    lay_out_paragraph(&shaped, &opportunities, &style, Some(px(40)))
+                        .expect("paragraph")
+                });
+                assert!(laid.lines.len() >= repeat * min_lines_per_unit);
+                assert!(
+                    laid.lines.len() >= repeat / 2,
+                    "{unit:?}: 줄이 많아야 합니다"
+                );
+                (units, shaped.segments().len() as u64)
+            };
+            let (small, _) = work(500);
+            let (large, segments) = work(2_000);
+            assert!(
+                large <= 8 * segments,
+                "{unit:?}: segment {segments}개에 작업량 {large}(segment당 상수 번이어야 함)"
+            );
+            assert!(
+                large <= 5 * small,
+                "{unit:?}: 입력 4배에 작업량 {small} → {large}(선형이면 4배 남짓, 제곱이면 16배)"
+            );
+        }
+    }
+
+    /// 정렬 불변식을 깨뜨린 shaping 결과로 `lay_out_paragraph`를 부릅니다. `corrupt`가 run·segment·BiDi
+    /// paragraph 목록을 고칩니다.
+    #[cfg(debug_assertions)]
+    fn lay_out_corrupted(
+        text: &str,
+        corrupt: impl FnOnce(
+            &mut Vec<GlyphRun>,
+            &mut Vec<crate::paragraph::Segment>,
+            &mut Vec<(Range<usize>, BidiLevel)>,
+        ),
+    ) {
+        let fx = Fixture::new();
+        let mut shaped = fx.shape(text, 16, BaseDirection::LeftToRight);
+        let (runs, segments, itemization) = crate::paragraph::tests::parts_mut(&mut shaped);
+        corrupt(runs, segments, itemization.bidi.paragraphs_mut());
+        let _ = lay_out_paragraph(
+            &shaped,
+            &breaks(text),
+            &ParagraphLayoutStyle::default(),
+            Some(px(40)),
+        );
+    }
+
+    // 리뷰 지적 회귀: 줄 배치의 이분 탐색(`overlapping_runs`, `trailing_len`, `line_levels`)은 run·segment·BiDi
+    // paragraph가 텍스트를 순서대로 빈틈없이 나눈다는 불변식에 기댑니다. 불변식이 깨지면 잘못된 배치를 조용히
+    // 내지 않고 debug 빌드에서 panic해야 합니다.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "glyph run 범위가 텍스트를 순서대로 빈틈없이 나누지 않습니다")]
+    fn unordered_runs_panic_in_debug_build() {
+        lay_out_corrupted("a日a日", |runs, _, _| {
+            assert!(runs.len() >= 2, "run이 둘 이상이어야 합니다");
+            runs.swap(0, 1);
+        });
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "segment 범위가 텍스트를 순서대로 빈틈없이 나누지 않습니다")]
+    fn unordered_segments_panic_in_debug_build() {
+        lay_out_corrupted("ab cd ef", |_, segments, _| {
+            assert!(segments.len() >= 2, "segment가 둘 이상이어야 합니다");
+            segments.swap(0, 1);
+        });
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "BiDi paragraph 범위가 텍스트를 순서대로 빈틈없이 나누지 않습니다")]
+    fn unordered_bidi_paragraphs_panic_in_debug_build() {
+        lay_out_corrupted("ab\u{2029}cd\u{2029}ef", |_, _, paragraphs| {
+            assert!(
+                paragraphs.len() >= 2,
+                "BiDi paragraph가 둘 이상이어야 합니다"
+            );
+            paragraphs.swap(0, 1);
+        });
     }
 
     #[test]

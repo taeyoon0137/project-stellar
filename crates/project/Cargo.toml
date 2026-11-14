@@ -14,6 +14,9 @@ stellar-dependencies = { path = "../dependencies" }
 stellar-git-porcelain = { path = "../git-porcelain" }
 # 프로젝트·시스템·외부 폰트 등록(XIII.6).
 stellar-text = { path = "../text" }
+# 자동 저장 dirty 판정이 완료된 document transaction과 창 history를 구분(XIII.1.2).
+stellar-commands = { path = "../commands" }
+stellar-history = { path = "../history" }
 # 제한 YAML 매니페스트 파싱(IV.1.2). config/dependencies.yaml 승인 항목.
 yaml-rust2 = "=0.11.0"
 

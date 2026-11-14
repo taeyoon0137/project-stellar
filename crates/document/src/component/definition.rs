@@ -358,6 +358,18 @@ impl DefinitionTree {
         Ok(())
     }
 
+    /// node payload를 교체합니다(테스트 전용). node가 없으면 `false`.
+    #[cfg(test)]
+    pub(crate) fn set_payload(&mut self, id: StableId, payload: Vec<u8>) -> bool {
+        match self.nodes.get_mut(&id) {
+            Some(node) => {
+                node.payload = payload;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// id로 node를 찾습니다.
     pub fn node(&self, id: StableId) -> Option<&DefinitionNode> {
         self.nodes.get(&id)
@@ -526,6 +538,27 @@ impl ComponentDefinition {
             });
         }
         self.properties.push(property);
+        Ok(())
+    }
+
+    /// Property를 선언 목록 `index` 위치에 선언합니다. 중복은 `DuplicateId`, 범위 밖 위치는 `Malformed`로
+    /// 거부합니다.
+    pub fn insert_property_at(
+        &mut self,
+        index: usize,
+        property: ComponentPropertyId,
+    ) -> Result<(), ComponentDefinitionError> {
+        if self.properties.contains(&property) {
+            return Err(ComponentDefinitionError::DuplicateId {
+                id: property.stable_id(),
+            });
+        }
+        if index > self.properties.len() {
+            return Err(ComponentDefinitionError::Malformed {
+                reason: "property 선언 위치가 범위를 벗어남",
+            });
+        }
+        self.properties.insert(index, property);
         Ok(())
     }
 
@@ -712,6 +745,17 @@ impl ComponentEntry {
     /// host node에 붙은 slot.
     pub fn slot_for_host(&self, host: StableId) -> Option<&ComponentSlot> {
         self.slots.values().find(|slot| slot.host.id() == host)
+    }
+
+    /// 정의(가변). root·tree 소유 관계를 바꾸지 않는 interface 편집(Property 선언 등)에만 씁니다.
+    pub(super) fn definition_mut(&mut self) -> &mut ComponentDefinition {
+        &mut self.definition
+    }
+
+    /// 정의 tree(가변, 테스트 전용 — node payload 교체).
+    #[cfg(test)]
+    pub(crate) fn tree_mut(&mut self) -> &mut DefinitionTree {
+        &mut self.tree
     }
 
     pub(super) fn insert_slot(&mut self, slot: ComponentSlot) {

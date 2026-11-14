@@ -58,3 +58,11 @@
 ## 남은 위험 / 한계
 
 - undo·redo, 병합 규칙, 창별 분리는 VII.4.2~VII.5.5에서 이어집니다.
+
+## 후속 기록 (통합: XIII.1.2·XIII.3.1)
+
+- XIII.1.2(autosave dirty 판정)와 XIII.3.1(clean 창 reload)이 `stellar-project`에 `stellar-history` 의존을
+  추가했습니다(crate graph 허용 edge). 그래서 `history_is_excluded_from_project_serializer`의 project manifest
+  검사를 project 문서 직렬화·적재 모듈(`document_io`의 `mod.rs`·`serialize.rs`·`load.rs`·`manifest.rs`·
+  `residency.rs`)이 `stellar_history`를 참조하지 않는지 보는 검사로 바꿨습니다. storage·document manifest
+  검사와 기록 전후 문서 레코드 비교는 그대로입니다.

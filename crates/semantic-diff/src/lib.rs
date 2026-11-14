@@ -31,3 +31,18 @@ pub mod codec;
 
 /// diff 적용 (XIV.3.9~XIV.3.10).
 pub mod apply;
+
+/// HEAD·Index·WorkingTree semantic status 분류 (XIV.4.1~).
+pub mod status;
+
+/// 선택 변경 Staging 계획 (XIV.5.1~).
+pub mod stage;
+
+/// 변경 dependency graph (XIV.5.2).
+pub mod dependency;
+
+/// semantic snapshot 무결성 validator (XIV.5.3).
+pub mod validate;
+
+/// snapshot → 영속 문서 레코드 역투영 (XIV.5.4).
+pub mod records;

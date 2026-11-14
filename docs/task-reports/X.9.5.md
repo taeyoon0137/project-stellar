@@ -60,3 +60,25 @@
   `.notdef` 검사로만 드러납니다.
 - Default_Ignorable 목록은 코드에 고정했습니다(Unicode DerivedCoreProperties 기준). Unicode 갱신 시 함께 검토해야
   합니다.
+
+## 후속 수정 (posthoc 리뷰 TS-3: `.notdef` cluster 중복 제거의 제곱 비용)
+
+- **결함**: `notdef_clusters`가 `.notdef` glyph마다 이미 넣은 범위를 선형 검색했고, `shape_font_runs`도 shaping
+  단계 범위마다 missing 목록 전체를 선형 검색했습니다. chain이 덮지 못하는 script만으로 된 paragraph(누락 폰트의
+  기본 경우)는 모든 cluster가 missing이라 비용이 missing 수의 제곱이었습니다. 리뷰 측정(release)에서 태국어
+  40k자가 3.76s였습니다.
+- **수정**: `notdef_clusters`는 `.notdef` cluster 시작을 정렬·중복 제거한 뒤 범위로 바꿉니다. `shape_font_runs`는
+  기록한 범위를 `BTreeSet`으로 확인합니다. 둘 다 O(m log m)이고 결과 목록·순서·원인은 같습니다(golden 불변).
+- **회귀 테스트**: `font_runs::tests::missing_cluster_work_is_linear_in_missing_count`는 Latin chain으로 태국어
+  1,000자·4,000자를 shaping해 방문 수(`op_count`)가 missing 수의 4배 이하이고 입력 4배에 5배 이하인지 보며,
+  missing 목록이 할당 단계 목록과 같은지(중복 없음)도 확인합니다. 수정 전 알고리즘에 같은 계수를 넣으면
+  4,000자에서 16,000,000회, `notdef_clusters`만 고친 상태에서는 8,006,000회로 실패합니다.
+  `notdef_clusters_are_unique_and_sorted`는 RTL visual 순서·같은 cluster의 여러 `.notdef` glyph 입력에서 범위가
+  cluster 시작마다 하나씩 오름차순인지 고정합니다(수정 전 구현에서도 통과하는 동작 고정 테스트).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-text` | 0 (112 unit passed, golden 포함) |
+| `cargo clippy -p stellar-text --all-targets -- -D warnings` | 0 |
+| `cargo clippy -p stellar-text --release -- -D warnings` | 0 |
+| `cargo fmt -p stellar-text -- --check` | 0 |

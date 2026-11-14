@@ -61,3 +61,51 @@
 
 - 줄 안 run별 baseline 정렬은 같은 baseline에 맞춥니다(위첨자·세로 정렬 속성은 범위 밖).
 - 양쪽 정렬은 공백 segment에만 공간을 줍니다(CJK 글자 사이 inter-character justification 없음).
+
+## 후속 수정 (posthoc 리뷰 TS-2: 줄 배치의 줄마다 전체 순회)
+
+- **결함**: `lay_out_paragraph`가 줄마다 paragraph 전체를 훑었습니다. `place_glyphs`는 visual run마다 모든 run을,
+  겹친 run마다 그 run의 모든 glyph를 걸렀고, `trailing_len`은 segment 전체를 뒤에서부터, `line_metrics`는 run
+  전체를 훑었습니다. 비용이 (줄 수 × paragraph 크기)라 리뷰 측정(release, 40px 폭)에서 40k자가 866ms였습니다.
+  BiDi 줄 재배치의 `line_levels`(X.9.3)도 줄마다 모든 BiDi paragraph를 훑어, U+2029가 많은 paragraph에서 같은
+  문제가 있었습니다.
+- **수정**: run·segment·BiDi paragraph는 논리 순서로 정렬되어 있으므로 줄과 겹치는 첫 항목을 이분 탐색하고
+  겹치는 동안만 훑습니다(`overlapping_runs`). run glyph는 paragraph마다 한 번 만드는 (cluster, glyph index) 정렬
+  표(`ClusterIndex`)에서 조각 범위를 이분 탐색해 원래 glyph 순서로 꺼냅니다. paragraph 전체 비용은
+  O(n log n)이고 줄·glyph 배치 결과는 같습니다(golden 불변).
+- **회귀 테스트**: `text_layout::tests::paragraph_layout_work_is_linear_in_text_length`는 40px 폭에서 줄이 많이
+  생기는 세 입력(단일 run Latin `"abcd "`, 글자마다 run이 바뀌는 `"a日"`, 줄마다 BiDi paragraph가 바뀌는
+  `"a"`+U+2029)을 500회·2,000회 반복해 `lay_out_paragraph` 방문 수(`op_count`)가 segment 수의 8배 이하이고
+  입력 4배에 5배 이하인지 봅니다. 수정 전 알고리즘에 같은 계수를 넣으면 2,000회에서 각각 30,005,000회,
+  13,343,335회, 16,004,000회로 실패합니다. text_layout만 고치고 `line_levels`를 그대로 두면 U+2029 입력이
+  4,010,000회로 실패합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-text` | 0 (110 unit passed, golden 포함) |
+| `cargo clippy -p stellar-text --all-targets -- -D warnings` | 0 |
+| `cargo clippy -p stellar-text --release -- -D warnings` | 0 |
+| `cargo fmt -p stellar-text -- --check` | 0 |
+
+## 후속 수정 (posthoc 수정 리뷰: 이분 탐색 정렬 불변식 미확인)
+
+- **결함**: 위 수정의 이분 탐색(`overlapping_runs`, `trailing_len`, `BidiParagraph::line_levels`)은 glyph run·segment·BiDi
+  paragraph가 텍스트를 순서대로 빈틈없이 나눈다는 불변식에 기대지만, 이 불변식을 문서 주석으로만 적고 코드로
+  확인하지 않았습니다. `shape_paragraph`가 순서를 어기는 결과를 내면 줄 배치가 panic 없이 잘못 나올 수 있었습니다.
+- **수정**: `crates/text/src/tiling.rs`(신규)의 `debug_assert_tiles`로 목록을 만드는 곳(`shape_paragraph`,
+  `BidiParagraph::analyze`)과 쓰는 곳(`lay_out_paragraph` 진입, paragraph당 한 번)에서 debug 빌드일 때 확인합니다.
+  release 빌드에서는 확인하지 않으며 배치 결과는 같습니다(golden 불변).
+- **회귀 테스트**: `text_layout::tests::unordered_runs_panic_in_debug_build`,
+  `unordered_segments_panic_in_debug_build`, `unordered_bidi_paragraphs_panic_in_debug_build`는 shaping 결과의 run·
+  segment·BiDi paragraph 순서를 바꿔 `lay_out_paragraph`를 부르고 debug 빌드에서 panic하는지 봅니다. 수정 전에는
+  셋 다 panic하지 않아 실패했습니다. `paragraph::tests::run_segment_and_bidi_ranges_tile_the_text`는 혼합 script
+  입력에서 세 목록이 텍스트를 나누는지 release 빌드에서도 고정합니다.
+- **한계**: 작업량 테스트(`op_count`)는 계측한 루프 안의 퇴행만 잡습니다. 계측하지 않은 새 루프는 잡지 못합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-text` | 0 (120 unit passed, golden 포함) |
+| `cargo test --release -p stellar-text` | 0 (117 unit passed, debug 전용 panic 테스트 3개 제외) |
+| `cargo clippy -p stellar-text --all-targets -- -D warnings` | 0 |
+| `cargo clippy -p stellar-text --release --all-targets -- -D warnings` | 0 |
+| `cargo fmt -p stellar-text -- --check` | 0 |

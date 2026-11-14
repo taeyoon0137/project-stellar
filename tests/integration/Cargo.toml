@@ -15,9 +15,15 @@ stellar-commands = { path = "../../crates/commands", features = ["test-support"]
 stellar-history = { path = "../../crates/history" }
 stellar-storage = { path = "../../crates/storage" }
 stellar-project = { path = "../../crates/project" }
-stellar-git-porcelain = { path = "../../crates/git-porcelain" }
+# Git 종단 시나리오는 local bare 원격 fixture harness(XIV.14.1)를 씁니다.
+stellar-git-porcelain = { path = "../../crates/git-porcelain", features = ["test-support"] }
 stellar-semantic-diff = { path = "../../crates/semantic-diff" }
 stellar-semantic-merge = { path = "../../crates/semantic-merge" }
+# crate 의존 정책상 따로 보관하는 같은 상수의 대조(`tests/constant_copies.rs`): 환경 key registry 사본과
+# Display P3 ↔ sRGB 행렬 사본. expressions·renderer-core는 대조용 상수를 `test-support` 뒤에 둡니다.
+stellar-expressions = { path = "../../crates/expressions", features = ["test-support"] }
+stellar-renderer-core = { path = "../../crates/renderer-core", features = ["test-support"] }
+stellar-target-profile = { path = "../../crates/target-profile" }
 
 [lints]
 workspace = true

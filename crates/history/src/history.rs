@@ -694,14 +694,43 @@ mod tests {
     #[test]
     fn history_is_excluded_from_project_serializer() {
         // 검증 기준(VII.4.1): 직렬화는 세션 메모리 전용이며 project serializer에서 제외.
+        // 저장 형식 계층(storage·document)은 history에 의존하지 않습니다.
         for (crate_name, manifest) in [
-            ("project", include_str!("../../project/Cargo.toml")),
             ("storage", include_str!("../../storage/Cargo.toml")),
             ("document", include_str!("../../document/Cargo.toml")),
         ] {
             assert!(
                 !manifest.contains("stellar-history"),
                 "{crate_name}는 history에 의존하지 않아야 합니다"
+            );
+        }
+        // project는 창 session·autosave dirty 판정(XIII.1.2·XIII.3.1)에 history를 쓰지만(crate graph 허용
+        // edge), 문서 직렬화·적재 모듈(`document_io`)은 history를 참조하지 않습니다.
+        for (module, source) in [
+            (
+                "document_io",
+                include_str!("../../project/src/document_io/mod.rs"),
+            ),
+            (
+                "document_io::serialize",
+                include_str!("../../project/src/document_io/serialize.rs"),
+            ),
+            (
+                "document_io::load",
+                include_str!("../../project/src/document_io/load.rs"),
+            ),
+            (
+                "document_io::manifest",
+                include_str!("../../project/src/document_io/manifest.rs"),
+            ),
+            (
+                "document_io::residency",
+                include_str!("../../project/src/document_io/residency.rs"),
+            ),
+        ] {
+            assert!(
+                !source.contains("stellar_history"),
+                "project {module}는 history를 참조하지 않아야 합니다"
             );
         }
         // 문서 저장 레코드에는 history 항목이 들어갈 자리가 없습니다: 기록 전후 레코드 비교.

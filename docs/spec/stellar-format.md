@@ -660,6 +660,14 @@ project crate는 제한 YAML 값을 형식 중립 트리로 1:1 바꿔 그 모�
 - 새 프로젝트의 `schema_version`은 `CURRENT_SCHEMA_VERSION` = `1`입니다.
 - **현재 구현**: `from_yaml`은 `schema_version` 값을 1과 비교하지 않고 모든 `u32`를 받습니다.
   `project.id` 형식도 이 단계에서 검사하지 않습니다(§5.4의 변환은 별도 함수).
+- **target-profile crate의 미연결 초안**: `stellar-target-profile`의 `spec`·`manifest` module(IX.10.2·IX.10.3)은
+  `target_profiles`에 대해 이 표와 다른 형식을 정의합니다. `target_profiles[i]`에는 `profile_schema_version`·
+  `registry_version`과 종류별 키(Apple `apple_platform`·`minimum_os`, Android `api_level`·`ui_system_version`, Web
+  `baseline`(연도)·`capability_set_version`)가 필수입니다. 최상위에는 `default_target_profile`이 있습니다. 두 형식은
+  호환되지 않습니다. profile이 하나라도 있는 파일은 두 파서 중 한쪽에서 `UnknownKey`나 필수 키 누락으로 거부됩니다. 이
+  초안은 아직 파일 형식이 아니며, `stellar.yaml` 형식의 기준은 위 표입니다. 두 형식의 통합(키 이름, 필수 여부,
+  `registry_version`·`profile_schema_version`, `default_target_profile`)과 project → target-profile 연결 방식(crate graph
+  edge 또는 형식 중립 노드)은 ADR로 정해야 합니다(미결). 결정 전까지 IX.10.3·IX.10.4는 `[~]`입니다.
 
 canonical 예(새 프로젝트, `project::scaffold::default_manifest`):
 

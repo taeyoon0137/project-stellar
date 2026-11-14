@@ -1,0 +1,1108 @@
+//! [`RendererBackend`]의 Metal 구현.
+//!
+//! - surface가 있는 backend([`MetalBackend::with_layer`])는 CAMetalLayer drawable에 그리고 present를
+//!   예약합니다. surface 없는 backend([`MetalBackend::headless`])는 external texture에만 그립니다
+//!   (offscreen 적합성 harness·테스트).
+//! - submission 번호는 device마다 1부터 셉니다. GPU 진행은 command buffer `status`로 비대기 조회합니다.
+//!   단일 queue이므로 앞 submission이 끝나기 전 뒤 submission을 완료로 보지 않습니다.
+//! - present 확정 시점은 present를 붙인 command buffer의 GPU 완료입니다. 실제 화면 표시 시각은 창
+//!   상태·compositor에 따라 다르고(창 밖 layer는 `presentedTime`이 오지 않음) 아키텍처 §6.1에서 별도
+//!   관측 지표입니다.
+
+use std::collections::VecDeque;
+use std::ffi::c_void;
+use std::ptr::NonNull;
+
+use stellar_renderer_core::backend::{
+    BackendError, BackendErrorKind, BackendKind, BufferDesc, BufferHandle, DeviceCapabilities,
+    DeviceConfig, EncodeOutcome, EncodedFrame, FrameEncodeRequest, FrameId, GpuProgress,
+    GpuTextureDesc, RendererBackend, SkipReason, SubmissionId, SurfaceSize, TextureHandle,
+    TextureRegion, TimestampQuery, MAX_FRAMES_IN_FLIGHT,
+};
+use stellar_renderer_core::gpu_handle::{BufferKind, HandleTable, TextureKind};
+use stellar_renderer_core::graph_trace::{MonotonicClock, TraceClock};
+use stellar_renderer_core::render_graph::{
+    ImportKind, ResourceLifetime, SampleCount, TextureFormat,
+};
+
+use crate::buffer::{
+    stage_texture_upload, submit_uploads, upload_layout, MetalBuffer, PendingUpload,
+};
+use crate::commands::CommandContext;
+use crate::device::MetalDevice;
+use crate::encode::{encode_pass, plan_pass, FrameTargets};
+use crate::events::{
+    classify_command_buffer_error, command_buffer_failure, MemoryBudget, MetalEvent, MAX_EVENTS,
+};
+use crate::format::bytes_per_pixel;
+use crate::objc::{autoreleasepool, sel, Id, NSUInteger, RawId};
+use crate::pipeline::{PipelineCache, ShaderError};
+use crate::surface::{check_surface_size, Drawable, LayerOptions, LayerSurface, SurfaceStats};
+use crate::sys::{command_buffer_status, resource_options, MTLOrigin, MTLSize};
+use crate::texture::{create_texture, texture_footprint, MetalTexture};
+use crate::timestamps::{timestamp_counter_set, FrameTiming, Timestamps};
+use crate::trace::{Clock, MetalFrameTrace, MAX_FRAME_TRACES};
+use crate::transient::{PoolError, TransientPool};
+
+/// encode했지만 아직 제출하지 않은 frame.
+#[derive(Debug)]
+struct OpenFrame {
+    frame: FrameId,
+    token: u64,
+    command_buffer: Id,
+    drawable: Option<Drawable>,
+    /// present 예약 시각(예약하지 않았으면 `None`).
+    present_nanos: Option<u64>,
+    encode_start_nanos: u64,
+    encode_end_nanos: u64,
+    pass_count: u32,
+    draw_count: u32,
+    timing: Option<FrameTiming>,
+}
+
+/// GPU에 제출한 command buffer. texture upload command buffer는 submission 번호가 없습니다.
+#[derive(Debug)]
+struct InFlight {
+    id: Option<SubmissionId>,
+    command_buffer: Id,
+    present: bool,
+    timing: Option<FrameTiming>,
+    /// 이 command buffer가 끝나면 예산에서 돌려받는 upload staging byte.
+    staging_bytes: u64,
+}
+
+/// macOS Metal backend.
+#[derive(Debug)]
+pub struct MetalBackend {
+    surface: Option<LayerSurface>,
+    device: Option<MetalDevice>,
+    capabilities: Option<DeviceCapabilities>,
+    surface_size: SurfaceSize,
+    surface_format: TextureFormat,
+    textures: HandleTable<TextureKind, MetalTexture>,
+    buffers: HandleTable<BufferKind, MetalBuffer>,
+    pipelines: PipelineCache,
+    pending_uploads: Vec<PendingUpload>,
+    transients: TransientPool,
+    timestamps: Option<Timestamps>,
+    clock: Clock,
+    traces: VecDeque<MetalFrameTrace>,
+    initialized_once: bool,
+    open: Option<OpenFrame>,
+    next_token: u64,
+    next_submission: u64,
+    in_flight: VecDeque<InFlight>,
+    progress: GpuProgress,
+    surface_stats: SurfaceStats,
+    events: VecDeque<MetalEvent>,
+    memory: MemoryBudget,
+    memory_budget_override: Option<u64>,
+    lost: bool,
+    /// 테스트용: 다음 n번의 drawable 요청을 nil로 만듭니다(가려진 창·timeout 재현).
+    #[cfg(test)]
+    pub(crate) drawable_failures: u32,
+    /// 테스트용: GPU에서 끝난 다음 submission들을 이 `MTLCommandBufferError` 코드로 실패한 것으로 봅니다.
+    #[cfg(test)]
+    pub(crate) injected_gpu_errors: VecDeque<i64>,
+    /// 테스트용: 다음 init에서 GPU device를 찾지 못한 것으로 봅니다.
+    #[cfg(test)]
+    pub(crate) fail_device_creation: bool,
+}
+
+/// backend GPU 메모리 사용량.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MemoryUsage {
+    /// backend가 만든 buffer·texture·transient와 GPU가 아직 끝내지 않은 texture upload staging buffer의
+    /// `allocatedSize` 합(byte).
+    pub resident_bytes: u64,
+    /// 예산(byte).
+    pub budget_bytes: u64,
+}
+
+/// drawable 요청 결과.
+enum Acquire {
+    Drawable(Drawable),
+    /// nil(가려짐·timeout).
+    Timeout {
+        waited_nanos: u64,
+    },
+    /// 크기가 달라 layer를 다시 맞춤.
+    Resynced,
+}
+
+fn invalid(detail: &'static str) -> BackendError {
+    BackendError::new(BackendErrorKind::InvalidUsage, detail)
+}
+
+impl MetalBackend {
+    fn new(surface: Option<LayerSurface>) -> MetalBackend {
+        MetalBackend {
+            surface,
+            device: None,
+            capabilities: None,
+            surface_size: SurfaceSize {
+                width: 0,
+                height: 0,
+            },
+            surface_format: TextureFormat::Bgra8Unorm,
+            textures: HandleTable::new(0),
+            buffers: HandleTable::new(0),
+            pipelines: PipelineCache::new(),
+            pending_uploads: Vec::new(),
+            transients: TransientPool::default(),
+            timestamps: None,
+            clock: Clock(Box::new(MonotonicClock::new())),
+            traces: VecDeque::new(),
+            initialized_once: false,
+            open: None,
+            next_token: 1,
+            next_submission: 1,
+            in_flight: VecDeque::new(),
+            progress: GpuProgress::default(),
+            surface_stats: SurfaceStats::default(),
+            events: VecDeque::new(),
+            memory: MemoryBudget::new(0),
+            memory_budget_override: None,
+            lost: false,
+            #[cfg(test)]
+            drawable_failures: 0,
+            #[cfg(test)]
+            injected_gpu_errors: VecDeque::new(),
+            #[cfg(test)]
+            fail_device_creation: false,
+        }
+    }
+
+    /// surface 없는 backend. external texture에만 그리며 present하지 않습니다.
+    pub fn headless() -> MetalBackend {
+        MetalBackend::new(None)
+    }
+
+    /// platform 셸의 CAMetalLayer에 그리는 backend. layer를 retain합니다.
+    ///
+    /// device·pixel format·drawable 크기는 [`RendererBackend::init`]에서 설정합니다.
+    ///
+    /// # Safety
+    ///
+    /// `layer`는 살아 있는 Objective-C 객체(`CAMetalLayer`)를 가리켜야 합니다. CAMetalLayer가 아닌
+    /// 객체면 `InvalidUsage`를 돌려줍니다.
+    pub unsafe fn with_layer(
+        layer: NonNull<c_void>,
+        options: LayerOptions,
+    ) -> Result<MetalBackend, BackendError> {
+        // SAFETY: layer 유효성은 호출자 보장입니다.
+        let surface = autoreleasepool(|| unsafe { LayerSurface::from_raw(layer, options) })?;
+        Ok(MetalBackend::new(Some(surface)))
+    }
+
+    /// 창에 붙지 않은 새 CAMetalLayer에 그리는 backend(테스트·진단용).
+    pub fn with_detached_layer(options: LayerOptions) -> Result<MetalBackend, BackendError> {
+        let surface = autoreleasepool(|| LayerSurface::detached(options))?;
+        Ok(MetalBackend::new(Some(surface)))
+    }
+
+    /// surface(CAMetalLayer)가 있으면 참입니다.
+    pub fn has_surface(&self) -> bool {
+        self.surface.is_some()
+    }
+
+    /// surface resize·frame skip 통계.
+    pub fn surface_stats(&self) -> SurfaceStats {
+        self.surface_stats
+    }
+
+    /// 현재 surface pixel 크기(마지막 `init`·`resize` 값).
+    pub fn surface_size(&self) -> SurfaceSize {
+        self.surface_size
+    }
+
+    /// frame CPU timestamp 시계를 바꿉니다. 공통 계층과 같은 기준점의 시계를 넣으면 T0~T5를 한 축에서
+    /// 비교할 수 있습니다(기본: backend 생성 시점 기준 [`MonotonicClock`]).
+    pub fn set_trace_clock(&mut self, clock: Box<dyn TraceClock>) {
+        self.clock = Clock(clock);
+    }
+
+    /// 쌓인 frame trace를 꺼냅니다(제출 순서, 최대 [`MAX_FRAME_TRACES`]개 보관).
+    pub fn drain_frame_traces(&mut self) -> Vec<MetalFrameTrace> {
+        self.traces.drain(..).collect()
+    }
+
+    /// 지금 할당된 graph transient texture 수(alias slot 기준).
+    pub fn transient_texture_count(&self) -> usize {
+        self.transients.allocated()
+    }
+
+    /// 마지막 shader compile·pipeline 생성 오류(단계와 Metal compiler log). `PipelineCreation` 오류의
+    /// 개발자 context입니다.
+    pub fn last_shader_error(&self) -> Option<ShaderError> {
+        self.pipelines.last_error().cloned()
+    }
+
+    /// 현재 device에서 MSL library를 실제로 compile한 횟수(cache 적중은 세지 않음, 실패 포함).
+    pub fn shader_compile_count(&self) -> u64 {
+        self.pipelines.library_compiles()
+    }
+
+    /// init이 돌려준 capability(init 전이면 `None`).
+    pub fn capabilities(&self) -> Option<DeviceCapabilities> {
+        self.capabilities
+    }
+
+    fn device(&self) -> Result<&MetalDevice, BackendError> {
+        if self.lost {
+            return Err(BackendError::new(
+                BackendErrorKind::DeviceLost,
+                "GPU device를 잃었습니다. init으로 다시 만들어야 합니다",
+            ));
+        }
+        self.device
+            .as_ref()
+            .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))
+    }
+
+    fn push_event(&mut self, event: MetalEvent) {
+        if self.events.len() == MAX_EVENTS {
+            self.events.pop_front();
+        }
+        self.events.push_back(event);
+    }
+
+    /// 쌓인 오류 event를 꺼냅니다(발생 순서, 최대 [`MAX_EVENTS`]개 보관).
+    pub fn drain_events(&mut self) -> Vec<MetalEvent> {
+        self.events.drain(..).collect()
+    }
+
+    /// GPU 메모리 예산을 바꿉니다(`None`이면 device `recommendedMaxWorkingSetSize`). device 재생성에도
+    /// 유지합니다.
+    pub fn set_memory_budget(&mut self, budget_bytes: Option<u64>) {
+        self.memory_budget_override = budget_bytes;
+        let budget = budget_bytes
+            .or_else(|| {
+                self.device
+                    .as_ref()
+                    .map(MetalDevice::recommended_working_set)
+            })
+            .unwrap_or(0);
+        let resident = self.memory.resident();
+        self.memory = MemoryBudget::new(budget);
+        self.memory.add(resident);
+    }
+
+    /// GPU 메모리 사용량과 예산.
+    pub fn memory_usage(&self) -> MemoryUsage {
+        MemoryUsage {
+            resident_bytes: self.memory.resident(),
+            budget_bytes: self.memory.budget(),
+        }
+    }
+
+    /// 다시 만들 수 있는 graph transient texture를 모두 놓습니다(memory pressure 대응, 다음 frame에
+    /// 필요한 만큼 다시 만듦).
+    pub fn purge_transients(&mut self) {
+        let freed = self.transients.purge();
+        self.memory.remove(freed);
+    }
+
+    /// `requested` byte 할당이 예산 안인지 확인합니다. 넘으면 transient pool을 비우고 다시 보며, 그래도
+    /// 넘으면 pressure event와 `OutOfDeviceMemory`입니다.
+    fn reserve(&mut self, requested: u64) -> Result<(), BackendError> {
+        if self.memory.fits(requested, 0) {
+            return Ok(());
+        }
+        if self.open.is_none() {
+            self.purge_transients();
+            if self.memory.fits(requested, 0) {
+                return Ok(());
+            }
+        }
+        let event = self.memory.pressure(requested);
+        self.push_event(event);
+        Err(BackendError::new(
+            BackendErrorKind::OutOfDeviceMemory,
+            "GPU 메모리 예산을 넘는 할당입니다",
+        ))
+    }
+
+    /// GPU에 남은 submission이 모두 끝날 때까지 기다리고 진행을 돌려줍니다(blocking).
+    ///
+    /// 종료·device 재생성·테스트용입니다. frame loop에서는 [`RendererBackend::poll`]을 씁니다.
+    pub fn wait_idle(&mut self) -> Result<GpuProgress, BackendError> {
+        autoreleasepool(|| self.flush_uploads())?;
+        if let Some(last) = self.in_flight.back() {
+            // SAFETY: `-waitUntilCompleted`는 () -> void이고 commit한 command buffer에만 부릅니다.
+            unsafe {
+                let _: () = last.command_buffer.send(sel!("waitUntilCompleted"), ());
+            }
+        }
+        self.poll_completions()
+    }
+
+    /// texture mip 0 내용을 CPU로 읽습니다(blocking, format 그대로의 byte 순서, 행 padding 없음).
+    ///
+    /// 적합성 harness(XI.11.1)·테스트용입니다. 앞서 제출한 모든 GPU 작업 뒤에 읽습니다.
+    /// multisample·depth texture는 읽을 수 없습니다(`InvalidUsage`).
+    pub fn read_texture(&mut self, texture: TextureHandle) -> Result<Vec<u8>, BackendError> {
+        autoreleasepool(|| self.read_texture_inner(texture))
+    }
+
+    fn read_texture_inner(&mut self, texture: TextureHandle) -> Result<Vec<u8>, BackendError> {
+        if self.open.is_some() {
+            return Err(invalid("열린 frame이 있는 동안 readback할 수 없습니다"));
+        }
+        self.flush_uploads()?;
+        let device = self.device()?;
+        let native = self.textures.get(texture)?;
+        let desc = native.desc;
+        let bytes_per_pixel = bytes_per_pixel(desc.format)
+            .filter(|_| desc.samples == SampleCount::X1)
+            .ok_or(invalid(
+                "multisample·depth texture는 readback할 수 없습니다",
+            ))?;
+        let row = u64::from(desc.width) * u64::from(bytes_per_pixel);
+        let length = row * u64::from(desc.height);
+        let length_usize =
+            usize::try_from(length).map_err(|_| invalid("readback 크기가 너무 큽니다"))?;
+        // SAFETY: `-newBufferWithLength:options:`는 (NSUInteger, NSUInteger) -> id<MTLBuffer>(+1,
+        // nil 가능), `-commandBuffer`는 () -> id(+0), `-blitCommandEncoder`는 () -> id(+0)입니다.
+        // copyFromTexture:...toBuffer: 인자는 (texture, slice, level, MTLOrigin, MTLSize, buffer,
+        // offset, bytesPerRow, bytesPerImage)이고 범위는 texture 크기와 buffer 길이로 맞췄습니다.
+        unsafe {
+            let buffer = Id::from_owned(device.device().send(
+                sel!("newBufferWithLength:options:"),
+                (length_usize as NSUInteger, resource_options::STORAGE_SHARED),
+            ))
+            .ok_or(BackendError::new(
+                BackendErrorKind::OutOfDeviceMemory,
+                "readback buffer를 할당할 수 없습니다",
+            ))?;
+            let command_buffer = Id::from_borrowed(device.queue().send(sel!("commandBuffer"), ()))
+                .ok_or(BackendError::new(
+                    BackendErrorKind::Internal,
+                    "command buffer를 만들 수 없습니다",
+                ))?;
+            let blit: RawId = command_buffer.send(sel!("blitCommandEncoder"), ());
+            if blit.is_null() {
+                return Err(BackendError::new(
+                    BackendErrorKind::Internal,
+                    "blit encoder를 만들 수 없습니다",
+                ));
+            }
+            let _: () = crate::objc::send(
+                blit,
+                sel!("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:"),
+                (
+                    native.texture.as_raw(),
+                    0 as NSUInteger,
+                    0 as NSUInteger,
+                    MTLOrigin { x: 0, y: 0, z: 0 },
+                    MTLSize {
+                        width: desc.width as NSUInteger,
+                        height: desc.height as NSUInteger,
+                        depth: 1,
+                    },
+                    buffer.as_raw(),
+                    0 as NSUInteger,
+                    row as NSUInteger,
+                    length_usize as NSUInteger,
+                ),
+            );
+            let _: () = crate::objc::send(blit, sel!("endEncoding"), ());
+            let _: () = command_buffer.send(sel!("commit"), ());
+            let _: () = command_buffer.send(sel!("waitUntilCompleted"), ());
+            let status: NSUInteger = command_buffer.send(sel!("status"), ());
+            if status != command_buffer_status::COMPLETED {
+                return Err(BackendError::new(
+                    BackendErrorKind::Internal,
+                    "readback command buffer 실행 실패",
+                ));
+            }
+            let contents: *const u8 = buffer.send(sel!("contents"), ());
+            if contents.is_null() {
+                return Err(BackendError::new(
+                    BackendErrorKind::Internal,
+                    "readback buffer 내용에 접근할 수 없습니다",
+                ));
+            }
+            Ok(std::slice::from_raw_parts(contents, length_usize).to_vec())
+        }
+    }
+
+    /// 쌓인 texture upload를 blit command buffer로 제출합니다(frame보다 먼저 queue에 들어감).
+    fn flush_uploads(&mut self) -> Result<(), BackendError> {
+        if self.pending_uploads.is_empty() {
+            return Ok(());
+        }
+        let device = self
+            .device
+            .as_ref()
+            .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
+        let staging_bytes = self.pending_uploads.iter().map(|upload| upload.bytes).sum();
+        if let Some(command_buffer) = submit_uploads(device.queue(), &mut self.pending_uploads)? {
+            self.in_flight.push_back(InFlight {
+                id: None,
+                command_buffer,
+                present: false,
+                timing: None,
+                staging_bytes,
+            });
+        }
+        Ok(())
+    }
+
+    /// 실패한 command buffer를 처리합니다: 진행 갱신, timing 반환, device error event, device lost 표시.
+    fn command_buffer_failed(&mut self, done: InFlight, injected: Option<i64>) -> BackendError {
+        self.memory.remove(done.staging_bytes);
+        if let Some(id) = done.id {
+            self.progress.completed = Some(id);
+        }
+        if let (Some(timing), Some(timestamps)) = (done.timing, self.timestamps.as_mut()) {
+            timestamps.recycle(timing);
+        }
+        let code = injected.or_else(|| {
+            // SAFETY: `-error`는 () -> NSError*(+0, nil 가능), `-code`는 () -> NSInteger입니다.
+            unsafe {
+                let error: RawId = done.command_buffer.send(sel!("error"), ());
+                (!error.is_null()).then(|| {
+                    let code: isize = crate::objc::send(error, sel!("code"), ());
+                    code as i64
+                })
+            }
+        });
+        let kind = classify_command_buffer_error(code.unwrap_or(0));
+        self.push_event(MetalEvent::DeviceError {
+            kind,
+            submission: done.id,
+            command_buffer_error: code,
+        });
+        if kind == BackendErrorKind::DeviceLost {
+            self.lost = true;
+        }
+        command_buffer_failure(kind)
+    }
+
+    /// 끝난 command buffer를 앞에서부터 거둡니다.
+    fn poll_completions(&mut self) -> Result<GpuProgress, BackendError> {
+        while let Some(front) = self.in_flight.front() {
+            // SAFETY: `-status`는 () -> NSUInteger(MTLCommandBufferStatus)입니다.
+            let status: NSUInteger = unsafe { front.command_buffer.send(sel!("status"), ()) };
+            #[cfg(test)]
+            if status == command_buffer_status::COMPLETED && front.id.is_some() {
+                if let Some(code) = self.injected_gpu_errors.pop_front() {
+                    let Some(done) = self.in_flight.pop_front() else {
+                        break;
+                    };
+                    return Err(self.command_buffer_failed(done, Some(code)));
+                }
+            }
+            match status {
+                command_buffer_status::COMPLETED => {
+                    if let Some(done) = self.in_flight.pop_front() {
+                        self.memory.remove(done.staging_bytes);
+                        if let Some(id) = done.id {
+                            self.progress.completed = Some(id);
+                            if done.present {
+                                self.progress.presented = Some(id);
+                            }
+                            if let (Some(timing), Some(timestamps), Some(device)) =
+                                (done.timing, self.timestamps.as_mut(), self.device.as_ref())
+                            {
+                                timestamps.complete(
+                                    device.device(),
+                                    id,
+                                    &done.command_buffer,
+                                    timing,
+                                );
+                            }
+                        }
+                    }
+                }
+                command_buffer_status::ERROR => {
+                    let Some(done) = self.in_flight.pop_front() else {
+                        break;
+                    };
+                    return Err(self.command_buffer_failed(done, None));
+                }
+                _ => break,
+            }
+        }
+        Ok(self.progress)
+    }
+
+    /// 테스트용: 내장 shader 대신 `source`로 pipeline을 만듭니다(compile 실패 경로 재현).
+    #[cfg(test)]
+    pub(crate) fn use_shader_source(&mut self, source: &'static str) {
+        self.pipelines = PipelineCache::with_source(source);
+    }
+
+    /// 테스트용: 만든 pipeline state 수.
+    #[cfg(test)]
+    pub(crate) fn pipeline_count(&self) -> usize {
+        self.pipelines.len()
+    }
+
+    /// 테스트용: pipeline state 생성을 실제로 시도한 횟수(실패 포함).
+    #[cfg(test)]
+    pub(crate) fn pipeline_state_creations(&self) -> u64 {
+        self.pipelines.state_creations()
+    }
+
+    /// 테스트용: 연결된 layer.
+    #[cfg(test)]
+    pub(crate) fn layer_surface(&self) -> Option<&LayerSurface> {
+        self.surface.as_ref()
+    }
+
+    /// 테스트용: 열린 surface frame의 drawable texture를 shared buffer로 복사하는 blit을 같은 command
+    /// buffer에 붙입니다(render pass 뒤, present 전). layer가 `framebuffer_only = false`여야 합니다.
+    /// GPU 완료 후 [`crate::tests::buffer_bytes`]로 읽습니다.
+    #[cfg(test)]
+    pub(crate) fn capture_open_drawable(&mut self) -> Result<(Id, usize), BackendError> {
+        let device = self.device()?;
+        let open = self.open.as_ref().ok_or(invalid("열린 frame 없음"))?;
+        let drawable = open.drawable.as_ref().ok_or(invalid("drawable 없음"))?;
+        let bytes_per_pixel = bytes_per_pixel(self.surface_format).ok_or(invalid("format"))?;
+        let row = self.surface_size.width as usize * bytes_per_pixel as usize;
+        let length = row * self.surface_size.height as usize;
+        autoreleasepool(|| {
+            // SAFETY: read_texture_inner와 같은 selector 시그니처이고, 범위는 drawable 크기로 맞췄습니다.
+            unsafe {
+                let buffer = Id::from_owned(device.device().send(
+                    sel!("newBufferWithLength:options:"),
+                    (length as NSUInteger, resource_options::STORAGE_SHARED),
+                ))
+                .ok_or(invalid("buffer"))?;
+                let blit: RawId = open.command_buffer.send(sel!("blitCommandEncoder"), ());
+                let _: () = crate::objc::send(
+                    blit,
+                    sel!("copyFromTexture:sourceSlice:sourceLevel:sourceOrigin:sourceSize:toBuffer:destinationOffset:destinationBytesPerRow:destinationBytesPerImage:"),
+                    (
+                        drawable.texture().as_raw(),
+                        0 as NSUInteger,
+                        0 as NSUInteger,
+                        MTLOrigin { x: 0, y: 0, z: 0 },
+                        MTLSize {
+                            width: self.surface_size.width as NSUInteger,
+                            height: self.surface_size.height as NSUInteger,
+                            depth: 1,
+                        },
+                        buffer.as_raw(),
+                        0 as NSUInteger,
+                        row as NSUInteger,
+                        length as NSUInteger,
+                    ),
+                );
+                let _: () = crate::objc::send(blit, sel!("endEncoding"), ());
+                Ok((buffer, length))
+            }
+        })
+    }
+
+    /// 다음 drawable. nil이거나 크기가 backend 크기와 다르면(layer를 다시 맞춘 뒤) `None`.
+    fn acquire_drawable(&mut self) -> Acquire {
+        #[cfg(test)]
+        if self.drawable_failures > 0 {
+            self.drawable_failures -= 1;
+            return Acquire::Timeout { waited_nanos: 0 };
+        }
+        let Some(surface) = self.surface.as_ref() else {
+            return Acquire::Timeout { waited_nanos: 0 };
+        };
+        let started = std::time::Instant::now();
+        let Some(drawable) = surface.next_drawable() else {
+            let waited_nanos = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            return Acquire::Timeout { waited_nanos };
+        };
+        if drawable.size() != (self.surface_size.width, self.surface_size.height) {
+            self.surface_stats.drawable_size_resyncs += 1;
+            surface.set_drawable_size(self.surface_size);
+            return Acquire::Resynced;
+        }
+        Acquire::Drawable(drawable)
+    }
+
+    fn take_open(&mut self, frame: &EncodedFrame) -> Result<OpenFrame, BackendError> {
+        match self.open.take() {
+            Some(open) if open.token == frame.token() && open.frame == frame.frame() => Ok(open),
+            other => {
+                self.open = other;
+                Err(invalid("열린 frame과 다른 frame입니다"))
+            }
+        }
+    }
+
+    fn encode_inner(
+        &mut self,
+        request: &FrameEncodeRequest<'_>,
+    ) -> Result<EncodeOutcome, BackendError> {
+        self.device()?;
+        if self.open.is_some() {
+            return Err(invalid("이미 열린 frame이 있습니다"));
+        }
+        let encode_start_nanos = self.clock.0.now_nanos();
+        // upload는 frame skip 여부와 상관없이 지금 queue에 넣습니다(다음 frame보다 먼저 실행).
+        self.flush_uploads()?;
+        let needs_surface =
+            request.graph.graph().resources.iter().any(|resource| {
+                resource.lifetime == ResourceLifetime::Imported(ImportKind::Surface)
+            });
+        let drawable = if needs_surface {
+            if self.surface.is_none() {
+                return Err(invalid("surface 없는 backend에 surface graph"));
+            }
+            if self.surface_size.is_empty() {
+                self.surface_stats.skipped_empty += 1;
+                return Ok(EncodeOutcome::Skipped(SkipReason::EmptySurface));
+            }
+            match self.acquire_drawable() {
+                Acquire::Drawable(drawable) => Some(drawable),
+                Acquire::Timeout { waited_nanos } => {
+                    self.surface_stats.skipped_no_drawable += 1;
+                    self.push_event(MetalEvent::DrawableTimeout {
+                        frame: request.frame,
+                        waited_nanos,
+                    });
+                    return Ok(EncodeOutcome::Skipped(SkipReason::NoDrawable));
+                }
+                Acquire::Resynced => {
+                    self.surface_stats.skipped_no_drawable += 1;
+                    return Ok(EncodeOutcome::Skipped(SkipReason::NoDrawable));
+                }
+            }
+        } else {
+            None
+        };
+        let device = self
+            .device
+            .as_ref()
+            .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
+        if let Err(error) = self.transients.prepare(
+            device.device(),
+            request.graph,
+            self.surface_size,
+            &mut self.memory,
+        ) {
+            let requested = match error {
+                PoolError::Invalid(error) => return Err(error),
+                PoolError::OverBudget { requested } | PoolError::AllocationFailed { requested } => {
+                    requested
+                }
+            };
+            let event = self.memory.pressure(requested);
+            self.push_event(event);
+            return Err(BackendError::new(
+                BackendErrorKind::OutOfDeviceMemory,
+                "graph transient가 GPU 메모리 예산을 넘습니다",
+            ));
+        }
+        let device = self
+            .device
+            .as_ref()
+            .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
+        let targets = FrameTargets {
+            request,
+            drawable: drawable.as_ref(),
+            surface_size: self.surface_size,
+            surface_format: self.surface_format,
+            textures: &self.textures,
+            transients: &self.transients,
+        };
+        let mut commands = CommandContext {
+            device: device.device(),
+            buffers: &self.buffers,
+            textures: &self.textures,
+            pipelines: &mut self.pipelines,
+        };
+        let plans = match request
+            .graph
+            .order()
+            .iter()
+            .map(|&pass| plan_pass(&targets, &mut commands, pass))
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(plans) => plans,
+            Err(error) => {
+                if error.kind() == BackendErrorKind::PipelineCreation {
+                    if let Some(shader) = self.pipelines.last_error() {
+                        let stage = shader.stage;
+                        self.push_event(MetalEvent::PipelineFailure { stage });
+                    }
+                }
+                return Err(error);
+            }
+        };
+        // SAFETY: `-commandBuffer`는 () -> id<MTLCommandBuffer>(+0, nil 가능)입니다.
+        let command_buffer =
+            unsafe { Id::from_borrowed(device.queue().send(sel!("commandBuffer"), ())) }.ok_or(
+                BackendError::new(
+                    BackendErrorKind::Internal,
+                    "command buffer를 만들 수 없습니다",
+                ),
+            )?;
+        let timing = self
+            .timestamps
+            .as_mut()
+            .and_then(|timestamps| timestamps.begin_frame(device.device(), request.graph.order()));
+        for (index, plan) in plans.iter().enumerate() {
+            let samples = timing.as_ref().map(|timing| timing.attachment(index));
+            if let Err(error) = encode_pass(&command_buffer, plan, samples) {
+                if let (Some(timing), Some(timestamps)) = (timing, self.timestamps.as_mut()) {
+                    timestamps.recycle(timing);
+                }
+                return Err(error);
+            }
+        }
+        let draw_count: usize = plans.iter().map(|plan| plan.draw_count()).sum();
+        let token = self.next_token;
+        self.next_token = self.next_token.wrapping_add(1);
+        let encode_end_nanos = self.clock.0.now_nanos();
+        self.open = Some(OpenFrame {
+            frame: request.frame,
+            token,
+            command_buffer,
+            drawable,
+            present_nanos: None,
+            encode_start_nanos,
+            encode_end_nanos,
+            pass_count: u32::try_from(plans.len()).unwrap_or(u32::MAX),
+            draw_count: u32::try_from(draw_count).unwrap_or(u32::MAX),
+            timing,
+        });
+        Ok(EncodeOutcome::Encoded(EncodedFrame::new(
+            request.frame,
+            token,
+        )))
+    }
+}
+
+impl RendererBackend for MetalBackend {
+    fn kind(&self) -> BackendKind {
+        BackendKind::Metal
+    }
+
+    fn init(&mut self, config: &DeviceConfig) -> Result<DeviceCapabilities, BackendError> {
+        autoreleasepool(|| {
+            if config.frames_in_flight == 0 || config.frames_in_flight > MAX_FRAMES_IN_FLIGHT {
+                return Err(invalid("frames in flight는 1..=3이어야 합니다"));
+            }
+            if config.surface.format.is_depth_stencil() {
+                return Err(invalid("surface format은 color format이어야 합니다"));
+            }
+            check_surface_size(config.surface.size)?;
+            // 새 device: 이전 resource·frame·submission은 모두 버리고 이전 handle은 무효가 됩니다.
+            self.open = None;
+            self.in_flight.clear();
+            self.device = None;
+            self.capabilities = None;
+            self.pending_uploads.clear();
+            self.pipelines = PipelineCache::new();
+            self.transients.purge();
+            self.lost = false;
+            self.memory = MemoryBudget::new(0);
+            if self.initialized_once {
+                self.textures.invalidate_all()?;
+                self.buffers.invalidate_all()?;
+            }
+            self.initialized_once = true;
+            #[cfg(test)]
+            let forced_failure = std::mem::take(&mut self.fail_device_creation);
+            #[cfg(not(test))]
+            let forced_failure = false;
+            let device = match MetalDevice::system_default() {
+                Ok(device) if !forced_failure => device,
+                Ok(_) | Err(_) => {
+                    self.push_event(MetalEvent::DeviceError {
+                        kind: BackendErrorKind::Unsupported,
+                        submission: None,
+                        command_buffer_error: None,
+                    });
+                    return Err(BackendError::new(
+                        BackendErrorKind::Unsupported,
+                        "Metal GPU device가 없습니다",
+                    ));
+                }
+            };
+            self.memory = MemoryBudget::new(
+                self.memory_budget_override
+                    .unwrap_or_else(|| device.recommended_working_set()),
+            );
+            if let Some(surface) = &self.surface {
+                surface.configure(device.device(), &config.surface)?;
+            }
+            let counter_set = timestamp_counter_set(device.device());
+            let capabilities = device.capabilities(self.surface.is_some(), counter_set.is_some());
+            self.timestamps = match counter_set {
+                Some(set) if config.timestamps => Some(Timestamps::new(device.device(), set)),
+                _ => None,
+            };
+            self.surface_size = config.surface.size;
+            self.surface_format = config.surface.format;
+            self.next_submission = 1;
+            self.progress = GpuProgress::default();
+            self.device = Some(device);
+            self.capabilities = Some(capabilities);
+            Ok(capabilities)
+        })
+    }
+
+    fn resize(&mut self, size: SurfaceSize) -> Result<(), BackendError> {
+        autoreleasepool(|| {
+            self.device()?;
+            if self.open.is_some() {
+                return Err(invalid("열린 frame이 있는 동안 resize할 수 없습니다"));
+            }
+            check_surface_size(size)?;
+            if size == self.surface_size {
+                return Ok(());
+            }
+            if let Some(surface) = &self.surface {
+                surface.set_drawable_size(size);
+            }
+            self.surface_size = size;
+            self.surface_stats.resizes += 1;
+            Ok(())
+        })
+    }
+
+    fn create_buffer(&mut self, desc: &BufferDesc) -> Result<BufferHandle, BackendError> {
+        autoreleasepool(|| {
+            if self.open.is_some() {
+                return Err(invalid(
+                    "열린 frame이 있는 동안 resource를 만들 수 없습니다",
+                ));
+            }
+            self.device()?;
+            self.reserve(desc.size)?;
+            let created = MetalBuffer::create(self.device()?.device(), desc);
+            let buffer = match created {
+                Ok(buffer) => buffer,
+                Err(error) => {
+                    if error.kind() == BackendErrorKind::OutOfDeviceMemory {
+                        let event = self.memory.pressure(desc.size);
+                        self.push_event(event);
+                    }
+                    return Err(error);
+                }
+            };
+            let bytes = buffer.bytes;
+            self.memory.add(bytes);
+            self.buffers.insert(buffer).map_err(|error| {
+                self.memory.remove(bytes);
+                BackendError::from(error)
+            })
+        })
+    }
+
+    fn create_texture(&mut self, desc: &GpuTextureDesc) -> Result<TextureHandle, BackendError> {
+        autoreleasepool(|| {
+            if self.open.is_some() {
+                return Err(invalid(
+                    "열린 frame이 있는 동안 resource를 만들 수 없습니다",
+                ));
+            }
+            let requested = texture_footprint(self.device()?.device(), desc)?;
+            self.reserve(requested)?;
+            let created = create_texture(self.device()?.device(), desc);
+            let texture = match created {
+                Ok(texture) => texture,
+                Err(error) => {
+                    if error.kind() == BackendErrorKind::OutOfDeviceMemory {
+                        let event = self.memory.pressure(requested);
+                        self.push_event(event);
+                    }
+                    return Err(error);
+                }
+            };
+            let bytes = texture.bytes;
+            self.memory.add(bytes);
+            self.textures.insert(texture).map_err(|error| {
+                self.memory.remove(bytes);
+                BackendError::from(error)
+            })
+        })
+    }
+
+    fn update_buffer(
+        &mut self,
+        buffer: BufferHandle,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), BackendError> {
+        if self.open.is_some() {
+            return Err(invalid(
+                "열린 frame이 있는 동안 resource를 갱신할 수 없습니다",
+            ));
+        }
+        self.buffers.get_mut(buffer)?.write(offset, data)
+    }
+
+    fn update_texture(
+        &mut self,
+        texture: TextureHandle,
+        region: TextureRegion,
+        data: &[u8],
+    ) -> Result<(), BackendError> {
+        autoreleasepool(|| {
+            if self.open.is_some() {
+                return Err(invalid(
+                    "열린 frame이 있는 동안 resource를 갱신할 수 없습니다",
+                ));
+            }
+            if self.device.is_none() {
+                return Err(invalid("Metal backend가 초기화되지 않았습니다"));
+            }
+            let native = self.textures.get(texture)?;
+            let layout = upload_layout(&native.desc, region, data.len())?;
+            let target = native.texture.clone();
+            // staging buffer는 GPU가 upload를 끝낼 때까지 예산에 잡힙니다.
+            let requested = layout.length as u64;
+            self.reserve(requested)?;
+            let device = self
+                .device
+                .as_ref()
+                .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
+            let upload = match stage_texture_upload(device.device(), &target, layout, data) {
+                Ok(upload) => upload,
+                Err(error) => {
+                    if error.kind() == BackendErrorKind::OutOfDeviceMemory {
+                        let event = self.memory.pressure(requested);
+                        self.push_event(event);
+                    }
+                    return Err(error);
+                }
+            };
+            self.memory.add(upload.bytes);
+            self.pending_uploads.push(upload);
+            Ok(())
+        })
+    }
+
+    fn destroy_buffer(&mut self, buffer: BufferHandle) -> Result<(), BackendError> {
+        if self.open.is_some() {
+            return Err(invalid(
+                "열린 frame이 있는 동안 resource를 파괴할 수 없습니다",
+            ));
+        }
+        // command buffer가 참조 buffer를 retain하므로 GPU 실행 중이어도 즉시 해제해도 안전합니다.
+        let removed = self.buffers.remove(buffer)?;
+        self.memory.remove(removed.bytes);
+        autoreleasepool(|| drop(removed));
+        Ok(())
+    }
+
+    fn destroy_texture(&mut self, texture: TextureHandle) -> Result<(), BackendError> {
+        if self.open.is_some() {
+            return Err(invalid(
+                "열린 frame이 있는 동안 resource를 파괴할 수 없습니다",
+            ));
+        }
+        // command buffer가 참조 texture를 retain하므로 GPU 실행 중이어도 즉시 해제해도 안전합니다.
+        let removed = self.textures.remove(texture)?;
+        self.memory.remove(removed.bytes);
+        autoreleasepool(|| drop(removed));
+        Ok(())
+    }
+
+    fn encode(&mut self, request: &FrameEncodeRequest<'_>) -> Result<EncodeOutcome, BackendError> {
+        autoreleasepool(|| self.encode_inner(request))
+    }
+
+    fn schedule_present(&mut self, frame: &EncodedFrame) -> Result<(), BackendError> {
+        let open = self
+            .open
+            .as_mut()
+            .filter(|open| open.token == frame.token() && open.frame == frame.frame())
+            .ok_or(invalid("열린 frame과 다른 frame입니다"))?;
+        if open.present_nanos.is_some() {
+            return Err(invalid("present를 이미 예약했습니다"));
+        }
+        let drawable = open.drawable.as_ref().ok_or(invalid(
+            "surface에 그리지 않는 frame은 present할 수 없습니다",
+        ))?;
+        autoreleasepool(|| {
+            // SAFETY: `-presentDrawable:`은 (id<MTLDrawable>) -> void이고 commit 전 command buffer에
+            // 붙입니다.
+            unsafe {
+                let _: () = open
+                    .command_buffer
+                    .send(sel!("presentDrawable:"), (drawable.drawable().as_raw(),));
+            }
+        });
+        open.present_nanos = Some(self.clock.0.now_nanos());
+        Ok(())
+    }
+
+    fn submit(&mut self, frame: EncodedFrame) -> Result<SubmissionId, BackendError> {
+        let open = self.take_open(&frame)?;
+        autoreleasepool(|| {
+            // SAFETY: `-commit`은 () -> void이며 frame당 한 번만 부릅니다(open을 소비).
+            unsafe {
+                let _: () = open.command_buffer.send(sel!("commit"), ());
+            }
+        });
+        let submit_nanos = self.clock.0.now_nanos();
+        let id = SubmissionId(self.next_submission);
+        self.next_submission += 1;
+        if self.traces.len() == MAX_FRAME_TRACES {
+            self.traces.pop_front();
+        }
+        self.traces.push_back(MetalFrameTrace {
+            frame: open.frame.0,
+            submission: id.0,
+            encode_start_nanos: open.encode_start_nanos,
+            encode_end_nanos: open.encode_end_nanos,
+            present_nanos: open.present_nanos,
+            submit_nanos,
+            pass_count: open.pass_count,
+            draw_count: open.draw_count,
+        });
+        self.in_flight.push_back(InFlight {
+            id: Some(id),
+            command_buffer: open.command_buffer,
+            present: open.present_nanos.is_some(),
+            timing: open.timing,
+            staging_bytes: 0,
+        });
+        Ok(id)
+    }
+
+    fn discard(&mut self, frame: EncodedFrame) -> Result<(), BackendError> {
+        // commit하지 않은 command buffer와 drawable을 놓습니다. GPU는 이 frame을 보지 않습니다.
+        let mut open = self.take_open(&frame)?;
+        if let (Some(timing), Some(timestamps)) = (open.timing.take(), self.timestamps.as_mut()) {
+            timestamps.recycle(timing);
+        }
+        autoreleasepool(|| drop(open));
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Result<GpuProgress, BackendError> {
+        self.device()?;
+        autoreleasepool(|| self.poll_completions())
+    }
+
+    /// GPU timestamp 결과(XI.8.6). 아직 GPU에서 끝나지 않았으면 `Pending`, 측정하지 않는 설정·device이거나
+    /// 측정하지 않은 frame·보관 범위([`crate::MAX_TIMING_RESULTS`]) 밖이면 `Unsupported`입니다.
+    fn query_timestamps(
+        &mut self,
+        submission: SubmissionId,
+    ) -> Result<TimestampQuery, BackendError> {
+        self.device()?;
+        autoreleasepool(|| {
+            self.poll_completions()?;
+            let Some(timestamps) = &self.timestamps else {
+                return Ok(TimestampQuery::Unsupported);
+            };
+            if self
+                .in_flight
+                .iter()
+                .any(|entry| entry.id == Some(submission))
+            {
+                return Ok(TimestampQuery::Pending);
+            }
+            Ok(timestamps
+                .result(submission)
+                .cloned()
+                .map_or(TimestampQuery::Unsupported, TimestampQuery::Ready))
+        })
+    }
+}

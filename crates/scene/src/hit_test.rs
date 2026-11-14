@@ -13,8 +13,8 @@
 //!    판정하고, path clip은 broad-phase에서 clip path의 control point 껍질로 판정합니다(보수적).
 //! 6. 남은 후보를 **z-order 역순**(위에 그린 것부터)으로 정렬합니다. 첫 항목이 topmost입니다.
 //!
-//! node content geometry(path 내부, glyph 등) 정밀 판정은 narrow-phase(XI.3.4)가 이 결과 위에서
-//! 합니다.
+//! node content geometry(path 내부, glyph 등) 정밀 판정은 narrow-phase(XI.3.4,
+//! [`crate::narrow_phase::hit_test`])가 이 결과 위에서 합니다.
 
 use std::sync::Arc;
 
@@ -53,6 +53,10 @@ pub struct HitStats {
     pub outside: usize,
     /// clip 밖이라 뺀 수.
     pub clipped: usize,
+    /// narrow-phase(XI.3.4)에서 path clip 내부 정밀 판정으로 뺀 수. broad-phase만 쓰면 0입니다.
+    pub path_clipped: usize,
+    /// narrow-phase(XI.3.4)에서 content geometry 밖이라 뺀 수. broad-phase만 쓰면 0입니다.
+    pub content_missed: usize,
 }
 
 /// broad-phase 결과(topmost 우선).
@@ -77,7 +81,7 @@ impl HitResult {
 }
 
 /// `point`를 `transform`의 local 좌표로 되돌립니다. 역변환 불가·비유한이면 `None`.
-fn to_local(transform: &Transform2D, point: Vec2) -> Option<Vec2> {
+pub(crate) fn to_local(transform: &Transform2D, point: Vec2) -> Option<Vec2> {
     transform.inverse()?.apply(point).ok()
 }
 
@@ -141,8 +145,31 @@ pub fn clip_stack_contains(clip: &ClipStackRef, point: Vec2) -> bool {
 
 /// world 점 `point`의 broad-phase hit test.
 pub fn hit_test_broad(index: &SceneSpatialIndex, point: Vec2) -> HitResult {
+    broad_phase(index, point, 0.0)
+}
+
+/// 변환의 선형부 평균 축척 `√|det|`. 0·비유한이면 `None`.
+pub(crate) fn linear_scale(transform: &Transform2D) -> Option<f32> {
+    let scale = transform.determinant().abs().sqrt();
+    (scale.is_finite() && scale > 0.0).then_some(scale)
+}
+
+/// broad-phase 본체. `tolerance`(world 단위, 비음수)만큼 점 주변을 넓혀 후보와 node bounds를 봅니다.
+///
+/// `tolerance`가 0이면 [`hit_test_broad`]와 같습니다. 넓힐 때 local bounds는 node world transform의
+/// 평균 축척(`√|det|`)으로 나눈 거리만큼 넓힙니다(비균일 축척에서는 근사). clip은 넓히지 않습니다.
+pub(crate) fn broad_phase(index: &SceneSpatialIndex, point: Vec2, tolerance: f32) -> HitResult {
+    let tolerance = if tolerance.is_finite() && tolerance > 0.0 {
+        tolerance
+    } else {
+        0.0
+    };
     let mut candidates = Vec::new();
-    index.query_point(point, &mut candidates);
+    if tolerance > 0.0 {
+        index.query_rect(&Aabb::point(point).expanded(tolerance), &mut candidates);
+    } else {
+        index.query_point(point, &mut candidates);
+    }
     let mut result = HitResult {
         hits: Vec::with_capacity(candidates.len()),
         stats: HitStats {
@@ -163,9 +190,16 @@ pub fn hit_test_broad(index: &SceneSpatialIndex, point: Vec2) -> HitResult {
             result.stats.pass_through += 1;
             continue;
         }
-        let Some(local) = to_local(&node.world_transform(), point)
-            .filter(|local| node.local_hit_bounds().contains_point(*local))
-        else {
+        let local_tolerance = if tolerance > 0.0 {
+            linear_scale(&node.world_transform()).map_or(0.0, |scale| tolerance / scale)
+        } else {
+            0.0
+        };
+        let Some(local) = to_local(&node.world_transform(), point).filter(|local| {
+            node.local_hit_bounds()
+                .expanded(local_tolerance)
+                .contains_point(*local)
+        }) else {
             result.stats.outside += 1;
             continue;
         };

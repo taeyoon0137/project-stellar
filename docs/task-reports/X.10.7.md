@@ -69,3 +69,14 @@
   테스트를 고치는 `Fix:`가 `tools/xtask`(이 lane 허용 경로 밖)에 필요합니다.
 - 합성 폰트는 GPOS(kerning·mark 위치)·복합 script GSUB(아랍어 연결형 등)를 담지 않습니다. 실제 폰트 golden은 라이선스상
   저장 가능한 폰트를 프로젝트 fixture로 들일 때 추가해야 합니다.
+
+## 후속 확인 (posthoc 리뷰 TS-5: check-core 차단 원인 해소)
+
+- 위 "check-core 실패(통합 차단)" 항목의 원인은 main에서 해소되었습니다. `975bf0a`(XXIX.1.2)가 `validate-dependencies`를
+  workspace 전체 직접 의존성 검사(`cargo tree --workspace`)로 바꿨고, `24728e3`이 `real_dependencies_file_parses`가 실제
+  workspace 사용 목록을 쓰도록 고쳤습니다. 위 표의 `cargo xtask check-core` 65는 당시 상태입니다.
+
+| 명령 (기준 `5d0f2ce` + 이 lane 수정, xtask·의존성 변경 없음) | 결과 |
+|---|---|
+| `cargo run -q -p xtask -- validate-dependencies` | 0 |
+| `cargo test -q -p xtask real_dependencies_file_parses` | 0 (1 passed) |

@@ -63,3 +63,12 @@
 - 공식 `BidiCharacterTest.txt` 전체 적합성은 `unicode-bidi` crate 자체 테스트에 의존합니다. 이 crate가 L1·L2를
   다시 구현했으므로 참조 일치 검사 범위(corpus 항목)를 넘는 입력의 차이는 아직 검증하지 않았습니다.
 - `cargo xtask validate-dependencies` 범위 문제(xtask 직접 의존성만 수집)는 X.9.1 보고서와 같습니다.
+
+## 후속 수정 (posthoc 리뷰 TS-2 관련: `line_levels`의 BiDi paragraph 전체 순회)
+
+- **결함**: `BidiParagraph::line_levels`가 줄마다 모든 BiDi paragraph를 훑었습니다. U+2029(문단 구분)가 많은
+  paragraph는 줄 수와 BiDi paragraph 수가 함께 늘어 줄 배치 비용이 제곱이었습니다.
+- **수정**: BiDi paragraph 범위는 텍스트 순서로 빈틈없이 이어지므로 줄과 겹치는 첫 paragraph를 이분 탐색하고
+  겹치는 동안만 L1을 적용합니다. level 결과는 같습니다(BiDi corpus·참조 일치 검사 통과).
+- **회귀 테스트**: X.10.2 보고서의 `paragraph_layout_work_is_linear_in_text_length` U+2029 입력이 이 경로를
+  검사합니다.

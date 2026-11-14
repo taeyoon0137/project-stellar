@@ -69,6 +69,15 @@ pub mod repo_status;
 /// Stellar 프로젝트 파일 분류와 raw Git status 분리(XIV.4.4).
 pub mod classify;
 
+/// Stellar 프로젝트 파일 단위 영역별 status(XIV.4.3).
+pub mod file_status;
+
+/// raw Git status와 semantic status 실패 분리(XIV.4.5).
+pub mod project_status;
+
+/// Stage candidate 임시 project tree writer(XIV.5.5).
+pub mod candidate_tree;
+
 /// Remote 목록·연결·push(XIV.9.*).
 pub mod remote;
 
@@ -100,6 +109,10 @@ mod test_support;
 /// 테스트에서만 빌드됩니다.
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
+
+/// Git 통합 corpus: 특수 경로·mode·LFS pointer·손상 프로젝트(XIV.14.6, 테스트 빌드 전용).
+#[cfg(all(test, unix))]
+mod corpus;
 
 /// Git snapshot 원천과 provider(XIV.2.3~).
 pub mod snapshot;

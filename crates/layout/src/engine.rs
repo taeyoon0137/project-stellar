@@ -122,17 +122,29 @@ fn run(
     cache: Option<&mut MeasureCache>,
 ) -> Result<LayoutRun, LayoutError> {
     let tree = input.tree()?;
-    if tree.depth <= INLINE_LAYOUT_DEPTH {
-        return compute_validated(input, tree, measurer, cache);
-    }
     let depth = tree.depth;
+    with_layout_stack(depth, move || {
+        compute_validated(input, tree, measurer, cache)
+    })
+}
+
+/// 깊이 `depth`인 tree의 재귀 계산 `f`를 실행합니다 (crate 내부).
+///
+/// 깊이가 [`INLINE_LAYOUT_DEPTH`] 이하면 호출 thread에서, 더 깊으면 [`DEEP_LAYOUT_STACK_BYTES`] stack을
+/// 가진 전용 thread에서 실행하고 결과를 돌려줍니다. thread를 만들 수 없으면
+/// [`LayoutError::DeepStackUnavailable`], 계산 중 panic은 호출 thread에서 다시 일으킵니다.
+pub(crate) fn with_layout_stack<T: Send>(
+    depth: usize,
+    f: impl FnOnce() -> Result<T, LayoutError> + Send,
+) -> Result<T, LayoutError> {
+    if depth <= INLINE_LAYOUT_DEPTH {
+        return f();
+    }
     std::thread::scope(|scope| {
         let worker = std::thread::Builder::new()
             .name("stellar-layout-deep".to_owned())
             .stack_size(DEEP_LAYOUT_STACK_BYTES)
-            .spawn_scoped(scope, move || {
-                compute_validated(input, tree, measurer, cache)
-            })
+            .spawn_scoped(scope, f)
             .map_err(|_| LayoutError::DeepStackUnavailable { depth })?;
         match worker.join() {
             Ok(result) => result,
@@ -149,7 +161,14 @@ fn compute_validated(
     measurer: &dyn ContentMeasurer,
     cache: Option<&mut MeasureCache>,
 ) -> Result<LayoutRun, LayoutError> {
-    let mut engine = Engine::new(input, tree, measurer, cache)?;
+    let nodes = prepare_all(input)?;
+    // cache가 없으면 key가 필요 없으므로 subtree hash를 계산하지 않습니다.
+    let subtree = if cache.is_some() {
+        subtree_hashes(input, &tree)
+    } else {
+        Vec::new()
+    };
+    let mut engine = Engine::new(input, &tree, &nodes, &subtree, measurer, cache);
     let root = engine.tree.root;
     let size = engine.resolve_size(root, ChildConstraint::UNCONSTRAINED)?;
     let mut pending = Vec::with_capacity(input.nodes.len());
@@ -177,6 +196,11 @@ fn compute_validated(
         result,
         stats: engine.stats,
     })
+}
+
+/// 모든 node 입력을 변환합니다(입력 순서).
+pub(crate) fn prepare_all(input: &LayoutInput) -> Result<Vec<Prepared>, LayoutError> {
+    input.nodes.iter().map(prepare).collect()
 }
 
 /// 부모 배치 방식이 자식 크기 해석에 주는 축별 제약.
@@ -269,7 +293,20 @@ pub(crate) struct Prepared {
 }
 
 /// HugContent 순환 검사(X.6.5)용 축별 콘텐츠 크기 조상.
-type CycleLink = [Option<StableId>; 2];
+pub(crate) type CycleLink = [Option<StableId>; 2];
+
+/// node 하나의 배치 결과(자손 배치 전, X.7.3 증분 경로와 공유).
+#[derive(Debug, Clone)]
+pub(crate) struct OwnArrangement {
+    /// 자신의 local 좌표 content box.
+    pub(crate) content: LayoutRect,
+    /// top 기준 첫 baseline.
+    pub(crate) baseline: Option<LayoutUnit>,
+    /// 자식 link 계산에 쓰는 자신의 콘텐츠 크기 조상([`Engine::child_link`]).
+    pub(crate) own: CycleLink,
+    /// 표시되는 자식과 rect(부모 local 좌표), 배치 순서.
+    pub(crate) placements: Vec<(usize, LayoutRect)>,
+}
 
 /// 결과 box 조립 전 값.
 #[derive(Debug, Clone, Copy)]
@@ -284,16 +321,16 @@ struct PendingBox {
 /// 레이아웃 계산 상태(한 번의 계산 동안만 유지).
 pub(crate) struct Engine<'a> {
     pub(crate) input: &'a LayoutInput,
-    pub(crate) tree: TreeIndex,
-    pub(crate) nodes: Vec<Prepared>,
+    pub(crate) tree: &'a TreeIndex,
+    pub(crate) nodes: &'a [Prepared],
     memo: HashMap<(usize, ChildConstraint, IntrinsicMode), LayoutSize>,
     /// 지금 계산 중인 측정의 mode(X.4.5). container 측정이 자식 크기 해석에 그대로 전달합니다.
     /// 배치 단계에서는 항상 `MaxContent`입니다.
     mode: IntrinsicMode,
     /// 측정 결과 in-run memo((node index, 가용 크기, mode) → 측정값, X.7.2).
     measure_memo: HashMap<(usize, [Option<LayoutUnit>; 2], IntrinsicMode), IntrinsicSize>,
-    /// node별 subtree input hash(입력 순서, X.7.2).
-    subtree: Vec<LayoutInputHash>,
+    /// node별 subtree input hash(입력 순서, X.7.2). cache가 없으면 비어 있을 수 있습니다.
+    subtree: &'a [LayoutInputHash],
     /// 계산 간 측정 cache(X.7.2).
     cache: Option<&'a mut MeasureCache>,
     /// 콘텐츠 측정기(X.6.4).
@@ -303,7 +340,7 @@ pub(crate) struct Engine<'a> {
     /// 레이아웃을 실패시키지 않는 진단(배치 순서대로).
     pub(crate) diagnostics: Vec<LayoutDiagnostic>,
     /// 집계(X.7.2).
-    stats: LayoutStats,
+    pub(crate) stats: LayoutStats,
 }
 
 /// 수치 오류를 node 문맥과 함께 레이아웃 오류로 바꿉니다.
@@ -329,24 +366,17 @@ pub(crate) fn size_of(
 }
 
 impl<'a> Engine<'a> {
-    fn new(
+    /// 계산 상태를 만듭니다. `nodes`·`subtree`는 입력 순서이며, `cache`가 있으면 `subtree`는 모든 node의
+    /// 현재 subtree hash여야 합니다.
+    pub(crate) fn new(
         input: &'a LayoutInput,
-        tree: TreeIndex,
+        tree: &'a TreeIndex,
+        nodes: &'a [Prepared],
+        subtree: &'a [LayoutInputHash],
         measurer: &'a dyn ContentMeasurer,
         cache: Option<&'a mut MeasureCache>,
-    ) -> Result<Engine<'a>, LayoutError> {
-        let nodes = input
-            .nodes
-            .iter()
-            .map(prepare)
-            .collect::<Result<Vec<_>, _>>()?;
-        // cache가 없으면 key가 필요 없으므로 subtree hash를 계산하지 않습니다.
-        let subtree = if cache.is_some() {
-            subtree_hashes(input, &tree)
-        } else {
-            Vec::new()
-        };
-        Ok(Engine {
+    ) -> Engine<'a> {
+        Engine {
             input,
             tree,
             nodes,
@@ -359,7 +389,7 @@ impl<'a> Engine<'a> {
             grid_areas: HashMap::new(),
             diagnostics: Vec::new(),
             stats: LayoutStats::default(),
-        })
+        }
     }
 
     /// node content를 측정합니다(bottom-up, X.7.2).
@@ -647,7 +677,7 @@ impl<'a> Engine<'a> {
     /// - `HugContent` 축: node 자신(비율로 다른 `Fixed` 축에서 정해지면 제외).
     /// - `Fill`·`Percentage` 축: containing block을 그대로 따르므로 `link`.
     /// - `Fixed` 축: 없음.
-    fn content_source(&self, index: usize, link: CycleLink) -> CycleLink {
+    pub(crate) fn content_source(&self, index: usize, link: CycleLink) -> CycleLink {
         let prepared = &self.nodes[index];
         let mut own = [None, None];
         for axis in Axis::BOTH {
@@ -673,7 +703,7 @@ impl<'a> Engine<'a> {
     /// Free는 부모 extent에 기여하는 자식(끝 anchor·백분율 시작 anchor 없음)만, Stack·Overlay·
     /// Constraint는 모든 자식이 부모 콘텐츠 box를 따릅니다. Grid item은 영역 track이 콘텐츠 기반이면
     /// Grid 자신, fr track이면 Grid 축의 콘텐츠 크기 조상을 따릅니다.
-    fn child_link(&self, parent: usize, child: usize, own: CycleLink) -> CycleLink {
+    pub(crate) fn child_link(&self, parent: usize, child: usize, own: CycleLink) -> CycleLink {
         let mut link = [None, None];
         for axis in Axis::BOTH {
             let i = axis.index();
@@ -703,21 +733,20 @@ impl<'a> Engine<'a> {
         link
     }
 
-    /// node를 `rect`(부모 local 좌표)에 놓고 자손을 배치합니다. 자신의 overflow bounds를 반환합니다.
+    /// node 자신을 `size` 크기로 배치합니다(자손 배치 전 단계, X.7.3 증분 경로와 공유).
     ///
-    /// `link`는 HugContent 순환 검사(X.6.5)용 축별 콘텐츠 크기 조상입니다.
-    fn arrange(
+    /// HugContent 순환 진단(자신)과 자식 배치 진단은 [`Engine::diagnostics`]에 이 순서로 더합니다. `link`는
+    /// HugContent 순환 검사(X.6.5)용 축별 콘텐츠 크기 조상입니다.
+    pub(crate) fn arrange_own(
         &mut self,
         index: usize,
-        rect: LayoutRect,
+        size: LayoutSize,
         link: CycleLink,
-        out: &mut Vec<PendingBox>,
-    ) -> Result<LayoutRect, LayoutError> {
+    ) -> Result<OwnArrangement, LayoutError> {
         let prepared = &self.nodes[index];
         let id = prepared.id;
         let padding = prepared.padding;
         let sizing = prepared.sizing;
-        let size = rect.size();
         self.stats.arranged = self.stats.arranged.saturating_add(1);
         // X.6.5: Percentage 축이 자신의 측정 기여로 크기가 정해지는 조상에 비례하면 순환입니다.
         for axis in Axis::BOTH {
@@ -741,15 +770,6 @@ impl<'a> Engine<'a> {
         let inner = size_of(id, inner_width, inner_height)?;
         let content = LayoutRect::from_origin_size(padding.left, padding.top, inner);
         let baseline = self.border_baseline(index, size)?;
-        let slot = out.len();
-        out.push(PendingBox {
-            id,
-            rect,
-            content,
-            baseline,
-            overflow: LayoutRect::at_origin(size),
-        });
-
         let placements = match &self.node(index).container {
             ContainerLayout::Free => free::place(self, index, inner)?,
             ContainerLayout::Stack(_) => stack::place(self, index, inner)?,
@@ -757,9 +777,38 @@ impl<'a> Engine<'a> {
             ContainerLayout::Overlay(_) => overlay::place(self, index, inner)?,
             ContainerLayout::Constraint => constraint::place(self, index, inner)?,
         };
+        Ok(OwnArrangement {
+            content,
+            baseline,
+            own,
+            placements,
+        })
+    }
+
+    /// node를 `rect`(부모 local 좌표)에 놓고 자손을 배치합니다. 자신의 overflow bounds를 반환합니다.
+    ///
+    /// `link`는 HugContent 순환 검사(X.6.5)용 축별 콘텐츠 크기 조상입니다.
+    fn arrange(
+        &mut self,
+        index: usize,
+        rect: LayoutRect,
+        link: CycleLink,
+        out: &mut Vec<PendingBox>,
+    ) -> Result<LayoutRect, LayoutError> {
+        let id = self.nodes[index].id;
+        let size = rect.size();
+        let own = self.arrange_own(index, size, link)?;
+        let slot = out.len();
+        out.push(PendingBox {
+            id,
+            rect,
+            content: own.content,
+            baseline: own.baseline,
+            overflow: LayoutRect::at_origin(size),
+        });
         let mut overflow = LayoutRect::at_origin(size);
-        for (child, child_rect) in placements {
-            let child_link = self.child_link(index, child, own);
+        for (child, child_rect) in own.placements {
+            let child_link = self.child_link(index, child, own.own);
             let child_overflow = self.arrange(child, child_rect, child_link, out)?;
             let moved = child_overflow
                 .translated(child_rect.x(), child_rect.y())
@@ -772,7 +821,7 @@ impl<'a> Engine<'a> {
 }
 
 /// node 입력을 subpixel 값으로 변환합니다(값 범위는 이미 검증됨).
-fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
+pub(crate) fn prepare(node: &LayoutNode) -> Result<Prepared, LayoutError> {
     let padding = prepare_padding(node.id, &node.padding)?;
     let mut sizing = [AxisSizing::Hug; 2];
     for (axis, mode) in [

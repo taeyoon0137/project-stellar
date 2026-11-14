@@ -57,3 +57,26 @@
   경계 활용)은 후속 최적화입니다.
 - 문서 모델(scalar index)과의 연결(문서 Text payload → `ParagraphSpec`)은 상위 계층 몫입니다(`text`는 `document`에
   의존하지 않음).
+
+## 후속 수정 (posthoc 리뷰 TS-4: cache 검증 값이 hash로만 비교하던 입력)
+
+- **결함**: 모듈 문서와 X.10.5 보고서는 cache가 원본 입력을 다시 비교해 hash 충돌로 잘못된 결과를 돌려주지 않는다고
+  했지만, shaping 검증 값은 paragraph 텍스트·span·기준 방향만 담았습니다. style 값(글꼴 크기·feature·variation),
+  fallback chain 항목·사용 가능 여부는 FNV-1a hash로만 비교했고, 줄 검증 값 `(ShapingCheck, ParagraphLayoutStyle)`에는
+  줄바꿈 옵션(word-break·엄격도)이 없었습니다. FNV-1a는 충돌 저항성이 없으므로 key가 충돌하면 다른 입력의 결과를
+  돌려줄 수 있었습니다.
+- **수정**: `ShapingCheck`가 paragraph가 쓰는 style(`paragraph_styles`)마다 글꼴 크기·`ShapingStyle`·fallback chain·
+  항목별 사용 가능 handle을 원본으로 담습니다. 결과 run이 face handle을 담으므로 handle 정체성도 비교합니다. 줄 검증
+  값은 `LineCheck`(shaping 검증 값, paragraph 속성, `LineBreakOptions`)입니다. locale·target profile·너비는 key에 원본
+  그대로 있어 key 비교로 충분합니다. 레이아웃 결과는 같습니다(golden 불변).
+- **회귀 테스트**: `incremental::tests::hash_collision_between_different_inputs_is_a_miss`는 cache 항목을 다른 입력의
+  key로 옮겨(`LayoutCache::rekey`, 테스트 전용) 충돌을 재현합니다. 16px 항목에 20px 요청이, Normal 줄 항목에 KeepAll
+  요청이 들어오면 miss로 다시 계산하고 결과가 새 엔진과 같은지 봅니다. 수정 전 검증 값으로는 두 경우 모두 앞 입력의
+  결과를 그대로 돌려줘 실패합니다(shaping 검증 값만 고친 상태에서는 KeepAll 경우가 실패).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-text` | 0 (115 unit passed, golden 포함) |
+| `cargo clippy -p stellar-text --all-targets -- -D warnings` | 0 |
+| `cargo clippy -p stellar-text --release -- -D warnings` | 0 |
+| `cargo fmt -p stellar-text -- --check` | 0 |

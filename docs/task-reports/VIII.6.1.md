@@ -53,3 +53,26 @@
 - `expected_type`이 실제 target 속성의 선언 타입과 같은지는 속성 metadata registry(document crate, 허용 edge 밖)가
   필요해 binding 단독으로는 확인하지 않습니다. 호출자가 선언 타입을 넣어야 합니다.
 - PropertyPath decoder는 expressions crate의 비공개 decoder와 같은 규칙을 이 crate에 다시 구현했습니다(공용화는 후속).
+
+## 후속 기록 (사후 리뷰 EB-4: ADR-0026)
+
+이 작업이 정한 binding binary 형식(`BINDING_FORMAT_VERSION = 1`)을
+`docs/adr/ADR-0026-binding-storage-and-environment-registry.md`에 Accepted(소급)로 기록했습니다.
+바이트 배치, 디코더 규칙, V.8 기준 버전·migration 규칙이 들어 있습니다. ADR 기록 커밋은 문서만
+바꿨습니다. 그 뒤 사후 리뷰 수정에서 바꾼 코드는 아래 항목에 적었습니다.
+
+- **정정**: 위 "round-trip 형식"의 "V.1.1 규칙(LE)"은 binding이 직접 쓰는 정수(version, blob 길이,
+  `enum_type`)에 해당합니다. 담겨 있는 하위 bytes는 각 형식 그대로입니다. `PropertyPath` bytes
+  (III.2.2)의 내부 정수는 big-endian입니다. AST literal 안 `TypedValue` bytes(III.3.5)는 정수(길이
+  프리픽스, Enum 필드, Gradient stop 수)가 big-endian이고 `f32` payload(Number·Length·Percentage·
+  Angle·Duration, Color 채널, Shadow, Gradient stop 위치)가 little-endian입니다(ADR-0008,
+  ADR-0026 1절). `binding.rs` 모듈 문서도 같은 내용으로 고쳤습니다.
+- **golden bytes(사후 리뷰 수정)**: `ValueBinding` 고정 golden bytes test가 없었습니다.
+  `canonical_bytes_golden`을 추가해 ADR-0026 1절 배치에서 직접 조립한 bytes로 binding 두 개를
+  고정했습니다. 확인을 위해 `type_spec`의 `enum_type`을 encoder·decoder 모두 big-endian으로 바꿔
+  보았습니다. 그러자 기존 test 51개는 모두 통과했고 `canonical_bytes_golden`만 실패했습니다. 바꾼
+  코드는 되돌렸습니다.
+- **보호 경로(사후 리뷰 수정)**: `crates/bindings/src/binding.rs`를 ADR 보호 경로
+  (`tools/xtask/src/adr_policy.rs`의 정확히 일치 목록)에 추가했습니다. 이제 이 파일을 바꾸는 diff에
+  ADR이 없으면 `validate-adr`가 실패합니다. 같은 변경에서 `crates/expressions/src/codec.rs`와
+  `crates/expressions/src/environment.rs`도 추가했습니다(I.3.5 보고서 후속 기록).

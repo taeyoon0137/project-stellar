@@ -4,6 +4,10 @@
 //! ours(stage 2)·theirs(stage 3)를 각각 `.git` 없는 임시 프로젝트 디렉터리로 만들면(conflict 없는 경로는
 //! index stage 0과 결합), 이 모듈은 세 디렉터리를 실제 프로젝트 열기 loader
 //! ([`SavedProjectLoader`]: `stellar.yaml` → current pointer → manifest → chunk, V.4.4)로 엽니다.
+//! side는 사용자가 checkout하지 않은 Git 객체에서 온 비신뢰 입력이라
+//! [`SavedProjectLoader::for_materialized_snapshot`]으로 엽니다: `design/` 저장소 경로의 symlink를
+//! 따르지 않고(snapshot 밖 파일을 읽지 않음), 정규 파일이 아니거나 크기 상한을 넘는 저장소 파일은 읽기
+//! 전에 거부합니다.
 //!
 //! - side별 열기 결과는 따로 보존합니다. 한 side의 프로젝트가 그 side에서 삭제됐거나 pointer·chunk가
 //!   서로 다른 stage에서 와서 검증에 실패해도 다른 side와 raw conflict 목록은 그대로 씁니다(semantic
@@ -105,7 +109,8 @@ pub fn open_conflict_projects(
         .map_err(ConflictOpenError::Session)?;
     let snapshots = materialize_conflict_snapshots(git, worktree, session.path())
         .map_err(ConflictOpenError::Snapshot)?;
-    let loader = SavedProjectLoader::new();
+    // side는 checkout하지 않은 Git 객체에서 온 비신뢰 입력이라 저장소 경로의 symlink를 따르지 않습니다.
+    let loader = SavedProjectLoader::for_materialized_snapshot();
     let open = |side: ConflictSide| loader.open(snapshots.side(side).root());
     Ok(ConflictProjects {
         base: open(ConflictSide::Base),

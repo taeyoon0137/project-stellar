@@ -453,10 +453,14 @@ mod git_clone_tests {
         let source = work.join("source");
         make_source_repo(&runner, &source);
         let parent = work.join("dest-parent");
-        // 비정상 종료한 process(존재하지 않는 pid)가 남긴 staging.
+        // 이 host에서 비정상 종료한 process(존재하지 않는 pid)가 남긴 staging.
         let stale = parent.join(format!("{CLONE_STAGING_PREFIX}-99999999-0-0"));
         std::fs::create_dir_all(stale.join("checkout/.git")).unwrap();
-        std::fs::write(stale.join(crate::private_temp::PRIVATE_TEMP_MARKER), b"").unwrap();
+        std::fs::write(
+            stale.join(crate::private_temp::PRIVATE_TEMP_MARKER),
+            crate::private_temp::marker_contents().unwrap(),
+        )
+        .unwrap();
         std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o700)).unwrap();
         // 사용자 파일은 건드리지 않음.
         std::fs::write(parent.join("notes.txt"), b"user").unwrap();

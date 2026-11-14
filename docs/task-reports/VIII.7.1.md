@@ -53,3 +53,19 @@
 - missing key 기본값 정책은 VIII.7.2에서 이 registry에 추가합니다.
 - 다른 enum registry(문서 enum 등)가 생길 때 `0xE000_0000` 대역 예약을 지켜야 합니다(현재 저장소에 다른 enum 타입 ID
   registry 없음).
+
+## 후속 기록 (사후 리뷰 EB-4: ADR-0026)
+
+이 작업이 정한 environment key ID 1\~11과 환경 enum 타입 ID·variant 번호를
+`docs/adr/ADR-0026-binding-storage-and-environment-registry.md`에 Accepted(소급)로 기록했습니다.
+번호 할당·재사용 금지·삭제 금지 규칙이 들어 있습니다. ADR 기록 커밋은 문서만 바꿨습니다. 그 뒤
+사후 리뷰 수정에서 바꾼 코드는 아래 항목에 적었습니다.
+
+- **대역 상한**: 코드 문서의 "`0xE000_0000` 대역"을 ADR에서 `0xE000_0000`\~`0xE000_FFFF`로
+  고정했습니다. `0xE000_0000`은 할당하지 않습니다. 사후 리뷰 수정에서 `environment.rs` 모듈 문서에
+  이 대역과 할당 규칙을 적었습니다. 또 test `environment_enum_types_stay_in_reserved_band`를
+  추가해, 등록된 환경 enum 타입이 대역 안에 있고 `0xE000_0001`부터 연속인지 검사합니다. 확인을 위해
+  `INTERACTION_STATE_TYPE`을 `0xE001_0004`로 바꿔 보았고, 이 test와 기존 golden test가 실패했습니다.
+  바꾼 코드는 되돌렸습니다.
+- **정정**: 위 "현재 저장소에 다른 enum 타입 ID registry 없음"은 `5d0f2ce` 기준으로 맞지 않습니다.
+  document List 계약(IX.6.5)이 `0x000C_0001`\~`0x000C_0003`을 씁니다. 대역 밖이라 충돌은 없습니다.

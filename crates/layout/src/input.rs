@@ -297,16 +297,15 @@ pub struct LayoutInput {
 #[derive(Debug, Clone)]
 pub(crate) struct TreeIndex {
     /// StableId → `nodes` index.
-    #[allow(dead_code)]
     pub(crate) index: HashMap<StableId, usize>,
     /// 부모 index.
-    #[allow(dead_code)]
     pub(crate) parent: Vec<Option<usize>>,
     /// visual order로 정렬한 자식 index.
     pub(crate) children: Vec<Vec<usize>>,
     /// root index.
     pub(crate) root: usize,
-    /// tree 최대 깊이(root = 0, [`MAX_LAYOUT_DEPTH`] 이하).
+    /// tree 최대 깊이(root = 0, [`MAX_LAYOUT_DEPTH`] 이하). 증분 레이아웃(X.7.3)은 구조 edit마다 node별 깊이
+    /// 표로 실제 최대 깊이를 유지합니다(삭제·이동으로 얕아지면 줄어듦). 계산 thread 선택에만 쓰입니다.
     pub(crate) depth: usize,
 }
 
@@ -396,12 +395,7 @@ impl LayoutInput {
         for (position, node) in self.nodes.iter().enumerate() {
             validate_node_values(node, position == root)?;
             if let Some(parent_index) = parent[position] {
-                match &self.nodes[parent_index].container {
-                    ContainerLayout::Free => validate_anchor_combination(node)?,
-                    ContainerLayout::Stack(stack) => validate_flex_combination(node, stack.axis)?,
-                    ContainerLayout::Grid(grid) => validate_item(node.id, &node.grid, grid)?,
-                    ContainerLayout::Overlay(_) | ContainerLayout::Constraint => {}
-                }
+                validate_in_parent(node, &self.nodes[parent_index].container)?;
             }
         }
         Ok(TreeIndex {
@@ -467,8 +461,21 @@ pub(crate) fn length_unit(
     LayoutUnit::from_length(value).map_err(|_| LayoutError::OutOfRange { node, property })
 }
 
+/// 자식 node의 속성이 부모 배치 방식과 맞는지 검증합니다(anchor·flex·grid item 조합).
+pub(crate) fn validate_in_parent(
+    node: &LayoutNode,
+    parent: &ContainerLayout,
+) -> Result<(), LayoutError> {
+    match parent {
+        ContainerLayout::Free => validate_anchor_combination(node),
+        ContainerLayout::Stack(stack) => validate_flex_combination(node, stack.axis),
+        ContainerLayout::Grid(grid) => validate_item(node.id, &node.grid, grid),
+        ContainerLayout::Overlay(_) | ContainerLayout::Constraint => Ok(()),
+    }
+}
+
 /// node 하나의 값 범위와 속성 조합을 검증합니다.
-fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutError> {
+pub(crate) fn validate_node_values(node: &LayoutNode, is_root: bool) -> Result<(), LayoutError> {
     let (top, right, bottom, left) = node.padding.components();
     for value in [top, right, bottom, left] {
         let length = Length::new(value).map_err(|_| LayoutError::OutOfRange {

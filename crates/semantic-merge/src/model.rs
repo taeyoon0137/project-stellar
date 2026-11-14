@@ -4,6 +4,9 @@
 //! 결과는 자동 병합된 candidate snapshot, base → candidate 변경, 그리고 자동 병합하지 못한
 //! [`SemanticConflict`] 목록입니다. conflict 대상은 candidate에서 **base 상태를 유지**하고
 //! base·ours·theirs 세 상태를 모두 기록합니다 — 해결(XIV.12)은 이 기록만으로 선택지를 만듭니다.
+//! 예외로 정의 목록(페이지·View·Slot 목록)은 candidate에서 항상 실제로 남은 소속 객체와 같은 원소를
+//! 가집니다. 목록 재정렬 conflict면 남은 객체의 base 순서를 유지하고, owner가 객체 conflict여도 목록
+//! 원소는 남은 소속 객체에 맞춥니다(merge 엔진 "정의 목록").
 //!
 //! canonical bytes(LE, semantic-diff codec 재사용):
 //!
@@ -51,7 +54,8 @@ pub enum ConflictKind {
     DeleteVsMove = 3,
     /// 한쪽 값 타입 변경 대 다른 쪽 같은 타입 값 변경(XIV.10.5).
     TypeChangeVsValueChange = 4,
-    /// 같은 객체를 양쪽이 다른 위치로 이동·재정렬(XIV.10.6).
+    /// 같은 객체를 양쪽이 다른 위치로 이동·재정렬(XIV.10.6, 대상 = 위치), 또는 같은 정의 목록
+    /// (페이지·View·Slot 목록)을 양쪽이 서로 다른 순서로 재정렬(대상 = 목록 속성, 상태 = 목록 값).
     ConflictingReorder = 5,
     /// 같은 StableId를 양쪽이 서로 다르게 정의(추가·교체, 아키텍처 §27.1).
     InconsistentDefinition = 6,
@@ -178,7 +182,8 @@ impl SemanticConflict {
 /// 3-way merge 결과.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct MergeResult {
-    /// 자동 병합한 candidate snapshot. conflict 대상은 base 상태를 유지합니다.
+    /// 자동 병합한 candidate snapshot. conflict 대상은 base 상태를 유지합니다(정의 목록 원소는 예외로
+    /// candidate 소속 객체와 맞춤, 모듈 문서).
     pub merged: SemanticSnapshot,
     /// base → merged 변경(canonical 순서).
     pub changes: SemanticDiff,

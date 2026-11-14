@@ -17,7 +17,9 @@
 //! | 10 | `density` | Number(display scale) |
 //! | 11 | `interaction_state` | Enum([`INTERACTION_STATE_TYPE`]) |
 //!
-//! 환경 enum 타입은 `0xE000_0000` 대역의 [`EnumTypeId`]를 씁니다. 다른 enum registry는 이 대역을 쓰지 않습니다.
+//! 환경 enum 타입은 `0xE000_0000`부터 `0xE000_FFFF`까지의 대역(상위 16 bit가 `0xE000`, ADR-0026 4절)에서
+//! [`EnumTypeId`]를 받습니다. `0xE000_0000`은 할당하지 않고, 새 타입은 대역 안의 다음 번호(`0xE000_0005`, …)를
+//! 받습니다. 다른 enum registry는 이 대역을 쓰지 않습니다.
 //! 각 enum의 variant 번호도 고정입니다([`platform`], [`color_scheme`], [`contrast`], [`interaction_state`]).
 //!
 //! **missing key 기본값 정책(VIII.7.2)**: [`EvaluationEnvironment`]에 값이 없는 등록 key는 registry가 고정한 기본값
@@ -49,7 +51,10 @@ use crate::types::{EnumTypeId, ExpressionType, TypeSpec};
 
 /// 대상 플랫폼 계열(Target Profile 종류, 아키텍처 §17.1).
 pub const PLATFORM: EnvironmentKey = EnvironmentKey::new(1);
-/// OS 버전(Apple: major.minor, 그 밖은 0).
+/// OS 버전(Apple: 최소 OS `major.minor`를 정수 `major × 1000 + minor`로 인코딩 — 예: 17.4 → 17004, 그 밖은 0).
+///
+/// 10진 소수(`17.4`)로 읽으면 `17.1`과 `17.10`이 같아지고 `10.15 < 10.9`처럼 순서가 뒤집히므로 정수 인코딩을 씁니다.
+/// 값은 Target Profile(IX.10.7, `stellar-target-profile` `environment`)이 정합니다.
 pub const OS_VERSION: EnvironmentKey = EnvironmentKey::new(2);
 /// API level(Android, 그 밖은 0).
 pub const API_LEVEL: EnvironmentKey = EnvironmentKey::new(3);
@@ -436,6 +441,30 @@ mod tests {
         );
         assert_eq!(PLATFORM_TYPE.raw(), 0xE000_0001);
         assert_eq!(INTERACTION_STATE_TYPE.raw(), 0xE000_0004);
+    }
+
+    #[test]
+    fn environment_enum_types_stay_in_reserved_band() {
+        // ADR-0026 4절: 대역 0xE000_0000..=0xE000_FFFF, 0xE000_0000은 할당하지 않음, 0xE000_0001부터 연속.
+        let mut enum_types = Vec::new();
+        for key in ALL_KEYS {
+            if let ExpressionType::Enum(id) = key_info(key).expect("등록").value_type {
+                assert_eq!(
+                    id.raw() >> 16,
+                    0xE000,
+                    "{key:?} 타입 {:#X}가 대역 밖",
+                    id.raw()
+                );
+                assert_ne!(id.raw(), 0xE000_0000, "{key:?}가 예약 번호를 씀");
+                enum_types.push(id.raw());
+            }
+        }
+        enum_types.sort_unstable();
+        enum_types.dedup();
+        let expected: Vec<u32> = (0..enum_types.len() as u32)
+            .map(|n| 0xE000_0001 + n)
+            .collect();
+        assert_eq!(enum_types, expected);
     }
 
     #[test]

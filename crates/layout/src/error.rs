@@ -193,6 +193,13 @@ pub enum LayoutError {
         /// 위치 설명.
         field: &'static str,
     },
+    /// 증분 레이아웃 edit가 없는 node를 지우려 했습니다 (X.7.3).
+    UnknownNode {
+        /// 없는 node.
+        node: StableId,
+    },
+    /// 직전 증분 레이아웃 계산이 실패해 결과가 없습니다 (X.7.3). 다음 edit 적용이 전체 계산으로 복구합니다.
+    LayoutUnavailable,
 }
 
 impl fmt::Display for LayoutError {
@@ -281,6 +288,12 @@ impl fmt::Display for LayoutError {
             }
             LayoutError::NonFinite { field } => {
                 write!(f, "레이아웃 bytes의 {field} 값이 유한하지 않습니다")
+            }
+            LayoutError::UnknownNode { node } => {
+                write!(f, "증분 레이아웃 입력에 node {node}가 없습니다")
+            }
+            LayoutError::LayoutUnavailable => {
+                f.write_str("직전 증분 레이아웃 계산이 실패해 결과가 없습니다")
             }
         }
     }

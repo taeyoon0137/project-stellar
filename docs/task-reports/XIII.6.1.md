@@ -81,3 +81,43 @@
 - WOFF·WOFF2 face 이름은 압축 해제 없이 읽지 않으므로 비어 있습니다.
 - 실제 상용 폰트 파일 대신 합성 header fixture로 검증했습니다. 실제 system 폰트 probe는 XIII.6.2
   smoke에서 확인합니다.
+
+## 후속 수정(리뷰 반영): sfnt name table 해석 비용을 입력 크기에 묶음
+
+- **문제**: `parse_name_table`은 nameID마다 모든 후보 record를 UTF-16 decode한 뒤에야 길이
+  (`MAX_FACE_NAME_BYTES`)로 거부했습니다. record 최대 65,535개가 같은 64 KiB 문자열 구간을 가리키면
+  face 하나에서 수 GB를 decode했고, collection이 같은 face offset을 최대 4,096번 반복하면 face마다 최대
+  1 MiB name table을 다시 읽고 해석했습니다. 리뷰 재현: 약 128 KiB 단일 face 749 ms, 16-face TTC
+  11.93 s(release). 프로젝트 import와 system discovery(`~/Library/Fonts` 자동 scan)가 이 probe를 씁니다.
+- **수정**(`crates/project/src/fonts/sfnt.rs`):
+  - 순위 대상이 아니거나 원본 길이가 유효 이름 상한(UTF-16 `2 × 1024 + 2`, Macintosh ASCII
+    `1024 + 1` bytes: 끝 NUL 하나 허용)을 넘는 record는 decode 전에 제외합니다.
+  - nameID마다 순위 순 앞 `MAX_NAME_CANDIDATES_PER_ID`(64)개만 decode합니다(`select_nth_unstable` 뒤
+    정렬, key에 record index가 있어 결정론적).
+  - 파일 하나에서 같은 name table 구간(offset, 길이)은 한 번만 읽어 해석하고, 서로 다른 구간을 읽은 bytes
+    합계를 `MAX_NAME_TABLE_BYTES_PER_FILE`(16 MiB)로 제한합니다. 넘으면 그 뒤 face의 이름만 비웁니다
+    (name table은 선택 metadata라는 기존 규칙과 같음).
+- **동작 차이**: 끝 NUL이 두 개 이상 붙어 원본이 상한을 넘던 이름, 순위 앞 64개 후보가 모두 깨진 이름은
+  이제 없음으로 처리합니다. 실제 macOS system font 전체 scan(548 파일, 932 face)은 skip 0으로 통과했습니다.
+- **검증**: `oversized_overlapping_name_records_are_not_decoded`(리뷰 재현 입력: 5,460 record × 65,534
+  bytes → decode 0회), `name_decode_candidates_are_capped_per_name_id`(decode 64회·경계 2,050/2,052 bytes),
+  `repeated_collection_faces_read_the_name_table_once`(같은 face 4,096번 → name table 1회 읽기),
+  `distinct_name_table_reads_are_capped_per_file`(1 MiB 구간 40개 → 읽기 합계 16 MiB + 고정 overhead
+  이하). 작업량은 시간 대신 decode 횟수·읽은 bytes로 검사합니다(부하에 따라 흔들리지 않음).
+
+## 후속 수정(2차 리뷰 반영): 파일 하나의 name decode 합계 상한
+
+- **문제**: 위 수정은 읽은 bytes와 nameID별 decode 후보 수를 묶었지만, 읽은 bytes당 decode 작업량은 여전히
+  약 100배였습니다. 약 6 KB name table 하나에 nameID 5종 × 64개 record가 모두 같은 2,050 bytes 구간(제어
+  문자라 거부)을 가리키면 table 하나에서 656,000 bytes를 decode합니다. 읽기 합계 상한 16 MiB 안에 이런 서로
+  다른 table이 약 2,800개 들어가므로 파일 하나에서 약 1.8 GB를 decode할 수 있었습니다(상한은 있었지만
+  "입력 크기에 묶음"이라는 설명이 상수를 가렸음). `NameParseWork::decoded_bytes`는 세기만 하고 쓰지 않았습니다.
+- **수정**(`crates/project/src/fonts/sfnt.rs`): name table 읽기 상태(`NameTables`)가 파일 하나의 decode 작업량을
+  모든 name table에 걸쳐 누적하고, decode 원본 bytes 합계가 `MAX_NAME_DECODE_BYTES_PER_FILE`(16 MiB, 읽기
+  합계 상한과 같은 값)을 넘게 되는 후보는 decode하지 않고 제외합니다. face 순서대로 쓰므로 결과는
+  결정론적입니다. 파일 하나의 name 처리 작업량은 이제 읽기 16 MiB + decode 16 MiB 이하입니다.
+- **동작 차이**: 정상 폰트는 face마다 이름 몇 개(수십\~수백 bytes)만 decode하므로 영향이 없습니다. 상한을 넘은
+  뒤의 face는 이름이 비고 face는 유지됩니다(name table은 선택 metadata라는 기존 규칙과 같음).
+- **검증**: `distinct_name_tables_share_a_per_file_decode_budget`(리뷰 재현 입력의 서로 다른 사본 40개: 수정 전
+  decode 26,240,000 bytes로 실패, 수정 후 16 MiB 이하이고 상한 직전까지는 실제로 decode). 기존 작업량 테스트
+  4개도 통과합니다.

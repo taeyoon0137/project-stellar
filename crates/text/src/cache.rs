@@ -3,7 +3,9 @@
 //! - [`ShapingCacheKey`]: paragraph shaping 결과([`ShapedParagraph`](crate::paragraph::ShapedParagraph))의
 //!   key. **text hash**(paragraph 텍스트), **style hash**(span 범위·style index·언어·기준 방향과 style별
 //!   글꼴 크기·feature·variation), **font face hash**(style별 fallback chain 항목의 file hash·face index·axes·
-//!   사용 가능 여부), **locale**, **target profile**을 담습니다.
+//!   사용 가능 여부), **locale**, **target profile**을 담습니다. style hash·font face hash는 style 표 전체가
+//!   아니라 그 paragraph가 쓰는 style([`paragraph_styles`])만 담으므로, 다른 paragraph만 쓰는 style이 바뀌어도
+//!   key가 그대로입니다.
 //! - [`LineLayoutCacheKey`]: 줄 레이아웃 결과(X.10.2 `ParagraphLines`)의 key. shaping key에 **너비 제약**,
 //!   paragraph 레이아웃 속성(정렬·줄 높이·wrap), 줄바꿈 옵션(word-break·엄격도)을 더합니다.
 //!
@@ -23,6 +25,7 @@ use crate::itemize::StyleSpan;
 use crate::line_break::{LineBreakOptions, LineBreakStrictness, WordBreak};
 use crate::line_layout::WrapMode;
 use crate::paragraph::{ParagraphInput, TextStyleSpec};
+use crate::registry::FontHandle;
 use crate::shaping::LanguageTag;
 use crate::text_layout::{LineHeight, ParagraphLayoutStyle, TextAlign};
 use crate::units::TextUnit;
@@ -144,7 +147,35 @@ fn write_span(h: &mut StableHasher, span: &StyleSpan) {
     write_language(h, span.language.as_ref());
 }
 
-/// span·기준 방향·style별 글꼴 크기·feature·variation hash.
+/// paragraph shaping 결과가 읽는 style index(오름차순, 중복 없음).
+///
+/// span이 가리키는 style과, 빈 paragraph 기본 줄 metric에 쓰는 style입니다. 기본 metric은 첫 span style이
+/// 없거나 표 밖이면 첫 style을 씁니다(`shape_paragraph` 규칙). 표 밖 index도 그대로 담습니다(그런 입력은
+/// shaping이 오류를 냅니다).
+pub fn paragraph_styles(input: &ParagraphInput<'_>, style_count: usize) -> Vec<u32> {
+    let mut used: Vec<u32> = input.spans.iter().map(|span| span.style).collect();
+    let first_known = input
+        .spans
+        .first()
+        .and_then(|span| usize::try_from(span.style).ok())
+        .is_some_and(|style| style < style_count);
+    if !first_known && style_count > 0 {
+        used.push(0);
+    }
+    used.sort_unstable();
+    used.dedup();
+    used
+}
+
+/// style 표의 `index` 항목(표 밖이면 `None`).
+pub(crate) fn style_at<'s, 'a>(
+    styles: &'s [TextStyleSpec<'a>],
+    index: u32,
+) -> Option<&'s TextStyleSpec<'a>> {
+    usize::try_from(index).ok().and_then(|i| styles.get(i))
+}
+
+/// span·기준 방향과 paragraph가 쓰는 style([`paragraph_styles`])별 글꼴 크기·feature·variation hash.
 pub fn style_hash(input: &ParagraphInput<'_>, styles: &[TextStyleSpec<'_>]) -> Hash128 {
     let mut h = StableHasher::new();
     h.write_u8(match input.base_direction {
@@ -156,8 +187,15 @@ pub fn style_hash(input: &ParagraphInput<'_>, styles: &[TextStyleSpec<'_>]) -> H
     for span in input.spans {
         write_span(&mut h, span);
     }
-    h.write_u64(styles.len() as u64);
-    for style in styles {
+    let used = paragraph_styles(input, styles.len());
+    h.write_u64(used.len() as u64);
+    for index in used {
+        h.write_u32(index);
+        let Some(style) = style_at(styles, index) else {
+            h.write_u8(0);
+            continue;
+        };
+        h.write_u8(1);
         h.write_i32(style.font_size.raw());
         h.write_u64(style.shaping.features().len() as u64);
         for feature in style.shaping.features() {
@@ -188,25 +226,44 @@ fn write_face_ref(h: &mut StableHasher, face: &FontFaceRef) {
     }
 }
 
-/// style별 fallback chain 항목(file hash·face index·axes)과 항목별 사용 가능 여부 hash.
-pub fn font_face_hash<S: FaceSource + ?Sized>(styles: &[TextStyleSpec<'_>], faces: &S) -> Hash128 {
-    let mut h = StableHasher::new();
-    h.write_u64(styles.len() as u64);
-    for style in styles {
-        let entries = style.chain.chain().faces();
-        let available: Vec<bool> = {
-            let mut flags = vec![false; entries.len()];
-            for (index, handle) in style.chain.available() {
-                if faces.face(handle).is_some() {
-                    flags[index] = true;
-                }
+/// chain 항목별로 사용 가능한(registry에 있고 face가 로드된) handle. 사용할 수 없으면 `None`.
+pub(crate) fn loaded_handles<S: FaceSource + ?Sized>(
+    style: &TextStyleSpec<'_>,
+    faces: &S,
+) -> Vec<Option<FontHandle>> {
+    let mut loaded = vec![None; style.chain.chain().faces().len()];
+    for (index, handle) in style.chain.available() {
+        if faces.face(handle).is_some() {
+            if let Some(slot) = loaded.get_mut(index) {
+                *slot = Some(handle);
             }
-            flags
+        }
+    }
+    loaded
+}
+
+/// paragraph가 쓰는 style([`paragraph_styles`])별 fallback chain 항목(file hash·face index·axes)과 항목별
+/// 사용 가능 여부 hash.
+pub fn font_face_hash<S: FaceSource + ?Sized>(
+    input: &ParagraphInput<'_>,
+    styles: &[TextStyleSpec<'_>],
+    faces: &S,
+) -> Hash128 {
+    let mut h = StableHasher::new();
+    let used = paragraph_styles(input, styles.len());
+    h.write_u64(used.len() as u64);
+    for index in used {
+        h.write_u32(index);
+        let Some(style) = style_at(styles, index) else {
+            h.write_u8(0);
+            continue;
         };
+        h.write_u8(1);
+        let entries = style.chain.chain().faces();
         h.write_u64(entries.len() as u64);
-        for (entry, ok) in entries.iter().zip(available) {
+        for (entry, loaded) in entries.iter().zip(loaded_handles(style, faces)) {
             write_face_ref(&mut h, entry);
-            h.write_u8(u8::from(ok));
+            h.write_u8(u8::from(loaded.is_some()));
         }
     }
     Hash128(h.finish())
@@ -224,7 +281,7 @@ impl ShapingCacheKey {
         ShapingCacheKey {
             text: text_hash(input.text),
             style: style_hash(input, styles),
-            font_faces: font_face_hash(styles, faces),
+            font_faces: font_face_hash(input, styles, faces),
             locale: locale.clone(),
             target_profile,
         }
@@ -351,6 +408,18 @@ impl<K: Ord, C: PartialEq, V> LayoutCache<K, C, V> {
     /// 조건을 만족하지 않는 항목을 지웁니다(메모리 회수용).
     pub fn retain(&mut self, mut keep: impl FnMut(&K) -> bool) {
         self.entries.retain(|k, _| keep(k));
+    }
+
+    /// 테스트용: `from` 항목을 검증 값·값 그대로 `to` key로 옮깁니다(서로 다른 입력의 hash 충돌 재현).
+    #[cfg(test)]
+    pub(crate) fn rekey(&mut self, from: &K, to: K) -> bool {
+        match self.entries.remove(from) {
+            Some(entry) => {
+                self.entries.insert(to, entry);
+                true
+            }
+            None => false,
+        }
     }
 }
 
@@ -524,13 +593,23 @@ mod tests {
         let missing = crate::font::FontFaceRef::new(FontSource::System, hash(0x99), 0, vec![]);
         let chain = crate::fallback::FontFallbackChain::new(vec![missing, fx.set.refs[0].clone()])
             .expect("chain");
+        let spans = [StyleSpan {
+            range: 0..1,
+            style: 0,
+            language: None,
+        }];
+        let input = ParagraphInput {
+            text: "a",
+            spans: &spans,
+            base_direction: BaseDirection::LeftToRight,
+        };
         let hash_now = |fx: &Fixture| {
             let spec = TextStyleSpec {
                 chain: chain.resolve(&fx.set.registry),
                 shaping: ShapingStyle::default(),
                 font_size: FontSize::from_px(16).expect("크기"),
             };
-            font_face_hash(&[spec], &fx.set.faces)
+            font_face_hash(&input, &[spec], &fx.set.faces)
         };
         let before = hash_now(&fx);
         // 등록만 되고 로드되지 않은 face는 사용 불가라 hash가 같습니다.
@@ -570,6 +649,34 @@ mod tests {
         assert_eq!(cache.len(), 1);
         cache.retain(|_| false);
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn paragraph_styles_are_span_styles_plus_default_metric_style() {
+        let span = |range: std::ops::Range<usize>, style: u32| StyleSpan {
+            range,
+            style,
+            language: None,
+        };
+        let styles_of = |text: &str, spans: &[StyleSpan], count: usize| {
+            paragraph_styles(
+                &ParagraphInput {
+                    text,
+                    spans,
+                    base_direction: BaseDirection::LeftToRight,
+                },
+                count,
+            )
+        };
+        // span style만(오름차순, 중복 없음). 첫 span style이 표 안이면 기본 metric도 그 style입니다.
+        let spans = [span(0..2, 2), span(2..4, 0), span(4..5, 2)];
+        assert_eq!(styles_of("abcde", &spans, 3), vec![0, 2]);
+        assert_eq!(styles_of("ab", &[span(0..2, 1)], 3), vec![1]);
+        // span 없는 빈 paragraph는 첫 style의 기본 metric을 씁니다. style 표가 비면 아무것도 쓰지 않습니다.
+        assert_eq!(styles_of("", &[], 3), vec![0]);
+        assert_eq!(styles_of("", &[], 0), Vec::<u32>::new());
+        // 첫 span style이 표 밖이면 기본 metric은 첫 style입니다(표 밖 index도 그대로 담음).
+        assert_eq!(styles_of("ab", &[span(0..2, 9)], 2), vec![0, 9]);
     }
 
     #[test]

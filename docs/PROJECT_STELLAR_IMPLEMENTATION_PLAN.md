@@ -788,8 +788,8 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | VIII.9.1 | `[x]` | 100만 token/binding edge synthetic graph 생성기를 추가합니다. 활성 document 한도 fixture는 20만 node 기준으로 별도 생성합니다. | 생성 결과 seed-deterministic. | VIII.6.4 |
-| VIII.9.2 | `[ ]` | 단일 token 변경의 evaluation count와 duration을 측정하는 benchmark를 추가합니다. | 결과 JSON에 affected/visited/evaluated count 존재. | VIII.9.1 |
-| VIII.9.3 | `[ ]` | 양 플랫폼 evaluator golden corpus를 CI에 추가합니다. | 모든 result bytes 동일. | VIII.4.6, VIII.8.3 |
+| VIII.9.2 | `[x]` | 단일 token 변경의 evaluation count와 duration을 측정하는 benchmark를 추가합니다. | 결과 JSON에 affected/visited/evaluated count 존재. | VIII.9.1 |
+| VIII.9.3 | `[~]` | 양 플랫폼 evaluator golden corpus를 CI에 추가합니다. | 모든 result bytes 동일. | VIII.4.6, VIII.8.3 |
 
 **Phase VIII 완료 조건:** 토큰·표현식·Binding의 생성, 증분 평가, provenance, orphan fallback이 통과합니다.
 
@@ -803,8 +803,8 @@ tools/xtask/
 |---|---|---|---|---|
 | IX.1.1 | `[x]` | `ComponentDefinition` resource에 StableId, root FrameRef, 공개 Property 목록, Slot 목록, local token scope를 정의합니다. | root가 component 밖 node를 가리키면 거부. | Phase VIII, Phase VI |
 | IX.1.2 | `[x]` | `ComponentProperty`에 StableId, 이름, type, 필수 default expression, 공개 여부를 정의합니다. default 없는 property는 생성 불가입니다. | default type mismatch 거부. | IX.1.1, VIII.2.5 |
-| IX.1.3 | `[ ]` | Property 생성·rename·default 변경·삭제 command를 구현합니다. inbound drilling이 있는 삭제는 orphan 정보를 생성합니다. | apply/inverse 및 orphan fixture 통과. | IX.1.2, VIII.8.1, Phase VII |
-| IX.1.4 | `[ ]` | component property의 runtime evaluated value를 instance별로 캐시하고 definition revision과 override revision으로 invalidate합니다. | 한 instance override 변경 시 다른 instance cache 유지. | IX.1.2, VIII.6.4 |
+| IX.1.3 | `[x]` | Property 생성·rename·default 변경·삭제 command를 구현합니다. inbound drilling이 있는 삭제는 orphan 정보를 생성합니다. | apply/inverse 및 orphan fixture 통과. | IX.1.2, VIII.8.1, Phase VII |
+| IX.1.4 | `[x]` | component property의 runtime evaluated value를 instance별로 캐시하고 definition revision과 override revision으로 invalidate합니다. | 한 instance override 변경 시 다른 instance cache 유지. | IX.1.2, VIII.6.4 |
 
 ### IX.2 Component Instance
 
@@ -829,12 +829,12 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| IX.4.1 | `[ ]` | component boundary를 넘는 binding은 각 경계의 ComponentProperty StableId chain을 필수로 갖게 합니다. | chain 누락 fixture 거부. | IX.1.2, VIII.6.1 |
+| IX.4.1 | `[x]` | component boundary를 넘는 binding은 각 경계의 ComponentProperty StableId chain을 필수로 갖게 합니다. | chain 누락 fixture 거부. | IX.1.2, VIII.6.1 |
 | IX.4.2 | `[x]` | nested instance property를 상위 instance에서 직접 수정하는 API를 제공하지 않고 validator에서도 거부합니다. | prohibited direct path fixture 실패. | IX.2.3 |
-| IX.4.3 | `[ ]` | 사용자가 내부 property를 상위로 노출할 때 필요한 중간 property와 binding chain을 계산하는 `DrillingPlan`을 구현합니다. 아직 적용하지 않습니다. | 1·2·10단계 nesting fixture의 계획 정확. | IX.4.1 |
-| IX.4.4 | `[ ]` | DrillingPlan preview에 생성될 property 이름, type, default, component 경로를 포함합니다. 이름 충돌은 deterministic suffix를 제안합니다. | 동일 입력 동일 plan. | IX.4.3 |
-| IX.4.5 | `[ ]` | 승인된 DrillingPlan을 하나의 CommandTransaction으로 적용합니다. 중간 실패 시 property 하나도 남기지 않습니다. | fault injection rollback. | IX.4.4, VII.1.6 |
-| IX.4.6 | `[ ]` | chain 일부 삭제·타입 변경 시 상위 chain 전체를 orphan 상태로 표시하되 저장에서 삭제하지 않습니다. | break point와 affected chain fixture 정확. | IX.4.5, VIII.8.1 |
+| IX.4.3 | `[x]` | 사용자가 내부 property를 상위로 노출할 때 필요한 중간 property와 binding chain을 계산하는 `DrillingPlan`을 구현합니다. 아직 적용하지 않습니다. | 1·2·10단계 nesting fixture의 계획 정확. | IX.4.1 |
+| IX.4.4 | `[x]` | DrillingPlan preview에 생성될 property 이름, type, default, component 경로를 포함합니다. 이름 충돌은 deterministic suffix를 제안합니다. | 동일 입력 동일 plan. | IX.4.3 |
+| IX.4.5 | `[x]` | 승인된 DrillingPlan을 하나의 CommandTransaction으로 적용합니다. 중간 실패 시 property 하나도 남기지 않습니다. | fault injection rollback. | IX.4.4, VII.1.6 |
+| IX.4.6 | `[x]` | chain 일부 삭제·타입 변경 시 상위 chain 전체를 orphan 상태로 표시하되 저장에서 삭제하지 않습니다. | break point와 affected chain fixture 정확. | IX.4.5, VIII.8.1 |
 
 ### IX.5 선언형 상태 머신
 
@@ -872,26 +872,26 @@ tools/xtask/
 | IX.7.6 | `[x]` | 구체 variant가 일반 variant 값을 덮어쓰고 존재하지 않는 조합은 추가 override 없이 base+일반 variant만 적용하게 합니다. | 요구 예제 fixture 통과. | IX.7.4 |
 | IX.7.7 | `[x]` | variant structure override도 ComponentInstance 내부 캡슐화를 침범하지 못하게 validator를 연결합니다. | nested direct override fixture 실패. | IX.7.3, IX.2.5 |
 | IX.7.8 | `[x]` | View variable/variant 생성·변경·삭제 command를 구현합니다. 삭제 시 참조 variant는 orphan diagnostic으로 남깁니다. | apply/inverse 통과. | IX.7.1~IX.7.7, Phase VII |
-| IX.7.9 | `[ ]` | 캔버스에 같은 View를 여러 variable assignment로 배치하는 `ViewPresentation` 런타임 타입을 정의합니다. definition을 복제하지 않습니다. | 100 presentations가 definition 1개 공유. | IX.7.4 |
+| IX.7.9 | `[x]` | 캔버스에 같은 View를 여러 variable assignment로 배치하는 `ViewPresentation` 런타임 타입을 정의합니다. definition을 복제하지 않습니다. | 100 presentations가 definition 1개 공유. | IX.7.4 |
 
 ### IX.8 접근성 의미 트리
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| IX.8.1 | `[ ]` | `AccessibilityNode`에 source StableId, role, label binding, value binding, state, action, reading order를 정의합니다. | round-trip. | IX.6.1, VIII.6.1 |
-| IX.8.2 | `[ ]` | 시각 tree와 별도 accessibility parent/child 관계를 허용하되 source node는 정확히 하나여야 합니다. | orphan source·cycle fixture 실패. | IX.8.1 |
-| IX.8.3 | `[ ]` | decorative node 제외, Fragment flatten, hidden node 제외 규칙을 적용한 기본 accessibility tree generator를 구현합니다. | expected tree fixture 통과. | IX.8.2, VI.4.1 |
-| IX.8.4 | `[ ]` | Button, TextInput, Modal, List, SingleSelectionGroup contract를 role/state/action으로 매핑합니다. | control별 golden tree 통과. | IX.6.7, IX.8.3 |
-| IX.8.5 | `[ ]` | label 누락, invalid nesting, focusable action 없음, duplicate reading order diagnostic을 구현합니다. | diagnostic fixture 정확. | IX.8.4 |
-| IX.8.6 | `[ ]` | Target adapter가 사용할 중립 accessibility snapshot을 정의합니다. 플랫폼 API 호출은 Phase XII로 미룹니다. | 양 플랫폼 snapshot bytes 동일. | IX.8.4 |
+| IX.8.1 | `[x]` | `AccessibilityNode`에 source StableId, role, label binding, value binding, state, action, reading order를 정의합니다. | round-trip. | IX.6.1, VIII.6.1 |
+| IX.8.2 | `[x]` | 시각 tree와 별도 accessibility parent/child 관계를 허용하되 source node는 정확히 하나여야 합니다. | orphan source·cycle fixture 실패. | IX.8.1 |
+| IX.8.3 | `[x]` | decorative node 제외, Fragment flatten, hidden node 제외 규칙을 적용한 기본 accessibility tree generator를 구현합니다. | expected tree fixture 통과. | IX.8.2, VI.4.1 |
+| IX.8.4 | `[x]` | Button, TextInput, Modal, List, SingleSelectionGroup contract를 role/state/action으로 매핑합니다. | control별 golden tree 통과. | IX.6.7, IX.8.3 |
+| IX.8.5 | `[x]` | label 누락, invalid nesting, focusable action 없음, duplicate reading order diagnostic을 구현합니다. | diagnostic fixture 정확. | IX.8.4 |
+| IX.8.6 | `[x]` | Target adapter가 사용할 중립 accessibility snapshot을 정의합니다. 플랫폼 API 호출은 Phase XII로 미룹니다. | 양 플랫폼 snapshot bytes 동일. | IX.8.4 |
 
 ### IX.9 통합 결정론 fixture
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| IX.9.1 | `[ ]` | Button, TextInput, Modal, List, Radio 합성 예제 component library fixture를 만듭니다. | document validator 0 오류. | IX.6, IX.8 |
+| IX.9.1 | `[~]` | Button, TextInput, Modal, List, Radio 합성 예제 component library fixture를 만듭니다. | document validator 0 오류. | IX.6, IX.8 |
 | IX.9.2 | `[ ]` | 10단계 nested component property drilling fixture를 만듭니다. | 최종 value provenance가 전체 chain 포함. | IX.4.5 |
-| IX.9.3 | `[ ]` | compact/error/dark nullable variant 조합 fixture를 만듭니다. | 예상 override resolution과 ambiguity diagnostic 통과. | IX.7.6 |
+| IX.9.3 | `[x]` | compact/error/dark nullable variant 조합 fixture를 만듭니다. | 예상 override resolution과 ambiguity diagnostic 통과. | IX.7.6 |
 | IX.9.4 | `[ ]` | 위 fixture를 macOS·Windows CI에서 semantic snapshot 비교합니다. | byte-identical. | IX.9.1~IX.9.3 |
 
 **Phase IX 완료 조건:** G5 통과.
@@ -902,16 +902,16 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| IX.10.1 | `[ ]` | `TargetProfileId`, profile kind Web/Apple/Android, profile schema version을 정의합니다. | numeric kind와 round-trip golden test. | IV.1.1, VIII.7.1 |
-| IX.10.2 | `[ ]` | Apple profile에 platform 종류와 최소 OS version, Android profile에 API level과 UI system version, Web profile에 browser baseline과 capability set version을 정의합니다. | profile별 required field validation. | IX.10.1 |
-| IX.10.3 | `[ ]` | `stellar.yaml`에 project target profile 목록과 기본 profile을 저장하고 존재하지 않는 default를 거부합니다. | manifest round-trip과 invalid default fixture. | IX.10.2, IV.1.5 |
-| IX.10.4 | `[ ]` | Stellar 앱 업데이트만으로 project profile version을 바꾸지 않게 합니다. profile registry version과 project pin을 분리합니다. | registry update 후 project bytes·resolved profile unchanged. | IX.10.3 |
-| IX.10.5 | `[ ]` | capability 상태를 Native, Approximated, Unsupported, Deprecated로 정의하고 element/property/semantic contract별 registry를 구현합니다. | 상태 matrix fixture 통과. | IX.10.2, IX.6.7 |
-| IX.10.6 | `[ ]` | selected TargetProfile에 따라 element·property 생성 가능 여부와 비활성화 사유를 조회하는 API를 구현합니다. 실제 UI는 Phase XII에 연결합니다. | Button/TextInput/Modal/List와 대표 CSS/Apple/Android property fixture 통과. | IX.10.5 |
-| IX.10.7 | `[ ]` | 공통 structure에 profile-specific sparse override를 적용하는 resolver를 구현하고 View Variant·Binding environment와 결합합니다. | 공통값·profile override·variant override 우선순위 fixture 통과. | IX.7.6, VIII.7.3, IX.10.5 |
-| IX.10.8 | `[ ]` | 한 View를 여러 TargetProfile에 대해 동시에 validate하고 Native/Approximated/Unsupported/Deprecated diagnostic을 생성합니다. | multi-profile fixture expected diagnostics. | IX.10.6, IX.10.7 |
-| IX.10.9 | `[ ]` | profile upgrade plan을 구현해 old/new capability registry의 semantic diff와 영향받는 nodes/properties를 반환합니다. 적용 전 project를 수정하지 않습니다. | upgrade preview fixture revision unchanged. | IX.10.4, IX.10.8, XIV.3.2 |
-| IX.10.10 | `[ ]` | 승인된 profile upgrade를 CommandTransaction과 manifest 변경으로 적용하고 자동 commit하지 않습니다. | apply/undo, Git working tree change fixture 통과. | IX.10.9, Phase VII |
+| IX.10.1 | `[x]` | `TargetProfileId`, profile kind Web/Apple/Android, profile schema version을 정의합니다. | numeric kind와 round-trip golden test. | IV.1.1, VIII.7.1 |
+| IX.10.2 | `[x]` | Apple profile에 platform 종류와 최소 OS version, Android profile에 API level과 UI system version, Web profile에 browser baseline과 capability set version을 정의합니다. | profile별 required field validation. | IX.10.1 |
+| IX.10.3 | `[~]` | `stellar.yaml`에 project target profile 목록과 기본 profile을 저장하고 존재하지 않는 default를 거부합니다. | manifest round-trip과 invalid default fixture. | IX.10.2, IV.1.5 |
+| IX.10.4 | `[~]` | Stellar 앱 업데이트만으로 project profile version을 바꾸지 않게 합니다. profile registry version과 project pin을 분리합니다. | registry update 후 project bytes·resolved profile unchanged. | IX.10.3 |
+| IX.10.5 | `[x]` | capability 상태를 Native, Approximated, Unsupported, Deprecated로 정의하고 element/property/semantic contract별 registry를 구현합니다. | 상태 matrix fixture 통과. | IX.10.2, IX.6.7 |
+| IX.10.6 | `[x]` | selected TargetProfile에 따라 element·property 생성 가능 여부와 비활성화 사유를 조회하는 API를 구현합니다. 실제 UI는 Phase XII에 연결합니다. | Button/TextInput/Modal/List와 대표 CSS/Apple/Android property fixture 통과. | IX.10.5 |
+| IX.10.7 | `[x]` | 공통 structure에 profile-specific sparse override를 적용하는 resolver를 구현하고 View Variant·Binding environment와 결합합니다. | 공통값·profile override·variant override 우선순위 fixture 통과. | IX.7.6, VIII.7.3, IX.10.5 |
+| IX.10.8 | `[x]` | 한 View를 여러 TargetProfile에 대해 동시에 validate하고 Native/Approximated/Unsupported/Deprecated diagnostic을 생성합니다. | multi-profile fixture expected diagnostics. | IX.10.6, IX.10.7 |
+| IX.10.9 | `[~]` | profile upgrade plan을 구현해 old/new capability registry의 semantic diff와 영향받는 nodes/properties를 반환합니다. 적용 전 project를 수정하지 않습니다. | upgrade preview fixture revision unchanged. | IX.10.4, IX.10.8, XIV.3.2 |
+| IX.10.10 | `[~]` | 승인된 profile upgrade를 CommandTransaction과 manifest 변경으로 적용하고 자동 commit하지 않습니다. | apply/undo, Git working tree change fixture 통과. | IX.10.9, Phase VII |
 
 **Phase IX 추가 완료 조건:** TargetProfile pin, capability filtering, 다중 profile validation을 통과합니다.
 
@@ -968,7 +968,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | X.1.1 | `[x]` | `layout`에 `LayoutInput`, `LayoutBox`, `LayoutResult`, `LayoutError`를 정의합니다. 결과는 local rect, content rect, baseline, overflow bounds를 포함합니다. | 타입 round-trip과 finite validation. | Phase IX, III.3.3 |
-| X.1.2 | `[ ]` | layout tree view는 Fragment를 flatten하고 ComponentInstance virtual subtree와 View Variant 적용 결과를 읽도록 합니다. 원본 document를 수정하지 않습니다. | flatten 전후 visual child order fixture 통과. | VI.4.1, IX.2.2, IX.7.6 |
+| X.1.2 | `[x]` | layout tree view는 Fragment를 flatten하고 ComponentInstance virtual subtree와 View Variant 적용 결과를 읽도록 합니다. 원본 document를 수정하지 않습니다. | flatten 전후 visual child order fixture 통과. | VI.4.1, IX.2.2, IX.7.6 |
 | X.1.3 | `[x]` | layout property registry에 각 속성의 dirty class를 SelfSize, ParentFlow, DescendantConstraint, PaintOnly로 분류합니다. | 모든 layout property에 class가 존재. | VI.3.5 |
 | X.1.4 | `[x]` | LayoutRevision과 node별 input hash/output cache 타입을 정의합니다. | 동일 input hash에서 cache hit. | II.3.4 |
 | X.1.5 | `[x]` | 레이아웃 수치의 rounding 정책을 logical subpixel 단위로 고정하고 pixel snapping은 렌더 단계로 분리합니다. | 1/3, scale 1.5 fixture가 양 플랫폼 동일. | III.3.1 |
@@ -1027,12 +1027,12 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| X.7.1 | `[ ]` | command invalidation을 layout dirty set으로 변환합니다. PaintOnly는 layout queue에 넣지 않습니다. | property별 expected dirty set 통과. | VII.1.4, X.1.3 |
+| X.7.1 | `[x]` | command invalidation을 layout dirty set으로 변환합니다. PaintOnly는 layout queue에 넣지 않습니다. | property별 expected dirty set 통과. | VII.1.4, X.1.3 |
 | X.7.2 | `[x]` | bottom-up intrinsic measurement와 top-down placement를 분리하고 cache key를 정의합니다. | 같은 input에서 중복 측정 0. | X.6.4, X.1.4 |
-| X.7.3 | `[ ]` | dirty node의 ancestor propagation을 layout mode별로 최소화합니다. | leaf color 변경 0 layout, leaf width 변경 예상 ancestor만 방문. | X.7.1 |
-| X.7.4 | `[ ]` | 20만 node synthetic document에서 단일 leaf 변경 방문 node count를 기록하는 benchmark를 추가합니다. | result JSON에 visited/cache hit/duration 포함. | X.7.3 |
+| X.7.3 | `[x]` | dirty node의 ancestor propagation을 layout mode별로 최소화합니다. | leaf color 변경 0 layout, leaf width 변경 예상 ancestor만 방문. | X.7.1 |
+| X.7.4 | `[x]` | 20만 node synthetic document에서 단일 leaf 변경 방문 node count를 기록하는 benchmark를 추가합니다. | result JSON에 visited/cache hit/duration 포함. | X.7.3 |
 | X.7.5 | `[x]` | layout result가 DocumentRevision과 input hash에 맞지 않으면 폐기하는 worker result guard를 구현합니다. | stale result 적용 0. | II.3.4, X.1.4 |
-| X.7.6 | `[ ]` | 전체 layout fallback 경로를 테스트·진단용으로만 제공하고 일반 property 변경에서 호출되면 debug assertion과 metric을 남깁니다. | 단일 edit fixture에서 full layout count 0. | X.7.3 |
+| X.7.6 | `[x]` | 전체 layout fallback 경로를 테스트·진단용으로만 제공하고 일반 property 변경에서 호출되면 debug assertion과 metric을 남깁니다. | 단일 edit fixture에서 full layout count 0. | X.7.3 |
 
 ### X.8 폰트 레코드와 탐색
 
@@ -1071,7 +1071,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | X.11.1 | `[x]` | Free, Stack, Grid, Overlay, Constraint 각각 최소 50개 fixture를 생성하는 schema와 runner를 작성합니다. | fixture count와 schema 검증 통과. | X.2~X.6 |
-| X.11.2 | `[ ]` | nested component, variant, token 조건이 포함된 layout fixture 20개를 추가합니다. | expected rect golden 통과. | IX.9, X.7 |
+| X.11.2 | `[~]` | nested component, variant, token 조건이 포함된 layout fixture 20개를 추가합니다. | expected rect golden 통과. | IX.9, X.7 |
 | X.11.3 | `[ ]` | 양 플랫폼에서 logical layout result를 비교하는 CI job을 추가합니다. | 모든 rect/baseline bytes 동일. | X.10.7, X.11.2 |
 
 **Phase X 완료 조건:** 공통 레이아웃과 텍스트 논리 결과가 양 플랫폼에서 동일하고 증분 benchmark가 방문 범위를 보고합니다.
@@ -1109,9 +1109,9 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XI.3.1 | `[x]` | world bounds 기반 공간 인덱스 인터페이스를 정의하고 insert/update/remove/query를 구현합니다. | 20만 node random query correctness. | XI.1.2 |
 | XI.3.2 | `[x]` | viewport frustum과 clip bounds로 visible candidate를 계산합니다. | 화면 밖 node draw list 제외. | XI.3.1 |
 | XI.3.3 | `[x]` | z-order 역순, clip, visibility, pointer-events semantic을 적용한 broad-phase hit test를 구현합니다. | overlap fixture에서 topmost 결과. | XI.3.1, XI.1.2 |
-| XI.3.4 | `[ ]` | Shape/Path/Text/Image별 narrow-phase hit test를 구현합니다. alpha pixel hit test는 초기 제외하고 bounds 또는 geometry policy를 명시합니다. | node kind별 fixture 통과. | XI.3.3, VI.5.6, VI.6.4, X.10.3 |
-| XI.3.5 | `[ ]` | selection handle와 modifier control point를 별도 transient hit-test layer로 추가합니다. project 저장에 포함하지 않습니다. | handle 우선순위 fixture 통과. | XI.3.3, VII.3.1 |
-| XI.3.6 | `[ ]` | 2만 가시 node 기준 hit test p99 benchmark를 추가합니다. | 결과 JSON에 query count·candidate count·duration. | XI.3.4 |
+| XI.3.4 | `[x]` | Shape/Path/Text/Image별 narrow-phase hit test를 구현합니다. alpha pixel hit test는 초기 제외하고 bounds 또는 geometry policy를 명시합니다. | node kind별 fixture 통과. | XI.3.3, VI.5.6, VI.6.4, X.10.3 |
+| XI.3.5 | `[x]` | selection handle와 modifier control point를 별도 transient hit-test layer로 추가합니다. project 저장에 포함하지 않습니다. | handle 우선순위 fixture 통과. | XI.3.3, VII.3.1 |
+| XI.3.6 | `[x]` | 2만 가시 node 기준 hit test p99 benchmark를 추가합니다. | 결과 JSON에 query count·candidate count·duration. | XI.3.4 |
 
 ### XI.4 Render Graph 공통 계층
 
@@ -1139,18 +1139,18 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XI.6.1 | `[x]` | Shape/Path fill tessellation interface와 cache key를 정의합니다. | 동일 path/style cache hit. | VI.5.6, VI.6.1 |
-| XI.6.2 | `[ ]` | stroke tessellation에 width, join, cap, dash를 적용합니다. | reference geometry bounds fixture 통과. | XI.6.1 |
-| XI.6.3 | `[ ]` | tessellation 작업을 worker pool에서 실행하고 stale scene revision 결과를 버립니다. | stale result 적용 0. | X.7.5, XI.6.1 |
-| XI.6.4 | `[ ]` | glyph outline/bitmap atlas interface와 key를 font hash, glyph id, size, variation, rendering mode로 정의합니다. | key collision fixture 없음. | X.10.5 |
-| XI.6.5 | `[ ]` | atlas page allocation·eviction을 구현하고 현재 frame 사용 glyph는 제거하지 않습니다. | memory pressure simulation 통과. | XI.6.4 |
-| XI.6.6 | `[ ]` | cache miss 시 placeholder가 아니라 outline rasterization 완료 전 이전 valid glyph 또는 빈 glyph 정책을 명시하고 테스트합니다. | 잘못된 glyph 표시 없음. | XI.6.5 |
+| XI.6.2 | `[x]` | stroke tessellation에 width, join, cap, dash를 적용합니다. | reference geometry bounds fixture 통과. | XI.6.1 |
+| XI.6.3 | `[x]` | tessellation 작업을 worker pool에서 실행하고 stale scene revision 결과를 버립니다. | stale result 적용 0. | X.7.5, XI.6.1 |
+| XI.6.4 | `[x]` | glyph outline/bitmap atlas interface와 key를 font hash, glyph id, size, variation, rendering mode로 정의합니다. | key collision fixture 없음. | X.10.5 |
+| XI.6.5 | `[x]` | atlas page allocation·eviction을 구현하고 현재 frame 사용 glyph는 제거하지 않습니다. | memory pressure simulation 통과. | XI.6.4 |
+| XI.6.6 | `[x]` | cache miss 시 placeholder가 아니라 outline rasterization 완료 전 이전 valid glyph 또는 빈 glyph 정책을 명시하고 테스트합니다. | 잘못된 glyph 표시 없음. | XI.6.5 |
 
 ### XI.7 이미지 decode·texture cache
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XI.7.1 | `[x]` | 이미지 decoder interface를 worker 전용으로 정의하고 decoded pixel format을 명시합니다. | malformed image corpus panic 없음. | VI.8.1 |
-| XI.7.2 | `[ ]` | mipmap 생성과 texture upload task를 구현합니다. | 크기별 expected mip count. | XI.7.1, XI.5.3 |
+| XI.7.2 | `[x]` | mipmap 생성과 texture upload task를 구현합니다. | 크기별 expected mip count. | XI.7.1, XI.5.3 |
 | XI.7.3 | `[x]` | texture cache key를 asset content hash, decode settings, color transform으로 정의합니다. | source path가 달라도 같은 content dedup. | V.1.5, XI.7.1 |
 | XI.7.4 | `[~]` | missing/decoding asset placeholder를 deterministic checker 또는 neutral icon으로 정의하고 양 backend 동일 data를 사용합니다. | screenshot fixture 동일. | VI.8.2 |
 
@@ -1158,13 +1158,13 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XI.8.1 | `[ ]` | `renderer-metal`에서 MTLDevice, command queue, CAMetalLayer 연결과 pixel format을 초기화합니다. | macOS smoke frame clear 통과. | XI.5.1, II.5.4 |
-| XI.8.2 | `[ ]` | resize와 drawable acquisition을 구현하고 drawable 없음은 frame skip으로 처리합니다. | minimized/occluded window crash 없음. | XI.8.1 |
-| XI.8.3 | `[ ]` | 공통 vertex/index/uniform buffer abstraction을 Metal resource로 매핑합니다. | mock geometry triangle render fixture 통과. | XI.5.3, XI.8.1 |
-| XI.8.4 | `[ ]` | pipeline state와 shader library cache를 구현합니다. shader compile 실패는 구조화 오류로 반환합니다. | known shader fixture 렌더. | XI.8.3 |
-| XI.8.5 | `[ ]` | RenderGraph pass encoding, submit, `present` 예약, CPU timestamp를 구현합니다. | T0-T5 trace에 submit/present timestamp 존재. | XI.4.6, XI.8.4 |
-| XI.8.6 | `[ ]` | Metal GPU timestamp query를 연결해 pass별 GPU 시간을 측정합니다. | simple scene GPU duration report. | XI.8.5 |
-| XI.8.7 | `[ ]` | device error·memory pressure·drawable timeout 처리 테스트를 추가합니다. | 앱 crash 없이 error event 발생. | XI.5.4, XI.8.5 |
+| XI.8.1 | `[x]` | `renderer-metal`에서 MTLDevice, command queue, CAMetalLayer 연결과 pixel format을 초기화합니다. | macOS smoke frame clear 통과. | XI.5.1, II.5.4 |
+| XI.8.2 | `[~]` | resize와 drawable acquisition을 구현하고 drawable 없음은 frame skip으로 처리합니다. | minimized/occluded window crash 없음. | XI.8.1 |
+| XI.8.3 | `[x]` | 공통 vertex/index/uniform buffer abstraction을 Metal resource로 매핑합니다. | mock geometry triangle render fixture 통과. | XI.5.3, XI.8.1 |
+| XI.8.4 | `[x]` | pipeline state와 shader library cache를 구현합니다. shader compile 실패는 구조화 오류로 반환합니다. | known shader fixture 렌더. | XI.8.3 |
+| XI.8.5 | `[x]` | RenderGraph pass encoding, submit, `present` 예약, CPU timestamp를 구현합니다. | T0-T5 trace에 submit/present timestamp 존재. | XI.4.6, XI.8.4 |
+| XI.8.6 | `[x]` | Metal GPU timestamp query를 연결해 pass별 GPU 시간을 측정합니다. | simple scene GPU duration report. | XI.8.5 |
+| XI.8.7 | `[x]` | device error·memory pressure·drawable timeout 처리 테스트를 추가합니다. | 앱 crash 없이 error event 발생. | XI.5.4, XI.8.5 |
 
 ### XI.9 Direct3D 12 backend
 
@@ -1186,8 +1186,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XI.10.2 | `[ ]` | alpha compositing과 지원 blend mode의 수식을 고정합니다. 초기 지원 목록 밖 mode는 diagnostic입니다. | blend reference image 통과. | XI.10.1 |
 | XI.10.3 | `[ ]` | gradient 렌더링을 구현하고 stop tie-order를 Phase III 규칙대로 적용합니다. | gradient pixel fixture 통과. | III.4.3, XI.10.1 |
 | XI.10.4 | `[ ]` | clip, mask, opacity, shadow, blur를 순차적으로 구현하고 각 기능마다 독립 image fixture를 추가합니다. | 기능별 Metal/D3D12 비교 통과. | XI.4.4, XI.10.1 |
-| XI.10.5 | `[ ]` | Display P3 surface 지원 여부를 플랫폼 capability로 감지하고 unsupported display에서는 sRGB 변환과 gamut warning을 생성합니다. | mock capability fixture 통과. | III.4.2, XI.5.1 |
-| XI.10.6 | `[ ]` | HDR path는 명시적 unsupported 상태로 유지하고 extended value를 silent clamp하지 않습니다. | HDR fixture warning 발생. | XI.10.5 |
+| XI.10.5 | `[x]` | Display P3 surface 지원 여부를 플랫폼 capability로 감지하고 unsupported display에서는 sRGB 변환과 gamut warning을 생성합니다. | mock capability fixture 통과. | III.4.2, XI.5.1 |
+| XI.10.6 | `[x]` | HDR path는 명시적 unsupported 상태로 유지하고 extended value를 silent clamp하지 않습니다. | HDR fixture warning 발생. | XI.10.5 |
 
 ### XI.11 렌더 적합성·성능
 
@@ -1197,7 +1197,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XI.11.2 | `[ ]` | image comparison에 per-channel/structural 허용 오차를 config로 정의하고 초과 pixel 위치를 diff artifact로 남깁니다. | known equal/different fixture 판정 정확. | XI.11.1 |
 | XI.11.3 | `[ ]` | Frame, Shape, Path, Text, Image, Modifier, clip, P3 fixture를 최소 100개 구성합니다. | fixture inventory 검사 통과. | XI.10.4, XI.7.4, XI.6.6 |
 | XI.11.4 | `[ ]` | 2만 가시 node scene에서 scene build, render graph encode, submit까지 구간 benchmark를 추가합니다. | 단계별 p50/p95/p99 JSON 생성. | XI.2.6, XI.4.6, XI.8.5, XI.9.5 |
-| XI.11.5 | `[ ]` | Present queue depth와 dropped stale frame count를 benchmark 결과에 포함합니다. | queue depth≤1 assertion. | XI.5.5 |
+| XI.11.5 | `[x]` | Present queue depth와 dropped stale frame count를 benchmark 결과에 포함합니다. | queue depth≤1 assertion. | XI.5.5 |
 | XI.11.6 | `[ ]` | Metal/D3D12 conformance CI에서 모든 fixture와 smoke benchmark를 실행합니다. | G6 통과. | XI.11.3~XI.11.5 |
 
 **Phase XI 완료 조건:** G6 통과.
@@ -1360,7 +1360,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XIII.1.1 | `[~]` | `AutosavePolicy`에 debounce, 최대 지연, 앱 비활성화 flush, 창 닫기 flush를 정의하고 값은 `config/performance-budgets.yaml`에서 읽습니다. | config 누락·범위 밖 값 거부. | Phase XII, V.5.4 |
-| XIII.1.2 | `[ ]` | 완료된 document CommandTransaction만 autosave dirty state를 만들고 Selection·viewport·preview event는 만들지 않게 합니다. | 선택 1,000회 후 save plan 없음. | VII.3.2, V.5.1 |
+| XIII.1.2 | `[x]` | 완료된 document CommandTransaction만 autosave dirty state를 만들고 Selection·viewport·preview event는 만들지 않게 합니다. | 선택 1,000회 후 save plan 없음. | VII.3.2, V.5.1 |
 | XIII.1.3 | `[ ]` | 연속 command 후 debounce timer를 재설정하고 최대 지연에 도달하면 입력이 이어져도 snapshot을 캡처합니다. 캡처는 document thread에서 짧게 수행합니다. | ManualClock fixture 통과. | XIII.1.1, XII.1.1 |
 | XIII.1.4 | `[ ]` | serialization과 chunk write는 worker에서 수행하고 base revision이 오래되면 결과를 current pointer로 전환하지 않습니다. | stale save result discard. | XII.1.4, V.5.2 |
 | XIII.1.5 | `[ ]` | Save Now는 대기 autosave를 취소·합치고 최신 snapshot 하나만 저장합니다. | double write 없음. | XIII.1.4 |
@@ -1382,7 +1382,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIII.3.1 | `[ ]` | 창에 로컬 미저장 변경이 없으면 외부의 새 정상 generation을 자동 reload하고 history를 폐기합니다. | clean window reload fixture 통과. | XIII.2.5, VII.5.4 |
+| XIII.3.1 | `[x]` | 창에 로컬 미저장 변경이 없으면 외부의 새 정상 generation을 자동 reload하고 history를 폐기합니다. | clean window reload fixture 통과. | XIII.2.5, VII.5.4 |
 | XIII.3.2 | `[x]` | 로컬 변경이 있으면 LoadedBase, CurrentMemory, ExternalDisk snapshot을 보존한 `ExternalChangePending` 상태를 생성합니다. | 세 snapshot hash 기록. | XIII.2.5, V.4.4 |
 | XIII.3.3 | `[x]` | Semantic Reconciliation 구현 전에는 pending 상태에서 autosave를 중지하고 read-only alert만 반환합니다. 자동 overwrite를 금지합니다. | pending 중 current pointer 미변경. | XIII.3.2 |
 | XIII.3.4 | `[ ]` | Phase XIV Semantic Merge 완료 후 세 snapshot reconciliation을 연결하고 겹치지 않는 변경만 자동 적용합니다. | non-overlap fixture 자동, overlap conflict. | XIII.3.2, XIV.10.9 |
@@ -1420,7 +1420,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIII.6.4 | `[x]` | External Font는 관리형 패키지의 고정 hash/face를 참조하는 인터페이스만 구현하고 다운로드 서비스는 제공하지 않습니다. | missing external package diagnostic. | X.8.1 |
 | XIII.6.5 | `[~]` | font file hash가 예상과 다르면 같은 family name이어도 다른 face로 처리하고 재현성 경고를 생성합니다. | same name/different hash fixture 통과. | XIII.6.1~XIII.6.4 |
 | XIII.6.6 | `[x]` | 라이선스·임베딩 상태는 Unknown, Allowed, Restricted, UserConfirmed로 저장하고 Stellar가 법적 판정을 자동 확정하지 않게 합니다. | 상태 transition fixture 통과. | XIII.6.1 |
-| XIII.6.7 | `[ ]` | missing font에서 명시 fallback chain만 적용하고 줄바꿈 변경 진단을 생성합니다. | missing face fixture expected fallback. | X.8.3, XIII.6.2, XIII.6.3 |
+| XIII.6.7 | `[x]` | missing font에서 명시 fallback chain만 적용하고 줄바꿈 변경 진단을 생성합니다. | missing face fixture expected fallback. | X.8.3, XIII.6.2, XIII.6.3 |
 
 ### XIII.7 Git LFS 감지와 권고
 
@@ -1493,21 +1493,21 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIV.4.1 | `[ ]` | HEAD→Index diff를 Staged, Index→WorkingTree diff를 Unstaged로 계산합니다. | 부분 staged fixture 분류 정확. | XIV.3.10, XIV.2.5, XIV.2.7 |
-| XIV.4.2 | `[ ]` | 같은 PropertyPath가 staged와 unstaged에서 연속 수정된 경우 base/head, staged, working 세 값을 모두 보존합니다. | H=1, I=2, W=3 fixture 표시 정확. | XIV.4.1 |
-| XIV.4.3 | `[ ]` | untracked Stellar files는 WorkingTree snapshot에 포함하되 index snapshot에는 없는 AddObject/File change로 표시합니다. | untracked chunk/asset fixture 통과. | XIV.4.1 |
+| XIV.4.1 | `[x]` | HEAD→Index diff를 Staged, Index→WorkingTree diff를 Unstaged로 계산합니다. | 부분 staged fixture 분류 정확. | XIV.3.10, XIV.2.5, XIV.2.7 |
+| XIV.4.2 | `[x]` | 같은 PropertyPath가 staged와 unstaged에서 연속 수정된 경우 base/head, staged, working 세 값을 모두 보존합니다. | H=1, I=2, W=3 fixture 표시 정확. | XIV.4.1 |
+| XIV.4.3 | `[x]` | untracked Stellar files는 WorkingTree snapshot에 포함하되 index snapshot에는 없는 AddObject/File change로 표시합니다. | untracked chunk/asset fixture 통과. | XIV.4.1 |
 | XIV.4.4 | `[x]` | non-Stellar files는 raw Git file status로만 표시하고 semantic parser로 해석하지 않습니다. | README change raw status 유지. | XIV.2.1 |
-| XIV.4.5 | `[ ]` | corrupt WorkingTree Stellar state는 semantic status를 실패시키되 raw Git status는 계속 제공하고 자동 수정하지 않습니다. | corrupt chunk fixture raw status 가능. | XIV.4.1, V.4.4 |
+| XIV.4.5 | `[x]` | corrupt WorkingTree Stellar state는 semantic status를 실패시키되 raw Git status는 계속 제공하고 자동 수정하지 않습니다. | corrupt chunk fixture raw status 가능. | XIV.4.1, V.4.4 |
 
 ### XIV.5 선택 변경의 Staging 계획
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIV.5.1 | `[ ]` | 선택한 SemanticChange ID 목록을 받는 `StageSelectionRequest`와 결과 dependency closure를 정의합니다. | round-trip. | XIV.4.1 |
-| XIV.5.2 | `[ ]` | change dependency graph를 작성합니다. 새 object의 property, binding이 참조하는 token/property, component interface와 instance override 관계를 포함합니다. | dependency fixture 정확. | XIV.3.2, VI.2.5, VIII.6.2 |
-| XIV.5.3 | `[ ]` | 선택 변경만으로 snapshot validator가 실패하면 필수 dependency를 `required_additions`로 반환하고 자동 stage하지 않습니다. | invalid partial fixture expected dependencies. | XIV.5.2, VI.10.1 |
-| XIV.5.4 | `[ ]` | caller가 dependencies 포함을 승인한 뒤 Index snapshot에 selected+required changes를 적용해 CandidateIndexSnapshot을 만듭니다. | candidate가 document validator 통과. | XIV.5.3, XIV.3.9 |
-| XIV.5.5 | `[ ]` | CandidateIndexSnapshot을 deterministic project files/chunks로 serialize하되 WorkingTree를 수정하지 않는 temp directory writer를 구현합니다. | write 전후 working tree file hash 동일. | XIV.5.4, VI.10.2, V.5.1 |
+| XIV.5.1 | `[x]` | 선택한 SemanticChange ID 목록을 받는 `StageSelectionRequest`와 결과 dependency closure를 정의합니다. | round-trip. | XIV.4.1 |
+| XIV.5.2 | `[x]` | change dependency graph를 작성합니다. 새 object의 property, binding이 참조하는 token/property, component interface와 instance override 관계를 포함합니다. | dependency fixture 정확. | XIV.3.2, VI.2.5, VIII.6.2 |
+| XIV.5.3 | `[x]` | 선택 변경만으로 snapshot validator가 실패하면 필수 dependency를 `required_additions`로 반환하고 자동 stage하지 않습니다. | invalid partial fixture expected dependencies. | XIV.5.2, VI.10.1 |
+| XIV.5.4 | `[x]` | caller가 dependencies 포함을 승인한 뒤 Index snapshot에 selected+required changes를 적용해 CandidateIndexSnapshot을 만듭니다. | candidate가 document validator 통과. | XIV.5.3, XIV.3.9 |
+| XIV.5.5 | `[~]` | CandidateIndexSnapshot을 deterministic project files/chunks로 serialize하되 WorkingTree를 수정하지 않는 temp directory writer를 구현합니다. | write 전후 working tree file hash 동일. | XIV.5.4, VI.10.2, V.5.1 |
 | XIV.5.6 | `[ ]` | candidate와 기존 index tree의 file-level diff를 계산해 update할 path와 blob bytes만 산출합니다. | unchanged path update 0. | XIV.5.5, XIV.2.5 |
 
 ### XIV.6 Git index 기록
@@ -1525,8 +1525,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIV.7.1 | `[ ]` | 선택 staged changes를 Index snapshot에서 inverse 적용해 CandidateIndexSnapshot을 계산합니다. 기준은 HEAD가 아니라 현재 Index입니다. | staged A+B에서 A만 제거 fixture 통과. | XIV.4.1, XIV.3.10 |
-| XIV.7.2 | `[ ]` | unstage dependency graph를 검사하고 남은 index snapshot이 invalid하면 필수 함께-unstage 변경을 반환합니다. | component property/override fixture 통과. | XIV.5.2, XIV.7.1 |
+| XIV.7.1 | `[x]` | 선택 staged changes를 Index snapshot에서 inverse 적용해 CandidateIndexSnapshot을 계산합니다. 기준은 HEAD가 아니라 현재 Index입니다. | staged A+B에서 A만 제거 fixture 통과. | XIV.4.1, XIV.3.10 |
+| XIV.7.2 | `[x]` | unstage dependency graph를 검사하고 남은 index snapshot이 invalid하면 필수 함께-unstage 변경을 반환합니다. | component property/override fixture 통과. | XIV.5.2, XIV.7.1 |
 | XIV.7.3 | `[ ]` | 승인된 candidate를 Phase XIV.6 index 기록 경로로 적용합니다. | WorkingTree 변경 없음, index semantic 결과 정확. | XIV.7.2, XIV.6.6 |
 
 ### XIV.8 Commit
@@ -1606,7 +1606,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIV.14.3 | `[ ]` | component/token dependency staging scenario를 만듭니다. | invalid partial 차단, dependency 승인 후 성공. | XIV.5.4 |
 | XIV.14.4 | `[ ]` | branch merge conflict를 시스템 Git으로 만든 뒤 Semantic Conflict 해결·git add까지 통합 실행합니다. | unmerged entries 0, merge state 유지. | XIV.12.5 |
 | XIV.14.5 | `[ ]` | linked worktree에서 open/status/stage/commit을 실행해 common git dir과 per-worktree index가 올바른지 검증합니다. | 다른 worktree index 변경 없음. | XIV.1.2, XIV.6.6 |
-| XIV.14.6 | `[ ]` | non-UTF8 path, symlink, executable, LFS pointer, corrupt project scenario를 추가합니다. | 각 정책 결과 정확. | XIV.1.5, XIII.4, XIII.7.5 |
+| XIV.14.6 | `[x]` | non-UTF8 path, symlink, executable, LFS pointer, corrupt project scenario를 추가합니다. | 각 정책 결과 정확. | XIV.1.5, XIII.4, XIII.7.5 |
 
 **Phase XIV 완료 조건:** G7 통과.
 
@@ -1659,11 +1659,11 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XV.5.1 | `[!]` | library project에서 export된 ComponentDefinition·TokenSet index를 읽는 `LibrarySnapshot`을 정의합니다. 모든 resource key에 LibraryId+commit+StableId를 포함합니다. | v1/v2 same StableId 충돌 없음. | XV.2.1, IX.1.1, VIII.5.1 |
-| XV.5.2 | `[ ]` | 사용 project document가 library resource를 참조할 수 있게 `ExternalComponentRef`, `ExternalTokenRef`를 구현합니다. | round-trip. | XV.5.1 |
-| XV.5.3 | `[ ]` | library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다. | edit definition fixture 실패, override 성공. | XV.5.2, IX.2.4 |
-| XV.5.4 | `[ ]` | library의 transitive resource ref를 동일 dependency graph instance 안에서 resolve합니다. | v1 parent가 v1 child, v2 parent가 v2 child 참조. | XV.2.2, XV.5.1 |
-| XV.5.5 | `[ ]` | missing cache/offline entry는 library resource unavailable diagnostic을 생성하고 project 기본 데이터는 읽을 수 있게 합니다. | offline missing fixture partial open. | XV.3.3, III.2.4 |
+| XV.5.1 | `[x]` | library project에서 export된 ComponentDefinition·TokenSet index를 읽는 `LibrarySnapshot`을 정의합니다. 모든 resource key에 LibraryId+commit+StableId를 포함합니다. | v1/v2 same StableId 충돌 없음. | XV.2.1, IX.1.1, VIII.5.1 |
+| XV.5.2 | `[x]` | 사용 project document가 library resource를 참조할 수 있게 `ExternalComponentRef`, `ExternalTokenRef`를 구현합니다. | round-trip. | XV.5.1 |
+| XV.5.3 | `[~]` | library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다. | edit definition fixture 실패, override 성공. | XV.5.2, IX.2.4 |
+| XV.5.4 | `[x]` | library의 transitive resource ref를 동일 dependency graph instance 안에서 resolve합니다. | v1 parent가 v1 child, v2 parent가 v2 child 참조. | XV.2.2, XV.5.1 |
+| XV.5.5 | `[~]` | missing cache/offline entry는 library resource unavailable diagnostic을 생성하고 project 기본 데이터는 읽을 수 있게 합니다. | offline missing fixture partial open. | XV.3.3, III.2.4 |
 
 ### XV.6 로컬 경로·Worktree Override
 
@@ -1679,11 +1679,11 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XV.7.1 | `[ ]` | dependency update request가 selector 재해석 후 CurrentLibrarySnapshot과 CandidateLibrarySnapshot을 생성합니다. | current/candidate commit 정확. | XV.2.4, XV.5.1 |
-| XV.7.2 | `[ ]` | library resource Semantic Diff를 ComponentDefinition·Property·Token 단위로 계산합니다. | resource 변경 fixture 정확. | XIV.3.7, XV.5.1 |
+| XV.7.1 | `[x]` | dependency update request가 selector 재해석 후 CurrentLibrarySnapshot과 CandidateLibrarySnapshot을 생성합니다. | current/candidate commit 정확. | XV.2.4, XV.5.1 |
+| XV.7.2 | `[x]` | library resource Semantic Diff를 ComponentDefinition·Property·Token 단위로 계산합니다. | resource 변경 fixture 정확. | XIV.3.7, XV.5.1 |
 | XV.7.3 | `[ ]` | candidate library를 적용하기 전 사용 project의 external refs와 instance overrides를 검증합니다. | removed property override가 orphan diagnostic. | IX.4.6, XV.5.2 |
-| XV.7.4 | `[ ]` | 사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다. | update 후 render/semantic snapshot expected. | XV.7.3, XV.4.5 |
-| XV.7.5 | `[ ]` | update 실패 시 이전 lock/cache snapshot을 유지합니다. | network/cache/schema fault fixture 통과. | XV.7.4 |
+| XV.7.4 | `[!]` | 사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다. | update 후 render/semantic snapshot expected. | XV.7.3, XV.4.5 |
+| XV.7.5 | `[!]` | update 실패 시 이전 lock/cache snapshot을 유지합니다. | network/cache/schema fault fixture 통과. | XV.7.4 |
 
 ### XV.8 캐시 정리와 진단
 
@@ -1692,7 +1692,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XV.8.1 | `[!]` | 최근 사용 시각과 lockfile reference set을 기준으로 cache GC 후보를 계산합니다. 삭제 임계치는 config에 둡니다. | active lock entry 후보 제외. | XV.3.6, XV.4.2 |
 | XV.8.2 | `[!]` | 여러 project가 참조하는 cache entry는 마지막 참조가 사라질 때까지 삭제하지 않습니다. | two-project fixture 통과. | XV.8.1 |
 | XV.8.3 | `[x]` | duplicate library version warning에 dependency paths와 예상 추가 용량을 포함합니다. repository URL은 표시 UI에만 local source로 전달하고 telemetry에는 제외합니다. | warning fixture 정확. | XV.2.5, XV.3.5 |
-| XV.8.4 | `[ ]` | 외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update. | semantic snapshot·lockfile golden 통과. | XV.1~XV.7 |
+| XV.8.4 | `[!]` | 외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update. | semantic snapshot·lockfile golden 통과. | XV.1~XV.7 |
 
 **Phase XV 완료 조건:** 외부 library exact version 재현, 다중 버전 격리, 읽기 전용 정책, update 검토가 통과합니다.
 
@@ -1758,8 +1758,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XVI.6.1 | `[x]` | restricted YAML parser fuzz target을 추가합니다. | panic, hang, excessive allocation corpus 0. | IV.1.4 |
 | XVI.6.2 | `[x]` | chunk envelope/canonical decoder fuzz target을 추가합니다. | malformed input panic 0. | V.2.6 |
-| XVI.6.3 | `[ ]` | document loader/validator fuzz target을 추가합니다. | invalid refs/cycles 처리, panic 0. | VI.10.3 |
-| XVI.6.4 | `[ ]` | expression AST/typechecker/evaluator fuzz target을 추가합니다. | instruction budget 작동, panic 0. | VIII.4.5 |
+| XVI.6.3 | `[x]` | document loader/validator fuzz target을 추가합니다. | invalid refs/cycles 처리, panic 0. | VI.10.3 |
+| XVI.6.4 | `[x]` | expression AST/typechecker/evaluator fuzz target을 추가합니다. | instruction budget 작동, panic 0. | VIII.4.5 |
 | XVI.6.5 | `[x]` | Semantic Diff/apply/inverse fuzz target을 추가합니다. | valid A/B에서 apply(diff)==B. | XIV.3.10 |
 | XVI.6.6 | `[ ]` | Semantic Merge fuzz target을 추가해 결과 valid 또는 명시 conflict/error만 허용합니다. | invalid silent merge 0. | XIV.10.8 |
 | XVI.6.7 | `[~]` | command sequence fuzz target을 장기 nightly job으로 추가합니다. | crash seed 자동 artifact 저장. | VII.6.3 |

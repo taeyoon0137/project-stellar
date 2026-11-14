@@ -202,6 +202,12 @@ impl BidiParagraph {
             .iter()
             .map(|p| (p.range.clone(), BidiLevel(p.level.number())))
             .collect();
+        // `line_levels`의 이분 탐색이 기대는 불변식입니다(debug 빌드, `crate::tiling`).
+        crate::tiling::debug_assert_tiles(
+            "BiDi paragraph",
+            paragraphs.iter().map(|(range, _)| range),
+            text.len(),
+        );
         let base_level = paragraphs
             .first()
             .map(|(_, level)| *level)
@@ -237,6 +243,12 @@ impl BidiParagraph {
         &self.paragraphs
     }
 
+    /// 테스트용: 정렬 불변식이 깨진 입력을 만들려고 BiDi paragraph 목록을 직접 고칩니다(debug 빌드 panic 검사).
+    #[cfg(all(test, debug_assertions))]
+    pub(crate) fn paragraphs_mut(&mut self) -> &mut Vec<(Range<usize>, BidiLevel)> {
+        &mut self.paragraphs
+    }
+
     /// RTL level이 하나라도 있는지.
     pub fn has_rtl(&self) -> bool {
         self.levels.iter().any(BidiLevel::is_rtl)
@@ -246,8 +258,17 @@ impl BidiParagraph {
     pub fn line_levels(&self, text: &str, line: Range<usize>) -> Result<Vec<BidiLevel>, BidiError> {
         self.check_line(text, &line)?;
         let mut out = self.levels[line.clone()].to_vec();
-        // BiDi paragraph 경계마다 따로 L1을 적용합니다.
-        for (para_range, para_level) in &self.paragraphs {
+        // BiDi paragraph 경계마다 따로 L1을 적용합니다. BiDi paragraph는 텍스트를 순서대로 빈틈없이 나누므로
+        // 줄과 겹치는 첫 paragraph를 이분 탐색하고 겹치는 동안만 훑습니다(줄마다 전체를 훑지 않음). 불변식은
+        // debug 빌드에서 `analyze`가 확인합니다.
+        let first = self
+            .paragraphs
+            .partition_point(|(range, _)| range.end <= line.start);
+        let overlapping = self.paragraphs[first..]
+            .iter()
+            .take_while(|(range, _)| range.start < line.end);
+        for (para_range, para_level) in overlapping {
+            crate::op_count::tick(1);
             let start = para_range.start.max(line.start);
             let end = para_range.end.min(line.end);
             if start >= end {

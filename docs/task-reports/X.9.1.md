@@ -83,3 +83,17 @@
 - 전이 의존성 중 Zlib(foldhash)·Unicode-3.0(yoke, zerofrom, unicode-ident) 라이선스는 자동 허용
   목록 밖이며 ADR-0016 표에 기록만 했습니다.
 - `harfrust`는 0.x입니다. 갱신 시 X.10.7 golden을 다시 검증해야 합니다.
+
+## 후속 확인 (posthoc 리뷰 TS-5: dependency validator 범위 문제 해소)
+
+- 위 "dependency validator 범위" 항목은 main에서 해소되었습니다. `975bf0a`(XXIX.1.2)가 `validate-dependencies`를
+  `cargo tree --workspace` 기반 workspace 전체 직접 의존성 검사로 바꿨고, `24728e3`이
+  `real_dependencies_file_parses`가 실제 workspace 사용 목록을 쓰도록 고쳤습니다. 이 보고서와 X.9.2·X.9.3·X.9.4
+  보고서의 종료 코드 65 기록은 당시 상태입니다.
+- ADR-0016 Consequences의 같은 내용("validator 수정이 필요합니다")은 처음 이 후속 확인 때는 고치지 않았고, 이후
+  posthoc 수정 리뷰 지적에 따라 해소 기록으로 고쳤습니다(위 두 commit과 현재 종료 코드 0을 적음).
+
+| 명령 (기준 `5d0f2ce` + 이 lane 수정, xtask·의존성 변경 없음) | 결과 |
+|---|---|
+| `cargo run -q -p xtask -- validate-dependencies` | 0 |
+| `cargo test -q -p xtask real_dependencies_file_parses` | 0 (1 passed) |

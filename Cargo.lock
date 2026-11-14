@@ -267,12 +267,15 @@ dependencies = [
  "stellar-commands",
  "stellar-core-types",
  "stellar-document",
+ "stellar-expressions",
  "stellar-git-porcelain",
  "stellar-history",
  "stellar-project",
+ "stellar-renderer-core",
  "stellar-semantic-diff",
  "stellar-semantic-merge",
  "stellar-storage",
+ "stellar-target-profile",
 ]
 
 [[package]]
@@ -310,10 +313,12 @@ name = "stellar-project"
 version = "0.0.0"
 dependencies = [
  "stellar-assets",
+ "stellar-commands",
  "stellar-core-types",
  "stellar-dependencies",
  "stellar-document",
  "stellar-git-porcelain",
+ "stellar-history",
  "stellar-storage",
  "stellar-text",
  "yaml-rust2",

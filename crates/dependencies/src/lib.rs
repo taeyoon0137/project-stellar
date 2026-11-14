@@ -64,6 +64,27 @@ pub mod lock_integrity;
 /// local path override 매핑 (XV.6.1)과 대상 검증 (XV.6.2).
 pub mod local_override;
 
+/// 읽기 전용 library snapshot과 resource key (XV.5.1).
+pub mod library_snapshot;
+
+/// 외부 library component·token 참조 (XV.5.2).
+pub mod external_ref;
+
+/// 사용 프로젝트의 library resource 읽기 전용 정책 (XV.5.3).
+pub mod read_only;
+
+/// 외부 참조 scope 해석과 전이 resource ref (XV.5.4).
+pub mod ref_resolution;
+
+/// lock 기준 library 로드와 부분 열기 (XV.5.5).
+pub mod library_load;
+
+/// library update 후보 준비 (XV.7.1).
+pub mod library_update;
+
+/// library resource Semantic Diff (XV.7.2).
+pub mod resource_diff;
+
 /// 다중 버전 경고 상세: 경로·예상 추가 용량·UI/telemetry 분리 (XV.8.3).
 pub mod duplicate_report;
 

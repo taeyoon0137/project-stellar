@@ -221,6 +221,114 @@ pub(crate) fn ttc(faces: &[Vec<NameEntry>]) -> Vec<u8> {
     out
 }
 
+/// 모든 record가 같은 문자열 구간(offset 0, `record_len` bytes)을 가리키는 name table.
+///
+/// record는 Windows English US, nameID는 모두 `name_id`이고 문자열은 UTF-16BE `unit` 반복입니다.
+pub(crate) fn overlapping_name_table(
+    record_count: u16,
+    name_id: u16,
+    record_len: u16,
+    unit: u16,
+) -> Vec<u8> {
+    overlapping_name_table_for(&[name_id], record_count, record_len, unit)
+}
+
+/// [`overlapping_name_table`]과 같되 `name_ids` 각각에 record `per_id`개씩을 둡니다(모두 같은 문자열 구간).
+pub(crate) fn overlapping_name_table_for(
+    name_ids: &[u16],
+    per_id: u16,
+    record_len: u16,
+    unit: u16,
+) -> Vec<u8> {
+    let record_count = u16::try_from(name_ids.len() * usize::from(per_id)).unwrap();
+    let string_offset = 6 + 12 * u32::from(record_count);
+    let mut out = Vec::new();
+    out.extend_from_slice(&0u16.to_be_bytes());
+    out.extend_from_slice(&record_count.to_be_bytes());
+    out.extend_from_slice(&(string_offset as u16).to_be_bytes());
+    for &name_id in name_ids {
+        for _ in 0..per_id {
+            for value in [3u16, 1, 0x0409, name_id, record_len, 0] {
+                out.extend_from_slice(&value.to_be_bytes());
+            }
+        }
+    }
+    for _ in 0..record_len / 2 {
+        out.extend_from_slice(&unit.to_be_bytes());
+    }
+    out
+}
+
+/// 같은 face 하나(`extra` table)를 `count`번 가리키는 collection(모든 face offset이 같음).
+pub(crate) fn ttc_repeated(extra: &[ExtraTable], count: u32) -> Vec<u8> {
+    let header_len = 12 + 4 * count;
+    let mut out = Vec::new();
+    out.extend_from_slice(&SIG_TTCF);
+    out.extend_from_slice(&1u16.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes());
+    out.extend_from_slice(&count.to_be_bytes());
+    for _ in 0..count {
+        out.extend_from_slice(&header_len.to_be_bytes());
+    }
+    out.extend_from_slice(&face_blob(SIG_TRUETYPE, &[], extra, header_len));
+    out
+}
+
+/// face `count`개가 저마다 `extra` table의 사본을 갖는 collection(name table 구간이 모두 다름).
+pub(crate) fn ttc_distinct_copies(extra: &[ExtraTable], count: u32) -> Vec<u8> {
+    let header_len = 12 + 4 * count;
+    let mut blobs = Vec::new();
+    let mut offsets = Vec::new();
+    let mut next = header_len;
+    for _ in 0..count {
+        let blob = face_blob(SIG_TRUETYPE, &[], extra, next);
+        offsets.push(next);
+        next += blob.len() as u32;
+        blobs.push(blob);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(&SIG_TTCF);
+    out.extend_from_slice(&1u16.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes());
+    out.extend_from_slice(&count.to_be_bytes());
+    for offset in offsets {
+        out.extend_from_slice(&offset.to_be_bytes());
+    }
+    for blob in blobs {
+        out.extend_from_slice(&blob);
+    }
+    out
+}
+
+/// face `count`개가 서로 1 byte씩 어긋난 `window_len` bytes name table 구간을 가리키는 collection.
+///
+/// 구간이 모두 달라 재사용되지 않으므로 파일 하나의 name table 읽기 합계 상한을 검사할 때 씁니다.
+/// 구간 내용은 0(빈 name table)입니다.
+pub(crate) fn ttc_shifted_name_windows(count: u32, window_len: u32) -> Vec<u8> {
+    const FACE_HEADER_LEN: u32 = 12 + 16;
+    let header_len = 12 + 4 * count;
+    let data_start = header_len + FACE_HEADER_LEN * count;
+    let mut out = Vec::new();
+    out.extend_from_slice(&SIG_TTCF);
+    out.extend_from_slice(&1u16.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes());
+    out.extend_from_slice(&count.to_be_bytes());
+    for k in 0..count {
+        out.extend_from_slice(&(header_len + FACE_HEADER_LEN * k).to_be_bytes());
+    }
+    for k in 0..count {
+        out.extend_from_slice(&SIG_TRUETYPE);
+        out.extend_from_slice(&1u16.to_be_bytes());
+        out.extend_from_slice(&[0u8; 6]);
+        out.extend_from_slice(b"name");
+        out.extend_from_slice(&0u32.to_be_bytes());
+        out.extend_from_slice(&(data_start + k).to_be_bytes());
+        out.extend_from_slice(&window_len.to_be_bytes());
+    }
+    out.resize(out.len() + (window_len + count) as usize, 0);
+    out
+}
+
 /// WOFF 1.0 header만 있는 파일(length = 44).
 pub(crate) fn woff(flavor: [u8; 4]) -> Vec<u8> {
     let mut out = vec![0u8; 44];

@@ -363,21 +363,34 @@ pub(crate) fn place(
     index: usize,
     inner: LayoutSize,
 ) -> Result<Vec<(usize, LayoutRect)>, LayoutError> {
+    let mut placements = Vec::new();
+    for child in engine.children(index) {
+        placements.push((child, child_rect(engine, index, inner, child)?));
+    }
+    Ok(placements)
+}
+
+/// Free container `index`(content 크기 `inner`) 안 자식 하나의 rect(부모 local 좌표).
+///
+/// 자식 위치는 자신의 anchor·크기와 부모 content box에만 의존합니다(형제와 무관). 증분 레이아웃(X.7.3)은
+/// 바뀐 자식 하나만 이 함수로 다시 놓습니다.
+pub(crate) fn child_rect(
+    engine: &mut Engine<'_>,
+    index: usize,
+    inner: LayoutSize,
+    child: usize,
+) -> Result<LayoutRect, LayoutError> {
     let id = engine.nodes[index].id;
     let padding = engine.nodes[index].padding;
     let inner_axes = [Some(inner.width()), Some(inner.height())];
-    let mut placements = Vec::new();
-    for child in engine.children(index) {
-        let anchors = engine.nodes[child].anchors;
-        let constraint = child_constraint(inner_axes, &anchors).map_err(at(id))?;
-        let size = engine.resolve_size(child, constraint)?;
-        let x = axis_position(anchors[0], inner.width(), size.width()).map_err(at(id))?;
-        let y = axis_position(anchors[1], inner.height(), size.height()).map_err(at(id))?;
-        let x = padding.left.checked_add(x).map_err(at(id))?;
-        let y = padding.top.checked_add(y).map_err(at(id))?;
-        placements.push((child, LayoutRect::from_origin_size(x, y, size)));
-    }
-    Ok(placements)
+    let anchors = engine.nodes[child].anchors;
+    let constraint = child_constraint(inner_axes, &anchors).map_err(at(id))?;
+    let size = engine.resolve_size(child, constraint)?;
+    let x = axis_position(anchors[0], inner.width(), size.width()).map_err(at(id))?;
+    let y = axis_position(anchors[1], inner.height(), size.height()).map_err(at(id))?;
+    let x = padding.left.checked_add(x).map_err(at(id))?;
+    let y = padding.top.checked_add(y).map_err(at(id))?;
+    Ok(LayoutRect::from_origin_size(x, y, size))
 }
 
 #[cfg(test)]

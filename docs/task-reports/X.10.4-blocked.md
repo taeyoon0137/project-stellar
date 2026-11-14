@@ -36,3 +36,22 @@
 
 - X.6.4가 `[x]`이고 연결 crate 경계가 crate graph 정책에 반영되면, Text intrinsic 측정(너비 제약 없음 = max-content,
   너비 제약 = 줄바꿈 높이)과 첫 줄 baseline을 hook에 연결하고 Stack baseline fixture(X.3.6과 공유)를 통과시킵니다.
+
+## 후속 확인 (posthoc 리뷰 TS-6: 선행 X.6.4 완료, crate 경계 결정은 남음)
+
+- **X.6.4 선행은 해소**: main 계획서에서 X.6.4가 `[x]`입니다(`8c8cbf1` Task(X.6.4)). 연결 대상 hook은
+  `stellar-layout`의 `intrinsic::ContentMeasurer`(`compute_layout_with`에 넘기는 `Sync` 측정기)와 기본 `TextIntrinsic`
+  입니다. 위 "X.6.4 미완료"는 기준 commit 1c461c2 당시 상태입니다.
+- **crate 경계는 아직 열린 결정**: `tools/xtask/src/crate_graph.rs` 정책은 그대로 `stellar-layout`·`stellar-text` 모두
+  `stellar-core-types`만 허용하고, 두 crate에 함께 의존할 수 있는 crate도 정책에 없습니다. text 쪽 `ContentMeasurer`
+  구현을 둘 위치(상위 crate 신설 또는 허용 간선 추가)를 정해야 X.10.4를 재개할 수 있습니다.
+- 계획서 X.10.4 상태(`[!]`)는 이 lane 허용 경로 밖이라 바꾸지 않았습니다. 재착수 시 위 결정과 함께 다시 잡아야 합니다.
+- **`[!]` 유지 근거(posthoc 수정 리뷰 후 재확인)**: 남은 차단 원인이 그대로입니다. `tools/xtask/src/crate_graph.rs`
+  `allowed_edges`와 `docs/architecture/crate-dependency-graph.md` 모두 `stellar-layout`·`stellar-text`를 함께 의존할 수
+  있는 crate가 없고 두 crate 사이 간선도 없습니다. 이 결정은 crate graph 정책 변경(ADR과 아키텍처 문서 갱신 포함)이라
+  리뷰 수정 범위 밖이므로 상태를 `[ ]`로 되돌리지 않았습니다. 결정이 반영되면 위 재개 조건대로 재착수합니다.
+
+| 명령 (기준 `5d0f2ce` + 이 lane 수정) | 결과 |
+|---|---|
+| `grep -n "^\| X\.6\.4 " docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md` | 상태 `[x]` |
+| `cargo run -q -p xtask -- validate-crate-graph` | 0 (layout·text → core-types만) |

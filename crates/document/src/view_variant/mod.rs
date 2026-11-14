@@ -8,6 +8,7 @@
 //! - [`resolver`]: 일치 Variant 정렬·충돌·적용(IX.7.4~IX.7.6).
 //! - [`encapsulation`]: Variant override의 ComponentInstance 캡슐화 검사(IX.7.7).
 //! - [`commands`]: View 변수·Variant 생성·변경·삭제 command와 orphan 진단(IX.7.8).
+//! - [`presentation`]: 같은 View를 여러 변수 할당으로 캔버스에 배치하는 런타임 타입(IX.7.9).
 
 /// View 변수 (IX.7.1).
 pub mod variable;
@@ -23,3 +24,6 @@ pub mod encapsulation;
 
 /// View 변수·Variant 생성·변경·삭제 command (IX.7.8).
 pub mod commands;
+
+/// 캔버스 ViewPresentation 런타임 타입 (IX.7.9).
+pub mod presentation;

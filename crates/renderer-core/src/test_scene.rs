@@ -77,6 +77,8 @@ pub(crate) struct PaintFx {
     /// `SceneBlendMode::tag()`.
     pub blend: u8,
     pub blur: f32,
+    /// 참이면 이 node의 모든 색을 Display P3로 기록합니다(기본 sRGB).
+    pub display_p3: bool,
 }
 
 impl Default for PaintFx {
@@ -88,6 +90,7 @@ impl Default for PaintFx {
             opacity: 1.0,
             blend: 0,
             blur: 0.0,
+            display_p3: false,
         }
     }
 }
@@ -192,6 +195,21 @@ impl NodeFx {
         self
     }
 
+    /// 이 node의 색을 Display P3로 기록합니다.
+    pub(crate) fn in_display_p3(mut self) -> NodeFx {
+        self.paint.display_p3 = true;
+        self
+    }
+
+    pub(crate) fn with_shadow_color(mut self, color: Rgba) -> NodeFx {
+        self.paint.shadows.push(ShadowFx {
+            offset: [0.0, 0.0],
+            blur: 0.0,
+            color,
+        });
+        self
+    }
+
     pub(crate) fn hidden(mut self) -> NodeFx {
         self.hidden = true;
         self
@@ -218,8 +236,8 @@ fn put_f32s(out: &mut Vec<u8>, values: &[f32]) {
     }
 }
 
-fn put_color(out: &mut Vec<u8>, color: Rgba) {
-    out.push(0x01); // sRGB
+fn put_color(out: &mut Vec<u8>, color: Rgba, display_p3: bool) {
+    out.push(if display_p3 { 0x02 } else { 0x01 }); // core-types ColorSpace tag
     put_f32s(out, &color);
 }
 
@@ -272,12 +290,12 @@ fn write_node(node: &NodeFx, z: &mut u64, out: &mut Vec<u8>) {
     for fill in &node.paint.fills {
         out.push(1);
         out.push(1);
-        put_color(out, *fill);
+        put_color(out, *fill, node.paint.display_p3);
     }
     for (color, width) in &node.paint.strokes {
         out.push(2);
         out.push(1);
-        put_color(out, *color);
+        put_color(out, *color, node.paint.display_p3);
         put_f32(out, *width);
         out.push(0); // align center
         out.push(0); // cap butt
@@ -286,7 +304,7 @@ fn write_node(node: &NodeFx, z: &mut u64, out: &mut Vec<u8>) {
     for shadow in &node.paint.shadows {
         put_f32s(out, &shadow.offset);
         put_f32(out, shadow.blur);
-        put_color(out, shadow.color);
+        put_color(out, shadow.color, node.paint.display_p3);
     }
     put_f32(out, node.paint.opacity);
     out.push(node.paint.blend);

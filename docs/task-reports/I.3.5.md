@@ -39,3 +39,22 @@
 ## 작업 지시와 다른 점
 
 - 보호 경로 패턴은 아키텍처의 계획 레이아웃 기준으로 정의했습니다(crate가 생성되면 동일 prefix가 적용됨).
+
+## 후속 기록 (사후 리뷰 EB-4: 보호 경로 추가)
+
+I.3.5를 마친 뒤 생긴 `crates/bindings/`와 `crates/expressions/`는 보호 경로 prefix에 없었습니다.
+그래서 `ValueBinding` 저장 형식, canonical AST 형식, 환경 입력 registry를 바꿔도 `validate-adr`가
+실패하지 않았습니다. 이 결정들을 ADR-0026에 소급 기록한 뒤, 그 결정이 있는 파일 세 개를 정확히
+일치하는 보호 경로(`PROTECTED_EXACT`)에 추가했습니다.
+
+- `crates/bindings/src/binding.rs`
+- `crates/expressions/src/codec.rs`
+- `crates/expressions/src/environment.rs`
+
+두 crate의 나머지 파일(평가기, command, scheduler 등)은 저장 형식도 numeric registry도 아니므로 crate
+전체를 보호하지 않았습니다. canonical AST bytes에 들어가는 연산 tag(`ops.rs` 등)와 함수
+ID(`functions.rs`)는 ADR에 기록되지 않았고 아직 보호 경로가 아닙니다(ADR-0026 Consequences).
+
+| 검사 | 결과 |
+|---|---|
+| `binding_and_expression_format_files_are_protected`: 세 파일 단독 변경은 `missing-adr`, ADR 동반 시 통과, `fallback.rs`·`vm.rs` 변경은 통과 | 보호 경로 추가 전 실패, 추가 후 통과 |

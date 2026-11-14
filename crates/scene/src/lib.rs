@@ -48,6 +48,12 @@ pub mod visibility;
 /// broad-phase hit test (XI.3.3).
 pub mod hit_test;
 
+/// node 종류별 narrow-phase hit test (XI.3.4).
+pub mod narrow_phase;
+
+/// selection handle·modifier control point transient hit-test layer (XI.3.5).
+pub mod transient;
+
 /// 테스트 전용 scene fixture 생성기 (XI.1.2).
 #[cfg(test)]
 mod fixtures;

@@ -6,8 +6,10 @@
 //! `compose_text`, glyph 수에 비례하는 저비용 단계). paragraph 내용으로 key를 만들므로 paragraph가 삽입·
 //! 삭제되어 index가 밀려도 내용이 같은 paragraph는 재사용됩니다.
 //!
-//! cache 항목은 원본 paragraph 텍스트·span·기준 방향을 검증 값으로 보관해 hash 충돌로 다른 결과를 쓰지
-//! 않습니다. 레이아웃이 끝나면 이번 요청에 쓰지 않은 항목을 지워 메모리를 문서 크기로 제한합니다.
+//! cache 항목은 key가 hash로만 요약한 원본 입력 전체(paragraph 텍스트·span·기준 방향, paragraph가 쓰는
+//! style의 글꼴 크기·feature·variation·fallback chain 항목·사용 가능 handle, 줄 레이아웃은 paragraph 속성·
+//! 줄바꿈 옵션까지)를 검증 값으로 보관해 hash 충돌로 다른 결과를 쓰지 않습니다. 레이아웃이 끝나면 이번 요청에
+//! 쓰지 않은 항목을 지워 메모리를 문서 크기로 제한합니다.
 //!
 //! [`affected_paragraphs`]는 편집 범위가 바꾸는 paragraph 구간을 계산하는 helper입니다(문서 모델 편집
 //! helper VI.7.5가 바꾼 범위를 layout 무효화 범위로 옮길 때 사용).
@@ -16,17 +18,22 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 
 use crate::bidi::BaseDirection;
-use crate::cache::{LayoutCache, LineLayoutCacheKey, ShapingCacheKey, TargetProfileKey};
-use crate::font_runs::FaceSource;
+use crate::cache::{
+    loaded_handles, paragraph_styles, style_at, LayoutCache, LineLayoutCacheKey, ShapingCacheKey,
+    TargetProfileKey,
+};
+use crate::fallback::FontFallbackChain;
+use crate::font_runs::{FaceSource, ShapingStyle};
 use crate::itemize::StyleSpan;
 use crate::line_break::{line_break_opportunities, LineBreakOptions};
 use crate::paragraph::{
     shape_paragraph, ParagraphInput, ShapedParagraph, TextLayoutError, TextStyleSpec,
 };
+use crate::registry::FontHandle;
 use crate::text_layout::{
     compose_text, lay_out_paragraph, ParagraphLayoutStyle, ParagraphLines, TextBox, TextLayout,
 };
-use crate::units::TextUnit;
+use crate::units::{FontSize, TextUnit};
 
 /// paragraph 하나의 입력.
 #[derive(Debug, Clone, Copy)]
@@ -69,19 +76,76 @@ pub struct LayoutReport {
     pub relaid: Vec<usize>,
 }
 
-/// shaping cache 검증 값(원본 입력).
+/// shaping cache 검증 값: key가 hash로만 요약한 원본 입력 전체. key가 같아도(hash 충돌) 이 값이 다르면
+/// miss입니다. locale·target profile은 key에 원본 그대로 있어 key 비교로 충분합니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ShapingCheck {
     text: String,
     spans: Vec<StyleSpan>,
     base: BaseDirection,
+    /// paragraph가 쓰는 style([`paragraph_styles`])의 원본 값(index 오름차순).
+    styles: Vec<StyleCheck>,
+}
+
+/// style 하나의 원본 값. style 표에 없는 index는 `value`가 `None`입니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StyleCheck {
+    index: u32,
+    value: Option<StyleValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StyleValue {
+    font_size: FontSize,
+    shaping: ShapingStyle,
+    /// fallback chain 항목(file hash·face index·axes).
+    chain: FontFallbackChain,
+    /// 항목별 사용 가능한(registry에 있고 로드된) handle. 결과 run이 handle을 담으므로 사용 가능 여부와 함께
+    /// handle 정체성도 비교합니다.
+    loaded: Vec<Option<FontHandle>>,
+}
+
+/// 줄 레이아웃 cache 검증 값: shaping 입력과 줄 key가 hash로만 요약한 paragraph 속성·줄바꿈 옵션 원본. 너비
+/// 제약은 key에 원본 그대로 있습니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LineCheck {
+    shaping: ShapingCheck,
+    style: ParagraphLayoutStyle,
+    line_break: LineBreakOptions,
+}
+
+impl ShapingCheck {
+    fn new<S: FaceSource + ?Sized>(
+        input: &ParagraphInput<'_>,
+        styles: &[TextStyleSpec<'_>],
+        faces: &S,
+    ) -> ShapingCheck {
+        let styles = paragraph_styles(input, styles.len())
+            .into_iter()
+            .map(|index| StyleCheck {
+                index,
+                value: style_at(styles, index).map(|style| StyleValue {
+                    font_size: style.font_size,
+                    shaping: style.shaping.clone(),
+                    chain: style.chain.chain().clone(),
+                    loaded: loaded_handles(style, faces),
+                }),
+            })
+            .collect();
+        ShapingCheck {
+            text: input.text.to_string(),
+            spans: input.spans.to_vec(),
+            base: input.base_direction,
+            styles,
+        }
+    }
 }
 
 /// 증분 레이아웃 엔진 (X.10.6).
 #[derive(Debug, Default)]
 pub struct IncrementalTextLayout {
     shaping: LayoutCache<ShapingCacheKey, ShapingCheck, ShapedParagraph>,
-    lines: LayoutCache<LineLayoutCacheKey, (ShapingCheck, ParagraphLayoutStyle), ParagraphLines>,
+    lines: LayoutCache<LineLayoutCacheKey, LineCheck, ParagraphLines>,
     shape_calls: u64,
     line_calls: u64,
 }
@@ -123,11 +187,7 @@ impl IncrementalTextLayout {
                 &request.line_break.locale,
                 request.target_profile,
             );
-            let check = ShapingCheck {
-                text: paragraph.text.to_string(),
-                spans: paragraph.spans.to_vec(),
-                base: paragraph.base_direction,
-            };
+            let check = ShapingCheck::new(&input, request.styles, faces);
             if self.shaping.get(&shaping_key, &check).is_none() {
                 let shaped = shape_paragraph(&input, request.styles, faces)?;
                 self.shape_calls += 1;
@@ -141,7 +201,11 @@ impl IncrementalTextLayout {
                 request.line_break,
                 request.max_width,
             );
-            let line_check = (check, paragraph.style);
+            let line_check = LineCheck {
+                shaping: check,
+                style: paragraph.style,
+                line_break: request.line_break.clone(),
+            };
             if self.lines.get(&line_key, &line_check).is_none() {
                 let shaped = self
                     .shaping
@@ -352,6 +416,167 @@ mod tests {
         run(&mut engine, &fx, &inserted, 120);
         assert_eq!(engine.shaping.len(), 4);
         assert_eq!(engine.lines.len(), 4);
+    }
+
+    /// 글꼴 크기만 다른 fixture style.
+    fn sized_style(fx: &Fixture, px: i32) -> TextStyleSpec<'_> {
+        TextStyleSpec {
+            chain: fx.chain.resolve(&fx.set.registry),
+            shaping: crate::font_runs::ShapingStyle::default(),
+            font_size: crate::units::FontSize::from_px(px).expect("크기"),
+        }
+    }
+
+    #[test]
+    fn style_change_reshapes_only_paragraphs_using_that_style() {
+        // posthoc TS-4 회귀: style·font face hash가 style 표 전체를 담으면, 다른 paragraph만 쓰는 style이
+        // 바뀌어도 모든 paragraph를 다시 shaping합니다.
+        let fx = Fixture::new();
+        let texts = ["first uses style zero", "second uses style one", ""];
+        let spans = [
+            spans(texts[0]),
+            vec![StyleSpan {
+                range: 0..texts[1].len(),
+                style: 1,
+                language: None,
+            }],
+            // span 없는 빈 paragraph: 기본 줄 metric은 첫 style을 씁니다.
+            vec![],
+        ];
+        let specs: Vec<ParagraphSpec<'_>> = texts
+            .iter()
+            .zip(&spans)
+            .map(|(text, spans)| ParagraphSpec {
+                text,
+                spans,
+                base_direction: BaseDirection::LeftToRight,
+                style: ParagraphLayoutStyle::default(),
+            })
+            .collect();
+        let options = LineBreakOptions::new(LanguageTag::parse("en").expect("en"));
+        let layout = |engine: &mut IncrementalTextLayout, sizes: [i32; 2]| {
+            let styles = vec![sized_style(&fx, sizes[0]), sized_style(&fx, sizes[1])];
+            engine
+                .layout(
+                    &LayoutRequest {
+                        paragraphs: &specs,
+                        styles: &styles,
+                        line_break: &options,
+                        target_profile: TargetProfileKey(1),
+                        max_width: Some(TextUnit::from_px(200).expect("폭")),
+                        paragraph_spacing: TextUnit::ZERO,
+                        text_box: TextBox::default(),
+                    },
+                    &fx.set.faces,
+                )
+                .expect("layout")
+        };
+        let mut engine = IncrementalTextLayout::new();
+        let (_, report) = layout(&mut engine, [16, 16]);
+        assert_eq!(report.reshaped, vec![0, 1, 2]);
+        // style 1(둘째 paragraph만 씀)만 바꾸면 둘째만 다시 shaping·줄 나누기합니다.
+        let (after, report) = layout(&mut engine, [16, 20]);
+        assert_eq!(report.reshaped, vec![1]);
+        assert_eq!(report.relaid, vec![1]);
+        assert_eq!(after, layout(&mut IncrementalTextLayout::new(), [16, 20]).0);
+        // style 0은 첫 paragraph와 span 없는 빈 paragraph(기본 줄 metric)가 씁니다.
+        let (after, report) = layout(&mut engine, [18, 20]);
+        assert_eq!(report.reshaped, vec![0, 2]);
+        assert_eq!(report.relaid, vec![0, 2]);
+        assert_eq!(after, layout(&mut IncrementalTextLayout::new(), [18, 20]).0);
+    }
+
+    #[test]
+    fn hash_collision_between_different_inputs_is_a_miss() {
+        // posthoc TS-4 회귀: cache 검증 값이 텍스트·span·기준 방향만 비교하면, style 값이나 줄바꿈 옵션만 다른
+        // 입력의 key가 hash 충돌로 같을 때 앞 입력의 결과를 그대로 돌려줍니다. 충돌은 cache 항목을 다른 입력의
+        // key로 옮겨 재현합니다.
+        let fx = Fixture::new();
+        let text = "한국어 텍스트";
+        let text_spans = spans(text);
+        let specs = [ParagraphSpec {
+            text,
+            spans: &text_spans,
+            base_direction: BaseDirection::LeftToRight,
+            style: ParagraphLayoutStyle::default(),
+        }];
+        let normal = LineBreakOptions::new(LanguageTag::parse("ko").expect("ko"));
+        let keep_all = LineBreakOptions {
+            word_break: crate::line_break::WordBreak::KeepAll,
+            ..normal.clone()
+        };
+        let width = Some(TextUnit::from_px(40).expect("폭"));
+        let layout = |engine: &mut IncrementalTextLayout, px: i32, options: &LineBreakOptions| {
+            let styles = vec![sized_style(&fx, px)];
+            engine
+                .layout(
+                    &LayoutRequest {
+                        paragraphs: &specs,
+                        styles: &styles,
+                        line_break: options,
+                        target_profile: TargetProfileKey(1),
+                        max_width: width,
+                        paragraph_spacing: TextUnit::ZERO,
+                        text_box: TextBox::default(),
+                    },
+                    &fx.set.faces,
+                )
+                .expect("layout")
+        };
+        let keys = |px: i32, options: &LineBreakOptions| {
+            let styles = vec![sized_style(&fx, px)];
+            let input = ParagraphInput {
+                text,
+                spans: &text_spans,
+                base_direction: BaseDirection::LeftToRight,
+            };
+            let shaping = ShapingCacheKey::new(
+                &input,
+                &styles,
+                &fx.set.faces,
+                &options.locale,
+                TargetProfileKey(1),
+            );
+            let line = LineLayoutCacheKey::new(
+                shaping.clone(),
+                &ParagraphLayoutStyle::default(),
+                options,
+                width,
+            );
+            (shaping, line)
+        };
+
+        // 1. 글꼴 크기만 다른 입력: 16px 항목이 20px 요청 key와 충돌.
+        let mut engine = IncrementalTextLayout::new();
+        layout(&mut engine, 16, &normal);
+        let (from_shaping, from_line) = keys(16, &normal);
+        let (to_shaping, to_line) = keys(20, &normal);
+        assert_ne!(from_shaping, to_shaping);
+        assert!(engine.shaping.rekey(&from_shaping, to_shaping));
+        assert!(engine.lines.rekey(&from_line, to_line));
+        let (got, report) = layout(&mut engine, 20, &normal);
+        assert_eq!(report.reshaped, vec![0]);
+        assert_eq!(
+            got,
+            layout(&mut IncrementalTextLayout::new(), 20, &normal).0
+        );
+
+        // 2. 줄바꿈 옵션만 다른 입력: Normal 줄 항목이 KeepAll 요청 key와 충돌(shaping key는 같음).
+        let mut engine = IncrementalTextLayout::new();
+        let (normal_layout, _) = layout(&mut engine, 16, &normal);
+        let (normal_shaping, from_line) = keys(16, &normal);
+        let (keep_all_shaping, to_line) = keys(16, &keep_all);
+        assert_eq!(normal_shaping, keep_all_shaping);
+        assert!(engine.lines.rekey(&from_line, to_line));
+        let (got, report) = layout(&mut engine, 16, &keep_all);
+        assert!(report.reshaped.is_empty());
+        assert_eq!(report.relaid, vec![0]);
+        let expected = layout(&mut IncrementalTextLayout::new(), 16, &keep_all).0;
+        assert_ne!(
+            expected, normal_layout,
+            "두 옵션의 줄 나누기가 달라야 합니다"
+        );
+        assert_eq!(got, expected);
     }
 
     #[test]

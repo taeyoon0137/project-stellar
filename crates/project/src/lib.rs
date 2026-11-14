@@ -75,6 +75,9 @@ pub mod watcher;
 /// 외부 변경 반영 상태 (XIII.3).
 pub mod external_change;
 
+/// 창 문서 세션과 clean 창의 외부 generation 자동 reload (XIII.3.1).
+pub mod window_session;
+
 /// 지연 자동 저장 정책 (XIII.1.1).
 pub mod autosave;
 

@@ -64,3 +64,40 @@
 - 구조 편집으로 z-order 간격이 부족하면 뒤쪽 node 재번호가 필요합니다. 간격 정책은 증분 builder
   (XI.2.5)에서 정해야 합니다.
 - `sharing_with`는 이전 snapshot node 수만큼 주소 집합을 만듭니다(진단·테스트용, 매 frame 용도 아님).
+
+## 후속 수정 (리뷰 major: SceneNode Drop이 공유 자식 목록까지 순회)
+
+- **결함**: 깊은 tree 반복 해제 수정(`ac1827b`)의 `SceneNode::drop`이 자식 목록 chunk를 다른 version과 공유할
+  때도 모든 자식 `Arc`를 복제해 꺼낸 뒤 다시 줄였습니다. 그래서 node 하나를 해제하는 비용이 자식 수에 비례(원자
+  증감 + 같은 크기 할당)했고, 넓은 frame 안의 편집이 남긴 이전 조상 version을 해제할 때(예: render thread가 오래된
+  snapshot을 놓을 때, XI.1.5) 형제 전부를 순회해 이 작업의 구조 공유 비용 모델이 해제 경로에서 깨졌습니다.
+- **수정**:
+  - `PersistentVec` chunk 표현을 `Arc<[T]>`에서 크기가 정해진 `Arc<Vec<T>>`로 바꿔 `Arc::into_inner`로 유일 소유
+    chunk를 넘겨받을 수 있게 했습니다(조회·순회·`set` 동작과 공개 API는 같음).
+  - `PersistentVec::release_unique(self, out)` 추가: 명시적 stack으로 trie를 내려가며 마지막 참조인 chunk만 풀고
+    그 원소를 복제 없이 `out`으로 옮깁니다. 공유 chunk는 참조만 하나 줄이고 멈춥니다(`ClipStackRef`가 공유 prefix에서
+    멈추는 방식과 같음). `into_inner`이므로 같은 chunk를 동시에 해제하는 thread 중 정확히 하나만 원소를 받습니다.
+    반환값은 놓은 chunk 수입니다.
+  - `SceneNode`의 `detach_children`가 `release_unique`를 씁니다. 테스트 build에서만 놓은 chunk 수·떼어 낸 자식 수를
+    thread별로 세는 계측(`drop_cost`)을 두었고, 그 밖에서는 빈 함수입니다.
+- **회귀 테스트**:
+  - `node::dropping_old_versions_of_a_wide_frame_skips_shared_child_chunks`: 자식 200,000개 frame에서 서로 다른
+    위치의 자식을 하나씩 바꾼 version 200개를 만든 뒤 이전 version 200개를 해제합니다. 놓은 chunk ≤ 200 × 97(root +
+    유일 branch 3개의 자식), 떼어 낸 자식 ∈ [200, 200 × 32]를 확인하고, 이전 version에만 있던 자식은 해제·공유 자식은
+    최신 version만 보유(strong count 1)함을 확인합니다. 마지막 version 해제 시 자식 200,000개가 모두 해제됩니다.
+  - `persistent::release_unique_stops_at_chunks_shared_with_another_version`: 길이 200,000에서 `set`한 이전 version
+    해제는 놓은 chunk ≤ 97, 넘어온 원소는 바뀐 leaf 하나(32개)뿐이고 남은 version은 그대로임을, root 공유 복제본은
+    chunk 1개만 놓음을, 마지막 version은 모든 원소를 넘김을 확인합니다.
+- **변이 확인**: `detach_children`를 이전 구현(전체 복제)으로 되돌리면 node 회귀 테스트가 `떼어 낸 자식 40000000`으로
+  실패하고 실행 시간이 12.89 s(debug)였습니다. 수정 후 같은 테스트는 debug 0.11 s, `--release` 0.04 s입니다(200,000개
+  자식 생성 포함). 되돌린 변이는 확인 뒤 복원했습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-scene` | unit 79, doc 2 passed, 0 failed |
+| `cargo clippy -p stellar-scene --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-scene -- --check` | 통과 |
+| `cargo test -p stellar-renderer-core -p stellar-export` | export unit 55·doc 0, renderer-core unit 95·doc 3 passed, 0 failed |
+
+- **남은 한계**: chunk마다 `Vec` header 할당이 하나 늘었습니다(32칸 chunk당 약 40 B와 할당 1회). snapshot 최상위
+  목록(`SceneSnapshot` roots)은 기본 drop을 쓰며, 그 원소 `SceneNode` 해제는 위 반복 Drop이 처리합니다.

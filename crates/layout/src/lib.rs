@@ -15,6 +15,9 @@ pub mod geometry;
 /// 레이아웃 입력 속성 식별자와 dirty class registry (X.1.1, X.1.3).
 pub mod property;
 
+/// command invalidation → layout dirty set (X.7.1).
+pub mod dirty;
+
 /// 레이아웃 오류 (X.1.1).
 pub mod error;
 
@@ -62,6 +65,15 @@ pub mod constraint;
 
 /// layout worker result guard (X.7.5).
 pub mod guard;
+
+/// 영향 범위만 다시 배치하는 증분 레이아웃 (X.7.3).
+pub mod incremental;
+
+/// 증분 레이아웃 단일 leaf 변경 benchmark (X.7.4).
+pub mod bench;
+
+/// 문서 원천을 Fragment flatten한 layout tree view (X.1.2).
+pub mod view;
 
 /// 레이아웃 적합성 fixture corpus (X.11.1).
 pub mod corpus;
