@@ -88,3 +88,26 @@
   실제 GPU 사용량보다 작습니다.
 - 공통 계층 cache(texture·glyph atlas) purge 연결은 runtime 몫입니다. backend는 transient pool만 스스로
   회수합니다.
+
+## 후속 수정 (리뷰 반영)
+
+통합 리뷰 지적 두 개가 이 행의 "crash 없이 error event" 보장에 걸려 `Fix:` 커밋으로 고쳤습니다. 행 상태는
+`[x]`로 둡니다(지적한 경로를 고쳤고 같은 DEV-MAC 실제 GPU 테스트로 확인).
+
+- **render target 용도 없는 attachment(`d5d28f0`)**: sampling 전용 external texture를 color·depth
+  attachment로 쓰면 backend가 그대로 `renderCommandEncoderWithDescriptor`에 넘겼습니다. 기본 실행은 정의되지
+  않은 GPU 동작으로 `Ok`였고, Metal API validation(`MTL_DEBUG_LAYER=1`)에서는 `SIGABRT`로 process가
+  끝났습니다(재현 확인). 이제 pass 계획 단계에서 `InvalidUsage`입니다
+  (`attachments_without_render_target_usage_are_rejected`, validation 켠 실행에서도 통과).
+- **texture upload staging 예산(`5b47e61`)**: `update_texture`의 staging buffer가 예산 검사·사용량 기록
+  없이 쌓였습니다. 이제 만들기 전에 예산을 확인해 넘으면 `MemoryPressure` event와 `OutOfDeviceMemory`이고,
+  GPU가 upload command buffer를 끝내면 사용량에서 뺍니다
+  (`texture_upload_staging_counts_against_the_budget`). `read_texture`는 자기 blit만 기다리므로 그 뒤 첫
+  `poll`·`wait_idle`까지 staging 몫이 사용량에 남습니다(보수적으로 큼).
+- GPU 오류 코드와 drawable timeout은 여전히 `#[cfg(test)]` 주입으로 재현합니다. 이 행의 작업은 처리
+  테스트 추가이고, 주입 뒤 분류·event·복구 경로는 실제 device로 확인합니다.
+
+| 명령 (`DEV-MAC`, 리뷰 수정 후) | 결과 |
+|---|---|
+| `cargo test -p stellar-renderer-metal` | 54 passed, 0 failed |
+| `MTL_DEBUG_LAYER=1 cargo test -p stellar-renderer-metal` | 54 passed, 0 failed |

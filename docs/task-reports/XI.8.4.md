@@ -80,3 +80,21 @@
 - 첫 frame shader compile·pipeline 생성이 frame 예산을 넘습니다. 앱 시작 시 warm-up(XII.4)이 필요합니다.
 - `ClipStencil`·depth-stencil state의 실제 렌더 결과는 depth·stencil attachment를 지원하는 XI.8.5에서
   확인합니다.
+
+## 후속 수정 (리뷰 반영)
+
+통합 리뷰 지적을 `Fix:` 커밋으로 고쳤습니다. 행 상태는 `[x]`로 둡니다.
+
+- **pipeline state 실패 기억(`e58503e`)**: library compile 실패만 cache하고 `newRenderPipelineState`·entry
+  point 실패는 남기지 않아 같은 key의 frame마다 pipeline 생성을 다시 시도했습니다. 이제 실패한
+  (`PipelineKey`, depth format)을 기억해 같은 구조화 오류를 바로 돌려줍니다. 재 init 때 cache와 함께
+  버립니다(`pipeline_state_failure_is_remembered_per_key`: 3 frame 실패에 생성 시도 1회, 다른 key는 따로
+  시도).
+- **자기 attachment texture sampling 거부(`bd4696c`)**: `TextureSource::Handle` bind는 pass가 그리는
+  attachment texture도 받아들여 feedback loop(정의되지 않은 pixel)를 만들었습니다. 이제 pass attachment의
+  실제 texture와 비교해 `InvalidUsage`입니다. 같은 texture에 묶인 다른 import를 graph version으로 읽는
+  경우도 같은 규칙입니다(XI.8.5 graph 읽기, `sampling_a_texture_the_pass_renders_into_is_rejected`).
+
+| 명령 (`DEV-MAC`, 리뷰 수정 후) | 결과 |
+|---|---|
+| `cargo test -p stellar-renderer-metal` | 54 passed, 0 failed |
