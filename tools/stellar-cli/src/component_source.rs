@@ -77,7 +77,7 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
         }
         [op, file, hash, node, width, height] if op == "resize-frame" => component_json(
             component_source::resize_frame(Path::new(file), hash, id(node)?, size(width, height)?)
-                .map_err(|error| operation_error(error).with_context(file))?,
+                .map_err(|error| operation_error(&error).with_context(file))?,
             true,
         ),
         [op, file, hash, node, x, y] if op == "set-position" => {
@@ -90,7 +90,7 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
                 .map_err(|_| argument("좌표는 유한한 수여야 합니다"))?;
             component_json(
                 component_source::set_position(Path::new(file), hash, id(node)?, position)
-                    .map_err(|error| operation_error(error).with_context(file))?,
+                    .map_err(|error| operation_error(&error).with_context(file))?,
                 true,
             )
         }
@@ -103,7 +103,7 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
                     .parse::<bool>()
                     .map_err(|_| argument("표시 여부는 true 또는 false여야 합니다"))?,
             )
-            .map_err(|error| operation_error(error).with_context(file))?,
+            .map_err(|error| operation_error(&error).with_context(file))?,
             true,
         ),
         [op, file, hash, node, locked] if op == "set-locked" => component_json(
@@ -115,17 +115,17 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
                     .parse::<bool>()
                     .map_err(|_| argument("잠금 여부는 true 또는 false여야 합니다"))?,
             )
-            .map_err(|error| operation_error(error).with_context(file))?,
+            .map_err(|error| operation_error(&error).with_context(file))?,
             true,
         ),
         [op, file, hash, node] if op == "remove-frame" => component_json(
             component_source::remove_frame(Path::new(file), hash, id(node)?)
-                .map_err(|error| operation_error(error).with_context(file))?,
+                .map_err(|error| operation_error(&error).with_context(file))?,
             true,
         ),
         [op, file, hash, node, name] if op == "rename-frame" => component_json(
             component_source::rename_frame(Path::new(file), hash, id(node)?, name.clone())
-                .map_err(|error| operation_error(error).with_context(file))?,
+                .map_err(|error| operation_error(&error).with_context(file))?,
             true,
         ),
         [op, file, hash, parent, child, name, width, height] if op == "add-frame" => {
