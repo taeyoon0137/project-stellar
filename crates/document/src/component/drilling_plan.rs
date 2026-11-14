@@ -19,6 +19,12 @@
 //!
 //! 결과의 `exposed`가 노출 후 `top`에서 쓰는 property입니다. 모든 경계가 이미 연결돼 있으면 새 항목 없는 계획이고
 //! `exposed`는 기존 property입니다. 같은 입력(library·모음·요청)은 항상 같은 계획입니다.
+//!
+//! **preview**(IX.4.4, [`DrillingPlan::preview`]): 새 property마다 제안 이름, 타입, default, 컴포넌트 경로(top →
+//! 그 컴포넌트, 표시 이름 포함)와 거치는 인스턴스 경로를 보여 줍니다. 제안 이름은 기준 이름이 그 컴포넌트의 기존
+//! property 이름과 겹치면 **결정론적 suffix** `"{기준} {n}"`(n = 2, 3, …의 첫 빈 번호)를 붙입니다. 이름 길이 상한
+//! ([`MAX_PROPERTY_NAME_BYTES`])을 넘으면 기준 이름을 문자 경계에서 줄입니다. 이름 선택은 기존 이름 **집합**만 보므로
+//! property 선언 순서와 무관합니다.
 
 use std::fmt;
 
@@ -27,9 +33,12 @@ use stellar_core_types::reference::ComponentRef;
 use stellar_core_types::typed_value::TypedValue;
 use stellar_expressions::types::TypeSpec;
 
-use super::definition::{ComponentLibrary, ComponentPropertyId};
+use std::collections::BTreeSet;
+
+use super::definition::{ComponentEntry, ComponentLibrary, ComponentPropertyId};
 use super::drilling::{resolve_path, DrillingBindingId, DrillingError, DrillingSet};
 use super::instance::{ComponentInstancePayload, OverrideKey};
+use super::property::MAX_PROPERTY_NAME_BYTES;
 
 /// 노출 요청.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +72,8 @@ pub struct NewProperty {
     pub component: ComponentRef,
     /// 기준 이름(노출하는 property 이름).
     pub base_name: String,
+    /// 제안 이름(기존 이름과 겹치면 결정론적 suffix, IX.4.4).
+    pub name: String,
     /// 선언 타입.
     pub value_type: TypeSpec,
     /// default 값(`None`이면 nullable 값 없음).
@@ -245,9 +256,13 @@ impl DrillingPlan {
                 }
             }
             let source = PlannedProperty::New { boundary };
+            let owner_entry = library
+                .get(owner)
+                .ok_or(DrillingError::UnknownComponent { component: owner })?;
             new_properties.push(NewProperty {
                 boundary,
                 component: owner,
+                name: propose_name(owner_entry, &exposed.name),
                 base_name: exposed.name.clone(),
                 value_type: exposed.value_type,
                 default: exposed.default.clone(),
@@ -313,6 +328,141 @@ impl DrillingPlan {
     pub fn is_noop(&self) -> bool {
         self.new_properties.is_empty() && self.links.is_empty()
     }
+
+    /// 계획의 사용자 확인용 preview(IX.4.4). 같은 계획·library는 같은 preview입니다.
+    pub fn preview(&self, library: &ComponentLibrary) -> DrillingPreview {
+        let segment = |component: ComponentRef| ComponentPathSegment {
+            component,
+            display_name: library
+                .get(component)
+                .map(|entry| entry.definition().display_name().to_string())
+                .unwrap_or_default(),
+        };
+        let properties = self
+            .new_properties
+            .iter()
+            .map(|property| PreviewProperty {
+                component_path: self.components[..=property.boundary]
+                    .iter()
+                    .map(|c| segment(*c))
+                    .collect(),
+                instance_path: self.request.path[..property.boundary].to_vec(),
+                name: property.name.clone(),
+                renamed: property.name != property.base_name,
+                value_type: property.value_type,
+                default: property.default.clone(),
+            })
+            .collect();
+        let name_of = |planned: PlannedProperty, component: ComponentRef| -> String {
+            match planned {
+                PlannedProperty::New { boundary } => self
+                    .new_property(boundary)
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default(),
+                PlannedProperty::Existing(id) => library
+                    .get(component)
+                    .and_then(|entry| entry.property(id))
+                    .map(|p| p.name().to_string())
+                    .unwrap_or_default(),
+            }
+        };
+        let links = self
+            .links
+            .iter()
+            .map(|link| PreviewLink {
+                boundary: link.boundary,
+                owner: segment(link.owner),
+                instance: link.instance,
+                source_name: name_of(link.source, link.owner),
+                target_component: segment(self.components[link.boundary + 1]),
+                target_name: name_of(link.target, self.components[link.boundary + 1]),
+            })
+            .collect();
+        DrillingPreview { properties, links }
+    }
+}
+
+/// 컴포넌트 경로 한 칸.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComponentPathSegment {
+    /// 컴포넌트.
+    pub component: ComponentRef,
+    /// 표시 이름(식별에 사용 금지).
+    pub display_name: String,
+}
+
+/// preview의 새 property 한 개.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewProperty {
+    /// top → 이 property를 만들 컴포넌트까지의 컴포넌트 경로.
+    pub component_path: Vec<ComponentPathSegment>,
+    /// top 정의 tree에서 그 컴포넌트 인스턴스까지의 인스턴스 경로.
+    pub instance_path: Vec<StableId>,
+    /// 만들 이름.
+    pub name: String,
+    /// 이름 충돌로 suffix가 붙었는지.
+    pub renamed: bool,
+    /// 타입.
+    pub value_type: TypeSpec,
+    /// default 값.
+    pub default: Option<TypedValue>,
+}
+
+/// preview의 새 link 한 개.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewLink {
+    /// 경계 index.
+    pub boundary: usize,
+    /// link owner 컴포넌트.
+    pub owner: ComponentPathSegment,
+    /// owner 정의 tree 안 인스턴스.
+    pub instance: StableId,
+    /// owner 쪽 property 이름.
+    pub source_name: String,
+    /// 인스턴스 컴포넌트.
+    pub target_component: ComponentPathSegment,
+    /// 인스턴스 쪽 property 이름.
+    pub target_name: String,
+}
+
+/// 계획 preview.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrillingPreview {
+    /// 새 property(바깥 → 안쪽).
+    pub properties: Vec<PreviewProperty>,
+    /// 새 link(바깥 → 안쪽).
+    pub links: Vec<PreviewLink>,
+}
+
+/// 기준 이름 `base`가 `entry`의 기존 이름과 겹치지 않게 결정론적 suffix를 붙인 이름.
+pub fn propose_name(entry: &ComponentEntry, base: &str) -> String {
+    let taken: BTreeSet<&str> = entry.property_records().map(|p| p.name()).collect();
+    if !taken.contains(base) {
+        return base.to_string();
+    }
+    // 이름 수는 유한하므로 taken.len() + 2 이전에 반드시 빈 번호가 있습니다.
+    for n in 2..=taken.len() + 2 {
+        let suffix = format!(" {n}");
+        let candidate = format!(
+            "{}{suffix}",
+            truncate(base, MAX_PROPERTY_NAME_BYTES - suffix.len())
+        );
+        if !taken.contains(candidate.as_str()) {
+            return candidate;
+        }
+    }
+    format!("{base} {}", taken.len() + 3)
+}
+
+fn truncate(text: &str, max_bytes: usize) -> &str {
+    if text.len() <= max_bytes {
+        return text;
+    }
+    let mut end = max_bytes;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
 }
 
 #[cfg(test)]
@@ -349,6 +499,7 @@ mod tests {
             assert_eq!(property.boundary, k);
             assert_eq!(property.component, component(k));
             assert_eq!(property.base_name, "label");
+            assert_eq!(property.name, "label");
             assert_eq!(property.value_type, string());
             assert_eq!(property.default, Some(TypedValue::String("확인".into())));
             let link = plan.links()[k];
@@ -447,6 +598,100 @@ mod tests {
         assert_eq!(plan.exposed(), PlannedProperty::Existing(pid(41_000)));
         assert_eq!(plan.reused().len(), 2);
         assert_eq!(plan.reused()[0].boundary, 0);
+    }
+
+    #[test]
+    fn preview_lists_names_types_defaults_and_paths_deterministically() {
+        // 검증 기준(IX.4.4): 동일 입력 동일 plan, 이름 충돌은 deterministic suffix.
+        let build = |reverse: bool| {
+            let mut library = nested_library(2);
+            // C1에는 "label"·"label 2"가 이미 있고, C0에는 "label"이 있습니다(선언 순서만 다르게).
+            let mut c1 = vec![
+                string_property(41_100, "label"),
+                string_property(41_101, "label 2"),
+            ];
+            if reverse {
+                c1.reverse();
+            }
+            for property in c1 {
+                declare(&mut library, 1, property);
+            }
+            declare(&mut library, 0, string_property(41_000, "label"));
+            library
+        };
+        let set = DrillingSet::new();
+        let a = build(false);
+        let b = build(true);
+        let plan_a = DrillingPlan::compute(&a, &set, request(2)).unwrap();
+        let plan_b = DrillingPlan::compute(&b, &set, request(2)).unwrap();
+        assert_eq!(plan_a, plan_b, "선언 순서와 무관");
+        assert_eq!(plan_a.preview(&a), plan_b.preview(&b));
+        let names: Vec<_> = plan_a
+            .new_properties()
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names, ["label 2", "label 3"]);
+
+        let preview = plan_a.preview(&a);
+        assert_eq!(preview.properties.len(), 2);
+        let top = &preview.properties[0];
+        assert_eq!(
+            top.component_path,
+            vec![ComponentPathSegment {
+                component: component(0),
+                display_name: "C0".into()
+            }]
+        );
+        assert!(top.instance_path.is_empty());
+        assert!(top.renamed);
+        assert_eq!(top.value_type, string());
+        assert_eq!(top.default, Some(TypedValue::String("확인".into())));
+        let middle = &preview.properties[1];
+        let path: Vec<_> = middle
+            .component_path
+            .iter()
+            .map(|s| s.display_name.as_str())
+            .collect();
+        assert_eq!(path, ["C0", "C1"]);
+        assert_eq!(middle.instance_path, vec![instance(0)]);
+        assert_eq!(middle.name, "label 3");
+        let links: Vec<_> = preview
+            .links
+            .iter()
+            .map(|l| {
+                (
+                    l.owner.display_name.as_str(),
+                    l.source_name.as_str(),
+                    l.target_component.display_name.as_str(),
+                    l.target_name.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("C0", "label 2", "C1", "label 3"),
+                ("C1", "label 3", "C2", "label")
+            ]
+        );
+        // 충돌이 없으면 기준 이름 그대로.
+        let fresh = nested_library(1);
+        let plan = DrillingPlan::compute(&fresh, &set, request(1)).unwrap();
+        assert!(!plan.preview(&fresh).properties[0].renamed);
+    }
+
+    #[test]
+    fn proposed_names_respect_length_limit() {
+        let mut library = nested_library(1);
+        let long = "가".repeat(MAX_PROPERTY_NAME_BYTES / 3);
+        declare(&mut library, 0, string_property(41_000, &long));
+        let entry = library.get(component(0)).unwrap();
+        let name = propose_name(entry, &long);
+        assert!(name.len() <= MAX_PROPERTY_NAME_BYTES);
+        assert!(name.ends_with(" 2"));
+        crate::component::property::validate_property_name(&name).unwrap();
+        assert_eq!(propose_name(entry, "free"), "free");
     }
 
     #[test]
