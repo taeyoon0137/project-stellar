@@ -271,6 +271,7 @@ private final class ShellIntegrationCheckRunner {
             }
             expect(failedWindow.toolsModel.snapshot.enabledCommands == ShellWindowToolsModelStub.notReadyCommands,
                    "실패 상태에서 도구 명령이 활성")
+            expect(!failedWindow.windowController.toolbarController.toolBar.isEnabled, "실패 상태에서 도구 막대가 활성")
             // 복구: Locate Folder…로 올바른 폴더를 고르면 같은 창에서 엽니다.
             nextChosenFolder = projectPath
             failedWindow.dataSource.send(.perform(ShellProjectCommandID.locateFolder))
@@ -409,18 +410,23 @@ private final class ShellIntegrationCheckRunner {
         let drawable = projectWindow.canvasHost.canvasView.currentDrawable()
         expect(drawable.width > 0 && drawable.height > 0, "캔버스 drawable 크기가 0")
 
-        // 툴바: 캔버스 도구 그룹(가운데)과 줌을 셸 툴바에 조합합니다.
+        // 툴바: 줌을 셸 툴바(검색 앞)에 조합합니다. 캔버스 도구는 상단 툴바가 아니라 캔버스 하단 가운데 도구 막대에
+        // 있습니다(2026-11-14 사용자 결정).
         guard let toolbar = window.toolbar else {
             expect(false, "툴바 없음")
             return
         }
         let identifiers = toolbar.items.map(\.itemIdentifier)
-        expect(identifiers.contains(ToolsToolbarController.toolsItemIdentifier), "툴바에 캔버스 도구 그룹 없음")
+        expect(!identifiers.contains(ToolsToolbarController.toolsItemIdentifier), "상단 툴바에 캔버스 도구 그룹이 남음")
         expect(identifiers.contains(ToolsToolbarController.zoomItemIdentifier), "툴바에 줌 항목 없음")
-        expect(!identifiers.contains(ShellToolbarController.toolAreaItem), "provider가 있는데 셸 도구 영역이 남음")
-        expect(toolbar.centeredItemIdentifiers == [ToolsToolbarController.toolsItemIdentifier], "가운데 항목이 캔버스 도구 그룹이 아님")
-        let toolsItem = toolbar.items.first { $0.itemIdentifier == ToolsToolbarController.toolsItemIdentifier }
-        expect(toolsItem === projectWindow.toolsToolbar.toolsGroup, "툴바 도구 그룹이 도구 controller 항목이 아님")
+        expect(!identifiers.contains(NSToolbarItem.Identifier("stellar.shell.toolArea")), "상단 툴바에 셸 도구 영역이 남음")
+        expect(toolbar.centeredItemIdentifiers.isEmpty, "상단 툴바에 가운데 고정 항목이 남음")
+        let toolBar = controller.toolbarController.toolBar
+        expect(toolBar.superview === split.contentContainer.view, "도구 막대가 캔버스 영역에 없음")
+        expect(toolBar.buttons.map(\.tool) == CanvasTool.allCases.map(\.shellToolDescriptor),
+               "도구 막대 도구 목록이 캔버스 도구와 다름")
+        expect(toolBar.selectedIndex == CanvasTool.allCases.firstIndex(of: projectWindow.toolsModel.snapshot.activeTool),
+               "도구 막대 선택이 창 도구 모델의 현재 도구가 아님")
         expect(identifiers.firstIndex(of: ToolsToolbarController.zoomItemIdentifier).map { zoom in
             identifiers.firstIndex(of: ShellToolbarController.searchItem).map { zoom < $0 } ?? false
         } ?? false, "줌 항목이 검색 앞에 있지 않음")
@@ -435,19 +441,23 @@ private final class ShellIntegrationCheckRunner {
     private func checkTools(_ projectWindow: ShellProjectWindow, window: NSWindow) {
         let router = projectWindow.router
         let model = projectWindow.toolsModel
-        let group = projectWindow.toolsToolbar.toolsGroup
+        let controller = projectWindow.windowController
+        let toolBar = controller.toolbarController.toolBar
         let tools = CanvasTool.allCases
         expect(model.snapshot.enabledCommands == ShellWindowToolsModelStub.readyCommands, "ready 창의 실행 가능 명령 불일치")
-        expect(group.isEnabled, "ready 창에서 도구 그룹이 비활성")
+        expect(toolBar.isEnabled && toolBar.buttons.allSatisfy(\.isEnabled), "ready 창에서 도구 막대가 비활성")
 
-        // 툴바 도구 그룹 → 창 모델 → 메뉴 체크.
-        if let pen = tools.firstIndex(of: .pen) {
-            group.selectedIndex = pen
-            projectWindow.toolsToolbar.toolSelectionChanged(group)
-            expect(model.snapshot.activeTool == .pen, "도구 그룹 선택이 창 모델에 반영되지 않음")
+        // 하단 도구 막대 → 창 모델 → 메뉴 체크, 막대 선택 표시는 창 모델 snapshot으로 바뀝니다.
+        if let pen = tools.firstIndex(of: .pen), toolBar.buttons.indices.contains(pen) {
+            toolBar.buttons[pen].performClick(nil)
+            expect(model.snapshot.activeTool == .pen, "도구 막대 선택이 창 모델에 반영되지 않음")
+            controller.flushPendingSnapshot()
+            expect(toolBar.selectedIndex == pen, "도구 막대 선택 표시가 창 모델 도구로 바뀌지 않음")
             let penItem = MainMenuBuilder.makeItem(for: .selectPenTool, target: nil)
             _ = router.validateMenuItem(penItem)
             expect(penItem.state == .on, "Pen 메뉴 체크 없음")
+        } else {
+            expect(false, "도구 막대에 Pen 없음")
         }
 
         // 캔버스 단일 키: R → Rectangle, 수식키가 있거나 도구가 아닌 키는 코어 입력으로 보냅니다.
@@ -456,6 +466,8 @@ private final class ShellIntegrationCheckRunner {
         if let event = keyEvent("r", keyCode: 0x0F, window: window) {
             canvas.keyDown(with: event)
             expect(model.snapshot.activeTool == .rectangle, "캔버스 R 키가 Rectangle 도구로 바뀌지 않음")
+            controller.flushPendingSnapshot()
+            expect(toolBar.selectedIndex == tools.firstIndex(of: .rectangle), "캔버스 R 키 뒤 도구 막대 선택 표시 미반영")
         }
         if let event = keyEvent("1", keyCode: 0x12, window: window), let handler = canvas.keyDownHandler {
             expect(!handler(event), "도구가 아닌 키를 셸이 삼킴")
@@ -471,7 +483,6 @@ private final class ShellIntegrationCheckRunner {
         }
         let close = MainMenuBuilder.makeItem(for: .closeProject, target: nil)
         expect(router.validateMenuItem(close), "Close Project가 비활성")
-        let controller = projectWindow.windowController
         expect(!controller.validateMenuItem(ShellFrameMenuItems.makeNavigationMenuItems()[2]), "코어 검색 없이 Search Project…가 활성")
         let reveal = ShellFrameMenuItems.makeFrameActionItem(title: "Show in Finder", id: ShellProjectCommandID.revealInFinder)
         expect(controller.validateMenuItem(reveal), "Show in Finder 메뉴가 비활성")

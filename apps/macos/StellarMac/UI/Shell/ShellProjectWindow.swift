@@ -45,13 +45,16 @@ enum ShellProjectCommandID {
 ///
 /// 제목은 프로젝트 이름, 부제목은 신뢰 상태(코어가 모든 프로젝트를 신뢰되지 않음으로 열므로 "Restricted Mode",
 /// 가이드 7.2)입니다. 프로젝트 내비게이션·검색 코어 경로가 없으므로 뒤로·앞으로와 검색은 비활성입니다. 상태는
-/// 열기 중(loading) → ready, 또는 실패(failed, 복구 동작 포함)입니다.
+/// 열기 중(loading) → ready, 또는 실패(failed, 복구 동작 포함)입니다. 도구 목록과 현재 도구는 창 도구 모델에서 받아
+/// 하단 도구 막대에 보내고(`setTools`), 도구 막대 선택은 `toolSelectionHandler`로 창 도구 모델에 넘깁니다.
 @MainActor
 final class ShellProjectFrameDataSource: ShellFrameDataSource {
     private(set) var currentSnapshot: ShellFrameSnapshot
     var snapshotHandler: ((ShellFrameSnapshot) -> Void)?
     /// 셸 프레임 명령을 받는 쪽(프로젝트 창). 명령 ID 해석은 창이 합니다.
     var commandHandler: ((ShellCommandID) -> Void)?
+    /// 하단 도구 막대에서 고른 도구의 명령 ID를 받는 쪽(프로젝트 창이 창 도구 모델로 보냅니다).
+    var toolSelectionHandler: ((ShellCommandID) -> Void)?
     /// 지금 연 session. 열기 전·실패 시 nil입니다.
     private(set) var session: ShellProjectSessionHandle?
     /// 이 창이 여는(또는 연) 프로젝트 폴더.
@@ -141,11 +144,22 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
         publish(next)
     }
 
+    /// 하단 도구 막대의 도구 목록과 현재 도구를 바꿉니다. 바뀐 것이 없으면 snapshot을 보내지 않습니다.
+    func setTools(_ tools: [ShellToolDescriptor], activeToolID: ShellCommandID?) {
+        guard tools != currentSnapshot.tools || activeToolID != currentSnapshot.activeToolID else { return }
+        var next = currentSnapshot
+        next.tools = tools
+        next.activeToolID = activeToolID
+        publish(next)
+    }
+
     func send(_ command: ShellFrameCommand) {
         switch command {
         case .perform(let id):
             commandHandler?(id)
-        case .navigateBack, .navigateForward, .selectTool, .submitSearch:
+        case .selectTool(let id):
+            toolSelectionHandler?(id)
+        case .navigateBack, .navigateForward, .submitSearch:
             // 코어 내비게이션·검색 경로가 아직 없습니다. 해당 항목은 snapshot으로 비활성화되어 있습니다.
             break
         }
@@ -236,6 +250,8 @@ final class ShellProjectWindow {
     let sidebarSlot: ShellSidebarAreaSlot
     let inspectorSlot: ShellInspectorAreaSlot
     let panelsSlot: ShellPanelTabsSlot
+    /// 창 도구 모델 → 하단 도구 막대(셸 프레임 snapshot 도구 목록) 구독.
+    private var toolsObservation: ToolsMenuObservation?
 
     var window: NSWindow? { windowController.window }
 
@@ -251,6 +267,9 @@ final class ShellProjectWindow {
         toolsModel = ShellWindowToolsModelStub()
         router = ShellCommandRouter(model: toolsModel)
         toolsToolbar = ToolsToolbarController(model: toolsModel, router: router)
+        // 캔버스 도구는 상단 툴바가 아니라 캔버스 하단 가운데 도구 막대에 둡니다(shell_frame 6.1, 2026-11-14 사용자 결정).
+        // 창 도구 모델의 도구 목록·현재 도구를 셸 프레임 snapshot으로 보내고, 도구 막대 선택은 router로 보냅니다.
+        toolsObservation = ShellProjectWindow.connectToolBar(dataSource: dataSource, toolsModel: toolsModel, router: router)
         canvasHost = ShellCanvasHostViewController(runtimeHandle: runtimeHandle)
         sidebarSlot = ShellSidebarAreaSlot(
             sidebar: SidebarViewController(provider: ShellAreaDataStubs.makeSidebarProvider())
@@ -285,6 +304,24 @@ final class ShellProjectWindow {
         ))
     }
 
+    /// 창 도구 모델과 하단 도구 막대를 잇습니다. 도구 목록은 `CanvasTool` 전체, 선택 표시는 창 도구 모델의 현재
+    /// 도구이고, 막대 활성 상태는 셸 프레임 상태(ready)로 정해집니다. 돌려준 구독 토큰을 창이 보관합니다.
+    private static func connectToolBar(
+        dataSource: ShellProjectFrameDataSource,
+        toolsModel: ShellWindowToolsModelStub,
+        router: ShellCommandRouter
+    ) -> ToolsMenuObservation {
+        let tools = CanvasTool.allCases.map(\.shellToolDescriptor)
+        dataSource.setTools(tools, activeToolID: toolsModel.snapshot.activeTool.shellToolDescriptor.id)
+        dataSource.toolSelectionHandler = { [weak router] id in
+            guard let router, let tool = ShellCommand(rawValue: id.rawValue)?.canvasTool else { return }
+            _ = router.dispatch(tool.command)
+        }
+        return toolsModel.addSnapshotObserver { [weak dataSource] snapshot in
+            dataSource?.setTools(tools, activeToolID: snapshot.activeTool.shellToolDescriptor.id)
+        }
+    }
+
     /// 창을 닫기 전에 확인이 필요한지(활성 에이전트 세션, ADR-0005 결정 4.5).
     var requiresConfirmationBeforeClosing: Bool {
         panelsSlot.requiresConfirmationBeforeClosing
@@ -308,5 +345,12 @@ final class ShellProjectWindow {
         dataSource.beginOpening(rootPath: rootPath)
         toolsModel.setProjectReady(false)
         window?.invalidateRestorableState()
+    }
+}
+
+extension CanvasTool {
+    /// 하단 도구 막대에 보낼 셸 프레임 도구 항목. 명령 ID는 셸 명령 ID(예: `tool.move`)입니다.
+    var shellToolDescriptor: ShellToolDescriptor {
+        ShellToolDescriptor(id: ShellCommandID(command.rawValue), label: label, symbolName: symbolName)
     }
 }

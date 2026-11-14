@@ -12,9 +12,9 @@ import AppKit
 /// `.inspectorTrackingSeparator`)로만 정하고 직접 계산하지 않습니다.
 /// 사용자 구성은 `autosavesConfiguration`으로 AppKit이 저장합니다.
 ///
-/// 다른 영역의 툴바 항목(예: 캔버스 도구 그룹·줌, `ToolsToolbarController`)은 `ShellToolbarItemProviding`으로 받아
-/// 같은 툴바에 조합합니다. provider가 있으면 가운데 도구 영역은 provider의 가운데 항목으로 바뀌고, provider의 뒤쪽
-/// 항목은 검색 앞에 놓입니다.
+/// 다른 영역의 툴바 항목(예: 캔버스 줌, `ToolsToolbarController`)은 `ShellToolbarItemProviding`으로 받아
+/// 같은 툴바에 조합합니다. provider의 뒤쪽 항목은 검색 앞에 놓입니다. 도구는 툴바에 두지 않으므로 provider도
+/// 가운데 항목을 내주지 않습니다. 캔버스 도구 목록은 셸 프레임 snapshot의 `tools`로 하단 도구 막대에 그립니다.
 final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemValidation {
     static let navigationItem = NSToolbarItem.Identifier("stellar.shell.navigation")
     static let navigateBackItem = NSToolbarItem.Identifier("stellar.shell.navigation.back")
@@ -41,12 +41,10 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
     ]
 
     let toolbar: NSToolbar
-    /// 다른 영역이 내주는 툴바 항목. nil이면 snapshot의 도구 목록으로 가운데 도구 영역을 만듭니다.
+    /// 다른 영역이 내주는 툴바 항목(검색 앞 뒤쪽 항목). nil이면 셸 프레임 항목만 둡니다.
     let itemProvider: ShellToolbarItemProviding?
     /// 이 툴바의 기본 항목 순서(provider 반영).
     let defaultItemIdentifiers: [NSToolbarItem.Identifier]
-    /// 가운데 고정 항목.
-    let centeredItemIdentifier: NSToolbarItem.Identifier
     /// 툴바 동작을 코어 명령으로 보냅니다. 셸 창 controller가 지정합니다.
     var commandHandler: ((ShellFrameCommand) -> Void)?
     /// 뒤로·앞으로 동작 대상. 메뉴 항목과 같은 동작 메서드를 부르도록 셸 창 controller를 지정합니다.
@@ -65,16 +63,10 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         self.snapshot = snapshot
         self.itemProvider = itemProvider
         if let itemProvider {
-            centeredItemIdentifier = itemProvider.centerItemIdentifier
             defaultItemIdentifiers = Self.defaultItemIdentifiers.flatMap { identifier -> [NSToolbarItem.Identifier] in
-                switch identifier {
-                case Self.toolAreaItem: return [itemProvider.centerItemIdentifier]
-                case Self.searchItem: return itemProvider.trailingItemIdentifiers + [Self.searchItem]
-                default: return [identifier]
-                }
+                identifier == Self.searchItem ? itemProvider.trailingItemIdentifiers + [Self.searchItem] : [identifier]
             }
         } else {
-            centeredItemIdentifier = Self.toolAreaItem
             defaultItemIdentifiers = Self.defaultItemIdentifiers
         }
         toolbar = NSToolbar(identifier: NSToolbar.Identifier(identifier))
@@ -324,13 +316,12 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
     }
 }
 
-/// 셸 툴바에 항목을 내주는 다른 영역(가이드 6.1 "툴바 가운데 도구 영역").
+/// 셸 툴바에 항목을 내주는 다른 영역(가이드 6.1).
 ///
 /// 항목 생성과 상태 반영은 provider가 맡습니다. `willBeInsertedIntoToolbar`가 false이면 사용자 구성 palette용
-/// 사본을 돌려줘야 합니다(실제 항목 인스턴스를 palette에 넘기지 않음).
+/// 사본을 돌려줘야 합니다(실제 항목 인스턴스를 palette에 넘기지 않음). 도구 영역은 툴바가 아니라 캔버스 하단 가운데
+/// 도구 막대(`ShellToolBarView`)에 있으므로 provider는 가운데 항목을 내주지 않습니다(2026-11-14 사용자 결정).
 protocol ShellToolbarItemProviding: AnyObject {
-    /// 가운데 고정 항목(`centeredItemIdentifiers`).
-    var centerItemIdentifier: NSToolbarItem.Identifier { get }
     /// 검색 항목 앞에 놓을 뒤쪽 항목.
     var trailingItemIdentifiers: [NSToolbarItem.Identifier] { get }
     /// 툴바 delegate 요청 하나에 맞는 항목.
@@ -339,12 +330,12 @@ protocol ShellToolbarItemProviding: AnyObject {
 
 extension ShellToolbarItemProviding {
     func providesItem(_ identifier: NSToolbarItem.Identifier) -> Bool {
-        identifier == centerItemIdentifier || trailingItemIdentifiers.contains(identifier)
+        trailingItemIdentifiers.contains(identifier)
     }
 }
 
-/// 캔버스 도구 그룹(가운데)과 줌(뒤쪽)을 셸 툴바에 조합합니다(tools_menus 3.1).
+/// 캔버스 줌(뒤쪽)을 셸 툴바에 조합합니다(tools_menus 3.1). 캔버스 도구 그룹은 셸 툴바에 넣지 않고, 같은 도구를
+/// 프로젝트 창 data source가 셸 프레임 snapshot 도구 목록으로 하단 도구 막대에 보냅니다.
 extension ToolsToolbarController: ShellToolbarItemProviding {
-    var centerItemIdentifier: NSToolbarItem.Identifier { Self.toolsItemIdentifier }
     var trailingItemIdentifiers: [NSToolbarItem.Identifier] { [Self.zoomItemIdentifier] }
 }

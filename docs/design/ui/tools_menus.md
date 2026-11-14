@@ -350,7 +350,7 @@ protocol ToolsMenuModel: AnyObject {
 - **프로젝트 명령**: New/Open/Clone Project 흐름과 패널. [계획 XII.6.1~XII.6.3]
 - **Undo/Redo/Save Now**: 활성 WindowSession 연결. [계획 XII.6.4]
 - **접근성**: 캔버스 호스트의 도구 상태 노출과 VoiceOver 자동화. [계획 XII.8.1]
-- **창 통합(완료, shell_frame 14장)**: `ShellAppCoordinator`가 `MainMenuBuilder.build(applicationTarget:)`·`install(on:)`을 하고, 프로젝트 창마다 `ShellCommandRouter.install(in:)`과 셸 툴바 조합(`ToolsToolbarController`가 `ShellToolbarItemProviding`으로 가운데 도구 그룹·줌 제공)을 합니다. 창 모델은 `ShellWindowToolsModelStub`(창별 도구 상태, 코어 경로 없는 명령 비활성)입니다. [가이드 2.3, 2.5]
+- **창 통합(완료, shell_frame 14장)**: `ShellAppCoordinator`가 `MainMenuBuilder.build(applicationTarget:)`·`install(on:)`을 하고, 프로젝트 창마다 `ShellCommandRouter.install(in:)`과 셸 툴바 조합(`ToolsToolbarController`가 `ShellToolbarItemProviding`으로 줌 제공)을 합니다. 캔버스 도구 그룹은 셸 툴바에 넣지 않고, 같은 도구 11개를 프로젝트 창이 셸 프레임 snapshot 도구 목록으로 캔버스 하단 가운데 도구 막대(`ShellToolBarView`)에 보냅니다(shell_frame 14.2). 창 모델은 `ShellWindowToolsModelStub`(창별 도구 상태, 코어 경로 없는 명령 비활성)입니다. [가이드 2.3, 2.5]
 - **캔버스 keyDown(단일 키 완료)**: `CanvasView.keyDownHandler`가 `CanvasToolShortcut.tool(for:)`로 도구를 구해 `router.dispatch`합니다. 처리한 키는 key down·짝 key up 모두 코어 입력으로 보내지 않고, 도구가 아니거나 비활성이면 코어 입력으로 보냅니다. Delete 키(`deleteBackward(_:)` → `.delete`)는 코어 삭제 명령 경로가 없어 아직 연결하지 않았습니다.
 - **앱 이름**: 메뉴 막대의 굵은 앱 이름은 번들 이름에서 옵니다. 현재 `PRODUCT_NAME`이 `StellarMac`이므로 표시 이름을 "Stellar"로 맞추는 프로젝트 설정 변경이 필요합니다(이 작업 범위 밖, 프로젝트 파일 미수정).
 - **smoke 연결(완료)**: `--tools-menus-ui-check`로 `ToolsUICheck.run()`을 실행하고, `UI/Tools/`가 코어 FFI·runtime(`stellar_`, `CoreRuntime`, `RuntimeHost`, `runtimeHandle`)을 참조하지 않는다는 구조 검사를 `scripts/macos/smoke.sh`가 합니다.
