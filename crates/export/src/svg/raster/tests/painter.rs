@@ -186,7 +186,7 @@ fn render(
 }
 
 /// 결정론적 xorshift64.
-struct Rng(u64);
+pub(super) struct Rng(pub(super) u64);
 
 impl Rng {
     fn next(&mut self) -> u64 {
@@ -198,18 +198,19 @@ impl Rng {
         x
     }
 
-    fn below(&mut self, bound: u64) -> u64 {
+    pub(super) fn below(&mut self, bound: u64) -> u64 {
         self.next() % bound
     }
 
-    fn chance(&mut self, percent: u64) -> bool {
+    pub(super) fn chance(&mut self, percent: u64) -> bool {
         self.below(100) < percent
     }
 }
 
-/// 무작위 scene(정수 좌표, canvas 24×24 주변과 밖).
-fn random_scene(rng: &mut Rng) -> Vec<Arc<SceneNode>> {
-    let count = 2 + rng.below(10) as usize;
+/// 무작위 scene(정수 좌표). node는 2개부터 `2 + extra − 1`개까지이고, 최상위 node 위치는
+/// `[−4, spread − 4)`입니다(`spread` 26이면 canvas 24×24 주변과 밖).
+pub(super) fn random_scene(rng: &mut Rng, extra: u64, spread: u64) -> Vec<Arc<SceneNode>> {
+    let count = 2 + rng.below(extra) as usize;
     let mut parents: Vec<Option<usize>> = Vec::with_capacity(count);
     let mut rects: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(count);
     let mut trees: Vec<Option<T>> = Vec::with_capacity(count);
@@ -231,7 +232,10 @@ fn random_scene(rng: &mut Rng) -> Vec<Arc<SceneNode>> {
                     py - 3.0 + rng.below(ph as u64 + 6) as f32,
                 )
             }
-            None => (rng.below(26) as f32 - 4.0, rng.below(26) as f32 - 4.0),
+            None => (
+                rng.below(spread) as f32 - 4.0,
+                rng.below(spread) as f32 - 4.0,
+            ),
         };
         rects.push((x, y, w, h));
         let mut paint = if rng.chance(70) { fill() } else { none() };
@@ -270,7 +274,7 @@ fn minimal_regions_preserve_the_composite_on_random_scenes() {
     let mut rng = Rng(0x5eed_cafe_f00d_1234);
     let (mut scenes_with_regions, mut vector_kept, mut ranges, mut widened) = (0, 0u64, 0, 0);
     for _ in 0..500 {
-        let roots = random_scene(&mut rng);
+        let roots = random_scene(&mut rng, 10, 26);
         let background = rng.chance(20);
         let planned = plan(&roots, grid(CANVAS as f32, CANVAS as f32, 1.0), background);
         let expected = render(&roots, None, background, CANVAS);

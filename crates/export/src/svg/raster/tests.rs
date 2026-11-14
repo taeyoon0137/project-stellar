@@ -1,5 +1,6 @@
 //! 부분 래스터화 경계 planner 테스트 (XX.4.1).
 
+use std::cell::Cell;
 use std::sync::Arc;
 use std::thread;
 
@@ -24,6 +25,26 @@ use crate::test_fixtures as fx;
 
 /// 기호 painter 모사 비교.
 mod painter;
+
+/// blend 영역 검색과 단계별 순차 탐색 기준 구현 비교.
+mod reference;
+
+thread_local! {
+    /// 이 thread에서 겹침 판정(`PixelGrid::overlaps`)을 한 횟수.
+    static OVERLAP_TESTS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// 겹침 판정 횟수를 셉니다(planner 작업량 측정).
+pub(super) fn count_overlap_test() {
+    OVERLAP_TESTS.with(|count| count.set(count.get() + 1));
+}
+
+/// `f`를 실행하는 동안의 겹침 판정 횟수.
+fn overlap_tests_during<R>(f: impl FnOnce() -> R) -> (R, u64) {
+    let before = OVERLAP_TESTS.with(Cell::get);
+    let result = f();
+    (result, OVERLAP_TESTS.with(Cell::get) - before)
+}
 
 /// 테스트 tree node: 이름 번호, world 사각형(x, y, w, h), paint, 숨김, 자식.
 struct T {
@@ -739,6 +760,40 @@ fn deep_trees_are_planned_without_recursion() {
         vec!["subtrees(canvas: top..top) [leaf BlendMode iso=canvas widest=top]"]
     );
     assert_eq!(planned.1, DEPTH);
+}
+
+#[test]
+fn wide_blend_sibling_lists_need_near_linear_overlap_work() {
+    // 겹치지 않는 1×1 blend 4096개를 한 부모 아래, 또 최상위에 나란히 둡니다. blend마다 앞선 형제를 하나씩
+    // 훑으면 겹침 판정이 형제 수의 제곱(약 840만 번)이 됩니다.
+    const SIDE: u64 = 64;
+    const COUNT: u64 = SIDE * SIDE;
+    let cells = |first: u64| -> Vec<T> {
+        (0..COUNT)
+            .map(|k| {
+                let (x, y) = ((k % SIDE) as f32, (k / SIDE) as f32);
+                t(first + k, (x, y, 1.0, 1.0), multiply(fill()))
+            })
+            .collect()
+    };
+    let side = SIDE as f32;
+    let nested = build(vec![t(1, (0.0, 0.0, side, side), none()).kids(cells(2))]);
+    let flat = build(cells(1));
+    for (roots, nodes) in [(nested, COUNT + 1), (flat, COUNT)] {
+        let (planned, work) = overlap_tests_during(|| plan(&roots, grid(side, side, 1.0), false));
+        assert_eq!(planned.boundaries().len() as u64, COUNT);
+        for boundary in planned.boundaries() {
+            let RasterRegion::Subtrees { first, last, .. } = boundary.region() else {
+                panic!("{:?}", boundary.region());
+            };
+            assert_eq!(first, last);
+            assert_eq!(boundary.causes().len(), 1);
+            assert_eq!(boundary.causes()[0].blend.unwrap().widest, None);
+        }
+        assert_eq!(planned.visible_nodes(), nodes);
+        assert_eq!(planned.rasterized_nodes(), COUNT);
+        assert!(work <= COUNT * 64, "겹침 판정 {work}번");
+    }
 }
 
 const PINS: ResourcePins = ResourcePins {

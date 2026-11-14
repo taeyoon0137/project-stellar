@@ -1,23 +1,26 @@
 //! 부분 래스터화 경계 planner (XX.4.1).
 //!
 //! 아키텍처 §34: SVG로 정확히 표현할 수 없는 **최소** 하위 트리만 래스터화하고 나머지는 벡터로 두며,
-//! 래스터 경계는 Blend·Filter·투명도 의존 범위를 포함합니다. [`plan_raster`]는 [`ExportCapture`]만 읽어
-//! 래스터화할 영역([`RasterRegion`])과 그 이유([`RasterCause`])를 paint 순서로 계산합니다. 영역을
-//! offscreen image로 렌더해 SVG `<image>`로 넣는 일은 XX.4.2, export report 기록은 XX.4.3입니다.
+//! 래스터 경계는 Blend·Filter·투명도 의존 범위를 포함합니다. [`plan_raster`]는
+//! [`ExportCapture`](crate::capture::ExportCapture)만 읽어 래스터화할 영역([`RasterRegion`])과 그
+//! 이유([`RasterCause`])를 paint 순서로 계산합니다. 영역을 offscreen image로 렌더해 SVG `<image>`로 넣는
+//! 일은 XX.4.2, export report 기록은 XX.4.3입니다.
 //!
 //! ## 래스터 기능과 영향 범위
 //!
 //! 대상은 mapping table([`crate::svg::mapping`])에서 지원 상태가
 //! [`SvgSupport::Rasterize`](crate::svg::mapping::SvgSupport::Rasterize)인 기능뿐입니다
-//! ([`raster_scope`]가 기능마다 범위를 정하고, inventory test가 두 표의 일치를 고정합니다).
+//! ([`raster_scope`](crate::svg::raster::raster_scope)가 기능마다 범위를 정하고, inventory test가 두
+//! 표의 일치를 고정합니다).
 //!
-//! - [`RasterScope::Content`] — drop shadow, image 색공간 override: node **자기 내용**만 그 node 위치에서
-//!   래스터화하고 자식은 vector로 둡니다. scene `PaintStack`에서 shadow는 node 내용 layer 아래에만
-//!   그리고, 색공간 override는 image 픽셀에만 걸립니다.
-//! - [`RasterScope::Subtree`] — layer blur: node와 subtree를 합성한 결과 전체에 걸리므로 subtree를
-//!   래스터화합니다.
-//! - [`RasterScope::Backdrop`] — Normal이 아닌 blend: subtree 합성 결과를 **먼저 그린 내용(backdrop)**과
-//!   섞으므로 결과에 영향을 주는 backdrop까지 함께 래스터화합니다(아래).
+//! - [`RasterScope::Content`](crate::svg::raster::RasterScope::Content) — drop shadow, image 색공간
+//!   override: node **자기 내용**만 그 node 위치에서 래스터화하고 자식은 vector로 둡니다. scene
+//!   `PaintStack`에서 shadow는 node 내용 layer 아래에만 그리고, 색공간 override는 image 픽셀에만 걸립니다.
+//! - [`RasterScope::Subtree`](crate::svg::raster::RasterScope::Subtree) — layer blur: node와 subtree를
+//!   합성한 결과 전체에 걸리므로 subtree를 래스터화합니다.
+//! - [`RasterScope::Backdrop`](crate::svg::raster::RasterScope::Backdrop) — Normal이 아닌 blend: subtree
+//!   합성 결과를 **먼저 그린 내용(backdrop)**과 섞으므로 결과에 영향을 주는 backdrop까지 함께
+//!   래스터화합니다(아래).
 //!
 //! 영역 image는 영역 안 node의 합성 효과(opacity·blend·blur)를 모두 포함하고, 영역 밖 조상의 효과는
 //! 포함하지 않습니다. 단 [`RasterRegion::Content`]는 node 내용만이므로 그 node의 subtree 합성
@@ -46,19 +49,36 @@
 //! ## footprint
 //!
 //! node 자기 내용 footprint는 scene world render bounds(stroke·shadow·자기 blur 포함, 보수적)를 내보내기
-//! pixel grid([`PixelGrid`])에서 바깥으로 정수화한 상자입니다. 아무것도 그리지 않는 내용(칠하기 layer와
-//! shadow가 없는 사각형·path)은 footprint가 없습니다. subtree footprint는 자손 footprint의 합집합이고,
-//! layer blur node는 자식 합집합을 blur 반경(world 변환 최대 배율 반영)만큼 넓힙니다.
+//! pixel grid([`PixelGrid`](crate::svg::raster::PixelGrid))에서 바깥으로 정수화한 상자입니다. 아무것도
+//! 그리지 않는 내용(칠하기 layer와 shadow가 없는 사각형·path)은 footprint가 없습니다. subtree footprint는
+//! 자손 footprint의 합집합이고, layer blur node는 자식 합집합을 blur 반경(world 변환 최대 배율 반영)만큼
+//! 넓힙니다.
 //!
 //! clip으로는 footprint를 줄이지 않습니다. 효과와 clip의 적용 순서는 XI.10.4가 고정하므로 지금은 넓게
 //! 잡는 쪽(래스터가 커질 수는 있어도 결과는 틀리지 않음)을 택했습니다. 겹침은 canvas 안에서 양의 넓이를
 //! 가진 pixel 교집합입니다. pixel 경계에 맞닿기만 하면 겹치지 않고, 한 pixel을 나눠 덮으면 겹칩니다.
+//!
+//! ## 겹침 검색
+//!
+//! 단계 `i`의 앞선 내용은 pre-order `[p_i, p_{i-1})`에 있으므로 단계가 높을수록 앞섭니다. 그래서 `G` 자기
+//! 내용(canvas 단계는 배경)을 먼저 보고, 나머지는 pre-order `(G, N)`(canvas면 `[0, N)`)에서 `N`
+//! footprint와 겹치는 첫 내용 하나를 찾으면 그 내용이 가장 높은 단계 `J`의 첫 겹침입니다. 그 내용이 경로
+//! 위 조상이면 `p_J` 자기 내용이 겹친 경우이고, 아니면 그 내용에서 경로와 갈라지는 단계까지 올라간
+//! node가 범위의 첫 자식입니다. blur node는 subtree footprint로 판정하고(합성 결과가 퍼짐), 그 자손은
+//! blur node보다 뒤라 고르지 않습니다.
+//!
+//! 첫 겹침은 pre-order entry 8개씩을 잎으로 묶은 footprint 합집합 구간 tree에서 왼쪽부터 찾고, 합집합이
+//! 겹치지 않는 tree node는 통째로 건너뜁니다. 그래서 blend마다 검색은 한 번이고, 넓은 형제 목록에서도
+//! 앞선 형제를 하나씩 훑지 않습니다.
 //!
 //! ## 병합
 //!
 //! 영역은 pre-order 구간으로 비교합니다. 다른 영역 안에 든 영역은 흡수하고, 같은 부모 아래 서로 겹치는
 //! 형제 범위는 하나로 합칩니다. canvas 영역이 하나라도 있으면 전체가 canvas 영역 하나입니다. 결과 경계는
 //! 서로 겹치지 않고 paint 순서로 정렬됩니다. 모든 순회는 명시적 stack·배열로 하며 재귀하지 않습니다.
+
+// 위 문서는 `svg/mod.rs`의 `pub mod raster;` 바깥 문서와 합쳐져 상위 module(`svg`) 기준으로 링크를
+// 풀므로, `svg`에서 보이지 않는 item 링크는 전체 경로로 씁니다.
 
 use std::collections::BTreeMap;
 
@@ -76,6 +96,9 @@ pub const PIXEL_EPSILON: f64 = 1.0 / 256.0;
 
 /// device pixel 좌표 상한. 이 밖은 잘라 정수 연산이 넘치지 않게 합니다.
 const COORD_LIMIT: i64 = 1 << 40;
+
+/// 겹침 검색 구간 tree 잎 하나가 묶는 pre-order entry 수.
+const BLOCK: usize = 8;
 
 /// 래스터 기능의 영향 범위.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -300,6 +323,8 @@ impl PixelGrid {
 
     /// 두 footprint가 canvas 안에서 양의 넓이로 겹치면 참입니다.
     fn overlaps(&self, a: Option<PixelRect>, b: &PixelRect) -> bool {
+        #[cfg(test)]
+        tests::count_overlap_test();
         a.and_then(|a| a.intersection(b))
             .and_then(|both| both.intersection(&self.canvas))
             .is_some()
@@ -550,10 +575,27 @@ struct Candidate {
     causes: Vec<RasterCause>,
 }
 
+impl Entry<'_> {
+    /// blend backdrop 겹침 판정 footprint. blur node는 subtree 합성 결과가 퍼지므로 subtree footprint이고
+    /// (그 자손은 이 상자 안이며 pre-order로 뒤라 따로 고르지 않음), 그 밖은 자기 내용 footprint입니다.
+    fn hit_area(&self) -> Option<PixelRect> {
+        if self.blur > 0 {
+            self.subtree
+        } else {
+            self.own
+        }
+    }
+}
+
 struct Arena<'a> {
     grid: PixelGrid,
     entries: Vec<Entry<'a>>,
     roots: Vec<usize>,
+    /// 잎 block 수(2의 거듭제곱).
+    leaves: usize,
+    /// 겹침 판정 footprint의 구간 tree(heap 배치: `hits[1]`이 root, `hits[leaves + b]`가 entry
+    /// `[b × BLOCK, (b + 1) × BLOCK)`의 합집합).
+    hits: Vec<Option<PixelRect>>,
 }
 
 /// node 자기 내용이 무언가를 그리면 참입니다(text·image는 고유 모습이 있어 항상 그림).
@@ -653,24 +695,27 @@ impl<'a> Arena<'a> {
                 parent.subtree = union(parent.subtree, subtree);
             }
         }
+        let leaves = entries.len().div_ceil(BLOCK).next_power_of_two();
+        let mut hits = vec![None; 2 * leaves];
+        for (index, entry) in entries.iter().enumerate() {
+            let leaf = &mut hits[leaves + index / BLOCK];
+            *leaf = union(*leaf, entry.hit_area());
+        }
+        for node in (1..leaves).rev() {
+            hits[node] = union(hits[2 * node], hits[2 * node + 1]);
+        }
         Arena {
             grid,
             entries,
             roots: top,
+            leaves,
+            hits,
         }
     }
 
-    /// `parent`의 자식(paint 순서).
-    fn children(&self, parent: usize) -> impl Iterator<Item = usize> + '_ {
-        let end = self.entries[parent].end;
-        let mut next = parent + 1;
-        std::iter::from_fn(move || {
-            (next < end).then(|| {
-                let child = next;
-                next = self.entries[child].end;
-                child
-            })
-        })
+    /// `ancestor` subtree가 `index`를 포함하면 참입니다.
+    fn contains(&self, ancestor: usize, index: usize) -> bool {
+        ancestor <= index && index < self.entries[ancestor].end
     }
 
     fn raster_node(&self, index: usize) -> RasterNode {
@@ -685,87 +730,110 @@ impl<'a> Arena<'a> {
         }
     }
 
-    /// `start` subtree에서 `target`과 겹치는 첫 내용(pre-order). blur node는 subtree가 겹치면 그
-    /// node 자체가 겹침입니다(합성 결과가 퍼짐).
-    fn first_hit(&self, start: usize, target: &PixelRect) -> Option<usize> {
-        let mut stack = vec![start];
-        while let Some(index) = stack.pop() {
-            let entry = &self.entries[index];
-            if !self.grid.overlaps(entry.subtree, target) {
-                continue;
-            }
-            if entry.blur > 0 || self.grid.overlaps(entry.own, target) {
-                return Some(index);
-            }
-            let from = stack.len();
-            stack.extend(self.children(index));
-            stack[from..].reverse();
+    /// pre-order 구간 `[lo, hi)`에서 겹침 판정 footprint가 `target`과 겹치는 첫 entry.
+    ///
+    /// 구간 tree를 왼쪽부터 훑되 합집합이 겹치지 않는 tree node는 통째로 건너뜁니다. 끝낸 tree node에서
+    /// 부모를 거슬러 오른쪽 형제로 옮기므로 stack이 없습니다.
+    fn first_hit(&self, lo: usize, hi: usize, target: &PixelRect) -> Option<usize> {
+        if lo >= hi {
+            return None;
         }
-        None
-    }
-
-    /// `siblings` 중 `before` 앞에서 `target`과 겹치는 첫 subtree와 그 안의 첫 겹침 내용.
-    fn first_overlapping(
-        &self,
-        siblings: impl Iterator<Item = usize>,
-        before: usize,
-        target: &PixelRect,
-    ) -> Option<(usize, usize)> {
-        siblings
-            .take_while(|&sibling| sibling != before)
-            .find_map(|sibling| self.first_hit(sibling, target).map(|hit| (sibling, hit)))
-    }
-
-    /// blend node의 영역과 backdrop 의존(모듈 문서 규칙).
-    fn blend_region(&self, index: usize, background: bool) -> (Kind, BlendDependency) {
-        let mut kind = self.subtree_kind(index);
-        let mut widest = None;
-        let target = self.grid.in_canvas(self.entries[index].subtree);
-        let mut child = index;
-        let isolation = loop {
-            match self.entries[child].parent {
-                Some(parent) => {
-                    if let Some(target) = &target {
-                        if self.grid.overlaps(self.entries[parent].own, target) {
-                            kind = self.subtree_kind(parent);
-                            widest = Some(BackdropItem::Node(self.raster_node(parent)));
-                        } else if let Some((first, hit)) =
-                            self.first_overlapping(self.children(parent), child, target)
-                        {
-                            kind = Kind::Range {
-                                parent: Some(parent),
-                                first,
-                                last: child,
-                            };
-                            widest = Some(BackdropItem::Node(self.raster_node(hit)));
-                        }
-                    }
-                    if self.entries[parent].isolating {
-                        break Some(self.raster_node(parent));
-                    }
-                    child = parent;
+        let mut node = self.leaves + lo / BLOCK;
+        // node가 잎에서 몇 단계 위인지.
+        let mut height: u32 = 0;
+        loop {
+            let start = ((node << height) - self.leaves) * BLOCK;
+            if start >= hi {
+                return None;
+            }
+            if self.grid.overlaps(self.hits[node], target) {
+                if height > 0 {
+                    node *= 2;
+                    height -= 1;
+                    continue;
                 }
-                None => {
-                    if let Some(target) = &target {
-                        if background {
-                            kind = Kind::Canvas;
-                            widest = Some(BackdropItem::Background);
-                        } else if let Some((first, hit)) =
-                            self.first_overlapping(self.roots.iter().copied(), child, target)
-                        {
-                            kind = Kind::Range {
-                                parent: None,
-                                first,
-                                last: child,
-                            };
-                            widest = Some(BackdropItem::Node(self.raster_node(hit)));
-                        }
-                    }
-                    break None;
+                let mut block = start.max(lo)..(start + BLOCK).min(hi);
+                let found =
+                    block.find(|&index| self.grid.overlaps(self.entries[index].hit_area(), target));
+                if found.is_some() {
+                    return found;
                 }
             }
+            while node % 2 == 1 {
+                node /= 2;
+                height += 1;
+            }
+            if node == 0 {
+                return None;
+            }
+            node += 1;
+        }
+    }
+
+    /// blend node의 영역과 backdrop 의존(모듈 문서 규칙과 겹침 검색).
+    fn blend_region(&self, index: usize, background: bool) -> (Kind, BlendDependency) {
+        let mut group = self.entries[index].parent;
+        while let Some(ancestor) = group {
+            if self.entries[ancestor].isolating {
+                break;
+            }
+            group = self.entries[ancestor].parent;
+        }
+        let dependency = |widest| BlendDependency {
+            isolation: group.map(|group| self.raster_node(group)),
+            widest,
         };
-        (kind, BlendDependency { isolation, widest })
+        let alone = self.subtree_kind(index);
+        let Some(target) = self.grid.in_canvas(self.entries[index].subtree) else {
+            return (alone, dependency(None));
+        };
+        // 가장 높은 단계의 isolation group 자기 내용(canvas 단계는 배경)을 먼저 보고, 나머지 앞선 내용은
+        // pre-order 구간에서 첫 겹침 하나를 찾습니다.
+        let lo = match group {
+            Some(group) => {
+                if self.grid.overlaps(self.entries[group].own, &target) {
+                    let widest = BackdropItem::Node(self.raster_node(group));
+                    return (self.subtree_kind(group), dependency(Some(widest)));
+                }
+                group + 1
+            }
+            None if background => {
+                return (Kind::Canvas, dependency(Some(BackdropItem::Background)));
+            }
+            None => 0,
+        };
+        let Some(hit) = self.first_hit(lo, index, &target) else {
+            return (alone, dependency(None));
+        };
+        let widest = dependency(Some(BackdropItem::Node(self.raster_node(hit))));
+        if self.contains(hit, index) {
+            // 경로 위 조상의 자기 내용.
+            return (self.subtree_kind(hit), widest);
+        }
+        // 앞선 형제 subtree 안: 경로에서 갈라지는 단계의 형제까지 올라갑니다.
+        let mut first = hit;
+        while let Some(up) = self.entries[first].parent {
+            if self.contains(up, index) {
+                break;
+            }
+            first = up;
+        }
+        let parent = self.entries[first].parent;
+        let mut last = index;
+        while let Some(up) = self.entries[last].parent {
+            if Some(up) == parent {
+                break;
+            }
+            last = up;
+        }
+        (
+            Kind::Range {
+                parent,
+                first,
+                last,
+            },
+            widest,
+        )
     }
 
     fn candidate(&self, kind: Kind, cause: RasterCause) -> Candidate {
