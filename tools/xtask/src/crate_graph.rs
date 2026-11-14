@@ -112,7 +112,22 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         // headless 도구(stellar-cli)는 이 브리지에 의존할 수 없습니다(위 항목에 없음).
         (
             "stellar-mcp",
-            &[core, "stellar-diagnostics", "stellar-local-ipc"],
+            &[
+                core,
+                "stellar-diagnostics",
+                "stellar-local-ipc",
+                "stellar-mcp-core",
+            ],
+        ),
+        // ADR-0005 §8의 L2 library 허용 경로(XIX.9.1).
+        (
+            "stellar-mcp-core",
+            &[
+                "stellar-ops",
+                "stellar-agent-protocol",
+                "stellar-local-ipc",
+                "stellar-diagnostics",
+            ],
         ),
         // bridge↔app 로컬 IPC(ADR-0005 §8, `crates/local-ipc`): core-types만 허용합니다.
         // document·commands·ops에 도달하지 않습니다.

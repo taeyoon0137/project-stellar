@@ -304,6 +304,15 @@ name = "stellar-mcp"
 version = "0.0.0"
 dependencies = [
  "stellar-local-ipc",
+ "stellar-mcp-core",
+]
+
+[[package]]
+name = "stellar-mcp-core"
+version = "0.0.0"
+dependencies = [
+ "stellar-local-ipc",
+ "stellar-ops",
 ]
 
 [[package]]
