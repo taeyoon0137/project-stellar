@@ -46,6 +46,7 @@ Project Stellar는 폴더와 실제 Git 저장소를 원본으로 사용하는 �
 - `README.md`는 생성 결과물입니다. 직접 수정으로 끝내지 않습니다.
 - README 원본(source of truth)은 `assets/docs/README.preset.md`입니다.
 - README 히어로 wrapper 원본은 `assets/docs/readme-hero.preset.svg`이며, `assets/docs/readme-hero.svg`는 생성 결과물입니다.
+- 앱 아이콘과 로고 원본은 `assets/icons/`에 둡니다. macOS 앱 아이콘은 `assets/icons/AppIcon.icon`(Icon Composer 형식)이며 Xcode 프로젝트가 직접 참조합니다.
 - `CLAUDE.md`는 `AGENTS.md`를 가리키는 심볼릭 링크입니다. 별도 사본으로 분리하지 않습니다.
 - `docs/`의 기술 문서는 수동 관리 원본입니다.
 

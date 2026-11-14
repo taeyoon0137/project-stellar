@@ -107,11 +107,14 @@ project-stellar
 ├── .githooks/
 │   └── commit-msg              # 커밋 메시지 형식 검사 훅
 ├── assets/
-│   └── docs/
-│       ├── README.preset.md        # README 생성 원본 (source of truth)
-│       ├── hero.jpg                # README 히어로 이미지 (로고 원본)
-│       ├── readme-hero.preset.svg  # README 히어로 wrapper 원본
-│       └── readme-hero.svg         # 생성된 README 히어로 SVG
+│   ├── docs/
+│   │   ├── README.preset.md        # README 생성 원본 (source of truth)
+│   │   ├── hero.jpg                # README 히어로 이미지 (로고 원본)
+│   │   ├── readme-hero.preset.svg  # README 히어로 wrapper 원본
+│   │   └── readme-hero.svg         # 생성된 README 히어로 SVG
+│   └── icons/
+│       ├── AppIcon.icon/           # macOS 앱 아이콘 (Icon Composer 형식)
+│       └── stellar-mark.svg        # Stellar 로고 마크 (히어로 이미지에서 추출)
 ├── docs/
 │   ├── PROJECT_STELLAR_IMPLEMENTATION_PLAN.md     # 원자적 구현·검증 실행 계획 (WBS)
 │   └── PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md  # 기술 아키텍처 기준 문서
