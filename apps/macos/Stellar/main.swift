@@ -8,6 +8,10 @@ if CommandLine.arguments.contains("--lifecycle-check") {
 }
 
 // canvas 검사 모드: drawable pixel == point × scale 및 코어 round-trip을 검증하고 종료(II.5.4).
+if let flag = CommandLine.arguments.firstIndex(of: "--canvas-culling-check"), CommandLine.arguments.indices.contains(flag + 1) {
+    exit(MainActor.assumeIsolated { ShellCanvasCullingCheck.run(path: CommandLine.arguments[flag + 1]) } ? 0 : 1)
+}
+
 if CommandLine.arguments.contains("--visible-frames-check") {
     exit(MainActor.assumeIsolated { ShellVisibleFramesCheck.run(CommandLine.arguments) } ? 0 : 1)
 }

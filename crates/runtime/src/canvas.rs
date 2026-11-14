@@ -253,6 +253,67 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires a Release macOS app and writes the 50,000-Frame benchmark project"]
+    fn profile_saved_canvas_50000_frames() {
+        let app =
+            std::env::var_os("STELLAR_CANVAS_PROFILE_APP").expect("set STELLAR_CANVAS_PROFILE_APP");
+        let mut model = sample_document();
+        model.remove_leaf(sid(11)).unwrap();
+        model.remove_leaf(sid(12)).unwrap();
+        let mut root = frame(800., 600., -400., -300., [1.; 3]);
+        root.clipping = Clipping::Disabled;
+        model
+            .set_payload(sid(10), NodePayload::Frame(root))
+            .unwrap();
+        let flat = std::env::var_os("STELLAR_CANVAS_PROFILE_FLAT").is_some();
+        // 같은 world 좌표의 Frame을 100개 그룹 또는 한 root의 직계 자식으로 배치합니다.
+        for i in 0..49_999_u32 {
+            let group = i / 500;
+            let member = i % 500;
+            let (parent, x, y, w, h) = if member == 0 {
+                (10, group as f32 * 2500., 0., 400., 300.)
+            } else {
+                (
+                    1000 + u64::from(group * 500),
+                    (member % 25) as f32 * 49.,
+                    (member / 25) as f32 * 39.,
+                    16.,
+                    14.,
+                )
+            };
+            let (parent, x) = if flat && member != 0 {
+                (10, group as f32 * 2500. + x)
+            } else {
+                (parent, x)
+            };
+            let mut f = frame(w, h, x, y, [0.1, 0.25 + (member % 7) as f32 / 10., 0.55]);
+            if member == 0 {
+                f.clipping = Clipping::Disabled;
+            }
+            let mut key = i.to_be_bytes().to_vec();
+            key.push(1);
+            model
+                .insert_node(NodeRecord {
+                    id: sid(1000 + u64::from(i)),
+                    parent: Some(sid(parent)),
+                    order_key: OrderKey::from_bytes(key).unwrap(),
+                    visible: true,
+                    locked: false,
+                    display_name: format!("Frame {i}"),
+                    payload: NodePayload::Frame(f),
+                })
+                .unwrap();
+        }
+        let dir = saved_project_with("canvas-profile", &[&model]);
+        let status = std::process::Command::new(app)
+            .arg("--canvas-culling-check")
+            .arg(dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
     fn saved_frames_open_in_window_painter_order() {
         let mut model = sample_document();
         let root = frame(800., 600., 0., 0., [1., 1., 1.]);
@@ -270,6 +331,14 @@ mod tests {
                 NodePayload::Frame(frame(24., 15., 55., 48., [0., 1., 0.])),
             )
             .unwrap();
+        let mut outside = frame(40., 40., 1000., 20., [0.; 3]);
+        outside.clipping = Clipping::Disabled;
+        let mut rotated = frame(34., 18., 0., 0., [1., 1., 0.]);
+        rotated.transform = Transform2D::new(0., 1., -1., 0., -850., 90.).unwrap();
+        rotated.border =
+            Some(Border::new(Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).unwrap(), 2.).unwrap());
+        let mut drag_parent = outside.clone();
+        drag_parent.transform = Transform2D::new(1., 0., 0., 1., 1200., 20.).unwrap();
         for (n, parent, visible, payload) in [
             (13, 11, true, NodePayload::Fragment(FragmentPayload)),
             (
@@ -284,12 +353,33 @@ mod tests {
                 false,
                 NodePayload::Frame(frame(120., 80., 0., 0., [0., 0., 0.])),
             ),
+            (16, 10, true, NodePayload::Frame(outside)),
+            (17, 16, true, NodePayload::Frame(rotated)),
+            (18, 10, true, NodePayload::Frame(drag_parent)),
+            (
+                19,
+                18,
+                true,
+                NodePayload::Frame(frame(25., 20., 10., 120., [0., 1., 1.])),
+            ),
+            (
+                21,
+                10,
+                true,
+                NodePayload::Frame(frame(40., 40., 1000., 20., [0.; 3])),
+            ),
+            (
+                22,
+                21,
+                true,
+                NodePayload::Frame(frame(25., 20., -820., 140., [0., 1., 1.])),
+            ),
         ] {
             model
                 .insert_node(NodeRecord {
                     id: sid(n),
                     parent: Some(sid(parent)),
-                    order_key: OrderKey::from_bytes(vec![n as u8]).unwrap(),
+                    order_key: OrderKey::from_bytes(vec![n as u8 + 0x40]).unwrap(),
                     visible,
                     locked: false,
                     display_name: format!("n{n}"),
@@ -304,7 +394,7 @@ mod tests {
         assert_eq!(scene.skipped, 0);
         assert_eq!(
             scene.frames.iter().map(|r| r.id).collect::<Vec<_>>(),
-            [sid(10), sid(11), sid(14), sid(12)]
+            [10, 11, 14, 12, 16, 17, 18, 19, 21, 22].map(sid)
         );
         assert_eq!(scene.frames[2].parent, Some(1));
         assert_eq!(
