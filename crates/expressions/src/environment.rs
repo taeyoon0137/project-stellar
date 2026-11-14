@@ -17,7 +17,9 @@
 //! | 10 | `density` | Number(display scale) |
 //! | 11 | `interaction_state` | Enum([`INTERACTION_STATE_TYPE`]) |
 //!
-//! 환경 enum 타입은 `0xE000_0000` 대역의 [`EnumTypeId`]를 씁니다. 다른 enum registry는 이 대역을 쓰지 않습니다.
+//! 환경 enum 타입은 `0xE000_0000`부터 `0xE000_FFFF`까지의 대역(상위 16 bit가 `0xE000`, ADR-0026 4절)에서
+//! [`EnumTypeId`]를 받습니다. `0xE000_0000`은 할당하지 않고, 새 타입은 대역 안의 다음 번호(`0xE000_0005`, …)를
+//! 받습니다. 다른 enum registry는 이 대역을 쓰지 않습니다.
 //! 각 enum의 variant 번호도 고정입니다([`platform`], [`color_scheme`], [`contrast`], [`interaction_state`]).
 //!
 //! **missing key 기본값 정책(VIII.7.2)**: [`EvaluationEnvironment`]에 값이 없는 등록 key는 registry가 고정한 기본값
@@ -436,6 +438,30 @@ mod tests {
         );
         assert_eq!(PLATFORM_TYPE.raw(), 0xE000_0001);
         assert_eq!(INTERACTION_STATE_TYPE.raw(), 0xE000_0004);
+    }
+
+    #[test]
+    fn environment_enum_types_stay_in_reserved_band() {
+        // ADR-0026 4절: 대역 0xE000_0000..=0xE000_FFFF, 0xE000_0000은 할당하지 않음, 0xE000_0001부터 연속.
+        let mut enum_types = Vec::new();
+        for key in ALL_KEYS {
+            if let ExpressionType::Enum(id) = key_info(key).expect("등록").value_type {
+                assert_eq!(
+                    id.raw() >> 16,
+                    0xE000,
+                    "{key:?} 타입 {:#X}가 대역 밖",
+                    id.raw()
+                );
+                assert_ne!(id.raw(), 0xE000_0000, "{key:?}가 예약 번호를 씀");
+                enum_types.push(id.raw());
+            }
+        }
+        enum_types.sort_unstable();
+        enum_types.dedup();
+        let expected: Vec<u32> = (0..enum_types.len() as u32)
+            .map(|n| 0xE000_0001 + n)
+            .collect();
+        assert_eq!(enum_types, expected);
     }
 
     #[test]

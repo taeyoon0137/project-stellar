@@ -262,8 +262,10 @@ AST의 reference payload `0x04`에 `u32` LE로 기록됩니다.
   포함합니다.
 - VIII.7.1 보고서는 "현재 저장소에 다른 enum 타입 ID registry 없음"이라고 적었습니다. `5d0f2ce`에는
   document List 계약의 `0x000C_0001`\~`0x000C_0003`이 있습니다. 대역 밖이라 충돌은 없습니다.
-- `environment.rs`의 "`0xE000_0000` 대역" 문구에는 상한이 없습니다. 이 ADR의 상한(`0xE000_FFFF`)을
-  코드 주석에 반영하는 일은 후속 작업입니다.
+- `environment.rs`의 "`0xE000_0000` 대역" 문구에는 상한이 없었습니다. 사후 리뷰 뒤 모듈 문서에 이
+  ADR의 대역(`0xE000_0000`부터 `0xE000_FFFF`까지, `0xE000_0000` 미할당, 다음 번호 할당)을 적었습니다.
+  test `environment_enum_types_stay_in_reserved_band`가 등록된 환경 enum 타입이 모두 이 대역 안에 있고
+  `0xE000_0001`부터 빈틈없이 이어지는지 검사합니다.
 - `ValueBinding`에는 고정 golden bytes test가 없었습니다. test는 round-trip, 머리 2바이트 버전, 손상
   거부만 확인했습니다. 그래서 배치가 바뀌어도 round-trip만 맞으면 통과했습니다. canonical AST
   (`canonical_bytes_golden`)와 key registry(`key_numeric_ids_match_golden`)에는 golden test가 있습니다.
