@@ -1847,10 +1847,21 @@ impl AppRuntime {
                 }
             }
             session.trust = store.status(identity);
+            let trusted = session.trust == TrustStatus::Trusted;
+            if !trusted {
+                for window in ctx
+                    .app_sessions_mut()
+                    .windows
+                    .values_mut()
+                    .filter(|w| w.project == project)
+                {
+                    window.canvas.update_library(request.0, None);
+                }
+            }
             Ok(RuntimeEvent::ProjectTrust {
                 request,
                 project,
-                trusted: session.trust == TrustStatus::Trusted,
+                trusted,
             })
         })
     }

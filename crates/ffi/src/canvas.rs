@@ -69,7 +69,8 @@ impl From<&CanvasFrame> for StellarCanvasFrame {
             parent: frame.parent.unwrap_or(u32::MAX),
             flags: u32::from(frame.clip_children)
                 | (u32::from(frame.hit_target) << 1)
-                | (u32::from(frame.rectangle_shape) << 2),
+                | (u32::from(frame.rectangle_shape) << 2)
+                | (u32::from(frame.instance_frame) << 3),
             world: affine(frame.world),
             size: [size.width(), size.height()],
             radii: [tl, tr, br, bl],

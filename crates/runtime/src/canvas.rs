@@ -21,6 +21,7 @@ use stellar_scene::node::{CornerRadii, RectPrimitive, SceneContent};
 
 use crate::window_session::ProjectWindowSession;
 
+mod component;
 pub(crate) mod shape;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
@@ -28,6 +29,8 @@ pub(crate) mod shape;
 pub struct CanvasFrame {
     /// Shape Rectangle이면 true입니다. Frame과 같은 사각형 painter를 사용합니다.
     pub rectangle_shape: bool,
+    /// 실제 문서의 ComponentInstance를 표시하는 투영 행입니다.
+    pub instance_frame: bool,
     /// 문서 node 식별자.
     pub id: StableId,
     /// 같은 목록의 Frame 부모 index.
@@ -57,10 +60,33 @@ pub struct CanvasScene {
 
 #[derive(Debug, Default)]
 pub(crate) struct CanvasCache {
+    library_request: u64,
     latest: Option<(DocumentRevision, StableId, Arc<CanvasScene>)>,
+    library: Option<(
+        stellar_project::document_io::component_source::ComponentFiles,
+        stellar_document::component::definition::ComponentLibrary,
+    )>,
 }
 
 impl CanvasCache {
+    pub(crate) fn update_library(
+        &mut self,
+        request: u64,
+        next: Option<(
+            stellar_project::document_io::component_source::ComponentFiles,
+            stellar_document::component::definition::ComponentLibrary,
+        )>,
+    ) {
+        if request < self.library_request {
+            return;
+        }
+        self.library_request = request;
+        if self.library.as_ref().map(|v| &v.0) != next.as_ref().map(|v| &v.0) {
+            self.library = next;
+            self.latest = None;
+        }
+    }
+
     pub(crate) fn current(&mut self, session: &ProjectWindowSession) -> Option<Arc<CanvasScene>> {
         let view = session.tabs().active_view()?;
         let state = session.document()?;
@@ -77,7 +103,11 @@ impl CanvasCache {
             .flat_map(|p| &p.views)
             .find(|v| v.id == view)?
             .root_frame;
-        let scene = Arc::new(CanvasScene::from_root(model, root));
+        let scene = Arc::new(CanvasScene::with_library(
+            model,
+            root,
+            self.library.as_ref().map(|v| &v.1),
+        ));
         self.latest = Some((state.revision(), view, scene.clone()));
         Some(scene)
     }
@@ -109,7 +139,72 @@ impl CanvasScene {
         .ok()
     }
 
+    fn push_frame(
+        &mut self,
+        builder: &mut SceneBuilder,
+        parent_scope: &stellar_scene::builder::SceneScope,
+        parent: Option<u32>,
+        id: StableId,
+        frame: &stellar_document::frame::FramePayload,
+        locked: bool,
+    ) -> Option<(stellar_scene::builder::SceneScope, u32)> {
+        let radius = RectangleParams {
+            size: frame.size,
+            corner_radius: frame.corner_radius,
+        }
+        .effective_corner_radius();
+        let radii = CornerRadii::new(radius.0, radius.1, radius.2, radius.3).ok()?;
+        let mut node = NodeInput::new(id, frame.transform);
+        node.locked = locked;
+        let clip_children = frame.clipping == Clipping::FrameBounds;
+        let input = FrameInput {
+            node,
+            size: frame.size,
+            corner_radii: radii,
+            background: frame.background,
+            border: frame.border.map(|b| BorderInput {
+                color: b.color,
+                thickness: b.thickness(),
+            }),
+            clip: if clip_children {
+                FrameClipInput::Bounds
+            } else {
+                FrameClipInput::None
+            },
+        };
+        let scope = builder.begin_frame(parent_scope, &input).ok()?;
+        let spec = scope.spec();
+        let SceneContent::Rect(geometry) = &spec.content else {
+            unreachable!("Frame primitive")
+        };
+        spec.world_transform.inverse()?;
+        Aabb::from_rect(geometry.rect).transformed(&spec.world_transform)?;
+        let index = self.frames.len() as u32;
+        self.frames.push(CanvasFrame {
+            rectangle_shape: false,
+            instance_frame: false,
+            id,
+            parent,
+            world: spec.world_transform,
+            geometry: *geometry,
+            background: frame.background,
+            border: frame.border,
+            clip_children,
+            hit_target: spec.hit.is_hit_target(),
+        });
+        Some((scope.scope().clone(), index))
+    }
+
+    #[cfg(test)]
     fn from_root(model: &DocumentModel, root: StableId) -> Self {
+        Self::with_library(model, root, None)
+    }
+
+    fn with_library(
+        model: &DocumentModel,
+        root: StableId,
+        library: Option<&stellar_document::component::definition::ComponentLibrary>,
+    ) -> Self {
         let mut result = Self::default();
         let mut builder = SceneBuilder::new();
         let mut pending = vec![(root, builder.root_scope(), None)];
@@ -140,6 +235,29 @@ impl CanvasScene {
                 }
                 continue;
             }
+            if let Some(NodePayload::ComponentInstance(instance)) = payload {
+                let start = result.frames.len();
+                let entry = library.and_then(|lib| lib.get(instance.component()));
+                let projected = entry
+                    .filter(|_| instance.has_no_overrides())
+                    .and_then(|entry| {
+                        component::project(
+                            &mut result,
+                            &mut builder,
+                            &parent_scope,
+                            parent,
+                            id,
+                            fields.locked,
+                            model.modifier_stack(id),
+                            entry,
+                        )
+                    });
+                if projected.is_none() {
+                    result.frames.truncate(start);
+                    result.skipped += 1;
+                }
+                continue;
+            }
             if model.modifier_stack(id).is_some() {
                 result.skipped += 1;
                 continue;
@@ -160,64 +278,18 @@ impl CanvasScene {
                     if frame.layout_mode.is_none()
                         && !matches!(frame.clipping, Clipping::Path(_)) =>
                 {
-                    let radius = RectangleParams {
-                        size: frame.size,
-                        corner_radius: frame.corner_radius,
-                    }
-                    .effective_corner_radius();
-                    let Ok(radii) = CornerRadii::new(radius.0, radius.1, radius.2, radius.3) else {
-                        result.skipped += 1;
-                        continue;
-                    };
-                    let mut node = NodeInput::new(id, frame.transform);
-                    node.locked = fields.locked;
-                    let clip_children = frame.clipping == Clipping::FrameBounds;
-                    let input = FrameInput {
-                        node,
-                        size: frame.size,
-                        corner_radii: radii,
-                        background: frame.background,
-                        border: frame.border.map(|b| BorderInput {
-                            color: b.color,
-                            thickness: b.thickness(),
-                        }),
-                        clip: if clip_children {
-                            FrameClipInput::Bounds
-                        } else {
-                            FrameClipInput::None
-                        },
-                    };
-                    let Ok(scope) = builder.begin_frame(&parent_scope, &input) else {
-                        result.skipped += 1;
-                        continue;
-                    };
-                    let spec = scope.spec();
-                    let SceneContent::Rect(geometry) = &spec.content else {
-                        unreachable!("Frame primitive")
-                    };
-                    if spec.world_transform.inverse().is_none() {
-                        continue;
-                    }
-                    if Aabb::from_rect(geometry.rect)
-                        .transformed(&spec.world_transform)
-                        .is_none()
-                    {
-                        result.skipped += 1;
-                        continue;
-                    }
-                    let index = result.frames.len() as u32;
-                    result.frames.push(CanvasFrame {
-                        rectangle_shape: false,
-                        id,
+                    let Some((scope, index)) = result.push_frame(
+                        &mut builder,
+                        &parent_scope,
                         parent,
-                        world: spec.world_transform,
-                        geometry: *geometry,
-                        background: frame.background,
-                        border: frame.border,
-                        clip_children,
-                        hit_target: spec.hit.is_hit_target(),
-                    });
-                    (scope.scope().clone(), Some(index))
+                        id,
+                        frame,
+                        fields.locked,
+                    ) else {
+                        result.skipped += 1;
+                        continue;
+                    };
+                    (scope, Some(index))
                 }
                 _ => {
                     result.skipped += 1;

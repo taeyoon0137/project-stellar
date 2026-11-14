@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 
 
@@ -58,6 +59,7 @@ def main(app, cli):
                     raise TimeoutError("native instance action: " + line)
                 return json.loads(proc.stdout.readline())
             command("initial")
+            command("fit")
             command("select " + card["id"])
             first = command("place 30 20")
             assert first["message"] == "Instance placed." and first["selection"] == 1, first
@@ -66,14 +68,73 @@ def main(app, cli):
             assert command("undo")["undo"] == first["undo"]
             assert command("redo")["undo"] == again["undo"]
             assert command("save")["generation"] > first["generation"]
-            assert len(instance_nodes(clone)) == 2
-            # Stale library row cannot insert a new instance after a real source edit.
+            ids = set(instance_nodes(clone))
+            assert len(ids) == 2
+
+            def wait_canvas(label, predicate):
+                deadline = time.monotonic() + 10
+                while True:
+                    sample = command("canvas")
+                    if predicate(sample["samples"]):
+                        return sample
+                    if time.monotonic() >= deadline:
+                        raise AssertionError(f"{label}: {sample}")
+                    time.sleep(.05)
+
+            visible = wait_canvas("two independently pickable instance roots", lambda s:
+                                  {s[0]["id"], s[1]["id"]} == ids)
+            initial = visible["samples"]
+            first_id, second_id, view_root = initial[0]["id"], initial[1]["id"], initial[6]["id"]
+            assert view_root and view_root not in ids
+            assert [p["id"] for p in initial] == [first_id, second_id, first_id, second_id, first_id, second_id, view_root]
+            assert [(p["x"], p["y"]) for p in initial[:2]] == [(30, 20), (230.5, -10)]
+            assert all(min(p["rgb"]) >= 250 for p in initial[:4]), initial
+            revision = visible["revision"]
+
+            def pixels_changed(s):
+                # Both roots are blue, the unchanged children stay white, the trimmed regions reveal the View.
+                return ([p["id"] for p in s] == [first_id, second_id, first_id, second_id, view_root, view_root, view_root]
+                        and all(p["rgb"][2] > 240 and max(p["rgb"][:2]) < 12 for p in s[:2])
+                        and all(min(p["rgb"]) >= 250 for p in s[2:4])
+                        and all(p["rgb"] == initial[6]["rgb"] for p in s[4:]))
+
+            # Keep the document generation and original SHA while replacing only this definition, as a checkout would.
             old_path = clone / path.relative_to(source)
+            original_source = old_path.read_bytes()
             subprocess.run([cli, "component-source", "resize", old_path, card["source_hash"], "201", "77"], env=clone_env, check=True, stdout=subprocess.DEVNULL)
+            named_sections = old_path.read_text().split('root_node:', 1)
+            assert len(named_sections) == 2
+            head, root_tail = named_sections
+            assert 'rgba: "1 1 1 1"' in root_tail
+            old_path.write_text(head + 'root_node:' + root_tail.replace('rgba: "1 1 1 1"', 'rgba: "0 0 1 1"', 1))
+            blue_source = old_path.read_bytes()
             stale = command("place 10 10")
             assert stale["message"] != "Instance placed." and stale["undo"] == again["undo"], stale
+            assert command("refresh")["entries"][0]["width"] == 201
+            assert wait_canvas("external edit updates both instances", pixels_changed)["revision"] == revision
+            subprocess.run(["git", "-C", clone, "restore", "--source=HEAD", "--", old_path], env=clone_env, check=True)
+            assert old_path.read_bytes() == original_source
+            command("refresh")
+            assert wait_canvas("git restore repaints both original instances", lambda s: s == initial)["revision"] == revision
+
+            def no_instances(s):
+                return all(p["id"] == view_root and p["rgb"] == initial[6]["rgb"] for p in s)
+            for broken in [None, b"invalid yaml without a component"]:
+                if broken is None:
+                    old_path.unlink()
+                else:
+                    old_path.write_bytes(broken)
+                assert not command("refresh")["entries"]
+                assert wait_canvas("missing or invalid definition clears stale paint", no_instances)["revision"] == revision
+                old_path.write_bytes(blue_source)
+                command("refresh")
+                assert wait_canvas("definition restored at the same revision", pixels_changed)["revision"] == revision
             restored = command("reopen")
             assert restored["entries"][0]["width"] == 201
+            command("fit")
+            wait_canvas("reopened instances resolve to updated source", pixels_changed)
+            assert not command("revoke")["entries"]
+            wait_canvas("trust revocation clears geometry and pick targets", no_instances)
             proc.stdin.write("done\n"); proc.stdin.flush()
             assert proc.wait(timeout=15) == 0
         ids = instance_nodes(clone)
@@ -81,6 +142,7 @@ def main(app, cli):
         for node in ids:
             detail = json.loads(subprocess.check_output([cli, "query", clone, "node", doc, node], env=clone_env))["result"]["node"]
             assert detail["modifier_count"] == 1 and card["id"] in json.dumps(detail["properties"])
+        print("instance rendering ok: two independent picks and offsets, nested hits, size/fill propagate at same document revision, Git restore, missing/invalid repair, reopen and trust revocation")
         print("instance placement ok: native Place twice at different positions, Undo/Redo, Save Now, reopen, 2 independent kind-7 nodes sharing original definition, stale source rejected")
         print("selected-component ok: original and local Git clone opened in native Component Library and CLI, identical IDs/hash/tree, single changed source")
         subprocess.run([app, "--component-create-check", home], env=env, check=True, timeout=90)

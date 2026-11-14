@@ -28,6 +28,25 @@ enum ShellComponentLibraryCheck {
         guard let firstLibrary = shell.componentLibrary else { return false }
         var library = firstLibrary
         while let command = readLine() {
+            if command == "fit" {
+                guard let window = shell.window, let session = shell.windowController.windowSession else { return false }
+                window.setContentSize(NSSize(width: 1300, height: 850))
+                window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+                window.orderBack(nil)
+                window.contentView?.layoutSubtreeIfNeeded()
+                guard session.track({ pump.fitRoot(session: session.session, size: shell.canvasHost.canvasView.bounds.size, completion: $0) },
+                                    completion: { _ in shell.refreshSessionCommands() }),
+                      pump.waitForPendingRequests(timeout: 10) else { return false }
+                FileHandle.standardOutput.write(Data("{}\n".utf8))
+                continue
+            }
+            if command == "canvas" {
+                // readLine()은 테스트 전용 main run loop를 멈추므로 실제 메뉴가 시작한 비동기 scene 요청을 배출합니다.
+                guard pump.waitForPendingRequests(timeout: 10) else { return false }
+                guard let sample = canvasSample(shell), let data = try? JSONSerialization.data(withJSONObject: sample) else { return false }
+                FileHandle.standardOutput.write(data + Data([10]))
+                continue
+            }
             if command == "done" { shell.window?.close(); return pump.waitForPendingRequests(timeout: 10) }
             if command == "revoke" {
                 guard let previous = library.rows.first, let session = shell.windowController.windowSession?.session else { return false }
@@ -103,4 +122,34 @@ enum ShellComponentLibraryCheck {
         }
         return false
     }
+    // 실제 CanvasView의 hit test 및 sRGB bitmap을 같은 카메라 좌표에서 읽습니다.
+    private static func canvasSample(_ shell: ShellProjectWindow) -> [String: Any]? {
+        guard let window = shell.window, let session = shell.windowController.windowSession,
+              let viewport = session.viewInfo, let info = session.info else { return nil }
+        window.contentView?.layoutSubtreeIfNeeded()
+        let canvas = shell.canvasHost.canvasView
+        guard let image = ShellVisibleFramesCheck.bitmap(canvas, in: window) else { return nil }
+        // 각 root 내부, 원본 자식 내부, 크기 감소로 사라지는 가장자리 및 독립 배경점.
+        let points = [CGPoint(x: 140, y: 75), CGPoint(x: 340, y: 40), CGPoint(x: 46, y: 32),
+                      CGPoint(x: 249, y: 8), CGPoint(x: 251, y: 105), CGPoint(x: 450, y: 21),
+                      CGPoint(x: 600, y: 155)]
+        let samples: [[String: Any]] = points.compactMap { world in
+            let point = CGPoint(x: canvas.bounds.midX + (world.x - viewport.center_x) * viewport.zoom,
+                                y: canvas.bounds.midY + (world.y - viewport.center_y) * viewport.zoom)
+            let x = Int(floor(point.x * CGFloat(image.pixelsWide) / canvas.bounds.width))
+            let y = Int(floor(point.y * CGFloat(image.pixelsHigh) / canvas.bounds.height))
+            guard x >= 0, x < image.pixelsWide, y >= 0, y < image.pixelsHigh else {
+                FileHandle.standardError.write(Data("canvas sample outside: \(world) projected \(point) bitmap \(image.pixelsWide)x\(image.pixelsHigh)\n".utf8))
+                return nil
+            }
+            var channels = [Int](repeating: 0, count: image.samplesPerPixel)
+            image.getPixel(&channels, atX: x, y: y)
+            let hit = canvas.frameHit(at: point)
+            return ["id": hit?.id.uuidString.lowercased() ?? "", "x": hit?.localToWorld.tx ?? 0,
+                    "y": hit?.localToWorld.ty ?? 0, "rgb": Array(channels.prefix(3))]
+        }
+        guard samples.count == points.count else { return nil }
+        return ["revision": info.revision, "samples": samples]
+    }
+
 }

@@ -205,3 +205,30 @@ pub unsafe extern "C" fn stellar_window_place_component(
         unsafe { rt.finish_request(result, out_request) }
     })
 }
+
+/// worker에서 원본 라이브러리를 읽고 현재 창의 캔버스 갱신을 요청합니다.
+/// # Safety
+/// out_request는 null 또는 u64 쓰기가 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_reload_component_canvas(
+    handle: u64,
+    session: u64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { out_request.write(0) };
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(app) = rt.app.as_ref() else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = app.reload_canvas_components(WindowSessionHandle(session));
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
