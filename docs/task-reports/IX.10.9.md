@@ -55,3 +55,10 @@
 
 - 한 번에 profile 하나의 plan만 계산합니다. 여러 profile 동시 upgrade는 호출자가 plan을 profile마다 만들어야 합니다.
 - 테스트의 release 2는 fixture입니다. 내장 catalog에는 아직 release 1만 있습니다.
+
+## 후속 수정(리뷰 반영): 영향 사용 조회 비용
+
+리뷰(TP-5)에서 사용마다 `registry_changes`를 선형 탐색(`find`)하는 비용이 지적되어 `Fix` commit으로 subject → 첫 변경 map
+조회로 바꿨습니다(결과 같음, 첫 일치 규칙 유지). 동작 보존 재구성이라 비용을 직접 재는 실패 테스트는 만들지 않았고, 기존
+upgrade preview fixture가 그대로 통과합니다. 사용 수집(`collect_usages`)의 제외 판정 비용 수정은 IX.10.8 보고서의 후속 수정
+절에 있습니다.

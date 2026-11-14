@@ -53,3 +53,22 @@
 
 - 검사는 주어진 variant 층 하나에 대해서만 합니다. 모든 variant 조합 검사는 호출자가 조합별로 반복해야 합니다.
 - node 수가 큰 View에서 profile 수 × node 수만큼 진단이 생깁니다(Native 포함). 대량 View의 성능 예산은 아직 측정하지 않았습니다.
+
+## 후속 수정(리뷰 반영): 제외 판정 비용
+
+리뷰(TP-5)에서 `collect_usages`가 node마다 `is_excluded`로 root까지 parent를 거슬러 올라가 깊은 선형 트리에서 O(N^2)라는 점이
+지적되어 `Fix` commit으로 고쳤습니다. 이 함수는 upgrade plan(IX.10.9)도 모든 View에 대해 씁니다.
+
+- `ResolvedView::excluded_among`(IX.10.7 `overrides.rs`)을 추가했습니다. 판정한 node의 결과를 재사용해 `parent_of`를 node마다 최대
+  한 번만 부르고(O(N log N)), 순환·목록에 없는 parent에서도 node마다 `is_excluded`(`max_depth` = node 수)를 부른 것과 같은
+  결과입니다. `collect_usages`는 이 함수로 제외 집합을 한 번에 구합니다.
+
+| 명령 | 결과 |
+|---|---|
+| 수정 전(같은 판정을 node마다 `is_excluded`로 하는 구현) `cargo test -p stellar-target-profile overrides::` | 1 failed(`excluded_among_matches_is_excluded_with_linear_parent_lookups`: 2,000단계 선형 트리에서 parent 조회 1,000,000회) |
+| 수정 후 `cargo test -p stellar-target-profile` | 42 passed, 0 failed |
+
+| 검사 | 결과 |
+|---|---|
+| 2,000단계 선형 트리에서 중간 node 제외 시 그 node와 하위만 제외, parent 조회 ≤ node 수; 제외 없는 순환·제외 node가 있는 순환·목록에 없는 제외 조상·목록에 없는 조상에서 node별 `is_excluded`와 같은 결과 (`excluded_among_matches_is_excluded_with_linear_parent_lookups`) | 통과 |
+| 기존 multi-profile 진단 fixture(제외 node 하위 미검사 포함) | 통과(변경 없음) |

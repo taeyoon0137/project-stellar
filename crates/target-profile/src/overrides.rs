@@ -15,7 +15,8 @@
 //!
 //! [`resolve_for_profile`]은 결과와 함께 선택 profile의 Binding 환경([`ProfileEnvironment`])을 돌려줍니다. 결과의 모든
 //! 값은 출처([`ValueOrigin`])를 가집니다. 제외된 node를 root로 하는 값은 결과에서 빠집니다(하위 node 제외 판정은
-//! [`ResolvedView::is_excluded`]가 parent 조회로 합니다).
+//! [`ResolvedView::is_excluded`]가 parent 조회로 하고, View 전체 판정은 결과를 재사용하는
+//! [`ResolvedView::excluded_among`]이 합니다).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -246,6 +247,50 @@ impl ResolvedView {
         }
         false
     }
+
+    /// `nodes` 중 제외된 node(자신 또는 조상이 제외)의 집합. node마다 [`ResolvedView::is_excluded`]를 부르는 것과 같은
+    /// 판정이지만(`max_depth` = node 수), 한 번 판정한 node의 결과를 재사용해 `parent_of`를 node마다 최대 한 번만
+    /// 부릅니다. 깊이 D인 트리에서 node마다 root까지 올라가는 O(N·D) 대신 O(N log N)입니다. 제외 node가 없는 순환에
+    /// 걸린 node는 제외되지 않은 것으로 봅니다(`is_excluded`와 같음).
+    pub fn excluded_among(
+        &self,
+        nodes: impl IntoIterator<Item = StableId>,
+        parent_of: impl Fn(StableId) -> Option<StableId>,
+    ) -> BTreeSet<StableId> {
+        let mut known: BTreeMap<StableId, bool> = BTreeMap::new();
+        let mut chain: Vec<StableId> = Vec::new();
+        let mut on_chain: BTreeSet<StableId> = BTreeSet::new();
+        let mut excluded = BTreeSet::new();
+        for node in nodes {
+            chain.clear();
+            on_chain.clear();
+            let mut current = Some(node);
+            let verdict = loop {
+                let Some(id) = current else {
+                    break false;
+                };
+                if self.excluded_nodes.contains(&id) {
+                    break true;
+                }
+                if let Some(&known_verdict) = known.get(&id) {
+                    break known_verdict;
+                }
+                if !on_chain.insert(id) {
+                    // 제외 node 없는 순환.
+                    break false;
+                }
+                chain.push(id);
+                current = parent_of(id);
+            };
+            for id in chain.drain(..) {
+                known.insert(id, verdict);
+            }
+            if verdict {
+                excluded.insert(node);
+            }
+        }
+        excluded
+    }
 }
 
 /// 공통값에 선택 profile의 override와 variant 층을 우선순위대로 적용합니다(모듈 문서).
@@ -277,23 +322,26 @@ pub fn resolve_for_profile(
             },
         );
     };
+    // override를 한 번만 훑어 `Always`와 활성 variant별 묶음으로 나눕니다(활성 variant마다 전체를 다시 훑지 않음).
+    let active: BTreeSet<StableId> = variants.active.iter().copied().collect();
+    let mut by_variant: BTreeMap<StableId, Vec<(&PropertyPath, &TypedValue)>> = BTreeMap::new();
     if let Some(po) = profile_overrides {
         for (scope, path, value) in po.iter() {
-            if scope == OverrideScope::Always {
-                apply(path, value, ValueOrigin::Profile);
+            match scope {
+                OverrideScope::Always => apply(path, value, ValueOrigin::Profile),
+                OverrideScope::Variant(variant) if active.contains(&variant) => {
+                    by_variant.entry(variant).or_default().push((path, value));
+                }
+                OverrideScope::Variant(_) => {}
             }
         }
     }
     for (path, (variant, value)) in &variants.values {
         apply(path, value, ValueOrigin::Variant(*variant));
     }
-    if let Some(po) = profile_overrides {
-        for variant in &variants.active {
-            for (scope, path, value) in po.iter() {
-                if scope == OverrideScope::Variant(*variant) {
-                    apply(path, value, ValueOrigin::ProfileVariant(*variant));
-                }
-            }
+    for variant in &variants.active {
+        for (path, value) in by_variant.get(variant).into_iter().flatten() {
+            apply(path, value, ValueOrigin::ProfileVariant(*variant));
         }
     }
     let excluded_nodes = profile_overrides
@@ -471,6 +519,65 @@ mod tests {
             get(&view, path(NODE, LABEL)),
             Some((text("E"), ValueOrigin::Variant(sid(ERROR))))
         );
+    }
+
+    #[test]
+    fn excluded_among_matches_is_excluded_with_linear_parent_lookups() {
+        use std::cell::Cell;
+        let wide = |n: u32| {
+            let mut bytes = [0u8; 16];
+            bytes[12..].copy_from_slice(&n.to_be_bytes());
+            StableId::from_bytes(bytes)
+        };
+        // 깊은 선형 트리(0 ← 1 ← … ← N-1)에서 node 하나(중간)를 제외합니다.
+        const N: u32 = 2_000;
+        let mut overrides = ProfileOverrideSet::new();
+        let f = fixture();
+        overrides.profile_mut(&f.droid.id).exclude_node(wide(N / 2));
+        let view = resolve_for_profile(&f.common, &overrides, &f.droid, &VariantLayer::none());
+        let calls = Cell::new(0usize);
+        let parent = |id: StableId| {
+            calls.set(calls.get() + 1);
+            let n = u32::from_be_bytes(id.to_bytes()[12..].try_into().expect("4 bytes"));
+            (n > 0 && n < N).then(|| wide(n - 1))
+        };
+        let excluded = view.excluded_among((0..N).map(wide), parent);
+        // 제외 node와 그 하위 node만 제외됩니다.
+        assert_eq!(excluded, (N / 2..N).map(wide).collect::<BTreeSet<_>>());
+        // parent 조회는 node마다 최대 한 번입니다(조상마다 다시 올라가지 않음).
+        assert!(
+            calls.get() <= N as usize,
+            "parent 조회 {}회 > node {N}개",
+            calls.get()
+        );
+
+        // 순환·모르는 parent·제외된 모르는 조상에서도 is_excluded와 같은 판정입니다.
+        let mut overrides = ProfileOverrideSet::new();
+        overrides.profile_mut(&f.droid.id).exclude_node(sid(50));
+        overrides.profile_mut(&f.droid.id).exclude_node(sid(7));
+        let view = resolve_for_profile(&f.common, &overrides, &f.droid, &VariantLayer::none());
+        let parent = |id: StableId| match id.to_bytes()[15] {
+            1 => Some(sid(2)),
+            2 => Some(sid(1)), // 제외 없는 순환
+            3 => Some(sid(4)),
+            4 => Some(sid(5)),
+            5 => Some(sid(3)), // 순환
+            6 => Some(sid(7)),
+            7 => Some(sid(6)),  // 제외 node가 있는 순환
+            8 => Some(sid(50)), // 목록에 없는 제외 조상
+            9 => Some(sid(60)), // 목록에 없는 조상
+            10 => Some(sid(8)),
+            _ => None,
+        };
+        let nodes: Vec<StableId> = (1..=12).map(sid).collect();
+        let bulk = view.excluded_among(nodes.iter().copied(), parent);
+        let one_by_one: BTreeSet<StableId> = nodes
+            .iter()
+            .copied()
+            .filter(|n| view.is_excluded(*n, parent, nodes.len()))
+            .collect();
+        assert_eq!(bulk, one_by_one);
+        assert_eq!(bulk, [6, 7, 8, 10].map(sid).into_iter().collect());
     }
 
     #[test]

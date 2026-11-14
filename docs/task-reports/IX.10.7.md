@@ -86,3 +86,14 @@ profile에서 false였습니다.
 |---|---|
 | 17.4·10.15·26.0 인코딩 값, 10.9 < 10.10 < 10.15 < 11.0 < 17.1 < 17.2 < 17.10 < 26.0 < 9999.999, 17.1 → 17.10 전환 시 `changed_keys` = {`os_version`}, 범위 밖 포화 (`os_version_preserves_version_order_and_identity`) | 통과 |
 | Apple `minimum_os` 범위 밖 거부·경계값 허용 (`spec::tests::field_values_are_validated`) | 통과 |
+
+## 후속 수정(리뷰 반영): 제외 판정·profile × variant 적용 비용
+
+리뷰(TP-5)에서 지적된 비용을 `Fix` commit으로 줄였습니다(결과는 같음).
+
+- View 전체 제외 판정용 `ResolvedView::excluded_among`을 추가했습니다(parent 조회 node마다 최대 한 번, IX.10.8 보고서의 후속
+  수정 절에 검증 기록).
+- `resolve_for_profile`은 활성 variant마다 profile override 전체를 다시 훑던 방식(O(V·N)) 대신 override를 한 번 훑어
+  `Always`와 활성 variant별 묶음으로 나눈 뒤 활성 순서대로 적용합니다. 적용 순서(활성 순서 → path 오름차순)와 우선순위는
+  같고, 기존 우선순위 fixture(`common_profile_and_variant_priority`, `later_active_variant_wins_in_profile_variant_layer`)가
+  그대로 통과합니다. 이 변경은 동작 보존 재구성이라 비용을 직접 재는 실패 테스트는 만들지 않았습니다.

@@ -19,6 +19,7 @@
 //! **영향받는 사용**([`AffectedUsage`])은 프로젝트 모든 View에서 이 profile이 쓰는 capability(IX.10.8
 //! [`collect_usages`]) 중 diff에 있는 subject입니다(View 순서 → 사용 순서).
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use stellar_core_types::revision::DocumentRevision;
@@ -235,10 +236,15 @@ pub fn plan_profile_upgrade(
         .get(target)
         .ok_or(UpgradePlanError::ReleaseUnavailable(target))?;
     let registry_changes = diff_registries(old.capabilities(), new.capabilities(), profile);
+    // subject → 첫 변경(사용마다 변경 목록을 선형 탐색하지 않음).
+    let mut change_of: BTreeMap<CapabilitySubject, &CapabilityChange> = BTreeMap::new();
+    for change in &registry_changes {
+        change_of.entry(change.subject).or_insert(change);
+    }
     let mut affected = Vec::new();
     for (index, view) in project.views().iter().enumerate() {
         for usage in collect_usages(view, map, profile, variants) {
-            if let Some(change) = registry_changes.iter().find(|c| c.subject == usage.subject) {
+            if let Some(change) = change_of.get(&usage.subject) {
                 affected.push(AffectedUsage {
                     view: index,
                     usage,

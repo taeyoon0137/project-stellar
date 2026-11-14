@@ -271,11 +271,12 @@ pub fn collect_usages(
         view.nodes.iter().map(|n| (n.id, n.parent)).collect();
     let values = resolve_for_profile(&view.common, &view.overrides, profile, variants);
     let parent_of = |id: StableId| parents.get(&id).copied().flatten();
+    let excluded = values.excluded_among(view.nodes.iter().map(|n| n.id), parent_of);
     let included: BTreeSet<StableId> = view
         .nodes
         .iter()
-        .filter(|n| !values.is_excluded(n.id, parent_of, view.nodes.len()))
         .map(|n| n.id)
+        .filter(|id| !excluded.contains(id))
         .collect();
 
     // node별 속성 사용(path 오름차순 첫 path, capability 중복 제거).
