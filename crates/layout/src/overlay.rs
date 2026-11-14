@@ -138,22 +138,35 @@ pub(crate) fn place(
     index: usize,
     inner: LayoutSize,
 ) -> Result<Vec<(usize, LayoutRect)>, LayoutError> {
+    let mut placements = Vec::new();
+    for child in engine.children(index) {
+        placements.push((child, child_rect(engine, index, inner, child)?));
+    }
+    Ok(placements)
+}
+
+/// Overlay container `index`(content 크기 `inner`) 안 자식 하나의 rect(부모 local 좌표).
+///
+/// 모든 자식이 같은 containing block을 쓰므로 위치는 자신의 크기와 정렬에만 의존합니다(형제와 무관).
+/// 증분 레이아웃(X.7.3)은 바뀐 자식 하나만 이 함수로 다시 놓습니다.
+pub(crate) fn child_rect(
+    engine: &mut Engine<'_>,
+    index: usize,
+    inner: LayoutSize,
+    child: usize,
+) -> Result<LayoutRect, LayoutError> {
     let id: StableId = engine.nodes[index].id;
     let padding = engine.nodes[index].padding;
     let overlay = overlay_of(engine, index)?;
     let constraint = shared_constraint([Some(inner.width()), Some(inner.height())]);
-    let mut placements = Vec::new();
-    for child in engine.children(index) {
-        let size = engine.resolve_size(child, constraint)?;
-        let x = aligned(overlay.horizontal, inner.width(), size.width())
-            .and_then(|x| padding.left.checked_add(x))
-            .map_err(at(id))?;
-        let y = aligned(overlay.vertical, inner.height(), size.height())
-            .and_then(|y| padding.top.checked_add(y))
-            .map_err(at(id))?;
-        placements.push((child, LayoutRect::from_origin_size(x, y, size)));
-    }
-    Ok(placements)
+    let size = engine.resolve_size(child, constraint)?;
+    let x = aligned(overlay.horizontal, inner.width(), size.width())
+        .and_then(|x| padding.left.checked_add(x))
+        .map_err(at(id))?;
+    let y = aligned(overlay.vertical, inner.height(), size.height())
+        .and_then(|y| padding.top.checked_add(y))
+        .map_err(at(id))?;
+    Ok(LayoutRect::from_origin_size(x, y, size))
 }
 
 #[cfg(test)]
