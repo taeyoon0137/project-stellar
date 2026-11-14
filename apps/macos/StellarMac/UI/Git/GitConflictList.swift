@@ -367,9 +367,9 @@ final class GitConflictListController: NSObject, NSTableViewDataSource, NSTableV
         let rows = tableView.contextTargetRows
         guard !rows.isEmpty else { return }
         let items: [(String, String, GitConflictChoice)] = [
-            ("Use \(GitPanelStrings.base)", "b", .base),
-            ("Use \(GitPanelStrings.ours)", "o", .ours),
-            ("Use \(GitPanelStrings.theirs)", "t", .theirs),
+            (GitPanelStrings.useChoice(.base), "b", .base),
+            (GitPanelStrings.useChoice(.ours), "o", .ours),
+            (GitPanelStrings.useChoice(.theirs), "t", .theirs),
         ]
         for (title, key, choice) in items {
             let item = NSMenuItem(title: title, action: #selector(chooseFromMenu(_:)), keyEquivalent: key)

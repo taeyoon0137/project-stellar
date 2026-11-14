@@ -51,7 +51,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             case .index: return GitPanelStrings.indexLabel
             case .working: return GitPanelStrings.workingLabel
             case .requires: return GitPanelStrings.requiresLabel
-            case .status: return "Status"
+            case .status: return GitPanelStrings.statusLabel
             }
         }
     }
@@ -63,11 +63,11 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         var name: String {
             switch self {
             case .kind: return GitPanelStrings.kindLabel
-            case .path: return "Path"
+            case .path: return GitPanelStrings.pathLabel
             case .base: return GitPanelStrings.base
             case .ours: return GitPanelStrings.ours
             case .theirs: return GitPanelStrings.theirs
-            case .choice: return "Choice"
+            case .choice: return GitPanelStrings.choiceLabel
             }
         }
     }
@@ -141,12 +141,12 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             right: GitPanelMetrics.outerInset
         )
     )
-    let branchIcon = GitControls.symbolView(GitPanelSymbols.branch, label: "Branch")
+    let branchIcon = GitControls.symbolView(GitPanelSymbols.branch, label: GitPanelStrings.branchSymbol)
     let branchLabel = GitControls.label(GitPanelStrings.loading, style: .headline)
     let mergeStateLabel = GitControls.label(style: .callout, color: .secondaryLabelColor)
-    let aheadIcon = GitControls.symbolView(GitPanelSymbols.ahead, label: "To push", style: .callout)
+    let aheadIcon = GitControls.symbolView(GitPanelSymbols.ahead, label: GitPanelStrings.aheadSymbol, style: .callout)
     let aheadLabel = GitControls.label(style: .callout, color: .secondaryLabelColor)
-    let behindIcon = GitControls.symbolView(GitPanelSymbols.behind, label: "To pull", style: .callout)
+    let behindIcon = GitControls.symbolView(GitPanelSymbols.behind, label: GitPanelStrings.behindSymbol, style: .callout)
     let behindLabel = GitControls.label(style: .callout, color: .secondaryLabelColor)
     let refreshButton = GitControls.iconButton(
         symbol: GitPanelSymbols.refresh,
@@ -165,11 +165,11 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
     // MARK: 배너
 
     let bannerColumn = GitColumnView()
-    let autosaveBanner = GitBannerView(symbol: GitPanelSymbols.save, symbolLabel: "Unsaved edits", tint: .systemOrange)
-    let semanticErrorBanner = GitBannerView(symbol: GitPanelSymbols.warning, symbolLabel: "Status error", tint: .systemOrange)
-    let dependencyBanner = GitBannerView(symbol: GitPanelSymbols.dependency, symbolLabel: "Related changes", tint: .systemOrange)
-    let progressBanner = GitBannerView(symbol: GitPanelSymbols.info, symbolLabel: "In progress", tint: .secondaryLabelColor)
-    let resultBanner = GitBannerView(symbol: GitPanelSymbols.info, symbolLabel: "Result", tint: .secondaryLabelColor)
+    let autosaveBanner = GitBannerView(symbol: GitPanelSymbols.save, symbolLabel: GitPanelStrings.unsavedEditsSymbol, tint: .systemOrange)
+    let semanticErrorBanner = GitBannerView(symbol: GitPanelSymbols.warning, symbolLabel: GitPanelStrings.statusErrorSymbol, tint: .systemOrange)
+    let dependencyBanner = GitBannerView(symbol: GitPanelSymbols.dependency, symbolLabel: GitPanelStrings.relatedChangesSymbol, tint: .systemOrange)
+    let progressBanner = GitBannerView(symbol: GitPanelSymbols.info, symbolLabel: GitPanelStrings.inProgressSymbol, tint: .secondaryLabelColor)
+    let resultBanner = GitBannerView(symbol: GitPanelSymbols.info, symbolLabel: GitPanelStrings.resultSymbol, tint: .secondaryLabelColor)
     let saveNowButton = NSButton(title: GitPanelStrings.saveNow, target: nil, action: nil)
     let useSavedButton = NSButton(title: GitPanelStrings.useSavedVersion, target: nil, action: nil)
     let retryButton = NSButton(title: GitPanelStrings.refresh, target: nil, action: nil)
@@ -762,7 +762,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             // 제한 모드에서는 이유와 신뢰 부여 동작을 함께 보여 줍니다(디자인 가이드 6.4).
             overlay.showMessage(
                 symbol: GitPanelSymbols.restricted,
-                title: "Restricted Mode",
+                title: GitPanelStrings.restrictedTitle,
                 message: GitPanelStrings.restrictedBanner,
                 action: GitPanelStrings.trustProject,
                 target: self,
@@ -771,7 +771,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         case .gitMissing:
             overlay.showMessage(
                 symbol: GitPanelSymbols.warning,
-                title: "Git Not Found",
+                title: GitPanelStrings.gitMissingTitle,
                 message: GitPanelStrings.gitMissingBanner,
                 action: GitPanelStrings.installHelp,
                 target: self,
@@ -780,7 +780,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         case .notRepository:
             overlay.showMessage(
                 symbol: GitPanelSymbols.warning,
-                title: "No Repository",
+                title: GitPanelStrings.noRepositoryTitle,
                 message: GitPanelStrings.notRepositoryBanner,
                 action: nil,
                 target: nil,
@@ -833,11 +833,11 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         if let result = lastResult {
             switch result.outcome {
             case .failed(let message):
-                resultBanner.setSymbol(GitPanelSymbols.error, label: "Error", tint: .systemRed)
+                resultBanner.setSymbol(GitPanelSymbols.error, label: GitPanelStrings.errorSymbol, tint: .systemRed)
                 resultBanner.configure(message: message, buttons: [dismissResultButton])
                 showResult = true
             case .succeeded(let message):
-                resultBanner.setSymbol(GitPanelSymbols.clean, label: "Done", tint: .secondaryLabelColor)
+                resultBanner.setSymbol(GitPanelSymbols.clean, label: GitPanelStrings.doneSymbol, tint: .secondaryLabelColor)
                 resultBanner.configure(message: message, buttons: [dismissResultButton])
                 showResult = true
             case .cancelled:
@@ -861,7 +861,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         } else {
             let staged = status?.stagedChangeCount ?? 0
             let branch = status.map { GitPanelStrings.head($0.head) } ?? ""
-            reason = "Commit \(GitPanelStrings.changeCount(staged)) to \(branch)."
+            reason = GitPanelStrings.commitReady(changes: staged, branch: branch)
         }
         commitReasonLabel.setStringIfChanged(reason)
         commitButton.setAccessibilityHelp(reason)
@@ -901,7 +901,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             reason = GitPanelStrings.applyBlocker(first)
         } else {
             let count = status?.semanticConflictCount ?? 0
-            reason = count == 1 ? "Apply 1 resolution and mark it resolved." : "Apply \(count) resolutions and mark them resolved."
+            reason = GitPanelStrings.applyReady(count)
         }
         applyReasonLabel.setStringIfChanged(reason)
         applyButton.setAccessibilityHelp(reason)
@@ -1030,7 +1030,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             .base: value.baseSummary,
             .ours: value.oursSummary,
             .theirs: value.theirsSummary,
-            .choice: value.kind == .raw ? GitPanelStrings.rawConflictHint : (value.choice.map(GitPanelStrings.choice) ?? "Not chosen"),
+            .choice: value.kind == .raw ? GitPanelStrings.rawConflictHint : (value.choice.map(GitPanelStrings.choice) ?? GitPanelStrings.notChosen),
         ]
         conflictDetailColumn.setItem(conflictDetailPlaceholder, visible: false)
         for field in ConflictField.allCases {
@@ -1169,7 +1169,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         presentingDependencySheet = true
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = prompt.isStaging ? "Stage Related Changes Too?" : "Unstage Related Changes Too?"
+        alert.messageText = prompt.isStaging ? GitPanelStrings.stageRelatedTitle : GitPanelStrings.unstageRelatedTitle
         alert.informativeText = GitPanelStrings.dependency(prompt)
         alert.addButton(withTitle: GitPanelStrings.includeRequired(prompt))
         alert.addButton(withTitle: GitPanelStrings.cancel)
