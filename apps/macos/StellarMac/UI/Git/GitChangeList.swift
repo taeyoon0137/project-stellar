@@ -198,8 +198,11 @@ final class GitChangeListController: NSObject, NSOutlineViewDataSource, NSOutlin
     private var hasLoaded = false
     private var rootItems: [Int: GitChangeOutlineItem] = [:]
     private var itemsByID: [GitChangeNodeID: GitChangeOutlineItem] = [:]
-    /// 사용자가 펼친 묶음. 구조가 바뀐 뒤 복원합니다.
+    /// 사용자가 펼친 묶음. 구조가 바뀐 뒤 복원합니다. 커밋으로 빠진 노드가 쌓이지 않게 구조가 바뀔 때 정리합니다
+    /// (`pruneExpandedIDs()`).
     private(set) var expandedIDs: Set<GitChangeNodeID> = []
+    /// 직전 구조 변경 때 그 구조에서 행이 오지 않았지만 한 번 더 넘겨 둔 펼침 ID.
+    private var carriedExpandedIDs: Set<GitChangeNodeID> = []
     /// 구조가 바뀌기 전 선택. 행이 도착하면 다시 선택합니다.
     private var pendingSelection: Set<GitChangeNodeID> = []
     private var restoreCandidates: [GitChangeOutlineItem] = []
@@ -306,8 +309,19 @@ final class GitChangeListController: NSObject, NSOutlineViewDataSource, NSOutlin
     private func applyStructure(_ info: GitChangeTreeInfo) {
         hasLoaded = true
         pendingSelection = Set(selectedItems.compactMap(\.nodeID))
+        pruneExpandedIDs()
         cache.reset(generation: info.generation, structure: info.structure, rootCount: info.documentCount)
         reloadStructure()
+    }
+
+    /// 나가는 구조에서 행이 온 노드(`itemsByID`)의 펼침은 남깁니다. 행이 오지 않은 펼침(커밋으로 빠진 노드, 접힌
+    /// 조상 아래 노드, 아직 복원 전인 노드)은 한 번 더 넘기고, 두 구조 연속으로 오지 않으면 버립니다. 그래서 기억은
+    /// 최근 두 구조에서 만든 항목 수를 넘지 않고, 복원 도중 구조가 한 번 더 바뀌어도 펼침을 잃지 않습니다.
+    private func pruneExpandedIDs() {
+        let unseen = expandedIDs.filter { itemsByID[$0] == nil }
+        let stale = unseen.intersection(carriedExpandedIDs)
+        expandedIDs.subtract(stale)
+        carriedExpandedIDs = unseen.subtracting(stale)
     }
 
     private func reloadStructure() {
@@ -536,13 +550,26 @@ final class GitChangeListController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private func flushRestore() {
         restoreScheduled = false
+        let start = ProcessInfo.processInfo.systemUptime
+        var changes = 0
         while !restoreCandidates.isEmpty {
             let item = restoreCandidates.removeFirst()
             guard let row = row(of: item), restore(item, row: row) else { continue }
+            changes += 1
             break
         }
+        restoredStructureChanges += changes
+        maxRestoreChangesPerTurn = max(maxRestoreChangesPerTurn, changes)
+        maxRestoreSeconds = max(maxRestoreSeconds, ProcessInfo.processInfo.systemUptime - start)
         scheduleRestore()
     }
+
+    /// 진단: 펼침·선택 복원 차례 한 번의 최대 점유(복원 펼침의 AppKit 비용 포함).
+    private(set) var maxRestoreSeconds: TimeInterval = 0
+    /// 진단: 복원 차례에서 outline 구조를 바꾼(펼침·자식 다시 읽기) 횟수.
+    private(set) var restoredStructureChanges = 0
+    /// 진단: 복원 차례 한 번에서 outline 구조를 바꾼 최대 횟수(규칙상 1).
+    private(set) var maxRestoreChangesPerTurn = 0
 
     /// 아직 반영할 구조 변경이나 복원할 펼침·선택이 남았는지(검사용).
     var isRestoring: Bool { pendingStructure != nil || restoreScheduled || !restoreCandidates.isEmpty }

@@ -65,6 +65,10 @@ final class GitPanelStubDataSource: GitPanelDataSource {
     private let backend: GitStubBackend
     /// 검사용: 보낸 명령 기록(최근 256개).
     private(set) var sentCommands: [GitPanelCommand] = []
+    /// 검사용: 이벤트를 하나 꺼낼 때마다 메인 스레드를 이 시간(초)만큼 점유합니다(느린 디코딩 모사). 0이면 없음.
+    var pollDelay: TimeInterval = 0
+    /// 검사용: 아직 꺼내지 않은 이벤트 수.
+    var queuedEventCount: Int { backend.queuedEventCount }
 
     init(scenario: GitPanelStubScenario = .typical) {
         backend = GitStubBackend(scenario: scenario)
@@ -82,13 +86,21 @@ final class GitPanelStubDataSource: GitPanelDataSource {
     }
 
     func pollEvent() -> GitPanelEvent? {
-        backend.popEvent()
+        guard let event = backend.popEvent() else { return nil }
+        if pollDelay > 0 {
+            let end = ProcessInfo.processInfo.systemUptime + pollDelay
+            while ProcessInfo.processInfo.systemUptime < end {}
+        }
+        return event
     }
 }
 
 // MARK: - 백그라운드 "코어" 모사
 
 /// 큐 하나에서만 상태를 바꾸는 Stub backend. 이벤트 큐만 lock으로 보호합니다.
+///
+/// 세대가 다르거나 대상이 없는 명령, 그리고 Commit·Push·해결 적용이 진행 중일 때 들어온 이 세 명령은 실행하지 않고
+/// 거부 이벤트로 알립니다.
 final class GitStubBackend: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dev.stellar.git-panel-stub", qos: .userInitiated)
     private let lock = NSLock()
@@ -107,6 +119,8 @@ final class GitStubBackend: @unchecked Sendable {
     private var nextOperationID: UInt64 = 1
     private var nextPromptID: UInt64 = 1
     private var pendingStage: (id: UInt64, changes: IndexSet, required: IndexSet, staged: Bool)?
+    /// 진행 중인 배타 작업(Commit·Push·해결 적용). 끝날 때까지 이 세 명령은 busy로 거부합니다.
+    private var exclusiveOperation: UInt64?
     private var headHash = "3f9a2c1"
     private var commitCounter = 0
     private var ahead: Int
@@ -137,6 +151,13 @@ final class GitStubBackend: @unchecked Sendable {
             return
         }
         queue.async { self.handle(command) }
+    }
+
+    /// 아직 꺼내지 않은 이벤트 수(검사용).
+    var queuedEventCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return outbox.count - outboxHead
     }
 
     func popEvent() -> GitPanelEvent? {
@@ -208,9 +229,11 @@ final class GitStubBackend: @unchecked Sendable {
             }
 
         case .commit(let message):
+            guard exclusiveOperation == nil else { return reject(command, .busy) }
             commit(message: message)
 
         case .push(let remote):
+            guard exclusiveOperation == nil else { return reject(command, .busy) }
             push(remote: remote)
 
         case .loadConflictPage(let generation, let rows):
@@ -233,6 +256,7 @@ final class GitStubBackend: @unchecked Sendable {
             post(.status(makeStatus()))
 
         case .applyResolutions:
+            guard exclusiveOperation == nil else { return reject(command, .busy) }
             applyResolutions()
 
         case .revealConflict(let generation, _):
@@ -262,6 +286,7 @@ final class GitStubBackend: @unchecked Sendable {
     }
 
     private func finish(_ id: UInt64, _ kind: GitOperationKind, _ outcome: GitOperationOutcome) {
+        if exclusiveOperation == id { exclusiveOperation = nil }
         post(.operationFinished(GitOperationResult(id: id, kind: kind, outcome: outcome)))
     }
 
@@ -315,6 +340,7 @@ final class GitStubBackend: @unchecked Sendable {
             return fail(.commit, "Enter a commit message.")
         }
         let id = beginOperation(.commit, message: "Committing…", cancellable: false)
+        exclusiveOperation = id
         queue.asyncAfter(deadline: .now() + scenario.stepDelay) {
             store.commitStaged()
             self.commitCounter += 1
@@ -331,6 +357,7 @@ final class GitStubBackend: @unchecked Sendable {
         guard scenario.remotes.contains(remote) else { return fail(.push, "Remote “\(remote)” isn't set up.") }
         guard ahead > 0 || !hasUpstream else { return fail(.push, "No commits to push.") }
         let id = beginOperation(.push, message: "Pushing to \(remote)…", cancellable: true)
+        exclusiveOperation = id
         pushStep(id: id, remote: remote, step: 1, steps: 5)
     }
 
@@ -367,6 +394,7 @@ final class GitStubBackend: @unchecked Sendable {
             return fail(.applyResolutions, "Choose a resolution for every conflict first.")
         }
         let id = beginOperation(.applyResolutions, message: "Applying resolutions…", cancellable: false)
+        exclusiveOperation = id
         queue.asyncAfter(deadline: .now() + scenario.stepDelay) {
             self.conflicts.removeAll { $0.kind != .raw }
             self.conflictGeneration += 1

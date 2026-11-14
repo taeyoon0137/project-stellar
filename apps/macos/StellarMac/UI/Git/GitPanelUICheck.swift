@@ -10,7 +10,9 @@ import AppKit
 /// - Commit 비활성 이유(Stage 없음, identity 없음, 신뢰 전 프로젝트)와 Push·해결 적용 이유
 /// - Stage 체크박스·필수 동반 변경 확인·키보드(Space, ←/→, B/O/T)·Commit·Push·Conflict 해결 흐름
 /// - 코어가 거부한 명령(세대 불일치)에서 미리 보여 준 체크박스가 되돌아가고 같은 페이지를 다시 요청할 수 있음
-/// - 구조가 바뀐 뒤(커밋) 펼침 상태가 노드 ID로 복원됨
+/// - 구조가 바뀐 뒤(커밋) 펼침 상태가 노드 ID로 복원되고(복원 차례 하나에 구조 변경 하나), 빠진 노드의 펼침 ID는 버려짐
+/// - 사용자가 시작한 작업 명령이 거부되면 오류 배너와 높은 우선순위 알림으로 전함
+/// - 이벤트 처리가 느리면 UI 반영을 다음 런 루프 차례로 넘김
 /// - 100만 change와 자식이 여러 페이지인 묶음에서 보이는 페이지만 요청하고 캐시·행 뷰 수가 제한됨(XIV.13.1)
 /// 실제 Git, 코어 FFI, 화면 표시, VoiceOver 읽기 순서, sheet 경로는 검사하지 않습니다.
 enum GitPanelUICheck {
@@ -36,6 +38,9 @@ enum GitPanelUICheck {
             try checkConflicts(&report)
             try checkMillion(&report)
             try checkWide(&report)
+            try checkExpansionMemory(&report)
+            try checkDeferredUI(&report)
+            try checkRejectionFeedback(&report)
             try checkKeyboard(&report)
         } catch let failure as Failure {
             FileHandle.standardError.write(Data("git-panel 실패: \(failure.message)\n".utf8))
@@ -155,10 +160,15 @@ enum GitPanelUICheck {
             layout()
         }
 
-        /// 항목을 펼치고 자식 행 페이지가 올 때까지 기다립니다.
+        /// 사용자 펼침 한 번(`expandItem` + 그 뒤 layout)의 최대 시간.
+        private(set) var maxUserExpandSeconds: TimeInterval = 0
+
+        /// 항목을 펼치고(사용자 펼침과 같은 AppKit 경로) 자식 행 페이지가 올 때까지 기다립니다.
         func expand(_ item: GitChangeOutlineItem, timeout: TimeInterval = 10) -> Bool {
+            let start = ProcessInfo.processInfo.systemUptime
             outline.expandItem(item)
             layout()
+            maxUserExpandSeconds = max(maxUserExpandSeconds, ProcessInfo.processInfo.systemUptime - start)
             return outline.isItemExpanded(item) && waitForVisibleChangeRows(timeout: timeout)
         }
 
@@ -175,6 +185,22 @@ enum GitPanelUICheck {
             layout()
             spin(timeout: timeout) { list.row(of: item) != nil }
             return list.row(of: item)
+        }
+
+        /// 펼친 문서 안에서 새 객체(AddObject가 unstaged)의 unstaged 속성 변경을 찾아 그 객체를 펼쳐 둡니다.
+        /// 이 속성만 Stage하면 코어가 필수 동반 변경 확인을 보냅니다.
+        func dependentProperty(in document: GitChangeOutlineItem) -> GitChangeOutlineItem? {
+            for index in 0..<outline.numberOfChildren(ofItem: document) {
+                guard let object = child(index, of: document), let header = loadedRow(object),
+                      header.detail.hasPrefix("New")
+                else { continue }
+                guard expand(object), let add = child(0, of: object), let property = child(1, of: object),
+                      loadedRow(add)?.kind == .addObject, loadedRow(add)?.stageState == .unstaged,
+                      loadedRow(property)?.stageState == .unstaged
+                else { continue }
+                return property
+            }
+            return nil
         }
 
         func key(_ characters: String, keyCode: UInt16, to view: NSView) {
@@ -297,10 +323,12 @@ enum GitPanelUICheck {
         try expect(problems.isEmpty, "\(context): 접근성 \(problems.prefix(5))")
     }
 
-    /// 패널이 메인 스레드를 한 차례에 점유한 최대 시간(이벤트 드레인, UI 반영, 상세, 미룬 outline 다시 읽기).
+    /// 패널이 런 루프 차례로 나눈 작업이 메인 스레드를 한 차례에 점유한 최대 시간(이벤트 드레인, UI 반영, 상세,
+    /// 미룬 outline 다시 읽기, 펼침·선택 복원). 사용자 펼침(검사가 `expandItem`을 직접 부름)은 들어 있지 않고
+    /// `Harness.maxUserExpandSeconds`로 따로 잽니다.
     @MainActor
     private static func maxTurn(_ panel: GitPanelViewController) -> TimeInterval {
-        max(panel.diagnostics.maxTurnSeconds, panel.changeList.maxStructureReloadSeconds)
+        max(panel.diagnostics.maxTurnSeconds, panel.changeList.maxStructureReloadSeconds, panel.changeList.maxRestoreSeconds)
     }
 
     /// Debug 빌드 회귀 방지 상한. 계약(아키텍처 §6.3 단일 점유 2ms, Release·기준 하드웨어)의 두 배입니다.
@@ -311,7 +339,8 @@ enum GitPanelUICheck {
     private static func occupancy(_ panel: GitPanelViewController) -> String {
         let d = panel.diagnostics
         func ms(_ seconds: TimeInterval) -> String { String(format: "%.2f", seconds * 1000) }
-        return "max drain \(ms(d.maxDrainSeconds))ms / UI \(ms(d.maxUIUpdateSeconds))ms / detail \(ms(d.maxDetailSeconds))ms / outline reload \(ms(panel.changeList.maxStructureReloadSeconds))ms (deferred UI \(d.deferredUIUpdates))"
+        let list = panel.changeList
+        return "max drain \(ms(d.maxDrainSeconds))ms / UI \(ms(d.maxUIUpdateSeconds))ms / detail \(ms(d.maxDetailSeconds))ms / outline reload \(ms(list.maxStructureReloadSeconds))ms / restore \(ms(list.maxRestoreSeconds))ms (restored \(list.restoredStructureChanges), deferred UI \(d.deferredUIUpdates))"
     }
 
     // MARK: 개별 검사
@@ -404,19 +433,7 @@ enum GitPanelUICheck {
         try expect(harness.waitForVisibleChangeRows(), "typical: 객체 행 페이지가 오지 않음")
 
         // 필수 동반 변경: 새 객체의 속성만 Stage하면 AddObject 포함 확인을 받습니다(XIV.5.3).
-        var target: GitChangeOutlineItem?
-        for index in 0..<outline.numberOfChildren(ofItem: document) {
-            guard let object = harness.child(index, of: document), let header = harness.loadedRow(object),
-                  header.detail.hasPrefix("New")
-            else { continue }
-            guard harness.expand(object), let add = harness.child(0, of: object), let property = harness.child(1, of: object),
-                  harness.loadedRow(add)?.kind == .addObject, harness.loadedRow(add)?.stageState == .unstaged,
-                  harness.loadedRow(property)?.stageState == .unstaged
-            else { continue }
-            target = property
-            break
-        }
-        guard let dependent = target, let dependentObject = dependent.parent else {
+        guard let dependent = harness.dependentProperty(in: document), let dependentObject = dependent.parent else {
             throw Failure(message: "typical: 의존 변경 fixture 행을 찾지 못함")
         }
         try expect(outline.level(forItem: dependent) == 2, "typical: 변경 행 수준이 2가 아님")
@@ -502,6 +519,8 @@ enum GitPanelUICheck {
         try expect(harness.spin { list.item(for: documentID).map(outline.isItemExpanded) == true },
                    "typical: 구조 변경 뒤 문서 펼침이 복원되지 않음")
         try expect(list.item(for: documentID) !== document, "typical: 구조 변경 뒤 항목을 다시 만들지 않음")
+        // 복원 펼침 차례가 실제로 실행되어 점유 측정(maxTurn)에 들어갔습니다.
+        try expect(list.restoredStructureChanges > 0 && list.maxRestoreSeconds > 0, "typical: 복원 펼침 차례가 측정되지 않음")
 
         // Push(강제 없음) → ahead 0.
         try expect(panel.pushBlockers.isEmpty && panel.pushButton.isEnabled, "typical: Push 비활성 \(panel.pushBlockers)")
@@ -726,9 +745,13 @@ enum GitPanelUICheck {
         try expect(harness.spin(timeout: 120) { panel.status?.stagedChangeCount == 1_000_000 },
                    "million: 전체 Stage 결과 불일치 \(panel.status?.stagedChangeCount ?? -1)")
 
-        // 이벤트 드레인·UI 반영·상세 차례가 각각 Debug 상한(계약 2ms의 두 배) 안이어야 합니다. 값은 보고에 남깁니다.
+        // 패널이 나눈 차례(드레인·UI 반영·상세·outline 다시 읽기·복원)가 각각 Debug 상한(계약 2ms의 두 배) 안이어야
+        // 합니다. 값은 보고에 남깁니다.
         try expect(maxTurn(panel) < debugTurnLimit, "million: 한 차례 점유가 상한을 넘음 \(occupancy(panel))")
-        report.append("million changes 1000000 (documents 1000), pages requested \(requested), cached \(cached), row views \(rowViews), \(occupancy(panel))")
+        // 사용자 펼침(검사가 expandItem을 직접 부름)은 차례 점유가 아니라 인터랙션입니다. 화면에 새로 보이는 행의 셀 생성과
+        // AppKit 펼침 작업이 들어 있어 §6.3 인터랙션 10ms를 넘는 알려진 위험(명세 8장·11장)이므로 값만 보고합니다.
+        let expandMs = String(format: "%.2f", harness.maxUserExpandSeconds * 1000)
+        report.append("million changes 1000000 (documents 1000), pages requested \(requested), cached \(cached), row views \(rowViews), \(occupancy(panel)), user expand max \(expandMs)ms")
     }
 
     /// 한 부모 아래 자식이 페이지 여러 개(2,000 객체)인 묶음: 그 부모의 보이는 페이지만 요청합니다.
@@ -754,7 +777,155 @@ enum GitPanelUICheck {
             if case .loadChangePage(_, let parent, let children) = $0 { return parent == document.nodeID && children.lowerBound == 1_792 }
             return false
         }, "wide: 마지막 페이지를 부모 기준으로 요청하지 않음")
-        report.append("wide parent pages ok (2000 children, \(list.cache.requestCount) requests)")
+        // 사용자 펼침은 화면에 새로 보이는 행의 셀 생성과 AppKit 펼침 작업으로 §6.3 인터랙션 10ms를 넘는 알려진 위험
+        // (명세 8장·11장)이라 상한 없이 값만 보고합니다.
+        report.append("wide parent pages ok (2000 children, \(list.cache.requestCount) requests, user expand \(String(format: "%.2f", harness.maxUserExpandSeconds * 1000))ms)")
+    }
+
+    /// 펼침 기억: 구조가 바뀐 뒤 남은 노드는 다시 펼치고(같은 페이지의 두 문서도 복원 차례 하나에 펼침 하나씩), 커밋으로
+    /// 빠진 노드의 ID는 이후 구조 변경에서 버립니다.
+    @MainActor
+    private static func checkExpansionMemory(_ report: inout [String]) throws {
+        let harness = Harness(.typical)
+        defer { harness.close() }
+        let panel = harness.controller
+        let list = harness.list
+        let outline = harness.outline
+        try expect(harness.waitForVisibleChangeRows(), "expansion: 페이지 없음")
+        guard let first = harness.child(1, of: nil), let second = harness.child(2, of: nil), let removed = harness.child(5, of: nil),
+              let firstID = first.nodeID, let secondID = second.nodeID, let removedID = removed.nodeID,
+              harness.expand(first), harness.expand(second), harness.expand(removed)
+        else { throw Failure(message: "expansion: 문서 펼치기 실패") }
+        let keptIDs: Set<GitChangeNodeID> = [firstID, secondID]
+        try expect(list.expandedIDs == keptIDs.union([removedID]), "expansion: 펼침 기억 불일치 \(list.expandedIDs.count)")
+
+        /// 최상위 문서 하나를 전부 Stage하고 커밋합니다. 그 문서는 목록에서 빠지고 구조 번호가 올라갑니다.
+        func commitDocument(_ index: Int) throws {
+            guard let status = panel.status else { throw Failure(message: "expansion: status 없음") }
+            harness.dataSource.send(.setStaged(
+                generation: list.generation,
+                targets: [GitChangeRange(parent: nil, children: IndexSet(integer: index))],
+                staged: true))
+            try expect(harness.spin { panel.status?.changes.generation != status.changes.generation && !panel.isBusy },
+                       "expansion: 문서 \(index) Stage 결과가 오지 않음")
+            harness.dataSource.send(.commit(message: "Commit document \(index)"))
+            // 상태의 구조 번호는 미룬 outline 다시 읽기보다 한 차례 먼저 오므로, 목록이 새 구조를 반영하고 복원을 마친
+            // 뒤의 항목으로 확인합니다(그 전에는 이전 구조 항목이 펼쳐진 채 남아 있음).
+            try expect(harness.spin {
+                guard let current = panel.status?.changes.structure, current > status.changes.structure else { return false }
+                return !panel.isBusy && list.cache.structure == current && !list.isRestoring
+                    && keptIDs.allSatisfy { list.item(for: $0).map(outline.isItemExpanded) == true }
+            }, "expansion: 문서 \(index) 커밋 뒤 남은 문서 펼침이 복원되지 않음")
+        }
+
+        // 1) 펼친 문서 하나를 커밋으로 뺍니다. 2·3) 펼치지 않은 다른 문서를 커밋해 구조를 두 번 더 바꿉니다.
+        try commitDocument(5)
+        try expect(list.item(for: removedID) == nil, "expansion: 커밋한 문서가 목록에 남음")
+        // 최상위 페이지 하나로 온 두 문서도 복원 차례 하나에 펼침 하나씩만 합니다(명세 8장).
+        try expect(list.maxRestoreChangesPerTurn == 1 && list.restoredStructureChanges >= 2,
+                   "expansion: 복원 차례 하나에서 outline 구조를 \(list.maxRestoreChangesPerTurn)번 바꿈")
+        try commitDocument(3)
+        try commitDocument(3)
+        try expect(!list.expandedIDs.contains(removedID), "expansion: 빠진 노드의 펼침 ID가 남음 \(list.expandedIDs.count)")
+        try expect(list.expandedIDs == keptIDs, "expansion: 남은 노드의 펼침 ID 불일치 \(list.expandedIDs.count)")
+        report.append("expansion memory restore/prune ok (\(list.expandedIDs.count) ids after 3 commits, restores \(list.restoredStructureChanges), max per turn \(list.maxRestoreChangesPerTurn))")
+    }
+
+    /// 이벤트 처리가 `inlineUIThreshold`를 넘으면 UI 반영을 다음 런 루프 차례로 넘깁니다. Stub이 이벤트마다 메인 스레드를
+    /// 점유하게 해(느린 디코딩 모사) 이 경로를 실제로 실행합니다.
+    @MainActor
+    private static func checkDeferredUI(_ report: inout [String]) throws {
+        let harness = Harness(.typical)
+        defer { harness.close() }
+        let panel = harness.controller
+        let dataSource = harness.dataSource
+        try expect(harness.waitForVisibleChangeRows(), "deferred UI: 페이지 없음")
+        guard let before = panel.status else { throw Failure(message: "deferred UI: status 없음") }
+        let summaryBefore = panel.summaryLabel.stringValue
+
+        // 패널이 스스로 깨어나지 않게 hook을 잠시 바꾸고, Stage 이벤트(진행·상태·결과)가 큐에 모두 쌓인 뒤 드레인 한
+        // 차례를 직접 실행합니다.
+        let wake = dataSource.onEventsAvailable
+        var woke = false
+        dataSource.onEventsAvailable = { woke = true }
+        dataSource.send(.setStaged(
+            generation: harness.list.generation,
+            targets: [GitChangeRange(parent: nil, children: IndexSet(integer: 0))],
+            staged: true))
+        let queued = harness.spin { woke && dataSource.queuedEventCount >= 3 }
+        dataSource.onEventsAvailable = wake
+        try expect(queued, "deferred UI: Stage 이벤트가 큐에 오지 않음")
+
+        let deferredBefore = panel.diagnostics.deferredUIUpdates
+        dataSource.pollDelay = GitPanelMetrics.inlineUIThreshold * 1.5
+        panel.drainEvents()
+        dataSource.pollDelay = 0
+        guard let after = panel.status, after != before else { throw Failure(message: "deferred UI: 드레인에서 상태를 받지 못함") }
+        try expect(panel.diagnostics.deferredUIUpdates == deferredBefore + 1 && panel.hasPendingWork,
+                   "deferred UI: 느린 드레인에서 UI 반영을 다음 차례로 넘기지 않음")
+        try expect(panel.summaryLabel.stringValue == summaryBefore, "deferred UI: 드레인 차례에서 UI를 반영함")
+        let expected = GitPanelStrings.statusSummary(staged: after.stagedChangeCount, unstaged: after.unstagedChangeCount)
+        try expect(harness.spin { panel.summaryLabel.stringValue == expected && !panel.hasPendingWork },
+                   "deferred UI: 다음 차례에 UI가 반영되지 않음 '\(panel.summaryLabel.stringValue)'")
+        report.append("deferred UI path ok (deferred \(panel.diagnostics.deferredUIUpdates - deferredBefore))")
+    }
+
+    /// 사용자가 시작한 작업 명령을 코어가 거부하면 오류 배너와 높은 우선순위 알림으로 알립니다.
+    @MainActor
+    private static func checkRejectionFeedback(_ report: inout [String]) throws {
+        let harness = Harness(.typical)
+        defer { harness.close() }
+        let panel = harness.controller
+        try expect(harness.waitForVisibleChangeRows(), "rejection: 페이지 없음")
+        harness.typeCommitMessage("Racing commit")
+        try expect(panel.commitButton.isEnabled, "rejection: Commit 비활성 \(panel.commitBlockers)")
+
+        // 1) 다른 곳에서 시작한 Push가 코어에 먼저 들어갔고, 패널은 그 진행 이벤트를 아직 받지 못한 채 Commit을 보냅니다.
+        //    코어는 busy로 거부하고, 패널은 메시지 잠금을 풀고 실행하지 않았다는 문장과 이유를 배너·알림으로 전합니다.
+        harness.dataSource.send(.push(remote: "origin"))
+        panel.commitButton.performClick(nil)
+        try expect(panel.isCommitInFlight, "rejection: Commit을 보내지 않음")
+        try expect(harness.spin { !panel.isCommitInFlight }, "rejection: 거부된 Commit 뒤 메시지 잠금이 풀리지 않음")
+        try expect(panel.commitTextView.isEditable && panel.commitTextView.string == "Racing commit",
+                   "rejection: 거부 뒤 메시지가 바뀜 '\(panel.commitTextView.string)'")
+        guard let commitNotice = GitPanelStrings.rejectionNotice(command: .commit(message: "Racing commit"), reason: .busy) else {
+            throw Failure(message: "rejection: Commit 거부 문구 없음")
+        }
+        try expect(panel.rejectionNotice == commitNotice && isShown(panel.resultBanner)
+                   && panel.resultBanner.messageField.stringValue == commitNotice,
+                   "rejection: 거부된 Commit을 배너로 알리지 않음 '\(panel.resultBanner.messageField.stringValue)'")
+        try expect(harness.announced(commitNotice, priority: .high), "rejection: 거부된 Commit을 VoiceOver에 알리지 않음")
+        try expectNoAmbiguity(harness, "rejection")
+        // 새 작업 결과(Push 성공)가 오면 그 결과 배너로 바뀝니다.
+        try expect(harness.spin { panel.lastResult?.kind == .push && !panel.isBusy }, "rejection: Push 결과가 오지 않음")
+        try expect(panel.rejectionNotice == nil && panel.resultBanner.messageField.stringValue != commitNotice,
+                   "rejection: 새 결과 뒤에도 거부 알림이 남음")
+
+        // 2) 필수 동반 변경 확인에 다른 응답이 먼저 처리되어 코어가 요청을 지운 뒤 패널이 답하면, 거부를 알리고 목록을
+        //    다시 조작할 수 있습니다. 취소 응답의 거부는 알리지 않습니다.
+        guard let document = harness.child(0, of: nil), harness.expand(document),
+              let property = harness.dependentProperty(in: document), let cell = harness.changeCell(property)
+        else { throw Failure(message: "rejection: 의존 변경 fixture 행을 찾지 못함") }
+        cell.stageCheckbox.performClick(nil)
+        try expect(harness.spin { panel.pendingPrompt != nil }, "rejection: 필수 동반 변경 확인이 오지 않음")
+        guard let prompt = panel.pendingPrompt else { throw Failure(message: "rejection: 확인 없음") }
+        harness.dataSource.send(.answerDependencyPrompt(requestID: prompt.requestID, includeRequired: true))
+        panel.includeRequiredButton.performClick(nil)
+        let answer = GitPanelCommand.answerDependencyPrompt(requestID: prompt.requestID, includeRequired: true)
+        guard let answerNotice = GitPanelStrings.rejectionNotice(command: answer, reason: .unknownTarget) else {
+            throw Failure(message: "rejection: 확인 응답 거부 문구 없음")
+        }
+        try expect(harness.spin { panel.rejectionNotice == answerNotice && !panel.isBusy },
+                   "rejection: 거부된 확인 응답을 알리지 않음 '\(panel.rejectionNotice ?? "")'")
+        try expect(isShown(panel.resultBanner) && harness.announced(answerNotice, priority: .high) && panel.changeList.isInteractive,
+                   "rejection: 확인 응답 거부 배너·알림·목록 잠금 해제 불일치")
+        try expect(GitPanelStrings.rejectionNotice(
+            command: .answerDependencyPrompt(requestID: prompt.requestID, includeRequired: false), reason: .unknownTarget) == nil,
+                   "rejection: 취소 응답의 거부까지 알림")
+        // Dismiss는 거부 알림도 닫습니다.
+        panel.dismissResultButton.performClick(nil)
+        try expect(panel.rejectionNotice == nil && !isShown(panel.resultBanner), "rejection: Dismiss 뒤 거부 배너가 남음")
+        report.append("rejection feedback commit-busy/answer-unknown/dismiss ok")
     }
 
     // MARK: 키보드 순서·단축키 범위

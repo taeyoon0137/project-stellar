@@ -342,6 +342,44 @@ enum GitPanelStrings {
     private static let operationInProgressReason = String(
         localized: "Wait for the current Git operation to finish.", comment: "비활성 이유: 작업 진행 중")
 
+    /// 코어가 실행하지 않은(거부한) 사용자 동작 알림. 사용자가 직접 시작한 작업 명령만 알리고, 미리 보여 준 값을
+    /// 되돌리는 것으로 충분한 명령(Stage 체크박스, 해결 선택, 페이지·상세 요청)과 취소 응답은 nil입니다.
+    static func rejectionNotice(command: GitPanelCommand, reason: GitRejectionReason) -> String? {
+        let action: String
+        switch command {
+        case .commit:
+            action = String(localized: "The commit didn't run.", comment: "거부 알림: Commit을 실행하지 않음")
+        case .push:
+            action = String(localized: "The push didn't run.", comment: "거부 알림: Push를 실행하지 않음")
+        case .applyResolutions:
+            action = String(localized: "The resolutions weren't applied.", comment: "거부 알림: 해결 적용을 실행하지 않음")
+        case .answerDependencyPrompt(_, includeRequired: true):
+            action = String(
+                localized: "The selection and its related changes weren't updated.",
+                comment: "거부 알림: 필수 동반 변경을 포함한 Stage·Unstage를 실행하지 않음")
+        case .resolvePendingAutosave(saveFirst: true):
+            action = String(localized: "Your edits weren't saved.", comment: "거부 알림: Save Now를 실행하지 않음")
+        case .resolvePendingAutosave(saveFirst: false):
+            action = String(localized: "The saved version wasn't used.", comment: "거부 알림: Use Saved Version을 실행하지 않음")
+        default:
+            return nil
+        }
+        let because: String
+        switch reason {
+        case .busy:
+            because = String(
+                localized: "Another Git operation is in progress. Try again when it finishes.",
+                comment: "거부 이유: 다른 Git 작업 진행 중")
+        case .staleGeneration, .unknownTarget:
+            because = String(
+                localized: "The repository changed in the meantime. Check the updated status and try again.",
+                comment: "거부 이유: 그 사이 저장소 상태가 바뀜")
+        case .unavailable:
+            because = gitUnavailableReason
+        }
+        return String(localized: "\(action) \(because)", comment: "거부 알림: 동작 문장 뒤에 이유 문장(둘 다 완전한 문장)")
+    }
+
     static func commitBlocker(_ blocker: GitCommitBlocker) -> String {
         switch blocker {
         case .statusLoading: return statusLoadingReason

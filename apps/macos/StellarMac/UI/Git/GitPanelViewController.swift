@@ -105,6 +105,8 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
     private(set) var status: GitStatusSnapshot?
     private(set) var activeOperation: GitOperationProgress?
     private(set) var lastResult: GitOperationResult?
+    /// 코어가 실행하지 않은 사용자 동작 알림. 결과 배너에 오류로 보이며, 새 작업 결과가 오거나 닫으면 지웁니다.
+    private(set) var rejectionNotice: String?
     private(set) var pendingPrompt: GitDependencyPrompt?
     private(set) var currentDetail: GitChangeDetail?
     private(set) var mode: Mode = .changes
@@ -581,6 +583,8 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
     }
 
     /// 코어가 버린 명령: 미리 보여 준 값을 캐시(코어) 값으로 되돌리고, 요청 중 표시를 지워 다시 요청할 수 있게 합니다.
+    /// 사용자가 시작한 작업 명령(Commit, Push, 해결 적용, 필수 동반 변경 포함, 저장 대기 선택)이면 실행하지 않았다는
+    /// 문장과 이유를 오류 배너와 높은 우선순위 알림으로 전합니다.
     private func handleRejection(_ rejection: GitCommandRejection) {
         diagnostics.rejections += 1
         switch rejection.command {
@@ -599,6 +603,12 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         default:
             break
         }
+        if let notice = GitPanelStrings.rejectionNotice(command: rejection.command, reason: rejection.reason) {
+            lastResult = nil
+            rejectionNotice = notice
+            pendingUI.status = true
+            announce(notice, priority: .high)
+        }
     }
 
     private func handleFinished(_ result: GitOperationResult) {
@@ -608,12 +618,15 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             // 보내는 동안 메시지를 편집할 수 없었으므로 지우는 문장은 보낸 문장과 같습니다.
             clearCommitMessage()
             lastResult = result
+            rejectionNotice = nil
             announce(message, priority: .medium)
         case (.push, .succeeded(let message)), (.applyResolutions, .succeeded(let message)):
             lastResult = result
+            rejectionNotice = nil
             announce(message, priority: .medium)
         case (_, .failed(let message)):
             lastResult = result
+            rejectionNotice = nil
             announce(message, priority: .high)
         default:
             // Stage·Unstage·새로고침 성공과 취소는 목록 변화로 충분하므로 배너를 띄우지 않습니다.
@@ -830,7 +843,11 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             )
         }
         var showResult = false
-        if let result = lastResult {
+        if let notice = rejectionNotice {
+            resultBanner.setSymbol(GitPanelSymbols.error, label: GitPanelStrings.errorSymbol, tint: .systemRed)
+            resultBanner.configure(message: notice, buttons: [dismissResultButton])
+            showResult = true
+        } else if let result = lastResult {
             switch result.outcome {
             case .failed(let message):
                 resultBanner.setSymbol(GitPanelSymbols.error, label: GitPanelStrings.errorSymbol, tint: .systemRed)
@@ -1146,6 +1163,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
 
     @objc private func dismissResult(_ sender: Any?) {
         lastResult = nil
+        rejectionNotice = nil
         updateStatusUI()
     }
 
