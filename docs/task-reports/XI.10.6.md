@@ -56,3 +56,9 @@
 - 이미지 pixel의 확장 값은 8-bit decode(XI.7.1)라 생기지 않습니다. 16-bit·HDR 이미지 decode는 초기 범위 밖입니다.
 - 경계 판정은 core-types `powf`(libm) transfer에 의존합니다. Windows 재개 시 경계 fixture를 다시 확인해야 합니다(ADR-0006
   규칙 4).
+- (통합 검증 반영, 2026-11-14) fallback drawable의 출력 encode가 정해지지 않았습니다. 이 행은 `Rgba16Float`를
+  `Bgra8Unorm`(하드웨어 sRGB encode 없음)으로 바꾸는데, Metal backend(XI.8)는 `Bgra8Unorm`에 sRGB 인코딩 colorspace를
+  붙이고 shader는 선형 값을 출력합니다. shader가 encode하지 않으면 fallback 경로는 어둡게 표시될 수 있습니다. encode 규칙을
+  정하는 XI.10.1(`[ ]`)에서 fallback 대상(`Bgra8UnormSrgb` 또는 shader encode)을 renderer-core `output_color`와
+  renderer-metal `surface` 문서에 함께 고정하고 fallback 경로의 pixel 기대값 test를 추가해야 합니다. 두 module 문서에 미결
+  항목으로 적었습니다. 이 행의 검증 열(HDR 미지원 상태 표시와 확장 값 경고)은 이 문제와 별개라 상태는 바꾸지 않았습니다.

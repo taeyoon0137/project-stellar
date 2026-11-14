@@ -28,6 +28,12 @@
 //!   [`GamutStatus::ExtendedRange`], 자르기 전 값은 [`SurfaceColor::unclamped_linear`]로 남기고, scene 검사는
 //!   [`OutputColorWarning::ExtendedRangeClamped`]를 냅니다. 문서·scene의 저장 값은 바꾸지 않습니다.
 //! - P3 안이지만 sRGB surface 밖인 색은 확장 값이 아니라 gamut 문제이므로 [`GamutStatus::Clipped`]입니다.
+//! - **미결(XI.10.1): fallback drawable의 출력 encode.** fallback 대상 `Bgra8Unorm`은 하드웨어 sRGB encode가 없는
+//!   format입니다. 그런데 Metal backend는 이 format에 sRGB 인코딩 colorspace를 붙이고(`kCGColorSpaceSRGB`,
+//!   `renderer-metal` `surface`) shader는 선형 값을 출력합니다(`renderer-metal` `shaders`). shader가 encode하지 않으면
+//!   선형 값이 sRGB 인코딩 값으로 해석되어 어둡게 표시됩니다. XI.10.1에서 encode 규칙을 정할 때 fallback 대상을
+//!   `Bgra8UnormSrgb`(하드웨어 encode)로 바꿀지, `Bgra8Unorm`은 shader가 encode한다는 규칙을 둘지 이 crate와
+//!   renderer-metal 문서에 함께 고정하고 fallback 경로의 pixel 기대값 test를 추가합니다.
 //!
 //! 경고에는 정적 종류와 개수, node의 안정 ID만 담습니다(이름·내용 없음).
 
