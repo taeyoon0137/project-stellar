@@ -15,9 +15,9 @@
 //! - registry는 token을 다른 어떤 검사(cwd·셸·환경)보다 먼저 확인하고, 실패하면 실행기를 호출하지
 //!   않습니다([`TerminalRegistry::start`](crate::registry::TerminalRegistry::start)).
 //! - token은 실행 요청([`LaunchRequest`](crate::launch::LaunchRequest))을 만들 때 그 안으로
-//!   소비됩니다. 요청 생성자는 crate 밖에 공개하지 않으므로, token 없이 실행기([`TerminalLauncher`]
-//!   (crate::launch::TerminalLauncher), macOS `PtyLauncher`)를 직접 불러 child를 만드는 경로가
-//!   없습니다(`launch` 모듈 문서의 `compile_fail` 예).
+//!   소비됩니다. 요청 생성자는 crate 밖에 공개하지 않으므로, token 없이 실행기
+//!   ([`TerminalLauncher`](crate::launch::TerminalLauncher), macOS `PtyLauncher`)를 직접 불러 child를
+//!   만드는 경로가 없습니다(`launch` 모듈 문서의 `compile_fail` 예).
 //!
 //! **연결 지점**: [`TerminalCapability::grant`]에 넘기는 [`TerminalTrust`]는 이 crate가 검증할 수
 //! 없습니다. 의존 정책상(ADR-0019, `tools/xtask/src/crate_graph.rs`) 이 crate는 project crate를 볼 수
