@@ -18,7 +18,7 @@
 - [x] 임시 fixture로 정상 프로세스 initialize → initialized → list/read, 읽기 범위와 크기 제한·거부·무변경 검증.
 - [x] 프로젝트 없는 기본 실행, 명시적 attach, connection-info의 기존 동작 유지.
 - [x] 이번 연결 범위와 남은 WBS 기능을 한국어로 기록.
-- Task 커밋 후 `cargo xtask generate-ledger`로 원장을 생성하고 별도 유지보수 커밋으로 기록합니다.
+- [x] 구현 Task 커밋 `e7d46f02` 뒤 `cargo xtask generate-ledger` 실행. 원장 1,152개 작업 중 XIX.9.1·XIX.9.3 상태/보고서만 갱신했고 상태·계획 동기화 검증을 통과했습니다.
 
 ## 변경 파일 목록
 
@@ -74,6 +74,11 @@ stellar-mcp --headless --project <project-id>
 | `cargo xtask validate-crate-graph` | 0, 허용 직접 의존과 전이 금지 통과 |
 | `cargo xtask validate-dependencies` | 0, 기존 승인 외부 의존 정책 통과 |
 | `cargo fmt -p stellar-mcp -p stellar-mcp-core -p stellar-ops -p stellar-project -p xtask -- --check` | 0, 통과 |
+| `cargo xtask validate-task-report docs/task-reports/XIX.9.3.md` (XIX.9.1·XIX.2.5도 각각 실행) | 0, 통과. 최초 표 헤더 형식 오류(65)는 수정 후 재검증 |
+| `cargo xtask validate-adr <stage 변경 경로 전체>` | 0, 기존 허용 경로이며 보호 경로 변경 없음 |
+| `cargo xtask validate-versions` | 0 |
+| `cargo xtask generate-ledger` (Task 커밋 뒤) | 0, 1,152 tasks |
+| `cargo xtask validate-task-status`, `cargo xtask sync-plan` | 각각 0 |
 | `git diff --check` | 0, 통과 |
 
 새 프로세스 테스트는 2,101개 node의 개수 제한 pagination, 긴 정상 이름의 byte 제한 pagination, 단일 item 초과 오류, 정상 저장 뒤 stale cursor, 다른 프로젝트 ID·선언 밖 인자, tool 호출 거부, 신뢰 철회·불명확·중복 ID·매니페스트 ID 변경을 확인합니다. 각 단계 전후 임시 프로젝트·신뢰 저장소·HOME 파일 목록과 content hash가 같습니다(테스트가 의도적으로 한 저장·grant/revoke 전후는 별도 기준). 기존 catalog의 20만 node pagination 테스트도 유지합니다. 성능 목표 달성을 주장하지 않으며 성능 측정은 하지 않았습니다.
