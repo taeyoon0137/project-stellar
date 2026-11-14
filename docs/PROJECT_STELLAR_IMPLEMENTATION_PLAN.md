@@ -3,7 +3,7 @@
 - 기준 아키텍처: `PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`
 - 기준일: 2026-06-23
 - 현재 진행 상황은 아래 WBS 표와 [작업 원장](../planning/task-status.yaml)에서 확인합니다.
-- 원자 작업 수: 1145개
+- 원자 작업 수: 1152개
 - 구현 Phase 수: 30개 (`I`\~`XXX`)
 - 초기 릴리스 범위: Phase `I`~`XVII`, G8 통과
 - 로드맵 범위: Phase `XVIII`\~`XXX`
@@ -514,6 +514,22 @@ tools/xtask/
 | V.9.2 | `[x]` | 문서 미저장 snapshot, 열린 탭, viewport, 선택, target profile을 canonical recovery payload로 정의합니다. 터미널·Git 실행 상태는 포함하지 않습니다. | payload round-trip. | V.9.1 |
 | V.9.3 | `[x]` | 정상 저장 generation보다 recovery revision이 최신인지 비교하는 probe를 구현합니다. | 오래된 snapshot은 제안하지 않습니다. | V.9.2, V.4.4 |
 | V.9.4 | `[x]` | 정상 종료 marker와 snapshot cleanup을 구현합니다. 비정상 종료 simulation에서는 snapshot이 남습니다. | 정상·비정상 fixture 결과 정확. | V.9.3 |
+
+### V.10 의미 단위 텍스트 원본 전환 (ADR-0059)
+
+기존 완료 행을 재정의하지 않습니다. V.1·V.2·V.3·V.6의 canonical codec·ChunkId·무결성·지연 로딩은 파생 cache에 재사용합니다. V.4·V.5·V.7·V.8의 generation 원본 경로는 기존 프로젝트 호환용으로 유지하고 V.10.7 검증 뒤 역할을 전환합니다. V.9의 프로젝트 밖 복구 snapshot은 계속 유지합니다.
+
+V.10.1~V.10.3은 단일 View 텍스트 원본이라는 한 제품 개선입니다. §1.2.13의 파일 수 상한을 유지하기 위해 I/O, 문서 왕복, CLI 연결을 아래 세 하위 작업으로 나눕니다. 각 하위 작업은 명시 파일과 테스트·문서만 바꾸며 별도 커밋으로 검증합니다.
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| V.10.1 | `[~]` | `crates/storage/src/{source_file,atomic_file,lib}.rs`에서 제한 handle 읽기·기대 hash 확인·단일 파일 원자 저장·권한 보존·파생 cache 교체를 제공합니다. 기존 정책을 유지하고 실패 시 원본을 보호합니다. | `[DEV-MAC]` 생성 충돌·stale hash·rename 전 fault·권한 보존·fsync 후 오류 의미 검사, storage 테스트와 전체 Rust 검증. | V.2.5 |
+| V.10.2 | `[~]` | `crates/project/src/document_io/{text_source,text_codec,mod}.rs`에서 단일 문서·페이지·View 및 Frame/Fragment 전체 속성·StableId의 제한 YAML 왕복과 선택적 chunk cache 재생성을 구현합니다. 미지원 의미를 거부하고 ADR-0059·문법·호환 절차를 갱신합니다. | `[DEV-MAC]` 실제 모델 편집→저장→재열기→Git diff, 미지원 필드·외부 변경 보존, 캐시 없음·손상·I/O 실패, 문서 예시 검증. | V.10.1, VI.10.3 |
+| V.10.3 | `[~]` | `crates/ops/src/{text_source,lib}.rs`와 `tools/stellar-cli/src/{text_source,cli,lib}.rs`에 명시적 export/check를 연결합니다. 기존 generation 전체 pointer 집합을 비교해 미지원 chunk를 거부합니다. 기본 열기·저장은 바꾸지 않습니다. | `[DEV-MAC]` 실제 CLI export→check→재export 거부, 기존 generation bytes 보존, unknown optional·미사용 chunk 거부, `cargo xtask check-core`. | V.10.2, XXIV.1.3 |
+| V.10.4 | `[ ]` | 전체 영속 의미(모든 node·modifier·component·token·resource)를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조 및 이름/StableId 규칙을 완성합니다. 미지원 필드·레코드는 보존하거나 쓰기를 거부합니다. 기존 generation 변환은 전체 semantic snapshot이 같을 때만 성공합니다. | `[DEV-MAC]` 전체 golden 의미 왕복·미지원 입력 보존·독립 View 변경의 Git 병합; 공개 포맷 동결 전 검증. | V.10.3 |
+| V.10.5 | `[ ]` | 여러 의미 파일의 temp/fsync/rename 저장 journal과 앞/새 세대 한쪽 복구를 구현합니다. 삭제·rename·디스크 오류도 원본과 미저장 작업을 보호합니다. | `[DEV-MAC]` 단계별 종료·오류 fault matrix, 재열기에서 섞인 세대 0건. | V.10.4 |
+| V.10.6 | `[ ]` | 텍스트 원본을 파일 감시·외부 변경·명령 저장 및 재열기 경로에 연결합니다. 열린 뒤 외부 편집이나 git pull이 있으면 dirty 편집을 보존하고 재로드·병합합니다. | `[DEV-MAC]` CLI dry-run→저장→재열기→Git diff, clean/dirty 외부 변경 및 cache 무효화 통합 시나리오. | V.10.5, XIII.3.1 |
+| V.10.7 | `[ ]` | 검증된 전체 변환 경로에서만 기본 원본을 텍스트로 전환하고 기존 chunk 저장은 로컬 cache로 내립니다. source hash 기반 빠른 열기·부분 로딩과 cache GC를 연결합니다. | `[DEV-MAC]` 기존 프로젝트 전체 semantic 왕복·복구·외부 변경 모두 통과. `[REF-MAC]` 실제 통합 T0→T5 및 열기·저장 예산 실측 후 전환. | V.10.6 |
 
 **Phase V 완료 조건:** 저장 fault matrix, migration golden test, 정상 세대 fallback을 통과합니다.
 

@@ -20,7 +20,7 @@
 //! 항목뿐입니다.
 
 use std::fmt;
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, Permissions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -154,7 +154,28 @@ pub fn write_file_atomic_observed(
     bytes: &[u8],
     observer: &mut dyn WriteObserver,
 ) -> std::io::Result<()> {
-    write_file_atomic_with_names(target, bytes, observer, || temp_path_for(target))
+    write_file_atomic_observed_with_permissions(target, bytes, observer, None, true)
+}
+
+/// temp handle에 기존 권한을 적용한 뒤 기록합니다. 원본 검사와 권한 선택은 호출자 책임입니다.
+/// `replace_existing`이 false면 완성 temp를 hard link로 게시해 기존 항목을 절대 교체하지 않습니다.
+/// link 미지원 오류는 그대로 반환합니다. link 후 temp 제거 또는 부모 sync가 실패하면 오류여도
+/// 새 대상은 이미 존재할 수 있으며, 실패 정리는 이 호출의 temp만 최선 노력으로 제거합니다.
+pub(crate) fn write_file_atomic_observed_with_permissions(
+    target: &Path,
+    bytes: &[u8],
+    observer: &mut dyn WriteObserver,
+    permissions: Option<Permissions>,
+    replace_existing: bool,
+) -> std::io::Result<()> {
+    write_file_atomic_with_names(
+        target,
+        bytes,
+        observer,
+        permissions,
+        replace_existing,
+        || temp_path_for(target),
+    )
 }
 
 /// [`write_file_atomic_observed`] 본체. `next_name`은 temp 후보 이름을 만듭니다(테스트가 이름을
@@ -163,14 +184,23 @@ fn write_file_atomic_with_names(
     target: &Path,
     bytes: &[u8],
     observer: &mut dyn WriteObserver,
+    permissions: Option<Permissions>,
+    replace_existing: bool,
     mut next_name: impl FnMut() -> PathBuf,
 ) -> std::io::Result<()> {
     observer.before(WriteStage::CreateTemp)?;
     let (temp, file) = create_new_temp((0..TEMP_NAME_ATTEMPTS).map(|_| next_name()))?;
-    let staged = write_and_rename(target, &temp, file, bytes, observer);
+    let staged = write_and_publish(
+        target,
+        &temp,
+        file,
+        bytes,
+        observer,
+        permissions,
+        replace_existing,
+    );
     if staged.is_err() {
-        // rename 전 실패: 이 호출이 만든 temp만 치웁니다(실패해도 무시 — 대상 불변식과 무관).
-        // rename 뒤에는 temp 이름에 아무 것도 없으므로 지우지 않습니다.
+        // 이 호출이 만든 temp만 치웁니다. link 후 unlink 실패에서도 새 대상은 지우지 않습니다.
         let _ = std::fs::remove_file(&temp);
     }
     staged?;
@@ -182,15 +212,20 @@ fn write_file_atomic_with_names(
     Ok(())
 }
 
-/// bytes 기록 → flush → sync → rename(이 호출이 만든 `temp`).
-fn write_and_rename(
+/// bytes 기록 → flush → sync → rename 또는 신규 hard link(이 호출이 만든 `temp`).
+fn write_and_publish(
     target: &Path,
     temp: &Path,
     mut file: File,
     bytes: &[u8],
     observer: &mut dyn WriteObserver,
+    permissions: Option<Permissions>,
+    replace_existing: bool,
 ) -> std::io::Result<()> {
     observer.before(WriteStage::WriteBytes)?;
+    if let Some(permissions) = permissions {
+        file.set_permissions(permissions)?;
+    }
     file.write_all(bytes)?;
 
     observer.before(WriteStage::Flush)?;
@@ -201,7 +236,12 @@ fn write_and_rename(
     drop(file);
 
     observer.before(WriteStage::Rename)?;
-    std::fs::rename(temp, target)
+    if replace_existing {
+        std::fs::rename(temp, target)
+    } else {
+        std::fs::hard_link(temp, target)?;
+        std::fs::remove_file(temp)
+    }
 }
 
 #[cfg(test)]
@@ -393,10 +433,11 @@ mod tests {
 
         // 모든 후보가 차 있음 → AlreadyExists, 아무 것도 쓰거나 지우지 않음.
         let mut names = taken.clone().into_iter().cycle();
-        let err = write_file_atomic_with_names(&target, b"x", &mut NoopObserver, || {
-            names.next().unwrap()
-        })
-        .unwrap_err();
+        let err =
+            write_file_atomic_with_names(&target, b"x", &mut NoopObserver, None, true, || {
+                names.next().unwrap()
+            })
+            .unwrap_err();
         assert_eq!(err.kind(), ErrorKind::AlreadyExists);
         assert!(!target.exists());
         assert!(
@@ -409,7 +450,7 @@ mod tests {
         // 빈 이름이 하나 있으면 그 이름으로 기록합니다.
         let fresh = dir.path.join(".a.bin.tmp-fresh");
         let mut names = taken.clone().into_iter().chain([fresh.clone()]);
-        write_file_atomic_with_names(&target, b"content", &mut NoopObserver, || {
+        write_file_atomic_with_names(&target, b"content", &mut NoopObserver, None, true, || {
             names.next().unwrap()
         })
         .unwrap();
@@ -424,8 +465,10 @@ mod tests {
         let mut fail = FailAt {
             stage: WriteStage::Rename,
         };
-        write_file_atomic_with_names(&target, b"new", &mut fail, || names.next().unwrap())
-            .unwrap_err();
+        write_file_atomic_with_names(&target, b"new", &mut fail, None, true, || {
+            names.next().unwrap()
+        })
+        .unwrap_err();
         assert!(!fresh.exists(), "이 호출이 만든 temp는 정리");
         assert_eq!(std::fs::read(&target).unwrap(), b"content");
         assert_eq!(std::fs::read(&taken_file).unwrap(), b"other process");
@@ -445,8 +488,37 @@ mod tests {
         let mut fail = FailAt {
             stage: WriteStage::CreateTemp,
         };
-        write_file_atomic_with_names(&target, b"x", &mut fail, || existing.clone()).unwrap_err();
+        write_file_atomic_with_names(&target, b"x", &mut fail, None, true, || existing.clone())
+            .unwrap_err();
         assert_eq!(std::fs::read(&existing).unwrap(), b"keep");
         assert!(!target.exists());
+    }
+
+    #[test]
+    fn new_file_publication_refuses_a_target_created_at_publish() {
+        struct CreateTarget<'a>(&'a Path);
+
+        impl WriteObserver for CreateTarget<'_> {
+            fn before(&mut self, stage: WriteStage) -> std::io::Result<()> {
+                if stage == WriteStage::Rename {
+                    std::fs::write(self.0, b"external content")?;
+                }
+                Ok(())
+            }
+        }
+
+        let dir = TempDir::new();
+        let target = dir.path.join("view.yaml");
+        let error = write_file_atomic_observed_with_permissions(
+            &target,
+            b"new content",
+            &mut CreateTarget(&target),
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&target).unwrap(), b"external content");
+        assert_eq!(std::fs::read_dir(&dir.path).unwrap().count(), 1);
     }
 }
