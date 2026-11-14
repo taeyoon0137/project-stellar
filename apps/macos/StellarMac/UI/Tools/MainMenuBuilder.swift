@@ -100,7 +100,10 @@ enum MainMenuBuilder {
     ]
 
     /// 메인 메뉴를 만듭니다. 앱에 연결하지는 않습니다(`MainMenu.install(on:)`).
-    static func build(applicationTarget: AnyObject? = nil) -> MainMenu {
+    ///
+    /// - Parameter applicationTarget: 앱 수준 셸 명령(New/Open/Clone Project, Settings…)의 명시 target. 창이 없을 때도
+    ///   이 명령들이 동작해야 하므로 반드시 넘깁니다. 빠뜨리면 창 router가 없는 동안 항목이 비활성으로 남습니다.
+    static func build(applicationTarget: AnyObject) -> MainMenu {
         let main = NSMenu(title: "Main Menu")
         let services = NSMenu(title: "Services")
         var topMenus: [String: NSMenu] = [:]

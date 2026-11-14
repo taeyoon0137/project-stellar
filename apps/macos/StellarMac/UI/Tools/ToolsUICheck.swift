@@ -96,6 +96,8 @@ enum ToolsUICheck {
         }
         for tool in CanvasTool.allCases {
             recorder.expect(tool.command.canvasTool == tool, "\(tool.rawValue) 도구↔명령 대응 불일치")
+            // 도구 선택은 체크 표시가 붙는 모드 전환이므로 말줄임표를 붙이지 않습니다(HIG The menu bar).
+            recorder.expect(!tool.command.title.hasSuffix("…"), "\(tool.rawValue) 도구 선택 제목에 말줄임표가 있음")
             recorder.expect(
                 NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.label) != nil,
                 "\(tool.rawValue) SF Symbol 없음: \(tool.symbolName)"
@@ -379,6 +381,9 @@ enum ToolsUICheck {
             "툴바에 도구·줌 항목 없음: \(identifiers.map(\.rawValue))"
         )
 
+        checkObservers(model: model, controller: controller, recorder)
+        checkPaletteCopies(controller: controller, toolbar: toolbar, recorder)
+
         withExtendedLifetime(controller) {
             checkToolbarItems(controller, router: router, recorder)
             checkRouting(
@@ -389,6 +394,57 @@ enum ToolsUICheck {
             timing = measure(mainMenu: mainMenu, model: model, router: router, controller: controller, recorder)
         }
         return timing
+    }
+
+    /// snapshot 구독이 여럿이어도 서로 덮어쓰지 않고, 토큰을 취소하면 그 구독만 끝납니다.
+    private static func checkObservers(
+        model: ToolsMenuModelStub,
+        controller: ToolsToolbarController,
+        _ recorder: Recorder
+    ) {
+        let before = model.observers.count
+        var received: [UInt64] = []
+        var second: ToolsMenuObservation? = model.addSnapshotObserver { snapshot in
+            received.append(snapshot.generation)
+        }
+        recorder.expect(model.observers.count == before + 1, "두 번째 구독이 추가되지 않음")
+        model.send(.zoomOut)
+        recorder.expect(received == [model.snapshot.generation], "두 번째 구독자가 snapshot을 받지 못함: \(received)")
+        recorder.expect(
+            controller.zoomItem.title == ZoomFormat.percentString(model.snapshot.zoomScale),
+            "두 번째 구독이 툴바 구독을 덮어씀"
+        )
+        second?.cancel()
+        second = nil
+        model.send(.zoomIn)
+        recorder.expect(received.count == 1, "취소한 구독자가 계속 snapshot을 받음")
+        recorder.expect(model.observers.count == before, "취소한 구독이 남아 있음")
+        recorder.expect(controller.zoomItem.title == ZoomFormat.percentString(1.0), "줌 복귀 실패: \(controller.zoomItem.title)")
+    }
+
+    /// 사용자 구성 palette 사본: 실제 항목과 다른 인스턴스이고 명령을 보내지 않습니다.
+    private static func checkPaletteCopies(
+        controller: ToolsToolbarController,
+        toolbar: NSToolbar,
+        _ recorder: Recorder
+    ) {
+        autoreleasepool {
+            let tools = controller.toolbar(
+                toolbar, itemForItemIdentifier: ToolsToolbarController.toolsItemIdentifier, willBeInsertedIntoToolbar: false
+            ) as? NSToolbarItemGroup
+            let zoom = controller.toolbar(
+                toolbar, itemForItemIdentifier: ToolsToolbarController.zoomItemIdentifier, willBeInsertedIntoToolbar: false
+            ) as? NSMenuToolbarItem
+            recorder.expect(tools != nil && tools !== controller.toolsGroup, "palette 도구 그룹이 실제 항목과 같음")
+            recorder.expect(zoom != nil && zoom !== controller.zoomItem, "palette 줌 항목이 실제 항목과 같음")
+            recorder.expect(tools?.target == nil && tools?.action == nil, "palette 도구 그룹이 명령을 보낼 수 있음")
+            // NSMenuToolbarItem은 메뉴 항목 action을 내부 pop-up action으로 감싸므로 target으로 판정합니다.
+            let liveZoomItems = zoom?.menu.items.filter { $0.target === controller.router } ?? []
+            recorder.expect(liveZoomItems.isEmpty, "palette 줌 메뉴가 router로 명령을 보낼 수 있음: \(liveZoomItems.map(\.title))")
+            recorder.expect(tools?.subitems.count == CanvasTool.allCases.count, "palette 도구 그룹 항목 수 불일치")
+        }
+        let real = toolbar.items.first { $0.itemIdentifier == ToolsToolbarController.toolsItemIdentifier }
+        recorder.expect(real === controller.toolsGroup, "palette 뒤 실제 도구 그룹이 바뀜")
     }
 
     private static func checkToolbarItems(
@@ -533,7 +589,60 @@ enum ToolsUICheck {
         }
         recorder.expect(model.sentCommands.count == countBefore, "텍스트 편집 중 표준 편집 action이 router로 감")
         recorder.expect(!router.dispatch(.duplicate), "텍스트 편집 중 Duplicate 직접 전달이 허용됨")
+        checkTextEditingUndo(window: window, router: router, model: model, undoItem: item(.undo), redoItem: item(.redo), recorder)
         recorder.expect(window.makeFirstResponder(focusView), "포커스 복귀 실패")
+    }
+
+    /// 텍스트 편집 중 ⌘Z·⇧⌘Z는 창 undo manager가 텍스트 입력을 되돌립니다(디자인 가이드 5.2, 8.2).
+    /// field editor는 `undo:`를 구현하지 않으므로 router가 응답자 체인을 창으로 넘기는지 확인합니다.
+    private static func checkTextEditingUndo(
+        window: NSWindow,
+        router: ShellCommandRouter,
+        model: ToolsMenuModelStub,
+        undoItem: NSMenuItem,
+        redoItem: NSMenuItem,
+        _ recorder: Recorder
+    ) {
+        guard let editor = window.firstResponder as? NSTextView, let undoManager = editor.undoManager else {
+            recorder.expect(false, "텍스트 편집 중 field editor·undo manager 없음")
+            return
+        }
+        let undo = #selector(ShellCommandRouter.undo(_:))
+        let redo = #selector(ShellCommandRouter.redo(_:))
+        recorder.expect(!editor.responds(to: undo), "field editor가 undo:를 직접 구현함(검사 전제 바뀜)")
+        recorder.expect(!router.responds(to: undo) && !router.responds(to: redo), "텍스트 편집 중 router가 undo:·redo:를 가로챔")
+
+        // 응답자 체인에서 undo:를 처리할 첫 대상은 창입니다.
+        var cursor: NSResponder? = editor
+        var handler: NSResponder?
+        while let responder = cursor {
+            if responder.responds(to: undo) {
+                handler = responder
+                break
+            }
+            cursor = responder.nextResponder
+        }
+        recorder.expect(handler === window, "텍스트 편집 중 undo: 처리 대상이 창이 아님: \(handler.map { String(describing: type(of: $0)) } ?? "없음")")
+
+        undoManager.removeAllActions()
+        let original = editor.string
+        editor.insertText("Renamed", replacementRange: NSRange(location: 0, length: (original as NSString).length))
+        editor.breakUndoCoalescing()
+        let typed = editor.string
+        recorder.expect(typed == "Renamed", "field editor 입력 실패: '\(typed)'")
+        let sentBefore = model.sentCommands
+        recorder.expect(window.validateUserInterfaceItem(undoItem), "텍스트 편집 중 창 Undo가 비활성")
+        recorder.expect(undoItem.title != "Undo Move", "텍스트 편집 중 Undo 제목이 캔버스 명령 이름임: \(undoItem.title)")
+        recorder.expect(router.validateMenuItem(undoItem), "텍스트 편집 중 router 직접 검증이 창 결과와 다름")
+        recorder.expect(editor.tryToPerform(undo, with: undoItem), "텍스트 편집 중 undo: 응답자 없음")
+        recorder.expect(editor.string != typed, "텍스트 편집 중 ⌘Z가 입력을 되돌리지 않음: '\(editor.string)'")
+        recorder.expect(editor.tryToPerform(redo, with: redoItem), "텍스트 편집 중 redo: 응답자 없음")
+        recorder.expect(editor.string == typed, "텍스트 편집 중 ⇧⌘Z가 입력을 다시 적용하지 않음: '\(editor.string)'")
+        // router를 직접 불러도 창으로 넘깁니다.
+        router.undo(undoItem)
+        recorder.expect(editor.string != typed, "router.undo 직접 호출이 창으로 넘어가지 않음")
+        recorder.expect(model.sentCommands == sentBefore, "텍스트 편집 중 Undo·Redo가 코어 명령으로 감: \(model.sentCommands.suffix(3))")
+        undoManager.removeAllActions()
     }
 
     private static func checkLayout(window: NSWindow, _ recorder: Recorder) {

@@ -24,19 +24,21 @@ final class ToolsToolbarController: NSObject, NSToolbarDelegate {
     let model: ToolsMenuModel
     let router: ShellCommandRouter
     /// 도구 그룹(target·action이 이 컨트롤러이므로 init 뒤에 만듭니다).
-    private(set) lazy var toolsGroup: NSToolbarItemGroup = makeToolsGroup()
+    private(set) lazy var toolsGroup: NSToolbarItemGroup = makeToolsGroup(target: self)
     let zoomItem: NSMenuToolbarItem
     private var appliedGeneration: UInt64?
+    /// 모델 snapshot 구독. 이 컨트롤러가 해제되면 함께 끝납니다.
+    private var observation: ToolsMenuObservation?
 
     /// - Parameters:
-    ///   - model: 창 session의 모델. `snapshotDidChange` 구독자를 이 컨트롤러로 지정합니다.
+    ///   - model: 창 session의 모델. snapshot 구독을 하나 추가합니다(다른 구독자를 덮어쓰지 않음).
     ///   - router: 같은 창의 router. 도구·줌 명령을 이 router로 보냅니다.
     init(model: ToolsMenuModel, router: ShellCommandRouter) {
         self.model = model
         self.router = router
         zoomItem = Self.makeZoomItem(router: router)
         super.init()
-        model.snapshotDidChange = { [weak self] snapshot in
+        observation = model.addSnapshotObserver { [weak self] snapshot in
             self?.apply(snapshot)
         }
         apply(model.snapshot)
@@ -59,6 +61,23 @@ final class ToolsToolbarController: NSObject, NSToolbarDelegate {
         case Self.zoomItemIdentifier: return zoomItem
         default: return nil
         }
+    }
+
+    /// 사용자 구성 palette에 보일 사본. 실제 툴바 항목과 다른 인스턴스이고 명령을 보내지 않습니다.
+    ///
+    /// AppKit은 palette 항목을 `willBeInsertedIntoToolbar: false`로 따로 요청하고 palette를 닫으면 해제합니다.
+    /// 실제 항목 인스턴스를 palette에 넘기면 한 항목이 두 곳에 놓이므로 항상 새로 만듭니다.
+    func paletteItem(for identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
+        switch identifier {
+        case Self.toolsItemIdentifier: return makeToolsGroup(target: nil)
+        case Self.zoomItemIdentifier: return Self.makeZoomItem(router: nil)
+        default: return nil
+        }
+    }
+
+    /// 툴바 delegate 요청 하나에 맞는 항목: 실제 삽입이면 `item(for:)`, palette이면 `paletteItem(for:)`.
+    func item(for identifier: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+        flag ? item(for: identifier) : paletteItem(for: identifier)
     }
 
     // MARK: Snapshot
@@ -119,12 +138,13 @@ final class ToolsToolbarController: NSObject, NSToolbarDelegate {
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
-        item(for: itemIdentifier)
+        item(for: itemIdentifier, willBeInsertedIntoToolbar: flag)
     }
 
     // MARK: 항목 생성
 
-    private func makeToolsGroup() -> NSToolbarItemGroup {
+    /// - Parameter target: 선택 변경을 받을 대상. nil이면 palette 사본(명령 없음)입니다.
+    private func makeToolsGroup(target: ToolsToolbarController?) -> NSToolbarItemGroup {
         let tools = CanvasTool.allCases
         let images = tools.map { tool in
             NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.label) ?? NSImage()
@@ -134,8 +154,8 @@ final class ToolsToolbarController: NSObject, NSToolbarDelegate {
             images: images,
             selectionMode: .selectOne,
             labels: tools.map(\.label),
-            target: self,
-            action: #selector(toolSelectionChanged(_:))
+            target: target,
+            action: target == nil ? nil : #selector(toolSelectionChanged(_:))
         )
         group.label = "Tools"
         group.paletteLabel = "Canvas Tools"
@@ -153,7 +173,8 @@ final class ToolsToolbarController: NSObject, NSToolbarDelegate {
         return group
     }
 
-    private static func makeZoomItem(router: ShellCommandRouter) -> NSMenuToolbarItem {
+    /// - Parameter router: 줌 메뉴 명령을 받을 router. nil이면 palette 사본(명령 없음)입니다.
+    private static func makeZoomItem(router: ShellCommandRouter?) -> NSMenuToolbarItem {
         let item = NSMenuToolbarItem(itemIdentifier: zoomItemIdentifier)
         item.label = "Zoom"
         item.paletteLabel = "Zoom"
@@ -166,7 +187,11 @@ final class ToolsToolbarController: NSObject, NSToolbarDelegate {
         for (index, command) in ShellCommand.zoomCommands.enumerated() {
             if index == 2 { menu.addItem(.separator()) }
             // 단축키는 View 메뉴에만 둡니다(같은 key equivalent를 두 메뉴에 두지 않음).
-            menu.addItem(MainMenuBuilder.makeItem(for: command, target: router, includeShortcut: false))
+            let item = MainMenuBuilder.makeItem(for: command, target: router, includeShortcut: false)
+            if router == nil {
+                item.action = nil
+            }
+            menu.addItem(item)
         }
         item.menu = menu
         return item

@@ -5,6 +5,10 @@ import AppKit
 /// - 창 수준: `install(in:)`으로 창 응답자 체인의 content view와 창 사이에 끼웁니다. 그러면 텍스트 편집 중에는
 ///   field editor가 표준 편집 action을 먼저 받고, 캔버스·목록 포커스에서는 이 객체가 받아 활성 창 session에
 ///   연결합니다(디자인 가이드 8.2). `NSWindow`도 `undo:`에 응답하므로 반드시 창보다 앞에 둡니다.
+/// - 텍스트 편집 중 Undo·Redo: field editor(`NSTextView`)는 `undo:`·`redo:`를 구현하지 않고 창의 undo manager가
+///   처리합니다. 그래서 텍스트 컨트롤이 first responder이면 이 router는 `undo:`·`redo:`에 응답하지 않는다고
+///   알려(`responds(to:)`) 응답자 체인이 창까지 가게 합니다. 메뉴 검증도 창이 받아 "Undo Typing" 같은 네이티브
+///   제목을 씁니다(디자인 가이드 5.2, 8.2).
 /// - 앱 수준: 창이 없어도 동작해야 하는 명령(New/Open/Clone Project, Settings)은 `MainMenuBuilder`가 앱 수준
 ///   router를 명시 target으로 지정합니다.
 ///
@@ -41,6 +45,21 @@ final class ShellCommandRouter: NSResponder, NSMenuItemValidation {
         window?.firstResponder is NSText
     }
 
+    /// 텍스트 편집 중 창 undo manager에 넘기는 표준 action.
+    static let textEditingPassThroughActions: Set<Selector> = [
+        #selector(ShellCommandRouter.undo(_:)),
+        #selector(ShellCommandRouter.redo(_:)),
+    ]
+
+    /// 텍스트 편집 중에는 `undo:`·`redo:`에 응답하지 않는다고 알립니다. AppKit의 target 탐색(`sendAction`,
+    /// `tryToPerform`, 메뉴 검증)이 이 값을 보므로 체인이 창(undo manager)까지 이어집니다.
+    override func responds(to aSelector: Selector!) -> Bool {
+        if let aSelector, isTextEditing, Self.textEditingPassThroughActions.contains(aSelector) {
+            return false
+        }
+        return super.responds(to: aSelector)
+    }
+
     /// 현재 snapshot 기준으로 명령을 보냅니다. 비활성 명령은 보내지 않습니다.
     @discardableResult
     func dispatch(_ command: ShellCommand) -> Bool {
@@ -60,19 +79,42 @@ final class ShellCommandRouter: NSResponder, NSMenuItemValidation {
         dispatch(command)
     }
 
-    // 표준 편집 action: 텍스트 편집 중에는 field editor가 먼저 받으므로 여기 오지 않습니다.
-    @objc func undo(_ sender: Any?) { dispatch(.undo) }
-    @objc func redo(_ sender: Any?) { dispatch(.redo) }
+    // 표준 편집 action: 텍스트 편집 중에는 field editor가 먼저 받으므로 여기 오지 않습니다. Undo·Redo는
+    // field editor가 구현하지 않으므로 `responds(to:)`가 체인을 창으로 넘기고, 직접 불려도 창에 넘깁니다.
+    @objc func undo(_ sender: Any?) {
+        if isTextEditing {
+            passToWindow(#selector(ShellCommandRouter.undo(_:)), sender)
+            return
+        }
+        dispatch(.undo)
+    }
+
+    @objc func redo(_ sender: Any?) {
+        if isTextEditing {
+            passToWindow(#selector(ShellCommandRouter.redo(_:)), sender)
+            return
+        }
+        dispatch(.redo)
+    }
     @objc func cut(_ sender: Any?) { dispatch(.cut) }
     @objc func copy(_ sender: Any?) { dispatch(.copy) }
     @objc func paste(_ sender: Any?) { dispatch(.paste) }
     @objc func delete(_ sender: Any?) { dispatch(.delete) }
     @objc override func selectAll(_ sender: Any?) { dispatch(.selectAll) }
 
+    /// 텍스트 편집 중 action을 응답자 체인의 다음(창)으로 넘깁니다.
+    private func passToWindow(_ action: Selector, _ sender: Any?) {
+        _ = nextResponder?.tryToPerform(action, with: sender)
+    }
+
     // MARK: NSMenuItemValidation
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard let command = ShellCommand.resolve(from: menuItem) else { return false }
+        // 텍스트 편집 중 Undo·Redo는 창이 검증합니다. 직접 불리면 창의 검증 결과를 그대로 씁니다.
+        if isTextEditing, let action = menuItem.action, Self.textEditingPassThroughActions.contains(action) {
+            return window?.validateUserInterfaceItem(menuItem) ?? false
+        }
         let presentation = ShellCommandPresentation.make(
             command, snapshot: model.snapshot, isTextEditing: isTextEditing
         )

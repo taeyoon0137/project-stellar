@@ -149,9 +149,8 @@ enum ShellCommand: String, CaseIterable {
         case .selectMoveTool: return "Move Tool"
         case .selectHandTool: return "Hand Tool"
         case .selectZoomTool: return "Zoom Tool"
-        case .selectImageTool: return "Image…"
         case .selectFrameTool, .selectRectangleTool, .selectEllipseTool, .selectLineTool,
-             .selectPolygonTool, .selectPenTool, .selectTextTool:
+             .selectPolygonTool, .selectPenTool, .selectTextTool, .selectImageTool:
             return canvasTool?.label ?? rawValue
         case .group: return "Group"
         case .ungroup: return "Ungroup"
@@ -183,7 +182,9 @@ enum ShellCommand: String, CaseIterable {
     /// 실행 전에 추가 입력(대화상자·파일 선택·검색어)이 필요한 명령. 제목에 말줄임표를 붙입니다(HIG The menu bar).
     var requiresMoreInput: Bool {
         switch self {
-        case .settings, .newProject, .openProject, .cloneProject, .find, .customizeToolbar, .selectImageTool:
+        // 도구 선택(Image 포함)은 모드 전환이라 그 자체로 추가 입력을 받지 않습니다. 이미지 파일 선택은 도구를
+        // 쓰는 단계(캔버스 클릭)에서 열리므로 메뉴 제목에 말줄임표를 붙이지 않습니다.
+        case .settings, .newProject, .openProject, .cloneProject, .find, .customizeToolbar:
             return true
         default:
             return false
