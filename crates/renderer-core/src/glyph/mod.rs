@@ -39,6 +39,11 @@ pub mod atlas;
 
 pub use atlas::{AtlasConfig, AtlasStats, ShelfGlyphAtlas, TrimOutcome};
 
+/// cache miss 정책: 이전 valid glyph 또는 빈 glyph (XI.6.6).
+pub mod resolve;
+
+pub use resolve::{CompleteOutcome, EmptyReason, GlyphDraw, GlyphResolver, GlyphSource};
+
 /// variation axis 최대 수.
 pub const MAX_VARIATION_AXES: usize = 64;
 
