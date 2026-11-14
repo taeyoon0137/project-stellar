@@ -45,3 +45,6 @@ pub mod missing;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures;
+
+// 문서 스타일 표의 고정 project face 등록·재열기.
+pub mod document;

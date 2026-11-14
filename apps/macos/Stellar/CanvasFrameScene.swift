@@ -11,6 +11,8 @@ struct CanvasInspectorFrame: Equatable {
 }
 
 struct CanvasFrameHit {
+    var textQuery: StellarCanvasTextQuery? = nil
+    var isText: Bool { textQuery != nil }
     let isInstance: Bool
     let isRectangle: Bool
     let id: UUID
@@ -59,6 +61,7 @@ private func outline(_ row: StellarCanvasFrame) -> CGPath {
 }
 
 private struct ProjectedFrame {
+    let text: CanvasDocumentText?
     let id: UUID
     let parent: Int?
     let world: CGAffineTransform
@@ -76,15 +79,20 @@ private struct ProjectedFrame {
     let borderWidth: CGFloat
     var lastDescendant: Int
 
-    init(_ row: StellarCanvasFrame, index: Int) {
+    init(_ row: StellarCanvasFrame, index: Int, text: CanvasDocumentText?) {
+        self.text = text
         id = UUID(uuid: row.id)
         parent = row.parent == .max ? nil : Int(row.parent)
         var world = transform(row.world)
         self.world = world
         localBounds = CGRect(x: 0, y: 0, width: CGFloat(row.size.0), height: CGFloat(row.size.1))
-        localPath = outline(row)
+        localPath = text?.hitPath ?? outline(row)
         worldPath = localPath.copy(using: &world)!
-        worldBounds = worldPath.boundingBox
+        if let text, !text.inkBounds.isNull {
+            worldBounds = worldPath.boundingBox.union(text.inkBounds.applying(world))
+        } else {
+            worldBounds = worldPath.boundingBox
+        }
         subtreeBounds = worldBounds
         isInstance = row.flags & 8 != 0
         isRectangle = row.flags & 4 != 0
@@ -157,7 +165,18 @@ final class CanvasFrameScene {
                 clear()
                 return
             }
-            frames = rows.prefix(Int(info.count)).enumerated().map { ProjectedFrame($0.element, index: $0.offset) }
+            var projected: [ProjectedFrame] = []
+            projected.reserveCapacity(Int(info.count))
+            for (index, row) in rows.prefix(Int(info.count)).enumerated() {
+                var text: CanvasDocumentText?
+                if row.flags & 16 != 0 {
+                    let query = StellarCanvasTextQuery(view: info.view, node: row.id, revision: info.revision, row: UInt32(index))
+                    guard let prepared = CanvasDocumentText(handle: handle, session: session, query: query) else { clear(); return }
+                    text = prepared
+                }
+                projected.append(ProjectedFrame(row, index: index, text: text))
+            }
+            frames = projected
             for i in frames.indices.reversed() {
                 if let parent = frames[i].parent {
                     let bounds = frames[i].subtreeBounds
@@ -182,7 +201,7 @@ final class CanvasFrameScene {
     var selectedInspectorFrame: CanvasInspectorFrame? {
         guard let session, let viewID, let primaryIndex else { return nil }
         let selected = frames[primaryIndex]
-        guard !selected.isRectangle, !selected.isInstance else { return nil }
+        guard !selected.isRectangle, !selected.isInstance, selected.text == nil else { return nil }
         let background: InspectorColor?
         if let fill = selected.fill, let rgba = fill.components, rgba.count == 4 {
             let space: InspectorColor.Space = fill.colorSpace?.name == CGColorSpace.extendedDisplayP3 ? .displayP3 : .srgb
@@ -197,11 +216,11 @@ final class CanvasFrameScene {
     func hit(at point: CGPoint, onlyFrames: Bool) -> CanvasFrameHit? {
         guard let viewID else { return nil }
         let world = point.applying(worldToView.inverted())
-        for frame in frames.reversed() where (!onlyFrames || (!frame.isRectangle && !frame.isInstance)) && frame.pickable && frame.worldBounds.contains(world) && frame.worldPath.contains(world) {
+        for frame in frames.reversed() where (!onlyFrames || (!frame.isRectangle && !frame.isInstance && frame.text == nil)) && frame.pickable && frame.worldBounds.contains(world) && frame.worldPath.contains(world) {
             var ancestor = frame.parent
             while let i = ancestor, !frames[i].clips || frames[i].worldPath.contains(world) { ancestor = frames[i].parent }
             if ancestor == nil {
-                return CanvasFrameHit(isInstance: frame.isInstance, isRectangle: frame.isRectangle, id: frame.id, revision: revision, viewID: viewID,
+                return CanvasFrameHit(textQuery: frame.text?.query, isInstance: frame.isInstance, isRectangle: frame.isRectangle, id: frame.id, revision: revision, viewID: viewID,
                                       localToWorld: frame.world, parentToWorld: frame.parent.map { frames[$0].world } ?? .identity, worldToView: worldToView)
             }
         }
@@ -243,8 +262,12 @@ final class CanvasFrameScene {
                 context.concatenate(frame.world)
                 if let fill = frame.fill {
                     context.setFillColor(fill)
-                    context.addPath(frame.localPath)
-                    context.fillPath()
+                    if let text = frame.text {
+                        for path in text.glyphs { context.addPath(path); context.fillPath() }
+                    } else {
+                        context.addPath(frame.localPath)
+                        context.fillPath()
+                    }
                 }
                 if let border = frame.border, frame.borderWidth > 0 {
                     context.addPath(frame.localPath)
