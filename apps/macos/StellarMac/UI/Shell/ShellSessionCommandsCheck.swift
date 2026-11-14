@@ -160,7 +160,40 @@ private final class ShellSessionCommandsCheckRunner {
                 session.isClosing = false
             } else { expect(false, "연속 스크롤 NSEvent 생성 실패") }
         } else { expect(false, "연속 스크롤 fixture 생성 실패") }
-        for (units, flags) in [(CGScrollEventUnit.line, CGEventFlags()), (.pixel, .maskCommand), (.pixel, .maskShift),
+        // 일반 마우스 휠도 실제 CanvasView 진입점에서 창별 팬으로 연결합니다.
+        for zoom in [0.5, 1.0] {
+            if zoom == 1.0 {
+                a.router.performShellCommand(MainMenuBuilder.makeItem(for: .zoomToActualSize, target: nil))
+                wait(coordinator, "휠 검사 100% 배율")
+            }
+            for (x, y) in [(0, 3), (-2, 0), (1, -3)] {
+                guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 2,
+                                       wheel1: Int32(y), wheel2: Int32(x), wheel3: 0) else {
+                    expect(false, "일반 휠 CGEvent 생성 실패")
+                    continue
+                }
+                cg.flags = []
+                guard let event = NSEvent(cgEvent: cg), let before = a.windowController.windowSession?.viewInfo else {
+                    expect(false, "일반 휠 fixture 생성 실패")
+                    continue
+                }
+                expect(!event.hasPreciseScrollingDeltas, "일반 휠 fixture가 정밀 스크롤임")
+                expect(before.zoom == zoom, "휠 검사 배율 불일치")
+                a.canvasHost.canvasView.scrollWheel(with: event)
+                wait(coordinator, "일반 휠 팬")
+                let after = a.windowController.windowSession?.viewInfo
+                expect(after?.center_x != before.center_x || after?.center_y != before.center_y,
+                       "일반 휠이 camera를 이동하지 않음")
+                expect(after?.center_x == before.center_x - Double(event.scrollingDeltaX) * 10 / zoom &&
+                       after?.center_y == before.center_y - Double(event.scrollingDeltaY) * 10 / zoom,
+                       "일반 휠 이동량이 창 camera에 반영되지 않음")
+                expect(after?.zoom == before.zoom, "일반 휠이 배율을 바꿈")
+            }
+        }
+        a.router.performShellCommand(MainMenuBuilder.makeItem(for: .zoomOut, target: nil))
+        wait(coordinator, "휠 검사 뒤 50% 복귀")
+        for (units, flags) in [(CGScrollEventUnit.line, CGEventFlags.maskCommand), (.line, .maskShift),
+                               (.line, .maskAlternate), (.line, .maskControl), (.pixel, .maskCommand), (.pixel, .maskShift),
                                (.pixel, .maskAlternate), (.pixel, .maskControl)] {
             guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: units, wheelCount: 2,
                                    wheel1: 12, wheel2: -8, wheel3: 0) else {
@@ -173,7 +206,7 @@ private final class ShellSessionCommandsCheckRunner {
                 continue
             }
             expect(a.canvasHost.canvasView.scrollWheelHandler?(event) == false,
-                   "일반 휠 또는 수식키 스크롤을 정밀 팬이 소비함")
+                   "수식키 스크롤을 팬이 소비함")
         }
         expect(a.windowController.windowSession?.viewInfo?.center_x != initialA?.center_x, "팬 누적 이동 없음")
         expect(b.windowController.windowSession?.viewInfo?.center_x == initialB?.center_x &&

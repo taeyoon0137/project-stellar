@@ -473,11 +473,12 @@ final class ShellProjectWindow {
             return router.dispatch(tool.command)
         }
         canvasHost.canvasView.scrollWheelHandler = { [weak self] event in
-            guard let session = self?.windowController.windowSession, event.hasPreciseScrollingDeltas,
+            guard let session = self?.windowController.windowSession,
                   event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty else { return false }
             // AppKit이 시스템 스크롤 방향을 적용한 delta를 그대로 사용합니다. flipped canvas의 y는 아래로 증가합니다.
-            let dx = Double(event.scrollingDeltaX)
-            let dy = Double(event.scrollingDeltaY)
+            let pointsPerUnit = event.hasPreciseScrollingDeltas ? 1.0 : 10.0
+            let dx = Double(event.scrollingDeltaX) * pointsPerUnit
+            let dy = Double(event.scrollingDeltaY) * pointsPerUnit
             guard dx.isFinite, dy.isFinite else { return false }
             return session.pan(dx: dx, dy: dy)
         }
