@@ -8,8 +8,9 @@ import AppKit
 /// - 메인 메뉴의 macOS 관례 단축키: Undo ⌘Z, Redo ⇧⌘Z, Save Now ⌘S, Zoom In ⌘+, Actual Size ⌘0, Zoom Out ⌘-(HIG,
 ///   `ShortcutPolicy` 감사 0건)
 /// - 키 조합 → 메뉴 항목 → 셸 명령 → 코어 ID 대응: ⌘Z → UNDO, ⇧⌘Z → REDO, ⌘S → SAVE_NOW, 대문자·Caps Lock 무관
-/// - 저장 프로젝트 fixture 창에서 같은 메뉴 항목 action을 응답자 체인(그 창 router)으로 보내면 그 창 session에 해당 코어
-///   명령이 도착함(완료 event 종류로 확인)
+/// - 저장 프로젝트 fixture 두 창에서 메뉴 항목 action을 캔버스의 응답자 체인으로 보내면 그 창 session에 해당 코어
+///   명령이 도착함(완료 event 종류로 확인). --native-menus 추가 시 실제 활성 앱의 nil target 메뉴 전달을 검사하며,
+///   앱을 활성화할 수 없는 환경에서는 실패합니다.
 enum ShellKeyMappingCheck {
     static func run(arguments: [String]) -> Bool {
         guard let flag = arguments.firstIndex(of: "--key-mapping-check"), arguments.indices.contains(flag + 1) else {
@@ -18,7 +19,24 @@ enum ShellKeyMappingCheck {
         }
         let fixture = URL(fileURLWithPath: arguments[flag + 1], isDirectory: true)
         return MainActor.assumeIsolated {
-            ShellKeyMappingCheckRunner(fixture: fixture).run()
+            let nativeMenus = arguments.contains("--native-menus")
+            if !nativeMenus { return ShellKeyMappingCheckRunner(fixture: fixture, nativeMenus: false).run() }
+            // nil target 메뉴 검사는 NSApplication의 실제 event loop와 key-window 관리가 필요합니다.
+            let app = NSApplication.shared
+            app.setActivationPolicy(.regular)
+            var passed = false
+            DispatchQueue.main.async {
+                passed = ShellKeyMappingCheckRunner(fixture: fixture, nativeMenus: true).run()
+                app.stop(nil)
+                if let wake = NSEvent.otherEvent(
+                    with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
+                    windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0
+                ) {
+                    app.postEvent(wake, atStart: true)
+                }
+            }
+            app.run()
+            return passed
         }
     }
 }
@@ -29,11 +47,13 @@ private final class ShellKeyMappingCheckRunner {
     static let childNode = UUID(uuidString: "00000000-000b-7000-8000-00000000000b")!
 
     private let fixture: URL
+    private let nativeMenus: Bool
     private var failures: [String] = []
     private var checks = 0
 
-    init(fixture: URL) {
+    init(fixture: URL, nativeMenus: Bool) {
         self.fixture = fixture
+        self.nativeMenus = nativeMenus
     }
 
     private func expect(_ condition: Bool, _ message: @autoclosure () -> String) {
@@ -53,7 +73,7 @@ private final class ShellKeyMappingCheckRunner {
     ]
 
     func run() -> Bool {
-        NSApplication.shared.setActivationPolicy(.accessory)
+        if !nativeMenus { NSApplication.shared.setActivationPolicy(.accessory) }
         let projects = ShellSavedProjectFixture(prefix: "StellarKeyMappingCheck")
         defer { projects.remove() }
         let host = RuntimeHost()
@@ -76,14 +96,15 @@ private final class ShellKeyMappingCheckRunner {
 
         checkCoreTable(coordinator.coreCommandIDs)
         checkMenuShortcuts(mainMenu.menu, ids: coordinator.coreCommandIDs)
-        if let path = projects.copy(fixture, as: "Project") {
+        if let path = projects.copy(fixture, as: "Project"), let otherPath = projects.copy(fixture, as: "Other") {
             autoreleasepool {
-                checkLiveDispatch(coordinator, menu: mainMenu.menu, path: path)
+                checkLiveDispatch(coordinator, menu: mainMenu.menu, path: path, otherPath: otherPath)
             }
         } else {
             expect(false, "fixture 복사 실패: \(fixture.path)")
         }
         if failures.isEmpty {
+            print("key-mapping mode: \(nativeMenus ? "active application menu" : "window responder chain")")
             print("key-mapping ok: \(checks) checks (core-shared command IDs, macOS shortcuts ⌘Z ⇧⌘Z ⌘S ⌘+ ⌘0 ⌘- → core commands)")
             return true
         }
@@ -155,11 +176,49 @@ private final class ShellKeyMappingCheckRunner {
 
     // MARK: - 창 session 도착
 
-    private func checkLiveDispatch(_ coordinator: ShellAppCoordinator, menu: NSMenu, path: String) {
+    /// 기본 검사는 캔버스부터 실제 응답자 체인을 걷습니다. --native-menus는 AppKit이 활성 창을 선택합니다.
+    private func send(_ entry: NSMenuItem, action: Selector, to project: ShellProjectWindow) -> Bool {
+        if nativeMenus { return NSApp.sendAction(action, to: entry.target, from: entry) }
+        return project.window?.firstResponder?.tryToPerform(action, with: entry) ?? false
+    }
+
+    /// 일반 앱과 같은 활성화 event를 처리한 뒤 실제 key 창의 캔버스에 포커스를 둡니다.
+    private func focus(_ project: ShellProjectWindow) {
+        project.window?.makeFirstResponder(project.canvasHost.canvasView)
+        guard nativeMenus else { return }
+        project.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+        let deadline = Date().addingTimeInterval(3)
+        while NSApp.keyWindow !== project.window && Date() < deadline {
+            if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.01), inMode: .default, dequeue: true) {
+                NSApp.sendEvent(event)
+            }
+        }
+        project.window?.makeFirstResponder(project.canvasHost.canvasView)
+    }
+
+    private func checkLiveDispatch(_ coordinator: ShellAppCoordinator, menu: NSMenu, path: String, otherPath: String) {
         coordinator.openProject(atPath: path, origin: .application)
         expect(coordinator.pump?.waitForPendingRequests(timeout: 10) == true, "프로젝트 열기 완료 event가 오지 않음")
         guard let window = coordinator.projectWindow(forPath: path), window.windowController.windowSession != nil else {
             expect(false, "프로젝트 창·창 session 없음")
+            return
+        }
+        coordinator.openProject(atPath: otherPath, origin: .application)
+        expect(coordinator.pump?.waitForPendingRequests(timeout: 10) == true, "둘째 창 열기 완료 event가 오지 않음")
+        guard let other = coordinator.projectWindow(forPath: otherPath) else {
+            expect(false, "둘째 창 없음")
+            window.window?.close()
+            return
+        }
+        other.window?.setFrameOrigin(NSPoint(x: 80, y: 80))
+        window.window?.setFrameOrigin(NSPoint(x: 80, y: 80))
+        focus(window)
+        if nativeMenus && NSApp.keyWindow !== window.window {
+            expect(false, "실제 key 창 활성화 실패: 로그인된 macOS 데스크톱에서 --native-menus를 다시 실행해야 함")
+            window.window?.close()
+            other.window?.close()
+            _ = coordinator.pump?.waitForPendingRequests(timeout: 10)
             return
         }
         expect(window.selectNodes([Self.childNode]), "선택 요청 실패")
@@ -171,12 +230,13 @@ private final class ShellKeyMappingCheckRunner {
                 expect(false, "\(expectation.command.rawValue) 메뉴 항목 action 없음")
                 continue
             }
-            // 메뉴 막대가 key 창 응답자 체인으로 보내는 것과 같이 그 창 router를 거쳐 보냅니다.
-            let target = entry.target ?? NSApp.target(forAction: action, to: window.router, from: entry)
-            expect((target as AnyObject?) === window.router,
-                   "\(expectation.command.rawValue) 메뉴 action이 창 router로 가지 않음: \(String(describing: target))")
+            expect(entry.target == nil, "창 메뉴에 고정 target이 지정됨")
+            if nativeMenus {
+                let target = NSApp.target(forAction: action, to: nil, from: entry)
+                expect((target as AnyObject?) === window.router, "활성 창 메뉴 대상이 창 router가 아님")
+            }
             expect(window.router.validateMenuItem(entry), "\(expectation.command.rawValue) 메뉴 항목이 비활성")
-            NSApp.sendAction(action, to: window.router, from: entry)
+            expect(send(entry, action: action, to: window), "메뉴 action 전달 실패")
             expect(coordinator.pump?.waitForPendingRequests(timeout: 10) == true, "\(expectation.command.rawValue) 완료 event가 오지 않음")
             let arrived: Bool
             switch (expectation.command, window.lastSessionCommandEvent) {
@@ -189,7 +249,26 @@ private final class ShellKeyMappingCheckRunner {
             }
             expect(arrived, "\(expectation.command.rawValue)가 창 session에 도착하지 않음: \(String(describing: window.lastSessionCommandEvent))")
         }
+        expect(other.lastSessionCommandEvent == nil, "첫째 창 메뉴가 둘째 창으로 전달됨")
+        focus(other)
+        if nativeMenus { expect(NSApp.keyWindow === other.window, "둘째 창이 key 창이 아님") }
+        if let entry = item(matching: "s", modifiers: [.command], in: menu), let action = entry.action {
+            if nativeMenus {
+                expect((NSApp.target(forAction: action, to: nil, from: entry) as AnyObject?) === other.router,
+                       "창 전환 뒤 실제 메뉴 대상이 둘째 창 router가 아님")
+            }
+            expect(send(entry, action: action, to: other), "둘째 창 Save Now 전달 실패")
+            expect(coordinator.pump?.waitForPendingRequests(timeout: 10) == true, "둘째 창 저장 완료 event 없음")
+            if case .windowSessionSaved(_, let session, 1, false)? = other.lastSessionCommandEvent {
+                expect(session == other.windowController.windowSession?.session, "둘째 창 저장의 session 불일치")
+            } else {
+                expect(false, "둘째 창 Save Now 완료 event 없음")
+            }
+        } else {
+            expect(false, "Save Now 메뉴 없음")
+        }
         window.window?.close()
+        other.window?.close()
         _ = coordinator.pump?.waitForPendingRequests(timeout: 10)
     }
 }

@@ -314,7 +314,6 @@ final class ShellAppCoordinator: NSObject {
                 self.discardLateOpen(event)
                 return
             }
-            projectWindow.pendingOpenRequest = nil
             self.finishReopening(projectWindow, path: path, event: event)
         }
         switch result {
@@ -338,13 +337,15 @@ final class ShellAppCoordinator: NSObject {
             let projectSession = ShellProjectSessionHandle(
                 project: project, projectID: projectID, name: name, rootPath: root, pump: pump
             )
+            let openingRequest = event.request
             openWindowSession(for: projectSession, path: path) { [weak projectWindow] result in
-                guard let projectWindow else {
+                guard let projectWindow, projectWindow.pendingOpenRequest == openingRequest else {
                     // 여는 동안 창이 닫혔으면 연 session을 남기지 않습니다.
                     if case .success(let windowSession) = result { windowSession.close() }
                     projectSession.close()
                     return
                 }
+                projectWindow.pendingOpenRequest = nil
                 switch result {
                 case .success(let windowSession):
                     projectWindow.didOpen(projectSession, windowSession: windowSession)
@@ -353,8 +354,10 @@ final class ShellAppCoordinator: NSObject {
                 }
             }
         case .requestFailed(_, let failure, _):
+            projectWindow.pendingOpenRequest = nil
             projectWindow.didFail(Self.failure(coreCode: failure, path: path), path: path)
         default:
+            projectWindow.pendingOpenRequest = nil
             projectWindow.didFail(.unexpectedResponse, path: path)
         }
     }

@@ -535,6 +535,8 @@ final class ShellProjectWindow {
 
     /// 다른 폴더로 다시 엽니다.
     func beginOpening(rootPath: String) {
+        closeSessions()
+        windowController.windowSession = nil
         dataSource.beginOpening(rootPath: rootPath)
         toolsModel.setProjectReady(false)
         window?.invalidateRestorableState()
