@@ -41,3 +41,6 @@ pub mod views;
 
 /// `export-accessibility`: 저장된 View 하나의 정적 접근성 HTML.
 pub mod accessibility_html;
+
+/// `export-web`: 저장된 고정 Free Frame View의 HTML+CSS.
+pub mod web_frame;

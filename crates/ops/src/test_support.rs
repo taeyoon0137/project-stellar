@@ -222,6 +222,9 @@ pub fn corrupt_view_tree_chunks(root: &Path) -> usize {
 /// 저장 View 접근성 HTML fixture.
 pub mod accessibility;
 
+/// 저장 View 고정 Frame HTML+CSS fixture.
+pub mod web_frame;
+
 /// 임시 fixture의 기존 신뢰 등록을 준비하는 타입. 제품 API에는 재노출하지 않습니다.
 pub use stellar_project::{identity::ProjectIdentity, trust_store::FileTrustStore};
 
