@@ -15,3 +15,6 @@ pub mod render_thread;
 
 /// 셸 경계용 앱 runtime: 프로젝트·문서 session, 완료 event, 상태 snapshot.
 pub mod app;
+
+/// 창 하나의 프로젝트 편집 session (XII.2.1).
+pub mod window_session;
