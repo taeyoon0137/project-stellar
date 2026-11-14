@@ -218,6 +218,80 @@ fn handles_keep_view_size_under_zoom_and_rotation() {
 }
 
 #[test]
+fn degenerate_boxes_have_no_handles_for_axes_without_length() {
+    // 길이 0인 축만 바꾸는 크기 조절 handle은 만들지 않습니다. 회전 영역은 그대로입니다.
+    let kinds = |selection_box: [Vec2; 4]| {
+        let mut layer = TransientLayer::new();
+        layer.push_selection_box(id(1), selection_box, metrics());
+        layer
+            .handles()
+            .iter()
+            .map(|handle| handle.kind)
+            .collect::<Vec<_>>()
+    };
+    let rotate: Vec<HandleKind> = Corner::ALL.into_iter().map(HandleKind::Rotate).collect();
+    let corners: Vec<HandleKind> = Corner::ALL
+        .into_iter()
+        .map(HandleKind::ResizeCorner)
+        .collect();
+    let with = |edges: &[Edge]| {
+        let mut expected = rotate.clone();
+        expected.extend(edges.iter().copied().map(HandleKind::ResizeEdge));
+        expected.extend(corners.iter().copied());
+        expected
+    };
+    let horizontal = quad(100.0, 150.0, 300.0, 150.0);
+    let vertical = quad(80.0, 100.0, 80.0, 200.0);
+    let point = [p(5.0, 5.0); 4];
+    let parallel = [p(0.0, 0.0), p(10.0, 10.0), p(20.0, 20.0), p(10.0, 10.0)];
+    let cases = [
+        (
+            quad(100.0, 100.0, 300.0, 200.0),
+            (true, true),
+            with(&Edge::ALL),
+        ),
+        (horizontal, (true, false), with(&[Edge::Right, Edge::Left])),
+        (vertical, (false, true), with(&[Edge::Top, Edge::Bottom])),
+        (point, (false, false), rotate.clone()),
+        (parallel, (false, false), rotate.clone()),
+    ];
+    for (selection_box, (h, v), expected) in cases {
+        let axes = ResizeAxes::of(&selection_box);
+        assert_eq!(
+            (axes.horizontal(), axes.vertical()),
+            (h, v),
+            "{selection_box:?}"
+        );
+        assert_eq!(kinds(selection_box), expected, "{selection_box:?}");
+    }
+
+    // 수평 선 상자: 선 위(끝점 handle 밖)를 누르면 변 handle이 아니라 node가 맞습니다.
+    let (_, index) = scene();
+    let mut layer = TransientLayer::new();
+    layer.push_selection_box(id(1), horizontal, metrics());
+    let viewport = identity_viewport();
+    for x in [140.0, 200.0, 260.0] {
+        assert_eq!(kind_at(&layer, &viewport, x, 150.0), None, "({x}, 150)");
+        assert!(matches!(
+            hit_test_canvas(
+                &layer,
+                &index,
+                &viewport,
+                p(x, 150.0),
+                &NarrowPhaseOptions::EXACT,
+                &LayoutBoxesOnly,
+            ),
+            CanvasHit::Node(ref node) if node.source == id(1)
+        ));
+    }
+    // 끝점은 크기 조절 모서리입니다(겹친 두 모서리 중 나중에 추가한 쪽).
+    assert_eq!(
+        kind_at(&layer, &viewport, 300.0, 150.0),
+        Some(HandleKind::ResizeCorner(Corner::BottomRight))
+    );
+}
+
+#[test]
 fn transient_layer_is_not_part_of_scene_or_save() {
     // project 저장에 포함하지 않습니다: layer를 만들고 hit test해도 snapshot bytes·hash·index가 같습니다.
     let (snapshot, index) = scene();

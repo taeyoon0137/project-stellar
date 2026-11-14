@@ -28,7 +28,8 @@
   같은 크기로 잡힙니다. 회전한 선택 상자(임의 사각형 꼭짓점)도 그대로 받습니다.
 - **handle 종류와 영역**: 크기 조절 모서리(view 정사각형), 크기 조절 변(선분 띠), 회전(모서리 반지름 안이면서
   상자 **밖**), modifier control point(원, 식별자 `ControlPointId`). `push_selection_box`가 회전 4·변 4·모서리 4를
-  한 번에 추가합니다.
+  한 번에 추가합니다. 이후 변경(XII.3.6 리뷰 반영): 크기를 조절할 수 없는 축(`ResizeAxes`, 길이 0인 축)의 변·모서리
+  handle은 만들지 않습니다. 수평 선 상자는 위·아래 변이 없고, 점 상자는 회전 영역만 있습니다.
 - **우선순위**: handle은 항상 scene node보다 먼저 판정합니다. handle끼리는 종류 우선순위(control point 4 > 모서리 3 >
   변 2 > 회전 1), 같으면 view 거리(원·선분은 유클리드, 정사각형은 Chebyshev)가 가까운 쪽, 그것도 같으면 나중에 추가한
   handle이 이깁니다. `hit_test_canvas`는 handle이 없으면 narrow-phase scene hit test(XI.3.4) topmost를 돌려줍니다.
