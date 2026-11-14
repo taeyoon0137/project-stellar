@@ -8,8 +8,12 @@
 //! 늘렸을 때 작업량도 4배 남짓인지(제곱이면 16배) 확인합니다. wall-clock이 아닌 결정론적 횟수라 실행 환경
 //! 부하와 무관합니다.
 //!
-//! 현재 계수 지점: [`NodeColumns::iter_live`](crate::node_columns::NodeColumns::iter_live)의 live 핸들 하나 —
-//! 문서 전체를 훑는 모든 순회(자식 조회, index 구성, 레코드 생성)가 이 지점을 지납니다.
+//! 현재 계수 지점:
+//!
+//! - [`NodeColumns::iter_live`](crate::node_columns::NodeColumns::iter_live)의 live 핸들 하나 — 문서 전체를
+//!   훑는 모든 순회(자식 조회, index 구성, 레코드 생성)가 이 지점을 지납니다.
+//! - Variant override 참조 검증(`VariantOverrideSet::validate_references`)의 부모 chain 한 걸음과 이동
+//!   subtree 자손 하나.
 
 #[cfg(any(test, feature = "test-support"))]
 use std::cell::Cell;

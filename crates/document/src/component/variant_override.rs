@@ -14,7 +14,7 @@
 //!
 //! slot change가 컴포넌트 Slot 모델에 의존하므로 component 모듈에 둡니다.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
@@ -30,6 +30,7 @@ use super::definition::{ComponentLibrary, ComponentSlotId};
 use super::expansion::SceneIndex;
 use super::instance::{ComponentInstancePayload, InstancePayloadError, SlotOverride};
 use crate::node_kind::NodeKind;
+use crate::validate::MAX_NODE_DEPTH;
 
 /// variant가 새로 만드는 node 내용(위치 제외).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +138,13 @@ pub enum VariantOverrideError {
         /// cycle에 걸린 node.
         node: StableId,
     },
+    /// 최종 구조의 node depth가 문서 상한([`MAX_NODE_DEPTH`], View root depth 0 기준)을 넘습니다.
+    DepthExceeded {
+        /// 처음으로 상한을 넘은 node.
+        node: StableId,
+        /// 그 node의 최종 depth.
+        depth: u32,
+    },
     /// property patch 대상이 최종 구조에 없습니다.
     DanglingPatch {
         /// patch 경로 root.
@@ -196,6 +204,10 @@ impl fmt::Display for VariantOverrideError {
             VariantOverrideError::Cycle { node } => {
                 write!(f, "node {node}의 부모 관계에 cycle이 생깁니다")
             }
+            VariantOverrideError::DepthExceeded { node, depth } => write!(
+                f,
+                "node {node}의 최종 depth {depth}가 최대 {MAX_NODE_DEPTH}를 넘습니다"
+            ),
             VariantOverrideError::DanglingPatch { target } => {
                 write!(f, "property patch 대상 {target}가 최종 구조에 없습니다")
             }
@@ -241,6 +253,168 @@ pub struct VariantOverrideSet {
 
 /// 최종 구조에서 node 정보: (종류, 부모).
 type FinalNode = (NodeKind, Option<StableId>);
+
+/// 최종 구조에서 node 하나의 상태(memo 값).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Liveness {
+    /// 제거된 조상 없이 View root에 닿습니다. 값은 View root depth 0 기준 depth입니다.
+    Live(u32),
+    /// 제거됐거나(조상 포함) View root에 닿지 않습니다.
+    Dead,
+}
+
+/// depth가 문서 상한을 넘으면 오류입니다.
+fn check_depth(node: StableId, depth: u32) -> Result<(), VariantOverrideError> {
+    if depth > MAX_NODE_DEPTH {
+        Err(VariantOverrideError::DepthExceeded { node, depth })
+    } else {
+        Ok(())
+    }
+}
+
+/// [`VariantOverrideSet::validate_references`]의 최종 구조 조회(추가 node → 이동 → base 순).
+///
+/// base 부모 chain의 View 소속과 최종 구조의 생존·depth를 node별로 memo합니다. 한 번 판정한 node는
+/// 다시 걷지 않으므로 깊은 chain을 patch마다 root까지 다시 걷는 이차 비용이 없습니다.
+struct FinalStructure<'s, 'a> {
+    base: &'s SceneIndex<'a>,
+    view_root: StableId,
+    /// 추가·교체 node → (종류, 부모).
+    added: HashMap<StableId, FinalNode>,
+    /// 이동 node → 새 부모.
+    moved: HashMap<StableId, StableId>,
+    /// 삭제·교체된 base node.
+    removed: BTreeSet<StableId>,
+    in_view: HashMap<StableId, bool>,
+    liveness: HashMap<StableId, Liveness>,
+}
+
+impl<'s, 'a> FinalStructure<'s, 'a> {
+    fn new(base: &'s SceneIndex<'a>, view_root: StableId) -> FinalStructure<'s, 'a> {
+        FinalStructure {
+            base,
+            view_root,
+            added: HashMap::new(),
+            moved: HashMap::new(),
+            removed: BTreeSet::new(),
+            in_view: HashMap::new(),
+            liveness: HashMap::new(),
+        }
+    }
+
+    /// base 부모 chain이 `view_root`에 닿는지(memo). base cycle이면 `false`입니다.
+    fn in_view(&mut self, id: StableId) -> bool {
+        let mut path = Vec::new();
+        let mut current = Some(id);
+        let result = loop {
+            let Some(node) = current else {
+                break false;
+            };
+            if let Some(&known) = self.in_view.get(&node) {
+                break known;
+            }
+            if node == self.view_root {
+                break true;
+            }
+            path.push(node);
+            crate::op_count::tick(1);
+            if path.len() > self.base.len() {
+                break false;
+            }
+            current = self.base.parent(node);
+        };
+        for node in path {
+            self.in_view.insert(node, result);
+        }
+        result
+    }
+
+    /// View 안 base node의 (종류, base 부모).
+    fn base_node(&mut self, id: StableId) -> Option<FinalNode> {
+        if !self.in_view(id) {
+            return None;
+        }
+        self.base.fields(id).map(|f| (f.kind, self.base.parent(id)))
+    }
+
+    /// 최종 구조의 (종류, 부모).
+    fn final_node(&mut self, id: StableId) -> Option<FinalNode> {
+        if let Some(node) = self.added.get(&id) {
+            return Some(*node);
+        }
+        let (kind, parent) = self.base_node(id)?;
+        Some((kind, self.moved.get(&id).copied().or(parent)))
+    }
+
+    /// node가 최종 구조에서 살아 있는지와 depth(memo). 부모 관계에 cycle이 있으면 `Err`입니다.
+    fn liveness(&mut self, id: StableId) -> Result<Liveness, VariantOverrideError> {
+        let mut path: Vec<StableId> = Vec::new();
+        let mut on_path: HashSet<StableId> = HashSet::new();
+        let mut current = Some(id);
+        let resolved = loop {
+            let Some(node) = current else {
+                break Liveness::Dead;
+            };
+            if let Some(&known) = self.liveness.get(&node) {
+                break known;
+            }
+            if self.removed.contains(&node) {
+                break Liveness::Dead;
+            }
+            if node == self.view_root {
+                break Liveness::Live(0);
+            }
+            if !on_path.insert(node) {
+                return Err(VariantOverrideError::Cycle { node: id });
+            }
+            crate::op_count::tick(1);
+            path.push(node);
+            match self.final_node(node) {
+                Some((_, parent)) => current = parent,
+                None => break Liveness::Dead,
+            }
+        };
+        // path[i]는 resolved 상태를 낸 node(또는 끊긴 지점)에서 `path.len() - i` 단계 아래입니다.
+        let len = path.len();
+        for (i, node) in path.into_iter().enumerate() {
+            let status = match resolved {
+                Liveness::Live(depth) => {
+                    let below = u32::try_from(len - i).unwrap_or(u32::MAX);
+                    Liveness::Live(depth.saturating_add(below))
+                }
+                Liveness::Dead => Liveness::Dead,
+            };
+            self.liveness.insert(node, status);
+        }
+        Ok(self.liveness.get(&id).copied().unwrap_or(resolved))
+    }
+
+    /// node가 최종 구조에서 살아 있는지(제거된 조상 없이 root에 닿는지). cycle이면 `Err`.
+    fn live(&mut self, id: StableId) -> Result<bool, VariantOverrideError> {
+        Ok(matches!(self.liveness(id)?, Liveness::Live(_)))
+    }
+
+    /// 이동한 base node `node`(최종 depth `depth`)와, 그 아래에서 따로 이동·삭제되지 않아 함께 따라오는
+    /// base 자손의 최종 depth를 검사합니다. 따로 이동한 자손은 자기 patch에서 검사하므로 이동 subtree들은
+    /// 서로 겹치지 않고, 전체 비용은 이동한 subtree 크기의 합에 선형입니다.
+    fn check_moved_subtree(&self, node: StableId, depth: u32) -> Result<(), VariantOverrideError> {
+        check_depth(node, depth)?;
+        let base = self.base;
+        let mut stack = vec![(node, depth)];
+        while let Some((current, current_depth)) = stack.pop() {
+            for &child in base.children(current) {
+                if self.moved.contains_key(&child) || self.removed.contains(&child) {
+                    continue;
+                }
+                crate::op_count::tick(1);
+                let child_depth = current_depth.saturating_add(1);
+                check_depth(child, child_depth)?;
+                stack.push((child, child_depth));
+            }
+        }
+        Ok(())
+    }
+}
 
 impl VariantOverrideSet {
     /// 빈 set.
@@ -318,40 +492,23 @@ impl VariantOverrideSet {
     /// base View 구조와 library에 대해 모든 참조를 검사합니다.
     ///
     /// base node는 `view_root` subtree 안에 있어야 합니다. 검사 순서는 구조 patch(node id
-    /// 순) → property patch(경로 순) → slot change 순이며 첫 위반을 반환합니다.
+    /// 순) → 최종 depth → property patch(경로 순) → slot change 순이며 첫 위반을 반환합니다.
+    ///
+    /// 최종 구조에서 추가·교체·이동한 node(이동을 따라가는 base 자손 포함)의 depth는 문서 상한
+    /// [`MAX_NODE_DEPTH`](crate::validate::MAX_NODE_DEPTH)(View root depth 0 기준)을 넘을 수 없습니다.
+    /// node별 생존·depth와 View 소속을 memo하므로 전체 검사는 patch·조회 수(와 이동한 subtree 크기)에
+    /// 선형입니다(posthoc DOC-VARIANT-QUADRATIC).
     pub fn validate_references(
         &self,
         base: &SceneIndex<'_>,
         view_root: StableId,
         library: &ComponentLibrary,
     ) -> Result<(), VariantOverrideError> {
-        let in_view = |id: StableId| -> bool {
-            let mut current = Some(id);
-            let mut steps = 0usize;
-            while let Some(node) = current {
-                if node == view_root {
-                    return true;
-                }
-                steps += 1;
-                if steps > base.len() {
-                    return false;
-                }
-                current = base.parent(node);
-            }
-            false
-        };
-        let base_node = |id: StableId| -> Option<FinalNode> {
-            if !in_view(id) {
-                return None;
-            }
-            base.fields(id).map(|f| (f.kind, base.parent(id)))
-        };
+        let mut tree = FinalStructure::new(base, view_root);
 
         // 1) 구조 patch 대상·새 id 검사, 최종 부모 관계 구성.
-        let mut added: HashMap<StableId, FinalNode> = HashMap::new();
-        let mut moved: HashMap<StableId, StableId> = HashMap::new();
-        let mut removed: BTreeSet<StableId> = BTreeSet::new();
         let mut new_ids: BTreeSet<StableId> = BTreeSet::new();
+        let mut added_payloads: HashMap<StableId, &[u8]> = HashMap::new();
         for (key, patch) in &self.structure {
             match patch {
                 StructurePatch::Add {
@@ -365,66 +522,37 @@ impl VariantOverrideSet {
                     if base.fields(node.id).is_some() || !new_ids.insert(node.id) {
                         return Err(VariantOverrideError::DuplicateNodeId { id: node.id });
                     }
-                    added.insert(node.id, (node.kind, Some(*parent)));
+                    tree.added.insert(node.id, (node.kind, Some(*parent)));
+                    added_payloads.insert(node.id, node.payload.as_slice());
                 }
                 StructurePatch::Delete
                 | StructurePatch::Move { .. }
                 | StructurePatch::Replace { .. } => {
-                    let (_, base_parent) = base_node(*key)
+                    let (_, base_parent) = tree
+                        .base_node(*key)
                         .ok_or(VariantOverrideError::UnknownTarget { target: *key })?;
                     if *key == view_root {
                         return Err(VariantOverrideError::RootStructureChange { root: view_root });
                     }
                     match patch {
                         StructurePatch::Move { parent, .. } => {
-                            moved.insert(*key, *parent);
+                            tree.moved.insert(*key, *parent);
                         }
                         StructurePatch::Replace { node } => {
                             if base.fields(node.id).is_some() || !new_ids.insert(node.id) {
                                 return Err(VariantOverrideError::DuplicateNodeId { id: node.id });
                             }
-                            removed.insert(*key);
-                            added.insert(node.id, (node.kind, base_parent));
+                            tree.removed.insert(*key);
+                            tree.added.insert(node.id, (node.kind, base_parent));
+                            added_payloads.insert(node.id, node.payload.as_slice());
                         }
                         _ => {
-                            removed.insert(*key);
+                            tree.removed.insert(*key);
                         }
                     }
                 }
             }
         }
-
-        // 최종 구조 조회: 추가 node → 이동 → base 순.
-        let final_node = |id: StableId| -> Option<FinalNode> {
-            if let Some(node) = added.get(&id) {
-                return Some(*node);
-            }
-            let (kind, parent) = base_node(id)?;
-            Some((kind, moved.get(&id).copied().or(parent)))
-        };
-        let limit = base.len() + added.len() + 1;
-        // node가 최종 구조에서 살아 있는지(제거된 조상 없이 root에 닿는지). cycle이면 Err.
-        let live = |id: StableId| -> Result<bool, VariantOverrideError> {
-            let mut current = Some(id);
-            let mut steps = 0usize;
-            while let Some(node) = current {
-                if removed.contains(&node) {
-                    return Ok(false);
-                }
-                if node == view_root {
-                    return Ok(true);
-                }
-                steps += 1;
-                if steps > limit {
-                    return Err(VariantOverrideError::Cycle { node: id });
-                }
-                match final_node(node) {
-                    Some((_, parent)) => current = parent,
-                    None => return Ok(false),
-                }
-            }
-            Ok(false)
-        };
 
         // 2) Add·Move의 부모 검사.
         for (key, patch) in &self.structure {
@@ -432,10 +560,11 @@ impl VariantOverrideSet {
                 StructurePatch::Add { parent, .. } | StructurePatch::Move { parent, .. } => *parent,
                 _ => continue,
             };
-            if !live(parent)? {
+            if !tree.live(parent)? {
                 return Err(VariantOverrideError::DanglingParent { node: *key, parent });
             }
-            let (kind, _) = final_node(parent)
+            let (kind, _) = tree
+                .final_node(parent)
                 .ok_or(VariantOverrideError::DanglingParent { node: *key, parent })?;
             if !matches!(
                 kind,
@@ -444,12 +573,29 @@ impl VariantOverrideSet {
                 return Err(VariantOverrideError::InvalidParentKind { parent, kind });
             }
             // 이동·추가 node 자신이 최종 구조에서 root에 닿아야 합니다(cycle 아님).
-            live(*key)?;
+            tree.live(*key)?;
+        }
+
+        // 2b) 최종 depth 상한.
+        for (key, patch) in &self.structure {
+            match patch {
+                StructurePatch::Add { node, .. } | StructurePatch::Replace { node } => {
+                    if let Liveness::Live(depth) = tree.liveness(node.id)? {
+                        check_depth(node.id, depth)?;
+                    }
+                }
+                StructurePatch::Move { .. } => {
+                    if let Liveness::Live(depth) = tree.liveness(*key)? {
+                        tree.check_moved_subtree(*key, depth)?;
+                    }
+                }
+                StructurePatch::Delete => {}
+            }
         }
 
         // 3) property patch 대상.
         for path in self.property_patches.keys() {
-            if !live(path.root())? {
+            if !tree.live(path.root())? {
                 return Err(VariantOverrideError::DanglingPatch {
                     target: path.root(),
                 });
@@ -458,8 +604,8 @@ impl VariantOverrideSet {
 
         // 4) slot change.
         for ((instance, slot), change) in &self.slot_changes {
-            let kind = if live(*instance)? {
-                final_node(*instance).map(|(kind, _)| kind)
+            let kind = if tree.live(*instance)? {
+                tree.final_node(*instance).map(|(kind, _)| kind)
             } else {
                 None
             };
@@ -468,8 +614,10 @@ impl VariantOverrideSet {
                     instance: *instance,
                 });
             }
-            let payload_bytes = self
-                .added_payload(*instance)
+            // 이 set이 추가·교체한 node의 payload가 base보다 우선합니다.
+            let payload_bytes = added_payloads
+                .get(instance)
+                .copied()
                 .or_else(|| base.payload(*instance))
                 .unwrap_or(&[]);
             let payload = ComponentInstancePayload::decode(payload_bytes)
@@ -485,8 +633,10 @@ impl VariantOverrideSet {
             }
             if let SlotChange::Set(content) = change {
                 for node in content.content() {
-                    let owned = live(*node)?
-                        && final_node(*node).is_some_and(|(_, parent)| parent == Some(*instance));
+                    let owned = tree.live(*node)?
+                        && tree
+                            .final_node(*node)
+                            .is_some_and(|(_, parent)| parent == Some(*instance));
                     if !owned {
                         return Err(VariantOverrideError::SlotContentNotOwned {
                             instance: *instance,
@@ -497,18 +647,6 @@ impl VariantOverrideSet {
             }
         }
         Ok(())
-    }
-
-    /// 이 set이 추가·교체한 node의 payload.
-    fn added_payload(&self, id: StableId) -> Option<&[u8]> {
-        self.structure.iter().find_map(|(_, patch)| match patch {
-            StructurePatch::Add { node, .. } | StructurePatch::Replace { node }
-                if node.id == id =>
-            {
-                Some(node.payload.as_slice())
-            }
-            _ => None,
-        })
     }
 
     // --- 직렬화 ---
@@ -1168,5 +1306,123 @@ mod tests {
         );
         set.set_slot(stable(50), slot(600), SlotChange::Reset);
         check(&set).unwrap();
+    }
+
+    /// root(10) 아래로 Add patch를 이어 붙인 깊이 `k` chain(`stable(1_000 + i)`, i번째 depth = i + 1).
+    fn added_chain(k: u64) -> VariantOverrideSet {
+        let mut set = VariantOverrideSet::new();
+        for i in 0..k {
+            let parent = if i == 0 {
+                stable(10)
+            } else {
+                stable(1_000 + i - 1)
+            };
+            set.set_structure(
+                stable(1_000 + i),
+                StructurePatch::Add {
+                    node: new_node(1_000 + i, NodeKind::Frame),
+                    parent,
+                    order_key: key(0x70),
+                },
+            );
+        }
+        set
+    }
+
+    #[test]
+    fn added_chain_depth_is_bounded_and_validation_is_linear() {
+        // posthoc DOC-VARIANT-QUADRATIC 회귀: patch마다 최종 부모 chain을 root까지 다시 걸어 깊이 k chain
+        // 검증이 O(k²)였고(k=8,000에 2.4초), 추가 node에는 문서 depth 상한이 없어 깊이 8,000이 통과했습니다.
+        let library = library();
+        let (columns, payloads) = base();
+        let index = SceneIndex::build(&columns, &payloads);
+        let check =
+            |set: &VariantOverrideSet| set.validate_references(&index, stable(10), &library);
+        let max = u64::from(MAX_NODE_DEPTH);
+        // View root depth 0 기준 depth 64까지 수용하고, 65번째 node에서 거부합니다.
+        check(&added_chain(max)).unwrap();
+        assert_eq!(
+            check(&added_chain(max + 1)),
+            Err(VariantOverrideError::DepthExceeded {
+                node: stable(1_000 + max),
+                depth: MAX_NODE_DEPTH + 1,
+            })
+        );
+        assert_eq!(
+            check(&added_chain(8_000)),
+            Err(VariantOverrideError::DepthExceeded {
+                node: stable(1_000 + max),
+                depth: MAX_NODE_DEPTH + 1,
+            })
+        );
+        // 작업량(부모 chain 걸음 수)은 patch 수에 선형입니다. 수정 전에는 k=2,000에 400만 걸음이었습니다.
+        let work = |k: u64| crate::op_count::measure(|| check(&added_chain(k))).1;
+        let (small, large) = (work(500), work(2_000));
+        assert!(
+            large <= 8 * 2_000,
+            "patch 하나당 상수 걸음만 걸어야 합니다: 작업량 {large}"
+        );
+        assert!(
+            large <= 5 * small,
+            "입력 4배에 작업량 {small} → {large}(선형이면 4배 남짓, 제곱이면 16배)"
+        );
+    }
+
+    #[test]
+    fn moved_and_replaced_nodes_respect_final_depth() {
+        // posthoc DOC-VARIANT-QUADRATIC: 이동한 base node를 따라오는 base 자손과 교체 node도 최종 depth
+        // 상한을 지킵니다. base: 10 ← 11 ← 12, 13.
+        let library = library();
+        let (columns, payloads) = base();
+        let index = SceneIndex::build(&columns, &payloads);
+        let check =
+            |set: &VariantOverrideSet| set.validate_references(&index, stable(10), &library);
+        let deep = u64::from(MAX_NODE_DEPTH) - 1;
+        let move_11 = |set: &mut VariantOverrideSet| {
+            set.set_structure(
+                stable(11),
+                StructurePatch::Move {
+                    parent: stable(1_000 + deep - 1),
+                    order_key: key(0x10),
+                },
+            );
+        };
+        // 11은 depth 64(허용)지만 따라오는 자식 12는 65입니다.
+        let mut set = added_chain(deep);
+        move_11(&mut set);
+        assert_eq!(
+            check(&set),
+            Err(VariantOverrideError::DepthExceeded {
+                node: stable(12),
+                depth: MAX_NODE_DEPTH + 1,
+            })
+        );
+        // 자식을 따로 옮기고 지우면 허용됩니다.
+        set.set_structure(
+            stable(12),
+            StructurePatch::Move {
+                parent: stable(10),
+                order_key: key(0x50),
+            },
+        );
+        set.set_structure(stable(13), StructurePatch::Delete);
+        check(&set).unwrap();
+        // 교체 node는 교체 대상의 최종 부모 아래 depth입니다.
+        let mut set = added_chain(deep);
+        move_11(&mut set);
+        set.set_structure(stable(13), StructurePatch::Delete);
+        set.set_structure(
+            stable(12),
+            StructurePatch::Replace {
+                node: new_node(31, NodeKind::Text),
+            },
+        );
+        assert_eq!(
+            check(&set),
+            Err(VariantOverrideError::DepthExceeded {
+                node: stable(31),
+                depth: MAX_NODE_DEPTH + 1,
+            })
+        );
     }
 }
