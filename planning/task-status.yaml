@@ -9587,13 +9587,14 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XVI.4.7"
-    title: "command 검증이 호출마다 다시 만드는 문서 전체 index(`crates/commands/src/tree.rs`의 `id_owners`·`ChildIndex`·`reference_index`, 각 O(N))를 `DocumentModel`이 편집과 함께 증분 유지하는 id 종류·자식·inbound 참조 index로 바꿉니다. RestoreNodeRecords(ConvertShapeToPath·ConvertFragmentToFrame의 undo·redo, VII.2.7)부터 옮기고, 같은 index를 쓰는 다른 command 검증도 옮깁니다. 검사 규칙과 오류 값은 바꾸지 않습니다."
-    status: not_started
+    title: "부분 구현은 `InsertNode`의 영속 ID·형제 OrderKey 검사를 모델의 증분 인덱스 조회로 바꾸고 단일 Frame 삽입을 release 측정한 범위입니다. RestoreNodeRecords와 나머지 command는 미완료입니다. command 검증이 호출마다 다시 만드는 문서 전체 index(`crates/commands/src/tree.rs`의 `id_owners`·`ChildIndex`·`reference_index`, 각 O(N))를 `DocumentModel`이 편집과 함께 증분 유지하는 id 종류·자식·inbound 참조 index로 바꿉니다. RestoreNodeRecords(ConvertShapeToPath·ConvertFragmentToFrame의 undo·redo, VII.2.7)부터 옮기고, 같은 index를 쓰는 다른 command 검증도 옮깁니다. 검사 규칙과 오류 값은 바꾸지 않습니다."
+    status: reported_done
     depends_on:
       - "VII.2.7"
       - "VI.2.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.4.7.md"
   - id: "XVI.4.8"
     title: "binding 저장소 조회의 선형 검색을 index로 바꿉니다. `BindingStore`에 token → binding(live·orphan) 역참조 index를 두어 토큰 Delete의 inbound 검사(VIII.5.5 `TokenOrphanPlan::current`)가 모든 binding source를 훑지 않게 하고, orphan target index로 `StoreTypes::reference_type`(VIII.8.2)이 Property 참조마다 하는 orphan 선형 검색을 없앱니다. 판정 결과는 바꾸지 않습니다."
     status: not_started
