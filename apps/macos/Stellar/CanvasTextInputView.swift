@@ -105,7 +105,7 @@ final class CanvasTextInputView: NSView, NSTextInputClient {
         changed?(buffer)
     }
 
-    private static func replacement(from source: String, to result: String, preferred: NSRange,
+    static func replacement(from source: String, to result: String, preferred: NSRange,
                                     inserted: String) -> (NSRange, String) {
         if var trial = CanvasTextBuffer(source, caret: 0),
            trial.replace(inserted, replacement: preferred, markedSelection: nil),

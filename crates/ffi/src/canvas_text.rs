@@ -81,60 +81,69 @@ pub unsafe extern "C" fn stellar_window_text_paint(
         unsafe {
             *count = 0;
         }
-        with_text(handle, session, q, |text| {
-            let len = text
-                .glyphs
-                .iter()
-                .try_fold(text.lines.len(), |n, (_, path)| {
-                    n.checked_add(path.commands().len())?.checked_add(1)
-                });
-            let Some(len) = len else {
-                return StellarStatus::Internal;
-            };
-            unsafe {
-                *count = len;
-            }
-            if rows.is_null() {
-                return StellarStatus::Ok;
-            }
-            if capacity < len {
-                return StellarStatus::BufferTooSmall;
-            }
-            let mut i = 0;
-            let mut put = |op, points| {
-                unsafe { rows.add(i).write(StellarCanvasTextElement { op, points }) };
-                i += 1;
-            };
-            for r in &text.lines {
-                let [x, y, w, h] = rect(*r);
-                put(5, [x, y, w, h, 0., 0.]);
-            }
-            for (origin, path) in &text.glyphs {
-                let at = |p: Vec2| [origin.x() + p.x(), origin.y() + p.y()];
-                for cmd in path.commands() {
-                    match *cmd {
-                        CanvasPathCommand::MoveTo(p) => {
-                            let [x, y] = at(p);
-                            put(1, [x, y, 0., 0., 0., 0.]);
-                        }
-                        CanvasPathCommand::LineTo(p) => {
-                            let [x, y] = at(p);
-                            put(2, [x, y, 0., 0., 0., 0.]);
-                        }
-                        CanvasPathCommand::CubicTo { c1, c2, to } => {
-                            let [a, b] = at(c1);
-                            let [c, d] = at(c2);
-                            let [x, y] = at(to);
-                            put(3, [a, b, c, d, x, y]);
-                        }
-                        CanvasPathCommand::Close => put(4, [0.; 6]),
-                    }
-                }
-                put(6, [0.; 6]);
-            }
-            StellarStatus::Ok
+        with_text(handle, session, q, |text| unsafe {
+            write_text_paint(text, rows, capacity, count)
         })
     })
+}
+
+pub(super) unsafe fn write_text_paint(
+    text: &DocumentText,
+    rows: *mut StellarCanvasTextElement,
+    capacity: usize,
+    count: *mut usize,
+) -> StellarStatus {
+    let len = text
+        .glyphs
+        .iter()
+        .try_fold(text.lines.len(), |n, (_, path)| {
+            n.checked_add(path.commands().len())?.checked_add(1)
+        });
+    let Some(len) = len else {
+        return StellarStatus::Internal;
+    };
+    unsafe {
+        *count = len;
+    }
+    if rows.is_null() {
+        return StellarStatus::Ok;
+    }
+    if capacity < len {
+        return StellarStatus::BufferTooSmall;
+    }
+    let mut i = 0;
+    let mut put = |op, points| {
+        unsafe { rows.add(i).write(StellarCanvasTextElement { op, points }) };
+        i += 1;
+    };
+    for r in &text.lines {
+        let [x, y, w, h] = rect(*r);
+        put(5, [x, y, w, h, 0., 0.]);
+    }
+    for (origin, path) in &text.glyphs {
+        let at = |p: Vec2| [origin.x() + p.x(), origin.y() + p.y()];
+        for cmd in path.commands() {
+            match *cmd {
+                CanvasPathCommand::MoveTo(p) => {
+                    let [x, y] = at(p);
+                    put(1, [x, y, 0., 0., 0., 0.]);
+                }
+                CanvasPathCommand::LineTo(p) => {
+                    let [x, y] = at(p);
+                    put(2, [x, y, 0., 0., 0., 0.]);
+                }
+                CanvasPathCommand::CubicTo { c1, c2, to } => {
+                    let [a, b] = at(c1);
+                    let [c, d] = at(c2);
+                    let [x, y] = at(to);
+                    put(3, [a, b, c, d, x, y]);
+                }
+                CanvasPathCommand::Close => put(4, [0.; 6]),
+            }
+        }
+        put(6, [0.; 6]);
+    }
+    StellarStatus::Ok
 }
 
 /// # Safety

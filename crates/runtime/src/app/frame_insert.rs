@@ -20,7 +20,11 @@ use stellar_document::text::{edit_text, TextPayload, TextRange};
 enum CanvasItem {
     Frame(Rect),
     Rectangle(Rect),
-    Text { origin: Vec2, content: String },
+    Text {
+        id: StableId,
+        origin: Vec2,
+        content: String,
+    },
 }
 
 impl AppRuntime {
@@ -63,14 +67,20 @@ impl AppRuntime {
         parent: StableId,
         origin: Vec2,
         content: String,
-    ) -> Result<RequestId, RequestError> {
+    ) -> Result<(RequestId, StableId), RequestError> {
+        let [id] = stellar_project::new_ids::new_ids().map_err(|_| RequestError::Stopped)?;
         self.insert_canvas_item(
             session,
             view,
             revision,
             parent,
-            CanvasItem::Text { origin, content },
+            CanvasItem::Text {
+                id,
+                origin,
+                content,
+            },
         )
+        .map(|request| (request, id))
     }
 
     fn insert_canvas_item(
@@ -109,22 +119,28 @@ fn insert_item(
     let model = window.document().ok_or_else(invalid)?.model();
     editable_frame(model, view, parent).ok_or_else(invalid)?;
     let id = command_id(window.window(), request);
-    // 새 node 식별자는 창 ID와 요청 순번으로부터 얻고 UUIDv7의 variant·version을 유지합니다.
-    let bytes = id.to_bytes();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| invalid())?;
-    let ms = u64::try_from(now.as_millis()).map_err(|_| invalid())?;
-    let node = StableId::new_v7(
-        ms,
-        u16::from_le_bytes([bytes[0], bytes[1]]),
-        u64::from_le_bytes(bytes[2..10].try_into().expect("eight bytes")),
-    );
+    let node = if let CanvasItem::Text { id, .. } = &item {
+        *id
+    } else {
+        // 새 node 식별자는 창 ID와 요청 순번으로부터 얻고 UUIDv7의 variant·version을 유지합니다.
+        let bytes = id.to_bytes();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| invalid())?;
+        let ms = u64::try_from(now.as_millis()).map_err(|_| invalid())?;
+        StableId::new_v7(
+            ms,
+            u16::from_le_bytes([bytes[0], bytes[1]]),
+            u64::from_le_bytes(bytes[2..10].try_into().expect("eight bytes")),
+        )
+    };
     let origin = match &item {
         CanvasItem::Frame(bounds) | CanvasItem::Rectangle(bounds) if !bounds.is_empty() => {
             bounds.origin()
         }
-        CanvasItem::Text { origin, content } if !content.is_empty() => *origin,
+        CanvasItem::Text {
+            origin, content, ..
+        } if !content.is_empty() => *origin,
         _ => return Err(invalid()),
     };
     let transform =
@@ -242,6 +258,7 @@ mod tests {
                 revision,
                 sid(10),
                 CanvasItem::Text {
+                    id: sid(331),
                     origin,
                     content: content.into(),
                 },

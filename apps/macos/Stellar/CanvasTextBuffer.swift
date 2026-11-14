@@ -17,8 +17,9 @@ struct CanvasTextBuffer {
     /// Surrogate pair 경계만 허용합니다. 조합 중의 scalar 경계는 grapheme 내부일 수 있습니다.
     static func bounds(_ range: NSRange, in text: String) -> Range<String.Index>? {
         let units = text.utf16
-        guard range.location >= 0, range.length >= 0, range.location <= units.count,
-              range.length <= units.count - range.location else { return nil }
+        let count = units.count
+        guard range.location >= 0, range.length >= 0, range.location <= count,
+              range.length <= count - range.location else { return nil }
         let a = units.index(units.startIndex, offsetBy: range.location)
         let b = units.index(a, offsetBy: range.length)
         guard let start = a.samePosition(in: text.unicodeScalars),

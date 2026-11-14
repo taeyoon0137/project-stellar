@@ -19,10 +19,16 @@ struct WindowInput {
 #[derive(Default)]
 pub(super) struct TextInputs {
     next: u64,
+    preview_fonts: HashMap<u64, Arc<Mutex<stellar_runtime::app::text_input::TextPreviewCache>>>,
     windows: HashMap<u64, WindowInput>,
 }
 
 impl TextInputs {
+    pub(super) fn close_window(&mut self, session: u64) {
+        self.close(session);
+        self.preview_fonts.remove(&session);
+    }
+
     pub(super) fn close(&mut self, session: u64) {
         self.windows.remove(&session);
     }
@@ -51,7 +57,7 @@ impl TextInputs {
 
 /// 현재 View의 자유 배치 부모 Frame에 확정한 UTF-8 본문과 local 원점을 저장합니다.
 /// # Safety
-/// view, parent는 16바이트를 읽을 수 있고 text는 len바이트, out_request는 정렬된 u64 출력이어야 합니다.
+/// view, parent는 16바이트를 읽을 수 있고 text는 len바이트, out_node는 16 byte 출력, out_request는 정렬된 u64 출력이어야 합니다.
 #[no_mangle]
 pub unsafe extern "C" fn stellar_window_insert_text(
     handle: u64,
@@ -63,13 +69,17 @@ pub unsafe extern "C" fn stellar_window_insert_text(
     y: f32,
     text: *const u8,
     len: usize,
+    out_node: *mut [u8; 16],
     out_request: *mut u64,
 ) -> StellarStatus {
     ffi_guard(move || {
-        if out_request.is_null() || view.is_null() || parent.is_null() {
+        if out_node.is_null() || out_request.is_null() || view.is_null() || parent.is_null() {
             return StellarStatus::NullPointer;
         }
-        unsafe { out_request.write(0) };
+        unsafe {
+            out_node.write([0; 16]);
+            out_request.write(0)
+        };
         let Ok(origin) = stellar_core_types::value::Vec2::new(x, y) else {
             return StellarStatus::InvalidArgument;
         };
@@ -97,7 +107,144 @@ pub unsafe extern "C" fn stellar_window_insert_text(
             ),
             Err(status) => return status,
         };
+        let request = request.map(|(request, id)| {
+            unsafe {
+                out_node.write(id.to_bytes());
+            }
+            request
+        });
         unsafe { rt.finish_request(request, out_request) }
+    })
+}
+
+/// Input-worker projection. The callback borrows immutable geometry only during this call.
+type PreviewSink = unsafe extern "C" fn(
+    *mut std::ffi::c_void,
+    crate::canvas::StellarCanvasColor,
+    *const f32,
+    *const crate::canvas_text::StellarCanvasTextElement,
+    usize,
+);
+
+/// # Safety
+/// view, target are 16 readable bytes, value is len UTF-8 bytes and sink must accept the borrowed arrays.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_text_input_paint(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    target: *const [u8; 16],
+    revision: u64,
+    new_text: u32,
+    start: u32,
+    end: u32,
+    value: *const u8,
+    len: usize,
+    caret: u32,
+    context: *mut std::ffi::c_void,
+    sink: Option<PreviewSink>,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Some(sink) = sink else {
+            return StellarStatus::NullPointer;
+        };
+        if view.is_null() || target.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        if new_text > 1 {
+            return StellarStatus::InvalidArgument;
+        }
+        let Some(range) = TextRange::new(start, end) else {
+            return StellarStatus::InvalidArgument;
+        };
+        let text = match unsafe { decode_utf8_owned(value, len) } {
+            Ok(s) => s,
+            Err(code) => return code,
+        };
+        let view = StableId::from_bytes(unsafe { *view });
+        let node = StableId::from_bytes(unsafe { *target });
+        let (ticket, cache) = {
+            let Ok(mut reg) = registry().lock() else {
+                return StellarStatus::Internal;
+            };
+            let Some(rt) = reg.live.get_mut(&handle) else {
+                return StellarStatus::InvalidHandle;
+            };
+            let Some(app) = &rt.app else {
+                return StellarStatus::InvalidHandle;
+            };
+            if app.state().window(WindowSessionHandle(session)).is_none() {
+                return StellarStatus::InvalidArgument;
+            }
+            let Ok(ticket) = app.canvas_text_preview_input(
+                WindowSessionHandle(session),
+                view,
+                DocumentRevision(revision),
+                node,
+                new_text == 1,
+            ) else {
+                return StellarStatus::InvalidArgument;
+            };
+            let cache = rt
+                .text_inputs
+                .preview_fonts
+                .entry(session)
+                .or_default()
+                .clone();
+            (ticket, cache)
+        };
+        let Ok(Some(input)) = ticket.wait() else {
+            return StellarStatus::InvalidArgument;
+        };
+        let prepared = {
+            let Ok(mut fonts) = cache.lock() else {
+                return StellarStatus::Internal;
+            };
+            fonts.layout(input, range, &text)
+        };
+        let Some(prepared) = prepared else {
+            return StellarStatus::NoError;
+        };
+        let mut count = 0;
+        let status = unsafe {
+            crate::canvas_text::write_text_paint(&prepared, std::ptr::null_mut(), 0, &mut count)
+        };
+        if status != StellarStatus::Ok {
+            return status;
+        }
+        let mut elements = vec![crate::canvas_text::StellarCanvasTextElement::default(); count];
+        let status = unsafe {
+            crate::canvas_text::write_text_paint(
+                &prepared,
+                elements.as_mut_ptr(),
+                elements.len(),
+                &mut count,
+            )
+        };
+        if status != StellarStatus::Ok {
+            return status;
+        }
+        let caret = prepared
+            .caret_rect(caret, false)
+            .or_else(|| prepared.caret_rect(caret, true));
+        let caret = caret.map(|r| {
+            [
+                r.origin().x(),
+                r.origin().y(),
+                r.size().width(),
+                r.size().height(),
+            ]
+        });
+        unsafe {
+            sink(
+                context,
+                Some(prepared.fill).into(),
+                caret.as_ref().map_or(std::ptr::null(), |r| r.as_ptr()),
+                elements.as_ptr(),
+                count,
+            );
+        }
+        StellarStatus::Ok
     })
 }
 

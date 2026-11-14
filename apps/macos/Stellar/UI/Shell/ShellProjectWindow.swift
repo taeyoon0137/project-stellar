@@ -504,6 +504,7 @@ final class ShellProjectWindow {
             toolbarItemProvider: toolsToolbar
         )
         gitSource.trustDidChange = { [weak self] trusted in
+            if !trusted { self?.canvasTextEditing?.invalidate() }
             self?.dataSource.updateTrust(trusted)
             self?.sidebarSource.trusted = trusted
             self?.reloadComponentCanvas()
@@ -549,10 +550,14 @@ final class ShellProjectWindow {
             router.install(in: window)
         }
         // 캔버스 포커스 중 단일 키 도구 단축키(tools_menus 6.2). 도구로 해석되지 않거나 비활성이면 코어 입력으로 보냅니다.
-        canvasHost.canvasView.keyDownHandler = { [weak router] event in
+        canvasHost.canvasView.keyDownHandler = { [weak self, weak router] event in
             if event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty,
                event.keyCode == 51 || event.keyCode == 117 {
                 return router?.dispatch(.delete) ?? false
+            }
+            if event.keyCode == 36, event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+               let self, let hit = self.canvasHost.canvasView.textHit() {
+                return self.editCanvasText(hit, at: nil, canvas: self.canvasHost.canvasView)
             }
             guard let router, let tool = CanvasToolShortcut.tool(for: event) else { return false }
             return router.dispatch(tool.command)

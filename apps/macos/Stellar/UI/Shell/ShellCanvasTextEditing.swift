@@ -13,20 +13,25 @@ final class ShellCanvasTextEditing {
     let input: CanvasTextInputView
     private let pump: ShellRuntimeEventPump
     private let view: UUID
+    private var insertedID: UUID?
     private var node: UUID?
     private let parent: UUID
     private let origin: CGPoint
     private var revision: UInt64
     private var pending: [Edit] = []
+    private var persisted: String
+    private var painting = false
+    private var paintVersion: UInt64 = 0
+    private var requiresFirstPaint = true
+    private let placement: CGAffineTransform
     private var applying = false
     private var invalid = false
     private(set) var focusEnded = false
     private let queue = DispatchQueue(label: "xyz.taeyoon.stellar.canvas-text", qos: .userInitiated)
-    var onChange: ((CanvasTextBuffer) -> Void)?
     var onEnd: (() -> Void)?
 
     init(shell: ShellProjectWindow, session: ShellWindowSessionHandle, pump: ShellRuntimeEventPump,
-         view: UUID, parent: UUID, origin: CGPoint, node: UUID?, revision: UInt64, buffer: CanvasTextBuffer) {
+         view: UUID, parent: UUID, origin: CGPoint, node: UUID?, revision: UInt64, buffer: CanvasTextBuffer, placement: CGAffineTransform) {
         self.shell = shell
         self.session = session
         self.pump = pump
@@ -35,13 +40,15 @@ final class ShellCanvasTextEditing {
         self.origin = origin
         self.node = node
         self.revision = revision
+        self.placement = placement
+        self.persisted = buffer.contents
         input = CanvasTextInputView(buffer: buffer)
         input.confirmed = { [weak self] range, value, original in
             guard let self else { return }
             self.pending.append(Edit(original: original, range: range, value: value))
             self.flush()
         }
-        input.changed = { [weak self] buffer in self?.onChange?(buffer) }
+        input.changed = { [weak self] buffer in self?.refreshPaint() }
         input.ended = { [weak self] in
             guard let self else { return }
             self.focusEnded = true
@@ -50,9 +57,62 @@ final class ShellCanvasTextEditing {
         }
     }
 
+    func refreshPaint() {
+        paintVersion &+= 1
+        requestPaint()
+    }
+
+    private func requestPaint() {
+        guard let shell, let session, !session.isClosed, !session.isClosing, (!focusEnded || !pending.isEmpty), !invalid,
+              !painting, !applying, session.info?.revision == revision else { return }
+        let version = paintVersion, editingRevision = revision, target = node ?? parent
+        let isNew = node == nil, view = view, handle = pump.runtimeHandle, owner = session.session
+        let buffer = input.buffer
+        guard let selection = buffer.scalarRange(buffer.selection) else { return }
+        let delta = CanvasTextInputView.replacement(from: persisted, to: buffer.contents,
+            preferred: buffer.marked ?? NSRange(location: 0, length: 0), inserted: "")
+        guard let range = CanvasTextBuffer(persisted, caret: 0)?.scalarRange(delta.0) else { return }
+        painting = true
+        queue.async { [weak self] in
+            let paint = CanvasTypingPaint.prepare(handle: handle, session: owner, view: view, target: target, revision: editingRevision,
+                                                 newText: isNew, start: range.0, end: range.1, value: delta.1, caret: selection.1)
+            DispatchQueue.main.async { [weak self, weak shell] in
+                guard let self, let shell else { return }
+                self.painting = false
+                guard shell.canvasTextEditing === self, (!self.focusEnded || !self.pending.isEmpty), !self.invalid,
+                      self.session === shell.windowController.windowSession else { return }
+                if self.paintVersion != version || self.revision != editingRevision || self.applying {
+                    self.requestPaint()
+                    return
+                }
+                guard let paint else {
+                    if self.requiresFirstPaint {
+                        self.fail(String(localized: "This text could not be laid out. Check its styles and the font selected in File → Document Font…."))
+                    }
+                    return
+                }
+                self.requiresFirstPaint = false
+                self.flush()
+                guard !self.focusEnded else { return }
+                let canvas = shell.canvasHost.canvasView
+                canvas.typingLayer = .init(parent: self.parent, node: self.node, origin: self.origin, paint: paint)
+                let current = self.node.flatMap { canvas.textHit(id: $0) }
+                let transform = current.map { $0.localToWorld.concatenating($0.worldToView) } ?? self.placement
+                self.input.rectForRange = { _ in paint.caret?.applying(transform) }
+                self.input.inputContext?.invalidateCharacterCoordinates()
+            }
+        }
+    }
+
     private func removeIfFinished() {
         guard focusEnded, !applying, pending.isEmpty, let shell, shell.canvasTextEditing === self else { return }
         shell.canvasTextEditing = nil
+    }
+
+    func invalidate() {
+        invalid = true
+        pending.removeAll()
+        stop()
     }
 
     func stop() {
@@ -71,7 +131,7 @@ final class ShellCanvasTextEditing {
     }
 
     private func flush() {
-        guard !invalid, !applying, let edit = pending.first else { removeIfFinished(); return }
+        guard !invalid, !requiresFirstPaint, !applying, let edit = pending.first else { removeIfFinished(); return }
         guard let shell, let session, !session.isClosed, !session.isClosing, shell.gitSource.trusted,
               shell.windowController.windowSession === session, session.info?.revision == revision,
               let viewport = session.viewInfo, UUID(uuid: viewport.active_view) == view else {
@@ -82,16 +142,18 @@ final class ShellCanvasTextEditing {
         if node == nil {
             let accepted = session.track({ done in
                 var request: UInt64 = 0
+                var created = UUID().uuid
                 let data = Array(edit.value.utf8)
                 let status = withUnsafeBytes(of: view.uuid) { v in
                     withUnsafeBytes(of: parent.uuid) { p in
                         data.withUnsafeBufferPointer { bytes in
                             stellar_window_insert_text(handle, owner, v.bindMemory(to: UInt8.self).baseAddress,
                                 p.bindMemory(to: UInt8.self).baseAddress, revision, Float(origin.x), Float(origin.y),
-                                bytes.baseAddress, bytes.count, &request)
+                                bytes.baseAddress, bytes.count, &created, &request)
                         }
                     }
                 }
+                if status == STELLAR_OK { insertedID = UUID(uuid: created) }
                 return pump.trackTextRequest(status, request, completion: done)
             }, completion: { [weak self] event in self?.didApply(event, first: true) })
             if !accepted { fail(String(localized: "The project is busy. Try again.")) }
@@ -146,15 +208,17 @@ final class ShellCanvasTextEditing {
             var info = StellarCanvasInfo()
             guard state.selection_count == 1,
                   stellar_window_canvas(pump.runtimeHandle, session.session, 1, 1, &info, nil, 0) == STELLAR_OK,
-                  UUID(uuid: info.view) == view, info.revision == revision else {
+                  UUID(uuid: info.view) == view, info.revision == revision, UUID(uuid: info.primary) == insertedID else {
                 fail(String(localized: "The selection changed during text input.")); return
             }
-            node = UUID(uuid: info.primary)
+            node = insertedID
         }
-        pending.removeFirst()
+        let edit = pending.removeFirst()
+        if var updated = CanvasTextBuffer(edit.original, caret: 0),
+           updated.replace(edit.value, replacement: edit.range, markedSelection: nil) { persisted = updated.contents }
         applying = false
         shell?.refreshSessionCommands()
-        onChange?(input.buffer)
+        refreshPaint()
         flush()
     }
 }
@@ -173,15 +237,63 @@ extension ShellProjectWindow {
         guard det.isFinite, det != 0 else { return false }
         let local = point.applying(transform.inverted())
         let edit = ShellCanvasTextEditing(shell: self, session: session, pump: project.pump, view: hit.viewID, parent: hit.id,
-                                          origin: local, node: nil, revision: hit.revision, buffer: buffer)
+                                          origin: local, node: nil, revision: hit.revision, buffer: buffer,
+                                          placement: CGAffineTransform(translationX: local.x, y: local.y).concatenating(transform))
+        return activateCanvasText(edit, canvas: canvas, anchor: point)
+    }
+
+    private func activateCanvasText(_ edit: ShellCanvasTextEditing, canvas: CanvasView, anchor: CGPoint) -> Bool {
         canvasTextEditing = edit
         canvas.addSubview(edit.input)
-        edit.input.rectForRange = { _ in CGRect(origin: point, size: .zero) }
+        edit.input.rectForRange = { _ in CGRect(origin: anchor, size: .zero) }
         edit.onEnd = { [weak edit, weak canvas] in
+            canvas?.typingLayer = nil
             edit?.input.removeFromSuperview()
-            canvas?.needsDisplay = true
         }
         guard window?.makeFirstResponder(edit.input) == true else { edit.stop(); return false }
+        edit.refreshPaint()
         return true
+    }
+
+    /// worker가 선택한 본문을 읽는 동안 포커스·선택·revision이 바뀌면 편집을 시작하지 않습니다.
+    func editCanvasText(_ hit: CanvasFrameHit, at point: CGPoint?, canvas: CanvasView) -> Bool {
+        if let current = canvasTextEditing { current.stop(); guard canvasTextEditing == nil else { return true } }
+        guard hit.isText, gitSource.trusted, let session = windowController.windowSession, !session.isClosing, !session.isClosed,
+              let pump = dataSource.session?.pump else { return false }
+        let transform = hit.localToWorld.concatenating(hit.worldToView)
+        let local = point?.applying(transform.inverted()) ?? .zero
+        let handle = pump.runtimeHandle, owner = session.session, view = hit.viewID, node = hit.id, revision = hit.revision
+        let caret = hit.textOffset(handle: handle, session: owner, at: local)?.offset ?? 0
+        canvas.window?.makeFirstResponder(canvas)
+        return session.select([node]) { [weak self, weak session, weak canvas] event in
+            guard case .windowViewChanged = event, let self, let session, let canvas else { return }
+            self.refreshSessionCommands()
+            DispatchQueue.global(qos: .userInitiated).async {
+                var token: UInt64 = 0
+                let status = withUnsafeBytes(of: view.uuid) { v in withUnsafeBytes(of: node.uuid) { n in
+                    stellar_text_begin(handle, owner, v.bindMemory(to: UInt8.self).baseAddress, n.bindMemory(to: UInt8.self).baseAddress,
+                                       revision, caret, caret, &token)
+                } }
+                guard status == STELLAR_OK else { return }
+                var count = 0
+                guard stellar_text_preview(handle, owner, token, nil, 0, &count) == STELLAR_OK else {
+                    _ = stellar_text_cancel(handle, owner, token); return
+                }
+                var bytes = [UInt8](repeating: 0, count: count)
+                let loaded = bytes.withUnsafeMutableBufferPointer { stellar_text_preview(handle, owner, token, $0.baseAddress, $0.count, &count) }
+                _ = stellar_text_cancel(handle, owner, token)
+                guard loaded == STELLAR_OK, let text = String(bytes: bytes, encoding: .utf8),
+                      let buffer = CanvasTextBuffer(text, caret: caret) else { return }
+                DispatchQueue.main.async { [weak self, weak session, weak canvas] in
+                    guard let self, let session, let canvas, self.windowController.windowSession === session,
+                          !session.isClosing, !session.isClosed, self.gitSource.trusted, self.canvasTextEditing == nil,
+                          self.window?.firstResponder === canvas, session.info?.selection_count == 1,
+                          let current = canvas.textHit(), current.id == node, current.revision == revision else { return }
+                    let edit = ShellCanvasTextEditing(shell: self, session: session, pump: pump, view: view,
+                        parent: node, origin: .zero, node: node, revision: revision, buffer: buffer, placement: transform)
+                    _ = self.activateCanvasText(edit, canvas: canvas, anchor: point ?? .zero)
+                }
+            }
+        }
     }
 }

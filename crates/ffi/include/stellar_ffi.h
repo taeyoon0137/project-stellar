@@ -382,8 +382,12 @@ StellarStatus stellar_window_canvas(uint64_t handle, uint64_t session, float wid
 /* 셸 worker 전용. 활성 View/revision의 직계 자식을 앞에서부터 조회합니다.
  * rows: STELLAR_LAYER_PAGE_SIZE개 caller buffer. 플래그 bit 0 표시, 1 잠금, 2 자식 있음.
  * UTF-8 text는 페이지·View·행 이름 순서. BUFFER_TOO_SMALL은 info.text_len만큼 확보해 재호출합니다. */
+/* Worker-only input preview. Elements and optional local caret xywh are borrowed only during sink(). */
+typedef void (*StellarTextPaintSink)(void *context, StellarCanvasColor fill, const float *caret, const StellarCanvasTextElement *elements, size_t count);
+StellarStatus stellar_text_input_paint(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t target[16], uint64_t revision, uint32_t new_text, uint32_t start, uint32_t end, const uint8_t *value, size_t len, uint32_t caret, void *context, StellarTextPaintSink sink);
+
 /* Insert nonempty UTF-8 text at a parent Frame's local origin as one undoable edit. */
-StellarStatus stellar_window_insert_text(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, const uint8_t *text, size_t len, uint64_t *out_request);
+StellarStatus stellar_window_insert_text(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, const uint8_t *text, size_t len, uint8_t out_node[16], uint64_t *out_request);
 
 /* Text composition. Begin and preview run on the window worker.
  * Begin uses document Unicode scalar offsets. Mark uses UTF-16 offsets within marked text.

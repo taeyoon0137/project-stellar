@@ -27,6 +27,10 @@ extension ShellProjectWindow {
         canvas.framePointerHandler = { [weak self, weak canvas] event in
             guard let self, let canvas else { return false }
             let point = CanvasInput.viewPoint(of: event, in: canvas)
+            if event.type == .leftMouseDown, event.clickCount == 2, self.toolsModel.snapshot.activeTool == .move,
+               let hit = canvas.frameHit(at: point), hit.isText {
+                return self.editCanvasText(hit, at: point, canvas: canvas)
+            }
             if event.type == .leftMouseDown, self.toolsModel.snapshot.activeTool == .text,
                event.modifierFlags.intersection([.shift, .control, .command, .option]).isEmpty {
                 return self.beginCanvasText(at: point, canvas: canvas)
