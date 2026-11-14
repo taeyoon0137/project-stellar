@@ -67,6 +67,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "<경로> <문서 id> <View id>: 지정 View의 정적 접근성 HTML 조각과 revision·진단을 JSON으로 출력합니다(전체 코드 내보내기 아님)",
     ),
     (
+        "export-web",
+        "<경로> <문서 id> <View id>: 고정 Free Frame·Fragment의 HTML+CSS와 revision·진단을 JSON으로 출력합니다(미지원 값은 실패)",
+    ),
+    (
         "apply",
         "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
     ),
@@ -165,6 +169,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("query", commands::query(rest))
     } else if command == "export-accessibility" {
         ("export-accessibility", crate::accessibility_html::run(rest))
+    } else if command == "export-web" {
+        ("export-web", crate::web_frame::run(rest))
     } else if command == "apply" {
         ("apply", crate::apply::run(rest))
     } else if command == "validate" {
