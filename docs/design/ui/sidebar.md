@@ -198,7 +198,8 @@ protocol SidebarDataProvider: AnyObject {
 
 - 메인 스레드에서는 snapshot 반영과 네이티브 UI 갱신만 합니다. 필터 질의, 트리 구성, 자식 페이지 계산은 provider(코어) 몫입니다. [아키텍처 §6.3, §9.2] [가이드 9장]
 - 연속된 변경 통지는 다음 런 루프(common mode, 드래그 중 포함)에서 한 번만 반영합니다. [가이드 9장]
-- 구조가 같으면 화면에 보이는 행 가운데 값이 바뀐 행만 제자리에서 다시 채웁니다. 구조가 바뀌면 목록을 다시 읽고 펼침을 복원합니다. 행 뷰는 보이는 범위만 만듭니다(`NSOutlineView` 재사용). [가이드 6.2, 9장]
+- 구조가 같으면 이미 만들어진 행 가운데 값이 바뀐 행만 제자리에서 다시 채웁니다. 구조가 바뀌면 목록을 다시 읽고 펼침을 복원합니다. 행 뷰는 보이는 범위 근처만 만듭니다(`NSOutlineView` 재사용). [가이드 6.2, 9장]
+- "이미 만들어진 행"은 `enumerateAvailableRowViews`로 돕니다. NSTableView는 스크롤 준비로 보이는 범위 밖 행 뷰도 만들어 두고(responsive scrolling overdraw) 그 행이 화면에 들어와도 `viewFor`를 다시 부르지 않으므로, 보이는 범위(`visibleRect`)만 돌면 그 행이 다음 구조 reload까지 이전 값으로 남습니다. 대비 높이기 변경도 같은 경로로 반영합니다.
 - 남은 비용: 구조 reload는 펼쳐진 행 수에 비례하는 data source 호출을 합니다. 한 부모 아래 자식이 매우 많을 때의 부모 내부 페이지 분할은 코어 연결 때 측정해 정합니다(13절).
 
 ## 10. 이 작업에서 정한 수치
@@ -221,7 +222,7 @@ protocol SidebarDataProvider: AnyObject {
 - 구조: SF Symbol 21개 해석, source list 스타일, `NSSearchField`, 사이드바 behavior, accessory 부착, 이 영역이 넣은 `NSVisualEffectView` 없음(시스템 행의 선택 재질은 제외), 행 수, group row, active View 선택, key view 순서.
 - layout: Light·Dark·결과 없음 상태에서 Auto Layout 모호성 없음, 이름 필드가 토글과 겹치지 않음, 토글 클릭 대상 20×20pt 이상이고 행 안에 들어감, 앱 크롬 색이 시스템 catalog 색.
 - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로로 읽습니다(`AXNode`: NSAccessibility 프로토콜 객체는 프로토콜 메서드, AppKit 표의 `AXRow`·`AXCell`은 legacy attribute 질의). 모든 행이 `AXCell` 하나로 묶임, 행 레이블·custom action(명세로 따로 계산한 값과 비교), 장식 아이콘 `AXImage` 없음, 보이는 토글만 노출되고 레이블이 다음 동작, custom action을 접근성 서버 방식(이름 있는 AX action)으로 실행(Hide·Lock → command, 선택 유지, Rename → 편집 시작·취소), 선택 행(`AXSelectedRows`)의 레이블, 필터 필드 cell 레이블, 상태 화면 group 레이블과 아이콘 미노출, 숨김·잠김·필터 문맥 문구, 빈 이름 placeholder.
-- 동작: 선택 command, 외부 선택 펼침, Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 변경 통지 병합.
+- 동작: 선택 command, 외부 선택 펼침, Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행의 값 변경·대비 높이기 반영, 변경 통지 병합.
 - 검사하지 않는 것: 실제 마우스 드래그 세션, VoiceOver 음성 출력, 시스템 접근성 설정을 실제로 켠 상태, 화면 픽셀.
 
 통합 때 `main.swift`에 `--sidebar-ui-check` 같은 인자로 `exit(SidebarUICheck.run() ? 0 : 1)`을 연결하고 `scripts/macos/smoke.sh`에서 호출합니다. 아직 연결되지 않았으므로(두 파일은 이 영역 밖) 지금은 자동 회귀 방지가 없습니다. 지금까지의 결과는 이 폴더의 소스와 `SidebarUICheck.run()`만 부르는 임시 진입점을 저장소 밖에서 컴파일해 얻은 것입니다.

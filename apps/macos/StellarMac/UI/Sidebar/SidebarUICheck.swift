@@ -10,7 +10,7 @@ import AppKit
 ///   행 레이블·custom action(실행 포함), 장식 아이콘 미노출, 토글·필터·상태 화면 레이블, 선택 행, key view 순서
 /// - 선택, 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증,
 ///   키보드 단축키, 드롭 사전 검증·재지정, 필터·결과 없음·필터 해제 후 펼침 복원, 빈 View,
-///   로드 중·실패·재시도, 지연 자식 로드, snapshot 변경 통지 병합
+///   로드 중·실패·재시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행 갱신, snapshot 변경 통지 병합
 /// 실제 마우스 드래그 세션, VoiceOver 음성 출력, 화면 픽셀은 검사하지 않습니다.
 enum SidebarUICheck {
     static func run() -> Bool {
@@ -215,10 +215,11 @@ enum SidebarUICheck {
 
         try checkLayout(harness, label: "Dark", appearance: .darkAqua)
         try checkLazyChildren()
+        try checkAvailableRows()
         try checkCoalescing()
 
         return "symbols \(SidebarSymbols.allNames.count), pages+layers outline, AX rows/cells/custom actions, "
-            + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/lazy/coalescing, "
+            + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/lazy/offscreen rows/coalescing, "
             + "no ambiguous layout (Light, Dark)"
     }
 
@@ -716,6 +717,47 @@ enum SidebarUICheck {
         harness.refresh()
         try require(layers.outline.isItemExpanded(item), "자식 로드 후 펼침이 유지되지 않음")
         try require(harness.row(of: try harness.id("Title"), in: layers.outline) > row, "로드된 자식이 보이지 않음")
+    }
+
+    /// 보이는 범위 밖에 만들어 둔 행 뷰(NSTableView가 스크롤 준비로 미리 만드는 행)도 값만 바뀐 snapshot과
+    /// 대비 높이기 변경을 반영해야 합니다. 그 행은 화면에 들어올 때 `viewFor`를 다시 거치지 않습니다.
+    @MainActor
+    private static func checkAvailableRows() throws {
+        let harness = Harness(provider: SidebarStubDataProvider())
+        defer { harness.close() }
+        let layers = harness.layers
+        let outline = layers.outline
+        // 모두 펼쳐 행이 레이어 구획 높이를 넘게 합니다.
+        outline.expandItem(nil, expandChildren: true)
+        harness.refresh()
+        outline.scrollRowToVisible(0)
+        harness.refresh()
+        let visible = outline.rows(in: outline.visibleRect)
+        let last = outline.numberOfRows - 1
+        try require(last >= visible.location + visible.length, "검사 전제: 보이는 범위 밖 행 없음(보임 \(visible), 행 \(outline.numberOfRows))")
+        guard let id = (outline.item(atRow: last) as? SidebarOutlineItem)?.layerID,
+              let cell = outline.view(atColumn: 0, row: last, makeIfNecessary: true) as? SidebarLayerCellView else {
+            throw Failure(message: "보이는 범위 밖 행 셀을 만들지 못함")
+        }
+        var available: [Int] = []
+        outline.enumerateAvailableRowViews { _, row in available.append(row) }
+        try require(available.contains(last), "검사 전제: 보이는 범위 밖 행 뷰가 목록에 남지 않음(\(available))")
+
+        // 값만 바뀐 snapshot(구조 같음): 보이는 범위 밖 행도 제자리에서 다시 채웁니다.
+        let structure = harness.provider.snapshot.layers.structureRevision
+        harness.provider.perform(.setVisible([id], false))
+        try require(harness.provider.snapshot.layers.structureRevision == structure, "검사 전제: 값 변경이 구조 변경으로 처리됨")
+        harness.sidebar.applySnapshotNow()
+        try require(outline.view(atColumn: 0, row: last, makeIfNecessary: false) === cell, "검사 전제: 보이는 범위 밖 행 셀이 교체됨")
+        try require((cell.accessibilityLabel() ?? "").contains(SidebarStrings.hiddenState),
+                    "보이는 범위 밖 행이 값 변경을 반영하지 않음: \(cell.accessibilityLabel() ?? "nil")")
+
+        // 대비 높이기: 보이는 범위 밖 행도 토글을 항상 보입니다.
+        try require(cell.lockButton.isHidden, "검사 전제: 기본 상태 잠금 토글이 보임")
+        layers.showsTogglesAlways = true
+        try require(cell.showsTogglesAlways && !cell.lockButton.isHidden, "보이는 범위 밖 행에 대비 높이기가 반영되지 않음")
+        layers.showsTogglesAlways = false
+        try require(cell.lockButton.isHidden, "대비 높이기 해제가 보이는 범위 밖 행에 반영되지 않음")
     }
 
     @MainActor
