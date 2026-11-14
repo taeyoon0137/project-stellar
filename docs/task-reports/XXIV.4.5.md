@@ -21,7 +21,7 @@
 
 ## 구현 요약
 
-- **순서**: 쓰기 모드 `apply`는 command 해석 → `stellar.yaml` probe로 project id 확인 → **잠금 획득** → snapshot 열기(generation 읽기) → base revision 비교 → 적용 → 세대 전환 저장(V.5) → 잠금 해제(drop) 순입니다. 잠금 안에서 generation 비교와 current pointer 교체가 일어나므로 headless writer끼리는 같은 base 위의 동시 저장이 생기지 않습니다. 앱 창 같은 잠금을 쓰지 않는 writer는 기존 V.5.2 optimistic check가 쓰기 전에 거부합니다.
+- **순서**: 쓰기 모드 `apply`는 command 해석 → `stellar.yaml` probe로 project id 확인 → **잠금 획득** → snapshot 열기(generation 읽기) → base revision 비교 → 적용 → 세대 전환 저장(V.5) → 잠금 해제(drop) 순입니다. 잠금 안에서 generation 비교와 current pointer 교체가 일어나므로 headless writer끼리는 같은 base 위의 동시 저장이 생기지 않습니다. 후속 runtime 통합으로 앱 창 Save Now도 같은 잠금을 잡아 base 확인부터 pointer 교체까지 직렬화합니다.
 - **위치**: `<OS 사용자 데이터>/xyz.taeyoon.stellar/locks/<key>.lock`. OS 사용자 데이터는 기존 `stellar_project::trust_store::os_user_data_base`(macOS `$HOME/Library/Application Support`)를 그대로 쓰고, 하위 폴더는 앱 bundle identifier(`apps/macos` 프로젝트의 `PRODUCT_BUNDLE_IDENTIFIER`)입니다. Apple File System Programming Guide는 Application Support 아래 앱 데이터를 bundle identifier 이름의 하위 폴더에 두라고 안내합니다. 디렉터리는 `0700`, 잠금 파일은 `0600`으로 만들고 내용은 쓰지 않습니다.
 - **key**: `project id ‖ canonical target`(IV.2.3 `ProjectIdentity`)의 SHA-256 앞 16바이트 16진수. symlink 경로로 열어도 같은 잠금이고 다른 worktree는 다른 잠금입니다.
 - **OS API**: Rust std `File::try_lock`(Unix에서 `flock(2)` `LOCK_EX | LOCK_NB`). Apple `flock(2)` 매뉴얼 기준으로 advisory 잠금이며 open file description에 붙어, 그 description을 가리키는 마지막 fd가 닫히면(프로세스 비정상 종료 포함) 해제됩니다. 그래서 남은 잠금 파일이 다음 writer를 막지 않습니다. 같은 프로세스 안에서도 따로 연 fd끼리 경합합니다(ops thread test로 확인).
@@ -53,13 +53,25 @@
 
 - 성능 작업이 아니며 자동 생성 파일 변경은 없습니다.
 
+### 앱 Save Now와의 상호 운용 후속 검증
+
+- `cargo test --locked -p stellar-runtime -p stellar-ops -p stellar-cli`에서 단위·통합·doctest 234개가 통과했습니다.
+  `cargo clippy --locked -p stellar-runtime -p stellar-ops -p stellar-cli --all-targets -- -D warnings`와 `cargo fmt --all -- --check`도 통과했습니다.
+- runtime의 `cli_generation_lock_and_window_save_share_one_identity`는 임시 사용자 데이터와 별도 프로세스로
+  동일 경로·symlink의 경합, 잠금 해제 후 저장, HOME이 없어도 가능한 무변경 저장과 undo로 원상 복원한 저장을 검사합니다.
+  `saving_after_a_symlink_is_repointed_updates_the_opened_project`는 열린 target에만 기록되는지 검사합니다.
+- 저장된 창 fixture를 복사해 실제 `stellar apply`와 Rust 창 session을 별도 프로세스로 실행했습니다.
+  앱 측에서 프로젝트 잠금을 보유한 동안 CLI는 75를 반환했고, 해제 후 2세대를 기록했습니다. 먼저 열었던
+  앱의 저장은 stale로 실패하고 편집을 유지했습니다. 새 앱 session은 다른 프로세스가 잠금을 보유하면
+  dirty 상태를 유지했고, 해제 후 같은 session에서 재시도하여 이름 변경을 3세대로 저장했습니다.
+
 ## 차이(작업 지시와 다른 점)
 
 - Git merge driver 모드 자체(XXIV.2.1)는 아직 없으므로 "merge driver 모드 잠금 미사용"은 그 모드가 쓸 `LockPolicy::None` 경로가 잠금을 만들거나 잡지 않음을 확인한 것입니다. XXIV.2.1은 이 정책을 써야 합니다.
 
 ## 남은 위험 / 한계
 
-- 잠금은 headless writer끼리만 직렬화합니다. 앱 창 저장은 아직 이 잠금을 쓰지 않으며(앱 저장 경로는 이 lane 밖), 앱과의 경합은 V.5.2 optimistic check와 XXIV.4.6 reconciliation이 담당합니다. optimistic check와 pointer 교체 사이의 짧은 구간은 앱이 같은 잠금을 쓰기 전까지 남습니다.
+- 같은 OS 사용자 데이터의 잠금을 사용하는 generation writer에 적용합니다. 다른 사용자나 외부 Git 변경에 대한 semantic reconciliation은 XXIV.4.6 범위입니다.
 - **후속(`[x]`로 올리기 위한 남은 일)**: XXIV.4.4의 generation metadata writer 종류 기록(보호 경로 `crates/storage`와 ADR)을 마쳐 XXIV.4.4를 `[x]`로 올린 뒤, 이 보고서의 검증 명령을 다시 실행해 `[x]`로 바꿉니다.
 - 동시 쓰기 test는 잠금이 직렬화한 결과의 손실 0을 확인하지만, 잠금 없이 손실이 나는 경합을 결정적으로 재현하지는 못합니다. 대신 V.5.2 optimistic check만으로 통과하지 않도록, 잠금이 감싸야 하는 계획 뒤 교체(`ConcurrentWrite`, CLI `concurrent-write`)가 한 번이라도 나오면 두 test 모두 실패합니다. base 불일치 재시도는 base를 잠금 밖에서 읽는 호출 방식 때문에 정상입니다.
 - 잠금 디렉터리의 상위 경로(`$HOME`, Application Support)는 symlink 여부를 검사하지 않습니다. 같은 사용자 `HOME` 안이라 위험이 낮습니다.

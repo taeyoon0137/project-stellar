@@ -107,8 +107,9 @@ cc -Icrates/ffi/include crates/ffi/tests/runtime_abi.c target/debug/libstellar_f
   GUI thread는 기다리지 않습니다. 새로 추가한 정상 닫기 경로에는 blocking 대기·modal run loop가 없습니다.
 - 앱 Quit(⌘Q)·종료·업데이트 재시작·앱 비활성화 flush는 이 경로를 거치지 않습니다. 종료 의미를 바꾸지 않았으며
   이들 경로의 미저장 편집 보존을 보장하지 않습니다. 마지막 프로젝트 창 닫기 후 시작 창 표시도 기존대로입니다.
-- runtime Save Now에는 `stellar-ops::lock::SaveLock`이 연결되지 않았습니다. 같은 runtime의 창별 저장은
-  document thread에서 순차 실행되어 stale 창이 앞선 저장을 덮어쓰지 않지만 교차 프로세스 경쟁은 남습니다.
+- 세대를 쓰는 Save Now와 `stellar apply`는 OS 사용자 데이터의 프로젝트별 저장 잠금을 공유합니다.
+  잠금 경합은 창을 유지하는 저장 실패로 전달되며, 잠금 해제 후 재시도 때 디스크 세대가 달라졌으면 stale을 반환합니다.
+  외부 Git 변경의 자동 병합과 다른 OS 사용자 간 쓰기 조정은 별도 범위입니다.
 - normal UI의 캔버스 편집 도구는 아직 미연결입니다. Debug bridge는 실제 Rust transaction으로 편집을 만들며
   native close·저장·재로드·오류는 제품 코드로 확인합니다. 시뮬레이터의 가짜 저장 성공을 근거로 쓰지 않습니다.
 - 저수준 `NSWindow.close()`와 `stellar_window_session_close`는 명시적 폐기 API로 유지합니다. 정상 사용자 닫기는

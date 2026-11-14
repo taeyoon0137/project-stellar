@@ -183,9 +183,10 @@ UI thread는 기다리지 않습니다.
   node에 실제 `CommandTransaction`을 적용하거나 이름을 검증하며, 제한된 지연(최대 500ms)을 document queue에
   넣습니다. Release에는 심벌이 없고 Swift 호출도 `#if DEBUG` 안입니다. 파일 쓰기·stale·저장 event는
   제품 경로를 그대로 검사합니다. 헤더 생성기가 검사 선언도 소유합니다.
-- `stellar-ops::lock::SaveLock`은 headless writer용 비대기 advisory lock입니다. runtime의 기존 Save Now는
-  이 lock을 획득하지 않습니다. 같은 runtime의 독립 창은 단일 document thread와 저장 전 stale 검사로
-  순서가 정해지지만, 별도 앱·CLI의 검사/쓰기 간 경쟁은 이 변경에서 해결하지 않습니다. 공통 lock 경로와
-  모든 writer 적용은 별도 통합이 필요합니다.
+- 세대를 기록하는 Save Now는 같은 OS 사용자의 `stellar apply`와 `stellar-ops::lock::SaveLock`을 공유합니다.
+  열린 프로젝트 ID와 symlink를 해석한 target으로 잠금을 잡고, 같은 경로의 current manifest를 확인한 뒤
+  pointer 교체와 session 갱신까지 보유합니다. 경합이나 잠금 준비 실패는 SaveFailed로 반환하며 편집을 보존합니다.
+  작업 문서가 없거나 저장 bytes가 같으면 잠금을 만들지 않습니다. 기존 세대가 있는 문서는 무변경 저장에서도
+  current manifest를 확인합니다. Git checkout 등 외부 변경이 base 검사 전에 끝나면 stale을 반환합니다. 외부 변경의 reconciliation은 XXIV.4.6 범위입니다.
 
 검증·남은 범위는 [정상 창 닫기 보고서](../status/window-close-save.md)를 따릅니다.

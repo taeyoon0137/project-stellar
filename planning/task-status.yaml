@@ -8460,11 +8460,17 @@ tasks:
     verified_at: "2026-11-14T18:10:17+09:00"
   - id: "XIV.6.6"
     title: "stage operation이 WorkingTree bytes와 in-memory document를 바꾸지 않는 통합 테스트를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.6.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.6.6.md"
+    commit: "9ec7820db321a481341a786157267e54c4ddf571"
+    report: "docs/task-reports/XIV.6.6.md"
+    verified_at: "2026-11-14T18:25:05+09:00"
   - id: "XIV.7.1"
     title: "선택 staged changes를 Index snapshot에서 inverse 적용해 CandidateIndexSnapshot을 계산합니다. 기준은 HEAD가 아니라 현재 Index입니다."
     status: verified

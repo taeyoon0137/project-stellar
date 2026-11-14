@@ -598,3 +598,102 @@ fn writer_during_semantic_verification_returns_restore_conflict_and_preserves_wr
     );
     assert!(!fx.work().join("README.external").exists());
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn rejected_cancelled_and_restored_stage_preserve_working_tree_and_document_revision() {
+    use stellar_commands::state::DocumentState;
+    use stellar_core_types::revision::DocumentRevision;
+    use stellar_git_porcelain::{
+        blob_write::write_blob, cancel::GitCancelToken, runner::argv, trust::GitTrust,
+    };
+    for scenario in [
+        "cancel",
+        "untrusted",
+        "stale",
+        "bad-temp",
+        "nested-root",
+        "mismatch",
+    ] {
+        let (fx, parent, mut prepared, unchanged) = apply_fixture("stage-invariants");
+        let loaded = SavedProjectLoader::new().open(fx.work()).unwrap();
+        let document_id = loaded.document_ids().unwrap()[0];
+        let memory = DocumentState::with_revision(
+            loaded.load_document(document_id).unwrap().model,
+            DocumentRevision(19),
+        );
+        let memory_before = memory.model().to_records().unwrap();
+        let mut gate = fx.gated();
+        let cancel = GitCancelToken::new();
+        let mut worktree = fx.work().to_path_buf();
+        let mut temp_parent = parent.clone();
+        match scenario {
+            "cancel" => cancel.cancel(),
+            "untrusted" => gate.set_trust(GitTrust::NotTrusted),
+            "stale" => {
+                let oid = write_blob(&fx.gated(), fx.work(), b"external staged").unwrap();
+                assert!(fx
+                    .gated()
+                    .run_with_input(
+                        &argv(["update-index", "--index-info"]),
+                        fx.work(),
+                        format!("100644 {oid}\tREADME.external\n").as_bytes()
+                    )
+                    .unwrap()
+                    .success());
+            }
+            "bad-temp" => temp_parent = fx.work().to_path_buf(),
+            "nested-root" => {
+                worktree.push("nested");
+                std::fs::create_dir(&worktree).unwrap();
+            }
+            "mismatch" => prepared.semantic = unchanged.semantic,
+            _ => unreachable!(),
+        }
+        let index_before = read_index_snapshot(&fx.gated(), fx.work()).unwrap();
+        let index_bytes = std::fs::read(fx.work().join(".git/index")).unwrap();
+        let working_before: std::collections::BTreeMap<_, _> = file_digest(fx.work())
+            .into_iter()
+            .filter(|(p, _)| !p.starts_with(".git/"))
+            .collect();
+        let spawns = gate.spawn_count();
+        let result = apply_stage_candidate(&gate, &worktree, &temp_parent, &prepared, &cancel);
+        assert!(result.is_err(), "{scenario}");
+        if matches!(scenario, "cancel" | "untrusted") {
+            assert_eq!(gate.spawn_count(), spawns, "{scenario}");
+        }
+        if scenario == "mismatch" {
+            assert!(matches!(
+                result,
+                Err(ApplyStageError::Verification {
+                    rollback: Ok(()),
+                    ..
+                })
+            ));
+        } else {
+            assert_eq!(
+                std::fs::read(fx.work().join(".git/index")).unwrap(),
+                index_bytes,
+                "{scenario}"
+            );
+        }
+        assert_eq!(
+            read_index_snapshot(&fx.gated(), fx.work()).unwrap(),
+            index_before,
+            "{scenario}"
+        );
+        let working_after: std::collections::BTreeMap<_, _> = file_digest(fx.work())
+            .into_iter()
+            .filter(|(p, _)| !p.starts_with(".git/"))
+            .collect();
+        assert_eq!(working_after, working_before, "{scenario}");
+        assert_eq!(memory.revision(), DocumentRevision(19), "{scenario}");
+        assert_eq!(
+            memory.model().to_records().unwrap(),
+            memory_before,
+            "{scenario}"
+        );
+        assert_eq!(std::fs::read_dir(parent).unwrap().count(), 2, "{scenario}");
+        assert!(!fx.work().join(".git/index.lock").exists(), "{scenario}");
+    }
+}

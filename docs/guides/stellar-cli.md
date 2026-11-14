@@ -11,6 +11,7 @@
 - [요약](#요약)
 - [빌드와 실행](#빌드와-실행)
 - [명령](#명령)
+- [신뢰된 프로젝트를 MCP로 읽기](#신뢰된-프로젝트를-mcp로-읽기)
 - [지정 View의 정적 접근성 HTML](#지정-view의-정적-접근성-html)
 - [지정 View의 고정 Frame HTML+CSS](#지정-view의-고정-frame-htmlcss)
 - [출력 계약](#출력-계약)
@@ -151,6 +152,55 @@ cargo run -q -p stellar-cli -- --help
 
 stdout JSON에는 입력 경로를 넣지 않습니다. 의존성의 `repository` URL과 `library_id`도 출력하지
 않습니다. 입력 경로는 stderr 진단에만 나타납니다.
+
+## 신뢰된 프로젝트를 MCP로 읽기
+
+`stellar-mcp`는 앱이 닫혀 있어도 디스크에 저장된 프로젝트 구조와 문서 노드를 읽을 수 있습니다.
+대상은 현재 OS 사용자의 기존 신뢰 등록에서 프로젝트 ID가 정확히 한 작업 폴더를 가리켜야 합니다.
+`stellar inspect`는 매니페스트의 ID를 읽습니다. 같은 ID로 등록된 작업 폴더가 여러 개이거나
+등록이 없으면 headless 서버는 종료 코드 77로 끝납니다.
+
+저장소에서 빌드할 때는 `cargo build -p stellar-cli -p stellar-mcp`로 두 실행 파일을 만듭니다.
+아래 명령에서 두 파일이 `PATH`에 없으면 각각 `target/debug/stellar`, `target/debug/stellar-mcp`를 사용합니다.
+
+```sh
+stellar inspect /path/to/project | jq -er '.result.project.id'
+stellar-mcp --connection-info
+```
+
+외부 MCP 클라이언트의 stdio 서버 설정에서 `command`는 두 번째 명령이 출력한 실행 경로를 사용합니다.
+기본 `args: []`로 시작하면 프로젝트 리소스를 제공하지 않습니다. 첫 번째 명령에서 얻은 ID로
+인자를 채웁니다. 아래 배열은 검증에 사용한 프로젝트의 예입니다.
+
+```json
+["--headless", "--project", "0195c530-3acd-7bc1-8414-c213f61cb965"]
+```
+
+다음은 클라이언트가 같은 stdio 세션에 보내는 JSON-RPC 메시지입니다. 요청 4의 응답에서
+`result.contents[0].text`를 JSON으로 파싱하고, 원하는 `documents[].id`를 요청 5의 URI에 넣습니다.
+
+```jsonl
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"fixture","version":"1"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"resources/list","params":{}}
+{"jsonrpc":"2.0","id":3,"method":"resources/templates/list","params":{}}
+{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"stellar://project/structure"}}
+{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"stellar://documents/00000000-0001-7000-8000-000000000001?limit=1"}}
+```
+
+커밋 `bc5b2db2`의 격리된 신뢰 프로젝트에서 받은 응답의 주요 필드입니다.
+
+| 요청 ID | 응답 |
+|---|---|
+| 1 | `protocolVersion = "2025-11-25"`, `capabilities = {"resources":{}}` |
+| 2 | `resources[0].uri = "stellar://project/structure"` |
+| 3 | `resourceTemplates[0].uriTemplate = "stellar://documents/{document}{?cursor,limit}"` |
+| 4 | 본문의 `documents[0].id = "00000000-0001-7000-8000-000000000001"`, `revision.generation = 1` |
+| 5 | 본문의 `offset = 0`, `items` 1개, `revision.generation = 1`, 다음 페이지용 `next_cursor` 문자열 |
+
+다음 페이지가 필요하면 같은 문서 URI의 `cursor`에 반환된 `next_cursor`를 넣습니다.
+`next_cursor`가 `null`이면 마지막 페이지입니다. 이 모드는 저장된 데이터만 읽으며
+에디터의 현재 선택이나 미저장 편집은 노출하지 않습니다.
 
 ## 지정 View의 정적 접근성 HTML
 
@@ -619,13 +669,14 @@ missing-manifest
 
 ### 쓰기와 실행 중 앱과의 공존
 
-- 세대 전환 저장 직전에 교차 프로세스 저장 잠금을 잡고, 디스크 generation과 base generation을
-  비교합니다. 잠금은 프로젝트 폴더와 Git 밖의 OS 사용자 데이터에 둡니다. 잠금이 사용 중이면 일시적
-  실패(75)로 끝납니다(XXIV.4.5).
-- 저장한 generation에는 writer 종류(앱 창, headless CLI)를 기록합니다.
+- `stellar apply`와 앱 창의 Save Now는 같은 OS 사용자의 프로젝트 ID·canonical target별 잠금을 공유합니다.
+  CLI는 잠금 사용 중이면 `save-lock-busy`(75), 앱은 미저장 편집을 유지한 채 저장 실패를 반환합니다.
+  쓰기 전에 잠금 안에서 현재 세대를 확인합니다. CLI dry-run과 앱의 무변경 저장에는 잠금이 필요 없습니다.
+  잠금 파일은 프로젝트·Git 밖의 OS 사용자 데이터에 둡니다(XXIV.4.5).
+- generation의 writer 종류 기록은 XXIV.4.4의 남은 작업입니다.
 - merge driver 모드는 Git이 넘긴 임시 경로만 쓰므로 저장 잠금과 앱 공존 검사 대상이 아닙니다.
-- 앱이 같은 프로젝트를 열고 있어도 L1 쓰기를 막지 않습니다. 앱은 writer 종류가 앱 창이 아닌
-  generation을 두 선택지 정책이 아니라 semantic reconciliation 경로로 처리합니다(XXIV.4.6).
+- 앱이 같은 프로젝트를 열고 있어도 L1 쓰기를 허용합니다. CLI가 먼저 저장하면 옛 세대를 연 앱의
+  저장은 stale로 실패합니다. 외부 세대의 semantic reconciliation은 XXIV.4.6의 후속 작업입니다.
 - 변경이 에이전트 lease와 겹치면 그 에이전트 세션을 끝냅니다(자동 rollback 없음). L1 쓰기는 에이전트
   출처 표시 대상이 아닙니다.
 
