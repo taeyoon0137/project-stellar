@@ -298,10 +298,12 @@ name = "stellar-project"
 version = "0.0.0"
 dependencies = [
  "stellar-assets",
+ "stellar-commands",
  "stellar-core-types",
  "stellar-dependencies",
  "stellar-document",
  "stellar-git-porcelain",
+ "stellar-history",
  "stellar-storage",
  "stellar-text",
  "yaml-rust2",

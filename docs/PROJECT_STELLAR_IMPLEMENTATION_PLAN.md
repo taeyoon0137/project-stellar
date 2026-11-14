@@ -1258,7 +1258,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XIII.1.1 | `[~]` | `AutosavePolicy`에 debounce, 최대 지연, 앱 비활성화 flush, 창 닫기 flush를 정의하고 값은 `config/performance-budgets.yaml`에서 읽습니다. | config 누락·범위 밖 값 거부. | Phase XII, V.5.4 |
-| XIII.1.2 | `[ ]` | 완료된 document CommandTransaction만 autosave dirty state를 만들고 Selection·viewport·preview event는 만들지 않게 합니다. | 선택 1,000회 후 save plan 없음. | VII.3.2, V.5.1 |
+| XIII.1.2 | `[x]` | 완료된 document CommandTransaction만 autosave dirty state를 만들고 Selection·viewport·preview event는 만들지 않게 합니다. | 선택 1,000회 후 save plan 없음. | VII.3.2, V.5.1 |
 | XIII.1.3 | `[ ]` | 연속 command 후 debounce timer를 재설정하고 최대 지연에 도달하면 입력이 이어져도 snapshot을 캡처합니다. 캡처는 document thread에서 짧게 수행합니다. | ManualClock fixture 통과. | XIII.1.1, XII.1.1 |
 | XIII.1.4 | `[ ]` | serialization과 chunk write는 worker에서 수행하고 base revision이 오래되면 결과를 current pointer로 전환하지 않습니다. | stale save result discard. | XII.1.4, V.5.2 |
 | XIII.1.5 | `[ ]` | Save Now는 대기 autosave를 취소·합치고 최신 snapshot 하나만 저장합니다. | double write 없음. | XIII.1.4 |

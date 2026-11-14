@@ -18,12 +18,17 @@
 //! - 범위 밖 값: 0 이하의 시간, `max_delay_ms < debounce_ms`, 정수가 아니거나 `u32`를 넘는 값, 알 수 없는
 //!   키는 거부합니다.
 //! - 앱 비활성화·창 닫기 flush는 아키텍처가 요구하는 동작이라 끌 수 없고, 제한 시간만 설정합니다.
+//!
+//! 무엇이 저장 대상(dirty)인지는 [`dirty`](XIII.1.2)가 정합니다.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::yaml::{load_restricted, scalar, LoaderError, YamlValue};
+
+/// 완료된 document transaction만 만드는 자동 저장 dirty 상태 (XIII.1.2).
+pub mod dirty;
 
 /// `performance-budgets.yaml`에서 자동 저장 값을 담는 절 이름.
 pub const AUTOSAVE_SECTION: &str = "autosave";
