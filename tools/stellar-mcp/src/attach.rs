@@ -19,6 +19,12 @@
 //! backend 자동 선택(앱 없음이면 headless 등)은 XIX.9.4 범위이며, 이 module은 명시적 `--attach`만
 //! 다룹니다.
 //!
+//! ## 앱이 시작한 브리지의 세션 결합 (XIX.1.8)
+//!
+//! 환경 변수 `STELLAR_MCP_SESSION_BINDING`(`stellar_local_ipc::binding`)이 있으면 그 token을 앱 인증을
+//! 통과한 뒤 HELLO에 담아 보냅니다. 앱이 거부하면(끝난 세션·모르는 token) 77 `noperm`, 값의 형식이
+//! 틀리면 연결하지 않고 78 `config`입니다. 결합은 세션 식별일 뿐 권한이 아닙니다.
+//!
 //! ## 한 bridge = 한 세션 (XIX.1.4)
 //!
 //! bridge process 하나는 MCP 연결 세션 하나만 담당하고, 그 세션은 앱 연결 하나에 묶입니다. 그래서
@@ -30,7 +36,8 @@ use std::fmt;
 use std::io::{self, Read};
 
 use stellar_local_ipc::auth::{AuthError, PeerPolicy};
-use stellar_local_ipc::handshake::{connect, HandshakeError, Session};
+use stellar_local_ipc::binding::{token_from_env_value, BindingToken, MalformedToken, BINDING_ENV};
+use stellar_local_ipc::handshake::{connect_bound, HandshakeError, Session};
 use stellar_local_ipc::nonce::NonceLedger;
 use stellar_local_ipc::registry::{Endpoint, InstanceId, Registry, RegistryError, SelectError};
 
@@ -47,6 +54,8 @@ pub enum AttachError {
     Policy(AuthError),
     /// 앱 인증 또는 handshake 실패.
     Handshake(HandshakeError),
+    /// 세션 결합 환경 변수 값이 형식에 맞지 않습니다(XIX.1.8, 값은 보고하지 않음).
+    Binding(MalformedToken),
 }
 
 impl fmt::Display for AttachError {
@@ -60,6 +69,7 @@ impl fmt::Display for AttachError {
                 "앱이 응답 없이 연결을 닫았습니다(앱이 이 브리지를 거부했거나 종료됨)"
             ),
             AttachError::Handshake(e) => write!(f, "{e}"),
+            AttachError::Binding(e) => write!(f, "{e}"),
         }
     }
 }
@@ -78,10 +88,14 @@ impl AttachError {
                 exit::UNAVAILABLE
             }
             AttachError::Policy(_) => exit::SOFTWARE,
+            AttachError::Binding(_) => exit::CONFIG,
             AttachError::Handshake(e) => match e {
                 HandshakeError::Unauthenticated(_)
                 | HandshakeError::PeerUserMismatch { .. }
-                | HandshakeError::PeerIdentity { .. } => exit::NOPERM,
+                | HandshakeError::PeerIdentity { .. }
+                | HandshakeError::BindingRejected(_) => exit::NOPERM,
+                // 앱이 세션 결합 token을 거부했습니다(끝난 세션·모르는 token, XIX.1.8).
+                HandshakeError::Rejected { reason } if reason == "binding-rejected" => exit::NOPERM,
                 HandshakeError::Closed => exit::UNAVAILABLE,
                 HandshakeError::TimedOut => exit::TEMPFAIL,
                 HandshakeError::Malformed
@@ -99,9 +113,17 @@ pub fn attach(
     instance: Option<&InstanceId>,
     ledger: &mut NonceLedger,
 ) -> Result<(Endpoint, Session), AttachError> {
+    // 앱이 시작한 브리지는 세션 결합 token을 환경 변수로 받습니다(XIX.1.8). 외부 client가 띄운
+    // 브리지에는 없습니다. 형식이 틀리면 연결하지 않고 끝냅니다(78 `config`).
+    let binding = binding_from_env(std::env::var(BINDING_ENV).ok().as_deref())?;
     let registry = Registry::for_current_user().map_err(AttachError::Registry)?;
     let policy = PeerPolicy::for_current_process().map_err(AttachError::Policy)?;
-    attach_with(&registry, &policy, instance, ledger)
+    attach_bound_with(&registry, &policy, instance, ledger, binding.as_ref())
+}
+
+/// 결합 환경 변수 값을 해석합니다.
+pub fn binding_from_env(value: Option<&str>) -> Result<Option<BindingToken>, AttachError> {
+    token_from_env_value(value).map_err(AttachError::Binding)
 }
 
 /// 주어진 registry·기준으로 앱을 골라 인증·handshake합니다.
@@ -111,13 +133,25 @@ pub fn attach_with(
     instance: Option<&InstanceId>,
     ledger: &mut NonceLedger,
 ) -> Result<(Endpoint, Session), AttachError> {
+    attach_bound_with(registry, policy, instance, ledger, None)
+}
+
+/// [`attach_with`]과 같되 세션 결합 token을 함께 보냅니다(XIX.1.8, 앱 인증 뒤에만 전송).
+pub fn attach_bound_with(
+    registry: &Registry,
+    policy: &PeerPolicy,
+    instance: Option<&InstanceId>,
+    ledger: &mut NonceLedger,
+    binding: Option<&BindingToken>,
+) -> Result<(Endpoint, Session), AttachError> {
     let report = registry.discover().map_err(AttachError::Registry)?;
     let endpoint = report
         .discovery
         .select(instance)
         .map_err(AttachError::Select)?
         .clone();
-    let session = connect(&endpoint, policy, ledger).map_err(AttachError::Handshake)?;
+    let session =
+        connect_bound(&endpoint, policy, ledger, binding).map_err(AttachError::Handshake)?;
     Ok((endpoint, session))
 }
 
@@ -329,11 +363,33 @@ mod tests {
                 }),
                 exit::PROTOCOL,
             ),
+            // XIX.1.8: 앱이 결합을 거부하면 권한 없음, 환경 변수 형식 오류는 설정 오류.
+            (
+                AttachError::Handshake(H::Rejected {
+                    reason: "binding-rejected".into(),
+                }),
+                exit::NOPERM,
+            ),
+            (
+                AttachError::Binding(stellar_local_ipc::binding::MalformedToken),
+                exit::CONFIG,
+            ),
         ];
         for (error, expected) in cases {
             assert_eq!(error.exit(), expected, "{error:?}");
             assert!(!error.to_string().is_empty());
         }
+    }
+
+    #[test]
+    fn binding_env_value_is_parsed_without_echoing_it() {
+        assert_eq!(binding_from_env(None), Ok(None));
+        let token = stellar_local_ipc::binding::BindingToken::from_bytes([9; 32]);
+        assert_eq!(binding_from_env(Some(&token.to_hex())), Ok(Some(token)));
+        let secret = "not-a-token-SECRET";
+        let error = binding_from_env(Some(secret)).unwrap_err();
+        assert_eq!(error.exit(), exit::CONFIG);
+        assert!(!error.to_string().contains(secret), "값을 진단에 쓰지 않음");
     }
 
     #[test]

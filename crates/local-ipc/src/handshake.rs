@@ -27,6 +27,7 @@ use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
 use crate::auth::{authenticate, AuthError, PeerPolicy};
+use crate::binding::{BindingError, BindingToken};
 use crate::nonce::{Nonce, NonceLedger};
 use crate::registry::Endpoint;
 
@@ -47,6 +48,13 @@ pub enum Message {
         /// client nonce.
         client: Nonce,
     },
+    /// 앱이 시작한 브리지 → 앱: client nonce와 세션 결합 token(XIX.1.8).
+    BoundHello {
+        /// client nonce.
+        client: Nonce,
+        /// 세션 결합 token.
+        binding: BindingToken,
+    },
     /// 앱 → 브리지: client nonce echo와 session nonce.
     Welcome {
         /// echo한 client nonce.
@@ -66,6 +74,11 @@ impl Message {
     pub fn encode(&self) -> String {
         match self {
             Message::Hello { client } => format!("{PROTOCOL_TAG} HELLO {}\n", client.to_hex()),
+            Message::BoundHello { client, binding } => format!(
+                "{PROTOCOL_TAG} HELLO {} BIND {}\n",
+                client.to_hex(),
+                binding.to_hex()
+            ),
             Message::Welcome { client, session } => format!(
                 "{PROTOCOL_TAG} WELCOME {} {}\n",
                 client.to_hex(),
@@ -82,6 +95,12 @@ impl Message {
             [tag, "HELLO", client] if *tag == PROTOCOL_TAG => Some(Message::Hello {
                 client: Nonce::parse_hex(client)?,
             }),
+            [tag, "HELLO", client, "BIND", binding] if *tag == PROTOCOL_TAG => {
+                Some(Message::BoundHello {
+                    client: Nonce::parse_hex(client)?,
+                    binding: BindingToken::parse_hex(binding)?,
+                })
+            }
             [tag, "WELCOME", client, session] if *tag == PROTOCOL_TAG => Some(Message::Welcome {
                 client: Nonce::parse_hex(client)?,
                 session: Nonce::parse_hex(session)?,
@@ -137,6 +156,8 @@ pub enum HandshakeError {
         /// 이유 token.
         reason: String,
     },
+    /// 앱 측: 세션 결합 token을 거부했습니다(XIX.1.8). 브리지에는 `REJECT binding-rejected`로 알립니다.
+    BindingRejected(BindingError),
     /// 기타 입출력 오류.
     Io {
         /// io 오류 종류.
@@ -165,6 +186,7 @@ impl fmt::Display for HandshakeError {
             HandshakeError::Rejected { reason } => {
                 write!(f, "IPC 상대가 handshake를 거부했습니다: {reason}")
             }
+            HandshakeError::BindingRejected(e) => write!(f, "세션 결합 거부: {e}"),
             HandshakeError::Io { kind } => write!(f, "IPC 입출력 오류: {kind:?}"),
         }
     }
@@ -296,7 +318,24 @@ pub fn bridge_handshake(
         AuthError::Credentials(c) if c.peer_closed() => HandshakeError::Closed,
         e => HandshakeError::Unauthenticated(e),
     })?;
-    exchange_nonces(stream, peer.euid, ledger, timeout)
+    exchange_nonces(stream, peer.euid, ledger, timeout, None)
+}
+
+/// [`bridge_handshake`]와 같되, 앱이 시작한 브리지는 세션 결합 token을 HELLO에 담습니다(XIX.1.8).
+///
+/// token은 앱 인증을 통과한 **뒤에만** 보냅니다. 인증에 실패하면 token을 포함해 아무것도 쓰지 않습니다.
+pub fn bridge_handshake_bound(
+    stream: UnixStream,
+    policy: &PeerPolicy,
+    ledger: &mut NonceLedger,
+    timeout: Duration,
+    binding: Option<&BindingToken>,
+) -> Result<Session, HandshakeError> {
+    let peer = authenticate(&stream, policy).map_err(|e| match e {
+        AuthError::Credentials(c) if c.peer_closed() => HandshakeError::Closed,
+        e => HandshakeError::Unauthenticated(e),
+    })?;
+    exchange_nonces(stream, peer.euid, ledger, timeout, binding)
 }
 
 /// 상대 uid만 주입 함수로 확인하는 handshake(XIX.1.3 오류 경로 테스트용).
@@ -312,7 +351,7 @@ where
     F: FnOnce(&UnixStream) -> io::Result<u32>,
 {
     let actual = verify_peer(&stream, expected_uid, peer_uid)?;
-    exchange_nonces(stream, actual, ledger, timeout)
+    exchange_nonces(stream, actual, ledger, timeout, None)
 }
 
 /// 인증을 마친 stream에서 HELLO/WELCOME nonce를 교환합니다.
@@ -321,6 +360,7 @@ fn exchange_nonces(
     peer_uid: u32,
     ledger: &mut NonceLedger,
     timeout: Duration,
+    binding: Option<&BindingToken>,
 ) -> Result<Session, HandshakeError> {
     set_timeouts(&stream, timeout)?;
 
@@ -329,7 +369,14 @@ fn exchange_nonces(
     ledger
         .record(client)
         .map_err(|_| HandshakeError::NonceReused)?;
-    write_message(&mut stream, &Message::Hello { client })?;
+    let hello = match binding {
+        None => Message::Hello { client },
+        Some(binding) => Message::BoundHello {
+            client,
+            binding: *binding,
+        },
+    };
+    write_message(&mut stream, &hello)?;
 
     // 3. 응답을 검증합니다.
     let line = read_line(&mut stream)?;
@@ -352,7 +399,9 @@ fn exchange_nonces(
             })
         }
         Some(Message::Reject { reason }) => Err(HandshakeError::Rejected { reason }),
-        Some(Message::Hello { .. }) | None => Err(HandshakeError::Malformed),
+        Some(Message::Hello { .. }) | Some(Message::BoundHello { .. }) | None => {
+            Err(HandshakeError::Malformed)
+        }
     }
 }
 
@@ -364,6 +413,17 @@ pub fn connect(
 ) -> Result<Session, HandshakeError> {
     let stream = UnixStream::connect(&endpoint.socket_path).map_err(|e| classify_io(&e))?;
     bridge_handshake(stream, policy, ledger, DEFAULT_TIMEOUT)
+}
+
+/// [`connect`]와 같되 세션 결합 token을 함께 보냅니다(XIX.1.8, 앱이 시작한 브리지).
+pub fn connect_bound(
+    endpoint: &Endpoint,
+    policy: &PeerPolicy,
+    ledger: &mut NonceLedger,
+    binding: Option<&BindingToken>,
+) -> Result<Session, HandshakeError> {
+    let stream = UnixStream::connect(&endpoint.socket_path).map_err(|e| classify_io(&e))?;
+    bridge_handshake_bound(stream, policy, ledger, DEFAULT_TIMEOUT, binding)
 }
 
 #[cfg(test)]
@@ -378,6 +438,39 @@ mod tests {
 
     fn n(byte: u8) -> Nonce {
         Nonce::from_bytes([byte; 16])
+    }
+
+    #[test]
+    fn bound_hello_round_trips_within_the_line_limit() {
+        let binding = BindingToken::from_bytes([0xab; 32]);
+        let hello = Message::BoundHello {
+            client: n(1),
+            binding,
+        };
+        let line = hello.encode();
+        assert!(line.len() <= MAX_LINE_BYTES, "{}", line.len());
+        assert_eq!(Message::decode(line.trim_end_matches('\n')), Some(hello));
+        // BIND 뒤 token 형식이 틀리면 메시지 전체를 거부합니다.
+        for bad in [
+            format!("{PROTOCOL_TAG} HELLO {} BIND", n(1).to_hex()),
+            format!(
+                "{PROTOCOL_TAG} HELLO {} BIND {}",
+                n(1).to_hex(),
+                "A".repeat(64)
+            ),
+            format!(
+                "{PROTOCOL_TAG} HELLO {} BOND {}",
+                n(1).to_hex(),
+                "a".repeat(64)
+            ),
+            format!(
+                "{PROTOCOL_TAG} HELLO {} BIND {} extra",
+                n(1).to_hex(),
+                "a".repeat(64)
+            ),
+        ] {
+            assert_eq!(Message::decode(&bad), None, "{bad}");
+        }
     }
 
     /// 현재 프로세스 기준(앱 측과 같은 기준).

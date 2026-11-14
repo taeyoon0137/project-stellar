@@ -44,6 +44,10 @@ pub mod listener;
 #[cfg(target_os = "macos")]
 pub mod session;
 
+/// 앱이 시작한 bridge의 세션 결합 (XIX.1.8).
+#[cfg(target_os = "macos")]
+pub mod binding;
+
 /// 앱 측 IPC test double (XIX.1.2, XIX.1.3).
 #[cfg(all(test, target_os = "macos"))]
 pub(crate) mod test_support;
