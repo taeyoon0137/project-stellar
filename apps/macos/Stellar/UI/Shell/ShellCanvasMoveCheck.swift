@@ -86,6 +86,35 @@ enum ShellCanvasMoveCheck {
               pump.waitForPendingRequests(timeout: 10), sa.info?.selection_count == 1 else {
             return fail("빈 공간 선택 해제·Frame 재선택")
         }
+        // Hand는 제한 모드에서도 문서를 편집하지 않고 이 창의 카메라만 움직입니다.
+        let beforeHand = sa.viewInfo
+        let beforeOther = sb.viewInfo
+        let beforeDocument = sa.info
+        let beforeHandPixels = bitmap(canvas)
+        guard a.router.dispatch(.selectHandTool),
+              mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseDragged, -5),
+              mouse(canvas, .leftMouseDragged, 25), mouse(canvas, .leftMouseUp, 30),
+              pump.waitForPendingRequests(timeout: 10), let hand = sa.viewInfo, let beforeHand,
+              hand.center_x == beforeHand.center_x - 60 / beforeHand.zoom,
+              hand.center_y == beforeHand.center_y, hand.zoom == beforeHand.zoom,
+              sb.viewInfo?.center_x == beforeOther?.center_x, sb.viewInfo?.center_y == beforeOther?.center_y,
+              sa.info?.revision == beforeDocument?.revision, sa.info?.undo_depth == beforeDocument?.undo_depth,
+              sa.info?.selection_count == beforeDocument?.selection_count,
+              sa.info?.has_unsaved_changes == beforeDocument?.has_unsaved_changes,
+              let beforeHandPixels, let handPixels = bitmap(canvas), handPixels != beforeHandPixels,
+              at(30, in: canvas) == node else { return fail("Hand 드래그 창별 팬·표시·문서 보존") }
+        // mouseUp 뒤 움직임과 Escape 뒤 움직임은 팬을 계속하지 않습니다.
+        guard mouse(canvas, .leftMouseDragged, 60), pump.waitForPendingRequests(timeout: 10),
+              sa.viewInfo?.center_x == hand.center_x,
+              mouse(canvas, .leftMouseDown, 30),
+              let cancel = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1,
+                  windowNumber: a.window?.windowNumber ?? 0, context: nil, characters: "\u{1b}",
+                  charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) else { return fail("Hand 종료 입력") }
+        canvas.keyDown(with: cancel)
+        guard mouse(canvas, .leftMouseDragged, 60), mouse(canvas, .leftMouseUp, 60),
+              pump.waitForPendingRequests(timeout: 10), sa.viewInfo?.center_x == hand.center_x,
+              sa.pan(dx: -60, dy: 0), pump.waitForPendingRequests(timeout: 10),
+              a.router.dispatch(.selectMoveTool), at(-30, in: canvas) == node else { return fail("Hand 종료·취소") }
         a.gitSource.updateTrust(true)
         guard pump.waitForPendingRequests(timeout: 10), a.gitSource.trusted else { return fail("격리된 프로젝트 신뢰") }
         guard let selectedPixels = bitmap(canvas), mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseDragged, 30),
@@ -99,6 +128,16 @@ enum ShellCanvasMoveCheck {
               let selected = sa.info else { return fail("Escape 뒤 이동 미반영") }
         guard action(a, .zoomOut), sa.viewInfo?.zoom == 0.5,
               at(-30, in: canvas) == node, sb.viewInfo?.zoom == 1 else { return fail("창별 50% 카메라") }
+        let halfCamera = sa.viewInfo
+        guard a.router.dispatch(.selectHandTool),
+              mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseDragged, 30),
+              mouse(canvas, .leftMouseUp, 30), pump.waitForPendingRequests(timeout: 10),
+              sa.viewInfo?.center_x == (halfCamera?.center_x ?? .nan) - 60,
+              sa.viewInfo?.zoom == 0.5, at(30, in: canvas) == node,
+              sa.info?.revision == selected.revision,
+              sa.pan(dx: -30, dy: 0), pump.waitForPendingRequests(timeout: 10),
+              a.router.dispatch(.selectMoveTool), at(-30, in: canvas) == node
+        else { return fail("50% Hand 팬·복원") }
         guard drag(canvas), sa.info?.revision == selected.revision + 1, sa.info?.undo_depth == selected.undo_depth + 1,
               at(30, in: canvas) == node, at(-30, in: canvas) != node,
               sb.info?.selection_count == 0, sb.info?.revision == initial.revision,
@@ -111,7 +150,7 @@ enum ShellCanvasMoveCheck {
               reopened.windowController.windowSession?.info?.generation == saved.generation,
               at(30, in: reopened.canvasHost.canvasView) == node, at(-30, in: reopened.canvasHost.canvasView) != node
         else { return fail("저장된 원본 재열기 좌표") }
-        print("canvas-move ok: restricted select, Escape, two drag updates/one undo, second window, save and reopen")
+        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save and reopen")
         return true
     }
 }
