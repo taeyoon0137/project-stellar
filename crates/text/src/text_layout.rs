@@ -170,8 +170,18 @@ pub fn lay_out_paragraph(
     style: &ParagraphLayoutStyle,
     max_width: Option<TextUnit>,
 ) -> Result<ParagraphLines, TextLayoutError> {
-    let breaks_out = break_lines(shaped, breaks, max_width, style.wrap)?;
     let bidi = &shaped.itemization().bidi;
+    // 아래 이분 탐색이 기대는 불변식을 쓰는 곳에서도 확인합니다(debug 빌드, paragraph당 O(n) 한 번).
+    // 깨지면 잘못된 배치를 조용히 내지 않고 panic합니다.
+    let len = shaped.text().len();
+    crate::tiling::debug_assert_tiles("glyph run", shaped.runs().iter().map(|r| &r.range), len);
+    crate::tiling::debug_assert_tiles("segment", shaped.segments().iter().map(|s| &s.range), len);
+    crate::tiling::debug_assert_tiles(
+        "BiDi paragraph",
+        bidi.paragraphs().iter().map(|(range, _)| range),
+        len,
+    );
+    let breaks_out = break_lines(shaped, breaks, max_width, style.wrap)?;
     let index = ClusterIndex::new(shaped.runs());
     let mut lines = Vec::with_capacity(breaks_out.len());
     let mut total = 0i64;
@@ -235,7 +245,8 @@ impl ClusterIndex {
 }
 
 /// `range`와 겹치는 run과 그 index(논리 순서). run은 paragraph를 논리 순서로 빈틈·겹침 없이 나누므로(범위
-/// 오름차순, `shape_paragraph` 불변식) 첫 run을 이분 탐색하고 겹치는 동안만 훑습니다.
+/// 오름차순, `shape_paragraph` 불변식) 첫 run을 이분 탐색하고 겹치는 동안만 훑습니다. 불변식은 debug 빌드에서
+/// `shape_paragraph`와 [`lay_out_paragraph`]가 확인합니다(`crate::tiling`).
 fn overlapping_runs<'a>(
     runs: &'a [GlyphRun],
     range: &Range<usize>,
@@ -318,7 +329,8 @@ fn place_glyphs(
 }
 
 /// 줄 끝 hanging 공백 byte 길이. segment는 논리 순서로 빈틈없이 이어지므로(범위 오름차순) 줄 끝 segment를
-/// 이분 탐색하고, 거기서 거꾸로 줄 안 공백 segment인 동안만 훑습니다.
+/// 이분 탐색하고, 거기서 거꾸로 줄 안 공백 segment인 동안만 훑습니다. 불변식은 debug 빌드에서
+/// [`lay_out_paragraph`]가 확인합니다.
 fn trailing_len(shaped: &ShapedParagraph, line: &LineBreak) -> usize {
     let segments = shaped.segments();
     let end = segments.partition_point(|s| s.range.end <= line.range.end);
@@ -884,6 +896,65 @@ pub(crate) mod tests {
                 "{unit:?}: 입력 4배에 작업량 {small} → {large}(선형이면 4배 남짓, 제곱이면 16배)"
             );
         }
+    }
+
+    /// 정렬 불변식을 깨뜨린 shaping 결과로 `lay_out_paragraph`를 부릅니다. `corrupt`가 run·segment·BiDi
+    /// paragraph 목록을 고칩니다.
+    #[cfg(debug_assertions)]
+    fn lay_out_corrupted(
+        text: &str,
+        corrupt: impl FnOnce(
+            &mut Vec<GlyphRun>,
+            &mut Vec<crate::paragraph::Segment>,
+            &mut Vec<(Range<usize>, BidiLevel)>,
+        ),
+    ) {
+        let fx = Fixture::new();
+        let mut shaped = fx.shape(text, 16, BaseDirection::LeftToRight);
+        let (runs, segments, itemization) = crate::paragraph::tests::parts_mut(&mut shaped);
+        corrupt(runs, segments, itemization.bidi.paragraphs_mut());
+        let _ = lay_out_paragraph(
+            &shaped,
+            &breaks(text),
+            &ParagraphLayoutStyle::default(),
+            Some(px(40)),
+        );
+    }
+
+    // 리뷰 지적 회귀: 줄 배치의 이분 탐색(`overlapping_runs`, `trailing_len`, `line_levels`)은 run·segment·BiDi
+    // paragraph가 텍스트를 순서대로 빈틈없이 나눈다는 불변식에 기댑니다. 불변식이 깨지면 잘못된 배치를 조용히
+    // 내지 않고 debug 빌드에서 panic해야 합니다.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "glyph run 범위가 텍스트를 순서대로 빈틈없이 나누지 않습니다")]
+    fn unordered_runs_panic_in_debug_build() {
+        lay_out_corrupted("a日a日", |runs, _, _| {
+            assert!(runs.len() >= 2, "run이 둘 이상이어야 합니다");
+            runs.swap(0, 1);
+        });
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "segment 범위가 텍스트를 순서대로 빈틈없이 나누지 않습니다")]
+    fn unordered_segments_panic_in_debug_build() {
+        lay_out_corrupted("ab cd ef", |_, segments, _| {
+            assert!(segments.len() >= 2, "segment가 둘 이상이어야 합니다");
+            segments.swap(0, 1);
+        });
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "BiDi paragraph 범위가 텍스트를 순서대로 빈틈없이 나누지 않습니다")]
+    fn unordered_bidi_paragraphs_panic_in_debug_build() {
+        lay_out_corrupted("ab\u{2029}cd\u{2029}ef", |_, _, paragraphs| {
+            assert!(
+                paragraphs.len() >= 2,
+                "BiDi paragraph가 둘 이상이어야 합니다"
+            );
+            paragraphs.swap(0, 1);
+        });
     }
 
     #[test]

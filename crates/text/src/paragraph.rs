@@ -335,6 +335,10 @@ pub fn shape_paragraph<S: FaceSource + ?Sized>(
         });
     }
 
+    // 줄 배치의 이분 탐색이 기대는 불변식을 만든 곳에서 확인합니다(debug 빌드, `crate::tiling`).
+    crate::tiling::debug_assert_tiles("glyph run", runs.iter().map(|r| &r.range), text.len());
+    crate::tiling::debug_assert_tiles("segment", segments.iter().map(|s| &s.range), text.len());
+
     let (default_metrics, default_font_size) = default_metrics(input, styles, faces)?;
     Ok(ShapedParagraph {
         text: text.to_string(),
@@ -481,6 +485,15 @@ pub(crate) mod tests {
         }
     }
 
+    /// 테스트용: 정렬 불변식이 깨진 shaping 결과를 만들려고 run·segment·itemization을 직접 고칩니다(debug
+    /// 빌드 panic 검사).
+    #[cfg(debug_assertions)]
+    pub(crate) fn parts_mut(
+        para: &mut ShapedParagraph,
+    ) -> (&mut Vec<GlyphRun>, &mut Vec<Segment>, &mut Itemization) {
+        (&mut para.runs, &mut para.segments, &mut para.itemization)
+    }
+
     #[test]
     fn segments_follow_shaping_clusters_and_scale_to_subpixels() {
         let fx = Fixture::new();
@@ -543,6 +556,33 @@ pub(crate) mod tests {
             large <= 5 * small,
             "입력 4배에 작업량 {small} → {large}(선형이면 4배 남짓, 제곱이면 16배)"
         );
+    }
+
+    #[test]
+    fn run_segment_and_bidi_ranges_tile_the_text() {
+        // 줄 배치의 이분 탐색이 기대는 불변식을 release 빌드에서도 고정합니다(debug 빌드는 shape_paragraph가
+        // 직접 확인). ligature, CJK fallback, RTL, missing script, 결합 부호, ZWJ, BiDi 제어, U+2028·U+2029.
+        let fx = Fixture::new();
+        let texts = [
+            "office 日本",
+            "abc שלום مرحبا 123",
+            "\u{0E01}\u{0E02}\u{0E03} a",
+            "e\u{0301} \u{1F469}\u{200D}\u{1F4BB}",
+            "a\u{202E}bc\u{202C}d",
+            "a\u{2028}b\u{2029}\u{05D0}\u{2029}c",
+        ];
+        for text in texts {
+            for base in [BaseDirection::LeftToRight, BaseDirection::RightToLeft] {
+                let para = fx.shape(text, 16, base);
+                let len = text.len();
+                let runs = para.runs().iter().map(|r| &r.range);
+                let segments = para.segments().iter().map(|s| &s.range);
+                let bidi = para.itemization().bidi.paragraphs().iter().map(|(r, _)| r);
+                assert!(crate::tiling::tiles(runs, len), "{text:?} run");
+                assert!(crate::tiling::tiles(segments, len), "{text:?} segment");
+                assert!(crate::tiling::tiles(bidi, len), "{text:?} BiDi paragraph");
+            }
+        }
     }
 
     #[test]

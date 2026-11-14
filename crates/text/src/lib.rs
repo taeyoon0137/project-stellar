@@ -57,6 +57,9 @@ pub mod incremental;
 /// 내부 루프 작업량 계수기(테스트 빌드에서만 셈, 성능 회귀 검사용).
 mod op_count;
 
+/// run·segment·BiDi paragraph 범위 목록의 정렬 불변식 확인(debug 빌드에서만 확인).
+mod tiling;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;
 
