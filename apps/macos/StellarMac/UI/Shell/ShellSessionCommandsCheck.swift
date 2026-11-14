@@ -116,6 +116,72 @@ private final class ShellSessionCommandsCheckRunner {
             expect(a.windowController.windowSession?.viewInfo?.zoom == expected, "\(command.rawValue) 뒤 코어 배율이 \(expected)가 아님")
             expect(a.toolsModel.snapshot.zoomScale == expected, "\(command.rawValue) 뒤 배율 표시가 \(expected)가 아님")
         }
+        // 실제 기본 창 CanvasView.scrollWheel 진입점 → 창 session viewport. 합성 AppKit 입력이며 화면 실측은 아닙니다.
+        let initialA = a.windowController.windowSession?.viewInfo
+        let initialB = b.windowController.windowSession?.viewInfo
+        let initialInfo = a.windowController.windowSession?.info
+        for (phase, momentum) in [(1, 0), (2, 0), (0, 2)] {
+            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel,
+                                   wheelCount: 2, wheel1: 12, wheel2: -8, wheel3: 0) else {
+                expect(false, "팬 CGEvent 생성 실패")
+                continue
+            }
+            cg.flags = []
+            cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: Int64(phase))
+            cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: Int64(momentum))
+            guard let event = NSEvent(cgEvent: cg), let beforePan = a.windowController.windowSession?.viewInfo else {
+                expect(false, "팬 NSEvent 또는 viewport 없음")
+                continue
+            }
+            a.canvasHost.canvasView.scrollWheel(with: event)
+            wait(coordinator, "캔버스 스크롤 팬")
+            let afterPan = a.windowController.windowSession?.viewInfo
+            expect(afterPan?.center_x == beforePan.center_x - Double(event.scrollingDeltaX) / beforePan.zoom,
+                   "스크롤 x가 창 camera에 반영되지 않음")
+            expect(afterPan?.center_y == beforePan.center_y - Double(event.scrollingDeltaY) / beforePan.zoom,
+                   "스크롤 y가 창 camera에 반영되지 않음")
+            expect(afterPan?.center_x != beforePan.center_x && afterPan?.center_y != beforePan.center_y,
+                   "유효한 스크롤이 camera를 이동하지 않음")
+            expect(afterPan?.zoom == beforePan.zoom, "스크롤 팬이 배율을 바꿈")
+        }
+        if let session = a.windowController.windowSession, let before = session.viewInfo,
+           let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 2, wheel2: -1, wheel3: 0) {
+            cg.flags = []
+            if let event = NSEvent(cgEvent: cg) {
+                for _ in 0..<32 { a.canvasHost.canvasView.scrollWheel(with: event) }
+                wait(coordinator, "연속 정밀 스크롤")
+                let after = session.viewInfo
+                expect(after?.center_x == before.center_x - 32 * Double(event.scrollingDeltaX) / before.zoom &&
+                       after?.center_y == before.center_y - 32 * Double(event.scrollingDeltaY) / before.zoom,
+                       "연속 스크롤의 delta 유실")
+                session.isClosing = true
+                expect(a.canvasHost.canvasView.scrollWheelHandler?(event) == false && session.pendingCommandCount == 0,
+                       "닫기 대기 중인 창에 팬 요청 접수")
+                session.isClosing = false
+            } else { expect(false, "연속 스크롤 NSEvent 생성 실패") }
+        } else { expect(false, "연속 스크롤 fixture 생성 실패") }
+        for (units, flags) in [(CGScrollEventUnit.line, CGEventFlags()), (.pixel, .maskCommand), (.pixel, .maskShift),
+                               (.pixel, .maskAlternate), (.pixel, .maskControl)] {
+            guard let cg = CGEvent(scrollWheelEvent2Source: nil, units: units, wheelCount: 2,
+                                   wheel1: 12, wheel2: -8, wheel3: 0) else {
+                expect(false, "비대상 스크롤 생성 실패")
+                continue
+            }
+            cg.flags = flags
+            guard let event = NSEvent(cgEvent: cg) else {
+                expect(false, "비대상 NSEvent 생성 실패")
+                continue
+            }
+            expect(a.canvasHost.canvasView.scrollWheelHandler?(event) == false,
+                   "일반 휠 또는 수식키 스크롤을 정밀 팬이 소비함")
+        }
+        expect(a.windowController.windowSession?.viewInfo?.center_x != initialA?.center_x, "팬 누적 이동 없음")
+        expect(b.windowController.windowSession?.viewInfo?.center_x == initialB?.center_x &&
+               b.windowController.windowSession?.viewInfo?.center_y == initialB?.center_y, "팬이 다른 창을 이동함")
+        expect(a.windowController.windowSession?.info?.revision == initialInfo?.revision &&
+               a.windowController.windowSession?.info?.undo_depth == initialInfo?.undo_depth &&
+               a.windowController.windowSession?.info?.has_unsaved_changes == initialInfo?.has_unsaved_changes,
+               "팬이 문서 revision/history/dirty를 바꿈")
         expect(enabled(.zoomToActualSize, in: a), "50%에서 Actual Size가 비활성")
         expect(b.windowController.windowSession?.viewInfo?.zoom == 1.0 && b.toolsModel.snapshot.zoomScale == 1.0,
                "A 줌이 B viewport·배율 표시를 바꿈")

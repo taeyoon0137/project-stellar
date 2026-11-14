@@ -15,6 +15,9 @@ final class CanvasView: NSView {
     /// `keyDownHandler`가 처리해 짝 key up도 삼킬 key code.
     private var handledKeyCodes: Set<UInt16> = []
 
+    /// 창별 viewport가 처리한 스크롤은 공용 runtime 입력 대기열에 중복 제출하지 않습니다.
+    var scrollWheelHandler: ((NSEvent) -> Bool)?
+
     private var mouseTrackingArea: NSTrackingArea?
 
     override var isFlipped: Bool { true }
@@ -84,7 +87,10 @@ final class CanvasView: NSView {
     override func otherMouseDown(with event: NSEvent) { submitInput(event) }
     override func otherMouseUp(with event: NSEvent) { submitInput(event) }
     override func otherMouseDragged(with event: NSEvent) { submitInput(event) }
-    override func scrollWheel(with event: NSEvent) { submitInput(event) }
+    override func scrollWheel(with event: NSEvent) {
+        if scrollWheelHandler?(event) == true { return }
+        submitInput(event)
+    }
     override func keyDown(with event: NSEvent) {
         if let keyDownHandler, keyDownHandler(event) {
             handledKeyCodes.insert(event.keyCode)

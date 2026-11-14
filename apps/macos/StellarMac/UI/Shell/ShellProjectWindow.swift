@@ -95,6 +95,14 @@ final class ShellWindowSessionHandle {
         }
     }
 
+    @discardableResult
+    func pan(dx: Double, dy: Double) -> Bool {
+        guard !isClosed, !isClosing, viewInfo?.has_view == 1 else { return false }
+        if dx == 0, dy == 0 { return true }
+        // 팬은 배율·문서 명령 상태를 바꾸지 않습니다. 창 닫기를 위해 진행 중인 요청만 추적합니다.
+        return track({ pump.pan(session: session, dx: dx, dy: dy, completion: $0) }, completion: { _ in })
+    }
+
     /// 이 창 session의 선택을 바꿉니다(그 창 history에 기록). 닫혔거나 요청을 받지 않으면 false입니다.
     @discardableResult
     func select(_ ids: [UUID], completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
@@ -447,6 +455,15 @@ final class ShellProjectWindow {
         canvasHost.canvasView.keyDownHandler = { [weak router] event in
             guard let router, let tool = CanvasToolShortcut.tool(for: event) else { return false }
             return router.dispatch(tool.command)
+        }
+        canvasHost.canvasView.scrollWheelHandler = { [weak self] event in
+            guard let session = self?.windowController.windowSession, event.hasPreciseScrollingDeltas,
+                  event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty else { return false }
+            // AppKit이 시스템 스크롤 방향을 적용한 delta를 그대로 사용합니다. flipped canvas의 y는 아래로 증가합니다.
+            let dx = Double(event.scrollingDeltaX)
+            let dy = Double(event.scrollingDeltaY)
+            guard dx.isFinite, dy.isFinite else { return false }
+            return session.pan(dx: dx, dy: dy)
         }
         canvasHost.canvasView.setAccessibilityHelp(String(
             localized: "Press V, F, R, O, L, P, T, H, or Z to choose a tool.",

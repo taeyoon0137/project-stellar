@@ -202,6 +202,34 @@ pub unsafe extern "C" fn stellar_window_session_perform(
     })
 }
 
+/// 창의 active viewport 내용을 화면 point 단위로 이동합니다. 문서·history는 바꾸지 않습니다.
+/// 완료는 `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는 `STELLAR_EVENT_REQUEST_FAILED`입니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 u64 쓰기가 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_pan(
+    handle: u64,
+    session: u64,
+    dx: f64,
+    dy: f64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.pan_viewport(WindowSessionHandle(session), dx, dy),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 /// 창 session의 선택을 `ids`(StableId 16 byte × `count`, 선택 순서)로 바꾸고 그 창 history에 기록합니다.
 ///
 /// 문서에 없거나 숨김 node는 거릅니다. 결과는 `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
@@ -612,6 +640,58 @@ pub(crate) mod tests {
             StellarStatus::InvalidArgument
         );
         assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn pan_moves_only_its_window_and_rejects_invalid_deltas() {
+        let fixture = FixtureProject::copy("pan");
+        let h = create();
+        let project = open_project(h, &fixture.path);
+        let a = open_window(h, project);
+        let b = open_window(h, project);
+        perform(h, a, AppCommand::ZoomIn.code());
+        let before = info(h, a).unwrap();
+        let other = view_info(h, b);
+        let mut request = 0;
+        assert_eq!(
+            unsafe { stellar_window_session_pan(h, a, 12.0, -8.0, &mut request) },
+            StellarStatus::Ok
+        );
+        assert!(
+            matches!(next_event(h), RuntimeEvent::WindowViewChanged { request: id, session, .. }
+            if id.0 == request && session.0 == a)
+        );
+        let moved = view_info(h, a);
+        assert_eq!(
+            (moved.center_x, moved.center_y, moved.zoom),
+            (-6.0, 4.0, 2.0)
+        );
+        assert_eq!(view_info(h, b), other);
+        assert_eq!(info(h, a).unwrap(), before);
+        for delta in [f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                unsafe { stellar_window_session_pan(h, a, delta, 0.0, &mut request) },
+                StellarStatus::Ok
+            );
+            assert!(matches!(
+                next_event(h),
+                RuntimeEvent::RequestFailed {
+                    failure: RequestFailure::InvalidViewport,
+                    ..
+                }
+            ));
+            assert_eq!(view_info(h, a), moved);
+        }
+        assert_eq!(
+            unsafe { stellar_window_session_pan(h, 999, 1.0, 0.0, &mut request) },
+            StellarStatus::Ok
+        );
+        assert!(matches!(next_event(h), RuntimeEvent::RequestFailed { .. }));
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        assert_eq!(
+            unsafe { stellar_window_session_pan(h, a, 1.0, 0.0, &mut request) },
+            StellarStatus::InvalidHandle
+        );
     }
 
     #[test]
