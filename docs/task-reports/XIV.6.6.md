@@ -54,7 +54,7 @@
 
 ## 남은 위험
 
-- 실제 적용은 macOS의 Apple/upstream Git 2.54.0, 지원 index 상태, 적용·복원 양방향 입력 예산 512 bytes 안으로 제한합니다. 초과 입력·selected flags·split/sparse·미확정 잠금 소유는 진단합니다. GNU/Linux·다른 Git 버전은 검증 전 거부합니다.
+- 실제 적용은 macOS에서 자식 Git의 잠금 소유와 현재 인덱스를 확인하며, 적용·복원 양방향 입력 예산은 512 bytes입니다. 초과 입력, 선택 경로의 flags, split/sparse 인덱스, 확인할 수 없는 잠금은 진단합니다. 통합 검증에서 Apple Git 2.54.0과 Fork에 포함된 Git 2.50.1 각각 22개의 실제 인덱스 테스트가 통과했습니다. macOS 외 플랫폼에는 이 적용 경로가 없습니다. [실행 파일별 검증](XIV.6.2.md)
 - 입력 승인 뒤 취소/timeout 또는 외부 writer 때문에 결과가 미확정이면 자동 역쓰기하지 않습니다. 정리 불명 lock도 직접 삭제하지 않습니다. 조건부 복원은 tree/mode/flags/REUC 기준이며 과거 stat cache bytes 복제는 아닙니다.
 - 기존 delta/blob 준비의 취소는 단계 사이에서 관찰합니다. 전체 operation deadline·준비 중 즉시 취소·전원 장애 복구는 보장하지 않습니다.
 - 다음 별도 단위는 XIV.7.3의 선택 unstage 적용 연결과 XIV.13.2 UI/FFI 진입점입니다. 이번 완료는 실제 stage API와 fixture 검증 범위입니다.
