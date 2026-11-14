@@ -4,8 +4,8 @@
 
 - WBS: XXII.1.1
 - 작업명: resolved View를 layout, semantics, state, tokens, target capability가 포함된 `CodegenIR`로 변환
-- 현재 상태: 일부 검증 (`[~]`). 현행 WBS에서 CSS 기반 레이아웃·타이포그래피 영속 record와 타깃 capability matrix(IX.11.6·IX.11.11·IX.11.19) 연결이 남았습니다.
-- 최초 구현 당시 선행: G8(gate 수준 선행 — 완화, 아래 "차이" 참조), IX.10.8(기준 브랜치 `[x]`)
+- 상태: 일부 검증 (`[~]`). 현행 WBS에서 CSS 기반 레이아웃·타이포그래피 영속 record와 타깃 capability matrix(IX.11.6·IX.11.11·IX.11.19) 연결이 남았습니다.
+- 선행: G8, IX.10.8, IX.11.6, IX.11.11, IX.11.19
 
 ## 변경 파일
 
