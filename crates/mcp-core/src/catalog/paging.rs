@@ -130,15 +130,16 @@ fn count(n: usize) -> JsonValue {
     JsonValue::Number(JsonNumber::from_u64(u64::try_from(n).unwrap_or(u64::MAX)))
 }
 
-/// page 하나의 내용 JSON을 만듭니다.
-pub fn build_page(source: &dyn PageSource, request: &PageRequest) -> Result<JsonValue, PageError> {
+/// 내용 로드 전에도 가능한 limit·resource·revision 검사. 반환값은 (offset, limit)입니다.
+pub fn validate_request(
+    key: &str,
+    revision: &str,
+    request: &PageRequest,
+) -> Result<(usize, usize), PageError> {
     let limit = request.limit.unwrap_or(DEFAULT_PAGE_ITEMS);
     if limit == 0 || limit > MAX_PAGE_ITEMS {
         return Err(PageError::InvalidLimit);
     }
-    let key = source.key();
-    let revision = source.revision_token();
-    let total = source.total();
     let offset = match &request.cursor {
         None => 0,
         Some(text) => {
@@ -149,12 +150,24 @@ pub fn build_page(source: &dyn PageSource, request: &PageRequest) -> Result<Json
             if cursor.revision != revision {
                 return Err(PageError::StaleCursor);
             }
-            if cursor.offset == 0 || cursor.offset >= total {
+            if cursor.offset == 0 {
                 return Err(PageError::CursorOutOfRange);
             }
             cursor.offset
         }
     };
+    Ok((offset, limit))
+}
+
+/// page 하나의 내용 JSON을 만듭니다.
+pub fn build_page(source: &dyn PageSource, request: &PageRequest) -> Result<JsonValue, PageError> {
+    let key = source.key();
+    let revision = source.revision_token();
+    let (offset, limit) = validate_request(&key, &revision, request)?;
+    let total = source.total();
+    if request.cursor.is_some() && offset >= total {
+        return Err(PageError::CursorOutOfRange);
+    }
     let end_by_count = offset.saturating_add(limit).min(total);
     // header 크기 + item 크기 합이 상한을 넘지 않게 담습니다(쉼표 1 byte 포함 추정, 아래에서 재확인).
     let mut fields = vec![("revision", source.revision_json())];

@@ -9,8 +9,8 @@ use stellar_mcp::catalog::{paging, resources};
 use stellar_mcp::json::{self, JsonLimits, JsonValue as J};
 use stellar_mcp::server::MAX_MESSAGE_BYTES;
 use stellar_mcp::test_support::{
-    file_digest, large_document, project_id, save_documents, scaffold_project, FileTrustStore,
-    ProjectIdentity, TempDir, PROJECT_ID_TEXT,
+    file_digest, large_document, project_id, random_valid_document, save_documents,
+    scaffold_project, FileTrustStore, ProjectIdentity, TempDir, PROJECT_ID_TEXT,
 };
 
 const BIN: &str = env!("CARGO_BIN_EXE_stellar-mcp");
@@ -55,7 +55,10 @@ impl Fixture {
             .unwrap();
     }
     fn command(&self, args: &[&str]) -> Command {
-        let mut command = Command::new(BIN);
+        self.command_with_binary(BIN, args)
+    }
+    fn command_with_binary(&self, binary: impl AsRef<std::ffi::OsStr>, args: &[&str]) -> Command {
+        let mut command = Command::new(binary);
         command
             .args(args)
             .env_clear()
@@ -449,4 +452,120 @@ fn byte_budget_splits_real_snapshot_items_and_oversized_item_is_an_error() {
     );
     client.finish();
     assert_eq!(file_digest(&fx.temp.path), after_save);
+}
+
+#[test]
+fn document_switch_save_and_reapproval_use_the_current_source() {
+    let fx = Fixture::new();
+    let a = large_document(12);
+    let b = random_valid_document(91);
+    assert!(b.node_count() > 2);
+    save_documents(&fx.project, &[&a, &b]);
+    fx.grant();
+    let mut client = fx.launch();
+    client.initialize();
+    let uri = |document| format!("stellar://documents/{document}?limit=2");
+    let before = file_digest(&fx.temp.path);
+    for model in [&a, &b, &a] {
+        let uri = uri(model.document_id());
+        let page = content(&client.read(&uri), &uri);
+        assert_eq!(
+            page.get("document").map(text),
+            Some(model.document_id().to_string().as_str())
+        );
+        assert_eq!(
+            page.get("total").and_then(J::as_i64),
+            Some(model.node_count() as i64)
+        );
+    }
+    assert_eq!(file_digest(&fx.temp.path), before);
+    FileTrustStore::open(&fx.data)
+        .unwrap()
+        .revoke(&fx.identity())
+        .unwrap();
+    let revoked = file_digest(&fx.temp.path);
+    assert_error(&client.read(&uri(a.document_id())), -32000);
+    assert_eq!(file_digest(&fx.temp.path), revoked);
+    save_documents(&fx.project, &[&large_document(13), &b]);
+    fx.grant();
+    let restored = file_digest(&fx.temp.path);
+    let fresh = content(&client.read(&uri(a.document_id())), &uri(a.document_id()));
+    assert_eq!(fresh.get("total"), Some(&J::int(13)));
+    assert_eq!(
+        fresh.get("revision").unwrap().get("generation"),
+        Some(&J::int(2))
+    );
+    client.finish();
+    assert_eq!(file_digest(&fx.temp.path), restored);
+}
+
+/// 동일 fixture·500개 page의 stdio 왕복(요청 직렬화부터 응답 JSON 파싱까지).
+#[test]
+#[ignore = "release 수동 RTT 측정"]
+fn release_page_rtt() {
+    if cfg!(debug_assertions) {
+        panic!("--release로 실행하세요");
+    }
+    let fx = Fixture::new();
+    let model = large_document(50_000);
+    save_documents(&fx.project, &[&model]);
+    fx.grant();
+    let before = file_digest(&fx.temp.path);
+    let base = format!("stellar://documents/{}", model.document_id());
+    let mut runs = vec![(
+        "after",
+        std::ffi::OsString::from(BIN),
+        [Vec::<f64>::new(), Vec::new(), Vec::new()],
+    )];
+    // 기준 실행 파일을 지정하면 같은 fixture에서 순서를 번갈아 측정합니다.
+    if let Some(binary) = std::env::var_os("STELLAR_MCP_BENCH_BASELINE") {
+        runs.push(("before", binary, [Vec::new(), Vec::new(), Vec::new()]));
+    }
+    for turn in 0..10 {
+        for index in 0..runs.len() {
+            let index = (turn + index) % runs.len();
+            let (_, binary, [first, next, repeated]) = &mut runs[index];
+            let mut client = Client::new(
+                fx.command_with_binary(&binary, &["--headless", "--project", PROJECT_ID_TEXT]),
+            );
+            client.initialize();
+            // 구조 조회 없이 연결의 첫 resource read를 측정합니다.
+            let uri = format!("{base}?limit=500");
+            let start = Instant::now();
+            let reply = client.read(&uri);
+            first.push(start.elapsed().as_secs_f64() * 1000.0);
+            let body = content(&reply, &uri);
+            assert_eq!(body.get("total"), Some(&J::int(50_000)));
+            assert_eq!(array(body.get("items").unwrap()).len(), 500);
+            let mut cursor = text(body.get("next_cursor").unwrap()).to_string();
+            for offset in (500..=2500).step_by(500) {
+                let uri = format!("{base}?cursor={cursor}&limit=500");
+                let start = Instant::now();
+                let reply = client.read(&uri);
+                next.push(start.elapsed().as_secs_f64() * 1000.0);
+                let body = content(&reply, &uri);
+                assert_eq!(body.get("offset"), Some(&J::int(offset)));
+                assert_eq!(array(body.get("items").unwrap()).len(), 500);
+                cursor = text(body.get("next_cursor").unwrap()).to_string();
+            }
+            let start = Instant::now();
+            let reply = client.read(&uri);
+            repeated.push(start.elapsed().as_secs_f64() * 1000.0);
+            assert_eq!(content(&reply, &uri).get("offset"), Some(&J::int(0)));
+            client.finish();
+        }
+    }
+    for (label, _, [first, next, repeated]) in runs {
+        for (name, mut samples) in [("first", first), ("next", next), ("repeat-first", repeated)] {
+            println!("{label}/{name} samples_ms={samples:.3?}");
+            samples.sort_by(f64::total_cmp);
+            println!(
+                "{label}/{name} n={} p50_ms={:.3} p95_ms={:.3}",
+                samples.len(),
+                samples[(samples.len() - 1) / 2],
+                samples[(samples.len() * 95).div_ceil(100) - 1],
+            );
+        }
+    }
+    assert_eq!(file_digest(&fx.temp.path), before);
 }

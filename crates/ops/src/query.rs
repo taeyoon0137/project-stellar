@@ -18,7 +18,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use stellar_document::definitions::DocumentDefinition;
-use stellar_document::records::DocumentRecords;
+use stellar_document::model::DocumentModel;
 use stellar_semantic_diff::build::SnapshotBuilder;
 use stellar_semantic_diff::value::SemanticValue;
 
@@ -203,17 +203,7 @@ pub struct TreePage {
 pub struct DocumentTree {
     revision: ProjectRevision,
     document: StableId,
-    records: DocumentRecords,
-    order: Vec<OrderedNode>,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct OrderedNode {
-    /// `records.nodes` index.
-    index: usize,
-    view: StableId,
-    depth: u32,
-    child_count: usize,
+    nodes: Vec<TreeNode>,
 }
 
 impl DocumentTree {
@@ -222,19 +212,23 @@ impl DocumentTree {
         snapshot: &ProjectSnapshot,
         document: StableId,
     ) -> Result<DocumentTree, QueryError> {
-        let records = snapshot.document_records(document)?;
-        let order = preorder(&records);
+        let model = snapshot.document_model(document)?;
+        let nodes = preorder(&model);
         Ok(DocumentTree {
             revision: snapshot.revision(),
             document,
-            records,
-            order,
+            nodes,
         })
     }
 
     /// 문서 전체 node 수(순회에 닿는 node).
     pub fn total(&self) -> usize {
-        self.order.len()
+        self.nodes.len()
+    }
+
+    /// 전위 순회 위치의 한 행을 빌립니다. 범위 밖이면 `None`입니다.
+    pub fn node(&self, index: usize) -> Option<&TreeNode> {
+        self.nodes.get(index)
     }
 
     /// page 하나를 만듭니다. `cursor`가 없으면 첫 page, `limit`은 1..=[`MAX_PAGE_LIMIT`].
@@ -260,28 +254,12 @@ impl DocumentTree {
                 cursor.offset
             }
         };
-        let total = self.order.len();
+        let total = self.nodes.len();
         if offset > total || (cursor.is_some() && offset == total) {
             return Err(QueryError::CursorOutOfRange { offset, total });
         }
         let end = offset.saturating_add(limit).min(total);
-        let nodes = self.order[offset..end]
-            .iter()
-            .map(|entry| {
-                let record = &self.records.nodes[entry.index];
-                TreeNode {
-                    id: record.id,
-                    parent: record.parent,
-                    view: entry.view,
-                    depth: entry.depth,
-                    kind: record.kind().name(),
-                    display_name: record.display_name.clone(),
-                    visible: record.visible,
-                    locked: record.locked,
-                    child_count: entry.child_count,
-                }
-            })
-            .collect();
+        let nodes = self.nodes[offset..end].to_vec();
         let next_cursor = (end < total).then_some(TreeCursor {
             document: self.document,
             offset: end,
@@ -327,38 +305,56 @@ pub fn document_tree_page(
 }
 
 /// 정의 순서 View별 깊이 우선 전위 순회(형제는 (OrderKey, StableId) 순). 반복 구현입니다.
-fn preorder(records: &DocumentRecords) -> Vec<OrderedNode> {
+fn preorder(model: &DocumentModel) -> Vec<TreeNode> {
+    // 검증된 모델의 공통 필드만 읽습니다. 전체 payload를 영속 레코드로 복제·정렬하지 않습니다.
+    let records: Vec<_> = model
+        .columns()
+        .iter_live()
+        .map(|handle| {
+            let fields = model.columns().get(handle).expect("live node");
+            let parent = fields
+                .parent
+                .map(|handle| model.stable_id(handle).expect("검증된 부모"));
+            (fields, parent)
+        })
+        .collect();
     let by_id: HashMap<StableId, usize> = records
-        .nodes
         .iter()
         .enumerate()
-        .map(|(i, n)| (n.id, i))
+        .map(|(i, (n, _))| (n.stable_id, i))
         .collect();
     let mut children: HashMap<StableId, Vec<(&OrderKey, StableId, usize)>> = HashMap::new();
-    for (index, node) in records.nodes.iter().enumerate() {
-        if let Some(parent) = node.parent {
+    for (index, (node, parent)) in records.iter().enumerate() {
+        if let Some(parent) = parent {
             children
-                .entry(parent)
+                .entry(*parent)
                 .or_default()
-                .push((&node.order_key, node.id, index));
+                .push((&node.order_key, node.stable_id, index));
         }
     }
     for list in children.values_mut() {
         list.sort();
     }
-    let mut out = Vec::with_capacity(records.nodes.len());
-    for view in records.views() {
+    let mut out = Vec::with_capacity(records.len());
+    for view in model.definition().pages.iter().flat_map(|page| &page.views) {
         let Some(&root) = by_id.get(&view.root_frame) else {
             continue;
         };
         let mut stack: Vec<(usize, u32)> = vec![(root, 0)];
         while let Some((index, depth)) = stack.pop() {
-            let id = records.nodes[index].id;
-            let kids = children.get(&id).map_or(&[][..], Vec::as_slice);
-            out.push(OrderedNode {
-                index,
+            let (record, parent) = &records[index];
+            let kids = children
+                .get(&record.stable_id)
+                .map_or(&[][..], Vec::as_slice);
+            out.push(TreeNode {
+                id: record.stable_id,
+                parent: *parent,
                 view: view.id,
                 depth,
+                kind: record.kind.name(),
+                display_name: record.display_name.clone(),
+                visible: record.visible,
+                locked: record.locked,
                 child_count: kids.len(),
             });
             for &(_, _, child) in kids.iter().rev() {
@@ -772,12 +768,26 @@ mod tests {
     fn preorder_visits_parents_before_children_in_order_key_order() {
         let dir = TempDir::new("order");
         scaffold_project(&dir.path);
-        let model = random_valid_document(77);
+        let model = random_valid_document(91);
         save_documents(&dir.path, &[&model]);
         let snapshot = open_snapshot(&dir.path).unwrap();
-        let page =
-            document_tree_page(&snapshot, model.document_id(), None, MAX_PAGE_LIMIT).unwrap();
+        let tree = DocumentTree::load(&snapshot, model.document_id()).unwrap();
+        let page = tree.page(None, MAX_PAGE_LIMIT).unwrap();
         assert_eq!(page.total, model.node_count());
+        assert!(
+            page.total > 0,
+            "공통 필드 비교가 빈 문서에서 통과하지 않아야 함"
+        );
+        assert!(tree.node(page.total).is_none());
+        for (index, node) in page.nodes.iter().enumerate() {
+            assert_eq!(tree.node(index), Some(node));
+            let record = model.record(node.id).unwrap();
+            assert_eq!(node.parent, record.parent);
+            assert_eq!(node.kind, record.kind().name());
+            assert_eq!(node.display_name, record.display_name);
+            assert_eq!(node.visible, record.visible);
+            assert_eq!(node.locked, record.locked);
+        }
         let position: HashMap<StableId, usize> = page
             .nodes
             .iter()
