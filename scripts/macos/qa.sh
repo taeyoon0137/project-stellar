@@ -113,8 +113,10 @@ if [ "$WELCOME" -eq 0 ]; then
     cargo run -q --manifest-path "$REPO_ROOT/Cargo.toml" -p stellar-project --example qa_sample_project -- \
       "$QA_ROOT" "$NAME" --image "$REPO_ROOT/assets/docs/hero.jpg"
   fi
-  if [ ! -f "$SAMPLE/stellar.yaml" ] || [ ! -e "$SAMPLE/.git" ]; then
-    echo "qa: 샘플이 Stellar 프로젝트가 아닙니다(stellar.yaml 또는 .git 없음): $SAMPLE (--fresh로 다시 만드세요)" >&2
+  # 생성기는 끝까지 성공한 샘플만 최종 이름으로 남깁니다. 그 전 버전이 남긴 반쯤 만든 폴더도 거르도록
+  # 저장한 문서 generation(design/current)까지 봅니다.
+  if [ ! -f "$SAMPLE/stellar.yaml" ] || [ ! -e "$SAMPLE/.git" ] || [ ! -e "$SAMPLE/design/current" ]; then
+    echo "qa: 샘플이 완성된 Stellar 프로젝트가 아닙니다(stellar.yaml·.git·design/current 중 없음): $SAMPLE (--fresh로 다시 만드세요)" >&2
     exit 1
   fi
 fi

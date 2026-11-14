@@ -30,7 +30,7 @@ QA0부터 진행합니다. 앞 단계에서 막히는 문제(앱이 뜨지 않�
 ```
 
 1. 앱을 Debug로 빌드합니다(`scripts/macos/smoke.sh`와 같은 xcodebuild 설정, 결과는 `apps/macos/build/`).
-2. 저장소 밖 임시 폴더 `${TMPDIR}/stellar-qa/sample`에 샘플 프로젝트를 만듭니다. 이미 있으면 그대로 씁니다.
+2. 저장소 밖 임시 폴더 `${TMPDIR}/stellar-qa/sample`에 샘플 프로젝트를 만듭니다. 이미 있으면 그대로 씁니다. 생성 중 실패하면 폴더를 남기지 않습니다. 있던 폴더에 `stellar.yaml`·`.git`·`design/current` 중 하나라도 없으면 멈추고 `--fresh`를 안내합니다.
 3. 샘플 프로젝트로 앱을 엽니다. 출력의 "샘플 프로젝트:" 줄이 샘플 폴더 경로입니다(Open Project에서 이 폴더를 고릅니다).
 
 | 옵션 | 동작 |

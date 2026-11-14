@@ -13,6 +13,11 @@
 //! 4. [`SavedProjectLoader`]로 다시 열어 같은 문서가 읽히는지 확인합니다.
 //! 5. 최초 커밋이 있었으면 문서와 에셋을 두 번째 커밋으로 남겨 작업 트리를 깨끗하게 둡니다.
 //!
+//! 1~5는 같은 부모 아래 임시 이름(`.<폴더 이름>.creating-<pid>`)으로 만들고, 모두 성공한 뒤에만
+//! `<폴더 이름>`으로 바꿉니다. 중간에 실패하면 임시 폴더를 지웁니다. 그래서 `<폴더 이름>` 폴더는
+//! 끝까지 만든 샘플일 때만 생깁니다. 프로세스가 강제로 끝나면 임시 폴더가 남을 수 있지만
+//! `<폴더 이름>`으로는 보이지 않습니다.
+//!
 //! 한계(QA 문서에 같은 내용이 있습니다):
 //! - Component 정의·인스턴스는 문서 레코드에 아직 표현할 수 없어(`record_codec`의 `UnsupportedNodeKind`) 넣지
 //!   않습니다. "Components" 페이지에는 컴포넌트로 만들 Frame 묶음만 둡니다.
@@ -52,6 +57,7 @@ use stellar_git_porcelain::runner::GitRunner;
 use stellar_git_porcelain::version::probe_git_version;
 use stellar_project::create::{create_project, ProjectCreateRequest, ProjectCreated};
 use stellar_project::document_io::serialize::serialize_document;
+use stellar_project::folder_name::validate_folder_name;
 use stellar_project::saved_project::SavedProjectLoader;
 use stellar_storage::generation::loader::load_current_generation;
 use stellar_storage::save::cancel::{run_save, CancelToken};
@@ -135,10 +141,16 @@ impl Options {
 }
 
 fn run(options: &Options) -> Result<(), String> {
+    validate_folder_name(&options.folder)
+        .map_err(|e| format!("폴더 이름 오류({}): {e}", options.folder))?;
+    let target = options.parent.join(&options.folder);
+    if target.exists() {
+        return Err(format!("이미 있습니다: {}", target.display()));
+    }
     let mut ids = Ids::for_folder(&options.folder);
     let project_id = ids.next();
 
-    // 1. 프로젝트 생성(scaffold + git init + 최초 커밋).
+    // 1. 프로젝트 생성(scaffold + git init + 최초 커밋)을 임시 이름으로 합니다.
     let git = discover_git(&GitDiscoveryConfig::default())
         .ok_or("시스템 Git을 찾지 못했습니다(xcode-select --install)")?;
     let version = probe_git_version(&git).map_err(|e| format!("Git 버전 확인 실패: {e:?}"))?;
@@ -150,12 +162,13 @@ fn run(options: &Options) -> Result<(), String> {
     );
     let request = ProjectCreateRequest {
         parent_dir: options.parent.clone(),
-        folder_name: options.folder.clone(),
+        folder_name: format!(".{}.creating-{}", options.folder, std::process::id()),
         project_name: PROJECT_NAME.to_string(),
     };
+    // 실패하면 create_project가 만든 폴더를 스스로 되돌리므로(git init 전) 여기서 지울 것이 없습니다.
     let created = create_project(&request, &project_id.to_string(), &runner, &version)
         .map_err(|e| format!("프로젝트 생성 실패: {e}"))?;
-    let (root, committed) = match created {
+    let (staging, committed) = match created {
         ProjectCreated::Created { path } => (path, true),
         ProjectCreated::InitializationIncomplete { path, reason } => {
             eprintln!(
@@ -165,34 +178,65 @@ fn run(options: &Options) -> Result<(), String> {
         }
     };
 
-    // 2. 이미지 에셋 복사(선택).
-    let asset = AssetRef::new(ids.next());
-    if let Some(image) = &options.image {
-        import_image(&root, image)?;
-    }
+    // 2~5. 여기부터 임시 폴더는 이 실행이 만든 것이므로, 실패하면 지웁니다.
+    let outcome = fill_sample(&staging, &mut ids, project_id, options, &runner, committed)
+        .and_then(|summary| {
+            std::fs::rename(&staging, &target)
+                .map_err(|e| format!("최종 이름으로 바꾸기 실패({}): {e}", target.display()))?;
+            Ok(summary)
+        });
+    let summary = match outcome {
+        Ok(summary) => summary,
+        Err(message) => {
+            if let Err(e) = std::fs::remove_dir_all(&staging) {
+                eprintln!(
+                    "qa_sample_project: 임시 폴더를 지우지 못했습니다({}): {e}",
+                    staging.display()
+                );
+            }
+            return Err(message);
+        }
+    };
 
-    // 3. 문서 저장.
-    let records = sample_document(&mut ids, asset)?;
-    let (model, _diagnostics) =
-        DocumentModel::from_records(records).map_err(|e| format!("샘플 문서 검증 실패: {e:?}"))?;
-    save_document(&root, project_id, &model)?;
-
-    // 4. 다시 열어 확인.
-    let summary = verify_saved(&root, &model)?;
-
-    // 5. 문서·에셋 커밋.
-    if committed {
-        repo::git_add_all(&runner, &root).map_err(|e| format!("git add 실패: {e:?}"))?;
-        repo::git_commit(&runner, &root, SAMPLE_COMMIT_MESSAGE)
-            .map_err(|e| format!("git commit 실패: {e:?}"))?;
-    }
-
-    println!("샘플 프로젝트: {}", root.display());
+    println!("샘플 프로젝트: {}", target.display());
     println!("{summary}");
     if !committed {
         println!("Git 커밋: 없음(identity 미설정)");
     }
     Ok(())
+}
+
+/// 만든 프로젝트 폴더(`root`)에 에셋·문서를 넣고 확인·커밋한 뒤 요약을 돌려줍니다.
+fn fill_sample(
+    root: &Path,
+    ids: &mut Ids,
+    project_id: StableId,
+    options: &Options,
+    runner: &GitRunner,
+    committed: bool,
+) -> Result<String, String> {
+    // 2. 이미지 에셋 복사(선택).
+    let asset = AssetRef::new(ids.next());
+    if let Some(image) = &options.image {
+        import_image(root, image)?;
+    }
+
+    // 3. 문서 저장.
+    let records = sample_document(ids, asset)?;
+    let (model, _diagnostics) =
+        DocumentModel::from_records(records).map_err(|e| format!("샘플 문서 검증 실패: {e:?}"))?;
+    save_document(root, project_id, &model)?;
+
+    // 4. 다시 열어 확인.
+    let summary = verify_saved(root, &model)?;
+
+    // 5. 문서·에셋 커밋.
+    if committed {
+        repo::git_add_all(runner, root).map_err(|e| format!("git add 실패: {e:?}"))?;
+        repo::git_commit(runner, root, SAMPLE_COMMIT_MESSAGE)
+            .map_err(|e| format!("git commit 실패: {e:?}"))?;
+    }
+    Ok(summary)
 }
 
 /// `config/asset-import.yaml` 정책으로 이미지를 `assets/`에 복사합니다.
