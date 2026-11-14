@@ -580,6 +580,16 @@ final class ShellProjectWindow {
 
     private func finishClose(attempt: UUID) {
         guard closeAttempt == attempt else { return }
+        if window?.attachedSheet != nil {
+            // 저장 응답을 받았습니다. 다른 시트에서 사용자가 답하는 시간은 저장 timeout에서 제외합니다.
+            closeTimer?.invalidate()
+            closeTimer = nil
+            windowController.didEndSheetHandler = { [weak self] in
+                // AppKit이 시트 종료와 다음 시트 연결을 마치면 창의 현재 상태로 다시 판단합니다.
+                DispatchQueue.main.async { [weak self] in self?.finishClose(attempt: attempt) }
+            }
+            return
+        }
         let confirmed = agentCloseConfirmed
         cancelPendingClose()
         agentCloseConfirmed = confirmed
@@ -608,6 +618,7 @@ final class ShellProjectWindow {
         closeAttempt = nil
         closeTimer?.invalidate()
         closeTimer = nil
+        windowController.didEndSheetHandler = nil
         windowController.windowSession?.isClosing = false
         windowController.windowSession?.commandsDidFinish = nil
     }

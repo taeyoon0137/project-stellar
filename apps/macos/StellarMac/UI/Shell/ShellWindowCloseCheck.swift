@@ -226,6 +226,32 @@ private final class ShellWindowCloseCheckRunner {
         expect(coordinator.projectWindows.isEmpty, "늦은 저장 완료 뒤 명시적 닫기 실패")
         wait()
 
+        guard let sheetProject = open(), let sheetSession = sheetProject.windowController.windowSession,
+              let parent = sheetProject.window else { return false }
+        sheetProject.windowController.showWindow(nil)
+        edit(sheetSession, "다른 시트가 열린 동안 저장")
+        wait()
+        // AppKit이 시트를 연결한 뒤에 닫기 저장 결과를 받도록 문서 큐에 검증 요청을 먼저 넣습니다.
+        _ = pump.checkWindowEdit(session: sheetSession.session, node: node, name: "다른 시트가 열린 동안 저장",
+                                 verify: true, delayMS: 500) { _ in }
+        close(sheetProject)
+        let sheet = NSAlert()
+        sheet.addButton(withTitle: "OK")
+        sheet.beginSheetModal(for: parent)
+        expect(parent.attachedSheet === sheet.window, "닫기 저장 응답 전에 다른 시트가 연결되지 않음")
+        wait()
+        retained(sheetProject, "저장 후 다른 시트 응답 대기")
+        expect(sheetSession.info?.has_unsaved_changes == 0 && sheetProject.isWaitingToClose, "시트 대기 중 닫기 의사 소실")
+        let savedWhileSheetOpen = bytes(path)
+        parent.endSheet(sheet.window)
+        let sheetDeadline = Date().addingTimeInterval(2)
+        while !sheetSession.isClosed, Date() < sheetDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        expect(coordinator.projectWindows.isEmpty && sheetSession.isClosed, "시트 종료 뒤 원래 정상 닫기 미재개")
+        expect(bytes(path) == savedWhileSheetOpen && alerts.count == 4, "시트 종료 뒤 불필요한 저장/경고")
+        wait()
+
         guard let cancelled = open(), let cancelledSession = cancelled.windowController.windowSession else { return false }
         edit(cancelledSession, "취소 후 저장")
         wait()
