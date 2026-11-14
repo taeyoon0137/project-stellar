@@ -2,8 +2,9 @@
 
 - WBS: IX.10.9
 - 작업명: old/new capability registry의 semantic diff와 영향받는 nodes/properties를 반환하는 upgrade plan, 적용 전 project 무변경
-- 상태: 완료 (`[x]`)
-- 선행: IX.10.4(이 lane `[x]`), IX.10.8(이 lane `[x]`), XIV.3.2(`[x]`)
+- 상태: 부분 완료 (`[~]`) — 구현과 검증 열(upgrade preview fixture revision unchanged)은 충족했지만 엄격 선행
+  IX.10.4가 `[~]`입니다(아래 "상태 정정").
+- 선행: IX.10.4(작성 당시 이 lane `[x]`, 리뷰 정정 후 `[~]`), IX.10.8(이 lane `[x]`), XIV.3.2(`[x]`)
 
 ## 필수 실행 환경
 
@@ -71,3 +72,18 @@ upgrade preview fixture가 그대로 통과합니다. 사용 수집(`collect_usa
   두 행은 `[~]`입니다.
 - 선행 IX.10.4도 이번 정정으로 `[~]`입니다. 이 행이 쓰는 pin 기준 release 해석(`RegistryCatalog`)은 검증되었고, IX.10.4의 남은
   범위는 실제 `stellar.yaml`에 pin을 저장하는 연결뿐입니다.
+
+## 상태 정정(통합 검증 반영, 2026-11-14)
+
+- `[x]` → `[~]`: 계획 §1.2 규칙 4와 상태 정의(`[x]`는 선행까지 완료)에 따라, 엄격 선행 IX.10.4가 `[~]`인 동안 이 행을
+  `[x]`로 둘 수 없습니다. IX.10.4는 이 행의 Task 커밋 뒤 리뷰 정정에서 `[~]`로 내려갔고, 남은 범위는 Windows 증거가 아니라
+  실제 `stellar.yaml`에 `registry_version` pin을 저장하는 연결(IX.10.3과 같은 project 연결)입니다. 그래서 Windows 보류
+  선례(ADR-0006에 따라 남은 미완료가 Windows 증거뿐인 선행)와 다르게 다뤘습니다.
+- `verify-task IX.10.9`는 이 정정 전에도 후에도 `missing-dependency`(선행 IX.10.4가 verified 아님)로 종료 코드 65입니다.
+  정정으로 계획서 상태가 선행 규칙과 맞게 되었고, ledger는 `cargo run -q -p xtask -- generate-ledger`로 다시 만들었습니다
+  (IX.10.9 `reported_done`).
+- 위 "상태 확인(리뷰 반영)" 절의 `[x]` 유지 판단은 검증 열 기준으로는 그대로이지만, 선행 규칙 때문에 이 정정으로
+  대체합니다. 이 행의 코드·테스트와 위 검증 결과는 바꾸지 않았습니다.
+- **`[x]` 복원 조건**: IX.10.4가 `[x]`가 된 뒤(IX.10.3의 project 연결로 실제 `stellar.yaml`에 pin을 저장하고 bytes·해석
+  결과 불변을 확인한 뒤) 이 행의 upgrade preview fixture(`upgrade_preview_leaves_project_unchanged`, `plan_errors`)를 그
+  기준에서 다시 통과시키고 `verify-task IX.10.9`가 종료 코드 0이면 `[x]`로 되돌리고 ledger를 다시 만듭니다.

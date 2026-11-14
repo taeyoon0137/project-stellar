@@ -4718,19 +4718,14 @@ tasks:
     verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.10.9"
     title: "profile upgrade plan을 구현해 old/new capability registry의 semantic diff와 영향받는 nodes/properties를 반환합니다. 적용 전 project를 수정하지 않습니다."
-    status: verified
+    status: reported_done
     depends_on:
       - "IX.10.4"
       - "IX.10.8"
       - "XIV.3.2"
     required_environments:
       - DEV-MAC
-    evidence:
-      - environment: DEV-MAC
-        locator: "docs/task-reports/IX.10.9.md"
-    commit: "68344ce198b97a5efde473a40cd6c1ee985a1729"
     report: "docs/task-reports/IX.10.9.md"
-    verified_at: "2026-11-14T11:44:49+09:00"
   - id: "IX.10.10"
     title: "승인된 profile upgrade를 CommandTransaction과 manifest 변경으로 적용하고 자동 commit하지 않습니다."
     status: reported_done
