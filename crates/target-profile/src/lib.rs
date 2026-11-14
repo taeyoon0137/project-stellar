@@ -18,3 +18,9 @@ pub mod manifest;
 
 /// profile registry 버전과 프로젝트 pin (IX.10.4).
 pub mod registry;
+
+/// capability 상태와 element·property·contract별 registry 표 (IX.10.5).
+pub mod capability;
+
+/// 앱 내장 profile registry release (IX.10.5).
+pub mod builtin;

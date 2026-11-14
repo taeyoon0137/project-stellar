@@ -13,6 +13,7 @@
 
 use std::fmt;
 
+use crate::capability::CapabilityTable;
 use crate::node::{parse_u32, ValueError};
 use crate::profile::TargetProfileId;
 use crate::spec::{
@@ -80,17 +81,31 @@ pub enum NewProfileKind {
     Android,
 }
 
-/// profile registry release 하나.
+/// profile registry release 하나: 새 profile 기본값과 capability 표(IX.10.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileRegistry {
     version: ProfileRegistryVersion,
     defaults: NewProfileDefaults,
+    capabilities: CapabilityTable,
 }
 
 impl ProfileRegistry {
     /// release를 만듭니다.
-    pub fn new(version: ProfileRegistryVersion, defaults: NewProfileDefaults) -> ProfileRegistry {
-        ProfileRegistry { version, defaults }
+    pub fn new(
+        version: ProfileRegistryVersion,
+        defaults: NewProfileDefaults,
+        capabilities: CapabilityTable,
+    ) -> ProfileRegistry {
+        ProfileRegistry {
+            version,
+            defaults,
+            capabilities,
+        }
+    }
+
+    /// capability 표.
+    pub fn capabilities(&self) -> &CapabilityTable {
+        &self.capabilities
     }
 
     /// 버전.
@@ -281,6 +296,7 @@ mod tests {
                 web_baseline: WebBaseline::new(baseline).expect("baseline"),
                 web_capability_set_version: CapabilitySetVersion::new(n).expect("set"),
             },
+            CapabilityTable::empty(),
         )
     }
 

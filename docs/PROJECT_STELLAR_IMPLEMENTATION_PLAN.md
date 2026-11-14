@@ -901,7 +901,7 @@ tools/xtask/
 | IX.10.2 | `[x]` | Apple profile에 platform 종류와 최소 OS version, Android profile에 API level과 UI system version, Web profile에 browser baseline과 capability set version을 정의합니다. | profile별 required field validation. | IX.10.1 |
 | IX.10.3 | `[x]` | `stellar.yaml`에 project target profile 목록과 기본 profile을 저장하고 존재하지 않는 default를 거부합니다. | manifest round-trip과 invalid default fixture. | IX.10.2, IV.1.5 |
 | IX.10.4 | `[x]` | Stellar 앱 업데이트만으로 project profile version을 바꾸지 않게 합니다. profile registry version과 project pin을 분리합니다. | registry update 후 project bytes·resolved profile unchanged. | IX.10.3 |
-| IX.10.5 | `[ ]` | capability 상태를 Native, Approximated, Unsupported, Deprecated로 정의하고 element/property/semantic contract별 registry를 구현합니다. | 상태 matrix fixture 통과. | IX.10.2, IX.6.7 |
+| IX.10.5 | `[x]` | capability 상태를 Native, Approximated, Unsupported, Deprecated로 정의하고 element/property/semantic contract별 registry를 구현합니다. | 상태 matrix fixture 통과. | IX.10.2, IX.6.7 |
 | IX.10.6 | `[ ]` | selected TargetProfile에 따라 element·property 생성 가능 여부와 비활성화 사유를 조회하는 API를 구현합니다. 실제 UI는 Phase XII에 연결합니다. | Button/TextInput/Modal/List와 대표 CSS/Apple/Android property fixture 통과. | IX.10.5 |
 | IX.10.7 | `[ ]` | 공통 structure에 profile-specific sparse override를 적용하는 resolver를 구현하고 View Variant·Binding environment와 결합합니다. | 공통값·profile override·variant override 우선순위 fixture 통과. | IX.7.6, VIII.7.3, IX.10.5 |
 | IX.10.8 | `[ ]` | 한 View를 여러 TargetProfile에 대해 동시에 validate하고 Native/Approximated/Unsupported/Deprecated diagnostic을 생성합니다. | multi-profile fixture expected diagnostics. | IX.10.6, IX.10.7 |
