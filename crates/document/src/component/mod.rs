@@ -20,6 +20,9 @@ pub mod typed_expr;
 /// ComponentProperty record (IX.1.2).
 pub mod property;
 
+/// Property 생성·rename·default 변경·삭제 command (IX.1.3).
+pub mod property_commands;
+
 /// 상태 머신 이벤트 종류 (IX.5.2).
 pub mod event;
 

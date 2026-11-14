@@ -32,11 +32,11 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::ComponentRef;
 use stellar_expressions::types::TypeSpec;
 
-use super::codec::{capacity_hint, put_count, put_id, Malformed, Reader};
+use super::codec::{capacity_hint, put_count, put_id, put_u8, Malformed, Reader};
 use super::definition::{ComponentEntry, ComponentLibrary, ComponentPropertyId};
 use super::expansion::MAX_INSTANCE_NESTING;
 use super::instance::{ComponentInstancePayload, InstancePayloadError, OverrideKey};
-use super::typed_expr::assignable;
+use super::typed_expr::{assignable, put_type_spec};
 use crate::node_kind::NodeKind;
 
 /// drilling binding이 넘을 수 있는 경계 수 상한(인스턴스 중첩 상한과 같음).
@@ -517,7 +517,9 @@ impl DrillingBinding {
                 let link_owner = components[boundary - 1];
                 let has_link = links
                     .link_into(link_owner, self.path[boundary], *property)
-                    .is_some_and(|link| link.source == self.chain[boundary - 1]);
+                    .is_some_and(|link| {
+                        link.source == self.chain[boundary - 1] && !links.is_orphan(link.id)
+                    });
                 if !has_link {
                     return Err(DrillingError::MissingIntermediateLink { boundary });
                 }
@@ -664,13 +666,119 @@ pub fn resolve_path(
     Ok(components)
 }
 
+/// binding이 끊긴 원인.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrphanCause {
+    /// binding이 쓰는 property가 삭제됐습니다.
+    PropertyDeleted {
+        /// 컴포넌트.
+        component: ComponentRef,
+        /// 삭제된 property.
+        property: ComponentPropertyId,
+    },
+}
+
+impl OrphanCause {
+    const fn tag(&self) -> u8 {
+        match self {
+            OrphanCause::PropertyDeleted { .. } => 0x01,
+        }
+    }
+
+    fn encode_into(&self, buf: &mut Vec<u8>) {
+        put_u8(buf, self.tag());
+        match self {
+            OrphanCause::PropertyDeleted {
+                component,
+                property,
+            } => {
+                put_id(buf, component.id());
+                put_id(buf, property.stable_id());
+            }
+        }
+    }
+
+    fn decode_from(reader: &mut Reader<'_>) -> Result<OrphanCause, DrillingError> {
+        match reader.u8()? {
+            0x01 => Ok(OrphanCause::PropertyDeleted {
+                component: ComponentRef::new(reader.id()?),
+                property: ComponentPropertyId::new(reader.id()?),
+            }),
+            _ => Err(DrillingError::Malformed {
+                reason: "알 수 없는 orphan cause tag",
+            }),
+        }
+    }
+}
+
+/// binding 안에서 끊긴 위치.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum BreakPoint {
+    /// 값 원천(owner의 source property).
+    Source,
+    /// 경계 `k`의 chain property.
+    Boundary(usize),
+}
+
+impl BreakPoint {
+    fn encode_into(&self, buf: &mut Vec<u8>) {
+        match self {
+            BreakPoint::Source => put_u8(buf, 0x01),
+            BreakPoint::Boundary(k) => {
+                put_u8(buf, 0x02);
+                put_count(buf, *k);
+            }
+        }
+    }
+
+    fn decode_from(reader: &mut Reader<'_>) -> Result<BreakPoint, DrillingError> {
+        match reader.u8()? {
+            0x01 => Ok(BreakPoint::Source),
+            0x02 => Ok(BreakPoint::Boundary(reader.count()?)),
+            _ => Err(DrillingError::Malformed {
+                reason: "알 수 없는 break point tag",
+            }),
+        }
+    }
+}
+
+/// orphan 상태 정보. binding 자체(원래 ID·owner·path·chain)는 모음에 그대로 남습니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrillingOrphan {
+    /// 원인.
+    pub cause: OrphanCause,
+    /// 끊긴 위치.
+    pub break_point: BreakPoint,
+    /// 끊기기 전 binding 값 타입(target property 선언 타입).
+    pub last_valid_type: TypeSpec,
+}
+
+impl DrillingOrphan {
+    fn encode_into(&self, buf: &mut Vec<u8>) {
+        self.cause.encode_into(buf);
+        self.break_point.encode_into(buf);
+        put_type_spec(buf, self.last_valid_type);
+    }
+
+    fn decode_from(reader: &mut Reader<'_>) -> Result<DrillingOrphan, DrillingError> {
+        Ok(DrillingOrphan {
+            cause: OrphanCause::decode_from(reader)?,
+            break_point: BreakPoint::decode_from(reader)?,
+            last_valid_type: reader.type_spec()?,
+        })
+    }
+}
+
 /// 문서의 drilling binding 모음.
 ///
-/// id 오름차순으로 순회·직렬화합니다. 첫 경계 값 자리([`DrillingSlot`])마다 binding은 하나뿐입니다.
+/// id 오름차순으로 순회·직렬화합니다. 첫 경계 값 자리([`DrillingSlot`])마다 binding은 하나뿐입니다. 끊긴 binding은
+/// 지우지 않고 orphan 정보([`DrillingOrphan`])를 붙여 보존합니다(기술 아키텍처 14.4). orphan binding은 검증·중간
+/// link 판정에서 제외됩니다.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DrillingSet {
     bindings: BTreeMap<DrillingBindingId, DrillingBinding>,
     slots: BTreeMap<DrillingSlot, DrillingBindingId>,
+    orphans: BTreeMap<DrillingBindingId, DrillingOrphan>,
 }
 
 impl DrillingSet {
@@ -704,7 +812,93 @@ impl DrillingSet {
             .remove(&id)
             .ok_or(DrillingError::UnknownBinding { binding: id })?;
         self.slots.remove(&binding.slot());
+        self.orphans.remove(&id);
         Ok(binding)
+    }
+
+    /// binding의 orphan 정보(live면 `None`).
+    pub fn orphan(&self, id: DrillingBindingId) -> Option<&DrillingOrphan> {
+        self.orphans.get(&id)
+    }
+
+    /// binding이 orphan 상태인지.
+    pub fn is_orphan(&self, id: DrillingBindingId) -> bool {
+        self.orphans.contains_key(&id)
+    }
+
+    /// orphan binding(id 오름차순).
+    pub fn orphans(&self) -> impl Iterator<Item = (DrillingBindingId, &DrillingOrphan)> + '_ {
+        self.orphans.iter().map(|(id, orphan)| (*id, orphan))
+    }
+
+    /// live binding(id 오름차순).
+    pub fn live(&self) -> impl Iterator<Item = &DrillingBinding> + '_ {
+        self.bindings
+            .values()
+            .filter(|binding| !self.orphans.contains_key(&binding.id))
+    }
+
+    /// binding을 orphan으로 표시합니다. 없는 binding이면 오류, 이미 orphan이면 기존 정보를 바꾸지 않고 `false`.
+    pub(crate) fn mark_orphan(
+        &mut self,
+        id: DrillingBindingId,
+        orphan: DrillingOrphan,
+    ) -> Result<bool, DrillingError> {
+        if !self.bindings.contains_key(&id) {
+            return Err(DrillingError::UnknownBinding { binding: id });
+        }
+        if self.orphans.contains_key(&id) {
+            return Ok(false);
+        }
+        self.orphans.insert(id, orphan);
+        Ok(true)
+    }
+
+    /// orphan 표시를 지우고 정보를 반환합니다.
+    pub(crate) fn clear_orphan(&mut self, id: DrillingBindingId) -> Option<DrillingOrphan> {
+        self.orphans.remove(&id)
+    }
+
+    /// `component`의 `property`를 쓰는 live binding과 그 위치(id 오름차순).
+    ///
+    /// owner가 `component`이고 source가 `property`면 [`BreakPoint::Source`], 경계 `k` 컴포넌트가 `component`이고
+    /// `chain[k]`가 `property`면 [`BreakPoint::Boundary`]입니다. path를 해석할 수 없는 binding은 source만 비교합니다.
+    pub fn uses_of(
+        &self,
+        library: &ComponentLibrary,
+        component: ComponentRef,
+        property: ComponentPropertyId,
+    ) -> Vec<(DrillingBindingId, BreakPoint)> {
+        let mut out = Vec::new();
+        for binding in self.live() {
+            if binding.owner == component && binding.source == property {
+                out.push((binding.id, BreakPoint::Source));
+                continue;
+            }
+            let Ok(components) = binding.resolve_components(library) else {
+                continue;
+            };
+            if let Some(k) = components
+                .iter()
+                .zip(&binding.chain)
+                .position(|(c, p)| *c == component && *p == property)
+            {
+                out.push((binding.id, BreakPoint::Boundary(k)));
+            }
+        }
+        out
+    }
+
+    /// binding의 target property 선언 타입(path를 해석할 수 없거나 property가 없으면 `None`).
+    pub fn target_type(
+        &self,
+        library: &ComponentLibrary,
+        id: DrillingBindingId,
+    ) -> Option<TypeSpec> {
+        let binding = self.bindings.get(&id)?;
+        let components = binding.resolve_components(library).ok()?;
+        let inner = library.get(*components.last()?)?;
+        inner.property(binding.target).map(|p| p.value_type())
     }
 
     /// binding.
@@ -752,7 +946,7 @@ impl DrillingSet {
         &self,
         library: &ComponentLibrary,
     ) -> Result<(), (DrillingBindingId, DrillingError)> {
-        for binding in self.bindings.values() {
+        for binding in self.live() {
             binding
                 .validate(library, self)
                 .map_err(|error| (binding.id, error))?;
@@ -760,12 +954,17 @@ impl DrillingSet {
         Ok(())
     }
 
-    /// canonical binary bytes(id 오름차순).
+    /// canonical binary bytes(id 오름차순): binding 목록 + orphan 정보(id 오름차순).
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         put_count(&mut buf, self.bindings.len());
         for binding in self.bindings.values() {
             binding.encode_into(&mut buf);
+        }
+        put_count(&mut buf, self.orphans.len());
+        for (id, orphan) in &self.orphans {
+            put_id(&mut buf, id.stable_id());
+            orphan.encode_into(&mut buf);
         }
         buf
     }
@@ -785,6 +984,19 @@ impl DrillingSet {
             }
             previous = Some(binding.id);
             set.insert(binding)?;
+        }
+        let orphan_count = reader.count()?;
+        let mut previous: Option<DrillingBindingId> = None;
+        for _ in 0..orphan_count {
+            let id = DrillingBindingId::new(reader.id()?);
+            if previous.is_some_and(|p| p >= id) {
+                return Err(DrillingError::Malformed {
+                    reason: "orphan 정보가 id 오름차순이 아님",
+                });
+            }
+            previous = Some(id);
+            let orphan = DrillingOrphan::decode_from(&mut reader)?;
+            set.mark_orphan(id, orphan)?;
         }
         reader.expect_end()?;
         Ok(set)
@@ -1220,6 +1432,7 @@ mod tests {
         put_count(&mut swapped, 2);
         swapped.extend_from_slice(&second);
         swapped.extend_from_slice(&first);
+        put_count(&mut swapped, 0);
         assert!(matches!(
             DrillingSet::decode(&swapped),
             Err(DrillingError::Malformed { .. })

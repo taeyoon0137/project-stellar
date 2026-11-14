@@ -541,6 +541,27 @@ impl ComponentDefinition {
         Ok(())
     }
 
+    /// Property를 선언 목록 `index` 위치에 선언합니다. 중복은 `DuplicateId`, 범위 밖 위치는 `Malformed`로
+    /// 거부합니다.
+    pub fn insert_property_at(
+        &mut self,
+        index: usize,
+        property: ComponentPropertyId,
+    ) -> Result<(), ComponentDefinitionError> {
+        if self.properties.contains(&property) {
+            return Err(ComponentDefinitionError::DuplicateId {
+                id: property.stable_id(),
+            });
+        }
+        if index > self.properties.len() {
+            return Err(ComponentDefinitionError::Malformed {
+                reason: "property 선언 위치가 범위를 벗어남",
+            });
+        }
+        self.properties.insert(index, property);
+        Ok(())
+    }
+
     /// Property 선언을 제거합니다. 없으면 오류입니다.
     pub fn remove_property(
         &mut self,
@@ -727,7 +748,6 @@ impl ComponentEntry {
     }
 
     /// 정의(가변). root·tree 소유 관계를 바꾸지 않는 interface 편집(Property 선언 등)에만 씁니다.
-    #[cfg(test)]
     pub(super) fn definition_mut(&mut self) -> &mut ComponentDefinition {
         &mut self.definition
     }
