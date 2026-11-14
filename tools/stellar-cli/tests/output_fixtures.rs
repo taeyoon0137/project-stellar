@@ -917,7 +917,9 @@ fn apply_exits_75_while_another_writer_holds_the_save_lock() {
 #[test]
 fn concurrent_apply_processes_lose_no_update() {
     // 검증 기준(XXIV.4.5): 동시 쓰기 fixture 손실 0. 여러 `stellar apply` 프로세스가 서로 다른
-    // node 이름을 바꾸고, 75(잠금 사용 중)·65(base 불일치)면 최신 revision으로 다시 시도합니다.
+    // node 이름을 바꾸고, 75(잠금 사용 중)·65 `base-revision-mismatch`(잠금 밖에서 읽은 base가
+    // 낡음)면 최신 revision으로 다시 시도합니다. 잠금이 generation 비교와 교체를 감싸므로 계획 뒤
+    // 교체(65 `concurrent-write`, V.5.2 optimistic check)는 생기면 안 되며, 생기면 실패입니다.
     let dir = TempDir::new("apply-concurrent");
     let (root, model) = saved_project(&dir);
     let home = dir.path.join("home");
@@ -952,10 +954,23 @@ fn concurrent_apply_processes_lose_no_update() {
                             &input,
                             Some(home),
                         );
-                        match result.code {
-                            0 => return retried,
-                            65 | 75 => retried += 1,
-                            other => panic!("예상하지 못한 종료 코드 {other}: {}", result.stderr),
+                        let error_code = (result.code != 0).then(|| {
+                            parse(result.stdout.trim_end(), JsonLimits::default())
+                                .unwrap()
+                                .get("error")
+                                .and_then(|e| e.get("code"))
+                                .and_then(JsonValue::as_str)
+                                .map(str::to_string)
+                                .unwrap_or_default()
+                        });
+                        match (result.code, error_code.as_deref()) {
+                            (0, _) => return retried,
+                            (75, Some("save-lock-busy")) | (65, Some("base-revision-mismatch")) => {
+                                retried += 1
+                            }
+                            (other, code) => {
+                                panic!("예상하지 못한 종료 {other} {code:?}: {}", result.stderr)
+                            }
                         }
                     }
                     panic!("writer {i}가 끝나지 못했습니다");

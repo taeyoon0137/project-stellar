@@ -65,5 +65,5 @@
 ## 남은 위험 / 한계
 
 - **후속(이 행을 `[x]`로 올리기 위한 남은 일)**: `docs/architecture/crate-dependency-graph.md` 허용 의존 표에 `| \`stellar-ops\` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics |` 행과 Mermaid edge(`ops --> project` 등 8개)를 추가하고, 규칙 절에 "ops는 local-ipc·agent-protocol·mcp-core·agent-host·ffi에 전이적으로도 도달하지 않음(ADR-0005 §8, `reach::FORBIDDEN_REACH`)"을 적어야 합니다.
-- `reach::FORBIDDEN_REACH`의 `stellar-ops` 금지 목록에는 ADR의 `mcp-core` 대신 현재 package 이름 `stellar-mcp`가 있습니다. `stellar-mcp-core`가 생기는 XIX.9.1에서 이름을 함께 맞춰야 합니다(`reach.rs`는 이 lane 허용 경로 밖).
+- `reach::FORBIDDEN_REACH`의 `stellar-ops` 금지 목록에는 처음에 ADR의 `mcp-core` 대신 현재 package 이름 `stellar-mcp`만 있었습니다. 리뷰 보완에서 `stellar-ops`·`stellar-cli` 금지 목록에 `stellar-mcp-core`를 더했고(`stellar-mcp`도 유지), ADR-0005 §8 열이 모두 들어 있는지와 diagnostics를 거친 `stellar-mcp-core` 전이 도달 거부를 `bans_cover_the_adr_0005_section_8_columns`로 확인합니다.
 - token·component 정의는 아직 저장 포맷(Phase VIII·IX)이 없어 snapshot은 chunk kind 개수만 보고합니다.

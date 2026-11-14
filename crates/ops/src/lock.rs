@@ -9,6 +9,7 @@
 //!   `$HOME/Library/Application Support`입니다(`stellar_project::trust_store::os_user_data_base`).
 //!   하위 폴더 이름은 앱 bundle identifier입니다(Apple File System Programming Guide: Application
 //!   Support 아래 앱 폴더는 bundle identifier로 둡니다). 디렉터리는 소유자 전용(`0700`)입니다.
+//!   잠금 디렉터리 자리가 symlink나 파일이면 따라가지 않고 거부합니다(`NotADirectory`).
 //! - **key**: 프로젝트 식별(IV.2.3) `project id ‖ canonical target`의 SHA-256 앞 16바이트 16진수.
 //!   같은 프로젝트를 symlink 경로로 열어도 같은 잠금이고, 다른 worktree는 다른 잠금입니다.
 //! - **OS API**: `flock(2)`의 `LOCK_EX | LOCK_NB`(Rust std `File::try_lock`). macOS `flock(2)`
@@ -164,8 +165,10 @@ fn ensure_private_dir(dir: &Path) -> Result<(), LockError> {
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
         Err(e) => return Err(io_error(dir, e)),
     }
-    let meta = std::fs::metadata(dir).map_err(|e| io_error(dir, e))?;
-    if !meta.is_dir() {
+    // symlink를 따라가지 않습니다. 잠금 자리가 symlink나 파일이면 대상의 권한을 바꾸거나 그 안에
+    // 잠금 파일을 만들지 않고 거부합니다.
+    let meta = std::fs::symlink_metadata(dir).map_err(|e| io_error(dir, e))?;
+    if !meta.file_type().is_dir() {
         return Err(LockError::Io {
             path: dir.to_path_buf(),
             kind: io::ErrorKind::NotADirectory,
@@ -209,6 +212,46 @@ mod tests {
             let mode = std::fs::metadata(&locks).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o700);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_lock_dir_is_refused_without_touching_the_target() {
+        // 잠금 디렉터리 자리가 symlink면 따라가지 않고 거부합니다. 대상 디렉터리의 권한을 바꾸거나
+        // 그 안에 잠금 파일을 만들지 않습니다.
+        use std::os::unix::fs::PermissionsExt;
+        let dir = TempDir::new("lock-symlink");
+        let root = dir.path.join("project");
+        scaffold_project(&root);
+        let target = dir.path.join("elsewhere");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let locks = dir.path.join("locks");
+        std::os::unix::fs::symlink(&target, &locks).unwrap();
+        assert!(matches!(
+            SaveLock::try_acquire(&locks, project_id(), &root),
+            Err(LockError::Io {
+                kind: io::ErrorKind::NotADirectory,
+                ..
+            })
+        ));
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755, "대상 권한 무변경");
+        assert_eq!(
+            std::fs::read_dir(&target).unwrap().count(),
+            0,
+            "잠금 파일 0"
+        );
+        // 일반 파일 자리도 거부합니다.
+        let file = dir.path.join("file-locks");
+        std::fs::write(&file, b"").unwrap();
+        assert!(matches!(
+            SaveLock::try_acquire(&file, project_id(), &root),
+            Err(LockError::Io {
+                kind: io::ErrorKind::NotADirectory,
+                ..
+            })
+        ));
     }
 
     #[test]

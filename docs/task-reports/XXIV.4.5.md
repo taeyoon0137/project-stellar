@@ -2,7 +2,7 @@
 
 - WBS: XXIV.4.5
 - 작업명: headless 쓰기 경로에 프로젝트·Git 밖 OS 사용자 데이터의 프로젝트별 배타 잠금을 두고, 잠금을 잡은 뒤 generation 비교·교체, 사용 중이면 종료 코드 75
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 구현과 작업 행의 검증 기준은 모두 통과했으나, 선행 XXIV.4.4가 `[~]`입니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`가 아니면 완료로 두지 않음)에 따라 XXIV.4.4가 `[x]`가 될 때까지 `[~]`로 둡니다.
 - 선행: XXIV.4.4(이 lane에서 구현, `[~]`: 남은 일은 storage writer 종류 필드뿐이며 잠금이 쓰는 저장 경로는 모두 있음), IV.2.3(`[x]`)
 
 ## 필수 실행 환경
@@ -40,8 +40,10 @@
 
 | 검사 | 결과 |
 |---|---|
-| 동시 쓰기 손실 0(thread): 6개 writer가 서로 다른 node 이름 변경, 잠금 사용 중·base 불일치면 재시도 → generation 1+6, 모든 이름 보존(`concurrent_writers_lose_no_update`) | 통과 |
-| 동시 쓰기 손실 0(프로세스): `stellar apply` 4개 프로세스 동시 실행, 75·65면 재시도 → revision `g5:`, 모든 이름 보존(`concurrent_apply_processes_lose_no_update`) | 통과 |
+| 동시 쓰기 손실 0(thread): 6개 writer가 서로 다른 node 이름 변경, 잠금 사용 중·base 불일치면 재시도, 계획 뒤 교체(`ConcurrentWrite`)는 즉시 실패 → generation 1+6, 모든 이름 보존(`concurrent_writers_lose_no_update`) | 통과 |
+| 동시 쓰기 손실 0(프로세스): `stellar apply` 4개 프로세스 동시 실행, 75 `save-lock-busy`·65 `base-revision-mismatch`만 재시도하고 65 `concurrent-write`를 포함한 다른 결과는 실패 → revision `g5:`, 모든 이름 보존(`concurrent_apply_processes_lose_no_update`) | 통과 |
+| CLI가 계획 뒤 교체를 base 불일치와 다른 코드 `concurrent-write`(65)로 보고(`concurrent_write_is_distinguished_from_base_mismatch`) | 통과 |
+| 잠금 디렉터리 자리가 symlink·파일이면 `NotADirectory`로 거부, symlink 대상 권한 무변경·잠금 파일 0(`symlinked_lock_dir_is_refused_without_touching_the_target`) | 통과 |
 | 잠금 경합 시 exit 75, golden `apply-lock-busy.json`, 파일 hash 동일, 해제 후 성공(`apply_exits_75_while_another_writer_holds_the_save_lock`) | 통과 |
 | ops: 잠금 보유 중 쓰기 `Lock(Busy)`·파일 변경 0, dry-run은 잠금 무관하게 동작(`held_lock_makes_write_fail_without_touching_files_and_dry_run_skips_the_lock`) | 통과 |
 | merge driver용 `LockPolicy::None` 쓰기는 잠금 디렉터리를 만들지 않음(`lock_policy_none_never_creates_the_lock_dir`) | 통과 |
@@ -58,5 +60,7 @@
 ## 남은 위험 / 한계
 
 - 잠금은 headless writer끼리만 직렬화합니다. 앱 창 저장은 아직 이 잠금을 쓰지 않으며(앱 저장 경로는 이 lane 밖), 앱과의 경합은 V.5.2 optimistic check와 XXIV.4.6 reconciliation이 담당합니다. optimistic check와 pointer 교체 사이의 짧은 구간은 앱이 같은 잠금을 쓰기 전까지 남습니다.
-- 동시 쓰기 test는 잠금이 직렬화한 결과의 손실 0을 확인하지만, 잠금 없이 손실이 나는 경합을 결정적으로 재현하지는 못합니다.
+- **후속(`[x]`로 올리기 위한 남은 일)**: XXIV.4.4의 generation metadata writer 종류 기록(보호 경로 `crates/storage`와 ADR)을 마쳐 XXIV.4.4를 `[x]`로 올린 뒤, 이 보고서의 검증 명령을 다시 실행해 `[x]`로 바꿉니다.
+- 동시 쓰기 test는 잠금이 직렬화한 결과의 손실 0을 확인하지만, 잠금 없이 손실이 나는 경합을 결정적으로 재현하지는 못합니다. 대신 V.5.2 optimistic check만으로 통과하지 않도록, 잠금이 감싸야 하는 계획 뒤 교체(`ConcurrentWrite`, CLI `concurrent-write`)가 한 번이라도 나오면 두 test 모두 실패합니다. base 불일치 재시도는 base를 잠금 밖에서 읽는 호출 방식 때문에 정상입니다.
+- 잠금 디렉터리의 상위 경로(`$HOME`, Application Support)는 symlink 여부를 검사하지 않습니다. 같은 사용자 `HOME` 안이라 위험이 낮습니다.
 - 기다리지 않는 정책이라 경합이 잦으면 호출자가 재시도해야 합니다(75는 재시도 가능 코드).

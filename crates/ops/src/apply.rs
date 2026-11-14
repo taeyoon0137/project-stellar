@@ -565,7 +565,8 @@ mod tests {
     #[test]
     fn concurrent_writers_lose_no_update() {
         // 검증 기준(XXIV.4.5): 동시 쓰기 fixture 손실 0. 여러 thread가 서로 다른 node 이름을 바꾸며
-        // 잠금 사용 중·base 불일치면 최신 revision으로 다시 시도합니다. 모든 변경이 남아야 합니다.
+        // 잠금 사용 중·base 불일치(잠금 밖에서 읽은 base가 낡음)면 최신 revision으로 다시 시도합니다.
+        // 모든 변경이 남아야 하고, 계획 뒤 교체(ConcurrentWrite)는 한 번도 없어야 합니다.
         let (dir, model) = project_with(7);
         let records = model.to_records().unwrap();
         let targets: Vec<StableId> = records
@@ -596,6 +597,11 @@ mod tests {
                             Err(ApplyError::Lock(LockError::Busy { .. }))
                             | Err(ApplyError::BaseRevisionMismatch { .. }) => {
                                 std::thread::yield_now();
+                            }
+                            // 잠금이 비교·교체를 감싸므로 V.5.2 optimistic check가 잡는 계획 뒤
+                            // 교체는 headless writer끼리 생기면 안 됩니다(재시도하지 않고 실패).
+                            Err(ApplyError::ConcurrentWrite) => {
+                                panic!("writer {i}: 잠금 아래에서 계획 뒤 교체가 일어났습니다")
                             }
                             Err(e) => panic!("{e}"),
                         }

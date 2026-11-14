@@ -29,7 +29,7 @@
   - 그 밖의 closed enum 종류는 `{"kind":"<CommandKind 이름>","canonical":"<encode_command 16진수>"}`로 받습니다. 이름이 registry(VII.1.2 `CommandKind::ALL`)에 없거나, bytes의 kind가 registry 밖이면 `unknown-command`, 선언 이름과 bytes kind가 다르면 `invalid-transaction`으로 거부합니다. 어느 형식이든 `Command` closed enum으로만 바뀌어 raw patch·script가 실행 경로에 닿지 않습니다.
 - **적용 순서(`stellar_ops::apply::apply`)**: command 해석 → snapshot 열기(XXIV.4.2) → base revision(`g<n>:<hash>`) 비교 → 대상 문서 로드 → `DocumentState::execute_transaction`(VII.1.6, 전부 성공 또는 전부 롤백, origin `User`) → 적용 전후 레코드 semantic diff → dry-run이면 종료.
 - **세대 전환 저장**: 모든 문서를 다시 직렬화하고(VI.10.2, 결과 문서는 저장 전 validator 통과 필수) 문서가 아닌 chunk pointer는 Clean으로 재사용해 같은 base generation 위의 SavePlan을 만듭니다(V.5.1). 저장 파이프라인(V.5.2 optimistic check → chunk 기록·재검증 → manifest 기록 → current pointer 원자 교체)을 그대로 씁니다. 같은 내용의 chunk는 hash 비교로 재사용되어 예시 fixture에서는 바뀐 subtree chunk 1개만 기록됐습니다.
-- **종료 코드**: base revision 불일치·계획 뒤 다른 writer의 교체 65(`base-revision-mismatch`), 형식 오류 65(`invalid-transaction`·`invalid-json`), 등록되지 않은 종류 65(`unknown-command`), 없는 문서 66, validator 거부 1(`rejected-command`), 결과가 저장 불변식 위반 1(`invalid-result`), 저장 실패 73. 실패하면 current generation은 바뀌지 않습니다.
+- **종료 코드**: base revision 불일치 65(`base-revision-mismatch`), 계획 뒤 다른 writer의 교체 65(`concurrent-write`, 처음에는 `base-revision-mismatch`와 같은 코드였으나 저장 잠금 동시 쓰기 test가 둘을 구분하도록 리뷰 보완에서 나눔), 형식 오류 65(`invalid-transaction`·`invalid-json`), 등록되지 않은 종류 65(`unknown-command`), 없는 문서 66, validator 거부 1(`rejected-command`), 결과가 저장 불변식 위반 1(`invalid-result`), 저장 실패 73. 실패하면 current generation은 바뀌지 않습니다.
 - **결과 JSON**: `mode`, `document`, `base_revision`, `revision`(write 후 새 generation), `command_count`, `written_chunks`, `changes`(`count`, `by_kind`, canonical 순서 `entries`).
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)

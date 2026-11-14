@@ -1860,7 +1860,7 @@ tools/xtask/
 | XIX.2.2 | `[x]` | resource response에 revision과 pagination cursor를 포함하고 전체 대형 document를 한 응답에 보내지 않습니다. | 20만 node pagination 통과. | XIX.2.1 |
 | XIX.2.3 | `[x]` | tools를 semantic diff 생성, render preview request, document validation, command proposal, command apply로 분리합니다. | tool inventory 정확. | XIX.2.1 |
 | XIX.2.4 | `[x]` | MCP는 terminal, commit, push 권한을 문서 apply 권한과 별도 tool namespace로 구분합니다. 초기에는 commit/push tool을 비활성 기본값으로 둡니다. | permission matrix 통과. | XIX.2.3 |
-| XIX.2.5 | `[x]` | 모든 MCP payload에서 project content가 agent에 전달되는 범위를 user-approved project/session으로 제한합니다. | cross-project access 거부. | XIX.1.4 |
+| XIX.2.5 | `[~]` | 모든 MCP payload에서 project content가 agent에 전달되는 범위를 user-approved project/session으로 제한합니다. | cross-project access 거부. | XIX.1.4 |
 
 ### XIX.3 권한 모델
 
@@ -2140,7 +2140,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XXIV.1.1 | `[x]` | `stellar-cli`를 app UI와 분리된 binary로 생성하고 core crate만 사용합니다. | headless machine에서 help 실행. | G8 |
 | XXIV.1.2 | `[x]` | exit code와 machine-readable JSON output schema를 정의합니다. stdout/stderr 역할을 분리합니다. | success/error fixture. | XXIV.1.1 |
-| XXIV.1.3 | `[x]` | `validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다. | fixture corpus 통과. | Phase XIV, V.8.6 |
+| XXIV.1.3 | `[~]` | `validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다. | fixture corpus 통과. | Phase XIV, V.8.6 |
 | XXIV.1.4 | `[ ]` | Phase XX 이후 `render/export` 명령을 추가합니다. | golden output. | Phase XX |
 
 ### XXIV.2 Git custom driver
@@ -2155,7 +2155,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXIV.3.1 | `[x]` | lockfile resolve check, project validation, migration-required check를 CI mode로 제공합니다. | invalid project CI failure. | XXIV.1.3 |
+| XXIV.3.1 | `[~]` | lockfile resolve check, project validation, migration-required check를 CI mode로 제공합니다. | invalid project CI failure. | XXIV.1.3 |
 | XXIV.3.2 | `[x]` | semantic diff summary를 artifact로 생성하되 project text/name/path redaction option을 기본으로 합니다. | privacy fixture. | XIV.3.8, XXIV.1.2 |
 | XXIV.3.3 | `[ ]` | performance replay CLI를 reference runner에서 실행할 수 있게 합니다. | result schema identical. | XVI.2.2 |
 
@@ -2165,9 +2165,9 @@ tools/xtask/
 |---|---|---|---|---|
 | XXIV.4.1 | `[x]` | 사용자가 부르는 명령 이름을 `stellar`로 고정합니다(2026-11-14 제품 소유자 결정). `stellar-cli` package에 `[[bin]] name = "stellar"`를 추가하고 package·library 이름 `stellar-cli`는 유지합니다. help·usage·stderr 진단 접두어를 `stellar`로 바꾸고, XXIV.1.2 JSON 결과 schema 식별자와 fixture는 바꾸지 않습니다. | `[DEV-MAC]` `cargo build -p stellar-cli` 산출 실행 파일 이름 `stellar`, help snapshot이 `stellar` 사용, XXIV.1.2 JSON fixture 무변경, `cargo test -p stellar-cli` 통과. | XXIV.1.2 |
 | XXIV.4.2 | `[~]` | headless 조회·편집 공용 library crate `stellar-ops`(`crates/ops`)를 추가하고 crate graph 정책과 문서에 등록합니다. 의존은 project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics만 허용하고 local-ipc, agent-protocol, mcp-core, agent-host, ffi는 금지합니다. 앱 없이 프로젝트를 열어 revision을 포함한 읽기 전용 snapshot을 반환합니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, 앱 미실행 snapshot fixture revision 일치. | XXIV.1.2, VII.1.6 |
-| XXIV.4.3 | `[x]` | `stellar inspect`를 확장하고 `stellar query`를 추가합니다. 프로젝트 구조, 문서 트리(cursor 분할), 노드 속성, 토큰, 컴포넌트를 revision과 함께 JSON으로 출력합니다. XXIV.1.2의 기존 inspect 결과 필드는 호환을 유지합니다. 앱 없이 동작하며 파일을 쓰지 않습니다. `stellar-cli`의 직접 의존을 `stellar-ops`·diagnostics로 줄이고(ADR-0005 §8), crate graph 정책의 `stellar-cli` 허용 의존도 ops·diagnostics로 갱신합니다. | `[DEV-MAC]` JSON golden 일치, 20만 node 문서 page 분할 통과, 실행 전후 프로젝트 파일 hash 동일, 기존 inspect fixture 통과, `cargo xtask validate-crate-graph` 통과, `stellar-cli` 직접 의존이 ops·diagnostics뿐. | XXIV.4.1, XXIV.4.2 |
+| XXIV.4.3 | `[~]` | `stellar inspect`를 확장하고 `stellar query`를 추가합니다. 프로젝트 구조, 문서 트리(cursor 분할), 노드 속성, 토큰, 컴포넌트를 revision과 함께 JSON으로 출력합니다. XXIV.1.2의 기존 inspect 결과 필드는 호환을 유지합니다. 앱 없이 동작하며 파일을 쓰지 않습니다. `stellar-cli`의 직접 의존을 `stellar-ops`·diagnostics로 줄이고(ADR-0005 §8), crate graph 정책의 `stellar-cli` 허용 의존도 ops·diagnostics로 갱신합니다. | `[DEV-MAC]` JSON golden 일치, 20만 node 문서 page 분할 통과, 실행 전후 프로젝트 파일 hash 동일, 기존 inspect fixture 통과, `cargo xtask validate-crate-graph` 통과, `stellar-cli` 직접 의존이 ops·diagnostics뿐. | XXIV.4.1, XXIV.4.2 |
 | XXIV.4.4 | `[~]` | `stellar apply`를 추가합니다. 파일이나 표준 입력으로 CommandTransaction JSON과 base revision을 받아 closed enum으로 검증한 뒤 세대 전환 저장으로 원자적으로 기록하고, generation metadata에 writer 종류 headless CLI를 남깁니다. `--dry-run`은 semantic diff만 출력합니다. storage는 보호 경로이므로 같은 변경에 ADR을 갱신합니다. | `[DEV-MAC]` dry-run 전후 revision 동일, base revision 불일치와 unknown command 거부, 적용 후 reopen semantic snapshot 일치, writer 종류 기록 확인. | XXIV.4.2, VII.1.6, XIV.3.8 |
-| XXIV.4.5 | `[x]` | `stellar-ops` 쓰기 경로에 교차 프로세스 저장 잠금을 추가합니다. 잠금은 프로젝트·Git 밖의 OS 사용자 데이터에 두고, 잠금을 잡은 뒤 generation을 비교하고 교체하며, 잠금 사용 중이면 일시적 실패 종료 코드로 끝냅니다. Git merge driver 모드는 잠금 대상에서 제외합니다. 사용 OS API는 Apple 공식 문서를 근거로 보고서에 기록합니다. | `[DEV-MAC]` 동시 쓰기 fixture 손실 0, 잠금 경합 시 exit 75, merge driver 모드 잠금 미사용. | XXIV.4.4, IV.2.3 |
+| XXIV.4.5 | `[~]` | `stellar-ops` 쓰기 경로에 교차 프로세스 저장 잠금을 추가합니다. 잠금은 프로젝트·Git 밖의 OS 사용자 데이터에 두고, 잠금을 잡은 뒤 generation을 비교하고 교체하며, 잠금 사용 중이면 일시적 실패 종료 코드로 끝냅니다. Git merge driver 모드는 잠금 대상에서 제외합니다. 사용 OS API는 Apple 공식 문서를 근거로 보고서에 기록합니다. | `[DEV-MAC]` 동시 쓰기 fixture 손실 0, 잠금 경합 시 exit 75, merge driver 모드 잠금 미사용. | XXIV.4.4, IV.2.3 |
 | XXIV.4.6 | `[ ]` | 앱이 writer 종류가 앱 창이 아닌 generation을 감지하면 XII.7.5 두 선택지 대신 XIII.3.4 semantic reconciliation으로 처리합니다. 변경이 에이전트 lease와 겹치면 XIX.7.2 절차를 따릅니다. | `[DEV-MAC]` CLI writer generation fixture에서 두 선택지 alert 0, reconciliation 결과 snapshot 일치. | XXIV.4.5, XIII.3.4, XII.7.5 |
 | XXIV.4.7 | `[ ]` | `stellar`에 AI·MCP·모델·에이전트 관련 명령과 해당 crate로의 직접·전이 의존이 없음을 검사하는 inventory test를 추가합니다. | `[DEV-MAC]` help 명령 inventory와 전이 도달 금지 검사 통과. | XXIV.4.3, XXIV.4.4, XXIX.1.1 |
 

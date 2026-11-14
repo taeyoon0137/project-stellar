@@ -6,7 +6,9 @@
 //!
 //! 1. **요청 resource URI**([`ApprovedScope::check_resource_uri`]): `stellar` scheme의 정의된
 //!    resource·template만 받습니다(XIX.2.1). 다른 scheme(`file:` 등), 정의 밖 경로, `..`·percent
-//!    encoding·빈 segment, 정의 밖 query는 거부합니다. URI에는 프로젝트를 고르는 수단이 없습니다.
+//!    encoding·빈 segment, 정의 밖 query(page가 아닌 resource의 query, page resource에서
+//!    `cursor`·`limit` 밖의 key·중복·형식 오류, XIX.2.2 [`parse_page_query`])는 거부합니다. URI에는
+//!    프로젝트를 고르는 수단이 없습니다.
 //!    문서 id는 승인 프로젝트의 문서여야 합니다([`ProjectDocuments`]).
 //! 2. **tool 인자**([`ApprovedScope::check_tool_arguments`]): 인자는 object이고 input schema에 선언된
 //!    key만 받습니다. 그래서 `project`·`path`·`root` 같은 범위 밖 지정이 들어올 수 없습니다. 문서 id
@@ -16,6 +18,7 @@
 
 use std::fmt;
 
+use super::paging::parse_page_query;
 use super::resources::{ResourceDef, RESOURCES};
 use super::tools::ToolDef;
 use crate::json::{self, JsonLimits, JsonValue};
@@ -153,6 +156,11 @@ impl ApprovedScope {
         for def in RESOURCES {
             if let Some(document) = match_template(def, path) {
                 if query.is_some() && !def.paginated {
+                    return Err(ScopeError::MalformedUri);
+                }
+                // page resource의 query는 `cursor`·`limit`만 받습니다(XIX.2.2 형식). 정의 밖 key는
+                // 뒤 단계에 맡기지 않고 여기서 거부합니다.
+                if query.is_some() && parse_page_query(uri).is_err() {
                     return Err(ScopeError::MalformedUri);
                 }
                 if let Some(document) = &document {
@@ -338,6 +346,35 @@ mod tests {
             Err(ScopeError::ForeignSession)
         );
         assert_eq!(scope.release(payload("project-a", "session-1")), Ok(body));
+    }
+
+    #[test]
+    fn paginated_query_accepts_only_cursor_and_limit() {
+        // page resource의 query도 정의된 key(`cursor`·`limit`)만 받습니다. 정의 밖 key로 범위를
+        // 바꾸려는 시도는 뒤 단계(page 해석)에 기대지 않고 범위 검사에서 거부합니다.
+        let scope = scope();
+        for uri in [
+            "stellar://document/current?project=other",
+            "stellar://document/current?limit=10&project=other",
+            &format!("stellar://documents/{MINE}?root=/Users/me/other") as &str,
+            "stellar://document/current?limit=10&limit=20",
+            "stellar://document/current?limit=010",
+            "stellar://document/current?cursor=",
+            "stellar://document/current?cursor",
+        ] {
+            assert_eq!(
+                scope.check_resource_uri(uri, &Docs),
+                Err(ScopeError::MalformedUri),
+                "{uri}"
+            );
+        }
+        let target = scope
+            .check_resource_uri(
+                &format!("stellar://documents/{MINE}?limit=10&cursor=p1.3.x.g1"),
+                &Docs,
+            )
+            .unwrap();
+        assert_eq!(target.query.as_deref(), Some("limit=10&cursor=p1.3.x.g1"));
     }
 
     #[test]

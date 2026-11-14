@@ -266,8 +266,13 @@ fn apply_error(error: &ApplyError) -> CliError {
     let message = error.to_string();
     match error {
         ApplyError::Open(e) => views::open_error(e),
-        ApplyError::BaseRevisionMismatch { .. } | ApplyError::ConcurrentWrite => {
+        ApplyError::BaseRevisionMismatch { .. } => {
             CliError::new(ExitStatus::DataErr, "base-revision-mismatch", message)
+        }
+        // 계획 뒤 다른 writer(저장 잠금을 쓰지 않는 writer)가 current를 바꿨습니다. base 불일치와
+        // 같이 다시 읽고 재시도할 데이터 오류지만 코드를 나눠 잠금 경합과 구분합니다(XXIV.4.5).
+        ApplyError::ConcurrentWrite => {
+            CliError::new(ExitStatus::DataErr, "concurrent-write", message)
         }
         ApplyError::EmptyTransaction
         | ApplyError::TooManyCommands { .. }
@@ -348,4 +353,25 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
         ]),
         diagnostics: Vec::new(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn concurrent_write_is_distinguished_from_base_mismatch() {
+        // 저장 잠금(XXIV.4.5)을 쓰는 headless writer끼리는 계획 뒤 교체(ConcurrentWrite)가 생기지
+        // 않아야 합니다. 동시 쓰기 test가 그 경우를 base 불일치 재시도와 섞지 않도록 오류 코드를
+        // 나눕니다. 둘 다 최신 revision으로 다시 읽어야 하는 데이터 오류(65)입니다.
+        let concurrent = apply_error(&ApplyError::ConcurrentWrite);
+        assert_eq!(concurrent.status, ExitStatus::DataErr);
+        assert_eq!(concurrent.code, "concurrent-write");
+        let mismatch = apply_error(&ApplyError::BaseRevisionMismatch {
+            expected: ProjectRevision::Unsaved,
+            found: ProjectRevision::Unsaved,
+        });
+        assert_eq!(mismatch.status, ExitStatus::DataErr);
+        assert_eq!(mismatch.code, "base-revision-mismatch");
+    }
 }

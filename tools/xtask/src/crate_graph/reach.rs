@@ -31,6 +31,7 @@ pub const FORBIDDEN_REACH: &[ReachBan] = &[
         never_reach: &[
             "stellar-local-ipc",
             "stellar-agent-protocol",
+            "stellar-mcp-core",
             "stellar-mcp",
             "stellar-agent-host",
             "stellar-ffi",
@@ -41,6 +42,7 @@ pub const FORBIDDEN_REACH: &[ReachBan] = &[
         never_reach: &[
             "stellar-local-ipc",
             "stellar-agent-protocol",
+            "stellar-mcp-core",
             "stellar-mcp",
             "stellar-agent-host",
         ],
@@ -374,6 +376,54 @@ stellar-project = { path = "../project" }
             edge("stellar-b", "stellar-x", DepKind::Build),
         ];
         assert_eq!(codes(&check_reach(&bans, &dep_build)), ["forbidden-reach"]);
+    }
+
+    #[test]
+    fn bans_cover_the_adr_0005_section_8_columns() {
+        // ADR-0005 §8 "전이적으로도 도달 금지" 열의 crate가 모두 규칙에 있어야 합니다.
+        // (`stellar-mcp`처럼 열보다 넓게 막는 항목은 허용합니다.)
+        let columns: [(&str, &[&str]); 2] = [
+            (
+                "stellar-ops",
+                &[
+                    "stellar-local-ipc",
+                    "stellar-agent-protocol",
+                    "stellar-mcp-core",
+                    "stellar-agent-host",
+                    "stellar-ffi",
+                ],
+            ),
+            (
+                "stellar-cli",
+                &[
+                    "stellar-local-ipc",
+                    "stellar-agent-protocol",
+                    "stellar-mcp-core",
+                    "stellar-agent-host",
+                ],
+            ),
+        ];
+        for (from, column) in columns {
+            let ban = FORBIDDEN_REACH
+                .iter()
+                .find(|ban| ban.from == from)
+                .unwrap_or_else(|| panic!("{from} 규칙 없음"));
+            for target in column {
+                assert!(ban.never_reach.contains(target), "{from} -> {target}");
+            }
+        }
+        // mcp-core가 생기기 전이라도 diagnostics를 거친 전이 도달은 거부됩니다.
+        for from in ["stellar-ops", "stellar-cli"] {
+            let edges = [
+                edge(from, "stellar-diagnostics", DepKind::Normal),
+                edge("stellar-diagnostics", "stellar-mcp-core", DepKind::Normal),
+            ];
+            let reach = check_reach(FORBIDDEN_REACH, &edges);
+            assert_eq!(codes(&reach), ["forbidden-reach"], "{from}");
+            assert!(reach[0].message.contains(&format!(
+                "{from} -> stellar-diagnostics -> stellar-mcp-core"
+            )));
+        }
     }
 
     #[test]

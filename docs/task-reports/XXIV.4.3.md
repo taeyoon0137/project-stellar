@@ -2,7 +2,7 @@
 
 - WBS: XXIV.4.3
 - 작업명: 프로젝트 구조·문서 트리(cursor 분할)·node 속성·token·component를 revision과 함께 JSON으로 출력하고, `stellar-cli` 직접 의존을 `stellar-ops`·diagnostics로 축소
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 구현과 작업 행의 검증 기준은 모두 통과했으나, 선행 XXIV.4.2가 `[~]`입니다. 계획서 §1.2 규칙 4(선행이 모두 `[x]`가 아니면 완료로 두지 않음)에 따라 XXIV.4.2가 `[x]`가 될 때까지 `[~]`로 둡니다.
 - 선행: XXIV.4.1(`[x]`), XXIV.4.2(이 lane에서 구현·commit, `[~]` — 남은 일은 crate graph 문서 반영뿐이며 이 작업이 쓰는 코드는 모두 있음)
 
 ## 필수 실행 환경
@@ -77,6 +77,8 @@
 
 ## 남은 위험 / 한계
 
+- **후속(`[x]`로 올리기 위한 남은 일)**: XXIV.4.2의 `docs/architecture/crate-dependency-graph.md` 등록을 마쳐 XXIV.4.2를 `[x]`로 올린 뒤, 이 보고서의 검증 명령을 다시 실행해 `[x]`로 바꿉니다.
+- `tools/xtask/src/crate_graph.rs`의 기존 `stellar-cli` 허용 의존 항목을 고친 일은 작업 행이 요구한 변경("crate graph 정책의 `stellar-cli` 허용 의존도 ops·diagnostics로 갱신")이지만, lane 규칙(새 crate 항목만 추가)보다 넓습니다. `manifest.rs` 1줄 변경과 함께 통합 시 확인이 필요합니다.
 - 한 page(최대 10000 node)의 JSON은 수 MB가 될 수 있습니다(200k fixture에서 10000 node page 약 2.8 MB). MCP처럼 메시지 상한이 있는 경로는 더 작은 limit을 써야 합니다(XIX.2.2·XIX.9.10에서 정함).
 - 각 `query tree` 호출은 문서 전체 chunk를 읽어 순회 index를 만듭니다. 20만 node 문서에서 debug 빌드 기준 호출당 수 초가 걸리며, release 측정과 index 재사용은 하지 않았습니다.
 - 속성 `path`는 PropertyKey 숫자 표기입니다. 사람이 읽는 이름 registry는 제공하지 않습니다.

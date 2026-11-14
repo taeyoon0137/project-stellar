@@ -2,8 +2,8 @@
 
 - WBS: XXIV.3.1
 - 작업명: lockfile resolve check, project validation, migration-required check를 `stellar ci` 한 명령으로 제공
-- 상태: 완료 (`[x]`)
-- 선행: XXIV.1.3(이 lane에서 `[x]`)
+- 상태: 부분 완료 (`[~]`) — 구현과 작업 행의 검증 기준은 통과했으나, 선행 XXIV.1.3이 `[~]`입니다(선행 Phase XIV 미완료). 계획서 §1.2 규칙 4에 따라 XXIV.1.3이 `[x]`가 될 때까지 `[~]`로 둡니다.
+- 선행: XXIV.1.3(이 lane에서 구현, `[~]`)
 
 ## 필수 실행 환경
 
@@ -52,5 +52,6 @@
 
 ## 남은 위험 / 한계
 
+- **후속(`[x]`로 올리기 위한 남은 일)**: XXIV.1.3이 `[x]`가 된 뒤 이 보고서의 검증 명령을 다시 실행해 `[x]`로 바꿉니다.
 - local override(`local_override`)가 있는 의존성은 lock 비교에서 따로 다루지 않습니다.
 - lock entry가 가리키는 commit이 원격에 실제로 있는지, cache entry hash가 맞는지는 검사하지 않습니다.
