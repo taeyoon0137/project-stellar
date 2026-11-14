@@ -23,8 +23,9 @@
 //! 전역 유일 값이라 우연 일치는 사실상 없고, 일치하면 의존을 **더하는** 방향(필수 변경이 늘어남)이므로
 //! 무결성을 해치지 않습니다.
 //!
-//! graph 구성은 diff·base 크기에 선형(참조 scan은 값 bytes 길이에 선형)이고, closure는 반복 worklist로
-//! 계산합니다(재귀 없음). 결과는 [`ChangeId`] 순서의 결정론적 BTreeMap입니다.
+//! graph 구성은 diff·base 크기에 선형(BTreeMap 조회의 log 인자 제외, 참조 scan은 값 bytes 길이에 선형)입니다.
+//! 새 root Frame의 root 참조 도입 변경도 변경 목록을 한 번 scan한 index로 찾습니다. closure는 반복
+//! worklist로 계산합니다(재귀 없음). 결과는 [`ChangeId`] 순서의 결정론적 BTreeMap입니다.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
@@ -259,6 +260,14 @@ impl DependencyGraph {
         }
         let introduced_windows = windows_of(introduced.keys().copied());
 
+        // root 참조 도입: root id → 그것을 View root Frame·컴포넌트 root로 가리키게 만드는 변경(한 번 scan).
+        let mut root_introducers: BTreeMap<StableId, Vec<&ChangeId>> = BTreeMap::new();
+        for (id, change) in &by_id {
+            for root in introduced_roots(change) {
+                root_introducers.entry(root).or_default().push(id);
+            }
+        }
+
         for (id, change) in &by_id {
             let target_state = match change {
                 SemanticChange::AddObject(c) | SemanticChange::AddToken(c) => Target {
@@ -333,8 +342,8 @@ impl DependencyGraph {
                     }
                 }
                 if matches!(c.object.kind(), ObjectKind::Node(_)) && c.object.parent().is_none() {
-                    for (other, other_change) in &by_id {
-                        if other != id && introduces_root(other_change, c.object.id()) {
+                    for other in root_introducers.get(&c.object.id()).into_iter().flatten() {
+                        if *other != id {
                             graph.edge(id, other, DependencyReason::Membership);
                         }
                     }
@@ -533,20 +542,25 @@ impl DependencyGraph {
     }
 }
 
-/// 변경이 `root`를 View root Frame·컴포넌트 root로 가리키게 만드는지.
-fn introduces_root(change: &SemanticChange, root: StableId) -> bool {
-    let points = |path: &PropertyPath, value: Option<&SemanticValue>| {
-        path.keys().first().copied().is_some_and(is_root_reference)
-            && value == Some(&SemanticValue::Id(root))
+/// 변경이 View root Frame·컴포넌트 root로 가리키게 만드는 id들.
+fn introduced_roots(change: &SemanticChange) -> Vec<StableId> {
+    let root = |path: &PropertyPath, value: Option<&SemanticValue>| match value {
+        Some(SemanticValue::Id(id))
+            if path.keys().first().copied().is_some_and(is_root_reference) =>
+        {
+            Some(*id)
+        }
+        _ => None,
     };
     match change {
         SemanticChange::AddObject(c) => c
             .object
             .properties()
             .iter()
-            .any(|(path, value)| points(path, Some(value))),
-        SemanticChange::SetProperty(c) => points(&c.path, c.new.as_ref()),
-        _ => false,
+            .filter_map(|(path, value)| root(path, Some(value)))
+            .collect(),
+        SemanticChange::SetProperty(c) => root(&c.path, c.new.as_ref()).into_iter().collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -781,6 +795,63 @@ pub(crate) mod tests {
                 ChangeId::add(sid(60)),
             ]
             .into()
+        );
+    }
+
+    #[test]
+    fn many_new_root_frames_each_depend_only_on_their_introducer() {
+        // 기존 페이지 2에 새 View 여러 개(각자 새 root frame), 기존 View 3의 root는 새 frame 3000으로 교체.
+        let base = build(&head_records());
+        let mut target = base.clone();
+        let count = 40u64;
+        let mut views: Vec<StableId> = vec![sid(3)];
+        for i in 0..count {
+            let (view, root) = (1000 + i, 2000 + i);
+            views.push(sid(view));
+            target
+                .insert(object(
+                    view,
+                    ObjectKind::View,
+                    doc(),
+                    Some(2),
+                    None,
+                    vec![(
+                        path(view, keys::VIEW_ROOT_FRAME),
+                        SemanticValue::Id(sid(root)),
+                    )],
+                ))
+                .unwrap();
+            target.insert(frame(root, None, 0x80)).unwrap();
+        }
+        let mut page = target.get(sid(2)).unwrap().clone();
+        page.set_property(path(2, keys::PAGE_VIEWS), SemanticValue::Ids(views))
+            .unwrap();
+        replace(&mut target, page);
+        let mut home = target.get(sid(3)).unwrap().clone();
+        home.set_property(path(3, keys::VIEW_ROOT_FRAME), SemanticValue::Id(sid(3000)))
+            .unwrap();
+        replace(&mut target, home);
+        target.insert(frame(3000, None, 0x80)).unwrap();
+
+        let changes = diff(&base, &target);
+        let graph = DependencyGraph::build(&base, &target, &changes);
+        use DependencyReason::*;
+        for i in 0..count {
+            assert_eq!(
+                deps(&graph, &ChangeId::add(sid(2000 + i))),
+                vec![(ChangeId::add(sid(1000 + i)), Membership)],
+                "root frame {}",
+                2000 + i
+            );
+        }
+        let home_root = ChangeId::property(path(3, keys::VIEW_ROOT_FRAME));
+        assert_eq!(
+            deps(&graph, &ChangeId::add(sid(3000))),
+            vec![(home_root.clone(), Membership)]
+        );
+        assert_eq!(
+            deps(&graph, &home_root),
+            vec![(ChangeId::add(sid(3000)), ReferenceAdded)]
         );
     }
 
