@@ -35,6 +35,8 @@ final class CanvasView: NSView {
 
     var insertionOutline: CGPath? { didSet { needsDisplay = true } }
 
+    var selectedFrameDimensions: CanvasFrameDimensions? { frameScene.selectedDimensions }
+
     func frameHit(at point: NSPoint) -> CanvasFrameHit? { frameScene.hit(at: point) }
 
     var framePointerHandler: ((NSEvent) -> Bool)?

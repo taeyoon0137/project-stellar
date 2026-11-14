@@ -3,8 +3,7 @@ import AppKit
 // 다른 UI 영역(사이드바, 인스펙터, Git·에이전트 패널)을 셸 프레임 슬롯에 끼우는 어댑터.
 //
 // 각 영역의 공개 view controller를 그대로 쓰고, 셸 슬롯 protocol만 덧붙입니다. 영역 파일은 수정하지 않습니다.
-// 영역별 코어 adapter(사이드바 snapshot, 선택 속성, Git 상태, 에이전트 세션)는 아직 없으므로 프로젝트 창은
-// 아래 `ShellAreaDataStubs`의 placeholder data source를 씁니다.
+// 프로젝트 창이 각 영역의 데이터를 연결합니다. 에이전트 세션은 아직 비어 있는 상태로 표시합니다.
 
 /// 왼쪽 사이드바 슬롯: `SidebarViewController`와 그 레이어 필터 accessory.
 @MainActor
@@ -74,14 +73,9 @@ final class ShellPanelTabsSlot: ShellAuxiliaryPanelSlot {
 ///
 /// 영역별 코어 adapter가 생기기 전까지 쓰는 의도적 placeholder입니다(계획 1.2 규칙 6, 이름에 "Stub").
 /// 열린 프로젝트와 어긋난 표본 내용을 보여 주지 않도록 각 Stub의 "비어 있음"에 가까운 상태를 고릅니다.
-/// - 인스펙터: 선택 없음.
 /// - 에이전트: 세션 없음.
 @MainActor
 enum ShellAreaDataStubs {
-    static func makeInspectorDataSource() -> InspectorDataSource {
-        InspectorStubDataSource(scenario: .noSelection)
-    }
-
     static func makeAgentSource() -> AgentPanelSource {
         AgentSessionStub(scenario: .noSession)
     }

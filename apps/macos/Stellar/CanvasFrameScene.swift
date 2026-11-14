@@ -1,5 +1,14 @@
 import AppKit
 
+struct CanvasFrameDimensions: Equatable {
+    let session: UInt64
+    let view: UUID
+    let node: UUID
+    let revision: UInt64
+    let size: CGSize
+    let editable: Bool
+}
+
 struct CanvasFrameHit {
     let id: UUID
     let revision: UInt64
@@ -161,6 +170,13 @@ final class CanvasFrameScene {
         }
         skipped = info.skipped
         worldToView = transform(info.camera)
+    }
+
+    var selectedDimensions: CanvasFrameDimensions? {
+        guard let session, let viewID, let primaryIndex else { return nil }
+        let selected = frames[primaryIndex]
+        return CanvasFrameDimensions(session: session, view: viewID, node: selected.id, revision: revision,
+                                     size: selected.localBounds.size, editable: selected.pickable)
     }
 
     func hit(at point: CGPoint) -> CanvasFrameHit? {

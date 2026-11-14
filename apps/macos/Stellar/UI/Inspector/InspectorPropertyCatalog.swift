@@ -184,17 +184,19 @@ enum InspectorPropertyCatalog {
         InspectorChoice("path", "Path"),
     ]
 
+    static let frameSizeRow = InspectorRowTemplate(id: "size", label: "Size", fields: [
+        InspectorFieldTemplate("frame.size.width", coreKey: 0x0101, label: "Width", short: "W",
+                               control: .number(.nonNegativeLength)),
+        InspectorFieldTemplate("frame.size.height", coreKey: 0x0101, label: "Height", short: "H",
+                               control: .number(.nonNegativeLength)),
+    ])
+
     static let frameLayoutSection = InspectorSectionTemplate(.frameLayout, "Frame", rows: [
         InspectorRowTemplate(id: "position", label: "Position", fields: [
             InspectorFieldTemplate("frame.transform.x", coreKey: 0x0102, label: "X", short: "X", control: .number(.length)),
             InspectorFieldTemplate("frame.transform.y", coreKey: 0x0102, label: "Y", short: "Y", control: .number(.length)),
         ]),
-        InspectorRowTemplate(id: "size", label: "Size", fields: [
-            InspectorFieldTemplate("frame.size.width", coreKey: 0x0101, label: "Width", short: "W",
-                                   control: .number(.nonNegativeLength)),
-            InspectorFieldTemplate("frame.size.height", coreKey: 0x0101, label: "Height", short: "H",
-                                   control: .number(.nonNegativeLength)),
-        ]),
+        frameSizeRow,
         InspectorRowTemplate(id: "rotation", label: "Rotation", fields: [
             InspectorFieldTemplate("frame.transform.rotation", coreKey: 0x0102, label: "Rotation",
                                    control: .number(.angle)),
