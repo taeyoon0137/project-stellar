@@ -96,11 +96,11 @@ final class ShellWindowSessionHandle {
     }
 
     @discardableResult
-    func pan(dx: Double, dy: Double) -> Bool {
+    func pan(dx: Double, dy: Double, completion: @escaping () -> Void = {}) -> Bool {
         guard !isClosed, !isClosing, viewInfo?.has_view == 1 else { return false }
         if dx == 0, dy == 0 { return true }
         // 팬은 배율·문서 명령 상태를 바꾸지 않습니다. 창 닫기를 위해 진행 중인 요청만 추적합니다.
-        return track({ pump.pan(session: session, dx: dx, dy: dy, completion: $0) }, completion: { _ in })
+        return track({ pump.pan(session: session, dx: dx, dy: dy, completion: $0) }, completion: { _ in completion() })
     }
 
     /// 이 창 session의 선택을 바꿉니다(그 창 history에 기록). 닫혔거나 요청을 받지 않으면 false입니다.
@@ -479,7 +479,7 @@ final class ShellProjectWindow {
             let dx = Double(event.scrollingDeltaX)
             let dy = Double(event.scrollingDeltaY)
             guard dx.isFinite, dy.isFinite else { return false }
-            return session.pan(dx: dx, dy: dy)
+            return session.pan(dx: dx, dy: dy) { [weak self] in self?.canvasHost.canvasView.refreshFrames() }
         }
         canvasHost.canvasView.setAccessibilityHelp(String(
             localized: "Press V, F, R, O, L, P, T, H, or Z to choose a tool.",
@@ -531,6 +531,7 @@ final class ShellProjectWindow {
     /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
     func refreshSessionCommands() {
         let session = windowController.windowSession
+        canvasHost.canvasView.frameSession = session?.session
         let view = session?.viewInfo
         let commands = ShellWindowToolsModelStub.sessionCommands(info: session?.info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
@@ -693,6 +694,7 @@ final class ShellProjectWindow {
 
     /// 열기에 실패했습니다. 창에 원인과 복구 동작을 보여 줍니다.
     func didFail(_ failure: ShellProjectOpenFailure, path: String) {
+        canvasHost.canvasView.frameSession = nil
         gitSource.attach(nil)
         cancelPendingClose()
         windowController.windowSession?.close()
@@ -704,6 +706,7 @@ final class ShellProjectWindow {
 
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
     func closeSessions() {
+        canvasHost.canvasView.frameSession = nil
         gitSource.attach(nil)
         cancelPendingClose()
         windowController.windowSession?.close()

@@ -893,6 +893,8 @@ pub struct WindowSessionSummary {
     pub redo_depth: u32,
     /// 선택된 node 수.
     pub selection_len: u32,
+    /// 표시 중인 primary 선택.
+    pub primary_selection: Option<StableId>,
     /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
     pub has_unsaved_changes: bool,
     /// 열린 탭 수.
@@ -901,6 +903,8 @@ pub struct WindowSessionSummary {
     pub active_view: Option<StableId>,
     /// active 탭의 viewport(열린 탭이 없으면 `None`).
     pub viewport: Option<CanvasViewport>,
+    /// 활성 View의 painter 목록. 문서 또는 View가 바뀔 때만 다시 평가합니다.
+    pub canvas: Option<Arc<crate::canvas::CanvasScene>>,
 }
 
 /// document thread가 게시한 불변 상태 snapshot.
@@ -960,6 +964,7 @@ struct ProjectSession {
 pub(crate) struct WindowEntry {
     pub(crate) project: ProjectSessionId,
     pub(crate) session: ProjectWindowSession,
+    canvas: crate::canvas::CanvasCache,
 }
 
 #[derive(Debug)]
@@ -1268,9 +1273,14 @@ fn open_window_session_on_thread(
     let document_id = session.document_id().unwrap_or(StableId::NIL);
     let generation = session.generation_number();
     let handle = sessions.allocate_window();
-    sessions
-        .windows
-        .insert(handle, WindowEntry { project, session });
+    sessions.windows.insert(
+        handle,
+        WindowEntry {
+            project,
+            session,
+            canvas: Default::default(),
+        },
+    );
     if let Some(owner) = sessions.projects.get_mut(&project) {
         owner.windows.insert(handle);
     }
@@ -1301,7 +1311,7 @@ fn close_window_session_on_thread(
 }
 
 /// 창 session 요약(상태 snapshot용).
-fn window_summary(handle: WindowSessionHandle, entry: &WindowEntry) -> WindowSessionSummary {
+fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> WindowSessionSummary {
     let session = &entry.session;
     let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     WindowSessionSummary {
@@ -1314,10 +1324,12 @@ fn window_summary(handle: WindowSessionHandle, entry: &WindowEntry) -> WindowSes
         undo_depth: clamp(session.history().history().len()),
         redo_depth: clamp(session.history().history().redo_entries().len()),
         selection_len: clamp(session.view().selection().len()),
+        primary_selection: session.view().displayed_selection().primary(),
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),
         active_view: session.tabs().active_view(),
         viewport: session.tabs().active_viewport(),
+        canvas: entry.canvas.current(session),
     }
 }
 
@@ -1438,9 +1450,10 @@ fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
                 .map_or(0, |view| view.len() as u64),
         })
         .collect();
-    let windows = sessions
+    let windows = ctx
+        .app_sessions_mut()
         .windows
-        .iter()
+        .iter_mut()
         .map(|(handle, entry)| window_summary(*handle, entry))
         .collect();
     RuntimeState {

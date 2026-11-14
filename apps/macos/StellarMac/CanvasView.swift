@@ -2,7 +2,7 @@ import AppKit
 
 /// AppKit 캔버스 호스트(II.5.4, XII.3.2).
 ///
-/// 렌더링은 하지 않습니다. backing scale과 drawable 픽셀 크기 변경을
+/// 창의 active View scene을 그리고, backing scale과 drawable 픽셀 크기 변경을
 /// `stellar_runtime_set_drawable_size`로, mouse·trackpad·keyboard 이벤트를
 /// `stellar_runtime_submit_mac_event`로 코어에 전달합니다.
 final class CanvasView: NSView {
@@ -17,6 +17,23 @@ final class CanvasView: NSView {
 
     /// 창별 viewport가 처리한 스크롤은 공용 runtime 입력 대기열에 중복 제출하지 않습니다.
     var scrollWheelHandler: ((NSEvent) -> Bool)?
+
+    private let frameScene = CanvasFrameScene()
+    var frameSession: UInt64? { didSet { refreshFrames() } }
+
+    func refreshFrames() {
+        if let runtimeHandle, let frameSession, bounds.width > 0, bounds.height > 0 {
+            frameScene.refresh(handle: runtimeHandle, session: frameSession, size: bounds.size)
+        } else { frameScene.clear() }
+        needsDisplay = true
+    }
+
+    func setFrameDragPreview(id: UUID?, offset: CGVector) {
+        frameScene.setDragPreview(id: id, offset: offset)
+        needsDisplay = true
+    }
+
+    func frameHit(at point: NSPoint) -> CanvasFrameHit? { frameScene.hit(at: point) }
 
     private var mouseTrackingArea: NSTrackingArea?
 
@@ -52,11 +69,13 @@ final class CanvasView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         forwardDrawableSize()
+        refreshFrames()
     }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.windowBackgroundColor.setFill()
         dirtyRect.fill()
+        if let context = NSGraphicsContext.current?.cgContext { frameScene.draw(in: context) }
     }
 
     // MARK: - 입력 (XII.3.2)
