@@ -220,13 +220,15 @@ enum InspectorPropertyCatalog {
         ]),
     ])
 
+    static let frameBackgroundRow = InspectorRowTemplate(id: "background", label: "Background", fields: [
+        InspectorFieldTemplate("frame.background.enabled", coreKey: 0x0104, label: "Background",
+                               control: .toggle, bindable: false),
+        InspectorFieldTemplate("frame.background.color", coreKey: 0x0104, label: "Background Color",
+                               control: .color),
+    ])
+
     static let frameAppearanceSection = InspectorSectionTemplate(.frameAppearance, "Appearance", rows: [
-        InspectorRowTemplate(id: "background", label: "Background", fields: [
-            InspectorFieldTemplate("frame.background.enabled", coreKey: 0x0104, label: "Background",
-                                   control: .toggle, bindable: false),
-            InspectorFieldTemplate("frame.background.color", coreKey: 0x0104, label: "Background Color",
-                                   control: .color),
-        ]),
+        frameBackgroundRow,
         InspectorRowTemplate(id: "border", label: "Border", fields: [
             InspectorFieldTemplate("frame.border.enabled", coreKey: 0x0105, label: "Border",
                                    control: .toggle, bindable: false),

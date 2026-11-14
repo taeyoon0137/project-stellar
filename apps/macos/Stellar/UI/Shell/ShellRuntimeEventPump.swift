@@ -134,10 +134,16 @@ final class ShellRuntimeEventPump {
                                          node: node, revision: revision, name: name), completion)
     }
 
-    func resizeFrame(_ frame: CanvasFrameDimensions, size: CGSize, completion: @escaping (CoreRuntimeEvent) -> Void)
+    func editFrame(_ frame: CanvasInspectorFrame, change: FrameInspectorEdit, completion: @escaping (CoreRuntimeEvent) -> Void)
         -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.resizeFrame(handle: runtimeHandle, session: frame.session, view: frame.view,
-                                         node: frame.node, revision: frame.revision, size: size), completion)
+        switch change {
+        case .size(let size):
+            return register(CoreRuntime.resizeFrame(handle: runtimeHandle, session: frame.session, view: frame.view,
+                                                     node: frame.node, revision: frame.revision, size: size), completion)
+        case .background(let color):
+            return register(CoreRuntime.setFrameBackground(handle: runtimeHandle, session: frame.session, view: frame.view,
+                                                           node: frame.node, revision: frame.revision, background: color), completion)
+        }
     }
 
     private func register(

@@ -1,11 +1,12 @@
 import AppKit
 
-struct CanvasFrameDimensions: Equatable {
+struct CanvasInspectorFrame: Equatable {
     let session: UInt64
     let view: UUID
     let node: UUID
     let revision: UInt64
     let size: CGSize
+    let background: InspectorColor?
     let editable: Bool
 }
 
@@ -172,11 +173,18 @@ final class CanvasFrameScene {
         worldToView = transform(info.camera)
     }
 
-    var selectedDimensions: CanvasFrameDimensions? {
+    var selectedInspectorFrame: CanvasInspectorFrame? {
         guard let session, let viewID, let primaryIndex else { return nil }
         let selected = frames[primaryIndex]
-        return CanvasFrameDimensions(session: session, view: viewID, node: selected.id, revision: revision,
-                                     size: selected.localBounds.size, editable: selected.pickable)
+        let background: InspectorColor?
+        if let fill = selected.fill, let rgba = fill.components, rgba.count == 4 {
+            let space: InspectorColor.Space = fill.colorSpace?.name == CGColorSpace.extendedDisplayP3 ? .displayP3 : .srgb
+            background = InspectorColor(space: space, red: rgba[0], green: rgba[1], blue: rgba[2], alpha: rgba[3])
+        } else {
+            background = nil
+        }
+        return CanvasInspectorFrame(session: session, view: viewID, node: selected.id, revision: revision,
+                                     size: selected.localBounds.size, background: background, editable: selected.pickable)
     }
 
     func hit(at point: CGPoint) -> CanvasFrameHit? {

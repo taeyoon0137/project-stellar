@@ -482,11 +482,11 @@ final class ShellProjectWindow {
             self?.refreshInspector()
             if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
         }
-        inspectorSource.resize = { [weak self] frame, size, completion in
+        inspectorSource.editFrame = { [weak self] frame, change, completion in
             guard let self, let session = self.windowController.windowSession, session.session == frame.session,
                   !session.isClosed, !session.isClosing, self.gitSource.trusted,
                   let pump = self.dataSource.session?.pump else { return false }
-            return session.track({ pump.resizeFrame(frame, size: size, completion: $0) }) { event in
+            return session.track({ pump.editFrame(frame, change: change, completion: $0) }) { event in
                 self.refreshSessionCommands()
                 if case .windowViewChanged = event { completion(true) } else { completion(false) }
             }
@@ -587,7 +587,7 @@ final class ShellProjectWindow {
 
     private func refreshInspector() {
         let selected = windowController.windowSession?.info?.selection_count == 1
-            ? canvasHost.canvasView.selectedFrameDimensions : nil
+            ? canvasHost.canvasView.selectedInspectorFrame : nil
         inspectorSource.refresh(selected, trusted: gitSource.trusted)
     }
 

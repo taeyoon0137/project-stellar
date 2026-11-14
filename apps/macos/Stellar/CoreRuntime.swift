@@ -202,6 +202,24 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    static func setFrameBackground(handle: UInt64, session: UInt64, view: UUID, node: UUID,
+                          revision: UInt64, background: InspectorColor?) -> Result<UInt64, CoreRuntimeCallError> {
+        var color = StellarCanvasColor()
+        if let background {
+            color.space = UInt32(background.space.rawValue)
+            color.rgba = (Float(background.red), Float(background.green), Float(background.blue), Float(background.alpha))
+        }
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: node.uuid) { nodeBytes in
+                stellar_window_session_set_frame_background(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, color, &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     /// 열린 창 session의 최신 정보. 열려 있지 않으면 nil입니다. document thread를 기다리지 않습니다.
     static func windowSessionInfo(handle: UInt64, session: UInt64) -> StellarWindowSessionInfo? {
         var info = StellarWindowSessionInfo()

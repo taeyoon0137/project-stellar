@@ -842,10 +842,10 @@ extension InspectorColor {
     /// 색 패널에서 고른 색을 문서 색으로 바꿉니다. Display P3 색은 P3로, 나머지는 sRGB로 옮깁니다.
     /// 패턴처럼 성분으로 바꿀 수 없는 색이면 `nil`입니다.
     init?(_ color: NSColor) {
-        if color.type == .componentBased, color.colorSpace == .displayP3,
-           let p3 = color.usingColorSpace(.displayP3) {
-            self.init(space: .displayP3, red: Double(p3.redComponent), green: Double(p3.greenComponent),
-                      blue: Double(p3.blueComponent), alpha: Double(p3.alphaComponent))
+        if color.type == .componentBased,
+           color.colorSpace == .displayP3 || color.colorSpace.cgColorSpace?.name == CGColorSpace.extendedDisplayP3 {
+            self.init(space: .displayP3, red: Double(color.redComponent), green: Double(color.greenComponent),
+                      blue: Double(color.blueComponent), alpha: Double(color.alphaComponent))
             return
         }
         guard let srgb = color.usingColorSpace(.sRGB) else { return nil }
