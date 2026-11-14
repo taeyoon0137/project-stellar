@@ -56,3 +56,22 @@
 - key 재배정은 merge 결과에만 적용되며 다른 쪽의 원래 key와 달라집니다(변경 목록에 반영).
 - 객체 종류(Node/Modifier/View)를 가리지 않고 같은 규칙을 씁니다. 페이지·View 목록 순서는
   OrderKey가 아니라 목록 속성이라 이 규칙의 대상이 아닙니다(XIV.3.1 한계).
+
+## 알려진 결함 SM-1 (통합 테스트에서 발견, 2026-11-14)
+
+- **증상**: 양쪽이 서로 다른 페이지·View를 독립적으로 추가하면(아키텍처 §27.1 "충돌하지 않는 자식 삽입", 자동 병합
+  대상) semantic-merge가 부모 정의 객체의 `DOCUMENT_PAGES`·`PAGE_VIEWS`(Ids 목록 속성, `crates/semantic-diff/src/keys.rs`)를
+  원자 값으로 비교해 목록 PropertyValue conflict를 냅니다. 같은 merge가 새 Page·View·root 객체의 AddObject는 받아들이므로
+  candidate의 정의 목록과 객체가 어긋납니다(목록에 없는 Page·View, 어떤 View 목록에도 닿지 않는 root Frame). 이 상태는
+  VI.10.1 root count 규칙으로 되돌릴 수 없습니다.
+- **재현**: `tests/integration/tests/git_semantic_merge.rs`의
+  `independent_page_and_view_insertions_merge_cleanly`(`#[ignore]`, 결함 사유 명시).
+  `cargo test -p stellar-integration-tests --test git_semantic_merge -- --ignored independent_page_and_view_insertions_merge_cleanly`가
+  실패합니다. `crates/semantic-merge`는 이 결함을 드러낸 통합 브랜치에서 바뀌지 않았으므로 기존 결함입니다.
+- **이 행과의 관계**: 이 행의 범위는 OrderKey 자식 순서입니다. 페이지·View 순서는 OrderKey가 아니라 목록 속성이라 이 행의
+  규칙 대상이 아니고(위 "남은 위험 / 한계"), 검증 열의 Phase III fixture는 그대로 통과합니다. 그래서 상태(`[x]`)는 바꾸지
+  않았습니다. 목록 속성의 독립 삽입 병합을 맡은 WBS 행은 계획서에서 찾지 못했습니다. 후속 행 추가나 이 행 재검토 여부는
+  계획 변경 결정이 필요합니다.
+- **XIV.10.8 선행 조건**: XIV.10.8(`[ ]`, conflict 없는 merged snapshot의 full validator 검증)은 이 결함의 candidate처럼
+  정의 목록과 객체가 어긋난 결과를 자동 merge 성공으로 돌려주지 않아야 합니다. XIV.10.8 착수 시 위 재현 테스트를 invalid
+  candidate fixture로 함께 다뤄야 합니다. 수정되면 테스트의 `#[ignore]`를 지웁니다.

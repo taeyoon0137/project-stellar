@@ -624,7 +624,8 @@ fn theirs_view(r: &mut DocumentRecords) {
 /// 서로 다른 페이지·View를 독립적으로 추가하면(아키텍처 §27.1 "충돌하지 않는 자식 삽입" = 자동 병합) 목록
 /// PropertyValue conflict가 나고, 동시에 새 Page·View·root 객체의 AddObject는 받아들여 candidate의 정의 목록과
 /// 객체가 어긋납니다(목록에 없는 Page·View, 어떤 View 목록에도 닿지 않는 root Frame — VI.10.1 root count로
-/// 되돌릴 수 없는 상태). 수정되면 `#[ignore]`를 지웁니다.
+/// 되돌릴 수 없는 상태). 결함 기록은 `docs/task-reports/XIV.10.6.md` "알려진 결함 SM-1"입니다. 수정되면
+/// `#[ignore]`를 지웁니다.
 #[test]
 #[ignore = "버그: semantic-merge가 독립 페이지·View 삽입을 DOCUMENT_PAGES·PAGE_VIEWS 목록 conflict로 만들고 candidate 정의 목록이 객체와 어긋남"]
 fn independent_page_and_view_insertions_merge_cleanly() {

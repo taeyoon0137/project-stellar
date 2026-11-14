@@ -681,8 +681,9 @@ fn random_documents_split_resplit_and_merge_round_trip() {
     assert!(absorbed > 10, "병합 흡수 {absorbed}");
 }
 
-/// 알려진 결함(연결 누락, 보고서 findings 참조): document_io serializer(`serialize_document`)는 V.6.4
-/// split planner를 쓰지 않고 View마다 subtree chunk를 하나만 씁니다. 그래서 승인 임계치(ADR-0012,
+/// 알려진 결함(연결 누락, `docs/task-reports/V.6.4.md` "남은 위험 / 한계" 첫 항목): document_io
+/// serializer(`serialize_document`)는 V.6.4 split planner를 쓰지 않고 View마다 subtree chunk를 하나만
+/// 씁니다. 그래서 승인 임계치(ADR-0012,
 /// `storage.chunk_split_threshold_bytes`)를 넘는 View도 의미 경계(Frame)로 나뉘지 않은 단일 chunk로
 /// 저장됩니다. 위 테스트들은 planner layout을 테스트에서 직접 chunk model로 옮겨 검증했습니다. serializer가
 /// planner와 연결되면 `#[ignore]`를 지웁니다.
