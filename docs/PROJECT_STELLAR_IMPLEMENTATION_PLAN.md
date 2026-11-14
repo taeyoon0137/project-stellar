@@ -3,10 +3,10 @@
 - 기준 아키텍처: `PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`
 - 기준일: 2026-06-23
 - 현재 상태: `I.1.1`~`I.1.9` DEV-MAC 검증 완료(이력 정합화·`Task(...)` 일원화 반영). 다음 작업은 `I.1.10`(Bootstrap CI). Windows·CI 증거는 미확보
-- 원자 작업 수: 1086개
-- 구현 Phase 수: 29개 (`I`~`XXIX`)
+- 원자 작업 수: 1133개
+- 구현 Phase 수: 30개 (`I`\~`XXX`)
 - 초기 릴리스 범위: Phase `I`~`XVII`, G8 통과
-- 로드맵 범위: Phase `XVIII`~`XXIX`
+- 로드맵 범위: Phase `XVIII`\~`XXX`
 - 이 문서는 세부 실행 계획만 포함하며 전체 기술 아키텍처를 중복 수록하지 않음
 
 ---
@@ -23,6 +23,7 @@
 - **2026-11-14 — 3계층 에이전트 도구 결정 반영(ADR-0005 Accepted):** 제품 소유자 결정에 따라 내장 에이전트는 사용자가 설치하고 직접 로그인한 공급자 공식 CLI를 공식 문서의 비대화형 인터페이스로만 실행하고, Stellar는 인증·자격 증명·사용량 중개에 참여하지 않습니다. 출력은 채팅 보기(기본)와 원문 보기를 함께 제공하고 공급자 출력 디코드는 표시 전용으로 격리합니다. 앱 없이 동작하는 읽기 전용 MCP backend를 신뢰된 고정 프로젝트에 한해 허용합니다. 에이전트 세션이 끊기거나 중지돼도 적용 변경은 자동 rollback하지 않고 출처 표시와 함께 남겨 사용자가 변경·세션 단위로 직접 되돌립니다. headless 명령의 실행 이름은 `stellar`이며 macOS 앱 첫 실행 때 명령 설치 화면을 제공합니다. 목적이 사라진 행은 폐기 표기 없이 삭제하는 규칙으로 바꿨습니다(3. 계획 변경 규칙). XIX.1.4, XIX.3.3, XIX.6.1, XIX.6.3, XIX.6.4, XIX.7.2와 Phase XIX 완료 조건을 그 자리에서 고쳤으며, XIX.1.6\~XIX.1.9, XIX.6.7\~XIX.6.10, XIX.9, XXIV.4, XXIV.5와 Phase XXIX를 추가했습니다.
 - **2026-11-14 — CSS 기반 디자인 속성 어휘(ADR-0024 Accepted):** 제품 소유자 방향에 따라 인스펙터가 편집하는 디자인 속성의 이름·값 문법·단위·레이아웃 의미는 CSS longhand를 정본으로 삼습니다. 저장은 바이너리 chunk와 숫자 `PropertyKey`를 유지하고 CSS 텍스트를 파일에 저장하지 않습니다. 영속 record는 longhand만 저장하고, Stellar가 받아들인 선언은 CSS와 같은 결과를 내야 하며 예외는 `docs/design/property_model.md` 14장 목록뿐입니다. 이미 저장되는 속성의 기본값은 바꾸지 않습니다. 완료된 행은 고치지 않고 Phase IX에 IX.11(CSS 기반 속성 체계, 20행)을 추가했습니다. 내용은 registry CSS 매핑, 레이아웃 의미 정렬과 CSS 적합성 fixture, 영속 layout record, Frame·Text migration, CSS 값 형식화·파싱과 복사·붙여넣기, 인스펙터 CSS 범주, export 정렬입니다.
 - **2026-11-14 — 캔버스 편집 UX(XII.10) 추가:** 제품 소유자 방향(편집 UX는 전문 UI 디자인 도구의 관례를 참고하되 베끼지 않음, UI는 Xcode 계열 macOS 네이티브 형태 위의 Stellar 고유 형태, 인스펙터·캔버스 편집 속성은 CSS 기반)에 따라 `docs/design/ui/canvas_editing.md`를 기준으로 XII.10.1\~XII.10.43을 추가했습니다. 도구·수식키 결정(ADR), 선택·깊은 선택·마퀴·hover, 변형 핸들, nudge, 스냅·스마트 가이드·눈금자·그리드, 정렬·분배, 순서·묶음, 흐름 컨테이너 드래그와 padding·gap 핸들, 생성·펜·Boolean, 캔버스 텍스트, 인스턴스 편집·교체, 확대 제스처 입력과 줌·팬, 클립보드, 문맥 메뉴, 한 제스처 한 history 적합성, 키보드 전용·VoiceOver 경로, 성능 replay를 다룹니다. 기존 행의 상태와 내용은 바꾸지 않았습니다.
+- **2026-11-14 — 노드 프로토타이핑·Component Context·코드 생성 방향(ADR-0025):** 제품 소유자 방향 P4에 따라 CSS 기반 속성을 값 연결 대상, 노드 그래프 포트, 코드 생성 매핑 단위로 함께 쓰기로 했습니다. 초기 릴리스 범위인 Phase IX에 IX.12(Component Context: 선언된 provide·require·consume, 해석·진단·command·인스펙터, IX.12.1\~IX.12.13)를 추가했습니다. 로드맵 Phase XXX(노드 기반 프로토타이핑: 기존 binding·상태 머신 위의 projection, `MotionSpec`, 논리 시계 평가, 프리뷰, macOS 그래프 편집기, XXX.1.1\~XXX.6.3)를 추가했습니다. 착수 전인 XXII.1.1과 XXII.2.2를 CSS 기반 속성·Context를 소비하도록 그 자리에서 고쳤고 XXII.1.4, XXII.1.5, XXII.2.5, XXII.2.6, XXII.3.4, XXII.4.3을 추가했습니다. 기존 상태 표기는 바꾸지 않았습니다.
 
 ---
 
@@ -940,6 +941,30 @@ tools/xtask/
 | IX.11.20 | `[ ]` | SVG export 매핑표(`crates/export/src/svg/mapping.rs`)의 각 행에 registry CSS 매핑을 연결하고, `fill`·`stroke`·`opacity`·`mix-blend-mode`·`filter` 출력이 registry 값 문법과 formatter를 쓰게 합니다. | 매핑 inventory 누락 0, SVG 출력 문자열이 IX.11.13 formatter 결과와 일치, same snapshot byte-identical. | IX.11.2, IX.11.13, XX.3.1 |
 
 **IX.11 완료 조건:** 모든 registry 항목이 CSS 매핑을 갖고, CSS 레이아웃 적합성 fixture와 의미가 다른 구현 속성의 migration fixture가 통과하며, 인스펙터가 CSS 범주와 CSS 값 입력을 사용합니다.
+
+---
+
+### IX.12 Component Context
+
+ADR-0025 결정 3을 구현합니다. Context는 선언된 인터페이스이며 아키텍처 14.3·15.1의 암묵적 참조 금지를 유지합니다(아키텍처 14.5).
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| IX.12.1 | `[ ]` | `ContextKey` resource에 StableId, 이름, TypeSpec, 필수 default expression, scope(프로젝트·라이브러리·문서)를 정의합니다. default는 닫힌 식이어야 하며 default 없는 key는 만들 수 없습니다. 참조는 StableId로 하고 저장 형식은 착수 시 ADR로 고정합니다. | default 누락·type mismatch·열린 식 fixture 거부, round-trip, rename 후 참조 유지. | IX.1.2, VIII.5.2 |
+| IX.12.2 | `[ ]` | node에 붙는 `ContextProvision`(provider node StableId, ContextKey ref, value expression)과 ComponentDefinition 공개 인터페이스의 `ContextRequirement`(ContextKey ref)를 정의합니다. provision은 소유 definition·View 안의 node에만 붙고, 자기 트리 안의 ComponentInstance node에는 붙일 수 있습니다. | round-trip, 소유 범위 밖 node를 가리키는 provision 거부, instance node provision 허용. | IX.12.1, IX.1.1, IX.2.1 |
+| IX.12.3 | `[ ]` | ReferenceTarget에 Context 종류를 추가하고 binding dependency graph가 ContextKey와 ContextProvision을 공통 node로 표현하게 합니다. 기존 ReferenceTarget 번호와 bytes는 바꾸지 않습니다. | dependency 종류 fixture 통과, 기존 ReferenceTarget golden bytes 불변. | IX.12.2, VIII.6.2 |
+| IX.12.4 | `[ ]` | Context 해석기를 구현합니다. instance expansion view의 펼친 트리에서 소비 지점의 가장 가까운 조상 provision을 쓰고, 없으면 key default를 씁니다. provision 값 식이 같은 key를 읽으면 바깥 조상 값으로 해석합니다. 조상 탐색 결과는 runtime index로 캐시합니다. | 중첩·shadowing·provision 없음·같은 key 재읽기 fixture 값 정확, 같은 입력 같은 결과. | IX.12.3, IX.2.2 |
+| IX.12.5 | `[ ]` | Context validator를 구현합니다. ComponentDefinition 안의 선언 없는 소비와 타입 불일치는 오류, 존재하지 않는 key의 provision은 orphan, 쓰지 않는 requirement는 경고, default 해석과 shadowing은 정보 진단입니다. 서로 다른 key가 서로를 읽는 cycle은 binding cycle detector로 저장 전 거부합니다. | diagnostic fixture 정확, K1↔K2 cycle fixture 거부, View 최상위 트리의 선언 없는 소비 허용. | IX.12.4, VIII.6.3 |
+| IX.12.6 | `[ ]` | provision 값·위치 변경 시 영향받는 소비 binding만 topological order로 재평가하도록 binding scheduler에 연결합니다. | 무관 subtree 평가 count 0, 평가 순서 deterministic. | IX.12.4, VIII.6.4 |
+| IX.12.7 | `[ ]` | evaluated value provenance chain에 ContextKey와 provision node StableId를 기록합니다. default로 해석된 경우도 표시합니다. | 최종값→provision→key chain fixture 정확, default 해석 표시 fixture. | IX.12.4, VIII.6.5 |
+| IX.12.8 | `[ ]` | ContextKey 생성·rename·default 변경·삭제, provision 생성·값 변경·삭제, requirement 추가·삭제 command를 구현합니다. 소비가 있는 key 삭제는 소비 binding을 OrphanedBinding으로 바꾸고, provision만 삭제하면 default로 해석합니다. | apply/inverse 통과, orphan·default fallback fixture 정확. | IX.12.5, VIII.8.1, Phase VII |
+| IX.12.9 | `[ ]` | View Variant와 Target Profile override가 provision 값을 PropertyPath로 덮어쓰도록 resolver를 연결합니다. 우선순위는 기존 공통값→profile override→variant override 규칙을 따릅니다. | 우선순위 조합 fixture 통과, 같은 specificity 충돌 diagnostic. | IX.12.4, IX.7.6, IX.10.7 |
+| IX.12.10 | `[ ]` | Semantic Diff·Merge에 Context를 연결합니다. ContextKey·provision·requirement를 StableId 단위로 diff하고, provision 삭제 대 소비 추가와 key 타입 변경 대 provision 값 변경을 전용 conflict로 분류합니다(아키텍처 27.1). | 3-way fixture conflict 분류 정확, diff bytes deterministic. | IX.12.8, XIV.3.7, XIV.10.5 |
+| IX.12.11 | `[ ]` | 인스펙터용 Context 조회 API를 구현합니다. 선택 속성의 binding이 Context 소비이면 key, 해석된 값, 제공한 provision node 경로를 반환하고, Value Binding 선택기 후보로 그 위치에서 소비 가능한 key와 선언 필요 여부를 반환합니다. 실제 UI는 IX.12.12에서 연결합니다. | 조회 결과 fixture 정확, 같은 입력 같은 후보 순서. | IX.12.7, IX.12.5 |
+| IX.12.12 | `[ ]` | macOS 인스펙터에 Context를 연결합니다. Value Binding 선택기에 Context를 연결원 종류 하나로 보여 주고, 제공한 조상 node로 이동하는 동작과 ComponentDefinition 인터페이스의 requirement 목록을 네이티브 컨트롤로 표시합니다. Context를 별도 기능 패널로 나누지 않습니다(아키텍처 14.2). | `[DEV-MAC]` 선택→연결→Undo smoke, 조상 이동 smoke, VoiceOver label 확인. | IX.12.11, XII.9.1 |
+| IX.12.13 | `[ ]` | 통합 fixture를 만듭니다. 테마 Context가 10단계 nested component를 중간 Property 없이 통과하고, 중간 단계 shadowing과 외부 library key 소비를 포함합니다. | validator 0 오류, provenance가 provision 경로 포함, semantic snapshot byte-identical. | IX.12.9, IX.12.10, IX.9.2 |
+
+**Phase IX 추가 완료 조건:** Context 선언·제공·소비가 명시 경계 규칙으로 검증되고 provenance에 provision이 나타나며 IX.12.13 fixture가 통과합니다.
 
 ## Phase X. 결정론적 레이아웃과 텍스트 엔진
 
@@ -2142,18 +2167,22 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXII.1.1 | `[ ]` | resolved View를 layout, semantics, state, tokens, target capability가 포함된 `CodegenIR`로 변환합니다. | semantic snapshot fixture. | G8, IX.10.8 |
+| XXII.1.1 | `[ ]` | resolved View를 CSS 기반 속성 record, layout, semantics, state, Context 선언·provision·소비, tokens, target capability가 포함된 `CodegenIR`로 변환합니다(ADR-0025 결정 4.1). CSS 문자열을 다시 parse하지 않고 타입 있는 속성 record를 그대로 씁니다. | semantic snapshot fixture, Context shadowing fixture의 IR 해석이 IX.12.4 결과와 같음. | G8, IX.10.8, IX.12.4 |
 | XXII.1.2 | `[ ]` | unsupported/approximated/native mapping diagnostic을 IR node별로 보존합니다. | diagnostic fixture. | XXII.1.1 |
 | XXII.1.3 | `[ ]` | CodegenIR은 one-way이며 generated source parser/import API를 만들지 않습니다. | API inventory에 import 없음. | XXII.1.1 |
+| XXII.1.4 | `[ ]` | CSS 기반 속성×TargetProfile 매핑 table을 capability registry에 기록하고 IR lowering이 이 table만 참조하게 합니다. 1:1이 아닌 항목(modifier stack 선형화, 블렌드 합성 색공간 차이, 자유 배치 anchor→CSS inset 변환, Stellar와 대상 플랫폼의 기본값 차이)은 lowering 규칙과 진단을 한 쌍으로 정의합니다(ADR-0025 결정 4.2). | 모든 CSS 기반 속성×profile 항목이 table에 있는지 완전성 검사, 규칙별 입력·출력·진단 fixture 통과. | XXII.1.2, IX.10.5 |
+| XXII.1.5 | `[ ]` | 선언형 상태 머신과 `MotionSpec`을 CodegenIR에 포함합니다. timing function과 reduced motion 대체 동작을 IR에 그대로 보존합니다. | semantic snapshot fixture, 같은 입력 IR bytes 동일. | XXII.1.1, XXX.1.1, IX.5.3 |
 
 ### XXII.2 Web Adapter
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XXII.2.1 | `[ ]` | Frame/Fragment/Text/Image/Control contract를 HTML semantic structure로 매핑합니다. | golden DOM tree. | XXII.1.1 |
-| XXII.2.2 | `[ ]` | 공통 layout을 CSS flex/grid/absolute로 변환하고 불가능한 constraint는 diagnostic 처리합니다. | fixture output. | Phase X, XXII.2.1 |
+| XXII.2.2 | `[ ]` | CSS 기반 layout 속성을 같은 이름의 CSS 속성(flex, grid, position·inset)으로 출력하고, XXII.1.4 lowering 규칙이 있는 항목만 변환합니다. 불가능한 constraint는 diagnostic 처리합니다. | fixture output, lowering 규칙 없는 속성의 이름·값이 IR과 같음. | Phase X, XXII.2.1, XXII.1.4 |
 | XXII.2.3 | `[ ]` | token을 CSS custom property 또는 generated constants로 내보냅니다. | deterministic CSS. | Phase VIII |
 | XXII.2.4 | `[ ]` | accessibility tree를 HTML/ARIA로 매핑합니다. | 정적 접근성 검사 fixture. | IX.8.6 |
+| XXII.2.5 | `[ ]` | Context를 Web 출력으로 낮춥니다. CSS로 표현 가능한 스타일 값은 등록된 CSS custom property 상속으로, 그 밖의 값은 생성 코드의 context 구조로 내보냅니다(ADR-0025 결정 4.3). | deterministic output, 중첩·shadowing fixture의 출력 해석값이 IX.12.4 결과와 같음. | XXII.2.3, XXII.1.1 |
+| XXII.2.6 | `[ ]` | 상태 머신과 `MotionSpec`을 Web 출력으로 낮춥니다. CSS transition·animation으로 표현 가능한 motion만 CSS로 내보내고, 상태 전환은 생성 코드로 내보냅니다. spring처럼 표현할 수 없는 항목은 근사 또는 미지원 진단을 냅니다. | fixture output, 근사·미지원 진단 fixture 정확. | XXII.1.5, XXII.2.1 |
 
 ### XXII.3 Apple Adapter
 
@@ -2162,6 +2191,7 @@ tools/xtask/
 | XXII.3.1 | `[ ]` | Apple TargetProfile에 맞춰 SwiftUI/AppKit 중 지정된 output dialect로 Control contract를 매핑합니다. | golden source. | XXII.1.1 |
 | XXII.3.2 | `[ ]` | common layout을 platform layout code로 변환하고 unsupported constraint를 diagnostic합니다. | compile fixture. | Phase X, XXII.3.1 |
 | XXII.3.3 | `[ ]` | accessibility semantics와 color space를 Apple API 표현으로 내보냅니다. | compile/static fixture. | IX.8.6, III.4.2 |
+| XXII.3.4 | `[ ]` | Context를 Apple dialect의 Environment 값으로, 상태 머신과 `MotionSpec`을 dialect의 상태·animation API로 내보냅니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다. | compile/static fixture, Context shadowing 결과가 IX.12.4와 같음. | XXII.3.1, XXII.1.5, XXII.1.4 |
 
 ### XXII.4 Android Adapter
 
@@ -2169,6 +2199,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XXII.4.1 | `[ ]` | Android TargetProfile에 맞춰 Compose output을 생성합니다. | golden source/compile fixture. | XXII.1.1 |
 | XXII.4.2 | `[ ]` | layout, control semantics, accessibility를 Compose API로 매핑합니다. | compile/static fixture. | Phase X, IX.8.6 |
+| XXII.4.3 | `[ ]` | Context를 CompositionLocal로, 상태 머신과 `MotionSpec`을 Compose 상태·animation API로 내보냅니다. 값 변경 빈도에 따라 추적형과 비추적형 local을 고르는 규칙을 고정합니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다. | compile/static fixture, local 선택 규칙 fixture 정확. | XXII.4.1, XXII.1.5, XXII.1.4 |
 
 ### XXII.5 결정론·출력 정책
 
@@ -2460,6 +2491,72 @@ tools/xtask/
 | XXIX.6.8 | `[ ]` | launch profile별 릴리스 전 수동 검증 절차를 작성합니다. ADR-0005 §4.3 두 불변식과 디코드 결과를 확인하고 결과와 약관 검토 일자를 보고서에 기록합니다. 보고서에는 XVI.8 금지 정보를 넣지 않습니다. | `[DEV-MAC]` profile별 수동 검증 항목 전부 통과 기록, 보고서 privacy scan 0건. | XXIX.6.2, XXIX.2.6 |
 
 **Phase XXIX 완료 조건:** macOS에서 사용자가 시작한 구독 CLI 세션이 Stellar MCP tool만으로 lease·승인 정책을 지키며 편집하고, Stellar는 공급자 인증·자격 증명·사용량에 관여하지 않습니다. 세션이 끝나도 적용 변경은 출처 표시와 함께 남아 사용자가 변경·세션 단위로 직접 되돌릴 수 있고, 채팅 보기(기본)와 원문 보기가 동작하며, 공급자 출력 디코드는 표시 전용으로 격리됩니다.
+
+---
+
+## Phase XXX. 로드맵 — 노드 기반 프로토타이핑
+
+> **범위:** ADR-0025 결정 2를 구현합니다. 프로토타입 그래프는 CSS 기반 속성, Value Binding, Expression AST, 선언형 상태 머신, Control Contract, Context 위의 읽기 전용 projection이며 별도 원본을 만들지 않습니다. 새로 저장하는 것은 `MotionSpec`, 그래프 배치 hint, EventKind 확장뿐입니다. 문서에는 실행 코드를 넣지 않고, 모든 편집은 CommandTransaction이며, 프리뷰는 문서를 쓰지 않습니다. 업계 프로토타이핑 도구는 개념 기준점으로만 쓰고 UI 문구와 시각 요소를 옮기지 않습니다.
+
+### XXX.1 프로토타입 모델
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXX.1.1 | `[ ]` | `MotionSpec` record에 StableId, owner(ComponentDefinition 또는 ViewDefinition), 대상 PropertyPath 목록, 시작 조건(상태 변수 StableId와 값 조건), 지속 시간, 지연, timing function, reduced motion 대체 동작(기본 즉시 전환)을 정의합니다. timing function은 linear, cubic-bezier(4 parameter), steps(개수·위치), spring(질량·강성·감쇠·초기 속도)의 닫힌 집합입니다. 저장 형식은 착수 시 ADR로 고정합니다. | parameter 범위 위반·보간할 수 없는 대상 타입 fixture 거부, round-trip. | IX.5.1, VIII.6.1 |
+| XXX.1.2 | `[ ]` | 프로토타입 socket 종류 State와 Pulse를 정의하고 expression socket 연결 가능 API를 확장합니다. State와 Pulse의 직접 연결은 거부하고 등록된 변환 node(상태 변화→펄스, 펄스→상태 토글·카운터)만 허용합니다. | 종류가 다른 직접 연결 fixture 거부, 변환 node 경유 연결 허용. | VIII.3.2, IX.5.2 |
+| XXX.1.3 | `[ ]` | 프로토타입 node 종류 registry를 닫힌 집합으로 정의합니다. 속성 출력(PropertyPath), expression block, 상태 변수, 이벤트 원천, Transition, semantic emit, Context 읽기, MotionSpec, 변환 node만 둡니다. 사용자 정의 코드, JavaScript, 파일·네트워크 node는 표현할 수 없게 합니다. | serialized unknown node kind 거부, registry 완전성 검사 통과. | XXX.1.1, XXX.1.2, IX.12.3 |
+| XXX.1.4 | `[ ]` | EventKind에 hover, pointer down·up, drag(변위), scroll, long press를 추가하는 확장을 ADR로 고정한 뒤 구현합니다. 제스처 판정 임계값은 논리 tick 단위로 registry에 고정하고 기존 kind 번호는 바꾸지 않습니다. | 기존 kind golden 불변, 새 kind golden test 통과. | IX.5.2 |
+| XXX.1.5 | `[ ]` | 사용자가 고정한 그래프 node 위치만 희소 배치 hint(StableId→좌표)로 저장합니다. Semantic Diff에서는 표현 전용 change로 분류해 따로 stage할 수 있게 합니다. | hint 없는 그래프의 save bytes에 배치 정보 0, hint 변경의 diff kind 정확. | XXX.1.3, XIV.3.2 |
+| XXX.1.6 | `[ ]` | `MotionSpec` 생성·변경·삭제 command를 구현합니다. 대상 속성이 삭제되면 MotionSpec을 지우지 않고 orphan 진단으로 남깁니다. | apply/inverse 통과, 대상 삭제 orphan fixture 정확. | XXX.1.1, Phase VII |
+
+### XXX.2 그래프 projection과 편집
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXX.2.1 | `[ ]` | owner의 binding, expression AST, 상태 머신, Control Contract 이벤트, Context 읽기, MotionSpec에서 node·edge 목록을 만드는 읽기 전용 `PrototypeGraphView`를 구현합니다. node·edge 순서는 StableId 기준으로 결정합니다. | projection→편집 plan→원본 의미 동일, 같은 입력 projection bytes 동일. | XXX.1.3, VIII.3.1, IX.5.3 |
+| XXX.2.2 | `[ ]` | 결정론적 자동 배치를 구현합니다. hint 없는 node 위치를 계산하고 hint 있는 node는 고정합니다. | 같은 입력 같은 좌표, hint node 좌표 불변. | XXX.2.1, XXX.1.5 |
+| XXX.2.3 | `[ ]` | node 추가·연결·해제·삭제를 기존 binding·expression·transition command와 MotionSpec command로 낮춘 command plan을 생성하는 API를 구현합니다. 사용자 동작 하나는 CommandTransaction 하나입니다. 실제 UI는 XXX.5에서 연결합니다. | 각 plan 적용 후 valid 문서, apply/inverse 통과, Undo 1회로 동작 전 상태 복원. | XXX.2.1, XXX.1.6, VIII.3.3, VIII.6.6 |
+| XXX.2.4 | `[ ]` | 포트 공개를 구현합니다. 그래프에서 컴포넌트 밖으로 포트를 공개하면 필요한 공개 ComponentProperty·Event·ContextRequirement 생성 plan을 계산하고, 미리보기 후 하나의 CommandTransaction으로 적용합니다. nested instance 내부 포트에 직접 연결하는 edge는 거부합니다. | nested 직접 edge fixture 거부, fault injection 시 생성된 Property 0. | XXX.2.3, IX.4.5, IX.12.8 |
+| XXX.2.5 | `[ ]` | expression, 상태 머신, Context, MotionSpec 진단을 그래프 node·socket ID로 매핑합니다. | 오류 위치 fixture 정확. | XXX.2.1, VIII.3.4, IX.5.7, IX.12.5 |
+
+### XXX.3 결정론적 평가
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXX.3.1 | `[ ]` | 프리뷰 세션에 고정 tick 논리 시계 `PreviewClock`을 정의합니다. 문서 평가 경로에는 시스템 시각 접근을 두지 않고, 셸은 디스플레이 프레임을 tick 번호로 대응시키기만 합니다. | 평가 경로 API inventory에 시스템 시각 호출 0, 같은 tick 열 같은 결과. | IX.5.4, XVI.2.1 |
+| XXX.3.2 | `[ ]` | timing function evaluator를 구현합니다. cubic-bezier는 고정 반복 횟수 해법, spring은 고정 step 적분 또는 닫힌 식을 쓰고 결과는 tick의 순수 함수입니다. | reference corpus bytes 동일, 경계 parameter fixture 통과. | XXX.1.1, VIII.4.6 |
+| XXX.3.3 | `[ ]` | tick 처리 순서를 고정합니다. 입력 이벤트→펄스 dispatch(정해진 순서, 원자 commit)→상태 변화에 따른 MotionSpec 시작·현재 값에서 재지정→영향받는 binding 재평가 순서입니다. 펄스 연쇄 dispatch 깊이가 상한을 넘으면 진단하고 그 tick의 상태 변화는 버립니다. | 같은 이벤트 로그·tick 열의 값 trace byte-identical, 무한 펄스 fixture 상한 오류·상태 변화 0. | XXX.3.1, XXX.3.2, XXX.1.4, IX.5.5 |
+| XXX.3.4 | `[ ]` | tick마다 활성 MotionSpec과 그 대상 binding만 평가하도록 binding scheduler에 연결합니다. | 무관 binding 평가 count 0. | XXX.3.3, VIII.6.4 |
+| XXX.3.5 | `[ ]` | 환경 key `reduced_motion`이 켜지면 MotionSpec의 대체 동작을 씁니다. | 환경 on/off fixture 결과 정확. | XXX.3.3, VIII.7.3 |
+| XXX.3.6 | `[ ]` | 프리뷰 상태, 진행 중 motion, 입력 로그를 세션 메모리에만 둡니다. 프로젝트 저장과 recovery snapshot에 넣지 않습니다. | 프리뷰 조작 후 save bytes 동일, recovery snapshot의 프리뷰 field 0. | XXX.3.3, XIII.8.2 |
+
+### XXX.4 프리뷰
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXX.4.1 | `[ ]` | macOS 프리뷰 세션을 구현합니다. 캔버스 렌더러로 프리뷰를 그리고, InputEvent를 프로토타입 이벤트로 변환하며, 평가 결과는 transient scene으로 주입합니다. | `[DEV-MAC]` 토글·drag fixture 프리뷰 smoke, project revision 증가 0. | XXX.3.3, XII.3.7, XII.4.1 |
+| XXX.4.2 | `[ ]` | 프리뷰 입력을 입력 재생 파일 형식으로 기록·재생해 같은 값 trace를 재현합니다. 기록 파일은 프로젝트 밖 사용자 위치에만 둡니다. | 기록→재생 trace byte-identical, 프로젝트 working tree 변경 0. | XXX.4.1, XVI.2.2 |
+| XXX.4.3 | `[ ]` | 프리뷰를 View presentation 단위로 열고 View 변수 assignment와 TargetProfile 환경을 고정해 실행합니다. | 같은 View의 두 presentation 프리뷰가 서로 독립된 state를 가짐. | XXX.4.1, IX.7.9, IX.10.7 |
+
+### XXX.5 macOS 그래프 편집기 UI
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXX.5.1 | `[ ]` | 편집기 영역을 분할해 캔버스 옆에 그래프 편집 면을 추가합니다. 편집 면은 코어 렌더러 scene으로 그리고(ADR-0025 결정 2.11), 포트 목록·속성 편집·메뉴·툴바·다이얼로그는 네이티브 컨트롤을 씁니다. | `[DEV-MAC]` UI hierarchy에 승인 범위 밖 커스텀 컨트롤 0, 분할 열기·닫기·창 상태 복원 smoke. | XXX.2.2, XII.9.1, XII.4.1 |
+| XXX.5.2 | `[ ]` | 인스펙터와 연결합니다. 선택 node의 CSS 기반 속성을 입력 포트로 보여 주고, 인스펙터 속성을 그래프로 끌면 속성 출력 node를 만드는 plan을 적용합니다. | `[DEV-MAC]` 끌기→plan 적용→Undo smoke. | XXX.5.1, XXX.2.3 |
+| XXX.5.3 | `[ ]` | socket 연결 상호작용을 구현합니다. 끌어서 연결하고, 연결 가능한 socket을 강조하고, 연결할 수 없는 사유를 표시하며, pointer up에서만 확정합니다. | `[DEV-MAC]` 연결·취소 fixture 통과, drag 중 project revision 증가 0. | XXX.5.1, XII.3.7 |
+| XXX.5.4 | `[ ]` | node·socket 진단을 그래프에 표시하고 진단 목록에서 해당 node로 이동하게 합니다. | `[DEV-MAC]` 진단 fixture 표시 위치 정확. | XXX.5.1, XXX.2.5 |
+| XXX.5.5 | `[ ]` | node와 socket을 VoiceOver 요소로 노출하고 키보드만으로 node 이동·연결·삭제를 할 수 있게 합니다. | `[DEV-MAC]` VoiceOver automation smoke, 키보드 연결 시나리오 통과. | XXX.5.3, XII.8.1 |
+
+### XXX.6 통합·성능
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| XXX.6.1 | `[ ]` | 통합 fixture를 만듭니다. motion이 있는 토글 버튼, drag sheet, Context 테마 전환 카드, 10단계 nested component의 공개 포트 연결을 포함합니다. | validator 0 오류, 재생 trace byte-identical. | XXX.3.6, XXX.2.4, IX.12.13 |
+| XXX.6.2 | `[ ]` | node 1,000개 그래프 편집과 활성 motion이 있는 프리뷰 중 캔버스 인터랙션이 아키텍처 6.2\~6.4 계약을 지키는지 측정합니다. 활성 motion 수 기준은 착수 시 측정으로 정하고, 성능 예산 파일 변경은 ADR로 합니다. | `[REF-MAC]` 인터랙션 trace가 예산 이내. | XXX.6.1, XVI.4.6 |
+| XXX.6.3 | `[ ]` | 문서 schema와 프로토타입 registry에 실행 코드, 파일·네트워크, 시스템 시각 접근 경로가 없음을 검사하는 inventory test를 추가합니다. | `[DEV-MAC]` inventory 0건, 위반 fixture 거부. | XXX.1.3, XXX.3.1 |
+
+**Phase XXX 완료 조건:** CSS 기반 속성과 상태 머신 위의 노드 그래프로 만든 인터랙션이 같은 입력 로그에서 같은 값 trace를 내고, 그래프 편집이 CommandTransaction과 창별 Undo로 동작하며, 프리뷰가 프로젝트를 바꾸지 않습니다.
 
 ---
 

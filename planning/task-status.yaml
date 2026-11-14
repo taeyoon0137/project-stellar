@@ -4770,6 +4770,114 @@ tasks:
       - "XX.3.1"
     required_environments:
       - DEV-MAC
+  - id: "IX.12.1"
+    title: "`ContextKey` resource에 StableId, 이름, TypeSpec, 필수 default expression, scope(프로젝트·라이브러리·문서)를 정의합니다. default는 닫힌 식이어야 하며 default 없는 key는 만들 수 없습니다. 참조는 StableId로 하고 저장 형식은 착수 시 ADR로 고정합니다."
+    status: not_started
+    depends_on:
+      - "IX.1.2"
+      - "VIII.5.2"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.2"
+    title: "node에 붙는 `ContextProvision`(provider node StableId, ContextKey ref, value expression)과 ComponentDefinition 공개 인터페이스의 `ContextRequirement`(ContextKey ref)를 정의합니다. provision은 소유 definition·View 안의 node에만 붙고, 자기 트리 안의 ComponentInstance node에는 붙일 수 있습니다."
+    status: not_started
+    depends_on:
+      - "IX.12.1"
+      - "IX.1.1"
+      - "IX.2.1"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.3"
+    title: "ReferenceTarget에 Context 종류를 추가하고 binding dependency graph가 ContextKey와 ContextProvision을 공통 node로 표현하게 합니다. 기존 ReferenceTarget 번호와 bytes는 바꾸지 않습니다."
+    status: not_started
+    depends_on:
+      - "IX.12.2"
+      - "VIII.6.2"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.4"
+    title: "Context 해석기를 구현합니다. instance expansion view의 펼친 트리에서 소비 지점의 가장 가까운 조상 provision을 쓰고, 없으면 key default를 씁니다. provision 값 식이 같은 key를 읽으면 바깥 조상 값으로 해석합니다. 조상 탐색 결과는 runtime index로 캐시합니다."
+    status: not_started
+    depends_on:
+      - "IX.12.3"
+      - "IX.2.2"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.5"
+    title: "Context validator를 구현합니다. ComponentDefinition 안의 선언 없는 소비와 타입 불일치는 오류, 존재하지 않는 key의 provision은 orphan, 쓰지 않는 requirement는 경고, default 해석과 shadowing은 정보 진단입니다. 서로 다른 key가 서로를 읽는 cycle은 binding cycle detector로 저장 전 거부합니다."
+    status: not_started
+    depends_on:
+      - "IX.12.4"
+      - "VIII.6.3"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.6"
+    title: "provision 값·위치 변경 시 영향받는 소비 binding만 topological order로 재평가하도록 binding scheduler에 연결합니다."
+    status: not_started
+    depends_on:
+      - "IX.12.4"
+      - "VIII.6.4"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.7"
+    title: "evaluated value provenance chain에 ContextKey와 provision node StableId를 기록합니다. default로 해석된 경우도 표시합니다."
+    status: not_started
+    depends_on:
+      - "IX.12.4"
+      - "VIII.6.5"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.8"
+    title: "ContextKey 생성·rename·default 변경·삭제, provision 생성·값 변경·삭제, requirement 추가·삭제 command를 구현합니다. 소비가 있는 key 삭제는 소비 binding을 OrphanedBinding으로 바꾸고, provision만 삭제하면 default로 해석합니다."
+    status: not_started
+    depends_on:
+      - "IX.12.5"
+      - "VIII.8.1"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.9"
+    title: "View Variant와 Target Profile override가 provision 값을 PropertyPath로 덮어쓰도록 resolver를 연결합니다. 우선순위는 기존 공통값→profile override→variant override 규칙을 따릅니다."
+    status: not_started
+    depends_on:
+      - "IX.12.4"
+      - "IX.7.6"
+      - "IX.10.7"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.10"
+    title: "Semantic Diff·Merge에 Context를 연결합니다. ContextKey·provision·requirement를 StableId 단위로 diff하고, provision 삭제 대 소비 추가와 key 타입 변경 대 provision 값 변경을 전용 conflict로 분류합니다(아키텍처 27.1)."
+    status: not_started
+    depends_on:
+      - "IX.12.8"
+      - "XIV.3.7"
+      - "XIV.10.5"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.11"
+    title: "인스펙터용 Context 조회 API를 구현합니다. 선택 속성의 binding이 Context 소비이면 key, 해석된 값, 제공한 provision node 경로를 반환하고, Value Binding 선택기 후보로 그 위치에서 소비 가능한 key와 선언 필요 여부를 반환합니다. 실제 UI는 IX.12.12에서 연결합니다."
+    status: not_started
+    depends_on:
+      - "IX.12.7"
+      - "IX.12.5"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.12"
+    title: "macOS 인스펙터에 Context를 연결합니다. Value Binding 선택기에 Context를 연결원 종류 하나로 보여 주고, 제공한 조상 node로 이동하는 동작과 ComponentDefinition 인터페이스의 requirement 목록을 네이티브 컨트롤로 표시합니다. Context를 별도 기능 패널로 나누지 않습니다(아키텍처 14.2)."
+    status: not_started
+    depends_on:
+      - "IX.12.11"
+      - "XII.9.1"
+    required_environments:
+      - DEV-MAC
+  - id: "IX.12.13"
+    title: "통합 fixture를 만듭니다. 테마 Context가 10단계 nested component를 중간 Property 없이 통과하고, 중간 단계 shadowing과 외부 library key 소비를 포함합니다."
+    status: not_started
+    depends_on:
+      - "IX.12.9"
+      - "IX.12.10"
+      - "IX.9.2"
+    required_environments:
+      - DEV-MAC
   - id: "X.1.1"
     title: "`layout`에 `LayoutInput`, `LayoutBox`, `LayoutResult`, `LayoutError`를 정의합니다. 결과는 local rect, content rect, baseline, overflow bounds를 포함합니다."
     status: verified
@@ -10276,10 +10384,11 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.1.1"
-    title: "resolved View를 layout, semantics, state, tokens, target capability가 포함된 `CodegenIR`로 변환합니다."
+    title: "resolved View를 CSS 기반 속성 record, layout, semantics, state, Context 선언·provision·소비, tokens, target capability가 포함된 `CodegenIR`로 변환합니다(ADR-0025 결정 4.1). CSS 문자열을 다시 parse하지 않고 타입 있는 속성 record를 그대로 씁니다."
     status: not_started
     depends_on:
       - "IX.10.8"
+      - "IX.12.4"
     required_environments:
       - DEV-MAC
   - id: "XXII.1.2"
@@ -10296,6 +10405,23 @@ tasks:
       - "XXII.1.1"
     required_environments:
       - DEV-MAC
+  - id: "XXII.1.4"
+    title: "CSS 기반 속성×TargetProfile 매핑 table을 capability registry에 기록하고 IR lowering이 이 table만 참조하게 합니다. 1:1이 아닌 항목(modifier stack 선형화, 블렌드 합성 색공간 차이, 자유 배치 anchor→CSS inset 변환, Stellar와 대상 플랫폼의 기본값 차이)은 lowering 규칙과 진단을 한 쌍으로 정의합니다(ADR-0025 결정 4.2)."
+    status: not_started
+    depends_on:
+      - "XXII.1.2"
+      - "IX.10.5"
+    required_environments:
+      - DEV-MAC
+  - id: "XXII.1.5"
+    title: "선언형 상태 머신과 `MotionSpec`을 CodegenIR에 포함합니다. timing function과 reduced motion 대체 동작을 IR에 그대로 보존합니다."
+    status: not_started
+    depends_on:
+      - "XXII.1.1"
+      - "XXX.1.1"
+      - "IX.5.3"
+    required_environments:
+      - DEV-MAC
   - id: "XXII.2.1"
     title: "Frame/Fragment/Text/Image/Control contract를 HTML semantic structure로 매핑합니다."
     status: not_started
@@ -10304,10 +10430,11 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.2.2"
-    title: "공통 layout을 CSS flex/grid/absolute로 변환하고 불가능한 constraint는 diagnostic 처리합니다."
+    title: "CSS 기반 layout 속성을 같은 이름의 CSS 속성(flex, grid, position·inset)으로 출력하고, XXII.1.4 lowering 규칙이 있는 항목만 변환합니다. 불가능한 constraint는 diagnostic 처리합니다."
     status: not_started
     depends_on:
       - "XXII.2.1"
+      - "XXII.1.4"
     required_environments:
       - DEV-MAC
   - id: "XXII.2.3"
@@ -10320,6 +10447,22 @@ tasks:
     status: not_started
     depends_on:
       - "IX.8.6"
+    required_environments:
+      - DEV-MAC
+  - id: "XXII.2.5"
+    title: "Context를 Web 출력으로 낮춥니다. CSS로 표현 가능한 스타일 값은 등록된 CSS custom property 상속으로, 그 밖의 값은 생성 코드의 context 구조로 내보냅니다(ADR-0025 결정 4.3)."
+    status: not_started
+    depends_on:
+      - "XXII.2.3"
+      - "XXII.1.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXII.2.6"
+    title: "상태 머신과 `MotionSpec`을 Web 출력으로 낮춥니다. CSS transition·animation으로 표현 가능한 motion만 CSS로 내보내고, 상태 전환은 생성 코드로 내보냅니다. spring처럼 표현할 수 없는 항목은 근사 또는 미지원 진단을 냅니다."
+    status: not_started
+    depends_on:
+      - "XXII.1.5"
+      - "XXII.2.1"
     required_environments:
       - DEV-MAC
   - id: "XXII.3.1"
@@ -10344,6 +10487,15 @@ tasks:
       - "III.4.2"
     required_environments:
       - DEV-MAC
+  - id: "XXII.3.4"
+    title: "Context를 Apple dialect의 Environment 값으로, 상태 머신과 `MotionSpec`을 dialect의 상태·animation API로 내보냅니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다."
+    status: not_started
+    depends_on:
+      - "XXII.3.1"
+      - "XXII.1.5"
+      - "XXII.1.4"
+    required_environments:
+      - DEV-MAC
   - id: "XXII.4.1"
     title: "Android TargetProfile에 맞춰 Compose output을 생성합니다."
     status: not_started
@@ -10356,6 +10508,15 @@ tasks:
     status: not_started
     depends_on:
       - "IX.8.6"
+    required_environments:
+      - DEV-MAC
+  - id: "XXII.4.3"
+    title: "Context를 CompositionLocal로, 상태 머신과 `MotionSpec`을 Compose 상태·animation API로 내보냅니다. 값 변경 빈도에 따라 추적형과 비추적형 local을 고르는 규칙을 고정합니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다."
+    status: not_started
+    depends_on:
+      - "XXII.4.1"
+      - "XXII.1.5"
+      - "XXII.1.4"
     required_environments:
       - DEV-MAC
   - id: "XXII.5.1"
@@ -11427,5 +11588,240 @@ tasks:
     depends_on:
       - "XXIX.6.2"
       - "XXIX.2.6"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.1.1"
+    title: "`MotionSpec` record에 StableId, owner(ComponentDefinition 또는 ViewDefinition), 대상 PropertyPath 목록, 시작 조건(상태 변수 StableId와 값 조건), 지속 시간, 지연, timing function, reduced motion 대체 동작(기본 즉시 전환)을 정의합니다. timing function은 linear, cubic-bezier(4 parameter), steps(개수·위치), spring(질량·강성·감쇠·초기 속도)의 닫힌 집합입니다. 저장 형식은 착수 시 ADR로 고정합니다."
+    status: not_started
+    depends_on:
+      - "IX.5.1"
+      - "VIII.6.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.1.2"
+    title: "프로토타입 socket 종류 State와 Pulse를 정의하고 expression socket 연결 가능 API를 확장합니다. State와 Pulse의 직접 연결은 거부하고 등록된 변환 node(상태 변화→펄스, 펄스→상태 토글·카운터)만 허용합니다."
+    status: not_started
+    depends_on:
+      - "VIII.3.2"
+      - "IX.5.2"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.1.3"
+    title: "프로토타입 node 종류 registry를 닫힌 집합으로 정의합니다. 속성 출력(PropertyPath), expression block, 상태 변수, 이벤트 원천, Transition, semantic emit, Context 읽기, MotionSpec, 변환 node만 둡니다. 사용자 정의 코드, JavaScript, 파일·네트워크 node는 표현할 수 없게 합니다."
+    status: not_started
+    depends_on:
+      - "XXX.1.1"
+      - "XXX.1.2"
+      - "IX.12.3"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.1.4"
+    title: "EventKind에 hover, pointer down·up, drag(변위), scroll, long press를 추가하는 확장을 ADR로 고정한 뒤 구현합니다. 제스처 판정 임계값은 논리 tick 단위로 registry에 고정하고 기존 kind 번호는 바꾸지 않습니다."
+    status: not_started
+    depends_on:
+      - "IX.5.2"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.1.5"
+    title: "사용자가 고정한 그래프 node 위치만 희소 배치 hint(StableId→좌표)로 저장합니다. Semantic Diff에서는 표현 전용 change로 분류해 따로 stage할 수 있게 합니다."
+    status: not_started
+    depends_on:
+      - "XXX.1.3"
+      - "XIV.3.2"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.1.6"
+    title: "`MotionSpec` 생성·변경·삭제 command를 구현합니다. 대상 속성이 삭제되면 MotionSpec을 지우지 않고 orphan 진단으로 남깁니다."
+    status: not_started
+    depends_on:
+      - "XXX.1.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.2.1"
+    title: "owner의 binding, expression AST, 상태 머신, Control Contract 이벤트, Context 읽기, MotionSpec에서 node·edge 목록을 만드는 읽기 전용 `PrototypeGraphView`를 구현합니다. node·edge 순서는 StableId 기준으로 결정합니다."
+    status: not_started
+    depends_on:
+      - "XXX.1.3"
+      - "VIII.3.1"
+      - "IX.5.3"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.2.2"
+    title: "결정론적 자동 배치를 구현합니다. hint 없는 node 위치를 계산하고 hint 있는 node는 고정합니다."
+    status: not_started
+    depends_on:
+      - "XXX.2.1"
+      - "XXX.1.5"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.2.3"
+    title: "node 추가·연결·해제·삭제를 기존 binding·expression·transition command와 MotionSpec command로 낮춘 command plan을 생성하는 API를 구현합니다. 사용자 동작 하나는 CommandTransaction 하나입니다. 실제 UI는 XXX.5에서 연결합니다."
+    status: not_started
+    depends_on:
+      - "XXX.2.1"
+      - "XXX.1.6"
+      - "VIII.3.3"
+      - "VIII.6.6"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.2.4"
+    title: "포트 공개를 구현합니다. 그래프에서 컴포넌트 밖으로 포트를 공개하면 필요한 공개 ComponentProperty·Event·ContextRequirement 생성 plan을 계산하고, 미리보기 후 하나의 CommandTransaction으로 적용합니다. nested instance 내부 포트에 직접 연결하는 edge는 거부합니다."
+    status: not_started
+    depends_on:
+      - "XXX.2.3"
+      - "IX.4.5"
+      - "IX.12.8"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.2.5"
+    title: "expression, 상태 머신, Context, MotionSpec 진단을 그래프 node·socket ID로 매핑합니다."
+    status: not_started
+    depends_on:
+      - "XXX.2.1"
+      - "VIII.3.4"
+      - "IX.5.7"
+      - "IX.12.5"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.3.1"
+    title: "프리뷰 세션에 고정 tick 논리 시계 `PreviewClock`을 정의합니다. 문서 평가 경로에는 시스템 시각 접근을 두지 않고, 셸은 디스플레이 프레임을 tick 번호로 대응시키기만 합니다."
+    status: not_started
+    depends_on:
+      - "IX.5.4"
+      - "XVI.2.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.3.2"
+    title: "timing function evaluator를 구현합니다. cubic-bezier는 고정 반복 횟수 해법, spring은 고정 step 적분 또는 닫힌 식을 쓰고 결과는 tick의 순수 함수입니다."
+    status: not_started
+    depends_on:
+      - "XXX.1.1"
+      - "VIII.4.6"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.3.3"
+    title: "tick 처리 순서를 고정합니다. 입력 이벤트→펄스 dispatch(정해진 순서, 원자 commit)→상태 변화에 따른 MotionSpec 시작·현재 값에서 재지정→영향받는 binding 재평가 순서입니다. 펄스 연쇄 dispatch 깊이가 상한을 넘으면 진단하고 그 tick의 상태 변화는 버립니다."
+    status: not_started
+    depends_on:
+      - "XXX.3.1"
+      - "XXX.3.2"
+      - "XXX.1.4"
+      - "IX.5.5"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.3.4"
+    title: "tick마다 활성 MotionSpec과 그 대상 binding만 평가하도록 binding scheduler에 연결합니다."
+    status: not_started
+    depends_on:
+      - "XXX.3.3"
+      - "VIII.6.4"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.3.5"
+    title: "환경 key `reduced_motion`이 켜지면 MotionSpec의 대체 동작을 씁니다."
+    status: not_started
+    depends_on:
+      - "XXX.3.3"
+      - "VIII.7.3"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.3.6"
+    title: "프리뷰 상태, 진행 중 motion, 입력 로그를 세션 메모리에만 둡니다. 프로젝트 저장과 recovery snapshot에 넣지 않습니다."
+    status: not_started
+    depends_on:
+      - "XXX.3.3"
+      - "XIII.8.2"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.4.1"
+    title: "macOS 프리뷰 세션을 구현합니다. 캔버스 렌더러로 프리뷰를 그리고, InputEvent를 프로토타입 이벤트로 변환하며, 평가 결과는 transient scene으로 주입합니다."
+    status: not_started
+    depends_on:
+      - "XXX.3.3"
+      - "XII.3.7"
+      - "XII.4.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.4.2"
+    title: "프리뷰 입력을 입력 재생 파일 형식으로 기록·재생해 같은 값 trace를 재현합니다. 기록 파일은 프로젝트 밖 사용자 위치에만 둡니다."
+    status: not_started
+    depends_on:
+      - "XXX.4.1"
+      - "XVI.2.2"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.4.3"
+    title: "프리뷰를 View presentation 단위로 열고 View 변수 assignment와 TargetProfile 환경을 고정해 실행합니다."
+    status: not_started
+    depends_on:
+      - "XXX.4.1"
+      - "IX.7.9"
+      - "IX.10.7"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.5.1"
+    title: "편집기 영역을 분할해 캔버스 옆에 그래프 편집 면을 추가합니다. 편집 면은 코어 렌더러 scene으로 그리고(ADR-0025 결정 2.11), 포트 목록·속성 편집·메뉴·툴바·다이얼로그는 네이티브 컨트롤을 씁니다."
+    status: not_started
+    depends_on:
+      - "XXX.2.2"
+      - "XII.9.1"
+      - "XII.4.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.5.2"
+    title: "인스펙터와 연결합니다. 선택 node의 CSS 기반 속성을 입력 포트로 보여 주고, 인스펙터 속성을 그래프로 끌면 속성 출력 node를 만드는 plan을 적용합니다."
+    status: not_started
+    depends_on:
+      - "XXX.5.1"
+      - "XXX.2.3"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.5.3"
+    title: "socket 연결 상호작용을 구현합니다. 끌어서 연결하고, 연결 가능한 socket을 강조하고, 연결할 수 없는 사유를 표시하며, pointer up에서만 확정합니다."
+    status: not_started
+    depends_on:
+      - "XXX.5.1"
+      - "XII.3.7"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.5.4"
+    title: "node·socket 진단을 그래프에 표시하고 진단 목록에서 해당 node로 이동하게 합니다."
+    status: not_started
+    depends_on:
+      - "XXX.5.1"
+      - "XXX.2.5"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.5.5"
+    title: "node와 socket을 VoiceOver 요소로 노출하고 키보드만으로 node 이동·연결·삭제를 할 수 있게 합니다."
+    status: not_started
+    depends_on:
+      - "XXX.5.3"
+      - "XII.8.1"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.6.1"
+    title: "통합 fixture를 만듭니다. motion이 있는 토글 버튼, drag sheet, Context 테마 전환 카드, 10단계 nested component의 공개 포트 연결을 포함합니다."
+    status: not_started
+    depends_on:
+      - "XXX.3.6"
+      - "XXX.2.4"
+      - "IX.12.13"
+    required_environments:
+      - DEV-MAC
+  - id: "XXX.6.2"
+    title: "node 1,000개 그래프 편집과 활성 motion이 있는 프리뷰 중 캔버스 인터랙션이 아키텍처 6.2\\~6.4 계약을 지키는지 측정합니다. 활성 motion 수 기준은 착수 시 측정으로 정하고, 성능 예산 파일 변경은 ADR로 합니다."
+    status: not_started
+    depends_on:
+      - "XXX.6.1"
+      - "XVI.4.6"
+    required_environments:
+      - REF-MAC
+  - id: "XXX.6.3"
+    title: "문서 schema와 프로토타입 registry에 실행 코드, 파일·네트워크, 시스템 시각 접근 경로가 없음을 검사하는 inventory test를 추가합니다."
+    status: not_started
+    depends_on:
+      - "XXX.1.3"
+      - "XXX.3.1"
     required_environments:
       - DEV-MAC
