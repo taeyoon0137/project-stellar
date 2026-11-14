@@ -1146,7 +1146,7 @@ tools/xtask/
 | XI.11.2 | `[ ]` | image comparison에 per-channel/structural 허용 오차를 config로 정의하고 초과 pixel 위치를 diff artifact로 남깁니다. | known equal/different fixture 판정 정확. | XI.11.1 |
 | XI.11.3 | `[ ]` | Frame, Shape, Path, Text, Image, Modifier, clip, P3 fixture를 최소 100개 구성합니다. | fixture inventory 검사 통과. | XI.10.4, XI.7.4, XI.6.6 |
 | XI.11.4 | `[ ]` | 2만 가시 node scene에서 scene build, render graph encode, submit까지 구간 benchmark를 추가합니다. | 단계별 p50/p95/p99 JSON 생성. | XI.2.6, XI.4.6, XI.8.5, XI.9.5 |
-| XI.11.5 | `[ ]` | Present queue depth와 dropped stale frame count를 benchmark 결과에 포함합니다. | queue depth≤1 assertion. | XI.5.5 |
+| XI.11.5 | `[x]` | Present queue depth와 dropped stale frame count를 benchmark 결과에 포함합니다. | queue depth≤1 assertion. | XI.5.5 |
 | XI.11.6 | `[ ]` | Metal/D3D12 conformance CI에서 모든 fixture와 smoke benchmark를 실행합니다. | G6 통과. | XI.11.3~XI.11.5 |
 
 **Phase XI 완료 조건:** G6 통과.

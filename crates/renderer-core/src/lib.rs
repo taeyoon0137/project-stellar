@@ -45,6 +45,9 @@ pub mod frame_resources;
 /// present queue 깊이 ≤ 1 frame scheduler (XI.5.5).
 pub mod frame_scheduler;
 
+/// benchmark 결과의 present queue 깊이·dropped stale frame 지표 (XI.11.5).
+pub mod present_metrics;
+
 /// scene primitive → opaque/transparent/effect pass compiler (XI.4.2).
 pub mod pass_compiler;
 
