@@ -5,7 +5,8 @@
 //!   않습니다(compile은 수십 ms라 frame 예산을 넘음).
 //! - **pipeline cache**: (`PipelineKey`, pass depth attachment format)마다 `MTLRenderPipelineState`를 한
 //!   번 만듭니다. pass에 depth·stencil attachment가 있으면 그 안의 모든 pipeline이 format을 선언해야
-//!   하므로(Metal 규칙) key에 포함합니다.
+//!   하므로(Metal 규칙) key에 포함합니다. entry point·pipeline state 실패도 key마다 기억해 frame마다 다시
+//!   시도하지 않습니다(재 init 때 cache와 함께 버림).
 //! - **depth-stencil·sampler cache**: `(DepthMode, StencilMode)`와 `SamplerDesc`마다 state 하나.
 //! - **구조화 오류**: compile·entry point·pipeline 생성 실패는 [`ShaderError`](단계 + Metal compiler
 //!   log)로 남기고 `BackendErrorKind::PipelineCreation`을 돌려줍니다. log는 내장 shader 소스의 진단이며
@@ -210,9 +211,13 @@ pub(crate) struct PipelineCache {
     source: &'static str,
     libraries: ShaderLibraryCache,
     states: HashMap<StateKey, Id>,
+    /// entry point·pipeline state 생성에 실패한 key(library compile 실패는 library cache가 기억).
+    failed_states: HashMap<StateKey, ShaderError>,
     depth_states: HashMap<(DepthMode, StencilMode), Id>,
     samplers: HashMap<SamplerDesc, Id>,
     last_error: Option<ShaderError>,
+    /// `newRenderPipelineStateWithDescriptor:`를 실제로 부른 횟수.
+    state_creations: u64,
 }
 
 impl Default for PipelineCache {
@@ -233,9 +238,11 @@ impl PipelineCache {
             source,
             libraries: ShaderLibraryCache::default(),
             states: HashMap::new(),
+            failed_states: HashMap::new(),
             depth_states: HashMap::new(),
             samplers: HashMap::new(),
             last_error: None,
+            state_creations: 0,
         }
     }
 
@@ -248,6 +255,12 @@ impl PipelineCache {
     /// 실제 library compile 횟수.
     pub(crate) fn library_compiles(&self) -> u64 {
         self.libraries.compiles()
+    }
+
+    /// pipeline state를 실제로 만든 횟수(실패 포함).
+    #[cfg(test)]
+    pub(crate) fn state_creations(&self) -> u64 {
+        self.state_creations
     }
 
     /// 마지막 shader 오류.
@@ -270,6 +283,10 @@ impl PipelineCache {
     ) -> Result<RawId, BackendError> {
         if let Some(state) = self.states.get(&(*key, depth_format)) {
             return Ok(state.as_raw());
+        }
+        if let Some(error) = self.failed_states.get(&(*key, depth_format)) {
+            let error = error.clone();
+            return Err(self.fail(error));
         }
         let layout = program_layout(key.program).ok_or(BackendError::new(
             BackendErrorKind::Unsupported,
@@ -296,13 +313,17 @@ impl PipelineCache {
         let functions = function(&library, layout.vertex, key.program).and_then(|vertex| {
             function(&library, layout.fragment, key.program).map(|fragment| (vertex, fragment))
         });
-        let (vertex, fragment) = match functions {
-            Ok(functions) => functions,
-            Err(error) => return Err(self.fail(error)),
-        };
-        let state = match create_state(device, key, depth_format, &layout, &vertex, &fragment) {
+        let created = functions.and_then(|(vertex, fragment)| {
+            self.state_creations += 1;
+            create_state(device, key, depth_format, &layout, &vertex, &fragment)
+        });
+        let state = match created {
             Ok(state) => state,
-            Err(error) => return Err(self.fail(error)),
+            Err(error) => {
+                self.failed_states
+                    .insert((*key, depth_format), error.clone());
+                return Err(self.fail(error));
+            }
         };
         let raw = state.as_raw();
         self.states.insert((*key, depth_format), state);

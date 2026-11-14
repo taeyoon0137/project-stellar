@@ -392,6 +392,59 @@ fn missing_entry_point_is_a_structured_error() {
     assert!(shader.to_string().contains("MissingEntryPoint"));
 }
 
+/// compile은 되지만 vertex descriptor 없이는 pipeline state를 만들 수 없는 소스(`[[stage_in]]` 입력).
+const STAGE_IN_SOURCE: &str = r#"
+#include <metal_stdlib>
+using namespace metal;
+struct StageIn { float2 position [[attribute(0)]]; };
+vertex float4 stellar_solid_vertex(StageIn in [[stage_in]]) { return float4(in.position, 0.0, 1.0); }
+fragment float4 stellar_solid_fragment() { return float4(1.0); }
+"#;
+
+#[test]
+fn pipeline_state_failure_is_remembered_per_key() {
+    // pipeline state 생성 실패도 key마다 기억해 frame마다 다시 만들지 않습니다(compile 실패와 같은 규칙).
+    if !metal_available() {
+        return;
+    }
+    let mut env = Offscreen::new(4, 4);
+    env.backend.inner_mut().use_shader_source(STAGE_IN_SOURCE);
+    let graph = single_pass(4, LoadOp::Clear, unit_clear([false; 4]));
+    let set = |blend| {
+        vec![DrawCommand::SetPipeline(solid_key(
+            TextureFormat::Rgba8Unorm,
+            blend,
+        ))]
+    };
+    for _ in 0..3 {
+        let error = env
+            .try_render(&graph, set(BlendState::Replace))
+            .unwrap_err();
+        assert_eq!(error.kind(), BackendErrorKind::PipelineCreation);
+        assert_eq!(env.backend.validator().state(), CallOrderState::Idle);
+        let shader = env.backend.inner().last_shader_error().expect("structured");
+        assert_eq!(shader.stage, ShaderErrorStage::PipelineState);
+        assert_eq!(shader.program, Some(ShaderProgram::SolidFill));
+        assert!(!shader.log.is_empty());
+        // 실패한 frame마다 event가 남습니다.
+        assert_eq!(
+            env.backend.inner_mut().drain_events(),
+            vec![crate::MetalEvent::PipelineFailure {
+                stage: ShaderErrorStage::PipelineState
+            }]
+        );
+    }
+    assert_eq!(env.backend.inner().pipeline_state_creations(), 1);
+    // 다른 key는 따로 시도합니다.
+    let error = env
+        .try_render(&graph, set(BlendState::PremultipliedOver))
+        .unwrap_err();
+    assert_eq!(error.kind(), BackendErrorKind::PipelineCreation);
+    assert_eq!(env.backend.inner().pipeline_state_creations(), 2);
+    assert_eq!(env.backend.inner().pipeline_count(), 0);
+    assert_eq!(env.backend.inner().shader_compile_count(), 1);
+}
+
 #[test]
 fn texture_binding_and_program_rules_are_checked() {
     if !metal_available() {

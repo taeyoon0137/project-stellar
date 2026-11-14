@@ -531,6 +531,12 @@ impl MetalBackend {
         self.pipelines.len()
     }
 
+    /// 테스트용: pipeline state 생성을 실제로 시도한 횟수(실패 포함).
+    #[cfg(test)]
+    pub(crate) fn pipeline_state_creations(&self) -> u64 {
+        self.pipelines.state_creations()
+    }
+
     /// 테스트용: 연결된 layer.
     #[cfg(test)]
     pub(crate) fn layer_surface(&self) -> Option<&LayerSurface> {
