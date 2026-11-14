@@ -77,3 +77,6 @@ pub mod web_frame;
 /// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 pub mod test_support;
+
+/// opt-in 컴포넌트별 텍스트 원본 파일 (ADR-0059).
+pub mod component_source;

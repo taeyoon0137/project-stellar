@@ -11,7 +11,7 @@ use crate::json::JsonValue;
 use crate::output::{CliError, Success};
 use crate::views;
 
-fn operation_error(error: TextSourceOperationError) -> CliError {
+pub(crate) fn operation_error(error: TextSourceOperationError) -> CliError {
     let (status, code) = match &error {
         TextSourceOperationError::Open(error) => return views::open_error(error),
         TextSourceOperationError::Document(error) => return views::document_error(error),

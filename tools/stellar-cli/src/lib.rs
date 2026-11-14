@@ -44,3 +44,5 @@ pub mod accessibility_html;
 
 /// `export-web`: 저장된 고정 Free Frame View의 HTML+CSS.
 pub mod web_frame;
+
+mod component_source;
