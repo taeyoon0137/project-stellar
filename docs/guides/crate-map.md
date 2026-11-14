@@ -67,7 +67,7 @@
 | assets | `crates/assets` | storage, core-types | core-types, storage | 없음 |
 | dependencies | `crates/dependencies` | core-types | core-types | 없음 |
 | git-porcelain | `crates/git-porcelain` | core-types | core-types | 없음 |
-| project | `crates/project` | core-types, document, storage, assets, dependencies, git-porcelain, commands, history, text | core-types, document, storage, assets, dependencies, git-porcelain, text. dev: document`[test-support]` | `yaml-rust2 =0.11.0` |
+| project | `crates/project` | core-types, document, storage, assets, dependencies, git-porcelain, commands, history, text | core-types, document, storage, assets, dependencies, git-porcelain, commands, history, text. dev: document`[test-support]` | `yaml-rust2 =0.11.0` |
 | semantic-diff | `crates/semantic-diff` | document, core-types | document, core-types. dev: document`[test-support]` | 없음 |
 | semantic-merge | `crates/semantic-merge` | semantic-diff | semantic-diff | 없음 |
 | runtime | `crates/runtime` | core-types, document, commands, history, project, storage, assets, renderer-core | core-types, document, project, renderer-core | 없음 |
@@ -300,9 +300,9 @@ transaction(`lock`, `lockfile_write`)이 파일 형식을 맡습니다. 폴더 �
 (`watcher`, `external_change`), 지연 자동 저장(`autosave`), 저장된 프로젝트 loader(`saved_project`),
 비공개 임시 디렉터리(`private_temp`), conflict virtual project 열기(`conflict_open`), 폰트(`fonts`)가
 수명주기를 맡습니다. 허용 직접 의존은 core-types, document, storage, assets, dependencies,
-git-porcelain, commands, history, text이고, 실제로는 commands와 history를 뺀 일곱 개를 씁니다. 외부
-의존은 `yaml-rust2 =0.11.0`입니다. `stellar` 명령의 `inspect`가 이 crate의 `probe`와 `root`를
-씁니다. 주요 ADR은 ADR-0021입니다.
+git-porcelain, commands, history, text이고, 아홉 개를 모두 씁니다(commands·history는 autosave dirty
+판정과 창 session, XIII.1.2·XIII.3.1). 외부 의존은 `yaml-rust2 =0.11.0`입니다. `stellar` 명령의
+`inspect`가 이 crate의 `probe`와 `root`를 씁니다. 주요 ADR은 ADR-0021입니다.
 
 ### stellar-semantic-diff
 
