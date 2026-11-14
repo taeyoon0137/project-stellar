@@ -340,8 +340,27 @@ pub fn validate_dependencies_with(
     errors
 }
 
-/// `cargo tree --workspace -e normal,build,dev --target all --depth 1 --prefix depth --no-dedupe`
-/// 출력에서 workspace member가 아닌 직접 의존 이름을 모읍니다(정렬·중복 제거, XXIX.1.2).
+/// `validate-dependencies`가 workspace 외부 직접 의존을 모을 때 실행하는 `cargo` 인자(XXIX.1.2).
+///
+/// `--all-features`가 없으면 기본 feature로 켜지지 않는 optional 의존(`foo = { optional = true }`와
+/// `x = ["dep:foo"]`)이 출력에서 빠져 미등록 외부 crate가 승인 검사를 건너뜁니다.
+pub const CARGO_TREE_ARGS: &[&str] = &[
+    "tree",
+    "--workspace",
+    "--all-features",
+    "-e",
+    "normal,build,dev",
+    "--target",
+    "all",
+    "--depth",
+    "1",
+    "--prefix",
+    "depth",
+    "--no-dedupe",
+];
+
+/// [`CARGO_TREE_ARGS`]로 실행한 `cargo tree` 출력에서 workspace member가 아닌 직접 의존 이름을
+/// 모읍니다(정렬·중복 제거, XXIX.1.2).
 ///
 /// 깊이 0 행은 workspace member이고, 깊이 1 행 중 member 행과 같은 package(이름·버전·출처)는
 /// 내부 path 의존이므로 제외합니다. 예상한 형식이 아니면 오류로 거부합니다(fail closed).

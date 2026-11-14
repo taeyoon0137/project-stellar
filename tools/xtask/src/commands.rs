@@ -11,7 +11,9 @@ use crate::check_core::run_check_core;
 use crate::commit_message::validate_commit_subject;
 use crate::crate_graph::check_workspace_graph;
 use crate::crate_graph::manifest::scan_workspace;
-use crate::dependencies::{parse_workspace_direct_deps, validate_dependencies_with, PlanProgress};
+use crate::dependencies::{
+    parse_workspace_direct_deps, validate_dependencies_with, PlanProgress, CARGO_TREE_ARGS,
+};
 use crate::ffi_header::generate_header;
 use crate::pr_body::validate_pr_body;
 use crate::storage_fixtures::check_canonical_primitives;
@@ -391,23 +393,12 @@ fn cmd_generate_ffi_header(repo_root: &Path, rest: &[String]) -> Result<(), i32>
 
 /// `cargo tree`로 workspace 모든 member의 외부 직접 의존성 이름을 수집합니다(XXIX.1.2).
 ///
-/// normal·build·dev 의존을 모든 target에 대해 모으고, 내부 workspace path 의존은 제외합니다.
+/// normal·build·dev 의존을 모든 target과 모든 feature(optional 의존 포함)에 대해 모으고, 내부
+/// workspace path 의존은 제외합니다. 인자는 [`CARGO_TREE_ARGS`]입니다.
 fn direct_dependencies(repo_root: &Path) -> Result<Vec<String>, i32> {
     let output = Command::new("cargo")
         .current_dir(repo_root)
-        .args([
-            "tree",
-            "--workspace",
-            "-e",
-            "normal,build,dev",
-            "--target",
-            "all",
-            "--depth",
-            "1",
-            "--prefix",
-            "depth",
-            "--no-dedupe",
-        ])
+        .args(CARGO_TREE_ARGS)
         .output()
         .map_err(|e| internal(&format!("cargo tree 실행 실패: {e}")))?;
     if !output.status.success() {
@@ -485,6 +476,75 @@ mod tests {
     fn validate_versions_and_status_on_real_files() {
         assert_eq!(run(&args(&["validate-versions"]), &root()), EXIT_OK);
         assert_eq!(run(&args(&["validate-task-status"]), &root()), EXIT_OK);
+    }
+
+    /// 테스트가 끝나면 지우는 임시 디렉터리.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default();
+            let dir =
+                std::env::temp_dir().join(format!("xtask-{tag}-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            TempDir(dir)
+        }
+
+        fn write(&self, relative: &str, text: &str) {
+            let path = self.0.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn direct_dependencies_include_optional_dependencies() {
+        // workspace 밖 path crate(`ext`)를 기본 feature로 켜지지 않는 optional 의존으로 둡니다.
+        // workspace 디렉터리 밖에 있어야 자동 member가 되지 않고 외부 직접 의존으로 보입니다.
+        let tmp = TempDir::new("optional-deps");
+        tmp.write(
+            "ws/Cargo.toml",
+            "[workspace]\nresolver = \"2\"\nmembers = [\"a\"]\n",
+        );
+        tmp.write(
+            "ws/a/Cargo.toml",
+            "[package]\nname = \"stellar-a\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [dependencies]\nextdep = { path = \"../../ext\", optional = true }\n\n\
+             [features]\nx = [\"dep:extdep\"]\n",
+        );
+        tmp.write("ws/a/src/lib.rs", "");
+        tmp.write(
+            "ext/Cargo.toml",
+            "[package]\nname = \"extdep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        tmp.write("ext/src/lib.rs", "");
+        let ws = tmp.0.join("ws");
+
+        assert_eq!(direct_dependencies(&ws), Ok(vec!["extdep".to_string()]));
+
+        // `--all-features`를 빼면 같은 의존이 출력에서 빠집니다(이 fixture가 optional 경로를 검사함).
+        let without: Vec<&str> = CARGO_TREE_ARGS
+            .iter()
+            .copied()
+            .filter(|arg| *arg != "--all-features")
+            .collect();
+        let output = Command::new("cargo")
+            .current_dir(&ws)
+            .args(&without)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(parse_workspace_direct_deps(&text), Ok(Vec::new()));
     }
 
     #[test]
