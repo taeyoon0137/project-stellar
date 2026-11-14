@@ -9,11 +9,15 @@
 //! 플랫폼별 tree 종료:
 //! - **unix**: Git을 새 process group의 leader로 시작하고(`process_group(0)`), 종료 시 group 전체에
 //!   먼저 `SIGTERM`을 보내 Git이 lock 파일(`index.lock` 등)을 정리할 기회를 준 뒤, 유예 시간이
-//!   지나도 Git이 끝나지 않으면 group 전체에 `SIGKILL`을 보냅니다. group 신호는 **leader(Git)를
-//!   아직 회수(wait)하지 않은 동안에만** 보냅니다. 회수 전에는 leader의 pid가 예약되어 있어
-//!   pgid가 다른 process group에 재사용될 수 없지만, 회수 뒤에는 재사용된 무관한 group에 신호가
-//!   갈 수 있기 때문입니다. 그래서 유예 시간 안에 Git이 끝나 회수되면 group에 더 이상 신호를 보내지
-//!   않습니다(`SIGTERM`을 무시하고 Git보다 오래 사는 자손은 이 경우 강제 종료되지 않습니다).
+//!   지나도 tree가 끝나지 않으면 group 전체에 `SIGKILL`을 보냅니다. group 신호는 **leader(Git)를
+//!   아직 회수(wait)하지 않은 동안에만** 보냅니다. 회수 전에는 leader의 pid가 예약되어 있어(이미
+//!   끝났어도 zombie로 남음) pgid가 다른 process group에 재사용될 수 없지만, 회수 뒤에는 재사용된
+//!   무관한 group에 신호가 갈 수 있기 때문입니다. 실행기는 출력 pipe가 모두 닫히기 전에는 leader를
+//!   회수하지 않으므로, Git이 끝난 뒤에도 pipe를 잡고 남은 손자(hook의 백그라운드 프로세스 등)를
+//!   같은 group 신호로 종료할 수 있습니다(SEC-2). 유예 시간 동안에는 pipe가 모두 닫히고 Git이 끝나기를
+//!   기다리며, 그 안에 둘 다 끝나 회수되면 group에 더 이상 신호를 보내지 않습니다(`SIGTERM`을
+//!   무시하고 pipe도 닫은 채 Git보다 오래 사는 자손은 이 경우 강제 종료되지 않습니다). `setsid` 등으로
+//!   group을 벗어난 자손은 group 신호로 종료할 수 없습니다.
 //! - **Windows**: `taskkill /PID <pid> /T /F`(argv, shell 없음)로 자식 tree까지 강제 종료합니다.
 //! - 그 밖의 플랫폼: 직접 자식만 종료합니다.
 
@@ -49,8 +53,18 @@ impl GitCancelToken {
 pub const TERMINATE_GRACE: Duration = Duration::from_millis(1_500);
 
 /// 자식 프로세스 tree를 종료하고 직접 자식을 회수(wait)합니다.
-pub(crate) fn terminate_process_tree(child: &mut Child) {
-    platform::terminate_process_tree(child);
+///
+/// 호출자는 leader를 아직 회수하지 않았어야 합니다(`try_wait`가 종료 상태를 돌려준 적 없음). leader가
+/// 이미 끝나 zombie여도 됩니다. `pipes_closed`는 자식 tree가 stdout·stderr·stdin pipe를 모두 닫았는지
+/// 알려 주며, unix에서는 유예 시간 동안 이것이 참이 되고 leader가 끝나기를 기다립니다.
+pub(crate) fn terminate_process_tree(child: &mut Child, pipes_closed: &dyn Fn() -> bool) {
+    platform::terminate_process_tree(child, pipes_closed);
+}
+
+/// leader 상태 조회가 실패했을 때(회수 여부를 알 수 없음) group 신호 없이 직접 자식만 종료·회수합니다.
+pub(crate) fn kill_leader_only(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(unix)]
@@ -78,53 +92,31 @@ mod platform {
         let _ = unsafe { kill(-pgid, signal) };
     }
 
-    /// leader 회수 상태. group 신호는 [`LeaderState::Unreaped`]일 때만 보냅니다.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum LeaderState {
-        /// 아직 회수하지 않음(실행 중이거나 zombie): pgid가 예약되어 있어 group 신호가 안전함.
-        Unreaped,
-        /// 회수함: pgid가 재사용될 수 있으므로 group 신호 금지.
-        Reaped,
-        /// 상태 조회 실패: 회수 여부를 알 수 없으므로 group 신호 금지.
-        Unknown,
-    }
-
-    /// 회수하지 않은 leader의 group에만 신호를 보냅니다.
-    fn signal_group_if_unreaped(state: LeaderState, pgid: i32, signal: i32) -> bool {
-        if state != LeaderState::Unreaped {
-            return false;
-        }
-        signal_group(pgid, signal);
-        true
-    }
-
-    /// `try_wait`로 leader 상태를 봅니다(종료했으면 이때 회수됩니다).
-    fn poll_leader(child: &mut Child) -> LeaderState {
-        match child.try_wait() {
-            Ok(None) => LeaderState::Unreaped,
-            Ok(Some(_)) => LeaderState::Reaped,
-            Err(_) => LeaderState::Unknown,
-        }
-    }
-
-    pub(super) fn terminate_process_tree(child: &mut Child) {
-        // 자식은 process_group(0)으로 시작했으므로 pgid == 자식 pid.
+    pub(super) fn terminate_process_tree(child: &mut Child, pipes_closed: &dyn Fn() -> bool) {
+        // 자식은 process_group(0)으로 시작했으므로 pgid == 자식 pid. 호출자 계약상 leader는 아직
+        // 회수 전(실행 중이거나 zombie)이므로 group 신호가 안전합니다.
         let pgid = i32::try_from(child.id()).unwrap_or(0);
-        // 호출 시점의 leader는 아직 회수 전입니다(호출자가 방금 `try_wait`에서 None을 봄).
-        let mut state = poll_leader(child);
-        signal_group_if_unreaped(state, pgid, SIGTERM);
+        signal_group(pgid, SIGTERM);
         let grace_deadline = Instant::now() + TERMINATE_GRACE;
-        while state == LeaderState::Unreaped && Instant::now() < grace_deadline {
+        while Instant::now() < grace_deadline {
+            // pipe가 모두 닫힌 뒤에만 leader를 조회(회수)합니다. pipe를 잡은 자손이 남아 있으면
+            // leader를 회수하지 않아야 아래 SIGKILL을 group에 보낼 수 있습니다.
+            if pipes_closed() {
+                match child.try_wait() {
+                    // tree가 끝나 회수함: 회수 뒤에는 group에 신호를 보내지 않습니다.
+                    Ok(Some(_)) => return,
+                    Ok(None) => {}
+                    // 회수 여부를 알 수 없음: group 신호 없이 직접 자식만 정리합니다.
+                    Err(_) => return super::kill_leader_only(child),
+                }
+            }
             thread::sleep(Duration::from_millis(5));
-            state = poll_leader(child);
         }
-        // 유예 시간이 지나도 leader가 살아 있으면(회수 전) group 전체를 강제 종료.
-        if signal_group_if_unreaped(state, pgid, SIGKILL) {
-            let _ = child.kill();
-        }
-        if state != LeaderState::Reaped {
-            let _ = child.wait();
-        }
+        // 유예 시간이 지나도 leader가 살아 있거나 pipe를 잡은 자손이 남음(아직 회수 전): group 전체를
+        // 강제 종료합니다. 이미 끝난 구성원(zombie leader 포함)에는 영향이 없습니다.
+        signal_group(pgid, SIGKILL);
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     /// 테스트용: pid가 아직 존재하는지(`kill(pid, 0)`).
@@ -138,35 +130,38 @@ mod platform {
     }
 
     #[cfg(test)]
-    mod leader_state_tests {
+    mod terminate_tests {
         use super::*;
+        use std::os::unix::process::CommandExt;
 
         #[test]
-        fn group_signal_only_while_unreaped() {
-            // pgid 0은 signal_group이 보내지 않으므로 판정 로직만 검사합니다.
-            assert!(signal_group_if_unreaped(LeaderState::Unreaped, 0, SIGTERM));
-            assert!(!signal_group_if_unreaped(LeaderState::Reaped, 0, SIGKILL));
-            assert!(!signal_group_if_unreaped(LeaderState::Unknown, 0, SIGKILL));
-        }
-
-        #[test]
-        fn reaped_leader_group_is_not_signalled_again() {
-            // 이미 끝나 회수된 자식에 대해 호출해도 group 신호 없이 반환합니다.
-            use std::os::unix::process::CommandExt;
+        fn exited_leader_with_closed_pipes_is_reaped_without_waiting_for_grace() {
+            // 이미 끝난(회수 전 zombie) leader: pipe가 닫혀 있으면 유예 시간을 기다리지 않고 회수합니다.
             let mut child = std::process::Command::new("/usr/bin/true")
                 .process_group(0)
                 .spawn()
                 .unwrap();
-            let pgid = i32::try_from(child.id()).unwrap();
-            let _ = child.wait();
-            assert_eq!(poll_leader(&mut child), LeaderState::Reaped);
-            // 회수 뒤에는 같은 pgid로 신호를 보내지 않음(재사용 group 오발송 방지).
-            assert!(!signal_group_if_unreaped(
-                poll_leader(&mut child),
-                pgid,
-                SIGKILL
-            ));
-            terminate_process_tree(&mut child);
+            thread::sleep(Duration::from_millis(100));
+            let start = Instant::now();
+            terminate_process_tree(&mut child, &|| true);
+            assert!(start.elapsed() < TERMINATE_GRACE, "{:?}", start.elapsed());
+            assert!(child.try_wait().unwrap().is_some());
+        }
+
+        #[test]
+        fn sigterm_ignoring_leader_is_killed_after_grace() {
+            let mut child = std::process::Command::new("/bin/sh")
+                .args(["-c", "trap '' TERM; sleep 30"])
+                .process_group(0)
+                .spawn()
+                .unwrap();
+            thread::sleep(Duration::from_millis(100));
+            let start = Instant::now();
+            terminate_process_tree(&mut child, &|| true);
+            let elapsed = start.elapsed();
+            assert!(elapsed >= TERMINATE_GRACE, "{elapsed:?}");
+            assert!(elapsed < TERMINATE_GRACE * 3, "{elapsed:?}");
+            assert!(child.try_wait().unwrap().is_some());
         }
     }
 }
@@ -175,7 +170,7 @@ mod platform {
 mod platform {
     use std::process::{Child, Command, Stdio};
 
-    pub(super) fn terminate_process_tree(child: &mut Child) {
+    pub(super) fn terminate_process_tree(child: &mut Child, _pipes_closed: &dyn Fn() -> bool) {
         let pid = child.id().to_string();
         // /T: 자식 tree 포함, /F: 강제 종료. argv 방식으로 실행합니다(shell 없음).
         let _ = Command::new("taskkill")
@@ -193,7 +188,7 @@ mod platform {
 mod platform {
     use std::process::Child;
 
-    pub(super) fn terminate_process_tree(child: &mut Child) {
+    pub(super) fn terminate_process_tree(child: &mut Child, _pipes_closed: &dyn Fn() -> bool) {
         let _ = child.kill();
         let _ = child.wait();
     }

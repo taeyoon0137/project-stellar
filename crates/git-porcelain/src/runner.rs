@@ -9,6 +9,12 @@
 //! - **취소**: [`GitRunner::run_cancellable`]은 [`GitCancelToken`] 취소를 관찰하면 프로세스 tree를
 //!   종료하고 [`GitRunError::Cancelled`]를 반환합니다(XIV.1.4). 부분 출력은 성공으로 돌려주지
 //!   않습니다.
+//! - **완료 기준**: 실행은 Git이 끝나고 **stdout·stderr·stdin pipe가 모두 닫혀야** 끝납니다. Git이
+//!   끝난 뒤에도 pipe를 상속한 손자(hook·credential helper의 백그라운드 프로세스 등)가 남아 있으면
+//!   같은 deadline·취소가 계속 적용되고, 그 사이 Git을 회수하지 않으므로 deadline·취소 때 process
+//!   group 전체를 종료할 수 있습니다(SEC-2). 종료 뒤에도 pipe가 닫히지 않으면(group을 벗어난 자손)
+//!   짧은 유예 뒤 drain 스레드를 분리하고 오류를 반환합니다. pipe를 닫은 자손은 정상 완료 경로에서
+//!   기다리지도 종료하지도 않습니다(예: 분리된 자동 gc).
 //! - **byte capture**: stdout/stderr를 원시 바이트로 캡처합니다(문자열 가정 없음).
 //! - **stdin 입력**: [`GitRunner::run_with_input`]은 바이트를 자식 stdin으로 전달합니다(XIV.8.2).
 //!   commit message처럼 사용자 텍스트를 argv·shell escaping 없이 넘길 때 사용합니다. 그 밖의
@@ -28,13 +34,57 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::cancel::{terminate_process_tree, GitCancelToken};
+use crate::cancel::{kill_leader_only, terminate_process_tree, GitCancelToken};
 use crate::trace::{
     GitCommandKind, GitCommandTrace, GitDebugLine, GitTraceExit, GitTraceSink, TraceSinkHandle,
 };
 
 /// stderr 조각을 받는 콜백.
 type StderrSink<'a> = &'a mut dyn FnMut(&[u8]);
+
+/// 중단(timeout·취소) 뒤 pipe가 닫히기를 더 기다리는 시간. 지나면 drain 스레드를 분리합니다.
+const PIPE_DETACH_GRACE: Duration = Duration::from_millis(500);
+
+/// 자식 pipe를 다루는 스레드(stdout·stderr drain, stdin 쓰기).
+struct PipeThreads {
+    stdout: thread::JoinHandle<Vec<u8>>,
+    stderr: thread::JoinHandle<Vec<u8>>,
+    stdin: Option<thread::JoinHandle<()>>,
+}
+
+impl PipeThreads {
+    /// 모든 스레드가 끝났는지. 참이면 자식 tree의 모든 프로세스가 pipe를 닫았습니다.
+    fn finished(&self) -> bool {
+        self.stdout.is_finished()
+            && self.stderr.is_finished()
+            && self
+                .stdin
+                .as_ref()
+                .is_none_or(thread::JoinHandle::is_finished)
+    }
+
+    /// 끝난 스레드를 모아 stdout·stderr를 돌려줍니다([`PipeThreads::finished`]가 참일 때만 호출).
+    fn join(self) -> (Vec<u8>, Vec<u8>) {
+        if let Some(handle) = self.stdin {
+            let _ = handle.join();
+        }
+        let stdout = self.stdout.join().unwrap_or_default();
+        let stderr = self.stderr.join().unwrap_or_default();
+        (stdout, stderr)
+    }
+
+    /// 중단 경로: `grace` 동안 pipe가 닫히기를 기다린 뒤 출력을 버립니다. 그래도 닫히지 않으면(group을
+    /// 벗어난 자손이 pipe를 잡음) 스레드를 분리합니다. 분리된 스레드는 pipe가 닫히면 스스로 끝납니다.
+    fn discard(self, grace: Duration) {
+        let deadline = Instant::now() + grace;
+        while !self.finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        if self.finished() {
+            let _ = self.join();
+        }
+    }
+}
 
 /// Git 실행 결과(원시 바이트 보존).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -228,7 +278,7 @@ impl GitRunner {
 
     /// 주어진 argv와 cwd로 Git을 실행합니다(shell 미사용). stdout/stderr를 캡처합니다.
     pub fn run(&self, args: &[OsString], cwd: &Path) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, None, None, None)
+        self.run_inner(args, cwd, None, None, None, 0)
     }
 
     /// `input` 바이트를 자식 stdin으로 전달하며 실행합니다(XIV.8.2). 전달 후 stdin을 닫습니다.
@@ -240,7 +290,22 @@ impl GitRunner {
         cwd: &Path,
         input: &[u8],
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, Some(input), None, None)
+        self.run_inner(args, cwd, Some(input), None, None, 0)
+    }
+
+    /// [`GitRunner::run_with_input`]과 같지만 stdout buffer를 `stdout_capacity` bytes로 미리 잡습니다.
+    ///
+    /// 출력 크기를 미리 아는 실행(크기를 확인한 `cat-file --batch` 등, SEC-3)이 큰 출력을 받는 동안
+    /// buffer를 거듭 키우며 재할당하지 않게 합니다. 출력이 더 크면 평소처럼 늘어나므로 값은 상한이 아니라
+    /// 힌트이며, 호출자는 이미 상한을 검사한 크기만 넘겨야 합니다.
+    pub fn run_with_input_sized(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: &[u8],
+        stdout_capacity: usize,
+    ) -> Result<GitOutput, GitRunError> {
+        self.run_inner(args, cwd, Some(input), None, None, stdout_capacity)
     }
 
     /// 취소 가능한 실행(XIV.1.4). `cancel`이 취소되면 프로세스 tree를 종료하고
@@ -252,7 +317,7 @@ impl GitRunner {
         cwd: &Path,
         cancel: &GitCancelToken,
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, None, Some(cancel), None)
+        self.run_inner(args, cwd, None, Some(cancel), None, 0)
     }
 
     /// 취소 가능하게 실행하며 stderr 조각을 도착하는 대로 `on_stderr`에 전달합니다(XXVI.1.2 진행률).
@@ -266,7 +331,7 @@ impl GitRunner {
         cancel: &GitCancelToken,
         on_stderr: &mut dyn FnMut(&[u8]),
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, None, Some(cancel), Some(on_stderr))
+        self.run_inner(args, cwd, None, Some(cancel), Some(on_stderr), 0)
     }
 
     fn run_inner(
@@ -276,13 +341,14 @@ impl GitRunner {
         input: Option<&[u8]>,
         cancel: Option<&GitCancelToken>,
         on_stderr: Option<StderrSink<'_>>,
+        stdout_capacity: usize,
     ) -> Result<GitOutput, GitRunError> {
         // 실행 전 취소: 프로세스를 만들지 않으므로 trace도 남기지 않습니다.
         if cancel.is_some_and(GitCancelToken::is_cancelled) {
             return Err(GitRunError::Cancelled);
         }
         let start = Instant::now();
-        let result = self.spawn_and_wait(args, cwd, input, cancel, on_stderr);
+        let result = self.spawn_and_wait(args, cwd, input, cancel, on_stderr, stdout_capacity);
         self.emit_trace(args, start.elapsed(), &result);
         result
     }
@@ -329,6 +395,7 @@ impl GitRunner {
         input: Option<&[u8]>,
         cancel: Option<&GitCancelToken>,
         mut on_stderr: Option<StderrSink<'_>>,
+        stdout_capacity: usize,
     ) -> Result<GitOutput, GitRunError> {
         let cancelled = || cancel.is_some_and(GitCancelToken::is_cancelled);
 
@@ -371,7 +438,7 @@ impl GitRunner {
         let mut stdout_pipe = child.stdout.take().expect("stdout piped");
         let mut stderr_pipe = child.stderr.take().expect("stderr piped");
         let out_thread = thread::spawn(move || {
-            let mut buf = Vec::new();
+            let mut buf = Vec::with_capacity(stdout_capacity);
             let _ = stdout_pipe.read_to_end(&mut buf);
             buf
         });
@@ -420,35 +487,45 @@ impl GitRunner {
             _ => None,
         };
 
+        let pipes = PipeThreads {
+            stdout: out_thread,
+            stderr: err_thread,
+            stdin: in_thread,
+        };
+
+        // 완료는 pipe가 모두 닫히고 leader가 끝난 때입니다. pipe가 열려 있는 동안에는 leader를
+        // 조회(회수)하지 않으므로 leader가 먼저 끝나도 zombie로 남아 pgid가 예약됩니다. 그래서
+        // deadline·취소 때 pipe를 잡은 손자까지 group 신호로 종료할 수 있습니다(SEC-2).
         let deadline = Instant::now() + self.timeout;
         let status = loop {
-            let interrupted = match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if cancelled() => GitRunError::Cancelled,
-                Ok(None) if Instant::now() >= deadline => GitRunError::Timeout,
-                Ok(None) => {
-                    forward(&chunk_rx);
-                    thread::sleep(Duration::from_millis(5));
-                    continue;
+            if pipes.finished() {
+                match child.try_wait() {
+                    Ok(Some(status)) => break status,
+                    Ok(None) => {}
+                    Err(e) => {
+                        // 회수 여부를 알 수 없으므로 group 신호 없이 정리합니다.
+                        kill_leader_only(&mut child);
+                        pipes.discard(PIPE_DETACH_GRACE);
+                        return Err(GitRunError::Wait { kind: e.kind() });
+                    }
                 }
-                Err(e) => GitRunError::Wait { kind: e.kind() },
-            };
-            // 중단: tree 종료 후 파이프가 닫히면 drain 스레드도 끝납니다. 부분 출력은 버립니다.
-            terminate_process_tree(&mut child);
-            if let Some(handle) = in_thread {
-                let _ = handle.join();
             }
-            let _ = out_thread.join();
-            let _ = err_thread.join();
+            let interrupted = if cancelled() {
+                GitRunError::Cancelled
+            } else if Instant::now() >= deadline {
+                GitRunError::Timeout
+            } else {
+                forward(&chunk_rx);
+                thread::sleep(Duration::from_millis(5));
+                continue;
+            };
+            // 중단: tree 종료 후 pipe가 닫히면 drain 스레드도 끝납니다. 부분 출력은 버립니다.
+            terminate_process_tree(&mut child, &|| pipes.finished());
+            pipes.discard(PIPE_DETACH_GRACE);
             return Err(interrupted);
         };
 
-        if let Some(handle) = in_thread {
-            let _ = handle.join();
-        }
-
-        let stdout = out_thread.join().unwrap_or_default();
-        let stderr = err_thread.join().unwrap_or_default();
+        let (stdout, stderr) = pipes.join();
         // drain 스레드가 끝난 뒤 남은 조각까지 전달합니다.
         forward(&chunk_rx);
         Ok(GitOutput {
@@ -630,6 +707,220 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(2));
     }
 
+    /// pid 파일에 기록된 pid(기록될 때까지 최대 5초 기다림).
+    #[cfg(unix)]
+    fn wait_for_pid(pidfile: &Path) -> i32 {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(pid) = std::fs::read_to_string(pidfile)
+                .ok()
+                .and_then(|text| text.trim().parse().ok())
+            {
+                return pid;
+            }
+            assert!(Instant::now() < deadline, "pid 파일이 기록되지 않음");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// `pid`가 `timeout` 안에 사라지는지.
+    #[cfg(unix)]
+    fn gone_within(pid: i32, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while crate::cancel::process_exists(pid) {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        true
+    }
+
+    /// 테스트가 남긴 프로세스 정리(실패해도 무시).
+    #[cfg(unix)]
+    fn kill_leftover(pid: i32) {
+        let _ = std::process::Command::new("/bin/kill")
+            .args(["-9", &pid.to_string()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    /// 상속한 stdout/stderr pipe를 잡은 손자를 남기고 바로 끝나는 sh 실행(SEC-2 재현).
+    #[cfg(unix)]
+    fn background_holder_args(prefix: &str, pidfile: &Path) -> Vec<OsString> {
+        let script = format!(
+            "{prefix}sleep 12 & echo $! > '{}'; exit 0",
+            pidfile.display()
+        );
+        argv(["-c", script.as_str()])
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_grandchild_holding_pipes_does_not_defeat_timeout() {
+        // SEC-2: 직접 자식은 곧바로 끝나도 손자가 pipe를 잡고 있으면 출력이 끝나지 않은 것입니다.
+        // 같은 deadline이 적용되어 Timeout이고, 손자도 process group 종료로 사라져야 합니다.
+        let dir = TempDir::new();
+        let pidfile = dir.path.join("pid");
+        let runner = runner_for("/bin/sh", 1_000);
+        let start = Instant::now();
+        let result = runner.run(&background_holder_args("", &pidfile), &dir.path);
+        let elapsed = start.elapsed();
+        let pid = wait_for_pid(&pidfile);
+        let gone = gone_within(pid, Duration::from_secs(5));
+        kill_leftover(pid);
+        assert_eq!(result, Err(GitRunError::Timeout));
+        assert!(
+            elapsed < Duration::from_secs(6),
+            "timeout이 늦음: {elapsed:?}"
+        );
+        assert!(gone, "pipe를 잡은 손자가 남음");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cancel_is_observed_while_grandchild_holds_pipes() {
+        let dir = TempDir::new();
+        let pidfile = dir.path.join("pid");
+        let runner = runner_for("/bin/sh", 60_000);
+        let token = GitCancelToken::new();
+        let canceller = {
+            let token = token.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(300));
+                token.cancel();
+            })
+        };
+        let start = Instant::now();
+        let result =
+            runner.run_cancellable(&background_holder_args("", &pidfile), &dir.path, &token);
+        let elapsed = start.elapsed();
+        canceller.join().unwrap();
+        let pid = wait_for_pid(&pidfile);
+        let gone = gone_within(pid, Duration::from_secs(5));
+        kill_leftover(pid);
+        assert_eq!(result, Err(GitRunError::Cancelled));
+        assert!(elapsed < Duration::from_secs(6), "취소가 늦음: {elapsed:?}");
+        assert!(gone, "pipe를 잡은 손자가 남음");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sigterm_ignoring_grandchild_holding_pipes_is_killed() {
+        // SIGTERM을 무시하는 손자: 유예 시간 뒤 group 전체 SIGKILL로 사라집니다.
+        let dir = TempDir::new();
+        let pidfile = dir.path.join("pid");
+        let runner = runner_for("/bin/sh", 500);
+        let start = Instant::now();
+        let result = runner.run(
+            &background_holder_args("trap '' TERM; ", &pidfile),
+            &dir.path,
+        );
+        let elapsed = start.elapsed();
+        let pid = wait_for_pid(&pidfile);
+        let gone = gone_within(pid, Duration::from_secs(5));
+        kill_leftover(pid);
+        assert_eq!(result, Err(GitRunError::Timeout));
+        assert!(
+            elapsed < Duration::from_secs(6),
+            "timeout이 늦음: {elapsed:?}"
+        );
+        assert!(gone, "SIGTERM을 무시한 손자가 남음");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn grandchild_escaping_process_group_does_not_block_return() {
+        // setsid로 group을 벗어난 손자는 group 신호로 끝낼 수 없습니다. 그래도 pipe를 기다리며
+        // 막히지 않고 짧은 유예 뒤 pipe를 버리고 Timeout을 돌려줘야 합니다.
+        let perl = Path::new("/usr/bin/perl");
+        if !perl.exists() {
+            return; // perl 없는 환경은 건너뜀.
+        }
+        let dir = TempDir::new();
+        let pidfile = dir.path.join("pid");
+        let script = "use POSIX; if (fork()) { exit 0 } POSIX::setsid(); \
+                      open(my $f, '>', $ARGV[0]) or die; print $f $$; close $f; sleep 12;";
+        let runner = runner_for("/usr/bin/perl", 500);
+        let start = Instant::now();
+        let result = runner.run(&argv(["-e", script, pidfile.to_str().unwrap()]), &dir.path);
+        let elapsed = start.elapsed();
+        let pid = wait_for_pid(&pidfile);
+        kill_leftover(pid);
+        assert_eq!(result, Err(GitRunError::Timeout));
+        assert!(elapsed < Duration::from_secs(6), "반환이 늦음: {elapsed:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn background_child_that_closed_pipes_is_left_alone() {
+        // 정책: pipe를 닫은(출력에 관여하지 않는) 자손은 정상 완료 경로에서 기다리지도 종료하지도
+        // 않습니다(예: 분리된 자동 gc).
+        let dir = TempDir::new();
+        let pidfile = dir.path.join("pid");
+        let runner = runner_for("/bin/sh", 5_000);
+        let start = Instant::now();
+        let out = runner
+            .run(
+                &background_holder_args("exec >/dev/null 2>&1; ", &pidfile),
+                &dir.path,
+            )
+            .unwrap();
+        let elapsed = start.elapsed();
+        let pid = wait_for_pid(&pidfile);
+        let alive = crate::cancel::process_exists(pid);
+        kill_leftover(pid);
+        assert!(out.success());
+        assert!(elapsed < Duration::from_secs(3), "{elapsed:?}");
+        assert!(alive, "정상 완료 경로가 무관한 자손을 종료함");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn post_commit_hook_background_child_does_not_defeat_timeout() {
+        // SEC-2 원 시나리오: 사용자 hook이 남긴 백그라운드 프로세스가 pipe를 상속합니다.
+        use crate::test_support::{
+            hermetic_runner_with_timeout, init_repo_with_identity, system_git,
+        };
+        use std::os::unix::fs::PermissionsExt;
+        let Some(git) = system_git() else {
+            return; // git 미설치 환경 건너뜀.
+        };
+        let dir = TempDir::new();
+        let pidfile = dir.path.join("hook-pid");
+        let repo = dir.path.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let setup = crate::test_support::hermetic_runner(git.clone());
+        init_repo_with_identity(&setup, &repo);
+        std::fs::write(repo.join("a.txt"), b"a").unwrap();
+        crate::test_support::git_ok(&setup, &repo, ["add", "a.txt"]);
+        let hook = repo.join(".git/hooks/post-commit");
+        std::fs::write(
+            &hook,
+            format!(
+                "#!/bin/sh\nsleep 12 &\necho $! > '{}'\nexit 0\n",
+                pidfile.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let runner = hermetic_runner_with_timeout(git, Duration::from_secs(2));
+        let start = Instant::now();
+        let result = runner.run(&argv(["commit", "-q", "-m", "x"]), &repo);
+        let elapsed = start.elapsed();
+        let pid = wait_for_pid(&pidfile);
+        let gone = gone_within(pid, Duration::from_secs(5));
+        kill_leftover(pid);
+        assert_eq!(result, Err(GitRunError::Timeout));
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "timeout이 늦음: {elapsed:?}"
+        );
+        assert!(gone, "hook이 남긴 프로세스가 남음");
+    }
+
     #[cfg(unix)]
     #[test]
     fn spawn_count_tracks_attempts_and_is_shared_by_clones() {
@@ -658,6 +949,25 @@ mod tests {
         assert!(out.success());
         assert_eq!(out.stdout, input);
         assert!(!dir.path.join("PWNED").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sized_run_presizes_stdout_and_still_grows_past_the_hint() {
+        let dir = TempDir::new();
+        let runner = runner_for("/bin/cat", 5_000);
+        let input = vec![b'z'; 100_000];
+        let exact = runner
+            .run_with_input_sized(&[], &dir.path, &input, input.len())
+            .unwrap();
+        assert_eq!(exact.stdout, input);
+        // 정확한 크기 힌트면 buffer를 다시 키우지 않습니다.
+        assert_eq!(exact.stdout.capacity(), input.len());
+        // 힌트보다 큰 출력도 잘리지 않습니다(힌트는 상한이 아님).
+        let small = runner
+            .run_with_input_sized(&[], &dir.path, &input, 10)
+            .unwrap();
+        assert_eq!(small.stdout, input);
     }
 
     #[cfg(unix)]

@@ -14,16 +14,19 @@
 //!   대상 경로 바이트로 링크만 만들고 따라가지 않습니다.
 //! - mode: `100755`는 `0755`, 일반 파일은 `0644`, root 디렉터리는 `0700`(unix).
 //! - submodule(gitlink)은 내용이 다른 저장소이므로 만들지 않고 [`MaterializedSnapshot`]에 기록합니다.
+//! - 크기 상한(SEC-3): 모든 blob 크기를 먼저 확인해 [`BlobLimits`] 상한(blob 하나·batch·전체)을 넘으면
+//!   임시 디렉터리를 만들기 전에 거부합니다. 내용은 batch 하나씩 읽어 쓰므로 snapshot 전체를 메모리에
+//!   모으지 않습니다.
 //! - 실패하면 만든 디렉터리 전체를 지웁니다. 성공 결과도 drop 시 지우며, 보존하려면
 //!   [`MaterializedSnapshot::keep`]을 호출합니다.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::blob::{read_blobs, BlobError, BATCH_CHUNK};
+use super::blob::{BlobError, BlobLimits, OrderedBlobReader};
 use super::SnapshotEntry;
 use crate::decode::GitPath;
-use crate::object::{FileModeKind, ObjectId};
+use crate::object::FileModeKind;
 use crate::trust::GatedGitRunner;
 
 /// 경로 거부 이유.
@@ -351,11 +354,28 @@ fn write_symlink(_target: &Path, _link: &[u8], path: &GitPath) -> Result<(), Mat
 }
 
 /// snapshot 항목을 `parent` 아래 새 임시 디렉터리에 materialize합니다(`.git` 없음).
+///
+/// blob 크기 상한은 [`BlobLimits::MATERIALIZE`]입니다([`materialize_snapshot_with_limits`]).
 pub fn materialize_snapshot(
     git: &GatedGitRunner,
     worktree: &Path,
     entries: &[SnapshotEntry],
     parent: &Path,
+) -> Result<MaterializedSnapshot, MaterializeError> {
+    materialize_snapshot_with_limits(git, worktree, entries, parent, &BlobLimits::MATERIALIZE)
+}
+
+/// `limits` 상한으로 snapshot 항목을 materialize합니다(SEC-3).
+///
+/// 경로 검증 뒤 모든 blob 크기를 먼저 확인하므로, blob 하나 또는 쓸 내용 전체(같은 blob 반복 포함)가
+/// 상한을 넘으면 임시 디렉터리를 만들기 전에 [`MaterializeError::Blob`]입니다. 내용은 batch 하나씩
+/// 읽어 쓰므로 메모리에는 batch 하나만 있습니다.
+pub fn materialize_snapshot_with_limits(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    entries: &[SnapshotEntry],
+    parent: &Path,
+    limits: &BlobLimits,
 ) -> Result<MaterializedSnapshot, MaterializeError> {
     // 1) 모든 경로·mode를 먼저 검증(Git 실행·파일 생성 전).
     for entry in entries {
@@ -380,58 +400,71 @@ pub fn materialize_snapshot(
         }
     }
 
-    // 2) 임시 root(실패 시 drop guard가 삭제).
+    // 2) blob 크기를 확인하고 상한을 검사합니다(파일 생성 전). submodule(gitlink)은 읽지 않습니다.
+    let (gitlinks, content_entries): (Vec<&SnapshotEntry>, Vec<&SnapshotEntry>) =
+        entries.iter().partition(|e| e.is_gitlink());
+    let mut blobs = OrderedBlobReader::new(
+        git,
+        worktree,
+        content_entries.iter().map(|e| e.oid.clone()).collect(),
+        limits,
+    )?;
+
+    // 3) 임시 root(실패 시 drop guard가 삭제).
     let mut snapshot = MaterializedSnapshot {
         root: create_unique_root(parent)?,
         keep: false,
         files: 0,
         symlinks: 0,
-        skipped_gitlinks: Vec::new(),
+        skipped_gitlinks: gitlinks.iter().map(|e| e.path.clone()).collect(),
     };
 
-    // 3) blob을 chunk 단위로 읽어 씁니다.
-    let content_entries: Vec<&SnapshotEntry> = entries
-        .iter()
-        .filter(|e| {
-            if e.is_gitlink() {
-                snapshot.skipped_gitlinks.push(e.path.clone());
-                false
-            } else {
-                true
+    // 4) blob을 batch 하나씩 읽어 Git 출력 buffer에서 바로 씁니다.
+    for entry in content_entries {
+        let components = validate_snapshot_path(entry.path.as_bytes()).map_err(|reason| {
+            MaterializeError::UnsafePath {
+                path: entry.path.clone(),
+                reason,
             }
-        })
-        .collect();
-    for chunk in content_entries.chunks(BATCH_CHUNK) {
-        let oids: Vec<ObjectId> = chunk.iter().map(|e| e.oid.clone()).collect();
-        let blobs = read_blobs(git, worktree, &oids)?;
-        for entry in chunk {
-            let components = validate_snapshot_path(entry.path.as_bytes()).map_err(|reason| {
-                MaterializeError::UnsafePath {
-                    path: entry.path.clone(),
-                    reason,
-                }
-            })?;
-            let target = ensure_parent_dirs(&snapshot.root, &components, &entry.path)?;
-            let bytes = blobs
-                .get(&entry.oid)
-                .ok_or_else(|| MaterializeError::Blob(BlobError::Missing(entry.oid.clone())))?;
-            match entry.kind() {
-                Some(FileModeKind::Symlink) => {
-                    write_symlink(&target, bytes, &entry.path)?;
-                    snapshot.symlinks += 1;
-                }
-                Some(FileModeKind::Executable) => {
-                    write_file(&target, bytes, true, &entry.path)?;
-                    snapshot.files += 1;
-                }
-                _ => {
-                    write_file(&target, bytes, false, &entry.path)?;
-                    snapshot.files += 1;
-                }
+        })?;
+        let target = ensure_parent_dirs(&snapshot.root, &components, &entry.path)?;
+        let bytes = blobs.next_content(&entry.oid)?;
+        match entry.kind() {
+            Some(FileModeKind::Symlink) => {
+                write_symlink(&target, bytes, &entry.path)?;
+                snapshot.symlinks += 1;
+            }
+            Some(FileModeKind::Executable) => {
+                write_file(&target, bytes, true, &entry.path)?;
+                snapshot.files += 1;
+            }
+            _ => {
+                write_file(&target, bytes, false, &entry.path)?;
+                snapshot.files += 1;
             }
         }
     }
     Ok(snapshot)
+}
+
+/// [`materialize_with`]가 쓰기 전에 하는 경로·종류 검증(일반·실행 파일과 symlink만 허용). 호출자는 Git을
+/// 실행하기 전에 같은 검증을 먼저 할 수 있습니다.
+pub(crate) fn validate_entries(
+    entries: &[(GitPath, FileModeKind)],
+) -> Result<(), MaterializeError> {
+    for (path, kind) in entries {
+        validate_snapshot_path(path.as_bytes()).map_err(|reason| MaterializeError::UnsafePath {
+            path: path.clone(),
+            reason,
+        })?;
+        if !matches!(
+            kind,
+            FileModeKind::Regular | FileModeKind::Executable | FileModeKind::Symlink
+        ) {
+            return Err(MaterializeError::UnsupportedMode { path: path.clone() });
+        }
+    }
+    Ok(())
 }
 
 /// 경로·종류 목록을 새 임시 디렉터리에 materialize하되 내용은 `read`가 항목마다 공급합니다(Git 실행 없음,
@@ -448,18 +481,7 @@ pub(crate) fn materialize_with<F>(
 where
     F: FnMut(usize, &GitPath, FileModeKind) -> Result<Vec<u8>, MaterializeError>,
 {
-    for (path, kind) in entries {
-        validate_snapshot_path(path.as_bytes()).map_err(|reason| MaterializeError::UnsafePath {
-            path: path.clone(),
-            reason,
-        })?;
-        if !matches!(
-            kind,
-            FileModeKind::Regular | FileModeKind::Executable | FileModeKind::Symlink
-        ) {
-            return Err(MaterializeError::UnsupportedMode { path: path.clone() });
-        }
-    }
+    validate_entries(entries)?;
     let mut snapshot = MaterializedSnapshot {
         root: create_unique_root(parent)?,
         keep: false,
@@ -575,7 +597,7 @@ mod tests {
     #[cfg(unix)]
     mod real_git {
         use super::*;
-        use crate::object::FileMode;
+        use crate::object::{FileMode, ObjectId};
         use crate::runner::GitRunner;
         use crate::snapshot::{read_index_snapshot, read_tree_snapshot, SnapshotSource};
         use crate::test_support::{
@@ -721,6 +743,100 @@ mod tests {
             let kept = snap2.keep();
             assert!(kept.join("stellar.yaml").exists());
             std::fs::remove_dir_all(&kept).unwrap();
+        }
+
+        fn limits(blob: u64, batch: u64, total: u64) -> BlobLimits {
+            BlobLimits {
+                max_blob_bytes: blob,
+                max_batch_bytes: batch,
+                max_total_bytes: total,
+            }
+        }
+
+        #[test]
+        fn size_limits_reject_before_creating_anything_and_count_written_bytes() {
+            // SEC-3: 크기는 내용을 읽기 전에 확인하고, 전체 상한은 쓸 바이트(같은 blob 반복 포함)에
+            // 적용합니다.
+            let Some(fx) = fixture() else {
+                return;
+            };
+            let runner = hermetic_runner(system_git().unwrap());
+            let gate = GatedGitRunner::new(runner.clone(), GitTrust::Trusted);
+            let blob = ObjectId::parse(&write_blob(&fx.runner, &fx.repo, &[7u8; 64])).unwrap();
+            let entry = |p: &[u8]| SnapshotEntry {
+                path: GitPath::from_bytes(p),
+                mode: FileMode::REGULAR,
+                oid: blob.clone(),
+            };
+            let entries = vec![entry(b"a.bin"), entry(b"dir/b.bin")];
+            assert_eq!(
+                materialize_snapshot_with_limits(
+                    &gate,
+                    &fx.repo,
+                    &entries,
+                    &fx.out,
+                    &limits(64, 64, 127)
+                )
+                .unwrap_err(),
+                MaterializeError::Blob(BlobError::TotalTooLarge { max_bytes: 127 })
+            );
+            assert_eq!(
+                materialize_snapshot_with_limits(
+                    &gate,
+                    &fx.repo,
+                    &entries,
+                    &fx.out,
+                    &limits(63, 64, 1_000)
+                )
+                .unwrap_err(),
+                MaterializeError::Blob(BlobError::BlobTooLarge {
+                    oid: blob.clone(),
+                    size: 64,
+                    max_bytes: 63
+                })
+            );
+            // 거부는 크기 확인만 실행하고 임시 디렉터리를 만들지 않습니다.
+            assert_eq!(runner.spawn_count(), 2);
+            assert_eq!(std::fs::read_dir(&fx.out).unwrap().count(), 0);
+            // 상한 안이면 같은 blob을 batch 하나로 읽어 두 경로에 씁니다.
+            let snap = materialize_snapshot_with_limits(
+                &gate,
+                &fx.repo,
+                &entries,
+                &fx.out,
+                &limits(64, 64, 128),
+            )
+            .unwrap();
+            assert_eq!(std::fs::read(snap.root().join("a.bin")).unwrap(), [7u8; 64]);
+            assert_eq!(
+                std::fs::read(snap.root().join("dir/b.bin")).unwrap(),
+                [7u8; 64]
+            );
+            assert_eq!(runner.spawn_count(), 4);
+        }
+
+        #[test]
+        fn one_blob_batches_keep_bytes_identical() {
+            // batch 상한 1 byte: 모든 blob을 단독 batch로 읽어도 결과가 같고, 실행 수는 고유 blob 수 + 1입니다.
+            let Some(fx) = fixture() else {
+                return;
+            };
+            let setup = GatedGitRunner::new(fx.runner.clone(), GitTrust::Trusted);
+            let head = read_tree_snapshot(&setup, &fx.repo, &SnapshotSource::Head).unwrap();
+            let unique: std::collections::BTreeSet<&ObjectId> =
+                head.entries.iter().map(|e| &e.oid).collect();
+            let runner = hermetic_runner(system_git().unwrap());
+            let gate = GatedGitRunner::new(runner.clone(), GitTrust::Trusted);
+            let snap = materialize_snapshot_with_limits(
+                &gate,
+                &fx.repo,
+                &head.entries,
+                &fx.out,
+                &limits(4 << 20, 1, 1 << 30),
+            )
+            .unwrap();
+            assert_matches_fixture(&fx, snap.root());
+            assert_eq!(runner.spawn_count(), unique.len() as u64 + 1);
         }
 
         #[test]
