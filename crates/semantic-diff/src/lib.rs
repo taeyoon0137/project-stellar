@@ -37,3 +37,6 @@ pub mod status;
 
 /// 선택 변경 Staging 계획 (XIV.5.1~).
 pub mod stage;
+
+/// 변경 dependency graph (XIV.5.2).
+pub mod dependency;
