@@ -1,12 +1,17 @@
 import AppKit
 
-/// 한 프로젝트 창에서 연 독립 원본의 읽기 전용 목록. 선택한 행에는 프로젝트 상대 경로와 ID를 표시합니다.
+/// 한 프로젝트 창에서 연 독립 원본의 목록과 선택한 원본의 루트 크기 편집.
 @MainActor
 final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private let runtime: UInt64
     private let session: UInt64
     private let worker = DispatchQueue(label: "xyz.taeyoon.stellar.component-library", qos: .userInitiated)
-    private let table = NSTableView()
+    let table = NSTableView()
+    let rootWidth = NSTextField()
+    let rootHeight = NSTextField()
+    let applySize = NSButton(title: String(localized: "Apply Size"), target: nil, action: nil)
+    private var editingEntry: LibraryComponent?
+    private var saveMessage: String?
     private let refreshButton = NSButton(title: String(localized: "Refresh"), target: nil, action: nil)
     private(set) var rows: [LibraryComponent] = []
     private(set) var isLoading = false
@@ -51,7 +56,24 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         details.isSelectable = true
         details.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         details.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [bar, scroll, details])
+        let sizing = NSStackView()
+        sizing.orientation = .horizontal
+        for (label, field) in [(String(localized: "Width"), rootWidth), (String(localized: "Height"), rootHeight)] {
+            sizing.addArrangedSubview(NSTextField(labelWithString: label))
+            field.setAccessibilityLabel(label)
+            field.alignment = .right
+            field.widthAnchor.constraint(equalToConstant: 80).isActive = true
+            field.isEnabled = false
+            field.target = self
+            field.action = #selector(commitRootSize)
+            sizing.addArrangedSubview(field)
+        }
+        sizing.addArrangedSubview(NSTextField(labelWithString: "px"))
+        applySize.target = self
+        applySize.action = #selector(commitRootSize)
+        applySize.isEnabled = false
+        sizing.addArrangedSubview(applySize)
+        let stack = NSStackView(views: [bar, scroll, details, sizing])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -79,6 +101,7 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         guard !isLoading else { needsRefresh = true; return }
         isLoading = true
         refreshButton.isEnabled = false
+        setEditorEnabled(false)
         message.stringValue = String(localized: "Loading components…")
         let runtime = self.runtime, session = self.session
         worker.async { [weak self] in
@@ -105,6 +128,10 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
                     self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
                 } else { self.table.deselectAll(nil) }
                 self.updateDetails()
+                if let reason = self.saveMessage {
+                    self.message.stringValue = reason
+                    self.saveMessage = nil
+                }
                 if self.needsRefresh { self.needsRefresh = false; self.refresh() }
             }
         }
@@ -114,6 +141,10 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         invalidated = true
         rows = []
         table.reloadData()
+        editingEntry = nil
+        rootWidth.stringValue = ""
+        rootHeight.stringValue = ""
+        setEditorEnabled(false)
         details.stringValue = ""
         message.stringValue = ""
         panel.close()
@@ -138,9 +169,52 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
 
     func tableViewSelectionDidChange(_ notification: Notification) { updateDetails() }
     private func updateDetails() {
-        guard rows.indices.contains(table.selectedRow) else { details.stringValue = ""; return }
-        let item = rows[table.selectedRow]
-        details.stringValue = "design/components/" + item.filename + "\n" + item.id.uuidString.lowercased()
+        let entry = rows.indices.contains(table.selectedRow) ? rows[table.selectedRow] : nil
+        editingEntry = entry
+        details.stringValue = entry.map { "design/components/" + $0.filename + "\n" + $0.id.uuidString.lowercased() } ?? ""
+        rootWidth.stringValue = entry.map { sizeString($0.width) } ?? ""
+        rootHeight.stringValue = entry.map { sizeString($0.height) } ?? ""
+        setEditorEnabled(!isLoading && !invalidated && entry != nil)
+    }
+
+    private func setEditorEnabled(_ enabled: Bool) {
+        rootWidth.isEnabled = enabled
+        rootHeight.isEnabled = enabled
+        applySize.isEnabled = enabled
+    }
+
+    private func sizeString(_ number: Float) -> String {
+        String(number).replacingOccurrences(of: ".", with: Locale.current.decimalSeparator ?? ".")
+    }
+
+    private func sizeValue(_ string: String) -> Float? {
+        let text = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: Locale.current.decimalSeparator ?? ".", with: ".")
+        guard let value = Float(text), value.isFinite, value >= 0 else { return nil }
+        return value
+    }
+
+    @objc func commitRootSize() {
+        guard !invalidated, !isLoading, let entry = editingEntry else { return }
+        guard let width = sizeValue(rootWidth.stringValue), let height = sizeValue(rootHeight.stringValue) else {
+            message.stringValue = String(localized: "Enter a finite width and height of zero or greater.")
+            return
+        }
+        isLoading = true
+        setEditorEnabled(false)
+        refreshButton.isEnabled = false
+        message.stringValue = String(localized: "Saving component size…")
+        let runtime = self.runtime, session = self.session
+        worker.async { [weak self] in
+            let error = CoreRuntime.resizeComponent(handle: runtime, session: session, entry: entry, width: width, height: height)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.invalidated else { return }
+                self.isLoading = false
+                self.needsRefresh = false
+                self.saveMessage = error
+                self.refresh()
+            }
+        }
     }
 }
 

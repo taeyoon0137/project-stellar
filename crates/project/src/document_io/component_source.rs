@@ -70,11 +70,18 @@ impl ComponentSource {
     }
 
     /// root Frame의 크기만 변경합니다.
-    fn set_size(&mut self, size: Size2) {
+    fn set_root_size(&mut self, size: Size2) -> Result<bool, TextSourceError> {
+        if self.root.locked {
+            return Err(invalid("대상 또는 조상 Frame이 잠겨 있습니다"));
+        }
         let NodePayload::Frame(frame) = &mut self.root.payload else {
             unreachable!("validated Frame")
         };
+        if frame.size == size {
+            return Ok(false);
+        }
         frame.size = size;
+        Ok(true)
     }
 
     /// 직렬화 순서(StableId)와 부모·자식 순서를 분리합니다. 순환·끊긴 부모도 거부합니다.
@@ -382,15 +389,52 @@ pub fn resize(
     if hash != expected {
         return Err(TextSourceError::Changed);
     }
-    if matches!(&source.root.payload, NodePayload::Frame(frame) if frame.size == size) {
+    if !source.set_root_size(size)? {
         return Ok((source, hash));
     }
-    source.set_size(size);
     save_changed(path, hash, source)
 }
 
 /// 조립할 때 읽은 각 원본 경로와 실제 bytes의 hash. 키는 전체 component ID입니다.
 pub type ComponentFiles = BTreeMap<StableId, (PathBuf, ContentHash)>;
+
+/// 프로젝트 라이브러리에서 선택한 정의의 루트 크기를 바꿉니다. byte hash·전체 ID와
+/// writer 잠금을 잡은 디렉터리를 확인한 다음 그 원본 파일 하나만 교체합니다.
+pub fn resize_project_root(
+    root: &Path,
+    dir: &Path,
+    id: StableId,
+    expected: ContentHash,
+    size: Size2,
+) -> Result<(ComponentSource, PathBuf, ContentHash), TextSourceError> {
+    let (_, mut files, remaining) = project_library(root)?;
+    let (path, listed) = files.remove(&id).ok_or(TextSourceError::Changed)?;
+    if listed != expected
+        || path.parent() != Some(dir)
+        || root.join("design/components").canonicalize()? != dir
+    {
+        return Err(TextSourceError::Changed);
+    }
+    // 폴더의 내부 별칭은 허용하지만 개별 원본 링크를 일반 파일로 바꾸지 않습니다.
+    if path.canonicalize()? != path {
+        return Err(invalid("링크된 컴포넌트 파일은 수정할 수 없습니다"));
+    }
+    let bytes = source_file::read_resolved(&path, MAX_INPUT_BYTES as u64)?;
+    let (mut source, actual) = decode_named(&path, &bytes)?;
+    if actual != expected || source.definition().id != id {
+        return Err(TextSourceError::Changed);
+    }
+    if !source.set_root_size(size)? {
+        return Ok((source, path, actual));
+    }
+    let encoded = source.encode()?;
+    let limit = (remaining + bytes.len() as u64).min(MAX_INPUT_BYTES as u64);
+    if root.join("design/components").canonicalize()? != dir {
+        return Err(TextSourceError::Changed);
+    }
+    source_file::write_checked_resolved(root, &path, encoded.as_bytes(), Some(expected), limit)?;
+    Ok((source, path, ContentHash::compute(encoded.as_bytes())))
+}
 
 /// 같은 폴더의 컴포넌트 정의를 기존 library로 재조립합니다. 참조는 전체 StableId를 사용합니다.
 pub fn read_library(dir: &Path) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
