@@ -184,6 +184,35 @@ fn lru_page_is_evicted_and_placements_invalidated() {
 }
 
 #[test]
+fn reused_slot_bumps_generation_and_can_change_format() {
+    // 리뷰 반영(XI.6.5): 비운 slot이 다른 format page로 다시 쓰이면 세대가 바뀌므로, renderer는
+    // `(page, generation)`으로 page texture를 관리해 다시 만들 시점을 알 수 있습니다(모듈 문서).
+    let mut atlas = atlas(64, 1);
+    atlas.begin_frame(1).unwrap();
+    let old = atlas.insert(coverage_key(1), &page_filler()).unwrap();
+    assert_eq!(
+        atlas.page_texture_desc(old.format).format,
+        TextureFormat::R8Unorm
+    );
+    atlas.begin_frame(2).unwrap();
+    atlas.gpu_completed(1);
+    let new = atlas.insert(color_key(1), &color(8, 8)).unwrap();
+    assert_eq!(new.page, old.page, "예산 1장이라 같은 slot을 다시 씁니다");
+    assert_ne!(new.generation, old.generation);
+    assert_eq!(new.format, GlyphBitmapFormat::Rgba8Premultiplied);
+    assert_eq!(
+        atlas.page_format(new.page),
+        Some(GlyphBitmapFormat::Rgba8Premultiplied)
+    );
+    assert!(!atlas.is_valid(&old) && atlas.is_valid(&new));
+    // color page texture는 mip chain과 같은 sRGB texture입니다(pixel 규약 공유).
+    assert_eq!(
+        atlas.page_texture_desc(new.format).format,
+        TextureFormat::Rgba8UnormSrgb
+    );
+}
+
+#[test]
 fn current_frame_and_in_flight_pages_are_never_evicted() {
     let mut atlas = atlas(64, 2);
     atlas.begin_frame(1).unwrap();

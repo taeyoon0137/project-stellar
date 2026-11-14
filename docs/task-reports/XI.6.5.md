@@ -62,3 +62,27 @@
   예산을 조정해야 합니다.
 - cache priority 정책(XVI.5.2)과 시스템 메모리 압박 감지 연결은 후속 작업입니다. 현재는 호출자가 예산을 넘깁니다.
 - page texture 생성·파괴와 `DeferredRelease` 연결은 backend 연결 작업(XI.8)에서 합니다.
+
+## 후속 수정 (리뷰 반영)
+
+`Fix: color glyph pixel 규약과 atlas page texture 수명 규약 명시` commit으로 리뷰 지적(minor)을 반영했습니다
+(문서 규약 명시와 테스트 추가, 동작 코드 변경 없음).
+
+- **color page pixel 규약**: `GlyphBitmapFormat::Rgba8Premultiplied`가 어느 공간에서 premultiply했는지 정의되어
+  있지 않았습니다. 이미지 mip chain(XI.7.2)과 같은 규약으로 명시했습니다. RGB는 선형광에서 premultiply한 값을 sRGB
+  transfer 곡선으로 인코딩한 8-bit, 알파는 선형 8-bit이며 texture는 `Rgba8UnormSrgb`입니다. 인코딩된 값에 알파를
+  곱한 bitmap(일반적인 bitmap context 출력)은 이 규약이 아니므로 rasterizer 연결 계층이 변환해야 한다고 적었습니다.
+  변환 helper는 넣지 않았습니다. 실제 color glyph rasterizer와 그 출력 형식이 아직 없어(XI.8.x 이후) 입력 규약을
+  확정할 수 없기 때문입니다.
+- **page texture 수명 규약**: 비운 slot이 다른 format page로 다시 쓰일 수 있는데 renderer가 texture를 다시 만들
+  시점을 알리는 규약이 없었습니다. 동작은 이미 이를 구분할 수 있었습니다. slot을 비우면 세대가 오르고, placement는
+  `(page, generation, format)`을 담습니다. 그래서 renderer가 page texture를 `(page id, 세대)`마다 두고, 맞는 texture가
+  없으면 placement의 `format`으로 `page_texture_desc`를 불러 새로 만든다는 규약을 모듈 문서에 적었습니다. 별도
+  이벤트 API는 두지 않았습니다.
+- 동작 코드가 그대로이므로 실패를 먼저 재현하는 테스트는 없습니다. 대신 renderer가 기대는 보장을
+  `reused_slot_bumps_generation_and_can_change_format` 테스트로 고정했습니다. 검증 기준 "memory pressure
+  simulation 통과"에는 영향이 없습니다.
+
+| 검사 | 결과 |
+|---|---|
+| `reused_slot_bumps_generation_and_can_change_format`(예산 1장, Coverage page를 비우고 같은 slot에 color glyph) | 통과: 같은 page id·다른 세대, `format`·`page_format` = `Rgba8Premultiplied`, 이전 placement 무효, texture format `R8Unorm` → `Rgba8UnormSrgb` |

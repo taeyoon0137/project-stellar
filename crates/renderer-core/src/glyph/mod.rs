@@ -364,7 +364,18 @@ impl GlyphKey {
 pub enum GlyphBitmapFormat {
     /// pixel당 1 byte 선형 coverage(atlas texture `R8Unorm`).
     Coverage8,
-    /// pixel당 4 byte RGBA, sRGB 인코딩·premultiplied alpha(atlas texture `Rgba8UnormSrgb`).
+    /// pixel당 4 byte RGBA, premultiplied alpha(atlas texture `Rgba8UnormSrgb`).
+    ///
+    /// pixel 규약은 이미지 mip chain(`crate::mipmap` 모듈 문서의 "texture pixel 규약")과 같습니다.
+    ///
+    /// - RGB는 **선형광에서 premultiply한 값**(선형 색 × 알파)을 sRGB transfer 곡선(ADR-0002)으로 인코딩한
+    ///   8-bit입니다. GPU가 `Rgba8UnormSrgb` texture를 sampling하면 선형 premultiplied 값을 얻으므로 반투명
+    ///   가장자리의 filtering·합성이 선형 공간에서 올바르게 일어납니다.
+    /// - 알파는 선형 8-bit입니다.
+    ///
+    /// 인코딩된 값에 알파를 곱한 bitmap(일반적인 bitmap context의 premultiplied 출력)은 이 규약이 아닙니다.
+    /// rasterizer 연결 계층이 bitmap을 만들기 전에 이 규약으로 변환해야 하며, 그대로 넣으면 반투명 가장자리 색이
+    /// 틀어집니다.
     Rgba8Premultiplied,
 }
 

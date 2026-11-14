@@ -13,6 +13,14 @@
 //!   비우지 않습니다. 그래서 현재 frame이 조회·배치한 glyph는 frame이 끝날 때까지 유효하고, GPU가 읽는 중인
 //!   texture 영역을 덮어쓰지 않습니다. 비울 page가 없으면 [`AtlasError::Full`]입니다.
 //! - **세대**: page를 비우거나 없애면 그 slot의 세대가 올라가 이전 [`AtlasPlacement`]는 무효가 됩니다.
+//! - **page texture 수명**: 비운 slot은 **다른 format의 page로 다시 쓰일 수 있습니다**. 그래서 renderer는 page
+//!   texture를 page id만이 아니라 `(page id, 세대)`마다 하나 두어야 합니다. [`AtlasPlacement`]의 `(page,
+//!   generation)`에 맞는 texture가 없으면(새 page, 또는 slot이 비워진 뒤 다시 쓰임) 그 placement의 `format`으로
+//!   [`ShelfGlyphAtlas::page_texture_desc`]를 불러 새 texture를 만들고, 이전 세대 texture는 GPU가 그것을 쓴
+//!   frame을 끝낸 뒤 파괴합니다. slot 목록은 줄지 않고 세대는 비울 때마다 올라가므로 `(page id, 세대)`는 page
+//!   하나를 가리킵니다(같은 slot을 `u32` 범위만큼 비우기 전까지). 별도 page 변경 이벤트는 두지 않습니다.
+//! - **color page pixel**: `Rgba8Premultiplied` page는 `Rgba8UnormSrgb` texture이며 pixel은 선형광에서
+//!   premultiply한 뒤 sRGB로 인코딩한 값입니다([`GlyphBitmapFormat::Rgba8Premultiplied`] 문서).
 //! - **memory pressure**: [`ShelfGlyphAtlas::apply_memory_pressure`]가 예산을 줄이고 비울 수 있는 page를
 //!   없앱니다. 보호된 page는 남기고 그 수를 보고합니다(예산은 다음 frame들에서 수렴).
 //! - **upload**: 새 glyph는 gutter까지 0으로 채운 cell 전체를 올려([`ShelfGlyphAtlas::upload_request`]) 재사용한
