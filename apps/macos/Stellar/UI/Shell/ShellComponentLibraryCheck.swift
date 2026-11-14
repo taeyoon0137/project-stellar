@@ -41,6 +41,8 @@ enum ShellComponentLibraryCheck {
                 continue
             }
             if command == "canvas" {
+                // readLine()은 테스트 전용 main run loop를 멈추므로 실제 메뉴가 시작한 비동기 scene 요청을 배출합니다.
+                guard pump.waitForPendingRequests(timeout: 10) else { return false }
                 guard let sample = canvasSample(shell), let data = try? JSONSerialization.data(withJSONObject: sample) else { return false }
                 FileHandle.standardOutput.write(data + Data([10]))
                 continue
