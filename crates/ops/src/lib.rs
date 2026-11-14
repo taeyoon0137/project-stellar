@@ -58,6 +58,9 @@ pub mod ci;
 /// redaction을 기본으로 하는 semantic diff 요약 artifact (XXIV.3.2).
 pub mod summary;
 
+/// opt-in 단일 View 텍스트 원본 export·읽기 전용 검사 (ADR-0059).
+pub mod text_source;
+
 /// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 pub mod test_support;

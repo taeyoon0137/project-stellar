@@ -66,6 +66,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "apply",
         "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
     ),
+    (
+        "text-source",
+        "export <프로젝트> <새 파일> | check <파일>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다",
+    ),
 ];
 
 /// `query` 대상: (사용법, 한 줄 설명). 도움말에 이 순서로 나타납니다.
@@ -169,6 +173,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("ci", crate::project_cmds::ci(rest))
     } else if command == "diff-summary" {
         ("diff-summary", crate::summary::run(rest))
+    } else if command == "text-source" {
+        ("text-source", crate::text_source::run(rest))
     } else {
         return usage_error(err, &format!("알 수 없는 명령: {command}"));
     };
@@ -382,6 +388,13 @@ mod tests {
             &["ci"][..],
             &["ci", "a", "b"][..],
             &["ci", "--strict", "a"][..],
+            &["text-source"][..],
+            &["text-source", "export", "p"][..],
+            &["text-source", "export", "p", "out", "extra"][..],
+            &["text-source", "check"][..],
+            &["text-source", "check", "file", "extra"][..],
+            &["text-source", "unknown", "file"][..],
+            &["text-source", "check", "--force"][..],
             &["diff-summary", "a"][..],
             &["diff-summary", "a", "b", "--output"][..],
             &["diff-summary", "a", "b", "--redact"][..],
