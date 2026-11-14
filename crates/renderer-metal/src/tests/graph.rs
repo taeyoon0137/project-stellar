@@ -512,6 +512,93 @@ fn attachments_without_render_target_usage_are_rejected() {
     assert!(all_pixels(&pixels, [255; 4]));
 }
 
+#[test]
+fn sampling_a_texture_the_pass_renders_into_is_rejected() {
+    // pass가 그리는 attachment texture를 같은 pass에서 sampling하면 결과가 정의되지 않습니다(feedback
+    // loop). 자기 attachment version 읽기는 graph compile이 막고(`FeedbackLoop`), backend는 handle bind와
+    // 같은 texture에 묶인 다른 import 읽기를 거부합니다.
+    if !metal_available() {
+        return;
+    }
+    let size = 4;
+    let mut env = Offscreen::new(size, size);
+    let mut builder = RenderGraphBuilder::new();
+    let target = builder.import(
+        "target",
+        fixed(TextureFormat::Rgba8Unorm, size),
+        ImportKind::External,
+    );
+    let source = builder.import(
+        "source",
+        fixed(TextureFormat::Rgba8Unorm, size),
+        ImportKind::External,
+    );
+    let pass = builder.pass("draw", PassKind::Raster);
+    builder.read(pass, source).expect("read source");
+    let written = builder
+        .color(
+            pass,
+            target,
+            LoadOp::Clear,
+            unit_clear([true; 4]),
+            StoreOp::Store,
+        )
+        .expect("color");
+    builder.set_output(written);
+    let graph = builder.finish().compile().expect("compile");
+    let imports = [
+        ImportBinding {
+            resource: target.resource,
+            target: ImportTarget::Texture(env.target),
+        },
+        ImportBinding {
+            resource: source.resource,
+            target: ImportTarget::Texture(env.target),
+        },
+    ];
+    let bind = |texture| {
+        vec![PassCommands {
+            pass,
+            commands: vec![DrawCommand::BindTexture {
+                slot: 0,
+                texture,
+                sampler: NEAREST,
+            }],
+        }]
+    };
+    for (frame, texture) in (200..).zip([
+        TextureSource::Handle(env.target),
+        TextureSource::Graph(source),
+    ]) {
+        let passes = bind(texture);
+        let request = FrameEncodeRequest {
+            frame: FrameId(frame),
+            graph: &graph,
+            passes: &passes,
+            imports: &imports,
+        };
+        let error = env.backend.encode(&request).unwrap_err();
+        assert_eq!(error.kind(), BackendErrorKind::InvalidUsage, "{texture:?}");
+        assert_eq!(env.backend.validator().state(), CallOrderState::Idle);
+    }
+    // 다른 texture를 sampling하는 것은 그대로 허용됩니다.
+    let other = env
+        .backend
+        .create_texture(&target_desc(size, size, TextureFormat::Rgba8Unorm))
+        .expect("other");
+    let passes = bind(TextureSource::Handle(other));
+    let request = FrameEncodeRequest {
+        frame: FrameId(300),
+        graph: &graph,
+        passes: &passes,
+        imports: &imports,
+    };
+    let EncodeOutcome::Encoded(encoded) = env.backend.encode(&request).expect("encode") else {
+        panic!("offscreen frame은 skip하지 않습니다");
+    };
+    env.backend.discard(encoded).expect("discard");
+}
+
 /// 호출마다 10 ns씩 증가하는 시계.
 #[derive(Debug, Clone)]
 struct StepClock(Rc<Cell<u64>>);

@@ -11,7 +11,8 @@
 //! - scissor는 attachment 크기로 자릅니다. 잘린 결과가 비면 다음 scissor 변경까지 draw를 건너뜁니다.
 //! - vertex 수·instance 수가 0인 draw는 건너뜁니다.
 //! - sampling program(`Texture`·`LayerComposite`·`GlyphMask`)은 draw 전에 texture slot 0이 있어야
-//!   합니다. bind하는 texture는 sampled 용도·single sample·color format이어야 합니다.
+//!   합니다. bind하는 texture는 sampled 용도·single sample·color format이어야 하고, 이 pass가 그리는
+//!   attachment texture가 아니어야 합니다(feedback loop).
 //! - depth·stencil attachment가 있는 pass는 pipeline마다 depth-stencil state도 bind합니다.
 //!   `DecrementWhereEqual`은 "reference + 1과 같은 값"을 비교하므로 backend가 Metal reference를 1 올려
 //!   넣습니다(reference 255는 비교 대상이 없어 `InvalidUsage`).
@@ -202,10 +203,12 @@ fn vertex_capacity(
 
 /// command 목록을 검사하고 encoder 호출로 바꿉니다.
 ///
-/// `graph_reads`는 이 pass가 읽는 graph version과 sampling 가능한 texture(+0, 불가면 `None`)입니다.
+/// `attachments`는 이 pass가 그리는 texture(+0), `graph_reads`는 이 pass가 읽는 graph version과
+/// sampling 가능한 texture(+0, 불가면 `None`)입니다.
 pub(crate) fn plan_commands(
     ctx: &mut CommandContext<'_>,
     pass: &PassFormat,
+    attachments: &[RawId],
     graph_reads: &[(ResourceVersion, Option<RawId>)],
     commands: &[DrawCommand],
 ) -> Result<Vec<Op>, BackendError> {
@@ -326,7 +329,13 @@ pub(crate) fn plan_commands(
                         {
                             return Err(invalid("sampling할 수 없는 texture입니다"));
                         }
-                        native.texture.as_raw()
+                        let texture = native.texture.as_raw();
+                        if attachments.contains(&texture) {
+                            return Err(invalid(
+                                "pass가 그리는 attachment texture는 sampling할 수 없습니다",
+                            ));
+                        }
+                        texture
                     }
                     TextureSource::Graph(version) => graph_reads
                         .iter()

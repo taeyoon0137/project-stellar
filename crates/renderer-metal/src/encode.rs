@@ -322,28 +322,21 @@ pub(crate) fn plan_pass(
                 BackendErrorKind::Unsupported,
                 "color attachment 없는 pass의 draw는 아직 지원하지 않습니다",
             ))?;
-        // 이 pass가 읽는 version과 sampling 가능한 texture. 같은 pass의 attachment는 feedback loop라
-        // sampling할 수 없습니다.
-        let attached = |resource: ResourceId| {
-            graph_pass
-                .color
-                .iter()
-                .map(|attachment| attachment.target.resource)
-                .chain(
-                    graph_pass
-                        .depth_stencil
-                        .iter()
-                        .map(|attachment| attachment.target.resource),
-                )
-                .any(|id| id == resource)
-        };
+        // 이 pass가 그리는 texture. 같은 pass에서 sampling하면 feedback loop라 결과가 정의되지 않으므로,
+        // graph resource가 달라도(같은 texture에 묶인 다른 import) 실제 texture가 같으면 거부합니다.
+        let attached: Vec<RawId> = colors
+            .iter()
+            .map(|color| color.target.texture)
+            .chain(depth.iter().map(|depth| depth.target.texture))
+            .collect();
+        // 이 pass가 읽는 version과 sampling 가능한 texture.
         let graph_reads = graph_pass
             .reads
             .iter()
             .map(|&version: &ResourceVersion| {
                 let target = targets.resolve(version.resource)?;
-                let texture =
-                    (target.sampleable && !attached(version.resource)).then_some(target.texture);
+                let texture = (target.sampleable && !attached.contains(&target.texture))
+                    .then_some(target.texture);
                 Ok((version, texture))
             })
             .collect::<Result<Vec<_>, BackendError>>()?;
@@ -355,7 +348,7 @@ pub(crate) fn plan_pass(
             height,
             depth_format: depth.map(|depth| depth.target.format),
         };
-        plan_commands(commands, &format, &graph_reads, draw_commands)?
+        plan_commands(commands, &format, &attached, &graph_reads, draw_commands)?
     };
     Ok(PassPlan {
         colors,
