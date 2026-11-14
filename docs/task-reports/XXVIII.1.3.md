@@ -3,8 +3,8 @@
 - WBS: XXVIII.1.3
 - 작업명: semantic model과 Git diff/merge 규칙을 별도 normative section으로 작성
 - 상태: 완료 (`[x]`)
-- 선행: Phase XIV(phase 단위 선행 — 완화 규칙 적용. 명세 대상 코드인 XIV.3.1~XIV.3.10, XIV.10.1~XIV.10.6,
-  XIV.2.3~XIV.2.7, XIV.11.1·XIV.11.2·XIV.11.4가 기준 commit에서 `[x]`이고 `semantic-diff`·`semantic-merge`·
+- 선행: Phase XIV(phase 단위 선행 — 완화 규칙 적용. 명세 대상 코드인 XIV.3.1\~XIV.3.10, XIV.10.1\~XIV.10.6,
+  XIV.2.3\~XIV.2.7, XIV.11.1·XIV.11.2·XIV.11.4가 기준 commit에서 `[x]`이고 `semantic-diff`·`semantic-merge`·
   `git-porcelain` crate가 있습니다. 미구현 행은 명세에 "미구현"으로 적었습니다)
 
 ## 필수 실행 환경
@@ -98,6 +98,11 @@
 - M3·M4·M5: 아키텍처 §27.1의 token 타입 대 값, Component Property 삭제 대 사용처 추가, 공급자 삭제 대 참조
   추가 conflict가 없습니다(XIV.10.7 `[ ]`).
 - M7: MergeResult decoder가 변경 반복·conflict 순서·merged 일치를 검사하지 않습니다.
+- 후속 추적: M3·M4·M5는 계획 XIV.10.7 `[ ]`, M2는 XIV.10.8 `[ ]`이 다룹니다. M1의 수정(cycle 되돌림 뒤
+  고아 방지 재실행 또는 빠진 parent 삭제 conflict 생성)과 M7의 decoder 검사를 다루는 행은 계획서에 없습니다.
+  XIV.12.3·XXIII.2.4(candidate full validation)가 구현되면 M1의 고아 candidate는 저장 전에 거부되지만, 빠진
+  parent 삭제 conflict는 여전히 만들어지지 않습니다. M1·M7의 후속 WBS 행 추가가 필요합니다. 계획 행 추가는 이
+  작업 범위 밖이라 하지 않았습니다.
 - 명세는 기준 commit 동작을 기록합니다. 코드와 명세의 일치를 강제하는 CI 검사는 없습니다(일치 검사
   스크립트는 scratchpad에 있고 저장소에 넣지 않았습니다).
 - Git 쪽 semantic status(XIV.4), staging(XIV.5~XIV.7), conflict→객체 mapping(XIV.11.3), 해결(XIV.12)이 구현되면
