@@ -25,3 +25,6 @@ pub mod variant_fixtures;
 
 /// Button·TextInput·Modal·List·Radio 합성 component library fixture (IX.9.1).
 pub mod component_fixtures;
+
+/// document loader/validator fuzz harness (XVI.6.3).
+pub mod loader_fuzz;
