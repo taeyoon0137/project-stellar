@@ -27,6 +27,21 @@ pub struct SelectionEditTarget {
     pub history_sequence: u64,
 }
 
+impl SelectionEditTarget {
+    pub(super) fn verify(self, window: &ProjectWindowSession) -> Result<(), Failure> {
+        if window.history_sequence() != self.history_sequence
+            || window.tabs().active_view() != Some(self.view)
+            || window.revision() != self.revision
+        {
+            return Err(Failure::new(
+                RequestFailure::UnknownView,
+                "표시한 선택이 변경되었습니다",
+            ));
+        }
+        Ok(())
+    }
+}
+
 impl AppRuntime {
     /// 신뢰한 창의 게시된 선택을 하나의 history 항목으로 삭제합니다.
     pub fn delete_selected_nodes(
@@ -56,20 +71,26 @@ impl AppRuntime {
         edit: SelectionEdit,
     ) -> Result<RequestId, RequestError> {
         // 기존 API도 접수와 실행 사이에 선택이 바뀌면 거부합니다.
-        let state = self.state();
-        let Some(summary) = state.window(session) else {
+        let Some(target) = self.published_selection_target(session, view, revision) else {
             return self.submit(move |_, _| Err(unknown_window(session)));
         };
-        self.edit_selection(
-            SelectionEditTarget {
-                session,
-                view,
-                revision,
-                history_sequence: summary.history_sequence,
-            },
-            edit,
-            None,
-        )
+        self.edit_selection(target, edit, None)
+    }
+
+    pub(super) fn published_selection_target(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+    ) -> Option<SelectionEditTarget> {
+        let state = self.state();
+        let summary = state.window(session)?;
+        Some(SelectionEditTarget {
+            session,
+            view,
+            revision,
+            history_sequence: summary.history_sequence,
+        })
     }
 
     /// 표시된 선택을 편집합니다. Layers가 명시한 ID는 실행 시점의 선택 전체와 일치해야 합니다.
@@ -82,10 +103,10 @@ impl AppRuntime {
         self.submit(move |ctx, request| {
             let window = trusted_canvas_window(ctx, target.session)?;
             let selected = window.view().selection().ids();
-            if window.history_sequence() != target.history_sequence
-                || ids
-                    .as_ref()
-                    .is_some_and(|ids| !same_selection(ids, selected))
+            target.verify(window)?;
+            if ids
+                .as_ref()
+                .is_some_and(|ids| !same_selection(ids, selected))
             {
                 return Err(Failure::new(
                     RequestFailure::UnknownView,
