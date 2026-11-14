@@ -141,16 +141,7 @@ pub(crate) fn path_element_ids(payload: &NodePayload) -> Vec<StableId> {
     let NodePayload::Path(path) = payload else {
         return Vec::new();
     };
-    let mut out = Vec::new();
-    for ids in path.ids() {
-        if let Some(point) = ids.point {
-            out.push(point.0);
-        }
-        if let Some((h1, h2)) = ids.handles {
-            out.extend([h1.0, h2.0]);
-        }
-    }
-    out
+    path.element_ids().collect()
 }
 
 /// 문서 안 영속 id의 종류(참조 대상 검사용).

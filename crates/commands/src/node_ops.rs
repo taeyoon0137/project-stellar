@@ -60,7 +60,6 @@ impl InsertNode {
                 reason: "삽입할 node가 없습니다",
             });
         };
-        let owners = id_owners(model);
 
         // 1. id: NIL 금지, 요청 안 유일, 문서 안 미사용.
         let mut new_ids: BTreeMap<StableId, NodeKind> = BTreeMap::new();
@@ -69,7 +68,7 @@ impl InsertNode {
             if id == StableId::NIL {
                 return Err(CommandError::NilId);
             }
-            if owners.contains_key(&id) || !claimed.insert(id) {
+            if model.contains_persistent_id(id) || !claimed.insert(id) {
                 return Err(CommandError::DuplicateId { id });
             }
             Ok(())
@@ -149,14 +148,11 @@ impl InsertNode {
 
         // 3. 형제 OrderKey 유일: root는 문서의 기존 형제와, 나머지는 요청 안 형제와.
         if let Some(parent) = root.parent {
-            let index = ChildIndex::build(model);
-            for sibling in index.children(parent) {
-                if crate::tree::order_key_of(model, *sibling).as_ref() == Some(&root.order_key) {
-                    return Err(CommandError::DuplicateOrderKey {
-                        parent,
-                        node: root.id,
-                    });
-                }
+            if model.has_child_order_key(parent, &root.order_key) {
+                return Err(CommandError::DuplicateOrderKey {
+                    parent,
+                    node: root.id,
+                });
             }
         }
         let mut keys: BTreeSet<(StableId, &OrderKey)> = BTreeSet::new();
@@ -171,11 +167,12 @@ impl InsertNode {
         }
 
         // 4. 참조 종류: 대상이 있으면 기대 종류여야 합니다(없으면 미해결 진단, III.2.4).
+        let owners = std::cell::OnceCell::new();
         let target_kind = |id: StableId| -> Option<IdOwner> {
             new_ids
                 .get(&id)
                 .map(|kind| IdOwner::Node(*kind))
-                .or_else(|| owners.get(&id).copied())
+                .or_else(|| owners.get_or_init(|| id_owners(model)).get(&id).copied())
         };
         for record in &self.nodes {
             if let NodePayload::Frame(frame) = &record.payload {
@@ -562,6 +559,189 @@ mod tests {
 
     fn insert(record: NodeRecord) -> Command {
         Command::InsertNode(InsertNode::single(record))
+    }
+
+    #[test]
+    #[ignore = "release에서 1천·1만·5만 leaf 문서의 단일 Frame 삽입 시간 측정"]
+    fn measure_insert_single_frame() {
+        for leaf_count in [1_000u64, 10_000, 50_000] {
+            let build_started = std::time::Instant::now();
+            let mut model = DocumentModel::new(crate::command::test_fixtures::definition());
+            model.insert_node(frame(10, None, 1)).unwrap();
+            let leaves_per_group = leaf_count / 100;
+            let keys = OrderKey::evenly_spaced(leaves_per_group as usize + 2);
+            for group in 0..100 {
+                let parent = 100 + group;
+                model
+                    .insert_node(frame(parent, Some(10), group as u8 + 1))
+                    .unwrap();
+                for offset in 0..leaves_per_group {
+                    let mut leaf =
+                        frame(1_000 + group * leaves_per_group + offset, Some(parent), 1);
+                    leaf.order_key = keys[offset as usize].clone();
+                    model.insert_node(leaf).unwrap();
+                }
+            }
+            let mut state = DocumentState::new(model);
+            let build_elapsed = build_started.elapsed();
+            let mut samples = Vec::with_capacity(101);
+            for sequence in 0..101 {
+                let group = sequence % 100;
+                let mut added = frame(100_000 + sequence, Some(100 + group), 1);
+                added.order_key = keys[(leaves_per_group + sequence / 100) as usize].clone();
+                let request = CommandRequest::at(&state, insert(added));
+                let start = std::time::Instant::now();
+                let result = state.execute(&request).unwrap();
+                samples.push(start.elapsed());
+                assert!(matches!(result.inverse, Command::DeleteSubtree(_)));
+            }
+            samples.sort_unstable();
+            assert_eq!(state.model().node_count(), leaf_count as usize + 202);
+            println!("insert execute, {leaf_count} leaves, setup {build_elapsed:?}, 101 samples: p50 {:?}, p95 {:?}, p99 {:?}",
+                samples[50], samples[95], samples[99]);
+        }
+    }
+
+    #[test]
+    fn insert_indexes_match_full_rebuilds_after_command_sequences() {
+        use crate::test_support::{random_valid_request, FreshIds};
+        use stellar_document::test_support::random_document::{random_valid_document, SplitMix64};
+
+        let mut applied = 0;
+        for seed in 0..16 {
+            let mut state = DocumentState::new(random_valid_document(seed));
+            let mut rng = SplitMix64::new(seed);
+            let mut fresh = FreshIds::new(seed);
+            let mut seen_ids = BTreeSet::new();
+            let mut seen_keys = BTreeSet::new();
+            let mut assert_indexes = |model: &DocumentModel| {
+                let owners = id_owners(model);
+                seen_ids.extend(owners.keys().copied());
+                for &id in &seen_ids {
+                    assert_eq!(model.contains_persistent_id(id), owners.contains_key(&id));
+                }
+                let rebuilt = ChildIndex::build(model);
+                let mut keys = BTreeSet::new();
+                for id in crate::tree::node_ids(model) {
+                    assert_eq!(model.children_in_order(id), rebuilt.children(id));
+                    if let Some(Some(parent)) = parent_of(model, id) {
+                        keys.insert((parent, crate::tree::order_key_of(model, id).unwrap()));
+                    }
+                }
+                seen_keys.extend(keys.iter().cloned());
+                for (parent, key) in &seen_keys {
+                    assert_eq!(
+                        model.has_child_order_key(*parent, key),
+                        keys.contains(&(*parent, key.clone()))
+                    );
+                }
+            };
+            assert_indexes(state.model());
+            for step in 0..32 {
+                let Some(request) = random_valid_request(&state, &mut rng, &mut fresh, 32) else {
+                    continue;
+                };
+                applied += 1;
+                let outcome = state.execute(&request).unwrap();
+                assert_indexes(state.model());
+                if step % 4 == 0 {
+                    run(&mut state, outcome.inverse).unwrap();
+                    assert_indexes(state.model());
+                }
+            }
+        }
+        assert!(applied >= 300, "충분한 command 경로 검사: {applied}");
+    }
+
+    #[test]
+    fn direct_records_keep_duplicate_order_keys_and_non_node_ids_until_the_last_owner_leaves() {
+        // 직접 모델 API는 전체 문서 validator 이전에 일시적으로 겹치는 ID·순서 키를 허용합니다.
+        let mut model = small_model();
+        let first = path_record(20, 11, 0x30);
+        let mut second = first.clone();
+        second.id = sid(21);
+        let key = first.order_key.clone();
+        model.insert_node(first).unwrap();
+        model.insert_node(second).unwrap();
+        for owner in [20, 21] {
+            let mut stack = ModifierStack::new(sid(owner));
+            stack
+                .push_back(ModifierId::new(sid(2001)), ModifierKind::Opacity)
+                .unwrap();
+            model.set_modifier_stack(stack).unwrap();
+        }
+        assert!(model.has_child_order_key(sid(11), &key));
+        assert!(model.contains_persistent_id(sid(2001)));
+        model.remove_leaf(sid(20)).unwrap();
+        assert!(model.has_child_order_key(sid(11), &key));
+        assert!(model.contains_persistent_id(sid(2001)));
+        model
+            .set_payload(sid(21), path_record(22, 11, 0x30).payload)
+            .unwrap();
+        assert!(model.contains_persistent_id(sid(2001)));
+        model
+            .set_modifier_stack(ModifierStack::new(sid(21)))
+            .unwrap();
+        assert!(!model.contains_persistent_id(sid(2001)));
+        assert!(model.contains_persistent_id(sid(2201)));
+        model.remove_leaf(sid(21)).unwrap();
+        assert!(!model.has_child_order_key(sid(11), &key));
+        assert!(!model.contains_persistent_id(sid(2201)));
+    }
+
+    #[test]
+    fn failed_subtree_insert_rolls_back_indexes_and_can_retry_after_reload() {
+        let nodes = vec![frame(20, Some(11), 0x30), path_record(21, 20, 0x10)];
+        let modifier_stacks = [(20, 60), (21, 61)]
+            .map(|(owner, modifier)| {
+                let mut stack = ModifierStack::new(sid(owner));
+                stack
+                    .push_back(ModifierId::new(sid(modifier)), ModifierKind::Opacity)
+                    .unwrap();
+                stack
+            })
+            .to_vec();
+        let command = Command::InsertNode(InsertNode {
+            nodes: nodes.clone(),
+            modifier_stacks,
+        });
+        let mut added_ids = vec![sid(20), sid(21), sid(60), sid(61)];
+        added_ids.extend(path_element_ids(&nodes[1].payload));
+        for fault_at in 0..4 {
+            let mut model = small_model();
+            let before = model.to_records().unwrap();
+            command.validate(&model).unwrap();
+            let mut guard = crate::guard::TransactionGuard::begin(&mut model);
+            guard.ctx().inject_fault_after(fault_at);
+            assert!(command.apply(guard.ctx()).is_err());
+            guard.rollback().unwrap();
+            assert_eq!(model.to_records().unwrap(), before);
+            for &id in &added_ids {
+                assert!(
+                    !model.contains_persistent_id(id),
+                    "fault {fault_at}: {id:?}"
+                );
+            }
+            for node in &nodes {
+                assert!(!model.has_child_order_key(node.parent.unwrap(), &node.order_key));
+            }
+            // 같은 요청의 재시도와 저장 레코드에서의 재구성이 동일한 인덱스를 만듭니다.
+            let mut state = DocumentState::new(model);
+            run(&mut state, command.clone()).unwrap();
+            let (reopened, _) = DocumentModel::from_records(state.model().to_records().unwrap())
+                .expect("삽입한 subtree와 modifier를 다시 열기");
+            for &id in &added_ids {
+                assert!(reopened.contains_persistent_id(id));
+            }
+            for node in &nodes {
+                let parent = node.parent.unwrap();
+                assert!(reopened.has_child_order_key(parent, &node.order_key));
+                assert_eq!(
+                    reopened.children_in_order(parent),
+                    state.model().children_in_order(parent)
+                );
+            }
+        }
     }
 
     #[test]
