@@ -277,14 +277,16 @@
 ### 7.1 프로토콜
 
 ```swift
+@MainActor
 protocol InspectorDataSource: AnyObject {
     var snapshot: InspectorSnapshot { get }
-    var snapshotHandler: ((InspectorSnapshot) -> Void)? { get set }
+    var snapshotHandler: (@MainActor (InspectorSnapshot) -> Void)? { get set }
     func submit(_ command: InspectorCommand, basedOn generation: UInt64)
 }
 ```
 
-- 모든 호출과 콜백은 메인 스레드입니다. 구현은 무거운 질의·해석을 메인 스레드에서 하지 않고 준비된 snapshot만 넘깁니다. [아키텍처 §6.3, §9.2] [가이드 9장]
+- 모든 호출과 콜백은 메인 스레드입니다. 프로토콜과 콜백 타입에 `@MainActor`를 붙여 컴파일러가 강제합니다. 프로젝트는 Swift 5 모드지만 명시한 actor 격리는 검사하므로, adapter가 다른 스레드에서 `snapshotHandler`를 동기 호출하면 컴파일 오류입니다. 구현은 무거운 질의·해석을 메인 스레드에서 하지 않고 준비된 snapshot만 넘깁니다. [아키텍처 §6.3, §9.2] [가이드 9장]
+- 인스펙터 타입(`InspectorStubDataSource`, `InspectorFieldController`, `InspectorModifierStackController`, `InspectorUICheck`)도 `@MainActor`입니다. `InspectorUICheck.run()`만 `nonisolated`이고, 동기 최상위 코드(`main.swift`)에서 부를 수 있게 `MainActor.assumeIsolated`로 들어갑니다(사이드바 검사와 같은 방식).
 - snapshot(`InspectorSnapshot`)은 plain value입니다: 세대 번호, 선택 토큰, 내용 상태, 선택 요약, 편집 가능 상태, 섹션 → 행 → 필드(속성 id, 레이블, 컨트롤 종류, 값, 편집 가능, binding 상태), modifier stack. Rust 타입을 담지 않습니다. [아키텍처 §8.2]
 - 숫자 tag가 있는 enum(`InspectorNodeKind`, `InspectorShapeKind`, `InspectorModifierKind`, `InspectorColor.Space`)은 문서 모델 저장 tag와 같은 값입니다.
 - 명령(`InspectorCommand`)은 셸 → 코어 단방향입니다(6.1절).

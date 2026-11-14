@@ -9,12 +9,18 @@ import AppKit
 /// - 사용한 SF Symbols 이름이 모두 시스템에 있는지 확인합니다.
 /// 대비 높이기·투명도 줄이기 설정 자체는 화면 밖에서 강제할 수 없어 검사하지 않습니다.
 /// 통합 시 scripts/macos/smoke.sh의 `--inspector-ui-check` 경로에서 호출합니다.
+@MainActor
 enum InspectorUICheck {
     private struct Failure: Error {
         let message: String
     }
 
-    static func run() -> Bool {
+    /// `main.swift` 최상위 코드(동기, actor 미지정)에서 부를 수 있는 진입점. 메인 스레드에서만 호출합니다.
+    nonisolated static func run() -> Bool {
+        MainActor.assumeIsolated { runOnMainActor() }
+    }
+
+    private static func runOnMainActor() -> Bool {
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
         do {
@@ -483,6 +489,7 @@ enum InspectorUICheck {
     // MARK: - 도우미
 
     /// 화면 밖 창 하나에 인스펙터를 넣은 검사 환경.
+    @MainActor
     private final class Harness {
         let source: InspectorStubDataSource
         let controller: InspectorViewController

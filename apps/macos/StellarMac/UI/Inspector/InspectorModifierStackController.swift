@@ -5,6 +5,7 @@ import AppKit
 /// 표준 `NSTableView` 목록으로 순서·활성 상태를 보여 주고, 선택한 항목의 파라미터를 목록 아래 행으로
 /// 편집합니다. 재정렬은 드래그 또는 Command-Option-위/아래, 삭제는 Delete, 활성 전환은 Space입니다.
 /// 순서·id·검증은 코어가 맡고 셸은 명령만 보냅니다.
+@MainActor
 final class InspectorModifierStackController: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     NSMenuItemValidation
 {

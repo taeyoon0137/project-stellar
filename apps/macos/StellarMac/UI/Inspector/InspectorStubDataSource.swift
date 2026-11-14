@@ -5,6 +5,7 @@ import Foundation
 /// 선택 종류별 예시 snapshot을 만들고, 받은 명령을 메모리 값에 적용해 새 세대 snapshot을 돌려줍니다.
 /// 실제 문서·Undo·검증은 하지 않습니다. 코어 adapter는 같은 `InspectorPropertyCatalog` 템플릿을 쓰고
 /// 값만 문서 snapshot에서 채우면 됩니다.
+@MainActor
 final class InspectorStubDataSource: InspectorDataSource {
     /// 예시 선택 상황.
     enum Scenario: String, CaseIterable {
@@ -15,7 +16,7 @@ final class InspectorStubDataSource: InspectorDataSource {
 
     private(set) var scenario: Scenario
     private(set) var snapshot: InspectorSnapshot
-    var snapshotHandler: ((InspectorSnapshot) -> Void)?
+    var snapshotHandler: (@MainActor (InspectorSnapshot) -> Void)?
     /// 받은 명령 기록(검사용).
     private(set) var receivedCommands: [InspectorCommand] = []
     /// 각 명령의 근거 세대(검사용, `receivedCommands`와 같은 순서).

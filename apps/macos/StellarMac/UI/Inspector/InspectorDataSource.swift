@@ -39,13 +39,16 @@ enum InspectorCommand: Equatable {
 
 /// 인스펙터 데이터 공급자. 모든 호출과 콜백은 메인 스레드에서 일어납니다.
 ///
+/// `@MainActor`로 컴파일러가 이 규칙을 강제합니다. 코어 adapter는 다른 스레드에서 받은 결과를
+/// 메인 actor로 옮긴 뒤 `snapshotHandler`를 호출해야 합니다(Swift 5 모드에서도 명시한 actor 격리는 검사됨).
 /// 구현은 무거운 작업(문서 질의, 값 해석)을 메인 스레드에서 하지 않고, 준비된 snapshot만
 /// 넘깁니다(아키텍처 §6.3 UI 스레드 2ms 상한, §9.2).
+@MainActor
 protocol InspectorDataSource: AnyObject {
     /// 가장 최근 snapshot.
     var snapshot: InspectorSnapshot { get }
     /// 새 snapshot이 준비되면 호출할 콜백. 인스펙터가 설정합니다.
-    var snapshotHandler: ((InspectorSnapshot) -> Void)? { get set }
+    var snapshotHandler: (@MainActor (InspectorSnapshot) -> Void)? { get set }
     /// 편집 명령을 보냅니다. `generation`은 명령의 근거가 된 snapshot 세대입니다.
     /// 코어는 오래된 세대에 근거한 명령을 거부하거나 재해석할 수 있습니다.
     func submit(_ command: InspectorCommand, basedOn generation: UInt64)

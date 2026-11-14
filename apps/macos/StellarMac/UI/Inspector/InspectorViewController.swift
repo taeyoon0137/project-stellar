@@ -157,7 +157,7 @@ final class InspectorViewController: NSViewController {
         guard pageOrder.count > Self.maximumCachedPages, !evictionScheduled else { return }
         evictionScheduled = true
         RunLoop.main.perform(inModes: [.default]) { [weak self] in
-            self?.evictOverflowPages()
+            MainActor.assumeIsolated { self?.evictOverflowPages() }
         }
     }
 

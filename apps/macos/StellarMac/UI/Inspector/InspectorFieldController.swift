@@ -5,6 +5,7 @@ import AppKit
 /// 뷰를 직접 소유하지 않고 행(`InspectorRowView`)에 넣을 뷰 목록을 만듭니다. 컨트롤 종류는 모두
 /// AppKit 표준 컨트롤입니다(가이드 5.1, 5.2). 값의 의미·검증은 코어가 맡고, 여기서는 표시 단위
 /// 변환(`displayScale`)과 범위 clamp만 합니다.
+@MainActor
 final class InspectorFieldController: NSObject, NSTextFieldDelegate {
     private(set) var field: InspectorField
     /// 행에 순서대로 넣을 뷰.
