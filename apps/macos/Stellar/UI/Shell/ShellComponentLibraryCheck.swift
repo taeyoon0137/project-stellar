@@ -27,6 +27,15 @@ enum ShellComponentLibraryCheck {
         shell.router.performShellCommand(menu)
         guard let firstLibrary = shell.componentLibrary else { return false }
         var library = firstLibrary
+        func until(_ condition: () -> Bool) -> Bool {
+            let limit = Date().addingTimeInterval(10)
+            while !condition(), Date() < limit { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+            return condition()
+        }
+        func control(_ id: String, in view: NSView) -> NSView? {
+            if view.identifier?.rawValue == id { return view }
+            return view.subviews.lazy.compactMap { control(id, in: $0) }.first
+        }
         while let command = readLine() {
             if command == "fit" {
                 guard let window = shell.window, let session = shell.windowController.windowSession else { return false }
@@ -53,12 +62,13 @@ enum ShellComponentLibraryCheck {
                 shell.gitSource.updateTrust(false)
                 guard pump.waitForPendingRequests(timeout: 10),
                       shell.componentLibrary == nil, !library.panel.isVisible, library.rows.isEmpty,
-                      !shell.router.validateMenuItem(menu), !library.applySize.isEnabled else { return false }
+                      !shell.router.validateMenuItem(menu), !library.applySize.isEnabled, !library.editFill.isEnabled else { return false }
                 let runtime = host.handle
                 var rejected: Bool?
                 Task { @MainActor in
                     rejected = await Task.detached {
                         CoreRuntime.resizeComponent(handle: runtime, session: session, entry: previous, width: 713, height: 317) != nil
+                            && CoreRuntime.editComponent(handle: runtime, session: session, entry: previous, change: .background(nil)) != nil
                     }.value
                 }
                 let deadline = Date().addingTimeInterval(10)
@@ -84,18 +94,9 @@ enum ShellComponentLibraryCheck {
                 guard parts.count == 3, library.placeInstance.isEnabled else { return false }
                 library.message.stringValue = ""
                 library.placeInstance.performClick(nil)
-                func until(_ condition: () -> Bool) -> Bool {
-                    let limit = Date().addingTimeInterval(10)
-                    while !condition(), Date() < limit { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
-                    return condition()
-                }
                 guard until({ library.panel.attachedSheet != nil }), let sheet = library.panel.attachedSheet else { return false }
-                func field(_ id: String, in view: NSView) -> NSTextField? {
-                    if view.identifier?.rawValue == id { return view as? NSTextField }
-                    return view.subviews.lazy.compactMap { field(id, in: $0) }.first
-                }
-                guard let content = sheet.contentView, let x = field("instance.x", in: content),
-                      let y = field("instance.y", in: content) else { return false }
+                guard let content = sheet.contentView, let x = control("instance.x", in: content) as? NSTextField,
+                      let y = control("instance.y", in: content) as? NSTextField else { return false }
                 x.stringValue = String(parts[1])
                 y.stringValue = String(parts[2])
                 library.panel.endSheet(sheet, returnCode: .alertFirstButtonReturn)
@@ -103,6 +104,29 @@ enum ShellComponentLibraryCheck {
             } else if ["undo", "redo", "save"].contains(command) {
                 let action: ShellCommand = command == "undo" ? .undo : (command == "redo" ? .redo : .saveNow)
                 guard shell.performSessionCommand(action), pump.waitForPendingRequests(timeout: 10) else { return false }
+            } else if command == "fill-open" {
+                guard library.editFill.isEnabled else { return false }
+                library.editFill.performClick(nil)
+                guard until({ library.panel.attachedSheet != nil }) else { return false }
+            } else if command.hasPrefix("fill-apply ") || command.hasPrefix("fill-cancel ") {
+                let parts = command.split(separator: " ")
+                guard let sheet = library.panel.attachedSheet, let view = sheet.contentView,
+                      let toggle = control("component.fill.enabled", in: view) as? NSButton,
+                      let well = control("component.fill.color", in: view) as? NSColorWell else { return false }
+                let enabled = parts[1] == "unchanged" ? toggle.state == .on : parts[1] != "none"
+                if enabled != (toggle.state == .on) { toggle.performClick(nil) }
+                guard well.isEnabled == enabled else { return false }
+                if enabled && parts[1] != "unchanged" {
+                    guard parts.count == 6, let space = UInt8(parts[1]).flatMap(InspectorColor.Space.init(rawValue:)),
+                          let red = Double(parts[2]), let green = Double(parts[3]), let blue = Double(parts[4]),
+                          let alpha = Double(parts[5]) else { return false }
+                    well.color = InspectorColor(space: space, red: red, green: green, blue: blue, alpha: alpha).nsColor
+                }
+                let apply = parts[0] == "fill-apply"
+                library.message.stringValue = ""
+                library.panel.endSheet(sheet, returnCode: apply ? .alertFirstButtonReturn : .alertSecondButtonReturn)
+                guard until({ library.panel.attachedSheet == nil }) else { return false }
+                if apply { guard until({ library.isLoading || !library.message.stringValue.isEmpty }) else { return false } }
             } else if command.hasPrefix("resize ") {
                 let parts = command.split(separator: " ")
                 guard parts.count == 3, library.applySize.isEnabled else { return false }
@@ -117,7 +141,9 @@ enum ShellComponentLibraryCheck {
                 ["id": $0.id.uuidString.lowercased(), "root": $0.root.uuidString.lowercased(), "name": $0.name,
                  "node_count": $0.nodeCount, "width": $0.width, "height": $0.height, "filename": $0.filename, "source_hash": $0.hash]
             }
-            guard let bytes = try? JSONSerialization.data(withJSONObject: ["entries": rows, "message": library.message.stringValue, "selection": shell.windowController.windowSession?.info?.selection_count ?? 0, "undo": shell.windowController.windowSession?.info?.undo_depth ?? 0, "generation": shell.windowController.windowSession?.info?.generation ?? 0]) else { return false }
+            let selected = library.rows.indices.contains(library.table.selectedRow) ? library.rows[library.table.selectedRow] : nil
+            let fill: [Double]? = selected?.background.map { [Double($0.space.rawValue), $0.red, $0.green, $0.blue, $0.alpha] }
+            guard let bytes = try? JSONSerialization.data(withJSONObject: ["entries": rows, "selected": selected?.id.uuidString.lowercased() ?? "", "fill": fill as Any, "message": library.message.stringValue, "selection": shell.windowController.windowSession?.info?.selection_count ?? 0, "undo": shell.windowController.windowSession?.info?.undo_depth ?? 0, "generation": shell.windowController.windowSession?.info?.generation ?? 0]) else { return false }
             FileHandle.standardOutput.write(bytes + Data([10]))
         }
         return false

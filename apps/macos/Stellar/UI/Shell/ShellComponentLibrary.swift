@@ -1,6 +1,6 @@
 import AppKit
 
-/// 한 프로젝트 창에서 연 독립 원본의 목록과 선택한 원본의 루트 크기 편집.
+/// 한 프로젝트 창에서 연 독립 원본의 목록과 선택한 원본의 루트 크기와 채우기 편집.
 @MainActor
 final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     private let runtime: UInt64
@@ -9,6 +9,9 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
     let table = NSTableView()
     let rootWidth = NSTextField()
     let rootHeight = NSTextField()
+    let editFill = NSButton(title: String(localized: "Edit Fill…"), target: nil, action: nil)
+    private let fillPreview = NSColorWell(style: .minimal)
+    private let fillStatus = NSTextField(labelWithString: "")
     let placeInstance = NSButton(title: String(localized: "Place Instance…"), target: nil, action: nil)
     var beginPlacement: ((LibraryComponent) -> Void)?
     let applySize = NSButton(title: String(localized: "Apply Size"), target: nil, action: nil)
@@ -18,6 +21,7 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
     private(set) var rows: [LibraryComponent] = []
     var didReadSources: (() -> Void)?
     private(set) var isLoading = false
+    private var editingFill = false
     private var needsRefresh = false
     private var invalidated = false
     let message = NSTextField(wrappingLabelWithString: "")
@@ -80,7 +84,14 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         placeInstance.action = #selector(placeSelected)
         placeInstance.isEnabled = false
         sizing.addArrangedSubview(placeInstance)
-        let stack = NSStackView(views: [bar, scroll, details, sizing])
+        fillPreview.isEnabled = false
+        fillPreview.supportsAlpha = true
+        fillPreview.setAccessibilityLabel(String(localized: "Root fill"))
+        editFill.target = self
+        editFill.action = #selector(promptForFill)
+        editFill.isEnabled = false
+        let fill = NSStackView(views: [NSTextField(labelWithString: String(localized: "Root Fill")), fillPreview, fillStatus, editFill])
+        let stack = NSStackView(views: [bar, scroll, details, sizing, fill])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 8
@@ -105,7 +116,7 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
 
     @objc func refresh() {
         guard !invalidated else { return }
-        guard !isLoading else { needsRefresh = true; return }
+        guard !isLoading && !editingFill else { needsRefresh = true; return }
         isLoading = true
         refreshButton.isEnabled = false
         setEditorEnabled(false)
@@ -152,9 +163,12 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         editingEntry = nil
         rootWidth.stringValue = ""
         rootHeight.stringValue = ""
+        fillPreview.isHidden = true
+        fillStatus.stringValue = ""
         setEditorEnabled(false)
         details.stringValue = ""
         message.stringValue = ""
+        if let sheet = panel.attachedSheet { panel.endSheet(sheet, returnCode: .cancel) }
         panel.close()
     }
 
@@ -182,12 +196,16 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         details.stringValue = entry.map { "design/components/" + $0.filename + "\n" + $0.id.uuidString.lowercased() } ?? ""
         rootWidth.stringValue = entry.map { sizeString($0.width) } ?? ""
         rootHeight.stringValue = entry.map { sizeString($0.height) } ?? ""
+        fillPreview.color = entry?.background?.nsColor ?? .clear
+        fillPreview.isHidden = entry?.background == nil
+        fillStatus.stringValue = entry == nil ? "" : (entry?.background == nil ? String(localized: "None") : "")
         setEditorEnabled(!isLoading && !invalidated && entry != nil)
     }
 
     private func setEditorEnabled(_ enabled: Bool) {
         rootWidth.isEnabled = enabled
         rootHeight.isEnabled = enabled
+        editFill.isEnabled = enabled
         applySize.isEnabled = enabled
         placeInstance.isEnabled = enabled
     }
@@ -214,13 +232,61 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
             message.stringValue = String(localized: "Enter a finite width and height of zero or greater.")
             return
         }
+        save(entry, change: .size(width, height))
+    }
+
+    @objc private func promptForFill() {
+        guard !invalidated, !isLoading, let entry = editingEntry, panel.attachedSheet == nil else { return }
+        let sheet = NSAlert()
+        sheet.messageText = String(localized: "Edit Root Fill")
+        let enabled = NSButton(checkboxWithTitle: String(localized: "Fill"), target: nil, action: nil)
+        enabled.identifier = NSUserInterfaceItemIdentifier("component.fill.enabled")
+        enabled.state = entry.background == nil ? .off : .on
+        let well = NSColorWell(style: .minimal)
+        well.identifier = NSUserInterfaceItemIdentifier("component.fill.color")
+        well.setAccessibilityLabel(String(localized: "Fill color"))
+        well.supportsAlpha = true
+        well.color = entry.background?.nsColor ?? .white
+        let initialWellColor = InspectorColor(well.color)
+        well.isEnabled = enabled.state == .on
+        enabled.target = well
+        enabled.action = #selector(NSColorWell.setComponentFillEnabled(_:))
+        let options = NSStackView(views: [enabled, well])
+        options.frame = NSRect(x: 0, y: 0, width: 180, height: 26)
+        sheet.accessoryView = options
+        sheet.addButton(withTitle: String(localized: "Apply"))
+        sheet.addButton(withTitle: String(localized: "Cancel"))
+        editingFill = true
+        sheet.beginSheetModal(for: panel) { [weak self] response in
+            well.deactivate()
+            guard let self else { return }
+            self.editingFill = false
+            guard !self.invalidated else { return }
+            let refreshRequested = self.needsRefresh
+            self.needsRefresh = false
+            guard response == .alertFirstButtonReturn, self.editingEntry?.id == entry.id else {
+                if refreshRequested { self.refresh() }
+                return
+            }
+            let fill = enabled.state == .on ? InspectorColor(well.color) : nil
+            if enabled.state == .on && fill == nil {
+                self.message.stringValue = String(localized: "Choose an sRGB or Display P3 color.")
+                return
+            }
+            // 색 패널이 표시를 위해 확장 RGB를 변환해도 그대로 Apply하면 원본 채널을 보존합니다.
+            let sourceFill = fill != nil && fill == initialWellColor ? (entry.background ?? fill) : fill
+            self.save(entry, change: .background(sourceFill))
+        }
+    }
+
+    private func save(_ entry: LibraryComponent, change: ComponentRootChange) {
         isLoading = true
         setEditorEnabled(false)
         refreshButton.isEnabled = false
-        message.stringValue = String(localized: "Saving component size…")
+        message.stringValue = String(localized: "Saving component…")
         let runtime = self.runtime, session = self.session
         worker.async { [weak self] in
-            let error = CoreRuntime.resizeComponent(handle: runtime, session: session, entry: entry, width: width, height: height)
+            let error = CoreRuntime.editComponent(handle: runtime, session: session, entry: entry, change: change)
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.invalidated else { return }
                 self.isLoading = false
@@ -303,4 +369,9 @@ extension ShellProjectWindow {
             if !submitted { library.message.stringValue = String(localized: "The project is busy. Try again.") }
         }
     }
+}
+
+
+private extension NSColorWell {
+    @objc func setComponentFillEnabled(_ sender: NSButton) { isEnabled = sender.state == .on }
 }

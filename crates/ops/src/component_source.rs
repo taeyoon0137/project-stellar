@@ -11,6 +11,7 @@ use crate::text_source::TextSourceOperationError as Error;
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::record_codec::decode_payload;
 use stellar_document::records::NodePayload;
+pub use stellar_project::document_io::component_source::ComponentRootEdit;
 use stellar_project::document_io::component_source::{self, ComponentFiles, ComponentSource};
 use stellar_storage::hash::ContentHash;
 
@@ -24,6 +25,8 @@ pub struct ComponentInfo {
     pub name: String,
     /// root Frame의 논리 픽셀 크기.
     pub size: Size2,
+    /// 루트 Frame에 저장된 비연관 RGBA 채우기.
+    pub background: Option<crate::core_types::color::Color>,
     /// root를 포함한 실제 Frame 수.
     pub node_count: usize,
     /// 원본 경로와 bytes hash.
@@ -52,6 +55,7 @@ fn info(source: &ComponentSource, file: PathBuf, hash: ContentHash) -> Component
         node_count: source.node_count(),
         name: source.definition().display_name().into(),
         size: frame.size,
+        background: frame.background,
         file,
         hash,
     }
@@ -152,6 +156,17 @@ pub fn resize_project_root(
     hash: ContentHash,
     size: Size2,
 ) -> Result<ComponentInfo, Error> {
+    edit_project_root(root, project_id, id, hash, ComponentRootEdit::Size(size))
+}
+
+/// size와 RGBA 편집은 같은 창 원본 잠금과 전체 ID·hash 검사를 사용합니다.
+pub fn edit_project_root(
+    root: &Path,
+    project_id: StableId,
+    id: StableId,
+    hash: ContentHash,
+    edit: ComponentRootEdit,
+) -> Result<ComponentInfo, Error> {
     let _project = lock_source_project(root, project_id, None)?;
     let folder = root
         .join("design/components")
@@ -163,8 +178,7 @@ pub fn resize_project_root(
         ));
     }
     let _folder = lock(&folder)?;
-    let (source, file, hash) =
-        component_source::resize_project_root(root, &folder, id, hash, size)?;
+    let (source, file, hash) = component_source::edit_project_root(root, &folder, id, hash, edit)?;
     Ok(info(&source, file, hash))
 }
 
@@ -243,6 +257,7 @@ fn entries(
             node_count: entry.tree().len(),
             name: definition.display_name().into(),
             size: frame.size,
+            background: frame.background,
             file,
             hash,
         });
