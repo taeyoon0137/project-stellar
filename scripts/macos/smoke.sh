@@ -63,7 +63,7 @@ fi
 # - 목록의 파일이 없으면(이름 변경·삭제) 검사가 조용히 통과하지 않도록 실패합니다.
 # - 직접 호출(`stellar_`)뿐 아니라 셸 FFI wrapper(`CoreRuntime`, `RuntimeHost`)와 runtime handle 전달도 금지합니다.
 # - grep 종료 코드 0(발견)과 2 이상(읽기 오류)은 모두 실패로 처리합니다.
-SOURCES_DIR="$REPO_ROOT/apps/macos/StellarMac"
+SOURCES_DIR="$REPO_ROOT/apps/macos/Stellar"
 NATIVE_UI_SOURCES=(NativeTextControls.swift NativeFieldsPanel.swift)
 for path in "$SOURCES_DIR"/Native*.swift; do
   [ -e "$path" ] || continue

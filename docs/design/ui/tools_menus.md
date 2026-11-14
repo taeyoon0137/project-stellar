@@ -1,7 +1,7 @@
 # 도구·메뉴 영역 명세 (tools_menus)
 
 - 상태: 초안(2026-11-14)
-- 코드: `apps/macos/StellarMac/UI/Tools/`
+- 코드: `apps/macos/Stellar/UI/Tools/`
 - 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), 구현 계획(이하 "계획"), Apple HIG
 - 근거 표기는 가이드 0.1절을 따릅니다. 이 문서는 가이드·아키텍처·계획을 바꾸지 않으며, 어긋나면 그 문서들이 우선입니다. [가이드 0.2]
 

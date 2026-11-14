@@ -2,7 +2,7 @@
 
 macOS 앱을 직접 써 보며 화면과 동작을 확인하는 절차입니다. 자동 검사(`scripts/macos/smoke.sh`, 영역별 `--*-ui-check`)가 화면 밖에서 확인하는 구조·접근성 값과 달리, 여기서는 사람이 실제 창에서 보고 느끼는 것을 확인합니다.
 
-- 대상: macOS 앱(`apps/macos/StellarMac`). Windows는 보류 중입니다.
+- 대상: macOS 앱(`apps/macos/Stellar`). Windows는 보류 중입니다.
 - 기준: [macOS 셸 디자인 가이드](../design/macos-shell-design.md)와 영역별 명세(`docs/design/ui/*.md`). 확인 목록의 "보여야 하는 것"은 이 명세에서 왔습니다. 명세가 이상하다고 느끼면 그것도 피드백으로 남깁니다.
 - 확인 목록은 "무엇을 해 보고 → 무엇이 보여야 하는지"로 씁니다. 아직 구현하지 않은 항목은 **구현 대기**와 해당 WBS ID(구현 계획 `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`의 행)로 표시하고, 지금 빌드에서 대신 보이는 모습을 함께 적습니다.
 

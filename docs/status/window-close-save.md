@@ -25,10 +25,10 @@
 
 ## 변경 파일
 
-- `apps/macos/StellarMac/UI/Shell/ShellProjectWindow.swift`, `ShellAppCoordinator.swift`: 닫기 보류·실패 보존·재시도.
+- `apps/macos/Stellar/UI/Shell/ShellProjectWindow.swift`, `ShellAppCoordinator.swift`: 닫기 보류·실패 보존·재시도.
 - `crates/runtime/src/window_session.rs`, `app.rs`, `app_window_tests.rs`: O(1) dirty snapshot과 검사.
 - `crates/ffi/src/window_session.rs`, `tools/xtask/src/ffi_header.rs`, `crates/ffi/include/stellar_ffi.h`: ABI·Debug 검사 bridge.
-- `apps/macos/StellarMac/CoreRuntime.swift`, `UI/Shell/ShellRuntimeEventPump.swift`,
+- `apps/macos/Stellar/CoreRuntime.swift`, `UI/Shell/ShellRuntimeEventPump.swift`,
   `UI/Shell/ShellWindowCloseCheck.swift`, `main.swift`, `scripts/macos/smoke.sh`: 실제 AppKit→Rust 통합 검사.
 - ADR-0028, 이 보고서, XII.6.4 보고서, UI shell 문서: 계약·증거·한계.
 

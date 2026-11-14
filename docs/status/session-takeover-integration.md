@@ -28,7 +28,7 @@ WBS 설명·검증 열·선행은 변경하지 않았습니다. 기준에 이미
 - `crates/commands/src/view_tabs.rs`, `selection.rs`, `lib.rs`, `crates/history/src/window.rs`: 창별 view state.
 - `crates/scene/src/overlay.rs`, `lib.rs`: 비영속 선택 레이어 생성.
 - `crates/ffi/src/window_session.rs`, `lib.rs`, `crates/ffi/include/stellar_ffi.h`, `tools/xtask/src/ffi_header.rs`: C ABI와 생성 헤더.
-- `apps/macos/StellarMac/CoreRuntime.swift`, `UI/Shell/`, `UI/Tools/`, `main.swift`: session 소유·메뉴 연결·검사. 기존 하단 도구 막대 구현은 보존했습니다.
+- `apps/macos/Stellar/CoreRuntime.swift`, `UI/Shell/`, `UI/Tools/`, `main.swift`: session 소유·메뉴 연결·검사. 기존 하단 도구 막대 구현은 보존했습니다.
 - `crates/runtime/tests/fixtures/window-session-project/`, `Cargo.lock`, `scripts/macos/smoke.sh`: fixture·의존 그래프 반영·smoke 항목.
 - `tools/xtask/src/crate_graph.rs`, `docs/architecture/crate-dependency-graph.md`, `docs/adr/ADR-0028-window-session-shell-surface.md`: runtime→scene 허용 근거.
 - 구현 계획·원장·개별 작업 보고서와 `docs/design/ui/{shell_frame,tools_menus}.md`: 실제 통합 범위 기록.

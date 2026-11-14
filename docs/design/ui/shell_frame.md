@@ -1,7 +1,7 @@
 # 셸 프레임(메인 창 구성) UI 명세
 
 - 상태: 초안(2026-11-14). 앱 창으로 통합됨(14장). 프로젝트 열기·닫기는 코어 FFI, 영역 내용은 Stub data source
-- 영역: `shell_frame` — 코드 위치 `apps/macos/StellarMac/UI/Shell/`
+- 영역: `shell_frame` — 코드 위치 `apps/macos/Stellar/UI/Shell/`
 - 기준 문서: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), Apple HIG(Windows, Toolbars, Sidebars, Split views, Keyboard, Accessibility, Materials, Writing)
 - WBS 대응은 통합 단계에서 정합니다. 관련 행은 XII.9.1(toolbar·sidebar·inspector 골격)과 가이드 10.4의 "창 상태 저장·복원"(전용 WBS 없음)입니다.
 

@@ -48,7 +48,7 @@ XVI.9.5의 첫 구현은 자체 JSON feed(schema 1)와 기본 브라우저 다�
      `dependencies`만 xtask cargo 직접 의존성과 대조하므로, cargo가 아닌 항목을 그 목록에 넣으면 `unused-approval`로
      실패합니다.
    - Zlib은 자동 허용 목록에 없어 `separate_approval: true`로 표시했습니다. 확인이 필요합니다.
-2. **Info.plist.** `apps/macos/StellarMac/Info.plist`(부분 plist)를 `INFOPLIST_FILE`로 지정하고, Xcode가 생성하는
+2. **Info.plist.** `apps/macos/Stellar/Info.plist`(부분 plist)를 `INFOPLIST_FILE`로 지정하고, Xcode가 생성하는
    key와 병합합니다(`GENERATE_INFOPLIST_FILE = YES` 유지). synchronized group의 resource에서는 제외합니다. key는 다음과
    같습니다.
 

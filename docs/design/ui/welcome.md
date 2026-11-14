@@ -1,7 +1,7 @@
 # 시작 창(Welcome)과 첫 실행 UI 명세
 
 - 상태: 초안(2026-11-14), 코어 연결 전(Stub 데이터)
-- 영역: `apps/macos/StellarMac/UI/Welcome/`
+- 영역: `apps/macos/Stellar/UI/Welcome/`
 - 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), Apple Human Interface Guidelines(이하 "HIG")
 - WBS 연결
   - New Project·Open·Clone 명령: 계획 XII.6.1~XII.6.3.

@@ -24,7 +24,7 @@ enum UpdateChannel: String, CaseIterable {
     }
 }
 
-/// 업데이트 구성 Info.plist key. 값은 `apps/macos/StellarMac/Info.plist`가 Xcode build setting
+/// 업데이트 구성 Info.plist key. 값은 `apps/macos/Stellar/Info.plist`가 Xcode build setting
 /// `STELLAR_UPDATE_FEED_STABLE`·`STELLAR_UPDATE_FEED_BETA`·`STELLAR_UPDATE_PUBLIC_ED_KEY`에서 채웁니다.
 enum UpdateInfoKey {
     static let stableFeed = "SUFeedURL"

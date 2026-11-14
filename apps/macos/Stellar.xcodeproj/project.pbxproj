@@ -32,8 +32,7 @@
 			exceptions = (
 				AA0000000000000000000014 /* Exceptions for "Stellar" folder in "Stellar" target */,
 			);
-			name = Stellar;
-			path = StellarMac;
+			path = Stellar;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -225,7 +224,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../crates/ffi/include";
-				INFOPLIST_FILE = StellarMac/Info.plist;
+				INFOPLIST_FILE = Stellar/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -247,7 +246,7 @@
 				STELLAR_UPDATE_FEED_STABLE = "https://raw.githubusercontent.com/taeyoon0137/stellar-releases/main/appcast/stable.xml";
 				STELLAR_UPDATE_PUBLIC_ED_KEY = "bNzmhRu95zcg9IcwH2rWI5FzHKrxY4pVe2+24VYO4Po=";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "StellarMac/StellarBridging.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "Stellar/StellarBridging.h";
 			};
 			name = Debug;
 		};
@@ -263,7 +262,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = YES;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../crates/ffi/include";
-				INFOPLIST_FILE = StellarMac/Info.plist;
+				INFOPLIST_FILE = Stellar/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMainNibFile = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -285,7 +284,7 @@
 				STELLAR_UPDATE_FEED_STABLE = "https://raw.githubusercontent.com/taeyoon0137/stellar-releases/main/appcast/stable.xml";
 				STELLAR_UPDATE_PUBLIC_ED_KEY = "bNzmhRu95zcg9IcwH2rWI5FzHKrxY4pVe2+24VYO4Po=";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "StellarMac/StellarBridging.h";
+				SWIFT_OBJC_BRIDGING_HEADER = "Stellar/StellarBridging.h";
 			};
 			name = Release;
 		};
