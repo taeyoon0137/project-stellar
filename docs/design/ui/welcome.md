@@ -56,7 +56,7 @@
 | 읽는 중(`loading`) | 작은 회전 표시 + "Loading Recent Projects…" | 없음 |
 | 빈 목록(`loaded([])`) | "No Recent Projects" + "Projects you create, open, or clone appear here." | 다음 동작은 같은 창 왼쪽 열의 세 버튼이 맡습니다. 빈 상태 안에 같은 버튼을 한 번 더 두지 않습니다(VoiceOver 중복 방지). |
 | 목록(`loaded([...])`) | 행 목록 | 4절 |
-| 실패(`failed(detail)`) | "Couldn’t Load Recent Projects" + 코어가 준 설명 + Try Again | Try Again → `reloadRecentProjects` |
+| 실패(`failed(reason)`) | "Couldn’t Load Recent Projects" + 이유 코드(`WelcomeFailureReason`)에서 셸이 만든 설명 + Try Again | Try Again → `reloadRecentProjects` |
 | 없어진 폴더(`isMissing`) | `questionmark.folder` 아이콘, 이름은 secondary 색, 경로 앞에 "Not found:" | 열기를 누르면 코어가 `projectMissing` 안내를 돌려줍니다. Show in Finder는 비활성 |
 
 선택 상태와 "없음" 상태는 색에만 기대지 않고 아이콘과 문구를 함께 바꿉니다(가이드 4.2).
@@ -68,7 +68,7 @@
 | 탐색 중(`checking`) | 안내 없음 | 켬 | 켬 |
 | 사용 가능(`available`) | 안내 없음 | 켬 | 켬 |
 | 없음(`notFound`) | ⚠ "Git Isn’t Installed", 설명, Terminal에서 실행할 명령 `xcode-select --install`(선택·복사 가능), Check Again, Locate Git… | 끔 + 도움말 "Requires Git…" | 켬 |
-| 쓸 수 없음(`unusable(detail)`) | ⚠ "Git Can’t Be Used", 코어가 준 설명, Check Again, Locate Git… | 끔 | 켬 |
+| 쓸 수 없음(`unusable(problem)`) | ⚠ "Git Can’t Be Used", 문제 코드(`WelcomeGitProblem`: 버전이 낮음·실행 파일 아님·실행 실패)에서 셸이 만든 설명, Check Again, Locate Git… | 끔 | 켬 |
 
 - 설치는 실행하지 않습니다. 명령은 보여 주고 복사만 하게 합니다. 셸은 시스템 Git을 직접 실행하지 않으므로, Git이 없는 Mac에서 시스템 설치 대화상자가 뜨게 하지 않습니다.
 - Locate Git…은 탐색 순서 1번(사용자 지정 경로)을 지정하는 경로입니다. 고른 경로를 `useGitExecutable`로 넘기고, 검사는 코어가 합니다.
@@ -78,6 +78,7 @@
 
 - 생성·열기·Clone 중에는 왼쪽 열에 "Cloning “이름”…" 같은 제목, 진행 막대(진행률을 모르면 불확정), Cancel(취소 가능할 때만)을 보이고 세 동작 버튼을 끕니다.
 - 제목에는 프로젝트 표시 이름만 넣고 Clone URL은 넣지 않습니다(아키텍처 §39: Git URL은 민감값).
+- 작업에는 코어가 발급한 식별자(`WelcomeActivity.id`)가 있고, Cancel은 지금 보이는 작업의 식별자로 `cancelActivity(id:)`를 보냅니다. 한 작업이 끝나고 다른 작업이 시작된 직후 늦게 도착한 취소가 새 작업을 취소하지 않도록, 코어는 식별자가 다르면 무시합니다.
 
 ### 3.4 안내(alert)
 
@@ -89,15 +90,15 @@
 | `projectMissing` | Project Not Found | — |
 | `folderAlreadyExists` | A Folder with This Name Already Exists | — |
 | `gitIdentityRequired` | Set Your Git Name and Email — 최초 커밋 전에 `user.name`·`user.email` 필요 | 아키텍처 §25.1, 가이드 7.2 |
-| `operationFailed(detail)` | The Operation Couldn’t Be Completed + 설명 | — |
+| `operationFailed(reason)` | The Operation Couldn’t Be Completed + 이유 코드에서 만든 설명(권한, 디스크 공간, 네트워크, 원격 인증, 원격 없음, Git 종료 상태, 그 밖의 오류 코드) | 아키텍처 §37.3(자격 증명은 시스템 Git) |
 
-문구는 셸이 종류 코드에서 만듭니다. 코어는 문구가 아니라 코드를 보냅니다(지역화 대비).
+문구는 셸이 종류·이유 코드에서 만듭니다. 코어는 문구가 아니라 코드를 보냅니다(지역화 대비). 경로, 버전, 종료 상태, 오류 식별자 같은 값만 그대로 끼워 넣습니다.
 
 ## 4. 상호작용
 
 | 동작 | 결과 명령 | 비고 |
 |---|---|---|
-| New Project… | `NSSavePanel`(제목 "New Project", 버튼 "Create", 이름표 "Project Name:")에서 상위 폴더와 새 폴더 이름을 받아 `createProject(parentDirectory:folderName:)` | 아키텍처 §25.1, 계획 XII.6.1. 이미 있는 이름은 패널에서 막습니다. |
+| New Project… | `NSSavePanel`(제목 "New Project", 버튼 "Create", 이름표 "Project Name:")에서 상위 폴더와 새 폴더 이름을 받아 `createProject(parentDirectory:folderName:)` | 아키텍처 §25.1, 계획 XII.6.1. 이미 있는 이름은 `panel(_:userEnteredFilename:confirmed:)`에서 Save를 누른 순간(`okFlag` true) 막고 패널 위 알림을 띄웁니다. AppKit은 이 메서드를 "바꾸기" 확인보다 먼저 부르고 nil이면 저장을 취소한 채 패널을 둡니다(NSOpenSavePanelDelegate). `validate`는 바꾸기 확인 뒤에 불리므로 두 번째 방어선입니다. |
 | Open Project… | `NSOpenPanel`(폴더만)에서 고른 폴더로 `openProject(directory:)` | 폴더 판정은 코어(계획 XII.6.2) |
 | Clone Project… | Clone sheet(5절) → `cloneProject(remoteURL:parentDirectory:folderName:)` | 계획 XII.6.3 |
 | 행 더블클릭, Return, Enter | `openRecent(id:)` | 빈 곳 더블클릭은 무시 |
@@ -106,7 +107,7 @@
 | Try Again | `reloadRecentProjects` | |
 | Check Again | `recheckGit` | |
 | Locate Git… | `NSOpenPanel` → `useGitExecutable(path:)` | |
-| Cancel(진행 중) | `cancelActivity` | 계획 XIV.1.4 |
+| Cancel(진행 중) | `cancelActivity(id:)` | 계획 XIV.1.4. 3.3절 |
 
 모든 패널은 창 sheet로 띄웁니다. 패널이 없는 상태(창 없음)에서는 명령을 보내지 않습니다.
 
@@ -241,8 +242,8 @@
 
 | 키 | 동작 | 범위 |
 |---|---|---|
-| ⌘N | New Project… | 시작 창 |
-| ⌘O | Open Project… | 시작 창 |
+| ⌘N | New Project…(File 메뉴 항목) | 앱 전체 |
+| ⌘O | Open Project…(File 메뉴 항목) | 앱 전체 |
 | Return, Enter | 선택한 최근 프로젝트 열기 | 최근 목록 |
 | Delete, Forward Delete | 최근 목록에서 빼기 | 최근 목록 |
 | ↑ ↓ | 행 이동 | 최근 목록(시스템 동작) |
@@ -251,20 +252,22 @@
 
 - 최근 목록이 있으면 창의 첫 포커스를 목록에 둡니다. 그 밖에는 사용자 조작 없이 포커스를 옮기지 않습니다(가이드 8.2).
 - Clone은 자주 쓰는 명령이 아니므로 별도 단축키를 두지 않습니다(가이드 8.1 "커스텀 단축키는 자주 쓰는 앱 고유 명령에만").
-- 버튼 action은 first responder action(`newStellarProject:`, `openStellarProject:`, `cloneStellarProject:`)으로도 받을 수 있게 했습니다. 통합 시 File 메뉴 항목을 같은 selector에 연결합니다.
+- ⌘N·⌘O는 File 메뉴 항목(Tools 영역 `ShellCommand.newProject`·`.openProject`)이 소유합니다. 시작 창 버튼에는 같은 단축키를 걸지 않습니다(메뉴와 중복 등록 방지, 가이드 8.1 "모든 명령은 메인 메뉴 항목으로 존재"). 메뉴 연결 전에는 시작 창에서 단축키가 동작하지 않습니다.
+- 버튼 action은 first responder action(`newStellarProject:`, `openStellarProject:`, `cloneStellarProject:`)으로도 받을 수 있고, `WelcomeViewController`가 `NSMenuItemValidation`으로 이 selector를 쓰는 메뉴 항목의 활성 여부를 버튼과 같은 판정(`WelcomeCommandAvailability`: Git 필요 여부, 진행 중 작업, 창에 붙은 sheet)으로 돌려줍니다. 지금 쓸 수 없는 항목은 숨기지 않고 비활성화합니다(가이드 8.1). Tools 영역 메뉴가 `performShellCommand:`로 보내는 경우에는 통합 어댑터가 `commandAvailability`를 그 영역 snapshot에 실어야 합니다.
 
 ## 8. 접근성(가이드 8장)
 
 - 모든 버튼은 제목이 있고, 아이콘만 있는 복사 버튼은 접근성 레이블과 도움말("Copy Command")을 둡니다.
-- 최근 목록 표의 레이블은 "Recent Projects"입니다. 각 행은 하위 뷰를 접근성 요소 하나로 묶고 "이름, 경로[, Not Found]"를 읽습니다.
+- 최근 목록 표의 레이블은 "Recent Projects"입니다. 각 행은 하위 뷰를 접근성 요소 하나로 묶고 "이름, 경로[, Not Found]"를 읽습니다. 행 셀은 접근성 자식을 내보내지 않고(`accessibilityChildren` 빈 배열) 하위 레이블도 요소에서 빼서, VoiceOver가 셀 안으로 들어가 같은 내용을 두 번 읽지 않게 합니다.
 - 행마다 접근성 사용자 동작(Open, Show in Finder, Remove from Recents)을 두어 문맥 메뉴 없이도 같은 동작을 할 수 있습니다.
 - Git 안내와 진행 표시는 제목을 레이블로 가진 group 요소이고, 안의 버튼은 그대로 접근할 수 있습니다.
-- 목록 상태 문구와 설치 sheet 제목이 바뀌면 VoiceOver에 값 변경을 알립니다.
+- 목록 상태 문구와 설치 sheet 단계가 바뀌면 `NSAccessibility.Notification.announcementRequested`(우선순위 high)로 알립니다. `.valueChanged`는 포커스가 없는 static text에서는 읽히지 않을 수 있기 때문입니다. sheet의 처음 표시는 시스템이 sheet를 읽으므로 알리지 않습니다.
+- 복사 버튼은 복사한 뒤 1.5초 동안 `checkmark` 기호와 "Copied" 도움말로 바뀌고 같은 문구를 알립니다. 접근성 레이블("Copy Command")은 바꾸지 않습니다.
 - 장식 아이콘(앱 아이콘, 행 아이콘, 안내 아이콘)은 접근성 트리에서 숨깁니다.
 
 ## 9. 외형과 시스템 설정
 
-- 색은 시스템 의미 색(label 계층, separator)만 씁니다. 하드코딩한 색, asset catalog 색, 이미지 자산이 없습니다(가이드 4.2). 경고 아이콘은 SF Symbol의 시스템 multicolor 렌더링을 씁니다.
+- 색은 시스템 의미 색(label 계층, separator)만 씁니다. 하드코딩한 색, asset catalog 색, 이미지 자산이 없습니다(가이드 4.2). 경고 아이콘은 SF Symbol의 시스템 multicolor 렌더링을 씁니다. 검사가 화면의 레이블 글자·배경 색, 이미지·버튼 tint, custom box 색이 모두 시스템 catalog 색인지 실행 중에 확인합니다(`NSColor(red:…)` 같은 색은 실패).
 - 글꼴은 텍스트 스타일(large title, title 2·3, headline, body, callout, subheadline)과 시스템 고정폭 글꼴(명령·경로)만 씁니다(가이드 4.1).
 - Light·Dark·대비 높이기는 표준 컨트롤과 의미 색이 자동으로 맞춥니다.
 - 투명도 줄이기: 이 영역은 직접 넣은 반투명 표면(`NSVisualEffectView`, `NSGlassEffectView`)이 없으므로 시스템 처리로 충분합니다. 검사가 이를 확인합니다.
@@ -280,6 +283,7 @@
 | `questionmark.folder` | 없어진 최근 프로젝트 행 |
 | `exclamationmark.triangle.fill` | Git 안내(multicolor) |
 | `doc.on.doc` | 명령 복사 버튼 |
+| `checkmark` | 복사 직후 피드백 |
 | `terminal` | `stellar` 명령 설치 sheet |
 
 모두 `NSImage(systemSymbolName:)`으로 이름만 참조합니다.
@@ -296,8 +300,9 @@ protocol WelcomeDataSource: AnyObject {
 }
 ```
 
-- `WelcomeSnapshot`: `generation`(세대 번호, 오래된 snapshot 폐기), `recentProjects`(loading / loaded / failed), `git`(checking / available / notFound / unusable), `activity?`, `notice?`, `defaultParentDirectory?`.
-- `WelcomeCommand`: `createProject`, `openProject`, `cloneProject`, `openRecent`, `removeRecent`, `reloadRecentProjects`, `recheckGit`, `useGitExecutable`, `cancelActivity`, `dismissNotice`.
+- `WelcomeSnapshot`: `generation`(세대 번호, 오래된 snapshot 폐기), `recentProjects`(loading / loaded / failed(`WelcomeFailureReason`)), `git`(checking / available / notFound / unusable(`WelcomeGitProblem`)), `activity?`(`id` 포함), `notice?`, `defaultParentDirectory?`.
+- `WelcomeFailureReason`: `permissionDenied(path)`, `notEnoughSpace`, `networkUnavailable`, `authenticationFailed`, `remoteNotFound`, `gitCommandFailed(exitStatus)`, `internalError(code)`. 코어 오류는 어댑터가 이 코드로 바꿉니다.
+- `WelcomeCommand`: `createProject`, `openProject`, `cloneProject`, `openRecent`, `removeRecent`, `reloadRecentProjects`, `recheckGit`, `useGitExecutable`, `cancelActivity(id:)`, `dismissNotice`.
 - 경로는 `String`(UTF-8)이라 ADR-0009의 `(ptr, len)` 문자열 규칙으로 옮기기 쉽습니다. 최근 항목 식별자는 코어가 발급한 불투명 문자열입니다.
 - 표본 구현 `WelcomeDataSourceStub`은 의도적 placeholder입니다(계획 1.2 규칙 6). 실제 프로젝트를 만들거나 열지 않고, 받은 명령을 기록하며 최근 목록 제거·안내 확인·작업 취소만 흉내 냅니다.
 
@@ -325,7 +330,8 @@ protocol WelcomeDataSource: AnyObject {
 - 시작 창 6개 상태(목록, 빈 목록, 읽는 중, 실패, Git 없음, Clone 진행 중)와 가장 긴 내용(쓸 수 없는 Git + 진행 중), Clone sheet, 설치 sheet 13개 단계를 Light, Dark, 대비 높이기 Light·Dark에서 레이아웃합니다.
 - 모호한 Auto Layout, 세로로 잘린 여러 줄 레이블, 직접 넣은 반투명 표면이 없는지 확인합니다(`NSScrollView`가 스스로 넣는 표면은 시스템 소유라 제외).
 - 왼쪽 열이 safe area 안에 잘리지 않고 들어가는지 확인합니다.
-- 접근성 레이블, 기본·취소 키, ⌘N·⌘O, Return·Delete 키 경로, 문맥 메뉴 활성 상태, 상태별 버튼 활성을 확인합니다.
+- 접근성 레이블, 행 접근성 자식 0, 기본·취소 키, 버튼에 메뉴와 겹치는 단축키 없음, 메뉴 활성 판정(표본·Git 없음·진행 중), Return·Delete 키 경로, 문맥 메뉴 활성 상태, 상태별 버튼 활성, 작업 식별자 취소(다른 식별자 무시), 이유 코드 문구, 저장 패널 같은 이름 판정, announcement(목록 상태·sheet 단계), 복사 피드백(검사용 이름 pasteboard)을 확인합니다.
+- 하드코딩 색: 레이아웃 검사와 함께 모든 외형에서 시스템 catalog 색이 아닌 색을 찾습니다.
 - 설치기를 메모리 파일 시스템으로 검사합니다(fixture 이름은 XXIV.5.3~XXIV.5.5 보고서와 같음).
   - 위치 결정 L1~L8: 기본 위치·폴더 생성, PATH에 있는 후보 우선, 공용 폴더 미선택, 쓸 수 있는 위치 없음, 쓸 수 없는 첫 후보 건너뛰기, App Translocation·읽기 전용 볼륨, helper 없음.
   - 이름 결정·설치·제거 I1, N1~N10, R1~R5, E1: 새 설치·멱등·제거(되돌리기 후 설치 항목 0), 설치 위치의 남의 파일·링크·폴더, PATH 앞쪽·순서 모르는 폴더의 다른 `stellar`, PATH 뒤쪽 프로그램 알림, 두 이름 모두 막힘(설치 0), 자기 링크 유지, 다른 앱 helper 링크, 설치 뒤 가림, 오래된 링크 다시 연결, 확인과 실행·교체·제거 사이 경합, 파일 시스템 오류 전달. 판정만으로 변경 0(`mutationCount`).
@@ -369,4 +375,5 @@ protocol WelcomeDataSource: AnyObject {
 - dangling 소유 링크(번들이 없는 `<이름>.app/Contents/Helpers/stellar`)는 번들 식별자를 확인할 수 없으므로 모양만으로 Stellar 소유로 봅니다. 다시 연결·제거 대상이 되며, 다시 연결은 동의 화면에서 이전 대상을 보여 줍니다.
 - 설치 위치를 사용자가 직접 고르는 기능은 없습니다.
 - 실제 화면 표시(키 창 기본 버튼 강조, sheet 표시·닫힘, 실제 VoiceOver 읽기)는 화면 밖 검사로 확인하지 않았습니다. 앱 통합 후 실제 앱에서 확인해야 합니다(XXIV.5.6 수용 기준).
-- 새 프로젝트 패널은 이미 있는 이름을 `panel(_:validate:)`에서 막습니다. 시스템이 띄우는 "바꾸기" 확인 대화상자와 이 검사의 순서는 실제 앱에서 확인하지 않았습니다. 코어도 대상 폴더가 있으면 `folderAlreadyExists`로 거부해야 합니다.
+- 새 프로젝트 패널의 같은 이름 차단은 AppKit 문서의 호출 순서(`userEnteredFilename`이 바꾸기 확인보다 먼저)에 기대며, 실제 패널에서 바꾸기 확인이 뜨지 않는지는 앱 통합 후 확인해야 합니다. 코어도 대상 폴더가 있으면 `folderAlreadyExists`로 거부해야 합니다.
+- 실제 VoiceOver가 announcement를 읽는지는 확인하지 않았습니다(검사는 요청을 보냈는지만 봄).

@@ -139,6 +139,54 @@ enum WelcomeStrings {
     )
     static let operationFailedTitle = String(localized: "The Operation Couldn’t Be Completed", comment: "Alert title")
 
+    // MARK: 이유 코드 → 문구(코어는 문구가 아니라 코드를 보냄, 지역화 대비)
+
+    static func failureReason(_ reason: WelcomeFailureReason) -> String {
+        switch reason {
+        case .permissionDenied(let path):
+            return String(
+                localized: "Stellar doesn’t have permission to use “\(path)”.",
+                comment: "Failure reason: permission denied"
+            )
+        case .notEnoughSpace:
+            return String(localized: "There isn’t enough free space on the disk.", comment: "Failure reason")
+        case .networkUnavailable:
+            return String(
+                localized: "Stellar couldn’t connect to the remote repository. Check your network connection.",
+                comment: "Failure reason"
+            )
+        case .authenticationFailed:
+            return String(
+                localized: "The remote repository requires you to sign in. Set up your Git credentials, then try again.",
+                comment: "Failure reason"
+            )
+        case .remoteNotFound:
+            return String(localized: "The remote repository wasn’t found. Check the URL.", comment: "Failure reason")
+        case .gitCommandFailed(let status):
+            return String(localized: "Git stopped with exit status \(status).", comment: "Failure reason")
+        case .internalError(let code):
+            return String(localized: "An unexpected error occurred. (Error code: \(code))", comment: "Failure reason")
+        }
+    }
+
+    static func gitProblem(_ problem: WelcomeGitProblem) -> String {
+        switch problem {
+        case .versionTooOld(let found, let minimum):
+            return String(
+                localized: "Git \(found) is too old. Stellar needs Git \(minimum) or later.",
+                comment: "Git problem"
+            )
+        case .notExecutable(let path):
+            return String(localized: "“\(path)” isn’t a program Stellar can run.", comment: "Git problem")
+        case .launchFailed:
+            return String(localized: "Git couldn’t be started.", comment: "Git problem")
+        }
+    }
+
+    // MARK: 접근성 알림·피드백
+
+    static let copied = String(localized: "Copied", comment: "Feedback after copying a command")
+
     // MARK: `stellar` 명령 설치 sheet(ADR-0005 §2·§7, 계획 XXIV.5.6)
 
     /// 앱 메뉴 항목(관리 진입점). 추가 입력이 필요하므로 말줄임표를 붙입니다(HIG The menu bar).

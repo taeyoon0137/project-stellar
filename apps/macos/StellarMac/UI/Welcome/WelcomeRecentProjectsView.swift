@@ -64,6 +64,14 @@ final class WelcomeRecentProjectCellView: NSTableCellView {
 
         setAccessibilityElement(true)
         setAccessibilityRole(.cell)
+        // 행이 요소 하나로 이름·경로를 읽으므로, 하위 레이블은 트리에서 숨겨 VoiceOver가 같은 내용을 두 번 읽지 않게 합니다.
+        nameLabel.setAccessibilityElement(false)
+        pathLabel.setAccessibilityElement(false)
+    }
+
+    /// 하위 뷰를 접근성 자식으로 내보내지 않습니다. 내용은 이 요소의 레이블 하나로 읽힙니다(가이드 8.3).
+    override func accessibilityChildren() -> [Any]? {
+        []
     }
 
     @available(*, unavailable)
@@ -216,18 +224,18 @@ final class WelcomeRecentProjectsView: NSView, NSTableViewDataSource, NSTableVie
         case .loaded(let list):
             showsTable = true
             updateProjects(list)
-        case .failed(let detail):
+        case .failed(let reason):
             stateTitleLabel.stringValue = WelcomeStrings.recentsFailed
-            stateMessageLabel.stringValue = detail
-            stateMessageLabel.isHidden = detail.isEmpty
+            stateMessageLabel.stringValue = WelcomeStrings.failureReason(reason)
+            stateMessageLabel.isHidden = false
             retryButton.isHidden = false
             updateProjects([])
         }
         scrollView.isHidden = !showsTable
         stateStack.isHidden = showsTable
-        if previousState != newState, !showsTable {
-            // 상태 문구가 바뀌면 VoiceOver에 알립니다.
-            NSAccessibility.post(element: stateTitleLabel, notification: .valueChanged)
+        if previousState != newState, !showsTable, window != nil {
+            // 상태 문구가 바뀌면 포커스와 관계없이 읽히도록 announcement를 요청합니다(AppKit NSAccessibility).
+            WelcomeAccessibility.announce(stateTitleLabel.stringValue)
         }
     }
 

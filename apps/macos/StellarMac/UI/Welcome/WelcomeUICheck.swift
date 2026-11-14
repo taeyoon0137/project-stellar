@@ -27,6 +27,7 @@ enum WelcomeUICheck {
         checkNoticeAlerts(checker)
         checkCloneSheet(checker)
         checkInstallSheet(checker)
+        checkAccessibilityFeedback(checker)
 
         // 실제 앱 번들 상태는 환경마다 다르므로 보고만 합니다(XXIV.5.1 전 빌드에는 helper가 없음).
         let realStatus = StellarCommandInstaller.forRunningApp().status()
@@ -62,7 +63,26 @@ enum WelcomeUICheck {
         .aqua, .darkAqua, .accessibilityHighContrastAqua, .accessibilityHighContrastDarkAqua,
     ]
 
-    /// 레이아웃 문제(모호한 제약, 세로로 잘린 여러 줄 레이블, 직접 넣은 반투명 표면)를 찾습니다.
+    /// 컨트롤에 지정된 색. 시스템 의미 색(catalog 색)이 아니면 하드코딩 색입니다(가이드 4.2).
+    static func assignedColors(of view: NSView) -> [(String, NSColor)] {
+        var colors: [(String, NSColor)] = []
+        if let field = view as? NSTextField {
+            if let color = field.textColor { colors.append(("textColor", color)) }
+            if field.drawsBackground, let color = field.backgroundColor { colors.append(("backgroundColor", color)) }
+        }
+        if let image = view as? NSImageView, let color = image.contentTintColor { colors.append(("contentTintColor", color)) }
+        if let button = view as? NSButton {
+            if let color = button.contentTintColor { colors.append(("contentTintColor", color)) }
+            if let color = button.bezelColor { colors.append(("bezelColor", color)) }
+        }
+        if let box = view as? NSBox, box.boxType == .custom {
+            colors.append(("fillColor", box.fillColor))
+            colors.append(("borderColor", box.borderColor))
+        }
+        return colors
+    }
+
+    /// 레이아웃 문제(모호한 제약, 세로로 잘린 여러 줄 레이블, 직접 넣은 반투명 표면, 하드코딩 색)를 찾습니다.
     static func layoutProblems(in root: NSView, context: String) -> [String] {
         root.layoutSubtreeIfNeeded()
         var problems: [String] = []
@@ -90,6 +110,9 @@ enum WelcomeUICheck {
                 if label.frame.height + 0.5 < needed {
                     problems.append("\(context): 잘린 레이블 '\(label.stringValue.prefix(24))'")
                 }
+            }
+            for (name, color) in assignedColors(of: view) where color.type != .catalog {
+                problems.append("\(context): 하드코딩 색 \(type(of: view)).\(name) \(color)")
             }
             for subview in view.subviews { visit(subview) }
         }
@@ -830,18 +853,23 @@ enum WelcomeUICheck {
             checker.expect(!button.title.isEmpty && button.isEnabled, "동작 버튼 '\(button.title)' 상태 불일치")
             checker.expect(button.image != nil, "동작 버튼 '\(button.title)' SF Symbol 없음")
         }
+        // ⌘N·⌘O는 File 메뉴가 소유하므로 버튼에 같은 단축키를 걸지 않습니다(메뉴와 중복 방지).
         checker.expect(
-            welcome.newProjectButton.keyEquivalent == "n" && welcome.newProjectButton.keyEquivalentModifierMask == .command,
-            "새 프로젝트 단축키 불일치")
+            [welcome.newProjectButton, welcome.openProjectButton, welcome.cloneProjectButton].allSatisfy(\.keyEquivalent.isEmpty),
+            "동작 버튼에 메뉴와 겹치는 단축키가 있음")
         checker.expect(
-            welcome.openProjectButton.keyEquivalent == "o" && welcome.openProjectButton.keyEquivalentModifierMask == .command,
-            "열기 단축키 불일치")
+            menuValidation(welcome) == WelcomeCommandAvailability(newProject: true, openProject: true, cloneProject: true),
+            "메뉴 활성 판정 불일치(sample): \(menuValidation(welcome))")
         checker.expect(welcome.gitNoticeView.isHidden && welcome.activityView.isHidden, "안내·진행 표시가 보임")
         checker.expect(welcome.versionLabel.stringValue.contains("1.2.3"), "버전 표시 불일치")
 
         let first = table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? WelcomeRecentProjectCellView
         let missing = table.view(atColumn: 0, row: 3, makeIfNecessary: true) as? WelcomeRecentProjectCellView
         checker.expect(first?.accessibilityLabel()?.contains("Design System") == true, "행 접근성 레이블 없음")
+        checker.expect(
+            first?.accessibilityChildren()?.isEmpty == true && first?.nameLabel.isAccessibilityElement() == false
+                && first?.pathLabel.isAccessibilityElement() == false,
+            "행 하위 레이블이 접근성 트리에 남아 중복으로 읽힘")
         checker.expect(first?.pathLabel.stringValue.hasPrefix("~/") == true, "경로가 ~로 줄지 않음: \(first?.pathLabel.stringValue ?? "")")
         checker.expect(
             missing?.accessibilityLabel()?.contains(WelcomeStrings.notFound) == true, "없는 프로젝트 상태가 레이블에 없음")
@@ -938,6 +966,9 @@ enum WelcomeUICheck {
                     && welcome.openProjectButton.isEnabled,
                 "Git 없음 버튼 활성 상태 불일치")
             checker.expect(welcome.newProjectButton.toolTip == WelcomeStrings.requiresGit, "비활성 이유 도움말 없음")
+            checker.expect(
+                menuValidation(welcome) == WelcomeCommandAvailability(newProject: false, openProject: true, cloneProject: false),
+                "메뉴 활성 판정 불일치(Git 없음): \(menuValidation(welcome))")
             expectCleanLayout(checker, window: window, context: "welcome/gitMissing")
             checker.expect(actionsColumnFits(welcome), "동작 열이 잘림(gitMissing)")
             notice.checkAgainButton.performClick(nil)
@@ -945,11 +976,18 @@ enum WelcomeUICheck {
 
             // 가장 긴 경우: Git 없음 + 진행 중 + 쓸 수 없는 Git 설명.
             stub.replaceSnapshot {
-                $0.git = .unusable(detail: "Git 2.20 is too old. Stellar needs a newer version of Git to read project status.")
-                $0.activity = WelcomeActivity(kind: .opening, projectName: "A Project With A Long Name", fractionCompleted: nil, isCancellable: true)
+                $0.git = .unusable(.versionTooOld(found: "2.20.1", minimum: "2.40"))
+                $0.activity = WelcomeActivity(
+                    id: 3, kind: .opening, projectName: "A Project With A Long Name", fractionCompleted: nil, isCancellable: true)
             }
             welcome.renderNow()
             checker.expect(notice.commandRow.isHidden, "쓸 수 없는 Git에 설치 명령을 보여 줌")
+            checker.expect(
+                notice.messageLabel.stringValue == WelcomeStrings.gitProblem(.versionTooOld(found: "2.20.1", minimum: "2.40")),
+                "Git 문제 문구를 셸이 만들지 않음")
+            checker.expect(
+                menuValidation(welcome) == WelcomeCommandAvailability(newProject: false, openProject: false, cloneProject: false),
+                "메뉴 활성 판정 불일치(진행 중)")
             checker.expect(!welcome.openProjectButton.isEnabled, "진행 중에 열기를 막지 않음")
             expectCleanLayout(checker, window: window, context: "welcome/gitUnusable+activity")
             checker.expect(actionsColumnFits(welcome), "동작 열이 잘림(최대 내용)")
@@ -970,8 +1008,12 @@ enum WelcomeUICheck {
                 ![welcome.newProjectButton, welcome.openProjectButton, welcome.cloneProjectButton].contains(where: \.isEnabled),
                 "진행 중 동작 버튼이 켜져 있음")
             expectCleanLayout(checker, window: window, context: "welcome/cloning")
+            // 끝난 작업의 늦은 취소(다른 식별자)는 현재 작업을 취소하지 않습니다.
+            stub.send(.cancelActivity(id: 999))
+            welcome.renderNow()
+            checker.expect(!activity.isHidden, "다른 작업 식별자의 취소가 현재 작업을 취소함")
             activity.cancelButton.performClick(nil)
-            checker.expect(stub.sentCommands.last == .cancelActivity, "취소 명령 없음")
+            checker.expect(stub.sentCommands.last == .cancelActivity(id: 7), "취소 명령에 작업 식별자가 없음")
             welcome.renderNow()
             checker.expect(activity.isHidden && welcome.openProjectButton.isEnabled, "취소 후 상태 불일치")
             window.close()
@@ -984,7 +1026,8 @@ enum WelcomeUICheck {
             .projectMissing(path: "/Users/stub/Projects/gone"),
             .folderAlreadyExists(path: "/Users/stub/Projects/design-system"),
             .gitIdentityRequired,
-            .operationFailed(detail: "Clone failed."),
+            .operationFailed(.networkUnavailable),
+            .operationFailed(.internalError(code: "E_CLONE_OPEN")),
         ]
         for (index, kind) in kinds.enumerated() {
             let alert = WelcomeViewController.makeAlert(for: WelcomeNotice(id: UInt64(index), kind: kind))
@@ -995,6 +1038,78 @@ enum WelcomeUICheck {
         let notStellar = WelcomeViewController.makeAlert(
             for: WelcomeNotice(id: 9, kind: .notStellarProject(path: "/Users/stub/Projects/plain-repo")))
         checker.expect(notStellar.informativeText.contains("stellar.yaml"), "stellar.yaml 안내 없음")
+        let failed = WelcomeViewController.makeAlert(for: WelcomeNotice(id: 10, kind: .operationFailed(.remoteNotFound)))
+        checker.expect(failed.informativeText == WelcomeStrings.failureReason(.remoteNotFound), "실패 문구를 셸이 만들지 않음")
+
+        // 새 프로젝트 저장 패널: 같은 이름은 바꾸기 확인 전에(userEnteredFilename, okFlag true) 막습니다.
+        let parent = URL(fileURLWithPath: "/Users/stub/Projects", isDirectory: true)
+        checker.expect(
+            WelcomeViewController.folderNameIsTaken("design-system", in: parent, fileExists: { $0 == "/Users/stub/Projects/design-system" })
+                && !WelcomeViewController.folderNameIsTaken("new-project", in: parent, fileExists: { _ in false })
+                && !WelcomeViewController.folderNameIsTaken("x", in: nil, fileExists: { _ in true }),
+            "같은 이름 판정 불일치")
+        if let fixture = makeWelcome(.empty) {
+            checker.expect(
+                fixture.welcome.panel(NSObject(), userEnteredFilename: "typing", confirmed: false) == "typing",
+                "입력 중(okFlag false)에 파일 이름을 막음")
+            fixture.window.close()
+        }
+    }
+
+    /// 메뉴 항목 활성 판정(`validateMenuItem`)을 세 selector로 읽습니다.
+    static func menuValidation(_ welcome: WelcomeViewController) -> WelcomeCommandAvailability {
+        func enabled(_ action: Selector) -> Bool {
+            welcome.validateMenuItem(NSMenuItem(title: "", action: action, keyEquivalent: ""))
+        }
+        return WelcomeCommandAvailability(
+            newProject: enabled(#selector(WelcomeViewController.newStellarProject(_:))),
+            openProject: enabled(#selector(WelcomeViewController.openStellarProject(_:))),
+            cloneProject: enabled(#selector(WelcomeViewController.cloneStellarProject(_:))))
+    }
+
+    /// 접근성 announcement와 복사 피드백(가이드 8.3, 8.1).
+    static func checkAccessibilityFeedback(_ checker: Checker) {
+        var announced: [String] = []
+        WelcomeAccessibility.announcementObserver = { announced.append($0) }
+        defer { WelcomeAccessibility.announcementObserver = nil }
+
+        // 최근 목록 상태 문구 변화 → announcement.
+        if let fixture = makeWelcome(.loading) {
+            fixture.welcome.recentsView.apply(.failed(.notEnoughSpace))
+            checker.expect(announced.last == WelcomeStrings.recentsFailed, "목록 상태 변화를 알리지 않음: \(announced)")
+            checker.expect(
+                fixture.welcome.recentsView.stateMessageLabel.stringValue == WelcomeStrings.failureReason(.notEnoughSpace),
+                "목록 실패 문구를 셸이 만들지 않음")
+            fixture.welcome.recentsView.apply(.loaded([]))
+            fixture.window.close()
+        }
+
+        // 설치 sheet 단계 변화 → announcement(처음 표시는 sheet가 읽히므로 제외).
+        let installer = makeInstaller(makeFileSystem())
+        let sheet = WelcomeCommandInstallSheetController(
+            installer: installer, status: .helperUnavailable(helperPath: installer.helperPath))
+        let window = offscreenWindow(for: sheet)
+        let before = announced.count
+        sheet.show(.working(removing: true))
+        checker.expect(announced.count == before + 1 && announced.last == WelcomeStrings.removing, "sheet 단계 변화를 알리지 않음")
+        window.close()
+
+        // 복사 버튼: 클립보드(검사용 이름 pasteboard)에 쓰고, 체크 표시·도움말·알림으로 피드백한 뒤 되돌아옵니다.
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("xyz.taeyoon.stellar.welcome-ui-check.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        let button = WelcomeCopyButton(accessibilityLabel: WelcomeStrings.copyCommand)
+        button.pasteboard = pasteboard
+        button.textToCopy = "export PATH=\"$HOME/.local/bin:$PATH\""
+        button.performClick(nil)
+        checker.expect(pasteboard.string(forType: .string) == button.textToCopy, "복사한 내용 불일치")
+        checker.expect(
+            button.isShowingCopiedFeedback && button.toolTip == WelcomeStrings.copied && announced.last == WelcomeStrings.copied,
+            "복사 피드백 없음")
+        checker.expect(button.accessibilityLabel() == WelcomeStrings.copyCommand, "복사 버튼 접근성 레이블이 바뀜")
+        checker.expect(
+            spin(until: { !button.isShowingCopiedFeedback }, timeout: WelcomeCopyButton.feedbackDuration + 2)
+                && button.toolTip == WelcomeStrings.copyCommand,
+            "복사 피드백이 되돌아오지 않음")
     }
 
     // MARK: Clone sheet

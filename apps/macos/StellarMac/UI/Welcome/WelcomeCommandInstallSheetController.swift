@@ -55,6 +55,8 @@ final class WelcomeCommandInstallSheetController: NSViewController {
     private var responded = false
     private var primaryAction: (() -> Void)?
     private var secondaryAction: (() -> Void)?
+    private var hasRendered = false
+    private var lastAnnouncedTitle = ""
 
     /// `status`가 nil이면 확인 단계로 시작하고 곧바로 메인 스레드 밖에서 상태를 확인합니다.
     init(installer: StellarCommandInstaller, status: StellarCommandInstallStatus?) {
@@ -311,10 +313,15 @@ final class WelcomeCommandInstallSheetController: NSViewController {
         // 보조 버튼이 없는 화면의 Escape는 `cancelOperation(_:)`이 처리합니다.
         secondaryButton.keyEquivalent = secondary == nil ? "" : "\u{1b}"
 
-        // sheet 창 제목과 접근성 레이블을 현재 단계 제목으로 맞춥니다.
+        // sheet 창 제목과 접근성 레이블을 현재 단계 제목으로 맞춥니다. 처음 표시는 sheet가 읽히므로, 이후 단계가
+        // 바뀔 때만 announcement를 요청합니다(포커스가 버튼에 있어도 읽힘).
         self.title = title
         view.setAccessibilityLabel(title)
-        NSAccessibility.post(element: titleLabel, notification: .valueChanged)
+        if hasRendered, title != lastAnnouncedTitle {
+            WelcomeAccessibility.announce(message.isEmpty ? title : title + ". " + message)
+        }
+        lastAnnouncedTitle = title
+        hasRendered = true
     }
 
     private func abbreviated(_ path: String) -> String {

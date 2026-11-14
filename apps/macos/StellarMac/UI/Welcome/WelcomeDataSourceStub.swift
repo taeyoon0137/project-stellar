@@ -48,11 +48,12 @@ final class WelcomeDataSourceStub: WelcomeDataSource {
             snapshot.recentProjects = .loading
             snapshot.git = .checking
         case .failed:
-            snapshot.recentProjects = .failed(detail: "The recent projects list couldn't be read.")
+            snapshot.recentProjects = .failed(.permissionDenied(path: "~/Library/Application Support/Stellar"))
         case .gitMissing:
             snapshot.git = .notFound
         case .cloning:
             snapshot.activity = WelcomeActivity(
+                id: 7,
                 kind: .cloning,
                 projectName: "design-system",
                 fractionCompleted: 0.4,
@@ -89,7 +90,9 @@ final class WelcomeDataSourceStub: WelcomeDataSource {
         case .reloadRecentProjects:
             let projects = WelcomeDataSourceStub.sampleProjects(homeDirectory: NSHomeDirectory())
             replaceSnapshot { $0.recentProjects = .loaded(projects) }
-        case .cancelActivity:
+        case .cancelActivity(let id):
+            // 끝난 작업의 늦은 취소는 무시합니다(식별자 비교).
+            guard snapshot.activity?.id == id else { return }
             replaceSnapshot { $0.activity = nil }
         case .dismissNotice(let id):
             guard snapshot.notice?.id == id else { return }

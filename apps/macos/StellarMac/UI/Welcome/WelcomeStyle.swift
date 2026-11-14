@@ -123,12 +123,42 @@ enum WelcomeViews {
     }
 }
 
+/// VoiceOver 알림. 상태 문구처럼 포커스가 없는 요소의 변화는 `.valueChanged`로는 읽히지 않을 수 있으므로
+/// 앱 요소에 `.announcementRequested`를 보냅니다(AppKit NSAccessibility.Notification.announcementRequested).
+enum WelcomeAccessibility {
+    /// 검사용 관찰자. 알림 문구를 받습니다.
+    static var announcementObserver: ((String) -> Void)?
+
+    static func announce(_ text: String) {
+        guard !text.isEmpty else { return }
+        announcementObserver?(text)
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: text,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ]
+        )
+    }
+}
+
 /// 글자를 클립보드에 복사하는 아이콘 버튼. 아이콘만 있으므로 레이블과 도움말을 반드시 붙입니다(가이드 8.1, 8.3).
+/// 복사하면 잠시 체크 표시와 "Copied" 도움말로 바꾸고 VoiceOver에도 알립니다.
 final class WelcomeCopyButton: NSButton {
+    static let feedbackDuration: TimeInterval = 1.5
+
     var textToCopy = ""
+    /// 검사에서 일반 클립보드 대신 쓸 pasteboard.
+    var pasteboard: NSPasteboard = .general
+    /// 복사 직후 피드백을 보이는 중인지.
+    private(set) var isShowingCopiedFeedback = false
+    private var label = ""
+    private var feedbackToken = 0
 
     convenience init(accessibilityLabel label: String) {
         self.init(frame: .zero)
+        self.label = label
         image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: label)
         imagePosition = .imageOnly
         bezelStyle = .push
@@ -142,9 +172,24 @@ final class WelcomeCopyButton: NSButton {
     }
 
     @objc private func copyText(_ sender: Any?) {
-        let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(textToCopy, forType: .string)
+        showCopiedFeedback()
+    }
+
+    private func showCopiedFeedback() {
+        feedbackToken += 1
+        let token = feedbackToken
+        isShowingCopiedFeedback = true
+        image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: WelcomeStrings.copied)
+        toolTip = WelcomeStrings.copied
+        WelcomeAccessibility.announce(WelcomeStrings.copied)
+        DispatchQueue.main.asyncAfter(deadline: .now() + WelcomeCopyButton.feedbackDuration) { [weak self] in
+            guard let self, token == self.feedbackToken else { return }
+            self.isShowingCopiedFeedback = false
+            self.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: self.label)
+            self.toolTip = self.label
+        }
     }
 }
 

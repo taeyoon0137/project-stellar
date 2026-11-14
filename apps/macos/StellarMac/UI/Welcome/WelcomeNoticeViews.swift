@@ -72,9 +72,9 @@ final class WelcomeGitNoticeView: NSView {
             titleLabel.stringValue = WelcomeStrings.gitNotFoundTitle
             messageLabel.stringValue = WelcomeStrings.gitNotFoundMessage
             commandRow.isHidden = false
-        case .unusable(let detail):
+        case .unusable(let problem):
             titleLabel.stringValue = WelcomeStrings.gitUnusableTitle
-            messageLabel.stringValue = detail
+            messageLabel.stringValue = WelcomeStrings.gitProblem(problem)
             commandRow.isHidden = true
         }
         setAccessibilityLabel(titleLabel.stringValue)
