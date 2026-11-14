@@ -215,3 +215,10 @@ Escape·창 포커스 상실로 미리보기를 취소하면 문서 변경이 �
 호스트 검사 `scripts/macos/canvas-move-check.py`는 CLI로 부모 2배 변환과 자식 Frame의 위치를 저장하고,
 실제 기본 창에 합성 AppKit 입력을 보냅니다. 50% 배율에서의 이동량, 미리보기·Escape 원복 픽셀,
 다른 창 상태, Undo·Redo와 Save Now 뒤 재열기 좌표를 확인합니다.
+
+### 자식 Free Frame 생성
+
+`stellar_window_session_insert_frame`은 누른 부모 Frame의 ID, 표시한 View·revision과 부모 local rect를
+받습니다. document thread가 창의 실제 신뢰·View·revision·부모 잠금 및 지원하는 자유 배치 여부를 확인하고,
+마지막 형제 뒤에 `InsertNode`를 기록합니다. 이전 선택과 생성된 Frame의 선택을 같은 history entry에 보관하므로
+Undo 한 번은 node와 선택을 함께 되돌리고 Redo는 같은 ID를 복원합니다. 화면의 드래그 미리보기는 저장되지 않습니다.

@@ -240,6 +240,15 @@ impl DocumentModel {
             .collect()
     }
 
+    /// 마지막 직계 자식 뒤에 삽입할 순서 키. 전체 형제 목록을 복사하지 않습니다.
+    pub fn next_child_order_key(&self, parent: StableId) -> OrderKey {
+        let last = self
+            .children
+            .get(&parent)
+            .and_then(|children| children.last());
+        OrderKey::between(last.map(|(key, _)| key), None)
+    }
+
     /// 부모의 직계 자식 중 같은 OrderKey가 있는지 확인합니다.
     pub fn has_child_order_key(&self, parent: StableId, key: &OrderKey) -> bool {
         self.children.get(&parent).is_some_and(|children| {

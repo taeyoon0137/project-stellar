@@ -23,26 +23,33 @@ impl AppRuntime {
         delta: Vec2,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let sessions = ctx.app_sessions();
-            let entry = sessions
-                .windows
-                .get(&session)
-                .ok_or_else(|| unknown_window(session))?;
-            let trusted = sessions
-                .projects
-                .get(&entry.project)
-                .is_some_and(|p| p.trust == TrustStatus::Trusted);
-            if !trusted {
-                return Err(Failure::new(
-                    RequestFailure::TrustUnavailable,
-                    "Frame 이동에 프로젝트 신뢰가 필요합니다",
-                ));
-            }
-            let window = window_mut(ctx, session)?;
+            let window = trusted_canvas_window(ctx, session)?;
             move_selected(window, request, view, revision, node, delta)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
+}
+
+pub(super) fn trusted_canvas_window(
+    ctx: &mut DocumentContext,
+    session: WindowSessionHandle,
+) -> Result<&mut ProjectWindowSession, Failure> {
+    let sessions = ctx.app_sessions();
+    let entry = sessions
+        .windows
+        .get(&session)
+        .ok_or_else(|| unknown_window(session))?;
+    let trusted = sessions
+        .projects
+        .get(&entry.project)
+        .is_some_and(|p| p.trust == TrustStatus::Trusted);
+    if !trusted {
+        return Err(Failure::new(
+            RequestFailure::TrustUnavailable,
+            "Frame 편집에 프로젝트 신뢰가 필요합니다",
+        ));
+    }
+    window_mut(ctx, session)
 }
 
 fn move_selected(
@@ -66,40 +73,7 @@ fn move_selected(
         return Err(stale());
     }
     let model = window.document().ok_or_else(stale)?.model();
-    let root = model
-        .definition()
-        .pages
-        .iter()
-        .flat_map(|page| &page.views)
-        .find(|v| v.id == view)
-        .ok_or_else(stale)?
-        .root_frame;
-    let Some(NodePayload::Frame(target)) = model.payload(node) else {
-        return Err(stale());
-    };
-    let mut current = node;
-    loop {
-        let fields = model
-            .runtime_id(current)
-            .and_then(|id| model.columns().get(id))
-            .ok_or_else(stale)?;
-        if !fields.visible || fields.locked || model.modifier_stack(current).is_some() {
-            return Err(stale());
-        }
-        match model.payload(current) {
-            Some(NodePayload::Frame(frame))
-                if frame.layout_mode.is_none() && !matches!(frame.clipping, Clipping::Path(_)) => {}
-            Some(NodePayload::Fragment(_)) => {}
-            _ => return Err(stale()),
-        }
-        if current == root {
-            break;
-        }
-        current = fields
-            .parent
-            .and_then(|id| model.stable_id(id))
-            .ok_or_else(stale)?;
-    }
+    let target = editable_frame(model, view, node).ok_or_else(stale)?;
     let (a, b, c, d, x, y) = target.transform.components();
     let transform =
         Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).map_err(|_| stale())?;
@@ -117,8 +91,45 @@ fn move_selected(
     Ok(())
 }
 
+pub(super) fn editable_frame(
+    model: &stellar_document::model::DocumentModel,
+    view: StableId,
+    node: StableId,
+) -> Option<&stellar_document::frame::FramePayload> {
+    let root = model
+        .definition()
+        .pages
+        .iter()
+        .flat_map(|page| &page.views)
+        .find(|v| v.id == view)?
+        .root_frame;
+    let Some(NodePayload::Frame(target)) = model.payload(node) else {
+        return None;
+    };
+    let mut current = node;
+    loop {
+        let fields = model
+            .runtime_id(current)
+            .and_then(|id| model.columns().get(id))?;
+        if !fields.visible || fields.locked || model.modifier_stack(current).is_some() {
+            return None;
+        }
+        match model.payload(current) {
+            Some(NodePayload::Frame(frame))
+                if frame.layout_mode.is_none() && !matches!(frame.clipping, Clipping::Path(_)) => {}
+            Some(NodePayload::Fragment(_)) => {}
+            _ => return None,
+        }
+        if current == root {
+            break;
+        }
+        current = fields.parent.and_then(|id| model.stable_id(id))?;
+    }
+    Some(target)
+}
+
 /// 요청 순번은 runtime 안에서만 유일하므로 창의 영속 ID와 함께 식별합니다.
-fn command_id(window: WindowSessionId, request: RequestId) -> CommandId {
+pub(super) fn command_id(window: WindowSessionId, request: RequestId) -> CommandId {
     let mut key = [0; 24];
     key[..16].copy_from_slice(&window.stable_id().to_bytes());
     key[16..].copy_from_slice(&request.0.to_le_bytes());

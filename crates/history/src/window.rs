@@ -104,6 +104,21 @@ impl WindowHistory {
         Ok(changes)
     }
 
+    /// 삽입 transaction에 새 선택을 함께 기록해 한 번의 undo/redo로 둘을 복원합니다.
+    pub fn record_document_and_select(
+        &mut self,
+        doc: &mut DocumentState,
+        transaction: &CommandTransaction,
+        selection: &SetSelection,
+    ) -> Result<ChangeSet, HistoryError> {
+        let before = self.view.selection().clone();
+        let changes = self.history.record_document(doc, transaction, None)?;
+        selection.apply(&mut self.view, doc.model(), self.selection_policy);
+        self.history
+            .note_selection(before, self.view.selection().clone());
+        Ok(changes)
+    }
+
     /// 연속 입력 grouping 기록(VII.4.3·VII.4.4).
     pub fn record_grouped<C: MonotonicClock>(
         &mut self,

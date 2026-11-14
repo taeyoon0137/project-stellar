@@ -134,6 +134,12 @@ cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --locked -p stellar-cli
 cli_target="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 python3 "$REPO_ROOT/scripts/macos/git-stage-check.py" "$APP" "$cli_target/debug/stellar" "$WINDOW_SESSION_FIXTURE"
 python3 "$REPO_ROOT/scripts/macos/canvas-move-check.py" "$APP" "$cli_target/debug/stellar" "$WINDOW_SESSION_FIXTURE"
+(
+  frame_home="$(mktemp -d)"
+  trap 'rm -rf "$frame_home"' EXIT
+  HOME="$frame_home" "$APP" --frame-insert-check "$frame_home"
+)
+
 "$APP" --window-session-check "$WINDOW_SESSION_FIXTURE"
 
 # 창 session 명령(XII.6.4): 메뉴 Undo·Redo·Save Now를 그 창의 창 session에 보내고, 다른 창 history·디스크는 그대로인지,

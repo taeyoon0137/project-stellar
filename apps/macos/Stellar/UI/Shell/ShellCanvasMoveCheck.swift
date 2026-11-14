@@ -2,6 +2,31 @@ import AppKit
 
 /// 실제 기본 창에서 저장된 Frame에 AppKit pointer 입력을 전달하고 Undo, 저장, 재열기를 확인합니다.
 enum ShellCanvasMoveCheck {
+    @MainActor static func mouse(_ canvas: CanvasView, _ kind: NSEvent.EventType, at point: CGPoint) -> Bool {
+        guard let owner = canvas.window else { return false }
+        let location = canvas.convert(point, to: nil)
+        func event(at location: NSPoint, window: Int) -> NSEvent? {
+            NSEvent.mouseEvent(with: kind, location: location, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window,
+                context: nil, eventNumber: 1, clickCount: 1, pressure: 1)
+        }
+        // 화면에 올리지 않은 창은 AppKit이 NSEvent.window를 연결하지 않을 수 있습니다.
+        guard let local = event(at: location, window: owner.windowNumber),
+              let event = local.window === owner ? local : event(at: owner.convertPoint(toScreen: location), window: 0)
+        else { return false }
+        let actual = CanvasInput.viewPoint(of: event, in: canvas)
+        guard hypot(actual.x - point.x, actual.y - point.y) < 0.01 else {
+            return false
+        }
+        switch kind {
+        case .leftMouseDown: canvas.mouseDown(with: event)
+        case .leftMouseDragged: canvas.mouseDragged(with: event)
+        case .leftMouseUp: canvas.mouseUp(with: event)
+        default: return false
+        }
+        return true
+    }
+
     @MainActor static func run(fixture: URL) -> Bool {
         let projects = ShellSavedProjectFixture(prefix: "StellarCanvasMove")
         defer { projects.remove() }
@@ -32,28 +57,7 @@ enum ShellCanvasMoveCheck {
             return NSPoint(x: canvas.bounds.midX + x * zoom, y: canvas.bounds.midY - 10 * zoom)
         }
         func mouse(_ canvas: CanvasView, _ kind: NSEvent.EventType, _ x: CGFloat) -> Bool {
-            guard let owner = canvas.window else { return false }
-            let location = canvas.convert(point(canvas, x), to: nil)
-            func event(at location: NSPoint, window: Int) -> NSEvent? {
-                NSEvent.mouseEvent(with: kind, location: location, modifierFlags: [],
-                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window,
-                    context: nil, eventNumber: 1, clickCount: 1, pressure: 1)
-            }
-            // 화면에 올리지 않은 창은 AppKit이 NSEvent.window를 연결하지 않을 수 있습니다.
-            guard let local = event(at: location, window: owner.windowNumber),
-                  let event = local.window === owner ? local : event(at: owner.convertPoint(toScreen: location), window: 0)
-            else { return false }
-            let actual = CanvasInput.viewPoint(of: event, in: canvas)
-            guard hypot(actual.x - point(canvas, x).x, actual.y - point(canvas, x).y) < 0.01 else {
-                return fail("합성 pointer가 실제 canvas 좌표에 도착하지 않음: \(point(canvas, x)) → \(actual), event.window \(String(describing: event.window?.windowNumber))")
-            }
-            switch kind {
-            case .leftMouseDown: canvas.mouseDown(with: event)
-            case .leftMouseDragged: canvas.mouseDragged(with: event)
-            case .leftMouseUp: canvas.mouseUp(with: event)
-            default: return false
-            }
-            return true
+            Self.mouse(canvas, kind, at: point(canvas, x))
         }
         func bitmap(_ canvas: CanvasView) -> Data? {
             guard let rep = canvas.bitmapImageRepForCachingDisplay(in: canvas.bounds) else { return nil }

@@ -155,6 +155,20 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    static func insertFrame(handle: UInt64, session: UInt64, view: UUID, parent: UUID, revision: UInt64,
+                            rect: CGRect) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: parent.uuid) { parentBytes in
+                stellar_window_session_insert_frame(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                    parentBytes.bindMemory(to: UInt8.self).baseAddress, revision, Float(rect.minX), Float(rect.minY),
+                    Float(rect.width), Float(rect.height), &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func moveFrame(handle: UInt64, session: UInt64, view: UUID, node: UUID,
                           revision: UInt64, delta: CGVector) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0

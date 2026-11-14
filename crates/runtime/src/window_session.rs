@@ -469,6 +469,21 @@ impl ProjectWindowSession {
             .map_err(WindowSessionEditError::History)
     }
 
+    pub(crate) fn insert_and_select(
+        &mut self,
+        transaction: &CommandTransaction,
+        inserted: StableId,
+    ) -> Result<ChangeSet, WindowSessionEditError> {
+        let document = self
+            .document
+            .as_mut()
+            .ok_or(WindowSessionEditError::NoDocument)?;
+        let selection = SetSelection::new(Selection::new([inserted], Some(inserted)));
+        self.history
+            .record_document_and_select(&mut document.state, transaction, &selection)
+            .map_err(WindowSessionEditError::History)
+    }
+
     /// 이 창 history의 마지막 항목을 되돌립니다. 되돌릴 항목이 없거나 작업 문서가 없으면 `Ok(false)`.
     pub fn undo(&mut self) -> Result<bool, WindowSessionEditError> {
         let Some(document) = self.document.as_mut() else {

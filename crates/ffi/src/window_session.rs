@@ -277,6 +277,59 @@ pub unsafe extern "C" fn stellar_window_session_move_frame(
     })
 }
 
+/// 창에 표시한 자유 배치 부모 Frame의 local 영역에 자식 Frame을 생성합니다.
+///
+/// # Safety
+/// `view`와 `parent`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_insert_frame(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    parent: *const [u8; 16],
+    revision: u64,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    use stellar_core_types::value::{Rect, Size2, Vec2};
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || parent.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let (Ok(origin), Ok(size)) = (Vec2::new(x, y), Size2::new(width, height)) else {
+            return StellarStatus::InvalidArgument;
+        };
+        if size.is_empty() {
+            return StellarStatus::InvalidArgument;
+        }
+        let view = StableId::from_bytes(unsafe { *view });
+        let parent = StableId::from_bytes(unsafe { *parent });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.insert_canvas_frame(
+                WindowSessionHandle(session),
+                view,
+                stellar_core_types::revision::DocumentRevision(revision),
+                parent,
+                Rect::new(origin, size),
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 /// 창 session의 선택을 `ids`(StableId 16 byte × `count`, 선택 순서)로 바꾸고 그 창 history에 기록합니다.
 ///
 /// 문서에 없거나 숨김 node는 거릅니다. 결과는 `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
