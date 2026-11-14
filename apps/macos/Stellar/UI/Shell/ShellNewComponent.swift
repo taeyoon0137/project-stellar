@@ -30,6 +30,7 @@ extension ShellProjectWindow {
                 guard let self, self.dataSource.session === project else { return }
                 switch event {
                 case .componentCreated(_, session.session, let filename):
+                    if self.componentLibrary?.panel.isVisible == true { self.componentLibrary?.refresh() }
                     self.alertPresenter?(String(localized: "Component Created"), "design/components/" + filename, window)
                 case .requestFailed(_, _, let message):
                     self.alertPresenter?(failed, message, window)

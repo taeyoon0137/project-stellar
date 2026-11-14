@@ -443,7 +443,7 @@ enum CoreRuntimeEvent: Equatable {
         return CoreGitName(document: document, node: node, head: head, index: index, working: working, staged: staged)
     }
 
-    private struct PayloadReader {
+    struct PayloadReader {
         let bytes: ArraySlice<UInt8>
         var offset: Int
 

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import select
 from pathlib import Path
 import subprocess
 import sys
@@ -46,6 +47,61 @@ def main(app, cli):
         untracked = subprocess.check_output([*git, "ls-files", "--others", "--exclude-standard", "-z"], env=env)
         assert set(untracked.decode().split("\0")[:-1]) == expected_files
         print("component-create disk ok: CLI project and folder agree, only two untracked files, four unique UUIDv7 IDs")
+
+        subprocess.run([*git, "add", "design/components"], env=env, check=True)
+        subprocess.run([*git, "commit", "-qm", "two library components"], env=env, check=True)
+        original_revision = subprocess.check_output([*git, "rev-parse", "HEAD"], env=env, text=True).strip()
+        subprocess.run([*git, "switch", "-qc", "third"], env=env, check=True)
+        result("component-source", "create", folder, "Third", "0195c530-3acd-7bc1-8414-c213f61cb965",
+               "0195c530-3acd-7bc1-8414-c213f61cb966")
+        subprocess.run([*git, "add", "design/components"], env=env, check=True)
+        subprocess.run([*git, "commit", "-qm", "third component"], env=env, check=True)
+        subprocess.run([*git, "switch", "-q", "--detach", original_revision], env=env, check=True)
+
+        with subprocess.Popen([app, "--component-library-check", home], stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, text=True, env=env) as process:
+            def read_panel(action="refresh"):
+                process.stdin.write(action + "\n")
+                process.stdin.flush()
+                if not select.select([process.stdout], [], [], 25)[0]:
+                    raise TimeoutError("Component Library did not return its visible rows")
+                return json.loads(process.stdout.readline())
+
+            def compare(action="refresh"):
+                visible = read_panel(action)
+                expected = result("query", project, "components")["entries"]
+                actual = visible["entries"]
+                assert len(actual) == len(expected)
+                sources = result("component-source", "check", folder)["components"] if folder.exists() else []
+                filenames = {row["id"]: Path(row["file"]).name for row in sources}
+                for row, expected_row in zip(actual, expected):
+                    assert row.pop("filename") == filenames[expected_row["id"]]
+                    assert row == dict(expected_row, width=float(expected_row["width"]), height=float(expected_row["height"]))
+                return visible
+
+            try:
+                assert len(compare("initial")["entries"]) == 2
+                subprocess.run([*git, "switch", "-q", "third"], env=env, check=True)
+                assert len(compare()["entries"]) == 3
+                broken = folder / "broken.stellar.yaml"
+                broken.write_text("broken")
+                failure = read_panel()
+                assert failure["entries"] == [] and failure["message"]
+                broken.unlink()
+                assert len(compare()["entries"]) == 3
+                subprocess.run([*git, "switch", "-q", "--detach", original_revision + "^"], env=env, check=True)
+                assert compare()["message"]  # empty state
+                subprocess.run([*git, "switch", "-q", "third"], env=env, check=True)
+                assert len(compare()["entries"]) == 3
+                assert read_panel("revoke")["entries"] == []
+                process.stdin.write("done\n")
+                process.stdin.flush()
+                assert process.wait(timeout=15) == 0
+            finally:
+                if process.poll() is None:
+                    process.kill()
+        print("component-library ok: matches CLI after checkout, empty state, malformed file and recovery, trust revocation clears panel")
+
 
 
 if __name__ == "__main__":
