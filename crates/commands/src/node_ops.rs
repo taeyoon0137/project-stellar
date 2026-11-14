@@ -25,9 +25,7 @@ use crate::change::{node_keys, STRUCTURE_INVALIDATION};
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::command::CommandError;
 use crate::edit::EditContext;
-use crate::tree::{
-    depth_of, id_owners, kind_of, parent_of, path_element_ids, reference_index, ChildIndex, IdOwner,
-};
+use crate::tree::{depth_of, id_owners, kind_of, parent_of, path_element_ids, ChildIndex, IdOwner};
 
 /// node(또는 subtree) 삽입.
 ///
@@ -332,7 +330,7 @@ impl DeleteSubtree {
     pub(crate) fn validate(&self, model: &DocumentModel) -> Result<(), CommandError> {
         let subtree = self.subtree(model)?;
         let members: BTreeSet<StableId> = subtree.iter().copied().collect();
-        let references = reference_index(model);
+        let references = model.references();
         for target in &subtree {
             if let Some(from) = references
                 .inbound(*target)

@@ -39,7 +39,7 @@ use crate::change::{node_field_invalidation, node_keys};
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::command::CommandError;
 use crate::edit::EditContext;
-use crate::tree::{id_owners, path_element_ids, reference_index, ChildIndex, IdOwner};
+use crate::tree::{id_owners, path_element_ids, ChildIndex, IdOwner};
 
 fn kind_error(node: StableId, expected: NodeKind, found: NodeKind) -> CommandError {
     CommandError::ConversionKind {
@@ -461,21 +461,25 @@ impl RestoreNodeRecords {
                 reason: "되돌릴 레코드가 없습니다",
             });
         }
-        let mut owners = id_owners(model);
         let replaced: BTreeSet<StableId> = self.records.iter().map(|r| r.id).collect();
         if replaced.len() != self.records.len() {
             return Err(CommandError::InvalidRequest {
                 reason: "같은 node 레코드가 둘 이상입니다",
             });
         }
-        // 교체되는 node의 기존 path element id는 해제됩니다.
-        for id in &replaced {
-            if let Some(payload) = model.payload(*id) {
-                for element in path_element_ids(payload) {
-                    owners.remove(&element);
-                }
+        let released: BTreeSet<StableId> = replaced
+            .iter()
+            .filter_map(|id| model.payload(*id))
+            .flat_map(path_element_ids)
+            .collect();
+        // clip 대상이나 새 path element의 소유권을 조회할 때만 문서 전체 id 공간이 필요합니다.
+        let owners = std::cell::LazyCell::new(|| {
+            let mut owners = id_owners(model);
+            for element in &released {
+                owners.remove(element);
             }
-        }
+            owners
+        });
         let new_kinds: BTreeMap<StableId, NodeKind> =
             self.records.iter().map(|r| (r.id, r.kind())).collect();
         let kind_after = |id: StableId| -> Option<IdOwner> {
@@ -484,8 +488,7 @@ impl RestoreNodeRecords {
                 .map(|kind| IdOwner::Node(*kind))
                 .or_else(|| owners.get(&id).copied())
         };
-        let index = ChildIndex::build(model);
-        let references = reference_index(model);
+        let references = model.references();
         let mut claimed = BTreeSet::new();
         for record in &self.records {
             let current = model
@@ -505,9 +508,14 @@ impl RestoreNodeRecords {
                     found: kind,
                 });
             }
-            if !index.children(record.id).is_empty() && !can_have_children(kind) {
+            if !can_have_children(kind)
+                && model
+                    .runtime_id(record.id)
+                    .and_then(|handle| model.columns().child_count(handle))
+                    .is_some_and(|count| count > 0)
+            {
                 return Err(CommandError::InvalidParent {
-                    node: index.children(record.id)[0],
+                    node: model.children_in_order(record.id)[0],
                     parent: Some(record.id),
                 });
             }
@@ -563,11 +571,6 @@ impl RestoreNodeRecords {
         }
         // 새로 path element가 되는 id(교체 전에는 교체 node의 path element가 아니던 id)를 참조가 가리키면 결과
         // 문서에서 참조 대상 종류가 어긋납니다(VI.10.1 RefTypeMismatch: clip은 Path node, modifier는 node 기대).
-        let released: BTreeSet<StableId> = replaced
-            .iter()
-            .filter_map(|id| model.payload(*id))
-            .flat_map(path_element_ids)
-            .collect();
         for &element in claimed.difference(&released) {
             for from in references.inbound(element) {
                 // 교체되는 node의 clip은 새 payload의 clip으로 바뀌므로(clip을 유지해도 아래 반복에서 검사) 여기서는
@@ -1241,6 +1244,53 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "release 빌드에서 5만 leaf 레코드 복원 시간을 측정"]
+    fn measure_restore_single_frame_50k() {
+        let mut model = DocumentModel::new(crate::command::test_fixtures::definition());
+        model.insert_node(frame(10, None, 1)).unwrap();
+        let leaf_keys = OrderKey::evenly_spaced(500);
+        for group in 0..100 {
+            let parent = 100 + group;
+            model
+                .insert_node(frame(parent, Some(10), group as u8 + 1))
+                .unwrap();
+            for (offset, key) in leaf_keys.iter().enumerate() {
+                let mut leaf = frame(1000 + group * 500 + offset as u64, Some(parent), 1);
+                leaf.order_key = key.clone();
+                model.insert_node(leaf).unwrap();
+            }
+        }
+        let mut renamed = model.record(sid(25_000)).unwrap();
+        renamed.display_name = "renamed".into();
+        let command = restore(vec![renamed]);
+        command.validate(&model).unwrap();
+        let mut samples = Vec::new();
+        for _ in 0..101 {
+            let start = std::time::Instant::now();
+            command.validate(std::hint::black_box(&model)).unwrap();
+            samples.push(start.elapsed());
+        }
+        samples.sort_unstable();
+        println!(
+            "restore validate, 50,000 leaves, 101 samples: p50 {:?}, p95 {:?}, p99 {:?}",
+            samples[50], samples[95], samples[99]
+        );
+        let mut state = DocumentState::new(model);
+        let mut inverse = Command::RestoreNodeRecords(command);
+        samples.clear();
+        for _ in 0..101 {
+            let start = std::time::Instant::now();
+            inverse = run(&mut state, inverse).unwrap();
+            samples.push(start.elapsed());
+        }
+        samples.sort_unstable();
+        println!(
+            "restore execute, 50,000 leaves, 101 samples: p50 {:?}, p95 {:?}, p99 {:?}",
+            samples[50], samples[95], samples[99]
+        );
+    }
+
+    #[test]
     fn restore_rejects_new_path_elements_that_references_point_to() {
         // 회귀(review RESTORE-BACKSTOP-PERF): 결과 문서 전체 재검사를 범위 검사로 바꾼 뒤에도, 대상 검사가 놓치던
         // 유일한 경우 — 새 path element id를 다른 참조가 이미 가리키는 결과(RefTypeMismatch) — 를 거부합니다.
@@ -1400,7 +1450,8 @@ mod tests {
             if ids.is_empty() {
                 continue;
             }
-            let references = reference_index(&model);
+            let references = crate::tree::reference_index(&model);
+            assert_eq!(model.references(), &references);
             // 참조 대상 후보: 기존 node, 다른 node의 path element, 미해결 참조 대상, fresh id.
             let mut targets: Vec<StableId> = ids.clone();
             for id in &ids {

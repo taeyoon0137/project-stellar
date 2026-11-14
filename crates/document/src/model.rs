@@ -18,9 +18,11 @@ use std::fmt;
 use stellar_core_types::ids::{IdRegistry, RuntimeEntityId, StableId};
 
 use crate::definitions::DocumentDefinition;
+use crate::frame::Clipping;
 use crate::modifier::{validate_modifier_owner, ModifierError, ModifierStack};
 use crate::node_columns::{NodeColumns, NodeFields};
 use crate::records::{DocumentRecords, NodePayload, NodeRecord};
+use crate::reference_index::ReferenceIndex;
 use crate::tree_ops::children_in_order;
 use crate::validate::{validate_document, DocumentDiagnostics, DocumentValidationError};
 
@@ -125,6 +127,7 @@ pub struct DocumentModel {
     ids: IdRegistry,
     payloads: BTreeMap<StableId, NodePayload>,
     modifiers: BTreeMap<StableId, ModifierStack>,
+    references: ReferenceIndex,
 }
 
 impl DocumentModel {
@@ -136,6 +139,7 @@ impl DocumentModel {
             ids: IdRegistry::new(),
             payloads: BTreeMap::new(),
             modifiers: BTreeMap::new(),
+            references: ReferenceIndex::new(),
         }
     }
 
@@ -184,6 +188,26 @@ impl DocumentModel {
         self.modifiers.get(&id)
     }
 
+    /// Frame clip과 modifier가 참조하는 node. 미해결 대상과 비활성 modifier도 포함합니다.
+    pub fn references(&self) -> &ReferenceIndex {
+        &self.references
+    }
+
+    fn sync_references(&mut self, owner: StableId) {
+        if let Some(stack) = self.modifiers.get(&owner) {
+            stack.sync_references(&mut self.references);
+        } else {
+            self.references.remove_all_from(owner);
+        }
+        if let Some(NodePayload::Frame(frame)) = self.payloads.get(&owner) {
+            if let Clipping::Path(target) = frame.clipping {
+                if target.id() != StableId::NIL {
+                    self.references.add_reference(owner, target.id());
+                }
+            }
+        }
+    }
+
     /// 부모의 자식 StableId를 OrderKey 순서로(VI.2.4).
     pub fn children_in_order(&self, parent: StableId) -> Vec<StableId> {
         let Some(handle) = self.ids.runtime_for(parent) else {
@@ -228,6 +252,7 @@ impl DocumentModel {
             return Err(ModelError::DuplicateNode { id: record.id });
         }
         self.payloads.insert(record.id, record.payload);
+        self.sync_references(record.id);
         Ok(handle)
     }
 
@@ -253,6 +278,7 @@ impl DocumentModel {
         self.columns.remove(handle);
         self.payloads.remove(&id);
         self.modifiers.remove(&id);
+        self.references.remove_all_from(id);
         Ok(record)
     }
 
@@ -266,6 +292,7 @@ impl DocumentModel {
             return Err(ModelError::PayloadKindChange { id });
         }
         *current = payload;
+        self.sync_references(id);
         Ok(())
     }
 
@@ -303,6 +330,7 @@ impl DocumentModel {
         } else {
             self.modifiers.insert(owner, stack);
         }
+        self.sync_references(owner);
         Ok(())
     }
 
@@ -458,6 +486,57 @@ mod tests {
 
     fn frame() -> NodePayload {
         NodePayload::Frame(FramePayload::default())
+    }
+
+    #[test]
+    fn reference_edges_follow_payload_stack_and_owner_lifetime() {
+        use crate::modifier::ModifierPayload;
+        use stellar_core_types::reference::NodeRef;
+
+        let clip = |id| {
+            NodePayload::Frame(FramePayload {
+                clipping: Clipping::Path(NodeRef::new(id)),
+                ..FramePayload::default()
+            })
+        };
+        let owner = sid(11);
+        let first = sid(50);
+        let second = sid(51);
+        let mut model = DocumentModel::new(definition());
+        model.insert_node(record(10, None, 1, frame())).unwrap();
+        model
+            .insert_node(record(11, Some(10), 1, clip(first)))
+            .unwrap();
+        let mut stack = ModifierStack::new(owner);
+        let modifier = ModifierId::new(sid(20));
+        stack.push_back(modifier, ModifierKind::Mask).unwrap();
+        stack
+            .set_payload(
+                modifier,
+                ModifierPayload::Mask {
+                    source: NodeRef::new(first),
+                },
+            )
+            .unwrap();
+        stack.set_enabled(modifier, false).unwrap();
+        model.set_modifier_stack(stack).unwrap();
+        assert_eq!(model.references().edge_count(), 1);
+        model.set_payload(owner, clip(second)).unwrap();
+        assert_eq!(model.references().outbound(owner), vec![first, second]);
+        let (loaded, _) = DocumentModel::from_records(model.to_records().unwrap()).unwrap();
+        assert_eq!(loaded.references(), model.references());
+        model.set_modifier_stack(ModifierStack::new(owner)).unwrap();
+        assert!(!model.references().has_inbound(first));
+        assert_eq!(model.references().inbound(second), vec![owner]);
+        assert!(model
+            .set_payload(owner, NodePayload::Fragment(FragmentPayload))
+            .is_err());
+        assert_eq!(model.references().inbound(second), vec![owner]);
+        model.remove_leaf(owner).unwrap();
+        model
+            .insert_node(record(11, Some(10), 1, clip(StableId::NIL)))
+            .unwrap();
+        assert_eq!(model.references().edge_count(), 0);
     }
 
     #[test]

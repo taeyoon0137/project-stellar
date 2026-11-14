@@ -114,3 +114,16 @@
 - **남은 한계(등록)**: 50,000 node에서 28.9 ms인 O(N) 문서 index 비용은 계획서 XVI.4.7(모델 수준 증분 id·자식·참조 index)로
   등록했습니다. 성능 예산 파일(`config/performance-budgets.yaml`)은 ADR 보호 경로라 이 수정에서 항목을 추가하지 않았고, 측정
   기준은 XVI.4.7 검증 열에 두었습니다.
+
+## 5만 leaf에서 단일 Frame 레코드의 이름 복원
+
+`DocumentModel`이 Frame clip과 활성·비활성 modifier의 참조를 소유 node의 편집과 함께 갱신합니다. 역 command는 이 인덱스로 참조를 읽고, 자식이 허용되지 않는 종류만 자식 수를 조회합니다. Path element의 ID 중복과 clip 대상 종류를 판정해야 하는 경우에는 기존 전체 ID 검사를 사용합니다.
+
+Apple M3 Max, macOS 27.2, release 빌드에서 root 한 개·그룹 100개·leaf Frame 50,000개를 만들고 같은 leaf의 이름을 101회 번갈아 복원했습니다. 검증과 command 실행은 개별 측정이며 실행에는 요청 생성, 검증, 역 command 생성 및 변경 적용이 포함됩니다.
+
+| 시간 | 변경 전 p50 | 변경 후 p50 | 변경 전 p95 | 변경 후 p95 |
+|---|---:|---:|---:|---:|
+| 검증 | 15.684 ms | 0.333 µs | 16.559 ms | 0.458 µs |
+| command 실행 | 15.523 ms | 0.875 µs | 16.116 ms | 1.750 µs |
+
+재측정 명령은 `cargo test -p stellar-commands --release measure_restore_single_frame_50k -- --ignored --nocapture`입니다. 같은 대상의 warm-cache 측정입니다. 다른 node 종류, 앱 화면 갱신, 저장, 기준 장비의 결과는 별도 검증이 필요합니다. 전체 ID 인덱스와 다른 command의 전체 트리 조회가 남아 있어 XVI.4.7은 진행 전 상태를 유지합니다.
