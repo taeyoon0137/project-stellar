@@ -317,6 +317,32 @@ stellar-project = { path = "../project" }
     }
 
     #[test]
+    fn inline_table_dependency_table_violations_are_rejected() {
+        // 의존 표를 inline table로 쓴 manifest도 직접 edge와 전이 도달을 똑같이 검사합니다.
+        // 이전 해석기는 세 형태 모두 의존 0개로 읽어 검사를 통과시켰습니다.
+        for text in [
+            "[package]\nname = \"stellar-document\"\n[target.'cfg(unix)']\ndependencies = { stellar-ffi = { path = \"../ffi\" } }\n",
+            "dev-dependencies = { stellar-ffi = { path = \"../ffi\" } }\n[package]\nname = \"stellar-document\"\n",
+            "[package]\nname = \"stellar-document\"\n[target]\n'cfg(unix)' = { dependencies = { stellar-ffi = { path = \"../ffi\" } } }\n",
+        ] {
+            let violations = check_workspace_graph(&graph_from(&[text]));
+            assert_eq!(codes(&violations), ["forbidden-edge"], "{text:?}");
+            assert!(violations[0]
+                .message
+                .contains("stellar-document -> stellar-ffi"));
+        }
+        let graph = graph_from(&[
+            "[package]\nname = \"stellar-agent-host\"\n[dependencies]\nstellar-diagnostics = { path = \"../diagnostics\" }\n",
+            "[package]\nname = \"stellar-diagnostics\"\n[target.'cfg(unix)']\ndependencies = { stellar-document = { path = \"../document\" } }\n",
+        ]);
+        let reach = check_reach(FORBIDDEN_REACH, &graph.edges);
+        assert_eq!(codes(&reach), ["forbidden-reach"]);
+        assert!(reach[0]
+            .message
+            .contains("stellar-agent-host -> stellar-diagnostics -> stellar-document"));
+    }
+
+    #[test]
     fn transitive_reach_violation_is_rejected_with_path() {
         // agent-host -> diagnostics(허용) -> document: diagnostics의 직접 edge 위반과 함께
         // agent-host의 전이 도달 위반(ADR-0005 §8)도 보고합니다.
