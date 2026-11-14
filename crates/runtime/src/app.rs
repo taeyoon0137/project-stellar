@@ -1882,6 +1882,34 @@ impl AppRuntime {
         })
     }
 
+    /// 새로 만든 프로젝트의 첫 Frame에 맞도록 최초 창의 실제 캔버스 크기로 viewport를 설정합니다.
+    pub fn fit_root_frame(
+        &self,
+        session: WindowSessionHandle,
+        width: f64,
+        height: f64,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let entry = ctx
+                .app_sessions_mut()
+                .windows
+                .get_mut(&session)
+                .ok_or_else(|| unknown_window(session))?;
+            let viewport = entry
+                .canvas
+                .current(&entry.session)
+                .and_then(|scene| scene.root_viewport(width, height))
+                .ok_or_else(|| {
+                    Failure::new(
+                        RequestFailure::InvalidViewport,
+                        "유효한 Frame 또는 캔버스 크기가 없습니다",
+                    )
+                })?;
+            entry.session.set_viewport(viewport).map_err(view_failure)?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
     /// 창 session의 active 탭 viewport를 바꿉니다. 문서·history·저장에는 영향이 없습니다.
     pub fn set_viewport(
         &self,

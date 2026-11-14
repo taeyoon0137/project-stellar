@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use stellar_commands::view_tabs::CanvasViewport;
 use stellar_core_types::color::Color;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::revision::DocumentRevision;
@@ -77,6 +78,31 @@ impl CanvasCache {
 }
 
 impl CanvasScene {
+    /// 최초 Frame을 창의 logical point 안에 배치합니다. 100%보다 키우지 않습니다.
+    pub(crate) fn root_viewport(&self, width: f64, height: f64) -> Option<CanvasViewport> {
+        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+            return None;
+        }
+        let root = self.frames.first()?;
+        let bounds = Aabb::from_rect(root.geometry.rect).transformed(&root.world)?;
+        let w = f64::from(bounds.max_x()) - f64::from(bounds.min_x());
+        let h = f64::from(bounds.max_y()) - f64::from(bounds.min_y());
+        if w <= 0.0 || h <= 0.0 {
+            return None;
+        }
+        // 좁은 창에서도 그릴 공간을 남기고 일반 창에서는 가장자리마다 24pt를 둡니다.
+        let margin = 24.0_f64.min(width.min(height) * 0.1);
+        let scale = ((width - 2.0 * margin) / w)
+            .min((height - 2.0 * margin) / h)
+            .min(1.0);
+        CanvasViewport::new(
+            f64::from(bounds.min_x()) + w / 2.0,
+            f64::from(bounds.min_y()) + h / 2.0,
+            scale,
+        )
+        .ok()
+    }
+
     fn from_root(model: &DocumentModel, root: StableId) -> Self {
         let mut result = Self::default();
         let mut builder = SceneBuilder::new();
@@ -203,6 +229,27 @@ mod tests {
             background: Some(Color::new(ColorSpace::Srgb, rgb[0], rgb[1], rgb[2], 1.).unwrap()),
             ..FramePayload::default()
         }
+    }
+
+    #[test]
+    fn initial_fit_uses_world_bounds_both_axes_and_zoom_limits() {
+        let mut model = sample_document();
+        let mut rotated = frame(200.0, 60.0, 0.0, 0.0, [1.0; 3]);
+        rotated.transform = Transform2D::new(0.0, 1.0, -1.0, 0.0, 600.0, 50.0).unwrap();
+        model
+            .set_payload(sid(10), NodePayload::Frame(rotated))
+            .unwrap();
+        let scene = CanvasScene::from_root(&model, sid(10));
+        for (width, height, expected) in
+            [(100.0, 120.0, 0.5), (30.0, 400.0, 0.4), (800.0, 900.0, 1.0)]
+        {
+            let camera = scene.root_viewport(width, height).unwrap();
+            assert_eq!((camera.center_x(), camera.center_y()), (570.0, 150.0));
+            assert_eq!(camera.zoom(), expected);
+        }
+        assert!(scene.root_viewport(f64::NAN, 400.0).is_none());
+        assert!(scene.root_viewport(0.0, 400.0).is_none());
+        assert!(CanvasScene::default().root_viewport(800.0, 600.0).is_none());
     }
 
     #[test]

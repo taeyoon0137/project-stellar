@@ -281,6 +281,7 @@ final class ShellAppCoordinator: NSObject {
                 case .success(let windowSession):
                     let projectWindow = self.makeProjectWindow(rootPath: root)
                     projectWindow.didOpen(projectSession, windowSession: windowSession)
+                    if createdGitState != nil { projectWindow.fitNewProjectFrame() }
                     self.present(projectWindow)
                     if let state = createdGitState, state != 0 {
                         let message = state == 1

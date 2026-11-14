@@ -345,6 +345,9 @@ private final class ShellIntegrationCheckRunner {
         for path in [".git", "stellar.yaml", "design/current"] {
             expect(FileManager.default.fileExists(atPath: folder.appendingPathComponent(path).path), "새 프로젝트 파일 누락: \(path)")
         }
+        if let shell = coordinator.projectWindows.first {
+            checkInitialFrame(shell, pump: pump)
+        }
         coordinator.projectWindows.first?.window?.close()
         expect(pump.waitForPendingRequests(timeout: 10), "새 프로젝트 창을 닫지 못함")
         coordinator.welcomeData.send(create)
@@ -356,8 +359,56 @@ private final class ShellIntegrationCheckRunner {
         expect(pump.waitForPendingRequests(timeout: 10), "생성한 프로젝트 재열기 실패")
         expect(session?.documentID != nil && coordinator.projectWindows.first?.windowController.windowSession?.documentID == session?.documentID,
                "재열기에서 최초 문서의 ID가 바뀜")
+        let reopened = coordinator.projectWindows.first?.windowController.windowSession?.viewInfo
+        expect(reopened?.zoom == 1 && reopened?.center_x == 0 && reopened?.center_y == 0, "기존 프로젝트 재열기에 생성 시 카메라 맞춤이 적용됨")
         coordinator.projectWindows.first?.window?.close()
         expect(pump.waitForPendingRequests(timeout: 10), "재열기 창을 닫지 못함")
+    }
+
+    /// Welcome에서 생성한 실제 generation과 최초 창. Resize 및 사용자의 카메라 변경은 다시 맞추지 않습니다.
+    private func checkInitialFrame(_ shell: ShellProjectWindow, pump: ShellRuntimeEventPump) {
+        guard let window = shell.window, let session = shell.windowController.windowSession,
+              let initial = session.viewInfo else { expect(false, "새 창 viewport 없음"); return }
+        let canvas = shell.canvasHost.canvasView
+        let size = canvas.bounds.size
+        let margin = min(24, min(size.width, size.height) / 10)
+        let zoom = min(1, (size.width - 2 * margin) / 800, (size.height - 2 * margin) / 600)
+        expect(initial.center_x == 400 && initial.center_y == 300 && abs(initial.zoom - zoom) < 0.00001,
+               "생성 직후의 실제 canvas에 Frame 전체가 맞지 않음: \(size), \(initial.zoom)")
+        guard let image = ShellVisibleFramesCheck.bitmap(canvas, in: window),
+              let hit = canvas.frameHit(at: CGPoint(x: size.width / 2, y: size.height / 2)) else {
+            expect(false, "새 창 Frame의 bitmap 또는 hit 없음")
+            return
+        }
+        func pixel(_ position: CGPoint) -> [Int] {
+            var values = [Int](repeating: 0, count: image.samplesPerPixel)
+            image.getPixel(&values, atX: Int(position.x / size.width * CGFloat(image.pixelsWide)),
+                           y: Int(position.y / size.height * CGFloat(image.pixelsHigh)))
+            return values
+        }
+        let bounds = CGRect(x: (size.width - zoom * 800) / 2, y: (size.height - zoom * 600) / 2,
+                            width: zoom * 800, height: zoom * 600)
+        let background = pixel(.zero), white = [255, 255, 255, 255]
+        for (x, y, dx, dy) in [(bounds.minX, bounds.minY, 1.0, 1.0), (bounds.maxX, bounds.minY, -1, 1),
+                               (bounds.maxX, bounds.maxY, -1, -1), (bounds.minX, bounds.maxY, 1, -1)] {
+            let inside = CGPoint(x: x + dx * 2, y: y + dy * 2), outside = CGPoint(x: x - dx * 2, y: y - dy * 2)
+            expect(pixel(inside) == white && pixel(outside) == background, "새 Frame의 모서리/여백 픽셀 불일치")
+            expect(canvas.frameHit(at: inside)?.id == hit.id && canvas.frameHit(at: outside) == nil, "새 Frame 모서리 hit 불일치")
+        }
+        if let path = ProcessInfo.processInfo.environment["STELLAR_TEST_NEW_CANVAS_PNG"],
+           let png = image.representation(using: .png, properties: [:]) {
+            do { try png.write(to: URL(fileURLWithPath: path)) } catch { expect(false, "새 프로젝트 화면 PNG 기록 실패") }
+        }
+        expect(shell.performSessionCommand(.zoomOut) && pump.waitForPendingRequests(timeout: 10), "사용자 축소 명령 실패")
+        guard let changed = session.viewInfo else { expect(false, "축소된 viewport 없음"); return }
+        let oldSize = window.contentView?.bounds.size ?? size
+        window.setContentSize(NSSize(width: oldSize.width + 160, height: oldSize.height + 60))
+        window.contentView?.layoutSubtreeIfNeeded()
+        expect(pump.waitForPendingRequests(timeout: 10), "resize 처리 실패")
+        expect(canvas.bounds.size != size && changed.zoom == initial.zoom / 2 && session.viewInfo?.zoom == changed.zoom &&
+               session.viewInfo?.center_x == changed.center_x && session.viewInfo?.center_y == changed.center_y,
+               "창 크기 변경이 사용자 viewport를 덮어씀")
+        expect(session.info?.has_unsaved_changes == 0 && session.info?.revision == 0, "최초 맞춤이 문서를 수정함")
     }
 
     /// 열기 중 창 닫기: 복원(Try Again·Locate Folder…도 같은 경로) 열기가 끝나기 전에 창을 닫으면, 늦게 온

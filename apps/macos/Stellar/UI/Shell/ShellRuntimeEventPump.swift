@@ -83,6 +83,10 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.perform(handle: runtimeHandle, session: session, command: command), completion)
     }
 
+    func fitRoot(session: UInt64, size: CGSize, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.fitRoot(handle: runtimeHandle, session: session, size: size), completion)
+    }
+
     @discardableResult
     func pan(
         session: UInt64, dx: Double, dy: Double,

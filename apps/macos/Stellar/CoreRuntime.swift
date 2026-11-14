@@ -133,6 +133,13 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    static func fitRoot(handle: UInt64, session: UInt64, size: CGSize) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_session_fit_root(handle, session, size.width, size.height, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func pan(handle: UInt64, session: UInt64, dx: Double, dy: Double) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = stellar_window_session_pan(handle, session, dx, dy, &request)

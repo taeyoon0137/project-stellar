@@ -536,6 +536,18 @@ final class ShellProjectWindow {
         window?.invalidateRestorableState()
     }
 
+    /// 생성 직후 한 번만 호출합니다. 복원한 split 폭과 안전 영역을 반영한 캔버스의 실제 point 크기를 사용합니다.
+    func fitNewProjectFrame() {
+        guard let session = windowController.windowSession, let project = dataSource.session else { return }
+        window?.contentView?.layoutSubtreeIfNeeded()
+        let size = canvasHost.canvasView.bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+        session.track({ project.pump.fitRoot(session: session.session, size: size, completion: $0) }) { [weak self, weak session] _ in
+            guard let self, let session, self.windowController.windowSession === session else { return }
+            self.refreshSessionCommands()
+        }
+    }
+
     /// 저장 실패를 알리는 곳(창, 제목, 메시지). coordinator가 앱 alert 경로를 넣습니다.
     var alertPresenter: ((_ title: String, _ message: String, _ window: NSWindow?) -> Void)?
 
