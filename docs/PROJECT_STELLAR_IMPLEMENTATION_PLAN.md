@@ -1830,7 +1830,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XVIII.5.1 | `[x]` | Claude Code, Codex 등을 특별 파서 없이 일반 terminal profile command로 실행할 수 있게 합니다. | arbitrary CLI command smoke. | XVIII.4.5 |
-| XVIII.5.3 | `[ ]` | 일반 Git worktree 생성·사용은 시스템 Git 기능으로 남기고 terminal cwd preset만 제공합니다. agent 전용 ShadowWorktree 타입을 만들지 않습니다. | type inventory 검사 통과. | XVIII.1.3, XIV.1.2 |
+| XVIII.5.3 | `[x]` | 일반 Git worktree 생성·사용은 시스템 Git 기능으로 남기고 terminal cwd preset만 제공합니다. agent 전용 ShadowWorktree 타입을 만들지 않습니다. | type inventory 검사 통과. | XVIII.1.3, XIV.1.2 |
 
 **Phase XVIII 완료 조건:** 다중 PTY 세션이 양 플랫폼에서 동작하며 프로젝트 신뢰·종료 정책을 준수합니다.
 
