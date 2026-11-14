@@ -414,6 +414,17 @@ impl IdentifiedPath {
         &self.ids
     }
 
+    /// 저장 순서로 각 point 및 cubic handle의 전체 StableId를 순회합니다.
+    pub fn element_ids(&self) -> impl Iterator<Item = StableId> + '_ {
+        self.ids.iter().flat_map(|ids| {
+            ids.point.map(|point| point.0).into_iter().chain(
+                ids.handles
+                    .into_iter()
+                    .flat_map(|(first, second)| [first.0, second.0]),
+            )
+        })
+    }
+
     /// anchor point id 목록(command 순).
     pub fn point_ids(&self) -> Vec<PathPointId> {
         self.ids.iter().filter_map(|id| id.point).collect()

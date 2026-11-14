@@ -12,10 +12,11 @@
 //! 로드는 [`DocumentModel::from_records`]가 레코드를 검증한 뒤 핸들을 새로 할당하며 ID
 //! registry와 부모·자식 순서를 재구축합니다(VI.10.3).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_core_types::ids::{IdRegistry, RuntimeEntityId, StableId};
+use stellar_core_types::order_key::OrderKey;
 
 use crate::definitions::DocumentDefinition;
 use crate::frame::Clipping;
@@ -23,7 +24,6 @@ use crate::modifier::{validate_modifier_owner, ModifierError, ModifierStack};
 use crate::node_columns::{NodeColumns, NodeFields};
 use crate::records::{DocumentRecords, NodePayload, NodeRecord};
 use crate::reference_index::ReferenceIndex;
-use crate::tree_ops::children_in_order;
 use crate::validate::{validate_document, DocumentDiagnostics, DocumentValidationError};
 
 /// 런타임 모델 조작 오류.
@@ -128,12 +128,34 @@ pub struct DocumentModel {
     payloads: BTreeMap<StableId, NodePayload>,
     modifiers: BTreeMap<StableId, ModifierStack>,
     references: ReferenceIndex,
+    /// 정의·path element·modifier ID별 소유 수. 직접 만든 레코드는 전체 검증 전에 ID가 겹칠 수 있습니다.
+    non_node_ids: BTreeMap<StableId, usize>,
+    /// 부모별 (OrderKey, StableId) 순서. 직접 삽입한 동순위 형제도 모두 보관합니다.
+    children: BTreeMap<StableId, BTreeSet<(OrderKey, StableId)>>,
+}
+
+fn remove_non_node_id(ids: &mut BTreeMap<StableId, usize>, id: StableId) {
+    let count = ids.get_mut(&id).expect("registered persistent id");
+    *count -= 1;
+    if *count == 0 {
+        ids.remove(&id);
+    }
 }
 
 impl DocumentModel {
     /// node가 없는 모델.
     pub fn new(definition: DocumentDefinition) -> DocumentModel {
+        let mut non_node_ids = BTreeMap::new();
+        non_node_ids.insert(definition.id, 1);
+        for page in &definition.pages {
+            *non_node_ids.entry(page.id).or_default() += 1;
+            for view in &page.views {
+                *non_node_ids.entry(view.id).or_default() += 1;
+            }
+        }
         DocumentModel {
+            non_node_ids,
+            children: BTreeMap::new(),
             definition,
             columns: NodeColumns::new(),
             ids: IdRegistry::new(),
@@ -210,13 +232,27 @@ impl DocumentModel {
 
     /// 부모의 자식 StableId를 OrderKey 순서로(VI.2.4).
     pub fn children_in_order(&self, parent: StableId) -> Vec<StableId> {
-        let Some(handle) = self.ids.runtime_for(parent) else {
-            return Vec::new();
-        };
-        children_in_order(&self.columns, handle)
+        self.children
+            .get(&parent)
             .into_iter()
-            .filter_map(|child| self.ids.stable_for(child))
+            .flatten()
+            .map(|(_, child)| *child)
             .collect()
+    }
+
+    /// 부모의 직계 자식 중 같은 OrderKey가 있는지 확인합니다.
+    pub fn has_child_order_key(&self, parent: StableId, key: &OrderKey) -> bool {
+        self.children.get(&parent).is_some_and(|children| {
+            children
+                .range((key.clone(), StableId::NIL)..)
+                .next()
+                .is_some_and(|(first, _)| first == key)
+        })
+    }
+
+    /// 문서·페이지·View·node·path element·modifier의 영속 ID 공간에서 중복을 검사합니다.
+    pub fn contains_persistent_id(&self, id: StableId) -> bool {
+        self.contains(id) || self.non_node_ids.contains_key(&id)
     }
 
     /// node를 추가합니다. 부모(있다면)가 먼저 있어야 하고 id는 유일해야 합니다.
@@ -238,6 +274,9 @@ impl DocumentModel {
             )?),
         };
         let kind = record.kind();
+        let child_key = record
+            .parent
+            .map(|parent| (parent, (record.order_key.clone(), record.id)));
         let handle = self.columns.insert(NodeFields {
             stable_id: record.id,
             kind,
@@ -250,6 +289,14 @@ impl DocumentModel {
         if self.ids.insert(record.id, handle).is_err() {
             self.columns.remove(handle);
             return Err(ModelError::DuplicateNode { id: record.id });
+        }
+        if let Some((parent, key)) = child_key {
+            self.children.entry(parent).or_default().insert(key);
+        }
+        if let NodePayload::Path(path) = &record.payload {
+            for id in path.element_ids() {
+                *self.non_node_ids.entry(id).or_default() += 1;
+            }
         }
         self.payloads.insert(record.id, record.payload);
         self.sync_references(record.id);
@@ -276,8 +323,23 @@ impl DocumentModel {
             .remove_by_stable(id)
             .ok_or(ModelError::UnknownNode { id })?;
         self.columns.remove(handle);
-        self.payloads.remove(&id);
-        self.modifiers.remove(&id);
+        if let Some(parent) = record.parent {
+            let children = self.children.get_mut(&parent).expect("registered parent");
+            children.remove(&(record.order_key.clone(), id));
+            if children.is_empty() {
+                self.children.remove(&parent);
+            }
+        }
+        if let Some(NodePayload::Path(path)) = self.payloads.remove(&id) {
+            for element in path.element_ids() {
+                remove_non_node_id(&mut self.non_node_ids, element);
+            }
+        }
+        if let Some(stack) = self.modifiers.remove(&id) {
+            for entry in stack.entries() {
+                remove_non_node_id(&mut self.non_node_ids, entry.id.stable_id());
+            }
+        }
         self.references.remove_all_from(id);
         Ok(record)
     }
@@ -290,6 +352,16 @@ impl DocumentModel {
             .ok_or(ModelError::UnknownNode { id })?;
         if current.kind() != payload.kind() {
             return Err(ModelError::PayloadKindChange { id });
+        }
+        if let NodePayload::Path(path) = current {
+            for element in path.element_ids() {
+                remove_non_node_id(&mut self.non_node_ids, element);
+            }
+        }
+        if let NodePayload::Path(path) = &payload {
+            for element in path.element_ids() {
+                *self.non_node_ids.entry(element).or_default() += 1;
+            }
         }
         *current = payload;
         self.sync_references(id);
@@ -341,9 +413,15 @@ impl DocumentModel {
             validate_modifier_owner(kind, entry.kind)
                 .map_err(|error| ModelError::Modifier { owner, error })?;
         }
-        if stack.entries().is_empty() {
-            self.modifiers.remove(&owner);
-        } else {
+        if let Some(previous) = self.modifiers.remove(&owner) {
+            for entry in previous.entries() {
+                remove_non_node_id(&mut self.non_node_ids, entry.id.stable_id());
+            }
+        }
+        if !stack.entries().is_empty() {
+            for entry in stack.entries() {
+                *self.non_node_ids.entry(entry.id.stable_id()).or_default() += 1;
+            }
             self.modifiers.insert(owner, stack);
         }
         self.sync_references(owner);
@@ -473,7 +551,6 @@ mod tests {
     use crate::modifier::{ModifierId, ModifierKind};
     use crate::node_kind::NodeKind;
     use crate::text::TextPayload;
-    use stellar_core_types::order_key::OrderKey;
 
     fn sid(n: u64) -> StableId {
         StableId::new_v7(n, 0, n)
