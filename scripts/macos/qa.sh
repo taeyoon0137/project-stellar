@@ -15,6 +15,8 @@
 #   --name <이름>  샘플 폴더 이름(기본 sample). 영문·숫자·`.`·`_`·`-`만 쓰고, 첫 글자는 영문·숫자·`_`입니다.
 #   -h, --help     이 도움말을 보여 줍니다.
 #
+# 실행 중 확인: 같은 번들 ID(xyz.taeyoon.stellar)의 Stellar 앱이 떠 있으면 빌드·샘플 삭제·실행 전에 멈추고
+#           실행 중인 바이너리 경로를 보여 줍니다(--no-build --no-launch이고 --fresh가 없을 때만 확인하지 않음).
 # 샘플 위치: ${TMPDIR}/stellar-qa/<이름> (TMPDIR가 없으면 /tmp). 저장소 안에는 아무것도 만들지 않습니다.
 # 샘플 내용: 페이지 2개(Home: Desktop·Mobile View, Components: Buttons View), Frame·Fragment·사각형·타원·선·다각형·
 #           path·텍스트·이미지, modifier. 생성은 crates/project/examples/qa_sample_project.rs(코어 생성 API)가 합니다.
@@ -77,6 +79,40 @@ fi
 DERIVED="$REPO_ROOT/apps/macos/build"
 APP_BUNDLE="$DERIVED/Build/Products/Debug/StellarMac.app"
 APP_BINARY="$APP_BUNDLE/Contents/MacOS/StellarMac"
+# 앱 번들 ID(apps/macos/StellarMac.xcodeproj의 PRODUCT_BUNDLE_IDENTIFIER).
+BUNDLE_ID="xyz.taeyoon.stellar"
+
+# 실행 중인 Stellar 앱의 pid 목록. 이 worktree 빌드만이 아니라 같은 번들 ID를 쓰는 다른 빌드(main checkout,
+# 다른 worktree)도 찾습니다. LaunchServices에 등록된 앱은 번들 ID로, 바이너리를 직접 실행한 프로세스
+# (smoke.sh의 화면 밖 검사 등)는 실행 파일 이름으로 찾습니다.
+running_stellar_pids() {
+  {
+    pgrep -x StellarMac || true
+    for asn in $(lsappinfo find "bundleid=$BUNDLE_ID" 2>/dev/null | grep -Eo 'ASN:0x[0-9a-fA-F]+-0x[0-9a-fA-F]+' || true); do
+      lsappinfo info -only pid "$asn" 2>/dev/null | sed -n 's/.*pid = \([0-9][0-9]*\).*/\1/p'
+    done
+  } | sort -un
+}
+
+# 앱이 실행 중이면 실행 중인 바이너리 경로를 보여 주고 멈춥니다. 실행 중에 다시 빌드하면 번들을 덮어쓰고,
+# --fresh는 열려 있는 샘플을 지우며, open은 샘플을 이미 떠 있는 다른 빌드에 넘길 수 있습니다.
+stop_if_running() {
+  local pids pid
+  pids="$(running_stellar_pids)"
+  if [ -z "$pids" ]; then
+    return 0
+  fi
+  echo "qa: Stellar 앱(번들 ID $BUNDLE_ID)이 이미 실행 중입니다. 앱을 종료(⌘Q)한 뒤 다시 실행하세요." >&2
+  for pid in $pids; do
+    echo "  pid $pid: $(ps -o comm= -p "$pid" 2>/dev/null || echo '(이미 끝남)')" >&2
+  done
+  exit 1
+}
+
+# 0. 실행 중 확인. 빌드·샘플 삭제·앱 실행 중 하나라도 할 때 그 전에 확인합니다.
+if [ "$BUILD" -eq 1 ] || [ "$LAUNCH" -eq 1 ] || { [ "$FRESH" -eq 1 ] && [ "$WELCOME" -eq 0 ]; }; then
+  stop_if_running
+fi
 
 # 1. 앱 Debug 빌드(smoke.sh와 같은 설정).
 if [ "$BUILD" -eq 1 ]; then
@@ -128,11 +164,8 @@ if [ "$LAUNCH" -eq 0 ]; then
   exit 0
 fi
 
-# 3. 앱 실행. 이미 실행 중인 같은 빌드가 있으면 새 빌드가 반영되지 않으므로 먼저 종료하게 합니다.
-if pgrep -f "$APP_BINARY" >/dev/null 2>&1; then
-  echo "qa: StellarMac이 이미 실행 중입니다. 앱을 종료(⌘Q)한 뒤 다시 실행하세요." >&2
-  exit 1
-fi
+# 3. 앱 실행. 빌드·샘플 준비 중에 앱이 떴을 수 있으므로 한 번 더 확인합니다.
+stop_if_running
 if [ "$WELCOME" -eq 1 ]; then
   echo "== 앱 실행(시작 창)"
   open "$APP_BUNDLE"
