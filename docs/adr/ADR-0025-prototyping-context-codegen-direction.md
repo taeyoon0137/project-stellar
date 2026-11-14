@@ -73,6 +73,12 @@ registry 값, 공개 API 시그니처는 이 ADR에서 고정하지 않습니다
      빼고, 집합이 비면 포트로 노출하지 않습니다. 길이·백분율을 섞은 `calc()`는 구성 타입이 아니며
      `<length-percentage>` 값 타입(속성 모델 15장 O3)이 정해지기 전에는 받지 않습니다. `MotionSpec`
      보간은 같은 구성 타입 사이에서만 하고, 시작값과 끝값의 타입이 다르면 진단합니다(XXX.1.1).
+     Color 보간은 저장된 색공간(sRGB 또는 Display P3)의 encoded 채널을 alpha로 곱한(premultiplied) 값에서
+     IEEE-754 기본 연산만으로 선형 보간하고, 결과 alpha로 다시 나눕니다(결과 alpha가 0이면 채널 0). 이는
+     CSS Color 4의 `srgb`·`display-p3` 보간 공간과 같습니다. 선형 광 공간이나 Oklab 보간은 `pow`·`cbrt`
+     같은 libm 초월함수가 필요해 ADR-0006 기준으로 플랫폼 의존 결과가 되고 결정 2.7과 맞지 않으므로 쓰지
+     않습니다. 시작값과 끝값의 색공간이 다르면 변환에 같은 초월함수가 필요하므로 보간하지 않고
+     진단합니다(XXX.1.1). Web 출력에서 이 보간 공간을 지정할 수 없으면 Approximated입니다(XXII.1.7).
      `height`, inset longhand(`top` 등), `flex-basis`, `min-*`, `max-*`도 같은 규칙을 씁니다.
 3. **코드 생성 매핑 단위.** Target Profile capability registry(IX.10.5)는 CSS 기반 속성마다 profile
    kind별로 Native·Approximated·Unsupported·Deprecated를 기록합니다. Web 항목은 IX.11.19 matrix와

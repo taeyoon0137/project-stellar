@@ -227,7 +227,7 @@ CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니
 | 모서리·변 드래그 | `width`·`height`와 필요하면 위치 | XII.10.9 |
 | Shift | 비율 유지. `aspect-ratio`가 고정이면 반대로 일시 해제 | XII.10.9 |
 | Option | 중심 기준(반대편도 같이 움직임) | XII.10.9 |
-| 반대편을 넘어감 | 0에서 멈추지 않고 뒤집기로 해석(Text는 0에서 멈춤) | XII.10.9 |
+| 반대편을 넘어감 | 0에서 멈추지 않고 뒤집기로 해석(Text는 0에서 멈춤). 결과는 5.6절과 같은 `scale` 부호 반전이고, 고정된 반대편 변의 world 위치가 남도록 위치를 보정 | XII.10.9 |
 | 다중 선택 | 선택 bounds 기준으로 각 node의 위치·크기를 비례 배치 | XII.10.9 |
 | 흐름 컨테이너 자식 | 조절한 축을 Fixed preset으로 바꿈(채움·내용 맞춤 해제) | XII.10.9, IX.11.7 |
 | 변 핸들 더블클릭 | 그 축을 HugContent preset(`width: fit-content` 등)으로 | XII.10.9, IX.11.7 |
@@ -239,7 +239,7 @@ CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니
 ### 5.3 회전
 
 - 회전 영역을 드래그하면 pivot을 기준으로 돌리고, Shift는 15도 단위입니다. pivot은 단일 선택이면 node border box 중심, 다중 선택이면 선택 bounds 중심입니다. [관례] [계획 XII.10.10]
-- 결과는 `rotate` 편집입니다. 제스처는 저장된 `transform-origin`을 바꾸지 않습니다. migration된 노드는 `transform-origin: 0 0`을 저장하므로(속성 모델 5장, 계획 IX.11.9) origin을 고쳐 쓰면 `scale`이나 잔여 `transform`이 있는 노드의 외형이 움직이기 때문입니다. 저장된 origin이 pivot과 다르면 pivot의 world 위치가 그대로 남도록 위치를 보정합니다. 위치 지정 자식은 현재 anchor의 inset을, 흐름 자식은 `translate`를 바꿉니다(흐름 자식의 위치는 흐름이 정함). 새 노드의 기본 origin은 `50% 50%`이므로 단일 선택 회전에는 보정이 없습니다. [속성 모델 5장, 12장] [계획 XII.10.10, IX.11.9]
+- 결과는 `rotate` 편집입니다. 제스처는 저장된 `transform-origin`을 바꾸지 않습니다. migration된 노드는 `transform-origin: 0 0`을 저장하므로(속성 모델 5장, 계획 IX.11.9) origin을 고쳐 쓰면 선형 `transform` 행렬을 보존한 노드(이후 사용자가 `scale`을 더한 경우 포함)의 외형이 움직이기 때문입니다. 저장된 origin이 pivot과 다르면 pivot의 world 위치가 그대로 남도록 위치를 보정합니다. 위치 지정 자식은 현재 anchor의 inset을, 흐름 자식은 `translate`를 바꿉니다(흐름 자식의 위치는 흐름이 정함). 새 노드의 기본 origin은 `50% 50%`이므로 단일 선택 회전에는 보정이 없습니다. [속성 모델 5장, 12장] [계획 XII.10.10, IX.11.9]
 - 회전은 흐름 크기에 영향을 주지 않습니다. 회전한 흐름 자식은 형제 배치를 바꾸지 않습니다. [계획 X.2.4]
 - 회전 중심을 캔버스에서 옮기는 핸들은 열린 결정 C3입니다. 핸들을 둔다면 그 핸들만 `transform-origin`을 바꾸며, 같은 보정으로 외형을 유지합니다.
 
@@ -256,7 +256,10 @@ CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니
 
 ### 5.6 뒤집기
 
-Object ▸ Flip Horizontal·Flip Vertical은 선택 bounds 중심 기준 반전 편집입니다. 반전은 `scale` 부호(예: `scale: -1 1`)로 표현합니다. [도구·메뉴 3.2] [속성 모델 5장]
+Object ▸ Flip Horizontal·Flip Vertical은 선택 bounds 중심 기준 반전 편집입니다. 반전은 `scale` 부호(예: `scale: -1 1`)로 표현합니다. [도구·메뉴 3.2] [속성 모델 5장] [계획 XII.10.44]
+
+- 반전 명령은 회전(5.3절)과 같이 저장된 `transform-origin`을 바꾸지 않습니다. 선택 bounds 중심이 그대로 남도록 위치를 보정합니다. 위치 지정 자식은 현재 anchor의 inset을, 흐름 자식은 `translate`를 바꿉니다. 새 노드(origin `50% 50%`)의 단일 선택 반전에는 보정이 없고, migration 노드(`transform-origin: 0 0`)는 bounds 중심 world 위치가 남도록 보정합니다. [속성 모델 5장] [계획 XII.10.44, IX.11.9]
+- 회전된 node를 local 축과 world 축 중 어느 축 기준으로 반전할지, `scale` longhand가 없는 node 종류(속성 모델 12장 Transform 대상 밖)를 어떻게 반전할지는 XII.10.44가 정하고 결정과 근거를 작업 보고서에 기록합니다. 크기 조절의 뒤집기(5.2절)는 핸들이 local 좌표이므로 local 축 기준입니다. [계획 XII.10.8, XII.10.9, XII.10.44]
 
 ---
 
@@ -654,13 +657,13 @@ C1\~C6은 "정할 곳" 행에서 정합니다. 그 행은 결정과 근거를 �
 
 ## 24. 계획 대응 요약
 
-이 문서의 동작 중 기존 행으로 구현되는 것은 각 표의 "구현" 열에 적었습니다. 기존 행이 없던 동작은 계획 `XII.10 캔버스 편집 UX`의 XII.10.1\~XII.10.43으로 추가했습니다.
+이 문서의 동작 중 기존 행으로 구현되는 것은 각 표의 "구현" 열에 적었습니다. 기존 행이 없던 동작은 계획 `XII.10 캔버스 편집 UX`의 XII.10.1\~XII.10.44로 추가했습니다.
 
 | 묶음 | 행 |
 |---|---|
 | 도구·수식키 결정 | XII.10.1, XII.10.2 |
 | 선택 | XII.10.3\~XII.10.7 |
-| 변형·이동 | XII.10.8\~XII.10.14 |
+| 변형·이동 | XII.10.8\~XII.10.14, XII.10.44 |
 | 스냅·가이드·눈금자·그리드 | XII.10.15\~XII.10.20 |
 | 정렬·순서·묶음 | XII.10.21\~XII.10.23 |
 | 레이아웃 인지 편집 | XII.10.24, XII.10.25 |
@@ -674,7 +677,7 @@ CSS 속성을 편집하는 행은 그 속성의 PropertyKey·영속 record·migr
 
 | 행 | 편집하는 속성 | IX.11 선행 |
 |---|---|---|
-| XII.10.9 | `width`·`height`, sizing preset(`fit-content` 등) | IX.11.3, IX.11.6, IX.11.7 |
+| XII.10.9 | `width`·`height`, sizing preset(`fit-content` 등), 뒤집기 `scale` 부호와 위치 보정 | IX.11.3, IX.11.6, IX.11.7, IX.11.9 |
 | XII.10.10 | `rotate`, 위치 보정(inset·`translate`) | IX.11.9 |
 | XII.10.11 | `border-*-radius`(Frame·Rectangle), Polygon 단일 반경 | IX.11.3, IX.11.22 |
 | XII.10.12 | 크기, `border-*-width`, `font-size` 등 비례 값 | IX.11.3, IX.11.10, IX.11.11 |
@@ -683,5 +686,6 @@ CSS 속성을 편집하는 행은 그 속성의 PropertyKey·영속 record·migr
 | XII.10.22 | 위치 longhand | IX.11.6, IX.11.9 |
 | XII.10.24 | inset(흐름 순서는 OrderKey) | IX.11.6 |
 | XII.10.25 | `padding-*`, `row-gap`, `column-gap` | IX.11.6 |
+| XII.10.44 | 뒤집기 `scale` 부호, 위치 보정(inset·`translate`) | IX.11.6, IX.11.9 |
 
 가이드 10.4절이 "WBS 없음"으로 두었던 항목 중 생성 도구(XII.10.26, XII.10.27, XII.10.29, XII.10.33), 가이드·측정 표시(XII.10.16), 눈금자(XII.10.19)가 이 행들로 채워졌고, 가이드와 도구·메뉴 명세의 해당 문장도 이 행 번호로 고쳤습니다. 셸 프레임 명세 6.1절의 같은 문장은 그 문서를 고치는 다음 작업에서 맞춥니다. [가이드 0.2, 10.4]

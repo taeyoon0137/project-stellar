@@ -4597,7 +4597,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.1"
-    title: "`crates/document`에 registry 항목별 CSS 매핑 metadata 타입을 정의합니다. 필드는 CSS longhand 이름 목록, 값 문법 종류, 매핑 상태(`exact`·`converted`·`approximated`·`stellar-only`), `initial-differs`·`subset` 표시, 차이 설명입니다. `Length`=`px`, `Angle`=`deg`, `Duration`=`ms`, `Percentage`=`%` 단위 계약을 `core-types` 문서 주석에 고정합니다. 저장 bytes는 바꾸지 않습니다."
+    title: "`crates/document`에 registry 항목별 CSS 매핑 metadata 타입을 정의합니다. 필드는 CSS longhand 이름 목록, 값 문법 종류, 매핑 상태(`exact`·`converted`·`approximated`·`stellar-only`), `initial-differs`·`subset` 표시, 차이 설명입니다. `Length`=`px`, `Angle`=`deg`, `Duration`=`ms`, `Percentage`=`%` 단위 계약을 `core-types` 문서 주석에 고정합니다. `crates/core-types/`는 I.3.5 보호 경로이므로 같은 diff에서 ADR-0008을 개정해 단위 계약을 기록합니다(새 ADR도 허용). 저장 bytes는 바꾸지 않습니다."
     status: not_started
     depends_on:
       - "VI.3.5"
@@ -4606,7 +4606,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.2"
-    title: "Frame·Modifier metadata registry의 모든 항목에 속성 모델 5장·9장 대응을 채웁니다. registry `name`을 CSS longhand 또는 `stellar-only` 이름으로 맞추고 semantic diff 표시 문자열을 같은 이름으로 바꿉니다. 묶음 key(IX.11.22)는 대응 longhand 목록으로 표시합니다. `clipping`(0x0103)은 CSS longhand로 나누지 않는 Stellar 고유 이름의 단일 속성으로 두고(ADR-0024 결정 14), 확인된 clip 기준(border box와 바깥 corner radius, `crates/scene/src/builder.rs` `FrameClipInput::Bounds`)과 변형별 CSS 대응(Disabled `overflow: visible`, FrameBounds `overflow: clip` + `overflow-clip-margin: border-box`, Path `clip-path`)을 변환 규칙과 차이 설명으로 기록합니다."
+    title: "Frame·Modifier metadata registry의 모든 항목에 속성 모델 5장·9장 대응을 채웁니다. registry `name`을 CSS longhand 또는 `stellar-only` 이름으로 맞추고 semantic diff 표시 문자열을 같은 이름으로 바꿉니다. 묶음 key(IX.11.22)는 대응 longhand 목록으로 표시합니다. `clipping`(0x0103)은 CSS longhand로 나누지 않는 Stellar 고유 이름의 단일 속성으로 두고(ADR-0024 결정 14), 확인된 clip 기준(border box와 바깥 corner radius, `crates/scene/src/builder.rs` `FrameClipInput::Bounds`)과 변형별 CSS 대응(Disabled `overflow: visible`, FrameBounds `overflow: clip` + `overflow-clip-margin: border-box`, Path `clip-path`)을 변환 규칙과 차이 설명으로 기록합니다. Mask(0x1051)는 alpha·luminance mode가 정해지기 전(속성 모델 9장 Mask 행, 15장 O14) 매핑 상태를 `approximated`로 기록합니다."
     status: not_started
     depends_on:
       - "IX.11.1"
@@ -4614,7 +4614,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.3"
-    title: "Shape·Path·Text·Image property metadata registry를 Frame registry(VI.3.5)와 같은 방식으로 추가합니다. node kind 상위 byte 규칙(Frame `0x01xx`, Image `0x06xx`)으로 longhand마다 PropertyKey 하나를 할당하고(ADR-0024 결정 14) 기존 key는 재사용하지 않습니다. 각 항목에 속성 모델 6장·7장 CSS 매핑을 채웁니다. semantic snapshot이 임시로 쓰는 전용 key(`0xE3xx`·`0xE4xx`·`0xE6xx`, `crates/semantic-diff/src/keys.rs`)를 새 문서 key로 바꾸고 diff golden을 갱신합니다. Path command·point 목록과 Text content는 payload 단위 key를 유지하고, Text style longhand key는 IX.11.11이 같은 규칙으로 할당합니다(속성 모델 15장 O12)."
+    title: "Shape·Path·Text·Image property metadata registry를 Frame registry(VI.3.5)와 같은 방식으로 추가합니다. node kind 상위 byte 규칙(Frame `0x01xx`, Image `0x06xx`)으로 longhand마다 PropertyKey 하나를 할당하고(ADR-0024 결정 14) 기존 key는 재사용하지 않습니다. Shape·Image의 `width`·`height` key는 IX.11.6 item record가 sizing longhand를 어디에 저장하든 그대로 쓰는 key로 할당합니다. PropertyKey는 payload bytes에 담기지 않으므로 저장 위치와 독립입니다(속성 모델 6장). 각 항목에 속성 모델 6장·7장 CSS 매핑을 채웁니다. semantic snapshot이 임시로 쓰는 전용 key(`0xE3xx`·`0xE4xx`·`0xE6xx`, `crates/semantic-diff/src/keys.rs`)를 새 문서 key로 바꾸고 diff golden을 갱신합니다. Path command·point 목록과 Text content는 payload 단위 key를 유지하고, Text style longhand key는 IX.11.11이 같은 규칙으로 할당합니다(속성 모델 15장 O12)."
     status: not_started
     depends_on:
       - "IX.11.1"
@@ -4627,7 +4627,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.4"
-    title: "layout 엔진 Stack 의미를 CSS Flexbox에 맞춥니다. `flex-shrink` 기본 1, `align-items`·`align-content` 생략값 `normal`(stretch), 자식별 `align-self`, 축 고정 `row-gap`·`column-gap` 입력을 구현합니다. flex item 자동 최소 크기는 IX.11.23이 맡습니다. 바뀐 X.11.1 corpus 기대값은 네 변경별로 나눠 fixture별 변경 이유와 함께 갱신합니다."
+    title: "layout 엔진 Stack 의미를 CSS Flexbox에 맞춥니다. `flex-shrink` 기본 1, `align-items`·`align-content` 생략값 `normal`(stretch), 자식별 `align-self`, 축 고정 `row-gap`·`column-gap` 입력, stretch 대상 제한을 구현합니다. stretch(`normal` 포함)는 cross 크기가 `auto`인 자식(속성 모델 4.3절 Fill)만 늘리고, HugContent(`fit-content`)·Fixed·Percentage 자식은 `flex-start`처럼 놓습니다. 지금 엔진은 `Stretch`에서 cross 축이 HugContent인 자식도 늘립니다(`crates/layout/src/stack.rs` `child_constraint`). flex item 자동 최소 크기는 IX.11.23이 맡습니다. 바뀐 X.11.1 corpus 기대값은 다섯 변경별로 나눠 fixture별 변경 이유와 함께 갱신합니다."
     status: not_started
     depends_on:
       - "IX.11.1"
@@ -4636,7 +4636,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.5"
-    title: "Grid·Free·Overlay 의미를 CSS에 맞춥니다. grid item 생략 정렬을 `normal`(stretch)로 하고 `justify-self`·`align-self`를 추가합니다. track 최솟값 `auto`(item 최소 기여)를 추가해 bare `fr`을 CSS `minmax(auto, <n>fr)`로 해석하고, 기존 `TrackSize::Fraction`은 `minmax(0, <n>fr)`과 같게 둡니다. Free containing block을 padding box로 바꾸고 백분율 위치·크기의 기준도 content rect(X.2.3)에서 padding box로 바꾸며, anchor 없는 축은 시작 anchor 0으로 해석합니다. absolute 자식이 부모 Hug 크기에 기여하지 않게 합니다. Overlay 정렬 이름을 `justify-items`·`align-items`로 맞추고, `OverlayAlignment`(지금 Start·Center·End, `crates/layout/src/overlay.rs`)에 stretch를 더해 생략값을 CSS initial value(`normal`, stretch)로 바꿉니다. stretch는 크기가 auto인 축만 영역 크기로 늘리고 Fixed 크기 자식은 시작 쪽에 놓습니다. `grid-auto-rows`의 CSS initial value `auto`는 지금 track 어휘로 표현할 수 없으므로(엔진 기본 `TrackSize::MaxContent`, 속성 모델 4.4절 `implicit_row` 행) `auto` track을 추가할지, 영속 record가 `grid-auto-rows`를 생략 없이 명시 `max-content`로 저장할지를 이 행에서 정해 보고서에 기록하고 IX.11.6이 따릅니다. 영속 record 생략값은 CSS initial value, 새 노드 생성 preset은 명시 값입니다."
+    title: "Grid·Free·Overlay 의미를 CSS에 맞춥니다. grid item 생략 정렬을 `normal`(stretch)로 하고 `justify-self`·`align-self`를 추가합니다. grid item stretch도 크기가 `auto`인 축만 영역 크기로 늘리고 크기가 `auto`가 아닌 자식(Fixed·Percentage·HugContent)은 시작 쪽에 놓습니다. track 최솟값 `auto`(item 최소 기여)를 추가해 bare `fr`을 CSS `minmax(auto, <n>fr)`로 해석하고, 기존 `TrackSize::Fraction`은 `minmax(0, <n>fr)`과 같게 둡니다. fr 크기 계산은 CSS 규칙으로 맞춥니다. fr 가중치 합이 1보다 작으면 1로 나누고, 가용 크기가 indefinite이면 factor가 1 이하인 track은 base나 기여를 factor로 나누지 않습니다. 지금 엔진은 합과 관계없이 남는 공간 전체를 비례 분배합니다(`crates/layout/src/grid_tracks.rs` 규칙 4, 속성 모델 4.4절). Free containing block을 padding box로 바꾸고 백분율 위치·크기의 기준도 content rect(X.2.3)에서 padding box로 바꾸며, anchor 없는 축은 시작 anchor 0으로 해석합니다. absolute 자식이 부모 Hug 크기에 기여하지 않게 합니다. Overlay 정렬 이름을 `justify-items`·`align-items`로 맞추고, `OverlayAlignment`(지금 Start·Center·End, `crates/layout/src/overlay.rs`)에 stretch를 더해 생략값을 CSS initial value(`normal`, stretch)로 바꿉니다. stretch는 크기가 `auto`인 축만 영역 크기로 늘리고 크기가 `auto`가 아닌 자식(Fixed·Percentage·HugContent)은 시작 쪽에 놓습니다. `grid-auto-rows`의 CSS initial value `auto`는 지금 track 어휘로 표현할 수 없으므로(엔진 기본 `TrackSize::MaxContent`, 속성 모델 4.4절 `implicit_row` 행) `auto` track을 추가할지, 영속 record가 `grid-auto-rows`를 생략 없이 명시 `max-content`로 저장할지를 이 행에서 정해 보고서에 기록하고 IX.11.6이 따릅니다. 영속 record 생략값은 CSS initial value, 새 노드 생성 preset은 명시 값입니다."
     status: not_started
     depends_on:
       - "IX.11.1"
@@ -4647,7 +4647,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.6"
-    title: "레이아웃 container·item 속성을 CSS longhand로 저장하는 영속 record와 schema version을 정의합니다. 생략값은 CSS initial value입니다. container 저장 위치(Frame payload 확장 또는 `layout_mode` 참조 resource)와 Frame `size` 흡수 방식을 이 작업의 ADR로 정합니다. item longhand(inset, `flex-*`, `align-self`·`justify-self`, `grid-*-start`·`-end`, sizing longhand)는 Frame만이 아니라 상자를 가진 모든 node 종류(Frame, Shape, Path, Text, Image, ComponentInstance)의 자식에 붙습니다. 지금 Frame이 아닌 node에는 위치 필드가 없으므로(`crates/document/src/records.rs` `NodeRecord`, Rectangle은 크기만 가짐) item record 저장 위치(NodeRecord 공통 필드 또는 node별 layout item record)와 Shape·Image payload 크기의 흡수 방식도 같은 ADR로 정합니다. 상자가 없는 Fragment는 item이 아니고 그 자식이 item입니다(아키텍처 §12.4). Ellipse·Polygon `bounds` 원점은 shape local 좌표의 기하 offset으로, Transform modifier 이동 성분은 layout 뒤에 적용하는 시각 변형으로 그대로 두고 위치 longhand로 migration하지 않으며, 새 위치 편집은 item record 위치 longhand를 씁니다(속성 모델 12장 Position 행). longhand key는 ADR-0024 결정 14로 할당하고, schema version 증가는 IX.11.21이 정한 묶음 규칙을 따릅니다."
+    title: "레이아웃 container·item 속성을 CSS longhand로 저장하는 영속 record와 schema version을 정의합니다. 생략값은 CSS initial value입니다. container 저장 위치(Frame payload 확장 또는 `layout_mode` 참조 resource)와 Frame `size` 흡수 방식을 이 작업의 ADR로 정합니다. item longhand(inset, `flex-*`, `align-self`·`justify-self`, `grid-*-start`·`-end`, sizing longhand)는 Frame만이 아니라 상자를 가진 모든 node 종류(Frame, Shape, Path, Text, Image, ComponentInstance)의 자식에 붙습니다. 지금 Frame이 아닌 node에는 위치 필드가 없으므로(`crates/document/src/records.rs` `NodeRecord`, Rectangle은 크기만 가짐) item record 저장 위치(NodeRecord 공통 필드 또는 node별 layout item record)와 Shape·Image payload 크기의 흡수 방식도 같은 ADR로 정합니다. 상자가 없는 Fragment는 item이 아니고 그 자식이 item입니다(아키텍처 §12.4). Ellipse·Polygon `bounds` 원점은 shape local 좌표의 기하 offset으로, Transform modifier 이동 성분은 layout 뒤에 적용하는 시각 변형으로 그대로 두고 위치 longhand로 migration하지 않으며, 새 위치 편집은 item record 위치 longhand를 씁니다(속성 모델 12장 Position 행). longhand key는 ADR-0024 결정 14로 할당하되, `width`·`height`는 IX.11.22(Frame)·IX.11.3(Shape·Image)이 할당한 key를 그대로 쓰고 아직 key가 없는 node 종류에만 새로 할당합니다. schema version 증가는 IX.11.21이 정한 묶음 규칙을 따릅니다."
     status: not_started
     depends_on:
       - "IX.11.4"
@@ -4665,7 +4665,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.8"
-    title: "CSS 레이아웃 적합성 fixture를 추가합니다. Flexbox 60개, Grid 40개, positioning 30개 이상이며 각 fixture는 CSS 선언과 기대 border box rect를 가집니다. 기대값은 Chromium 계열 고정 버전 브라우저 하나(1/64 px LayoutUnit, 속성 모델 1.3절)로 생성한 JSON을 커밋하고, 생성 절차와 브라우저 버전을 fixture README에 기록합니다. 브라우저와 생성 스크립트는 빌드·테스트 의존성이 아닌 개발 도구이며, 도입 전에 `config/dependencies.yaml` 승인 절차(계획 1장 14번)를 거칩니다. 테스트는 브라우저를 실행하지 않습니다. 텍스트는 고정 intrinsic 크기 대체 요소로 둡니다. 기본 fixture는 남는 공간이 1/64 px 격자에서 나누어떨어지는 입력만 쓰고, 잔여 분배·가운데 정렬 반올림 차이는 별도 `distribution` 묶음으로 둡니다. 두 축 indefinite `aspect-ratio`, 음수 남는 공간의 `space-around`·`space-evenly`, bare `fr`, flex item 자동 최소 크기 fixture를 포함합니다."
+    title: "CSS 레이아웃 적합성 fixture를 추가합니다. Flexbox 60개, Grid 40개, positioning 30개 이상이며 각 fixture는 CSS 선언과 기대 border box rect를 가집니다. 기대값은 Chromium 계열 고정 버전 브라우저 하나(1/64 px LayoutUnit, 속성 모델 1.3절)로 생성한 JSON을 커밋하고, 생성 절차와 브라우저 버전을 fixture README에 기록합니다. 브라우저와 생성 스크립트는 빌드·테스트 의존성이 아닌 개발 도구이며, 도입 전에 `config/dependencies.yaml` 승인 절차(계획 1장 14번)를 거칩니다. 테스트는 브라우저를 실행하지 않습니다. 텍스트는 고정 intrinsic 크기 대체 요소로 둡니다. 기본 fixture는 남는 공간이 1/64 px 격자에서 나누어떨어지는 입력만 쓰고, 잔여 분배·가운데 정렬 반올림 차이는 별도 `distribution` 묶음으로 둡니다. 두 축 indefinite `aspect-ratio`, 한 축만 definite인 `aspect-ratio` Frame 안 넘치는 콘텐츠(14장 E10, 비율 축 `min-*: 0px`을 명시한 선언은 일치), 음수 남는 공간의 `space-around`·`space-evenly`, bare `fr`, fr 합이 1보다 작은 Grid, 기본 Stack(`align-items: normal`) 안 `fit-content` 자식, flex item 자동 최소 크기 fixture를 포함합니다."
     status: not_started
     depends_on:
       - "IX.11.4"
@@ -4675,7 +4675,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.9"
-    title: "Frame 위치와 transform 분리 migration을 IX.11.21 registry step으로 구현합니다. 행렬의 이동 성분만 위치로 옮기고 선형 부분은 `transform: matrix(a, b, c, d, 0, 0)`으로 bit 그대로 보존하며 `rotate`·`scale`로 분해해 저장하지 않습니다(ADR-0024 결정 8). 지금 저장 형식에는 layout 정의 record가 없어 모든 자식이 Free 자식이므로 이동 성분은 `left`·`top`으로 옮기고, 부모가 flow 방식인 입력이면 `translate`로 옮깁니다. migration된 노드에는 `transform-origin: 0 0`을 명시 저장하고, 새 노드 기본 origin은 `50% 50%`입니다. 새 longhand key는 ADR-0024 결정 14로 할당하고 0x0102는 묶음 key로 남기되 이 schema 이후 새 command로 받지 않습니다. 0x0102를 가리키는 저장 참조(ValueBinding target, View Variant·Component variant override property patch)는 `TypedValue`·`ExpressionType`에 Transform 타입이 없어 값 변환을 하지 않고, bytes를 보존한 채 migration 보고서와 IX.11.22 진단에 나열합니다. layout 결과 위치와 `translate`·`rotate`·`scale`·`transform`·`transform-origin`을 CSS 순서로 합성해 scene `NodeInput.transform`을 만드는 함수와 `rotate` 각도→행렬 sin·cos 구현(속성 모델 15장 O13)을 정합니다. 인스펙터 위치 X·Y 편집 경로를 새 속성으로 바꿉니다."
+    title: "Frame 위치와 transform 분리 migration을 IX.11.21 registry step으로 구현합니다. 행렬의 이동 성분만 위치로 옮기고 선형 부분은 `transform: matrix(a, b, c, d, 0, 0)`으로 bit 그대로 보존하며 `rotate`·`scale`로 분해해 저장하지 않습니다(ADR-0024 결정 8). 지금 저장 형식에는 layout 정의 record가 없어 모든 자식이 Free 자식이므로 이동 성분은 `left`·`top`으로 옮기고, 부모가 flow 방식인 입력이면 `translate`로 옮깁니다. 부모가 없는 Frame(View root Frame `ViewDefinition.root_frame`, ComponentDefinition root)의 이동 성분은 페이지 캔버스 배치이므로 위치 longhand가 아니라 x·y 두 longhand로 된 stellar-only 캔버스 배치 속성으로 옮기고(속성 모델 4.6절·5장), Web export는 이 속성을 출력하지 않습니다. migration된 노드에는 `transform-origin: 0 0`을 명시 저장하고, 새 노드 기본 origin은 `50% 50%`입니다. 새 longhand key는 ADR-0024 결정 14로 할당하고 0x0102는 묶음 key로 남기되 이 schema 이후 새 command로 받지 않습니다. 0x0102를 가리키는 저장 참조(ValueBinding target, View Variant·Component variant override property patch)는 `TypedValue`·`ExpressionType`에 Transform 타입이 없어 값 변환을 하지 않고, bytes를 보존한 채 migration 보고서와 IX.11.22 진단에 나열합니다. layout 결과 위치(부모가 없는 Frame은 캔버스 배치 값)와 `translate`·`rotate`·`scale`·`transform`·`transform-origin`을 CSS 순서로 합성해 scene `NodeInput.transform`을 만드는 함수와 `rotate` 각도→행렬 sin·cos 구현(속성 모델 15장 O13)을 정하고, O13 결정과 근거를 보고서에 기록합니다. 인스펙터 위치 X·Y 편집 경로를 새 속성으로 바꿉니다. Frame payload schema 변경은 storage format 변경이므로(I.3.5) 같은 diff에서 ADR을 작성하거나 ADR-0024를 개정합니다."
     status: not_started
     depends_on:
       - "IX.11.6"
@@ -4686,7 +4686,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.10"
-    title: "Frame border를 4변 `border-*-width`·`-style`·`-color` longhand로 바꾸는 migration을 IX.11.21 registry step으로 구현합니다. 기존 `Border{color, thickness}`는 4변 같은 값과 style `solid`로, 없음은 `none`으로 옮기고, 12개 longhand에 ADR-0024 결정 14로 key를 할당하며 0x0105는 묶음 key로 남기되 이 schema 이후 새 command로 받지 않습니다. border가 CSS처럼 padding box를 줄이도록 layout 입력에 border 두께를 넣고, 화면 위치를 보존하려고 border가 있는 부모의 Free 자식 `left`·`top`에서 부모 border 두께를 뺍니다(IX.11.9 뒤 적용). 0x0105를 가리키는 저장 참조(index segment 포함)는 IX.11.9와 같은 규칙으로 값 변환 없이 보존·보고합니다."
+    title: "Frame border를 4변 `border-*-width`·`-style`·`-color` longhand로 바꾸는 migration을 IX.11.21 registry step으로 구현합니다. 기존 `Border{color, thickness}`는 4변 같은 값과 style `solid`로, 없음은 `none`으로 옮기고, 12개 longhand에 ADR-0024 결정 14로 key를 할당하며 0x0105는 묶음 key로 남기되 이 schema 이후 새 command로 받지 않습니다. border가 CSS처럼 padding box를 줄이도록 layout 입력에 border 두께를 넣고, 화면 위치를 보존하려고 border가 있는 부모의 Free 자식 `left`·`top`에서 부모 border 두께를 뺍니다(IX.11.9 뒤 적용). IX.11.6 이전 schema에서 온 입력에는 layout record가 없어 모든 자식이 Free 자식입니다. 입력 schema에 영속 layout record(IX.11.6)가 있어 border가 있는 부모가 flow 방식(Stack·Grid·Overlay)이면, 부모의 각 변 `padding-*`에서 그 변 border 두께를 빼 flow 자식의 위치와 부모 Hug 크기를 보존합니다. padding이 border 두께보다 작은 변은 padding을 `0px`로 두고 보존하지 못한 차이를 노드별로 migration 보고서에 기록합니다(속성 모델 5장 `border` 행). 이런 중간 schema 입력의 Free 자식은 지정된 `right`·`bottom`도 그 변 border 두께로 같은 방식으로 보정하고, 백분율 inset·크기처럼 길이 보정으로 보존할 수 없는 값은 보고서에 기록합니다. 0x0105를 가리키는 저장 참조(index segment 포함)는 IX.11.9와 같은 규칙으로 값 변환 없이 보존·보고합니다. Frame payload schema 변경은 storage format 변경이므로(I.3.5) 같은 diff에서 ADR을 작성하거나 ADR-0024를 개정합니다."
     status: not_started
     depends_on:
       - "IX.11.6"
@@ -4696,7 +4696,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.11"
-    title: "Typography record를 CSS longhand(`font-family`, `font-size`, `font-weight`, `font-style`, `font-stretch`, `line-height`, `letter-spacing`)로 정의하고 `TextStyle.typography` 참조 대상으로 연결합니다. family 해석 결과는 `FontFaceRef`로 고정하고 누락 글꼴은 진단합니다. 지금 `TextPayload`는 content와 paragraph·run의 style index만 저장하고 `TextStyle`·`ParagraphStyle` 표는 저장하지 않으므로(`crates/document/src/text.rs` `encode`), style 표 저장 형식을 이 행에서 정하고 Text payload schema 변경으로 IX.11.21 step에 넣습니다(옛 payload는 기본 style 표로 migration). `ParagraphStyle`에 문단 typography 참조(CSS의 문단 요소 자신의 `font-*`, root inline box strut의 글꼴 출처)를 추가하고, typography 없는 run은 문단 typography, 그다음 문서 기본 typography를 상속합니다(문서 기본의 저장 위치도 이 행에서 정함). `letter-spacing`은 `ParagraphStyle.letter_spacing_em`에서 run `TextStyle`의 선택 필드(없으면 Typography 값)로 옮기며 Typography resource를 복제하지 않습니다. 저장된 값이 없으므로 이 이동은 파일 migration이 아닙니다. `TypedValue::Typography` tag는 유지하고 payload를 Typography canonical encoding으로 정의하며, 새 encoding으로 decode되지 않는 기존 불투명 blob은 bytes를 보존하고 `typography-unrecognized` 진단을 냅니다. style longhand에는 IX.11.3 Text registry에 ADR-0024 결정 14로 key를 할당하고, semantic snapshot(`crates/semantic-diff/src/build.rs`)의 Text style 경로를 `TEXT_PAYLOAD` 하나에서 style longhand key 경로로 바꿉니다. 이때부터 Text style은 longhand 단위로 merge합니다(속성 모델 15장 O12)."
+    title: "Typography record를 CSS longhand(`font-family`, `font-size`, `font-weight`, `font-style`, `font-stretch`, `line-height`, `letter-spacing`)로 정의하고 `TextStyle.typography` 참조 대상으로 연결합니다. family 해석 결과는 `FontFaceRef`로 고정하고 누락 글꼴은 진단합니다. 지금 `TextPayload`는 content와 paragraph·run의 style index만 저장하고 `TextStyle`·`ParagraphStyle` 표는 저장하지 않으므로(`crates/document/src/text.rs` `encode`), style 표 저장 형식을 이 행에서 정하고 Text payload schema 변경으로 IX.11.21 step에 넣습니다(옛 payload는 기본 style 표로 migration). 저장하는 `line-height` 값(`ParagraphStyle.line_height`, Typography `line-height`)의 뜻은 처음부터 CSS 의미(속성 모델 7장, inline box마다 자기 글꼴 metric에 half-leading 적용)로 정의합니다. text 엔진이 그 의미를 따르게 하는 일은 IX.11.12이며, 그 사이에 저장된 값의 뜻은 바뀌지 않습니다. `ParagraphStyle`에 문단 typography 참조(CSS의 문단 요소 자신의 `font-*`, root inline box strut의 글꼴 출처)를 추가하고, typography 없는 run은 문단 typography, 그다음 문서 기본 typography를 상속합니다(문서 기본의 저장 위치도 이 행에서 정함). `letter-spacing`은 `ParagraphStyle.letter_spacing_em`에서 run `TextStyle`의 선택 필드(없으면 Typography 값)로 옮기며 Typography resource를 복제하지 않습니다. 저장된 값이 없으므로 이 이동은 파일 migration이 아닙니다. `TypedValue::Typography` tag는 유지하고 payload를 Typography canonical encoding으로 정의하며, 새 encoding으로 decode되지 않는 기존 불투명 blob은 bytes를 보존하고 `typography-unrecognized` 진단을 냅니다. style longhand에는 IX.11.3 Text registry에 ADR-0024 결정 14로 key를 할당하고, semantic snapshot(`crates/semantic-diff/src/build.rs`)의 Text style 경로를 `TEXT_PAYLOAD` 하나에서 style longhand key 경로로 바꿉니다. 이때부터 Text style은 longhand 단위로 merge합니다(속성 모델 15장 O12). Text payload schema와 `crates/core-types/`의 `TypedValue::Typography` encoding 변경은 I.3.5 보호 대상이므로 같은 diff에서 ADR을 작성하거나 ADR-0008·ADR-0024를 개정합니다."
     status: not_started
     depends_on:
       - "IX.11.1"
@@ -4708,7 +4708,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.12"
-    title: "Text paragraph 속성을 CSS에 맞춥니다. `line-height` 배율(`<number>`)과 고정 길이(`<length>`)를 CSS처럼 inline box마다 자기 글꼴 metric에 half-leading을 적용해 해석하도록 text layout을 고칩니다. 지금은 둘 다 줄 전체 높이를 정하고 줄 안 최대 ascent·descent로 baseline을 정합니다(`crates/text/src/text_layout.rs`). root inline box strut는 문단 typography(IX.11.11)의 첫 사용 가능 글꼴과 font-size로 만듭니다. run `letter-spacing`(IX.11.11)을 text 엔진 입력에 연결합니다. style 표가 아직 저장되지 않으므로 이 행은 파일 migration을 만들지 않습니다. 바뀐 X.10 golden은 이유와 함께 갱신합니다."
+    title: "Text paragraph 속성을 CSS에 맞춥니다. `line-height` 배율(`<number>`)과 고정 길이(`<length>`)를 CSS처럼 inline box마다 자기 글꼴 metric에 half-leading을 적용해 해석하도록 text layout을 고칩니다. 지금은 둘 다 줄 전체 높이를 정하고 줄 안 최대 ascent·descent로 baseline을 정합니다(`crates/text/src/text_layout.rs`). root inline box strut는 문단 typography(IX.11.11)의 첫 사용 가능 글꼴과 font-size로 만듭니다. run `letter-spacing`(IX.11.11)을 text 엔진 입력에 연결합니다. IX.11.11이 저장하는 `line-height`는 처음부터 CSS 의미로 정의되므로 이 행은 저장 bytes의 뜻을 바꾸지 않고 엔진 해석만 맞추며 파일 migration을 만들지 않습니다. 바뀐 X.10 golden은 이유와 함께 갱신합니다."
     status: not_started
     depends_on:
       - "IX.11.11"
@@ -4742,7 +4742,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.16"
-    title: "TokenName과 ContextKey 이름에서 CSS custom property 이름을 결정론적으로 파생합니다. 속성 모델 10장 규칙(구분자 치환, identifier escape, 토큰 `--`·ContextKey `--context-` 접두사, 토큰과 ContextKey를 합친 집합 기준 충돌 진단, 충돌 시 StableId 32자리 hex 접미사)을 이름·종류·StableId만 받는 순수 함수로 구현하고 parser의 `var()` 해석에 연결합니다. 토큰 `@property` 선언 텍스트는 `inherits: true`로 만듭니다(10장 등록 속성 정책). ContextKey 입력은 로드맵 XXX.7.1의 `ContextKey` resource가 생기면 연결하고, 그 전에는 같은 함수에 합성 입력을 넣어 검증합니다."
+    title: "TokenName과 ContextKey 이름에서 CSS custom property 이름을 결정론적으로 파생합니다. 속성 모델 10장 규칙(구분자 치환, identifier escape, 토큰 `--`·ContextKey `--context-` 접두사, 토큰과 ContextKey를 합친 집합 기준 충돌 진단, 충돌 시 StableId 32자리 hex 접미사)을 이름·종류·StableId만 받는 순수 함수로 구현하고 parser의 `var()` 해석에 연결합니다. 토큰 `@property` 선언 텍스트는 `inherits: true`로 만들고, `initial-value`에는 default expression을 기본 환경에서 평가한 literal을 씁니다. 다른 토큰을 참조하는 alias 값은 `:root`의 `var()` 선언으로만 냅니다(10장 등록 속성 정책 3번). ContextKey 입력은 로드맵 XXX.7.1의 `ContextKey` resource가 생기면 연결하고, 그 전에는 같은 함수에 합성 입력을 넣어 검증합니다."
     status: not_started
     depends_on:
       - "IX.11.13"
@@ -4761,7 +4761,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.18"
-    title: "modifier stack을 CSS 고정 적용 순서로 선형화하는 export 계획 함수를 구현합니다. 속성 모델 9.1절 규칙으로 요소·wrapper 구조, filter 목록, path 굽기 지점을 계산하고 wrapper마다 `approximated` 진단을 냅니다. 요소 구조에는 모든 요소가 같은 층(`z-index: 0`)의 stacking context를 만들어 DOM 순서대로 그려지게 하는 출력 규칙(속성 모델 3장, 14장 E3), Frame 칠하기 층과 Path clip의 분리 규칙(속성 모델 9.2절), Transform modifier 행렬을 `transform-origin` 반대 이동으로 감싸는 규칙(9장 Transform 행)을 넣습니다. 이 행은 파일을 출력하지 않는 core 계획 함수이고, 실제 HTML·CSS 출력은 로드맵 XXII.2가 합니다."
+    title: "modifier stack을 CSS 고정 적용 순서로 선형화하는 export 계획 함수를 구현합니다. 속성 모델 9.1절 규칙으로 요소·wrapper 구조, filter 목록, path 굽기 지점을 계산하고 wrapper마다 `approximated` 진단을 냅니다. 요소 구조에는 모든 요소가 같은 층(`z-index: 0`)의 stacking context를 만들어 DOM 순서대로 그려지게 하는 출력 규칙(속성 모델 3장, 14장 E3: absolute 요소는 `z-index: 0`, 그 밖의 모든 요소는 `position: relative; z-index: 0`), Frame 칠하기 층과 Path clip의 분리 규칙(속성 모델 9.2절), Transform modifier 행렬을 `transform-origin` 반대 이동으로 감싸는 규칙(9장 Transform 행)을 넣습니다. 이 행은 파일을 출력하지 않는 core 계획 함수이고, 실제 HTML·CSS 출력은 로드맵 XXII.2가 합니다."
     status: not_started
     depends_on:
       - "IX.11.2"
@@ -4769,7 +4769,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.19"
-    title: "registry CSS 매핑과 Web TargetProfile을 잇는 초기 capability matrix를 IX.10.5 registry에 등록합니다. 상태는 IX.10.5 어휘(Native·Approximated·Unsupported·Deprecated)이고, CSS 매핑 상태에서 ADR-0025 결정 1.3 대응표로 정합니다. `stellar-only` 항목은 구조 변환·path 굽기·래스터화 규칙이 있으면 Approximated, 출력이 없으면 Unsupported입니다. Deprecated는 CSS 매핑 상태에서 나오지 않으므로 이 행에서 쓰지 않습니다. 기준 browser baseline이 지원하지 않는 CSS 기능(예: `overflow-clip-margin`의 `<visual-box>` 값, 속성 모델 5장 `clipping` 행)은 그 항목을 Approximated로 둡니다. Apple·Android profile 항목은 CSS 매핑 상태에서 유도하지 않으므로(ADR-0025 결정 1.3) 이 행에서 등록하지 않고 XXII.1.4가 더합니다. XXII.1.1, XXII.1.4, XXII.2.2는 이 matrix를 입력으로 쓰고, XXII.3.2·XXII.4.2는 XXII.1.4를 거쳐 씁니다."
+    title: "registry CSS 매핑과 Web TargetProfile을 잇는 초기 capability matrix를 IX.10.5 registry에 등록합니다. 상태는 IX.10.5 어휘(Native·Approximated·Unsupported·Deprecated)이고, CSS 매핑 상태에서 ADR-0025 결정 1.3 대응표로 정합니다. `stellar-only` 항목은 구조 변환·path 굽기·래스터화 규칙이 있으면 Approximated, 출력이 없으면 Unsupported입니다. Deprecated는 CSS 매핑 상태에서 나오지 않으므로 이 행에서 쓰지 않습니다. CSS 매핑 상태에 capability 조건이 붙은 항목(예: 속성 모델 5장 `clipping` FrameBounds의 `converted`(capability), 필요한 기능은 `overflow-clip-margin`의 `<visual-box>` 값)은 대응표 대신 기준 browser baseline의 그 기능 지원 여부로 정합니다. 지원하면 Native, 지원하지 않으면 Approximated이고 판정 근거를 보고서에 기록합니다. Apple·Android profile 항목은 CSS 매핑 상태에서 유도하지 않으므로(ADR-0025 결정 1.3) 이 행에서 등록하지 않고 XXII.1.4가 더합니다. XXII.1.1, XXII.1.4, XXII.2.2는 이 matrix를 입력으로 쓰고, XXII.3.2·XXII.4.2는 XXII.1.4를 거쳐 씁니다."
     status: not_started
     depends_on:
       - "IX.11.2"
@@ -4802,7 +4802,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.22"
-    title: "합성 PropertyKey를 longhand key로 나눕니다(ADR-0024 결정 14). Frame `size`(0x0101)를 `width`·`height`로, `corner_radius`(0x0106)를 4 모서리 `border-*-radius`로, modifier `SHADOW_OFFSET`(0x1092)을 shadow offset x·y로 나누고 같은 대역의 빈 번호를 할당합니다. 기존 key는 재사용하지 않는 묶음 key로 registry에 남기고, 기존 `SetProperty` bytes와 history journal은 그대로 decode·실행합니다(결과는 longhand 전체를 설정한 것과 같음). 새 command, 인스펙터 묶음 편집, semantic snapshot(`crates/semantic-diff/src/build.rs`)과 merge는 longhand key를 씁니다. 저장된 참조(ValueBinding target, View Variant·Component variant override property patch)가 묶음 key를 가리키면 변환하지 않고 validator 진단을 냅니다. payload bytes는 바꾸지 않습니다. `transform`(0x0102)·`border`(0x0105)는 IX.11.9·IX.11.10이 같은 규칙으로 나눕니다."
+    title: "합성 PropertyKey를 longhand key로 나눕니다(ADR-0024 결정 14). Frame `size`(0x0101)를 `width`·`height`로, `corner_radius`(0x0106)를 4 모서리 `border-*-radius`로, modifier `SHADOW_OFFSET`(0x1092)을 shadow offset x·y로 나누고 같은 대역의 빈 번호를 할당합니다. Frame `width`·`height` key는 IX.11.6이 sizing longhand를 NodeRecord 공통 필드와 node별 item record 중 어디에 저장하든 그 record가 그대로 쓰는 key입니다. PropertyKey는 payload bytes에 담기지 않으므로 저장 위치와 독립이고, 그래서 같은 노드의 `width`에 key가 둘 생기지 않습니다. 기존 key는 재사용하지 않는 묶음 key로 registry에 남기고, 기존 `SetProperty` bytes와 history journal은 그대로 decode·실행합니다(결과는 longhand 전체를 설정한 것과 같음). 새 command, 인스펙터 묶음 편집, semantic snapshot(`crates/semantic-diff/src/build.rs`)과 merge는 longhand key를 씁니다. 저장된 참조(ValueBinding target, View Variant·Component variant override property patch)가 묶음 key를 가리키면 변환하지 않고 validator 진단을 냅니다. payload bytes는 바꾸지 않습니다. `transform`(0x0102)·`border`(0x0105)는 IX.11.9·IX.11.10이 같은 규칙으로 나눕니다."
     status: not_started
     depends_on:
       - "VI.3.5"
@@ -6621,7 +6621,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.9"
-    title: "크기 조절 제스처를 구현합니다. Shift는 비율 유지(비율 고정 속성이 켜져 있으면 일시 해제), Option은 중심 기준, 반대편을 넘으면 뒤집기(Text는 0에서 멈춤), 다중 선택은 선택 bounds 기준 비례 배치입니다. 흐름 컨테이너 자식은 조절한 축을 Fixed preset으로 바꾸고 변 핸들 더블클릭은 그 축을 HugContent preset(`width: fit-content` 등)으로 바꾸며, preset과 longhand 변환은 IX.11.7 함수를 씁니다. 크기 longhand는 IX.11.6 영속 record와 IX.11.3 Shape·Image·Text PropertyKey로 씁니다. 속성 이름과 저장 필드 대응은 `docs/design/property_model.md`를 따르며 pointer up에서 CommandTransaction 하나를 확정합니다."
+    title: "크기 조절 제스처를 구현합니다. Shift는 비율 유지(비율 고정 속성이 켜져 있으면 일시 해제), Option은 중심 기준, 반대편을 넘으면 뒤집기(Text는 0에서 멈춤), 다중 선택은 선택 bounds 기준 비례 배치입니다. 뒤집기는 node local 축 기준(핸들이 local 좌표, XII.10.8)으로 Frame의 그 축 `scale` 부호를 바꾸고(캔버스 명세 5.6절), `scale` longhand가 없는 node 종류는 XII.10.44가 정한 반전 표현을 씁니다. 저장된 `transform-origin`은 바꾸지 않고, 고정된 반대편 변의 world 위치가 그대로 남도록 위치(위치 지정 자식은 inset, 흐름 자식은 `translate`)를 보정합니다. 흐름 컨테이너 자식은 조절한 축을 Fixed preset으로 바꾸고 변 핸들 더블클릭은 그 축을 HugContent preset(`width: fit-content` 등)으로 바꾸며, preset과 longhand 변환은 IX.11.7 함수를 씁니다. 크기 longhand는 IX.11.6 영속 record와 IX.11.3 Shape·Image·Text PropertyKey로 씁니다. 속성 이름과 저장 필드 대응은 `docs/design/property_model.md`를 따르며 pointer up에서 CommandTransaction 하나를 확정합니다."
     status: not_started
     depends_on:
       - "XII.10.8"
@@ -6631,6 +6631,8 @@ tasks:
       - "IX.11.3"
       - "IX.11.6"
       - "IX.11.7"
+      - "IX.11.9"
+      - "XII.10.44"
     required_environments:
       - DEV-MAC
   - id: "XII.10.10"
@@ -6968,6 +6970,18 @@ tasks:
       - "XII.10.16"
       - "XII.10.25"
       - "XII.10.33"
+    required_environments:
+      - DEV-MAC
+  - id: "XII.10.44"
+    title: "Object ▸ Flip Horizontal·Flip Vertical(`object.flip_*`, `docs/design/ui/tools_menus.md` 3.2·6.1절) 명령을 구현합니다. 반전은 Frame `scale`의 해당 축 부호 반전(예: `scale: -1 1`, 캔버스 명세 5.6절, 속성 모델 5장)이고 저장된 `transform-origin`은 바꾸지 않습니다. 선택 bounds 중심을 지나는 축에 대해 반전되도록 각 node의 위치(위치 지정 자식은 현재 anchor의 inset, 흐름 자식은 `translate`)를 보정합니다. 단일 선택은 그 node bounds 중심 기준이므로 origin이 `50% 50%`인 새 노드는 보정이 없고, migration 노드(`transform-origin: 0 0`)는 bounds 중심 world 위치가 그대로 남도록 보정합니다. 회전된 node(또는 migration 노드의 선형 `transform`)를 node local 축과 world 축 중 어느 축 기준으로 반전할지, 그리고 `scale` longhand가 없는 node 종류(속성 모델 12장 Transform 대상 밖)의 반전 표현(예: Path·Polygon geometry 반전, 표현이 없으면 메뉴 항목 비활성화)을 이 행에서 정해 결정과 근거를 보고서에 기록합니다. 명령 하나는 CommandTransaction 하나입니다."
+    status: not_started
+    depends_on:
+      - "VII.1.6"
+      - "VII.2.4"
+      - "XII.10.3"
+      - "IX.11.6"
+      - "IX.11.9"
+      - "XII.6.5"
     required_environments:
       - DEV-MAC
   - id: "XIII.1.1"
@@ -10462,7 +10476,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.2.3"
-    title: "token을 CSS custom property 또는 generated constants로 내보냅니다. CSS 이름은 IX.11.16 파생 규칙, 등록 방식은 속성 모델 10장(`inherits: true`, 값은 `:root`와 `:root`를 감싼 `@media` 블록에서만 선언)을 따릅니다."
+    title: "token을 CSS custom property 또는 generated constants로 내보냅니다. CSS 이름은 IX.11.16 파생 규칙, 등록 방식은 속성 모델 10장(`inherits: true`, `initial-value`는 기본 환경에서 평가한 literal, 값은 `:root`와 `:root`를 감싼 `@media` 블록에서만 선언)을 따릅니다. 환경 `interaction_state`에 따라 달라지는 값은 토큰 선언에서 빼고 XXII.2.6이 Control 상태 selector로 냅니다."
     status: not_started
     depends_on:
       - "IX.11.8"
@@ -10488,12 +10502,13 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.2.6"
-    title: "상태 머신과 `MotionSpec`을 Web 출력으로 낮춥니다. CSS transition·animation으로 표현 가능한 motion만 CSS로 내보내고, 상태 전환은 생성 코드로 내보냅니다. spring처럼 표현할 수 없는 항목은 근사 또는 미지원 진단을 냅니다."
+    title: "상태 머신과 `MotionSpec`을 Web 출력으로 낮춥니다. CSS transition·animation으로 표현 가능한 motion만 CSS로 내보내고, 상태 전환은 생성 코드로 내보냅니다. spring처럼 표현할 수 없는 항목은 근사 또는 미지원 진단을 냅니다. 환경 `interaction_state`에 따라 달라지는 토큰·binding 값은 `:root` 토큰 선언이 아니라(속성 모델 10장) 그 값을 쓰는 Control 요소의 상태 selector(`:hover`·`:focus-visible`·`:active`·`:disabled`)에 해당 속성 선언으로 냅니다. 상태와 selector의 대응은 Control contract 상태(IX.6)로 정합니다."
     status: not_started
     depends_on:
       - "XXII.1.5"
       - "XXII.1.7"
       - "XXII.2.1"
+      - "XXII.2.3"
     required_environments:
       - DEV-MAC
   - id: "XXII.3.1"
@@ -11627,7 +11642,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXX.1.1"
-    title: "`MotionSpec` record에 StableId, owner(ComponentDefinition 또는 ViewDefinition), 대상 PropertyPath 목록, 시작 조건(상태 변수 StableId와 값 조건), 지속 시간, 지연, timing function, reduced motion 대체 동작(기본 즉시 전환)을 정의합니다. timing function은 linear, cubic-bezier(4 parameter), steps(개수·위치), spring(질량·강성·감쇠·초기 속도)의 닫힌 집합입니다. 저장 형식은 착수 시 ADR로 고정합니다."
+    title: "`MotionSpec` record에 StableId, owner(ComponentDefinition 또는 ViewDefinition), 대상 PropertyPath 목록, 시작 조건(상태 변수 StableId와 값 조건), 지속 시간, 지연, timing function, reduced motion 대체 동작(기본 즉시 전환)을 정의합니다. timing function은 linear, cubic-bezier(4 parameter), steps(개수·위치), spring(질량·강성·감쇠·초기 속도)의 닫힌 집합입니다. Color 보간 공간은 ADR-0025 결정 1.2를 따릅니다. 저장된 색공간(sRGB 또는 Display P3)의 encoded 채널을 premultiplied로 선형 보간하고, 시작값과 끝값의 색공간이 다르면 거부합니다. 저장 형식은 착수 시 ADR로 고정합니다."
     status: not_started
     depends_on:
       - "IX.5.1"
@@ -11731,7 +11746,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXX.3.2"
-    title: "timing function evaluator를 구현합니다. cubic-bezier는 고정 반복 횟수 해법, spring은 고정 step 적분을 쓰고 결과는 tick의 순수 함수입니다. 계산은 IEEE-754 기본 연산(사칙연산·`sqrt`)만 씁니다. `exp`·`sin`·`cos`·`pow` 같은 libm 초월함수가 필요한 닫힌 식은 ADR-0006 기준으로 플랫폼 의존 결과가 되므로 쓰지 않습니다."
+    title: "timing function evaluator를 구현합니다. cubic-bezier는 고정 반복 횟수 해법, spring은 고정 step 적분을 쓰고 결과는 tick의 순수 함수입니다. 진행률에 따른 값 보간(Color는 ADR-0025 결정 1.2의 premultiplied encoded 채널 선형 보간)도 같은 evaluator에 둡니다. 계산은 IEEE-754 기본 연산(사칙연산·`sqrt`)만 씁니다. `exp`·`sin`·`cos`·`pow` 같은 libm 초월함수가 필요한 닫힌 식은 ADR-0006 기준으로 플랫폼 의존 결과가 되므로 쓰지 않습니다."
     status: not_started
     depends_on:
       - "XXX.1.1"

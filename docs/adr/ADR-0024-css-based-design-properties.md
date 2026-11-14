@@ -123,6 +123,9 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
      지금 저장 형식에는 layout 정의 record가 없으므로 모든 자식이 이 경우입니다. 부모가 flow 방식
      (Stack·Grid·Overlay)인 자식은 `translate`로 옮깁니다. CSS는 static 요소의 `left`·`top`을
      무시하기 때문입니다.
+   - 부모가 없는 Frame(View root Frame, ComponentDefinition root)의 이동 성분은 페이지 캔버스 위
+     배치이고 CSS containing block 안의 위치가 아닙니다. 그래서 위치 longhand로 옮기지 않고 x·y 두
+     longhand로 된 stellar-only 캔버스 배치 속성으로 옮깁니다. Web export는 이 값을 출력하지 않습니다.
    - 선형 부분은 `transform: matrix(a, b, c, d, 0, 0)`으로 bit 그대로 보존합니다. `rotate`·`scale`로
      분해해 저장하지 않습니다. 분해에는 atan2·sin·cos가 필요한데 ADR-0006은 libm 초월함수 결과를
      플랫폼 의존으로 봅니다. 다시 합성한 f32 행렬도 원래 행렬과 bit 단위로 같지 않습니다.
@@ -144,11 +147,15 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
     아키텍처 §10.3의 선형 공간을 유지합니다. 따라서 Web profile에서 blend·겹친 opacity 결과는
     `approximated`입니다.
 11. **토큰.** `TokenDefinition`은 타입 있는 CSS custom property(`@property`로 등록한 것과 같은 의미:
-    syntax는 TokenType, initial-value는 기본값)에 대응합니다. 문서 안의 참조는 계속 StableId입니다.
-    텍스트 표현과 export에서만 `var(--name)`을 씁니다. CSS 이름은 TokenName에서 결정론적으로
-    파생하고, 충돌하면 진단합니다. 등록 속성은 `inherits: true`로 냅니다. `inherits: false`이면
-    `:root`에 둔 값이 자손에 상속되지 않아 자손의 `var()`가 initial-value를 받기 때문입니다. 환경
-    key는 media feature와 상태 pseudo-class에 대응합니다. CSS 상속처럼 컴포넌트 경계를 암묵적으로
+    syntax는 TokenType, initial-value는 기본 환경에서 평가한 기본값)에 대응합니다. 문서 안의 참조는 계속
+    StableId입니다. 텍스트 표현과 export에서만 `var(--name)`을 씁니다. CSS 이름은 TokenName에서
+    결정론적으로 파생하고, 충돌하면 진단합니다. 등록 속성은 `inherits: true`로 냅니다. `inherits: false`이면
+    `:root`에 둔 값이 자손에 상속되지 않아 자손의 `var()`가 initial-value를 받기 때문입니다. CSS
+    initial-value는 계산상 독립적인 값이어야 해서 `var()`를 담을 수 없으므로, default expression을 기본
+    환경에서 평가한 literal을 씁니다. 다른 토큰을 참조하는 값과 환경 조건 값은 `:root`와 `:root`를 감싼
+    `@media` 선언으로만 냅니다. 환경 key는 media feature에 대응합니다. `interaction_state`는 평가 환경
+    전체에 하나뿐인 key라 요소마다 판정되는 상태 pseudo-class와 뜻이 다르므로 토큰 export 대상에서 빼고,
+    Control 상태 selector 규칙(계획 XXII.2.6)으로 냅니다. CSS 상속처럼 컴포넌트 경계를 암묵적으로
     넘는 공급은 이 ADR 범위 밖입니다. 아키텍처 §14.3의 명시적 경계 규칙을 유지하며, context 모델은
     ADR-0025 결정 3(Component Context)이 정합니다. Context를 Web에서 등록 custom property 상속으로
     낮출 때(ADR-0025 결정 4.3)도 이 결정의 `inherits` 정책과 같은 이름 공간·충돌 규칙을 씁니다
@@ -259,8 +266,9 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 - Frame payload(위치·transform 분리, border longhand)와 Text(style 표 저장 형식, Typography record)
   변경은 IX.11.21이 만드는 제품 문서 migration registry의 step과 golden fixture 갱신으로 진행합니다.
   schema version 증가를 공개 포맷(Phase XXVIII) 전에 한 번으로 묶을지는 IX.11.21이 정합니다. Text
-  `letter-spacing` 이동과 `line-height` 의미 변경은 style 표가 아직 저장되지 않으므로 파일 migration이
-  아닙니다.
+  `letter-spacing` 이동은 style 표 저장 형식(IX.11.11)을 정하기 전의 타입 변경이라 파일 migration이
+  아닙니다. IX.11.11이 저장하기 시작하는 `line-height`는 처음부터 CSS 의미로 정의하므로, text 엔진을
+  그 의미에 맞추는 IX.11.12도 저장 bytes의 뜻을 바꾸지 않아 파일 migration이 아닙니다.
 - 인스펙터 snapshot에 CSS 이름 문자열을 실어야 하면 FFI 표면이 바뀝니다. 그 변경은 해당 구현
   행에서 ADR-0014 절차로 다룹니다.
 - 파일 포맷 공개 명세(Phase XXVIII)에는 CSS 매핑 표를 부록으로 포함합니다.
@@ -282,9 +290,12 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 
 1. 합성 key를 longhand key로 나누고(IX.11.22) registry CSS metadata(IX.11.1\~IX.11.3)를 채웁니다.
    파일 변경은 없습니다.
-2. 레이아웃 엔진 의미를 CSS에 맞추고(IX.11.4, IX.11.5, IX.11.23) CSS 적합성 fixture(IX.11.8)로 고정한
-   뒤 영속 layout record(IX.11.6)를 정의합니다.
+2. 레이아웃 엔진 의미를 CSS에 맞춥니다(IX.11.4, IX.11.5, IX.11.23). 영속 layout record(IX.11.6)는
+   IX.11.4·IX.11.5와 제품 문서 migration registry(IX.11.21) 뒤에 정의합니다. CSS 적합성 fixture(IX.11.8)는
+   IX.11.4·IX.11.5·IX.11.23 뒤에 엔진 결과를 고정하며 IX.11.6의 선행이 아닙니다.
 3. 제품 문서 migration registry(IX.11.21)를 project 열기에 연결한 뒤 Frame·Text schema migration
    (IX.11.9, IX.11.10, IX.11.11)을 그 step으로 구현합니다. 원본 generation을 보존하고, 자동 commit하지
    않으며, 외형 보존 fixture를 둡니다(아키텍처 §36).
-4. 인스펙터·복사·export 연결(IX.11.13\~IX.11.20)은 위 단계를 선행으로 둡니다.
+4. 값 formatter·parser·복사·토큰 이름(IX.11.13\~IX.11.16)과 export 정렬(IX.11.18\~IX.11.20)은 2·3단계 행에
+   의존하지 않고 1단계(와 같은 4단계 행)만 선행으로 둡니다. 인스펙터 재구성(IX.11.17)은 1\~3단계(sizing
+   preset IX.11.7, Frame 위치·transform IX.11.9)와 parser(IX.11.14)를 선행으로 둡니다.
