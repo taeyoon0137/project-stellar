@@ -29,6 +29,7 @@ use stellar_core_types::reference::{ComponentRef, TokenRef};
 use crate::cache_entry::{LibraryEntryStore, MaterializeError, Sha256Digest};
 use crate::content_hash::ContentHashText;
 use crate::declaration::{CommitId, LibraryId, RepositoryUrl};
+use crate::external_ref::ExternalResourceRef;
 use crate::graph::DependencyNodeKey;
 use crate::mirror::RepositoryKeyer;
 
@@ -139,6 +140,9 @@ pub struct ExportedComponent {
     pub properties: Vec<ExportedProperty>,
     /// slot StableId(선언 순서).
     pub slots: Vec<StableId>,
+    /// 정의가 참조하는 다른 library resource(이 library의 의존성, XV.5.4). 이 library의
+    /// `stellar.yaml` 선언 이름 기준입니다.
+    pub references: Vec<ExternalResourceRef>,
 }
 
 impl ExportedComponent {
@@ -159,6 +163,8 @@ pub struct ExportedToken {
     pub type_signature: String,
     /// default expression의 canonical encoding.
     pub value: ExportFingerprint,
+    /// default expression이 참조하는 다른 library token(이 library의 의존성, XV.5.4).
+    pub references: Vec<ExternalResourceRef>,
 }
 
 /// export된 TokenSet 하나.
@@ -198,6 +204,8 @@ pub struct SnapshotLimits {
     pub max_type_signature_bytes: usize,
     /// fingerprint 하나의 최대 byte 수.
     pub max_fingerprint_bytes: usize,
+    /// resource 하나가 가진 외부 참조 최대 수.
+    pub max_references_per_resource: usize,
 }
 
 impl Default for SnapshotLimits {
@@ -211,6 +219,7 @@ impl Default for SnapshotLimits {
             max_name_bytes: 1_024,
             max_type_signature_bytes: 256,
             max_fingerprint_bytes: 1024 * 1024,
+            max_references_per_resource: 65_536,
         }
     }
 }
@@ -288,6 +297,13 @@ pub enum SnapshotError {
         /// 대상 property·token.
         id: StableId,
     },
+    /// resource의 외부 참조 수가 상한을 넘음.
+    TooManyReferences {
+        /// 대상 component·token.
+        id: StableId,
+        /// 상한.
+        max: usize,
+    },
 }
 
 impl fmt::Display for SnapshotError {
@@ -331,6 +347,9 @@ impl fmt::Display for SnapshotError {
             }
             SnapshotError::FingerprintTooLarge { id } => {
                 write!(f, "{id}의 값 encoding이 너무 큽니다")
+            }
+            SnapshotError::TooManyReferences { id, max } => {
+                write!(f, "{id}의 외부 참조 수가 {max}개를 넘습니다")
             }
         }
     }
@@ -410,6 +429,20 @@ fn check_type(signature: &str, id: StableId, limits: &SnapshotLimits) -> Result<
     Ok(())
 }
 
+fn check_references(
+    references: &[ExternalResourceRef],
+    id: StableId,
+    limits: &SnapshotLimits,
+) -> Result<(), SnapshotError> {
+    if references.len() > limits.max_references_per_resource {
+        return Err(SnapshotError::TooManyReferences {
+            id,
+            max: limits.max_references_per_resource,
+        });
+    }
+    Ok(())
+}
+
 fn check_fingerprint(
     value: &ExportFingerprint,
     id: StableId,
@@ -472,6 +505,7 @@ impl LibrarySnapshot {
                     max: limits.max_properties_per_component,
                 });
             }
+            check_references(&component.references, id, limits)?;
             if component.slots.len() > limits.max_slots_per_component {
                 return Err(SnapshotError::TooManySlots {
                     component: id,
@@ -514,6 +548,7 @@ impl LibrarySnapshot {
                     check_name(&token.name, id, limits)?;
                     check_type(&token.type_signature, id, limits)?;
                     check_fingerprint(&token.value, id, limits)?;
+                    check_references(&token.references, id, limits)?;
                     if !names.insert(token.name.as_str()) {
                         return Err(SnapshotError::DuplicateTokenName {
                             set: set.id,
@@ -797,6 +832,7 @@ pub(crate) mod fixtures {
             name: name.to_string(),
             properties,
             slots: Vec::new(),
+            references: Vec::new(),
         }
     }
 
@@ -807,6 +843,7 @@ pub(crate) mod fixtures {
             name: name.to_string(),
             type_signature: ty.to_string(),
             value: ExportFingerprint::new(value.to_vec()),
+            references: Vec::new(),
         }
     }
 
@@ -1038,6 +1075,7 @@ mod tests {
             max_name_bytes: 4,
             max_type_signature_bytes: 6,
             max_fingerprint_bytes: 2,
+            max_references_per_resource: 1,
         };
         let two_components = LibraryExports {
             components: vec![component(1, "A", vec![]), component(2, "B", vec![])],
@@ -1128,6 +1166,19 @@ mod tests {
         assert_eq!(
             build(big_value, &tight),
             Err(SnapshotError::FingerprintTooLarge { id: rid(2) })
+        );
+        let target = crate::external_ref::fixtures::component_ref("c", library(3), rid(9));
+        let mut referencing = component(1, "A", vec![]);
+        referencing.references = vec![target.clone().into(), target.into()];
+        assert_eq!(
+            build(
+                LibraryExports {
+                    components: vec![referencing],
+                    token_sets: vec![]
+                },
+                &tight
+            ),
+            Err(SnapshotError::TooManyReferences { id: rid(1), max: 1 })
         );
         // 오류 메시지는 이름·값 원문을 담지 않음.
         let text = SnapshotError::NameTooLong { id: rid(1) }.to_string();

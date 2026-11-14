@@ -73,6 +73,9 @@ pub mod external_ref;
 /// 사용 프로젝트의 library resource 읽기 전용 정책 (XV.5.3).
 pub mod read_only;
 
+/// 외부 참조 scope 해석과 전이 resource ref (XV.5.4).
+pub mod ref_resolution;
+
 /// 다중 버전 경고 상세: 경로·예상 추가 용량·UI/telemetry 분리 (XV.8.3).
 pub mod duplicate_report;
 
