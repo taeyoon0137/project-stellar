@@ -37,13 +37,18 @@
 //!
 //! [`DocumentThread::shutdown`]은 새 job 접수를 닫고, 이미 접수된 job을 모두 실행한 뒤 thread를
 //! join합니다. thread별 전체 종료 순서는 XII.1.6 소관입니다.
+//!
+//! [`DocumentThread::shutdown_timeout`]은 같은 순서로 종료하되 thread가 시간 안에 끝나지 않으면
+//! 기다리지 않습니다. 실행 중인 job(예: 응답 없는 파일 시스템 호출)은 끊을 수 없으므로, 아직 시작하지
+//! 않은 job만 버리고 thread를 분리(detach)합니다. 분리된 thread는 실행 중인 job이 끝나면 스스로
+//! 끝납니다.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::marker::PhantomData;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::Duration;
 
@@ -648,6 +653,12 @@ pub enum DocumentThreadError {
     ShutdownFromDocumentThread,
     /// document thread가 panic으로 끝났습니다.
     Panicked,
+    /// document thread가 종료 시간 안에 끝나지 않아 기다리지 않고 분리했습니다
+    /// ([`DocumentThread::shutdown_timeout`]). 아직 시작하지 않은 job은 버렸습니다.
+    ShutdownTimedOut {
+        /// 기다린 최대 시간.
+        timeout: Duration,
+    },
 }
 
 impl fmt::Display for DocumentThreadError {
@@ -663,11 +674,48 @@ impl fmt::Display for DocumentThreadError {
                 write!(f, "document thread에서 자기 자신을 종료할 수 없습니다")
             }
             DocumentThreadError::Panicked => write!(f, "document thread가 panic으로 끝났습니다"),
+            DocumentThreadError::ShutdownTimedOut { timeout } => write!(
+                f,
+                "document thread가 {timeout:?} 안에 끝나지 않아 기다리지 않고 분리했습니다"
+            ),
         }
     }
 }
 
 impl std::error::Error for DocumentThreadError {}
+
+/// document thread가 끝났는지(정상 종료·panic 모두) 알리는 신호.
+#[derive(Debug, Default)]
+struct ExitSignal {
+    exited: Mutex<bool>,
+    changed: Condvar,
+}
+
+impl ExitSignal {
+    fn mark(&self) {
+        *self.exited.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.changed.notify_all();
+    }
+
+    /// 최대 `timeout` 동안 thread 종료를 기다립니다. 끝났으면 `true`입니다.
+    fn wait(&self, timeout: Duration) -> bool {
+        let exited = self.exited.lock().unwrap_or_else(PoisonError::into_inner);
+        let (exited, _) = self
+            .changed
+            .wait_timeout_while(exited, timeout, |exited| !*exited)
+            .unwrap_or_else(PoisonError::into_inner);
+        *exited
+    }
+}
+
+/// thread가 어떤 경로로 끝나든(panic 포함) drop에서 [`ExitSignal`]을 세웁니다.
+struct MarkExitOnDrop(Arc<ExitSignal>);
+
+impl Drop for MarkExitOnDrop {
+    fn drop(&mut self) {
+        self.0.mark();
+    }
+}
 
 /// 유일한 문서 작성자 thread와 그 event loop.
 ///
@@ -676,6 +724,7 @@ pub struct DocumentThread {
     inbox: Arc<Inbox>,
     thread_id: ThreadId,
     join: Option<JoinHandle<Result<DocumentLoopStats, DocumentThreadError>>>,
+    exit: Arc<ExitSignal>,
 }
 
 impl fmt::Debug for DocumentThread {
@@ -697,15 +746,21 @@ impl DocumentThread {
     pub fn spawn_with(capacity: QueueCapacity) -> Result<DocumentThread, DocumentThreadError> {
         let inbox = Arc::new(Inbox::new(capacity));
         let loop_inbox = Arc::clone(&inbox);
+        let exit = Arc::new(ExitSignal::default());
+        let loop_exit = MarkExitOnDrop(Arc::clone(&exit));
         let join = thread::Builder::new()
             .name(DOCUMENT_THREAD_NAME.to_string())
-            .spawn(move || run_loop(loop_inbox))
+            .spawn(move || {
+                let _exit = loop_exit;
+                run_loop(loop_inbox)
+            })
             .map_err(|error| DocumentThreadError::Spawn { kind: error.kind() })?;
         let thread_id = join.thread().id();
         Ok(DocumentThread {
             inbox,
             thread_id,
             join: Some(join),
+            exit,
         })
     }
 
@@ -726,10 +781,27 @@ impl DocumentThread {
     /// document thread 자신(job 안)에서 호출하면 접수만 닫고
     /// [`DocumentThreadError::ShutdownFromDocumentThread`]를 반환합니다.
     pub fn shutdown(mut self) -> Result<DocumentLoopStats, DocumentThreadError> {
-        self.stop_and_join()
+        self.stop_within(None)
     }
 
-    fn stop_and_join(&mut self) -> Result<DocumentLoopStats, DocumentThreadError> {
+    /// [`DocumentThread::shutdown`]과 같이 종료하되 thread가 `timeout` 안에 끝나지 않으면 기다리지
+    /// 않습니다.
+    ///
+    /// 시간을 넘기면 아직 시작하지 않은 job을 실행하지 않고 버리고(ticket은 [`JobError::Lost`]),
+    /// thread를 분리한 뒤 [`DocumentThreadError::ShutdownTimedOut`]을 반환합니다. 실행 중인 job은
+    /// 끊지 않으며, 그 job이 끝나면 thread가 스스로 끝납니다.
+    pub fn shutdown_timeout(
+        mut self,
+        timeout: Duration,
+    ) -> Result<DocumentLoopStats, DocumentThreadError> {
+        self.stop_within(Some(timeout))
+    }
+
+    /// 접수를 닫고 thread를 join합니다. `timeout`이 있으면 그 시간까지만 기다립니다.
+    pub(crate) fn stop_within(
+        &mut self,
+        timeout: Option<Duration>,
+    ) -> Result<DocumentLoopStats, DocumentThreadError> {
         self.inbox.close();
         let Some(join) = self.join.take() else {
             return Ok(DocumentLoopStats::default());
@@ -739,6 +811,17 @@ impl DocumentThread {
             // 남은 job을 처리한 뒤 스스로 끝납니다.
             drop(join);
             return Err(DocumentThreadError::ShutdownFromDocumentThread);
+        }
+        if let Some(timeout) = timeout {
+            if !self.exit.wait(timeout) {
+                // 시작하지 않은 job은 lock 밖에서 버립니다. 실행 중인 job이 끝나면 수신함이 닫혀
+                // 비었으므로 loop가 끝납니다.
+                for job in self.inbox.close_and_drain() {
+                    job.discard(JobError::Lost);
+                }
+                drop(join);
+                return Err(DocumentThreadError::ShutdownTimedOut { timeout });
+            }
         }
         match join.join() {
             Ok(result) => result,
@@ -750,7 +833,7 @@ impl DocumentThread {
 impl Drop for DocumentThread {
     fn drop(&mut self) {
         if self.join.is_some() {
-            let _ = self.stop_and_join();
+            let _ = self.stop_within(None);
         }
     }
 }
@@ -1077,6 +1160,50 @@ mod tests {
     }
 
     #[test]
+    fn shutdown_timeout_detaches_a_stalled_thread_and_discards_pending_jobs() {
+        let doc = DocumentThread::spawn().unwrap();
+        let sender = doc.sender();
+        let (entered, started) = mpsc::channel::<()>();
+        let (release, wait) = mpsc::channel::<()>();
+        let stalled = sender
+            .submit(move |_ctx| {
+                let _ = entered.send(());
+                let _ = wait.recv();
+                1u32
+            })
+            .unwrap();
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        let pending = sender.submit(|_ctx| 2u32).unwrap();
+
+        let timeout = Duration::from_millis(100);
+        let begun = Instant::now();
+        assert_eq!(
+            doc.shutdown_timeout(timeout),
+            Err(DocumentThreadError::ShutdownTimedOut { timeout })
+        );
+        assert!(begun.elapsed() < Duration::from_secs(5));
+        assert!(sender.is_stopped());
+        // 시작하지 않은 job은 실행하지 않고 버립니다.
+        assert_eq!(pending.wait(), Err(TicketError::Job(JobError::Lost)));
+        // 실행 중이던 job은 끊지 않습니다. 풀어 주면 끝나고 결과를 돌려줍니다.
+        release.send(()).unwrap();
+        assert_eq!(stalled.wait(), Ok(1));
+    }
+
+    #[test]
+    fn shutdown_timeout_joins_a_thread_that_finishes_in_time() {
+        let doc = DocumentThread::spawn().unwrap();
+        let sender = doc.sender();
+        let tickets: Vec<_> = (0..5u32)
+            .map(|i| sender.submit(move |_ctx| i).unwrap())
+            .collect();
+        let stats = doc.shutdown_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(stats.jobs_run, 5, "시간 안이면 접수된 job을 모두 실행");
+        let values: Vec<u32> = tickets.into_iter().map(|t| t.wait().unwrap()).collect();
+        assert_eq!(values, (0..5).collect::<Vec<u32>>());
+    }
+
+    #[test]
     fn shutdown_from_the_document_thread_is_refused() {
         let doc = DocumentThread::spawn().unwrap();
         let sender = doc.sender();
@@ -1127,6 +1254,11 @@ mod tests {
         assert!(DocumentThreadError::ShutdownFromDocumentThread
             .to_string()
             .contains("자기 자신"));
+        assert!(DocumentThreadError::ShutdownTimedOut {
+            timeout: Duration::from_secs(2)
+        }
+        .to_string()
+        .contains("분리"));
     }
 }
 

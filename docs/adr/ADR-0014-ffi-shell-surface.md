@@ -48,6 +48,13 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    시각, `NSEvent.timestamp`와 같은 축)과 코어 단조 시계 현재값으로 기준점을 잡습니다. 코어 단조 시계는
    `Instant` 기반이며 기준점을 첫 `stellar_runtime_create`에서 고정합니다(runtime 생성 뒤 발생한 입력이
    0으로 눌리지 않게). wall clock은 쓰지 않습니다(II.3.3).
+   - 2026-11-14 보완(보안 리뷰 FR-3·FR-4): 기준점은 검증(버전·예약·종류 변환)을 통과한 첫 이벤트에서만
+     잡습니다. 거부된 이벤트는 기준점을 정하지 않습니다. `receive_uptime`은 모든 이벤트에서 유한한 음이
+     아닌 값이어야 하고(위반은 `STELLAR_INVALID_ARGUMENT`), `receive_uptime`보다 10초 넘게 늦은
+     `timestamp`는 `receive_uptime`으로 자릅니다. 실제 이벤트는 받은 뒤에 일어날 수 없으므로, 미래 시각
+     하나가 단조 보정으로 이후 입력 시각을 고정하는 범위를 10초 안으로 묶습니다(허용 오차는 합성 이벤트를
+     최대 9초 앞선 timestamp로 만드는 셸 입력 검사 `InputCheck.swift` 때문입니다). 구조체·시그니처는
+     그대로입니다.
 
 ### XII.3.4 — 입력 대기열 coalescing
 
@@ -103,7 +110,10 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    닿으면 새 요청은 `STELLAR_QUEUE_FULL`입니다. 접수한 요청의 완료 event는 버리지 않습니다.
 8. **수명**: `AppRuntime`은 handle의 첫 프로젝트·문서 요청에서 시작합니다(그 전의 create/destroy
    비용·동작은 그대로). `stellar_runtime_destroy`는 registry lock을 놓은 뒤 runtime을 파괴하고,
-   파괴는 이미 접수한 요청을 실행한 뒤 document thread를 join합니다.
+   파괴는 이미 접수한 요청을 실행한 뒤 document thread를 join합니다. join은 최대 2초
+   (`AppRuntime::SHUTDOWN_TIMEOUT`)까지만 기다리고, 넘으면 아직 시작하지 않은 요청을 버리고 thread를
+   분리한 뒤 반환합니다(2026-11-14 보완, 보안 리뷰 FR-1: 멈춘 파일 시스템 호출이 앱 종료를 막지 않게).
+   시그니처와 반환 상태는 그대로입니다.
 9. **New/Clone Project는 이 결정에 없습니다**: `create_project`·`clone_and_open`(IV.4.7·IV.6.4)은
    `stellar-git-porcelain`의 `GitRunner`·`GitVersion`을 인자로 받는데, crate 정책은
    `stellar-runtime → stellar-git-porcelain`을 허용하지 않고 `stellar-project`도 runner를 만드는 공개

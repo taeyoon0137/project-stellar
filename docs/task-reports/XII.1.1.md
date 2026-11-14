@@ -89,3 +89,20 @@
   payload 변경 API가 늘면 함께 확장해야 합니다.
 - release profile은 `panic = "abort"`라 job panic 시 프로세스가 종료됩니다(II.1.3 정책). job 안
   panic 경로를 만들지 않는 것은 각 command 구현의 책임입니다.
+
+## 후속 수정(보안 리뷰 FR-1 반영): 종료가 멈춘 document thread를 무기한 기다리지 않음
+
+- **문제**: `AppRuntime` drop(셸 `stellar_runtime_destroy`)은 document thread를 시간 제한 없이 join했습니다.
+  job이 응답 없는 파일 시스템 호출(FIFO로 바뀐 매니페스트, 응답 없는 네트워크·FUSE mount)에서 멈추면 셸이
+  main thread에서 부르는 destroy와 앱 종료가 영구히 멈췄습니다.
+- **수정**: `DocumentThread::shutdown_timeout(timeout)`을 추가했습니다. thread 종료 신호(Condvar)를 최대
+  `timeout`까지 기다리고, 넘으면 아직 시작하지 않은 job을 버리고(ticket `Lost`) thread를 분리한 뒤
+  `DocumentThreadError::ShutdownTimedOut`을 반환합니다. 실행 중인 job은 끊을 수 없어 그 job이 끝나면 thread가
+  스스로 끝납니다. `AppRuntime`은 drop에서 이 경로를 최대 `AppRuntime::SHUTDOWN_TIMEOUT`(2초)로 쓰고,
+  `AppRuntime::shutdown_timeout`도 엽니다. 끝까지 기다리는 `shutdown`과 `DocumentThread` drop은 그대로입니다.
+  ADR-0013 결정 5와 ADR-0014 XII.6 결정 8에 보완을 적었습니다. 멈춤의 트리거였던 FIFO 매니페스트 열기는
+  IV.5.3 후속 수정에서 막았습니다.
+- **검증**: `dropping_the_runtime_does_not_wait_forever_for_a_stalled_document_thread`(수정 전 10초 안에 drop이
+  끝나지 않아 실패, 수정 후 대기 상한 200ms 뒤 반환하고 뒤에 접수된 job은 실행하지 않음),
+  `shutdown_timeout_reports_a_stalled_document_thread`, `shutdown_timeout_detaches_a_stalled_thread_and_discards_pending_jobs`,
+  `shutdown_timeout_joins_a_thread_that_finishes_in_time`.

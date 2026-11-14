@@ -47,6 +47,13 @@
 //! 닿으면 새 요청을 [`RequestError::QueueFull`]로 거부합니다. 접수한 요청의 완료 event는 버리지
 //! 않습니다.
 //!
+//! # 종료
+//!
+//! [`AppRuntime`]을 drop하면(셸 FFI destroy) 이미 접수한 요청을 실행한 뒤 document thread를
+//! join하되 최대 [`AppRuntime::SHUTDOWN_TIMEOUT`]까지만 기다립니다. 실행 중인 요청이 응답 없는 파일
+//! 시스템 호출에서 멈춰도 앱 종료가 멈추지 않도록, 시간을 넘기면 아직 시작하지 않은 요청을 버리고
+//! thread를 분리합니다. 끝까지 기다리는 종료는 [`AppRuntime::shutdown`]입니다.
+//!
 //! # event payload (little-endian)
 //!
 //! 모든 payload는 `u32 schema_version`([`EVENT_SCHEMA_VERSION`])으로 시작합니다. 문자열은
@@ -66,6 +73,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::revision::DocumentRevision;
@@ -954,20 +962,34 @@ impl AppShared {
 
 /// 셸 경계용 앱 runtime. document thread를 소유합니다.
 ///
-/// drop하면 document thread를 [`DocumentThread::shutdown`]과 같이 종료합니다(이미 접수한 요청은
-/// 실행하고, 그 완료 event는 버립니다).
+/// drop하면(셸 FFI destroy 포함) 접수를 닫고 이미 접수한 요청을 실행한 뒤 document thread를 join하되,
+/// 최대 [`AppRuntime::SHUTDOWN_TIMEOUT`]까지만 기다립니다. 넘으면(예: 응답 없는 파일 시스템 위
+/// 매니페스트 열기) 아직 시작하지 않은 요청을 버리고 thread를 분리합니다
+/// ([`DocumentThread::shutdown_timeout`]). 완료 event는 어느 경우든 버립니다.
 #[derive(Debug)]
 pub struct AppRuntime {
     sender: DocumentSender,
     shared: Arc<AppShared>,
     next_request: AtomicU64,
     event_capacity: usize,
+    /// drop이 document thread 종료를 기다리는 최대 시간.
+    drop_timeout: Duration,
     document: DocumentThread,
+}
+
+impl Drop for AppRuntime {
+    fn drop(&mut self) {
+        // shutdown·shutdown_timeout으로 이미 종료했으면 아무것도 하지 않습니다.
+        let _ = self.document.stop_within(Some(self.drop_timeout));
+    }
 }
 
 impl AppRuntime {
     /// 완료 event를 꺼내지 않은 요청 수 기본 상한.
     pub const DEFAULT_EVENT_CAPACITY: usize = 1024;
+
+    /// drop(셸 FFI destroy)이 document thread 종료를 기다리는 최대 시간.
+    pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
     /// 기본 설정으로 시작합니다(document thread 생성).
     pub fn start() -> Result<AppRuntime, DocumentThreadError> {
@@ -989,6 +1011,7 @@ impl AppRuntime {
             }),
             next_request: AtomicU64::new(1),
             event_capacity: event_capacity.max(1),
+            drop_timeout: AppRuntime::SHUTDOWN_TIMEOUT,
             document,
         })
     }
@@ -1121,9 +1144,18 @@ impl AppRuntime {
         self.shared.outstanding.load(Ordering::Acquire)
     }
 
-    /// document thread를 종료합니다. 이미 접수한 요청은 실행합니다.
-    pub fn shutdown(self) -> Result<DocumentLoopStats, DocumentThreadError> {
-        self.document.shutdown()
+    /// document thread를 종료합니다. 이미 접수한 요청은 실행하고, 끝날 때까지 기다립니다.
+    pub fn shutdown(mut self) -> Result<DocumentLoopStats, DocumentThreadError> {
+        self.document.stop_within(None)
+    }
+
+    /// [`AppRuntime::shutdown`]과 같이 종료하되 최대 `timeout`까지만 기다립니다. 넘으면 아직 시작하지
+    /// 않은 요청을 버리고 thread를 분리한 뒤 [`DocumentThreadError::ShutdownTimedOut`]입니다.
+    pub fn shutdown_timeout(
+        mut self,
+        timeout: Duration,
+    ) -> Result<DocumentLoopStats, DocumentThreadError> {
+        self.document.stop_within(Some(timeout))
     }
 }
 
@@ -1287,5 +1319,88 @@ mod tests {
         assert!(RequestError::QueueFull.to_string().contains("가득"));
         assert!(RequestError::Stopped.to_string().contains("종료"));
         assert!(EventDecodeError::Length.to_string().contains("길이"));
+    }
+
+    /// document thread를 막는 job(응답 없는 파일 시스템 호출 대역)을 넣고, 실행이 시작될 때까지
+    /// 기다립니다. 돌려준 sender에 보내면(또는 버리면) job이 끝납니다.
+    fn stall(app: &AppRuntime) -> std::sync::mpsc::Sender<()> {
+        use std::sync::mpsc;
+        let (release, wait) = mpsc::channel::<()>();
+        let (entered, started) = mpsc::channel::<()>();
+        app.sender
+            .submit(move |_ctx| {
+                let _ = entered.send(());
+                let _ = wait.recv();
+            })
+            .unwrap();
+        started
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("막는 job이 시작되지 않음");
+        release
+    }
+
+    #[test]
+    fn dropping_the_runtime_does_not_wait_forever_for_a_stalled_document_thread() {
+        // 보안 리뷰 FR-1: document thread가 job 안에서 멈춰도 drop(FFI destroy)이 무기한 join하지
+        // 않습니다. 멈춘 job 뒤에 접수된 요청은 실행하지 않고 버립니다.
+        use std::sync::mpsc;
+        use std::time::Instant;
+
+        let mut app = AppRuntime::start().unwrap();
+        assert_eq!(app.drop_timeout, AppRuntime::SHUTDOWN_TIMEOUT);
+        // 테스트 시간을 줄이려고 drop 대기 상한만 줄입니다(동작은 같음).
+        app.drop_timeout = Duration::from_millis(200);
+        let release = stall(&app);
+        let (ran, queued_ran) = mpsc::channel::<()>();
+        app.sender
+            .submit(move |_ctx| {
+                let _ = ran.send(());
+            })
+            .unwrap();
+        app.open_project(Path::new("/stellar-runtime-test-no-such-project"))
+            .unwrap();
+
+        let (dropped, drop_done) = mpsc::channel();
+        let dropper = std::thread::spawn(move || {
+            let started = Instant::now();
+            drop(app);
+            let _ = dropped.send(started.elapsed());
+        });
+        let waited = drop_done.recv_timeout(Duration::from_secs(10));
+        // 멈춘 job을 풀어 document thread가 끝나게 합니다.
+        drop(release);
+        dropper.join().unwrap();
+        let waited = waited.expect("drop이 멈춘 document thread를 무기한 기다림");
+        assert!(
+            waited >= Duration::from_millis(200) && waited < Duration::from_secs(5),
+            "drop 대기 {waited:?}"
+        );
+        // 시간 초과 뒤 남은 job은 실행하지 않고 버립니다(closure가 버려져 channel이 끊김).
+        assert_eq!(
+            queued_ran.recv_timeout(Duration::from_secs(5)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
+    }
+
+    #[test]
+    fn shutdown_timeout_reports_a_stalled_document_thread() {
+        let app = AppRuntime::start().unwrap();
+        let release = stall(&app);
+        let request = app
+            .open_project(Path::new("/stellar-runtime-test-no-such-project"))
+            .unwrap();
+        assert_eq!(request, RequestId(1));
+        let timeout = Duration::from_millis(100);
+        assert_eq!(
+            app.shutdown_timeout(timeout),
+            Err(DocumentThreadError::ShutdownTimedOut { timeout })
+        );
+        drop(release);
+        // 시간 안에 끝나는 종료는 shutdown과 같습니다.
+        let app = AppRuntime::start().unwrap();
+        app.open_project(Path::new("/stellar-runtime-test-no-such-project"))
+            .unwrap();
+        let stats = app.shutdown_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(stats.jobs_run, 1);
     }
 }
