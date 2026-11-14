@@ -5,7 +5,8 @@ import AppKit
 /// `SidebarStubDataProvider` 데이터로 실제 배치(`NSSplitViewController` + 사이드바 item + 필터 accessory)를
 /// 일반적인 창 크기에서 만들고 layout을 강제한 뒤 다음을 확인합니다.
 /// - SF Symbols 이름이 실행 OS에서 해석됨, source list 스타일, 네이티브 텍스트 컨트롤, `NSVisualEffectView` 없음
-/// - Auto Layout 모호성 없음(Light·Dark 모두), 앱 크롬 색이 시스템 의미 색(catalog)임, 토글 클릭 대상 최소 크기
+/// - Auto Layout 모호성 없음(Light·Dark, 사이드바 크기 설정 작게·중간·크게), 앱 크롬 색이 시스템 의미 색(catalog)임,
+///   토글의 눌리는 영역 최소 크기(창 hit test로 확인)
 /// - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로(`AXNode`)로 읽습니다. 목록 → `AXRow` → `AXCell`의
 ///   행 레이블·custom action(실행 포함), 장식 아이콘 미노출, 토글·필터·상태 화면 레이블, 선택 행, key view 순서
 /// - 선택(페이지 행 → active View 행, 화살표·←·→ 키 이동 포함), 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증
@@ -215,13 +216,14 @@ enum SidebarUICheck {
 
         try checkPageSelection(harness)
         try checkLayout(harness, label: "Dark", appearance: .darkAqua)
+        try checkRowSizeStyles(harness)
         try checkLazyChildren()
         try checkAvailableRows()
         try checkCoalescing()
 
         return "symbols \(SidebarSymbols.allNames.count), pages+layers outline, AX rows/cells/custom actions, "
             + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/page selection/page arrow keys/lazy/offscreen rows/"
-            + "coalescing, no ambiguous layout (Light, Dark)"
+            + "coalescing, no ambiguous layout (Light, Dark, small/medium/large rows), toggle hit test"
     }
 
     /// 상태 화면: 하나의 group 요소가 제목·설명을 레이블로 내고, 장식 아이콘은 노출하지 않습니다.
@@ -381,6 +383,62 @@ enum SidebarUICheck {
         try require(layers.outline.acceptsFirstResponder && pages.outline.acceptsFirstResponder, "목록이 first responder를 받지 않음")
     }
 
+    /// 시스템 사이드바 크기 설정(작게·중간·크게)마다 layout 검사를 다시 합니다. 검사 시스템의 현재 설정과 무관하게
+    /// 목록의 row size style을 직접 지정해 각 크기의 행 높이·글꼴로 만들고, 끝나면 시스템 설정(.default)으로 되돌립니다.
+    @MainActor
+    private static func checkRowSizeStyles(_ harness: Harness) throws {
+        let outlines: [NSOutlineView] = [harness.pages.outline, harness.layers.outline]
+        defer {
+            for outline in outlines { outline.rowSizeStyle = .default }
+            harness.refresh()
+        }
+        for (style, name) in [(NSTableView.RowSizeStyle.small, "small"), (.medium, "medium"), (.large, "large")] {
+            for outline in outlines { outline.rowSizeStyle = style }
+            harness.refresh()
+            try require(outlines.allSatisfy { $0.effectiveRowSizeStyle == style }, "[\(name)] row size style이 적용되지 않음")
+            let rowHeight = harness.layers.outline.rect(ofRow: 1).height
+            try require(rowHeight > 0, "[\(name)] 레이어 행 높이 없음")
+            try checkLayout(harness, label: "Light, \(name) rows \(rowHeight)pt", appearance: .aqua)
+        }
+    }
+
+    /// 보이는 레이어 행마다 토글의 눌리는 영역 가운데 최소 크기 정사각형 네 모서리를 창의 hit test로 짚어, 그 토글이
+    /// 받는지 확인합니다(`checkLayout`의 크기 계산이 AppKit의 실제 클릭 판정과 같은지). 기본 상태라 숨겨 둔 토글도
+    /// 잠시 보이게 해서 짚습니다.
+    @MainActor
+    private static func checkToggleHitTest(_ harness: Harness, label: String) throws {
+        guard let content = harness.window.contentView, let frameView = content.superview else {
+            throw Failure(message: "[\(label)] 창 view 계층 없음")
+        }
+        let outline = harness.layers.outline
+        let half = SidebarMetrics.minimumHitTarget / 2 - 0.5
+        var missed: [String] = []
+        var layerRows = 0
+        var tested = 0
+        for row in 0..<outline.numberOfRows {
+            guard let cell = harness.cell(at: row, in: outline) as? SidebarLayerCellView else { continue }
+            layerRows += 1
+            let showedAlways = cell.showsTogglesAlways
+            cell.showsTogglesAlways = true
+            defer { cell.showsTogglesAlways = showedAlways }
+            for button in [cell.visibilityButton, cell.lockButton] {
+                let clickable = button.frame.intersection(cell.bounds)
+                let square = NSRect(x: clickable.midX - half, y: clickable.midY - half, width: half * 2, height: half * 2)
+                guard outline.visibleRect.contains(cell.convert(square, to: outline)) else { continue }
+                tested += 1
+                let corners = [
+                    NSPoint(x: square.minX, y: square.minY), NSPoint(x: square.minX, y: square.maxY),
+                    NSPoint(x: square.maxX, y: square.minY), NSPoint(x: square.maxX, y: square.maxY),
+                ]
+                for corner in corners where content.hitTest(frameView.convert(cell.convert(corner, to: nil), from: nil)) !== button {
+                    missed.append("\(cell.nameField.stringValue) \(corner)")
+                }
+            }
+        }
+        try require(layerRows == 0 || tested > 0, "[\(label)] 레이어 행이 있는데 hit test로 짚을 토글이 없음")
+        try require(missed.isEmpty, "[\(label)] 토글 최소 클릭 대상 안의 점을 토글이 받지 않음: \(missed)")
+    }
+
     @MainActor
     private static func checkLayout(_ harness: Harness, label: String, appearance: NSAppearance.Name) throws {
         harness.window.appearance = NSAppearance(named: appearance)
@@ -404,13 +462,15 @@ enum SidebarUICheck {
                    cell.nameField.frame.width <= 0 || cell.nameField.frame.maxX > cell.visibilityButton.frame.minX {
                     overlapping.append(cell.nameField.stringValue)
                 }
-                // 토글 클릭 대상: HIG 최소 컨트롤 크기 이상이고 행 높이 안에 들어감(디자인 가이드 4.4).
+                // 토글 클릭 대상: 실제로 눌리는 영역이 HIG 최소 컨트롤 크기 이상(디자인 가이드 4.4). 눌리는 영역은
+                // 버튼 frame과 셀(행) 영역의 겹침입니다. AppKit hit test는 상위 뷰 frame 밖의 점을 하위 뷰로 넘기지
+                // 않습니다. 버튼 frame은 symbol 정렬 여백만큼 크기 제약(alignment rect)보다 커서 작은 행에서는 셀 밖으로
+                // 나갈 수 있는데, 그 부분은 눌리지 않으므로 셈하지 않습니다.
                 if let cell = view as? SidebarLayerCellView {
                     for button in [cell.visibilityButton, cell.lockButton] {
-                        let size = button.frame.size
-                        if size.width < SidebarMetrics.minimumHitTarget || size.height < SidebarMetrics.minimumHitTarget
-                            || button.frame.minY < cell.bounds.minY || button.frame.maxY > cell.bounds.maxY {
-                            smallTargets.append("\(cell.nameField.stringValue) \(size)")
+                        let clickable = button.frame.intersection(cell.bounds)
+                        if clickable.width < SidebarMetrics.minimumHitTarget || clickable.height < SidebarMetrics.minimumHitTarget {
+                            smallTargets.append("\(cell.nameField.stringValue) \(clickable.size)")
                         }
                     }
                 }
@@ -433,7 +493,8 @@ enum SidebarUICheck {
         try require(ambiguous.isEmpty, "[\(label)] Auto Layout 모호성: \(Set(ambiguous).sorted())")
         try require(nonSemantic.isEmpty, "[\(label)] 시스템 의미 색이 아닌 색: \(Set(nonSemantic).sorted())")
         try require(overlapping.isEmpty, "[\(label)] 이름 필드 폭 없음 또는 토글과 겹침: \(overlapping)")
-        try require(smallTargets.isEmpty, "[\(label)] 토글 클릭 대상이 최소 크기보다 작거나 행 밖으로 나감: \(smallTargets)")
+        try require(smallTargets.isEmpty, "[\(label)] 토글의 눌리는 영역이 최소 크기보다 작음: \(smallTargets)")
+        try checkToggleHitTest(harness, label: label)
         let sidebarWidth = harness.sidebar.view.frame.width
         try require(abs(sidebarWidth - Harness.sidebarWidth) < 1, "[\(label)] 사이드바 폭이 검사 폭과 다름: \(sidebarWidth)")
 

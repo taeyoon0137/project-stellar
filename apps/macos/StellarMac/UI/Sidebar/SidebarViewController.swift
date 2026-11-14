@@ -7,7 +7,8 @@ enum SidebarMetrics {
     /// 분할선으로 줄일 수 있는 각 구획의 최소 행 수(제목 행 포함). 행 높이는 시스템 사이드바 크기 설정을 따릅니다.
     static let minimumPaneRows: CGFloat = 3
     /// 행 안 아이콘 버튼(표시·잠금 토글)의 최소 클릭 대상 한 변(point). HIG Accessibility의 macOS 최소 컨트롤 크기
-    /// 20×20pt입니다(디자인 가이드 4.4). 작은 사이드바 크기 설정의 행 높이 안에도 들어갑니다.
+    /// 20×20pt입니다(디자인 가이드 4.4). 제약은 버튼 alignment rect에 걸리며, 작은 사이드바 크기 설정의 행(24pt)에서도
+    /// 눌리는 영역(버튼 frame과 셀의 겹침)이 이 크기 이상입니다(`SidebarUICheck`가 작게·중간·크게에서 확인).
     static let minimumHitTarget: CGFloat = 20
 }
 
