@@ -59,6 +59,9 @@ pub mod encapsulation;
 /// 컴포넌트 경계를 넘는 drilling binding (IX.4.1).
 pub mod drilling;
 
+/// Property drilling 계획 (IX.4.3).
+pub mod drilling_plan;
+
 /// 인스턴스 expansion view (IX.2.2).
 pub mod expansion;
 
