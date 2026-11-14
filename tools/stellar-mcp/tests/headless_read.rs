@@ -445,7 +445,8 @@ fn component_resource_tracks_saved_yaml_across_checkouts_in_one_session() {
     const CHILD: &str = "0195c530-3acd-7bc1-8414-c213f61cb970";
     const FILE: &str = "Card-8c5619572809.stellar.yaml";
     let fx = Fixture::new();
-    save_documents(&fx.project, &[&large_document(2)]);
+    let document = large_document(2);
+    save_documents(&fx.project, &[&document]);
     fx.grant();
     fx.git(&["init", "-q", "-b", "main"]);
     let mut client = fx.launch();
@@ -590,6 +591,14 @@ payload:
     assert_eq!(checked(&mut client, 2, "160"), nested);
     fs::write(&path, v2.replace("160 40", "184.5 40")).unwrap();
     assert_ne!(checked(&mut client, 2, "184.5"), nested);
+
+    // 한 파일만 바꾼 경로도 현재 문서 또는 다른 정의가 소유한 ID를 가져올 수 없습니다.
+    let colliding = v2.replace(CHILD, &document.document_id().to_string());
+    fs::write(&path, colliding).unwrap();
+    let before = file_digest(&fx.temp.path);
+    assert_error(&client.diff(empty()), -32000);
+    assert_eq!(file_digest(&fx.temp.path), before);
+    fs::write(&path, v2.replace("160 40", "184.5 40")).unwrap();
 
     // 전체 SHA·generation을 그대로 둔 작업 파일 손상, 바이트 상한은 fail closed.
     let edited = fs::read(&path).unwrap();
@@ -1101,4 +1110,49 @@ fn release_page_rtt() {
         }
     }
     assert_eq!(file_digest(&fx.temp.path), before);
+}
+
+#[test]
+#[ignore = "대형 컴포넌트 폴더의 실제 stdio 응답 시간 수동 측정"]
+fn component_diff_rtt() {
+    use stellar_mcp::test_support::component_diff_fixture;
+    let measured = |client: &mut Client, count| {
+        let start = Instant::now();
+        let page = tool_page(&client.diff(empty()));
+        let ms = start.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(page.get("total"), Some(&J::int(count)));
+        ms
+    };
+    for count in [100, 1000, 4096] {
+        let fx = Fixture::new();
+        save_documents(&fx.project, &[&large_document(2)]);
+        fx.grant();
+        fx.git(&["init", "-q", "-b", "main"]);
+        let file = component_diff_fixture(&fx.project.join("design/components"), count);
+        let original = std::fs::read_to_string(&file).unwrap();
+        fx.git(&["add", "."]);
+        fx.git(&["commit", "-qm", "root Frame definitions"]);
+        let mut binaries = vec![("current", std::ffi::OsString::from(BIN))];
+        if let Some(old) = std::env::var_os("STELLAR_MCP_BENCH_BASELINE") {
+            binaries.push(("baseline", old));
+        }
+        for turn in 0..3 {
+            for index in 0..binaries.len() {
+                let (label, binary) = &binaries[(index + turn) % binaries.len()];
+                std::fs::write(&file, &original).unwrap();
+                let mut client = Client::new(
+                    fx.command_with_binary(binary, &["--headless", "--project", PROJECT_ID_TEXT]),
+                );
+                client.initialize();
+                let cold = measured(&mut client, 0);
+                let warm = measured(&mut client, 0);
+                std::fs::write(&file, original.replace("size: \"0 0\"", "size: \"161 40\""))
+                    .unwrap();
+                let edit = measured(&mut client, 1);
+                let repeat = measured(&mut client, 1);
+                println!("components={count} sample={turn} binary={label} cold_ms={cold:.2} warm_ms={warm:.2} edit_ms={edit:.2} repeat_ms={repeat:.2}");
+                client.finish();
+            }
+        }
+    }
 }

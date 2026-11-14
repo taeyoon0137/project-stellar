@@ -104,6 +104,25 @@ pub fn save_documents_with_schema(root: &Path, documents: &[&DocumentModel], sch
     run_save(root, &plan, &mut memory, &CancelToken::new()).expect("save");
 }
 
+/// 실제 v1 root Frame 컴포넌트 원본들을 만듭니다. 원본 검사는 측정 대상에서 한 번만 수행합니다.
+pub fn component_diff_fixture(folder: &Path, count: u64) -> std::path::PathBuf {
+    use stellar_project::document_io::component_source::ComponentSource;
+    std::fs::create_dir_all(folder).unwrap();
+    let mut first = None;
+    for index in 0..count {
+        let component = StableId::new_v7(1_900_000_000_000, 7, index * 2);
+        let root = StableId::new_v7(1_900_000_000_000, 7, index * 2 + 1);
+        let name = format!("Frame{index}");
+        let source = ComponentSource::new(component, name.clone(), root).unwrap();
+        let path = folder.join(source.filename().unwrap());
+        // create는 기존 라이브러리 전체에서 ID 중복을 검사합니다. fixture에는 위에서 만든 고유 ID만 씁니다.
+        let yaml = source.to_yaml().unwrap();
+        std::fs::write(&path, yaml).unwrap();
+        first.get_or_insert(path);
+    }
+    first.expect("컴포넌트 fixture 한 개 이상")
+}
+
 /// 디렉터리 아래 모든 파일의 (상대 경로 → content hash). 실행 전후 비교로 "파일 변경 0"을 검사합니다.
 pub fn file_digest(root: &Path) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();

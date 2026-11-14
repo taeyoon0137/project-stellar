@@ -146,7 +146,7 @@ pub fn snapshot_of(documents: &[&DocumentRecords]) -> Result<SemanticSnapshot, P
 }
 
 /// semantic diff(XIV.3)와 표시용 목록.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct DiffReport {
     /// canonical 순서의 변경.
     pub diff: SemanticDiff,

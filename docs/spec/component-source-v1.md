@@ -63,6 +63,24 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 `diff-summary`와 두 작업 트리를 공통 base와 비교하는 `semantic-merge`도 이 정보를 사용합니다. 같은 Frame 크기를 양쪽에서 다르게 바꾸면 속성 충돌이 반환됩니다. 이 명령들은 비교할 때 작업 파일이나 Git index를 수정하지 않습니다. headless MCP의 `document.semantic_diff`도 고정 HEAD의 Git blob과 현재 프로젝트의 YAML을 같은 규칙으로 비교합니다. 커서는 기준 commit, 저장 generation, 현재 컴포넌트 원본 집합의 hash와 결합됩니다. HEAD 안의 컴포넌트 폴더나 파일이 symlink이면 비교를 거부합니다. 앱의 Stage/Unstage는 현재 저장 generation의 문서를 대상으로 합니다.
 
+### MCP 비교 성능 재현
+
+아래 명령은 한 프로세스에서 100·1,000·4,096개의 독립 root Frame YAML 파일을 쓰고 한 번에 Git에 커밋합니다. 각 크기마다 새 stdio 프로세스 첫 요청, 동일 요청, 파일 하나의 root 크기 편집 후 요청, 변경 상태의 반복 요청을 3회씩 측정합니다. 첫 요청 시간에는 서버 프로세스 생성과 initialize가 포함되지 않습니다. 매 요청에서 반환된 변경 개수도 검증합니다.
+
+```sh
+cargo test --locked --offline -p stellar-mcp --test headless_read component_diff_rtt -- --ignored --nocapture
+```
+
+`STELLAR_MCP_BENCH_BASELINE`에 이전 stellar-mcp 실행 파일 경로를 지정하면 같은 fixture에서 실행 순서를 교대로 바꾸어 비교합니다. 2026-11-14 Apple M3 Max의 로컬 Debug 빌드에서 측정한 중앙값은 다음과 같습니다. 기준은 커밋 `c15e5fe2`이며 단위는 ms입니다.
+
+| 컴포넌트 수 | 첫 조회 기준 → 변경 | 동일 조회 기준 → 변경 | 파일 하나 편집 기준 → 변경 |
+|---:|---:|---:|---:|
+| 100 | 349 → 270 | 135 → 68 | 344 → 74 |
+| 1,000 | 851 → 581 | 248 → 120 | 860 → 178 |
+| 4,096 | 2,721 → 1,750 | 695 → 320 | 2,782 → 558 |
+
+세션은 검증한 고정 HEAD의 의미 객체를 재사용합니다. 파일 이름 집합과 저장 generation이 같고 한 파일의 bytes만 바뀌면 그 정의만 다시 투영하고 나머지 객체와의 ID 충돌을 검사합니다. 이름 변경, 파일 추가·삭제, 여러 파일 편집은 전체 검증을 수행합니다. 현재 파일 내용과 HEAD를 매번 재확인하므로 반복 요청에도 bytes를 읽는 비용이 포함됩니다. 측정은 파일시스템 캐시를 비우지 않은 로컬 개발 환경에서 수행했습니다.
+
 ## 검증
 
 `cargo test -p stellar-cli --test component_source`는 기존 generation을 가진 프로젝트에서 위 두 파일을 생성·커밋하고, 각각의 브랜치에서 한 파일만 수정합니다. 일반 `git merge --no-ff` 후 새 clone에서 `check`가 양쪽 root 크기(240.5 × 64, 32 × 55), 전체 ID와 파일 hash를 재현하며 작업 트리는 깨끗합니다. 한 파일의 편집 전후에 다른 파일 bytes를 직접 비교하고, clone 뒤 기존 프로젝트 설정·generation의 hash가 모두 같은지 확인합니다. 같은 테스트가 component/root 교차 중복 ID, 오래된 hash, 미지원 중첩 Property·Slot·state·token·알 수 없는 Frame 필드와 잘못된 root 참조의 원본 보존, 이름 변경 후 참조를 확인합니다.
