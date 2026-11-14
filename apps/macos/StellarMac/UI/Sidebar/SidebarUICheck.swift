@@ -8,7 +8,7 @@ import AppKit
 /// - Auto Layout 모호성 없음(Light·Dark 모두), 앱 크롬 색이 시스템 의미 색(catalog)임, 토글 클릭 대상 최소 크기
 /// - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로(`AXNode`)로 읽습니다. 목록 → `AXRow` → `AXCell`의
 ///   행 레이블·custom action(실행 포함), 장식 아이콘 미노출, 토글·필터·상태 화면 레이블, 선택 행, key view 순서
-/// - 선택, 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증
+/// - 선택(페이지 행 → active View 행 포함), 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증
 ///   (단축키 표시 없음), 키보드 단축키, 드롭 사전 검증·재지정, 필터·결과 없음·필터 해제 후 펼침 복원, 빈 View,
 ///   로드 중·실패·재시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행 갱신, snapshot 변경 통지 병합
 /// 실제 마우스 드래그 세션, VoiceOver 음성 출력, 화면 픽셀은 검사하지 않습니다.
@@ -213,13 +213,14 @@ enum SidebarUICheck {
         harness.refresh()
         try require(sidebar.stateView.content == .empty, "다시 시도 후 상태 불일치")
 
+        try checkPageSelection(harness)
         try checkLayout(harness, label: "Dark", appearance: .darkAqua)
         try checkLazyChildren()
         try checkAvailableRows()
         try checkCoalescing()
 
         return "symbols \(SidebarSymbols.allNames.count), pages+layers outline, AX rows/cells/custom actions, "
-            + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/lazy/offscreen rows/coalescing, "
+            + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/page selection/lazy/offscreen rows/coalescing, "
             + "no ambiguous layout (Light, Dark)"
     }
 
@@ -231,6 +232,42 @@ enum SidebarUICheck {
         try require(!(node.label ?? "").isEmpty && (node.label ?? "").hasPrefix(stateView.titleField.stringValue),
                     "\(label) 접근성 레이블 불일치: \(node.label ?? "nil")")
         try require(node.descendants(role: .image).isEmpty, "\(label) 장식 아이콘이 AXImage로 노출됨")
+    }
+
+    /// 페이지 목록: 선택 = active 페이지·View. 페이지 행을 고르면 코어가 고른 active View 행으로 선택이 옮겨 갑니다.
+    @MainActor
+    private static func checkPageSelection(_ harness: Harness) throws {
+        let pages = harness.pages
+        let outline = pages.outline
+        guard let onboarding = harness.provider.snapshot.pages.first(where: { $0.name == "Onboarding" }),
+              let welcomeID = harness.provider.viewID(named: "Welcome") else {
+            throw Failure(message: "예시 페이지 없음")
+        }
+        // 다른 페이지(Settings)가 active인 상태에서 Onboarding 페이지 행을 고름 → .activatePage → 첫 View 행 선택.
+        var mark = harness.provider.performedCommands.count
+        outline.selectRowIndexes(IndexSet(integer: harness.row(of: onboarding.id, in: outline)), byExtendingSelection: false)
+        try require(harness.commands(since: mark) == [.activatePage(onboarding.id)], "페이지 활성화 command 불일치: \(harness.commands(since: mark))")
+        harness.refresh()
+        try require(harness.provider.snapshot.activeViewID == welcomeID, "예시 active View 불일치")
+        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline),
+                    "페이지 활성화 후 active View 행이 선택되지 않음(선택 행 \(outline.selectedRow))")
+
+        // 이미 active인 페이지 행을 다시 고름 → command 없음, 선택은 active View 행으로 돌아감.
+        mark = harness.provider.performedCommands.count
+        outline.selectRowIndexes(IndexSet(integer: harness.row(of: onboarding.id, in: outline)), byExtendingSelection: false)
+        try require(harness.commands(since: mark).isEmpty, "active 페이지 재선택이 command를 만듦: \(harness.commands(since: mark))")
+        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline), "active 페이지 재선택 후 선택이 View 행으로 돌아가지 않음")
+
+        // 페이지를 접으면 페이지 행, 다시 펼치면 active View 행.
+        guard let pageItem = outline.item(atRow: harness.row(of: onboarding.id, in: outline)) else {
+            throw Failure(message: "페이지 행 없음")
+        }
+        outline.collapseItem(pageItem)
+        try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline), "접은 active 페이지 행이 선택되지 않음")
+        outline.expandItem(pageItem)
+        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline), "다시 펼친 뒤 active View 행이 선택되지 않음")
+        try require(harness.commands(since: mark).isEmpty, "접기·펼치기가 command를 만듦: \(harness.commands(since: mark))")
+        try require(harness.layers.outline.numberOfRows == 9, "Welcome 레이어가 다시 보이지 않음: \(harness.layers.outline.numberOfRows)")
     }
 
     // MARK: 구조·layout·접근성

@@ -73,6 +73,7 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 - snapshot의 선택이 사이드바가 마지막으로 보낸 선택과 다르면 외부(캔버스 등) 변경으로 보고, 조상 행을 펼치고 첫 선택 행이 보이게 스크롤합니다. 사이드바가 보낸 선택에는 스크롤·펼침을 하지 않습니다(사용자 조작 없이 화면을 움직이지 않음). [가이드 8.2]
 - 구획 제목 행은 선택되지 않습니다(`selectionIndexesForProposedSelection`에서 제외).
 - 페이지 구획 선택: 페이지 행 → `.activatePage`, View 행 → `.activateView`. 빈 곳을 눌러 선택이 비면 active 표시를 되살립니다.
+- 페이지 행을 골라 그 페이지가 active가 되면, 코어가 고른 active View 행으로 선택이 옮겨 갑니다(페이지가 접혀 있으면 페이지 행). 이미 active인 페이지 행을 고르면 command 없이 선택만 active View 행으로 돌아가고, 접은 active 페이지를 다시 펼쳐도 같습니다.
 
 ### 4.2 인라인 이름 변경
 
@@ -223,7 +224,7 @@ protocol SidebarDataProvider: AnyObject {
 - 구조: SF Symbol 21개 해석, source list 스타일, `NSSearchField`, 사이드바 behavior, accessory 부착, 이 영역이 넣은 `NSVisualEffectView` 없음(시스템 행의 선택 재질은 제외), 행 수, group row, active View 선택, key view 순서.
 - layout: Light·Dark·결과 없음 상태에서 Auto Layout 모호성 없음, 이름 필드가 토글과 겹치지 않음, 토글 클릭 대상 20×20pt 이상이고 행 안에 들어감, 앱 크롬 색이 시스템 catalog 색.
 - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로로 읽습니다(`AXNode`: NSAccessibility 프로토콜 객체는 프로토콜 메서드, AppKit 표의 `AXRow`·`AXCell`은 legacy attribute 질의). 모든 행이 `AXCell` 하나로 묶임, 행 레이블·custom action(명세로 따로 계산한 값과 비교), 장식 아이콘 `AXImage` 없음, 보이는 토글만 노출되고 레이블이 다음 동작, custom action을 접근성 서버 방식(이름 있는 AX action)으로 실행(Hide·Lock → command, 선택 유지, Rename → 편집 시작·취소), 선택 행(`AXSelectedRows`)의 레이블, 필터 필드 cell 레이블, 상태 화면 group 레이블과 아이콘 미노출, 숨김·잠김·필터 문맥 문구, 빈 이름 placeholder.
-- 동작: 선택 command, 외부 선택 펼침, Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화와 단축키 표시 없음, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행의 값 변경·대비 높이기 반영, 변경 통지 병합.
+- 동작: 선택 command, 외부 선택 펼침, 페이지 행 선택 → active View 행 선택(재선택·접기·펼치기 포함), Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화와 단축키 표시 없음, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행의 값 변경·대비 높이기 반영, 변경 통지 병합.
 - 검사하지 않는 것: 실제 마우스 드래그 세션, VoiceOver 음성 출력, 시스템 접근성 설정을 실제로 켠 상태, 화면 픽셀.
 
 통합 때 `main.swift`에 `--sidebar-ui-check` 같은 인자로 `exit(SidebarUICheck.run() ? 0 : 1)`을 연결하고 `scripts/macos/smoke.sh`에서 호출합니다. 아직 연결되지 않았으므로(두 파일은 이 영역 밖) 지금은 자동 회귀 방지가 없습니다. 지금까지의 결과는 이 폴더의 소스와 `SidebarUICheck.run()`만 부르는 임시 진입점을 저장소 밖에서 컴파일해 얻은 것입니다.
