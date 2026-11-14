@@ -1,0 +1,58 @@
+schema_version: "1"
+resolved:
+  -
+    logical_id: a
+    library_id: "0195c530-3acd-7bc1-8414-00000000000a"
+    source: git
+    repository: "https://example.com/a.git"
+    exact_commit: a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
+    content_hash: "sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+    schema_version: "1"
+    dependency_path:
+      - a
+    dependencies:
+      -
+        library_id: "0195c530-3acd-7bc1-8414-00000000000c"
+        exact_commit: c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1
+  -
+    logical_id: b
+    library_id: "0195c530-3acd-7bc1-8414-00000000000b"
+    source: git
+    repository: "https://example.com/b.git"
+    requested:
+      branch: main
+    exact_commit: b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1
+    content_hash: "sha256:b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1"
+    schema_version: "1"
+    dependency_path:
+      - b
+    dependencies:
+      -
+        library_id: "0195c530-3acd-7bc1-8414-00000000000c"
+        exact_commit: c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2
+  -
+    logical_id: c
+    library_id: "0195c530-3acd-7bc1-8414-00000000000c"
+    source: git
+    repository: "https://example.com/c.git"
+    requested: v1
+    exact_commit: c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1
+    content_hash: "sha256:c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1"
+    schema_version: "1"
+    dependency_path:
+      - a
+      - c
+    dependencies: []
+  -
+    logical_id: c
+    library_id: "0195c530-3acd-7bc1-8414-00000000000c"
+    source: git
+    repository: "https://example.com/c.git"
+    requested: v2
+    exact_commit: c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2
+    content_hash: "sha256:c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2c2"
+    schema_version: "2"
+    dependency_path:
+      - b
+      - c
+    dependencies: []

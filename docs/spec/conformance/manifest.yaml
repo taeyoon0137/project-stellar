@@ -1,0 +1,690 @@
+schema_version: "1"
+name: stellar-format-golden-corpus
+license:
+  status: undecided
+  note: "저장소에 라이선스가 없고 corpus 라이선스는 정하지 않았습니다. 공개 전에 product owner 결정이 필요합니다."
+content: synthetic
+baseline_commit: "24728e3"
+entries:
+  -
+    id: chunk-file-golden
+    file: "binary/chunk_golden_test.hex"
+    target: chunk-file
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §6.1, §6.4"
+    description: "kind 1, payload \"test\" golden header 뒤 payload"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/chunk_golden_test.hex"
+    sha256: "sha256:d772a39be4fb79e9d2657507b4aa1972e8fe8121f3a5db2bc84d563893fd9736"
+  -
+    id: chunk-file-view-tree
+    file: "binary/chunk_view_tree.hex"
+    target: chunk-file
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §6.1, §6.4"
+    description: "view-tree kind chunk 파일(ViewTree payload)"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/chunk_view_tree.hex"
+    sha256: "sha256:87e17cb2c4a0c745bf732e8a55d1993b1baa8bf3f9b6693b0f345aab38ae8c6e"
+  -
+    id: envelope-bad-version
+    file: "binary/envelope_bad_version.hex"
+    target: envelope
+    validity: invalid
+    expect: "error:UnsupportedVersion"
+    spec: "stellar-format.md §6.1"
+    description: "format version 2"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/envelope_bad_version.hex"
+    sha256: "sha256:2b590d901b0dfa506e0c77308a2b686cf431cdf0a707fff932627514f964c2fe"
+  -
+    id: envelope-hash-multibyte
+    file: "binary/envelope_hash_multibyte_3byte.hex"
+    target: envelope
+    validity: invalid
+    expect: "error:InvalidHash"
+    spec: "stellar-format.md §6.1"
+    description: "hash hex 자리에 3 byte UTF-8 문자"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/envelope_hash_multibyte_3byte.hex"
+    sha256: "sha256:d6f248b891016311017ee10c272d2aa37cafe24200d1f83f644217937e1904f3"
+  -
+    id: envelope-uppercase-hash
+    file: "binary/envelope_uppercase_hash.hex"
+    target: envelope
+    validity: invalid
+    expect: "error:InvalidHash"
+    spec: "stellar-format.md §6.1"
+    description: "hash hex 대문자"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/envelope_uppercase_hash.hex"
+    sha256: "sha256:488fd01d8494d442bb38bcccf5998b35cfba7e35874c7c57dda6f7fca4a3f306"
+  -
+    id: manifest-minimal
+    file: "binary/manifest_minimal.hex"
+    target: manifest
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §10"
+    description: "generation 2, parent 1, pointer 1, root document 1"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/manifest_minimal.hex"
+    sha256: "sha256:0da9579a38c01f9781dbf61e97d5a53b2cd345d6f893365630af5e82b7540d9a"
+  -
+    id: manifest-misordered-pointers
+    file: "binary/manifest_misordered_pointers.hex"
+    target: manifest
+    validity: invalid
+    expect: "error:MisorderedPointers"
+    spec: "stellar-format.md §10"
+    description: "pointer chunk_id 내림차순"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/manifest_misordered_pointers.hex"
+    sha256: "sha256:d4cd58d50a799b220bdaabc843975226ad68abfec2321a2beba294ec59ac3cd1"
+  -
+    id: pointer-hash-multibyte
+    file: "binary/pointer_hash_multibyte_4byte.hex"
+    target: pointer
+    validity: invalid
+    expect: "error:InvalidHash"
+    spec: "stellar-format.md §8.1"
+    description: "pointer hash 문자열에 4 byte UTF-8 문자"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/pointer_hash_multibyte_4byte.hex"
+    sha256: "sha256:fc4b88601227f542f0ad3a94b9e2834be1383267eb58a677668d888e65fc4f6b"
+  -
+    id: current-pointer-valid
+    file: "binary/text_current_pointer.hex"
+    target: current-pointer
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §11"
+    description: "hash 문자열 + LF"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/text_current_pointer.hex"
+    sha256: "sha256:61ab377593f657058a53803648d02ebd087564a6fe2b71de7a093f44dd82aa63"
+  -
+    id: current-pointer-hash-multibyte
+    file: "binary/text_hash_multibyte_2byte.hex"
+    target: current-pointer
+    validity: invalid
+    expect: "error:InvalidFormat"
+    spec: "stellar-format.md §11"
+    description: "hash 문자열에 2 byte UTF-8 문자 + LF"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/text_hash_multibyte_2byte.hex"
+    sha256: "sha256:06af8b25dc3ee55d8b415a6dfbc677e5961d2def6a60e7d3dc997909ec447f7f"
+  -
+    id: view-tree-duplicate-root
+    file: "binary/view_tree_duplicate_root.hex"
+    target: view-tree
+    validity: invalid
+    expect: "error:DuplicateSubtreeRoot"
+    spec: "stellar-format.md §9.1"
+    description: "subtree root 중복"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/view_tree_duplicate_root.hex"
+    sha256: "sha256:7b5b13b8a1c2b21b4a3f47e261dc0487f388ece420c5ab6fe8ff21dde9cff4fe"
+  -
+    id: view-tree-minimal
+    file: "binary/view_tree_minimal.hex"
+    target: view-tree
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §9.1"
+    description: "view root + subtree 항목"
+    origin: copied
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/view_tree_minimal.hex"
+    sha256: "sha256:04c7611a3e82dc712ed83f63978c0dab4451cbd0b29fe83f075bbe176bcaee60"
+  -
+    id: yaml-bom-tabs
+    file: "yaml/bom_tabs.yaml"
+    target: restricted-yaml
+    validity: invalid
+    expect: "error:parse@1:6"
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "선행 BOM과 tab"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/bom_tabs.yaml"
+    sha256: "sha256:1e58ad5829e326816e8840ba81bbb4e23a430431e17f052899a32cf14a378cf6"
+  -
+    id: yaml-duplicate-keys
+    file: "yaml/duplicate_keys.yaml"
+    target: restricted-yaml
+    validity: invalid
+    expect: "error:duplicate-key@2:0"
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "같은 매핑의 같은 키"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/duplicate_keys.yaml"
+    sha256: "sha256:d2aa92f34253470065b00064619596018a78196cc620651de5ee8d4236a6a4e3"
+  -
+    id: yaml-anchor-alias
+    file: "yaml/forbidden_anchor_alias.yaml"
+    target: restricted-yaml
+    validity: invalid
+    expect: "error:anchor@1:6"
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "anchor·alias"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/forbidden_anchor_alias.yaml"
+    sha256: "sha256:ff4aa6afb995f003cc9f8f047e94de372edad9f3ee9c93027846f4ee9ff9cc91"
+  -
+    id: yaml-merge-key
+    file: "yaml/forbidden_merge_key.yaml"
+    target: restricted-yaml
+    validity: invalid
+    expect: "error:merge-key@3:2"
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "merge key <<"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/forbidden_merge_key.yaml"
+    sha256: "sha256:b0e7ed838cb9fe31fc5fd1a90a1b42f1699500631457af059a706be5269d6d76"
+  -
+    id: yaml-tags
+    file: "yaml/forbidden_tags.yaml"
+    target: restricted-yaml
+    validity: invalid
+    expect: "error:custom-tag@1:9"
+    spec: "stellar-format.md §14.1~§14.3"
+    description: tag
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/forbidden_tags.yaml"
+    sha256: "sha256:1c42eda25211434a0264db50f36cd7475b7d63fbf95f5ba95c4d9b390037557d"
+  -
+    id: yaml-lock-multi-version
+    file: "yaml/lock_multi_version.yaml"
+    target: restricted-yaml
+    validity: valid
+    expect: ok
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "lock 형태 문서(loader 단계)"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/lock_multi_version.yaml"
+    sha256: "sha256:3f055b8089af3809f4b1ee72ce1642faa9ef24e7f078de5ef65d25e1e929a902"
+  -
+    id: yaml-manifest-full
+    file: "yaml/manifest_full.yaml"
+    target: restricted-yaml
+    validity: valid
+    expect: ok
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "manifest 형태 문서(loader 단계)"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/manifest_full.yaml"
+    sha256: "sha256:14fdb9e61505e77365128000064b0fe6453b8b60d96cf705c2f6e8f78098a8fa"
+  -
+    id: yaml-manifest-yaml11-confusables
+    file: "yaml/manifest_yaml11_confusables.yaml"
+    target: restricted-yaml
+    validity: valid
+    expect: ok
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "YAML 1.1 혼동 스칼라(loader 단계)"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/manifest_yaml11_confusables.yaml"
+    sha256: "sha256:0dc6c3cbc347344e673cb44ddfcdec41ca83252f5ccbf52af1c2cc5a1595dab3"
+  -
+    id: yaml-multiple-documents
+    file: "yaml/multiple_documents.yaml"
+    target: restricted-yaml
+    validity: invalid
+    expect: "error:multiple-documents@2:0"
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "document 여러 개"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/multiple_documents.yaml"
+    sha256: "sha256:3b436e4254a1f9637fe9b0c17c7982e6d4bf5efa7777e251c758caac603669dc"
+  -
+    id: yaml-non-scalar-keys
+    file: "yaml/non_scalar_keys.yaml"
+    target: restricted-yaml
+    validity: invalid
+    expect: "error:non-scalar-key@1:7"
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "비스칼라 키"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/non_scalar_keys.yaml"
+    sha256: "sha256:3e801a6adc802425d6b935260c48ff4c5f8a4b1aa864be9ac51b4111a6e21eac"
+  -
+    id: yaml-scalar-styles-directives
+    file: "yaml/scalar_styles_directives.yaml"
+    target: restricted-yaml
+    validity: valid
+    expect: ok
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "스칼라 스타일과 directive"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/scalar_styles_directives.yaml"
+    sha256: "sha256:b037cd0bb7acd4c2d2e3725ec1a68c9b42a5d67bc559d84cf03eac766b0cca68"
+  -
+    id: yaml-yaml11-scalars
+    file: "yaml/yaml11_scalars.yaml"
+    target: restricted-yaml
+    validity: valid
+    expect: ok
+    spec: "stellar-format.md §14.1~§14.3"
+    description: "YAML 1.1 스칼라"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/yaml11_scalars.yaml"
+    sha256: "sha256:e7fc8073b45134535b0e13c243c5c17ab95c9334ca79752ef7e52e91c380452f"
+  -
+    id: stellar-yaml-full
+    file: "yaml/manifest_full.yaml"
+    target: stellar-yaml
+    validity: invalid
+    expect: "error:Manifest/MissingField[dependencies.design-system.library_id]"
+    spec: "stellar-format.md §14.5"
+    description: "library_id 없는 이전 의존성 entry 형식(ADR-0021 이전)"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/manifest_full.yaml"
+    sha256: "sha256:14fdb9e61505e77365128000064b0fe6453b8b60d96cf705c2f6e8f78098a8fa"
+  -
+    id: stellar-yaml-yaml11-confusables
+    file: "yaml/manifest_yaml11_confusables.yaml"
+    target: stellar-yaml
+    validity: valid
+    expect: ok
+    canonical: "false"
+    spec: "stellar-format.md §14.5"
+    description: "YAML 1.1 혼동 스칼라를 문자열로 받는 stellar.yaml"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/manifest_yaml11_confusables.yaml"
+    sha256: "sha256:0dc6c3cbc347344e673cb44ddfcdec41ca83252f5ccbf52af1c2cc5a1595dab3"
+  -
+    id: stellar-lock-multi-version
+    file: "yaml/lock_multi_version.yaml"
+    target: stellar-lock-yaml
+    validity: invalid
+    expect: "error:Lock/MissingField[resolved[0].library_id]"
+    spec: "stellar-format.md §14.6"
+    description: "6필드 이전 lock entry 형식(ADR-0021 이전)"
+    origin: copied
+    source: "crates/project/tests/fuzz_corpus/restricted_yaml/lock_multi_version.yaml"
+    sha256: "sha256:3f055b8089af3809f4b1ee72ce1642faa9ef24e7f078de5ef65d25e1e929a902"
+  -
+    id: stellar-yaml-cli-fixture
+    file: "yaml/valid_stellar_cli.yaml"
+    target: stellar-yaml
+    validity: valid
+    expect: ok
+    canonical: "false"
+    spec: "stellar-format.md §14.5"
+    description: "stellar-cli 유효 fixture(의존성 1개, 비인용 schema_version)"
+    origin: copied
+    source: "tools/stellar-cli/tests/fixtures/projects/valid.stellar.yaml"
+    sha256: "sha256:b5d14576f22e836dab9706a8c1c3e6639deeaf706d9115aa8d117e8c94cc0821"
+  -
+    id: envelope-bad-magic
+    file: "binary/envelope_bad_magic.hex"
+    target: envelope
+    validity: invalid
+    expect: "error:BadMagic"
+    spec: "stellar-format.md §6.1"
+    description: "magic 첫 byte가 X"
+    origin: generated
+    sha256: "sha256:33e842be3044b71c6983bb54f39e963a061c9d24ec06d167abc158e2e070313f"
+  -
+    id: pointer-valid
+    file: "binary/pointer_valid.hex"
+    target: pointer
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §8.1"
+    description: "view-tree kind pointer, schema version 1"
+    origin: generated
+    sha256: "sha256:7205020319f1ac845e2fe333d95a0a864394075a2381da218d9ae6116475ab76"
+  -
+    id: manifest-zero-generation
+    file: "binary/manifest_zero_generation.hex"
+    target: manifest
+    validity: invalid
+    expect: "error:ZeroGeneration"
+    spec: "stellar-format.md §10"
+    description: "manifest-minimal의 generation을 0으로"
+    origin: generated
+    sha256: "sha256:ff00a752d7c657d04c6463b142a27a6386719ea749e2e67feb92b89e43f355c7"
+  -
+    id: current-pointer-crlf
+    file: "binary/current_pointer_crlf.hex"
+    target: current-pointer
+    validity: invalid
+    expect: "error:InvalidFormat"
+    spec: "stellar-format.md §11"
+    description: "hash 문자열 + CRLF"
+    origin: generated
+    sha256: "sha256:e0ff6090df59aaa29f7138a3d11aa3eab3e0276f8005e67ee291811225f66b98"
+  -
+    id: view-tree-trailing
+    file: "binary/view_tree_trailing.hex"
+    target: view-tree
+    validity: invalid
+    expect: "error:Decode/TrailingBytes"
+    spec: "stellar-format.md §9.1"
+    description: "view-tree-minimal 뒤 1 byte"
+    origin: generated
+    sha256: "sha256:0097c84aee9f2493557fcfae4e88de2f8c1796a2e8440ac57ca2812cbdcb54a3"
+  -
+    id: chunk-file-length-mismatch
+    file: "binary/chunk_file_length_mismatch.hex"
+    target: chunk-file
+    validity: invalid
+    expect: "error:LengthMismatch"
+    spec: "stellar-format.md §6.1, §6.4"
+    description: "chunk-file-golden 뒤 payload 1 byte 추가"
+    origin: generated
+    sha256: "sha256:4a7d05a18986f030e6d03645fe2562279da030e8ad857f58ac197814523c071e"
+  -
+    id: chunk-file-payload-hash-mismatch
+    file: "binary/chunk_file_payload_hash_mismatch.hex"
+    target: chunk-file
+    validity: invalid
+    expect: "error:PayloadHashMismatch/ChunkObjectPath"
+    spec: "stellar-format.md §6.1, §6.4"
+    description: "chunk-file-golden payload를 tesu로"
+    origin: generated
+    sha256: "sha256:657180351aa3df489e3d47e8241b59d0f038fa946276967d5b2a375da311214b"
+  -
+    id: document-definition-minimal
+    file: "binary/document_definition_minimal.hex"
+    target: document-definition
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-semantic-model.md §2.5"
+    description: "문서 1, 페이지 1, View 1"
+    origin: generated
+    sha256: "sha256:00f8d9fc23d5c3fde65595e17d5cfb44c55f6da0e260556f4b65648d1f96cc72"
+  -
+    id: document-definition-trailing
+    file: "binary/document_definition_trailing.hex"
+    target: document-definition
+    validity: invalid
+    expect: "error:Malformed[trailing bytes]"
+    spec: "stellar-semantic-model.md §2.5"
+    description: "document-definition-minimal 뒤 1 byte"
+    origin: generated
+    sha256: "sha256:470116629a12ab66aa007d06216c5910ec65e2dfa923153dfa891ba96b632307"
+  -
+    id: document-definition-bad-utf8
+    file: "binary/document_definition_bad_utf8.hex"
+    target: document-definition
+    validity: invalid
+    expect: "error:Malformed[UTF-8 아님]"
+    spec: "stellar-semantic-model.md §2.5"
+    description: "문서 이름 byte 0xff"
+    origin: generated
+    sha256: "sha256:c28d01fa6685f6d5bc39f38e0b532c5622ec009ced3fe0ee59a51e5ae79fd69d"
+  -
+    id: document-manifest-minimal
+    file: "binary/document_manifest_minimal.hex"
+    target: document-manifest
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §9.2"
+    description: "정의 + View 1개의 ViewTree 참조"
+    origin: generated
+    sha256: "sha256:2aa0f424e1bc5bd111a486b9191ac04f958f18f30c7eee792a567d35e16488d2"
+  -
+    id: document-manifest-view-mismatch
+    file: "binary/document_manifest_view_mismatch.hex"
+    target: document-manifest
+    validity: invalid
+    expect: "error:ViewMismatch"
+    spec: "stellar-format.md §9.2"
+    description: "View 1개 정의에 ViewTree 참조 0개"
+    origin: generated
+    sha256: "sha256:ba3a35661a3496d3285937f9479b4f982019a04acf35880f8b788cca8a93135b"
+  -
+    id: subtree-minimal
+    file: "binary/subtree_minimal.hex"
+    target: subtree
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-semantic-model.md §2.4"
+    description: "root Frame + Fragment 자식, Frame의 modifier stack(Fill, Opacity)"
+    origin: generated
+    sha256: "sha256:b027eec8e12886e1635897aac02d4159dbbe42d34f35f80e3ab107c633e2aaf0"
+  -
+    id: subtree-root-mismatch
+    file: "binary/subtree_root_mismatch.hex"
+    target: subtree
+    validity: invalid
+    expect: "error:SubtreeRootMismatch"
+    spec: "stellar-semantic-model.md §2.4"
+    description: "선언 root가 첫 node와 다름"
+    origin: generated
+    sha256: "sha256:b0cedc8eee32aab543a00981cff44d0ea1d81dfb5c54bb6d5c792d84a2f68cbc"
+  -
+    id: subtree-foreign-stack
+    file: "binary/subtree_foreign_stack.hex"
+    target: subtree
+    validity: invalid
+    expect: "error:ForeignModifierStack"
+    spec: "stellar-semantic-model.md §2.4"
+    description: "subtree에 없는 node의 modifier stack"
+    origin: generated
+    sha256: "sha256:c0f42a3ce14beca09fc925e7f752e0ac68b9dd5e447ab741a2d68852e89b1b2f"
+  -
+    id: subtree-component-instance
+    file: "binary/subtree_component_instance.hex"
+    target: subtree
+    validity: invalid
+    expect: "error:UnsupportedNodeKind/ComponentInstance"
+    spec: "stellar-semantic-model.md §2.4"
+    description: "첫 node kind를 7(ComponentInstance)로"
+    origin: generated
+    sha256: "sha256:f062a36667da2d0c6a0c7ac4f69db94e9c79f73a3a051315f4ddf72c90636c87"
+  -
+    id: subtree-fragment-payload
+    file: "binary/subtree_fragment_payload.hex"
+    target: subtree
+    validity: invalid
+    expect: "error:Fragment/UnexpectedPayload"
+    spec: "stellar-semantic-model.md §2.4"
+    description: "Fragment payload 1 byte"
+    origin: generated
+    sha256: "sha256:edb060b17c4d332501fd53c164912e82adf56ee6c3b7581858fd6ae41422839f"
+  -
+    id: modifier-stack-fill-opacity
+    file: "binary/modifier_stack_fill_opacity.hex"
+    target: modifier-stack
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-semantic-model.md §2.6"
+    description: "Fill(검정) + Opacity 0.5"
+    origin: generated
+    sha256: "sha256:ad0d5fc26b44b344bde22176591b7a1b3ebbe0312e609518d42417b594271b37"
+  -
+    id: modifier-stack-misordered
+    file: "binary/modifier_stack_misordered.hex"
+    target: modifier-stack
+    validity: invalid
+    expect: "error:Malformed[OrderKey 정렬 위반]"
+    spec: "stellar-semantic-model.md §2.6"
+    description: "OrderKey 0xc0 다음 0x40"
+    origin: generated
+    sha256: "sha256:a2f32f4b65dcc72de2f8ba891bed552c5af1792a72a434bae1a7eec554668966"
+  -
+    id: modifier-stack-opacity-range
+    file: "binary/modifier_stack_opacity_range.hex"
+    target: modifier-stack
+    validity: invalid
+    expect: "error:InvalidPayload[불투명도는 0..=1]"
+    spec: "stellar-semantic-model.md §2.6"
+    description: "Opacity 1.5"
+    origin: generated
+    sha256: "sha256:c72e2406135612131c581eed967eb50d710e2d52fc4a3992e1d5907eab067af3"
+  -
+    id: modifier-stack-payload-length
+    file: "binary/modifier_stack_payload_length.hex"
+    target: modifier-stack
+    validity: invalid
+    expect: "error:Malformed[payload 부족]"
+    spec: "stellar-semantic-model.md §2.6"
+    description: "Opacity payload 2 byte"
+    origin: generated
+    sha256: "sha256:637a27f37cd1aa86a06572222db0dbe0130df93917a0d624b75de9a891d62623"
+  -
+    id: stellar-yaml-minimal
+    file: "yaml/stellar_minimal.yaml"
+    target: stellar-yaml
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §14.5"
+    description: "새 프로젝트 기본 stellar.yaml"
+    origin: generated
+    sha256: "sha256:8e1a56c1a2642d31ad9e13e3531fc4221481ada2b5475fa490f8096d95587ee3"
+  -
+    id: stellar-yaml-unknown-key
+    file: "yaml/stellar_unknown_key.yaml"
+    target: stellar-yaml
+    validity: invalid
+    expect: "error:Manifest/UnknownKey[<root>.extra]"
+    spec: "stellar-format.md §14.5"
+    description: "최상위에 정의되지 않은 키"
+    origin: generated
+    sha256: "sha256:095b31675530b0df57a167cd1d18d4a3658eabf23059de75038f5cc6a86b1a7c"
+  -
+    id: stellar-yaml-missing-project
+    file: "yaml/stellar_missing_project.yaml"
+    target: stellar-yaml
+    validity: invalid
+    expect: "error:Manifest/MissingField[project]"
+    spec: "stellar-format.md §14.5"
+    description: "project 키 없음"
+    origin: generated
+    sha256: "sha256:5f140643e9ed4b5f83e98c687f12a1ebeb6a3571a6c73b6cd5365d0459c7f061"
+  -
+    id: stellar-yaml-bad-schema-version
+    file: "yaml/stellar_bad_schema_version.yaml"
+    target: stellar-yaml
+    validity: invalid
+    expect: "error:Manifest/InvalidSchemaVersion"
+    spec: "stellar-format.md §14.5"
+    description: "schema_version 선행 0"
+    origin: generated
+    sha256: "sha256:d87bc77482fd69a3087889a5e9cda838a6298fdd653b6cfad9b9555b16bdfbe5"
+  -
+    id: stellar-yaml-bom
+    file: "yaml/stellar_bom.yaml"
+    target: stellar-yaml
+    validity: invalid
+    expect: "error:Manifest/UnknownKey[<root>.\\u{feff}schema_version]"
+    spec: "stellar-format.md §14.5"
+    description: "선행 BOM + 기본 stellar.yaml"
+    origin: generated
+    sha256: "sha256:e30fc75174d34ce7290194ff09a88303ed6b9375ff44e9b1300774614760067b"
+  -
+    id: stellar-yaml-dependencies
+    file: "yaml/stellar_dependencies.yaml"
+    target: stellar-yaml
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §14.5"
+    description: "stellar-yaml-cli-fixture의 canonical 기록"
+    origin: generated
+    sha256: "sha256:c3050203e644c0d680d40abb5a49a029f2edd7ce7ceb90ccfd8edfbd8957c948"
+  -
+    id: stellar-yaml-dependency-option-url
+    file: "yaml/stellar_dependency_option_url.yaml"
+    target: stellar-yaml
+    validity: invalid
+    expect: "error:Manifest/InvalidValue[dependencies.design-system.repository]/LeadingDash"
+    spec: "stellar-format.md §14.5"
+    description: "repository가 -로 시작(git option 주입)"
+    origin: generated
+    sha256: "sha256:108f40da27f44b0fa5e3fdcabe8de95511fc43395e8cea215136ddafae892e7d"
+  -
+    id: stellar-yaml-dependency-branch
+    file: "yaml/stellar_dependency_branch.yaml"
+    target: stellar-yaml
+    validity: valid
+    expect: ok
+    canonical: "false"
+    spec: "stellar-format.md §14.5"
+    description: "branch 선택자 매핑과 local_override"
+    origin: generated
+    sha256: "sha256:e5660b6e3563338a99aa23df905d5060e6f66aee1c38ab0178409d9c3db95228"
+  -
+    id: stellar-lock-resolved
+    file: "yaml/lock_resolved.yaml"
+    target: stellar-lock-yaml
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §14.6"
+    description: "resolver 그래프 root → a(v1), b(branch main), c v1·v2의 canonical lock(XV.4.1 golden과 같은 내용)"
+    origin: generated
+    sha256: "sha256:8e64dfce344f1ba6dd1cce3af6d50364fa31188728ad0e9553002549c96af6d3"
+  -
+    id: stellar-lock-empty
+    file: "yaml/lock_empty.yaml"
+    target: stellar-lock-yaml
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-format.md §14.6"
+    description: "새 프로젝트 기본 stellar.lock.yaml"
+    origin: generated
+    sha256: "sha256:d05cfa236a5660e5fb73e7289db4f2dce6b1119d996d92db44625183f0b840a8"
+  -
+    id: stellar-lock-unknown-key
+    file: "yaml/lock_unknown_key.yaml"
+    target: stellar-lock-yaml
+    validity: invalid
+    expect: "error:Lock/UnknownKey[resolved[0].note]"
+    spec: "stellar-format.md §14.6"
+    description: "stellar-lock-resolved 첫 entry에 정의되지 않은 키 note"
+    origin: generated
+    sha256: "sha256:b4794a6cf3898a7e79989308a38cadf0d9a1d8971b4e8551bc1791ba846ae421"
+  -
+    id: stellar-lock-missing-requested
+    file: "yaml/lock_missing_requested.yaml"
+    target: stellar-lock-yaml
+    validity: invalid
+    expect: "error:Lock/MissingField[resolved[0].requested]"
+    spec: "stellar-format.md §14.6"
+    description: "stellar-lock-resolved 첫 entry의 requested 없음"
+    origin: generated
+    sha256: "sha256:7c8cdcbbdf41ad75261230b409ff5df1717c70d0647f12d307923729afff9c85"
+excluded:
+  -
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/stream_all_ops.hex"
+    reason: "fuzz harness 전용 op stream 입력이며 파일 형식이 아님"
+  -
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/stream_f32_nan.hex"
+    reason: "fuzz harness 전용 op stream 입력이며 파일 형식이 아님"
+  -
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/stream_f64_negative_zero.hex"
+    reason: "fuzz harness 전용 op stream 입력이며 파일 형식이 아님"
+  -
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/stream_fields_unknown_mandatory.hex"
+    reason: "fuzz harness 전용 op stream 입력이며 파일 형식이 아님"
+  -
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/stream_length_overflow.hex"
+    reason: "fuzz harness 전용 op stream 입력이며 파일 형식이 아님"
+  -
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/stream_map_duplicate_key.hex"
+    reason: "fuzz harness 전용 op stream 입력이며 파일 형식이 아님"
+  -
+    source: "crates/storage/tests/fuzz_corpus/chunk_canonical/stream_map_misordered.hex"
+    reason: "fuzz harness 전용 op stream 입력이며 파일 형식이 아님"
+related_fixtures:
+  -
+    path: "docs/fixtures/storage/canonical-primitives.yaml"
+    check: "cargo xtask validate-storage-fixtures"
+    spec: "stellar-format.md §3"

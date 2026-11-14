@@ -1,0 +1,17 @@
+schema_version: "1"
+resolved:
+  - logical_id: design-system
+    source: git
+    exact_commit: "0123456789abcdef0123456789abcdef01234567"
+    content_hash: "sha256:00ff"
+    schema_version: "1"
+    dependency_path:
+      - design-system
+  - logical_id: design-system
+    source: git
+    exact_commit: "89abcdef0123456789abcdef0123456789abcdef"
+    content_hash: "sha256:ff00"
+    schema_version: "2"
+    dependency_path:
+      - icons
+      - design-system
