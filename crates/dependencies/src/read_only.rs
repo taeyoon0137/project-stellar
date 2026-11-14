@@ -13,9 +13,11 @@
 //! | instance override 설정 | 공개 property이고 타입 표기가 같을 때만 허용 |
 //! | instance override reset | 항상 허용(instance 쪽 sparse 값 삭제. property가 사라졌거나 library를 쓸 수 없어도 정리 가능) |
 //!
-//! 판정은 snapshot(XV.5.1)만 읽습니다. reset은 snapshot을 읽지 않습니다. command 계층(document·commands crate)은 외부 참조를 대상으로
-//! 하는 command를 이 분류로 바꿔 transaction 적용 전에 [`check_library_edits`]를 호출합니다. 한 건이라도
-//! 거부되면 transaction 전체를 거부합니다.
+//! 판정은 snapshot(XV.5.1)만 읽습니다. reset은 snapshot을 읽지 않습니다. document·commands crate는 crate graph
+//! 정책상 이 crate에 의존할 수 없습니다. 그래서 외부 참조를 대상으로 하는 command의 사전 검사는 이 crate와
+//! document·commands를 함께 쓰는 project crate(또는 project를 거쳐 command를 실행하는 runtime) 계층이 맡습니다. 그
+//! 계층이 command를 이 분류로 바꿔 transaction 적용 전에 [`check_library_edits`]를 호출하고, 한 건이라도 거부되면
+//! transaction 전체를 거부합니다. 이 연결은 아직 없습니다(XV.5.3 `[~]`, 작업 보고서 "상태 정정").
 
 use std::fmt;
 
