@@ -69,6 +69,9 @@ pub mod repo_status;
 /// Stellar 프로젝트 파일 분류와 raw Git status 분리(XIV.4.4).
 pub mod classify;
 
+/// Stellar 프로젝트 파일 단위 영역별 status(XIV.4.3).
+pub mod file_status;
+
 /// Remote 목록·연결·push(XIV.9.*).
 pub mod remote;
 

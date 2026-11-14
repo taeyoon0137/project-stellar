@@ -22,11 +22,17 @@
 //! 어느 영역에서든 바뀐 모든 속성 경로에 대해 HEAD·Index·WorkingTree 세 값을 [`PropertyLayers`]로
 //! 함께 보존합니다. 값은 snapshot에서 직접 읽으므로 객체 추가·삭제와 겹쳐도(객체 없음 =
 //! [`LayerValue::NoObject`]) 정확합니다.
+//!
+//! **untracked Stellar 파일(XIV.4.3)**: Git이 추적하지 않는 새 chunk·asset 파일은 WorkingTree
+//! snapshot에는 들어가고(XIV.2.7) Index snapshot에는 없습니다. 그 안의 객체는 unstaged
+//! AddObject/AddToken이며 [`SemanticStatus::working_tree_additions`]로 모아 봅니다. 파일 단위
+//! 표시(`Untracked` file change)는 git-porcelain `file_status`가 담당합니다.
 
 use std::collections::BTreeMap;
 
 use stellar_core_types::property::PropertyPath;
 
+use crate::change::{SemanticChange, SemanticChangeKind};
 use crate::diff::{diff, SemanticDiff};
 use crate::snapshot::SemanticSnapshot;
 use crate::value::SemanticValue;
@@ -237,6 +243,30 @@ impl SemanticStatus {
     pub fn layered_properties(&self) -> impl Iterator<Item = &PropertyLayers> + '_ {
         self.properties.values().filter(|p| p.is_layered())
     }
+
+    /// WorkingTree에만 있고 Index에는 없는 객체의 추가(unstaged AddObject·AddToken, canonical 순서).
+    ///
+    /// untracked Stellar 파일의 객체가 여기에 나옵니다(XIV.4.3). 같은 StableId를 다른 종류로 바꾼
+    /// 교체(삭제 + 추가)의 추가 쪽은 Index에도 객체가 있으므로 포함하지 않습니다.
+    pub fn working_tree_additions(&self) -> impl Iterator<Item = &SemanticChange> + '_ {
+        let removed: std::collections::BTreeSet<_> = self
+            .unstaged
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.kind(),
+                    SemanticChangeKind::RemoveObject | SemanticChangeKind::RemoveToken
+                )
+            })
+            .map(SemanticChange::object_id)
+            .collect();
+        self.unstaged.iter().filter(move |c| {
+            matches!(
+                c.kind(),
+                SemanticChangeKind::AddObject | SemanticChangeKind::AddToken
+            ) && !removed.contains(&c.object_id())
+        })
+    }
 }
 
 #[cfg(test)]
@@ -244,11 +274,16 @@ pub(crate) mod tests {
     use super::*;
     use crate::apply::apply;
     use crate::build::tests::{build, head_records, node, rect, sid};
-    use crate::change::{SemanticChange, SemanticChangeKind};
+    use crate::build::{AssetEntry, SnapshotBuilder};
     use crate::keys;
+    use crate::snapshot::{ObjectKind, Origin, SemanticObject};
     use stellar_core_types::ids::StableId;
     use stellar_core_types::property::PropertyPath;
+    use stellar_core_types::reference::AssetRef;
     use stellar_core_types::value::{FiniteF32, Rect, Size2, Vec2};
+    use stellar_document::definitions::{PageDefinition, ViewDefinition};
+    use stellar_document::frame::FramePayload;
+    use stellar_document::image::ImagePayload;
     use stellar_document::record_codec::SubtreeRecords;
     use stellar_document::records::{DocumentRecords, NodePayload};
     use stellar_document::shape::{EllipseParams, ShapeGeometry};
@@ -497,6 +532,100 @@ pub(crate) mod tests {
         assert_eq!(LayerValue::read(&head, &unset), LayerValue::Unset);
         assert!(LayerValue::Unset.canonical_eq(&LayerValue::Unset));
         assert!(!LayerValue::Unset.canonical_eq(&LayerValue::NoObject));
+    }
+
+    #[test]
+    fn untracked_chunk_and_asset_objects_are_working_tree_additions() {
+        // Index: HEAD 그대로. WorkingTree: 새 View subtree(새 chunk 파일: 페이지 4·View 5·frame 20·
+        // rect 21)와 untracked asset 91, 그 asset을 쓰는 image 12 참조 변경.
+        let index = head_records();
+        let mut working = index.clone();
+        let mut page = PageDefinition::new(sid(4), "새 페이지".into());
+        page.add_view(ViewDefinition::new(sid(5), "새 View".into(), sid(20)))
+            .unwrap();
+        working.definition.add_page(page).unwrap();
+        working.nodes.push(node(
+            20,
+            None,
+            0x80,
+            "new-root",
+            NodePayload::Frame(FramePayload::default()),
+        ));
+        working
+            .nodes
+            .push(node(21, Some(20), 0x80, "new-box", rect(5.0, 5.0)));
+        working.nodes[2].payload = NodePayload::Image(ImagePayload::new(
+            AssetRef::new(sid(91)),
+            Size2::new(64.0, 64.0).unwrap(),
+        ));
+        // 새 View subtree는 별도 chunk로 직렬화됩니다.
+        assert_eq!(working.view_subtrees().unwrap().len(), 2);
+        let working = through_chunks(&working);
+
+        let snapshot = |records: &DocumentRecords, assets: &[u64]| {
+            let mut builder = SnapshotBuilder::new();
+            builder.add_document(records).unwrap();
+            for id in assets {
+                builder
+                    .add_asset(&AssetEntry {
+                        id: sid(*id),
+                        content_hash: vec![*id as u8; 32],
+                        media_type: "image/png".into(),
+                    })
+                    .unwrap();
+            }
+            builder.finish()
+        };
+        let head = snapshot(&index, &[90]);
+        let index_snapshot = snapshot(&index, &[90]);
+        let working_snapshot = snapshot(&working, &[90, 91]);
+        let status = SemanticStatus::classify(&head, &index_snapshot, &working_snapshot);
+        assert!(status.staged().is_empty());
+
+        let added: Vec<_> = status
+            .working_tree_additions()
+            .map(|c| c.object_id())
+            .collect();
+        assert_eq!(added, vec![sid(91), sid(4), sid(5), sid(20), sid(21)]);
+        for id in &added {
+            assert!(!index_snapshot.contains(*id), "Index에 없음");
+            assert!(working_snapshot.contains(*id), "WorkingTree에 있음");
+        }
+        assert!(status
+            .working_tree_additions()
+            .all(|c| c.kind() == SemanticChangeKind::AddObject));
+        // 기존 객체의 참조·목록 변경은 추가가 아니라 속성 변경입니다.
+        let others = summary(status.unstaged())
+            .into_iter()
+            .filter(|(kind, _, _)| *kind != SemanticChangeKind::AddObject)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            others,
+            vec![
+                (
+                    SemanticChangeKind::SetProperty,
+                    sid(1),
+                    Some(keys::DOCUMENT_PAGES.0)
+                ),
+                (
+                    SemanticChangeKind::AssetRefChange,
+                    sid(12),
+                    Some(keys::IMAGE_ASSET.0)
+                ),
+            ]
+        );
+
+        // 교체(같은 id를 다른 종류로)의 추가 쪽은 untracked 추가가 아닙니다.
+        let mut replaced = working_snapshot.clone();
+        let old = replaced.remove(sid(21)).unwrap();
+        replaced
+            .insert(
+                SemanticObject::new(sid(21), ObjectKind::Token, Origin::Project)
+                    .with_position(old.parent(), None),
+            )
+            .unwrap();
+        let status = SemanticStatus::classify(&head, &working_snapshot, &replaced);
+        assert_eq!(status.working_tree_additions().count(), 0);
     }
 
     #[test]
