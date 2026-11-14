@@ -13,7 +13,7 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
   transform, opacity·blend)를 따릅니다.
 - 이후 이 속성들은 노드 기반 프로토타이핑(patch·node 그래프가 속성과 인터랙션을 구동)으로
   연결됩니다. 컴포넌트는 property drilling과 context(트리 아래로 공급·소비)를 지원하고, 디자인은
-  실제 코드로 변환됩니다.
+  실제 코드로 변환됩니다. 이 세 방향은 ADR-0025가 정합니다.
 - 편집 UX는 전문 UI 디자인 도구 사용자가 기대하는 관례를 참고하되, 다른 제품의 외형·문구·독점
   세부는 옮기지 않습니다. UI는 macOS 네이티브 바탕 위의 Stellar 고유 형태입니다
   (`docs/design/macos-shell-design.md`).
@@ -23,10 +23,26 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 - 속성 식별자는 숫자 `PropertyKey`입니다. Frame은 `0x01xx`, Image는 `0x06xx`, ComponentInstance는
   `0x0Axx`, Modifier는 `0x1000 | kind << 4 | field`입니다. registry 표시 이름은 일부만 CSS와 비슷한
   kebab-case입니다(`corner-radius`, `layout-mode`).
+- 일부 key는 값 여러 개를 담은 합성 key입니다. Frame `size`(0x0101)는 너비·높이, `transform`(0x0102)은
+  행렬 6성분, `border`(0x0105)는 색·두께, `corner_radius`(0x0106)는 4 모서리, modifier
+  `SHADOW_OFFSET`(0x1092)은 x·y입니다. 값 타입은 commands `PropertyValueType`의 Size·Transform·
+  OptionalBorder·CornerRadius·Offset뿐입니다(`crates/commands/src/property.rs`). 속성 경로를 저장하는
+  참조(ValueBinding target, View Variant·Component variant override property patch)의 값 타입인
+  `TypedValue`·`ExpressionType`에는 이런 합성 타입이 없습니다(`crates/core-types/src/typed_value.rs`,
+  `crates/expressions/src/types.rs`). semantic snapshot도 `corner_radius` 4값을 경로 하나에 둡니다
+  (`crates/semantic-diff/src/build.rs`).
 - 영속 형식에 들어간 것은 Frame·Shape·Path·Text·Image payload, modifier stack 12종, core 값 타입,
   토큰·binding·component입니다. 레이아웃 어휘(Free·Stack·Grid·Overlay·Constraint, `SizingMode`,
   `FlexItem`, `GridItem`, padding)는 `crates/layout` 엔진 입력에만 있고 문서 저장 record가 없습니다.
-  document→layout 연결(X.1.2)도 아직 없습니다.
+  Frame `layout_mode`가 가리킬 layout 정의 record도 없습니다. document→layout 연결(X.1.2)도 아직
+  없습니다.
+- Text payload는 내용과 paragraph·run의 style index만 저장합니다. `TextStyle`·`ParagraphStyle` 표는
+  저장 형식이 없습니다(`crates/document/src/text.rs` `TextPayload::encode`).
+- schema migration runner(V.8)는 있지만 제품 경로에 연결되어 있지 않습니다. step을 등록하는 곳은
+  test와 xtask의 noop v1→v2뿐이고(`tools/xtask/src/migration_fixtures.rs`), project 열기
+  (`crates/project/src/saved_project.rs` `SavedProjectLoader::open`)는 migration 없이 current
+  generation을 엽니다. `FramePayload::decode`는 version 없이 잉여 bytes를 거부합니다
+  (`crates/document/src/frame.rs`).
 - `Length`·`Angle`·`Duration`은 단위 없는 `FiniteF32` newtype입니다(ADR-0008). px·°·ms는 인스펙터의
   표시 가정일 뿐 타입 계약이 아닙니다.
 - Typography는 불투명 placeholder이고 font family·size·weight·style이 문서 모델에 없습니다.
@@ -59,10 +75,10 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
    metadata이며 식별자가 아닙니다. 식별자는 계속 `PropertyKey`이고, CSS 이름을 바꿔도 파일 바이트는
    바뀌지 않습니다.
 3. **부분집합 규칙.** Stellar는 CSS가 받는 값 일부를 구조화된 진단과 함께 거부할 수 있습니다. 하지만
-   Stellar가 받아들인 선언은 같은 CSS 선언과 같은 계산 결과를 내야 합니다(레이아웃은 1/64 px 반올림
-   범위 안). 이 규칙을 지킬 수 없는 동작은 "Stellar 확장"으로 registry에 명시하고, Web Target
-   Profile에서 `approximated`로 진단합니다. 허용하는 확장 목록은
-   `docs/design/property_model.md` 14장이 전부입니다.
+   Stellar가 받아들인 선언은 같은 CSS 선언과 같은 계산 결과를 내야 합니다. 레이아웃의 기준 브라우저,
+   1/64 px 반올림과 잔여 분배 허용 범위는 `docs/design/property_model.md` 1.3절이 정합니다. 이 규칙을
+   지킬 수 없는 동작은 "Stellar 확장"으로 registry에 명시하고, Web Target Profile에서 `approximated`로
+   진단합니다. 허용하는 확장 목록은 `docs/design/property_model.md` 14장이 전부입니다.
 4. **longhand만 저장합니다.** 영속 record는 longhand만 가집니다. shorthand(`padding`, `inset`,
    `gap`, `flex`, `border`, `border-radius`, `grid-area`, `font` 등)는 인스펙터 편집·입력·복사에서만
    쓰는 표현입니다. 입력된 shorthand는 CSS 명세의 확장 규칙으로 longhand 집합으로 펼쳐 하나의
@@ -101,9 +117,20 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
    - 기존 엔진 동작 중 CSS와 다른 것은 IX.11의 migration 행으로 CSS에 맞춥니다.
 8. **위치와 transform을 분리합니다.** 위치는 레이아웃 속성(inset 또는 flow)으로, 시각 변형은 CSS
    개별 transform 속성(`translate`, `rotate`, `scale`)과 `transform`, `transform-origin`으로
-   저장합니다. 지금 Frame transform 행렬의 이동 성분을 위치로 쓰는 모델은 schema migration(V.8
-   경로)으로 옮깁니다. 기존 노드의 외형을 보존하려고 migration된 노드에는 `transform-origin: 0 0`을
-   명시 저장합니다. 새 노드의 기본값은 CSS initial value `50% 50%`입니다.
+   저장합니다. 지금 Frame transform 행렬의 이동 성분을 위치로 쓰는 모델은 schema migration(계획
+   IX.11.21의 제품 문서 migration registry, V.8 runner 위)으로 옮깁니다.
+   - migration은 행렬의 이동 성분만 옮깁니다. 부모가 Free 방식인 자식은 `left`·`top`으로 옮깁니다.
+     지금 저장 형식에는 layout 정의 record가 없으므로 모든 자식이 이 경우입니다. 부모가 flow 방식
+     (Stack·Grid·Overlay)인 자식은 `translate`로 옮깁니다. CSS는 static 요소의 `left`·`top`을
+     무시하기 때문입니다.
+   - 선형 부분은 `transform: matrix(a, b, c, d, 0, 0)`으로 bit 그대로 보존합니다. `rotate`·`scale`로
+     분해해 저장하지 않습니다. 분해에는 atan2·sin·cos가 필요한데 ADR-0006은 libm 초월함수 결과를
+     플랫폼 의존으로 봅니다. 다시 합성한 f32 행렬도 원래 행렬과 bit 단위로 같지 않습니다.
+   - 인스펙터가 보여 주는 migration된 노드의 회전·배율은 행렬에서 계산한 표시 전용 파생값입니다.
+     저장하지 않고 golden이나 scene 입력에도 쓰지 않습니다. 새 편집은 `rotate`·`scale`·`translate`
+     longhand를 씁니다.
+   - 기존 노드의 외형을 보존하려고 migration된 노드에는 `transform-origin: 0 0`을 명시 저장합니다.
+     새 노드의 기본값은 CSS initial value `50% 50%`입니다.
 9. **modifier stack은 Stellar 구조로 유지하고, 파라미터는 CSS를 따릅니다.**
    - 각 modifier의 파라미터 이름·문법은 대응 CSS 속성(`box-shadow`·`drop-shadow()`, `filter`,
      `mix-blend-mode`, `opacity`, `clip-path`, `mask`, `transform`, background·border paint)을
@@ -119,15 +146,47 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 11. **토큰.** `TokenDefinition`은 타입 있는 CSS custom property(`@property`로 등록한 것과 같은 의미:
     syntax는 TokenType, initial-value는 기본값)에 대응합니다. 문서 안의 참조는 계속 StableId입니다.
     텍스트 표현과 export에서만 `var(--name)`을 씁니다. CSS 이름은 TokenName에서 결정론적으로
-    파생하고, 충돌하면 진단합니다. 환경 key는 media feature와 상태 pseudo-class에 대응합니다. CSS
-    상속처럼 컴포넌트 경계를 암묵적으로 넘는 공급은 이 ADR 범위 밖입니다. 아키텍처 §14.3의 명시적
-    경계 규칙을 유지하며, context 모델은 별도로 결정합니다.
+    파생하고, 충돌하면 진단합니다. 등록 속성은 `inherits: true`로 냅니다. `inherits: false`이면
+    `:root`에 둔 값이 자손에 상속되지 않아 자손의 `var()`가 initial-value를 받기 때문입니다. 환경
+    key는 media feature와 상태 pseudo-class에 대응합니다. CSS 상속처럼 컴포넌트 경계를 암묵적으로
+    넘는 공급은 이 ADR 범위 밖입니다. 아키텍처 §14.3의 명시적 경계 규칙을 유지하며, context 모델은
+    ADR-0025 결정 3(Component Context)이 정합니다. Context를 Web에서 등록 custom property 상속으로
+    낮출 때(ADR-0025 결정 4.3)도 이 결정의 `inherits` 정책과 같은 이름 공간·충돌 규칙을 씁니다
+    (`docs/design/property_model.md` 10장).
 12. **비웹 타깃은 CSS 의미에서 낮춥니다.** CSS 의미가 원본 의미이고 Web은 그 표현 타깃 중
     하나입니다. Apple·Android adapter는 CSS 의미를 기준으로 낮추고(lowering), 표현할 수 없으면
     Target Profile capability 진단(아키텍처 §17)을 냅니다.
 13. **포트 단위.** 노드 기반 프로토타이핑 포트, Component Property 타입, binding 대상은 registry의 CSS
-    longhand 단위로 노출합니다. 포트 하나는 longhand 하나이고, 값 타입은 registry의 값 문법입니다.
-    그래프 모델 자체는 이 ADR 범위 밖입니다.
+    longhand 단위로 노출합니다. 포트 하나는 longhand 하나(결정 14에 따라 PropertyKey 하나)이고, 값
+    타입은 registry의 값 문법입니다. 그래프 모델과 포트 타입(`ExpressionType`)은 ADR-0025 결정 1·2가
+    정합니다. 값 문법과 `ExpressionType`의 대응(예: `width`처럼 `<length>`·`<percentage>`·keyword를
+    함께 받는 문법)도 ADR-0025 결정 1이 정하며, 대응이 정해지지 않은 longhand(예: `transform` 행렬)는
+    그때까지 포트·binding 대상이 아닙니다.
+14. **longhand 하나는 PropertyKey 하나입니다.** 영속 record의 longhand마다 PropertyKey를 하나
+    할당하고, longhand 주소는 key 하나로 끝나는 `PropertyPath`입니다. 경로의 두 번째 key(sub-key)로
+    longhand를 가리키지 않습니다. 결정 4의 merge 단위, 결정 13의 포트·binding 대상, semantic diff의
+    속성 단위가 모두 이 key입니다.
+    - 합성 key(Frame `size` 0x0101, `transform` 0x0102, `border` 0x0105, `corner_radius` 0x0106,
+      modifier `SHADOW_OFFSET` 0x1092)는 longhand별 새 key로 나눕니다. 기존 숫자는 재사용하지 않고
+      **묶음 key**로 남깁니다. 묶음 key는 기존 `SetProperty` 직렬화와 history journal을 읽고 실행하기
+      위해서만 registry에 있습니다. 실행 결과는 해당 longhand 전체를 한 번에 설정한 것과 같습니다.
+      새 command, 인스펙터 묶음 편집, merge, 포트는 longhand key를 씁니다. `transform`·`border`는
+      payload 의미가 바뀌므로 해당 schema migration(IX.11.9, IX.11.10) 이후 문서에서 묶음 key를 새
+      command로 받지 않습니다.
+    - payload bytes는 key를 담지 않으므로 key 분할만으로는 파일 bytes가 바뀌지 않습니다. 바뀌는 것은
+      registry, command 경로, semantic snapshot 경로입니다.
+    - 묶음 key를 가리키는 저장된 참조는 자동 변환하지 않습니다. 참조 값 타입(`TypedValue`·
+      `ExpressionType`)에 합성 타입이 없어 타입이 맞는 값을 가질 수 없고, 값을 longhand로 나누는
+      규칙을 추측하면 의미를 지어내게 되기 때문입니다. bytes를 그대로 두고 validator가 진단하며,
+      사용자가 longhand 참조로 다시 연결합니다.
+    - 근거: 지금 경로를 만드는 코드가 key 하나를 전제합니다. `SetProperty`는 key 하나와 값 하나이고
+      (`crates/commands/src/property.rs`), 변경 경로는 `PropertyPath::with_keys(node, [key])`이며,
+      semantic snapshot은 key 하나에 값 하나를 둡니다(`crates/semantic-diff/src/build.rs`). longhand
+      key의 값은 `Length`·`Color`·`Enum` 같은 기존 값 타입 하나로 표현됩니다. key가 둘 이상인 경로는
+      이미 component override 경로에서 nested 단계를 뜻하고 거부됩니다(`NestedOverridePath`,
+      `crates/document/src/component/encapsulation.rs`). longhand sub-key를 섞으면 경로가 longhand인지
+      nested 단계인지 registry 없이 판정할 수 없습니다. Frame 대역 `0x01xx`는 256자리 중 7개만
+      씁니다.
 
 세부 매핑 표, 정규 텍스트 형식, 인스펙터 범주는 `docs/design/property_model.md`에 둡니다. 구현은
 계획 IX.11(CSS 기반 속성 체계)이 맡습니다.
@@ -147,6 +206,13 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
   의미가 바뀔 위험이 있어 탈락했습니다.
 - **shorthand 저장:** merge 단위가 커지고, longhand 일부만 바꾼 두 변경이 거짓 충돌을 만들어
   탈락했습니다.
+- **합성 key 유지 + `PropertyPath` sub-key로 longhand 주소(예: `[CORNER_RADIUS, TOP_LEFT]`):** 기존
+  key 숫자를 longhand 주소의 앞부분으로 계속 쓰고 새 key 할당이 줄어드는 장점이 있습니다. 하지만
+  command, merge, 포트, binding, 인스펙터가 모두 두 단계 경로를 다뤄야 하고, 경로가 longhand인지
+  nested override 단계인지 registry 없이 판정할 수 없어 탈락했습니다(결정 14).
+- **migration에서 행렬을 `rotate`·`scale`로 분해해 저장:** 초월함수 결과가 플랫폼에 따라 달라
+  결정론적 golden을 만들 수 없고, 다시 합성한 행렬이 원래 행렬과 bit 단위로 같지 않아
+  탈락했습니다(결정 8).
 
 ## Consequences
 
@@ -155,8 +221,10 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 - 인스펙터 입력, 복사·붙여넣기, 노드 그래프 포트가 같은 CSS 값 문법을 공유합니다. CSS를 아는
   사용자는 그 지식을 그대로 씁니다.
 - 레이아웃 엔진의 기본값·의미 migration과 X.11.1 적합성 corpus 기대값 갱신이 필요합니다.
-- Frame 위치·transform 분리, Frame border longhand, Text letter-spacing 위치 변경은 schema
-  migration이 필요합니다.
+- Frame 위치·transform 분리, Frame border longhand, Text style 표 저장 형식 추가는 schema
+  migration이 필요합니다. 그 전에 제품 문서 migration registry를 project 열기에 연결해야 합니다
+  (IX.11.21).
+- 합성 key를 longhand key로 나눕니다(IX.11.22). 묶음 key를 가리키는 저장 참조는 진단 대상이 됩니다.
 - 인스펙터 섹션을 CSS 범주로 재구성해야 합니다.
 - CSS가 직접 표현하지 않는 디자인 도구 개념(채움, 내용 맞춤)은 preset 계층이 필요합니다.
 - CSS 명세가 바뀌면 추적해야 합니다. 이 부담은 Web Target Profile의 capability 버전 고정(IX.10.4)으로
@@ -166,10 +234,19 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 
 - 이 ADR 자체는 파일 바이트, 공개 API, FFI를 바꾸지 않습니다.
 - 기존 `PropertyKey` 숫자는 유지합니다. 새 longhand에는 새 key를 할당하고 기존 key를 재사용하지
-  않습니다.
-- Frame payload(위치·transform 분리, border longhand)와 Text(letter-spacing 위치, line-height 의미)
-  변경은 schema version 증가, V.8 migration step, golden fixture 갱신으로 진행합니다. 각 행이 새
-  schema version을 기록합니다.
+  않습니다. 합성 key 다섯 개는 결정 14의 묶음 key로 남습니다.
+- modifier key 대역에는 여유가 적습니다. 규칙 `0x1000 | (kind << 4) | field`에서 kind nibble 0(공통)과
+  1\~12를 쓰고 있어 새 kind 자리는 13\~15 세 개뿐이고, kind마다 field는 1\~15입니다(field 0 예약,
+  `crates/document/src/modifier_metadata.rs` 번호 규칙 test). 결정 14로 파라미터마다 field를 쓰고
+  CSS 파라미터(spread·inset, stroke join·dash·miter, `backdrop-filter`)를 더하면 소진될 수 있습니다.
+  소진되면 기존 번호를 옮기지 않고, node 종류 대역(`kind << 8`)과 semantic snapshot 전용 대역
+  (`0xE0xx`\~`0xEFxx`)과 겹치지 않는 새 modifier 대역을 ADR로 예약합니다. sub-key 방식은 결정 14에서
+  탈락했으므로 확장 방법으로 쓰지 않습니다.
+- Frame payload(위치·transform 분리, border longhand)와 Text(style 표 저장 형식, Typography record)
+  변경은 IX.11.21이 만드는 제품 문서 migration registry의 step과 golden fixture 갱신으로 진행합니다.
+  schema version 증가를 공개 포맷(Phase XXVIII) 전에 한 번으로 묶을지는 IX.11.21이 정합니다. Text
+  `letter-spacing` 이동과 `line-height` 의미 변경은 style 표가 아직 저장되지 않으므로 파일 migration이
+  아닙니다.
 - 인스펙터 snapshot에 CSS 이름 문자열을 실어야 하면 FFI 표면이 바뀝니다. 그 변경은 해당 구현
   행에서 ADR-0014 절차로 다룹니다.
 - 파일 포맷 공개 명세(Phase XXVIII)에는 CSS 매핑 표를 부록으로 포함합니다.
@@ -178,8 +255,8 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 
 - registry CSS metadata는 정적 표이므로 런타임 비용이 없습니다.
 - CSS 텍스트 파싱은 입력 확정과 붙여넣기 때만 실행하고 인터랙션 경로(T0\~T5)에는 들어가지 않습니다.
-- flex item 자동 최소 크기(`min-width: auto`)는 intrinsic 측정을 추가로 요구합니다. 증분 layout
-  benchmark(X.7.4)로 방문 범위를 확인합니다.
+- flex item 자동 최소 크기(`min-width: auto`)는 intrinsic 측정을 추가로 요구합니다. 별도 행
+  (IX.11.23)으로 구현하고 증분 layout benchmark(X.7.4)로 방문 범위를 확인합니다.
 
 ## Security
 
@@ -189,9 +266,11 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 
 ## Migration
 
-1. registry CSS metadata(IX.11.1\~IX.11.3)를 먼저 채웁니다. 파일 변경은 없습니다.
-2. 레이아웃 엔진 의미를 CSS에 맞추고(IX.11.4, IX.11.5) CSS 적합성 fixture(IX.11.8)로 고정한 뒤 영속
-   layout record(IX.11.6)를 정의합니다.
-3. Frame·Text schema migration(IX.11.9, IX.11.10, IX.11.12)은 V.8 경로를 씁니다. 원본 generation을
-   보존하고, 자동 commit하지 않으며, 외형 보존 fixture를 둡니다.
+1. 합성 key를 longhand key로 나누고(IX.11.22) registry CSS metadata(IX.11.1\~IX.11.3)를 채웁니다.
+   파일 변경은 없습니다.
+2. 레이아웃 엔진 의미를 CSS에 맞추고(IX.11.4, IX.11.5, IX.11.23) CSS 적합성 fixture(IX.11.8)로 고정한
+   뒤 영속 layout record(IX.11.6)를 정의합니다.
+3. 제품 문서 migration registry(IX.11.21)를 project 열기에 연결한 뒤 Frame·Text schema migration
+   (IX.11.9, IX.11.10, IX.11.11)을 그 step으로 구현합니다. 원본 generation을 보존하고, 자동 commit하지
+   않으며, 외형 보존 fixture를 둡니다(아키텍처 §36).
 4. 인스펙터·복사·export 연결(IX.11.13\~IX.11.20)은 위 단계를 선행으로 둡니다.
