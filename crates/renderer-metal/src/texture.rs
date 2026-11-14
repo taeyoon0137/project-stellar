@@ -20,6 +20,8 @@ pub(crate) struct MetalTexture {
     pub(crate) texture: Id,
     /// 생성 descriptor.
     pub(crate) desc: GpuTextureDesc,
+    /// GPU 메모리 크기(`allocatedSize`, 예산 계산용).
+    pub(crate) bytes: u64,
 }
 
 /// `width × height` texture의 최대 mip level 수.
@@ -79,8 +81,8 @@ pub(crate) fn render_target_desc(
     }
 }
 
-/// 검사한 descriptor로 private texture를 만듭니다. Metal이 nil이면 `OutOfDeviceMemory`.
-pub(crate) fn create_texture(device: &Id, desc: &GpuTextureDesc) -> Result<Id, BackendError> {
+/// 검사한 descriptor의 `MTLTextureDescriptor`(+1).
+fn texture_descriptor(desc: &GpuTextureDesc) -> Result<Id, BackendError> {
     validate_texture_desc(desc)?;
     let class = class!("MTLTextureDescriptor").ok_or(BackendError::new(
         BackendErrorKind::Unsupported,
@@ -105,7 +107,6 @@ pub(crate) fn create_texture(device: &Id, desc: &GpuTextureDesc) -> Result<Id, B
         usage |= texture_usage::RENDER_TARGET;
     }
     // SAFETY: MTLTextureDescriptor setter는 모두 (NSUInteger) -> void이고 값은 위에서 검사했습니다.
-    // `-newTextureWithDescriptor:`는 (MTLTextureDescriptor*) -> id<MTLTexture>(+1, nil 가능)입니다.
     unsafe {
         let _: () = descriptor.send(sel!("setTextureType:"), (kind,));
         let _: () = descriptor.send(sel!("setPixelFormat:"), (mtl_pixel_format(desc.format),));
@@ -118,12 +119,59 @@ pub(crate) fn create_texture(device: &Id, desc: &GpuTextureDesc) -> Result<Id, B
         let _: () = descriptor.send(sel!("setSampleCount:"), (sample_count(desc.samples),));
         let _: () = descriptor.send(sel!("setUsage:"), (usage,));
         let _: () = descriptor.send(sel!("setStorageMode:"), (storage_mode::PRIVATE,));
+    }
+    Ok(descriptor)
+}
+
+/// `MTLSizeAndAlign`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct SizeAndAlign {
+    size: NSUInteger,
+    align: NSUInteger,
+}
+
+/// descriptor로 만들 texture의 GPU 메모리 크기(byte, 할당하지 않고 계산).
+pub(crate) fn texture_footprint(device: &Id, desc: &GpuTextureDesc) -> Result<u64, BackendError> {
+    let descriptor = texture_descriptor(desc)?;
+    // SAFETY: `-heapTextureSizeAndAlignWithDescriptor:`는 (MTLTextureDescriptor*) -> MTLSizeAndAlign
+    // (16 byte, register 반환)입니다.
+    let size: SizeAndAlign = unsafe {
+        device.send(
+            sel!("heapTextureSizeAndAlignWithDescriptor:"),
+            (descriptor.as_raw(),),
+        )
+    };
+    Ok(size.size as u64)
+}
+
+/// resource가 실제로 차지하는 GPU 메모리(`-allocatedSize`).
+pub(crate) fn allocated_size(resource: &Id) -> u64 {
+    // SAFETY: MTLResource `-allocatedSize`는 () -> NSUInteger입니다.
+    let size: NSUInteger = unsafe { resource.send(sel!("allocatedSize"), ()) };
+    size as u64
+}
+
+/// 검사한 descriptor로 private texture를 만듭니다. Metal이 nil이면 `OutOfDeviceMemory`.
+pub(crate) fn create_texture(
+    device: &Id,
+    desc: &GpuTextureDesc,
+) -> Result<MetalTexture, BackendError> {
+    let descriptor = texture_descriptor(desc)?;
+    // SAFETY: `-newTextureWithDescriptor:`는 (MTLTextureDescriptor*) -> id<MTLTexture>(+1, nil 가능)입니다.
+    let texture = unsafe {
         Id::from_owned(device.send(sel!("newTextureWithDescriptor:"), (descriptor.as_raw(),)))
     }
     .ok_or(BackendError::new(
         BackendErrorKind::OutOfDeviceMemory,
         "GPU texture를 할당할 수 없습니다",
-    ))
+    ))?;
+    let bytes = allocated_size(&texture);
+    Ok(MetalTexture {
+        texture,
+        desc: *desc,
+        bytes,
+    })
 }
 
 #[cfg(test)]

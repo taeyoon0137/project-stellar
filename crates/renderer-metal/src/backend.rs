@@ -29,15 +29,18 @@ use crate::buffer::{stage_texture_upload, submit_uploads, MetalBuffer, PendingUp
 use crate::commands::CommandContext;
 use crate::device::MetalDevice;
 use crate::encode::{encode_pass, plan_pass, FrameTargets};
+use crate::events::{
+    classify_command_buffer_error, command_buffer_failure, MemoryBudget, MetalEvent, MAX_EVENTS,
+};
 use crate::format::bytes_per_pixel;
 use crate::objc::{autoreleasepool, sel, Id, NSUInteger, RawId};
 use crate::pipeline::{PipelineCache, ShaderError};
 use crate::surface::{check_surface_size, Drawable, LayerOptions, LayerSurface, SurfaceStats};
 use crate::sys::{command_buffer_status, resource_options, MTLOrigin, MTLSize};
-use crate::texture::{create_texture, MetalTexture};
+use crate::texture::{create_texture, texture_footprint, MetalTexture};
 use crate::timestamps::{timestamp_counter_set, FrameTiming, Timestamps};
 use crate::trace::{Clock, MetalFrameTrace, MAX_FRAME_TRACES};
-use crate::transient::TransientPool;
+use crate::transient::{PoolError, TransientPool};
 
 /// encode했지만 아직 제출하지 않은 frame.
 #[derive(Debug)]
@@ -87,9 +90,39 @@ pub struct MetalBackend {
     in_flight: VecDeque<InFlight>,
     progress: GpuProgress,
     surface_stats: SurfaceStats,
+    events: VecDeque<MetalEvent>,
+    memory: MemoryBudget,
+    memory_budget_override: Option<u64>,
+    lost: bool,
     /// 테스트용: 다음 n번의 drawable 요청을 nil로 만듭니다(가려진 창·timeout 재현).
     #[cfg(test)]
     pub(crate) drawable_failures: u32,
+    /// 테스트용: GPU에서 끝난 다음 submission들을 이 `MTLCommandBufferError` 코드로 실패한 것으로 봅니다.
+    #[cfg(test)]
+    pub(crate) injected_gpu_errors: VecDeque<i64>,
+    /// 테스트용: 다음 init에서 GPU device를 찾지 못한 것으로 봅니다.
+    #[cfg(test)]
+    pub(crate) fail_device_creation: bool,
+}
+
+/// backend GPU 메모리 사용량.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MemoryUsage {
+    /// backend가 만든 buffer·texture·transient의 `allocatedSize` 합(byte).
+    pub resident_bytes: u64,
+    /// 예산(byte).
+    pub budget_bytes: u64,
+}
+
+/// drawable 요청 결과.
+enum Acquire {
+    Drawable(Drawable),
+    /// nil(가려짐·timeout).
+    Timeout {
+        waited_nanos: u64,
+    },
+    /// 크기가 달라 layer를 다시 맞춤.
+    Resynced,
 }
 
 fn invalid(detail: &'static str) -> BackendError {
@@ -122,8 +155,16 @@ impl MetalBackend {
             in_flight: VecDeque::new(),
             progress: GpuProgress::default(),
             surface_stats: SurfaceStats::default(),
+            events: VecDeque::new(),
+            memory: MemoryBudget::new(0),
+            memory_budget_override: None,
+            lost: false,
             #[cfg(test)]
             drawable_failures: 0,
+            #[cfg(test)]
+            injected_gpu_errors: VecDeque::new(),
+            #[cfg(test)]
+            fail_device_creation: false,
         }
     }
 
@@ -203,9 +244,78 @@ impl MetalBackend {
     }
 
     fn device(&self) -> Result<&MetalDevice, BackendError> {
+        if self.lost {
+            return Err(BackendError::new(
+                BackendErrorKind::DeviceLost,
+                "GPU device를 잃었습니다. init으로 다시 만들어야 합니다",
+            ));
+        }
         self.device
             .as_ref()
             .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))
+    }
+
+    fn push_event(&mut self, event: MetalEvent) {
+        if self.events.len() == MAX_EVENTS {
+            self.events.pop_front();
+        }
+        self.events.push_back(event);
+    }
+
+    /// 쌓인 오류 event를 꺼냅니다(발생 순서, 최대 [`MAX_EVENTS`]개 보관).
+    pub fn drain_events(&mut self) -> Vec<MetalEvent> {
+        self.events.drain(..).collect()
+    }
+
+    /// GPU 메모리 예산을 바꿉니다(`None`이면 device `recommendedMaxWorkingSetSize`). device 재생성에도
+    /// 유지합니다.
+    pub fn set_memory_budget(&mut self, budget_bytes: Option<u64>) {
+        self.memory_budget_override = budget_bytes;
+        let budget = budget_bytes
+            .or_else(|| {
+                self.device
+                    .as_ref()
+                    .map(MetalDevice::recommended_working_set)
+            })
+            .unwrap_or(0);
+        let resident = self.memory.resident();
+        self.memory = MemoryBudget::new(budget);
+        self.memory.add(resident);
+    }
+
+    /// GPU 메모리 사용량과 예산.
+    pub fn memory_usage(&self) -> MemoryUsage {
+        MemoryUsage {
+            resident_bytes: self.memory.resident(),
+            budget_bytes: self.memory.budget(),
+        }
+    }
+
+    /// 다시 만들 수 있는 graph transient texture를 모두 놓습니다(memory pressure 대응, 다음 frame에
+    /// 필요한 만큼 다시 만듦).
+    pub fn purge_transients(&mut self) {
+        let freed = self.transients.purge();
+        self.memory.remove(freed);
+    }
+
+    /// `requested` byte 할당이 예산 안인지 확인합니다. 넘으면 transient pool을 비우고 다시 보며, 그래도
+    /// 넘으면 pressure event와 `OutOfDeviceMemory`입니다.
+    fn reserve(&mut self, requested: u64) -> Result<(), BackendError> {
+        if self.memory.fits(requested, 0) {
+            return Ok(());
+        }
+        if self.open.is_none() {
+            self.purge_transients();
+            if self.memory.fits(requested, 0) {
+                return Ok(());
+            }
+        }
+        let event = self.memory.pressure(requested);
+        self.push_event(event);
+        Err(BackendError::new(
+            BackendErrorKind::OutOfDeviceMemory,
+            "GPU 메모리 예산을 넘는 할당입니다",
+        ))
     }
 
     /// GPU에 남은 submission이 모두 끝날 때까지 기다리고 진행을 돌려줍니다(blocking).
@@ -332,11 +442,50 @@ impl MetalBackend {
         Ok(())
     }
 
+    /// 실패한 command buffer를 처리합니다: 진행 갱신, timing 반환, device error event, device lost 표시.
+    fn command_buffer_failed(&mut self, done: InFlight, injected: Option<i64>) -> BackendError {
+        if let Some(id) = done.id {
+            self.progress.completed = Some(id);
+        }
+        if let (Some(timing), Some(timestamps)) = (done.timing, self.timestamps.as_mut()) {
+            timestamps.recycle(timing);
+        }
+        let code = injected.or_else(|| {
+            // SAFETY: `-error`는 () -> NSError*(+0, nil 가능), `-code`는 () -> NSInteger입니다.
+            unsafe {
+                let error: RawId = done.command_buffer.send(sel!("error"), ());
+                (!error.is_null()).then(|| {
+                    let code: isize = crate::objc::send(error, sel!("code"), ());
+                    code as i64
+                })
+            }
+        });
+        let kind = classify_command_buffer_error(code.unwrap_or(0));
+        self.push_event(MetalEvent::DeviceError {
+            kind,
+            submission: done.id,
+            command_buffer_error: code,
+        });
+        if kind == BackendErrorKind::DeviceLost {
+            self.lost = true;
+        }
+        command_buffer_failure(kind)
+    }
+
     /// 끝난 command buffer를 앞에서부터 거둡니다.
     fn poll_completions(&mut self) -> Result<GpuProgress, BackendError> {
         while let Some(front) = self.in_flight.front() {
             // SAFETY: `-status`는 () -> NSUInteger(MTLCommandBufferStatus)입니다.
             let status: NSUInteger = unsafe { front.command_buffer.send(sel!("status"), ()) };
+            #[cfg(test)]
+            if status == command_buffer_status::COMPLETED && front.id.is_some() {
+                if let Some(code) = self.injected_gpu_errors.pop_front() {
+                    let Some(done) = self.in_flight.pop_front() else {
+                        break;
+                    };
+                    return Err(self.command_buffer_failed(done, Some(code)));
+                }
+            }
             match status {
                 command_buffer_status::COMPLETED => {
                     if let Some(done) = self.in_flight.pop_front() {
@@ -359,20 +508,10 @@ impl MetalBackend {
                     }
                 }
                 command_buffer_status::ERROR => {
-                    if let Some(done) = self.in_flight.pop_front() {
-                        if let Some(id) = done.id {
-                            self.progress.completed = Some(id);
-                        }
-                        if let (Some(timing), Some(timestamps)) =
-                            (done.timing, self.timestamps.as_mut())
-                        {
-                            timestamps.recycle(timing);
-                        }
-                    }
-                    return Err(BackendError::new(
-                        BackendErrorKind::Internal,
-                        "GPU command buffer 실행 실패",
-                    ));
+                    let Some(done) = self.in_flight.pop_front() else {
+                        break;
+                    };
+                    return Err(self.command_buffer_failed(done, None));
                 }
                 _ => break,
             }
@@ -444,20 +583,26 @@ impl MetalBackend {
     }
 
     /// 다음 drawable. nil이거나 크기가 backend 크기와 다르면(layer를 다시 맞춘 뒤) `None`.
-    fn acquire_drawable(&mut self) -> Option<Drawable> {
+    fn acquire_drawable(&mut self) -> Acquire {
         #[cfg(test)]
         if self.drawable_failures > 0 {
             self.drawable_failures -= 1;
-            return None;
+            return Acquire::Timeout { waited_nanos: 0 };
         }
-        let surface = self.surface.as_ref()?;
-        let drawable = surface.next_drawable()?;
+        let Some(surface) = self.surface.as_ref() else {
+            return Acquire::Timeout { waited_nanos: 0 };
+        };
+        let started = std::time::Instant::now();
+        let Some(drawable) = surface.next_drawable() else {
+            let waited_nanos = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+            return Acquire::Timeout { waited_nanos };
+        };
         if drawable.size() != (self.surface_size.width, self.surface_size.height) {
             self.surface_stats.drawable_size_resyncs += 1;
             surface.set_drawable_size(self.surface_size);
-            return None;
+            return Acquire::Resynced;
         }
-        Some(drawable)
+        Acquire::Drawable(drawable)
     }
 
     fn take_open(&mut self, frame: &EncodedFrame) -> Result<OpenFrame, BackendError> {
@@ -494,8 +639,16 @@ impl MetalBackend {
                 return Ok(EncodeOutcome::Skipped(SkipReason::EmptySurface));
             }
             match self.acquire_drawable() {
-                Some(drawable) => Some(drawable),
-                None => {
+                Acquire::Drawable(drawable) => Some(drawable),
+                Acquire::Timeout { waited_nanos } => {
+                    self.surface_stats.skipped_no_drawable += 1;
+                    self.push_event(MetalEvent::DrawableTimeout {
+                        frame: request.frame,
+                        waited_nanos,
+                    });
+                    return Ok(EncodeOutcome::Skipped(SkipReason::NoDrawable));
+                }
+                Acquire::Resynced => {
                     self.surface_stats.skipped_no_drawable += 1;
                     return Ok(EncodeOutcome::Skipped(SkipReason::NoDrawable));
                 }
@@ -507,8 +660,29 @@ impl MetalBackend {
             .device
             .as_ref()
             .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
-        self.transients
-            .prepare(device.device(), request.graph, self.surface_size)?;
+        if let Err(error) = self.transients.prepare(
+            device.device(),
+            request.graph,
+            self.surface_size,
+            &mut self.memory,
+        ) {
+            let requested = match error {
+                PoolError::Invalid(error) => return Err(error),
+                PoolError::OverBudget { requested } | PoolError::AllocationFailed { requested } => {
+                    requested
+                }
+            };
+            let event = self.memory.pressure(requested);
+            self.push_event(event);
+            return Err(BackendError::new(
+                BackendErrorKind::OutOfDeviceMemory,
+                "graph transient가 GPU 메모리 예산을 넘습니다",
+            ));
+        }
+        let device = self
+            .device
+            .as_ref()
+            .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
         let targets = FrameTargets {
             request,
             drawable: drawable.as_ref(),
@@ -523,12 +697,24 @@ impl MetalBackend {
             textures: &self.textures,
             pipelines: &mut self.pipelines,
         };
-        let plans = request
+        let plans = match request
             .graph
             .order()
             .iter()
             .map(|&pass| plan_pass(&targets, &mut commands, pass))
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(plans) => plans,
+            Err(error) => {
+                if error.kind() == BackendErrorKind::PipelineCreation {
+                    if let Some(shader) = self.pipelines.last_error() {
+                        let stage = shader.stage;
+                        self.push_event(MetalEvent::PipelineFailure { stage });
+                    }
+                }
+                return Err(error);
+            }
+        };
         // SAFETY: `-commandBuffer`는 () -> id<MTLCommandBuffer>(+0, nil 가능)입니다.
         let command_buffer =
             unsafe { Id::from_borrowed(device.queue().send(sel!("commandBuffer"), ())) }.ok_or(
@@ -595,12 +781,35 @@ impl RendererBackend for MetalBackend {
             self.pending_uploads.clear();
             self.pipelines = PipelineCache::new();
             self.transients.purge();
+            self.lost = false;
+            self.memory = MemoryBudget::new(0);
             if self.initialized_once {
                 self.textures.invalidate_all()?;
                 self.buffers.invalidate_all()?;
             }
             self.initialized_once = true;
-            let device = MetalDevice::system_default()?;
+            #[cfg(test)]
+            let forced_failure = std::mem::take(&mut self.fail_device_creation);
+            #[cfg(not(test))]
+            let forced_failure = false;
+            let device = match MetalDevice::system_default() {
+                Ok(device) if !forced_failure => device,
+                Ok(_) | Err(_) => {
+                    self.push_event(MetalEvent::DeviceError {
+                        kind: BackendErrorKind::Unsupported,
+                        submission: None,
+                        command_buffer_error: None,
+                    });
+                    return Err(BackendError::new(
+                        BackendErrorKind::Unsupported,
+                        "Metal GPU device가 없습니다",
+                    ));
+                }
+            };
+            self.memory = MemoryBudget::new(
+                self.memory_budget_override
+                    .unwrap_or_else(|| device.recommended_working_set()),
+            );
             if let Some(surface) = &self.surface {
                 surface.configure(device.device(), &config.surface)?;
             }
@@ -646,8 +855,25 @@ impl RendererBackend for MetalBackend {
                     "열린 frame이 있는 동안 resource를 만들 수 없습니다",
                 ));
             }
-            let buffer = MetalBuffer::create(self.device()?.device(), desc)?;
-            Ok(self.buffers.insert(buffer)?)
+            self.device()?;
+            self.reserve(desc.size)?;
+            let created = MetalBuffer::create(self.device()?.device(), desc);
+            let buffer = match created {
+                Ok(buffer) => buffer,
+                Err(error) => {
+                    if error.kind() == BackendErrorKind::OutOfDeviceMemory {
+                        let event = self.memory.pressure(desc.size);
+                        self.push_event(event);
+                    }
+                    return Err(error);
+                }
+            };
+            let bytes = buffer.bytes;
+            self.memory.add(bytes);
+            self.buffers.insert(buffer).map_err(|error| {
+                self.memory.remove(bytes);
+                BackendError::from(error)
+            })
         })
     }
 
@@ -658,11 +884,25 @@ impl RendererBackend for MetalBackend {
                     "열린 frame이 있는 동안 resource를 만들 수 없습니다",
                 ));
             }
-            let texture = create_texture(self.device()?.device(), desc)?;
-            Ok(self.textures.insert(MetalTexture {
-                texture,
-                desc: *desc,
-            })?)
+            let requested = texture_footprint(self.device()?.device(), desc)?;
+            self.reserve(requested)?;
+            let created = create_texture(self.device()?.device(), desc);
+            let texture = match created {
+                Ok(texture) => texture,
+                Err(error) => {
+                    if error.kind() == BackendErrorKind::OutOfDeviceMemory {
+                        let event = self.memory.pressure(requested);
+                        self.push_event(event);
+                    }
+                    return Err(error);
+                }
+            };
+            let bytes = texture.bytes;
+            self.memory.add(bytes);
+            self.textures.insert(texture).map_err(|error| {
+                self.memory.remove(bytes);
+                BackendError::from(error)
+            })
         })
     }
 
@@ -710,7 +950,9 @@ impl RendererBackend for MetalBackend {
             ));
         }
         // command buffer가 참조 buffer를 retain하므로 GPU 실행 중이어도 즉시 해제해도 안전합니다.
-        autoreleasepool(|| self.buffers.remove(buffer).map(drop))?;
+        let removed = self.buffers.remove(buffer)?;
+        self.memory.remove(removed.bytes);
+        autoreleasepool(|| drop(removed));
         Ok(())
     }
 
@@ -721,7 +963,9 @@ impl RendererBackend for MetalBackend {
             ));
         }
         // command buffer가 참조 texture를 retain하므로 GPU 실행 중이어도 즉시 해제해도 안전합니다.
-        autoreleasepool(|| self.textures.remove(texture).map(drop))?;
+        let removed = self.textures.remove(texture)?;
+        self.memory.remove(removed.bytes);
+        autoreleasepool(|| drop(removed));
         Ok(())
     }
 

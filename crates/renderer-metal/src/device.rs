@@ -44,6 +44,12 @@ impl MetalDevice {
         &self.queue
     }
 
+    /// 권장 최대 작업 집합 크기(`recommendedMaxWorkingSetSize`, byte). GPU 메모리 예산 기본값입니다.
+    pub(crate) fn recommended_working_set(&self) -> u64 {
+        // SAFETY: `-recommendedMaxWorkingSetSize`는 () -> uint64_t입니다.
+        unsafe { self.device.send(sel!("recommendedMaxWorkingSetSize"), ()) }
+    }
+
     /// `-supportsTextureSampleCount:`.
     pub(crate) fn supports_sample_count(&self, count: NSUInteger) -> bool {
         // SAFETY: `-supportsTextureSampleCount:`은 (NSUInteger) -> BOOL입니다.

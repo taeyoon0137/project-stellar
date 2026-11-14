@@ -26,7 +26,7 @@ use stellar_renderer_core::render_graph::SampleCount;
 use crate::format::bytes_per_pixel;
 use crate::objc::{sel, send, Id, NSUInteger, RawId};
 use crate::sys::{resource_options, MTLOrigin, MTLSize};
-use crate::texture::MetalTexture;
+use crate::texture::{allocated_size, MetalTexture};
 
 fn invalid(detail: &'static str) -> BackendError {
     BackendError::new(BackendErrorKind::InvalidUsage, detail)
@@ -39,6 +39,8 @@ pub(crate) struct MetalBuffer {
     pub(crate) buffer: Id,
     /// 생성 descriptor.
     pub(crate) desc: BufferDesc,
+    /// GPU 메모리 크기(`allocatedSize`, 예산 계산용).
+    pub(crate) bytes: u64,
     contents: NonNull<u8>,
 }
 
@@ -73,9 +75,11 @@ impl MetalBuffer {
                 BackendErrorKind::Internal,
                 "buffer 내용에 접근할 수 없습니다",
             ))?;
+            let bytes = allocated_size(&buffer);
             Ok(MetalBuffer {
                 buffer,
                 desc: *desc,
+                bytes,
                 contents,
             })
         }

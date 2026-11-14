@@ -21,6 +21,7 @@ use stellar_renderer_core::render_graph::{
 use crate::objc::{sel, Id};
 use crate::sys::MTLCreateSystemDefaultDevice;
 
+mod errors;
 mod geometry;
 mod graph;
 mod shaders;

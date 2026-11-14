@@ -55,10 +55,14 @@ mod trace;
 /// GPU timestamp query (XI.8.6).
 mod timestamps;
 
+/// 오류 event·GPU 메모리 예산 (XI.8.7).
+mod events;
+
 /// `RendererBackend` 구현.
 mod backend;
 
-pub use backend::MetalBackend;
+pub use backend::{MemoryUsage, MetalBackend};
+pub use events::{classify_command_buffer_error, MetalEvent, MAX_EVENTS};
 pub use pipeline::{ShaderError, ShaderErrorStage};
 pub use surface::{LayerOptions, SurfaceStats};
 pub use timestamps::{gpu_timing_line, MAX_TIMED_PASSES, MAX_TIMING_RESULTS};
