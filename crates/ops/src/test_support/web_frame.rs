@@ -205,3 +205,62 @@ pub fn unsupported(case: &str) -> DocumentModel {
         .unwrap();
     model
 }
+
+/// 실제 저장·CLI Rectangle 검증. 기본 Frame fixture의 leaf만 교체합니다.
+pub fn rectangle(case: &str) -> DocumentModel {
+    use stellar_document::modifier::ModifierPayload;
+    use stellar_document::shape::{RectangleParams, ShapeGeometry};
+    let mut model = document();
+    let mut record = model.remove_leaf(id(21)).unwrap();
+    record.payload = NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+        size: Size2::new(40.0, 20.0).unwrap(),
+        corner_radius: if case == "square" {
+            CornerRadius::ZERO
+        } else {
+            CornerRadius::new(40.0, 20.0, 10.0, 0.0).unwrap()
+        },
+    }));
+    record.visible = case != "hidden-unsupported";
+    model.insert_node(record).unwrap();
+    let mut stack = ModifierStack::new(id(21));
+    let mut payloads = vec![
+        ModifierPayload::Transform(Transform2D::new(1., 0., 0., 1., 10., 12.).unwrap()),
+        ModifierPayload::Transform(Transform2D::new(0., 1., -1., 0., 100., 25.).unwrap()),
+        ModifierPayload::Fill {
+            color: color(ColorSpace::DisplayP3, [1.2, -0.1, 0.3, 0.25]),
+        },
+    ];
+    match case {
+        "supported" | "disabled" | "no-stack" | "square" => {}
+        "after-fill" => payloads.swap(1, 2),
+        "double-fill" => payloads.push(payloads[2].clone()),
+        "unsupported" | "hidden-unsupported" => {
+            payloads.push(ModifierPayload::default_for(ModifierKind::Opacity))
+        }
+        "singular" => {
+            payloads[0] =
+                ModifierPayload::Transform(Transform2D::new(0., 0., 0., 1., 0., 0.).unwrap())
+        }
+        "range" => {
+            payloads[0] = ModifierPayload::Transform(
+                Transform2D::new(1., 0., 0., 1., 0., 2_000_000.).unwrap(),
+            )
+        }
+        _ => panic!("unknown Rectangle fixture {case}"),
+    }
+    if case == "disabled" {
+        payloads.push(ModifierPayload::default_for(ModifierKind::Blur));
+    }
+    for (index, payload) in payloads.into_iter().enumerate() {
+        let modifier = ModifierId::new(id(90 + index as u64));
+        stack.push_back(modifier, payload.kind()).unwrap();
+        stack.set_payload(modifier, payload).unwrap();
+        if case == "disabled" && index == 3 {
+            stack.set_enabled(modifier, false).unwrap();
+        }
+    }
+    if case != "no-stack" {
+        model.set_modifier_stack(stack).unwrap();
+    }
+    model
+}
