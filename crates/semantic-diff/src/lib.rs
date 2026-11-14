@@ -34,3 +34,6 @@ pub mod apply;
 
 /// HEAD·Index·WorkingTree semantic status 분류 (XIV.4.1~).
 pub mod status;
+
+/// 선택 변경 Staging 계획 (XIV.5.1~).
+pub mod stage;

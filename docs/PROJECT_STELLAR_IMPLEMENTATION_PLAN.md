@@ -1401,7 +1401,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIV.5.1 | `[ ]` | 선택한 SemanticChange ID 목록을 받는 `StageSelectionRequest`와 결과 dependency closure를 정의합니다. | round-trip. | XIV.4.1 |
+| XIV.5.1 | `[x]` | 선택한 SemanticChange ID 목록을 받는 `StageSelectionRequest`와 결과 dependency closure를 정의합니다. | round-trip. | XIV.4.1 |
 | XIV.5.2 | `[ ]` | change dependency graph를 작성합니다. 새 object의 property, binding이 참조하는 token/property, component interface와 instance override 관계를 포함합니다. | dependency fixture 정확. | XIV.3.2, VI.2.5, VIII.6.2 |
 | XIV.5.3 | `[ ]` | 선택 변경만으로 snapshot validator가 실패하면 필수 dependency를 `required_additions`로 반환하고 자동 stage하지 않습니다. | invalid partial fixture expected dependencies. | XIV.5.2, VI.10.1 |
 | XIV.5.4 | `[ ]` | caller가 dependencies 포함을 승인한 뒤 Index snapshot에 selected+required changes를 적용해 CandidateIndexSnapshot을 만듭니다. | candidate가 document validator 통과. | XIV.5.3, XIV.3.9 |
