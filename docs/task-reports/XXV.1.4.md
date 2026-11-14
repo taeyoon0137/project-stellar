@@ -47,7 +47,7 @@
 | `cargo fmt -p stellar-commands -p stellar-history -- --check` | 통과 |
 | `cargo test -p stellar-commands -p stellar-history` | commands unit 82 passed·1 ignored·doctest 3 passed, history unit 38 passed, 0 failed |
 | `cargo clippy -p stellar-commands -p stellar-history --all-targets -- -D warnings` | 경고 0 |
-| `cargo check -p stellar-project -p stellar-runtime`(history 의존 crate) | 통과 |
+| `grep -l stellar-history crates/*/Cargo.toml` | history crate 자신 외 의존 crate 없음(crate graph는 project·runtime 의존을 허용하나 아직 쓰지 않음). 공개 API 변경(`SealReason::ALL` 길이 등)의 영향 범위가 이 crate 안임을 확인 |
 | `cargo test -p stellar-document workspace_production_code_does_not_use_test_support`(VI.10.4 검사) | 통과 |
 
 | 검사 | 결과 |
