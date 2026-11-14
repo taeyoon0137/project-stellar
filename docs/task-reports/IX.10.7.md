@@ -29,8 +29,8 @@
 - **구조 override**: 제외 node를 root로 하는 값은 결과에서 빠지고, 하위 node 판정은 `ResolvedView::is_excluded`가 parent
   조회를 상한 단계까지만 반복합니다(순환 입력에서도 종료).
 - **Binding 환경**: 선택 profile이 VIII.7.1 key `platform`(1)·`os_version`(2)·`api_level`(3) 값을 정합니다(platform enum
-  `0xE000_0001`, variant = profile 종류 code, profile 없음 = generic 0). Apple `os_version`은 `major.minor`를 10진 수로 읽은
-  값입니다. `changed_keys`는 값이 실제로 바뀐 key만 돌려주어 VIII.7.3 reverse index가 그 key를 참조한 expression만
+  `0xE000_0001`, variant = profile 종류 code, profile 없음 = generic 0). Apple `os_version`은 `major × 1000 + minor` 정수
+  입니다(아래 후속 수정 참고). `changed_keys`는 값이 실제로 바뀐 key만 돌려주어 VIII.7.3 reverse index가 그 key를 참조한 expression만
   무효화하게 합니다(예: iOS 26 → macOS 26은 무효화 없음).
 - 프로젝트에 없는 profile의 override는 `unknown_profiles`로 보고합니다(IX.10.8 진단 입력).
 
@@ -60,6 +60,29 @@
 
 ## 남은 위험 / 한계
 
-- Apple `os_version`을 10진 수로 읽으므로 minor가 두 자리일 때(예: `10.15`) 수 비교 순서가 버전 순서와 다릅니다. VIII.7.1의
-  `major.minor` 표기 정의를 따른 것이며, 정확한 버전 비교는 capability 계산(`ProfileLevel`)이 담당합니다.
 - override 저장 형식(문서 파일 직렬화)은 이 작업 범위가 아닙니다.
+- `os_version` 인코딩은 새 numeric 규칙이지만 ADR을 쓰지 않았습니다(허용 경로 밖). 결정 기록(ADR)이 필요합니다.
+
+## 후속 수정(리뷰 반영): `os_version` 순서 보존 인코딩
+
+리뷰(TP-3)에서 Apple `os_version`을 `major.minor` 10진 소수로 읽는 방식이 서로 다른 버전을 같은 값으로 만들고(`17.1`과
+`17.10` → 17.1) 순서를 뒤집는다는 점(`10.15` → 10.15 < `10.9` → 10.9)이 지적되어 `Fix` commit으로 고쳤습니다. 수정 전에는
+iOS 17.1 → 17.10 profile 전환에서 `changed_keys`가 `os_version`을 돌려주지 않았고, `os_version >= 10.9`가 macOS 10.15
+profile에서 false였습니다.
+
+- **인코딩**: `os_version = major × 1000 + minor`(patch 제외, 예: 17.4 → 17004, 10.15 → 10015, 26.0 → 26000). major
+  9999·minor 999 이하에서 서로 다른 버전은 서로 다른 값이고 수 순서가 버전 순서와 같습니다. 최댓값 9,999,999는 f32로
+  정확합니다. 직접 만든 범위 밖 profile은 상한으로 포화합니다(순서는 뒤집지 않음).
+- **범위 검증**: `stellar.yaml` Apple `minimum_os`는 이 범위 밖(`17.1000`, `10000.0` 등)을 `OutOfRange`로 거부합니다(IX.10.2
+  `spec.rs`).
+- **VIII.7.1 쪽 기록**: `crates/expressions/src/environment.rs`의 `OS_VERSION` 문서에 같은 인코딩을 적었습니다(코드 변경 없음).
+
+| 명령 | 결과 |
+|---|---|
+| 수정 전 `cargo test -p stellar-target-profile environment::` | 1 failed(`os_version_preserves_version_order_and_identity`: 17.4 → 17.4, 기대 17004) |
+| 수정 후 `cargo test -p stellar-target-profile` | 40 passed, 0 failed |
+
+| 검사 | 결과 |
+|---|---|
+| 17.4·10.15·26.0 인코딩 값, 10.9 < 10.10 < 10.15 < 11.0 < 17.1 < 17.2 < 17.10 < 26.0 < 9999.999, 17.1 → 17.10 전환 시 `changed_keys` = {`os_version`}, 범위 밖 포화 (`os_version_preserves_version_order_and_identity`) | 통과 |
+| Apple `minimum_os` 범위 밖 거부·경계값 허용 (`spec::tests::field_values_are_validated`) | 통과 |

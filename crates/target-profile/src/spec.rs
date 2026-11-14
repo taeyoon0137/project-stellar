@@ -6,7 +6,7 @@
 //! | 종류 | 키 | 형식 | 필수 |
 //! |---|---|---|---|
 //! | Apple | `apple_platform` | [`ApplePlatform`] 이름(`ios`·`ipados`·`macos`·`watchos`·`tvos`·`visionos`) | 예 |
-//! | Apple | `minimum_os` | [`DottedVersion`] (`26.0`) | 예 |
+//! | Apple | `minimum_os` | [`DottedVersion`] (`26.0`, major 9999·minor 999 이하) | 예 |
 //! | Android | `api_level` | [`AndroidApiLevel`] 10진 정수(1 이상) | 예 |
 //! | Android | `ui_system_version` | [`DottedVersion`] | 예 |
 //! | Web | `baseline` | [`WebBaseline`] Baseline 연도(2000~9999) | 예 |
@@ -19,6 +19,7 @@
 
 use std::fmt;
 
+use crate::environment::{MAX_OS_MAJOR, MAX_OS_MINOR};
 use crate::node::{
     expect_mapping, invalid, join, parse_u32, reject_unknown_keys, required_scalar, ManifestNode,
     SchemaError, ValueError,
@@ -334,7 +335,9 @@ impl ProfileSpec {
                 let platform = ApplePlatform::from_name(text)
                     .ok_or_else(|| invalid(&p, ValueError::UnknownApplePlatform))?;
                 let (text, p) = field(KEY_MINIMUM_OS)?;
-                let minimum_os = DottedVersion::parse(text).map_err(|e| invalid(&p, e))?;
+                let minimum_os = DottedVersion::parse(text)
+                    .and_then(apple_os_in_range)
+                    .map_err(|e| invalid(&p, e))?;
                 ProfileSpec::Apple(AppleProfile {
                     platform,
                     minimum_os,
@@ -351,6 +354,16 @@ impl ProfileSpec {
                 })
             }
         })
+    }
+}
+
+/// Apple `minimum_os`는 Binding 환경 `os_version` 인코딩(IX.10.7, [`crate::environment`])이 정확히 담는 범위만
+/// 받습니다(major [`MAX_OS_MAJOR`]·minor [`MAX_OS_MINOR`] 이하).
+fn apple_os_in_range(version: DottedVersion) -> Result<DottedVersion, ValueError> {
+    if version.major() > MAX_OS_MAJOR || version.minor() > MAX_OS_MINOR {
+        Err(ValueError::OutOfRange)
+    } else {
+        Ok(version)
     }
 }
 
@@ -645,6 +658,20 @@ mod tests {
                 TargetProfile::from_node(&apple("ios", bad), "p"),
                 err("p.minimum_os", expected),
                 "{bad:?}"
+            );
+        }
+        // Binding 환경 `os_version` 인코딩(IX.10.7) 범위: major 9999·minor 999 이하.
+        for bad in ["17.1000", "10000", "10000.0", "65535.65535"] {
+            assert_eq!(
+                TargetProfile::from_node(&apple("ios", bad), "p"),
+                err("p.minimum_os", ValueError::OutOfRange),
+                "{bad:?}"
+            );
+        }
+        for good in ["9999.999", "17.999", "0", "10.15"] {
+            assert!(
+                TargetProfile::from_node(&apple("ios", good), "p").is_ok(),
+                "{good:?}"
             );
         }
         // 정규화: `17` → `17.0`, `17.4.0` → `17.4`, patch 보존.

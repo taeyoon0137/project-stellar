@@ -56,3 +56,9 @@
 
 - Android `ui_system_version`이 가리키는 UI 시스템(예: Compose·Material 버전)의 의미는 capability registry(IX.10.5)가
   해석합니다. 이 작업은 형식만 고정합니다.
+
+## 후속 수정(리뷰 반영): Apple `minimum_os` 범위
+
+IX.10.7 Binding 환경 `os_version` 인코딩(`major × 1000 + minor`, 리뷰 TP-3)이 정확히 담는 범위만 받도록 Apple
+`minimum_os`에 major 9999·minor 999 상한을 추가했습니다. 범위 밖은 `ValueError::OutOfRange`입니다. 다른 `DottedVersion`
+필드(Android `ui_system_version`)는 바꾸지 않았습니다. 자세한 내용과 검증은 IX.10.7 보고서의 후속 수정 절에 있습니다.

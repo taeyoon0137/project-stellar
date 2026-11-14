@@ -6,9 +6,15 @@
 //! | key | 이름 | 값 |
 //! |---|---|---|
 //! | 1 | `platform` | Enum(`0xE000_0001`, Web=1·Apple=2·Android=3, profile 없음=generic 0) |
-//! | 2 | `os_version` | Number — Apple은 `major.minor`를 10진 수로 읽은 값(예: `17.4` → 17.4), 그 밖은 0 |
+//! | 2 | `os_version` | Number — Apple은 `minimum_os`의 `major × 1000 + minor`(예: `17.4` → 17004), 그 밖은 0 |
 //! | 3 | `api_level` | Number — Android API level, 그 밖은 0 |
 //!
+//! **`os_version` 인코딩**: `major.minor`를 10진 소수로 읽으면 `17.1`과 `17.10`이 같은 값이 되고 `10.15 < 10.9`처럼
+//! 순서가 뒤집힙니다. 그래서 정수 `major × 1000 + minor`로 둡니다(patch는 넣지 않음). major [`MAX_OS_MAJOR`]·minor
+//! [`MAX_OS_MINOR`] 이하에서 서로 다른 버전은 서로 다른 값이고 수 순서가 버전 순서와 같으며, 최댓값 9,999,999는
+//! f32로 정확합니다. `stellar.yaml`의 Apple `minimum_os`는 이 범위 밖을 거부하고(IX.10.2), 직접 만든 범위 밖 값은
+//! 상한으로 포화합니다(순서는 뒤집지 않음). 표현식은 같은 인코딩으로 비교합니다(예: iOS 17.4 이상은
+//! `os_version >= 17004`).
 //! profile을 바꿀 때 [`changed_keys`]는 값이 실제로 바뀐 key만 돌려줍니다. bindings의 환경 reverse index(VIII.7.3)는 이
 //! key 집합으로 해당 key를 참조한 expression만 무효화합니다(예: iOS 26 → macOS 26은 무효화 없음).
 
@@ -44,6 +50,11 @@ pub const PLATFORM_ENUM_TYPE: u32 = 0xE000_0001;
 /// `platform` variant: profile 없음(일반 미리보기).
 pub const PLATFORM_GENERIC: u32 = 0;
 
+/// `os_version` 인코딩이 정확히 담는 최대 major.
+pub const MAX_OS_MAJOR: u16 = 9_999;
+/// `os_version` 인코딩이 정확히 담는 최대 minor.
+pub const MAX_OS_MINOR: u16 = 999;
+
 /// profile이 정한 환경 값.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ProfileEnvironment {
@@ -62,7 +73,7 @@ impl ProfileEnvironment {
             ),
             Some(ProfileSpec::Apple(apple)) => (
                 u32::from(crate::profile::TargetProfileKind::Apple.code()),
-                decimal_version(apple.minimum_os.major(), apple.minimum_os.minor()),
+                os_version_code(apple.minimum_os.major(), apple.minimum_os.minor()),
                 FiniteF32::ZERO,
             ),
             Some(ProfileSpec::Android(android)) => (
@@ -112,15 +123,13 @@ fn finite(value: f32) -> FiniteF32 {
     FiniteF32::new(value).unwrap_or(FiniteF32::ZERO)
 }
 
-/// `major.minor`를 10진 수로 읽은 값(`17.4` → 17.4, `10.15` → 10.15).
-fn decimal_version(major: u16, minor: u16) -> FiniteF32 {
-    let mut scale = 10.0f32;
-    let mut rest = minor / 10;
-    while rest > 0 {
-        scale *= 10.0;
-        rest /= 10;
-    }
-    finite(f32::from(major) + f32::from(minor) / scale)
+/// `os_version` 값: `major × 1000 + minor`(모듈 문서). 상한 밖 성분은 상한으로 포화합니다.
+fn os_version_code(major: u16, minor: u16) -> FiniteF32 {
+    let major = u32::from(major.min(MAX_OS_MAJOR));
+    let minor = u32::from(minor.min(MAX_OS_MINOR));
+    // 최댓값 9_999_999 < 2^24이므로 f32 변환이 정확합니다.
+    let code = major * 1_000 + minor;
+    finite(code as f32)
 }
 
 #[cfg(test)]
@@ -159,7 +168,7 @@ mod tests {
 
         let ios = ProfileEnvironment::for_profile(Some(&apple("i", ApplePlatform::Ios, 26, 1)));
         assert_eq!(platform(&ios), 2);
-        assert_eq!(number(&ios, EnvironmentKeyCode::OS_VERSION), 26.0);
+        assert_eq!(number(&ios, EnvironmentKeyCode::OS_VERSION), 26_000.0);
         assert_eq!(number(&ios, EnvironmentKeyCode::API_LEVEL), 0.0);
 
         let droid = ProfileEnvironment::for_profile(Some(&android("a", 35, 1)));
@@ -169,11 +178,59 @@ mod tests {
 
         let site = ProfileEnvironment::for_profile(Some(&web("w", 2024, 1)));
         assert_eq!(platform(&site), 1);
+    }
 
-        assert_eq!(decimal_version(17, 4).get(), 17.4);
-        assert_eq!(decimal_version(10, 15).get(), 10.15);
-        assert_eq!(decimal_version(26, 0).get(), 26.0);
-        assert_eq!(decimal_version(1, 100).get(), 1.1);
+    fn apple_os(major: u16, minor: u16) -> ProfileEnvironment {
+        use crate::profile::TargetProfileId;
+        use crate::registry::ProfileRegistryVersion;
+        use crate::spec::{AppleProfile, DottedVersion};
+        let profile = TargetProfile::new(
+            TargetProfileId::new("ios").expect("id"),
+            ProfileRegistryVersion::new(1).expect("pin"),
+            ProfileSpec::Apple(AppleProfile {
+                platform: ApplePlatform::Ios,
+                minimum_os: DottedVersion::new(major, minor, 0),
+            }),
+        );
+        ProfileEnvironment::for_profile(Some(&profile))
+    }
+
+    #[test]
+    fn os_version_preserves_version_order_and_identity() {
+        let os = |major, minor| number(&apple_os(major, minor), EnvironmentKeyCode::OS_VERSION);
+        // `major × 1000 + minor` 정수 인코딩: 표현식은 이 값과 비교합니다.
+        assert_eq!(os(17, 4), 17_004.0);
+        assert_eq!(os(10, 15), 10_015.0);
+        assert_eq!(os(26, 0), 26_000.0);
+        assert_eq!(os(0, 0), 0.0);
+        // 수 순서 = 버전 순서(10.9 < 10.10 < 10.15, 17.1 < 17.2 < 17.10).
+        let ascending = [
+            (10, 9),
+            (10, 10),
+            (10, 15),
+            (11, 0),
+            (17, 1),
+            (17, 2),
+            (17, 10),
+            (26, 0),
+            (MAX_OS_MAJOR, MAX_OS_MINOR),
+        ];
+        for pair in ascending.windows(2) {
+            let (a, b) = (os(pair[0].0, pair[0].1), os(pair[1].0, pair[1].1));
+            assert!(a < b, "{:?} → {a} < {:?} → {b}", pair[0], pair[1]);
+        }
+        // 서로 다른 버전은 다른 값이라 profile을 바꾸면 os_version이 무효화됩니다.
+        let keys = changed_keys(&apple_os(17, 1), &apple_os(17, 10))
+            .into_iter()
+            .map(|k| k.0)
+            .collect::<Vec<_>>();
+        assert_eq!(keys, vec![2]);
+        // 상한 안의 가장 큰 값도 f32로 정확합니다.
+        assert_eq!(os(MAX_OS_MAJOR, MAX_OS_MINOR), 9_999_999.0);
+        // 상한 밖(직접 만든 profile)은 상한으로 포화해 순서를 뒤집지 않습니다.
+        assert_eq!(os(17, 1000), os(17, MAX_OS_MINOR));
+        assert!(os(17, 1000) < os(18, 0));
+        assert_eq!(os(u16::MAX, u16::MAX), os(MAX_OS_MAJOR, MAX_OS_MINOR));
     }
 
     #[test]

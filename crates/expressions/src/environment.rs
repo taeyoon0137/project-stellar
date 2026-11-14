@@ -51,7 +51,10 @@ use crate::types::{EnumTypeId, ExpressionType, TypeSpec};
 
 /// 대상 플랫폼 계열(Target Profile 종류, 아키텍처 §17.1).
 pub const PLATFORM: EnvironmentKey = EnvironmentKey::new(1);
-/// OS 버전(Apple: major.minor, 그 밖은 0).
+/// OS 버전(Apple: 최소 OS `major.minor`를 정수 `major × 1000 + minor`로 인코딩 — 예: 17.4 → 17004, 그 밖은 0).
+///
+/// 10진 소수(`17.4`)로 읽으면 `17.1`과 `17.10`이 같아지고 `10.15 < 10.9`처럼 순서가 뒤집히므로 정수 인코딩을 씁니다.
+/// 값은 Target Profile(IX.10.7, `stellar-target-profile` `environment`)이 정합니다.
 pub const OS_VERSION: EnvironmentKey = EnvironmentKey::new(2);
 /// API level(Android, 그 밖은 0).
 pub const API_LEVEL: EnvironmentKey = EnvironmentKey::new(3);
