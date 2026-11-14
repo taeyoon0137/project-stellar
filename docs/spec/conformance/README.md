@@ -107,7 +107,7 @@ reader·writer 구현이 Stellar 프로젝트 파일 형식을 같은 방식으�
 | `document-manifest` | DocumentManifest payload | 형식 §9.2 | 재인코딩 = 입력 | 형식 §9.2 |
 | `subtree` | subtree payload | 의미 §2.4(node 레코드 §2.2, payload 분기 §2.3, stack §2.6) | 재인코딩 = 입력 | 의미 §2.4 |
 | `modifier-stack` | `ModifierStack` bytes | 의미 §2.6 | 재인코딩 = 입력 | 의미 §2.6 |
-| `restricted-yaml` | YAML 텍스트 | 제한 loader만(형식 §14.1~§14.3) | 없음 | 형식 §14.1~§14.3 |
+| `restricted-yaml` | YAML 텍스트 | 제한 loader만(형식 §14.1\~§14.3) | 없음 | 형식 §14.1\~§14.3 |
 | `stellar-yaml` | YAML 텍스트 | 제한 loader → `stellar.yaml` 스키마 | canonical writer 출력 = 입력 | 형식 §14.5 |
 | `stellar-lock-yaml` | YAML 텍스트 | 제한 loader → `stellar.lock.yaml` 스키마 | canonical writer 출력 = 입력 | 형식 §14.6 |
 
