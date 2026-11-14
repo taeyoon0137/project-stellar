@@ -12,7 +12,7 @@
 
 | 문서 | 내용 | 기준 커밋 |
 |---|---|---|
-| [stellar-cli.md](stellar-cli.md) | headless `stellar` 명령의 현재 명령·인자·JSON 결과 envelope·종료 코드, 실제 실행 예시, ADR-0005 L1 계획 | `993d7d0` |
+| [stellar-cli.md](stellar-cli.md) | headless `stellar` 명령, JSON 결과와 종료 코드, ADR-0005 L1 계획. [기존 신뢰 프로젝트에서 MCP로 문서 읽기](stellar-cli.md#신뢰된-프로젝트를-mcp로-읽기) | `993d7d0` (기존 inspect 예시), `bc5b2db2` (MCP 예시) |
 | [crate-map.md](crate-map.md) | workspace member 32개의 책임, 주요 module, 허용 의존(crate graph 정책)과 실제 의존, 주요 ADR | `939d142` |
 
 ## 관련 문서
