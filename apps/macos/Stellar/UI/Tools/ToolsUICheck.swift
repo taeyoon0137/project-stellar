@@ -97,8 +97,9 @@ enum ToolsUICheck {
                     recorder.expect(false, "코어 명령 \(command.rawValue)이 표에 없음")
                 }
             }
-            if command.isSuppressedDuringTextEditing {
-                recorder.expect(command.standardAction == nil, "\(command.rawValue) 표준 action은 억제 대상이 아님")
+            if command.isSuppressedDuringTextEditing, let action = command.standardAction {
+                recorder.expect(ShellCommandRouter.textEditingPassThroughActions.contains(action),
+                                "\(command.rawValue) 표준 텍스트 action을 field editor에 전달하지 않음")
             }
         }
         for tool in CanvasTool.allCases {

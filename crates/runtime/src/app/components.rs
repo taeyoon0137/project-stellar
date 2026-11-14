@@ -77,6 +77,32 @@ impl AppRuntime {
 }
 
 impl ProjectSummary {
+    /// 창이 표시했던 전체 ID와 원본 hash로 프로젝트 파일 하나를 조건부 저장합니다.
+    pub fn resize_component_root(
+        &self,
+        id: StableId,
+        hash: &str,
+        width: f32,
+        height: f32,
+    ) -> Result<(), String> {
+        if self.trust != TrustStatus::Trusted {
+            return Err("프로젝트 신뢰가 필요합니다".into());
+        }
+        self.verify_trust()?;
+        let size = stellar_core_types::value::Size2::new(width, height)
+            .map_err(|_| "유한한 비음수 크기가 필요합니다")?;
+        let hash = hash.parse().map_err(|_| "잘못된 원본 hash입니다")?;
+        stellar_ops::component_source::resize_project_root(
+            &self.canonical_root,
+            self.project_id,
+            id,
+            hash,
+            size,
+        )
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    }
+
     /// 사용자가 연 창의 프로젝트 식별자를 고정하고 폴더의 현재 원본을 읽습니다.
     /// 호출자는 UI/document thread 밖에서 실행해야 합니다.
     pub fn component_library(

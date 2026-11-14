@@ -274,6 +274,10 @@ StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_
  * out_len reports required bytes. STELLAR_BUFFER_TOO_SMALL means retry with a larger buffer. */
 StellarStatus stellar_window_component_library(uint64_t handle, uint64_t session, uint8_t *buf, size_t capacity, size_t *out_len);
 
+/* Conditional root-size edit on a worker. id is 16 bytes; hash is the source SHA-256 shown by the library.
+ * Pass an error buffer of STELLAR_EVENT_TEXT_MAX or more before calling. Non-OK may report UTF-8 detail. */
+StellarStatus stellar_window_component_resize(uint64_t handle, uint64_t session, const uint8_t *id, const uint8_t *hash, size_t hash_len, float width, float height, uint8_t *error, size_t capacity, size_t *out_len);
+
 /* 열린 신뢰 창의 프로젝트에 독립 컴포넌트 원본 한 개 생성. 완료는 COMPONENT_CREATED 또는 REQUEST_FAILED. */
 StellarStatus stellar_window_component_create(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, uint64_t *out_request);
 

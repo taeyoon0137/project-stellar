@@ -54,6 +54,9 @@ def main(app, cli):
         subprocess.run([*git, "switch", "-qc", "third"], env=env, check=True)
         result("component-source", "create", folder, "Third", "0195c530-3acd-7bc1-8414-c213f61cb965",
                "0195c530-3acd-7bc1-8414-c213f61cb966")
+        original = next(row for row in result("component-source", "check", folder)["components"] if row["name"] == "버튼")
+        original_path = Path(original["file"])
+        result("component-source", "resize", original_path, original["source_hash"], "42", "11")
         subprocess.run([*git, "add", "design/components"], env=env, check=True)
         subprocess.run([*git, "commit", "-qm", "third component"], env=env, check=True)
         subprocess.run([*git, "switch", "-q", "--detach", original_revision], env=env, check=True)
@@ -81,8 +84,28 @@ def main(app, cli):
 
             try:
                 assert len(compare("initial")["entries"]) == 2
+                read_panel("select " + original["id"])
+                untouched = {path: path.read_bytes() for path in folder.glob("*.stellar.yaml") if path != original_path}
+                changed = read_panel("resize 248.5 44")
+                assert not changed["message"]
+                assert all(path.read_bytes() == expected for path, expected in untouched.items())
+                paths = subprocess.check_output([*git, "diff", "--name-only", "-z"], env=env)
+                assert paths.decode().split("\0")[:-1] == [str(original_path.relative_to(project))]
+                resized = next(e for e in compare("reopen")["entries"] if e["id"] == original["id"])
+                assert (resized["width"], resized["height"]) == (248.5, 44)
+                # The user sees this hash; a real checkout subsequently changes the same definition.
+                read_panel("select " + original["id"])
+                subprocess.run([*git, "restore", "--worktree", "--", original_path], env=env, check=True)
                 subprocess.run([*git, "switch", "-q", "third"], env=env, check=True)
+                before = {path: path.read_bytes() for path in folder.glob("*.stellar.yaml")}
+                failed = read_panel("resize 600 60")
+                assert failed["message"] and all(path.read_bytes() == expected for path, expected in before.items())
                 assert len(compare()["entries"]) == 3
+                read_panel("select " + original["id"])
+                assert read_panel("resize -1 45")["message"]
+                assert read_panel("resize nan 45")["message"]
+                assert all(path.read_bytes() == expected for path, expected in before.items())
+                subprocess.run([*git, "diff", "--quiet", "HEAD", "--"], env=env, check=True)
                 broken = folder / "broken.stellar.yaml"
                 broken.write_text("broken")
                 failure = read_panel()
@@ -94,13 +117,14 @@ def main(app, cli):
                 subprocess.run([*git, "switch", "-q", "third"], env=env, check=True)
                 assert len(compare()["entries"]) == 3
                 assert read_panel("revoke")["entries"] == []
+                subprocess.run([*git, "diff", "--quiet", "HEAD", "--"], env=env, check=True)
                 process.stdin.write("done\n")
                 process.stdin.flush()
                 assert process.wait(timeout=15) == 0
             finally:
                 if process.poll() is None:
                     process.kill()
-        print("component-library ok: matches CLI after checkout, empty state, malformed file and recovery, trust revocation clears panel")
+        print("component-library ok: root resize and reopen, only selected file changed, stale checkout and invalid size preserved files, trust revocation clears panel")
 
 
 
