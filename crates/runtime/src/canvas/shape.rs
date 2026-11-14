@@ -82,6 +82,7 @@ pub(super) fn rectangle(
     let r = shape.effective_corner_radius();
     Some(CanvasFrame {
         rectangle_shape: true,
+        instance_frame: false,
         id,
         parent,
         world,

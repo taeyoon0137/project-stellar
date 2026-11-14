@@ -207,7 +207,8 @@ pub fn query(snapshot: &crate::snapshot::ProjectSnapshot) -> Result<ProjectCompo
     })
 }
 
-pub(crate) fn project_library(
+/// 검증된 프로젝트의 원본 정의와 파일별 hash를 함께 반환합니다.
+pub fn project_library(
     snapshot: &crate::snapshot::ProjectSnapshot,
 ) -> Result<(ComponentLibrary, ComponentFiles), Error> {
     let (library, files) = component_source::read_project_library(snapshot.root())?;

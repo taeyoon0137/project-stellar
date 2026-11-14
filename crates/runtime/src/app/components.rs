@@ -5,6 +5,66 @@ use stellar_project::document_io::component_source::ComponentSource;
 
 /// 프로젝트 범위 디스크 작업은 document thread 밖에서 실행합니다.
 impl AppRuntime {
+    /// 파일 읽기는 별도 worker, 메모리 장면 교체는 document thread에서 수행합니다.
+    pub fn reload_canvas_components(
+        &self,
+        session: WindowSessionHandle,
+    ) -> Result<RequestId, RequestError> {
+        let request = self.reserve_request()?;
+        let state = self.state();
+        let sender = self.sender.clone();
+        let shared = Arc::clone(&self.shared);
+        let spawned = std::thread::Builder::new()
+            .name("stellar-canvas-components".into())
+            .spawn(move || {
+                let read = std::panic::catch_unwind(|| {
+                    state
+                        .window(session)
+                        .and_then(|w| state.project(w.project))
+                        .and_then(ProjectSummary::read_canvas_components)
+                })
+                .unwrap_or(None);
+                let publish = Arc::clone(&shared);
+                if sender
+                    .submit(move |ctx| {
+                        let sessions = ctx.app_sessions_mut();
+                        let result = match sessions.windows.get_mut(&session) {
+                            Some(entry) => {
+                                let trusted = sessions
+                                    .projects
+                                    .get(&entry.project)
+                                    .is_some_and(|p| p.trust == TrustStatus::Trusted);
+                                entry.canvas.update_library(
+                                    request.0,
+                                    read.filter(|_| trusted).map(|lib| (lib.files, lib.library)),
+                                );
+                                publish.publish_state(build_state(ctx));
+                                RuntimeEvent::WindowViewChanged { request, session }
+                            }
+                            None => RuntimeEvent::RequestFailed {
+                                request,
+                                failure: RequestFailure::UnknownWindowSession,
+                                message: "창이 닫혔습니다".into(),
+                            },
+                        };
+                        publish.outbox().push_back(result);
+                    })
+                    .is_err()
+                {
+                    shared.outbox().push_back(RuntimeEvent::RequestFailed {
+                        request,
+                        failure: RequestFailure::SaveFailed,
+                        message: "컴포넌트 캔버스 갱신을 접수하지 못했습니다".into(),
+                    });
+                }
+            });
+        if spawned.is_err() {
+            self.shared.release_one();
+            return Err(RequestError::Stopped);
+        }
+        Ok(request)
+    }
+
     /// 창이 가리키는 실제 프로젝트의 신뢰를 다시 검사한 뒤 이름을 가진 정의 한 개를 만듭니다.
     pub fn create_component(
         &self,
@@ -156,7 +216,28 @@ fn capture_selection(
     Ok((source, base))
 }
 
+/// worker가 검증한 독립 정의 집합. 호출자는 내용을 수정하지 않습니다.
+struct CanvasComponentLibrary {
+    files: stellar_project::document_io::component_source::ComponentFiles,
+    library: stellar_document::component::definition::ComponentLibrary,
+}
+
 impl ProjectSummary {
+    /// 원본 파일과 라이브러리의 조회는 worker에서 수행합니다.
+    fn read_canvas_components(&self) -> Option<CanvasComponentLibrary> {
+        if self.trust != TrustStatus::Trusted {
+            return None;
+        }
+        self.verify_trust().ok()?;
+        let snapshot = stellar_ops::snapshot::open_snapshot(&self.canonical_root).ok()?;
+        if snapshot.project_id() != self.project_id {
+            return None;
+        }
+        let (library, files) = stellar_ops::component_source::project_library(&snapshot).ok()?;
+        self.verify_trust().ok()?;
+        Some(CanvasComponentLibrary { files, library })
+    }
+
     /// 창이 표시했던 전체 ID와 원본 hash로 프로젝트 파일 하나를 조건부 저장합니다.
     pub fn resize_component_root(
         &self,

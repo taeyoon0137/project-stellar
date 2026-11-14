@@ -183,7 +183,7 @@ typedef struct StellarWindowSessionInfo {
 /* v1: 좌상단 원점 logical point. world/camera는 CGAffineTransform 순서 (a,b,c,d,tx,ty). */
 typedef struct StellarCanvasColor { uint32_t space; float rgba[4]; } StellarCanvasColor; /* 0 없음, 1 sRGB, 2 Display P3 */
 typedef struct StellarCanvasFrame {
-    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target, bit2 Rectangle Shape */
+    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target, bit2 Rectangle Shape, bit3 component instance */
     float world[6], size[2], radii[4]; /* TL,TR,BR,BL */
     StellarCanvasColor fill, border; float border_width;
 } StellarCanvasFrame;
@@ -272,6 +272,8 @@ StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_
  * 0, u32 legacy chunk count, u32 row count, rows (UUID, root UUID, u32 nodes, f32 width, f32 height,
  * length-prefixed UTF-8 name, filename, hash); or 1, length-prefixed UTF-8 error.
  * out_len reports required bytes. STELLAR_BUFFER_TOO_SMALL means retry with a larger buffer. */
+/* Queues a background component source read and a WINDOW_VIEW_CHANGED event. */
+StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t session, uint64_t *out_request);
 StellarStatus stellar_window_component_library(uint64_t handle, uint64_t session, uint8_t *buf, size_t capacity, size_t *out_len);
 
 /* Conditional root-size edit on a worker. id is 16 bytes; hash is the source SHA-256 shown by the library.

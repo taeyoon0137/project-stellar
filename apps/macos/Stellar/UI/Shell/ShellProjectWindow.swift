@@ -506,6 +506,7 @@ final class ShellProjectWindow {
         gitSource.trustDidChange = { [weak self] trusted in
             self?.dataSource.updateTrust(trusted)
             self?.sidebarSource.trusted = trusted
+            self?.reloadComponentCanvas()
             self?.refreshSessionCommands()
             if !trusted {
                 _ = self?.canvasHost.canvasView.cancelFrameGesture?()

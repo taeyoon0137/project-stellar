@@ -21,6 +21,8 @@ final class CanvasView: NSView {
     private let frameScene = CanvasFrameScene()
     var frameSession: UInt64? { didSet { refreshFrames() } }
 
+    func invalidateComponentFrames() { frameScene.clear(); refreshFrames() }
+
     func refreshFrames() {
         if let runtimeHandle, let frameSession, bounds.width > 0, bounds.height > 0 {
             frameScene.refresh(handle: runtimeHandle, session: frameSession, size: bounds.size)

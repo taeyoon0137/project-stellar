@@ -14,6 +14,7 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
     private var saveMessage: String?
     private let refreshButton = NSButton(title: String(localized: "Refresh"), target: nil, action: nil)
     private(set) var rows: [LibraryComponent] = []
+    var didReadSources: (() -> Void)?
     private(set) var isLoading = false
     private var needsRefresh = false
     private var invalidated = false
@@ -124,6 +125,7 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
                     self.message.stringValue = error
                 }
                 self.table.reloadData()
+                self.didReadSources?()
                 if let index = self.rows.firstIndex(where: { $0.id == selected }) {
                     self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
                 } else { self.table.deselectAll(nil) }
@@ -219,11 +221,20 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
 }
 
 extension ShellProjectWindow {
+    func reloadComponentCanvas() {
+        guard let project = dataSource.session, let session = windowController.windowSession, !session.isClosing, !session.isClosed else { return }
+        _ = session.track({ project.pump.reloadComponentCanvas(session.session, completion: $0) }) { [weak self, weak session] event in
+            guard let self, self.windowController.windowSession === session, case .windowViewChanged = event else { return }
+            self.canvasHost.canvasView.invalidateComponentFrames()
+        }
+    }
+
     func showComponentLibrary() {
         guard let window, let project = dataSource.session, let session = windowController.windowSession,
               !session.isClosed, !session.isClosing, gitSource.trusted else { return }
         if componentLibrary == nil {
             componentLibrary = ShellComponentLibrary(runtime: project.pump.runtimeHandle, session: session.session, projectName: project.name)
+            componentLibrary?.didReadSources = { [weak self] in self?.reloadComponentCanvas() }
         }
         componentLibrary?.show(relativeTo: window)
     }
