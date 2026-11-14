@@ -97,13 +97,17 @@
 
 ## 차이(작업 지시와 다른 점)
 
-- **외부 parser/emulator dependency를 등록하지 않고 crate 안에서 구현했습니다.** 이유:
-  ADR-0019 결정 2가 `stellar-terminal`의 의존을 `core-types`만 허용하고 crate 테스트
-  (`terminal_state_has_no_persistence_dependency`)가 이를 고정합니다. 공개된 상태 기계 명세와
-  Unicode 데이터만으로 구현할 수 있고, 입력 크기 비례 상한을 crate가 직접 보장해야 했습니다. 그래서
-  `config/dependencies.yaml`·`Cargo.lock`·ADR 변경이 없으며, 새 결정이 아니라 기존 ADR-0019를 따른
-  것이라 ADR을 추가하지 않았습니다. "등록할 dependency"가 없으므로 승인 목록의 direct dependency
-  일치 조건(I.3.2)은 그대로 유지됩니다.
+- **외부 parser/emulator dependency를 등록하지 않고 crate 안에서 구현했습니다.** 작업 행은 승인된
+  dependency 등록을 지시하므로, crate 안 구현을 고른 것은 작업 지시와 다른 설계 결정입니다.
+  ADR-0019에서 이 결정과 관련된 항목은 결정 4입니다. 결정 4는 세 crate가 외부 의존성 없이 시작하고,
+  외부 crate가 필요하면 `config/dependencies.yaml`과 별도 ADR로 추가하게 합니다. 결정 2는 workspace
+  안 crate 의존을 `core-types`로 제한하는 항목이라 외부 crate를 막지 않습니다(처음 이 보고서에 결정 2를
+  근거로 적은 것은 잘못이었습니다). 따라서 dependency 대신 crate 안 parser를 쓰기로 한 결정은 별도
+  ADR로 기록해야 합니다. 이 ADR은 새 번호가 필요해 이 작업에서 쓰지 않았고 통합 단계에서
+  추가합니다(남은 위험). 선택한 이유는 두 가지입니다. 공개된 DEC ANSI 상태 기계 명세와 Unicode
+  데이터만으로 구현할 수 있고, 매개변수·OSC·응답·알림 같은 입력 크기 비례 상한을 crate가 직접
+  보장해야 했습니다. 외부 dependency가 없으므로 `config/dependencies.yaml`·`Cargo.lock` 변경이 없고,
+  승인 목록과 direct dependency의 일치 조건(I.3.2)은 그대로 유지됩니다.
 - 셀 폭 표는 생성 파일이므로 생성기(`crates/terminal/tools/gen_width.py`)를 함께 두었습니다. 표는
   Python 3.15.2의 `unicodedata`(Unicode 17.0.0)로 만들었습니다.
 - 작업 행에 없던 `TERM`·`COLORTERM` 기본값을 registry에 넣었습니다. emulator가 해석하는 sequence
@@ -111,6 +115,8 @@
 
 ## 남은 위험 / 한계
 
+- crate 안 VT parser·emulator를 쓰기로 한 결정의 ADR이 아직 없습니다(새 ADR 번호가 필요해 통합 단계에서
+  추가). ADR이 생기기 전에는 이 결정의 근거가 이 보고서의 "차이" 절뿐입니다.
 - 셀 폭은 code point 단위입니다. emoji ZWJ 연쇄·국기 같은 grapheme cluster는 실제 표시 폭보다 넓게
   잡힐 수 있습니다(일반 터미널과 같은 한계).
 - 크기 변경 때 줄을 다시 흘리지 않습니다. alternate screen·scrollback·ED 3은 XVIII.4.2에서 다룹니다.
