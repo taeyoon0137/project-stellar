@@ -529,6 +529,60 @@ payload:
     fx.git(&["add", "--", "design/components"]);
     fx.git(&["commit", "-qm", "nested Frame"]);
     let nested = checked(&mut client, 2, "160");
+    let nested_head = fx.git(&["rev-parse", "HEAD"]);
+    assert_eq!(
+        tool_page(&client.diff(empty())).get("total"),
+        Some(&J::int(0))
+    );
+    fs::write(
+        &path,
+        v2.replace("160 40", "181 40").replace("24 12", "30 14"),
+    )
+    .unwrap();
+    let before = file_digest(&fx.temp.path);
+    let first = tool_page(&client.diff(J::object(vec![("limit", J::int(1))])));
+    assert_eq!(first.get("total"), Some(&J::int(2)));
+    assert_eq!(first.get("revision"), Some(&revision));
+    assert_eq!(
+        first.get("base_commit").map(text),
+        Some(nested_head.as_str())
+    );
+    let cursor = first.get("next_cursor").unwrap().clone();
+    let next = tool_page(&client.diff(J::object(vec![("cursor", cursor.clone())])));
+    assert_eq!(next.get("next_cursor"), Some(&J::Null));
+    for (page, object) in [(&first, ROOT), (&next, CHILD)] {
+        let entry = &array(page.get("items").unwrap())[0];
+        assert_eq!(entry.get("document"), Some(&J::Null));
+        assert_eq!(entry.get("component").map(text), Some(ID));
+        assert_eq!(entry.get("object").map(text), Some(object));
+        assert_eq!(entry.get("kind").map(text), Some("set-property"));
+    }
+    assert_eq!(file_digest(&fx.temp.path), before);
+    fs::write(&path, v2.replace("160 40", "180 40")).unwrap();
+    assert_error(
+        &client.diff(J::object(vec![("cursor", cursor.clone())])),
+        -32602,
+    );
+    let updated = tool_page(&client.diff(empty()));
+    assert_eq!(updated.get("total"), Some(&J::int(1)));
+    assert_ne!(
+        updated.get("component_source_hash"),
+        first.get("component_source_hash")
+    );
+    fs::write(&path, &v2).unwrap();
+    // 고정된 HEAD가 실제로 바뀌면 현재 파일과 generation이 같아도 이전 커서는 폐기합니다.
+    fx.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+    assert_error(&client.diff(J::object(vec![("cursor", cursor)])), -32602);
+    let switched = tool_page(&client.diff(empty()));
+    assert_eq!(switched.get("total"), Some(&J::int(1)));
+    assert_eq!(
+        array(switched.get("items").unwrap())[0]
+            .get("object")
+            .map(text),
+        Some(CHILD)
+    );
+    fx.git(&["symbolic-ref", "HEAD", "refs/heads/nested"]);
+
     assert_ne!(nested, main);
     fx.git(&["switch", "-q", "main"]);
     assert_eq!(checked(&mut client, 1, "160"), main);
@@ -536,6 +590,42 @@ payload:
     assert_eq!(checked(&mut client, 2, "160"), nested);
     fs::write(&path, v2.replace("160 40", "184.5 40")).unwrap();
     assert_ne!(checked(&mut client, 2, "184.5"), nested);
+
+    // 전체 SHA·generation을 그대로 둔 작업 파일 손상, 바이트 상한은 fail closed.
+    let edited = fs::read(&path).unwrap();
+    fs::write(&path, "format: unsupported").unwrap();
+    assert_error(&client.diff(empty()), -32000);
+    fs::write(&path, vec![b' '; 1024 * 1024 + 1]).unwrap();
+    assert_error(&client.diff(empty()), -32000);
+
+    // HEAD의 과대 blob도 working 파일로 대체해서 비교하지 않습니다.
+    fx.git(&["add", "--", "design/components"]);
+    fx.git(&["commit", "-qm", "oversized source"]);
+    fs::write(&path, &edited).unwrap();
+    let over = file_digest(&fx.temp.path);
+    assert_error(&client.diff(empty()), -32000);
+    assert_eq!(file_digest(&fx.temp.path), over);
+    fx.git(&["reset", "--soft", &nested_head]);
+    fx.git(&["restore", "--staged", "--", "design/components"]);
+    assert_eq!(
+        tool_page(&client.diff(empty())).get("total"),
+        Some(&J::int(1))
+    );
+
+    #[cfg(unix)]
+    {
+        // 작업 트리에 정상 파일을 돌려놔도 고정한 commit의 symlink는 거부합니다.
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink("../../stellar.yaml", &path).unwrap();
+        fx.git(&["add", "--", "design/components"]);
+        fx.git(&["commit", "-qm", "source symlink"]);
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, &edited).unwrap();
+        let switched = file_digest(&fx.temp.path);
+        assert_error(&client.diff(empty()), -32000);
+        assert_eq!(file_digest(&fx.temp.path), switched);
+    }
+
     assert_error(
         &client.call(
             "resources/read",

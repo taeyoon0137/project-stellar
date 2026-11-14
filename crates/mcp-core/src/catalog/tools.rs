@@ -92,11 +92,12 @@ pub const VALIDATE_DOCUMENT: ToolDef = ToolDef {
     grant: RequiredGrant::Read,
 };
 
-/// Git HEAD 대비 저장 문서 변경. 기준은 고정 HEAD입니다.
+/// 고정 Git HEAD 대비 저장 문서와 프로젝트 공용 컴포넌트 변경.
 pub const SEMANTIC_DIFF: ToolDef = ToolDef {
     name: "document.semantic_diff",
     title: "Semantic diff",
-    description: "같은 프로젝트의 Git HEAD와 현재 저장 세대의 문서 변경을 페이지로 읽습니다",
+    description:
+        "같은 프로젝트의 Git HEAD와 작업 트리의 저장 문서·컴포넌트 원본 변경을 페이지로 읽습니다",
     input_schema: r#"{"type":"object","additionalProperties":false,"properties":{"base":{"type":"string","enum":["HEAD"]},"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":2000}}}"#,
     read_only: true,
     destructive: false,

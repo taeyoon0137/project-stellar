@@ -22,9 +22,9 @@ use super::text_source::TextSourceError;
 use crate::folder_name::{collision_key, validate_folder_name};
 use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_checked, YamlValue};
 
-const EXT: &str = ".stellar.yaml";
-const MAX_COMPONENT_FILES: usize = 4096;
-const MAX_PROJECT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+pub(crate) const EXT: &str = ".stellar.yaml";
+pub(crate) const MAX_COMPONENT_FILES: usize = 4096;
+pub(crate) const MAX_PROJECT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// 빈 공개 인터페이스와 Free Frame tree의 편집 원본.
 #[derive(Debug)]
@@ -506,6 +506,56 @@ pub fn read_library(dir: &Path) -> Result<(ComponentLibrary, ComponentFiles), Te
 pub fn read_project_library(
     root: &Path,
 ) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
+    let Some(paths) = project_source_paths(root)? else {
+        return Ok((ComponentLibrary::new(), BTreeMap::new()));
+    };
+    let mut remaining = MAX_PROJECT_SOURCE_BYTES;
+    assemble(paths.files.into_iter().map(|path| {
+        let bytes = read_project_source(&paths.root, &path, &mut remaining)?;
+        let (source, hash) = decode_named(&path, &bytes)?;
+        Ok((path, source, hash))
+    }))
+}
+
+/// 프로젝트 루트 내부 실제 경로에서 읽은 파일 이름과 bytes hash의 결정적 집합 hash.
+/// HEAD 비교 페이지에서 YAML을 다시 파싱하지 않고 현재 원본을 재확인합니다.
+pub fn project_source_hash(root: &Path) -> Result<ContentHash, TextSourceError> {
+    let mut remaining = MAX_PROJECT_SOURCE_BYTES;
+    let mut hashes = Vec::new();
+    if let Some(paths) = project_source_paths(root)? {
+        for path in paths.files {
+            let bytes = read_project_source(&paths.root, &path, &mut remaining)?;
+            hashes.push((path, ContentHash::compute(&bytes)));
+        }
+    }
+    source_set_hash(hashes)
+}
+
+/// 이미 검증한 라이브러리의 원본 파일 집합 hash.
+pub fn source_set_hash(
+    hashes: impl IntoIterator<Item = (PathBuf, ContentHash)>,
+) -> Result<ContentHash, TextSourceError> {
+    let mut files: Vec<_> = hashes.into_iter().collect();
+    files.sort_unstable_by(|(a, _), (b, _)| a.file_name().cmp(&b.file_name()));
+    let mut input = Vec::new();
+    for (path, hash) in files {
+        let name = path
+            .file_name()
+            .ok_or_else(|| invalid("컴포넌트 파일 이름이 필요합니다"))?
+            .as_encoded_bytes();
+        input.extend_from_slice(&(name.len() as u64).to_le_bytes());
+        input.extend_from_slice(name);
+        input.extend_from_slice(hash.digest());
+    }
+    Ok(ContentHash::compute(&input))
+}
+
+struct ProjectSourcePaths {
+    root: PathBuf,
+    files: Vec<PathBuf>,
+}
+
+fn project_source_paths(root: &Path) -> Result<Option<ProjectSourcePaths>, TextSourceError> {
     use crate::path_resolver::{PathResolver, ResolveError, TargetKind, TargetLocation};
     let resolver = PathResolver::new(root)?;
     let folder = match resolver.resolve("design/components") {
@@ -519,25 +569,40 @@ pub fn read_project_library(
         Err(ResolveError::Io {
             kind: std::io::ErrorKind::NotFound,
             ..
-        }) => return Ok((ComponentLibrary::new(), BTreeMap::new())),
+        }) => return Ok(None),
         Err(_) => return Err(invalid("컴포넌트 폴더를 해석할 수 없습니다")),
     };
-    let mut remaining = MAX_PROJECT_SOURCE_BYTES;
-    assemble_library(&folder.target, |path| {
-        let target = path.canonicalize()?;
-        if !target.starts_with(resolver.canonical_root()) {
-            return Err(invalid("프로젝트 밖의 컴포넌트 원본입니다"));
-        }
-        let bytes = source_file::read_resolved(&target, remaining.min(MAX_INPUT_BYTES as u64))?;
-        remaining -= bytes.len() as u64;
-        decode_named(path, &bytes)
-    })
+    Ok(Some(ProjectSourcePaths {
+        root: resolver.canonical_root().to_owned(),
+        files: source_paths(&folder.target)?,
+    }))
+}
+
+fn read_project_source(
+    root: &Path,
+    path: &Path,
+    remaining: &mut u64,
+) -> Result<Vec<u8>, TextSourceError> {
+    let target = path.canonicalize()?;
+    if !target.starts_with(root) {
+        return Err(invalid("프로젝트 밖의 컴포넌트 원본입니다"));
+    }
+    let bytes = source_file::read_resolved(&target, (*remaining).min(MAX_INPUT_BYTES as u64))?;
+    *remaining -= bytes.len() as u64;
+    Ok(bytes)
 }
 
 fn assemble_library(
     dir: &Path,
     mut read: impl FnMut(&Path) -> Result<(ComponentSource, ContentHash), TextSourceError>,
 ) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
+    assemble(source_paths(dir)?.into_iter().map(|path| {
+        let (source, hash) = read(&path)?;
+        Ok((path, source, hash))
+    }))
+}
+
+fn source_paths(dir: &Path) -> Result<Vec<PathBuf>, TextSourceError> {
     let mut paths = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -553,11 +618,27 @@ fn assemble_library(
         }
     }
     paths.sort();
+    Ok(paths)
+}
+
+pub(crate) fn library_from_blobs(
+    sources: Vec<(PathBuf, Vec<u8>)>,
+) -> Result<ComponentLibrary, TextSourceError> {
+    let (library, _) = assemble(sources.into_iter().map(|(path, bytes)| {
+        let (source, hash) = decode_named(&path, &bytes)?;
+        Ok((path, source, hash))
+    }))?;
+    Ok(library)
+}
+
+fn assemble(
+    sources: impl IntoIterator<Item = Result<(PathBuf, ComponentSource, ContentHash), TextSourceError>>,
+) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
     let mut lib = ComponentLibrary::new();
     let mut index = BTreeMap::new();
     let mut filenames = BTreeSet::new();
-    for path in paths {
-        let (source, hash) = read(&path)?;
+    for item in sources {
+        let (path, source, hash) = item?;
         if !filenames.insert(collision_key(&source.filename()?)) {
             return Err(invalid("대소문자 무시 파일명 충돌"));
         }

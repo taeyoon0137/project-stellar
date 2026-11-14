@@ -7,13 +7,15 @@
 use std::fmt;
 use std::path::Path;
 
+use stellar_project::document_io::component_source::{project_source_hash, source_set_hash};
 use stellar_semantic_diff::build::SnapshotBuilder;
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
 use stellar_semantic_merge::merge::merge;
 use stellar_semantic_merge::model::{ConflictTarget, MergeInput, SemanticConflict, SideState};
+use stellar_storage::hash::ContentHash;
 
 use crate::core_types::ids::StableId;
-use crate::diff::{diff_snapshots, object_kind_name, snapshot_of, DiffPosition, DiffReport};
+use crate::diff::{diff_snapshots, object_kind_name, DiffPosition, DiffReport};
 use crate::error::{DocumentReadError, OpenError};
 use crate::query::{property_path_label, OpsValue};
 use crate::revision::ProjectRevision;
@@ -150,11 +152,27 @@ pub fn semantic_diff_projects(base: &Path, target: &Path) -> Result<ProjectDiff,
     })
 }
 
-/// 고정 HEAD의 저장 문서와 동일 project ID인 작업 트리의 저장 문서를 CLI와 같은 규칙으로 비교합니다.
+/// YAML을 해석하지 않고 파일 이름·바이트의 집합 hash를 다시 확인합니다.
+pub fn working_component_hash(snapshot: &ProjectSnapshot) -> Result<ContentHash, CompareError> {
+    project_source_hash(snapshot.root()).map_err(|error| CompareError::ComponentSource {
+        side: "target",
+        error: error.into(),
+    })
+}
+
+/// 고정 HEAD와 working tree의 문서·공용 컴포넌트를 CLI와 같은 규칙으로 비교합니다.
 pub fn semantic_diff_head(
     head: &crate::trusted::ProjectHead,
     target: &ProjectSnapshot,
 ) -> Result<DiffReport, CompareError> {
+    Ok(semantic_diff_head_with_source_hash(head, target)?.0)
+}
+
+/// diff에 실제 사용한 작업 파일 집합의 hash도 반환합니다.
+pub fn semantic_diff_head_with_source_hash(
+    head: &crate::trusted::ProjectHead,
+    target: &ProjectSnapshot,
+) -> Result<(DiffReport, ContentHash), CompareError> {
     let unavailable =
         || CompareError::Projection("HEAD에서 같은 프로젝트의 저장 세대를 열 수 없습니다".into());
     if head.root() != target.root() || target.generation().is_none() {
@@ -162,16 +180,33 @@ pub fn semantic_diff_head(
     }
     let base = head.saved(target.project_id()).map_err(|_| unavailable())?;
     let saved = base.project();
-    let mut records = Vec::new();
+    let mut builder = SnapshotBuilder::new();
     for document in saved.document_ids().map_err(|_| unavailable())? {
         let loaded = saved.load_document(document).map_err(|_| unavailable())?;
-        records.push(loaded.model.to_records().map_err(|_| unavailable())?);
+        let records = loaded.model.to_records().map_err(|_| unavailable())?;
+        builder.add_document(&records).map_err(|_| unavailable())?;
     }
-    let base = snapshot_of(&records.iter().collect::<Vec<_>>())
-        .map_err(|e| CompareError::Projection(e.0))?;
-    Ok(diff_snapshots(
-        &base,
-        &document_builder(target, "target")?.finish(),
+    builder
+        .add_project_component_library(base.components())
+        .map_err(|_| unavailable())?;
+    let mut working = document_builder(target, "target")?;
+    let (library, files) = crate::component_source::project_library(target).map_err(|error| {
+        CompareError::ComponentSource {
+            side: "target",
+            error,
+        }
+    })?;
+    working
+        .add_project_component_library(&library)
+        .map_err(|_| unavailable())?;
+    let source_hash =
+        source_set_hash(files.into_values()).map_err(|error| CompareError::ComponentSource {
+            side: "target",
+            error: error.into(),
+        })?;
+    Ok((
+        diff_snapshots(&builder.finish(), &working.finish()),
+        source_hash,
     ))
 }
 
