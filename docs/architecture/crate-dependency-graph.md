@@ -33,6 +33,7 @@
 | `stellar-export` | core-types, scene |
 | `stellar-local-ipc` | core-types |
 | `stellar-terminal` | core-types |
+| `stellar-codegen` | core-types, target-profile, accessibility, layout |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core |
 | `stellar-ffi` | core-types, runtime |
 
@@ -77,6 +78,10 @@ graph TD
   local_ipc --> core_types
   export --> scene
   terminal --> core_types
+  codegen --> core_types
+  codegen --> target_profile
+  codegen --> accessibility
+  codegen --> layout
   runtime --> core_types
   runtime --> document
   runtime --> commands
@@ -92,6 +97,8 @@ graph TD
 ## 규칙
 
 - `document`·`bindings`는 표현식 AST를 저장·평가 입력으로 쓰므로 `expressions`에 의존합니다. `project`는 Command 단위 자동 저장·복구를 위해 `commands`·`history`에 의존하고, 프로젝트·시스템 폰트 등록(XIII.6)을 위해 `text`에 의존합니다(2026-11-14, 순환 없음).
+- `codegen`(ADR-0049)은 문서·binding 계층에 의존하지 않고 target-profile·accessibility·layout의 지역 모델로 만든
+  IR만 읽습니다. 생성 코드를 되읽는 crate는 없습니다(단방향, 2026-11-14).
 - 셸 경계(`ffi`)는 문서·프로젝트 작업에 `runtime`을 통해서만 도달합니다(ADR-0013, 2026-11-14).
 - `commands`와 `history`는 이미 `document`를 거쳐 `core-types`에 전이 의존하므로, StableId·WindowSessionId·DocumentRevision 같은 기본 타입을 직접 쓰도록 `core-types` 직접 의존을 허용합니다(2026-11-14, `semantic-diff` 선례와 같음).
 - `assets`도 같은 이유로 `core-types` 직접 의존을 허용합니다. AssetId는 계획서(XIII.5.1)대로 StableId newtype입니다(2026-11-14).

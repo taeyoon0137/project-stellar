@@ -1,0 +1,86 @@
+codegen-ir v1
+target ios apple platform=ios minimum_os=26.0.0 registry=1
+tokens 3
+  token 00000000-0000-0000-0000-000000000046 "surface" = display-p3(0.96 0.96 0.98 / 1)
+  token 00000000-0000-0000-0000-000000000047 "accent" = srgb(0 0.48 1 / 1)
+  token 00000000-0000-0000-0000-000000000048 "spacing.md" = 16px
+states 3
+  state 00000000-0000-0000-0000-000000000032 "selectedSize" = "00000000-0000-0000-0000-000000000008"
+  state 00000000-0000-0000-0000-000000000033 "memo" = ""
+  state 00000000-0000-0000-0000-000000000034 "isSaving" = false
+nodes 14
+  [0] 00000000-0000-0000-0000-000000000001 frame semantics=a11y[0]
+    layout stack(axis=vertical direction=forward gap=16 main=start cross=stretch wrap=nowrap cross_gap=0 lines=start) w=390 h=844 padding=24,24,24,24
+    property 00000000-0000-0000-0000-000000000001.4 = display-p3(0.96 0.96 0.98 / 1) origin=common token=00000000-0000-0000-0000-000000000046
+    capability element:frame native
+    [1] 00000000-0000-0000-0000-000000000002 text semantics=a11y[2]
+      layout free w=hug h=hug padding=0,0,0,0 content=intrinsic(48x28 baseline=21)
+      text "설정"
+      property 00000000-0000-0000-0000-000000000002.5 = srgb(0.8 0.1 0.1 / 1) origin=variant(00000000-0000-0000-0000-000000000064)
+      capability element:text native
+    [2] 00000000-0000-0000-0000-000000000003 fragment
+      capability element:fragment native
+      [3] 00000000-0000-0000-0000-000000000004 image semantics=a11y[1]
+        layout free w=64 h=64 padding=0,0,0,0
+        property 00000000-0000-0000-0000-000000000004.3 = "프로필 사진" origin=common
+        property 00000000-0000-0000-0000-000000000004.201 = "person.crop.circle" origin=common capability=property:apple.sf_symbol
+        capability element:image native
+        capability property:apple.sf_symbol native path=00000000-0000-0000-0000-000000000004.201
+      [4] 00000000-0000-0000-0000-000000000005 shape
+        layout free w=fill h=1 padding=0,0,0,0
+        capability element:shape native
+    [5] 00000000-0000-0000-0000-000000000006 frame contracts=[single_selection_group] semantics=a11y[3]
+      layout stack(axis=horizontal direction=forward gap=8 main=start cross=center wrap=nowrap cross_gap=0 lines=start) w=fill h=hug padding=0,0,0,0
+      property 00000000-0000-0000-0000-000000000006.101 = 12px origin=common capability=property:css.backdrop_filter
+      capability element:frame native
+      capability contract:single_selection_group approximated
+      capability property:css.backdrop_filter native path=00000000-0000-0000-0000-000000000006.101
+      [6] 00000000-0000-0000-0000-000000000007 frame contracts=[list]
+        layout stack(axis=horizontal direction=forward gap=8 main=start cross=center wrap=nowrap cross_gap=0 lines=start) w=fill h=hug padding=0,0,0,0
+        capability element:frame native
+        capability contract:list native
+        [7] 00000000-0000-0000-0000-000000000008 frame contracts=[button] semantics=a11y[4]
+          layout stack(axis=horizontal direction=forward gap=0 main=center cross=start wrap=nowrap cross_gap=0 lines=start) w=hug h=hug padding=12,16,12,16 flex=1,1,auto
+          capability element:frame native
+          capability contract:button native
+          [8] 00000000-0000-0000-0000-000000000009 text semantics=a11y[5]
+            layout free w=hug h=hug padding=0,0,0,0 content=intrinsic(32x20 baseline=15)
+            text "작게"
+            capability element:text native
+        [9] 00000000-0000-0000-0000-00000000000a frame contracts=[button] semantics=a11y[6]
+          layout free w=hug h=hug padding=12,16,12,16 flex=1,1,auto
+          capability element:frame native
+          capability contract:button native
+    [10] 00000000-0000-0000-0000-00000000000b frame contracts=[text_input] semantics=a11y[7]
+      layout free w=fill h=44 padding=8,12,8,12
+      capability element:frame native
+      capability contract:text_input native
+    [11] 00000000-0000-0000-0000-00000000000c frame contracts=[button] semantics=a11y[8]
+      layout overlay(horizontal=center vertical=center) w=fill h=48 padding=0,0,0,0 limits=w[120..-],h[-..-]
+      property 00000000-0000-0000-0000-00000000000c.1 = 12px origin=profile capability=property:common.corner_radius
+      property 00000000-0000-0000-0000-00000000000c.2 = 4px origin=common capability=property:common.drop_shadow
+      property 00000000-0000-0000-0000-00000000000c.4 = srgb(0 0.48 1 / 1) origin=common token=00000000-0000-0000-0000-000000000047
+      capability element:frame native
+      capability contract:button native
+      capability property:common.corner_radius native path=00000000-0000-0000-0000-00000000000c.1
+      capability property:common.drop_shadow native path=00000000-0000-0000-0000-00000000000c.2
+    [12] 00000000-0000-0000-0000-000000000010 frame contracts=[modal] semantics=a11y[9]
+      layout free w=320 h=120 padding=0,0,0,0
+      capability element:frame native
+      capability contract:modal native
+      [13] 00000000-0000-0000-0000-000000000011 text semantics=a11y[10]
+        layout free w=hug h=hug padding=0,0,0,0 position=x(16..-),y(16..-) content=intrinsic(120x20 baseline=15)
+        text "저장되었습니다"
+        capability element:text native
+accessibility 11
+  [0] node=[0] generic
+    [1] node=[3] image label=property(00000000-0000-0000-0000-000000000004.3)
+    [2] node=[1] staticText label=text(00000000-0000-0000-0000-000000000002)
+    [3] node=[5] radioGroup label="크기"
+      [4] node=[7] radio states{focusable=true,checked=selection(00000000-0000-0000-0000-000000000032==00000000-0000-0000-0000-000000000008)} actions{activate=action(00000000-0000-0000-0000-00000000003d),focus=none,select=state(00000000-0000-0000-0000-000000000032)}
+        [5] node=[8] staticText label=text(00000000-0000-0000-0000-000000000009)
+      [6] node=[9] radio label="크게" states{focusable=true,checked=selection(00000000-0000-0000-0000-000000000032==00000000-0000-0000-0000-00000000000a)} actions{activate=action(00000000-0000-0000-0000-00000000003e),focus=none,select=state(00000000-0000-0000-0000-000000000032)}
+    [7] node=[10] textField label="메모" value=state(00000000-0000-0000-0000-000000000033) states{focusable=true,editable=true} actions{focus=none,setValue=state(00000000-0000-0000-0000-000000000033)}
+    [8] node=[11] button label="저장" states{focusable=true,disabled=state(00000000-0000-0000-0000-000000000034)} actions{activate=action(00000000-0000-0000-0000-00000000003c),focus=none}
+    [9] node=[12] dialog label="알림" states{modal=true} actions{dismiss=action(00000000-0000-0000-0000-00000000003f)}
+      [10] node=[13] staticText label=text(00000000-0000-0000-0000-000000000011)

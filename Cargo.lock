@@ -189,6 +189,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-codegen"
+version = "0.0.0"
+dependencies = [
+ "stellar-accessibility",
+ "stellar-core-types",
+ "stellar-layout",
+ "stellar-target-profile",
+]
+
+[[package]]
 name = "stellar-commands"
 version = "0.0.0"
 dependencies = [

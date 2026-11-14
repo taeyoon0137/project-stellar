@@ -76,6 +76,16 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         // 로드맵 crate(ADR-0019): 내보내기(Phase XX)와 내장 터미널 코어(Phase XVIII).
         ("stellar-export", &[core, "stellar-scene"]),
         ("stellar-terminal", &[core]),
+        // 단방향 코드 생성(Phase XXII, ADR-0049): 문서·binding 계층을 거치지 않고 하위 crate의 지역 모델만 읽습니다.
+        (
+            "stellar-codegen",
+            &[
+                core,
+                "stellar-target-profile",
+                "stellar-accessibility",
+                "stellar-layout",
+            ],
+        ),
         // 앱 프로세스 runtime(ADR-0013): thread 구성과 document thread event loop.
         (
             "stellar-runtime",

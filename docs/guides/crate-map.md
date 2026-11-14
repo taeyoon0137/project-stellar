@@ -1,8 +1,7 @@
 # Workspace crate 지도
 
-이 문서는 루트 `Cargo.toml`의 workspace member 32개를 crate마다 한 문단으로 설명합니다. 커밋
-`939d142`의 코드에서 확인한 내용만 적었습니다. 근거는 각 crate의 `Cargo.toml`, `src/lib.rs` module
-문서와 module 선언, 그리고 의존 정책 `tools/xtask/src/crate_graph.rs`입니다. 문서와 코드가 다르면
+이 문서의 기준은 루트 `Cargo.toml`의 workspace member, 각 crate의 manifest·module 선언과
+의존 정책 `tools/xtask/src/crate_graph.rs`입니다. 문서와 코드가 다르면
 코드가 기준입니다.
 
 ## 목차
@@ -63,6 +62,7 @@
 | renderer-metal | `crates/renderer-metal` | renderer-core | renderer-core | 없음 |
 | renderer-d3d12 | `crates/renderer-d3d12` | renderer-core | renderer-core | 없음 |
 | export | `crates/export` | core-types, scene | core-types, scene | 없음 |
+| codegen | `crates/codegen` | core-types, target-profile, accessibility, layout | core-types, target-profile, accessibility, layout | 없음 |
 | storage | `crates/storage` | core-types | core-types | 없음 |
 | assets | `crates/assets` | storage, core-types | core-types, storage | 없음 |
 | dependencies | `crates/dependencies` | core-types | core-types | 없음 |
@@ -263,6 +263,15 @@ encoding(`encode`), frame CPU timestamp trace(`trace`), GPU timestamp query(`tim
 않고 불변 Scene Snapshot을 입력으로 받습니다. 현재 module은 내보내기 요청과 field schema(`request`),
 scene snapshot·resource revision 입력 고정(`capture`), SVG 벡터 변환(`svg`)입니다. 허용 직접 의존과
 실제 의존은 core-types, scene입니다. 주요 ADR은 로드맵 crate를 추가한 ADR-0019입니다.
+
+### stellar-codegen
+
+`crates/codegen`은 단방향 플랫폼 코드 생성(Phase XXII)용 로드맵 crate입니다. 문서 모델·binding graph를 직접
+읽지 않고 하위 crate의 지역 모델(target-profile의 `ViewModel`, layout의 `LayoutInput`, accessibility의
+`AccessibilitySnapshot`)과 상태 변수·token 선언을 입력으로 받아, Target Profile 하나로 해석한 중립
+IR(`ir::CodegenIr`)을 만듭니다. 현재 module은 IR과 semantic snapshot(`ir`), 결정론 텍스트 도우미(`text`)입니다.
+생성 코드를 되읽는 API는 없습니다. 허용 직접 의존과 실제 의존은 core-types, target-profile, accessibility,
+layout입니다. 주요 ADR은 crate와 입력 경계를 정한 ADR-0049입니다.
 
 ## 저장, 프로젝트, Git
 
