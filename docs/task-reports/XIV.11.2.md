@@ -70,3 +70,30 @@
 - 이번 세션은 기계 부하가 매우 높았습니다(load average 약 170). 전체 `cargo test` 병렬 실행 중 이 작업과
   무관한 timing 테스트(제한 YAML fuzz 입력당 3초 상한, FSEvents live)가 한 번씩 실패했고, 단독·재실행에서는
   통과했습니다(YAML·watcher 코드는 이 작업에서 바꾸지 않음).
+
+## 후속 수정(리뷰 반영): snapshot loader가 저장소 symlink·비정규 파일을 따라가지 않음
+
+- **문제**: `SavedProjectLoader`는 `stellar.yaml` symlink만 거부했습니다. materialize는 symlink를 그대로
+  만들므로 theirs branch의 `design/current`(또는 manifest·chunk·shard 디렉터리)가 snapshot 밖 절대 경로
+  symlink면 loader가 snapshot 밖 파일을 읽었고, `/dev/zero`·FIFO·거대한 파일이면 상한 없는 읽기로
+  `open_conflict_projects`가 멈추거나 메모리를 무한히 쓸 수 있었습니다. `stellar.yaml`도 정규 파일 검사와
+  크기 상한 없이 `read_to_string`으로 전부 읽었습니다.
+- **수정**(`crates/project/src/saved_project.rs`, `conflict_open.rs`):
+  - loader에 `StorageLinkPolicy`(`Follow`: 사용자 작업 트리, 아키텍처 19.3 / `Reject`: materialize된
+    snapshot)와 `StorageReadLimits`(pointer 1 KiB·manifest 64 MiB·chunk 256 MiB, 비신뢰 입력 방어 상한)를
+    두고, `open_conflict_projects`는 `SavedProjectLoader::for_materialized_snapshot()`(Reject)을 씁니다.
+  - 저장소 crate가 읽기 **전에** current pointer, generation manifest, manifest가 가리키는 모든 chunk의
+    종류·크기를 검사합니다. Reject는 `design/`부터 파일까지 각 구성 요소를 `symlink_metadata`로 검사해
+    symlink를 거부하고, 두 규칙 모두 정규 파일이 아니거나 상한을 넘으면 `StorageEntry` 오류로 거부합니다.
+    검사한 manifest와 실제로 연 manifest가 다르면 `StorageChanged`로 거부합니다.
+  - `stellar.yaml`은 정규 파일만, loader 상한(1 MiB)까지만 읽고(`Read::take`), 검사한 파일과 연 handle의
+    device·inode가 다르면 `ManifestChanged`로 거부합니다.
+- **검증**: `snapshot_loader_rejects_storage_symlinks_and_working_tree_follows_them`(pointer·shard
+  디렉터리·`design` 절대 경로 symlink: Reject 거부, Follow 열림), `non_regular_storage_entries_are_rejected_before_reading`
+  (`/dev/zero` pointer, 디렉터리 pointer, 파일인 `design/generations`), `oversized_storage_files_are_rejected_before_reading`,
+  `manifest_must_be_a_bounded_regular_file`(디렉터리·64 MiB sparse), `fifo_manifest_is_rejected_without_blocking`,
+  통합 테스트 `theirs_storage_symlink_outside_the_snapshot_is_not_followed`(theirs `design/current`가 snapshot 밖
+  절대 경로 symlink인 실제 conflict: theirs `StorageEntry{design/current, Symlink}`).
+- **남은 한계**: 저장소 파일은 저장소 crate가 경로로 다시 열기 때문에 검사와 읽기 사이 교체(TOCTOU)는 막지
+  못합니다. snapshot은 소유자 전용 session 디렉터리 안이라 같은 사용자 프로세스만 이 틈을 쓸 수 있습니다.
+  검사 단계가 manifest를 한 번 더 읽어 열기 비용이 manifest 읽기·디코딩 한 번만큼 늘었습니다.

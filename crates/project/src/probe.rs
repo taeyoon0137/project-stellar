@@ -104,7 +104,7 @@ fn read_manifest_bounded(path: &Path) -> Result<String, ProbeError> {
 /// `reader`에서 최대 `limit + 1` 바이트만 읽습니다. `limit`을 넘으면 `Ok(None)`입니다.
 ///
 /// 끝없는 입력(장치 파일, 계속 자라는 파일)에서도 읽기량과 할당량이 `limit + 1`에 묶입니다.
-fn read_at_most(reader: impl Read, limit: usize) -> io::Result<Option<Vec<u8>>> {
+pub(crate) fn read_at_most(reader: impl Read, limit: usize) -> io::Result<Option<Vec<u8>>> {
     let cap = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
     let mut bytes = Vec::new();
     reader.take(cap).read_to_end(&mut bytes)?;
