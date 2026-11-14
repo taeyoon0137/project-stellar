@@ -12,6 +12,17 @@
 //!   implicit transaction이 thread에 남지 않습니다.
 //! - **drawable 획득**은 `allowsNextDrawableTimeout`을 항상 켜 둡니다. 가려진 창에서도 무한 대기하지
 //!   않고 최대 1초 뒤 nil을 받습니다.
+//!
+//! ## resize와 frame skip (XI.8.2)
+//!
+//! - `resize`는 backend가 기억하는 surface 크기를 바꾸고, 0이 아니면 layer `drawableSize`에 넣습니다.
+//!   0 크기(최소화)는 layer에 넣지 않고 기억만 합니다. 그 동안 surface frame은 drawable을 요청하지 않고
+//!   `Skipped(EmptySurface)`입니다(최소화된 창에서 `nextDrawable` 대기 없음).
+//! - drawable이 nil이면(가려짐·timeout) frame을 `Skipped(NoDrawable)`로 건너뜁니다. 오류가 아니므로
+//!   frame은 열리지 않고 다음 tick에 다시 시도합니다.
+//! - 얻은 drawable 크기가 backend 크기와 다르면(셸이 layer 크기를 직접 바꾼 경우) layer를 backend
+//!   크기로 다시 맞추고 그 frame은 `Skipped(NoDrawable)`입니다. attachment 크기 불일치로 Metal에 잘못된
+//!   render pass를 넘기지 않습니다.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
@@ -103,6 +114,19 @@ fn with_transaction<T>(f: impl FnOnce() -> T) -> T {
     result
 }
 
+/// surface frame의 resize·skip 통계(진단·benchmark용, XI.11.5). device 재생성에도 누적합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct SurfaceStats {
+    /// 크기가 실제로 바뀐 resize 횟수.
+    pub resizes: u64,
+    /// 0 크기 surface(최소화)로 건너뛴 frame 수. drawable을 요청하지 않습니다.
+    pub skipped_empty: u64,
+    /// drawable을 얻지 못해 건너뛴 frame 수(가려짐·timeout·크기 재동기화).
+    pub skipped_no_drawable: u64,
+    /// layer drawable 크기가 backend 크기와 달라 layer를 다시 맞춘 횟수(`skipped_no_drawable`에 포함).
+    pub drawable_size_resyncs: u64,
+}
+
 /// 얻은 drawable과 그 texture.
 #[derive(Debug)]
 pub(crate) struct Drawable {
@@ -111,6 +135,21 @@ pub(crate) struct Drawable {
 }
 
 impl Drawable {
+    /// drawable texture pixel 크기.
+    pub(crate) fn size(&self) -> (u32, u32) {
+        // SAFETY: `-width`·`-height`는 () -> NSUInteger입니다.
+        let (width, height): (NSUInteger, NSUInteger) = unsafe {
+            (
+                self.texture.send(sel!("width"), ()),
+                self.texture.send(sel!("height"), ()),
+            )
+        };
+        (
+            u32::try_from(width).unwrap_or(u32::MAX),
+            u32::try_from(height).unwrap_or(u32::MAX),
+        )
+    }
+
     /// `id<CAMetalDrawable>`.
     pub(crate) fn drawable(&self) -> &Id {
         &self.drawable

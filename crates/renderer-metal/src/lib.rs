@@ -25,7 +25,7 @@ mod format;
 /// `MTLDevice`·command queue (XI.8.1).
 mod device;
 
-/// CAMetalLayer 연결·drawable (XI.8.1).
+/// CAMetalLayer 연결·drawable (XI.8.1), resize·frame skip (XI.8.2).
 mod surface;
 
 /// texture 생성 (XI.8.1).
@@ -38,7 +38,7 @@ mod encode;
 mod backend;
 
 pub use backend::MetalBackend;
-pub use surface::LayerOptions;
+pub use surface::{LayerOptions, SurfaceStats};
 
 /// backend 식별자.
 pub const BACKEND: &str = "metal";

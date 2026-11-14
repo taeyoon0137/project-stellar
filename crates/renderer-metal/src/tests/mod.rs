@@ -22,6 +22,7 @@ use crate::objc::{sel, Id};
 use crate::sys::MTLCreateSystemDefaultDevice;
 
 mod smoke;
+mod surface;
 
 /// 이 machine에 Metal device가 있으면 참입니다. 없으면 이유를 출력합니다.
 pub(crate) fn metal_available() -> bool {

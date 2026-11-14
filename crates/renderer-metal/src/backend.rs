@@ -16,8 +16,8 @@ use std::ptr::NonNull;
 use stellar_renderer_core::backend::{
     BackendError, BackendErrorKind, BackendKind, BufferDesc, BufferHandle, DeviceCapabilities,
     DeviceConfig, EncodeOutcome, EncodedFrame, FrameEncodeRequest, FrameId, GpuProgress,
-    GpuTextureDesc, RendererBackend, SubmissionId, SurfaceSize, TextureHandle, TextureRegion,
-    TimestampQuery, MAX_FRAMES_IN_FLIGHT,
+    GpuTextureDesc, RendererBackend, SkipReason, SubmissionId, SurfaceSize, TextureHandle,
+    TextureRegion, TimestampQuery, MAX_FRAMES_IN_FLIGHT,
 };
 use stellar_renderer_core::gpu_handle::{HandleTable, TextureKind};
 use stellar_renderer_core::render_graph::{
@@ -28,7 +28,7 @@ use crate::device::MetalDevice;
 use crate::encode::{encode_pass, plan_pass, FrameTargets};
 use crate::format::bytes_per_pixel;
 use crate::objc::{autoreleasepool, sel, Id, NSUInteger, RawId};
-use crate::surface::{check_surface_size, Drawable, LayerOptions, LayerSurface};
+use crate::surface::{check_surface_size, Drawable, LayerOptions, LayerSurface, SurfaceStats};
 use crate::sys::{command_buffer_status, resource_options, MTLOrigin, MTLSize};
 use crate::texture::{create_texture, MetalTexture};
 
@@ -65,6 +65,10 @@ pub struct MetalBackend {
     next_submission: u64,
     in_flight: VecDeque<InFlight>,
     progress: GpuProgress,
+    surface_stats: SurfaceStats,
+    /// 테스트용: 다음 n번의 drawable 요청을 nil로 만듭니다(가려진 창·timeout 재현).
+    #[cfg(test)]
+    pub(crate) drawable_failures: u32,
 }
 
 fn invalid(detail: &'static str) -> BackendError {
@@ -89,6 +93,9 @@ impl MetalBackend {
             next_submission: 1,
             in_flight: VecDeque::new(),
             progress: GpuProgress::default(),
+            surface_stats: SurfaceStats::default(),
+            #[cfg(test)]
+            drawable_failures: 0,
         }
     }
 
@@ -123,6 +130,16 @@ impl MetalBackend {
     /// surface(CAMetalLayer)가 있으면 참입니다.
     pub fn has_surface(&self) -> bool {
         self.surface.is_some()
+    }
+
+    /// surface resize·frame skip 통계.
+    pub fn surface_stats(&self) -> SurfaceStats {
+        self.surface_stats
+    }
+
+    /// 현재 surface pixel 크기(마지막 `init`·`resize` 값).
+    pub fn surface_size(&self) -> SurfaceSize {
+        self.surface_size
     }
 
     /// init이 돌려준 capability(init 전이면 `None`).
@@ -318,6 +335,23 @@ impl MetalBackend {
         })
     }
 
+    /// 다음 drawable. nil이거나 크기가 backend 크기와 다르면(layer를 다시 맞춘 뒤) `None`.
+    fn acquire_drawable(&mut self) -> Option<Drawable> {
+        #[cfg(test)]
+        if self.drawable_failures > 0 {
+            self.drawable_failures -= 1;
+            return None;
+        }
+        let surface = self.surface.as_ref()?;
+        let drawable = surface.next_drawable()?;
+        if drawable.size() != (self.surface_size.width, self.surface_size.height) {
+            self.surface_stats.drawable_size_resyncs += 1;
+            surface.set_drawable_size(self.surface_size);
+            return None;
+        }
+        Some(drawable)
+    }
+
     fn take_open(&mut self, frame: &EncodedFrame) -> Result<OpenFrame, BackendError> {
         match self.open.take() {
             Some(open) if open.token == frame.token() && open.frame == frame.frame() => Ok(open),
@@ -341,19 +375,20 @@ impl MetalBackend {
                 resource.lifetime == ResourceLifetime::Imported(ImportKind::Surface)
             });
         let drawable = if needs_surface {
-            let surface = self
-                .surface
-                .as_ref()
-                .ok_or(invalid("surface 없는 backend에 surface graph"))?;
-            if self.surface_size.is_empty() {
-                return Ok(EncodeOutcome::Skipped(
-                    stellar_renderer_core::backend::SkipReason::EmptySurface,
-                ));
+            if self.surface.is_none() {
+                return Err(invalid("surface 없는 backend에 surface graph"));
             }
-            Some(surface.next_drawable().ok_or(BackendError::new(
-                BackendErrorKind::Timeout,
-                "drawable을 얻지 못했습니다",
-            ))?)
+            if self.surface_size.is_empty() {
+                self.surface_stats.skipped_empty += 1;
+                return Ok(EncodeOutcome::Skipped(SkipReason::EmptySurface));
+            }
+            match self.acquire_drawable() {
+                Some(drawable) => Some(drawable),
+                None => {
+                    self.surface_stats.skipped_no_drawable += 1;
+                    return Ok(EncodeOutcome::Skipped(SkipReason::NoDrawable));
+                }
+            }
         } else {
             None
         };
@@ -443,10 +478,14 @@ impl RendererBackend for MetalBackend {
                 return Err(invalid("열린 frame이 있는 동안 resize할 수 없습니다"));
             }
             check_surface_size(size)?;
+            if size == self.surface_size {
+                return Ok(());
+            }
             if let Some(surface) = &self.surface {
                 surface.set_drawable_size(size);
             }
             self.surface_size = size;
+            self.surface_stats.resizes += 1;
             Ok(())
         })
     }
