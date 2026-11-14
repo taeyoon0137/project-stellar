@@ -2,7 +2,7 @@
 
 - 기준 아키텍처: `PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`
 - 기준일: 2026-06-23
-- 현재 상태: `I.1.1`~`I.1.9` DEV-MAC 검증 완료(이력 정합화·`Task(...)` 일원화 반영). 다음 작업은 `I.1.10`(Bootstrap CI). Windows·CI 증거는 미확보
+- 현재 진행 상황은 아래 WBS 표와 [작업 원장](../planning/task-status.yaml)에서 확인합니다.
 - 원자 작업 수: 1142개
 - 구현 Phase 수: 30개 (`I`\~`XXX`)
 - 초기 릴리스 범위: Phase `I`~`XVII`, G8 통과
@@ -33,18 +33,9 @@
 
 본 장의 작업 번호는 기존 문서 장 번호와 독립된 WBS 식별자입니다. 예를 들어 `II.1.1`은 작업 패키지 ID입니다. 작업 하나는 한 번의 에이전트 실행, 한 개의 완료 보고서, 한 개의 `Task(...)` 커밋으로 끝내는 것을 원칙으로 합니다.
 
-### 1.1 현재 상태
+### 1.1 작업 상태 읽기
 
-| 항목 | 상태 | 비고 |
-|---|---|---|
-| `I.1.1`~`I.1.5` | `[x]` 검증 완료 | 저장소·Git 설정·inventory 기준선 유지 |
-| 계획·검증 환경 계약 (`I.1.6`) | `[x]` 검증 완료 | `Task(I.1.6)` 반영, `config/verification-environments.yaml` 생성, 이력 정합화 완료 |
-| Rust 1.96.0 고정 (`I.1.7`) | `[x]` DEV-MAC 검증 완료 | `Task(I.1.7)`. Windows 검증 완료를 의미하지 않음 |
-| 최소 Cargo workspace·`tools/xtask` (`I.1.8`) | `[x]` DEV-MAC 검증 완료 | `Task(I.1.8)` |
-| `cargo xtask help` (`I.1.9`) | `[x]` DEV-MAC 검증 완료 | `Task(I.1.9)` |
-| `.vscode/settings.json` 개인 오타 설정 | 제거 완료 | `I.1.6`에서 drop, `.vscode/settings.json` 삭제 |
-| Bootstrap CI | `[ ]` 미착수 | `CI-MAC`, `CI-WIN` 증거 없음 |
-| 기능 코드 | `[ ]` 미착수 | Phase II 이후 각 작업 검증 전 완료 처리 금지 |
+각 WBS 행의 상태는 이 계획서에서 관리합니다. [작업 원장](../planning/task-status.yaml)은 행별 상태, 필수 환경, 근거 커밋과 보고서 경로를 함께 기록합니다. 개별 검증의 범위와 미확인 항목은 [작업 보고서](task-reports/)에서 확인합니다.
 
 상태 표기는 다음과 같습니다.
 

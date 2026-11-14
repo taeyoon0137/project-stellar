@@ -12,9 +12,9 @@
 
 ## 저장소 역할
 
-Project Stellar는 폴더와 실제 Git 저장소를 원본으로 사용하는 고성능 UI 디자인 소프트웨어입니다. macOS와 Windows에서 공통 Rust 코어를 사용하되 각 운영체제의 네이티브 셸을 제공합니다.
+Project Stellar는 폴더와 실제 Git 저장소를 원본으로 사용하는 고성능 UI 디자인 소프트웨어입니다. 플랫폼 중립 Rust 코어와 macOS 네이티브 셸을 개발합니다. Windows 지원 범위는 `docs/adr/ADR-0006-windows-support-deferred.md`에서 정합니다.
 
-- 현재 저장소는 아키텍처 기준선(Architecture Baseline) 단계입니다. 구현 코드는 아직 포함되어 있지 않습니다.
+- 구현 상태와 검증 증거는 `planning/task-status.yaml`과 `docs/task-reports/`에서 확인합니다. Rust 코어는 `crates/`, 개발 도구와 CLI·MCP는 `tools/`, macOS 앱은 `apps/macos/`에 있습니다.
 - 기술 기준은 `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`에 정의되어 있습니다.
 - 구현 범위, 모듈 경계, 성능 계약, 파일 포맷, Git 동작에 대한 판단은 위 문서를 우선 기준으로 사용합니다.
 
