@@ -1856,7 +1856,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIX.2.1 | `[ ]` | read resources에 project structure, current document, selection, components, tokens, target profile, Git status를 정의합니다. | schema fixture. | XIX.1.4, G8 |
+| XIX.2.1 | `[x]` | read resources에 project structure, current document, selection, components, tokens, target profile, Git status를 정의합니다. | schema fixture. | XIX.1.4, G8 |
 | XIX.2.2 | `[ ]` | resource response에 revision과 pagination cursor를 포함하고 전체 대형 document를 한 응답에 보내지 않습니다. | 20만 node pagination 통과. | XIX.2.1 |
 | XIX.2.3 | `[ ]` | tools를 semantic diff 생성, render preview request, document validation, command proposal, command apply로 분리합니다. | tool inventory 정확. | XIX.2.1 |
 | XIX.2.4 | `[ ]` | MCP는 terminal, commit, push 권한을 문서 apply 권한과 별도 tool namespace로 구분합니다. 초기에는 commit/push tool을 비활성 기본값으로 둡니다. | permission matrix 통과. | XIX.2.3 |
