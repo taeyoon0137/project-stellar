@@ -12,6 +12,7 @@
 //! 경계를 넘지 않고 정수 handle·고정 POD 구조체·버전형 바이트만 씁니다. `AppRuntime`(document
 //! thread)은 handle의 첫 프로젝트·문서 요청에서 시작합니다.
 
+mod git_names;
 /// 양 플랫폼 공통 입력 이벤트와 native timestamp 변환 (XII.3.1).
 pub mod input;
 /// macOS `NSEvent` → 공통 입력 이벤트 adapter (XII.3.2).
@@ -197,6 +198,42 @@ unsafe fn write_len(out: *mut usize, value: usize) {
     if !out.is_null() {
         unsafe { *out = value };
     }
+}
+
+/// 열린 프로젝트의 신뢰를 읽거나 사용자가 확인한 결정을 기록합니다.
+/// action 0은 조회, 1은 등록, 2는 철회입니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 `u64` 쓰기가 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_project_trust(
+    handle: u64,
+    project: u64,
+    action: u32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        let decision = match action {
+            0 => None,
+            1 => Some(true),
+            2 => Some(false),
+            _ => return StellarStatus::InvalidArgument,
+        };
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.project_trust(ProjectSessionId(project), decision),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
 }
 
 /// 새 runtime을 생성해 handle을 `out_handle`에 씁니다.
@@ -1312,6 +1349,8 @@ mod tests {
         define("STELLAR_EVENT_TEXT_MAX", EVENT_TEXT_MAX.to_string());
         for (name, kind) in [
             ("STELLAR_EVENT_PROJECT_OPENED", event_kind::PROJECT_OPENED),
+            ("STELLAR_EVENT_PROJECT_TRUST", event_kind::PROJECT_TRUST),
+            ("STELLAR_EVENT_GIT_NAMES", event_kind::GIT_NAMES),
             ("STELLAR_EVENT_PROJECT_CLOSED", event_kind::PROJECT_CLOSED),
             ("STELLAR_EVENT_DOCUMENT_OPENED", event_kind::DOCUMENT_OPENED),
             ("STELLAR_EVENT_DOCUMENT_CLOSED", event_kind::DOCUMENT_CLOSED),
@@ -1372,6 +1411,8 @@ mod tests {
             ("SAVE_FAILED", RequestFailure::SaveFailed),
             ("HISTORY_UNAVAILABLE", RequestFailure::HistoryUnavailable),
             ("INVALID_VIEWPORT", RequestFailure::InvalidViewport),
+            ("TRUST_UNAVAILABLE", RequestFailure::TrustUnavailable),
+            ("GIT_NAMES_UNAVAILABLE", RequestFailure::GitNamesUnavailable),
         ];
         assert_eq!(
             failures.len(),

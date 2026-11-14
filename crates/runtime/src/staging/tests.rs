@@ -362,6 +362,63 @@ fn no_op_uses_index_generation_and_rejects_worktree_temp_parent_and_untrusted_gi
     assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
 }
 
+#[test]
+fn stage_preview_rejects_changed_name_with_same_id_and_accepts_independent_edit() {
+    let fx = GitFixture::with_system_git("stage-preview")
+        .unwrap()
+        .expect("system Git required");
+    scaffold_project(fx.work());
+    let doc = large_document(4).to_records().unwrap();
+    let root = doc.nodes.iter().find(|n| n.parent.is_none()).unwrap().id;
+    let save = |name: &str, locked| {
+        let mut records = doc.clone();
+        let node = records.nodes.iter_mut().find(|n| n.id == root).unwrap();
+        node.display_name = name.into();
+        node.locked = locked;
+        let (model, _) = DocumentModel::from_records(records).unwrap();
+        save_documents(fx.work(), &[&model]);
+    };
+    save("A", false);
+    fx.commit_all("baseline A").unwrap();
+    let parent = fx.root().join("candidates");
+    std::fs::create_dir(&parent).unwrap();
+    let request = StageSelectionRequest::stage([ChangeId::property(
+        stellar_core_types::property::PropertyPath::with_keys(
+            root,
+            vec![stellar_ops::candidate::DISPLAY_NAME],
+        ),
+    )]);
+    let git = fx.gated();
+    save("B", false);
+    let preview = prepare_stage_candidate(&git, fx.work(), &parent, &request)
+        .unwrap()
+        .semantic
+        .applied()
+        .clone();
+
+    save("C", false);
+    let before = file_digest(fx.work());
+    assert!(matches!(
+        prepare_stage_candidate_with_preview(&git, fx.work(), &parent, &request, Some(&preview)),
+        Err(PrepareStageError::StalePreview)
+    ));
+    assert_eq!(file_digest(fx.work()), before);
+    assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
+
+    let refreshed = prepare_stage_candidate(&git, fx.work(), &parent, &request)
+        .unwrap()
+        .semantic
+        .applied()
+        .clone();
+    assert_ne!(preview, refreshed);
+    // 사용자가 C를 본 뒤 같은 청크의 다른 속성만 바뀌었습니다.
+    save("C", true);
+    let prepared =
+        prepare_stage_candidate_with_preview(&git, fx.work(), &parent, &request, Some(&refreshed))
+            .unwrap();
+    assert_eq!(prepared.semantic.applied(), &refreshed);
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_revision() {
@@ -403,7 +460,19 @@ fn actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_rev
             vec![stellar_ops::candidate::DISPLAY_NAME],
         ),
     )]);
-    let prepared = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request).unwrap();
+    let preview = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request)
+        .unwrap()
+        .semantic
+        .applied()
+        .clone();
+    let prepared = prepare_stage_candidate_with_preview(
+        &fx.gated(),
+        fx.work(),
+        &parent,
+        &request,
+        Some(&preview),
+    )
+    .unwrap();
     let actual = apply_stage_candidate(
         &fx.gated(),
         fx.work(),

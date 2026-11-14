@@ -88,6 +88,8 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_EVENT_WINDOW_VIEW_CHANGED 0x0108
 #define STELLAR_EVENT_HISTORY_REPLAYED 0x0109
 #define STELLAR_EVENT_WINDOW_SESSION_SAVED 0x010a
+#define STELLAR_EVENT_PROJECT_TRUST 0x010b
+#define STELLAR_EVENT_GIT_NAMES 0x010c
 
 /* 완료 event를 아직 꺼내지 않은 요청(실행 중 포함) 상한. 닿으면 새 요청은 STELLAR_QUEUE_FULL. */
 #define STELLAR_EVENT_CAPACITY 1024
@@ -112,6 +114,8 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_SAVE_FAILED 22
 #define STELLAR_FAILURE_HISTORY_UNAVAILABLE 23
 #define STELLAR_FAILURE_INVALID_VIEWPORT 24
+#define STELLAR_FAILURE_TRUST_UNAVAILABLE 25
+#define STELLAR_FAILURE_GIT_NAMES_UNAVAILABLE 26
 
 /* 창 session 명령 코드(stellar_window_session_perform). 코어가 정하고 셸과 공유합니다. 셸은 메뉴 명령의 공유 이름
  * (edit.undo, edit.redo, file.save_now, view.zoom_in, view.zoom_out, view.zoom_actual_size)으로
@@ -251,6 +255,17 @@ StellarStatus stellar_document_info(uint64_t handle, uint64_t document, StellarD
 
 /* 프로젝트 session 아래에서 창 session 열기를 요청합니다(current generation·작업 문서 로드). */
 StellarStatus stellar_window_session_open(uint64_t handle, uint64_t project, uint64_t *out_request);
+
+/* 열린 project의 신뢰 등록을 확인합니다. action 0 조회, 1 사용자 승인, 2 사용자 철회.
+ * PROJECT_TRUST event: request u64, project u64, trusted u8. */
+StellarStatus stellar_project_trust(uint64_t handle, uint64_t project, uint32_t action, uint64_t *out_request);
+
+/* action 0: refresh, 1: stage displayed row. Event: request u64, session u64, rows u32, other_changes u8, staged u8.
+ * A row contains document and node IDs (16 bytes each), staged u8, and HEAD/index/working names
+ * (each u32 little-endian UTF-8 byte length followed by those bytes). No Git I/O occurs in the row getter. */
+StellarStatus stellar_git_names_request(uint64_t handle, uint64_t session, uint32_t action, uint64_t generation, uint32_t row, uint64_t *out_request);
+StellarStatus stellar_git_names_row(uint64_t handle, uint64_t session, uint64_t generation, uint32_t row, uint8_t *buf, size_t capacity, size_t *out_len);
+StellarStatus stellar_git_names_cancel(uint64_t handle, uint64_t session, uint64_t request);
 
 /* 창 session 닫기를 요청합니다(문서 state·history·선택 폐기, 저장하지 않음). */
 StellarStatus stellar_window_session_close(uint64_t handle, uint64_t session, uint64_t *out_request);

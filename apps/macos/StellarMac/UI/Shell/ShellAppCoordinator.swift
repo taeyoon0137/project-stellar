@@ -435,6 +435,8 @@ final class ShellAppCoordinator: NSObject {
             projectWindow.window?.performClose(nil)
         case ShellProjectCommandID.retryOpen:
             reopen(projectWindow, atPath: projectWindow.dataSource.rootPath)
+        case ShellProjectCommandID.revokeTrust:
+            projectWindow.gitSource.updateTrust(false)
         case ShellProjectCommandID.locateFolder:
             folderChooser(projectWindow.window) { [weak self, weak projectWindow] path in
                 guard let self, let projectWindow, let path else { return }

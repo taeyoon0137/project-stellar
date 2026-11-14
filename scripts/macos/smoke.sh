@@ -116,12 +116,22 @@ done
 # 셸 통합: 앱이 실제로 쓰는 구성을 화면 밖에서 검사합니다(실제 코어 runtime으로 임시 fixture 프로젝트를 엽니다).
 "$APP" --shell-integration-check
 
+# 신뢰 등록 smoke는 검사 전용 HOME만 사용합니다.
+(
+  trust_home="$(mktemp -d)"
+  trap 'rm -rf "$trust_home"' EXIT
+  HOME="$trust_home" "$APP" --project-trust-check "$trust_home"
+)
+
 # Open Project(XII.6.2): 폴더 선택 → 코어 열기·안전 probe → 창, 잘못된 폴더 fixture별 실패 코드 → 안내 대응.
 "$APP" --project-open-check
 
 # 창 session(XII.2.2): 저장 프로젝트 fixture를 복사한 두 프로젝트를 열고 닫으며 창 controller마다 코어 창 session handle
 # 하나를 소유하는지, 닫으면 그 창 session만 닫히는지 확인합니다.
 WINDOW_SESSION_FIXTURE="$REPO_ROOT/crates/runtime/tests/fixtures/window-session-project"
+cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --locked -p stellar-cli
+cli_target="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
+python3 "$REPO_ROOT/scripts/macos/git-stage-check.py" "$APP" "$cli_target/debug/stellar" "$WINDOW_SESSION_FIXTURE"
 "$APP" --window-session-check "$WINDOW_SESSION_FIXTURE"
 
 # 창 session 명령(XII.6.4): 메뉴 Undo·Redo·Save Now를 그 창의 창 session에 보내고, 다른 창 history·디스크는 그대로인지,

@@ -13,7 +13,7 @@ final class ShellProjectSessionHandle {
     let projectID: UUID
     let name: String
     let rootPath: String
-    private let pump: ShellRuntimeEventPump
+    let pump: ShellRuntimeEventPump
     private(set) var isClosed = false
 
     init(project: UInt64, projectID: UUID, name: String, rootPath: String, pump: ShellRuntimeEventPump) {
@@ -141,6 +141,7 @@ extension ShellCommandCoreIDs {
 
 /// 프로젝트 창의 셸 프레임 명령 ID(더 보기 메뉴·상태 화면 버튼).
 enum ShellProjectCommandID {
+    static let revokeTrust = ShellCommandID("project.revokeTrust")
     static let revealInFinder = ShellCommandID("project.revealInFinder")
     static let closeProject = ShellCommandID("project.close")
     static let locateFolder = ShellCommandID("project.locate")
@@ -224,6 +225,18 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
                 title: String(localized: "Close Project", comment: "More menu item")
             ),
         ]
+        publish(next)
+    }
+
+    func updateTrust(_ trusted: Bool) {
+        guard session != nil else { return }
+        var next = currentSnapshot
+        next.subtitle = trusted ? "" : String(localized: "Restricted Mode")
+        next.moreActions.removeAll { $0.id == ShellProjectCommandID.revokeTrust }
+        if trusted {
+            next.moreActions.append(ShellActionDescriptor(id: ShellProjectCommandID.revokeTrust,
+                title: String(localized: "Revoke Project Trust")))
+        }
         publish(next)
     }
 
@@ -400,6 +413,7 @@ final class ShellProjectWindow {
     let sidebarSlot: ShellSidebarAreaSlot
     let inspectorSlot: ShellInspectorAreaSlot
     let panelsSlot: ShellPanelTabsSlot
+    let gitSource = ShellGitDataSource()
     /// 창 도구 모델 → 하단 도구 막대(셸 프레임 snapshot 도구 목록) 구독.
     private var toolsObservation: ToolsMenuObservation?
 
@@ -436,7 +450,7 @@ final class ShellProjectWindow {
             inspector: InspectorViewController(dataSource: ShellAreaDataStubs.makeInspectorDataSource())
         )
         panelsSlot = ShellPanelTabsSlot(
-            gitPanel: GitPanelViewController(dataSource: ShellAreaDataStubs.makeGitDataSource()),
+            gitPanel: GitPanelViewController(dataSource: gitSource),
             agentPanel: AgentPanelViewController(source: ShellAreaDataStubs.makeAgentSource())
         )
         windowController = ShellWindowController(
@@ -447,6 +461,8 @@ final class ShellProjectWindow {
             ),
             toolbarItemProvider: toolsToolbar
         )
+        gitSource.trustDidChange = { [weak dataSource] trusted in dataSource?.updateTrust(trusted) }
+        panelsSlot.gitPanel.host = self
         if let window = windowController.window {
             // 응답자 체인: content view → router → split controller → 창. 텍스트 편집 중에는 field editor가 먼저 받습니다.
             router.install(in: window)
@@ -500,6 +516,7 @@ final class ShellProjectWindow {
         windowController.windowSession?.close()
         windowController.windowSession = windowSession
         dataSource.didOpen(session)
+        gitSource.attach(session, window: windowSession)
         toolsModel.setProjectReady(true)
         refreshSessionCommands()
         window?.invalidateRestorableState()
@@ -676,6 +693,7 @@ final class ShellProjectWindow {
 
     /// 열기에 실패했습니다. 창에 원인과 복구 동작을 보여 줍니다.
     func didFail(_ failure: ShellProjectOpenFailure, path: String) {
+        gitSource.attach(nil)
         cancelPendingClose()
         windowController.windowSession?.close()
         windowController.windowSession = nil
@@ -686,6 +704,7 @@ final class ShellProjectWindow {
 
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
     func closeSessions() {
+        gitSource.attach(nil)
         cancelPendingClose()
         windowController.windowSession?.close()
         dataSource.session?.close()
@@ -698,6 +717,32 @@ final class ShellProjectWindow {
         dataSource.beginOpening(rootPath: rootPath)
         toolsModel.setProjectReady(false)
         window?.invalidateRestorableState()
+    }
+}
+
+extension ShellProjectWindow: GitPanelHostActions {
+    func gitPanelRequestsProjectTrust() {
+        guard let window, let session = dataSource.session, !session.isClosed else { return }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Trust This Project?")
+        alert.informativeText = String(localized: "Trusting this folder allows Stellar to run Git commands for it.") + "\n" + session.rootPath
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        alert.addButton(withTitle: String(localized: "Trust Project"))
+        alert.beginSheetModal(for: window) { [weak self, weak session] response in
+            guard response == .alertSecondButtonReturn, let self, let session,
+                  self.dataSource.session === session, !session.isClosed else { return }
+            self.gitSource.updateTrust(true)
+        }
+    }
+
+    func gitPanelRequestsIdentitySetup() {
+        alertPresenter?(String(localized: "Git Identity"),
+                        String(localized: "Set your Git name and email in the repository’s Git configuration."), window)
+    }
+
+    func gitPanelRequestsGitInstallHelp() {
+        alertPresenter?(String(localized: "Git Is Unavailable"),
+                        String(localized: "Install the Xcode Command Line Tools to use Git on this Mac."), window)
     }
 }
 
