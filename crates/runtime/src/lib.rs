@@ -18,3 +18,7 @@ pub mod app;
 
 /// 창 하나의 프로젝트 편집 session (XII.2.1).
 pub mod window_session;
+
+/// 창 session을 앱 runtime 경계로 다루는 테스트.
+#[cfg(test)]
+mod app_window_tests;

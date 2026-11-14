@@ -84,7 +84,10 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
  *   PROJECT_CLOSED : request u64, project u64, closed_documents u32
  *   DOCUMENT_OPENED: request u64, project u64, document u64, document_id[16], already_open u8
  *   DOCUMENT_CLOSED: request u64, document u64
- *   REQUEST_FAILED : request u64, failure u32 (STELLAR_FAILURE_*), message str */
+ *   REQUEST_FAILED : request u64, failure u32 (STELLAR_FAILURE_*), message str
+ *   WINDOW_SESSION_OPENED: request u64, project u64, session u64, window_id[16],
+ *                          document_id[16] (작업 문서 없으면 0), generation u64
+ *   WINDOW_SESSION_CLOSED: request u64, session u64 */
 #define STELLAR_EVENT_SCHEMA_VERSION 1
 #define STELLAR_EVENT_TEXT_MAX 4096
 #define STELLAR_EVENT_PROJECT_OPENED 0x0101
@@ -92,6 +95,8 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_EVENT_DOCUMENT_OPENED 0x0103
 #define STELLAR_EVENT_DOCUMENT_CLOSED 0x0104
 #define STELLAR_EVENT_REQUEST_FAILED 0x0105
+#define STELLAR_EVENT_WINDOW_SESSION_OPENED 0x0106
+#define STELLAR_EVENT_WINDOW_SESSION_CLOSED 0x0107
 
 /* 완료 event를 아직 꺼내지 않은 요청(실행 중 포함) 상한. 닿으면 새 요청은 STELLAR_QUEUE_FULL. */
 #define STELLAR_EVENT_CAPACITY 1024
@@ -108,11 +113,13 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_INVALID_PROJECT_ID 15
 #define STELLAR_FAILURE_UNTRUSTED_SYMLINK 16
 #define STELLAR_FAILURE_PATH_UNRESOLVED 17
+#define STELLAR_FAILURE_UNKNOWN_WINDOW_SESSION 4
+#define STELLAR_FAILURE_WINDOW_SESSION_LOAD_FAILED 18
 
-/* StellarRuntimeState 레이아웃 버전. */
-#define STELLAR_RUNTIME_STATE_VERSION 1
+/* StellarRuntimeState 레이아웃 버전. 2: window_session_count 추가. */
+#define STELLAR_RUNTIME_STATE_VERSION 2
 
-/* 앱 runtime 최신 상태 snapshot 요약(고정 40 byte, 코어가 씀). */
+/* 앱 runtime 최신 상태 snapshot 요약(고정 48 byte, 코어가 씀). */
 typedef struct StellarRuntimeState {
     uint32_t version;         /* STELLAR_RUNTIME_STATE_VERSION */
     uint32_t reserved;        /* 0 */
@@ -120,6 +127,7 @@ typedef struct StellarRuntimeState {
     uint64_t project_count;   /* 열린 프로젝트 session 수 */
     uint64_t document_count;  /* 열린 문서 session 수 */
     uint64_t outstanding;     /* 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함) */
+    uint64_t window_session_count; /* 열린 창 session 수 */
 } StellarRuntimeState;
 
 /* StellarDocumentInfo 레이아웃 버전. */
@@ -136,12 +144,33 @@ typedef struct StellarDocumentInfo {
     uint8_t document_id[16];  /* 문서 StableId(UUID 바이트 순서) */
 } StellarDocumentInfo;
 
+/* StellarWindowSessionInfo 레이아웃 버전. */
+#define STELLAR_WINDOW_SESSION_INFO_VERSION 1
+
+/* 열린 창 session 정보(고정 88 byte, 코어가 씀). 창 controller 하나가 창 session handle 하나를 소유합니다. */
+typedef struct StellarWindowSessionInfo {
+    uint32_t version;         /* STELLAR_WINDOW_SESSION_INFO_VERSION */
+    uint32_t has_document;    /* 작업 문서가 있으면 1(저장한 적 없는 프로젝트는 0) */
+    uint64_t session;         /* 창 session handle */
+    uint64_t project;         /* 소속 프로젝트 session handle */
+    uint64_t revision;        /* snapshot 게시 시점의 작업 문서 revision */
+    uint64_t generation;      /* loaded generation 번호(저장한 적 없으면 0) */
+    uint32_t undo_depth;      /* undo stack 깊이 */
+    uint32_t redo_depth;      /* redo stack 깊이 */
+    uint32_t selection_count; /* 선택된 node 수 */
+    uint32_t reserved;        /* 0 */
+    uint8_t window_id[16];    /* 창 편집 session id(UUID 바이트 순서) */
+    uint8_t document_id[16];  /* 작업 문서 StableId(없으면 0) */
+} StellarWindowSessionInfo;
+
 #ifdef __cplusplus
-static_assert(sizeof(StellarRuntimeState) == 40, "StellarRuntimeState layout");
+static_assert(sizeof(StellarRuntimeState) == 48, "StellarRuntimeState layout");
 static_assert(sizeof(StellarDocumentInfo) == 56, "StellarDocumentInfo layout");
+static_assert(sizeof(StellarWindowSessionInfo) == 88, "StellarWindowSessionInfo layout");
 #else
-_Static_assert(sizeof(StellarRuntimeState) == 40, "StellarRuntimeState layout");
+_Static_assert(sizeof(StellarRuntimeState) == 48, "StellarRuntimeState layout");
 _Static_assert(sizeof(StellarDocumentInfo) == 56, "StellarDocumentInfo layout");
+_Static_assert(sizeof(StellarWindowSessionInfo) == 88, "StellarWindowSessionInfo layout");
 #endif
 
 /* runtime을 생성하고 handle을 out_handle에 씁니다. */
@@ -194,6 +223,15 @@ StellarStatus stellar_runtime_state(uint64_t handle, StellarRuntimeState *out_st
 
 /* 열린 문서 session의 최신 snapshot 정보를 씁니다(없는 문서는 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_document_info(uint64_t handle, uint64_t document, StellarDocumentInfo *out_info);
+
+/* 프로젝트 session 아래에서 창 session 열기를 요청합니다(current generation·작업 문서 로드). */
+StellarStatus stellar_window_session_open(uint64_t handle, uint64_t project, uint64_t *out_request);
+
+/* 창 session 닫기를 요청합니다(문서 state·history·선택 폐기, 저장하지 않음). */
+StellarStatus stellar_window_session_close(uint64_t handle, uint64_t session, uint64_t *out_request);
+
+/* 열린 창 session의 최신 snapshot 정보를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
+StellarStatus stellar_window_session_info(uint64_t handle, uint64_t session, StellarWindowSessionInfo *out_info);
 
 /* 살아 있는 runtime handle 수(진단용). */
 uint64_t stellar_runtime_live_count(void);

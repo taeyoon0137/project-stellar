@@ -6,8 +6,7 @@ import AppKit
 /// 창이 소유하는 코어 프로젝트 session handle(`stellar_project_open` 결과).
 ///
 /// 창 하나가 session 하나를 소유하고, 창이 닫히면 `close()`로 한 번만 닫습니다(`stellar_project_close`).
-/// 코어의 `ProjectWindowSession`(XII.2.1)은 아직 없으므로 이 handle은 프로젝트 session만 가리킵니다. 창별 문서
-/// state·view state·history는 코어 타입이 생기면 이 handle 자리에 연결합니다(XII.2.2, XII.2.5).
+/// 창별 문서 state·view state·history는 이 프로젝트 session 아래의 창 session(`ShellWindowSessionHandle`)이 가리킵니다.
 @MainActor
 final class ShellProjectSessionHandle {
     let project: UInt64
@@ -30,6 +29,49 @@ final class ShellProjectSessionHandle {
         guard !isClosed else { return }
         isClosed = true
         pump.closeProject(project, completion: completion)
+    }
+}
+
+/// 창 controller가 소유하는 코어 창 session handle(`stellar_window_session_open` 결과, XII.2.2).
+///
+/// 코어의 `ProjectWindowSession`(XII.2.1) 하나를 가리킵니다: 이 창만의 작업 문서 state, view state(선택), history,
+/// 창을 열 때 읽은 generation. 창 controller(`ShellWindowController.windowSession`) 하나가 handle 하나를 소유하고, 창이
+/// 닫히면 `close()`로 한 번만 닫습니다(`stellar_window_session_close`). 닫으면 저장하지 않은 편집도 폐기합니다.
+@MainActor
+final class ShellWindowSessionHandle {
+    let session: UInt64
+    let project: UInt64
+    let windowID: UUID
+    /// 작업 문서 id. 저장한 적 없는 프로젝트는 nil입니다.
+    let documentID: UUID?
+    /// 창을 열 때 읽은 generation 번호(저장한 적 없으면 0).
+    let openedGeneration: UInt64
+    private let pump: ShellRuntimeEventPump
+    private(set) var isClosed = false
+
+    init(
+        session: UInt64, project: UInt64, windowID: UUID, documentID: UUID?, openedGeneration: UInt64,
+        pump: ShellRuntimeEventPump
+    ) {
+        self.session = session
+        self.project = project
+        self.windowID = windowID
+        self.documentID = documentID
+        self.openedGeneration = openedGeneration
+        self.pump = pump
+    }
+
+    /// 코어 상태 snapshot의 최신 창 session 정보. 닫혔으면 nil입니다(document thread를 기다리지 않음).
+    var info: StellarWindowSessionInfo? {
+        guard !isClosed else { return nil }
+        return CoreRuntime.windowSessionInfo(handle: pump.runtimeHandle, session: session)
+    }
+
+    /// 창 session을 닫습니다. 여러 번 불러도 한 번만 요청합니다.
+    func close(completion: ((CoreRuntimeEvent) -> Void)? = nil) {
+        guard !isClosed else { return }
+        isClosed = true
+        pump.closeWindowSession(session, completion: completion)
     }
 }
 
@@ -327,8 +369,10 @@ final class ShellProjectWindow {
         panelsSlot.requiresConfirmationBeforeClosing
     }
 
-    /// 코어가 프로젝트를 열었습니다.
-    func didOpen(_ session: ShellProjectSessionHandle) {
+    /// 코어가 프로젝트와 이 창의 창 session을 열었습니다. 창 controller가 창 session handle을 소유합니다(XII.2.2).
+    func didOpen(_ session: ShellProjectSessionHandle, windowSession: ShellWindowSessionHandle) {
+        windowController.windowSession?.close()
+        windowController.windowSession = windowSession
         dataSource.didOpen(session)
         toolsModel.setProjectReady(true)
         window?.invalidateRestorableState()
@@ -336,8 +380,16 @@ final class ShellProjectWindow {
 
     /// 열기에 실패했습니다. 창에 원인과 복구 동작을 보여 줍니다.
     func didFail(_ failure: ShellProjectOpenFailure, path: String) {
+        windowController.windowSession?.close()
+        windowController.windowSession = nil
         dataSource.didFail(title: failure.title, message: failure.message(path: path))
         toolsModel.setProjectReady(false)
+    }
+
+    /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
+    func closeSessions() {
+        windowController.windowSession?.close()
+        dataSource.session?.close()
     }
 
     /// 다른 폴더로 다시 엽니다.

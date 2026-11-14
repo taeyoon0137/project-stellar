@@ -558,4 +558,66 @@ mod tests {
         );
         assert!(error.to_string().contains("generation"));
     }
+
+    /// `root` 아래 일반 파일(상대 경로 → bytes). 숨김 파일(`.git` 등)은 넣지 않습니다.
+    fn tree(root: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+        fn walk(
+            base: &std::path::Path,
+            dir: &std::path::Path,
+            out: &mut std::collections::BTreeMap<String, Vec<u8>>,
+        ) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                if name.starts_with('.') {
+                    continue;
+                }
+                if path.is_dir() {
+                    walk(base, &path, out);
+                } else {
+                    let relative = path.strip_prefix(base).unwrap().to_string_lossy();
+                    out.insert(relative.replace('\\', "/"), std::fs::read(&path).unwrap());
+                }
+            }
+        }
+        let mut out = std::collections::BTreeMap::new();
+        walk(root, root, &mut out);
+        out
+    }
+
+    #[test]
+    fn committed_fixture_project_matches_the_sample_project() {
+        // 셸 검사(`--window-session-check`)와 FFI 테스트가 복사해 쓰는 저장 프로젝트 fixture입니다. 저장 형식이
+        // 바뀌면 `STELLAR_UPDATE_FIXTURES=1 cargo test -p stellar-runtime committed_fixture`로 다시 만듭니다.
+        let generated = saved_project("fixture");
+        let expected = tree(generated.path());
+        let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("window-session-project");
+        if std::env::var("STELLAR_UPDATE_FIXTURES").as_deref() == Ok("1") {
+            for (relative, bytes) in &expected {
+                let path = fixture.join(relative);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, bytes).unwrap();
+            }
+        }
+        assert_eq!(
+            tree(&fixture),
+            expected,
+            "fixture가 sample 프로젝트 저장 결과와 다릅니다"
+        );
+        // fixture 그대로 열면(.git만 더함) 같은 작업 문서가 로드됩니다.
+        let copy = TempDir::new("fixture-copy");
+        for (relative, bytes) in &expected {
+            let path = copy.path().join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
+        }
+        let session = ProjectWindowSession::load(identity(copy.path()), window(5)).unwrap();
+        assert_eq!(
+            snapshot(&session),
+            model_snapshot_json(&sample_document()).unwrap()
+        );
+    }
 }

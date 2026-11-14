@@ -11,6 +11,7 @@
 #  - --<영역>-ui-check: UI 영역별 화면 밖 검사(shell-frame, tools-menus, sidebar, inspector, git-panel, agent-panel, welcome)
 #  - --shell-integration-check: 실제 앱 구성(메뉴, 시작 창, 코어로 프로젝트 열기, 프로젝트 창 영역·도구, 복원·닫기)
 #  - --project-open-check: Open Project 폴더 선택·코어 열기와 잘못된 폴더별 안내 대응(XII.6.2)
+#  - --window-session-check: 저장 프로젝트 fixture로 창 2개 open/close, 창 controller당 코어 창 session 하나(XII.2.2)
 #  - UI 구조 검사: UI/Tools는 코어 FFI를 모르고, UI/Shell은 stellar_ 함수를 직접 부르지 않음(CoreRuntime 경유)
 set -euo pipefail
 
@@ -115,6 +116,11 @@ done
 
 # Open Project(XII.6.2): 폴더 선택 → 코어 열기·안전 probe → 창, 잘못된 폴더 fixture별 실패 코드 → 안내 대응.
 "$APP" --project-open-check
+
+# 창 session(XII.2.2): 저장 프로젝트 fixture를 복사한 두 프로젝트를 열고 닫으며 창 controller마다 코어 창 session handle
+# 하나를 소유하는지, 닫으면 그 창 session만 닫히는지 확인합니다.
+WINDOW_SESSION_FIXTURE="$REPO_ROOT/crates/runtime/tests/fixtures/window-session-project"
+"$APP" --window-session-check "$WINDOW_SESSION_FIXTURE"
 
 # UI 구조 검사(grep 종료 코드 0 = 발견 = 실패, 2 이상 = 읽기 오류 = 실패).
 # - UI/Tools(메뉴·도구 명령)는 코어 FFI와 runtime handle을 모릅니다. 명령은 ToolsMenuModel로만 나갑니다.

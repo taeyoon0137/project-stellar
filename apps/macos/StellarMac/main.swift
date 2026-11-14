@@ -55,6 +55,12 @@ if CommandLine.arguments.contains("--project-open-check") {
     exit(ShellProjectOpenCheck.run() ? 0 : 1)
 }
 
+// 창 session 검사 모드: 저장 프로젝트 fixture(다음 인자)를 복사한 두 프로젝트를 열고 닫으며 창 controller마다 코어 창
+// session handle 하나를 소유하는지 검사하고 종료합니다(XII.2.2).
+if CommandLine.arguments.contains("--window-session-check") {
+    exit(ShellWindowSessionCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
+}
+
 // smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다(II.5.2).
 if CommandLine.arguments.contains("--smoke") {
     let host = RuntimeHost()

@@ -43,6 +43,33 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    // MARK: - 창 session (XII.2.2)
+
+    /// 프로젝트 session 아래에서 창 session 열기를 요청합니다. 결과는 `.windowSessionOpened` 또는 `.requestFailed`입니다.
+    static func openWindowSession(handle: UInt64, project: UInt64) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_session_open(handle, project, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// 창 session 닫기를 요청합니다(문서 state·history·선택 폐기).
+    static func closeWindowSession(handle: UInt64, session: UInt64) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_session_close(handle, session, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// 열린 창 session의 최신 정보. 열려 있지 않으면 nil입니다. document thread를 기다리지 않습니다.
+    static func windowSessionInfo(handle: UInt64, session: UInt64) -> StellarWindowSessionInfo? {
+        var info = StellarWindowSessionInfo()
+        guard stellar_window_session_info(handle, session, &info) == STELLAR_OK,
+            info.version == UInt32(STELLAR_WINDOW_SESSION_INFO_VERSION)
+        else { return nil }
+        return info
+    }
+
     /// 최신 상태 snapshot 요약. document thread를 기다리지 않습니다.
     static func state(handle: UInt64) -> StellarRuntimeState? {
         var state = StellarRuntimeState()
@@ -86,6 +113,11 @@ enum CoreRuntimeEvent: Equatable {
     case documentOpened(request: UInt64, project: UInt64, document: UInt64, documentID: UUID, alreadyOpen: Bool)
     case documentClosed(request: UInt64, document: UInt64)
     case requestFailed(request: UInt64, failure: UInt32, message: String)
+    /// 창 session을 열었습니다. `documentID`는 작업 문서가 없으면(저장한 적 없는 프로젝트) nil입니다.
+    case windowSessionOpened(
+        request: UInt64, project: UInt64, session: UInt64, windowID: UUID, documentID: UUID?, generation: UInt64
+    )
+    case windowSessionClosed(request: UInt64, session: UInt64)
     /// 이 셸이 모르는 kind이거나 payload를 해석하지 못한 event. 요청 id를 알 수 없으므로 버립니다.
     case undecodable(kind: UInt32)
 
@@ -94,7 +126,8 @@ enum CoreRuntimeEvent: Equatable {
         switch self {
         case .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _),
              .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
-             .requestFailed(let request, _, _):
+             .requestFailed(let request, _, _), .windowSessionOpened(let request, _, _, _, _, _),
+             .windowSessionClosed(let request, _):
             return request
         case .undecodable:
             return nil
@@ -144,6 +177,27 @@ enum CoreRuntimeEvent: Equatable {
             event = reader.u64().flatMap { request in
                 reader.u64().map { .documentClosed(request: request, document: $0) }
             }
+        case UInt32(STELLAR_EVENT_WINDOW_SESSION_OPENED):
+            event = reader.u64().flatMap { request in
+                reader.u64().flatMap { project in
+                    reader.u64().flatMap { session in
+                        reader.uuid().flatMap { windowID in
+                            reader.uuid().flatMap { documentID in
+                                reader.u64().map {
+                                    .windowSessionOpened(
+                                        request: request, project: project, session: session, windowID: windowID,
+                                        documentID: documentID == Self.nilID ? nil : documentID, generation: $0
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        case UInt32(STELLAR_EVENT_WINDOW_SESSION_CLOSED):
+            event = reader.u64().flatMap { request in
+                reader.u64().map { .windowSessionClosed(request: request, session: $0) }
+            }
         case UInt32(STELLAR_EVENT_REQUEST_FAILED):
             event = reader.u64().flatMap { request in
                 reader.u32().flatMap { failure in
@@ -156,6 +210,9 @@ enum CoreRuntimeEvent: Equatable {
         guard let event, reader.isAtEnd else { return .undecodable(kind: kind) }
         return event
     }
+
+    /// NIL StableId(0 16바이트).
+    static let nilID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
     /// event payload 순차 reader(little-endian, 범위 밖이면 nil).
     private struct PayloadReader {

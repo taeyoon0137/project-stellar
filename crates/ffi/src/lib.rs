@@ -18,6 +18,8 @@ pub mod input;
 pub mod input_macos;
 /// 셸→코어 입력 대기열과 연속 move/wheel coalescing (XII.3.4).
 pub mod input_queue;
+/// 창 session C ABI (XII.2.2).
+pub mod window_session;
 
 use std::collections::{HashMap, VecDeque};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -699,13 +701,13 @@ unsafe fn poll_app_event(
     }
 }
 
-/// `StellarRuntimeState` 레이아웃 버전.
-pub const RUNTIME_STATE_VERSION: u32 = 1;
+/// `StellarRuntimeState` 레이아웃 버전. 2: `window_session_count` 추가(XII.2.2, 48 byte).
+pub const RUNTIME_STATE_VERSION: u32 = 2;
 
 /// `StellarDocumentInfo` 레이아웃 버전.
 pub const DOCUMENT_INFO_VERSION: u32 = 1;
 
-/// 앱 runtime 상태 snapshot 요약(고정 40 byte, C ABI).
+/// 앱 runtime 상태 snapshot 요약(고정 48 byte, C ABI).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct StellarRuntimeState {
@@ -721,6 +723,8 @@ pub struct StellarRuntimeState {
     pub document_count: u64,
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
     pub outstanding: u64,
+    /// 열린 창 session 수(XII.2.2).
+    pub window_session_count: u64,
 }
 
 /// 열린 문서 session 정보(고정 56 byte, C ABI).
@@ -900,6 +904,7 @@ pub unsafe extern "C" fn stellar_runtime_state(
             state.project_count = snapshot.projects.len() as u64;
             state.document_count = snapshot.documents.len() as u64;
             state.outstanding = app.outstanding() as u64;
+            state.window_session_count = snapshot.windows.len() as u64;
         }
         unsafe { *out_state = state };
         StellarStatus::Ok
@@ -1305,6 +1310,14 @@ mod tests {
             ("STELLAR_EVENT_DOCUMENT_OPENED", event_kind::DOCUMENT_OPENED),
             ("STELLAR_EVENT_DOCUMENT_CLOSED", event_kind::DOCUMENT_CLOSED),
             ("STELLAR_EVENT_REQUEST_FAILED", event_kind::REQUEST_FAILED),
+            (
+                "STELLAR_EVENT_WINDOW_SESSION_OPENED",
+                event_kind::WINDOW_SESSION_OPENED,
+            ),
+            (
+                "STELLAR_EVENT_WINDOW_SESSION_CLOSED",
+                event_kind::WINDOW_SESSION_CLOSED,
+            ),
         ] {
             define(name, format!("{kind:#06x}"));
         }
@@ -1327,6 +1340,14 @@ mod tests {
             ("INVALID_PROJECT_ID", RequestFailure::InvalidProjectId),
             ("UNTRUSTED_SYMLINK", RequestFailure::UntrustedSymlink),
             ("PATH_UNRESOLVED", RequestFailure::PathUnresolved),
+            (
+                "UNKNOWN_WINDOW_SESSION",
+                RequestFailure::UnknownWindowSession,
+            ),
+            (
+                "WINDOW_SESSION_LOAD_FAILED",
+                RequestFailure::WindowSessionLoadFailed,
+            ),
         ];
         assert_eq!(
             failures.len(),
@@ -1355,12 +1376,31 @@ mod tests {
             "sizeof(StellarDocumentInfo) == {}",
             std::mem::size_of::<StellarDocumentInfo>()
         )));
+        define(
+            "STELLAR_WINDOW_SESSION_INFO_VERSION",
+            window_session::WINDOW_SESSION_INFO_VERSION.to_string(),
+        );
+        assert!(header.contains(&format!(
+            "sizeof(StellarWindowSessionInfo) == {}",
+            std::mem::size_of::<window_session::StellarWindowSessionInfo>()
+        )));
+        for function in [
+            "stellar_window_session_open",
+            "stellar_window_session_close",
+            "stellar_window_session_info",
+        ] {
+            assert!(
+                header.contains(&format!("StellarStatus {function}(")),
+                "헤더에 {function} 없음"
+            );
+        }
     }
 
     #[test]
     fn session_struct_layouts_are_fixed() {
         use std::mem::{align_of, offset_of, size_of};
-        assert_eq!(size_of::<StellarRuntimeState>(), 40);
+        assert_eq!(size_of::<StellarRuntimeState>(), 48);
+        assert_eq!(offset_of!(StellarRuntimeState, window_session_count), 40);
         assert_eq!(align_of::<StellarRuntimeState>(), 8);
         assert_eq!(offset_of!(StellarRuntimeState, version), 0);
         assert_eq!(offset_of!(StellarRuntimeState, reserved), 4);

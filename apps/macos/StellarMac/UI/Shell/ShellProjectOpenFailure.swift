@@ -5,7 +5,7 @@ import Foundation
 /// 코어 `REQUEST_FAILED`의 고정 실패 코드(`STELLAR_FAILURE_*`)와 FFI 호출 상태(`StellarStatus`)를 셸 문구로 바꿉니다.
 /// 코어 실패 메시지(한국어 진단 문자열, 경로 포함 가능)는 화면에 보이지 않고 코드만 씁니다. 문구는 문제와 해결 방법을
 /// 함께 말합니다(가이드 7.1, HIG Writing). `stellar.yaml`이 없는 Git 저장소는 전환하지 않고 안내만 합니다(가이드 7.2).
-enum ShellProjectOpenFailure: Equatable {
+enum ShellProjectOpenFailure: Error, Equatable {
     /// 폴더에 `.git`이 없습니다(`STELLAR_FAILURE_NOT_A_REPOSITORY`, 폴더는 있음).
     case notARepository
     /// 폴더 자체가 없습니다(`NOT_A_REPOSITORY`이면서 셸이 확인한 경로에 항목 없음 — 옮겨졌거나 지워진 최근·복원
@@ -25,6 +25,8 @@ enum ShellProjectOpenFailure: Equatable {
     case untrustedSymlink
     /// 프로젝트 경로를 해석하지 못했습니다(`STELLAR_FAILURE_PATH_UNRESOLVED`).
     case pathUnresolved
+    /// 저장된 디자인(current generation·작업 문서)을 로드하지 못했습니다(`STELLAR_FAILURE_WINDOW_SESSION_LOAD_FAILED`).
+    case designUnavailable
     /// 경로가 비었거나 절대 경로가 아니거나 NUL을 포함합니다(`STELLAR_INVALID_ARGUMENT`, `STELLAR_INVALID_UTF8`).
     case invalidPath
     /// 대기 요청이 가득 찼습니다(`STELLAR_QUEUE_FULL`).
@@ -47,6 +49,7 @@ enum ShellProjectOpenFailure: Equatable {
         case STELLAR_FAILURE_INVALID_PROJECT_ID: self = .invalidProjectID
         case STELLAR_FAILURE_UNTRUSTED_SYMLINK: self = .untrustedSymlink
         case STELLAR_FAILURE_PATH_UNRESOLVED: self = .pathUnresolved
+        case STELLAR_FAILURE_WINDOW_SESSION_LOAD_FAILED: self = .designUnavailable
         default: self = .unknown(code: code)
         }
     }
@@ -89,6 +92,8 @@ enum ShellProjectOpenFailure: Equatable {
             return String(localized: "The Project File Is a Symbolic Link", comment: "Project open failure title")
         case .pathUnresolved:
             return String(localized: "The Project Folder Couldn’t Be Located", comment: "Project open failure title")
+        case .designUnavailable:
+            return String(localized: "The Project’s Design Couldn’t Be Loaded", comment: "Project open failure title")
         case .invalidPath:
             return String(localized: "The Folder Path Isn’t Valid", comment: "Project open failure title")
         case .busy:
@@ -147,6 +152,11 @@ enum ShellProjectOpenFailure: Equatable {
         case .pathUnresolved:
             return String(
                 localized: "Stellar couldn’t resolve the location of “\(name)”. It may have been moved or deleted while opening.",
+                comment: "Project open failure message"
+            )
+        case .designUnavailable:
+            return String(
+                localized: "Stellar couldn’t load the saved design in “\(name)”. Files in its design folder may be missing or damaged. Restore the folder from your Git history, then try again.",
                 comment: "Project open failure message"
             )
         case .invalidPath:

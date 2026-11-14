@@ -248,7 +248,7 @@ struct ShellFrameSlots {
 
 - 끝난 일(14장): `AppDelegate`가 `CanvasWindowController` 대신 셸 프레임 창을 쓰고, `ShellWindowRestoration.windowProvider` 등록과 secure restorable state를 지원합니다. 메인 메뉴에 `ShellFrameMenuItems` 항목을 설치했습니다. 사이드바·인스펙터·보조 패널 슬롯에 실제 영역 view controller를 끼웠습니다(내용은 영역 data source Stub).
 - 프로젝트 창의 `ShellFrameDataSource`(`ShellProjectFrameDataSource`)는 코어 프로젝트 열기 결과만 씁니다. 코어 내비게이션·검색·페이지 이름 snapshot은 아직 없어 뒤로·앞으로·검색은 비활성입니다. [아키텍처 §8.2] [ADR-0009]
-- 창 controller가 코어 `ProjectWindowSession` handle을 소유하도록 연결합니다. 코어 타입(XII.2.1)이 없어 지금은 프로젝트 session handle(`ShellProjectSessionHandle`)만 data source가 소유합니다. [가이드 2.5] [계획 XII.2.1, XII.2.2]
+- 끝난 일(XII.2.2): 창 controller(`ShellWindowController.windowSession`)가 코어 `ProjectWindowSession` handle(`ShellWindowSessionHandle`) 하나를 소유합니다. 셸은 프로젝트 session을 연 뒤 창 session까지 열린 다음에 창을 ready로 두고, 창 session을 열지 못하면 프로젝트 session을 닫고 "The Project’s Design Couldn’t Be Loaded"로 안내합니다. 창을 닫으면 창 session → 프로젝트 session 순서로 한 번씩 닫습니다. 프로젝트 session handle(`ShellProjectSessionHandle`)은 그대로 data source가 소유합니다. [가이드 2.5] [계획 XII.2.1, XII.2.2] [ADR-0028]
 - `NativeFieldsPanel`(텍스트 입력 검증 fixture)은 `--text-input-check` 전용 창(`CanvasWindowController`)에 남아 있습니다. 셸 창의 텍스트 편집 중 Undo 경로는 `--tools-menus-ui-check`가 검사합니다. [가이드 10.1]
 - 영역별 코어 adapter(사이드바 snapshot, 선택 속성, Git 상태, 에이전트 세션)로 `ShellAreaDataStubs`를 바꿉니다. 보조 패널 노출 여부·위치는 가이드 2.4·O4·ADR-0005에 따릅니다.
 - 다중 창(XII.2.4)에서 창별 `ShellWindowConfiguration` 이름 규칙을 정합니다. 지금은 모든 프로젝트 창이 `.standard` 이름을 써서 둘째 창부터 frame autosave가 걸리지 않고 split autosave는 서로 덮어씁니다.
