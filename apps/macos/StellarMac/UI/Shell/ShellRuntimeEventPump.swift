@@ -64,6 +64,26 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.closeWindowSession(handle: runtimeHandle, session: session), completion ?? { _ in })
     }
 
+    /// 창 session에 명령 코드를 보내고 완료 event를 `completion`으로 받습니다(XII.6.4).
+    @discardableResult
+    func perform(
+        session: UInt64,
+        command: UInt32,
+        completion: @escaping (CoreRuntimeEvent) -> Void
+    ) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.perform(handle: runtimeHandle, session: session, command: command), completion)
+    }
+
+    /// 창 session의 선택을 바꾸고 완료 event를 `completion`으로 받습니다.
+    @discardableResult
+    func select(
+        session: UInt64,
+        ids: [UUID],
+        completion: @escaping (CoreRuntimeEvent) -> Void
+    ) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.select(handle: runtimeHandle, session: session, ids: ids), completion)
+    }
+
     private func register(
         _ result: Result<UInt64, CoreRuntimeCallError>,
         _ completion: @escaping (CoreRuntimeEvent) -> Void

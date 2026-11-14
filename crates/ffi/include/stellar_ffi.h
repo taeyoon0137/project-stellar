@@ -73,7 +73,9 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
  *   WINDOW_SESSION_OPENED: request u64, project u64, session u64, window_id[16],
  *                          document_id[16] (작업 문서 없으면 0), generation u64
  *   WINDOW_SESSION_CLOSED: request u64, session u64
- *   WINDOW_VIEW_CHANGED  : request u64, session u64 (탭·active view·viewport, 새 값은 상태 snapshot) */
+ *   WINDOW_VIEW_CHANGED  : request u64, session u64 (탭·active view·viewport·선택, 새 값은 상태 snapshot)
+ *   HISTORY_REPLAYED     : request u64, session u64, redo u8, applied u8, revision u64
+ *   WINDOW_SESSION_SAVED : request u64, session u64, generation u64, written u8 */
 #define STELLAR_EVENT_SCHEMA_VERSION 1
 #define STELLAR_EVENT_TEXT_MAX 4096
 #define STELLAR_EVENT_PROJECT_OPENED 0x0101
@@ -84,6 +86,8 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_EVENT_WINDOW_SESSION_OPENED 0x0106
 #define STELLAR_EVENT_WINDOW_SESSION_CLOSED 0x0107
 #define STELLAR_EVENT_WINDOW_VIEW_CHANGED 0x0108
+#define STELLAR_EVENT_HISTORY_REPLAYED 0x0109
+#define STELLAR_EVENT_WINDOW_SESSION_SAVED 0x010a
 
 /* 완료 event를 아직 꺼내지 않은 요청(실행 중 포함) 상한. 닿으면 새 요청은 STELLAR_QUEUE_FULL. */
 #define STELLAR_EVENT_CAPACITY 1024
@@ -104,6 +108,14 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_WINDOW_SESSION_LOAD_FAILED 18
 #define STELLAR_FAILURE_UNKNOWN_VIEW 19
 #define STELLAR_FAILURE_NO_ACTIVE_VIEW 20
+#define STELLAR_FAILURE_SAVE_STALE 21
+#define STELLAR_FAILURE_SAVE_FAILED 22
+#define STELLAR_FAILURE_HISTORY_UNAVAILABLE 23
+
+/* 창 session 명령 코드(stellar_window_session_perform). */
+#define STELLAR_COMMAND_UNDO 1
+#define STELLAR_COMMAND_REDO 2
+#define STELLAR_COMMAND_SAVE_NOW 3
 
 /* StellarRuntimeState 레이아웃 버전. 2: window_session_count 추가. */
 #define STELLAR_RUNTIME_STATE_VERSION 2
@@ -218,6 +230,12 @@ StellarStatus stellar_window_session_open(uint64_t handle, uint64_t project, uin
 
 /* 창 session 닫기를 요청합니다(문서 state·history·선택 폐기, 저장하지 않음). */
 StellarStatus stellar_window_session_close(uint64_t handle, uint64_t session, uint64_t *out_request);
+
+/* 창 session에 명령(STELLAR_COMMAND_*)을 보냅니다. 모르는 코드는 STELLAR_INVALID_ARGUMENT(요청 없음). */
+StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, uint32_t command, uint64_t *out_request);
+
+/* 창 session의 선택을 ids(StableId 16 byte × count)로 바꾸고 그 창 history에 기록합니다(count 0 = 비움). */
+StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, const uint8_t *ids, size_t count, uint64_t *out_request);
 
 /* 열린 창 session의 최신 snapshot 정보를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_session_info(uint64_t handle, uint64_t session, StellarWindowSessionInfo *out_info);

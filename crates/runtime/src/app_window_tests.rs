@@ -246,3 +246,131 @@ fn view_state_changes_stay_in_their_window() {
     assert_eq!(app.state().window(a).unwrap().viewport, Some(zoomed));
     app.shutdown().unwrap();
 }
+
+/// 테스트 전용: 창 session 작업 문서에서 node 이름을 바꾸고 그 창 history에 기록합니다(셸 편집 경로가 생기기 전).
+fn rename_in(app: &AppRuntime, session: WindowSessionHandle, command: u64, node: u64, name: &str) {
+    let name = name.to_string();
+    let request = app
+        .submit(move |ctx, request| {
+            let window = crate::app::window_mut(ctx, session)?;
+            let tx = crate::window_session::test_fixtures::rename(
+                window.document().unwrap(),
+                command,
+                node,
+                &name,
+            );
+            window.apply(&tx).unwrap();
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+        .unwrap();
+    assert!(matches!(
+        next_event(app),
+        RuntimeEvent::WindowViewChanged { request: got, .. } if got == request
+    ));
+}
+
+fn replay(app: &AppRuntime, session: WindowSessionHandle, redo: bool) -> (bool, DocumentRevision) {
+    let request = if redo {
+        app.redo(session).unwrap()
+    } else {
+        app.undo(session).unwrap()
+    };
+    match next_event(app) {
+        RuntimeEvent::HistoryReplayed {
+            request: got,
+            session: owner,
+            redo: was_redo,
+            applied,
+            revision,
+        } => {
+            assert_eq!((got, owner, was_redo), (request, session, redo));
+            (applied, revision)
+        }
+        other => panic!("undo·redo 완료 event가 아님: {other:?}"),
+    }
+}
+
+fn save(app: &AppRuntime, session: WindowSessionHandle) -> (u64, bool) {
+    let request = app.save_now(session).unwrap();
+    match next_event(app) {
+        RuntimeEvent::WindowSessionSaved {
+            request: got,
+            session: owner,
+            generation,
+            written,
+        } => {
+            assert_eq!((got, owner), (request, session));
+            (generation, written)
+        }
+        other => panic!("저장 완료 event가 아님: {other:?}"),
+    }
+}
+
+#[test]
+fn undo_redo_and_save_now_reach_only_the_target_window() {
+    // 검증 기준(XII.6.4): 창별 history와 save 호출 fixture.
+    let first = saved_project("app-commands-a");
+    let second = saved_project("app-commands-b");
+    let app = AppRuntime::start().unwrap();
+    let (a, _, _) = open_window(&app, open_project(&app, first.path()));
+    let (b, _, _) = open_window(&app, open_project(&app, second.path()));
+
+    // A: 선택 1개, B: 이름 변경 1개.
+    let request = app.set_selection(a, vec![sid(11)]).unwrap();
+    assert!(matches!(
+        next_event(&app),
+        RuntimeEvent::WindowViewChanged { request: got, session } if got == request && session == a
+    ));
+    rename_in(&app, b, 800, 12, "B 이름");
+    let state = app.state();
+    assert_eq!(
+        (
+            state.window(a).unwrap().undo_depth,
+            state.window(a).unwrap().selection_len
+        ),
+        (1, 1)
+    );
+    assert_eq!(state.window(b).unwrap().undo_depth, 1);
+    assert_eq!(state.window(b).unwrap().revision, DocumentRevision(1));
+
+    // A undo는 A의 선택만 되돌립니다.
+    assert_eq!(replay(&app, a, false), (true, DocumentRevision(0)));
+    let state = app.state();
+    assert_eq!(state.window(a).unwrap().selection_len, 0);
+    assert_eq!(state.window(a).unwrap().redo_depth, 1);
+    assert_eq!(state.window(b).unwrap().undo_depth, 1, "B history 그대로");
+    assert_eq!(state.window(b).unwrap().revision, DocumentRevision(1));
+    assert_eq!(replay(&app, a, false), (false, DocumentRevision(0)));
+    assert_eq!(replay(&app, a, true), (true, DocumentRevision(0)));
+    assert_eq!(app.state().window(a).unwrap().selection_len, 1);
+
+    // Save Now: A는 문서 변경이 없어 쓰지 않고, B는 generation 2를 씁니다. A의 프로젝트 디스크는 그대로.
+    let a_current = std::fs::read(first.path().join("design").join("current")).unwrap();
+    assert_eq!(save(&app, a), (1, false));
+    assert_eq!(
+        std::fs::read(first.path().join("design").join("current")).unwrap(),
+        a_current
+    );
+    assert_eq!(save(&app, b), (2, true));
+    assert_eq!(app.state().window(b).unwrap().generation, 2);
+    assert_eq!(app.state().window(a).unwrap().generation, 1);
+    // B undo 후 다시 저장하면 generation 3.
+    assert_eq!(replay(&app, b, false), (true, DocumentRevision(2)));
+    assert_eq!(save(&app, b), (3, true));
+
+    // 같은 프로젝트의 둘째 창(B2)은 loaded generation 3이고, B가 다시 저장하면 B2 저장은 Stale입니다.
+    let project_b = app.state().window(b).unwrap().project;
+    let (b2, _, generation) = open_window(&app, project_b);
+    assert_eq!(generation, 3);
+    rename_in(&app, b, 801, 11, "B 다시");
+    assert_eq!(save(&app, b), (4, true));
+    rename_in(&app, b2, 900, 11, "B2 편집");
+    let request = app.save_now(b2).unwrap();
+    expect_failure(&app, request, RequestFailure::SaveStale);
+    assert_eq!(app.state().window(b2).unwrap().generation, 3);
+
+    // 없는 창.
+    let request = app.undo(WindowSessionHandle(999)).unwrap();
+    expect_failure(&app, request, RequestFailure::UnknownWindowSession);
+    app.shutdown().unwrap();
+}

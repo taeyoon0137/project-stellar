@@ -60,6 +60,25 @@ WindowSessionId, 독립 document state, view state, history, loaded generation)�
    `STELLAR_FAILURE_NO_ACTIVE_VIEW`(20, active 탭 없음)를 덧붙입니다. 이 행에서는 C 함수를 더하지 않고 event
    kind와 실패 코드만 헤더에 노출합니다(셸 viewport 연결은 XII.4.3).
 
+### XII.6.4 — 활성 창 session의 Undo·Redo·Save Now
+
+1. **명령 코드**: `stellar-runtime::app_command::AppCommand`(`STELLAR_COMMAND_UNDO` 1, `_REDO` 2, `_SAVE_NOW` 3,
+   끝에 덧붙임). `stellar_window_session_perform(handle, session, command, out_request)`가 명령을 그 창 session
+   하나에만 보냅니다. 모르는 코드는 `STELLAR_INVALID_ARGUMENT`(요청 없음).
+2. **완료 event**: Undo·Redo는 `STELLAR_EVENT_HISTORY_REPLAYED`(`0x0109`: request, session, redo u8, applied u8,
+   revision u64, 재생할 항목이 없으면 applied 0), Save Now는 `STELLAR_EVENT_WINDOW_SESSION_SAVED`(`0x010A`: request,
+   session, generation u64, written u8, 바뀐 chunk가 없으면 written 0이고 새 generation을 쓰지 않음).
+3. **저장 규칙**: 작업 문서를 직렬화해 loaded generation 위에 SavePlan을 만들고, 작업 문서가 차지하지 않은 base
+   chunk는 Clean으로 이어 씁니다. 쓰기 전에 current pointer가 loaded generation과 같은지 확인하고 다르면
+   `STELLAR_FAILURE_SAVE_STALE`(21)로 아무것도 쓰지 않습니다(두 선택지 정책은 XII.7). 그 밖의 저장 실패는
+   `STELLAR_FAILURE_SAVE_FAILED`(22), history 재생 불가(preview 진행 중 등)는 `STELLAR_FAILURE_HISTORY_UNAVAILABLE`(23).
+4. **선택**: `stellar_window_session_select(handle, session, ids, count, out_request)`(StableId 16 byte × count)가 그
+   창 선택을 바꾸고 history에 기록합니다(VII.4.6). 완료는 `WINDOW_VIEW_CHANGED`입니다. 캔버스 선택 도구가 생기기 전에는
+   셸 검사가 Undo 대상 history를 만들 때 씁니다.
+5. **셸**: 메뉴·단축키는 응답자 체인으로 key 창의 router가 받으므로 명령은 언제나 그 창의 창 session으로 갑니다.
+   Undo·Redo는 그 창 undo·redo stack이 비어 있지 않을 때, Save Now는 작업 문서가 있을 때만 활성입니다. 저장 실패는 alert
+   한 번으로 알립니다.
+
 ## Alternatives
 
 - **프로젝트 session handle에 창 상태를 합침**: 같은 프로젝트를 연 두 창(XII.2.4)이 독립 문서·history를

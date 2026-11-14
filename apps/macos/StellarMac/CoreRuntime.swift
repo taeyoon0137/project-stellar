@@ -61,6 +61,30 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    /// 창 session에 명령 코드(`STELLAR_COMMAND_*`)를 보냅니다(XII.6.4). 결과는 `.historyReplayed`·`.windowSessionSaved`
+    /// 또는 `.requestFailed`입니다. 모르는 코드는 `STELLAR_INVALID_ARGUMENT`(요청 없음)입니다.
+    static func perform(handle: UInt64, session: UInt64, command: UInt32) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_session_perform(handle, session, command, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// 창 session의 선택을 바꾸고 그 창 history에 기록합니다. 결과는 `.windowViewChanged` 또는 `.requestFailed`입니다.
+    static func select(handle: UInt64, session: UInt64, ids: [UUID]) -> Result<UInt64, CoreRuntimeCallError> {
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(ids.count * 16)
+        for id in ids {
+            withUnsafeBytes(of: id.uuid) { bytes.append(contentsOf: $0) }
+        }
+        var request: UInt64 = 0
+        let status = bytes.withUnsafeBufferPointer { raw in
+            stellar_window_session_select(handle, session, raw.baseAddress, ids.count, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     /// 열린 창 session의 최신 정보. 열려 있지 않으면 nil입니다. document thread를 기다리지 않습니다.
     static func windowSessionInfo(handle: UInt64, session: UInt64) -> StellarWindowSessionInfo? {
         var info = StellarWindowSessionInfo()
@@ -118,6 +142,12 @@ enum CoreRuntimeEvent: Equatable {
         request: UInt64, project: UInt64, session: UInt64, windowID: UUID, documentID: UUID?, generation: UInt64
     )
     case windowSessionClosed(request: UInt64, session: UInt64)
+    /// 창 view state(탭·active view·viewport·선택)가 바뀌었습니다. 새 값은 창 session 정보에 있습니다.
+    case windowViewChanged(request: UInt64, session: UInt64)
+    /// 창 history를 undo(`redo == false`)·redo로 재생했습니다. `applied == false`면 재생할 항목이 없었습니다.
+    case historyReplayed(request: UInt64, session: UInt64, redo: Bool, applied: Bool, revision: UInt64)
+    /// 창 작업 문서를 저장했습니다(Save Now). `written == false`면 바뀐 것이 없어 새 generation을 쓰지 않았습니다.
+    case windowSessionSaved(request: UInt64, session: UInt64, generation: UInt64, written: Bool)
     /// 이 셸이 모르는 kind이거나 payload를 해석하지 못한 event. 요청 id를 알 수 없으므로 버립니다.
     case undecodable(kind: UInt32)
 
@@ -127,7 +157,8 @@ enum CoreRuntimeEvent: Equatable {
         case .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _),
              .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
              .requestFailed(let request, _, _), .windowSessionOpened(let request, _, _, _, _, _),
-             .windowSessionClosed(let request, _):
+             .windowSessionClosed(let request, _), .windowViewChanged(let request, _),
+             .historyReplayed(let request, _, _, _, _), .windowSessionSaved(let request, _, _, _):
             return request
         case .undecodable:
             return nil
@@ -198,6 +229,34 @@ enum CoreRuntimeEvent: Equatable {
             event = reader.u64().flatMap { request in
                 reader.u64().map { .windowSessionClosed(request: request, session: $0) }
             }
+        case UInt32(STELLAR_EVENT_WINDOW_VIEW_CHANGED):
+            event = reader.u64().flatMap { request in
+                reader.u64().map { .windowViewChanged(request: request, session: $0) }
+            }
+        case UInt32(STELLAR_EVENT_HISTORY_REPLAYED):
+            event = reader.u64().flatMap { request in
+                reader.u64().flatMap { session in
+                    reader.bool().flatMap { redo in
+                        reader.bool().flatMap { applied in
+                            reader.u64().map {
+                                .historyReplayed(
+                                    request: request, session: session, redo: redo, applied: applied, revision: $0
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        case UInt32(STELLAR_EVENT_WINDOW_SESSION_SAVED):
+            event = reader.u64().flatMap { request in
+                reader.u64().flatMap { session in
+                    reader.u64().flatMap { generation in
+                        reader.bool().map {
+                            .windowSessionSaved(request: request, session: session, generation: generation, written: $0)
+                        }
+                    }
+                }
+            }
         case UInt32(STELLAR_EVENT_REQUEST_FAILED):
             event = reader.u64().flatMap { request in
                 reader.u32().flatMap { failure in
@@ -242,6 +301,14 @@ enum CoreRuntimeEvent: Equatable {
         }
 
         mutating func u8() -> UInt8? { integer(UInt8.self) }
+        /// 0/1 바이트. 다른 값이면 nil(해석 실패)입니다.
+        mutating func bool() -> Bool? {
+            switch u8() {
+            case 0: return false
+            case 1: return true
+            default: return nil
+            }
+        }
         mutating func u32() -> UInt32? { integer(UInt32.self) }
         mutating func u64() -> UInt64? { integer(UInt64.self) }
 

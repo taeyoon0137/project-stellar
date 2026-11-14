@@ -73,6 +73,52 @@ final class ShellWindowSessionHandle {
         isClosed = true
         pump.closeWindowSession(session, completion: completion)
     }
+
+    /// 이 창 session에 명령을 보냅니다(XII.6.4). 닫혔거나 요청을 받지 않으면 false입니다.
+    @discardableResult
+    func perform(_ command: ShellWindowSessionCommand, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed else { return false }
+        if case .success = pump.perform(session: session, command: command.coreCode, completion: completion) {
+            return true
+        }
+        return false
+    }
+
+    /// 이 창 session의 선택을 바꿉니다(그 창 history에 기록). 닫혔거나 요청을 받지 않으면 false입니다.
+    @discardableResult
+    func select(_ ids: [UUID], completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed else { return false }
+        if case .success = pump.select(session: session, ids: ids, completion: completion) {
+            return true
+        }
+        return false
+    }
+}
+
+/// 활성 창 session에 보내는 코어 명령(XII.6.4). 코드는 코어 C ABI 상수(`STELLAR_COMMAND_*`)입니다.
+enum ShellWindowSessionCommand: CaseIterable {
+    case undo
+    case redo
+    case saveNow
+
+    /// 셸 명령에 대응하는 창 session 명령. 창 session으로 가지 않는 명령은 nil입니다.
+    init?(_ command: ShellCommand) {
+        switch command {
+        case .undo: self = .undo
+        case .redo: self = .redo
+        case .saveNow: self = .saveNow
+        default: return nil
+        }
+    }
+
+    /// 코어 명령 코드.
+    var coreCode: UInt32 {
+        switch self {
+        case .undo: return UInt32(STELLAR_COMMAND_UNDO)
+        case .redo: return UInt32(STELLAR_COMMAND_REDO)
+        case .saveNow: return UInt32(STELLAR_COMMAND_SAVE_NOW)
+        }
+    }
 }
 
 /// 프로젝트 창의 셸 프레임 명령 ID(더 보기 메뉴·상태 화면 버튼).
@@ -217,13 +263,14 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
 
 /// 프로젝트 창의 도구·메뉴 모델(의도적 placeholder, 계획 1.2 규칙 6).
 ///
-/// 코어 도구 상태 기계(XII.3.6)와 command ID 체계(XII.6.5)가 없으므로, 창별 현재 도구만 셸이 보관합니다. 제한:
-/// - 실행 가능한 명령은 도구 선택 11개와 Close Project뿐입니다. Undo·Redo·Save Now(XII.6.4), 편집·객체 명령, 줌
-///   (camera, XII.4.3)은 코어 경로가 없어 숨기지 않고 비활성으로 둡니다.
+/// 코어 도구 상태 기계(XII.3.6)가 없으므로, 창별 현재 도구만 셸이 보관합니다. 제한:
+/// - 실행 가능한 명령은 도구 선택 11개, Close Project, 그리고 창 session 상태에 따른 Undo·Redo·Save Now(XII.6.4)입니다.
+///   Undo는 그 창 undo stack이, Redo는 redo stack이 비어 있지 않을 때, Save Now는 창 session에 작업 문서가 있을 때
+///   활성입니다(`setSessionCommands`). 편집·객체 명령과 줌(camera, XII.4.3)은 코어 경로가 없어 숨기지 않고 비활성입니다.
 /// - 프로젝트가 ready가 아니면 도구 선택도 비활성입니다.
 /// - 도구 선택은 코어로 보내지 않습니다. 다른 명령은 `commandHandler`(프로젝트 창)로 넘깁니다.
 final class ShellWindowToolsModelStub: ToolsMenuModel {
-    /// ready 상태에서 실행할 수 있는 명령.
+    /// ready 상태에서 항상 실행할 수 있는 명령(창 session 상태와 무관).
     static let readyCommands: Set<ShellCommand> = Set(CanvasTool.allCases.map(\.command)).union([.closeProject])
     /// ready가 아닐 때(열기 중·실패) 실행할 수 있는 명령.
     static let notReadyCommands: Set<ShellCommand> = [.closeProject]
@@ -263,9 +310,31 @@ final class ShellWindowToolsModelStub: ToolsMenuModel {
         commandHandler?(command)
     }
 
-    /// 프로젝트 상태에 맞춰 실행 가능한 명령을 바꿉니다.
+    /// 지금 활성인 창 session 명령(ready일 때만 반영).
+    private(set) var sessionCommands: Set<ShellCommand> = []
+    private var isReady = false
+
+    /// 프로젝트 상태에 맞춰 실행 가능한 명령을 바꿉니다. ready가 아니면 창 session 명령도 비활성입니다.
     func setProjectReady(_ ready: Bool) {
-        let commands = ready ? Self.readyCommands : Self.notReadyCommands
+        isReady = ready
+        if !ready { sessionCommands = [] }
+        republishEnabledCommands()
+    }
+
+    /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 바꿉니다(XII.6.4). nil이면 모두 비활성입니다.
+    func setSessionCommands(from info: StellarWindowSessionInfo?) {
+        var commands: Set<ShellCommand> = []
+        if let info {
+            if info.undo_depth > 0 { commands.insert(.undo) }
+            if info.redo_depth > 0 { commands.insert(.redo) }
+            if info.has_document != 0 { commands.insert(.saveNow) }
+        }
+        sessionCommands = commands
+        republishEnabledCommands()
+    }
+
+    private func republishEnabledCommands() {
+        let commands = isReady ? Self.readyCommands.union(sessionCommands) : Self.notReadyCommands
         guard commands != snapshot.enabledCommands else { return }
         var next = snapshot
         next.enabledCommands = commands
@@ -375,7 +444,62 @@ final class ShellProjectWindow {
         windowController.windowSession = windowSession
         dataSource.didOpen(session)
         toolsModel.setProjectReady(true)
+        refreshSessionCommands()
         window?.invalidateRestorableState()
+    }
+
+    /// 저장 실패를 알리는 곳(창, 제목, 메시지). coordinator가 앱 alert 경로를 넣습니다.
+    var alertPresenter: ((_ title: String, _ message: String, _ window: NSWindow?) -> Void)?
+
+    /// 창 session 명령(Undo·Redo·Save Now)이 끝날 때마다 받은 완료 event(검사용).
+    private(set) var lastSessionCommandEvent: CoreRuntimeEvent?
+
+    /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
+    func refreshSessionCommands() {
+        toolsModel.setSessionCommands(from: windowController.windowSession?.info)
+    }
+
+    /// Undo·Redo·Save Now를 이 창의 창 session(활성 창 session)에 보냅니다(XII.6.4). 다른 명령은 false입니다.
+    ///
+    /// 메뉴·단축키는 응답자 체인으로 key 창의 router가 받으므로 여기 오는 명령은 언제나 이 창(활성 창)의 것입니다.
+    @discardableResult
+    func performSessionCommand(_ command: ShellCommand) -> Bool {
+        guard let sessionCommand = ShellWindowSessionCommand(command), let session = windowController.windowSession else {
+            return false
+        }
+        return session.perform(sessionCommand) { [weak self] event in
+            self?.finishSessionCommand(sessionCommand, event: event)
+        }
+    }
+
+    /// 이 창 session의 선택을 바꿉니다(그 창 history에 기록, 끝나면 명령 활성 상태 갱신). 캔버스 선택 도구가 생기기 전에는
+    /// 검사만 부릅니다.
+    @discardableResult
+    func selectNodes(_ ids: [UUID]) -> Bool {
+        guard let session = windowController.windowSession else { return false }
+        return session.select(ids) { [weak self] _ in
+            self?.refreshSessionCommands()
+        }
+    }
+
+    private func finishSessionCommand(_ command: ShellWindowSessionCommand, event: CoreRuntimeEvent) {
+        lastSessionCommandEvent = event
+        refreshSessionCommands()
+        guard command == .saveNow, case .requestFailed(_, let failure, _) = event else { return }
+        let stale = Int32(bitPattern: failure) == STELLAR_FAILURE_SAVE_STALE
+        alertPresenter?(
+            String(localized: "The Design Couldn’t Be Saved", comment: "Save Now failure alert title"),
+            stale
+                ? String(
+                    localized: "This project was saved from another window or app after this window opened it. This window’s changes weren’t saved.",
+                    comment: "Save Now failure: the project changed on disk since the window opened it"
+                )
+                : String(
+                    localized: "Stellar couldn’t write the design files. Make sure the project folder is available and you can write to it, then choose Save Now again.",
+                    comment: "Save Now failure: writing failed"
+                ),
+            window
+        )
     }
 
     /// 열기에 실패했습니다. 창에 원인과 복구 동작을 보여 줍니다.
@@ -384,6 +508,7 @@ final class ShellProjectWindow {
         windowController.windowSession = nil
         dataSource.didFail(title: failure.title, message: failure.message(path: path))
         toolsModel.setProjectReady(false)
+        toolsModel.setSessionCommands(from: nil)
     }
 
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.

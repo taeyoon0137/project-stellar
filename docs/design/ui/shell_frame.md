@@ -308,7 +308,7 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 
 ### 14.5 영역 data source(Stub)
 
-영역별 코어 adapter가 없어 `ShellAreaDataStubs`가 의도적 placeholder를 줍니다. 열린 프로젝트와 어긋난 표본 내용을 보여 주지 않도록 "비어 있음"에 가까운 상태를 고릅니다: 사이드바 페이지·레이어 없음(`ShellEmptySidebarProviderStub`, 모든 명령 unsupported), 인스펙터 선택 없음, Git 제한 모드(모든 프로젝트가 신뢰되지 않음), 에이전트 세션 없음. 창별 도구 상태는 `ShellWindowToolsModelStub`이 보관합니다(도구 선택 11개와 Close Project만 실행 가능, Undo·Redo·Save Now·편집·객체·줌은 코어 경로가 없어 비활성).
+영역별 코어 adapter가 없어 `ShellAreaDataStubs`가 의도적 placeholder를 줍니다. 열린 프로젝트와 어긋난 표본 내용을 보여 주지 않도록 "비어 있음"에 가까운 상태를 고릅니다: 사이드바 페이지·레이어 없음(`ShellEmptySidebarProviderStub`, 모든 명령 unsupported), 인스펙터 선택 없음, Git 제한 모드(모든 프로젝트가 신뢰되지 않음), 에이전트 세션 없음. 창별 도구 상태는 `ShellWindowToolsModelStub`이 보관합니다(도구 선택 11개, Close Project, 창 session 상태에 따른 Undo·Redo·Save Now(XII.6.4)가 실행 가능하고, 편집·객체·줌은 코어 경로가 없어 비활성).
 
 ### 14.6 통합 검사(`--shell-integration-check`)
 

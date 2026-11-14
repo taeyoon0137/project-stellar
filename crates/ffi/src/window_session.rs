@@ -3,8 +3,14 @@
 //! 셸의 창 controller 하나가 창 session handle 하나를 소유합니다. 요청은 다른 프로젝트·문서 요청과 같이
 //! 기다리지 않고 request id를 돌려주며, 완료는 `stellar_runtime_poll_event`의 event
 //! (`STELLAR_EVENT_WINDOW_SESSION_*`)와 [`stellar_window_session_info`]의 상태 snapshot으로만 돌아옵니다.
+//!
+//! 활성 창의 Undo·Redo·Save Now(XII.6.4)는 [`stellar_window_session_perform`]에 명령 코드
+//! (`STELLAR_COMMAND_*`)를 넘겨 그 창 session에만 보냅니다. 선택 변경([`stellar_window_session_select`])은 그 창
+//! history에 기록됩니다.
 
+use stellar_core_types::ids::StableId;
 use stellar_runtime::app::{AppRuntime, ProjectSessionId, WindowSessionHandle};
+use stellar_runtime::app_command::AppCommand;
 
 use crate::{ffi_guard, registry, StellarStatus};
 
@@ -89,6 +95,100 @@ pub unsafe extern "C" fn stellar_window_session_close(
         };
         let result = match rt.app() {
             Ok(app) => app.close_window_session(WindowSessionHandle(session)),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 창 session에 명령(`STELLAR_COMMAND_*`)을 보냅니다(XII.6.4). 기다리지 않고 request id를 씁니다.
+///
+/// Undo·Redo는 `STELLAR_EVENT_HISTORY_REPLAYED`, Save Now는 `STELLAR_EVENT_WINDOW_SESSION_SAVED`, 실패는
+/// `STELLAR_EVENT_REQUEST_FAILED`(없는 창, `SAVE_STALE`, `SAVE_FAILED`, `HISTORY_UNAVAILABLE`)로 옵니다. 모르는 명령
+/// 코드는 `InvalidArgument`(요청 없음, `out_request = 0`)입니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_perform(
+    handle: u64,
+    session: u64,
+    command: u32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(command) = AppCommand::from_code(command) else {
+            rt.last_error = Some((
+                StellarStatus::InvalidArgument,
+                format!("알 수 없는 명령 코드입니다: {command}"),
+            ));
+            if !out_request.is_null() {
+                unsafe { *out_request = 0 };
+            }
+            return StellarStatus::InvalidArgument;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.perform(WindowSessionHandle(session), command),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 창 session의 선택을 `ids`(StableId 16 byte × `count`, 선택 순서)로 바꾸고 그 창 history에 기록합니다.
+///
+/// 문서에 없거나 숨김 node는 거릅니다. 결과는 `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
+/// `count`가 0이면 선택을 비웁니다.
+///
+/// # Safety
+/// `count > 0`이면 `ids`는 `count * 16` 바이트 읽기가 유효해야 하고, `out_request`는 null이거나 유효해야
+/// 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_select(
+    handle: u64,
+    session: u64,
+    ids: *const u8,
+    count: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if count > 0 && ids.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(len) = count.checked_mul(16) else {
+            rt.last_error = Some((
+                StellarStatus::InvalidArgument,
+                "선택 id 수가 너무 큽니다".to_string(),
+            ));
+            return StellarStatus::InvalidArgument;
+        };
+        let bytes = if count == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(ids, len) }
+        };
+        let selection: Vec<StableId> = bytes
+            .chunks_exact(16)
+            .map(|chunk| {
+                let mut id = [0u8; 16];
+                id.copy_from_slice(chunk);
+                StableId::from_bytes(id)
+            })
+            .collect();
+        let result = match rt.app() {
+            Ok(app) => app.set_selection(WindowSessionHandle(session), selection),
             Err(status) => return status,
         };
         unsafe { rt.finish_request(result, out_request) }
@@ -349,6 +449,90 @@ pub(crate) mod tests {
             panic!("실패 event가 아님");
         };
         assert_eq!(failure, RequestFailure::UnknownWindowSession);
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    fn perform(h: u64, session: u64, command: u32) -> RuntimeEvent {
+        let mut request = 0u64;
+        assert_eq!(
+            unsafe { stellar_window_session_perform(h, session, command, &mut request) },
+            StellarStatus::Ok
+        );
+        let event = next_event(h);
+        assert_eq!(event.request(), RequestId(request));
+        event
+    }
+
+    #[test]
+    fn undo_redo_and_save_now_go_to_the_given_window_session() {
+        // 검증 기준(XII.6.4, C ABI): 창별 history와 save 호출.
+        let first = FixtureProject::copy("cmd-a");
+        let second = FixtureProject::copy("cmd-b");
+        let h = create();
+        let a = open_window(h, open_project(h, &first.path));
+        let b = open_window(h, open_project(h, &second.path));
+        // 선택할 node: fixture 문서의 첫 View root(10)의 자식 11.
+        let child = StableId::new_v7(11, 0, 11).to_bytes();
+        let mut request = 0u64;
+        assert_eq!(
+            unsafe { stellar_window_session_select(h, a, child.as_ptr(), 1, &mut request) },
+            StellarStatus::Ok
+        );
+        assert!(matches!(
+            next_event(h),
+            RuntimeEvent::WindowViewChanged { session, .. } if session.0 == a
+        ));
+        assert_eq!(
+            (
+                info(h, a).unwrap().undo_depth,
+                info(h, a).unwrap().selection_count
+            ),
+            (1, 1)
+        );
+        assert_eq!(info(h, b).unwrap().undo_depth, 0);
+
+        let undo = perform(h, a, AppCommand::Undo.code());
+        assert!(matches!(
+            undo,
+            RuntimeEvent::HistoryReplayed {
+                redo: false,
+                applied: true,
+                ..
+            }
+        ));
+        let after = info(h, a).unwrap();
+        assert_eq!((after.selection_count, after.redo_depth), (0, 1));
+        assert!(matches!(
+            perform(h, b, AppCommand::Undo.code()),
+            RuntimeEvent::HistoryReplayed { applied: false, .. }
+        ));
+        assert!(matches!(
+            perform(h, a, AppCommand::Redo.code()),
+            RuntimeEvent::HistoryReplayed {
+                redo: true,
+                applied: true,
+                ..
+            }
+        ));
+        assert_eq!(info(h, a).unwrap().selection_count, 1);
+        // Save Now: 선택만 바뀌어 저장할 문서 변경이 없습니다(generation 1 그대로).
+        assert!(matches!(
+            perform(h, a, AppCommand::SaveNow.code()),
+            RuntimeEvent::WindowSessionSaved { session, generation: 1, written: false, .. }
+                if session.0 == a
+        ));
+
+        // 모르는 명령 코드는 요청을 만들지 않습니다.
+        let mut request = 9u64;
+        assert_eq!(
+            unsafe { stellar_window_session_perform(h, a, 999, &mut request) },
+            StellarStatus::InvalidArgument
+        );
+        assert_eq!(request, 0);
+        assert_eq!(
+            unsafe { stellar_window_session_select(h, a, std::ptr::null(), 1, &mut request) },
+            StellarStatus::NullPointer
+        );
         assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
     }
 

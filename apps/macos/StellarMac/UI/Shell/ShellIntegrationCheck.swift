@@ -476,10 +476,11 @@ private final class ShellIntegrationCheckRunner {
             expect(!handler(event), "⌘R을 단일 키 도구로 해석함")
         }
 
-        // 코어 경로가 없는 명령은 숨기지 않고 비활성, Close Project는 활성.
+        // 코어 경로가 없는 명령(복제·줌)과, 저장한 문서·history가 없는 창 session의 Undo·Redo·Save Now(XII.6.4)는 숨기지
+        // 않고 비활성, Close Project는 활성.
         for command in [ShellCommand.undo, .redo, .saveNow, .duplicate, .zoomIn] {
             let entry = MainMenuBuilder.makeItem(for: command, target: nil)
-            expect(!router.validateMenuItem(entry), "코어 경로 없는 \(command.rawValue)가 활성")
+            expect(!router.validateMenuItem(entry), "실행할 수 없는 \(command.rawValue)가 활성")
         }
         let close = MainMenuBuilder.makeItem(for: .closeProject, target: nil)
         expect(router.validateMenuItem(close), "Close Project가 비활성")

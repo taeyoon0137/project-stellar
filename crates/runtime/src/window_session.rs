@@ -24,6 +24,15 @@
 //! 선택·탭·viewport를 공유하지 않습니다. session은 document thread(유일한 작성자, XII.1.1)의 session 표에서만
 //! 살아 있고 `Send`가 아닌 context 밖으로 나가지 않습니다.
 //!
+//! # Undo·Redo·Save Now (XII.6.4)
+//!
+//! [`ProjectWindowSession::undo`]·[`ProjectWindowSession::redo`]는 이 창 history만 재생하고 이 창 문서·선택만
+//! 바꿉니다(VII.5.2·VII.5.3). [`ProjectWindowSession::save_now`]는 작업 문서를 직렬화해(VI.10.2) loaded
+//! generation 위의 SavePlan(V.5.1)을 만들고, 작업 문서가 차지하지 않은 base chunk는 그대로 이어 씁니다. 쓰기 전에
+//! current pointer가 loaded generation과 같은지 확인하고(V.5.2) 다르면 [`WindowSessionSaveError::Stale`]로
+//! 아무것도 쓰지 않습니다(다른 창·프로세스가 먼저 저장함, 선택지는 XII.7). 바뀐 chunk가 없으면 새 generation을
+//! 만들지 않습니다(`written == false`). 성공하면 loaded generation을 새 generation으로 바꿉니다(V.5.4).
+//!
 //! # view state (XII.2.5)
 //!
 //! 작업 문서를 로드하면 문서의 첫 View(첫 페이지의 첫 View) 탭을 기본 viewport로 열어 active view로 둡니다. 탭
@@ -43,12 +52,19 @@ use stellar_core_types::revision::DocumentRevision;
 use stellar_history::entry::{HistoryError, HistorySequence};
 use stellar_history::window::WindowHistory;
 use stellar_project::document_io::load::{load_document_from_generation, LoadDocumentError};
+use stellar_project::document_io::serialize::{serialize_document, SerializeError};
 use stellar_project::identity::ProjectIdentity;
+use stellar_project::manifest::CURRENT_SCHEMA_VERSION;
 use stellar_storage::chunk::id::ChunkId;
+use stellar_storage::chunk::planner::LogicalChunkState;
 use stellar_storage::chunk::pointer::ChunkPointer;
 use stellar_storage::generation::current::CurrentPointerError;
 use stellar_storage::generation::lazy::{ChunkReadRecorder, LazyGeneration, LazyLoadError};
 use stellar_storage::generation::loader::{load_current_generation, LoadError, LoadedGeneration};
+use stellar_storage::save::cancel::{run_save, CancelToken, SaveRunError};
+use stellar_storage::save::commit::SavedGenerationState;
+use stellar_storage::save::optimistic::{check_base_generation, BaseCheckError};
+use stellar_storage::save::plan::{build_save_plan, SavePlanError};
 
 /// session 로드 실패.
 #[derive(Debug)]
@@ -78,6 +94,48 @@ impl fmt::Display for WindowSessionLoadError {
 }
 
 impl std::error::Error for WindowSessionLoadError {}
+
+/// Save Now 결과.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SaveOutcome {
+    /// 저장 뒤 loaded generation 번호(저장한 적 없고 쓸 것도 없으면 0).
+    pub generation: u64,
+    /// 새 generation을 썼는지. 바뀐 chunk가 없거나 작업 문서가 없으면 `false`.
+    pub written: bool,
+}
+
+/// Save Now 실패. loaded generation과 디스크는 저장 전 그대로입니다(commit 전 실패).
+#[derive(Debug)]
+pub enum WindowSessionSaveError {
+    /// current pointer가 loaded generation과 다릅니다(다른 저장이 먼저 끝남). 아무것도 쓰지 않았습니다.
+    Stale(BaseCheckError),
+    /// 작업 문서를 chunk로 직렬화하지 못했습니다.
+    Serialize(SerializeError),
+    /// SavePlan을 만들지 못했습니다.
+    Plan(SavePlanError),
+    /// 저장 실행(chunk·manifest 기록, current pointer 전환)에 실패했습니다.
+    Run(SaveRunError),
+    /// 저장은 끝났지만 새 current generation을 다시 읽지 못했습니다.
+    Reload(LoadError),
+}
+
+impl fmt::Display for WindowSessionSaveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WindowSessionSaveError::Stale(error) => {
+                write!(f, "다른 저장이 먼저 끝나 저장하지 않았습니다: {error}")
+            }
+            WindowSessionSaveError::Serialize(error) => write!(f, "문서 직렬화 실패: {error}"),
+            WindowSessionSaveError::Plan(error) => write!(f, "저장 계획 실패: {error}"),
+            WindowSessionSaveError::Run(error) => write!(f, "저장 실패: {error}"),
+            WindowSessionSaveError::Reload(error) => {
+                write!(f, "저장 뒤 generation을 다시 읽지 못했습니다: {error}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WindowSessionSaveError {}
 
 /// 작업 문서 하나: 이 창의 문서 state와 로드할 때 읽은 그 문서의 chunk.
 #[derive(Debug)]
@@ -306,6 +364,116 @@ impl ProjectWindowSession {
             .map_err(WindowSessionEditError::History)
     }
 
+    /// 이 창 history의 마지막 항목을 되돌립니다. 되돌릴 항목이 없거나 작업 문서가 없으면 `Ok(false)`.
+    pub fn undo(&mut self) -> Result<bool, WindowSessionEditError> {
+        let Some(document) = self.document.as_mut() else {
+            return Ok(false);
+        };
+        self.history
+            .undo(&mut document.state)
+            .map(|outcome| outcome.is_some())
+            .map_err(WindowSessionEditError::History)
+    }
+
+    /// 이 창에서 마지막으로 되돌린 항목을 다시 적용합니다. 다시 적용할 항목이 없으면 `Ok(false)`.
+    pub fn redo(&mut self) -> Result<bool, WindowSessionEditError> {
+        let Some(document) = self.document.as_mut() else {
+            return Ok(false);
+        };
+        self.history
+            .redo(&mut document.state)
+            .map(|outcome| outcome.is_some())
+            .map_err(WindowSessionEditError::History)
+    }
+
+    /// 작업 문서를 지금 저장합니다(모듈 문서 "Undo·Redo·Save Now").
+    pub fn save_now(&mut self) -> Result<SaveOutcome, WindowSessionSaveError> {
+        let Some(document) = self.document.as_ref() else {
+            return Ok(SaveOutcome {
+                generation: self.generation_number(),
+                written: false,
+            });
+        };
+        let serialized = serialize_document(document.state.model())
+            .map_err(WindowSessionSaveError::Serialize)?;
+        let document_id = serialized.document_id;
+        let new_chunks: BTreeSet<ChunkId> = serialized
+            .chunks()
+            .into_iter()
+            .map(|chunk| chunk.chunk_id)
+            .collect();
+        let mut states = serialized.to_dirty_states();
+        let base = self.loaded.as_ref();
+        let mut roots = base.map_or_else(Vec::new, |base| base.manifest.root_document_ids.clone());
+        if let Some(base) = base {
+            // 작업 문서가 차지하지 않은 base chunk(다른 문서·에셋 등)는 그대로 이어 씁니다. 작업 문서가 로드할 때
+            // 차지했지만 이번에 만들지 않은 chunk(지운 subtree 등)는 새 generation에서 빠집니다.
+            states.extend(
+                base.manifest
+                    .chunk_pointers
+                    .iter()
+                    .filter(|pointer| {
+                        !document.owned_chunks.contains(&pointer.chunk_id)
+                            && !new_chunks.contains(&pointer.chunk_id)
+                    })
+                    .map(|pointer| LogicalChunkState::Clean {
+                        chunk_id: pointer.chunk_id,
+                    }),
+            );
+        }
+        if !roots.contains(&document_id) {
+            roots.push(document_id);
+        }
+        let schema_version =
+            base.map_or(CURRENT_SCHEMA_VERSION, |base| base.manifest.schema_version);
+        let plan = build_save_plan(
+            base,
+            self.identity.project_id(),
+            schema_version,
+            &states,
+            roots,
+        )
+        .map_err(WindowSessionSaveError::Plan)?;
+        let root = self.identity.root_path();
+        // 쓰기 전 optimistic check(V.5.2): 다른 저장이 먼저 끝났으면 아무것도 쓰지 않습니다.
+        check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
+        if let Some(base) = base {
+            let unchanged = plan.dirty_chunks.is_empty()
+                && plan.manifest.chunk_pointers == base.manifest.chunk_pointers
+                && plan.manifest.root_document_ids == base.manifest.root_document_ids;
+            if unchanged {
+                return Ok(SaveOutcome {
+                    generation: base.manifest.generation,
+                    written: false,
+                });
+            }
+        }
+        let mut memory = SavedGenerationState::new(
+            base.map(|base| (base.manifest.generation, base.manifest_hash)),
+        );
+        run_save(root, &plan, &mut memory, &CancelToken::new())
+            .map_err(WindowSessionSaveError::Run)?;
+        // commit(V.5.4)이 성공하면 메모리 상태에 새 (generation, manifest hash)가 들어 있습니다. 없으면 디스크에서
+        // 다시 읽습니다.
+        let loaded = match memory.saved() {
+            Some((_, manifest_hash)) => LoadedGeneration {
+                manifest_hash,
+                manifest: plan.manifest,
+            },
+            None => load_current_generation(root, self.identity.project_id())
+                .map_err(WindowSessionSaveError::Reload)?,
+        };
+        let generation = loaded.manifest.generation;
+        self.loaded = Some(loaded);
+        if let Some(document) = self.document.as_mut() {
+            document.owned_chunks = new_chunks;
+        }
+        Ok(SaveOutcome {
+            generation,
+            written: true,
+        })
+    }
+
     /// 선택을 바꾸고 이 창 history에 기록합니다(같은 선택이면 기록하지 않음).
     pub fn select(
         &mut self,
@@ -445,21 +613,43 @@ pub(crate) mod test_fixtures {
 
     /// `stellar.yaml` + `.git` + [`sample_document`]를 저장한 generation 1을 가진 프로젝트.
     pub fn saved_project(tag: &str) -> TempDir {
+        saved_project_with(tag, &[&sample_document()])
+    }
+
+    /// `documents`를 root 문서 순서로 저장한 generation 1을 가진 프로젝트.
+    pub fn saved_project_with(tag: &str, documents: &[&DocumentModel]) -> TempDir {
         let dir = TempDir::new(tag);
         write_default_scaffold(dir.path(), "창 session", PROJECT_ID).unwrap();
         std::fs::create_dir(dir.path().join(".git")).unwrap();
-        let serialized = serialize_document(&sample_document()).unwrap();
-        let plan = build_save_plan(
-            None,
-            project_id(),
-            1,
-            &serialized.to_dirty_states(),
-            vec![serialized.document_id],
-        )
-        .unwrap();
+        let serialized: Vec<_> = documents
+            .iter()
+            .map(|model| serialize_document(model).unwrap())
+            .collect();
+        let states: Vec<_> = serialized
+            .iter()
+            .flat_map(|document| document.to_dirty_states())
+            .collect();
+        let roots = serialized
+            .iter()
+            .map(|document| document.document_id)
+            .collect();
+        let plan = build_save_plan(None, project_id(), 1, &states, roots).unwrap();
         let mut memory = SavedGenerationState::new(None);
         run_save(dir.path(), &plan, &mut memory, &CancelToken::new()).unwrap();
         dir
+    }
+
+    /// 둘째 문서(500): View 501(root 510) 하나, root 아래 511.
+    pub fn other_document() -> DocumentModel {
+        let mut definition = DocumentDefinition::new(sid(500), "다른 문서".to_string());
+        let mut page = PageDefinition::new(sid(502), String::new());
+        page.add_view(ViewDefinition::new(sid(501), String::new(), sid(510)))
+            .unwrap();
+        definition.add_page(page).unwrap();
+        let mut model = DocumentModel::new(definition);
+        model.insert_node(frame(510, None, 0x10)).unwrap();
+        model.insert_node(frame(511, Some(510), 0x10)).unwrap();
+        model
     }
 
     /// 저장한 generation 없이 scaffold만 있는 프로젝트.
@@ -654,6 +844,184 @@ mod tests {
         );
     }
 
+    fn name_of(session: &ProjectWindowSession, node: u64) -> String {
+        session
+            .document()
+            .unwrap()
+            .model()
+            .record(sid(node))
+            .unwrap()
+            .display_name
+    }
+
+    #[test]
+    fn undo_and_redo_replay_only_their_own_window_history() {
+        // 검증 기준(XII.6.4): 창별 history.
+        let project = saved_project("undo-redo");
+        let mut a = ProjectWindowSession::load(identity(project.path()), window(21)).unwrap();
+        let mut b = ProjectWindowSession::load(identity(project.path()), window(22)).unwrap();
+        a.apply(&rename(a.document().unwrap(), 300, 11, "A1"))
+            .unwrap();
+        a.apply(&rename(a.document().unwrap(), 301, 11, "A2"))
+            .unwrap();
+        b.apply(&rename(b.document().unwrap(), 400, 12, "B1"))
+            .unwrap();
+        b.select(Selection::new([sid(12)], None)).unwrap();
+
+        // A undo: A의 마지막 편집만 되돌리고 B는 그대로.
+        assert_eq!(a.undo(), Ok(true));
+        assert_eq!(name_of(&a, 11), "A1");
+        assert_eq!(name_of(&b, 12), "B1");
+        assert_eq!(b.view().selection().ids(), &[sid(12)]);
+        // B undo: B의 마지막 항목(선택)을 되돌립니다. 문서 이름은 그대로.
+        assert_eq!(b.undo(), Ok(true));
+        assert!(b.view().selection().is_empty());
+        assert_eq!(name_of(&b, 12), "B1");
+        assert_eq!(b.undo(), Ok(true));
+        assert_eq!(name_of(&b, 12), "n12");
+        assert_eq!(b.undo(), Ok(false), "B에는 더 되돌릴 것이 없음");
+        assert_eq!(name_of(&a, 11), "A1", "B undo가 A 문서를 바꾸지 않음");
+
+        // redo도 창별입니다.
+        assert_eq!(a.redo(), Ok(true));
+        assert_eq!(name_of(&a, 11), "A2");
+        assert_eq!(a.redo(), Ok(false));
+        assert_eq!(b.redo(), Ok(true));
+        assert_eq!(name_of(&b, 12), "B1");
+        assert_eq!(a.history().history().len(), 2);
+        assert_eq!(b.history().history().redo_entries().len(), 1);
+    }
+
+    #[test]
+    fn save_now_writes_this_windows_document_as_a_new_generation() {
+        // 검증 기준(XII.6.4): 창별 save 호출.
+        let project = saved_project("save-now");
+        let mut a = ProjectWindowSession::load(identity(project.path()), window(31)).unwrap();
+        let mut b = ProjectWindowSession::load(identity(project.path()), window(32)).unwrap();
+
+        // 바뀐 것이 없으면 새 generation을 쓰지 않습니다.
+        let current = std::fs::read(project.path().join("design").join("current")).unwrap();
+        assert_eq!(
+            a.save_now().unwrap(),
+            SaveOutcome {
+                generation: 1,
+                written: false
+            }
+        );
+        assert_eq!(
+            std::fs::read(project.path().join("design").join("current")).unwrap(),
+            current
+        );
+
+        a.apply(&rename(a.document().unwrap(), 500, 11, "저장된 이름"))
+            .unwrap();
+        b.apply(&rename(b.document().unwrap(), 600, 12, "B 편집"))
+            .unwrap();
+        assert_eq!(
+            a.save_now().unwrap(),
+            SaveOutcome {
+                generation: 2,
+                written: true
+            }
+        );
+        assert_eq!(a.generation_number(), 2);
+        assert_eq!(b.generation_number(), 1, "B의 loaded generation은 그대로");
+
+        // 디스크에서 새로 연 창은 A의 편집을 보고 B의 저장 안 한 편집은 보지 않습니다.
+        let reopened = ProjectWindowSession::load(identity(project.path()), window(33)).unwrap();
+        assert_eq!(reopened.generation_number(), 2);
+        assert_eq!(name_of(&reopened, 11), "저장된 이름");
+        assert_eq!(name_of(&reopened, 12), "n12");
+
+        // B는 오래된 base(1) 위에서 저장하려 하므로 아무것도 쓰지 않고 Stale입니다.
+        let current = std::fs::read(project.path().join("design").join("current")).unwrap();
+        assert!(matches!(
+            b.save_now(),
+            Err(WindowSessionSaveError::Stale(_))
+        ));
+        assert_eq!(
+            std::fs::read(project.path().join("design").join("current")).unwrap(),
+            current,
+            "Stale 저장은 current pointer를 바꾸지 않음"
+        );
+        assert_eq!(b.generation_number(), 1);
+
+        // A: 다시 저장할 것이 없으면 그대로, undo 후 저장하면 generation 3.
+        assert!(!a.save_now().unwrap().written);
+        assert_eq!(a.undo(), Ok(true));
+        assert_eq!(
+            a.save_now().unwrap(),
+            SaveOutcome {
+                generation: 3,
+                written: true
+            }
+        );
+        let reopened = ProjectWindowSession::load(identity(project.path()), window(34)).unwrap();
+        assert_eq!(name_of(&reopened, 11), "n11");
+        assert_eq!(
+            a.history().history().redo_entries().len(),
+            1,
+            "저장은 history를 바꾸지 않음"
+        );
+    }
+
+    #[test]
+    fn save_now_keeps_other_documents_of_the_generation() {
+        let project =
+            saved_project_with("save-other-docs", &[&sample_document(), &other_document()]);
+        let mut session = ProjectWindowSession::load(identity(project.path()), window(41)).unwrap();
+        assert_eq!(session.document_id(), Some(sid(1)), "첫 root 문서");
+        let base_pointers = session
+            .loaded_generation()
+            .unwrap()
+            .manifest
+            .chunk_pointers
+            .clone();
+        let other_chunks: Vec<_> = base_pointers
+            .iter()
+            .filter(|pointer| {
+                !session
+                    .document_chunks()
+                    .unwrap()
+                    .contains(&pointer.chunk_id)
+            })
+            .copied()
+            .collect();
+        assert_eq!(
+            other_chunks.len(),
+            3,
+            "다른 문서 chunk(manifest·ViewTree·subtree)"
+        );
+
+        session
+            .apply(&rename(
+                session.document().unwrap(),
+                700,
+                12,
+                "첫 문서 편집",
+            ))
+            .unwrap();
+        assert!(session.save_now().unwrap().written);
+        let saved = session.loaded_generation().unwrap();
+        assert_eq!(saved.manifest.root_document_ids, vec![sid(1), sid(500)]);
+        for pointer in &other_chunks {
+            assert!(
+                saved.manifest.chunk_pointers.contains(pointer),
+                "다른 문서 chunk를 그대로 이어 씀"
+            );
+        }
+        // 둘째 문서는 저장 뒤에도 디스크에서 그대로 로드됩니다.
+        let project_id = project_id();
+        let lazy = LazyGeneration::open(project.path(), project_id, &mut ChunkCollector::default())
+            .unwrap();
+        let other =
+            load_document_from_generation(&lazy, sid(500), &mut ChunkCollector::default()).unwrap();
+        assert_eq!(
+            model_snapshot_json(&other.model).unwrap(),
+            model_snapshot_json(&other_document()).unwrap()
+        );
+    }
+
     #[test]
     fn unsaved_project_opens_without_document_or_generation() {
         let project = unsaved_project("unsaved");
@@ -674,6 +1042,16 @@ mod tests {
             session.set_viewport(CanvasViewport::DEFAULT),
             Err(WindowSessionEditError::View(ViewTabsError::NoActiveTab))
         );
+        assert_eq!(session.undo(), Ok(false));
+        assert_eq!(session.redo(), Ok(false));
+        assert_eq!(
+            session.save_now().unwrap(),
+            SaveOutcome {
+                generation: 0,
+                written: false
+            }
+        );
+        assert!(!project.path().join("design").join("current").exists());
     }
 
     #[test]

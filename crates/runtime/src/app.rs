@@ -54,6 +54,14 @@
 //! 바꾸고 문서 revision·history·저장 bytes에 영향이 없으며, 성공하면 [`RuntimeEvent::WindowViewChanged`]가
 //! 옵니다.
 //!
+//! # Undo·Redo·Save Now (XII.6.4)
+//!
+//! 셸은 활성 창의 창 session handle에 [`AppCommand`](crate::app_command::AppCommand)를 보냅니다
+//! ([`AppRuntime::perform`]). Undo·Redo는 그 창 history만 재생하고 [`RuntimeEvent::HistoryReplayed`]
+//! (되돌릴 항목이 없으면 `applied == false`)를, Save Now는 그 창 작업 문서를 저장하고
+//! [`RuntimeEvent::WindowSessionSaved`](바뀐 것이 없으면 `written == false`)를 보냅니다. 다른 저장이 먼저
+//! 끝났으면 쓰지 않고 [`RequestFailure::SaveStale`]입니다.
+//!
 //! # outbox 상한
 //!
 //! 완료 event를 꺼내지 않은 요청 수(실행 중 포함)가 상한([`AppRuntime::DEFAULT_EVENT_CAPACITY`])에
@@ -83,6 +91,8 @@
 //! | `0x0106` | WindowSessionOpened | request u64, project u64, session u64, window_id \[16\], document_id \[16\], generation u64 |
 //! | `0x0107` | WindowSessionClosed | request u64, session u64 |
 //! | `0x0108` | WindowViewChanged | request u64, session u64 |
+//! | `0x0109` | HistoryReplayed | request u64, session u64, redo u8, applied u8, revision u64 |
+//! | `0x010A` | WindowSessionSaved | request u64, session u64, generation u64, written u8 |
 //!
 //! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다.
 
@@ -102,12 +112,13 @@ use stellar_project::probe::{safe_probe, ProbeError, SafeProbeError};
 use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 
+use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
 use crate::document_thread::{
     DocumentContext, DocumentLoopStats, DocumentSender, DocumentThread, DocumentThreadError,
     SubmitError,
 };
-use crate::window_session::{ProjectWindowSession, WindowSessionEditError};
+use crate::window_session::{ProjectWindowSession, WindowSessionEditError, WindowSessionSaveError};
 
 /// event payload 스키마 버전.
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
@@ -133,6 +144,10 @@ pub mod event_kind {
     pub const WINDOW_SESSION_CLOSED: u32 = 0x0107;
     /// 창 view state(탭·active view·viewport)를 바꿨습니다.
     pub const WINDOW_VIEW_CHANGED: u32 = 0x0108;
+    /// 창 history를 undo·redo로 재생했습니다.
+    pub const HISTORY_REPLAYED: u32 = 0x0109;
+    /// 창 작업 문서를 저장했습니다(Save Now).
+    pub const WINDOW_SESSION_SAVED: u32 = 0x010A;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,11 +220,17 @@ pub enum RequestFailure {
     UnknownView,
     /// active 탭이 없어 viewport를 바꿀 수 없음.
     NoActiveView,
+    /// 다른 저장이 먼저 끝나 current generation이 창의 loaded generation과 다름(아무것도 쓰지 않음).
+    SaveStale,
+    /// 저장 실패(직렬화·계획·기록·pointer 전환).
+    SaveFailed,
+    /// history를 재생할 수 없음(preview 진행 중 등).
+    HistoryUnavailable,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 15] = [
+    pub const ALL: [RequestFailure; 18] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -225,6 +246,9 @@ impl RequestFailure {
         RequestFailure::WindowSessionLoadFailed,
         RequestFailure::UnknownView,
         RequestFailure::NoActiveView,
+        RequestFailure::SaveStale,
+        RequestFailure::SaveFailed,
+        RequestFailure::HistoryUnavailable,
     ];
 
     /// C ABI 코드 값.
@@ -245,6 +269,9 @@ impl RequestFailure {
             RequestFailure::WindowSessionLoadFailed => 18,
             RequestFailure::UnknownView => 19,
             RequestFailure::NoActiveView => 20,
+            RequestFailure::SaveStale => 21,
+            RequestFailure::SaveFailed => 22,
+            RequestFailure::HistoryUnavailable => 23,
         }
     }
 
@@ -329,6 +356,30 @@ pub enum RuntimeEvent {
         request: RequestId,
         /// 창 session handle.
         session: WindowSessionHandle,
+    },
+    /// 창 history를 undo(`redo == false`)·redo로 재생했습니다.
+    HistoryReplayed {
+        /// 요청 id.
+        request: RequestId,
+        /// 창 session handle.
+        session: WindowSessionHandle,
+        /// redo였는지.
+        redo: bool,
+        /// 재생한 항목이 있었는지(없으면 아무것도 바뀌지 않음).
+        applied: bool,
+        /// 재생 뒤 작업 문서 revision.
+        revision: DocumentRevision,
+    },
+    /// 창 작업 문서를 저장했습니다(Save Now).
+    WindowSessionSaved {
+        /// 요청 id.
+        request: RequestId,
+        /// 창 session handle.
+        session: WindowSessionHandle,
+        /// 저장 뒤 loaded generation 번호.
+        generation: u64,
+        /// 새 generation을 썼는지(바뀐 것이 없으면 `false`).
+        written: bool,
     },
     /// 요청이 실패했습니다. 상태는 바뀌지 않았습니다.
     RequestFailed {
@@ -496,6 +547,8 @@ impl RuntimeEvent {
             RuntimeEvent::WindowSessionOpened { .. } => event_kind::WINDOW_SESSION_OPENED,
             RuntimeEvent::WindowSessionClosed { .. } => event_kind::WINDOW_SESSION_CLOSED,
             RuntimeEvent::WindowViewChanged { .. } => event_kind::WINDOW_VIEW_CHANGED,
+            RuntimeEvent::HistoryReplayed { .. } => event_kind::HISTORY_REPLAYED,
+            RuntimeEvent::WindowSessionSaved { .. } => event_kind::WINDOW_SESSION_SAVED,
         }
     }
 
@@ -509,6 +562,8 @@ impl RuntimeEvent {
             | RuntimeEvent::WindowSessionOpened { request, .. }
             | RuntimeEvent::WindowSessionClosed { request, .. }
             | RuntimeEvent::WindowViewChanged { request, .. }
+            | RuntimeEvent::HistoryReplayed { request, .. }
+            | RuntimeEvent::WindowSessionSaved { request, .. }
             | RuntimeEvent::RequestFailed { request, .. } => *request,
         }
     }
@@ -576,6 +631,30 @@ impl RuntimeEvent {
                 w.u64(request.0);
                 w.u64(session.0);
             }
+            RuntimeEvent::HistoryReplayed {
+                request,
+                session,
+                redo,
+                applied,
+                revision,
+            } => {
+                w.u64(request.0);
+                w.u64(session.0);
+                w.u8(u8::from(*redo));
+                w.u8(u8::from(*applied));
+                w.u64(revision.0);
+            }
+            RuntimeEvent::WindowSessionSaved {
+                request,
+                session,
+                generation,
+                written,
+            } => {
+                w.u64(request.0);
+                w.u64(session.0);
+                w.u64(*generation);
+                w.u8(u8::from(*written));
+            }
             RuntimeEvent::RequestFailed {
                 request,
                 failure,
@@ -635,6 +714,19 @@ impl RuntimeEvent {
             event_kind::WINDOW_VIEW_CHANGED => RuntimeEvent::WindowViewChanged {
                 request: RequestId(r.u64()?),
                 session: WindowSessionHandle(r.u64()?),
+            },
+            event_kind::HISTORY_REPLAYED => RuntimeEvent::HistoryReplayed {
+                request: RequestId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+                redo: r.bool()?,
+                applied: r.bool()?,
+                revision: DocumentRevision(r.u64()?),
+            },
+            event_kind::WINDOW_SESSION_SAVED => RuntimeEvent::WindowSessionSaved {
+                request: RequestId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+                generation: r.u64()?,
+                written: r.bool()?,
             },
             event_kind::REQUEST_FAILED => {
                 let request = RequestId(r.u64()?);
@@ -848,7 +940,7 @@ impl AppSessions {
 }
 
 /// 실패 event 재료.
-struct Failure {
+pub(crate) struct Failure {
     failure: RequestFailure,
     message: String,
 }
@@ -1133,7 +1225,7 @@ fn window_summary(handle: WindowSessionHandle, entry: &WindowEntry) -> WindowSes
 }
 
 /// 창 session 하나를 찾습니다.
-fn window_mut(
+pub(crate) fn window_mut(
     ctx: &mut DocumentContext,
     session: WindowSessionHandle,
 ) -> Result<&mut ProjectWindowSession, Failure> {
@@ -1144,17 +1236,59 @@ fn window_mut(
         .ok_or_else(|| unknown_window(session))
 }
 
-/// 탭·viewport 조작 실패를 고정 코드로 바꿉니다.
+/// 탭·viewport·선택 조작 실패를 고정 코드로 바꿉니다.
 fn view_failure(error: WindowSessionEditError) -> Failure {
     let failure = match &error {
         WindowSessionEditError::View(ViewTabsError::NoActiveTab) => RequestFailure::NoActiveView,
+        WindowSessionEditError::History(_) => RequestFailure::HistoryUnavailable,
         _ => RequestFailure::UnknownView,
     };
     Failure::new(failure, error.to_string())
 }
 
-/// document thread에서 창 view state를 바꿉니다(XII.2.5).
-fn change_view_on_thread(
+/// document thread에서 창 session 명령을 실행합니다(XII.6.4).
+fn perform_on_thread(
+    ctx: &mut DocumentContext,
+    request: RequestId,
+    session: WindowSessionHandle,
+    command: AppCommand,
+) -> Result<RuntimeEvent, Failure> {
+    let window = window_mut(ctx, session)?;
+    match command {
+        AppCommand::Undo | AppCommand::Redo => {
+            let redo = command == AppCommand::Redo;
+            let replayed = if redo { window.redo() } else { window.undo() };
+            let applied = replayed.map_err(|error| {
+                Failure::new(RequestFailure::HistoryUnavailable, error.to_string())
+            })?;
+            Ok(RuntimeEvent::HistoryReplayed {
+                request,
+                session,
+                redo,
+                applied,
+                revision: window.revision(),
+            })
+        }
+        AppCommand::SaveNow => {
+            let outcome = window.save_now().map_err(|error| {
+                let failure = match error {
+                    WindowSessionSaveError::Stale(_) => RequestFailure::SaveStale,
+                    _ => RequestFailure::SaveFailed,
+                };
+                Failure::new(failure, error.to_string())
+            })?;
+            Ok(RuntimeEvent::WindowSessionSaved {
+                request,
+                session,
+                generation: outcome.generation,
+                written: outcome.written,
+            })
+        }
+    }
+}
+
+/// document thread에서 창 view state(탭·viewport XII.2.5, 선택)를 바꿉니다.
+pub(crate) fn change_view_on_thread(
     ctx: &mut DocumentContext,
     request: RequestId,
     session: WindowSessionHandle,
@@ -1350,7 +1484,7 @@ impl AppRuntime {
 
     /// 요청 하나를 접수합니다. job은 document thread에서 상태를 바꾸고, 바뀌었으면 snapshot을
     /// 게시한 뒤 완료 event를 outbox에 넣습니다.
-    fn submit<F>(&self, run: F) -> Result<RequestId, RequestError>
+    pub(crate) fn submit<F>(&self, run: F) -> Result<RequestId, RequestError>
     where
         F: FnOnce(&mut DocumentContext, RequestId) -> Result<RuntimeEvent, Failure>
             + Send
@@ -1475,6 +1609,22 @@ impl AppRuntime {
         })
     }
 
+    /// 창 session의 선택을 바꾸고 그 창 history에 기록합니다(VII.4.6, 같은 선택이면 기록 없음). 문서에 없거나
+    /// 숨김 정책상 선택할 수 없는 id는 거릅니다. 성공하면 [`RuntimeEvent::WindowViewChanged`]가 옵니다.
+    pub fn set_selection(
+        &self,
+        session: WindowSessionHandle,
+        ids: Vec<StableId>,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| {
+                window
+                    .select(stellar_commands::selection::Selection::new(ids, None))
+                    .map(|_| ())
+            })
+        })
+    }
+
     /// 창 session의 active 탭 viewport를 바꿉니다. 문서·history·저장에는 영향이 없습니다.
     pub fn set_viewport(
         &self,
@@ -1486,6 +1636,30 @@ impl AppRuntime {
                 window.set_viewport(viewport).map(|_| ())
             })
         })
+    }
+
+    /// 창 session에 명령을 보냅니다(XII.6.4). 결과는 명령별 완료 event 하나입니다(모듈 문서).
+    pub fn perform(
+        &self,
+        session: WindowSessionHandle,
+        command: AppCommand,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| perform_on_thread(ctx, request, session, command))
+    }
+
+    /// 창 session에서 undo합니다([`AppCommand::Undo`]).
+    pub fn undo(&self, session: WindowSessionHandle) -> Result<RequestId, RequestError> {
+        self.perform(session, AppCommand::Undo)
+    }
+
+    /// 창 session에서 redo합니다([`AppCommand::Redo`]).
+    pub fn redo(&self, session: WindowSessionHandle) -> Result<RequestId, RequestError> {
+        self.perform(session, AppCommand::Redo)
+    }
+
+    /// 창 session의 작업 문서를 지금 저장합니다([`AppCommand::SaveNow`]).
+    pub fn save_now(&self, session: WindowSessionHandle) -> Result<RequestId, RequestError> {
+        self.perform(session, AppCommand::SaveNow)
     }
 
     /// 최신 상태 snapshot. document thread를 기다리지 않습니다.
@@ -1598,6 +1772,19 @@ mod tests {
             RuntimeEvent::WindowViewChanged {
                 request: RequestId(16),
                 session: WindowSessionHandle(11),
+            },
+            RuntimeEvent::HistoryReplayed {
+                request: RequestId(17),
+                session: WindowSessionHandle(11),
+                redo: true,
+                applied: false,
+                revision: DocumentRevision(18),
+            },
+            RuntimeEvent::WindowSessionSaved {
+                request: RequestId(19),
+                session: WindowSessionHandle(11),
+                generation: 20,
+                written: true,
             },
         ]
     }
@@ -1742,7 +1929,7 @@ mod tests {
         let codes: Vec<u32> = RequestFailure::ALL.iter().map(|f| f.code()).collect();
         assert_eq!(
             codes,
-            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20]
+            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23]
         );
         let unique: BTreeSet<u32> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len());

@@ -387,7 +387,13 @@ final class ShellAppCoordinator: NSObject {
         projectWindow.toolsModel.commandHandler = { [weak projectWindow] command in
             if command == .closeProject {
                 projectWindow?.window?.performClose(nil)
+            } else {
+                // Undo·Redo·Save Now는 이 창(key 창)의 창 session으로 갑니다(XII.6.4).
+                projectWindow?.performSessionCommand(command)
             }
+        }
+        projectWindow.alertPresenter = { [weak self] title, message, window in
+            self?.alertPresenter(title, message, window)
         }
         let controller = projectWindow.windowController
         controller.shouldCloseHandler = { [weak self, weak projectWindow] in

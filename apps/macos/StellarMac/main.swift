@@ -61,6 +61,12 @@ if CommandLine.arguments.contains("--window-session-check") {
     exit(ShellWindowSessionCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
 }
 
+// 창 session 명령 검사 모드: 메뉴 Undo·Redo·Save Now가 그 창의 코어 창 session에만 가는지 저장 프로젝트 fixture(다음
+// 인자)로 검사하고 종료합니다(XII.6.4).
+if CommandLine.arguments.contains("--session-commands-check") {
+    exit(ShellSessionCommandsCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
+}
+
 // smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다(II.5.2).
 if CommandLine.arguments.contains("--smoke") {
     let host = RuntimeHost()

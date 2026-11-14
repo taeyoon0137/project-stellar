@@ -1322,6 +1322,14 @@ mod tests {
                 "STELLAR_EVENT_WINDOW_VIEW_CHANGED",
                 event_kind::WINDOW_VIEW_CHANGED,
             ),
+            (
+                "STELLAR_EVENT_HISTORY_REPLAYED",
+                event_kind::HISTORY_REPLAYED,
+            ),
+            (
+                "STELLAR_EVENT_WINDOW_SESSION_SAVED",
+                event_kind::WINDOW_SESSION_SAVED,
+            ),
         ] {
             define(name, format!("{kind:#06x}"));
         }
@@ -1354,6 +1362,9 @@ mod tests {
             ),
             ("UNKNOWN_VIEW", RequestFailure::UnknownView),
             ("NO_ACTIVE_VIEW", RequestFailure::NoActiveView),
+            ("SAVE_STALE", RequestFailure::SaveStale),
+            ("SAVE_FAILED", RequestFailure::SaveFailed),
+            ("HISTORY_UNAVAILABLE", RequestFailure::HistoryUnavailable),
         ];
         assert_eq!(
             failures.len(),
@@ -1390,10 +1401,31 @@ mod tests {
             "sizeof(StellarWindowSessionInfo) == {}",
             std::mem::size_of::<window_session::StellarWindowSessionInfo>()
         )));
+        let commands = [
+            ("UNDO", stellar_runtime::app_command::AppCommand::Undo),
+            ("REDO", stellar_runtime::app_command::AppCommand::Redo),
+            (
+                "SAVE_NOW",
+                stellar_runtime::app_command::AppCommand::SaveNow,
+            ),
+        ];
+        assert_eq!(
+            commands.len(),
+            stellar_runtime::app_command::AppCommand::ALL.len(),
+            "모든 명령 코드 노출"
+        );
+        for (name, command) in commands {
+            define(
+                &format!("STELLAR_COMMAND_{name}"),
+                command.code().to_string(),
+            );
+        }
         for function in [
             "stellar_window_session_open",
             "stellar_window_session_close",
             "stellar_window_session_info",
+            "stellar_window_session_perform",
+            "stellar_window_session_select",
         ] {
             assert!(
                 header.contains(&format!("StellarStatus {function}(")),
