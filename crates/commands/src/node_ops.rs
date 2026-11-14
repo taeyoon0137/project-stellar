@@ -415,6 +415,17 @@ impl MoveNode {
         if parent_of(model, self.node) == Some(None) {
             return Err(CommandError::ViewRoot { node: self.node });
         }
+        if model.columns().parent(node_handle) == Some(parent_handle) {
+            if crate::tree::order_key_of(model, self.node).as_ref() != Some(&self.order_key)
+                && model.has_child_order_key(self.new_parent, &self.order_key)
+            {
+                return Err(CommandError::DuplicateOrderKey {
+                    parent: self.new_parent,
+                    node: self.node,
+                });
+            }
+            return Ok(());
+        }
         validate_reparent(model.columns(), node_handle, parent_handle).map_err(|error| {
             CommandError::Reparent {
                 node: self.node,
@@ -470,14 +481,23 @@ impl MoveNode {
     }
 
     pub(crate) fn apply(&self, ctx: &mut EditContext<'_>) -> Result<(), CommandError> {
+        if parent_of(ctx.model(), self.node) == Some(Some(self.new_parent)) {
+            if crate::tree::order_key_of(ctx.model(), self.node).as_ref() != Some(&self.order_key) {
+                ctx.replace_child_order(self.node, self.order_key.clone())?;
+                ctx.changes().node_property(
+                    self.node,
+                    node_keys::ORDER_KEY,
+                    STRUCTURE_INVALIDATION,
+                );
+                ctx.changes().structure(self.new_parent);
+            }
+            return Ok(());
+        }
         let mut record = ctx
             .model()
             .record(self.node)
             .ok_or(CommandError::UnknownNode { id: self.node })?;
         let old_parent = record.parent;
-        if old_parent == Some(self.new_parent) && record.order_key == self.order_key {
-            return Ok(());
-        }
         record.parent = Some(self.new_parent);
         record.order_key = self.order_key.clone();
         ctx.replace_record(record)?;
@@ -1240,6 +1260,43 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "1천·1만·5만 형제에서 같은 부모 MoveNode 왕복 측정"]
+    fn measure_layer_reorder() {
+        for count in [1_000, 10_000, 50_000] {
+            let mut model = DocumentModel::new(crate::command::test_fixtures::definition());
+            model.insert_node(frame(10, None, 1)).unwrap();
+            for (i, key) in OrderKey::evenly_spaced(count).into_iter().enumerate() {
+                let mut record = frame(100 + i as u64, Some(10), 1);
+                record.order_key = key;
+                model.insert_node(record).unwrap();
+            }
+            let mut state = DocumentState::new(model);
+            let id = sid(100 + (count / 2) as u64);
+            let mut timings = Vec::new();
+            for _ in 0..15 {
+                let key = state.model().next_child_order_key(sid(10));
+                let start = std::time::Instant::now();
+                let undo = run(
+                    &mut state,
+                    Command::MoveNode(MoveNode {
+                        node: id,
+                        new_parent: sid(10),
+                        order_key: key,
+                    }),
+                )
+                .unwrap();
+                run(&mut state, undo).unwrap();
+                timings.push(start.elapsed().as_micros());
+            }
+            timings.sort_unstable();
+            println!(
+                "siblings={count} MoveNode+inverse p50_us={} p95_us={}",
+                timings[7], timings[14]
+            );
+        }
+    }
+
+    #[test]
     fn move_and_reorder_round_trip() {
         // 검증 기준(VII.2.3): move→undo, reorder fixture 통과.
         let mut state = DocumentState::new(small_model());
@@ -1271,7 +1328,13 @@ mod tests {
         assert_eq!(snapshot(&state), before);
 
         // 재정렬: 같은 부모 안에서 12를 11 앞으로.
+        let handles =
+            [sid(10), sid(11), sid(12), sid(13), sid(14)].map(|id| state.model().runtime_id(id));
         let inverse = run(&mut state, move_to(12, 10, 0x08)).unwrap();
+        assert_eq!(
+            handles,
+            [sid(10), sid(11), sid(12), sid(13), sid(14)].map(|id| state.model().runtime_id(id))
+        );
         assert_eq!(
             state.model().children_in_order(sid(10)),
             vec![sid(12), sid(11)]

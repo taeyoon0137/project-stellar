@@ -26,6 +26,19 @@ use crate::records::{DocumentRecords, NodePayload, NodeRecord};
 use crate::reference_index::ReferenceIndex;
 use crate::validate::{validate_document, DocumentDiagnostics, DocumentValidationError};
 
+/// 단일 레이어의 같은 부모 안에서의 이동 방향. 큰 OrderKey가 앞에 그려집니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SiblingOrder {
+    /// 바로 앞 형제와 순서를 바꿉니다.
+    Forward,
+    /// 바로 뒤 형제와 순서를 바꿉니다.
+    Backward,
+    /// 가장 앞에 놓습니다.
+    Front,
+    /// 가장 뒤에 놓습니다.
+    Back,
+}
+
 /// 런타임 모델 조작 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelError {
@@ -288,6 +301,80 @@ impl DocumentModel {
                 .map(|(_, child)| *child)
                 .collect(),
         )
+    }
+
+    /// 뒤와 앞 끝에 있는 형제의 ID를 반환합니다.
+    pub fn child_order_ends(&self, parent: StableId) -> Option<(StableId, StableId)> {
+        let children = self.children.get(&parent)?;
+        Some((children.first()?.1, children.last()?.1))
+    }
+
+    /// 최대 두 이웃만 조회하여 목표 순서의 새 키를 만듭니다. 경계에 있으면 변경할 수 없습니다.
+    pub fn reordered_child_key(
+        &self,
+        parent: StableId,
+        node: StableId,
+        direction: SiblingOrder,
+    ) -> Option<OrderKey> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        let children = self.children.get(&parent)?;
+        let fields = self.columns.get(self.runtime_id(node)?)?;
+        if self.stable_id(fields.parent?)? != parent {
+            return None;
+        }
+        let current = (fields.order_key, node);
+        let (left, right) = match direction {
+            SiblingOrder::Forward => {
+                let mut above = children.range((Excluded(current), Unbounded));
+                (Some(above.next()?), above.next())
+            }
+            SiblingOrder::Backward => {
+                let mut below = children.range((Unbounded, Excluded(current))).rev();
+                let right = below.next()?;
+                (below.next(), Some(right))
+            }
+            SiblingOrder::Front => (Some(children.last().filter(|last| last.1 != node)?), None),
+            SiblingOrder::Back => (
+                None,
+                Some(children.first().filter(|first| first.1 != node)?),
+            ),
+        };
+        let left = left.map(|pair| &pair.0);
+        let right = right.map(|pair| &pair.0);
+        if matches!((left,right), (Some(l),Some(r)) if l >= r) {
+            return None;
+        }
+        Some(OrderKey::between(left, right))
+    }
+
+    /// 같은 부모 안에서 순서 열과 형제 인덱스만 바꾸고 이전 키를 반환합니다.
+    pub fn replace_child_order(
+        &mut self,
+        node: StableId,
+        order: OrderKey,
+    ) -> Result<OrderKey, ModelError> {
+        let unknown = || ModelError::UnknownNode { id: node };
+        let handle = self.runtime_id(node).ok_or_else(unknown)?;
+        let fields = self.columns.get(handle).ok_or_else(unknown)?;
+        let parent =
+            fields
+                .parent
+                .and_then(|h| self.stable_id(h))
+                .ok_or(ModelError::Inconsistent {
+                    id: node,
+                    reason: "형제 순서에는 부모가 필요함",
+                })?;
+        let children = self.children.get_mut(&parent).ok_or_else(unknown)?;
+        let old = (fields.order_key, node);
+        if !children.remove(&old) {
+            return Err(ModelError::Inconsistent {
+                id: node,
+                reason: "부모의 형제 인덱스에 없음",
+            });
+        }
+        children.insert((order.clone(), node));
+        self.columns.set_order_key(handle, order);
+        Ok(old.0)
     }
 
     /// 마지막 직계 자식 뒤에 삽입할 순서 키. 전체 형제 목록을 복사하지 않습니다.

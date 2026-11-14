@@ -96,6 +96,10 @@ final class ShellWindowSessionHandle {
         switch command {
         case .delete: action = UInt32(STELLAR_SELECTION_DELETE)
         case .duplicate: action = UInt32(STELLAR_SELECTION_DUPLICATE)
+        case .bringForward: action = UInt32(STELLAR_SELECTION_FORWARD)
+        case .sendBackward: action = UInt32(STELLAR_SELECTION_BACKWARD)
+        case .bringToFront: action = UInt32(STELLAR_SELECTION_FRONT)
+        case .sendToBack: action = UInt32(STELLAR_SELECTION_BACK)
         default: return false
         }
         return track({ pump.editSelection(target: target, action: action, ids: ids, completion: $0) }, completion: completion)
@@ -462,6 +466,7 @@ final class ShellProjectWindow {
     var recoveryPrompt: NSAlert?
     let sidebarSource = ShellSidebarSource()
     private var displayedSelection: StellarSelectionTarget?
+    private var displayedOrderFlags: UInt32 = 0
     let inspectorSource = ShellFrameInspectorSource()
     /// 창 도구 모델 → 하단 도구 막대(셸 프레임 snapshot 도구 목록) 구독.
     private var toolsObservation: ToolsMenuObservation?
@@ -663,6 +668,9 @@ final class ShellProjectWindow {
         let view = session?.viewInfo
         let info = session?.info
         displayedSelection = session?.selectionTarget
+        if gitSource.trusted, var target = displayedSelection, target.selection_count == 1, let handle = dataSource.session?.pump.runtimeHandle {
+            displayedOrderFlags = stellar_window_layer_order_flags(handle, &target)
+        } else { displayedOrderFlags = 0 }
         sidebarSource.refresh(runtime: dataSource.session?.pump.runtimeHandle, session: session, target: displayedSelection)
         if let drag = frameDrag,
            info?.revision != drag.hit.revision || view.map({ UUID(uuid: $0.active_view) }) != drag.hit.viewID ||
@@ -673,6 +681,9 @@ final class ShellProjectWindow {
         var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
         if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .componentLibrary, .selectImageTool]) }
+        for command: ShellCommand in [.bringForward, .bringToFront, .sendBackward, .sendToBack] {
+            if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
+        }
         if gitSource.trusted, selectedComponentFrame != nil { commands.insert(.componentFromSelection) }
         if gitSource.trusted, (displayedSelection?.selection_count ?? 0) > 0 { commands.insert(.delete) }
         if gitSource.trusted, displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy]) }
@@ -725,7 +736,8 @@ final class ShellProjectWindow {
                 self.finishSessionCommand(command, event: event)
             }
         }
-        if command == .delete || command == .duplicate {
+        if let flag = command.layerOrderFlag, displayedOrderFlags & flag == 0 { return false }
+        if command == .delete || command == .duplicate || command.layerOrderFlag != nil {
             guard let target = displayedSelection else { return false }
             return editSelection(command, target: target, ids: nil)
         }
@@ -740,10 +752,17 @@ final class ShellProjectWindow {
 
     private func editSelection(_ command: ShellCommand, target: StellarSelectionTarget, ids: [UUID]?) -> Bool {
         guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession else { return false }
+        let affectsFlow = command.layerOrderFlag != nil && displayedOrderFlags & UInt32(STELLAR_ORDER_FLOW_PARENT) != 0
         _ = canvasHost.canvasView.cancelFrameGesture?()
         return session.editSelection(target, command: command, ids: ids) { [weak self, weak session] event in
             guard let self, self.windowController.windowSession === session else { return }
             self.finishSessionCommand(command, event: event)
+            if affectsFlow, case .windowViewChanged = event, let window = self.window {
+                NSAccessibility.post(element: window, notification: .announcementRequested, userInfo: [
+                    .announcement: String(localized: "Layer order and layout order changed."),
+                    .priority: NSAccessibilityPriorityLevel.medium.rawValue,
+                ])
+            }
         }
     }
 
@@ -889,6 +908,7 @@ final class ShellProjectWindow {
         inspectorSource.refresh(nil, trusted: false)
         gitSource.attach(nil)
         displayedSelection = nil
+        displayedOrderFlags = 0
         sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()
         windowController.windowSession?.close()
@@ -906,6 +926,7 @@ final class ShellProjectWindow {
         inspectorSource.refresh(nil, trusted: false)
         gitSource.attach(nil)
         displayedSelection = nil
+        displayedOrderFlags = 0
         sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()
         windowController.windowSession?.close()

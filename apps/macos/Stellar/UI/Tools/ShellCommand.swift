@@ -318,6 +318,15 @@ enum ShellCommand: String, CaseIterable {
         self == .minimizeAll
     }
 
+    /// 현재 창의 실제 형제 위치에 따라 필요한 이동 가능 방향입니다.
+    var layerOrderFlag: UInt32? {
+        switch self {
+        case .bringForward, .bringToFront: return UInt32(STELLAR_ORDER_CAN_FORWARD)
+        case .sendBackward, .sendToBack: return UInt32(STELLAR_ORDER_CAN_BACKWARD)
+        default: return nil
+        }
+    }
+
     /// 텍스트 컨트롤 편집 중에는 비활성화하는 캔버스 객체 명령.
     ///
     /// Copy/Paste는 field editor가 먼저 받고, router 직접 전달도 객체 편집을 억제합니다.

@@ -139,6 +139,7 @@ pub mod recovery;
 pub use instance_place::InstancePlacement;
 mod node_delete;
 mod node_duplicate;
+mod node_order;
 mod node_paste;
 pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
@@ -146,6 +147,7 @@ pub mod text_input;
 pub use git_components::GitComponentRow;
 pub use git_names::{GitNameRow, SelectionOperation};
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
+pub use stellar_document::model::SiblingOrder;
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
@@ -994,6 +996,8 @@ pub struct WindowSessionSummary {
     pub selection_len: u32,
     /// Undo 스택 끝의 sequence. 문서 revision이 같은 선택 변경도 구분합니다.
     pub history_sequence: u64,
+    /// 확정 단일 선택의 형제 이동 가능 방향(bit 0 앞, bit 1 뒤)과 흐름 부모(bit 2).
+    pub order_flags: u32,
     /// 표시 중인 primary 선택.
     pub primary_selection: Option<StableId>,
     /// 현재 확정된 단일 선택이 Frame일 때 그 ID. viewport 가시성과 독립적입니다.
@@ -1435,6 +1439,7 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         redo_depth: clamp(session.history().history().redo_entries().len()),
         selection_len: clamp(session.view().selection().len()),
         history_sequence: session.history_sequence(),
+        order_flags: node_order::capabilities(session),
         primary_selection: session.view().displayed_selection().primary(),
         selected_frame: match session.view().selection().ids() {
             [node]
