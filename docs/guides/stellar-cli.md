@@ -214,6 +214,16 @@ stellar-mcp --connection-info
 
 `result.content[0].text`를 JSON으로 읽습니다. `valid`, `errors`, `warnings`는 전체 검사 결과이고 `items`에는 이 페이지의 문서 ID·심각도·진단 코드·메시지가 있습니다. 미해결 참조는 경고입니다. `next_cursor`가 문자열이면 같은 대상의 다음 호출에서 `arguments.cursor`로 전달합니다. 개수는 기본 500개, 최대 2,000개이며 JSON 페이지 한도는 512 KiB입니다. 저장 후 오래된 cursor는 거부되므로 첫 페이지부터 다시 읽습니다.
 
+### Git HEAD와 저장 문서의 변경 조회
+
+같은 headless 세션의 `document.semantic_diff`는 현재 브랜치의 HEAD에 커밋한 문서와 디스크에 저장된 문서를 StableId로 비교합니다. 인자는 생략하거나 `base`에 `HEAD`를 지정합니다.
+
+```jsonl
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"document.semantic_diff","arguments":{"base":"HEAD","limit":100}}}
+```
+
+`result.content[0].text`의 JSON에서 `base_commit`은 실제 비교한 commit ID이고 `revision`은 현재 저장 세대입니다. `items`에는 변경 종류, 대상 문서·객체 ID, 속성 경로와 이전·이후 값 또는 이동 위치가 있습니다. `next_cursor`가 있으면 같은 도구의 `arguments.cursor`에 전달합니다. 기준 commit이나 저장 세대가 바뀌면 첫 페이지를 다시 요청합니다. 두 입력 모두 같은 project ID의 `design/current`가 있어야 합니다. 외부 에셋·옵트인 YAML 원본·Git index·저장 전 편집은 이 도구의 비교 범위 밖입니다.
+
 ## 지정 View의 정적 접근성 HTML
 
 ```sh

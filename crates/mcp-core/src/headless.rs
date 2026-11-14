@@ -1,4 +1,5 @@
-//! 고정한 신뢰 프로젝트의 저장 문서 조회·검증 L2 backend (XIX.9.3).
+//! 고정한 신뢰 프로젝트의 저장 문서 조회·비교·검증 L2 backend (XIX.9.3).
+mod comparison;
 mod validation;
 use std::cell::RefCell;
 
@@ -11,7 +12,7 @@ use stellar_ops::trusted::{TrustedProject, TrustedReadError};
 use crate::catalog::paging::{self, PageSource};
 use crate::catalog::resources::{descriptor, resource};
 use crate::catalog::scope::{ApprovedScope, ProjectDocuments, ScopedPayload};
-use crate::catalog::tools::{self, VALIDATE_DOCUMENT};
+use crate::catalog::tools::{self, SEMANTIC_DIFF, VALIDATE_DOCUMENT};
 use crate::json::{self, JsonNumber, JsonValue};
 use crate::jsonrpc::{codes, RpcError};
 
@@ -26,12 +27,13 @@ pub struct Headless {
     loads: std::cell::Cell<(usize, usize)>,
 }
 
-/// 연결별 snapshot, 최근 문서 트리, 최근 검증 대상의 진단을 각 하나씩 보관합니다.
+/// 연결별 snapshot, 최근 문서 트리, 최근 검증 진단과 HEAD 비교 결과를 각 하나씩 보관합니다.
 #[derive(Debug)]
 struct CachedRead {
     snapshot: ProjectSnapshot,
     tree: Option<(StableId, DocumentTree)>,
     validation: Option<validation::FindingsPage>,
+    comparison: Option<comparison::DiffPage>,
 }
 
 impl Headless {
@@ -64,14 +66,17 @@ impl Headless {
         })
     }
 
-    /// 구현한 resource와 template, 저장 문서 검증 tool을 노출합니다.
+    /// 구현한 resource·template과 저장 문서 비교·검증 tool을 노출합니다.
     pub fn list(&self, method: &str, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
         self.check()?;
         check_fields(params, &[])?;
         if method == "tools/list" {
             return Ok(JsonValue::object(vec![(
                 "tools",
-                JsonValue::Array(vec![tools::descriptor(&VALIDATE_DOCUMENT)]),
+                JsonValue::Array(vec![
+                    tools::descriptor(&SEMANTIC_DIFF),
+                    tools::descriptor(&VALIDATE_DOCUMENT),
+                ]),
             )]));
         }
         let (field, name) = match method {
@@ -83,6 +88,54 @@ impl Headless {
             field,
             JsonValue::Array(vec![descriptor(resource(name).expect("catalog resource"))]),
         )]))
+    }
+
+    /// 신뢰 snapshot에서 읽기 전용 tool 한 페이지를 만듭니다.
+    pub fn call(&self, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
+        self.with_snapshot(|cached| {
+            check_fields(params, &["name", "arguments"])?;
+            let params = params.ok_or_else(|| invalid("tool 이름이 필요합니다"))?;
+            let tool = match params.get("name").and_then(JsonValue::as_str) {
+                Some(name) if name == VALIDATE_DOCUMENT.name => &VALIDATE_DOCUMENT,
+                Some(name) if name == SEMANTIC_DIFF.name => &SEMANTIC_DIFF,
+                _ => return Err(invalid("제공하지 않는 tool입니다")),
+            };
+            let empty = JsonValue::Object(Vec::new());
+            let args = params.get("arguments").unwrap_or(&empty);
+            self.scope
+                .check_tool_arguments(tool, args, &Documents(&cached.snapshot))
+                .map_err(|error| invalid(error.to_string()))?;
+            let request = paging::PageRequest {
+                cursor: args
+                    .get("cursor")
+                    .map(|v| {
+                        v.as_str()
+                            .map(str::to_owned)
+                            .ok_or_else(|| invalid("cursor는 문자열이어야 합니다"))
+                    })
+                    .transpose()?,
+                limit: args
+                    .get("limit")
+                    .map(|v| {
+                        v.as_i64()
+                            .and_then(|n| usize::try_from(n).ok())
+                            .ok_or_else(|| invalid("limit은 양의 정수여야 합니다"))
+                    })
+                    .transpose()?,
+            };
+            let body = if tool.name == SEMANTIC_DIFF.name {
+                comparison::page(&self.project, cached, args, &request)?
+            } else {
+                validation::page(cached, args, &request)?
+            };
+            Ok(JsonValue::object(vec![(
+                "content",
+                JsonValue::Array(vec![JsonValue::object(vec![
+                    ("type", JsonValue::string("text")),
+                    ("text", JsonValue::string(json::write(&body))),
+                ])]),
+            )]))
+        })
     }
 
     /// scope 확인 → ops snapshot → 기존 catalog 결과 → scope release.
@@ -114,6 +167,7 @@ impl Headless {
                 snapshot: self.project.snapshot().map_err(read_error)?,
                 tree: None,
                 validation: None,
+                comparison: None,
             });
         }
         let cached = cache.as_mut().expect("snapshot을 열었음");

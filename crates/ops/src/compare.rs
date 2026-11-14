@@ -134,6 +134,31 @@ pub fn semantic_diff_projects(base: &Path, target: &Path) -> Result<ProjectDiff,
     })
 }
 
+/// 고정 HEAD의 저장 문서와 동일 project ID인 작업 트리의 저장 문서를 CLI와 같은 규칙으로 비교합니다.
+pub fn semantic_diff_head(
+    head: &crate::trusted::ProjectHead,
+    target: &ProjectSnapshot,
+) -> Result<DiffReport, CompareError> {
+    let unavailable =
+        || CompareError::Projection("HEAD에서 같은 프로젝트의 저장 세대를 열 수 없습니다".into());
+    if head.root() != target.root() || target.generation().is_none() {
+        return Err(unavailable());
+    }
+    let base = head.saved(target.project_id()).map_err(|_| unavailable())?;
+    let saved = base.project();
+    let mut records = Vec::new();
+    for document in saved.document_ids().map_err(|_| unavailable())? {
+        let loaded = saved.load_document(document).map_err(|_| unavailable())?;
+        records.push(loaded.model.to_records().map_err(|_| unavailable())?);
+    }
+    let base = snapshot_of(&records.iter().collect::<Vec<_>>())
+        .map_err(|e| CompareError::Projection(e.0))?;
+    Ok(diff_snapshots(
+        &base,
+        &project_semantic_snapshot(target, "target")?,
+    ))
+}
+
 /// conflict 한쪽의 표시용 상태.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SideView {

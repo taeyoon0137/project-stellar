@@ -92,19 +92,22 @@ pub const VALIDATE_DOCUMENT: ToolDef = ToolDef {
     grant: RequiredGrant::Read,
 };
 
+/// Git HEAD 대비 저장 문서 변경. 기준은 고정 HEAD입니다.
+pub const SEMANTIC_DIFF: ToolDef = ToolDef {
+    name: "document.semantic_diff",
+    title: "Semantic diff",
+    description: "같은 프로젝트의 Git HEAD와 현재 저장 세대의 문서 변경을 페이지로 읽습니다",
+    input_schema: r#"{"type":"object","additionalProperties":false,"properties":{"base":{"type":"string","enum":["HEAD"]},"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":2000}}}"#,
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    availability: Availability::All,
+    grant: RequiredGrant::Read,
+};
+
 /// 정의된 문서 tool(고정 순서).
 pub const DOCUMENT_TOOLS: &[ToolDef] = &[
-    ToolDef {
-        name: "document.semantic_diff",
-        title: "Semantic diff",
-        description: "현재 저장된 프로젝트와 Git 기준(기본 HEAD)의 semantic diff를 만듭니다",
-        input_schema: r#"{"type":"object","additionalProperties":false,"properties":{"base":{"type":"string","description":"Git revision(기본 HEAD)"}}}"#,
-        read_only: true,
-        destructive: false,
-        idempotent: true,
-        availability: Availability::All,
-        grant: RequiredGrant::Read,
-    },
+    SEMANTIC_DIFF,
     ToolDef {
         name: "document.render_preview",
         title: "Render preview",
