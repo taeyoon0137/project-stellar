@@ -24,17 +24,22 @@ fn size(width: &str, height: &str) -> Result<Size2, CliError> {
     Size2::new(dimension(width)?, dimension(height)?)
         .map_err(|_| argument("크기는 유한한 비음수여야 합니다"))
 }
-fn json(info: ComponentInfo) -> J {
-    J::object(vec![
+pub(crate) fn component_json(info: ComponentInfo, include_file: bool) -> J {
+    let mut fields = vec![
         ("id", views::id(info.id)),
         ("root", views::id(info.root)),
         ("node_count", views::count(info.node_count)),
         ("name", J::string(info.name)),
-        ("file", J::string(info.file.to_string_lossy())),
+    ];
+    if include_file {
+        fields.push(("file", J::string(info.file.to_string_lossy())));
+    }
+    fields.extend([
         ("width", J::string(info.size.width().to_string())),
         ("height", J::string(info.size.height().to_string())),
         ("source_hash", J::string(info.hash.to_string())),
-    ])
+    ]);
+    J::object(fields)
 }
 
 pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
@@ -44,34 +49,43 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
             let source =
                 component_source::create(Path::new(dir), name.clone(), id(component)?, id(root)?)
                     .map_err(|error| operation_error(error).with_context(dir))?;
-            json(source)
+            component_json(source, true)
         }
         [op, dir] if op == "check" => {
             let components = component_source::check(Path::new(dir))
                 .map_err(|error| operation_error(error).with_context(dir))?;
             J::object(vec![(
                 "components",
-                J::Array(components.into_iter().map(json).collect()),
+                J::Array(
+                    components
+                        .into_iter()
+                        .map(|entry| component_json(entry, true))
+                        .collect(),
+                ),
             )])
         }
         [op, file, hash, width, height] if op == "resize" => {
             let size = size(width, height)?;
-            json(
+            component_json(
                 component_source::resize(Path::new(file), hash, size)
                     .map_err(|error| operation_error(error).with_context(file))?,
+                true,
             )
         }
-        [op, file, hash, parent, child, name, width, height] if op == "add-frame" => json(
-            component_source::add_frame(
-                Path::new(file),
-                hash,
-                id(parent)?,
-                id(child)?,
-                name.clone(),
-                size(width, height)?,
+        [op, file, hash, parent, child, name, width, height] if op == "add-frame" => {
+            component_json(
+                component_source::add_frame(
+                    Path::new(file),
+                    hash,
+                    id(parent)?,
+                    id(child)?,
+                    name.clone(),
+                    size(width, height)?,
+                )
+                .map_err(|error| operation_error(error).with_context(file))?,
+                true,
             )
-            .map_err(|error| operation_error(error).with_context(file))?,
-        ),
+        }
         _ => return Err(CliError::usage(USAGE)),
     };
     Ok(Success {

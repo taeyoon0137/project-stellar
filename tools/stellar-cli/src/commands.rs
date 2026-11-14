@@ -7,8 +7,8 @@ use std::path::Path;
 
 use stellar_ops::core_types::ids::StableId;
 use stellar_ops::query::{
-    components, document_tree_page, node_detail, project_structure, tokens, TreeCursor,
-    DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT,
+    document_tree_page, node_detail, project_structure, tokens, TreeCursor, DEFAULT_PAGE_LIMIT,
+    MAX_PAGE_LIMIT,
 };
 use stellar_ops::snapshot::{open_snapshot, probe as ops_probe};
 use stellar_ops::types::{GitLink, Manifest};
@@ -295,7 +295,24 @@ pub fn query(args: &[String]) -> Result<Success, CliError> {
             views::node_detail(&detail)
         }
         QueryPlan::Tokens => views::definition_set(&tokens(&snapshot)),
-        QueryPlan::Components => views::definition_set(&components(&snapshot)),
+        QueryPlan::Components => {
+            let set = stellar_ops::component_source::query(&snapshot)
+                .map_err(|err| crate::text_source::operation_error(err).with_context(context))?;
+            JsonValue::object(vec![
+                ("revision", views::revision(set.revision)),
+                ("chunk_kind", JsonValue::string("component-library")),
+                ("chunk_count", views::count(set.chunk_count)),
+                (
+                    "entries",
+                    JsonValue::Array(
+                        set.entries
+                            .into_iter()
+                            .map(|entry| crate::component_source::component_json(entry, false))
+                            .collect(),
+                    ),
+                ),
+            ])
+        }
     };
     Ok(Success {
         result,

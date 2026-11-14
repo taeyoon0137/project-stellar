@@ -15,6 +15,11 @@ pub fn read(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     read_regular_file(path, limit, Link::Follow)
 }
 
+/// 프로젝트 경계 안으로 해석해 둔 실제 절대 경로에서 정규 파일을 제한 크기로 읽습니다.
+pub fn read_resolved(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
+    read_regular_file(path, limit, Link::Resolved)
+}
+
 struct Expected<'a> {
     path: &'a Path,
     hash: Option<ContentHash>,

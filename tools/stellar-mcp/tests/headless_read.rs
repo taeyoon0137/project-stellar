@@ -16,6 +16,7 @@ use stellar_mcp::test_support::{
 
 const BIN: &str = env!("CARGO_BIN_EXE_stellar-mcp");
 const STRUCTURE: &str = "stellar://project/structure";
+const COMPONENTS: &str = "stellar://components";
 const OTHER: &str = "0195c530-3acd-7bc1-8414-c213f61cb999";
 
 struct Fixture {
@@ -67,6 +68,30 @@ impl Fixture {
             .env("APPDATA", self.home.join("AppData/Roaming"))
             .current_dir(&self.home);
         command
+    }
+    fn git(&self, args: &[&str]) -> String {
+        let output = self
+            .command_with_binary("git", &[])
+            .current_dir(&self.project)
+            .args([
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
     fn launch(&self) -> Client {
         Client::new(self.command(&["--headless", "--project", PROJECT_ID_TEXT]))
@@ -224,7 +249,10 @@ fn assert_error(reply: &J, code: i64) {
     );
 }
 fn content(reply: &J, uri: &str) -> J {
-    let contents = array(reply.get("result").unwrap().get("contents").unwrap());
+    let result = reply
+        .get("result")
+        .unwrap_or_else(|| panic!("{uri}: {reply:?}"));
+    let contents = array(result.get("contents").unwrap());
     assert_eq!(contents.len(), 1);
     assert_eq!(contents[0].get("uri").map(text), Some(uri));
     assert_eq!(
@@ -248,7 +276,9 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
     client.initialize();
     let list = client.call("resources/list", empty());
     let resources = array(list.get("result").unwrap().get("resources").unwrap());
-    assert_eq!(resources.len(), 1);
+    assert_eq!(resources.len(), 2);
+    assert_eq!(resources[1].get("uri").map(text), Some(COMPONENTS));
+    assert_eq!(resources[1].get("name").map(text), Some("components"));
     assert_eq!(resources[0].get("uri").map(text), Some(STRUCTURE));
     assert_eq!(
         resources[0].get("name").map(text),
@@ -335,7 +365,8 @@ fn scope_revision_limits_and_write_requests_return_normal_errors() {
         format!("stellar://documents/{document}?project={OTHER}"),
         format!("stellar://documents/{document}?cursor=p1.2.{OTHER}.g0"),
         "stellar://project/structure?limit=1".into(),
-        "stellar://components".into(),
+        "stellar://components?path=other".into(),
+        "stellar://components/other".into(),
     ] {
         assert_error(&client.read(&uri), -32602);
     }
@@ -407,33 +438,128 @@ fn tool_page(reply: &J) -> J {
 }
 
 #[test]
+fn component_resource_tracks_saved_yaml_across_checkouts_in_one_session() {
+    use std::fs;
+    const ID: &str = "0195c530-3acd-7bc1-8414-c213f61cb965";
+    const ROOT: &str = "0195c530-3acd-7bc1-8414-c213f61cb966";
+    const CHILD: &str = "0195c530-3acd-7bc1-8414-c213f61cb970";
+    const FILE: &str = "Card-8c5619572809.stellar.yaml";
+    let fx = Fixture::new();
+    save_documents(&fx.project, &[&large_document(2)]);
+    fx.grant();
+    fx.git(&["init", "-q", "-b", "main"]);
+    let mut client = fx.launch();
+    client.initialize();
+    let revision = content(&client.read(STRUCTURE), STRUCTURE)
+        .get("revision")
+        .unwrap()
+        .clone();
+    let dir = fx.project.join("design/components");
+    let read = |client: &mut Client| {
+        let before = file_digest(&fx.temp.path);
+        let body = content(&client.read(COMPONENTS), COMPONENTS);
+        assert_eq!(file_digest(&fx.temp.path), before);
+        assert!(!json::write(&body).contains(fx.project.to_str().unwrap()));
+        assert_eq!(body.get("revision"), Some(&revision));
+        assert_eq!(body.get("chunk_count"), Some(&J::int(0)));
+        body
+    };
+    assert!(array(read(&mut client).get("entries").unwrap()).is_empty());
+    assert!(!dir.exists());
+    fs::create_dir_all(&dir).unwrap();
+    // component-source v1/v2의 최소 Free Frame 레코드. HEAD와 저장 generation을 독립적으로 변경합니다.
+    let frame = |id: &str, parent: &str, size: &str| {
+        format!(
+            r#"id: {id}
+parent: {parent}
+order_key: "80"
+visible: "true"
+locked: "false"
+display_name: Frame
+kind: frame
+payload:
+  size: "{size}"
+  transform: "1 0 0 1 0 0"
+  clipping:
+    kind: frame-bounds
+  background: none
+  border: none
+  corner_radius: "0 0 0 0"
+  layout_mode: none
+"#
+        )
+    };
+    let indent = |record: String, spaces: &str| {
+        record
+            .lines()
+            .map(|s| format!("{spaces}{s}\n"))
+            .collect::<String>()
+    };
+    let v1 = format!(
+        "format: stellar-component\nschema_version: 1\ncomponent:\n  id: {ID}\n  name: Card\n  root: {ROOT}\nroot_node:\n{}",
+        indent(frame(ROOT, "none", "160 40"), "  ")
+    );
+    let path = dir.join(FILE);
+    fs::write(&path, &v1).unwrap();
+    fx.git(&["add", "-A"]);
+    fx.git(&["commit", "-qm", "root Frame"]);
+    let checked = |client: &mut Client, node_count, width| {
+        let body = read(client);
+        let items = array(body.get("entries").unwrap());
+        assert_eq!(items.len(), 1);
+        let entry = &items[0];
+        assert_eq!(entry.get("id").map(text), Some(ID));
+        assert_eq!(entry.get("name").map(text), Some("Card"));
+        assert_eq!(entry.get("root").map(text), Some(ROOT));
+        assert_eq!(entry.get("node_count"), Some(&J::int(node_count)));
+        assert_eq!(
+            entry.get("source_hash").map(text),
+            Some(file_digest(&dir)[FILE].as_str())
+        );
+        assert_eq!(entry.get("width"), Some(&J::string(width)));
+        assert_eq!(entry.get("height").map(text), Some("40"));
+        body
+    };
+    let main = checked(&mut client, 1, "160");
+    fx.git(&["switch", "-qc", "nested"]);
+    let v2 = v1.replace("schema_version: 1", "schema_version: 2")
+        + "children:\n  -\n"
+        + &indent(frame(CHILD, ROOT, "24 12"), "    ");
+    fs::write(&path, &v2).unwrap();
+    fx.git(&["add", "--", "design/components"]);
+    fx.git(&["commit", "-qm", "nested Frame"]);
+    let nested = checked(&mut client, 2, "160");
+    assert_ne!(nested, main);
+    fx.git(&["switch", "-q", "main"]);
+    assert_eq!(checked(&mut client, 1, "160"), main);
+    fx.git(&["switch", "-q", "nested"]);
+    assert_eq!(checked(&mut client, 2, "160"), nested);
+    fs::write(&path, v2.replace("160 40", "184.5 40")).unwrap();
+    assert_ne!(checked(&mut client, 2, "184.5"), nested);
+    assert_error(
+        &client.call(
+            "resources/read",
+            J::object(vec![
+                ("uri", J::string(COMPONENTS)),
+                ("path", J::string("design")),
+            ]),
+        ),
+        -32602,
+    );
+    FileTrustStore::open(&fx.data)
+        .unwrap()
+        .revoke(&fx.identity())
+        .unwrap();
+    let revoked = file_digest(&fx.temp.path);
+    assert_error(&client.read(COMPONENTS), -32000);
+    client.finish();
+    assert_eq!(file_digest(&fx.temp.path), revoked);
+}
+
+#[test]
 fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     let fx = Fixture::new();
-    let git = |args: &[&str]| {
-        let output = fx
-            .command_with_binary("git", &[])
-            .current_dir(&fx.project)
-            .args([
-                "-c",
-                "user.name=Fixture",
-                "-c",
-                "user.email=fixture@example.invalid",
-                "-c",
-                "core.hooksPath=/dev/null",
-                "-c",
-                "commit.gpgsign=false",
-            ])
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
-    };
-    git(&["init", "-q", "-b", "main"]);
+    fx.git(&["init", "-q", "-b", "main"]);
     let mut document = large_document(4);
     let nodes = document.to_records().unwrap().nodes;
     save_documents(&fx.project, &[&document]);
@@ -441,23 +567,23 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     let mut client = fx.launch();
     client.initialize();
     assert_error(&client.diff(empty()), -32000); // unborn HEAD
-    git(&["add", "-A"]);
-    git(&["commit", "-qm", "main"]);
-    let main = git(&["rev-parse", "HEAD"]);
+    fx.git(&["add", "-A"]);
+    fx.git(&["commit", "-qm", "main"]);
+    let main = fx.git(&["rev-parse", "HEAD"]);
     let before = file_digest(&fx.temp.path);
     let clean = tool_page(&client.diff(empty()));
     assert_eq!(clean.get("total"), Some(&J::int(0)));
     assert_eq!(clean.get("base_commit").map(text), Some(main.as_str()));
     assert_eq!(file_digest(&fx.temp.path), before);
 
-    git(&["switch", "-qc", "feature"]);
+    fx.git(&["switch", "-qc", "feature"]);
     document
         .set_display_name(nodes[0].id, "브랜치 이름".into())
         .unwrap();
     save_documents(&fx.project, &[&document]);
-    git(&["add", "-A"]);
-    git(&["commit", "-qm", "feature"]);
-    let feature = git(&["rev-parse", "HEAD"]);
+    fx.git(&["add", "-A"]);
+    fx.git(&["commit", "-qm", "feature"]);
+    let feature = fx.git(&["rev-parse", "HEAD"]);
     for (node, name) in nodes.iter().take(2).zip(["변경 A", "변경 B"]) {
         document.set_display_name(node.id, name.into()).unwrap();
     }
@@ -499,7 +625,7 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     assert_eq!(file_digest(&fx.temp.path), before);
 
     // 작업 트리와 index는 그대로 두고 실제 branch를 이동합니다.
-    git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+    fx.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
     let after_ref = file_digest(&fx.temp.path);
     assert_error(&client.diff(J::object(vec![("cursor", cursor)])), -32602);
     let switched = tool_page(&client.diff(J::object(vec![("limit", J::int(1))])));
@@ -544,17 +670,17 @@ fn head_diff_pages_follow_real_branches_and_preserve_all_inputs() {
     save_documents(&fx.project, &[&document]);
 
     // 별도 branch의 다른 프로젝트 ID로 커밋한 매니페스트를 기준으로 사용하지 않습니다.
-    git(&["switch", "-qc", "foreign"]);
+    fx.git(&["switch", "-qc", "foreign"]);
     let manifest = fx.project.join("stellar.yaml");
     let original = std::fs::read_to_string(&manifest).unwrap();
     std::fs::write(&manifest, original.replace(PROJECT_ID_TEXT, OTHER)).unwrap();
-    git(&["add", "stellar.yaml"]);
-    git(&["commit", "-qm", "different project"]);
+    fx.git(&["add", "stellar.yaml"]);
+    fx.git(&["commit", "-qm", "different project"]);
     std::fs::write(manifest, original).unwrap();
     let before = file_digest(&fx.temp.path);
     assert_error(&client.diff(empty()), -32000);
     assert_eq!(file_digest(&fx.temp.path), before);
-    git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
+    fx.git(&["symbolic-ref", "HEAD", "refs/heads/main"]);
     assert!(tool_page(&client.diff(empty())).get("items").is_some());
     FileTrustStore::open(&fx.data)
         .unwrap()

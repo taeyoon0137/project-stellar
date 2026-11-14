@@ -11,7 +11,7 @@
 //!   `O_NONBLOCK`으로 열어 FIFO·장치를 열 때 기다리지 않습니다(정규 파일 읽기에는 영향 없음).
 //!   [`Link::Follow`]는 symlink를 따르고(기술 아키텍처 19.3 "심볼릭 링크 전면 허용" — 최종 대상의
 //!   종류·크기만 검사), [`Link::NoFollow`]는 마지막 구성 요소 symlink를 거부합니다(macOS
-//!   `O_NOFOLLOW`).
+//!   `O_NOFOLLOW`). [`Link::Resolved`]는 이미 해석한 절대 경로를 열 때 macOS의 `O_NOFOLLOW_ANY`를 씁니다.
 //! - **쓰기 디렉터리**([`ensure_real_dirs`]): root 아래 구성 요소를 한 단계씩 `lstat`해 symlink면
 //!   따라가지 않고 거부하고, 없으면 한 단계씩 `create_dir`로 만듭니다(`create_dir_all`은 symlink
 //!   디렉터리를 그대로 통과하므로 쓰지 않음). [`DirGuard`]는 temp 생성과 rename 직전에 같은 디렉터리
@@ -145,6 +145,8 @@ pub(crate) enum Link {
     Follow,
     /// 따르지 않고 [`Refusal::SymlinkFile`]로 거부합니다.
     NoFollow,
+    /// 이미 해석한 절대 경로입니다. macOS에서는 여는 순간 모든 경로 구성 요소의 링크를 거부합니다.
+    Resolved,
 }
 
 /// macOS `<sys/fcntl.h>`·`<sys/errno.h>` 값(SDK header로 확인, assets `fs_guard`와 같은 값).
@@ -152,6 +154,7 @@ pub(crate) enum Link {
 mod flags {
     pub const O_NONBLOCK: i32 = 0x0000_0004;
     pub const O_NOFOLLOW: i32 = 0x0000_0100;
+    pub const O_NOFOLLOW_ANY: i32 = 0x2000_0000;
     pub const ELOOP: i32 = 62;
 }
 
@@ -165,6 +168,7 @@ fn open_read(path: &Path, link: Link) -> io::Result<File> {
         let nofollow = match link {
             Link::Follow => 0,
             Link::NoFollow => flags::O_NOFOLLOW,
+            Link::Resolved => flags::O_NOFOLLOW_ANY,
         };
         options.custom_flags(flags::O_NONBLOCK | nofollow);
     }
@@ -198,6 +202,12 @@ pub(crate) fn read_regular_file(path: &Path, limit: u64, link: Link) -> io::Resu
         let metadata = match link {
             Link::Follow => std::fs::metadata(path)?,
             Link::NoFollow => std::fs::symlink_metadata(path)?,
+            Link::Resolved => {
+                if std::fs::canonicalize(path)? != path {
+                    return Err(Refusal::Changed.into_io());
+                }
+                std::fs::symlink_metadata(path)?
+            }
         };
         if metadata.file_type().is_symlink() {
             return Err(Refusal::SymlinkFile.into_io());
@@ -209,7 +219,7 @@ pub(crate) fn read_regular_file(path: &Path, limit: u64, link: Link) -> io::Resu
     };
     let file = match open_read(path, link) {
         Ok(file) => file,
-        Err(e) if link == Link::NoFollow && is_nofollow_refusal(&e) => {
+        Err(e) if link != Link::Follow && is_nofollow_refusal(&e) => {
             return Err(Refusal::SymlinkFile.into_io())
         }
         Err(e) => return Err(e),
