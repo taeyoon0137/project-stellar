@@ -25,6 +25,36 @@ enum ShellFrameInsertCheck {
         window.setContentSize(NSSize(width: 1300, height: 800))
         window.contentView?.layoutSubtreeIfNeeded()
         let canvas = project.canvasHost.canvasView
+        func awaitSidebar(_ matches: () -> Bool) -> Bool {
+            let deadline = Date().addingTimeInterval(5)
+            while !matches(), Date() < deadline {
+                RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+            }
+            return matches()
+        }
+        func layerRow(_ id: UUID, in owner: ShellProjectWindow) -> Int? {
+            let outline = owner.sidebarSlot.sidebar.layersController.outline
+            return (0..<outline.numberOfRows).first {
+                (outline.item(atRow: $0) as? SidebarOutlineItem)?.layerID?.uuid == id
+            }
+        }
+        func showsActiveView(_ owner: ShellProjectWindow) -> Bool {
+            let sidebar = owner.sidebarSlot.sidebar
+            let state = sidebar.pagesController.snapshot
+            guard let view = owner.windowController.windowSession?.viewInfo,
+                  state.loadState == .ready, state.pages.count == 1, let page = state.pages.first,
+                  page.id == state.activePageID, page.name == "Page 1", page.views.count == 1,
+                  page.views.first?.id.uuid == UUID(uuid: view.active_view), page.views.first?.name == "View 1",
+                  sidebar.pagesController.outline.numberOfRows == 3 else { return false }
+            return true
+        }
+        guard awaitSidebar({ showsActiveView(project) }),
+              project.sidebarSlot.sidebar.layersController.snapshot.layers.topLevelIDs.isEmpty else { return fail("새 프로젝트의 Pages·빈 Layers") }
+        app.createProject(parentDirectory: directory.path, folderName: "Other Window")
+        let otherPath = directory.appendingPathComponent("Other Window").path
+        guard wait(), let other = app.projectWindow(forPath: otherPath),
+              awaitSidebar({ showsActiveView(other) }), other.sidebarSlot.sidebar.pagesController.snapshot.activeViewID !=
+              project.sidebarSlot.sidebar.pagesController.snapshot.activeViewID else { return fail("다른 창의 실제 View") }
         func viewPoint(_ x: CGFloat, _ y: CGFloat, canvas target: CanvasView = canvas) -> NSPoint {
             // 실제 카메라와 800×600 root의 local 좌표를 사용합니다.
             let camera = (target.window?.windowController as? ShellWindowController)?.windowSession?.viewInfo
@@ -66,8 +96,15 @@ enum ShellFrameInsertCheck {
               project.toolsModel.snapshot.activeTool == .move, session.info?.selection_count == 1,
               session.info?.undo_depth == initial.undo_depth + 1, session.info?.revision == initial.revision + 1
         else { return fail("Frame 생성·선택·도구 복귀") }
-        guard action(.undo), canvas.frameHit(at: viewPoint(50, 50))?.id == root, session.info?.selection_count == 0,
-              action(.redo), canvas.frameHit(at: viewPoint(50, 50))?.id == child, session.info?.selection_count == 1,
+        let firstOutline = project.sidebarSlot.sidebar.layersController.outline
+        guard awaitSidebar({ layerRow(child, in: project) != nil }), let index = layerRow(child, in: project),
+              firstOutline.selectedRow == index,
+              let cell = firstOutline.view(atColumn: 0, row: index, makeIfNecessary: true) as? SidebarLayerCellView,
+              cell.nameField.stringValue == "Frame", !cell.nameField.isEditable, !cell.lockButton.isEnabled,
+              !cell.visibilityButton.isEnabled, !project.sidebarSlot.sidebar.filterAccessory.searchField.isEnabled,
+              other.sidebarSlot.sidebar.layersController.snapshot.layers.rows.isEmpty else { return fail("추가된 실제 행·읽기 전용 편집·창 격리") }
+        guard action(.undo), awaitSidebar({ layerRow(child, in: project) == nil }), canvas.frameHit(at: viewPoint(50, 50))?.id == root, session.info?.selection_count == 0,
+              action(.redo), awaitSidebar({ layerRow(child, in: project) != nil }), canvas.frameHit(at: viewPoint(50, 50))?.id == child, session.info?.selection_count == 1,
               action(.saveNow), session.info?.generation == initial.generation + 1 else { return fail("Undo·Redo·저장") }
         window.close()
         guard wait() else { return fail("닫기") }
@@ -76,7 +113,8 @@ enum ShellFrameInsertCheck {
         reopened.window?.setContentSize(NSSize(width: 1300, height: 800))
         reopened.window?.contentView?.layoutSubtreeIfNeeded()
         let shown = reopened.canvasHost.canvasView
-        guard shown.frameHit(at: viewPoint(41, 31, canvas: shown))?.id == child,
+        guard awaitSidebar({ showsActiveView(reopened) && layerRow(child, in: reopened) != nil }),
+              shown.frameHit(at: viewPoint(41, 31, canvas: shown))?.id == child,
               shown.frameHit(at: viewPoint(99, 89, canvas: shown))?.id == child,
               shown.frameHit(at: viewPoint(101, 91, canvas: shown))?.id == root else { return fail("재열기 후 자식 위치·크기") }
         guard key(3, "f", canvas: shown), pointer(.leftMouseDown, 45, 36, canvas: shown),
@@ -84,7 +122,55 @@ enum ShellFrameInsertCheck {
               let nested = shown.frameHit(at: viewPoint(46, 37, canvas: shown))?.id,
               nested != root, nested != child, shown.frameHit(at: viewPoint(61, 51, canvas: shown))?.id == nested,
               shown.frameHit(at: viewPoint(63, 53, canvas: shown))?.id == child else { return fail("이동된 부모의 local 좌표") }
-        print("frame-insert ok: new project, F, restricted, cancel, tiny drag, undo/redo with selection, saved child geometry, translated parent")
+        let layers = reopened.sidebarSlot.sidebar.layersController
+        guard awaitSidebar({ layerRow(nested, in: reopened) != nil }),
+              let nestedRow = layerRow(nested, in: reopened),
+              (layers.outline.parent(forItem: layers.outline.item(atRow: nestedRow)) as? SidebarOutlineItem)?.id?.uuid == child
+        else { return fail("새 중첩 Frame의 조상 펼침·자식 행") }
+
+        // 실제 F 도구로 루트에 형제 64개를 추가합니다. 첫 자식은 마지막 페이지에 남습니다.
+        var latest: UUID?
+        for i in 0..<64 {
+            let x = CGFloat(145 + (i % 8) * 20), y = CGFloat(145 + (i / 8) * 20)
+            guard key(3, "f", canvas: shown), pointer(.leftMouseDown, x, y, canvas: shown),
+                  pointer(.leftMouseDragged, x + 14, y + 14, canvas: shown),
+                  pointer(.leftMouseUp, x + 14, y + 14, canvas: shown), wait(),
+                  let inserted = shown.frameHit(at: viewPoint(x + 5, y + 5, canvas: shown))?.id,
+                  inserted != root else { return fail("페이지 검사용 실제 Frame 생성") }
+            latest = inserted
+        }
+        guard awaitSidebar({ layers.snapshot.layers.topLevelIDs.first?.uuid == latest && layers.snapshot.layers.moreParents.contains(nil) }),
+              layers.snapshot.layers.topLevelIDs.count == 64, layerRow(child, in: reopened) == nil,
+              let moreIndex = (0..<layers.outline.numberOfRows).first(where: {
+                  (layers.outline.item(atRow: $0) as? SidebarOutlineItem)?.role == .more
+              }) else { return fail("65개 형제 중 첫 페이지 64개") }
+        layers.outline.scrollRowToVisible(moreIndex)
+        guard let more = layers.outline.view(atColumn: 0, row: moreIndex, makeIfNecessary: true) as? NSButton else {
+            return fail("다음 페이지 버튼")
+        }
+        more.performClick(nil)
+        guard awaitSidebar({ layerRow(child, in: reopened) != nil && !layers.snapshot.layers.moreParents.contains(nil) }),
+              layers.snapshot.layers.topLevelIDs.count == 65,
+              let parentIndex = layerRow(child, in: reopened), let parentItem = layers.outline.item(atRow: parentIndex),
+              other.sidebarSlot.sidebar.layersController.snapshot.layers.rows.isEmpty else { return fail("다음 페이지·다른 창 격리") }
+        layers.outline.expandItem(parentItem)
+        guard awaitSidebar({ layerRow(nested, in: reopened) != nil }) else { return fail("저장된 자식 disclosure") }
+        guard let row = layerRow(nested, in: reopened), let beforeSelect = reopened.windowController.windowSession?.info else {
+            return fail("중첩 행 선택 준비")
+        }
+        layers.outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        guard wait(), reopened.windowController.windowSession?.info?.selection_count == 1,
+              reopened.windowController.windowSession?.info?.undo_depth == beforeSelect.undo_depth + 1,
+              awaitSidebar({
+                  guard let selected = layerRow(nested, in: reopened) else { return false }
+                  return layers.snapshot.primarySelection?.uuid == nested &&
+                      layers.outline.selectedRowIndexes.contains(selected) && layers.snapshot.layers.topLevelIDs.count == 65
+              }),
+              other.windowController.windowSession?.info?.selection_count == 0,
+              other.sidebarSlot.sidebar.layersController.snapshot.selection.isEmpty else {
+            return fail("Layers 선택 창 격리: undo=\(reopened.windowController.windowSession?.info?.undo_depth ?? 0)/\(beforeSelect.undo_depth + 1) top=\(layers.snapshot.layers.topLevelIDs.count) selectedRow=\(layers.outline.selectedRow) other=\(other.windowController.windowSession?.info?.selection_count ?? 0)")
+        }
+        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; live Layers, nested disclosure, 64+1 pagination and two windows")
         return true
     }
 }

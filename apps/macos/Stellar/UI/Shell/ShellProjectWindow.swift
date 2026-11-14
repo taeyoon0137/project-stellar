@@ -426,6 +426,7 @@ final class ShellProjectWindow {
     let inspectorSlot: ShellInspectorAreaSlot
     let panelsSlot: ShellPanelTabsSlot
     let gitSource = ShellGitDataSource()
+    let sidebarSource = ShellSidebarSource()
     /// 창 도구 모델 → 하단 도구 막대(셸 프레임 snapshot 도구 목록) 구독.
     private var toolsObservation: ToolsMenuObservation?
 
@@ -457,7 +458,7 @@ final class ShellProjectWindow {
         toolsObservation = ShellProjectWindow.connectToolBar(dataSource: dataSource, toolsModel: toolsModel, router: router)
         canvasHost = ShellCanvasHostViewController(runtimeHandle: runtimeHandle)
         sidebarSlot = ShellSidebarAreaSlot(
-            sidebar: SidebarViewController(provider: ShellAreaDataStubs.makeSidebarProvider())
+            sidebar: SidebarViewController(provider: sidebarSource)
         )
         inspectorSlot = ShellInspectorAreaSlot(
             inspector: InspectorViewController(dataSource: ShellAreaDataStubs.makeInspectorDataSource())
@@ -478,6 +479,7 @@ final class ShellProjectWindow {
             self?.dataSource.updateTrust(trusted)
             if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
         }
+        sidebarSource.select = { [weak self] ids in _ = self?.selectNodes(ids) }
         connectFrameInteractions()
         panelsSlot.gitPanel.host = self
         if let window = windowController.window {
@@ -565,6 +567,7 @@ final class ShellProjectWindow {
         canvasHost.canvasView.frameSession = session?.session
         let view = session?.viewInfo
         let info = session?.info
+        sidebarSource.refresh(runtime: dataSource.session?.pump.runtimeHandle, session: session, info: info, view: view)
         if let drag = frameDrag,
            info?.revision != drag.hit.revision || view.map({ UUID(uuid: $0.active_view) }) != drag.hit.viewID ||
            view?.center_x != drag.viewport.center_x || view?.center_y != drag.viewport.center_y ||
@@ -734,6 +737,7 @@ final class ShellProjectWindow {
     func didFail(_ failure: ShellProjectOpenFailure, path: String) {
         canvasHost.canvasView.frameSession = nil
         gitSource.attach(nil)
+        sidebarSource.refresh(runtime: nil, session: nil, info: nil, view: nil)
         cancelPendingClose()
         windowController.windowSession?.close()
         windowController.windowSession = nil
@@ -746,6 +750,7 @@ final class ShellProjectWindow {
     func closeSessions() {
         canvasHost.canvasView.frameSession = nil
         gitSource.attach(nil)
+        sidebarSource.refresh(runtime: nil, session: nil, info: nil, view: nil)
         cancelPendingClose()
         windowController.windowSession?.close()
         dataSource.session?.close()

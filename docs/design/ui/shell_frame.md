@@ -250,7 +250,7 @@ struct ShellFrameSlots {
 - 프로젝트 창의 `ShellFrameDataSource`(`ShellProjectFrameDataSource`)는 코어 프로젝트 열기 결과만 씁니다. 코어 내비게이션·검색·페이지 이름 snapshot은 아직 없어 뒤로·앞으로·검색은 비활성입니다. [아키텍처 §8.2] [ADR-0009]
 - 끝난 일(XII.2.2): 창 controller(`ShellWindowController.windowSession`)가 코어 `ProjectWindowSession` handle(`ShellWindowSessionHandle`) 하나를 소유합니다. 셸은 프로젝트 session을 연 뒤 창 session까지 열린 다음에 창을 ready로 두고, 창 session을 열지 못하면 프로젝트 session을 닫고 "The Project’s Design Couldn’t Be Loaded"로 안내합니다. 창을 닫으면 창 session → 프로젝트 session 순서로 한 번씩 닫습니다. 프로젝트 session handle(`ShellProjectSessionHandle`)은 그대로 data source가 소유합니다. [가이드 2.5] [계획 XII.2.1, XII.2.2] [ADR-0028]
 - `NativeFieldsPanel`(텍스트 입력 검증 fixture)은 `--text-input-check` 전용 창(`CanvasWindowController`)에 남아 있습니다. 셸 창의 텍스트 편집 중 Undo 경로는 `--tools-menus-ui-check`가 검사합니다. [가이드 10.1]
-- 영역별 코어 adapter(사이드바 snapshot, 선택 속성, Git 상태, 에이전트 세션)로 `ShellAreaDataStubs`를 바꿉니다. 보조 패널 노출 여부·위치는 가이드 2.4·O4·ADR-0005에 따릅니다.
+- 선택 속성과 에이전트 세션을 연결하면 해당 영역의 `ShellAreaDataStubs`를 교체합니다. 사이드바의 활성 문서 트리와 Git 변경 목록은 창별 코어 데이터를 사용합니다. 보조 패널 노출 여부·위치는 가이드 2.4·O4·ADR-0005에 따릅니다.
 - 다중 창(XII.2.4)에서 창별 `ShellWindowConfiguration` 이름 규칙을 정합니다. 지금은 모든 프로젝트 창이 `.standard` 이름을 써서 둘째 창부터 frame autosave가 걸리지 않고 split autosave는 서로 덮어씁니다.
 - 모든 프로젝트 창의 캔버스(`CanvasView`)가 앱의 코어 runtime handle 하나를 함께 씁니다. 코어에 창별 session·view state가 없어 창마다 보내는 drawable 크기(`stellar_runtime_set_drawable_size`)와 입력(`stellar_runtime_submit_mac_event`)이 같은 runtime으로 가므로, 프로젝트 창이 둘 이상이면 마지막으로 보낸 창의 drawable 크기가 남습니다. 코어 `ProjectWindowSession`·창별 view state가 생기면 캔버스 호스트가 창 session으로 보내도록 바꿉니다. [계획 XII.2.1, XII.2.5]
 - 툴바 스타일(O1), 캔버스 확장(O2), 배치 수치 확정(가이드 12장)을 XII.9.1에서 정합니다.
@@ -308,7 +308,7 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 
 ### 14.5 영역 data source(Stub)
 
-영역별 코어 adapter가 없어 `ShellAreaDataStubs`가 의도적 placeholder를 줍니다. 열린 프로젝트와 어긋난 표본 내용을 보여 주지 않도록 "비어 있음"에 가까운 상태를 고릅니다: 사이드바 페이지·레이어 없음(`ShellEmptySidebarProviderStub`, 모든 명령 unsupported), 인스펙터 선택 없음, Git 제한 모드(모든 프로젝트가 신뢰되지 않음), 에이전트 세션 없음. 창별 도구 상태는 `ShellWindowToolsModelStub`이 보관합니다(도구 선택 11개, Close Project, 창 session 상태에 따른 Undo·Redo·Save Now(XII.6.4)가 실행 가능하고, 편집·객체·줌은 코어 경로가 없어 비활성).
+사이드바는 창의 활성 Page·View와 레이어를 코어에서 읽습니다. Git 패널은 프로젝트 신뢰와 실제 Git 이름 변경을 사용합니다. `ShellAreaDataStubs`는 인스펙터 선택 없음과 에이전트 세션 없음 상태를 제공합니다. 창별 도구 상태는 `ShellWindowToolsModelStub`이 보관합니다. 메뉴는 창 세션이 제공하는 Undo·Redo·Save Now와 줌 명령의 활성 상태를 반영합니다.
 
 ### 14.6 통합 검사(`--shell-integration-check`)
 

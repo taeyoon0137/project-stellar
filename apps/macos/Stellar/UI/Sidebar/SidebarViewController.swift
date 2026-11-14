@@ -163,6 +163,7 @@ final class SidebarViewController: NSViewController, NSSplitViewDelegate {
         appliedGeneration = snapshot.generation
         pagesController.apply(snapshot)
         layersController.apply(snapshot)
+        filterAccessory.searchField.isEnabled = provider.validate(.setFilter("")).isAllowed
         filterAccessory.sync(query: snapshot.filter?.query ?? "")
         stateView.show(stateContent(for: snapshot))
     }

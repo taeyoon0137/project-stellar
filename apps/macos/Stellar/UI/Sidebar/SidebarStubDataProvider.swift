@@ -90,6 +90,7 @@ final class SidebarStubDataProvider: SidebarDataProvider {
             return pages.contains { $0.views.contains { $0.id == id } } ? .allowed : .denied(.unknownNode)
         case .renamePage(let id, _):
             return pages.contains { $0.id == id } ? .allowed : .denied(.unknownNode)
+        case .loadMore: return .denied(.unsupported)
         case .setSelection, .setFilter, .reload:
             return .allowed
         case .loadChildren(let id), .renameNode(let id, _):
@@ -173,6 +174,7 @@ final class SidebarStubDataProvider: SidebarDataProvider {
         case .setFilter(let query):
             filterQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
             commit(structural: true)
+        case .loadMore: return
         case .loadChildren(let id):
             loadedParents.insert(id)
             commit(structural: true)

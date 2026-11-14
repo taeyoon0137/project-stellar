@@ -19,6 +19,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private let header = SidebarOutlineItem(role: .header, id: nil)
     private var items: [SidebarStableID: SidebarOutlineItem] = [:]
+    private var moreItems: [SidebarStableID?: SidebarOutlineItem] = [:]
     /// 사용자가 펼친 레이어. 구조 reload 뒤 복원합니다.
     private(set) var expandedIDs: Set<SidebarStableID> = []
     /// 필터를 켜기 전 펼침 상태. 필터를 끄면 복원합니다.
@@ -101,7 +102,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         } else {
             refreshAvailableRows(previous: old.layers)
         }
-        syncSelection()
+        syncSelection(previousTree: old.layers)
     }
 
     /// 편집 종료 알림은 field editor가 아직 first responder인 동안 오므로, 미뤄 둔 snapshot은 다음 런 루프에서
@@ -121,6 +122,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
     private func reloadStructure() {
         // snapshot에서 사라진 행의 항목 객체는 버립니다.
         items = items.filter { snapshot.layers.rows[$0.key] != nil }
+        moreItems = moreItems.filter { snapshot.layers.moreParents.contains($0.key) }
         outline.reloadData()
         outline.expandItem(header)
         if snapshot.filter != nil {
@@ -137,9 +139,13 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         while row < outline.numberOfRows {
             if let item = outline.item(atRow: row) as? SidebarOutlineItem,
                let id = item.layerID,
-               expandedIDs.contains(id),
-               !outline.isItemExpanded(item) {
-                outline.expandItem(item)
+               expandedIDs.contains(id) {
+                if !outline.isItemExpanded(item) {
+                    outline.expandItem(item)
+                } else if snapshot.layers.rows[id]?.hasChildren == true, snapshot.layers.childIDs[id] == nil {
+                    // AppKit이 펼침을 유지하면 새 문서 revision에서도 willExpand가 다시 오지 않습니다.
+                    provider.perform(.loadChildren(id))
+                }
             }
             row += 1
         }
@@ -168,9 +174,11 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     /// snapshot 선택을 목록에 반영합니다. 외부(캔버스 등)에서 바뀐 선택이면 조상을 펼치고 첫 행이 보이게 합니다.
-    private func syncSelection() {
+    private func syncSelection(previousTree: SidebarLayerTree) {
         let ids = snapshot.selection
-        let external = ids != knownSelection
+        let external = ids != knownSelection || ids.contains {
+            previousTree.rows[$0] == nil && snapshot.layers.rows[$0] != nil
+        }
         knownSelection = ids
         if external {
             for id in ids { revealAncestors(of: id) }
@@ -218,7 +226,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         switch item.role {
         case .header: return snapshot.layers.topLevelIDs
         case .layer: return item.id.flatMap { snapshot.layers.childIDs[$0] } ?? []
-        case .page, .view: return []
+        case .page, .view, .more: return []
         }
     }
 
@@ -239,20 +247,24 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         guard let item = item as? SidebarOutlineItem else { return 1 }
-        return childIDs(of: item).count
+        let more = (item.role == .header || item.role == .layer) && snapshot.layers.moreParents.contains(item.id)
+        return childIDs(of: item).count + (more ? 1 : 0)
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
         guard let item = item as? SidebarOutlineItem else { return header }
         let ids = childIDs(of: item)
-        // numberOfChildren와 같은 snapshot을 읽으므로 범위를 벗어나지 않습니다.
-        return ids.indices.contains(index) ? layerItem(ids[index]) : SidebarOutlineItem(role: .layer, id: nil)
+        if ids.indices.contains(index) { return layerItem(ids[index]) }
+        if let more = moreItems[item.id] { return more }
+        let more = SidebarOutlineItem(role: .more, id: item.id)
+        moreItems[item.id] = more
+        return more
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         guard let item = item as? SidebarOutlineItem else { return false }
         if item.role == .header { return true }
-        return item.id.flatMap { snapshot.layers.rows[$0]?.hasChildren } ?? false
+        return item.layerID.flatMap { snapshot.layers.rows[$0]?.hasChildren } ?? false
     }
 
     // MARK: NSOutlineViewDelegate
@@ -277,6 +289,15 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
             cell.configure(title: SidebarStrings.layers)
             return cell
         }
+        if item.role == .more {
+            let reuseID = NSUserInterfaceItemIdentifier("SidebarMoreLayers")
+            let button = outlineView.makeView(withIdentifier: reuseID, owner: nil) as? NSButton ??
+                NSButton(title: String(localized: "Show More Layers"), target: self, action: #selector(showMore(_:)))
+            button.identifier = reuseID
+            button.bezelStyle = .inline
+            button.controlSize = .small
+            return button
+        }
         guard let id = item.layerID, let row = snapshot.layers.rows[id] else { return nil }
         let cell = outlineView.makeView(withIdentifier: SidebarCellIdentifier.layer, owner: nil)
             as? SidebarLayerCellView ?? SidebarLayerCellView()
@@ -290,25 +311,29 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
     private func configure(_ cell: SidebarLayerCellView, row: SidebarLayerRow) {
         cell.configure(row: row)
         let id = row.id
-        // VoiceOver custom action. AppKit이 셀 view의 값을 행의 AXCell 동작으로 내보냅니다(`SidebarAccessibility`).
-        // 행 하나에만 적용하고 선택은 바꾸지 않습니다.
-        cell.setAccessibilityCustomActions([
-            NSAccessibilityCustomAction(name: SidebarStrings.rename) { [weak self] in
-                self?.beginRename(id) ?? false
-            },
-            NSAccessibilityCustomAction(name: row.isVisible ? SidebarStrings.hide : SidebarStrings.show) { [weak self] in
-                self?.perform(.toggleVisibility, targets: [id]) ?? false
-            },
-            NSAccessibilityCustomAction(name: row.isLocked ? SidebarStrings.unlock : SidebarStrings.lock) { [weak self] in
-                self?.perform(.toggleLock, targets: [id]) ?? false
-            },
-            NSAccessibilityCustomAction(name: SidebarStrings.duplicate) { [weak self] in
-                self?.perform(.duplicate, targets: [id]) ?? false
-            },
-            NSAccessibilityCustomAction(name: SidebarStrings.delete) { [weak self] in
-                self?.perform(.delete, targets: [id]) ?? false
-            },
-        ])
+        let actions: [(SidebarOutlineAction, String)] = [
+            (.rename, SidebarStrings.rename),
+            (.toggleVisibility, row.isVisible ? SidebarStrings.hide : SidebarStrings.show),
+            (.toggleLock, row.isLocked ? SidebarStrings.unlock : SidebarStrings.lock),
+            (.duplicate, SidebarStrings.duplicate),
+            (.delete, SidebarStrings.delete),
+        ]
+        let allowed = actions.filter { canPerform($0.0, targets: [id]) }
+        cell.nameField.isEditable = allowed.contains { $0.0 == .rename }
+        cell.visibilityButton.isEnabled = allowed.contains { $0.0 == .toggleVisibility }
+        cell.lockButton.isEnabled = allowed.contains { $0.0 == .toggleLock }
+        cell.setAccessibilityCustomActions(allowed.map { action, title in
+            NSAccessibilityCustomAction(name: title) { [weak self] in
+                self?.perform(action, targets: [id]) ?? false
+            }
+        })
+    }
+
+    @objc private func showMore(_ sender: NSButton) {
+        let row = outline.row(for: sender)
+        guard row >= 0, let more = outline.item(atRow: row) as? SidebarOutlineItem, more.role == .more,
+              provider.validate(.loadMore(more.id)).isAllowed else { return }
+        provider.perform(.loadMore(more.id))
     }
 
     func outlineView(_ outlineView: NSOutlineView, typeSelectStringFor tableColumn: NSTableColumn?, item: Any) -> String? {
@@ -361,7 +386,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     @discardableResult
     func beginRename(_ id: SidebarStableID) -> Bool {
-        guard let item = items[id] else { return false }
+        guard canPerform(.rename, targets: [id]), let item = items[id] else { return false }
         let row = outline.row(forItem: item)
         guard row >= 0 else { return false }
         if !outline.selectedRowIndexes.contains(row) {
@@ -501,7 +526,10 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         // 필터 결과의 표시 순서는 실제 순서와 다르므로 필터 중에는 드래그를 시작하지 않습니다.
-        guard snapshot.filter == nil, let id = (item as? SidebarOutlineItem)?.layerID else { return nil }
+        guard snapshot.filter == nil, let id = (item as? SidebarOutlineItem)?.layerID,
+              let row = snapshot.layers.rows[id],
+              provider.validate(.move([id], to: SidebarDropTarget(parentID: row.parentID, index: 0))).isAllowed
+        else { return nil }
         let pasteboardItem = NSPasteboardItem()
         pasteboardItem.setString(id.stringValue, forType: Self.dragType)
         return pasteboardItem
@@ -578,7 +606,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
             guard let item = proposedItem, let id = item.id else { return nil }
             let index = max(0, childIndex)
             candidate = (SidebarDropTarget(parentID: id, index: index), item, index)
-        case .page?, .view?:
+        case .page?, .view?, .more?:
             return nil
         }
         if provider.validate(.move(ids, to: candidate.0)).isAllowed {

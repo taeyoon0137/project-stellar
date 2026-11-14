@@ -240,6 +240,35 @@ impl DocumentModel {
             .collect()
     }
 
+    /// 위에 그린 자식부터 최대 `limit`개 조회합니다. 다음 페이지는 직전 마지막 자식 바로 뒤부터 읽습니다.
+    pub fn children_front_to_back(
+        &self,
+        parent: StableId,
+        after: Option<StableId>,
+        limit: usize,
+    ) -> Option<Vec<StableId>> {
+        let Some(children) = self.children.get(&parent) else {
+            return after.is_none().then(Vec::new);
+        };
+        let upper = if let Some(after) = after {
+            let fields = self.columns.get(self.runtime_id(after)?)?;
+            if fields.parent.and_then(|id| self.stable_id(id)) != Some(parent) {
+                return None;
+            }
+            std::ops::Bound::Excluded((fields.order_key, after))
+        } else {
+            std::ops::Bound::Unbounded
+        };
+        Some(
+            children
+                .range((std::ops::Bound::Unbounded, upper))
+                .rev()
+                .take(limit)
+                .map(|(_, child)| *child)
+                .collect(),
+        )
+    }
+
     /// 마지막 직계 자식 뒤에 삽입할 순서 키. 전체 형제 목록을 복사하지 않습니다.
     pub fn next_child_order_key(&self, parent: StableId) -> OrderKey {
         let last = self

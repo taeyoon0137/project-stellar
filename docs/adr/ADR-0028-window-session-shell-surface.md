@@ -223,3 +223,7 @@ Escape·창 포커스 상실로 미리보기를 취소하면 문서 변경이 �
 받습니다. document thread가 창의 실제 신뢰·View·revision·부모 잠금 및 지원하는 자유 배치 여부를 확인하고,
 마지막 형제 뒤에 `InsertNode`를 기록합니다. 이전 선택과 생성된 Frame의 선택을 같은 history entry에 보관하므로
 Undo 한 번은 node와 선택을 함께 되돌리고 Redo는 같은 ID를 복원합니다. 화면의 드래그 미리보기는 저장되지 않습니다.
+
+### 기본 창의 레이어 읽기
+
+`stellar_window_layer_page`는 셸 worker에서 창 handle·활성 View·표시 revision·부모·직전 자식 ID로 직계 자식 64개까지 읽습니다. 코어는 document thread에서 해당 창이 이미 연 문서를 조회합니다. cursor의 부모와 활성 View 소속을 확인하고 순서 인덱스에서 다음 형제부터 반환합니다. 반환값은 Page·View 이름, 원본 노드 종류·표시 이름·잠금·표시 상태, 자식 유무와 창 선택입니다. registry 잠금은 읽기 접수까지만 유지합니다. UI thread는 저장 폴더를 열거나 조회 완료를 기다리지 않습니다.

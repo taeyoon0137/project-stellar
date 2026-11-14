@@ -20,6 +20,7 @@ pub mod input;
 pub mod input_macos;
 /// 셸→코어 입력 대기열과 연속 move/wheel coalescing (XII.3.4).
 pub mod input_queue;
+mod sidebar;
 /// 창 session C ABI (XII.2.2).
 pub mod window_session;
 
