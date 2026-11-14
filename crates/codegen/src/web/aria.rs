@@ -40,7 +40,7 @@ use stellar_core_types::typed_value::TypedValue;
 use stellar_target_profile::capability::ElementKind;
 
 use crate::ir::snapshot::id_hex;
-use crate::ir::{CodegenIr, IrAccessibilityEntry, ResolvedBinding};
+use crate::ir::{IrAccessibilityEntry, IrTree, ResolvedBinding};
 use crate::web::html::{HtmlChild, HtmlDocument};
 
 pub use crate::facet::Facet;
@@ -90,7 +90,7 @@ pub fn element_id(node: StableId) -> String {
 }
 
 struct Mapper<'a> {
-    ir: &'a CodegenIr,
+    ir: &'a IrTree,
     doc: HtmlDocument,
     /// IR node index → element index(Fragment는 `None`).
     element_of: Vec<Option<u32>>,
@@ -98,7 +98,7 @@ struct Mapper<'a> {
     referenced: BTreeSet<u32>,
 }
 
-fn is_listbox(ir: &CodegenIr, entry: u32) -> bool {
+fn is_listbox(ir: &IrTree, entry: u32) -> bool {
     let list = &ir.accessibility[entry as usize].semantics;
     if list.role != AccessibilityRole::List {
         return false;
@@ -273,7 +273,13 @@ impl<'a> Mapper<'a> {
                     if tag == "img" {
                         self.doc.set_attr(element, "alt", "");
                     }
-                    let parent_has = node.parent.is_none_or(|p| has_semantics[p as usize]);
+                    // Fragment는 DOM element가 없으므로 실제 element 부모를 기준으로 숨깁니다.
+                    let parent_has = self
+                        .doc
+                        .element(element)
+                        .parent
+                        .and_then(|parent| self.node_of(parent))
+                        .is_none_or(|parent| has_semantics[parent as usize]);
                     if !has_semantics[index] && parent_has {
                         self.doc.set_attr(element, "aria-hidden", "true");
                     }
@@ -596,7 +602,7 @@ impl<'a> Mapper<'a> {
 }
 
 /// IR 접근성 tree를 HTML/ARIA 조각으로 매핑합니다(모듈 문서 규칙).
-pub fn map_accessibility(ir: &CodegenIr) -> WebAccessibility {
+pub fn map_accessibility(ir: &IrTree) -> WebAccessibility {
     let mut mapper = Mapper {
         ir,
         doc: HtmlDocument::new(),

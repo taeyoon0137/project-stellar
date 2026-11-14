@@ -28,7 +28,7 @@ Accepted (2026-11-14). 제품 소유자가 기술 문서에 세부가 없는 설
 ## Consequences
 
 - 긍정: 코드 생성 작업을 문서 모델 변경과 독립적으로 진행할 수 있고, 같은 IR로 세 플랫폼 adapter를 결정론적으로 비교할 수 있습니다.
-- 부정: 문서 계층에 IR 입력을 채우는 연결 코드가 따로 필요합니다(아직 없음). 입력 모델이 하위 crate에서 바뀌면 IR 변환도 함께 바뀝니다.
+- 부정: 전체 코드 생성에는 문서 계층에서 IR 입력을 채우는 연결 코드가 따로 필요합니다(아직 없음). 입력 모델이 하위 crate에서 바뀌면 IR 변환도 함께 바뀝니다.
 
 ## Compatibility
 
@@ -45,3 +45,23 @@ Accepted (2026-11-14). 제품 소유자가 기술 문서에 세부가 없는 설
 ## Migration
 
 없습니다.
+
+## 정적 접근성 HTML 연결 (2026-11-14)
+
+- 저장된 프로젝트의 명시한 문서·View를 CLI로 내보내는 사용자 요청에 따라 `ops → codegen`,
+  `ops → accessibility`, `ops → target-profile` 간선을 허용합니다. CLI의 직접 의존은 ops로 유지하며,
+  document와 codegen 사이의 역방향 간선이나 새 외부 의존은 추가하지 않습니다.
+- 현재 `DocumentModel`은 control 의미·상태·token·Variant를 복원하지 못하고, 저장된 target profile도
+  codegen의 registry pin 형식과 연결되지 않았습니다. 없는 layout·capability를 만들어 `CodegenSources`를
+  채우지 않습니다. 기존 `CodegenIr`의 tree 부분을 `IrTree`로 분리하고 `build_accessibility_ir`는
+  구조·저장 텍스트·접근성 snapshot만 받습니다. 전체 adapter 입력 `CodegenIr`에는 여전히 target과
+  기존 `build_ir` 검증이 필요합니다. 기존 플랫폼 golden은 그대로 유지합니다.
+- `stellar export-accessibility <경로> <문서 id> <View id>`는 `ProjectSnapshot::document_model`과
+  `View.root_frame`만 사용합니다. Frame·Fragment·Text의 정적 의미를 기존 접근성 생성기와
+  `web::aria::map_accessibility`로 매핑하고 같은 정적 검사를 실행합니다. 이름을 role·label로 해석하지
+  않습니다. Shape·Path·Image는 의미·에셋 투영이 없어 오류로 거부합니다(숨김 node도 동일).
+- 성공 결과에는 HTML 조각·읽은 revision·범위 및 미지원 진단을 포함합니다. 다른 View를 내보내지 않으며
+  제외 사실을 알립니다. geometry·paint·스타일·modifier·profile·동적 의미는 명시적으로 진단합니다.
+  파일 출력 옵션은 없고 JSON의 `result.html`을 사용합니다. Git·프로젝트를 변경하지 않습니다.
+- 이는 정적 접근성 투영의 제품 경로이며 XXIV.1.4의 일반 render/export나 Phase XXII 전체 코드 생성
+  완료가 아닙니다. 저장 형식·FFI·초기 앱 메뉴·text-source apply에는 영향이 없습니다.

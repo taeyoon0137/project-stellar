@@ -34,6 +34,8 @@
 | `stellar-local-ipc` | core-types |
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
+| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile |
+| `stellar-cli` | ops, diagnostics |
 | `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, ops, git-porcelain |
 | `stellar-ffi` | core-types, runtime |
 
@@ -82,6 +84,10 @@ graph TD
   codegen --> target_profile
   codegen --> accessibility
   codegen --> layout
+  ops --> codegen
+  ops --> accessibility
+  ops --> target_profile
+  stellar_cli --> ops
   runtime --> core_types
   runtime --> document
   runtime --> commands

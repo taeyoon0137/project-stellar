@@ -1,14 +1,14 @@
 //! 접근성 binding을 IR 안의 값·상태로 해석합니다 (XXII.1.1).
 //!
 //! adapter는 binding 종류마다 플랫폼 표현이 다릅니다. 정적 출력(HTML 등)은 초기값을, 상태를 가진 출력
-//! (SwiftUI·Compose)은 상태 변수 참조를 씁니다. [`CodegenIr::resolve_binding`]은 그 둘을 모두 알려 주고,
-//! [`CodegenIr::static_value`]는 초기값을 계산합니다.
+//! (SwiftUI·Compose)은 상태 변수 참조를 씁니다. [`IrTree::resolve_binding`]은 그 둘을 모두 알려 주고,
+//! [`IrTree::static_value`]는 초기값을 계산합니다.
 
 use stellar_accessibility::node::AccessibilityBinding;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::typed_value::TypedValue;
 
-use super::{CodegenIr, IrProperty, IrState};
+use super::{IrProperty, IrState, IrTree};
 
 /// IR 안에서 해석한 binding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +39,7 @@ pub enum ResolvedBinding<'a> {
     Missing,
 }
 
-impl CodegenIr {
+impl IrTree {
     /// binding을 IR 안의 대상으로 해석합니다.
     pub fn resolve_binding<'a>(&'a self, binding: &'a AccessibilityBinding) -> ResolvedBinding<'a> {
         match binding {

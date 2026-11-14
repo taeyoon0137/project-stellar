@@ -132,6 +132,9 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-storage",
                 "stellar-semantic-diff",
                 "stellar-semantic-merge",
+                "stellar-codegen",
+                "stellar-accessibility",
+                "stellar-target-profile",
                 "stellar-diagnostics",
             ],
         ),
@@ -309,6 +312,9 @@ mod tests {
             "stellar-storage",
             "stellar-semantic-diff",
             "stellar-semantic-merge",
+            "stellar-codegen",
+            "stellar-accessibility",
+            "stellar-target-profile",
             "stellar-diagnostics",
         ] {
             assert!(

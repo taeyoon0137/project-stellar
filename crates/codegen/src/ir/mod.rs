@@ -68,7 +68,7 @@ pub mod snapshot;
 mod tests;
 
 pub use binding::ResolvedBinding;
-pub use build::build_ir;
+pub use build::{build_accessibility_ir, build_ir};
 
 /// IR을 만들 수 있는 최대 View node 수.
 pub const MAX_IR_NODES: usize = 1_000_000;
@@ -288,6 +288,28 @@ pub struct IrToken {
 pub struct CodegenIr {
     /// target.
     pub target: IrTarget,
+    /// 해석된 tree와 값. 접근성 전용 투영은 이 부분만 만들 수 있습니다.
+    tree: IrTree,
+}
+
+impl std::ops::Deref for CodegenIr {
+    type Target = IrTree;
+
+    fn deref(&self) -> &IrTree {
+        &self.tree
+    }
+}
+
+impl std::ops::DerefMut for CodegenIr {
+    fn deref_mut(&mut self) -> &mut IrTree {
+        &mut self.tree
+    }
+}
+
+/// Target Profile과 독립된 IR tree. 접근성 전용 입력은 layout·capability·속성·상태·token을
+/// 만들지 않습니다. 전체 코드 생성에는 `build_ir`가 만든 `CodegenIr`이 필요합니다.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrTree {
     /// 시각 node(preorder, `nodes[0]`이 root).
     pub nodes: Vec<IrNode>,
     /// 접근성 entry(읽기 순서 preorder).
@@ -299,7 +321,7 @@ pub struct CodegenIr {
     index: BTreeMap<StableId, u32>,
 }
 
-impl CodegenIr {
+impl IrTree {
     /// StableId의 IR node index.
     pub fn node_index(&self, id: StableId) -> Option<u32> {
         self.index.get(&id).copied()
