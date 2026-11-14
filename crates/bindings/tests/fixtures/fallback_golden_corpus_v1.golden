@@ -1,0 +1,89 @@
+# orphan 기본값·안전값 evaluator golden corpus (VIII.9.3, 버전 1).
+#
+# 각 줄: <case 이름> <결과> <진단>
+# - 결과: value:<TypedValue::to_bytes 소문자 hex> | null | error:<종류>
+# - 진단: none | missing | malformed | invalid-type (VIII.8.3 CorruptionDiagnostic)
+# 모든 값은 상수 구성·IEEE 기본 연산만 써서 플랫폼과 무관하게 같은 bytes여야 합니다(ADR-0006 규칙 4).
+#
+# case 정의와 검사: crates/bindings/tests/fallback_golden_corpus.rs
+# 갱신: STELLAR_UPDATE_FALLBACK_CORPUS=1 cargo test -p stellar-bindings --test fallback_golden_corpus
+safe.bool value:0100 none
+safe.num value:0200000000 none
+safe.str value:0300000000 none
+safe.enum value:040000000700000000 none
+safe.len value:0500000000 none
+safe.pct value:0600000000 none
+safe.deg value:0700000000 none
+safe.dur value:0800000000 none
+safe.color value:090100000000000000000000000000000000 none
+safe.gradient value:0a0000000400000000 none
+safe.shadow value:0b0000000000000000000000000100000000000000000000000000000000 none
+safe.typo value:0c00000000 none
+safe.res value:0d00000000000000000000000000000000 none
+open.bool.valid value:0101 none
+open.bool.missing value:0100 missing
+open.bool.truncated value:0100 malformed
+open.bool.wrong_type value:0100 invalid-type
+open.num.valid value:020000403f none
+open.num.missing value:0200000000 missing
+open.num.truncated value:0200000000 malformed
+open.num.wrong_type value:0200000000 invalid-type
+open.str.valid value:0300000009eab8b0ebb3b8eab092 none
+open.str.missing value:0300000000 missing
+open.str.truncated value:0300000000 malformed
+open.str.wrong_type value:0300000000 invalid-type
+open.enum.valid value:040000000700000003 none
+open.enum.missing value:040000000700000000 missing
+open.enum.truncated value:040000000700000000 malformed
+open.enum.wrong_type value:040000000700000000 invalid-type
+open.len.valid value:0500004841 none
+open.len.missing value:0500000000 missing
+open.len.truncated value:0500000000 malformed
+open.len.wrong_type value:0500000000 invalid-type
+open.pct.valid value:0600004842 none
+open.pct.missing value:0600000000 missing
+open.pct.truncated value:0600000000 malformed
+open.pct.wrong_type value:0600000000 invalid-type
+open.deg.valid value:070000b4c2 none
+open.deg.missing value:0700000000 missing
+open.deg.truncated value:0700000000 malformed
+open.deg.wrong_type value:0700000000 invalid-type
+open.dur.valid value:0800007a43 none
+open.dur.missing value:0800000000 missing
+open.dur.truncated value:0800000000 malformed
+open.dur.wrong_type value:0800000000 invalid-type
+open.color.valid value:09020000803f0000003f00000000cdcc4c3f none
+open.color.missing value:090100000000000000000000000000000000 missing
+open.color.truncated value:090100000000000000000000000000000000 malformed
+open.color.wrong_type value:090100000000000000000000000000000000 invalid-type
+open.gradient.valid value:0a0000004e000000026161616161616161616161616161616100000000010000803f0000803f0000803f0000803f626262626262626262626262626262620000803f010000000000000000000000000000803f none
+open.gradient.missing value:0a0000000400000000 missing
+open.gradient.truncated value:0a0000000400000000 malformed
+open.gradient.wrong_type value:0a0000000400000000 invalid-type
+open.shadow.valid value:0b0000803f0000004000008040010000000000000000000000000000803e none
+open.shadow.missing value:0b0000000000000000000000000100000000000000000000000000000000 missing
+open.shadow.truncated value:0b0000000000000000000000000100000000000000000000000000000000 malformed
+open.shadow.wrong_type value:0b0000000000000000000000000100000000000000000000000000000000 invalid-type
+open.typo.valid value:0c00000003010203 none
+open.typo.missing value:0c00000000 missing
+open.typo.truncated value:0c00000000 malformed
+open.typo.wrong_type value:0c00000000 invalid-type
+open.res.valid value:0d52525252525252525252525252525252 none
+open.res.missing value:0d00000000000000000000000000000000 missing
+open.res.truncated value:0d00000000000000000000000000000000 malformed
+open.res.wrong_type value:0d00000000000000000000000000000000 invalid-type
+open.optional_len.valid value:0500004841 none
+open.optional_len.missing null missing
+open.optional_len.truncated null malformed
+open.optional_len.wrong_type null invalid-type
+open.optional_str.valid value:0300000009eab8b0ebb3b8eab092 none
+open.optional_str.missing null missing
+open.optional_str.truncated null malformed
+open.optional_str.wrong_type null invalid-type
+open.optional_color.valid value:09020000803f0000003f00000000cdcc4c3f none
+open.optional_color.missing null missing
+open.optional_color.truncated null malformed
+open.optional_color.wrong_type null invalid-type
+open.token_default value:0500004041 none
+open.live_reads_orphan value:0500005841 none
+open.diagnostics count:48 none
