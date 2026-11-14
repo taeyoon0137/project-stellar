@@ -19,6 +19,13 @@
 //! - 모든 읽기는 `[offset, offset + len)`이 파일 길이 안인지 먼저 확인합니다([`FontParseError::Truncated`]).
 //! - face 수는 [`MAX_FACES_PER_FILE`], sfnt table 수는 [`MAX_SFNT_TABLES`], name table 크기는
 //!   [`MAX_NAME_TABLE_BYTES`]로 제한합니다. 할당 크기는 항상 이 상한과 파일 길이 이하입니다.
+//! - 작업량도 입력 크기에 비례하게 묶습니다. 파일 하나에서 같은 name table 구간(offset, 길이)은 한
+//!   번만 읽어 해석하고(collection이 같은 face·name table을 반복 가리켜도 재해석 없음), 서로 다른 구간을
+//!   읽은 bytes 합계는 [`MAX_NAME_TABLE_BYTES_PER_FILE`]로 제한합니다. 넘으면 그 뒤 face의 이름만
+//!   비웁니다.
+//! - name record는 decode 전에 원본 길이로 거르고(아래 이름 선택 규칙), nameID 하나에서 decode를
+//!   시도하는 후보는 순위 순 [`MAX_NAME_CANDIDATES_PER_ID`]개까지입니다. 같은 문자열 구간을 가리키는
+//!   record가 아무리 많아도 face 하나의 decode 작업량은 상수 상한 이하입니다.
 //! - 재귀 없이 반복문으로만 읽습니다.
 //!
 //! container 구조(collection offset, face signature, WOFF header) 오류는 파일 전체를 거부합니다.
@@ -41,8 +48,12 @@
 //! 4. Macintosh(1) Roman(0) English(0) — ASCII인 경우만
 //!
 //! UTF-16BE가 깨졌거나, 제어 문자가 있거나, 비었거나, [`MAX_FACE_NAME_BYTES`]를 넘는 값은
-//! 후보에서 제외합니다.
+//! 후보에서 제외합니다. 유효한 이름은 UTF-16 code unit 하나가 UTF-8 1 byte 이상이므로, 원본
+//! bytes가 UTF-16이면 `2 × MAX_FACE_NAME_BYTES + 2`, Macintosh ASCII면 `MAX_FACE_NAME_BYTES + 1`
+//! (끝 NUL 하나 허용)을 넘는 record는 decode하지 않고 제외합니다. 순위 순 앞
+//! [`MAX_NAME_CANDIDATES_PER_ID`]개 후보가 모두 제외되면 그 이름은 없습니다.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{ErrorKind, Read, Seek, SeekFrom};
 
@@ -57,6 +68,19 @@ pub const MAX_NAME_TABLE_BYTES: u32 = 1 << 20;
 
 /// face 이름 하나의 최대 UTF-8 길이(byte).
 pub const MAX_FACE_NAME_BYTES: usize = 1024;
+
+/// 파일 하나에서 읽는 서로 다른 name table 구간의 bytes 합계 상한. 넘으면 그 뒤 face의 이름을 읽지
+/// 않습니다(face 하나 상한 [`MAX_NAME_TABLE_BYTES`]의 16배).
+pub const MAX_NAME_TABLE_BYTES_PER_FILE: u64 = 16 * MAX_NAME_TABLE_BYTES as u64;
+
+/// nameID 하나에서 decode를 시도하는 후보 record 수 상한(순위 순).
+pub const MAX_NAME_CANDIDATES_PER_ID: usize = 64;
+
+/// UTF-16BE name record 원본 bytes 상한(유효 이름 + 끝 NUL 하나).
+const MAX_UTF16_NAME_RECORD_BYTES: usize = 2 * MAX_FACE_NAME_BYTES + 2;
+
+/// Macintosh Roman(ASCII) name record 원본 bytes 상한(유효 이름 + 끝 NUL 하나).
+const MAX_MAC_NAME_RECORD_BYTES: usize = MAX_FACE_NAME_BYTES + 1;
 
 const SIG_TRUETYPE: [u8; 4] = [0x00, 0x01, 0x00, 0x00];
 const SIG_TRUE: [u8; 4] = *b"true";
@@ -466,7 +490,7 @@ pub fn read_font_file<R: Read + Seek>(
             } else {
                 FontFileFormat::TrueType
             };
-            let face = read_sfnt_face(&mut file, 0)?;
+            let face = read_sfnt_face(&mut file, 0, &mut NameTables::default())?;
             Ok(FontFileInfo {
                 format,
                 faces: vec![face],
@@ -560,6 +584,7 @@ fn read_collection<R: Read + Seek>(
     // offset 표 전체가 파일 안인지 먼저 확인합니다(count <= MAX_FACES_PER_FILE).
     let table = file.vec_at(TTC_HEADER_LEN, (count as u32) * 4)?;
     let mut faces = Vec::with_capacity(count);
+    let mut names = NameTables::default();
     for (index, raw) in table.chunks_exact(4).enumerate() {
         let offset = u64::from(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]));
         // index < count <= MAX_FACES_PER_FILE.
@@ -568,12 +593,53 @@ fn read_collection<R: Read + Seek>(
         if !is_sfnt_signature(signature) {
             return Err(FontParseError::InvalidFaceSignature { index, signature });
         }
-        faces.push(read_sfnt_face(file, offset)?);
+        faces.push(read_sfnt_face(file, offset, &mut names)?);
     }
     Ok(FontFileInfo {
         format: FontFileFormat::Collection,
         faces,
     })
+}
+
+/// 파일 하나의 name table 읽기 상태(모듈 문서 "신뢰하지 않는 입력").
+///
+/// 같은 구간(offset, 길이)은 한 번만 읽어 해석한 결과를 재사용하고, 서로 다른 구간을 읽은 bytes
+/// 합계를 [`MAX_NAME_TABLE_BYTES_PER_FILE`]로 제한합니다. face 순서대로 쓰므로 결과는 결정론적입니다.
+#[derive(Default)]
+struct NameTables {
+    parsed: BTreeMap<(u64, u32), FontFaceNames>,
+    bytes_read: u64,
+}
+
+impl NameTables {
+    /// `[offset, offset + length)` name table의 이름. 파일 밖이거나 예산을 넘으면 빈 이름입니다.
+    fn names<R: Read + Seek>(
+        &mut self,
+        file: &mut Bounded<'_, R>,
+        offset: u64,
+        length: u32,
+    ) -> Result<FontFaceNames, FontParseError> {
+        if let Some(names) = self.parsed.get(&(offset, length)) {
+            return Ok(names.clone());
+        }
+        // name table이 파일 밖이면 이름만 비웁니다(모듈 문서). 읽지 않으므로 예산을 쓰지 않습니다.
+        if file.check(offset, u64::from(length)).is_err() {
+            return Ok(FontFaceNames::default());
+        }
+        let total = self.bytes_read.saturating_add(u64::from(length));
+        if total > MAX_NAME_TABLE_BYTES_PER_FILE {
+            return Ok(FontFaceNames::default());
+        }
+        self.bytes_read = total;
+        let names = match file.vec_at(offset, length) {
+            Ok(bytes) => parse_name_table(&bytes, &mut NameParseWork::default()),
+            // 선언 길이보다 실제 파일이 짧음(읽는 도중 잘림).
+            Err(FontParseError::Truncated { .. }) => FontFaceNames::default(),
+            Err(e) => return Err(e),
+        };
+        self.parsed.insert((offset, length), names.clone());
+        Ok(names)
+    }
 }
 
 /// sfnt face 하나(offset table 위치 `face_offset`)의 이름을 읽습니다.
@@ -582,6 +648,7 @@ fn read_collection<R: Read + Seek>(
 fn read_sfnt_face<R: Read + Seek>(
     file: &mut Bounded<'_, R>,
     face_offset: u64,
+    name_tables: &mut NameTables,
 ) -> Result<FontFaceInfo, FontParseError> {
     let num_tables = file.u16_at(face_offset + 4)?;
     if num_tables > MAX_SFNT_TABLES {
@@ -619,12 +686,7 @@ fn read_sfnt_face<R: Read + Seek>(
     };
     let names = match name_table {
         Some((offset, length)) if length <= MAX_NAME_TABLE_BYTES => {
-            match file.vec_at(offset, length) {
-                Ok(bytes) => parse_name_table(&bytes),
-                // name table이 파일 밖이면 이름만 비웁니다(모듈 문서).
-                Err(FontParseError::Truncated { .. }) => FontFaceNames::default(),
-                Err(e) => return Err(e),
-            }
+            name_tables.names(file, offset, length)?
         }
         _ => FontFaceNames::default(),
     };
@@ -829,71 +891,101 @@ impl<R: Read> Cursor<R> {
     }
 }
 
-/// name record 하나(nameID 필터 후).
+/// name record 정렬 key: (순위, language id, encoding id, record index). record index가 있어 서로
+/// 다릅니다.
+type NameRecordKey = (u8, u16, u16, usize);
+
+/// name record 하나(nameID·순위·길이 필터 후).
 struct NameRecord {
+    name_id: u16,
+    key: NameRecordKey,
     platform: u16,
-    encoding: u16,
-    language: u16,
-    index: usize,
     bytes_offset: usize,
     bytes_len: usize,
 }
 
+/// name table 해석 작업량(decode를 시도한 record 수와 그 원본 bytes 합). 상한 검사에 씁니다.
+#[derive(Debug, Default)]
+struct NameParseWork {
+    decode_attempts: usize,
+    decoded_bytes: usize,
+}
+
+/// 이름 선택 순위(모듈 문서 "이름 선택 규칙"). 대상이 아니면 `None`.
+fn name_rank(platform: u16, encoding: u16, language: u16) -> Option<u8> {
+    match (platform, encoding, language) {
+        (3, 1 | 10, 0x0409) => Some(0),
+        (3, 1 | 10, _) => Some(1),
+        (0, _, _) => Some(2),
+        (1, 0, 0) => Some(3),
+        _ => None,
+    }
+}
+
+/// 유효 이름이 될 수 있는 record 원본 bytes 상한(모듈 문서 "이름 선택 규칙").
+fn max_name_record_bytes(platform: u16) -> usize {
+    if platform == 1 {
+        MAX_MAC_NAME_RECORD_BYTES
+    } else {
+        MAX_UTF16_NAME_RECORD_BYTES
+    }
+}
+
 /// name table bytes(메모리, [`MAX_NAME_TABLE_BYTES`] 이하)에서 이름을 고릅니다.
-fn parse_name_table(table: &[u8]) -> FontFaceNames {
+///
+/// 순위 대상이 아니거나 원본 길이가 상한을 넘는 record는 decode 전에 거르고, nameID마다 순위 순 앞
+/// [`MAX_NAME_CANDIDATES_PER_ID`]개만 decode합니다. 작업량은 `work`에 더합니다.
+fn parse_name_table(table: &[u8], work: &mut NameParseWork) -> FontFaceNames {
     let read_u16 = |at: usize| -> Option<u16> {
         table
-            .get(at..at + 2)
+            .get(at..at.checked_add(2)?)
             .map(|b| u16::from_be_bytes([b[0], b[1]]))
     };
     let (Some(count), Some(string_offset)) = (read_u16(2), read_u16(4)) else {
         return FontFaceNames::default();
     };
     let string_offset = usize::from(string_offset);
-    let mut records: Vec<(u16, NameRecord)> = Vec::new();
+    let mut records: Vec<NameRecord> = Vec::new();
     for index in 0..usize::from(count) {
         let at = 6 + index * 12;
-        let fields: Option<Vec<u16>> = (0..6).map(|k| read_u16(at + k * 2)).collect();
-        let Some(fields) = fields else {
+        let Some(raw) = table.get(at..at + 12) else {
             // record 배열이 table 밖으로 나가면 거기까지만 씁니다.
             break;
         };
-        let name_id = fields[3];
+        let field = |k: usize| u16::from_be_bytes([raw[k * 2], raw[k * 2 + 1]]);
+        let (platform, encoding, language, name_id) = (field(0), field(1), field(2), field(3));
         if !matches!(name_id, 1 | 2 | 6 | 16 | 17) {
             continue;
         }
-        records.push((
+        let Some(rank) = name_rank(platform, encoding, language) else {
+            continue;
+        };
+        let bytes_len = usize::from(field(4));
+        if bytes_len > max_name_record_bytes(platform) {
+            continue;
+        }
+        records.push(NameRecord {
             name_id,
-            NameRecord {
-                platform: fields[0],
-                encoding: fields[1],
-                language: fields[2],
-                index,
-                bytes_offset: string_offset + usize::from(fields[5]),
-                bytes_len: usize::from(fields[4]),
-            },
-        ));
-    }
-    let pick = |name_id: u16| -> Option<String> {
-        let mut candidates: Vec<(u8, u16, u16, usize, &NameRecord)> = records
-            .iter()
-            .filter(|(id, _)| *id == name_id)
-            .filter_map(|(_, r)| {
-                let rank = match (r.platform, r.encoding, r.language) {
-                    (3, 1 | 10, 0x0409) => 0,
-                    (3, 1 | 10, _) => 1,
-                    (0, _, _) => 2,
-                    (1, 0, 0) => 3,
-                    _ => return None,
-                };
-                Some((rank, r.language, r.encoding, r.index, r))
-            })
-            .collect();
-        candidates.sort_by_key(|(rank, language, encoding, index, _)| {
-            (*rank, *language, *encoding, *index)
+            key: (rank, language, encoding, index),
+            platform,
+            bytes_offset: string_offset + usize::from(field(5)),
+            bytes_len,
         });
-        candidates.into_iter().find_map(|(_, _, _, _, r)| {
+    }
+    let mut pick = |name_id: u16| -> Option<String> {
+        let mut candidates: Vec<&NameRecord> = records
+            .iter()
+            .filter(|record| record.name_id == name_id)
+            .collect();
+        if candidates.len() > MAX_NAME_CANDIDATES_PER_ID {
+            candidates.select_nth_unstable_by_key(MAX_NAME_CANDIDATES_PER_ID - 1, |r| r.key);
+            candidates.truncate(MAX_NAME_CANDIDATES_PER_ID);
+        }
+        candidates.sort_unstable_by_key(|r| r.key);
+        candidates.into_iter().find_map(|r| {
             let bytes = table.get(r.bytes_offset..r.bytes_offset.checked_add(r.bytes_len)?)?;
+            work.decode_attempts += 1;
+            work.decoded_bytes += bytes.len();
             let text = if r.platform == 1 {
                 bytes
                     .is_ascii()
@@ -1289,5 +1381,119 @@ mod tests {
         // table record(하나뿐) offset 필드를 파일 밖으로 옮깁니다.
         outside[20..24].copy_from_slice(&0x00FF_FFFFu32.to_be_bytes());
         assert_eq!(probe(&outside).unwrap().faces[0].embedding, None);
+    }
+
+    /// 읽은 bytes를 세는 reader.
+    struct CountingReader<'a> {
+        inner: IoCursor<&'a [u8]>,
+        bytes_read: u64,
+    }
+
+    impl Read for CountingReader<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.bytes_read += n as u64;
+            Ok(n)
+        }
+    }
+
+    impl Seek for CountingReader<'_> {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    /// probe 결과와 읽은 bytes 수.
+    fn probe_counting(bytes: &[u8]) -> (Result<FontFileInfo, FontParseError>, u64) {
+        let mut reader = CountingReader {
+            inner: IoCursor::new(bytes),
+            bytes_read: 0,
+        };
+        let result = read_font_file(&mut reader, bytes.len() as u64);
+        (result, reader.bytes_read)
+    }
+
+    #[test]
+    fn oversized_overlapping_name_records_are_not_decoded() {
+        use crate::fonts::test_fixtures::{overlapping_name_table, sfnt_face_with_tables};
+        // 리뷰 재현 입력: 5,460개 nameID-1 record가 모두 같은 65,534 bytes 구간을 가리킴(약 128 KiB).
+        let table = overlapping_name_table(5460, 1, 65534, u16::from(b'A'));
+        let mut work = NameParseWork::default();
+        let names = parse_name_table(&table, &mut work);
+        // 유효 이름 상한(2 × 1024 + 2 bytes)을 넘는 record는 decode 전에 제외됩니다.
+        assert!(names.is_empty());
+        assert_eq!(work.decode_attempts, 0);
+        assert_eq!(work.decoded_bytes, 0);
+        let bytes = sfnt_face_with_tables(SIG_TRUETYPE, &[], &[(*b"name", table)]);
+        let info = probe(&bytes).unwrap();
+        assert_eq!(info.face_count(), 1);
+        assert!(info.faces[0].names.is_empty());
+    }
+
+    #[test]
+    fn name_decode_candidates_are_capped_per_name_id() {
+        use crate::fonts::test_fixtures::overlapping_name_table;
+        // 길이 상한 이내지만 제어 문자(U+0001)라 모두 거부되는 record 5,460개.
+        let table = overlapping_name_table(5460, 1, 2048, 0x0001);
+        let mut work = NameParseWork::default();
+        let names = parse_name_table(&table, &mut work);
+        assert!(names.is_empty());
+        // nameID 1만 후보가 있고 순위 순 앞 MAX_NAME_CANDIDATES_PER_ID개만 decode합니다.
+        assert_eq!(work.decode_attempts, MAX_NAME_CANDIDATES_PER_ID);
+        assert_eq!(work.decoded_bytes, MAX_NAME_CANDIDATES_PER_ID * 2048);
+
+        // 상한 경계: 정확히 2 × 1024 + 2 bytes(끝 NUL 하나)인 이름은 decode되어 선택됩니다.
+        let mut entries = vec![0u8; 0];
+        for _ in 0..MAX_FACE_NAME_BYTES {
+            entries.extend_from_slice(&u16::from(b'A').to_be_bytes());
+        }
+        entries.extend_from_slice(&[0, 0]);
+        let exact = NameEntry::raw(3, 1, 0x0409, 1, entries.clone());
+        let info = probe(&sfnt_face(SIG_TRUETYPE, &[exact])).unwrap();
+        assert_eq!(
+            info.faces[0].names.family().map(str::len),
+            Some(MAX_FACE_NAME_BYTES)
+        );
+        // 2 bytes 더 길면(끝 NUL 둘) decode하지 않고 제외합니다.
+        entries.extend_from_slice(&[0, 0]);
+        let over = NameEntry::raw(3, 1, 0x0409, 1, entries);
+        let info = probe(&sfnt_face(SIG_TRUETYPE, &[over])).unwrap();
+        assert_eq!(info.faces[0].names.family(), None);
+    }
+
+    #[test]
+    fn repeated_collection_faces_read_the_name_table_once() {
+        use crate::fonts::test_fixtures::{overlapping_name_table, ttc_repeated};
+        let table = overlapping_name_table(5460, 1, 2048, 0x0001);
+        let table_len = table.len() as u64;
+        let bytes = ttc_repeated(&[(*b"name", table)], MAX_FACES_PER_FILE);
+        let (result, bytes_read) = probe_counting(&bytes);
+        let info = result.unwrap();
+        assert_eq!(info.face_count(), MAX_FACES_PER_FILE);
+        // name table은 한 번만 읽습니다. 나머지는 face마다 offset table·record 수십 bytes입니다.
+        let per_face_overhead = 64 * u64::from(MAX_FACES_PER_FILE);
+        assert!(
+            bytes_read <= table_len + per_face_overhead,
+            "읽은 bytes {bytes_read} > {table_len} + {per_face_overhead}"
+        );
+    }
+
+    #[test]
+    fn distinct_name_table_reads_are_capped_per_file() {
+        use crate::fonts::test_fixtures::ttc_shifted_name_windows;
+        // 구간이 모두 다른 1 MiB name table 40개: 상한이 없으면 40 MiB를 읽습니다.
+        let count = 40;
+        let bytes = ttc_shifted_name_windows(count, MAX_NAME_TABLE_BYTES);
+        let (result, bytes_read) = probe_counting(&bytes);
+        let info = result.unwrap();
+        assert_eq!(info.face_count(), count);
+        assert!(info.faces.iter().all(|face| face.names.is_empty()));
+        let overhead = 64 * u64::from(count) + 4 * u64::from(count) + 12;
+        assert!(
+            bytes_read <= MAX_NAME_TABLE_BYTES_PER_FILE + overhead,
+            "읽은 bytes {bytes_read} > {MAX_NAME_TABLE_BYTES_PER_FILE} + {overhead}"
+        );
+        // 상한 안의 앞 face들은 실제로 읽었습니다(16개 × 1 MiB).
+        assert!(bytes_read >= MAX_NAME_TABLE_BYTES_PER_FILE);
     }
 }
