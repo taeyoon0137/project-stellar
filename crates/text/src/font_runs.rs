@@ -15,7 +15,7 @@
 //! - Default_Ignorable 문자(ZWJ, variation selector, BiDi 제어 등)는 coverage 판단에서 제외합니다.
 //!   무시 문자만으로 된 cluster는 앞 cluster의 face를 따릅니다.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Range;
 
@@ -331,6 +331,12 @@ pub fn shape_font_runs<S: FaceSource + ?Sized>(
     faces: &S,
 ) -> Result<(Vec<ShapedFontRun>, Vec<MissingGlyphCluster>), FontRunError> {
     let mut missing = assignment.missing.clone();
+    // 이미 기록한 missing 범위(할당 단계 + 앞 run의 shaping 단계). 중복 확인을 선형 검색 대신 집합으로 해
+    // missing 수 m에 대해 O(m log m)입니다.
+    let mut recorded: BTreeSet<(usize, usize)> = missing
+        .iter()
+        .map(|m| (m.range.start, m.range.end))
+        .collect();
     let mut shaped_runs = Vec::with_capacity(assignment.runs.len());
     // 같은 (face, axes) instance는 한 번만 만듭니다.
     let mut instances: BTreeMap<(FontHandle, Vec<FontVariation>), FontFace> = BTreeMap::new();
@@ -399,7 +405,8 @@ pub fn shape_font_runs<S: FaceSource + ?Sized>(
             },
         )?;
         for range in notdef_clusters(&shaped) {
-            if !missing.iter().any(|m| m.range == range) {
+            crate::op_count::tick(1);
+            if recorded.insert((range.start, range.end)) {
                 missing.push(MissingGlyphCluster {
                     range,
                     item: run.item,
@@ -416,22 +423,31 @@ pub fn shape_font_runs<S: FaceSource + ?Sized>(
     Ok((shaped_runs, missing))
 }
 
-/// run 안에서 `.notdef` glyph를 가진 shaping cluster 범위(오름차순).
+/// run 안에서 `.notdef` glyph를 가진 shaping cluster 범위(오름차순, cluster 시작마다 하나).
+///
+/// `.notdef` glyph의 cluster 시작을 정렬해 중복을 지운 뒤 범위로 바꿉니다. 이미 넣은 범위를 선형 검색하지
+/// 않으므로 비용은 glyph 수 n에 대해 O(n log n)입니다.
 pub fn notdef_clusters(run: &ShapedRun) -> Vec<Range<usize>> {
     let mut starts: Vec<usize> = run.glyphs.iter().map(|g| g.cluster as usize).collect();
     starts.sort_unstable();
     starts.dedup();
-    let mut out: Vec<Range<usize>> = Vec::new();
-    for glyph in run.glyphs.iter().filter(|g| g.glyph == GlyphId::NOTDEF) {
-        let start = glyph.cluster as usize;
-        let next = starts.partition_point(|s| *s <= start);
-        let end = starts.get(next).copied().unwrap_or(run.range.end);
-        if !out.iter().any(|r| r.start == start) {
-            out.push(start..end);
-        }
-    }
-    out.sort_by_key(|r| r.start);
-    out
+    let mut notdef: Vec<usize> = run
+        .glyphs
+        .iter()
+        .filter(|g| g.glyph == GlyphId::NOTDEF)
+        .map(|g| g.cluster as usize)
+        .collect();
+    notdef.sort_unstable();
+    notdef.dedup();
+    notdef
+        .into_iter()
+        .map(|start| {
+            crate::op_count::tick(1);
+            let next = starts.partition_point(|s| *s <= start);
+            let end = starts.get(next).copied().unwrap_or(run.range.end);
+            start..end
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -667,6 +683,73 @@ pub(crate) mod tests {
         )
         .expect("shape");
         assert!(shaped[0].shaped.is_none());
+    }
+
+    #[test]
+    fn missing_cluster_work_is_linear_in_missing_count() {
+        // posthoc TS-3 회귀: chain이 덮지 못하는 script(태국어)만으로 된 paragraph는 모든 cluster가 missing이고
+        // shaping 결과도 모두 `.notdef`입니다. 중복 제거를 선형 검색으로 하면 missing 수의 제곱이 됩니다.
+        let set = FontSet::new(&[latin_spec()]);
+        let chain = set.chain(&[0]);
+        let resolved = [chain.resolve(&set.registry)];
+        let work = |n: usize| {
+            let text = "\u{0E01}".repeat(n);
+            let items = itemize(&text, &span(&text), BaseDirection::LeftToRight).expect("items");
+            let assignment =
+                assign_fonts(&text, &items.items, &resolved, &set.faces).expect("assign");
+            assert_eq!(assignment.missing.len(), n);
+            let ((_, missing), units) = crate::op_count::measure(|| {
+                shape_font_runs(
+                    &text,
+                    &items.items,
+                    &assignment,
+                    &resolved,
+                    &[ShapingStyle::default()],
+                    &set.faces,
+                )
+                .expect("shape")
+            });
+            // shaping 단계 `.notdef`는 할당 단계와 같은 범위라 중복 기록하지 않습니다.
+            assert_eq!(missing, assignment.missing);
+            units
+        };
+        let (small, large) = (work(1_000), work(4_000));
+        assert!(
+            large <= 4 * 4_000,
+            "missing cluster 하나당 상수 번만 방문해야 합니다: 작업량 {large}"
+        );
+        assert!(
+            large <= 5 * small,
+            "입력 4배에 작업량 {small} → {large}(선형이면 4배 남짓, 제곱이면 16배)"
+        );
+    }
+
+    #[test]
+    fn notdef_clusters_are_unique_and_sorted() {
+        // notdef_clusters는 cluster 시작마다 범위 하나를 오름차순으로 냅니다(RTL run의 visual 순서 입력 포함).
+        let glyph = |id: u32, cluster: u32| crate::shaping::ShapedGlyph {
+            glyph: GlyphId::new(id),
+            cluster,
+            x_advance: 0,
+            y_advance: 0,
+            x_offset: 0,
+            y_offset: 0,
+            unsafe_to_break: false,
+        };
+        let run = ShapedRun {
+            range: 0..10,
+            direction: crate::shaping::TextDirection::RightToLeft,
+            units_per_em: 1000,
+            glyphs: vec![
+                glyph(0, 8),
+                glyph(5, 6),
+                glyph(0, 4),
+                glyph(0, 4),
+                glyph(7, 2),
+                glyph(0, 0),
+            ],
+        };
+        assert_eq!(notdef_clusters(&run), vec![0..2, 4..6, 8..10]);
     }
 
     #[test]
