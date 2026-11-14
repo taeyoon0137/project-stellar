@@ -41,9 +41,9 @@
 |---|---|---|
 | `helperUnavailable` | 번들에 실행 가능한 `Contents/Helpers/stellar` 없음 | Close. 첫 실행 제안 없음 |
 | `unsupportedAppLocation` | App Translocation 또는 읽기 전용 볼륨 | Close. 제안·기록 없음(옮긴 뒤 다시 제안) |
-| `installed` | 이 앱 helper를 가리키는 소유 링크가 있고 그 이름이 가려지지 않음 | Done / Remove Command |
+| `installed` | 이 앱 helper를 가리키는 소유 링크가 있고 그 이름이 가려지지 않음 | Done / Remove Command(이 앱 helper 링크만 지움) |
 | `shadowed` | 이 앱을 가리키는 소유 링크가 모두 다른 프로그램에 가려짐 | 대체 이름 가능하면 Install as stellar-cli 제안, 아니면 알림. Remove Command 제공 |
-| `needsRepair` | 다른 위치를 가리키는 소유 링크가 있고 이름이 가려지지 않음 | Update(원자적 교체) |
+| `needsRepair` | 다른 위치를 가리키는 소유 링크가 있고 이름이 가려지지 않음 | Update(원자적 교체). 계획에 지금 링크 대상(절대 경로)과 그 앱 번들이 있는지를 실어 동의 화면에 보여 줌 |
 | `ready` | 새 설치 가능(`stellar` 또는 대체 이름) | Install / Install as stellar-cli |
 | `namesUnavailable` | 두 이름 모두 다른 프로그램 | 설치 0, 알림(Close) |
 | `noWritableLocation` | 쓸 수 있는 후보 없음 | 만들 폴더 안내, Close |
@@ -57,16 +57,16 @@
 | 명령 | 결과 |
 |---|---|
 | Debug `xcodebuild … build`(XXIV.5.3 보고서와 같은 옵션) | `BUILD SUCCEEDED` |
-| `StellarMac --welcome-ui-check`(임시 실행 인자) 3회 | 3회 모두 `welcome-ui ok: 353 checks [disk installer ok; main-thread fs calls 0, background 103; …]`, 종료 코드 0 |
-| `./scripts/macos/smoke.sh` | `smoke OK`, 종료 코드 0 |
+| `StellarMac --welcome-ui-check`(커밋된 실행 인자) 3회 | 3회 모두 `welcome-ui ok: 378 checks [disk installer ok; main-thread fs calls 0, background 104; …]`, 종료 코드 0 |
+| `./scripts/macos/smoke.sh`(`--welcome-ui-check` 포함) | `welcome-ui ok: 378 checks …`, `smoke OK`, 종료 코드 0 |
 
 | 상태 fixture(보고서 정의와 일치) | 결과 |
 |---|---|
 | `helperUnavailable`(L8), `unsupportedAppLocation`(L7) | 통과 |
 | `installed`: 새 설치 후(I1), 자기 링크만 있음(N7), 대체 이름 설치 후(N1, N9) | 통과 |
 | `shadowed` + 대체 계획(N9), 대체 불가(N10) | 통과 |
-| `needsRepair`(R1, 절대·상대·dangling) | 통과 |
-| `ready`(L1~L6, N1~N5, N8), `namesUnavailable`(N6, N6b), `noWritableLocation`(L5) | 통과 |
+| `needsRepair`(R1, 절대·상대·dangling; 지금 대상과 번들 없음 표시, 제거 뒤 남은 상대 경로 링크) | 통과 |
+| `ready`(L1\~L6, N1\~N5, N8), `namesUnavailable`(N6, N6b), `noWritableLocation`(L5) | 통과 |
 | 첫 실행 정책: 제안 대상 5종 제안, helper 없음·임시 위치·설치됨 미제안, 답한 뒤 미제안 | 통과 |
 | 동의 없는 파일 변경 0: 상태 확인 경로(I1, N6, N9, 확인 단계 sheet)에서 `mutationCount == 0` | 통과 |
 | UI 스레드 밖 확인: `StellarCommandStatusCheck`, 첫 실행 판정, sheet 확인·Check Again에서 메인 스레드 파일 조회 0 | 통과 |

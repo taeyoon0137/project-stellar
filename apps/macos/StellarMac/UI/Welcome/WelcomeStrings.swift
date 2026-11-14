@@ -296,6 +296,20 @@ enum WelcomeStrings {
             comment: "Sheet message"
         )
     }
+    /// 링크 대상의 앱 번들이 있고 번들 식별자로 Stellar 사본임을 확인했을 때.
+    static func repairOtherCopyMessage(_ name: String, appPath: String) -> String {
+        String(
+            localized: "The \(name) command links to another copy of Stellar at \(appPath). Update it to use this copy?",
+            comment: "Sheet message: the link points to another verified copy of Stellar"
+        )
+    }
+    /// 링크 대상의 앱 번들이 없어 어느 앱이 만든 링크인지 확인하지 못했을 때(다른 앱이 남긴 링크일 수 있음).
+    static func repairMissingMessage(_ name: String, path: String) -> String {
+        String(
+            localized: "The \(name) command links to \(path), which no longer exists. Update it to use this copy of Stellar?",
+            comment: "Sheet message: the link points to an app that no longer exists"
+        )
+    }
     static let namesUnavailableTitle = String(localized: "The stellar Command Wasn’t Installed", comment: "Sheet title")
     static let namesUnavailableMessage = String(
         localized: "Other programs already use both stellar and stellar-cli, so Stellar didn’t install anything. To use the command, rename or remove one of these programs, then choose Set Up the stellar Command again.",

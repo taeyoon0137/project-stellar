@@ -210,7 +210,17 @@ final class WelcomeCommandInstallSheetController: NSViewController {
             }
         case .status(.needsRepair(let plan)):
             title = WelcomeStrings.repairTitle(plan.commandName)
-            message = WelcomeStrings.repairMessage(plan.commandName)
+            // 바꿀 링크의 지금 대상을 보여 줍니다. 번들이 없는 링크는 모양만으로 소유로 본 것이므로 Stellar 사본이라고
+            // 단정하지 않습니다(디자인 명세 6.4절).
+            switch plan.action {
+            case .replaceOwnLink(let previous, true):
+                let app = StellarCommandInstaller.appBundlePath(ofHelper: previous) ?? previous
+                message = WelcomeStrings.repairOtherCopyMessage(plan.commandName, appPath: abbreviated(app))
+            case .replaceOwnLink(let previous, false):
+                message = WelcomeStrings.repairMissingMessage(plan.commandName, path: abbreviated(previous))
+            case .create:
+                message = WelcomeStrings.repairMessage(plan.commandName)
+            }
             offer(plan, button: WelcomeStrings.update)
         case .status(.shadowed(let installation, let conflict, let fallback)):
             title = WelcomeStrings.shadowedTitle(installation.commandName)

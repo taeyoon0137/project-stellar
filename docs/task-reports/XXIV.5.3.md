@@ -14,6 +14,7 @@
 - `apps/macos/StellarMac/UI/Welcome/StellarCommandInstaller.swift`: 후보 폴더, 위치 선택, PATH 구성(`StellarCommandSearchPath`), 메인 스레드 감시용 `StellarCommandFileSystemThreadAudit`
 - `apps/macos/StellarMac/UI/Welcome/WelcomeViewController.swift`: `StellarCommandStatusCheck.evaluate`(큐에서 설치기 생성·판정)
 - `apps/macos/StellarMac/UI/Welcome/WelcomeUICheck.swift`: fixture L1~L8, PATH 구성, 메인 스레드 감시 검사
+- `apps/macos/StellarMac/main.swift`, `scripts/macos/smoke.sh`: `--welcome-ui-check` 실행 인자와 smoke 단계(리뷰 수정 커밋)
 - `docs/design/ui/welcome.md` 6.2·6.3절(정의 원본)
 - `docs/task-reports/XXIV.5.3.md`(이 보고서). 계획서 상태 표기는 바꾸지 않았습니다.
 
@@ -37,9 +38,11 @@
 | 명령 | 결과 |
 |---|---|
 | `xcodebuild -project apps/macos/StellarMac.xcodeproj -scheme StellarMac -configuration Debug -derivedDataPath apps/macos/build -packageAuthorizationProvider netrc -disableAutomaticPackageResolution CODE_SIGNING_ALLOWED=NO build` | `BUILD SUCCEEDED`, Welcome 파일 경고 0 |
-| `StellarMac --welcome-ui-check`(임시 실행 인자, 커밋하지 않은 `main.swift` 분기) 3회 | 3회 모두 `welcome-ui ok: 353 checks [disk installer ok; main-thread fs calls 0, background 103; …; running app command status=helperUnavailable]`, 종료 코드 0 |
-| `./scripts/macos/smoke.sh` | `smoke OK`, 종료 코드 0(시작 창 검사는 smoke에 연결돼 있지 않음) |
+| `StellarMac --welcome-ui-check`(커밋된 `main.swift` 실행 인자) 3회 | 3회 모두 `welcome-ui ok: 378 checks [disk installer ok; main-thread fs calls 0, background 104; …; running app command status=helperUnavailable]`, 종료 코드 0 |
+| `./scripts/macos/smoke.sh` | 빌드 후 lifecycle·canvas·text·input·update 검사와 `welcome-ui ok: 378 checks …`, `smoke OK`, 종료 코드 0 |
 | `git diff --check` | 출력 없음 |
+
+리뷰 수정 전 기록: 같은 fixture를 커밋하지 않은 임시 실행 인자로 3회 실행했을 때 `welcome-ui ok: 353 checks`(배경 호출 103)였습니다. 늘어난 25건은 실제 File 메뉴 항목 판정, Update 동의 화면, 제거 범위 검사입니다(XXIV.5.4·XXIV.5.6 보고서).
 
 | fixture(보고서 정의와 일치 여부) | 결과 |
 |---|---|
@@ -52,7 +55,7 @@
 | L7 App Translocation·읽기 전용 볼륨 → `unsupportedAppLocation` | 통과 |
 | L8 helper 없음 → `helperUnavailable(…/Contents/Helpers/stellar)` | 통과 |
 | PATH 구성(`/etc/paths` → `/etc/paths.d` → 프로세스 `PATH`, 순서 모르는 폴더에서 중복 제거) | 통과 |
-| UI 스레드 호출 0: 상태 확인, 첫 실행 판정, sheet 확인·설치·제거·Check Again 경로에서 메인 스레드 파일 조회 0(배경 호출 103) | 통과 |
+| UI 스레드 호출 0: 상태 확인, 첫 실행 판정, sheet 확인·설치·제거·Check Again 경로에서 메인 스레드 파일 조회 0(배경 호출 104) | 통과 |
 | 실제 파일 시스템(임시 폴더): 판정만으로 폴더를 만들지 않음, 설치 위치 일치 | 통과 |
 
 변이 확인(커밋하지 않고 되돌림): helper 경로를 `Contents/Helpers/stellar-cli`로 바꾸면 L1~L8 등 32건 실패. 상태 판정을 메인 스레드로 옮기면 `thread: 메인 스레드 파일 조회 ["isExecutableFile", "isExecutableFile"]`으로 실패.
@@ -67,10 +70,10 @@
 
 - 셸 설정 파일이 더하는 PATH는 알 수 없습니다. 순서 모르는 폴더 목록 밖의 폴더는 판정에 들어가지 않습니다.
 - App Translocation 경로 판정은 Apple이 지원하는 방법이 아닙니다.
-- 검사는 임시 실행 인자로 실행했습니다. `main.swift`·`scripts/macos/smoke.sh` 연결은 이 영역 밖이라 하지 않았습니다.
+- 실제 앱 번들 기준 판정은 helper가 없어 `helperUnavailable`까지만 확인했습니다.
 
 ## 재개 조건
 
 - XXIV.5.1이 `[x]`가 되어 번들에 helper가 실제로 들어갑니다.
 - helper 배치가 `Contents/Helpers/stellar`와 다르면 `helperRelativePath`를 고칩니다.
-- `--welcome-ui-check`를 smoke에 연결한 뒤 같은 fixture가 통과하면 `Task(XXIV.5.3)`로 표기를 올립니다.
+- helper가 든 빌드에서 `./scripts/macos/smoke.sh`(`--welcome-ui-check` 포함)의 같은 fixture가 통과하면 `Task(XXIV.5.3)`로 표기를 올립니다.

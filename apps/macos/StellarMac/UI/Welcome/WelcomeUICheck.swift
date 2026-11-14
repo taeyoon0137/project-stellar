@@ -1,6 +1,6 @@
 import AppKit
 
-/// 시작 창 영역을 headless로 검증합니다(통합 시 `scripts/macos/smoke.sh`에 연결).
+/// 시작 창 영역을 headless로 검증합니다(`StellarMac --welcome-ui-check`, `scripts/macos/smoke.sh`가 실행).
 ///
 /// - 시작 창·Clone sheet·명령 설치 sheet를 Stub 데이터로 화면 밖에서 만들고 레이아웃을 강제한 뒤,
 ///   모호한 Auto Layout, 잘린 여러 줄 레이블, 직접 그린 반투명 표면이 없는지 확인합니다.
@@ -534,10 +534,24 @@ enum WelcomeUICheck {
                 checker.expect(false, "R1 오래된 링크 상태가 needsRepair가 아님: \(installer.status())")
                 return
             }
-            checker.expect(plan.linkPath == link && plan.action == .replaceOwnLink(previousDestination: old), "R1 다시 연결 계획 불일치")
+            checker.expect(
+                plan.linkPath == link && plan.action == .replaceOwnLink(previousDestination: old, previousAppExists: false),
+                "R1 다시 연결 계획 불일치: \(plan.action)")
             checker.expect(installer.install(plan).isSuccess, "R1 다시 연결 실패")
             checker.expect(fileSystem.nodes[link] == .symbolicLink(destination: stubHelper), "R1 다시 연결 대상 불일치")
-            checker.expect(installer.uninstall().removedPaths.count == 2, "R1 소유 링크 2개를 모두 제거하지 않음")
+            // 제거는 다시 연결한 링크(이 앱 helper)만 합니다. 상대 경로 링크는 아직 없는 앱을 가리키므로 남고, 다음 확인에서
+            // 현재 대상(링크 폴더 기준으로 푼 절대 경로)을 보여 주는 Update 동의 대상이 됩니다.
+            let removed = installer.uninstall()
+            checker.expect(removed.removedPaths == [link] && fileSystem.nodes[link] == nil, "R1 다시 연결한 링크만 제거하지 않음: \(removed)")
+            if case .needsRepair(let next) = installer.status() {
+                checker.expect(
+                    next.linkPath == fallbackLink
+                        && next.action == .replaceOwnLink(
+                            previousDestination: stubHome + "/Apps/Stellar.app/Contents/Helpers/stellar", previousAppExists: false),
+                    "R1 상대 경로 링크의 현재 대상을 풀지 않음: \(next.action)")
+            } else {
+                checker.expect(false, "R1 제거 뒤 남은 상대 경로 링크가 Update 대상이 아님: \(installer.status())")
+            }
         }
 
         // R2: 확인과 실행 사이에 설치 위치에 남의 파일이 생김.
@@ -588,6 +602,31 @@ enum WelcomeUICheck {
             checker.expect(
                 installer.install(plan) == .failure(.conflict(path: "/usr/local/bin/stellar")) && fileSystem.mutationCount == before,
                 "R5 확인 뒤 가림을 막지 못함")
+        }
+
+        // R6: Remove Command는 이 앱 helper를 가리키는 링크만 지웁니다. 번들이 없어 소유를 확인하지 못한(dangling)
+        // 링크와 다른 Stellar 사본의 링크는 동의 화면에 보인 적이 없으므로 남깁니다.
+        fixture {
+            let fileSystem = makeFileSystem()
+            fileSystem.addDirectory(localBin, writable: true)
+            fileSystem.addDirectory(homeBin, writable: true)
+            let gone = "/Applications/Gone.app/Contents/Helpers/stellar"
+            let beta = "/Applications/Stellar Beta.app"
+            fileSystem.addFile(beta + "/Contents/Helpers/stellar", executable: true)
+            fileSystem.bundleIdentifiers[beta] = ownerBundleID
+            fileSystem.addSymbolicLink(link, destination: stubHelper)
+            fileSystem.addSymbolicLink(fallbackLink, destination: gone)
+            fileSystem.addSymbolicLink(homeBin + "/stellar", destination: beta + "/Contents/Helpers/stellar")
+            let installer = makeInstaller(fileSystem)
+            checker.expect(
+                installer.status() == .installed(StellarCommandInstallation(linkPath: link, directoryOnSearchPath: false)),
+                "R6 설치 상태 불일치: \(installer.status())")
+            let removed = installer.uninstall()
+            checker.expect(removed == StellarCommandUninstallResult(removedPaths: [link], failures: []), "R6 제거 결과 불일치: \(removed)")
+            checker.expect(
+                fileSystem.nodes[fallbackLink] == .symbolicLink(destination: gone)
+                    && fileSystem.nodes[homeBin + "/stellar"] == .symbolicLink(destination: beta + "/Contents/Helpers/stellar"),
+                "R6 동의 화면에 보이지 않은 링크를 지움")
         }
 
         // E1: 파일 시스템 오류 전달.
@@ -860,6 +899,18 @@ enum WelcomeUICheck {
         checker.expect(
             menuValidation(welcome) == WelcomeCommandAvailability(newProject: true, openProject: true, cloneProject: true),
             "메뉴 활성 판정 불일치(sample): \(menuValidation(welcome))")
+        checker.expect(
+            shellMenuValidation(welcome) == WelcomeCommandAvailability(newProject: true, openProject: true, cloneProject: true),
+            "실제 File 메뉴 활성 판정 불일치(sample): \(shellMenuValidation(welcome))")
+        // 캔버스 명령(실제 View 메뉴 항목)은 시작 창에서 켜지지 않습니다.
+        checker.expect(
+            !welcome.validateMenuItem(MainMenuBuilder.makeItem(for: .zoomIn, target: nil)), "시작 창이 캔버스 명령 메뉴를 켬")
+        // 앱 수준 router가 명시 target일 때 통합 어댑터가 쓰는 경로: 같은 판정, 시작 창 명령이 아니면 nil·실행 안 함.
+        checker.expect(
+            welcome.availability(of: .newProject) == true && welcome.availability(of: .openProject) == true
+                && welcome.availability(of: .cloneProject) == true && welcome.availability(of: .zoomIn) == nil
+                && welcome.availability(of: .settings) == nil && !welcome.run(.zoomIn),
+            "시작 창 셸 명령 판정(어댑터 경로) 불일치")
         checker.expect(welcome.gitNoticeView.isHidden && welcome.activityView.isHidden, "안내·진행 표시가 보임")
         checker.expect(welcome.versionLabel.stringValue.contains("1.2.3"), "버전 표시 불일치")
 
@@ -969,6 +1020,9 @@ enum WelcomeUICheck {
             checker.expect(
                 menuValidation(welcome) == WelcomeCommandAvailability(newProject: false, openProject: true, cloneProject: false),
                 "메뉴 활성 판정 불일치(Git 없음): \(menuValidation(welcome))")
+            checker.expect(
+                shellMenuValidation(welcome) == WelcomeCommandAvailability(newProject: false, openProject: true, cloneProject: false),
+                "실제 File 메뉴 활성 판정 불일치(Git 없음): \(shellMenuValidation(welcome))")
             expectCleanLayout(checker, window: window, context: "welcome/gitMissing")
             checker.expect(actionsColumnFits(welcome), "동작 열이 잘림(gitMissing)")
             notice.checkAgainButton.performClick(nil)
@@ -988,6 +1042,9 @@ enum WelcomeUICheck {
             checker.expect(
                 menuValidation(welcome) == WelcomeCommandAvailability(newProject: false, openProject: false, cloneProject: false),
                 "메뉴 활성 판정 불일치(진행 중)")
+            checker.expect(
+                shellMenuValidation(welcome) == WelcomeCommandAvailability(newProject: false, openProject: false, cloneProject: false),
+                "실제 File 메뉴 활성 판정 불일치(진행 중)")
             checker.expect(!welcome.openProjectButton.isEnabled, "진행 중에 열기를 막지 않음")
             expectCleanLayout(checker, window: window, context: "welcome/gitUnusable+activity")
             checker.expect(actionsColumnFits(welcome), "동작 열이 잘림(최대 내용)")
@@ -1008,6 +1065,16 @@ enum WelcomeUICheck {
                 ![welcome.newProjectButton, welcome.openProjectButton, welcome.cloneProjectButton].contains(where: \.isEnabled),
                 "진행 중 동작 버튼이 켜져 있음")
             expectCleanLayout(checker, window: window, context: "welcome/cloning")
+            // 실제 File 메뉴 항목은 응답자 체인(목록 → 시작 창 controller)으로 도달하고, 진행 중에는 아무것도 띄우지 않습니다.
+            let sentBefore = stub.sentCommands.count
+            let shellAction = #selector(ShellCommandRouter.performShellCommand(_:))
+            checker.expect(
+                fileMenuItems[.cloneProject].map { welcome.recentsView.tableView.tryToPerform(shellAction, with: $0) } == true,
+                "실제 File 메뉴의 Clone 항목이 시작 창에 도달하지 않음")
+            checker.expect(
+                !welcome.run(.cloneProject) && !welcome.run(.openProject) && window.attachedSheet == nil
+                    && (welcome.presentedViewControllers ?? []).isEmpty && stub.sentCommands.count == sentBefore,
+                "진행 중에 메뉴 명령이 실행됨")
             // 끝난 작업의 늦은 취소(다른 식별자)는 현재 작업을 취소하지 않습니다.
             stub.send(.cancelActivity(id: 999))
             welcome.renderNow()
@@ -1065,6 +1132,30 @@ enum WelcomeUICheck {
             newProject: enabled(#selector(WelcomeViewController.newStellarProject(_:))),
             openProject: enabled(#selector(WelcomeViewController.openStellarProject(_:))),
             cloneProject: enabled(#selector(WelcomeViewController.cloneStellarProject(_:))))
+    }
+
+    /// 실제 File 메뉴(Tools 영역 `MainMenuBuilder`)의 명령 항목. 앱 수준 target 없이 만들면 New·Open·Clone은
+    /// target 없이 응답자 체인으로 `performShellCommand:`를 보내고, identifier로 `ShellCommand`를 싣습니다.
+    static let fileMenuItems: [ShellCommand: NSMenuItem] = {
+        var items: [ShellCommand: NSMenuItem] = [:]
+        let file = MainMenuBuilder.build().menu.items.first { $0.title == "File" }?.submenu
+        for item in file?.items ?? [] {
+            if let command = ShellCommand.resolve(from: item), items[command] == nil { items[command] = item }
+        }
+        return items
+    }()
+
+    /// 실제 File 메뉴 항목으로 읽은 활성 판정. AppKit은 이 action에 응답하는 응답자에게만 묻습니다.
+    static func shellMenuValidation(_ welcome: WelcomeViewController) -> WelcomeCommandAvailability {
+        let action = #selector(ShellCommandRouter.performShellCommand(_:))
+        func enabled(_ command: ShellCommand) -> Bool {
+            guard let item = fileMenuItems[command], item.action == action, item.target == nil,
+                welcome.responds(to: action)
+            else { return false }
+            return welcome.validateMenuItem(item)
+        }
+        return WelcomeCommandAvailability(
+            newProject: enabled(.newProject), openProject: enabled(.openProject), cloneProject: enabled(.cloneProject))
     }
 
     /// 접근성 announcement와 복사 피드백(가이드 8.3, 8.1).
@@ -1252,6 +1343,39 @@ enum WelcomeUICheck {
                         && fallbackFileSystem.nodes[localBin + "/stellar"] == nil,
                     "설치한 이름(stellar-cli)을 보여 주지 않음")
                 fallbackWindow.close()
+            }
+        }
+
+        // Update 동의 화면: 바꿀 링크의 현재 대상을 보여 주고, 번들이 없어 소유를 확인하지 못했으면 Stellar 사본이라고
+        // 단정하지 않습니다(다른 앱이 남긴 링크일 수 있음).
+        do {
+            let beta = "/Applications/Stellar Beta.app"
+            let cases = [("/Applications/Gone.app/Contents/Helpers/stellar", false), (beta + "/Contents/Helpers/stellar", true)]
+            for (previous, appExists) in cases {
+                let repairFileSystem = makeFileSystem()
+                repairFileSystem.addDirectory(localBin, writable: true)
+                if appExists {
+                    repairFileSystem.addFile(previous, executable: true)
+                    repairFileSystem.bundleIdentifiers[beta] = ownerBundleID
+                }
+                repairFileSystem.addSymbolicLink(localBin + "/stellar", destination: previous)
+                let repairInstaller = makeInstaller(repairFileSystem)
+                guard case .needsRepair(let repairPlan) = repairInstaller.status() else {
+                    checker.expect(false, "Update 화면 준비 상태 불일치: \(repairInstaller.status())")
+                    continue
+                }
+                let repairSheet = WelcomeCommandInstallSheetController(installer: repairInstaller, status: .needsRepair(repairPlan))
+                let repairWindow = offscreenWindow(for: repairSheet)
+                let message = repairSheet.messageLabel.stringValue
+                checker.expect(message.contains(appExists ? beta : previous), "Update 동의 화면에 현재 링크 대상이 없음: \(message)")
+                checker.expect(
+                    message.contains("another copy of Stellar") == appExists,
+                    "Update 동의 화면이 소유를 확인하지 못한 앱을 Stellar 사본이라고 함: \(message)")
+                checker.expect(
+                    repairSheet.targetValueLabel.stringValue == stubHelper && repairSheet.primaryButton.title == WelcomeStrings.update,
+                    "Update 동의 화면 구성 불일치")
+                expectCleanLayout(checker, window: repairWindow, context: "install/repair-\(appExists ? "copy" : "missing")")
+                repairWindow.close()
             }
         }
 

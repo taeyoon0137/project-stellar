@@ -12,11 +12,12 @@
 ## 변경 파일 목록
 
 - `apps/macos/StellarMac/UI/Welcome/WelcomeCommandInstallSheetController.swift`: 단계별 화면(확인 중, 설치 제안, 대체 이름 제안, 다시 연결, 가림, 두 이름 막힘 알림, 설치됨, 제거 결과, 실패), 단계 변화 announcement
-- `apps/macos/StellarMac/UI/Welcome/WelcomeViewController.swift`: `presentCommandInstallOfferIfNeeded`, 관리 진입점 `showStellarCommandSetup(_:)`과 메뉴 활성 판정
+- `apps/macos/StellarMac/UI/Welcome/WelcomeViewController.swift`: `presentCommandInstallOfferIfNeeded`, 관리 진입점 `showStellarCommandSetup(_:)`과 메뉴 활성 판정, 실제 File 메뉴 항목(`performShellCommand:` + `ShellCommand`)을 받는 경로와 통합 어댑터용 `availability(of:)`·`run(_:)`
 - `apps/macos/StellarMac/UI/Welcome/WelcomeStrings.swift`: sheet 문구, 메뉴 항목 "Set Up the stellar Command…"
 - `apps/macos/StellarMac/UI/Welcome/WelcomeStyle.swift`: 첫 실행 정책, 복사 버튼 피드백, `WelcomeAccessibility.announce`
 - `apps/macos/StellarMac/UI/Welcome/WelcomeUICheck.swift`: 설치 sheet 검사
-- `docs/design/ui/welcome.md` 6.6절(정의 원본)
+- `apps/macos/StellarMac/main.swift`, `scripts/macos/smoke.sh`: `--welcome-ui-check` 실행 인자와 smoke 단계(리뷰 수정 커밋)
+- `docs/design/ui/welcome.md` 6.6절·7장(정의 원본)
 - `docs/task-reports/XXIV.5.6.md`(이 보고서). 계획서 상태 표기는 바꾸지 않았습니다.
 
 ## 결정: 화면 구성과 진입점
@@ -36,8 +37,8 @@
 | 명령 | 결과 |
 |---|---|
 | Debug `xcodebuild … build`(XXIV.5.3 보고서와 같은 옵션) | `BUILD SUCCEEDED` |
-| `StellarMac --welcome-ui-check`(임시 실행 인자) 3회 | 3회 모두 `welcome-ui ok: 353 checks`, 종료 코드 0 |
-| `./scripts/macos/smoke.sh` | `smoke OK`, 종료 코드 0 |
+| `StellarMac --welcome-ui-check`(커밋된 실행 인자) 3회 | 3회 모두 `welcome-ui ok: 378 checks`, 종료 코드 0 |
+| `./scripts/macos/smoke.sh`(`--welcome-ui-check` 포함) | `welcome-ui ok: 378 checks …`, `smoke OK`, 종료 코드 0 |
 
 | 수용 기준 | 결과 |
 |---|---|
@@ -45,6 +46,8 @@
 | 동의 없는 파일 변경 0 | 통과: sheet 표시 전·Not Now·Escape·알림 상태에서 `mutationCount == 0`, 링크 없음 |
 | 되돌리기 후 설치 항목 0 | 통과: sheet Install → Remove Command 뒤 `installedLinkPaths()` 빈 배열, 링크 없음(메모리·임시 폴더) |
 | 실제 설치한 이름 표시 | 통과: 대체 이름 제안 제목·버튼·링크 줄, 설치 뒤 제목이 `stellar-cli` |
+| Update 동의 화면(리뷰 수정) | 통과: 확인한 다른 Stellar 사본이면 그 앱 위치와 "another copy of Stellar", 번들이 없는 링크면 대상 경로와 "no longer exists"를 보여 주고 Stellar 사본이라고 하지 않음. 링크 대상 줄은 이 앱 helper, 버튼 Update, 두 경우 모두 4개 외형 레이아웃 통과. 수정 전 트리에서는 대상 경로가 없고 dangling 링크를 Stellar 사본이라고 해 실패했습니다. |
+| 메뉴 활성 판정(리뷰 수정) | 통과: `MainMenuBuilder`가 만든 실제 File 메뉴 New·Open·Clone 항목(`performShellCommand:`, target 없음)이 표본·Git 없음·진행 중에서 버튼과 같은 판정, 응답자 체인(목록 → 시작 창 controller)으로 도달, 진행 중에는 아무것도 띄우지 않음, 캔버스 명령 메뉴는 비활성. 수정 전 트리에서는 시작 창이 이 action에 응답하지 않아 실패했습니다. 메뉴를 앱에 설치하는 통합은 아직 없습니다. |
 | 키보드 smoke | 부분: 주 버튼 Return·보조 버튼 Escape key equivalent, 파괴적 버튼 비기본, 작업 중 Escape 무시를 검사했습니다. 실제 키 창에서의 기본 버튼 강조와 Full Keyboard Access 이동은 확인하지 않았습니다. |
 | VoiceOver smoke | **미확인.** announcement 요청과 접근성 레이블만 검사했습니다. 실제 VoiceOver 읽기는 확인하지 않았습니다. |
 | 단계별 레이아웃(Light·Dark·대비 높이기) | 통과: 설치 제안, 설치됨, 대체 이름 제안, 그 밖의 13개 단계, 작업 중, 확인 중에서 모호한 레이아웃, 잘린 레이블, 직접 넣은 반투명 표면, 하드코딩 색 0 |
@@ -56,7 +59,8 @@
 
 ## 남은 위험 / 한계
 
-- 앱 통합(시작 창 표시, 메뉴 항목 추가, smoke 연결) 전에는 사용자가 이 화면을 볼 수 없습니다.
+- 앱 통합(시작 창 표시, 메인 메뉴 설치와 메뉴 항목 추가) 전에는 사용자가 이 화면을 볼 수 없습니다. smoke 연결은 리뷰 수정 커밋에서 했습니다.
+- File 메뉴의 앱 수준 router가 명시 target이면 시작 창에 묻지 않습니다. 통합 어댑터가 `availability(of:)`·`run(_:)`을 써야 하며(welcome.md 7장·15장 4), 그 연결 전에는 시작 창의 ⌘N·⌘O가 동작하지 않습니다.
 - 가이드 7.3·10.4는 ADR-0005 Accepted 전 문구로 남아 있습니다(이 영역 밖 문서).
 
 ## 재개 조건

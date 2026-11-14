@@ -272,13 +272,75 @@ final class WelcomeViewController: NSViewController, NSOpenSavePanelDelegate, NS
         return WelcomeCommandAvailability(snapshot: snapshot)
     }
 
-    /// 이 selector를 쓰는 메뉴 항목(File 메뉴 통합 때 연결)이 실행할 수 없을 때 꺼지게 합니다.
+    /// 시작 창이 처리하는 셸 명령(File 메뉴 New·Open·Clone)이면 지금 실행할 수 있는지, 아니면 nil.
+    ///
+    /// 앱 수준 router가 File 메뉴 항목의 명시 target일 때(창이 없어도 동작, Tools 영역 `MainMenuBuilder`) 통합
+    /// 어댑터는 시작 창이 떠 있으면 이 값을 메뉴 snapshot에 싣고 `run(_:)`으로 명령을 넘깁니다.
+    func availability(of command: ShellCommand) -> Bool? {
+        let availability = commandAvailability
+        switch command {
+        case .newProject: return availability.newProject
+        case .openProject: return availability.openProject
+        case .cloneProject: return availability.cloneProject
+        default: return nil
+        }
+    }
+
+    /// 시작 창 셸 명령을 실행합니다. 시작 창 명령이 아니거나 지금 실행할 수 없으면 false입니다.
+    @discardableResult
+    func run(_ command: ShellCommand) -> Bool {
+        guard availability(of: command) == true else { return false }
+        switch command {
+        case .newProject: newStellarProject(nil)
+        case .openProject: openStellarProject(nil)
+        case .cloneProject: cloneStellarProject(nil)
+        default: return false
+        }
+        return true
+    }
+
+    /// 실제 File 메뉴 항목의 action(Tools 영역 `ShellCommandRouter.performShellCommand(_:)`과 같은 selector).
+    ///
+    /// 앱 수준 target 없이 만든 메뉴에서는 New·Open·Clone 항목이 응답자 체인으로 이 메서드에 옵니다. 시작 창 명령이 아니면
+    /// 이 창 응답자 체인의 다음 대상에 넘깁니다(시작 창이 다른 셸 명령을 가로채지 않음).
+    @objc func performShellCommand(_ sender: Any?) {
+        guard let command = ShellCommand.resolve(from: sender) else { return }
+        if availability(of: command) != nil {
+            run(command)
+        } else {
+            _ = nextShellCommandTarget?.perform(WelcomeViewController.shellCommandAction, with: sender)
+        }
+    }
+
+    private static let shellCommandAction = #selector(ShellCommandRouter.performShellCommand(_:))
+
+    /// 이 controller 다음으로 `performShellCommand:`를 받는 대상(창 응답자 체인 → 창 delegate → NSApp → app delegate).
+    private var nextShellCommandTarget: NSObjectProtocol? {
+        let action = WelcomeViewController.shellCommandAction
+        var responder = nextResponder
+        while let current = responder {
+            if current.responds(to: action) { return current }
+            responder = current.nextResponder
+        }
+        let application: NSApplication? = NSApp
+        let others: [NSObjectProtocol?] = [view.window?.delegate, application, application?.delegate]
+        return others.compactMap { $0 }.first { $0.responds(to: action) }
+    }
+
+    /// 버튼 selector와 실제 File 메뉴 항목(`performShellCommand:` + `ShellCommand` identifier)이 실행할 수 없을 때
+    /// 꺼지게 합니다. 시작 창 명령이 아닌 셸 명령은 다음 대상의 판정을 따르고, 받을 대상이 없으면 끕니다.
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         let availability = commandAvailability
         switch menuItem.action {
         case #selector(newStellarProject(_:)): return availability.newProject
         case #selector(openStellarProject(_:)): return availability.openProject
         case #selector(cloneStellarProject(_:)): return availability.cloneProject
+        case WelcomeViewController.shellCommandAction:
+            if let command = ShellCommand.resolve(from: menuItem), let enabled = self.availability(of: command) {
+                return enabled
+            }
+            guard let next = nextShellCommandTarget else { return false }
+            return (next as? NSMenuItemValidation)?.validateMenuItem(menuItem) ?? true
         default: return true
         }
     }

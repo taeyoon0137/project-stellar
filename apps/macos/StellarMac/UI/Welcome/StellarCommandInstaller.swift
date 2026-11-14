@@ -503,7 +503,11 @@ struct StellarCommandInstallPlan: Equatable {
         /// 빈 자리에 새 링크를 만듭니다.
         case create
         /// 이동했거나 다른 사본을 가리키는 Stellar 소유 링크를 이 앱으로 다시 연결합니다.
-        case replaceOwnLink(previousDestination: String)
+        ///
+        /// - `previousDestination`: 지금 링크 대상(상대 경로는 링크 폴더 기준으로 푼 절대 경로). 동의 화면에 보여 줍니다.
+        /// - `previousAppExists`: 그 대상의 앱 번들이 있어 번들 식별자로 Stellar 사본임을 확인했으면 true.
+        ///   false이면 번들이 없는(dangling) 링크라 모양만으로 소유로 본 것이므로, 화면은 Stellar 사본이라고 단정하지 않습니다.
+        case replaceOwnLink(previousDestination: String, previousAppExists: Bool)
     }
 
     /// 만들 링크 경로(예: ~/.local/bin/stellar).
@@ -740,7 +744,7 @@ struct StellarCommandInstaller {
                     StellarCommandInstallPlan(
                         linkPath: stale,
                         destination: helperPath,
-                        action: .replaceOwnLink(previousDestination: previous),
+                        action: replacement(of: previous, linkPath: stale),
                         createsDirectory: false,
                         directoryOnSearchPath: isOnSearchPath(directory(of: stale)),
                         primaryNameConflict: nil,
@@ -774,7 +778,8 @@ struct StellarCommandInstaller {
     ///
     /// 심볼릭 링크이고 대상(상대 경로는 링크 폴더 기준)이 `<이름>.app/Contents/Helpers/stellar` 형식이며,
     /// 그 앱 번들이 있으면 번들 식별자가 Stellar의 것이어야 합니다. 앱이 옮겨지거나 지워져 번들이 없는(dangling)
-    /// 링크는 Stellar 소유로 봅니다. 그 밖의 파일은 절대 바꾸지 않습니다.
+    /// 링크는 모양만으로 Stellar 소유로 봅니다(다른 앱이 남긴 링크일 수 있음). 이런 링크는 현재 대상을 보여 준 Update
+    /// 동의 뒤에만 바꾸고 `uninstall()`은 지우지 않습니다. 그 밖의 파일은 절대 바꾸지 않습니다.
     func isStellarOwnedLink(atPath path: String) -> Bool {
         guard case .symbolicLink(let destination) = fileSystem.entry(atPath: path),
             let bundle = StellarCommandInstaller.appBundlePath(
@@ -866,10 +871,14 @@ struct StellarCommandInstaller {
         return .success(installation(at: plan.linkPath))
     }
 
-    /// 후보 폴더의 Stellar 소유 링크를 모두 지웁니다. 만든 폴더(~/.local/bin 등)는 남깁니다.
+    /// 후보 폴더에서 이 앱 helper를 가리키는 링크를 모두 지웁니다(이 앱이 만든 설치를 되돌림). 만든 폴더(~/.local/bin 등)는
+    /// 남깁니다.
+    ///
+    /// 다른 Stellar 사본을 가리키는 링크와 번들이 없어 소유를 확인하지 못한(dangling) 링크는 지우지 않습니다. 이런 링크는
+    /// 관리 화면에 보인 적이 없으므로, Update 동의 화면에서 현재 대상을 보여 준 뒤에만 바꿉니다.
     func uninstall() -> StellarCommandUninstallResult {
         var result = StellarCommandUninstallResult(removedPaths: [], failures: [])
-        for path in installedLinkPaths() {
+        for path in installedLinkPaths() where pointsToHelper(path) {
             guard case .symbolicLink(let destination) = fileSystem.entry(atPath: path) else { continue }
             do {
                 try fileSystem.removeSymbolicLink(atPath: path, expectedDestination: destination)
@@ -908,7 +917,7 @@ struct StellarCommandInstaller {
                 if pointsToHelper(linkPath) {
                     alreadyInstalled = true
                 } else {
-                    action = .replaceOwnLink(previousDestination: destination)
+                    action = replacement(of: destination, linkPath: linkPath)
                 }
             default:
                 conflicts.append(
@@ -933,6 +942,15 @@ struct StellarCommandInstaller {
             )
         }
         return .unavailable(conflicts)
+    }
+
+    /// 소유 링크 `linkPath`(지금 대상 `destination`)를 이 앱으로 다시 연결하는 동작. 동의 화면이 쓸 현재 대상과
+    /// 그 앱 번들이 있는지(번들 식별자로 확인했는지)를 함께 싣습니다.
+    private func replacement(of destination: String, linkPath: String) -> StellarCommandInstallPlan.Action {
+        let previous = resolvedDestination(destination, linkPath: linkPath)
+        let bundle = StellarCommandInstaller.appBundlePath(ofHelper: previous)
+        let exists = bundle.map { fileSystem.entry(atPath: $0) != .missing } ?? false
+        return .replaceOwnLink(previousDestination: previous, previousAppExists: exists)
     }
 
     private func status(fromNaming naming: Naming) -> StellarCommandInstallStatus {

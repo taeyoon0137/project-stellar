@@ -140,7 +140,7 @@
 | 셸 설정 파일 불변·불실행 | `~/.zshrc` 등을 고치지도 실행하지도 않습니다. zsh 시작 파일은 셸이 읽어 실행하는 명령 파일이므로(zsh(1) STARTUP/SHUTDOWN FILES), 결과 PATH를 알려면 사용자 코드를 실행해야 합니다. 대신 PATH에 추가할 한 줄을 보여 주고 복사만 하게 합니다. | zsh(1), 아키텍처 §37 |
 | 남의 파일 보존 | Stellar 소유 링크가 아닌 파일·링크·폴더는 덮어쓰거나 지우지 않습니다. 새 링크는 `symlink(2)`로 만들어 그 자리에 무엇이 있으면 `EEXIST`로 실패합니다. | symlink(2) |
 | 원자적 교체·경합 방지 | 오래된 소유 링크는 같은 폴더에 새 링크를 만든 뒤 `renamex_np(RENAME_SWAP)`로 맞바꾸고, 맞바뀐 항목이 확인한 소유 링크가 아니면 다시 맞바꿔 되돌립니다. 제거는 항목을 같은 폴더 임시 이름으로 `rename(2)`한 뒤 확인하고, 아니면 `RENAME_EXCL`로 되돌립니다. 맞바꾸기를 지원하지 않는 볼륨은 같은 확인·되돌리기 방식으로 바꿉니다. | rename(2) |
-| 되돌릴 수 있음 | Remove Command가 후보 폴더의 Stellar 소유 링크(`stellar`, `stellar-cli`)를 모두 지웁니다. 설치 때 만든 폴더는 다른 도구도 쓸 수 있으므로 남깁니다. | ADR-0005 §7 |
+| 되돌릴 수 있음 | Remove Command가 후보 폴더에서 이 앱 helper를 가리키는 링크(`stellar`, `stellar-cli`)를 모두 지웁니다. 설치는 이 앱 helper를 가리키는 링크만 만들므로 이것으로 설치를 되돌립니다. 다른 Stellar 사본을 가리키거나 번들이 없어 소유를 확인하지 못한 링크는 관리 화면에 보인 적이 없으므로 지우지 않습니다(6.4절). 설치 때 만든 폴더는 다른 도구도 쓸 수 있으므로 남깁니다. | ADR-0005 §7 |
 | 메인 스레드 보호 | 설치기 생성(`/etc/paths` 읽기), 상태 판정, 설치·제거는 별도 큐에서 하고 결과만 메인 스레드에 반영합니다. sheet가 닫히거나 다른 작업이 시작되면 늦게 온 결과는 버립니다. | 아키텍처 §6.3·§6.4, 가이드 9장, HIG Launching("Launch fast") |
 | 기록 | 첫 실행 제안에 답했는지만 앱 사용자 기본값(`StellarCommandInstallOffered`, OS 사용자 데이터)에 둡니다. 설치 여부는 기록하지 않고 매번 파일 시스템에서 판정합니다. 프로젝트, Git, 텔레메트리에는 남기지 않습니다. | ADR-0005 §7 |
 | 실행 환경 전제 | 앱이 App Sandbox 밖(Developer ID 배포)에서 실행된다는 전제입니다. 샌드박스 앱은 홈 아래 임의 폴더에 쓸 수 없습니다. | 현재 Xcode 설정(샌드박스 없음, hardened runtime) |
@@ -168,6 +168,9 @@
 **다른 프로그램**: 링크를 따라가 실행 가능한 일반 파일이고 Stellar 소유 링크가 아닌 것.
 
 **Stellar 소유 링크**: 심볼릭 링크이고, 대상(상대 경로는 링크 폴더 기준으로 풀어서)이 `<이름>.app/Contents/Helpers/stellar` 형식이며, 그 앱 번들이 있으면 `CFBundleIdentifier`가 Stellar(`xyz.taeyoon.stellar`)의 것인 링크. 앱이 옮겨지거나 지워져 번들이 없는(dangling) 링크도 Stellar 소유로 봅니다. 다른 앱의 `Contents/Helpers/stellar`를 가리키는 링크는 다른 프로그램입니다.
+
+- dangling 링크는 번들 식별자를 확인할 수 없어 모양만으로 소유로 본 것이므로, 같은 모양의 helper를 가진 다른 앱이 남긴 링크일 수 있습니다. 그래서 바꾸기 전에 Update 동의 화면이 링크의 지금 대상(상대 경로는 링크 폴더 기준으로 푼 절대 경로)과 그 대상이 더 이상 없다는 사실을 보여 주고, Stellar 사본이라고 단정하지 않습니다(`replaceOwnLink(previousDestination:previousAppExists:)`). 번들이 있어 식별자로 확인한 링크만 "another copy of Stellar"로 부르고 그 앱 위치를 보여 줍니다.
+- Remove Command는 이 앱 helper를 가리키는 링크만 지우고, dangling 링크와 다른 사본의 링크는 남깁니다(6.2절). 남은 링크는 다음 확인에서 `needsRepair`가 되어 같은 동의 화면으로만 바꿉니다.
 
 **이름 결정**(폴더 D에 이름 N을 설치할 때, N = `stellar` → `stellar-cli` 순)
 
@@ -222,7 +225,7 @@
 | 확인 중 | Checking the stellar Command… + 회전 표시 | 없음(Escape는 닫기, 파일 변경 없음) |
 | `ready`(`stellar`) | Install the stellar Command? + 링크 위치·대상, 폴더 생성 예고, 가려질 프로그램, PATH 안내 | Not Now(Esc) / **Install**(Return) |
 | `ready`(`stellar-cli`) | Install the Command as stellar-cli? + `stellar`를 못 쓰는 이유(경로 포함) | Not Now / **Install as stellar-cli** |
-| `needsRepair` | Update the <이름> Command? | Not Now / **Update** |
+| `needsRepair` | Update the <이름> Command? + 지금 링크 대상(확인한 Stellar 사본이면 그 앱 위치, 번들이 없으면 대상 경로와 "no longer exists") | Not Now / **Update** |
 | `shadowed` | Another Program Runs Instead of <이름> + 가린 프로그램 경로 | Remove Command / Not Now / **Install as stellar-cli**, 불가하면 Remove Command / **Close** |
 | `namesUnavailable` | The stellar Command Wasn’t Installed + 두 충돌 | **Close** |
 | `installed` | The <설치한 이름> Command Is Installed (+ PATH 안내) | Remove Command(파괴적 표시, 기본 버튼 아님) / **Done** |
@@ -252,8 +255,11 @@
 
 - 최근 목록이 있으면 창의 첫 포커스를 목록에 둡니다. 그 밖에는 사용자 조작 없이 포커스를 옮기지 않습니다(가이드 8.2).
 - Clone은 자주 쓰는 명령이 아니므로 별도 단축키를 두지 않습니다(가이드 8.1 "커스텀 단축키는 자주 쓰는 앱 고유 명령에만").
-- ⌘N·⌘O는 File 메뉴 항목(Tools 영역 `ShellCommand.newProject`·`.openProject`)이 소유합니다. 시작 창 버튼에는 같은 단축키를 걸지 않습니다(메뉴와 중복 등록 방지, 가이드 8.1 "모든 명령은 메인 메뉴 항목으로 존재"). 메뉴 연결 전에는 시작 창에서 단축키가 동작하지 않습니다.
-- 버튼 action은 first responder action(`newStellarProject:`, `openStellarProject:`, `cloneStellarProject:`)으로도 받을 수 있고, `WelcomeViewController`가 `NSMenuItemValidation`으로 이 selector를 쓰는 메뉴 항목의 활성 여부를 버튼과 같은 판정(`WelcomeCommandAvailability`: Git 필요 여부, 진행 중 작업, 창에 붙은 sheet)으로 돌려줍니다. 지금 쓸 수 없는 항목은 숨기지 않고 비활성화합니다(가이드 8.1). Tools 영역 메뉴가 `performShellCommand:`로 보내는 경우에는 통합 어댑터가 `commandAvailability`를 그 영역 snapshot에 실어야 합니다.
+- ⌘N·⌘O는 File 메뉴 항목(Tools 영역 `ShellCommand.newProject`·`.openProject`)이 소유합니다. 시작 창 버튼에는 같은 단축키를 걸지 않습니다(메뉴와 중복 등록 방지, 가이드 8.1 "모든 명령은 메인 메뉴 항목으로 존재"). 현재 앱은 메인 메뉴(`MainMenuBuilder`)도 시작 창도 띄우지 않으므로(15장 3·4) 앱 통합 전에는 시작 창 단축키가 동작하지 않습니다.
+- 실제 File 메뉴 항목은 `MainMenuBuilder`가 만들며 action은 `performShellCommand:`, identifier는 `ShellCommand`입니다. `WelcomeViewController`는 이 모양을 그대로 받습니다.
+  - 응답자 체인 경로(앱 수준 target 없이 만든 메뉴): `performShellCommand(_:)`가 New·Open·Clone을 처리하고, `NSMenuItemValidation`이 버튼과 같은 판정(`WelcomeCommandAvailability`: Git 필요 여부, 진행 중 작업, 창에 붙은 sheet)을 돌려줍니다. 시작 창 명령이 아닌 셸 명령은 실행·판정을 응답자 체인의 다음 대상(없으면 비활성)에 넘겨 가로채지 않습니다.
+  - 명시 target 경로(Tools 영역 설계: 앱 수준 명령은 창이 없어도 동작하도록 앱 수준 router가 target): router는 시작 창에 묻지 않으므로, 통합 어댑터가 시작 창이 떠 있으면 `availability(of:)`를 메뉴 snapshot의 `enabledCommands`에 싣고 `run(_:)`으로 명령을 넘깁니다(15장 4).
+  - 버튼 action(`newStellarProject:`, `openStellarProject:`, `cloneStellarProject:`)도 같은 판정을 씁니다. 지금 쓸 수 없는 항목은 숨기지 않고 비활성화합니다(가이드 8.1).
 
 ## 8. 접근성(가이드 8장)
 
@@ -325,20 +331,20 @@ protocol WelcomeDataSource: AnyObject {
 
 ## 13. 검사
 
-`WelcomeUICheck.run() -> Bool`이 화면 밖에서 검사합니다. 통합 시 `--welcome-ui-check` 같은 실행 인자로 `scripts/macos/smoke.sh`에 연결합니다.
+`WelcomeUICheck.run() -> Bool`이 화면 밖에서 검사합니다. `StellarMac --welcome-ui-check`로 실행하며(`main.swift`), `scripts/macos/smoke.sh`가 다른 검사 뒤에 실행합니다.
 
 - 시작 창 6개 상태(목록, 빈 목록, 읽는 중, 실패, Git 없음, Clone 진행 중)와 가장 긴 내용(쓸 수 없는 Git + 진행 중), Clone sheet, 설치 sheet 13개 단계를 Light, Dark, 대비 높이기 Light·Dark에서 레이아웃합니다.
 - 모호한 Auto Layout, 세로로 잘린 여러 줄 레이블, 직접 넣은 반투명 표면이 없는지 확인합니다(`NSScrollView`가 스스로 넣는 표면은 시스템 소유라 제외).
 - 왼쪽 열이 safe area 안에 잘리지 않고 들어가는지 확인합니다.
-- 접근성 레이블, 행 접근성 자식 0, 기본·취소 키, 버튼에 메뉴와 겹치는 단축키 없음, 메뉴 활성 판정(표본·Git 없음·진행 중), Return·Delete 키 경로, 문맥 메뉴 활성 상태, 상태별 버튼 활성, 작업 식별자 취소(다른 식별자 무시), 이유 코드 문구, 저장 패널 같은 이름 판정, announcement(목록 상태·sheet 단계), 복사 피드백(검사용 이름 pasteboard)을 확인합니다.
+- 접근성 레이블, 행 접근성 자식 0, 기본·취소 키, 버튼에 메뉴와 겹치는 단축키 없음, 메뉴 활성 판정(표본·Git 없음·진행 중; 버튼 selector와 `MainMenuBuilder`가 만든 실제 File 메뉴 항목 모두), 실제 File 메뉴 항목이 응답자 체인으로 시작 창에 도달하는지, 캔버스 명령 메뉴를 켜지 않는지, 어댑터 경로(`availability(of:)`, `run(_:)`), Return·Delete 키 경로, 문맥 메뉴 활성 상태, 상태별 버튼 활성, 작업 식별자 취소(다른 식별자 무시), 이유 코드 문구, 저장 패널 같은 이름 판정, announcement(목록 상태·sheet 단계), 복사 피드백(검사용 이름 pasteboard)을 확인합니다.
 - 하드코딩 색: 레이아웃 검사와 함께 모든 외형에서 시스템 catalog 색이 아닌 색을 찾습니다.
 - 설치기를 메모리 파일 시스템으로 검사합니다(fixture 이름은 XXIV.5.3~XXIV.5.5 보고서와 같음).
   - 위치 결정 L1~L8: 기본 위치·폴더 생성, PATH에 있는 후보 우선, 공용 폴더 미선택, 쓸 수 있는 위치 없음, 쓸 수 없는 첫 후보 건너뛰기, App Translocation·읽기 전용 볼륨, helper 없음.
-  - 이름 결정·설치·제거 I1, N1~N10, R1~R5, E1: 새 설치·멱등·제거(되돌리기 후 설치 항목 0), 설치 위치의 남의 파일·링크·폴더, PATH 앞쪽·순서 모르는 폴더의 다른 `stellar`, PATH 뒤쪽 프로그램 알림, 두 이름 모두 막힘(설치 0), 자기 링크 유지, 다른 앱 helper 링크, 설치 뒤 가림, 오래된 링크 다시 연결, 확인과 실행·교체·제거 사이 경합, 파일 시스템 오류 전달. 판정만으로 변경 0(`mutationCount`).
+  - 이름 결정·설치·제거 I1, N1\~N10, R1\~R6, E1: 새 설치·멱등·제거(되돌리기 후 설치 항목 0), 설치 위치의 남의 파일·링크·폴더, PATH 앞쪽·순서 모르는 폴더의 다른 `stellar`, PATH 뒤쪽 프로그램 알림, 두 이름 모두 막힘(설치 0), 자기 링크 유지, 다른 앱 helper 링크, 설치 뒤 가림, 오래된 링크 다시 연결(상대 경로 대상을 절대 경로로 풀어 보고), 확인과 실행·교체·제거 사이 경합, 제거가 이 앱 helper 링크만 지움(dangling·다른 사본 링크 보존), 파일 시스템 오류 전달. 판정만으로 변경 0(`mutationCount`).
   - PATH 구성: `/etc/paths`, `/etc/paths.d`, 프로세스 `PATH`, 순서 모르는 폴더.
 - 실제 파일 시스템 구현은 임시 폴더 안에서만 검사합니다: 설치, `RENAME_SWAP` 다시 연결, 임시 링크 잔여 0, 기대와 다른 항목 교체·삭제 거부, `symlink` EEXIST, 대체 이름 설치·되돌리기.
 - 메인 스레드 감시: 상태 확인·첫 실행 판정·sheet 설치·제거·Check Again 경로에서 메인 스레드 파일 조회 0.
-- 설치 sheet는 확인 → Install → 작업 큐 → 결과, Remove → 결과, Not Now(파일 변경 0), 대체 이름 제안·설치 결과 이름, 알림 상태(설치 동작 없음)까지 확인합니다.
+- 설치 sheet는 확인 → Install → 작업 큐 → 결과, Remove → 결과, Not Now(파일 변경 0), 대체 이름 제안·설치 결과 이름, 알림 상태(설치 동작 없음), Update 동의 화면의 지금 링크 대상(확인한 사본은 앱 위치, dangling은 대상 경로와 Stellar 사본이라고 하지 않음)까지 확인합니다.
 - 실제 앱 번들의 설치 상태는 환경마다 다르므로 보고만 합니다. XXIV.5.1 전 Debug 빌드는 helper가 없어 `helperUnavailable`입니다.
 
 ## 14. 확정 수치 제안
@@ -360,8 +366,8 @@ protocol WelcomeDataSource: AnyObject {
 1. **데이터 어댑터**: `WelcomeDataSource`를 구현하는 코어 어댑터. 최근 목록 저장소, ProjectCreateRequest(XII.6.1), ProjectProbe 후 session 열기(XII.6.2), clone-open pipeline(XII.6.3), Git 탐색·capability(XIV.1.3), Git 명령 취소(XIV.1.4)를 FFI pull 이벤트(`stellar_runtime_poll_event`)와 명령 호출로 연결합니다.
 2. **안내 코드 매핑**: 코어 오류 코드 → `WelcomeNotice.Kind`. `gitIdentityRequired`는 지금 안내만 하며, 이름·이메일을 받는 입력 sheet는 XII.6.1 상세 UX에서 정합니다.
 3. **앱 연결**: `AppDelegate`가 열린 프로젝트가 없을 때 `WelcomeWindowController`를 띄우고 `presentCommandInstallOfferIfNeeded()`를 부르게 합니다. 프로젝트가 열리면 시작 창을 닫습니다. 현재 앱은 캔버스 창을 바로 엽니다.
-4. **메뉴**: File 메뉴의 New Project…(⌘N), Open Project…(⌘O), Clone Project…를 같은 selector에 연결하고, 앱 메뉴에 "Set Up the stellar Command…"(`WelcomeStrings.setUpCommandMenuItem`) 항목을 두어 `showStellarCommandSetup(_:)`으로 같은 sheet를 관리 모드로 엽니다(XII.6.5, XXIV.5.6, 가이드 8.1). 메뉴 정의는 Tools 영역(`ShellCommand`)이 소유하므로 그 영역에서 명령을 추가합니다.
-5. **smoke 연결**: `main.swift`에 `--welcome-ui-check` 실행 인자를 추가하고 `scripts/macos/smoke.sh`에서 실행합니다. 두 파일은 이 영역 밖이라 아직 연결하지 않았고, 지금 검사 결과는 임시 실행 인자로 얻은 값입니다.
+4. **메뉴**: `MainMenuBuilder` 메뉴를 앱에 설치합니다. File 메뉴의 New Project…(⌘N), Open Project…(⌘O), Clone Project…는 앱 수준 router가 명시 target이므로, 그 router의 model(통합 어댑터)이 시작 창이 떠 있으면 `WelcomeViewController.availability(of:)`를 `enabledCommands`에 싣고 `run(_:)`으로 넘기게 합니다(7장). 앱 메뉴에 "Set Up the stellar Command…"(`WelcomeStrings.setUpCommandMenuItem`) 항목을 두어 `showStellarCommandSetup(_:)`으로 같은 sheet를 관리 모드로 엽니다(XII.6.5, XXIV.5.6, 가이드 8.1). 메뉴 정의는 Tools 영역(`ShellCommand`)이 소유하므로 그 영역에서 명령을 추가합니다.
+5. **smoke 연결**: 완료. `main.swift`의 `--welcome-ui-check` 실행 인자와 `scripts/macos/smoke.sh` 단계로 커밋된 트리에서 실행합니다.
 6. **helper**: 앱 번들 `Contents/Helpers/stellar` 배치와 서명(ADR-0005 §7, 계획 XXIV.5.1)이 생기기 전에는 설치 화면이 `helperUnavailable`이고 첫 실행 제안은 뜨지 않습니다. XXIV.5.1이 다른 배치를 정하면 `helperRelativePath`를 고치고 검사를 다시 실행합니다.
 7. **문서 반영**: 가이드 7.3·10.4는 ADR-0005 Accepted 전 문구("이 화면을 정하지 않음", "Open Questions 7 결정 대기")로 남아 있으므로 6장과 계획 XXIV.5.3~XXIV.5.6을 가리키도록 고칩니다. 가이드 12장에 14절 수치를 기록합니다. 시작 창 화면 자체는 전용 WBS가 없습니다(가이드 10.4).
 8. **설정 창**: 명령 설치 상태 보기·제거를 설정 창에도 둘지는 설정 창 작업에서 정합니다.
@@ -372,7 +378,7 @@ protocol WelcomeDataSource: AnyObject {
 - PATH 확인은 셸 설정 파일을 실행하지 않으므로 사용자의 실제 PATH와 다를 수 있습니다. 확인하지 못한 폴더는 "확인하지 못함"으로 표시하고 추가할 줄을 안내합니다.
 - PATH 앞쪽 충돌은 순서를 아는 폴더와 흔한 폴더(홈 후보, Homebrew·MacPorts 기본 접두사)만 봅니다. 셸 설정 파일이 그 밖의 폴더를 앞에 붙이고 거기에 다른 `stellar`가 있으면 감지하지 못합니다. 셸 alias·함수·builtin 이름 충돌도 보지 않습니다(셸 실행 필요).
 - App Translocation 판정의 경로 문자열 검사는 Apple이 지원하는 방법이 아닙니다. 읽기 전용 볼륨 판정을 함께 쓰지만, macOS 동작이 바뀌면 달라질 수 있습니다.
-- dangling 소유 링크(번들이 없는 `<이름>.app/Contents/Helpers/stellar`)는 번들 식별자를 확인할 수 없으므로 모양만으로 Stellar 소유로 봅니다. 다시 연결·제거 대상이 되며, 다시 연결은 동의 화면에서 이전 대상을 보여 줍니다.
+- dangling 소유 링크(번들이 없는 `<이름>.app/Contents/Helpers/stellar`)는 번들 식별자를 확인할 수 없으므로 모양만으로 Stellar 소유로 봅니다. 다른 앱이 남긴 같은 모양의 링크일 수 있으므로, Update 동의 화면에서 지금 대상과 "더 이상 없음"을 보여 준 뒤에만 바꾸고, Remove Command는 지우지 않습니다. 사용자가 이런 링크를 앱에서 지우는 방법은 없습니다(Finder나 Terminal로 지움).
 - 설치 위치를 사용자가 직접 고르는 기능은 없습니다.
 - 실제 화면 표시(키 창 기본 버튼 강조, sheet 표시·닫힘, 실제 VoiceOver 읽기)는 화면 밖 검사로 확인하지 않았습니다. 앱 통합 후 실제 앱에서 확인해야 합니다(XXIV.5.6 수용 기준).
 - 새 프로젝트 패널의 같은 이름 차단은 AppKit 문서의 호출 순서(`userEnteredFilename`이 바꾸기 확인보다 먼저)에 기대며, 실제 패널에서 바꾸기 확인이 뜨지 않는지는 앱 통합 후 확인해야 합니다. 코어도 대상 폴더가 있으면 `folderAlreadyExists`로 거부해야 합니다.

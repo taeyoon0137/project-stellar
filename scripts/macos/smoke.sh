@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# macOS 셸 smoke/lifecycle/canvas/text input/input test (II.5.2, II.5.3, II.5.4, XII.5.1, XII.3.2, XII.3.4, XVI.9.5).
+# macOS 셸 smoke/lifecycle/canvas/text input/input/welcome test (II.5.2, II.5.3, II.5.4, XII.5.1, XII.3.2, XII.3.4, XVI.9.5,
+# XXIV.5.3~XXIV.5.6).
 # StellarMac 앱을 Debug로 빌드한 뒤:
 #  - --smoke: FFI로 코어 버전을 읽고 종료 코드 0
 #  - --lifecycle-check: runtime create/destroy가 1:1인지 확인하고 종료 코드 0
