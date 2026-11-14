@@ -91,17 +91,25 @@ pub fn default_lock_dir() -> Result<PathBuf, LockError> {
 
 /// 프로젝트 식별(IV.2.3)의 잠금 key.
 pub fn lock_key(project_id: StableId, root: &Path) -> Result<String, LockError> {
-    let identity = ProjectIdentity::new(project_id, root).map_err(|e| LockError::Io {
+    let identity = project_identity(project_id, root)?;
+    Ok(identity_lock_key(&identity))
+}
+
+fn project_identity(project_id: StableId, root: &Path) -> Result<ProjectIdentity, LockError> {
+    ProjectIdentity::new(project_id, root).map_err(|e| LockError::Io {
         path: root.to_path_buf(),
         kind: e.kind(),
-    })?;
-    let mut bytes = project_id.to_bytes().to_vec();
+    })
+}
+
+fn identity_lock_key(identity: &ProjectIdentity) -> String {
+    let mut bytes = identity.project_id().to_bytes().to_vec();
     bytes.extend_from_slice(identity.canonical_target().as_os_str().as_encoded_bytes());
     let digest = ContentHash::compute(&bytes);
-    Ok(digest.digest()[..16]
+    digest.digest()[..16]
         .iter()
         .map(|b| format!("{b:02x}"))
-        .collect())
+        .collect()
 }
 
 /// 잡은 저장 잠금. drop 하면(파일 닫힘) 해제됩니다.
@@ -123,8 +131,15 @@ impl SaveLock {
         project_id: StableId,
         root: &Path,
     ) -> Result<SaveLock, LockError> {
+        Self::for_identity(dir, &project_identity(project_id, root)?)
+    }
+
+    pub(crate) fn for_identity(
+        dir: &Path,
+        identity: &ProjectIdentity,
+    ) -> Result<SaveLock, LockError> {
         ensure_private_dir(dir)?;
-        let path = dir.join(format!("{}.lock", lock_key(project_id, root)?));
+        let path = dir.join(format!("{}.lock", identity_lock_key(identity)));
         let io_error = |e: io::Error| LockError::Io {
             path: path.clone(),
             kind: e.kind(),

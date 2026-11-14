@@ -11,9 +11,37 @@
 ```sh
 stellar text-source export ./MyProject ./home-00000003.stellar.yaml
 stellar text-source check ./home-00000003.stellar.yaml
+stellar text-source apply ./home-00000003.stellar.yaml ./edit.json --dry-run
+stellar text-source apply ./home-00000003.stellar.yaml ./edit.json
 ```
 
 `export <project> <new-file>`은 지원 범위의 기존 저장 프로젝트를 새 파일로 내보냅니다. 출력 파일이 이미 있으면 실패하며 덮어쓰지 않습니다. 기존 프로젝트의 원본과 generation은 변경하지 않습니다. `check <file>`은 텍스트를 읽어 문법·지원 범위·문서 불변식을 검증합니다. `check`와 라이브러리 `open`은 원본·캐시를 쓰지 않는 읽기 전용 작업입니다.
+
+## 명시적 명령 적용
+
+`apply <file> <input|-> [--dry-run]`은 내보낸 단일 View 원본에 기존 command transaction을 적용합니다. 입력 파일 대신 `-`로 표준 입력을 읽을 수 있습니다. `check`/`export` 응답의 `document`와 `source_hash`를 요청에 사용합니다. `stellar-apply`의 generation revision과 혼용하지 않습니다.
+
+```json
+{
+  "format": "stellar-text-apply",
+  "format_version": 1,
+  "base_source_hash": "sha256:<check가 반환한 소문자 hex 64자리>",
+  "document": "019a8180-0001-7000-8000-000000000001",
+  "commands": [
+    {"kind": "rename", "node": "019a8180-0011-7000-8000-000000000011", "name": "확인 버튼"},
+    {"kind": "set-visible", "node": "019a8180-0011-7000-8000-000000000011", "visible": false}
+  ]
+}
+```
+
+요청의 키는 위 다섯 개만 허용합니다. 입력은 기존 apply와 같은 8 MiB·깊이 16·명령 10,000개 상한을 사용합니다. `rename`, `set-visible`, `set-locked`, `move-node`, `delete-subtree` 필드 형식과 등록된 명령의 `canonical` 소문자 hex 형식은 기존 `stellar apply`와 같습니다. command validator와 전체 transaction 실행을 거치므로 중간 실패는 저장하지 않습니다. 미지원 노드·modifier·속성이 생기는 명령은 결과 텍스트 직렬화 단계에서 **dry-run과 쓰기 모두 거부**합니다.
+
+- dry-run은 원본·generation·cache·잠금 파일을 쓰지 않고 적용될 semantic `changes`를 반환합니다. `source_hash`는 디스크의 기존 hash이며 `written`은 false입니다.
+- 쓰기는 기존 OS 사용자 데이터 저장 잠금을 문서 ID와 canonical 원본 파일 경로로 잡은 뒤 원본을 다시 읽고 hash·문서 ID를 확인합니다. 동일 파일의 협조적 CLI writer는 직렬화합니다. 정상 저장 결과에는 새 `source_hash`와 `written: true`가 있고 `check`로 재열 수 있습니다.
+- 동일 모델이 되는 명령은 원본 주석·공백·hash를 그대로 보존하고 `written: false`를 반환합니다. 실제 의미 변경 시에는 v1의 결정론적 writer가 파일 전체를 다시 쓰므로 주석·서식은 보존하지 않습니다.
+- 외부 수정에는 주석·공백 변경도 포함하며 `text-source-changed`(75)로 거부합니다. 다시 `check`하고 변경을 검토한 후 새 hash로 요청해야 합니다. 알 수 없는 원본 필드·레코드는 `text-source-unsupported`(69)로 거부하고 원본을 덮어쓰지 않습니다. 명령 실패(1), 잘못된 요청·문서 ID(65), 저장 잠금 경합(75), 잠금용 사용자 데이터 위치 누락(78)을 구분합니다.
+
+기존 프로젝트에서 export한 파일을 이 명령으로 고쳐도 기존 generation은 변경하지 않습니다. 기본 앱에서 그 변경을 자동으로 읽는 연결은 아직 없으므로, 이 CLI는 명시적으로 지정한 텍스트 파일만의 편집 경로입니다. 저장 후 일반 `git diff -- <file>`로 사람이 읽는 속성 변경을 검토할 수 있습니다.
 
 ## 전체 예시
 
@@ -141,7 +169,7 @@ Shape·Path·Text·Image payload, component instance·library, token set, modifi
 
 ## 열기·저장과 파생 캐시
 
-라이브러리 `save_new`는 완성된 임시 파일을 hard link로 게시하므로 마지막 검사 후 다른 파일이 생겨도 기존 항목을 덮어쓰지 않습니다. hard link를 지원하지 않는 파일 시스템은 오류로 거부합니다. `save`는 열었을 때의 원본 bytes hash와 문서 ID를 확인한 뒤 단일 파일을 원자적으로 교체합니다. 원본이 외부에서 바뀌었거나 재해석할 수 없는 필드가 생겼으면 덮어쓰지 않습니다. CLI에는 현재 `export`와 읽기 전용 `check`만 노출합니다. 저장은 기존 파일 권한을 유지합니다. 마지막 hash 검사와 rename 사이에 비협조적 외부 writer가 개입하는 경쟁은 기존 atomic 저장과 같이 남아 있으므로 앱 연결 전 프로젝트 저장 잠금과 외부 변경 통합이 필요합니다. 부모 디렉터리 fsync 또는 새 파일 게시 뒤 임시 링크 제거 실패는 대상이 이미 생긴 뒤 반환될 수 있으므로 오류 후 실제 원본을 다시 읽어 상태를 확인해야 합니다.
+라이브러리 `save_new`는 완성된 임시 파일을 hard link로 게시하므로 마지막 검사 후 다른 파일이 생겨도 기존 항목을 덮어쓰지 않습니다. hard link를 지원하지 않는 파일 시스템은 오류로 거부합니다. `save`는 열었을 때의 원본 bytes hash와 문서 ID를 확인한 뒤 단일 파일을 원자적으로 교체합니다. 원본이 외부에서 바뀌었거나 재해석할 수 없는 필드가 생겼으면 덮어쓰지 않습니다. CLI에는 `export`, 읽기 전용 `check`, 명시적 `apply`를 노출합니다. 저장은 기존 파일 권한을 유지합니다. 마지막 hash 검사와 rename 사이에 비협조적 외부 writer가 개입하는 경쟁은 기존 atomic 저장과 같이 남아 있으므로 CLI는 협조적 writer 저장 잠금을 사용하며 앱 연결 전 프로젝트 전체 잠금과 외부 변경 통합이 필요합니다. 부모 디렉터리 fsync 또는 새 파일 게시 뒤 임시 링크 제거 실패는 대상이 이미 생긴 뒤 반환될 수 있으므로 오류 후 실제 원본을 다시 읽어 상태를 확인해야 합니다.
 
 캐시는 라이브러리 `open_with_cache(path, project_root)`를 명시적으로 호출할 때 생성합니다.
 
