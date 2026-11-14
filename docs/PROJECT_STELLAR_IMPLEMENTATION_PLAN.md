@@ -976,7 +976,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| X.7.1 | `[ ]` | command invalidation을 layout dirty set으로 변환합니다. PaintOnly는 layout queue에 넣지 않습니다. | property별 expected dirty set 통과. | VII.1.4, X.1.3 |
+| X.7.1 | `[x]` | command invalidation을 layout dirty set으로 변환합니다. PaintOnly는 layout queue에 넣지 않습니다. | property별 expected dirty set 통과. | VII.1.4, X.1.3 |
 | X.7.2 | `[x]` | bottom-up intrinsic measurement와 top-down placement를 분리하고 cache key를 정의합니다. | 같은 input에서 중복 측정 0. | X.6.4, X.1.4 |
 | X.7.3 | `[ ]` | dirty node의 ancestor propagation을 layout mode별로 최소화합니다. | leaf color 변경 0 layout, leaf width 변경 예상 ancestor만 방문. | X.7.1 |
 | X.7.4 | `[ ]` | 20만 node synthetic document에서 단일 leaf 변경 방문 node count를 기록하는 benchmark를 추가합니다. | result JSON에 visited/cache hit/duration 포함. | X.7.3 |

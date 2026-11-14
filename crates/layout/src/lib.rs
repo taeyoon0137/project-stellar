@@ -15,6 +15,9 @@ pub mod geometry;
 /// 레이아웃 입력 속성 식별자와 dirty class registry (X.1.1, X.1.3).
 pub mod property;
 
+/// command invalidation → layout dirty set (X.7.1).
+pub mod dirty;
+
 /// 레이아웃 오류 (X.1.1).
 pub mod error;
 
