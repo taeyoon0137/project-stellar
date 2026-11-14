@@ -1,0 +1,20 @@
+[package]
+name = "stellar-mcp-core"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# ADR-0005 §8: L2는 L1 library를 in-process로 호출합니다.
+[dependencies]
+stellar-ops = { path = "../ops" }
+stellar-local-ipc = { path = "../local-ipc" }
+
+[features]
+test-support = ["stellar-ops/test-support"]
+
+[dev-dependencies]
+stellar-ops = { path = "../ops", features = ["test-support"] }
+
+[lints]
+workspace = true

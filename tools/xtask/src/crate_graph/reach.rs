@@ -27,6 +27,10 @@ pub struct ReachBan {
 /// `stellar-ffi`는 이 열 대신 타입 변환 금지 inventory로 보완하므로 규칙이 없습니다.
 pub const FORBIDDEN_REACH: &[ReachBan] = &[
     ReachBan {
+        from: "stellar-mcp-core",
+        never_reach: &["stellar-agent-host", "stellar-runtime", "stellar-ffi"],
+    },
+    ReachBan {
         from: "stellar-ops",
         never_reach: &[
             "stellar-local-ipc",

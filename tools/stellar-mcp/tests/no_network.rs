@@ -4,8 +4,8 @@
 //!
 //! - 소스에 TCP·UDP socket API와 `std::net` 사용이 없습니다. 로컬 IPC는
 //!   `std::os::unix::net`(Unix domain socket)만 씁니다.
-//! - manifest의 의존성은 모두 workspace 내부 `crates/` path 의존입니다. 외부(crates.io·git)
-//!   crate를 통한 network 우회가 없습니다. 어떤 내부 crate에 의존할 수 있는지(허용 edge)는
+//! - L2 manifest는 workspace 내부 `crates/` path 의존만 사용합니다. ops 전이 경로의 기존
+//!   승인 YAML·텍스트 의존만 예외로 확인합니다. 어떤 내부 crate에 의존할 수 있는지(허용 edge)는
 //!   crate graph 정책(`tools/xtask/src/crate_graph.rs`)이 정하므로 이 검사는 목록을 두지 않습니다.
 
 use std::collections::BTreeSet;
@@ -68,8 +68,7 @@ fn path_of(value: &str) -> Option<&str> {
     Some(&rest[..rest.find('"')?])
 }
 
-/// 브리지 manifest에서 시작해 path 의존을 따라가며 crate 디렉터리를 모읍니다. 외부 의존이 있으면
-/// 실패합니다.
+/// 브리지 manifest에서 내부 path 의존을 따라갑니다. 기존 ops의 승인된 외부 의존 외에는 거부합니다.
 fn dependency_closure() -> Vec<PathBuf> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace = root.join("../..").canonicalize().unwrap();
@@ -81,12 +80,31 @@ fn dependency_closure() -> Vec<PathBuf> {
             continue;
         }
         for dep in dependencies(&dir.join("Cargo.toml")) {
-            assert!(
-                dep.name.starts_with("stellar-"),
-                "{}: 외부 crate 의존 금지: {}",
-                dir.display(),
-                dep.name
-            );
+            if !dep.name.starts_with("stellar-") {
+                // ops의 기존 YAML·텍스트 구현에 이미 승인된 의존만 허용합니다.
+                // 전체 외부 의존/lock 검증은 validate-dependencies가 담당합니다.
+                let allowed = match dir.file_name().and_then(|n| n.to_str()) {
+                    Some("project") => [("yaml-rust2", "0.11.0")].as_slice(),
+                    Some("text") => [
+                        ("harfrust", "0.15.0"),
+                        ("unicode-bidi", "0.3.18"),
+                        ("unicode-segmentation", "1.13.3"),
+                        ("unicode-linebreak", "0.1.5"),
+                    ]
+                    .as_slice(),
+                    _ => &[],
+                };
+                assert!(
+                    allowed.iter().any(|(name, version)| dep.name == *name
+                        && dep.value.contains(&format!("\"={version}\""))
+                        && path_of(&dep.value).is_none()
+                        && !dep.value.contains("git =")),
+                    "승인 밖 의존: {} {}",
+                    dir.display(),
+                    dep.name
+                );
+                continue;
+            }
             let path = path_of(&dep.value).unwrap_or_else(|| {
                 panic!(
                     "{}: {}는 path 의존이어야 함: {}",
@@ -152,8 +170,8 @@ fn bridge_and_internal_dependencies_use_no_network_sockets() {
 }
 
 #[test]
-fn manifests_have_only_internal_path_dependencies() {
-    // 전이 closure 계산이 외부·비 path 의존을 만나면 실패합니다. 브리지 자신은 항상 포함됩니다.
+fn manifests_use_internal_paths_and_existing_ops_dependencies() {
+    // 전이 closure가 허용 밖 외부·비 path 의존을 만나면 실패합니다.
     let closure = dependency_closure();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .canonicalize()

@@ -2,7 +2,7 @@
 
 - WBS: XIX.2.5
 - 작업명: 모든 MCP payload에서 agent에 전달되는 프로젝트 내용을 사용자가 승인한 프로젝트·세션으로 제한
-- 상태: 부분 완료 (`[~]`) — 범위 검사(요청 URI·tool 인자·응답 payload)와 cross-project 거부 fixture는 끝났으나, 작업 지시의 "모든 MCP payload"에 적용하려면 server의 `resources/list`·`resources/read`·`tools/call`이 이 검사를 거쳐야 하는데 catalog가 아직 server에 연결되지 않았습니다. 지금은 검사를 강제하는 호출 지점이 없습니다.
+- 상태: 부분 완료 (`[~]`) — XIX.9.3에서 headless 구조·문서 읽기를 scope 검사에 연결했습니다. attached와 나머지 resource/tool의 연결은 남았습니다. 아래 원 구현 기록의 후속 상황은 추가 절을 참고합니다.
 - 선행: XIX.1.4(`[x]`)
 
 ## 필수 실행 환경
@@ -52,3 +52,10 @@
 
 - 승인(첫 연결 승인 XIX.3.3)과 trust 확인(XVI.7)은 이 모듈의 범위가 아닙니다. 범위 검사는 승인된 범위를 넘지 않게 할 뿐 승인을 만들지 않습니다.
 - 응답 표지 검사는 backend가 표지를 정직하게 붙인다는 전제의 심층 방어입니다.
+
+## XIX.9.3 읽기 경로 연결 후속
+
+- 구현 모듈은 ADR-0005의 `crates/mcp-core/src/catalog/scope.rs`로 이동했습니다.
+- headless의 구조·문서 `resources/read`가 `check_resource_uri`와 `release`를 호출합니다. 실제 stdio 프로세스 테스트에서 다른 프로젝트 ID·문서·선언 밖 인자 거부와 신뢰 철회를 확인했습니다.
+- `tools/list`는 비어 있고 `tools/call`은 미제공입니다. 따라서 모든 미래 tool·attached payload까지 완료했다는 의미는 아니며 `[~]`를 유지합니다.
+- 명령·결과·남은 범위: [XIX.9.3 보고서](XIX.9.3.md).

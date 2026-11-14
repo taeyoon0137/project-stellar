@@ -139,6 +139,14 @@ impl FileTrustStore {
         self.entries.keys().map(PathBuf::as_path).collect()
     }
 
+    /// ID가 신뢰 목록의 target 하나에만 등록돼 있으면 그 경로를 반환합니다.
+    /// 없거나 복사본 등으로 여러 target이 있으면 임의로 고르지 않습니다.
+    pub fn unique_target(&self, project_id: StableId) -> Option<&Path> {
+        let mut targets = self.entries.iter().filter(|(_, id)| **id == project_id);
+        let (target, _) = targets.next()?;
+        targets.next().is_none().then_some(target.as_path())
+    }
+
     /// identity의 신뢰 상태. canonical target과 project id가 모두 일치해야 `Trusted`입니다.
     pub fn status(&self, identity: &ProjectIdentity) -> TrustStatus {
         match self.entries.get(trust_key(identity)) {

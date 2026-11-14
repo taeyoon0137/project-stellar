@@ -151,7 +151,10 @@ fn sources_have_no_stdout_print_macros() {
         .collect();
     let stdout_handle = ["io::", "stdout()"].concat();
     let mut stdout_uses = 0;
-    let mut stack = vec![src];
+    let mut stack = vec![
+        src,
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/mcp-core/src"),
+    ];
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {
             let path = entry.unwrap().path();
