@@ -44,10 +44,14 @@
 | `cargo xtask validate-task-report docs/task-reports/XII.3.6.md` | 종료 0 |
 | `cargo xtask validate-crate-graph` | 종료 0 |
 | `git diff --check` | 종료 0 |
+| `cargo xtask generate-ledger` | `7b5cf84b` 커밋 후 종료 0, 1,145행 재생성 |
+| `cargo xtask sync-plan --check` / `validate-task-status` / `verify-task XII.3.6` | 모두 종료 0 |
+| `cargo xtask validate-adr <기준점 이후 전체 변경 경로>` | 종료 0 |
 | `cargo test -p stellar-scene` | 종료 0. unit 117, integration 1, doctest 2 통과. 전용 성능 benchmark 1개 ignored |
 
 16개 interaction 테스트가 여섯 도구의 진행→완료·취소, threshold, 선택하지 않은 node의 drag 전환,
 마지막 위치 반영, 줌 clamp, 회전 누적, 뒤집기·회전된 resize, 잘못된 누름·이동, 뗌 실패 후 복구를 검사합니다.
+최종 검사 로그는 `/tmp/stellar-interaction-final-checks.log`입니다.
 transient layer 검사는 사각형·수평선·수직선·점·평행 축 상자의 handle과 상태 기계가 일치하는지 확인합니다.
 
 ## 차이(작업 지시와 다른 점)
