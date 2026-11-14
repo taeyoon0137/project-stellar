@@ -309,7 +309,7 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 
 ### 14.6 통합 검사(`--shell-integration-check`)
 
-실제 코어 runtime과 임시 fixture 프로젝트로 `ShellAppCoordinator`를 화면 밖에서 구동합니다.
+실제 코어 runtime과 임시 fixture 프로젝트로 `ShellAppCoordinator`를 화면 밖에서 구동합니다. 프로젝트 창은 검사 전용 autosave 이름(`ShellCheckAutosave`, 접두어 `StellarShellIntegrationCheck`·`StellarProjectOpenCheck`)으로 만들고 시작·끝에 그 기록을 지웁니다. 앱의 실제 창 기록(`StellarMainWindow`, split, 툴바 구성)을 읽거나 바꾸지 않는지도 검사 전후로 비교합니다. 실제 기록을 쓰면 사용자가 펼친 보조 패널 같은 저장 상태에 따라 검사 결과가 달라지기 때문입니다.
 
 - 메뉴: Open Project…·Settings… 활성(앱 수준 router target), New·Clone Project 비활성, 셸 프레임 항목 설치, key equivalent 중복 없음
 - 시작 창 표시 → 시작 창 Open Project → 진행 표시 → 같은 폴더 중복 요청 없음 → 펌프 timer 켜짐·완료 후 꺼짐 → 창 1개, 시작 창 닫힘, 코어 프로젝트 session 1개

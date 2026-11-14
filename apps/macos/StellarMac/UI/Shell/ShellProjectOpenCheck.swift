@@ -47,6 +47,9 @@ private final class ShellProjectOpenCheckRunner {
         defer { host.shutdown() }
         let coordinator = ShellAppCoordinator(runtimeHandle: host.handle)
         coordinator.presentsWindows = false
+        let autosave = ShellCheckAutosave(prefix: "StellarProjectOpenCheck")
+        defer { autosave.removeRecords() }
+        coordinator.windowConfiguration = { autosave.configuration }
         coordinator.alertPresenter = { [weak self] title, message, _ in
             self?.alerts.append((title, message))
         }

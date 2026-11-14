@@ -35,6 +35,9 @@ final class ShellAppCoordinator: NSObject {
 
     /// false이면 창을 화면에 올리지 않습니다(화면 밖 검사).
     var presentsWindows = true
+    /// 프로젝트 창의 AppKit 상태 저장 이름(frame·split·툴바 autosave, 복원 식별자). 검사는 앱의 실제 기록을 읽거나
+    /// 덮어쓰지 않도록 검사 전용 이름을 넘깁니다.
+    var windowConfiguration: () -> ShellWindowConfiguration = { .standard }
     /// 프로젝트 열기 실패를 alert로 알립니다. 검사에서 바꿉니다.
     lazy var alertPresenter: (_ title: String, _ message: String, _ window: NSWindow?) -> Void = { title, message, window in
         let alert = NSAlert()
@@ -291,7 +294,9 @@ final class ShellAppCoordinator: NSObject {
     // MARK: - 프로젝트 창
 
     private func makeProjectWindow(rootPath: String) -> ShellProjectWindow {
-        let projectWindow = ShellProjectWindow(rootPath: rootPath, runtimeHandle: runtimeHandle)
+        let projectWindow = ShellProjectWindow(
+            rootPath: rootPath, runtimeHandle: runtimeHandle, configuration: windowConfiguration()
+        )
         projectWindow.dataSource.commandHandler = { [weak self, weak projectWindow] id in
             guard let self, let projectWindow else { return }
             self.performFrameCommand(id, in: projectWindow)

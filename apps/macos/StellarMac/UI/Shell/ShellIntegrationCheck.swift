@@ -48,6 +48,21 @@ private final class ShellIntegrationCheckRunner {
 
         let coordinator = ShellAppCoordinator(runtimeHandle: host.handle)
         coordinator.presentsWindows = false
+        let autosave = ShellCheckAutosave(prefix: "StellarShellIntegrationCheck")
+        defer { autosave.removeRecords() }
+        coordinator.windowConfiguration = { autosave.configuration }
+        // 앱의 실제 창 기록은 검사 전후로 그대로여야 합니다.
+        let standard = ShellWindowConfiguration.standard
+        let appRecordKeys = [
+            "NSWindow Frame \(standard.autosaveName)",
+            "NSSplitView Subview Frames \(standard.mainSplitAutosaveName)",
+            "NSSplitView Subview Frames \(standard.centerSplitAutosaveName)",
+            "NSToolbar Configuration \(standard.toolbarIdentifier)",
+        ]
+        func appRecords() -> [NSObject?] {
+            appRecordKeys.map { UserDefaults.standard.object(forKey: $0) as? NSObject }
+        }
+        let recordsBefore = appRecords()
         coordinator.alertPresenter = { [weak self] title, message, _ in
             self?.alerts.append((title, message))
         }
@@ -63,6 +78,9 @@ private final class ShellIntegrationCheckRunner {
         autoreleasepool {
             checkProjectLifecycle(coordinator, host: host)
         }
+        // split view는 상태를 다음 런 루프에서 기록하므로 한 번 돌린 뒤 비교합니다.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        expect(appRecords() == recordsBefore, "검사가 앱의 실제 창 autosave 기록을 바꿈")
 
         if failures.isEmpty {
             print("shell-integration ok: \(checks) checks (menu, welcome, open via core, window composition, tools, restore, close)")
@@ -311,6 +329,8 @@ private final class ShellIntegrationCheckRunner {
         expect(snapshot.status == .ready, "프로젝트 창이 ready가 아님")
         expect(projectWindow.dataSource.session?.name == Self.projectName, "session 이름 불일치")
         expect(window.isRestorable && window.restorationClass == ShellWindowRestoration.self, "프로젝트 창 복원 설정 없음")
+        expect(controller.configuration.autosaveName != ShellWindowConfiguration.standard.autosaveName,
+               "검사 창이 앱의 실제 autosave 이름을 씀")
 
         let split = controller.splitController
         expect(split.contentContainer.contentSlot === projectWindow.canvasHost, "가운데 슬롯이 캔버스 호스트가 아님")
@@ -407,5 +427,31 @@ private final class ShellIntegrationCheckRunner {
             windowNumber: window.windowNumber, context: nil, characters: characters,
             charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode
         )
+    }
+}
+
+/// 검사 전용 AppKit 상태 저장 이름. 앱의 실제 창 기록(`ShellWindowConfiguration.standard`)을 읽거나 덮어쓰지 않고,
+/// 시작과 끝에 같은 접두어의 user defaults 기록(중간에 비정상 종료한 이전 실행 포함)을 지웁니다.
+@MainActor
+final class ShellCheckAutosave {
+    let prefix: String
+    let configuration: ShellWindowConfiguration
+
+    init(prefix: String) {
+        self.prefix = prefix
+        let token = UUID().uuidString
+        configuration = ShellWindowConfiguration(
+            autosaveName: "\(prefix).Window.\(token)",
+            toolbarIdentifier: "\(prefix).Toolbar.\(token)",
+            restorationIdentifier: "\(prefix).Window.\(token)"
+        )
+        removeRecords()
+    }
+
+    func removeRecords() {
+        let defaults = UserDefaults.standard
+        for key in defaults.dictionaryRepresentation().keys where key.contains(prefix) {
+            defaults.removeObject(forKey: key)
+        }
     }
 }
