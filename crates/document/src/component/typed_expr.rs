@@ -28,7 +28,8 @@ use super::codec::{put_bytes, put_u32, put_u8, Malformed, Reader};
 /// 타입 확인 표현식 오류.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpressionCheckError {
-    /// type checker가 오류를 보고했습니다(오류 node StableId·경로 포함, VIII.2.4).
+    /// type checker가 오류를 보고했습니다(오류 node StableId 포함, VIII.2.4). 경로가 필요하면 같은 AST를
+    /// `type_check`해 `TypeCheckReport::path_to`로 얻습니다.
     TypeErrors(Vec<TypeError>),
     /// root 추론 타입이 선언 타입에 대입되지 않습니다.
     TypeMismatch {

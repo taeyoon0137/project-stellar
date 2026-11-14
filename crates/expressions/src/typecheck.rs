@@ -1,14 +1,16 @@
 //! Expression AST type checker (VIII.2.4).
 //!
-//! [`type_check`]는 검증된 AST의 모든 node에 대해 추론 타입을 계산하고, 규칙 위반을 **node StableId와
-//! root→node 경로**가 포함된 [`TypeError`]로 모읍니다. 규칙은 산술(VIII.1.2), 비교·논리·조건식(VIII.1.3),
-//! 함수 signature(VIII.1.4) 표를 그대로 사용합니다.
+//! [`type_check`]는 검증된 AST의 모든 node에 대해 추론 타입을 계산하고, 규칙 위반을 **node StableId**가
+//! 포함된 [`TypeError`]로 모읍니다. root→node 오류 경로는 보고서의 [`TypeCheckReport::path_to`]가 돌려줍니다.
+//! 규칙은 산술(VIII.1.2), 비교·논리·조건식(VIII.1.3), 함수 signature(VIII.1.4) 표를 그대로 사용합니다.
 //!
 //! - 순회는 root에서 시작하는 반복(비재귀) 후위 순회이며 child를 slot 순서로 방문합니다. 공유(DAG)
 //!   node는 한 번만 검사합니다. 오류 목록 순서는 이 후위 순서라 결정적입니다.
 //! - 오류가 난 node는 타입을 갖지 않습니다. 그 부모는 child 타입이 없으므로 검사하지 않아, 하나의
 //!   원인이 조상 전체로 번지는 연쇄 오류를 만들지 않습니다.
-//! - 오류 경로는 root에서 slot 순서 전위 순회로 처음 발견한 경로입니다.
+//! - 오류 경로는 root에서 slot 순서 전위 순회로 처음 발견한 경로입니다. 경로는 오류마다 복제하지 않고 순회의
+//!   부모 map 하나만 보고서에 보관한 뒤 요청할 때 재구성합니다(EXPR-1). 깊이 `d` 사슬 곳곳에 오류가 있어도
+//!   검사 비용과 보고서·오류 목록 메모리는 AST 크기에 선형이며, 경로 하나의 재구성은 O(d)입니다.
 //! - 참조 타입은 호출자가 [`ReferenceTypes`]로 제공합니다(토큰·속성 타입은 이 crate 밖의 원본).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -90,10 +92,8 @@ impl fmt::Display for TypeErrorKind {
 /// node 하나의 type 오류 (VIII.2.4).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeError {
-    /// 규칙을 위반한 node.
+    /// 규칙을 위반한 node. root에서 이 node까지의 경로는 [`TypeCheckReport::path_to`]로 얻습니다.
     pub node: ExprNodeId,
-    /// root에서 `node`까지의 경로(양 끝 포함).
-    pub path: Vec<ExprNodeId>,
     /// 위반 위치의 child slot(피연산자 위치가 있는 오류만).
     pub slot: Option<ChildSlot>,
     /// 위반 위치에 연결된 child node(있으면).
@@ -115,6 +115,8 @@ impl std::error::Error for TypeError {}
 pub struct TypeCheckReport {
     types: BTreeMap<ExprNodeId, TypeSpec>,
     errors: Vec<TypeError>,
+    /// root에서 slot 순서 전위 순회로 처음 발견한 부모(root 제외). 오류 경로 재구성용입니다.
+    parents: BTreeMap<ExprNodeId, ExprNodeId>,
     root: ExprNodeId,
 }
 
@@ -142,6 +144,23 @@ impl TypeCheckReport {
     /// 오류가 없으면 `true`.
     pub fn is_ok(&self) -> bool {
         self.errors.is_empty()
+    }
+
+    /// root에서 `node`까지의 경로(양 끝 포함). root에서 slot 순서 전위 순회로 처음 발견한 경로이며, 검사한
+    /// AST에 없는 node면 `None`입니다. 비용은 경로 길이에 비례합니다.
+    pub fn path_to(&self, node: ExprNodeId) -> Option<Vec<ExprNodeId>> {
+        if node != self.root && !self.parents.contains_key(&node) {
+            return None;
+        }
+        let mut path = vec![node];
+        let mut current = node;
+        while current != self.root {
+            // 부모 map은 순회 tree라 cycle이 없고, root가 아닌 모든 node에 부모가 있습니다.
+            current = *self.parents.get(&current)?;
+            path.push(current);
+        }
+        path.reverse();
+        Some(path)
     }
 }
 
@@ -217,7 +236,6 @@ pub fn type_check(ast: &ExpressionAst, references: &dyn ReferenceTypes) -> TypeC
                 let slot = kind.position().map(|position| position.child_slot());
                 errors.push(TypeError {
                     node: id,
-                    path: path_to(&parents, ast.root(), id),
                     slot,
                     child: slot.and_then(|slot| node.child(slot)),
                     kind,
@@ -228,6 +246,7 @@ pub fn type_check(ast: &ExpressionAst, references: &dyn ReferenceTypes) -> TypeC
     TypeCheckReport {
         types,
         errors,
+        parents,
         root: ast.root(),
     }
 }
@@ -260,26 +279,6 @@ fn post_order(ast: &ExpressionAst) -> (Vec<ExprNodeId>, BTreeMap<ExprNodeId, Exp
         }
     }
     (order, parents)
-}
-
-fn path_to(
-    parents: &BTreeMap<ExprNodeId, ExprNodeId>,
-    root: ExprNodeId,
-    node: ExprNodeId,
-) -> Vec<ExprNodeId> {
-    let mut path = vec![node];
-    let mut current = node;
-    while current != root {
-        match parents.get(&current) {
-            Some(&parent) => {
-                path.push(parent);
-                current = parent;
-            }
-            None => break,
-        }
-    }
-    path.reverse();
-    path
 }
 
 #[cfg(test)]
@@ -392,7 +391,7 @@ mod tests {
         assert_eq!(report.errors().len(), 1, "연쇄 오류 없음");
         let error = &report.errors()[0];
         assert_eq!(error.node, id(3), "오류 node StableId");
-        assert_eq!(error.path, vec![id(1), id(3)]);
+        assert_eq!(report.path_to(error.node), Some(vec![id(1), id(3)]));
         assert_eq!(error.slot, Some(ChildSlot::Rhs));
         assert_eq!(error.child, Some(id(8)));
         match &error.kind {
@@ -433,7 +432,10 @@ mod tests {
         assert_eq!(report.errors().len(), 1);
         let error = &report.errors()[0];
         assert_eq!(error.node, id(5));
-        assert_eq!(error.path, vec![id(1), id(2), id(3), id(5)]);
+        assert_eq!(
+            report.path_to(error.node),
+            Some(vec![id(1), id(2), id(3), id(5)])
+        );
         assert_eq!(error.slot, Some(ChildSlot::Argument(0)));
         assert_eq!(error.child, Some(id(6)));
         assert!(matches!(
@@ -464,7 +466,10 @@ mod tests {
         let nodes: Vec<ExprNodeId> = report.errors().iter().map(|e| e.node).collect();
         assert_eq!(nodes, vec![id(2), id(3)]);
         assert_eq!(report.errors()[1].slot, Some(ChildSlot::Operand));
-        assert_eq!(report.errors()[1].path, vec![id(1), id(3)]);
+        assert_eq!(
+            report.path_to(report.errors()[1].node),
+            Some(vec![id(1), id(3)])
+        );
     }
 
     #[test]
@@ -537,7 +542,32 @@ mod tests {
         .expect("구조 유효");
         let report = type_check(&ast, &refs());
         assert_eq!(report.errors().len(), 1);
-        assert_eq!(report.errors()[0].path, vec![id(1), id(2), id(4)]);
+        assert_eq!(
+            report.path_to(report.errors()[0].node),
+            Some(vec![id(1), id(2), id(4)])
+        );
+    }
+
+    #[test]
+    fn path_to_covers_root_and_rejects_foreign_node() {
+        let ast = ExpressionAst::new(
+            id(1),
+            vec![
+                ExprNode::binary(id(1), BinaryOp::Add, id(2), id(3)),
+                length(2, 1.0),
+                color(3),
+            ],
+        )
+        .expect("구조 유효");
+        let report = type_check(&ast, &refs());
+        assert_eq!(report.errors().len(), 1);
+        assert_eq!(report.path_to(id(1)), Some(vec![id(1)]), "root 오류 경로");
+        assert_eq!(
+            report.path_to(id(3)),
+            Some(vec![id(1), id(3)]),
+            "오류 없는 node도 경로"
+        );
+        assert_eq!(report.path_to(id(99)), None, "검사한 AST 밖 node");
     }
 
     #[test]
@@ -554,7 +584,9 @@ mod tests {
         let report = type_check(&ast, &refs());
         assert_eq!(report.errors().len(), 1);
         assert_eq!(report.errors()[0].node, id(depth - 1));
-        assert_eq!(report.errors()[0].path.len(), depth as usize - 1);
+        let path = report.path_to(report.errors()[0].node).expect("경로");
+        assert_eq!(path.len(), depth as usize - 1);
+        assert_eq!(path.first(), Some(&id(1)));
         assert_eq!(report.types().len(), 1, "leaf만 타입 보유");
     }
 }
