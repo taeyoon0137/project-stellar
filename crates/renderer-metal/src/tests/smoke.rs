@@ -72,7 +72,7 @@ fn offscreen_smoke_frame_clears_external_texture() {
     let pixels = backend.inner_mut().read_texture(target).expect("readback");
     assert_eq!(pixels.len(), 8 * 4 * 4);
     assert!(all_pixels(&pixels, [255, 0, 0, 255]), "{pixels:?}");
-    // timestamp는 XI.8.6 전까지 지원하지 않습니다.
+    // timestamp를 요청하지 않은 device config에서는 측정하지 않습니다(XI.8.6).
     assert_eq!(
         backend.query_timestamps(submission).unwrap(),
         TimestampQuery::Unsupported

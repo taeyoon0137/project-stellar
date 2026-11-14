@@ -52,12 +52,16 @@ mod encode;
 /// frame CPU timestamp trace (XI.8.5).
 mod trace;
 
+/// GPU timestamp query (XI.8.6).
+mod timestamps;
+
 /// `RendererBackend` 구현.
 mod backend;
 
 pub use backend::MetalBackend;
 pub use pipeline::{ShaderError, ShaderErrorStage};
 pub use surface::{LayerOptions, SurfaceStats};
+pub use timestamps::{gpu_timing_line, MAX_TIMED_PASSES, MAX_TIMING_RESULTS};
 pub use trace::{MetalFrameTrace, MAX_FRAME_TRACES};
 
 /// backend 식별자.

@@ -35,6 +35,7 @@ use crate::objc::{class, sel, send, Id, NSUInteger, RawId};
 use crate::surface::Drawable;
 use crate::sys::{load_action, store_action, MTLClearColor};
 use crate::texture::MetalTexture;
+use crate::timestamps::attach_samples;
 use crate::transient::TransientPool;
 
 /// attachment가 가리키는 texture(frame encode 동안 table·pool·drawable이 살아 있게 유지).
@@ -359,7 +360,13 @@ pub(crate) fn plan_pass(
 /// 계획의 texture는 호출 동안 살아 있어야 합니다(table·pool·열린 frame 소유). render pass descriptor 등
 /// 임시 객체는 호출자의 autorelease pool에 쌓입니다. 이 함수가 실패하면 encoder는 열리지 않은
 /// 상태입니다.
-pub(crate) fn encode_pass(command_buffer: &Id, plan: &PassPlan) -> Result<(), BackendError> {
+///
+/// `samples`가 있으면 (counter sample buffer, pass index)로 GPU timestamp를 붙입니다(XI.8.6).
+pub(crate) fn encode_pass(
+    command_buffer: &Id,
+    plan: &PassPlan,
+    samples: Option<(RawId, NSUInteger)>,
+) -> Result<(), BackendError> {
     let descriptor_class = class!("MTLRenderPassDescriptor").ok_or(BackendError::new(
         BackendErrorKind::Unsupported,
         "MTLRenderPassDescriptor class가 없습니다",
@@ -401,6 +408,9 @@ pub(crate) fn encode_pass(command_buffer: &Id, plan: &PassPlan) -> Result<(), Ba
             let _: () = send(attachment, sel!("setLoadAction:"), (depth.load,));
             let _: () = send(attachment, sel!("setStoreAction:"), (depth.store,));
             let _: () = send(attachment, sel!("setClearStencil:"), (depth.clear_stencil,));
+        }
+        if let Some((buffer, index)) = samples {
+            attach_samples(descriptor, buffer, index);
         }
         let encoder: RawId =
             command_buffer.send(sel!("renderCommandEncoderWithDescriptor:"), (descriptor,));

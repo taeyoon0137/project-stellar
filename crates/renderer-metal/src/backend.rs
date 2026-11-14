@@ -35,6 +35,7 @@ use crate::pipeline::{PipelineCache, ShaderError};
 use crate::surface::{check_surface_size, Drawable, LayerOptions, LayerSurface, SurfaceStats};
 use crate::sys::{command_buffer_status, resource_options, MTLOrigin, MTLSize};
 use crate::texture::{create_texture, MetalTexture};
+use crate::timestamps::{timestamp_counter_set, FrameTiming, Timestamps};
 use crate::trace::{Clock, MetalFrameTrace, MAX_FRAME_TRACES};
 use crate::transient::TransientPool;
 
@@ -51,6 +52,7 @@ struct OpenFrame {
     encode_end_nanos: u64,
     pass_count: u32,
     draw_count: u32,
+    timing: Option<FrameTiming>,
 }
 
 /// GPU에 제출한 command buffer. texture upload command buffer는 submission 번호가 없습니다.
@@ -59,6 +61,7 @@ struct InFlight {
     id: Option<SubmissionId>,
     command_buffer: Id,
     present: bool,
+    timing: Option<FrameTiming>,
 }
 
 /// macOS Metal backend.
@@ -74,6 +77,7 @@ pub struct MetalBackend {
     pipelines: PipelineCache,
     pending_uploads: Vec<PendingUpload>,
     transients: TransientPool,
+    timestamps: Option<Timestamps>,
     clock: Clock,
     traces: VecDeque<MetalFrameTrace>,
     initialized_once: bool,
@@ -108,6 +112,7 @@ impl MetalBackend {
             pipelines: PipelineCache::new(),
             pending_uploads: Vec::new(),
             transients: TransientPool::default(),
+            timestamps: None,
             clock: Clock(Box::new(MonotonicClock::new())),
             traces: VecDeque::new(),
             initialized_once: false,
@@ -321,6 +326,7 @@ impl MetalBackend {
                 id: None,
                 command_buffer,
                 present: false,
+                timing: None,
             });
         }
         Ok(())
@@ -339,6 +345,16 @@ impl MetalBackend {
                             if done.present {
                                 self.progress.presented = Some(id);
                             }
+                            if let (Some(timing), Some(timestamps), Some(device)) =
+                                (done.timing, self.timestamps.as_mut(), self.device.as_ref())
+                            {
+                                timestamps.complete(
+                                    device.device(),
+                                    id,
+                                    &done.command_buffer,
+                                    timing,
+                                );
+                            }
                         }
                     }
                 }
@@ -346,6 +362,11 @@ impl MetalBackend {
                     if let Some(done) = self.in_flight.pop_front() {
                         if let Some(id) = done.id {
                             self.progress.completed = Some(id);
+                        }
+                        if let (Some(timing), Some(timestamps)) =
+                            (done.timing, self.timestamps.as_mut())
+                        {
+                            timestamps.recycle(timing);
                         }
                     }
                     return Err(BackendError::new(
@@ -516,8 +537,18 @@ impl MetalBackend {
                     "command buffer를 만들 수 없습니다",
                 ),
             )?;
-        for plan in &plans {
-            encode_pass(&command_buffer, plan)?;
+        let timing = self
+            .timestamps
+            .as_mut()
+            .and_then(|timestamps| timestamps.begin_frame(device.device(), request.graph.order()));
+        for (index, plan) in plans.iter().enumerate() {
+            let samples = timing.as_ref().map(|timing| timing.attachment(index));
+            if let Err(error) = encode_pass(&command_buffer, plan, samples) {
+                if let (Some(timing), Some(timestamps)) = (timing, self.timestamps.as_mut()) {
+                    timestamps.recycle(timing);
+                }
+                return Err(error);
+            }
         }
         let draw_count: usize = plans.iter().map(|plan| plan.draw_count()).sum();
         let token = self.next_token;
@@ -533,6 +564,7 @@ impl MetalBackend {
             encode_end_nanos,
             pass_count: u32::try_from(plans.len()).unwrap_or(u32::MAX),
             draw_count: u32::try_from(draw_count).unwrap_or(u32::MAX),
+            timing,
         });
         Ok(EncodeOutcome::Encoded(EncodedFrame::new(
             request.frame,
@@ -572,7 +604,12 @@ impl RendererBackend for MetalBackend {
             if let Some(surface) = &self.surface {
                 surface.configure(device.device(), &config.surface)?;
             }
-            let capabilities = device.capabilities(self.surface.is_some(), false);
+            let counter_set = timestamp_counter_set(device.device());
+            let capabilities = device.capabilities(self.surface.is_some(), counter_set.is_some());
+            self.timestamps = match counter_set {
+                Some(set) if config.timestamps => Some(Timestamps::new(device.device(), set)),
+                _ => None,
+            };
             self.surface_size = config.surface.size;
             self.surface_format = config.surface.format;
             self.next_submission = 1;
@@ -745,13 +782,17 @@ impl RendererBackend for MetalBackend {
             id: Some(id),
             command_buffer: open.command_buffer,
             present: open.present_nanos.is_some(),
+            timing: open.timing,
         });
         Ok(id)
     }
 
     fn discard(&mut self, frame: EncodedFrame) -> Result<(), BackendError> {
         // commit하지 않은 command buffer와 drawable을 놓습니다. GPU는 이 frame을 보지 않습니다.
-        let open = self.take_open(&frame)?;
+        let mut open = self.take_open(&frame)?;
+        if let (Some(timing), Some(timestamps)) = (open.timing.take(), self.timestamps.as_mut()) {
+            timestamps.recycle(timing);
+        }
         autoreleasepool(|| drop(open));
         Ok(())
     }
@@ -761,11 +802,29 @@ impl RendererBackend for MetalBackend {
         autoreleasepool(|| self.poll_completions())
     }
 
+    /// GPU timestamp 결과(XI.8.6). 아직 GPU에서 끝나지 않았으면 `Pending`, 측정하지 않는 설정·device이거나
+    /// 측정하지 않은 frame·보관 범위([`crate::MAX_TIMING_RESULTS`]) 밖이면 `Unsupported`입니다.
     fn query_timestamps(
         &mut self,
-        _submission: SubmissionId,
+        submission: SubmissionId,
     ) -> Result<TimestampQuery, BackendError> {
         self.device()?;
-        Ok(TimestampQuery::Unsupported)
+        autoreleasepool(|| {
+            self.poll_completions()?;
+            let Some(timestamps) = &self.timestamps else {
+                return Ok(TimestampQuery::Unsupported);
+            };
+            if self
+                .in_flight
+                .iter()
+                .any(|entry| entry.id == Some(submission))
+            {
+                return Ok(TimestampQuery::Pending);
+            }
+            Ok(timestamps
+                .result(submission)
+                .cloned()
+                .map_or(TimestampQuery::Unsupported, TimestampQuery::Ready))
+        })
     }
 }
