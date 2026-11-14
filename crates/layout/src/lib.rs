@@ -63,6 +63,9 @@ pub mod constraint;
 /// layout worker result guard (X.7.5).
 pub mod guard;
 
+/// 문서 원천을 Fragment flatten한 layout tree view (X.1.2).
+pub mod view;
+
 /// 레이아웃 적합성 fixture corpus (X.11.1).
 pub mod corpus;
 
