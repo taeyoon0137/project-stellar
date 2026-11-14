@@ -1,7 +1,7 @@
 # 작업 보고서: XII.2.1 ProjectWindowSession core type
 
 > 아래 초기 구현·검증 기록은 선별 통합 원본 범위 `3892c5e3..2636e8ce`에서 가져왔습니다.
-> 현재 기준 `eac4531b` 위의 재검증·수정·남은 범위는 [세션 통합 보고서](session-takeover-integration.md)를 따릅니다.
+> 현재 기준 `eac4531b` 위의 재검증·수정·남은 범위는 [세션 통합 보고서](../status/session-takeover-integration.md)를 따릅니다.
 
 ## WBS
 
