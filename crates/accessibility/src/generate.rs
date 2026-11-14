@@ -12,6 +12,9 @@
 //! | Image | `Image`, 작성자 label(없으면 진단 대상, IX.8.5) |
 //! | Graphic(Shape·Path) | label이 있으면 `Image`, 없으면 장식으로 보고 제외 |
 //!
+//! Frame에 control 계약이 있으면 IX.8.4 매핑([`crate::control`])이 role·state·action을 정하고, List·
+//! SingleSelectionGroup 항목 문맥과 flatten 대상(연결 List, 의미 없는 collection Frame)도 그 모듈이 정합니다.
+//!
 //! 작성자 읽기 순서는 그대로 옮깁니다. 순회는 반복(비재귀) preorder이고 시각 자식 순서를 따르므로, flatten된
 //! node의 자식도 원래 문서 순서 위치에 들어갑니다. source tree가 tree가 아니면(없는 자식, 같은 node를 두 번
 //! 방문 — 공유 자식 또는 cycle) [`GenerateError`]로 거부합니다.
@@ -21,6 +24,7 @@ use std::fmt;
 
 use stellar_core_types::ids::StableId;
 
+use crate::control::ControlContext;
 use crate::node::{AccessibilityBinding, AccessibilityNode, AccessibilityRole};
 use crate::source::{SourceKind, SourceNode, SourceTree};
 use crate::tree::AccessibilityTree;
@@ -63,6 +67,7 @@ impl std::error::Error for GenerateError {}
 
 /// 시각 source tree에서 기본 접근성 트리를 만듭니다.
 pub fn generate(source: &SourceTree) -> Result<AccessibilityTree, GenerateError> {
+    let controls = ControlContext::build(source);
     let mut tree = AccessibilityTree::new();
     let mut visited = BTreeSet::new();
     // (source node, 그 source를 가리킨 시각 부모, 접근성 부모)
@@ -84,7 +89,7 @@ pub fn generate(source: &SourceTree) -> Result<AccessibilityTree, GenerateError>
             continue;
         }
         let mut child_parent = ax_parent;
-        if let Some(ax_node) = map_node(node) {
+        if let Some(ax_node) = map_node(node, &controls) {
             // source는 visited로 한 번만 방문하므로 중복 삽입이 생기지 않습니다.
             if tree.insert(ax_node).is_err() {
                 return Err(GenerateError::RevisitedNode { node: id });
@@ -105,9 +110,9 @@ pub fn generate(source: &SourceTree) -> Result<AccessibilityTree, GenerateError>
     Ok(tree)
 }
 
-/// source node 하나의 기본 접근성 node. 접근성 node를 만들지 않으면(flatten·제외) `None`.
-fn map_node(node: &SourceNode) -> Option<AccessibilityNode> {
-    if node.decorative {
+/// source node 하나의 접근성 node. 접근성 node를 만들지 않으면(flatten·제외) `None`.
+fn map_node(node: &SourceNode, controls: &ControlContext) -> Option<AccessibilityNode> {
+    if node.decorative || controls.is_absorbed(node.id) {
         return None;
     }
     let mut mapped = match node.kind {
@@ -132,6 +137,7 @@ fn map_node(node: &SourceNode) -> Option<AccessibilityNode> {
         mapped.label = Some(label.clone());
     }
     mapped.reading_order = node.reading_order;
+    controls.apply(node, &mut mapped);
     Some(mapped)
 }
 

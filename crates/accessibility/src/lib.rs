@@ -18,5 +18,8 @@ pub mod source;
 /// 기본 접근성 트리 생성기 (IX.8.3).
 pub mod generate;
 
+/// Control contract → role·state·action 매핑 (IX.8.4).
+pub mod control;
+
 #[cfg(test)]
 pub(crate) mod test_support;

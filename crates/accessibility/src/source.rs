@@ -13,12 +13,14 @@
 //! | `decorative` | 작성자가 정보 없는 장식으로 표시 |
 //! | `label` | 작성자 지정 접근 가능한 이름(상수·속성 binding) |
 //! | `reading_order` | 작성자 지정 형제 읽기 순서 |
+//! | `control` | Frame에 부착된 control 계약(IX.6)의 중립 사본([`SourceControl`], IX.8.4) |
 
 use std::collections::BTreeMap;
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
 
+use crate::control::SourceControl;
 use crate::node::AccessibilityBinding;
 use crate::tree::SourceIndex;
 
@@ -56,6 +58,8 @@ pub struct SourceNode {
     pub label: Option<AccessibilityBinding>,
     /// 작성자 지정 형제 읽기 순서.
     pub reading_order: Option<u32>,
+    /// control 계약(IX.8.4).
+    pub control: Option<SourceControl>,
 }
 
 impl SourceNode {
@@ -69,6 +73,7 @@ impl SourceNode {
             decorative: false,
             label: None,
             reading_order: None,
+            control: None,
         }
     }
 
@@ -99,6 +104,12 @@ impl SourceNode {
     /// 읽기 순서를 설정한 사본(빌더).
     pub fn with_reading_order(mut self, order: u32) -> SourceNode {
         self.reading_order = Some(order);
+        self
+    }
+
+    /// control 계약을 설정한 사본(빌더).
+    pub fn with_control(mut self, control: SourceControl) -> SourceNode {
+        self.control = Some(control);
         self
     }
 }
