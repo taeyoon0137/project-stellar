@@ -304,8 +304,8 @@ pub(crate) struct TreeIndex {
     pub(crate) children: Vec<Vec<usize>>,
     /// root index.
     pub(crate) root: usize,
-    /// tree 최대 깊이(root = 0, [`MAX_LAYOUT_DEPTH`] 이하). 증분 레이아웃(X.7.3)에서는 상한값입니다(삭제로
-    /// 얕아져도 줄이지 않음). 계산 thread 선택에만 쓰입니다.
+    /// tree 최대 깊이(root = 0, [`MAX_LAYOUT_DEPTH`] 이하). 증분 레이아웃(X.7.3)은 구조 edit마다 node별 깊이
+    /// 표로 실제 최대 깊이를 유지합니다(삭제·이동으로 얕아지면 줄어듦). 계산 thread 선택에만 쓰입니다.
     pub(crate) depth: usize,
 }
 

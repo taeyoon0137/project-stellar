@@ -78,5 +78,24 @@
 ## 남은 위험 / 한계
 
 - 구조 edit 검증은 바뀐 관계에 비례하지만, 한 batch에 같은 부모를 많이 바꾸면 자식 목록 비교 비용이 그만큼 듭니다.
-- `TreeIndex.depth`는 증분 경로에서 줄어들지 않는 상한입니다(전용 stack thread 선택에만 쓰임).
+- `TreeIndex.depth`는 증분 경로에서 줄어들지 않는 상한입니다(전용 stack thread 선택에만 쓰임). → 아래 후속 수정으로 해소.
 - 전체 레이아웃 대체 경로의 debug assertion·metric(X.7.6)과 20만 node benchmark(X.7.4)는 후속 행입니다.
+
+## 후속 수정 (리뷰 minor: 늘기만 하는 증분 tree 깊이)
+
+- **결함**: `commit`이 `tree.depth = tree.depth.max(staged.depth)`로만 갱신해, 깊은 subtree를 지우거나 얕은 곳으로 옮겨도
+  깊이가 줄지 않았습니다. 한 번 `INLINE_LAYOUT_DEPTH`(32)를 넘은 세션은 이후 모든 edit에서 전용 stack thread를 만들었습니다
+  (결과는 같고 비용만 듦).
+- **수정**: `IncrementalLayout`에 node별 깊이와 깊이별 node 수 표(`DepthIndex`, 길이 `MAX_LAYOUT_DEPTH` + 1)를 둡니다.
+  세션 시작 때 한 번 세고, 구조 edit에서는 지우는 node를 빼고 검증이 이미 순회하는 새로 붙는 subtree(가장 바깥만)의 node를
+  최종 깊이로 다시 셉니다. `tree.depth`는 표의 실제 최대 깊이입니다. 비용은 기존 검증 순회와 같은 범위이며 구조 edit가
+  아니면 표를 건드리지 않습니다. `TreeIndex.depth` 문서도 고쳤습니다(`crates/layout/src/input.rs`).
+- **재현 테스트**(수정 전 실패 확인):
+  - `tree_depth_shrinks_after_deep_subtree_is_removed_or_moved_up` — 깊이 2 node 아래에 길이 40 사슬을 붙이고(깊이 42),
+    아래 절반을 root 아래로 옮기고(수정 전 42, 기대 22), 전부 지워 처음 깊이로 돌아오는지와 전체 계산 bytes 동일.
+  - `random_edits_match_full_compute_and_reject_invalid_batches`에 적용마다 `tree.depth`가 같은 입력의 전체 검증 깊이와 같은지
+    검사를 추가(수정 전 `free-001 step 23`에서 1 ≠ 0으로 실패).
+- 검증(`DEV-MAC`): `cargo test -p stellar-layout`와 `cargo test --release -p stellar-layout` 모두 unit 173 +
+  `component_layout_corpus` 4 + `layout_corpus` 2 + doctest 2 passed, 0 failed.
+  `cargo clippy -p stellar-layout --all-targets -- -D warnings` 경고 0, `cargo fmt -p stellar-layout -- --check` 종료 코드 0.
+  커밋하지 않은 일회성 확대 실행(무작위 edit 150 fixture × 100 step, release)도 깊이 검사 포함 통과.

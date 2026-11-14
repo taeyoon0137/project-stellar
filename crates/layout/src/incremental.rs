@@ -225,8 +225,56 @@ struct Staged {
     removed: Vec<usize>,
     /// 자식 관계가 바뀌는지 여부.
     structural: bool,
-    /// 새로 붙는 subtree가 만드는 최대 깊이.
-    depth: usize,
+    /// 새로 붙는 subtree(가장 바깥만)의 모든 node와 최종 깊이(root = 0).
+    depths: Vec<(StableId, usize)>,
+}
+
+/// node별 root로부터의 깊이와 깊이별 node 수.
+///
+/// 구조 edit마다 검증이 이미 순회하는 범위(지우는 node, 새로 붙는 subtree)만 고쳐 [`TreeIndex::depth`]를 실제
+/// 최대 깊이로 유지합니다. 깊은 subtree를 지우거나 얕은 곳으로 옮기면 깊이가 줄어 전용 stack thread를 다시 쓰지
+/// 않습니다. 최대 깊이는 길이 [`MAX_LAYOUT_DEPTH`] + 1의 개수 표에서 찾습니다.
+#[derive(Debug, Clone)]
+struct DepthIndex {
+    /// `nodes` index별 깊이. 아직 세지 않은 새 node는 `None`.
+    of: Vec<Option<usize>>,
+    /// 깊이별 node 수.
+    count: Vec<usize>,
+}
+
+impl DepthIndex {
+    /// 검증된 tree에서 모든 node의 깊이를 셉니다(node 수에 선형).
+    fn new(tree: &TreeIndex) -> DepthIndex {
+        let mut depths = DepthIndex {
+            of: vec![None; tree.parent.len()],
+            count: vec![0; MAX_LAYOUT_DEPTH + 1],
+        };
+        let mut stack = vec![(tree.root, 0usize)];
+        while let Some((index, depth)) = stack.pop() {
+            depths.set(index, depth);
+            stack.extend(tree.children[index].iter().map(|&child| (child, depth + 1)));
+        }
+        depths
+    }
+
+    /// node의 깊이를 `depth`로 다시 셉니다.
+    fn set(&mut self, index: usize, depth: usize) {
+        self.forget(index);
+        self.of[index] = Some(depth);
+        self.count[depth] += 1;
+    }
+
+    /// node를 깊이 집계에서 뺍니다.
+    fn forget(&mut self, index: usize) {
+        if let Some(old) = self.of[index].take() {
+            self.count[old] -= 1;
+        }
+    }
+
+    /// 현재 최대 깊이.
+    fn max(&self) -> usize {
+        self.count.iter().rposition(|&n| n > 0).unwrap_or(0)
+    }
 }
 
 /// 증분 레이아웃 상태 (X.7.3).
@@ -234,6 +282,7 @@ struct Staged {
 pub struct IncrementalLayout {
     input: LayoutInput,
     tree: TreeIndex,
+    depths: DepthIndex,
     prepared: Vec<Prepared>,
     own_hash: Vec<LayoutInputHash>,
     subtree: Vec<LayoutInputHash>,
@@ -251,6 +300,7 @@ impl IncrementalLayout {
         measurer: &dyn ContentMeasurer,
     ) -> Result<(IncrementalLayout, UpdateStats), LayoutError> {
         let tree = input.tree()?;
+        let depths = DepthIndex::new(&tree);
         let prepared = prepare_all(&input)?;
         let own_hash: Vec<LayoutInputHash> = input.nodes.iter().map(node_hash).collect();
         let subtree = subtree_hashes_from(&own_hash, &tree);
@@ -258,6 +308,7 @@ impl IncrementalLayout {
         let mut session = IncrementalLayout {
             input,
             tree,
+            depths,
             prepared,
             own_hash,
             subtree,
@@ -455,7 +506,7 @@ impl IncrementalLayout {
             child_of: &child_of,
         };
         if staged.structural {
-            staged.depth = self.validate_structure(&view, &order)?;
+            staged.depths = self.validate_structure(&view, &order)?;
         }
         // 값·조합 검증.
         for id in &order {
@@ -497,12 +548,12 @@ impl IncrementalLayout {
         Ok(staged)
     }
 
-    /// 자식 관계 변경을 검증하고 새로 붙는 subtree의 최대 깊이를 돌려줍니다.
+    /// 자식 관계 변경을 검증하고 새로 붙는 subtree(가장 바깥만)의 모든 node와 최종 깊이를 돌려줍니다.
     fn validate_structure(
         &self,
         view: &FinalView<'_>,
         order: &[StableId],
-    ) -> Result<usize, LayoutError> {
+    ) -> Result<Vec<(StableId, usize)>, LayoutError> {
         let root_id = self.input.nodes[self.tree.root].id;
         let mut detached: HashSet<StableId> = HashSet::new();
         let mut attached: HashMap<StableId, StableId> = HashMap::new();
@@ -635,8 +686,8 @@ impl IncrementalLayout {
                 outermost.push((child, steps + 1));
             }
         }
-        // 붙는 subtree(가장 바깥만)의 깊이.
-        let mut max_depth = 0usize;
+        // 붙는 subtree(가장 바깥만)의 깊이. 가장 바깥 subtree는 서로 겹치지 않아 node마다 한 번씩 셉니다.
+        let mut depths: Vec<(StableId, usize)> = Vec::new();
         for (child, depth) in outermost {
             let mut stack = vec![(child, depth)];
             while let Some((node, depth)) = stack.pop() {
@@ -646,13 +697,13 @@ impl IncrementalLayout {
                         limit: MAX_LAYOUT_DEPTH,
                     });
                 }
-                max_depth = max_depth.max(depth);
+                depths.push((node, depth));
                 if let Some(node) = view.node(node) {
                     stack.extend(node.children.iter().map(|c| (c.id, depth + 1)));
                 }
             }
         }
-        Ok(max_depth)
+        Ok(depths)
     }
 
     // --- 반영 ---
@@ -697,6 +748,7 @@ impl IncrementalLayout {
             self.own_hash.push(node_hash(&node));
             self.subtree.push(LayoutInputHash::from_parts(0, 0));
             self.prepared.push(prepared);
+            self.depths.of.push(None);
             self.arrangement.layouts.push(None);
             self.arrangement.stale.push(true);
             self.arrangement.epoch.push(0);
@@ -734,7 +786,18 @@ impl IncrementalLayout {
             }
             self.tree.children[index] = ordered.into_iter().map(|(_, _, child)| child).collect();
         }
-        self.tree.depth = self.tree.depth.max(staged.depth);
+        // 깊이: 지울 node는 빼고 새로 붙는 subtree node는 최종 깊이로 다시 세어 실제 최대 깊이를 둡니다.
+        if staged.structural {
+            for &index in &staged.removed {
+                self.depths.forget(index);
+            }
+            for (id, depth) in staged.depths {
+                if let Some(&index) = self.tree.index.get(&id) {
+                    self.depths.set(index, depth);
+                }
+            }
+            self.tree.depth = self.depths.max();
+        }
         // 4. 삭제(큰 index부터 swap_remove).
         let mut removed = staged.removed;
         removed.sort_unstable_by(|a, b| b.cmp(a));
@@ -784,6 +847,7 @@ impl IncrementalLayout {
         self.subtree.swap_remove(index);
         self.tree.parent.swap_remove(index);
         self.tree.children.swap_remove(index);
+        self.depths.of.swap_remove(index);
         self.arrangement.layouts.swap_remove(index);
         self.arrangement.stale.swap_remove(index);
         self.arrangement.epoch.swap_remove(index);
@@ -1520,6 +1584,12 @@ mod tests {
                     sorted_nodes(&model),
                     "{context}"
                 );
+                // tree 깊이는 구조 edit 뒤에도 실제 최대 깊이입니다(늘기만 하는 상한이 아님).
+                assert_eq!(
+                    session.tree.depth,
+                    model.tree().unwrap().depth,
+                    "{context}: tree 깊이"
+                );
                 match full {
                     Some(full) => {
                         let stats = outcome.unwrap_or_else(|e| panic!("{context}: {e}"));
@@ -2084,6 +2154,70 @@ mod tests {
                 .join()
                 .unwrap();
         });
+    }
+
+    #[test]
+    fn tree_depth_shrinks_after_deep_subtree_is_removed_or_moved_up() {
+        use crate::engine::INLINE_LAYOUT_DEPTH;
+        let (mut session, _) = IncrementalLayout::new(modes_document(), &DefaultMeasurer).unwrap();
+        let shallow = session.tree.depth;
+        assert!(shallow <= INLINE_LAYOUT_DEPTH);
+        let expect_depth = |session: &IncrementalLayout, context: &str| {
+            assert_eq!(
+                session.tree.depth,
+                session.input().tree().unwrap().depth,
+                "{context}"
+            );
+        };
+        // B(3, 깊이 2) 아래에 INLINE_LAYOUT_DEPTH + 8 길이 사슬(7000..)을 붙입니다.
+        let length = INLINE_LAYOUT_DEPTH as u64 + 8;
+        let chain_ids: Vec<u64> = (7000..7000 + length).collect();
+        let mut edits = vec![edited(&session, 3, |node| {
+            node.children.push(LayoutChild {
+                id: id(7000),
+                order_key: key(9),
+            })
+        })];
+        for (at, &n) in chain_ids.iter().enumerate() {
+            let mut node = LayoutNode::new(id(n));
+            match chain_ids.get(at + 1) {
+                Some(&next) => node = node.with_child(id(next), key(1)),
+                None => node = node.with_fixed_size(len(4.0), len(4.0)),
+            }
+            edits.push(LayoutEdit::upsert(node));
+        }
+        session.apply(edits, &DefaultMeasurer).unwrap();
+        assert!(session.tree.depth > INLINE_LAYOUT_DEPTH);
+        expect_depth(&session, "attach deep chain");
+        assert_matches_full(&session, "attach deep chain");
+        // 사슬 아래 절반을 root 바로 아래로 옮기면 얕아집니다.
+        let half = chain_ids[chain_ids.len() / 2];
+        let detach = edited(&session, half - 1, |node| node.children.clear());
+        let attach = edited(&session, 1, |node| {
+            node.children.push(LayoutChild {
+                id: id(half),
+                order_key: key(99),
+            })
+        });
+        session
+            .apply(vec![detach, attach], &DefaultMeasurer)
+            .unwrap();
+        expect_depth(&session, "move lower half up");
+        assert_matches_full(&session, "move lower half up");
+        // 남은 사슬을 모두 지우면 처음 깊이로 돌아옵니다.
+        let mut edits = vec![
+            edited(&session, 3, |node| {
+                node.children.retain(|c| c.id != id(7000))
+            }),
+            edited(&session, 1, |node| {
+                node.children.retain(|c| c.id != id(half))
+            }),
+        ];
+        edits.extend(chain_ids.iter().map(|&n| LayoutEdit::Remove(id(n))));
+        session.apply(edits, &DefaultMeasurer).unwrap();
+        assert_eq!(session.tree.depth, shallow);
+        expect_depth(&session, "remove chain");
+        assert_matches_full(&session, "remove chain");
     }
 
     // --- 전체 레이아웃 fallback (X.7.6) ---
