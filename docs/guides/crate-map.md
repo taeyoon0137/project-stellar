@@ -269,7 +269,8 @@ scene snapshot·resource revision 입력 고정(`capture`), SVG 벡터 변환(`s
 `crates/codegen`은 단방향 플랫폼 코드 생성(Phase XXII)용 로드맵 crate입니다. 문서 모델·binding graph를 직접
 읽지 않고 하위 crate의 지역 모델(target-profile의 `ViewModel`, layout의 `LayoutInput`, accessibility의
 `AccessibilitySnapshot`)과 상태 변수·token 선언을 입력으로 받아, Target Profile 하나로 해석한 중립
-IR(`ir::CodegenIr`)을 만듭니다. 현재 module은 IR과 semantic snapshot(`ir`), 결정론 텍스트 도우미(`text`)입니다.
+IR(`ir::CodegenIr`)을 만듭니다. 현재 module은 IR과 semantic snapshot(`ir`), 결정론 텍스트 도우미(`text`),
+adapter 노트 facet(`facet`), Web adapter의 HTML 모델·접근성 매핑·정적 접근성 검사(`web`)입니다.
 생성 코드를 되읽는 API는 없습니다. 허용 직접 의존과 실제 의존은 core-types, target-profile, accessibility,
 layout입니다. 주요 ADR은 crate와 입력 경계를 정한 ADR-0049입니다.
 

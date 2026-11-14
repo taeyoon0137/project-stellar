@@ -12,5 +12,11 @@ pub mod ir;
 /// 결정론 텍스트 도우미.
 pub mod text;
 
+/// adapter 노트가 가리키는 접근성 의미 facet.
+pub mod facet;
+
+/// Web adapter (XXII.2).
+pub mod web;
+
 #[cfg(test)]
 pub(crate) mod fixture;
