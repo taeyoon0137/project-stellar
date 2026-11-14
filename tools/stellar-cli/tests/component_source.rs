@@ -259,3 +259,180 @@ fn nested_unsupported_records_and_invalid_references_are_never_rewritten() {
         assert_eq!(file_digest(&folder), before);
     }
 }
+
+const FIRST: &str = "0195c530-3acd-7bc1-8414-c213f61cb980";
+const SECOND: &str = "0195c530-3acd-7bc1-8414-c213f61cb970";
+const NESTED: &str = "0195c530-3acd-7bc1-8414-c213f61cb960";
+
+#[test]
+fn nested_frames_survive_a_component_rename_and_fresh_clone() {
+    let fixture = TempDir::new("component-frames-clone");
+    let repo = fixture.path.join("repo");
+    let dir = "design/components";
+    fs::create_dir_all(repo.join(dir)).unwrap();
+    let home = fixture.path.join("home");
+    fs::create_dir(&home).unwrap();
+    let run = |args: &[&str]| cli(&repo, &home, args, 0);
+    git(&repo, &["init", "-q", "-b", "main"]);
+    let a = run(&["create", dir, "Card", A, AR]);
+    let b = run(&["create", dir, "Badge", B, BR]);
+    let file = value(&a, "file");
+    let other = value(&b, "file");
+    let original = fs::read_to_string(repo.join(file)).unwrap();
+    let other_bytes = fs::read(repo.join(other)).unwrap();
+    assert!(original.contains("schema_version: \"1\"\n"));
+    assert!(!original.contains("children:"));
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "root frames"]);
+
+    let mut info = a.clone();
+    for (parent, id, name, width, height) in [
+        (AR, FIRST, "First", "12.5", "8.25"),
+        (AR, SECOND, "Second", "21", "13"),
+        (FIRST, NESTED, "Nested", "9", "4"),
+    ] {
+        info = run(&[
+            "add-frame",
+            file,
+            value(&info, "source_hash"),
+            parent,
+            id,
+            name,
+            width,
+            height,
+        ]);
+        assert_eq!(fs::read(repo.join(other)).unwrap(), other_bytes);
+    }
+    assert_eq!(info.get("node_count").and_then(JsonValue::as_i64), Some(4));
+    assert_eq!(git(&repo, &["diff", "--name-only"]), file);
+    let yaml = fs::read_to_string(repo.join(file)).unwrap();
+    assert!(yaml.contains("schema_version: \"2\"\n"));
+    let root_lines = original.split_once("root_node:\n").unwrap().1;
+    assert!(yaml.contains(&format!("root_node:\n{root_lines}")));
+    let child_records: Vec<_> = yaml
+        .split_once("children:\n")
+        .unwrap()
+        .1
+        .split("  -\n")
+        .skip(1)
+        .collect();
+    assert_eq!(child_records.len(), 3);
+    for (record, (id, parent, order_key)) in child_records.iter().zip([
+        (NESTED, FIRST, "\"80\""),
+        (SECOND, AR, "c0"),
+        (FIRST, AR, "\"80\""),
+    ]) {
+        assert!(
+            record.starts_with(&format!(
+                "    id: \"{id}\"\n    parent: \"{parent}\"\n    order_key: {order_key}\n"
+            )),
+            "{record}"
+        );
+    }
+    run(&["resize", file, value(&info, "source_hash"), "248.5", "44"]);
+    let resized_yaml = fs::read_to_string(repo.join(file)).unwrap();
+    assert_eq!(
+        resized_yaml,
+        yaml.replacen("size: \"0 0\"", "size: \"248.5 44\"", 1)
+    );
+    assert_ne!(resized_yaml, yaml);
+    assert_eq!(fs::read(repo.join(other)).unwrap(), other_bytes);
+    git(&repo, &["add", "--", file]);
+    git(&repo, &["commit", "-qm", "nested frames"]);
+    let renamed = file.replace("Card-", "CardLarge-");
+    git(&repo, &["mv", "--", file, &renamed]);
+    let renamed_yaml = resized_yaml.replace("  name: Card\n", "  name: CardLarge\n");
+    assert_ne!(renamed_yaml, resized_yaml);
+    fs::write(repo.join(&renamed), &renamed_yaml).unwrap();
+    git(&repo, &["add", "--", &renamed]);
+    git(&repo, &["commit", "-qm", "rename card"]);
+    let change = git(&repo, &["diff", "--name-status", "-M", "HEAD^", "HEAD"]);
+    assert!(
+        change.starts_with('R') && change.ends_with(&format!("\t{file}\t{renamed}")),
+        "{change}"
+    );
+    let expected = run(&["check", dir]);
+    let fresh = fixture.path.join("fresh");
+    git(
+        &repo,
+        &[
+            "clone",
+            "--quiet",
+            "--no-local",
+            ".",
+            fresh.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(cli(&fresh, &home, &["check", dir], 0), expected);
+    let components = expected.get("components").unwrap().as_array().unwrap();
+    assert_eq!(value(&components[0], "id"), A);
+    assert_eq!(value(&components[0], "root"), AR);
+    assert_eq!(value(&components[0], "name"), "CardLarge");
+    assert_eq!(
+        components[0].get("node_count").and_then(JsonValue::as_i64),
+        Some(4)
+    );
+    assert_eq!(components[1], b);
+    assert_eq!(fs::read(fresh.join(other)).unwrap(), other_bytes);
+    assert_eq!(
+        fs::read_to_string(fresh.join(&renamed)).unwrap(),
+        renamed_yaml
+    );
+    assert!(!fresh.join(".stellar/cache").exists());
+    assert!(git(&fresh, &["status", "--porcelain"]).is_empty());
+}
+
+#[test]
+fn nested_frame_errors_preserve_every_component_file() {
+    let fixture = TempDir::new("component-frames-preserve");
+    let dir = fixture.path.join("components");
+    let home = fixture.path.join("home");
+    fs::create_dir(&dir).unwrap();
+    fs::create_dir(&home).unwrap();
+    let run = |args: &[&str], code| cli(&dir, &home, args, code);
+    let a = run(&["create", ".", "Card", A, AR], 0);
+    let b = run(&["create", ".", "Badge", B, BR], 0);
+    let ap = value(&a, "file");
+    let bp = value(&b, "file");
+    let hash = value(&a, "source_hash");
+    let changed = run(&["add-frame", ap, hash, AR, FIRST, "First", "20", "30"], 0);
+    let current = value(&changed, "source_hash");
+    let before = file_digest(&dir);
+    run(
+        &["add-frame", ap, hash, AR, SECOND, "Stale", "10", "20"],
+        75,
+    );
+    for (file, hash, parent, id) in [
+        (ap, current, FIRST, FIRST),
+        (ap, current, NESTED, SECOND),
+        (bp, value(&b, "source_hash"), BR, FIRST),
+    ] {
+        run(
+            &["add-frame", file, hash, parent, id, "Other", "10", "10"],
+            65,
+        );
+    }
+    assert_eq!(file_digest(&dir), before);
+    let path = dir.join(ap);
+    let valid = fs::read_to_string(&path).unwrap();
+    let (head, children) = valid.split_once("children:\n").unwrap();
+    assert!(children.contains("kind: frame"));
+    fs::write(
+        &path,
+        format!(
+            "{head}children:\n{}",
+            children.replacen("kind: frame", "kind: shape", 1)
+        ),
+    )
+    .unwrap();
+    let malformed = file_digest(&dir);
+    let latest = malformed
+        .get(path.file_name().unwrap().to_str().unwrap())
+        .unwrap();
+    run(&["check", "."], 69);
+    run(
+        &["add-frame", ap, latest, AR, SECOND, "Other", "0", "0"],
+        69,
+    );
+    assert_eq!(file_digest(&dir), malformed);
+}

@@ -71,7 +71,7 @@ cargo run -q -p stellar-cli -- --help
 | `diff-summary` | 없음 | `<base> <target> [--output <파일>] [--include-content]` | 요약 artifact |
 | `ci` | 없음 | `<경로>` | lockfile·문서·migration 검사 |
 | `apply` | 없음 | `<경로> <입력 파일 또는 -> [--dry-run]` | transaction 검증·저장 또는 diff |
-| `component-source` | 없음 | `create <폴더> <이름> <id> <root-id>`, `check <폴더>`, `resize <파일> <원본 hash> <너비> <높이>` | 컴포넌트별 파일 생성·라이브러리 재조립·root Frame 크기 수정. [컴포넌트 원본 v1](../spec/component-source-v1.md) |
+| `component-source` | 없음 | `create <폴더> <이름> <id> <root-id>`, `check <폴더>`, `resize <파일> <원본 hash> <너비> <높이>`, `add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>` | 컴포넌트별 파일 생성·라이브러리 재조립·root Frame 크기 수정·중첩 Free Frame 추가. [컴포넌트 원본 v1·v2](../spec/component-source-v1.md) |
 | `text-source` | 없음 | `export <프로젝트> <새 파일>`, `check <파일>`, `apply <파일> <입력 파일 또는 -> [--dry-run]` | 단일 View 텍스트 원본 생성·검사·편집. [문법과 지원 범위](../spec/text-view-source-v1.md) |
 | `export-accessibility` | 없음 | `<경로> <문서 id> <View id>` | 정적 접근성 HTML 조각·revision·진단 |
 | `export-web` | 없음 | `<경로> <문서 id> <View id>` | 고정 Free Frame HTML+CSS·revision·진단 |

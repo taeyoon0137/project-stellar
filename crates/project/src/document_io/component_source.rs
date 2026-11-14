@@ -1,9 +1,14 @@
-//! 한 컴포넌트와 그 정의 tree의 root Frame을 담는 opt-in YAML 원본.
+//! 한 컴포넌트 정의와 Free Frame tree를 담는 opt-in YAML 원본.
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use stellar_core_types::{ids::StableId, order_key::OrderKey, reference::NodeRef, value::Size2};
+use stellar_core_types::{
+    ids::StableId,
+    order_key::OrderKey,
+    reference::{ComponentRef, NodeRef},
+    value::Size2,
+};
 use stellar_document::component::definition::{
     ComponentDefinition, ComponentLibrary, DefinitionNode, DefinitionTree,
 };
@@ -15,16 +20,17 @@ use stellar_storage::{hash::ContentHash, source_file};
 use super::text_codec::{field, fields, invalid, mapping, node, parse, parse_node, scalar, text};
 use super::text_source::TextSourceError;
 use crate::folder_name::{collision_key, validate_folder_name};
-use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_checked};
+use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_checked, YamlValue};
 
 const EXT: &str = ".stellar.yaml";
 const MAX_COMPONENT_FILES: usize = 4096;
 
-/// 빈 공개 인터페이스와 root Frame으로 제한된 편집 원본.
+/// 빈 공개 인터페이스와 Free Frame tree의 편집 원본.
 #[derive(Debug)]
 pub struct ComponentSource {
     definition: ComponentDefinition,
     root: NodeRecord,
+    children: BTreeMap<StableId, NodeRecord>,
 }
 
 impl ComponentSource {
@@ -32,6 +38,7 @@ impl ComponentSource {
     pub fn new(id: StableId, name: String, root: StableId) -> Result<Self, TextSourceError> {
         let value = Self {
             definition: ComponentDefinition::new(id, name, NodeRef::new(root)),
+            children: BTreeMap::new(),
             root: NodeRecord {
                 id: root,
                 parent: None,
@@ -42,7 +49,7 @@ impl ComponentSource {
                 payload: NodePayload::Frame(FramePayload::default()),
             },
         };
-        value.validate()?;
+        value.definition_tree()?;
         Ok(value)
     }
 
@@ -56,6 +63,11 @@ impl ComponentSource {
         &self.root
     }
 
+    /// 정의 tree에 속한 Frame 수(root 포함).
+    pub fn node_count(&self) -> usize {
+        self.children.len() + 1
+    }
+
     /// root Frame의 크기만 변경합니다.
     fn set_size(&mut self, size: Size2) {
         let NodePayload::Frame(frame) = &mut self.root.payload else {
@@ -64,29 +76,62 @@ impl ComponentSource {
         frame.size = size;
     }
 
-    fn validate(&self) -> Result<(), TextSourceError> {
+    /// 직렬화 순서(StableId)와 부모·자식 순서를 분리합니다. 순환·끊긴 부모도 거부합니다.
+    fn definition_tree(&self) -> Result<DefinitionTree, TextSourceError> {
+        self.filename()?;
         if self.definition.id == StableId::NIL
-            || self.root.id == StableId::NIL
-            || self.definition.id == self.root.id
             || self.root.id != self.definition.root.id()
             || self.root.parent.is_some()
+            || self.children.contains_key(&self.root.id)
         {
             return Err(invalid(
                 "component/root ID 또는 root parent가 잘못되었습니다",
             ));
         }
-        let NodePayload::Frame(frame) = &self.root.payload else {
-            return Err(TextSourceError::Unsupported(
-                "root는 Frame이어야 합니다".into(),
-            ));
-        };
-        if frame.layout_mode.is_some() || matches!(frame.clipping, Clipping::Path(_)) {
-            return Err(TextSourceError::Unsupported(
-                "외부 layout 또는 Path 참조".into(),
-            ));
+        let mut by_parent: BTreeMap<StableId, Vec<&NodeRecord>> = BTreeMap::new();
+        for record in self.children.values() {
+            let parent = record
+                .parent
+                .ok_or_else(|| invalid("자식 Frame의 parent가 필요합니다"))?;
+            by_parent.entry(parent).or_default().push(record);
         }
-        self.filename()?;
-        Ok(())
+        let mut tree = DefinitionTree::new(self.definition.reference());
+        let mut pending = vec![&self.root];
+        while let Some(record) = pending.pop() {
+            if record.id == StableId::NIL || record.id == self.definition.id {
+                return Err(invalid(
+                    "component와 Frame에는 서로 다른 StableId가 필요합니다",
+                ));
+            }
+            let NodePayload::Frame(frame) = &record.payload else {
+                return Err(TextSourceError::Unsupported(
+                    "컴포넌트는 Free Frame만 지원합니다".into(),
+                ));
+            };
+            if frame.layout_mode.is_some() || matches!(frame.clipping, Clipping::Path(_)) {
+                return Err(TextSourceError::Unsupported(
+                    "외부 layout 또는 Path 참조".into(),
+                ));
+            }
+            tree.insert(DefinitionNode {
+                id: record.id,
+                kind: record.kind(),
+                parent: record.parent,
+                order_key: record.order_key.clone(),
+                visible: record.visible,
+                locked: record.locked,
+                display_name: record.display_name.clone(),
+                payload: encode_payload(&record.payload),
+            })
+            .map_err(invalid)?;
+            if let Some(children) = by_parent.remove(&record.id) {
+                pending.extend(children);
+            }
+        }
+        if tree.len() != self.node_count() {
+            return Err(invalid("root에 연결되지 않은 Frame 또는 순환 parent입니다"));
+        }
+        Ok(tree)
     }
 
     /// 표시 이름과 전체 StableId의 SHA-256 앞 12자리(hex)로 만든 파일명.
@@ -102,50 +147,66 @@ impl ComponentSource {
     }
 
     fn add_to(&self, library: &mut ComponentLibrary) -> Result<(), TextSourceError> {
-        let mut tree = DefinitionTree::new(self.definition.reference());
-        tree.insert(DefinitionNode {
-            id: self.root.id,
-            kind: self.root.kind(),
-            parent: self.root.parent,
-            order_key: self.root.order_key.clone(),
-            visible: self.root.visible,
-            locked: self.root.locked,
-            display_name: self.root.display_name.clone(),
-            payload: encode_payload(&self.root.payload),
-        })
-        .map_err(invalid)?;
         library
-            .insert(self.definition.clone(), tree)
+            .insert(self.definition.clone(), self.definition_tree()?)
             .map_err(invalid)
     }
 
     fn encode(&self) -> Result<String, TextSourceError> {
-        self.validate()?;
-        write_canonical_checked(&mapping([
-            ("format", scalar("stellar-component")),
-            ("schema_version", scalar(1)),
+        let version = if self.children.is_empty() { 1 } else { 2 };
+        let mut fields = vec![
+            (scalar("format"), scalar("stellar-component")),
+            (scalar("schema_version"), scalar(version)),
             (
-                "component",
+                scalar("component"),
                 mapping([
                     ("id", scalar(self.definition.id)),
                     ("name", scalar(self.definition.display_name())),
                     ("root", scalar(self.definition.root.id())),
                 ]),
             ),
-            ("root_node", node(&self.root)?),
-        ]))
-        .map_err(invalid)
+            (scalar("root_node"), node(&self.root)?),
+        ];
+        if !self.children.is_empty() {
+            fields.push((
+                scalar("children"),
+                YamlValue::Sequence(self.children.values().map(node).collect::<Result<_, _>>()?),
+            ));
+        }
+        write_canonical_checked(&YamlValue::Mapping(fields)).map_err(invalid)
     }
 
     fn decode(src: &str) -> Result<Self, TextSourceError> {
         let v = load_restricted(src).map_err(invalid)?;
-        fields(&v, &["format", "schema_version", "component", "root_node"])?;
-        if text(field(&v, "format")?)? != "stellar-component"
-            || text(field(&v, "schema_version")?)? != "1"
-        {
-            return Err(TextSourceError::Unsupported(
-                "컴포넌트 원본 형식·버전".into(),
-            ));
+        if text(field(&v, "format")?)? != "stellar-component" {
+            return Err(TextSourceError::Unsupported("컴포넌트 원본 형식".into()));
+        }
+        let mut children = BTreeMap::new();
+        match text(field(&v, "schema_version")?)? {
+            "1" => fields(&v, &["format", "schema_version", "component", "root_node"])?,
+            "2" => {
+                fields(
+                    &v,
+                    &[
+                        "format",
+                        "schema_version",
+                        "component",
+                        "root_node",
+                        "children",
+                    ],
+                )?;
+                let records = field(&v, "children")?
+                    .as_sequence()
+                    .filter(|records| !records.is_empty())
+                    .ok_or_else(|| invalid("v2 children에 자식 Frame이 필요합니다"))?;
+                for record in records {
+                    let record = parse_node(record)?;
+                    if children.insert(record.id, record).is_some() {
+                        return Err(invalid("중복 자식 Frame ID"));
+                    }
+                }
+            }
+            _ => return Err(TextSourceError::Unsupported("컴포넌트 원본 버전".into())),
         }
         let component = field(&v, "component")?;
         fields(component, &["id", "name", "root"])?;
@@ -156,14 +217,20 @@ impl ComponentSource {
                 NodeRef::new(parse(field(component, "root")?)?),
             ),
             root: parse_node(field(&v, "root_node")?)?,
+            children,
         };
-        value.validate()?;
         Ok(value)
     }
 }
 
 /// 정확히 하나의 기존 파일. 파일명과 내용에서 같은 StableId·이름을 확인합니다.
 pub fn open(path: &Path) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let (source, hash) = read_source(path)?;
+    source.definition_tree()?;
+    Ok((source, hash))
+}
+
+fn read_source(path: &Path) -> Result<(ComponentSource, ContentHash), TextSourceError> {
     let bytes = source_file::read(path, MAX_INPUT_BYTES as u64)?;
     let source = ComponentSource::decode(std::str::from_utf8(&bytes).map_err(invalid)?)?;
     if path.file_name() != Some(source.filename()?.as_ref()) {
@@ -198,6 +265,65 @@ pub fn create(
     Ok((path, ContentHash::compute(encoded.as_bytes())))
 }
 
+/// 같은 라이브러리 내 ID를 확인하고 지정한 부모의 마지막 자식으로 Frame을 추가합니다.
+pub fn add_frame(
+    path: &Path,
+    expected: ContentHash,
+    parent: StableId,
+    id: StableId,
+    name: String,
+    size: Size2,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let (mut source, hash) = open(path)?;
+    if hash != expected {
+        return Err(TextSourceError::Changed);
+    }
+    let folder = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let (library, _) = read_library(folder)?;
+    let entry = library
+        .get(source.definition.reference())
+        .ok_or_else(|| invalid("컴포넌트 정의 누락"))?;
+    let tree = entry.tree();
+    if id == StableId::NIL
+        || library.owner_of(id).is_some()
+        || library.get(ComponentRef::new(id)).is_some()
+    {
+        return Err(invalid("이미 사용 중이거나 비어 있는 Frame ID"));
+    }
+    if !tree.contains(parent) {
+        return Err(invalid("같은 컴포넌트에 parent Frame이 필요합니다"));
+    }
+    let last = tree.children(parent).last().and_then(|id| tree.node(*id));
+    let record = NodeRecord {
+        id,
+        parent: Some(parent),
+        order_key: OrderKey::between(last.map(|n| &n.order_key), None),
+        visible: true,
+        locked: false,
+        display_name: name,
+        payload: NodePayload::Frame(FramePayload {
+            size,
+            ..FramePayload::default()
+        }),
+    };
+    source.children.insert(id, record);
+    source.definition_tree()?;
+    save_changed(path, hash, source)
+}
+
+fn save_changed(
+    path: &Path,
+    hash: ContentHash,
+    source: ComponentSource,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let encoded = source.encode()?;
+    source_file::write_checked(path, encoded.as_bytes(), Some(hash), MAX_INPUT_BYTES as u64)?;
+    Ok((source, ContentHash::compute(encoded.as_bytes())))
+}
+
 /// 기존 hash로 단일 파일의 Frame 크기를 조건부 저장합니다.
 pub fn resize(
     path: &Path,
@@ -212,9 +338,7 @@ pub fn resize(
         return Ok((source, hash));
     }
     source.set_size(size);
-    let encoded = source.encode()?;
-    source_file::write_checked(path, encoded.as_bytes(), Some(hash), MAX_INPUT_BYTES as u64)?;
-    Ok((source, ContentHash::compute(encoded.as_bytes())))
+    save_changed(path, hash, source)
 }
 
 /// 조립할 때 읽은 각 원본 경로와 실제 bytes의 hash. 키는 전체 component ID입니다.
@@ -241,7 +365,7 @@ pub fn read_library(dir: &Path) -> Result<(ComponentLibrary, ComponentFiles), Te
     let mut index = BTreeMap::new();
     let mut filenames = BTreeSet::new();
     for path in paths {
-        let (source, hash) = open(&path)?;
+        let (source, hash) = read_source(&path)?;
         if !filenames.insert(collision_key(&source.filename()?)) {
             return Err(invalid("대소문자 무시 파일명 충돌"));
         }
@@ -279,13 +403,85 @@ mod tests {
         let color = Color::new(ColorSpace::DisplayP3, 0.7, 0.2, 0.3, 0.5).unwrap();
         frame.background = Some(color);
         frame.border = Some(Border::new(color, 1.25).unwrap());
+        // v1 root의 색·geometry와 같은 payload를 가진 손자. StableId 정렬에서 부모보다 앞에 둡니다.
+        let id = |n| StableId::new_v7(10, 0, n);
+        for (child, parent, order, name) in [
+            (id(9), source.root.id, 0x40, "그룹"),
+            (id(7), source.root.id, 0x80, "다음 형제"),
+            (id(3), id(9), 0x80, "손자 #1"),
+        ] {
+            source.children.insert(
+                child,
+                NodeRecord {
+                    id: child,
+                    parent: Some(parent),
+                    order_key: OrderKey::from_bytes(vec![order]).unwrap(),
+                    display_name: name.into(),
+                    ..source.root.clone()
+                },
+            );
+        }
         let text = source.encode().unwrap();
         let reopened = ComponentSource::decode(&text).unwrap();
+        let disconnected = text.replace(
+            &format!("parent: \"{}\"", id(9)),
+            &format!("parent: \"{}\"", id(3)),
+        );
+        assert_ne!(disconnected, text);
+        assert!(ComponentSource::decode(&disconnected)
+            .unwrap()
+            .definition_tree()
+            .is_err());
+        let mut duplicate_order = ComponentSource::decode(&text).unwrap();
+        duplicate_order.children.get_mut(&id(7)).unwrap().order_key =
+            OrderKey::from_bytes(vec![0x40]).unwrap();
+        assert!(duplicate_order.definition_tree().is_err());
         assert_eq!(reopened.encode().unwrap(), text);
         let mut before = ComponentLibrary::new();
         let mut after = ComponentLibrary::new();
         source.add_to(&mut before).unwrap();
         reopened.add_to(&mut after).unwrap();
         assert_eq!(before.encode(), after.encode());
+
+        // 같은 정의를 참조하는 두 실제 scene 인스턴스가 고유한 가상 주소로 같은 tree를 사용합니다.
+        use stellar_document::component::{
+            expansion::{ExpandedNodeId, InstanceExpansion, SceneIndex, ScenePayloads},
+            instance::ComponentInstancePayload,
+        };
+        use stellar_document::node_columns::{NodeColumns, NodeFields};
+        use stellar_document::node_kind::NodeKind;
+        let mut columns = NodeColumns::new();
+        let mut payloads = ScenePayloads::new();
+        for instance in [id(20), id(21)] {
+            columns.insert(NodeFields {
+                stable_id: instance,
+                kind: NodeKind::ComponentInstance,
+                parent: None,
+                order_key: OrderKey::between(None, None),
+                visible: true,
+                locked: false,
+                display_name: "Instance".into(),
+            });
+            payloads.insert(
+                instance,
+                ComponentInstancePayload::new(source.definition.reference()).encode(),
+            );
+        }
+        let scene = SceneIndex::build(&columns, &payloads);
+        for instance in [id(20), id(21)] {
+            let expansion = InstanceExpansion::new(&after, &scene, instance).unwrap();
+            let at = |node| ExpandedNodeId::virtual_node(vec![instance], node);
+            assert_eq!(
+                expansion.children(&expansion.root()).unwrap(),
+                [at(id(9)), at(id(7))]
+            );
+            assert_eq!(expansion.children(&at(id(9))).unwrap(), [at(id(3))]);
+            let leaf = expansion.node(&at(id(3))).unwrap();
+            assert_eq!(leaf.display_name(), "손자 #1");
+            assert_eq!(
+                leaf.payload(),
+                Some(encode_payload(&source.root.payload).as_slice())
+            );
+        }
     }
 }
