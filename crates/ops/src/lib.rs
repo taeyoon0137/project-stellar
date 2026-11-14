@@ -52,6 +52,9 @@ pub mod compare;
 /// 저장 스키마 migration (XXIV.1.3).
 pub mod migrate;
 
+/// CI 검사: lockfile·검증·migration 필요 여부 (XXIV.3.1).
+pub mod ci;
+
 /// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 pub mod test_support;

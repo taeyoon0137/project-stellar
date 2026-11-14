@@ -2155,7 +2155,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXIV.3.1 | `[ ]` | lockfile resolve check, project validation, migration-required check를 CI mode로 제공합니다. | invalid project CI failure. | XXIV.1.3 |
+| XXIV.3.1 | `[x]` | lockfile resolve check, project validation, migration-required check를 CI mode로 제공합니다. | invalid project CI failure. | XXIV.1.3 |
 | XXIV.3.2 | `[ ]` | semantic diff summary를 artifact로 생성하되 project text/name/path redaction option을 기본으로 합니다. | privacy fixture. | XIV.3.8, XXIV.1.2 |
 | XXIV.3.3 | `[ ]` | performance replay CLI를 reference runner에서 실행할 수 있게 합니다. | result schema identical. | XVI.2.2 |
 

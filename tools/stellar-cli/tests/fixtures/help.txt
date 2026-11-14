@@ -12,6 +12,7 @@ stellar — Project Stellar headless 도구
     semantic-diff   <base 경로> <target 경로>: 같은 프로젝트 두 상태의 semantic diff를 출력합니다
     semantic-merge  <base> <ours> <theirs>: 3-way semantic merge 결과와 conflict를 출력합니다(conflict가 있으면 종료 코드 1, 파일을 쓰지 않음)
     migrate         <경로> [--check]: generation 스키마를 이 도구의 버전으로 migration합니다(--check: 판정만)
+    ci              <경로>: CI 검사(lockfile·검증·migration 필요 여부)를 실행합니다(하나라도 실패하면 종료 코드 1)
     apply           <경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)
 
 query 대상:

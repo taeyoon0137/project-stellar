@@ -1200,3 +1200,83 @@ fn migrate_corpus_fixtures() {
         &[&unsaved],
     );
 }
+
+// --- XXIV.3.1: CI mode ---
+
+#[test]
+fn ci_mode_fixtures() {
+    let dir = TempDir::new("ci");
+    // 통과: 저장된 유효 프로젝트.
+    let (root, _) = saved_project(&dir);
+    let before = file_digest(&root);
+    check(
+        &run(&["ci", root.to_str().unwrap()]),
+        "ci-pass.json",
+        ExitStatus::Ok,
+        &[&root],
+    );
+    assert_eq!(file_digest(&root), before, "ci는 파일을 쓰지 않음");
+
+    // 실패: 손상 문서(validation) + 새 스키마(migration).
+    let broken = dir.path.join("broken");
+    scaffold_project(&broken);
+    stellar_ops::test_support::save_documents_with_schema(
+        &broken,
+        &[&random_valid_document(QUERY_SEED)],
+        2,
+    );
+    assert!(stellar_ops::test_support::corrupt_view_tree_chunks(&broken) > 0);
+    let failed = run(&["ci", broken.to_str().unwrap()]);
+    check(&failed, "ci-invalid.json", ExitStatus::Failure, &[&broken]);
+    let checks = result_of(&failed);
+    let statuses: Vec<(&str, &str)> = checks
+        .get("checks")
+        .and_then(JsonValue::as_array)
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c.get("name").and_then(JsonValue::as_str).unwrap(),
+                c.get("status").and_then(JsonValue::as_str).unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            ("lockfile", "pass"),
+            ("validation", "fail"),
+            ("migration", "fail")
+        ]
+    );
+
+    // 실패: 의존성이 선언됐지만 lock entry가 없음.
+    let deps = dir.path.join("deps");
+    scaffold_project(&deps);
+    std::fs::copy(
+        Path::new(FIXTURES)
+            .join("projects")
+            .join("valid.stellar.yaml"),
+        deps.join("stellar.yaml"),
+    )
+    .unwrap();
+    let lock = run(&["ci", deps.to_str().unwrap()]);
+    check(&lock, "ci-lockfile.json", ExitStatus::Failure, &[&deps]);
+    assert!(
+        !lock.stdout.contains("example.com"),
+        "repository URL 미포함"
+    );
+
+    // 프로젝트가 아니면(손상된 매니페스트) CI도 실패합니다.
+    let corrupt = dir.path.join("corrupt");
+    scaffold_project(&corrupt);
+    std::fs::copy(
+        Path::new(FIXTURES)
+            .join("projects")
+            .join("corrupt.stellar.yaml"),
+        corrupt.join("stellar.yaml"),
+    )
+    .unwrap();
+    let invalid = run(&["ci", corrupt.to_str().unwrap()]);
+    assert_eq!(invalid.code, 65, "{}", invalid.stderr);
+}

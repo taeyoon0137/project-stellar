@@ -12,10 +12,13 @@
 //! | `migrate <경로> --check` | 읽기 | 최신·저장 전 | `migration-required` |
 //! | `migrate <경로>` | 쓰기(저장 잠금) | 최신이거나 migration 완료 | — |
 //!
+//! | `ci <경로>` | 읽기 | lockfile·검증·migration 모두 통과 | `ci-failed` (XXIV.3.1) |
+//!
 //! 스키마가 이 도구보다 새 버전이면 `migrate`는 `unsupported-schema`(65)입니다.
 
 use std::path::Path;
 
+use stellar_ops::ci::{run_ci, CheckStatus, CiReport};
 use stellar_ops::compare::{
     semantic_diff_projects, semantic_merge_projects, CompareError, ConflictEntry, SideView,
 };
@@ -376,4 +379,79 @@ pub fn lock_error(error: &LockError) -> CliError {
             CliError::new(ExitStatus::from_io_kind(*kind), "save-lock-io", message)
         }
     }
+}
+
+fn ci_json(report: &CiReport) -> JsonValue {
+    JsonValue::object(vec![
+        ("revision", views::revision(report.revision)),
+        ("passed", JsonValue::Bool(report.passed())),
+        (
+            "checks",
+            JsonValue::Array(
+                report
+                    .checks
+                    .iter()
+                    .map(|check| {
+                        JsonValue::object(vec![
+                            ("name", JsonValue::string(check.name)),
+                            ("status", JsonValue::string(check.status.name())),
+                            (
+                                "findings",
+                                JsonValue::Array(
+                                    check
+                                        .findings
+                                        .iter()
+                                        .map(|f| {
+                                            JsonValue::object(vec![
+                                                ("code", JsonValue::string(f.code)),
+                                                ("message", JsonValue::string(f.message.clone())),
+                                            ])
+                                        })
+                                        .collect(),
+                                ),
+                            ),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ])
+}
+
+/// `ci <경로>`: lockfile·검증·migration 검사를 모두 실행합니다(XXIV.3.1). 하나라도 실패하면 1.
+pub fn ci(args: &[String]) -> Result<Success, CliError> {
+    let path = paths(args, &["<프로젝트 경로>"], "ci")?[0];
+    let context = path.display().to_string();
+    let report = run_ci(path).map_err(|e| views::open_error(&e).with_context(context.clone()))?;
+    let result = ci_json(&report);
+    if report.passed() {
+        return Ok(Success {
+            result,
+            diagnostics: Vec::new(),
+        });
+    }
+    let failed: Vec<&str> = report
+        .checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::Fail)
+        .map(|c| c.name)
+        .collect();
+    let mut error = CliError::new(
+        ExitStatus::Failure,
+        "ci-failed",
+        format!("CI 검사 실패: {}", failed.join(", ")),
+    )
+    .with_result(result)
+    .with_context(context);
+    error.diagnostics = report
+        .checks
+        .iter()
+        .flat_map(|c| c.findings.iter().map(move |f| (c.name, f)))
+        .map(|(check, f)| Diagnostic {
+            severity: Severity::Error,
+            code: f.code,
+            message: format!("{check}: {}", f.message),
+        })
+        .collect();
+    Err(error)
 }

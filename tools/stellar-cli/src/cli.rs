@@ -55,6 +55,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "<경로> [--check]: generation 스키마를 이 도구의 버전으로 migration합니다(--check: 판정만)",
     ),
     (
+        "ci",
+        "<경로>: CI 검사(lockfile·검증·migration 필요 여부)를 실행합니다(하나라도 실패하면 종료 코드 1)",
+    ),
+    (
         "apply",
         "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
     ),
@@ -157,6 +161,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("semantic-merge", crate::project_cmds::semantic_merge(rest))
     } else if command == "migrate" {
         ("migrate", crate::project_cmds::migrate_command(rest))
+    } else if command == "ci" {
+        ("ci", crate::project_cmds::ci(rest))
     } else {
         return usage_error(err, &format!("알 수 없는 명령: {command}"));
     };
@@ -343,6 +349,9 @@ mod tests {
             &["migrate"][..],
             &["migrate", "a", "--force"][..],
             &["migrate", "a", "--check", "--check"][..],
+            &["ci"][..],
+            &["ci", "a", "b"][..],
+            &["ci", "--strict", "a"][..],
         ] {
             let (code, out, err) = run_args(args);
             assert_eq!(code, EXIT_USAGE, "{args:?}");
