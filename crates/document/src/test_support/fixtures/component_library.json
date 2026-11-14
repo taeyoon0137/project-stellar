@@ -1,0 +1,139 @@
+{
+  "checksums": {
+    "contracts": "1c77a2050c61f958",
+    "drilling": "837bf8f5e13d0945",
+    "library": "10a6aff51c8ceb4b"
+  },
+  "components": [
+    {
+      "contracts": [
+        {
+          "frame": "button",
+          "kind": "button"
+        }
+      ],
+      "name": "Button",
+      "nodes": 2,
+      "properties": [
+        {
+          "name": "label",
+          "public": true,
+          "type": "String"
+        },
+        {
+          "name": "disabled",
+          "public": true,
+          "type": "Boolean"
+        }
+      ],
+      "slots": 0,
+      "stateActions": [
+        "activated"
+      ],
+      "stateVariables": [],
+      "transitions": 1
+    },
+    {
+      "contracts": [
+        {
+          "frame": "field",
+          "kind": "textInput"
+        }
+      ],
+      "name": "TextInput",
+      "nodes": 2,
+      "properties": [
+        {
+          "name": "placeholder",
+          "public": true,
+          "type": "String"
+        }
+      ],
+      "slots": 0,
+      "stateActions": [],
+      "stateVariables": [
+        "text"
+      ],
+      "transitions": 1
+    },
+    {
+      "contracts": [
+        {
+          "frame": "modal",
+          "kind": "modal"
+        }
+      ],
+      "name": "Modal",
+      "nodes": 5,
+      "properties": [
+        {
+          "name": "closeLabel",
+          "public": true,
+          "type": "String"
+        }
+      ],
+      "slots": 1,
+      "stateActions": [
+        "dismissed"
+      ],
+      "stateVariables": [
+        "open"
+      ],
+      "transitions": 1
+    },
+    {
+      "contracts": [
+        {
+          "frame": "list",
+          "kind": "list"
+        }
+      ],
+      "name": "List",
+      "nodes": 8,
+      "properties": [],
+      "slots": 0,
+      "stateActions": [],
+      "stateVariables": [
+        "selection"
+      ],
+      "transitions": 1
+    },
+    {
+      "contracts": [
+        {
+          "frame": "radio group",
+          "kind": "singleSelectionGroup"
+        },
+        {
+          "frame": "options list",
+          "kind": "list"
+        },
+        {
+          "frame": "option 0",
+          "kind": "button"
+        },
+        {
+          "frame": "option 1",
+          "kind": "button"
+        },
+        {
+          "frame": "option 2",
+          "kind": "button"
+        }
+      ],
+      "name": "Radio",
+      "nodes": 9,
+      "properties": [],
+      "slots": 0,
+      "stateActions": [
+        "chosen"
+      ],
+      "stateVariables": [
+        "selected"
+      ],
+      "transitions": 1
+    }
+  ],
+  "drillingLinks": 1,
+  "libraryBytes": 3274
+}

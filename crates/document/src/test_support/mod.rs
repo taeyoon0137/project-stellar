@@ -22,3 +22,6 @@ pub mod random_document;
 
 /// compact/error/dark nullable Variant 조합 fixture (IX.9.3).
 pub mod variant_fixtures;
+
+/// Button·TextInput·Modal·List·Radio 합성 component library fixture (IX.9.1).
+pub mod component_fixtures;
