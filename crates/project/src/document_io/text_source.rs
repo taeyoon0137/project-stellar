@@ -135,6 +135,14 @@ pub fn save(
     if current.model.document_id() != model.document_id() {
         return Err(TextSourceError::Invalid("문서 StableId 변경".into()));
     }
+    let records = |model: &DocumentModel| {
+        model
+            .to_records()
+            .map_err(|error| TextSourceError::Invalid(error.to_string()))
+    };
+    if records(&current.model)? == records(model)? {
+        return Ok(current.source_hash);
+    }
     write(path, model, Some(expected))
 }
 

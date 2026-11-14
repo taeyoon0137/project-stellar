@@ -56,6 +56,29 @@ fn fixture() -> DocumentModel {
 }
 
 #[test]
+fn unchanged_save_keeps_collaborator_comments_and_external_edits() {
+    let dir = TempDir::new("stellar-text-source-noop");
+    let path = dir.path.join("sample.stellar.yaml");
+    text_source::save_new(&path, &fixture()).unwrap();
+    let canonical = std::fs::read_to_string(&path).unwrap();
+    let annotated = format!("# 편집자 주석\n{canonical}");
+    std::fs::write(&path, &annotated).unwrap();
+    let opened = text_source::open(&path).unwrap();
+    assert_eq!(
+        text_source::save(&path, &opened.model, opened.source_hash).unwrap(),
+        opened.source_hash
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), annotated);
+    let external = format!("# 다른 편집\n{annotated}");
+    std::fs::write(&path, &external).unwrap();
+    assert!(matches!(
+        text_source::save(&path, &opened.model, opened.source_hash),
+        Err(TextSourceError::Changed)
+    ));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), external);
+}
+
+#[test]
 fn actual_model_edit_save_reopen_and_readable_git_diff() {
     let dir = TempDir::new("stellar-text-source-edit");
     let runner =
