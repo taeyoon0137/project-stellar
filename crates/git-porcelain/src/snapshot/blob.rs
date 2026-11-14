@@ -10,7 +10,8 @@
 //!   [`BlobLimits::max_total_bytes`]를 넘으면 [`BlobError::TotalTooLarge`]이며 내용은 읽지 않습니다.
 //! - 한 번의 `cat-file --batch` 실행은 [`BATCH_CHUNK`]개와 [`BlobLimits::max_batch_bytes`] 중 먼저 닿는
 //!   쪽까지만 읽습니다. batch 상한보다 큰 blob 하나는 단독으로 읽습니다. 그래서 한 실행의 출력은 batch
-//!   상한과 blob 상한 중 큰 값(+ header)을 넘지 않습니다.
+//!   상한과 blob 상한 중 큰 값(+ header)을 넘지 않습니다. 출력 buffer는 확인한 크기로 한 번에 잡아, 큰
+//!   출력을 받는 동안 buffer를 거듭 키우며 재할당하지 않습니다.
 //! - materialize(XIV.2.6)와 stage candidate(XIV.5.5)는 요청 순서대로 읽는 내부 reader로 batch 하나만
 //!   메모리에 두고 Git 출력 buffer에서 바로 씁니다(blob별 복사 없음). [`read_blobs`]는 결과 전체를
 //!   메모리에 담으므로 전체 상한이 곧 메모리 상한입니다(blob이 하나인 batch는 출력 buffer를 그대로
@@ -330,6 +331,20 @@ fn plan_batch(
     (end, items)
 }
 
+/// `items`에 대한 `cat-file --batch` 출력 길이(`<oid> blob <size>\n<content>\n`의 합). 크기는 상한을
+/// 검사한 값이므로 합도 batch 상한과 blob 상한 중 큰 값 근처로 제한됩니다.
+fn batch_output_len(items: &[(ObjectId, u64)]) -> usize {
+    items
+        .iter()
+        .map(|(oid, size)| {
+            let header = oid.as_str().len() + " blob ".len() + size.to_string().len() + 1;
+            usize::try_from(*size)
+                .unwrap_or(usize::MAX)
+                .saturating_add(header + 1)
+        })
+        .fold(0usize, usize::saturating_add)
+}
+
 /// 한 번의 `cat-file --batch` 결과: 출력 buffer와 blob별 내용 범위.
 struct BlobBatch {
     stdout: Vec<u8>,
@@ -344,8 +359,14 @@ impl BlobBatch {
         items: &[(ObjectId, u64)],
     ) -> Result<BlobBatch, BlobError> {
         let oids: Vec<ObjectId> = items.iter().map(|(oid, _)| oid.clone()).collect();
+        // 크기를 이미 확인했으므로 출력 buffer를 한 번에 잡습니다(키우며 재할당하지 않음).
         let output = git
-            .run_with_input(&argv(["cat-file", "--batch"]), worktree, &oid_lines(&oids))
+            .run_with_input_sized(
+                &argv(["cat-file", "--batch"]),
+                worktree,
+                &oid_lines(&oids),
+                batch_output_len(items),
+            )
             .map_err(GitOpError::Gate)?;
         let stdout = require_success(output)?.stdout;
         let found = parse_batch_ranges(&stdout, &oids)?;
@@ -641,6 +662,15 @@ mod tests {
         let (end, items) = plan_batch(&many, 0, &zero, &lim);
         assert_eq!((end, items.len()), (BATCH_CHUNK, BATCH_CHUNK));
         assert_eq!(plan_batch(&many, end, &zero, &lim).0, BATCH_CHUNK + 3);
+    }
+
+    #[test]
+    fn batch_output_len_matches_cat_file_batch_format() {
+        let (a, b) = (oid('a'), oid('b'));
+        let mut out = response(&a, "blob", &[1u8; 1234]);
+        out.extend(response(&b, "blob", b""));
+        assert_eq!(batch_output_len(&[(a, 1234), (b, 0)]), out.len());
+        assert_eq!(batch_output_len(&[]), 0);
     }
 
     #[test]

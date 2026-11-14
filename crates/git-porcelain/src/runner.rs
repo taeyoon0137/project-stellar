@@ -278,7 +278,7 @@ impl GitRunner {
 
     /// 주어진 argv와 cwd로 Git을 실행합니다(shell 미사용). stdout/stderr를 캡처합니다.
     pub fn run(&self, args: &[OsString], cwd: &Path) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, None, None, None)
+        self.run_inner(args, cwd, None, None, None, 0)
     }
 
     /// `input` 바이트를 자식 stdin으로 전달하며 실행합니다(XIV.8.2). 전달 후 stdin을 닫습니다.
@@ -290,7 +290,22 @@ impl GitRunner {
         cwd: &Path,
         input: &[u8],
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, Some(input), None, None)
+        self.run_inner(args, cwd, Some(input), None, None, 0)
+    }
+
+    /// [`GitRunner::run_with_input`]과 같지만 stdout buffer를 `stdout_capacity` bytes로 미리 잡습니다.
+    ///
+    /// 출력 크기를 미리 아는 실행(크기를 확인한 `cat-file --batch` 등, SEC-3)이 큰 출력을 받는 동안
+    /// buffer를 거듭 키우며 재할당하지 않게 합니다. 출력이 더 크면 평소처럼 늘어나므로 값은 상한이 아니라
+    /// 힌트이며, 호출자는 이미 상한을 검사한 크기만 넘겨야 합니다.
+    pub fn run_with_input_sized(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: &[u8],
+        stdout_capacity: usize,
+    ) -> Result<GitOutput, GitRunError> {
+        self.run_inner(args, cwd, Some(input), None, None, stdout_capacity)
     }
 
     /// 취소 가능한 실행(XIV.1.4). `cancel`이 취소되면 프로세스 tree를 종료하고
@@ -302,7 +317,7 @@ impl GitRunner {
         cwd: &Path,
         cancel: &GitCancelToken,
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, None, Some(cancel), None)
+        self.run_inner(args, cwd, None, Some(cancel), None, 0)
     }
 
     /// 취소 가능하게 실행하며 stderr 조각을 도착하는 대로 `on_stderr`에 전달합니다(XXVI.1.2 진행률).
@@ -316,7 +331,7 @@ impl GitRunner {
         cancel: &GitCancelToken,
         on_stderr: &mut dyn FnMut(&[u8]),
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, None, Some(cancel), Some(on_stderr))
+        self.run_inner(args, cwd, None, Some(cancel), Some(on_stderr), 0)
     }
 
     fn run_inner(
@@ -326,13 +341,14 @@ impl GitRunner {
         input: Option<&[u8]>,
         cancel: Option<&GitCancelToken>,
         on_stderr: Option<StderrSink<'_>>,
+        stdout_capacity: usize,
     ) -> Result<GitOutput, GitRunError> {
         // 실행 전 취소: 프로세스를 만들지 않으므로 trace도 남기지 않습니다.
         if cancel.is_some_and(GitCancelToken::is_cancelled) {
             return Err(GitRunError::Cancelled);
         }
         let start = Instant::now();
-        let result = self.spawn_and_wait(args, cwd, input, cancel, on_stderr);
+        let result = self.spawn_and_wait(args, cwd, input, cancel, on_stderr, stdout_capacity);
         self.emit_trace(args, start.elapsed(), &result);
         result
     }
@@ -379,6 +395,7 @@ impl GitRunner {
         input: Option<&[u8]>,
         cancel: Option<&GitCancelToken>,
         mut on_stderr: Option<StderrSink<'_>>,
+        stdout_capacity: usize,
     ) -> Result<GitOutput, GitRunError> {
         let cancelled = || cancel.is_some_and(GitCancelToken::is_cancelled);
 
@@ -421,7 +438,7 @@ impl GitRunner {
         let mut stdout_pipe = child.stdout.take().expect("stdout piped");
         let mut stderr_pipe = child.stderr.take().expect("stderr piped");
         let out_thread = thread::spawn(move || {
-            let mut buf = Vec::new();
+            let mut buf = Vec::with_capacity(stdout_capacity);
             let _ = stdout_pipe.read_to_end(&mut buf);
             buf
         });
@@ -932,6 +949,25 @@ mod tests {
         assert!(out.success());
         assert_eq!(out.stdout, input);
         assert!(!dir.path.join("PWNED").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sized_run_presizes_stdout_and_still_grows_past_the_hint() {
+        let dir = TempDir::new();
+        let runner = runner_for("/bin/cat", 5_000);
+        let input = vec![b'z'; 100_000];
+        let exact = runner
+            .run_with_input_sized(&[], &dir.path, &input, input.len())
+            .unwrap();
+        assert_eq!(exact.stdout, input);
+        // 정확한 크기 힌트면 buffer를 다시 키우지 않습니다.
+        assert_eq!(exact.stdout.capacity(), input.len());
+        // 힌트보다 큰 출력도 잘리지 않습니다(힌트는 상한이 아님).
+        let small = runner
+            .run_with_input_sized(&[], &dir.path, &input, 10)
+            .unwrap();
+        assert_eq!(small.stdout, input);
     }
 
     #[cfg(unix)]

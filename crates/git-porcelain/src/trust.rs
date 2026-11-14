@@ -175,6 +175,20 @@ impl GatedGitRunner {
             .map_err(GatedRunError::Run)
     }
 
+    /// trusted일 때만 stdout buffer를 미리 잡고 stdin 입력과 함께 실행합니다
+    /// ([`GitRunner::run_with_input_sized`]). untrusted면 프로세스를 만들지 않습니다.
+    pub fn run_with_input_sized(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: &[u8],
+        stdout_capacity: usize,
+    ) -> Result<GitOutput, GatedRunError> {
+        self.runner()?
+            .run_with_input_sized(args, cwd, input, stdout_capacity)
+            .map_err(GatedRunError::Run)
+    }
+
     /// trusted일 때만 취소 가능한 실행을 합니다(XIV.1.4). untrusted면 프로세스를 만들지 않습니다.
     pub fn run_cancellable(
         &self,
