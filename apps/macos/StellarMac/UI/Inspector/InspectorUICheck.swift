@@ -837,7 +837,9 @@ enum InspectorUICheck {
     ///
     /// - 나눠 만들기(예열·캐시 미스·보강): slice마다 그 slice가 붙인 컨트롤의 배치와 화면 그리기
     ///   (`displayIfNeeded`)까지 잽니다. 2ms 상한을 다 지키지 못해 분포를 보고하고 회귀 경계(중앙값 3ms, p95 8ms)만 봅니다.
-    /// - 선택 경로: 값 하나 변경과 캐시 미스(로딩 표시)는 반영 + 배치 + 그리기 합이 2ms 이하여야 합니다.
+    /// - 선택 경로: 값 하나 변경, 캐시 미스(로딩 표시), 같은 값 전환은 반영 + 배치 + 그리기 합의 p95가 2ms 이하여야
+    ///   합니다. 2ms는 단일 점유 상한이라 중앙값이 아니라 꼬리(p95)로 판정합니다. p95가 최댓값 하나에 끌려가지 않게
+    ///   경로마다 표본을 12개 이상 잽니다.
     /// - 예열 페이지 전환: 값이 같으면 alpha 전환뿐이고, 값이 모두 바뀌면(처음 표시 포함) AppKit 컨트롤 갱신
     ///   (popup·segmented 하나당 0.5~0.8ms 재배치)이 들어 2ms를 넘습니다. 측정값만 보고하고 회귀 경계(25ms)만 봅니다.
     /// Stub snapshot 생성 시간은 뺍니다. 실제 판정은 Release·통합 창에서 XVI.1 계측이 맡습니다.
@@ -875,7 +877,7 @@ enum InspectorUICheck {
 
         // 3) 예열 페이지 사이 전환: 같은 값(같은 Stub 장면)으로 돌아올 때.
         var sameValueSwitch: [Double] = []
-        for _ in 0..<3 {
+        for _ in 0..<6 {
             for scenario in kinds {
                 harness.source.select(scenario)
                 sameValueSwitch.append(harness.measureFlush().total)
@@ -911,7 +913,7 @@ enum InspectorUICheck {
         finishRefinement()
         let widthID = try propertyID(harness, "frame.size.width")
         var updates: [Double] = []
-        for iteration in 0..<16 {
+        for iteration in 0..<40 {
             harness.source.submit(.setValue(widthID, .number(Double(100 + iteration)), phase: .commit),
                                   basedOn: harness.source.snapshot.generation)
             updates.append(harness.measureFlush().total)
@@ -920,7 +922,7 @@ enum InspectorUICheck {
         // 6) 캐시 미스(예열 밖 구성): 로딩 표시까지(반영 + 배치 + 그리기), 이어지는 구성 slice.
         var missToLoading: [Double] = []
         var missSlices: [Double] = []
-        for count in 1...6 {
+        for count in 1...12 {
             harness.source.select(.frame)
             harness.flush()
             // 선택 사이의 유휴 시간: 넘친 페이지 제거 같은 배경 작업을 마칩니다.
@@ -969,11 +971,12 @@ enum InspectorUICheck {
                         "\(name) slice 중앙값이 회귀 경계 3ms 초과: \(describeSlices(values))")
             try require(percentile(values, 0.95) <= sliceGuard, "\(name) slice p95가 회귀 경계 8ms 초과: \(describeSlices(values))")
         }
-        try require(percentile(updates, 0.5) <= budget, "값 변경(반영+배치+그리기) 중앙값이 2ms 초과: \(describe(updates))")
-        try require(percentile(missToLoading, 0.5) <= budget,
-                    "캐시 미스 로딩 표시 중앙값이 2ms 초과: \(describe(missToLoading))")
-        try require(percentile(sameValueSwitch, 0.5) <= budget,
-                    "같은 값 예열 페이지 전환 중앙값이 2ms 초과: \(describe(sameValueSwitch))")
+        // 2ms 안이어야 하는 선택 경로: 단일 점유 상한이므로 p95로 판정합니다(가끔 느려지는 회귀도 잡음).
+        try require(percentile(updates, 0.95) <= budget, "값 변경(반영+배치+그리기) p95가 2ms 초과: \(describe(updates))")
+        try require(percentile(missToLoading, 0.95) <= budget,
+                    "캐시 미스 로딩 표시 p95가 2ms 초과: \(describe(missToLoading))")
+        try require(percentile(sameValueSwitch, 0.95) <= budget,
+                    "같은 값 예열 페이지 전환 p95가 2ms 초과: \(describe(sameValueSwitch))")
         let switchGuard = 25.0
         try require(percentile(firstShow, 0.95) <= switchGuard, "예열 페이지 첫 표시 p95가 25ms 초과: \(describe(firstShow))")
         try require(percentile(allValuesSwitch, 0.95) <= switchGuard,
