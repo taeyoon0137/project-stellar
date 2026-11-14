@@ -260,11 +260,9 @@ pub(crate) fn autoreleasepool<T>(f: impl FnOnce() -> T) -> T {
 }
 
 /// `NSUTF8StringEncoding`.
-#[cfg(test)]
 const NS_UTF8_STRING_ENCODING: NSUInteger = 4;
 
 /// UTF-8 문자열로 `NSString`을 만듭니다(+1). 실패하면 `None`.
-#[cfg(test)]
 pub(crate) fn ns_string(text: &str) -> Option<Id> {
     let class = class!("NSString")?;
     // SAFETY: `+[NSString alloc]`은 (Class) -> id, `-initWithBytes:length:encoding:`은

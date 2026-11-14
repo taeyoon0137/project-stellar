@@ -171,3 +171,23 @@ pub(crate) mod command_buffer_status {
     /// `MTLCommandBufferStatusError`.
     pub(crate) const ERROR: NSUInteger = 5;
 }
+
+/// `MTLScissorRect`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MTLScissorRect {
+    /// 왼쪽.
+    pub x: NSUInteger,
+    /// 위.
+    pub y: NSUInteger,
+    /// 너비.
+    pub width: NSUInteger,
+    /// 높이.
+    pub height: NSUInteger,
+}
+
+/// `MTLPrimitiveTypeTriangle`.
+pub(crate) const PRIMITIVE_TRIANGLE: NSUInteger = 3;
+
+/// `MTLIndexTypeUInt32`.
+pub(crate) const INDEX_TYPE_UINT32: NSUInteger = 1;

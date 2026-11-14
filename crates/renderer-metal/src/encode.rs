@@ -3,7 +3,8 @@
 //! encoding은 두 단계입니다.
 //!
 //! 1. **계획**([`plan_pass`]): pass attachment를 실제 texture로 해석하고 format·크기·sample 수를
-//!    검사합니다. 실패해도 command buffer에는 아무것도 기록되지 않습니다.
+//!    검사하며, draw command를 검사한 encoder 호출로 바꿉니다([`crate::commands`]). pipeline 생성도
+//!    이 단계에서 끝납니다. 실패해도 command buffer에는 아무것도 기록되지 않습니다.
 //! 2. **기록**([`encode_pass`]): 계획만 보고 Metal 호출을 합니다. encoder를 연 뒤에는 실패 경로가 없어
 //!    `endEncoding` 없이 encoder가 해제되는 일(Metal assertion)이 생기지 않습니다.
 
@@ -16,6 +17,7 @@ use stellar_renderer_core::render_graph::{
     SampleCount, StoreOp, TextureFormat,
 };
 
+use crate::commands::{plan_commands, record, CommandContext, Op, PassFormat};
 use crate::objc::{class, sel, send, Id, NSUInteger, RawId};
 use crate::surface::Drawable;
 use crate::sys::{load_action, store_action, MTLClearColor};
@@ -127,6 +129,9 @@ pub(crate) struct ColorPlan {
 #[derive(Debug, Clone)]
 pub(crate) struct PassPlan {
     colors: Vec<ColorPlan>,
+    ops: Vec<Op>,
+    width: u32,
+    height: u32,
 }
 
 const fn load(op: LoadOp) -> NSUInteger {
@@ -153,9 +158,10 @@ fn clear_color(clear: ClearColor) -> MTLClearColor {
     }
 }
 
-/// pass attachment를 해석하고 검사합니다.
+/// pass attachment와 draw command를 해석하고 검사합니다.
 pub(crate) fn plan_pass(
     targets: &FrameTargets<'_>,
+    commands: &mut CommandContext<'_>,
     pass: PassId,
 ) -> Result<PassPlan, BackendError> {
     let graph_pass = targets
@@ -167,16 +173,6 @@ pub(crate) fn plan_pass(
         return Err(BackendError::new(
             BackendErrorKind::Unsupported,
             "Metal backend는 아직 raster pass만 encode합니다",
-        ));
-    }
-    if targets
-        .request
-        .commands_for(pass)
-        .is_some_and(|commands| !commands.commands.is_empty())
-    {
-        return Err(BackendError::new(
-            BackendErrorKind::Unsupported,
-            "draw command encoding은 아직 지원하지 않습니다",
         ));
     }
     if graph_pass.depth_stencil.is_some() {
@@ -209,10 +205,25 @@ pub(crate) fn plan_pass(
             clear: clear_color(attachment.clear),
         });
     }
-    if extent.is_none() {
-        return Err(invalid("attachment 없는 raster pass"));
-    }
-    Ok(PassPlan { colors })
+    let (width, height) = extent.ok_or(invalid("attachment 없는 raster pass"))?;
+    let first = colors[0].target;
+    let format = PassFormat {
+        color_format: first.format,
+        samples: first.samples,
+        color_count: colors.len(),
+        width,
+        height,
+    };
+    let ops = match targets.request.commands_for(pass) {
+        Some(list) => plan_commands(commands, &format, &list.commands)?,
+        None => Vec::new(),
+    };
+    Ok(PassPlan {
+        colors,
+        ops,
+        width,
+        height,
+    })
 }
 
 /// 계획한 pass를 `command_buffer`에 기록합니다.
@@ -257,6 +268,7 @@ pub(crate) fn encode_pass(command_buffer: &Id, plan: &PassPlan) -> Result<(), Ba
                 "render command encoder를 만들 수 없습니다",
             ));
         }
+        record(encoder, &plan.ops, plan.width, plan.height);
         let _: () = send(encoder, sel!("endEncoding"), ());
     }
     Ok(())

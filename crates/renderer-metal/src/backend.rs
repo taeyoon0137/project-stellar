@@ -19,15 +19,18 @@ use stellar_renderer_core::backend::{
     GpuTextureDesc, RendererBackend, SkipReason, SubmissionId, SurfaceSize, TextureHandle,
     TextureRegion, TimestampQuery, MAX_FRAMES_IN_FLIGHT,
 };
-use stellar_renderer_core::gpu_handle::{HandleTable, TextureKind};
+use stellar_renderer_core::gpu_handle::{BufferKind, HandleTable, TextureKind};
 use stellar_renderer_core::render_graph::{
     ImportKind, ResourceLifetime, SampleCount, TextureFormat,
 };
 
+use crate::buffer::{stage_texture_upload, submit_uploads, MetalBuffer, PendingUpload};
+use crate::commands::CommandContext;
 use crate::device::MetalDevice;
 use crate::encode::{encode_pass, plan_pass, FrameTargets};
 use crate::format::bytes_per_pixel;
 use crate::objc::{autoreleasepool, sel, Id, NSUInteger, RawId};
+use crate::pipeline::PipelineCache;
 use crate::surface::{check_surface_size, Drawable, LayerOptions, LayerSurface, SurfaceStats};
 use crate::sys::{command_buffer_status, resource_options, MTLOrigin, MTLSize};
 use crate::texture::{create_texture, MetalTexture};
@@ -42,10 +45,10 @@ struct OpenFrame {
     present: bool,
 }
 
-/// GPU에 제출한 submission.
+/// GPU에 제출한 command buffer. texture upload command buffer는 submission 번호가 없습니다.
 #[derive(Debug)]
 struct InFlight {
-    id: SubmissionId,
+    id: Option<SubmissionId>,
     command_buffer: Id,
     present: bool,
 }
@@ -59,6 +62,9 @@ pub struct MetalBackend {
     surface_size: SurfaceSize,
     surface_format: TextureFormat,
     textures: HandleTable<TextureKind, MetalTexture>,
+    buffers: HandleTable<BufferKind, MetalBuffer>,
+    pipelines: PipelineCache,
+    pending_uploads: Vec<PendingUpload>,
     initialized_once: bool,
     open: Option<OpenFrame>,
     next_token: u64,
@@ -87,6 +93,9 @@ impl MetalBackend {
             },
             surface_format: TextureFormat::Bgra8Unorm,
             textures: HandleTable::new(0),
+            buffers: HandleTable::new(0),
+            pipelines: PipelineCache::new(),
+            pending_uploads: Vec::new(),
             initialized_once: false,
             open: None,
             next_token: 1,
@@ -157,6 +166,7 @@ impl MetalBackend {
     ///
     /// 종료·device 재생성·테스트용입니다. frame loop에서는 [`RendererBackend::poll`]을 씁니다.
     pub fn wait_idle(&mut self) -> Result<GpuProgress, BackendError> {
+        autoreleasepool(|| self.flush_uploads())?;
         if let Some(last) = self.in_flight.back() {
             // SAFETY: `-waitUntilCompleted`는 () -> void이고 commit한 command buffer에만 부릅니다.
             unsafe {
@@ -178,6 +188,7 @@ impl MetalBackend {
         if self.open.is_some() {
             return Err(invalid("열린 frame이 있는 동안 readback할 수 없습니다"));
         }
+        self.flush_uploads()?;
         let device = self.device()?;
         let native = self.textures.get(texture)?;
         let desc = native.desc;
@@ -255,7 +266,26 @@ impl MetalBackend {
         }
     }
 
-    /// 끝난 submission을 앞에서부터 거둡니다.
+    /// 쌓인 texture upload를 blit command buffer로 제출합니다(frame보다 먼저 queue에 들어감).
+    fn flush_uploads(&mut self) -> Result<(), BackendError> {
+        if self.pending_uploads.is_empty() {
+            return Ok(());
+        }
+        let device = self
+            .device
+            .as_ref()
+            .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
+        if let Some(command_buffer) = submit_uploads(device.queue(), &mut self.pending_uploads)? {
+            self.in_flight.push_back(InFlight {
+                id: None,
+                command_buffer,
+                present: false,
+            });
+        }
+        Ok(())
+    }
+
+    /// 끝난 command buffer를 앞에서부터 거둡니다.
     fn poll_completions(&mut self) -> Result<GpuProgress, BackendError> {
         while let Some(front) = self.in_flight.front() {
             // SAFETY: `-status`는 () -> NSUInteger(MTLCommandBufferStatus)입니다.
@@ -263,15 +293,19 @@ impl MetalBackend {
             match status {
                 command_buffer_status::COMPLETED => {
                     if let Some(done) = self.in_flight.pop_front() {
-                        self.progress.completed = Some(done.id);
-                        if done.present {
-                            self.progress.presented = Some(done.id);
+                        if let Some(id) = done.id {
+                            self.progress.completed = Some(id);
+                            if done.present {
+                                self.progress.presented = Some(id);
+                            }
                         }
                     }
                 }
                 command_buffer_status::ERROR => {
                     if let Some(done) = self.in_flight.pop_front() {
-                        self.progress.completed = Some(done.id);
+                        if let Some(id) = done.id {
+                            self.progress.completed = Some(id);
+                        }
                     }
                     return Err(BackendError::new(
                         BackendErrorKind::Internal,
@@ -282,6 +316,12 @@ impl MetalBackend {
             }
         }
         Ok(self.progress)
+    }
+
+    /// 테스트용: 만든 pipeline state 수.
+    #[cfg(test)]
+    pub(crate) fn pipeline_count(&self) -> usize {
+        self.pipelines.len()
     }
 
     /// 테스트용: 연결된 layer.
@@ -370,6 +410,8 @@ impl MetalBackend {
         if self.open.is_some() {
             return Err(invalid("이미 열린 frame이 있습니다"));
         }
+        // upload는 frame skip 여부와 상관없이 지금 queue에 넣습니다(다음 frame보다 먼저 실행).
+        self.flush_uploads()?;
         let needs_surface =
             request.graph.graph().resources.iter().any(|resource| {
                 resource.lifetime == ResourceLifetime::Imported(ImportKind::Surface)
@@ -392,7 +434,10 @@ impl MetalBackend {
         } else {
             None
         };
-        let device = self.device()?;
+        let device = self
+            .device
+            .as_ref()
+            .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
         let targets = FrameTargets {
             request,
             drawable: drawable.as_ref(),
@@ -400,11 +445,16 @@ impl MetalBackend {
             surface_format: self.surface_format,
             textures: &self.textures,
         };
+        let mut commands = CommandContext {
+            device: device.device(),
+            buffers: &self.buffers,
+            pipelines: &mut self.pipelines,
+        };
         let plans = request
             .graph
             .order()
             .iter()
-            .map(|&pass| plan_pass(&targets, pass))
+            .map(|&pass| plan_pass(&targets, &mut commands, pass))
             .collect::<Result<Vec<_>, _>>()?;
         // SAFETY: `-commandBuffer`는 () -> id<MTLCommandBuffer>(+0, nil 가능)입니다.
         let command_buffer =
@@ -452,8 +502,11 @@ impl RendererBackend for MetalBackend {
             self.in_flight.clear();
             self.device = None;
             self.capabilities = None;
+            self.pending_uploads.clear();
+            self.pipelines = PipelineCache::new();
             if self.initialized_once {
                 self.textures.invalidate_all()?;
+                self.buffers.invalidate_all()?;
             }
             self.initialized_once = true;
             let device = MetalDevice::system_default()?;
@@ -490,11 +543,16 @@ impl RendererBackend for MetalBackend {
         })
     }
 
-    fn create_buffer(&mut self, _desc: &BufferDesc) -> Result<BufferHandle, BackendError> {
-        Err(BackendError::new(
-            BackendErrorKind::Unsupported,
-            "Metal buffer는 아직 지원하지 않습니다",
-        ))
+    fn create_buffer(&mut self, desc: &BufferDesc) -> Result<BufferHandle, BackendError> {
+        autoreleasepool(|| {
+            if self.open.is_some() {
+                return Err(invalid(
+                    "열린 frame이 있는 동안 resource를 만들 수 없습니다",
+                ));
+            }
+            let buffer = MetalBuffer::create(self.device()?.device(), desc)?;
+            Ok(self.buffers.insert(buffer)?)
+        })
     }
 
     fn create_texture(&mut self, desc: &GpuTextureDesc) -> Result<TextureHandle, BackendError> {
@@ -514,33 +572,50 @@ impl RendererBackend for MetalBackend {
 
     fn update_buffer(
         &mut self,
-        _buffer: BufferHandle,
-        _offset: u64,
-        _data: &[u8],
+        buffer: BufferHandle,
+        offset: u64,
+        data: &[u8],
     ) -> Result<(), BackendError> {
-        Err(BackendError::new(
-            BackendErrorKind::Unsupported,
-            "Metal buffer는 아직 지원하지 않습니다",
-        ))
+        if self.open.is_some() {
+            return Err(invalid(
+                "열린 frame이 있는 동안 resource를 갱신할 수 없습니다",
+            ));
+        }
+        self.buffers.get_mut(buffer)?.write(offset, data)
     }
 
     fn update_texture(
         &mut self,
-        _texture: TextureHandle,
-        _region: TextureRegion,
-        _data: &[u8],
+        texture: TextureHandle,
+        region: TextureRegion,
+        data: &[u8],
     ) -> Result<(), BackendError> {
-        Err(BackendError::new(
-            BackendErrorKind::Unsupported,
-            "Metal texture upload는 아직 지원하지 않습니다",
-        ))
+        autoreleasepool(|| {
+            if self.open.is_some() {
+                return Err(invalid(
+                    "열린 frame이 있는 동안 resource를 갱신할 수 없습니다",
+                ));
+            }
+            let device = self
+                .device
+                .as_ref()
+                .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
+            let native = self.textures.get(texture)?;
+            let upload = stage_texture_upload(device.device(), native, region, data)?;
+            self.pending_uploads.push(upload);
+            Ok(())
+        })
     }
 
-    fn destroy_buffer(&mut self, _buffer: BufferHandle) -> Result<(), BackendError> {
-        Err(BackendError::new(
-            BackendErrorKind::Unsupported,
-            "Metal buffer는 아직 지원하지 않습니다",
-        ))
+    fn destroy_buffer(&mut self, buffer: BufferHandle) -> Result<(), BackendError> {
+        if self.open.is_some() {
+            return Err(invalid(
+                "열린 frame이 있는 동안 resource를 파괴할 수 없습니다",
+            ));
+        }
+        // command buffer가 참조 buffer를 retain하므로 GPU 실행 중이어도 즉시 해제해도 안전합니다.
+        autoreleasepool(|| self.buffers.remove(buffer).map(drop))?;
+        Ok(())
     }
 
     fn destroy_texture(&mut self, texture: TextureHandle) -> Result<(), BackendError> {
@@ -594,7 +669,7 @@ impl RendererBackend for MetalBackend {
         let id = SubmissionId(self.next_submission);
         self.next_submission += 1;
         self.in_flight.push_back(InFlight {
-            id,
+            id: Some(id),
             command_buffer: open.command_buffer,
             present: open.present,
         });

@@ -31,6 +31,18 @@ mod surface;
 /// texture 생성 (XI.8.1).
 mod texture;
 
+/// buffer 대응과 texture upload (XI.8.3).
+mod buffer;
+
+/// shader 소스와 ABI.
+mod shaders;
+
+/// pipeline state cache.
+mod pipeline;
+
+/// draw command 해석·기록 (XI.8.3).
+mod commands;
+
 /// RenderGraph pass encoding.
 mod encode;
 
