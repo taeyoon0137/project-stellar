@@ -9391,7 +9391,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XVIII.1.1"
-    title: "`TerminalSessionId`, profile, cwd, environment allowlist, process state를 정의합니다. project 저장·recovery snapshot에는 포함하지 않습니다."
+    title: "`TerminalSessionId`, profile, cwd, environment policy, process state를 정의합니다. project 저장·recovery snapshot에는 포함하지 않습니다."
     status: verified
     required_environments:
       - DEV-MAC
@@ -9494,6 +9494,14 @@ tasks:
     commit: "47adb5f1d8bb4031ecd73609595e8220635ebebc"
     report: "docs/task-reports/XVIII.2.4.md"
     verified_at: "2026-11-14T03:30:17+09:00"
+  - id: "XVIII.2.5"
+    title: "대화형 terminal session의 child 환경을 ADR-0023에 맞춥니다. spawn 경로에서 `env_clear`와 상속 허용 목록(`DEFAULT_INHERITED_ENV`)을 제거하고 앱 프로세스 환경을 그대로 물려준 뒤, 터미널 식별 변수 `TERM`·`COLORTERM`·`TERM_PROGRAM`·`TERM_PROGRAM_VERSION`을 설정하고 profile 명시 지정을 마지막에 적용합니다. 식별 변수 값은 spawn 입력으로 받으며 `TERM`·`COLORTERM` 값은 XVIII.4.1이 emulator에 맞춰 확정합니다. 그 밖의 변수는 추가하지 않고 사용자 셸 설정 파일을 만들거나 고치지 않습니다. 허용 목록 환경은 agent CLI 실행기(XXIX.2.4)에만 둡니다."
+    status: not_started
+    depends_on:
+      - "XVIII.1.4"
+      - "XVIII.2.2"
+    required_environments:
+      - DEV-MAC
   - id: "XVIII.3.1"
     title: "ConPTY create와 child process spawn wrapper를 구현합니다. 기본 profile은 PowerShell입니다."
     status: blocked
@@ -9574,6 +9582,14 @@ tasks:
       - "XIII.8.2"
       - "XVIII.4.3"
       - "XVIII.4.4"
+    required_environments:
+      - DEV-MAC
+  - id: "XVIII.4.7"
+    title: "macOS terminal view에 Stellar 테마를 적용합니다(ADR-0023 결정 7). ANSI 16색, 기본 전경·배경, 선택 영역, cursor 색·모양·깜박임, 글꼴 family·크기를 asset catalog의 Light·Dark·대비 높이기 변형으로 정의하고 ShellTheme 이벤트로 실행 중에 바꿉니다. 동작 줄이기가 켜져 있으면 cursor 깜박임을 끕니다. 기본 전경·배경 색 질의에는 현재 테마 값으로 응답합니다. 테마 변경은 표시만 바꾸며 셸 프로세스 재시작, 환경 변수 변경, 사용자 셸 설정 파일 쓰기를 하지 않습니다. 테마·글꼴 설정은 앱 사용자 설정이며 프로젝트 파일에 넣지 않습니다."
+    status: not_started
+    depends_on:
+      - "XVIII.4.3"
+      - "XII.9.3"
     required_environments:
       - DEV-MAC
   - id: "XVIII.5.1"
@@ -11272,7 +11288,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXIX.2.4"
-    title: "macOS 실행기를 구현합니다. 실행은 ADR-0005 §4.3 두 불변식(문서 변경은 Stellar MCP tool로만, 세션은 프로젝트 working tree와 사용자의 CLI·도구 설정에 흔적 없음)을 지키고, Stellar는 자격 증명을 다루거나 들여다보지 않습니다(아키텍처 31.1, 37.3). UI가 느려도 출력 수신을 멈추지 않습니다(ADR-0005 §6). 그 밖의 실행 세부와 timeout 값은 실측, Apple 공식 문서, 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다."
+    title: "macOS 실행기를 구현합니다. 실행은 ADR-0005 §4.3 두 불변식(문서 변경은 Stellar MCP tool로만, 세션은 프로젝트 working tree와 사용자의 CLI·도구 설정에 흔적 없음)을 지키고, Stellar는 자격 증명을 다루거나 들여다보지 않습니다(아키텍처 31.1, 37.3). UI가 느려도 출력 수신을 멈추지 않습니다(ADR-0005 §6). CLI 프로세스 환경은 대화형 터미널(ADR-0023)과 달리 launch profile에 적은 이름만 전달하는 허용 목록으로 만듭니다. 그 밖의 실행 세부와 timeout 값은 실측, Apple 공식 문서, 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다."
     status: not_started
     depends_on:
       - "XXIX.2.2"

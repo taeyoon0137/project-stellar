@@ -3,7 +3,7 @@
 - 기준 아키텍처: `PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`
 - 기준일: 2026-06-23
 - 현재 상태: `I.1.1`~`I.1.9` DEV-MAC 검증 완료(이력 정합화·`Task(...)` 일원화 반영). 다음 작업은 `I.1.10`(Bootstrap CI). Windows·CI 증거는 미확보
-- 원자 작업 수: 1133개
+- 원자 작업 수: 1135개
 - 구현 Phase 수: 30개 (`I`\~`XXX`)
 - 초기 릴리스 범위: Phase `I`~`XVII`, G8 통과
 - 로드맵 범위: Phase `XVIII`\~`XXX`
@@ -24,6 +24,7 @@
 - **2026-11-14 — CSS 기반 디자인 속성 어휘(ADR-0024 Accepted):** 제품 소유자 방향에 따라 인스펙터가 편집하는 디자인 속성의 이름·값 문법·단위·레이아웃 의미는 CSS longhand를 정본으로 삼습니다. 저장은 바이너리 chunk와 숫자 `PropertyKey`를 유지하고 CSS 텍스트를 파일에 저장하지 않습니다. 영속 record는 longhand만 저장하고, Stellar가 받아들인 선언은 CSS와 같은 결과를 내야 하며 예외는 `docs/design/property_model.md` 14장 목록뿐입니다. 이미 저장되는 속성의 기본값은 바꾸지 않습니다. 완료된 행은 고치지 않고 Phase IX에 IX.11(CSS 기반 속성 체계, 20행)을 추가했습니다. 내용은 registry CSS 매핑, 레이아웃 의미 정렬과 CSS 적합성 fixture, 영속 layout record, Frame·Text migration, CSS 값 형식화·파싱과 복사·붙여넣기, 인스펙터 CSS 범주, export 정렬입니다.
 - **2026-11-14 — 캔버스 편집 UX(XII.10) 추가:** 제품 소유자 방향(편집 UX는 전문 UI 디자인 도구의 관례를 참고하되 베끼지 않음, UI는 Xcode 계열 macOS 네이티브 형태 위의 Stellar 고유 형태, 인스펙터·캔버스 편집 속성은 CSS 기반)에 따라 `docs/design/ui/canvas_editing.md`를 기준으로 XII.10.1\~XII.10.43을 추가했습니다. 도구·수식키 결정(ADR), 선택·깊은 선택·마퀴·hover, 변형 핸들, nudge, 스냅·스마트 가이드·눈금자·그리드, 정렬·분배, 순서·묶음, 흐름 컨테이너 드래그와 padding·gap 핸들, 생성·펜·Boolean, 캔버스 텍스트, 인스턴스 편집·교체, 확대 제스처 입력과 줌·팬, 클립보드, 문맥 메뉴, 한 제스처 한 history 적합성, 키보드 전용·VoiceOver 경로, 성능 replay를 다룹니다. 기존 행의 상태와 내용은 바꾸지 않았습니다.
 - **2026-11-14 — 노드 프로토타이핑·Component Context·코드 생성 방향(ADR-0025):** 제품 소유자 방향 P4에 따라 CSS 기반 속성을 값 연결 대상, 노드 그래프 포트, 코드 생성 매핑 단위로 함께 쓰기로 했습니다. 초기 릴리스 범위인 Phase IX에 IX.12(Component Context: 선언된 provide·require·consume, 해석·진단·command·인스펙터, IX.12.1\~IX.12.13)를 추가했습니다. 로드맵 Phase XXX(노드 기반 프로토타이핑: 기존 binding·상태 머신 위의 projection, `MotionSpec`, 논리 시계 평가, 프리뷰, macOS 그래프 편집기, XXX.1.1\~XXX.6.3)를 추가했습니다. 착수 전인 XXII.1.1과 XXII.2.2를 CSS 기반 속성·Context를 소비하도록 그 자리에서 고쳤고 XXII.1.4, XXII.1.5, XXII.2.5, XXII.2.6, XXII.3.4, XXII.4.3을 추가했습니다. 기존 상태 표기는 바꾸지 않았습니다.
+- **2026-11-14 — 내장 터미널 사용자 셸 환경(ADR-0023 Accepted):** 제품 소유자 결정에 따라 대화형 내장 터미널은 계정 기본 로그인 셸을 사용자의 전체 로그인 환경과 설정(rc 파일, `PATH`, prompt, alias, plugin)으로 실행합니다. Stellar는 터미널 식별 변수(`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`)만 설정하고, 셸 설정을 바꾸지 않은 채 terminal view에 Stellar 테마(색, 글꼴, cursor, Light·Dark·대비 높이기)를 적용합니다. 신뢰된 프로젝트 게이트는 유지하고, 앱이 시작하는 agent CLI 하위 프로세스는 ADR-0005 §4.3 허용 목록 환경을 따로 유지합니다. 완료 행 XVIII.1.1은 요구사항을 바꾸지 않고 구현 타입 이름에 맞춰 "environment allowlist"를 "environment policy"로 정리했으며(상태 유지), 바뀐 요구사항은 새 행 XVIII.2.5(로그인 환경 상속)와 XVIII.4.7(terminal view 테마)이 맡습니다. XXIX.2.4에 허용 목록 환경 지시와 검증을 더했습니다.
 
 ---
 
@@ -1897,7 +1898,7 @@ ADR-0025 결정 3을 구현합니다. Context는 선언된 인터페이스이며
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XVIII.1.1 | `[x]` | `TerminalSessionId`, profile, cwd, environment allowlist, process state를 정의합니다. project 저장·recovery snapshot에는 포함하지 않습니다. | round-trip은 세션 메모리 전용. | G8 |
+| XVIII.1.1 | `[x]` | `TerminalSessionId`, profile, cwd, environment policy, process state를 정의합니다. project 저장·recovery snapshot에는 포함하지 않습니다. | round-trip은 세션 메모리 전용. | G8 |
 | XVIII.1.2 | `[x]` | 프로젝트 창당 여러 terminal session registry를 구현합니다. | 20 session create/close 누수 없음. | XVIII.1.1 |
 | XVIII.1.3 | `[x]` | terminal cwd는 project root 또는 사용자가 선택한 worktree root를 preset으로 제공하고 임의 cwd도 명시 입력으로 허용합니다. | cwd validation fixture 통과. | XIV.1.2, XVIII.1.1 |
 | XVIII.1.4 | `[x]` | terminal은 trusted project에서만 시작되게 capability check를 연결합니다. | untrusted spawn 0. | XVI.7.1, XVIII.1.2 |
@@ -1910,6 +1911,7 @@ ADR-0025 결정 3을 구현합니다. Context는 선언된 인터페이스이며
 | XVIII.2.2 | `[x]` | 사용자 기본 shell과 login/non-login profile을 설정에서 선택하게 합니다. | shell path 없음 오류 처리. | XVIII.2.1 |
 | XVIII.2.3 | `[x]` | resize를 winsize ioctl로 전달합니다. | columns/rows 확인 fixture. | XVIII.2.1 |
 | XVIII.2.4 | `[x]` | child exit, signal, cancellation, app close 시 process tree 정리를 구현합니다. | orphan process 0. | XVIII.2.1 |
+| XVIII.2.5 | `[ ]` | 대화형 terminal session의 child 환경을 ADR-0023에 맞춥니다. spawn 경로에서 `env_clear`와 상속 허용 목록(`DEFAULT_INHERITED_ENV`)을 제거하고 앱 프로세스 환경을 그대로 물려준 뒤, 터미널 식별 변수 `TERM`·`COLORTERM`·`TERM_PROGRAM`·`TERM_PROGRAM_VERSION`을 설정하고 profile 명시 지정을 마지막에 적용합니다. 식별 변수 값은 spawn 입력으로 받으며 `TERM`·`COLORTERM` 값은 XVIII.4.1이 emulator에 맞춰 확정합니다. 그 밖의 변수는 추가하지 않고 사용자 셸 설정 파일을 만들거나 고치지 않습니다. 허용 목록 환경은 agent CLI 실행기(XXIX.2.4)에만 둡니다. | `[DEV-MAC]` 임시 HOME의 login 셸 fixture에서 rc·profile 파일이 더한 `PATH` 항목과 marker 변수가 child에 보임, 앱 환경에만 있는 기존 허용 목록 밖 변수가 child에 보임, 식별 변수 4개가 spawn 입력 값과 일치, Stellar가 더한 변수는 식별 변수 4개 외 0, profile 명시 지정 우선 fixture 통과, 세션 전후 rc·profile 파일 hash 동일, 대화형 spawn 경로의 `env_clear`·상속 허용 목록 사용 inventory 0. | XVIII.1.4, XVIII.2.2 |
 
 ### XVIII.3 Windows ConPTY
 
@@ -1930,6 +1932,7 @@ ADR-0025 결정 3을 구현합니다. Context는 선언된 인터페이스이며
 | XVIII.4.4 | `[!]` | Windows terminal view를 연결합니다. | interactive smoke. | XVIII.3.3, XVIII.4.2 |
 | XVIII.4.5 | `[x]` | 일반 terminal과 특정 worktree terminal의 header metadata를 분리 표시할 data model을 추가합니다. | wrong cwd session 경고. | XVIII.1.3 |
 | XVIII.4.6 | `[ ]` | 창 종료 시 terminal을 복원하지 않고 종료하며 recovery snapshot에 output/process를 넣지 않는 검사를 추가합니다. | crash/relaunch 후 process 재연결 없음. | XIII.8.2, XVIII.4.3, XVIII.4.4 |
+| XVIII.4.7 | `[ ]` | macOS terminal view에 Stellar 테마를 적용합니다(ADR-0023 결정 7). ANSI 16색, 기본 전경·배경, 선택 영역, cursor 색·모양·깜박임, 글꼴 family·크기를 asset catalog의 Light·Dark·대비 높이기 변형으로 정의하고 ShellTheme 이벤트로 실행 중에 바꿉니다. 동작 줄이기가 켜져 있으면 cursor 깜박임을 끕니다. 기본 전경·배경 색 질의에는 현재 테마 값으로 응답합니다. 테마 변경은 표시만 바꾸며 셸 프로세스 재시작, 환경 변수 변경, 사용자 셸 설정 파일 쓰기를 하지 않습니다. 테마·글꼴 설정은 앱 사용자 설정이며 프로젝트 파일에 넣지 않습니다. | `[DEV-MAC]` Light·Dark·대비 높이기 snapshot fixture 3종 golden 일치, 기본 전경·배경 대비가 Light·Dark에서 4.5:1 이상·대비 높이기에서 7:1 이상, 테마 전환 전후 셸 pid와 child 환경 동일, 세션 전후 사용자 rc·profile 파일 hash 동일, 색 질의 응답이 현재 테마 값과 일치, 프로젝트 파일 쓰기 0. | XVIII.4.3, XII.9.3 |
 
 ### XVIII.5 CLI 에이전트 실행
 
@@ -2432,7 +2435,7 @@ ADR-0025 결정 3을 구현합니다. Context는 선언된 인터페이스이며
 | XXIX.2.1 | `[ ]` | `stellar-agent-host` crate(`crates/agent-host`)를 추가하고 crate graph에 등록합니다. 의존은 core-types, agent-protocol, local-ipc, diagnostics만 허용하고 document, commands, history, storage, ops로의 전이 도달을 금지합니다. 모델 제공자 API client, API key 필드, 자격 증명 저장, 모델 라우팅, 사용량 계량 타입이 없음을 inventory test로 고정합니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, 금지 타입 inventory 0. | XIX.9.1, XXIX.1.1 |
 | XXIX.2.2 | `[ ]` | 구독 CLI 실행 경로를 네트워크와 실제 계정 없이 테스트할 수 있는 테스트 대역을 만듭니다. XXIX.2.4~XXIX.2.13과 XXIX.6의 시나리오를 재현할 수 있어야 하며, 방식은 이 작업에서 정해 보고서에 기록합니다. | `[DEV-MAC]` 테스트 대역 self-test 통과, 네트워크와 실제 계정 사용 0. | XXIX.2.1 |
 | XXIX.2.3 | `[ ]` | 구독 CLI 실행 대상 지정을 구현합니다. 사용자가 확인한, 수정하지 않은 공식 CLI만 실행 대상으로 삼습니다(ADR-0005 §4.3 실행 대상 확인). 신원 확인 방법은 Apple 공식 문서와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. Stellar는 공급자 CLI를 설치·업데이트·수정하지 않습니다. | `[DEV-MAC]` 신원 확인 실패 fixture에서 실행 0, 확인 중 네트워크 호출 0, CLI 실행 파일 쓰기 0. | XXIX.2.2 |
-| XXIX.2.4 | `[ ]` | macOS 실행기를 구현합니다. 실행은 ADR-0005 §4.3 두 불변식(문서 변경은 Stellar MCP tool로만, 세션은 프로젝트 working tree와 사용자의 CLI·도구 설정에 흔적 없음)을 지키고, Stellar는 자격 증명을 다루거나 들여다보지 않습니다(아키텍처 31.1, 37.3). UI가 느려도 출력 수신을 멈추지 않습니다(ADR-0005 §6). 그 밖의 실행 세부와 timeout 값은 실측, Apple 공식 문서, 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 테스트 대역 세션에서 Stellar MCP tool 외 프로젝트 변경 0, 세션 전후 프로젝트·사용자 설정 hash 동일, 세션 종료 후 실행 흔적 0, timeout·취소 fixture 통과, UI 지연 fixture에서 출력 수신 정지 0. | XXIX.2.2, XVIII.2.4, XVI.7.5 |
+| XXIX.2.4 | `[ ]` | macOS 실행기를 구현합니다. 실행은 ADR-0005 §4.3 두 불변식(문서 변경은 Stellar MCP tool로만, 세션은 프로젝트 working tree와 사용자의 CLI·도구 설정에 흔적 없음)을 지키고, Stellar는 자격 증명을 다루거나 들여다보지 않습니다(아키텍처 31.1, 37.3). UI가 느려도 출력 수신을 멈추지 않습니다(ADR-0005 §6). CLI 프로세스 환경은 대화형 터미널(ADR-0023)과 달리 launch profile에 적은 이름만 전달하는 허용 목록으로 만듭니다. 그 밖의 실행 세부와 timeout 값은 실측, Apple 공식 문서, 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 테스트 대역 세션에서 Stellar MCP tool 외 프로젝트 변경 0, 세션 전후 프로젝트·사용자 설정 hash 동일, 세션 종료 후 실행 흔적 0, timeout·취소 fixture 통과, UI 지연 fixture에서 출력 수신 정지 0, 허용 목록 밖 환경 변수 전달 0. | XXIX.2.2, XVIII.2.4, XVI.7.5 |
 | XXIX.2.5 | `[ ]` | 구독 CLI 연결 상태를 각 CLI 공식 문서가 제공하는 방법으로만 판정합니다. CLI 자격 증명 저장 위치에는 접근하지 않습니다. 판정은 UI·Document 스레드 밖에서 하며, 판정할 수 없으면 사용 불가로 처리합니다(fail closed). CLI가 보고한 계정 식별 정보는 저장·로그·진단에 넣지 않습니다(XVI.8). 상태 정의와 판정 시점은 보고서에 기록합니다(ADR-0005 §4.1). | `[DEV-MAC]` 테스트 대역 상태 fixture 판정 일치, 판정 불가 fixture에서 사용 불가, CLI 자격 증명 저장 위치 접근 inventory 0, 진단·설정 저장소에 계정 식별 문자열 0. | XXIX.2.3, XXIX.2.4 |
 | XXIX.2.6 | `[ ]` | CLI 종류와 지원 버전 범위별 launch profile을 Stellar 소유 fixture로 관리합니다. 각 profile은 각 CLI 공식 문서의 비대화형 인터페이스와 구조화 출력 형식만 쓰고, 실행 설정, decoder profile 버전, 공급자 약관·공식 문서 검토 일자와 결과를 담습니다. profile은 ADR-0005 §4.3 두 불변식을 지키며, 각 불변식을 지키는 공식 설정과 그 밖의 실행 세부는 각 CLI 공식 문서와 Apple 공식 문서를 근거로 profile별 보고서에 기록합니다. 약관 검토상 허용이 명확하지 않은 CLI와 지원 범위 밖 버전은 실행하지 않습니다. | `[DEV-MAC]` profile별 테스트 대역 세션에서 Stellar MCP tool 외 프로젝트 변경 0, 세션 전후 프로젝트·사용자 설정 hash 동일, 비활성 profile과 지원 범위 밖 버전 실행 거부. | XXIX.2.4, XXIX.2.5, XIX.1.8 |
 | XXIX.2.7 | `[ ]` | 세션 실행 전 확인을 구현합니다. ADR-0005 §4.3 실행 대상 확인과 XXIX.2.5 연결 상태를 확인하고, 확인되지 않으면 실행하지 않습니다(fail closed). | `[DEV-MAC]` 확인 실패 fixture에서 실행 0, 정상 fixture에서 실행 1. | XXIX.2.6 |
