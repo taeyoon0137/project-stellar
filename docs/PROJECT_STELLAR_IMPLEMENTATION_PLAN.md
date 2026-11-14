@@ -1088,7 +1088,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XI.6.1 | `[x]` | Shape/Path fill tessellation interface와 cache key를 정의합니다. | 동일 path/style cache hit. | VI.5.6, VI.6.1 |
-| XI.6.2 | `[ ]` | stroke tessellation에 width, join, cap, dash를 적용합니다. | reference geometry bounds fixture 통과. | XI.6.1 |
+| XI.6.2 | `[x]` | stroke tessellation에 width, join, cap, dash를 적용합니다. | reference geometry bounds fixture 통과. | XI.6.1 |
 | XI.6.3 | `[ ]` | tessellation 작업을 worker pool에서 실행하고 stale scene revision 결과를 버립니다. | stale result 적용 0. | X.7.5, XI.6.1 |
 | XI.6.4 | `[ ]` | glyph outline/bitmap atlas interface와 key를 font hash, glyph id, size, variation, rendering mode로 정의합니다. | key collision fixture 없음. | X.10.5 |
 | XI.6.5 | `[ ]` | atlas page allocation·eviction을 구현하고 현재 frame 사용 glyph는 제거하지 않습니다. | memory pressure simulation 통과. | XI.6.4 |

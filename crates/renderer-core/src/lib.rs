@@ -6,6 +6,9 @@ mod digest;
 /// Shape/Path fill tessellation interface와 cache key (XI.6.1).
 pub mod tessellation;
 
+/// stroke tessellation: 폭·join·cap·dash (XI.6.2).
+pub mod stroke;
+
 /// thread 역할 표시 (XI.7.1).
 pub mod thread_role;
 

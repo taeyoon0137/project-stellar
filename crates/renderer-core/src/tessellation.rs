@@ -7,18 +7,23 @@
 //!   style 값([`TessellationStyle`]). paint(색상·gradient)·opacity·transform은 mesh를 바꾸지 않으므로
 //!   key에 넣지 않습니다. 같은 path/style이면 Shape든 Path든, 서로 다른 node든 같은 entry를
 //!   공유합니다.
-//! - 실제 tessellation 알고리즘은 [`FillTessellator`] 구현이 담당합니다. stroke(XI.6.2),
-//!   worker pool 실행과 stale revision 폐기(XI.6.3), 예산 기반 eviction(XVI.5)은 후속 작업입니다.
+//! - 실제 tessellation 알고리즘은 [`FillTessellator`] 구현이 담당합니다.
+//! - **stroke(XI.6.2)**: [`crate::stroke`]의 [`StrokeStyle`](폭·join·miter limit·cap·dash·허용 오차)이
+//!   [`TessellationStyle::Stroke`]로 같은 cache를 공유합니다. stroke 결과도 같은 삼각형 mesh
+//!   ([`FillMesh`]) 타입입니다. worker pool 실행과 stale revision 폐기(XI.6.3), 예산 기반
+//!   eviction(XVI.5)은 후속 작업입니다.
 
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use stellar_scene::bounds::Aabb;
 use stellar_scene::geometry::{FillRule, PathGeometry};
 use stellar_scene::Vec2;
 
 use crate::digest::fnv1a64;
+use crate::stroke::{StrokeStyle, StrokeTessellator};
 
 /// tessellation 오류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +40,16 @@ pub enum TessellationError {
         /// 원인.
         reason: &'static str,
     },
+    /// stroke style 값이 유효하지 않습니다(XI.6.2).
+    InvalidStroke {
+        /// 원인.
+        reason: &'static str,
+    },
+    /// 출력이 상한을 넘습니다(신뢰되지 않은 입력의 폭주 방지, XI.6.2).
+    TooComplex {
+        /// 넘은 상한.
+        limit: usize,
+    },
 }
 
 impl fmt::Display for TessellationError {
@@ -47,6 +62,12 @@ impl fmt::Display for TessellationError {
                 write!(f, "tessellation mesh 계약 위반: {reason}")
             }
             TessellationError::Failed { reason } => write!(f, "tessellation 실패: {reason}"),
+            TessellationError::InvalidStroke { reason } => {
+                write!(f, "stroke style이 유효하지 않습니다: {reason}")
+            }
+            TessellationError::TooComplex { limit } => {
+                write!(f, "tessellation 출력이 상한({limit})을 넘습니다")
+            }
         }
     }
 }
@@ -102,11 +123,13 @@ pub struct FillStyle {
     pub tolerance: FlattenTolerance,
 }
 
-/// cache key의 style 부분. stroke(XI.6.2)는 variant를 추가해 같은 cache를 공유합니다.
+/// cache key의 style 부분. fill과 stroke가 같은 cache를 공유합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TessellationStyle {
     /// fill tessellation.
     Fill(FillStyle),
+    /// stroke tessellation(XI.6.2). 값은 [`StrokeStyle::canonical`] 정규형입니다.
+    Stroke(StrokeStyle),
 }
 
 /// path geometry key: canonical bytes와 그 FNV-1a 64 digest.
@@ -172,6 +195,15 @@ impl TessellationKey {
         }
     }
 
+    /// stroke tessellation key(XI.6.2). mesh를 바꾸지 않는 style 차이는 정규화해 같은 key가
+    /// 됩니다([`StrokeStyle::canonical`]).
+    pub fn stroke(path: &PathGeometry, style: &StrokeStyle) -> TessellationKey {
+        TessellationKey {
+            path: PathKey::new(path),
+            style: TessellationStyle::Stroke(style.canonical()),
+        }
+    }
+
     /// path 부분.
     pub fn path(&self) -> &PathKey {
         &self.path
@@ -227,6 +259,15 @@ impl FillMesh {
     /// 삼각형 개수.
     pub fn triangle_count(&self) -> usize {
         self.indices.len() / 3
+    }
+
+    /// 삼각형이 참조하는 정점의 축 정렬 bounds. 삼각형이 없으면 `None`.
+    pub fn bounds(&self) -> Option<Aabb> {
+        Aabb::from_points(
+            self.indices
+                .iter()
+                .filter_map(|&index| self.vertices.get(index as usize).copied()),
+        )
     }
 }
 
@@ -324,6 +365,27 @@ impl TessellationCache {
             });
         }
         let mesh = tessellator.tessellate_fill(path, &style)?;
+        Ok(CachedMesh {
+            mesh: self.insert(key, mesh),
+            outcome: CacheOutcome::Miss,
+        })
+    }
+
+    /// stroke mesh를 조회하고, 없으면 `tessellator`로 만들어 저장합니다(XI.6.2).
+    pub fn stroke(
+        &mut self,
+        path: &PathGeometry,
+        style: &StrokeStyle,
+        tessellator: &dyn StrokeTessellator,
+    ) -> Result<CachedMesh, TessellationError> {
+        let key = TessellationKey::stroke(path, style);
+        if let Some(mesh) = self.lookup(&key) {
+            return Ok(CachedMesh {
+                mesh,
+                outcome: CacheOutcome::Hit,
+            });
+        }
+        let mesh = tessellator.tessellate_stroke(path, &style.canonical())?;
         Ok(CachedMesh {
             mesh: self.insert(key, mesh),
             outcome: CacheOutcome::Miss,
