@@ -4,10 +4,14 @@
 //! 투영합니다. diff는 XIV.3, merge는 XIV.10 엔진을 그대로 씁니다. 두 기능 모두 읽기 전용이며 파일을
 //! 쓰지 않습니다. merge 결과를 프로젝트 파일로 기록하는 일(XIV.12.4)은 이 모듈의 범위가 아닙니다.
 
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::path::Path;
 
-use stellar_project::document_io::component_source::{project_source_hash, source_set_hash};
+use stellar_project::document_io::component_source::{
+    project_source_index, source_set_hash, ProjectSourceIndex,
+};
 use stellar_semantic_diff::build::SnapshotBuilder;
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
 use stellar_semantic_merge::merge::merge;
@@ -152,12 +156,17 @@ pub fn semantic_diff_projects(base: &Path, target: &Path) -> Result<ProjectDiff,
     })
 }
 
-/// YAML을 해석하지 않고 파일 이름·바이트의 집합 hash를 다시 확인합니다.
-pub fn working_component_hash(snapshot: &ProjectSnapshot) -> Result<ContentHash, CompareError> {
-    project_source_hash(snapshot.root()).map_err(|error| CompareError::ComponentSource {
+/// YAML을 해석하지 않고 파일 이름·바이트의 집합을 관측합니다.
+pub fn working_components(snapshot: &ProjectSnapshot) -> Result<ProjectSourceIndex, CompareError> {
+    project_source_index(snapshot.root()).map_err(|error| CompareError::ComponentSource {
         side: "target",
         error: error.into(),
     })
+}
+
+/// 현재 컴포넌트 원본 집합의 hash만 필요한 호출자.
+pub fn working_component_hash(snapshot: &ProjectSnapshot) -> Result<ContentHash, CompareError> {
+    Ok(working_components(snapshot)?.hash())
 }
 
 /// 고정 HEAD와 working tree의 문서·공용 컴포넌트를 CLI와 같은 규칙으로 비교합니다.
@@ -173,41 +182,167 @@ pub fn semantic_diff_head_with_source_hash(
     head: &crate::trusted::ProjectHead,
     target: &ProjectSnapshot,
 ) -> Result<(DiffReport, ContentHash), CompareError> {
-    let unavailable =
-        || CompareError::Projection("HEAD에서 같은 프로젝트의 저장 세대를 열 수 없습니다".into());
-    if head.root() != target.root() || target.generation().is_none() {
-        return Err(unavailable());
-    }
-    let base = head.saved(target.project_id()).map_err(|_| unavailable())?;
-    let saved = base.project();
-    let mut builder = SnapshotBuilder::new();
-    for document in saved.document_ids().map_err(|_| unavailable())? {
-        let loaded = saved.load_document(document).map_err(|_| unavailable())?;
-        let records = loaded.model.to_records().map_err(|_| unavailable())?;
-        builder.add_document(&records).map_err(|_| unavailable())?;
-    }
-    builder
-        .add_project_component_library(base.components())
-        .map_err(|_| unavailable())?;
-    let mut working = document_builder(target, "target")?;
-    let (library, files) = crate::component_source::project_library(target).map_err(|error| {
-        CompareError::ComponentSource {
-            side: "target",
-            error,
+    let base = HeadDiffBase::open(head, target)?;
+    base.compare(target, &working_components(target)?)
+}
+
+/// 불변 Git commit에서 한 번 읽고 검증한 semantic 비교 기준.
+#[derive(Debug)]
+pub struct HeadDiffBase {
+    commit: String,
+    root: std::path::PathBuf,
+    project: StableId,
+    manifest_hash: ContentHash,
+    components: BTreeMap<OsString, (StableId, ContentHash)>,
+    semantic: SemanticSnapshot,
+}
+
+impl HeadDiffBase {
+    /// 고정한 commit의 문서·컴포넌트 ID·원본을 모두 검증합니다.
+    pub fn open(
+        head: &crate::trusted::ProjectHead,
+        target: &ProjectSnapshot,
+    ) -> Result<Self, CompareError> {
+        let unavailable = || {
+            CompareError::Projection("HEAD에서 같은 프로젝트의 저장 세대를 열 수 없습니다".into())
+        };
+        if head.root() != target.root() || target.generation().is_none() {
+            return Err(unavailable());
         }
-    })?;
-    working
-        .add_project_component_library(&library)
-        .map_err(|_| unavailable())?;
-    let source_hash =
-        source_set_hash(files.into_values()).map_err(|error| CompareError::ComponentSource {
-            side: "target",
-            error: error.into(),
+        let base = head.saved(target.project_id()).map_err(|_| unavailable())?;
+        let saved = base.project();
+        let mut builder = SnapshotBuilder::new();
+        for document in saved.document_ids().map_err(|_| unavailable())? {
+            let loaded = saved.load_document(document).map_err(|_| unavailable())?;
+            let records = loaded.model.to_records().map_err(|_| unavailable())?;
+            builder.add_document(&records).map_err(|_| unavailable())?;
+        }
+        builder
+            .add_project_component_library(base.components())
+            .map_err(|_| unavailable())?;
+        Ok(Self {
+            commit: head.commit().into(),
+            root: target.root().into(),
+            project: target.project_id(),
+            manifest_hash: base.manifest_hash,
+            components: base
+                .component_files
+                .into_iter()
+                .map(|(id, (path, hash))| {
+                    (path.file_name().expect("검증한 원본").into(), (id, hash))
+                })
+                .collect(),
+            semantic: builder.finish(),
+        })
+    }
+
+    /// 이 비교 기준의 commit ID.
+    pub fn commit(&self) -> &str {
+        &self.commit
+    }
+
+    /// 동일한 원본 집합이면 HEAD에서 검증한 YAML 투영을 재사용합니다.
+    pub fn compare(
+        &self,
+        target: &ProjectSnapshot,
+        observed: &ProjectSourceIndex,
+    ) -> Result<(DiffReport, ContentHash), CompareError> {
+        if target.root() != self.root
+            || observed.project_root() != target.root()
+            || target.project_id() != self.project
+            || target.generation().is_none()
+        {
+            return Err(CompareError::Projection(
+                "다른 프로젝트의 HEAD 비교 기준입니다".into(),
+            ));
+        }
+        let mut working = document_builder(target, "target")?;
+        if target.revision().manifest_hash() == Some(self.manifest_hash)
+            && observed.entries().len() == self.components.len()
+        {
+            // 같은 파일명이 모두 있으면 정의간 이름 충돌과 기존 generation의 경계도 동일합니다.
+            // 한 파일의 변경만 독립 비교하고 나머지는 기존 전체 조립 경로로 보냅니다.
+            let mut edited = None;
+            let mut single_edit = true;
+            for (name, (_, hash)) in observed.entries() {
+                let Some((owner, before)) = self.components.get(name) else {
+                    single_edit = false;
+                    break;
+                };
+                if before != hash && edited.replace((name, owner)).is_some() {
+                    single_edit = false;
+                    break;
+                }
+            }
+            if single_edit {
+                match edited {
+                    None => return Ok((DiffReport::default(), observed.hash())),
+                    Some((name, owner)) => return self.compare_component(observed, name, *owner),
+                }
+            }
+        }
+        let (library, files) =
+            crate::component_source::project_library(target).map_err(|error| {
+                CompareError::ComponentSource {
+                    side: "target",
+                    error,
+                }
+            })?;
+        working
+            .add_project_component_library(&library)
+            .map_err(|e| CompareError::Projection(e.to_string()))?;
+        let source_hash = source_set_hash(files.into_values()).map_err(|error| {
+            CompareError::ComponentSource {
+                side: "target",
+                error: error.into(),
+            }
         })?;
-    Ok((
-        diff_snapshots(&builder.finish(), &working.finish()),
-        source_hash,
-    ))
+        Ok((
+            diff_snapshots(&self.semantic, &working.finish()),
+            source_hash,
+        ))
+    }
+
+    fn compare_component(
+        &self,
+        observed: &ProjectSourceIndex,
+        name: &OsStr,
+        owner: StableId,
+    ) -> Result<(DiffReport, ContentHash), CompareError> {
+        let library =
+            observed
+                .library_for(name)
+                .map_err(|error| CompareError::ComponentSource {
+                    side: "target",
+                    error: error.into(),
+                })?;
+        let mut builder = SnapshotBuilder::new();
+        builder
+            .add_project_component_library(&library)
+            .map_err(|e| CompareError::Projection(e.to_string()))?;
+        let working = builder.finish();
+        let mut base = SemanticSnapshot::new();
+        for object in self
+            .semantic
+            .objects()
+            .filter(|o| o.origin().component() == Some(owner))
+        {
+            base.insert(object.clone())
+                .map_err(|e| CompareError::Projection(e.to_string()))?;
+        }
+        for object in working.objects() {
+            if self
+                .semantic
+                .get(object.id())
+                .is_some_and(|old| old.origin().component() != Some(owner))
+            {
+                return Err(CompareError::Projection(
+                    "다른 정의 또는 문서와 StableId가 겹칩니다".into(),
+                ));
+            }
+        }
+        Ok((diff_snapshots(&base, &working), observed.hash()))
+    }
 }
 
 /// conflict 한쪽의 표시용 상태.

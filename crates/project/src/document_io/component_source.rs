@@ -153,7 +153,8 @@ impl ComponentSource {
             .map_err(invalid)
     }
 
-    fn encode(&self) -> Result<String, TextSourceError> {
+    /// 검증한 정의를 버전에 맞는 canonical YAML로 직렬화합니다.
+    pub fn to_yaml(&self) -> Result<String, TextSourceError> {
         let version = if self.children.is_empty() { 1 } else { 2 };
         let mut fields = vec![
             (scalar("format"), scalar("stellar-component")),
@@ -268,7 +269,7 @@ pub fn create(
         return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists).into());
     }
     source.add_to(&mut library)?;
-    let encoded = source.encode()?;
+    let encoded = source.to_yaml()?;
     source_file::write_checked(&path, encoded.as_bytes(), None, MAX_INPUT_BYTES as u64)?;
     Ok((path, ContentHash::compute(encoded.as_bytes())))
 }
@@ -327,7 +328,7 @@ fn save_changed(
     hash: ContentHash,
     source: ComponentSource,
 ) -> Result<(ComponentSource, ContentHash), TextSourceError> {
-    let encoded = source.encode()?;
+    let encoded = source.to_yaml()?;
     source_file::write_checked(path, encoded.as_bytes(), Some(hash), MAX_INPUT_BYTES as u64)?;
     Ok((source, ContentHash::compute(encoded.as_bytes())))
 }
@@ -376,15 +377,74 @@ pub fn read_project_library(
 /// 프로젝트 루트 내부 실제 경로에서 읽은 파일 이름과 bytes hash의 결정적 집합 hash.
 /// HEAD 비교 페이지에서 YAML을 다시 파싱하지 않고 현재 원본을 재확인합니다.
 pub fn project_source_hash(root: &Path) -> Result<ContentHash, TextSourceError> {
-    let mut remaining = MAX_PROJECT_SOURCE_BYTES;
-    let mut hashes = Vec::new();
-    if let Some(paths) = project_source_paths(root)? {
-        for path in paths.files {
-            let bytes = read_project_source(&paths.root, &path, &mut remaining)?;
-            hashes.push((path, ContentHash::compute(&bytes)));
-        }
+    Ok(project_source_index(root)?.hash)
+}
+
+/// 실제 경계 안에서 bytes를 읽어 만든 원본 파일 목록. 읽기 요청 하나에만 유효합니다.
+pub struct ProjectSourceIndex {
+    root: PathBuf,
+    paths: BTreeMap<std::ffi::OsString, (PathBuf, ContentHash)>,
+    hash: ContentHash,
+}
+
+impl ProjectSourceIndex {
+    /// 관측한 파일 이름과 bytes 집합의 결정적 hash.
+    pub fn hash(&self) -> ContentHash {
+        self.hash
     }
-    source_set_hash(hashes)
+
+    /// 이 목록을 관측한 실제 프로젝트 루트.
+    pub fn project_root(&self) -> &Path {
+        &self.root
+    }
+
+    /// 비교를 위해 관측한 (파일명, bytes hash) 목록.
+    pub fn entries(&self) -> &BTreeMap<std::ffi::OsString, (PathBuf, ContentHash)> {
+        &self.paths
+    }
+    /// 앞서 읽은 파일 하나를 같은 경계·상한·hash로 재검증하여 독립된 정의를 조립합니다.
+    pub fn library_for(&self, name: &std::ffi::OsStr) -> Result<ComponentLibrary, TextSourceError> {
+        let (path, expected) = self
+            .paths
+            .get(name)
+            .ok_or_else(|| invalid("관측한 컴포넌트 원본이 필요합니다"))?;
+        let mut remaining = MAX_INPUT_BYTES as u64;
+        let bytes = read_project_source(&self.root, path, &mut remaining)?;
+        let (source, hash) = decode_named(path, &bytes)?;
+        if &hash != expected {
+            return Err(TextSourceError::Changed);
+        }
+        let mut library = ComponentLibrary::new();
+        source.add_to(&mut library)?;
+        Ok(library)
+    }
+}
+
+/// 원본 전체의 바이트 상한을 확인하면서 개별 파일 hash도 보존합니다.
+pub fn project_source_index(root: &Path) -> Result<ProjectSourceIndex, TextSourceError> {
+    let Some(paths) = project_source_paths(root)? else {
+        return Ok(ProjectSourceIndex {
+            root: root.into(),
+            paths: BTreeMap::new(),
+            hash: ContentHash::compute(&[]),
+        });
+    };
+    let mut remaining = MAX_PROJECT_SOURCE_BYTES;
+    let mut entries = BTreeMap::new();
+    for path in paths.files {
+        let bytes = read_project_source(&paths.root, &path, &mut remaining)?;
+        let name = path
+            .file_name()
+            .ok_or_else(|| invalid("컴포넌트 파일 이름이 필요합니다"))?
+            .to_owned();
+        entries.insert(name, (path, ContentHash::compute(&bytes)));
+    }
+    let hash = source_set_hash(entries.values().cloned())?;
+    Ok(ProjectSourceIndex {
+        root: paths.root,
+        paths: entries,
+        hash,
+    })
 }
 
 /// 이미 검증한 라이브러리의 원본 파일 집합 hash.
@@ -479,12 +539,11 @@ fn source_paths(dir: &Path) -> Result<Vec<PathBuf>, TextSourceError> {
 
 pub(crate) fn library_from_blobs(
     sources: Vec<(PathBuf, Vec<u8>)>,
-) -> Result<ComponentLibrary, TextSourceError> {
-    let (library, _) = assemble(sources.into_iter().map(|(path, bytes)| {
+) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
+    assemble(sources.into_iter().map(|(path, bytes)| {
         let (source, hash) = decode_named(&path, &bytes)?;
         Ok((path, source, hash))
-    }))?;
-    Ok(library)
+    }))
 }
 
 fn assemble(
@@ -550,7 +609,7 @@ mod tests {
                 },
             );
         }
-        let text = source.encode().unwrap();
+        let text = source.to_yaml().unwrap();
         let reopened = ComponentSource::decode(&text).unwrap();
         let disconnected = text.replace(
             &format!("parent: \"{}\"", id(9)),
@@ -565,7 +624,7 @@ mod tests {
         duplicate_order.children.get_mut(&id(7)).unwrap().order_key =
             OrderKey::from_bytes(vec![0x40]).unwrap();
         assert!(duplicate_order.definition_tree().is_err());
-        assert_eq!(reopened.encode().unwrap(), text);
+        assert_eq!(reopened.to_yaml().unwrap(), text);
         let mut before = ComponentLibrary::new();
         let mut after = ComponentLibrary::new();
         source.add_to(&mut before).unwrap();
