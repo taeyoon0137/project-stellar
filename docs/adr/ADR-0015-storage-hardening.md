@@ -19,6 +19,8 @@ parser의 동작을 바꾸므로 이 ADR에 기록합니다.
 | 날짜 | WBS | 발견 | 위치 | 수정 |
 |---|---|---|---|---|
 | 2026-11-14 | XVI.6.2 | `ContentHash` 문자열 parse가 다중 byte UTF-8 문자에서 panic | `crates/storage/src/hash/mod.rs` | slice 전 문자 검사 |
+| 2026-11-14 | 보안 감사 STOR-1 | current pointer·manifest·chunk 읽기가 symlink를 따라 장치·FIFO·거대 파일을 크기 확인 없이 끝까지 읽음(`/dev/zero`에서 메모리 무한 할당, FIFO에서 무한 대기) | `crates/storage/src/generation/current.rs`, `crates/storage/src/generation/loader.rs`, `crates/storage/src/chunk/store.rs` | 연 handle `fstat`으로 정규 파일·크기 상한 확인, 상한 + 1 bytes에서 읽기 중단, macOS `O_NONBLOCK` |
+| 2026-11-14 | 보안 감사 STOR-4 | chunk·manifest·current 쓰기가 `create_dir_all` 뒤 경로로 기록해 symlink 디렉터리를 따라 프로젝트 밖에 디렉터리·파일을 만듦 | 같은 세 파일 | 구성 요소별 `lstat`·한 단계 `create_dir`, temp 생성·rename 직전 identity 재확인, 기존 파일 검증은 `O_NOFOLLOW` |
 | 2026-11-14 | 보안 감사 STOR-5 | atomic write가 temp를 `O_TRUNC`로 열어, 예측 가능한 temp 이름에 심어 둔 symlink를 따라 프로젝트 밖 파일을 덮어씀 | `crates/storage/src/atomic_file.rs` | temp는 `create_new`로만 만들고 이미 있는 이름은 건너뜀 |
 
 XVI.6.2 발견의 원인: parse는 hex 부분의 **byte 길이**(64)만 확인한 뒤 2 byte 단위로 slice합니다.
@@ -49,6 +51,21 @@ release profile은 `panic = "abort"`(II.1.3)이므로 손상·조작된 chunk �
 4. 이후 저장 decoder의 fuzz 발견 수정도 위 발견 기록 표에 추가합니다.
 5. 보안 감사 발견(STOR) 수정은 공개 API(오류 enum variant·함수 signature)와 파일 포맷을 바꾸지
    않습니다. 새로 거부하는 경우는 기존 `Io` variant로 보고합니다. 규칙은 다음과 같습니다.
+   - 저장소 파일 읽기(STOR-1): 마지막 구성 요소 symlink는 따릅니다(기술 아키텍처 19.3 "심볼릭 링크
+     전면 허용", project loader의 사용자 작업 트리 규칙과 같음). 연 handle을 `fstat`해 정규 파일이고
+     크기가 상한 이하일 때만 읽고, 읽기도 상한 + 1 bytes에서 멈춥니다. macOS는 `O_NONBLOCK`으로 열어
+     FIFO·장치 열기에서 기다리지 않습니다. 상한은 current pointer 72 bytes(형식 크기), manifest 파일
+     64 MiB, chunk 파일 256 MiB입니다. manifest·chunk 상한은 제품 예산이 아니라 비신뢰 입력 방어
+     상한이며 project loader 기본 상한(XIV.2.7)과 같습니다. 쓰기도 같은 상한을 넘는 파일은 기록하지
+     않습니다(다시 읽을 수 없는 세대를 만들지 않음).
+   - 저장소 파일 쓰기(STOR-4): `design`·`design/objects`·shard·`design/generations`가 symlink면 따라가지
+     않고 거부합니다(assets의 symlink 에셋 디렉터리 거부와 같은 규칙). 없으면 한 단계씩 `create_dir`로
+     만들고, temp 생성·rename 직전에 같은 디렉터리 identity(`(dev, ino)`)인지 다시 확인합니다.
+     content-addressed 파일의 dedup 검증은 기존 항목을 따라가지 않고(macOS `O_NOFOLLOW`) 기대 크기까지만
+     읽습니다. symlink·정규 파일이 아닌 항목·크기가 다른 파일은 불변성 위반(`CorruptExisting`)으로
+     보고하고 덮어쓰지 않습니다.
+   - 공통 검사는 crate 내부 `fs_guard` 모듈에 둡니다(공개 API 아님). 거부 이유는 `Io` variant의
+     `std::io::Error`에 담깁니다.
    - atomic write temp(STOR-5): `create_new`(`O_CREAT`·`O_EXCL`, 마지막 구성 요소 symlink를 따르지
      않음)로만 만듭니다. 이름이 이미 있으면 열거나 지우지 않고 다음 이름으로 최대 16번 다시
      만듭니다(assets `atomic_write`와 같은 규칙). 실패 정리는 이 호출이 만든 temp만 지웁니다.
@@ -68,6 +85,16 @@ release profile은 `panic = "abort"`(II.1.3)이므로 손상·조작된 chunk �
 - 이전에 수용하던 입력 중 거부로 바뀐 것은 없습니다. 이전에 panic하던 입력만 오류로 바뀝니다.
   ASCII 입력은 이전과 같은 첫 위반 문자를 보고합니다(이전에도 문자열 순서로 검사).
 - hex 64자를 한 번 더 순회합니다.
+- (STOR-1) 64 MiB를 넘는 manifest 파일과 256 MiB를 넘는 chunk 파일은 읽기·쓰기 모두 거부합니다.
+  이전에는 storage가 받았지만, project crate `SavedProjectLoader`는 이미 같은 기본 상한으로 거부했습니다.
+  정규 파일이 아닌 저장소 항목은 읽지 않고 `Io`(`InvalidInput`)입니다. 이전에는 디렉터리면 `Io`
+  (`IsADirectory`), 장치·FIFO면 무한 읽기·대기였습니다.
+- (STOR-4) symlink 디렉터리 아래로의 저장은 거부됩니다. 읽기는 19.3에 따라 symlink를 따르므로, `design`
+  등을 symlink로 둔 작업 트리는 열 수 있지만 저장할 수 없습니다. 저장소 경로가 아닌 프로젝트 root
+  자체의 symlink는 그대로 허용합니다.
+- 디렉터리 fd 기준 연산(`openat`·`renameat`)이 std에 없어, 디렉터리를 다시 확인한 직후와 경로 기반
+  syscall 사이의 짧은 창은 남습니다. commit된(정적) symlink는 모두 차단하고, 그 창에 디렉터리를
+  교체하는 동시 공격자만 남습니다. macOS 밖 Unix는 flag 없이 열기 전 `stat`으로 종류를 확인합니다.
 - (STOR-5) temp 이름 16개가 모두 이미 있으면 저장 단계가 `AlreadyExists`로 실패합니다. 이전에는 그
   항목을 열어 덮어썼습니다. 이름 형식(`.<이름>.tmp-<pid>-<n>`)은 그대로입니다.
 

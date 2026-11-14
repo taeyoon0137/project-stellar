@@ -12,6 +12,9 @@ pub mod chunk;
 /// atomic 파일 쓰기 (V.2.5).
 pub mod atomic_file;
 
+/// 저장소 파일 접근 guard(보안 감사 STOR, crate 내부 전용).
+mod fs_guard;
+
 /// generation 저장 (V.4).
 pub mod generation;
 
