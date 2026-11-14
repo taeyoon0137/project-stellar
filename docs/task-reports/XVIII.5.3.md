@@ -54,6 +54,23 @@
 | 위반 fixture 검출, 일반 타입·variant 비검출(`detector_flags_agent_only_worktree_types`) | 통과 |
 | 시스템 Git linked worktree → cwd preset → 그 cwd에서 세션 시작, worktree 목록 불변(`system_git_worktrees_become_cwd_presets`) | 통과 |
 
+## 리뷰 후 수정(`Fix:` 커밋)
+
+- **검사 범위 넓힘**: 처음 검사는 이름에 `Worktree`가 있는 타입만 봐서 `AgentCheckout`·`ShadowWorkspace`
+  같은 이름을 놓쳤고, Rust는 `crates/`·`tools/`만 읽어 workspace member인 `benchmarks/fixtures`를
+  빠뜨렸습니다. 작업 사본 개념 이름 조각(`worktree`·`checkout`·`workspace`·`workdir`·`workingcopy`)과
+  agent 전용 표시(`shadow`·`agent`·`sandbox`·`ephemeral`)를 소문자·`_` 제거 이름으로 함께 찾고, Rust
+  검사 루트에 `benchmarks/`를 더했습니다. 루트 `Cargo.toml`의 모든 workspace member가 검사 루트 아래에
+  있는지도 테스트로 고정했습니다(`scanned_rust_roots_cover_every_workspace_member`).
+- 일반 타입 오검출 없음: 현재 workspace의 `SparseCheckoutState`·`WorkspaceGraph`·`WorktreeEntry`, 표시
+  효과 `ShadowFx`는 검출하지 않습니다(위반 fixture 테스트에 고정).
+
+| 명령 | 결과 |
+|---|---|
+| 수정 전(검사 루트에서 `benchmarks` 제외 상태로 member 검사 실행) | `scanned_rust_roots_cover_every_workspace_member` 실패: `benchmarks/fixtures` 미검사 |
+| 수정 전(이름 조각을 `worktree`만으로 되돌려 위반 fixture 검사 실행) | `detector_flags_agent_only_worktree_types` 실패: `AgentCheckout` 미검출 |
+| 수정 뒤 `cargo test -p stellar-terminal --test worktree_type_inventory` | 5 passed, 0 failed |
+
 ## 차이(작업 지시와 다른 점)
 
 - 검사는 workspace 전체 타입을 보지만 terminal crate의 통합 테스트로 두었습니다(이 lane의 변경 범위가
@@ -61,8 +78,8 @@
 
 ## 남은 위험 / 한계
 
-- 이름 기반 검사입니다. 다른 이름으로 agent 전용 worktree 개념을 만드는 경우는 리뷰와 XIX.8.1 검사로
-  막아야 합니다.
+- 이름 기반 검사입니다. 위 이름 조각과 표시 밖의 이름으로 agent 전용 작업 사본 개념을 만드는 경우는
+  리뷰와 XIX.8.1 검사로 막아야 합니다.
 - 시스템 Git 통합 테스트는 개발 장비에 `git`이 있어야 합니다(없으면 실패로 드러남).
 - 앱 셸이 시스템 Git(XIV.1.2)으로 worktree 목록을 얻어 `CwdContext`에 넣는 연결은 터미널 view(XVIII.4.3)
   작업에서 합니다.

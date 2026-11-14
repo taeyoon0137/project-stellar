@@ -1,7 +1,7 @@
 //! XVIII.5.3: 일반 Git worktree 생성·사용은 시스템 Git에 남기고, terminal은 cwd preset만 제공합니다.
 //!
-//! - workspace(Rust crate·도구, macOS 앱 Swift)에 agent 전용 worktree 타입(`ShadowWorktree` 등)이
-//!   없습니다.
+//! - workspace(모든 Rust workspace member, macOS 앱 Swift)에 agent 전용 작업 사본 타입
+//!   (`ShadowWorktree`, `AgentCheckout`, `ShadowWorkspace` 등)이 없습니다.
 //! - terminal crate는 Git을 실행하지 않고 worktree 타입을 정의하지 않습니다. worktree root는 호출자가
 //!   시스템 Git으로 얻어 [`CwdContext`]에 공급하고, terminal은 그 목록을 cwd preset으로만 씁니다.
 //! - 시스템 Git(`git worktree add`)으로 만든 linked worktree가 terminal cwd preset이 되고 그 cwd에서
@@ -11,8 +11,21 @@ use std::path::{Path, PathBuf};
 
 use stellar_terminal::cwd::{CwdContext, CwdPreset};
 
-/// worktree 타입 이름에 붙으면 agent 전용으로 보는 표시(소문자 비교).
+/// worktree와 같은 작업 사본 개념을 가리키는 이름 조각(소문자·`_` 제거 비교).
+const WORKTREE_NOUNS: &[&str] = &[
+    "worktree",
+    "checkout",
+    "workspace",
+    "workdir",
+    "workingcopy",
+];
+
+/// 작업 사본 타입 이름에 붙으면 agent 전용으로 보는 표시(소문자·`_` 제거 비교).
 const AGENT_ONLY_MARKERS: &[&str] = &["shadow", "agent", "sandbox", "ephemeral"];
+
+/// Rust 타입을 찾는 workspace 디렉터리. 모든 workspace member가 이 아래에 있어야 합니다
+/// (`scanned_rust_roots_cover_every_workspace_member`).
+const RUST_ROOTS: &[&str] = &["crates", "tools", "benchmarks"];
 
 const RUST_TYPE_KEYWORDS: &[&str] = &["struct", "enum", "trait", "type", "union"];
 const SWIFT_TYPE_KEYWORDS: &[&str] = &["class", "struct", "enum", "protocol", "typealias", "actor"];
@@ -54,23 +67,32 @@ fn declared_types(text: &str, keywords: &[&str]) -> Vec<String> {
         .collect()
 }
 
+/// 비교용 이름: 소문자, `_` 제거(`Shadow_Worktree`·`shadow_worktree`도 같은 이름).
+fn normalized(name: &str) -> String {
+    name.chars()
+        .filter(|&c| c != '_')
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// 이름이 작업 사본(worktree·checkout·workspace 등) 개념인지.
 fn is_worktree_type(name: &str) -> bool {
-    name.to_lowercase().contains("worktree")
+    let name = normalized(name);
+    WORKTREE_NOUNS.iter().any(|noun| name.contains(noun))
 }
 
 fn is_agent_only_worktree_type(name: &str) -> bool {
-    let lower = name.to_lowercase();
-    lower.contains("worktree")
+    is_worktree_type(name)
         && AGENT_ONLY_MARKERS
             .iter()
-            .any(|marker| lower.contains(marker))
+            .any(|marker| normalized(name).contains(marker))
 }
 
 /// workspace의 (파일, 타입 이름) 중 worktree 타입.
 fn worktree_types(root: &Path) -> Vec<(PathBuf, String)> {
     let mut found = Vec::new();
     for (dirs, extension, keywords) in [
-        (&["crates", "tools"][..], "rs", RUST_TYPE_KEYWORDS),
+        (RUST_ROOTS, "rs", RUST_TYPE_KEYWORDS),
         (&["apps"][..], "swift", SWIFT_TYPE_KEYWORDS),
     ] {
         let mut files = Vec::new();
@@ -107,14 +129,59 @@ fn detector_flags_agent_only_worktree_types() {
         std::slice::from_ref(&controller)
     );
     assert!(is_agent_only_worktree_type(&controller));
-    // 일반 Git worktree 타입과 enum variant는 해당하지 않습니다.
-    assert!(!is_agent_only_worktree_type("WorktreeEntry"));
+    // worktree와 같은 작업 사본 개념의 다른 이름도 검출합니다.
+    for name in [
+        ["Agent", "Checkout"].concat(),
+        ["Shadow", "Workspace"].concat(),
+        ["Ephemeral", "Work", "Dir"].concat(),
+        ["sandbox", "_working", "_copy"].concat(),
+    ] {
+        assert!(is_agent_only_worktree_type(&name), "{name}");
+    }
+    // 일반 Git worktree 타입과 enum variant, 표시(drop shadow) 타입은 해당하지 않습니다.
+    for name in [
+        "WorktreeEntry",
+        "SparseCheckoutState",
+        "WorkspaceGraph",
+        "ShadowFx",
+    ] {
+        assert!(!is_agent_only_worktree_type(name), "{name}");
+    }
     assert!(declared_types(
         "enum CwdPreset { WorktreeRoot { path } }",
         RUST_TYPE_KEYWORDS
     )
     .iter()
     .all(|name| !is_worktree_type(name)));
+}
+
+/// 검사 대상 Rust 디렉터리가 workspace member를 모두 덮습니다(member가 늘어도 빠지지 않게).
+#[test]
+fn scanned_rust_roots_cover_every_workspace_member() {
+    let root = workspace_root();
+    let manifest = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    let members = manifest
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("members"))
+        .and_then(|rest| rest.split_once('[').map(|(_, list)| list))
+        .and_then(|list| list.split_once(']').map(|(list, _)| list))
+        .expect("루트 Cargo.toml에 한 줄 `members = [...]`가 없습니다");
+    let members: Vec<&str> = members
+        .split(',')
+        .map(|member| member.trim().trim_matches('"'))
+        .filter(|member| !member.is_empty())
+        .collect();
+    assert!(members.len() >= 10, "{members:?}");
+    let uncovered: Vec<&str> = members
+        .iter()
+        .copied()
+        .filter(|member| {
+            !RUST_ROOTS
+                .iter()
+                .any(|dir| Path::new(member).starts_with(dir))
+        })
+        .collect();
+    assert!(uncovered.is_empty(), "검사하지 않는 member: {uncovered:?}");
 }
 
 #[test]
