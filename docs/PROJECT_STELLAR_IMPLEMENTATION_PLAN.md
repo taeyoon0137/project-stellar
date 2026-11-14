@@ -829,7 +829,7 @@ tools/xtask/
 | IX.4.3 | `[x]` | 사용자가 내부 property를 상위로 노출할 때 필요한 중간 property와 binding chain을 계산하는 `DrillingPlan`을 구현합니다. 아직 적용하지 않습니다. | 1·2·10단계 nesting fixture의 계획 정확. | IX.4.1 |
 | IX.4.4 | `[x]` | DrillingPlan preview에 생성될 property 이름, type, default, component 경로를 포함합니다. 이름 충돌은 deterministic suffix를 제안합니다. | 동일 입력 동일 plan. | IX.4.3 |
 | IX.4.5 | `[x]` | 승인된 DrillingPlan을 하나의 CommandTransaction으로 적용합니다. 중간 실패 시 property 하나도 남기지 않습니다. | fault injection rollback. | IX.4.4, VII.1.6 |
-| IX.4.6 | `[ ]` | chain 일부 삭제·타입 변경 시 상위 chain 전체를 orphan 상태로 표시하되 저장에서 삭제하지 않습니다. | break point와 affected chain fixture 정확. | IX.4.5, VIII.8.1 |
+| IX.4.6 | `[x]` | chain 일부 삭제·타입 변경 시 상위 chain 전체를 orphan 상태로 표시하되 저장에서 삭제하지 않습니다. | break point와 affected chain fixture 정확. | IX.4.5, VIII.8.1 |
 
 ### IX.5 선언형 상태 머신
 

@@ -14,6 +14,13 @@
 //!   ([`PropertyCommandOutcome::orphaned`])로 돌려줍니다. inverse는 `Restore`.
 //! - [`PropertyCommand::Restore`]: `Delete`의 inverse 전용입니다. record를 원래 위치에 되살리고 그 삭제가 orphan으로
 //!   만든 binding의 orphan 표시만 지웁니다.
+//! - [`PropertyCommand::Retype`](IX.4.6): 선언 타입과 default를 함께 바꿉니다. 바뀐 타입 때문에 값 흐름이 타입 규칙을
+//!   어기는 drilling binding은 `PropertyRetyped`로 orphan이 됩니다. inverse는 `RestoreRecord`(inverse 전용: 이전
+//!   record로 되돌리고 그 변경이 만든 orphan 표시를 지움).
+//!
+//! **상위 chain 전파**(IX.4.6): 삭제·타입 변경으로 직접 끊긴 binding뿐 아니라, 그 binding으로 값을 넘기는 상위 chain
+//! 전체를 `UpstreamOfBreak { origin }`으로 orphan 표시합니다([`DrillingSet::orphan_chain`]). 아래쪽(끊긴 지점보다
+//! 안쪽) binding은 그대로 live입니다. 어느 binding도 저장에서 지우지 않습니다.
 //!
 //! 삭제 거부: 같은 컴포넌트 상태 머신 표현식(initial·조건·action 값)이 property를 참조하거나, 다른 컴포넌트 정의
 //! tree 안 nested 인스턴스가 그 property를 정적 override하면 거부합니다 — 둘 다 library 저장 검증(IX.5·IX.2.3)이
@@ -27,9 +34,12 @@ use std::fmt;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::reference::ComponentRef;
 use stellar_expressions::ast::{ExpressionAst, ReferenceTarget};
+use stellar_expressions::types::TypeSpec;
 
 use super::definition::{ComponentEntry, ComponentLibrary, ComponentPropertyId};
-use super::drilling::{DrillingBindingId, DrillingError, DrillingOrphan, DrillingSet, OrphanCause};
+use super::drilling::{
+    BreakPoint, DrillingBindingId, DrillingError, DrillingOrphan, DrillingSet, OrphanCause,
+};
 use super::instance::{ComponentInstancePayload, OverrideKey};
 use super::property::{ComponentProperty, ComponentPropertyError};
 use super::state_machine::TransitionAction;
@@ -71,6 +81,26 @@ pub enum PropertyCommand {
         component: ComponentRef,
         /// property.
         property: ComponentPropertyId,
+    },
+    /// 선언 타입과 default를 함께 바꿉니다(IX.4.6). 끊긴 drilling chain은 orphan이 됩니다.
+    Retype {
+        /// 컴포넌트.
+        component: ComponentRef,
+        /// property.
+        property: ComponentPropertyId,
+        /// 새 선언 타입.
+        value_type: TypeSpec,
+        /// 새 타입에 맞는 default.
+        default: ExpressionAst,
+    },
+    /// `Retype`의 inverse 전용: 이전 record로 되돌리고 그 변경이 만든 orphan 표시를 지웁니다.
+    RestoreRecord {
+        /// 컴포넌트.
+        component: ComponentRef,
+        /// 이전 record.
+        property: ComponentProperty,
+        /// orphan 표시를 지울 binding.
+        revive: Vec<DrillingBindingId>,
     },
     /// `Delete`의 inverse 전용: record를 원래 위치에 되살리고 그 삭제가 만든 orphan 표시를 지웁니다.
     Restore {
@@ -416,6 +446,8 @@ impl PropertyCommand {
             | PropertyCommand::Rename { component, .. }
             | PropertyCommand::SetDefault { component, .. }
             | PropertyCommand::Delete { component, .. }
+            | PropertyCommand::Retype { component, .. }
+            | PropertyCommand::RestoreRecord { component, .. }
             | PropertyCommand::Restore { component, .. } => *component,
         }
     }
@@ -424,9 +456,11 @@ impl PropertyCommand {
     pub fn property(&self) -> ComponentPropertyId {
         match self {
             PropertyCommand::Create { property, .. }
+            | PropertyCommand::RestoreRecord { property, .. }
             | PropertyCommand::Restore { property, .. } => property.id(),
             PropertyCommand::Rename { property, .. }
             | PropertyCommand::SetDefault { property, .. }
+            | PropertyCommand::Retype { property, .. }
             | PropertyCommand::Delete { property, .. } => *property,
         }
     }
@@ -461,6 +495,25 @@ impl PropertyCommand {
                 record_of(entry, *property)?;
                 check_deletable(library, entry, *property)
             }
+            PropertyCommand::Retype {
+                property,
+                value_type,
+                default,
+                ..
+            } => {
+                retyped(record_of(entry, *property)?, *value_type, default.clone())?;
+                check_deletable(library, entry, *property)
+            }
+            PropertyCommand::RestoreRecord {
+                property, revive, ..
+            } => {
+                record_of(entry, property.id())?;
+                check_name_free(entry, property.name(), Some(property.id()))?;
+                check_revivable(drilling, revive, |cause| {
+                    matches!(cause, OrphanCause::PropertyRetyped { component: c, property: p, .. }
+                        if *c == component && *p == property.id())
+                })
+            }
             PropertyCommand::Restore {
                 property,
                 index,
@@ -468,19 +521,13 @@ impl PropertyCommand {
                 ..
             } => {
                 check_insertable(entry, property, *index)?;
-                for binding in revive {
-                    let revivable = drilling.orphan(*binding).is_some_and(|orphan| {
-                        orphan.cause
-                            == OrphanCause::PropertyDeleted {
-                                component,
-                                property: property.id(),
-                            }
-                    });
-                    if !revivable {
-                        return Err(PropertyCommandError::NotRevivable { binding: *binding });
-                    }
-                }
-                Ok(())
+                check_revivable(drilling, revive, |cause| {
+                    *cause
+                        == OrphanCause::PropertyDeleted {
+                            component,
+                            property: property.id(),
+                        }
+                })
             }
         }
     }
@@ -534,37 +581,74 @@ impl PropertyCommand {
                 }
             }
             PropertyCommand::Delete { property, .. } => {
-                let uses = drilling.uses_of(library, component, *property);
                 let fallback = record_of(entry_of(library, component)?, *property)?.value_type();
-                let typed: Vec<_> = uses
-                    .into_iter()
-                    .map(|(binding, at)| {
-                        let last_valid_type =
-                            drilling.target_type(library, binding).unwrap_or(fallback);
-                        (binding, at, last_valid_type)
-                    })
-                    .collect();
+                let direct = typed_uses(library, drilling, component, *property, fallback);
                 let (record, index) = library.remove_property_record(component, *property)?;
-                let mut revive = Vec::new();
-                for (binding, break_point, last_valid_type) in typed {
-                    let orphan = DrillingOrphan {
-                        cause: OrphanCause::PropertyDeleted {
-                            component,
-                            property: *property,
-                        },
-                        break_point,
-                        last_valid_type,
-                    };
-                    if drilling.mark_orphan(binding, orphan.clone())? {
-                        revive.push(binding);
-                        orphaned.push((binding, orphan));
-                    }
-                }
+                orphaned = drilling.orphan_chain(
+                    library,
+                    direct,
+                    OrphanCause::PropertyDeleted {
+                        component,
+                        property: *property,
+                    },
+                    None,
+                )?;
                 PropertyCommand::Restore {
                     component,
                     property: record,
                     index,
-                    revive,
+                    revive: orphaned.iter().map(|(id, _)| *id).collect(),
+                }
+            }
+            PropertyCommand::Retype {
+                property,
+                value_type,
+                default,
+                ..
+            } => {
+                let current = record_of(entry_of(library, component)?, *property)?;
+                let previous_type = current.value_type();
+                let updated = retyped(current, *value_type, default.clone())?;
+                let uses = typed_uses(library, drilling, component, *property, previous_type);
+                let previous = library.replace_property_record(component, updated)?;
+                // 바뀐 타입으로 다시 검증해 실패하는 사용처만 직접 끊긴 binding입니다.
+                let direct: Vec<_> = uses
+                    .into_iter()
+                    .filter(|(id, _, _)| {
+                        drilling
+                            .get(*id)
+                            .is_some_and(|binding| binding.validate(library, drilling).is_err())
+                    })
+                    .collect();
+                orphaned = drilling.orphan_chain(
+                    library,
+                    direct,
+                    OrphanCause::PropertyRetyped {
+                        component,
+                        property: *property,
+                        previous: previous_type,
+                        current: *value_type,
+                    },
+                    Some((component, *property, previous_type)),
+                )?;
+                PropertyCommand::RestoreRecord {
+                    component,
+                    property: previous,
+                    revive: orphaned.iter().map(|(id, _)| *id).collect(),
+                }
+            }
+            PropertyCommand::RestoreRecord {
+                property, revive, ..
+            } => {
+                let current = library.replace_property_record(component, property.clone())?;
+                for binding in revive {
+                    drilling.clear_orphan(*binding);
+                }
+                PropertyCommand::Retype {
+                    component,
+                    property: property.id(),
+                    value_type: current.value_type(),
+                    default: current.default_expression().ast().clone(),
                 }
             }
             PropertyCommand::Restore {
@@ -585,6 +669,59 @@ impl PropertyCommand {
         };
         Ok(PropertyCommandOutcome { inverse, orphaned })
     }
+}
+
+/// `property`를 직접 쓰는 live binding과 위치, 끊기기 전 target 타입.
+fn typed_uses(
+    library: &ComponentLibrary,
+    drilling: &DrillingSet,
+    component: ComponentRef,
+    property: ComponentPropertyId,
+    fallback: TypeSpec,
+) -> Vec<(DrillingBindingId, BreakPoint, TypeSpec)> {
+    drilling
+        .uses_of(library, component, property)
+        .into_iter()
+        .map(|(binding, at)| {
+            let last_valid_type = drilling.target_type(library, binding).unwrap_or(fallback);
+            (binding, at, last_valid_type)
+        })
+        .collect()
+}
+
+/// 같은 id·이름·공개 여부로 타입과 default를 바꾼 record.
+fn retyped(
+    current: &ComponentProperty,
+    value_type: TypeSpec,
+    default: ExpressionAst,
+) -> Result<ComponentProperty, PropertyCommandError> {
+    Ok(ComponentProperty::new(
+        current.id(),
+        current.name().to_string(),
+        value_type,
+        default,
+        current.visibility(),
+    )?)
+}
+
+/// `revive`의 각 binding이 orphan이고, 원인이 `expected`이거나 `revive` 안 binding에서 전파된 것인지.
+fn check_revivable(
+    drilling: &DrillingSet,
+    revive: &[DrillingBindingId],
+    expected: impl Fn(&OrphanCause) -> bool,
+) -> Result<(), PropertyCommandError> {
+    for binding in revive {
+        let revivable = drilling
+            .orphan(*binding)
+            .is_some_and(|orphan| match &orphan.cause {
+                OrphanCause::UpstreamOfBreak { origin } => revive.contains(origin),
+                cause => expected(cause),
+            });
+        if !revivable {
+            return Err(PropertyCommandError::NotRevivable { binding: *binding });
+        }
+    }
+    Ok(())
 }
 
 fn check_deletable(
@@ -731,12 +868,20 @@ mod tests {
             break_point: BreakPoint::Boundary(0),
             last_valid_type: TypeSpec::required(ExpressionType::String),
         };
-        assert_eq!(outcome.orphaned, vec![(bid(1), expected.clone())]);
+        // 상위 chain(C0 link, bid 2)도 전파로 orphan이 됩니다(IX.4.6).
+        let upstream = DrillingOrphan {
+            cause: OrphanCause::UpstreamOfBreak { origin: bid(1) },
+            break_point: BreakPoint::Boundary(0),
+            last_valid_type: TypeSpec::required(ExpressionType::String),
+        };
+        assert_eq!(
+            outcome.orphaned,
+            vec![(bid(1), expected.clone()), (bid(2), upstream)]
+        );
         // binding은 지워지지 않고 원래 ID·path·chain을 보존합니다.
         assert_eq!(set.len(), 2);
         assert_eq!(set.orphan(bid(1)), Some(&expected));
         assert_eq!(set.get(bid(1)).unwrap().target(), pid(LABEL));
-        assert!(!set.is_orphan(bid(2)));
         // orphan은 검증에서 제외되고 저장·복원됩니다.
         set.validate(&library).unwrap();
         let decoded = DrillingSet::decode(&set.encode()).unwrap();
@@ -779,6 +924,216 @@ mod tests {
         second.inverse.apply(&mut library, &mut set).unwrap();
         assert!(set.is_orphan(bid(1)), "C1.title 삭제의 orphan 유지");
         outcome.inverse.apply(&mut library, &mut set).unwrap();
+        assert_eq!(snapshot(&library, &set), original);
+    }
+
+    /// 3단계 chain을 IX.4.5 적용으로 만듭니다: L0(C0.p0 → I0.p1), L1(C1.p1 → I1.p2), L2(C2.p2 → I2.label).
+    fn applied_chain() -> (
+        ComponentLibrary,
+        DrillingSet,
+        Vec<ComponentPropertyId>,
+        Vec<DrillingBindingId>,
+    ) {
+        use crate::component::drilling_apply::apply_drilling_plan;
+        use crate::component::drilling_plan::{DrillingPlan, DrillingRequest};
+        let mut library = nested_library(3);
+        let mut set = DrillingSet::new();
+        let plan = DrillingPlan::compute(
+            &library,
+            &set,
+            DrillingRequest {
+                top: component(0),
+                path: vec![instance(0), instance(1), instance(2)],
+                property: pid(LABEL),
+            },
+        )
+        .unwrap();
+        let mut next = 70_000u64;
+        let applied = apply_drilling_plan(&mut library, &mut set, &plan, &mut || {
+            next += 1;
+            stable(next)
+        })
+        .unwrap();
+        let properties = applied.created_properties.iter().map(|(_, p)| *p).collect();
+        (library, set, properties, applied.created_links)
+    }
+
+    fn summary(
+        orphaned: &[(DrillingBindingId, DrillingOrphan)],
+    ) -> Vec<(DrillingBindingId, BreakPoint, bool)> {
+        orphaned
+            .iter()
+            .map(|(id, o)| {
+                (
+                    *id,
+                    o.break_point,
+                    matches!(o.cause, OrphanCause::UpstreamOfBreak { .. }),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn partial_chain_delete_orphans_the_whole_upstream_chain() {
+        // 검증 기준(IX.4.6): break point와 affected chain fixture 정확.
+        let (mut library, mut set, props, links) = applied_chain();
+        let (l0, l1, l2) = (links[0], links[1], links[2]);
+        let original = snapshot(&library, &set);
+        // 중간 C2.p2 삭제: L1(경계 0 target)·L2(source)가 직접 끊기고, L1로 값을 넘기는 L0가 전파 orphan.
+        let outcome = PropertyCommand::Delete {
+            component: component(2),
+            property: props[2],
+        }
+        .apply(&mut library, &mut set)
+        .unwrap();
+        assert_eq!(
+            summary(&outcome.orphaned),
+            vec![
+                (l0, BreakPoint::Boundary(0), true),
+                (l1, BreakPoint::Boundary(0), false),
+                (l2, BreakPoint::Source, false),
+            ]
+        );
+        assert_eq!(
+            set.orphan(l0).unwrap().cause,
+            OrphanCause::UpstreamOfBreak { origin: l1 }
+        );
+        assert_eq!(set.affected_chain(l1), vec![l0, l1]);
+        // 저장에서 삭제하지 않음: binding 3개와 orphan 정보가 bytes로 보존됩니다.
+        assert_eq!(set.len(), 3);
+        let decoded = DrillingSet::decode(&set.encode()).unwrap();
+        assert_eq!(decoded, set);
+        assert_eq!(decoded.orphans().count(), 3);
+        outcome.inverse.apply(&mut library, &mut set).unwrap();
+        assert_eq!(snapshot(&library, &set), original);
+
+        // 가장 안쪽 C3.label 삭제: L2가 break point, 상위 L1·L0 전체가 전파 orphan(origin L2).
+        let outcome = PropertyCommand::Delete {
+            component: component(3),
+            property: pid(LABEL),
+        }
+        .apply(&mut library, &mut set)
+        .unwrap();
+        assert_eq!(
+            summary(&outcome.orphaned),
+            vec![
+                (l0, BreakPoint::Boundary(0), true),
+                (l1, BreakPoint::Boundary(0), true),
+                (l2, BreakPoint::Boundary(0), false),
+            ]
+        );
+        assert_eq!(set.affected_chain(l2), vec![l0, l1, l2]);
+        assert!(outcome
+            .orphaned
+            .iter()
+            .all(|(_, o)| o.last_valid_type == TypeSpec::required(ExpressionType::String)));
+        outcome.inverse.apply(&mut library, &mut set).unwrap();
+        assert_eq!(snapshot(&library, &set), original);
+    }
+
+    #[test]
+    fn type_change_orphans_broken_links_and_upstream_but_keeps_downstream_live() {
+        let (mut library, mut set, props, links) = applied_chain();
+        let (l0, l1, l2) = (links[0], links[1], links[2]);
+        let original = snapshot(&library, &set);
+        let number = TypeSpec::required(ExpressionType::Number);
+        // C1.p1 String → Number: L1(source)·L0(경계 0 target) 직접 끊김, 아래쪽 L2는 live.
+        let outcome = PropertyCommand::Retype {
+            component: component(1),
+            property: props[1],
+            value_type: number,
+            default: literal(TypedValue::Number(
+                stellar_core_types::value::FiniteF32::new(1.0).unwrap(),
+            )),
+        }
+        .apply(&mut library, &mut set)
+        .unwrap();
+        assert_eq!(
+            summary(&outcome.orphaned),
+            vec![
+                (l0, BreakPoint::Boundary(0), false),
+                (l1, BreakPoint::Source, false),
+            ]
+        );
+        assert_eq!(
+            set.orphan(l1).unwrap().cause,
+            OrphanCause::PropertyRetyped {
+                component: component(1),
+                property: props[1],
+                previous: TypeSpec::required(ExpressionType::String),
+                current: number,
+            }
+        );
+        // L0의 target이 바뀐 property이므로 마지막 유효 타입은 이전 타입(String).
+        assert_eq!(
+            set.orphan(l0).unwrap().last_valid_type,
+            TypeSpec::required(ExpressionType::String)
+        );
+        assert!(!set.is_orphan(l2), "끊긴 지점보다 안쪽은 live");
+        assert_eq!(DrillingSet::decode(&set.encode()).unwrap(), set);
+        set.validate(&library).unwrap();
+        ComponentLibrary::decode(&library.encode()).unwrap();
+        outcome.inverse.apply(&mut library, &mut set).unwrap();
+        assert_eq!(snapshot(&library, &set), original);
+
+        // C2.p2 String → Optional String: L1(String → Optional)은 유효하지만 L2(Optional → String)가 끊겨
+        // 상위 L1·L0가 전파 orphan.
+        let outcome = PropertyCommand::Retype {
+            component: component(2),
+            property: props[2],
+            value_type: TypeSpec::optional(ExpressionType::String),
+            default: literal(TypedValue::String("확인".into())),
+        }
+        .apply(&mut library, &mut set)
+        .unwrap();
+        assert_eq!(
+            summary(&outcome.orphaned),
+            vec![
+                (l0, BreakPoint::Boundary(0), true),
+                (l1, BreakPoint::Boundary(0), true),
+                (l2, BreakPoint::Source, false),
+            ]
+        );
+        assert_eq!(set.affected_chain(l2), vec![l0, l1, l2]);
+        assert_eq!(
+            set.orphan(l1).unwrap().last_valid_type,
+            TypeSpec::required(ExpressionType::String),
+            "target이 바뀐 property면 이전 타입"
+        );
+        let redo = outcome.inverse.apply(&mut library, &mut set).unwrap();
+        assert_eq!(snapshot(&library, &set), original);
+        // redo는 같은 orphan 상태를 다시 만듭니다.
+        let again = redo.inverse;
+        assert!(matches!(again, PropertyCommand::Retype { .. }));
+        let replay = again.apply(&mut library, &mut set).unwrap();
+        assert_eq!(summary(&replay.orphaned), summary(&outcome.orphaned));
+        replay.inverse.apply(&mut library, &mut set).unwrap();
+        assert_eq!(snapshot(&library, &set), original);
+
+        // 타입에 맞지 않는 default, 상태 머신 참조는 거부.
+        assert!(matches!(
+            PropertyCommand::Retype {
+                component: component(1),
+                property: props[1],
+                value_type: number,
+                default: literal(TypedValue::String("x".into())),
+            }
+            .apply(&mut library, &mut set),
+            Err(PropertyCommandError::Property(_))
+        ));
+        let mut toggle = sm::toggle_library();
+        let machine = sm::toggle_machine(&toggle);
+        toggle.set_state_machine(sm::toggle(), machine).unwrap();
+        assert!(matches!(
+            PropertyCommand::Retype {
+                component: sm::toggle(),
+                property: sm::prop(sm::INITIALLY_ON),
+                value_type: TypeSpec::optional(ExpressionType::Boolean),
+                default: literal(TypedValue::Boolean(true)),
+            }
+            .apply(&mut toggle, &mut DrillingSet::new()),
+            Err(PropertyCommandError::ReferencedByStateMachine { .. })
+        ));
         assert_eq!(snapshot(&library, &set), original);
     }
 

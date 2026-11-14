@@ -676,12 +676,30 @@ pub enum OrphanCause {
         /// 삭제된 property.
         property: ComponentPropertyId,
     },
+    /// binding이 쓰는 property의 타입이 바뀌어 값 흐름이 타입 규칙을 어깁니다(IX.4.6).
+    PropertyRetyped {
+        /// 컴포넌트.
+        component: ComponentRef,
+        /// property.
+        property: ComponentPropertyId,
+        /// 이전 타입.
+        previous: TypeSpec,
+        /// 새 타입.
+        current: TypeSpec,
+    },
+    /// 이 binding이 값을 넘기는 아래쪽 chain이 끊겼습니다(상위 chain 전파, IX.4.6).
+    UpstreamOfBreak {
+        /// 직접 끊긴 binding(break point를 가진 binding).
+        origin: DrillingBindingId,
+    },
 }
 
 impl OrphanCause {
     const fn tag(&self) -> u8 {
         match self {
             OrphanCause::PropertyDeleted { .. } => 0x01,
+            OrphanCause::PropertyRetyped { .. } => 0x02,
+            OrphanCause::UpstreamOfBreak { .. } => 0x03,
         }
     }
 
@@ -695,6 +713,18 @@ impl OrphanCause {
                 put_id(buf, component.id());
                 put_id(buf, property.stable_id());
             }
+            OrphanCause::PropertyRetyped {
+                component,
+                property,
+                previous,
+                current,
+            } => {
+                put_id(buf, component.id());
+                put_id(buf, property.stable_id());
+                put_type_spec(buf, *previous);
+                put_type_spec(buf, *current);
+            }
+            OrphanCause::UpstreamOfBreak { origin } => put_id(buf, origin.stable_id()),
         }
     }
 
@@ -704,6 +734,15 @@ impl OrphanCause {
                 component: ComponentRef::new(reader.id()?),
                 property: ComponentPropertyId::new(reader.id()?),
             }),
+            0x02 => Ok(OrphanCause::PropertyRetyped {
+                component: ComponentRef::new(reader.id()?),
+                property: ComponentPropertyId::new(reader.id()?),
+                previous: reader.type_spec()?,
+                current: reader.type_spec()?,
+            }),
+            0x03 => Ok(OrphanCause::UpstreamOfBreak {
+                origin: DrillingBindingId::new(reader.id()?),
+            }),
             _ => Err(DrillingError::Malformed {
                 reason: "알 수 없는 orphan cause tag",
             }),
@@ -712,6 +751,9 @@ impl OrphanCause {
 }
 
 /// binding 안에서 끊긴 위치.
+///
+/// 직접 끊긴 binding은 끊긴 property 위치입니다. 상위 chain 전파로 orphan이 된 binding
+/// ([`OrphanCause::UpstreamOfBreak`])은 끊긴 아래쪽 chain으로 값을 넘기는 경계 위치(`Boundary(k)`)입니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum BreakPoint {
     /// 값 원천(owner의 source property).
@@ -887,6 +929,88 @@ impl DrillingSet {
             }
         }
         out
+    }
+
+    /// 직접 끊긴 binding을 `cause`로 orphan 표시하고, 그 binding으로 값을 넘기는 **상위 chain 전체**를 따라 올라가며
+    /// [`OrphanCause::UpstreamOfBreak`]로 표시합니다(IX.4.6). 저장에서 지우지 않습니다.
+    ///
+    /// binding `X`(owner `O`, source `s`)로 값을 넘기는 binding은 경계 chain에 (`O`, `s`)가 있는 binding입니다. 이미
+    /// orphan인 binding은 정보를 덮어쓰지 않지만 전파는 계속합니다. 각 binding은 한 번만 방문합니다(반복, 재귀 없음).
+    /// `library`는 변경 **후** 상태입니다(정의 tree는 바뀌지 않으므로 path 해석은 같습니다). `retyped`(타입이 바뀐
+    /// property와 이전 타입)가 주어지면 그 property가 target인 binding의 마지막 유효 타입은 이전 타입입니다. 새로 표시한
+    /// binding을 id 오름차순으로 돌려줍니다.
+    pub(crate) fn orphan_chain(
+        &mut self,
+        library: &ComponentLibrary,
+        direct: Vec<(DrillingBindingId, BreakPoint, TypeSpec)>,
+        cause: OrphanCause,
+        retyped: Option<(ComponentRef, ComponentPropertyId, TypeSpec)>,
+    ) -> Result<Vec<(DrillingBindingId, DrillingOrphan)>, DrillingError> {
+        let mut newly = BTreeMap::new();
+        let mut visited = BTreeSet::new();
+        let mut work: Vec<(DrillingBindingId, DrillingBindingId, TypeSpec)> = Vec::new();
+        for (id, break_point, last_valid_type) in direct {
+            let orphan = DrillingOrphan {
+                cause: cause.clone(),
+                break_point,
+                last_valid_type,
+            };
+            if self.mark_orphan(id, orphan.clone())? {
+                newly.insert(id, orphan);
+            }
+            if visited.insert(id) {
+                work.push((id, id, last_valid_type));
+            }
+        }
+        while let Some((id, origin, fallback)) = work.pop() {
+            let Some(broken) = self.bindings.get(&id) else {
+                continue;
+            };
+            let (owner, source) = (broken.owner, broken.source);
+            let feeders: Vec<(DrillingBindingId, usize, Option<TypeSpec>)> = self
+                .bindings
+                .values()
+                .filter(|binding| !visited.contains(&binding.id))
+                .filter_map(|binding| {
+                    let components = binding.resolve_components(library).ok()?;
+                    let k = components
+                        .iter()
+                        .zip(&binding.chain)
+                        .position(|(c, p)| *c == owner && *p == source)?;
+                    let previous = retyped.and_then(|(c, p, previous)| {
+                        (components.last() == Some(&c) && binding.target == p).then_some(previous)
+                    });
+                    Some((binding.id, k, previous))
+                })
+                .collect();
+            for (feeder, k, previous) in feeders {
+                visited.insert(feeder);
+                let last_valid_type = previous
+                    .or_else(|| self.target_type(library, feeder))
+                    .unwrap_or(fallback);
+                let orphan = DrillingOrphan {
+                    cause: OrphanCause::UpstreamOfBreak { origin },
+                    break_point: BreakPoint::Boundary(k),
+                    last_valid_type,
+                };
+                if self.mark_orphan(feeder, orphan.clone())? {
+                    newly.insert(feeder, orphan);
+                }
+                work.push((feeder, origin, last_valid_type));
+            }
+        }
+        Ok(newly.into_iter().collect())
+    }
+
+    /// 직접 끊긴 `origin`과 그 상위 chain 전파로 orphan이 된 binding(id 오름차순, `origin` 포함).
+    pub fn affected_chain(&self, origin: DrillingBindingId) -> Vec<DrillingBindingId> {
+        self.orphans
+            .iter()
+            .filter(|(id, orphan)| {
+                **id == origin || orphan.cause == OrphanCause::UpstreamOfBreak { origin }
+            })
+            .map(|(id, _)| *id)
+            .collect()
     }
 
     /// binding의 target property 선언 타입(path를 해석할 수 없거나 property가 없으면 `None`).
