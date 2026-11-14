@@ -19,6 +19,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::cwd::{check_path_syntax, CwdBinding, CwdContext, CwdSelection, ResolvedCwd};
+use crate::profile::ProfileCommand;
 
 /// header가 보여 줄 세션 범위.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,11 +102,43 @@ impl CwdWarning {
     }
 }
 
+/// header가 보여 줄 실행 명령(일반 셸 세션과 명령 세션 구분, 기술 아키텍처 32 "일반 세션과 외부
+/// 에이전트 세션 구분 가능"). 명령 이름만 보여 주며 명령 종류를 해석하지 않습니다(XVIII.5.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderCommand {
+    /// 설정의 사용자 셸.
+    Shell,
+    /// argv 명령(실행 파일 이름).
+    Program {
+        /// 실행 파일 이름(경로의 마지막 요소).
+        name: String,
+    },
+}
+
+impl HeaderCommand {
+    /// profile 명령에서 만듭니다.
+    pub fn of(command: &ProfileCommand) -> HeaderCommand {
+        match command {
+            ProfileCommand::DefaultShell => HeaderCommand::Shell,
+            ProfileCommand::Argv(argv) => HeaderCommand::Program {
+                name: argv
+                    .program()
+                    .file_name()
+                    .unwrap_or(argv.program().as_os_str())
+                    .to_string_lossy()
+                    .into_owned(),
+            },
+        }
+    }
+}
+
 /// 터미널 header metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalHeader {
     /// 표시 이름(profile 이름).
     pub title: String,
+    /// 실행 명령.
+    pub command: HeaderCommand,
     /// 범위.
     pub scope: HeaderScope,
     /// 시작 시 검증한 cwd(시작 전이면 `None`).
@@ -129,6 +162,7 @@ impl TerminalHeader {
     /// symlink 해석 때문에 파일 시스템을 읽습니다(모듈 문서).
     pub fn build(
         title: &str,
+        command: HeaderCommand,
         selection: &CwdSelection,
         resolved: Option<&ResolvedCwd>,
         context: &CwdContext,
@@ -155,6 +189,7 @@ impl TerminalHeader {
         warnings.extend(unusable);
         TerminalHeader {
             title: title.to_owned(),
+            command,
             scope,
             start_cwd,
             current_cwd,
@@ -278,7 +313,30 @@ mod tests {
 
     fn header(f: &Fixture, selection: CwdSelection, observed: Option<&Path>) -> TerminalHeader {
         let resolved = f.context.resolve(&selection).unwrap();
-        TerminalHeader::build("zsh", &selection, Some(&resolved), &f.context, observed)
+        TerminalHeader::build(
+            "zsh",
+            HeaderCommand::Shell,
+            &selection,
+            Some(&resolved),
+            &f.context,
+            observed,
+        )
+    }
+
+    #[test]
+    fn header_command_names_the_program_without_interpreting_it() {
+        use crate::profile::ArgvCommand;
+        assert_eq!(
+            HeaderCommand::of(&ProfileCommand::DefaultShell),
+            HeaderCommand::Shell
+        );
+        let argv = ArgvCommand::new("/opt/tools/bin/agent-cli", ["--flag"]).unwrap();
+        assert_eq!(
+            HeaderCommand::of(&ProfileCommand::Argv(argv)),
+            HeaderCommand::Program {
+                name: "agent-cli".to_owned()
+            }
+        );
     }
 
     #[test]
@@ -431,7 +489,14 @@ mod tests {
         let resolved = f.context.resolve(&selection).unwrap();
         // worktree가 목록에서 빠진 뒤 다시 만든 context.
         let updated = CwdContext::new(&f.repo, &[f.repo.clone(), f.nested.clone()]).unwrap();
-        let header = TerminalHeader::build("zsh", &selection, Some(&resolved), &updated, None);
+        let header = TerminalHeader::build(
+            "zsh",
+            HeaderCommand::Shell,
+            &selection,
+            Some(&resolved),
+            &updated,
+            None,
+        );
         assert_eq!(
             header.warnings,
             [CwdWarning::BindingMissing {
@@ -445,7 +510,14 @@ mod tests {
     fn header_before_start_uses_selection() {
         let f = fixture();
         let selection = CwdSelection::WorktreeRoot(f.nested.clone());
-        let header = TerminalHeader::build("agent", &selection, None, &f.context, None);
+        let header = TerminalHeader::build(
+            "agent",
+            HeaderCommand::Shell,
+            &selection,
+            None,
+            &f.context,
+            None,
+        );
         assert_eq!(
             header.scope,
             HeaderScope::Worktree {
@@ -455,8 +527,14 @@ mod tests {
         assert_eq!(header.start_cwd, None);
         assert_eq!(header.current_cwd, None);
         assert!(!header.has_warning());
-        let project =
-            TerminalHeader::build("agent", &CwdSelection::ProjectRoot, None, &f.context, None);
+        let project = TerminalHeader::build(
+            "agent",
+            HeaderCommand::Shell,
+            &CwdSelection::ProjectRoot,
+            None,
+            &f.context,
+            None,
+        );
         assert_eq!(project.scope, HeaderScope::Project { root: f.repo });
     }
 }

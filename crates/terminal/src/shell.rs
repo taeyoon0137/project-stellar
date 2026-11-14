@@ -195,8 +195,8 @@ pub fn resolve_shell(
     })
 }
 
-/// 셸 경로를 검사합니다.
-fn check_shell_path(path: &Path) -> Result<(), ShellPathProblem> {
+/// 실행 파일 경로를 검사합니다(셸과 profile 명령 찾기, XVIII.5.1에서 함께 씀).
+pub(crate) fn check_shell_path(path: &Path) -> Result<(), ShellPathProblem> {
     let bytes = path.as_os_str().as_encoded_bytes();
     if bytes.is_empty() || bytes.len() > MAX_ARG_BYTES || bytes.contains(&0) {
         return Err(ShellPathProblem::Malformed);

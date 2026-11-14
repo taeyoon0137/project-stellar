@@ -28,7 +28,7 @@ use stellar_core_types::ids::WindowSessionId;
 use crate::capability::{TerminalCapability, TerminalNotTrusted};
 use crate::cwd::{CwdContext, CwdError, ResolvedCwd};
 use crate::emulator::{COLORTERM, TERM_NAME};
-use crate::header::TerminalHeader;
+use crate::header::{HeaderCommand, TerminalHeader};
 use crate::id::{SessionIdAllocator, TerminalSessionId};
 use crate::launch::{
     ExitReport, LaunchError, LaunchRequest, TerminalIoError, TerminalLauncher, TerminalProcess,
@@ -486,6 +486,7 @@ impl TerminalRegistry {
         let session = self.sessions.get(&id)?;
         Some(TerminalHeader::build(
             session.profile.name.as_str(),
+            HeaderCommand::of(&session.profile.command),
             &session.profile.cwd,
             session.cwd.as_ref(),
             context,
