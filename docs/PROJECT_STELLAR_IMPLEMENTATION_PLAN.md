@@ -3,7 +3,7 @@
 - 기준 아키텍처: `PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`
 - 기준일: 2026-06-23
 - 현재 진행 상황은 아래 WBS 표와 [작업 원장](../planning/task-status.yaml)에서 확인합니다.
-- 원자 작업 수: 1142개
+- 원자 작업 수: 1145개
 - 구현 Phase 수: 30개 (`I`\~`XXX`)
 - 초기 릴리스 범위: Phase `I`~`XVII`, G8 통과
 - 로드맵 범위: Phase `XVIII`\~`XXX`
@@ -1731,6 +1731,9 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XVI.4.4 | `[ ]` | release gate는 모든 required scenario가 p50≤5, p95≤7, p99≤9, controllable max≤10ms를 통과해야 성공하게 합니다. | threshold boundary fixture 통과. | XVI.4.2 |
 | XVI.4.5 | `[ ]` | 결과를 commit, hardware profile, OS build, app build와 함께 보존하되 사용자 project 정보는 포함하지 않습니다. | result schema privacy 검사. | XVI.4.4 |
 | XVI.4.6 | `[ ]` | 기준 하드웨어 전용 CI 또는 lab runner에서 macOS M1 16GB와 Windows 기준 기기 결과를 required status로 설정합니다. | 해당 status 없이는 release tag 차단. | XVI.2.5, XVI.4.5 |
+| XVI.4.7 | `[ ]` | command 검증이 호출마다 다시 만드는 문서 전체 index(`crates/commands/src/tree.rs`의 `id_owners`·`ChildIndex`·`reference_index`, 각 O(N))를 `DocumentModel`이 편집과 함께 증분 유지하는 id 종류·자식·inbound 참조 index로 바꿉니다. RestoreNodeRecords(ConvertShapeToPath·ConvertFragmentToFrame의 undo·redo, VII.2.7)부터 옮기고, 같은 index를 쓰는 다른 command 검증도 옮깁니다. 검사 규칙과 오류 값은 바꾸지 않습니다. | release에서 node 1,000·10,000·50,000 문서의 이름만 바꾸는 RestoreNodeRecords validate 측정값을 보고서에 기록하고 50,000 node 값이 1 ms 이하(아키텍처 6.3 단일 점유 2 ms, 6.4 Undo/Redo 10 ms 안), random command sequence 뒤 증분 index가 전체 재구성 index와 같은 property test 통과, 범위 검사와 전체 validator oracle을 비교하는 기존 property test 통과. | VII.2.7, VI.2.5 |
+| XVI.4.8 | `[ ]` | binding 저장소 조회의 선형 검색을 index로 바꿉니다. `BindingStore`에 token → binding(live·orphan) 역참조 index를 두어 토큰 Delete의 inbound 검사(VIII.5.5 `TokenOrphanPlan::current`)가 모든 binding source를 훑지 않게 하고, orphan target index로 `StoreTypes::reference_type`(VIII.8.2)이 Property 참조마다 하는 orphan 선형 검색을 없앱니다. 판정 결과는 바꾸지 않습니다. | release에서 binding 1,000·10,000 fixture의 토큰 Delete validate와 orphan 1,000개가 있는 open 경로 측정값을 보고서에 기록하고 binding 10배에서 시간 2배 이하, random 편집 뒤 index 조회가 전체 순회 결과와 같은 property test 통과, 기존 VIII.5.5·VIII.8.2·VIII.8.3 test 통과. | VIII.5.5, VIII.8.2 |
+| XVI.4.9 | `[ ]` | 토큰·binding·orphan command 검증이 호출마다 다시 만드는 토큰 dependency graph와 통합 binding graph(VIII.5.5·VIII.6.6·VIII.8.4)를 편집과 함께 증분 갱신하도록 바꿉니다. cycle·참조 판정은 바꾸지 않습니다. | release에서 토큰 1,000·binding 1,000·10,000 fixture의 command 하나 validate 측정값을 보고서에 기록하고 binding 10배에서 시간 2배 이하, random command sequence 뒤 증분 graph가 전체 재구성 graph와 같은 property test 통과, 기존 VIII.5.5·VIII.6.6·VIII.8.4 test 통과. | VIII.5.5, VIII.6.6, VIII.8.4 |
 
 ### XVI.5 메모리·캐시 예산
 
