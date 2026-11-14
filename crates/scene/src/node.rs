@@ -785,13 +785,45 @@ impl SceneNode {
     }
 }
 
-/// 자식 목록을 비우고, 목록이 들고 있던 자식 참조를 `out`으로 옮깁니다.
+/// 자식 목록을 비우고, 이 목록만 가진 chunk의 자식 참조를 `out`으로 옮깁니다.
 ///
-/// 원소를 꺼낼 수 없는 공유 chunk 구조라 참조를 하나 늘린 뒤 목록을 해제합니다. 목록 chunk를
-/// 다른 node와 공유하면 그쪽 참조가 남아 자식은 해제되지 않습니다.
+/// 다른 node·snapshot과 공유하는 목록 chunk는 참조만 줄이고 내려가지 않습니다
+/// ([`PersistentVec::release_unique`]). 그 chunk 아래 자식은 공유 쪽이 계속 들고 있으므로 해제
+/// 대상이 아닙니다. 그래서 넓은 frame 안의 편집이 남긴 이전 조상 version을 해제하는 비용은
+/// 형제 수가 아니라 경로 복사한 chunk 수에 비례합니다.
 fn detach_children(children: &mut PersistentVec<Arc<SceneNode>>, out: &mut Vec<Arc<SceneNode>>) {
-    let list = std::mem::take(children);
-    out.extend(list.iter().cloned());
+    let before = out.len();
+    let released = std::mem::take(children).release_unique(out);
+    drop_cost::record(released, out.len() - before);
+}
+
+/// 해제 비용 계측. 테스트 build에서만 thread별로 놓은 chunk 수와 떼어 낸 자식 참조 수를 세고,
+/// 그 밖에서는 아무것도 하지 않습니다.
+mod drop_cost {
+    #[cfg(test)]
+    use std::cell::Cell;
+
+    #[cfg(test)]
+    thread_local! {
+        static CHUNKS: Cell<usize> = const { Cell::new(0) };
+        static DETACHED: Cell<usize> = const { Cell::new(0) };
+    }
+
+    #[cfg(test)]
+    pub(super) fn record(chunks: usize, detached: usize) {
+        CHUNKS.set(CHUNKS.get() + chunks);
+        DETACHED.set(DETACHED.get() + detached);
+    }
+
+    #[cfg(not(test))]
+    #[inline(always)]
+    pub(super) fn record(_chunks: usize, _detached: usize) {}
+
+    /// 현재 thread의 (chunk 수, 자식 참조 수)를 돌려주고 0으로 되돌립니다.
+    #[cfg(test)]
+    pub(super) fn take() -> (usize, usize) {
+        (CHUNKS.replace(0), DETACHED.replace(0))
+    }
 }
 
 impl Drop for SceneNode {
@@ -800,8 +832,9 @@ impl Drop for SceneNode {
     /// 기본 drop은 자식 → 손자로 재귀하므로 깊은 tree에서 stack overflow로 프로세스가
     /// 중단됩니다(panic이 아니라 복구할 수 없음). 마지막 참조인 자식만 떼어 내 자식 목록을
     /// 비운 뒤 해제하므로, 각 node는 빈 자식 목록으로 해제되어 재귀하지 않습니다. 다른
-    /// snapshot과 공유하는 subtree는 참조만 줄이고 내려가지 않습니다. `Arc::into_inner`는
-    /// 동시에 해제하는 thread 중 정확히 하나에게만 node를 넘깁니다.
+    /// snapshot과 공유하는 subtree는 참조만 줄이고 내려가지 않으며, 다른 node와 공유하는 자식
+    /// 목록 chunk도 참조만 줄입니다(`detach_children`). `Arc::into_inner`는 동시에 해제하는
+    /// thread 중 정확히 하나에게만 node와 chunk를 넘깁니다.
     fn drop(&mut self) {
         if self.children.is_empty() {
             return;
@@ -1104,6 +1137,64 @@ mod tests {
             drop((a, b, c));
             assert!(bottom_alive.upgrade().is_none());
         });
+    }
+
+    #[test]
+    fn dropping_old_versions_of_a_wide_frame_skips_shared_child_chunks() {
+        use crate::fixtures::{leaf, rect_content, spec};
+        // 회귀(scene-node-drop-o-width-regression): 넓은 frame에서 자식 하나씩 바꾼 이전
+        // version을 해제할 때, 다른 version과 공유하는 자식 목록 chunk의 자식은 떼어 내지
+        // 않아야 합니다(해제 비용이 형제 수가 아니라 경로 복사한 chunk 수에 비례).
+        const CHILDREN: u64 = 200_000;
+        const EDITS: u64 = 200;
+        // 자식 200,000개 목록은 높이 4이므로 version 하나가 놓는 chunk는 root와 유일 branch
+        // 3개의 자식(각 ≤32칸)을 넘지 않고, 떼어 내는 자식은 유일 leaf 하나(≤32개)입니다.
+        const CHUNKS_PER_VERSION: usize = 1 + 3 * 32;
+        const DETACHED_PER_VERSION: usize = 32;
+
+        let children: Vec<Arc<SceneNode>> = (0..CHILDREN)
+            .map(|i| leaf(i + 2, i + 2, 1.0, 1.0))
+            .collect();
+        let shared_probe = Arc::downgrade(&children[(CHILDREN - 1) as usize]);
+        let mut versions =
+            vec![SceneNode::new(spec(1, rect_content(10.0, 10.0), 1), children).unwrap()];
+        let mut replaced = Vec::new();
+        for edit in 0..EDITS {
+            // trie 전체에 퍼진 서로 다른 위치(997 · 200 < 200,000).
+            let index = (edit * 997) as usize;
+            let current = versions.last().unwrap();
+            let old_child = current.child(index).unwrap();
+            replaced.push(Arc::downgrade(old_child));
+            let next = current
+                .with_child_replaced(index, leaf(CHILDREN + 10 + edit, old_child.z().0, 2.0, 1.0))
+                .unwrap();
+            versions.push(next);
+        }
+        let newest = versions.pop().unwrap();
+        assert_eq!(versions.len(), EDITS as usize);
+
+        let _ = drop_cost::take();
+        drop(versions);
+        let (chunks, detached) = drop_cost::take();
+        assert!(
+            chunks <= EDITS as usize * CHUNKS_PER_VERSION,
+            "놓은 chunk {chunks}"
+        );
+        assert!(
+            (EDITS as usize..=EDITS as usize * DETACHED_PER_VERSION).contains(&detached),
+            "떼어 낸 자식 {detached}"
+        );
+        // 이전 version에만 있던 자식은 해제되고, 공유 자식은 최신 version만 들고 있습니다.
+        assert!(replaced.iter().all(|weak| weak.upgrade().is_none()));
+        assert_eq!(shared_probe.strong_count(), 1);
+        assert_eq!(newest.child_count(), CHILDREN as usize);
+        assert_eq!(newest.subtree_len(), CHILDREN + 1);
+
+        // 마지막 version은 모든 자식을 해제합니다.
+        drop(newest);
+        let (_, detached) = drop_cost::take();
+        assert_eq!(detached, CHILDREN as usize);
+        assert!(shared_probe.upgrade().is_none());
     }
 
     #[test]

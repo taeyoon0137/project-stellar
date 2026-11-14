@@ -7,6 +7,10 @@
 //!
 //! scene node의 자식 목록과 snapshot의 최상위 node 목록이 이 타입을 써서, 자식이 수만 개인
 //! frame에서도 자식 하나를 바꿀 때 O(log₃₂ n) chunk만 새로 만듭니다.
+//!
+//! chunk는 크기가 정해진 `Arc<Vec<_>>`로 담아 [`Arc::into_inner`]로 유일 소유 chunk를 넘겨받을
+//! 수 있게 합니다. [`PersistentVec::release_unique`]는 이 성질로 경로 복사한 이전 version을
+//! 해제할 때 그 version만 가진 chunk만 풀고 공유 chunk는 참조만 줄입니다.
 
 use std::fmt;
 use std::sync::Arc;
@@ -16,8 +20,8 @@ const WIDTH: usize = 1 << BITS;
 const MASK: usize = WIDTH - 1;
 
 enum Chunk<T> {
-    Leaf(Arc<[T]>),
-    Branch(Arc<[Chunk<T>]>),
+    Leaf(Arc<Vec<T>>),
+    Branch(Arc<Vec<Chunk<T>>>),
 }
 
 impl<T> Clone for Chunk<T> {
@@ -106,8 +110,8 @@ impl<T> PersistentVec<T> {
         };
         match &self.root {
             None => {}
-            Some(Chunk::Leaf(leaf)) => iter.leaf = leaf,
-            Some(Chunk::Branch(branch)) => iter.stack.push((branch, 0)),
+            Some(Chunk::Leaf(leaf)) => iter.leaf = leaf.as_slice(),
+            Some(Chunk::Branch(branch)) => iter.stack.push((branch.as_slice(), 0)),
         }
         iter
     }
@@ -138,6 +142,37 @@ impl<T> PersistentVec<T> {
             _ => 0,
         }
     }
+
+    /// vector를 해제하면서, 이 vector가 마지막 참조인 chunk의 원소만 `out`으로 옮깁니다.
+    ///
+    /// 다른 vector와 공유하는 chunk는 참조만 하나 줄이고 내려가지 않습니다. 그래서 경로 복사로
+    /// 만든 이전 version을 해제하는 비용은 전체 길이가 아니라 그 version만 가진 chunk 수에
+    /// 비례합니다(XI.1.4 비용 모델). chunk는 [`Arc::into_inner`]로 넘겨받으므로 같은 chunk를
+    /// 여러 thread가 동시에 해제해도 정확히 하나만 원소를 받고, 원소는 복제하지 않고 옮깁니다.
+    /// trie는 명시적 stack으로 순회합니다.
+    ///
+    /// 반환값은 참조를 놓은 chunk 수(내려간 chunk와 공유라서 멈춘 chunk 모두)입니다. 해제 비용
+    /// 진단에 씁니다.
+    pub fn release_unique(self, out: &mut Vec<T>) -> usize {
+        let mut released = 0usize;
+        let mut stack: Vec<Chunk<T>> = self.root.into_iter().collect();
+        while let Some(chunk) = stack.pop() {
+            released += 1;
+            match chunk {
+                Chunk::Leaf(leaf) => {
+                    if let Some(items) = Arc::into_inner(leaf) {
+                        out.extend(items);
+                    }
+                }
+                Chunk::Branch(branch) => {
+                    if let Some(chunks) = Arc::into_inner(branch) {
+                        stack.extend(chunks);
+                    }
+                }
+            }
+        }
+        released
+    }
 }
 
 impl<T: Clone> PersistentVec<T> {
@@ -149,13 +184,13 @@ impl<T: Clone> PersistentVec<T> {
         }
         let mut level: Vec<Chunk<T>> = items
             .chunks(WIDTH)
-            .map(|chunk| Chunk::Leaf(Arc::from(chunk)))
+            .map(|chunk| Chunk::Leaf(Arc::new(chunk.to_vec())))
             .collect();
         let mut shift = 0;
         while level.len() > 1 {
             level = level
                 .chunks(WIDTH)
-                .map(|chunk| Chunk::Branch(Arc::from(chunk)))
+                .map(|chunk| Chunk::Branch(Arc::new(chunk.to_vec())))
                 .collect();
             shift += BITS;
         }
@@ -183,14 +218,14 @@ impl<T: Clone> PersistentVec<T> {
                 Chunk::Leaf(leaf) => {
                     let mut items: Vec<T> = leaf.to_vec();
                     *items.get_mut(index & MASK)? = value;
-                    Some(Chunk::Leaf(items.into()))
+                    Some(Chunk::Leaf(Arc::new(items)))
                 }
                 Chunk::Branch(branch) => {
                     let slot = (index >> shift) & MASK;
                     let child = replace(branch.get(slot)?, shift.checked_sub(BITS)?, index, value)?;
                     let mut chunks: Vec<Chunk<T>> = branch.to_vec();
                     *chunks.get_mut(slot)? = child;
-                    Some(Chunk::Branch(chunks.into()))
+                    Some(Chunk::Branch(Arc::new(chunks)))
                 }
             }
         }
@@ -255,10 +290,10 @@ impl<'a, T> Iterator for Iter<'a, T> {
                     *next += 1;
                     match chunk {
                         Chunk::Leaf(leaf) => {
-                            self.leaf = leaf;
+                            self.leaf = leaf.as_slice();
                             self.pos = 0;
                         }
-                        Chunk::Branch(child) => self.stack.push((child, 0)),
+                        Chunk::Branch(child) => self.stack.push((child.as_slice(), 0)),
                     }
                 }
             }
@@ -312,6 +347,51 @@ mod tests {
         assert!(old.set(10_000, 1).is_none());
         assert_ne!(old, new);
         assert_eq!(old, (0..10_000u32).collect::<PersistentVec<u32>>());
+    }
+
+    #[test]
+    fn release_unique_stops_at_chunks_shared_with_another_version() {
+        // 회귀(scene-node-drop-o-width-regression): 경로 복사한 이전 version 해제는 그 version만
+        // 가진 경로 chunk만 풀고, 공유 chunk의 원소는 건드리지 않아야 합니다.
+        const LEN: usize = 200_000;
+        // 200,000개는 높이 4(leaf + branch 3단)이므로 경로의 유일 chunk는 root·branch 2개·leaf
+        // 1개입니다. 놓는 chunk는 root와 유일 branch 3개의 자식(각 ≤32칸)을 넘지 않습니다.
+        const PATH_BOUND: usize = 1 + 3 * WIDTH;
+        let old: PersistentVec<usize> = (0..LEN).collect();
+        let new = old.set(123_456, 7).expect("in range");
+        let mut out = Vec::new();
+        let released = old.release_unique(&mut out);
+        assert!(released <= PATH_BOUND, "놓은 chunk {released}");
+        // 바뀐 leaf 하나의 원소만 넘어옵니다.
+        let leaf_start = 123_456 / WIDTH * WIDTH;
+        let mut expected: Vec<usize> = (leaf_start..leaf_start + WIDTH).collect();
+        out.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(out, expected);
+        // 남은 version은 그대로입니다.
+        assert_eq!(new.len(), LEN);
+        assert_eq!(new.get(123_456), Some(&7));
+        assert_eq!(new.get(LEN - 1), Some(&(LEN - 1)));
+
+        // root를 공유하는 복제본은 root 참조 하나만 놓습니다.
+        let mut out = Vec::new();
+        assert_eq!(new.clone().release_unique(&mut out), 1);
+        assert!(out.is_empty());
+
+        // 마지막 version은 모든 원소를 복제 없이 넘깁니다.
+        let mut out = Vec::new();
+        let released = new.release_unique(&mut out);
+        assert_eq!(out.len(), LEN);
+        assert!(released > LEN / WIDTH);
+        let mut expected: Vec<usize> = (0..LEN).collect();
+        expected[123_456] = 7;
+        out.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(out, expected);
+
+        let mut out = Vec::new();
+        assert_eq!(PersistentVec::<u8>::new().release_unique(&mut out), 0);
+        assert!(out.is_empty());
     }
 
     #[test]
