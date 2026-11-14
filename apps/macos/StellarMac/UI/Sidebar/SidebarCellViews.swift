@@ -185,6 +185,15 @@ final class SidebarLayerCellView: SidebarNameCellView {
         visibilityButton.action = #selector(toggleVisibility(_:))
         lockButton.target = self
         lockButton.action = #selector(toggleLock(_:))
+        // 클릭 대상은 symbol 크기가 아니라 HIG 최소 컨트롤 크기 이상으로 둡니다. 이미지는 가운데에 그대로 그립니다
+        // (디자인 가이드 4.4).
+        let minimum = SidebarMetrics.minimumHitTarget
+        NSLayoutConstraint.activate([visibility, lock].flatMap { button in
+            [
+                button.widthAnchor.constraint(greaterThanOrEqualToConstant: minimum),
+                button.heightAnchor.constraint(greaterThanOrEqualToConstant: minimum),
+            ]
+        })
     }
 
     @available(*, unavailable)

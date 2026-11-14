@@ -86,6 +86,7 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 ### 4.3 표시·잠금 토글
 
 - 행 오른쪽의 테두리 없는 아이콘 버튼입니다. 마우스를 올린 행·선택한 행에서 보이고, 숨김·잠김 상태인 행에서는 항상 보입니다. 대비 높이기가 켜져 있으면 모든 행에서 보입니다. 숨겨진 토글도 자리를 차지해 열 위치가 행마다 같습니다.
+- 클릭 대상은 symbol 크기(약 21×13pt)가 아니라 HIG macOS 최소 컨트롤 크기 20×20pt 이상입니다. 이미지는 가운데에 그대로 그립니다. [가이드 4.4] [HIG Accessibility]
 - 버튼은 해당 행 하나에만 적용하며 선택을 바꾸지 않습니다. 여러 행에 적용할 때(단축키·문맥 메뉴): 모두 보이면 숨기고 하나라도 숨겨져 있으면 모두 보입니다. 잠금도 같은 규칙입니다.
 - 숨김은 흐린 글자만이 아니라 `eye.slash` 아이콘과 접근성 문구("Hidden")로도 알립니다. [가이드 4.2 "색에만 의존하지 않음"]
 
@@ -209,6 +210,7 @@ protocol SidebarDataProvider: AnyObject {
 | 페이지 구획 첫 높이 비율 | safe area 아래 높이의 0.3 | 페이지(수 개)보다 레이어(수백~)가 많음. 이후 사용자 분할선 위치를 따름 | `SidebarMetrics.initialPagesFraction` |
 | 구획 최소 높이 | 3행(제목 행 포함) × 시스템 행 높이 | 분할선이 사라지지 않게 함 [HIG Split views] | `SidebarMetrics.minimumPaneRows` |
 | 셀 안 간격 | 시스템 간격 × 0.5 (아이콘↔이름, 이름↔토글, 토글↔끝) | 하드코딩 point 대신 시스템 간격 기준 [가이드 4.4] | `SidebarNameCellView` |
+| 행 토글 최소 클릭 대상 | 20×20pt 이상 | HIG Accessibility의 macOS 최소 컨트롤 크기. 작은 사이드바 크기 설정의 행 높이 안에도 들어감 [가이드 4.4] | `SidebarMetrics.minimumHitTarget` |
 | 상태 화면 좌우 여백 | 시스템 간격 × 1 | 같음 | `SidebarStateView` |
 | 검사용 사이드바 폭 | 240pt | 검사 harness 전용. 실제 폭 범위는 XII.9.1 | `SidebarUICheck` |
 
@@ -217,7 +219,7 @@ protocol SidebarDataProvider: AnyObject {
 `NSSplitViewController`에 사이드바 item(필터 accessory 포함)과 빈 콘텐츠 item을 넣은 화면 밖 960×600 창에서, 사이드바 폭 240pt로 Stub 데이터를 반영한 뒤 확인합니다.
 
 - 구조: SF Symbol 21개 해석, source list 스타일, `NSSearchField`, 사이드바 behavior, accessory 부착, 이 영역이 넣은 `NSVisualEffectView` 없음(시스템 행의 선택 재질은 제외), 행 수, group row, active View 선택, key view 순서.
-- layout: Light·Dark·결과 없음 상태에서 Auto Layout 모호성 없음, 이름 필드가 토글과 겹치지 않음, 앱 크롬 색이 시스템 catalog 색.
+- layout: Light·Dark·결과 없음 상태에서 Auto Layout 모호성 없음, 이름 필드가 토글과 겹치지 않음, 토글 클릭 대상 20×20pt 이상이고 행 안에 들어감, 앱 크롬 색이 시스템 catalog 색.
 - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로로 읽습니다(`AXNode`: NSAccessibility 프로토콜 객체는 프로토콜 메서드, AppKit 표의 `AXRow`·`AXCell`은 legacy attribute 질의). 모든 행이 `AXCell` 하나로 묶임, 행 레이블·custom action(명세로 따로 계산한 값과 비교), 장식 아이콘 `AXImage` 없음, 보이는 토글만 노출되고 레이블이 다음 동작, custom action을 접근성 서버 방식(이름 있는 AX action)으로 실행(Hide·Lock → command, 선택 유지, Rename → 편집 시작·취소), 선택 행(`AXSelectedRows`)의 레이블, 필터 필드 cell 레이블, 상태 화면 group 레이블과 아이콘 미노출, 숨김·잠김·필터 문맥 문구, 빈 이름 placeholder.
 - 동작: 선택 command, 외부 선택 펼침, Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 변경 통지 병합.
 - 검사하지 않는 것: 실제 마우스 드래그 세션, VoiceOver 음성 출력, 시스템 접근성 설정을 실제로 켠 상태, 화면 픽셀.

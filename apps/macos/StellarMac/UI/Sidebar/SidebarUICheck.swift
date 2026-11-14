@@ -5,7 +5,7 @@ import AppKit
 /// `SidebarStubDataProvider` 데이터로 실제 배치(`NSSplitViewController` + 사이드바 item + 필터 accessory)를
 /// 일반적인 창 크기에서 만들고 layout을 강제한 뒤 다음을 확인합니다.
 /// - SF Symbols 이름이 실행 OS에서 해석됨, source list 스타일, 네이티브 텍스트 컨트롤, `NSVisualEffectView` 없음
-/// - Auto Layout 모호성 없음(Light·Dark 모두), 앱 크롬 색이 시스템 의미 색(catalog)임
+/// - Auto Layout 모호성 없음(Light·Dark 모두), 앱 크롬 색이 시스템 의미 색(catalog)임, 토글 클릭 대상 최소 크기
 /// - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로(`AXNode`)로 읽습니다. 목록 → `AXRow` → `AXCell`의
 ///   행 레이블·custom action(실행 포함), 장식 아이콘 미노출, 토글·필터·상태 화면 레이블, 선택 행, key view 순서
 /// - 선택, 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증,
@@ -285,6 +285,7 @@ enum SidebarUICheck {
         var ambiguous: [String] = []
         var nonSemantic: [String] = []
         var overlapping: [String] = []
+        var smallTargets: [String] = []
         let roots: [NSView] = [harness.sidebar.view, harness.sidebar.filterAccessory.view]
         for root in roots {
             visit(root) { view in
@@ -292,6 +293,16 @@ enum SidebarUICheck {
                 if let cell = view as? SidebarLayerCellView,
                    cell.nameField.frame.width <= 0 || cell.nameField.frame.maxX > cell.visibilityButton.frame.minX {
                     overlapping.append(cell.nameField.stringValue)
+                }
+                // 토글 클릭 대상: HIG 최소 컨트롤 크기 이상이고 행 높이 안에 들어감(디자인 가이드 4.4).
+                if let cell = view as? SidebarLayerCellView {
+                    for button in [cell.visibilityButton, cell.lockButton] {
+                        let size = button.frame.size
+                        if size.width < SidebarMetrics.minimumHitTarget || size.height < SidebarMetrics.minimumHitTarget
+                            || button.frame.minY < cell.bounds.minY || button.frame.maxY > cell.bounds.maxY {
+                            smallTargets.append("\(cell.nameField.stringValue) \(size)")
+                        }
+                    }
                 }
                 if view.hasAmbiguousLayout {
                     let owner = view.superview.map { String(describing: type(of: $0)) } ?? "-"
@@ -312,6 +323,7 @@ enum SidebarUICheck {
         try require(ambiguous.isEmpty, "[\(label)] Auto Layout 모호성: \(Set(ambiguous).sorted())")
         try require(nonSemantic.isEmpty, "[\(label)] 시스템 의미 색이 아닌 색: \(Set(nonSemantic).sorted())")
         try require(overlapping.isEmpty, "[\(label)] 이름 필드 폭 없음 또는 토글과 겹침: \(overlapping)")
+        try require(smallTargets.isEmpty, "[\(label)] 토글 클릭 대상이 최소 크기보다 작거나 행 밖으로 나감: \(smallTargets)")
         let sidebarWidth = harness.sidebar.view.frame.width
         try require(abs(sidebarWidth - Harness.sidebarWidth) < 1, "[\(label)] 사이드바 폭이 검사 폭과 다름: \(sidebarWidth)")
 
