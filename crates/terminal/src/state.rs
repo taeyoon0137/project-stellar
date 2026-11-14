@@ -12,6 +12,8 @@ pub enum TerminalExitStatus {
     Exited(i32),
     /// 신호로 종료(신호 번호).
     Signaled(i32),
+    /// 끝났지만 상태를 알 수 없습니다(이 crate 밖에서 leader를 회수함, `ECHILD`).
+    Unknown,
 }
 
 impl fmt::Display for TerminalExitStatus {
@@ -19,6 +21,7 @@ impl fmt::Display for TerminalExitStatus {
         match self {
             TerminalExitStatus::Exited(code) => write!(f, "exit {code}"),
             TerminalExitStatus::Signaled(signal) => write!(f, "signal {signal}"),
+            TerminalExitStatus::Unknown => f.write_str("unknown"),
         }
     }
 }
@@ -147,6 +150,7 @@ mod tests {
             ["child-exited", "closed", "cancelled", "app-closed"]
         );
         assert_eq!(TerminalExitStatus::Signaled(9).to_string(), "signal 9");
+        assert_eq!(TerminalExitStatus::Unknown.to_string(), "unknown");
         assert_eq!(StartFailure::Pty.code(), "pty");
     }
 }

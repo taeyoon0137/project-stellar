@@ -213,10 +213,12 @@ impl TerminalSession {
         self.process.as_deref_mut()
     }
 
-    /// child를 종료하고 상태를 `Finished`로 바꿉니다. child가 없으면 상태를 그대로 둡니다.
+    /// child를 종료하고 상태를 `Finished`로 바꿉니다. child가 없으면 상태를 그대로 둡니다. 종료가
+    /// 실패하면 child handle을 세션에 그대로 남겨 호출자가 다시 시도하거나 보고할 수 있게 합니다.
     fn finish(&mut self, reason: TerminationReason) -> Result<(), TerminalIoError> {
-        if let Some(mut process) = self.process.take() {
+        if let Some(process) = self.process.as_mut() {
             let report = process.terminate()?;
+            self.process = None;
             self.record_exit(report, reason);
         }
         Ok(())
@@ -369,15 +371,20 @@ impl TerminalRegistry {
     }
 
     /// 세션을 닫고 registry에서 제거합니다. 실행 중이면 child를 종료한 뒤 최종 상태를 돌려줍니다.
+    ///
+    /// child 종료가 실패하면([`RegistryError::Terminate`]) 세션을 제거하지 않습니다. 세션은 실행 중
+    /// 상태와 child handle을 그대로 가지므로 다시 닫거나 취소할 수 있습니다.
     pub fn close(&mut self, id: TerminalSessionId) -> Result<TerminalProcessState, RegistryError> {
-        let mut session = self
+        let session = self
             .sessions
-            .remove(&id)
+            .get_mut(&id)
             .ok_or(RegistryError::UnknownSession)?;
         session
             .finish(TerminationReason::Closed)
             .map_err(RegistryError::Terminate)?;
-        Ok(session.state)
+        let state = session.state;
+        self.sessions.remove(&id);
+        Ok(state)
     }
 
     /// 세션.
@@ -387,7 +394,8 @@ impl TerminalRegistry {
 
     /// 실행 중 세션의 종료를 비차단으로 확인하고 정리를 진행합니다. 이번에 끝난 세션 식별자를
     /// 돌려줍니다. 끝난 세션은 사용자가 닫을 때까지 `Finished{ChildExited}`로 남고 child handle은
-    /// 해제됩니다. OS 호출 오류는 다음 호출에서 다시 확인합니다.
+    /// 해제됩니다. OS 호출 오류는 다음 호출에서 다시 확인합니다. leader를 이 crate 밖에서 회수한
+    /// 경우(`ECHILD`)는 오류가 아니라 종료 상태 `Unknown`으로 끝납니다(`pty` 모듈 문서).
     pub fn poll(&mut self) -> Vec<TerminalSessionId> {
         let mut finished = Vec::new();
         for session in self.sessions.values_mut() {
@@ -419,6 +427,8 @@ impl TerminalRegistry {
     }
 
     /// 모든 세션을 닫고 제거합니다(창·앱 종료). 각 세션의 최종 상태를 만든 순서로 돌려줍니다.
+    /// 종료에 실패한 세션도 결과와 함께 제거하며, macOS PTY handle은 drop에서 마지막 `SIGKILL`만
+    /// 보내고 다시 기다리지 않습니다.
     pub fn close_all(
         &mut self,
         reason: TerminationReason,
@@ -521,7 +531,7 @@ pub(crate) mod tests {
     use crate::state::{StartFailure, TerminalExitStatus};
     use crate::test_support::TempDir;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use stellar_core_types::ids::StableId;
 
@@ -540,6 +550,8 @@ pub(crate) mod tests {
         terminated: Arc<AtomicUsize>,
         dropped: Arc<AtomicUsize>,
         resized: Arc<AtomicUsize>,
+        /// 켜져 있으면 terminate가 `TimedOut`으로 실패합니다.
+        fail_terminate: Arc<AtomicBool>,
     }
 
     impl FakeCounters {
@@ -557,6 +569,10 @@ pub(crate) mod tests {
 
         pub(crate) fn resized(&self) -> usize {
             self.resized.load(Ordering::SeqCst)
+        }
+
+        pub(crate) fn set_fail_terminate(&self, fail: bool) {
+            self.fail_terminate.store(fail, Ordering::SeqCst);
         }
     }
 
@@ -580,6 +596,13 @@ pub(crate) mod tests {
 
         fn terminate(&mut self) -> Result<ExitReport, TerminalIoError> {
             self.counters.terminated.fetch_add(1, Ordering::SeqCst);
+            if self.counters.fail_terminate.load(Ordering::SeqCst) {
+                return Err(TerminalIoError {
+                    operation: "terminate",
+                    kind: std::io::ErrorKind::TimedOut,
+                    os_code: None,
+                });
+            }
             Ok(ExitReport {
                 status: TerminalExitStatus::Signaled(1),
                 remaining_processes: 0,
@@ -884,6 +907,67 @@ pub(crate) mod tests {
         assert_eq!(launcher.counters.launches(), 20);
         assert_eq!(launcher.counters.terminated(), 20);
         assert_eq!(launcher.counters.dropped(), 20);
+    }
+
+    #[test]
+    fn failed_termination_keeps_session_for_retry() {
+        let dir = TempDir::new();
+        let context = CwdContext::new(dir.path(), &[]).unwrap();
+        let shell = sh();
+        let environment = LaunchEnvironment {
+            cwd: &context,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
+            env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
+        };
+        let mut launcher = FakeLauncher::default();
+        let mut registry = TerminalRegistry::new(window(22));
+        let id = registry.create(profile("stuck")).unwrap();
+        let pid = registry
+            .start(id, trusted(&registry), &environment, &mut launcher)
+            .unwrap();
+        launcher.counters.set_fail_terminate(true);
+        let timed_out = Err(RegistryError::Terminate(TerminalIoError {
+            operation: "terminate",
+            kind: std::io::ErrorKind::TimedOut,
+            os_code: None,
+        }));
+        // 닫기 실패: 세션·handle이 그대로 남고 다시 시도할 수 있습니다(handle drop 0).
+        assert_eq!(registry.close(id), timed_out);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.resolve_handle(id.to_handle()), Some(id));
+        assert_eq!(
+            registry.session(id).unwrap().state(),
+            TerminalProcessState::Running { pid }
+        );
+        assert!(registry.session(id).unwrap().process().is_some());
+        assert_eq!(registry.cancel(id), timed_out);
+        assert!(registry.session(id).unwrap().process().is_some());
+        assert_eq!(launcher.counters.dropped(), 0);
+        // 원인이 사라지면 같은 세션을 닫을 수 있습니다.
+        launcher.counters.set_fail_terminate(false);
+        assert!(matches!(
+            registry.close(id),
+            Ok(TerminalProcessState::Finished {
+                reason: TerminationReason::Closed,
+                ..
+            })
+        ));
+        assert!(registry.is_empty());
+        assert_eq!(launcher.counters.terminated(), 3);
+        assert_eq!(launcher.counters.dropped(), 1);
+
+        // 창 종료(close_all)는 실패한 세션도 결과와 함께 제거합니다.
+        let id = registry.create(profile("stuck-on-close")).unwrap();
+        registry
+            .start(id, trusted(&registry), &environment, &mut launcher)
+            .unwrap();
+        launcher.counters.set_fail_terminate(true);
+        let results = registry.close_all(TerminationReason::AppClosed);
+        assert_eq!(results, [(id, timed_out)]);
+        assert!(registry.is_empty());
+        assert_eq!(launcher.counters.dropped(), 2);
     }
 
     #[test]
