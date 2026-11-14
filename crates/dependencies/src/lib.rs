@@ -76,6 +76,9 @@ pub mod read_only;
 /// 외부 참조 scope 해석과 전이 resource ref (XV.5.4).
 pub mod ref_resolution;
 
+/// lock 기준 library 로드와 부분 열기 (XV.5.5).
+pub mod library_load;
+
 /// 다중 버전 경고 상세: 경로·예상 추가 용량·UI/telemetry 분리 (XV.8.3).
 pub mod duplicate_report;
 
