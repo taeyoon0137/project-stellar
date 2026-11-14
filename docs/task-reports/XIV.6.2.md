@@ -35,7 +35,7 @@ Cargo 명령은 모두 `CARGO_TARGET_DIR="$PWD/target/semantic-index-publish"`�
 
 - `DEV-MAC`: macOS 27.2, Apple Git 2.54.0 (Apple Git-157), Rust/Cargo 1.96.0.
 - upstream Git v2.54.0의 공식 소스를 새 임시 디렉터리에서 `make -j4 NO_GETTEXT=YesPlease NO_CURL=YesPlease NO_TCLTK=YesPlease NO_OPENSSL=YesPlease NO_EXPAT=YesPlease git`로 빌드(0)했습니다. 시스템 설치·config 변경은 없습니다.
-- macOS에서 Apple/upstream Git 2.54.0만 승인합니다. GNU/Linux는 실행하지 않았으며 production도 진단으로 거부합니다. 다른 Git 버전도 버전별 검증 전에는 거부합니다.
+- 최초 구현은 위 두 Git 2.54.0 실행 파일을 검증하고 패치 버전을 고정했습니다. 현재 macOS에서는 아래의 실제 명령과 잠금 검사를 사용합니다.
 - 모든 실험·Git 변경은 새 GitFixture에 한정했습니다. 제품 저장소의 실제 index·worktree를 fixture로 쓰지 않았습니다. 컴파일 로그는 전용 target 아래 있습니다.
 
 ## 테스트
@@ -52,15 +52,35 @@ Cargo 명령은 모두 `CARGO_TARGET_DIR="$PWD/target/semantic-index-publish"`�
 
 - 전체 index bytes와 entries를 비교하는 O(index 크기) 작업입니다. 하나의 update-index 입력에 모든 경로를 넣으며, 승인 전 읽기 명령 비용은 별도입니다. REF 성능·대형 index benchmark는 실행하지 않았습니다.
 
+## macOS Git 호환성 재검증
+
+기준 `636034ba`에서 설치된 Fork Git 2.50.1의 빈 index 적용 검사는 버전 제한으로 종료 101이었습니다.
+수정 후 각 실행 파일을 `STELLAR_INDEX_PUBLISH_TEST_GIT`로 지정하고
+`cargo test --locked --offline -p stellar-git-porcelain index_publish::`를 실행했습니다.
+각 검사는 독립 임시 저장소와 사용자 데이터 경로를 사용했습니다.
+
+| 실행 파일 | 실제 버전 | 결과 |
+|---|---|---|
+| `/usr/bin/git` | 2.54.0 (Apple Git-157) | 16개 통과 |
+| `/Applications/Fork.app/Contents/Resources/git-instance/bin/git` | 2.50.1 | 16개 통과 |
+
+두 실행 파일 모두 실제 index 반영·재조회, D/F 전환, flags·REUC, SHA-256, linked worktree,
+잠금 경합과 승인 전 timeout·취소에서 기준 index 및 Working Tree 보존을 검증했습니다.
+macOS 쓰기 경로는 선택한 Git의 실제 `rev-parse`·`ls-files` 응답을 확인합니다.
+`ls-files --debug -z`는 기준 index의 모든 경로에 대해 같은 순서로 해석 가능한 flags를 반환해야 합니다.
+각 publish에서 `update-index` 자식이 실제 잠금 inode의 쓰기 FD를 보유한 상태에서 기준을 다시 검사하고
+입력을 허용합니다. 미지원 명령·출력 형식·불분명한 잠금 소유는 승인 전에 중단합니다.
+IV.3.5의 Git 설치 상태와 최소 버전 정책은 변경하지 않았습니다. 표에 없는 버전은 이번 실행의 검증 범위 밖입니다.
+
 ## 차이
 
 - [Git update-index v2.54.0](https://github.com/git/git/blob/v2.54.0/builtin/update-index.c#L1047-L1055)은 lock 실패 뒤에도 index를 읽을 수 있습니다. 따라서 파일 존재가 아닌 실제 자식 FD 소유를 확인합니다. 수정·commit·잠금 정리는 Git만 수행합니다.
-- [Git lockfile API](https://git-scm.com/docs/api-lockfile)의 exclusive-create/rename 규약을 지키는 writer를 대상으로 합니다. 검증되지 않은 OS/버전/flags는 우회하지 않습니다.
+- [Git lockfile API](https://git-scm.com/docs/api-lockfile)의 exclusive-create/rename 규약을 지키는 writer를 대상으로 합니다. macOS에서 해석 가능한 index와 flags를 검사합니다.
 - 이전 장문 재현은 commit `39bf1612`에 남기고 차단 보고서를 핵심 관찰로 줄였습니다. 기존 부분 선택·직렬화는 재구현하지 않았습니다.
 
 ## 남은 위험
 
 - 입력 승인 뒤 timeout·취소·Git 실패·재조회 불일치는 결과 미확정입니다. 이 단계는 무조건 rollback하지 않습니다. 성공이 확인된 publish의 조건부 복원과 semantic 검증 실패 처리(XIV.6.4/6.5)는 후속 단위입니다.
-- selected assume/skip/ITA 등 flags, split/sparse index, Git 저장소/index 환경 경로 재지정, Linux/Windows·다른 Git 버전은 지원하지 않습니다. unrelated flags/REUC는 유지합니다.
+- selected assume/skip/ITA 등 flags, split/sparse index, Git 저장소/index 환경 경로 재지정, Linux/Windows는 지원하지 않습니다. unrelated flags/REUC는 유지합니다.
 - 직접 index/lock을 강제 조작하는 writer 및 SIGKILL 뒤 잔류 lock을 자동 삭제하지 않습니다. FD 조회 권한·형식이 불확실하면 입력을 보내지 않습니다.
 - 동기 filesystem 읽기 자체는 OS에서 막힐 수 있습니다. Git 자식 실행/승인 대기에는 deadline·취소가 적용됩니다. 실제 앱 QA·CI·REF·release는 실행하지 않았습니다.

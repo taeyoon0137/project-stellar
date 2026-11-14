@@ -85,6 +85,36 @@ fn stale_same_path_and_both_directory_file_races_preserve_external_writer() {
 }
 
 #[test]
+fn flags_probe_requires_exactly_the_base_index_paths() {
+    let fx = fixture("publish-flags-coverage");
+    fx.write("first", b"one").unwrap();
+    fx.write("second", b"two").unwrap();
+    fx.git(["add", "-A"]).unwrap();
+    let c = candidate(
+        &fx,
+        vec![upsert(&fx, "first", FileMode::REGULAR, b"updated")],
+    );
+    let probe = |paths: &[&str]| {
+        let mut args = vec!["ls-files", "--debug", "-z", "--"];
+        args.extend_from_slice(paths);
+        fx.git(args).unwrap().stdout
+    };
+    let first = probe(&["first"]);
+    let second = probe(&["second"]);
+    assert_eq!(check_flags(&[&first[..], &second].concat(), &c), Ok(()));
+    for partial in [&first[..], &second, &[]] {
+        assert_eq!(
+            check_flags(partial, &c),
+            Err(PublishError::Unsupported("index flags 경로 목록 불일치"))
+        );
+    }
+    assert_eq!(
+        check_flags(&[&first[..], &first].concat(), &c),
+        Err(PublishError::Unsupported("index flags 경로 목록 불일치"))
+    );
+}
+
+#[test]
 fn modes_deletion_and_valid_directory_file_transitions() {
     for (old, new) in [("d/a", "d"), ("d", "d/a")] {
         let fx = fixture("publish-modes");

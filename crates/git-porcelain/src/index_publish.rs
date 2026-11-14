@@ -178,6 +178,7 @@ fn input(candidate: &WrittenCandidate) -> Vec<u8> {
 
 /// ls-files --debug는 안정된 protocol이 아니므로 구조가 달라지면 승인하지 않습니다.
 fn check_flags(mut output: &[u8], candidate: &WrittenCandidate) -> Result<(), PublishError> {
+    let mut base_entries = candidate.base_index().entries.iter();
     while !output.is_empty() {
         let nul = output
             .iter()
@@ -213,6 +214,9 @@ fn check_flags(mut output: &[u8], candidate: &WrittenCandidate) -> Result<(), Pu
         if flags & !0x6000_c000 != 0 {
             return Err(PublishError::Unsupported("검증되지 않은 index flags"));
         }
+        if base_entries.next().map(|entry| entry.path.as_bytes()) != Some(path) {
+            return Err(PublishError::Unsupported("index flags 경로 목록 불일치"));
+        }
         if flags != 0
             && candidate
                 .changes()
@@ -224,13 +228,15 @@ fn check_flags(mut output: &[u8], candidate: &WrittenCandidate) -> Result<(), Pu
             ));
         }
     }
+    if base_entries.next().is_some() {
+        return Err(PublishError::Unsupported("index flags 경로 목록 불일치"));
+    }
     Ok(())
 }
 
 /// 승인된 blob 후보를 실제 index에 적용하고 Index provider 결과를 대조합니다.
 /// Working Tree나 인메모리 문서에 접근하지 않습니다. 아직 UI/FFI staging 진입점은 아닙니다.
-/// macOS의 Apple/upstream Git 2.54.0에서 자식의 FD 소유를 확인할 수 있을 때만 승인합니다.
-/// Linux 등 다른 OS·Git 버전은 실측 검증 전까지 진단합니다.
+/// macOS에서 실제 update-index 자식의 쓰기 FD 소유와 선택한 Git의 index 조회 결과를 확인한 뒤 승인합니다.
 pub fn publish_candidate(
     git: &GatedGitRunner,
     worktree: &Path,
@@ -257,14 +263,6 @@ pub fn publish_candidate(
     }
     if cancel.is_cancelled() {
         return Err(GatedRunError::Run(GitRunError::Cancelled).into());
-    }
-    let version = require_success(git.run_cancellable(&argv(["--version"]), worktree, cancel)?)?;
-    if crate::version::parse_git_version_output(&String::from_utf8_lossy(&version.stdout))
-        != Some((2, 54, 0))
-    {
-        return Err(PublishError::Unsupported(
-            "검증된 Git 2.54.0 (Apple/upstream) 필요",
-        ));
     }
     let expected = expected_index(candidate)?;
     if candidate.changes().is_empty() {
