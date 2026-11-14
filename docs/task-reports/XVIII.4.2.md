@@ -71,6 +71,28 @@
 | 버려진 줄 따라 선택 자르기·사라짐, 대체 화면·크기 변경 때 선택 지움(`selection_follows_eviction_and_is_cleared_on_screen_switch`) | 통과 |
 | 복사 상한·한글 문자 경계 자르기(`copy_is_bounded_and_marks_truncation`), 붙여넣기 개행·제어 문자 제거·bracketed(`paste_normalizes_newlines_and_strips_controls`, `paste_follows_bracketed_mode`), base64(`base64_decoding`), OSC 52 정책(`osc52_clipboard_policy`), 선택 순서·자르기(`ordering_and_clamping`) | 통과 |
 
+## 리뷰 후 수정(`Fix:` 커밋)
+
+- **할당자 계측으로 memory cap 독립 확인**: 위 100만 줄 검사는 crate가 스스로 세는
+  `Scrollback::memory_bytes`만 봅니다. 그 계산과 따로, 테스트 바이너리 전용 계측 할당자(System 위임,
+  thread별)로 같은 조건(24×80, 상한 1,000,000줄·32 MiB, 출력 100만 줄)의 heap을 재는 통합 테스트
+  `crates/terminal/tests/scrollback_heap_measurement.rs`를 추가했습니다. realloc은 두 블록이 공존한다고
+  보고 peak를 셉니다(보수적).
+
+| 측정(`DEV-MAC`, `cargo test -p stellar-terminal --test scrollback_heap_measurement -- --nocapture`) | 값 |
+|---|---|
+| 상한 | 33,554,432 B |
+| 자체 계산(`memory_bytes`, 끝) | 33,554,032 B |
+| 요청 크기 heap peak(측정 중 늘어난 양) | 33,555,904 B(상한 + 1,472 B: 기록으로 옮기는 줄 대신 화면에 새로 만드는 빈 줄 등 scrollback 밖 일시 할당) |
+| 요청 크기 heap 끝 | 33,554,032 B(자체 계산과 같음) |
+| 실제 블록 크기 peak(macOS `malloc_size`, 크기 등급 올림 포함) | 36,064,000 B(상한의 107.5%) |
+| 남은 기록 | 52,251줄 |
+
+| 검사 | 결과 |
+|---|---|
+| 요청 크기 peak ≤ 상한 + 64 KiB, 끝 heap과 자체 계산 차이 ≤ 64 KiB, 실제 블록 peak ≤ 상한 + 1/8(`one_million_output_lines_stay_within_cap_by_allocator_measurement`) | 통과 |
+| 검사가 실제로 잡는지: ring buffer 칸을 상한 계산에서 빼도록 임시로 고치면 요청 크기 peak 36,177,280 B로 실패(확인 뒤 되돌림) | 실패 확인 |
+
 ## 차이(작업 지시와 다른 점)
 
 - "100만 line memory cap"은 줄 수 상한을 최대 100만 줄로 설정해 100만 줄 이상을 넣어도 메모리 상한
@@ -80,6 +102,9 @@
 ## 남은 위험 / 한계
 
 - 크기 변경 때 줄을 다시 흘리지 않고, 화면이 커질 때 기록 줄을 화면으로 되돌리지 않습니다.
+- 메모리 상한은 요청 크기(byte)로 셉니다. 실제 사용량에는 할당자의 크기 등급 올림이 더해지며, 위
+  측정(37자 줄)에서 상한의 7.5%였습니다. 줄 폭에 따라 이 비율이 달라질 수 있고 다른 폭은 재지 않았습니다.
+  할당자 관리 정보(zone metadata)는 `malloc_size`에도 들어가지 않습니다.
 - 화면 격자 자체(최대 4096×4096 셀)는 scrollback 상한에 들어가지 않습니다. 크기 상한
   (`TerminalSize`)이 그 상한입니다.
 - 선택은 출력이 선택 영역을 덮어써도 지워지지 않습니다(내용이 바뀐 줄의 새 문자열이 복사됨).
