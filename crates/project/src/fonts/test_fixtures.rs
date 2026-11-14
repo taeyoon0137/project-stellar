@@ -230,14 +230,27 @@ pub(crate) fn overlapping_name_table(
     record_len: u16,
     unit: u16,
 ) -> Vec<u8> {
+    overlapping_name_table_for(&[name_id], record_count, record_len, unit)
+}
+
+/// [`overlapping_name_table`]과 같되 `name_ids` 각각에 record `per_id`개씩을 둡니다(모두 같은 문자열 구간).
+pub(crate) fn overlapping_name_table_for(
+    name_ids: &[u16],
+    per_id: u16,
+    record_len: u16,
+    unit: u16,
+) -> Vec<u8> {
+    let record_count = u16::try_from(name_ids.len() * usize::from(per_id)).unwrap();
     let string_offset = 6 + 12 * u32::from(record_count);
     let mut out = Vec::new();
     out.extend_from_slice(&0u16.to_be_bytes());
     out.extend_from_slice(&record_count.to_be_bytes());
     out.extend_from_slice(&(string_offset as u16).to_be_bytes());
-    for _ in 0..record_count {
-        for value in [3u16, 1, 0x0409, name_id, record_len, 0] {
-            out.extend_from_slice(&value.to_be_bytes());
+    for &name_id in name_ids {
+        for _ in 0..per_id {
+            for value in [3u16, 1, 0x0409, name_id, record_len, 0] {
+                out.extend_from_slice(&value.to_be_bytes());
+            }
         }
     }
     for _ in 0..record_len / 2 {
@@ -258,6 +271,32 @@ pub(crate) fn ttc_repeated(extra: &[ExtraTable], count: u32) -> Vec<u8> {
         out.extend_from_slice(&header_len.to_be_bytes());
     }
     out.extend_from_slice(&face_blob(SIG_TRUETYPE, &[], extra, header_len));
+    out
+}
+
+/// face `count`개가 저마다 `extra` table의 사본을 갖는 collection(name table 구간이 모두 다름).
+pub(crate) fn ttc_distinct_copies(extra: &[ExtraTable], count: u32) -> Vec<u8> {
+    let header_len = 12 + 4 * count;
+    let mut blobs = Vec::new();
+    let mut offsets = Vec::new();
+    let mut next = header_len;
+    for _ in 0..count {
+        let blob = face_blob(SIG_TRUETYPE, &[], extra, next);
+        offsets.push(next);
+        next += blob.len() as u32;
+        blobs.push(blob);
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(&SIG_TTCF);
+    out.extend_from_slice(&1u16.to_be_bytes());
+    out.extend_from_slice(&0u16.to_be_bytes());
+    out.extend_from_slice(&count.to_be_bytes());
+    for offset in offsets {
+        out.extend_from_slice(&offset.to_be_bytes());
+    }
+    for blob in blobs {
+        out.extend_from_slice(&blob);
+    }
     out
 }
 

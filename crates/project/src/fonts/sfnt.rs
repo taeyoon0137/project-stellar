@@ -25,7 +25,10 @@
 //!   비웁니다.
 //! - name record는 decode 전에 원본 길이로 거르고(아래 이름 선택 규칙), nameID 하나에서 decode를
 //!   시도하는 후보는 순위 순 [`MAX_NAME_CANDIDATES_PER_ID`]개까지입니다. 같은 문자열 구간을 가리키는
-//!   record가 아무리 많아도 face 하나의 decode 작업량은 상수 상한 이하입니다.
+//!   record가 아무리 많아도 name table 하나의 decode 작업량은 상수 상한(nameID 5종 × 64개 × 2,050 bytes
+//!   = 656,000 bytes) 이하입니다. 이 상수는 읽은 bytes보다 약 100배 클 수 있으므로(약 6 KB table),
+//!   파일 하나의 모든 name table에 걸친 decode 원본 bytes 합계도 [`MAX_NAME_DECODE_BYTES_PER_FILE`]로
+//!   제한합니다. 넘는 후보는 decode하지 않고 제외합니다(face 순서대로 쓰므로 결정론적).
 //! - 재귀 없이 반복문으로만 읽습니다.
 //!
 //! container 구조(collection offset, face signature, WOFF header) 오류는 파일 전체를 거부합니다.
@@ -75,6 +78,10 @@ pub const MAX_NAME_TABLE_BYTES_PER_FILE: u64 = 16 * MAX_NAME_TABLE_BYTES as u64;
 
 /// nameID 하나에서 decode를 시도하는 후보 record 수 상한(순위 순).
 pub const MAX_NAME_CANDIDATES_PER_ID: usize = 64;
+
+/// 파일 하나에서 name record decode를 시도하는 원본 bytes 합계 상한. 넘는 후보는 decode하지 않고
+/// 제외합니다(읽기 합계 상한 [`MAX_NAME_TABLE_BYTES_PER_FILE`]과 같은 값).
+pub const MAX_NAME_DECODE_BYTES_PER_FILE: u64 = MAX_NAME_TABLE_BYTES_PER_FILE;
 
 /// UTF-16BE name record 원본 bytes 상한(유효 이름 + 끝 NUL 하나).
 const MAX_UTF16_NAME_RECORD_BYTES: usize = 2 * MAX_FACE_NAME_BYTES + 2;
@@ -478,6 +485,15 @@ pub fn read_font_file<R: Read + Seek>(
     reader: &mut R,
     file_len: u64,
 ) -> Result<FontFileInfo, FontParseError> {
+    read_font_file_with(reader, file_len, &mut NameTables::default())
+}
+
+/// [`read_font_file`] 본체. `names`는 이 파일 하나의 name table 읽기·decode 상태입니다.
+fn read_font_file_with<R: Read + Seek>(
+    reader: &mut R,
+    file_len: u64,
+    names: &mut NameTables,
+) -> Result<FontFileInfo, FontParseError> {
     let mut file = Bounded {
         reader,
         len: file_len,
@@ -490,13 +506,13 @@ pub fn read_font_file<R: Read + Seek>(
             } else {
                 FontFileFormat::TrueType
             };
-            let face = read_sfnt_face(&mut file, 0, &mut NameTables::default())?;
+            let face = read_sfnt_face(&mut file, 0, names)?;
             Ok(FontFileInfo {
                 format,
                 faces: vec![face],
             })
         }
-        SIG_TTCF => read_collection(&mut file),
+        SIG_TTCF => read_collection(&mut file, names),
         SIG_WOFF => read_woff(&mut file),
         SIG_WOFF2 => read_woff2(&mut file),
         signature => Err(FontParseError::UnknownSignature { signature }),
@@ -574,6 +590,7 @@ fn check_face_count(count: u32) -> Result<usize, FontParseError> {
 /// TTC: `ttcf`, major, minor, numFonts, offset[numFonts].
 fn read_collection<R: Read + Seek>(
     file: &mut Bounded<'_, R>,
+    names: &mut NameTables,
 ) -> Result<FontFileInfo, FontParseError> {
     let major = file.u16_at(4)?;
     let minor = file.u16_at(6)?;
@@ -584,7 +601,6 @@ fn read_collection<R: Read + Seek>(
     // offset 표 전체가 파일 안인지 먼저 확인합니다(count <= MAX_FACES_PER_FILE).
     let table = file.vec_at(TTC_HEADER_LEN, (count as u32) * 4)?;
     let mut faces = Vec::with_capacity(count);
-    let mut names = NameTables::default();
     for (index, raw) in table.chunks_exact(4).enumerate() {
         let offset = u64::from(u32::from_be_bytes([raw[0], raw[1], raw[2], raw[3]]));
         // index < count <= MAX_FACES_PER_FILE.
@@ -593,7 +609,7 @@ fn read_collection<R: Read + Seek>(
         if !is_sfnt_signature(signature) {
             return Err(FontParseError::InvalidFaceSignature { index, signature });
         }
-        faces.push(read_sfnt_face(file, offset, &mut names)?);
+        faces.push(read_sfnt_face(file, offset, names)?);
     }
     Ok(FontFileInfo {
         format: FontFileFormat::Collection,
@@ -604,11 +620,14 @@ fn read_collection<R: Read + Seek>(
 /// 파일 하나의 name table 읽기 상태(모듈 문서 "신뢰하지 않는 입력").
 ///
 /// 같은 구간(offset, 길이)은 한 번만 읽어 해석한 결과를 재사용하고, 서로 다른 구간을 읽은 bytes
-/// 합계를 [`MAX_NAME_TABLE_BYTES_PER_FILE`]로 제한합니다. face 순서대로 쓰므로 결과는 결정론적입니다.
+/// 합계를 [`MAX_NAME_TABLE_BYTES_PER_FILE`], decode 원본 bytes 합계를 [`MAX_NAME_DECODE_BYTES_PER_FILE`]로
+/// 제한합니다. face 순서대로 쓰므로 결과는 결정론적입니다.
 #[derive(Default)]
 struct NameTables {
     parsed: BTreeMap<(u64, u32), FontFaceNames>,
     bytes_read: u64,
+    /// 이 파일의 모든 name table에 걸친 decode 작업량.
+    work: NameParseWork,
 }
 
 impl NameTables {
@@ -632,7 +651,7 @@ impl NameTables {
         }
         self.bytes_read = total;
         let names = match file.vec_at(offset, length) {
-            Ok(bytes) => parse_name_table(&bytes, &mut NameParseWork::default()),
+            Ok(bytes) => parse_name_table(&bytes, &mut self.work),
             // 선언 길이보다 실제 파일이 짧음(읽는 도중 잘림).
             Err(FontParseError::Truncated { .. }) => FontFaceNames::default(),
             Err(e) => return Err(e),
@@ -934,7 +953,8 @@ fn max_name_record_bytes(platform: u16) -> usize {
 /// name table bytes(메모리, [`MAX_NAME_TABLE_BYTES`] 이하)에서 이름을 고릅니다.
 ///
 /// 순위 대상이 아니거나 원본 길이가 상한을 넘는 record는 decode 전에 거르고, nameID마다 순위 순 앞
-/// [`MAX_NAME_CANDIDATES_PER_ID`]개만 decode합니다. 작업량은 `work`에 더합니다.
+/// [`MAX_NAME_CANDIDATES_PER_ID`]개만 decode합니다. 작업량은 `work`에 더하며, `work`의 decode 합계가
+/// [`MAX_NAME_DECODE_BYTES_PER_FILE`]을 넘게 되는 후보는 decode하지 않고 제외합니다.
 fn parse_name_table(table: &[u8], work: &mut NameParseWork) -> FontFaceNames {
     let read_u16 = |at: usize| -> Option<u16> {
         table
@@ -984,6 +1004,10 @@ fn parse_name_table(table: &[u8], work: &mut NameParseWork) -> FontFaceNames {
         candidates.sort_unstable_by_key(|r| r.key);
         candidates.into_iter().find_map(|r| {
             let bytes = table.get(r.bytes_offset..r.bytes_offset.checked_add(r.bytes_len)?)?;
+            let decoded = (work.decoded_bytes as u64).saturating_add(bytes.len() as u64);
+            if decoded > MAX_NAME_DECODE_BYTES_PER_FILE {
+                return None;
+            }
             work.decode_attempts += 1;
             work.decoded_bytes += bytes.len();
             let text = if r.platform == 1 {
@@ -1476,6 +1500,40 @@ mod tests {
             bytes_read <= table_len + per_face_overhead,
             "읽은 bytes {bytes_read} > {table_len} + {per_face_overhead}"
         );
+    }
+
+    #[test]
+    fn distinct_name_tables_share_a_per_file_decode_budget() {
+        use crate::fonts::test_fixtures::{overlapping_name_table_for, ttc_distinct_copies};
+        // 리뷰 재현 입력: 약 6 KB name table 하나에 nameID 5종 × 64개 record가 모두 같은 2,050 bytes
+        // 구간(제어 문자라 거부)을 가리킴. table 하나의 decode는 320 × 2,050 = 656,000 bytes입니다.
+        let table = overlapping_name_table_for(&[1, 2, 6, 16, 17], 64, 2050, 0x0001);
+        let mut work = NameParseWork::default();
+        assert!(parse_name_table(&table, &mut work).is_empty());
+        let per_table = work.decoded_bytes as u64;
+        assert_eq!(per_table, 5 * 64 * 2050);
+        // 서로 다른 구간의 사본 40개: 읽기는 약 236 KB(읽기 상한 안)지만 상한이 없으면 decode는
+        // 26 MB를 넘습니다.
+        let count = 40;
+        assert!(per_table * u64::from(count) > MAX_NAME_DECODE_BYTES_PER_FILE);
+        let bytes = ttc_distinct_copies(&[(*b"name", table)], count);
+        let mut names = NameTables::default();
+        let info = read_font_file_with(
+            &mut IoCursor::new(&bytes[..]),
+            bytes.len() as u64,
+            &mut names,
+        )
+        .unwrap();
+        assert_eq!(info.face_count(), count);
+        assert!(info.faces.iter().all(|face| face.names.is_empty()));
+        assert!(names.bytes_read < MAX_NAME_TABLE_BYTES_PER_FILE);
+        let decoded = names.work.decoded_bytes as u64;
+        assert!(
+            decoded <= MAX_NAME_DECODE_BYTES_PER_FILE,
+            "decode bytes {decoded} > {MAX_NAME_DECODE_BYTES_PER_FILE}"
+        );
+        // 상한 안의 앞 table들은 실제로 decode했습니다.
+        assert!(decoded + per_table > MAX_NAME_DECODE_BYTES_PER_FILE);
     }
 
     #[test]

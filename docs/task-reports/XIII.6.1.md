@@ -104,3 +104,20 @@
   `repeated_collection_faces_read_the_name_table_once`(같은 face 4,096번 → name table 1회 읽기),
   `distinct_name_table_reads_are_capped_per_file`(1 MiB 구간 40개 → 읽기 합계 16 MiB + 고정 overhead
   이하). 작업량은 시간 대신 decode 횟수·읽은 bytes로 검사합니다(부하에 따라 흔들리지 않음).
+
+## 후속 수정(2차 리뷰 반영): 파일 하나의 name decode 합계 상한
+
+- **문제**: 위 수정은 읽은 bytes와 nameID별 decode 후보 수를 묶었지만, 읽은 bytes당 decode 작업량은 여전히
+  약 100배였습니다. 약 6 KB name table 하나에 nameID 5종 × 64개 record가 모두 같은 2,050 bytes 구간(제어
+  문자라 거부)을 가리키면 table 하나에서 656,000 bytes를 decode합니다. 읽기 합계 상한 16 MiB 안에 이런 서로
+  다른 table이 약 2,800개 들어가므로 파일 하나에서 약 1.8 GB를 decode할 수 있었습니다(상한은 있었지만
+  "입력 크기에 묶음"이라는 설명이 상수를 가렸음). `NameParseWork::decoded_bytes`는 세기만 하고 쓰지 않았습니다.
+- **수정**(`crates/project/src/fonts/sfnt.rs`): name table 읽기 상태(`NameTables`)가 파일 하나의 decode 작업량을
+  모든 name table에 걸쳐 누적하고, decode 원본 bytes 합계가 `MAX_NAME_DECODE_BYTES_PER_FILE`(16 MiB, 읽기
+  합계 상한과 같은 값)을 넘게 되는 후보는 decode하지 않고 제외합니다. face 순서대로 쓰므로 결과는
+  결정론적입니다. 파일 하나의 name 처리 작업량은 이제 읽기 16 MiB + decode 16 MiB 이하입니다.
+- **동작 차이**: 정상 폰트는 face마다 이름 몇 개(수십\~수백 bytes)만 decode하므로 영향이 없습니다. 상한을 넘은
+  뒤의 face는 이름이 비고 face는 유지됩니다(name table은 선택 metadata라는 기존 규칙과 같음).
+- **검증**: `distinct_name_tables_share_a_per_file_decode_budget`(리뷰 재현 입력의 서로 다른 사본 40개: 수정 전
+  decode 26,240,000 bytes로 실패, 수정 후 16 MiB 이하이고 상한 직전까지는 실제로 decode). 기존 작업량 테스트
+  4개도 통과합니다.
