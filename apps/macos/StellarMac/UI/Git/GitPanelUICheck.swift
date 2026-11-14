@@ -75,6 +75,8 @@ enum GitPanelUICheck {
         let host = HostRecorder()
         let controller: GitPanelViewController
         let window: NSWindow
+        /// VoiceOver 알림 기록(문구, 우선순위).
+        private(set) var announcements: [(String, NSAccessibilityPriorityLevel)] = []
 
         /// 일반적인 사이드바·인스펙터 폭과 창 높이에서 만듭니다.
         init(_ scenario: GitPanelStubScenario, size: NSSize = NSSize(width: 320, height: 760), appearance: NSAppearance.Name = .aqua) {
@@ -88,6 +90,7 @@ enum GitPanelUICheck {
             )
             window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: appearance)
+            controller.announcementHandler = { [weak self] message, priority in self?.announcements.append((message, priority)) }
             window.contentViewController = controller
             window.setContentSize(size)
             layout()
@@ -100,12 +103,21 @@ enum GitPanelUICheck {
             window.contentView?.layoutSubtreeIfNeeded()
         }
 
-        /// 메인 런 루프를 돌려 Stub 이벤트를 처리합니다.
+        func announced(_ fragment: String, priority: NSAccessibilityPriorityLevel? = nil) -> Bool {
+            announcements.contains { $0.0.contains(fragment) && (priority == nil || $0.1 == priority) }
+        }
+
+        /// 메인 런 루프를 돌려 Stub 이벤트를 처리합니다. 조건이 맞은 뒤에는 미뤄 둔 UI·상세·복원 반영(다음 런 루프
+        /// 차례로 넘긴 반영)을 마저 끝내 화면 상태를 확인할 수 있게 합니다. 그 사이 조건이 바뀌면 멈춥니다.
         @discardableResult
         func spin(timeout: TimeInterval = 10, until condition: () -> Bool) -> Bool {
             let deadline = Date().addingTimeInterval(timeout)
             while !condition() {
                 if Date() > deadline { return false }
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+                layout()
+            }
+            while controller.hasPendingWork, condition(), Date() <= deadline {
                 RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
                 layout()
             }
@@ -285,6 +297,23 @@ enum GitPanelUICheck {
         try expect(problems.isEmpty, "\(context): 접근성 \(problems.prefix(5))")
     }
 
+    /// 패널이 메인 스레드를 한 차례에 점유한 최대 시간(이벤트 드레인, UI 반영, 상세, 미룬 outline 다시 읽기).
+    @MainActor
+    private static func maxTurn(_ panel: GitPanelViewController) -> TimeInterval {
+        max(panel.diagnostics.maxTurnSeconds, panel.changeList.maxStructureReloadSeconds)
+    }
+
+    /// Debug 빌드 회귀 방지 상한. 계약(아키텍처 §6.3 단일 점유 2ms, Release·기준 하드웨어)의 두 배입니다.
+    private static let debugTurnLimit: TimeInterval = 0.004
+
+    /// 런 루프 차례별 최대 점유(ms) 보고 문구.
+    @MainActor
+    private static func occupancy(_ panel: GitPanelViewController) -> String {
+        let d = panel.diagnostics
+        func ms(_ seconds: TimeInterval) -> String { String(format: "%.2f", seconds * 1000) }
+        return "max drain \(ms(d.maxDrainSeconds))ms / UI \(ms(d.maxUIUpdateSeconds))ms / detail \(ms(d.maxDetailSeconds))ms / outline reload \(ms(panel.changeList.maxStructureReloadSeconds))ms (deferred UI \(d.deferredUIUpdates))"
+    }
+
     // MARK: 개별 검사
 
     @MainActor
@@ -318,8 +347,43 @@ enum GitPanelUICheck {
         try expectNoAmbiguity(harness, "typical light")
         try expectAccessibility(harness, "typical")
 
-        // 저장 대기 편집 안내(XIV.2.8).
+        // 저장 대기 편집 안내(XIV.2.8). 배너가 나타나면 VoiceOver에도 같은 문구를 알립니다.
         try expect(initial.pendingAutosave && isShown(panel.autosaveBanner), "typical: 저장 대기 배너가 보이지 않음")
+        try expect(harness.announced(GitPanelStrings.pendingAutosaveBanner), "typical: 저장 대기 알림 없음")
+
+        // Push·Pull 대기 수: 두 숫자를 각각 읽고(같은 문장 두 번 아님), 도움말 태그는 전체 문장입니다.
+        let aheadLabel = panel.aheadLabel.accessibilityLabel() ?? ""
+        let behindLabel = panel.behindLabel.accessibilityLabel() ?? ""
+        try expect(aheadLabel == GitPanelStrings.aheadCount(2) && behindLabel == GitPanelStrings.behindCount(0)
+                   && panel.aheadLabel.toolTip == GitPanelStrings.aheadBehind(ahead: 2, behind: 0),
+                   "typical: Push·Pull 레이블 '\(aheadLabel)' '\(behindLabel)'")
+
+        // 대비 높이기: 보조 문구·보조 색 아이콘(머리 줄, 진행 배너, 목록 행)을 label 색으로 올리고 되돌립니다.
+        let normal = panel.displayOptions
+        panel.apply(displayOptions: GitDisplayOptions(reduceMotion: true, increaseContrast: true, reduceTransparency: false))
+        let firstCell = list.item(atRow: 0).flatMap { harness.changeCell($0) }
+        try expect(panel.summaryLabel.textColor == .labelColor && panel.branchIcon.contentTintColor == .labelColor
+                   && panel.progressBanner.iconView.contentTintColor == .labelColor
+                   && panel.resultBanner.iconView.contentTintColor == .labelColor
+                   && panel.semanticErrorBanner.iconView.contentTintColor == .systemOrange
+                   && firstCell?.kindImageView.contentTintColor == .labelColor,
+                   "typical: 대비 높이기 색이 반영되지 않음")
+        try expect(panel.displayOptions.revealDuration == 0, "typical: 동작 줄이기에서 전환 시간이 0이 아님")
+        panel.apply(displayOptions: GitDisplayOptions(reduceMotion: false, increaseContrast: false, reduceTransparency: false))
+        try expect(panel.summaryLabel.textColor == .secondaryLabelColor && panel.progressBanner.iconView.contentTintColor == .secondaryLabelColor
+                   && firstCell?.kindImageView.contentTintColor == .secondaryLabelColor,
+                   "typical: 대비 높이기를 끈 뒤 색이 돌아가지 않음")
+        panel.apply(displayOptions: normal)
+
+        // 선택 강조 행: 종류 아이콘 tint를 비워 시스템 대비 색으로 그립니다.
+        if let cell = firstCell {
+            cell.backgroundStyle = .emphasized
+            try expect(cell.kindImageView.contentTintColor == nil, "typical: 강조 행 아이콘 색이 고정됨")
+            cell.backgroundStyle = .normal
+            try expect(cell.kindImageView.contentTintColor == panel.displayOptions.secondaryTextColor,
+                       "typical: 강조 해제 뒤 아이콘 색이 돌아가지 않음")
+        }
+
         panel.saveNowButton.performClick(nil)
         try expect(harness.spin { panel.status?.pendingAutosave == false && !isShown(panel.autosaveBanner) },
                    "typical: Save Now 후 배너가 사라지지 않음")
@@ -418,8 +482,16 @@ enum GitPanelUICheck {
         let aheadBefore = panel.status?.upstream?.ahead ?? 0
         try expect(panel.commitButton.isEnabled, "typical: Commit 직전 비활성 \(panel.commitBlockers)")
         panel.commitButton.performClick(nil)
+        // 보낸 뒤 결과가 올 때까지 메시지를 편집할 수 없고 다시 커밋할 수 없습니다(보낸 문장 = 지울 문장).
+        try expect(panel.isCommitInFlight && !panel.commitTextView.isEditable && panel.commitBlockers.contains(.operationInProgress),
+                   "typical: 커밋 중 메시지가 잠기지 않음 \(panel.commitBlockers)")
+        panel.commitTextView.insertText(" (late)", replacementRange: NSRange(location: NSNotFound, length: 0))
+        try expect(panel.commitTextView.string == "Update button colors", "typical: 커밋 중 메시지가 바뀜 '\(panel.commitTextView.string)'")
         try expect(harness.spin { if case .succeeded = panel.lastResult?.outcome, panel.lastResult?.kind == .commit { return true }; return false },
                    "typical: Commit 결과가 오지 않음")
+        try expect(!panel.isCommitInFlight && panel.commitTextView.isEditable, "typical: 커밋 후 메시지 잠금이 풀리지 않음")
+        try expect(harness.announced("Committing") && harness.announced("Committed", priority: .medium),
+                   "typical: 커밋 진행·결과 알림 없음")
         try expect(panel.commitTextView.string.isEmpty, "typical: Commit 후 메시지가 남음")
         // 비운 메시지는 텍스트 시스템 Undo로 되살릴 수 있어야 합니다.
         panel.commitTextView.undoManager?.undo()
@@ -438,6 +510,9 @@ enum GitPanelUICheck {
         try expect(isShown(panel.progressBanner) && isShown(panel.cancelOperationButton),
                    "typical: Push 진행 배너·취소 버튼 없음")
         try expect(harness.spin { panel.lastResult?.kind == .push }, "typical: Push 결과가 오지 않음")
+        try expect(harness.announced("Pushing to origin") && harness.announced("Pushed to origin", priority: .medium),
+                   "typical: Push 진행·결과 알림 없음")
+        try expect(!harness.announced("Staging") && !harness.announced("Unstaging"), "typical: 짧은 Stage 작업까지 알림")
         try expect(panel.pushBlockers == [.nothingToPush], "typical: Push 후 이유 불일치 \(panel.pushBlockers)")
 
         // Dark 외형.
@@ -450,8 +525,9 @@ enum GitPanelUICheck {
         try expectNoAmbiguity(dark, "typical dark")
         try expectAccessibility(dark, "typical dark")
 
-        let typicalDrain = String(format: "%.2f", panel.diagnostics.maxDrainSeconds * 1000)
-        report.append("typical outline/stage/deps/detail/space/arrows/reject/commit/restore/push ok, rows \(outline.numberOfRows), max drain \(typicalDrain)ms")
+        // 프로세스 첫 상태 반영(첫 셀·글꼴·심볼 생성)이 들어 있어 느슨한 상한(한 프레임)만 둡니다. 값은 보고에 남깁니다.
+        try expect(maxTurn(panel) < 1.0 / 60.0, "typical: 한 차례 점유가 한 프레임을 넘음 \(occupancy(panel))")
+        report.append("typical outline/stage/deps/detail/space/arrows/reject/commit/restore/push/announce/contrast ok, rows \(outline.numberOfRows), \(occupancy(panel))")
     }
 
     @MainActor
@@ -474,6 +550,9 @@ enum GitPanelUICheck {
         try expect(isShown(identity.controller.identityRow), "identity: 설정 안내 버튼이 보이지 않음")
         identity.controller.identityButton.performClick(nil)
         try expect(identity.host.identityRequests == 1, "identity: host 동작이 호출되지 않음")
+        // Git이 거절한 커밋(실패 결과)은 오류 배너와 함께 높은 우선순위로 알립니다.
+        identity.dataSource.send(.commit(message: "Message"))
+        try expect(identity.spin { identity.announced("Git needs your name", priority: .high) }, "identity: 커밋 실패 알림 없음")
         try expectNoAmbiguity(identity, "identity")
         report.append("commit blockers nothing-staged/identity ok")
     }
@@ -537,6 +616,11 @@ enum GitPanelUICheck {
                    "conflicts: 허용 선택 제한 불일치")
         guard let raw = conflictCell(harness, 5) else { throw Failure(message: "conflicts: raw 셀 없음") }
         try expect(raw.choiceControl.isHidden && !raw.rawHintField.isHidden, "conflicts: raw conflict 표시 불일치")
+        // 선택 강조 행에서는 주황 경고 아이콘도 시스템 대비 색으로 그립니다.
+        card.backgroundStyle = .emphasized
+        try expect(card.kindImageView.contentTintColor == nil, "conflicts: 강조 행 아이콘 색이 고정됨")
+        card.backgroundStyle = .normal
+        try expect(card.kindImageView.contentTintColor == .systemOrange, "conflicts: 강조 해제 뒤 아이콘 색이 돌아가지 않음")
 
         // 거부: 세대가 지난 해결 선택은 기록되지 않고, 미리 바꾼 segment가 코어 값으로 돌아갑니다.
         guard let first = conflictCell(harness, 0) else { throw Failure(message: "conflicts: 첫 셀 없음") }
@@ -642,11 +726,9 @@ enum GitPanelUICheck {
         try expect(harness.spin(timeout: 120) { panel.status?.stagedChangeCount == 1_000_000 },
                    "million: 전체 Stage 결과 불일치 \(panel.status?.stagedChangeCount ?? -1)")
 
-        // 회귀 방지용 느슨한 상한(한 프레임). 실제 계약은 아키텍처 §6.3의 단일 점유 2ms이며 값은 보고에 남깁니다.
-        try expect(panel.diagnostics.maxDrainSeconds < 1.0 / 60.0,
-                   "million: 이벤트 반영 한 번이 한 프레임을 넘음 \(panel.diagnostics.maxDrainSeconds * 1000)ms")
-        let maxDrain = String(format: "%.2f", panel.diagnostics.maxDrainSeconds * 1000)
-        report.append("million changes 1000000 (documents 1000), pages requested \(requested), cached \(cached), row views \(rowViews), max drain \(maxDrain)ms")
+        // 이벤트 드레인·UI 반영·상세 차례가 각각 Debug 상한(계약 2ms의 두 배) 안이어야 합니다. 값은 보고에 남깁니다.
+        try expect(maxTurn(panel) < debugTurnLimit, "million: 한 차례 점유가 상한을 넘음 \(occupancy(panel))")
+        report.append("million changes 1000000 (documents 1000), pages requested \(requested), cached \(cached), row views \(rowViews), \(occupancy(panel))")
     }
 
     /// 한 부모 아래 자식이 페이지 여러 개(2,000 객체)인 묶음: 그 부모의 보이는 페이지만 요청합니다.
@@ -730,6 +812,10 @@ enum GitPanelUICheck {
             let deadline = Date().addingTimeInterval(timeout)
             while !condition() {
                 if Date() > deadline { return false }
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+                window.contentView?.layoutSubtreeIfNeeded()
+            }
+            while controller.hasPendingWork, condition(), Date() <= deadline {
                 RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
                 window.contentView?.layoutSubtreeIfNeeded()
             }
@@ -864,6 +950,9 @@ enum GitPanelUICheck {
         try expectOrder(restrictedOrder, [("mode", restrictedPanel.modeControl), ("Trust Project", restrictedPanel.changesOverlay.actionButton)],
                         "keyboard 제한 모드")
 
-        report.append("keyboard loop changes \(changesOrder.count)/conflicts \(conflictOrder.count)/restricted \(restrictedOrder.count) views, exits panel; ⌘Return scoped")
+        // 화면에 보이는 창(배너 페이드 경로 실행)에서도 한 차례 점유가 Debug 상한 안이어야 합니다.
+        try expect(panel.diagnostics.animatedUIUpdates > 0, "keyboard: 보이는 창에서 배너 페이드 경로가 실행되지 않음")
+        try expect(maxTurn(panel) < debugTurnLimit, "keyboard: 보이는 창 한 차례 점유가 상한을 넘음 \(occupancy(panel))")
+        report.append("keyboard loop changes \(changesOrder.count)/conflicts \(conflictOrder.count)/restricted \(restrictedOrder.count) views, exits panel; ⌘Return scoped; visible window animated UI \(panel.diagnostics.animatedUIUpdates), \(occupancy(panel))")
     }
 }

@@ -115,4 +115,12 @@ enum GitPanelRules {
     static func stagedTarget(afterToggling state: GitStageState) -> Bool {
         state != .staged
     }
+
+    /// 시작을 VoiceOver에 알리는 작업. 짧은 Stage·Unstage·새로고침은 목록 변화로 충분하므로 알리지 않습니다.
+    static func announcesProgress(_ kind: GitOperationKind) -> Bool {
+        switch kind {
+        case .commit, .push, .applyResolutions, .saveBeforeStatus: return true
+        case .refresh, .stage, .unstage: return false
+        }
+    }
 }

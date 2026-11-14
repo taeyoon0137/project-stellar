@@ -503,11 +503,19 @@ final class GitBannerView: NSView {
     private var buttons: [NSButton] = []
     private var bottomToMessage: NSLayoutConstraint!
     private var bottomToButtons: NSLayoutConstraint!
+    /// 지정한 아이콘 색. 대비 높이기에서는 보조 label 색만 label 색으로 올립니다.
+    private var baseTint: NSColor
+
+    /// 대비 높이기 여부(가이드 8.4).
+    var increaseContrast = false {
+        didSet { if oldValue != increaseContrast { applyTint() } }
+    }
 
     init(symbol: String, symbolLabel: String, tint: NSColor) {
         iconView = GitControls.symbolView(symbol, label: symbolLabel, style: .callout)
-        iconView.contentTintColor = tint
+        baseTint = tint
         super.init(frame: .zero)
+        applyTint()
         translatesAutoresizingMaskIntoConstraints = false
 
         spinner.style = .spinning
@@ -547,7 +555,12 @@ final class GitBannerView: NSView {
     func setSymbol(_ symbol: String, label: String, tint: NSColor) {
         iconView.image = GitPanelSymbols.image(symbol, label: label)
         iconView.setAccessibilityLabel(label)
-        iconView.contentTintColor = tint
+        baseTint = tint
+        applyTint()
+    }
+
+    private func applyTint() {
+        iconView.contentTintColor = increaseContrast && baseTint == .secondaryLabelColor ? .labelColor : baseTint
     }
 
     /// 문구와 버튼을 바꿉니다. `busy`이면 아이콘 자리에 시스템 진행 표시를 보여 줍니다.

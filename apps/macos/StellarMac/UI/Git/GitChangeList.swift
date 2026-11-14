@@ -205,6 +205,8 @@ final class GitChangeListController: NSObject, NSOutlineViewDataSource, NSOutlin
     private var restoreCandidates: [GitChangeOutlineItem] = []
     private var restoreScheduled = false
     private var isReloading = false
+    /// 다음 런 루프에서 반영할 구조 변경.
+    private var pendingStructure: GitChangeTreeInfo?
 
     /// 조작 가능 여부(작업 진행 중·제한 모드에서는 false).
     var isInteractive = true {
@@ -258,23 +260,54 @@ final class GitChangeListController: NSObject, NSOutlineViewDataSource, NSOutlin
     // MARK: 세대 반영
 
     /// 세대와 조작 가능 여부를 함께 반영합니다. 구조가 같으면 보이는 행만 다시 구성하고, 다르면 다시 읽습니다.
+    ///
+    /// 처음 채울 때(약 0.1ms)를 빼면 구조 다시 읽기는 다음 런 루프 차례로 미룹니다. `reloadData()`는 만든 행 뷰를
+    /// 모두 떼므로 AppKit 안에서 수 ms가 걸려(2026-11-14 Debug 약 2.8ms) 상태 UI 반영과 한 차례에 겹치지 않게
+    /// 합니다. 그 사이 목록은 이전 세대 값을 보여 주고, 이전 세대로 보낸 명령은 코어가 거부합니다.
     func update(_ info: GitChangeTreeInfo?, interactive: Bool) {
         let interactivityChanged = interactive != isInteractive
         suppressRefresh = true
         isInteractive = interactive
         suppressRefresh = false
         guard let info else { return }
-        if !hasLoaded || info.structure != cache.structure || info.documentCount != cache.rootCount {
-            hasLoaded = true
-            pendingSelection = Set(selectedItems.compactMap(\.nodeID))
-            cache.reset(generation: info.generation, structure: info.structure, rootCount: info.documentCount)
-            reloadStructure()
+        if pendingStructure != nil {
+            pendingStructure = info
+        } else if !hasLoaded {
+            applyStructure(info)
+        } else if info.structure != cache.structure || info.documentCount != cache.rootCount {
+            pendingStructure = info
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated { self?.flushPendingStructure() }
+            }
         } else if info.generation != cache.generation {
             cache.advance(generation: info.generation)
             refreshVisibleRows()
         } else if interactivityChanged {
             refreshVisibleRows()
         }
+    }
+
+    private func flushPendingStructure() {
+        guard let info = pendingStructure else { return }
+        pendingStructure = nil
+        let start = ProcessInfo.processInfo.systemUptime
+        if info.structure != cache.structure || info.documentCount != cache.rootCount {
+            applyStructure(info)
+        } else if info.generation != cache.generation {
+            cache.advance(generation: info.generation)
+            refreshVisibleRows()
+        }
+        maxStructureReloadSeconds = max(maxStructureReloadSeconds, ProcessInfo.processInfo.systemUptime - start)
+    }
+
+    /// 진단: 미룬 구조 다시 읽기 차례 한 번의 최대 점유.
+    private(set) var maxStructureReloadSeconds: TimeInterval = 0
+
+    private func applyStructure(_ info: GitChangeTreeInfo) {
+        hasLoaded = true
+        pendingSelection = Set(selectedItems.compactMap(\.nodeID))
+        cache.reset(generation: info.generation, structure: info.structure, rootCount: info.documentCount)
+        reloadStructure()
     }
 
     private func reloadStructure() {
@@ -511,8 +544,8 @@ final class GitChangeListController: NSObject, NSOutlineViewDataSource, NSOutlin
         scheduleRestore()
     }
 
-    /// 아직 복원할 펼침·선택이 남았는지(검사용).
-    var isRestoring: Bool { restoreScheduled || !restoreCandidates.isEmpty }
+    /// 아직 반영할 구조 변경이나 복원할 펼침·선택이 남았는지(검사용).
+    var isRestoring: Bool { pendingStructure != nil || restoreScheduled || !restoreCandidates.isEmpty }
 
     // MARK: 동작
 

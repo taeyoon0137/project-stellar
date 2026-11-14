@@ -72,12 +72,31 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         }
     }
 
-    /// 이벤트 드레인 진단(검사용).
+    /// 메인 스레드 점유 진단(검사용). 한 런 루프 차례의 점유를 종류별로 잽니다(아키텍처 §6.3).
     struct Diagnostics {
         var drains = 0
         var events = 0
         var rejections = 0
+        /// 이벤트 드레인 차례 한 번의 최대 점유(같은 차례에서 한 UI 반영 포함).
         var maxDrainSeconds: TimeInterval = 0
+        /// 상태·conflict 상세 UI 반영 한 번의 최대 시간(배너 전환 애니메이션 배치 포함).
+        var maxUIUpdateSeconds: TimeInterval = 0
+        /// 변경 상세 반영 차례 한 번의 최대 점유.
+        var maxDetailSeconds: TimeInterval = 0
+        /// 이벤트 처리가 길어 UI 반영을 다음 차례로 넘긴 횟수.
+        var deferredUIUpdates = 0
+        /// 화면에 보이는 창에서 애니메이션 배치로 UI를 반영한 횟수.
+        var animatedUIUpdates = 0
+
+        /// 종류와 무관한 한 차례 최대 점유.
+        var maxTurnSeconds: TimeInterval { max(maxDrainSeconds, maxUIUpdateSeconds, maxDetailSeconds) }
+    }
+
+    /// 미뤄 둔 UI 반영.
+    private struct PendingUI {
+        var status = false
+        var conflictDetail = false
+        var isEmpty: Bool { !status && !conflictDetail }
     }
 
     let dataSource: GitPanelDataSource
@@ -94,10 +113,22 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
 
     private var drainScheduled = false
     private var detailUpdateScheduled = false
+    private var uiUpdateScheduled = false
+    private var pendingUI = PendingUI()
     private var requestedDetail: (generation: UInt64, node: GitChangeNodeID)?
     private var presentingDependencySheet = false
     private var displayOptionsToken: GitNotificationToken?
     private var secondaryLabels: [NSTextField] = []
+    /// 보조 색으로 칠한 상태 아이콘(대비 높이기에서 label 색으로 올림).
+    private var secondaryIcons: [NSImageView] = []
+    /// 커밋 명령을 보냈고 결과(또는 거부)를 기다리는 중. 이 동안 메시지를 편집할 수 없고 다시 커밋할 수 없습니다.
+    private(set) var isCommitInFlight = false
+
+    /// 상태 알림을 받는 쪽(검사용). nil이면 VoiceOver 알림(announcementRequested)을 보냅니다.
+    var announcementHandler: ((String, NSAccessibilityPriorityLevel) -> Void)?
+
+    /// 미뤄 둔 이벤트·UI·상세 반영이 남았는지(검사용).
+    var hasPendingWork: Bool { drainScheduled || uiUpdateScheduled || detailUpdateScheduled || changeList.isRestoring }
 
     // MARK: 머리 영역
 
@@ -307,6 +338,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         secondaryLabels = [mergeStateLabel, aheadLabel, behindLabel, summaryLabel, detailPlaceholder, commitLabel,
                            commitReasonLabel, pushInfoLabel, conflictDetailPlaceholder, applyReasonLabel, continueHintLabel]
             + detailRows.values.map(\.nameField) + conflictRows.values.map(\.nameField)
+        secondaryIcons = [branchIcon, aheadIcon, behindIcon, changesOverlay.iconView, conflictsOverlay.iconView]
 
         changeList.requestPage = { [weak self] generation, parent, children in
             self?.dataSource.send(.loadChangePage(generation: generation, parent: parent, children: children))
@@ -404,15 +436,25 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         ])
     }
 
+    /// 대비 높이기에서는 보조 문구와 보조 색 상태 아이콘을 label 색으로 올립니다. 시스템 색(주황·빨강) 아이콘은
+    /// 시스템이 대비 높이기 변형을 그리므로 그대로 둡니다(가이드 8.4).
     private func applyDisplayOptions() {
         let color = displayOptions.secondaryTextColor
         secondaryLabels.forEach { $0.textColor = color }
+        secondaryIcons.forEach { $0.contentTintColor = color }
+        for banner in [autosaveBanner, semanticErrorBanner, dependencyBanner, progressBanner, resultBanner] {
+            banner.increaseContrast = displayOptions.increaseContrast
+        }
         changeList.secondaryColor = color
         conflictList.secondaryColor = color
     }
 
     private func displayOptionsChanged() {
-        let options = GitDisplayOptions.current()
+        apply(displayOptions: GitDisplayOptions.current())
+    }
+
+    /// 시스템 접근성 표시 옵션을 반영합니다. 실행 중 바뀌면 알림으로 불립니다(검사에서도 씁니다).
+    func apply(displayOptions options: GitDisplayOptions) {
         guard options != displayOptions else { return }
         displayOptions = options
         applyDisplayOptions()
@@ -426,22 +468,26 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         DispatchQueue.main.async { [weak self] in self?.drainEvents() }
     }
 
-    /// 이벤트 큐를 메인 스레드 예산 안에서 비웁니다. 예산을 넘으면 다음 런 루프로 넘깁니다(아키텍처 §6.3).
+    /// 이벤트 큐를 메인 스레드 예산 안에서 비웁니다(아키텍처 §6.3 단일 점유 2ms).
+    ///
+    /// - 이벤트 처리는 `eventBudget`을 넘으면 멈추고 나머지를 다음 런 루프로 넘깁니다.
+    /// - UI 반영(상태·배너·목록 세대·conflict 상세)은 이벤트 처리가 `inlineUIThreshold` 안에 끝났을 때만 같은
+    ///   차례에서 하고, 아니면 다음 차례로 넘겨 한 차례에 둘을 겹치지 않습니다. 변경 상세는 늘 다음 차례입니다.
     func drainEvents() {
         drainScheduled = false
         let start = ProcessInfo.processInfo.systemUptime
-        var needsStatusUI = false
         var needsDetail = false
-        var needsConflictDetail = false
-        while let event = dataSource.pollEvent() {
+        while ProcessInfo.processInfo.systemUptime - start <= GitPanelMetrics.eventBudget {
+            guard let event = dataSource.pollEvent() else { break }
             diagnostics.events += 1
             switch event {
             case .status(let snapshot):
                 let previous = status
                 status = snapshot
-                needsStatusUI = true
+                pendingUI.status = true
                 if previous?.changes != snapshot.changes { needsDetail = true }
-                if previous?.conflicts != snapshot.conflicts { needsConflictDetail = true }
+                if previous?.conflicts != snapshot.conflicts { pendingUI.conflictDetail = true }
+                announceStatusChanges(from: previous, to: snapshot)
             case .changePage(let page):
                 changeList.receive(page)
                 if let selected = changeList.singleSelectedItem, changeList.page(page, contains: selected) {
@@ -457,29 +503,81 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
                 handleRejection(rejection)
             case .conflictPage(let page):
                 conflictList.receive(page)
-                needsConflictDetail = true
+                pendingUI.conflictDetail = true
             case .dependencyPrompt(let prompt):
                 pendingPrompt = prompt
                 presentDependencyPrompt()
-                needsStatusUI = true
+                if !presentingDependencySheet { announce(GitPanelStrings.dependency(prompt), priority: .high) }
+                pendingUI.status = true
             case .operationProgress(let progress):
+                if activeOperation?.id != progress.id, GitPanelRules.announcesProgress(progress.kind), !progress.message.isEmpty {
+                    announce(progress.message, priority: .medium)
+                }
                 activeOperation = progress
-                needsStatusUI = true
+                pendingUI.status = true
             case .operationFinished(let result):
                 if activeOperation?.id == result.id { activeOperation = nil }
                 handleFinished(result)
-                needsStatusUI = true
-            }
-            if ProcessInfo.processInfo.systemUptime - start > GitPanelMetrics.mainThreadBudget {
-                scheduleDrain()
-                break
+                pendingUI.status = true
             }
         }
-        if needsStatusUI { updateStatusUI() }
+        // 예산을 넘겨 멈췄을 수 있으므로 다음 차례에 다시 비웁니다(빈 큐면 아무 일도 하지 않음).
+        if ProcessInfo.processInfo.systemUptime - start > GitPanelMetrics.eventBudget { scheduleDrain() }
         if needsDetail { scheduleDetailUpdate() }
-        if needsConflictDetail { updateConflictDetail() }
+        if !pendingUI.isEmpty {
+            if ProcessInfo.processInfo.systemUptime - start <= GitPanelMetrics.inlineUIThreshold {
+                applyPendingUI()
+            } else {
+                diagnostics.deferredUIUpdates += 1
+                schedulePendingUI()
+            }
+        }
         diagnostics.drains += 1
         diagnostics.maxDrainSeconds = max(diagnostics.maxDrainSeconds, ProcessInfo.processInfo.systemUptime - start)
+    }
+
+    private func schedulePendingUI() {
+        guard !uiUpdateScheduled else { return }
+        uiUpdateScheduled = true
+        DispatchQueue.main.async { [weak self] in self?.applyPendingUI() }
+    }
+
+    private func applyPendingUI() {
+        uiUpdateScheduled = false
+        let pending = pendingUI
+        pendingUI = PendingUI()
+        guard !pending.isEmpty else { return }
+        let start = ProcessInfo.processInfo.systemUptime
+        if pending.status { updateStatusUI() }
+        if pending.conflictDetail { updateConflictDetail() }
+        diagnostics.maxUIUpdateSeconds = max(diagnostics.maxUIUpdateSeconds, ProcessInfo.processInfo.systemUptime - start)
+    }
+
+    // MARK: 상태 알림
+
+    /// 상태 변화를 VoiceOver에 알립니다. 배너 문구와 같은 내용을 보냅니다(가이드 8.3).
+    private func announce(_ message: String, priority: NSAccessibilityPriorityLevel) {
+        guard !message.isEmpty else { return }
+        if let announcementHandler {
+            announcementHandler(message, priority)
+            return
+        }
+        let element: Any = view.window ?? NSApp.mainWindow ?? NSApp as Any
+        NSAccessibility.post(
+            element: element,
+            notification: .announcementRequested,
+            userInfo: [.announcement: message, .priority: priority.rawValue]
+        )
+    }
+
+    /// 새로 나타난 배너(semantic status 오류, 저장 대기 편집)를 알립니다.
+    private func announceStatusChanges(from previous: GitStatusSnapshot?, to snapshot: GitStatusSnapshot) {
+        if let error = snapshot.semanticStatusError, error != previous?.semanticStatusError {
+            announce(error, priority: .high)
+        }
+        if snapshot.pendingAutosave, previous?.pendingAutosave != true {
+            announce(GitPanelStrings.pendingAutosaveBanner, priority: .medium)
+        }
     }
 
     /// 코어가 버린 명령: 미리 보여 준 값을 캐시(코어) 값으로 되돌리고, 요청 중 표시를 지워 다시 요청할 수 있게 합니다.
@@ -496,24 +594,39 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             conflictList.cancelRequest(generation: generation, rows: rows)
         case .chooseResolution:
             conflictList.refreshVisibleRows()
+        case .commit:
+            setCommitInFlight(false)
         default:
             break
         }
     }
 
     private func handleFinished(_ result: GitOperationResult) {
+        if result.kind == .commit { setCommitInFlight(false) }
         switch (result.kind, result.outcome) {
-        case (.commit, .succeeded):
+        case (.commit, .succeeded(let message)):
+            // 보내는 동안 메시지를 편집할 수 없었으므로 지우는 문장은 보낸 문장과 같습니다.
             clearCommitMessage()
             lastResult = result
-        case (.push, .succeeded), (.applyResolutions, .succeeded):
+            announce(message, priority: .medium)
+        case (.push, .succeeded(let message)), (.applyResolutions, .succeeded(let message)):
             lastResult = result
-        case (_, .failed):
+            announce(message, priority: .medium)
+        case (_, .failed(let message)):
             lastResult = result
+            announce(message, priority: .high)
         default:
             // Stage·Unstage·새로고침 성공과 취소는 목록 변화로 충분하므로 배너를 띄우지 않습니다.
             if case .failed = lastResult?.outcome {} else { lastResult = nil }
         }
+    }
+
+    /// 커밋을 보낸 뒤 결과가 올 때까지 메시지를 잠급니다. 그 사이에 친 글자가 성공 후 함께 지워지지 않게 합니다.
+    private func setCommitInFlight(_ inFlight: Bool) {
+        guard isCommitInFlight != inFlight else { return }
+        isCommitInFlight = inFlight
+        commitTextView.isEditable = !inFlight
+        updateCommitArea()
     }
 
     // MARK: 상태 반영
@@ -521,7 +634,8 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
     var isBusy: Bool { activeOperation != nil }
 
     var commitBlockers: [GitCommitBlocker] {
-        GitPanelRules.commitBlockers(status: status, message: commitTextView.string, operationInProgress: isBusy)
+        GitPanelRules.commitBlockers(
+            status: status, message: commitTextView.string, operationInProgress: isBusy || isCommitInFlight)
     }
 
     var pushBlockers: [GitPushBlocker] {
@@ -532,18 +646,41 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         GitPanelRules.applyBlockers(status: status, operationInProgress: isBusy)
     }
 
+    private var banners: [GitBannerView] {
+        [autosaveBanner, semanticErrorBanner, dependencyBanner, progressBanner, resultBanner]
+    }
+
     private func updateStatusUI() {
         guard isViewLoaded else { return }
-        // 표시 변경을 묶어 각 구획의 제약을 한 번씩만 다시 만듭니다. 배너가 나타나고 사라지는 전환은
-        // 동작 줄이기가 꺼져 있고 창이 보일 때만 짧게 움직입니다(디자인 가이드 8.5).
-        animateLayout {
-            rootColumn.batchUpdates {
-                changesColumn.batchUpdates {
-                    conflictsColumn.batchUpdates {
-                        bannerColumn.batchUpdates { applyStatusUI() }
-                    }
+        let shownBefore = Set(banners.filter { !$0.isHiddenOrHasHiddenAncestor }.map(ObjectIdentifier.init))
+        // 표시 변경을 묶어 각 구획의 제약을 한 번씩만 다시 만듭니다. 배치는 즉시 바꾸고, 새로 나타난 배너만 짧게
+        // 페이드합니다(디자인 가이드 8.5).
+        rootColumn.batchUpdates {
+            changesColumn.batchUpdates {
+                conflictsColumn.batchUpdates {
+                    bannerColumn.batchUpdates { applyStatusUI() }
                 }
             }
+        }
+        fadeIn(banners.filter { !$0.isHiddenOrHasHiddenAncestor && !shownBefore.contains(ObjectIdentifier($0)) })
+    }
+
+    /// 새로 나타난 배너를 페이드로 보여 줍니다. 동작 줄이기에서는 즉시 보입니다(디자인 가이드 8.4, 8.5).
+    ///
+    /// 배치 변경 자체를 애니메이션 묶음 안에서 강제 배치하면 패널 전체의 frame 변경이 애니메이션이 되어, 화면에
+    /// 보이는 창에서 한 번에 약 20ms를 점유했습니다(2026-11-14 Debug 측정, 즉시 배치는 1ms 미만). 그래서 배치는
+    /// 즉시 바꾸고 배너의 불투명도만 움직입니다(가이드 1.2 원칙 6).
+    private func fadeIn(_ appeared: [GitBannerView]) {
+        let duration = displayOptions.revealDuration
+        guard !appeared.isEmpty, duration > 0, let window = view.window, window.isVisible else {
+            appeared.forEach { $0.alphaValue = 1 }
+            return
+        }
+        diagnostics.animatedUIUpdates += 1
+        appeared.forEach { $0.alphaValue = 0 }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            appeared.forEach { $0.animator().alphaValue = 1 }
         }
     }
 
@@ -563,9 +700,13 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         if let upstream {
             aheadLabel.setStringIfChanged("\(upstream.ahead)")
             behindLabel.setStringIfChanged("\(upstream.behind)")
+            // 두 숫자를 각각 읽게 합니다(같은 문장을 두 번 읽지 않음). 도움말 태그는 전체 문장입니다.
+            aheadLabel.setAccessibilityLabel(GitPanelStrings.aheadCount(upstream.ahead))
+            behindLabel.setAccessibilityLabel(GitPanelStrings.behindCount(upstream.behind))
             let text = GitPanelStrings.aheadBehind(ahead: upstream.ahead, behind: upstream.behind)
-            aheadLabel.setAccessibilityLabel(text)
-            behindLabel.setAccessibilityLabel(text)
+            for view in [aheadIcon, aheadLabel, behindIcon, behindLabel] as [NSView] where view.toolTip != text {
+                view.toolTip = text
+            }
         }
         if let status, ready {
             summaryLabel.setStringIfChanged(GitPanelStrings.statusSummary(
@@ -767,23 +908,6 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         conflictsColumn.setItem(continueHintLabel, visible: (status?.mergeState ?? .none) != .none)
     }
 
-    /// 상태 표시 전환. 동작 줄이기에서는 즉시 바꿉니다(디자인 가이드 8.4, 8.5).
-    private func animateLayout(_ changes: () -> Void) {
-        let duration = displayOptions.revealDuration
-        guard duration > 0, let window = view.window, window.isVisible else {
-            changes()
-            return
-        }
-        withoutActuallyEscaping(changes) { body in
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = duration
-                context.allowsImplicitAnimation = true
-                body()
-                self.view.layoutSubtreeIfNeeded()
-            }, completionHandler: nil)
-        }
-    }
-
     // MARK: 상세
 
     private func scheduleDetailUpdate() {
@@ -791,8 +915,12 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         detailUpdateScheduled = true
         // 선택이 연속으로 바뀌면 다음 런 루프에서 한 번만 반영합니다(디자인 가이드 9장).
         DispatchQueue.main.async { [weak self] in
-            self?.detailUpdateScheduled = false
-            self?.updateDetail()
+            guard let self else { return }
+            self.detailUpdateScheduled = false
+            let start = ProcessInfo.processInfo.systemUptime
+            self.updateDetail()
+            self.diagnostics.maxDetailSeconds = max(
+                self.diagnostics.maxDetailSeconds, ProcessInfo.processInfo.systemUptime - start)
         }
     }
 
@@ -953,6 +1081,8 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             NSSound.beep()
             return
         }
+        // 결과가 올 때까지 메시지를 잠가 보낸 문장과 성공 후 지우는 문장이 같게 합니다.
+        setCommitInFlight(true)
         dataSource.send(.commit(message: commitTextView.string))
     }
 

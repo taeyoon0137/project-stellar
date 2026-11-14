@@ -153,12 +153,25 @@ final class GitConflictCellView: NSTableCellView {
         )
     }
 
+    /// 선택 강조가 없을 때의 아이콘 색.
+    private var iconTint: NSColor = .secondaryLabelColor
+
+    /// 선택 강조(키 창의 강조 색 배경)에서는 아이콘을 시스템 대비 색으로 그립니다(디자인 가이드 8.2).
+    override var backgroundStyle: NSView.BackgroundStyle {
+        didSet { applyIconTint() }
+    }
+
+    private func applyIconTint() {
+        kindImageView.contentTintColor = backgroundStyle == .emphasized ? nil : iconTint
+    }
+
     func configure(_ row: GitConflictRow, stale: Bool, interactive: Bool, secondaryColor: NSColor) {
         let kindText = GitPanelStrings.conflictKind(row.kind)
         kindImageView.image = GitPanelSymbols.image(GitPanelSymbols.conflictKind(row.kind), label: kindText)
         kindImageView.setAccessibilityLabel(kindText)
         // 경고 아이콘은 모양과 문구로 상태를 함께 전달하므로 색에만 의존하지 않습니다(디자인 가이드 4.2).
-        kindImageView.contentTintColor = row.kind == .raw ? secondaryColor : .systemOrange
+        iconTint = row.kind == .raw ? secondaryColor : .systemOrange
+        applyIconTint()
         titleField.stringValue = row.title
         titleField.textColor = stale ? secondaryColor : .labelColor
         kindField.stringValue = kindText

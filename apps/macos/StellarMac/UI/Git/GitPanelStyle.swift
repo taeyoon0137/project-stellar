@@ -19,8 +19,12 @@ enum GitPanelMetrics {
     static let pageSize = 256
     /// 메모리에 유지하는 페이지 수 상한. 넘으면 오래 쓰지 않은 페이지부터 버립니다.
     static let pageCapacity = 32
-    /// 이벤트 드레인 한 번의 메인 스레드 예산(초). 아키텍처 §6.3 단일 점유 2ms 안에 둡니다.
-    static let mainThreadBudget: TimeInterval = 0.0015
+    /// 이벤트 드레인 한 번에서 이벤트 처리에 쓰는 메인 스레드 예산(초, 잠정값). 같은 차례의 UI 반영 몫을 남겨
+    /// 아키텍처 §6.3 단일 점유 2ms 안에 둡니다.
+    static let eventBudget: TimeInterval = 0.001
+    /// 이벤트 처리가 이 시간 안에 끝났을 때만 같은 런 루프 차례에서 UI를 반영합니다. 넘으면 다음 차례로 넘겨
+    /// 이벤트 처리와 UI 반영이 한 차례 점유(아키텍처 §6.3 2ms)에 겹치지 않게 합니다.
+    static let inlineUIThreshold: TimeInterval = 0.0005
     /// 목록 영역이 최소한 보여 줄 행 수.
     static let minimumVisibleRows: CGFloat = 4
     /// 커밋 메시지 입력의 기본 줄 수.
@@ -152,6 +156,8 @@ enum GitPanelStrings {
     static func aheadBehind(ahead: Int, behind: Int) -> String {
         "\(ahead) to push, \(behind) to pull"
     }
+    static func aheadCount(_ count: Int) -> String { "\(count) to push" }
+    static func behindCount(_ count: Int) -> String { "\(count) to pull" }
     static func statusSummary(staged: Int, unstaged: Int) -> String {
         "\(staged) staged, \(unstaged) unstaged"
     }
