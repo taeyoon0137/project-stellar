@@ -49,3 +49,23 @@ extension CoreRuntime {
         return .failed(String(localized: "Couldn’t read the component library."))
     }
 }
+
+extension CoreRuntime {
+    /// writer 결과는 단일 호출에서 수신합니다. 읽기처럼 작은 출력 버퍼로 쓰기를 재시도하지 않습니다.
+    static func resizeComponent(handle: UInt64, session: UInt64, entry: LibraryComponent, width: Float, height: Float) -> String? {
+        precondition(!Thread.isMainThread)
+        var id = entry.id.uuid, length = 0
+        var bytes = [UInt8](repeating: 0, count: Int(STELLAR_EVENT_TEXT_MAX))
+        let status = withUnsafeBytes(of: &id) { id in
+            Array(entry.hash.utf8).withUnsafeBufferPointer { hash in
+                bytes.withUnsafeMutableBufferPointer { error in
+                    stellar_window_component_resize(handle, session, id.bindMemory(to: UInt8.self).baseAddress,
+                                                    hash.baseAddress, hash.count, width, height, error.baseAddress, error.count, &length)
+                }
+            }
+        }
+        guard status != STELLAR_OK else { return nil }
+        return length > 0 && length <= bytes.count ? String(decoding: bytes.prefix(length), as: UTF8.self)
+            : String(localized: "Couldn’t save the component size.")
+    }
+}

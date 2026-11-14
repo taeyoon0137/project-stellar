@@ -80,3 +80,69 @@ pub unsafe extern "C" fn stellar_window_component_library(
         StellarStatus::Ok
     })
 }
+
+/// worker 전용. 성공하거나 편집을 거부한 이유를 출력합니다. 버퍼 크기 조사로 쓰기를 재실행하지 않습니다.
+/// # Safety
+/// id는 읽을 수 있는 16바이트, hash는 hash_len byte UTF-8, error는 적어도 EVENT_TEXT_MAX개의
+/// 바이트를 쓸 수 있어야 하고 out_len은 쓸 수 있는 size_t여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_component_resize(
+    handle: u64,
+    session: u64,
+    id: *const u8,
+    hash: *const u8,
+    hash_len: usize,
+    width: f32,
+    height: f32,
+    error: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_len.is_null() || id.is_null() || hash.is_null() || error.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            *out_len = 0;
+        }
+        if capacity < stellar_runtime::app::EVENT_TEXT_MAX {
+            return StellarStatus::BufferTooSmall;
+        }
+        if hash_len != 71 {
+            return StellarStatus::InvalidArgument;
+        }
+        let Ok(hash) = (unsafe { std::str::from_utf8(std::slice::from_raw_parts(hash, hash_len)) })
+        else {
+            return StellarStatus::InvalidArgument;
+        };
+        let id =
+            stellar_core_types::ids::StableId::from_bytes(unsafe { id.cast::<[u8; 16]>().read() });
+        let state = {
+            let Ok(reg) = registry().lock() else {
+                return StellarStatus::Internal;
+            };
+            let Some(app) = reg.live.get(&handle).and_then(|rt| rt.app.as_ref()) else {
+                return StellarStatus::InvalidHandle;
+            };
+            app.state()
+        };
+        let Some(project) = state
+            .window(WindowSessionHandle(session))
+            .and_then(|w| state.project(w.project))
+        else {
+            return StellarStatus::InvalidHandle;
+        };
+        if let Err(message) = project.resize_component_root(id, hash, width, height) {
+            let mut len = message.len().min(stellar_runtime::app::EVENT_TEXT_MAX);
+            while !message.is_char_boundary(len) {
+                len -= 1;
+            }
+            unsafe {
+                std::ptr::copy_nonoverlapping(message.as_ptr(), error, len);
+                *out_len = len;
+            }
+            return StellarStatus::InvalidArgument;
+        }
+        StellarStatus::Ok
+    })
+}
