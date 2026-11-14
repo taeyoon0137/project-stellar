@@ -361,3 +361,240 @@ fn no_op_uses_index_generation_and_rejects_worktree_temp_parent_and_untrusted_gi
     assert_eq!(file_digest(fx.work()), before);
     assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_revision() {
+    use stellar_commands::state::DocumentState;
+    use stellar_core_types::revision::DocumentRevision;
+    use stellar_git_porcelain::cancel::GitCancelToken;
+    let fx = GitFixture::with_system_git("actual-semantic-stage")
+        .unwrap()
+        .expect("system Git required");
+    scaffold_project(fx.work());
+    let model = large_document(4);
+    save_documents(fx.work(), &[&model]);
+    fx.commit_all("baseline").unwrap();
+    fx.write("README.txt", b"unrelated staged").unwrap();
+    fx.git(["add", "README.txt"]).unwrap();
+    let mut records = model.to_records().unwrap();
+    let root = records
+        .nodes
+        .iter_mut()
+        .find(|n| n.parent.is_none())
+        .unwrap();
+    let id = root.id;
+    root.display_name = "selected A".into();
+    root.locked = true; // unselected B in the same chunk
+    let (working, _) = DocumentModel::from_records(records).unwrap();
+    save_documents(fx.work(), &[&working]);
+    fx.write("README.txt", b"unrelated working").unwrap();
+    let memory = DocumentState::with_revision(working, DocumentRevision(7));
+    let memory_before = memory.model().to_records().unwrap();
+    let working_before: std::collections::BTreeMap<_, _> = file_digest(fx.work())
+        .into_iter()
+        .filter(|(p, _)| !p.starts_with(".git/"))
+        .collect();
+    let parent = fx.root().join("candidates");
+    std::fs::create_dir(&parent).unwrap();
+    let request = StageSelectionRequest::stage([ChangeId::property(
+        stellar_core_types::property::PropertyPath::with_keys(
+            id,
+            vec![stellar_ops::candidate::DISPLAY_NAME],
+        ),
+    )]);
+    let prepared = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request).unwrap();
+    let actual = apply_stage_candidate(
+        &fx.gated(),
+        fx.work(),
+        &parent,
+        &prepared,
+        &GitCancelToken::new(),
+    )
+    .unwrap();
+    assert_eq!(actual, read_index_snapshot(&fx.gated(), fx.work()).unwrap());
+    let actual_tree =
+        materialize_snapshot(&fx.gated(), fx.work(), &actual.entries, &parent).unwrap();
+    let loaded = SavedProjectLoader::for_materialized_snapshot()
+        .open(actual_tree.root())
+        .unwrap();
+    assert_eq!(
+        &saved_semantic_snapshot(&loaded).unwrap(),
+        prepared.semantic.snapshot()
+    );
+    let actual_model = loaded
+        .load_document(model.document_id())
+        .unwrap()
+        .model
+        .to_records()
+        .unwrap();
+    let selected = actual_model.nodes.iter().find(|n| n.id == id).unwrap();
+    assert_eq!(selected.display_name, "selected A");
+    assert!(!selected.locked);
+    assert_eq!(
+        std::fs::read(actual_tree.root().join("README.txt")).unwrap(),
+        b"unrelated staged"
+    );
+    let working_after: std::collections::BTreeMap<_, _> = file_digest(fx.work())
+        .into_iter()
+        .filter(|(p, _)| !p.starts_with(".git/"))
+        .collect();
+    assert_eq!(working_after, working_before);
+    assert_eq!(memory.revision(), DocumentRevision(7));
+    assert_eq!(memory.model().to_records().unwrap(), memory_before);
+}
+
+#[cfg(target_os = "macos")]
+fn apply_fixture(
+    tag: &str,
+) -> (
+    GitFixture,
+    PathBuf,
+    PreparedStageCandidate,
+    PreparedStageCandidate,
+) {
+    let fx = GitFixture::with_system_git(tag)
+        .unwrap()
+        .expect("system Git required");
+    scaffold_project(fx.work());
+    let model = large_document(4);
+    save_documents(fx.work(), &[&model]);
+    fx.commit_all("baseline").unwrap();
+    let mut records = model.to_records().unwrap();
+    let root = records
+        .nodes
+        .iter_mut()
+        .find(|n| n.parent.is_none())
+        .unwrap();
+    let id = root.id;
+    root.display_name = "selected".into();
+    let (working, _) = DocumentModel::from_records(records).unwrap();
+    save_documents(fx.work(), &[&working]);
+    let parent = fx.root().join("candidate");
+    std::fs::create_dir(&parent).unwrap();
+    let request = StageSelectionRequest::stage([ChangeId::property(
+        stellar_core_types::property::PropertyPath::with_keys(
+            id,
+            vec![stellar_ops::candidate::DISPLAY_NAME],
+        ),
+    )]);
+    let selected = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request).unwrap();
+    let unchanged = prepare_stage_candidate(
+        &fx.gated(),
+        fx.work(),
+        &parent,
+        &StageSelectionRequest::stage([]),
+    )
+    .unwrap();
+    (fx, parent, selected, unchanged)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn actual_index_semantic_mismatch_restores_original_tree() {
+    use stellar_git_porcelain::cancel::GitCancelToken;
+    let (fx, parent, selected, unchanged) = apply_fixture("semantic-restore");
+    let before = read_index_snapshot(&fx.gated(), fx.work()).unwrap();
+    let working_before: std::collections::BTreeMap<_, _> = file_digest(fx.work())
+        .into_iter()
+        .filter(|(p, _)| !p.starts_with(".git/"))
+        .collect();
+    // 검증 후 내부 후보 대응이 잘못된 경우를 주입해 실제 publish 이후 비교·복원까지 실행합니다.
+    let wrong = PreparedStageCandidate {
+        tree: selected.tree,
+        semantic: unchanged.semantic,
+    };
+    let result = apply_stage_candidate(
+        &fx.gated(),
+        fx.work(),
+        &parent,
+        &wrong,
+        &GitCancelToken::new(),
+    );
+    assert!(
+        matches!(result, Err(ApplyStageError::Verification { cause, rollback: Ok(()) }) if matches!(*cause, PrepareStageError::ReopenMismatch))
+    );
+    assert_eq!(read_index_snapshot(&fx.gated(), fx.work()).unwrap(), before);
+    let working_after: std::collections::BTreeMap<_, _> = file_digest(fx.work())
+        .into_iter()
+        .filter(|(p, _)| !p.starts_with(".git/"))
+        .collect();
+    assert_eq!(working_after, working_before);
+    assert_eq!(std::fs::read_dir(parent).unwrap().count(), 2); // 두 준비 후보 외 검증 temp는 정리됨
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn writer_during_semantic_verification_returns_restore_conflict_and_preserves_writer() {
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+    use stellar_git_porcelain::{
+        blob_write::write_blob,
+        cancel::GitCancelToken,
+        index_publish::PublishError,
+        object::ObjectId,
+        runner::argv,
+        trace::{GitCommandKind, GitCommandTrace, GitTraceExit, GitTraceSink},
+        trust::GitTrust,
+    };
+    struct Writer {
+        gate: GatedGitRunner,
+        root: PathBuf,
+        oid: ObjectId,
+        armed: AtomicBool,
+        reads: AtomicUsize,
+    }
+    impl GitTraceSink for Writer {
+        fn record(&self, trace: &GitCommandTrace) {
+            if trace.kind == GitCommandKind::UpdateIndex && trace.exit == GitTraceExit::Code(0) {
+                self.armed.store(true, Ordering::SeqCst);
+            }
+            if trace.kind == GitCommandKind::LsFiles
+                && self.armed.load(Ordering::SeqCst)
+                && self.reads.fetch_add(1, Ordering::SeqCst) == 1
+            {
+                assert!(self
+                    .gate
+                    .run_with_input(
+                        &argv(["update-index", "--index-info"]),
+                        &self.root,
+                        format!("100644 {}\tREADME.external\n", self.oid).as_bytes()
+                    )
+                    .unwrap()
+                    .success());
+            }
+        }
+    }
+    let (fx, parent, prepared, _unchanged) = apply_fixture("semantic-restore-conflict");
+    let external = write_blob(&fx.gated(), fx.work(), b"external during verification").unwrap();
+    let writer = Arc::new(Writer {
+        gate: fx.gated(),
+        root: fx.work().to_path_buf(),
+        oid: external.clone(),
+        armed: AtomicBool::new(false),
+        reads: AtomicUsize::new(0),
+    });
+    let gate = GatedGitRunner::new(
+        fx.runner().clone().with_trace_sink(writer.clone()),
+        GitTrust::Trusted,
+    );
+    let result =
+        apply_stage_candidate(&gate, fx.work(), &parent, &prepared, &GitCancelToken::new());
+    assert!(
+        matches!(result, Err(ApplyStageError::Verification { cause, rollback:Err(PublishError::StaleBase) }) if matches!(*cause, PrepareStageError::IndexChanged))
+    );
+    assert!(writer.reads.load(Ordering::SeqCst) >= 2);
+    let actual = read_index_snapshot(&fx.gated(), fx.work()).unwrap();
+    assert_eq!(
+        actual
+            .entries
+            .iter()
+            .find(|e| e.path.as_bytes() == b"README.external")
+            .unwrap()
+            .oid,
+        external
+    );
+    assert!(!fx.work().join("README.external").exists());
+}

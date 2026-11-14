@@ -37,6 +37,42 @@ pub struct WrittenCandidate {
 }
 
 impl WrittenCandidate {
+    #[cfg(test)]
+    pub(crate) fn for_test(base: IndexSnapshot, changes: Vec<WrittenFileDelta>) -> Self {
+        Self { base, changes }
+    }
+
+    pub(crate) fn inverse(&self, installed: IndexSnapshot) -> Self {
+        let original: std::collections::BTreeMap<_, _> = self
+            .base
+            .entries
+            .iter()
+            .map(|entry| (&entry.path, entry))
+            .collect();
+        let changes =
+            self.changes
+                .iter()
+                .map(|change| {
+                    let path = match change {
+                        WrittenFileDelta::Upsert { path, .. }
+                        | WrittenFileDelta::Remove { path } => path,
+                    };
+                    match original.get(path) {
+                        Some(entry) => WrittenFileDelta::Upsert {
+                            path: path.clone(),
+                            mode: entry.mode,
+                            oid: entry.oid.clone(),
+                        },
+                        None => WrittenFileDelta::Remove { path: path.clone() },
+                    }
+                })
+                .collect();
+        Self {
+            base: installed,
+            changes,
+        }
+    }
+
     /// 후보 생성 당시의 index.
     pub fn base_index(&self) -> &IndexSnapshot {
         &self.base
