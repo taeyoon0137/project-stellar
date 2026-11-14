@@ -11523,14 +11523,13 @@ tasks:
       - DEV-MAC
   - id: "XXIV.5.1"
     title: "macOS 앱 번들에 `stellar`를 helper로 넣습니다. 릴리스 서명 스크립트가 helper와 앱을 Apple 공식 코드 서명·공증 문서에 따라 서명하도록 바꾸고(helper에 앱 entitlement 없음), \"중첩 서명 대상 없음\" 전제를 고치며 helper에도 arm64·서명 검사를 적용합니다. 번들 안 배치와 구체 서명 옵션은 보고서에 기록합니다(ADR-0005 §7)."
-    status: reported_done
+    status: not_started
     depends_on:
       - "XVI.9.4"
       - "XXIV.4.1"
     required_environments:
       - DEV-MAC
       - CI-MAC
-    report: "docs/task-reports/XXIV.5.1.md"
   - id: "XXIV.5.2"
     title: "앱 없는 macOS headless·CI 머신용 `stellar` 단독 서명·공증 배포물을 만듭니다. `stellar-mcp`는 넣지 않습니다."
     status: not_started

@@ -29,8 +29,7 @@ enum WelcomeUICheck {
         checkInstallSheet(checker)
         checkAccessibilityFeedback(checker)
 
-        checkBundledCommand(checker)
-        // 사용자 PATH/동명 명령/마운트 위치는 달라질 수 있습니다. 정상 앱의 상태는 읽기만 합니다.
+        // 실제 앱 번들 상태는 환경마다 다르므로 보고만 합니다(XXIV.5.1 전 빌드에는 helper가 없음).
         let realStatus = StellarCommandInstaller.forRunningApp().status()
         checker.note("running app command status=\(describe(realStatus))")
 
@@ -42,48 +41,6 @@ enum WelcomeUICheck {
             FileHandle.standardError.write(Data("welcome-ui 실패: \(failure)\n".utf8))
         }
         return false
-    }
-
-    /// 정상 앱 번들의 helper를 임시 홈에만 설치하고 그 링크를 실행합니다.
-    static func checkBundledCommand(_ checker: Checker) {
-        let manager = FileManager.default
-        let home = manager.temporaryDirectory.appendingPathComponent("StellarBundledCommand-\(UUID())", isDirectory: true)
-        defer { try? manager.removeItem(at: home) }
-        do {
-            try manager.createDirectory(at: home, withIntermediateDirectories: true)
-            let app = Bundle.main.bundleURL
-            let installer = StellarCommandInstaller(
-                appBundlePath: app.path,
-                fileSystem: LocalStellarCommandFileSystem(homeDirectory: home.path),
-                searchPath: StellarCommandSearchPath(ordered: []), ownerBundleIdentifier: ownerBundleID
-            )
-            guard case .ready(let plan) = installer.status() else {
-                checker.expect(false, "실제 번들 CLI 설치 준비 실패: \(installer.status())")
-                return
-            }
-            checker.expect(!manager.fileExists(atPath: plan.linkPath), "동의 전 링크가 생성됨")
-            guard installer.install(plan).isSuccess else {
-                checker.expect(false, "임시 홈에 실제 번들 CLI 설치 실패")
-                return
-            }
-            let destination = try manager.destinationOfSymbolicLink(atPath: plan.linkPath)
-            checker.expect(destination == installer.helperPath, "번들 CLI 링크 대상 불일치")
-            let process = Process(), output = Pipe()
-            process.executableURL = URL(fileURLWithPath: plan.linkPath)
-            process.arguments = ["version"]
-            process.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin"]
-            process.standardOutput = output
-            try process.run()
-            let bytes = output.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            let reply = try JSONSerialization.jsonObject(with: bytes) as? [String: Any]
-            let result = reply?["result"] as? [String: Any]
-            checker.expect(process.terminationStatus == 0 && result?["name"] as? String == "stellar-cli",
-                           "설치한 실제 CLI의 version 응답 불일치")
-            checker.note("bundled CLI install and version ok")
-        } catch {
-            checker.expect(false, "번들 CLI 임시 설치 검사 실패: \(error)")
-        }
     }
 
     // MARK: 공통

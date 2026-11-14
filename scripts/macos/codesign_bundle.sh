@@ -8,7 +8,6 @@
 #     APP_ENTITLEMENTS  앱 실행 파일 서명에만 붙일 entitlements(선택). 배포 서명에는 쓰지 않습니다.
 #
 # 서명 순서(Sparkle 배포 문서와 같은 순서, 모두 Hardened Runtime):
-#   Contents/Helpers/stellar (앱 entitlement 없음)
 #   Sparkle.framework/Versions/B/XPCServices/Installer.xpc
 #   Sparkle.framework/Versions/B/XPCServices/Downloader.xpc (entitlements 보존)
 #   Sparkle.framework/Versions/B/Autoupdate
@@ -42,12 +41,6 @@ sign() {
   codesign --force --options runtime "$TIMESTAMP_FLAG" --sign "$IDENTITY" "$@"
 }
 
-CLI="$APP/Contents/Helpers/stellar"
-if [ ! -f "$CLI" ] || [ ! -x "$CLI" ] || [ -L "$CLI" ]; then
-  echo "배포할 번들 안에 실행 가능한 stellar CLI가 없습니다: $CLI" >&2
-  exit 1
-fi
-sign "$CLI"
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
 if [ -d "$SPARKLE" ]; then
   VERSION_DIR="$SPARKLE/Versions/B"
