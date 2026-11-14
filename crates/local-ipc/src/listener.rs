@@ -431,7 +431,7 @@ struct Stop;
 
 impl IoLoop {
     fn run(mut self) {
-        while self.step().is_ok() {}
+        while self.step(Instant::now()).is_ok() {}
         // 진행 중 handshake는 이벤트 없이 닫습니다(앱이 listener를 버림).
     }
 
@@ -440,8 +440,7 @@ impl IoLoop {
     }
 
     /// poll 한 번과 그 결과 처리.
-    fn step(&mut self) -> Result<(), Stop> {
-        let now = Instant::now();
+    fn step(&mut self, now: Instant) -> Result<(), Stop> {
         self.expire(now)?;
         let accepting = self.pending.len() < MAX_PENDING_HANDSHAKES;
         let mut fds = vec![self.wake_rx.as_raw_fd()];
@@ -648,6 +647,27 @@ mod tests {
         let registry = Registry::at(tmp.path.join("r"), os::current_uid());
         let endpoint = AppEndpoint::bind(&registry, id(1)).unwrap();
         AppListener::spawn(endpoint, policy).unwrap()
+    }
+
+    fn test_io_loop(
+        endpoint: AppEndpoint,
+        policy: PeerPolicy,
+        wake_rx: UnixStream,
+        handshake_timeout: Duration,
+    ) -> (IoLoop, Receiver<ListenerEvent>) {
+        let (tx, events) = mpsc::channel();
+        let io_loop = IoLoop {
+            endpoint,
+            policy,
+            wake_rx,
+            bindings: None,
+            handshake_timeout,
+            tx,
+            thread: std::thread::current().id(),
+            ledger: NonceLedger::new(),
+            pending: Vec::new(),
+        };
+        (io_loop, events)
     }
 
     #[test]
@@ -1016,49 +1036,47 @@ mod tests {
         let tmp = TempDir::new();
         let registry = Registry::at(tmp.path.join("r"), os::current_uid());
         let endpoint = AppEndpoint::bind(&registry, id(1)).unwrap();
+        endpoint.listener.set_nonblocking(true).unwrap();
+        let mut client = UnixStream::connect(&endpoint.endpoint().socket_path).unwrap();
+        let (waker, wake_rx) = UnixStream::pair().unwrap();
         let timeout = Duration::from_millis(400);
-        let app = AppListener::spawn_inner(
+        let (mut io_loop, events) = test_io_loop(
             endpoint,
             PeerPolicy::for_current_process().unwrap(),
-            None,
+            wake_rx,
             timeout,
-        )
-        .unwrap();
-        let mut slow = UnixStream::connect(app.socket_path()).unwrap();
-        let mut reader = slow.try_clone().unwrap();
-        let started = std::time::Instant::now();
-        let trickle = std::thread::spawn(move || {
-            for byte in PROTOCOL_TAG.bytes() {
-                if slow.write_all(&[byte]).is_err() {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(100));
-            }
-        });
-        let event = app.events().recv_timeout(WAIT).unwrap();
-        let elapsed = started.elapsed();
-        assert!(
-            matches!(
-                event,
-                ListenerEvent::HandshakeFailed {
-                    error: HandshakeError::TimedOut,
-                    ..
-                }
-            ),
-            "{event:?}"
         );
-        assert_eq!(event.thread(), app.io_thread());
-        assert!(
-            elapsed >= timeout && elapsed < timeout * 3,
-            "기한 {timeout:?}, 실제 {elapsed:?}"
-        );
-        // 앱은 아무것도 쓰지 않고 닫았습니다. 이미 양방향이 닫혔으면 macOS는 timeout 설정에 EINVAL을
-        // 돌려주지만, 그 상태의 read는 기다리지 않습니다.
-        let _ = reader.set_read_timeout(Some(WAIT));
-        let mut received = Vec::new();
-        let _ = reader.read_to_end(&mut received);
-        assert!(received.is_empty());
-        trickle.join().unwrap();
+        let before_accept = Instant::now();
+        assert!(io_loop.accept_ready().is_ok());
+        let deadline = io_loop.pending[0].deadline;
+        let start = deadline - timeout;
+        assert!((before_accept..=Instant::now()).contains(&start));
+
+        // 각 poll 전에 실제 socket에 1 byte를 준비하고, poll 시각만 제어합니다.
+        let partial = &PROTOCOL_TAG.as_bytes()[..3];
+        let mut now = start;
+        for byte in partial {
+            now += Duration::from_millis(100);
+            client.write_all(&[*byte]).unwrap();
+            assert!(io_loop.step(now).is_ok());
+            assert_eq!(io_loop.pending[0].deadline, deadline);
+        }
+        assert_eq!(io_loop.pending[0].line, partial);
+        assert!(io_loop.expire(deadline - Duration::from_nanos(1)).is_ok());
+        assert_eq!(io_loop.pending.len(), 1);
+        assert!(matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+        // 만료 처리 뒤 대기할 fd가 없으므로 waker EOF로 그 poll을 즉시 마칩니다.
+        drop(waker);
+        assert!(io_loop.step(deadline).is_err());
+        assert!(io_loop.pending.is_empty());
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            ListenerEvent::HandshakeFailed { error: HandshakeError::TimedOut, thread }
+                if thread == io_loop.thread
+        ));
+        client.set_nonblocking(true).unwrap();
+        assert_eq!(client.read(&mut [0u8]).unwrap(), 0, "응답 없이 EOF");
     }
 
     /// 진행 중 handshake가 [`MAX_PENDING_HANDSHAKES`]개면 새 연결은 그중 하나가 끝날 때까지 kernel
@@ -1093,19 +1111,7 @@ mod tests {
                 let _ = waker.shutdown(Shutdown::Both);
             }
         });
-        let (tx, events) = mpsc::channel();
-        let thread = std::thread::current().id();
-        let mut io_loop = IoLoop {
-            endpoint,
-            policy,
-            wake_rx,
-            bindings: None,
-            handshake_timeout: DEFAULT_TIMEOUT,
-            tx,
-            thread,
-            ledger: NonceLedger::new(),
-            pending: Vec::new(),
-        };
+        let (mut io_loop, events) = test_io_loop(endpoint, policy, wake_rx, DEFAULT_TIMEOUT);
         let mut silent = Vec::new();
         for _ in 0..MAX_PENDING_HANDSHAKES {
             let (stream, other) = UnixStream::pair().unwrap();
@@ -1120,7 +1126,7 @@ mod tests {
         silent[0].write_all(b"S").unwrap();
         assert!(readable(io_loop.pending[0].stream.as_raw_fd()));
         assert!(readable(listener_fd));
-        assert!(io_loop.step().is_ok());
+        assert!(io_loop.step(Instant::now()).is_ok());
         assert_eq!(io_loop.pending.len(), MAX_PENDING_HANDSHAKES);
         assert_eq!(io_loop.pending[0].line, b"S");
         assert!(
@@ -1134,17 +1140,17 @@ mod tests {
         let closing_fd = io_loop.pending.last().unwrap().stream.as_raw_fd();
         drop(silent.pop());
         assert!(readable(closing_fd));
-        assert!(io_loop.step().is_ok());
+        assert!(io_loop.step(Instant::now()).is_ok());
         assert_eq!(io_loop.pending.len(), MAX_PENDING_HANDSHAKES - 1);
         assert!(matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)));
 
         // 다음 step은 backlog 연결을 실제 인증하고, 그다음 step은 이미 도착한 HELLO에 답합니다.
         assert!(readable(listener_fd));
-        assert!(io_loop.step().is_ok());
+        assert!(io_loop.step(Instant::now()).is_ok());
         assert_eq!(io_loop.pending.len(), MAX_PENDING_HANDSHAKES);
         assert!(readable(listener_fd), "두 번째 연결은 backlog에 남음");
         assert!(readable(io_loop.pending.last().unwrap().stream.as_raw_fd()));
-        assert!(io_loop.step().is_ok());
+        assert!(io_loop.step(Instant::now()).is_ok());
         assert_eq!(io_loop.pending.len(), MAX_PENDING_HANDSHAKES - 1);
         assert!(
             readable(listener_fd),
@@ -1170,7 +1176,7 @@ mod tests {
         assert_eq!(connection.client_nonce(), client);
         assert_eq!(connection.session_nonce(), session);
         assert_eq!(connection.peer(), peer);
-        assert_eq!(processed, thread);
+        assert_eq!(processed, io_loop.thread);
         done_tx.send(()).unwrap();
         watchdog.join().unwrap();
     }
