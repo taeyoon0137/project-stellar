@@ -66,5 +66,20 @@
 
 ## 남은 위험 / 한계
 
-- id 중복·참조·cycle 검사는 문서 전체를 한 번 훑습니다(O(N)). 대형 문서의 반복 삽입 비용은 증분 id/참조 index가 생기면
-  줄일 수 있습니다.
+- Path clip 및 modifier가 외부 대상을 참조하면 종류 확인에 전체 ID 분류를 사용합니다. modifier stack을 포함하는 요청은 문서 전체 cycle 검사도 수행합니다. 이동·삭제·복원에는 각 command의 기존 검사 범위가 적용됩니다.
+
+## 5만 leaf 문서에서 Frame 단일 삽입
+
+`InsertNode::validate`는 매 호출마다 전체 영속 ID 지도를 만들고, 대상 부모의 형제 순서 키 하나를 확인하기 위해 전체 노드를 다시 그룹화·정렬했습니다. 변경 후 문서·페이지·View·path element·modifier ID의 소유 수와 부모별 `(OrderKey, StableId)`를 모델에서 유지하고, node ID는 기존 registry에서 조회합니다. ID와 순서 키는 저장 레코드에서 재구성됩니다. `DocumentModel::children_in_order`도 같은 형제 순서를 사용합니다.
+
+Apple M3 Max, macOS 27.2 (26B123), rustc 1.96.0에서 기준 커밋 `757f246b`와 변경 코드에 같은 release 측정을 적용했습니다. 루트 하나·그룹 100개·그룹별 같은 수의 leaf Frame을 만든 뒤, 그룹을 바꿔 가며 충돌하지 않는 ID·순서 키로 Frame 101개를 삽입합니다. 시간은 요청을 만든 직후부터 `DocumentState::execute`의 검증·역 명령 생성·모델 적용이 끝날 때까지입니다. 각 바이너리를 번갈아 5번 실행해 각 측정값의 중앙값을 기록했습니다.
+
+| 기존 leaf 수 | 변경 전 p50 | 변경 후 p50 | 변경 전 p95 | 변경 후 p95 |
+|---|---:|---:|---:|---:|
+| 1,000 | 215.583 µs | 0.917 µs | 240.667 µs | 2.209 µs |
+| 10,000 | 2.178 ms | 1.167 µs | 2.485 ms | 1.584 µs |
+| 50,000 | 11.782 ms | 1.625 µs | 12.576 ms | 2.166 µs |
+
+5만 leaf의 p99는 13.330 ms에서 3.209 µs로 줄었습니다. 모델과 초기 인덱스를 만드는 시간은 18.179 ms에서 24.265 ms로 늘었습니다. 메모리 사용량과 디스크 열기, 입력에서 화면 표시까지의 시간은 측정하지 않았습니다.
+
+재현 명령은 `cargo test --release -p stellar-commands measure_insert_single_frame -- --ignored --nocapture`입니다. `insert_indexes_match_full_rebuilds_after_command_sequences`는 16개 seed의 command 순서에 대해 전체 재구성과 ID 사용 여부·순서 키·자식 순서를 대조합니다. 직접 모델 API가 중복 ID·같은 순서 키를 일시 허용한 상태에서 제거하는 경우도 검사합니다. 다음 단계는 참조를 포함하는 삽입과 다른 구조 command의 전체 문서 조회 비용 측정입니다.
