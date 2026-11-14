@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """실제 CLI 저장 파일, macOS 패널 클릭, 시스템 Git index 재열기를 한 임시 홈에서 검증합니다."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -58,8 +59,19 @@ def main(app, cli, fixture):
         identity = project["project"]["id"]
         target = json.dumps(str(work.resolve()))
         trust.write_text(f"schema_version: 1\ntrusted:\n  - target: {target}\n    project_id: {identity}\n")
+
+        def project_files():
+            files = {}
+            for path in work.rglob("*"):
+                relative = path.relative_to(work)
+                if relative.parts[0] != ".git" and path.is_file():
+                    files[relative] = hashlib.sha256(path.read_bytes()).digest()
+            return files
+
+        expected_files = project_files()
+        expected_files[current.relative_to(work)] = hashlib.sha256(after.read_bytes()).digest()
         subprocess.run([app, "--git-stage-check", work, after], env=env, check=True, timeout=75)
-        assert current.read_bytes() == after.read_bytes()
+        assert project_files() == expected_files, "Stage/Unstage changed the saved project files"
 
         # Git 자신의 checkout-index 결과를 별도로 열고, working과 같은 노드의 이름·잠금을 비교합니다.
         def stored_node(directory, index_file):

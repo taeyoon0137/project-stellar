@@ -36,9 +36,22 @@ enum ShellGitStageCheck {
             guard pump.waitForPendingRequests(timeout: 10) else { return nil }
             return coordinator.projectWindow(forPath: path)
         }
+        func showGitPanel(_ project: ShellProjectWindow) -> GitPanelViewController? {
+            let controller = project.windowController
+            guard let window = project.window, let pane = controller.splitController.centerController.auxiliaryItem else { return nil }
+            window.orderFront(nil)
+            if pane.isCollapsed { controller.toggleAuxiliaryPanel(nil) }
+            let panel = project.panelsSlot.gitPanel
+            panel.loadViewIfNeeded()
+            let outline = panel.changeList.outlineView
+            return spin {
+                window.isVisible && outline.window === window && !outline.isHiddenOrHasHiddenAncestor && !outline.visibleRect.isEmpty
+            } ? panel : nil
+        }
         func click(_ panel: GitPanelViewController, state: GitStageState = .unstaged) -> Bool {
             let outline = panel.changeList.outlineView
             guard spin({
+                guard panel.changeList.generation == panel.status?.changes.generation, !panel.isBusy else { return false }
                 for i in 0..<outline.numberOfRows {
                     guard let item = outline.item(atRow: i) as? GitChangeOutlineItem,
                           let row = panel.changeList.row(of: item) else { continue }
@@ -47,7 +60,8 @@ enum ShellGitStageCheck {
                     } else if row.title == String(localized: "Node name"), row.stageState == state {
                         outline.scrollRowToVisible(i)
                         guard let cell = outline.view(atColumn: 0, row: i, makeIfNecessary: true) as? GitChangeCellView,
-                              cell.stageCheckbox.isEnabled else { continue }
+                              cell.stageCheckbox.isEnabled, !cell.stageCheckbox.isHidden,
+                              outline.row(for: cell.stageCheckbox) == i else { continue }
                         cell.stageCheckbox.performClick(nil)
                         return true
                     }
@@ -57,10 +71,7 @@ enum ShellGitStageCheck {
             return true
         }
         guard let window = open() else { return fail("프로젝트 창 열기") }
-        window.window?.orderFront(nil)
-        window.windowController.toggleAuxiliaryPanel(nil)
-        let panel = window.panelsSlot.gitPanel
-        panel.loadViewIfNeeded()
+        guard let panel = showGitPanel(window) else { return fail("프로젝트 창의 Git 패널 표시") }
         guard spin({ panel.status?.availability == .ready && panel.status?.unstagedChangeCount == 1 }) else {
             return fail("실제 저장된 이름 변경 조회: \(String(describing: panel.status?.semanticStatusError))")
         }
@@ -105,19 +116,22 @@ enum ShellGitStageCheck {
               spin({ panel.status?.stagedChangeCount == 1 && panel.status?.unstagedChangeCount == 0 }) else {
             return fail("현재 이름 한 건 실제 Stage: \(String(describing: panel.status?.semanticStatusError))")
         }
+        // 다른 창 구성에서 열면 보조 패널의 기본값인 접힌 상태에서 다시 시작합니다.
+        let reopenedAutosave = ShellCheckAutosave(prefix: "StellarGitStageReopenedCheck")
+        defer { reopenedAutosave.removeRecords() }
+        coordinator.windowConfiguration = { reopenedAutosave.configuration }
         window.window?.close()
         guard pump.waitForPendingRequests(timeout: 10), let again = open(), again !== window else { return fail("창 닫기/재열기") }
-        let reopened = again.panelsSlot.gitPanel
-        reopened.loadViewIfNeeded()
+        guard let reopened = showGitPanel(again) else { return fail("재열린 창의 Git 패널 표시") }
         guard spin({ reopened.status?.stagedChangeCount == 1 && reopened.status?.unstagedChangeCount == 0 }) else { return fail("재열기 index 확인") }
         // Python harness가 두 시점의 실제 index를 별도로 재열 수 있게 Stage 결과를 복사합니다.
         do {
             try Data(contentsOf: URL(fileURLWithPath: before)).write(
                 to: URL(fileURLWithPath: replacement).appendingPathExtension("staged-index"))
         } catch { return fail("Stage index 복사") }
-        guard click(reopened, state: .staged),
-              spin({ reopened.status?.stagedChangeCount == 0 && reopened.status?.unstagedChangeCount == 1 }) else {
-            return fail("재열린 창에서 이름 Unstage: \(String(describing: reopened.status?.semanticStatusError))")
+        guard click(reopened, state: .staged) else { return fail("재열린 창의 Stage된 체크박스 클릭") }
+        guard spin({ reopened.status?.stagedChangeCount == 0 && reopened.status?.unstagedChangeCount == 1 }) else {
+            return fail("Unstage 후 변경 개수: staged=\(reopened.status?.stagedChangeCount ?? -1), unstaged=\(reopened.status?.unstagedChangeCount ?? -1), \(String(describing: reopened.status?.semanticStatusError))")
         }
         guard let closingSession = again.windowController.windowSession else { return fail("재개한 창 session") }
         var late: CoreRuntimeEvent?
