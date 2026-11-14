@@ -53,7 +53,10 @@ enum SidebarUICheck {
         init(provider: SidebarStubDataProvider) {
             self.provider = provider
             sidebar = SidebarViewController(provider: provider)
-            splitController.addSplitViewItem(sidebar.makeSplitViewItem())
+            let sidebarItem = sidebar.makeSplitViewItem()
+            sidebarItem.minimumThickness = Self.sidebarWidth
+            sidebarItem.maximumThickness = Self.sidebarWidth
+            splitController.addSplitViewItem(sidebarItem)
             let canvas = NSViewController()
             canvas.view = NSView()
             splitController.addSplitViewItem(NSSplitViewItem(viewController: canvas))
@@ -67,12 +70,10 @@ enum SidebarUICheck {
             window.contentViewController = splitController
             window.setContentSize(NSSize(width: 960, height: 600))
             window.contentView?.layoutSubtreeIfNeeded()
-            // 사이드바 폭 범위는 셸 골격(XII.9.1)이 정합니다. 검사는 일반적인 사이드바 폭에서 합니다.
-            splitController.splitView.setPosition(Self.sidebarWidth, ofDividerAt: 0)
             refresh()
         }
 
-        /// 검사용 일반 사이드바 폭(point).
+        /// 화면 크기와 관계없이 레이아웃과 클릭 영역을 검사할 사이드바 폭(point).
         static let sidebarWidth: CGFloat = 240
 
         var layers: SidebarLayersController { sidebar.layersController }
