@@ -36,13 +36,18 @@ impl HashAlgorithm {
 }
 
 /// `ContentHash` 문자열 파싱 실패.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// 입력은 신뢰되지 않은 파일 내용일 수 있습니다(`design/current`, envelope·pointer hash 문자열).
+/// 그래서 [`fmt::Display`]·[`fmt::Debug`] 출력에는 입력 원문을 넣지 않습니다(보안 감사 STOR-6:
+/// 알 수 없는 알고리즘 이름 자리에 비밀 값 한 줄이 들어와도 로그·UI에 남지 않음).
+#[derive(Clone, PartialEq, Eq)]
 pub enum ParseContentHashError {
     /// `<algorithm>:<hex>` 형태가 아닙니다.
     MissingSeparator,
     /// 알 수 없는 알고리즘 이름입니다.
     UnknownAlgorithm {
-        /// 입력에 있던 알고리즘 이름.
+        /// 입력에 있던 알고리즘 이름. 오류 출력(`Display`·`Debug`)은 이 값 대신 byte 길이만
+        /// 보여 줍니다.
         name: String,
     },
     /// hex 길이가 알고리즘 digest 길이와 다릅니다.
@@ -66,7 +71,11 @@ impl fmt::Display for ParseContentHashError {
                 f.write_str("content hash는 '<algorithm>:<hex>' 형태여야 합니다")
             }
             ParseContentHashError::UnknownAlgorithm { name } => {
-                write!(f, "알 수 없는 hash 알고리즘입니다: {name}")
+                write!(
+                    f,
+                    "알 수 없는 hash 알고리즘입니다(sha256만 지원, 입력 이름 {} bytes)",
+                    name.len()
+                )
             }
             ParseContentHashError::InvalidLength { expected, actual } => {
                 write!(
@@ -77,6 +86,28 @@ impl fmt::Display for ParseContentHashError {
             ParseContentHashError::InvalidHexDigit { found } => {
                 write!(f, "소문자 16진수가 아닌 문자입니다: {found:?}")
             }
+        }
+    }
+}
+
+impl fmt::Debug for ParseContentHashError {
+    /// derive와 같은 모양이지만 알 수 없는 알고리즘 이름은 길이로만 보여 줍니다(원문 비노출).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseContentHashError::MissingSeparator => f.write_str("MissingSeparator"),
+            ParseContentHashError::UnknownAlgorithm { name } => f
+                .debug_struct("UnknownAlgorithm")
+                .field("name", &format_args!("<생략, {} bytes>", name.len()))
+                .finish(),
+            ParseContentHashError::InvalidLength { expected, actual } => f
+                .debug_struct("InvalidLength")
+                .field("expected", expected)
+                .field("actual", actual)
+                .finish(),
+            ParseContentHashError::InvalidHexDigit { found } => f
+                .debug_struct("InvalidHexDigit")
+                .field("found", found)
+                .finish(),
         }
     }
 }
@@ -206,6 +237,51 @@ mod tests {
             ParseContentHashError::UnknownAlgorithm {
                 name: "blake3".to_string()
             }
+        );
+    }
+
+    /// 보안 감사 STOR-6: 오류 출력에 알고리즘 자리의 입력 원문을 넣지 않습니다(길이만).
+    #[test]
+    fn unknown_algorithm_error_does_not_echo_input() {
+        let secret = "tok_SECRETVALUE_0123456";
+        let err = format!("{secret}:x").parse::<ContentHash>().unwrap_err();
+        assert_eq!(
+            err,
+            ParseContentHashError::UnknownAlgorithm {
+                name: secret.to_string()
+            }
+        );
+        let display = err.to_string();
+        let debug = format!("{err:?}");
+        for text in [&display, &debug] {
+            assert!(!text.contains("SECRET"), "원문 노출: {text}");
+            assert!(
+                text.contains(&secret.len().to_string()),
+                "길이 표시: {text}"
+            );
+        }
+        assert_eq!(debug, "UnknownAlgorithm { name: <생략, 23 bytes> }");
+        // 다른 variant의 Debug는 derive와 같은 모양입니다.
+        assert_eq!(
+            format!("{:?}", ParseContentHashError::MissingSeparator),
+            "MissingSeparator"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                ParseContentHashError::InvalidLength {
+                    expected: 64,
+                    actual: 4
+                }
+            ),
+            "InvalidLength { expected: 64, actual: 4 }"
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                ParseContentHashError::InvalidHexDigit { found: 'g' }
+            ),
+            "InvalidHexDigit { found: 'g' }"
         );
     }
 

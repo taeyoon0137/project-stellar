@@ -271,9 +271,10 @@ scene snapshot·resource revision 입력 고정(`capture`), SVG 벡터 변환(`s
 `crates/storage`는 생성(generation) 기반 저장소입니다. canonical binary 인코딩(`canonical`), content
 hash(`hash`), chunk 저장소(`chunk`), atomic 파일 쓰기(`atomic_file`), generation 저장(`generation`),
 저장 트랜잭션(`save`), garbage collection(`gc`), 스키마 버전과 마이그레이션(`migration`)을 둡니다.
-허용 직접 의존과 실제 의존은 core-types입니다. 주요 ADR은 content hash 알고리즘의 ADR-0004, 저장 포맷
-기준선의 ADR-0010, 저장 트랜잭션·GC 보존·마이그레이션의 ADR-0011, chunk 분할 임계치의 ADR-0012,
-decoder 경화의 ADR-0015입니다.
+내부 `fs_guard`는 저장소 파일을 정규 파일·크기 상한으로만 읽기, symlink 저장소 디렉터리 거부, 파일
+identity 비교를 맡습니다. 허용 직접 의존과 실제 의존은 core-types입니다. 주요 ADR은 content hash
+알고리즘의 ADR-0004, 저장 포맷 기준선의 ADR-0010, 저장 트랜잭션·GC 보존·마이그레이션의 ADR-0011,
+chunk 분할 임계치의 ADR-0012, decoder·파일 접근 경화의 ADR-0015입니다.
 
 ### stellar-assets
 
