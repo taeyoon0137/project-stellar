@@ -82,7 +82,9 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         if newSnapshot.searchPlaceholder != previous.searchPlaceholder {
             searchToolbarItem?.searchField.placeholderString = newSnapshot.searchPlaceholder
         }
-        searchToolbarItem?.searchField.isEnabled = newSnapshot.status == .ready
+        if let field = searchToolbarItem?.searchField, field.isEnabled != isSearchUsable {
+            field.isEnabled = isSearchUsable
+        }
         validateItems()
     }
 
@@ -130,40 +132,48 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
+        // `flag == false`는 사용자 구성 palette에 보일 사본입니다. palette가 닫히면 사본은 해제되므로
+        // controller의 항목 참조는 실제 툴바에 들어갈 항목(`flag == true`)에만 묶습니다. 사본에 묶으면
+        // palette를 닫은 뒤 weak 참조가 nil이 되어 snapshot 반영과 메뉴 검증이 실제 항목에 닿지 않습니다.
+        let bindsToController = flag
         let item: NSToolbarItem?
         switch itemIdentifier {
         case Self.navigationItem:
-            item = makeNavigationGroup()
+            item = makeNavigationGroup(binds: bindsToController)
         case Self.searchItem:
-            item = makeSearchItem()
+            item = makeSearchItem(binds: bindsToController)
         case Self.moreItem:
-            item = makeMoreItem()
+            item = makeMoreItem(binds: bindsToController)
         default:
             item = nil
         }
         // 항목이 늦게 만들어져도 현재 snapshot의 활성 상태로 시작합니다.
-        validateItems()
+        if bindsToController {
+            validateItems()
+        }
         return item
     }
 
     // MARK: - 항목 생성
 
-    private func makeNavigationGroup() -> NSToolbarItemGroup {
+    private func makeNavigationGroup(binds: Bool) -> NSToolbarItemGroup {
         let back = makeButtonItem(
-            Self.navigateBackItem, label: "Back", symbolName: ShellFrameSymbols.navigateBack,
+            Self.navigateBackItem, label: ShellFrameStrings.back, symbolName: ShellFrameSymbols.navigateBack,
             action: #selector(ShellWindowController.navigateBack(_:))
         )
         let forward = makeButtonItem(
-            Self.navigateForwardItem, label: "Forward", symbolName: ShellFrameSymbols.navigateForward,
+            Self.navigateForwardItem, label: ShellFrameStrings.forward, symbolName: ShellFrameSymbols.navigateForward,
             action: #selector(ShellWindowController.navigateForward(_:))
         )
         let group = NSToolbarItemGroup(itemIdentifier: Self.navigationItem)
         group.subitems = [back, forward]
-        group.label = "Back/Forward"
-        group.paletteLabel = "Back/Forward"
+        group.label = ShellFrameStrings.backForward
+        group.paletteLabel = ShellFrameStrings.backForward
         // 내비게이션 항목은 창 제목 앞쪽에 놓입니다.
         group.isNavigational = true
-        navigationGroup = group
+        if binds {
+            navigationGroup = group
+        }
         return group
     }
 
@@ -178,7 +188,8 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         item.label = label
         item.paletteLabel = label
         item.toolTip = label
-        item.isBordered = true
+        // 툴바 아이콘은 테두리 없이 둡니다(가이드 5.4). 눌림·강조 표현은 시스템이 그립니다.
+        item.isBordered = false
         item.target = navigationTarget
         item.action = action
         return item
@@ -190,43 +201,58 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         syncToolSelection()
     }
 
-    private func makeSearchItem() -> NSSearchToolbarItem {
+    private func makeSearchItem(binds: Bool) -> NSSearchToolbarItem {
         let item = NSSearchToolbarItem(itemIdentifier: Self.searchItem)
-        item.label = "Search"
-        item.paletteLabel = "Search Project"
-        item.toolTip = "Search Project"
+        item.label = ShellFrameStrings.search
+        item.paletteLabel = ShellFrameStrings.searchProject
+        item.toolTip = ShellFrameStrings.searchProject
         let field = item.searchField
         field.placeholderString = snapshot.searchPlaceholder
         // Return으로 확정한 질의만 보냅니다. 입력마다 질의하지 않아 메인 스레드 부담을 줄입니다(가이드 9장).
         field.sendsSearchStringImmediately = false
         field.sendsWholeSearchString = true
-        field.target = self
-        field.action = #selector(searchSubmitted(_:))
-        field.setAccessibilityLabel("Search Project")
-        field.isEnabled = snapshot.status == .ready
-        searchToolbarItem = item
+        field.setAccessibilityLabel(ShellFrameStrings.searchProject)
+        if binds {
+            field.target = self
+            field.action = #selector(searchSubmitted(_:))
+            field.isEnabled = isSearchUsable
+            searchToolbarItem = item
+        } else {
+            field.isEnabled = false
+        }
         return item
     }
 
-    private func makeMoreItem() -> NSMenuToolbarItem {
+    /// 검색 필드를 쓸 수 있는지: 창이 ready이고 코어가 검색을 제공할 때만.
+    var isSearchUsable: Bool {
+        snapshot.status == .ready && snapshot.isSearchAvailable
+    }
+
+    private func makeMoreItem(binds: Bool) -> NSMenuToolbarItem {
         let item = NSMenuToolbarItem(itemIdentifier: Self.moreItem)
-        item.image = NSImage(systemSymbolName: ShellFrameSymbols.moreMenu, accessibilityDescription: "More")
-        item.label = "More"
-        item.paletteLabel = "More"
-        item.toolTip = "More"
+        item.image = NSImage(
+            systemSymbolName: ShellFrameSymbols.moreMenu, accessibilityDescription: ShellFrameStrings.more
+        )
+        item.label = ShellFrameStrings.more
+        item.paletteLabel = ShellFrameStrings.more
+        item.toolTip = ShellFrameStrings.more
         item.showsIndicator = false
         item.autovalidates = false
-        item.menu = makeMoreMenu()
-        moreToolbarItem = item
+        item.menu = makeMoreMenu(binds: binds)
+        if binds {
+            moreToolbarItem = item
+        }
         return item
     }
 
-    private func makeMoreMenu() -> NSMenu {
-        let menu = NSMenu(title: "More")
+    private func makeMoreMenu(binds: Bool = true) -> NSMenu {
+        let menu = NSMenu(title: ShellFrameStrings.more)
         menu.autoenablesItems = false
         for action in snapshot.moreActions {
-            let menuItem = NSMenuItem(title: action.title, action: #selector(moreActionChosen(_:)), keyEquivalent: "")
-            menuItem.target = self
+            let menuItem = NSMenuItem(
+                title: action.title, action: binds ? #selector(moreActionChosen(_:)) : nil, keyEquivalent: ""
+            )
+            menuItem.target = binds ? self : nil
             menuItem.representedObject = action.id.rawValue
             menuItem.isEnabled = action.isEnabled
             menu.addItem(menuItem)

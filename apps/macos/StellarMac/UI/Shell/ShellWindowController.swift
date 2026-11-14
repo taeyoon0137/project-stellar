@@ -165,18 +165,30 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     // MARK: - 명령(메뉴 막대·툴바 공용, 가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도")
 
+    // 동작 메서드의 guard는 활성화 검사(`validate(_:)`)와 같은 조건을 씁니다. 메뉴·툴바 밖의
+    // `sendAction`이나 직접 호출도 ready가 아닌 창에서 명령을 보내지 않습니다.
+
     @objc func navigateBack(_ sender: Any?) {
-        guard snapshot.navigation.canGoBack else { return }
+        guard canNavigateBack else { return }
         dataSource.send(.navigateBack)
     }
 
     @objc func navigateForward(_ sender: Any?) {
-        guard snapshot.navigation.canGoForward else { return }
+        guard canNavigateForward else { return }
         dataSource.send(.navigateForward)
+    }
+
+    private var canNavigateBack: Bool {
+        snapshot.status == .ready && snapshot.navigation.canGoBack
+    }
+
+    private var canNavigateForward: Bool {
+        snapshot.status == .ready && snapshot.navigation.canGoForward
     }
 
     /// 툴바 프로젝트 검색 필드로 포커스를 옮깁니다(사용자 명령으로만, 가이드 8.2).
     @objc func focusProjectSearch(_ sender: Any?) {
+        guard toolbarController.isSearchUsable else { return }
         toolbarController.searchToolbarItem?.beginSearchInteraction()
     }
 
@@ -208,11 +220,11 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private func validate(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(navigateBack(_:)):
-            return snapshot.status == .ready && snapshot.navigation.canGoBack
+            return canNavigateBack
         case #selector(navigateForward(_:)):
-            return snapshot.status == .ready && snapshot.navigation.canGoForward
+            return canNavigateForward
         case #selector(focusProjectSearch(_:)):
-            return snapshot.status == .ready && toolbarController.searchToolbarItem != nil
+            return toolbarController.isSearchUsable && toolbarController.searchToolbarItem != nil
         case #selector(toggleSidebar(_:)), #selector(toggleInspector(_:)), #selector(toggleAuxiliaryPanel(_:)):
             return splitController.validateUserInterfaceItem(item)
         default:

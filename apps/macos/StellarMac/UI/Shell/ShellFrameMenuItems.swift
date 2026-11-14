@@ -13,13 +13,13 @@ enum ShellFrameMenuItems {
     static func makeViewMenuItems(auxiliaryTitle: String?) -> [NSMenuItem] {
         var items = [
             // Control-Command-S: 사이드바 표시 전환(시스템 앱 관례, HIG Keyboard).
-            makeItem("Show Sidebar", #selector(ShellWindowController.toggleSidebar(_:)), "s", [.control, .command]),
+            makeItem(ShellFrameStrings.showSidebar, #selector(ShellWindowController.toggleSidebar(_:)), "s", [.control, .command]),
             // Option-Command-I: 인스펙터 표시 전환(HIG Keyboard 표준 단축키).
-            makeItem("Show Inspector", #selector(ShellWindowController.toggleInspector(_:)), "i", [.option, .command]),
+            makeItem(ShellFrameStrings.showInspector, #selector(ShellWindowController.toggleInspector(_:)), "i", [.option, .command]),
         ]
         if let auxiliaryTitle {
             // 보조 패널 단축키는 앱 고유 메뉴 구성(O8, XII.6.5)에서 정합니다.
-            items.append(makeItem("Show \(auxiliaryTitle)", #selector(ShellWindowController.toggleAuxiliaryPanel(_:)), "", []))
+            items.append(makeItem(ShellFrameStrings.showPane(auxiliaryTitle), #selector(ShellWindowController.toggleAuxiliaryPanel(_:)), "", []))
         }
         return items
     }
@@ -28,10 +28,10 @@ enum ShellFrameMenuItems {
     static func makeNavigationMenuItems() -> [NSMenuItem] {
         [
             // Command-[ / Command-]: 뒤로·앞으로(HIG Keyboard 표준 단축키).
-            makeItem("Back", #selector(ShellWindowController.navigateBack(_:)), "[", [.command]),
-            makeItem("Forward", #selector(ShellWindowController.navigateForward(_:)), "]", [.command]),
+            makeItem(ShellFrameStrings.back, #selector(ShellWindowController.navigateBack(_:)), "[", [.command]),
+            makeItem(ShellFrameStrings.forward, #selector(ShellWindowController.navigateForward(_:)), "]", [.command]),
             // 추가 입력이 필요하므로 말줄임표를 붙입니다. 단축키는 XII.6.5에서 정합니다.
-            makeItem("Search Project…", #selector(ShellWindowController.focusProjectSearch(_:)), "", []),
+            makeItem(ShellFrameStrings.searchProjectMenu, #selector(ShellWindowController.focusProjectSearch(_:)), "", []),
         ]
     }
 

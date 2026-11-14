@@ -115,6 +115,9 @@ final class ShellContentContainerViewController: NSViewController {
             field.isSelectable = false
             field.preferredMaxLayoutWidth = ShellFrameMetrics.statusTextMaxWidth
         }
+        // 제목은 상태 그룹의 접근성 레이블로 전달하므로 제목 레이블 자체는 접근성 트리에서 뺍니다.
+        // 그러지 않으면 VoiceOver가 그룹 이름과 제목 레이블로 같은 문장을 두 번 읽습니다(가이드 8.3).
+        statusTitleField.setAccessibilityElement(false)
 
         actionStack.orientation = .horizontal
         actionStack.distribution = .fill

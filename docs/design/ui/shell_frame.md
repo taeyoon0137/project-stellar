@@ -39,6 +39,7 @@
 | `ShellContentContainerViewController.swift` | 콘텐츠 슬롯 + 빈·로딩·오류 상태 화면 |
 | `ShellCanvasHostViewController.swift` | 기존 `CanvasView`를 감싼 콘텐츠 슬롯 |
 | `ShellFrameMenuItems.swift` | 메뉴 막대 항목(설치는 하지 않음) |
+| `ShellFrameStrings.swift` | UI 문자열(`String(localized:)`, 상태 제목은 형식 문자열 하나) |
 | `ShellFrameStubs.swift` | `ShellFrameDataSourceStub`, `ShellPanePlaceholderStub`, `ShellFrameSlots.stub(...)` |
 | `ShellFrameUICheck.swift` | offscreen 검사 진입점 `ShellFrameUICheck.run() -> Bool` |
 
@@ -83,7 +84,8 @@ struct ShellFrameSlots {
 }
 ```
 
-- `ShellFrameSnapshot`(값 타입, `Equatable`·`Sendable`): `generation`, `title`, `subtitle`, `status`, `navigation(canGoBack, canGoForward)`, `tools[ShellToolDescriptor]`, `activeToolID`, `moreActions[ShellActionDescriptor]`, `searchPlaceholder`.
+- `ShellFrameSnapshot`(값 타입, `Equatable`·`Sendable`): `generation`, `title`, `subtitle`, `status`, `navigation(canGoBack, canGoForward)`, `tools[ShellToolDescriptor]`, `activeToolID`, `moreActions[ShellActionDescriptor]`, `searchPlaceholder`, `isSearchAvailable`(기본 true. 코어 검색 경로가 없으면 false로 보내 ready 상태에서도 검색 필드와 "Search Project…"를 비활성화합니다).
+- data source 하나는 창 하나에 대응합니다. `snapshotHandler`는 구독자 하나만 받고 창 controller가 만들어질 때 덮어쓰므로, 창마다 별도 data source를 만듭니다.
 - `ShellFrameCommand`: `navigateBack`, `navigateForward`, `selectTool(id)`, `submitSearch(query:)`, `perform(id)`.
 - 명령 식별자(`ShellCommandID`)는 코어와 공유하는 문자열이며 셸은 해석하지 않습니다. [가이드 6.1] [계획 XII.6.5]
 - 사이드바·인스펙터·보조 패널 접기는 문서 의미가 아닌 창 상태이므로 명령으로 보내지 않습니다. [가이드 2.6] [아키텍처 §8.1]
@@ -127,6 +129,8 @@ struct ShellFrameSlots {
 - 도구 영역은 툴바가 아니라 콘텐츠 슬롯 하단 가운데에 떠 있는 도구 막대(`ShellToolBarView`)에 둡니다(2026-11-14 사용자 결정). 모양은 상단 툴바에 있던 도구 그룹과 같게 유지합니다: Liquid Glass 캡슐(`NSGlassEffectView`, 높이 36pt, 반경 18pt), 도구 칸 38.5pt, 선택한 도구 뒤 32.5 × 28pt 둥근 회색 선택 표시, 구분선 없음. 캔버스 아래 가장자리와 16pt 떨어지고, 사이드바·인스펙터가 열리고 닫혀도 콘텐츠 영역 기준 가운데에 있습니다.
 - 아이콘만 있는 항목에는 레이블, 도움말 태그, 이미지 접근성 설명을 모두 둡니다. 같은 묶음에서 텍스트 항목과 아이콘 항목을 섞지 않습니다. [가이드 5.4, 8.1]
 - 사용자 구성은 `allowsUserCustomization`과 `autosavesConfiguration`으로 AppKit이 저장합니다.
+- **사용자 구성 palette 사본**: AppKit은 Customize Toolbar palette에 보일 항목을 `toolbar(_:itemForItemIdentifier:willBeInsertedIntoToolbar:)`에 `false`를 넘겨 따로 만들고 palette를 닫으면 해제합니다. controller의 항목 참조(내비게이션·검색·더 보기)는 `true`로 만든 실제 항목에만 묶고, palette 사본에는 target·action을 달지 않습니다. 사본에 묶으면 palette를 닫은 뒤 weak 참조가 nil이 되어 snapshot 반영·활성 상태·"Search Project…" 검증이 실제 항목에 닿지 않습니다(리뷰에서 재현). 도구 막대는 툴바 항목이 아니라 controller가 직접 가지므로 palette 사본과 관계없습니다.
+- 툴바 아이콘(뒤로·앞으로)은 테두리 없이 둡니다(`isBordered = false`). 눌림·강조 표현은 시스템이 그립니다. [가이드 5.4]
 - 도구 막대는 placeholder입니다. 받은 도구 목록을 그리고 선택을 `selectTool`로 보낼 뿐이며, 도구 상태 기계는 XII.3.6, 생성 도구는 WBS 없음(가이드 10.4)입니다.
 - Branch·Pull·Fetch 같은 Git 동작은 툴바에 두지 않습니다. [가이드 6.1]
 
@@ -156,7 +160,8 @@ struct ShellFrameSlots {
 
 ## 7. 접근성과 외형
 
-- VoiceOver: pane 영역 이름(Sidebar, Canvas, Inspector, 보조 패널 이름), 캔버스 뷰(역할 layout area, 레이블 Canvas), 툴바 항목 레이블, 도구별 레이블, 검색 필드 레이블(Search Project), 상태 화면(그룹 레이블 = 제목, 진행 표시기 레이블 = 메시지). 장식 아이콘은 접근성 트리에서 숨깁니다. [가이드 8.3] [HIG Accessibility]
+- VoiceOver: pane 영역 이름(Sidebar, Inspector, 보조 패널 이름), 캔버스 뷰(역할 layout area, 레이블 Canvas), 툴바 항목 레이블, 도구별 레이블, 검색 필드 레이블(Search Project), 상태 화면(그룹 레이블 = 제목, 진행 표시기 레이블 = 메시지). 장식 아이콘은 접근성 트리에서 숨깁니다. [가이드 8.3] [HIG Accessibility]
+- 같은 이름을 두 번 읽지 않게 합니다: 캔버스 호스트 루트는 배치용 컨테이너라 접근성 요소가 아니고 "Canvas"는 캔버스 뷰에만 둡니다. 상태 화면 제목은 그룹 레이블로 전달하므로 제목 레이블 자체는 접근성 트리에서 뺍니다.
 - 캔버스의 선택·도구 상태 노출은 XII.8.1 범위입니다.
 - 키보드: `autorecalculatesKeyViewLoop`로 Tab·Shift-Tab이 사이드바 → 캔버스 → 인스펙터 순서로 이동합니다. 사용자 조작 없이 포커스를 옮기지 않습니다(검색 포커스는 명령으로만). [가이드 8.2]
 - 색: 시스템 의미 색(label 계층)만 씁니다. 하드코딩 색과 이미지 asset이 없습니다. [가이드 4.2, 5.4]
@@ -220,7 +225,11 @@ struct ShellFrameSlots {
 - 창 크롬: full-size content, 표준 스타일 마스크, 툴바 스타일 automatic, 기본 툴바 항목 전체, 툴바에 도구 영역 없음, 상단 바 구분선 없음, 도구 막대가 콘텐츠 하단 가운데에 있고 치수가 도구 그룹과 같음, 툴바 구성 autosave, 내비게이션 그룹 navigational
 - 분할: 항목 3개, sidebar·inspector behavior, autosave 이름, 보조 패널 처음 접힘, pane 폭이 허용 범위 안, 창 폭 변경 시 캔버스만 변함, 캔버스가 툴바·사이드바·인스펙터와 겹치지 않음, drawable 크기 > 0
 - Auto Layout: ready, 각 pane 전환 후, 로딩·오류·빈 상태에서 모호한 레이아웃 없음(숨긴 뷰 제외)
-- 접근성: pane·캔버스 레이블, 툴바·도구·검색·더 보기 레이블과 도움말, 상태 화면 레이블, SF Symbol 이름 유효
+- 접근성: pane·캔버스 레이블(캔버스 컨테이너는 요소 아님), 툴바·도구·검색·더 보기 레이블과 도움말, 내비게이션 아이콘 테두리 없음, 상태 화면 레이블(제목 레이블 중복 없음), SF Symbol 이름 유효
+- 사용자 구성 palette: `willBeInsertedIntoToolbar: false` 사본을 만들고 해제한 뒤에도 항목 참조가 실제 툴바 항목이고, 도구 선택 snapshot·로딩 비활성·"Search Project…" 검증이 실제 항목에 닿음. 사본은 명령을 보내지 않음
+- O2 설정 값: 가운데 항목 `automaticallyAdjustsSafeAreaInsets == false`(겹침 검사만으로는 잡히지 않음)
+- 검색 미제공(`isSearchAvailable == false`): ready에서도 검색 필드·메뉴 비활성
+- 동작 메서드 guard: 로딩 상태에서 `navigateBack(_:)`·`navigateForward(_:)`를 직접 불러도 명령을 보내지 않음
 - 명령: 창이 first responder일 때 응답자 체인으로 사이드바·인스펙터·보조 패널 전환과 되돌리기, 메뉴 제목 반영, 애니메이션 경로 전환
 - snapshot: 다음 런 루프 병합, 연속 snapshot 1회 반영, 오래된 세대 폐기, 내비게이션 활성 상태, 도구·검색·더 보기·상태 화면 버튼 명령 전달, 대표 버튼 1개
 - 상태 저장: frame·split autosave 기록과 새 창에서의 복원(크기, 인스펙터 접힘), 창 복원 설정, provider 미등록 시 복원 실패 보고
@@ -237,5 +246,5 @@ struct ShellFrameSlots {
 - 사이드바·인스펙터·보조 패널의 실제 슬롯으로 Stub을 바꿉니다. 보조 패널 노출 여부는 가이드 2.4·O4·ADR-0005에 따릅니다.
 - 다중 창(XII.2.4)에서 창별 `ShellWindowConfiguration` 이름 규칙을 정합니다.
 - 툴바 스타일(O1), 캔버스 확장(O2), 배치 수치 확정(가이드 12장)을 XII.9.1에서 정합니다.
-- UI 문자열 현지화 체계는 아직 없습니다(현재 영문 문자열).
+- UI 문자열 현지화 표(String Catalog)는 아직 없습니다. 셸 프레임 문자열은 `ShellFrameStrings`에서 `String(localized:)`로 만들고, "Show/Hide <pane>" 같은 상태 제목은 이어 붙이지 않고 형식 문자열 하나로 만듭니다. Stub 데이터 문자열은 코어가 줄 값의 표본이라 현지화 대상이 아닙니다.
 - 실제 창에서 Liquid Glass 재질, 키 창 강조, 대비 높이기·투명도 줄이기 조합을 눈으로 확인하는 작업은 XII.9.4 적합성 보고서에서 합니다.
