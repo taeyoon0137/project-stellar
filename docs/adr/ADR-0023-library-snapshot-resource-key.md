@@ -34,12 +34,17 @@ XV.5.1은 library 프로젝트가 export한 ComponentDefinition·TokenSet index�
    씁니다.
 3. 저장 데이터를 export record로 바꾸는 일은 `LibraryExportSource` trait 구현이 맡습니다. 기존
    `LibraryProjectValidator`·`LibraryManifestSource`와 같은 방식입니다. 운영 구현은 document·bindings
-   codec과 storage loader를 함께 쓸 수 있는 통합 계층이 제공합니다.
+   codec과 storage loader를 함께 쓸 수 있는 통합 계층이 제공합니다. `read_exports`는 호출자의
+   `SnapshotLimits`를 받고, 구현은 읽는 동안 상한을 넘는 순간 더 읽지 않고 `LimitExceeded`로 멈춥니다.
+   snapshot 생성의 상한 검사는 이미 메모리에 올라온 결과에만 적용되므로 읽기 중 메모리·CPU 상한은
+   구현의 책임입니다.
 4. **읽기 전용**: `LibrarySnapshot`은 필드가 비공개이고 변경 API가 없습니다. 검증 생성자
    `LibrarySnapshot::new`만 값을 만듭니다.
 5. **검증과 상한**(`SnapshotLimits`, 기본값): component 100,000개, component당 property·slot 각
    4,096개, TokenSet 10,000개, token 합계 1,000,000개, 이름 1,024 byte, 타입 표기 256 byte(비어 있지
-   않고 제어 문자 없음), encoding 하나 1 MiB. 같은 library 안 resource(component·TokenSet·token)
+   않고 제어 문자 없음), encoding 하나 1 MiB, resource당 외부 참조 65,536개. 개별 상한의 곱으로 커지는
+   입력을 막기 위해 전체 합계도 제한합니다: property 1,000,000개, slot 1,000,000개, 외부 참조
+   1,000,000개, 이름·타입 표기·encoding byte 합계 256 MiB. 같은 library 안 resource(component·TokenSet·token)
    StableId 중복, component 안 property·slot 중복, TokenSet 안 token 이름 중복을 거부합니다. 오류에는
    이름·값 원문을 담지 않습니다.
 6. **cache 읽기**: `load_cached_snapshot`은 cache entry를 공유 read lock(XV.3.6)을 잡은 채 읽고,
@@ -105,8 +110,8 @@ XV.5.1은 library 프로젝트가 export한 ComponentDefinition·TokenSet index�
 
 ## Security
 
-- 비신뢰 export의 개수·크기·중복을 생성 시점에 검사합니다. 검증하지 않은 export는 snapshot이 될 수
-  없습니다.
+- 비신뢰 export의 개수·크기·합계·중복을 생성 시점에 검사합니다. 검증하지 않은 export는 snapshot이 될 수
+  없습니다. 공급자는 같은 상한을 받아 읽는 동안 적용합니다(결정 3).
 - 오류·표시 문자열에 repository URL·경로·이름 원문을 넣지 않습니다(XV.1.4).
 
 ## Migration

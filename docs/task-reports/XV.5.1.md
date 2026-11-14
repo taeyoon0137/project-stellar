@@ -66,3 +66,22 @@
 - export 타입 표기·encoding의 canonical 규칙은 운영 `LibraryExportSource` 구현이 정해야 합니다. 규칙이
   바뀌면 XV.7.2 diff가 변경으로 판정합니다.
 - ADR 번호 0023은 병렬 lane과 겹칠 수 있습니다. 통합 시 번호를 다시 맞춰야 할 수 있습니다.
+
+## 리뷰 수정(9A 리뷰 P4, 2026-11-14)
+
+- 문제: `SnapshotLimits`는 `LibraryExportSource::read_exports`가 export 전체를 메모리에 만든 뒤에만
+  적용됐고, trait이 상한을 받지 않아 공급자가 읽는 동안 멈출 수 없었습니다. 전체 합계 상한도 없어
+  component 100,000개 × property 4,096개, token 1,000,000개 × 1 MiB fingerprint 같은 입력이 모두
+  통과했습니다. 즉 상한은 메모리·CPU를 막지 못하고 검증 뒤 모양만 제한했습니다.
+- 재현: `export_totals_are_enforced` — 개별 상한 안이지만 합계(property·slot·외부 참조·byte)가 상한을
+  넘는 export가 수정 전 snapshot으로 만들어져 실패했습니다.
+- 수정: `SnapshotLimits`에 전체 합계 상한 4개(`max_total_properties`·`max_total_slots`·
+  `max_total_references` 각 1,000,000, `max_total_bytes` 256 MiB)와 `SnapshotError::TotalLimitExceeded`를
+  추가하고, `LibrarySnapshot::new`가 resource별 색인 전에 합계를 검사합니다. `read_exports`는 호출자의
+  `SnapshotLimits`를 받고, 공급자가 읽는 중 상한을 넘으면 `ExportReadFailure::LimitExceeded`로 멈춥니다
+  (trait 문서·모듈 문서·ADR-0023 결정 3·5·Security 갱신).
+- 검증: `export_totals_are_enforced` 통과. 실제 Git으로 materialize한 entry에서 공급자가 호출자 상한을
+  받고, 1,000개 중 2개만 만든 뒤 `LimitExceeded`로 멈추며, 상한 안이면 같은 공급자로 snapshot을 만듦
+  (`cached_snapshot_is_read_under_shared_lock_and_detached_after` 확장).
+- 한계: 읽기 중 메모리 상한은 공급자 계약입니다. 운영 공급자(실제 ComponentLibrary·TokenSet chunk reader)가
+  아직 없으므로 그 구현이 이 계약을 지키는지는 그 작업에서 검증해야 합니다.

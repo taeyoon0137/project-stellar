@@ -340,6 +340,7 @@ pub(crate) mod fixtures {
             &mut self,
             root: &Path,
             _: LibraryId,
+            _: &SnapshotLimits,
         ) -> Result<LibraryExports, ExportReadFailure> {
             self.reads += 1;
             let text = std::fs::read_to_string(root.join("stellar.yaml"))

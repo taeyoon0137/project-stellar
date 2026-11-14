@@ -14,7 +14,9 @@
 //! - **읽기 전용**: snapshot 필드는 비공개이고 변경 API가 없습니다. 검증을 통과한 결과만
 //!   [`LibrarySnapshot::new`]로 만들 수 있습니다.
 //! - **비신뢰 입력 상한**: export는 외부 저장소에서 옵니다. resource 수·이름 길이·fingerprint
-//!   크기를 [`SnapshotLimits`]로 제한하고, 같은 library 안 StableId 중복을 거부합니다.
+//!   크기와 전체 합계(property·slot·외부 참조·byte)를 [`SnapshotLimits`]로 제한하고, 같은 library 안
+//!   StableId 중복을 거부합니다. 상한은 [`LibraryExportSource`]에도 전달되어 공급자가 읽는 동안 멈출 수
+//!   있습니다(읽기 중 메모리 상한은 공급자 책임, snapshot 생성은 같은 상한을 다시 검사).
 //! - **cache 읽기**: [`load_cached_snapshot`]은 cache entry를 공유 read lock(XV.3.6)을 잡은 채
 //!   읽고, snapshot을 만든 뒤 lock을 풉니다. snapshot은 cache 파일을 참조하지 않으므로 이후 entry
 //!   정리(XV.8)와 무관합니다.
@@ -206,6 +208,14 @@ pub struct SnapshotLimits {
     pub max_fingerprint_bytes: usize,
     /// resource 하나가 가진 외부 참조 최대 수.
     pub max_references_per_resource: usize,
+    /// 모든 component를 합한 최대 property 수.
+    pub max_total_properties: usize,
+    /// 모든 component를 합한 최대 slot 수.
+    pub max_total_slots: usize,
+    /// 모든 component·token을 합한 최대 외부 참조 수.
+    pub max_total_references: usize,
+    /// 이름·타입 표기·fingerprint를 모두 합한 최대 byte 수.
+    pub max_total_bytes: usize,
 }
 
 impl Default for SnapshotLimits {
@@ -220,6 +230,35 @@ impl Default for SnapshotLimits {
             max_type_signature_bytes: 256,
             max_fingerprint_bytes: 1024 * 1024,
             max_references_per_resource: 65_536,
+            max_total_properties: 1_000_000,
+            max_total_slots: 1_000_000,
+            max_total_references: 1_000_000,
+            max_total_bytes: 256 * 1024 * 1024,
+        }
+    }
+}
+
+/// export 전체 합계 상한 종류.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportTotal {
+    /// property 합계.
+    Properties,
+    /// slot 합계.
+    Slots,
+    /// 외부 참조 합계.
+    References,
+    /// 이름·타입 표기·fingerprint byte 합계.
+    Bytes,
+}
+
+impl ExportTotal {
+    /// 종류 이름.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExportTotal::Properties => "property",
+            ExportTotal::Slots => "slot",
+            ExportTotal::References => "외부 참조",
+            ExportTotal::Bytes => "byte",
         }
     }
 }
@@ -304,6 +343,13 @@ pub enum SnapshotError {
         /// 상한.
         max: usize,
     },
+    /// export 전체 합계가 상한을 넘음.
+    TotalLimitExceeded {
+        /// 합계 종류.
+        total: ExportTotal,
+        /// 상한.
+        max: usize,
+    },
 }
 
 impl fmt::Display for SnapshotError {
@@ -350,6 +396,9 @@ impl fmt::Display for SnapshotError {
             }
             SnapshotError::TooManyReferences { id, max } => {
                 write!(f, "{id}의 외부 참조 수가 {max}개를 넘습니다")
+            }
+            SnapshotError::TotalLimitExceeded { total, max } => {
+                write!(f, "export 전체 {} 합계가 {max}를 넘습니다", total.as_str())
             }
         }
     }
@@ -454,10 +503,77 @@ fn check_fingerprint(
     Ok(())
 }
 
+/// export 전체 합계(property·slot·외부 참조·byte)를 resource별 검증 전에 확인합니다.
+///
+/// 개별 상한만으로는 component 수 × component당 property 수처럼 곱으로 커지는 입력을 막지 못합니다.
+/// 덧셈 overflow도 초과로 봅니다.
+fn check_totals(exports: &LibraryExports, limits: &SnapshotLimits) -> Result<(), SnapshotError> {
+    fn add(sum: &mut usize, n: usize, total: ExportTotal, max: usize) -> Result<(), SnapshotError> {
+        *sum = sum
+            .checked_add(n)
+            .filter(|v| *v <= max)
+            .ok_or(SnapshotError::TotalLimitExceeded { total, max })?;
+        Ok(())
+    }
+    let (mut properties, mut slots, mut references, mut bytes) = (0, 0, 0, 0);
+    let max_bytes = limits.max_total_bytes;
+    for component in &exports.components {
+        add(
+            &mut properties,
+            component.properties.len(),
+            ExportTotal::Properties,
+            limits.max_total_properties,
+        )?;
+        add(
+            &mut slots,
+            component.slots.len(),
+            ExportTotal::Slots,
+            limits.max_total_slots,
+        )?;
+        add(
+            &mut references,
+            component.references.len(),
+            ExportTotal::References,
+            limits.max_total_references,
+        )?;
+        add(
+            &mut bytes,
+            component.name.len(),
+            ExportTotal::Bytes,
+            max_bytes,
+        )?;
+        for property in &component.properties {
+            for n in [
+                property.name.len(),
+                property.type_signature.len(),
+                property.default.as_bytes().len(),
+            ] {
+                add(&mut bytes, n, ExportTotal::Bytes, max_bytes)?;
+            }
+        }
+    }
+    for token in exports.token_sets.iter().flat_map(|set| &set.tokens) {
+        add(
+            &mut references,
+            token.references.len(),
+            ExportTotal::References,
+            limits.max_total_references,
+        )?;
+        for n in [
+            token.name.len(),
+            token.type_signature.len(),
+            token.value.as_bytes().len(),
+        ] {
+            add(&mut bytes, n, ExportTotal::Bytes, max_bytes)?;
+        }
+    }
+    Ok(())
+}
+
 impl LibrarySnapshot {
     /// export index를 검증해 snapshot을 만듭니다.
     ///
-    /// 거부: 상한 초과, 같은 library 안 resource(component·TokenSet·token) StableId 중복, component 안
+    /// 거부: 상한(개별·전체 합계) 초과, 같은 library 안 resource(component·TokenSet·token) StableId 중복, component 안
     /// property·slot 중복, TokenSet 안 token 이름 중복, 잘못된 타입 표기. token은 set 안에서
     /// StableId 순으로 정렬합니다(property·slot은 선언 순서 유지).
     pub fn new(
@@ -484,6 +600,7 @@ impl LibrarySnapshot {
             .ok_or(SnapshotError::TooManyTokens {
                 max: limits.max_tokens,
             })?;
+        check_totals(&exports, limits)?;
 
         let mut seen: BTreeSet<StableId> = BTreeSet::new();
         let mut claim = |id: StableId| {
@@ -679,6 +796,8 @@ pub enum ExportReadFailure {
     Corrupt,
     /// 지원하지 않는 library 저장 schema.
     UnsupportedSchema,
+    /// 읽는 동안 [`SnapshotLimits`]를 넘어 읽기를 멈춤.
+    LimitExceeded,
     /// 읽기 실패.
     Io {
         /// io 오류 종류.
@@ -693,6 +812,9 @@ impl fmt::Display for ExportReadFailure {
             ExportReadFailure::UnsupportedSchema => {
                 f.write_str("지원하지 않는 library 저장 schema입니다")
             }
+            ExportReadFailure::LimitExceeded => {
+                f.write_str("library export가 상한을 넘어 읽기를 멈췄습니다")
+            }
             ExportReadFailure::Io { kind } => write!(f, "library export 읽기 실패: {kind:?}"),
         }
     }
@@ -704,12 +826,18 @@ impl std::error::Error for ExportReadFailure {}
 ///
 /// 운영 구현은 storage generation loader와 document·bindings codec을 쓰는 쪽(project 통합)이
 /// 제공합니다. 구현은 `root` 아래를 쓰지 않아야 합니다(cache entry는 읽기 전용).
+///
+/// export는 비신뢰 입력이므로 구현은 `limits`를 **읽는 동안** 적용해야 합니다. 개수·크기·합계 상한을
+/// 넘는 순간 더 읽거나 할당하지 말고 [`ExportReadFailure::LimitExceeded`]를 돌려줍니다. snapshot
+/// 생성([`LibrarySnapshot::new`])은 같은 상한을 다시 검사하지만, 그 검사는 이미 메모리에 올라온 결과에만
+/// 적용되므로 읽기 중 메모리·CPU 상한은 구현의 책임입니다.
 pub trait LibraryExportSource {
-    /// `root`의 library 프로젝트(`library`)에서 export index를 읽습니다.
+    /// `root`의 library 프로젝트(`library`)에서 `limits` 안의 export index를 읽습니다.
     fn read_exports(
         &mut self,
         root: &Path,
         library: LibraryId,
+        limits: &SnapshotLimits,
     ) -> Result<LibraryExports, ExportReadFailure>;
 }
 
@@ -786,7 +914,7 @@ pub fn load_cached_snapshot<H: Sha256Digest, K: RepositoryKeyer>(
         }
     }
     let exports = source
-        .read_exports(opened.dir(), request.node.library_id)
+        .read_exports(opened.dir(), request.node.library_id, limits)
         .map_err(SnapshotLoadError::Export)?;
     let snapshot = LibrarySnapshot::new(
         request.node.clone(),
@@ -875,6 +1003,7 @@ pub(crate) mod fixtures {
             &mut self,
             root: &Path,
             library: LibraryId,
+            _: &SnapshotLimits,
         ) -> Result<LibraryExports, ExportReadFailure> {
             self.calls.push((root.to_path_buf(), library));
             self.by_root
@@ -1076,6 +1205,10 @@ mod tests {
             max_type_signature_bytes: 6,
             max_fingerprint_bytes: 2,
             max_references_per_resource: 1,
+            max_total_properties: usize::MAX,
+            max_total_slots: usize::MAX,
+            max_total_references: usize::MAX,
+            max_total_bytes: usize::MAX,
         };
         let two_components = LibraryExports {
             components: vec![component(1, "A", vec![]), component(2, "B", vec![])],
@@ -1185,6 +1318,89 @@ mod tests {
         assert!(!text.contains("Toolong"));
     }
 
+    #[test]
+    fn export_totals_are_enforced() {
+        // component·token 하나씩은 개별 상한 안이지만 합계가 상한을 넘는 export(리뷰 P4).
+        let with = |f: fn(&mut SnapshotLimits)| {
+            let mut limits = SnapshotLimits::default();
+            f(&mut limits);
+            limits
+        };
+        let two_by_two = LibraryExports {
+            components: vec![
+                component(
+                    1,
+                    "A",
+                    vec![property(2, "x", "N", b"1"), property(3, "y", "N", b"1")],
+                ),
+                component(
+                    4,
+                    "B",
+                    vec![property(5, "x", "N", b"1"), property(6, "y", "N", b"1")],
+                ),
+            ],
+            token_sets: vec![],
+        };
+        assert_eq!(
+            build(two_by_two, &with(|l| l.max_total_properties = 3)),
+            Err(SnapshotError::TotalLimitExceeded {
+                total: ExportTotal::Properties,
+                max: 3
+            })
+        );
+        let mut a = component(1, "A", vec![]);
+        a.slots = vec![rid(10)];
+        let mut b = component(2, "B", vec![]);
+        b.slots = vec![rid(11)];
+        assert_eq!(
+            build(
+                LibraryExports {
+                    components: vec![a, b],
+                    token_sets: vec![]
+                },
+                &with(|l| l.max_total_slots = 1)
+            ),
+            Err(SnapshotError::TotalLimitExceeded {
+                total: ExportTotal::Slots,
+                max: 1
+            })
+        );
+        let target = crate::external_ref::fixtures::component_ref("c", library(3), rid(9));
+        let mut referencing = component(1, "A", vec![]);
+        referencing.references = vec![target.clone().into()];
+        let mut ink = token(3, "ink", "Color", b"#000");
+        ink.references = vec![target.into()];
+        assert_eq!(
+            build(
+                LibraryExports {
+                    components: vec![referencing],
+                    token_sets: vec![token_set(2, vec![ink])]
+                },
+                &with(|l| l.max_total_references = 1)
+            ),
+            Err(SnapshotError::TotalLimitExceeded {
+                total: ExportTotal::References,
+                max: 1
+            })
+        );
+        // byte 합계: 이름 1 + 타입 1 + 값 4 = 6 byte짜리 token 두 개(12) > 10.
+        let heavy = LibraryExports {
+            components: vec![],
+            token_sets: vec![token_set(
+                1,
+                vec![token(2, "a", "N", b"1234"), token(3, "b", "N", b"5678")],
+            )],
+        };
+        assert_eq!(
+            build(heavy.clone(), &with(|l| l.max_total_bytes = 10)),
+            Err(SnapshotError::TotalLimitExceeded {
+                total: ExportTotal::Bytes,
+                max: 10
+            })
+        );
+        assert!(build(heavy, &with(|l| l.max_total_bytes = 12)).is_ok());
+    }
+
     /// read lock 보유 여부를 확인하며 export를 돌려주는 공급자.
     struct LockProbeSource {
         locks: CacheLocks,
@@ -1198,10 +1414,38 @@ mod tests {
             &mut self,
             root: &Path,
             _: LibraryId,
+            _: &SnapshotLimits,
         ) -> Result<LibraryExports, ExportReadFailure> {
             assert!(root.join("stellar.yaml").is_file());
             self.delete_while_reading = self.locks.try_delete_entry(&self.hash).err();
             Ok(self.exports.clone())
+        }
+    }
+
+    /// component를 하나씩 "읽으며" 받은 상한을 넘는 순간 멈추는 공급자(읽기 중 적용 확인용).
+    struct StreamingSource {
+        available: u16,
+        produced: usize,
+        seen_limits: Vec<SnapshotLimits>,
+    }
+
+    impl LibraryExportSource for StreamingSource {
+        fn read_exports(
+            &mut self,
+            _: &Path,
+            _: LibraryId,
+            limits: &SnapshotLimits,
+        ) -> Result<LibraryExports, ExportReadFailure> {
+            self.seen_limits.push(*limits);
+            let mut exports = LibraryExports::default();
+            for n in 0..self.available {
+                if exports.components.len() == limits.max_components {
+                    return Err(ExportReadFailure::LimitExceeded);
+                }
+                self.produced += 1;
+                exports.components.push(component(100 + n, "C", vec![]));
+            }
+            Ok(exports)
         }
     }
 
@@ -1321,5 +1565,26 @@ mod tests {
                 SnapshotError::DuplicateResource { id: rid(1) }
             ))
         );
+
+        // 공급자는 호출자의 상한을 받아 읽는 동안 멈출 수 있음(리뷰 P4): 1,000개 중 2개만 만들고 중단.
+        let tight = SnapshotLimits {
+            max_components: 2,
+            ..SnapshotLimits::default()
+        };
+        let mut streaming = StreamingSource {
+            available: 1_000,
+            produced: 0,
+            seen_limits: Vec::new(),
+        };
+        assert_eq!(
+            load_cached_snapshot(&store, request, &mut streaming, &tight, 7),
+            Err(SnapshotLoadError::Export(ExportReadFailure::LimitExceeded))
+        );
+        assert_eq!(streaming.seen_limits, [tight]);
+        assert_eq!(streaming.produced, 2);
+        // 상한 안이면 같은 공급자로 snapshot 생성.
+        streaming.available = 2;
+        let snap = load_cached_snapshot(&store, request, &mut streaming, &tight, 8).unwrap();
+        assert_eq!(snap.components().count(), 2);
     }
 }
