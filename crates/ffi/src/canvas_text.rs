@@ -67,6 +67,27 @@ fn rect(r: Rect) -> [f32; 4] {
     ]
 }
 
+fn path_command(cmd: CanvasPathCommand, origin: Vec2) -> (u32, [f32; 6]) {
+    let at = |p: Vec2| [origin.x() + p.x(), origin.y() + p.y()];
+    match cmd {
+        CanvasPathCommand::MoveTo(p) => {
+            let [x, y] = at(p);
+            (1, [x, y, 0., 0., 0., 0.])
+        }
+        CanvasPathCommand::LineTo(p) => {
+            let [x, y] = at(p);
+            (2, [x, y, 0., 0., 0., 0.])
+        }
+        CanvasPathCommand::CubicTo { c1, c2, to } => {
+            let [a, b] = at(c1);
+            let [c, d] = at(c2);
+            let [x, y] = at(to);
+            (3, [a, b, c, d, x, y])
+        }
+        CanvasPathCommand::Close => (4, [0.; 6]),
+    }
+}
+
 /// # Safety
 /// count는 유효한 출력, rows는 null(크기 조회) 또는 capacity 원소 출력입니다.
 #[no_mangle]
@@ -90,7 +111,8 @@ pub unsafe extern "C" fn stellar_window_text_paint(
                 .glyphs
                 .iter()
                 .try_fold(text.lines.len(), |n, (_, path)| {
-                    n.checked_add(path.commands().len())?.checked_add(1)
+                    n.checked_add(text.outlines[*path as usize].commands().len())?
+                        .checked_add(1)
                 });
             let Some(len) = len else {
                 return StellarStatus::Internal;
@@ -113,26 +135,10 @@ pub unsafe extern "C" fn stellar_window_text_paint(
                 let [x, y, w, h] = rect(*r);
                 put(5, [x, y, w, h, 0., 0.]);
             }
-            for (origin, path) in &text.glyphs {
-                let at = |p: Vec2| [origin.x() + p.x(), origin.y() + p.y()];
-                for cmd in path.commands() {
-                    match *cmd {
-                        CanvasPathCommand::MoveTo(p) => {
-                            let [x, y] = at(p);
-                            put(1, [x, y, 0., 0., 0., 0.]);
-                        }
-                        CanvasPathCommand::LineTo(p) => {
-                            let [x, y] = at(p);
-                            put(2, [x, y, 0., 0., 0., 0.]);
-                        }
-                        CanvasPathCommand::CubicTo { c1, c2, to } => {
-                            let [a, b] = at(c1);
-                            let [c, d] = at(c2);
-                            let [x, y] = at(to);
-                            put(3, [a, b, c, d, x, y]);
-                        }
-                        CanvasPathCommand::Close => put(4, [0.; 6]),
-                    }
+            for (origin, index) in &text.glyphs {
+                for cmd in text.outlines[*index as usize].commands() {
+                    let (op, points) = path_command(*cmd, *origin);
+                    put(op, points);
                 }
                 put(6, [0.; 6]);
             }
@@ -279,5 +285,82 @@ pub unsafe extern "C" fn stellar_window_set_document_font(
             Err(e) => return e,
         };
         unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 저장 장면의 중복 없는 outline 정의 또는 그 outline의 배치입니다.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct StellarCanvasTextPart {
+    op: u32,
+    index: u32,
+    points: [f32; 6],
+}
+
+/// # Safety
+/// count/token은 유효한 출력, rows는 null(크기 조회) 또는 capacity 원소의 buffer입니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_text_parts(
+    handle: u64,
+    session: u64,
+    q: StellarCanvasTextQuery,
+    rows: *mut StellarCanvasTextPart,
+    capacity: usize,
+    count: *mut usize,
+    paint_token: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if count.is_null() || paint_token.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            *count = 0;
+            *paint_token = 0;
+        }
+        with_text(handle, session, q, |text| {
+            let len = text
+                .outlines
+                .iter()
+                .try_fold(text.lines.len(), |n, p| {
+                    n.checked_add(p.commands().len())?.checked_add(1)
+                })
+                .and_then(|n| n.checked_add(text.glyphs.len()));
+            let Some(len) = len else {
+                return StellarStatus::Internal;
+            };
+            unsafe {
+                *count = len;
+                *paint_token = text.paint_token;
+            }
+            if rows.is_null() {
+                return StellarStatus::Ok;
+            }
+            if capacity < len {
+                return StellarStatus::BufferTooSmall;
+            }
+            let mut i = 0;
+            let mut put = |op, index, points| {
+                unsafe {
+                    rows.add(i)
+                        .write(StellarCanvasTextPart { op, index, points })
+                };
+                i += 1;
+            };
+            for r in &text.lines {
+                let [x, y, w, h] = rect(*r);
+                put(5, 0, [x, y, w, h, 0., 0.]);
+            }
+            for p in &text.outlines {
+                for &cmd in p.commands() {
+                    let (op, points) = path_command(cmd, Vec2::ZERO);
+                    put(op, 0, points);
+                }
+                put(6, 0, [0.; 6]);
+            }
+            for (origin, index) in &text.glyphs {
+                put(7, *index, [origin.x(), origin.y(), 0., 0., 0., 0.]);
+            }
+            StellarStatus::Ok
+        })
     })
 }

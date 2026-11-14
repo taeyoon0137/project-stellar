@@ -1,6 +1,10 @@
 //! 저장된 문단/문자의 명시적 스타일로 layout을 만들고 같은 layout에서 picking·caret을 구합니다.
 use super::*;
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::Path,
+    sync::atomic::{AtomicU64, Ordering},
+};
 use stellar_core_types::{
     color::Color,
     font::FontSource,
@@ -33,6 +37,9 @@ use stellar_text::{
     text_layout::{ParagraphLayoutStyle, TextAlign, TextBox},
 };
 
+// 프로세스 안에서만 쓰는 동일 paint 식별자. wrap되면 새 식별자 발급을 중단합니다.
+static NEXT_PAINT: AtomicU64 = AtomicU64::new(1);
+
 /// 한 줄의 문자/byte 경계와 문서 scalar offset 시작점.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ParagraphOffsets {
@@ -43,8 +50,12 @@ struct ParagraphOffsets {
 /// glyph paint와 동일한 layout에서 가져온 caret과 줄 영역.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentText {
-    /// 같은 glyph의 outline 데이터는 PathGeometry 내부에서 공유합니다.
-    pub glyphs: Vec<(Vec2, PathGeometry)>,
+    /// 모양별 단 하나의 지역 좌표 경로.
+    pub outlines: Vec<PathGeometry>,
+    /// painter 순서의 pen 위치 및 outlines index.
+    pub glyphs: Vec<(Vec2, u32)>,
+    /// 새로 계산한 투영마다 고유합니다. 동일한 Arc를 재사용할 때만 같은 값입니다.
+    pub paint_token: u64,
     /// 실제 줄 단위 picking 영역.
     pub lines: Vec<Rect>,
     /// 명시된 글자색.
@@ -401,8 +412,16 @@ impl FontCache {
             registry: &self.registry,
             faces: &self.faces,
         };
-        let mut glyphs = Vec::new();
+        let mut glyphs = Vec::with_capacity(geometry.glyphs.len());
+        let mut outlines = Vec::new();
+        let mut indices: HashMap<GlyphKey, Option<u32>> = HashMap::new();
         for g in geometry.glyphs {
+            if let Some(index) = indices.get(&g.key) {
+                if let Some(index) = index {
+                    glyphs.push((g.origin, *index));
+                }
+                continue;
+            }
             let mut draw = self.resolver.resolve(&mut self.atlas, &g.key);
             if matches!(
                 draw,
@@ -413,15 +432,26 @@ impl FontCache {
                     .complete(&mut self.atlas, g.key.clone(), image);
                 draw = self.resolver.resolve(&mut self.atlas, &g.key);
             }
-            match draw {
-                GlyphDraw::Exact(GlyphSource::Outline(path)) => glyphs.push((g.origin, path)),
-                GlyphDraw::Empty(EmptyReason::NoInk) => {}
+            let index = match draw {
+                GlyphDraw::Exact(GlyphSource::Outline(path)) => {
+                    let index = u32::try_from(outlines.len()).ok()?;
+                    outlines.push(path);
+                    glyphs.push((g.origin, index));
+                    Some(index)
+                }
+                GlyphDraw::Empty(EmptyReason::NoInk) => None,
                 _ => return None,
-            }
+            };
+            indices.insert(g.key, index);
         }
         let bounds = Size2::new(px(layout.width), px(layout.height)).ok()?;
+        let paint_token = NEXT_PAINT
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .ok()?;
         Some((
             DocumentText {
+                paint_token,
+                outlines,
                 glyphs,
                 lines: geometry.line_rects,
                 fill: color?,

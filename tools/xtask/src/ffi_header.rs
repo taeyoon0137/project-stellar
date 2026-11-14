@@ -389,6 +389,10 @@ StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, c
 typedef struct StellarCanvasTextQuery { uint8_t view[16], node[16]; uint64_t revision; uint32_t row; } StellarCanvasTextQuery;
 typedef struct StellarCanvasTextElement { uint32_t op; float points[6]; } StellarCanvasTextElement;
 StellarStatus stellar_window_text_paint(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, StellarCanvasTextElement *rows, size_t capacity, size_t *count);
+/* Saved text: local outline commands 1..4, line bounds 5, end of unique outline 6,
+ * placement 7 with index into the definitions and points[0..2] = pen position. */
+typedef struct StellarCanvasTextPart { uint32_t op, index; float points[6]; } StellarCanvasTextPart;
+StellarStatus stellar_window_text_parts(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, StellarCanvasTextPart *rows, size_t capacity, size_t *count, uint64_t *paint_token);
 StellarStatus stellar_window_text_hit(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, float x, float y, uint32_t *offset, uint32_t *upstream);
 StellarStatus stellar_window_text_rects(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, uint32_t start, uint32_t end, uint32_t upstream, float (*rects)[4], size_t capacity, size_t *count);
 StellarStatus stellar_window_set_document_font(uint64_t handle, uint64_t session, uint64_t revision, const uint8_t *path, size_t path_len, uint32_t face, uint32_t size_subpixels, StellarCanvasColor color, uint64_t *out_request);
