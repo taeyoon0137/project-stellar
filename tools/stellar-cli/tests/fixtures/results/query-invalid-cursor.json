@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"query","ok":false,"exit_code":65,"exit_name":"dataerr","result":null,"error":{"code":"invalid-cursor","message":"cursor 형식이 올바르지 않습니다"},"diagnostics":[]}

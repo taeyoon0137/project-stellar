@@ -185,7 +185,7 @@ dependencies = [
 name = "stellar-cli"
 version = "0.0.0"
 dependencies = [
- "stellar-project",
+ "stellar-ops",
 ]
 
 [[package]]

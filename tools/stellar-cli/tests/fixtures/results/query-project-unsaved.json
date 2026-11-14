@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"query","ok":true,"exit_code":0,"exit_name":"ok","result":{"project":{"id":"0195c530-3acd-7bc1-8414-c213f61cb965","name":"Fixture"},"revision":{"token":"g0","generation":0,"manifest_hash":null},"documents":[],"chunks":[]},"error":null,"diagnostics":[]}

@@ -128,8 +128,21 @@ impl ProjectSnapshot {
     }
 }
 
-/// 프로젝트를 앱 없이 읽기 전용으로 엽니다(모듈 문서 순서).
-pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
+/// 문서 chunk를 읽지 않는 가벼운 검사 결과(IV.5.1 probe).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectProbe {
+    /// 프로젝트 root 경로(진단 문맥용).
+    pub root: PathBuf,
+    /// `.git` 링크 종류.
+    pub git_link: GitLink,
+    /// 검증한 `stellar.yaml`.
+    pub manifest: Manifest,
+}
+
+/// 경로를 가볍게 검사합니다: 디렉터리 확인 → root 검증 → `stellar.yaml` probe(IV.5.1).
+///
+/// 문서 chunk(`design/`)는 읽지 않고 파일을 만들거나 바꾸지 않습니다.
+pub fn probe(path: &Path) -> Result<ProjectProbe, OpenError> {
     let metadata = std::fs::metadata(path).map_err(|e| OpenError::Path { kind: e.kind() })?;
     if !metadata.is_dir() {
         return Err(OpenError::NotADirectory);
@@ -140,6 +153,16 @@ pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
         ProbeError::ManifestSyntax(e) => OpenError::ManifestSyntax(e),
         ProbeError::ManifestSchema(e) => OpenError::ManifestSchema(e),
     })?;
+    Ok(ProjectProbe {
+        root: probe.root,
+        git_link: probe.git_link,
+        manifest: probe.manifest,
+    })
+}
+
+/// 프로젝트를 앱 없이 읽기 전용으로 엽니다(모듈 문서 순서).
+pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
+    let probe = probe(path)?;
     let project_id = parse_project_id(&probe.manifest.project.id).ok_or_else(|| {
         OpenError::InvalidProjectId {
             id: probe.manifest.project.id.clone(),

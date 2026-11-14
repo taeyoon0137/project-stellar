@@ -6,7 +6,20 @@ stellar — Project Stellar headless 도구
 명령:
     help     이 도움말을 표시합니다
     version  도구 이름·버전을 JSON으로 출력합니다
-    inspect  <경로>의 프로젝트 root와 stellar.yaml을 읽기 전용으로 검사해 JSON으로 출력합니다
+    inspect  <경로>의 프로젝트 root와 stellar.yaml을 읽기 전용으로 검사해 JSON으로 출력합니다(--structure: 문서 개요와 revision 추가)
+    query    <경로> <대상>: 저장된 프로젝트를 읽기 전용으로 조회해 revision과 함께 JSON으로 출력합니다
+
+query 대상:
+    project
+        프로젝트 구조(문서·페이지·View 개요, chunk 요약)
+    tree <문서 id> [--cursor <c>] [--limit <n>]
+        문서 트리 한 page(깊이 우선, 기본 1000·최대 10000 node, next_cursor로 이어 조회)
+    node <문서 id> <node id>
+        node 공통 필드와 속성
+    tokens
+        token 집합(저장 포맷 미정: chunk 수만 보고)
+    components
+        component library(저장 포맷 미정: chunk 수만 보고)
 
 출력:
     stdout  명령 결과 JSON 한 줄(schema "stellar-cli/result" v1). 도움말만 텍스트입니다.

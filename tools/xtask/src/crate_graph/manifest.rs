@@ -1024,6 +1024,6 @@ other.workspace = true
         assert!(graph
             .edges
             .iter()
-            .any(|e| e.from == "stellar-cli" && e.to == "stellar-project"));
+            .any(|e| e.from == "stellar-cli" && e.to == "stellar-ops"));
     }
 }

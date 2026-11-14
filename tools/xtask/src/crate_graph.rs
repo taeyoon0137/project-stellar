@@ -90,18 +90,10 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ),
         // 셸 경계는 runtime을 통해서만 문서·프로젝트 작업에 도달합니다(ADR-0013).
         ("stellar-ffi", &[core, "stellar-runtime"]),
-        // headless 도구(XXIV.1.1, `tools/stellar-cli`): core crate만 사용합니다. MCP·agent·FFI·
-        // GUI(renderer) crate에 의존하지 않습니다.
-        (
-            "stellar-cli",
-            &[
-                core,
-                "stellar-project",
-                "stellar-document",
-                "stellar-storage",
-                "stellar-diagnostics",
-            ],
-        ),
+        // headless 도구(XXIV.1.1, `tools/stellar-cli`, 실행 이름 `stellar`): 직접 의존은 L1 공용
+        // library와 diagnostics뿐입니다(ADR-0005 §8, XXIV.4.3). MCP·agent·FFI·GUI(renderer)
+        // crate에 의존하지 않습니다.
+        ("stellar-cli", &["stellar-ops", "stellar-diagnostics"]),
         // MCP stdio 브리지(XIX.1.1, `tools/stellar-mcp`): FFI·GUI crate에 의존하지 않습니다.
         // headless 도구(stellar-cli)는 이 브리지에 의존할 수 없습니다(위 항목에 없음).
         (
@@ -201,12 +193,23 @@ mod tests {
     fn stellar_cli_uses_only_core_crates() {
         // XXIV.1.1: 실제 manifest의 내부 의존이 정책을 따릅니다.
         assert!(check_crate_graph(&tool_edges("stellar-cli")).is_empty());
-        // L1 headless 도구는 MCP·FFI·GUI(renderer) crate에 의존할 수 없습니다.
+        // L1 headless 도구는 MCP·FFI·GUI(renderer) crate와, ops를 우회한 core crate에 직접
+        // 의존할 수 없습니다(XXIV.4.3: 직접 의존은 ops·diagnostics뿐).
+        assert!(check_crate_graph(&[
+            edge("stellar-cli", "stellar-ops"),
+            edge("stellar-cli", "stellar-diagnostics"),
+        ])
+        .is_empty());
         for forbidden in [
             "stellar-mcp",
+            "stellar-mcp-core",
             "stellar-ffi",
             "stellar-renderer-core",
             "stellar-renderer-metal",
+            "stellar-core-types",
+            "stellar-project",
+            "stellar-document",
+            "stellar-storage",
         ] {
             let codes: Vec<&str> = check_crate_graph(&[edge("stellar-cli", forbidden)])
                 .iter()

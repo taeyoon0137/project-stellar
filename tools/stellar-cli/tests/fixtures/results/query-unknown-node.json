@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"query","ok":false,"exit_code":66,"exit_name":"noinput","result":null,"error":{"code":"unknown-node","message":"문서 01a318c7-1fc1-7334-93f0-7e1b813152c2에 node 0195c530-3acd-7bc1-8414-c213f61cb999가 없습니다"},"diagnostics":[]}

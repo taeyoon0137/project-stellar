@@ -14,6 +14,14 @@
 /// StableId·PropertyPath 등 core 값 타입(semantic-diff 재노출 경유, 직접 edge 없음).
 pub use stellar_semantic_diff::core_types;
 
+/// 프로젝트 매니페스트·root 검사 타입(stellar-project 재노출). 상위 도구가 project crate에 직접
+/// 의존하지 않고 결과를 해석할 수 있게 합니다(ADR-0005 §8 `stellar-cli` 허용 의존 ops·diagnostics).
+pub mod types {
+    pub use stellar_project::manifest::{Manifest, ManifestError};
+    pub use stellar_project::root::{GitLink, RootError};
+    pub use stellar_project::yaml::{LoaderError, LoaderErrorKind};
+}
+
 /// 디스크 generation 기준 프로젝트 revision (XXIV.4.2).
 pub mod revision;
 
@@ -22,6 +30,9 @@ pub mod error;
 
 /// 앱 없이 연 읽기 전용 프로젝트 snapshot (XXIV.4.2).
 pub mod snapshot;
+
+/// 읽기 전용 조회: 프로젝트 구조, 문서 트리 page, node 속성, token·component (XXIV.4.3).
+pub mod query;
 
 /// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]

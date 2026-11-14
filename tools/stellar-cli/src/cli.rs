@@ -32,7 +32,29 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("version", "도구 이름·버전을 JSON으로 출력합니다"),
     (
         "inspect",
-        "<경로>의 프로젝트 root와 stellar.yaml을 읽기 전용으로 검사해 JSON으로 출력합니다",
+        "<경로>의 프로젝트 root와 stellar.yaml을 읽기 전용으로 검사해 JSON으로 출력합니다(--structure: 문서 개요와 revision 추가)",
+    ),
+    (
+        "query",
+        "<경로> <대상>: 저장된 프로젝트를 읽기 전용으로 조회해 revision과 함께 JSON으로 출력합니다",
+    ),
+];
+
+/// `query` 대상: (사용법, 한 줄 설명). 도움말에 이 순서로 나타납니다.
+pub const QUERY_TARGETS: &[(&str, &str)] = &[
+    (
+        "project",
+        "프로젝트 구조(문서·페이지·View 개요, chunk 요약)",
+    ),
+    (
+        "tree <문서 id> [--cursor <c>] [--limit <n>]",
+        "문서 트리 한 page(깊이 우선, 기본 1000·최대 10000 node, next_cursor로 이어 조회)",
+    ),
+    ("node <문서 id> <node id>", "node 공통 필드와 속성"),
+    ("tokens", "token 집합(저장 포맷 미정: chunk 수만 보고)"),
+    (
+        "components",
+        "component library(저장 포맷 미정: chunk 수만 보고)",
     ),
 ];
 
@@ -54,6 +76,10 @@ pub fn usage() -> String {
         .unwrap_or(0);
     for (name, summary) in COMMANDS {
         out.push_str(&format!("    {name:<width$}  {summary}\n"));
+    }
+    out.push_str("\nquery 대상:\n");
+    for (usage, summary) in QUERY_TARGETS {
+        out.push_str(&format!("    {usage}\n        {summary}\n"));
     }
     out.push_str(
         "\n출력:\n    \
@@ -99,6 +125,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("version", commands::version(rest))
     } else if command == "inspect" {
         ("inspect", commands::inspect(rest))
+    } else if command == "query" {
+        ("query", commands::query(rest))
     } else {
         return usage_error(err, &format!("알 수 없는 명령: {command}"));
     };
@@ -240,6 +268,37 @@ mod tests {
             &["inspect", "--json", "x"][..],
             &["inspect", "--bogus"][..],
             &["inspect", "a", "b"][..],
+            &["inspect", "a", "--structure", "--structure"][..],
+            &["query"][..],
+            &["query", "p"][..],
+            &["query", "--x", "project"][..],
+            &["query", "p", "nothing"][..],
+            &["query", "p", "project", "extra"][..],
+            &["query", "p", "tree"][..],
+            &["query", "p", "tree", "not-an-id"][..],
+            &[
+                "query",
+                "p",
+                "tree",
+                "0195c530-3acd-7bc1-8414-c213f61cb965",
+                "--limit",
+                "0",
+            ][..],
+            &[
+                "query",
+                "p",
+                "tree",
+                "0195c530-3acd-7bc1-8414-c213f61cb965",
+                "--limit",
+            ][..],
+            &[
+                "query",
+                "p",
+                "tree",
+                "0195c530-3acd-7bc1-8414-c213f61cb965",
+                "--bogus",
+            ][..],
+            &["query", "p", "node", "0195c530-3acd-7bc1-8414-c213f61cb965"][..],
         ] {
             let (code, out, err) = run_args(args);
             assert_eq!(code, EXIT_USAGE, "{args:?}");

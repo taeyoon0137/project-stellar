@@ -119,14 +119,8 @@ fn non_utf8_argument_is_usage_error_without_panic() {
     assert!(!stderr.contains("panicked"), "{stderr}");
 }
 
-/// stellar-cli가 직접 의존할 수 있는 core crate.
-const ALLOWED_CORE_DEPS: [&str; 5] = [
-    "stellar-core-types",
-    "stellar-project",
-    "stellar-document",
-    "stellar-storage",
-    "stellar-diagnostics",
-];
+/// stellar-cli가 직접 의존할 수 있는 crate(ADR-0005 §8, XXIV.4.3: ops·diagnostics뿐).
+const ALLOWED_CORE_DEPS: [&str; 2] = ["stellar-ops", "stellar-diagnostics"];
 
 /// `[section]` 본문의 `key = ...` 줄에서 key를 모읍니다.
 fn section_keys(manifest: &str, section: &str) -> Vec<(String, String)> {
@@ -162,6 +156,13 @@ fn manifest_depends_only_on_core_crates() {
         assert!(
             value.contains("path = \"../../crates/"),
             "{key}는 crates/ 아래 path 의존이어야 함: {value}"
+        );
+    }
+    // dev 의존도 같은 허용 목록 안에 있습니다(fixture 생성은 ops test-support).
+    for (key, _) in section_keys(&manifest, "dev-dependencies") {
+        assert!(
+            ALLOWED_CORE_DEPS.contains(&key.as_str()),
+            "dev 의존성 허용 목록 밖: {key}"
         );
     }
     // build script·빌드 의존성도 두지 않습니다.

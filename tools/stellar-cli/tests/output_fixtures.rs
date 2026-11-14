@@ -7,6 +7,8 @@
 //! - stdout JSON은 엄격한 reader로 파싱되고 `schema/cli-result.v1.schema.json`을 만족합니다.
 //! - 성공은 stderr가 비어 있고, 오류는 stderr에 사람용 진단(오류 코드 포함)이 있습니다.
 //! - stdout에는 입력 경로가 들어가지 않습니다(경로는 stderr에만).
+//! - XXIV.4.3: `inspect --structure`·`query` 결과는 golden과 같고 revision을 담으며, 실행 전후
+//!   프로젝트 파일 hash가 같습니다. 옵션 없는 `inspect`는 XXIV.1.2 fixture와 그대로 같습니다.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -154,9 +156,18 @@ fn validate(value: &JsonValue, schema: &JsonValue, at: &str) -> Result<(), Strin
 
 /// 실행 결과가 fixture·스키마·stdout/stderr 계약을 만족하는지 검사합니다.
 fn check(run: &Run, fixture: &str, expected: ExitStatus, private: &[&Path]) {
-    assert_eq!(run.code, i32::from(expected.code()), "{fixture}: 종료 코드");
-    let golden =
-        std::fs::read_to_string(Path::new(FIXTURES).join("results").join(fixture)).unwrap();
+    assert_eq!(
+        run.code,
+        i32::from(expected.code()),
+        "{fixture}: 종료 코드, stderr: {}",
+        run.stderr
+    );
+    let golden_path = Path::new(FIXTURES).join("results").join(fixture);
+    // 새 golden을 만들 때만 STELLAR_CLI_BLESS=1로 실행합니다(검토 후 commit).
+    if std::env::var_os("STELLAR_CLI_BLESS").is_some() {
+        std::fs::write(&golden_path, &run.stdout).unwrap();
+    }
+    let golden = std::fs::read_to_string(&golden_path).unwrap();
     assert_eq!(run.stdout, golden, "{fixture}: stdout golden 불일치");
     assert!(run.stdout.ends_with('\n'), "{fixture}: 개행으로 끝남");
     assert_eq!(run.stdout.matches('\n').count(), 1, "{fixture}: JSON 한 줄");
@@ -393,4 +404,264 @@ fn schema_validator_rejects_contract_violations() {
     for bad in [extra, wrong_code, missing] {
         assert!(validate(&JsonValue::Object(bad), &schema, "$").is_err());
     }
+}
+
+// --- XXIV.4.3: inspect --structure, query ---
+
+use stellar_ops::test_support::{
+    file_digest, large_document, random_valid_document, save_documents, scaffold_project,
+    FixtureDocument,
+};
+
+/// fixture 문서 seed(node가 여러 개인 View를 가진 seed).
+const QUERY_SEED: u64 = 7;
+
+/// 저장된 generation을 가진 fixture 프로젝트(문서 하나).
+fn saved_project(dir: &TempDir) -> (PathBuf, FixtureDocument) {
+    let root = dir.path.join("project");
+    scaffold_project(&root);
+    let model = random_valid_document(QUERY_SEED);
+    assert!(
+        model.node_count() >= 8,
+        "fixture node 수 {}",
+        model.node_count()
+    );
+    save_documents(&root, &[&model]);
+    (root, model)
+}
+
+fn result_of(run: &Run) -> JsonValue {
+    // 대형 page(최대 10000 node) 결과도 읽도록 reader 상한을 넓힙니다.
+    let limits = JsonLimits {
+        max_bytes: 16 * 1024 * 1024,
+        ..JsonLimits::default()
+    };
+    parse(run.stdout.trim_end(), limits)
+        .unwrap()
+        .get("result")
+        .cloned()
+        .unwrap()
+}
+
+fn first_root_frame(model: &FixtureDocument) -> String {
+    model
+        .definition()
+        .pages
+        .iter()
+        .flat_map(|p| p.views.iter())
+        .find(|v| model.contains(v.root_frame))
+        .map(|v| v.root_frame.to_string())
+        .unwrap()
+}
+
+#[test]
+fn inspect_without_option_keeps_the_xxiv_1_2_result() {
+    // 기존 inspect fixture(XXIV.1.2)는 저장된 generation이 있어도 byte 단위로 같습니다.
+    let dir = TempDir::new("inspect-compat");
+    let (root, _) = saved_project(&dir);
+    std::fs::copy(
+        Path::new(FIXTURES)
+            .join("projects")
+            .join("valid.stellar.yaml"),
+        root.join("stellar.yaml"),
+    )
+    .unwrap();
+    let run = run(&["inspect", root.to_str().unwrap()]);
+    check(&run, "inspect-valid.json", ExitStatus::Ok, &[&root]);
+}
+
+#[test]
+fn inspect_structure_and_query_success_fixtures() {
+    let dir = TempDir::new("query");
+    let (root, model) = saved_project(&dir);
+    let path = root.to_str().unwrap();
+    let document = model.document_id().to_string();
+    let before = file_digest(&root);
+
+    let structure = run(&["inspect", path, "--structure"]);
+    check(
+        &structure,
+        "inspect-structure.json",
+        ExitStatus::Ok,
+        &[&root],
+    );
+    // 기존 inspect key가 같은 순서로 앞에 있고 새 key는 뒤에 붙습니다.
+    let keys: Vec<String> = result_of(&structure)
+        .as_object()
+        .unwrap()
+        .iter()
+        .map(|(k, _)| k.clone())
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "manifest_schema_version",
+            "project",
+            "git_link",
+            "target_profiles",
+            "dependencies",
+            "revision",
+            "documents",
+            "chunks"
+        ]
+    );
+
+    check(
+        &run(&["query", path, "project"]),
+        "query-project.json",
+        ExitStatus::Ok,
+        &[&root],
+    );
+    check(
+        &run(&["query", path, "tokens"]),
+        "query-tokens.json",
+        ExitStatus::Ok,
+        &[&root],
+    );
+    check(
+        &run(&["query", path, "components"]),
+        "query-components.json",
+        ExitStatus::Ok,
+        &[&root],
+    );
+    let first = run(&["query", path, "tree", &document, "--limit", "3"]);
+    check(&first, "query-tree-first.json", ExitStatus::Ok, &[&root]);
+    let cursor = result_of(&first)
+        .get("next_cursor")
+        .and_then(JsonValue::as_str)
+        .unwrap()
+        .to_string();
+    let next = run(&[
+        "query", path, "tree", &document, "--cursor", &cursor, "--limit", "3",
+    ]);
+    check(&next, "query-tree-next.json", ExitStatus::Ok, &[&root]);
+    let node = first_root_frame(&model);
+    check(
+        &run(&["query", path, "node", &document, &node]),
+        "query-node.json",
+        ExitStatus::Ok,
+        &[&root],
+    );
+
+    // 모든 결과의 revision은 같은 generation 표기입니다.
+    let token = result_of(&structure)
+        .get("revision")
+        .and_then(|r| r.get("token"))
+        .and_then(JsonValue::as_str)
+        .unwrap()
+        .to_string();
+    assert!(token.starts_with("g1:sha256:"), "{token}");
+    assert_eq!(
+        result_of(&first)
+            .get("revision")
+            .and_then(|r| r.get("token"))
+            .and_then(JsonValue::as_str),
+        Some(token.as_str())
+    );
+    // 실행 전후 프로젝트 파일 hash 동일(파일을 쓰지 않음).
+    assert_eq!(file_digest(&root), before);
+}
+
+#[test]
+fn query_error_fixtures() {
+    let dir = TempDir::new("query-errors");
+    let (root, model) = saved_project(&dir);
+    let path = root.to_str().unwrap();
+    let document = model.document_id().to_string();
+    let missing = "0195c530-3acd-7bc1-8414-c213f61cb999";
+
+    check(
+        &run(&["query", path, "tree", missing]),
+        "query-unknown-document.json",
+        ExitStatus::NoInput,
+        &[&root],
+    );
+    check(
+        &run(&["query", path, "node", &document, missing]),
+        "query-unknown-node.json",
+        ExitStatus::NoInput,
+        &[&root],
+    );
+    check(
+        &run(&["query", path, "tree", &document, "--cursor", "t1.x"]),
+        "query-invalid-cursor.json",
+        ExitStatus::DataErr,
+        &[&root],
+    );
+    // 다른 writer가 저장한 뒤의 낡은 cursor는 거부합니다.
+    let first = run(&["query", path, "tree", &document, "--limit", "2"]);
+    let cursor = result_of(&first)
+        .get("next_cursor")
+        .and_then(JsonValue::as_str)
+        .unwrap()
+        .to_string();
+    save_documents(&root, &[&model, &random_valid_document(QUERY_SEED + 1)]);
+    check(
+        &run(&["query", path, "tree", &document, "--cursor", &cursor]),
+        "query-stale-cursor.json",
+        ExitStatus::DataErr,
+        &[&root],
+    );
+    // 저장된 generation이 없는 프로젝트는 g0 revision과 빈 구조를 돌려줍니다.
+    let empty = TempDir::new("query-unsaved");
+    let unsaved = empty.path.join("project");
+    scaffold_project(&unsaved);
+    check(
+        &run(&["query", unsaved.to_str().unwrap(), "project"]),
+        "query-project-unsaved.json",
+        ExitStatus::Ok,
+        &[&unsaved],
+    );
+}
+
+#[test]
+fn query_tree_splits_a_two_hundred_thousand_node_document() {
+    // 검증 기준(XXIV.4.3): 20만 node 문서 page 분할(명령 경로). 전체 순회는 stellar-ops 단위
+    // 테스트가 하고, 여기서는 첫 page와 마지막 page를 명령으로 확인합니다.
+    let dir = TempDir::new("query-large");
+    let root = dir.path.join("project");
+    scaffold_project(&root);
+    let model = large_document(200_000);
+    save_documents(&root, &[&model]);
+    let path = root.to_str().unwrap();
+    let document = model.document_id().to_string();
+    let first = run(&["query", path, "tree", &document, "--limit", "10000"]);
+    assert_eq!(first.code, 0, "{}", first.stderr);
+    let page = result_of(&first);
+    assert_eq!(page.get("total").and_then(JsonValue::as_i64), Some(200_000));
+    assert_eq!(
+        page.get("nodes")
+            .and_then(JsonValue::as_array)
+            .map(<[_]>::len),
+        Some(10_000)
+    );
+    let cursor = page.get("next_cursor").and_then(JsonValue::as_str).unwrap();
+    assert!(cursor.starts_with("t1.10000."), "{cursor}");
+    // 같은 revision의 cursor로 마지막 page로 이동합니다.
+    let last_cursor = cursor.replacen("t1.10000.", "t1.195000.", 1);
+    let last = run(&[
+        "query",
+        path,
+        "tree",
+        &document,
+        "--cursor",
+        &last_cursor,
+        "--limit",
+        "10000",
+    ]);
+    assert_eq!(last.code, 0, "{}", last.stderr);
+    let page = result_of(&last);
+    assert_eq!(
+        page.get("nodes")
+            .and_then(JsonValue::as_array)
+            .map(<[_]>::len),
+        Some(5_000)
+    );
+    assert_eq!(page.get("next_cursor"), Some(&JsonValue::Null));
+    // 한 응답의 크기는 page 크기로 제한됩니다(전체 문서를 한 번에 보내지 않음).
+    assert!(
+        first.stdout.len() < 4 * 1024 * 1024,
+        "{}",
+        first.stdout.len()
+    );
 }

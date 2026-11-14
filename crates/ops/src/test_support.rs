@@ -9,7 +9,11 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
+use stellar_document::fragment::FragmentPayload;
+use stellar_document::frame::FramePayload;
 use stellar_document::model::DocumentModel;
+use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_project::document_io::serialize::serialize_document;
 use stellar_project::identity::parse_project_id;
 use stellar_project::scaffold::write_default_scaffold;
@@ -20,6 +24,7 @@ use stellar_storage::save::commit::SavedGenerationState;
 use stellar_storage::save::plan::build_save_plan;
 
 use crate::core_types::ids::StableId;
+use crate::core_types::order_key::OrderKey;
 
 /// fixture 프로젝트의 `project.id`.
 pub const PROJECT_ID_TEXT: &str = "0195c530-3acd-7bc1-8414-c213f61cb965";
@@ -118,4 +123,74 @@ pub fn file_digest(root: &Path) -> BTreeMap<String, String> {
         }
     }
     out
+}
+
+/// 대형 문서 fixture: View 하나의 root Frame 아래 Frame group(group당 Fragment 최대 499개)으로
+/// 정확히 `node_count`개 node를 만듭니다(`node_count >= 1`).
+pub fn large_document(node_count: usize) -> DocumentModel {
+    const GROUP: usize = 500;
+    let id = |n: u64| StableId::new_v7(1_900_000_000_000 + n, 0x0123, n);
+    let document_id = id(1);
+    let view_id = id(2);
+    let page_id = id(3);
+    let root = id(4);
+    let mut definition = DocumentDefinition::new(document_id, "Large".to_string());
+    let mut page = PageDefinition::new(page_id, "Page".to_string());
+    page.add_view(ViewDefinition::new(view_id, "View".to_string(), root))
+        .expect("view");
+    definition.add_page(page).expect("page");
+    let mut model = DocumentModel::new(definition);
+    let record =
+        |id: StableId, parent: Option<StableId>, order_key: OrderKey, payload| NodeRecord {
+            id,
+            parent,
+            order_key,
+            visible: true,
+            locked: false,
+            display_name: String::new(),
+            payload,
+        };
+    model
+        .insert_node(record(
+            root,
+            None,
+            OrderKey::between(None, None),
+            NodePayload::Frame(FramePayload::default()),
+        ))
+        .expect("root");
+    let remaining = node_count.saturating_sub(1);
+    let groups = remaining.div_ceil(GROUP);
+    let group_keys = OrderKey::evenly_spaced(groups);
+    let mut next = 100u64;
+    let mut created = 1usize;
+    for group_key in group_keys {
+        if created >= node_count {
+            break;
+        }
+        let group = id(next);
+        next += 1;
+        model
+            .insert_node(record(
+                group,
+                Some(root),
+                group_key,
+                NodePayload::Frame(FramePayload::default()),
+            ))
+            .expect("group");
+        created += 1;
+        let children = (node_count - created).min(GROUP - 1);
+        for key in OrderKey::evenly_spaced(children) {
+            model
+                .insert_node(record(
+                    id(next),
+                    Some(group),
+                    key,
+                    NodePayload::Fragment(FragmentPayload),
+                ))
+                .expect("fragment");
+            next += 1;
+            created += 1;
+        }
+    }
+    model
 }
