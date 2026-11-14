@@ -4,9 +4,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use stellar_renderer_core::backend::{
-    BackendErrorKind, BlendState, BufferHandle, BufferUsage, CheckedBackend, DepthMode,
-    DrawCommand, EncodeOutcome, PassCommands, PipelineKey, RendererBackend, ShaderProgram,
-    StencilMode, SurfaceSize, TextureSource,
+    BackendErrorKind, BlendState, BufferHandle, BufferUsage, CallOrderState, CheckedBackend,
+    DepthMode, DrawCommand, EncodeOutcome, PassCommands, PipelineKey, RendererBackend,
+    ShaderProgram, StencilMode, SurfaceSize, TextureSource,
 };
 use stellar_renderer_core::graph_trace::{MonotonicClock, TraceClock};
 use stellar_renderer_core::placeholder::{SamplerDesc, TextureFilter, TextureWrap};
@@ -427,6 +427,89 @@ fn compute_and_transfer_passes_are_unsupported() {
         env.try_render(&graph, Vec::new()).unwrap_err().kind(),
         BackendErrorKind::Unsupported
     );
+}
+
+#[test]
+fn attachments_without_render_target_usage_are_rejected() {
+    // render target 용도가 없는 external texture를 attachment로 붙이면 Metal에 넘기기 전에
+    // InvalidUsage입니다(Metal API validation을 켜면 그대로 넘긴 descriptor는 process를 끝냄).
+    if !metal_available() {
+        return;
+    }
+    let size = 4;
+    let mut env = Offscreen::new(size, size);
+    let sampled_only = |format| GpuTextureDesc {
+        usage: TextureUsage {
+            sampled: true,
+            render_target: false,
+        },
+        ..target_desc(size, size, format)
+    };
+    let color = env
+        .backend
+        .create_texture(&sampled_only(TextureFormat::Rgba8Unorm))
+        .expect("sampled-only color");
+    let graph = external_clear_graph(size, size, TextureFormat::Rgba8Unorm, unit_clear([true; 4]));
+    let imports = bind_first_import(&graph, color);
+    let error = env
+        .backend
+        .encode(&request(100, &graph, &imports))
+        .unwrap_err();
+    assert_eq!(error.kind(), BackendErrorKind::InvalidUsage);
+    assert_eq!(env.backend.validator().state(), CallOrderState::Idle);
+
+    let depth = env
+        .backend
+        .create_texture(&sampled_only(TextureFormat::Depth32FloatStencil8))
+        .expect("sampled-only depth");
+    let mut builder = RenderGraphBuilder::new();
+    let target = builder.import(
+        "target",
+        fixed(TextureFormat::Rgba8Unorm, size),
+        ImportKind::External,
+    );
+    let depth_import = builder.import(
+        "depth",
+        fixed(TextureFormat::Depth32FloatStencil8, size),
+        ImportKind::External,
+    );
+    let pass = builder.pass("opaque", PassKind::Raster);
+    let written = builder
+        .color(
+            pass,
+            target,
+            LoadOp::Clear,
+            unit_clear([true; 4]),
+            StoreOp::Store,
+        )
+        .expect("color");
+    builder
+        .depth_stencil(pass, depth_import, LoadOp::Clear, StoreOp::Discard)
+        .expect("depth");
+    builder.set_output(written);
+    let graph = builder.finish().compile().expect("compile");
+    let imports = [
+        ImportBinding {
+            resource: target.resource,
+            target: ImportTarget::Texture(env.target),
+        },
+        ImportBinding {
+            resource: depth_import.resource,
+            target: ImportTarget::Texture(depth),
+        },
+    ];
+    let error = env
+        .backend
+        .encode(&request(101, &graph, &imports))
+        .unwrap_err();
+    assert_eq!(error.kind(), BackendErrorKind::InvalidUsage);
+    assert_eq!(env.backend.validator().state(), CallOrderState::Idle);
+    // 거부 뒤에도 같은 backend로 그릴 수 있습니다.
+    let pixels = env.render(
+        &external_clear_graph(size, size, TextureFormat::Rgba8Unorm, unit_clear([true; 4])),
+        Vec::new(),
+    );
+    assert!(all_pixels(&pixels, [255; 4]));
 }
 
 /// 호출마다 10 ns씩 증가하는 시계.

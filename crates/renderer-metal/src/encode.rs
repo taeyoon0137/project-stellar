@@ -13,7 +13,7 @@
 //! | lifetime | texture |
 //! |---|---|
 //! | `Imported(Surface)` | 이 frame이 얻은 drawable(`framebufferOnly`라 sampling 불가) |
-//! | `Imported(External)` | import binding의 backend texture(크기·format·sample 수 일치 검사) |
+//! | `Imported(External)` | import binding의 backend texture(크기·format·sample 수 일치, attachment면 render target 용도 검사) |
 //! | `Transient` | alias slot pool texture([`crate::transient`]) |
 //!
 //! pass는 compile된 실행 순서대로 하나씩 render command encoder가 됩니다. 같은 command buffer 안의
@@ -53,6 +53,8 @@ pub(crate) struct Target {
     pub(crate) samples: SampleCount,
     /// shader에서 sampling할 수 있으면 참.
     pub(crate) sampleable: bool,
+    /// attachment로 붙일 수 있으면(render target 용도) 참.
+    pub(crate) renderable: bool,
 }
 
 /// frame의 attachment 해석 문맥.
@@ -107,6 +109,7 @@ impl FrameTargets<'_> {
                     format: desc.format,
                     samples: SampleCount::X1,
                     sampleable: false,
+                    renderable: true,
                 })
             }
             ResourceLifetime::Imported(ImportKind::External) => {
@@ -133,6 +136,7 @@ impl FrameTargets<'_> {
                     format: desc.format,
                     samples: desc.samples,
                     sampleable: sampleable(texture),
+                    renderable: texture.desc.usage.render_target,
                 })
             }
             ResourceLifetime::Transient => {
@@ -157,6 +161,7 @@ impl FrameTargets<'_> {
                     format: texture.desc.format,
                     samples: texture.desc.samples,
                     sampleable: sampleable(texture),
+                    renderable: texture.desc.usage.render_target,
                 })
             }
         }
@@ -223,8 +228,14 @@ fn clear_color(clear: ClearColor) -> MTLClearColor {
     }
 }
 
-/// pass attachment 크기를 하나로 맞춥니다.
+/// pass attachment 크기를 하나로 맞춥니다. render target 용도가 없는 texture는 attachment가 될 수
+/// 없습니다(Metal API validation assertion).
 fn merge_extent(extent: &mut Option<(u32, u32)>, target: &Target) -> Result<(), BackendError> {
+    if !target.renderable {
+        return Err(invalid(
+            "render target 용도가 없는 texture는 attachment가 될 수 없습니다",
+        ));
+    }
     if target.width == 0 || target.height == 0 {
         return Err(invalid("0 크기 attachment"));
     }
