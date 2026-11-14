@@ -225,6 +225,8 @@ Stub: `GitPanelStubDataSource`(메인 스레드 adapter) + `GitStubBackend`(백�
 - 키보드: 창에 넣기 전 두 화면을 오가도 패널 컨트롤 20개에 직접 이은 `nextKeyView`가 없음. 셸 창처럼 위·아래에 다른 컨트롤이 있고 `autorecalculatesKeyViewLoop`를 켠 창(화면 밖 좌표에 표시)에서, 실제 Tab처럼 창에 다음 key view를 물은 뒤 고리를 따라가면 위 컨트롤 → 패널 → 아래 컨트롤로 나감. 순서: (변경 화면) 새로고침 → 화면 전환 → Save Now → Use Saved Version → 목록 → 메시지 → Commit → Push → remote, (진행 중) Cancel, (결과) Dismiss, (conflict 화면) 화면 전환 → 목록 → Apply, (제한 모드) 화면 전환 → Trust Project…. 고리 소속을 보며, 시스템 키보드 탐색 설정에 따른 실제 정지 여부는 보지 않음.
 - ⌘↩ 범위: 패널 밖 포커스에서는 처리하지 않고 커밋 명령도 나가지 않음, 커밋 메시지 포커스에서는 처리하고 `.commit(message:)`이 나감, conflict 화면에서는 처리하지 않음.
 
+공유 CI-MAC Debug 실행은 측정값과 상한 초과 경고를 로그에 남깁니다. 로컬 기본 실행은 상한 초과 시 실패하며, 릴리스 성능 게이트는 REF-MAC에서 판정합니다.
+
 검사하지 않은 것: 실제 Git·코어 FFI, 화면 표시(on-screen) 렌더, VoiceOver 실제 낭독 순서와 outline 행 요소 트리(7장의 한 번 확인 외), sheet 경로의 필수 동반 변경 확인, 대비 높이기·투명도 줄이기 켠 상태의 시각 결과, Release 빌드·기준 하드웨어 성능.
 
 ## 13. 근거
