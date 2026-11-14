@@ -867,7 +867,7 @@ tools/xtask/
 | IX.7.6 | `[x]` | 구체 variant가 일반 variant 값을 덮어쓰고 존재하지 않는 조합은 추가 override 없이 base+일반 variant만 적용하게 합니다. | 요구 예제 fixture 통과. | IX.7.4 |
 | IX.7.7 | `[x]` | variant structure override도 ComponentInstance 내부 캡슐화를 침범하지 못하게 validator를 연결합니다. | nested direct override fixture 실패. | IX.7.3, IX.2.5 |
 | IX.7.8 | `[x]` | View variable/variant 생성·변경·삭제 command를 구현합니다. 삭제 시 참조 variant는 orphan diagnostic으로 남깁니다. | apply/inverse 통과. | IX.7.1~IX.7.7, Phase VII |
-| IX.7.9 | `[ ]` | 캔버스에 같은 View를 여러 variable assignment로 배치하는 `ViewPresentation` 런타임 타입을 정의합니다. definition을 복제하지 않습니다. | 100 presentations가 definition 1개 공유. | IX.7.4 |
+| IX.7.9 | `[x]` | 캔버스에 같은 View를 여러 variable assignment로 배치하는 `ViewPresentation` 런타임 타입을 정의합니다. definition을 복제하지 않습니다. | 100 presentations가 definition 1개 공유. | IX.7.4 |
 
 ### IX.8 접근성 의미 트리
 
