@@ -76,7 +76,6 @@ final class ShellPanelTabsSlot: ShellAuxiliaryPanelSlot {
 /// 열린 프로젝트와 어긋난 표본 내용을 보여 주지 않도록 각 Stub의 "비어 있음"에 가까운 상태를 고릅니다.
 /// - 사이드바: 페이지·레이어 없음(코어가 문서 내용을 아직 셸에 주지 않음).
 /// - 인스펙터: 선택 없음.
-/// - Git: 제한 모드(코어가 모든 프로젝트를 신뢰되지 않음으로 엶, 아키텍처 §24.3).
 /// - 에이전트: 세션 없음.
 @MainActor
 enum ShellAreaDataStubs {
@@ -86,10 +85,6 @@ enum ShellAreaDataStubs {
 
     static func makeInspectorDataSource() -> InspectorDataSource {
         InspectorStubDataSource(scenario: .noSelection)
-    }
-
-    static func makeGitDataSource() -> GitPanelDataSource {
-        GitPanelStubDataSource(scenario: .restricted)
     }
 
     static func makeAgentSource() -> AgentPanelSource {

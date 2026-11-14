@@ -22,7 +22,7 @@ use stellar_git_porcelain::snapshot::{
 use stellar_git_porcelain::trust::GatedGitRunner;
 use stellar_ops::candidate::{
     build_stage_candidate, saved_semantic_snapshot, serialize_candidate, CandidateIndexSnapshot,
-    CandidateStorageError, StageError, StageSelectionRequest,
+    CandidateStorageError, SemanticDiff, StageError, StageSelectionRequest,
 };
 use stellar_project::saved_project::{SavedProjectError, SavedProjectLoader};
 
@@ -50,6 +50,8 @@ pub enum PrepareStageError {
     Open(SavedProjectError),
     /// 선택 또는 필수 의존 승인 실패.
     Selection(StageError),
+    /// 표시한 선택 변경과 현재 index → working 변경이 다릅니다.
+    StalePreview,
     /// 무손실 검사·저장 직렬화 실패.
     Storage(CandidateStorageError),
     /// 후보 writer 실패.
@@ -72,6 +74,9 @@ impl fmt::Display for PrepareStageError {
             Self::Materialize(e) => write!(f, "{e}"),
             Self::Open(e) => write!(f, "{e}"),
             Self::Selection(e) => write!(f, "{e}"),
+            Self::StalePreview => {
+                f.write_str("표시한 변경이 바뀌었습니다. 선택을 새로 확인해야 합니다")
+            }
             Self::Storage(e) => write!(f, "{e}"),
             Self::Write(e) => write!(f, "{e}"),
             Self::Conflicted => f.write_str("index conflict가 있습니다"),
@@ -119,6 +124,20 @@ pub fn prepare_stage_candidate(
     parent: &Path,
     request: &StageSelectionRequest,
 ) -> Result<PreparedStageCandidate, PrepareStageError> {
+    prepare_stage_candidate_with_preview(git, worktree, parent, request, None)
+}
+
+/// 선택 화면에서 관찰한 변경을 현재 저장 상태와 대조한 뒤 후보를 준비합니다.
+/// `preview`에는 사용자가 선택한 변경과 함께 승인한 필수 변경만 canonical diff로 담습니다.
+/// ID가 같아도 변경 내용이 달라지면 `StalePreview`로 거부합니다. 다른 속성의 독립 변경은 허용합니다.
+/// `None`은 기존 [`prepare_stage_candidate`]처럼 현재 상태에서 ID만 해석합니다.
+pub fn prepare_stage_candidate_with_preview(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    parent: &Path,
+    request: &StageSelectionRequest,
+    preview: Option<&SemanticDiff>,
+) -> Result<PreparedStageCandidate, PrepareStageError> {
     let index = read_index_snapshot(git, worktree).map_err(PrepareStageError::Git)?;
     if index.has_conflicts() {
         return Err(PrepareStageError::Conflicted);
@@ -142,6 +161,9 @@ pub fn prepare_stage_candidate(
     let working_semantic = saved_semantic_snapshot(&working).map_err(PrepareStageError::Storage)?;
     let semantic = build_stage_candidate(&base_semantic, &working_semantic, request)
         .map_err(PrepareStageError::Selection)?;
+    if preview.is_some_and(|shown| shown != semantic.applied()) {
+        return Err(PrepareStageError::StalePreview);
+    }
     let bytes = serialize_candidate(&base, &semantic).map_err(PrepareStageError::Storage)?;
     let index_by_path: BTreeMap<_, _> = index
         .entries

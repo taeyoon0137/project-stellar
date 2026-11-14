@@ -23,6 +23,7 @@ use stellar_storage::save::plan::build_save_plan;
 use crate::core_types::ids::StableId;
 use crate::diff::snapshot_of;
 
+pub use stellar_semantic_diff::diff::SemanticDiff;
 pub use stellar_semantic_diff::keys::DISPLAY_NAME;
 pub use stellar_semantic_diff::snapshot::SemanticSnapshot;
 pub use stellar_semantic_diff::stage::{
