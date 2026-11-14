@@ -66,6 +66,13 @@ pub mod graph_trace;
 /// surface 출력 색공간 협상과 gamut 경고 (XI.10.5), HDR 미지원 상태 (XI.10.6).
 pub mod output_color;
 
+/// 테스트 전용 지원 코드: 다른 crate가 따로 보관하는 상수의 대조용 재노출.
+///
+/// 이 crate의 unit test와, 기본값이 꺼진 `test-support` feature를 `[dev-dependencies]`에서 켠 crate의
+/// 테스트에서만 빌드됩니다.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;

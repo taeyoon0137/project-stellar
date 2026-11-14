@@ -13,7 +13,8 @@
 //! - **P3 surface**: sRGB 색은 P3 안에 들어가므로 행렬 변환만 하고 경고가 없습니다.
 //!
 //! 변환식(행 우선, 선형광, D65): transfer decode(ADR-0002, sRGB·P3 공통 곡선) → 행렬 → surface 색공간
-//! encode. 행렬은 expressions crate 색 함수(VIII.4.4)와 같은 상수입니다(crate 의존 정책상 각자 보관).
+//! encode. 행렬은 expressions crate 색 함수(VIII.4.4)와 같은 상수입니다(crate 의존 정책상 각자 보관). 두 사본이
+//! 같은지는 정책 밖 통합 테스트(`tests/integration/tests/constant_copies.rs`)가 `test-support` feature로 대조합니다.
 //! gamut 판정 허용 오차는 [`GAMUT_EPSILON`]입니다(행렬 반올림이 경계 색을 잘못 경고하지 않게).
 //!
 //! ## HDR (XI.10.6)
@@ -37,14 +38,17 @@ use crate::backend::{DeviceCapabilities, SurfaceConfig};
 use crate::render_graph::TextureFormat;
 
 /// 선형 Display P3 → 선형 sRGB (D65). 행 우선.
-const P3_TO_SRGB: [[f32; 3]; 3] = [
+///
+/// expressions `function_eval`의 같은 상수 사본입니다. 두 사본은 `tests/integration/tests/constant_copies.rs`가
+/// 대조합니다.
+pub(crate) const P3_TO_SRGB: [[f32; 3]; 3] = [
     [1.224_940_1, -0.224_940_4, 0.0],
     [-0.042_056_9, 1.042_057_1, 0.0],
     [-0.019_637_6, -0.078_636_1, 1.098_273_5],
 ];
 
-/// 선형 sRGB → 선형 Display P3 (D65). 행 우선.
-const SRGB_TO_P3: [[f32; 3]; 3] = [
+/// 선형 sRGB → 선형 Display P3 (D65). 행 우선. 대조는 [`P3_TO_SRGB`]와 같습니다.
+pub(crate) const SRGB_TO_P3: [[f32; 3]; 3] = [
     [0.822_462_1, 0.177_538, 0.0],
     [0.033_194_1, 0.966_805_8, 0.0],
     [0.017_082_7, 0.072_397_4, 0.910_519_9],

@@ -267,12 +267,15 @@ dependencies = [
  "stellar-commands",
  "stellar-core-types",
  "stellar-document",
+ "stellar-expressions",
  "stellar-git-porcelain",
  "stellar-history",
  "stellar-project",
+ "stellar-renderer-core",
  "stellar-semantic-diff",
  "stellar-semantic-merge",
  "stellar-storage",
+ "stellar-target-profile",
 ]
 
 [[package]]

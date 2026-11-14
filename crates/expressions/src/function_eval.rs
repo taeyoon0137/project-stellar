@@ -32,14 +32,17 @@ use crate::eval::{make_numeric, numeric, ArgumentIssue, EvalErrorKind, MAX_STRIN
 use crate::functions::FunctionId;
 
 /// 선형 Display P3 → 선형 sRGB (D65). 행 우선.
-const P3_TO_SRGB: [[f32; 3]; 3] = [
+///
+/// renderer-core `output_color`도 같은 값을 따로 보관합니다(crate 의존 정책상 공유 불가). 두 사본은
+/// `tests/integration/tests/constant_copies.rs`가 대조합니다.
+pub(crate) const P3_TO_SRGB: [[f32; 3]; 3] = [
     [1.224_940_1, -0.224_940_4, 0.0],
     [-0.042_056_9, 1.042_057_1, 0.0],
     [-0.019_637_6, -0.078_636_1, 1.098_273_5],
 ];
 
-/// 선형 sRGB → 선형 Display P3 (D65). 행 우선.
-const SRGB_TO_P3: [[f32; 3]; 3] = [
+/// 선형 sRGB → 선형 Display P3 (D65). 행 우선. 대조는 [`P3_TO_SRGB`]와 같습니다.
+pub(crate) const SRGB_TO_P3: [[f32; 3]; 3] = [
     [0.822_462_1, 0.177_538, 0.0],
     [0.033_194_1, 0.966_805_8, 0.0],
     [0.017_082_7, 0.072_397_4, 0.910_519_9],
