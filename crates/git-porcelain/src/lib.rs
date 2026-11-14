@@ -84,6 +84,9 @@ pub mod candidate_delta;
 /// 후보 bytes의 Git blob 기록(XIV.6.1).
 pub mod blob_write;
 
+/// Git 소유 잠금 아래 실제 후보 index 적용(XIV.6.2).
+pub mod index_publish;
+
 /// Remote 목록·연결·push(XIV.9.*).
 pub mod remote;
 

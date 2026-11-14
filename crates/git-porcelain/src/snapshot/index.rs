@@ -119,6 +119,20 @@ pub fn read_index_snapshot(
     Ok(split_index_entries(parse_ls_files_stage(&output.stdout)?))
 }
 
+/// 동일 provider를 취소 가능한 Git 읽기로 실행합니다.
+pub fn read_index_snapshot_cancellable(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    cancel: &crate::cancel::GitCancelToken,
+) -> Result<IndexSnapshot, GitOpError> {
+    let output = crate::ops::require_success(git.run_cancellable(
+        &argv(["ls-files", "--stage", "-z", "--full-name", "--", ":/"]),
+        worktree,
+        cancel,
+    )?)?;
+    Ok(split_index_entries(parse_ls_files_stage(&output.stdout)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -37,6 +37,11 @@ pub struct WrittenCandidate {
 }
 
 impl WrittenCandidate {
+    #[cfg(test)]
+    pub(crate) fn for_test(base: IndexSnapshot, changes: Vec<WrittenFileDelta>) -> Self {
+        Self { base, changes }
+    }
+
     /// 후보 생성 당시의 index.
     pub fn base_index(&self) -> &IndexSnapshot {
         &self.base
