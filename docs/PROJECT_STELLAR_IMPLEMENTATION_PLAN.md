@@ -1534,7 +1534,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XIV.7.1 | `[x]` | 선택 staged changes를 Index snapshot에서 inverse 적용해 CandidateIndexSnapshot을 계산합니다. 기준은 HEAD가 아니라 현재 Index입니다. | staged A+B에서 A만 제거 fixture 통과. | XIV.4.1, XIV.3.10 |
 | XIV.7.2 | `[x]` | unstage dependency graph를 검사하고 남은 index snapshot이 invalid하면 필수 함께-unstage 변경을 반환합니다. | component property/override fixture 통과. | XIV.5.2, XIV.7.1 |
-| XIV.7.3 | `[ ]` | 승인된 candidate를 Phase XIV.6 index 기록 경로로 적용합니다. | WorkingTree 변경 없음, index semantic 결과 정확. | XIV.7.2, XIV.6.6 |
+| XIV.7.3 | `[x]` | 현재 Index에서 선택·승인한 변경을 HEAD 값으로 되돌린 후보를 Phase XIV.6 index 기록 경로로 적용합니다. | 실제 Git 재열기에서 다른 staged 속성·파일과 Working Tree 보존, HEAD 변경 거부, macOS 창의 이름 Unstage 검증. | XIV.7.2, XIV.6.6 |
 
 ### XIV.8 Commit
 

@@ -8501,13 +8501,19 @@ tasks:
     report: "docs/task-reports/XIV.7.2.md"
     verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.7.3"
-    title: "승인된 candidate를 Phase XIV.6 index 기록 경로로 적용합니다."
-    status: not_started
+    title: "현재 Index에서 선택·승인한 변경을 HEAD 값으로 되돌린 후보를 Phase XIV.6 index 기록 경로로 적용합니다."
+    status: verified
     depends_on:
       - "XIV.7.2"
       - "XIV.6.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.7.3.md"
+    commit: "bb90f21d46ded4ab7c637f0af4521c085c6ffb35"
+    report: "docs/task-reports/XIV.7.3.md"
+    verified_at: "2026-11-14T20:09:29+09:00"
   - id: "XIV.8.1"
     title: "staged snapshot이 valid Stellar project인지 commit 전에 재검증합니다. invalid하면 Git commit을 실행하지 않습니다."
     status: not_started
