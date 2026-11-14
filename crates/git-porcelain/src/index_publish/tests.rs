@@ -137,7 +137,21 @@ fn unrelated_flags_and_resolve_undo_survive_selected_update() {
         &fx,
         vec![upsert(&fx, "selected", FileMode::REGULAR, b"candidate")],
     );
-    publish(&fx, &c).unwrap();
+    let receipt = publish_with_receipt(&fx.gated(), fx.work(), &c, &GitCancelToken::new()).unwrap();
+    assert_eq!(
+        fx.git(["ls-files", "--resolve-undo", "-z"]).unwrap().stdout,
+        reuc
+    );
+    assert_eq!(
+        fx.git(["ls-files", "--debug", "-z", "--", "assume", "skip", "ita"])
+            .unwrap()
+            .stdout,
+        flags
+    );
+    assert_eq!(
+        restore_published(&fx.gated(), receipt, &GitCancelToken::new()).unwrap(),
+        *c.base_index()
+    );
     assert_eq!(
         fx.git(["ls-files", "--resolve-undo", "-z"]).unwrap().stdout,
         reuc
@@ -193,13 +207,17 @@ fn a_foreign_git_lock_is_never_mistaken_for_our_childs_lock() {
     std::thread::scope(|scope| {
         let writer = scope.spawn(|| {
             let mut announced = false;
-            fx.gated()
+            protocol_runner(&fx.gated())
+                .unwrap()
                 .run_with_checked_input(
                     &argv(["update-index", "--index-info"]),
                     fx.work(),
                     external_input.as_bytes(),
                     &GitCancelToken::new(),
-                    &mut |pid, _| {
+                    &mut |pid, _, stderr| {
+                        if !index_read_ready(pid, stderr) {
+                            return Ok(false);
+                        }
                         if !ownership::owns_lock(pid, &fx.work().join(".git/index.lock")).unwrap() {
                             return Ok(false);
                         }
@@ -241,14 +259,17 @@ fn locked_validation_excludes_external_writer_and_git_rolls_back_invalid_batch()
     let oid = write_blob(&fx.gated(), fx.work(), b"candidate").unwrap();
     let input = format!("100644 {oid}\tselected\ninvalid final record\n");
     let mut checked = false;
-    let result = fx
-        .gated()
+    let result = protocol_runner(&fx.gated())
+        .unwrap()
         .run_with_checked_input(
             &argv(["update-index", "--index-info"]),
             fx.work(),
             input.as_bytes(),
             &GitCancelToken::new(),
-            &mut |pid, _| {
+            &mut |pid, _, stderr| {
+                if !index_read_ready(pid, stderr) {
+                    return Ok(false);
+                }
                 if !ownership::owns_lock(pid, &fx.work().join(".git/index.lock")).unwrap() {
                     return Ok(false);
                 }
@@ -289,12 +310,15 @@ fn withheld_input_timeout_cancel_and_rejection_leave_index_exactly_unchanged() {
         );
         let token = GitCancelToken::new();
         let mut seen = false;
-        let result = gate.run_with_checked_input(
+        let result = protocol_runner(&gate).unwrap().run_with_checked_input(
             &argv(["update-index", "--index-info"]),
             fx.work(),
             format!("100644 {oid}\tselected\n").as_bytes(),
             &token,
-            &mut |pid, _| {
+            &mut |pid, _, stderr| {
+                if !index_read_ready(pid, stderr) {
+                    return Ok(false);
+                }
                 if ownership::owns_lock(pid, &fx.work().join(".git/index.lock")).unwrap() {
                     seen = true;
                     if action == "cancel" {
@@ -661,4 +685,136 @@ fn mode_only_changes_and_deletions_keep_gitlinks_and_working_types() {
         check_flags(unknown_flags, &c),
         Err(PublishError::Unsupported("검증되지 않은 index flags"))
     );
+}
+
+#[test]
+fn receipt_restores_multiple_paths_modes_and_deletions_as_one_operation() {
+    let fx = fixture("publish-restore");
+    fx.write("d/a", b"original").unwrap();
+    fx.write("other", b"keep").unwrap();
+    fx.git(["add", "-A"]).unwrap();
+    let c = candidate(
+        &fx,
+        vec![
+            WrittenFileDelta::Remove { path: path("d/a") },
+            upsert(&fx, "d", FileMode::SYMLINK, b"../target"),
+            upsert(&fx, "exec", FileMode::EXECUTABLE, b"new"),
+        ],
+    );
+    let receipt = publish_with_receipt(&fx.gated(), fx.work(), &c, &GitCancelToken::new()).unwrap();
+    assert_eq!(receipt.snapshot(), &expected_index(&c).unwrap());
+    assert_eq!(
+        restore_published(&fx.gated(), receipt, &GitCancelToken::new()).unwrap(),
+        *c.base_index()
+    );
+    assert_eq!(
+        read_index_snapshot(&fx.gated(), fx.work()).unwrap(),
+        *c.base_index()
+    );
+    assert_eq!(std::fs::read(fx.work().join("d/a")).unwrap(), b"original");
+    assert!(!fx.work().join("exec").exists());
+}
+
+#[test]
+fn receipt_rejects_external_content_and_flags_without_restoring_over_them() {
+    for kind in ["selected", "unrelated", "flags"] {
+        let fx = fixture("publish-restore-conflict");
+        fx.write("selected", b"base").unwrap();
+        fx.write("unrelated", b"base").unwrap();
+        fx.git(["add", "-A"]).unwrap();
+        let c = candidate(
+            &fx,
+            vec![upsert(&fx, "selected", FileMode::REGULAR, b"candidate")],
+        );
+        let receipt =
+            publish_with_receipt(&fx.gated(), fx.work(), &c, &GitCancelToken::new()).unwrap();
+        if kind == "flags" {
+            fx.git(["update-index", "--assume-unchanged", "unrelated"])
+                .unwrap();
+        } else {
+            let external = write_blob(&fx.gated(), fx.work(), b"external").unwrap();
+            set(&fx, kind, &external);
+        }
+        let before = index_bytes(&fx.work().join(".git/index")).unwrap();
+        assert_eq!(
+            restore_published(&fx.gated(), receipt, &GitCancelToken::new()),
+            Err(PublishError::StaleBase)
+        );
+        assert_eq!(index_bytes(&fx.work().join(".git/index")).unwrap(), before);
+    }
+}
+
+#[test]
+fn timeout_and_cancel_after_git_commit_issue_no_restore_receipt() {
+    use std::os::unix::fs::PermissionsExt;
+    for action in ["timeout", "cancel"] {
+        let fx = fixture("publish-after-commit-cancel");
+        fx.write("selected", b"working").unwrap();
+        fx.git(["add", "selected"]).unwrap();
+        let c = candidate(
+            &fx,
+            vec![upsert(&fx, "selected", FileMode::REGULAR, b"candidate")],
+        );
+        let hooks = fx.root().join("hooks");
+        std::fs::create_dir(&hooks).unwrap();
+        let ready = fx.root().join("committed");
+        let hook = hooks.join("post-index-change");
+        std::fs::write(
+            &hook,
+            format!("#!/bin/sh\n: > '{}'\nsleep 30\n", ready.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        fx.git([
+            std::ffi::OsStr::new("config"),
+            std::ffi::OsStr::new("core.hooksPath"),
+            hooks.as_os_str(),
+        ])
+        .unwrap();
+        let gate = GatedGitRunner::new(
+            fx.runner()
+                .clone()
+                .with_timeout(std::time::Duration::from_secs(2)),
+            GitTrust::Trusted,
+        );
+        let token = GitCancelToken::new();
+        let result = std::thread::scope(|scope| {
+            let job = scope.spawn(|| publish_with_receipt(&gate, fx.work(), &c, &token));
+            let deadline = Instant::now() + std::time::Duration::from_secs(5);
+            while !ready.exists() && Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
+            if action == "cancel" || !ready.exists() {
+                token.cancel();
+            }
+            job.join().unwrap()
+        });
+        assert!(
+            ready.exists(),
+            "post-index-change hook did not run ({action}): {result:?}"
+        );
+        let Err(PublishError::OutcomeUnknown {
+            cause: Some(GitOpError::Gate(GatedRunError::Run(error))),
+        }) = result
+        else {
+            panic!("expected unconfirmed outcome: {result:?}")
+        };
+        assert_eq!(
+            error,
+            if action == "cancel" {
+                GitRunError::Cancelled
+            } else {
+                GitRunError::Timeout
+            }
+        );
+        assert_eq!(
+            read_index_snapshot(&fx.gated(), fx.work()).unwrap(),
+            expected_index(&c).unwrap()
+        );
+        assert_eq!(
+            std::fs::read(fx.work().join("selected")).unwrap(),
+            b"working"
+        );
+        assert!(!fx.work().join(".git/index.lock").exists());
+    }
 }
