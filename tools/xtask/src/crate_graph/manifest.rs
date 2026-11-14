@@ -893,11 +893,13 @@ fn string_array(value: &str, line: usize) -> Result<Option<Vec<String>>, Manifes
     Ok(Some(items))
 }
 
-/// basic string 본문의 escape를 TOML 규칙대로 풉니다(`\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX`).
+/// basic string 본문의 escape를 Cargo의 TOML 해석기와 같게 풉니다. TOML 1.0의
+/// `\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX`와, Cargo 1.96이 받는 TOML 1.1의 `\e`(U+001B)·
+/// `\xHH`(U+00HH)입니다.
 ///
-/// Cargo는 `"stellar-ffi"`를 `stellar-ffi`로 읽으므로 같은 이름으로 풀어야 내부 의존 판정에서
-/// 빠지지 않습니다. 그 밖의 escape, 끝나지 않은 escape, escape하지 않은 `"`, 유니코드 scalar가
-/// 아닌 코드는 거부합니다(fail closed).
+/// Cargo는 `"stellar-ffi"`와 `"\x73tellar-ffi"`를 `stellar-ffi`로 읽으므로 같은 이름으로 풀어야
+/// 내부 의존 판정에서 빠지지 않습니다. 그 밖의 escape, 끝나지 않은 escape, escape하지 않은 `"`,
+/// 유니코드 scalar가 아닌 코드는 거부합니다(fail closed).
 fn unescape_basic(inner: &str, line: usize) -> Result<String, ManifestError> {
     let invalid = || {
         ManifestError::at(
@@ -918,8 +920,10 @@ fn unescape_basic(inner: &str, line: usize) -> Result<String, ManifestError> {
                     'n' => '\n',
                     'f' => '\u{c}',
                     'r' => '\r',
+                    'e' => '\u{1b}',
                     '"' => '"',
                     '\\' => '\\',
+                    'x' => hex_scalar(&mut chars, 2).ok_or_else(invalid)?,
                     'u' => hex_scalar(&mut chars, 4).ok_or_else(invalid)?,
                     'U' => hex_scalar(&mut chars, 8).ok_or_else(invalid)?,
                     _ => return Err(invalid()),
@@ -1589,6 +1593,9 @@ path = "../document"
         want.sort();
         assert_eq!(got, want);
         assert!(parsed.deps.iter().any(|d| d.key == "tab\tkey"));
+        // 따옴표 key 안의 escape된 `"`와 `=`도 key의 일부로 읽습니다.
+        let quoted = parse_manifest("[dependencies]\n\"a\\\"=b\" = \"1\"\n").unwrap();
+        assert_eq!(quoted.deps[0].key, "a\"=b");
         let root = parse_manifest(
             "[workspace.dependencies]\ncore = { package = \"stellar\\u002dcore-types\" }\n",
         )
@@ -1600,10 +1607,41 @@ path = "../document"
     }
 
     #[test]
+    fn toml_1_1_escapes_resolve_like_cargo() {
+        // Cargo 1.96의 TOML 해석기는 TOML 1.1의 `\e`(U+001B)와 `\xHH`(U+00HH)도 받습니다(실측).
+        // 이전 해석기는 이 manifest를 manifest-syntax로 거부했습니다.
+        let text = "[package]\nname = \"\\x73tellar-a\"\ndescription = \"esc \\e \\xff\"\n\n\
+                    [dev-dependencies]\n\"\\x73tellar-git-porcelain\" = { path = \"../git-porcelain\" }\n\
+                    alias = { package = \"stellar\\x2dffi\", path = \"../ffi\" }\n";
+        let parsed = parse_manifest(text).unwrap();
+        assert_eq!(parsed.package.as_deref(), Some("stellar-a"));
+        let mut got = internal(text);
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                pair("stellar-ffi", "[dev-dependencies]"),
+                pair("stellar-git-porcelain", "[dev-dependencies]")
+            ]
+        );
+        let parsed = parse_manifest("[dependencies]\n\"k\\e\" = \"1\"\n").unwrap();
+        assert_eq!(parsed.deps[0].key, "k\u{1b}");
+        // 16진 숫자가 두 개가 아니면 Cargo처럼 거부합니다.
+        for text in [
+            "[dependencies]\n\"\\xZZ\" = \"1\"\n",
+            "[dependencies]\n\"\\x7\" = \"1\"\n",
+        ] {
+            assert_eq!(
+                parse_manifest(text).unwrap_err().code,
+                "manifest-syntax",
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
     fn invalid_string_escapes_and_quotes_fail_closed() {
         for text in [
-            "[dependencies]\n\"\\x73tellar-ffi\" = \"1\"\n",
-            "[dependencies]\n\"\\e\" = \"1\"\n",
             "[dependencies]\n\"\\u00\" = \"1\"\n",
             "[dependencies]\n\"\\u00zz\" = \"1\"\n",
             "[dependencies]\n\"\\uD800\" = \"1\"\n",
