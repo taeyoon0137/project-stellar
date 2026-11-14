@@ -139,13 +139,52 @@ enum WelcomeStrings {
     )
     static let operationFailedTitle = String(localized: "The Operation Couldn’t Be Completed", comment: "Alert title")
 
-    // MARK: `stellar` 명령 설치 sheet
+    // MARK: `stellar` 명령 설치 sheet(ADR-0005 §2·§7, 계획 XXIV.5.6)
 
+    /// 앱 메뉴 항목(관리 진입점). 추가 입력이 필요하므로 말줄임표를 붙입니다(HIG The menu bar).
+    static let setUpCommandMenuItem = String(localized: "Set Up the stellar Command…", comment: "App menu item")
+    static let checkingTitle = String(localized: "Checking the stellar Command…", comment: "Progress")
     static let commandInstallTitle = String(localized: "Install the stellar Command?", comment: "Sheet title")
     static let commandInstallMessage = String(
         localized: "Use Stellar from Terminal with the stellar command. Stellar adds a link to the command-line tool inside the app. No administrator password is needed, and you can remove the command at any time.",
         comment: "Sheet message"
     )
+    static func fallbackInstallTitle(_ name: String) -> String {
+        String(localized: "Install the Command as \(name)?", comment: "Sheet title")
+    }
+    static func fallbackInstallMessage(_ name: String) -> String {
+        String(
+            localized: "Stellar won’t change the other program, so it can install the command as \(name) instead. No administrator password is needed, and you can remove the command at any time.",
+            comment: "Sheet message"
+        )
+    }
+    /// 다른 프로그램이 이름을 쓰는 이유 한 문장(ADR-0005 §2).
+    static func nameConflict(_ conflict: StellarCommandNameConflict, path: String) -> String {
+        let name = conflict.commandName
+        switch conflict.position {
+        case .atInstallLocation:
+            return String(
+                localized: "Another program already uses the name \(name) at \(path).",
+                comment: "Sheet message: name taken at the install location"
+            )
+        case .earlierOnPath:
+            return String(
+                localized: "Another program named \(name) at \(path) would run instead, because it comes first on your PATH.",
+                comment: "Sheet message: name shadowed earlier on PATH"
+            )
+        case .possiblyEarlierOnPath:
+            return String(
+                localized: "Another program named \(name) is at \(path), which may come first on your PATH.",
+                comment: "Sheet message: name possibly shadowed on PATH"
+            )
+        }
+    }
+    static func hidesPrograms(_ name: String, paths: String) -> String {
+        String(
+            localized: "After you install it, \(name) runs Stellar instead of \(paths).",
+            comment: "Sheet note: the link will come first on PATH"
+        )
+    }
     static let commandLink = String(localized: "Link:", comment: "Sheet detail label")
     static let commandTarget = String(localized: "Points to:", comment: "Sheet detail label")
     static func createsFolder(_ path: String) -> String {
@@ -165,6 +204,7 @@ enum WelcomeStrings {
     static let update = String(localized: "Update", comment: "Button")
     static let done = String(localized: "Done", comment: "Button")
     static let close = String(localized: "Close", comment: "Button")
+    static let checkAgainButton = String(localized: "Check Again", comment: "Button")
     static let removeCommand = String(localized: "Remove Command", comment: "Button")
     static let installing = String(localized: "Installing…", comment: "Progress")
     static let removing = String(localized: "Removing…", comment: "Progress")
@@ -174,11 +214,21 @@ enum WelcomeStrings {
     }
     static func installedMessage(_ name: String) -> String {
         String(
-            localized: "You can now run \(name) in Terminal. You can remove the command at any time.",
+            localized: "You can now run \(name) in a new Terminal window. You can remove the command at any time.",
             comment: "Sheet message"
         )
     }
-    static let removedTitle = String(localized: "The stellar Command Was Removed", comment: "Sheet title")
+    static func shadowedTitle(_ name: String) -> String {
+        String(localized: "Another Program Runs Instead of \(name)", comment: "Sheet title")
+    }
+    static func shadowedFallbackMessage(_ name: String) -> String {
+        String(localized: "Stellar can also install the command as \(name).", comment: "Sheet message")
+    }
+    static let shadowedNoFallbackMessage = String(
+        localized: "The name stellar-cli is also in use, so Stellar didn’t install another name. Rename or remove one of the other programs, or remove this command.",
+        comment: "Sheet message"
+    )
+    static let removedTitle = String(localized: "The Command Was Removed", comment: "Sheet title")
     static func removedMessage(_ paths: String) -> String {
         String(
             localized: "Stellar removed \(paths). Your projects and folders weren’t changed.",
@@ -186,31 +236,26 @@ enum WelcomeStrings {
         )
     }
     static let nothingToRemove = String(
-        localized: "There was no stellar command link created by Stellar.",
+        localized: "Stellar didn’t find a command link it created.",
         comment: "Sheet message"
     )
-    static let repairTitle = String(localized: "Update the stellar Command?", comment: "Sheet title")
-    static let repairMessage = String(
-        localized: "The stellar command links to another copy of Stellar, or to a copy that was moved. Update it to use this copy?",
-        comment: "Sheet message"
-    )
-    static let blockedTitle = String(localized: "Another stellar Command Exists", comment: "Sheet title")
-    static func blockedMessage(_ path: String) -> String {
+    static func repairTitle(_ name: String) -> String {
+        String(localized: "Update the \(name) Command?", comment: "Sheet title")
+    }
+    static func repairMessage(_ name: String) -> String {
         String(
-            localized: "A file at \(path) wasn’t created by Stellar, so Stellar won’t change it.",
+            localized: "The \(name) command links to another copy of Stellar, or to a copy that was moved. Update it to use this copy?",
             comment: "Sheet message"
         )
     }
-    static func blockedFallbackMessage(_ name: String) -> String {
-        String(localized: "You can install the command as \(name) instead.", comment: "Sheet message")
-    }
-    static let blockedNoFallbackMessage = String(
-        localized: "Rename or remove the existing file yourself, then try again.",
+    static let namesUnavailableTitle = String(localized: "The stellar Command Wasn’t Installed", comment: "Sheet title")
+    static let namesUnavailableMessage = String(
+        localized: "Other programs already use both stellar and stellar-cli, so Stellar didn’t install anything. To use the command, rename or remove one of these programs, then choose Set Up the stellar Command again.",
         comment: "Sheet message"
     )
-    static let helperUnavailableTitle = String(localized: "Command-Line Tool Not Included", comment: "Sheet title")
+    static let helperUnavailableTitle = String(localized: "The stellar Command Isn’t Included", comment: "Sheet title")
     static let helperUnavailableMessage = String(
-        localized: "This build of Stellar doesn’t include the command-line tool, so the stellar command can’t be installed.",
+        localized: "This build of Stellar doesn’t include the stellar command, so it can’t be installed.",
         comment: "Sheet message"
     )
     static let locationTitle = String(localized: "Move Stellar to Your Applications Folder", comment: "Sheet title")
@@ -221,15 +266,17 @@ enum WelcomeStrings {
     static let noLocationTitle = String(localized: "No Folder Available", comment: "Sheet title")
     static func noLocationMessage(_ path: String) -> String {
         String(
-            localized: "Stellar couldn’t find a folder it can use without an administrator password. Create \(path), then try again.",
+            localized: "Stellar couldn’t find a folder in your home folder that it can use without an administrator password. Create \(path), then try again.",
             comment: "Sheet message"
         )
     }
-    static let installFailedTitle = String(localized: "The stellar Command Couldn’t Be Installed", comment: "Sheet title")
+    static func installFailedTitle(_ name: String) -> String {
+        String(localized: "The \(name) Command Couldn’t Be Installed", comment: "Sheet title")
+    }
     static let removeFailedTitle = String(localized: "Some Links Couldn’t Be Removed", comment: "Sheet title")
     static func conflictMessage(_ path: String) -> String {
         String(
-            localized: "A file appeared at \(path) that wasn’t created by Stellar. Nothing was changed.",
+            localized: "Something changed at \(path) after Stellar checked it, so nothing was changed. Check again to see what you can do now.",
             comment: "Sheet message"
         )
     }

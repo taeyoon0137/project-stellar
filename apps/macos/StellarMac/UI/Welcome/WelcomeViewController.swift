@@ -394,22 +394,66 @@ final class WelcomeWindowController: NSWindowController {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
     }
 
-    /// 첫 실행이면 `stellar` 명령 설치 제안 sheet를 띄웁니다. 상태 판정(파일 조회)은 메인 스레드 밖에서 합니다.
+    /// 첫 실행이면 `stellar` 명령 설치 제안 sheet를 띄웁니다(ADR-0005 §7, 계획 XXIV.5.6).
+    ///
+    /// 상태 판정(파일 조회)은 메인 스레드 밖에서 하고(XXIV.5.5), 창이 보이고 다른 sheet가 없을 때만 띄웁니다.
+    /// `completion`은 검사용이며 판정 결과와 띄운 sheet(없으면 nil)를 메인 스레드에서 받습니다.
     func presentCommandInstallOfferIfNeeded(
         makeInstaller: @escaping () -> StellarCommandInstaller = StellarCommandInstaller.forRunningApp,
-        policy: WelcomeFirstLaunchPolicy = WelcomeFirstLaunchPolicy()
+        policy: WelcomeFirstLaunchPolicy = WelcomeFirstLaunchPolicy(),
+        completion: ((StellarCommandInstallStatus, WelcomeCommandInstallSheetController?) -> Void)? = nil
     ) {
-        installQueue.async { [weak self] in
+        StellarCommandStatusCheck.evaluate(on: installQueue, makeInstaller: makeInstaller) { [weak self] installer, status in
+            guard let self, policy.shouldOfferCommandInstall(for: status),
+                let window = self.window, window.isVisible, window.attachedSheet == nil
+            else {
+                completion?(status, nil)
+                return
+            }
+            let sheet = WelcomeCommandInstallSheetController(installer: installer, status: status)
+            sheet.onResponse = { _ in policy.recordCommandInstallOffered() }
+            self.welcomeViewController.presentAsSheet(sheet)
+            completion?(status, sheet)
+        }
+    }
+
+    /// 관리 진입점(앱 메뉴 "Set Up the stellar Command…"): 현재 상태를 확인해 같은 sheet를 띄웁니다.
+    /// 설치를 되돌리는(Remove Command) 경로도 여기서 제공합니다(XXIV.5.6).
+    @objc func showStellarCommandSetup(_ sender: Any?) {
+        guard let window, window.attachedSheet == nil else { return }
+        let policy = WelcomeFirstLaunchPolicy()
+        StellarCommandStatusCheck.evaluate(on: installQueue, makeInstaller: StellarCommandInstaller.forRunningApp) {
+            [weak self] installer, status in
+            guard let self, let window = self.window, window.attachedSheet == nil else { return }
+            let sheet = WelcomeCommandInstallSheetController(installer: installer, status: status)
+            // 메뉴로 먼저 답했으면 첫 실행 제안을 다시 띄우지 않습니다.
+            sheet.onResponse = { _ in policy.recordCommandInstallOffered() }
+            self.welcomeViewController.presentAsSheet(sheet)
+        }
+    }
+}
+
+extension WelcomeWindowController: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(showStellarCommandSetup(_:)) {
+            return window?.attachedSheet == nil
+        }
+        return true
+    }
+}
+
+/// `stellar` 명령 설치 상태 확인(XXIV.5.5). 설치기 생성(PATH 파일 읽기)과 판정을 `queue`에서 하고,
+/// 결과만 메인 스레드로 넘깁니다(아키텍처 §6.4, UI 스레드 파일 조회 0).
+enum StellarCommandStatusCheck {
+    static func evaluate(
+        on queue: DispatchQueue,
+        makeInstaller: @escaping () -> StellarCommandInstaller,
+        completion: @escaping (StellarCommandInstaller, StellarCommandInstallStatus) -> Void
+    ) {
+        queue.async {
             let installer = makeInstaller()
             let status = installer.status()
-            DispatchQueue.main.async {
-                guard let self, policy.shouldOfferCommandInstall(for: status),
-                    let window = self.window, window.isVisible, window.attachedSheet == nil
-                else { return }
-                let sheet = WelcomeCommandInstallSheetController(installer: installer, status: status)
-                sheet.onResponse = { _ in policy.recordCommandInstallOffered() }
-                self.welcomeViewController.presentAsSheet(sheet)
-            }
+            DispatchQueue.main.async { completion(installer, status) }
         }
     }
 }

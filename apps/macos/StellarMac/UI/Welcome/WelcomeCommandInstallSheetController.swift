@@ -1,11 +1,12 @@
 import AppKit
 
-/// `stellar` 명령 설치·제거 sheet(제품 책임자 결정 2026-11-14).
+/// `stellar` 명령 설치·제거 sheet(ADR-0005 §2·§7, 계획 XXIV.5.6).
 ///
-/// 첫 실행에는 설치 제안으로, 이미 설치된 경우에는 관리(제거) 화면으로 같은 sheet를 씁니다.
-/// - 동의: 사용자가 Install을 눌러야만 설치합니다. Return은 Install, Escape는 Not Now입니다.
-/// - 권한 상승 없음, 남의 파일 덮어쓰기 없음: `StellarCommandInstaller`가 보장합니다.
-/// - 결과와 오류를 같은 sheet에서 바로 보여 줍니다. 파일 작업은 메인 스레드 밖 큐에서 합니다.
+/// 첫 실행에는 설치 제안으로, 앱 메뉴 "Set Up the stellar Command…"에서는 관리(상태 확인·제거) 화면으로 같은 sheet를 씁니다.
+/// - 동의: 사용자가 Install(또는 Install as stellar-cli, Update)을 눌러야만 파일을 바꿉니다. Return은 주 동작, Escape는 Not Now입니다.
+/// - 권한 상승 없음, 남의 파일 덮어쓰기 없음, 대체 이름 규칙: `StellarCommandInstaller`가 보장합니다.
+/// - 실제로 설치한 이름(`stellar` 또는 `stellar-cli`)을 제목과 링크 줄에 보여 줍니다.
+/// - 결과와 오류를 같은 sheet에서 바로 보여 줍니다. 상태 확인과 파일 작업은 메인 스레드 밖 큐에서 합니다.
 final class WelcomeCommandInstallSheetController: NSViewController {
     /// sheet가 닫힐 때 사용자의 답.
     enum Response: Equatable {
@@ -17,6 +18,8 @@ final class WelcomeCommandInstallSheetController: NSViewController {
 
     /// 화면 단계.
     enum Phase: Equatable {
+        /// 상태를 확인하는 중(메인 스레드 밖).
+        case checking
         case status(StellarCommandInstallStatus)
         case working(removing: Bool)
         case installed(StellarCommandInstallation)
@@ -44,7 +47,7 @@ final class WelcomeCommandInstallSheetController: NSViewController {
     let secondaryButton = WelcomeViews.button(WelcomeStrings.notNow, target: nil, action: nil)
     let primaryButton = WelcomeViews.button(WelcomeStrings.install, target: nil, action: nil)
 
-    private let installer: StellarCommandInstaller
+    let installer: StellarCommandInstaller
     private let workQueue = DispatchQueue(label: "xyz.taeyoon.stellar.welcome.command-installer", qos: .userInitiated)
     private(set) var phase: Phase
     /// 진행 중 작업 식별자. sheet가 닫히거나 다른 작업이 시작되면 늦게 온 결과를 버립니다.
@@ -53,10 +56,12 @@ final class WelcomeCommandInstallSheetController: NSViewController {
     private var primaryAction: (() -> Void)?
     private var secondaryAction: (() -> Void)?
 
-    init(installer: StellarCommandInstaller, status: StellarCommandInstallStatus) {
+    /// `status`가 nil이면 확인 단계로 시작하고 곧바로 메인 스레드 밖에서 상태를 확인합니다.
+    init(installer: StellarCommandInstaller, status: StellarCommandInstallStatus?) {
         self.installer = installer
-        phase = .status(status)
+        phase = status.map(Phase.status) ?? .checking
         super.init(nibName: nil, bundle: nil)
+        if status == nil { refreshStatus() }
     }
 
     @available(*, unavailable)
@@ -157,46 +162,69 @@ final class WelcomeCommandInstallSheetController: NSViewController {
     private func render() {
         var title = ""
         var message = ""
-        var note: String?
+        var notes: [String] = []
         var link: (path: String, target: String)?
         var pathHint: (directory: String, line: String)?
         var primary: (String, () -> Void)?
         var secondary: (String, () -> Void)?
         var showsRemove = false
         var working = false
-        let home = installer.fileSystem.homeDirectory
+        let home = installer.homeDirectory
 
         func hint(for directory: String, onPath: Bool) {
             guard !onPath else { return }
             pathHint = (directory, StellarCommandInstaller.pathExportLine(for: directory, homeDirectory: home))
         }
-        func offer(_ plan: StellarCommandInstallPlan, title offerTitle: String, button: String) {
-            title = offerTitle
+        func conflictSentence(_ conflict: StellarCommandNameConflict) -> String {
+            WelcomeStrings.nameConflict(conflict, path: abbreviated(conflict.path))
+        }
+        func offer(_ plan: StellarCommandInstallPlan, button: String) {
             link = (plan.linkPath, plan.destination)
-            if plan.createsDirectory { note = WelcomeStrings.createsFolder(abbreviated(plan.directory)) }
+            if plan.createsDirectory { notes.append(WelcomeStrings.createsFolder(abbreviated(plan.directory))) }
+            if !plan.hiddenProgramPaths.isEmpty {
+                notes.append(
+                    WelcomeStrings.hidesPrograms(
+                        plan.commandName, paths: plan.hiddenProgramPaths.map(abbreviated).joined(separator: ", ")))
+            }
             hint(for: plan.directory, onPath: plan.directoryOnSearchPath)
             primary = (button, { [weak self] in self?.install(plan) })
             secondary = (WelcomeStrings.notNow, { [weak self] in self?.finish(.declined) })
         }
+        let close: (String, () -> Void) = (WelcomeStrings.close, { [weak self] in self?.finish(.closed) })
 
         switch phase {
+        case .checking:
+            title = WelcomeStrings.checkingTitle
+            working = true
         case .status(.ready(let plan)):
-            message = WelcomeStrings.commandInstallMessage
-            offer(plan, title: WelcomeStrings.commandInstallTitle, button: WelcomeStrings.install)
-        case .status(.needsRepair(let plan)):
-            message = WelcomeStrings.repairMessage
-            offer(plan, title: WelcomeStrings.repairTitle, button: WelcomeStrings.update)
-        case .status(.blocked(let conflictPath, let fallback)):
-            title = WelcomeStrings.blockedTitle
-            if let fallback {
-                message = WelcomeStrings.blockedMessage(abbreviated(conflictPath)) + " "
-                    + WelcomeStrings.blockedFallbackMessage(fallback.commandName)
-                offer(fallback, title: title, button: WelcomeStrings.installAs(fallback.commandName))
+            if let conflict = plan.primaryNameConflict {
+                title = WelcomeStrings.fallbackInstallTitle(plan.commandName)
+                message = conflictSentence(conflict) + " " + WelcomeStrings.fallbackInstallMessage(plan.commandName)
+                offer(plan, button: WelcomeStrings.installAs(plan.commandName))
             } else {
-                message = WelcomeStrings.blockedMessage(abbreviated(conflictPath)) + " "
-                    + WelcomeStrings.blockedNoFallbackMessage
-                primary = (WelcomeStrings.close, { [weak self] in self?.finish(.closed) })
+                title = WelcomeStrings.commandInstallTitle
+                message = WelcomeStrings.commandInstallMessage
+                offer(plan, button: WelcomeStrings.install)
             }
+        case .status(.needsRepair(let plan)):
+            title = WelcomeStrings.repairTitle(plan.commandName)
+            message = WelcomeStrings.repairMessage(plan.commandName)
+            offer(plan, button: WelcomeStrings.update)
+        case .status(.shadowed(let installation, let conflict, let fallback)):
+            title = WelcomeStrings.shadowedTitle(installation.commandName)
+            showsRemove = true
+            if let fallback {
+                message = conflictSentence(conflict) + " " + WelcomeStrings.shadowedFallbackMessage(fallback.commandName)
+                offer(fallback, button: WelcomeStrings.installAs(fallback.commandName))
+            } else {
+                message = conflictSentence(conflict) + " " + WelcomeStrings.shadowedNoFallbackMessage
+                link = (installation.linkPath, installer.helperPath)
+                primary = close
+            }
+        case .status(.namesUnavailable(let conflicts)):
+            title = WelcomeStrings.namesUnavailableTitle
+            message = (conflicts.map(conflictSentence) + [WelcomeStrings.namesUnavailableMessage]).joined(separator: " ")
+            primary = close
         case .status(.installed(let installation)), .installed(let installation):
             title = WelcomeStrings.installedTitle(installation.commandName)
             message = WelcomeStrings.installedMessage(installation.commandName)
@@ -208,15 +236,15 @@ final class WelcomeCommandInstallSheetController: NSViewController {
         case .status(.helperUnavailable):
             title = WelcomeStrings.helperUnavailableTitle
             message = WelcomeStrings.helperUnavailableMessage
-            primary = (WelcomeStrings.close, { [weak self] in self?.finish(.closed) })
+            primary = close
         case .status(.unsupportedAppLocation):
             title = WelcomeStrings.locationTitle
             message = WelcomeStrings.locationMessage
-            primary = (WelcomeStrings.close, { [weak self] in self?.finish(.closed) })
+            primary = close
         case .status(.noWritableLocation(let suggested)):
             title = WelcomeStrings.noLocationTitle
             message = WelcomeStrings.noLocationMessage(abbreviated(suggested))
-            primary = (WelcomeStrings.close, { [weak self] in self?.finish(.closed) })
+            primary = close
         case .working(let removing):
             title = removing ? WelcomeStrings.removing : WelcomeStrings.installing
             working = true
@@ -232,17 +260,21 @@ final class WelcomeCommandInstallSheetController: NSViewController {
             }
             primary = (WelcomeStrings.done, { [weak self] in self?.finish(.removed) })
         case .installFailed(let error, let plan):
-            title = WelcomeStrings.installFailedTitle
+            title = WelcomeStrings.installFailedTitle(plan.commandName)
             switch error {
             case .helperUnavailable:
                 message = WelcomeStrings.helperUnavailableMessage
+                primary = close
             case .conflict(let path):
+                // 상황이 바뀌었으므로 같은 계획을 다시 실행하지 않고 상태부터 다시 확인합니다(다시 동의 필요).
                 message = WelcomeStrings.conflictMessage(abbreviated(path))
+                primary = (WelcomeStrings.checkAgainButton, { [weak self] in self?.refreshStatus() })
+                secondary = close
             case .fileSystem(let failure):
                 message = "\(abbreviated(failure.path)): \(failure.message)"
+                primary = (WelcomeStrings.tryAgain, { [weak self] in self?.install(plan) })
+                secondary = close
             }
-            primary = (WelcomeStrings.tryAgain, { [weak self] in self?.install(plan) })
-            secondary = (WelcomeStrings.close, { [weak self] in self?.finish(.closed) })
         }
 
         titleLabel.stringValue = title
@@ -256,14 +288,12 @@ final class WelcomeCommandInstallSheetController: NSViewController {
         }
         detailRows.isHidden = link == nil
         if let pathHint {
-            noteLabel.stringValue = [note, WelcomeStrings.pathUnconfirmed(abbreviated(pathHint.directory))]
-                .compactMap { $0 }.joined(separator: " ")
+            notes.append(WelcomeStrings.pathUnconfirmed(abbreviated(pathHint.directory)))
             pathLineLabel.stringValue = pathHint.line
             pathCopyButton.textToCopy = pathHint.line
-        } else {
-            noteLabel.stringValue = note ?? ""
         }
-        noteLabel.isHidden = noteLabel.stringValue.isEmpty
+        noteLabel.stringValue = notes.joined(separator: " ")
+        noteLabel.isHidden = notes.isEmpty
         pathLineRow.isHidden = pathHint == nil
 
         if working { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
@@ -288,7 +318,7 @@ final class WelcomeCommandInstallSheetController: NSViewController {
     }
 
     private func abbreviated(_ path: String) -> String {
-        let home = installer.fileSystem.homeDirectory
+        let home = installer.homeDirectory
         if path == home { return "~" }
         if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
         return path
@@ -304,7 +334,22 @@ final class WelcomeCommandInstallSheetController: NSViewController {
         secondaryAction?()
     }
 
-    /// Escape(cancelOperation)는 보조 버튼이 없을 때도 sheet를 닫습니다.
+    /// 상태를 메인 스레드 밖에서 다시 확인합니다(XXIV.5.5). 결과 화면에서 다시 동의를 받습니다.
+    func refreshStatus() {
+        operationToken += 1
+        let token = operationToken
+        let installer = installer
+        show(.checking)
+        workQueue.async { [weak self] in
+            let status = installer.status()
+            DispatchQueue.main.async {
+                guard let self, token == self.operationToken else { return }
+                self.show(.status(status))
+            }
+        }
+    }
+
+    /// Escape(cancelOperation)는 보조 버튼이 없을 때도 sheet를 닫습니다. 파일 작업 중에는 무시합니다.
     override func cancelOperation(_ sender: Any?) {
         if let secondaryAction {
             secondaryAction()
