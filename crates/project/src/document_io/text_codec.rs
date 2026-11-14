@@ -323,7 +323,7 @@ fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
 
 fn parse_order_key(value: &YamlValue) -> Result<OrderKey, TextSourceError> {
     let hex = text(value)?;
-    if !hex.is_ascii() || hex.len() % 2 != 0 {
+    if hex.len() % 2 != 0 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err(invalid("OrderKey는 2자리씩 구분되는 hex여야 합니다"));
     }
     let bytes = (0..hex.len())
@@ -517,5 +517,23 @@ mod tests {
             encode(&model),
             Err(TextSourceError::Unsupported(_))
         ));
+    }
+}
+
+#[cfg(test)]
+mod order_key_tests {
+    use super::*;
+
+    #[test]
+    fn order_key_accepts_only_hex_digit_pairs() {
+        for bad in ["+1", "1+", " 1", "abc", "１２"] {
+            assert!(parse_order_key(&YamlValue::scalar(bad)).is_err(), "{bad}");
+        }
+        assert_eq!(
+            parse_order_key(&YamlValue::scalar("0aB1"))
+                .unwrap()
+                .as_bytes(),
+            &[0x0a, 0xb1]
+        );
     }
 }
