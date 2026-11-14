@@ -621,18 +621,20 @@ impl HistoryJournal {
         }
     }
 
-    /// 창 history의 현재 undo·redo stack과 다음 sequence를 담은 journal(현재 writer 버전).
+    /// 창 history의 현재 undo·redo stack과 다음 sequence를 담은 journal(현재 writer 버전). 마지막 기준점
+    /// 변경 이전 항목은 담지 않습니다([`History::journal_stacks`], XXV.1.4).
     pub fn capture(
         window: WindowSessionId,
         base: JournalBase,
         history: &History,
     ) -> HistoryJournal {
+        let (undo, redo) = history.journal_stacks();
         HistoryJournal::new(
             window,
             base,
             history.next_sequence(),
-            history.entries().to_vec(),
-            history.redo_entries().to_vec(),
+            undo.to_vec(),
+            redo.to_vec(),
         )
     }
 

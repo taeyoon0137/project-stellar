@@ -113,6 +113,8 @@ pub enum JournalStoreError {
     GuardMismatch,
     /// preview가 진행 중이라 완료된 상태가 아닙니다.
     PreviewActive,
+    /// undo·redo 재생 중이라 완료된 상태가 아닙니다(XXV.1.4 기준점 변경).
+    Replaying,
     /// 기존 journal이 이 writer보다 높은 최소 writer version을 요구합니다(V.8.1 읽기 전용).
     WriterTooOld {
         /// journal이 요구하는 최소 writer schema.
@@ -156,6 +158,9 @@ impl fmt::Display for JournalStoreError {
             }
             JournalStoreError::PreviewActive => {
                 f.write_str("preview가 진행 중이라 journal을 기록할 수 없습니다")
+            }
+            JournalStoreError::Replaying => {
+                f.write_str("undo·redo 재생 중이라 journal session을 바꿀 수 없습니다")
             }
             JournalStoreError::WriterTooOld { required, writer } => write!(
                 f,

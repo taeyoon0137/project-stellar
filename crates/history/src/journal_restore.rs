@@ -14,6 +14,9 @@
 //! | 읽을 수 없음(형식·버전·손상) | 봉인 [`SealReason::Unreadable`] — 새 reader가 읽을 수 있게 보존 |
 //! | 파일 이름과 창 id가 다름 | 봉인 [`SealReason::WindowMismatch`] |
 //!
+//! 실행 중 checkout·merge·rebase 등으로 기준점이 바뀌면 복원과 별개로 active journal을 봉인합니다
+//! ([`SealReason::BaseChanged`], XXV.1.4 `journal_base_change`).
+//!
 //! 봉인 파일: `sealed/<window>.<순번 6자리>.<사유>.stlhjnl`. 같은 디렉터리 안 rename이라 내용 bytes가 그대로
 //! 보존되고, 프로젝트 내부 정책에서도 guard `.gitignore`(`*`)가 하위 디렉터리를 함께 제외합니다.
 
@@ -25,6 +28,7 @@ use stellar_core_types::ids::StableId;
 use crate::grouping::HistoryGroupingPolicy;
 use crate::history::History;
 use crate::journal::{HistoryJournal, JournalAccess, JournalBase, JOURNAL_SCHEMA_VERSION};
+use crate::journal_base_change::BaseChangeKind;
 use crate::journal_store::{JournalStore, JournalStoreError, JOURNAL_EXTENSION};
 use crate::window::WindowHistory;
 
@@ -42,15 +46,25 @@ pub enum SealReason {
     Unreadable,
     /// 파일 이름과 journal 안 창 id가 다릅니다.
     WindowMismatch,
+    /// 실행 중 기준점이 바뀌었습니다(checkout·merge·rebase 등, XXV.1.4).
+    BaseChanged(BaseChangeKind),
 }
 
 impl SealReason {
     /// 모든 사유.
-    pub const ALL: [SealReason; 4] = [
+    pub const ALL: [SealReason; 12] = [
         SealReason::BaseMismatch,
         SealReason::ReadOnly,
         SealReason::Unreadable,
         SealReason::WindowMismatch,
+        SealReason::BaseChanged(BaseChangeKind::Checkout),
+        SealReason::BaseChanged(BaseChangeKind::Merge),
+        SealReason::BaseChanged(BaseChangeKind::Rebase),
+        SealReason::BaseChanged(BaseChangeKind::CherryPick),
+        SealReason::BaseChanged(BaseChangeKind::Revert),
+        SealReason::BaseChanged(BaseChangeKind::Reset),
+        SealReason::BaseChanged(BaseChangeKind::ApplyMailbox),
+        SealReason::BaseChanged(BaseChangeKind::Other),
     ];
 
     /// 파일 이름 token.
@@ -60,6 +74,7 @@ impl SealReason {
             SealReason::ReadOnly => "read-only",
             SealReason::Unreadable => "unreadable",
             SealReason::WindowMismatch => "window-mismatch",
+            SealReason::BaseChanged(kind) => kind.token(),
         }
     }
 
@@ -107,7 +122,7 @@ pub struct RestoredWindow {
     pub outcome: RestoreOutcome,
 }
 
-fn parse_sealed_name(name: &str) -> Option<(WindowSessionId, u32, SealReason)> {
+pub(crate) fn parse_sealed_name(name: &str) -> Option<(WindowSessionId, u32, SealReason)> {
     let stem = name.strip_suffix(&format!(".{JOURNAL_EXTENSION}"))?;
     let mut parts = stem.split('.');
     let window = parts.next()?.parse::<StableId>().ok()?;

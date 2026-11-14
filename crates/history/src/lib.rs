@@ -29,6 +29,9 @@ pub mod journal_store;
 /// 앱 재실행 후 history 복원과 journal 봉인 (XXV.1.3, 로드맵).
 pub mod journal_restore;
 
+/// checkout·merge·rebase 등 기준점 변경 시 journal 봉인 (XXV.1.4, 로드맵).
+pub mod journal_base_change;
+
 /// journal 저장 테스트 공용 fixture(임시 디렉터리·hermetic Git).
 #[cfg(test)]
 mod test_fs;
