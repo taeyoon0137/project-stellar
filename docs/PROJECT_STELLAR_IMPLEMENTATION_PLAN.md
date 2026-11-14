@@ -20,7 +20,7 @@
 - **2026-11-14 — Windows 지원 보류(ADR-0006):** 당분간 macOS만 지원합니다. Windows 전용 행은 `[!]`(사용자 결정 차단)로 표기하고, 양 플랫폼 비교 행은 ADR-0006의 판정 규칙(IEEE 기본 연산만 쓰는 결과는 macOS 증거로 `[x]`, 플랫폼 의존 결과는 `[~]`)을 따릅니다. 코어는 플랫폼 중립을 유지합니다.
 - **2026-11-14 — 커밋 규칙 정합:** 지침 우선순위상 위인 `AGENTS.md`에 맞춰 WBS 작업은 `Task(<WBS-ID>)`, WBS 밖 유지보수는 `Feat:`·`Docs:`·`Refactor:`·`Fix:`·`Chore:`·`Test:`를 허용합니다. 2026-06-23 "커밋 규칙 고정"을 대체하며, `cargo xtask validate-commit-message`와 CI commit subject 검사도 같은 기준을 씁니다.
 - **2026-11-14 — 제품 테스트 실행 위치:** 제품 crate 테스트는 CI에 추가하지 않고, 통합 시 로컬 `cargo xtask check-core`(workspace fmt·clippy·test·doctest)로 검증합니다. 행 지시의 "CI smoke"는 이 로컬 통합 검증을 뜻합니다(VI.10.5 문구 수정).
-- **2026-11-14 — 3계층 에이전트 도구 결정 반영(ADR-0005 Accepted):** 제품 소유자 결정에 따라 내장 에이전트는 사용자가 설치하고 직접 로그인한 공급자 공식 CLI를 공식 문서의 비대화형 인터페이스로만 실행하고, Stellar는 인증·자격 증명·사용량 중개에 참여하지 않습니다. 출력은 채팅 보기(기본)와 원문 보기를 함께 제공하고 공급자 출력 디코드는 표시 전용으로 격리합니다. 앱 없이 동작하는 읽기 전용 MCP backend를 신뢰된 고정 프로젝트에 한해 허용합니다. 에이전트 세션이 끊기거나 중지돼도 적용 변경은 자동 rollback하지 않고 출처 표시와 함께 남겨 사용자가 변경·세션 단위로 직접 되돌립니다. headless 명령의 실행 이름은 `stellar`이며 macOS 앱 첫 실행 때 명령 설치 화면을 제공합니다. 목적이 사라진 행은 폐기 표기 없이 삭제하는 규칙으로 바꿨습니다(3. 계획 변경 규칙). XIX.1.4, XIX.3.3, XIX.6.1, XIX.6.3, XIX.6.4, XIX.7.2와 Phase XIX 완료 조건을 그 자리에서 고쳤으며, XIX.1.6~XIX.1.9, XIX.6.7~XIX.6.10, XIX.9, XXIV.4, XXIV.5와 Phase XXIX를 추가했습니다.
+- **2026-11-14 — 3계층 에이전트 도구 결정 반영(ADR-0005 Accepted):** 제품 소유자 결정에 따라 내장 에이전트는 사용자가 설치하고 직접 로그인한 공급자 공식 CLI를 공식 문서의 비대화형 인터페이스로만 실행하고, Stellar는 인증·자격 증명·사용량 중개에 참여하지 않습니다. 출력은 채팅 보기(기본)와 원문 보기를 함께 제공하고 공급자 출력 디코드는 표시 전용으로 격리합니다. 앱 없이 동작하는 읽기 전용 MCP backend를 신뢰된 고정 프로젝트에 한해 허용합니다. 에이전트 세션이 끊기거나 중지돼도 적용 변경은 자동 rollback하지 않고 출처 표시와 함께 남겨 사용자가 변경·세션 단위로 직접 되돌립니다. headless 명령의 실행 이름은 `stellar`이며 macOS 앱 첫 실행 때 명령 설치 화면을 제공합니다. 목적이 사라진 행은 폐기 표기 없이 삭제하는 규칙으로 바꿨습니다(3. 계획 변경 규칙). XIX.1.4, XIX.3.3, XIX.6.1, XIX.6.3, XIX.6.4, XIX.7.2와 Phase XIX 완료 조건을 그 자리에서 고쳤으며, XIX.1.6\~XIX.1.9, XIX.6.7\~XIX.6.10, XIX.9, XXIV.4, XXIV.5와 Phase XXIX를 추가했습니다.
 
 ---
 
@@ -188,7 +188,7 @@ tools/xtask/
 | I.2.9 | `[x]` | `tools/xtask/src/task_status/validate_evidence.rs`에 상태별 증거 규칙을 구현합니다. `verified`는 commit·report·verified_at과 모든 required environment evidence가 필요하고, `reported_done`은 report가 필요하며, `not_started`는 commit·report·evidence가 없어야 합니다. | `[DEV-MAC]` 환경 1개 누락, report 누락, 과도한 not_started evidence fixture 실패. | I.2.7 |
 | I.2.10 | `[x]` | `tools/xtask/src/plan/markdown_wbs.rs`에 Markdown table 행에서 WBS ID·title·status·선행 exact ID를 추출하는 parser를 구현합니다. fenced code, prose 예시, range 표기는 WBS 정의로 세지 않습니다. | `[DEV-MAC]` 실제 계획서에서 ID를 중복 없이 추출하고 code fence 속 가짜 ID fixture를 무시. | I.2.2 |
 | I.2.11 | `[x]` | `tools/xtask/src/task_status/write.rs`에 deterministic ledger writer를 구현합니다. key 순서, 2-space indent, LF, final newline, task ID 정렬을 고정하고 주석은 생성하지 않습니다. | `[DEV-MAC]` 동일 collection 100회 출력 byte-identical, parse→write→parse 의미 동일. | I.2.5 |
-| I.2.12 | `[x]` | 계획서 WBS 추출 결과로 `planning/task-status.yaml`을 생성합니다. `I.1.1`~`I.1.5`는 `verified`, `I.1.6`~`I.1.9`는 현재 교정 전이면 `reported_done`, 나머지는 `not_started`로 기록합니다. 각 record의 required environment는 작업 행과 Gate 규칙을 반영합니다. 수작업 복사 대신 I.2.10·I.2.11 library를 호출하는 일회성 subcommand를 사용합니다. | `[DEV-MAC]` 계획 ID 집합과 ledger ID 집합 동일, decoder·record·collection·graph·evidence validator 모두 통과. | I.2.8, I.2.9, I.2.10, I.2.11 |
+| I.2.12 | `[x]` | 계획서 WBS 추출 결과로 `planning/task-status.yaml`을 생성합니다. `I.1.1`\~`I.1.5`는 `verified`, `I.1.6`\~`I.1.9`는 현재 교정 전이면 `reported_done`, 나머지는 `not_started`로 기록합니다. 각 record의 required environment는 작업 행과 Gate 규칙을 반영합니다. 수작업 복사 대신 I.2.10·I.2.11 library를 호출하는 일회성 subcommand를 사용합니다. | `[DEV-MAC]` 계획 ID 집합과 ledger ID 집합 동일, decoder·record·collection·graph·evidence validator 모두 통과. | I.2.8, I.2.9, I.2.10, I.2.11 |
 | I.2.13 | `[x]` | `docs/task-reports/TEMPLATE.md`를 생성합니다. WBS, 변경 파일, 명령·종료 코드, 환경·증거, 테스트, 성능, 차이, 남은 위험 섹션을 고정합니다. | `[DEV-MAC]` template fixture에 필수 heading이 정확히 한 번씩 존재. | I.2.1 |
 | I.2.14 | `[x]` | `docs/task-reports/BLOCKED_TEMPLATE.md`를 생성합니다. 실패 선행조건, 재현 명령, 필요한 결정·환경, 변경되지 않은 파일, 재개 조건을 고정합니다. | `[DEV-MAC]` 필수 heading fixture 통과. | I.2.13 |
 | I.2.15 | `[x]` | `tools/xtask/src/task_report/validate.rs`에 완료·blocked 보고서 validator를 구현합니다. template heading, WBS 일치, 검증 환경, 명령 종료 코드, artifact locator 형식을 검사합니다. | `[DEV-MAC]` heading·WBS·evidence를 하나씩 제거한 fixture가 실패. | I.2.13, I.2.14 |
@@ -1734,7 +1734,7 @@ tools/xtask/
 | W0 | Phase I | 없음 | 저장소·작업 추적·CI 기준선 확정 |
 | W1 | Phase II | macOS II.5와 Windows II.6 병렬 | G1 |
 | W2 | Phase III | III.3/III.4와 III.5/III.6 일부 병렬 | core primitive 안정화 |
-| W3 | Phase IV, Phase V.1~V.3, Phase VI.1~VI.4 | 프로젝트 수명주기·저장 primitive·노드 모델 병렬 | 빈 프로젝트와 기본 노드 모델 준비 |
+| W3 | Phase IV, Phase V.1\~V.3, Phase VI.1\~VI.4 | 프로젝트 수명주기·저장 primitive·노드 모델 병렬 | 빈 프로젝트와 기본 노드 모델 준비 |
 | W4 | Phase V 나머지, Phase VI 나머지, Phase VII | crate별 독립 작업만 병렬 | G3·G4 |
 | W5 | Phase VIII, Phase IX.1~IX.4 | Expression/Token과 Component 기본 모델 병렬 | Binding·Component 기본 연결 |
 | W6 | Phase IX 나머지, Phase X | 상태·Variant·접근성과 layout/text 일부 병렬 | G5 |

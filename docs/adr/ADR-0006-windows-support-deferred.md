@@ -21,9 +21,9 @@ backend, Windows 파일 감시·글꼴·복구 adapter, MSIX 패키징·서명·
    이미 있는 Windows 지향 코드와 crate(예: `renderer-d3d12` 골격, Git 설치 winget adapter)는
    삭제하지 않고 빌드·테스트가 계속 통과하는 상태로 유지합니다.
 3. **Windows 전용 WBS 행은 `[!]`**(사용자 결정으로 차단)로 표기합니다. 대상:
-   II.6.1~II.6.4, II.7.2, II.7.3, XI.9.1~XI.9.7, XII.2.3, XII.3.3, XII.4.2, XII.5.2, XII.5.5,
-   XII.7.4, XII.8.2, XII.9.2, XIII.2.3, XIII.6.3, XIII.8.6, XIV.13.6, XVI.2.4, XVI.10.1~XVI.10.5,
-   XVIII.3.1~XVIII.3.4, XVIII.4.4, XX.5.2, XXI.2.2, XXVII.1.1~XXVII.1.3, XXVII.2.1~XXVII.2.3.
+   II.6.1\~II.6.4, II.7.2, II.7.3, XI.9.1\~XI.9.7, XII.2.3, XII.3.3, XII.4.2, XII.5.2, XII.5.5,
+   XII.7.4, XII.8.2, XII.9.2, XIII.2.3, XIII.6.3, XIII.8.6, XIV.13.6, XVI.2.4, XVI.10.1\~XVI.10.5,
+   XVIII.3.1\~XVIII.3.4, XVIII.4.4, XX.5.2, XXI.2.2, XXVII.1.1\~XXVII.1.3, XXVII.2.1\~XXVII.2.3.
 4. **양 플랫폼 비교가 들어 있는 행**(예: "양 플랫폼 동일", "macOS·Windows CI 비교")은 macOS
    부분을 구현합니다. 판정 규칙:
    - 결과가 IEEE-754 기본 연산(사칙연산·`sqrt`)과 정수 연산만으로 정해지고 OS API나 libm

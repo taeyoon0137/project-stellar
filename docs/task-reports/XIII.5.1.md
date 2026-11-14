@@ -78,8 +78,8 @@
   형식을 StableId와 다르게 바꾸면 함께 바뀝니다(현재 ChunkId는 StableId 위임).
 - AssetId 생성(UUIDv7 발급)은 assets에 두지 않았습니다. import(XIII.5.2)에서 상위 crate가
   발급한 id를 받거나 bytes로 전달받는 방식으로 연결해야 합니다.
-- ~~unknown optional tag를 보존하지 않고 무시하므로, 미래 버전이 쓴 optional field는 이 버전이
-  재기록하면 사라집니다(R6 "무시" 정책 선택).~~ → 후속 수정으로 "보존" 정책으로 바꿨습니다
+- \~\~unknown optional tag를 보존하지 않고 무시하므로, 미래 버전이 쓴 optional field는 이 버전이
+  재기록하면 사라집니다(R6 "무시" 정책 선택).\~\~ → 후속 수정으로 "보존" 정책으로 바꿨습니다
   (아래 절).
 - media type 허용 목록·unknown type의 binary 저장 정책·최대 크기는 XIII.5.7에서 정합니다.
 
@@ -90,7 +90,7 @@
   worktree·프로젝트 이동에서 재현 가능") 이제 원본 위치를 `SourceLocation`으로 기록합니다.
   - 프로젝트 내부: project root 기준 `/` 상대 경로만(`SourceMetadata::project`). 빈 경로·
     NUL·`\`·선행 `/`·빈 구성 요소·`.`·`..`는 생성과 디코딩 모두에서 거부합니다.
-  - 프로젝트 외부: 파일 이름과 ~~비가역~~ 출처 지문(`external_origin_fingerprint` =
+  - 프로젝트 외부: 파일 이름과 \~\~비가역\~\~ 출처 지문(`external_origin_fingerprint` =
     domain 구분 prefix + 해석된 절대 경로 bytes의 SHA-256)만(`SourceMetadata::external`).
     → **정정**: key 없는 SHA-256은 비가역이 아닙니다. 파일 이름과 함께 commit되므로 누구나
     `/Users/<이름>/Downloads/<파일 이름>` 같은 후보를 계산해 맞춰 볼 수 있습니다(사전 공격).

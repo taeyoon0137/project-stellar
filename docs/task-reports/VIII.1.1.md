@@ -1,4 +1,4 @@
-# 작업 보고서: VIII.1.1 ExpressionType과 Optional<T>
+# 작업 보고서: VIII.1.1 ExpressionType과 Optional\<T>
 
 - WBS: VIII.1.1
 - 작업명: `ExpressionType`을 `TypedValue`와 1:1로 정의하고 nullable은 별도 `Optional<T>`로 표현

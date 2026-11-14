@@ -34,7 +34,7 @@
 - **lazy 연동**: `load_document_from_generation`은 열기 때 읽힌 DocumentManifest(V.6.6)를 쓰고
   요청 문서의 ViewTree·subtree chunk만 `LazyGeneration::read_chunk_payload`로 읽습니다.
 - **golden 문서**: 파일 대신 index→문서 생성기(정수 연산과 1/4 단위 f32만 사용)로 100개를 만듭니다.
-  페이지 1~2·View 1~3, 모든 node 종류와 Shape 4종, 미해결 참조, modifier 12종(비활성 포함, 참조는
+  페이지 1\~2·View 1\~3, 모든 node 종류와 Shape 4종, 미해결 참조, modifier 12종(비활성 포함, 참조는
   먼저 만든 node만 가리켜 DAG), depth 64 chain 문서 4개를 포함합니다. 형식 고정을 위해 100개 chunk
   model 전체 content hash를 golden 값으로 고정했습니다.
 

@@ -72,8 +72,8 @@
   결과로 재조정해야 합니다.
 - media type은 호출자가 선언한 값을 판정합니다. 파일 내용 sniffing(magic bytes)으로 선언과
   실제 형식이 맞는지 확인하는 것은 이 작업 범위 밖입니다.
-- ~~정책 없이 만든 `ImportRequest::new`는 크기 제한이 없습니다. 사용자 import 경로는 항상
-  `AssetImportPolicy::request`를 거치도록 상위 계층(project·셸)에서 연결해야 합니다.~~
+- \~\~정책 없이 만든 `ImportRequest::new`는 크기 제한이 없습니다. 사용자 import 경로는 항상
+  `AssetImportPolicy::request`를 거치도록 상위 계층(project·셸)에서 연결해야 합니다.\~\~
   → 후속 수정으로 정책 없는 요청은 crate 내부 전용이 되었습니다(아래 절).
 - 읽는 도중 커진 파일의 `TooLarge.size`는 전체 크기가 아니라 상한을 넘은 시점까지 읽은
   크기입니다.

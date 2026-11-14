@@ -107,7 +107,7 @@ P1 보충: 제품 decoder의 `expect`는 앞에서 증명한 불변식에만 씁
 | 한도 | 값 | 판정 | 오류 코드 |
 |---|---|---|---|
 | 입력 크기 `MAX_INPUT_BYTES` | 1,048,576 byte(1 MiB) | UTF-8 byte 길이 > 상한이면 거부. 정확히 1 MiB는 허용 | `input-too-large` |
-| 문자 집합 | YAML 1.2 `c-printable` | TAB, LF, CR, U+0020~U+007E, U+0085, U+00A0~U+D7FF, U+E000~U+FFFD, U+10000~U+10FFFF만 허용. 위반 문자의 줄·열 보고 | `non-printable` |
+| 문자 집합 | YAML 1.2 `c-printable` | TAB, LF, CR, U+0020\~U+007E, U+0085, U+00A0\~U+D7FF, U+E000\~U+FFFD, U+10000\~U+10FFFF만 허용. 위반 문자의 줄·열 보고 | `non-printable` |
 | 중첩 깊이 `MAX_NESTING_DEPTH` | 64 | 매핑·시퀀스 중첩 64단계까지 허용, 65단계째 거부 | `nesting-too-deep` |
 | 이벤트 선읽기 `MAX_EVENT_LOOKAHEAD_CHARS` | 32,768 문자 | 이벤트 하나를 만들려고 scanner가 직전 이벤트 이후 상한을 넘는 문자를 읽어야 하면 거부(너무 긴 스칼라, 버퍼링되는 flow collection, 이어진 주석·공백) | `lookahead-too-large` |
 | implicit key 길이(writer) | 1,024 문자 | 넘으면 explicit key(`? `)로 씀 | — |

@@ -39,7 +39,7 @@
 |---|---|
 | **잘못된 socket 연결 거부**(`invalid_socket_connections_are_rejected`): `Length + Color`·if 조건에 Length → `TypeMismatch`(위반 slot 정확), 자기 자신·조상을 자손 socket에 연결 → `WouldCreateCycle`(경로 정확), 없는 socket·block·source 거부; 정상 공유 연결은 통과하고 적용 결과 type 오류 없음 | 통과 |
 | 하류 type 파손 거부(`connection_that_breaks_downstream_types_is_rejected`): `len ÷ ?`에 Length는 국소적으로 허용되지만 상위 if branch 불일치로 `IntroducesErrors`(node = if, slot = Else) | 통과 |
-| 허용 타입이 형제 socket을 반영(`accepted_types_reflect_sibling_sockets`): `Length + ?`→Length, if 조건→Boolean, if else→Length·Optional<Length>, `Length × ?`→Number, `? × Number`→Number·4 단위, clamp 인자→Angle | 통과 |
+| 허용 타입이 형제 socket을 반영(`accepted_types_reflect_sibling_sockets`): `Length + ?`→Length, if 조건→Boolean, if else→Length·Optional\<Length>, `Length × ?`→Number, `? × Number`→Number·4 단위, clamp 인자→Angle | 통과 |
 | 연결 후 도달 불가 node 제거(`connect_prunes_unreachable_nodes`) | 통과 |
 
 ## 차이(작업 지시와 다른 점)

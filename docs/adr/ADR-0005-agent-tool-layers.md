@@ -193,7 +193,7 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 - **저장 범위**: 출처 표시와 되돌리기 정보는 세션이 묶인 창(WindowSessionId)의 메모리에만 둡니다. 프로젝트 파일, Git, generation metadata, 복구 snapshot, 진단, 텔레메트리에는 넣지 않습니다. 창을 닫으면 WindowHistory와 함께 폐기합니다(VII.5.4). 변경 자체는 남고 Git semantic status(§26)로 확인할 수 있습니다.
 - **에이전트 경로 차단**: MCP tool, `stellar-mcp`, `stellar` 명령 어디에도 출처 표시를 지우거나 바꾸는 수단과 되돌리기 수단을 두지 않습니다(§3 변경 불가 경로).
 - 세션은 시작한 창에 묶이고, 앱을 다시 시작하면 복원하지 않습니다.
-- 이 규칙은 XIX.1.4, XIX.6.1~XIX.6.4, XIX.6.7~XIX.6.10, XIX.7.2, XXIX.2.8이 구현합니다.
+- 이 규칙은 XIX.1.4, XIX.6.1\~XIX.6.4, XIX.6.7\~XIX.6.10, XIX.7.2, XXIX.2.8이 구현합니다.
 
 #### 4.3 구독 CLI 실행 요구사항
 
@@ -328,7 +328,7 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 - **그 자리에서 고친 행**: XIX.1.4(연결 종료 event), XIX.3.3(headless 읽기 예외), XIX.6.1(batch별 inverse 보존), XIX.6.3(중지는 rollback 없음), XIX.6.4(종료 절차), XIX.7.2(겹치는 외부 변경), Phase XIX 완료 조건.
 - **책임 위치**: 터미널 경로의 공급자 parser 금지 검사는 XXIX.6.6이 담당하고, 되돌리기 결과는 일반 autosave 경로(XIX.6.8)로 저장합니다.
 - **유지되는 행**: XIX.1.1, XIX.1.2, XIX.1.3, XIX.1.5, XXIV.1.1, XXIV.1.2, XVI.9.3, XVI.11.8은 그대로 둡니다. 실행 이름 `stellar`는 신규 XXIV.4.1에서 적용합니다.
-- **신규 WBS**: XIX.1.6~XIX.1.9, XIX.6.7~XIX.6.10, XIX.9, XXIV.4, XXIV.5, Phase XXIX.
+- **신규 WBS**: XIX.1.6\~XIX.1.9, XIX.6.7\~XIX.6.10, XIX.9, XXIV.4, XXIV.5, Phase XXIX.
 - **crate graph 검사기 확장**: 전이 도달 금지 규칙과 target·build·dev 의존 파싱을 추가합니다.
 - **새 외부 의존성**: JSON 직렬화, JSON-RPC 프레이밍, IPC 상대 인증용 OS binding, 필요하면 표시 서식 해석은 승인 목록에 등록해야 합니다.
 - **Phase VII 요구 추가**: 속성 단위 되돌리기 전제조건과 구조 충돌 판정이 필요합니다. 진행 중인 VII 행은 바꾸지 않고 XIX.6.8이 VII 산출물 위에서 구현합니다.
@@ -370,7 +370,7 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 1. 2026-11-14: 이 ADR을 Accepted로 바꾸고, 같은 변경에서 아키텍처 본문(§4.2, §22.5, §31, §37.3)과 계획서를 개정한 뒤 ledger를 다시 생성합니다.
 2. Phase VII: CommandTransaction closed enum과 에이전트 origin(FutureAgent) 표기를 유지합니다. 에이전트 동작은 XIX에서 구현합니다.
 3. Phase XII: 에이전트 패널이 들어갈 네이티브 chrome 자리와 drawable 갱신 정책을 고려합니다.
-4. 2026-11-14 제품 소유자 지시(최대 병렬 진행)에 따라 L1 골격(XXIV.1.1~XXIV.1.2)과 L2 골격(XIX.1.1~XIX.1.3, XIX.1.5)은 G8 이전에 착수합니다. 이 골격에는 쓰기 tool과 내장 에이전트가 없습니다.
-5. G8 이후: Phase XVIII → XXIV 나머지(L1, XXIV.4 실행 이름·확장, XXIV.5 번들·명령줄 설치) → XIX 나머지(XIX.1.4, XIX.1.6~XIX.1.9, XIX.2~XIX.9, L2) → XXIX.2~XXIX.3(L3 코어·FFI) → XXIX.4(macOS UI) → XXIX.5(`stellar-mcp` 번들) → XXIX.6(E2E·불변식). XXIX.1(계획·정책 도구)은 선행이 없어 언제든 착수할 수 있습니다.
+4. 2026-11-14 제품 소유자 지시(최대 병렬 진행)에 따라 L1 골격(XXIV.1.1\~XXIV.1.2)과 L2 골격(XIX.1.1\~XIX.1.3, XIX.1.5)은 G8 이전에 착수합니다. 이 골격에는 쓰기 tool과 내장 에이전트가 없습니다.
+5. G8 이후: Phase XVIII → XXIV 나머지(L1, XXIV.4 실행 이름·확장, XXIV.5 번들·명령줄 설치) → XIX 나머지(XIX.1.4, XIX.1.6\~XIX.1.9, XIX.2\~XIX.9, L2) → XXIX.2\~XXIX.3(L3 코어·FFI) → XXIX.4(macOS UI) → XXIX.5(`stellar-mcp` 번들) → XXIX.6(E2E·불변식). XXIX.1(계획·정책 도구)은 선행이 없어 언제든 착수할 수 있습니다.
 
 노출 기준은 §7과 같습니다. AI와 무관한 L1 `stellar` 명령과 명령줄 설치 화면은 준비되는 대로 앱에 포함할 수 있고, L2(`stellar-mcp`)와 L3(내장 에이전트)는 해당 Phase가 끝나기 전에는 노출하지 않습니다.

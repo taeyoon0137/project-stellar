@@ -25,7 +25,7 @@
 - **mapping table**: scene이 표현하는 기능을 `SvgFeature`로 열거하고, row마다 scene 원천(어느
   document node·scene 값), 대응 SVG 요소·속성, 지원 상태를 기록합니다.
   - vector: Frame 상자(`<rect>`/원호 `<path>`), Shape·Path(`<path d>`, even-odd), Image(`<svg viewBox
-    preserveAspectRatio>` + data URI `<image>`, Fill/Contain/Cover/None, crop, nearest sampling),
+    preserveAspectRatio>` + data URI `\<image>`, Fill/Contain/Cover/None, crop, nearest sampling),
     단색 fill, sRGB(`rgb(%)`)·wide gamut(CSS Color 4 `color()`)·반투명(`*-opacity`), Center·Inside
     stroke(Inside = 두 배 폭 + 자기 기하 clipPath), Round·Square cap, Rect·둥근 Rect·Path clip과 중첩
     clip chain, group opacity, world transform(`matrix`), 숨김(생략).

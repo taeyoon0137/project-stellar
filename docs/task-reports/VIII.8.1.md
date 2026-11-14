@@ -41,7 +41,7 @@
 | 검사 | 결과 |
 |---|---|
 | **삭제 fixture 정보 보존**(`deleted_references_and_targets_become_orphans_with_information`): 토큰 삭제·target node 삭제 시 b1·b4만 orphan, 전체 수 4 유지, b1 binding·canonical bytes 원본과 동일, 경로·마지막 타입·원인(없는 토큰 + 참조 node)·UnresolvedRef(ID·Token·위치) 정확, target 원인 우선, 재검사·대상 복구 후에도 orphan 불변 | 통과 |
-| **타입 변경 fixture**(`type_changes_become_orphans_only_when_broken`): target Length→Color는 `TargetTypeChanged`, Length→Optional<Length>는 유지, Component Property Length→Color는 `SourceTypeChanged`(덧셈 node 오류), 마지막 유효 타입 보존 | 통과 |
+| **타입 변경 fixture**(`type_changes_become_orphans_only_when_broken`): target Length→Color는 `TargetTypeChanged`, Length→Optional\<Length>는 유지, Component Property Length→Color는 `SourceTypeChanged`(덧셈 node 오류), 마지막 유효 타입 보존 | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 

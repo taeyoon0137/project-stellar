@@ -23,7 +23,7 @@
   만든 Frame·Fragment 중 depth < 64, 형제 OrderKey는 정렬된 형제 key 사이 `between`으로 유일,
   modifier 참조는 먼저 만든 node만(참조 graph DAG) 또는 NIL·없는 id(미해결 진단), Fragment에는
   stack 없음, Frame clip은 Path node 또는 없는 id. float은 1/4·1/8 격자 값이라 정확히 표현됩니다.
-- **분포**: 페이지 1~3·View 0~3, View당 node 0~24(1/16 확률로 depth 64 chain), 모든 node 종류·
+- **분포**: 페이지 1\~3·View 0\~3, View당 node 0\~24(1/16 확률로 depth 64 chain), 모든 node 종류·
   Shape 4종·modifier 12종(비활성·무작위 stack 위치), 다국어·emoji·제어 문자 이름/텍스트, 무작위
   runtime churn(dummy insert/remove)으로 핸들 배치도 흔듭니다.
 - **property test**(`smoke_thousand_seed_round_trip_property`, seed 0..1000): 생성 문서 validator

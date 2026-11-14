@@ -22,8 +22,8 @@
 - host가 정확히 `github.com`이 아니면 `NotGitHub`(외부 터미널로 등록하는 remote, 아키텍처 §25.3).
   `github.com.evil.example`·대문자 host도 `NotGitHub`입니다.
 - GitHub host이지만 canonical이 아니면 `Invalid(이유)`: URL 내 자격 증명(token이 Git config에 남으므로 거부),
-  `http://`, port, query·fragment, 추가 경로·끝 `/`, owner 규칙(영숫자·`-` 1~39자, `-`로 시작·끝 불가),
-  repo 규칙(영숫자·`.`·`_`·`-` 1~100자, `.`/`..` 불가, 끝 `.git` 한 번 제거), SSH 사용자 `git` 아님.
+  `http://`, port, query·fragment, 추가 경로·끝 `/`, owner 규칙(영숫자·`-` 1\~39자, `-`로 시작·끝 불가),
+  repo 규칙(영숫자·`.`·`_`·`-` 1\~100자, `.`/`..` 불가, 끝 `.git` 한 번 제거), SSH 사용자 `git` 아님.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 

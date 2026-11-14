@@ -69,7 +69,7 @@
 - Phase VII에서 `AssetRecordUpdate`를 closed command enum(VII.1.2)의 variant로 감싸고
   validate/apply/invert와 history에 연결해야 `[x]`가 됩니다.
 - 외부 원본의 후보 경로를 어디서 얻을지(파일 선택 UI, Git 밖 로컬 캐시 등)는 셸·project
-  계층의 결정입니다. ~~기록된 지문은 비밀이 아니므로 후보 경로가 맞는지만 확인합니다.~~
+  계층의 결정입니다. \~\~기록된 지문은 비밀이 아니므로 후보 경로가 맞는지만 확인합니다.\~\~
   → 정정: 지문은 기기별 비밀 key의 HMAC입니다(아래 "후속 수정: 기기 key 출처 지문").
 - media type 허용·최대 크기 정책은 XIII.5.7에서 import 경로에 연결합니다(이 작업 시점에는
   미적용).

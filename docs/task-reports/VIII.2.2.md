@@ -21,7 +21,7 @@
 
 ## 구현 요약
 
-- **7개 node**: `ExprNode::literal`/`null`(Optional<T>의 값 없음), `reference`, `unary`, `binary`, `call`,
+- **7개 node**: `ExprNode::literal`/`null`(Optional\<T>의 값 없음), `reference`, `unary`, `binary`, `call`,
   `if_else`, `match_on`. kind는 payload에서 파생되고 child는 VIII.2.1의 typed slot으로 연결합니다.
   참조는 이름이 아니라 `TokenRef`·`PropertyPath`·Component Property `StableId`·환경 입력 numeric key로 가리킵니다.
 - **구조 검증 강화**: Call은 `Argument(0..arity)`를 정확히, Match는 pattern 수만큼 `Arm(i)`(최소 1개)와

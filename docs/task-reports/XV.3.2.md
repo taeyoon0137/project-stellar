@@ -23,7 +23,7 @@
   소문자 hex(16~64자)라 디렉터리 이름에 URL이 드러나지 않고, 같은 비교 키(`.git`·끝 `/` 차이)는 같은
   mirror를 씁니다.
 - `ensure_fetched`: mirror가 없으면 `git init --bare --quiet --template= <dir>`(로컬, template 비움 →
-  hook 미복사), 이어서 `git --git-dir <dir> fetch --quiet --prune -- <url> +refs/heads/*:refs/heads/*
+  hook 미복사), 이어서 `git --git-dir \<dir> fetch --quiet --prune -- \<url> +refs/heads/*:refs/heads/*
   +refs/tags/*:refs/tags/*`. 성공한 repository key를 세션 집합에 기록해 **세션 안에서 같은 저장소는
   다시 fetch하지 않습니다.** 실패는 기록하지 않아 재시도 가능하고, 오류에는 종료 코드만 담습니다.
 - `MirrorCache`는 XV.2.4의 `FetchedRefs`를 구현하므로 `GitSelectorResolver`가 commit 검증 전에

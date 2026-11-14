@@ -18,7 +18,7 @@
 ## 구현 요약
 
 - `NodeColumns`: 모든 node 공통 필드를 **SoA column**(필드별 별도 `Vec`)으로 저장합니다.
-  최소 공통 필드는 `stable_id`(StableId), `parent`(Option<RuntimeEntityId>),
+  최소 공통 필드는 `stable_id`(StableId), `parent`(Option\<RuntimeEntityId>),
   `order_key`(OrderKey)입니다. 종류별 payload는 없습니다(Phase VI).
 - 핸들 수명은 `RuntimeEntityAllocator`, 인덱싱은 `live_slot`을 사용합니다(III.6.1과 동일 패턴).
 - 길이 불변식: 새 slot은 모든 column에 함께 push, 재사용 slot은 모든 column을 덮어쓰며, 제거는

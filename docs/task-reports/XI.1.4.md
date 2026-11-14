@@ -49,7 +49,7 @@
 | frame property만 바꾸면 frame + root 2개만 새 node, 자식 subtree 공유(`frame_property_edit_keeps_children_shared`) | 통과 |
 | 자식 5000개 frame에서 자식 하나 교체: node 2개만 새로, 자식 목록 leaf chunk 157개 중 156개 공유(`wide_frame_child_edit_copies_one_chunk_path`) | 통과 |
 | z-order 범위 밖 교체·경로 범위 밖(단계 보고)·빈 경로·다음 root와 겹침 거부(`replacement_must_fit_z_range_and_path`) | 통과 |
-| trie 높이 1~4 경계 길이(0~40000)에서 `get`·`iter`·`len` 일치, `set` 경로 복사·원본 불변(`persistent::tests`) | 통과 |
+| trie 높이 1\~4 경계 길이(0\~40000)에서 `get`·`iter`·`len` 일치, `set` 경로 복사·원본 불변(`persistent::tests`) | 통과 |
 
 ## 차이(작업 지시와 다른 점)
 

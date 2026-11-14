@@ -43,7 +43,7 @@
 
 | 검사 | 결과 |
 |---|---|
-| **mismatch fixture 오류 위치 정확**(`mismatch_fixtures_report_exact_position`): if 조건 Number·Optional<Boolean>→`Condition`, Length/Color·Number/Length branch→`Else`, `Color<Color`→`Lhs`, `Length<Percentage`→`Rhs`, nullable 순서 비교 Lhs/Rhs, `Gradient==Gradient`→`Lhs`, `Enum(1)==Enum(2)`→`Rhs`, `Number and Boolean`→`Lhs`, `Boolean or Optional<Boolean>`→`Rhs`, `not String`→`Operand` | 통과 |
+| **mismatch fixture 오류 위치 정확**(`mismatch_fixtures_report_exact_position`): if 조건 Number·Optional\<Boolean>→`Condition`, Length/Color·Number/Length branch→`Else`, `Color<Color`→`Lhs`, `Length<Percentage`→`Rhs`, nullable 순서 비교 Lhs/Rhs, `Gradient==Gradient`→`Lhs`, `Enum(1)==Enum(2)`→`Rhs`, `Number and Boolean`→`Lhs`, `Boolean or Optional<Boolean>`→`Rhs`, `not String`→`Operand` | 통과 |
 | match fixture(`match_rules_and_error_positions`): 대상 Color·Optional·Length→`Scrutinee`, arm 없음→`Scrutinee`, 다른 enum pattern→`Pattern(1)`, 중복 pattern→`Pattern(2)`(DistinctPattern), String pattern→`Pattern(0)`, Color arm→`Arm(2)`(CommonWith Length), Color 기본 branch→`Default` | 통과 |
 | 비교 6개 × 28 TypeSpec × 28 전수(`comparison_rules_are_exhaustive`), 논리·not 전수 | 통과 |
 | 공통 타입 표 28×28 전수·교환 법칙, 암묵 승격 없음(`common_type_table`) | 통과 |

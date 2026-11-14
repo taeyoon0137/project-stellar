@@ -3,7 +3,7 @@
 - WBS: VII.6.1
 - 작업명: 각 command에 `apply(forward); apply(inverse)`가 원본 semantic snapshot으로 돌아오는 property test macro
 - 상태: 완료 (`[x]`)
-- 선행: VII.2, VII.3(section 단위 선행 — 이 lane에서 VII.2.1~VII.2.8, VII.3.1~VII.3.4 모두 완료)
+- 선행: VII.2, VII.3(section 단위 선행 — 이 lane에서 VII.2.1\~VII.2.8, VII.3.1\~VII.3.4 모두 완료)
 
 ## 필수 실행 환경
 

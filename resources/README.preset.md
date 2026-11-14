@@ -82,7 +82,7 @@ git config core.hooksPath .githooks
 ## 📚 문서
 
 - [`docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`](../docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md): 제품 정의, 아키텍처 원칙, 성능 계약, 문서 모델, 파일 포맷, Git 동작, 로드맵을 담은 기술 기준 문서입니다. 구현 판단의 1차 기준입니다.
-- [`docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`](../docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md): 아키텍처 기준 문서를 원자적 작업 패키지(WBS)로 분해한 구현·검증 실행 계획입니다. 28개 Phase(I~XXVIII), 933개 작업, 단계 완료 게이트(G0~G8)를 정의하며 초기 릴리스 범위는 Phase I~XVII(G8)입니다.
+- [`docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md`](../docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md): 아키텍처 기준 문서를 원자적 작업 패키지(WBS)로 분해한 구현·검증 실행 계획입니다. 29개 Phase(I\~XXIX), 1,023개 작업, 단계 완료 게이트(G0\~G8)를 정의하며 초기 릴리스 범위는 Phase I\~XVII(G8)입니다.
 
 <a id="scripts"></a>
 

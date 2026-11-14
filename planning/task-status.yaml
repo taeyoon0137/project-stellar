@@ -274,7 +274,7 @@ tasks:
     report: "docs/task-reports/I.2.11.md"
     verified_at: "2026-06-24T03:49:27+09:00"
   - id: "I.2.12"
-    title: "계획서 WBS 추출 결과로 `planning/task-status.yaml`을 생성합니다. `I.1.1`~`I.1.5`는 `verified`, `I.1.6`~`I.1.9`는 현재 교정 전이면 `reported_done`, 나머지는 `not_started`로 기록합니다. 각 record의 required environment는 작업 행과 Gate 규칙을 반영합니다. 수작업 복사 대신 I.2.10·I.2.11 library를 호출하는 일회성 subcommand를 사용합니다."
+    title: "계획서 WBS 추출 결과로 `planning/task-status.yaml`을 생성합니다. `I.1.1`\\~`I.1.5`는 `verified`, `I.1.6`\\~`I.1.9`는 현재 교정 전이면 `reported_done`, 나머지는 `not_started`로 기록합니다. 각 record의 required environment는 작업 행과 Gate 규칙을 반영합니다. 수작업 복사 대신 I.2.10·I.2.11 library를 호출하는 일회성 subcommand를 사용합니다."
     status: verified
     depends_on:
       - "I.2.8"
