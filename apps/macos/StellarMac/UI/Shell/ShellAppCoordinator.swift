@@ -205,7 +205,7 @@ final class ShellAppCoordinator: NSObject {
             pendingOpenPaths.insert(path)
         case .failure(let error):
             welcomeData.setOpening(projectName: nil)
-            presentOpenFailure(.call(error.status), path: path, origin: origin)
+            presentOpenFailure(ShellProjectOpenFailure(callStatus: error.status), path: path, origin: origin)
         }
     }
 
@@ -221,9 +221,9 @@ final class ShellAppCoordinator: NSObject {
             ))
             present(projectWindow)
         case .requestFailed(_, let failure, _):
-            presentOpenFailure(.core(failure), path: path, origin: origin)
+            presentOpenFailure(Self.failure(coreCode: failure, path: path), path: path, origin: origin)
         default:
-            presentOpenFailure(.unexpectedEvent, path: path, origin: origin)
+            presentOpenFailure(.unexpectedResponse, path: path, origin: origin)
         }
     }
 
@@ -245,8 +245,7 @@ final class ShellAppCoordinator: NSObject {
         let path = Self.canonicalPath(rawPath)
         projectWindow.beginOpening(rootPath: path)
         guard let pump else {
-            let text = Self.failureText(.runtimeUnavailable, path: path)
-            projectWindow.didFail(title: text.title, message: text.message)
+            projectWindow.didFail(.runtimeUnavailable, path: path)
             return
         }
         let result = pump.openProject(path: path) { [weak self, weak projectWindow] event in
@@ -254,8 +253,7 @@ final class ShellAppCoordinator: NSObject {
             self?.finishReopening(projectWindow, path: path, event: event)
         }
         if case .failure(let error) = result {
-            let text = Self.failureText(.call(error.status), path: path)
-            projectWindow.didFail(title: text.title, message: text.message)
+            projectWindow.didFail(ShellProjectOpenFailure(callStatus: error.status), path: path)
         }
     }
 
@@ -267,59 +265,27 @@ final class ShellAppCoordinator: NSObject {
                 project: project, projectID: projectID, name: name, rootPath: root, pump: pump
             ))
         case .requestFailed(_, let failure, _):
-            let text = Self.failureText(.core(failure), path: path)
-            projectWindow.didFail(title: text.title, message: text.message)
+            projectWindow.didFail(Self.failure(coreCode: failure, path: path), path: path)
         default:
-            let text = Self.failureText(.unexpectedEvent, path: path)
-            projectWindow.didFail(title: text.title, message: text.message)
+            projectWindow.didFail(.unexpectedResponse, path: path)
         }
     }
 
     // MARK: - 실패 안내
 
-    /// 프로젝트 열기 실패 원인.
-    enum OpenFailureSource: Equatable {
-        /// 코어 `REQUEST_FAILED` 실패 코드(`STELLAR_FAILURE_*`).
-        case core(UInt32)
-        /// FFI 호출이 요청을 받지 않음(`StellarStatus`).
-        case call(StellarStatus)
-        /// 코어 runtime을 만들지 못함.
-        case runtimeUnavailable
-        /// 열기 요청에 다른 종류의 완료 event가 옴.
-        case unexpectedEvent
-
-        static func == (lhs: OpenFailureSource, rhs: OpenFailureSource) -> Bool {
-            switch (lhs, rhs) {
-            case (.core(let a), .core(let b)): return a == b
-            case (.call(let a), .call(let b)): return a.rawValue == b.rawValue
-            case (.runtimeUnavailable, .runtimeUnavailable), (.unexpectedEvent, .unexpectedEvent): return true
-            default: return false
-            }
-        }
+    /// 코어 실패 코드를 안내 원인으로 바꿉니다. `NOT_A_REPOSITORY`이면 폴더가 아직 있는지 확인해 "폴더 없음"과
+    /// 구분합니다(실패 경로에서만 로컬 stat 한 번).
+    static func failure(coreCode: UInt32, path: String) -> ShellProjectOpenFailure {
+        ShellProjectOpenFailure(coreFailure: coreCode, folderExists: ShellProjectOpenFailure.folderExists(atPath: path))
     }
 
-    /// 실패 안내 문구.
-    static func failureText(_ source: OpenFailureSource, path: String) -> (title: String, message: String) {
-        (
-            String(localized: "The Project Couldn’t Be Opened", comment: "Alert title"),
-            String(
-                localized: "“\(ShellProjectFrameDataSource.folderName(path))” couldn’t be opened as a Stellar project.",
-                comment: "Alert message; the argument is the folder name"
-            )
-        )
-    }
-
-    private func presentOpenFailure(_ source: OpenFailureSource, path: String, origin: OpenOrigin) {
+    /// 열기 실패를 알립니다. 시작 창에서 연 경우 시작 창 안내(sheet), 그 밖에는 alert입니다.
+    private func presentOpenFailure(_ failure: ShellProjectOpenFailure, path: String, origin: OpenOrigin) {
         if origin == .welcome, welcomeController != nil {
-            if case .core(let code) = source, code == UInt32(STELLAR_FAILURE_NOT_A_STELLAR_PROJECT) {
-                welcomeData.postNotice(.notStellarProject(path: path))
-            } else {
-                welcomeData.postNotice(.operationFailed(detail: Self.failureText(source, path: path).message))
-            }
+            welcomeData.postNotice(failure.welcomeNotice(path: path))
             return
         }
-        let text = Self.failureText(source, path: path)
-        alertPresenter(text.title, text.message, NSApp.keyWindow)
+        alertPresenter(failure.title, failure.message(path: path), NSApp.keyWindow)
     }
 
     // MARK: - 프로젝트 창

@@ -47,6 +47,8 @@
 | `ShellAreaSlots.swift` | 사이드바·인스펙터·Git·에이전트 영역을 슬롯에 끼우는 어댑터와 영역 data source Stub |
 | `ShellRuntimeEventPump.swift` | 코어 완료 event pull 펌프(요청별 완료 handler) |
 | `ShellIntegrationCheck.swift` | 통합 검사 진입점 `ShellIntegrationCheck.run() -> Bool`(`--shell-integration-check`) |
+| `ShellProjectOpenFailure.swift` | 프로젝트 열기 실패 원인과 안내 문구(14.8, XII.6.2) |
+| `ShellProjectOpenCheck.swift` | Open Project 검사 진입점 `ShellProjectOpenCheck.run() -> Bool`(`--project-open-check`) |
 
 SwiftUI는 쓰지 않습니다. 모든 구성요소는 AppKit 표준 컨트롤입니다. [가이드 5.3] [아키텍처 §8.1]
 
@@ -315,10 +317,35 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 - 도구: 툴바 도구 그룹 → 창 모델 → 메뉴 체크, 캔버스 R 키 → Rectangle, 도구 아닌 키·⌘R은 코어 입력으로, 코어 경로 없는 명령 비활성, Close Project·Show in Finder 활성, Search Project… 비활성
 - 같은 폴더 재열기 시 새 창·요청 없음, 복원 상태 secure coding 왕복(열린 폴더는 기존 창), 창 닫기 → session 닫기 → 시작 창 → 코어 session 0
 - 복원: 열기 중 → ready, 없어진 폴더 → 실패 상태·복구 동작 3개(대표 1개)·도구 비활성 → Locate Folder…로 같은 창에서 열기
-- 실패 안내: 앱 수준 열기 실패 → alert, 시작 창 열기 실패(stellar.yaml 없음) → 시작 창 안내, New Project → 미지원 안내(폴더를 만들지 않음), 설정 창
+- 실패 안내: 앱 수준 열기 실패 → alert, 시작 창 열기 실패(stellar.yaml 없음) → 시작 창 안내, New Project → 미지원 안내(폴더를 만들지 않음), 설정 창. 원인별 문구 대응은 14.8의 `--project-open-check`가 검사합니다.
 
 ### 14.7 화면 확인(2026-11-14, macOS 27.2, Debug 앱)
 
 - 프로젝트 창(`open -n -a StellarMac.app <fixture>`, 1200 × 760pt): 왼쪽 사이드바(필터 필드, Pages·Layers 머리글, "No View Selected" 빈 상태), 툴바 제목 "Sample Design Project"와 부제목 "Restricted Mode", 가운데 캔버스 도구 그룹 11개(Move 선택), 검색 버튼과 overflow 버튼(»; 줌·더 보기·뒤로·앞으로는 보이지 않음), 오른쪽 인스펙터 "No Selection", 인스펙터 토글. 캔버스는 빈 영역(렌더러 미연결, XII.4.1).
 - 시작 창(인자 없이 실행): 앱 아이콘, "Stellar", Version, New Project…·Open Project…·Clone Project… 버튼, "No Recent Projects".
 - 실행 기록: 직전 인스턴스가 끝나기 전에 같은 번들을 다시 띄운 실행에서는 시작 창이 만들어졌으나 화면에 올라오지 않은 경우가 있었습니다(창 목록 onscreen 아님). 이전 인스턴스를 종료한 뒤 다시 실행하면 앱이 활성화되고 시작 창이 표시됐습니다. 원인은 확인하지 못했습니다.
+
+### 14.8 프로젝트 열기 실패 안내(XII.6.2)
+
+Open Project는 폴더를 고른 뒤 코어 `stellar_project_open`에 넘기고, 코어가 열기 분류(IV.2.4)와 신뢰되지 않은 프로젝트용 안전 probe(IV.5.3)를 마친 뒤에만 창을 만듭니다. 실패는 코어 고정 코드(`STELLAR_FAILURE_*`)나 FFI 호출 상태를 `ShellProjectOpenFailure`로 바꿔 알립니다. 코어 진단 메시지(한국어, 경로 포함 가능)는 화면에 쓰지 않고, 안내에는 전체 경로 대신 폴더 이름만 넣습니다.
+
+| 원인(코드) | 제목 | 해결 방법(요지) |
+|---|---|---|
+| `NOT_A_REPOSITORY`(10), 폴더 있음 | This Folder Isn’t a Git Repository | 프로젝트 최상위 폴더(Git 저장소 + stellar.yaml)를 고름 |
+| `NOT_A_REPOSITORY`(10), 폴더 없음 | Project Folder Not Found | 폴더 찾기 또는 다른 프로젝트 열기 |
+| `NOT_A_STELLAR_PROJECT`(11) | This Folder Isn’t a Stellar Project | 저장소를 자동 변환하지 않음(가이드 7.2) |
+| `MANIFEST_UNREADABLE`(12) | The Project File Couldn’t Be Read | 폴더 읽기 권한 확인 후 다시 시도 |
+| `MANIFEST_CORRUPT`(13) | The Project File Is Damaged | YAML 손상·1 MiB 초과. Git 이력에서 복원 |
+| `MANIFEST_INVALID`(14) | The Project File Isn’t Valid | 필수 설정 누락·지원하지 않는 값 |
+| `INVALID_PROJECT_ID`(15) | The Project ID Isn’t Valid | project.id는 UUID. Git 이력에서 복원 |
+| `UNTRUSTED_SYMLINK`(16) | The Project File Is a Symbolic Link | 신뢰 전에는 링크를 따르지 않음. 링크를 파일로 바꿈 |
+| `PATH_UNRESOLVED`(17) | The Project Folder Couldn’t Be Located | 열기 중 옮겨지거나 지워짐 |
+| `STELLAR_INVALID_ARGUMENT`·`INVALID_UTF8`(빈·상대 경로) | The Folder Path Isn’t Valid | 이 Mac의 폴더를 고름 |
+| `STELLAR_QUEUE_FULL` | Stellar Is Busy | 잠시 뒤 다시 시도 |
+| runtime 없음·그 밖의 호출 실패 | Stellar Can’t Open Projects Right Now | 앱을 다시 열기 |
+| 모르는 코드·예상 밖 event | The Project Couldn’t Be Opened | 다시 시도 또는 다른 프로젝트 |
+
+- "폴더 없음"은 코어가 `NOT_A_REPOSITORY`를 보낸 경우에만 셸이 폴더 존재를 한 번 확인해 구분합니다(실패 경로의 로컬 stat 한 번). 옮겨진 최근·복원 프로젝트를 "Git 저장소 아님"으로 잘못 안내하지 않기 위해서입니다.
+- 안내 위치: 메뉴 막대·Finder에서 연 실패는 alert(열린 창이 있으면 sheet), 시작 창에서 연 실패는 시작 창 안내(`stellar.yaml` 없음은 `.notStellarProject`, 폴더 없음은 `.projectMissing`, 나머지는 원인 제목이 앞에 붙은 `.operationFailed`), 창 복원·Locate Folder… 실패는 그 창의 실패 상태(제목·해결 방법·복구 동작)입니다.
+- 실패한 열기는 창과 코어 session을 만들지 않습니다.
+- 검사: `--project-open-check`(`ShellProjectOpenCheck`). 대응표 전체, 원인별 제목이 서로 다름, 폴더 이름 표시·전체 경로 비노출, 메뉴 ⌘O → 폴더 선택(취소 시 요청 없음) → 코어 열기 → 창, 실제 코어로 연 잘못된 폴더 fixture 9종(폴더 없음, 일반 폴더, Git만, YAML 손상, 1 MiB 초과, 스키마 위반, 잘못된 project.id, 심볼릭 링크 매니페스트, 읽기 권한 없음)과 상대·빈 경로 2종의 코드 → 원인 대응, alert·시작 창·복원 안내 위치, 실패 후 창·session 0.

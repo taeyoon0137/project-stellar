@@ -9,6 +9,7 @@
 #  - --update-check: 업데이트 구성·채널 격리·appcast 서명·승인 gate(Sparkle, loopback fixture)
 #  - --<영역>-ui-check: UI 영역별 화면 밖 검사(shell-frame, tools-menus, sidebar, inspector, git-panel, agent-panel, welcome)
 #  - --shell-integration-check: 실제 앱 구성(메뉴, 시작 창, 코어로 프로젝트 열기, 프로젝트 창 영역·도구, 복원·닫기)
+#  - --project-open-check: Open Project 폴더 선택·코어 열기와 잘못된 폴더별 안내 대응(XII.6.2)
 #  - UI 구조 검사: UI/Tools는 코어 FFI를 모르고, UI/Shell은 stellar_ 함수를 직접 부르지 않음(CoreRuntime 경유)
 set -euo pipefail
 
@@ -110,6 +111,9 @@ done
 
 # 셸 통합: 앱이 실제로 쓰는 구성을 화면 밖에서 검사합니다(실제 코어 runtime으로 임시 fixture 프로젝트를 엽니다).
 "$APP" --shell-integration-check
+
+# Open Project(XII.6.2): 폴더 선택 → 코어 열기·안전 probe → 창, 잘못된 폴더 fixture별 실패 코드 → 안내 대응.
+"$APP" --project-open-check
 
 # UI 구조 검사(grep 종료 코드 0 = 발견 = 실패, 2 이상 = 읽기 오류 = 실패).
 # - UI/Tools(메뉴·도구 명령)는 코어 FFI와 runtime handle을 모릅니다. 명령은 ToolsMenuModel로만 나갑니다.

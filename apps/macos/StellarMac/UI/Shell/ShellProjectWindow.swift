@@ -73,7 +73,8 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
         )
     }
 
-    static func folderName(_ path: String) -> String {
+    /// 경로의 마지막 구성 요소(폴더 이름). 화면에는 전체 경로 대신 이 이름만 보여 줍니다.
+    nonisolated static func folderName(_ path: String) -> String {
         let name = (path as NSString).lastPathComponent
         return name.isEmpty ? path : name
     }
@@ -292,9 +293,9 @@ final class ShellProjectWindow {
         window?.invalidateRestorableState()
     }
 
-    /// 열기에 실패했습니다.
-    func didFail(title: String, message: String) {
-        dataSource.didFail(title: title, message: message)
+    /// 열기에 실패했습니다. 창에 원인과 복구 동작을 보여 줍니다.
+    func didFail(_ failure: ShellProjectOpenFailure, path: String) {
+        dataSource.didFail(title: failure.title, message: failure.message(path: path))
         toolsModel.setProjectReady(false)
     }
 

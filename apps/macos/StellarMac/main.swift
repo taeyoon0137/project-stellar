@@ -49,6 +49,12 @@ if CommandLine.arguments.contains("--shell-integration-check") {
     exit(ShellIntegrationCheck.run() ? 0 : 1)
 }
 
+// Open Project 검사 모드: 폴더 선택 → 코어 열기(분류·안전 probe) → 창, 잘못된 폴더별 실패 코드 → 안내 대응을 실제 코어와
+// 임시 fixture로 검사하고 종료합니다(XII.6.2).
+if CommandLine.arguments.contains("--project-open-check") {
+    exit(ShellProjectOpenCheck.run() ? 0 : 1)
+}
+
 // smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다(II.5.2).
 if CommandLine.arguments.contains("--smoke") {
     let host = RuntimeHost()
