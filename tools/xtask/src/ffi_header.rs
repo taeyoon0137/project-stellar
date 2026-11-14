@@ -193,6 +193,17 @@ typedef struct StellarWindowSessionInfo {
     uint8_t document_id[16];  /* 작업 문서 StableId(없으면 0) */
 } StellarWindowSessionInfo;
 
+/* v1: 좌상단 원점 logical point. world/camera는 CGAffineTransform 순서 (a,b,c,d,tx,ty). */
+typedef struct StellarCanvasColor { uint32_t space; float rgba[4]; } StellarCanvasColor; /* 0 없음, 1 sRGB, 2 Display P3 */
+typedef struct StellarCanvasFrame {
+    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target */
+    float world[6], size[2], radii[4]; /* TL,TR,BR,BL */
+    StellarCanvasColor fill, border; float border_width;
+} StellarCanvasFrame;
+typedef struct StellarCanvasInfo {
+    uint64_t revision; uint8_t view[16], primary[16]; float camera[6]; uint32_t count, skipped;
+} StellarCanvasInfo;
+
 /* StellarWindowViewInfo 레이아웃 버전. */
 #define STELLAR_WINDOW_VIEW_INFO_VERSION 1
 
@@ -301,6 +312,10 @@ StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, 
 StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);
 /* 창 session의 선택을 ids(StableId 16 byte × count)로 바꾸고 그 창 history에 기록합니다(count 0 = 비움). */
 StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, const uint8_t *ids, size_t count, uint64_t *out_request);
+
+/* 활성 View의 같은 게시 snapshot에서 카메라와 painter 순서 목록 조회. rows=NULL이면 metadata만 씁니다.
+ * 용량 부족 시 최신 count와 STELLAR_BUFFER_TOO_SMALL, active View 없음은 STELLAR_NO_ERROR. */
+StellarStatus stellar_window_canvas(uint64_t handle, uint64_t session, float width, float height, StellarCanvasInfo *info, StellarCanvasFrame *rows, size_t capacity);
 
 /* 열린 창 session의 view state(탭 수, active view, viewport)를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, StellarWindowViewInfo *out_info);

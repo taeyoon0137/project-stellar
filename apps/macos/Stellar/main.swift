@@ -8,6 +8,10 @@ if CommandLine.arguments.contains("--lifecycle-check") {
 }
 
 // canvas 검사 모드: drawable pixel == point × scale 및 코어 round-trip을 검증하고 종료(II.5.4).
+if CommandLine.arguments.contains("--visible-frames-check") {
+    exit(MainActor.assumeIsolated { ShellVisibleFramesCheck.run(CommandLine.arguments) } ? 0 : 1)
+}
+
 if CommandLine.arguments.contains("--canvas-check") {
     exit(CanvasCheck.run() ? 0 : 1)
 }

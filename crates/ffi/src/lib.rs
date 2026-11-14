@@ -12,6 +12,7 @@
 //! 경계를 넘지 않고 정수 handle·고정 POD 구조체·버전형 바이트만 씁니다. `AppRuntime`(document
 //! thread)은 handle의 첫 프로젝트·문서 요청에서 시작합니다.
 
+pub mod canvas;
 mod git_names;
 /// 양 플랫폼 공통 입력 이벤트와 native timestamp 변환 (XII.3.1).
 pub mod input;

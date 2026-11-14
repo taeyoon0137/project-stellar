@@ -57,6 +57,7 @@ fi
 
 # canvas: drawable pixel == point × scale + 코어 round-trip.
 "$APP" --canvas-check
+STELLAR_TEST_CANVAS_APP="$APP" cargo test --locked --manifest-path "$REPO_ROOT/Cargo.toml" -p stellar-runtime --lib canvas::tests::saved_frames_open_in_window_painter_order -- --exact --nocapture
 
 # 네이티브 UI 텍스트 컨트롤은 코어 텍스트 엔진(FFI)을 직접·간접으로 호출하지 않습니다(XII.5.1 구조 검사).
 # - 대상: 고정 목록 + `Native*.swift`로 추가되는 네이티브 UI 파일 전부.
