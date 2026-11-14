@@ -135,7 +135,11 @@ impl Server {
                 Some(match self.request(&method, params.as_ref(), log) {
                     Ok(result) => response_ok(&id, result),
                     Err(error) => {
-                        log.warn(&format!("request 거부({}): {method}", error.code));
+                        log.warn(&format!(
+                            "request 거부({}): {}",
+                            error.code,
+                            truncate_for_log(&method)
+                        ));
                         response_err(Some(&id), &error)
                     }
                 })
@@ -156,9 +160,13 @@ impl Server {
                 codes::SERVER_NOT_INITIALIZED,
                 "initialize 전에는 ping만 허용합니다",
             )),
+            // 오류 data의 method echo도 로그와 같은 길이 상한으로 자릅니다.
             _ => Err(
                 RpcError::new(codes::METHOD_NOT_FOUND, "알 수 없는 method입니다").with_data(
-                    JsonValue::object(vec![("method", JsonValue::string(method))]),
+                    JsonValue::object(vec![(
+                        "method",
+                        JsonValue::string(truncate_for_log(method)),
+                    )]),
                 ),
             ),
         }
@@ -227,7 +235,7 @@ impl Server {
             ("notifications/initialized", _) => {
                 log.warn("initialize 응답 전의 initialized notification을 무시합니다");
             }
-            _ => log.info(&format!("notification 무시: {method}")),
+            _ => log.info(&format!("notification 무시: {}", truncate_for_log(method))),
         }
     }
 }
@@ -272,6 +280,7 @@ pub fn serve<R: BufRead, W: Write, L: Write>(
 mod tests {
     use super::*;
     use crate::json::{parse, write};
+    use crate::protocol::MAX_ECHO_CHARS;
 
     fn handle(server: &mut Server, text: &str) -> Option<String> {
         let mut log = Logger::new(Vec::new());
@@ -404,6 +413,52 @@ mod tests {
         assert_eq!(server.phase(), Phase::Initialized);
         let log = String::from_utf8(log.into_inner()).unwrap();
         assert!(log.contains("\"2025-11-25\"을 지원하지 않아"), "{log}");
+    }
+
+    /// client가 정한 method 이름은 로그와 오류 echo에서 길이를 제한하고, 로그에는 bidi 서식 문자를
+    /// 남기지 않습니다(IPC-04).
+    #[test]
+    fn client_method_names_are_bounded_and_escaped_in_logs_and_echo() {
+        let long = "m".repeat(1_000_000);
+        let mut server = Server::new();
+        handle(&mut server, INIT);
+        handle(
+            &mut server,
+            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        );
+        for (frame, is_request) in [
+            (format!(r#"{{"jsonrpc":"2.0","method":"{long}"}}"#), false),
+            (
+                format!(r#"{{"jsonrpc":"2.0","id":5,"method":"{long}"}}"#),
+                true,
+            ),
+            (
+                "{\"jsonrpc\":\"2.0\",\"id\":6,\"method\":\"x\u{202e}evil\u{2066}\"}".to_string(),
+                true,
+            ),
+        ] {
+            let mut log = Logger::new(Vec::new());
+            let reply = server.handle_frame(frame.as_bytes(), &mut log);
+            let log = String::from_utf8(log.into_inner()).unwrap();
+            assert_eq!(log.matches('\n').count(), 1, "로그 한 줄");
+            assert!(log.len() < 512, "로그 줄 길이 {}", log.len());
+            assert!(!log.contains(['\u{202e}', '\u{2066}']), "{log}");
+            assert_eq!(reply.is_some(), is_request);
+            if let Some(reply) = reply {
+                let echoed = reply
+                    .get("error")
+                    .and_then(|e| e.get("data"))
+                    .and_then(|d| d.get("method"))
+                    .and_then(JsonValue::as_str)
+                    .unwrap()
+                    .to_string();
+                assert!(
+                    echoed.chars().count() <= MAX_ECHO_CHARS + 1,
+                    "echo {}자",
+                    echoed.chars().count()
+                );
+            }
+        }
     }
 
     #[test]
