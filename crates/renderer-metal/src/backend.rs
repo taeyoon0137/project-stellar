@@ -25,7 +25,9 @@ use stellar_renderer_core::render_graph::{
     ImportKind, ResourceLifetime, SampleCount, TextureFormat,
 };
 
-use crate::buffer::{stage_texture_upload, submit_uploads, MetalBuffer, PendingUpload};
+use crate::buffer::{
+    stage_texture_upload, submit_uploads, upload_layout, MetalBuffer, PendingUpload,
+};
 use crate::commands::CommandContext;
 use crate::device::MetalDevice;
 use crate::encode::{encode_pass, plan_pass, FrameTargets};
@@ -65,6 +67,8 @@ struct InFlight {
     command_buffer: Id,
     present: bool,
     timing: Option<FrameTiming>,
+    /// 이 command buffer가 끝나면 예산에서 돌려받는 upload staging byte.
+    staging_bytes: u64,
 }
 
 /// macOS Metal backend.
@@ -108,7 +112,8 @@ pub struct MetalBackend {
 /// backend GPU 메모리 사용량.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MemoryUsage {
-    /// backend가 만든 buffer·texture·transient의 `allocatedSize` 합(byte).
+    /// backend가 만든 buffer·texture·transient와 GPU가 아직 끝내지 않은 texture upload staging buffer의
+    /// `allocatedSize` 합(byte).
     pub resident_bytes: u64,
     /// 예산(byte).
     pub budget_bytes: u64,
@@ -431,12 +436,14 @@ impl MetalBackend {
             .device
             .as_ref()
             .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
+        let staging_bytes = self.pending_uploads.iter().map(|upload| upload.bytes).sum();
         if let Some(command_buffer) = submit_uploads(device.queue(), &mut self.pending_uploads)? {
             self.in_flight.push_back(InFlight {
                 id: None,
                 command_buffer,
                 present: false,
                 timing: None,
+                staging_bytes,
             });
         }
         Ok(())
@@ -444,6 +451,7 @@ impl MetalBackend {
 
     /// 실패한 command buffer를 처리합니다: 진행 갱신, timing 반환, device error event, device lost 표시.
     fn command_buffer_failed(&mut self, done: InFlight, injected: Option<i64>) -> BackendError {
+        self.memory.remove(done.staging_bytes);
         if let Some(id) = done.id {
             self.progress.completed = Some(id);
         }
@@ -489,6 +497,7 @@ impl MetalBackend {
             match status {
                 command_buffer_status::COMPLETED => {
                     if let Some(done) = self.in_flight.pop_front() {
+                        self.memory.remove(done.staging_bytes);
                         if let Some(id) = done.id {
                             self.progress.completed = Some(id);
                             if done.present {
@@ -938,12 +947,30 @@ impl RendererBackend for MetalBackend {
                     "열린 frame이 있는 동안 resource를 갱신할 수 없습니다",
                 ));
             }
+            if self.device.is_none() {
+                return Err(invalid("Metal backend가 초기화되지 않았습니다"));
+            }
+            let native = self.textures.get(texture)?;
+            let layout = upload_layout(&native.desc, region, data.len())?;
+            let target = native.texture.clone();
+            // staging buffer는 GPU가 upload를 끝낼 때까지 예산에 잡힙니다.
+            let requested = layout.length as u64;
+            self.reserve(requested)?;
             let device = self
                 .device
                 .as_ref()
                 .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
-            let native = self.textures.get(texture)?;
-            let upload = stage_texture_upload(device.device(), native, region, data)?;
+            let upload = match stage_texture_upload(device.device(), &target, layout, data) {
+                Ok(upload) => upload,
+                Err(error) => {
+                    if error.kind() == BackendErrorKind::OutOfDeviceMemory {
+                        let event = self.memory.pressure(requested);
+                        self.push_event(event);
+                    }
+                    return Err(error);
+                }
+            };
+            self.memory.add(upload.bytes);
             self.pending_uploads.push(upload);
             Ok(())
         })
@@ -1033,6 +1060,7 @@ impl RendererBackend for MetalBackend {
             command_buffer: open.command_buffer,
             present: open.present_nanos.is_some(),
             timing: open.timing,
+            staging_bytes: 0,
         });
         Ok(id)
     }

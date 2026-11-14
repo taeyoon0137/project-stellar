@@ -21,8 +21,8 @@
 //!
 //! ## GPU 메모리 예산
 //!
-//! [`MemoryBudget`]은 backend가 만든 buffer·texture·transient의 `allocatedSize` 합을 예산(기본:
-//! device `recommendedMaxWorkingSetSize`)과 비교합니다. 넘는 할당은 Metal에 요청하기 전에 거부하고
+//! [`MemoryBudget`]은 backend가 만든 buffer·texture·transient와 GPU가 아직 끝내지 않은 texture upload
+//! staging buffer의 `allocatedSize` 합을 예산(기본: device `recommendedMaxWorkingSetSize`)과 비교합니다. 넘는 할당은 Metal에 요청하기 전에 거부하고
 //! `MemoryPressure` event와 `OutOfDeviceMemory`(복구: cache purge 후 한 번 재시도)를 돌려줍니다. 거부 전에
 //! backend가 다시 만들 수 있는 transient pool부터 비웁니다.
 

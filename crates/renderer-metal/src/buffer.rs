@@ -14,19 +14,22 @@
 //! 한꺼번에 제출합니다. 같은 queue에서 frame command buffer보다 먼저 commit하므로 frame은 upload 결과를
 //! 봅니다(queue 순서). 따라서 texture upload는 CPU timeline이 아니라 GPU queue 순서를 따르고, 이미
 //! 제출한 frame이 읽는 내용을 바꾸지 않습니다.
+//!
+//! staging buffer는 만들기 전에 GPU 메모리 예산을 확인하고, GPU가 upload command buffer를 끝낼 때까지
+//! 사용량에 잡힙니다(XI.8.7). 쌓인 upload가 예산을 넘으면 `update_texture`가 `OutOfDeviceMemory`입니다.
 
 use std::ffi::c_void;
 use std::ptr::NonNull;
 
 use stellar_renderer_core::backend::{
-    BackendError, BackendErrorKind, BufferDesc, BufferUsage, TextureRegion,
+    BackendError, BackendErrorKind, BufferDesc, BufferUsage, GpuTextureDesc, TextureRegion,
 };
 use stellar_renderer_core::render_graph::SampleCount;
 
 use crate::format::bytes_per_pixel;
 use crate::objc::{sel, send, Id, NSUInteger, RawId};
 use crate::sys::{resource_options, MTLOrigin, MTLSize};
-use crate::texture::{allocated_size, MetalTexture};
+use crate::texture::allocated_size;
 
 fn invalid(detail: &'static str) -> BackendError {
     BackendError::new(BackendErrorKind::InvalidUsage, detail)
@@ -148,16 +151,25 @@ pub(crate) struct PendingUpload {
     region: TextureRegion,
     bytes_per_row: usize,
     length: usize,
+    /// staging buffer GPU 메모리(`allocatedSize`, 예산 계산용).
+    pub(crate) bytes: u64,
 }
 
-/// upload 영역을 검사하고 data를 staging buffer에 복사합니다.
-pub(crate) fn stage_texture_upload(
-    device: &Id,
-    texture: &MetalTexture,
+/// 검사를 마친 upload 영역의 staging layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UploadLayout {
     region: TextureRegion,
-    data: &[u8],
-) -> Result<PendingUpload, BackendError> {
-    let desc = texture.desc;
+    bytes_per_row: usize,
+    /// staging byte 수(= data 길이).
+    pub(crate) length: usize,
+}
+
+/// upload 영역과 data 길이를 검사합니다(할당하지 않음).
+pub(crate) fn upload_layout(
+    desc: &GpuTextureDesc,
+    region: TextureRegion,
+    data_len: usize,
+) -> Result<UploadLayout, BackendError> {
     let bytes_per_pixel = bytes_per_pixel(desc.format)
         .filter(|_| desc.samples == SampleCount::X1)
         .ok_or(invalid(
@@ -176,6 +188,28 @@ pub(crate) fn stage_texture_upload(
     }
     let bytes_per_row = region.width as usize * bytes_per_pixel as usize;
     let length = bytes_per_row * region.height as usize;
+    if data_len != length {
+        return Err(invalid("upload data 길이가 영역과 다릅니다"));
+    }
+    Ok(UploadLayout {
+        region,
+        bytes_per_row,
+        length,
+    })
+}
+
+/// [`upload_layout`]으로 검사한 data를 staging buffer에 복사합니다. Metal이 nil이면 `OutOfDeviceMemory`.
+pub(crate) fn stage_texture_upload(
+    device: &Id,
+    texture: &Id,
+    layout: UploadLayout,
+    data: &[u8],
+) -> Result<PendingUpload, BackendError> {
+    let UploadLayout {
+        region,
+        bytes_per_row,
+        length,
+    } = layout;
     if data.len() != length {
         return Err(invalid("upload data 길이가 영역과 다릅니다"));
     }
@@ -195,12 +229,14 @@ pub(crate) fn stage_texture_upload(
         BackendErrorKind::OutOfDeviceMemory,
         "upload staging buffer를 할당할 수 없습니다",
     ))?;
+    let bytes = allocated_size(&staging);
     Ok(PendingUpload {
         staging,
-        texture: texture.texture.clone(),
+        texture: texture.clone(),
         region,
         bytes_per_row,
         length,
+        bytes,
     })
 }
 

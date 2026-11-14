@@ -14,7 +14,7 @@ use stellar_renderer_core::backend::recovery::{RecoveryAction, RecoveryTracker};
 use stellar_renderer_core::backend::{
     BackendError, BackendErrorKind, BlendState, BufferDesc, BufferUsage, CallOrderState,
     CheckedBackend, DrawCommand, EncodeOutcome, RendererBackend, SkipReason, SubmissionId,
-    TextureHandle,
+    TextureHandle, TextureRegion,
 };
 use stellar_renderer_core::render_graph::{
     AttachmentSize, CompiledRenderGraph, ImportKind, LoadOp, PassKind, RenderGraphBuilder,
@@ -257,6 +257,71 @@ fn memory_pressure_rejects_allocations_with_events() {
         [MetalEvent::MemoryPressure { .. }]
     ));
     assert_eq!(backend.validator().state(), CallOrderState::Idle);
+}
+
+#[test]
+fn texture_upload_staging_counts_against_the_budget() {
+    // texture upload staging buffer도 GPU가 upload를 끝낼 때까지 예산에 잡힙니다. 쌓인 upload가 예산을
+    // 넘으면 staging을 만들기 전에 거부하고 pressure event를 냅니다.
+    if !metal_available() {
+        return;
+    }
+    const KIB: u64 = 1024;
+    let size = 256;
+    let (mut backend, texture) = headless(size);
+    let texture_bytes = backend.inner().memory_usage().resident_bytes;
+    backend
+        .inner_mut()
+        .set_memory_budget(Some(texture_bytes + 100 * KIB));
+    let rows = |y, height| TextureRegion {
+        mip_level: 0,
+        x: 0,
+        y,
+        width: size,
+        height,
+    };
+    // 전체(256 KiB)는 남은 예산(100 KiB)을 넘습니다.
+    let full = vec![0u8; (size * size * 4) as usize];
+    let error = backend
+        .update_texture(texture, rows(0, size), &full)
+        .unwrap_err();
+    assert_eq!(error.kind(), BackendErrorKind::OutOfDeviceMemory);
+    assert_eq!(
+        backend.inner_mut().drain_events(),
+        vec![MetalEvent::MemoryPressure {
+            requested_bytes: 256 * KIB,
+            resident_bytes: texture_bytes,
+            budget_bytes: texture_bytes + 100 * KIB,
+        }]
+    );
+    assert_eq!(backend.validator().state(), CallOrderState::Idle);
+    // 64 KiB(64행)는 들어가고, GPU에 넘기기 전까지 사용량에 잡힙니다.
+    let quarter = vec![255u8; (size * 64 * 4) as usize];
+    backend
+        .update_texture(texture, rows(0, 64), &quarter)
+        .expect("upload");
+    let staged = backend.inner().memory_usage().resident_bytes - texture_bytes;
+    assert!(staged >= 64 * KIB, "{staged}");
+    // 앞 upload가 끝나지 않은 동안 두 번째 64 KiB는 예산을 넘습니다.
+    let error = backend
+        .update_texture(texture, rows(64, 64), &quarter)
+        .unwrap_err();
+    assert_eq!(error.kind(), BackendErrorKind::OutOfDeviceMemory);
+    assert!(matches!(
+        backend.inner_mut().drain_events().as_slice(),
+        [MetalEvent::MemoryPressure { .. }]
+    ));
+    // GPU가 upload를 끝내면 staging 몫이 돌아옵니다.
+    backend.inner_mut().wait_idle().expect("wait");
+    assert_eq!(backend.inner().memory_usage().resident_bytes, texture_bytes);
+    backend
+        .update_texture(texture, rows(64, 64), &quarter)
+        .expect("upload after completion");
+    // 두 upload가 쓴 위 128행(아래 행은 정의되지 않은 초기 내용).
+    let pixels = backend.inner_mut().read_texture(texture).expect("readback");
+    assert!(all_pixels(&pixels[..(size * 128 * 4) as usize], [255; 4]));
+    backend.inner_mut().wait_idle().expect("wait");
+    assert_eq!(backend.inner().memory_usage().resident_bytes, texture_bytes);
 }
 
 #[test]
