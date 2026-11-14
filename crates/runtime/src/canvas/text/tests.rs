@@ -311,3 +311,112 @@ fn document_selection_projects_multiline_scalar_offsets_and_verifies_changed_reg
     cache.sync_registrations(&model.definition().text_styles);
     assert!(project_text(&mut cache, &model).is_none());
 }
+
+#[test]
+fn saved_layout_reuses_only_matching_content_modifiers_styles_and_visible_nodes() {
+    use crate::window_session::test_fixtures::{sample_document, sid, TempDir};
+    use std::sync::Arc;
+    use stellar_core_types::{
+        color::{Color, ColorSpace},
+        order_key::OrderKey,
+        value::Transform2D,
+    };
+    use stellar_document::{
+        modifier::{ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack},
+        records::{NodePayload, NodeRecord},
+    };
+    use stellar_project::fonts::document::{import_default_font, DocumentFontSelection};
+    let project = TempDir::new("saved-text-cache");
+    let data = TempDir::new("saved-text-cache-origin");
+    let file = data.path().join("chosen.ttf");
+    std::fs::write(&file, stellar_text::test_support::outline_test_font()).unwrap();
+    let mut model = sample_document();
+    let black = Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).unwrap();
+    let red = Color::new(ColorSpace::Srgb, 1., 0., 0., 1.).unwrap();
+    let default = import_default_font(
+        project.path(),
+        data.path(),
+        &model.definition().text_styles,
+        [sid(801), sid(802)],
+        &DocumentFontSelection {
+            file,
+            index: 0,
+            size: 20 * 64,
+            fill: black,
+        },
+    )
+    .unwrap();
+    model.replace_text_styles(default.styles);
+    let a = TextPayload::new(
+        UserText::new("A\nA"),
+        vec![Paragraph { style: 0 }; 2],
+        vec![],
+    )
+    .unwrap();
+    let b = TextPayload::new(
+        UserText::new("A A\nA"),
+        vec![Paragraph { style: 0 }; 2],
+        vec![],
+    )
+    .unwrap();
+    let id = sid(501);
+    model
+        .insert_node(NodeRecord {
+            id,
+            parent: Some(sid(10)),
+            order_key: model.next_child_order_key(sid(10)),
+            visible: true,
+            locked: false,
+            display_name: "Test".into(),
+            payload: NodePayload::Text(a.clone()),
+        })
+        .unwrap();
+    let mut fonts = document::FontCache::default();
+    let mut saved = saved::SavedTextLayouts::default();
+    let mut project_text =
+        |id, model: &stellar_document::model::DocumentModel, payload: &TextPayload| {
+            let table = &model.definition().text_styles;
+            fonts.sync_registrations(table);
+            saved.begin_view(table);
+            let result = saved
+                .layout(&mut fonts, project.path(), model, id, payload)
+                .unwrap();
+            saved.end_view();
+            result
+        };
+    let original = project_text(id, &model, &a).0;
+    let unchanged = project_text(id, &model, &a).0;
+    assert!(Arc::ptr_eq(&original, &unchanged));
+    let changed = project_text(id, &model, &b).0;
+    assert!(!Arc::ptr_eq(&original, &changed));
+    assert_eq!(changed.glyphs.len(), 3);
+    let restored = project_text(id, &model, &a).0;
+    assert_eq!(original, restored);
+    let mut stack = ModifierStack::new(id);
+    stack
+        .insert(ModifierEntry {
+            id: ModifierId::new(sid(502)),
+            order: OrderKey::between(None, None),
+            kind: ModifierKind::Transform,
+            enabled: true,
+            payload: ModifierPayload::Transform(Transform2D::new(1., 0., 0., 1., 22., 0.).unwrap()),
+        })
+        .unwrap();
+    model.set_modifier_stack(stack).unwrap();
+    let (moved, _, transform) = project_text(id, &model, &a);
+    assert_eq!(
+        transform,
+        Transform2D::new(1., 0., 0., 1., 22., 0.).unwrap()
+    );
+    assert!(!Arc::ptr_eq(&restored, &moved));
+    let mut styles = model.definition().text_styles.clone();
+    styles.default_fill = Some(red);
+    model.replace_text_styles(styles);
+    let recolored = project_text(id, &model, &a).0;
+    assert_eq!(recolored.fill, red);
+    assert_eq!(original.fill, black);
+    project_text(sid(600), &model, &a);
+    let returned = project_text(id, &model, &a).0;
+    assert!(!Arc::ptr_eq(&returned, &recolored));
+    assert_eq!(returned, recolored);
+}

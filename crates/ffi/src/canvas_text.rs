@@ -52,7 +52,11 @@ fn with_text(
     {
         return StellarStatus::NoError;
     }
-    scene.text.get(&q.row).map_or(StellarStatus::NoError, run)
+    scene
+        .text
+        .get(&q.row)
+        .map(AsRef::as_ref)
+        .map_or(StellarStatus::NoError, run)
 }
 fn rect(r: Rect) -> [f32; 4] {
     [
