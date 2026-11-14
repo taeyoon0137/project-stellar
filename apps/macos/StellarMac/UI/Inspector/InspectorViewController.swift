@@ -189,17 +189,22 @@ final class InspectorViewController: NSViewController {
             )
         }
         page.frame = view.bounds
-        view.addSubview(page, positioned: .below, relativeTo: stateView)
         pages[key] = page
         if !pageOrder.contains(key) {
             // 예열 페이지는 아직 쓰지 않았으므로 가장 오래된 쪽에 둡니다.
             pageOrder.insert(key, at: 0)
         }
+        // 첫 단계에서 페이지를 창에 넣습니다(선택 경로에서 뷰를 창에 넣는 비용을 뺌).
+        let attach = InspectorBuildStep.light { [weak self, weak page] in
+            guard let self, let page, page.superview == nil else { return }
+            page.frame = self.view.bounds
+            self.view.addSubview(page, positioned: .below, relativeTo: self.stateView)
+        }
         buildQueue.enqueue(
             key: Self.buildKey(key), priority: priority,
             // 예열(배경)은 견본 값 변경까지 미리 치르고, 지금 필요한 구성(미스)은 바로 보이게 건너뜁니다.
-            steps: page.buildSteps(from: snapshot, collapsedSections: collapsedSections,
-                                   warmsUpValues: priority == .background),
+            steps: [attach] + page.buildSteps(from: snapshot, collapsedSections: collapsedSections,
+                                              warmsUpValues: priority == .background),
             afterSlice: { [weak page] in page?.layoutSubtreeIfNeeded() },
             completion: { [weak self, weak page] in
                 guard let self, let page else { return }
@@ -240,13 +245,12 @@ final class InspectorViewController: NSViewController {
             activePage = page
             if let focused { moveFocus(toControlWithIdentifier: focused, in: page, leaving: previous) }
         }
-        if !stateView.isHidden { stateView.isHidden = true }
+        stateView.hide()
         rebuildKeyViewChain()
     }
 
     private func showState(_ state: InspectorContentState) {
         stateView.show(state)
-        stateView.isHidden = false
         if let activePage {
             // 페이지를 기다리는 로딩이면 포커스한 속성을 맡아 두었다가 페이지가 보일 때 돌려줍니다.
             if let focused = focusedIdentifier(in: activePage) {
@@ -389,6 +393,12 @@ final class InspectorViewController: NSViewController {
 
     /// 상태 화면(선택 없음·로딩·오류)이 보이는지.
     var isShowingState: Bool { !stateView.isHidden }
+
+    /// 로딩 spinner가 돌고 있는지(페이지를 보인 뒤에는 멈춰야 함).
+    var isLoadingSpinnerRunning: Bool { stateView.isSpinnerRunning }
+
+    /// 로딩 문구·spinner를 보이기 전 기다리는 중인지.
+    var isLoadingRevealPending: Bool { stateView.isLoadingRevealPending }
 
     /// 현재 화면(활성 페이지 또는 상태 화면)에서 식별자로 컨트롤을 찾습니다.
     func control(identifier: String) -> NSView? {

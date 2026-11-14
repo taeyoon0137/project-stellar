@@ -782,8 +782,17 @@ enum InspectorUICheck {
             try require(controller.isShowingState == !hit,
                         "\(scenario.rawValue): \(hit ? "예열 페이지가 바로 보이지 않음" : "예열 밖 구성인데 로딩 상태가 아님")")
             if hit { hits += 1 } else { misses += 1 }
+            if !hit {
+                // 로딩 문구·spinner는 잠시 기다렸다 보입니다(짧은 로딩에 깜박이지 않게).
+                try require(controller.isLoadingRevealPending && !controller.isLoadingSpinnerRunning,
+                            "\(scenario.rawValue): 로딩 문구를 바로 보임")
+                if misses == 0 {
+                    try pumpUntil("로딩 문구 표시") { controller.isLoadingSpinnerRunning }
+                }
+            }
             harness.flush()
             try require(!controller.isShowingState, "\(scenario.rawValue): 나눠 만든 페이지가 보이지 않음")
+            try require(!controller.isLoadingSpinnerRunning, "\(scenario.rawValue): 페이지를 보인 뒤에도 로딩 spinner가 돎")
             try checkStandby(harness, label: scenario.rawValue)
         }
         report.append("prewarm \(prewarm.count) layouts, \(hits) scenarios without miss, \(misses) via loading")

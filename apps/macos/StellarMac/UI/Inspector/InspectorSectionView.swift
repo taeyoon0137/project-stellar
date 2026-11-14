@@ -362,7 +362,13 @@ final class InspectorBannerView: InspectorFlowView {
 }
 
 /// 선택 없음·로딩·오류 상태 화면(가이드 7.1). 보이는 요소를 세로 가운데에 쌓습니다.
+///
+/// 로딩은 `loadingRevealDelay` 동안 비어 있다가 그때도 로딩 중이면 제목과 spinner를 보입니다. 페이지를 나눠
+/// 만드는 짧은 로딩(보통 0.1초 안팎)에 문구가 깜박이지 않게 하고, 선택 경로에서 spinner 시작·그리기 비용을 빼기
+/// 위함입니다. 접근성 레이블은 처음부터 "Loading Properties…"입니다.
 final class InspectorStateView: InspectorFlowView {
+    /// 로딩 문구·spinner를 보이기까지 기다리는 시간(초).
+    static let loadingRevealDelay: TimeInterval = 0.15
     private let iconView = NSImageView()
     private let spinner = NSProgressIndicator()
     private let titleLabel = NSTextField(labelWithString: "")
@@ -375,6 +381,7 @@ final class InspectorStateView: InspectorFlowView {
     private var titleHeight: CGFloat = 0
     private var retrySize = NSSize.zero
     private var shownState: InspectorContentState?
+    private var revealTimer: Timer?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -403,12 +410,48 @@ final class InspectorStateView: InspectorFlowView {
         setAccessibilityRole(.group)
     }
 
+    /// 상태 화면을 숨깁니다. 로딩 spinner가 숨은 채로 계속 돌지 않게 멈춥니다.
+    func hide() {
+        guard !isHidden else { return }
+        cancelReveal()
+        spinner.stopAnimation(nil)
+        isSpinnerRunning = false
+        shownState = nil
+        isHidden = true
+    }
+
+    /// 로딩 문구가 아직 보이지 않고 기다리는 중인지(검사용).
+    var isLoadingRevealPending: Bool { revealTimer != nil }
+
+    private func cancelReveal() {
+        revealTimer?.invalidate()
+        revealTimer = nil
+    }
+
+    /// 기다린 로딩 문구·spinner를 지금 보입니다.
+    func revealLoading() {
+        cancelReveal()
+        guard shownState == .loading, !isHidden else { return }
+        titleLabel.isHidden = false
+        spinner.isHidden = false
+        spinner.startAnimation(nil)
+        isSpinnerRunning = true
+        needsLayout = true
+    }
+
+    /// 로딩 spinner를 돌리고 있는지(검사용).
+    private(set) var isSpinnerRunning = false
+
     func show(_ state: InspectorContentState) {
+        isHidden = false
         guard state != shownState else { return }
         shownState = state
+        cancelReveal()
         iconView.isHidden = true
         spinner.stopAnimation(nil)
+        isSpinnerRunning = false
         spinner.isHidden = true
+        titleLabel.isHidden = false
         retryButton.isHidden = true
         messageLabel.isHidden = false
         switch state {
@@ -417,10 +460,14 @@ final class InspectorStateView: InspectorFlowView {
             titleLabel.stringValue = "No Selection"
             messageLabel.stringValue = "Select a layer on the canvas or in the layer list to see its properties."
         case .loading:
-            spinner.isHidden = false
-            spinner.startAnimation(nil)
             titleLabel.stringValue = "Loading Properties…"
+            titleLabel.isHidden = true
             messageLabel.isHidden = true
+            let timer = Timer(timeInterval: Self.loadingRevealDelay, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.revealLoading() }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+            revealTimer = timer
         case .failed(let message):
             setIcon(InspectorSymbols.failure, label: "Error")
             titleLabel.stringValue = "Can’t Show Properties"
@@ -446,7 +493,7 @@ final class InspectorStateView: InspectorFlowView {
         var entries: [(view: NSView, size: NSSize)] = []
         if !iconView.isHidden { entries.append((iconView, iconSize)) }
         if !spinner.isHidden { entries.append((spinner, spinnerSize)) }
-        entries.append((titleLabel, NSSize(width: contentWidth, height: titleHeight)))
+        if !titleLabel.isHidden { entries.append((titleLabel, NSSize(width: contentWidth, height: titleHeight))) }
         if !messageLabel.isHidden {
             entries.append((messageLabel, NSSize(width: contentWidth, height: messageLabel.flowHeight(forWidth: contentWidth))))
         }
