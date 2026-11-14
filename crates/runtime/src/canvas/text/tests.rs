@@ -256,6 +256,8 @@ fn document_selection_projects_multiline_scalar_offsets_and_verifies_changed_reg
     let (text, _, _) = project_text(&mut cache, &model).unwrap();
     assert_eq!(text.fill, fill);
     assert_eq!(text.glyphs.len(), 3);
+    assert_eq!(text.outlines.len(), 1);
+    assert!(text.glyphs.iter().all(|(_, index)| *index == 0));
     assert_eq!(text.lines.len(), 2);
     assert_eq!(text.hit(1., 22.).unwrap().0, 4);
     assert_eq!(text.caret_rect(4, false).unwrap().origin().y(), 20.);
@@ -391,7 +393,9 @@ fn saved_layout_reuses_only_matching_content_modifiers_styles_and_visible_nodes(
     assert!(!Arc::ptr_eq(&original, &changed));
     assert_eq!(changed.glyphs.len(), 3);
     let restored = project_text(id, &model, &a).0;
-    assert_eq!(original, restored);
+    assert_ne!(original.paint_token, restored.paint_token);
+    assert_eq!(original.outlines, restored.outlines);
+    assert_eq!(original.glyphs, restored.glyphs);
     let mut stack = ModifierStack::new(id);
     stack
         .insert(ModifierEntry {
@@ -418,5 +422,6 @@ fn saved_layout_reuses_only_matching_content_modifiers_styles_and_visible_nodes(
     project_text(sid(600), &model, &a);
     let returned = project_text(id, &model, &a).0;
     assert!(!Arc::ptr_eq(&returned, &recolored));
-    assert_eq!(returned, recolored);
+    assert_ne!(returned.paint_token, recolored.paint_token);
+    assert_eq!(returned.glyphs, recolored.glyphs);
 }

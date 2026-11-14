@@ -2,24 +2,73 @@ import AppKit
 
 /// Rust 문서 layout과 같은 revision의 glyph 및 line box입니다.
 struct CanvasDocumentText {
-    let query: StellarCanvasTextQuery
-    let glyphs: [CGPath]
+    private(set) var query: StellarCanvasTextQuery
+    let paintToken: UInt64
+    private struct Glyph {
+        let outline: CGPath
+        let origin: CGPoint
+    }
+    private let glyphs: [Glyph]
     let hitPath: CGPath
     let inkBounds: CGRect
 
-    init?(handle: UInt64, session: UInt64, query: StellarCanvasTextQuery) {
+    init?(handle: UInt64, session: UInt64, query: StellarCanvasTextQuery, previous: CanvasDocumentText? = nil) {
         var count = 0
-        guard stellar_window_text_paint(handle, session, query, nil, 0, &count) == STELLAR_OK else { return nil }
-        var elements = [StellarCanvasTextElement](repeating: StellarCanvasTextElement(), count: count)
+        var token: UInt64 = 0
+        guard stellar_window_text_parts(handle, session, query, nil, 0, &count, &token) == STELLAR_OK else { return nil }
+        if var cached = previous, cached.paintToken == token {
+            cached.query = query
+            self = cached
+            return
+        }
+        var elements = [StellarCanvasTextPart](repeating: StellarCanvasTextPart(), count: count)
         let status = elements.withUnsafeMutableBufferPointer {
-            stellar_window_text_paint(handle, session, query, $0.baseAddress, $0.count, &count)
+            stellar_window_text_parts(handle, session, query, $0.baseAddress, $0.count, &count, &token)
         }
         guard status == STELLAR_OK else { return nil }
-        guard let geometry = CanvasGlyphPaths(elements) else { return nil }
+        var outlines: [(CGPath, CGRect)] = []
+        var glyphs: [Glyph] = []
+        var path = CGMutablePath()
+        let hits = CGMutablePath()
+        var bounds = CGRect.null
+        for e in elements {
+            let (x, y, a, b, c, d) = e.points
+            switch e.op {
+            case 1: path.move(to: CGPoint(x: CGFloat(x), y: CGFloat(y)))
+            case 2: path.addLine(to: CGPoint(x: CGFloat(x), y: CGFloat(y)))
+            case 3:
+                path.addCurve(to: CGPoint(x: CGFloat(c), y: CGFloat(d)),
+                              control1: CGPoint(x: CGFloat(x), y: CGFloat(y)),
+                              control2: CGPoint(x: CGFloat(a), y: CGFloat(b)))
+            case 4: path.closeSubpath()
+            case 5: hits.addRect(CGRect(x: CGFloat(x), y: CGFloat(y), width: CGFloat(a), height: CGFloat(b)))
+            case 6:
+                outlines.append((path, path.boundingBoxOfPath))
+                path = CGMutablePath()
+            case 7:
+                guard let index = Int(exactly: e.index), outlines.indices.contains(index) else { return nil }
+                let (outline, ink) = outlines[index]
+                let origin = CGPoint(x: CGFloat(x), y: CGFloat(y))
+                glyphs.append(Glyph(outline: outline, origin: origin))
+                bounds = bounds.union(ink.offsetBy(dx: origin.x, dy: origin.y))
+            default: return nil
+            }
+        }
         self.query = query
-        glyphs = geometry.paths
-        hitPath = geometry.hits
-        inkBounds = geometry.bounds
+        paintToken = token
+        self.glyphs = glyphs
+        hitPath = hits
+        inkBounds = bounds
+    }
+
+    func draw(in context: CGContext) {
+        for glyph in glyphs {
+            context.saveGState()
+            context.translateBy(x: glyph.origin.x, y: glyph.origin.y)
+            context.addPath(glyph.outline)
+            context.fillPath()
+            context.restoreGState()
+        }
     }
 }
 
