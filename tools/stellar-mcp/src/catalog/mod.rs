@@ -1,6 +1,7 @@
 //! MCP resource·tool catalog 정의 (XIX.2).
 //!
 //! - [`resources`]: read resource와 내용 schema (XIX.2.1).
+//! - [`paging`]: resource 응답의 revision과 page cursor (XIX.2.2).
 //!
 //! 이 모듈은 정의와 순수 판정만 담습니다. backend(headless XIX.9.3, attached XIX.9.4) 연결 전이라
 //! 서버는 아직 이 catalog를 `resources/list`·`tools/list`로 광고하지 않습니다. 정의는 XIX.9.2에서
@@ -8,6 +9,9 @@
 
 /// read resource 정의 (XIX.2.1).
 pub mod resources;
+
+/// resource 응답 revision과 page cursor (XIX.2.2).
+pub mod paging;
 
 use crate::json::{self, JsonLimits, JsonValue};
 
