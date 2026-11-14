@@ -1579,9 +1579,9 @@ tools/xtask/
 |---|---|---|---|---|
 | XV.7.1 | `[x]` | dependency update request가 selector 재해석 후 CurrentLibrarySnapshot과 CandidateLibrarySnapshot을 생성합니다. | current/candidate commit 정확. | XV.2.4, XV.5.1 |
 | XV.7.2 | `[x]` | library resource Semantic Diff를 ComponentDefinition·Property·Token 단위로 계산합니다. | resource 변경 fixture 정확. | XIV.3.7, XV.5.1 |
-| XV.7.3 | `[ ]` | candidate library를 적용하기 전 사용 project의 external refs와 instance overrides를 검증합니다. | removed property override가 orphan diagnostic. | IX.4.6, XV.5.2 |
-| XV.7.4 | `[ ]` | 사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다. | update 후 render/semantic snapshot expected. | XV.7.3, XV.4.5 |
-| XV.7.5 | `[ ]` | update 실패 시 이전 lock/cache snapshot을 유지합니다. | network/cache/schema fault fixture 통과. | XV.7.4 |
+| XV.7.3 | `[!]` | candidate library를 적용하기 전 사용 project의 external refs와 instance overrides를 검증합니다. | removed property override가 orphan diagnostic. | IX.4.6, XV.5.2 |
+| XV.7.4 | `[!]` | 사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다. | update 후 render/semantic snapshot expected. | XV.7.3, XV.4.5 |
+| XV.7.5 | `[!]` | update 실패 시 이전 lock/cache snapshot을 유지합니다. | network/cache/schema fault fixture 통과. | XV.7.4 |
 
 ### XV.8 캐시 정리와 진단
 
@@ -1590,7 +1590,7 @@ tools/xtask/
 | XV.8.1 | `[!]` | 최근 사용 시각과 lockfile reference set을 기준으로 cache GC 후보를 계산합니다. 삭제 임계치는 config에 둡니다. | active lock entry 후보 제외. | XV.3.6, XV.4.2 |
 | XV.8.2 | `[!]` | 여러 project가 참조하는 cache entry는 마지막 참조가 사라질 때까지 삭제하지 않습니다. | two-project fixture 통과. | XV.8.1 |
 | XV.8.3 | `[x]` | duplicate library version warning에 dependency paths와 예상 추가 용량을 포함합니다. repository URL은 표시 UI에만 local source로 전달하고 telemetry에는 제외합니다. | warning fixture 정확. | XV.2.5, XV.3.5 |
-| XV.8.4 | `[ ]` | 외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update. | semantic snapshot·lockfile golden 통과. | XV.1~XV.7 |
+| XV.8.4 | `[!]` | 외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update. | semantic snapshot·lockfile golden 통과. | XV.1~XV.7 |
 
 **Phase XV 완료 조건:** 외부 library exact version 재현, 다중 버전 격리, 읽기 전용 정책, update 검토가 통과합니다.
 
