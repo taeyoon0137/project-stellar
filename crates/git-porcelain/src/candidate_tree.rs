@@ -17,8 +17,10 @@
 //!   흐름(XIV.11) 대상이므로 거부합니다.
 //! - submodule(gitlink)은 내용이 다른 저장소라 쓰지 않고 [`CandidateTree::preserved_gitlinks`]로 돌려줍니다.
 //! - 결과는 경로 bytes 순으로 결정론적입니다.
-//! - 내용은 쓰는 순간 한 항목씩 읽습니다. index blob은 [`BATCH_CHUNK`]개씩 읽어 그 batch만 메모리에 두고,
-//!   작업 트리 파일 목록은 경로 index로 찾습니다(후보 수 × 작업 트리 파일 수 탐색 없음).
+//! - 내용은 쓰는 순간 한 항목씩 읽습니다. index blob은 크기를 먼저 확인한 뒤 batch
+//!   ([`BATCH_CHUNK`](crate::snapshot::blob::BATCH_CHUNK)개와 바이트 상한, SEC-3) 단위로 읽어 그 batch만
+//!   메모리에 두고, 작업 트리 파일 목록은 경로 index로 찾습니다(후보 수 × 작업 트리 파일 수 탐색 없음).
+//!   index blob 크기 상한은 [`BlobLimits::MATERIALIZE`]입니다.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -27,8 +29,10 @@ use crate::classify::{classify_project_path, ProjectFileClass};
 use crate::decode::GitPath;
 use crate::object::{FileModeKind, ObjectId};
 use crate::ops::GitOpError;
-use crate::snapshot::blob::{read_blobs, BlobError, BATCH_CHUNK};
-use crate::snapshot::materialize::{materialize_with, MaterializeError, MaterializedSnapshot};
+use crate::snapshot::blob::{BlobError, BlobLimits, OrderedBlobReader};
+use crate::snapshot::materialize::{
+    materialize_with, validate_entries, MaterializeError, MaterializedSnapshot,
+};
 use crate::snapshot::read_index_snapshot;
 use crate::snapshot::working_tree::{
     list_working_tree_files, read_working_tree_file, WorkingTreeFile, WorkingTreeFileKind,
@@ -328,9 +332,9 @@ pub fn write_candidate_tree(
         );
     }
 
-    // 4) 임시 tree 쓰기(검증 먼저, 실패 시 전체 삭제). 내용은 한 항목씩 읽어 씁니다. index blob은
-    //    [`BATCH_CHUNK`]개씩 읽어 그 batch만 메모리에 두고(XIV.2.6 `materialize_snapshot`과 같은 상한), 작업
-    //    트리 파일은 쓸 때 읽습니다.
+    // 4) 임시 tree 쓰기(검증 먼저, 실패 시 전체 삭제). 내용은 한 항목씩 읽어 씁니다. index blob은 크기를
+    //    먼저 확인하고(상한을 넘으면 쓰기 전에 실패) batch 단위로 읽어 그 batch만 메모리에 두며(XIV.2.6
+    //    `materialize_snapshot`과 같은 상한), 작업 트리 파일은 쓸 때 읽습니다.
     let (files, sources): (Vec<CandidateTreeFile>, Vec<Source<'_>>) = files.into_values().unzip();
     let entries: Vec<(GitPath, FileModeKind)> =
         files.iter().map(|f| (f.path.clone(), f.kind)).collect();
@@ -341,25 +345,20 @@ pub fn write_candidate_tree(
             _ => None,
         })
         .collect();
-    let mut batch: BTreeMap<ObjectId, Vec<u8>> = BTreeMap::new();
-    let mut index_read = 0usize;
+    // 경로 검증을 blob 크기 확인(Git 실행)보다 먼저 합니다.
+    validate_entries(&entries).map_err(CandidateTreeError::Materialize)?;
+    let mut blobs = OrderedBlobReader::new(git, worktree, index_oids, &BlobLimits::MATERIALIZE)
+        .map_err(CandidateTreeError::Blob)?;
     // 원래 실패 종류(blob·작업 트리 읽기)를 materialize 오류로 뭉개지 않고 돌려주기 위한 자리.
     let mut failure: Option<CandidateTreeError> = None;
     let written = materialize_with(&entries, parent, |index, path, _| match sources[index] {
-        Source::Index(oid) => {
-            if index_read.is_multiple_of(BATCH_CHUNK) {
-                let end = (index_read + BATCH_CHUNK).min(index_oids.len());
-                batch = read_blobs(git, worktree, &index_oids[index_read..end]).map_err(|e| {
-                    failure = Some(CandidateTreeError::Blob(e.clone()));
-                    MaterializeError::Blob(e)
-                })?;
+        Source::Index(oid) => match blobs.next_content(oid) {
+            Ok(bytes) => Ok(bytes.to_vec()),
+            Err(e) => {
+                failure = Some(CandidateTreeError::Blob(e.clone()));
+                Err(MaterializeError::Blob(e))
             }
-            index_read += 1;
-            batch
-                .get(oid)
-                .cloned()
-                .ok_or_else(|| MaterializeError::Blob(BlobError::Missing(oid.clone())))
-        }
+        },
         Source::WorkingTree(observed) => {
             read_working_tree_file(worktree, observed).map_err(|kind| {
                 failure = Some(CandidateTreeError::WorkingTreeRead {

@@ -33,8 +33,10 @@ pub mod blob;
 /// 임시 virtual project 디렉터리 materialize(XIV.2.6).
 pub mod materialize;
 
-pub use blob::{read_blobs, BlobError};
-pub use materialize::{materialize_snapshot, MaterializeError, MaterializedSnapshot};
+pub use blob::{read_blobs, read_blobs_with_limits, BlobError, BlobLimits};
+pub use materialize::{
+    materialize_snapshot, materialize_snapshot_with_limits, MaterializeError, MaterializedSnapshot,
+};
 
 /// 디스크 저장 파일 기준 WorkingTree provider(XIV.2.7).
 pub mod working_tree;
