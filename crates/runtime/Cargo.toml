@@ -20,10 +20,15 @@ stellar-storage = { path = "../storage" }
 stellar-renderer-core = { path = "../renderer-core" }
 # 창 session viewport → scene camera 입력(XII.4.3, ADR-0028).
 stellar-scene = { path = "../scene" }
+# 선택 staging 후보의 저장 직렬화와 실제 Git 읽기 조합(XIV.5.5, ADR-0013).
+stellar-ops = { path = "../ops" }
+stellar-git-porcelain = { path = "../git-porcelain" }
 
 [dev-dependencies]
 # 테스트만 문서 semantic snapshot(VI.10.4 test-support)을 씁니다.
 stellar-document = { path = "../document", features = ["test-support"] }
+stellar-ops = { path = "../ops", features = ["test-support"] }
+stellar-git-porcelain = { path = "../git-porcelain", features = ["test-support"] }
 
 [lints]
 workspace = true

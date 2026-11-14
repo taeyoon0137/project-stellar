@@ -49,6 +49,9 @@ pub mod validate;
 /// 프로젝트 사이 semantic diff와 3-way semantic merge (XXIV.1.3).
 pub mod compare;
 
+/// 선택 staging 후보의 무손실 검사와 기존 generation 파일 직렬화(XIV.5.5).
+pub mod candidate;
+
 /// 저장 스키마 migration (XXIV.1.3).
 pub mod migrate;
 
