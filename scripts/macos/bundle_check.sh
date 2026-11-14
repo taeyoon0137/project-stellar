@@ -135,7 +135,7 @@ echo "✓ rpath: $( [ -n "$RPATHS" ] && printf '%s' "$RPATHS" | tr '\n' ' ' || p
 
 # --- 5. Rust 코어 C ABI가 실행 파일에 정적으로 포함 ---
 DEFINED="$(nm -gU "$BIN" | awk '{print $NF}')"
-ABI_FUNCTIONS="$(grep -oE '\bstellar_[a-z_]+\(' "$HEADER" | tr -d '(' | sort -u)"
+ABI_FUNCTIONS="$(xcrun clang -E -P -x c "$HEADER" | grep -oE '\bstellar_[a-z_]+\(' | tr -d '(' | sort -u)"
 [ -n "$ABI_FUNCTIONS" ] || fail "헤더에서 C ABI 함수를 찾지 못함"
 ABI_COUNT=0
 while IFS= read -r symbol; do
