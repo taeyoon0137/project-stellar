@@ -2,7 +2,8 @@
 
 - WBS: X.11.2
 - 작업명: nested component, variant, token 조건이 포함된 layout fixture 20개 추가(expected rect golden)
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 리뷰 상태 정정(아래 "상태 정정"). 테스트 모델 기준 expected rect golden은 통과했지만, 실제 문서
+  resolver 결과와 같은지는 확인하지 않았습니다.
 - 선행: IX.9(절 단위, IX.9.1~IX.9.4 모두 `[ ]`), X.7(절 단위)
   - **완화**: 절 단위 선행이므로 필요한 코드가 있으면 완화합니다. IX.9 통합 fixture는 미완이지만 이 행이 쓰는 계약 —
     instance expansion(IX.2.2 `[x]`), variant override 우선순위(IX.7.6 `[x]`), token 모델·평가(VIII.5.1~VIII.5.4 `[x]`) —
@@ -64,3 +65,16 @@
 
 - Toolbar root의 `Fill` 너비는 Hug 인스턴스 box 안이라 콘텐츠 크기로 해석됩니다(엔진 규칙대로이며 golden에 그대로 고정).
 - 양 플랫폼 비교(X.11.3)는 Windows 보류(ADR-0006)로 이 행 범위 밖입니다.
+
+## 상태 정정(리뷰, 2026-11-14)
+
+- `[x]` → `[~]`. 근거:
+  - 절 단위 선행 IX.9(IX.9.1\~IX.9.4)가 기준 commit `24728e3`에서 모두 `[ ]`입니다. 위 완화는 "필요한 코드가 있으면"을
+    전제로 하지만, 이 행이 IX.9에서 받아야 할 것은 통합 component library·drilling·nullable variant fixture 자체이고 아직
+    없습니다. 완화 근거로 든 IX.2.2·IX.7.6·VIII.5 코드도 이 fixture가 호출하지 않습니다(layout crate는 core-types만 의존).
+  - fixture의 component 펼침·variant override·token 값은 `crates/layout/tests/component_layout_corpus.rs` 안의 테스트 모델이
+    만듭니다. 검증 열 "expected rect golden 통과"는 이 모델의 출력에 대해서만 충족했고, 문서 crate의 실제 resolver가 같은
+    layout 입력(따라서 같은 rect)을 내는지는 확인하지 않았습니다(위 "차이").
+- 이미 있는 증거(유지): 테스트 모델 기준 fixture 20개 golden 일치, 증분 전환 = 전체 계산, 가상 layout id 안정성.
+- `[x]` 조건: IX.9.1\~IX.9.3이 `[x]`가 되고, 상위 crate의 adapter(문서 → `LayoutSource`)로 같은 scene·조건을 실제
+  resolver에서 펼쳐 이 golden(또는 IX.9 fixture에서 다시 만든 golden)과 같은 rect를 내는 테스트가 통과해야 합니다.

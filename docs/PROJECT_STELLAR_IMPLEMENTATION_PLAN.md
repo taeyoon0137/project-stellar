@@ -1020,7 +1020,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | X.11.1 | `[x]` | Free, Stack, Grid, Overlay, Constraint 각각 최소 50개 fixture를 생성하는 schema와 runner를 작성합니다. | fixture count와 schema 검증 통과. | X.2~X.6 |
-| X.11.2 | `[x]` | nested component, variant, token 조건이 포함된 layout fixture 20개를 추가합니다. | expected rect golden 통과. | IX.9, X.7 |
+| X.11.2 | `[~]` | nested component, variant, token 조건이 포함된 layout fixture 20개를 추가합니다. | expected rect golden 통과. | IX.9, X.7 |
 | X.11.3 | `[ ]` | 양 플랫폼에서 logical layout result를 비교하는 CI job을 추가합니다. | 모든 rect/baseline bytes 동일. | X.10.7, X.11.2 |
 
 **Phase X 완료 조건:** 공통 레이아웃과 텍스트 논리 결과가 양 플랫폼에서 동일하고 증분 benchmark가 방문 범위를 보고합니다.
