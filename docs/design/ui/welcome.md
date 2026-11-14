@@ -331,7 +331,7 @@ protocol WelcomeDataSource: AnyObject {
 
 ## 13. 검사
 
-`WelcomeUICheck.run() -> Bool`이 화면 밖에서 검사합니다. `StellarMac --welcome-ui-check`로 실행하며(`main.swift`), `scripts/macos/smoke.sh`가 다른 검사 뒤에 실행합니다.
+`WelcomeUICheck.run() -> Bool`이 화면 밖에서 검사합니다. `Stellar --welcome-ui-check`로 실행하며(`main.swift`), `scripts/macos/smoke.sh`가 다른 검사 뒤에 실행합니다.
 
 - 시작 창 6개 상태(목록, 빈 목록, 읽는 중, 실패, Git 없음, Clone 진행 중)와 가장 긴 내용(쓸 수 없는 Git + 진행 중), Clone sheet, 설치 sheet 13개 단계를 Light, Dark, 대비 높이기 Light·Dark에서 레이아웃합니다.
 - 모호한 Auto Layout, 세로로 잘린 여러 줄 레이블, 직접 넣은 반투명 표면이 없는지 확인합니다(`NSScrollView`가 스스로 넣는 표면은 시스템 소유라 제외).

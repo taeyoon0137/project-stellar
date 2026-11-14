@@ -17,7 +17,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		AA0000000000000000000014 /* Exceptions for "StellarMac" folder in "Stellar" target */ = {
+		AA0000000000000000000014 /* Exceptions for "Stellar" folder in "Stellar" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -27,11 +27,12 @@
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		AA0000000000000000000004 /* StellarMac */ = {
+		AA0000000000000000000004 /* Stellar */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				AA0000000000000000000014 /* Exceptions for "StellarMac" folder in "Stellar" target */,
+				AA0000000000000000000014 /* Exceptions for "Stellar" folder in "Stellar" target */,
 			);
+			name = Stellar;
 			path = StellarMac;
 			sourceTree = "<group>";
 		};
@@ -52,7 +53,7 @@
 		AA0000000000000000000002 = {
 			isa = PBXGroup;
 			children = (
-				AA0000000000000000000004 /* StellarMac */,
+				AA0000000000000000000004 /* Stellar */,
 				AA0000000000000000000015 /* AppIcon.icon */,
 				AA0000000000000000000003 /* Products */,
 			);
@@ -83,7 +84,7 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				AA0000000000000000000004 /* StellarMac */,
+				AA0000000000000000000004 /* Stellar */,
 			);
 			name = Stellar;
 			packageProductDependencies = (

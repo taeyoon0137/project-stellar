@@ -1,6 +1,6 @@
 import AppKit
 
-/// 시작 창 영역을 headless로 검증합니다(`StellarMac --welcome-ui-check`, `scripts/macos/smoke.sh`가 실행).
+/// 시작 창 영역을 headless로 검증합니다(`Stellar --welcome-ui-check`, `scripts/macos/smoke.sh`가 실행).
 ///
 /// - 시작 창·Clone sheet·명령 설치 sheet를 Stub 데이터로 화면 밖에서 만들고 레이아웃을 강제한 뒤,
 ///   모호한 Auto Layout, 잘린 여러 줄 레이블, 직접 그린 반투명 표면이 없는지 확인합니다.

@@ -43,7 +43,7 @@
 | `cargo xtask validate-adr crates/ffi/src/window_session.rs docs/adr/ADR-0028-window-session-shell-surface.md` | 종료 0 |
 | `cargo xtask validate-task-status` / `cargo xtask sync-plan --check` | 종료 0. WBS 상태 변경 없음 |
 | Debug `xcodebuild … CODE_SIGNING_ALLOWED=NO build` | 종료 0. Swift warning 0. AppIntents 미사용 metadata 경고 1건 |
-| `StellarMac --window-close-check crates/runtime/tests/fixtures/window-session-project` | 종료 0, 87 checks |
+| `Stellar --window-close-check crates/runtime/tests/fixtures/window-session-project` | 종료 0, 87 checks |
 | `scripts/macos/smoke.sh` | 종료 0, `smoke OK` |
 | C ABI `cc … runtime_abi.c … libstellar_ffi.a` 후 실행 | 종료 0, 1,000 create/destroy cycle·0 leaks·session events |
 | `git diff --check` / `git status --short` | 공백 오류 없음, 요청 범위의 변경 파일만 확인 |

@@ -12,7 +12,7 @@
 | 실행 | 관측 |
 |---|---|
 | `./scripts/macos/smoke.sh` | Debug 앱 컴파일·링크 후 화면 밖 기본 프로젝트 창에서 창 session 명령 82개 검사 |
-| `StellarMac --session-commands-check crates/runtime/tests/fixtures/window-session-project` | 시작·변경·관성 이벤트와 50% 배율에서 x/y 이동량 확인. 대기 없이 보낸 32개 이벤트 합계 확인. 다른 창, 문서 revision·undo·dirty 및 Save Now 뒤 저장 파일 bytes 보존 |
+| `Stellar --session-commands-check crates/runtime/tests/fixtures/window-session-project` | 시작·변경·관성 이벤트와 50% 배율에서 x/y 이동량 확인. 대기 없이 보낸 32개 이벤트 합계 확인. 다른 창, 문서 revision·undo·dirty 및 Save Now 뒤 저장 파일 bytes 보존 |
 | `cargo test --locked --offline -p stellar-ffi` | 71개 통과. 두 창 격리, 유효하지 않은 delta와 session 오류 경계 포함 |
 | `cargo test --locked --offline -p stellar-runtime --lib zoom_commands_and_pan_change_only_the_target_viewport` | 기존 viewport의 배율·팬과 다른 창 보존 검사 |
 | `cargo run --locked --offline -q -p xtask -- generate-ffi-header --check` | 생성 헤더와 원본 일치 |

@@ -71,7 +71,7 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA0-37 | 메뉴 막대 보기 | 순서: 앱 메뉴, File, Edit, View, Insert, Object, Window, Help. 앱 메뉴 이름은 지금 "StellarMac"(번들 이름, 표시 이름 변경은 별도 작업) |
+| QA0-37 | 메뉴 막대 보기 | 순서: 앱 메뉴, File, Edit, View, Insert, Object, Window, Help. 앱 메뉴 이름은 "Stellar" |
 | QA0-38 | 각 메뉴를 펼쳐 보기 | 지금 쓸 수 없는 항목(Undo, Redo, Save Now, Cut·Copy·Paste(캔버스 포커스), Object 메뉴 전체, Show Rulers, Search Project…, New·Clone Project…)은 숨지 않고 비활성. 한 묶음 안의 아이콘은 모두 있거나 모두 없음 |
 | QA0-39 | Settings…(⌘,) | 설정 창이 열림. 지금은 "Stellar Settings" 글자만 있는 placeholder(설정 창 전용 WBS 없음) |
 | QA0-40 | File ▸ Show in Finder | QA0-33과 같음 |

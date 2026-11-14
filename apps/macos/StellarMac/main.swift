@@ -1,6 +1,6 @@
 import AppKit
 
-// StellarMac 진입점.
+// Stellar 진입점.
 
 // lifecycle 검사 모드: 코어 runtime create/destroy가 1:1인지 headless로 검증하고 종료(II.5.3).
 if CommandLine.arguments.contains("--lifecycle-check") {
