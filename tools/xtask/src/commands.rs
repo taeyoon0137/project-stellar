@@ -347,7 +347,8 @@ fn cmd_sync_plan(repo_root: &Path) -> Result<(), i32> {
 }
 
 fn cmd_validate_crate_graph(repo_root: &Path) -> Result<(), i32> {
-    // XXIX.1.1: crates/*와 tools/stellar-* manifest의 모든 의존 표를 읽고 전이 도달도 검사합니다.
+    // XXIX.1.1: crates/*, tools/stellar-*, 루트 [workspace].members(xtask·bench fixture 제외)
+    // manifest의 모든 의존 표를 읽고 전이 도달도 검사합니다.
     let graph = scan_workspace(repo_root).map_err(|e| match e.code {
         "missing-crates-dir" => usage_err(&e.message),
         "io" => internal(&e.message),
@@ -549,7 +550,7 @@ mod tests {
 
     #[test]
     fn validate_crate_graph_on_real_workspace() {
-        // XXIX.1.1: crates/*와 tools/stellar-*의 모든 의존 표와 전이 도달 규칙을 통과합니다.
+        // XXIX.1.1: 검사 대상 manifest의 모든 의존 표와 전이 도달 규칙을 통과합니다.
         assert_eq!(run(&args(&["validate-crate-graph"]), &root()), EXIT_OK);
     }
 }

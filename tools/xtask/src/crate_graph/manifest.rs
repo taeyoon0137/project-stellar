@@ -138,6 +138,8 @@ pub struct ParsedManifest {
     pub deps: Vec<DeclaredDep>,
     /// `[workspace.dependencies]`에서 `package = "..."`로 이름을 바꾼 항목(key → package).
     pub workspace_renames: BTreeMap<String, String>,
+    /// `[workspace].members`(선언 순서). 없으면 `None`.
+    pub workspace_members: Option<Vec<String>>,
 }
 
 /// workspace 내부 의존 edge.
@@ -313,6 +315,17 @@ fn apply_key_value(
             ManifestError::at("package-name", line, "[package].name은 문자열이어야 합니다")
         })?;
         parsed.package = Some(name);
+        return Ok(());
+    }
+    if full == ["workspace", "members"] {
+        let members = string_array(value, line)?.ok_or_else(|| {
+            ManifestError::at(
+                "workspace-members",
+                line,
+                "[workspace].members는 문자열 배열이어야 합니다",
+            )
+        })?;
+        parsed.workspace_members = Some(members);
         return Ok(());
     }
     if let [workspace, dependencies, key, rest @ ..] = full {
@@ -803,6 +816,35 @@ fn string_value(value: &str, line: usize) -> Result<Option<String>, ManifestErro
     }
 }
 
+/// 한 줄 문자열만 담은 배열(`["a", 'b',]`)을 읽습니다. 배열이 아니거나, 문자열이 아닌 항목이나
+/// 빈 항목(마지막 쉼표 뒤 제외)이 있으면 `Ok(None)`.
+fn string_array(value: &str, line: usize) -> Result<Option<Vec<String>>, ManifestError> {
+    let value = value.trim();
+    let Some(inner) = value
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return Ok(None);
+    };
+    let pieces = split_top_level(inner, ',');
+    let last = pieces.len() - 1;
+    let mut items = Vec::with_capacity(pieces.len());
+    for (index, piece) in pieces.iter().enumerate() {
+        let piece = piece.trim();
+        if piece.is_empty() {
+            if index == last {
+                continue;
+            }
+            return Ok(None);
+        }
+        match string_value(piece, line)? {
+            Some(item) => items.push(item),
+            None => return Ok(None),
+        }
+    }
+    Ok(Some(items))
+}
+
 /// basic string 본문의 escape를 TOML 규칙대로 풉니다(`\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX`).
 ///
 /// Cargo는 `"stellar-ffi"`를 `stellar-ffi`로 읽으므로 같은 이름으로 풀어야 내부 의존 판정에서
@@ -870,9 +912,19 @@ fn read_bounded(path: &Path) -> Result<String, ManifestError> {
     Ok(text)
 }
 
-/// 검사 대상 manifest 경로: `crates/*/Cargo.toml`(필수 디렉터리)과
-/// `tools/stellar-*/Cargo.toml`. 경로 순으로 정렬합니다.
-pub fn member_manifests(repo_root: &Path) -> Result<Vec<PathBuf>, ManifestError> {
+/// crate graph 검사에서 빼는 workspace member(ADR-0019): 개발 도구와 benchmark fixture crate.
+pub const EXCLUDED_MEMBERS: &[&str] = &["tools/xtask", "benchmarks/fixtures"];
+
+/// 검사 대상 manifest 경로(경로 순 정렬·중복 제거).
+///
+/// - `crates/*/Cargo.toml`(필수 디렉터리)과 `tools/stellar-*/Cargo.toml`
+/// - 루트 `[workspace].members`의 모든 member([`EXCLUDED_MEMBERS`] 제외). 디렉터리 패턴 밖
+///   (`tools/agent-host`, `apps/*` 등)에 추가한 product crate도 검사하기 위해서입니다. glob은
+///   마지막 segment 전체가 `*`인 형태만 펼치고, 그 밖의 glob은 거부합니다(fail closed).
+pub fn member_manifests(
+    repo_root: &Path,
+    workspace_members: &[String],
+) -> Result<Vec<PathBuf>, ManifestError> {
     let mut manifests = Vec::new();
     let crates = repo_root.join("crates");
     if !crates.is_dir() {
@@ -890,8 +942,60 @@ pub fn member_manifests(repo_root: &Path) -> Result<Vec<PathBuf>, ManifestError>
             &mut manifests,
         )?;
     }
+    for raw in workspace_members {
+        let member = normalize_member(raw)?;
+        if let Some(parent) = member.strip_suffix("/*") {
+            let dir = repo_root.join(parent);
+            // 일치하는 디렉터리가 없는 glob은 member가 없는 것과 같습니다(검사할 crate 없음).
+            if dir.is_dir() {
+                collect_manifests(
+                    &dir,
+                    |name| !EXCLUDED_MEMBERS.contains(&format!("{parent}/{name}").as_str()),
+                    &mut manifests,
+                )?;
+            }
+        } else if !EXCLUDED_MEMBERS.contains(&member.as_str()) {
+            let manifest = repo_root.join(&member).join("Cargo.toml");
+            if !manifest.is_file() {
+                return Err(ManifestError::new(
+                    "missing-member-manifest",
+                    format!("workspace member `{raw}`에 Cargo.toml이 없습니다"),
+                ));
+            }
+            manifests.push(manifest);
+        }
+    }
     manifests.sort();
+    manifests.dedup();
     Ok(manifests)
+}
+
+/// `[workspace].members` 항목을 `/`로 구분한 상대 경로로 정규화합니다(앞의 `./`와 끝의 `/` 제거).
+///
+/// 절대 경로, 빈 segment, `.`·`..`, 마지막 segment 전체가 `*`가 아닌 glob은 거부합니다.
+fn normalize_member(raw: &str) -> Result<String, ManifestError> {
+    let invalid = |why: &str| ManifestError::new("workspace-member", format!("`{raw}`: {why}"));
+    let mut member = raw;
+    while let Some(rest) = member.strip_prefix("./") {
+        member = rest;
+    }
+    let member = member.trim_end_matches('/');
+    if member.is_empty() || member.starts_with('/') || member.contains('\\') {
+        return Err(invalid("workspace 루트 기준 상대 경로여야 합니다"));
+    }
+    let segments: Vec<&str> = member.split('/').collect();
+    for (index, segment) in segments.iter().enumerate() {
+        if segment.is_empty() || *segment == "." || *segment == ".." {
+            return Err(invalid("빈 segment나 `.`·`..`는 쓸 수 없습니다"));
+        }
+        let glob = segment.contains(['*', '?', '[', ']', '{', '}']);
+        if glob && !(*segment == "*" && index + 1 == segments.len() && index > 0) {
+            return Err(invalid(
+                "glob은 마지막 segment 전체가 `*`인 형태(`dir/*`)만 지원합니다",
+            ));
+        }
+    }
+    Ok(member.to_string())
 }
 
 fn collect_manifests(
@@ -918,18 +1022,19 @@ fn collect_manifests(
 
 /// 저장소의 검사 대상 manifest 전체를 읽어 내부 의존 graph를 만듭니다.
 ///
-/// 루트 `Cargo.toml`의 `[workspace.dependencies]` 이름 변경을 `workspace = true` 의존에 반영합니다.
+/// 루트 `Cargo.toml`의 `[workspace].members`를 검사 대상에 더하고([`member_manifests`]),
+/// `[workspace.dependencies]` 이름 변경을 `workspace = true` 의존에 반영합니다.
 pub fn scan_workspace(repo_root: &Path) -> Result<WorkspaceGraph, ManifestError> {
     let root_manifest = repo_root.join("Cargo.toml");
-    let renames = if root_manifest.is_file() {
-        parse_manifest(&read_bounded(&root_manifest)?)
-            .map_err(|e| with_path(e, &root_manifest))?
-            .workspace_renames
+    let root = if root_manifest.is_file() {
+        parse_manifest(&read_bounded(&root_manifest)?).map_err(|e| with_path(e, &root_manifest))?
     } else {
-        BTreeMap::new()
+        ParsedManifest::default()
     };
+    let renames = root.workspace_renames;
+    let members = root.workspace_members.unwrap_or_default();
     let mut sources = Vec::new();
-    for path in member_manifests(repo_root)? {
+    for path in member_manifests(repo_root, &members)? {
         let text = read_bounded(&path)?;
         let parsed = parse_manifest(&text).map_err(|e| with_path(e, &path))?;
         sources.push((path, parsed));
@@ -1411,5 +1516,121 @@ other.workspace = true
             .edges
             .iter()
             .any(|e| e.from == "stellar-cli" && e.to == "stellar-ops"));
+        // 루트 `[workspace].members`의 제외 대상이 아닌 member는 모두 검사 대상입니다.
+        let root_text = std::fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        let members = parse_manifest(&root_text)
+            .unwrap()
+            .workspace_members
+            .expect("root members");
+        assert!(members.iter().any(|m| m == "tools/xtask"));
+        let scanned = member_manifests(root, &members).unwrap();
+        for member in members
+            .iter()
+            .filter(|m| !EXCLUDED_MEMBERS.contains(&m.as_str()))
+        {
+            assert!(
+                scanned.contains(&root.join(member).join("Cargo.toml")),
+                "{member}"
+            );
+        }
+    }
+
+    /// 테스트가 끝나면 지우는 임시 저장소 디렉터리.
+    struct TempRepo(PathBuf);
+
+    impl TempRepo {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default();
+            let dir = std::env::temp_dir().join(format!(
+                "xtask-manifest-{tag}-{}-{nanos}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(dir.join("crates")).unwrap();
+            TempRepo(dir)
+        }
+
+        fn write(&self, relative: &str, text: &str) {
+            let path = self.0.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+
+        fn package(&self, dir: &str, name: &str, deps: &str) {
+            self.write(
+                &format!("{dir}/Cargo.toml"),
+                &format!("[package]\nname = \"{name}\"\n\n[dependencies]\n{deps}"),
+            );
+        }
+    }
+
+    impl Drop for TempRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn workspace_members_outside_directory_patterns_are_scanned() {
+        // 이전 검사기는 crates/*와 tools/stellar-*만 읽어 아래 apps/*·tools/agent-host member를
+        // unknown-crate·전이 도달 검사에서 빠뜨렸습니다.
+        let repo = TempRepo::new("members");
+        repo.write(
+            "Cargo.toml",
+            "[workspace]\nmembers = [\n  \"crates/core-types\",\n  \"./tools/agent-host/\",\n  \"apps/*\",\n  \"tools/xtask\",\n  \"benchmarks/fixtures\",\n  \"empty/*\",\n]\n",
+        );
+        repo.package("crates/core-types", "stellar-core-types", "");
+        repo.package("crates/document", "stellar-document", "");
+        repo.package(
+            "tools/agent-host",
+            "stellar-agent-host",
+            "stellar-document = { path = \"../../crates/document\" }\n",
+        );
+        repo.package("apps/viewer", "stellar-viewer", "");
+        repo.write("apps/notes/README.md", "manifest 없는 디렉터리\n");
+        repo.package("tools/xtask", "xtask", "stellar-ffi = { path = \"x\" }\n");
+        repo.package("benchmarks/fixtures", "stellar-bench-fixtures", "");
+
+        let graph = scan_workspace(&repo.0).unwrap();
+        assert_eq!(
+            graph.packages,
+            [
+                "stellar-agent-host",
+                "stellar-core-types",
+                "stellar-document",
+                "stellar-viewer"
+            ]
+        );
+        let violations = crate::crate_graph::check_workspace_graph(&graph);
+        assert!(violations
+            .iter()
+            .any(|v| v.code == "unknown-crate" && v.message.contains("stellar-viewer")));
+        assert!(violations.iter().any(|v| v.code == "forbidden-reach"
+            && v.message.contains("stellar-agent-host -> stellar-document")));
+    }
+
+    #[test]
+    fn unsupported_or_missing_workspace_members_fail_closed() {
+        for (members, code) in [
+            ("[\"apps/missing\"]", "missing-member-manifest"),
+            ("[\"apps/v*\"]", "workspace-member"),
+            ("[\"apps/**\"]", "workspace-member"),
+            ("[\"*\"]", "workspace-member"),
+            ("[\"apps/*/x\"]", "workspace-member"),
+            ("[\"../outside\"]", "workspace-member"),
+            ("[\"/abs\"]", "workspace-member"),
+            ("[\"apps//x\"]", "workspace-member"),
+            ("[\"\"]", "workspace-member"),
+            ("\"crates/a\"", "workspace-members"),
+            ("[\"a\", 1]", "workspace-members"),
+            ("[, \"a\"]", "workspace-members"),
+        ] {
+            let repo = TempRepo::new("bad-members");
+            repo.write("Cargo.toml", &format!("[workspace]\nmembers = {members}\n"));
+            let err = scan_workspace(&repo.0).unwrap_err();
+            assert_eq!(err.code, code, "{members}: {err:?}");
+        }
     }
 }
