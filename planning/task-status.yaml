@@ -6582,7 +6582,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.5"
-    title: "select-through 규칙을 구현합니다. pointer down이 현재 선택 bounds 안이면 위에 다른 node가 있어도 드래그는 선택을 옮기고, 움직이지 않고 놓으면 그 위치를 클릭 규칙으로 선택합니다. 잠금·숨김 node는 캔버스 hit에서 통과시키고, 커서 아래 겹친 node 목록(잠금 포함, z 역순)을 문맥 메뉴 Select Layer용으로 반환합니다."
+    title: "select-through 규칙을 구현합니다. pointer down이 현재 선택 bounds 안이면 위에 다른 node가 있어도 드래그는 선택을 옮기고, 움직이지 않고 놓으면 그 위치를 클릭 규칙으로 선택합니다. 잠금·숨김 node는 캔버스 hit에서 통과시키고, 커서 아래 겹친 node 목록(잠금 포함, z 역순)을 문맥 메뉴의 겹친 레이어 고르기 하위 메뉴(Select Overlapping, 캔버스 명세 4.3절)용으로 반환합니다."
     status: not_started
     depends_on:
       - "XII.10.3"
@@ -6615,56 +6615,66 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.9"
-    title: "크기 조절 제스처를 구현합니다. Shift는 비율 유지(비율 고정 속성이 켜져 있으면 일시 해제), Option은 중심 기준, 반대편을 넘으면 뒤집기(Text는 0에서 멈춤), 다중 선택은 선택 bounds 기준 비례 배치입니다. 흐름 컨테이너 자식은 조절한 축을 고정 크기로 바꾸고 변 핸들 더블클릭은 그 축을 `fit-content`로 바꿉니다. 속성 이름과 저장 필드 대응은 `docs/design/property_model.md`를 따르며 pointer up에서 CommandTransaction 하나를 확정합니다."
+    title: "크기 조절 제스처를 구현합니다. Shift는 비율 유지(비율 고정 속성이 켜져 있으면 일시 해제), Option은 중심 기준, 반대편을 넘으면 뒤집기(Text는 0에서 멈춤), 다중 선택은 선택 bounds 기준 비례 배치입니다. 흐름 컨테이너 자식은 조절한 축을 Fixed preset으로 바꾸고 변 핸들 더블클릭은 그 축을 HugContent preset(`width: fit-content` 등)으로 바꾸며, preset과 longhand 변환은 IX.11.7 함수를 씁니다. 크기 longhand는 IX.11.6 영속 record와 IX.11.3 Shape·Image·Text PropertyKey로 씁니다. 속성 이름과 저장 필드 대응은 `docs/design/property_model.md`를 따르며 pointer up에서 CommandTransaction 하나를 확정합니다."
     status: not_started
     depends_on:
       - "XII.10.8"
       - "XII.3.7"
       - "VII.4.2"
       - "XII.10.2"
+      - "IX.11.3"
+      - "IX.11.6"
+      - "IX.11.7"
     required_environments:
       - DEV-MAC
   - id: "XII.10.10"
-    title: "회전 제스처를 구현합니다. 회전 영역 드래그는 node 중심 기준, Shift는 15도 단위이며 결과는 `rotate`·`transform-origin` 속성 편집(`docs/design/property_model.md`)입니다. 다중 선택은 선택 bounds 중심을 기준으로 각 node의 위치와 회전을 함께 바꾸고, 회전 중심 이동 핸들 제공 여부(캔버스 명세 C3)를 이 행에서 정합니다."
+    title: "회전 제스처를 구현합니다. pivot은 단일 선택이면 node border box 중심, 다중 선택이면 선택 bounds 중심이고 Shift는 15도 단위입니다. 결과는 `rotate` 편집(`docs/design/property_model.md`)이며 제스처는 저장된 `transform-origin`을 바꾸지 않습니다. 저장된 origin이 pivot과 다르면(IX.11.9 migration 노드의 `0 0` 등) pivot의 world 위치가 그대로 남도록 위치를 보정합니다. 위치 지정 자식은 현재 anchor의 inset, 흐름 자식은 `translate`를 바꿉니다. 다중 선택은 각 node의 위치와 `rotate`를 함께 바꿉니다. 회전 중심 이동 핸들 제공 여부(캔버스 명세 C3)를 이 행에서 정하고, 핸들을 두면 그 핸들만 `transform-origin`을 바꾸며 같은 보정으로 외형을 유지합니다."
     status: not_started
     depends_on:
       - "XII.10.8"
       - "XII.10.2"
+      - "IX.11.9"
     required_environments:
       - DEV-MAC
   - id: "XII.10.11"
-    title: "모서리 반경 핸들을 Frame·Rectangle·Polygon에 구현합니다. 드래그는 네 모서리 동시, Option은 그 모서리만 바꾸고, bounds를 넘는 값은 VI.5.2 평가 규칙으로 표시만 줄이며 저장값은 입력값을 유지합니다."
+    title: "모서리 반경 핸들을 Frame·Rectangle·Polygon에 구현합니다. 드래그는 네 모서리 동시, Option은 그 모서리만 바꾸고, bounds를 넘는 값은 VI.5.2 평가 규칙으로 표시만 줄이며 저장값은 입력값을 유지합니다. 반경은 4 모서리 `border-*-radius` longhand key로 씁니다. Frame key는 IX.11.22가 `corner_radius`(0x0106)를 나눠 만들고, Rectangle·Polygon key는 IX.11.3이 만듭니다(ADR-0024 결정 14)."
     status: not_started
     depends_on:
       - "XII.10.8"
       - "VI.5.2"
+      - "IX.11.3"
+      - "IX.11.22"
     required_environments:
       - DEV-MAC
   - id: "XII.10.12"
-    title: "비례 확대(Scale) 명령을 구현합니다. 크기 조절과 달리 선 두께, 반경, 그림자·블러 반경, 글자 크기까지 같은 비율로 바꾸고 modifier 값 변경을 같은 CommandTransaction에 넣습니다. Object 메뉴와 인스펙터 비율 입력으로 실행하며 단일 키 배정은 XII.10.2 ADR이 정합니다."
+    title: "비례 확대(Scale) 명령을 구현합니다. 크기 조절과 달리 선 두께, 반경, 그림자·블러 반경, 글자 크기(`font-size`, IX.11.11 Typography record)까지 같은 비율로 바꾸고 modifier 값 변경을 같은 CommandTransaction에 넣습니다. Object 메뉴와 인스펙터 비율 입력으로 실행하며 단일 키 배정은 XII.10.2 ADR이 정합니다."
     status: not_started
     depends_on:
       - "XII.10.9"
       - "VII.2.6"
+      - "IX.11.3"
+      - "IX.11.11"
     required_environments:
       - DEV-MAC
   - id: "XII.10.13"
-    title: "이동 드래그를 구현합니다. Shift는 축 고정, Option으로 시작하면 복제 후 복제본 이동(DuplicateSubtree와 이동을 한 transaction), 자유 배치 컨테이너 사이로 끌면 world 위치를 유지한 채 MoveNode로 부모를 바꿉니다. 결과는 위치 속성 편집(`docs/design/property_model.md`)이며 ComponentInstance 안에는 공개 Slot에만 놓입니다."
+    title: "이동 드래그를 구현합니다. Shift는 축 고정, Option으로 시작하면 복제 후 복제본 이동(DuplicateSubtree와 이동을 한 transaction), 자유 배치 컨테이너 사이로 끌면 world 위치를 유지한 채 MoveNode로 부모를 바꿉니다. 결과는 IX.11.9가 transform에서 분리한 위치 longhand 편집(위치 지정 자식은 현재 anchor의 inset, `docs/design/property_model.md` 4.5절·5장)이며 ComponentInstance 안에는 공개 Slot에만 놓입니다."
     status: not_started
     depends_on:
       - "XII.10.5"
       - "XII.3.7"
       - "VII.2.8"
       - "VII.2.3"
+      - "IX.11.9"
     required_environments:
       - DEV-MAC
   - id: "XII.10.14"
-    title: "키보드 이동·크기 조절을 구현합니다. 화살표와 Shift-화살표는 XII.10.2 단위로 이동하고, 크기 조절 키는 오른쪽·아래 가장자리를 옮기며, 흐름 컨테이너 자식은 주축 화살표로 흐름 순서를 바꾸고, 선택이 없으면 화살표가 camera를 팬합니다. 키 반복은 VII.4.4 규칙으로 한 entry로 합칩니다."
+    title: "키보드 이동·크기 조절을 구현합니다. 화살표와 Shift-화살표는 XII.10.2 단위로 위치 longhand(IX.11.9)를 바꿔 이동하고, 크기 조절 키는 오른쪽·아래 가장자리를 옮기며, 흐름 컨테이너 자식은 주축 화살표로 흐름 순서를 바꾸고, 선택이 없으면 화살표가 camera를 팬합니다. 키 반복은 VII.4.4 규칙으로 한 entry로 합칩니다."
     status: not_started
     depends_on:
       - "XII.10.2"
       - "VII.4.4"
       - "XII.10.3"
+      - "IX.11.9"
     required_environments:
       - DEV-MAC
   - id: "XII.10.15"
@@ -6715,12 +6725,16 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.21"
-    title: "정렬 6종, 분배 2종, Tidy를 구현합니다. 단일 선택은 부모 기준, 다중 선택은 선택 bounds 기준이며 primary selection을 기준 객체로 쓸 수 있고, 분배는 가장 바깥 두 객체를 고정합니다. 흐름 컨테이너 자식의 정렬은 비활성화하고 컨테이너 속성 안내를 도움말로 보입니다. 결과는 CommandTransaction 하나입니다."
+    title: "정렬 6종, 분배 2종, 행·열 정리(Arrange in Rows and Columns, 선택을 같은 간격 행·열로 재배치하며 흐름 컨테이너를 만들지 않음)를 구현합니다. 단일 선택은 부모 기준, 다중 선택은 선택 bounds 기준이며 primary selection을 기준 객체로 쓸 수 있고, 분배는 가장 바깥 두 객체를 고정합니다. 흐름 밖 node는 위치 longhand(IX.11.9)를 바꿉니다. 흐름 자식은 캔버스 명세 8장 규칙을 따릅니다. Stack 자식의 주축 정렬은 비활성화하고 컨테이너 `justify-content` 안내를 도움말로 보이며, 교차축 정렬은 자식 `align-self`를 바꿉니다. Grid 자식은 `justify-self`·`align-self`를 바꾸고, Overlay 자식의 정렬과 모든 흐름 자식의 분배·행·열 정리는 비활성화합니다. 결과는 CommandTransaction 하나입니다."
     status: not_started
     depends_on:
       - "VII.1.6"
       - "VII.2.4"
       - "XII.10.3"
+      - "IX.11.4"
+      - "IX.11.5"
+      - "IX.11.6"
+      - "IX.11.9"
     required_environments:
       - DEV-MAC
   - id: "XII.10.22"
@@ -6730,6 +6744,7 @@ tasks:
       - "XII.10.21"
       - "XII.10.8"
       - "XII.10.15"
+      - "IX.11.9"
     required_environments:
       - DEV-MAC
   - id: "XII.10.23"
@@ -6744,22 +6759,24 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.24"
-    title: "흐름 컨테이너(Stack·Grid) 안 드래그를 구현합니다. 끄는 동안 삽입 위치 표시를 그리고 형제를 증분 레이아웃 preview로 비키게 하며, 놓으면 OrderKey를 바꾸는 MoveNode 하나를 만듭니다. 밖으로 끌어내면 대상 부모 규칙으로 옮기고, 흐름에서 빠진 자식(`position: absolute`)은 inset 편집으로 움직이며, ComponentInstance 내부 재정렬은 거부합니다. Grid 명시 배치 자식 처리(캔버스 명세 C6)를 이 행에서 정합니다."
+    title: "흐름 컨테이너(Stack·Grid) 안 드래그를 구현합니다. 끄는 동안 삽입 위치 표시를 그리고 형제를 증분 레이아웃 preview로 비키게 하며, 놓으면 OrderKey를 바꾸는 MoveNode 하나를 만듭니다. 밖으로 끌어내면 대상 부모 규칙으로 옮기고, 흐름에서 빠진 자식(`position: absolute`)은 inset 편집으로 움직이며, ComponentInstance 내부 재정렬은 거부합니다. 흐름 순서는 OrderKey로, inset은 IX.11.6 영속 record 값으로 씁니다. Grid 명시 배치 자식 처리(캔버스 명세 C6)를 이 행에서 정합니다."
     status: not_started
     depends_on:
       - "X.1.2"
       - "X.3.2"
       - "X.4.4"
       - "XII.10.13"
+      - "IX.11.6"
     required_environments:
       - DEV-MAC
   - id: "XII.10.25"
-    title: "padding·gap 캔버스 핸들을 구현합니다. 선택한 흐름 컨테이너에 hover하면 네 변 padding 핸들과 자식 사이 gap 핸들을 보이고, 드래그는 `padding-top`·`padding-right`·`padding-bottom`·`padding-left`·`gap`·`row-gap`·`column-gap`을 바꾸며 Shift는 큰 단위, Option은 마주 보는 변을 함께 바꿉니다. gap은 음수가 되지 않고, 남는 공간 분배가 켜진 축의 gap 핸들은 표시만 하며, 핸들 클릭은 `NSPopover`와 `NSTextField` 숫자 입력을 엽니다."
+    title: "padding·gap 캔버스 핸들을 구현합니다. 선택한 흐름 컨테이너에 hover하면 네 변 padding 핸들과 자식 사이 gap 핸들을 보입니다. padding 드래그는 `padding-top`·`padding-right`·`padding-bottom`·`padding-left`를 바꿉니다. gap 핸들은 자기 축의 longhand 하나만 바꿉니다. Stack 주축 핸들은 `flex-direction`이 `row` 계열이면 `column-gap`, `column` 계열이면 `row-gap`이고, 줄바꿈 Stack의 줄 사이 핸들은 다른 하나, Grid는 열 사이 `column-gap`·행 사이 `row-gap`입니다. `gap` shorthand는 쓰지 않습니다(속성 모델 11장, ADR-0024 결정 4). 값은 IX.11.6 영속 record에 씁니다. Shift는 큰 단위, Option은 마주 보는 padding 변을 함께 바꿉니다. gap은 음수가 되지 않고, 남는 공간 분배가 켜진 축의 gap 핸들은 표시만 하며, 핸들 클릭은 그 핸들 longhand의 `NSPopover`와 `NSTextField` 숫자 입력을 엽니다."
     status: not_started
     depends_on:
       - "XII.10.8"
       - "X.3.1"
       - "X.1.2"
+      - "IX.11.6"
     required_environments:
       - DEV-MAC
   - id: "XII.10.26"
@@ -6856,7 +6873,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.36"
-    title: "`InputEvent`에 확대 제스처(Magnify, phase 포함)와 smart magnify 종류를 추가하고 FFI input encoding version을 올립니다. 이전 version 입력은 계속 decode합니다."
+    title: "`InputEvent`에 확대 제스처(Magnify, phase 포함)와 smart magnify 종류를 추가합니다. `StellarMacEvent`에 `NSEvent.magnification` 값을 담는 필드를 더하고, 지금 변환하지 않는 magnify 이벤트(`crates/ffi/src/input_macos.rs` `event_type::MAGNIFY`)와 smart magnify 이벤트를 변환합니다. ADR-0014 Compatibility와 각 상수 문서 주석의 규칙에 따라 `STELLAR_MAC_EVENT_VERSION`(`MAC_EVENT_VERSION`)과 `INPUT_EVENT_SCHEMA_VERSION`을 올리고 이전 version은 거부합니다. `crates/ffi` 변경이므로 같은 diff에서 ADR-0014에 이 작업 절을 추가하고(I.3.5 보호 경로 정책), `cargo xtask generate-ffi-header`로 헤더를 다시 만듭니다."
     status: not_started
     depends_on:
       - "XII.3.1"
@@ -6882,7 +6899,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.39"
-    title: "캔버스 문맥 메뉴를 구현합니다. 우클릭·Control-클릭 위치의 hit 결과와 현재 선택으로 `ShellCommand` 항목만 담은 `NSMenu`를 만들고, Select Layer 하위 메뉴(XII.10.5), 순서·묶음·Boolean·변환·인스턴스 항목을 상황에 맞게 비활성화하며, VoiceOver AXShowMenu로도 같은 메뉴를 엽니다."
+    title: "캔버스 문맥 메뉴를 구현합니다. 우클릭·Control-클릭 위치의 hit 결과와 현재 선택으로 `ShellCommand` 항목만 담은 `NSMenu`를 만들고, 겹친 레이어 고르기 하위 메뉴(Select Overlapping, XII.10.5), 순서·묶음·Boolean·변환·인스턴스 항목을 상황에 맞게 비활성화하며, VoiceOver AXShowMenu로도 같은 메뉴를 엽니다."
     status: not_started
     depends_on:
       - "XII.6.5"
@@ -6890,7 +6907,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.40"
-    title: "한 제스처 한 history 적합성 검사를 추가합니다. 선택하지 않은 node를 눌러 바로 끄는 경우처럼 선택 변경과 편집이 한 제스처에서 일어나면 undo 한 번으로 둘 다 되돌리고, 취소한 제스처·hover·camera·도구 전환·편집 범위 이동은 기록하지 않습니다. 필요하면 HistoryEntry가 선택 복원을 함께 담도록 확장합니다."
+    title: "한 제스처 한 history 적합성 검사를 추가합니다. 선택하지 않은 node를 눌러 바로 끄는 경우처럼 선택 변경과 편집이 한 제스처에서 일어나면 undo 한 번으로 둘 다 되돌리고, 취소한 제스처·hover·camera·도구 전환·편집 범위 이동은 기록하지 않습니다. `HistoryEntry` 타입은 바꾸지 않습니다. 문서 항목은 이미 `SelectionRestore`(편집 직전·직후 선택)를 담고(`crates/history/src/entry.rs`), `WindowHistory::begin_pointer_gesture`가 제스처 전 선택을 잡아 `end_preview`가 기록합니다(`crates/history/src/window.rs`). preview 중 `record_selection`은 `PreviewActive`로 거부되므로(`crates/history/src/history.rs`), `WindowHistory`에 pointer gesture 안에서 선택을 항목 없이 view에 반영하는 API를 추가합니다. 규칙: 제스처가 문서 항목을 만들면 그 항목의 `SelectionRestore`가 제스처 전·후 선택을 담고 Selection 항목은 만들지 않습니다. 편집 없이 끝나고 선택이 바뀌었으면 Selection 항목 하나를 기록합니다. 취소하면 제스처 전 선택으로 돌리고 기록하지 않습니다."
     status: not_started
     depends_on:
       - "VII.4.2"
@@ -9339,7 +9356,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XVIII.1.1"
-    title: "`TerminalSessionId`, profile, cwd, environment policy, process state를 정의합니다. project 저장·recovery snapshot에는 포함하지 않습니다."
+    title: "`TerminalSessionId`, profile, cwd, environment allowlist, process state를 정의합니다. project 저장·recovery snapshot에는 포함하지 않습니다."
     status: verified
     required_environments:
       - DEV-MAC
@@ -9443,7 +9460,7 @@ tasks:
     report: "docs/task-reports/XVIII.2.4.md"
     verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.2.5"
-    title: "대화형 terminal session의 child 환경을 ADR-0023에 맞춥니다. spawn 경로에서 `env_clear`와 상속 허용 목록(`DEFAULT_INHERITED_ENV`)을 제거하고 앱 프로세스 환경을 그대로 물려준 뒤, 터미널 식별 변수 `TERM`·`COLORTERM`·`TERM_PROGRAM`·`TERM_PROGRAM_VERSION`을 설정하고 profile 명시 지정을 마지막에 적용합니다. 식별 변수 값은 spawn 입력으로 받으며 `TERM`·`COLORTERM` 값은 XVIII.4.1이 emulator에 맞춰 확정합니다. 그 밖의 변수는 추가하지 않고 사용자 셸 설정 파일을 만들거나 고치지 않습니다. 허용 목록 환경은 agent CLI 실행기(XXIX.2.4)에만 둡니다."
+    title: "대화형 terminal session의 child 환경을 ADR-0023에 맞춥니다. 이 행은 완료 행 XVIII.1.1이 정의한 \"environment allowlist\"(구현 타입 `EnvironmentPolicy`, `crates/terminal/src/env.rs`)를 대화형 세션에 대해 대체하며, XVIII.1.1 문구와 상태는 그대로 둡니다(ADR-0023 Consequences). spawn 경로에서 `env_clear`와 상속 허용 목록(`DEFAULT_INHERITED_ENV`)을 제거하고 앱 프로세스 환경을 그대로 물려준 뒤, 터미널 식별 변수 `TERM`·`COLORTERM`·`TERM_PROGRAM`·`TERM_PROGRAM_VERSION`을 설정하고 profile 명시 지정을 마지막에 적용합니다. 식별 변수 값은 spawn 입력으로 받으며 `TERM`·`COLORTERM` 값은 XVIII.4.1이 emulator에 맞춰 확정합니다. 그 밖의 변수는 추가하지 않고 사용자 셸 설정 파일을 만들거나 고치지 않습니다. 허용 목록 환경은 agent CLI 실행기(XXIX.2.4, ADR-0023 결정 9)에만 둡니다."
     status: not_started
     depends_on:
       - "XVIII.1.4"
@@ -11250,7 +11267,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXIX.2.4"
-    title: "macOS 실행기를 구현합니다. 실행은 ADR-0005 §4.3 두 불변식(문서 변경은 Stellar MCP tool로만, 세션은 프로젝트 working tree와 사용자의 CLI·도구 설정에 흔적 없음)을 지키고, Stellar는 자격 증명을 다루거나 들여다보지 않습니다(아키텍처 31.1, 37.3). UI가 느려도 출력 수신을 멈추지 않습니다(ADR-0005 §6). CLI 프로세스 환경은 대화형 터미널(ADR-0023)과 달리 launch profile에 적은 이름만 전달하는 허용 목록으로 만듭니다. 그 밖의 실행 세부와 timeout 값은 실측, Apple 공식 문서, 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다."
+    title: "macOS 실행기를 구현합니다. 실행은 ADR-0005 §4.3 두 불변식(문서 변경은 Stellar MCP tool로만, 세션은 프로젝트 working tree와 사용자의 CLI·도구 설정에 흔적 없음)을 지키고, Stellar는 자격 증명을 다루거나 들여다보지 않습니다(아키텍처 31.1, 37.3). UI가 느려도 출력 수신을 멈추지 않습니다(ADR-0005 §6). CLI 프로세스 환경은 대화형 터미널과 달리 ADR-0023 결정 9의 허용 목록으로 만듭니다. 빈 환경에서 시작해 launch profile(XXIX.2.6)의 환경 변수 이름 목록에 있는 이름만 앱 프로세스 환경에서 전달합니다. 그 밖의 실행 세부와 timeout 값은 실측, Apple 공식 문서, 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다."
     status: not_started
     depends_on:
       - "XXIX.2.2"
@@ -11267,7 +11284,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXIX.2.6"
-    title: "CLI 종류와 지원 버전 범위별 launch profile을 Stellar 소유 fixture로 관리합니다. 각 profile은 각 CLI 공식 문서의 비대화형 인터페이스와 구조화 출력 형식만 쓰고, 실행 설정, decoder profile 버전, 공급자 약관·공식 문서 검토 일자와 결과를 담습니다. profile은 ADR-0005 §4.3 두 불변식을 지키며, 각 불변식을 지키는 공식 설정과 그 밖의 실행 세부는 각 CLI 공식 문서와 Apple 공식 문서를 근거로 profile별 보고서에 기록합니다. 약관 검토상 허용이 명확하지 않은 CLI와 지원 범위 밖 버전은 실행하지 않습니다."
+    title: "CLI 종류와 지원 버전 범위별 launch profile을 Stellar 소유 fixture로 관리합니다. 각 profile은 각 CLI 공식 문서의 비대화형 인터페이스와 구조화 출력 형식만 쓰고, 실행 설정, decoder profile 버전, CLI 프로세스에 전달할 환경 변수 이름 목록(ADR-0023 결정 9), 공급자 약관·공식 문서 검토 일자와 결과를 담습니다. 환경 변수 목록에는 이름만 적고 값은 넣지 않으며, 각 이름을 넣은 근거(CLI 공식 문서의 해당 항목)를 profile별 보고서에 기록합니다. profile은 ADR-0005 §4.3 두 불변식을 지키며, 각 불변식을 지키는 공식 설정과 그 밖의 실행 세부는 각 CLI 공식 문서와 Apple 공식 문서를 근거로 profile별 보고서에 기록합니다. 약관 검토상 허용이 명확하지 않은 CLI와 지원 범위 밖 버전은 실행하지 않습니다."
     status: not_started
     depends_on:
       - "XXIX.2.4"

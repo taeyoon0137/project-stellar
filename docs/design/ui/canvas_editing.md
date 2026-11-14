@@ -3,7 +3,7 @@
 - 상태: 초안(2026-11-14), 구현 전 명세
 - 범위: macOS 캔버스에서 노드를 선택·변형·생성·편집하는 상호작용과, 각 상호작용이 만드는 Command·history·접근성·성능 계약
 - 상위 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), 구현 계획(이하 "계획")
-- 관련 명세: [도구·메뉴](tools_menus.md), [인스펙터](inspector.md), [사이드바](sidebar.md), 속성 모델 `docs/design/property_model.md`(이하 "속성 모델", 병행 작성 중)
+- 관련 명세: [도구·메뉴](tools_menus.md), [인스펙터](inspector.md), [사이드바](sidebar.md), 속성 모델 `docs/design/property_model.md`(이하 "속성 모델", 구현은 계획 IX.11)
 
 이 문서는 가이드·아키텍처·계획을 바꾸지 않습니다. 어긋나면 그 문서들이 우선이고 이 문서를 고칩니다. [가이드 0.2] 이 문서가 요구하지만 계획에 행이 없던 동작은 계획 `XII.10`(캔버스 편집 UX)으로 추가했습니다(24장).
 
@@ -50,7 +50,7 @@
 
 1. **관례를 따르되 베끼지 않습니다.** 선택·변형·스냅·레이아웃 핸들의 동작은 전문 도구 사용자가 기대하는 결과를 내야 합니다. 화면 모양, 문구, 색, 아이콘은 Stellar가 macOS 시스템 구성요소와 SF Symbols로 정합니다. [PO 2026-11-14 편집 UX] [관례] [가이드 1.2 원칙 1]
 2. **셸은 해석하지 않고 전달합니다.** pointer·key·제스처는 공통 `InputEvent`로 코어에 가고, 도구 상태 기계·hit test·스냅·Command 생성은 코어가 합니다. 셸은 커서, 문맥 메뉴, 접근성, IME 연결만 맡습니다. [가이드 1.2 원칙 4] [아키텍처 §8.2, §9.2] [계획 XII.3.1, XII.3.6]
-3. **캔버스 조작과 인스펙터 편집은 같은 속성을 바꿉니다.** 핸들 드래그, nudge, padding 핸들은 모두 속성 모델의 CSS 기반 속성(`width`, `padding-top`, `gap`, `rotate` 등)에 대한 편집 의도를 만들고, 인스펙터는 같은 속성을 같은 이름으로 보여 줍니다. 캔버스에만 있는 숨은 속성을 만들지 않습니다. [PO 2026-11-14 편집 UX] [속성 모델]
+3. **캔버스 조작과 인스펙터 편집은 같은 속성을 바꿉니다.** 핸들 드래그, nudge, padding 핸들은 모두 속성 모델의 CSS longhand(`width`, `padding-top`, `column-gap`, `rotate` 등)에 대한 편집 의도를 만들고, 인스펙터는 같은 속성을 같은 이름으로 보여 줍니다. 캔버스에만 있는 숨은 속성을 만들지 않습니다. [PO 2026-11-14 편집 UX] [속성 모델]
 4. **한 제스처는 한 history entry입니다.** pointer down부터 up까지, 연속 키 반복, 스크럽은 하나로 묶고, 취소한 제스처와 hover·camera·도구 전환은 기록하지 않습니다. [아키텍처 §23.3] [계획 VII.4.2, VII.4.4, VII.4.5, XII.3.7]
 5. **hover가 클릭 결과를 미리 보여 줍니다.** 수식키를 누른 상태까지 반영해, hover 윤곽은 지금 클릭하면 선택될 node와 언제나 같습니다. 깊이 규칙이 예측 가능해야 한다는 것이 이 규칙의 목적입니다. [관례] [계획 XII.10.7]
 6. **모든 동작에 키보드와 VoiceOver 경로가 있습니다.** 핸들로만 할 수 있는 동작을 두지 않습니다. 각 동작은 메뉴 명령, 키 조작, 인스펙터 필드 중 하나 이상으로도 됩니다. [가이드 8.2, 8.3] [HIG Accessibility]
@@ -93,7 +93,9 @@ NSEvent(셸)
 | Text 범위 편집(가칭 `TextEdit`) | 신규 XII.10.32 | 캔버스 텍스트 |
 | 인스턴스 교체(가칭 `SwapInstanceComponent`) | 신규 XII.10.35 | 인스턴스 swap |
 
-속성 편집 의도를 `SetProperty`의 PropertyKey와 저장 필드로 옮기는 규칙(예: 위치를 inset으로 둘지 이동 변환으로 둘지)은 속성 모델이 정합니다. 이 문서는 CSS 속성 이름까지만 정합니다. [속성 모델]
+속성 편집 의도를 `SetProperty`의 PropertyKey와 저장 필드로 옮기는 규칙은 속성 모델이 정합니다. 예를 들어 위치는 이동 변환이 아니라 inset 또는 흐름으로 저장합니다(속성 모델 4.6절·5장, 계획 IX.11.9). 이 문서는 CSS 속성 이름까지만 정합니다. 영속 record는 longhand만 저장하므로 캔버스 조작은 shorthand(`gap`, `inset`, `padding` 등)를 쓰지 않고 longhand만 바꿉니다. [속성 모델 11장] [ADR-0024 결정 4]
+
+CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니다. 그 속성을 편집하는 XII.10 행은 해당 IX.11 행을 선행으로 둡니다(24장). [계획 IX.11]
 
 ---
 
@@ -174,7 +176,7 @@ NSEvent(셸)
 ### 4.3 선택 우선 드래그와 아래 레이어 고르기(select-through)
 
 - pointer down이 현재 선택의 bounds 안이면, 그 위에 다른 node가 겹쳐 있어도 드래그는 현재 선택을 옮깁니다. 움직이지 않고 놓으면 그 위치에서 클릭 규칙으로 고른 node를 선택합니다. [관례] [계획 XII.10.5]
-- 겹친 node 중 아래 것을 고르려면 문맥 메뉴의 Select Layer 하위 메뉴를 씁니다. 커서 아래 node를 z 역순으로 보여 주고, 잠긴 node도 표시해 고를 수 있게 합니다(고르면 선택만 되고 잠금은 유지). [관례] [계획 XII.10.5, XII.10.39]
+- 겹친 node 중 아래 것을 고르려면 문맥 메뉴의 겹친 레이어 고르기 하위 메뉴(Select Overlapping ▸)를 씁니다. 커서 아래 node를 z 역순으로 보여 주고, 잠긴 node도 표시해 고를 수 있게 합니다(고르면 선택만 되고 잠금은 유지). 아래 레이어를 고르는 기능은 관례이고, 명령 이름은 Stellar가 정한 것입니다(1.2 원칙 1). [관례] [계획 XII.10.5, XII.10.39]
 
 ### 4.4 영역 선택(마퀴)
 
@@ -225,17 +227,19 @@ NSEvent(셸)
 | Option | 중심 기준(반대편도 같이 움직임) | XII.10.9 |
 | 반대편을 넘어감 | 0에서 멈추지 않고 뒤집기로 해석(Text는 0에서 멈춤) | XII.10.9 |
 | 다중 선택 | 선택 bounds 기준으로 각 node의 위치·크기를 비례 배치 | XII.10.9 |
-| 흐름 컨테이너 자식 | 조절한 축을 고정 크기로 바꿈(채움·내용 맞춤 해제) | XII.10.9 |
-| 변 핸들 더블클릭 | 그 축을 내용 맞춤(`fit-content`)으로 | XII.10.9 |
+| 흐름 컨테이너 자식 | 조절한 축을 Fixed preset으로 바꿈(채움·내용 맞춤 해제) | XII.10.9, IX.11.7 |
+| 변 핸들 더블클릭 | 그 축을 HugContent preset(`width: fit-content` 등)으로 | XII.10.9, IX.11.7 |
 
+- sizing preset과 longhand의 대응은 속성 모델 4.3절 표이고, 변환은 계획 IX.11.7 함수가 합니다. 크기 longhand는 IX.11.6 영속 record, Shape·Image·Text의 PropertyKey는 IX.11.3이 만듭니다. [속성 모델 4.3, 6장] [계획 IX.11.3, IX.11.6, IX.11.7]
 - 크기 조절은 선 두께, 반경, 효과 반경, 글자 크기를 바꾸지 않습니다. 그것까지 비례로 바꾸는 것은 5.5절의 Scale입니다. [관례]
 - 부모 크기가 바뀔 때 위치 지정 자식이 반응하는 규칙은 레이아웃 엔진의 anchor 규칙을 따릅니다. 캔버스는 별도 규칙을 두지 않습니다. [계획 X.2.2, X.2.3]
 
 ### 5.3 회전
 
-- 회전 영역을 드래그하면 node 중심을 기준으로 돌리고, Shift는 15도 단위입니다. 결과는 `rotate`와 `transform-origin` 편집입니다(속성 모델). [관례] [계획 XII.10.10]
+- 회전 영역을 드래그하면 pivot을 기준으로 돌리고, Shift는 15도 단위입니다. pivot은 단일 선택이면 node border box 중심, 다중 선택이면 선택 bounds 중심입니다. [관례] [계획 XII.10.10]
+- 결과는 `rotate` 편집입니다. 제스처는 저장된 `transform-origin`을 바꾸지 않습니다. migration된 노드는 `transform-origin: 0 0`을 저장하므로(속성 모델 5장, 계획 IX.11.9) origin을 고쳐 쓰면 `scale`이나 잔여 `transform`이 있는 노드의 외형이 움직이기 때문입니다. 저장된 origin이 pivot과 다르면 pivot의 world 위치가 그대로 남도록 위치를 보정합니다. 위치 지정 자식은 현재 anchor의 inset을, 흐름 자식은 `translate`를 바꿉니다(흐름 자식의 위치는 흐름이 정함). 새 노드의 기본 origin은 `50% 50%`이므로 단일 선택 회전에는 보정이 없습니다. [속성 모델 5장, 12장] [계획 XII.10.10, IX.11.9]
 - 회전은 흐름 크기에 영향을 주지 않습니다. 회전한 흐름 자식은 형제 배치를 바꾸지 않습니다. [계획 X.2.4]
-- 회전 중심을 캔버스에서 옮기는 핸들은 열린 결정 C3입니다.
+- 회전 중심을 캔버스에서 옮기는 핸들은 열린 결정 C3입니다. 핸들을 둔다면 그 핸들만 `transform-origin`을 바꾸며, 같은 보정으로 외형을 유지합니다.
 
 ### 5.4 모서리 반경
 
@@ -244,12 +248,12 @@ NSEvent(셸)
 
 ### 5.5 비례 확대(Scale)
 
-- Object 메뉴 명령과 인스펙터 비율 입력으로 실행하며, 크기와 함께 선 두께·반경·그림자와 블러 반경·글자 크기를 같은 비율로 바꿉니다. modifier 값은 `SetModifierProperty`로 함께 바꿔 한 transaction으로 묶습니다. [관례] [계획 XII.10.12, VII.2.6]
+- Object 메뉴 명령과 인스펙터 비율 입력으로 실행하며, 크기와 함께 선 두께·반경·그림자와 블러 반경·글자 크기(`font-size`)를 같은 비율로 바꿉니다. modifier 값은 `SetModifierProperty`로 함께 바꿔 한 transaction으로 묶습니다. `font-size`는 Typography record(계획 IX.11.11)에, Shape·Text 속성의 PropertyKey는 IX.11.3에 생깁니다. [관례] [속성 모델 7장] [계획 XII.10.12, VII.2.6, IX.11.3, IX.11.11]
 - 캔버스 단일 키를 줄지는 XII.10.2가 정합니다(도구·메뉴 6.2절은 Shift+글자를 도구 변형용으로 비워 두었습니다).
 
 ### 5.6 뒤집기
 
-Object ▸ Flip Horizontal·Flip Vertical은 선택 bounds 중심 기준 반전 속성 편집입니다. [도구·메뉴 3.2] [속성 모델]
+Object ▸ Flip Horizontal·Flip Vertical은 선택 bounds 중심 기준 반전 편집입니다. 반전은 `scale` 부호(예: `scale: -1 1`)로 표현합니다. [도구·메뉴 3.2] [속성 모델 5장]
 
 ---
 
@@ -259,7 +263,7 @@ Object ▸ Flip Horizontal·Flip Vertical은 선택 bounds 중심 기준 반전 
 
 | 조작 | 결과 | Command | 구현 |
 |---|---|---|---|
-| 선택 드래그 | 위치 속성 편집 | `SetProperty`(transaction) | XII.10.13 |
+| 선택 드래그 | 위치 longhand 편집(위치 지정 자식은 현재 anchor의 inset, 계획 IX.11.9) | `SetProperty`(transaction) | XII.10.13 |
 | Shift | 처음 움직인 축으로 고정 | 같음 | XII.10.13 |
 | Option으로 시작 | 복제 후 복제본 이동 | `DuplicateSubtree` + `SetProperty` | XII.10.13, VII.2.8 |
 | 자유 배치 컨테이너 사이로 끌기 | world 위치를 유지하며 부모 변경 | `MoveNode` + `SetProperty` | XII.10.13, VII.2.3 |
@@ -331,13 +335,18 @@ Object ▸ Flip Horizontal·Flip Vertical은 선택 bounds 중심 기준 반전 
 |---|---|---|---|
 | Align 6종(왼쪽·가로 가운데·오른쪽·위·세로 가운데·아래) | 단일 선택은 부모, 다중 선택은 선택 bounds, 기준 객체가 있으면 그 객체 | `SetProperty` transaction | XII.10.21 |
 | Distribute 2종 | 가장 바깥 두 객체 고정, 사이를 같은 간격으로 | 같음 | XII.10.21 |
-| Tidy | 선택을 같은 간격 행·열로 재배치 | 같음 | XII.10.21 |
+| 행·열 정리(Arrange in Rows and Columns) | 선택을 같은 간격 행·열로 재배치. 흐름 컨테이너를 만들지 않고 각 node의 위치만 바꿈 | 같음 | XII.10.21 |
 | 간격 핸들 드래그 | 등간격 선택의 간격을 함께 바꿈 | 같음 | XII.10.22 |
 | 자리 바꾸기 핸들 드래그 | 이웃과 위치 교환 | 같음 | XII.10.22 |
 
 - 기준 객체는 primary selection입니다. 다중 선택에서 이미 선택된 node를 Option-클릭하면 primary로 지정합니다. [계획 VII.3.1] [관례]
 - 회전한 node는 world bounds로 정렬합니다. [계획 XII.10.21]
-- 흐름 컨테이너 자식의 주축 정렬은 흐름이 정하므로 비활성화하고, 도움말 태그로 컨테이너의 `justify-content`(속성 모델)를 바꾸라고 안내합니다. 교차축 정렬은 자식별 정렬 속성(CSS `align-self`)이 레이아웃 엔진에 생기기 전까지 같은 방식으로 비활성화합니다. [속성 모델] [계획 X.3.1]
+- 흐름 컨테이너 자식의 정렬 명령은 컨테이너 방식에 따라 다음 규칙을 씁니다. 분배와 행·열 정리는 흐름 자식에서 모두 비활성화합니다. [속성 모델 4.2, 4.4] [계획 X.3.1, IX.11.4, IX.11.5, IX.11.6]
+  - Stack 자식: 주축 정렬은 흐름이 정하므로 비활성화하고, 도움말 태그로 컨테이너의 `justify-content`를 바꾸라고 안내합니다. 교차축 정렬은 그 자식의 `align-self`(`flex-start`·`center`·`flex-end`)를 바꿉니다. `align-self`는 계획 IX.11.4가 레이아웃 엔진에, IX.11.6이 영속 record에 추가합니다.
+  - Grid 자식: 가로 정렬은 `justify-self`, 세로 정렬은 `align-self`(`start`·`center`·`end`)를 바꿔 grid 영역 안에서 맞춥니다. 두 속성은 계획 IX.11.5가 엔진에, IX.11.6이 영속 record에 추가합니다.
+  - Overlay 자식: 컨테이너 `justify-items`·`align-items`가 정하므로 비활성화하고 도움말 태그로 안내합니다.
+- 흐름 밖 node의 정렬·분배·행·열 정리는 위치 longhand(위치 지정 자식은 현재 anchor의 inset)를 바꿉니다. [계획 IX.11.9]
+- 바꾼 값은 인스펙터 Position 섹션에 보입니다(속성 모델 12장).
 - 메뉴 위치와 단축키는 도구·메뉴 명세의 Object ▸ Align·Distribute를 씁니다. 인스펙터 위쪽에 같은 명령의 momentary segmented control을 둘지는 인스펙터 명세가 정합니다. [도구·메뉴 3.2, 6.1] [HIG Segmented controls]
 
 ---
@@ -355,13 +364,15 @@ Object ▸ Flip Horizontal·Flip Vertical은 선택 bounds 중심 기준 반전 
 
 - Group은 좌표계가 없는 Fragment로 만듭니다. 변형·효과가 필요하면 Frame Selection 또는 Convert to Frame을 씁니다. [아키텍처 §12.4]
 - Frame을 풀 때는 자식의 world 위치를 보존합니다. Frame의 칠·테두리는 사라지지만 Undo로 돌아오므로 확인 대화상자를 두지 않습니다. [아키텍처 §23] [HIG Alerts]
-- 흐름 컨테이너에서는 그리기 순서가 곧 흐름 순서입니다. 따라서 순서 명령이 자식 위치도 바꿉니다. 메뉴 도움말 태그와 접근성 알림으로 이 사실을 알립니다. 흐름 순서와 쌓임 순서(CSS `order`와 `z-index`)를 나눌지는 속성 모델의 결정을 따릅니다. [계획 X.5.1] [속성 모델]
+- 흐름 컨테이너에서는 그리기 순서가 곧 흐름 순서입니다. 따라서 순서 명령이 자식 위치도 바꿉니다. 메뉴 도움말 태그와 접근성 알림으로 이 사실을 알립니다. 흐름 순서와 쌓임 순서는 나누지 않습니다. CSS `order`와 `z-index`를 쓰지 않고 자식 visual order가 곧 paint 순서입니다. [계획 X.5.1] [속성 모델 3장, 14장 E3]
 
 ---
 
 ## 10. 레이아웃 인지 편집
 
 PO 방향에 따라 레이아웃은 CSS의 Flexbox·Grid·positioning 개념으로 편집합니다. 속성 이름과 기본값은 속성 모델이 정하고, 캔버스는 그 속성을 직접 조작하는 손잡이입니다. [PO 2026-11-14 편집 UX] [속성 모델] [아키텍처 §13]
+
+이 장이 편집하는 속성은 지금 `crates/layout` 엔진 입력에만 있고 문서에 저장되지 않습니다. Frame payload는 layout 정의 참조(`layout_mode: Option<StableId>`, `crates/document/src/frame.rs`)만 갖고, Stack 엔진에는 자식별 `align-self`가 없습니다(`crates/layout/src/stack.rs`는 컨테이너 `cross_alignment`만 가짐). 레이아웃 container·item longhand의 영속 record는 계획 IX.11.6, Flexbox 의미 정렬은 IX.11.4, Grid·positioning 의미 정렬은 IX.11.5, sizing preset 변환은 IX.11.7이 만듭니다. 그래서 이 장의 구현 행(XII.10.21, XII.10.24, XII.10.25)은 IX.11.6을 선행으로 둡니다. [속성 모델 4장] [계획 IX.11.4\~IX.11.7]
 
 ### 10.1 흐름 컨테이너 안 드래그
 
@@ -372,7 +383,7 @@ PO 방향에 따라 레이아웃은 CSS의 Flexbox·Grid·positioning 개념으�
 
 ### 10.2 위치 지정 자식
 
-흐름에서 빠진 자식(CSS `position: absolute`)과 자유 배치 컨테이너의 자식은 inset(`left`·`top`·`right`·`bottom`) 편집으로 움직입니다. 어느 변에 고정되는지(anchor)는 인스펙터에서 바꾸고, 캔버스 드래그는 현재 anchor의 inset 값만 바꿉니다. [속성 모델] [계획 X.2.2]
+흐름에서 빠진 자식(CSS `position: absolute`)과 자유 배치 컨테이너의 자식은 inset(`left`·`top`·`right`·`bottom`) 편집으로 움직입니다. 어느 변에 고정되는지(anchor)는 인스펙터에서 바꾸고, 캔버스 드래그는 현재 anchor의 inset 값만 바꿉니다. inset의 기준은 부모 padding box입니다(계획 IX.11.5). [속성 모델 4.5] [계획 X.2.2, IX.11.5, IX.11.6]
 
 ### 10.3 padding·gap 핸들
 
@@ -380,16 +391,19 @@ PO 방향에 따라 레이아웃은 CSS의 Flexbox·Grid·positioning 개념으�
 |---|---|---|
 | 흐름 컨테이너 선택 후 안쪽 가장자리 드래그 | `padding-top`·`padding-right`·`padding-bottom`·`padding-left` | XII.10.25 |
 | Option + padding 드래그 | 마주 보는 변을 함께 | XII.10.25 |
-| 자식 사이 핸들 드래그 | `gap`(줄바꿈 컨테이너는 `row-gap`·`column-gap`) | XII.10.25 |
+| Stack 자식 사이 핸들 드래그 | 주축 gap longhand 하나. `flex-direction`이 `row`·`row-reverse`이면 `column-gap`, `column`·`column-reverse`이면 `row-gap` | XII.10.25 |
+| 줄바꿈 Stack(`flex-wrap: wrap`)의 줄 사이 핸들 드래그 | 교차축 gap longhand 하나(주축 핸들이 바꾸지 않는 쪽) | XII.10.25 |
+| Grid 열 사이·행 사이 핸들 드래그 | 열 사이는 `column-gap`, 행 사이는 `row-gap` | XII.10.25 |
 | Shift + 드래그 | 큰 단위 | XII.10.25 |
-| 핸들 클릭 | 숫자 입력 popover(`NSPopover` + `NSTextField`) | XII.10.25 |
+| 핸들 클릭 | 그 핸들의 longhand 숫자 입력 popover(`NSPopover` + `NSTextField`) | XII.10.25 |
 
-- gap은 음수가 되지 않습니다(CSS `gap`과 같음). 겹쳐 놓기는 Overlay 컨테이너나 위치 지정 자식으로 합니다. [속성 모델]
+- gap 핸들은 자기 축의 longhand 하나만 바꾸고 다른 축 gap 값은 그대로 둡니다. 캔버스는 `gap` shorthand를 쓰지 않습니다. `gap`은 인스펙터 입력·복사 표현이며, 입력하면 `row-gap`·`column-gap` 두 longhand로 펼칩니다. Stellar의 main·cross 기준 gap을 축 고정 CSS 이름으로 바꾸는 규칙은 속성 모델 4.2절을 따릅니다. [속성 모델 4.2, 11장] [ADR-0024 결정 4]
+- gap은 음수가 되지 않습니다(CSS `row-gap`·`column-gap`과 같음). 겹쳐 놓기는 Overlay 컨테이너나 위치 지정 자식으로 합니다. [속성 모델 4.2]
 - 남는 공간 분배(CSS `justify-content`의 `space-between` 등)가 켜진 축의 gap 핸들은 값을 보여 주기만 하고 드래그를 받지 않습니다. [관례]
 
 ### 10.4 크기 방식
 
-흐름 자식의 크기 방식(고정, 채움, 내용 맞춤)은 5.2절 규칙으로 바뀝니다. 채움은 CSS의 `flex-grow`·`align-self: stretch` 계열, 내용 맞춤은 `fit-content`로 표현합니다(속성 모델). 부모가 내용 맞춤이고 자식이 채움인 경우처럼 서로 의존하는 조합은 레이아웃 엔진 진단을 인스펙터와 캔버스 윤곽에 함께 표시합니다. [계획 X.6.5] [속성 모델]
+흐름 자식의 크기 방식(고정, 채움, 내용 맞춤)은 5.2절 규칙으로 바뀝니다. 채움은 CSS의 `flex-grow`·`align-self: stretch` 계열, 내용 맞춤은 `fit-content`로 표현합니다(속성 모델 4.3절 sizing preset, 계획 IX.11.7). 부모가 내용 맞춤이고 자식이 채움인 경우처럼 서로 의존하는 조합은 레이아웃 엔진 진단을 인스펙터와 캔버스 윤곽에 함께 표시합니다. [계획 X.6.5] [속성 모델]
 
 ---
 
@@ -504,6 +518,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 
 - 줌·팬은 camera 입력일 뿐 문서 geometry를 바꾸지 않고 history에 넣지 않습니다. [계획 XII.4.3] [아키텍처 §23.3]
 - 현재 `InputEvent`에는 확대 제스처 종류가 없으므로 XII.10.36에서 추가합니다. 핀치는 `NSEvent` magnify 이벤트를 직접 받아 연속 move처럼 병합합니다. [계획 XII.3.1, XII.3.4] [AppKit 문서 NSEvent]
+- 지금 `StellarMacEvent`에는 확대 값 필드가 없고 셸 변환은 magnify 이벤트를 변환하지 않습니다(`crates/ffi/src/input_macos.rs`). 그래서 XII.10.36은 구조체 필드와 입력 encoding을 함께 바꾸며, ADR-0014 Compatibility에 따라 `STELLAR_MAC_EVENT_VERSION`과 `INPUT_EVENT_SCHEMA_VERSION`을 올리고 이전 version은 거부합니다. `crates/ffi` 변경이므로 같은 diff에 ADR-0014 갱신이 있어야 합니다. [ADR-0014] [계획 I.3.5, XII.10.36]
 - 줌 단계와 상하한은 XII.10.2가 정합니다. 캔버스 Pan·Zoom은 장식 애니메이션을 두지 않고 입력에 즉시 반응합니다. 맞춤 명령의 이동 애니메이션은 동작 줄이기가 켜지면 즉시 전환합니다. [가이드 8.5] [아키텍처 §6.4]
 - 스크롤 방향은 시스템 설정을 따릅니다. 캔버스에는 끝이 없으므로 탄성 경계를 두지 않습니다. [HIG Mouse and trackpads]
 
@@ -526,7 +541,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 
 | 대상 | 항목 묶음(구분선 순서) |
 |---|---|
-| node | Cut, Copy, Paste, Duplicate, Delete · Select Layer ▸ · Bring Forward, Send Backward, Bring to Front, Send to Back · Group, Ungroup, Frame Selection · Boolean ▸ · Flip Horizontal, Flip Vertical · Lock, Hide |
+| node | Cut, Copy, Paste, Duplicate, Delete · Select Overlapping ▸(겹친 레이어 고르기, 4.3절) · Bring Forward, Send Backward, Bring to Front, Send to Back · Group, Ungroup, Frame Selection · Boolean ▸ · Flip Horizontal, Flip Vertical · Lock, Hide |
 | Shape·Fragment 추가 | Convert to Path(Shape), Convert to Frame(Fragment) |
 | ComponentInstance 추가 | Reset Overrides, Swap…, Detach Instance, 정의로 이동 |
 | 빈 캔버스 | Paste, Select All, Zoom to Fit, Zoom to Selection, Show Rulers |
@@ -545,14 +560,14 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 | Option 복제 이동 | 1건 | VII.1.6 |
 | 화살표 반복 | 짧은 연속 입력 병합 1건 | VII.4.4 |
 | 인스펙터 스크럽·stepper | 시작\~끝 1건 | VII.4.5 |
-| 정렬·분배·Tidy·묶음·Boolean | 명령당 1건 | VII.1.6 |
+| 정렬·분배·행·열 정리·묶음·Boolean | 명령당 1건 | VII.1.6 |
 | 생성 도구 | 생성과 새 선택 1건 | XII.10.40 |
 | 펜 point 하나 | 1건 | XII.10.28 |
 | 텍스트 연속 입력 | 같은 위치 연속 입력 1건 | VII.4.3 |
 | 새 Text를 입력 없이 끝냄, 취소한 제스처, hover, 줌·팬, 도구 전환, 편집 범위 이동 | 0건 | §23.3 |
 
 - 선택 변경과 문서 편집은 같은 시간순 스택에 있고, Undo 중 복원된 선택은 새 entry를 만들지 않습니다. [아키텍처 §23.2] [계획 VII.4.6, VII.5.5]
-- 한 제스처 안에서 선택과 편집이 함께 바뀌면 entry 하나가 둘을 함께 되돌려야 합니다. 현재 HistoryEntry가 이를 담지 못하면 XII.10.40에서 확장합니다.
+- 한 제스처 안에서 선택과 편집이 함께 바뀌면 entry 하나가 둘을 함께 되돌려야 합니다. 문서 항목은 이미 편집 직전·직후 선택(`SelectionRestore { before, after }`)을 담습니다(`crates/history/src/entry.rs`). 그러나 pointer gesture preview 중에는 `record_selection`이 `PreviewActive`로 거부됩니다(`crates/history/src/history.rs`). 그래서 HistoryEntry 타입은 바꾸지 않고, 제스처 안 선택 변경을 별도 항목 없이 그 제스처의 문서 항목에 담는 규칙을 XII.10.40이 구현합니다. [계획 VII.4.2, VII.5.5, XII.10.40]
 - Undo 메뉴 제목은 entry 대상 이름을 붙입니다(예: "Undo Move"). [도구·메뉴 5.3]
 
 ---
@@ -629,6 +644,8 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 | C7 | 같은 속성 node 모두 선택, 반전 선택 같은 고급 선택 명령 | 후속 계획 개정 |
 | 가이드 O10 | 수식키·이동 단위 | XII.10.2 ADR |
 
+C1\~C6은 "정할 곳" 행에서 정합니다. 그 행은 결정과 근거를 작업 보고서(XII.10.2는 ADR)에 기록하고 고른 규칙의 fixture를 검증 기준에 둡니다. [계획 3. 계획 변경 규칙]
+
 ---
 
 ## 24. 계획 대응 요약
@@ -648,5 +665,19 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 | 인스턴스 | XII.10.34, XII.10.35 |
 | 줌·팬·클립보드·문맥 메뉴 | XII.10.36\~XII.10.39 |
 | history·접근성·성능 | XII.10.40\~XII.10.43 |
+
+CSS 속성을 편집하는 행은 그 속성의 PropertyKey·영속 record·migration을 만드는 IX.11 행을 선행으로 둡니다. [속성 모델 17장]
+
+| 행 | 편집하는 속성 | IX.11 선행 |
+|---|---|---|
+| XII.10.9 | `width`·`height`, sizing preset(`fit-content` 등) | IX.11.3, IX.11.6, IX.11.7 |
+| XII.10.10 | `rotate`, 위치 보정(inset·`translate`) | IX.11.9 |
+| XII.10.11 | `border-*-radius`(Frame·Rectangle·Polygon) | IX.11.3, IX.11.22 |
+| XII.10.12 | 크기, `font-size` 등 비례 값 | IX.11.3, IX.11.11 |
+| XII.10.13, XII.10.14 | 위치 longhand | IX.11.9 |
+| XII.10.21 | `align-self`·`justify-self`, 위치 longhand | IX.11.4, IX.11.5, IX.11.6, IX.11.9 |
+| XII.10.22 | 위치 longhand | IX.11.9 |
+| XII.10.24 | inset(흐름 순서는 OrderKey) | IX.11.6 |
+| XII.10.25 | `padding-*`, `row-gap`, `column-gap` | IX.11.6 |
 
 가이드 10.4절이 "WBS 없음"으로 둔 항목 중 생성 도구(XII.10.26, XII.10.27, XII.10.29, XII.10.33)와 가이드·측정 표시(XII.10.16, XII.10.19)가 이 행들로 채워집니다. 가이드 본문 갱신은 가이드를 고치는 작업에서 합니다. [가이드 0.2, 10.4]
