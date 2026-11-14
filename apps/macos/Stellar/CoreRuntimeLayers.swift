@@ -2,6 +2,7 @@ import Foundation
 
 /// 한 부모의 다음 64행. worker가 caller 소유 공간에서 Swift 값으로 바꾼 후 UI에 전달합니다.
 struct WindowLayerPage {
+    let historySequence: UInt64
     let page: SidebarPageRow
     let rows: [SidebarLayerRow]
     let selected: [SidebarStableID: Int]
@@ -35,12 +36,14 @@ extension CoreRuntime {
         if let parent { query.parent = parent.uuid.uuid }
         if let after { query.after = after.uuid.uuid }
         var info = StellarLayerInfo()
+        var history: UInt64 = 0
         var rows = Array(repeating: StellarLayerRow(), count: Int(STELLAR_LAYER_PAGE_SIZE))
         var names = [UInt8](repeating: 0, count: 4096)
         func read() -> StellarStatus {
             rows.withUnsafeMutableBufferPointer { rowBuffer in
                 names.withUnsafeMutableBufferPointer { text in
-                    stellar_window_layer_page(handle, session, &query, &info, rowBuffer.baseAddress, text.baseAddress, text.count)
+                    stellar_window_layer_page_with_history(handle, session, &query, &info, rowBuffer.baseAddress,
+                                                          text.baseAddress, text.count, &history)
                 }
             }
         }
@@ -69,7 +72,7 @@ extension CoreRuntime {
                 hasChildren: row.flags & 4 != 0, isFilterMatch: true))
             if row.selection_order != 0 { selected[id] = row.selection_order }
         }
-        return WindowLayerPage(page: page, rows: items, selected: selected, primary: optionalID(info.primary),
+        return WindowLayerPage(historySequence: history, page: page, rows: items, selected: selected, primary: optionalID(info.primary),
                                revealChild: optionalID(info.reveal_child), hasMore: info.more != 0)
     }
 }

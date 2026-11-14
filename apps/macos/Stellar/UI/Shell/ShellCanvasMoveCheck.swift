@@ -262,14 +262,48 @@ enum ShellCanvasMoveCheck {
         editor.removeFromSuperview()
         reopened.window?.makeFirstResponder(deleteCanvas)
 
+        // A를 표시한 채 같은 revision에서 B를 선택한 다음 페이지를 읽습니다.
+        // B의 행을 A의 history에서 편집할 수 없어야 합니다.
+        guard let visible = deleteSession.selectionTarget,
+              deleteSession.select([sibling], completion: { _ in }), pump.waitForPendingRequests(timeout: 10),
+              let newer = deleteSession.selectionTarget, newer.revision == visible.revision,
+              newer.history_sequence != visible.history_sequence, newer.selection_count == visible.selection_count
+        else { return fail("Layers 교차 읽기용 형제 선택") }
+        reopened.sidebarSource.perform(.reload)
+        let layerDeadline = Date().addingTimeInterval(5)
+        while reopened.sidebarSource.isReadingLayers && Date() < layerDeadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        guard !reopened.sidebarSource.isReadingLayers else { return fail("Layers 교차 읽기 시간 초과") }
+        let crossSelection = reopened.sidebarSource.snapshot.selection
+        guard crossSelection.isEmpty, !reopened.sidebarSource.validate(.delete([SidebarStableID(sibling)])).isAllowed
+        else { return fail("표시 history \(visible.history_sequence)에 다른 선택 행 게시: \(crossSelection.map(\.uuid))") }
+        guard action(reopened, .undo), visible.matches(deleteSession.selectionTarget),
+              awaitLayerAction(layerDuplicate), reopened.sidebarSource.snapshot.selection == [SidebarStableID(node)]
+        else { return fail("Undo 후 Layers 원래 선택 페이지 복원 실패") }
+
         for command in [ShellCommand.delete, .duplicate] {
             let layerCommand: SidebarCommand = command == .delete ? .delete([SidebarStableID(node)]) : layerDuplicate
             for fromLayers in [true, false] {
-                guard awaitLayerAction(layerCommand), let shown = deleteSession.selectionTarget,
-                      deleteSession.select([sibling], completion: { _ in }), pump.waitForPendingRequests(timeout: 10),
-                      let changed = deleteSession.selectionTarget, changed.revision == shown.revision,
+                let scenario = "\(fromLayers ? "Layers" : "메뉴") \(command.rawValue)"
+                func diagnostics(_ reason: String) -> Bool {
+                    let live = deleteSession.selectionTarget
+                    let ids = reopened.sidebarSource.snapshot.selection.map { $0.uuid.uuidString }
+                    return fail([
+                        "\(scenario) \(reason)",
+                        "live revision=\(String(describing: live?.revision)) history=\(String(describing: live?.history_sequence)) count=\(String(describing: live?.selection_count))",
+                        "Layers=\(ids) expected=\(node) sibling=\(sibling)",
+                        "event=\(String(describing: reopened.lastSessionCommandEvent))"
+                    ].joined(separator: ", "))
+                }
+                guard awaitLayerAction(layerCommand) else { return diagnostics("초기 Layers 명령이 활성화되지 않음") }
+                guard let shown = deleteSession.selectionTarget else { return diagnostics("선택 대상 없음") }
+                var selectedEvent: CoreRuntimeEvent?
+                guard deleteSession.select([sibling], completion: { selectedEvent = $0 }), pump.waitForPendingRequests(timeout: 10),
+                      case .windowViewChanged = selectedEvent else { return diagnostics("선택 요청 또는 완료 실패") }
+                guard let changed = deleteSession.selectionTarget, changed.revision == shown.revision,
                       changed.selection_count == shown.selection_count, changed.history_sequence != shown.history_sequence,
-                      let before = deleteSession.info else { return fail("같은 revision·개수의 선택 전환") }
+                      let before = deleteSession.info else { return diagnostics("선택 전환 실패, 전 history \(shown.history_sequence)") }
                 let previousRequest = reopened.lastSessionCommandEvent?.request
                 if fromLayers { reopened.sidebarSource.perform(layerCommand) }
                 else { guard reopened.router.dispatch(command) else { return fail("오래된 메뉴 명령 제출") } }
@@ -280,7 +314,7 @@ enum ShellCanvasMoveCheck {
                       deleteSession.info?.has_unsaved_changes == before.has_unsaved_changes,
                       deleteSession.selectionTarget?.history_sequence == changed.history_sequence,
                       action(reopened, .undo), deleteSession.selectionTarget?.history_sequence == shown.history_sequence
-                else { return fail("오래된 선택의 삭제·복제 거부 및 Undo 선택 복원") }
+                else { return diagnostics("오래된 명령 거부 또는 Undo 복원 실패, 이전 요청 \(String(describing: previousRequest)), 전 history \(shown.history_sequence), 변경 history \(changed.history_sequence)") }
             }
         }
         guard awaitLayerAction(layerDuplicate) else { return fail("선택 복원 후 Layers 복제 활성") }
@@ -314,7 +348,7 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleted = open(path), deleted !== reopened,
               deleted.windowController.windowSession?.info?.generation == deletedGeneration,
               at(30, in: deleted.canvasHost.canvasView) != node else { return fail("삭제 저장 재열기") }
-        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, key-window identity and text focus, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
+        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, key-window identity and text focus, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets, cross-history page rejection and Undo recovery")
         return true
     }
 }

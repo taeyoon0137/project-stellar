@@ -47,6 +47,35 @@ pub unsafe extern "C" fn stellar_window_layer_page(
     text: *mut u8,
     capacity: usize,
 ) -> StellarStatus {
+    unsafe {
+        stellar_window_layer_page_with_history(
+            handle,
+            session,
+            query,
+            info,
+            rows,
+            text,
+            capacity,
+            std::ptr::null_mut(),
+        )
+    }
+}
+
+/// 행의 선택과 같은 시점의 history sequence를 함께 반환합니다.
+/// # Safety
+/// 버퍼는 `stellar_window_layer_page`와 같은 계약입니다. `out_history`는 null이거나
+/// 다른 출력과 겹치지 않는 정렬된 u64 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_layer_page_with_history(
+    handle: u64,
+    session: u64,
+    query: *const StellarLayerQuery,
+    info: *mut StellarLayerInfo,
+    rows: *mut StellarLayerRow,
+    text: *mut u8,
+    capacity: usize,
+    out_history: *mut u64,
+) -> StellarStatus {
     ffi_guard(move || {
         if query.is_null() || info.is_null() || rows.is_null() {
             return StellarStatus::NullPointer;
@@ -78,6 +107,9 @@ pub unsafe extern "C" fn stellar_window_layer_page(
             Ok(None) => return StellarStatus::NoError,
             Err(_) => return StellarStatus::Internal,
         };
+        if !out_history.is_null() {
+            unsafe { out_history.write(page.history_sequence) };
+        }
         let names = [&page.page_name, &page.view_name]
             .into_iter()
             .chain(page.rows.iter().map(|r| &r.name));
