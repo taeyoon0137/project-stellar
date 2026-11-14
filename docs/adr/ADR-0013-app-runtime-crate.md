@@ -61,6 +61,10 @@ Render(불변 scene snapshot 읽기), Worker Pool로 나누고 "문서 모델에
 5. **종료**: document thread 종료는 접수 닫기 → 이미 접수된 job 실행 → join 순서입니다. 전체 종료
    순서는 계획 XII.1.6대로 UI stop → command drain/cancel → render stop → worker stop → runtime
    destroy로 고정하며, render thread·worker pool이 생기는 시점에 이 crate에서 구현합니다.
+   - 2026-11-14 보완(보안 리뷰 FR-1): `AppRuntime` drop(셸 destroy)은 join을 최대
+     `AppRuntime::SHUTDOWN_TIMEOUT`(2초)까지만 기다립니다. 실행 중인 job은 끊을 수 없으므로(응답 없는
+     파일 시스템 호출 등), 시간을 넘기면 아직 시작하지 않은 job을 버리고 thread를 분리합니다
+     (`DocumentThread::shutdown_timeout`). 끝까지 기다리는 `shutdown`은 그대로입니다.
 
 ## Alternatives
 

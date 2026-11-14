@@ -103,7 +103,10 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    닿으면 새 요청은 `STELLAR_QUEUE_FULL`입니다. 접수한 요청의 완료 event는 버리지 않습니다.
 8. **수명**: `AppRuntime`은 handle의 첫 프로젝트·문서 요청에서 시작합니다(그 전의 create/destroy
    비용·동작은 그대로). `stellar_runtime_destroy`는 registry lock을 놓은 뒤 runtime을 파괴하고,
-   파괴는 이미 접수한 요청을 실행한 뒤 document thread를 join합니다.
+   파괴는 이미 접수한 요청을 실행한 뒤 document thread를 join합니다. join은 최대 2초
+   (`AppRuntime::SHUTDOWN_TIMEOUT`)까지만 기다리고, 넘으면 아직 시작하지 않은 요청을 버리고 thread를
+   분리한 뒤 반환합니다(2026-11-14 보완, 보안 리뷰 FR-1: 멈춘 파일 시스템 호출이 앱 종료를 막지 않게).
+   시그니처와 반환 상태는 그대로입니다.
 9. **New/Clone Project는 이 결정에 없습니다**: `create_project`·`clone_and_open`(IV.4.7·IV.6.4)은
    `stellar-git-porcelain`의 `GitRunner`·`GitVersion`을 인자로 받는데, crate 정책은
    `stellar-runtime → stellar-git-porcelain`을 허용하지 않고 `stellar-project`도 runner를 만드는 공개
