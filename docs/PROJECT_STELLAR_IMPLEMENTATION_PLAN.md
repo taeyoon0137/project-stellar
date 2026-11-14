@@ -878,7 +878,7 @@ tools/xtask/
 | IX.8.3 | `[x]` | decorative node 제외, Fragment flatten, hidden node 제외 규칙을 적용한 기본 accessibility tree generator를 구현합니다. | expected tree fixture 통과. | IX.8.2, VI.4.1 |
 | IX.8.4 | `[x]` | Button, TextInput, Modal, List, SingleSelectionGroup contract를 role/state/action으로 매핑합니다. | control별 golden tree 통과. | IX.6.7, IX.8.3 |
 | IX.8.5 | `[x]` | label 누락, invalid nesting, focusable action 없음, duplicate reading order diagnostic을 구현합니다. | diagnostic fixture 정확. | IX.8.4 |
-| IX.8.6 | `[ ]` | Target adapter가 사용할 중립 accessibility snapshot을 정의합니다. 플랫폼 API 호출은 Phase XII로 미룹니다. | 양 플랫폼 snapshot bytes 동일. | IX.8.4 |
+| IX.8.6 | `[x]` | Target adapter가 사용할 중립 accessibility snapshot을 정의합니다. 플랫폼 API 호출은 Phase XII로 미룹니다. | 양 플랫폼 snapshot bytes 동일. | IX.8.4 |
 
 ### IX.9 통합 결정론 fixture
 

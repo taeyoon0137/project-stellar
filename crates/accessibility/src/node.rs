@@ -575,6 +575,12 @@ impl AccessibilityNode {
 
     pub(crate) fn encode_into(&self, buf: &mut Vec<u8>) {
         put_id(buf, self.source);
+        self.encode_semantics(buf);
+        put_opt_u32(buf, self.reading_order);
+    }
+
+    /// source·읽기 순서를 뺀 의미 본문(role ++ label ++ value ++ states ++ actions). snapshot(IX.8.6)과 공유합니다.
+    pub(crate) fn encode_semantics(&self, buf: &mut Vec<u8>) {
         put_u8(buf, self.role.tag());
         encode_opt_binding(buf, self.label.as_ref());
         encode_opt_binding(buf, self.value.as_ref());
@@ -588,11 +594,20 @@ impl AccessibilityNode {
             put_u8(buf, action.tag());
             target.encode_into(buf);
         }
-        put_opt_u32(buf, self.reading_order);
     }
 
     pub(crate) fn decode_from(reader: &mut Reader<'_>) -> Result<AccessibilityNode, CodecError> {
         let source = reader.id()?;
+        let mut node = AccessibilityNode::decode_semantics(reader, source)?;
+        node.reading_order = reader.opt_u32()?;
+        Ok(node)
+    }
+
+    /// [`AccessibilityNode::encode_semantics`]의 역(읽기 순서는 `None`).
+    pub(crate) fn decode_semantics(
+        reader: &mut Reader<'_>,
+        source: StableId,
+    ) -> Result<AccessibilityNode, CodecError> {
         let role = AccessibilityRole::from_tag(reader.u8()?)
             .ok_or(CodecError::new("알 수 없는 role tag"))?;
         let label = decode_opt_binding(reader)?;
@@ -622,7 +637,6 @@ impl AccessibilityNode {
                 ActionKind::from_tag(tag).ok_or(CodecError::new("알 수 없는 action tag"))?;
             actions.insert(action, ActionTarget::decode_from(reader)?);
         }
-        let reading_order = reader.opt_u32()?;
         Ok(AccessibilityNode {
             source,
             role,
@@ -630,7 +644,7 @@ impl AccessibilityNode {
             value,
             states,
             actions,
-            reading_order,
+            reading_order: None,
         })
     }
 }

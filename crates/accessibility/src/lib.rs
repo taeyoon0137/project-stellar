@@ -24,5 +24,8 @@ pub mod control;
 /// 접근성 진단: label 누락, 잘못된 중첩, focus·동작 불일치, 읽기 순서 중복 (IX.8.5).
 pub mod diagnostics;
 
+/// Target adapter용 중립 접근성 snapshot (IX.8.6).
+pub mod snapshot;
+
 #[cfg(test)]
 pub(crate) mod test_support;
