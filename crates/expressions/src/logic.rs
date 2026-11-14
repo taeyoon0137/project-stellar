@@ -20,6 +20,7 @@
 //! (`Pattern(i)`), 앞선 arm들과 공통 타입이 없는 첫 arm(`Arm(i)`) 또는 기본 branch(`Default`)를
 //! 보고합니다.
 
+use std::collections::BTreeSet;
 use std::fmt;
 
 use stellar_core_types::typed_value::TypedValue;
@@ -221,6 +222,9 @@ pub fn check_match(
         ));
     }
     let scrutinee_type = scrutinee.value_type();
+    // 앞선 pattern 집합. arm 수에 대해 O(n log n)으로 중복을 찾습니다(이전 선형 재탐색은 arm 수의 제곱 —
+    // XVI.6.4 fuzz stress에서 2만 arm 검사가 debug 19 s).
+    let mut seen: BTreeSet<&TypedValue> = BTreeSet::new();
     for (index, arm) in arms.iter().enumerate() {
         let position = OperandPosition::Pattern(arm_index(index));
         let pattern_type = ExpressionType::of(arm.pattern);
@@ -231,10 +235,7 @@ pub fn check_match(
                 vec![scrutinee_type],
             ));
         }
-        if arms[..index]
-            .iter()
-            .any(|earlier| earlier.pattern == arm.pattern)
-        {
+        if !seen.insert(arm.pattern) {
             return Err(TypeRuleError::new(
                 position,
                 TypeSpec::required(pattern_type),

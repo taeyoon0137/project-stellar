@@ -405,10 +405,14 @@ impl ExprNode {
     }
 
     /// slot에 연결된 child.
+    ///
+    /// child 목록은 (slot, 대상) 순으로 정렬되어 있으므로 이진 탐색으로 찾습니다. 같은 slot이 여럿이면(검증 전
+    /// node) 정렬상 첫 child입니다. arm이 많은 `match`에서 arm마다 선형 탐색하면 arm 수의 제곱이 됩니다(XVI.6.4).
     pub fn child(&self, slot: ChildSlot) -> Option<ExprNodeId> {
+        let at = self.children.partition_point(|child| child.slot < slot);
         self.children
-            .iter()
-            .find(|child| child.slot == slot)
+            .get(at)
+            .filter(|child| child.slot == slot)
             .map(|child| child.target)
     }
 }

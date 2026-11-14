@@ -228,7 +228,18 @@ impl ExpressionAst {
 }
 
 /// node 하나를 기록합니다.
+///
+/// 같은 slot이 두 번 이상 있는 node(구조 검증을 통과할 수 없는 node)는 [`CodecError::NonCanonical`]로 거부합니다.
+/// decoder가 거부할 bytes를 만들지 않아, 직렬화에 성공한 node는 항상 같은 node로 복원됩니다(XVI.6.4).
 pub(crate) fn write_node(out: &mut Vec<u8>, node: &ExprNode) -> Result<(), CodecError> {
+    // children은 생성 시 정렬되므로 인접 slot만 비교하면 중복을 찾습니다.
+    if node
+        .children()
+        .windows(2)
+        .any(|pair| pair[0].slot >= pair[1].slot)
+    {
+        return Err(CodecError::NonCanonical);
+    }
     out.extend_from_slice(&node.id().stable_id().to_bytes());
     out.extend_from_slice(&node.op().encode());
     match node.payload() {
@@ -1010,5 +1021,40 @@ mod ast_tests {
         let bytes = ast.to_canonical_bytes().expect("직렬화");
         let decoded = ExpressionAst::from_canonical_bytes(&bytes).expect("역직렬화");
         assert_eq!(decoded.len(), depth as usize);
+    }
+
+    #[test]
+    fn nodes_the_decoder_rejects_are_not_encoded() {
+        // 같은 slot이 두 번 있는 node(XVI.6.4 fuzz 발견): 이전에는 직렬화가 성공하고 역직렬화가 NonCanonical로
+        // 실패했습니다. 이제 직렬화도 거부합니다.
+        let duplicated = ExprNode::new(
+            id(1),
+            NodePayload::Unary(UnaryOp::Negate),
+            vec![
+                ChildRef::new(ChildSlot::Operand, id(2)),
+                ChildRef::new(ChildSlot::Operand, id(3)),
+            ],
+        );
+        assert_eq!(duplicated.to_bytes(), Err(CodecError::NonCanonical));
+        let arguments = ExprNode::new(
+            id(1),
+            NodePayload::Call(FunctionId::Min),
+            vec![
+                ChildRef::new(ChildSlot::Argument(1), id(2)),
+                ChildRef::new(ChildSlot::Argument(1), id(3)),
+            ],
+        );
+        assert_eq!(arguments.to_bytes(), Err(CodecError::NonCanonical));
+        // slot이 서로 다르면(검증과 무관하게) 직렬화한 node는 같은 node로 복원됩니다.
+        let unexpected = ExprNode::new(
+            id(1),
+            NodePayload::Unary(UnaryOp::Negate),
+            vec![
+                ChildRef::new(ChildSlot::Default, id(2)),
+                ChildRef::new(ChildSlot::Lhs, id(3)),
+            ],
+        );
+        let bytes = unexpected.to_bytes().expect("직렬화");
+        assert_eq!(ExprNode::from_bytes(&bytes), Ok(unexpected));
     }
 }
