@@ -27,6 +27,10 @@ extension ShellProjectWindow {
         canvas.framePointerHandler = { [weak self, weak canvas] event in
             guard let self, let canvas else { return false }
             let point = CanvasInput.viewPoint(of: event, in: canvas)
+            if event.type == .leftMouseDown, self.toolsModel.snapshot.activeTool == .text,
+               event.modifierFlags.intersection([.shift, .control, .command, .option]).isEmpty {
+                return self.beginCanvasText(at: point, canvas: canvas)
+            }
             if self.frameDrag?.tool.insertsBounds == true || (event.type == .leftMouseDown && self.toolsModel.snapshot.activeTool.insertsBounds) {
                 return self.handleFrameInsertion(event, point: point, canvas: canvas)
             }

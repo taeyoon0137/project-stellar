@@ -442,6 +442,7 @@ final class ShellProjectWindow {
     let dataSource: ShellProjectFrameDataSource
     let toolsModel: ShellWindowToolsModelStub
     let router: ShellCommandRouter
+    var canvasTextEditing: ShellCanvasTextEditing?
     let toolsToolbar: ToolsToolbarController
     let canvasHost: ShellCanvasHostViewController
     let sidebarSlot: ShellSidebarAreaSlot

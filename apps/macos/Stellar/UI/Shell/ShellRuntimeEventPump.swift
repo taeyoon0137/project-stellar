@@ -173,6 +173,11 @@ final class ShellRuntimeEventPump {
         return register(.success(request), completion)
     }
 
+    func trackTextRequest(_ status: StellarStatus, _ request: UInt64, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return register(.success(request), completion)
+    }
+
     private func register(
         _ result: Result<UInt64, CoreRuntimeCallError>,
         _ completion: @escaping (CoreRuntimeEvent) -> Void
