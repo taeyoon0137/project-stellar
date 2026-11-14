@@ -43,3 +43,6 @@ pub mod dependency;
 
 /// semantic snapshot 무결성 validator (XIV.5.3).
 pub mod validate;
+
+/// snapshot → 영속 문서 레코드 역투영 (XIV.5.4).
+pub mod records;

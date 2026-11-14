@@ -37,12 +37,15 @@ use std::fmt;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyPath;
 
+use stellar_document::validate::{validate_document, DocumentViolation};
+
 use crate::apply::{apply, ApplyError};
 use crate::change::SemanticChange;
 use crate::codec::{put_path, read_path, DecodeError, Reader};
 use crate::dependency::DependencyGraph;
-use crate::diff::diff;
-use crate::snapshot::SemanticSnapshot;
+use crate::diff::{diff, SemanticDiff};
+use crate::records::{document_records, DocumentProjection, ProjectionError};
+use crate::snapshot::{ObjectKind, SemanticSnapshot};
 use crate::validate::{introduced_violations, SnapshotViolation};
 
 /// 변경이 다루는 대상 단위.
@@ -421,6 +424,32 @@ pub enum StageError {
         /// 요청 작업.
         found: SelectionOperation,
     },
+    /// 필수 함께-변경을 호출자가 모두 승인하지 않음(candidate를 만들지 않음).
+    ApprovalRequired {
+        /// 승인이 필요한 전체 필수 변경.
+        required: BTreeSet<ChangeId>,
+    },
+    /// 승인 목록에 필수 변경이 아닌 ID가 있음(오래된 승인).
+    UnexpectedApproval {
+        /// 필수 변경이 아닌 ID.
+        id: ChangeId,
+    },
+    /// closure 적용 실패.
+    Apply(ApplyError),
+    /// candidate가 snapshot 무결성 위반을 새로 만듦.
+    CandidateInvalid {
+        /// 새 위반.
+        violations: BTreeSet<SnapshotViolation>,
+    },
+    /// candidate 문서를 레코드로 복원하지 못함.
+    Projection(ProjectionError),
+    /// candidate 문서가 문서 validator(VI.10.1)를 통과하지 못함.
+    DocumentInvalid {
+        /// 문서.
+        document: StableId,
+        /// 기준 Index 문서에 없던 위반(발견 순).
+        violations: Vec<DocumentViolation>,
+    },
 }
 
 impl fmt::Display for StageError {
@@ -433,6 +462,25 @@ impl fmt::Display for StageError {
                     "요청 작업 {found:?}은 {expected:?} 계획에 쓸 수 없습니다"
                 )
             }
+            StageError::ApprovalRequired { required } => {
+                write!(f, "필수 함께-변경 {}개의 승인이 필요합니다", required.len())
+            }
+            StageError::UnexpectedApproval { id } => {
+                write!(f, "필수 변경이 아닌 승인 ID(객체 {})", id.object)
+            }
+            StageError::Apply(e) => write!(f, "{e}"),
+            StageError::CandidateInvalid { violations } => {
+                write!(f, "candidate 무결성 위반 {}건", violations.len())
+            }
+            StageError::Projection(e) => write!(f, "{e}"),
+            StageError::DocumentInvalid {
+                document,
+                violations,
+            } => write!(
+                f,
+                "candidate 문서 {document} 검증 실패({}건)",
+                violations.len()
+            ),
         }
     }
 }
@@ -454,10 +502,20 @@ pub(crate) fn plan_selection(
     operation: SelectionOperation,
     selected: &BTreeSet<ChangeId>,
 ) -> Result<StagePlan, StageError> {
-    let changes = diff(base, target);
-    let graph = DependencyGraph::build(base, target, &changes);
+    plan_selection_with(base, target, &diff(base, target), operation, selected)
+}
+
+/// [`plan_selection`]을 이미 계산한 `base → target` 변경 목록으로 실행합니다.
+pub(crate) fn plan_selection_with(
+    base: &SemanticSnapshot,
+    target: &SemanticSnapshot,
+    changes: &[SemanticChange],
+    operation: SelectionOperation,
+    selected: &BTreeSet<ChangeId>,
+) -> Result<StagePlan, StageError> {
+    let graph = DependencyGraph::build(base, target, changes);
     let selection = graph.select(operation, selected)?;
-    let chosen: Vec<SemanticChange> = resolve_changes(&changes, selection.selected())?
+    let chosen: Vec<SemanticChange> = resolve_changes(changes, selection.selected())?
         .into_iter()
         .cloned()
         .collect();
@@ -494,6 +552,142 @@ pub fn plan_stage(
         });
     }
     plan_selection(index, working, SelectionOperation::Stage, &request.selected)
+}
+
+/// 승인된 선택(선택 + 필수 변경)을 기준 snapshot에 적용한 candidate(XIV.5.4).
+///
+/// stage면 기준은 현재 Index이고, candidate는 Git index에 기록할 다음 Index 상태입니다. candidate는
+/// semantic 무결성(XIV.5.3)과 문서 validator(VI.10.1)를 통과한 상태로만 만들어집니다.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CandidateIndexSnapshot {
+    selection: StageSelection,
+    snapshot: SemanticSnapshot,
+    applied: SemanticDiff,
+    documents: Vec<DocumentProjection>,
+}
+
+impl CandidateIndexSnapshot {
+    /// 선택과 closure.
+    pub fn selection(&self) -> &StageSelection {
+        &self.selection
+    }
+
+    /// candidate snapshot.
+    pub fn snapshot(&self) -> &SemanticSnapshot {
+        &self.snapshot
+    }
+
+    /// 기준 snapshot → candidate 변경(canonical 순서).
+    pub fn applied(&self) -> &SemanticDiff {
+        &self.applied
+    }
+
+    /// 변경이 닿은 문서의 검증된 레코드(문서 StableId 오름차순).
+    pub fn documents(&self) -> &[DocumentProjection] {
+        &self.documents
+    }
+
+    /// candidate snapshot을 꺼냅니다.
+    pub fn into_snapshot(self) -> SemanticSnapshot {
+        self.snapshot
+    }
+}
+
+/// 문서 validator 위반 목록(통과면 빈 목록). 문서가 없거나 복원에 실패하면 `None`.
+fn document_violations(
+    snapshot: &SemanticSnapshot,
+    document: StableId,
+) -> Option<Vec<DocumentViolation>> {
+    let projection = document_records(snapshot, document).ok()?;
+    Some(match validate_document(&projection.records) {
+        Ok(_) => Vec::new(),
+        Err(error) => error.violations,
+    })
+}
+
+/// 승인된 선택으로 candidate를 만듭니다(공통: stage·unstage).
+///
+/// `base`는 적용 기준(Index), `target`은 선택 변경이 가리키는 상태(stage: WorkingTree, unstage: HEAD)입니다.
+/// semantic 위반은 `base`·`target` 어디에도 없던 것만, 문서 위반은 `base` 문서에 없던 것만 실패로 봅니다.
+pub(crate) fn build_candidate(
+    base: &SemanticSnapshot,
+    target: &SemanticSnapshot,
+    operation: SelectionOperation,
+    request: &StageSelectionRequest,
+) -> Result<CandidateIndexSnapshot, StageError> {
+    let changes = diff(base, target);
+    let plan = plan_selection_with(base, target, &changes, operation, &request.selected)?;
+    let required = plan.required_additions();
+    if let Some(id) = request.approved.iter().find(|id| !required.contains(*id)) {
+        return Err(StageError::UnexpectedApproval { id: id.clone() });
+    }
+    if !required.is_subset(&request.approved) {
+        return Err(StageError::ApprovalRequired { required });
+    }
+    let closure: Vec<SemanticChange> = resolve_changes(&changes, plan.selection.closure())?
+        .into_iter()
+        .cloned()
+        .collect();
+    let candidate = apply(base, &closure).map_err(StageError::Apply)?;
+    let violations = introduced_violations(&candidate, &[base, target]);
+    if !violations.is_empty() {
+        return Err(StageError::CandidateInvalid { violations });
+    }
+    let touched: BTreeSet<StableId> = closure
+        .iter()
+        .filter_map(SemanticChange::document)
+        .collect();
+    let mut documents = Vec::new();
+    for document in touched {
+        if candidate
+            .get(document)
+            .is_none_or(|o| o.kind() != ObjectKind::Document)
+        {
+            // 문서 자체를 지우는 선택: 남은 레코드가 없습니다.
+            continue;
+        }
+        let projection = document_records(&candidate, document).map_err(StageError::Projection)?;
+        if let Err(error) = validate_document(&projection.records) {
+            let existing = document_violations(base, document).unwrap_or_default();
+            let introduced: Vec<DocumentViolation> = error
+                .violations
+                .into_iter()
+                .filter(|v| !existing.contains(v))
+                .collect();
+            if !introduced.is_empty() {
+                return Err(StageError::DocumentInvalid {
+                    document,
+                    violations: introduced,
+                });
+            }
+        }
+        documents.push(projection);
+    }
+    Ok(CandidateIndexSnapshot {
+        selection: plan.selection,
+        applied: diff(base, &candidate),
+        snapshot: candidate,
+        documents,
+    })
+}
+
+/// 승인된 선택 stage candidate(XIV.5.4): Index에 선택 + 필수 변경을 적용합니다.
+///
+/// 필수 변경은 `request.approved`가 모두 포함해야 하며(아니면 [`StageError::ApprovalRequired`]), 필수가
+/// 아닌 승인 ID는 오래된 승인으로 거부합니다. 결과는 semantic validator와 문서 validator를 통과합니다.
+/// Index·WorkingTree snapshot은 바꾸지 않습니다.
+pub fn build_stage_candidate(
+    index: &SemanticSnapshot,
+    working: &SemanticSnapshot,
+    request: &StageSelectionRequest,
+) -> Result<CandidateIndexSnapshot, StageError> {
+    if request.operation != SelectionOperation::Stage {
+        return Err(StageError::WrongOperation {
+            expected: SelectionOperation::Stage,
+            found: request.operation,
+        });
+    }
+    build_candidate(index, working, SelectionOperation::Stage, request)
 }
 
 const REQUEST_MAGIC: &[u8; 4] = b"SSRQ";
@@ -756,6 +950,167 @@ pub(crate) mod tests {
                 &index,
                 &working,
                 &StageSelectionRequest::unstage([ChangeId::add(sid(21))])
+            ),
+            Err(StageError::WrongOperation {
+                expected: SelectionOperation::Stage,
+                found: SelectionOperation::Unstage
+            })
+        );
+    }
+
+    /// 레코드 기반 staging fixture(Index, WorkingTree) — 문서 validator 대상.
+    ///
+    /// Index: HEAD fixture(frame 10 아래 rect 11·image 12·fragment 13, rect 11 fill modifier 50).
+    /// WorkingTree: 새 페이지 4 ─ View 5 ─ root frame 20 ─ rect 21(+ modifier 60), rect 11 크기 변경.
+    pub(crate) fn record_staging_fixture() -> (SemanticSnapshot, SemanticSnapshot) {
+        use crate::build::tests::{head_records, node, rect};
+        use stellar_document::definitions::{PageDefinition, ViewDefinition};
+        use stellar_document::frame::FramePayload;
+        use stellar_document::modifier::{ModifierId, ModifierKind, ModifierStack};
+        use stellar_document::records::NodePayload;
+        let index = head_records();
+        let mut working = index.clone();
+        let mut page = PageDefinition::new(sid(4), "새 페이지".into());
+        page.add_view(ViewDefinition::new(sid(5), "새 View".into(), sid(20)))
+            .unwrap();
+        working.definition.add_page(page).unwrap();
+        working.nodes.push(node(
+            20,
+            None,
+            0x80,
+            "new-root",
+            NodePayload::Frame(FramePayload::default()),
+        ));
+        working
+            .nodes
+            .push(node(21, Some(20), 0x80, "new-box", rect(5.0, 5.0)));
+        let mut stack = ModifierStack::new(sid(21));
+        stack
+            .push_back(ModifierId::new(sid(60)), ModifierKind::Opacity)
+            .unwrap();
+        working.modifier_stacks.push(stack);
+        working.nodes[1].payload = rect(40.0, 20.0);
+        (build(&index), build(&working))
+    }
+
+    #[test]
+    fn approved_selection_builds_a_candidate_that_passes_the_document_validator() {
+        let (index, working) = record_staging_fixture();
+        let index_before = index.clone();
+        let working_before = working.clone();
+        let select = StageSelectionRequest::stage([ChangeId::add(sid(21))]);
+        let plan = plan_stage(&index, &working, &select).unwrap();
+        let required = plan.required_additions();
+        assert_eq!(
+            required,
+            [
+                ChangeId::property(path(1, keys::DOCUMENT_PAGES)),
+                ChangeId::add(sid(4)),
+                ChangeId::add(sid(5)),
+                ChangeId::add(sid(20)),
+            ]
+            .into()
+        );
+        // 승인 전에는 candidate를 만들지 않습니다.
+        assert_eq!(
+            build_stage_candidate(&index, &working, &select),
+            Err(StageError::ApprovalRequired {
+                required: required.clone()
+            })
+        );
+        // 일부만 승인해도 거부, 필수가 아닌 ID 승인은 오래된 승인.
+        let partial = select.clone().with_approved([ChangeId::add(sid(20))]);
+        assert!(matches!(
+            build_stage_candidate(&index, &working, &partial),
+            Err(StageError::ApprovalRequired { .. })
+        ));
+        let stale = select
+            .clone()
+            .with_approved(required.iter().cloned().chain([ChangeId::add(sid(60))]));
+        assert_eq!(
+            build_stage_candidate(&index, &working, &stale),
+            Err(StageError::UnexpectedApproval {
+                id: ChangeId::add(sid(60))
+            })
+        );
+
+        // 승인 후 candidate.
+        let approved = select.with_approved(required.iter().cloned());
+        let candidate = build_stage_candidate(&index, &working, &approved).unwrap();
+        let snapshot = candidate.snapshot();
+        for id in [4, 5, 20, 21] {
+            assert!(snapshot.contains(sid(id)), "{id}");
+        }
+        // 선택하지 않은 변경(modifier 60, rect 11 크기)은 들어가지 않습니다.
+        assert!(!snapshot.contains(sid(60)));
+        let size = path(11, keys::RECT_SIZE);
+        assert_eq!(
+            snapshot.get(sid(11)).unwrap().property(&size),
+            index.get(sid(11)).unwrap().property(&size)
+        );
+        assert_eq!(candidate.applied().len(), 5);
+        assert_eq!(candidate.selection().closure().len(), 5);
+        // candidate 문서는 문서 validator(VI.10.1)를 통과합니다.
+        assert_eq!(candidate.documents().len(), 1);
+        let records = &candidate.documents()[0].records;
+        assert!(validate_document(records).is_ok());
+        assert_eq!(records.definition.pages.len(), 2);
+        assert!(crate::validate::validate_snapshot(snapshot)
+            .iter()
+            .all(|v| matches!(v, SnapshotViolation::DanglingReference { target, .. } if *target == sid(90))));
+        // 입력 snapshot은 그대로입니다.
+        assert_eq!(index, index_before);
+        assert_eq!(working, working_before);
+    }
+
+    #[test]
+    fn staging_every_change_reproduces_the_working_tree() {
+        use stellar_document::test_support::random_document::random_valid_document;
+        for seed in 0..20 {
+            let index = build(&random_valid_document(seed).to_records().unwrap());
+            let working = build(&random_valid_document(seed + 1000).to_records().unwrap());
+            let all: BTreeSet<ChangeId> = diff(&index, &working).iter().map(|c| c.id()).collect();
+            let candidate =
+                build_stage_candidate(&index, &working, &StageSelectionRequest::stage(all))
+                    .unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+            assert_eq!(candidate.snapshot(), &working, "seed {seed}");
+            assert!(candidate.selection().is_self_contained());
+        }
+    }
+
+    #[test]
+    fn candidate_failing_the_document_validator_is_rejected() {
+        use crate::build::tests::{head_records, node};
+        use stellar_document::fragment::FragmentPayload;
+        use stellar_document::records::NodePayload;
+        // WorkingTree가 Shape(rect 11) 아래에 자식을 둠: semantic 무결성은 통과하지만 문서 validator
+        // (parent consistency: Shape는 자식을 가질 수 없음)는 거부합니다.
+        let index = head_records();
+        let mut working = index.clone();
+        working.nodes.push(node(
+            30,
+            Some(11),
+            0x80,
+            "bad",
+            NodePayload::Fragment(FragmentPayload),
+        ));
+        let (index, working) = (build(&index), build(&working));
+        let request = StageSelectionRequest::stage([ChangeId::add(sid(30))]);
+        match build_stage_candidate(&index, &working, &request) {
+            Err(StageError::DocumentInvalid {
+                document,
+                violations,
+            }) => {
+                assert_eq!(document, sid(1));
+                assert!(!violations.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            build_stage_candidate(
+                &index,
+                &working,
+                &StageSelectionRequest::unstage([ChangeId::add(sid(30))])
             ),
             Err(StageError::WrongOperation {
                 expected: SelectionOperation::Stage,
