@@ -210,7 +210,7 @@ impl DocumentModel {
         self.modifiers.get(&id)
     }
 
-    /// Frame clip과 modifier가 참조하는 node. 미해결 대상과 비활성 modifier도 포함합니다.
+    /// Frame clip·modifier가 참조하는 node와 인스턴스가 참조하는 정의. 미해결 대상과 비활성 modifier도 포함합니다.
     pub fn references(&self) -> &ReferenceIndex {
         &self.references
     }
@@ -220,6 +220,10 @@ impl DocumentModel {
             stack.sync_references(&mut self.references);
         } else {
             self.references.remove_all_from(owner);
+        }
+        if let Some(NodePayload::ComponentInstance(payload)) = self.payloads.get(&owner) {
+            self.references
+                .add_reference(owner, payload.component().id());
         }
         if let Some(NodePayload::Frame(frame)) = self.payloads.get(&owner) {
             if let Clipping::Path(target) = frame.clipping {

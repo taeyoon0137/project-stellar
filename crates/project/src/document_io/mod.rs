@@ -45,5 +45,8 @@ mod text_codec;
 /// 문서 chunk payload 스키마 version. chunk pointer(V.3.1)에 기록됩니다.
 pub const DOCUMENT_CHUNK_SCHEMA_VERSION: u32 = 1;
 
+/// ComponentInstance(tag 7)를 실제로 담은 subtree에만 사용하는 payload schema.
+pub const INSTANCE_SUBTREE_SCHEMA_VERSION: u32 = 2;
+
 /// 독립 컴포넌트 원본 파일과 라이브러리 조립 (ADR-0059).
 pub mod component_source;

@@ -7,26 +7,26 @@
 //! | 객체 | 레코드 |
 //! |---|---|
 //! | Document·Page·View | [`DocumentDefinition`](페이지·View 순서는 `DOCUMENT_PAGES`·`PAGE_VIEWS` 목록) |
-//! | scene `Node`(ComponentInstance 제외) | [`NodeRecord`](필드별 속성 → typed payload, Path·Text는 canonical payload 해석) |
+//! | scene `Node` | [`NodeRecord`](필드별 속성 → typed payload, Path·Text는 canonical payload 해석) |
 //! | `Modifier` | [`ModifierStack`](parent = 소유 node, OrderKey 순) |
 //!
 //! - **결정론·왕복**: `document_records(build(R)) == R`(레코드 canonical 정렬 기준)이 성립합니다. 결과는
 //!   [`DocumentRecords::sort_canonical`] 순서입니다.
 //! - **typed 검증**: 값은 문서 crate 생성자(크기·radius·crop·polygon 등)를 다시 거치므로 범위를 벗어난 값은
 //!   [`ProjectionError`]로 거부하고 고쳐 넣지 않습니다.
-//! - scene ComponentInstance node는 [`DocumentRecords`]가 아직 표현하지 못하므로(XIV.3.6 builder 입력도 별도)
-//!   레코드에 넣지 않고 [`DocumentProjection::instances`]로 따로 돌려줍니다. 그 무결성은 semantic validator
-//!   (XIV.5.3)가 검사합니다.
+//! - ComponentInstance는 정의 참조와 희소 override를 복원합니다.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
 use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::ids::StableId;
-use stellar_core_types::property::PropertyKey;
-use stellar_core_types::reference::{AssetRef, NodeRef};
+use stellar_core_types::property::{PathSegment, PropertyKey};
+use stellar_core_types::reference::{AssetRef, ComponentRef, NodeRef};
 use stellar_core_types::typed_value::TypedValue;
 use stellar_core_types::value::{Angle, FiniteF32, Rect, Size2, Transform2D, Vec2};
+use stellar_document::component::definition::{ComponentPropertyId, ComponentSlotId};
+use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey, SlotOverride};
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
 use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::{Border, Clipping, CornerRadius, FramePayload};
@@ -97,7 +97,7 @@ impl std::error::Error for ProjectionError {}
 pub struct DocumentProjection {
     /// 문서 레코드(canonical 정렬).
     pub records: DocumentRecords,
-    /// 레코드로 표현하지 못한 scene ComponentInstance node(StableId 오름차순).
+    /// 레코드에 포함한 scene ComponentInstance node(StableId 오름차순).
     pub instances: Vec<StableId>,
 }
 
@@ -255,8 +255,53 @@ fn node_payload(object: &SemanticObject, kind: NodeKind) -> Result<NodePayload, 
             decode_payload(kind, r.bytes(key)?).map_err(|e| r.invalid(key, e))
         }
         NodeKind::Image => image_payload(&r).map(NodePayload::Image),
-        NodeKind::ComponentInstance => Err(r.bad(keys::instance::COMPONENT_REF)),
+        NodeKind::ComponentInstance => instance_payload(&r).map(NodePayload::ComponentInstance),
     }
+}
+
+fn instance_payload(r: &Reader<'_>) -> Result<ComponentInstancePayload, ProjectionError> {
+    use keys::instance::{COMPONENT_REF, PROPERTY_OVERRIDES, SLOT_OVERRIDES};
+    let mut instance = ComponentInstancePayload::new(ComponentRef::new(r.id(COMPONENT_REF)?));
+    for (path, value) in r.object.properties() {
+        let Some(&first) = path.keys().first() else {
+            continue;
+        };
+        if first != PROPERTY_OVERRIDES && first != SLOT_OVERRIDES {
+            continue;
+        }
+        let Some(PathSegment::Key(segment)) = path.tail() else {
+            return Err(r.bad(first));
+        };
+        if path.keys() != [first] {
+            return Err(r.bad(first));
+        }
+        match (first, value) {
+            (PROPERTY_OVERRIDES, SemanticValue::Typed(value)) => {
+                let mut ids = segment
+                    .split('/')
+                    .map(|s| s.parse::<StableId>().map_err(|_| r.bad(first)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let property = ComponentPropertyId::new(ids.pop().ok_or_else(|| r.bad(first))?);
+                let key = OverrideKey::nested(ids, property);
+                if crate::build::override_segment(&key) != *segment {
+                    return Err(r.bad(first));
+                }
+                instance.set_property_override(key, value.clone());
+            }
+            (SLOT_OVERRIDES, SemanticValue::Ids(content)) => {
+                let id: StableId = segment.parse().map_err(|_| r.bad(first))?;
+                if id.to_string() != *segment {
+                    return Err(r.bad(first));
+                }
+                instance.set_slot_override(
+                    ComponentSlotId::new(id),
+                    SlotOverride::new(content.clone()).map_err(|e| r.invalid(first, e))?,
+                );
+            }
+            _ => return Err(r.bad(first)),
+        }
+    }
+    Ok(instance)
 }
 
 fn frame_payload(r: &Reader<'_>) -> Result<FramePayload, ProjectionError> {
@@ -493,8 +538,10 @@ pub fn document_records(
     for object in snapshot.objects().filter(|o| o.origin() == origin) {
         let r = Reader { object };
         match object.kind() {
-            ObjectKind::Node(NodeKind::ComponentInstance) => instances.push(object.id()),
             ObjectKind::Node(kind) => {
+                if kind == NodeKind::ComponentInstance {
+                    instances.push(object.id());
+                }
                 let order_key = object
                     .order_key()
                     .cloned()
@@ -581,6 +628,39 @@ mod tests {
             // 다시 build하면 같은 snapshot.
             assert_eq!(build(&projection.records), snapshot, "seed {seed}");
         }
+    }
+
+    #[test]
+    fn document_instances_project_sparse_overrides_and_slot_references_losslessly() {
+        let mut records = head_records();
+        let mut instance = ComponentInstancePayload::new(ComponentRef::new(sid(300)));
+        instance.set_property_override(
+            OverrideKey::direct(ComponentPropertyId::new(sid(310))),
+            TypedValue::Boolean(false),
+        );
+        instance.set_property_override(
+            OverrideKey::nested(vec![sid(303)], ComponentPropertyId::new(sid(311))),
+            TypedValue::String("Nested".into()),
+        );
+        instance.set_slot_override(
+            ComponentSlotId::new(sid(330)),
+            SlotOverride::new(vec![sid(11)]).unwrap(),
+        );
+        let parent = records.nodes[0].id;
+        records.nodes.push(NodeRecord {
+            id: sid(400),
+            parent: Some(parent),
+            order_key: stellar_core_types::order_key::OrderKey::from_bytes(vec![0xf0]).unwrap(),
+            visible: true,
+            locked: false,
+            display_name: "Placed".into(),
+            payload: NodePayload::ComponentInstance(instance),
+        });
+        let snapshot = build(&records);
+        let projection = document_records(&snapshot, records.definition.id).unwrap();
+        assert_eq!(projection.instances, [sid(400)]);
+        assert_eq!(projection.records, canonical(records));
+        assert_eq!(build(&projection.records), snapshot);
     }
 
     #[test]

@@ -73,7 +73,7 @@ fn leaf_bounds(payload: &NodePayload) -> Option<Rect> {
             .and_then(|commands| path_bounds(&commands)),
         NodePayload::Path(path) => path_bounds(path.data().commands()),
         NodePayload::Image(image) => Some(image.layout_bounds()),
-        NodePayload::Text(_) | NodePayload::Fragment(_) => None,
+        NodePayload::Text(_) | NodePayload::Fragment(_) | NodePayload::ComponentInstance(_) => None,
     }
 }
 
@@ -152,7 +152,10 @@ fn translate(payload: &NodePayload, offset: Vec2) -> Result<Option<NodePayload>,
                 .and_then(|data| IdentifiedPath::new(data, path.ids().to_vec()).ok())
                 .map(NodePayload::Path)
         }
-        NodePayload::Fragment(_) | NodePayload::Text(_) | NodePayload::Image(_) => return Err(()),
+        NodePayload::Fragment(_)
+        | NodePayload::Text(_)
+        | NodePayload::Image(_)
+        | NodePayload::ComponentInstance(_) => return Err(()),
     })
 }
 

@@ -98,7 +98,7 @@ pub fn saved_semantic_snapshot(
     let mut pointers = Vec::new();
     for (id, record) in &records {
         let projected = document_records(&semantic, *id).map_err(invalid)?;
-        if !projected.instances.is_empty() || &projected.records != record {
+        if &projected.records != record {
             return Err(CandidateStorageError::Unsupported(
                 "문서 semantic 역투영 손실",
             ));
@@ -136,10 +136,8 @@ pub fn serialize_candidate(
     let mut documents = records(index)?;
     for projection in candidate.documents() {
         let id = projection.records.definition.id;
-        if !projection.instances.is_empty() || !documents.contains_key(&id) {
-            return Err(CandidateStorageError::Unsupported(
-                "문서 추가 또는 ComponentInstance",
-            ));
+        if !documents.contains_key(&id) {
+            return Err(CandidateStorageError::Unsupported("문서 추가"));
         }
         documents.insert(id, projection.records.clone());
     }

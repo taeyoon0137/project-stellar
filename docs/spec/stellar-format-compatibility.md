@@ -22,7 +22,7 @@
 | chunk envelope format version | `.starchunk` header | 1 | `storage::chunk::envelope::CHUNK_FORMAT_VERSION` | 정확히 일치. 아니면 `UnsupportedVersion` |
 | generation manifest format version | `.starmanifest` header | 1 | `storage::generation::manifest::MANIFEST_FORMAT_VERSION` | 정확히 일치. 아니면 `UnsupportedVersion` |
 | storage 문서 스키마 버전 | manifest `schema_version` | 최신 2 | `xtask::migration_fixtures::LATEST_SCHEMA` | 열기에서 비교하지 않음(§4.2) |
-| chunk payload 스키마 버전 | chunk pointer `schema_version` | 문서 chunk 1 | `project::document_io::DOCUMENT_CHUNK_SCHEMA_VERSION` | 읽기에서 비교하지 않음(§4.2) |
+| chunk payload 스키마 버전 | chunk pointer `schema_version` | 문서 chunk 1, 인스턴스 subtree 2 | `project::document_io` | generation 문서 로더는 1·2만 열 수 있음(§4.2) |
 | content hash 알고리즘 | hash 문자열 prefix | `sha256` | `storage::hash::HashAlgorithm` | 모르는 이름은 `UnknownAlgorithm` |
 | chunk kind code | envelope·pointer `kind` | 초기 6종 | `storage::chunk::kinds::INITIAL_KINDS` | 읽기에서 pointer kind와 envelope kind가 같아야 함. registry 해석은 열기에서 쓰지 않음(§4.3) |
 | 문서 ChunkId 유도 domain | 유도 입력 | `stellar/document-chunk-id/v1\0` | `project::document_io::serialize` | reader는 유도를 가정하지 않음 |
@@ -100,7 +100,7 @@ ADR-0009).
 | migration 목표 < 현재 | `NoPath`(다운그레이드 경로 없음) |
 | migration 목표 > 현재, step 경로 있음 | 새 세대로 변환. 원본 불변 |
 | migration 경로 끊김 | `NoPath { stuck_at, target }`, 아무것도 쓰지 않음 |
-| chunk pointer `schema_version` | 읽기에서 비교하지 않습니다. migration은 모든 pointer를 도달한 manifest 스키마 버전으로 바꿉니다 |
+| 문서 chunk pointer `schema_version` | generation 문서 로더는 1·2를 읽고 다른 버전을 거부합니다. 기존 v1 문서의 bytes·pointer는 유지합니다. NodeKind 7을 담은 subtree writer는 2를 씁니다. 이전 독자는 7을 해석할 수 없어 문서 로드를 거부합니다. migration으로 버전 2가 된 기존 문서도 그대로 읽습니다 |
 
 따라서 현재 구현은 기술 아키텍처 §36의 "새 스키마를 구버전에서 편집 금지"를 강제하지 않습니다(§9).
 

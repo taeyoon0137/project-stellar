@@ -3,7 +3,7 @@
 - 문서 종류: conformance corpus 설명서. corpus 자체는 [`manifest.yaml`](manifest.yaml)과 `binary/`·`yaml/`
   아래 파일입니다.
 - WBS: XXVIII.2.1
-- 기준 commit: `24728e3`. 모든 기대 결과는 이 commit의 구현으로 실행해 얻었습니다.
+- 초기 기준 commit은 `24728e3`입니다. tag 7 ComponentInstance의 유효·오류 fixture는 현재 문서 codec으로 왕복·거부를 검사합니다.
 - 공개 상태: **공개 전**. 라이선스가 정해지지 않았습니다(§6).
 - 관련 명세: [`../stellar-format.md`](../stellar-format.md)(형식 명세),
   [`../stellar-semantic-model.md`](../stellar-semantic-model.md)(의미 레코드 §2),

@@ -8,12 +8,12 @@
 //! - modifier stack은 node payload와 **분리**되어 별도 목록으로 저장됩니다(VI.9.1).
 //!
 //! node 종류는 payload variant에서 유도하므로 kind와 payload가 어긋난 레코드는 표현할 수
-//! 없습니다. ComponentInstance는 정의 참조·override 스키마가 컴포넌트 단계(Phase IX)에서
-//! 정해지기 전까지 payload variant가 없어 레코드로 만들 수 없습니다.
+//! 없습니다. 컴포넌트 인스턴스는 정의와 희소 override만 보관합니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
 
+use crate::component::instance::ComponentInstancePayload;
 use crate::definitions::{DocumentDefinition, ViewDefinition};
 use crate::fragment::FragmentPayload;
 use crate::frame::FramePayload;
@@ -39,6 +39,8 @@ pub enum NodePayload {
     Text(TextPayload),
     /// 이미지(VI.8).
     Image(ImagePayload),
+    /// 컴포넌트 정의에 대한 참조와 희소 override(IX.2.1).
+    ComponentInstance(ComponentInstancePayload),
 }
 
 impl NodePayload {
@@ -51,6 +53,7 @@ impl NodePayload {
             NodePayload::Path(_) => NodeKind::Path,
             NodePayload::Text(_) => NodeKind::Text,
             NodePayload::Image(_) => NodeKind::Image,
+            NodePayload::ComponentInstance(_) => NodeKind::ComponentInstance,
         }
     }
 }

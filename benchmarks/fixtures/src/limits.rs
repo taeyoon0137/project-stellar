@@ -356,7 +356,7 @@ fn local_bounds(payload: &NodePayload) -> Option<(Vec2, Vec2)> {
             }
             aabb(&points)
         }
-        NodePayload::Text(_) | NodePayload::Fragment(_) => None,
+        NodePayload::Text(_) | NodePayload::Fragment(_) | NodePayload::ComponentInstance(_) => None,
     }
 }
 

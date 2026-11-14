@@ -73,7 +73,7 @@
 | 4 | Path | `path` | 예 |
 | 5 | Text | `text` | 예 |
 | 6 | Image | `image` | 예 |
-| 7 | ComponentInstance | `component-instance` | 아니오(§2.3) |
+| 7 | ComponentInstance | `component-instance` | 예(§2.3) |
 
 컴포넌트 정의는 scene node가 아니라 문서 resource입니다. scene에는 ComponentInstance만 배치됩니다.
 
@@ -120,8 +120,9 @@ decoder는 다음을 거부해야 합니다.
 | Path | `IdentifiedPath::decode` | `Path(...)` |
 | Text | `TextPayload::decode` | `Text(...)` |
 | Image | `ImagePayload::decode` | `Image(...)` |
-| ComponentInstance | 없음 | `UnsupportedNodeKind { kind }` |
+| ComponentInstance | `ComponentInstancePayload::decode` | `ComponentInstance(InstancePayloadError)` |
 
+- ComponentInstance는 정의 StableId 16바이트 뒤에 희소 PropertyOverride와 SlotOverride 맵을 저장합니다. 각 맵은 `u32` 개수와 오름차순 항목으로 구성합니다. Property key는 중첩 인스턴스 경로 길이(`u32`), 경로 ID들, Property ID이며 값은 `u32` 길이 + canonical TypedValue입니다. Slot 항목은 Slot ID, content 수(`u32`), 순서대로 나열한 scene node ID들입니다. 중복·역순 key, slot 안의 중복 content, 모르는 값 tag·잘린 입력·남은 bytes를 거부합니다. 인스턴스와 정의의 ID는 독립적이며 슬롯·override를 포함한 원본 payload로부터 참조를 재조립합니다.
 - 각 payload decoder는 끝까지 정확히 소비하고 값 범위를 검증해야 합니다.
 - **현재 구현**: `FramePayload::decode`와 `ModifierStack::decode`(Opacity)는 float 자리의 `-0.0` bit 패턴
   (`00000080`)을 거부하지 않고 `+0.0`으로 정규화해 받습니다(`FiniteF32::new`). 그래서 그 입력을 다시
@@ -242,7 +243,7 @@ entry = id:raw16 ‖ key_len:u32 LE ‖ key[key_len] ‖ kind:u16 LE ‖ enabled
 | 객체 | 메모리·인코딩 근거 | 형식 명세 kind |
 |---|---|---|
 | 컴포넌트 library(정의, 정의 tree, Slot) | `document::component::definition::ComponentLibrary::encode` | `component-library`(등록만 됨) |
-| ComponentInstance node | `document::component::instance::ComponentInstancePayload::encode` | 레코드 불가(§2.3) |
+| ComponentInstance node | `document::component::instance::ComponentInstancePayload::encode` | §2.3의 tag 7 payload |
 | token | `bindings::token`의 메모리 모델(`TokenSet`, `TokenDefinition`) | `token-set`(등록만 됨) |
 | asset record | `assets::record`(형식 명세 §15) | `asset-metadata`(등록만 됨) |
 | expression AST | `expressions::codec`(AST canonical bytes) | 없음 |

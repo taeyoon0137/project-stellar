@@ -476,13 +476,24 @@ entries:
     origin: generated
     sha256: "sha256:c0f42a3ce14beca09fc925e7f752e0ac68b9dd5e447ab741a2d68852e89b1b2f"
   -
+    id: subtree-component-instance-valid
+    file: "binary/subtree_component_instance_valid.hex"
+    target: subtree
+    validity: valid
+    expect: ok
+    canonical: "true"
+    spec: "stellar-semantic-model.md §2.3"
+    description: "Frame 아래에 정의 StableId와 빈 희소 override를 가진 인스턴스"
+    origin: generated
+    sha256: "sha256:ca357d32043eb40fa04cc59e95ab55dabd73e9a9684ff59a3e181f9e50b75bf5"
+  -
     id: subtree-component-instance
     file: "binary/subtree_component_instance.hex"
     target: subtree
     validity: invalid
-    expect: "error:UnsupportedNodeKind/ComponentInstance"
+    expect: "error:ComponentInstance/Malformed[입력 부족]"
     spec: "stellar-semantic-model.md §2.4"
-    description: "첫 node kind를 7(ComponentInstance)로"
+    description: "Frame payload에 ComponentInstance tag를 붙인 잘못된 레코드"
     origin: generated
     sha256: "sha256:f062a36667da2d0c6a0c7ac4f69db94e9c79f73a3a051315f4ddf72c90636c87"
   -

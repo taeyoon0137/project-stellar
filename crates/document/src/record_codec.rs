@@ -27,6 +27,7 @@ use std::fmt;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::order_key::OrderKey;
 
+use crate::component::instance::{ComponentInstancePayload, InstancePayloadError};
 use crate::definitions::{DefinitionError, DocumentDefinition};
 use crate::fragment::{FragmentError, FragmentPayload};
 use crate::frame::{FrameError, FramePayload};
@@ -51,11 +52,8 @@ pub enum RecordCodecError {
         /// 발견된 값.
         value: u16,
     },
-    /// 이 버전이 레코드로 다루지 않는 node 종류입니다(ComponentInstance, Phase IX).
-    UnsupportedNodeKind {
-        /// 종류.
-        kind: NodeKind,
-    },
+    /// 인스턴스 참조 또는 희소 override 형식 오류.
+    ComponentInstance(InstancePayloadError),
     /// subtree 첫 node가 선언된 root가 아닙니다.
     SubtreeRootMismatch {
         /// 선언된 root.
@@ -93,9 +91,7 @@ impl fmt::Display for RecordCodecError {
             RecordCodecError::UnknownNodeKind { value } => {
                 write!(f, "알 수 없는 node kind: {value}")
             }
-            RecordCodecError::UnsupportedNodeKind { kind } => {
-                write!(f, "{} node는 아직 레코드로 저장할 수 없습니다", kind.name())
-            }
+            RecordCodecError::ComponentInstance(e) => write!(f, "ComponentInstance payload: {e}"),
             RecordCodecError::SubtreeRootMismatch { declared, found } => {
                 write!(f, "subtree root {declared}와 첫 node {found}가 다릅니다")
             }
@@ -202,6 +198,7 @@ pub fn encode_payload(payload: &NodePayload) -> Vec<u8> {
         NodePayload::Path(path) => path.encode(),
         NodePayload::Text(text) => text.encode(),
         NodePayload::Image(image) => image.encode(),
+        NodePayload::ComponentInstance(instance) => instance.encode(),
     }
 }
 
@@ -226,7 +223,9 @@ pub fn decode_payload(kind: NodeKind, bytes: &[u8]) -> Result<NodePayload, Recor
         NodeKind::Image => {
             NodePayload::Image(ImagePayload::decode(bytes).map_err(RecordCodecError::Image)?)
         }
-        NodeKind::ComponentInstance => return Err(RecordCodecError::UnsupportedNodeKind { kind }),
+        NodeKind::ComponentInstance => NodePayload::ComponentInstance(
+            ComponentInstancePayload::decode(bytes).map_err(RecordCodecError::ComponentInstance)?,
+        ),
     })
 }
 
@@ -592,6 +591,9 @@ mod tests {
             NodePayload::Text(text),
             NodePayload::Text(TextPayload::empty(0)),
             NodePayload::Image(image),
+            NodePayload::ComponentInstance(ComponentInstancePayload::new(
+                stellar_core_types::reference::ComponentRef::new(sid(1000)),
+            )),
         ]
     }
 
@@ -605,6 +607,39 @@ mod tests {
             assert_eq!(decoded, original, "#{i}");
             assert_eq!(encode_node_record(&decoded), bytes, "#{i} 재인코딩");
         }
+    }
+
+    #[test]
+    fn component_instance_conformance_corpus() {
+        fn bytes(hex: &str) -> Vec<u8> {
+            let joined: String = hex
+                .lines()
+                .filter(|line| !line.starts_with('#'))
+                .flat_map(str::split_whitespace)
+                .collect();
+            (0..joined.len())
+                .step_by(2)
+                .map(|n| u8::from_str_radix(&joined[n..n + 2], 16).unwrap())
+                .collect()
+        }
+        let good = bytes(include_str!(
+            "../../../docs/spec/conformance/binary/subtree_component_instance_valid.hex"
+        ));
+        let tree = SubtreeRecords::decode(&good).unwrap();
+        assert!(matches!(
+            tree.nodes[1].payload,
+            NodePayload::ComponentInstance(_)
+        ));
+        assert_eq!(tree.encode(), good);
+        let bad = bytes(include_str!(
+            "../../../docs/spec/conformance/binary/subtree_component_instance.hex"
+        ));
+        assert_eq!(
+            SubtreeRecords::decode(&bad).unwrap_err(),
+            RecordCodecError::ComponentInstance(InstancePayloadError::Malformed {
+                reason: "입력 부족"
+            })
+        );
     }
 
     #[test]
@@ -626,12 +661,10 @@ mod tests {
         );
         let mut component = bytes.clone();
         component[16..18].copy_from_slice(&NodeKind::ComponentInstance.as_u16().to_le_bytes());
-        assert_eq!(
-            decode_node_record(&component).unwrap_err(),
-            RecordCodecError::UnsupportedNodeKind {
-                kind: NodeKind::ComponentInstance
-            }
-        );
+        assert!(matches!(
+            decode_node_record(&component),
+            Err(RecordCodecError::ComponentInstance(_))
+        ));
         // kind와 payload가 어긋나면 payload decoder가 거부(Text bytes를 Frame으로).
         let mut mismatched = bytes.clone();
         mismatched[16..18].copy_from_slice(&NodeKind::Frame.as_u16().to_le_bytes());
