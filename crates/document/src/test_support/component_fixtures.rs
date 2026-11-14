@@ -802,9 +802,14 @@ pub fn library_snapshot(fixture: &ComponentLibraryFixture) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component::encapsulation::validate_scene_encapsulation;
     use crate::component::expansion::{InstanceExpansion, SceneIndex};
-    use crate::component::override_rules::validate_scene_property_overrides;
-    use crate::component::slot_override::validate_scene_slot_overrides;
+    use crate::component::override_rules::{
+        validate_definition_property_overrides, validate_scene_property_overrides,
+    };
+    use crate::component::slot_override::{
+        validate_definition_slot_overrides, validate_scene_slot_overrides,
+    };
     use crate::component::state_diagnostics::diagnose_state_machine;
     use crate::control::registry::validate_contracts;
 
@@ -824,6 +829,10 @@ mod tests {
         for (name, component) in components() {
             library.validate_properties(component).unwrap();
             library.validate_slots(component).unwrap();
+            // 정의 tree 안 nested 인스턴스(Modal의 닫기 Button)의 property·slot override를 미해결 참조 건너뛰기 없이
+            // 검사합니다(library 디코딩 경로는 미해결 참조를 건너뜀).
+            validate_definition_property_overrides(library, component).unwrap();
+            validate_definition_slot_overrides(library, component).unwrap();
             // control contract: 오류·진단 모두 0건.
             let entry = library.get(component).unwrap();
             let issues = validate_contracts(&fixture.contracts[&component], entry);
@@ -881,6 +890,9 @@ mod tests {
         let fixture = component_library_fixture().unwrap();
         let (columns, payloads) = fixture_scene().unwrap();
         let scene = SceneIndex::build(&columns, &payloads);
+        // scene 전체 node의 override 캡슐화 규칙(IX.4.2: nested 직접 경로 금지).
+        let scene_nodes = (0..=5u64).map(|i| sid(SCENE_ROOT + i)).chain([sid(9006)]);
+        validate_scene_encapsulation(&fixture.library, &scene, scene_nodes).unwrap();
         for i in 0..5u64 {
             let instance = sid(SCENE_ROOT + 1 + i);
             validate_scene_property_overrides(&fixture.library, &scene, instance).unwrap();
