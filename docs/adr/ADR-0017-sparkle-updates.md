@@ -29,8 +29,9 @@ XVI.9.5의 첫 구현은 자체 JSON feed(schema 1)와 기본 브라우저 다�
 
 - 자동 업데이트를 Sparkle로 구현합니다.
 - feed URL은 설정할 수 있어야 하고, 기본값은 별도 공개 릴리스 저장소 placeholder입니다.
-- 에이전트는 저장소를 만들거나 배포하지 않고, Sparkle EdDSA 키도 만들지 않습니다. 키 생성은 공증 자격 증명처럼
-  사용자 단계로 문서화합니다.
+- 에이전트는 저장소를 만들거나 배포하지 않습니다. 공개 릴리스 저장소는 실제 배포 시점에 만듭니다.
+- Sparkle EdDSA 키는 제품 책임자 요청(2026-11-14)으로 개발 Mac에서 생성했습니다. 개인 키는 그 Mac의 로그인
+  키체인에만 있고, 저장소에는 공개 키만 둡니다(아래 8).
 
 ## Decision
 
@@ -93,18 +94,21 @@ XVI.9.5의 첫 구현은 자체 JSON feed(schema 1)와 기본 브라우저 다�
    - 자동 설치가 명시적으로 꺼져 있음
    - 공개 키가 base64 32바이트
 
-   하나라도 어긋나면 updater를 만들지 않으므로 네트워크 요청도 없습니다. 현재 저장소 상태는 키가 비어 있어
-   `disabled(missingPublicKey)`이고, 실행 로그에 `stellar update: disabled(...)`로 남습니다.
-8. **사용자 단계(에이전트가 하지 않음).**
-   1. 키 생성: `apps/macos/build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys`를 실행합니다. 개인 키는
-      로그인 키체인에 저장되고 공개 키가 출력됩니다. 출력된 공개 키를 `STELLAR_UPDATE_PUBLIC_ED_KEY`(project build
-      setting 또는 스크립트 환경 변수)에 넣습니다. 공개 키는 커밋해도 됩니다. 개인 키는 `generate_keys -x <파일>`로
-      저장소 밖에 백업하고, 절대 커밋하지 않습니다.
-   2. 공개 릴리스 저장소 `stellar-releases`를 만듭니다(또는 다른 feed 위치를 정합니다).
+   하나라도 어긋나면 updater를 만들지 않으므로 네트워크 요청도 없습니다. 공개 키가 설정된 뒤(2026-11-14)로는
+   구성이 완전하므로 updater가 시작됩니다. 공개 릴리스 저장소가 생기기 전에는 background 확인이 feed를 찾지 못하고
+   조용히 실패합니다(사용자에게 대화상자를 띄우지 않음).
+8. **배포 키와 남은 사용자 단계.**
+   1. 키(완료, 2026-11-14): `generate_keys --account stellar`로 만들었습니다. keychain account 이름 `stellar`는 같은
+      Mac에서 Sparkle을 쓰는 다른 앱의 기본 키(`ed25519`)와 섞이지 않게 하려고 정했습니다. 공개 키
+      `bNzmhRu95zcg9IcwH2rWI5FzHKrxY4pVe2+24VYO4Po=`를 project build setting `STELLAR_UPDATE_PUBLIC_ED_KEY`(Debug·Release)에
+      넣었습니다. 개인 키는 개발 Mac의 로그인 키체인에만 있습니다. 다른 Mac으로 옮기거나 백업할 때만
+      `generate_keys --account stellar -x <파일>`로 저장소 밖에 내보내고, 절대 커밋하지 않습니다. 개인 키를 잃으면
+      Sparkle key rotation 절차로 새 키를 배포해야 합니다(아래 Migration).
+   2. 공개 릴리스 저장소 `stellar-releases`를 만듭니다(또는 다른 feed 위치를 정합니다). 실제 배포 시점의 사용자 단계입니다.
    3. 릴리스마다 다음을 수행합니다.
       1. `scripts/macos/sign_release.sh`와 `scripts/macos/notarize.sh`를 실행합니다.
       2. `ditto -c -k --keepParent`로 archive를 만듭니다.
-      3. 채널별 폴더에서 `generate_appcast`를 실행합니다. Beta 항목에는 `--channel beta`를 붙입니다.
+      3. 채널별 폴더에서 `generate_appcast --account stellar`를 실행합니다. Beta 항목에는 `--channel beta`를 붙입니다.
       4. appcast와 archive를 올립니다.
 9. **번들·서명.**
    - Sparkle.framework는 `Contents/Frameworks`에 내장하고, `LD_RUNPATH_SEARCH_PATHS`는
@@ -151,7 +155,10 @@ XVI.9.5의 첫 구현은 자체 JSON feed(schema 1)와 기본 브라우저 다�
 - XVI.9.6(업데이트 전 dirty project 저장·복구)은 Sparkle의 설치·재실행 hook으로 구현해야 합니다. 예:
   `-updater:shouldPostponeRelaunchForUpdate:untilInvokingBlock:`, `-updaterShouldRelaunchApplication:`. XIII.1.6
   이후에 진행합니다.
-- 키가 설정될 때까지 배포본은 업데이트를 확인하지 않습니다. `sign_release.sh`가 이 상태를 경고합니다.
+- 키가 비어 있는 빌드는 업데이트를 확인하지 않습니다. `sign_release.sh`가 이 상태를 경고합니다. 현재 저장소는 키가
+  설정되어 있습니다.
+- 개인 키는 개발 Mac 한 대의 키체인에만 있습니다. 그 Mac을 잃으면 기존 배포본에 업데이트를 보낼 수 없으므로, 배포를
+  시작하기 전에 저장소 밖 안전한 곳에 백업해야 합니다(사용자 단계).
 
 ## Compatibility
 

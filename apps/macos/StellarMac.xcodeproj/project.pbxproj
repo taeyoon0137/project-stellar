@@ -239,7 +239,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STELLAR_UPDATE_FEED_BETA = "https://raw.githubusercontent.com/taeyoon0137/stellar-releases/main/appcast/beta.xml";
 				STELLAR_UPDATE_FEED_STABLE = "https://raw.githubusercontent.com/taeyoon0137/stellar-releases/main/appcast/stable.xml";
-				STELLAR_UPDATE_PUBLIC_ED_KEY = "";
+				STELLAR_UPDATE_PUBLIC_ED_KEY = "bNzmhRu95zcg9IcwH2rWI5FzHKrxY4pVe2+24VYO4Po=";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "StellarMac/StellarBridging.h";
 			};
@@ -276,7 +276,7 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STELLAR_UPDATE_FEED_BETA = "https://raw.githubusercontent.com/taeyoon0137/stellar-releases/main/appcast/beta.xml";
 				STELLAR_UPDATE_FEED_STABLE = "https://raw.githubusercontent.com/taeyoon0137/stellar-releases/main/appcast/stable.xml";
-				STELLAR_UPDATE_PUBLIC_ED_KEY = "";
+				STELLAR_UPDATE_PUBLIC_ED_KEY = "bNzmhRu95zcg9IcwH2rWI5FzHKrxY4pVe2+24VYO4Po=";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "StellarMac/StellarBridging.h";
 			};
