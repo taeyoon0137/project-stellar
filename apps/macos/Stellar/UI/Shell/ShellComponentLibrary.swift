@@ -9,6 +9,8 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
     let table = NSTableView()
     let rootWidth = NSTextField()
     let rootHeight = NSTextField()
+    let placeInstance = NSButton(title: String(localized: "Place Instance…"), target: nil, action: nil)
+    var beginPlacement: ((LibraryComponent) -> Void)?
     let applySize = NSButton(title: String(localized: "Apply Size"), target: nil, action: nil)
     private var editingEntry: LibraryComponent?
     private var saveMessage: String?
@@ -73,6 +75,10 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         applySize.action = #selector(commitRootSize)
         applySize.isEnabled = false
         sizing.addArrangedSubview(applySize)
+        placeInstance.target = self
+        placeInstance.action = #selector(placeSelected)
+        placeInstance.isEnabled = false
+        sizing.addArrangedSubview(placeInstance)
         let stack = NSStackView(views: [bar, scroll, details, sizing])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -181,6 +187,7 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
         rootWidth.isEnabled = enabled
         rootHeight.isEnabled = enabled
         applySize.isEnabled = enabled
+        placeInstance.isEnabled = enabled
     }
 
     private func sizeString(_ number: Float) -> String {
@@ -192,6 +199,11 @@ final class ShellComponentLibrary: NSObject, NSWindowDelegate, NSTableViewDataSo
             .replacingOccurrences(of: Locale.current.decimalSeparator ?? ".", with: ".")
         guard let value = Float(text), value.isFinite, value >= 0 else { return nil }
         return value
+    }
+
+    @objc private func placeSelected() {
+        guard !invalidated, !isLoading, let entry = editingEntry else { return }
+        beginPlacement?(entry)
     }
 
     @objc func commitRootSize() {
@@ -223,8 +235,60 @@ extension ShellProjectWindow {
         guard let window, let project = dataSource.session, let session = windowController.windowSession,
               !session.isClosed, !session.isClosing, gitSource.trusted else { return }
         if componentLibrary == nil {
-            componentLibrary = ShellComponentLibrary(runtime: project.pump.runtimeHandle, session: session.session, projectName: project.name)
+            let library = ShellComponentLibrary(runtime: project.pump.runtimeHandle, session: session.session, projectName: project.name)
+            library.beginPlacement = { [weak self] entry in self?.promptForInstance(entry) }
+            componentLibrary = library
         }
         componentLibrary?.show(relativeTo: window)
+    }
+}
+
+extension ShellProjectWindow {
+    fileprivate func promptForInstance(_ entry: LibraryComponent) {
+        guard gitSource.trusted, let project = dataSource.session, let session = windowController.windowSession,
+              let library = componentLibrary, let view = session.viewInfo, view.has_view != 0, let state = session.info,
+              !session.isClosing, !session.isClosed else { return }
+        let viewID = UUID(uuid: view.active_view)
+        let sheet = NSAlert()
+        sheet.messageText = String(localized: "Place Instance")
+        sheet.informativeText = String(localized: "Position this instance in the active View, in logical pixels.")
+        let fields = ["X", "Y"].map { label -> NSTextField in
+            let field = NSTextField(string: "0")
+            field.setAccessibilityLabel(label)
+            field.identifier = NSUserInterfaceItemIdentifier("instance." + label.lowercased())
+            field.widthAnchor.constraint(equalToConstant: 82).isActive = true
+            return field
+        }
+        let coordinates = NSStackView(views: [NSTextField(labelWithString: "X"), fields[0],
+                                              NSTextField(labelWithString: "Y"), fields[1]])
+        coordinates.frame = NSRect(x: 0, y: 0, width: 250, height: 24)
+        sheet.accessoryView = coordinates
+        sheet.addButton(withTitle: String(localized: "Place"))
+        sheet.addButton(withTitle: String(localized: "Cancel"))
+        sheet.window.initialFirstResponder = fields[0]
+        sheet.beginSheetModal(for: library.panel) { [weak self, weak library] response in
+            guard response == .alertFirstButtonReturn, let self, let library,
+                  self.componentLibrary === library, self.windowController.windowSession === session,
+                  self.gitSource.trusted, !session.isClosing, !session.isClosed else { return }
+            func coordinate(_ field: NSTextField) -> Float? {
+                let separator = Locale.current.decimalSeparator ?? "."
+                return Float(field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: separator, with: "."))
+            }
+            guard let x = coordinate(fields[0]), let y = coordinate(fields[1]), x.isFinite, y.isFinite else {
+                library.message.stringValue = String(localized: "Enter finite X and Y coordinates.")
+                return
+            }
+            let submitted = session.track({ done in
+                project.pump.placeInstance(session: session.session, view: viewID, revision: state.revision,
+                                           entry: entry, x: x, y: y, completion: done)
+            }) { [weak self, weak library] event in
+                self?.refreshSessionCommands()
+                guard let library, self?.componentLibrary === library else { return }
+                if case .requestFailed(_, _, let reason) = event { library.message.stringValue = reason }
+                else { library.message.stringValue = String(localized: "Instance placed.") }
+            }
+            if !submitted { library.message.stringValue = String(localized: "The project is busy. Try again.") }
+        }
     }
 }
