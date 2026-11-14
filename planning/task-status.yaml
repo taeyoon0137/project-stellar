@@ -6502,21 +6502,33 @@ tasks:
       - DEV-MAC
   - id: "XII.2.1"
     title: "`ProjectWindowSession` core type에 ProjectIdentity, WindowSessionId, 독립 document state, view state, history, loaded generation을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.2.3"
       - "VII.5.1"
       - "V.4.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.2.1.md"
+    commit: "5e1edbf4099f3997d5b645f7757b26c5bdb80471"
+    report: "docs/task-reports/XII.2.1.md"
+    verified_at: "2026-11-14T16:50:34+09:00"
   - id: "XII.2.2"
     title: "macOS `NSWindowController`가 한 ProjectWindowSession handle을 소유하도록 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "II.5.3"
       - "XII.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.2.2.md"
+    commit: "7b0ccfa30b202d3646c484313f9316b8fc6c072f"
+    report: "docs/task-reports/XII.2.2.md"
+    verified_at: "2026-11-14T16:50:41+09:00"
   - id: "XII.2.3"
     title: "Windows `MainWindow`가 한 ProjectWindowSession handle을 소유하도록 연결합니다."
     status: blocked
@@ -6535,12 +6547,18 @@ tasks:
       - DEV-MAC
   - id: "XII.2.5"
     title: "창별 열린 tab, active view, viewport, selection을 WindowViewState에 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.3.1"
       - "XII.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.2.5.md"
+    commit: "58b1aafeeb5df004c73ae7964131b64acbe11010"
+    report: "docs/task-reports/XII.2.5.md"
+    verified_at: "2026-11-14T16:50:42+09:00"
   - id: "XII.3.1"
     title: "공통 `InputEvent`에 pointer, wheel, key, text composition, focus, resize를 정의하고 native timestamp를 monotonic domain으로 변환합니다."
     status: verified
@@ -6630,20 +6648,22 @@ tasks:
       - DEV-MAC
   - id: "XII.4.3"
     title: "viewport pan/zoom matrix를 scene camera 입력으로 연결하고 document geometry는 변경하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.2.5"
       - "XI.2.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.4.3.md"
   - id: "XII.4.4"
     title: "selection overlay와 handles를 transient scene layer로 렌더합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XI.3.5"
       - "XII.4.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.4.4.md"
   - id: "XII.5.1"
     title: "macOS 레이어명·검색·일반 필드에 NSTextField/NSTextView를 사용하고 core text engine을 호출하지 않습니다."
     status: verified
@@ -6725,19 +6745,21 @@ tasks:
       - DEV-MAC
   - id: "XII.6.4"
     title: "Undo/Redo/Save Now command를 active WindowSession에 연결합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VII.5.3"
       - "V.5.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.6.4.md"
   - id: "XII.6.5"
     title: "앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.6.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.6.5.md"
   - id: "XII.7.1"
     title: "각 WindowSession이 load 당시 base generation/hash를 유지하고 save 전에 disk current와 비교하게 합니다."
     status: not_started

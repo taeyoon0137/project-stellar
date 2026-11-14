@@ -7,7 +7,7 @@
 
 - WBS: XII.6.4
 - 작업명: Undo/Redo/Save Now command를 active WindowSession에 연결합니다.
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 창별 명령 fixture 통과. 실제 활성 앱 메뉴 전달 검증은 현재 환경의 활성화 실패로 미완료.
 - 선행: VII.5.3 (`[x]`), V.5.4 (`[x]`)
 
 ## 변경 파일
@@ -31,7 +31,7 @@
 - `apps/macos/StellarMac/UI/Shell/ShellSessionCommandsCheck.swift` (신규), `apps/macos/StellarMac/main.swift`,
   `scripts/macos/smoke.sh` (수정) — `--session-commands-check <fixture>`.
 - `docs/design/ui/tools_menus.md`, `docs/design/ui/shell_frame.md` (수정) — 남은 일·Stub 설명 갱신.
-- `docs/task-reports/XII.6.4.md`(신규), 계획서(XII.6.4 `[ ]`→`[x]`)
+- `docs/task-reports/XII.6.4.md`(신규), 계획서(XII.6.4 `[ ]`→`[~]`)
 
 ## 명령과 종료 코드
 
