@@ -78,6 +78,9 @@ pub mod project_status;
 /// Stage candidate 임시 project tree writer(XIV.5.5).
 pub mod candidate_tree;
 
+/// Stage candidate와 기준 index의 파일 변경 계산(XIV.5.6).
+pub mod candidate_delta;
+
 /// Remote 목록·연결·push(XIV.9.*).
 pub mod remote;
 
