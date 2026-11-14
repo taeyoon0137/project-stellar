@@ -279,7 +279,7 @@ impl DirtyTrackedHistory {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use stellar_commands::command::Command;
     use stellar_commands::id::{CommandId, CommandOrigin, WindowSessionId};
@@ -293,7 +293,8 @@ mod tests {
         StableId::new_v7(9, 9, 9)
     }
 
-    fn sid(n: u64) -> StableId {
+    /// 결정론적 id.
+    pub(crate) fn sid(n: u64) -> StableId {
         StableId::new_v7(n, 0, n)
     }
 
@@ -309,21 +310,35 @@ mod tests {
         }
     }
 
-    /// root(10) 아래 11·12.
-    fn state() -> DocumentState {
-        let mut definition = DocumentDefinition::new(sid(1), String::new());
-        let mut page = PageDefinition::new(sid(2), String::new());
-        page.add_view(ViewDefinition::new(sid(3), String::new(), sid(10)))
-            .unwrap();
+    /// 문서 id `sid(base + 1)`, root `sid(base + 10)` 아래 `base + 11`·`base + 12` Frame.
+    pub(crate) fn document(base: u64) -> DocumentModel {
+        let mut definition = DocumentDefinition::new(sid(base + 1), String::new());
+        let mut page = PageDefinition::new(sid(base + 2), String::new());
+        page.add_view(ViewDefinition::new(
+            sid(base + 3),
+            String::new(),
+            sid(base + 10),
+        ))
+        .unwrap();
         definition.add_page(page).unwrap();
         let mut model = DocumentModel::new(definition);
-        model.insert_node(frame(10, None, 0x10)).unwrap();
-        model.insert_node(frame(11, Some(10), 0x10)).unwrap();
-        model.insert_node(frame(12, Some(10), 0x20)).unwrap();
-        DocumentState::new(model)
+        model.insert_node(frame(base + 10, None, 0x10)).unwrap();
+        model
+            .insert_node(frame(base + 11, Some(base + 10), 0x10))
+            .unwrap();
+        model
+            .insert_node(frame(base + 12, Some(base + 10), 0x20))
+            .unwrap();
+        model
     }
 
-    fn tx(doc: &DocumentState, id: u64, command: Command) -> CommandTransaction {
+    /// root(10) 아래 11·12.
+    fn state() -> DocumentState {
+        DocumentState::new(document(0))
+    }
+
+    /// 현재 revision 기준 command 하나짜리 사용자 transaction.
+    pub(crate) fn tx(doc: &DocumentState, id: u64, command: Command) -> CommandTransaction {
         CommandTransaction::new(CommandId::from_stable_id(sid(id)), CommandOrigin::User)
             .with_command(doc.revision(), command)
     }
@@ -339,7 +354,8 @@ mod tests {
             .unwrap()
     }
 
-    fn select(ids: &[u64]) -> SetSelection {
+    /// `ids` 선택 event(첫 id가 primary).
+    pub(crate) fn select(ids: &[u64]) -> SetSelection {
         SetSelection {
             selection: Selection::new(ids.iter().map(|n| sid(*n)), ids.first().map(|n| sid(*n))),
         }

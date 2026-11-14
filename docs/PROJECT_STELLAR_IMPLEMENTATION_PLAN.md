@@ -1280,7 +1280,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIII.3.1 | `[ ]` | 창에 로컬 미저장 변경이 없으면 외부의 새 정상 generation을 자동 reload하고 history를 폐기합니다. | clean window reload fixture 통과. | XIII.2.5, VII.5.4 |
+| XIII.3.1 | `[x]` | 창에 로컬 미저장 변경이 없으면 외부의 새 정상 generation을 자동 reload하고 history를 폐기합니다. | clean window reload fixture 통과. | XIII.2.5, VII.5.4 |
 | XIII.3.2 | `[x]` | 로컬 변경이 있으면 LoadedBase, CurrentMemory, ExternalDisk snapshot을 보존한 `ExternalChangePending` 상태를 생성합니다. | 세 snapshot hash 기록. | XIII.2.5, V.4.4 |
 | XIII.3.3 | `[x]` | Semantic Reconciliation 구현 전에는 pending 상태에서 autosave를 중지하고 read-only alert만 반환합니다. 자동 overwrite를 금지합니다. | pending 중 current pointer 미변경. | XIII.3.2 |
 | XIII.3.4 | `[ ]` | Phase XIV Semantic Merge 완료 후 세 snapshot reconciliation을 연결하고 겹치지 않는 변경만 자동 적용합니다. | non-overlap fixture 자동, overlap conflict. | XIII.3.2, XIV.10.9 |

@@ -19,7 +19,8 @@
 //! 없는 읽기 전용 alert([`ExternalChangeAlert`])만 한 번 돌려줍니다. 어느 쪽 버전으로도 자동 overwrite하지
 //! 않으므로 대기 중 current pointer는 바뀌지 않습니다.
 //!
-//! 로컬 변경이 없는 창의 reload(XIII.3.1)와 reconciliation(XIII.3.4)은 이 상태 위에서 연결합니다.
+//! 로컬 변경이 없는 창의 자동 reload(XIII.3.1)는 [`crate::window_session`]이 이 상태 위에서 실행하고
+//! ([`WindowExternalState::adopt_reloaded`]), reconciliation(XIII.3.4)은 이후 연결합니다.
 //!
 //! agent lock(XIII.3.5): 잠금된 agent subtree와 외부 변경의 충돌 정책은 로드맵 Phase R3에서 연결합니다.
 //! 초기 릴리스에는 agent lock 상태·feature가 **없으며**, 대기 상태는 위 세 snapshot만 보존하고 외부 변경
@@ -36,6 +37,8 @@ use stellar_storage::hash::ContentHash;
 use stellar_storage::save::cancel::{run_save, CancelToken, SaveRunError};
 use stellar_storage::save::commit::SavedGenerationState;
 use stellar_storage::save::plan::{build_save_plan, SavePlan, SavePlanError};
+
+use crate::document_io::serialize::SerializeError;
 
 /// 디스크의 완성된 generation snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,12 +147,17 @@ impl MemorySnapshot {
 pub enum SnapshotError {
     /// 메모리 상태로 저장 계획을 만들 수 없음.
     Plan(SavePlanError),
+    /// 메모리 문서를 직렬화할 수 없음(편집 중 불변식 위반 등).
+    Serialize(SerializeError),
 }
 
 impl std::fmt::Display for SnapshotError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SnapshotError::Plan(e) => write!(f, "메모리 snapshot을 만들 수 없습니다: {e}"),
+            SnapshotError::Serialize(e) => {
+                write!(f, "메모리 문서를 직렬화할 수 없습니다: {e}")
+            }
         }
     }
 }
@@ -217,7 +225,8 @@ pub enum WindowDiskState {
 /// 외부 generation을 받은 결과.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExternalChangeDecision {
-    /// 로컬 변경이 없음: 새 generation으로 reload할 수 있음(XIII.3.1에서 실행).
+    /// 로컬 변경이 없음: 새 generation으로 reload할 수 있음(실행은 XIII.3.1
+    /// [`crate::window_session::WindowDocumentSession::on_external_generation`]).
     CleanWindow {
         /// 외부의 새 generation.
         external: DiskSnapshot,
@@ -344,6 +353,18 @@ impl WindowExternalState {
             return false;
         }
         self.state = WindowDiskState::Clean { base };
+        true
+    }
+
+    /// clean 창이 외부의 새 generation을 다시 불러온 뒤 그 generation을 base로 삼습니다(XIII.3.1).
+    ///
+    /// 로컬 미저장 변경이 있거나(dirty) 대기 중이면 바꾸지 않고 `false`입니다. 로컬 변경을 버리는
+    /// reload는 이 경로로 할 수 없습니다.
+    pub fn adopt_reloaded(&mut self, external: DiskSnapshot) -> bool {
+        if !matches!(self.state, WindowDiskState::Clean { .. }) {
+            return false;
+        }
+        self.state = WindowDiskState::Clean { base: external };
         true
     }
 
