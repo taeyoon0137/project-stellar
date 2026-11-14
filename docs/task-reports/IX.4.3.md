@@ -50,3 +50,28 @@
 ## 남은 위험 / 한계
 
 - 정적 override가 있는 자리는 자동으로 reset하지 않고 거부합니다. UI가 reset 후 다시 계획해야 합니다.
+
+## 후속 수정 (리뷰 반영)
+
+`Fix: private source link를 재사용하는 drilling 계획 거부` 커밋에서 고쳤습니다.
+
+- **문제**: 경계 자리에 이미 있는 live link를 재사용할 때 그 link의 source가 공개인지 확인하지 않았습니다. link
+  source는 owner 내부 property라 private이어도 저장 규칙(IX.4.1)상 허용됩니다. 그래서 C1의 private property가
+  I1.label을 채우는 상태에서 C0으로 노출을 요청하면 `compute`가 private property를 target으로 삼는 바깥 link를
+  계획해 `Ok`를 돌려주고, 적용(IX.4.5)은 항상 `PrivateProperty`로 실패해 롤백됐습니다. "private property 거부"는
+  가장 안쪽 property에만 적용되고 있었습니다.
+- **변경**: 재사용할 link의 source가 owner 선언 목록에 있고 공개인지 확인하고, private이면
+  `DrillingError::PrivateProperty { component: owner, property: source }`로 거부합니다. top 경계(k = 0)에서도
+  거부합니다. 노출 결과는 top 인스턴스가 override할 property여야 하는데 private property는 인스턴스 override 대상이
+  아니기 때문입니다. 그 자리는 이미 link가 채우고 있어 새 공개 property를 따로 연결하는 계획(값 원천 두 개)도 만들 수
+  없으므로 거부가 맞습니다.
+- **검증**: `reused_link_with_private_source_is_rejected`를 먼저 추가해 수정 전 `Ok` 계획이 나오는 것(실패)을
+  확인했습니다. 수정 후 바깥 경계와 top 경계 둘 다 `PrivateProperty`가 나오고, 계산 전후 library·모음 bytes가
+  같습니다.
+
+| 명령(후속 수정) | 결과 |
+|---|---|
+| `cargo test -p stellar-document --lib reused_link_with_private_source`(수정 전) | 1 failed(`unwrap_err()`가 `Ok` 계획을 받음) |
+| `cargo test -p stellar-document` | unit 352 passed, 통합 7+1+1, doc 2 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -- --check` | 통과 |

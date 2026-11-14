@@ -11,7 +11,9 @@
 //! 자리는 `components[k+1]`의 property입니다.
 //!
 //! - 그 자리에 owner가 소유한 **live link**가 이미 있으면 재사용합니다([`DrillingPlan::reused`]). link source가
-//!   다음 바깥 경계의 자리가 됩니다.
+//!   다음 바깥 경계의 자리가 됩니다. link source는 private이어도 저장 규칙상 허용되지만, 노출 자리로 쓰려면 공개여야
+//!   하므로 private source link는 재사용하지 않고 [`DrillingError::PrivateProperty`]로 거부합니다(그 자리는 이미
+//!   link가 채우고 있어 새 property를 따로 연결할 수도 없습니다).
 //! - 없으면 owner에 새 공개 property를 계획하고([`NewProperty`]) 새 property → 자리 link를 계획합니다
 //!   ([`PlannedLink`]). 새 property의 이름·타입·default는 현재 노출 중인 property(가장 안쪽 property 또는 재사용한
 //!   link의 source)에서 가져옵니다 — 노출 전과 같은 값이 보이도록 default 값을 그대로 씁니다.
@@ -217,12 +219,27 @@ impl DrillingPlan {
                     let owner_entry = library
                         .get(owner)
                         .ok_or(DrillingError::UnknownComponent { component: owner })?;
-                    let source = owner_entry.property(link.source()).ok_or(
-                        DrillingError::UnknownProperty {
+                    let source = owner_entry
+                        .property(link.source())
+                        .filter(|_| {
+                            owner_entry
+                                .definition()
+                                .properties()
+                                .contains(&link.source())
+                        })
+                        .ok_or(DrillingError::UnknownProperty {
                             component: owner,
                             property: link.source(),
-                        },
-                    )?;
+                        })?;
+                    // link source는 owner 내부 property라 private이어도 되지만(IX.4.1), 노출 자리는 바깥 link의
+                    // target이거나(경계 k ≥ 1) top 인스턴스가 override할 property(k = 0)이므로 공개여야 합니다.
+                    if !source.is_public() {
+                        return Err(DrillingError::PrivateProperty {
+                            component: owner,
+                            property: link.source(),
+                        }
+                        .into());
+                    }
                     reused.push(ReusedLink {
                         boundary,
                         binding: link.id(),
@@ -598,6 +615,66 @@ mod tests {
         assert_eq!(plan.exposed(), PlannedProperty::Existing(pid(41_000)));
         assert_eq!(plan.reused().len(), 2);
         assert_eq!(plan.reused()[0].boundary, 0);
+    }
+
+    #[test]
+    fn reused_link_with_private_source_is_rejected() {
+        // 리뷰 회귀: 재사용할 link의 source가 private이면(link source는 private이어도 됨) 그 property를 노출 자리로
+        // 삼을 수 없습니다. 바깥 경계라면 새 link가 private property를 target으로 삼아 적용이 항상 실패하고, top
+        // 경계라면 노출 결과가 인스턴스에서 override할 수 없는 property가 됩니다. 계획 단계에서 거부합니다.
+        let private = |id: u64| {
+            crate::component::property::ComponentProperty::new(
+                pid(id),
+                "inner".into(),
+                string(),
+                crate::component::typed_expr::test_util::literal(TypedValue::String("확인".into())),
+                PropertyVisibility::Private,
+            )
+            .unwrap()
+        };
+        // 바깥 경계: C1.inner(private) → I1.label link를 재사용하려 하면 거부.
+        let mut library = nested_library(2);
+        declare(&mut library, 1, private(41_001));
+        let mut set = DrillingSet::new();
+        set.insert(DrillingBinding::link(
+            bid(1),
+            component(1),
+            pid(41_001),
+            instance(1),
+            pid(LABEL),
+        ))
+        .unwrap();
+        set.validate(&library).unwrap();
+        let before = (library.encode(), set.encode());
+        assert_eq!(
+            DrillingPlan::compute(&library, &set, request(2)).unwrap_err(),
+            DrillingPlanError::Drilling(DrillingError::PrivateProperty {
+                component: component(1),
+                property: pid(41_001),
+            })
+        );
+        assert_eq!((library.encode(), set.encode()), before);
+
+        // top 경계: C0.inner(private) → I0.label link도 노출로 재사용하지 않습니다.
+        let mut library = nested_library(1);
+        declare(&mut library, 0, private(41_000));
+        let mut set = DrillingSet::new();
+        set.insert(DrillingBinding::link(
+            bid(2),
+            component(0),
+            pid(41_000),
+            instance(0),
+            pid(LABEL),
+        ))
+        .unwrap();
+        set.validate(&library).unwrap();
+        assert_eq!(
+            DrillingPlan::compute(&library, &set, request(1)).unwrap_err(),
+            DrillingPlanError::Drilling(DrillingError::PrivateProperty {
+                component: component(0),
+                property: pid(41_000),
+            })
+        );
     }
 
     #[test]
