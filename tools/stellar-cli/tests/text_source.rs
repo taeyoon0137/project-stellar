@@ -174,6 +174,8 @@ struct ApplyFixture {
     path: PathBuf,
     document: StableId,
     node: StableId,
+    root: StableId,
+    fragment: StableId,
     hash: String,
 }
 
@@ -184,12 +186,23 @@ impl ApplyFixture {
         let home = TempDir::new(&format!("{label}-home"));
         let model = large_document(4);
         let document = model.document_id();
-        let node = model
-            .to_records()
-            .unwrap()
+        let records = model.to_records().unwrap();
+        let node = records
             .nodes
-            .into_iter()
+            .iter()
             .find(|node| node.parent.is_some())
+            .unwrap()
+            .id;
+        let root = records
+            .nodes
+            .iter()
+            .find(|node| node.parent.is_none())
+            .unwrap()
+            .id;
+        let fragment = records
+            .nodes
+            .iter()
+            .find(|node| node.payload.kind().name() == "fragment")
             .unwrap()
             .id;
         scaffold_project(&project.path);
@@ -218,6 +231,8 @@ impl ApplyFixture {
             path,
             document,
             node,
+            root,
+            fragment,
             hash,
         }
     }
@@ -389,6 +404,216 @@ fn apply_dry_run_then_write_checks_semantic_diff_and_readable_git_changes() {
         "view.stellar.yaml\n"
     );
     assert_eq!(file_digest(&fixture.project.path), project_before);
+}
+
+#[test]
+fn apply_frame_geometry_round_trips_through_cli_and_readable_git_diff() {
+    let fixture = ApplyFixture::new("text-source-cli-frame-geometry");
+    let project_before = file_digest(&fixture.project.path);
+    git(&fixture.source.path, &["init", "--quiet"]);
+    git(&fixture.source.path, &["add", "--", "view.stellar.yaml"]);
+    git(
+        &fixture.source.path,
+        &["commit", "--quiet", "-m", "fixture baseline"],
+    );
+    let root = fixture.root;
+    let commands = format!(
+        r#"{{"kind":"set-frame-size","node":"{root}","width":320.5,"height":180}},{{"kind":"set-frame-transform","node":"{root}","a":0.5,"b":0.25,"c":-0.25,"d":0.5,"tx":12.75,"ty":-3e1}}"#
+    );
+    let request = fixture.request(&commands);
+    let path = fixture.path.to_str().unwrap();
+    let source_before = file_digest(&fixture.source.path);
+    let home_before = file_digest(&fixture.home.path);
+    let dry = run_with_stdin(
+        &["text-source", "apply", path, "-", "--dry-run"],
+        &request,
+        Some(&fixture.home.path),
+        0,
+    );
+    let dry_result = dry.get("result").unwrap();
+    assert_eq!(dry_result.get("written"), Some(&JsonValue::Bool(false)));
+    assert_eq!(dry_result.get("command_count"), Some(&JsonValue::int(2)));
+    assert_eq!(
+        dry_result.get("source_hash"),
+        Some(&JsonValue::string(&fixture.hash))
+    );
+    let changes = dry_result.get("changes").unwrap();
+    assert_eq!(changes.get("count"), Some(&JsonValue::int(2)));
+    assert_eq!(
+        changes.get("by_kind").unwrap().get("set-property"),
+        Some(&JsonValue::int(2))
+    );
+    for entry in changes.get("entries").unwrap().as_array().unwrap() {
+        assert_eq!(
+            entry.get("object"),
+            Some(&JsonValue::string(root.to_string()))
+        );
+    }
+    assert_eq!(file_digest(&fixture.source.path), source_before);
+    assert_eq!(file_digest(&fixture.home.path), home_before);
+    assert_eq!(file_digest(&fixture.project.path), project_before);
+
+    let written = run_with_stdin(
+        &["text-source", "apply", path, "-"],
+        &request,
+        Some(&fixture.home.path),
+        0,
+    );
+    let result = written.get("result").unwrap();
+    assert_eq!(result.get("written"), Some(&JsonValue::Bool(true)));
+    assert_eq!(result.get("changes"), Some(changes));
+    assert_ne!(result.get("source_hash"), result.get("base_source_hash"));
+    let checked = run(&["text-source", "check", path], 0);
+    let checked = checked.get("result").unwrap();
+    assert_eq!(checked.get("source_hash"), result.get("source_hash"));
+    assert_eq!(checked.get("document"), result.get("document"));
+    assert_eq!(checked.get("node_count"), Some(&JsonValue::int(4)));
+    let diff = git(
+        &fixture.source.path,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--unified=0",
+            "--",
+            "view.stellar.yaml",
+        ],
+    );
+    assert!(diff.contains("+      size: \"320.5 180\""), "{diff}");
+    assert!(
+        diff.contains("+      transform: \"0.5 0.25 -0.25 0.5 12.75 -30\""),
+        "{diff}"
+    );
+    assert!(!diff.contains("Binary files"), "{diff}");
+    assert_eq!(
+        git(&fixture.source.path, &["diff", "--name-only"]),
+        "view.stellar.yaml\n"
+    );
+
+    // 같은 값을 재적용해 디스크에서 다시 구성한 모델의 두 속성이 일치하는지 확인합니다.
+    let hash = checked.get("source_hash").unwrap().as_str().unwrap();
+    let source_after = file_digest(&fixture.source.path);
+    let repeated = transaction(hash, fixture.document, &commands);
+    let noop = run_with_stdin(
+        &["text-source", "apply", path, "-"],
+        &repeated,
+        Some(&fixture.home.path),
+        0,
+    );
+    let noop = noop.get("result").unwrap();
+    assert_eq!(noop.get("written"), Some(&JsonValue::Bool(false)));
+    assert_eq!(noop.get("source_hash"), Some(&JsonValue::string(hash)));
+    assert_eq!(
+        noop.get("changes").unwrap().get("count"),
+        Some(&JsonValue::int(0))
+    );
+    assert_eq!(file_digest(&fixture.source.path), source_after);
+    assert_eq!(file_digest(&fixture.project.path), project_before);
+}
+
+#[test]
+fn apply_frame_geometry_rejects_invalid_fields_and_rolls_back_wrong_node_kind() {
+    let fixture = ApplyFixture::new("text-source-cli-frame-rejections");
+    let root = fixture.root;
+    let fragment = fixture.fragment;
+    let project_before = file_digest(&fixture.project.path);
+    let source_before = file_digest(&fixture.source.path);
+    let size = format!(r#"{{"kind":"set-frame-size","node":"{root}","width":320,"height":180}}"#);
+    let transform = format!(
+        r#"{{"kind":"set-frame-transform","node":"{root}","a":1,"b":0,"c":0,"d":1,"tx":12,"ty":-30}}"#
+    );
+    let cases = [
+        (
+            format!(r#"{{"kind":"set-frame-size","node":"{root}","width":-1,"height":180}}"#),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-size","node":"{root}","width":320,"height":1e39}}"#),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-size","node":"{root}","width":"320","height":180}}"#),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(r#"{{"kind":"set-frame-size","node":"{root}","width":320}}"#),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(
+                r#"{{"kind":"set-frame-size","node":"{root}","width":320,"height":180,"extra":0}}"#
+            ),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(
+                r#"{{"kind":"set-frame-transform","node":"{root}","a":1,"b":0,"c":0,"d":1,"tx":1e39,"ty":0}}"#
+            ),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(
+                r#"{{"kind":"set-frame-transform","node":"{root}","a":true,"b":0,"c":0,"d":1,"tx":0,"ty":0}}"#
+            ),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(
+                r#"{{"kind":"set-frame-transform","node":"{root}","a":1,"b":0,"c":0,"d":1,"tx":0}}"#
+            ),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(
+                r#"{{"kind":"set-frame-transform","node":"{root}","a":1,"b":0,"c":0,"d":1,"tx":0,"ty":0,"extra":0}}"#
+            ),
+            65,
+            "invalid-transaction",
+        ),
+        (
+            format!(
+                r#"{size},{transform},{{"kind":"set-frame-size","node":"{fragment}","width":320,"height":180}}"#
+            ),
+            1,
+            "rejected-command",
+        ),
+        (
+            format!(
+                r#"{size},{transform},{{"kind":"set-frame-transform","node":"{fragment}","a":1,"b":0,"c":0,"d":1,"tx":12,"ty":-30}}"#
+            ),
+            1,
+            "rejected-command",
+        ),
+    ];
+    for (commands, status, code) in cases {
+        for dry_run in [true, false] {
+            let mut args = vec!["text-source", "apply", fixture.path.to_str().unwrap(), "-"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let rejected = run_with_stdin(
+                &args,
+                &fixture.request(&commands),
+                Some(&fixture.home.path),
+                status,
+            );
+            assert_eq!(
+                rejected.get("error").unwrap().get("code"),
+                Some(&JsonValue::string(code)),
+                "{commands}"
+            );
+            assert_eq!(file_digest(&fixture.source.path), source_before);
+            assert_eq!(file_digest(&fixture.project.path), project_before);
+        }
+    }
 }
 
 #[test]

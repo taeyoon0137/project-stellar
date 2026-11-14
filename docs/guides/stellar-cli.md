@@ -76,6 +76,12 @@ cargo run -q -p stellar-cli -- --help
 
 명령이 없거나(`stellar`만 실행) 알 수 없는 명령이면 사용법 오류(64)입니다.
 
+`apply`와 `text-source apply`의 `commands` 배열에는 Frame 크기를 JSON 숫자로 지정하는
+`set-frame-size`(`node`, `width`, `height`)와 local 변환을 지정하는
+`set-frame-transform`(`node`, `a`, `b`, `c`, `d`, `tx`, `ty`)를 넣을 수 있습니다.
+입력 예시와 dry-run→저장→재열기 절차는 [텍스트 원본 명령 적용](../spec/text-view-source-v1.md#명시적-명령-적용)을
+참고합니다. 두 경로의 요청은 각각 generation revision과 source hash를 사용합니다.
+
 ### `help`
 
 - 도움말 텍스트를 stdout에 쓰고 0으로 끝납니다. 내용은 `tools/stellar-cli/tests/fixtures/help.txt`

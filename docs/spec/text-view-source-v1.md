@@ -36,6 +36,15 @@ stellar text-source apply ./home-00000003.stellar.yaml ./edit.json
 
 요청의 키는 위 다섯 개만 허용합니다. 입력은 기존 apply와 같은 8 MiB·깊이 16·명령 10,000개 상한을 사용합니다. `rename`, `set-visible`, `set-locked`, `move-node`, `delete-subtree` 필드 형식과 등록된 명령의 `canonical` 소문자 hex 형식은 기존 `stellar apply`와 같습니다. command validator와 전체 transaction 실행을 거치므로 중간 실패는 저장하지 않습니다. 미지원 노드·modifier·속성이 생기는 명령은 결과 텍스트 직렬화 단계에서 **dry-run과 쓰기 모두 거부**합니다.
 
+Frame의 크기와 local 아핀 변환은 두 apply 경로 모두에서 JSON 숫자로 지정할 수 있습니다. `node`는 Frame의 전체 StableId이며 아래 필드는 모두 필수입니다. 다른 키나 숫자를 담은 문자열은 거부합니다.
+
+```json
+{"kind":"set-frame-size","node":"019a8180-0010-7000-8000-000000000010","width":320.5,"height":180}
+{"kind":"set-frame-transform","node":"019a8180-0010-7000-8000-000000000010","a":1,"b":0,"c":0,"d":1,"tx":12.75,"ty":-30}
+```
+
+각 object를 요청의 `commands` 배열에 넣습니다. 숫자는 원문에서 모델의 `f32`로 변환하며 정수·소수·지수 표기를 허용합니다. `f32` 변환 결과가 무한대이면 오류이고, `width`·`height`는 비음수여야 합니다. 변환은 `(x, y)`를 `(a*x + c*y + tx, b*x + d*y + ty)`로 보냅니다. 이 두 입력은 기존 `SetProperty`의 `size`·`transform`에 대응하므로 새 저장 opcode나 바이너리 포맷을 만들지 않습니다. Frame이 아닌 노드에 적용하면 validator가 전체 transaction을 거부합니다. 현재 모델의 묶음 속성을 사용하며, CSS width/height longhand 전환(IX.11.22)의 완료를 뜻하지 않습니다.
+
 - dry-run은 원본·generation·cache·잠금 파일을 쓰지 않고 적용될 semantic `changes`를 반환합니다. `source_hash`는 디스크의 기존 hash이며 `written`은 false입니다.
 - 쓰기는 기존 OS 사용자 데이터 저장 잠금을 문서 ID와 canonical 원본 파일 경로로 잡은 뒤 원본을 다시 읽고 hash·문서 ID를 확인합니다. 동일 파일의 협조적 CLI writer는 직렬화합니다. 정상 저장 결과에는 새 `source_hash`와 `written: true`가 있고 `check`로 재열 수 있습니다.
 - 동일 모델이 되는 명령은 원본 주석·공백·hash를 그대로 보존하고 `written: false`를 반환합니다. 실제 의미 변경 시에는 v1의 결정론적 writer가 파일 전체를 다시 쓰므로 주석·서식은 보존하지 않습니다.
