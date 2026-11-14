@@ -52,6 +52,7 @@ enum ShellCommand: String, CaseIterable {
 
     // MARK: 도구(View·Insert 메뉴, 툴바 도구 그룹)
     case selectMoveTool = "tool.move"
+    case componentLibrary = "view.component_library"
     case newComponent = "insert.new_component"
     case selectFrameTool = "tool.frame"
     case selectRectangleTool = "tool.rectangle"
@@ -121,6 +122,7 @@ enum ShellCommand: String, CaseIterable {
         case .quit: return "Quit \(MainMenuBuilder.applicationName)"
         case .newProject: return "New Project…"
         case .newComponent: return "New Component…"
+        case .componentLibrary: return "Component Library"
         case .openProject: return "Open Project…"
         case .cloneProject: return "Clone Project…"
         case .closeWindow: return "Close"
@@ -349,6 +351,7 @@ enum ShellCommand: String, CaseIterable {
         case .quit: return "power"
         case .newProject: return "folder.badge.plus"
         case .newComponent: return "square.3.layers.3d"
+        case .componentLibrary: return "books.vertical"
         case .openProject: return "folder"
         case .cloneProject: return "square.and.arrow.down.on.square"
         case .closeWindow: return "xmark"

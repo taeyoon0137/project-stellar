@@ -1,0 +1,51 @@
+import Foundation
+
+struct LibraryComponent: Equatable, Sendable {
+    let id: UUID
+    let root: UUID
+    let nodeCount: UInt32
+    let width: Float
+    let height: Float
+    let name: String
+    let filename: String
+    let hash: String
+}
+
+enum ComponentLibraryResult: Sendable {
+    case loaded([LibraryComponent], legacyChunks: Int)
+    case failed(String)
+}
+
+extension CoreRuntime {
+    static func componentLibrary(handle: UInt64, session: UInt64) -> ComponentLibraryResult {
+        precondition(!Thread.isMainThread)
+        var buffer = [UInt8](repeating: 0, count: 16 * 1024)
+        var length = 0
+        // 두 호출 사이에 checkout으로 결과 크기가 바뀔 수 있습니다. 매 호출은 독립 snapshot입니다.
+        for _ in 0..<3 {
+            let status = buffer.withUnsafeMutableBufferPointer {
+                stellar_window_component_library(handle, session, $0.baseAddress, $0.count, &length)
+            }
+            if status == STELLAR_BUFFER_TOO_SMALL, length > buffer.count, length <= 4 * 1024 * 1024 {
+                buffer = [UInt8](repeating: 0, count: length)
+                continue
+            }
+            guard status == STELLAR_OK, length <= buffer.count else { break }
+            var reader = CoreRuntimeEvent.PayloadReader(bytes: buffer.prefix(length))
+            guard let tag = reader.u8() else { break }
+            if tag == 1, let message = reader.text(), reader.isAtEnd { return .failed(message) }
+            guard tag == 0, let chunks = reader.u32(), let count = reader.u32(), count <= 4096 else { break }
+            var rows: [LibraryComponent] = []
+            for _ in 0..<count {
+                guard let id = reader.uuid(), let root = reader.uuid(), let nodes = reader.u32(),
+                      let width = reader.u32(), let height = reader.u32(), let name = reader.text(),
+                      let filename = reader.text(), let hash = reader.text() else { break }
+                rows.append(LibraryComponent(id: id, root: root, nodeCount: nodes, width: Float(bitPattern: width),
+                                             height: Float(bitPattern: height), name: name, filename: filename, hash: hash))
+            }
+            if rows.count == Int(count), reader.isAtEnd { return .loaded(rows, legacyChunks: Int(chunks)) }
+            break
+        }
+        return .failed(String(localized: "Couldn’t read the component library."))
+    }
+}

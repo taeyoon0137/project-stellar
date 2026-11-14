@@ -47,6 +47,8 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 이 작업은 캔버스 선택을 복제하지 않으며, 생성 직전의 문서 generation·선택·Undo 기록을 보존합니다. 생성 결과는 프로젝트를 다시 열거나 다른 브랜치를 checkout한 뒤에도 현재 폴더에서 CLI와 MCP로 조회할 수 있습니다. 캔버스 Undo는 이 파일 생성을 취소하지 않습니다. GUI에서 원본 트리를 편집하는 동작은 별도 범위입니다. 신뢰를 해제한 프로젝트, 기존 component-library chunk가 있는 프로젝트, 잘못된 이름·원본 또는 외부나 Git 내부를 가리키는 쓰기 폴더에서는 새 파일을 기록하지 않습니다. 같은 사용자로 동작하는 프로젝트 writer와 source CLI의 잠금을 사용합니다.
 
+**View → Component Library**는 열린 프로젝트의 컴포넌트 이름·파일명·Frame 수·root 크기를 보여줍니다. 행을 선택하면 프로젝트 내 경로와 전체 component ID가 표시됩니다. 다른 창에서 작업하다 목록으로 돌아오거나 **Refresh**를 누르면 디스크의 현재 원본을 다시 읽습니다. Git checkout으로 같은 generation에서 원본 파일만 바뀐 경우도 반영합니다. 잘못된 파일이나 이중 원본에서는 이전 목록을 비우고 오류를 표시하고, 신뢰를 철회하거나 프로젝트를 닫으면 목록 창도 닫힙니다.
+
 ## 프로젝트에서 조회
 
 프로젝트 루트 아래 `design/components/`에 원본을 두면 `stellar query . components`와 신뢰된 headless MCP의 `stellar://components`가 같은 라이브러리를 읽습니다. 다른 폴더의 원본은 기존 `component-source check <폴더>`로 조회할 수 있습니다. 각 항목은 전체 StableId, 이름, 루트 ID, 루트의 논리 픽셀 크기, 루트를 포함한 Frame 수, 원본 bytes의 `source_hash`를 담습니다. `source_hash`는 그대로 `resize`와 `add-frame`에 전달할 수 있습니다.

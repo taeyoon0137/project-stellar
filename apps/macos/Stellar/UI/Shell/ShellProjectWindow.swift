@@ -426,6 +426,7 @@ final class ShellProjectWindow {
     let inspectorSlot: ShellInspectorAreaSlot
     let panelsSlot: ShellPanelTabsSlot
     let gitSource = ShellGitDataSource()
+    var componentLibrary: ShellComponentLibrary?
     let sidebarSource = ShellSidebarSource()
     let inspectorSource = ShellFrameInspectorSource()
     /// 창 도구 모델 → 하단 도구 막대(셸 프레임 snapshot 도구 목록) 구독.
@@ -480,7 +481,11 @@ final class ShellProjectWindow {
             self?.dataSource.updateTrust(trusted)
             self?.sidebarSource.trusted = trusted
             self?.refreshSessionCommands()
-            if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
+            if !trusted {
+                _ = self?.canvasHost.canvasView.cancelFrameGesture?()
+                self?.componentLibrary?.invalidate()
+                self?.componentLibrary = nil
+            }
         }
         inspectorSource.editFrame = { [weak self] frame, change, completion in
             guard let self, let session = self.windowController.windowSession, session.session == frame.session,
@@ -607,7 +612,7 @@ final class ShellProjectWindow {
         }
         var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
-        if gitSource.trusted, session != nil { commands.insert(.newComponent) }
+        if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .componentLibrary]) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
 
@@ -781,6 +786,8 @@ final class ShellProjectWindow {
 
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
     func closeSessions() {
+        componentLibrary?.invalidate()
+        componentLibrary = nil
         canvasHost.canvasView.frameSession = nil
         inspectorSource.refresh(nil, trusted: false)
         gitSource.attach(nil)

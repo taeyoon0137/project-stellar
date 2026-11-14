@@ -268,6 +268,12 @@ StellarStatus stellar_project_open(uint64_t handle, const uint8_t *path, size_t 
 /* 새 폴더 생성. 완료 event 뒤 같은 path로 stellar_project_open을 호출할 수 있습니다. */
 StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_t path_len, uint64_t *out_request);
 
+/* Read fresh source components on a worker. Output is a tagged little-endian buffer:
+ * 0, u32 legacy chunk count, u32 row count, rows (UUID, root UUID, u32 nodes, f32 width, f32 height,
+ * length-prefixed UTF-8 name, filename, hash); or 1, length-prefixed UTF-8 error.
+ * out_len reports required bytes. STELLAR_BUFFER_TOO_SMALL means retry with a larger buffer. */
+StellarStatus stellar_window_component_library(uint64_t handle, uint64_t session, uint8_t *buf, size_t capacity, size_t *out_len);
+
 /* 열린 신뢰 창의 프로젝트에 독립 컴포넌트 원본 한 개 생성. 완료는 COMPONENT_CREATED 또는 REQUEST_FAILED. */
 StellarStatus stellar_window_component_create(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, uint64_t *out_request);
 
