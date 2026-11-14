@@ -6481,20 +6481,32 @@ tasks:
     verified_at: "2026-11-14T03:11:59+09:00"
   - id: "XII.1.4"
     title: "worker pool을 text shaping, tessellation, image decode, save serialization class로 나누거나 priority tag로 구분합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.7.5"
       - "XI.6.3"
       - "XI.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.1.4.md"
+    commit: "723997e54dee56bebeda59fdf79dac03247b6a71"
+    report: "docs/task-reports/XII.1.4.md"
+    verified_at: "2026-11-14T16:45:34+09:00"
   - id: "XII.1.5"
     title: "worker result에 source revision/hash를 포함하고 stale result를 적용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XII.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.1.5.md"
+    commit: "ae1369488797527abb88300004697ccc81d587e5"
+    report: "docs/task-reports/XII.1.5.md"
+    verified_at: "2026-11-14T16:46:57+09:00"
   - id: "XII.1.6"
     title: "thread별 shutdown 순서를 UI stop→command drain/cancel→render stop→worker stop→runtime destroy로 고정합니다."
     status: not_started

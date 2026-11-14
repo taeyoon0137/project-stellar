@@ -35,6 +35,11 @@
 | `cargo clippy -p stellar-runtime --all-targets -- -D warnings` | 종료 0, 경고 0 |
 | `cargo fmt -p stellar-runtime -p stellar-renderer-core -- --check` | 종료 0 |
 | `git diff --check` | 종료 0 |
+| `cargo xtask generate-ledger` | 종료 0, 1,145개 작업 재생성·내부 검증 통과 |
+| `cargo xtask sync-plan --check` · `cargo xtask validate-task-status` | 모두 종료 0 |
+| `cargo xtask verify-task XII.1.4` · `cargo xtask verify-task XII.1.5` | 모두 종료 0, 현행 선행 검증 |
+| `cargo xtask validate-task-report docs/task-reports/XII.1.4.md` · `cargo xtask validate-task-report docs/task-reports/XII.1.5.md` | 모두 종료 0 |
+| `cargo xtask validate-adr <branch base 대비 변경 경로 전체>` · `cargo xtask validate-crate-graph` | 모두 종료 0 |
 
 - 긴 저장 2개와 GC 1개를 worker 2개에 제출해도 shaping은 저장 완료 전에 실행됩니다. 최대 non-interactive 실행 수는 1입니다.
 - 4개 생산자의 혼합 job 400개 모두 완료되고 background·합산 실행 상한을 지킵니다.
@@ -54,3 +59,7 @@
 - 실행 중인 job은 선점하지 않습니다. 취소를 무시하고 끝나지 않는 job은 종료를 지연시킵니다. worker 1개 또는 합산 상한을 worker 수로 올린 설정에는 interactive 전용 자리가 없습니다.
 - 엄격한 우선순위 때문에 interactive 입력이 계속되면 background 작업이 늦어질 수 있습니다. 실제 저장 지연 측정은 XIII.1.4 연결 후 필요합니다.
 - macOS 앱 파일은 바꾸지 않아 `scripts/macos/smoke.sh`는 실행하지 않았습니다. 전체 통합 검사는 별도 담당 범위입니다.
+
+원장 재생성 후 비교에서 XII.1.4·XII.1.5 두 record만 달라졌고 WBS 설명·선행은 원문과 동일합니다. XIII.1.2 완료 record·보고서·project 구현 및 기존 runtime 배선·의존성은 branch base와 동일합니다.
+
+종료 전 `git ls-remote origin refs/heads/main` 재확인 결과 원격은 `218a671cbd636aad0e8b997ef67ef80295e13f49`였습니다. base 이후 추가된 커밋은 수동 CI 검사 설정이며, 이 작업의 runtime·tessellation 파일·WBS 행·원장에는 변화가 없습니다. 해당 설정은 이 lane에 가져오지 않았고 현재 브랜치의 선별 패치만 통합 대상으로 제공합니다.

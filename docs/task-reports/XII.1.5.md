@@ -33,6 +33,11 @@
 | `cargo clippy -p stellar-runtime --all-targets -- -D warnings` | 종료 0, 경고 0 |
 | `cargo fmt -p stellar-runtime -p stellar-renderer-core -- --check` | 종료 0 |
 | `git diff --check` | 종료 0 |
+| `cargo xtask generate-ledger` | 종료 0, 1,145개 작업 재생성·내부 검증 통과 |
+| `cargo xtask sync-plan --check` · `cargo xtask validate-task-status` | 모두 종료 0 |
+| `cargo xtask verify-task XII.1.4` · `cargo xtask verify-task XII.1.5` | 모두 종료 0, 현행 선행 검증 |
+| `cargo xtask validate-task-report docs/task-reports/XII.1.4.md` · `cargo xtask validate-task-report docs/task-reports/XII.1.5.md` | 모두 종료 0 |
+| `cargo xtask validate-adr <branch base 대비 변경 경로 전체>` · `cargo xtask validate-crate-graph` | 모두 종료 0 |
 
 - 7개 rapid edit fixture의 apply 8·stale 11이 기대 판정과 일치합니다. 모든 적용 값은 적용 시점 현재 입력과 같습니다.
 - 16개 key·3,000번 편집 stress에서 stale apply가 없고, 편집 종료 후 모든 key가 최신 결과로 수렴합니다.
@@ -55,3 +60,7 @@
 - 결과 channel은 unbounded입니다. 실제 앱 연결 시 소비 속도·메모리 예산을 검증하고 배압 정책을 정해야 합니다. 실행 전 stale job 취소도 아직 없습니다.
 - 저장 직렬화·chunk write·base revision 확인·current pointer 전환(XIII.1.4), 통합 thread 종료(XII.1.6)는 미완료 상태로 남깁니다.
 - macOS 변경이 없어 smoke는 실행하지 않았으며 전체 통합 검사는 별도 담당 범위입니다.
+
+원장 재생성 후 비교에서 XII.1.4·XII.1.5 두 record만 달라졌고 WBS 설명·선행은 원문과 동일합니다. XIII.1.2 완료 record·보고서·project 구현 및 기존 runtime 배선·의존성은 branch base와 동일합니다.
+
+종료 전 `git ls-remote origin refs/heads/main` 재확인 결과 원격은 `218a671cbd636aad0e8b997ef67ef80295e13f49`였습니다. base 이후 추가된 커밋은 수동 CI 검사 설정이며, 이 작업의 runtime·tessellation 파일·WBS 행·원장에는 변화가 없습니다. 해당 설정은 이 lane에 가져오지 않았고 현재 브랜치의 선별 패치만 통합 대상으로 제공합니다.
