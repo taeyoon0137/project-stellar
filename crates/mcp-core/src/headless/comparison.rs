@@ -1,9 +1,9 @@
-//! HEAD commit과 working generation에 고정한 문서 변경 페이지.
+//! 고정 HEAD·working generation·프로젝트 컴포넌트 YAML 집합의 변경 페이지.
 use super::{id, invalid, opt_id, read_error, revision, uint, CachedRead};
 use crate::catalog::paging::{self, PageRequest, PageSource};
 use crate::json::{self, JsonLimits, JsonValue};
 use crate::jsonrpc::RpcError;
-use stellar_ops::compare::semantic_diff_head;
+use stellar_ops::compare::{semantic_diff_head_with_source_hash, working_component_hash};
 use stellar_ops::diff::{DiffEntry, DiffPosition, DiffReport};
 use stellar_ops::query::OpsValue;
 use stellar_ops::revision::ProjectRevision;
@@ -13,11 +13,12 @@ use stellar_ops::trusted::{TrustedProject, TrustedReadError};
 pub(super) struct DiffPage {
     head: String,
     revision: ProjectRevision,
+    component_source_hash: String,
     report: DiffReport,
 }
 
-fn cursor_revision(head: &str, revision: ProjectRevision) -> String {
-    format!("{head}-{}", revision.token())
+fn cursor_revision(head: &str, revision: ProjectRevision, component_source_hash: &str) -> String {
+    format!("{head}-{}-{component_source_hash}", revision.token())
 }
 
 impl PageSource for DiffPage {
@@ -25,7 +26,7 @@ impl PageSource for DiffPage {
         "semantic-diff".into()
     }
     fn revision_token(&self) -> String {
-        cursor_revision(&self.head, self.revision)
+        cursor_revision(&self.head, self.revision, &self.component_source_hash)
     }
     fn revision_json(&self) -> JsonValue {
         revision(self.revision)
@@ -34,7 +35,13 @@ impl PageSource for DiffPage {
         self.report.entries.len()
     }
     fn header(&self) -> Vec<(&'static str, JsonValue)> {
-        vec![("base_commit", JsonValue::string(&self.head))]
+        vec![
+            ("base_commit", JsonValue::string(&self.head)),
+            (
+                "component_source_hash",
+                JsonValue::string(&self.component_source_hash),
+            ),
+        ]
     }
     fn item(&self, index: usize) -> JsonValue {
         diff_entry(&self.report.entries[index])
@@ -60,9 +67,11 @@ pub(super) fn page(
         other => read_error(other),
     })?;
     let revision = cached.snapshot.revision();
+    let source_hash = working_component_hash(&cached.snapshot).map_err(|_| unavailable())?;
+    let tag = source_hash.to_string();
     paging::validate_request(
         "semantic-diff",
-        &cursor_revision(head.commit(), revision),
+        &cursor_revision(head.commit(), revision, &tag),
         request,
     )
     .map_err(|e| invalid(e.to_string()))?;
@@ -70,19 +79,26 @@ pub(super) fn page(
     if cached
         .comparison
         .as_ref()
-        .is_none_or(|page| page.head != head.commit())
+        .is_none_or(|page| page.head != head.commit() || page.component_source_hash != tag)
     {
         cached.comparison = None;
-        let report = semantic_diff_head(&head, &cached.snapshot).map_err(|_| unavailable())?;
+        let (report, actual_hash) = semantic_diff_head_with_source_hash(&head, &cached.snapshot)
+            .map_err(|_| unavailable())?;
+        if actual_hash != source_hash {
+            return Err(unavailable());
+        }
         cached.comparison = Some(DiffPage {
             head: head.commit().into(),
             revision,
+            component_source_hash: tag,
             report,
         });
     }
     let body = paging::build_page(cached.comparison.as_ref().expect("비교가 끝남"), request)
         .map_err(|e| invalid(e.to_string()))?;
-    if !head.is_current().map_err(|_| unavailable())? {
+    if working_component_hash(&cached.snapshot).map_err(|_| unavailable())? != source_hash
+        || !head.is_current().map_err(|_| unavailable())?
+    {
         return Err(read_error(TrustedReadError::Unavailable));
     }
     Ok(body)
@@ -138,7 +154,7 @@ fn opt_value(value: Option<&OpsValue>) -> JsonValue {
 
 /// semantic diff 변경 한 건.
 fn diff_entry(entry: &DiffEntry) -> JsonValue {
-    JsonValue::object(vec![
+    let mut fields = vec![
         ("kind", JsonValue::string(entry.kind)),
         ("document", opt_id(entry.document)),
         ("object", id(entry.object)),
@@ -151,5 +167,9 @@ fn diff_entry(entry: &DiffEntry) -> JsonValue {
         ("new", opt_value(entry.new.as_ref())),
         ("from", diff_position(entry.from.as_ref())),
         ("to", diff_position(entry.to.as_ref())),
-    ])
+    ];
+    if let Some(component) = entry.component {
+        fields.push(("component", id(component)));
+    }
+    JsonValue::object(fields)
 }

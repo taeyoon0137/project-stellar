@@ -224,13 +224,13 @@ stellar-mcp --connection-info
 
 ### Git HEAD와 저장 문서의 변경 조회
 
-같은 headless 세션의 `document.semantic_diff`는 현재 브랜치의 HEAD에 커밋한 문서와 디스크에 저장된 문서를 StableId로 비교합니다. 인자는 생략하거나 `base`에 `HEAD`를 지정합니다.
+같은 headless 세션의 `document.semantic_diff`는 현재 브랜치의 HEAD에 커밋한 문서와 디스크에 저장된 문서와 `design/components/`의 공유 정의를 StableId로 비교합니다. 인자는 생략하거나 `base`에 `HEAD`를 지정합니다.
 
 ```jsonl
 {"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"document.semantic_diff","arguments":{"base":"HEAD","limit":100}}}
 ```
 
-`result.content[0].text`의 JSON에서 `base_commit`은 실제 비교한 commit ID이고 `revision`은 현재 저장 세대입니다. `items`에는 변경 종류, 대상 문서·객체 ID, 속성 경로와 이전·이후 값 또는 이동 위치가 있습니다. `next_cursor`가 있으면 같은 도구의 `arguments.cursor`에 전달합니다. 기준 commit이나 저장 세대가 바뀌면 첫 페이지를 다시 요청합니다. 두 입력 모두 같은 project ID의 `design/current`가 있어야 합니다. 외부 에셋·옵트인 YAML 원본·Git index·저장 전 편집은 이 도구의 비교 범위 밖입니다.
+`result.content[0].text`에서 `base_commit`은 고정 HEAD의 commit ID, `revision`은 현재 저장 세대, `component_source_hash`는 현재 프로젝트의 컴포넌트 파일 집합 hash입니다. `items`에는 대상 객체, 속성 경로, 이전·이후 값 또는 이동 위치가 있습니다. 공유 컴포넌트 변경에는 `component`에 정의 ID, `document`에 `null`을 반환합니다. 다음 페이지는 `next_cursor`를 같은 도구의 `arguments.cursor`로 요청합니다. commit·저장 세대·컴포넌트 파일 중 하나라도 바뀌면 첫 페이지부터 다시 읽습니다. 두 입력에는 같은 project ID의 `design/current`가 있어야 합니다. HEAD는 일반 파일로 커밋된 정의만 열고, 대상을 해석해야 하는 Git symlink는 거부합니다.
 
 ## 지정 View의 정적 접근성 HTML
 
