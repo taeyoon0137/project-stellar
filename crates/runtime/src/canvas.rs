@@ -1,4 +1,4 @@
-//! 활성 View의 고정 Free Frame을 scene builder로 평가한 창별 불변 그리기 목록.
+//! 활성 View의 고정 Free Frame과 사각형 Shape를 평가한 창별 불변 그리기 목록.
 
 use std::sync::Arc;
 
@@ -19,10 +19,14 @@ use stellar_scene::node::{CornerRadii, RectPrimitive, SceneContent};
 
 use crate::window_session::ProjectWindowSession;
 
-/// painter 순서의 Frame 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
+mod shape;
+
+/// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CanvasFrame {
-    /// 문서 Frame 식별자.
+    /// Shape Rectangle이면 true입니다. Frame과 같은 사각형 painter를 사용합니다.
+    pub rectangle_shape: bool,
+    /// 문서 node 식별자.
     pub id: StableId,
     /// 같은 목록의 Frame 부모 index.
     pub parent: Option<u32>,
@@ -43,7 +47,7 @@ pub struct CanvasFrame {
 /// 동일한 문서 revision·View는 카메라·선택·다른 창의 변경 때 그대로 공유합니다.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CanvasScene {
-    /// 아래에서 위로 칠하는 Frame 목록.
+    /// 아래에서 위로 칠하는 Frame·사각형 Shape 목록.
     pub frames: Vec<CanvasFrame>,
     /// 해석하지 못한 subtree 수. 그 자손도 잘못된 위치·clip으로 표시하지 않습니다.
     pub skipped: u32,
@@ -114,11 +118,31 @@ impl CanvasScene {
             if !fields.visible {
                 continue;
             }
+            let payload = model.payload(id);
+            if let Some(NodePayload::Shape(stellar_document::shape::ShapeGeometry::Rectangle(
+                shape,
+            ))) = payload
+            {
+                if let Some(rectangle) = shape::rectangle(
+                    model,
+                    id,
+                    shape,
+                    &parent_scope,
+                    parent,
+                    fields.locked,
+                    &mut builder,
+                ) {
+                    result.frames.push(rectangle);
+                } else {
+                    result.skipped += 1;
+                }
+                continue;
+            }
             if model.modifier_stack(id).is_some() {
                 result.skipped += 1;
                 continue;
             }
-            let (scope, next_parent) = match model.payload(id) {
+            let (scope, next_parent) = match payload {
                 Some(NodePayload::Fragment(_)) => {
                     let scope = builder.begin_fragment(
                         &parent_scope,
@@ -181,6 +205,7 @@ impl CanvasScene {
                     }
                     let index = result.frames.len() as u32;
                     result.frames.push(CanvasFrame {
+                        rectangle_shape: false,
                         id,
                         parent,
                         world: spec.world_transform,

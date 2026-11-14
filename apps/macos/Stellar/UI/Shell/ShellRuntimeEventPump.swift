@@ -130,10 +130,10 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.duplicateSelection(handle: runtimeHandle, session: session, view: view, revision: revision), completion)
     }
 
-    func insertFrame(session: UInt64, parent: CanvasFrameHit, rect: CGRect,
+    func insertFrame(session: UInt64, parent: CanvasFrameHit, rect: CGRect, rectangle: Bool,
                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.insertFrame(handle: runtimeHandle, session: session, view: parent.viewID,
-                                         parent: parent.id, revision: parent.revision, rect: rect), completion)
+                                         parent: parent.id, revision: parent.revision, rect: rect, rectangle: rectangle), completion)
     }
 
     func moveFrame(session: UInt64, hit: CanvasFrameHit, delta: CGVector,

@@ -37,7 +37,7 @@ final class CanvasView: NSView {
 
     var selectedInspectorFrame: CanvasInspectorFrame? { frameScene.selectedInspectorFrame }
 
-    func frameHit(at point: NSPoint) -> CanvasFrameHit? { frameScene.hit(at: point) }
+    func frameHit(at point: NSPoint, onlyFrames: Bool = false) -> CanvasFrameHit? { frameScene.hit(at: point, onlyFrames: onlyFrames) }
 
     var framePointerHandler: ((NSEvent) -> Bool)?
     var cancelFrameGesture: (() -> Bool)?

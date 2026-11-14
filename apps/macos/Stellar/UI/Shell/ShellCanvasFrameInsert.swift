@@ -1,24 +1,28 @@
 import AppKit
 
+extension CanvasTool {
+    var insertsBounds: Bool { self == .frame || self == .rectangle }
+}
+
 extension ShellProjectWindow {
     func handleFrameInsertion(_ event: NSEvent, point: CGPoint, canvas: CanvasView) -> Bool {
         let tool = toolsModel.snapshot.activeTool
         switch event.type {
         case .leftMouseDown:
             _ = canvas.cancelFrameGesture?()
-            guard tool == .frame, gitSource.trusted, event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty,
+            guard tool.insertsBounds, gitSource.trusted, event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty,
                   let session = windowController.windowSession, !session.isClosed, !session.isClosing,
-                  let viewport = session.viewInfo, viewport.has_view == 1, let parent = canvas.frameHit(at: point),
+                  let viewport = session.viewInfo, viewport.has_view == 1, let parent = canvas.frameHit(at: point, onlyFrames: true),
                   UUID(uuid: viewport.active_view) == parent.viewID, session.info?.revision == parent.revision else { return false }
             canvas.window?.makeFirstResponder(canvas)
             frameDrag = CanvasFrameDrag(hit: parent, start: point, session: session.session, size: canvas.bounds.size,
-                viewport: viewport, canMove: true, tool: .frame)
+                viewport: viewport, canMove: true, tool: tool)
             return true
         case .leftMouseDragged, .leftMouseUp:
             guard let drag = frameDrag else { return false }
             let release = event.type == .leftMouseUp
             if release { _ = canvas.cancelFrameGesture?() }
-            guard tool == .frame, gitSource.trusted, canvas.bounds.size == drag.size,
+            guard tool == drag.tool, gitSource.trusted, canvas.bounds.size == drag.size,
                   let session = windowController.windowSession, session.session == drag.session,
                   !session.isClosing, !session.isClosed else {
                 _ = canvas.cancelFrameGesture?()
@@ -41,9 +45,9 @@ extension ShellProjectWindow {
                 guard let camera = session.viewInfo, UUID(uuid: camera.active_view) == drag.hit.viewID,
                       camera.center_x == drag.viewport.center_x, camera.center_y == drag.viewport.center_y,
                       camera.zoom == drag.viewport.zoom else { return true }
-                _ = session.insertFrame(parent: drag.hit, rect: rect) { [weak self] event in
+                _ = session.insertFrame(parent: drag.hit, rect: rect, rectangle: tool == .rectangle) { [weak self] event in
                     guard let self else { return }
-                    if case .windowViewChanged = event, self.toolsModel.snapshot.activeTool == .frame {
+                    if case .windowViewChanged = event, self.toolsModel.snapshot.activeTool == tool {
                         _ = self.router.dispatch(CanvasTool.move.command)
                     }
                     self.refreshSessionCommands()

@@ -1,4 +1,4 @@
-//! 표시한 자유 배치 Frame 아래에 새 Frame 하나를 삽입합니다.
+//! 자유 배치 Frame에 새 Frame 또는 사각형 Shape를 삽입하고 선택합니다.
 
 use super::frame_move::{command_id, editable_frame, trusted_canvas_window};
 use super::*;
@@ -6,9 +6,14 @@ use stellar_commands::{
     command::Command, id::CommandOrigin, node_ops::InsertNode, transaction::CommandTransaction,
 };
 use stellar_core_types::color::{Color, ColorSpace};
+use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::value::{Rect, Transform2D};
-use stellar_document::frame::FramePayload;
+use stellar_document::frame::{CornerRadius, FramePayload};
+use stellar_document::modifier::{
+    ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack,
+};
 use stellar_document::records::{NodePayload, NodeRecord};
+use stellar_document::shape::{RectangleParams, ShapeGeometry};
 
 impl AppRuntime {
     /// 부모의 local 공간에서 그린 영역에 Frame을 삽입하고 선택합니다.
@@ -20,21 +25,46 @@ impl AppRuntime {
         parent: StableId,
         bounds: Rect,
     ) -> Result<RequestId, RequestError> {
+        self.insert_canvas_item(session, view, revision, parent, bounds, false)
+    }
+
+    /// 부모의 local 영역에 실제 Rectangle Shape와 Transform·Fill modifier를 생성합니다.
+    pub fn insert_canvas_rectangle(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        parent: StableId,
+        bounds: Rect,
+    ) -> Result<RequestId, RequestError> {
+        self.insert_canvas_item(session, view, revision, parent, bounds, true)
+    }
+
+    fn insert_canvas_item(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        parent: StableId,
+        bounds: Rect,
+        rectangle: bool,
+    ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let window = trusted_canvas_window(ctx, session)?;
-            insert_frame(window, request, view, revision, parent, bounds)?;
+            insert_item(window, request, view, revision, parent, bounds, rectangle)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
 }
 
-fn insert_frame(
+fn insert_item(
     window: &mut ProjectWindowSession,
     request: RequestId,
     view: StableId,
     revision: DocumentRevision,
     parent: StableId,
     bounds: Rect,
+    rectangle: bool,
 ) -> Result<StableId, Failure> {
     let invalid = || {
         Failure::new(
@@ -62,32 +92,64 @@ fn insert_frame(
         u16::from_le_bytes([bytes[0], bytes[1]]),
         u64::from_le_bytes(bytes[2..10].try_into().expect("eight bytes")),
     );
-    let record = NodeRecord {
+    let transform = Transform2D::new(1.0, 0.0, 0.0, 1.0, bounds.origin().x(), bounds.origin().y())
+        .map_err(|_| invalid())?;
+    let (name, payload) = if rectangle {
+        (
+            "Rectangle",
+            NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+                size: bounds.size(),
+                corner_radius: CornerRadius::ZERO,
+            })),
+        )
+    } else {
+        (
+            "Frame",
+            NodePayload::Frame(FramePayload {
+                size: bounds.size(),
+                transform,
+                background: Some(
+                    Color::new(ColorSpace::Srgb, 1.0, 1.0, 1.0, 1.0).expect("opaque white"),
+                ),
+                ..FramePayload::default()
+            }),
+        )
+    };
+    let mut insert = InsertNode::single(NodeRecord {
         id: node,
         parent: Some(parent),
         order_key: model.next_child_order_key(parent),
         visible: true,
         locked: false,
-        display_name: "Frame".into(),
-        payload: NodePayload::Frame(FramePayload {
-            size: bounds.size(),
-            transform: Transform2D::new(
-                1.0,
-                0.0,
-                0.0,
-                1.0,
-                bounds.origin().x(),
-                bounds.origin().y(),
-            )
-            .map_err(|_| invalid())?,
-            background: Some(
-                Color::new(ColorSpace::Srgb, 1.0, 1.0, 1.0, 1.0).expect("opaque white"),
-            ),
-            ..FramePayload::default()
-        }),
-    };
+        display_name: name.into(),
+        payload,
+    });
+    if rectangle {
+        let mut stack = ModifierStack::new(node);
+        for (slot, payload) in [
+            ModifierPayload::Transform(transform),
+            ModifierPayload::default_for(ModifierKind::Fill),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut raw = node.to_bytes();
+            raw[15] ^= slot as u8 + 1;
+            let order = OrderKey::between(stack.entries().last().map(|entry| &entry.order), None);
+            stack
+                .insert(ModifierEntry {
+                    id: ModifierId::new(StableId::from_bytes(raw)),
+                    order,
+                    kind: payload.kind(),
+                    enabled: true,
+                    payload,
+                })
+                .map_err(|_| invalid())?;
+        }
+        insert.modifier_stacks.push(stack);
+    }
     let transaction = CommandTransaction::new(id, CommandOrigin::User)
-        .with_command(revision, Command::InsertNode(InsertNode::single(record)));
+        .with_command(revision, Command::InsertNode(insert));
     window
         .insert_and_select(&transaction, node)
         .map_err(view_failure)?;
@@ -100,6 +162,61 @@ mod tests {
     use crate::window_session::test_fixtures::{identity, saved_project, sid, window};
     use stellar_commands::selection::Selection;
     use stellar_core_types::value::{Size2, Vec2};
+
+    fn insert_frame(
+        window: &mut ProjectWindowSession,
+        request: RequestId,
+        view: StableId,
+        revision: DocumentRevision,
+        parent: StableId,
+        bounds: Rect,
+    ) -> Result<StableId, Failure> {
+        insert_item(window, request, view, revision, parent, bounds, false)
+    }
+
+    #[test]
+    fn inserted_rectangle_keeps_shape_geometry_and_modifier_identity_after_reopen() {
+        let project = saved_project("canvas-insert-rectangle");
+        let mut session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
+        let bounds = Rect::new(
+            Vec2::new(14.0, 22.0).unwrap(),
+            Size2::new(70.0, 40.0).unwrap(),
+        );
+        let revision = session.revision();
+        let node = insert_item(
+            &mut session,
+            RequestId(171),
+            sid(3),
+            revision,
+            sid(10),
+            bounds,
+            true,
+        )
+        .ok()
+        .expect("Rectangle 삽입");
+        let model = session.document().unwrap().model();
+        let stack = model.modifier_stack(node).unwrap().clone();
+        let entries = stack.entries();
+        assert!(
+            matches!(entries[0].payload, ModifierPayload::Transform(t) if t.components() == (1.,0.,0.,1.,14.,22.))
+        );
+        assert_eq!(
+            entries[1].payload,
+            ModifierPayload::default_for(ModifierKind::Fill)
+        );
+        assert_eq!(model.children_in_order(sid(10)).last(), Some(&node));
+        assert_eq!(session.view().selection().ids(), [node]);
+        session.undo().unwrap();
+        assert!(!session.document().unwrap().model().contains(node));
+        session.redo().unwrap();
+        session.save_now().unwrap();
+        let reopened = ProjectWindowSession::load(identity(project.path()), window(2)).unwrap();
+        let loaded = reopened.document().unwrap().model();
+        assert!(
+            matches!(loaded.payload(node), Some(NodePayload::Shape(ShapeGeometry::Rectangle(r))) if r.size == bounds.size())
+        );
+        assert_eq!(loaded.modifier_stack(node), Some(&stack));
+    }
 
     #[test]
     fn insert_and_selection_share_an_entry_and_save_real_geometry() {
