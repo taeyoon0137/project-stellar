@@ -121,7 +121,9 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
     /// stack snapshot을 반영합니다. 선택한 항목은 id로 유지합니다.
     func apply(_ newStack: InspectorModifierStack, forceDisabled: Bool) {
         if hasApplied, newStack == stack, forceDisabled == self.forceDisabled {
-            return // 바뀐 것이 없으면 목록을 다시 그리지 않습니다.
+            // 바뀐 것이 없으면 목록을 다시 그리지 않습니다. 파라미터 필드의 낙관적 표시만 snapshot 값으로 맞춥니다.
+            refreshDetail()
+            return
         }
         hasApplied = true
         let previousIDs = stack.items.map(\.id)

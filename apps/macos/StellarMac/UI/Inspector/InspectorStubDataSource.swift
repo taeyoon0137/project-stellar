@@ -21,32 +21,89 @@ final class InspectorStubDataSource: InspectorDataSource {
     private(set) var receivedCommands: [InspectorCommand] = []
     /// 각 명령의 근거 세대(검사용, `receivedCommands`와 같은 순서).
     private(set) var receivedGenerations: [UInt64] = []
-    private var selectionToken: UInt64 = 1
+    /// 각 명령을 적용한 선택 토큰(검사용, `receivedCommands`와 같은 순서). 거부한 명령은 `nil`입니다.
+    private(set) var appliedSelectionTokens: [UInt64?] = []
+    private(set) var selectionToken: UInt64 = 1
     private var model: InspectorStubModel
     private var generation: UInt64 = 1
+    /// 발행한 세대 → 그 세대의 선택 토큰(최근 `retainedGenerations`개).
+    private var selectionTokenByGeneration: [UInt64: UInt64] = [:]
+    /// 이전 선택의 상태(최근 `retainedSelections`개). `basedOn`이 이전 선택이면 여기에 적용합니다.
+    private var previousModels: [UInt64: InspectorStubModel] = [:]
+    private var previousTokens: [UInt64] = []
+    private static let retainedGenerations: UInt64 = 256
+    private static let retainedSelections = 8
 
     init(scenario: Scenario = .frame) {
         self.scenario = scenario
         model = InspectorStubModel.make(scenario)
         snapshot = model.snapshot(generation: generation, selectionToken: selectionToken)
+        selectionTokenByGeneration[generation] = selectionToken
     }
 
-    /// 다른 예시 선택으로 바꿉니다(선택 변경 흉내).
+    /// 다른 예시 선택으로 바꿉니다(선택 변경 흉내). 이전 선택 상태는 늦게 도착한 명령을 위해 남겨 둡니다.
     func select(_ scenario: Scenario) {
+        retainCurrentSelection()
         self.scenario = scenario
         model = InspectorStubModel.make(scenario)
         selectionToken += 1
         publish()
     }
 
+    /// 선택 토큰의 저장 값(검사용). 현재 선택이거나 남겨 둔 이전 선택만 찾습니다.
+    func storedValue(_ path: String, selectionToken token: UInt64) -> InspectorValue? {
+        if token == selectionToken { return model.values[path] }
+        return previousModels[token]?.values[path]
+    }
+
+    /// 프로토콜 7.2절: 명령은 `basedOn` 세대의 선택 대상에 적용합니다. 그 세대가 이전 선택이면 이전 선택의
+    /// 상태를 바꾸고(현재 선택은 그대로), 알 수 없는 세대면 거부합니다. 어느 경우든 현재 snapshot을 다시 보내
+    /// 셸의 낙관적 표시를 바로잡습니다.
     func submit(_ command: InspectorCommand, basedOn generation: UInt64) {
         receivedCommands.append(command)
         receivedGenerations.append(generation)
+        if case .showBinding = command {
+            appliedSelectionTokens.append(nil)
+            return // Value Binding UI는 후속 작업입니다.
+        }
+        if case .reload = command {
+            // 다시 읽기는 선택 대상이 아니라 인스펙터 상태에 대한 요청입니다.
+            appliedSelectionTokens.append(selectionToken)
+            if case .failed = model.state {
+                retainCurrentSelection()
+                model = InspectorStubModel.make(.frame)
+                selectionToken += 1
+            }
+            publish()
+            return
+        }
+        guard let target = selectionTokenByGeneration[generation] else {
+            appliedSelectionTokens.append(nil) // 만료됐거나 발행한 적 없는 세대: 거부
+            publish()
+            return
+        }
+        if target == selectionToken {
+            Self.apply(command, to: &model, token: target)
+        } else if var previous = previousModels[target] {
+            Self.apply(command, to: &previous, token: target)
+            previousModels[target] = previous
+        } else {
+            appliedSelectionTokens.append(nil) // 남겨 두지 않은 오래된 선택: 거부
+            publish()
+            return
+        }
+        appliedSelectionTokens.append(target)
+        publish()
+    }
+
+    private static func apply(_ command: InspectorCommand, to model: inout InspectorStubModel, token: UInt64) {
+        // 수치 규격은 그 선택의 snapshot에서 찾습니다(세대 번호는 규격 조회에 쓰지 않음).
+        let reference = model.snapshot(generation: 0, selectionToken: token)
         switch command {
         case .setValue(let id, let value, _):
-            model.set(id.path, value, spec: Self.numberSpec(of: snapshot.field(id)))
+            model.set(id.path, value, spec: numberSpec(of: reference.field(id)))
         case .adjustNumber(let id, let delta, _):
-            model.adjust(id.path, by: delta, spec: Self.numberSpec(of: snapshot.field(id)))
+            model.adjust(id.path, by: delta, spec: numberSpec(of: reference.field(id)))
         case .perform(let id):
             switch id.path {
             case "shape.convertToPath":
@@ -55,8 +112,6 @@ final class InspectorStubDataSource: InspectorDataSource {
                 model = model.converted(to: .frame)
             default: break // 반전·캔버스 편집은 Stub이 값 변화로 흉내 내지 않습니다.
             }
-        case .showBinding:
-            return // Value Binding UI는 후속 작업입니다.
         case .addModifier(let kind):
             model.addModifier(kind)
         case .removeModifier(let id):
@@ -72,18 +127,26 @@ final class InspectorStubDataSource: InspectorDataSource {
                 list.insert(item, at: toIndex)
                 model.modifiers = list
             }
-        case .reload:
-            if case .failed = model.state {
-                model = InspectorStubModel.make(.frame)
-                selectionToken += 1
-            }
+        case .showBinding, .reload:
+            break // submit에서 먼저 처리합니다.
         }
-        publish()
+    }
+
+    private func retainCurrentSelection() {
+        previousModels[selectionToken] = model
+        previousTokens.append(selectionToken)
+        while previousTokens.count > Self.retainedSelections {
+            previousModels.removeValue(forKey: previousTokens.removeFirst())
+        }
     }
 
     private func publish() {
         generation += 1
         snapshot = model.snapshot(generation: generation, selectionToken: selectionToken)
+        selectionTokenByGeneration[generation] = selectionToken
+        if generation > Self.retainedGenerations {
+            selectionTokenByGeneration.removeValue(forKey: generation - Self.retainedGenerations)
+        }
         snapshotHandler?(snapshot)
     }
 

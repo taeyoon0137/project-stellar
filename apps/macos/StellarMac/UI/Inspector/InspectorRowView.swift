@@ -48,6 +48,13 @@ final class InspectorRowView: NSView {
         refreshDecorations()
     }
 
+    /// 화면이 이미 이 행을 그대로 보이고 있는지. 편집 직후 필드가 낙관적으로 바꿔 둔 값이 있으면 false라서,
+    /// 코어가 같은 값을 다시 보내도(명령 거부·다른 선택에 적용) 표시가 snapshot 값으로 돌아옵니다.
+    func isShowing(_ newRow: InspectorRow, forceDisabled: Bool) -> Bool {
+        row == newRow && self.forceDisabled == forceDisabled
+            && zip(fieldControllers, newRow.fields).allSatisfy { $0.field == $1 }
+    }
+
     /// 키보드 포커스 순서.
     var keyViews: [NSView] {
         fieldControllers.flatMap(\.keyViews) + (bindingButton.map { [$0] } ?? [])
@@ -220,7 +227,7 @@ final class InspectorRowsView: NSView {
         if rows.count == rowViews.count {
             for (index, row) in rows.enumerated() {
                 let existing = rowViews[index]
-                if existing.row == row, existing.forceDisabled == forceDisabled {
+                if existing.isShowing(row, forceDisabled: forceDisabled) {
                     continue // 바뀌지 않은 행은 건드리지 않습니다.
                 }
                 if existing.canUpdate(to: row) {

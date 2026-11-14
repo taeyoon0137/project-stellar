@@ -297,6 +297,8 @@ protocol InspectorDataSource: AnyObject {
 - `generation`은 단조 증가합니다. 셸은 현재보다 오래된 snapshot을 버리고, 한 런 루프에 여러 개가 오면 마지막 것만 반영합니다. [가이드 9장]
 - `selectionToken`은 선택 집합이 바뀔 때마다 코어가 새로 발급합니다. 같은 이름의 다른 레이어를 골라도 바뀝니다.
 - 코어는 `basedOn` 세대의 선택 대상에 명령을 적용하거나, 만료된 세대면 거부하고 현재 상태 snapshot을 다시 보냅니다. 명령마다 결과 snapshot을 보내야 셸의 낙관적 표시가 바로잡힙니다.
+- 셸은 편집 직후 필드에 입력값을 낙관적으로 보입니다. 결과 snapshot의 값이 직전 snapshot과 같아도(명령 거부, 이전 선택에 적용) 낙관적으로 바꾼 필드는 snapshot 값으로 되돌립니다(`InspectorRowView.isShowing`).
+- `InspectorStubDataSource`도 이 규칙을 따릅니다. 세대별 선택 토큰과 최근 이전 선택 8개의 상태를 남겨, 이전 선택 세대의 명령은 그 선택 상태에 적용하고(현재 선택은 그대로), 알 수 없는 세대의 명령은 거부합니다. 어느 경우든 현재 snapshot을 다시 보냅니다.
 
 ### 7.3 코어 adapter가 할 일
 
@@ -384,7 +386,7 @@ protocol InspectorDataSource: AnyObject {
 
 - 사용한 SF Symbols 이름이 모두 시스템에 있음(현재 41개).
 - Stub 17개 장면 × Light·Dark: Auto Layout 모호성 없음, 내용이 인스펙터 폭을 넓히지 않음, 컨트롤이 패널 여백 안에 있음, 크기 0 컨트롤 없음, 조작 컨트롤의 접근성 레이블, 장면별 섹션 구성, 파괴 동작 버튼 3종만 `hasDestructiveAction`이고 기본 버튼이 아님, key view 순서 연결.
-- 상호작용: 수치 확정·clamp·Escape 되돌리기·화살표 키, 표시 자릿수 반올림(변 수 "6.7" → 7, crop "12.34" → 12.3%), stepper, switch와 의존 필드, popup·동적 선택지, 색 well, segmented, 줄 높이 Auto, disclosure와 key view 제외, 오래된 세대 무시, 선택 종류 전환, modifier 선택·배율 변환·추가·활성·이동(Command-Option-↑)·삭제, 혼합 값 상대 조정(Shift-↑), Fragment 변환, 잠금 → 안내 → Unlock, 페이지 재사용 상한·재생성·접힘 상태 공유, 편집 중 선택 변경 시 이전 세대로 확정.
+- 상호작용: 수치 확정·clamp·Escape 되돌리기·화살표 키, 이전 세대 명령은 이전 선택에 적용·새 선택 값과 표시 유지·만료 세대 거부, 표시 자릿수 반올림(변 수 "6.7" → 7, crop "12.34" → 12.3%), stepper, switch와 의존 필드, popup·동적 선택지, 색 well, segmented, 줄 높이 Auto, disclosure와 key view 제외, 오래된 세대 무시, 선택 종류 전환, modifier 선택·배율 변환·추가·활성·이동(Command-Option-↑)·삭제, 혼합 값 상대 조정(Shift-↑), Fragment 변환, 잠금 → 안내 → Unlock, 페이지 재사용 상한·재생성·접힘 상태 공유, 편집 중 선택 변경 시 이전 세대로 확정.
 - Stub 한계: 혼합 값 상대 조정을 적용하지 않음, Value Binding 요청에 snapshot을 내지 않음. [계획 1.2 규칙 6]
 - 반영 시간 참고값(8.3절)을 출력합니다. 판정 기준은 아닙니다.
 - 화면 밖에서 대비 높이기·투명도 줄이기 설정을 강제할 수 없어, 이 두 설정의 실제 화면은 검사하지 않습니다. XII.9.4 적합성 보고서에서 확인합니다.

@@ -462,6 +462,7 @@ enum InspectorUICheck {
         guard let editor = width.currentEditor() as? NSTextView else { throw Failure(message: "field editor 없음") }
         editor.string = "777"
         let previousGeneration = harness.controller.appliedSnapshot?.generation ?? 0
+        let previousToken = source.selectionToken
         source.select(.frame) // 같은 구성의 다른 선택(선택 토큰 변경)
         harness.flush()
         guard let index = source.receivedCommands.lastIndex(where: {
@@ -472,7 +473,23 @@ enum InspectorUICheck {
                     "확정 값 불일치: \(source.receivedCommands[index])")
         try require(source.receivedGenerations[index] == previousGeneration,
                     "확정 명령이 이전 세대가 아님: \(source.receivedGenerations[index]) ≠ \(previousGeneration)")
+        // 프로토콜 7.2: 이전 세대 명령은 이전 선택에 적용되고, 새 선택 값은 바뀌지 않습니다.
+        try require(source.appliedSelectionTokens[index] == previousToken,
+                    "확정 명령이 이전 선택에 적용되지 않음: \(String(describing: source.appliedSelectionTokens[index]))")
+        try require(source.storedValue("frame.size.width", selectionToken: previousToken) == .number(777),
+                    "이전 선택 너비가 777이 아님")
+        try require(source.snapshot.field(widthID)?.value == .number(320),
+                    "이전 세대 명령이 새 선택에 적용됨: \(String(describing: source.snapshot.field(widthID)?.value))")
+        harness.flush()
         try require(width.currentEditor() == nil, "선택 변경 후에도 편집 중")
+        try require(width.stringValue == "320", "새 선택 너비 표시 '\(width.stringValue)'")
+
+        // 알 수 없는(만료된) 세대 명령은 거부하고 현재 snapshot을 다시 보냅니다.
+        let generation = source.snapshot.generation
+        source.submit(.setValue(widthID, .number(5), phase: .commit), basedOn: 0)
+        try require(source.appliedSelectionTokens.last == .some(nil), "만료 세대 명령이 거부되지 않음")
+        try require(source.snapshot.generation == generation + 1, "거부 후 현재 snapshot을 다시 보내지 않음")
+        try require(source.snapshot.field(widthID)?.value == .number(320), "거부한 명령이 적용됨")
     }
 
     /// 페이지 재사용: 상한·제거 후 재생성·접힘 상태 공유.
@@ -526,7 +543,7 @@ enum InspectorUICheck {
             let switchTime = measureFlush()
             let path = even ? "text.paragraph.letterSpacing" : "frame.size.width"
             harness.source.submit(.setValue(try propertyID(harness, path), .number(Double(iteration)), phase: .commit),
-                                  basedOn: 0)
+                                  basedOn: harness.source.snapshot.generation)
             let updateTime = measureFlush()
             if iteration > 1 {
                 switches.append(switchTime)
