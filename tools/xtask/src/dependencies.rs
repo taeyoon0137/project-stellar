@@ -457,11 +457,66 @@ mod tests {
         assert!(codes.contains(&"rejected-license"));
     }
 
+    /// 실제 workspace member manifest에 직접 선언된 외부 의존성 이름(승인 목록과 대조할 집합).
+    ///
+    /// `cargo tree` 없이 각 member `Cargo.toml`의 `<name> = ...` 줄을 봅니다. 승인 목록의 이름만
+    /// 확인하므로 내부 path 의존(stellar-*)은 결과에 나오지 않습니다.
+    fn real_workspace_direct_deps(root: &str, approved: &[&str]) -> Vec<String> {
+        let workspace = std::fs::read_to_string(format!("{root}/Cargo.toml")).unwrap();
+        let start = workspace.find("members").unwrap();
+        let open = start + workspace[start..].find('[').unwrap();
+        let close = open + workspace[open..].find(']').unwrap();
+        let manifests: Vec<String> = workspace[open + 1..close]
+            .split(',')
+            .map(|m| m.trim().trim_matches('"').to_string())
+            .filter(|m| !m.is_empty())
+            .filter_map(|m| std::fs::read_to_string(format!("{root}/{m}/Cargo.toml")).ok())
+            .collect();
+        approved
+            .iter()
+            .filter(|name| {
+                manifests.iter().any(|manifest| {
+                    manifest.lines().any(|line| {
+                        let line = line.trim_start();
+                        line.strip_prefix(**name)
+                            .is_some_and(|rest| rest.trim_start().starts_with('='))
+                    })
+                })
+            })
+            .map(|name| (*name).to_string())
+            .collect()
+    }
+
+    /// 실제 승인 목록에서 cargo 항목 이름.
+    fn real_cargo_approvals(content: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut current: Option<String> = None;
+        for line in content.lines() {
+            if let Some(name) = line.trim_start().strip_prefix("- name:") {
+                current = Some(name.trim().trim_matches('"').to_string());
+            } else if line.trim_start() == "ecosystem: cargo" {
+                if let Some(name) = current.take() {
+                    names.push(name);
+                }
+            }
+        }
+        names
+    }
+
     #[test]
     fn real_dependencies_file_parses() {
         let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
         let content = std::fs::read_to_string(format!("{root}/config/dependencies.yaml")).unwrap();
-        assert!(validate_dependencies(&content, &["yaml-rust2"]).is_empty());
+        let approved = real_cargo_approvals(&content);
+        let approved: Vec<&str> = approved.iter().map(String::as_str).collect();
+        let used = real_workspace_direct_deps(root, &approved);
+        assert!(used.iter().any(|u| u == "yaml-rust2"), "{used:?}");
+        let used: Vec<&str> = used.iter().map(String::as_str).collect();
+        let errors: Vec<_> = validate_dependencies(&content, &used)
+            .into_iter()
+            .filter(|e| e.code != "unused-approval")
+            .collect();
+        assert!(errors.is_empty(), "{errors:?}");
     }
 
     fn planned_yaml(planned_for: &str) -> String {
@@ -610,7 +665,11 @@ mod tests {
         .unwrap();
         let progress = PlanProgress::from_plan(&plan);
         assert!(progress.known.contains("XXIX.1.2"));
-        let errors = validate_dependencies_with(&content, &["yaml-rust2"], Some(&progress));
+        let approved = real_cargo_approvals(&content);
+        let approved: Vec<&str> = approved.iter().map(String::as_str).collect();
+        let used = real_workspace_direct_deps(root, &approved);
+        let used: Vec<&str> = used.iter().map(String::as_str).collect();
+        let errors = validate_dependencies_with(&content, &used, Some(&progress));
         assert!(errors.is_empty(), "{errors:?}");
     }
 }
