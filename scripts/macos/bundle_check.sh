@@ -6,7 +6,7 @@
 #   scripts/macos/bundle_check.sh APP                # 이미 서명된 앱(예: Developer ID)을 그대로 검사
 #
 # 검사(하나라도 어긋나면 실패):
-#  1. 번들 구조 allowlist: Contents/{Info.plist, PkgInfo, MacOS/Stellar, _CodeSignature/CodeResources,
+#  1. 번들 구조 allowlist: Contents/{Info.plist, PkgInfo, MacOS/Stellar, Helpers/stellar, _CodeSignature/CodeResources,
 #     CodeResources(stapled 공증 ticket), Resources/**, Frameworks/Sparkle.framework/**}만 허용(빌드 중간물·dSYM·
 #     헤더·module·staticlib·다른 framework 혼입 금지)
 #  2. Mach-O 파일은 실행 파일과 Sparkle.framework의 고정 목록(framework·Autoupdate·Updater·XPC service 2개)뿐이고
@@ -68,7 +68,7 @@ while IFS= read -r entry; do
       fail "Sparkle.framework에 개발 전용 항목이 남아 있음: $entry" ;;
   esac
   case "$entry" in
-    Contents | Contents/Info.plist | Contents/PkgInfo | Contents/MacOS | Contents/MacOS/Stellar) ;;
+    Contents | Contents/Info.plist | Contents/PkgInfo | Contents/MacOS | Contents/MacOS/Stellar | Contents/Helpers | Contents/Helpers/stellar) ;;
     Contents/_CodeSignature | Contents/_CodeSignature/CodeResources) ;;
     Contents/CodeResources) ;; # stapler가 붙인 공증 ticket(XVI.9.4)
     Contents/Resources | Contents/Resources/*) ;;
@@ -81,6 +81,7 @@ echo "✓ 번들 구조: allowlist 통과"
 # --- 2. Mach-O 목록 고정, 모두 arm64 포함 ---
 EXPECTED_MACHO="$(printf '%s\n' \
   "Contents/MacOS/Stellar" \
+  "Contents/Helpers/stellar" \
   "$SPARKLE_VERSION_DIR/Autoupdate" \
   "$SPARKLE_VERSION_DIR/Sparkle" \
   "$SPARKLE_VERSION_DIR/Updater.app/Contents/MacOS/Updater" \
@@ -97,7 +98,9 @@ MACHO_FILES="$(printf '%s' "$MACHO_FILES" | LC_ALL=C sort)"
 while IFS= read -r path; do
   lipo -archs "$APP/$path" | tr ' ' '\n' | grep -qx arm64 || fail "arm64 slice 없음: $path"
 done <<< "$MACHO_FILES"
-echo "✓ Mach-O: 실행 파일 + Sparkle.framework 고정 목록 $(printf '%s\n' "$MACHO_FILES" | grep -c .)개, 모두 arm64 포함"
+[ -x "$APP/Contents/Helpers/stellar" ] && [ ! -L "$APP/Contents/Helpers/stellar" ] || fail "번들 CLI 실행 파일 없음"
+[ "$(lipo -archs "$APP/Contents/Helpers/stellar")" = arm64 ] || fail "배포 CLI는 arm64 전용이어야 함"
+echo "✓ Mach-O: 앱 + CLI + Sparkle.framework 고정 목록 $(printf '%s\n' "$MACHO_FILES" | grep -c .)개, 모두 arm64 포함"
 
 # --- 3. 동적 링크는 시스템 경로와 번들 안 Sparkle.framework만 ---
 [ -f "$APP/$SPARKLE_VERSION_DIR/Sparkle" ] || fail "@rpath 대상 Sparkle.framework 없음"
@@ -105,6 +108,9 @@ LINK_COUNT=0
 while IFS= read -r path; do
   LINKED="$(otool -arch arm64 -L "$APP/$path" | tail -n +2 | awk '{print $1}')"
   while IFS= read -r lib; do
+    if [ "$path" = "Contents/Helpers/stellar" ] && [ "$lib" = "$SPARKLE_INSTALL_NAME" ]; then
+      fail "headless CLI가 Sparkle.framework에 의존함"
+    fi
     case "$lib" in
       /usr/lib/* | /System/Library/* | "$SPARKLE_INSTALL_NAME") ;;
       *) fail "$path: 허용되지 않은 동적 라이브러리 의존: $lib" ;;
@@ -164,6 +170,7 @@ printf '%s\n' "$SIGNATURE_INFO" | grep -q "flags=.*runtime" || fail "Hardened Ru
 printf '%s\n' "$SIGNATURE_INFO" | grep -q "^Identifier=xyz.taeyoon.stellar$" || fail "서명 identifier가 번들 ID가 아님"
 APP_TEAM="$(printf '%s\n' "$SIGNATURE_INFO" | awk -F= '/^TeamIdentifier=/ {print $2}')"
 for nested in \
+  "Contents/Helpers/stellar" \
   "$SPARKLE_VERSION_DIR/XPCServices/Installer.xpc" \
   "$SPARKLE_VERSION_DIR/XPCServices/Downloader.xpc" \
   "$SPARKLE_VERSION_DIR/Autoupdate" \
@@ -176,7 +183,12 @@ for nested in \
 done
 # team 식별자는 출력하지 않습니다(저장소·로그 비기록 원칙, XVI.9.3).
 echo "✓ 코드 서명 구조: verify --deep --strict, Sealed Resources v2, Info.plist bound, Hardened Runtime," \
-  "중첩 코드 5개 Hardened Runtime·앱과 같은 TeamIdentifier$( [ "$APP_TEAM" = "not set" ] && printf '(ad-hoc)')"
+  "CLI·Sparkle 중첩 코드 Hardened Runtime·앱과 같은 TeamIdentifier$( [ "$APP_TEAM" = "not set" ] && printf '(ad-hoc)')"
+
+codesign --verify --strict "$APP/Contents/Helpers/stellar" || fail "CLI 서명 검증 실패"
+codesign -d --entitlements - --xml "$APP/Contents/Helpers/stellar" > "$WORK/cli.entitlements" 2>/dev/null
+[ ! -s "$WORK/cli.entitlements" ] || fail "CLI에 entitlement가 있습니다"
+echo "✓ CLI: 독립 strict 서명 검증 통과, entitlement 없음"
 
 # --- 7. 재배치 실행 smoke(개발 도구·빌드 트리 읽기 차단) ---
 RUN="$WORK/run"
@@ -190,11 +202,14 @@ PROFILE="(version 1)(allow default)$DENY"
 if sandbox-exec -p "$PROFILE" /bin/cat "$REPO_ROOT/Cargo.toml" >/dev/null 2>&1; then
   fail "sandbox 읽기 차단 profile이 동작하지 않습니다"
 fi
+env -i HOME="$RUN/home" PATH=/usr/bin:/bin TMPDIR="$RUN/home" \
+  sandbox-exec -p "$PROFILE" "$RUN/Stellar.app/Contents/Helpers/stellar" --version > "$WORK/cli-version.json"
+[ "$(plutil -extract result.name raw -o - "$WORK/cli-version.json")" = stellar-cli ] || fail "재배치 CLI version 실패"
 for mode in --smoke --lifecycle-check --canvas-check --update-check; do
   env -i HOME="$RUN/home" PATH=/usr/bin:/bin TMPDIR="$RUN/home" \
     sandbox-exec -p "$PROFILE" "$RUN/Stellar.app/Contents/MacOS/Stellar" "$mode" \
     || fail "재배치 실행 $mode 실패"
 done
-echo "✓ 재배치 실행: 임시 폴더·최소 환경·개발 경로 읽기 차단에서 --smoke/--lifecycle-check/--canvas-check/--update-check 통과"
+echo "✓ 재배치 실행: 임시 폴더·최소 환경·개발 경로 읽기 차단에서 CLI --version 및 앱 --smoke/--lifecycle-check/--canvas-check/--update-check 통과"
 
 echo "✓ bundle 검사 통과: $SOURCE_APP$( [ "$ADHOC" -eq 1 ] && printf ' (ad-hoc 서명 사본)')"

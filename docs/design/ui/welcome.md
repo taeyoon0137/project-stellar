@@ -5,7 +5,7 @@
 - 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), Apple Human Interface Guidelines(이하 "HIG")
 - WBS 연결
   - New Project·Open·Clone 명령: 계획 XII.6.1~XII.6.3.
-  - `stellar` 명령 설치: 계획 XXIV.5.3(위치 결정), XXIV.5.4(설치·제거), XXIV.5.5(상태 확인), XXIV.5.6(첫 실행 화면). 위치·안전 조건·확인 규칙은 6장이 정의하고, 각 행 보고서(`docs/task-reports/XXIV.5.3.md`~`XXIV.5.6.md`)가 근거와 검사 결과를 기록합니다. 네 행 모두 선행 XXIV.5.1(helper 번들 배치)이 `[x]`가 될 때까지 `[ ]`입니다.
+  - `stellar` 명령 설치: 계획 XXIV.5.3(위치 결정), XXIV.5.4(설치·제거), XXIV.5.5(상태 확인), XXIV.5.6(첫 실행 화면). 위치·안전 조건·확인 규칙은 6장이 정의하고, 각 행 보고서(`docs/task-reports/XXIV.5.3.md`~`XXIV.5.6.md`)가 근거와 검사 결과를 기록합니다.
   - 시작 창 화면 자체는 전용 WBS가 없습니다(가이드 10.4).
 
 ## 1. 범위
@@ -126,9 +126,9 @@
 ### 6.1 결정과 문서 관계
 
 - ADR-0005(Accepted) §2: 사용자가 부르는 명령은 `stellar`이고(Cargo package는 `stellar-cli`, 실행 파일 이름만 `stellar`), PATH에서 `stellar`가 Stellar 자기 링크가 아닌 다른 프로그램으로 먼저 해석되면 `stellar-cli`로 설치하며, `stellar-cli`도 다른 프로그램이 쓰면 설치하지 않고 알립니다. 설치 화면은 실제로 설치한 이름을 보여 줍니다.
-- ADR-0005 §7: 앱 번들에 `stellar`를 helper로 넣고(배치·서명 확정은 XXIV.5.1), 첫 실행 때 설치 화면을 제공하며, 동의 전에는 어떤 파일도 만들거나 바꾸지 않습니다. 위치·제거 방법·안전 조건은 아키텍처 §37(최소 권한)과 Apple·각 셸 공식 문서를 근거로 이 영역이 정합니다. 설치 상태는 OS 사용자 데이터에만 둡니다.
-- helper 경로: `Contents/Helpers/stellar`. Apple "Placing content in a bundle"은 macOS helper tool 위치로 `Contents/Helpers/`를 듭니다. 최종 배치는 XXIV.5.1 보고서가 정하며, 바뀌면 `StellarCommandInstaller.helperRelativePath` 한 곳만 고칩니다.
-- helper가 없는 빌드(XXIV.5.1 전)에서는 상태가 `helperUnavailable`이고 첫 실행 제안을 띄우지 않습니다.
+- ADR-0005 §7: 앱 번들에 `stellar`를 helper로 넣고(배치·서명은 XXIV.5.1), 첫 실행 때 설치 화면을 제공하며, 동의 전에는 어떤 파일도 만들거나 바꾸지 않습니다. 위치·제거 방법·안전 조건은 아키텍처 §37(최소 권한)과 Apple·각 셸 공식 문서를 근거로 이 영역이 정합니다. 설치 상태는 OS 사용자 데이터에만 둡니다.
+- Debug와 Release에서 앱에 포함하는 helper 경로는 `Contents/Helpers/stellar`입니다. 배치와 서명 검사 근거는 [XXIV.5.1 보고서](../../task-reports/XXIV.5.1.md)에 기록합니다.
+- helper가 손상되거나 빠진 번들은 `helperUnavailable` 상태가 되고 첫 실행 제안을 띄우지 않습니다.
 - 가이드 7.3·10.4는 아직 "ADR-0005가 Accepted되기 전에는 이 화면을 정하지 않음"으로 남아 있습니다. 이 영역 작업은 가이드를 수정하지 않으므로, 가이드 갱신은 별도 작업으로 남깁니다(15장).
 
 ### 6.2 원칙
@@ -345,7 +345,7 @@ protocol WelcomeDataSource: AnyObject {
 - 실제 파일 시스템 구현은 임시 폴더 안에서만 검사합니다: 설치, `RENAME_SWAP` 다시 연결, 임시 링크 잔여 0, 기대와 다른 항목 교체·삭제 거부, `symlink` EEXIST, 대체 이름 설치·되돌리기.
 - 메인 스레드 감시: 상태 확인·첫 실행 판정·sheet 설치·제거·Check Again 경로에서 메인 스레드 파일 조회 0.
 - 설치 sheet는 확인 → Install → 작업 큐 → 결과, Remove → 결과, Not Now(파일 변경 0), 대체 이름 제안·설치 결과 이름, 알림 상태(설치 동작 없음), Update 동의 화면의 지금 링크 대상(확인한 사본은 앱 위치, dangling은 대상 경로와 Stellar 사본이라고 하지 않음)까지 확인합니다.
-- 실제 앱 번들의 설치 상태는 환경마다 다르므로 보고만 합니다. XXIV.5.1 전 Debug 빌드는 helper가 없어 `helperUnavailable`입니다.
+- 실제 앱의 `Contents/Helpers/stellar`에 임시 홈 링크를 설치하고 그 링크로 `version` JSON을 실행합니다. 실제 사용자 PATH의 설치 상태는 읽어서 보고합니다.
 
 ## 14. 확정 수치 제안
 
@@ -368,7 +368,7 @@ protocol WelcomeDataSource: AnyObject {
 3. **앱 연결**: `AppDelegate`가 열린 프로젝트가 없을 때 `WelcomeWindowController`를 띄우고 `presentCommandInstallOfferIfNeeded()`를 부르게 합니다. 프로젝트가 열리면 시작 창을 닫습니다. 현재 앱은 캔버스 창을 바로 엽니다.
 4. **메뉴**: `MainMenuBuilder` 메뉴를 앱에 설치합니다. File 메뉴의 New Project…(⌘N), Open Project…(⌘O), Clone Project…는 앱 수준 router가 명시 target이므로, 그 router의 model(통합 어댑터)이 시작 창이 떠 있으면 `WelcomeViewController.availability(of:)`를 `enabledCommands`에 싣고 `run(_:)`으로 넘기게 합니다(7장). 앱 메뉴에 "Set Up the stellar Command…"(`WelcomeStrings.setUpCommandMenuItem`) 항목을 두어 `showStellarCommandSetup(_:)`으로 같은 sheet를 관리 모드로 엽니다(XII.6.5, XXIV.5.6, 가이드 8.1). 메뉴 정의는 Tools 영역(`ShellCommand`)이 소유하므로 그 영역에서 명령을 추가합니다.
 5. **smoke 연결**: 완료. `main.swift`의 `--welcome-ui-check` 실행 인자와 `scripts/macos/smoke.sh` 단계로 커밋된 트리에서 실행합니다.
-6. **helper**: 앱 번들 `Contents/Helpers/stellar` 배치와 서명(ADR-0005 §7, 계획 XXIV.5.1)이 생기기 전에는 설치 화면이 `helperUnavailable`이고 첫 실행 제안은 뜨지 않습니다. XXIV.5.1이 다른 배치를 정하면 `helperRelativePath`를 고치고 검사를 다시 실행합니다.
+6. **helper**: 앱의 `Contents/Helpers/stellar`가 실행 가능해야 설치 화면에서 링크를 만들 수 있습니다. 정상 번들이 갖춰야 할 빌드·서명 조건은 [XXIV.5.1 보고서](../../task-reports/XXIV.5.1.md)에 기록합니다.
 7. **문서 반영**: 가이드 7.3·10.4는 ADR-0005 Accepted 전 문구("이 화면을 정하지 않음", "Open Questions 7 결정 대기")로 남아 있으므로 6장과 계획 XXIV.5.3~XXIV.5.6을 가리키도록 고칩니다. 가이드 12장에 14절 수치를 기록합니다. 시작 창 화면 자체는 전용 WBS가 없습니다(가이드 10.4).
 8. **설정 창**: 명령 설치 상태 보기·제거를 설정 창에도 둘지는 설정 창 작업에서 정합니다.
 9. **모듈 위치**: 파일 시스템을 바꾸는 설치기(`StellarCommandInstaller.swift`)를 UI 밖 모듈로 옮길지 앱 통합 때 정합니다.

@@ -10,7 +10,7 @@ import Foundation
 // - Stellar 소유 링크가 아닌 파일은 덮어쓰거나 지우지 않습니다. 확인과 실행 사이에 바뀐 경우도 막습니다.
 // - 대체 이름 규칙(ADR-0005 §2): PATH에서 `stellar`가 다른 프로그램으로 먼저 해석되면(설치 위치에 있거나 PATH
 //   앞쪽에 있음) `stellar-cli`로 설치하고, `stellar-cli`도 다른 프로그램이 쓰면 아무것도 설치하지 않고 알립니다.
-// - 앱 번들 안 helper(`Contents/Helpers/stellar`, ADR-0005 §2·§7, 배치 확정은 XXIV.5.1)가 없으면 설치하지 않습니다.
+// - 앱 번들 안 helper(`Contents/Helpers/stellar`, ADR-0005 §2·§7, 배치·검사는 XXIV.5.1)가 없으면 설치하지 않습니다.
 // 파일 I/O는 메인 스레드 밖에서 호출합니다(아키텍처 §6.4). 위치·안전 조건의 근거는 docs/design/ui/welcome.md 6장입니다.
 
 /// 경로 하나의 lstat 결과(마지막 심볼릭 링크를 따라가지 않음).
