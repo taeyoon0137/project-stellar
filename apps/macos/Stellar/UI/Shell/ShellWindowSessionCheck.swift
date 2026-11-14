@@ -36,12 +36,17 @@ struct ShellSavedProjectFixture {
     func copy(_ fixture: URL, as name: String) -> String? {
         let target = root.appendingPathComponent(name, isDirectory: true)
         do {
+            for marker in ["stellar.yaml", "design/current"] {
+                guard try fixture.appendingPathComponent(marker)
+                    .resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { return nil }
+            }
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
             try FileManager.default.copyItem(at: fixture, to: target)
             try FileManager.default.createDirectory(
                 at: target.appendingPathComponent(".git", isDirectory: true), withIntermediateDirectories: true
             )
         } catch {
+            FileHandle.standardError.write(Data("저장된 프로젝트 fixture 복사 실패: \(fixture.path): \(error.localizedDescription)\n".utf8))
             return nil
         }
         return target.path
