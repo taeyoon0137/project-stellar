@@ -875,7 +875,7 @@ tools/xtask/
 |---|---|---|---|---|
 | IX.8.1 | `[x]` | `AccessibilityNode`에 source StableId, role, label binding, value binding, state, action, reading order를 정의합니다. | round-trip. | IX.6.1, VIII.6.1 |
 | IX.8.2 | `[x]` | 시각 tree와 별도 accessibility parent/child 관계를 허용하되 source node는 정확히 하나여야 합니다. | orphan source·cycle fixture 실패. | IX.8.1 |
-| IX.8.3 | `[ ]` | decorative node 제외, Fragment flatten, hidden node 제외 규칙을 적용한 기본 accessibility tree generator를 구현합니다. | expected tree fixture 통과. | IX.8.2, VI.4.1 |
+| IX.8.3 | `[x]` | decorative node 제외, Fragment flatten, hidden node 제외 규칙을 적용한 기본 accessibility tree generator를 구현합니다. | expected tree fixture 통과. | IX.8.2, VI.4.1 |
 | IX.8.4 | `[ ]` | Button, TextInput, Modal, List, SingleSelectionGroup contract를 role/state/action으로 매핑합니다. | control별 golden tree 통과. | IX.6.7, IX.8.3 |
 | IX.8.5 | `[ ]` | label 누락, invalid nesting, focusable action 없음, duplicate reading order diagnostic을 구현합니다. | diagnostic fixture 정확. | IX.8.4 |
 | IX.8.6 | `[ ]` | Target adapter가 사용할 중립 accessibility snapshot을 정의합니다. 플랫폼 API 호출은 Phase XII로 미룹니다. | 양 플랫폼 snapshot bytes 동일. | IX.8.4 |

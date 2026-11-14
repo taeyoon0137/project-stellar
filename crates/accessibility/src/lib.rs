@@ -12,5 +12,11 @@ pub mod node;
 /// 시각 tree와 별도 parent/child 관계를 갖는 접근성 트리 (IX.8.2).
 pub mod tree;
 
+/// 생성기 입력: 중립 시각 source tree (IX.8.3).
+pub mod source;
+
+/// 기본 접근성 트리 생성기 (IX.8.3).
+pub mod generate;
+
 #[cfg(test)]
 pub(crate) mod test_support;
