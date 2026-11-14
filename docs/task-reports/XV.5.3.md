@@ -2,7 +2,7 @@
 
 - WBS: XV.5.3
 - 작업명: library resource를 수정하는 command를 사용 project에서 거부, instance 공개 override만 허용
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 판정 정책은 완료했지만 실제 command가 이 판정을 거치지 않습니다(9A 리뷰 P2).
 - 선행: XV.5.2(`[x]`, 이 lane), IX.2.4(`[x]`)
 
 ## 필수 실행 환경
@@ -67,3 +67,15 @@
   돌려줍니다. 정의 편집·삭제·override 설정의 판정은 그대로입니다(snapshot 없으면 `LibraryUnavailable`).
 - 검증: 위 테스트 통과(offline reset 허용, library 불일치 reset 허용, reset과 offline override가 섞인
   transaction은 override 위치 1에서 거부), 기존 `read_only` 테스트 3건 통과.
+
+## 상태 정정(9A 리뷰 P2, 2026-11-14)
+
+- `[x]` → `[~]`: 작업 행은 library resource를 수정하는 **command**를 사용 프로젝트에서 거부하라고 하지만,
+  실제 command는 이 판정을 거치지 않습니다. 검증 열 "edit definition fixture 실패, override 성공"은 형식 중립
+  `LibraryEditRequest` 분류 fixture로만 충족했습니다. 실제 command를 대신하는 분류로 검증한 것입니다.
+- 남은 일: 외부 참조를 대상으로 하는 command가 transaction 적용 전에 `check_library_edits`를 호출하게
+  연결하고, 실제 정의 편집 command가 거부되고 공개 override command가 성공하는 fixture를 확인하면 `[x]`로
+  올립니다. document·commands crate는 dependencies에 의존할 수 없으므로(crate graph) 연결 위치는 둘을 함께
+  쓰는 project crate 또는 runtime입니다. 문서가 외부 참조를 저장하는 통합(XV.5.2 차이)이 먼저 필요합니다.
+- 이 crate의 판정 정책(정의·property·token 편집과 삭제 거부, 공개 override만 허용, reset 항상 허용)은
+  완료했고 리뷰 수정 P3까지 반영했습니다.

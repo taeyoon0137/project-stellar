@@ -52,3 +52,12 @@
 ## 남은 위험 / 한계
 
 - 문서 chunk에 이 텍스트를 저장하는 통합 작업이 형식을 바꾸면 ADR-0023 결정 7을 함께 갱신해야 합니다.
+
+## 상태 검토(9A 리뷰 P2, 2026-11-14)
+
+- `[x]` 유지: 검증 열 "round-trip"은 이 작업이 구현하는 `ExternalComponentRef`·`ExternalTokenRef`의
+  canonical 텍스트 왕복으로 검증했습니다.
+- 사실 기록: 문서는 아직 이 참조를 저장하지 않습니다(차이 절). document crate는 dependencies에 의존할 수
+  없어(crate graph) 문서 chunk에 canonical 텍스트로 넣는 통합 작업이 필요하고, 그 작업이 문서 저장·읽기
+  왕복을 검증해야 합니다. 해석할 수 없는 참조는 참조 전체를 보존하는 `UnresolvedExternalRef`(XV.5.5 리뷰
+  수정 P1)로 남깁니다.

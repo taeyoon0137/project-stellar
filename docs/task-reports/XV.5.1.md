@@ -85,3 +85,13 @@
   (`cached_snapshot_is_read_under_shared_lock_and_detached_after` 확장).
 - 한계: 읽기 중 메모리 상한은 공급자 계약입니다. 운영 공급자(실제 ComponentLibrary·TokenSet chunk reader)가
   아직 없으므로 그 구현이 이 계약을 지키는지는 그 작업에서 검증해야 합니다.
+
+## 상태 검토(9A 리뷰 P2, 2026-11-14)
+
+- `[x]` 유지: 검증 열 "v1/v2 same StableId 충돌 없음"은 이 작업이 정의하는 실제 `LibrarySnapshot`·
+  `LibraryResourceKey` 타입으로 검증했습니다. key가 LibraryId + commit + StableId이므로 결과는 export를
+  어디서 읽었는지와 무관합니다.
+- 사실 기록: 실제 ComponentLibrary·TokenSet chunk를 읽는 운영 `LibraryExportSource`는 없습니다(차이 절).
+  저장된 프로젝트에서 두 chunk를 읽는 경로 자체가 아직 없습니다. 그 reader를 만드는 작업이 trait 구현과 읽기
+  중 상한 계약(P4)을 함께 검증해야 합니다. 통합 판단에서 이 차이를 완료 기준 미달로 보면 `[~]`로 낮추고, 이
+  행을 선행으로 둔 XV.5.2·XV.5.4·XV.7.1·XV.7.2도 함께 다시 판정해야 합니다.

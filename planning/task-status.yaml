@@ -8105,44 +8105,64 @@ tasks:
     verified_at: "2026-11-14T09:54:38+09:00"
   - id: "XV.5.1"
     title: "library project에서 export된 ComponentDefinition·TokenSet index를 읽는 `LibrarySnapshot`을 정의합니다. 모든 resource key에 LibraryId+commit+StableId를 포함합니다."
-    status: blocked
+    status: verified
     depends_on:
       - "XV.2.1"
       - "IX.1.1"
       - "VIII.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.5.1.md"
+    commit: "a53231e9e8c83c1ad3b094397f69a8b87a5af7f8"
+    report: "docs/task-reports/XV.5.1.md"
+    verified_at: "2026-11-14T10:20:53+09:00"
   - id: "XV.5.2"
     title: "사용 project document가 library resource를 참조할 수 있게 `ExternalComponentRef`, `ExternalTokenRef`를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XV.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.5.2.md"
+    commit: "d493c7ce252e5fef1ddd9fa675d0b81d5260ebaf"
+    report: "docs/task-reports/XV.5.2.md"
+    verified_at: "2026-11-14T10:22:52+09:00"
   - id: "XV.5.3"
     title: "library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XV.5.2"
       - "IX.2.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XV.5.3.md"
   - id: "XV.5.4"
     title: "library의 transitive resource ref를 동일 dependency graph instance 안에서 resolve합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XV.2.2"
       - "XV.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.5.4.md"
+    commit: "6687265539fa8a06deac4fcd63f992b74a4be5f2"
+    report: "docs/task-reports/XV.5.4.md"
+    verified_at: "2026-11-14T10:28:09+09:00"
   - id: "XV.5.5"
     title: "missing cache/offline entry는 library resource unavailable diagnostic을 생성하고 project 기본 데이터는 읽을 수 있게 합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XV.3.3"
       - "III.2.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XV.5.5.md"
   - id: "XV.6.1"
     title: "`stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다."
     status: verified
@@ -8190,23 +8210,35 @@ tasks:
       - DEV-MAC
   - id: "XV.7.1"
     title: "dependency update request가 selector 재해석 후 CurrentLibrarySnapshot과 CandidateLibrarySnapshot을 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XV.2.4"
       - "XV.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.7.1.md"
+    commit: "2c684a1b94109e06274a7b63e06a55d2b7c99689"
+    report: "docs/task-reports/XV.7.1.md"
+    verified_at: "2026-11-14T10:38:22+09:00"
   - id: "XV.7.2"
     title: "library resource Semantic Diff를 ComponentDefinition·Property·Token 단위로 계산합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.7"
       - "XV.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.7.2.md"
+    commit: "86ef9db2386e3c7b79c48bd0494671e1908448aa"
+    report: "docs/task-reports/XV.7.2.md"
+    verified_at: "2026-11-14T10:41:47+09:00"
   - id: "XV.7.3"
     title: "candidate library를 적용하기 전 사용 project의 external refs와 instance overrides를 검증합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "IX.4.6"
       - "XV.5.2"
@@ -8214,7 +8246,7 @@ tasks:
       - DEV-MAC
   - id: "XV.7.4"
     title: "사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.7.3"
       - "XV.4.5"
@@ -8222,7 +8254,7 @@ tasks:
       - DEV-MAC
   - id: "XV.7.5"
     title: "update 실패 시 이전 lock/cache snapshot을 유지합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.7.4"
     required_environments:
@@ -8258,7 +8290,7 @@ tasks:
     verified_at: "2026-11-14T02:08:56+09:00"
   - id: "XV.8.4"
     title: "외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update."
-    status: not_started
+    status: blocked
     required_environments:
       - DEV-MAC
   - id: "XVI.1.1"

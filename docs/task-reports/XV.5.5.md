@@ -2,7 +2,7 @@
 
 - WBS: XV.5.5
 - 작업명: missing cache/offline entry는 library resource unavailable diagnostic을 만들고 project 기본 데이터는 읽기 가능
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — library 부분 로드와 진단은 완료했지만 프로젝트 열기 경로에 연결하지 않았습니다(9A 리뷰 P2).
 - 선행: XV.3.3(`[x]`), III.2.4(`[x]`)
 
 ## 필수 실행 환경
@@ -86,3 +86,15 @@
   repository 표기와 선택자는 선언한 부모마다 다를 수 있어 비교하지 않습니다.
 - 검증: 위 테스트 통과(세 변조 모두 a unavailable·b 정상, 일치하는 두 번째 경로는 정상 로드).
 - 한계: 같은 검사를 lock validator(XV.4.2 `LockDocument::from_node`)에 넣는 일은 이 수정 범위 밖입니다.
+
+## 상태 정정(9A 리뷰 P2, 2026-11-14)
+
+- `[x]` → `[~]`: 작업 행의 "project 기본 데이터는 읽을 수 있게"와 검증 열 "offline missing fixture partial
+  open"은 library 집합 수준에서만 검증했습니다. `load_locked_libraries`가 실패 node를 진단으로 남기고 나머지를
+  돌려주는 것까지입니다. 실제 프로젝트 열기 경로(project crate의 `stellar.lock.yaml` 읽기)는 이 함수를
+  호출하지 않으므로, offline에서 **프로젝트**가 부분적으로 열리고 기본 데이터를 읽는 것은 확인하지 않았습니다.
+  또 운영 export 공급자가 없어 snapshot은 테스트 공급자로만 채워집니다(XV.5.1 차이).
+- 남은 일: 프로젝트 열기 경로에 이 로드를 연결하고, offline missing fixture로 프로젝트 기본 데이터가 열리고
+  누락 library가 진단으로 남는 것을 확인하면 `[x]`로 올립니다.
+- unavailable 진단 생성, 미해결 외부 참조 보존(P1), 같은 node entry 불일치 진단(P5)은 이 crate에서
+  완료했습니다.

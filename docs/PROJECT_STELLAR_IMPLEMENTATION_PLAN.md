@@ -1559,9 +1559,9 @@ tools/xtask/
 |---|---|---|---|---|
 | XV.5.1 | `[x]` | library project에서 export된 ComponentDefinition·TokenSet index를 읽는 `LibrarySnapshot`을 정의합니다. 모든 resource key에 LibraryId+commit+StableId를 포함합니다. | v1/v2 same StableId 충돌 없음. | XV.2.1, IX.1.1, VIII.5.1 |
 | XV.5.2 | `[x]` | 사용 project document가 library resource를 참조할 수 있게 `ExternalComponentRef`, `ExternalTokenRef`를 구현합니다. | round-trip. | XV.5.1 |
-| XV.5.3 | `[x]` | library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다. | edit definition fixture 실패, override 성공. | XV.5.2, IX.2.4 |
+| XV.5.3 | `[~]` | library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다. | edit definition fixture 실패, override 성공. | XV.5.2, IX.2.4 |
 | XV.5.4 | `[x]` | library의 transitive resource ref를 동일 dependency graph instance 안에서 resolve합니다. | v1 parent가 v1 child, v2 parent가 v2 child 참조. | XV.2.2, XV.5.1 |
-| XV.5.5 | `[x]` | missing cache/offline entry는 library resource unavailable diagnostic을 생성하고 project 기본 데이터는 읽을 수 있게 합니다. | offline missing fixture partial open. | XV.3.3, III.2.4 |
+| XV.5.5 | `[~]` | missing cache/offline entry는 library resource unavailable diagnostic을 생성하고 project 기본 데이터는 읽을 수 있게 합니다. | offline missing fixture partial open. | XV.3.3, III.2.4 |
 
 ### XV.6 로컬 경로·Worktree Override
 
