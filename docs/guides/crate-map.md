@@ -70,7 +70,7 @@
 | project | `crates/project` | core-types, document, storage, assets, dependencies, git-porcelain, commands, history, text | core-types, document, storage, assets, dependencies, git-porcelain, commands, history, text. dev: document`[test-support]` | `yaml-rust2 =0.11.0` |
 | semantic-diff | `crates/semantic-diff` | document, core-types | document, core-types. dev: document`[test-support]` | 없음 |
 | semantic-merge | `crates/semantic-merge` | semantic-diff | semantic-diff | 없음 |
-| runtime | `crates/runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, ops, git-porcelain | core-types, document, commands, history, project, storage, renderer-core, scene, ops, git-porcelain. dev: document·ops·git-porcelain`[test-support]` | 없음 |
+| runtime | `crates/runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, text, ops, git-porcelain | core-types, document, commands, history, project, storage, renderer-core, scene, text, ops, git-porcelain. dev: assets, document·ops·git-porcelain·text`[test-support]` | 없음 |
 | ffi | `crates/ffi` | core-types, runtime | core-types, runtime | 없음 |
 | terminal | `crates/terminal` | core-types | core-types | 없음 |
 | local-ipc | `crates/local-ipc` | core-types | 없음 | 없음 |

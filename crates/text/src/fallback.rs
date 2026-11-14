@@ -163,6 +163,13 @@ impl<'a> ResolvedFallbackChain<'a> {
         self.chain
     }
 
+    pub(crate) fn face_for_handle(&self, index: usize, handle: FontHandle) -> Option<&FontFaceRef> {
+        if self.handles.get(index) != Some(&Some(handle)) {
+            return None;
+        }
+        self.chain.faces().get(index)
+    }
+
     /// 사용 가능한 항목을 체인 순서로 (위치, handle) 반환합니다.
     pub fn available(&self) -> impl Iterator<Item = (usize, FontHandle)> + '_ {
         self.handles

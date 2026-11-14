@@ -256,6 +256,41 @@ impl ProjectFontRecord {
             .then(|| FontFaceRef::new(FontSource::Project, self.file_hash, face_index, Vec::new()))
     }
 
+    /// catalog의 asset id/hash와 저장 객체의 실제 bytes를 검증한 뒤 shaping용 기본 face를 엽니다.
+    /// 요청한 face의 axes는 style과 합쳐 shaping할 때 적용합니다.
+    pub fn load_face(
+        &self,
+        reference: &FontFaceRef,
+        catalog: &stellar_assets::catalog::AssetCatalog,
+        store: &AssetStore,
+        policy: &AssetImportPolicy,
+    ) -> Result<stellar_text::shaping::FontFace, ProjectFaceError> {
+        if reference.source() != FontSource::Project
+            || reference.file_hash() != self.file_hash
+            || reference.face_index() >= self.face_count()
+        {
+            return Err(ProjectFaceError::ReferenceMismatch);
+        }
+        let asset = catalog
+            .get(&self.asset_id)
+            .ok_or(ProjectFaceError::MissingAsset)?;
+        if asset.content_hash.digest() != self.file_hash.sha256_digest()
+            || asset.media_type.as_str() != self.format.media_type()
+        {
+            return Err(ProjectFaceError::ReferenceMismatch);
+        }
+        let bytes = store
+            .read_content(
+                &asset.content_hash,
+                asset.size,
+                policy.max_file_size_bytes(),
+            )
+            .map_err(ProjectFaceError::Store)?
+            .ok_or(ProjectFaceError::MissingAsset)?;
+        stellar_text::shaping::FontFace::from_bytes(bytes, reference.face_index())
+            .map_err(ProjectFaceError::Font)
+    }
+
     /// 모든 face 참조(face index 오름차순).
     pub fn face_refs(&self) -> impl Iterator<Item = FontFaceRef> + '_ {
         (0..self.face_count())
@@ -605,6 +640,32 @@ impl fmt::Display for ProjectFontImportError {
 }
 
 impl std::error::Error for ProjectFontImportError {}
+
+/// 프로젝트 font 해석 오류.
+#[derive(Debug)]
+pub enum ProjectFaceError {
+    /// 출처·hash·face index 또는 media type 불일치.
+    ReferenceMismatch,
+    /// 등록된 asset이 없거나 검증된 contents가 없습니다.
+    MissingAsset,
+    /// 저장소에 접근할 수 없습니다.
+    Store(ImportError),
+    /// bytes가 shaping 가능한 SFNT가 아닙니다.
+    Font(stellar_text::shaping::FontLoadError),
+}
+
+impl fmt::Display for ProjectFaceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReferenceMismatch => f.write_str("프로젝트 글꼴 참조가 일치하지 않습니다"),
+            Self::MissingAsset => f.write_str("검증된 프로젝트 글꼴 파일이 없습니다"),
+            Self::Store(e) => write!(f, "{e}"),
+            Self::Font(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for ProjectFaceError {}
 
 /// Project Font import 결과.
 #[derive(Debug, Clone, PartialEq, Eq)]

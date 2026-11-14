@@ -47,6 +47,10 @@ impl ShapingStyle {
         }
     }
 
+    pub(crate) fn effective_axes(&self, face: &crate::font::FontFaceRef) -> Vec<FontVariation> {
+        canonical_variations(face.variations().iter().chain(self.variations()).copied())
+    }
+
     /// feature(정렬됨).
     pub fn features(&self) -> &[FontFeature] {
         &self.features
@@ -167,6 +171,11 @@ pub enum FontRunError {
         /// item index.
         item: usize,
     },
+    /// font 할당과 fallback chain의 index 또는 handle이 일치하지 않습니다.
+    InvalidFace {
+        /// 할당된 chain index.
+        chain_index: usize,
+    },
     /// shaping 실패.
     Shape(ShapeError),
 }
@@ -180,6 +189,10 @@ impl fmt::Display for FontRunError {
             FontRunError::InvalidItem { item } => {
                 write!(f, "item {item}의 범위가 텍스트 문자 경계와 맞지 않습니다")
             }
+            FontRunError::InvalidFace { chain_index } => write!(
+                f,
+                "font run이 fallback chain 항목 {chain_index}와 일치하지 않습니다"
+            ),
             FontRunError::Shape(err) => write!(f, "font run shaping 실패: {err}"),
         }
     }
@@ -310,6 +323,8 @@ pub fn assign_fonts<S: FaceSource + ?Sized>(
 /// shaping된 font run.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShapedFontRun {
+    /// 실제 shaping에 선택한 face와 style을 적용한 최종 variation 좌표.
+    pub instance: Option<crate::font::FontFaceRef>,
     /// font run.
     pub run: FontRun,
     /// shaping 결과. face가 없으면 `None`.
@@ -363,6 +378,7 @@ pub fn shape_font_runs<S: FaceSource + ?Sized>(
             shaped_runs.push(ShapedFontRun {
                 run: run.clone(),
                 shaped: None,
+                instance: None,
             });
             continue;
         };
@@ -370,24 +386,18 @@ pub fn shape_font_runs<S: FaceSource + ?Sized>(
             shaped_runs.push(ShapedFontRun {
                 run: run.clone(),
                 shaped: None,
+                instance: None,
             });
             continue;
         };
-        let entry_axes = chain
-            .chain()
-            .faces()
-            .get(chain_index)
-            .map(|f| f.variations().to_vec())
-            .unwrap_or_default();
-        let axes = canonical_variations(
-            entry_axes
-                .into_iter()
-                .chain(style.variations().iter().copied()),
-        );
+        let entry = chain
+            .face_for_handle(chain_index, handle)
+            .ok_or(FontRunError::InvalidFace { chain_index })?;
+        let axes = style.effective_axes(entry);
         let face = instances
             .entry((handle, axes))
             .or_insert_with_key(|(_, axes)| {
-                if axes.is_empty() {
+                if base.variations() == axes {
                     base.clone()
                 } else {
                     base.with_variations(axes)
@@ -417,6 +427,12 @@ pub fn shape_font_runs<S: FaceSource + ?Sized>(
         shaped_runs.push(ShapedFontRun {
             run: run.clone(),
             shaped: Some(shaped),
+            instance: Some(crate::font::FontFaceRef::new(
+                entry.source(),
+                entry.file_hash(),
+                entry.face_index(),
+                face.variations().to_vec(),
+            )),
         });
     }
     missing.sort_by_key(|m| (m.range.start, m.reason));
@@ -737,6 +753,11 @@ pub(crate) mod tests {
             unsafe_to_break: false,
         };
         let run = ShapedRun {
+            metrics: crate::shaping::LineMetrics {
+                ascender: 800,
+                descender: -200,
+                line_gap: 0,
+            },
             range: 0..10,
             direction: crate::shaping::TextDirection::RightToLeft,
             units_per_em: 1000,
@@ -825,6 +846,14 @@ pub(crate) mod tests {
         )
         .expect("shape");
         assert_eq!(advances(&shaped), vec![600, 550]);
+        assert_eq!(
+            shaped[0].instance.as_ref().unwrap().variations(),
+            &[axis("wght", 900.0)]
+        );
+        assert_eq!(
+            shaped[1].instance.as_ref().unwrap().variations(),
+            &[axis("wght", 650.0)]
+        );
 
         // style feature: liga=0이면 "fi" ligature가 풀립니다.
         let text = "fi";
