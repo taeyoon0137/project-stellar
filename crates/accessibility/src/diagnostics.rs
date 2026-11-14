@@ -16,6 +16,9 @@
 //!
 //! 순회는 반복 preorder이며 결과 순서는 root 목록 중복 검사 → node preorder 순(node 자신의 진단 → 그 자식의 읽기
 //! 순서 중복 검사)입니다. 같은 tree는 항상 같은 목록을 냅니다.
+//!
+//! 조상 문맥(가장 가까운 상호작용 조상·비-`Generic` 조상)은 preorder stack으로 물려주고, 내용 이름은 강결합 요소마다
+//! 한 번 계산합니다. 따라서 깊은 tree에서도 시간이 node·간선 수에 비례합니다(node마다 조상·자손을 다시 훑지 않음).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -26,7 +29,7 @@ use stellar_core_types::typed_value::TypedValue;
 use crate::node::{
     AccessibilityBinding, AccessibilityNode, AccessibilityRole, ActionKind, StateKind,
 };
-use crate::tree::AccessibilityTree;
+use crate::tree::{AccessibilityTree, Components};
 
 /// 심각도.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -195,27 +198,69 @@ fn usable_label(label: Option<&AccessibilityBinding>) -> bool {
     }
 }
 
-/// 자손 `StaticText`·`Image`의 label로 이름을 계산할 수 있는지(반복 순회).
-fn has_content_name(tree: &AccessibilityTree, node: StableId) -> bool {
-    let mut visited = BTreeSet::new();
-    let mut stack: Vec<StableId> = tree.children(node).to_vec();
-    while let Some(current) = stack.pop() {
-        if !visited.insert(current) {
-            continue;
-        }
-        let Some(child) = tree.node(current) else {
-            continue;
-        };
-        if matches!(
-            child.role,
-            AccessibilityRole::StaticText | AccessibilityRole::Image
-        ) && usable_label(child.label.as_ref())
-        {
-            return true;
-        }
-        stack.extend(tree.children(current).iter().copied());
+/// 자손(간선 하나 이상으로 도달하는 node) `StaticText`·`Image`의 label로 이름을 계산할 수 있는 node 집합.
+///
+/// 강결합 요소를 역위상 순서로 한 번씩 계산하므로 node·간선 수에 비례하고, cycle이 있어도 자손 전체를 봅니다.
+fn content_named(tree: &AccessibilityTree) -> BTreeSet<StableId> {
+    let Components {
+        ids,
+        adjacency,
+        component,
+        members,
+    } = tree.components();
+    let named_leaf: Vec<bool> = ids
+        .iter()
+        .map(|id| {
+            tree.node(*id).is_some_and(|node| {
+                matches!(
+                    node.role,
+                    AccessibilityRole::StaticText | AccessibilityRole::Image
+                ) && usable_label(node.label.as_ref())
+            })
+        })
+        .collect();
+    // 요소에서 도달하는 다른 요소는 역위상 순서상 먼저 계산되어 있습니다.
+    let mut named = vec![false; members.len()];
+    for (number, group) in members.iter().enumerate() {
+        let value = group.iter().any(|member| {
+            adjacency[*member].iter().any(|child| {
+                named_leaf[*child] || (component[*child] != number && named[component[*child]])
+            })
+        });
+        named[number] = value;
     }
-    false
+    ids.iter()
+        .enumerate()
+        .filter(|(index, _)| named[component[*index]])
+        .map(|(_, id)| *id)
+        .collect()
+}
+
+/// preorder 경로에서 물려받는 조상 문맥.
+#[derive(Debug, Clone, Copy, Default)]
+struct Ancestry {
+    /// 가장 가까운 상호작용 조상.
+    interactive: Option<StableId>,
+    /// 가장 가까운 비-`Generic` 조상과 그 역할.
+    semantic: Option<(StableId, AccessibilityRole)>,
+}
+
+impl Ancestry {
+    /// `node`의 자식이 물려받는 문맥.
+    fn below(self, node: &AccessibilityNode) -> Ancestry {
+        Ancestry {
+            interactive: if is_interactive(node.role) {
+                Some(node.source)
+            } else {
+                self.interactive
+            },
+            semantic: if node.role == AccessibilityRole::Generic {
+                self.semantic
+            } else {
+                Some((node.source, node.role))
+            },
+        }
+    }
 }
 
 fn duplicate_orders(
@@ -252,9 +297,9 @@ fn duplicate_orders(
 }
 
 fn node_issues(
-    tree: &AccessibilityTree,
     node: &AccessibilityNode,
-    ancestors: &[StableId],
+    ancestry: Ancestry,
+    content_named: &BTreeSet<StableId>,
     issues: &mut Vec<AccessibilityIssue>,
 ) {
     let mut push = |problem| {
@@ -266,30 +311,21 @@ fn node_issues(
     // label 누락.
     if requires_label(node.role)
         && !usable_label(node.label.as_ref())
-        && !(name_from_content(node.role) && has_content_name(tree, node.source))
+        && !(name_from_content(node.role) && content_named.contains(&node.source))
     {
         push(AccessibilityProblem::MissingLabel { role: node.role });
     }
     // 잘못된 중첩.
-    let role_of = |id: &StableId| tree.node(*id).map(|ancestor| ancestor.role);
     if is_interactive(node.role) {
-        if let Some(ancestor) = ancestors
-            .iter()
-            .rev()
-            .find(|id| role_of(id).is_some_and(is_interactive))
-        {
+        if let Some(ancestor) = ancestry.interactive {
             push(AccessibilityProblem::InvalidNesting {
                 rule: NestingRule::InteractiveInsideInteractive,
-                ancestor: Some(*ancestor),
+                ancestor: Some(ancestor),
             });
         }
     }
-    let semantic_parent = ancestors
-        .iter()
-        .rev()
-        .find(|id| role_of(id).is_some_and(|role| role != AccessibilityRole::Generic))
-        .copied();
-    let parent_role = semantic_parent.as_ref().and_then(role_of);
+    let semantic_parent = ancestry.semantic.map(|(id, _)| id);
+    let parent_role = ancestry.semantic.map(|(_, role)| role);
     if node.role == AccessibilityRole::ListItem && parent_role != Some(AccessibilityRole::List) {
         push(AccessibilityProblem::InvalidNesting {
             rule: NestingRule::ListItemOutsideList,
@@ -330,23 +366,27 @@ fn node_issues(
 /// 접근성 트리를 진단합니다. root에서 도달하는 node만 봅니다(cycle에도 종료).
 pub fn diagnose(tree: &AccessibilityTree) -> Vec<AccessibilityIssue> {
     let mut issues = Vec::new();
+    let content_named = content_named(tree);
     duplicate_orders(tree, None, tree.roots(), &mut issues);
     let mut visited = BTreeSet::new();
-    let mut ancestors: Vec<StableId> = Vec::new();
-    let mut stack: Vec<(StableId, usize)> = tree.roots().iter().rev().map(|r| (*r, 0)).collect();
-    while let Some((source, depth)) = stack.pop() {
+    let mut stack: Vec<(StableId, Ancestry)> = tree
+        .roots()
+        .iter()
+        .rev()
+        .map(|root| (*root, Ancestry::default()))
+        .collect();
+    while let Some((source, ancestry)) = stack.pop() {
         if !visited.insert(source) {
             continue;
         }
         let Some(node) = tree.node(source) else {
             continue;
         };
-        ancestors.truncate(depth);
-        node_issues(tree, node, &ancestors, &mut issues);
+        node_issues(node, ancestry, &content_named, &mut issues);
         let children = tree.children(source);
         duplicate_orders(tree, Some(source), children, &mut issues);
-        ancestors.push(source);
-        stack.extend(children.iter().rev().map(|child| (*child, depth + 1)));
+        let below = ancestry.below(node);
+        stack.extend(children.iter().rev().map(|child| (*child, below)));
     }
     issues
 }
@@ -603,6 +643,85 @@ mod tests {
     }
 
     #[test]
+    fn deep_trees_are_diagnosed_in_linear_time() {
+        // 깊이 20,000 chain. 조상 문맥과 내용 이름을 node마다 다시 훑지 않으므로 node 수에 비례해 끝납니다.
+        // 시간 상한은 debug에서도 넉넉한 참고용입니다(조상·자손을 node마다 다시 훑는 구현은 release에서도 넘습니다).
+        const DEPTH: u32 = 20_000;
+        let node_id = |n: u32| {
+            let mut bytes = [0u8; 16];
+            bytes[12..].copy_from_slice(&n.to_be_bytes());
+            StableId::from_bytes(bytes)
+        };
+        let chain = |make: &dyn Fn(u32) -> AccessibilityNode| {
+            let mut tree = AccessibilityTree::new();
+            for n in 0..=DEPTH {
+                tree.insert(make(n)).expect("node");
+                if n < DEPTH {
+                    tree.set_children(node_id(n), vec![node_id(n + 1)]);
+                }
+            }
+            tree.push_root(node_id(0));
+            tree
+        };
+        let started = std::time::Instant::now();
+
+        // List > Generic × (DEPTH - 1) > ListItem: Generic을 건너 가장 가까운 의미 조상이 List라 진단 0건.
+        let generic = chain(&|n| {
+            let role = match n {
+                0 => AccessibilityRole::List,
+                DEPTH => AccessibilityRole::ListItem,
+                _ => AccessibilityRole::Generic,
+            };
+            AccessibilityNode::new(node_id(n), role)
+        });
+        assert_eq!(diagnose(&generic), Vec::new());
+
+        // label 없는 Button chain: 모두 missing-label, root 밖은 모두 바로 위 Button 안의 중첩.
+        // 맨 아래 Button만 자식 텍스트로 이름을 계산하면 그 위 Button은 모두 내용 이름을 가집니다.
+        let buttons = chain(&|n| {
+            let node = AccessibilityNode::new(node_id(n), AccessibilityRole::Button)
+                .with_state(StateKind::Focusable, AccessibilityBinding::flag(true))
+                .with_action(ActionKind::Activate, ActionTarget::None);
+            if n == DEPTH {
+                AccessibilityNode::new(node_id(n), AccessibilityRole::StaticText)
+                    .with_label(AccessibilityBinding::text("끝"))
+            } else {
+                node
+            }
+        });
+        let mut expected = Vec::new();
+        for n in 1..DEPTH {
+            expected.push(AccessibilityIssue {
+                node: node_id(n),
+                problem: AccessibilityProblem::InvalidNesting {
+                    rule: NestingRule::InteractiveInsideInteractive,
+                    ancestor: Some(node_id(n - 1)),
+                },
+            });
+        }
+        assert_eq!(diagnose(&buttons), expected);
+
+        let unnamed = chain(&|n| {
+            AccessibilityNode::new(node_id(n), AccessibilityRole::Button)
+                .with_state(StateKind::Focusable, AccessibilityBinding::flag(true))
+                .with_action(ActionKind::Activate, ActionTarget::None)
+        });
+        let issues = diagnose(&unnamed);
+        let missing = issues
+            .iter()
+            .filter(|issue| issue.code() == "missing-label")
+            .count();
+        assert_eq!(missing, DEPTH as usize + 1);
+        assert_eq!(issues.len(), 2 * DEPTH as usize + 1);
+
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
     fn generated_control_trees_are_clean_and_diagnosis_is_deterministic() {
         let mut source = SourceTree::new();
         let nodes = [
@@ -638,5 +757,16 @@ mod tests {
         let first = diagnose(&cyclic);
         assert_eq!(first, diagnose(&cyclic));
         assert!(!first.is_empty());
+
+        // cycle 안 Button도 cycle을 거쳐 도달하는 자손 텍스트로 이름을 계산합니다(1 → (2, 3), 2 → 1).
+        let mut named = tree_of(
+            vec![button(1), button(2), text(3, "이름")],
+            &[(1, &[2, 3])],
+            &[1],
+        );
+        named.push_child(id(2), id(1));
+        assert!(diagnose(&named)
+            .iter()
+            .all(|issue| issue.code() != "missing-label"));
     }
 }

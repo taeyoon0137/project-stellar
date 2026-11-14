@@ -59,3 +59,26 @@
   연결이 필요하며 그 작업에서 다룹니다.
 - 기술 아키텍처 §18의 "읽기 순서와 시각 순서 불일치", "선택 상태 누락" 진단은 이 행 범위 밖이라 구현하지
   않았습니다.
+
+## 리뷰 후 수정(9A 리뷰, 2026-11-14)
+
+- 지적(A11Y-1): `diagnose`가 node마다 조상 목록을 다시 훑어(가장 가까운 상호작용 조상·비-`Generic` 조상) 가장 가까운
+  의미 조상을 찾고, label 없는 `Button`·`Radio`마다 subtree 전체를 다시 훑어 내용 이름을 계산해 깊은 tree에서
+  O(node 수 × 깊이)였습니다. 깊이 입력 테스트도 없었습니다.
+- 수정: 조상 문맥(가장 가까운 상호작용 조상, 가장 가까운 비-`Generic` 조상과 역할)을 preorder stack으로 물려주고,
+  내용 이름은 강결합 요소(IX.8.2 리뷰 수정의 Tarjan 분해)를 역위상 순서로 한 번 계산합니다. 시간이 node·간선
+  수에 비례합니다. 진단 규칙·결과 순서는 바뀌지 않았고 기존 fixture는 그대로 통과합니다. cycle이 있어도 자손
+  전체(간선 하나 이상으로 도달하는 node)로 내용 이름을 계산하는 의미도 같습니다.
+- 완료 근거(diagnostic fixture 정확)는 바뀌지 않으므로 상태 `[x]`를 유지합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-accessibility` | 34 passed, 0 failed |
+| `cargo test --release -p stellar-accessibility deep_trees_are_diagnosed` | 수정 전 실패(75.8초, 상한 10초), 수정 후 통과(0.05초) |
+| `cargo clippy -p stellar-accessibility --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-accessibility -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| 깊이 20,000 chain: List > Generic chain > ListItem 진단 0건, 맨 아래 텍스트로 이름을 얻는 Button chain은 중첩만, 이름 없는 Button chain은 label 누락 20,001건과 중첩 20,000건, 시간 상한 10초(debug 참고용)(`deep_trees_are_diagnosed_in_linear_time`) | 통과 |
+| cycle 안 Button이 cycle을 거쳐 도달하는 자손 텍스트로 이름을 계산(`generated_control_trees_are_clean_and_diagnosis_is_deterministic`) | 통과 |
