@@ -23,8 +23,16 @@
 //!
 //! 진단에는 Text 내용이 없습니다. Text StableId, face key·출처, chain 위치, 줄 수와 줄 경계(byte offset)의
 //! digest만 담습니다([`LineBreakSignature`]). 결과는 Text id 오름차순으로 결정론적입니다.
+//!
+//! # Text id 중복
+//!
+//! Text node 하나는 chain 하나를 가지므로 입력의 Text id는 고유해야 합니다. 같은 id가 **같은 chain**으로
+//! 여러 번 오면 하나로 합칩니다. **다른 chain**으로 오면 어느 쪽을 쓸지가 입력 순서에 달리므로
+//! [`ConflictingTextUsage`]로 거부합니다(해석과 누락 진단이 서로 다른 chain에서 나오지 않음). 따라서 같은
+//! 입력 집합은 순서와 무관하게 같은 결과입니다.
 
-use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::ops::Range;
 
@@ -205,10 +213,29 @@ impl LineBreakEvidence for NoLineBreakEvidence {
     }
 }
 
+/// 같은 Text id가 서로 다른 chain으로 두 번 이상 들어옴(모듈 문서 "Text id 중복").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictingTextUsage {
+    /// 충돌한 Text id(오름차순, 중복 없음, 1개 이상).
+    pub text_ids: Vec<StableId>,
+}
+
+impl fmt::Display for ConflictingTextUsage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("같은 Text에 서로 다른 fallback chain이 들어왔습니다:")?;
+        for text_id in &self.text_ids {
+            write!(f, " {text_id}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ConflictingTextUsage {}
+
 /// [`resolve_text_fonts`] 결과.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MissingFontReport {
-    /// Text별 해석(Text id 오름차순, 같은 Text는 마지막 입력).
+    /// Text별 해석(Text id 오름차순, Text마다 하나).
     pub resolutions: Vec<TextFontResolution>,
     /// 누락 face 진단(X.8.4, face key 순).
     pub missing: Vec<MissingFontDiagnostic>,
@@ -227,13 +254,16 @@ impl MissingFontReport {
 }
 
 /// Text별 명시 fallback chain을 registry에 대해 해석하고 누락·줄바꿈 변경 진단을 만듭니다.
+///
+/// 같은 Text id가 서로 다른 chain으로 오면 [`ConflictingTextUsage`]입니다(같은 chain 중복은 하나로 합침).
 pub fn resolve_text_fonts<R: FontRegistry + ?Sized, E: LineBreakEvidence + ?Sized>(
     usages: &[TextFontUsage<'_>],
     registry: &R,
     evidence: &E,
-) -> MissingFontReport {
+) -> Result<MissingFontReport, ConflictingTextUsage> {
+    let usages = unique_usages(usages)?;
     let mut by_text: BTreeMap<StableId, TextFontResolution> = BTreeMap::new();
-    for usage in usages {
+    for usage in &usages {
         let resolved = usage.chain.resolve(registry);
         let resolution = match resolved.select(|_| true) {
             FallbackSelection::Face {
@@ -281,11 +311,37 @@ pub fn resolve_text_fonts<R: FontRegistry + ?Sized, E: LineBreakEvidence + ?Size
             })
         })
         .collect();
-    MissingFontReport {
+    Ok(MissingFontReport {
         resolutions: by_text.into_values().collect(),
-        missing: collect_missing_fonts(usages, registry),
+        missing: collect_missing_fonts(&usages, registry),
         line_breaks,
+    })
+}
+
+/// Text id마다 usage 하나(id 오름차순). 같은 chain 중복은 합치고, 다른 chain이면 충돌 id를 모두 보고합니다.
+fn unique_usages<'a>(
+    usages: &[TextFontUsage<'a>],
+) -> Result<Vec<TextFontUsage<'a>>, ConflictingTextUsage> {
+    let mut by_text: BTreeMap<StableId, TextFontUsage<'a>> = BTreeMap::new();
+    let mut conflicts: BTreeSet<StableId> = BTreeSet::new();
+    for usage in usages {
+        match by_text.entry(usage.text_id) {
+            Entry::Vacant(entry) => {
+                entry.insert(*usage);
+            }
+            Entry::Occupied(entry) => {
+                if entry.get().chain != usage.chain {
+                    conflicts.insert(usage.text_id);
+                }
+            }
+        }
     }
+    if !conflicts.is_empty() {
+        return Err(ConflictingTextUsage {
+            text_ids: conflicts.into_iter().collect(),
+        });
+    }
+    Ok(by_text.into_values().collect())
 }
 
 #[cfg(test)]
@@ -424,7 +480,7 @@ mod tests {
                 chain: &skip_missing,
             },
         ];
-        let report = resolve_text_fonts(&usages, &fx.registry, &NoLineBreakEvidence);
+        let report = resolve_text_fonts(&usages, &fx.registry, &NoLineBreakEvidence).unwrap();
 
         // expected fallback: chain 기록 순서상 다음 등록 face. 체인 밖 같은 family(Z)는 쓰지 않음.
         let expected = [
@@ -503,7 +559,7 @@ mod tests {
         let mut reversed = usages;
         reversed.reverse();
         assert_eq!(
-            resolve_text_fonts(&reversed, &fx.registry, &NoLineBreakEvidence),
+            resolve_text_fonts(&reversed, &fx.registry, &NoLineBreakEvidence).unwrap(),
             report
         );
     }
@@ -528,7 +584,7 @@ mod tests {
         evidence.baseline.insert(id(2), two_lines);
         evidence.relaid.insert(id(2), two_lines);
         evidence.baseline.insert(id(3), two_lines);
-        let report = resolve_text_fonts(&usages, &fx.registry, &evidence);
+        let report = resolve_text_fonts(&usages, &fx.registry, &evidence).unwrap();
         let line_breaks: Vec<_> = report
             .line_breaks
             .iter()
@@ -552,6 +608,50 @@ mod tests {
     }
 
     #[test]
+    fn duplicated_text_ids_do_not_depend_on_input_order() {
+        let fx = fixture();
+        let fallback = chain(vec![fx.a.clone(), fx.b.clone()]);
+        let primary = chain(vec![fx.c.clone()]);
+        let usage = |n: u8, chain| TextFontUsage {
+            text_id: id(n),
+            chain,
+        };
+        // 같은 Text id가 서로 다른 chain으로 옴(리뷰 재현): 순서와 무관하게 충돌 id를 모두 보고합니다.
+        let usages = [
+            usage(2, &primary),
+            usage(1, &fallback),
+            usage(3, &primary),
+            usage(1, &primary),
+            usage(2, &fallback),
+        ];
+        let expected = ConflictingTextUsage {
+            text_ids: vec![id(1), id(2)],
+        };
+        let mut reversed = usages;
+        reversed.reverse();
+        for input in [&usages[..], &reversed[..]] {
+            assert_eq!(
+                resolve_text_fonts(input, &fx.registry, &NoLineBreakEvidence),
+                Err(expected.clone())
+            );
+        }
+        assert!(expected.to_string().contains(&id(1).to_string()));
+
+        // 같은 chain 중복은 하나로 합쳐 고유 입력과 같은 결과입니다(해석·누락 진단이 같은 chain에서 나옴).
+        let single =
+            resolve_text_fonts(&[usage(1, &fallback)], &fx.registry, &NoLineBreakEvidence).unwrap();
+        let repeated = resolve_text_fonts(
+            &[usage(1, &fallback), usage(1, &fallback)],
+            &fx.registry,
+            &NoLineBreakEvidence,
+        )
+        .unwrap();
+        assert_eq!(repeated, single);
+        assert_eq!(repeated.resolutions.len(), 1);
+        assert_eq!(repeated.missing[0].affected_text_ids(), &[id(1)]);
+    }
+
+    #[test]
     fn fully_available_chains_produce_no_diagnostics() {
         let fx = fixture();
         let full = chain(vec![fx.b.clone(), fx.c.clone()]);
@@ -559,7 +659,7 @@ mod tests {
             text_id: id(9),
             chain: &full,
         }];
-        let report = resolve_text_fonts(&usages, &fx.registry, &NoLineBreakEvidence);
+        let report = resolve_text_fonts(&usages, &fx.registry, &NoLineBreakEvidence).unwrap();
         assert_eq!(
             report.resolutions[0].resolution,
             TextFaceResolution::Primary {

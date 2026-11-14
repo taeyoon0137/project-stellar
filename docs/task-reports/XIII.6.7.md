@@ -60,3 +60,17 @@
   않았습니다. 연결 전에는 대체가 일어난 Text가 모두 `MayChange`입니다.
 - glyph coverage 기준 run 단위 fallback(X.9.5)은 shaping 단계의 몫이며, 이 모듈은 Text 단위 face 선택과
   진단만 다룹니다.
+
+## 후속 수정(리뷰 반영): 중복 Text id가 입력 순서에 따라 다른 결과를 내지 않음
+
+- **문제**: `resolve_text_fonts`는 같은 `text_id`가 여러 번 오면 해석(`resolutions`·`line_breaks`)에는 마지막
+  usage만 남기고, 누락 진단(`collect_missing_fonts`)에는 모든 usage를 셌습니다. 서로 다른 chain으로 중복되면
+  누락 진단이 해석과 다른 chain의 face로 그 Text를 가리켰고, 결과가 입력 순서에 달려 "입력 순서와 무관"이라는
+  결정론 설명과 맞지 않았습니다(기존 순서 반전 테스트는 고유 id만 썼음).
+- **수정**(`crates/project/src/fonts/missing.rs`): Text node 하나는 chain 하나이므로, 같은 id가 같은 chain으로
+  오면 하나로 합치고 다른 chain으로 오면 `ConflictingTextUsage { text_ids }`(충돌 id 오름차순 전부)로
+  거부합니다. 해석과 누락 진단은 합친 같은 usage 목록에서 만듭니다. `resolve_text_fonts`는 이제
+  `Result<MissingFontReport, ConflictingTextUsage>`를 돌려줍니다(이 함수의 호출자는 아직 테스트뿐).
+- **검증**: `duplicated_text_ids_do_not_depend_on_input_order`(수정 전: 순서를 뒤집으면 해석이 Primary C와
+  Fallback B로 갈려 실패. 수정 후: 두 순서 모두 같은 `ConflictingTextUsage{1, 2}`, 같은 chain 중복은 고유 입력과
+  같은 결과). 기존 테스트 4개는 `unwrap()`으로 같은 기대값을 검사합니다.
