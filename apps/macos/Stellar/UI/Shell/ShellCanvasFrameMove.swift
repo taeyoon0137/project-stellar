@@ -66,7 +66,7 @@ extension ShellProjectWindow {
                 guard session.info?.revision == hit.revision, UUID(uuid: viewport.active_view) == hit.viewID,
                       self.selectNodes([hit.id]) else { return false }
                 self.frameDrag = CanvasFrameDrag(hit: hit, start: point, session: session.session,
-                                                 size: canvas.bounds.size, viewport: viewport, canMove: self.gitSource.trusted && !hit.isRectangle, tool: .move)
+                                                 size: canvas.bounds.size, viewport: viewport, canMove: self.gitSource.trusted, tool: .move)
                 return true
             case .leftMouseDragged:
                 guard var drag = self.frameDrag else { return false }

@@ -19,7 +19,7 @@ use stellar_scene::node::{CornerRadii, RectPrimitive, SceneContent};
 
 use crate::window_session::ProjectWindowSession;
 
-mod shape;
+pub(crate) mod shape;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
 #[derive(Clone, Debug, PartialEq, Eq)]

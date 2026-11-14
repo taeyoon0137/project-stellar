@@ -1,11 +1,41 @@
 //! 고정 Rectangle Shape의 Transform·단색 Fill을 문서 순서대로 평가합니다.
 use super::*;
 use stellar_core_types::value::{Rect, Vec2};
-use stellar_document::modifier::ModifierPayload;
+use stellar_document::modifier::{ModifierId, ModifierPayload, ModifierStack};
 use stellar_document::path::PathCommand as DocumentPath;
 use stellar_scene::builder::{SceneScope, ShapeInput};
 use stellar_scene::geometry::{PathCommand, PathGeometry};
 use stellar_scene::stack::{Paint, StrokeCap};
+
+/// 캔버스가 평가하는 transform과 fill. 부모 공간 이동은 마지막 Transform에 적용합니다.
+pub(crate) struct RectangleStyle {
+    pub(crate) transform: Transform2D,
+    pub(crate) last_transform: Option<(ModifierId, Transform2D)>,
+    fill: Option<Color>,
+}
+
+pub(crate) fn rectangle_style(stack: Option<&ModifierStack>) -> Option<RectangleStyle> {
+    let mut last_transform = None;
+    let mut transform = Transform2D::identity();
+    let mut fill = None;
+    if let Some(stack) = stack {
+        for entry in stack.entries().iter().filter(|e| e.enabled) {
+            match entry.payload {
+                ModifierPayload::Transform(next) if fill.is_none() => {
+                    transform = transform.then(&next).ok()?;
+                    last_transform = Some((entry.id, next));
+                }
+                ModifierPayload::Fill { color } if fill.is_none() => fill = Some(color),
+                _ => return None,
+            }
+        }
+    }
+    Some(RectangleStyle {
+        transform,
+        last_transform,
+        fill,
+    })
+}
 
 pub(super) fn rectangle(
     model: &DocumentModel,
@@ -16,19 +46,9 @@ pub(super) fn rectangle(
     locked: bool,
     builder: &mut SceneBuilder,
 ) -> Option<CanvasFrame> {
-    let mut transform = Transform2D::identity();
-    let mut fill = None;
-    if let Some(stack) = model.modifier_stack(id) {
-        for entry in stack.entries().iter().filter(|e| e.enabled) {
-            match entry.payload {
-                ModifierPayload::Transform(next) if fill.is_none() => {
-                    transform = transform.then(&next).ok()?
-                }
-                ModifierPayload::Fill { color } if fill.is_none() => fill = Some(color),
-                _ => return None,
-            }
-        }
-    }
+    let RectangleStyle {
+        transform, fill, ..
+    } = rectangle_style(model.modifier_stack(id))?;
     let mut node = NodeInput::new(id, transform);
     node.locked = locked;
     if let Some(color) = fill {
