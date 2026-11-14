@@ -7,7 +7,8 @@ use std::process::{Command, Output, Stdio};
 use stellar_cli::json::{parse, JsonLimits, JsonValue};
 use stellar_ops::core_types::ids::StableId;
 use stellar_ops::test_support::{
-    file_digest, large_document, random_valid_document, save_documents, scaffold_project, TempDir,
+    file_digest, large_document, random_valid_document, save_documents, scaffold_project,
+    text_document, FixtureDocument, TempDir,
 };
 
 fn run(args: &[&str], code: i32) -> JsonValue {
@@ -181,10 +182,13 @@ struct ApplyFixture {
 
 impl ApplyFixture {
     fn new(label: &str) -> Self {
+        Self::from_model(label, large_document(4))
+    }
+
+    fn from_model(label: &str, model: FixtureDocument) -> Self {
         let project = TempDir::new(&format!("{label}-project"));
         let source = TempDir::new(&format!("{label}-source"));
         let home = TempDir::new(&format!("{label}-home"));
-        let model = large_document(4);
         let document = model.document_id();
         let records = model.to_records().unwrap();
         let node = records
@@ -404,6 +408,179 @@ fn apply_dry_run_then_write_checks_semantic_diff_and_readable_git_changes() {
         "view.stellar.yaml\n"
     );
     assert_eq!(file_digest(&fixture.project.path), project_before);
+}
+
+#[test]
+fn text_node_export_apply_and_external_content_edit_preserve_payload() {
+    let model = text_document();
+    let node = model.to_records().unwrap().nodes.last().unwrap().id;
+    let fixture = ApplyFixture::from_model("text-source-cli-text", model);
+    let path = fixture.path.to_str().unwrap();
+    let project_before = file_digest(&fixture.project.path);
+    let original = std::fs::read_to_string(&fixture.path).unwrap();
+    assert!(original.contains("kind: text\n"), "{original}");
+    assert!(original.contains("Original 한글 e\u{301} 👩‍💻"), "{original}");
+    assert!(original.contains("style: \"4294967295\""), "{original}");
+    git(&fixture.source.path, &["init", "--quiet"]);
+    git(&fixture.source.path, &["add", "--", "view.stellar.yaml"]);
+    git(
+        &fixture.source.path,
+        &["commit", "--quiet", "-m", "fixture baseline"],
+    );
+    let commands = format!(r#"{{"kind":"rename","node":"{node}","name":"Confirm"}}"#);
+    let input = fixture.request(&commands);
+    let source_before = file_digest(&fixture.source.path);
+    let home_before = file_digest(&fixture.home.path);
+    let dry = run_with_stdin(
+        &["text-source", "apply", path, "-", "--dry-run"],
+        &input,
+        Some(&fixture.home.path),
+        0,
+    );
+    let dry = dry.get("result").unwrap();
+    assert_eq!(dry.get("written"), Some(&JsonValue::Bool(false)));
+    assert_eq!(
+        dry.get("source_hash"),
+        Some(&JsonValue::string(&fixture.hash))
+    );
+    assert_eq!(
+        dry.get("changes").unwrap().get("count"),
+        Some(&JsonValue::int(1))
+    );
+    assert_eq!(file_digest(&fixture.source.path), source_before);
+    assert_eq!(file_digest(&fixture.home.path), home_before);
+
+    let written = run_with_stdin(
+        &["text-source", "apply", path, "-"],
+        &input,
+        Some(&fixture.home.path),
+        0,
+    );
+    let result = written.get("result").unwrap();
+    assert_eq!(result.get("written"), Some(&JsonValue::Bool(true)));
+    assert_eq!(result.get("changes"), dry.get("changes"));
+    let expected = original.replace("display_name: TextFixture", "display_name: Confirm");
+    assert_ne!(expected, original);
+    assert_eq!(std::fs::read_to_string(&fixture.path).unwrap(), expected);
+    let checked = run(&["text-source", "check", path], 0);
+    assert_eq!(
+        checked.get("result").unwrap().get("source_hash"),
+        result.get("source_hash")
+    );
+    let diff = git(
+        &fixture.source.path,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--unified=0",
+            "--",
+            "view.stellar.yaml",
+        ],
+    );
+    assert!(diff.contains("-    display_name: TextFixture"), "{diff}");
+    assert!(diff.contains("+    display_name: Confirm"), "{diff}");
+    assert!(!diff.contains("Binary files"), "{diff}");
+    assert!(!diff.contains("content:"), "{diff}");
+    assert!(!diff.contains("style:"), "{diff}");
+
+    let external = expected.replace("Original 한글", "External 한글");
+    assert_ne!(external, expected);
+    std::fs::write(&fixture.path, &external).unwrap();
+    let checked = run(&["text-source", "check", path], 0);
+    let hash = checked
+        .get("result")
+        .unwrap()
+        .get("source_hash")
+        .unwrap()
+        .as_str()
+        .unwrap();
+    assert_ne!(Some(&JsonValue::string(hash)), result.get("source_hash"));
+    let noop = run_with_stdin(
+        &["text-source", "apply", path, "-"],
+        &transaction(hash, fixture.document, &commands),
+        Some(&fixture.home.path),
+        0,
+    );
+    assert_eq!(
+        noop.get("result").unwrap().get("written"),
+        Some(&JsonValue::Bool(false))
+    );
+    assert_eq!(std::fs::read_to_string(&fixture.path).unwrap(), external);
+    assert_eq!(file_digest(&fixture.project.path), project_before);
+}
+
+#[test]
+fn invalid_text_fields_reject_check_and_apply_without_overwriting() {
+    let fixture = ApplyFixture::from_model("text-source-cli-invalid-text", text_document());
+    let input = fixture.request(&format!(
+        r#"{{"kind":"rename","node":"{}","name":"Rejected"}}"#,
+        fixture.node
+    ));
+    let project_before = file_digest(&fixture.project.path);
+    let source = std::fs::read_to_string(&fixture.path).unwrap();
+    let content_line = source
+        .lines()
+        .find(|line| line.starts_with("      content:"))
+        .unwrap();
+    let cases = [
+        (
+            source.replace(content_line, "      content: []"),
+            65,
+            "text-source-invalid",
+        ),
+        (
+            source.replace(&format!("{content_line}\n"), ""),
+            65,
+            "text-source-invalid",
+        ),
+        (
+            source.replacen("style: \"17\"", "unknown_style: \"17\"", 1),
+            69,
+            "text-source-unsupported",
+        ),
+        (
+            source.replacen("start: \"8\"", "start: \"13\"", 1),
+            65,
+            "text-source-invalid",
+        ),
+        (
+            source.replacen("end: \"12\"", "end: \"999\"", 1),
+            65,
+            "text-source-invalid",
+        ),
+        (
+            source.replace(content_line, "      content: short"),
+            65,
+            "text-source-invalid",
+        ),
+    ];
+    for (invalid, status, code) in cases {
+        assert_ne!(invalid, source);
+        std::fs::write(&fixture.path, &invalid).unwrap();
+        let before = file_digest(&fixture.source.path);
+        let checked = run(
+            &["text-source", "check", fixture.path.to_str().unwrap()],
+            status,
+        );
+        assert_eq!(
+            checked.get("error").unwrap().get("code"),
+            Some(&JsonValue::string(code))
+        );
+        for dry_run in [true, false] {
+            let mut args = vec!["text-source", "apply", fixture.path.to_str().unwrap(), "-"];
+            if dry_run {
+                args.push("--dry-run");
+            }
+            let rejected = run_with_stdin(&args, &input, Some(&fixture.home.path), status);
+            assert_eq!(
+                rejected.get("error").unwrap().get("code"),
+                Some(&JsonValue::string(code))
+            );
+            assert_eq!(file_digest(&fixture.source.path), before);
+            assert_eq!(file_digest(&fixture.project.path), project_before);
+        }
+    }
 }
 
 #[test]

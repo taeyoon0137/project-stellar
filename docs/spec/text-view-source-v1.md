@@ -1,6 +1,6 @@
 # 단일 View 텍스트 원본 v1
 
-[ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)의 첫 opt-in 구현 형식입니다. 문서 하나, 페이지 하나, View 하나와 그 아래 Frame·Fragment를 사람이 읽는 YAML 파일 하나에 보관합니다. 기존 프로젝트의 기본 열기·저장 경로는 세대 기반 chunk 저장을 계속 사용합니다. 이 형식은 전체 프로젝트 포맷 전환이나 공개 포맷 동결을 뜻하지 않습니다.
+[ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)의 첫 opt-in 구현 형식입니다. 문서 하나, 페이지 하나, View 하나와 그 아래 Frame·Fragment·Text를 사람이 읽는 YAML 파일 하나에 보관합니다. 기존 프로젝트의 기본 열기·저장 경로는 세대 기반 chunk 저장을 계속 사용합니다. 이 형식은 전체 프로젝트 포맷 전환이나 공개 포맷 동결을 뜻하지 않습니다.
 
 구현 원본은 [`text_codec.rs`](../../crates/project/src/document_io/text_codec.rs), 파일 입출력은 [`text_source.rs`](../../crates/project/src/document_io/text_source.rs), 기존 프로젝트 export는 [`ops/text_source.rs`](../../crates/ops/src/text_source.rs)입니다.
 
@@ -115,10 +115,13 @@ nodes:
 | `view` | `id`, `display_name`, `root_frame` |
 | `nodes`의 각 항목 | `id`, `parent`, `order_key`, `visible`, `locked`, `display_name`, `kind`, `payload` |
 | Frame `payload` | `size`, `transform`, `clipping`, `background`, `border`, `corner_radius`, `layout_mode` |
+| Text `payload` | `content`, `paragraphs`, `style_runs` |
+| Text 문단 | `style` (기존 문단 style 표의 `u32` index) |
+| Text style run | `start`, `end`, `style` (`u32`) |
 | 색상 | `space`, `rgba` |
 | 테두리 | `color`, `thickness` |
 
-`document`·`page`·`view`는 각각 하나의 mapping이며 배열이 아닙니다. `nodes`만 sequence입니다. 문서 validator가 ID 중복, root Frame, 부모 연결, 트리 깊이와 참조 불변식을 검증합니다. 부모가 없는 노드는 View의 root Frame이어야 합니다. 표시 이름은 빈 문자열을 포함해 문자열 그대로 보존하며 식별에 사용하지 않습니다.
+`document`·`page`·`view`는 각각 하나의 mapping이며 배열이 아닙니다. `nodes`와 Text의 `paragraphs`·`style_runs`는 sequence입니다. 문서 validator가 ID 중복, root Frame, 부모 연결, 트리 깊이와 참조 불변식을 검증합니다. 부모가 없는 노드는 View의 root Frame이어야 합니다. 표시 이름은 빈 문자열을 포함해 문자열 그대로 보존하며 식별에 사용하지 않습니다.
 
 | 필드 | 허용 값 |
 |---|---|
@@ -126,7 +129,7 @@ nodes:
 | `parent` | 부모 노드의 전체 `StableId`, root는 `none` |
 | `order_key` | byte당 두 자리 hex 문자열. 빈 값·홀수 길이·마지막 byte `00`은 거부 |
 | `visible`, `locked` | 소문자 `true` 또는 `false` |
-| `kind` | `frame` 또는 `fragment` |
+| `kind` | `frame`, `fragment`, `text` |
 | Fragment `payload` | 정확히 `none`; 별도 시각·layout 필드 없음 |
 | Frame `size` | `width height` 순서의 비음수 유한 `f32` 두 개 |
 | Frame `transform` | `a b c d tx ty` 순서의 유한 `f32` 여섯 개 |
@@ -156,6 +159,30 @@ target: "019a8180-0099-7000-8000-000000000099"
 
 Path clipping과 `layout_mode`는 참조 ID를 보존합니다. 미해결 Path 참조는 기존 문서 모델 규칙에 따라 보존할 수 있지만, Path 노드 payload나 layout 정의 자체를 이 파일에 추가하는 기능은 포함하지 않습니다. 이미 존재하는 잘못된 종류의 노드를 Path로 참조하면 문서 validator가 거부합니다.
 
+## Text 본문과 스타일 범위
+
+Text의 `payload`는 본문과 기존 모델의 문단·style run을 모두 명시합니다. 다음 예시는 `확인` 뒤 LF가 있는 두 문단이며 범위는 UTF-8 byte가 아닌 Unicode scalar offset입니다.
+
+```yaml
+content: "확인\n다음"
+paragraphs:
+  -
+    style: "7"
+  -
+    style: "2"
+style_runs:
+  -
+    start: "0"
+    end: "2"
+    style: "3"
+```
+
+`paragraphs` 길이는 본문의 LF 개수 + 1이어야 합니다. 빈 본문도 문단 하나를 가지며, 빈 `style_runs`는 `[]`입니다. 각 run은 `0 <= start <= end <= 본문 scalar 길이`를 만족해야 합니다. 정수는 `u32` 범위이며 음수·범위 초과는 거부합니다. 문단 style과 run style은 기존 모델의 숫자 index를 보존하며, 별도 font/style 정의를 이 파일 안에 만들어 넣지 않습니다.
+
+본문의 Unicode 정규화, CR/CRLF 변환, run 정렬·병합·겹침 제거를 하지 않습니다. 빈 run·겹치는 run·run 순서도 기존 payload 그대로 보존합니다. 제어 문자는 YAML 인용·이스케이프를 사용하고 읽을 수 없는 긴 scalar는 저장 전에 거부합니다. 본문 자체에 전용 CLI 편집 명령은 아직 없으며 외부 텍스트 편집 후 `check`로 검증할 수 있습니다. 기존 `rename`·표시 여부 등 CLI 명령은 Text payload 전체를 보존하면서 적용됩니다.
+
+V.10.4의 부분 확장이므로 schema version은 1을 유지합니다. 이전 구현은 `kind: text`를 미지원으로 거부해 덮어쓰지 않으며, 기존 Frame/Fragment 파일의 bytes·문법은 바뀌지 않습니다.
+
 ## 텍스트 결정론과 파서 제한
 
 기존 제한 YAML loader와 checked canonical writer를 사용합니다. loader는 모든 scalar를 문자열로 보존하고, codec이 ID·불리언·숫자를 명시적으로 해석합니다. 따라서 예시의 숫자와 불리언이 따옴표로 감싸져 있어도 같은 의미로 읽힙니다. writer는 재파싱해 같은 값 트리가 되는 출력만 반환합니다.
@@ -170,7 +197,7 @@ Path clipping과 `layout_mode`는 참조 ID를 보존합니다. 미해결 Path �
 
 ## 지원 범위 밖의 데이터
 
-Shape·Path·Text·Image payload, component instance·library, token set, modifier stack과 다중 문서·페이지·View는 이번 범위에 포함하지 않습니다. 미지원 데이터를 만났을 때 생략한 결과를 저장하지 않고 실패합니다. disabled modifier도 stack 데이터이므로 거부합니다.
+Shape·Path·Image payload, component instance·library, token set, modifier stack과 다중 문서·페이지·View는 이번 범위에 포함하지 않습니다. 미지원 데이터를 만났을 때 생략한 결과를 저장하지 않고 실패합니다. disabled modifier도 stack 데이터이므로 거부합니다.
 
 기존 프로젝트 export는 로드한 문서를 다시 직렬화한 **전체 chunk pointer 집합**이 저장된 generation과 정확히 같아야 합니다. ChunkId·내용 hash·kind·schema version을 비교하고 generation schema와 단일 root 문서도 검사합니다. 따라서 문서 밖 메타데이터, component·token chunk, 사용되지 않는 추가 chunk, 알 수 없는 optional chunk도 조용히 버리지 않습니다. 이미 알려진 kind라는 이유만으로 허용하지 않습니다. 지원되는 단일 View의 예상 집합은 DocumentManifest 하나, ViewTree 하나, subtree 하나입니다.
 

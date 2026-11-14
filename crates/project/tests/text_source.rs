@@ -4,13 +4,15 @@ mod common;
 use common::{id, node, TempDir};
 use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::reference::NodeRef;
+use stellar_core_types::text::UserText;
 use stellar_core_types::value::{Size2, Transform2D};
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
 use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::{Border, Clipping, CornerRadius, FramePayload};
 use stellar_document::model::DocumentModel;
 use stellar_document::records::{DocumentRecords, NodePayload};
-use stellar_document::text::TextPayload;
+use stellar_document::shape::{RectangleParams, ShapeGeometry};
+use stellar_document::text::{Paragraph, StyleRun, TextIndex, TextPayload, TextRange};
 use stellar_project::document_io::text_source::{self, CacheStatus, TextSourceError};
 
 fn fixture() -> DocumentModel {
@@ -48,6 +50,34 @@ fn fixture() -> DocumentModel {
                 50,
                 "Button",
                 NodePayload::Frame(FramePayload::default()),
+            ),
+            node(
+                1,
+                8,
+                Some(6),
+                50,
+                "Label",
+                NodePayload::Text(
+                    TextPayload::new(
+                        UserText::new("확인 e\u{301} 👩‍💻\r\n다음\0\t\"줄\""),
+                        vec![Paragraph { style: 7 }, Paragraph { style: u32::MAX }],
+                        vec![
+                            StyleRun {
+                                range: TextRange::new(3, 5).unwrap(),
+                                style: 9,
+                            },
+                            StyleRun {
+                                range: TextRange::new(0, 8).unwrap(),
+                                style: 2,
+                            },
+                            StyleRun {
+                                range: TextRange::new(5, 5).unwrap(),
+                                style: 1,
+                            },
+                        ],
+                    )
+                    .unwrap(),
+                ),
             ),
         ],
         modifier_stacks: Vec::new(),
@@ -232,8 +262,11 @@ fn unsupported_input_or_external_fields_never_overwrite_source() {
         7,
         Some(4),
         80,
-        "Text",
-        NodePayload::Text(TextPayload::empty(0)),
+        "Shape",
+        NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+            size: Size2::ZERO,
+            corner_radius: CornerRadius::ZERO,
+        })),
     ));
     let unsupported = DocumentModel::from_records(records).unwrap().0;
     assert!(matches!(
@@ -250,6 +283,90 @@ fn unsupported_input_or_external_fields_never_overwrite_source() {
     assert!(text_source::open(&path).is_err());
     assert!(text_source::save(&path, &model, hash).is_err());
     assert_eq!(std::fs::read_to_string(&path).unwrap(), future);
+}
+
+#[test]
+fn malformed_text_payloads_and_unknown_nested_fields_preserve_source() {
+    let dir = TempDir::new("stellar-text-payload-refusal");
+    let path = dir.path.join("view.stellar.yaml");
+    let model = fixture();
+    text_source::save_new(&path, &model).unwrap();
+    let source = std::fs::read_to_string(&path).unwrap();
+    for malformed in [
+        source.replacen("content:", "future_content:", 1),
+        source.replacen("style: \"7\"", "style: \"7\"\n          font: future", 1),
+        source.replacen(
+            "start: \"3\"",
+            "start: \"3\"\n          future_run: keep",
+            1,
+        ),
+        source.replacen("start: \"3\"", "start: \"6\"", 1),
+        source.replacen("end: \"5\"", "end: \"9999\"", 1),
+        source.replacen("style: \"7\"", "style: \"4294967296\"", 1),
+        source.replacen("style: \"7\"", "style: \"-1\"", 1),
+        source.replacen("        -\n          style: \"7\"\n", "", 1),
+        source.replacen("style_runs:", "missing_runs:", 1),
+    ] {
+        assert_ne!(malformed, source);
+        std::fs::write(&path, &malformed).unwrap();
+        let hash = stellar_storage::hash::ContentHash::compute(malformed.as_bytes());
+        assert!(text_source::open(&path).is_err());
+        assert!(text_source::save(&path, &model, hash).is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), malformed);
+    }
+}
+
+#[test]
+fn empty_text_and_long_scalar_limits_round_trip_or_preserve_existing_bytes() {
+    let dir = TempDir::new("stellar-text-content-limits");
+    let path = dir.path.join("view.stellar.yaml");
+    let mut records = fixture().to_records().unwrap();
+    let text_index = records.nodes.iter().position(|n| n.id == id(1, 8)).unwrap();
+    records.nodes[text_index].payload = NodePayload::Text(TextPayload::empty(u32::MAX));
+    let empty = DocumentModel::from_records(records.clone()).unwrap().0;
+    let hash = text_source::save_new(&path, &empty).unwrap();
+    assert_eq!(
+        text_source::open(&path)
+            .unwrap()
+            .model
+            .to_records()
+            .unwrap(),
+        records
+    );
+    let bytes = std::fs::read(&path).unwrap();
+    records.nodes[text_index].payload = NodePayload::Text(
+        TextPayload::new(
+            UserText::new(&"x".repeat(40 * 1024)),
+            vec![Paragraph { style: 0 }],
+            vec![],
+        )
+        .unwrap(),
+    );
+    let too_long = DocumentModel::from_records(records).unwrap().0;
+    assert!(text_source::save(&path, &too_long, hash).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+
+    let mut records = empty.to_records().unwrap();
+    records.nodes[text_index].payload = NodePayload::Text(
+        TextPayload::new(
+            UserText::new("text"),
+            vec![Paragraph { style: 0 }],
+            vec![StyleRun {
+                range: TextRange {
+                    start: TextIndex(3),
+                    end: TextIndex(1),
+                },
+                style: 0,
+            }],
+        )
+        .unwrap(),
+    );
+    let reversed = DocumentModel::from_records(records).unwrap().0;
+    assert!(text_source::save(&path, &reversed, hash).is_err());
+    let new_path = dir.path.join("invalid.stellar.yaml");
+    assert!(text_source::save_new(&new_path, &reversed).is_err());
+    assert!(!new_path.exists());
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
 }
 
 #[cfg(unix)]
