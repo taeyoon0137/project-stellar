@@ -22,6 +22,7 @@ pub mod input;
 pub mod input_macos;
 /// 셸→코어 입력 대기열과 연속 move/wheel coalescing (XII.3.4).
 pub mod input_queue;
+mod recovery;
 mod sidebar;
 mod text_input;
 /// 창 session C ABI (XII.2.2).
@@ -133,7 +134,10 @@ impl Runtime {
     fn app(&mut self) -> Result<&AppRuntime, StellarStatus> {
         if self.app.is_none() {
             match AppRuntime::start() {
-                Ok(app) => self.app = Some(app),
+                Ok(mut app) => {
+                    app.enable_recovery();
+                    self.app = Some(app)
+                }
                 Err(error) => {
                     self.last_error = Some((
                         StellarStatus::Internal,

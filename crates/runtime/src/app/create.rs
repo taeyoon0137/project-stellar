@@ -7,7 +7,8 @@ use stellar_project::create::{
     create_editable_project, IncompleteReason, ProjectCreateRequest, ProjectCreated,
 };
 
-fn initialize(request: &ProjectCreateRequest) -> Result<u32, String> {
+pub(super) fn project_git(
+) -> Result<(GitRunner, stellar_git_porcelain::version::GitVersion), String> {
     let git = discover_git(&GitDiscoveryConfig::default()).ok_or("시스템 Git을 찾지 못했습니다")?;
     let version = probe_git_version(&git).map_err(|e| format!("Git 버전 확인 실패: {e:?}"))?;
     let runner = GitRunner::new(
@@ -30,6 +31,11 @@ fn initialize(request: &ProjectCreateRequest) -> Result<u32, String> {
         .collect(),
         Duration::from_secs(30),
     );
+    Ok((runner, version))
+}
+
+fn initialize(request: &ProjectCreateRequest) -> Result<u32, String> {
+    let (runner, version) = project_git()?;
     Ok(
         match create_editable_project(request, &runner, &version).map_err(|e| e.to_string())? {
             ProjectCreated::Created { .. } => 0,

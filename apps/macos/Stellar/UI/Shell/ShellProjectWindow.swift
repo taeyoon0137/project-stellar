@@ -451,6 +451,7 @@ final class ShellProjectWindow {
     let panelsSlot: ShellPanelTabsSlot
     let gitSource = ShellGitDataSource()
     var componentLibrary: ShellComponentLibrary?
+    var recoveryPrompt: NSAlert?
     let sidebarSource = ShellSidebarSource()
     private var displayedSelection: StellarSelectionTarget?
     let inspectorSource = ShellFrameInspectorSource()
@@ -605,6 +606,7 @@ final class ShellProjectWindow {
         gitSource.attach(session, window: windowSession)
         toolsModel.setProjectReady(true)
         refreshSessionCommands()
+        offerDocumentRecovery()
         window?.invalidateRestorableState()
     }
 

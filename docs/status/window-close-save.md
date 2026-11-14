@@ -114,3 +114,15 @@ cc -Icrates/ffi/include crates/ffi/tests/runtime_abi.c target/debug/libstellar_f
   native close·저장·재로드·오류는 제품 코드로 확인합니다. 시뮬레이터의 가짜 저장 성공을 근거로 쓰지 않습니다.
 - 저수준 `NSWindow.close()`와 `stellar_window_session_close`는 명시적 폐기 API로 유지합니다. 정상 사용자 닫기는
   `performClose`를 거쳐야 합니다. 테스트 정리에서만 저수준 close를 사용합니다.
+
+## 저장된 문서의 비정상 종료 복구
+
+일반 앱에서 저장된 문서를 편집하면 마지막 정상 generation과 별개로 미저장 체크포인트를 기록합니다. 문서 revision 또는 dirty 상태가 바뀐 경우만 대상입니다. 선택·스크롤·확대만으로는 복구 파일이 생기지 않습니다. XXV history journal은 저장된 문서에 대한 Undo/Redo stack을 나타내므로, 미저장 내용은 V.9의 기존 RecoverySnapshotStore와 RecoveryPayload를 사용합니다.
+
+- 로컬 앱 데이터의 `recovery/<project-identity-hash>/<window-uuid>.starrecovery`에 창별로 기록합니다. 활성 문서의 전체 chunk, 기준 manifest hash, revision, 탭·viewport·선택을 담습니다. 사용자 자료를 기록하는 identity 디렉터리의 Unix 권한은 0700입니다. 프로젝트의 Git 작업 트리와 index는 체크포인트에 포함되지 않습니다.
+- document thread는 revision별 영속 레코드를 캡처하고, 창별 worker가 직렬화와 원자적 파일 교체를 수행합니다. worker가 쓰는 동안에는 가장 최신 대기 상태 하나만 유지합니다. 저장·정리는 같은 worker에서 순차 실행하며, 복구 중 다시 종료될 때를 위해 이전 복구본은 대체 체크포인트 또는 정상 저장이 마련될 때까지 보존합니다. 살아 있는 writer의 OS 파일 잠금은 같은 프로젝트를 연 다른 프로세스에서도 유효합니다.
+- 다시 열면 시트가 미저장 변경을 제안합니다. **Restore Changes**는 열린 창과 디스크의 기준 hash가 일치하고 새 문서 편집이 없을 때만 메모리에서 복원합니다. 이후 일반 **Save Now** 또는 정상 닫기가 저장합니다. **Later**는 복구본을 보존합니다.
+- 외부 checkout 등으로 기준이 바뀌면 **Save Recovered Document…**를 제공합니다. 사용자가 정한 원본 밖의 새 폴더에 독립 Git 저장소와 문서 generation을 생성합니다. 이 사본에는 복구된 문서와 그 문서 안의 Frame·참조가 들어갑니다. 외부 컴포넌트 정의, asset, 다른 문서, Git history는 원래 프로젝트에 남습니다.
+- 갑자기 종료되면 마지막으로 원자적 교체가 끝난 상태까지만 복구할 수 있습니다. 현재 캡처는 활성 문서의 모든 레코드를 복사·정렬합니다. 앱 전반의 debounce/최대 지연, 큰 문서 capture 성능 예산, history 복원, 전체 앱 종료 시 flush는 별도입니다. 이 경로로 XIII.1.3~.6 전체 상태를 올리지 않습니다.
+
+`python3 scripts/macos/document-recovery-check.py <Stellar Debug 실행 파일> <stellar CLI>`는 별도의 HOME·Git fixture에서 실제 Frame을 만든 후 프로젝트 원본이 clean인 시점에 앱 프로세스를 SIGKILL합니다. 재실행 후 같은 기준에서 동일 StableId를 정상 저장하고, 다른 checkout에서는 원본 파일 hash와 index를 보존하면서 복구 사본의 StableId를 CLI로 확인합니다. 다른 살아 있는 프로세스의 checkpoint가 복구 후보에서 제외됨도 확인합니다. 사본 위치 선택은 실제 NSSavePanel 표시와 취소를 검사한 뒤, 같은 제품 입력 경로에 임시 목적지 URL을 넘깁니다.

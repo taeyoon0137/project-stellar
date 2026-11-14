@@ -184,6 +184,18 @@ final class ShellRuntimeEventPump {
         return register(.success(request), completion)
     }
 
+    func recoverDocument(_ session: UInt64, ticket: String, destination: URL?,
+                         completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = Array(ticket.utf8).withUnsafeBufferPointer { token in
+            Array((destination?.path ?? "").utf8).withUnsafeBufferPointer { path in
+                stellar_window_recovery_apply(runtimeHandle, session, token.baseAddress, token.count, path.baseAddress, path.count, &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return register(.success(request), completion)
+    }
+
     private func register(
         _ result: Result<UInt64, CoreRuntimeCallError>,
         _ completion: @escaping (CoreRuntimeEvent) -> Void

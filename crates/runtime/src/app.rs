@@ -133,6 +133,7 @@ mod frame_move;
 mod git_components;
 mod git_names;
 mod instance_place;
+pub mod recovery;
 pub use instance_place::InstancePlacement;
 mod node_delete;
 mod node_duplicate;
@@ -1060,6 +1061,7 @@ pub(crate) struct WindowEntry {
     pub(crate) project: ProjectSessionId,
     pub(crate) session: ProjectWindowSession,
     canvas: crate::canvas::CanvasCache,
+    checkpoint: recovery::WindowCheckpoint,
 }
 
 #[derive(Debug)]
@@ -1240,7 +1242,9 @@ fn close_project_on_thread(
     // 프로젝트를 닫으면 그 아래 창 session(문서 state·history·선택)도 폐기합니다.
     let sessions = ctx.app_sessions_mut();
     for window in session.windows {
-        sessions.windows.remove(&window);
+        if let Some(mut entry) = sessions.windows.remove(&window) {
+            entry.checkpoint.discard();
+        }
     }
     Ok(RuntimeEvent::ProjectClosed {
         request,
@@ -1354,6 +1358,7 @@ fn open_window_session_on_thread(
     ctx: &mut DocumentContext,
     request: RequestId,
     project: ProjectSessionId,
+    recovery_root: Option<PathBuf>,
 ) -> Result<RuntimeEvent, Failure> {
     let sessions = ctx.app_sessions_mut();
     let identity = sessions
@@ -1374,6 +1379,7 @@ fn open_window_session_on_thread(
             project,
             session,
             canvas: Default::default(),
+            checkpoint: recovery::WindowCheckpoint::new(recovery_root),
         },
     );
     if let Some(owner) = sessions.projects.get_mut(&project) {
@@ -1395,10 +1401,11 @@ fn close_window_session_on_thread(
     session: WindowSessionHandle,
 ) -> Result<RuntimeEvent, Failure> {
     let sessions = ctx.app_sessions_mut();
-    let entry = sessions
+    let mut entry = sessions
         .windows
         .remove(&session)
         .ok_or_else(|| unknown_window(session))?;
+    entry.checkpoint.discard();
     if let Some(owner) = sessions.projects.get_mut(&entry.project) {
         owner.windows.remove(&session);
     }
@@ -1407,6 +1414,7 @@ fn close_window_session_on_thread(
 
 /// 창 session 요약(상태 snapshot용).
 fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> WindowSessionSummary {
+    entry.checkpoint.observe(&entry.session);
     let session = &entry.session;
     let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     WindowSessionSummary {
@@ -1669,6 +1677,7 @@ pub struct AppRuntime {
     sender: DocumentSender,
     shared: Arc<AppShared>,
     next_request: AtomicU64,
+    recovery_root: Option<PathBuf>,
     event_capacity: usize,
     /// drop이 document thread 종료를 기다리는 최대 시간.
     drop_timeout: Duration,
@@ -1736,10 +1745,18 @@ impl AppRuntime {
                 state: Mutex::new(Arc::new(RuntimeState::default())),
             }),
             next_request: AtomicU64::new(1),
+            recovery_root: None,
             event_capacity: event_capacity.max(1),
             drop_timeout: AppRuntime::SHUTDOWN_TIMEOUT,
             document,
         })
+    }
+
+    /// 네이티브 앱이 사용자 데이터 안에 복구 체크포인트를 활성화합니다.
+    pub fn enable_recovery(&mut self) {
+        self.recovery_root = os_user_data_base()
+            .filter(|p| p.is_absolute())
+            .map(|p| p.join(stellar_ops::lock::APP_DATA_DIR));
     }
 
     fn reserve_request(&self) -> Result<RequestId, RequestError> {
@@ -1904,7 +1921,8 @@ impl AppRuntime {
         &self,
         project: ProjectSessionId,
     ) -> Result<RequestId, RequestError> {
-        self.submit(move |ctx, request| open_window_session_on_thread(ctx, request, project))
+        let root = self.recovery_root.clone();
+        self.submit(move |ctx, request| open_window_session_on_thread(ctx, request, project, root))
     }
 
     /// 창 session을 닫습니다. 그 창의 문서 state·history·선택을 폐기합니다(저장하지 않음).
