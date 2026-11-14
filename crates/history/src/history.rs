@@ -505,6 +505,13 @@ impl History {
         transaction: &CommandTransaction,
     ) -> Result<ChangeSet, HistoryError> {
         let preview = self.preview.as_mut().ok_or(HistoryError::NoPreview)?;
+        if transaction.requests.is_empty() {
+            return Err(stellar_commands::transaction::TransactionError {
+                index: 0,
+                error: stellar_commands::command::CommandError::EmptyTransaction,
+            }
+            .into());
+        }
         let mut combined = CommandTransaction::new(transaction.id, transaction.origin);
         if let Some(previous) = &preview.applied {
             combined
@@ -818,6 +825,46 @@ mod tests {
         doc.execute_transaction(&inverse.rebased(doc.revision()))
             .unwrap();
         assert_eq!(snapshot(&doc), before);
+    }
+
+    #[test]
+    fn empty_update_preserves_the_last_preview_for_cancel_or_undo() {
+        use stellar_commands::command::CommandError;
+        use stellar_commands::transaction::TransactionError;
+        for cancel in [true, false] {
+            let mut doc = small_state();
+            let mut history = History::new();
+            let start = snapshot(&doc);
+            history.begin_pointer_gesture(3).unwrap();
+            let movement = drag(&doc, 1, 20.0);
+            history.update_preview(&mut doc, &movement).unwrap();
+            let last = snapshot(&doc);
+            let revision = doc.revision();
+            let empty = CommandTransaction::new(movement.id, movement.origin);
+            assert_eq!(
+                history.update_preview(&mut doc, &empty),
+                Err(HistoryError::Transaction(TransactionError {
+                    index: 0,
+                    error: CommandError::EmptyTransaction
+                }))
+            );
+            assert_eq!(doc.revision(), revision);
+            assert_eq!(snapshot(&doc), last);
+            if cancel {
+                history.cancel_preview(&mut doc).unwrap();
+                assert!(history.is_empty());
+                assert_eq!(snapshot(&doc), start);
+            } else {
+                history.end_preview().unwrap().unwrap();
+                let mut view = WindowViewState::new(
+                    stellar_commands::id::WindowSessionId::from_stable_id(sid(500)),
+                );
+                history.undo(&mut doc, &mut view).unwrap().unwrap();
+                assert_eq!(snapshot(&doc), start);
+                history.redo(&mut doc, &mut view).unwrap().unwrap();
+                assert_eq!(snapshot(&doc), last);
+            }
+        }
     }
 
     #[test]
