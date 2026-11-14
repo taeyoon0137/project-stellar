@@ -49,6 +49,58 @@ impl TextInputs {
     }
 }
 
+/// 현재 View의 자유 배치 부모 Frame에 확정한 UTF-8 본문과 local 원점을 저장합니다.
+/// # Safety
+/// view, parent는 16바이트를 읽을 수 있고 text는 len바이트, out_request는 정렬된 u64 출력이어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_insert_text(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    parent: *const [u8; 16],
+    revision: u64,
+    x: f32,
+    y: f32,
+    text: *const u8,
+    len: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_request.is_null() || view.is_null() || parent.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { out_request.write(0) };
+        let Ok(origin) = stellar_core_types::value::Vec2::new(x, y) else {
+            return StellarStatus::InvalidArgument;
+        };
+        if len == 0 {
+            return StellarStatus::InvalidArgument;
+        }
+        let content = match unsafe { decode_utf8_owned(text, len) } {
+            Ok(value) => value,
+            Err(status) => return status,
+        };
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let request = match rt.app() {
+            Ok(app) => app.insert_canvas_text(
+                WindowSessionHandle(session),
+                StableId::from_bytes(unsafe { *view }),
+                DocumentRevision(revision),
+                StableId::from_bytes(unsafe { *parent }),
+                origin,
+                content,
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(request, out_request) }
+    })
+}
+
 /// window worker에서 현재 선택한 Text의 조합을 시작합니다. range는 문서의 Unicode scalar 단위입니다.
 /// # Safety
 /// view와 node는 각각 16 byte를 읽을 수 있고 out_token은 정렬된 u64 출력을 허용해야 합니다.

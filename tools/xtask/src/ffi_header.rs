@@ -386,6 +386,9 @@ StellarStatus stellar_window_canvas(uint64_t handle, uint64_t session, float wid
 /* 셸 worker 전용. 활성 View/revision의 직계 자식을 앞에서부터 조회합니다.
  * rows: STELLAR_LAYER_PAGE_SIZE개 caller buffer. 플래그 bit 0 표시, 1 잠금, 2 자식 있음.
  * UTF-8 text는 페이지·View·행 이름 순서. BUFFER_TOO_SMALL은 info.text_len만큼 확보해 재호출합니다. */
+/* Insert nonempty UTF-8 text at a parent Frame's local origin as one undoable edit. */
+StellarStatus stellar_window_insert_text(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, const uint8_t *text, size_t len, uint64_t *out_request);
+
 /* Text composition. Begin and preview run on the window worker.
  * Begin uses document Unicode scalar offsets. Mark uses UTF-16 offsets within marked text.
  * One transient token per window. Commit reports its request result via the event queue. */
