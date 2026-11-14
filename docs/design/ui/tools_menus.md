@@ -28,7 +28,7 @@
 | `CanvasTool.swift` | 도구 enum(11개), `CanvasToolShortcut` 단일 키 해석기 |
 | `KeyShortcut.swift` | 단축키 값 타입, 표시 문자열, 물리 키 정규화 |
 | `ShortcutPolicy.swift` | HIG 표준·시스템 단축키 표와 충돌 감사 |
-| `ToolsMenuModel.swift` | snapshot·프로토콜, `ShellCommandPresentation`, `ZoomFormat`, `ShellCommandCoreIDStub`, `ToolsMenuModelStub` |
+| `ToolsMenuModel.swift` | snapshot·프로토콜, `ShellCommandPresentation`, `ZoomFormat`, `ShellCommandCoreIDs`, `ToolsMenuModelStub` |
 | `ShellCommandRouter.swift` | 응답자 체인 router, 메뉴 검증 |
 | `MainMenuBuilder.swift` | 메뉴 막대 구성과 앱 연결 |
 | `ToolsToolbarController.swift` | 도구 그룹·줌 툴바 항목, 툴바 delegate |
@@ -320,7 +320,7 @@ protocol ToolsMenuModel: AnyObject {
 - 값 snapshot이 들어오고 명령이 나가는 구조이며 Rust 타입이 없습니다. 코어 연결 시 pull 이벤트 큐(`stellar_runtime_poll_event`)로 받은 버전형 메시지를 이 구조체로 디코드하고, `send`는 command ID와 인자를 Document Thread 큐에 넣기만 합니다. [아키텍처 §8.2, §9.2] [ADR-0009]
 - FFI 표현 제안: `enabledCommands`는 command ID 비트셋, `activeTool`은 작은 정수 tag, 이름 문자열은 UTF-8 `(ptr, len)`. 형식은 코어 command ID가 정해질 때 함께 정합니다.
 - 메뉴 검증은 `snapshot` 읽기와 제목 비교만 하므로 메인 스레드 예산 안입니다. 측정값은 10장에 있습니다. [아키텍처 §6.3]
-- `ShellCommandCoreIDStub`: 코어 command ID 체계가 아직 없어(`crates/commands`는 골격) 코어 소유 명령에 임시 문자열 `stellar.stub.<rawValue>`를 주고, 셸 전용 명령(창·메뉴·툴바·시스템 동작)은 nil을 줍니다. [계획 XII.6.5]
+- `ShellCommandCoreIDs`: command ID는 코어가 정합니다. 앱 구성(UI/Shell)이 코어 소유 명령마다 공유 이름(`rawValue`, 예: `edit.undo`)으로 코어에 물어(`stellar_command_code`) 표를 만들고, 셸 전용 명령(창·메뉴·툴바·시스템 동작)과 코어가 아직 구현하지 않은 명령은 ID가 없습니다. UI/Tools는 FFI를 모르므로 조회 함수를 받기만 합니다. [계획 XII.6.5] [ADR-0028]
 - `ToolsMenuModelStub`: 코어 없이 영역을 띄우는 의도적 placeholder입니다. FFI를 호출하지 않고, 도구 전환·줌·Lock/Hide만 흉내 내며, 눈금자와 Redo를 비활성으로 둡니다. 이 제한은 검사가 확인합니다. [계획 1.2 규칙 6]
 
 ## 10. 검사
@@ -343,12 +343,12 @@ protocol ToolsMenuModel: AnyObject {
 
 ## 11. 코어 연결·통합에 남은 일
 
-- **command ID**: 코어가 command ID를 정의하면 `ShellCommandCoreIDStub`을 그 표로 바꿉니다. [계획 XII.6.5]
+- **command ID(완료)**: 코어가 정한 command ID를 공유 이름으로 조회한 `ShellCommandCoreIDs` 표로 바꿨습니다. 단축키는 macOS 관례 그대로이고, 키 조합 → 메뉴 항목 → 셸 명령 → 코어 ID → 창 session 도착을 `--key-mapping-check`가 확인합니다. Windows 셸의 같은 대응(Ctrl+Z·Ctrl+Y·Ctrl+S)은 ADR-0006으로 보류했습니다. [계획 XII.6.5] [ADR-0028]
 - **snapshot 수신**: pull 이벤트 디코더와 `ToolsMenuModel` 실제 구현(창 session별 1개, 앱 수준 1개). `ToolsMenuModelStub`은 검사·미리보기용으로만 남깁니다. `MainMenuBuilder.build(applicationTarget:)`의 target은 필수 인자입니다(빠뜨리면 창이 없을 때 New/Open/Clone Project가 비활성으로 남음).
 - **도구 상태 기계**: Space 일시 Hand, Escape 복귀, Image 파일 선택 흐름. [계획 XII.3.6]
-- **줌**: camera 입력과 줌 단계·맞춤 계산. [계획 XII.4.3]
+- **줌(일부 완료)**: Zoom In(×2)·Zoom Out(÷2)·Actual Size(100%)는 코어 창 session viewport를 바꾸고(화면 중심 고정, 2%\~25600%), 툴바 배율 제목은 코어 viewport 값입니다. active view가 없으면 비활성입니다. viewport는 scene camera 입력(`ProjectWindowSession::camera`)입니다. Zoom to Fit·Zoom to Selection(내용·선택 bounds 필요)과 트랙패드 이동·확대 입력 연결은 남았습니다. [계획 XII.4.3] [ADR-0028]
 - **프로젝트 명령**: New/Open/Clone Project 흐름과 패널. [계획 XII.6.1~XII.6.3]
-- **Undo/Redo/Save Now**: 활성 WindowSession 연결. [계획 XII.6.4]
+- **Undo/Redo/Save Now(완료)**: 메뉴·단축키는 응답자 체인으로 key 창의 router가 받아 그 창의 코어 창 session(`ShellWindowSessionHandle`)에 `stellar_window_session_perform`으로 보냅니다. Undo는 그 창 undo stack, Redo는 redo stack이 비어 있지 않을 때, Save Now는 작업 문서가 있을 때 활성입니다. 저장 실패(다른 저장이 먼저 끝남, 쓰기 실패)는 alert 한 번으로 알립니다. 검사는 `--session-commands-check`입니다. [계획 XII.6.4] [ADR-0028]
 - **접근성**: 캔버스 호스트의 도구 상태 노출과 VoiceOver 자동화. [계획 XII.8.1]
 - **창 통합(완료, shell_frame 14장)**: `ShellAppCoordinator`가 `MainMenuBuilder.build(applicationTarget:)`·`install(on:)`을 하고, 프로젝트 창마다 `ShellCommandRouter.install(in:)`과 셸 툴바 조합(`ToolsToolbarController`가 `ShellToolbarItemProviding`으로 줌 제공)을 합니다. 캔버스 도구 그룹은 셸 툴바에 넣지 않고, 같은 도구 11개를 프로젝트 창이 셸 프레임 snapshot 도구 목록으로 캔버스 하단 가운데 도구 막대(`ShellToolBarView`)에 보냅니다(shell_frame 14.2). 창 모델은 `ShellWindowToolsModelStub`(창별 도구 상태, 코어 경로 없는 명령 비활성)입니다. [가이드 2.3, 2.5]
 - **캔버스 keyDown(단일 키 완료)**: `CanvasView.keyDownHandler`가 `CanvasToolShortcut.tool(for:)`로 도구를 구해 `router.dispatch`합니다. 처리한 키는 key down·짝 key up 모두 코어 입력으로 보내지 않고, 도구가 아니거나 비활성이면 코어 입력으로 보냅니다. Delete 키(`deleteBackward(_:)` → `.delete`)는 코어 삭제 명령 경로가 없어 아직 연결하지 않았습니다.

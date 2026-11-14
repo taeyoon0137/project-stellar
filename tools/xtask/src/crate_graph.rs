@@ -86,7 +86,8 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-layout",
             ],
         ),
-        // 앱 프로세스 runtime(ADR-0013): thread 구성과 document thread event loop.
+        // 앱 프로세스 runtime(ADR-0013): thread 구성과 document thread event loop. 창 session의 scene camera
+        // 입력(viewport → scene Viewport, XII.4.3)을 위해 scene에 직접 의존합니다(ADR-0028).
         (
             "stellar-runtime",
             &[
@@ -98,6 +99,7 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-storage",
                 "stellar-assets",
                 "stellar-renderer-core",
+                "stellar-scene",
             ],
         ),
         // 셸 경계는 runtime을 통해서만 문서·프로젝트 작업에 도달합니다(ADR-0013).
@@ -345,6 +347,8 @@ mod tests {
             edge("stellar-runtime", "stellar-storage"),
             edge("stellar-runtime", "stellar-assets"),
             edge("stellar-runtime", "stellar-renderer-core"),
+            // ADR-0028: 창 session scene camera(XII.4.3).
+            edge("stellar-runtime", "stellar-scene"),
         ];
         assert!(check_crate_graph(&edges).is_empty());
     }

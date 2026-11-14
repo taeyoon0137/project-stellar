@@ -134,18 +134,43 @@ enum ZoomFormat {
     }
 }
 
-/// `ShellCommand` → 코어 command ID 대응 Stub(계획 XII.6.5).
+/// `ShellCommand` → 코어 command ID 표(계획 XII.6.5 "command ID는 core에서 공유").
 ///
-/// 코어에는 아직 command ID 체계가 없습니다(`crates/commands`는 골격). 코어가 ID를 정의하면 이 Stub을
-/// 코어가 내보내는 ID 표(FFI 조회 또는 생성 헤더)로 바꿉니다. 셸 전용 명령은 nil입니다.
-enum ShellCommandCoreIDStub {
-    /// 임시 ID 접두사. 코어 ID가 생기면 제거합니다.
-    static let provisionalPrefix = "stellar.stub."
+/// command ID는 코어가 정합니다. 셸은 명령의 공유 이름(`ShellCommand.rawValue`, 예: `edit.undo`)으로 코어에 물어
+/// 얻은 ID만 이 표에 담습니다(`resolve`). 단축키는 셸이 운영체제 관례로 정하고(`ShellCommand.shortcut`, macOS
+/// HIG), ID는 바꾸지 않습니다. 셸 전용 명령(`owner == .shell`)은 코어가 무엇을 돌려줘도 ID를 갖지 않고, 코어가
+/// 아직 구현하지 않은 코어 명령도 ID가 없습니다(그 명령은 메뉴에서 비활성). UI/Tools는 코어 FFI를 모르므로 조회
+/// 함수는 앱 구성(UI/Shell)이 넘깁니다.
+struct ShellCommandCoreIDs: Equatable {
+    /// 코어 연결이 없는 표(영역 검사·미리보기용).
+    static let empty = ShellCommandCoreIDs(ids: [:])
 
-    /// 코어 command ID(임시 문자열). 셸 전용이면 nil.
-    static func coreCommandID(for command: ShellCommand) -> String? {
-        guard command.owner == .core else { return nil }
-        return provisionalPrefix + command.rawValue
+    /// 명령 → 코어 command ID. 코어 소유 명령만 담습니다.
+    let ids: [ShellCommand: UInt32]
+
+    init(ids: [ShellCommand: UInt32]) {
+        self.ids = ids.filter { $0.key.owner == .core && $0.value != 0 }
+    }
+
+    /// 코어 소유 명령마다 공유 이름으로 `lookup`을 불러 표를 만듭니다. `lookup`이 nil·0을 주면 ID가 없습니다.
+    static func resolve(_ lookup: (String) -> UInt32?) -> ShellCommandCoreIDs {
+        var ids: [ShellCommand: UInt32] = [:]
+        for command in ShellCommand.allCases where command.owner == .core {
+            if let id = lookup(command.rawValue), id != 0 {
+                ids[command] = id
+            }
+        }
+        return ShellCommandCoreIDs(ids: ids)
+    }
+
+    /// 코어 command ID. 셸 전용이거나 코어가 구현하지 않은 명령이면 nil.
+    func coreCommandID(for command: ShellCommand) -> UInt32? {
+        ids[command]
+    }
+
+    /// 코어 command ID의 셸 명령(역 조회).
+    func command(forCoreID id: UInt32) -> ShellCommand? {
+        ids.first { $0.value == id }?.key
     }
 }
 

@@ -3,8 +3,9 @@ import AppKit
 /// 셸 명령 하나(XII.6.4, XII.6.5).
 ///
 /// 메뉴 항목, 툴바 항목, 캔버스 단일 키 도구 단축키가 모두 이 enum으로 명령을 지정합니다.
-/// `rawValue`는 셸 쪽 안정 ID입니다. 코어 command ID와의 대응은 `ShellCommandCoreIDStub`이 맡으며,
-/// 코어 command ID 체계가 생기면 그 Stub만 바꿉니다(계획 XII.6.5 "command ID는 core에서 공유").
+/// `rawValue`는 코어와 공유하는 명령 이름입니다(예: `edit.undo`). 코어 command ID는 코어가 정하고, 셸은 이 이름으로
+/// 코어에 물어 `ShellCommandCoreIDs` 표를 만듭니다(계획 XII.6.5 "command ID는 core에서 공유"). 단축키(`shortcut`)는
+/// macOS 관례로 셸이 정합니다.
 enum ShellCommand: String, CaseIterable {
     // MARK: 앱 메뉴
     case about = "app.about"
@@ -104,7 +105,7 @@ enum ShellCommand: String, CaseIterable {
     enum Owner {
         /// 셸 전용(창·메뉴·툴바·시스템 동작). 코어 command ID가 없습니다.
         case shell
-        /// 코어 command로 전달(ShellCommandCoreIDStub이 ID를 줌).
+        /// 코어 command로 전달(ID는 코어가 정하고 `ShellCommandCoreIDs`가 담음, 코어가 아직 구현하지 않았으면 ID 없음).
         case core
     }
 

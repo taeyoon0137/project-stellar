@@ -315,6 +315,14 @@ private final class ShellIntegrationCheckRunner {
     /// 열기 중 창 닫기: 복원(Try Again·Locate Folder…도 같은 경로) 열기가 끝나기 전에 창을 닫으면, 늦게 온
     /// `PROJECT_OPENED`를 닫힌 창에 붙이지 않고 그 session을 바로 닫습니다(창 닫기 = 프로젝트 닫기).
     private func checkCloseWhileOpening(_ coordinator: ShellAppCoordinator, host: RuntimeHost, projectPath: String) {
+        for afterProjectOpened in [false, true] {
+            checkCloseWhileOpening(coordinator, host: host, projectPath: projectPath, afterProjectOpened: afterProjectOpened)
+        }
+    }
+
+    private func checkCloseWhileOpening(
+        _ coordinator: ShellAppCoordinator, host: RuntimeHost, projectPath: String, afterProjectOpened: Bool
+    ) {
         guard let pump = coordinator.pump, let state = encodeRestorableState(path: projectPath),
             coordinator.restoreProjectWindow(from: state) != nil
         else {
@@ -327,12 +335,25 @@ private final class ShellIntegrationCheckRunner {
             expect(false, "열기 중 닫기 검사 창이 열기 중 상태가 아님")
         }
         expect(pump.pendingRequestCount == 1, "복원 열기 요청이 대기 중이 아님: \(pump.pendingRequestCount)")
+        if afterProjectOpened {
+            // timer/run loop 없이 첫 완료만 전달해 창 session 열기 직후에 닫습니다.
+            let deadline = Date().addingTimeInterval(10)
+            var drained = 0
+            while drained == 0 && Date() < deadline {
+                drained = pump.drain(limit: 1)
+                if drained == 0 { Thread.sleep(forTimeInterval: 0.001) }
+            }
+            expect(drained == 1 && loadingWindow?.pendingOpenRequest != nil,
+                   "프로젝트 열기 뒤 창 session 대기 단계에 도달하지 못함")
+            expect(loadingWindow?.windowController.windowSession == nil, "창 session 완료를 먼저 전달함")
+        }
         loadingWindow?.window?.close()
         expect(coordinator.projectWindows.isEmpty, "열기 중 닫은 창이 목록에 남음")
         expect(coordinator.welcomeController != nil, "열기 중 마지막 창을 닫았는데 시작 창이 없음")
         expect(pump.waitForPendingRequests(timeout: 10), "열기 중 닫은 창의 늦은 열기·닫기 완료 event가 오지 않음")
         expect(loadingWindow?.dataSource.session == nil, "닫은 창에 늦게 연 session이 붙음")
         expect(projectCount(host) == 0, "열기 중 창을 닫았는데 늦게 연 코어 프로젝트 session이 남음: \(projectCount(host))")
+        expect(CoreRuntime.state(handle: host.handle)?.window_session_count == 0, "늦게 연 창 session이 남음")
     }
 
     /// Locate Folder…로 고른 폴더를 다른 열기(메뉴·Finder)가 이미 여는 중이면, 같은 폴더 창을 둘 만들지 않고 이 창을
@@ -476,10 +497,11 @@ private final class ShellIntegrationCheckRunner {
             expect(!handler(event), "⌘R을 단일 키 도구로 해석함")
         }
 
-        // 코어 경로가 없는 명령은 숨기지 않고 비활성, Close Project는 활성.
+        // 코어 경로가 없는 명령(복제)과, 저장한 문서·history가 없는 창 session의 Undo·Redo·Save Now(XII.6.4)·줌(XII.4.3,
+        // active view 없음)은 숨기지 않고 비활성, Close Project는 활성.
         for command in [ShellCommand.undo, .redo, .saveNow, .duplicate, .zoomIn] {
             let entry = MainMenuBuilder.makeItem(for: command, target: nil)
-            expect(!router.validateMenuItem(entry), "코어 경로 없는 \(command.rawValue)가 활성")
+            expect(!router.validateMenuItem(entry), "실행할 수 없는 \(command.rawValue)가 활성")
         }
         let close = MainMenuBuilder.makeItem(for: .closeProject, target: nil)
         expect(router.validateMenuItem(close), "Close Project가 비활성")

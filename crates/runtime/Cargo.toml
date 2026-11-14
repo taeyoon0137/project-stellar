@@ -9,10 +9,21 @@ publish = false
 [dependencies]
 stellar-core-types = { path = "../core-types" }
 stellar-document = { path = "../document" }
+# 창별 편집 session(XII.2.1): 문서 state·command 실행과 창별 history.
+stellar-commands = { path = "../commands" }
+stellar-history = { path = "../history" }
 # 프로젝트 열기(probe·identity, IV.2~IV.5)를 document thread에서 실행합니다.
 stellar-project = { path = "../project" }
+# 창 session의 generation 로드·저장(V.4·V.5, XII.2.1).
+stellar-storage = { path = "../storage" }
 # thread 역할 표시(XI.7.1)를 runtime이 만드는 thread에 bind합니다.
 stellar-renderer-core = { path = "../renderer-core" }
+# 창 session viewport → scene camera 입력(XII.4.3, ADR-0028).
+stellar-scene = { path = "../scene" }
+
+[dev-dependencies]
+# 테스트만 문서 semantic snapshot(VI.10.4 test-support)을 씁니다.
+stellar-document = { path = "../document", features = ["test-support"] }
 
 [lints]
 workspace = true

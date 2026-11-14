@@ -7,9 +7,9 @@ import AppKit
 /// 창 프레임은 AppKit frame autosave, pane 상태는 split view autosave, 창 복원은
 /// `NSWindowRestoration`이 맡습니다(가이드 2.6).
 ///
-/// 코어 연결 시 이 controller가 창의 `ProjectWindowSession` handle을 소유합니다(가이드 2.5, XII.2.2).
-/// 지금은 `ShellFrameDataSource`만 받습니다. 프로젝트 창에서는 data source(`ShellProjectFrameDataSource`)가 코어
-/// 프로젝트 session handle을 소유하고, 이 controller가 data source를 소유합니다.
+/// 이 controller가 창의 코어 `ProjectWindowSession` handle(`windowSession`) 하나를 소유합니다(가이드 2.5, XII.2.2).
+/// 프로젝트 창에서는 data source(`ShellProjectFrameDataSource`)가 코어 프로젝트 session handle을 소유하고, 이
+/// controller가 data source와 창 session handle을 소유합니다. 영역 검사처럼 코어 없이 만든 창은 handle이 없습니다.
 final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation,
     NSToolbarItemValidation
 {
@@ -25,6 +25,10 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private var flushScheduled = false
     /// 반영 횟수(검사용).
     private(set) var appliedSnapshotCount = 0
+
+    /// 이 창이 소유하는 코어 창 session handle(XII.2.2). 프로젝트가 열리기 전·실패 상태·코어 없는 창에서는 nil입니다.
+    /// 창이 닫히면 소유자(프로젝트 창)가 한 번 닫습니다.
+    var windowSession: ShellWindowSessionHandle?
 
     /// 창을 닫아도 되는지 묻는 hook(예: 활성 에이전트 세션 확인). nil이면 항상 닫습니다.
     var shouldCloseHandler: (() -> Bool)?

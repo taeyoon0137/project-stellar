@@ -43,6 +43,77 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    // MARK: - 창 session (XII.2.2)
+
+    /// 프로젝트 session 아래에서 창 session 열기를 요청합니다. 결과는 `.windowSessionOpened` 또는 `.requestFailed`입니다.
+    static func openWindowSession(handle: UInt64, project: UInt64) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_session_open(handle, project, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// 창 session 닫기를 요청합니다(문서 state·history·선택 폐기).
+    static func closeWindowSession(handle: UInt64, session: UInt64) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_session_close(handle, session, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// 열린 창 session의 view 정보(탭 수, active view, viewport, XII.4.3). 열려 있지 않으면 nil입니다.
+    static func windowViewInfo(handle: UInt64, session: UInt64) -> StellarWindowViewInfo? {
+        var info = StellarWindowViewInfo()
+        guard stellar_window_view_info(handle, session, &info) == STELLAR_OK,
+            info.version == UInt32(STELLAR_WINDOW_VIEW_INFO_VERSION)
+        else { return nil }
+        return info
+    }
+
+    /// 공유 command 이름(예: `edit.undo`)의 코어 명령 코드(XII.6.5). 코어 명령이 아니면 nil입니다(handle 불필요).
+    static func commandCode(name: String) -> UInt32? {
+        var code: UInt32 = 0
+        let bytes = Array(name.utf8)
+        let status = bytes.withUnsafeBufferPointer { raw in
+            stellar_command_code(raw.baseAddress, raw.count, &code)
+        }
+        guard status == STELLAR_OK, code != 0 else { return nil }
+        return code
+    }
+
+    /// 창 session에 명령 코드(`STELLAR_COMMAND_*`)를 보냅니다(XII.6.4). 결과는 `.historyReplayed`·`.windowSessionSaved`
+    /// 또는 `.requestFailed`입니다. 모르는 코드는 `STELLAR_INVALID_ARGUMENT`(요청 없음)입니다.
+    static func perform(handle: UInt64, session: UInt64, command: UInt32) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = stellar_window_session_perform(handle, session, command, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// 창 session의 선택을 바꾸고 그 창 history에 기록합니다. 결과는 `.windowViewChanged` 또는 `.requestFailed`입니다.
+    static func select(handle: UInt64, session: UInt64, ids: [UUID]) -> Result<UInt64, CoreRuntimeCallError> {
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(ids.count * 16)
+        for id in ids {
+            withUnsafeBytes(of: id.uuid) { bytes.append(contentsOf: $0) }
+        }
+        var request: UInt64 = 0
+        let status = bytes.withUnsafeBufferPointer { raw in
+            stellar_window_session_select(handle, session, raw.baseAddress, ids.count, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// 열린 창 session의 최신 정보. 열려 있지 않으면 nil입니다. document thread를 기다리지 않습니다.
+    static func windowSessionInfo(handle: UInt64, session: UInt64) -> StellarWindowSessionInfo? {
+        var info = StellarWindowSessionInfo()
+        guard stellar_window_session_info(handle, session, &info) == STELLAR_OK,
+            info.version == UInt32(STELLAR_WINDOW_SESSION_INFO_VERSION)
+        else { return nil }
+        return info
+    }
+
     /// 최신 상태 snapshot 요약. document thread를 기다리지 않습니다.
     static func state(handle: UInt64) -> StellarRuntimeState? {
         var state = StellarRuntimeState()
@@ -86,6 +157,17 @@ enum CoreRuntimeEvent: Equatable {
     case documentOpened(request: UInt64, project: UInt64, document: UInt64, documentID: UUID, alreadyOpen: Bool)
     case documentClosed(request: UInt64, document: UInt64)
     case requestFailed(request: UInt64, failure: UInt32, message: String)
+    /// 창 session을 열었습니다. `documentID`는 작업 문서가 없으면(저장한 적 없는 프로젝트) nil입니다.
+    case windowSessionOpened(
+        request: UInt64, project: UInt64, session: UInt64, windowID: UUID, documentID: UUID?, generation: UInt64
+    )
+    case windowSessionClosed(request: UInt64, session: UInt64)
+    /// 창 view state(탭·active view·viewport·선택)가 바뀌었습니다. 새 값은 창 session 정보에 있습니다.
+    case windowViewChanged(request: UInt64, session: UInt64)
+    /// 창 history를 undo(`redo == false`)·redo로 재생했습니다. `applied == false`면 재생할 항목이 없었습니다.
+    case historyReplayed(request: UInt64, session: UInt64, redo: Bool, applied: Bool, revision: UInt64)
+    /// 창 작업 문서를 저장했습니다(Save Now). `written == false`면 바뀐 것이 없어 새 generation을 쓰지 않았습니다.
+    case windowSessionSaved(request: UInt64, session: UInt64, generation: UInt64, written: Bool)
     /// 이 셸이 모르는 kind이거나 payload를 해석하지 못한 event. 요청 id를 알 수 없으므로 버립니다.
     case undecodable(kind: UInt32)
 
@@ -94,7 +176,9 @@ enum CoreRuntimeEvent: Equatable {
         switch self {
         case .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _),
              .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
-             .requestFailed(let request, _, _):
+             .requestFailed(let request, _, _), .windowSessionOpened(let request, _, _, _, _, _),
+             .windowSessionClosed(let request, _), .windowViewChanged(let request, _),
+             .historyReplayed(let request, _, _, _, _), .windowSessionSaved(let request, _, _, _):
             return request
         case .undecodable:
             return nil
@@ -144,6 +228,55 @@ enum CoreRuntimeEvent: Equatable {
             event = reader.u64().flatMap { request in
                 reader.u64().map { .documentClosed(request: request, document: $0) }
             }
+        case UInt32(STELLAR_EVENT_WINDOW_SESSION_OPENED):
+            event = reader.u64().flatMap { request in
+                reader.u64().flatMap { project in
+                    reader.u64().flatMap { session in
+                        reader.uuid().flatMap { windowID in
+                            reader.uuid().flatMap { documentID in
+                                reader.u64().map {
+                                    .windowSessionOpened(
+                                        request: request, project: project, session: session, windowID: windowID,
+                                        documentID: documentID == Self.nilID ? nil : documentID, generation: $0
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        case UInt32(STELLAR_EVENT_WINDOW_SESSION_CLOSED):
+            event = reader.u64().flatMap { request in
+                reader.u64().map { .windowSessionClosed(request: request, session: $0) }
+            }
+        case UInt32(STELLAR_EVENT_WINDOW_VIEW_CHANGED):
+            event = reader.u64().flatMap { request in
+                reader.u64().map { .windowViewChanged(request: request, session: $0) }
+            }
+        case UInt32(STELLAR_EVENT_HISTORY_REPLAYED):
+            event = reader.u64().flatMap { request in
+                reader.u64().flatMap { session in
+                    reader.bool().flatMap { redo in
+                        reader.bool().flatMap { applied in
+                            reader.u64().map {
+                                .historyReplayed(
+                                    request: request, session: session, redo: redo, applied: applied, revision: $0
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        case UInt32(STELLAR_EVENT_WINDOW_SESSION_SAVED):
+            event = reader.u64().flatMap { request in
+                reader.u64().flatMap { session in
+                    reader.u64().flatMap { generation in
+                        reader.bool().map {
+                            .windowSessionSaved(request: request, session: session, generation: generation, written: $0)
+                        }
+                    }
+                }
+            }
         case UInt32(STELLAR_EVENT_REQUEST_FAILED):
             event = reader.u64().flatMap { request in
                 reader.u32().flatMap { failure in
@@ -156,6 +289,9 @@ enum CoreRuntimeEvent: Equatable {
         guard let event, reader.isAtEnd else { return .undecodable(kind: kind) }
         return event
     }
+
+    /// NIL StableId(0 16바이트).
+    static let nilID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
     /// event payload 순차 reader(little-endian, 범위 밖이면 nil).
     private struct PayloadReader {
@@ -185,6 +321,14 @@ enum CoreRuntimeEvent: Equatable {
         }
 
         mutating func u8() -> UInt8? { integer(UInt8.self) }
+        /// 0/1 바이트. 다른 값이면 nil(해석 실패)입니다.
+        mutating func bool() -> Bool? {
+            switch u8() {
+            case 0: return false
+            case 1: return true
+            default: return nil
+            }
+        }
         mutating func u32() -> UInt32? { integer(UInt32.self) }
         mutating func u64() -> UInt64? { integer(UInt64.self) }
 

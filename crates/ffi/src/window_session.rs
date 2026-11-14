@@ -1,0 +1,745 @@
+//! 창 session C ABI (XII.2.2, ADR-0028).
+//!
+//! 셸의 창 controller 하나가 창 session handle 하나를 소유합니다. 요청은 다른 프로젝트·문서 요청과 같이
+//! 기다리지 않고 request id를 돌려주며, 완료는 `stellar_runtime_poll_event`의 event
+//! (`STELLAR_EVENT_WINDOW_SESSION_*`)와 [`stellar_window_session_info`]의 상태 snapshot으로만 돌아옵니다.
+//!
+//! 활성 창의 Undo·Redo·Save Now(XII.6.4)는 [`stellar_window_session_perform`]에 명령 코드
+//! (`STELLAR_COMMAND_*`)를 넘겨 그 창 session에만 보냅니다. 선택 변경([`stellar_window_session_select`])은 그 창
+//! history에 기록됩니다.
+//!
+//! 명령 코드는 코어가 정하고 셸과 공유합니다(XII.6.5). 셸은 메뉴 명령 식별자(공유 이름, 예: `edit.undo`)로
+//! [`stellar_command_code`]에 물어 코드를 얻고, 단축키는 각 운영체제 관례대로 셸 메뉴에 둡니다.
+
+use stellar_core_types::ids::StableId;
+use stellar_runtime::app::{AppRuntime, ProjectSessionId, WindowSessionHandle};
+use stellar_runtime::app_command::AppCommand;
+
+use crate::{ffi_guard, registry, StellarStatus};
+
+/// `StellarWindowSessionInfo` 레이아웃 버전.
+pub const WINDOW_SESSION_INFO_VERSION: u32 = 1;
+
+/// `StellarWindowViewInfo` 레이아웃 버전.
+pub const WINDOW_VIEW_INFO_VERSION: u32 = 1;
+
+/// 창 view state 정보(고정 56 byte, C ABI, XII.4.3): 열린 탭 수, active view와 그 viewport(scene camera 입력).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[repr(C)]
+pub struct StellarWindowViewInfo {
+    /// [`WINDOW_VIEW_INFO_VERSION`](코어가 씀).
+    pub version: u32,
+    /// active 탭이 있으면 1(없으면 아래 viewport·view 값은 0).
+    pub has_view: u32,
+    /// 열린 탭 수.
+    pub tab_count: u32,
+    /// 0.
+    pub reserved: u32,
+    /// 화면 중심의 문서 x.
+    pub center_x: f64,
+    /// 화면 중심의 문서 y.
+    pub center_y: f64,
+    /// 배율(1.0 = 100%).
+    pub zoom: f64,
+    /// active view StableId 16 byte.
+    pub active_view: [u8; 16],
+}
+
+/// 열린 창 session 정보(고정 88 byte, C ABI).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[repr(C)]
+pub struct StellarWindowSessionInfo {
+    /// [`WINDOW_SESSION_INFO_VERSION`](코어가 씀).
+    pub version: u32,
+    /// 작업 문서가 있으면 1, 없으면 0(저장한 적 없는 프로젝트).
+    pub has_document: u32,
+    /// 창 session handle.
+    pub session: u64,
+    /// 소속 프로젝트 session handle.
+    pub project: u64,
+    /// snapshot 게시 시점의 작업 문서 revision.
+    pub revision: u64,
+    /// loaded generation 번호(저장한 적 없으면 0).
+    pub generation: u64,
+    /// undo stack 깊이.
+    pub undo_depth: u32,
+    /// redo stack 깊이.
+    pub redo_depth: u32,
+    /// 선택된 node 수.
+    pub selection_count: u32,
+    /// 0.
+    pub reserved: u32,
+    /// 창 편집 session id 16 byte(UUID 바이트 순서).
+    pub window_id: [u8; 16],
+    /// 작업 문서 StableId 16 byte(없으면 0).
+    pub document_id: [u8; 16],
+}
+
+/// 프로젝트 session 아래에서 창 session 열기를 요청합니다. 기다리지 않고 request id를 씁니다.
+///
+/// 결과는 `STELLAR_EVENT_WINDOW_SESSION_OPENED` 또는 `STELLAR_EVENT_REQUEST_FAILED` event로 옵니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_open(
+    handle: u64,
+    project: u64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.open_window_session(ProjectSessionId(project)),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 창 session 닫기를 요청합니다. 그 창의 문서 state·history·선택을 저장하지 않고 폐기합니다.
+///
+/// 결과는 `STELLAR_EVENT_WINDOW_SESSION_CLOSED` 또는 `STELLAR_EVENT_REQUEST_FAILED` event로 옵니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_close(
+    handle: u64,
+    session: u64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.close_window_session(WindowSessionHandle(session)),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 공유 command 이름(UTF-8 ptr+len, 예: `edit.undo`)의 코어 명령 코드를 씁니다(XII.6.5). runtime handle이 필요 없는
+/// 순수 조회입니다.
+///
+/// 코어가 구현하는 이름이면 `Ok`와 코드(`STELLAR_COMMAND_*`), 코어 명령이 아닌 이름(셸 전용·미구현)이면
+/// `STELLAR_NO_ERROR`와 코드 0입니다. 유효하지 않은 UTF-8은 `InvalidUtf8`, null `out_code`는 `NullPointer`입니다.
+///
+/// # Safety
+/// `name_len > 0`이면 `name`은 `name_len` 바이트 읽기가 유효해야 하고, `out_code`는 `u32` 쓰기가 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_command_code(
+    name: *const u8,
+    name_len: usize,
+    out_code: *mut u32,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_code.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { *out_code = 0 };
+        let text = match unsafe { crate::decode_utf8_owned(name, name_len) } {
+            Ok(text) => text,
+            Err(status) => return status,
+        };
+        match AppCommand::from_name(&text) {
+            Some(command) => {
+                unsafe { *out_code = command.code() };
+                StellarStatus::Ok
+            }
+            None => StellarStatus::NoError,
+        }
+    })
+}
+
+/// 창 session에 명령(`STELLAR_COMMAND_*`)을 보냅니다(XII.6.4). 기다리지 않고 request id를 씁니다.
+///
+/// Undo·Redo는 `STELLAR_EVENT_HISTORY_REPLAYED`, Save Now는 `STELLAR_EVENT_WINDOW_SESSION_SAVED`, 실패는
+/// `STELLAR_EVENT_REQUEST_FAILED`(없는 창, `SAVE_STALE`, `SAVE_FAILED`, `HISTORY_UNAVAILABLE`)로 옵니다. 모르는 명령
+/// 코드는 `InvalidArgument`(요청 없음, `out_request = 0`)입니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_perform(
+    handle: u64,
+    session: u64,
+    command: u32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(command) = AppCommand::from_code(command) else {
+            rt.last_error = Some((
+                StellarStatus::InvalidArgument,
+                format!("알 수 없는 명령 코드입니다: {command}"),
+            ));
+            if !out_request.is_null() {
+                unsafe { *out_request = 0 };
+            }
+            return StellarStatus::InvalidArgument;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.perform(WindowSessionHandle(session), command),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 창 session의 선택을 `ids`(StableId 16 byte × `count`, 선택 순서)로 바꾸고 그 창 history에 기록합니다.
+///
+/// 문서에 없거나 숨김 node는 거릅니다. 결과는 `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
+/// `count`가 0이면 선택을 비웁니다.
+///
+/// # Safety
+/// `count > 0`이면 `ids`는 `count * 16` 바이트 읽기가 유효해야 하고, `out_request`는 null이거나 유효해야
+/// 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_select(
+    handle: u64,
+    session: u64,
+    ids: *const u8,
+    count: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if count > 0 && ids.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(len) = count.checked_mul(16) else {
+            rt.last_error = Some((
+                StellarStatus::InvalidArgument,
+                "선택 id 수가 너무 큽니다".to_string(),
+            ));
+            return StellarStatus::InvalidArgument;
+        };
+        let bytes = if count == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(ids, len) }
+        };
+        let selection: Vec<StableId> = bytes
+            .chunks_exact(16)
+            .map(|chunk| {
+                let mut id = [0u8; 16];
+                id.copy_from_slice(chunk);
+                StableId::from_bytes(id)
+            })
+            .collect();
+        let result = match rt.app() {
+            Ok(app) => app.set_selection(WindowSessionHandle(session), selection),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 열린 창 session의 view state(탭 수, active view, viewport)를 씁니다(XII.4.3). document thread를 기다리지 않습니다.
+///
+/// 열려 있지 않은 창 session은 `InvalidArgument`(last error 설정)입니다.
+///
+/// # Safety
+/// `out_info`는 `StellarWindowViewInfo` 쓰기가 유효한 포인터여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_view_info(
+    handle: u64,
+    session: u64,
+    out_info: *mut StellarWindowViewInfo,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_info.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let snapshot = rt.app.as_ref().map(AppRuntime::state);
+        let Some(summary) = snapshot
+            .as_ref()
+            .and_then(|state| state.window(WindowSessionHandle(session)))
+        else {
+            rt.last_error = Some((
+                StellarStatus::InvalidArgument,
+                format!("열려 있지 않은 창 session입니다: {session}"),
+            ));
+            return StellarStatus::InvalidArgument;
+        };
+        let mut info = StellarWindowViewInfo {
+            version: WINDOW_VIEW_INFO_VERSION,
+            tab_count: summary.tab_count,
+            ..StellarWindowViewInfo::default()
+        };
+        if let (Some(view), Some(viewport)) = (summary.active_view, summary.viewport) {
+            info.has_view = 1;
+            info.center_x = viewport.center_x();
+            info.center_y = viewport.center_y();
+            info.zoom = viewport.zoom();
+            info.active_view = view.to_bytes();
+        }
+        unsafe { *out_info = info };
+        StellarStatus::Ok
+    })
+}
+
+/// 열린 창 session의 최신 snapshot 정보를 씁니다. document thread를 기다리지 않습니다.
+///
+/// 열려 있지 않은 창 session은 `InvalidArgument`(last error 설정)입니다.
+///
+/// # Safety
+/// `out_info`는 `StellarWindowSessionInfo` 쓰기가 유효한 포인터여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_info(
+    handle: u64,
+    session: u64,
+    out_info: *mut StellarWindowSessionInfo,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_info.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let snapshot = rt.app.as_ref().map(AppRuntime::state);
+        let Some(summary) = snapshot
+            .as_ref()
+            .and_then(|state| state.window(WindowSessionHandle(session)))
+        else {
+            rt.last_error = Some((
+                StellarStatus::InvalidArgument,
+                format!("열려 있지 않은 창 session입니다: {session}"),
+            ));
+            return StellarStatus::InvalidArgument;
+        };
+        let info = StellarWindowSessionInfo {
+            version: WINDOW_SESSION_INFO_VERSION,
+            has_document: u32::from(summary.document_id.is_some()),
+            session: summary.session.0,
+            project: summary.project.0,
+            revision: summary.revision.0,
+            generation: summary.generation,
+            undo_depth: summary.undo_depth,
+            redo_depth: summary.redo_depth,
+            selection_count: summary.selection_len,
+            reserved: 0,
+            window_id: summary.window_id.stable_id().to_bytes(),
+            document_id: summary.document_id.map_or([0; 16], |id| id.to_bytes()),
+        };
+        unsafe { *out_info = info };
+        StellarStatus::Ok
+    })
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    use stellar_runtime::app::{RequestFailure, RequestId, RuntimeEvent};
+
+    use crate::{
+        stellar_project_close, stellar_project_open, stellar_runtime_create,
+        stellar_runtime_destroy, stellar_runtime_poll_event, stellar_runtime_state,
+        StellarRuntimeState,
+    };
+
+    /// 저장 프로젝트 fixture(`crates/runtime/tests/fixtures/window-session-project`)를 복사한 임시 프로젝트.
+    pub(crate) struct FixtureProject {
+        pub(crate) path: PathBuf,
+    }
+
+    impl FixtureProject {
+        pub(crate) fn copy(tag: &str) -> FixtureProject {
+            static COUNTER: AtomicUsize = AtomicUsize::new(0);
+            let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "stellar-ffi-window-{tag}-{}-{n}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&path);
+            let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../runtime/tests/fixtures/window-session-project");
+            copy_tree(&source, &path);
+            std::fs::create_dir(path.join(".git")).unwrap();
+            FixtureProject { path }
+        }
+    }
+
+    impl Drop for FixtureProject {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.path().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+
+    /// 다음 event를 C ABI로 읽어 해석합니다(최대 5초).
+    pub(crate) fn next_event(h: u64) -> RuntimeEvent {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let mut kind = 0u32;
+            let mut need = 0usize;
+            let status = unsafe {
+                stellar_runtime_poll_event(h, &mut kind, std::ptr::null_mut(), 0, &mut need)
+            };
+            if status == StellarStatus::Ok {
+                let mut buf = vec![0u8; need];
+                let mut written = 0usize;
+                let status = unsafe {
+                    stellar_runtime_poll_event(
+                        h,
+                        &mut kind,
+                        buf.as_mut_ptr(),
+                        buf.len(),
+                        &mut written,
+                    )
+                };
+                assert_eq!(status, StellarStatus::Ok);
+                return RuntimeEvent::decode(kind, &buf[..written]).expect("event payload");
+            }
+            assert_eq!(status, StellarStatus::NoError);
+            assert!(Instant::now() < deadline, "event가 오지 않았습니다");
+            std::thread::yield_now();
+        }
+    }
+
+    pub(crate) fn create() -> u64 {
+        let mut h = 0u64;
+        assert_eq!(unsafe { stellar_runtime_create(&mut h) }, StellarStatus::Ok);
+        h
+    }
+
+    pub(crate) fn open_project(h: u64, root: &Path) -> u64 {
+        let bytes = root.to_str().unwrap().as_bytes();
+        let mut request = 0u64;
+        assert_eq!(
+            unsafe { stellar_project_open(h, bytes.as_ptr(), bytes.len(), &mut request) },
+            StellarStatus::Ok
+        );
+        match next_event(h) {
+            RuntimeEvent::ProjectOpened { project, .. } => project.0,
+            other => panic!("프로젝트 열기 실패: {other:?}"),
+        }
+    }
+
+    pub(crate) fn open_window(h: u64, project: u64) -> u64 {
+        let mut request = 0u64;
+        assert_eq!(
+            unsafe { stellar_window_session_open(h, project, &mut request) },
+            StellarStatus::Ok
+        );
+        match next_event(h) {
+            RuntimeEvent::WindowSessionOpened {
+                request: got,
+                session,
+                ..
+            } => {
+                assert_eq!(got, RequestId(request));
+                session.0
+            }
+            other => panic!("창 session 열기 실패: {other:?}"),
+        }
+    }
+
+    pub(crate) fn info(h: u64, session: u64) -> Result<StellarWindowSessionInfo, StellarStatus> {
+        let mut info = StellarWindowSessionInfo::default();
+        match unsafe { stellar_window_session_info(h, session, &mut info) } {
+            StellarStatus::Ok => Ok(info),
+            status => Err(status),
+        }
+    }
+
+    fn state(h: u64) -> StellarRuntimeState {
+        let mut state = StellarRuntimeState::default();
+        assert_eq!(
+            unsafe { stellar_runtime_state(h, &mut state) },
+            StellarStatus::Ok
+        );
+        state
+    }
+
+    #[test]
+    fn info_layout_is_fixed() {
+        assert_eq!(std::mem::size_of::<StellarWindowSessionInfo>(), 88);
+        assert_eq!(std::mem::align_of::<StellarWindowSessionInfo>(), 8);
+        assert_eq!(std::mem::size_of::<StellarWindowViewInfo>(), 56);
+        assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, center_x), 16);
+        assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, active_view), 40);
+    }
+
+    fn view_info(h: u64, session: u64) -> StellarWindowViewInfo {
+        let mut info = StellarWindowViewInfo::default();
+        assert_eq!(
+            unsafe { stellar_window_view_info(h, session, &mut info) },
+            StellarStatus::Ok
+        );
+        info
+    }
+
+    #[test]
+    fn zoom_commands_update_the_view_info_of_their_window() {
+        // XII.4.3(C ABI): 줌 명령은 그 창 viewport만 바꾸고 view 정보로 읽습니다.
+        let first = FixtureProject::copy("zoom-a");
+        let second = FixtureProject::copy("zoom-b");
+        let h = create();
+        let a = open_window(h, open_project(h, &first.path));
+        let b = open_window(h, open_project(h, &second.path));
+        let initial = view_info(h, a);
+        assert_eq!(initial.version, WINDOW_VIEW_INFO_VERSION);
+        assert_eq!(
+            (initial.has_view, initial.tab_count, initial.zoom),
+            (1, 1, 1.0)
+        );
+        assert_eq!(
+            initial.active_view,
+            StableId::new_v7(3, 0, 3).to_bytes(),
+            "첫 View"
+        );
+        for command in [AppCommand::ZoomIn, AppCommand::ZoomIn, AppCommand::ZoomOut] {
+            assert!(matches!(
+                perform(h, a, command.code()),
+                RuntimeEvent::WindowViewChanged { session, .. } if session.0 == a
+            ));
+        }
+        assert_eq!(view_info(h, a).zoom, 2.0);
+        assert_eq!(view_info(h, b).zoom, 1.0, "B viewport 그대로");
+        assert!(matches!(
+            perform(h, a, AppCommand::ZoomToActualSize.code()),
+            RuntimeEvent::WindowViewChanged { .. }
+        ));
+        assert_eq!(view_info(h, a).zoom, 1.0);
+        let mut info = StellarWindowViewInfo::default();
+        assert_eq!(
+            unsafe { stellar_window_view_info(h, 999, &mut info) },
+            StellarStatus::InvalidArgument
+        );
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    #[test]
+    fn two_window_sessions_open_and_close_through_the_c_abi() {
+        let first = FixtureProject::copy("a");
+        let second = FixtureProject::copy("b");
+        let h = create();
+        let project_a = open_project(h, &first.path);
+        let project_b = open_project(h, &second.path);
+        let a = open_window(h, project_a);
+        let b = open_window(h, project_b);
+        assert_ne!(a, b);
+        assert_eq!(state(h).window_session_count, 2);
+
+        let info_a = info(h, a).unwrap();
+        let info_b = info(h, b).unwrap();
+        assert_eq!(info_a.version, WINDOW_SESSION_INFO_VERSION);
+        assert_eq!((info_a.project, info_b.project), (project_a, project_b));
+        assert_eq!((info_a.has_document, info_a.generation), (1, 1));
+        assert_eq!(info_a.document_id, info_b.document_id, "같은 fixture 문서");
+        assert_ne!(info_a.window_id, info_b.window_id, "창마다 다른 id");
+        assert_eq!((info_a.undo_depth, info_a.redo_depth), (0, 0));
+
+        let mut request = 0u64;
+        assert_eq!(
+            unsafe { stellar_window_session_close(h, a, &mut request) },
+            StellarStatus::Ok
+        );
+        assert_eq!(
+            next_event(h),
+            RuntimeEvent::WindowSessionClosed {
+                request: RequestId(request),
+                session: WindowSessionHandle(a),
+            }
+        );
+        assert_eq!(info(h, a), Err(StellarStatus::InvalidArgument));
+        assert!(info(h, b).is_ok());
+        assert_eq!(state(h).window_session_count, 1);
+
+        // 프로젝트를 닫으면 남은 창 session도 닫힙니다.
+        assert_eq!(
+            unsafe { stellar_project_close(h, project_b, &mut request) },
+            StellarStatus::Ok
+        );
+        assert!(matches!(next_event(h), RuntimeEvent::ProjectClosed { .. }));
+        assert_eq!(info(h, b), Err(StellarStatus::InvalidArgument));
+        assert_eq!(state(h).window_session_count, 0);
+
+        // 닫은 창 session을 다시 닫으면 실패 event입니다.
+        assert_eq!(
+            unsafe { stellar_window_session_close(h, a, &mut request) },
+            StellarStatus::Ok
+        );
+        let RuntimeEvent::RequestFailed { failure, .. } = next_event(h) else {
+            panic!("실패 event가 아님");
+        };
+        assert_eq!(failure, RequestFailure::UnknownWindowSession);
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    fn perform(h: u64, session: u64, command: u32) -> RuntimeEvent {
+        let mut request = 0u64;
+        assert_eq!(
+            unsafe { stellar_window_session_perform(h, session, command, &mut request) },
+            StellarStatus::Ok
+        );
+        let event = next_event(h);
+        assert_eq!(event.request(), RequestId(request));
+        event
+    }
+
+    #[test]
+    fn undo_redo_and_save_now_go_to_the_given_window_session() {
+        // 검증 기준(XII.6.4, C ABI): 창별 history와 save 호출.
+        let first = FixtureProject::copy("cmd-a");
+        let second = FixtureProject::copy("cmd-b");
+        let h = create();
+        let a = open_window(h, open_project(h, &first.path));
+        let b = open_window(h, open_project(h, &second.path));
+        // 선택할 node: fixture 문서의 첫 View root(10)의 자식 11.
+        let child = StableId::new_v7(11, 0, 11).to_bytes();
+        let mut request = 0u64;
+        assert_eq!(
+            unsafe { stellar_window_session_select(h, a, child.as_ptr(), 1, &mut request) },
+            StellarStatus::Ok
+        );
+        assert!(matches!(
+            next_event(h),
+            RuntimeEvent::WindowViewChanged { session, .. } if session.0 == a
+        ));
+        assert_eq!(
+            (
+                info(h, a).unwrap().undo_depth,
+                info(h, a).unwrap().selection_count
+            ),
+            (1, 1)
+        );
+        assert_eq!(info(h, b).unwrap().undo_depth, 0);
+
+        let undo = perform(h, a, AppCommand::Undo.code());
+        assert!(matches!(
+            undo,
+            RuntimeEvent::HistoryReplayed {
+                redo: false,
+                applied: true,
+                ..
+            }
+        ));
+        let after = info(h, a).unwrap();
+        assert_eq!((after.selection_count, after.redo_depth), (0, 1));
+        assert!(matches!(
+            perform(h, b, AppCommand::Undo.code()),
+            RuntimeEvent::HistoryReplayed { applied: false, .. }
+        ));
+        assert!(matches!(
+            perform(h, a, AppCommand::Redo.code()),
+            RuntimeEvent::HistoryReplayed {
+                redo: true,
+                applied: true,
+                ..
+            }
+        ));
+        assert_eq!(info(h, a).unwrap().selection_count, 1);
+        // Save Now: 선택만 바뀌어 저장할 문서 변경이 없습니다(generation 1 그대로).
+        assert!(matches!(
+            perform(h, a, AppCommand::SaveNow.code()),
+            RuntimeEvent::WindowSessionSaved { session, generation: 1, written: false, .. }
+                if session.0 == a
+        ));
+
+        // 모르는 명령 코드는 요청을 만들지 않습니다.
+        let mut request = 9u64;
+        assert_eq!(
+            unsafe { stellar_window_session_perform(h, a, 999, &mut request) },
+            StellarStatus::InvalidArgument
+        );
+        assert_eq!(request, 0);
+        assert_eq!(
+            unsafe { stellar_window_session_select(h, a, std::ptr::null(), 1, &mut request) },
+            StellarStatus::NullPointer
+        );
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    fn code_of(name: &str) -> (StellarStatus, u32) {
+        let mut code = 77u32;
+        let status = unsafe { stellar_command_code(name.as_ptr(), name.len(), &mut code) };
+        (status, code)
+    }
+
+    #[test]
+    fn command_codes_are_looked_up_by_shared_name() {
+        // 검증 기준(XII.6.5, C ABI): command ID는 코어가 공유 이름으로 알려 줍니다.
+        for command in AppCommand::ALL {
+            assert_eq!(code_of(command.name()), (StellarStatus::Ok, command.code()));
+        }
+        for name in ["app.quit", "edit.copy", "view.toggle_sidebar", ""] {
+            assert_eq!(code_of(name), (StellarStatus::NoError, 0), "{name}");
+        }
+        let bad = [0xFFu8, 0xFE];
+        let mut code = 5u32;
+        assert_eq!(
+            unsafe { stellar_command_code(bad.as_ptr(), bad.len(), &mut code) },
+            StellarStatus::InvalidUtf8
+        );
+        assert_eq!(code, 0);
+        assert_eq!(
+            unsafe { stellar_command_code(bad.as_ptr(), bad.len(), std::ptr::null_mut()) },
+            StellarStatus::NullPointer
+        );
+    }
+
+    #[test]
+    fn null_info_pointer_and_unknown_handle_are_rejected() {
+        let h = create();
+        assert_eq!(
+            unsafe { stellar_window_session_info(h, 1, std::ptr::null_mut()) },
+            StellarStatus::NullPointer
+        );
+        assert_eq!(info(h, 1), Err(StellarStatus::InvalidArgument));
+        let mut request = 7u64;
+        assert_eq!(
+            unsafe { stellar_window_session_open(0, 1, &mut request) },
+            StellarStatus::InvalidHandle
+        );
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+}

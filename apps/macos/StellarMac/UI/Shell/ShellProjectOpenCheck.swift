@@ -183,6 +183,7 @@ private final class ShellProjectOpenCheckRunner {
             (STELLAR_FAILURE_INVALID_PROJECT_ID, .invalidProjectID),
             (STELLAR_FAILURE_UNTRUSTED_SYMLINK, .untrustedSymlink),
             (STELLAR_FAILURE_PATH_UNRESOLVED, .pathUnresolved),
+            (STELLAR_FAILURE_WINDOW_SESSION_LOAD_FAILED, .designUnavailable),
         ]
         for (code, expected) in codes {
             expect(ShellProjectOpenFailure(coreFailure: UInt32(code)) == expected, "실패 코드 \(code) 대응 불일치")

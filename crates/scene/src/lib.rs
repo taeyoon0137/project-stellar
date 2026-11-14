@@ -56,6 +56,9 @@ pub mod transient;
 
 pub mod interaction;
 
+/// selection overlay transient scene layer (XII.4.4).
+pub mod overlay;
+
 /// 테스트 전용 scene fixture 생성기 (XI.1.2).
 #[cfg(test)]
 mod fixtures;

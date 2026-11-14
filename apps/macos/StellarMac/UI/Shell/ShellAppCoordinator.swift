@@ -5,8 +5,10 @@ import SwiftUI
 ///
 /// - 열린 프로젝트 창이 없으면 시작 창(`WelcomeWindowController`)을 보여 주고, 프로젝트 창이 열리면 닫습니다
 ///   (가이드 7.1 "열린 프로젝트가 없음").
-/// - Open Project(메뉴·시작 창·Finder에서 폴더 열기)는 코어 `stellar_project_open`으로 열고, 완료 event를 받은 뒤
-///   프로젝트 창을 만듭니다. 같은 폴더를 연 창이 이미 있으면 새 창을 만들지 않고 그 창을 앞으로 가져옵니다(가이드 2.5).
+/// - Open Project(메뉴·시작 창·Finder에서 폴더 열기)는 코어 `stellar_project_open`으로 열고, 그 프로젝트 session 아래에서
+///   창 session(`stellar_window_session_open`, 작업 문서·history·선택, XII.2.2)까지 연 뒤 프로젝트 창을 만듭니다. 창
+///   controller가 창 session handle 하나를 소유하고, 창을 닫으면 창 session → 프로젝트 session 순서로 닫습니다. 같은
+///   폴더를 연 창이 이미 있으면 새 창을 만들지 않고 그 창을 앞으로 가져옵니다(가이드 2.5).
 /// - 창 복원은 프로젝트 폴더 경로만 창 상태에 저장하고, 복원할 때 같은 경로를 다시 엽니다(가이드 2.6).
 /// - New Project·Clone Project는 코어 FFI 경로가 아직 없어 메뉴에서 비활성이고, 시작 창에서 고르면 안내만 합니다.
 @MainActor
@@ -27,6 +29,8 @@ final class ShellAppCoordinator: NSObject {
     let applicationModel = ShellApplicationCommandModel()
     let applicationRouter: ShellCommandRouter
     let welcomeData = ShellWelcomeDataSource()
+    /// 코어 command ID 표(XII.6.5). 코어에 공유 이름으로 물어 한 번 만들고 프로젝트 창마다 넘깁니다.
+    let coreCommandIDs = ShellCommandCoreIDs.fromCore()
     private(set) var projectWindows: [ShellProjectWindow] = []
     private(set) var welcomeController: WelcomeWindowController?
     private(set) var settingsController: NSWindowController?
@@ -213,20 +217,67 @@ final class ShellAppCoordinator: NSObject {
     }
 
     private func finishOpening(path: String, origin: OpenOrigin, event: CoreRuntimeEvent) {
-        pendingOpenPaths.remove(path)
-        welcomeData.setOpening(nil)
+        func finish() {
+            pendingOpenPaths.remove(path)
+            welcomeData.setOpening(nil)
+        }
         switch event {
         case .projectOpened(_, let project, let projectID, let name, let root):
-            guard let pump else { return }
-            let projectWindow = makeProjectWindow(rootPath: root)
-            projectWindow.didOpen(ShellProjectSessionHandle(
+            guard let pump else { return finish() }
+            let projectSession = ShellProjectSessionHandle(
                 project: project, projectID: projectID, name: name, rootPath: root, pump: pump
-            ))
-            present(projectWindow)
+            )
+            // 창 session이 열릴 때까지 열기 중으로 둡니다(같은 폴더 중복 요청 방지 유지).
+            openWindowSession(for: projectSession, path: path) { [weak self] result in
+                guard let self else { return }
+                finish()
+                switch result {
+                case .success(let windowSession):
+                    let projectWindow = self.makeProjectWindow(rootPath: root)
+                    projectWindow.didOpen(projectSession, windowSession: windowSession)
+                    self.present(projectWindow)
+                case .failure(let failure):
+                    self.presentOpenFailure(failure, path: path, origin: origin)
+                }
+            }
         case .requestFailed(_, let failure, _):
+            finish()
             presentOpenFailure(Self.failure(coreCode: failure, path: path), path: path, origin: origin)
         default:
+            finish()
             presentOpenFailure(.unexpectedResponse, path: path, origin: origin)
+        }
+    }
+
+    /// 연 프로젝트 session 아래에서 창 session을 엽니다(XII.2.2). 실패하면 프로젝트 session을 닫고 원인을 넘깁니다.
+    private func openWindowSession(
+        for projectSession: ShellProjectSessionHandle,
+        path: String,
+        completion: @escaping (Result<ShellWindowSessionHandle, ShellProjectOpenFailure>) -> Void
+    ) {
+        guard let pump else {
+            projectSession.close()
+            completion(.failure(.runtimeUnavailable))
+            return
+        }
+        let result = pump.openWindowSession(project: projectSession.project) { event in
+            switch event {
+            case .windowSessionOpened(_, let project, let session, let windowID, let documentID, let generation):
+                completion(.success(ShellWindowSessionHandle(
+                    session: session, project: project, windowID: windowID, documentID: documentID,
+                    openedGeneration: generation, pump: pump
+                )))
+            case .requestFailed(_, let failure, _):
+                projectSession.close()
+                completion(.failure(Self.failure(coreCode: failure, path: path)))
+            default:
+                projectSession.close()
+                completion(.failure(.unexpectedResponse))
+            }
+        }
+        if case .failure(let error) = result {
+            projectSession.close()
+            completion(.failure(ShellProjectOpenFailure(callStatus: error.status)))
         }
     }
 
@@ -263,7 +314,6 @@ final class ShellAppCoordinator: NSObject {
                 self.discardLateOpen(event)
                 return
             }
-            projectWindow.pendingOpenRequest = nil
             self.finishReopening(projectWindow, path: path, event: event)
         }
         switch result {
@@ -284,12 +334,30 @@ final class ShellAppCoordinator: NSObject {
         switch event {
         case .projectOpened(_, let project, let projectID, let name, let root):
             guard let pump else { return }
-            projectWindow.didOpen(ShellProjectSessionHandle(
+            let projectSession = ShellProjectSessionHandle(
                 project: project, projectID: projectID, name: name, rootPath: root, pump: pump
-            ))
+            )
+            let openingRequest = event.request
+            openWindowSession(for: projectSession, path: path) { [weak projectWindow] result in
+                guard let projectWindow, projectWindow.pendingOpenRequest == openingRequest else {
+                    // 여는 동안 창이 닫혔으면 연 session을 남기지 않습니다.
+                    if case .success(let windowSession) = result { windowSession.close() }
+                    projectSession.close()
+                    return
+                }
+                projectWindow.pendingOpenRequest = nil
+                switch result {
+                case .success(let windowSession):
+                    projectWindow.didOpen(projectSession, windowSession: windowSession)
+                case .failure(let failure):
+                    projectWindow.didFail(failure, path: path)
+                }
+            }
         case .requestFailed(_, let failure, _):
+            projectWindow.pendingOpenRequest = nil
             projectWindow.didFail(Self.failure(coreCode: failure, path: path), path: path)
         default:
+            projectWindow.pendingOpenRequest = nil
             projectWindow.didFail(.unexpectedResponse, path: path)
         }
     }
@@ -324,7 +392,14 @@ final class ShellAppCoordinator: NSObject {
         projectWindow.toolsModel.commandHandler = { [weak projectWindow] command in
             if command == .closeProject {
                 projectWindow?.window?.performClose(nil)
+            } else {
+                // Undo·Redo·Save Now는 이 창(key 창)의 창 session으로 갑니다(XII.6.4).
+                projectWindow?.performSessionCommand(command)
             }
+        }
+        projectWindow.coreCommandIDs = coreCommandIDs
+        projectWindow.alertPresenter = { [weak self] title, message, window in
+            self?.alertPresenter(title, message, window)
         }
         let controller = projectWindow.windowController
         controller.shouldCloseHandler = { [weak self, weak projectWindow] in
@@ -416,7 +491,7 @@ final class ShellAppCoordinator: NSObject {
     private func projectWindowWillClose(_ projectWindow: ShellProjectWindow) {
         // 열기 중이면 늦게 올 결과가 이 창에 붙지 않게 하고, 열린 session은 도착할 때 닫습니다(`reopen`).
         projectWindow.pendingOpenRequest = nil
-        projectWindow.dataSource.session?.close()
+        projectWindow.closeSessions()
         projectWindows.removeAll { $0 === projectWindow }
         // 마지막 프로젝트 창이면 닫히기 전에 시작 창을 띄워 앱이 종료되지 않게 합니다(창 닫기 = 프로젝트 닫기).
         showWelcomeIfNeeded()

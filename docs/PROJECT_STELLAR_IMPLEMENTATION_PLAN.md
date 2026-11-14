@@ -1212,11 +1212,11 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XII.2.1 | `[ ]` | `ProjectWindowSession` core type에 ProjectIdentity, WindowSessionId, 독립 document state, view state, history, loaded generation을 정의합니다. | 두 session이 서로 state를 공유하지 않습니다. | IV.2.3, VII.5.1, V.4.4 |
-| XII.2.2 | `[ ]` | macOS `NSWindowController`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.5.3, XII.2.1 |
+| XII.2.1 | `[x]` | `ProjectWindowSession` core type에 ProjectIdentity, WindowSessionId, 독립 document state, view state, history, loaded generation을 정의합니다. | 두 session이 서로 state를 공유하지 않습니다. | IV.2.3, VII.5.1, V.4.4 |
+| XII.2.2 | `[x]` | macOS `NSWindowController`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.5.3, XII.2.1 |
 | XII.2.3 | `[!]` | Windows `MainWindow`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.6.3, XII.2.1 |
 | XII.2.4 | `[ ]` | 같은 project path를 여러 창에서 열 수 있게 하되 각 창이 독립 base generation과 memory model을 로드하게 합니다. | 한 창 edit가 다른 창에 즉시 나타나지 않습니다. | XII.2.2, XII.2.3 |
-| XII.2.5 | `[ ]` | 창별 열린 tab, active view, viewport, selection을 WindowViewState에 연결합니다. | 창간 상태 격리. | VII.3.1, XII.2.1 |
+| XII.2.5 | `[x]` | 창별 열린 tab, active view, viewport, selection을 WindowViewState에 연결합니다. | 창간 상태 격리. | VII.3.1, XII.2.1 |
 
 ### XII.3 Canvas 입력 파이프라인
 
@@ -1236,8 +1236,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XII.4.1 | `[ ]` | macOS CanvasHost의 CAMetalLayer를 Metal backend에 연결하고 scale/size lifecycle을 전달합니다. | resize, display scale change 렌더 통과. | XI.8.2, XII.2.2 |
 | XII.4.2 | `[!]` | Windows CanvasHost HWND/SwapChainPanel 또는 선택된 native surface를 D3D12 backend에 연결합니다. | resize, DPI change 렌더 통과. | XI.9.2, XII.2.3 |
-| XII.4.3 | `[ ]` | viewport pan/zoom matrix를 scene camera 입력으로 연결하고 document geometry는 변경하지 않습니다. | pan/zoom 후 save bytes 동일. | XII.2.5, XI.2.2 |
-| XII.4.4 | `[ ]` | selection overlay와 handles를 transient scene layer로 렌더합니다. | project snapshot에 overlay node 없음. | XI.3.5, XII.4.3 |
+| XII.4.3 | `[~]` | viewport pan/zoom matrix를 scene camera 입력으로 연결하고 document geometry는 변경하지 않습니다. | pan/zoom 후 save bytes 동일. | XII.2.5, XI.2.2 |
+| XII.4.4 | `[~]` | selection overlay와 handles를 transient scene layer로 렌더합니다. | project snapshot에 overlay node 없음. | XI.3.5, XII.4.3 |
 
 ### XII.5 네이티브 UI 텍스트와 IME
 
@@ -1257,8 +1257,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XII.6.1 | `[ ]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
 | XII.6.2 | `[x]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
 | XII.6.3 | `[ ]` | Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다. | local fixture remote clone 통과. | IV.6.4 |
-| XII.6.4 | `[ ]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
-| XII.6.5 | `[ ]` | 앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다. | key mapping smoke test. | XII.6.4 |
+| XII.6.4 | `[~]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
+| XII.6.5 | `[~]` | 앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다. | key mapping smoke test. | XII.6.4 |
 
 ### XII.7 동일 프로젝트 다중 창 저장 충돌
 

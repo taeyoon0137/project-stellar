@@ -41,6 +41,34 @@
 //! (창별 독립 memory model은 XII.2.4 소관). 프로젝트를 닫으면 그 아래 문서도 닫습니다. 저장된 문서
 //! 내용 로드는 아직 하지 않으며, 새로 연 문서는 빈 문서(revision 0)입니다.
 //!
+//! # 창 session (XII.2.2)
+//!
+//! 창 하나는 [`ProjectWindowSession`](crate::window_session::ProjectWindowSession) 하나를 소유합니다.
+//! [`AppRuntime::open_window_session`]은 열린 프로젝트 session 아래에서 디스크의 current generation과 작업
+//! 문서를 로드해 창 session을 만들고 [`WindowSessionHandle`]을 돌려줍니다. 셸의 창 controller는 이 handle
+//! 하나를 보관하고 창을 닫을 때 [`AppRuntime::close_window_session`]으로 한 번 닫습니다. 프로젝트 session을
+//! 닫으면 그 아래 창 session도 닫습니다. 창 session은 서로 문서·history·선택을 공유하지 않습니다(XII.2.1).
+//!
+//! 창별 열린 탭·active view·탭별 viewport(XII.2.5)는 [`AppRuntime::open_view_tab`]·
+//! [`AppRuntime::close_view_tab`]·[`AppRuntime::set_viewport`]로 바꿉니다. 이 요청은 그 창의 view state만
+//! 바꾸고 문서 revision·history·저장 bytes에 영향이 없으며, 성공하면 [`RuntimeEvent::WindowViewChanged`]가
+//! 옵니다.
+//!
+//! # Undo·Redo·Save Now (XII.6.4)
+//!
+//! 셸은 활성 창의 창 session handle에 [`AppCommand`](crate::app_command::AppCommand)를 보냅니다
+//! ([`AppRuntime::perform`]). Undo·Redo는 그 창 history만 재생하고 [`RuntimeEvent::HistoryReplayed`]
+//! (되돌릴 항목이 없으면 `applied == false`)를, Save Now는 그 창 작업 문서를 저장하고
+//! [`RuntimeEvent::WindowSessionSaved`](바뀐 것이 없으면 `written == false`)를 보냅니다. 다른 저장이 먼저
+//! 끝났으면 쓰지 않고 [`RequestFailure::SaveStale`]입니다.
+//!
+//! # viewport 이동·확대 (XII.4.3)
+//!
+//! Zoom In·Zoom Out·Actual Size([`AppCommand`](crate::app_command::AppCommand))와 [`AppRuntime::pan_viewport`]는 그 창
+//! active 탭 viewport만 바꾸고 [`RuntimeEvent::WindowViewChanged`]를 보냅니다. 문서 revision·history·저장 bytes는
+//! 그대로입니다. scene camera 입력은 [`ProjectWindowSession::camera`](crate::window_session::ProjectWindowSession::camera)가
+//! viewport와 캔버스 화면 크기로 만듭니다.
+//!
 //! # outbox 상한
 //!
 //! 완료 event를 꺼내지 않은 요청 수(실행 중 포함)가 상한([`AppRuntime::DEFAULT_EVENT_CAPACITY`])에
@@ -67,6 +95,13 @@
 //! | `0x0103` | DocumentOpened | request u64, project u64, document u64, document_id \[16\], already_open u8 |
 //! | `0x0104` | DocumentClosed | request u64, document u64 |
 //! | `0x0105` | RequestFailed | request u64, failure u32, message str |
+//! | `0x0106` | WindowSessionOpened | request u64, project u64, session u64, window_id \[16\], document_id \[16\], generation u64 |
+//! | `0x0107` | WindowSessionClosed | request u64, session u64 |
+//! | `0x0108` | WindowViewChanged | request u64, session u64 |
+//! | `0x0109` | HistoryReplayed | request u64, session u64, redo u8, applied u8, revision u64 |
+//! | `0x010A` | WindowSessionSaved | request u64, session u64, generation u64, written u8 |
+//!
+//! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
@@ -75,7 +110,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use stellar_core_types::ids::StableId;
+use stellar_commands::view_tabs::{CanvasViewport, ViewTabsError, ZOOM_STEP};
+use stellar_core_types::ids::{StableId, WindowSessionId};
 use stellar_core_types::revision::DocumentRevision;
 use stellar_document::open_set::{OpenDocumentHandle, OpenOutcome};
 use stellar_project::identity::{parse_project_id, ProjectIdentity};
@@ -83,11 +119,13 @@ use stellar_project::probe::{safe_probe, ProbeError, SafeProbeError};
 use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 
+use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
 use crate::document_thread::{
     DocumentContext, DocumentLoopStats, DocumentSender, DocumentThread, DocumentThreadError,
     SubmitError,
 };
+use crate::window_session::{ProjectWindowSession, WindowSessionEditError, WindowSessionSaveError};
 
 /// event payload 스키마 버전.
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
@@ -107,6 +145,16 @@ pub mod event_kind {
     pub const DOCUMENT_CLOSED: u32 = 0x0104;
     /// 요청이 실패했습니다.
     pub const REQUEST_FAILED: u32 = 0x0105;
+    /// 창 session을 열었습니다.
+    pub const WINDOW_SESSION_OPENED: u32 = 0x0106;
+    /// 창 session을 닫았습니다.
+    pub const WINDOW_SESSION_CLOSED: u32 = 0x0107;
+    /// 창 view state(탭·active view·viewport)를 바꿨습니다.
+    pub const WINDOW_VIEW_CHANGED: u32 = 0x0108;
+    /// 창 history를 undo·redo로 재생했습니다.
+    pub const HISTORY_REPLAYED: u32 = 0x0109;
+    /// 창 작업 문서를 저장했습니다(Save Now).
+    pub const WINDOW_SESSION_SAVED: u32 = 0x010A;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +178,14 @@ pub struct ProjectSessionId(
 /// 열린 문서 session id. runtime마다 1부터 증가하며 다시 쓰지 않습니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DocumentSessionId(
+    /// id 값(0 = 없음).
+    pub u64,
+);
+
+/// 열린 창 session handle(XII.2.2). runtime마다 1부터 증가하며 다시 쓰지 않습니다. 창 편집 session의
+/// 영속 식별자([`WindowSessionId`])와 별개인 runtime 정수 handle입니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WindowSessionHandle(
     /// id 값(0 = 없음).
     pub u64,
 );
@@ -163,11 +219,27 @@ pub enum RequestFailure {
     UntrustedSymlink,
     /// 프로젝트 경로를 절대·실경로로 해석하지 못함.
     PathUnresolved,
+    /// 열려 있지 않은 창 session.
+    UnknownWindowSession,
+    /// 창 session의 generation·작업 문서를 로드하지 못함.
+    WindowSessionLoadFailed,
+    /// 작업 문서에 없는 View이거나 열리지 않은 탭(작업 문서가 없는 창 포함).
+    UnknownView,
+    /// active 탭이 없어 viewport를 바꿀 수 없음.
+    NoActiveView,
+    /// 다른 저장이 먼저 끝나 current generation이 창의 loaded generation과 다름(아무것도 쓰지 않음).
+    SaveStale,
+    /// 저장 실패(직렬화·계획·기록·pointer 전환).
+    SaveFailed,
+    /// history를 재생할 수 없음(preview 진행 중 등).
+    HistoryUnavailable,
+    /// 이동·확대 결과 viewport가 유효하지 않음(유한 값 아님).
+    InvalidViewport,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 11] = [
+    pub const ALL: [RequestFailure; 19] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -179,6 +251,14 @@ impl RequestFailure {
         RequestFailure::InvalidProjectId,
         RequestFailure::UntrustedSymlink,
         RequestFailure::PathUnresolved,
+        RequestFailure::UnknownWindowSession,
+        RequestFailure::WindowSessionLoadFailed,
+        RequestFailure::UnknownView,
+        RequestFailure::NoActiveView,
+        RequestFailure::SaveStale,
+        RequestFailure::SaveFailed,
+        RequestFailure::HistoryUnavailable,
+        RequestFailure::InvalidViewport,
     ];
 
     /// C ABI 코드 값.
@@ -195,6 +275,14 @@ impl RequestFailure {
             RequestFailure::InvalidProjectId => 15,
             RequestFailure::UntrustedSymlink => 16,
             RequestFailure::PathUnresolved => 17,
+            RequestFailure::UnknownWindowSession => 4,
+            RequestFailure::WindowSessionLoadFailed => 18,
+            RequestFailure::UnknownView => 19,
+            RequestFailure::NoActiveView => 20,
+            RequestFailure::SaveStale => 21,
+            RequestFailure::SaveFailed => 22,
+            RequestFailure::HistoryUnavailable => 23,
+            RequestFailure::InvalidViewport => 24,
         }
     }
 
@@ -250,6 +338,59 @@ pub enum RuntimeEvent {
         request: RequestId,
         /// 닫은 문서 session.
         document: DocumentSessionId,
+    },
+    /// 창 session을 열었습니다.
+    WindowSessionOpened {
+        /// 요청 id.
+        request: RequestId,
+        /// 소속 프로젝트 session.
+        project: ProjectSessionId,
+        /// 창 session handle.
+        session: WindowSessionHandle,
+        /// 창 편집 session id.
+        window_id: WindowSessionId,
+        /// 작업 문서 StableId(없으면 NIL).
+        document_id: StableId,
+        /// 로드한 generation 번호(저장한 적 없으면 0).
+        generation: u64,
+    },
+    /// 창 session을 닫았습니다.
+    WindowSessionClosed {
+        /// 요청 id.
+        request: RequestId,
+        /// 닫은 창 session handle.
+        session: WindowSessionHandle,
+    },
+    /// 창 view state(탭·active view·viewport)를 바꿨습니다. 새 값은 상태 snapshot에 있습니다.
+    WindowViewChanged {
+        /// 요청 id.
+        request: RequestId,
+        /// 창 session handle.
+        session: WindowSessionHandle,
+    },
+    /// 창 history를 undo(`redo == false`)·redo로 재생했습니다.
+    HistoryReplayed {
+        /// 요청 id.
+        request: RequestId,
+        /// 창 session handle.
+        session: WindowSessionHandle,
+        /// redo였는지.
+        redo: bool,
+        /// 재생한 항목이 있었는지(없으면 아무것도 바뀌지 않음).
+        applied: bool,
+        /// 재생 뒤 작업 문서 revision.
+        revision: DocumentRevision,
+    },
+    /// 창 작업 문서를 저장했습니다(Save Now).
+    WindowSessionSaved {
+        /// 요청 id.
+        request: RequestId,
+        /// 창 session handle.
+        session: WindowSessionHandle,
+        /// 저장 뒤 loaded generation 번호.
+        generation: u64,
+        /// 새 generation을 썼는지(바뀐 것이 없으면 `false`).
+        written: bool,
     },
     /// 요청이 실패했습니다. 상태는 바뀌지 않았습니다.
     RequestFailed {
@@ -414,6 +555,11 @@ impl RuntimeEvent {
             RuntimeEvent::DocumentOpened { .. } => event_kind::DOCUMENT_OPENED,
             RuntimeEvent::DocumentClosed { .. } => event_kind::DOCUMENT_CLOSED,
             RuntimeEvent::RequestFailed { .. } => event_kind::REQUEST_FAILED,
+            RuntimeEvent::WindowSessionOpened { .. } => event_kind::WINDOW_SESSION_OPENED,
+            RuntimeEvent::WindowSessionClosed { .. } => event_kind::WINDOW_SESSION_CLOSED,
+            RuntimeEvent::WindowViewChanged { .. } => event_kind::WINDOW_VIEW_CHANGED,
+            RuntimeEvent::HistoryReplayed { .. } => event_kind::HISTORY_REPLAYED,
+            RuntimeEvent::WindowSessionSaved { .. } => event_kind::WINDOW_SESSION_SAVED,
         }
     }
 
@@ -424,6 +570,11 @@ impl RuntimeEvent {
             | RuntimeEvent::ProjectClosed { request, .. }
             | RuntimeEvent::DocumentOpened { request, .. }
             | RuntimeEvent::DocumentClosed { request, .. }
+            | RuntimeEvent::WindowSessionOpened { request, .. }
+            | RuntimeEvent::WindowSessionClosed { request, .. }
+            | RuntimeEvent::WindowViewChanged { request, .. }
+            | RuntimeEvent::HistoryReplayed { request, .. }
+            | RuntimeEvent::WindowSessionSaved { request, .. }
             | RuntimeEvent::RequestFailed { request, .. } => *request,
         }
     }
@@ -471,6 +622,50 @@ impl RuntimeEvent {
                 w.u64(request.0);
                 w.u64(document.0);
             }
+            RuntimeEvent::WindowSessionOpened {
+                request,
+                project,
+                session,
+                window_id,
+                document_id,
+                generation,
+            } => {
+                w.u64(request.0);
+                w.u64(project.0);
+                w.u64(session.0);
+                w.id(window_id.stable_id());
+                w.id(*document_id);
+                w.u64(*generation);
+            }
+            RuntimeEvent::WindowSessionClosed { request, session }
+            | RuntimeEvent::WindowViewChanged { request, session } => {
+                w.u64(request.0);
+                w.u64(session.0);
+            }
+            RuntimeEvent::HistoryReplayed {
+                request,
+                session,
+                redo,
+                applied,
+                revision,
+            } => {
+                w.u64(request.0);
+                w.u64(session.0);
+                w.u8(u8::from(*redo));
+                w.u8(u8::from(*applied));
+                w.u64(revision.0);
+            }
+            RuntimeEvent::WindowSessionSaved {
+                request,
+                session,
+                generation,
+                written,
+            } => {
+                w.u64(request.0);
+                w.u64(session.0);
+                w.u64(*generation);
+                w.u8(u8::from(*written));
+            }
             RuntimeEvent::RequestFailed {
                 request,
                 failure,
@@ -514,6 +709,35 @@ impl RuntimeEvent {
             event_kind::DOCUMENT_CLOSED => RuntimeEvent::DocumentClosed {
                 request: RequestId(r.u64()?),
                 document: DocumentSessionId(r.u64()?),
+            },
+            event_kind::WINDOW_SESSION_OPENED => RuntimeEvent::WindowSessionOpened {
+                request: RequestId(r.u64()?),
+                project: ProjectSessionId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+                window_id: WindowSessionId::from_stable_id(r.id()?),
+                document_id: r.id()?,
+                generation: r.u64()?,
+            },
+            event_kind::WINDOW_SESSION_CLOSED => RuntimeEvent::WindowSessionClosed {
+                request: RequestId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+            },
+            event_kind::WINDOW_VIEW_CHANGED => RuntimeEvent::WindowViewChanged {
+                request: RequestId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+            },
+            event_kind::HISTORY_REPLAYED => RuntimeEvent::HistoryReplayed {
+                request: RequestId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+                redo: r.bool()?,
+                applied: r.bool()?,
+                revision: DocumentRevision(r.u64()?),
+            },
+            event_kind::WINDOW_SESSION_SAVED => RuntimeEvent::WindowSessionSaved {
+                request: RequestId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+                generation: r.u64()?,
+                written: r.bool()?,
             },
             event_kind::REQUEST_FAILED => {
                 let request = RequestId(r.u64()?);
@@ -567,6 +791,35 @@ pub struct DocumentSummary {
     pub node_count: u64,
 }
 
+/// 열린 창 session 요약.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowSessionSummary {
+    /// 창 session handle.
+    pub session: WindowSessionHandle,
+    /// 소속 프로젝트 session.
+    pub project: ProjectSessionId,
+    /// 창 편집 session id.
+    pub window_id: WindowSessionId,
+    /// 작업 문서 StableId(없으면 `None`).
+    pub document_id: Option<StableId>,
+    /// snapshot 게시 시점의 작업 문서 revision(문서가 없으면 0).
+    pub revision: DocumentRevision,
+    /// loaded generation 번호(저장한 적 없으면 0).
+    pub generation: u64,
+    /// undo stack 깊이.
+    pub undo_depth: u32,
+    /// redo stack 깊이.
+    pub redo_depth: u32,
+    /// 선택된 node 수.
+    pub selection_len: u32,
+    /// 열린 탭 수.
+    pub tab_count: u32,
+    /// active view(열린 탭이 없으면 `None`).
+    pub active_view: Option<StableId>,
+    /// active 탭의 viewport(열린 탭이 없으면 `None`).
+    pub viewport: Option<CanvasViewport>,
+}
+
 /// document thread가 게시한 불변 상태 snapshot.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RuntimeState {
@@ -576,6 +829,8 @@ pub struct RuntimeState {
     pub projects: Vec<ProjectSummary>,
     /// 열린 문서(session id 순).
     pub documents: Vec<DocumentSummary>,
+    /// 열린 창 session(handle 순).
+    pub windows: Vec<WindowSessionSummary>,
 }
 
 impl RuntimeState {
@@ -594,6 +849,14 @@ impl RuntimeState {
             .ok()
             .map(|index| &self.projects[index])
     }
+
+    /// 창 session 요약.
+    pub fn window(&self, session: WindowSessionHandle) -> Option<&WindowSessionSummary> {
+        self.windows
+            .binary_search_by_key(&session, |summary| summary.session)
+            .ok()
+            .map(|index| &self.windows[index])
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -605,6 +868,14 @@ struct ProjectSession {
     identity: ProjectIdentity,
     name: String,
     documents: BTreeSet<DocumentSessionId>,
+    windows: BTreeSet<WindowSessionHandle>,
+}
+
+/// 창 session 표 항목.
+#[derive(Debug)]
+pub(crate) struct WindowEntry {
+    pub(crate) project: ProjectSessionId,
+    pub(crate) session: ProjectWindowSession,
 }
 
 #[derive(Debug)]
@@ -614,18 +885,60 @@ struct DocumentSession {
     document_id: StableId,
 }
 
-/// document thread만 소유하는 프로젝트·문서 session 표([`DocumentContext`] 안에 있음).
+/// document thread만 소유하는 프로젝트·문서·창 session 표([`DocumentContext`] 안에 있음).
 #[derive(Debug, Default)]
 pub(crate) struct AppSessions {
     next_project: u64,
     next_document: u64,
+    next_window: u64,
     generation: u64,
     projects: BTreeMap<ProjectSessionId, ProjectSession>,
     documents: BTreeMap<DocumentSessionId, DocumentSession>,
     by_document_id: BTreeMap<StableId, DocumentSessionId>,
+    pub(crate) windows: BTreeMap<WindowSessionHandle, WindowEntry>,
+    window_ids: WindowIdSource,
+}
+
+/// 창 편집 session id 공급기: UUIDv7(현재 Unix ms + 시각·프로세스·순번에서 섞은 난수 bit).
+///
+/// 영속 식별자라 프로세스를 다시 시작해도 겹치지 않아야 합니다(복구 snapshot 키, V.9.1). 시각의 nanosecond와
+/// 프로세스 id, runtime 안 순번을 SplitMix64로 섞어 random bit를 채우고, rand_b 하위 32 bit에는 순번을 그대로
+/// 넣어 같은 runtime 안에서는 항상 다르게 합니다.
+#[derive(Debug, Default)]
+struct WindowIdSource {
+    issued: u64,
+}
+
+impl WindowIdSource {
+    fn next(&mut self) -> WindowSessionId {
+        self.issued = self.issued.wrapping_add(1);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default();
+        let unix_ms = u64::try_from(now.as_millis()).unwrap_or(u64::MAX);
+        let seed = u64::from(now.subsec_nanos())
+            ^ (u64::from(std::process::id()) << 32)
+            ^ self.issued.rotate_left(48);
+        let a = splitmix64(seed);
+        let b = splitmix64(a ^ self.issued);
+        let rand_b = (b & !0xFFFF_FFFF) | (self.issued & 0xFFFF_FFFF);
+        WindowSessionId::from_stable_id(StableId::new_v7(unix_ms, (a & 0x0FFF) as u16, rand_b))
+    }
+}
+
+fn splitmix64(seed: u64) -> u64 {
+    let mut z = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 impl AppSessions {
+    fn allocate_window(&mut self) -> WindowSessionHandle {
+        self.next_window = self.next_window.saturating_add(1);
+        WindowSessionHandle(self.next_window)
+    }
+
     fn allocate_project(&mut self) -> ProjectSessionId {
         self.next_project = self.next_project.saturating_add(1);
         ProjectSessionId(self.next_project)
@@ -638,7 +951,7 @@ impl AppSessions {
 }
 
 /// 실패 event 재료.
-struct Failure {
+pub(crate) struct Failure {
     failure: RequestFailure,
     message: String,
 }
@@ -710,6 +1023,7 @@ fn open_project_on_thread(
             identity,
             name: name.clone(),
             documents: BTreeSet::new(),
+            windows: BTreeSet::new(),
         },
     );
     Ok(RuntimeEvent::ProjectOpened {
@@ -737,6 +1051,11 @@ fn close_project_on_thread(
             ctx.close_document(handle);
             closed_documents = closed_documents.saturating_add(1);
         }
+    }
+    // 프로젝트를 닫으면 그 아래 창 session(문서 state·history·선택)도 폐기합니다.
+    let sessions = ctx.app_sessions_mut();
+    for window in session.windows {
+        sessions.windows.remove(&window);
     }
     Ok(RuntimeEvent::ProjectClosed {
         request,
@@ -838,6 +1157,168 @@ fn close_document_on_thread(
     Ok(RuntimeEvent::DocumentClosed { request, document })
 }
 
+fn unknown_window(session: WindowSessionHandle) -> Failure {
+    Failure::new(
+        RequestFailure::UnknownWindowSession,
+        format!("열려 있지 않은 창 session입니다: {}", session.0),
+    )
+}
+
+/// document thread에서 창 session을 엽니다: current generation과 작업 문서를 로드합니다(XII.2.2).
+fn open_window_session_on_thread(
+    ctx: &mut DocumentContext,
+    request: RequestId,
+    project: ProjectSessionId,
+) -> Result<RuntimeEvent, Failure> {
+    let sessions = ctx.app_sessions_mut();
+    let identity = sessions
+        .projects
+        .get(&project)
+        .map(|owner| owner.identity.clone())
+        .ok_or_else(|| unknown_project(project))?;
+    let window_id = sessions.window_ids.next();
+    let session = ProjectWindowSession::load(identity, window_id).map_err(|error| {
+        Failure::new(RequestFailure::WindowSessionLoadFailed, error.to_string())
+    })?;
+    let document_id = session.document_id().unwrap_or(StableId::NIL);
+    let generation = session.generation_number();
+    let handle = sessions.allocate_window();
+    sessions
+        .windows
+        .insert(handle, WindowEntry { project, session });
+    if let Some(owner) = sessions.projects.get_mut(&project) {
+        owner.windows.insert(handle);
+    }
+    Ok(RuntimeEvent::WindowSessionOpened {
+        request,
+        project,
+        session: handle,
+        window_id,
+        document_id,
+        generation,
+    })
+}
+
+fn close_window_session_on_thread(
+    ctx: &mut DocumentContext,
+    request: RequestId,
+    session: WindowSessionHandle,
+) -> Result<RuntimeEvent, Failure> {
+    let sessions = ctx.app_sessions_mut();
+    let entry = sessions
+        .windows
+        .remove(&session)
+        .ok_or_else(|| unknown_window(session))?;
+    if let Some(owner) = sessions.projects.get_mut(&entry.project) {
+        owner.windows.remove(&session);
+    }
+    Ok(RuntimeEvent::WindowSessionClosed { request, session })
+}
+
+/// 창 session 요약(상태 snapshot용).
+fn window_summary(handle: WindowSessionHandle, entry: &WindowEntry) -> WindowSessionSummary {
+    let session = &entry.session;
+    let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    WindowSessionSummary {
+        session: handle,
+        project: entry.project,
+        window_id: session.window(),
+        document_id: session.document_id(),
+        revision: session.revision(),
+        generation: session.generation_number(),
+        undo_depth: clamp(session.history().history().len()),
+        redo_depth: clamp(session.history().history().redo_entries().len()),
+        selection_len: clamp(session.view().selection().len()),
+        tab_count: clamp(session.tabs().len()),
+        active_view: session.tabs().active_view(),
+        viewport: session.tabs().active_viewport(),
+    }
+}
+
+/// 창 session 하나를 찾습니다.
+pub(crate) fn window_mut(
+    ctx: &mut DocumentContext,
+    session: WindowSessionHandle,
+) -> Result<&mut ProjectWindowSession, Failure> {
+    ctx.app_sessions_mut()
+        .windows
+        .get_mut(&session)
+        .map(|entry| &mut entry.session)
+        .ok_or_else(|| unknown_window(session))
+}
+
+/// 탭·viewport·선택 조작 실패를 고정 코드로 바꿉니다.
+fn view_failure(error: WindowSessionEditError) -> Failure {
+    let failure = match &error {
+        WindowSessionEditError::View(ViewTabsError::NoActiveTab) => RequestFailure::NoActiveView,
+        WindowSessionEditError::History(_) => RequestFailure::HistoryUnavailable,
+        WindowSessionEditError::Viewport(_) => RequestFailure::InvalidViewport,
+        _ => RequestFailure::UnknownView,
+    };
+    Failure::new(failure, error.to_string())
+}
+
+/// document thread에서 창 session 명령을 실행합니다(XII.6.4).
+fn perform_on_thread(
+    ctx: &mut DocumentContext,
+    request: RequestId,
+    session: WindowSessionHandle,
+    command: AppCommand,
+) -> Result<RuntimeEvent, Failure> {
+    let window = window_mut(ctx, session)?;
+    match command {
+        AppCommand::Undo | AppCommand::Redo => {
+            let redo = command == AppCommand::Redo;
+            let replayed = if redo { window.redo() } else { window.undo() };
+            let applied = replayed.map_err(|error| {
+                Failure::new(RequestFailure::HistoryUnavailable, error.to_string())
+            })?;
+            Ok(RuntimeEvent::HistoryReplayed {
+                request,
+                session,
+                redo,
+                applied,
+                revision: window.revision(),
+            })
+        }
+        AppCommand::ZoomIn | AppCommand::ZoomOut | AppCommand::ZoomToActualSize => {
+            let zoomed = match command {
+                AppCommand::ZoomIn => window.zoom(ZOOM_STEP, 0.0, 0.0),
+                AppCommand::ZoomOut => window.zoom(1.0 / ZOOM_STEP, 0.0, 0.0),
+                _ => window.zoom_to_actual_size(),
+            };
+            zoomed.map_err(view_failure)?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        }
+        AppCommand::SaveNow => {
+            let outcome = window.save_now().map_err(|error| {
+                let failure = match error {
+                    WindowSessionSaveError::Stale(_) => RequestFailure::SaveStale,
+                    _ => RequestFailure::SaveFailed,
+                };
+                Failure::new(failure, error.to_string())
+            })?;
+            Ok(RuntimeEvent::WindowSessionSaved {
+                request,
+                session,
+                generation: outcome.generation,
+                written: outcome.written,
+            })
+        }
+    }
+}
+
+/// document thread에서 창 view state(탭·viewport XII.2.5, 선택)를 바꿉니다.
+pub(crate) fn change_view_on_thread(
+    ctx: &mut DocumentContext,
+    request: RequestId,
+    session: WindowSessionHandle,
+    change: impl FnOnce(&mut ProjectWindowSession) -> Result<(), WindowSessionEditError>,
+) -> Result<RuntimeEvent, Failure> {
+    change(window_mut(ctx, session)?).map_err(view_failure)?;
+    Ok(RuntimeEvent::WindowViewChanged { request, session })
+}
+
 /// 현재 session 표로 불변 상태 snapshot을 만듭니다(세대 1 증가).
 fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
     let generation = {
@@ -870,10 +1351,16 @@ fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
                 .map_or(0, |view| view.len() as u64),
         })
         .collect();
+    let windows = sessions
+        .windows
+        .iter()
+        .map(|(handle, entry)| window_summary(*handle, entry))
+        .collect();
     RuntimeState {
         generation,
         projects,
         documents,
+        windows,
     }
 }
 
@@ -1018,7 +1505,7 @@ impl AppRuntime {
 
     /// 요청 하나를 접수합니다. job은 document thread에서 상태를 바꾸고, 바뀌었으면 snapshot을
     /// 게시한 뒤 완료 event를 outbox에 넣습니다.
-    fn submit<F>(&self, run: F) -> Result<RequestId, RequestError>
+    pub(crate) fn submit<F>(&self, run: F) -> Result<RequestId, RequestError>
     where
         F: FnOnce(&mut DocumentContext, RequestId) -> Result<RuntimeEvent, Failure>
             + Send
@@ -1100,6 +1587,115 @@ impl AppRuntime {
     /// 문서 session을 닫습니다.
     pub fn close_document(&self, document: DocumentSessionId) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| close_document_on_thread(ctx, request, document))
+    }
+
+    /// 프로젝트 session 아래에서 창 session을 엽니다(XII.2.2). 디스크의 current generation과 작업 문서를
+    /// document thread에서 로드하고, 성공하면 [`RuntimeEvent::WindowSessionOpened`]가 옵니다.
+    pub fn open_window_session(
+        &self,
+        project: ProjectSessionId,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| open_window_session_on_thread(ctx, request, project))
+    }
+
+    /// 창 session을 닫습니다. 그 창의 문서 state·history·선택을 폐기합니다(저장하지 않음).
+    pub fn close_window_session(
+        &self,
+        session: WindowSessionHandle,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| close_window_session_on_thread(ctx, request, session))
+    }
+
+    /// 창 session에서 작업 문서의 View 탭을 열고 active로 만듭니다(이미 열려 있으면 active만, XII.2.5).
+    pub fn open_view_tab(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| {
+                window.open_view(view).map(|_| ())
+            })
+        })
+    }
+
+    /// 창 session의 View 탭을 닫습니다(active면 이웃 탭이 active).
+    pub fn close_view_tab(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| window.close_view(view))
+        })
+    }
+
+    /// 창 session의 선택을 바꾸고 그 창 history에 기록합니다(VII.4.6, 같은 선택이면 기록 없음). 문서에 없거나
+    /// 숨김 정책상 선택할 수 없는 id는 거릅니다. 성공하면 [`RuntimeEvent::WindowViewChanged`]가 옵니다.
+    pub fn set_selection(
+        &self,
+        session: WindowSessionHandle,
+        ids: Vec<StableId>,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| {
+                window
+                    .select(stellar_commands::selection::Selection::new(ids, None))
+                    .map(|_| ())
+            })
+        })
+    }
+
+    /// 창 session의 active 탭 viewport를 화면에서 `(dx, dy)` point만큼 옮깁니다(XII.4.3). 문서·history·저장에는
+    /// 영향이 없습니다.
+    pub fn pan_viewport(
+        &self,
+        session: WindowSessionHandle,
+        dx: f64,
+        dy: f64,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| {
+                window.pan(dx, dy).map(|_| ())
+            })
+        })
+    }
+
+    /// 창 session의 active 탭 viewport를 바꿉니다. 문서·history·저장에는 영향이 없습니다.
+    pub fn set_viewport(
+        &self,
+        session: WindowSessionHandle,
+        viewport: CanvasViewport,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| {
+                window.set_viewport(viewport).map(|_| ())
+            })
+        })
+    }
+
+    /// 창 session에 명령을 보냅니다(XII.6.4). 결과는 명령별 완료 event 하나입니다(모듈 문서).
+    pub fn perform(
+        &self,
+        session: WindowSessionHandle,
+        command: AppCommand,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| perform_on_thread(ctx, request, session, command))
+    }
+
+    /// 창 session에서 undo합니다([`AppCommand::Undo`]).
+    pub fn undo(&self, session: WindowSessionHandle) -> Result<RequestId, RequestError> {
+        self.perform(session, AppCommand::Undo)
+    }
+
+    /// 창 session에서 redo합니다([`AppCommand::Redo`]).
+    pub fn redo(&self, session: WindowSessionHandle) -> Result<RequestId, RequestError> {
+        self.perform(session, AppCommand::Redo)
+    }
+
+    /// 창 session의 작업 문서를 지금 저장합니다([`AppCommand::SaveNow`]).
+    pub fn save_now(&self, session: WindowSessionHandle) -> Result<RequestId, RequestError> {
+        self.perform(session, AppCommand::SaveNow)
     }
 
     /// 최신 상태 snapshot. document thread를 기다리지 않습니다.
@@ -1197,7 +1793,67 @@ mod tests {
                 failure: RequestFailure::NotAStellarProject,
                 message: "Stellar 프로젝트가 아닙니다".to_string(),
             },
+            RuntimeEvent::WindowSessionOpened {
+                request: RequestId(10),
+                project: ProjectSessionId(2),
+                session: WindowSessionHandle(11),
+                window_id: WindowSessionId::from_stable_id(id(12)),
+                document_id: id(13),
+                generation: 14,
+            },
+            RuntimeEvent::WindowSessionClosed {
+                request: RequestId(15),
+                session: WindowSessionHandle(11),
+            },
+            RuntimeEvent::WindowViewChanged {
+                request: RequestId(16),
+                session: WindowSessionHandle(11),
+            },
+            RuntimeEvent::HistoryReplayed {
+                request: RequestId(17),
+                session: WindowSessionHandle(11),
+                redo: true,
+                applied: false,
+                revision: DocumentRevision(18),
+            },
+            RuntimeEvent::WindowSessionSaved {
+                request: RequestId(19),
+                session: WindowSessionHandle(11),
+                generation: 20,
+                written: true,
+            },
         ]
+    }
+
+    #[test]
+    fn window_session_payload_layout_is_fixed() {
+        let event = RuntimeEvent::WindowSessionOpened {
+            request: RequestId(1),
+            project: ProjectSessionId(2),
+            session: WindowSessionHandle(3),
+            window_id: WindowSessionId::from_stable_id(StableId::from_bytes([0xAA; 16])),
+            document_id: StableId::NIL,
+            generation: 7,
+        };
+        let mut expected = vec![1, 0, 0, 0];
+        expected.extend_from_slice(&1u64.to_le_bytes());
+        expected.extend_from_slice(&2u64.to_le_bytes());
+        expected.extend_from_slice(&3u64.to_le_bytes());
+        expected.extend_from_slice(&[0xAA; 16]);
+        expected.extend_from_slice(&[0; 16]);
+        expected.extend_from_slice(&7u64.to_le_bytes());
+        assert_eq!(event.encode(), expected);
+        assert_eq!(event.kind(), 0x0106);
+    }
+
+    #[test]
+    fn window_ids_are_distinct_v7_ids() {
+        let mut source = WindowIdSource::default();
+        let ids: BTreeSet<WindowSessionId> = (0..1_000).map(|_| source.next()).collect();
+        assert_eq!(ids.len(), 1_000);
+        for id in &ids {
+            assert_eq!(id.stable_id().to_bytes()[6] >> 4, 7, "UUIDv7");
+        }
     }
 
     #[test]
@@ -1307,7 +1963,12 @@ mod tests {
     #[test]
     fn failure_codes_are_stable_and_unique() {
         let codes: Vec<u32> = RequestFailure::ALL.iter().map(|f| f.code()).collect();
-        assert_eq!(codes, [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17]);
+        assert_eq!(
+            codes,
+            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24]
+        );
+        let unique: BTreeSet<u32> = codes.iter().copied().collect();
+        assert_eq!(unique.len(), codes.len());
         for failure in RequestFailure::ALL {
             assert_eq!(RequestFailure::from_code(failure.code()), Some(failure));
         }

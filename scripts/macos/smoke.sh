@@ -11,6 +11,9 @@
 #  - --<영역>-ui-check: UI 영역별 화면 밖 검사(shell-frame, tools-menus, sidebar, inspector, git-panel, agent-panel, welcome)
 #  - --shell-integration-check: 실제 앱 구성(메뉴, 시작 창, 코어로 프로젝트 열기, 프로젝트 창 영역·도구, 복원·닫기)
 #  - --project-open-check: Open Project 폴더 선택·코어 열기와 잘못된 폴더별 안내 대응(XII.6.2)
+#  - --window-session-check: 저장 프로젝트 fixture로 창 2개 open/close, 창 controller당 코어 창 session 하나(XII.2.2)
+#  - --session-commands-check: 메뉴 Undo·Redo·Save Now가 그 창의 코어 창 session에만 가는지(XII.6.4)
+#  - --key-mapping-check: 코어 공유 command ID와 macOS 관례 단축키 ⌘Z·⇧⌘Z·⌘S 대응(XII.6.5)
 #  - UI 구조 검사: UI/Tools는 코어 FFI를 모르고, UI/Shell은 stellar_ 함수를 직접 부르지 않음(CoreRuntime 경유)
 set -euo pipefail
 
@@ -115,6 +118,20 @@ done
 
 # Open Project(XII.6.2): 폴더 선택 → 코어 열기·안전 probe → 창, 잘못된 폴더 fixture별 실패 코드 → 안내 대응.
 "$APP" --project-open-check
+
+# 창 session(XII.2.2): 저장 프로젝트 fixture를 복사한 두 프로젝트를 열고 닫으며 창 controller마다 코어 창 session handle
+# 하나를 소유하는지, 닫으면 그 창 session만 닫히는지 확인합니다.
+WINDOW_SESSION_FIXTURE="$REPO_ROOT/crates/runtime/tests/fixtures/window-session-project"
+"$APP" --window-session-check "$WINDOW_SESSION_FIXTURE"
+
+# 창 session 명령(XII.6.4): 메뉴 Undo·Redo·Save Now를 그 창의 창 session에 보내고, 다른 창 history·디스크는 그대로인지,
+# Stale 저장은 쓰지 않고 alert 한 번인지 확인합니다.
+"$APP" --session-commands-check "$WINDOW_SESSION_FIXTURE"
+
+# 단축키 대응(XII.6.5): command ID는 코어가 공유 이름으로 알려 주고, 단축키는 macOS 관례(⌘Z·⇧⌘Z·⌘S)로 메뉴에 둡니다.
+# 키 조합 → 메뉴 항목 → 셸 명령 → 코어 ID → 창 session 도착을 확인합니다.
+# 실제 활성 앱의 nil target 메뉴 검사: 아래 명령 끝에 --native-menus를 더합니다(활성화 실패는 비0 종료).
+"$APP" --key-mapping-check "$WINDOW_SESSION_FIXTURE"
 
 # UI 구조 검사(grep 종료 코드 0 = 발견 = 실패, 2 이상 = 읽기 오류 = 실패).
 # - UI/Tools(메뉴·도구 명령)는 코어 FFI와 runtime handle을 모릅니다. 명령은 ToolsMenuModel로만 나갑니다.

@@ -46,6 +46,44 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.closeProject(handle: runtimeHandle, project: project), completion ?? { _ in })
     }
 
+    /// 프로젝트 session 아래에서 창 session 열기를 요청하고 완료 event를 `completion`으로 받습니다(XII.2.2).
+    @discardableResult
+    func openWindowSession(
+        project: UInt64,
+        completion: @escaping (CoreRuntimeEvent) -> Void
+    ) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.openWindowSession(handle: runtimeHandle, project: project), completion)
+    }
+
+    /// 창 session 닫기를 요청합니다. 완료 event는 `completion`이 없으면 버립니다.
+    @discardableResult
+    func closeWindowSession(
+        _ session: UInt64,
+        completion: ((CoreRuntimeEvent) -> Void)? = nil
+    ) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.closeWindowSession(handle: runtimeHandle, session: session), completion ?? { _ in })
+    }
+
+    /// 창 session에 명령 코드를 보내고 완료 event를 `completion`으로 받습니다(XII.6.4).
+    @discardableResult
+    func perform(
+        session: UInt64,
+        command: UInt32,
+        completion: @escaping (CoreRuntimeEvent) -> Void
+    ) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.perform(handle: runtimeHandle, session: session, command: command), completion)
+    }
+
+    /// 창 session의 선택을 바꾸고 완료 event를 `completion`으로 받습니다.
+    @discardableResult
+    func select(
+        session: UInt64,
+        ids: [UUID],
+        completion: @escaping (CoreRuntimeEvent) -> Void
+    ) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.select(handle: runtimeHandle, session: session, ids: ids), completion)
+    }
+
     private func register(
         _ result: Result<UInt64, CoreRuntimeCallError>,
         _ completion: @escaping (CoreRuntimeEvent) -> Void
