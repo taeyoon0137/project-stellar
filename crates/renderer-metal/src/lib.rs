@@ -43,8 +43,14 @@ mod pipeline;
 /// draw command 해석·기록 (XI.8.3).
 mod commands;
 
-/// RenderGraph pass encoding.
+/// graph transient texture pool (XI.8.5).
+mod transient;
+
+/// RenderGraph pass encoding (XI.8.1, XI.8.5).
 mod encode;
+
+/// frame CPU timestamp trace (XI.8.5).
+mod trace;
 
 /// `RendererBackend` 구현.
 mod backend;
@@ -52,6 +58,7 @@ mod backend;
 pub use backend::MetalBackend;
 pub use pipeline::{ShaderError, ShaderErrorStage};
 pub use surface::{LayerOptions, SurfaceStats};
+pub use trace::{MetalFrameTrace, MAX_FRAME_TRACES};
 
 /// backend 식별자.
 pub const BACKEND: &str = "metal";

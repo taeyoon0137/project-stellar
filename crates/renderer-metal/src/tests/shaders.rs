@@ -18,7 +18,7 @@ use super::*;
 use crate::ShaderErrorStage;
 
 /// `{ float2 position; float2 uv; }` vertex 사각형(6 vertex).
-fn textured_quad(x1: f32, y1: f32, u1: f32, v1: f32) -> Vec<u8> {
+pub(crate) fn textured_quad(x1: f32, y1: f32, u1: f32, v1: f32) -> Vec<u8> {
     let corners = [
         ([0.0, 0.0], [0.0, 0.0]),
         ([x1, 0.0], [u1, 0.0]),
@@ -34,7 +34,7 @@ fn textured_quad(x1: f32, y1: f32, u1: f32, v1: f32) -> Vec<u8> {
         .collect()
 }
 
-fn key(program: ShaderProgram, format: TextureFormat) -> PipelineKey {
+pub(crate) fn key(program: ShaderProgram, format: TextureFormat) -> PipelineKey {
     PipelineKey {
         program,
         blend: BlendState::Replace,
@@ -455,7 +455,8 @@ fn texture_binding_and_program_rules_are_checked() {
         (no_texture, BackendErrorKind::InvalidUsage),
         (not_sampled, BackendErrorKind::InvalidUsage),
         (bad_slot, BackendErrorKind::InvalidUsage),
-        (graph_source, BackendErrorKind::Unsupported),
+        // pass가 reads로 선언하지 않은 graph version은 sampling할 수 없습니다(XI.8.5).
+        (graph_source, BackendErrorKind::InvalidUsage),
         (depth_key, BackendErrorKind::InvalidUsage),
         (
             base(ShaderProgram::GaussianBlur),

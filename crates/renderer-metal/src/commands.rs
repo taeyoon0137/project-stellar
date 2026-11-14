@@ -21,7 +21,7 @@ use stellar_renderer_core::backend::{
     StencilMode, TextureSource,
 };
 use stellar_renderer_core::gpu_handle::{BufferKind, HandleTable, TextureKind};
-use stellar_renderer_core::render_graph::{SampleCount, TextureFormat};
+use stellar_renderer_core::render_graph::{ResourceVersion, SampleCount, TextureFormat};
 
 use crate::buffer::MetalBuffer;
 use crate::objc::{sel, send, Id, NSUInteger, RawId};
@@ -67,6 +67,8 @@ pub(crate) struct CommandContext<'a> {
 }
 
 /// 검사를 마친 encoder 호출. native 포인터는 table·cache가 소유합니다(+0).
+///
+/// draw 수는 [`Op::is_draw`]로 셉니다(frame trace).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Op {
     /// `setRenderPipelineState:`.
@@ -122,6 +124,13 @@ pub(crate) enum Op {
         /// instance 수.
         instances: NSUInteger,
     },
+}
+
+impl Op {
+    /// draw 호출이면 참입니다.
+    pub(crate) const fn is_draw(&self) -> bool {
+        matches!(self, Op::Draw { .. } | Op::DrawIndexed { .. })
+    }
 }
 
 #[derive(Debug, Default)]
@@ -192,9 +201,12 @@ fn vertex_capacity(
 }
 
 /// command 목록을 검사하고 encoder 호출로 바꿉니다.
+///
+/// `graph_reads`는 이 pass가 읽는 graph version과 sampling 가능한 texture(+0, 불가면 `None`)입니다.
 pub(crate) fn plan_commands(
     ctx: &mut CommandContext<'_>,
     pass: &PassFormat,
+    graph_reads: &[(ResourceVersion, Option<RawId>)],
     commands: &[DrawCommand],
 ) -> Result<Vec<Op>, BackendError> {
     let mut ops = Vec::with_capacity(commands.len());
@@ -304,27 +316,30 @@ pub(crate) fn plan_commands(
                 if slot >= MAX_TEXTURE_SLOTS {
                     return Err(invalid("texture slot 범위 밖"));
                 }
-                let native = match texture {
-                    TextureSource::Handle(handle) => ctx.textures.get(handle)?,
-                    TextureSource::Graph(_) => {
-                        return Err(BackendError::new(
-                            BackendErrorKind::Unsupported,
-                            "graph resource sampling은 아직 지원하지 않습니다",
-                        ));
+                let texture = match texture {
+                    TextureSource::Handle(handle) => {
+                        let native = ctx.textures.get(handle)?;
+                        let desc = native.desc;
+                        if !desc.usage.sampled
+                            || desc.samples != SampleCount::X1
+                            || desc.format.is_depth_stencil()
+                        {
+                            return Err(invalid("sampling할 수 없는 texture입니다"));
+                        }
+                        native.texture.as_raw()
                     }
+                    TextureSource::Graph(version) => graph_reads
+                        .iter()
+                        .find(|(read, _)| *read == version)
+                        .ok_or(invalid("pass가 읽는다고 선언하지 않은 graph version"))?
+                        .1
+                        .ok_or(invalid("sampling할 수 없는 graph resource입니다"))?,
                 };
-                let desc = native.desc;
-                if !desc.usage.sampled
-                    || desc.samples != SampleCount::X1
-                    || desc.format.is_depth_stencil()
-                {
-                    return Err(invalid("sampling할 수 없는 texture입니다"));
-                }
                 let sampler = ctx.pipelines.sampler(ctx.device, sampler)?;
                 state.textures[usize::from(slot)] = true;
                 ops.push(Op::Texture {
                     slot: NSUInteger::from(slot),
-                    texture: native.texture.as_raw(),
+                    texture,
                     sampler,
                 });
             }

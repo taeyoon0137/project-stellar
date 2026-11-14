@@ -20,6 +20,7 @@ use stellar_renderer_core::backend::{
     TextureRegion, TimestampQuery, MAX_FRAMES_IN_FLIGHT,
 };
 use stellar_renderer_core::gpu_handle::{BufferKind, HandleTable, TextureKind};
+use stellar_renderer_core::graph_trace::{MonotonicClock, TraceClock};
 use stellar_renderer_core::render_graph::{
     ImportKind, ResourceLifetime, SampleCount, TextureFormat,
 };
@@ -34,6 +35,8 @@ use crate::pipeline::{PipelineCache, ShaderError};
 use crate::surface::{check_surface_size, Drawable, LayerOptions, LayerSurface, SurfaceStats};
 use crate::sys::{command_buffer_status, resource_options, MTLOrigin, MTLSize};
 use crate::texture::{create_texture, MetalTexture};
+use crate::trace::{Clock, MetalFrameTrace, MAX_FRAME_TRACES};
+use crate::transient::TransientPool;
 
 /// encode했지만 아직 제출하지 않은 frame.
 #[derive(Debug)]
@@ -42,7 +45,12 @@ struct OpenFrame {
     token: u64,
     command_buffer: Id,
     drawable: Option<Drawable>,
-    present: bool,
+    /// present 예약 시각(예약하지 않았으면 `None`).
+    present_nanos: Option<u64>,
+    encode_start_nanos: u64,
+    encode_end_nanos: u64,
+    pass_count: u32,
+    draw_count: u32,
 }
 
 /// GPU에 제출한 command buffer. texture upload command buffer는 submission 번호가 없습니다.
@@ -65,6 +73,9 @@ pub struct MetalBackend {
     buffers: HandleTable<BufferKind, MetalBuffer>,
     pipelines: PipelineCache,
     pending_uploads: Vec<PendingUpload>,
+    transients: TransientPool,
+    clock: Clock,
+    traces: VecDeque<MetalFrameTrace>,
     initialized_once: bool,
     open: Option<OpenFrame>,
     next_token: u64,
@@ -96,6 +107,9 @@ impl MetalBackend {
             buffers: HandleTable::new(0),
             pipelines: PipelineCache::new(),
             pending_uploads: Vec::new(),
+            transients: TransientPool::default(),
+            clock: Clock(Box::new(MonotonicClock::new())),
+            traces: VecDeque::new(),
             initialized_once: false,
             open: None,
             next_token: 1,
@@ -149,6 +163,22 @@ impl MetalBackend {
     /// 현재 surface pixel 크기(마지막 `init`·`resize` 값).
     pub fn surface_size(&self) -> SurfaceSize {
         self.surface_size
+    }
+
+    /// frame CPU timestamp 시계를 바꿉니다. 공통 계층과 같은 기준점의 시계를 넣으면 T0~T5를 한 축에서
+    /// 비교할 수 있습니다(기본: backend 생성 시점 기준 [`MonotonicClock`]).
+    pub fn set_trace_clock(&mut self, clock: Box<dyn TraceClock>) {
+        self.clock = Clock(clock);
+    }
+
+    /// 쌓인 frame trace를 꺼냅니다(제출 순서, 최대 [`MAX_FRAME_TRACES`]개 보관).
+    pub fn drain_frame_traces(&mut self) -> Vec<MetalFrameTrace> {
+        self.traces.drain(..).collect()
+    }
+
+    /// 지금 할당된 graph transient texture 수(alias slot 기준).
+    pub fn transient_texture_count(&self) -> usize {
+        self.transients.allocated()
     }
 
     /// 마지막 shader compile·pipeline 생성 오류(단계와 Metal compiler log). `PipelineCreation` 오류의
@@ -427,6 +457,7 @@ impl MetalBackend {
         if self.open.is_some() {
             return Err(invalid("이미 열린 frame이 있습니다"));
         }
+        let encode_start_nanos = self.clock.0.now_nanos();
         // upload는 frame skip 여부와 상관없이 지금 queue에 넣습니다(다음 frame보다 먼저 실행).
         self.flush_uploads()?;
         let needs_surface =
@@ -455,12 +486,15 @@ impl MetalBackend {
             .device
             .as_ref()
             .ok_or(invalid("Metal backend가 초기화되지 않았습니다"))?;
+        self.transients
+            .prepare(device.device(), request.graph, self.surface_size)?;
         let targets = FrameTargets {
             request,
             drawable: drawable.as_ref(),
             surface_size: self.surface_size,
             surface_format: self.surface_format,
             textures: &self.textures,
+            transients: &self.transients,
         };
         let mut commands = CommandContext {
             device: device.device(),
@@ -485,14 +519,20 @@ impl MetalBackend {
         for plan in &plans {
             encode_pass(&command_buffer, plan)?;
         }
+        let draw_count: usize = plans.iter().map(|plan| plan.draw_count()).sum();
         let token = self.next_token;
         self.next_token = self.next_token.wrapping_add(1);
+        let encode_end_nanos = self.clock.0.now_nanos();
         self.open = Some(OpenFrame {
             frame: request.frame,
             token,
             command_buffer,
             drawable,
-            present: false,
+            present_nanos: None,
+            encode_start_nanos,
+            encode_end_nanos,
+            pass_count: u32::try_from(plans.len()).unwrap_or(u32::MAX),
+            draw_count: u32::try_from(draw_count).unwrap_or(u32::MAX),
         });
         Ok(EncodeOutcome::Encoded(EncodedFrame::new(
             request.frame,
@@ -522,6 +562,7 @@ impl RendererBackend for MetalBackend {
             self.capabilities = None;
             self.pending_uploads.clear();
             self.pipelines = PipelineCache::new();
+            self.transients.purge();
             if self.initialized_once {
                 self.textures.invalidate_all()?;
                 self.buffers.invalidate_all()?;
@@ -657,7 +698,7 @@ impl RendererBackend for MetalBackend {
             .as_mut()
             .filter(|open| open.token == frame.token() && open.frame == frame.frame())
             .ok_or(invalid("열린 frame과 다른 frame입니다"))?;
-        if open.present {
+        if open.present_nanos.is_some() {
             return Err(invalid("present를 이미 예약했습니다"));
         }
         let drawable = open.drawable.as_ref().ok_or(invalid(
@@ -672,7 +713,7 @@ impl RendererBackend for MetalBackend {
                     .send(sel!("presentDrawable:"), (drawable.drawable().as_raw(),));
             }
         });
-        open.present = true;
+        open.present_nanos = Some(self.clock.0.now_nanos());
         Ok(())
     }
 
@@ -684,12 +725,26 @@ impl RendererBackend for MetalBackend {
                 let _: () = open.command_buffer.send(sel!("commit"), ());
             }
         });
+        let submit_nanos = self.clock.0.now_nanos();
         let id = SubmissionId(self.next_submission);
         self.next_submission += 1;
+        if self.traces.len() == MAX_FRAME_TRACES {
+            self.traces.pop_front();
+        }
+        self.traces.push_back(MetalFrameTrace {
+            frame: open.frame.0,
+            submission: id.0,
+            encode_start_nanos: open.encode_start_nanos,
+            encode_end_nanos: open.encode_end_nanos,
+            present_nanos: open.present_nanos,
+            submit_nanos,
+            pass_count: open.pass_count,
+            draw_count: open.draw_count,
+        });
         self.in_flight.push_back(InFlight {
             id: Some(id),
             command_buffer: open.command_buffer,
-            present: open.present,
+            present: open.present_nanos.is_some(),
         });
         Ok(id)
     }

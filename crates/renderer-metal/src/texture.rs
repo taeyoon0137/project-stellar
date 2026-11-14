@@ -4,8 +4,10 @@
 //! descriptor는 Metal에 넘기기 전에 검사합니다. 잘못된 descriptor는 Metal 내부 assertion으로 process를
 //! 끝낼 수 있으므로 공통 계층 실수도 `InvalidUsage`로 돌려줍니다.
 
-use stellar_renderer_core::backend::{BackendError, BackendErrorKind, GpuTextureDesc};
-use stellar_renderer_core::render_graph::{SampleCount, MAX_TEXTURE_DIMENSION};
+use stellar_renderer_core::backend::{
+    BackendError, BackendErrorKind, GpuTextureDesc, TextureUsage,
+};
+use stellar_renderer_core::render_graph::{SampleCount, TextureFormat, MAX_TEXTURE_DIMENSION};
 
 use crate::format::mtl_pixel_format;
 use crate::objc::{class, sel, send, Id, NSUInteger};
@@ -57,6 +59,26 @@ pub(crate) fn validate_texture_desc(desc: &GpuTextureDesc) -> Result<(), Backend
     Ok(())
 }
 
+/// graph transient attachment descriptor. single-sample color만 sampling 용도를 겸합니다.
+pub(crate) fn render_target_desc(
+    format: TextureFormat,
+    width: u32,
+    height: u32,
+    samples: SampleCount,
+) -> GpuTextureDesc {
+    GpuTextureDesc {
+        width,
+        height,
+        format,
+        mip_levels: 1,
+        samples,
+        usage: TextureUsage {
+            sampled: samples == SampleCount::X1 && !format.is_depth_stencil(),
+            render_target: true,
+        },
+    }
+}
+
 /// 검사한 descriptor로 private texture를 만듭니다. Metal이 nil이면 `OutOfDeviceMemory`.
 pub(crate) fn create_texture(device: &Id, desc: &GpuTextureDesc) -> Result<Id, BackendError> {
     validate_texture_desc(desc)?;
@@ -106,7 +128,6 @@ pub(crate) fn create_texture(device: &Id, desc: &GpuTextureDesc) -> Result<Id, B
 
 #[cfg(test)]
 mod tests {
-    use stellar_renderer_core::backend::TextureUsage;
     use stellar_renderer_core::render_graph::TextureFormat;
 
     use super::*;
@@ -165,5 +186,14 @@ mod tests {
             ..desc(8, 8, 1)
         };
         assert!(validate_texture_desc(&msaa).is_ok());
+        for (format, samples, sampled) in [
+            (TextureFormat::Rgba16Float, SampleCount::X1, true),
+            (TextureFormat::Bgra8Unorm, SampleCount::X4, false),
+            (TextureFormat::Depth32FloatStencil8, SampleCount::X1, false),
+        ] {
+            let transient = render_target_desc(format, 8, 8, samples);
+            assert_eq!(transient.usage.sampled, sampled, "{format:?}");
+            assert!(validate_texture_desc(&transient).is_ok());
+        }
     }
 }

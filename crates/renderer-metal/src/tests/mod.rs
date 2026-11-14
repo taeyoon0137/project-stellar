@@ -22,6 +22,7 @@ use crate::objc::{sel, Id};
 use crate::sys::MTLCreateSystemDefaultDevice;
 
 mod geometry;
+mod graph;
 mod shaders;
 mod smoke;
 mod surface;

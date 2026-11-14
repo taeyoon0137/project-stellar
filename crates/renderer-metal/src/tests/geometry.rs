@@ -103,11 +103,22 @@ impl Offscreen {
         graph: &CompiledRenderGraph,
         commands: Vec<DrawCommand>,
     ) -> Result<Vec<u8>, BackendError> {
+        self.try_render_passes(
+            graph,
+            vec![PassCommands {
+                pass: PassId(0),
+                commands,
+            }],
+        )
+    }
+
+    /// 여러 pass graph를 encode·제출하고 output target을 읽습니다.
+    pub(crate) fn try_render_passes(
+        &mut self,
+        graph: &CompiledRenderGraph,
+        passes: Vec<PassCommands>,
+    ) -> Result<Vec<u8>, BackendError> {
         let imports = bind_first_import(graph, self.target);
-        let passes = [PassCommands {
-            pass: PassId(0),
-            commands,
-        }];
         let frame = self.next_frame;
         self.next_frame += 1;
         let request = stellar_renderer_core::backend::FrameEncodeRequest {
