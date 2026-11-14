@@ -49,7 +49,7 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 **Object → Create Component from Selection…**은 선택한 Frame 한 개와 그 아래의 모든 Free Frame을 현재 창의 미저장 편집까지 포함해 복사합니다. 정의와 모든 노드에 새 UUIDv7을 부여하고 내부 부모를 새 ID로 잇습니다. 선택 Frame은 부모가 없는 정의 root가 되고 모든 Frame의 기존 로컬 affine(이동 성분 포함), 크기, 색·테두리·모서리·clipping, 표시·잠금, 이름과 순서 키를 그대로 저장합니다. 이전 부모의 world transform은 곱하지 않습니다. 자식이 있으면 v2, 없으면 v1입니다.
 
-선택 트리 안에 다른 종류의 노드, modifier stack, layout 참조 또는 Path clip이 있으면 전체 생성을 거부합니다. 이름 sheet가 열려 있던 선택·View·문서 revision이 다르거나 Git checkout으로 창이 읽은 generation의 hash가 달라져도 기록하지 않습니다. 캔버스의 원래 Frame·자식과 Undo 기록은 유지합니다. 문서 노드 포맷은 아직 ComponentInstance payload를 저장하지 않으므로 이 명령은 별도의 정의 원본만 생성합니다.
+선택 트리 안에 다른 종류의 노드, modifier stack, layout 참조 또는 Path clip이 있으면 전체 생성을 거부합니다. 이름 sheet가 열려 있던 선택·View·문서 revision이 다르거나 Git checkout으로 창이 읽은 generation의 hash가 달라져도 기록하지 않습니다. 캔버스의 원래 Frame·자식과 Undo 기록은 유지합니다. 이 명령은 독립 정의를 생성하며 캔버스에 인스턴스를 삽입하지 않습니다.
 
 **View → Component Library**는 열린 프로젝트의 컴포넌트 이름·파일명·Frame 수·root 크기를 보여줍니다. 행을 선택하면 프로젝트 내 경로와 전체 component ID가 표시됩니다. 다른 창에서 작업하다 목록으로 돌아오거나 **Refresh**를 누르면 디스크의 현재 원본을 다시 읽습니다. Git checkout으로 같은 generation에서 원본 파일만 바뀐 경우도 반영합니다. 잘못된 파일이나 이중 원본에서는 이전 목록을 비우고 오류를 표시하고, 신뢰를 철회하거나 프로젝트를 닫으면 목록 창도 닫힙니다.
 

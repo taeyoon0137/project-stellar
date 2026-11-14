@@ -595,6 +595,7 @@ fn project_payload(
             SemanticValue::Bytes(encode_payload(payload)),
         ),
         NodePayload::Image(image) => project_image(object, image),
+        NodePayload::ComponentInstance(instance) => project_instance(object, instance),
     }
 }
 
@@ -770,13 +771,8 @@ fn project_definition_payload(
         kind,
         reason,
     };
-    if kind == NodeKind::ComponentInstance {
-        let payload = ComponentInstancePayload::decode(bytes).map_err(|e| error(e.to_string()))?;
-        project_instance(object, &payload)
-    } else {
-        let payload = decode_payload(kind, bytes).map_err(|e| error(e.to_string()))?;
-        project_payload(object, &payload)
-    }
+    let payload = decode_payload(kind, bytes).map_err(|e| error(e.to_string()))?;
+    project_payload(object, &payload)
 }
 
 /// modifier stack 항목 객체(부모 = 소유 node, 순서 = 항목 OrderKey).

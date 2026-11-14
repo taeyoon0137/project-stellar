@@ -19,8 +19,7 @@
 //! `<폴더 이름>`으로는 보이지 않습니다.
 //!
 //! 한계(QA 문서에 같은 내용이 있습니다):
-//! - Component 정의·인스턴스는 문서 레코드에 아직 표현할 수 없어(`record_codec`의 `UnsupportedNodeKind`) 넣지
-//!   않습니다. "Components" 페이지에는 컴포넌트로 만들 Frame 묶음만 둡니다.
+//! - 이 fixture의 "Components" 페이지에는 컴포넌트로 만들 Frame 묶음을 둡니다.
 //! - 에셋 catalog(`AssetId → AssetRecord`)는 아직 프로젝트에 저장되지 않으므로, 이미지 노드의 asset 참조는
 //!   복사한 파일과 이어져 있지 않습니다.
 //!

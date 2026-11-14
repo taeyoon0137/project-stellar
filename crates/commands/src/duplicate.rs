@@ -90,6 +90,26 @@ fn remap_payload(table: &IdRemapTable, payload: &NodePayload) -> Result<NodePayl
                 }
             })?)
         }
+        NodePayload::ComponentInstance(instance) => {
+            // 정의·property·nested definition path는 외부 원본을 가리킵니다. slot content만 scene 소유 노드입니다.
+            let mut copy = instance.clone();
+            for (slot, content) in instance.slot_overrides() {
+                let ids = content
+                    .content()
+                    .iter()
+                    .map(|id| table.remap(*id))
+                    .collect();
+                copy.set_slot_override(
+                    slot,
+                    stellar_document::component::instance::SlotOverride::new(ids).map_err(
+                        |_| CommandError::InvalidRequest {
+                            reason: "복제 slot content ID 충돌",
+                        },
+                    )?,
+                );
+            }
+            NodePayload::ComponentInstance(copy)
+        }
         other => other.clone(),
     })
 }

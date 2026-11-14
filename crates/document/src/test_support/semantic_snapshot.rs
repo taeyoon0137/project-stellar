@@ -270,6 +270,44 @@ fn payload(value: &NodePayload) -> Json {
         NodePayload::Path(p) => path(p),
         NodePayload::Text(p) => text(p),
         NodePayload::Image(p) => image(p),
+        NodePayload::ComponentInstance(p) => Json::object([
+            ("component", id(p.component().id())),
+            (
+                "property_overrides",
+                Json::Array(
+                    p.property_overrides()
+                        .map(|(key, value)| {
+                            Json::object([
+                                (
+                                    "path",
+                                    Json::Array(key.path().iter().copied().map(id).collect()),
+                                ),
+                                ("property", id(key.property().stable_id())),
+                                ("typed_value", hex(&value.to_bytes())),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+            (
+                "slot_overrides",
+                Json::Array(
+                    p.slot_overrides()
+                        .map(|(slot, content)| {
+                            Json::object([
+                                ("slot", id(slot.stable_id())),
+                                (
+                                    "content",
+                                    Json::Array(
+                                        content.content().iter().copied().map(id).collect(),
+                                    ),
+                                ),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ]),
     }
 }
 

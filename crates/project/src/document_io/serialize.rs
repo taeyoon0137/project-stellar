@@ -191,7 +191,16 @@ pub fn serialize_records(records: &DocumentRecords) -> Result<SerializedDocument
             KIND_VIEW_TREE,
             tree.encode().map_err(SerializeError::ViewTree)?,
         ));
-        subtrees.push(chunk(subtree_id, KIND_VIEW_TREE, subtree.encode()));
+        let mut serialized = chunk(subtree_id, KIND_VIEW_TREE, subtree.encode());
+        if subtree.nodes.iter().any(|n| {
+            matches!(
+                n.payload,
+                stellar_document::records::NodePayload::ComponentInstance(_)
+            )
+        }) {
+            serialized.schema_version = super::INSTANCE_SUBTREE_SCHEMA_VERSION;
+        }
+        subtrees.push(serialized);
         refs.push(ViewTreeRef {
             view,
             chunk: tree_id,

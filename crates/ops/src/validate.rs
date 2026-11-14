@@ -85,12 +85,13 @@ impl ValidationReport {
 
 /// 열린 snapshot을 검증합니다.
 pub fn validate_snapshot(snapshot: &ProjectSnapshot) -> ValidationReport {
+    let definitions = std::sync::OnceLock::new();
     ValidationReport {
         revision: snapshot.revision(),
         documents: snapshot
             .documents()
             .iter()
-            .map(|document| validate_snapshot_document(snapshot, document.id))
+            .map(|document| validate_with_definitions(snapshot, document.id, &definitions))
             .collect(),
     }
 }
@@ -99,6 +100,45 @@ pub fn validate_snapshot(snapshot: &ProjectSnapshot) -> ValidationReport {
 pub fn validate_snapshot_document(
     snapshot: &ProjectSnapshot,
     document: StableId,
+) -> DocumentValidation {
+    validate_with_definitions(snapshot, document, &std::sync::OnceLock::new())
+}
+
+type DefinitionIds = std::collections::BTreeSet<StableId>;
+
+fn definition_ids(snapshot: &ProjectSnapshot) -> Result<DefinitionIds, String> {
+    let (library, _) =
+        crate::component_source::project_library(snapshot).map_err(|e| e.to_string())?;
+    let mut ids: DefinitionIds = library.iter().map(|e| e.definition().id).collect();
+    if let Some(generation) = snapshot.generation() {
+        for pointer in generation
+            .manifest()
+            .chunk_pointers
+            .iter()
+            .filter(|p| p.kind == stellar_storage::chunk::kinds::KIND_COMPONENT_LIBRARY)
+        {
+            let bytes = generation
+                .read_chunk_payload(
+                    pointer.chunk_id,
+                    &mut stellar_storage::generation::lazy::NoopRecorder,
+                )
+                .map_err(|e| e.to_string())?;
+            let legacy = stellar_document::component::definition::ComponentLibrary::decode(&bytes)
+                .map_err(|e| e.to_string())?;
+            for entry in legacy.iter() {
+                if !ids.insert(entry.definition().id) {
+                    return Err("중복 component definition ID".into());
+                }
+            }
+        }
+    }
+    Ok(ids)
+}
+
+fn validate_with_definitions(
+    snapshot: &ProjectSnapshot,
+    document: StableId,
+    definitions: &std::sync::OnceLock<Result<DefinitionIds, String>>,
 ) -> DocumentValidation {
     let mut findings = Vec::new();
     let records = match snapshot.document_records(document) {
@@ -145,6 +185,34 @@ pub fn validate_snapshot_document(
             }
         }
     }
+    let instances = records.nodes.iter().filter_map(|n| match &n.payload {
+        stellar_document::records::NodePayload::ComponentInstance(i) => {
+            Some((n.id, i.component().id()))
+        }
+        _ => None,
+    });
+    for (instance, definition) in instances {
+        match definitions.get_or_init(|| definition_ids(snapshot)) {
+            Ok(ids) if ids.contains(&definition) => (),
+            Ok(_) => findings.push(Finding {
+                severity: FindingSeverity::Warning,
+                code: "missing-component-definition",
+                document,
+                message: format!(
+                    "인스턴스 {instance}가 참조하는 컴포넌트 정의 {definition}가 없습니다"
+                ),
+            }),
+            Err(e) => {
+                findings.push(Finding {
+                    severity: FindingSeverity::Error,
+                    code: "component-library-load",
+                    document,
+                    message: e.clone(),
+                });
+                break;
+            }
+        }
+    }
     DocumentValidation {
         document,
         node_count: Some(records.nodes.len()),
@@ -178,6 +246,82 @@ mod tests {
         for doc in &report.documents {
             assert!(doc.node_count.is_some());
         }
+        assert_eq!(file_digest(&dir.path), before);
+    }
+
+    #[test]
+    fn instances_survive_storage_and_diagnose_disappearing_definition_with_no_writes() {
+        use crate::core_types::{reference::ComponentRef, typed_value::TypedValue};
+        use stellar_document::{
+            component::{
+                definition::ComponentPropertyId,
+                instance::{ComponentInstancePayload, OverrideKey},
+            },
+            records::{NodePayload, NodeRecord},
+        };
+        let dir = TempDir::new("validate-instance");
+        scaffold_project(&dir.path);
+        let source = crate::component_source::create_in_project(
+            &dir.path.canonicalize().unwrap(),
+            crate::test_support::project_id(),
+            "Card".into(),
+        )
+        .unwrap();
+        let mut model = random_valid_document(311);
+        let root = model.definition().pages[0].views[0].root_frame;
+        let mut original = Vec::new();
+        for n in [900_001, 900_002] {
+            let id = StableId::new_v7(n, 0, n);
+            let mut payload = ComponentInstancePayload::new(ComponentRef::new(source.id));
+            payload.set_property_override(
+                OverrideKey::direct(ComponentPropertyId::new(StableId::new_v7(123, 0, 123))),
+                TypedValue::String("저장된 값".into()),
+            );
+            let record = NodeRecord {
+                id,
+                parent: Some(root),
+                order_key: model.next_child_order_key(root),
+                visible: true,
+                locked: false,
+                display_name: "Placed".into(),
+                payload: NodePayload::ComponentInstance(payload),
+            };
+            original.push(record.clone());
+            model.insert_node(record).unwrap();
+        }
+        save_documents(&dir.path, &[&model]);
+        let open = open_snapshot(&dir.path).unwrap();
+        let reopened = open.document_model(model.document_id()).unwrap();
+        assert!(open
+            .generation()
+            .unwrap()
+            .manifest()
+            .chunk_pointers
+            .iter()
+            .any(|p| p.schema_version
+                == stellar_project::document_io::INSTANCE_SUBTREE_SCHEMA_VERSION));
+        for node in &original {
+            assert_eq!(reopened.record(node.id).as_ref(), Some(node));
+        }
+        assert_eq!(
+            reopened.references().inbound(source.id),
+            original.iter().map(|n| n.id).collect::<Vec<_>>()
+        );
+        assert!(validate_snapshot(&open).documents[0]
+            .findings
+            .iter()
+            .all(|f| f.code != "missing-component-definition"));
+        std::fs::remove_file(source.file).unwrap();
+        let before = file_digest(&dir.path);
+        let report = validate_project(&dir.path).unwrap();
+        assert_eq!(
+            report.documents[0]
+                .findings
+                .iter()
+                .filter(|f| f.code == "missing-component-definition")
+                .count(),
+            2
+        );
         assert_eq!(file_digest(&dir.path), before);
     }
 
