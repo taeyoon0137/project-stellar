@@ -1818,7 +1818,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XVIII.4.1 | `[ ]` | 승인된 terminal parser/emulator dependency를 등록하고 VT sequence corpus를 테스트합니다. | 기본 cursor/color/erase fixture 통과. | I.3.2, XVIII.2.1, XVIII.3.1 |
+| XVIII.4.1 | `[x]` | 승인된 terminal parser/emulator dependency를 등록하고 VT sequence corpus를 테스트합니다. | 기본 cursor/color/erase fixture 통과. | I.3.2, XVIII.2.1, XVIII.3.1 |
 | XVIII.4.2 | `[ ]` | terminal screen buffer, scrollback, selection, clipboard 모델을 구현합니다. | 100만 line memory cap 유지. | XVIII.4.1 |
 | XVIII.4.3 | `[ ]` | macOS terminal view가 screen buffer를 표시하고 keyboard/IME input을 PTY로 전달합니다. | interactive smoke. | XVIII.2.3, XVIII.4.2 |
 | XVIII.4.4 | `[!]` | Windows terminal view를 연결합니다. | interactive smoke. | XVIII.3.3, XVIII.4.2 |

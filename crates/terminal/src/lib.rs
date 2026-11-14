@@ -15,6 +15,8 @@
 //! - [`shell`]: 사용자 셸 설정(login/non-login).
 //! - [`header`]: 일반·worktree 터미널 header metadata와 잘못된 cwd 경고.
 //! - `pty`(macOS): POSIX PTY 실행기.
+//! - [`vt`]: VT escape sequence parser와 문자 셀 폭.
+//! - [`emulator`]: PTY 출력을 화면 격자로 해석하는 터미널 emulator.
 //!
 //! **저장하지 않는 상태**: 세션·profile 복사본·출력·프로세스 상태는 세션 메모리에만 있습니다.
 //! 프로젝트 저장과 복구 snapshot에 넣지 않으며(기술 아키텍처 22.3 "복구하지 않는 대상: 터미널
@@ -23,6 +25,7 @@
 
 pub mod capability;
 pub mod cwd;
+pub mod emulator;
 pub mod env;
 pub mod header;
 pub mod id;
@@ -34,6 +37,7 @@ pub mod registry;
 pub mod shell;
 pub mod size;
 pub mod state;
+pub mod vt;
 
 #[cfg(test)]
 mod test_support;

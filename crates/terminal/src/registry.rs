@@ -11,7 +11,7 @@
 //! - **시작 gate**([`TerminalRegistry::start`]): 신뢰된 프로젝트 창의 [`TerminalCapability`]를
 //!   가장 먼저 확인합니다. token이 없거나 다른 창의 것이면 cwd·명령·환경을 보지도 않고, 실행기를
 //!   호출하지 않습니다(untrusted spawn 0). 그다음 cwd 검증(XVIII.1.3), 셸 해석(XVIII.2.2)·명령·환경
-//!   구성, 실행 순입니다.
+//!   구성(`TERM`·`COLORTERM` 기본값 포함, XVIII.4.1), 실행 순입니다.
 //! - 닫기([`TerminalRegistry::close`])는 실행 중인 child를 종료한 뒤 세션을 제거합니다.
 //! - **프로세스 tree 정리**(XVIII.2.4): child 스스로 종료·외부 신호 종료는 [`TerminalRegistry::poll`]이
 //!   비차단으로 정리하고 세션을 `Finished{ChildExited}`로 남깁니다. 취소([`TerminalRegistry::cancel`])는
@@ -27,6 +27,7 @@ use stellar_core_types::ids::WindowSessionId;
 
 use crate::capability::{TerminalCapability, TerminalNotTrusted};
 use crate::cwd::{CwdContext, CwdError, ResolvedCwd};
+use crate::emulator::{COLORTERM, TERM_NAME};
 use crate::header::TerminalHeader;
 use crate::id::{SessionIdAllocator, TerminalSessionId};
 use crate::launch::{
@@ -323,6 +324,13 @@ impl TerminalRegistry {
             .resolve(&session.profile.cwd)
             .map_err(StartError::Cwd)?;
         let mut env = session.profile.environment.resolve(environment.env_lookup);
+        // child가 보는 터미널 종류는 이 crate의 emulator가 해석하는 sequence 집합입니다(XVIII.4.1).
+        // 앱 프로세스에서 상속한 값보다 우선하고, profile이 명시한 값은 그대로 둡니다.
+        for (name, value) in [("TERM", TERM_NAME), ("COLORTERM", COLORTERM)] {
+            if session.profile.environment.assignment(name).is_none() {
+                set_env(&mut env, name, std::ffi::OsStr::new(value));
+            }
+        }
         let (program, args, arg0) = match &session.profile.command {
             ProfileCommand::DefaultShell => {
                 let shell = resolve_shell(environment.shell, environment.shell_source)
@@ -775,9 +783,11 @@ pub(crate) mod tests {
         assert_eq!(
             shell_request.env(),
             [
+                (OsString::from("COLORTERM"), OsString::from("truecolor")),
                 (OsString::from("HOME"), OsString::from("/Users/example")),
                 (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
                 (OsString::from("SHELL"), OsString::from("/bin/sh")),
+                (OsString::from("TERM"), OsString::from("xterm-256color")),
             ]
         );
 
@@ -1084,6 +1094,7 @@ pub(crate) mod tests {
         assert_eq!(launcher.requests[0].arg0(), None);
         let mut explicit = profile("explicit-shell-env");
         explicit.environment.set("SHELL", "/custom/shell").unwrap();
+        explicit.environment.set("TERM", "dumb").unwrap();
         let explicit_id = registry.create(explicit).unwrap();
         let shell = sh();
         let environment = LaunchEnvironment {
@@ -1097,6 +1108,14 @@ pub(crate) mod tests {
             .env()
             .iter()
             .any(|(name, value)| name == "SHELL" && value == "/custom/shell"));
+        // profile이 정한 TERM은 기본값으로 바꾸지 않습니다.
+        let terms: Vec<&OsString> = launcher.requests[1]
+            .env()
+            .iter()
+            .filter(|(name, _)| name == "TERM")
+            .map(|(_, value)| value)
+            .collect();
+        assert_eq!(terms, [&OsString::from("dumb")]);
     }
 
     /// 실제 PTY에서 login/non-login 셸의 `$0`과 `SHELL`을 확인합니다.
