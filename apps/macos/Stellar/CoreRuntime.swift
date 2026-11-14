@@ -22,6 +22,15 @@ enum CoreRuntime {
 
     // MARK: - 프로젝트 session (XII.6.2)
 
+    static func createComponent(handle: UInt64, session: UInt64, name: String) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = Array(name.utf8).withUnsafeBufferPointer {
+            stellar_window_component_create(handle, session, $0.baseAddress, $0.count, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func createProject(handle: UInt64, path: String) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let bytes = Array(path.utf8)
@@ -296,6 +305,7 @@ struct CoreGitName: Equatable {
 }
 
 enum CoreRuntimeEvent: Equatable {
+    case componentCreated(request: UInt64, session: UInt64, filename: String)
     case projectCreated(request: UInt64, gitState: UInt32)
     case projectOpened(request: UInt64, project: UInt64, projectID: UUID, name: String, root: String)
     case projectClosed(request: UInt64, project: UInt64, closedDocuments: UInt32)
@@ -321,7 +331,7 @@ enum CoreRuntimeEvent: Equatable {
     /// event가 완료한 요청 id. 해석하지 못한 event는 nil입니다.
     var request: UInt64? {
         switch self {
-        case .projectCreated(let request, _), .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _), .projectTrust(let request, _, _),
+        case .componentCreated(let request, _, _), .projectCreated(let request, _), .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _), .projectTrust(let request, _, _),
              .gitNames(let request, _, _, _, _), .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
              .requestFailed(let request, _, _), .windowSessionOpened(let request, _, _, _, _, _),
              .windowSessionClosed(let request, _), .windowViewChanged(let request, _),
@@ -338,6 +348,9 @@ enum CoreRuntimeEvent: Equatable {
         guard reader.u32() == UInt32(STELLAR_EVENT_SCHEMA_VERSION) else { return .undecodable(kind: kind) }
         let event: CoreRuntimeEvent?
         switch kind {
+        case UInt32(STELLAR_EVENT_COMPONENT_CREATED):
+            guard let request = reader.u64(), let session = reader.u64(), let filename = reader.text() else { return .undecodable(kind: kind) }
+            event = .componentCreated(request: request, session: session, filename: filename)
         case UInt32(STELLAR_EVENT_PROJECT_CREATED):
             guard let request = reader.u64(), let gitState = reader.u32() else { return .undecodable(kind: kind) }
             event = .projectCreated(request: request, gitState: gitState)

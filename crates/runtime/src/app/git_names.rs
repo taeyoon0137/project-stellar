@@ -19,11 +19,8 @@ use stellar_ops::candidate::{
     diff, saved_semantic_snapshot, ObjectKind, SemanticChange, SemanticDiff, SemanticSnapshot,
     SemanticValue, StageSelectionRequest, DISPLAY_NAME,
 };
-use stellar_project::identity::{parse_project_id, ProjectIdentity};
-use stellar_project::probe::safe_probe;
 use stellar_project::saved_project::SavedProjectLoader;
 use stellar_project::trust::TrustStatus;
-use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
 use super::{
     AppRuntime, ProjectSummary, RequestError, RequestFailure, RequestId, RuntimeEvent,
@@ -80,27 +77,6 @@ impl WindowGit {
         self.active.clear();
         self.snapshots.clear();
     }
-}
-
-fn trust(project: &ProjectSummary) -> Result<(), String> {
-    let root = &project.canonical_root;
-    if project.root.canonicalize().ok().as_deref() != Some(root) {
-        return Err("열린 프로젝트 폴더가 바뀌었습니다".into());
-    }
-    let identity = ProjectIdentity::new(project.project_id, root).map_err(|e| e.to_string())?;
-    let dir = os_user_data_base()
-        .filter(|p| p.is_absolute())
-        .ok_or("사용자 데이터 경로 없음")?;
-    let store = FileTrustStore::open(&dir.join(stellar_ops::lock::APP_DATA_DIR))
-        .map_err(|e| e.to_string())?;
-    if store.status(&identity) != TrustStatus::Trusted {
-        return Err("프로젝트 신뢰가 필요합니다".into());
-    }
-    let probe = safe_probe(root, TrustStatus::NotTrusted).map_err(|e| e.to_string())?;
-    if parse_project_id(&probe.manifest.project.id) != Some(project.project_id) {
-        return Err("열린 프로젝트 ID가 바뀌었습니다".into());
-    }
-    Ok(())
 }
 
 struct TempParent(PathBuf);
@@ -337,7 +313,7 @@ impl AppRuntime {
                     let project = project.as_ref().ok_or("이미 닫힌 창입니다")?;
                     live(&token)?;
                     if project.trust != TrustStatus::Trusted { return Err("프로젝트 신뢰가 필요합니다".into()); }
-                    trust(project)?;
+                    project.verify_trust()?;
                     let git = discover_git(&GitDiscoveryConfig::default())
                         .ok_or("시스템 Git을 찾지 못했습니다")?;
                     let git = GatedGitRunner::new(
@@ -359,7 +335,7 @@ impl AppRuntime {
                             ),
                         }.map_err(|e| e.to_string())?;
                         live(&token)?;
-                        trust(project)?;
+                        project.verify_trust()?;
                         apply_stage_candidate(
                             &git,
                             &project.canonical_root,

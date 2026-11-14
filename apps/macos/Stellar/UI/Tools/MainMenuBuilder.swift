@@ -69,6 +69,7 @@ enum MainMenuBuilder {
             [.command(.toggleFullScreen)],
         ]),
         ("Insert", [
+            [.command(.newComponent)],
             [.command(.selectFrameTool)],
             [.command(.selectRectangleTool), .command(.selectEllipseTool),
              .command(.selectLineTool), .command(.selectPolygonTool)],

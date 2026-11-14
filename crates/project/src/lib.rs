@@ -66,6 +66,9 @@ pub mod trust_store;
 /// 문서 ↔ chunk model 입출력 (VI.10.2).
 pub mod document_io;
 
+/// 새 프로젝트·정의·노드에 사용할 UUIDv7.
+pub mod new_ids;
+
 /// 프로젝트 신뢰 capability matrix (XVI.7.1).
 pub mod capability;
 

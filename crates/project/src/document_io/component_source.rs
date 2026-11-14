@@ -274,12 +274,40 @@ pub fn create(
     dir: &Path,
     source: &ComponentSource,
 ) -> Result<(PathBuf, ContentHash), TextSourceError> {
-    let path = dir.join(source.filename()?);
-    let (mut library, files) = read_library(dir)?;
+    let (library, files) = read_library(dir)?;
+    create_in(dir, source, library, files, None)
+}
+
+/// 고정한 프로젝트 폴더 안에서만 전체 원본을 검사하고 새 파일을 작성합니다.
+pub fn create_in_project(
+    root: &Path,
+    dir: &Path,
+    source: &ComponentSource,
+) -> Result<(PathBuf, ContentHash), TextSourceError> {
+    let canonical = dir.canonicalize()?;
+    if !canonical.starts_with(root)
+        || canonical == root
+        || root.join("design/components").canonicalize()? != canonical
+    {
+        return Err(invalid("프로젝트의 컴포넌트 원본 폴더가 바뀌었습니다"));
+    }
+    let (library, files, remaining) = project_library(root)?;
+    create_in(&canonical, source, library, files, Some((root, remaining)))
+}
+
+fn create_in(
+    dir: &Path,
+    source: &ComponentSource,
+    mut library: ComponentLibrary,
+    files: ComponentFiles,
+    project: Option<(&Path, u64)>,
+) -> Result<(PathBuf, ContentHash), TextSourceError> {
+    let filename = source.filename()?;
+    let path = dir.join(&filename);
     if files.len() == MAX_COMPONENT_FILES {
         return Err(invalid("컴포넌트 파일 수 상한 초과"));
     }
-    let key = collision_key(&source.filename()?);
+    let key = collision_key(&filename);
     if files.values().any(|(p, _)| {
         p.file_name()
             .and_then(|s| s.to_str())
@@ -289,7 +317,19 @@ pub fn create(
     }
     source.add_to(&mut library)?;
     let encoded = source.encode()?;
-    source_file::write_checked(&path, encoded.as_bytes(), None, MAX_INPUT_BYTES as u64)?;
+    if let Some((root, remaining)) = project {
+        if root.join("design/components").canonicalize()? != dir {
+            return Err(TextSourceError::Changed);
+        }
+        source_file::write_new_resolved(
+            root,
+            &path,
+            encoded.as_bytes(),
+            remaining.min(MAX_INPUT_BYTES as u64),
+        )?;
+    } else {
+        source_file::write_checked(&path, encoded.as_bytes(), None, MAX_INPUT_BYTES as u64)?;
+    }
     Ok((path, ContentHash::compute(encoded.as_bytes())))
 }
 
@@ -506,15 +546,27 @@ pub fn read_library(dir: &Path) -> Result<(ComponentLibrary, ComponentFiles), Te
 pub fn read_project_library(
     root: &Path,
 ) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
+    let (library, files, _) = project_library(root)?;
+    Ok((library, files))
+}
+
+fn project_library(
+    root: &Path,
+) -> Result<(ComponentLibrary, ComponentFiles, u64), TextSourceError> {
     let Some(paths) = project_source_paths(root)? else {
-        return Ok((ComponentLibrary::new(), BTreeMap::new()));
+        return Ok((
+            ComponentLibrary::new(),
+            BTreeMap::new(),
+            MAX_PROJECT_SOURCE_BYTES,
+        ));
     };
     let mut remaining = MAX_PROJECT_SOURCE_BYTES;
-    assemble(paths.files.into_iter().map(|path| {
+    let (library, files) = assemble(paths.files.into_iter().map(|path| {
         let bytes = read_project_source(&paths.root, &path, &mut remaining)?;
         let (source, hash) = decode_named(&path, &bytes)?;
         Ok((path, source, hash))
-    }))
+    }))?;
+    Ok((library, files, remaining))
 }
 
 /// 프로젝트 루트 내부 실제 경로에서 읽은 파일 이름과 bytes hash의 결정적 집합 hash.

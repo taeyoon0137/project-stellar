@@ -841,6 +841,47 @@ pub unsafe extern "C" fn stellar_project_create(
     }
 }
 
+/// 이름으로 새 프로젝트 컴포넌트 원본을 만드는 비동기 요청.
+/// # Safety
+/// name은 name_len개의 읽을 수 있는 UTF-8 바이트, out_request는 쓸 수 있는 u64여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_component_create(
+    handle: u64,
+    session: u64,
+    name: *const u8,
+    name_len: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_request.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            *out_request = 0;
+        }
+        if name_len == 0 || name_len > 255 {
+            return StellarStatus::InvalidArgument;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let name = match unsafe { decode_utf8_owned(name, name_len) } {
+            Ok(name) => name,
+            Err(status) => return status,
+        };
+        let result = match rt.app() {
+            Ok(app) => {
+                app.create_component(stellar_runtime::app::WindowSessionHandle(session), name)
+            }
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 unsafe fn project_path_request(
     handle: u64,
     path: *const u8,
@@ -1393,6 +1434,10 @@ mod tests {
             ("STELLAR_EVENT_PROJECT_OPENED", event_kind::PROJECT_OPENED),
             ("STELLAR_EVENT_PROJECT_TRUST", event_kind::PROJECT_TRUST),
             ("STELLAR_EVENT_GIT_NAMES", event_kind::GIT_NAMES),
+            (
+                "STELLAR_EVENT_COMPONENT_CREATED",
+                event_kind::COMPONENT_CREATED,
+            ),
             ("STELLAR_EVENT_PROJECT_CREATED", event_kind::PROJECT_CREATED),
             ("STELLAR_EVENT_PROJECT_CLOSED", event_kind::PROJECT_CLOSED),
             ("STELLAR_EVENT_DOCUMENT_OPENED", event_kind::DOCUMENT_OPENED),

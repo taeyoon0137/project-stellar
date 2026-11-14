@@ -107,6 +107,8 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_EVENT_PROJECT_TRUST 0x010b
 #define STELLAR_EVENT_GIT_NAMES 0x010c
 #define STELLAR_EVENT_PROJECT_CREATED 0x010d
+/* request u64, session u64, filename text */
+#define STELLAR_EVENT_COMPONENT_CREATED 0x010e
 
 /* 완료 event를 아직 꺼내지 않은 요청(실행 중 포함) 상한. 닿으면 새 요청은 STELLAR_QUEUE_FULL. */
 #define STELLAR_EVENT_CAPACITY 1024
@@ -280,6 +282,9 @@ StellarStatus stellar_project_open(uint64_t handle, const uint8_t *path, size_t 
 
 /* 새 폴더 생성. 완료 event 뒤 같은 path로 stellar_project_open을 호출할 수 있습니다. */
 StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_t path_len, uint64_t *out_request);
+
+/* 열린 신뢰 창의 프로젝트에 독립 컴포넌트 원본 한 개 생성. 완료는 COMPONENT_CREATED 또는 REQUEST_FAILED. */
+StellarStatus stellar_window_component_create(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, uint64_t *out_request);
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
 StellarStatus stellar_project_close(uint64_t handle, uint64_t project, uint64_t *out_request);

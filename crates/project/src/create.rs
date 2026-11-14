@@ -166,7 +166,7 @@ pub fn create_editable_project(
     runner: &GitRunner,
     version: &GitVersion,
 ) -> Result<ProjectCreated, ProjectCreateError> {
-    let ids = initial_document::new_ids().map_err(|e| ProjectCreateError::Io(e.kind()))?;
+    let ids = crate::new_ids::new_ids().map_err(|e| ProjectCreateError::Io(e.kind()))?;
     create_with(request, &ids[0].to_string(), runner, version, |root| {
         initial_document::save(root, ids)
     })
