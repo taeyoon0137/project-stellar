@@ -40,3 +40,6 @@ pub mod stage;
 
 /// 변경 dependency graph (XIV.5.2).
 pub mod dependency;
+
+/// semantic snapshot 무결성 validator (XIV.5.3).
+pub mod validate;

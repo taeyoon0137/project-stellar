@@ -24,6 +24,12 @@
 //! | ID 집합 | 개수 `u32` + ChangeId* (오름차순·중복 없음) |
 //! | 요청 | `SSRQ` + version `u16` + 작업 `u8` + selected 집합 + approved 집합 |
 //! | 결과 | `SSEL` + version `u16` + 작업 `u8` + selected 집합 + closure 집합(selected ⊆ closure) |
+//!
+//! **계획(XIV.5.3)**: [`plan_stage`]는 현재 Index → WorkingTree diff에서 dependency graph(XIV.5.2)로
+//! closure를 구하고, 선택만 Index에 적용한 snapshot을 validator(XIV.5.3 [`validate`](crate::validate))로
+//! 검사해 [`StagePlan`]을 돌려줍니다. 필수 dependency는 `required_additions`로 **반환만** 하고 자동으로
+//! 포함하지 않습니다. Index·WorkingTree snapshot은 읽기만 합니다. graph는 validator가 볼 수 없는 참조
+//! (binding payload 안 token 등)까지 의존으로 보므로, validator가 통과해도 필수 변경이 있을 수 있습니다.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -31,8 +37,13 @@ use std::fmt;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyPath;
 
+use crate::apply::{apply, ApplyError};
 use crate::change::SemanticChange;
 use crate::codec::{put_path, read_path, DecodeError, Reader};
+use crate::dependency::DependencyGraph;
+use crate::diff::diff;
+use crate::snapshot::SemanticSnapshot;
+use crate::validate::{introduced_violations, SnapshotViolation};
 
 /// 변경이 다루는 대상 단위.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -366,6 +377,125 @@ impl StageSelection {
     }
 }
 
+/// 선택만 적용했을 때의 결과(XIV.5.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectedOnlyOutcome {
+    /// validator가 새 위반을 찾지 못함.
+    Valid,
+    /// 기준(Index·WorkingTree) 어디에도 없던 위반이 생김.
+    Invalid(BTreeSet<SnapshotViolation>),
+    /// 선택만으로는 적용할 수 없음(예: 교체의 추가만 선택).
+    NotApplicable(ApplyError),
+}
+
+/// 선택 stage·unstage 계획(XIV.5.3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StagePlan {
+    /// 선택과 dependency closure.
+    pub selection: StageSelection,
+    /// 선택만 기준 snapshot에 적용했을 때의 결과.
+    pub selected_only: SelectedOnlyOutcome,
+}
+
+impl StagePlan {
+    /// 호출자 승인이 필요한 필수 함께-변경.
+    pub fn required_additions(&self) -> BTreeSet<ChangeId> {
+        self.selection.required_additions()
+    }
+
+    /// 승인이 필요한지(필수 함께-변경이 있음).
+    pub fn needs_approval(&self) -> bool {
+        !self.selection.is_self_contained()
+    }
+}
+
+/// staging 계획·candidate 실패.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StageError {
+    /// 요청 ID가 현재 변경 목록에 없음(오래된 요청).
+    UnknownChange(UnknownChange),
+    /// 요청 작업이 이 함수와 맞지 않음.
+    WrongOperation {
+        /// 이 함수가 받는 작업.
+        expected: SelectionOperation,
+        /// 요청 작업.
+        found: SelectionOperation,
+    },
+}
+
+impl fmt::Display for StageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            StageError::UnknownChange(e) => write!(f, "{e}"),
+            StageError::WrongOperation { expected, found } => {
+                write!(
+                    f,
+                    "요청 작업 {found:?}은 {expected:?} 계획에 쓸 수 없습니다"
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for StageError {}
+
+impl From<UnknownChange> for StageError {
+    fn from(e: UnknownChange) -> StageError {
+        StageError::UnknownChange(e)
+    }
+}
+
+/// `base → target` diff에서 선택의 closure와 선택만 적용한 결과를 계산합니다.
+///
+/// `baselines`의 위반은 이미 있던 것으로 보고 제외합니다.
+pub(crate) fn plan_selection(
+    base: &SemanticSnapshot,
+    target: &SemanticSnapshot,
+    operation: SelectionOperation,
+    selected: &BTreeSet<ChangeId>,
+) -> Result<StagePlan, StageError> {
+    let changes = diff(base, target);
+    let graph = DependencyGraph::build(base, target, &changes);
+    let selection = graph.select(operation, selected)?;
+    let chosen: Vec<SemanticChange> = resolve_changes(&changes, selection.selected())?
+        .into_iter()
+        .cloned()
+        .collect();
+    let selected_only = match apply(base, &chosen) {
+        Ok(candidate) => {
+            let violations = introduced_violations(&candidate, &[base, target]);
+            if violations.is_empty() {
+                SelectedOnlyOutcome::Valid
+            } else {
+                SelectedOnlyOutcome::Invalid(violations)
+            }
+        }
+        Err(error) => SelectedOnlyOutcome::NotApplicable(error),
+    };
+    Ok(StagePlan {
+        selection,
+        selected_only,
+    })
+}
+
+/// 선택 stage 계획(XIV.5.3): Index → WorkingTree 변경 중 선택의 필수 dependency를 계산합니다.
+///
+/// 필수 dependency는 [`StagePlan::required_additions`]로 반환만 하고 자동으로 stage하지 않습니다.
+/// `request.approved`는 이 단계에서 쓰지 않습니다(candidate 단계에서 검사).
+pub fn plan_stage(
+    index: &SemanticSnapshot,
+    working: &SemanticSnapshot,
+    request: &StageSelectionRequest,
+) -> Result<StagePlan, StageError> {
+    if request.operation != SelectionOperation::Stage {
+        return Err(StageError::WrongOperation {
+            expected: SelectionOperation::Stage,
+            found: request.operation,
+        });
+    }
+    plan_selection(index, working, SelectionOperation::Stage, &request.selected)
+}
+
 const REQUEST_MAGIC: &[u8; 4] = b"SSRQ";
 const SELECTION_MAGIC: &[u8; 4] = b"SSEL";
 const FORMAT_VERSION: u16 = 1;
@@ -433,6 +563,234 @@ pub(crate) mod tests {
 
     pub(crate) fn path(id: u64, key: stellar_core_types::property::PropertyKey) -> PropertyPath {
         PropertyPath::with_keys(sid(id), vec![key])
+    }
+
+    /// staging fixture(Index, WorkingTree).
+    ///
+    /// - Index: 문서 1 ─ 페이지 2 ─ View 3(root frame 10), frame 10 아래 frame 11·인스턴스 400(컴포넌트 300,
+    ///   override 310), token 200, binding expression 600(token 200 참조).
+    /// - WorkingTree: 새 페이지 4 ─ View 5 ─ root frame 20 ─ 자식 21(문서 페이지 목록 변경), interface에
+    ///   Property 311 추가와 그 override, frame 11 숨김(독립 변경).
+    pub(crate) fn staging_fixture() -> (SemanticSnapshot, SemanticSnapshot) {
+        use crate::dependency::tests::{component_base, frame, object, replace};
+        use crate::snapshot::{ObjectKind, Origin};
+        use crate::value::SemanticValue;
+        let doc = Origin::Document(sid(1));
+        let mut index = component_base();
+        for o in [
+            object(
+                1,
+                ObjectKind::Document,
+                doc,
+                None,
+                None,
+                vec![(
+                    path(1, keys::DOCUMENT_PAGES),
+                    SemanticValue::Ids(vec![sid(2)]),
+                )],
+            ),
+            object(
+                2,
+                ObjectKind::Page,
+                doc,
+                Some(1),
+                None,
+                vec![(path(2, keys::PAGE_VIEWS), SemanticValue::Ids(vec![sid(3)]))],
+            ),
+            object(
+                3,
+                ObjectKind::View,
+                doc,
+                Some(2),
+                None,
+                vec![(path(3, keys::VIEW_ROOT_FRAME), SemanticValue::Id(sid(10)))],
+            ),
+            frame(11, Some(10), 0x40),
+        ] {
+            index.insert(o).unwrap();
+        }
+        let mut working = index.clone();
+        let mut document = working.get(sid(1)).unwrap().clone();
+        document
+            .set_property(
+                path(1, keys::DOCUMENT_PAGES),
+                SemanticValue::Ids(vec![sid(2), sid(4)]),
+            )
+            .unwrap();
+        replace(&mut working, document);
+        for o in [
+            object(
+                4,
+                ObjectKind::Page,
+                doc,
+                Some(1),
+                None,
+                vec![(path(4, keys::PAGE_VIEWS), SemanticValue::Ids(vec![sid(5)]))],
+            ),
+            object(
+                5,
+                ObjectKind::View,
+                doc,
+                Some(4),
+                None,
+                vec![(path(5, keys::VIEW_ROOT_FRAME), SemanticValue::Id(sid(20)))],
+            ),
+            frame(20, None, 0x80),
+            frame(21, Some(20), 0x80),
+        ] {
+            working.insert(o).unwrap();
+        }
+        let mut component = working.get(sid(300)).unwrap().clone();
+        component
+            .set_property(
+                path(300, keys::COMPONENT_PROPERTIES),
+                SemanticValue::Ids(vec![sid(310), sid(311)]),
+            )
+            .unwrap();
+        replace(&mut working, component);
+        let mut instance = working.get(sid(400)).unwrap().clone();
+        instance
+            .set_property(override_path(311), SemanticValue::Bool(true))
+            .unwrap();
+        replace(&mut working, instance);
+        let mut hidden = frame(11, Some(10), 0x40);
+        hidden
+            .set_property(path(11, keys::VISIBLE), SemanticValue::Bool(false))
+            .unwrap();
+        replace(&mut working, hidden);
+        (index, working)
+    }
+
+    pub(crate) fn override_path(property: u64) -> PropertyPath {
+        path(400, keys::instance::PROPERTY_OVERRIDES).with_key_segment(&sid(property).to_string())
+    }
+
+    #[test]
+    fn invalid_partial_selection_returns_required_dependencies_without_staging() {
+        let (index, working) = staging_fixture();
+        let index_before = index.clone();
+        // fixture 자체는 Index·WorkingTree 모두 위반 없음(인스턴스·root 정상).
+        assert!(crate::validate::validate_snapshot(&index).is_empty());
+        assert!(crate::validate::validate_snapshot(&working).is_empty());
+
+        // 새 자식 21만 선택: parent 20이 없어 invalid → 새 subtree와 페이지 목록이 필수.
+        let plan = plan_stage(
+            &index,
+            &working,
+            &StageSelectionRequest::stage([ChangeId::add(sid(21))]),
+        )
+        .unwrap();
+        assert!(plan.needs_approval());
+        assert_eq!(
+            plan.required_additions(),
+            [
+                ChangeId::property(path(1, keys::DOCUMENT_PAGES)),
+                ChangeId::add(sid(4)),
+                ChangeId::add(sid(5)),
+                ChangeId::add(sid(20)),
+            ]
+            .into()
+        );
+        assert_eq!(
+            plan.selected_only,
+            SelectedOnlyOutcome::Invalid(
+                [SnapshotViolation::MissingParent {
+                    object: sid(21),
+                    parent: sid(20)
+                }]
+                .into()
+            )
+        );
+
+        // override 311만 선택: interface에 311이 없어 invalid → interface 변경이 필수.
+        let plan = plan_stage(
+            &index,
+            &working,
+            &StageSelectionRequest::stage([ChangeId::property(override_path(311))]),
+        )
+        .unwrap();
+        assert_eq!(
+            plan.required_additions(),
+            [ChangeId::property(path(300, keys::COMPONENT_PROPERTIES))].into()
+        );
+        assert_eq!(
+            plan.selected_only,
+            SelectedOnlyOutcome::Invalid(
+                [SnapshotViolation::UnknownInterfaceMember {
+                    path: override_path(311),
+                    member: sid(311)
+                }]
+                .into()
+            )
+        );
+
+        // 독립 변경은 필수 변경 없이 유효.
+        let plan = plan_stage(
+            &index,
+            &working,
+            &StageSelectionRequest::stage([ChangeId::property(path(11, keys::VISIBLE))]),
+        )
+        .unwrap();
+        assert!(!plan.needs_approval());
+        assert_eq!(plan.selected_only, SelectedOnlyOutcome::Valid);
+
+        // 계획은 Index를 바꾸지 않습니다.
+        assert_eq!(index, index_before);
+    }
+
+    #[test]
+    fn stale_or_wrong_requests_are_rejected() {
+        let (index, working) = staging_fixture();
+        assert_eq!(
+            plan_stage(
+                &index,
+                &working,
+                &StageSelectionRequest::stage([ChangeId::add(sid(99))])
+            ),
+            Err(StageError::UnknownChange(UnknownChange {
+                id: ChangeId::add(sid(99))
+            }))
+        );
+        assert_eq!(
+            plan_stage(
+                &index,
+                &working,
+                &StageSelectionRequest::unstage([ChangeId::add(sid(21))])
+            ),
+            Err(StageError::WrongOperation {
+                expected: SelectionOperation::Stage,
+                found: SelectionOperation::Unstage
+            })
+        );
+    }
+
+    #[test]
+    fn replacement_half_is_not_applicable_alone() {
+        use crate::snapshot::{ObjectKind, Origin, SemanticObject};
+        let (index, _) = staging_fixture();
+        let mut working = index.clone();
+        working.remove(sid(11)).unwrap();
+        working
+            .insert(SemanticObject::new(
+                sid(11),
+                ObjectKind::Token,
+                Origin::Project,
+            ))
+            .unwrap();
+        let plan = plan_stage(
+            &index,
+            &working,
+            &StageSelectionRequest::stage([ChangeId::add(sid(11))]),
+        )
+        .unwrap();
+        assert_eq!(
+            plan.required_additions(),
+            [ChangeId::remove(sid(11))].into()
+        );
+        assert_eq!(
+            plan.selected_only,
+            SelectedOnlyOutcome::NotApplicable(ApplyError::ObjectExists { id: sid(11) })
+        );
     }
 
     #[test]
