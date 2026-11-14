@@ -13,5 +13,8 @@ unicode-bidi = { version = "=0.3.18", default-features = false, features = ["har
 unicode-segmentation = "=1.13.3"
 unicode-linebreak = "=0.1.5"
 
+[features]
+test-support = []
+
 [lints]
 workspace = true

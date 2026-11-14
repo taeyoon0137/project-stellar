@@ -534,6 +534,8 @@ pub struct ShapedGlyph {
 /// shaping 결과 run.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ShapedRun {
+    /// 실제 shaping instance의 줄 metric.
+    pub metrics: LineMetrics,
     /// 원본 byte 범위.
     pub range: Range<usize>,
     /// 쓰기 방향.
@@ -685,6 +687,7 @@ pub fn shape(face: &FontFace, request: &ShapeRequest<'_>) -> Result<ShapedRun, S
         })
         .collect();
     Ok(ShapedRun {
+        metrics: face.line_metrics(),
         range: range.clone(),
         direction,
         units_per_em: face.units_per_em(),

@@ -21,6 +21,9 @@ pub mod missing_font;
 /// 공통 shaping 엔진 wrapper (X.9.1).
 pub mod shaping;
 
+/// 실제 shaping face instance의 glyph outline.
+pub mod outline;
+
 /// Unicode BiDi level 해석 (X.9.2), 줄 재배치·logical cluster mapping (X.9.3).
 pub mod bidi;
 
@@ -60,8 +63,15 @@ mod op_count;
 /// run·segment·BiDi paragraph 범위 목록의 정렬 불변식 확인(debug 빌드에서만 확인).
 mod tiling;
 
-#[cfg(test)]
-pub(crate) mod test_fonts;
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
+mod test_fonts;
+
+#[cfg(feature = "test-support")]
+/// 다른 crate의 실물 SFNT 파이프라인 검증에 쓰는 테스트 전용 API.
+pub mod test_support {
+    pub use crate::test_fonts::outline_test_font;
+}
 
 #[cfg(test)]
 mod golden;

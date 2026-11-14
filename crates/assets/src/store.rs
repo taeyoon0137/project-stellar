@@ -36,7 +36,7 @@
 
 use std::fmt;
 use std::fs::File;
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -462,7 +462,7 @@ impl AssetStore {
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
         let digest = hash_source(source, &mut buffer, request.max_size)?;
         let (object_path, outcome) =
-            match self.locate_verified_content(&digest.hash, digest.size, &mut buffer)? {
+            match self.locate_verified_content(&digest.hash, digest.size, &mut buffer, None)? {
                 Some(existing) => (existing, ImportOutcome::Deduplicated),
                 None => {
                     let object_path = AssetObjectPath::new(&digest.hash, &request.extension);
@@ -495,7 +495,24 @@ impl AssetStore {
         size: u64,
     ) -> Result<Option<AssetObjectPath>, ImportError> {
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
-        self.locate_verified_content(hash, size, &mut buffer)
+        self.locate_verified_content(hash, size, &mut buffer, None)
+    }
+
+    /// asset decoder용 bytes입니다. 같은 fd에서 읽으며 hash와 크기를 확인합니다.
+    /// 이름·확장자·원본 경로로 대체하지 않습니다. 읽는 동안 커진 파일도 size에서 중단합니다.
+    pub fn read_content(
+        &self,
+        hash: &ContentHash,
+        size: u64,
+        max: u64,
+    ) -> Result<Option<Vec<u8>>, ImportError> {
+        if size > max || usize::try_from(size).is_err() {
+            return Err(ImportError::TooLarge { size, max });
+        }
+        let mut bytes = Vec::new();
+        let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
+        let found = self.locate_verified_content(hash, size, &mut buffer, Some(&mut bytes))?;
+        Ok(found.map(|_| bytes))
     }
 
     /// [`AssetStore::locate_content`]의 buffer 재사용 버전(import hash pass buffer).
@@ -504,6 +521,7 @@ impl AssetStore {
         hash: &ContentHash,
         size: u64,
         buffer: &mut [u8],
+        mut bytes: Option<&mut Vec<u8>>,
     ) -> Result<Option<AssetObjectPath>, ImportError> {
         let locate_error = |e: std::io::Error| ImportError::io(ImportOperation::LocateContent, &e);
         let assets = self.root.join(ASSETS_DIR);
@@ -550,7 +568,14 @@ impl AssetStore {
         }
         candidates.sort_by(|a, b| a.0.cmp(&b.0));
         for (candidate, identity) in candidates {
-            if self.content_matches(&candidate, identity, hash, size, buffer) {
+            if self.content_matches(
+                &candidate,
+                identity,
+                hash,
+                size,
+                buffer,
+                bytes.as_deref_mut(),
+            ) {
                 return Ok(Some(candidate));
             }
         }
@@ -569,6 +594,7 @@ impl AssetStore {
         hash: &ContentHash,
         size: u64,
         buffer: &mut [u8],
+        mut bytes: Option<&mut Vec<u8>>,
     ) -> bool {
         let Ok(mut file) = open_read(&self.content_path(object), NoFollow::Final) else {
             return false;
@@ -577,7 +603,19 @@ impl AssetStore {
             Ok(metadata) if metadata.is_file() && FileIdentity::of(&metadata) == listed => {}
             _ => return false,
         }
-        match hash_reader_with(&mut file, buffer, |_| Ok(())) {
+        if let Some(bytes) = bytes.as_mut() {
+            bytes.clear();
+        }
+        let mut bounded = (&mut file).take(size.saturating_add(1));
+        match hash_reader_with(&mut bounded, buffer, |chunk| {
+            if let Some(out) = bytes.as_mut() {
+                if out.len() as u64 + chunk.len() as u64 > size {
+                    return Err(std::io::Error::other("asset size changed"));
+                }
+                out.extend_from_slice(chunk);
+            }
+            Ok(())
+        }) {
             Ok(digest) => digest.hash == *hash && digest.size == size,
             Err(_) => false,
         }
@@ -1754,16 +1792,26 @@ mod tests {
         let (_, listed) = FileIdentity::lstat(&content).unwrap();
         let hash = ContentHash::compute(b"same");
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
-        assert!(fx
-            .store
-            .content_matches(&imported.object_path, listed, &hash, 4, &mut buffer));
+        assert!(fx.store.content_matches(
+            &imported.object_path,
+            listed,
+            &hash,
+            4,
+            &mut buffer,
+            None
+        ));
         // 같은 내용이라도 목록 뒤 다른 항목으로 바뀌었으면 재사용하지 않습니다.
         let replacement = content.with_file_name("replacement");
         std::fs::write(&replacement, b"same").unwrap();
         std::fs::rename(&replacement, &content).unwrap();
         #[cfg(unix)]
-        assert!(!fx
-            .store
-            .content_matches(&imported.object_path, listed, &hash, 4, &mut buffer));
+        assert!(!fx.store.content_matches(
+            &imported.object_path,
+            listed,
+            &hash,
+            4,
+            &mut buffer,
+            None
+        ));
     }
 }

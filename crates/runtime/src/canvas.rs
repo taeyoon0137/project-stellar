@@ -1,5 +1,7 @@
 //! 활성 View의 고정 Free Frame과 사각형 Shape를 평가한 창별 불변 그리기 목록.
 
+pub mod text;
+
 use std::sync::Arc;
 
 use stellar_commands::view_tabs::CanvasViewport;

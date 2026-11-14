@@ -41,10 +41,35 @@ pub(crate) struct TestFont {
     pub weight_axis: Option<WeightAxis>,
 }
 
+/// 단위시험용 TrueType. 공백은 빈 contour, 'A'는 quadratic과 직선으로 구성된 1개 contour입니다.
+/// 폰트의 실제 bitstream을 거쳐 shaping 및 outline renderer 결과를 검사합니다.
+pub fn outline_test_font() -> Vec<u8> {
+    let spec = FontSpec::new(1000, 800, -200, 500)
+        .range(32, 32, |_| 250)
+        .range(65, 65, |_| 600);
+    let mut glyf = Vec::new();
+    // (0,0) → quadratic control (250,500) → (500,0), 그리고 시작점으로 닫기.
+    for n in [1i16, 0, 0, 500, 500, 2, 0] {
+        put_i16(&mut glyf, n);
+    }
+    glyf.extend_from_slice(&[1, 0, 1]);
+    for delta in [0i16, 250, 250, 0, 500, -500] {
+        put_i16(&mut glyf, delta);
+    }
+    glyf.push(0);
+    let mut loca = vec![0; 6];
+    put_u16(&mut loca, (glyf.len() / 2) as u16);
+    spec.font()
+        .build_with_tables(BTreeMap::from([(*b"glyf", glyf), (*b"loca", loca)]))
+}
+
 impl TestFont {
     /// SFNT bytes를 만듭니다.
     pub(crate) fn build(&self) -> Vec<u8> {
-        let mut tables: BTreeMap<[u8; 4], Vec<u8>> = BTreeMap::new();
+        self.build_with_tables(BTreeMap::new())
+    }
+
+    fn build_with_tables(&self, mut tables: BTreeMap<[u8; 4], Vec<u8>>) -> Vec<u8> {
         tables.insert(*b"head", self.head());
         tables.insert(*b"hhea", self.hhea());
         tables.insert(*b"maxp", self.maxp());
