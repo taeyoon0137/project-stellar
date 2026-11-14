@@ -77,3 +77,9 @@
 | `cargo clippy -p stellar-text --all-targets -- -D warnings` | 0 |
 | `cargo clippy -p stellar-text --release -- -D warnings` | 0 |
 | `cargo fmt -p stellar-text -- --check` | 0 |
+
+## 후속 수정 (posthoc 리뷰 TS-4: 충돌 방어 범위)
+
+- 위 "남은 위험"의 원본 검증 값 비교는 원래 텍스트·span·기준 방향만 비교했습니다. 이제 style 값·fallback chain·
+  사용 가능 handle·paragraph 속성·줄바꿈 옵션까지 원본으로 비교합니다. 결함·수정·회귀 테스트는 X.10.6 보고서의
+  "후속 수정 (posthoc 리뷰 TS-4: cache 검증 값이 hash로만 비교하던 입력)" 절에 있습니다.

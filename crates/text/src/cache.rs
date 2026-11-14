@@ -409,6 +409,18 @@ impl<K: Ord, C: PartialEq, V> LayoutCache<K, C, V> {
     pub fn retain(&mut self, mut keep: impl FnMut(&K) -> bool) {
         self.entries.retain(|k, _| keep(k));
     }
+
+    /// 테스트용: `from` 항목을 검증 값·값 그대로 `to` key로 옮깁니다(서로 다른 입력의 hash 충돌 재현).
+    #[cfg(test)]
+    pub(crate) fn rekey(&mut self, from: &K, to: K) -> bool {
+        match self.entries.remove(from) {
+            Some(entry) => {
+                self.entries.insert(to, entry);
+                true
+            }
+            None => false,
+        }
+    }
 }
 
 #[cfg(test)]
