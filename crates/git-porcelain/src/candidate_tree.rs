@@ -17,6 +17,8 @@
 //!   흐름(XIV.11) 대상이므로 거부합니다.
 //! - submodule(gitlink)은 내용이 다른 저장소라 쓰지 않고 [`CandidateTree::preserved_gitlinks`]로 돌려줍니다.
 //! - 결과는 경로 bytes 순으로 결정론적입니다.
+//! - 내용은 쓰는 순간 한 항목씩 읽습니다. index blob은 [`BATCH_CHUNK`]개씩 읽어 그 batch만 메모리에 두고,
+//!   작업 트리 파일 목록은 경로 index로 찾습니다(후보 수 × 작업 트리 파일 수 탐색 없음).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -25,11 +27,11 @@ use crate::classify::{classify_project_path, ProjectFileClass};
 use crate::decode::GitPath;
 use crate::object::{FileModeKind, ObjectId};
 use crate::ops::GitOpError;
-use crate::snapshot::blob::{read_blobs, BlobError};
+use crate::snapshot::blob::{read_blobs, BlobError, BATCH_CHUNK};
 use crate::snapshot::materialize::{materialize_with, MaterializeError, MaterializedSnapshot};
 use crate::snapshot::read_index_snapshot;
 use crate::snapshot::working_tree::{
-    list_working_tree_files, read_working_tree_file, WorkingTreeFileKind,
+    list_working_tree_files, read_working_tree_file, WorkingTreeFile, WorkingTreeFileKind,
 };
 use crate::trust::GatedGitRunner;
 
@@ -193,6 +195,17 @@ impl CandidateTree {
     }
 }
 
+/// candidate 파일 내용을 쓸 때 읽을 출처.
+#[derive(Clone, Copy)]
+enum Source<'a> {
+    /// 현재 index blob.
+    Index(&'a ObjectId),
+    /// 작업 트리 파일(디스크 관찰 항목).
+    WorkingTree(&'a WorkingTreeFile),
+    /// serializer bytes.
+    Bytes(&'a [u8]),
+}
+
 fn working_kind(kind: WorkingTreeFileKind) -> FileModeKind {
     match kind {
         WorkingTreeFileKind::Regular => FileModeKind::Regular,
@@ -236,10 +249,9 @@ pub fn write_candidate_tree(
     }
     let index_entries: BTreeMap<&GitPath, _> = index.entries.iter().map(|e| (&e.path, e)).collect();
 
-    // 3) 최종 파일 목록: non-Stellar index 항목 + candidate Stellar 목록.
-    let mut files: BTreeMap<GitPath, CandidateTreeFile> = BTreeMap::new();
+    // 3) 최종 파일 목록: non-Stellar index 항목 + candidate Stellar 목록. 내용은 4)에서 쓸 때 읽습니다.
+    let mut files: BTreeMap<GitPath, (CandidateTreeFile, Source<'_>)> = BTreeMap::new();
     let mut preserved_gitlinks = Vec::new();
-    let mut bytes_of: BTreeMap<GitPath, Vec<u8>> = BTreeMap::new();
     for entry in &index.entries {
         if classify_project_path(entry.path.as_bytes()) != ProjectFileClass::NonStellar {
             continue;
@@ -255,13 +267,16 @@ pub fn write_candidate_tree(
             })?;
         files.insert(
             entry.path.clone(),
-            CandidateTreeFile {
-                path: entry.path.clone(),
-                kind,
-                origin: CandidateOrigin::Index {
-                    oid: entry.oid.clone(),
+            (
+                CandidateTreeFile {
+                    path: entry.path.clone(),
+                    kind,
+                    origin: CandidateOrigin::Index {
+                        oid: entry.oid.clone(),
+                    },
                 },
-            },
+                Source::Index(&entry.oid),
+            ),
         );
     }
     let needs_working_tree = stellar_files
@@ -272,10 +287,15 @@ pub fn write_candidate_tree(
     } else {
         None
     };
+    // 경로 → 디스크 관찰 항목(후보마다 목록 선형 탐색을 하지 않음).
+    let observed_files: BTreeMap<&GitPath, &WorkingTreeFile> = listing
+        .iter()
+        .flat_map(|l| l.files.iter().map(|f| (&f.path, f)))
+        .collect();
     for file in stellar_files {
         let path = file.path().clone();
         let missing = || CandidateTreeError::MissingSource { path: path.clone() };
-        let (kind, origin) = match file {
+        let (kind, origin, source) = match file {
             CandidateFile::KeepIndex { .. } => {
                 let entry = index_entries.get(&path).ok_or_else(missing)?;
                 if entry.is_gitlink() {
@@ -287,58 +307,77 @@ pub fn write_candidate_tree(
                     CandidateOrigin::Index {
                         oid: entry.oid.clone(),
                     },
+                    Source::Index(&entry.oid),
                 )
             }
             CandidateFile::FromWorkingTree { .. } => {
-                let observed = listing
-                    .as_ref()
-                    .and_then(|l| l.files.iter().find(|f| f.path == path))
-                    .ok_or_else(missing)?;
-                let bytes = read_working_tree_file(worktree, observed).map_err(|kind| {
-                    CandidateTreeError::WorkingTreeRead {
-                        path: path.clone(),
-                        kind,
-                    }
-                })?;
-                bytes_of.insert(path.clone(), bytes);
-                (working_kind(observed.kind), CandidateOrigin::WorkingTree)
+                let observed = *observed_files.get(&path).ok_or_else(missing)?;
+                (
+                    working_kind(observed.kind),
+                    CandidateOrigin::WorkingTree,
+                    Source::WorkingTree(observed),
+                )
             }
             CandidateFile::Bytes { kind, bytes, .. } => {
-                bytes_of.insert(path.clone(), bytes.clone());
-                (*kind, CandidateOrigin::Bytes)
+                (*kind, CandidateOrigin::Bytes, Source::Bytes(bytes))
             }
         };
-        files.insert(path.clone(), CandidateTreeFile { path, kind, origin });
+        files.insert(
+            path.clone(),
+            (CandidateTreeFile { path, kind, origin }, source),
+        );
     }
 
-    // 4) index blob 일괄 읽기.
-    let oids: Vec<ObjectId> = files
-        .values()
-        .filter_map(|f| match &f.origin {
-            CandidateOrigin::Index { oid } => Some(oid.clone()),
+    // 4) 임시 tree 쓰기(검증 먼저, 실패 시 전체 삭제). 내용은 한 항목씩 읽어 씁니다. index blob은
+    //    [`BATCH_CHUNK`]개씩 읽어 그 batch만 메모리에 두고(XIV.2.6 `materialize_snapshot`과 같은 상한), 작업
+    //    트리 파일은 쓸 때 읽습니다.
+    let (files, sources): (Vec<CandidateTreeFile>, Vec<Source<'_>>) = files.into_values().unzip();
+    let entries: Vec<(GitPath, FileModeKind)> =
+        files.iter().map(|f| (f.path.clone(), f.kind)).collect();
+    let index_oids: Vec<ObjectId> = sources
+        .iter()
+        .filter_map(|source| match source {
+            Source::Index(oid) => Some((*oid).clone()),
             _ => None,
         })
         .collect();
-    let blobs = read_blobs(git, worktree, &oids).map_err(CandidateTreeError::Blob)?;
-
-    // 5) 임시 tree 쓰기(검증 먼저, 실패 시 전체 삭제).
-    let files: Vec<CandidateTreeFile> = files.into_values().collect();
-    let entries: Vec<(GitPath, FileModeKind)> =
-        files.iter().map(|f| (f.path.clone(), f.kind)).collect();
-    let snapshot = materialize_with(&entries, parent, |index, path, _| {
-        let file = &files[index];
-        match &file.origin {
-            CandidateOrigin::Index { oid } => blobs
+    let mut batch: BTreeMap<ObjectId, Vec<u8>> = BTreeMap::new();
+    let mut index_read = 0usize;
+    // 원래 실패 종류(blob·작업 트리 읽기)를 materialize 오류로 뭉개지 않고 돌려주기 위한 자리.
+    let mut failure: Option<CandidateTreeError> = None;
+    let written = materialize_with(&entries, parent, |index, path, _| match sources[index] {
+        Source::Index(oid) => {
+            if index_read.is_multiple_of(BATCH_CHUNK) {
+                let end = (index_read + BATCH_CHUNK).min(index_oids.len());
+                batch = read_blobs(git, worktree, &index_oids[index_read..end]).map_err(|e| {
+                    failure = Some(CandidateTreeError::Blob(e.clone()));
+                    MaterializeError::Blob(e)
+                })?;
+            }
+            index_read += 1;
+            batch
                 .get(oid)
                 .cloned()
-                .ok_or_else(|| MaterializeError::Blob(BlobError::Missing(oid.clone()))),
-            _ => bytes_of.get(path).cloned().ok_or(MaterializeError::Io {
-                path: Some(path.clone()),
-                kind: std::io::ErrorKind::NotFound,
-            }),
+                .ok_or_else(|| MaterializeError::Blob(BlobError::Missing(oid.clone())))
         }
-    })
-    .map_err(CandidateTreeError::Materialize)?;
+        Source::WorkingTree(observed) => {
+            read_working_tree_file(worktree, observed).map_err(|kind| {
+                failure = Some(CandidateTreeError::WorkingTreeRead {
+                    path: path.clone(),
+                    kind,
+                });
+                MaterializeError::Io {
+                    path: Some(path.clone()),
+                    kind,
+                }
+            })
+        }
+        Source::Bytes(bytes) => Ok(bytes.to_vec()),
+    });
+    let snapshot = match written {
+        Ok(snapshot) => snapshot,
+        Err(error) => return Err(failure.unwrap_or(CandidateTreeError::Materialize(error))),
+    };
     Ok(CandidateTree {
         snapshot,
         files,
@@ -496,6 +535,56 @@ mod tests {
     }
 
     #[test]
+    fn index_blobs_spanning_several_batches_are_written_exactly() {
+        use crate::snapshot::blob::BATCH_CHUNK;
+        let Some(fx) = GitFixture::with_system_git("candidate-tree-batches").unwrap() else {
+            return; // git 미설치 환경 건너뜀.
+        };
+        // BATCH_CHUNK를 넘는 non-Stellar 파일, 같은 내용(같은 blob ID)이 batch 경계 양쪽에 걸침.
+        let count = BATCH_CHUNK + 45;
+        let body = |i: usize| format!("doc {}\n", i % 7).into_bytes();
+        for i in 0..count {
+            fx.write(&format!("docs/n{i:04}.txt"), &body(i)).unwrap();
+        }
+        fx.write("stellar.yaml", b"schema_version: 1\n").unwrap();
+        fx.commit_all("base").unwrap();
+        let assets: Vec<String> = (0..40)
+            .map(|i| format!("assets/sha256/{i:02}/a.png"))
+            .collect();
+        for (i, path) in assets.iter().enumerate() {
+            fx.write(path, format!("PNG-{i}").as_bytes()).unwrap();
+        }
+        let gate = fx.gated();
+        let parent = fx.root().join("candidates");
+        std::fs::create_dir_all(&parent).unwrap();
+        let mut candidate = vec![CandidateFile::KeepIndex {
+            path: p("stellar.yaml"),
+        }];
+        candidate.extend(
+            assets
+                .iter()
+                .map(|path| CandidateFile::FromWorkingTree { path: p(path) }),
+        );
+        let tree = write_candidate_tree(&gate, fx.work(), &parent, &candidate).unwrap();
+        let mut expected: Vec<(PathBuf, Vec<u8>)> = (0..count)
+            .map(|i| (PathBuf::from(format!("docs/n{i:04}.txt")), body(i)))
+            .collect();
+        expected.extend(
+            assets
+                .iter()
+                .enumerate()
+                .map(|(i, path)| (PathBuf::from(path), format!("PNG-{i}").into_bytes())),
+        );
+        expected.push((
+            PathBuf::from("stellar.yaml"),
+            b"schema_version: 1\n".to_vec(),
+        ));
+        expected.sort();
+        assert_eq!(files_under(tree.root()), expected);
+        assert_eq!(tree.files().len(), count + 1 + assets.len());
+    }
+
+    #[test]
     fn invalid_candidate_lists_are_rejected_before_writing() {
         let Some(fx) = project() else {
             return;
@@ -561,6 +650,44 @@ mod tests {
             CandidateTreeError::Materialize(MaterializeError::UnsafePath { .. })
         ));
         // 거부된 시도는 임시 디렉터리를 남기지 않습니다.
+        assert!(std::fs::read_dir(&parent).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn unreadable_working_tree_file_keeps_its_error_and_leaves_no_directory() {
+        use std::os::unix::fs::PermissionsExt;
+        let Some(fx) = project() else {
+            return;
+        };
+        let photo = fx.work().join("assets/sha256/bb/photo.png");
+        std::fs::set_permissions(&photo, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read(&photo).is_ok() {
+            return; // 권한을 무시하는 실행 환경(root)에서는 재현할 수 없습니다.
+        }
+        let gate = fx.gated();
+        let parent = fx.root().join("candidates");
+        std::fs::create_dir_all(&parent).unwrap();
+        let result = write_candidate_tree(
+            &gate,
+            fx.work(),
+            &parent,
+            &[
+                CandidateFile::KeepIndex {
+                    path: p("stellar.yaml"),
+                },
+                CandidateFile::FromWorkingTree {
+                    path: p("assets/sha256/bb/photo.png"),
+                },
+            ],
+        );
+        std::fs::set_permissions(&photo, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            result.unwrap_err(),
+            CandidateTreeError::WorkingTreeRead {
+                path: p("assets/sha256/bb/photo.png"),
+                kind: std::io::ErrorKind::PermissionDenied,
+            }
+        );
         assert!(std::fs::read_dir(&parent).unwrap().next().is_none());
     }
 
