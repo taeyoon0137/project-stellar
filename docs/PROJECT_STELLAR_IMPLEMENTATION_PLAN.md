@@ -2296,7 +2296,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXVIII.3.1 | `[ ]` | 공개 format version을 동결하고 이후 incompatible change는 major format bump와 migration을 요구하도록 governance를 적용합니다. | breaking fixture without bump CI 실패. | XXVIII.2.4 |
+| XXVIII.3.1 | `[!]` | 공개 format version을 동결하고 이후 incompatible change는 major format bump와 migration을 요구하도록 governance를 적용합니다. | breaking fixture without bump CI 실패. | XXVIII.2.4 |
 | XXVIII.3.2 | `[ ]` | 공개 문서, reference parser API 범위, issue process를 게시합니다. reference parser는 headless CLI와 분리할 수 있습니다. | clean-room sample parser가 최소 fixture 읽기 성공. | XXVIII.3.1 |
 | XXVIII.3.3 | `[ ]` | 공개 명세가 있어도 Stellar 제품의 지원 보장은 minimum reader/writer version 규칙을 따른다는 호환성 문서를 제공합니다. | version matrix 일치. | XXVIII.3.1 |
 
