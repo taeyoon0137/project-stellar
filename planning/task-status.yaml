@@ -8406,18 +8406,30 @@ tasks:
     verified_at: "2026-11-14T17:34:08+09:00"
   - id: "XIV.6.2"
     title: "file mode와 blob OID를 `git update-index --cacheinfo` 또는 `--index-info`로 stage합니다. index 파일을 직접 수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.6.2.md"
+    commit: "169903b0ab91783092a06db553284b6f63e510bf"
+    report: "docs/task-reports/XIV.6.2.md"
+    verified_at: "2026-11-14T17:55:35+09:00"
   - id: "XIV.6.3"
     title: "삭제 path는 update-index remove semantics를 사용하고 symlink/executable mode를 보존합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.6.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.6.3.md"
+    commit: "636034ba0e74303a676a7aa7404699e1ee47796e"
+    report: "docs/task-reports/XIV.6.3.md"
+    verified_at: "2026-11-14T17:56:33+09:00"
   - id: "XIV.6.4"
     title: "여러 path index update를 하나의 operation으로 묶고 중간 실패 시 기존 index tree를 복원합니다. 시작 전 `git write-tree` 또는 안전한 index snapshot OID를 기록합니다."
     status: not_started
