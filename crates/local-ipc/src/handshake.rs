@@ -19,12 +19,14 @@
 //! - session마다 새 session nonce를 만듭니다.
 //! - HELLO 없이 닫히는 연결(registry 탐색의 생존 확인)은 오류 없이 무시합니다.
 //!
-//! 메시지는 ASCII 한 줄(개행 포함 최대 [`MAX_LINE_BYTES`])이며 읽기·쓰기에 timeout을 둡니다.
+//! 메시지는 ASCII 한 줄(개행 포함 최대 [`MAX_LINE_BYTES`])이며 읽기·쓰기에 timeout을 둡니다. 읽기
+//! timeout은 read 한 번이 아니라 한 줄 전체의 상한이라([`read_line`]), 1 byte씩 늦게 보내는 상대도
+//! timeout 안에 끝납니다.
 
 use std::fmt;
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::auth::{authenticate, AuthError, PeerPolicy};
 use crate::nonce::{Nonce, NonceLedger};
@@ -185,10 +187,46 @@ pub fn classify_io(error: &io::Error) -> HandshakeError {
 }
 
 /// 개행까지 한 줄을 읽습니다(개행 제외). 다음 데이터를 미리 읽지 않도록 byte 단위로 읽습니다.
+///
+/// stream의 read timeout([`set_timeouts`])은 read 한 번이 아니라 **한 줄 전체**의 상한입니다. read마다
+/// 남은 시간으로 timeout을 다시 걸므로, 상대가 timeout보다 짧은 간격으로 1 byte씩 보내도 한 줄을
+/// timeout 안에 끝내지 못하면 [`HandshakeError::TimedOut`]입니다. 끝나면 원래 timeout을 되돌립니다.
 pub fn read_line(stream: &mut UnixStream) -> Result<String, HandshakeError> {
+    let budget = match stream.read_timeout() {
+        Ok(budget) => budget,
+        // 양방향이 shut down된 socket(아래 참조)은 read가 기다리지 않으므로 기한이 필요 없습니다.
+        Err(e) if e.kind() == io::ErrorKind::InvalidInput => None,
+        Err(e) => return Err(classify_io(&e)),
+    };
+    let deadline = budget.map(|budget| Instant::now() + budget);
+    let result = read_line_until(stream, deadline);
+    if budget.is_some() {
+        // 상대가 이미 닫아 설정할 수 없으면(macOS EINVAL) 이 stream은 더 쓸 수 없으므로 무시합니다.
+        let _ = stream.set_read_timeout(budget);
+    }
+    result
+}
+
+fn read_line_until(
+    stream: &mut UnixStream,
+    deadline: Option<Instant>,
+) -> Result<String, HandshakeError> {
     let mut line = Vec::with_capacity(MAX_LINE_BYTES);
     let mut byte = [0u8; 1];
     loop {
+        if let Some(deadline) = deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(HandshakeError::TimedOut);
+            }
+            match stream.set_read_timeout(Some(remaining)) {
+                Ok(()) => {}
+                // macOS는 상대가 닫아 양방향이 shut down된 socket에 EINVAL을 돌려줍니다. 그 상태의
+                // read는 남은 buffer나 EOF를 바로 돌려주고 기다리지 않으므로 계속 읽습니다.
+                Err(e) if e.kind() == io::ErrorKind::InvalidInput => {}
+                Err(e) => return Err(classify_io(&e)),
+            }
+        }
         match stream.read(&mut byte) {
             Ok(0) if line.is_empty() => return Err(HandshakeError::Closed),
             Ok(0) => return Err(HandshakeError::Malformed),
@@ -627,6 +665,36 @@ mod tests {
             HandshakeError::NonceReused
         );
         handle.join().unwrap();
+    }
+
+    /// read timeout은 read 한 번이 아니라 한 줄 전체의 상한입니다: 상대가 timeout보다 짧은 간격으로
+    /// 1 byte씩 보내도 timeout 뒤에 끝납니다(IPC-03).
+    #[test]
+    fn read_timeout_bounds_the_whole_line() {
+        let (mut reader, mut writer) = UnixStream::pair().unwrap();
+        let timeout = Duration::from_millis(300);
+        set_timeouts(&reader, timeout).unwrap();
+        let trickle = std::thread::spawn(move || {
+            for _ in 0..30 {
+                if writer.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let started = std::time::Instant::now();
+        assert_eq!(read_line(&mut reader), Err(HandshakeError::TimedOut));
+        let elapsed = started.elapsed();
+        assert!(elapsed < Duration::from_millis(900), "{elapsed:?}");
+        drop(reader);
+        trickle.join().unwrap();
+
+        // 성공한 뒤에는 stream의 원래 timeout을 되돌립니다.
+        let (mut reader, mut writer) = UnixStream::pair().unwrap();
+        set_timeouts(&reader, timeout).unwrap();
+        writer.write_all(b"line\n").unwrap();
+        assert_eq!(read_line(&mut reader).unwrap(), "line");
+        assert_eq!(reader.read_timeout().unwrap(), Some(timeout));
     }
 
     #[test]
