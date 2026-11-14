@@ -120,10 +120,9 @@
 
 ## 차이(작업 지시와 다른 점)
 
-- 실제 NSWindow harness로 선행 검증 경로를 독립시켰지만 활성화·가림 검증이 끝나지 않았습니다. 사용자 지시에 따라
-  독립적으로 검증된 harness와 증거만 커밋하고, XI.8.2 `[~]`와 XII.4.1 `[ ]`를 유지합니다.
+- 실제 NSWindow harness로 선행 검증 경로를 독립시켰지만 활성화·가림 검증이 끝나지 않았습니다. 실행한 결과에 맞춰
+  XI.8.2 `[~]`와 XII.4.1 `[ ]`를 유지합니다.
 - XII.4.1 제품 CanvasView 연결, display scale 전환, release rollback 통합은 이번에 착수하지 않았습니다.
-  지정된 `session-takeover-integration.md`와 `XII.4.1-blocked.md`도 수정하지 않았습니다.
 - 원장 상태와 공개 ABI 변화가 없으므로 생성기 실행·생성물 변경은 없습니다.
 
 ## 남은 위험 / 한계
