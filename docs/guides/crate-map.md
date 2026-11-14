@@ -357,9 +357,8 @@ semantic-merge가 이 crate에만 의존하므로 `pub use stellar_core_types as
 `crates/semantic-merge`는 3-way Semantic Merge(Phase XIV.10)입니다. base·ours·theirs
 `SemanticSnapshot`을 `StableId + PropertyPath` 단위로 비교해 겹치지 않는 변경은 자동 병합하고, 겹치는
 변경은 세 상태를 모두 담은 conflict로 남깁니다. module은 입력·결과·conflict 모델(`model`)과 merge
-엔진(`merge`)입니다. 허용 직접 의존과 실제 의존은 semantic-diff 하나입니다. 알려진 결함 SM-1(독립 페이지·View
-삽입이 목록 conflict가 되고 candidate 정의 목록이 객체와 어긋남)은 XIV.10.6 작업 보고서에 있고, 재현 테스트는
-`#[ignore]` 상태입니다.
+엔진(`merge`)입니다. 허용 직접 의존과 실제 의존은 semantic-diff 하나입니다. 페이지·View·Slot 정의 목록은 3-way 목록
+병합으로 합치고 candidate에 남은 소속 객체와 맞춥니다(SM-1 수정, XIV.10.6 작업 보고서).
 
 ## 앱 runtime과 셸 경계
 
@@ -526,9 +525,9 @@ crate 원칙). 제품 crate는 이 crate에 의존하지 않고, 테스트는 cr
 - 상수 사본 대조: `constant_copies`. crate graph상 서로 의존할 수 없는 crate가 따로 보관하는 같은 계약 값이
   같은지 검사합니다. 대상은 환경 key registry의 target-profile 사본과 expressions 원본, Display P3 ↔ sRGB
   행렬의 expressions·renderer-core 사본입니다.
-- 알려진 결함을 재현하는 테스트 두 개는 `#[ignore]`입니다. `git_semantic_merge`의
-  `independent_page_and_view_insertions_merge_cleanly`(SM-1, XIV.10.6 보고서)와 `chunk_layout`의
-  `product_serializer_splits_views_over_approved_threshold`(V.6.4 보고서 "남은 위험")입니다.
+- 알려진 결함을 재현하는 테스트 하나는 `#[ignore]`입니다. `chunk_layout`의
+  `product_serializer_splits_views_over_approved_threshold`(V.6.4 보고서 "남은 위험")입니다. SM-1 재현 테스트
+  `git_semantic_merge`의 `independent_page_and_view_insertions_merge_cleanly`는 수정 후 기본 실행 대상입니다.
 
 `[dependencies]`는 비어 있고, `[dev-dependencies]`에 core-types, document(`test-support`),
 commands(`test-support`), history, storage, project, git-porcelain(`test-support`), semantic-diff,

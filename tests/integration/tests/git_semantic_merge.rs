@@ -619,15 +619,11 @@ fn theirs_view(r: &mut DocumentRecords) {
     append_view(r, view, root, "theirs View");
 }
 
-/// 버그(stellar-semantic-merge, `crates/semantic-merge/src/merge.rs`): 페이지·View 순서는 부모 정의 객체의
-/// `DOCUMENT_PAGES`·`PAGE_VIEWS` Ids 속성 하나로 표현되는데, merge가 이 목록을 원자 값으로 비교합니다. 양쪽이
-/// 서로 다른 페이지·View를 독립적으로 추가하면(아키텍처 §27.1 "충돌하지 않는 자식 삽입" = 자동 병합) 목록
-/// PropertyValue conflict가 나고, 동시에 새 Page·View·root 객체의 AddObject는 받아들여 candidate의 정의 목록과
-/// 객체가 어긋납니다(목록에 없는 Page·View, 어떤 View 목록에도 닿지 않는 root Frame — VI.10.1 root count로
-/// 되돌릴 수 없는 상태). 결함 기록은 `docs/task-reports/XIV.10.6.md` "알려진 결함 SM-1"입니다. 수정되면
-/// `#[ignore]`를 지웁니다.
+/// 양쪽이 서로 다른 페이지와 첫 페이지의 서로 다른 View를 독립적으로 추가합니다(아키텍처 §27.1 "충돌하지 않는
+/// 자식 삽입" = 자동 병합). 페이지·View 순서는 부모 정의 객체의 `DOCUMENT_PAGES`·`PAGE_VIEWS` Ids 속성 하나라,
+/// merge는 이 목록을 3-way 목록 병합으로 합치고 candidate 정의 목록을 candidate의 Page·View 객체와 맞춥니다
+/// (SM-1 회귀 테스트, `docs/task-reports/XIV.10.6.md`).
 #[test]
-#[ignore = "버그: semantic-merge가 독립 페이지·View 삽입을 DOCUMENT_PAGES·PAGE_VIEWS 목록 conflict로 만들고 candidate 정의 목록이 객체와 어긋남"]
 fn independent_page_and_view_insertions_merge_cleanly() {
     let card = card_document();
     let other = seeded_document(41);
@@ -657,7 +653,7 @@ fn independent_page_and_view_insertions_merge_cleanly() {
     let commits = d.commit_states();
     let commit_input = input(&commits[0], &commits[1], &commits[2]);
     let result = merge(&commit_input).unwrap();
-    // conflict 여부와 무관하게 candidate 정의 목록은 객체와 맞아야 합니다(현재 여기서 실패).
+    // conflict 여부와 무관하게 candidate 정의 목록은 객체와 맞아야 합니다.
     assert_definition_coherent(&result.merged, "candidate");
     assert!(
         result.is_clean(),
@@ -669,6 +665,7 @@ fn independent_page_and_view_insertions_merge_cleanly() {
             .collect::<Vec<_>>()
     );
     assert_result_invariants(&commit_input, &result, "commit 입력");
+    assert_symmetric(&commit_input, &result);
 
     // 같은 끝 위치 삽입의 상대 순서는 정하지 않습니다(ours 먼저·theirs 먼저 모두 허용).
     let orders: [(RecordEdit, RecordEdit); 2] =
