@@ -809,6 +809,58 @@ impl DrillingOrphan {
             last_valid_type: reader.type_spec()?,
         })
     }
+
+    /// orphan 정보가 binding `id` 구조와 맞는지 검사합니다(library 없이 판정할 수 있는 규칙만).
+    ///
+    /// - `Boundary(k)`는 binding 경계 수 안이어야 합니다.
+    /// - 상위 chain 전파([`OrphanCause::UpstreamOfBreak`])는 경계 위치이고 origin이 자기 자신이 아닙니다.
+    /// - 직접 끊긴 원인(삭제·타입 변경)의 property는 break point 위치의 property입니다(`Source`면 owner·source,
+    ///   `Boundary(k)`면 `chain[k]`).
+    ///
+    /// origin binding의 존재·orphan 여부는 검사하지 않습니다. origin binding은 `DrillingCommand::Remove`로 따로 지울 수
+    /// 있어(상위 chain orphan은 원인 기록으로 남음) 정상 편집으로도 없는 origin을 가리킬 수 있기 때문입니다.
+    fn check_against(
+        &self,
+        id: DrillingBindingId,
+        binding: &DrillingBinding,
+    ) -> Result<(), DrillingError> {
+        let malformed = |reason| Err(DrillingError::Malformed { reason });
+        if let BreakPoint::Boundary(k) = self.break_point {
+            if k >= binding.boundaries() {
+                return malformed("orphan break point가 binding 경계 수를 넘음");
+            }
+        }
+        match (&self.cause, self.break_point) {
+            (OrphanCause::UpstreamOfBreak { origin }, _) if *origin == id => {
+                malformed("상위 chain orphan의 origin이 자기 자신")
+            }
+            (OrphanCause::UpstreamOfBreak { .. }, BreakPoint::Source) => {
+                malformed("상위 chain orphan의 break point가 source")
+            }
+            (
+                OrphanCause::PropertyDeleted {
+                    component,
+                    property,
+                }
+                | OrphanCause::PropertyRetyped {
+                    component,
+                    property,
+                    ..
+                },
+                BreakPoint::Source,
+            ) if binding.owner != *component || binding.source != *property => {
+                malformed("orphan 원인 property가 binding source와 다름")
+            }
+            (
+                OrphanCause::PropertyDeleted { property, .. }
+                | OrphanCause::PropertyRetyped { property, .. },
+                BreakPoint::Boundary(k),
+            ) if binding.chain[k] != *property => {
+                malformed("orphan 원인 property가 break point의 chain property와 다름")
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// 문서의 drilling binding 모음.
@@ -1093,7 +1145,8 @@ impl DrillingSet {
         buf
     }
 
-    /// binary bytes에서 디코딩합니다. 생성 규칙·id 오름차순·값 자리 유일성을 검사합니다.
+    /// binary bytes에서 디코딩합니다. 생성 규칙·id 오름차순·값 자리 유일성과, orphan 정보가 그 binding 구조와 맞는지
+    /// (break point 범위·원인 위치)를 검사합니다.
     pub fn decode(bytes: &[u8]) -> Result<DrillingSet, DrillingError> {
         let mut reader = Reader::new(bytes);
         let count = reader.count()?;
@@ -1120,6 +1173,11 @@ impl DrillingSet {
             }
             previous = Some(id);
             let orphan = DrillingOrphan::decode_from(&mut reader)?;
+            let binding = set
+                .bindings
+                .get(&id)
+                .ok_or(DrillingError::UnknownBinding { binding: id })?;
+            orphan.check_against(id, binding)?;
             set.mark_orphan(id, orphan)?;
         }
         reader.expect_end()?;
@@ -1528,6 +1586,75 @@ mod tests {
             set.remove(bid(1)),
             Err(DrillingError::UnknownBinding { .. })
         ));
+    }
+
+    #[test]
+    fn decode_rejects_orphan_information_inconsistent_with_its_binding() {
+        // 리뷰 회귀: 저장된 orphan 정보가 binding 구조와 맞지 않으면(경계 수를 넘는 break point, 자기 자신을
+        // origin으로 둔 상위 chain orphan, source 위치의 상위 chain orphan, 원인 property와 다른 위치) 디코딩을
+        // 거부합니다. 실제 command가 만드는 orphan 정보는 그대로 round-trip합니다.
+        let string = TypeSpec::required(stellar_expressions::types::ExpressionType::String);
+        let deleted = |property: u64| OrphanCause::PropertyDeleted {
+            component: component(2),
+            property: pid(property),
+        };
+        let orphan = |cause: OrphanCause, break_point: BreakPoint| DrillingOrphan {
+            cause,
+            break_point,
+            last_valid_type: string,
+        };
+        let encoded_with = |orphan: DrillingOrphan| {
+            let (_, mut set) = two_level();
+            set.mark_orphan(bid(1), orphan).unwrap();
+            set.encode()
+        };
+        // 정상: link(경계 1개)의 경계 0 chain property(C2.label) 삭제.
+        let valid = encoded_with(orphan(deleted(LABEL), BreakPoint::Boundary(0)));
+        assert_eq!(DrillingSet::decode(&valid).unwrap().encode(), valid);
+        // 정상: source(C1.label 41_001) 삭제.
+        let source = OrphanCause::PropertyDeleted {
+            component: component(1),
+            property: pid(41_001),
+        };
+        let valid = encoded_with(orphan(source.clone(), BreakPoint::Source));
+        assert_eq!(DrillingSet::decode(&valid).unwrap().encode(), valid);
+
+        let invalid = [
+            // link는 경계가 하나뿐이라 Boundary(1)은 없습니다.
+            orphan(deleted(LABEL), BreakPoint::Boundary(1)),
+            orphan(deleted(LABEL), BreakPoint::Boundary(usize::from(u16::MAX))),
+            // 상위 chain orphan의 origin은 자기 자신일 수 없고, break point는 경계 위치입니다.
+            orphan(
+                OrphanCause::UpstreamOfBreak { origin: bid(1) },
+                BreakPoint::Boundary(0),
+            ),
+            orphan(
+                OrphanCause::UpstreamOfBreak { origin: bid(7) },
+                BreakPoint::Source,
+            ),
+            // 원인 property가 그 위치의 property가 아닙니다.
+            orphan(deleted(41_001), BreakPoint::Boundary(0)),
+            orphan(deleted(LABEL), BreakPoint::Source),
+            orphan(
+                OrphanCause::PropertyRetyped {
+                    component: component(1),
+                    property: pid(41_001),
+                    previous: string,
+                    current: string,
+                },
+                BreakPoint::Boundary(0),
+            ),
+        ];
+        for (i, bad) in invalid.into_iter().enumerate() {
+            let bytes = encoded_with(bad);
+            assert!(
+                matches!(
+                    DrillingSet::decode(&bytes),
+                    Err(DrillingError::Malformed { .. })
+                ),
+                "경우 {i}"
+            );
+        }
     }
 
     #[test]
