@@ -18,8 +18,8 @@
 //!    ([`ApplyError::ConcurrentWrite`]).
 //!
 //! 쓰기 모드는 1번 전에 프로젝트별 교차 프로세스 저장 잠금([`crate::lock`], XXIV.4.5)을 잡고 저장을
-//! 마칠 때까지 쥡니다. 잠금을 쥔 동안 다른 headless writer는 들어오지 못하므로, 잠금 안에서 한
-//! generation 비교와 pointer 교체 사이에 다른 headless 저장이 끼어들 수 없습니다.
+//! 마칠 때까지 쥡니다. 잠금을 쥔 동안 같은 잠금을 쓰는 앱 창과 CLI는 들어오지 못하므로, 잠금 안에서 한
+//! generation 비교와 pointer 교체 사이에 다른 저장이 끼어들 수 없습니다.
 
 use std::fmt;
 use std::path::Path;
@@ -363,18 +363,25 @@ pub fn apply(
     lock: &LockPolicy,
 ) -> Result<ApplyOutcome, ApplyError> {
     let commands = decode_commands(&request.commands)?;
-    let _guard = match (mode, lock) {
+    let locked_root = match (mode, lock) {
         (ApplyMode::Write, LockPolicy::Required { dir }) => {
-            let probe = probe(path).map_err(ApplyError::Open)?;
+            // 잠금과 저장 모두 같은 실제 경로를 사용합니다.
+            let root = std::fs::canonicalize(path)
+                .map_err(|e| ApplyError::Open(OpenError::Path { kind: e.kind() }))?;
+            let probe = probe(&root).map_err(ApplyError::Open)?;
             let project_id = parse_project_id(&probe.manifest.project.id).ok_or_else(|| {
                 ApplyError::Open(OpenError::InvalidProjectId {
                     id: probe.manifest.project.id.clone(),
                 })
             })?;
-            Some(SaveLock::try_acquire(dir, project_id, &probe.root).map_err(ApplyError::Lock)?)
+            let guard = SaveLock::try_acquire(dir, project_id, &root).map_err(ApplyError::Lock)?;
+            Some((root, guard))
         }
         _ => None,
     };
+    let path = locked_root
+        .as_ref()
+        .map_or(path, |(root, _)| root.as_path());
     let snapshot = open_snapshot(path).map_err(ApplyError::Open)?;
     let base_revision = snapshot.revision();
     if base_revision != request.base_revision {
