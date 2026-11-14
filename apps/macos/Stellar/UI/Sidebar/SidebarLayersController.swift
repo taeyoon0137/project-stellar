@@ -399,6 +399,10 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
 
     private func commitRename(_ field: NSTextField, value: String) {
         guard let row = row(of: field), row.name != value else { return }
+        // 비동기 승인을 기다리는 동안 셀에는 실제 문서 이름을 유지합니다.
+        field.stringValue = row.name
+        guard provider.snapshot.activeViewID == snapshot.activeViewID,
+              provider.snapshot.layers.rows[row.id]?.name == row.name else { return }
         provider.perform(.renameNode(row.id, name: value))
     }
 

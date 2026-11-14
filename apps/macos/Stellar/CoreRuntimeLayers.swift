@@ -11,6 +11,21 @@ struct WindowLayerPage {
 }
 
 extension CoreRuntime {
+    static func renameLayer(handle: UInt64, session: UInt64, view: UUID, node: UUID, revision: UInt64,
+                            name: String) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: node.uuid) { nodeBytes in
+                Array(name.utf8).withUnsafeBufferPointer { bytes in
+                    stellar_window_layer_rename(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                        nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, bytes.baseAddress, bytes.count, &request)
+                }
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func layerPage(handle: UInt64, session: UInt64, view: UUID, revision: UInt64,
                           parent: SidebarStableID?, after: SidebarStableID?) -> WindowLayerPage? {
         precondition(!Thread.isMainThread)

@@ -477,9 +477,22 @@ final class ShellProjectWindow {
         )
         gitSource.trustDidChange = { [weak self] trusted in
             self?.dataSource.updateTrust(trusted)
+            self?.sidebarSource.trusted = trusted
             if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
         }
         sidebarSource.select = { [weak self] ids in _ = self?.selectNodes(ids) }
+        sidebarSource.rename = { [weak self] view, revision, id, name in
+            guard let self, let session = self.windowController.windowSession, !session.isClosed, !session.isClosing,
+                  let pump = self.dataSource.session?.pump else { return }
+            session.track({ pump.renameLayer(session: session.session, view: view, node: id, revision: revision,
+                                             name: name, completion: $0) }) { [weak self, weak session] event in
+                guard let self, let session, self.windowController.windowSession === session else { return }
+                self.refreshSessionCommands()
+                if case .requestFailed(_, _, let message) = event {
+                    self.alertPresenter?(String(localized: "Couldn’t Rename Layer"), message, self.window)
+                }
+            }
+        }
         connectFrameInteractions()
         panelsSlot.gitPanel.host = self
         if let window = windowController.window {

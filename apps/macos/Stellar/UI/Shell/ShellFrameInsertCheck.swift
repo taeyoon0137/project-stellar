@@ -100,12 +100,22 @@ enum ShellFrameInsertCheck {
         guard awaitSidebar({ layerRow(child, in: project) != nil }), let index = layerRow(child, in: project),
               firstOutline.selectedRow == index,
               let cell = firstOutline.view(atColumn: 0, row: index, makeIfNecessary: true) as? SidebarLayerCellView,
-              cell.nameField.stringValue == "Frame", !cell.nameField.isEditable, !cell.lockButton.isEnabled,
+              cell.nameField.stringValue == "Frame", cell.nameField.isEditable, !cell.lockButton.isEnabled,
               !cell.visibilityButton.isEnabled, !project.sidebarSlot.sidebar.filterAccessory.searchField.isEnabled,
-              other.sidebarSlot.sidebar.layersController.snapshot.layers.rows.isEmpty else { return fail("추가된 실제 행·읽기 전용 편집·창 격리") }
+              other.sidebarSlot.sidebar.layersController.snapshot.layers.rows.isEmpty else { return fail("추가된 실제 행·이름 편집·창 격리") }
         guard action(.undo), awaitSidebar({ layerRow(child, in: project) == nil }), canvas.frameHit(at: viewPoint(50, 50))?.id == root, session.info?.selection_count == 0,
               action(.redo), awaitSidebar({ layerRow(child, in: project) != nil }), canvas.frameHit(at: viewPoint(50, 50))?.id == child, session.info?.selection_count == 1,
-              action(.saveNow), session.info?.generation == initial.generation + 1 else { return fail("Undo·Redo·저장") }
+              let beforeRename = session.info,
+              project.sidebarSlot.sidebar.layersController.beginRename(SidebarStableID(child)),
+              let editor = window.firstResponder as? NSTextView else { return fail("Undo·Redo·이름 편집기") }
+        editor.selectAll(nil)
+        editor.insertText("설정 카드", replacementRange: NSRange(location: NSNotFound, length: 0))
+        func layerName() -> String? { project.sidebarSlot.sidebar.layersController.snapshot.layers.rows[SidebarStableID(child)]?.name }
+        guard window.makeFirstResponder(firstOutline), wait(), awaitSidebar({ layerName() == "설정 카드" }),
+              session.info?.undo_depth == beforeRename.undo_depth + 1,
+              action(.undo), awaitSidebar({ layerName() == "Frame" }),
+              action(.redo), awaitSidebar({ layerName() == "설정 카드" }),
+              action(.saveNow), session.info?.generation == initial.generation + 1 else { return fail("레이어 이름 변경·Undo·Redo·저장") }
         window.close()
         guard wait() else { return fail("닫기") }
         app.openProject(atPath: path, origin: .application)
@@ -114,6 +124,7 @@ enum ShellFrameInsertCheck {
         reopened.window?.contentView?.layoutSubtreeIfNeeded()
         let shown = reopened.canvasHost.canvasView
         guard awaitSidebar({ showsActiveView(reopened) && layerRow(child, in: reopened) != nil }),
+              reopened.sidebarSlot.sidebar.layersController.snapshot.layers.rows[SidebarStableID(child)]?.name == "설정 카드",
               shown.frameHit(at: viewPoint(41, 31, canvas: shown))?.id == child,
               shown.frameHit(at: viewPoint(99, 89, canvas: shown))?.id == child,
               shown.frameHit(at: viewPoint(101, 91, canvas: shown))?.id == root else { return fail("재열기 후 자식 위치·크기") }
@@ -170,7 +181,7 @@ enum ShellFrameInsertCheck {
               other.sidebarSlot.sidebar.layersController.snapshot.selection.isEmpty else {
             return fail("Layers 선택 창 격리: undo=\(reopened.windowController.windowSession?.info?.undo_depth ?? 0)/\(beforeSelect.undo_depth + 1) top=\(layers.snapshot.layers.topLevelIDs.count) selectedRow=\(layers.outline.selectedRow) other=\(other.windowController.windowSession?.info?.selection_count ?? 0)")
         }
-        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; live Layers, nested disclosure, 64+1 pagination and two windows")
+        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
         return true
     }
 }

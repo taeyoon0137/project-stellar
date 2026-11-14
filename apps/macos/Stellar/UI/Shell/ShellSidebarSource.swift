@@ -27,6 +27,10 @@ final class ShellSidebarSource: SidebarDataProvider {
     private(set) var snapshot = SidebarSnapshot.empty
     var snapshotDidChange: (() -> Void)?
     var select: (([UUID]) -> Void)?
+    var rename: ((_ view: UUID, _ revision: UInt64, _ id: UUID, _ name: String) -> Void)?
+    var trusted = false {
+        didSet { if oldValue != trusted { publish() } }
+    }
 
     func refresh(runtime: UInt64?, session: ShellWindowSessionHandle?, info: StellarWindowSessionInfo?, view: StellarWindowViewInfo?) {
         self.runtime = runtime
@@ -75,6 +79,15 @@ final class ShellSidebarSource: SidebarDataProvider {
     func validate(_ command: SidebarCommand) -> SidebarCommandValidation {
         switch command {
         case .reload: return display != nil ? .allowed : .denied(.unsupported)
+        case .renameNode(let id, _):
+            guard trusted, window?.isClosing == false else { return .denied(.unsupported) }
+            var current: SidebarStableID? = id
+            while let target = current {
+                guard let row = snapshot.layers.rows[target] else { return .denied(.unknownNode) }
+                if row.isLocked { return .denied(.unsupported) }
+                current = row.parentID
+            }
+            return .allowed
         case .setSelection(let ids, _):
             return display != nil && ids.allSatisfy { snapshot.layers.rows[$0] != nil } ? .allowed : .denied(.unknownNode)
         case .loadChildren(let id):
@@ -93,6 +106,10 @@ final class ShellSidebarSource: SidebarDataProvider {
             enqueue(Request(parent: nil, after: nil))
         case .loadChildren(let id):
             if snapshot.layers.childIDs[id] == nil { enqueue(Request(parent: id, after: nil)) }
+        case .renameNode(let id, let name):
+            if let display, snapshot.layers.rows[id]?.name != name {
+                rename?(display.view, display.revision, id.uuid, name)
+            }
         case .loadMore(let parent):
             let ids = parent.map { snapshot.layers.childIDs[$0] ?? [] } ?? snapshot.layers.topLevelIDs
             if let last = ids.last { enqueue(Request(parent: parent, after: last)) }

@@ -128,3 +128,51 @@ pub unsafe extern "C" fn stellar_window_layer_page(
         StellarStatus::Ok
     })
 }
+
+/// 표시한 레이어 이름 변경을 문서 스레드에 접수합니다.
+/// # Safety
+/// 두 ID는 16바이트씩, name은 name_len바이트 읽을 수 있어야 합니다.
+/// out_request는 null이거나 u64 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_layer_rename(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    node: *const [u8; 16],
+    revision: u64,
+    name: *const u8,
+    name_len: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || node.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let name = match unsafe { crate::decode_utf8_owned(name, name_len) } {
+            Ok(name) => name,
+            Err(status) => return status,
+        };
+        let view = StableId::from_bytes(unsafe { *view });
+        let node = StableId::from_bytes(unsafe { *node });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.rename_layer(
+                WindowSessionHandle(session),
+                view,
+                DocumentRevision(revision),
+                node,
+                name,
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
