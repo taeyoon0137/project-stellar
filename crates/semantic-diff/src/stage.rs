@@ -751,6 +751,28 @@ fn require_unstage(request: &StageSelectionRequest) -> Result<(), StageError> {
     }
 }
 
+/// 선택 unstage 계획(XIV.7.2): 선택한 staged 변경을 Index에서 되돌렸을 때 남은 Index가 invalid해지지 않도록
+/// 필수 함께-unstage 변경을 계산합니다.
+///
+/// dependency graph(XIV.5.2)는 Index → HEAD 방향 diff(staged의 역변경)로 만들므로, 예를 들어 컴포넌트 interface에
+/// Property를 넣은 staged 변경만 되돌리면 그 Property를 쓰는 staged override도 함께 되돌려야 합니다(interface member
+/// 제거 → override 해제). 결과 selection·`selected_only`의 위반은 staged ID 기준이며, 필수 변경은 반환만 하고
+/// 자동으로 unstage하지 않습니다.
+pub fn plan_unstage(
+    head: &SemanticSnapshot,
+    index: &SemanticSnapshot,
+    request: &StageSelectionRequest,
+) -> Result<StagePlan, StageError> {
+    require_unstage(request)?;
+    let inverted = inverted_request(request);
+    let plan = plan_selection(index, head, SelectionOperation::Unstage, &inverted.selected)
+        .map_err(inverted_error)?;
+    Ok(StagePlan {
+        selection: plan.selection.inverted(),
+        selected_only: plan.selected_only,
+    })
+}
+
 /// 선택 unstage candidate(XIV.7.1): 선택한 staged 변경(HEAD → Index)을 **현재 Index**에서 역적용합니다.
 ///
 /// 기준은 HEAD가 아니라 Index입니다 — 선택하지 않은 staged 변경은 그대로 남습니다. 요청·결과·오류의 ID는
@@ -1271,6 +1293,172 @@ pub(crate) mod tests {
         let both = build_unstage_candidate(&head, &index, &StageSelectionRequest::unstage([a, b]))
             .unwrap();
         assert_eq!(both.snapshot(), &head);
+    }
+
+    /// component Property·override staged fixture(HEAD, Index).
+    ///
+    /// HEAD: HEAD 레코드 fixture + 컴포넌트 300(root frame 301, interface [310]) + 인스턴스 400(frame 10 아래,
+    /// override 310 = 1).
+    /// Index(staged): interface를 [311]로(A: 311 추가·310 제거) + override 311(B) + override 310 제거(C).
+    fn component_staged() -> (SemanticSnapshot, SemanticSnapshot) {
+        use crate::build::tests::{head_records, key};
+        use crate::build::{InstanceNode, SnapshotBuilder};
+        use crate::dependency::tests::replace;
+        use crate::value::SemanticValue;
+        use stellar_core_types::reference::{ComponentRef, NodeRef};
+        use stellar_core_types::typed_value::TypedValue;
+        use stellar_core_types::value::FiniteF32;
+        use stellar_document::component::definition::{
+            ComponentDefinition, ComponentLibrary, ComponentPropertyId, DefinitionNode,
+            DefinitionTree,
+        };
+        use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey};
+        use stellar_document::frame::FramePayload;
+        use stellar_document::node_kind::NodeKind;
+        use stellar_document::record_codec::encode_payload;
+        use stellar_document::records::NodePayload;
+
+        let mut library = ComponentLibrary::new();
+        let mut definition =
+            ComponentDefinition::new(sid(300), "Button".into(), NodeRef::new(sid(301)));
+        definition
+            .add_property(ComponentPropertyId::new(sid(310)))
+            .unwrap();
+        let mut tree = DefinitionTree::new(ComponentRef::new(sid(300)));
+        tree.insert(DefinitionNode {
+            id: sid(301),
+            kind: NodeKind::Frame,
+            parent: None,
+            order_key: key(0x80),
+            visible: true,
+            locked: false,
+            display_name: String::new(),
+            payload: encode_payload(&NodePayload::Frame(FramePayload::default())),
+        })
+        .unwrap();
+        library.insert(definition, tree).unwrap();
+        let mut payload = ComponentInstancePayload::new(ComponentRef::new(sid(300)));
+        payload.set_property_override(
+            OverrideKey::direct(ComponentPropertyId::new(sid(310))),
+            TypedValue::Number(FiniteF32::ONE),
+        );
+        let mut builder = SnapshotBuilder::new();
+        builder.add_document(&head_records()).unwrap();
+        builder.add_component_library(sid(1), &library).unwrap();
+        builder
+            .add_instance(
+                sid(1),
+                &InstanceNode {
+                    id: sid(400),
+                    parent: Some(sid(10)),
+                    order_key: key(0xE0),
+                    visible: true,
+                    locked: false,
+                    display_name: "button".into(),
+                    payload,
+                },
+            )
+            .unwrap();
+        let head = builder.finish();
+        let mut index = head.clone();
+        let mut component = index.get(sid(300)).unwrap().clone();
+        component
+            .set_property(
+                path(300, keys::COMPONENT_PROPERTIES),
+                SemanticValue::Ids(vec![sid(311)]),
+            )
+            .unwrap();
+        replace(&mut index, component);
+        let mut instance = index.get(sid(400)).unwrap().clone();
+        instance.remove_property(&override_path(310));
+        instance
+            .set_property(override_path(311), SemanticValue::Bool(true))
+            .unwrap();
+        replace(&mut index, instance);
+        (head, index)
+    }
+
+    #[test]
+    fn unstage_dependencies_keep_component_property_and_override_consistent() {
+        let (head, index) = component_staged();
+        let interface = ChangeId::property(path(300, keys::COMPONENT_PROPERTIES));
+        let add_override = ChangeId::property(override_path(311));
+        let removed_override = ChangeId::property(override_path(310));
+        // HEAD 레코드 fixture의 image 12 → asset 90(snapshot 밖) 외에는 위반이 없습니다.
+        assert!(crate::validate::introduced_violations(&index, &[&head]).is_empty());
+
+        // interface 변경(A)만 unstage: Index가 311 override를 가진 채 interface에서 311이 빠지고 310이
+        // 돌아오는데 override 310은 없음 → override 311을 함께 되돌려야 합니다(310 override 복원은 불필요).
+        let plan = plan_unstage(
+            &head,
+            &index,
+            &StageSelectionRequest::unstage([interface.clone()]),
+        )
+        .unwrap();
+        assert_eq!(plan.selection.operation(), SelectionOperation::Unstage);
+        assert_eq!(plan.required_additions(), [add_override.clone()].into());
+        assert_eq!(
+            plan.selected_only,
+            SelectedOnlyOutcome::Invalid(
+                [SnapshotViolation::UnknownInterfaceMember {
+                    path: override_path(311),
+                    member: sid(311)
+                }]
+                .into()
+            )
+        );
+        // 승인 없이는 candidate 없음, 승인 후에는 interface·override 311이 함께 HEAD로.
+        assert_eq!(
+            build_unstage_candidate(
+                &head,
+                &index,
+                &StageSelectionRequest::unstage([interface.clone()])
+            ),
+            Err(StageError::ApprovalRequired {
+                required: [add_override.clone()].into()
+            })
+        );
+        let candidate = build_unstage_candidate(
+            &head,
+            &index,
+            &StageSelectionRequest::unstage([interface.clone()])
+                .with_approved([add_override.clone()]),
+        )
+        .unwrap();
+        let instance = candidate.snapshot().get(sid(400)).unwrap();
+        assert!(instance.property(&override_path(311)).is_none());
+        assert!(instance.property(&override_path(310)).is_none());
+        assert_eq!(
+            candidate.selection().required_additions(),
+            [add_override.clone()].into()
+        );
+        assert!(crate::validate::introduced_violations(candidate.snapshot(), &[&head]).is_empty());
+
+        // override 311 추가(B)만 unstage: interface는 그대로 둬도 유효합니다.
+        let plan = plan_unstage(
+            &head,
+            &index,
+            &StageSelectionRequest::unstage([add_override.clone()]),
+        )
+        .unwrap();
+        assert!(!plan.needs_approval());
+        assert_eq!(plan.selected_only, SelectedOnlyOutcome::Valid);
+
+        // override 310 제거(C)만 unstage: 310 override가 돌아오지만 interface에 310이 없음 → interface 변경을
+        // 함께 되돌려야 하고, 그러면 override 311도 따라옵니다.
+        let plan = plan_unstage(
+            &head,
+            &index,
+            &StageSelectionRequest::unstage([removed_override.clone()]),
+        )
+        .unwrap();
+        assert_eq!(plan.required_additions(), [interface, add_override].into());
+        assert!(matches!(
+            plan.selected_only,
+            SelectedOnlyOutcome::Invalid(_)
+        ));
+        // 계획은 snapshot을 바꾸지 않습니다.
+        assert_eq!(component_staged(), (head, index));
     }
 
     #[test]
