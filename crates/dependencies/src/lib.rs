@@ -79,6 +79,9 @@ pub mod ref_resolution;
 /// lock 기준 library 로드와 부분 열기 (XV.5.5).
 pub mod library_load;
 
+/// library update 후보 준비 (XV.7.1).
+pub mod library_update;
+
 /// 다중 버전 경고 상세: 경로·예상 추가 용량·UI/telemetry 분리 (XV.8.3).
 pub mod duplicate_report;
 
