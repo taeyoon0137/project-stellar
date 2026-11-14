@@ -584,7 +584,8 @@ enum InspectorUICheck {
         try require(isEnabled(harness.controller, "frame.size.width"), "잠금 해제 후 너비 편집 불가")
     }
 
-    /// 편집 중 선택이 바뀌면 입력을 이전 세대로 확정하고 편집을 끝냅니다(새 선택에 잘못 적용 방지).
+    /// 편집 중 선택이 바뀌면 입력을 이전 세대로 확정합니다(새 선택에 잘못 적용 방지). 사용자 조작 없이 바뀐 선택이므로
+    /// 포커스는 옮기지 않고(가이드 8.2), 같은 필드에 새 선택의 값을 보입니다.
     private static func checkSelectionChangeCommitsEdit() throws {
         let harness = Harness(scenario: .frame, appearance: .aqua)
         defer { harness.close() }
@@ -614,7 +615,15 @@ enum InspectorUICheck {
         try require(source.snapshot.field(widthID)?.value == .number(320),
                     "이전 세대 명령이 새 선택에 적용됨: \(String(describing: source.snapshot.field(widthID)?.value))")
         harness.flush()
-        try require(width.currentEditor() == nil, "선택 변경 후에도 편집 중")
+        guard let kept = width.currentEditor() as? NSTextView else {
+            throw Failure(message: "선택 변경으로 포커스·편집이 끝남(사용자 조작 없이 포커스를 옮기면 안 됨)")
+        }
+        try require(kept.string == "320", "편집 중인 필드에 새 선택 너비가 보이지 않음 '\(kept.string)'")
+        // 이어서 편집을 끝내도 새 선택에 명령을 보내지 않습니다(값이 그대로).
+        let afterSelection = source.receivedCommands.count
+        _ = harness.window.makeFirstResponder(nil)
+        try require(source.receivedCommands.count == afterSelection,
+                    "새 선택 값 그대로 편집을 끝냈는데 명령이 나감: \(source.receivedCommands.suffix(1))")
         try require(width.stringValue == "320", "새 선택 너비 표시 '\(width.stringValue)'")
 
         // 알 수 없는(만료된) 세대 명령은 거부하고 현재 snapshot을 다시 보냅니다.
@@ -623,6 +632,49 @@ enum InspectorUICheck {
         try require(source.appliedSelectionTokens.last == .some(nil), "만료 세대 명령이 거부되지 않음")
         try require(source.snapshot.generation == generation + 1, "거부 후 현재 snapshot을 다시 보내지 않음")
         try require(source.snapshot.field(widthID)?.value == .number(320), "거부한 명령이 적용됨")
+        harness.flush()
+
+        // 다른 구성으로 바뀌는 선택: 같은 속성 컨트롤(레이어 이름)이 새 페이지에 있으면 포커스가 그 컨트롤로 이어집니다.
+        let nameID = try propertyID(harness, InspectorPropertyID.layerName.path)
+        let frameName = try control(harness.controller, InspectorPropertyID.layerName.path, as: NSTextField.self)
+        try require(harness.window.makeFirstResponder(frameName), "이름 first responder 실패")
+        guard let nameEditor = frameName.currentEditor() as? NSTextView else { throw Failure(message: "이름 편집 없음") }
+        nameEditor.string = "Renamed"
+        let frameGeneration = harness.controller.appliedSnapshot?.generation ?? 0
+        source.select(.text)
+        harness.flush()
+        guard let renamed = source.receivedCommands.lastIndex(where: { $0 == .setValue(nameID, .text("Renamed"), phase: .commit) })
+        else { throw Failure(message: "구성이 바뀌는 선택 변경 시 이름 편집이 확정되지 않음") }
+        try require(source.receivedGenerations[renamed] == frameGeneration, "이름 확정이 이전 세대가 아님")
+        let textName = try control(harness.controller, InspectorPropertyID.layerName.path, as: NSTextField.self)
+        try require(textName !== frameName, "Text 페이지가 아닌 이전 페이지의 이름 필드가 보임")
+        guard let textEditor = textName.currentEditor() as? NSTextView else {
+            throw Failure(message: "새 페이지의 같은 속성(이름) 필드로 포커스가 이어지지 않음")
+        }
+        try require(textEditor.string == "Headline", "새 선택 이름이 보이지 않음 '\(textEditor.string)'")
+
+        // 새 페이지에 같은 속성이 없으면(너비 → Text) 보이지 않는 컨트롤에 포커스가 남지 않아야 합니다.
+        source.select(.frame)
+        harness.flush()
+        let frameWidth = try control(harness.controller, "frame.size.width", as: NSTextField.self)
+        try require(harness.window.makeFirstResponder(frameWidth), "너비 first responder 실패")
+        source.select(.text)
+        harness.flush()
+        if let responder = harness.window.firstResponder as? NSView {
+            let owner = ((responder as? NSText)?.delegate as? NSView) ?? responder
+            try require(!(owner.isDescendant(of: harness.controller.view) && !owner.isDescendant(of: harness.controller.activePage ?? owner)),
+                        "대기 페이지 컨트롤에 포커스가 남음: \(describe(owner))")
+        }
+
+        // 캐시 미스(로딩 상태)를 거쳐도 페이지가 보이면 같은 속성 컨트롤로 포커스가 돌아옵니다.
+        let textNameAgain = try control(harness.controller, InspectorPropertyID.layerName.path, as: NSTextField.self)
+        try require(harness.window.makeFirstResponder(textNameAgain), "이름 first responder 실패")
+        source.select(.componentInstance)
+        harness.controller.flushPendingSnapshot()
+        try require(harness.controller.isShowingState, "Component 구성이 이미 있음(캐시 미스 경로를 검사하지 못함)")
+        harness.flush()
+        let componentName = try control(harness.controller, InspectorPropertyID.layerName.path, as: NSTextField.self)
+        try require(componentName.currentEditor() != nil, "로딩 뒤 같은 속성 필드로 포커스가 돌아오지 않음")
     }
 
     /// 페이지 재사용: 접힘 상태 공유, 상한 초과 시 유휴 시간 제거, 제거 뒤 재생성.

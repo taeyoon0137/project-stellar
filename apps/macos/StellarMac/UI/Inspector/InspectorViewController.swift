@@ -39,6 +39,8 @@ final class InspectorViewController: NSViewController {
     private var pageOrder: [String] = []
     private(set) var activePage: InspectorPageView?
     private var laidOutSize: NSSize = .zero
+    /// 캐시 미스로 페이지를 기다리는 동안 맡아 둔 포커스(속성 식별자). 그 페이지가 보이면 같은 속성 컨트롤로 돌려줍니다.
+    private var pendingFocusIdentifier: String?
 
     /// 인스펙터 안의 키보드 포커스 순서. 통합 시 창의 key view loop에 앞뒤를 잇습니다.
     private(set) var keyViewChain: [NSView] = []
@@ -124,9 +126,12 @@ final class InspectorViewController: NSViewController {
 
     private func apply(_ snapshot: InspectorSnapshot) {
         if let applied = appliedSnapshot, snapshot.generation < applied.generation { return }
-        if let applied = appliedSnapshot, applied.selectionToken != snapshot.selectionToken {
+        let selectionChanged = appliedSnapshot.map { $0.selectionToken != snapshot.selectionToken } ?? false
+        if selectionChanged {
             // 선택이 바뀌기 전에, 진행 중인 편집과 연속 조작을 이전 세대(이전 선택)로 확정합니다.
+            // 포커스는 옮기지 않습니다(가이드 8.2).
             finishInteractions()
+            pendingFocusIdentifier = nil
         } else if let activePage,
                   snapshot.state != .ready || InspectorPageView.structureKey(of: snapshot) != activePage.structureKey {
             // 같은 선택이라도 페이지가 바뀌면(예: Frame으로 변환) 사라질 컨트롤의 연속 조작을 먼저 끝냅니다.
@@ -148,6 +153,8 @@ final class InspectorViewController: NSViewController {
         if let page = pages[key], page.isComplete {
             page.apply(snapshot, collapsedSections: collapsedSections)
             activate(page)
+            // 선택이 바뀐 경우에만: 편집 중인 필드에 새 선택의 값을 보입니다(같은 선택의 snapshot은 입력 중인 글자를 지우지 않음).
+            if selectionChanged { refreshEditingField() }
             return
         }
         // 캐시 미스: 로딩 상태를 먼저 보이고, 페이지를 최우선으로 나눠 만든 뒤 보입니다.
@@ -212,19 +219,26 @@ final class InspectorViewController: NSViewController {
         guard let snapshot = appliedSnapshot, snapshot.state == .ready,
               InspectorPageView.structureKey(of: snapshot) == page.structureKey else { return }
         page.apply(snapshot, collapsedSections: collapsedSections)
-        activate(page)
+        let focus = pendingFocusIdentifier
+        pendingFocusIdentifier = nil
+        activate(page, restoringFocusTo: focus)
     }
 
     /// 페이지를 화면에 보입니다. 이전 페이지는 대기(alpha 0)로 돌립니다.
-    private func activate(_ page: InspectorPageView) {
+    ///
+    /// 포커스(가이드 8.2 "사용자 조작 없이 포커스를 옮기지 않음"): 이전 페이지 안 컨트롤에 포커스가 있었으면 새 페이지의
+    /// 같은 속성 컨트롤(같은 식별자, 예: 레이어 이름)로 이어 줍니다. 같은 속성이 없으면 포커스한 컨트롤이 화면에서
+    /// 사라지므로, 보이지 않는 컨트롤로 키 입력이 가지 않게 포커스를 내려놓습니다.
+    private func activate(_ page: InspectorPageView, restoringFocusTo pendingIdentifier: String? = nil) {
         if activePage !== page {
             let previous = activePage
+            let focused = previous.flatMap(focusedIdentifier(in:)) ?? pendingIdentifier
             previous?.isActive = false
-            if let previous { releaseFocus(from: previous) }
             page.syncExpansion(collapsedSections)
             if page.frame != view.bounds { page.frame = view.bounds }
             page.isActive = true
             activePage = page
+            if let focused { moveFocus(toControlWithIdentifier: focused, in: page, leaving: previous) }
         }
         if !stateView.isHidden { stateView.isHidden = true }
         rebuildKeyViewChain()
@@ -234,20 +248,47 @@ final class InspectorViewController: NSViewController {
         stateView.show(state)
         stateView.isHidden = false
         if let activePage {
+            // 페이지를 기다리는 로딩이면 포커스한 속성을 맡아 두었다가 페이지가 보일 때 돌려줍니다.
+            if let focused = focusedIdentifier(in: activePage) {
+                pendingFocusIdentifier = state == .loading ? focused : nil
+                view.window?.makeFirstResponder(nil)
+            }
             activePage.isActive = false
-            releaseFocus(from: activePage)
             self.activePage = nil
         }
         rebuildKeyViewChain()
     }
 
-    /// 대기로 돌린 페이지 안에 키보드 포커스가 남지 않게 합니다(보이지 않는 컨트롤로 입력이 가지 않게).
-    private func releaseFocus(from page: InspectorPageView) {
-        guard let window = view.window, let responder = window.firstResponder as? NSView else { return }
-        let owner = ((responder as? NSText)?.delegate as? NSView) ?? responder
-        if owner.isDescendant(of: page) {
+    /// 창의 first responder가 `page` 안 컨트롤이면 그 식별자(속성 경로). 편집 중이면 field editor의 delegate가 필드입니다.
+    private func focusedIdentifier(in page: InspectorPageView) -> String? {
+        guard let owner = focusedControl(), owner.isDescendant(of: page) else { return nil }
+        return owner.identifier?.rawValue ?? ""
+    }
+
+    private func focusedControl() -> NSView? {
+        guard let responder = view.window?.firstResponder as? NSView else { return nil }
+        return ((responder as? NSText)?.delegate as? NSView) ?? responder
+    }
+
+    private func moveFocus(toControlWithIdentifier identifier: String, in page: InspectorPageView,
+                           leaving previous: InspectorPageView?) {
+        guard let window = view.window else { return }
+        if !identifier.isEmpty, let target = Self.find(identifier, in: page), target.acceptsFirstResponder,
+           window.makeFirstResponder(target) {
+            return
+        }
+        // 같은 속성 컨트롤이 없음: 대기 페이지 안 컨트롤에 포커스가 남지 않게 합니다.
+        if let previous, let owner = focusedControl(), owner.isDescendant(of: previous) {
             window.makeFirstResponder(nil)
         }
+    }
+
+    /// 같은 페이지에서 선택이 바뀐 뒤, 편집 중인 필드에 새 선택의 값을 보입니다(포커스와 편집은 유지).
+    private func refreshEditingField() {
+        guard let responder = view.window?.firstResponder as? NSText,
+              let field = responder.delegate as? NSTextField, let activePage, field.isDescendant(of: activePage),
+              let controller = field.delegate as? InspectorFieldController else { return }
+        controller.showValueInEditor()
     }
 
     /// 넘친 페이지 제거. 활성·구성 중 페이지는 남기고, 가장 오래 안 쓴 페이지부터 유휴 시간에 나눠 제거합니다.
@@ -278,14 +319,13 @@ final class InspectorViewController: NSViewController {
     }
 
     /// 인스펙터 안에서 진행 중인 텍스트 편집과 연속 조작을 확정하고, 색 패널과 연결된 색 well을 끊습니다.
-    /// 확정 명령은 아직 바뀌지 않은 `appliedSnapshot` 세대로 나갑니다.
+    /// 확정 명령은 아직 바뀌지 않은 `appliedSnapshot` 세대로 나갑니다. 편집은 끝내지 않고(포커스 유지) 입력한
+    /// 값만 이전 선택에 확정합니다. 이어서 새 선택의 값이 같은 필드에 보입니다.
     private func finishInteractions() {
-        if let window = view.window, let responder = window.firstResponder as? NSView {
-            // 한 줄 필드 편집 중이면 first responder는 창의 field editor이고, 그 delegate가 필드입니다.
-            let owner = ((responder as? NSText)?.delegate as? NSView) ?? responder
-            if owner.isDescendant(of: view) {
-                window.makeFirstResponder(nil)
-            }
+        if let window = view.window, let responder = window.firstResponder as? NSText,
+           let field = responder.delegate as? NSTextField, field.isDescendant(of: view),
+           let controller = field.delegate as? InspectorFieldController {
+            controller.commitPendingEdit()
         }
         activePage?.endGestures()
         // 색 패널이 만들어진 적이 없으면 활성 well도 없으므로 뷰를 훑지 않습니다.
