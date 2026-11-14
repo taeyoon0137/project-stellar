@@ -15,6 +15,9 @@
 # Swift package(Sparkle)는 Package.resolved 고정 버전만 쓰고(-disableAutomaticPackageResolution),
 # 자격 증명 조회는 키체인 대신 netrc로 합니다(공개 package라 인증 불필요, 키체인 접근 대화상자 방지).
 #
+# Rust 코어 staticlib은 cargo의 실제 target 디렉터리(CARGO_TARGET_DIR·cargo 설정의 build.target-dir 반영, 기본은 저장소
+# target/)에서 링크하고 검사합니다. 회귀 검사: scripts/macos/release_target_dir_check.sh
+#
 # 업데이트 구성 override(설정된 환경 변수만 xcodebuild build setting으로 전달):
 #   STELLAR_UPDATE_FEED_STABLE, STELLAR_UPDATE_FEED_BETA  appcast URL(기본값은 project.pbxproj의 공개 릴리스
 #                                                         저장소 placeholder)
@@ -55,9 +58,21 @@ for name in STELLAR_UPDATE_FEED_STABLE STELLAR_UPDATE_FEED_BETA STELLAR_UPDATE_P
   fi
 done
 
+# --- Rust 코어 staticlib 위치: build phase의 cargo가 실제로 쓰는 target 디렉터리 ---
+# project.pbxproj의 LIBRARY_SEARCH_PATHS는 저장소 target/을 가리킵니다. CARGO_TARGET_DIR 등으로 cargo의 target이 다르면
+# 그곳의 오래된 staticlib이 링크되거나 링크가 실패하므로, cargo가 알려 주는 target 디렉터리를 링크와 검사에 함께 씁니다.
+# phase와 같이 저장소 루트에서 ~/.cargo/bin을 앞에 둔 PATH로 cargo를 찾습니다.
+RUST_TARGET_DIR="$(cd "$REPO_ROOT" && PATH="$HOME/.cargo/bin:$PATH" \
+  && cargo metadata --format-version 1 --no-deps --locked | plutil -extract target_directory raw -o - -)" \
+  || fail "cargo target 디렉터리를 읽지 못함"
+CORE_LIB_DIR="$RUST_TARGET_DIR/$RUST_TARGET/release"
+# 경로 목록 build setting이라 공백이 있는 경로도 한 항목이 되도록 따옴표로 감쌉니다.
+LINK_OVERRIDES=("LIBRARY_SEARCH_PATHS=\"$CORE_LIB_DIR\"")
+
 # --- Xcode Release 설정 고정값 ---
 SETTINGS="$(xcodebuild -project "$PROJECT" -scheme StellarMac -configuration Release "${PACKAGE_FLAGS[@]}" \
-  -derivedDataPath "$DERIVED" ${UPDATE_OVERRIDES[@]+"${UPDATE_OVERRIDES[@]}"} -showBuildSettings 2>/dev/null)"
+  -derivedDataPath "$DERIVED" "${LINK_OVERRIDES[@]}" ${UPDATE_OVERRIDES[@]+"${UPDATE_OVERRIDES[@]}"} \
+  -showBuildSettings 2>/dev/null)"
 setting() {
   # 'KEY = value' 줄에서 값만 꺼냅니다(정확히 일치하는 key).
   printf '%s\n' "$SETTINGS" | awk -v key="$1" '$1 == key && $2 == "=" { sub(/^[^=]*= /, ""); print; exit }'
@@ -78,14 +93,16 @@ xcodebuild \
   -derivedDataPath "$DERIVED" \
   "${PACKAGE_FLAGS[@]}" \
   CODE_SIGNING_ALLOWED=NO \
+  "${LINK_OVERRIDES[@]}" \
   ${UPDATE_OVERRIDES[@]+"${UPDATE_OVERRIDES[@]}"} \
   build
 
 APP="$DERIVED/Build/Products/Release/StellarMac.app"
 BIN="$APP/Contents/MacOS/StellarMac"
-CORE_LIB="$REPO_ROOT/target/$RUST_TARGET/release/libstellar_ffi.a"
+CORE_LIB="$CORE_LIB_DIR/libstellar_ffi.a"
 [ -x "$BIN" ] || fail "실행 파일 없음: $BIN"
 [ -f "$CORE_LIB" ] || fail "Rust 코어 staticlib 없음: $CORE_LIB"
+echo "✓ Rust 코어 staticlib: $CORE_LIB"
 
 # --- 아키텍처: arm64 전용 ---
 BIN_ARCHS="$(lipo -archs "$BIN")"

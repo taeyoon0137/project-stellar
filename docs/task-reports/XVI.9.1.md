@@ -80,3 +80,29 @@
 | `scripts/macos/rust_core_phase_check.sh`(수정 후) | `✓ Rust 코어 phase(Release): 새 target에서 성공, MACOSX_DEPLOYMENT_TARGET=26.0, staticlib arm64`, 종료 0 |
 | `scripts/macos/rust_core_phase_check.sh Debug` | 종료 0(dev profile은 strip하지 않아 원래 통과) |
 | `plutil -lint apps/macos/StellarMac.xcodeproj/project.pbxproj` | `OK` |
+
+## 후속 수정 (release_build.sh가 CARGO_TARGET_DIR을 무시)
+
+- **증상**: Xcode phase의 cargo는 `CARGO_TARGET_DIR`(또는 cargo 설정 `build.target-dir`)에 staticlib을 만들지만, Release
+  `LIBRARY_SEARCH_PATHS`와 `release_build.sh`의 staticlib 검사는 저장소 `target/`에 고정되어 있었습니다. 그래서
+  `CARGO_TARGET_DIR`을 쓰면, 저장소 `target/`에 staticlib이 없을 때는 `ld: library 'stellar_ffi' not found`로 실패했습니다.
+  오래된 staticlib이 남아 있을 때는 그것을 링크하고 검사했습니다(새로 빌드한 코어가 앱에 들어가지 않음).
+- **수정**: `release_build.sh`가 `cargo metadata`의 `target_directory`를 읽어 xcodebuild `LIBRARY_SEARCH_PATHS` override와
+  staticlib 검사에 함께 씁니다. 변수가 없으면 이전과 같은 저장소 `target/`입니다. `sign_release.sh`는 `release_build.sh`를
+  거치므로 함께 적용됩니다.
+- **회귀 검사**: `scripts/macos/release_target_dir_check.sh`(신규)는 빈 임시 `CARGO_TARGET_DIR`로 `release_build.sh` 전체를
+  실행합니다. 그리고 링크 명령의 `-L`과 staticlib 검사 경로가 그 디렉터리인지 확인합니다. 수정 전 종료 1(링크 실패),
+  수정 후 종료 0입니다.
+- **MF-1 재현 확인**: 아래 실행은 모두 비어 있는 Rust target에서 시작했고, release 그래프의 proc-macro
+  (`zerofrom-derive`, `bytemuck_derive`)를 새로 빌드했습니다. `release_build.sh`·`bundle_check.sh`(재배치
+  `--update-check` 포함)·`sign_release.sh`(Developer ID) 검사가 새 target에서 통과했습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `scripts/macos/release_target_dir_check.sh`(수정 전 `release_build.sh`) | `ld: library 'stellar_ffi' not found`, `** BUILD FAILED **`, 종료 1 |
+| `scripts/macos/release_target_dir_check.sh`(수정 후) | Release 구성·번들 검사(재배치 `--update-check` 포함) 모두 ✓, 종료 0 |
+| `scripts/macos/release_build.sh`(변수 없음, 저장소 `target/`에 release 산출물이 없는 worktree) | `** BUILD SUCCEEDED **`, 모든 검사 ✓, 종료 0 |
+| `CARGO_TARGET_DIR=<빈 scratch> scripts/macos/sign_release.sh`(Developer ID, 공증 없음) | 서명, `codesign --verify --deep --strict`, 서명본 번들 검사 ✓, 공개 키 없음 경고, `✓ 서명 완료(developer-id)`, 종료 0 |
+
+- **남은 한계**: Debug 경로(`scripts/macos/smoke.sh`, Xcode IDE 빌드)의 `LIBRARY_SEARCH_PATHS`는 여전히 저장소
+  `target/debug`입니다. `CARGO_TARGET_DIR`을 설정한 채 Debug를 빌드하면 같은 불일치가 생깁니다(이번 수정 범위 밖).
