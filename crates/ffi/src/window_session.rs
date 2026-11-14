@@ -18,7 +18,7 @@ use stellar_runtime::app_command::AppCommand;
 use crate::{ffi_guard, registry, StellarStatus};
 
 /// `StellarWindowSessionInfo` 레이아웃 버전.
-pub const WINDOW_SESSION_INFO_VERSION: u32 = 1;
+pub const WINDOW_SESSION_INFO_VERSION: u32 = 2;
 
 /// `StellarWindowViewInfo` 레이아웃 버전.
 pub const WINDOW_VIEW_INFO_VERSION: u32 = 1;
@@ -67,8 +67,8 @@ pub struct StellarWindowSessionInfo {
     pub redo_depth: u32,
     /// 선택된 node 수.
     pub selection_count: u32,
-    /// 0.
-    pub reserved: u32,
+    /// 저장되지 않은 문서 변경이면 1(선택·viewport 제외). v1의 reserved 위치.
+    pub has_unsaved_changes: u32,
     /// 창 편집 session id 16 byte(UUID 바이트 순서).
     pub window_id: [u8; 16],
     /// 작업 문서 StableId 16 byte(없으면 0).
@@ -349,12 +349,60 @@ pub unsafe extern "C" fn stellar_window_session_info(
             undo_depth: summary.undo_depth,
             redo_depth: summary.redo_depth,
             selection_count: summary.selection_len,
-            reserved: 0,
+            has_unsaved_changes: u32::from(summary.has_unsaved_changes),
             window_id: summary.window_id.stable_id().to_bytes(),
             document_id: summary.document_id.map_or([0; 16], |id| id.to_bytes()),
         };
         unsafe { *out_info = info };
         StellarStatus::Ok
+    })
+}
+
+/// Debug native close 검사 전용입니다. Release에는 이 심벌을 내보내지 않습니다.
+///
+/// # Safety
+/// `node`는 16 byte, `name`은 `name_len` byte 읽기, `out_request`는 u64 쓰기가 유효해야 합니다.
+#[cfg(debug_assertions)]
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_check_edit(
+    handle: u64,
+    session: u64,
+    node: *const u8,
+    name: *const u8,
+    name_len: usize,
+    verify: u32,
+    delay_ms: u32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if node.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let mut bytes = [0; 16];
+        unsafe {
+            std::ptr::copy_nonoverlapping(node, bytes.as_mut_ptr(), 16);
+        }
+        let name = match unsafe { crate::decode_utf8_owned(name, name_len) } {
+            Ok(name) => name,
+            Err(status) => return status,
+        };
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.check_window_edit(
+                WindowSessionHandle(session),
+                StableId::from_bytes(bytes),
+                name,
+                verify != 0,
+                delay_ms,
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
     })
 }
 
@@ -503,6 +551,15 @@ pub(crate) mod tests {
     fn info_layout_is_fixed() {
         assert_eq!(std::mem::size_of::<StellarWindowSessionInfo>(), 88);
         assert_eq!(std::mem::align_of::<StellarWindowSessionInfo>(), 8);
+        assert_eq!(
+            std::mem::offset_of!(StellarWindowSessionInfo, has_unsaved_changes),
+            52
+        );
+        assert_eq!(
+            std::mem::offset_of!(StellarWindowSessionInfo, window_id),
+            56
+        );
+        assert_eq!(WINDOW_SESSION_INFO_VERSION, 2);
         assert_eq!(std::mem::size_of::<StellarWindowViewInfo>(), 56);
         assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, center_x), 16);
         assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, active_view), 40);

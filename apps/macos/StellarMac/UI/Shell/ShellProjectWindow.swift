@@ -48,6 +48,9 @@ final class ShellWindowSessionHandle {
     let openedGeneration: UInt64
     private let pump: ShellRuntimeEventPump
     private(set) var isClosed = false
+    private(set) var pendingCommandCount = 0
+    var isClosing = false
+    var commandsDidFinish: (() -> Void)?
 
     init(
         session: UInt64, project: UInt64, windowID: UUID, documentID: UUID?, openedGeneration: UInt64,
@@ -77,26 +80,46 @@ final class ShellWindowSessionHandle {
     func close(completion: ((CoreRuntimeEvent) -> Void)? = nil) {
         guard !isClosed else { return }
         isClosed = true
+        commandsDidFinish = nil
         pump.closeWindowSession(session, completion: completion)
     }
 
     /// 이 창 session에 코어 명령 코드를 보냅니다(XII.6.4). 닫혔거나 요청을 받지 않으면 false입니다.
     @discardableResult
-    func perform(coreCommand code: UInt32, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
-        guard !isClosed else { return false }
-        if case .success = pump.perform(session: session, command: code, completion: completion) {
-            return true
+    func perform(
+        coreCommand code: UInt32, forClosing: Bool = false, completion: @escaping (CoreRuntimeEvent) -> Void
+    ) -> Bool {
+        guard !isClosed, !isClosing || forClosing else { return false }
+        return track { done in pump.perform(session: session, command: code, completion: done) } completion: { event in
+            completion(event)
         }
-        return false
     }
 
     /// 이 창 session의 선택을 바꿉니다(그 창 history에 기록). 닫혔거나 요청을 받지 않으면 false입니다.
     @discardableResult
     func select(_ ids: [UUID], completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
-        guard !isClosed else { return false }
-        if case .success = pump.select(session: session, ids: ids, completion: completion) {
-            return true
+        guard !isClosed, !isClosing else { return false }
+        return track { done in pump.select(session: session, ids: ids, completion: done) } completion: { event in
+            completion(event)
         }
+    }
+
+    /// 접수된 명령의 snapshot이 아직 게시되지 않았을 때 clean으로 닫지 않습니다.
+    @discardableResult
+    func track(
+        _ submit: (@escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError>,
+        completion: @escaping (CoreRuntimeEvent) -> Void
+    ) -> Bool {
+        pendingCommandCount += 1
+        let result = submit { [weak self] event in
+            guard let self else { return }
+            self.pendingCommandCount -= 1
+            guard !self.isClosed else { return }
+            completion(event)
+            if self.pendingCommandCount == 0 { self.commandsDidFinish?() }
+        }
+        if case .success = result { return true }
+        pendingCommandCount -= 1
         return false
     }
 }
@@ -378,6 +401,14 @@ final class ShellProjectWindow {
     /// 완료 event의 요청 id가 이 값과 다르면(창이 닫혔거나 다른 요청으로 바뀜) 결과를 이 창에 붙이지 않습니다.
     var pendingOpenRequest: UInt64?
 
+    var closeConfirmationPending = false
+    var agentCloseConfirmed = false
+    private var closeAttempt: UUID?
+    private var closeTimer: Timer?
+    /// 저장 응답을 기다리는 셸 watchdog. AutosavePolicy의 미확정 성능 수치를 대체하지 않습니다.
+    var closeReplyTimeout: TimeInterval = 10
+    var isWaitingToClose: Bool { closeAttempt != nil }
+
     /// - Parameters:
     ///   - rootPath: 열 프로젝트 폴더(절대 경로). 창은 열기 중 상태로 시작합니다.
     ///   - runtimeHandle: 캔버스 drawable·입력을 받을 코어 runtime handle.
@@ -448,6 +479,7 @@ final class ShellProjectWindow {
 
     /// 코어가 프로젝트와 이 창의 창 session을 열었습니다. 창 controller가 창 session handle을 소유합니다(XII.2.2).
     func didOpen(_ session: ShellProjectSessionHandle, windowSession: ShellWindowSessionHandle) {
+        cancelPendingClose()
         windowController.windowSession?.close()
         windowController.windowSession = windowSession
         dataSource.didOpen(session)
@@ -483,9 +515,101 @@ final class ShellProjectWindow {
         guard let code = coreCommandIDs.coreCommandID(for: command), let session = windowController.windowSession else {
             return false
         }
-        return session.perform(coreCommand: code) { [weak self] event in
-            self?.finishSessionCommand(command, event: event)
+        return session.perform(coreCommand: code) { [weak self, weak session] event in
+            guard let self, self.windowController.windowSession === session else { return }
+            self.finishSessionCommand(command, event: event)
         }
+    }
+
+    /// 정상 NSWindow close 진입점. clean은 즉시 허용하고 dirty는 실제 저장 성공까지 창을 유지합니다.
+    func shouldCloseAfterSaving() -> Bool {
+        guard closeAttempt == nil else { return false }
+        guard let session = windowController.windowSession, !session.isClosed else { return true }
+        if session.pendingCommandCount == 0, let info = session.info, info.has_unsaved_changes == 0 {
+            return true
+        }
+        let attempt = UUID()
+        closeAttempt = attempt
+        session.isClosing = true
+        let timer = Timer(timeInterval: closeReplyTimeout, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.closeAttempt == attempt else { return }
+                self.failClose(String(
+                    localized: "Saving is taking longer than expected. This window is still open and saving may still finish. Close the window again to retry.",
+                    comment: "Close save response timeout; memory and window are retained"
+                ))
+            }
+        }
+        closeTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+        session.commandsDidFinish = { [weak self] in self?.continueClose(attempt: attempt) }
+        // 이미 접수된 Undo/Redo/편집을 먼저 확인합니다. UI thread는 기다리지 않습니다.
+        continueClose(attempt: attempt)
+        return false
+    }
+
+    private func continueClose(attempt: UUID) {
+        guard closeAttempt == attempt, let session = windowController.windowSession,
+              !session.isClosed, session.pendingCommandCount == 0 else { return }
+        session.commandsDidFinish = nil
+        guard let info = session.info else {
+            failClose(String(localized: "The design’s save state couldn’t be checked. This window is still open. Try closing it again."))
+            return
+        }
+        if info.has_unsaved_changes == 0 {
+            finishClose(attempt: attempt)
+            return
+        }
+        guard let code = coreCommandIDs.coreCommandID(for: .saveNow),
+              session.perform(coreCommand: code, forClosing: true, completion: { [weak self, weak session] event in
+                  guard let self, self.closeAttempt == attempt,
+                        self.windowController.windowSession === session else { return }
+                  self.lastSessionCommandEvent = event
+                  self.refreshSessionCommands()
+                  if case .windowSessionSaved(_, let savedSession, _, _) = event,
+                     savedSession == session?.session, session?.info?.has_unsaved_changes == 0 {
+                      self.finishClose(attempt: attempt)
+                  } else {
+                      self.failCloseAfterSave(event)
+                  }
+              }) else {
+            failClose(String(localized: "Saving couldn’t start. This window and its changes are still open. Try closing it again."))
+            return
+        }
+    }
+
+    private func finishClose(attempt: UUID) {
+        guard closeAttempt == attempt else { return }
+        let confirmed = agentCloseConfirmed
+        cancelPendingClose()
+        agentCloseConfirmed = confirmed
+        // delegate를 다시 거칩니다. 창을 앞으로 가져오거나 닫힌 창을 다시 열지 않습니다.
+        window?.performClose(nil)
+    }
+
+    private func failCloseAfterSave(_ event: CoreRuntimeEvent) {
+        let stale: Bool
+        if case .requestFailed(_, let failure, _) = event {
+            stale = Int32(bitPattern: failure) == STELLAR_FAILURE_SAVE_STALE
+        } else { stale = false }
+        failClose(stale
+            ? String(localized: "This project changed on disk. This window and its unsaved changes are still open. The disk version wasn’t overwritten.")
+            : String(localized: "The design couldn’t be saved. This window and its changes are still open. Check the project folder, then close the window again to retry."))
+    }
+
+    private func failClose(_ message: String) {
+        cancelPendingClose()
+        alertPresenter?(String(localized: "The Window Couldn’t Be Closed"), message, window)
+    }
+
+    /// 취소·실제 닫힘·session 교체 뒤 도착하는 저장 응답은 닫기 권한이 없습니다.
+    func cancelPendingClose() {
+        agentCloseConfirmed = false
+        closeAttempt = nil
+        closeTimer?.invalidate()
+        closeTimer = nil
+        windowController.windowSession?.isClosing = false
+        windowController.windowSession?.commandsDidFinish = nil
     }
 
     /// 이 창 session의 선택을 바꿉니다(그 창 history에 기록, 끝나면 명령 활성 상태 갱신). 캔버스 선택 도구가 생기기 전에는
@@ -502,6 +626,10 @@ final class ShellProjectWindow {
         lastSessionCommandEvent = event
         refreshSessionCommands()
         guard command == .saveNow, case .requestFailed(_, let failure, _) = event else { return }
+        if isWaitingToClose {
+            failCloseAfterSave(event)
+            return
+        }
         let stale = Int32(bitPattern: failure) == STELLAR_FAILURE_SAVE_STALE
         alertPresenter?(
             String(localized: "The Design Couldn’t Be Saved", comment: "Save Now failure alert title"),
@@ -520,6 +648,7 @@ final class ShellProjectWindow {
 
     /// 열기에 실패했습니다. 창에 원인과 복구 동작을 보여 줍니다.
     func didFail(_ failure: ShellProjectOpenFailure, path: String) {
+        cancelPendingClose()
         windowController.windowSession?.close()
         windowController.windowSession = nil
         dataSource.didFail(title: failure.title, message: failure.message(path: path))
@@ -529,6 +658,7 @@ final class ShellProjectWindow {
 
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
     func closeSessions() {
+        cancelPendingClose()
         windowController.windowSession?.close()
         dataSource.session?.close()
     }
