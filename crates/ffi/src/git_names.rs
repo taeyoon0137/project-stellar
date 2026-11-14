@@ -100,6 +100,64 @@ pub unsafe extern "C" fn stellar_git_names_row(
     })
 }
 
+/// 같은 표시 세대의 컴포넌트 행을 읽습니다. 이름 행에는 NoError를 반환합니다.
+/// # Safety
+/// `out_len`은 size_t 하나, null이 아닌 `buf`는 capacity 바이트를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_git_component_row(
+    handle: u64,
+    session: u64,
+    generation: u64,
+    row: u32,
+    buf: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_len.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { write_len(out_len, 0) }
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let Some(item) = rt.app.as_ref().and_then(|app| {
+            app.git_component_row(
+                WindowSessionHandle(session),
+                RequestId(generation),
+                row as usize,
+            )
+        }) else {
+            return StellarStatus::NoError;
+        };
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&item.id.to_bytes());
+        bytes.push(u8::from(item.staged()));
+        bytes.push(u8::from(item.unstaged()));
+        for text in [
+            item.path,
+            item.head.map(|h| h.to_string()).unwrap_or_default(),
+            item.index.map(|h| h.to_string()).unwrap_or_default(),
+            item.working.map(|h| h.to_string()).unwrap_or_default(),
+        ] {
+            bytes.extend_from_slice(&(text.len() as u32).to_le_bytes());
+            bytes.extend_from_slice(text.as_bytes());
+        }
+        unsafe { write_len(out_len, bytes.len()) };
+        if buf.is_null() {
+            return StellarStatus::Ok;
+        }
+        if capacity < bytes.len() {
+            return StellarStatus::BufferTooSmall;
+        }
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len()) };
+        StellarStatus::Ok
+    })
+}
+
 /// 같은 창과 요청에만 취소를 보냅니다. 이미 완료된 요청은 무시합니다.
 #[no_mangle]
 pub extern "C" fn stellar_git_names_cancel(

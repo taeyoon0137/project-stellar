@@ -22,6 +22,7 @@ use stellar_ops::candidate::{
 use stellar_project::saved_project::SavedProjectLoader;
 use stellar_project::trust::TrustStatus;
 
+use super::git_components::{self, GitComponentRow};
 use super::{
     AppRuntime, ProjectSummary, RequestError, RequestFailure, RequestId, RuntimeEvent,
     WindowSessionHandle,
@@ -50,9 +51,21 @@ pub struct GitNameRow {
     unstaged_preview: Option<SemanticDiff>,
 }
 
+#[derive(Clone, Debug)]
+enum PanelRow {
+    Name(GitNameRow),
+    Component(GitComponentRow),
+}
+
+#[derive(Clone)]
+enum Preview {
+    Name(SemanticDiff),
+    Component(Box<GitComponentRow>),
+}
+
 #[derive(Default, Debug)]
 pub(super) struct WindowGit {
-    snapshots: BTreeMap<WindowSessionHandle, (RequestId, Vec<GitNameRow>)>,
+    snapshots: BTreeMap<WindowSessionHandle, (RequestId, Vec<PanelRow>)>,
     active: BTreeMap<WindowSessionHandle, (RequestId, GitCancelToken)>,
 }
 
@@ -108,11 +121,65 @@ impl Drop for TempParent {
         let _ = std::fs::remove_dir(&self.0);
     }
 }
-fn live(cancel: &GitCancelToken) -> Result<(), String> {
+pub(super) fn live(cancel: &GitCancelToken) -> Result<(), String> {
     if cancel.is_cancelled() {
         Err("Git 작업을 취소했습니다".into())
     } else {
         Ok(())
+    }
+}
+
+/// Index/HEAD 저장 generation은 컴포넌트 YAML과 별도로 열어 작업 중인 문서 전체를 재직렬화하지 않습니다.
+pub(super) fn stored_project(
+    git: &GatedGitRunner,
+    project: &ProjectSummary,
+    entries: &[SnapshotEntry],
+    parent: &Path,
+) -> Result<
+    (
+        stellar_git_porcelain::snapshot::MaterializedSnapshot,
+        stellar_project::saved_project::SavedProject,
+    ),
+    String,
+> {
+    // YAML blobs use their own bounded library decoder. Unrelated repository files never enter the
+    // temporary tree used to project names from the saved document generation.
+    let generation: Vec<_> = entries
+        .iter()
+        .filter(|e| {
+            let path = e.path.as_bytes();
+            path == b"stellar.yaml"
+                || path == b"design/current"
+                || path.starts_with(b"design/generations/")
+                || path.starts_with(b"design/objects/")
+        })
+        .cloned()
+        .collect();
+    let files = materialize_snapshot(git, &project.canonical_root, &generation, parent)
+        .map_err(|e| e.to_string())?;
+    let saved = SavedProjectLoader::for_materialized_snapshot()
+        .open(files.root())
+        .map_err(|e| e.to_string())?;
+    if saved.project_id != project.project_id {
+        return Err("Git 상태의 프로젝트 ID가 다릅니다".into());
+    }
+    git_components::ensure_text_library(
+        &saved,
+        entries.iter().any(|e| {
+            e.path.as_bytes().starts_with(b"design/components/")
+                && e.path.as_bytes().ends_with(b".stellar.yaml")
+        }),
+    )?;
+    Ok((files, saved))
+}
+
+fn document_names(
+    saved: &stellar_project::saved_project::SavedProject,
+) -> Result<Option<SemanticSnapshot>, String> {
+    match saved_semantic_snapshot(saved) {
+        Ok(snapshot) => Ok(Some(snapshot)),
+        Err(stellar_ops::candidate::CandidateStorageError::Unsupported(_)) => Ok(None),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -121,16 +188,9 @@ fn snapshot(
     project: &ProjectSummary,
     entries: &[SnapshotEntry],
     parent: &Path,
-) -> Result<SemanticSnapshot, String> {
-    let files = materialize_snapshot(git, &project.canonical_root, entries, parent)
-        .map_err(|e| e.to_string())?;
-    let saved = SavedProjectLoader::for_materialized_snapshot()
-        .open(files.root())
-        .map_err(|e| e.to_string())?;
-    if saved.project_id != project.project_id {
-        return Err("Git 상태의 프로젝트 ID가 다릅니다".into());
-    }
-    saved_semantic_snapshot(&saved).map_err(|e| e.to_string())
+) -> Result<Option<SemanticSnapshot>, String> {
+    let (_files, saved) = stored_project(git, project, entries, parent)?;
+    document_names(&saved)
 }
 
 fn read_names(
@@ -138,7 +198,7 @@ fn read_names(
     project: &ProjectSummary,
     parent: &Path,
     cancel: &GitCancelToken,
-) -> Result<(Vec<GitNameRow>, bool), String> {
+) -> Result<(Vec<PanelRow>, bool), String> {
     let root = &project.canonical_root;
     live(cancel)?;
     let location =
@@ -159,16 +219,29 @@ fn read_names(
     if working_project.project_id != project.project_id {
         return Err("작업 프로젝트 ID가 다릅니다".into());
     }
-    let working = saved_semantic_snapshot(&working_project).map_err(|e| e.to_string())?;
+    let (components, mut other) = git_components::rows(git, root, &head, &index, &working_project)?;
+    let working = document_names(&working_project)?;
+    let committed = if head.entries == index.entries {
+        None
+    } else {
+        snapshot(git, project, &head.entries, parent)?
+    };
+    let mut rows = BTreeMap::new();
+    let (Some(indexed), Some(working)) = (indexed, working) else {
+        return Ok((
+            components.into_iter().map(PanelRow::Component).collect(),
+            true,
+        ));
+    };
     let staged = if head.entries == index.entries {
         SemanticDiff::default()
-    } else {
-        let committed = snapshot(git, project, &head.entries, parent)?;
+    } else if let Some(committed) = committed {
         diff(&committed, &indexed)
+    } else {
+        other = true;
+        SemanticDiff::default()
     };
     let unstaged = diff(&indexed, &working);
-    let mut rows = BTreeMap::new();
-    let mut other = false;
     for (in_index, changes) in [(true, staged), (false, unstaged)] {
         for change in changes.into_changes() {
             let SemanticChange::SetProperty(property) = &change else {
@@ -220,7 +293,66 @@ fn read_names(
         }
     }
     live(cancel)?;
-    Ok((rows.into_values().collect(), other))
+    let rows = rows
+        .into_values()
+        .map(PanelRow::Name)
+        .chain(components.into_iter().map(PanelRow::Component))
+        .collect();
+    Ok((rows, other))
+}
+
+fn apply_name(
+    git: &GatedGitRunner,
+    project: &ProjectSummary,
+    preview: &SemanticDiff,
+    operation: SelectionOperation,
+    parent: &Path,
+    token: &GitCancelToken,
+) -> Result<(), String> {
+    let ids = preview.changes().iter().map(SemanticChange::id);
+    let prepared = match operation {
+        SelectionOperation::Stage => prepare_stage_candidate_with_preview(
+            git,
+            &project.canonical_root,
+            parent,
+            &StageSelectionRequest::stage(ids),
+            Some(preview),
+        ),
+        SelectionOperation::Unstage => prepare_unstage_candidate(
+            git,
+            &project.canonical_root,
+            parent,
+            &StageSelectionRequest::unstage(ids),
+            Some(preview),
+        ),
+    }
+    .map_err(|e| e.to_string())?;
+    live(token)?;
+    project.verify_trust()?;
+    apply_stage_candidate(git, &project.canonical_root, parent, &prepared, token)
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn panel_git(executable: PathBuf) -> GatedGitRunner {
+    // Panel commands only read snapshots or publish raw blobs. Never invoke repository programs.
+    let config = [
+        ("GIT_NO_LAZY_FETCH", "1"),
+        ("GIT_NO_REPLACE_OBJECTS", "1"),
+        ("GIT_ALLOW_PROTOCOL", ""),
+        ("GIT_CONFIG_COUNT", "2"),
+        ("GIT_CONFIG_KEY_0", "core.hooksPath"),
+        ("GIT_CONFIG_VALUE_0", "/dev/null"),
+        ("GIT_CONFIG_KEY_1", "core.fsmonitor"),
+        ("GIT_CONFIG_VALUE_1", "false"),
+    ];
+    let runner = GitRunner::new(executable, vec![], Duration::from_secs(15)).with_added_env(
+        config
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect(),
+    );
+    GatedGitRunner::new(runner, GitTrust::Trusted)
 }
 
 impl AppRuntime {
@@ -231,6 +363,31 @@ impl AppRuntime {
         generation: RequestId,
         row: usize,
     ) -> Option<GitNameRow> {
+        match self.git_panel_row(session, generation, row)? {
+            PanelRow::Name(row) => Some(row),
+            _ => None,
+        }
+    }
+
+    /// 같은 표시 세대의 컴포넌트 행입니다. 기존 이름 행 ABI와 독립적입니다.
+    pub fn git_component_row(
+        &self,
+        session: WindowSessionHandle,
+        generation: RequestId,
+        row: usize,
+    ) -> Option<GitComponentRow> {
+        match self.git_panel_row(session, generation, row)? {
+            PanelRow::Component(row) => Some(row),
+            _ => None,
+        }
+    }
+
+    fn git_panel_row(
+        &self,
+        session: WindowSessionHandle,
+        generation: RequestId,
+        row: usize,
+    ) -> Option<PanelRow> {
         let git = self
             .shared
             .git_names
@@ -297,9 +454,13 @@ impl AppRuntime {
                 return None;
             }
             let entry = rows.get(row)?;
-            match operation {
-                SelectionOperation::Stage => entry.unstaged_preview.clone(),
-                SelectionOperation::Unstage => entry.staged_preview.clone(),
+            match entry {
+                PanelRow::Name(entry) => match operation {
+                    SelectionOperation::Stage => entry.unstaged_preview.clone(),
+                    SelectionOperation::Unstage => entry.staged_preview.clone(),
+                }
+                .map(Preview::Name),
+                PanelRow::Component(row) => Some(Preview::Component(Box::new(row.clone()))),
             }
         });
         jobs.active.insert(session, (request, token.clone()));
@@ -316,34 +477,14 @@ impl AppRuntime {
                     project.verify_trust()?;
                     let git = discover_git(&GitDiscoveryConfig::default())
                         .ok_or("시스템 Git을 찾지 못했습니다")?;
-                    let git = GatedGitRunner::new(
-                        GitRunner::new(git, vec![], Duration::from_secs(15)),
-                        GitTrust::Trusted,
-                    );
+                    let git = panel_git(git);
                     let parent = TempParent::new()?;
                     if let Some((_, _, operation)) = selection {
                         let preview = preview.as_ref().ok_or("표시 세대나 선택 행이 바뀌었습니다")?;
-                        let ids = preview.changes().iter().map(SemanticChange::id);
-                        let prepared = match operation {
-                            SelectionOperation::Stage => prepare_stage_candidate_with_preview(
-                                &git, &project.canonical_root, &parent.0,
-                                &StageSelectionRequest::stage(ids), Some(preview),
-                            ),
-                            SelectionOperation::Unstage => prepare_unstage_candidate(
-                                &git, &project.canonical_root, &parent.0,
-                                &StageSelectionRequest::unstage(ids), Some(preview),
-                            ),
-                        }.map_err(|e| e.to_string())?;
-                        live(&token)?;
-                        project.verify_trust()?;
-                        apply_stage_candidate(
-                            &git,
-                            &project.canonical_root,
-                            &parent.0,
-                            &prepared,
-                            &token,
-                        )
-                        .map_err(|e| e.to_string())?;
+                        match preview {
+                            Preview::Component(component) => git_components::apply(&git, project, component, operation, &parent.0, &token)?,
+                            Preview::Name(preview) => apply_name(&git, project, preview, operation, &parent.0, &token)?,
+                        }
                         published = true;
                     }
                     read_names(&git, project, &parent.0, &token)
@@ -387,7 +528,7 @@ impl AppRuntime {
                         RuntimeEvent::RequestFailed {
                             request,
                             failure: RequestFailure::GitNamesUnavailable,
-                            message: if published {format!("선택한 이름의 index 변경은 완료됐습니다. 목록을 다시 읽지 못했습니다. 새로고침하세요. {message}")} else {message},
+                            message: if published {format!("선택한 변경의 index 반영은 완료됐습니다. 목록을 다시 읽지 못했습니다. 새로고침하세요. {message}")} else {message},
                         }
                     }
                 };

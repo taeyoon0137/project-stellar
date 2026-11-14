@@ -63,7 +63,7 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 `stellar semantic-diff <base> <target>`은 같은 프로젝트의 두 Git 작업 트리에서 저장 문서와 `design/components/`의 공유 정의를 함께 비교합니다. 각 변경의 `object`는 전체 StableId이고, 공유 컴포넌트에 속한 변경은 `component`에 정의의 전체 ID, `document`에 `null`을 반환합니다. 이름과 파일명을 함께 바꾸면 같은 컴포넌트의 이름 변경 한 건입니다. Frame 크기는 속성 변경, Frame 생성·삭제는 해당 노드의 추가·삭제로 표시합니다. 주석·YAML 서식만 다르면 의미 변경은 없습니다.
 
-`diff-summary`와 두 작업 트리를 공통 base와 비교하는 `semantic-merge`도 이 정보를 사용합니다. 같은 Frame 크기를 양쪽에서 다르게 바꾸면 속성 충돌이 반환됩니다. 이 명령들은 비교할 때 작업 파일이나 Git index를 수정하지 않습니다. headless MCP의 `document.semantic_diff`도 고정 HEAD의 Git blob과 현재 프로젝트의 YAML을 같은 규칙으로 비교합니다. 커서는 기준 commit, 저장 generation, 현재 컴포넌트 원본 집합의 hash와 결합됩니다. HEAD 안의 컴포넌트 폴더나 파일이 symlink이면 비교를 거부합니다. 앱의 Stage/Unstage는 현재 저장 generation의 문서를 대상으로 합니다.
+`diff-summary`와 두 작업 트리를 공통 base와 비교하는 `semantic-merge`도 이 정보를 사용합니다. 같은 Frame 크기를 양쪽에서 다르게 바꾸면 속성 충돌이 반환됩니다. 이 명령들은 비교할 때 작업 파일이나 Git index를 수정하지 않습니다. headless MCP의 `document.semantic_diff`도 고정 HEAD의 Git blob과 현재 프로젝트의 YAML을 같은 규칙으로 비교합니다. 커서는 기준 commit, 저장 generation, 현재 컴포넌트 원본 집합의 hash와 결합됩니다. HEAD 안의 컴포넌트 폴더나 파일이 symlink이면 비교를 거부합니다. 신뢰한 macOS 프로젝트의 Git 패널에서 **Components → 파일명 → Component source**의 체크박스로 추가되거나 수정된 원본 하나를 Stage/Unstage할 수 있습니다. Stage는 YAML 서식과 주석까지 현재 파일 그대로 Git index에 넣습니다. Unstage는 HEAD의 파일로 index를 되돌리며 새 파일이면 index에서 제거합니다. 작업 파일과 형제 파일의 staging 상태는 보존합니다. 표시한 뒤 HEAD나 선택한 index 항목이 달라지면 새로고침해야 합니다. 삭제 및 이름 변경은 이 체크박스에서 지원하지 않습니다.
 
 ### MCP 비교 성능 재현
 

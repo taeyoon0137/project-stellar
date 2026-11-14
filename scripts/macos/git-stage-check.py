@@ -90,6 +90,59 @@ def main(app, cli, fixture):
         assert not staged["locked"] and not unstaged["locked"] and working["locked"]
         print("git-stage disk ok: name staged, then unstaged to HEAD; working name and lock preserved")
 
+        # 같은 창을 다시 열어 일반 컴포넌트 파일 추가·수정을 선택한다. 앞선 이름 검사는 별도 generation이다.
+        current.write_bytes(before)
+        folder = work / "design/components"
+        folder.mkdir(parents=True)
+        def create(name, suffix):
+            return stellar("component-source", "create", folder, name,
+                          f"0195c530-3acd-7bc1-8414-c213f61c{suffix:04x}",
+                          f"0195c530-3acd-7bc1-8414-c213f61d{suffix:04x}")
+        def resize(item, size):
+            return stellar("component-source", "resize", item["file"], item["source_hash"], str(size), "21")
+
+        tracked = create("Button", 300)
+        sibling = create("Sibling", 301)
+        git("add", "design/components")
+        git("-c", "user.name=Stellar Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "components")
+        tracked = resize(tracked, 42)
+        sibling = resize(sibling, 43)
+        sibling_path = Path(sibling["file"]).relative_to(work).as_posix()
+        git("add", "--", sibling_path)
+        added = create("Card", 302)
+        (work / ".gitattributes").write_text("design/components/*.stellar.yaml filter=stellar-fixture\n")
+        hooks = base / "hooks"
+        hooks.mkdir()
+        marker = base / "executed"
+        program = hooks / "post-index-change"
+        program.write_text(f"#!/bin/sh\necho \"$*\" >> '{marker}'\ncat\n")
+        program.chmod(0o755)
+        git("config", "core.hooksPath", str(hooks))
+        git("config", "filter.stellar-fixture.clean", str(program))
+        git("config", "filter.stellar-fixture.required", "true")
+        original_files = project_files()
+        def index_entries(indexfile):
+            raw = subprocess.check_output(["git", "-c", "core.hooksPath=/dev/null", "-C", work, "ls-files", "-s", "-z"],
+                                          env=dict(env, GIT_INDEX_FILE=str(indexfile)))
+            return {path.decode(): record for entry in raw.split(b"\0") if entry
+                    for record, path in [entry.split(b"\t", 1)]}
+        initial = index_entries(work/".git/index")
+        for item in (tracked, added):
+            source = Path(item["file"])
+            target_path = source.relative_to(work).as_posix()
+            review_index = base / (source.name + ".index")
+            subprocess.run([app, "--git-stage-check", work, review_index, source.name], env=env, check=True, timeout=90)
+            assert not marker.exists(), "Panel ran a Git hook or clean filter: " + marker.read_text()
+            installed = index_entries(review_index)
+            assert (set(installed) | set(initial)) - {target_path} == set(initial) - {target_path}
+            assert all(initial[k] == installed[k] for k in initial if k != target_path)
+            staged_oid = installed[target_path].split()[1].decode()
+            assert git("cat-file", "blob", staged_oid) == source.read_bytes()
+            assert index_entries(work/".git/index") == initial, "Unstage did not restore only the selected file"
+            assert project_files() == original_files
+            assert not marker.exists(), "Disk check ran a hook or filter: " + marker.read_text()
+        print("component-stage disk ok: selected tracked edit and untracked addition, raw bytes, staged sibling, working files, no hooks/filters")
+
 
 if __name__ == "__main__":
     main(*(Path(arg).resolve() for arg in sys.argv[1:]))
