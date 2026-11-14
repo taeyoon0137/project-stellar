@@ -4,6 +4,8 @@
 //! 담습니다. [`validate_create_request`]는 **사전 검증만** 수행하며 파일을 만들지 않습니다
 //! (실제 생성은 IV.4.2 이후). 폴더 이름 규칙은 IV.2.1을 재사용합니다.
 
+mod initial_document;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -155,6 +157,28 @@ pub fn create_project(
     runner: &GitRunner,
     version: &GitVersion,
 ) -> Result<ProjectCreated, ProjectCreateError> {
+    create_with(request, project_id, runner, version, |_| Ok(()))
+}
+
+/// 새 편집 프로젝트를 생성합니다. 첫 문서·Page·View·Frame을 최초 commit 전에 generation 1로 저장합니다.
+pub fn create_editable_project(
+    request: &ProjectCreateRequest,
+    runner: &GitRunner,
+    version: &GitVersion,
+) -> Result<ProjectCreated, ProjectCreateError> {
+    let ids = initial_document::new_ids().map_err(|e| ProjectCreateError::Io(e.kind()))?;
+    create_with(request, &ids[0].to_string(), runner, version, |root| {
+        initial_document::save(root, ids)
+    })
+}
+
+fn create_with(
+    request: &ProjectCreateRequest,
+    project_id: &str,
+    runner: &GitRunner,
+    version: &GitVersion,
+    initialize: impl FnOnce(&Path) -> std::io::Result<()>,
+) -> Result<ProjectCreated, ProjectCreateError> {
     validate_create_request(request).map_err(ProjectCreateError::Validation)?;
 
     // 폴더 생성 트랜잭션(commit 전 드롭되면 롤백).
@@ -165,6 +189,8 @@ pub fn create_project(
     if let Err(e) = write_default_scaffold(tx.path(), &request.project_name, project_id) {
         return Err(ProjectCreateError::Io(e.kind()));
     }
+
+    initialize(tx.path()).map_err(|e| ProjectCreateError::Io(e.kind()))?;
 
     // git init(at-init): 실패 시 tx 드롭 → 롤백.
     if let Err(e) = repo::git_init_main(runner, version, tx.path()) {
@@ -215,7 +241,7 @@ fn is_writable(dir: &Path) -> bool {
     static COUNTER: AtomicUsize = AtomicUsize::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let probe = dir.join(format!(".stellar-write-probe-{}-{n}", std::process::id()));
-    match std::fs::File::create(&probe) {
+    match std::fs::File::create_new(&probe) {
         Ok(_) => {
             let _ = std::fs::remove_file(&probe);
             true
@@ -427,6 +453,111 @@ mod tests {
             }
             other => panic!("예상과 다른 결과: {other:?}"),
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn editable_project_is_openable_and_original_files_survive_every_outcome() {
+        use crate::saved_project::SavedProjectLoader;
+        let git = discover_git(&GitDiscoveryConfig::default()).expect("system Git");
+        let version = probe_git_version(&git).unwrap();
+        let dir = TempDir::new();
+        let config = dir.path.join("gitconfig");
+        std::fs::write(
+            &config,
+            "[user]\n name = Fixture\n email = fixture@example.invalid\n",
+        )
+        .unwrap();
+        let make_runner = |config: &Path| {
+            GitRunner::new(git.clone(), vec![], Duration::from_secs(30))
+                .with_env_overrides(hermetic_overrides(config.as_os_str().into()))
+        };
+        for (name, settings, committed) in [
+            ("한글 UI", config.as_path(), true),
+            ("No identity", Path::new("/dev/null"), false),
+        ] {
+            let runner = make_runner(settings);
+            let req = request(&dir.path, name);
+            let saved = create_editable_project(&req, &runner, &version).unwrap();
+            match (saved, committed) {
+                (ProjectCreated::Created { .. }, true)
+                | (
+                    ProjectCreated::InitializationIncomplete {
+                        reason: IncompleteReason::MissingIdentity { .. },
+                        ..
+                    },
+                    false,
+                ) => {}
+                other => panic!("unexpected create outcome {other:?}"),
+            }
+            let root = req.target_path();
+            let loaded = SavedProjectLoader::new().open(&root).unwrap();
+            assert_eq!(loaded.generation_number(), 1);
+            let ids = loaded.document_ids().unwrap();
+            assert_eq!(ids.len(), 1);
+            let records = loaded
+                .load_document(ids[0])
+                .unwrap()
+                .model
+                .to_records()
+                .unwrap();
+            assert_eq!(records.definition.pages.len(), 1);
+            assert_eq!(records.definition.pages[0].views.len(), 1);
+            assert_eq!(records.nodes.len(), 1);
+            assert_eq!(
+                records.nodes[0].id,
+                records.definition.pages[0].views[0].root_frame
+            );
+            assert!(records.nodes[0].visible && !records.nodes[0].locked);
+            assert!(runner
+                .run(
+                    &argv(["ls-files", "--error-unmatch", "design/current"]),
+                    &root
+                )
+                .unwrap()
+                .success());
+            assert_eq!(
+                runner
+                    .run(&argv(["rev-parse", "--verify", "HEAD"]), &root)
+                    .unwrap()
+                    .success(),
+                committed
+            );
+            if committed {
+                assert_eq!(
+                    runner
+                        .run(&argv(["show", "HEAD:design/current"]), &root)
+                        .unwrap()
+                        .stdout,
+                    std::fs::read(root.join("design/current")).unwrap()
+                );
+                assert!(runner
+                    .run(&argv(["status", "--porcelain"]), &root)
+                    .unwrap()
+                    .stdout
+                    .is_empty());
+            }
+            std::fs::write(root.join("keep.txt"), b"keep").unwrap();
+            assert!(matches!(
+                create_editable_project(&req, &runner, &version),
+                Err(ProjectCreateError::Validation(
+                    CreateValidationError::TargetExists
+                ))
+            ));
+            assert_eq!(std::fs::read(root.join("keep.txt")).unwrap(), b"keep");
+            assert_eq!(
+                SavedProjectLoader::new().open(&root).unwrap().project_id,
+                loaded.project_id
+            );
+        }
+        let req = request(&dir.path, "rollback");
+        assert!(
+            create_with(&req, ID, &make_runner(&config), &version, |_| Err(
+                std::io::ErrorKind::WriteZero.into()
+            ))
+            .is_err()
+        );
+        assert!(!req.target_path().exists());
     }
 
     #[cfg(unix)]

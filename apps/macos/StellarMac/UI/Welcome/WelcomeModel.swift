@@ -94,8 +94,7 @@ enum WelcomeFailureReason: Equatable {
     /// 프로젝트 열기 실패(XII.6.2). 원인은 셸 어댑터가 코어 실패 코드에서 고른 `ShellProjectOpenFailure`이고, 문구는
     /// 그 원인의 제목과 해결 방법입니다. `path`는 고른 폴더입니다(문구에는 폴더 이름만 씀).
     case projectOpenFailed(ShellProjectOpenFailure, path: String)
-    /// 이 빌드에는 프로젝트 만들기 코어 경로가 아직 없습니다(New Project).
-    case projectCreationUnavailable
+    case projectCreationFailed(message: String)
     /// 이 빌드에는 Clone 코어 경로가 아직 없습니다(Clone Project).
     case projectCloneUnavailable
 }

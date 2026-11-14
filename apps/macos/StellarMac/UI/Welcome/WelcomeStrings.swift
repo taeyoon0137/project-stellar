@@ -168,11 +168,8 @@ enum WelcomeStrings {
             return String(localized: "An unexpected error occurred. (Error code: \(code))", comment: "Failure reason")
         case .projectOpenFailed(let failure, let path):
             return "\(failure.title). \(failure.message(path: path))"
-        case .projectCreationUnavailable:
-            return String(
-                localized: "Creating projects isn’t available in this build yet. Open an existing Stellar project instead.",
-                comment: "Failure reason"
-            )
+        case .projectCreationFailed(let message):
+            return message
         case .projectCloneUnavailable:
             return String(
                 localized: "Cloning projects isn’t available in this build yet. Clone the repository with Git, then open the folder.",

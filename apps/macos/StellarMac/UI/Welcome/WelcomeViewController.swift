@@ -40,6 +40,11 @@ final class WelcomeViewController: NSViewController, NSOpenSavePanelDelegate, NS
     private var renderScheduled = false
     private var presentedNoticeID: UInt64?
     private var sheetObserver: NSObjectProtocol?
+    var chooseNewProjectLocation: (NSSavePanel, NSWindow, @escaping (URL?) -> Void) -> Void = { panel, window, completion in
+        panel.beginSheetModal(for: window) { response in
+            completion(response == .OK ? panel.url : nil)
+        }
+    }
 
     init(dataSource: WelcomeDataSource, appVersion: String) {
         self.dataSource = dataSource
@@ -365,8 +370,8 @@ final class WelcomeViewController: NSViewController, NSOpenSavePanelDelegate, NS
         panel.showsTagField = false
         panel.directoryURL = defaultParentDirectory
         panel.delegate = self
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
+        chooseNewProjectLocation(panel, window) { [weak self] url in
+            guard let url else { return }
             self?.dataSource.send(
                 .createProject(
                     parentDirectory: url.deletingLastPathComponent().path,

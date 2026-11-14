@@ -307,7 +307,7 @@ protocol WelcomeDataSource: AnyObject {
 ```
 
 - `WelcomeSnapshot`: `generation`(세대 번호, 오래된 snapshot 폐기), `recentProjects`(loading / loaded / failed(`WelcomeFailureReason`)), `git`(checking / available / notFound / unusable(`WelcomeGitProblem`)), `activity?`(`id` 포함), `notice?`, `defaultParentDirectory?`.
-- `WelcomeFailureReason`: `permissionDenied(path)`, `notEnoughSpace`, `networkUnavailable`, `authenticationFailed`, `remoteNotFound`, `gitCommandFailed(exitStatus)`, `internalError(code)`, `projectOpenFailed(ShellProjectOpenFailure, path)`(셸 어댑터가 코어 열기 실패 코드에서 고른 원인, 문구는 원인 제목과 해결 방법, XII.6.2), `projectCreationUnavailable`·`projectCloneUnavailable`(이 빌드에 코어 경로 없음). 코어 오류는 어댑터가 이 코드로 바꿉니다.
+- `WelcomeFailureReason`: `permissionDenied(path)`, `notEnoughSpace`, `networkUnavailable`, `authenticationFailed`, `remoteNotFound`, `gitCommandFailed(exitStatus)`, `internalError(code)`, `projectOpenFailed(ShellProjectOpenFailure, path)`(셸 어댑터가 코어 열기 실패 코드에서 고른 원인, 문구는 원인 제목과 해결 방법, XII.6.2), `projectCreationFailed(message)`(코어의 생성 실패 원인), `projectCloneUnavailable`(Clone 경로 준비 중). 코어 오류는 어댑터가 이 코드로 바꿉니다.
 - `WelcomeCommand`: `createProject`, `openProject`, `cloneProject`, `openRecent`, `removeRecent`, `reloadRecentProjects`, `recheckGit`, `useGitExecutable`, `cancelActivity(id:)`, `dismissNotice`.
 - 경로는 `String`(UTF-8)이라 ADR-0009의 `(ptr, len)` 문자열 규칙으로 옮기기 쉽습니다. 최근 항목 식별자는 코어가 발급한 불투명 문자열입니다.
 - 표본 구현 `WelcomeDataSourceStub`은 의도적 placeholder입니다(계획 1.2 규칙 6). 실제 프로젝트를 만들거나 열지 않고, 받은 명령을 기록하며 최근 목록 제거·안내 확인·작업 취소만 흉내 냅니다.

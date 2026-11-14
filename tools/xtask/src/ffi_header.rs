@@ -80,6 +80,7 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
  * 요청마다 정확히 하나가 옵니다. payload는 little-endian이고 u32 schema version
  * (STELLAR_EVENT_SCHEMA_VERSION)으로 시작합니다. str은 u32 길이 + UTF-8 바이트
  * (최대 STELLAR_EVENT_TEXT_MAX byte, 문자 경계에서 자름), id는 StableId 16 byte입니다.
+ *   PROJECT_CREATED: request u64, git_state u32 (0 committed, 1 missing identity, 2 add failed, 3 commit failed)
  *   PROJECT_OPENED : request u64, project u64, project_id[16], name str, root str
  *   PROJECT_CLOSED : request u64, project u64, closed_documents u32
  *   DOCUMENT_OPENED: request u64, project u64, document u64, document_id[16], already_open u8
@@ -105,6 +106,7 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_EVENT_WINDOW_SESSION_SAVED 0x010a
 #define STELLAR_EVENT_PROJECT_TRUST 0x010b
 #define STELLAR_EVENT_GIT_NAMES 0x010c
+#define STELLAR_EVENT_PROJECT_CREATED 0x010d
 
 /* 완료 event를 아직 꺼내지 않은 요청(실행 중 포함) 상한. 닿으면 새 요청은 STELLAR_QUEUE_FULL. */
 #define STELLAR_EVENT_CAPACITY 1024
@@ -131,6 +133,7 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_INVALID_VIEWPORT 24
 #define STELLAR_FAILURE_TRUST_UNAVAILABLE 25
 #define STELLAR_FAILURE_GIT_NAMES_UNAVAILABLE 26
+#define STELLAR_FAILURE_PROJECT_CREATE_FAILED 27
 
 /* 창 session 명령 코드(stellar_window_session_perform). 코어가 정하고 셸과 공유합니다. 셸은 메뉴 명령의 공유 이름
  * (edit.undo, edit.redo, file.save_now, view.zoom_in, view.zoom_out, view.zoom_actual_size)으로
@@ -252,6 +255,9 @@ StellarStatus stellar_runtime_poll_input(uint64_t handle, uint8_t *buf, size_t b
 
 /* 프로젝트 폴더 열기를 요청합니다(입력: 절대 경로 UTF-8 ptr+len). 기다리지 않고 request id를 씁니다(실패 시 0). */
 StellarStatus stellar_project_open(uint64_t handle, const uint8_t *path, size_t path_len, uint64_t *out_request);
+
+/* 새 폴더 생성. 완료 event 뒤 같은 path로 stellar_project_open을 호출할 수 있습니다. */
+StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_t path_len, uint64_t *out_request);
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
 StellarStatus stellar_project_close(uint64_t handle, uint64_t project, uint64_t *out_request);

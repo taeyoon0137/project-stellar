@@ -10,7 +10,7 @@ import SwiftUI
 ///   controller가 창 session handle 하나를 소유하고, 창을 닫으면 창 session → 프로젝트 session 순서로 닫습니다. 같은
 ///   폴더를 연 창이 이미 있으면 새 창을 만들지 않고 그 창을 앞으로 가져옵니다(가이드 2.5).
 /// - 창 복원은 프로젝트 폴더 경로만 창 상태에 저장하고, 복원할 때 같은 경로를 다시 엽니다(가이드 2.6).
-/// - New Project·Clone Project는 코어 FFI 경로가 아직 없어 메뉴에서 비활성이고, 시작 창에서 고르면 안내만 합니다.
+/// - New Project는 Git 프로젝트와 첫 문서를 만들고 창을 엽니다. Clone은 시작 창에서 사용 가능 여부를 안내합니다.
 @MainActor
 final class ShellAppCoordinator: NSObject {
     /// 창 복원 상태에 프로젝트 폴더 경로를 넣는 키.
@@ -132,6 +132,9 @@ final class ShellAppCoordinator: NSObject {
 
     private func performApplicationCommand(_ command: ShellCommand) {
         switch command {
+        case .newProject:
+            showWelcome()
+            welcomeController?.welcomeViewController.newStellarProject(nil)
         case .openProject:
             chooseProjectToOpen(origin: .application)
         case .settings:
@@ -186,8 +189,49 @@ final class ShellAppCoordinator: NSObject {
         }
     }
 
+    func createProject(parentDirectory: String, folderName: String) {
+        guard parentDirectory.hasPrefix("/"), !parentDirectory.utf8.contains(0), !folderName.isEmpty,
+              folderName != ".", folderName != "..", !folderName.contains("/"), !folderName.utf8.contains(0) else {
+            welcomeData.postNotice(.operationFailed(.projectCreationFailed(
+                message: String(localized: "Choose a parent folder and enter a name for the new project.")
+            )))
+            return
+        }
+        let path = URL(fileURLWithPath: parentDirectory, isDirectory: true)
+            .appendingPathComponent(folderName, isDirectory: true).path
+        guard welcomeData.currentSnapshot().activity == nil else { return }
+        guard !FileManager.default.fileExists(atPath: path) else {
+            welcomeData.postNotice(.folderAlreadyExists(path: path))
+            return
+        }
+        guard let pump else {
+            welcomeData.postNotice(.operationFailed(.projectCreationFailed(message: ShellProjectOpenFailure.runtimeUnavailable.title)))
+            return
+        }
+        let result = pump.createProject(path: path) { [weak self] event in
+            guard let self else { return }
+            self.welcomeData.setActivity(nil)
+            switch event {
+            case .projectCreated(_, let gitState):
+                self.openProject(atPath: path, origin: .welcome, createdGitState: gitState)
+            case .requestFailed(_, _, let message):
+                self.welcomeData.postNotice(.operationFailed(.projectCreationFailed(message: message)))
+            default:
+                self.welcomeData.postNotice(.operationFailed(.projectCreationFailed(message: ShellProjectOpenFailure.unexpectedResponse.title)))
+            }
+        }
+        switch result {
+        case .success(let request):
+            welcomeData.setActivity(WelcomeActivity(id: request, kind: .creating, projectName: folderName,
+                                                    fractionCompleted: nil, isCancellable: false))
+        case .failure(let error):
+            let failure = ShellProjectOpenFailure(callStatus: error.status)
+            welcomeData.postNotice(.operationFailed(.projectCreationFailed(message: failure.message(path: path))))
+        }
+    }
+
     /// 프로젝트 폴더를 엽니다. 코어가 열기 분류·안전 probe를 마친 뒤에만 창을 만듭니다.
-    func openProject(atPath rawPath: String, origin: OpenOrigin) {
+    func openProject(atPath rawPath: String, origin: OpenOrigin, createdGitState: UInt32? = nil) {
         let path = Self.canonicalPath(rawPath)
         if let existing = projectWindow(forPath: path) {
             if presentsWindows {
@@ -202,24 +246,26 @@ final class ShellAppCoordinator: NSObject {
             return
         }
         let result = pump.openProject(path: path) { [weak self] event in
-            self?.finishOpening(path: path, origin: origin, event: event)
+            self?.finishOpening(path: path, origin: origin, event: event, createdGitState: createdGitState)
         }
         switch result {
         case .success(let request):
             pendingOpenPaths.insert(path)
             if origin == .welcome {
                 // 진행 표시의 작업 식별자는 코어 열기 요청 id입니다(열기는 취소할 수 없음).
-                welcomeData.setOpening((id: request, projectName: ShellProjectFrameDataSource.folderName(path)))
+                welcomeData.setActivity(WelcomeActivity(id: request, kind: .opening,
+                                                        projectName: ShellProjectFrameDataSource.folderName(path),
+                                                        fractionCompleted: nil, isCancellable: false))
             }
         case .failure(let error):
             presentOpenFailure(ShellProjectOpenFailure(callStatus: error.status), path: path, origin: origin)
         }
     }
 
-    private func finishOpening(path: String, origin: OpenOrigin, event: CoreRuntimeEvent) {
+    private func finishOpening(path: String, origin: OpenOrigin, event: CoreRuntimeEvent, createdGitState: UInt32?) {
         func finish() {
             pendingOpenPaths.remove(path)
-            welcomeData.setOpening(nil)
+            welcomeData.setActivity(nil)
         }
         switch event {
         case .projectOpened(_, let project, let projectID, let name, let root):
@@ -236,6 +282,12 @@ final class ShellAppCoordinator: NSObject {
                     let projectWindow = self.makeProjectWindow(rootPath: root)
                     projectWindow.didOpen(projectSession, windowSession: windowSession)
                     self.present(projectWindow)
+                    if let state = createdGitState, state != 0 {
+                        let message = state == 1
+                            ? String(localized: "Set your Git user.name and user.email, then make the first commit in this project.")
+                            : String(localized: "Git could not complete the first commit. Check the repository status and commit the project files.")
+                        self.alertPresenter(String(localized: "Project Created Without a First Commit"), message, projectWindow.window)
+                    }
                 case .failure(let failure):
                     self.presentOpenFailure(failure, path: path, origin: origin)
                 }
@@ -513,9 +565,9 @@ final class ShellAppCoordinator: NSObject {
 
 /// 앱 수준 메뉴 모델: 창이 없어도 동작하는 셸 명령(tools_menus 5.4).
 ///
-/// New Project·Clone Project는 코어 FFI 경로(프로젝트 생성·clone)가 없어 비활성입니다(XII.6.1, XII.6.3).
+/// 프로젝트를 만들거나 열 수 있고 설정 창을 열 수 있습니다.
 final class ShellApplicationCommandModel: ToolsMenuModel {
-    static let availableCommands: Set<ShellCommand> = [.openProject, .settings]
+    static let availableCommands: Set<ShellCommand> = [.newProject, .openProject, .settings]
 
     let snapshot = ToolsMenuSnapshot(
         generation: 1,
@@ -543,10 +595,7 @@ final class ShellApplicationCommandModel: ToolsMenuModel {
 
 /// 시작 창 data source(코어 연결 부분).
 ///
-/// Open Project는 코어로 엽니다. 최근 프로젝트 목록과 Git 탐색 결과를 셸에 주는 코어 경로가 아직 없으므로 최근
-/// 목록은 비어 있고 Git 상태는 "탐색 중"(안내 없음, 동작 막지 않음)으로 둡니다. New Project·Clone Project는 코어 경로가
-/// 없어 고르면 사용할 수 없다고 안내합니다. 시작 창 protocol은 actor 표기가 없으므로 모든 호출이 메인 스레드라는
-/// 전제(protocol 문서)를 `MainActor.assumeIsolated`로 확인하고 coordinator를 부릅니다.
+/// 프로젝트 생성·열기를 코어에 요청합니다. 시작 창 protocol은 모든 호출이 메인 스레드에서 이루어집니다.
 final class ShellWelcomeDataSource: WelcomeDataSource {
     weak var coordinator: ShellAppCoordinator?
     var snapshotDidChange: (() -> Void)?
@@ -573,8 +622,10 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
             MainActor.assumeIsolated {
                 coordinator?.openProject(atPath: directory, origin: .welcome)
             }
-        case .createProject:
-            postNotice(.operationFailed(.projectCreationUnavailable))
+        case .createProject(let parentDirectory, let folderName):
+            MainActor.assumeIsolated {
+                coordinator?.createProject(parentDirectory: parentDirectory, folderName: folderName)
+            }
         case .cloneProject:
             postNotice(.operationFailed(.projectCloneUnavailable))
         case .dismissNotice(let id):
@@ -586,11 +637,7 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
         }
     }
 
-    /// 열기 진행 표시. `id`는 코어 열기 요청 id(작업 식별자)입니다. nil이면 지웁니다.
-    func setOpening(_ opening: (id: UInt64, projectName: String)?) {
-        let activity = opening.map {
-            WelcomeActivity(id: $0.id, kind: .opening, projectName: $0.projectName, fractionCompleted: nil, isCancellable: false)
-        }
+    func setActivity(_ activity: WelcomeActivity?) {
         guard activity != snapshot.activity else { return }
         update { $0.activity = activity }
     }
