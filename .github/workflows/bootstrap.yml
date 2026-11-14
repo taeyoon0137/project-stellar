@@ -96,7 +96,7 @@ jobs:
       - name: Xcode Debug build + smoke
         env:
           # Hosted Debug 측정은 로그에 경고로 남기고 REF-MAC에서 성능을 판정합니다.
-          STELLAR_INSPECTOR_TIMING: report
+          STELLAR_UI_TIMING: report
         run: ./scripts/macos/smoke.sh
 
   bootstrap-windows:
