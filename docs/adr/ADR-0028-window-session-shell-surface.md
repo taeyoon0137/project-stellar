@@ -190,3 +190,14 @@ UI thread는 기다리지 않습니다.
   current manifest를 확인합니다. Git checkout 등 외부 변경이 base 검사 전에 끝나면 stale을 반환합니다. 외부 변경의 reconciliation은 XXIV.4.6 범위입니다.
 
 검증·남은 범위는 [정상 창 닫기 보고서](../status/window-close-save.md)를 따릅니다.
+
+## 정밀 스크롤의 창별 팬 연결 — XII.10.37 부분 구현
+
+- `stellar_window_session_pan(handle, session, dx, dy, out_request)`는 기존 runtime `pan_viewport`를 호출합니다.
+  delta는 화면 point 단위의 내용 이동이며, 완료는 기존 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
+  기존 ABI 구조체·입력 encoding·저장 포맷은 바꾸지 않습니다.
+- 기본 프로젝트 창은 수식키 없는 `hasPreciseScrollingDeltas` 이벤트를 해당 창 session에만 보냅니다.
+  관성 이벤트도 같은 delta 경로로 처리하고, 처리한 입력은 공용 runtime 입력 대기열에 중복 제출하지 않습니다.
+  일반 휠(line 단위), 수식키 조합, 준비되지 않은 창은 기존 입력 경로를 유지합니다.
+- 합성 AppKit 입력의 창별 camera 이동, 연속 입력과 저장 불변성은 호스트 앱에서 확인했습니다.
+  [스크롤 팬 검증 기록](../status/canvas-scroll-pan.md)에 명령과 남은 범위를 기록합니다.

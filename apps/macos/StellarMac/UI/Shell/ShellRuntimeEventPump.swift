@@ -74,6 +74,14 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.perform(handle: runtimeHandle, session: session, command: command), completion)
     }
 
+    @discardableResult
+    func pan(
+        session: UInt64, dx: Double, dy: Double,
+        completion: @escaping (CoreRuntimeEvent) -> Void
+    ) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.pan(handle: runtimeHandle, session: session, dx: dx, dy: dy), completion)
+    }
+
     /// 창 session의 선택을 바꾸고 완료 event를 `completion`으로 받습니다.
     @discardableResult
     func select(
