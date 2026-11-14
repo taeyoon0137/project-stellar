@@ -14,6 +14,7 @@ use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::FramePayload;
 use stellar_document::model::DocumentModel;
 use stellar_document::records::{NodePayload, NodeRecord};
+use stellar_document::text::{Paragraph, StyleRun, TextPayload, TextRange};
 use stellar_project::document_io::serialize::serialize_document;
 use stellar_project::identity::parse_project_id;
 use stellar_project::scaffold::write_default_scaffold;
@@ -25,6 +26,7 @@ use stellar_storage::save::plan::build_save_plan;
 
 use crate::core_types::ids::StableId;
 use crate::core_types::order_key::OrderKey;
+use crate::core_types::text::UserText;
 
 /// fixture 프로젝트의 `project.id`.
 pub const PROJECT_ID_TEXT: &str = "0195c530-3acd-7bc1-8414-c213f61cb965";
@@ -198,6 +200,41 @@ pub fn large_document(node_count: usize) -> DocumentModel {
         }
     }
     model
+}
+
+/// 단일 View의 Text 원본 왕복 fixture. Unicode와 비정규화된 run 순서를 보존해야 합니다.
+pub fn text_document() -> DocumentModel {
+    let mut records = large_document(4).to_records().expect("records");
+    let node = records.nodes.last_mut().expect("text leaf");
+    node.display_name = "TextFixture".into();
+    node.payload = NodePayload::Text(
+        TextPayload::new(
+            UserText::new("Original 한글 e\u{301} 👩‍💻\nsecond line\r\n"),
+            vec![
+                Paragraph { style: 17 },
+                Paragraph { style: 0 },
+                Paragraph { style: u32::MAX },
+            ],
+            vec![
+                StyleRun {
+                    range: TextRange::new(8, 12).unwrap(),
+                    style: 91,
+                },
+                StyleRun {
+                    range: TextRange::new(0, 10).unwrap(),
+                    style: 3,
+                },
+                StyleRun {
+                    range: TextRange::new(5, 5).unwrap(),
+                    style: u32::MAX,
+                },
+            ],
+        )
+        .expect("text payload"),
+    );
+    DocumentModel::from_records(records)
+        .expect("text document")
+        .0
 }
 
 /// current generation에서 ViewTree kind chunk(ViewTree·subtree) 파일을 모두 망가뜨립니다.

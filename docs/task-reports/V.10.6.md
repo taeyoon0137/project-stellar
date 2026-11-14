@@ -28,7 +28,7 @@ Frame 후속 단위는 `crates/ops/src/apply.rs`의 typed 입력 두 개와 `too
 - dry-run은 semantic diff를 반환하지만 source·generation·cache·저장 잠금 파일을 생성하지 않습니다. source_hash는 변경하지 않은 원본 bytes hash입니다.
 - 쓰기는 문서 ID + canonical 파일 경로의 기존 OS 저장 잠금을 사용합니다. 잠금 뒤 원본을 열고 expected hash와 ID를 확인합니다. 저장 전 재해석·hash 확인과 temp/fsync/rename은 기존 저장 계층을 재사용합니다.
 - 같은 값 적용은 주석·bytes·hash를 보존합니다. 주석만 외부 변경해도 stale hash는 거부합니다. unknown 원본 필드, 잘못된 문서, unknown command, 중간 명령 실패는 원본을 보존합니다.
-- canonical InsertNode로 미지원 Text 노드가 생기는 경우 dry-run/write 모두 거부합니다. 이름 변경의 semantic diff와 저장 후 재구축 모델이 일치하는지 ops 테스트로도 검사합니다.
+- canonical InsertNode로 미지원 노드가 생기는 경우(초기 Text fixture는 V.10.4 지원 확장 후 Shape로 교체) dry-run/write 모두 거부합니다. 이름 변경의 semantic diff와 저장 후 재구축 모델이 일치하는지 ops 테스트로도 검사합니다.
 - 저장 잠금 경합은 write를 거부하고 dry-run은 성공합니다. 잠금을 제공하지 않은 write도 거부합니다.
 - Frame 후속 단위: 실제 CLI 프로세스에서 JSON 정수·소수·지수 입력 → dry-run → write → check → 실제 Git diff의 size·transform 값 → 새 hash로 동일 값 재적용(no-op)을 검증합니다. dry-run은 잠금 디렉터리도 만들지 않으며 기존 generation은 전 과정에서 보존합니다.
 - 음수 크기, f32 overflow, 문자열·불리언, 필수 키 누락·추가 키를 두 모드 모두에서 거부합니다. 정상 Frame 변경 뒤 Fragment에 size 또는 transform을 지정하면 전체 transaction을 저장하지 않습니다.

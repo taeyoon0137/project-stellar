@@ -407,7 +407,7 @@ mod tests {
         use stellar_commands::command::Command;
         use stellar_commands::node_ops::InsertNode;
         use stellar_document::records::NodePayload;
-        use stellar_document::text::TextPayload;
+        use stellar_document::shape::{RectangleParams, ShapeGeometry};
 
         let dir = TempDir::new("text-source-apply-unsupported");
         let lock_dir = TempDir::new("text-source-apply-unsupported-lock");
@@ -423,7 +423,10 @@ mod tests {
             .unwrap();
         node.id = StableId::new_v7(99, 0, 99);
         node.order_key = crate::core_types::order_key::OrderKey::from_bytes(vec![255]).unwrap();
-        node.payload = NodePayload::Text(TextPayload::empty(0));
+        node.payload = NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+            size: crate::core_types::value::Size2::ZERO,
+            corner_radius: stellar_document::frame::CornerRadius::ZERO,
+        }));
         let command = Command::InsertNode(InsertNode::single(node));
         let request = TextSourceApplyRequest {
             base_source_hash: hash,

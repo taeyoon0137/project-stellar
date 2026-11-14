@@ -1,4 +1,4 @@
-//! ADR-0059 첫 텍스트 원본 범위: 단일 문서·페이지·View와 Frame/Fragment.
+//! ADR-0059 텍스트 원본 범위: 단일 문서·페이지·View와 Frame/Fragment/Text.
 //!
 //! 모든 저장 속성을 명시하며, 미지원 레코드나 키는 생략하지 않고 거부합니다.
 
@@ -8,12 +8,14 @@ use std::str::FromStr;
 use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::order_key::OrderKey;
 use stellar_core_types::reference::NodeRef;
+use stellar_core_types::text::UserText;
 use stellar_core_types::value::{Size2, Transform2D};
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
 use stellar_document::fragment::FragmentPayload;
 use stellar_document::frame::{Border, Clipping, CornerRadius, FramePayload};
 use stellar_document::model::DocumentModel;
 use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
+use stellar_document::text::{Paragraph, StyleRun, TextPayload, TextRange};
 use stellar_document::validate::validate_document;
 
 use super::text_source::TextSourceError;
@@ -106,10 +108,51 @@ fn frame(payload: &FramePayload) -> YamlValue {
     ])
 }
 
+fn text_payload(payload: &TextPayload) -> Result<YamlValue, TextSourceError> {
+    // TextRange의 public 필드로 직접 만든 역전 범위도 쓰기 전에 거부합니다.
+    if payload
+        .style_runs()
+        .iter()
+        .any(|run| run.range.start > run.range.end)
+    {
+        return Err(invalid("Text run의 start는 end 이하여야 합니다"));
+    }
+    Ok(mapping([
+        ("content", scalar(payload.content())),
+        (
+            "paragraphs",
+            YamlValue::Sequence(
+                payload
+                    .paragraphs()
+                    .iter()
+                    .map(|paragraph| mapping([("style", scalar(paragraph.style))]))
+                    .collect(),
+            ),
+        ),
+        (
+            "style_runs",
+            YamlValue::Sequence(
+                payload
+                    .style_runs()
+                    .iter()
+                    .map(|run| {
+                        mapping([
+                            ("start", scalar(run.range.start.0)),
+                            ("end", scalar(run.range.end.0)),
+                            ("style", scalar(run.style)),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ]))
+}
+
 fn node(record: &NodeRecord) -> Result<YamlValue, TextSourceError> {
     let (kind, payload) = match &record.payload {
         NodePayload::Frame(value) => ("frame", frame(value)),
         NodePayload::Fragment(_) => ("fragment", scalar("none")),
+        NodePayload::Text(value) => ("text", text_payload(value)?),
         other => {
             return Err(TextSourceError::Unsupported(format!(
                 "node {}: {} payload",
@@ -333,6 +376,43 @@ fn parse_order_key(value: &YamlValue) -> Result<OrderKey, TextSourceError> {
     OrderKey::from_bytes(bytes).map_err(invalid)
 }
 
+fn parse_text_payload(value: &YamlValue) -> Result<TextPayload, TextSourceError> {
+    fields(value, &["content", "paragraphs", "style_runs"])?;
+    let paragraphs = field(value, "paragraphs")?
+        .as_sequence()
+        .ok_or_else(|| invalid("paragraphs는 sequence여야 합니다"))?
+        .iter()
+        .map(|paragraph| {
+            fields(paragraph, &["style"])?;
+            Ok(Paragraph {
+                style: parse(field(paragraph, "style")?)?,
+            })
+        })
+        .collect::<Result<Vec<_>, TextSourceError>>()?;
+    let runs = field(value, "style_runs")?
+        .as_sequence()
+        .ok_or_else(|| invalid("style_runs는 sequence여야 합니다"))?
+        .iter()
+        .map(|run| {
+            fields(run, &["start", "end", "style"])?;
+            let start = parse(field(run, "start")?)?;
+            let end = parse(field(run, "end")?)?;
+            Ok(StyleRun {
+                range: TextRange::new(start, end)
+                    .ok_or_else(|| invalid("Text run의 start는 end 이하여야 합니다"))?,
+                style: parse(field(run, "style")?)?,
+            })
+        })
+        .collect::<Result<Vec<_>, TextSourceError>>()?;
+    // 저장된 run의 순서·겹침·빈 범위는 모델의 원본 의미이므로 정규화하지 않습니다.
+    TextPayload::new(
+        UserText::new(text(field(value, "content")?)?),
+        paragraphs,
+        runs,
+    )
+    .map_err(invalid)
+}
+
 fn parse_node(value: &YamlValue) -> Result<NodeRecord, TextSourceError> {
     fields(
         value,
@@ -352,6 +432,7 @@ fn parse_node(value: &YamlValue) -> Result<NodeRecord, TextSourceError> {
         "frame" => NodePayload::Frame(parse_frame(payload)?),
         "fragment" if payload.as_scalar() == Some("none") => NodePayload::Fragment(FragmentPayload),
         "fragment" => return Err(invalid("Fragment payload는 none이어야 합니다")),
+        "text" => NodePayload::Text(parse_text_payload(payload)?),
         kind => {
             return Err(TextSourceError::Unsupported(format!(
                 "node payload: {kind}"
