@@ -38,6 +38,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "query",
         "<경로> <대상>: 저장된 프로젝트를 읽기 전용으로 조회해 revision과 함께 JSON으로 출력합니다",
     ),
+    (
+        "apply",
+        "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
+    ),
 ];
 
 /// `query` 대상: (사용법, 한 줄 설명). 도움말에 이 순서로 나타납니다.
@@ -127,6 +131,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("inspect", commands::inspect(rest))
     } else if command == "query" {
         ("query", commands::query(rest))
+    } else if command == "apply" {
+        ("apply", crate::apply::run(rest))
     } else {
         return usage_error(err, &format!("알 수 없는 명령: {command}"));
     };
@@ -299,6 +305,11 @@ mod tests {
                 "--bogus",
             ][..],
             &["query", "p", "node", "0195c530-3acd-7bc1-8414-c213f61cb965"][..],
+            &["apply"][..],
+            &["apply", "p"][..],
+            &["apply", "p", "in.json", "extra"][..],
+            &["apply", "p", "in.json", "--force"][..],
+            &["apply", "p", "in.json", "--dry-run", "--dry-run"][..],
         ] {
             let (code, out, err) = run_args(args);
             assert_eq!(code, EXIT_USAGE, "{args:?}");

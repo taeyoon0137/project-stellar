@@ -297,6 +297,7 @@ dependencies = [
 name = "stellar-ops"
 version = "0.0.0"
 dependencies = [
+ "stellar-commands",
  "stellar-document",
  "stellar-project",
  "stellar-semantic-diff",

@@ -665,3 +665,163 @@ fn query_tree_splits_a_two_hundred_thousand_node_document() {
         first.stdout.len()
     );
 }
+
+// --- XXIV.4.4: apply ---
+
+fn run_with_stdin(args: &[&str], input: &str) -> Run {
+    use std::io::Write as _;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stellar"))
+        .args(args)
+        .env_clear()
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(input.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    Run {
+        code: output.status.code().unwrap(),
+        stdout: String::from_utf8(output.stdout).unwrap(),
+        stderr: String::from_utf8(output.stderr).unwrap(),
+    }
+}
+
+fn revision_token(root: &Path) -> String {
+    let run = run(&["query", root.to_str().unwrap(), "project"]);
+    result_of(&run)
+        .get("revision")
+        .and_then(|r| r.get("token"))
+        .and_then(JsonValue::as_str)
+        .unwrap()
+        .to_string()
+}
+
+/// 부모가 있는(View root가 아닌) 첫 node.
+fn first_child(model: &FixtureDocument) -> String {
+    let root = first_root_frame(model);
+    let root: stellar_ops::core_types::ids::StableId = root.parse().unwrap();
+    model.children_in_order(root)[0].to_string()
+}
+
+fn transaction(base: &str, document: &str, commands: &str) -> String {
+    format!(
+        r#"{{"format":"stellar-apply","format_version":1,"base_revision":"{base}","document":"{document}","commands":[{commands}]}}"#
+    )
+}
+
+#[test]
+fn apply_dry_run_and_write_fixtures() {
+    let dir = TempDir::new("apply");
+    let (root, model) = saved_project(&dir);
+    let path = root.to_str().unwrap();
+    let document = model.document_id().to_string();
+    let node = first_child(&model);
+    let base = revision_token(&root);
+    let input = transaction(
+        &base,
+        &document,
+        &format!(
+            r#"{{"kind":"set-visible","node":"{node}","visible":false}},{{"kind":"rename","node":"{node}","name":"headless"}}"#
+        ),
+    );
+    let file = dir.path.join("transaction.json");
+    std::fs::write(&file, &input).unwrap();
+
+    // dry-run: semantic diff만 출력하고 revision·파일은 그대로입니다.
+    let before = file_digest(&root);
+    let dry = run(&["apply", path, file.to_str().unwrap(), "--dry-run"]);
+    check(&dry, "apply-dry-run.json", ExitStatus::Ok, &[&root, &file]);
+    assert_eq!(file_digest(&root), before, "dry-run은 파일을 쓰지 않음");
+    assert_eq!(revision_token(&root), base, "dry-run 전후 revision 동일");
+
+    // 표준 입력으로 받은 같은 transaction을 세대 전환 저장으로 기록합니다.
+    let write = run_with_stdin(&["apply", path, "-"], &input);
+    check(&write, "apply-write.json", ExitStatus::Ok, &[&root]);
+    let after = revision_token(&root);
+    assert!(after.starts_with("g2:"), "{after}");
+    assert_eq!(
+        result_of(&write)
+            .get("revision")
+            .and_then(|r| r.get("token"))
+            .and_then(JsonValue::as_str),
+        Some(after.as_str())
+    );
+    // 적용 후 reopen한 node가 바뀐 값을 가집니다.
+    let detail = result_of(&run(&["query", path, "node", &document, &node]));
+    let node_json = detail.get("node").unwrap();
+    assert_eq!(node_json.get("visible"), Some(&JsonValue::Bool(false)));
+    assert_eq!(
+        node_json.get("name").and_then(JsonValue::as_str),
+        Some("headless")
+    );
+    // dry-run과 write의 변경 목록이 같습니다.
+    assert_eq!(
+        result_of(&dry).get("changes"),
+        result_of(&write).get("changes")
+    );
+}
+
+#[test]
+fn apply_rejection_fixtures_write_nothing() {
+    let dir = TempDir::new("apply-errors");
+    let (root, model) = saved_project(&dir);
+    let path = root.to_str().unwrap();
+    let document = model.document_id().to_string();
+    let node = first_child(&model);
+    let base = revision_token(&root);
+    let before = file_digest(&root);
+    let ok = format!(r#"{{"kind":"set-locked","node":"{node}","locked":true}}"#);
+
+    let cases = [
+        (
+            transaction("g0", &document, &ok),
+            "apply-base-mismatch.json",
+            ExitStatus::DataErr,
+        ),
+        (
+            transaction(
+                &base,
+                &document,
+                &format!(r#"{ok},{{"kind":"run-script","source":"rm -rf /"}}"#),
+            ),
+            "apply-unknown-command.json",
+            ExitStatus::DataErr,
+        ),
+        (
+            transaction(
+                &base,
+                &document,
+                &format!(
+                    r#"{ok},{{"kind":"delete-subtree","root":"0195c530-3acd-7bc1-8414-c213f61cb999"}}"#
+                ),
+            ),
+            "apply-rejected.json",
+            ExitStatus::Failure,
+        ),
+        (
+            transaction(
+                &base,
+                &document,
+                &format!(r#"{{"kind":"set-locked","node":"{node}","locked":true,"extra":1}}"#),
+            ),
+            "apply-invalid-transaction.json",
+            ExitStatus::DataErr,
+        ),
+    ];
+    for (input, fixture, status) in cases {
+        let result = run_with_stdin(&["apply", path, "-"], &input);
+        check(&result, fixture, status, &[&root]);
+    }
+    assert_eq!(
+        file_digest(&root),
+        before,
+        "거부된 apply는 파일을 쓰지 않음"
+    );
+    assert_eq!(revision_token(&root), base);
+}

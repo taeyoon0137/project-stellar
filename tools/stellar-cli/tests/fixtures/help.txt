@@ -8,6 +8,7 @@ stellar — Project Stellar headless 도구
     version  도구 이름·버전을 JSON으로 출력합니다
     inspect  <경로>의 프로젝트 root와 stellar.yaml을 읽기 전용으로 검사해 JSON으로 출력합니다(--structure: 문서 개요와 revision 추가)
     query    <경로> <대상>: 저장된 프로젝트를 읽기 전용으로 조회해 revision과 함께 JSON으로 출력합니다
+    apply    <경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)
 
 query 대상:
     project

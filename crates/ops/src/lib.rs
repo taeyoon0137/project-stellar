@@ -34,6 +34,12 @@ pub mod snapshot;
 /// 읽기 전용 조회: 프로젝트 구조, 문서 트리 page, node 속성, token·component (XXIV.4.3).
 pub mod query;
 
+/// 문서 레코드의 semantic diff 요약 (XXIV.4.4).
+pub mod diff;
+
+/// headless 편집 적용: base revision 검사, closed enum 검증, 세대 전환 저장 (XXIV.4.4).
+pub mod apply;
+
 /// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 pub mod test_support;

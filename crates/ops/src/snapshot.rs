@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use stellar_document::definitions::DocumentDefinition;
+use stellar_document::model::DocumentModel;
 use stellar_document::records::DocumentRecords;
 use stellar_project::document_io::load::LoadDocumentError;
 use stellar_project::document_io::manifest::DocumentManifestChunk;
@@ -98,11 +99,8 @@ impl ProjectSnapshot {
         self.generation.as_ref()
     }
 
-    /// 문서 하나의 영속 레코드를 그 문서의 chunk만 읽어 만듭니다(VI.10.3).
-    pub fn document_records(
-        &self,
-        document: StableId,
-    ) -> Result<DocumentRecords, DocumentReadError> {
+    /// 문서 하나의 런타임 모델을 그 문서의 chunk만 읽어 만듭니다(VI.10.3).
+    pub fn document_model(&self, document: StableId) -> Result<DocumentModel, DocumentReadError> {
         let generation = self
             .generation
             .as_ref()
@@ -119,8 +117,16 @@ impl ProjectSnapshot {
             }
             other => DocumentReadError::Load(other),
         })?;
-        let mut records = loaded
-            .model
+        Ok(loaded.model)
+    }
+
+    /// 문서 하나의 영속 레코드를 그 문서의 chunk만 읽어 만듭니다(VI.10.3, canonical 정렬).
+    pub fn document_records(
+        &self,
+        document: StableId,
+    ) -> Result<DocumentRecords, DocumentReadError> {
+        let mut records = self
+            .document_model(document)?
             .to_records()
             .map_err(|e| DocumentReadError::Records(e.to_string()))?;
         records.sort_canonical();

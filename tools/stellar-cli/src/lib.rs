@@ -12,8 +12,11 @@
 /// 명령 registry와 도움말 (XXIV.1.1, XXIV.1.2, XXIV.4.1).
 pub mod cli;
 
-/// 명령 구현 (XXIV.1.2).
+/// 명령 구현 (XXIV.1.2, XXIV.4.3).
 pub mod commands;
+
+/// `stellar apply`: CommandTransaction JSON 적용 (XXIV.4.4).
+pub mod apply;
 
 /// 종료 코드 (XXIV.1.2).
 pub mod exit;

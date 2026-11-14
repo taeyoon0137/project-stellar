@@ -3,6 +3,7 @@
 //! 결과 JSON에는 경로를 넣지 않습니다. 경로는 [`CliError::with_context`]로 stderr에만 씁니다.
 
 use stellar_ops::core_types::ids::StableId;
+use stellar_ops::diff::{DiffEntry, DiffPosition, DiffReport};
 use stellar_ops::error::{DocumentReadError, OpenError};
 use stellar_ops::query::{
     DefinitionSet, DocumentOutline, NodeDetail, OpsValue, ProjectStructure, QueryError, TreePage,
@@ -349,4 +350,67 @@ pub fn query_error(error: &QueryError) -> CliError {
             CliError::new(ExitStatus::Software, "projection", error.to_string())
         }
     }
+}
+
+/// semantic diff 위치.
+fn diff_position(position: Option<&DiffPosition>) -> JsonValue {
+    match position {
+        None => JsonValue::Null,
+        Some(p) => JsonValue::object(vec![
+            ("parent", opt_id(p.parent)),
+            (
+                "order_key",
+                JsonValue::opt_string(p.order_key_hex.as_deref()),
+            ),
+        ]),
+    }
+}
+
+/// 선택 속성 값(`{"type","value"}` 또는 `null`).
+fn opt_value(value: Option<&OpsValue>) -> JsonValue {
+    value.map_or(JsonValue::Null, |v| {
+        JsonValue::object(vec![
+            ("type", JsonValue::string(v.type_name())),
+            ("value", value_inner(v)),
+        ])
+    })
+}
+
+/// semantic diff 변경 한 건.
+pub fn diff_entry(entry: &DiffEntry) -> JsonValue {
+    JsonValue::object(vec![
+        ("kind", JsonValue::string(entry.kind)),
+        ("document", opt_id(entry.document)),
+        ("object", id(entry.object)),
+        (
+            "object_kind",
+            JsonValue::opt_string(entry.object_kind.as_deref()),
+        ),
+        ("path", JsonValue::opt_string(entry.path.as_deref())),
+        ("old", opt_value(entry.old.as_ref())),
+        ("new", opt_value(entry.new.as_ref())),
+        ("from", diff_position(entry.from.as_ref())),
+        ("to", diff_position(entry.to.as_ref())),
+    ])
+}
+
+/// semantic diff: `{"count", "by_kind", "entries"}`(canonical 순서, XIV.3.8).
+pub fn diff_report(report: &DiffReport) -> JsonValue {
+    JsonValue::object(vec![
+        ("count", count(report.entries.len())),
+        (
+            "by_kind",
+            JsonValue::Object(
+                report
+                    .counts()
+                    .into_iter()
+                    .map(|(kind, n)| (kind.to_string(), count(n)))
+                    .collect(),
+            ),
+        ),
+        (
+            "entries",
+            JsonValue::Array(report.entries.iter().map(diff_entry).collect()),
+        ),
+    ])
 }

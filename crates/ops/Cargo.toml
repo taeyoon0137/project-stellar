@@ -14,7 +14,9 @@ publish = false
 stellar-project = { path = "../project" }
 # 문서 영속 레코드·정의 타입 (VI.10).
 stellar-document = { path = "../document" }
-# current generation·manifest 읽기 (V.4.4, V.6.6).
+# closed enum command·CommandTransaction 적용 (VII.1.2, VII.1.6).
+stellar-commands = { path = "../commands" }
+# current generation·manifest 읽기와 세대 전환 저장 (V.4.4, V.5, V.6.6).
 stellar-storage = { path = "../storage" }
 # StableId·PropertyPath(core-types 재노출)와 semantic snapshot 속성 투영 (XIV.3.1).
 stellar-semantic-diff = { path = "../semantic-diff" }
