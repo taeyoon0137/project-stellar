@@ -209,34 +209,30 @@ enum CoreRuntime {
     }
 
     /// Call from a worker queue; the document ticket may wait.
-    static func copySubtree(handle: UInt64, session: UInt64, view: UUID, revision: UInt64) -> Data? {
-        var data = Data(count: 16 * 1024 * 1024)
-        var count = 0
-        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+    static func copySubtree(handle: UInt64, target: StellarSelectionTarget) -> Data? {
+        var target = target
+        func read(_ data: inout Data, count: inout Int) -> StellarStatus {
             data.withUnsafeMutableBytes { bytes in
-                stellar_window_session_copy_subtree(handle, session,
-                    viewBytes.bindMemory(to: UInt8.self).baseAddress, revision,
-                    bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, &count)
+                stellar_window_copy_selection(handle, &target, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, &count)
             }
         }
-        guard status == STELLAR_OK, count > 0 else { return nil }
+        var data = Data(count: 4096)
+        var count = 0
+        var status = read(&data, count: &count)
+        if status == STELLAR_BUFFER_TOO_SMALL {
+            guard count > data.count, count <= 16 * 1024 * 1024 else { return nil }
+            data = Data(count: count)
+            status = read(&data, count: &count)
+        }
+        guard status == STELLAR_OK, count > 0, count <= data.count else { return nil }
         data.count = count
         return data
     }
 
-    /// Pasteboard 데이터는 FFI가 반환 전에 복사합니다. 완료는 기존 창 event 경로로 받습니다.
-    static func pasteSubtree(handle: UInt64, session: UInt64, view: UUID, parent: UUID,
-                             revision: UInt64, data: Data) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
-            withUnsafeBytes(of: parent.uuid) { parentBytes in
-                data.withUnsafeBytes { bytes in
-                    stellar_window_session_paste_subtree(handle, session,
-                        viewBytes.bindMemory(to: UInt8.self).baseAddress,
-                        parentBytes.bindMemory(to: UInt8.self).baseAddress, revision,
-                        bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, &request)
-                }
-            }
+    static func pasteSubtree(handle: UInt64, target: StellarSelectionTarget, data: Data) -> Result<UInt64, CoreRuntimeCallError> {
+        var target = target, request: UInt64 = 0
+        let status = data.withUnsafeBytes { bytes in
+            stellar_window_paste_selection(handle, &target, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, &request)
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)
@@ -595,5 +591,13 @@ enum CoreRuntimeEvent: Equatable {
             guard let length = u32(), let raw = take(Int(length)) else { return nil }
             return String(bytes: raw, encoding: .utf8)
         }
+    }
+}
+
+extension StellarSelectionTarget {
+    func matches(_ other: StellarSelectionTarget?) -> Bool {
+        guard let other else { return false }
+        return session == other.session && revision == other.revision && history_sequence == other.history_sequence
+            && selection_count == other.selection_count && UUID(uuid: view) == UUID(uuid: other.view)
     }
 }

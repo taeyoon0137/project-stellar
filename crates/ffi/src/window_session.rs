@@ -334,6 +334,17 @@ pub struct StellarSelectionTarget {
     view: [u8; 16],
 }
 
+impl StellarSelectionTarget {
+    fn runtime_target(self) -> SelectionEditTarget {
+        SelectionEditTarget {
+            session: WindowSessionHandle(self.session),
+            view: StableId::from_bytes(self.view),
+            revision: stellar_core_types::revision::DocumentRevision(self.revision),
+            history_sequence: self.history_sequence,
+        }
+    }
+}
+
 /// 한 번 게시된 snapshot에서 선택과 활성 View를 함께 읽습니다.
 /// # Safety
 /// `out`은 대상 구조체 하나를 쓸 수 있어야 합니다.
@@ -422,12 +433,7 @@ pub unsafe extern "C" fn stellar_window_edit_selection(
                     .collect(),
             )
         };
-        let target = SelectionEditTarget {
-            session: WindowSessionHandle(target.session),
-            view: StableId::from_bytes(target.view),
-            revision: stellar_core_types::revision::DocumentRevision(target.revision),
-            history_sequence: target.history_sequence,
-        };
+        let target = target.runtime_target();
         let Ok(mut reg) = registry().lock() else {
             return StellarStatus::Internal;
         };
@@ -541,41 +547,85 @@ pub unsafe extern "C" fn stellar_window_session_copy_subtree(
                 .try_into()
                 .unwrap(),
         );
-        let ticket = {
-            let Ok(reg) = registry().lock() else {
-                return StellarStatus::Internal;
-            };
-            let Some(app) = reg.live.get(&handle).and_then(|rt| rt.app.as_ref()) else {
-                return StellarStatus::InvalidHandle;
-            };
-            match app.copy_selected_subtree(
-                WindowSessionHandle(session),
-                view,
-                stellar_core_types::revision::DocumentRevision(revision),
-            ) {
-                Ok(ticket) => ticket,
-                Err(stellar_runtime::document_thread::SubmitError::QueueFull { .. }) => {
-                    return StellarStatus::QueueFull
-                }
-                Err(_) => return StellarStatus::InvalidHandle,
-            }
-        };
-        let data = match ticket.wait() {
-            Ok(Some(data)) => data,
-            Ok(None) => return StellarStatus::NoError,
-            Err(_) => return StellarStatus::Internal,
-        };
         unsafe {
-            out_len.write(data.len());
+            copy_subtree_bytes(handle, bytes, capacity, out_len, |app| {
+                app.copy_selected_subtree(
+                    WindowSessionHandle(session),
+                    view,
+                    stellar_core_types::revision::DocumentRevision(revision),
+                )
+            })
         }
-        if data.len() > capacity || bytes.is_null() {
-            return StellarStatus::BufferTooSmall;
-        }
-        unsafe {
-            std::ptr::copy_nonoverlapping(data.as_ptr(), bytes, data.len());
-        }
-        StellarStatus::Ok
     })
+}
+
+/// 표시된 창의 선택을 복사합니다. 작은 출력 buffer에는 필요한 byte 수를 반환합니다.
+/// # Safety
+/// `target`은 구조체 하나, `out_len`은 usize 하나, null이 아닌 `bytes`는 capacity byte를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_copy_selection(
+    handle: u64,
+    target: *const StellarSelectionTarget,
+    bytes: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_len.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { out_len.write(0) };
+        let Some(target) = (unsafe { target.as_ref() }) else {
+            return StellarStatus::NullPointer;
+        };
+        unsafe {
+            copy_subtree_bytes(handle, bytes, capacity, out_len, |app| {
+                app.copy_displayed_subtree(target.runtime_target())
+            })
+        }
+    })
+}
+
+unsafe fn copy_subtree_bytes(
+    handle: u64,
+    bytes: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+    capture: impl FnOnce(
+        &AppRuntime,
+    ) -> Result<
+        stellar_runtime::document_thread::JobTicket<Option<Vec<u8>>>,
+        stellar_runtime::document_thread::SubmitError,
+    >,
+) -> StellarStatus {
+    let ticket = {
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(app) = reg.live.get(&handle).and_then(|rt| rt.app.as_ref()) else {
+            return StellarStatus::InvalidHandle;
+        };
+        match capture(app) {
+            Ok(ticket) => ticket,
+            Err(stellar_runtime::document_thread::SubmitError::QueueFull { .. }) => {
+                return StellarStatus::QueueFull
+            }
+            Err(_) => return StellarStatus::InvalidHandle,
+        }
+    };
+    let data = match ticket.wait() {
+        Ok(Some(data)) => data,
+        Ok(None) => return StellarStatus::NoError,
+        Err(_) => return StellarStatus::Internal,
+    };
+    unsafe { out_len.write(data.len()) };
+    if data.len() > capacity || bytes.is_null() {
+        return StellarStatus::BufferTooSmall;
+    }
+    unsafe {
+        std::ptr::copy_nonoverlapping(data.as_ptr(), bytes, data.len());
+    }
+    StellarStatus::Ok
 }
 
 /// 플랫폼 pasteboard의 subtree bytes를 복사해 창의 일반 history로 전달합니다.
@@ -605,24 +655,77 @@ pub unsafe extern "C" fn stellar_window_session_paste_subtree(
         if view.is_null() || parent.is_null() || bytes.is_null() {
             return StellarStatus::NullPointer;
         }
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let result = match rt.app() {
-            Ok(app) => app.paste_node_subtree(
-                WindowSessionHandle(session),
-                StableId::from_bytes(unsafe { *view }),
-                stellar_core_types::revision::DocumentRevision(revision),
-                StableId::from_bytes(unsafe { *parent }),
-                unsafe { std::slice::from_raw_parts(bytes, len) }.to_vec(),
-            ),
-            Err(status) => return status,
-        };
-        unsafe { rt.finish_request(result, out_request) }
+        unsafe {
+            paste_subtree_bytes(handle, bytes, len, out_request, |app, data| {
+                app.paste_node_subtree(
+                    WindowSessionHandle(session),
+                    StableId::from_bytes(*view),
+                    stellar_core_types::revision::DocumentRevision(revision),
+                    StableId::from_bytes(*parent),
+                    data,
+                )
+            })
+        }
     })
+}
+
+/// 표시한 창·선택에서 같은 문서의 subtree를 붙여넣습니다. 목적 부모를 현재 선택에서 계산합니다.
+/// # Safety
+/// `target`은 구조체 하나, `bytes`는 len byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_paste_selection(
+    handle: u64,
+    target: *const StellarSelectionTarget,
+    bytes: *const u8,
+    len: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { out_request.write(0) };
+        }
+        if len == 0 || len > 16 * 1024 * 1024 {
+            return StellarStatus::InvalidArgument;
+        }
+        let Some(target) = (unsafe { target.as_ref() }) else {
+            return StellarStatus::NullPointer;
+        };
+        if bytes.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            paste_subtree_bytes(handle, bytes, len, out_request, |app, data| {
+                app.paste_displayed_subtree(target.runtime_target(), StableId::NIL, data)
+            })
+        }
+    })
+}
+
+unsafe fn paste_subtree_bytes(
+    handle: u64,
+    bytes: *const u8,
+    len: usize,
+    out_request: *mut u64,
+    paste: impl FnOnce(
+        &AppRuntime,
+        Vec<u8>,
+    )
+        -> Result<stellar_runtime::app::RequestId, stellar_runtime::app::RequestError>,
+) -> StellarStatus {
+    let Ok(mut reg) = registry().lock() else {
+        return StellarStatus::Internal;
+    };
+    let Some(rt) = reg.live.get_mut(&handle) else {
+        return StellarStatus::InvalidHandle;
+    };
+    let result = match rt.app() {
+        Ok(app) => paste(
+            app,
+            unsafe { std::slice::from_raw_parts(bytes, len) }.to_vec(),
+        ),
+        Err(status) => return status,
+    };
+    unsafe { rt.finish_request(result, out_request) }
 }
 
 /// 표시된 Frame을 부모 좌표계 delta만큼 이동하도록 요청합니다.

@@ -28,11 +28,11 @@ enum ShellCanvasMoveCheck {
     }
 
     @MainActor static func run(fixture: URL) -> Bool {
+        NSApplication.shared.setActivationPolicy(.accessory)
         let projects = ShellSavedProjectFixture(prefix: "StellarCanvasMove")
         defer { projects.remove() }
         guard let path = projects.copy(fixture, as: "A"), let otherPath = projects.copy(fixture, as: "B"),
               let node = UUID(uuidString: "00000000-000b-7000-8000-00000000000b") else { return false }
-        NSApplication.shared.setActivationPolicy(.accessory)
         let runtime = RuntimeHost()
         defer { runtime.shutdown() }
         let coordinator = ShellAppCoordinator(runtimeHandle: runtime.handle)
@@ -165,13 +165,17 @@ enum ShellCanvasMoveCheck {
         defer { board.releaseGlobally() }
         reopened.subtreePasteboard = board
         let clipboardDepth = deleteSession.info?.undo_depth
+        // The CLI fixture runs with background windows. Supply the same active-window
+        // identity that AppKit's keyWindow supplies during interactive use.
+        weak var keyWindow = reopened.window
+        reopened.clipboardKeyWindow = { keyWindow }
         guard reopened.router.dispatch(.copy) else { return fail("선택 복사 요청") }
         let clipboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
         let deadline = Date().addingTimeInterval(5)
         while board.availableType(from: [clipboardType]) == nil && Date() < deadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
         }
-        guard board.data(forType: clipboardType)?.isEmpty == false,
+        guard let copied = board.data(forType: clipboardType), copied.count > 4096,
               clipboardDepth == deleteSession.info?.undo_depth,
               action(reopened, .delete), action(reopened, .paste),
               let pasted = at(30, in: deleteCanvas), pasted != node,
@@ -202,6 +206,62 @@ enum ShellCanvasMoveCheck {
         guard let sibling = reopened.sidebarSource.snapshot.layers.topLevelIDs.first(where: { $0.uuid != node })?.uuid else {
             return fail("다른 형제 레이어")
         }
+        // Copy completion always follows this serial queue marker on main. No wall-clock
+        // delay can turn a late pasteboard write into a false success.
+        func finishCopy() -> Bool {
+            var finished = false
+            reopened.clipboardQueue.async { DispatchQueue.main.async { finished = true } }
+            let until = Date().addingTimeInterval(5)
+            while !finished && Date() < until { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+            return finished
+        }
+        let boardVersion = board.changeCount
+        guard let shown = deleteSession.selectionTarget,
+              deleteSession.select([sibling], completion: { _ in }), pump.waitForPendingRequests(timeout: 10),
+              let changed = deleteSession.selectionTarget, changed.revision == shown.revision,
+              changed.history_sequence != shown.history_sequence, changed.selection_count == shown.selection_count,
+              reopened.performSessionCommand(.copy), finishCopy(), board.changeCount == boardVersion,
+              reopened.performSessionCommand(.paste), pump.waitForPendingRequests(timeout: 10),
+              case .requestFailed(_, let failure, _) = reopened.lastSessionCommandEvent,
+              Int32(bitPattern: failure) == STELLAR_FAILURE_UNKNOWN_VIEW,
+              changed.matches(deleteSession.selectionTarget), action(reopened, .undo), shown.matches(deleteSession.selectionTarget)
+        else { return fail("같은 revision에서 바뀐 선택으로 Copy/Paste가 적용됨") }
+
+        // Let the worker capture A, then publish B without pumping the queued main-thread
+        // pasteboard delivery. This covers a selection change *after* a successful capture.
+        guard reopened.performSessionCommand(.copy) else { return fail("선택 전환 전 Copy") }
+        reopened.clipboardQueue.sync {}
+        let selecting = CoreRuntime.select(handle: pump.runtimeHandle, session: deleteSession.session, ids: [sibling])
+        guard case .success = selecting else { return fail("다른 원본 선택") }
+        let timeout = Date().addingTimeInterval(3)
+        while shown.matches(deleteSession.selectionTarget) && Date() < timeout { Thread.sleep(forTimeInterval: 0.005) }
+        guard let current = deleteSession.selectionTarget, current.revision == shown.revision,
+              current.selection_count == shown.selection_count, current.history_sequence != shown.history_sequence,
+              finishCopy(), board.changeCount == boardVersion, action(reopened, .undo), shown.matches(deleteSession.selectionTarget)
+        else { return fail("복사 결과 전달 전 바뀐 선택에 pasteboard 쓰기") }
+
+        // Keep main busy until copy has captured the bytes. Its queued delivery must
+        // recheck the active window, independently of the worker's selection check.
+        guard reopened.performSessionCommand(.copy) else { return fail("창 전환 전 Copy") }
+        reopened.clipboardQueue.sync {}
+        keyWindow = b.window
+        guard !reopened.performSessionCommand(.paste),
+              finishCopy(), board.changeCount == boardVersion, board.data(forType: clipboardType) == copied,
+              shown.matches(deleteSession.selectionTarget)
+        else { return fail("다른 key 창에서 늦은 Copy/Paste 거부") }
+
+        keyWindow = reopened.window
+        guard reopened.performSessionCommand(.copy) else { return fail("텍스트 포커스 전 Copy") }
+        reopened.clipboardQueue.sync {}
+        let editor = NSTextView(frame: .init(x: 0, y: 0, width: 100, height: 32))
+        reopened.window?.contentView?.addSubview(editor)
+        guard reopened.window?.makeFirstResponder(editor) == true, reopened.router.isTextEditing,
+              !reopened.router.responds(to: #selector(NSText.copy(_:))), !reopened.router.responds(to: #selector(NSText.paste(_:))),
+              !reopened.performSessionCommand(.paste), finishCopy(), board.changeCount == boardVersion
+        else { return fail("텍스트 응답자에서 지연된 객체 복사·붙여넣기") }
+        editor.removeFromSuperview()
+        reopened.window?.makeFirstResponder(deleteCanvas)
+
         for command in [ShellCommand.delete, .duplicate] {
             let layerCommand: SidebarCommand = command == .delete ? .delete([SidebarStableID(node)]) : layerDuplicate
             for fromLayers in [true, false] {
@@ -254,7 +314,7 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleted = open(path), deleted !== reopened,
               deleted.windowController.windowSession?.info?.generation == deletedGeneration,
               at(30, in: deleted.canvasHost.canvasView) != node else { return fail("삭제 저장 재열기") }
-        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
+        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, 4 KiB retry, stale clipboard selection, key-window identity and text focus, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
         return true
     }
 }

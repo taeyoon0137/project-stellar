@@ -101,12 +101,9 @@ final class ShellWindowSessionHandle {
         return track({ pump.editSelection(target: target, action: action, ids: ids, completion: $0) }, completion: completion)
     }
 
-    func pasteSubtree(_ data: Data, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
-        guard !isClosed, !isClosing, let view = viewInfo, view.has_view == 1, let info else { return false }
-        return track { done in
-            pump.pasteSubtree(session: session, view: UUID(uuid: view.active_view), revision: info.revision,
-                              data: data, completion: done)
-        } completion: { completion($0) }
+    func pasteSubtree(_ data: Data, target: StellarSelectionTarget, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed, !isClosing, target.session == session else { return false }
+        return track({ pump.pasteSubtree(target: target, data: data, completion: $0) }, completion: completion)
     }
 
     func insertFrame(parent: CanvasFrameHit, rect: CGRect, rectangle: Bool, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
@@ -634,8 +631,9 @@ final class ShellProjectWindow {
 
     /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
     var subtreePasteboard: NSPasteboard = .general
+    var clipboardKeyWindow: () -> NSWindow? = { NSApp.keyWindow }
     private static let subtreePasteboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
-    private let clipboardQueue = DispatchQueue(label: "xyz.taeyoon.stellar.clipboard", qos: .userInitiated)
+    let clipboardQueue = DispatchQueue(label: "xyz.taeyoon.stellar.clipboard", qos: .userInitiated)
 
     func refreshSessionCommands() {
         let session = windowController.windowSession
@@ -657,7 +655,7 @@ final class ShellProjectWindow {
         if gitSource.trusted, selectedComponentFrame != nil { commands.insert(.componentFromSelection) }
         if gitSource.trusted, (displayedSelection?.selection_count ?? 0) > 0 { commands.insert(.delete) }
         if gitSource.trusted, displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy]) }
-        if gitSource.trusted, view?.has_view == 1 { commands.insert(.paste) }
+        if gitSource.trusted, let target = displayedSelection, target.selection_count <= 1 { commands.insert(.paste) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
 
@@ -671,20 +669,21 @@ final class ShellProjectWindow {
     @discardableResult
     func performSessionCommand(_ command: ShellCommand) -> Bool {
         if command == .copy {
-            guard gitSource.trusted, !router.isTextEditing,
+            guard gitSource.trusted, !router.isTextEditing, let owner = window, clipboardKeyWindow() === owner,
                   let session = windowController.windowSession, !session.isClosing, !session.isClosed,
-                  session.pendingCommandCount == 0,
-                  let info = session.info, let view = session.viewInfo, view.has_view == 1,
+                  session.pendingCommandCount == 0, let target = displayedSelection,
+                  target.session == session.session, target.selection_count == 1,
                   let runtime = dataSource.session?.pump.runtimeHandle else { return false }
+            let boardID = ObjectIdentifier(subtreePasteboard)
             let changeCount = subtreePasteboard.changeCount
-            let sessionID = session.session
-            clipboardQueue.async { [weak self, weak session] in
-                let data = CoreRuntime.copySubtree(handle: runtime, session: sessionID,
-                                                   view: UUID(uuid: view.active_view), revision: info.revision)
-                DispatchQueue.main.async { [weak self, weak session] in
-                    guard let self, let session, self.windowController.windowSession === session,
-                          !session.isClosed, !session.isClosing, self.gitSource.trusted,
-                          self.subtreePasteboard.changeCount == changeCount, let data else { return }
+            clipboardQueue.async { [weak self, weak session, weak owner] in
+                let data = CoreRuntime.copySubtree(handle: runtime, target: target)
+                DispatchQueue.main.async { [weak self, weak session, weak owner] in
+                    guard let self, let session, let owner, self.window === owner, self.clipboardKeyWindow() === owner,
+                          !self.router.isTextEditing, self.windowController.windowSession === session,
+                          !session.isClosed, !session.isClosing, session.pendingCommandCount == 0, self.gitSource.trusted,
+                          target.matches(self.displayedSelection), target.matches(session.selectionTarget),
+                          ObjectIdentifier(self.subtreePasteboard) == boardID, self.subtreePasteboard.changeCount == changeCount, let data else { return }
                     let item = NSPasteboardItem()
                     item.setData(data, forType: Self.subtreePasteboardType)
                     self.subtreePasteboard.clearContents()
@@ -694,12 +693,13 @@ final class ShellProjectWindow {
             return true
         }
         if command == .paste {
-            guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession,
-                  session.pendingCommandCount == 0,
+            guard gitSource.trusted, !router.isTextEditing, let owner = window, clipboardKeyWindow() === owner,
+                  let session = windowController.windowSession, let target = displayedSelection,
+                  target.session == session.session, session.pendingCommandCount == 0,
                   let data = subtreePasteboard.data(forType: Self.subtreePasteboardType),
                   !data.isEmpty, data.count <= 16 * 1024 * 1024 else { return false }
             _ = canvasHost.canvasView.cancelFrameGesture?()
-            return session.pasteSubtree(data) { [weak self, weak session] event in
+            return session.pasteSubtree(data, target: target) { [weak self, weak session] event in
                 guard let self, self.windowController.windowSession === session else { return }
                 self.finishSessionCommand(command, event: event)
             }

@@ -4,7 +4,7 @@ use super::*;
 use stellar_commands::{
     command::Command, id::CommandOrigin, paste::ClipboardSubtree, transaction::CommandTransaction,
 };
-use stellar_core_types::{clock::ManualClock, ids::StableIdGenerator, order_key::OrderKey};
+use stellar_core_types::{clock::ManualClock, ids::StableIdGenerator};
 
 impl AppRuntime {
     /// Shell worker query; never wait for this ticket on the UI thread.
@@ -14,9 +14,21 @@ impl AppRuntime {
         view: StableId,
         revision: DocumentRevision,
     ) -> Result<crate::document_thread::JobTicket<Option<Vec<u8>>>, SubmitError> {
+        let Some(target) = self.published_selection_target(session, view, revision) else {
+            return self.sender.submit(|_| None);
+        };
+        self.copy_displayed_subtree(target)
+    }
+
+    /// Capture only the selection that the requesting window displayed.
+    pub fn copy_displayed_subtree(
+        &self,
+        target: SelectionEditTarget,
+    ) -> Result<crate::document_thread::JobTicket<Option<Vec<u8>>>, SubmitError> {
         self.sender.submit(move |ctx| {
-            let window = trusted_canvas_window(ctx, session).ok()?;
-            copy_from(window, view, revision)
+            let window = trusted_canvas_window(ctx, target.session).ok()?;
+            target.verify(window).ok()?;
+            copy_from(window, target.view, target.revision)
         })
     }
 
@@ -30,16 +42,34 @@ impl AppRuntime {
         parent: StableId,
         bytes: Vec<u8>,
     ) -> Result<RequestId, RequestError> {
+        let Some(target) = self.published_selection_target(session, view, revision) else {
+            return self.submit(move |_, _| Err(unknown_window(session)));
+        };
+        self.paste_displayed_subtree(target, parent, bytes)
+    }
+
+    /// Resolve the paste destination only while the displayed selection still matches.
+    pub fn paste_displayed_subtree(
+        &self,
+        target: SelectionEditTarget,
+        parent: StableId,
+        bytes: Vec<u8>,
+    ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
+            let window = trusted_canvas_window(ctx, target.session)?;
+            target.verify(window)?;
             paste_into(
-                trusted_canvas_window(ctx, session)?,
+                window,
                 request,
-                view,
-                revision,
+                target.view,
+                target.revision,
                 parent,
                 &bytes,
             )?;
-            Ok(RuntimeEvent::WindowViewChanged { request, session })
+            Ok(RuntimeEvent::WindowViewChanged {
+                request,
+                session: target.session,
+            })
         })
     }
 }
@@ -90,11 +120,15 @@ fn paste_into(
         match window.view().selection().ids() {
             [] => root,
             [selected] => {
-                let record = model.record(*selected).ok_or_else(invalid)?;
-                if stellar_document::validate::can_have_children(record.kind()) {
+                let payload = model.payload(*selected).ok_or_else(invalid)?;
+                if stellar_document::validate::can_have_children(payload.kind()) {
                     *selected
                 } else {
-                    record.parent.ok_or_else(invalid)?
+                    model
+                        .runtime_id(*selected)
+                        .and_then(|id| model.columns().parent(id))
+                        .and_then(|id| model.stable_id(id))
+                        .ok_or_else(invalid)?
                 }
             }
             _ => return Err(invalid()),
@@ -102,20 +136,21 @@ fn paste_into(
     } else {
         parent
     };
-    let target = model.record(parent).ok_or_else(invalid)?;
+    let target = model.payload(parent).ok_or_else(invalid)?;
     if !stellar_document::validate::can_have_children(target.kind()) {
         return Err(invalid());
     }
-    let mut current = parent;
+    let mut current = model.runtime_id(parent).ok_or_else(invalid)?;
+    let root = model.runtime_id(root).ok_or_else(invalid)?;
     loop {
-        let record = model.record(current).ok_or_else(invalid)?;
-        if record.locked {
+        let fields = model.columns().get(current).ok_or_else(invalid)?;
+        if fields.locked {
             return Err(invalid());
         }
         if current == root {
             break;
         }
-        current = record.parent.ok_or_else(invalid)?;
+        current = fields.parent.ok_or_else(invalid)?;
     }
     let clipboard = ClipboardSubtree::decode(bytes).map_err(|_| invalid())?;
     let id = command_id(window.window(), request);
@@ -126,11 +161,7 @@ fn paste_into(
         .ok()
         .and_then(|duration| u64::try_from(duration.as_nanos()).ok())
         .ok_or_else(invalid)?;
-    let last = model
-        .children_in_order(parent)
-        .last()
-        .and_then(|id| model.record(*id));
-    let order = OrderKey::between(last.as_ref().map(|record| &record.order_key), None);
+    let order = model.next_child_order_key(parent);
     let insert = clipboard
         .plan(
             model,
@@ -526,6 +557,94 @@ mod tests {
         .is_err());
         assert_eq!(session.view().selection(), &selection);
         assert_eq!(session.history().history().len(), history);
+    }
+
+    #[test]
+    fn clipboard_rejects_same_revision_selection_changes_before_queued_work() {
+        use crate::app_window_tests::{next_event, open_project, open_window};
+        use std::sync::mpsc;
+
+        let dir = saved_project_with("queued-clipboard", &[&sample_document()]);
+        let app = AppRuntime::start().unwrap();
+        let owner = open_project(&app, dir.path());
+        let (session, _, _) = open_window(&app, owner);
+        app.sender
+            .submit(move |ctx| {
+                ctx.app_sessions_mut()
+                    .projects
+                    .get_mut(&owner)
+                    .unwrap()
+                    .trust = TrustStatus::Trusted;
+            })
+            .unwrap()
+            .wait()
+            .unwrap();
+        let changed = |request| {
+            assert!(
+                matches!(next_event(&app), RuntimeEvent::WindowViewChanged { request: got, .. } if got == request)
+            )
+        };
+        let rejected = |request| {
+            assert!(
+                matches!(next_event(&app), RuntimeEvent::RequestFailed { request: got, failure: RequestFailure::UnknownView, .. } if got == request)
+            )
+        };
+        changed(app.set_selection(session, vec![sid(11)]).unwrap());
+        let revision = app.state().window(session).unwrap().revision;
+        let target = app
+            .published_selection_target(session, sid(3), revision)
+            .unwrap();
+        let bytes = app
+            .copy_displayed_subtree(target)
+            .unwrap()
+            .wait()
+            .unwrap()
+            .unwrap();
+        let (release, wait) = mpsc::channel();
+        let _barrier = app.sender.submit(move |_| wait.recv().unwrap()).unwrap();
+        let select = app.set_selection(session, vec![sid(12)]).unwrap();
+        let copy = app
+            .copy_selected_subtree(session, sid(3), revision)
+            .unwrap();
+        let paste = app
+            .paste_node_subtree(session, sid(3), revision, StableId::NIL, bytes.clone())
+            .unwrap();
+        release.send(()).unwrap();
+        changed(select);
+        assert!(copy.wait().unwrap().is_none());
+        rejected(paste);
+        assert!(app
+            .copy_displayed_subtree(target)
+            .unwrap()
+            .wait()
+            .unwrap()
+            .is_none());
+        rejected(
+            app.paste_displayed_subtree(target, StableId::NIL, bytes.clone())
+                .unwrap(),
+        );
+        let state = app.state();
+        let window = state.window(session).unwrap();
+        assert_eq!(window.revision, revision);
+        assert_eq!(window.undo_depth, 2);
+        assert!(!window.has_unsaved_changes);
+        app.undo(session).unwrap();
+        assert!(matches!(
+            next_event(&app),
+            RuntimeEvent::HistoryReplayed { applied: true, .. }
+        ));
+        assert_eq!(
+            app.copy_displayed_subtree(target).unwrap().wait().unwrap(),
+            Some(bytes.clone())
+        );
+        changed(
+            app.paste_displayed_subtree(target, StableId::NIL, bytes)
+                .unwrap(),
+        );
+        assert_eq!(
+            app.state().window(session).unwrap().revision.0,
+            revision.0 + 1
+        );
     }
 
     #[test]
