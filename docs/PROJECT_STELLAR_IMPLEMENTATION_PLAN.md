@@ -1526,7 +1526,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIV.6.3 | `[x]` | 삭제 path는 update-index remove semantics를 사용하고 symlink/executable mode를 보존합니다. | mode/delete fixture 통과. | XIV.6.2 |
 | XIV.6.4 | `[x]` | 여러 path index update를 하나의 operation으로 묶고 중간 실패 시 기존 index tree를 복원합니다. 시작 전 `git write-tree` 또는 안전한 index snapshot OID를 기록합니다. | fault injection 후 original index 동일. | XIV.6.2 |
 | XIV.6.5 | `[x]` | stage 후 Index provider를 다시 읽고 CandidateIndexSnapshot과 semantic snapshot이 같은지 검증합니다. | mismatch 시 operation 실패와 index 복원. | XIV.6.4, XIV.2.5 |
-| XIV.6.6 | `[ ]` | stage operation이 WorkingTree bytes와 in-memory document를 바꾸지 않는 통합 테스트를 추가합니다. | 전후 hash/revision 동일. | XIV.6.5 |
+| XIV.6.6 | `[x]` | stage operation이 WorkingTree bytes와 in-memory document를 바꾸지 않는 통합 테스트를 추가합니다. | 전후 hash/revision 동일. | XIV.6.5 |
 
 ### XIV.7 선택 Unstage
 
