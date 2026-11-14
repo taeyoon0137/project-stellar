@@ -65,3 +65,23 @@
 - 2×2 box filter는 고주파 이미지에서 aliasing이 남을 수 있습니다(Lanczos 등은 품질 benchmark 후 판단).
 - 큰 이미지(16384²)의 chain 메모리는 base의 약 4/3배입니다. 메모리 예산·화면 밖 mip eviction은 XVI.5 범위입니다.
 - 결과는 정수 연산만으로 정해져 ADR-0006 판정 규칙상 플랫폼 간 동일 구성입니다(golden digest 고정).
+
+## 후속 수정 (리뷰 반영)
+
+`Fix: texture upload start가 texture 생성 전에 device 최대 크기 검사` commit으로 리뷰 지적(minor)을 고쳤습니다.
+위 "upload task"의 `start` 설명은 이 절로 대체됩니다.
+
+- **문제**: `start()`는 `check_device()`를 호출하지 않고 바로 `backend.create_texture`를 불렀습니다. device 최대
+  크기를 넘는 texture의 거부가 backend 오류에 달려 있었고, 크기 상한을 검사하지 않는 mock backend에서는 그대로
+  만들어졌습니다. lane HEAD(`b971205`)에서 `start_rejects_texture_larger_than_device_before_creating_it`(mock
+  `max_texture_dimension` 4, 5×3 texture)를 먼저 돌려 `start`가 `Ok`로 texture를 만드는 실패를 확인했습니다.
+- **변경**: `start(backend, caps, queue)`가 `init`이 돌려준 `DeviceCapabilities`를 받아 먼저 `check_device`를
+  실행합니다. 넘으면 texture를 만들지 않고 새 오류 `TextureUploadError::Device(MipmapError::ExceedsDevice)`를
+  돌려줍니다. `RendererBackend`에는 capability 조회 메서드가 없어 인자로 받습니다. 호출처는 이 crate의 테스트뿐입니다.
+- 검증 기준 "크기별 expected mip count"에는 영향이 없습니다.
+
+| 검사 | 결과 |
+|---|---|
+| lane HEAD에서 `start_rejects_texture_larger_than_device_before_creating_it` | 실패 재현: `Ok(UploadSummary { requests: 3, bytes: 72, .. })` |
+| `start_rejects_texture_larger_than_device_before_creating_it`(수정 후) | 통과: `Device(ExceedsDevice { 5, 3, max 4 })`, `CreateTexture` 호출 0, queue 비어 있음, 4×4는 정상 시작 |
+| `upload_task_creates_texture_and_uploads_every_level`(새 signature) | 통과 |

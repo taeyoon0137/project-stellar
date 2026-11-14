@@ -232,7 +232,7 @@ fn upload_task_creates_texture_and_uploads_every_level() {
     let caps = backend.init(&device_config(16, 16)).unwrap();
     task.check_device(&caps).unwrap();
     let mut queue = UploadQueue::new();
-    let summary = task.start(&mut backend, &mut queue).unwrap();
+    let summary = task.start(&mut backend, &caps, &mut queue).unwrap();
     assert_eq!((summary.requests, summary.bytes), (3, 72));
     assert_eq!(queue.len(), 3);
     // 작은 예산으로 여러 frame에 나눠 upload합니다(base level 먼저).
@@ -260,5 +260,47 @@ fn upload_task_creates_texture_and_uploads_every_level() {
             height: 3,
             max: 4
         })
+    );
+}
+
+#[test]
+fn start_rejects_texture_larger_than_device_before_creating_it() {
+    // 리뷰 회귀(XI.7.2): start는 device 최대 크기를 넘는 texture를 backend 오류에 기대지 않고 만들기 전에
+    // 거부합니다(mock backend는 크기 상한을 검사하지 않음).
+    let chain = on_worker(|scope| {
+        generate_mip_chain(&solid(5, 3, [9, 8, 7, 255]), MipmapMode::Full, scope)
+    });
+    let task = TextureUploadTask::new(&chain);
+    let mut mock = MockBackend::new();
+    mock.caps.max_texture_dimension = 4;
+    let mut backend = CheckedBackend::new(mock);
+    let caps = backend.init(&device_config(16, 16)).unwrap();
+    let mut queue = UploadQueue::new();
+    assert_eq!(
+        task.start(&mut backend, &caps, &mut queue),
+        Err(TextureUploadError::Device(MipmapError::ExceedsDevice {
+            width: 5,
+            height: 3,
+            max: 4
+        }))
+    );
+    assert!(!backend.inner().calls.contains(&BackendCall::CreateTexture));
+    assert_eq!(queue.len(), 0);
+    // 크기를 넘지 않는 texture는 같은 backend에서 정상 시작합니다.
+    let fits = on_worker(|scope| {
+        generate_mip_chain(&solid(4, 4, [1, 2, 3, 255]), MipmapMode::Full, scope)
+    });
+    let summary = TextureUploadTask::new(&fits)
+        .start(&mut backend, &caps, &mut queue)
+        .unwrap();
+    assert_eq!(summary.requests, 3);
+    assert_eq!(
+        backend
+            .inner()
+            .calls
+            .iter()
+            .filter(|call| **call == BackendCall::CreateTexture)
+            .count(),
+        1
     );
 }

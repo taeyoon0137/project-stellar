@@ -458,12 +458,18 @@ impl TextureUploadTask {
 
     /// texture를 만들고 upload 요청을 queue에 넣습니다(render thread, frame encode 전).
     ///
-    /// upload 요청이 거부되면 만든 texture를 바로 파괴합니다(아직 어떤 submission도 참조하지 않음).
+    /// `caps`는 `backend`의 `init`이 돌려준 capability입니다. 먼저 [`TextureUploadTask::check_device`]로 device
+    /// 최대 크기를 확인하고, 넘으면 texture를 만들지 않고 [`TextureUploadError::Device`]를 돌려줍니다(backend
+    /// 오류에 기대지 않음). upload 요청이 거부되면 만든 texture를 바로 파괴합니다(아직 어떤 submission도
+    /// 참조하지 않음).
     pub fn start(
         &self,
         backend: &mut dyn RendererBackend,
+        caps: &DeviceCapabilities,
         queue: &mut UploadQueue,
     ) -> Result<UploadSummary, TextureUploadError> {
+        self.check_device(caps)
+            .map_err(TextureUploadError::Device)?;
         let texture = backend
             .create_texture(&self.desc)
             .map_err(TextureUploadError::Backend)?;
@@ -482,6 +488,8 @@ impl TextureUploadTask {
 /// [`TextureUploadTask::start`] 오류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextureUploadError {
+    /// device가 이 texture를 만들 수 없습니다(texture를 만들지 않음).
+    Device(MipmapError),
     /// backend 오류.
     Backend(BackendError),
     /// upload 요청 검증 오류.
@@ -491,6 +499,7 @@ pub enum TextureUploadError {
 impl fmt::Display for TextureUploadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            TextureUploadError::Device(error) => write!(f, "texture 생성 불가: {error}"),
             TextureUploadError::Backend(error) => write!(f, "texture 생성 실패: {error}"),
             TextureUploadError::Upload(error) => write!(f, "texture upload 요청 오류: {error}"),
         }
