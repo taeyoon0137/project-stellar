@@ -1,4 +1,4 @@
-# 저장된 단일 View의 고정 Free Frame HTML+CSS
+# 저장된 단일 View의 고정 Frame·Rectangle HTML+CSS
 
 상태: 제한된 제품 경로 구현. 일반 `stellar` CLI의 `export-web` 명령입니다.
 Phase XXII 전체 코드 생성, XXIV.1.4 일반 render/export 완료를 뜻하지 않습니다.
@@ -74,6 +74,26 @@ CSS 근거: [border width 계산](https://www.w3.org/TR/css-backgrounds-3/#borde
 [overflow clip edge](https://www.w3.org/TR/css-overflow-3/#overflow-clip-margin),
 [색공간과 color()](https://www.w3.org/TR/css-color-4/#color-function).
 
+## Rectangle Shape
+
+실제 `ShapeGeometry::Rectangle`도 같은 고정 CSS formatter로 출력합니다. `size`와 네 개의
+`corner_radius`는 geometry에서 읽고 CSS의 반경 겹침 정규화를 적용합니다. Shape는 border·자식 clip이
+없으며 Fill이 없으면 투명합니다. 이름에서 접근성 label을 만들지 않는 장식용 `div`입니다.
+
+로컬 main의 `runtime::canvas::shape::rectangle_style`과 동일하게 OrderKey 순서의 **활성 Transform
+0개 이상 → 활성 단색 Fill 최대 1개**만 허용합니다. Transform은 `identity.then(first).then(next)`로
+합성합니다. Fill 뒤 Transform, 두 번째 Fill, Stroke·Opacity·그 밖의 활성 modifier는 오류입니다.
+비활성 항목은 실제 renderer처럼 건너뜁니다. Frame의 modifier 거부 규칙은 그대로 유지합니다.
+색공간·straight RGBA·부분 투명 경고·부모 Frame border 보정·숨김·선택 View 범위·숫자 한계는
+기존 Frame과 같습니다. 실제 renderer처럼 누적 affine의 역변환이 없는 Rectangle은 거부합니다.
+
+저장된 generation을 여는 실제 CLI fixture는 modifier 순서·비활성·무채우기·색·반경·변환·실패·
+선택 밖 subtree·프로젝트 바이트 불변을 검사합니다. snapshot은 이후 modifier를 저장해도 고정됩니다.
+`rectangle_saved_cli` 테스트에 `STELLAR_WEB_EVIDENCE_DIR`을 지정하면 호스트 브라우저 비교용
+`rectangle.html`과 CLI envelope `rectangle.json`을 해당 디렉터리에 남깁니다. 변환된 실효 반경에서 모서리의 안티앨리어싱은 브라우저와 캔버스에 따라 달라질 수 있습니다. 둥근
+Rectangle은 node ID를 포함한 `browser-rectangle-curve` 경고를 반환합니다. 직각 Rectangle에는
+이 경고를 반환하지 않으며, 경고만으로 HTML 출력을 실패시키지 않습니다.
+
 ## 실패와 한계
 
 선택 View의 숨겨진 node도 검증합니다. 오류가 하나라도 있으면 `html: null`, 종료 코드 1,
@@ -82,8 +102,8 @@ CSS 근거: [border width 계산](https://www.w3.org/TR/css-backgrounds-3/#borde
 | 조건 | 진단 |
 |---|---|
 | 저장된 layout 참조(정의·해석 경로 없음) | `unsupported-layout` |
-| Text·Shape·Path·Image | `unsupported-node` |
-| modifier stack(비활성 항목도 포함) | `unsupported-modifier` |
+| Text·Rectangle 이외 Shape·Path·Image | `unsupported-node` |
+| Frame modifier stack(비활성 항목도 포함), Rectangle의 미지원 활성 modifier·순서 | `unsupported-modifier` |
 | Path clipping | `unsupported-clip` |
 | 숫자·테두리·변환 범위 위반 | `unsupported-frame-value` |
 | 설정된 target profile(저장 profile ↔ capability pin 연결 없음) | `unsupported-target-profile` |
@@ -93,7 +113,7 @@ CSS 근거: [border width 계산](https://www.w3.org/TR/css-backgrounds-3/#borde
 
 해석하지 못하는 project chunk·profile은 선택 View에 대한 영향 범위를 판정할 수 없으므로 **선택 root ID**에
 진단하고 보수적으로 실패합니다. node 의미·control·binding·token·Variant·Context·Motion을 빈 가상 데이터로
-채우지 않습니다. 현재 Frame/Fragment 저장 레코드에는 그런 의미가 연결되지 않아 `fixed-free-frame-only`
+채우지 않습니다. 현재 지원하는 Frame/Fragment/Rectangle 저장 레코드에는 그런 의미가 연결되지 않아 `fixed-free-frame-only`
 범위 경고를 항상 출력합니다. Text는 문자열만으로 글꼴·paragraph·run 스타일을 복구할 수 없어 거부합니다.
 반응형 layout·동작하는 control·Text UI는 후속 구현입니다. 기존 `export-accessibility`는 별도 명령으로 유지됩니다.
 

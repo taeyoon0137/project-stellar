@@ -11,8 +11,10 @@ use stellar_codegen::web::{
     check::check_document,
     frame::FrameStyle,
 };
-use stellar_document::frame::Clipping;
+use stellar_document::frame::{Clipping, FramePayload};
+use stellar_document::modifier::{ModifierPayload, ModifierStack};
 use stellar_document::records::NodePayload;
+use stellar_document::shape::{RectangleParams, ShapeGeometry};
 use stellar_target_profile::capability::ElementKind;
 use stellar_target_profile::validate::ViewNode;
 
@@ -168,7 +170,34 @@ pub fn export_web_frame(
         let visible = ancestor_visible && record.visible;
         let mut child_border = parent_border;
         let mut child_transform = parent_transform;
-        if model.modifier_stack(id).is_some() {
+        let rectangle = matches!(
+            &record.payload,
+            NodePayload::Shape(ShapeGeometry::Rectangle(_))
+        );
+        if rectangle {
+            result.diagnostics[0].message = result.diagnostics[0].message.replace(
+                "Free Frame·Fragment만",
+                "Free Frame·Fragment·Rectangle Shape만",
+            );
+        }
+        let projected = if let NodePayload::Shape(ShapeGeometry::Rectangle(shape)) = &record.payload
+        {
+            let (tl, tr, br, bl) = shape.effective_corner_radius();
+            if [tl, tr, br, bl].iter().any(|radius| *radius > 0.0) {
+                result.note(false, "browser-rectangle-curve", id,
+                    "둥근 Rectangle의 모서리 안티앨리어싱은 브라우저와 캔버스의 래스터화 방식에 따라 달라질 수 있습니다");
+            }
+            match rectangle_frame(shape, model.modifier_stack(id)) {
+                Ok(frame) => Some(NodePayload::Frame(frame)),
+                Err(message) => {
+                    result.note(true, "unsupported-modifier", id, message);
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        if !rectangle && model.modifier_stack(id).is_some() {
             result.note(
                 true,
                 "unsupported-modifier",
@@ -176,7 +205,7 @@ pub fn export_web_frame(
                 "modifier stack을 CSS로 해석하지 않습니다",
             );
         }
-        let supported = match &record.payload {
+        let supported = match projected.as_ref().unwrap_or(&record.payload) {
             NodePayload::Frame(frame) => {
                 if frame.layout_mode.is_some() {
                     result.note(
@@ -243,6 +272,14 @@ pub fn export_web_frame(
                         "누적 affine 이후 모서리 좌표가 유한한 ±1,000,000px 범위를 넘어갑니다",
                     );
                 }
+                if rectangle && world.as_ref().is_ok_and(|w| w.inverse().is_none()) {
+                    result.note(
+                        true,
+                        "unsupported-frame-value",
+                        id,
+                        "Rectangle의 누적 affine은 역변환 가능해야 합니다",
+                    );
+                }
                 if let Ok(world) = world {
                     if !style.size_rounding_fits(&world) {
                         result.note(true, "unsupported-frame-value", id,
@@ -260,7 +297,11 @@ pub fn export_web_frame(
                 }
                 child_border = Some(border.map_or(FiniteF32::ZERO, |(_, w)| w));
                 styles.insert(id, style);
-                Some((SourceKind::Frame, ElementKind::FRAME))
+                Some(if rectangle {
+                    (SourceKind::Graphic, ElementKind::SHAPE)
+                } else {
+                    (SourceKind::Frame, ElementKind::FRAME)
+                })
             }
             NodePayload::Fragment(_) => Some((SourceKind::Fragment, ElementKind::FRAGMENT)),
             other => {
@@ -341,6 +382,37 @@ pub fn export_web_frame(
     Ok(result)
 }
 
+// 로컬 main의 runtime::canvas::shape::rectangle_style과 같은 지원 부분집합.
+// Shape는 컨테이너가 아니지만 기존 CSS 값 검증·formatter 입력을 재사용합니다.
+fn rectangle_frame(
+    shape: &RectangleParams,
+    stack: Option<&ModifierStack>,
+) -> Result<FramePayload, &'static str> {
+    let mut transform = Transform2D::identity();
+    let mut background = None;
+    if let Some(stack) = stack {
+        for entry in stack.entries().iter().filter(|e| e.enabled) {
+            match entry.payload {
+                ModifierPayload::Transform(next) if background.is_none() => {
+                    transform = transform
+                        .then(&next)
+                        .map_err(|_| "Rectangle affine 합성이 비유한합니다")?;
+                }
+                ModifierPayload::Fill { color } if background.is_none() => background = Some(color),
+                _ => return Err("Rectangle은 활성 Transform 다음 단일 Fill만 지원합니다"),
+            }
+        }
+    }
+    Ok(FramePayload {
+        size: shape.size,
+        transform,
+        background,
+        corner_radius: shape.corner_radius,
+        clipping: Clipping::Disabled,
+        ..FramePayload::default()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,6 +453,31 @@ mod tests {
         assert!(first.html.is_some());
         assert_eq!(moved.html, first.html);
         assert_ne!(moved.revision, first.revision);
+        assert_eq!(
+            export_web_frame(&snapshot, fixture::id(1), fixture::id(4)).unwrap(),
+            first
+        );
+        assert_eq!(file_digest(&dir.path), before);
+    }
+
+    #[test]
+    fn rectangle_snapshot_remains_pinned_after_modifier_save() {
+        let dir = TempDir::new("web-rectangle-revision");
+        scaffold_project(&dir.path);
+        save_documents(&dir.path, &[&fixture::rectangle("supported")]);
+        let snapshot = open_snapshot(&dir.path).unwrap();
+        let first = export_web_frame(&snapshot, fixture::id(1), fixture::id(4)).unwrap();
+        assert!(first.html.is_some());
+        save_documents(&dir.path, &[&fixture::rectangle("after-fill")]);
+        let before = file_digest(&dir.path);
+        let next = export_web_frame(
+            &open_snapshot(&dir.path).unwrap(),
+            fixture::id(1),
+            fixture::id(4),
+        )
+        .unwrap();
+        assert!(next.html.is_none());
+        assert_ne!(first.revision, next.revision);
         assert_eq!(
             export_web_frame(&snapshot, fixture::id(1), fixture::id(4)).unwrap(),
             first

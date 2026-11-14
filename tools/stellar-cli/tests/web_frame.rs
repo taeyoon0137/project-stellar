@@ -300,3 +300,109 @@ fn chrome_computed_styles_bounds_stacking_and_clipping() {
     }
     assert_eq!(file_digest(&project), before);
 }
+
+#[test]
+fn rectangle_saved_cli_preserves_geometry_modifier_order_and_read_only_scope() {
+    let dir = TempDir::new("web-rectangle");
+    scaffold_project(&dir.path);
+    save_documents(&dir.path, &[&fixture::document()]);
+    assert_eq!(
+        html(&export(&dir.path, 3)),
+        include_str!("fixtures/web/view-a.html")
+    );
+    assert_eq!(
+        html(&export(&dir.path, 4)),
+        include_str!("fixtures/web/view-b.html")
+    );
+    let mut supported_html = None;
+    for case in [
+        "supported",
+        "disabled",
+        "no-stack",
+        "square",
+        "after-fill",
+        "double-fill",
+        "unsupported",
+        "hidden-unsupported",
+        "singular",
+        "range",
+    ] {
+        save_documents(&dir.path, &[&fixture::rectangle(case)]);
+        let before = file_digest(&dir.path);
+        // 선택 밖 Shape가 Frame 출력에 영향을 주지 않습니다. 기존 golden 그대로입니다.
+        assert_eq!(
+            html(&export(&dir.path, 3)),
+            include_str!("fixtures/web/view-a.html")
+        );
+        let output = run(
+            &dir.path,
+            &fixture::id(1).to_string(),
+            &fixture::id(4).to_string(),
+        );
+        let again = run(
+            &dir.path,
+            &fixture::id(1).to_string(),
+            &fixture::id(4).to_string(),
+        );
+        assert_eq!(output.stdout, again.stdout);
+        assert_eq!(output.stderr, again.stderr);
+        let success = matches!(case, "supported" | "disabled" | "no-stack" | "square");
+        let value = envelope(&output, if success { 0 } else { 1 });
+        if success {
+            let result = html(&value);
+            assert!(result.contains("width: 40px;\n  height: 20px;"));
+            let diagnostics = json::write(value.get("diagnostics").unwrap());
+            assert_eq!(
+                diagnostics.contains("browser-rectangle-curve"),
+                case != "square"
+            );
+            if case == "square" {
+                assert!(result.contains("border-top-left-radius: 0px;"));
+            } else {
+                assert!(result.contains("border-top-left-radius: 40px;"));
+            }
+            if case != "no-stack" {
+                assert!(result.contains("left: calc(88px - 2px)"));
+                assert!(result.contains("top: calc(35px - 2px)"));
+                assert!(result.contains("matrix(0, 1, -1, 0, 0, 0)"));
+                assert!(result.contains("background-color: color(display-p3 1.2 -0.1 0.3 / 0.25)"));
+                assert!(json::write(value.get("diagnostics").unwrap())
+                    .contains("browser-color-compositing"));
+                if case != "square" {
+                    if let Some(previous) = &supported_html {
+                        assert_eq!(result, previous);
+                    }
+                }
+                if case == "supported" {
+                    if let Some(directory) = std::env::var_os("STELLAR_WEB_EVIDENCE_DIR") {
+                        let directory = std::path::PathBuf::from(directory);
+                        std::fs::create_dir_all(&directory).unwrap();
+                        std::fs::write(directory.join("rectangle.html"), result).unwrap();
+                        std::fs::write(directory.join("rectangle.json"), &output.stdout).unwrap();
+                    }
+                }
+                if case != "square" {
+                    supported_html = Some(result.to_owned());
+                }
+            }
+        } else {
+            assert_eq!(
+                value.get("result").unwrap().get("html"),
+                Some(&JsonValue::Null)
+            );
+            let diagnostics = json::write(value.get("diagnostics").unwrap());
+            let code = if matches!(case, "singular" | "range") {
+                "unsupported-frame-value"
+            } else {
+                "unsupported-modifier"
+            };
+            assert!(diagnostics.contains(code), "{case}: {diagnostics}");
+            assert!(diagnostics.contains(&fixture::id(21).to_string()));
+        }
+        assert_eq!(
+            file_digest(&dir.path),
+            before,
+            "{case}: export writes nothing"
+        );
+    }
+}
