@@ -61,7 +61,10 @@ impl FixtureGit {
 
     /// 실행하고 (성공 여부, stdout)을 돌려줍니다.
     pub fn run(&self, cwd: &Path, args: &[&str]) -> (bool, String) {
+        // journal 전후에 .git까지 비교합니다. Git 자체의 비동기 maintenance가 lock 파일을
+        // 만들거나 지우면 동일한 작업 트리에서도 파일 목록이 달라집니다.
         let output = Command::new(&self.git)
+            .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
             .args(args)
             .current_dir(cwd)
             .env_clear()
