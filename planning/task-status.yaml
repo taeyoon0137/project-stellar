@@ -6803,13 +6803,18 @@ tasks:
       - DEV-MAC
   - id: "XII.6.1"
     title: "New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IV.4.7"
       - "XII.2.2"
       - "XII.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XII.6.1.md"
+    commit: "0d5e7dc746c0d670320466269d3a1e2fb367d2e3"
+    report: "docs/task-reports/XII.6.1.md"
   - id: "XII.6.2"
     title: "Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다."
     status: verified
