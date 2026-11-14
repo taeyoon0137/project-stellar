@@ -13,5 +13,8 @@ pub mod command_queue;
 /// RenderThread와 최신 scene snapshot lock-free handoff (XII.1.3).
 pub mod render_thread;
 
+/// worker pool: 작업 class와 priority tag (XII.1.4).
+pub mod worker_pool;
+
 /// 셸 경계용 앱 runtime: 프로젝트·문서 session, 완료 event, 상태 snapshot.
 pub mod app;
