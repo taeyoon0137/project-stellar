@@ -105,16 +105,18 @@ enum ShellCanvasMoveCheck {
               at(30, in: canvas) == node else { return fail("Hand 드래그 창별 팬·표시·문서 보존") }
         // mouseUp 뒤 움직임과 Escape 뒤 움직임은 팬을 계속하지 않습니다.
         guard mouse(canvas, .leftMouseDragged, 60), pump.waitForPendingRequests(timeout: 10),
-              sa.viewInfo?.center_x == hand.center_x,
-              mouse(canvas, .leftMouseDown, 30),
+              sa.viewInfo?.center_x == hand.center_x else { return fail("Hand mouseUp 뒤 팬 종료") }
+        guard mouse(canvas, .leftMouseDown, 30),
               let cancel = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1,
                   windowNumber: a.window?.windowNumber ?? 0, context: nil, characters: "\u{1b}",
                   charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) else { return fail("Hand 종료 입력") }
         canvas.keyDown(with: cancel)
         guard mouse(canvas, .leftMouseDragged, 60), mouse(canvas, .leftMouseUp, 60),
-              pump.waitForPendingRequests(timeout: 10), sa.viewInfo?.center_x == hand.center_x,
-              sa.pan(dx: -60, dy: 0), pump.waitForPendingRequests(timeout: 10),
-              a.router.dispatch(.selectMoveTool), at(-30, in: canvas) == node else { return fail("Hand 종료·취소") }
+              pump.waitForPendingRequests(timeout: 10), sa.viewInfo?.center_x == hand.center_x
+        else { return fail("Hand Escape 뒤 팬 취소") }
+        guard sa.pan(dx: -60, dy: 0, completion: { canvas.refreshFrames() }),
+              pump.waitForPendingRequests(timeout: 10),
+              a.router.dispatch(.selectMoveTool), at(-30, in: canvas) == node else { return fail("Hand 카메라·scene 복원") }
         a.gitSource.updateTrust(true)
         guard pump.waitForPendingRequests(timeout: 10), a.gitSource.trusted else { return fail("격리된 프로젝트 신뢰") }
         guard let selectedPixels = bitmap(canvas), mouse(canvas, .leftMouseDown, -30), mouse(canvas, .leftMouseDragged, 30),
@@ -135,7 +137,7 @@ enum ShellCanvasMoveCheck {
               sa.viewInfo?.center_x == (halfCamera?.center_x ?? .nan) - 60,
               sa.viewInfo?.zoom == 0.5, at(30, in: canvas) == node,
               sa.info?.revision == selected.revision,
-              sa.pan(dx: -30, dy: 0), pump.waitForPendingRequests(timeout: 10),
+              sa.pan(dx: -30, dy: 0, completion: { canvas.refreshFrames() }), pump.waitForPendingRequests(timeout: 10),
               a.router.dispatch(.selectMoveTool), at(-30, in: canvas) == node
         else { return fail("50% Hand 팬·복원") }
         guard drag(canvas), sa.info?.revision == selected.revision + 1, sa.info?.undo_depth == selected.undo_depth + 1,
