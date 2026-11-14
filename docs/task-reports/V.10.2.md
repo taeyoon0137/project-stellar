@@ -4,7 +4,8 @@
 
 - WBS: V.10.2
 - 작업명: 단일 View 텍스트 의미 왕복과 cache 복구
-- 상태: 부분 완료 (`[~]`) — 구현·타깃 검증 완료, 전체 Rust·최종 main 통합 타깃 검증 완료, 커밋 증거 확정 중.
+- 상태: 완료 (`[x]`) — DEV-MAC 구현·타깃·전체 Rust 검증 완료.
+- 구현 커밋: `bd945963f548e166871707032eb12665cfb482aa`.
 - 선행: V.10.1, VI.10.3.
 
 ## 변경 파일
@@ -30,6 +31,7 @@
 | `target/debug/xtask validate-task-status` / `sync-plan` | 0 |
 | `target/debug/xtask validate-adr <storage 변경 경로> docs/adr/ADR-0059-text-source-files-with-chunk-cache.md` | 0 |
 | `target/debug/xtask validate-task-report docs/task-reports/V.10.N.md` (N=1,2,3) | 0 |
+| `target/debug/xtask verify-task V.10.2` | 0 |
 | `git diff --check` | 0 |
 
 ## 환경과 증거
@@ -56,7 +58,7 @@
 ## 차이
 
 - ADR-0059의 첫 수직 단위 V.10.1~V.10.3을 파일 수 정책에 따라 세 WBS로 나눕니다. 추가 의존성·서비스·기본 저장 전환은 없습니다.
-- 인계 코드를 검토하고 회귀 검사를 보강했습니다. 계획서가 원본이며 `generate-ledger`로 원장을 재생성합니다. 실제 WBS 커밋 생성 후 상태와 SHA를 갱신합니다.
+- 인계 코드를 검토하고 회귀 검사를 보강했습니다. 계획서가 원본이며 `generate-ledger`로 원장을 재생성합니다. 실제 WBS 커밋과 DEV-MAC 보고서를 근거로 원장을 verified로 생성했습니다.
 
 ## 남은 위험
 

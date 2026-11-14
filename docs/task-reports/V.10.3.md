@@ -4,7 +4,8 @@
 
 - WBS: V.10.3
 - 작업명: 기존 프로젝트의 명시적 텍스트 export와 CLI 검사
-- 상태: 부분 완료 (`[~]`) — 구현·타깃 검증 완료, 전체 Rust·최종 main 통합 타깃 검증 완료, 커밋 증거 확정 중.
+- 상태: 부분 완료 (`[~]`) — 구현·DEV-MAC 검증·커밋은 완료했지만 선행 XXIV.1.3이 `[~]`이므로 verified 승격을 보류합니다.
+- 구현 커밋: `0a26ffe3f3fa6022a096bb5e05c8130d22fe623c`.
 - 선행: V.10.2, XXIV.1.3.
 
 ## 변경 파일
@@ -31,6 +32,7 @@
 | `target/debug/xtask validate-task-status` / `sync-plan` | 0 |
 | `target/debug/xtask validate-adr <storage 변경 경로> docs/adr/ADR-0059-text-source-files-with-chunk-cache.md` | 0 |
 | `target/debug/xtask validate-task-report docs/task-reports/V.10.N.md` (N=1,2,3) | 0 |
+| `target/debug/xtask verify-task V.10.3` | 65 — missing-dependency: XXIV.1.3이 verified가 아님 |
 | `git diff --check` | 0 |
 
 ## 환경과 증거
@@ -57,9 +59,11 @@
 ## 차이
 
 - ADR-0059의 첫 수직 단위 V.10.1~V.10.3을 파일 수 정책에 따라 세 WBS로 나눕니다. 추가 의존성·서비스·기본 저장 전환은 없습니다.
-- 인계 코드를 검토하고 회귀 검사를 보강했습니다. 계획서가 원본이며 `generate-ledger`로 원장을 재생성합니다. 실제 WBS 커밋 생성 후 상태와 SHA를 갱신합니다.
+- 인계 코드를 검토하고 회귀 검사를 보강했습니다. 계획서가 원본이며 `generate-ledger`로 원장을 재생성합니다. 구현 커밋과 DEV-MAC 검증은 이 보고서에 기록하지만, 선행 XXIV.1.3이 미완료여서 원장은 reported_done으로 유지합니다. 사용자 지시에 따라 인계 구현을 검증·커밋했고 선행 완료 정책이나 의존 관계는 변경하지 않았습니다.
 
 ## 남은 위험
+
+- 원장 승격은 XXIV.1.3의 선행 Phase XIV와 Semantic Merge 결과 저장 경로가 완료된 뒤 별도 확인합니다. 이 회차에서 선행 작업을 완료 처리하거나 범위를 확장하지 않았습니다.
 
 - CLI는 export/check만 제공합니다. 텍스트 파일의 apply/dry-run 연결은 V.10.6 후속 범위입니다.
 - 기본 generation 저장은 유지하며 프로젝트 metadata·asset·dependency 전체 이전 기능은 아닙니다.
