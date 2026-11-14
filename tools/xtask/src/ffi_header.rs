@@ -198,7 +198,7 @@ typedef struct StellarWindowSessionInfo {
 /* v1: 좌상단 원점 logical point. world/camera는 CGAffineTransform 순서 (a,b,c,d,tx,ty). */
 typedef struct StellarCanvasColor { uint32_t space; float rgba[4]; } StellarCanvasColor; /* 0 없음, 1 sRGB, 2 Display P3 */
 typedef struct StellarCanvasFrame {
-    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target, bit2 Rectangle Shape, bit3 component instance */
+    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target, bit2 Rectangle Shape, bit3 component instance, bit4 Text */
     float world[6], size[2], radii[4]; /* TL,TR,BR,BL */
     StellarCanvasColor fill, border; float border_width;
 } StellarCanvasFrame;
@@ -381,6 +381,12 @@ StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, c
 
 /* 활성 View의 같은 게시 snapshot에서 카메라와 painter 순서 목록 조회. rows=NULL이면 metadata만 씁니다.
  * 용량 부족 시 최신 count와 STELLAR_BUFFER_TOO_SMALL, active View 없음은 STELLAR_NO_ERROR. */
+typedef struct StellarCanvasTextQuery { uint8_t view[16], node[16]; uint64_t revision; uint32_t row; } StellarCanvasTextQuery;
+typedef struct StellarCanvasTextElement { uint32_t op; float points[6]; } StellarCanvasTextElement;
+StellarStatus stellar_window_text_paint(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, StellarCanvasTextElement *rows, size_t capacity, size_t *count);
+StellarStatus stellar_window_text_hit(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, float x, float y, uint32_t *offset, uint32_t *upstream);
+StellarStatus stellar_window_text_rects(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, uint32_t start, uint32_t end, uint32_t upstream, float (*rects)[4], size_t capacity, size_t *count);
+StellarStatus stellar_window_set_document_font(uint64_t handle, uint64_t session, uint64_t revision, const uint8_t *path, size_t path_len, uint32_t face, uint32_t size_subpixels, StellarCanvasColor color, uint64_t *out_request);
 StellarStatus stellar_window_canvas(uint64_t handle, uint64_t session, float width, float height, StellarCanvasInfo *info, StellarCanvasFrame *rows, size_t capacity);
 
 /* 셸 worker 전용. 활성 View/revision의 직계 자식을 앞에서부터 조회합니다.

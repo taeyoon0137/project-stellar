@@ -29,6 +29,8 @@ pub(crate) mod shape;
 pub struct CanvasFrame {
     /// Shape Rectangle이면 true입니다. Frame과 같은 사각형 painter를 사용합니다.
     pub rectangle_shape: bool,
+    /// 저장한 font/style로 layout한 Text 행.
+    pub text_node: bool,
     /// 실제 문서의 ComponentInstance를 표시하는 투영 행입니다.
     pub instance_frame: bool,
     /// 문서 node 식별자.
@@ -52,14 +54,17 @@ pub struct CanvasFrame {
 /// 동일한 문서 revision·View는 카메라·선택·다른 창의 변경 때 그대로 공유합니다.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CanvasScene {
-    /// 아래에서 위로 칠하는 Frame·사각형 Shape 목록.
+    /// 아래에서 위로 칠하는 Frame·Rectangle·ComponentInstance·Text 목록.
     pub frames: Vec<CanvasFrame>,
+    /// Text 행 번호별 layout 및 glyph path.
+    pub text: std::collections::BTreeMap<u32, text::DocumentText>,
     /// 해석하지 못한 subtree 수. 그 자손도 잘못된 위치·clip으로 표시하지 않습니다.
     pub skipped: u32,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct CanvasCache {
+    pub(crate) fonts: text::document::FontCache,
     library_request: u64,
     latest: Option<(DocumentRevision, StableId, Arc<CanvasScene>)>,
     library: Option<(
@@ -103,10 +108,13 @@ impl CanvasCache {
             .flat_map(|p| &p.views)
             .find(|v| v.id == view)?
             .root_frame;
+        self.fonts
+            .sync_registrations(&model.definition().text_styles);
         let scene = Arc::new(CanvasScene::with_library(
             model,
             root,
             self.library.as_ref().map(|v| &v.1),
+            Some((session.identity().canonical_target(), &mut self.fonts)),
         ));
         self.latest = Some((state.revision(), view, scene.clone()));
         Some(scene)
@@ -183,6 +191,7 @@ impl CanvasScene {
         self.frames.push(CanvasFrame {
             rectangle_shape: false,
             instance_frame: false,
+            text_node: false,
             id,
             parent,
             world: spec.world_transform,
@@ -197,13 +206,14 @@ impl CanvasScene {
 
     #[cfg(test)]
     fn from_root(model: &DocumentModel, root: StableId) -> Self {
-        Self::with_library(model, root, None)
+        Self::with_library(model, root, None, None)
     }
 
     fn with_library(
         model: &DocumentModel,
         root: StableId,
         library: Option<&stellar_document::component::definition::ComponentLibrary>,
+        mut fonts: Option<(&std::path::Path, &mut text::document::FontCache)>,
     ) -> Self {
         let mut result = Self::default();
         let mut builder = SceneBuilder::new();
@@ -216,6 +226,60 @@ impl CanvasScene {
                 continue;
             }
             let payload = model.payload(id);
+            if let Some(NodePayload::Text(payload)) = payload {
+                let prepared = fonts
+                    .as_mut()
+                    .and_then(|(root, cache)| cache.layout(model, root, id, payload));
+                let row = prepared.and_then(|(text, size, transform)| {
+                    let mut node = NodeInput::new(id, transform);
+                    node.locked = fields.locked;
+                    let item = builder
+                        .build_text(
+                            &mut parent_scope.clone(),
+                            &stellar_scene::builder::TextInput {
+                                node,
+                                layout: stellar_scene::node::TextLayoutKey::from_bytes(
+                                    id.to_bytes(),
+                                ),
+                                size,
+                            },
+                        )
+                        .ok()?;
+                    let world = item.world_transform();
+                    world.inverse()?;
+                    let rect = stellar_core_types::value::Rect::new(
+                        stellar_core_types::value::Vec2::ZERO,
+                        size,
+                    );
+                    Aabb::from_rect(rect).transformed(&world)?;
+                    Some((
+                        CanvasFrame {
+                            rectangle_shape: false,
+                            instance_frame: false,
+                            text_node: true,
+                            id,
+                            parent,
+                            world,
+                            geometry: RectPrimitive {
+                                rect,
+                                radii: CornerRadii::ZERO,
+                            },
+                            background: Some(text.fill),
+                            border: None,
+                            clip_children: false,
+                            hit_target: item.hit().is_hit_target(),
+                        },
+                        text,
+                    ))
+                });
+                if let Some((frame, text)) = row {
+                    result.text.insert(result.frames.len() as u32, text);
+                    result.frames.push(frame);
+                } else {
+                    result.skipped += 1;
+                }
+                continue;
+            }
             if let Some(NodePayload::Shape(stellar_document::shape::ShapeGeometry::Rectangle(
                 shape,
             ))) = payload

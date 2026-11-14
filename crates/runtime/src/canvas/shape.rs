@@ -83,6 +83,7 @@ pub(super) fn rectangle(
     Some(CanvasFrame {
         rectangle_shape: true,
         instance_frame: false,
+        text_node: false,
         id,
         parent,
         world,

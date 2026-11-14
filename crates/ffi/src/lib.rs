@@ -13,6 +13,7 @@
 //! thread)은 handle의 첫 프로젝트·문서 요청에서 시작합니다.
 
 pub mod canvas;
+mod canvas_text;
 mod component_library;
 mod git_names;
 /// 양 플랫폼 공통 입력 이벤트와 native timestamp 변환 (XII.3.1).

@@ -680,7 +680,9 @@ pub struct ImportedProjectFont {
 }
 
 /// 파일 하나를 열어 probe합니다.
-fn probe_file(path: &Path) -> Result<Result<FontFileInfo, FontParseError>, std::io::Error> {
+pub(super) fn probe_file(
+    path: &Path,
+) -> Result<Result<FontFileInfo, FontParseError>, std::io::Error> {
     let mut file = File::open(path)?;
     let metadata = file.metadata()?;
     if !metadata.is_file() {
