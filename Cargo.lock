@@ -310,12 +310,15 @@ dependencies = [
 name = "stellar-ops"
 version = "0.0.0"
 dependencies = [
+ "stellar-accessibility",
+ "stellar-codegen",
  "stellar-commands",
  "stellar-document",
  "stellar-project",
  "stellar-semantic-diff",
  "stellar-semantic-merge",
  "stellar-storage",
+ "stellar-target-profile",
 ]
 
 [[package]]
@@ -362,7 +365,9 @@ dependencies = [
  "stellar-commands",
  "stellar-core-types",
  "stellar-document",
+ "stellar-git-porcelain",
  "stellar-history",
+ "stellar-ops",
  "stellar-project",
  "stellar-renderer-core",
  "stellar-scene",

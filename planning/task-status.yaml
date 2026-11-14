@@ -8363,14 +8363,19 @@ tasks:
     verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.5.5"
     title: "CandidateIndexSnapshot을 deterministic project files/chunks로 serialize하되 WorkingTree를 수정하지 않는 temp directory writer를 구현합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.5.4"
       - "VI.10.2"
       - "V.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.5.5.md"
+    commit: "1af7e0f5c81ad6ef9786ace58b651dedad72d720"
     report: "docs/task-reports/XIV.5.5.md"
+    verified_at: "2026-11-14T17:10:50+09:00"
   - id: "XIV.5.6"
     title: "candidate와 기존 index tree의 file-level diff를 계산해 update할 path와 blob bytes만 산출합니다."
     status: not_started

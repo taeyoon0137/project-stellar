@@ -3,16 +3,17 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use stellar_accessibility::node::{AccessibilityBinding, AccessibilityNode, ActionTarget};
+use stellar_accessibility::snapshot::AccessibilitySnapshot;
 use stellar_core_types::ids::StableId;
 use stellar_target_profile::capability::ElementKind;
 use stellar_target_profile::overrides::resolve_for_profile;
 use stellar_target_profile::registry::RegistryCatalog;
 use stellar_target_profile::spec::TargetProfile;
-use stellar_target_profile::validate::{validate_profiles, ProfileOutcome, ViewModel};
+use stellar_target_profile::validate::{validate_profiles, ProfileOutcome, ViewNode};
 
 use super::{
     CodegenIr, CodegenSources, IrAccessibilityEntry, IrError, IrLayout, IrNode, IrProperty,
-    IrState, IrTarget, IrToken, MAX_IR_NODES,
+    IrState, IrTarget, IrToken, IrTree, MAX_IR_NODES,
 };
 
 /// View 구조(문서 순서 index 기준).
@@ -25,28 +26,28 @@ struct ViewTree {
     root: usize,
 }
 
-fn view_tree(view: &ViewModel) -> Result<ViewTree, IrError> {
-    if view.nodes.is_empty() {
+fn view_tree(nodes: &[ViewNode]) -> Result<ViewTree, IrError> {
+    if nodes.is_empty() {
         return Err(IrError::EmptyView);
     }
-    if view.nodes.len() > MAX_IR_NODES {
+    if nodes.len() > MAX_IR_NODES {
         return Err(IrError::TooManyNodes);
     }
     let mut index = BTreeMap::new();
-    for (position, node) in view.nodes.iter().enumerate() {
+    for (position, node) in nodes.iter().enumerate() {
         if index.insert(node.id, position).is_some() {
             return Err(IrError::DuplicateNode(node.id));
         }
     }
-    let mut children = vec![Vec::new(); view.nodes.len()];
+    let mut children = vec![Vec::new(); nodes.len()];
     let mut root: Option<usize> = None;
-    for (position, node) in view.nodes.iter().enumerate() {
+    for (position, node) in nodes.iter().enumerate() {
         match node.parent {
             None => match root {
                 None => root = Some(position),
                 Some(first) => {
                     return Err(IrError::MultipleRoots {
-                        first: view.nodes[first].id,
+                        first: nodes[first].id,
                         second: node.id,
                     })
                 }
@@ -64,14 +65,14 @@ fn view_tree(view: &ViewModel) -> Result<ViewTree, IrError> {
     }
     let root = root.ok_or(IrError::MissingRoot)?;
     // 모든 node가 부모 하나를 가지므로 root에서 닿는 node는 tree이고, 닿지 않는 node는 순환에 걸린 것입니다.
-    let mut reached = vec![false; view.nodes.len()];
+    let mut reached = vec![false; nodes.len()];
     let mut stack = vec![root];
     while let Some(position) = stack.pop() {
         reached[position] = true;
         stack.extend(children[position].iter().copied());
     }
     if let Some(position) = reached.iter().position(|r| !r) {
-        return Err(IrError::Unreachable(view.nodes[position].id));
+        return Err(IrError::Unreachable(nodes[position].id));
     }
     Ok(ViewTree {
         index,
@@ -87,7 +88,7 @@ pub fn build_ir(
     catalog: &RegistryCatalog,
 ) -> Result<CodegenIr, IrError> {
     let view = sources.view;
-    let tree = view_tree(view)?;
+    let tree = view_tree(&view.nodes)?;
 
     // capability 진단(registry pin 해석 실패는 IR을 만들지 않음).
     let report = validate_profiles(
@@ -126,43 +127,7 @@ pub fn build_ir(
     };
     let excluded = resolved.excluded_among(view.nodes.iter().map(|n| n.id), parent_of);
 
-    // 시각 preorder(제외 subtree 생략).
-    let mut nodes: Vec<IrNode> = Vec::new();
-    let mut ir_index: BTreeMap<StableId, u32> = BTreeMap::new();
-    let mut stack: Vec<(usize, Option<u32>, u32)> = vec![(tree.root, None, 0)];
-    while let Some((position, parent, depth)) = stack.pop() {
-        let source = &view.nodes[position];
-        if excluded.contains(&source.id) {
-            continue;
-        }
-        let index = nodes.len() as u32;
-        let mut contracts = source.contracts.clone();
-        contracts.sort();
-        contracts.dedup();
-        nodes.push(IrNode {
-            id: source.id,
-            parent,
-            depth,
-            children: Vec::new(),
-            element: source.element,
-            contracts,
-            layout: None,
-            text: None,
-            properties: Vec::new(),
-            semantics: None,
-            capabilities: Vec::new(),
-        });
-        ir_index.insert(source.id, index);
-        if let Some(parent) = parent {
-            nodes[parent as usize].children.push(index);
-        }
-        stack.extend(
-            tree.children[position]
-                .iter()
-                .rev()
-                .map(|child| (*child, Some(index), depth + 1)),
-        );
-    }
+    let (mut nodes, ir_index) = build_nodes(&view.nodes, &tree, &excluded);
     // root는 제외할 수 없습니다(제외하면 빈 IR) — 제외된 root는 빈 View와 같게 봅니다.
     if nodes.is_empty() {
         return Err(IrError::EmptyView);
@@ -236,7 +201,7 @@ pub fn build_ir(
     }
 
     let states = declared_states(sources)?;
-    let accessibility = attach_accessibility(sources, &tree, &mut nodes, &ir_index)?;
+    let accessibility = attach_accessibility(sources.accessibility, &tree, &mut nodes, &ir_index)?;
     for entry in &accessibility {
         check_state_references(&entry.semantics, &states)?;
     }
@@ -246,11 +211,13 @@ pub fn build_ir(
             profile: profile.clone(),
             registry_version,
         },
-        nodes,
-        accessibility,
-        states,
-        tokens,
-        index: ir_index,
+        tree: IrTree {
+            nodes,
+            accessibility,
+            states,
+            tokens,
+            index: ir_index,
+        },
     })
 }
 
@@ -371,12 +338,11 @@ fn declared_tokens(sources: &CodegenSources<'_>) -> Result<Vec<IrToken>, IrError
 }
 
 fn attach_accessibility(
-    sources: &CodegenSources<'_>,
+    snapshot: &AccessibilitySnapshot,
     tree: &ViewTree,
     nodes: &mut [IrNode],
     ir_index: &BTreeMap<StableId, u32>,
 ) -> Result<Vec<IrAccessibilityEntry>, IrError> {
-    let snapshot = sources.accessibility;
     // snapshot entry index → 그 entry 또는 가장 가까운 남은 조상의 IR entry index.
     let mut effective: Vec<Option<u32>> = Vec::with_capacity(snapshot.len());
     let mut entries: Vec<IrAccessibilityEntry> = Vec::new();
@@ -448,4 +414,78 @@ fn check_state_references(
         }
     }
     Ok(())
+}
+
+/// 저장된 정적 구조·텍스트·접근성만 투영합니다. layout, profile, capability, 상태나 token은
+/// 받거나 추정하지 않습니다. 전체 코드 생성용 `CodegenIr`로 사용할 수 없습니다.
+pub fn build_accessibility_ir(
+    source: &[ViewNode],
+    snapshot: &AccessibilitySnapshot,
+    texts: &BTreeMap<StableId, String>,
+) -> Result<IrTree, IrError> {
+    let tree = view_tree(source)?;
+    let (mut nodes, index) = build_nodes(source, &tree, &BTreeSet::new());
+    for (id, text) in texts {
+        let current = *index.get(id).ok_or(IrError::TextOutsideView(*id))?;
+        if nodes[current as usize].element != ElementKind::TEXT {
+            return Err(IrError::TextOnNonTextNode(*id));
+        }
+        nodes[current as usize].text = Some(text.clone());
+    }
+    let accessibility = attach_accessibility(snapshot, &tree, &mut nodes, &index)?;
+    for entry in &accessibility {
+        check_state_references(&entry.semantics, &[])?;
+    }
+    Ok(IrTree {
+        nodes,
+        accessibility,
+        states: Vec::new(),
+        tokens: Vec::new(),
+        index,
+    })
+}
+
+fn build_nodes(
+    source: &[ViewNode],
+    tree: &ViewTree,
+    excluded: &BTreeSet<StableId>,
+) -> (Vec<IrNode>, BTreeMap<StableId, u32>) {
+    // 시각 preorder(제외 subtree 생략).
+    let mut nodes: Vec<IrNode> = Vec::new();
+    let mut ir_index: BTreeMap<StableId, u32> = BTreeMap::new();
+    let mut stack: Vec<(usize, Option<u32>, u32)> = vec![(tree.root, None, 0)];
+    while let Some((position, parent, depth)) = stack.pop() {
+        let source = &source[position];
+        if excluded.contains(&source.id) {
+            continue;
+        }
+        let index = nodes.len() as u32;
+        let mut contracts = source.contracts.clone();
+        contracts.sort();
+        contracts.dedup();
+        nodes.push(IrNode {
+            id: source.id,
+            parent,
+            depth,
+            children: Vec::new(),
+            element: source.element,
+            contracts,
+            layout: None,
+            text: None,
+            properties: Vec::new(),
+            semantics: None,
+            capabilities: Vec::new(),
+        });
+        ir_index.insert(source.id, index);
+        if let Some(parent) = parent {
+            nodes[parent as usize].children.push(index);
+        }
+        stack.extend(
+            tree.children[position]
+                .iter()
+                .rev()
+                .map(|child| (*child, Some(index), depth + 1)),
+        );
+    }
+    (nodes, ir_index)
 }

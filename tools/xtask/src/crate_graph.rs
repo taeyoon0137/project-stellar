@@ -100,6 +100,8 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-assets",
                 "stellar-renderer-core",
                 "stellar-scene",
+                "stellar-ops",
+                "stellar-git-porcelain",
             ],
         ),
         // 셸 경계는 runtime을 통해서만 문서·프로젝트 작업에 도달합니다(ADR-0013).
@@ -130,6 +132,9 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
                 "stellar-storage",
                 "stellar-semantic-diff",
                 "stellar-semantic-merge",
+                "stellar-codegen",
+                "stellar-accessibility",
+                "stellar-target-profile",
                 "stellar-diagnostics",
             ],
         ),
@@ -307,6 +312,9 @@ mod tests {
             "stellar-storage",
             "stellar-semantic-diff",
             "stellar-semantic-merge",
+            "stellar-codegen",
+            "stellar-accessibility",
+            "stellar-target-profile",
             "stellar-diagnostics",
         ] {
             assert!(

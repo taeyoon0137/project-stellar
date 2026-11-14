@@ -34,7 +34,9 @@
 | `stellar-local-ipc` | core-types |
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
-| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene |
+| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile |
+| `stellar-cli` | ops, diagnostics |
+| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, ops, git-porcelain |
 | `stellar-ffi` | core-types, runtime |
 
 ## Mermaid
@@ -82,6 +84,10 @@ graph TD
   codegen --> target_profile
   codegen --> accessibility
   codegen --> layout
+  ops --> codegen
+  ops --> accessibility
+  ops --> target_profile
+  stellar_cli --> ops
   runtime --> core_types
   runtime --> document
   runtime --> commands
@@ -91,11 +97,16 @@ graph TD
   runtime --> assets
   runtime --> renderer_core
   runtime --> scene
+  runtime --> ops
+  runtime --> git_porcelain
   ffi --> core_types
   ffi --> runtime
 ```
 
 ## 규칙
+
+- 선택 staging 후보(XIV.5.5)는 `ops`의 무손실 저장 직렬화와 `git-porcelain`의 index·임시 tree API를
+  `runtime`에서 조합합니다(ADR-0013). `ops`의 직접 의존과 `git-porcelain`·`semantic-diff`의 경계는 유지합니다.
 
 - `document`·`bindings`는 표현식 AST를 저장·평가 입력으로 쓰므로 `expressions`에 의존합니다. `project`는 Command 단위 자동 저장·복구를 위해 `commands`·`history`에 의존하고, 프로젝트·시스템 폰트 등록(XIII.6)을 위해 `text`에 의존합니다(2026-11-14, 순환 없음).
 - `codegen`(ADR-0049)은 문서·binding 계층에 의존하지 않고 target-profile·accessibility·layout의 지역 모델로 만든

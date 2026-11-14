@@ -56,16 +56,21 @@ impl std::error::Error for BaseCheckError {}
 /// 일치하지 않으면 [`BaseCheckError::StaleBase`] — 호출자는 write를 시작하면
 /// 안 됩니다.
 pub fn check_base_generation(root: &Path, plan: &SavePlan) -> Result<(), BaseCheckError> {
+    check_base_manifest(root, plan.base_manifest_hash)
+}
+
+/// 열린 문서가 기억하는 manifest hash를 현재 포인터와 대조합니다.
+pub fn check_base_manifest(
+    root: &Path,
+    expected: Option<ContentHash>,
+) -> Result<(), BaseCheckError> {
     let found = match read_current_pointer(root) {
         Ok(hash) => Some(hash),
         Err(CurrentPointerError::Missing { .. }) => None,
         Err(e) => return Err(BaseCheckError::CurrentPointer(e)),
     };
-    if found != plan.base_manifest_hash {
-        return Err(BaseCheckError::StaleBase {
-            expected: plan.base_manifest_hash,
-            found,
-        });
+    if found != expected {
+        return Err(BaseCheckError::StaleBase { expected, found });
     }
     Ok(())
 }

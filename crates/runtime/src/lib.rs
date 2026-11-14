@@ -30,6 +30,9 @@ pub mod window_session;
 /// 창 session 명령 (XII.6.4).
 pub mod app_command;
 
+/// 실제 index에서 선택 staging용 임시 후보를 준비합니다(XIV.5.5).
+pub mod staging;
+
 /// 창 session을 앱 runtime 경계로 다루는 테스트.
 #[cfg(test)]
 mod app_window_tests;

@@ -45,14 +45,19 @@
 | `RUST_TEST_THREADS=1 cargo xtask check-core` (943efb19 통합 후) | 0 — fmt·clippy·workspace 3,835 passed/8 ignored·별도 doctest 54 passed |
 | `cargo xtask generate-ledger` | 0 — 계획서 원본에서 1,152행 생성, V.10.6은 reported_done으로 기록 |
 | `target/debug/xtask sync-plan` / `validate-task-status` / `validate-task-report docs/task-reports/V.10.6.md` / `validate-adr` | 0 — 최신 통합 원장·보고서·ADR 검사 |
-| `git diff --check` | 0 |
+| `git merge --no-commit origin/main` (7f046069) | 1 — 도움말 fixture의 정렬 폭 충돌. 합쳐진 CLI의 실제 `--help` 출력으로 재생성해 해결 |
+| `cargo run --quiet --locked -p stellar-cli -- --help` | 0 — text-source apply와 export-accessibility를 모두 포함한 도움말 재생성 |
+| `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets --locked -- -D warnings` (7f046069 통합 후) | 0 |
+| `RUST_TEST_THREADS=1 cargo test -p stellar-project -p stellar-ops -p stellar-cli --locked` (7f046069 통합 후) | 0 — 510 passed/1 ignored |
+| `./scripts/macos/smoke.sh` (7f046069 통합 후) | 0 — 서명 없는 Debug 빌드·기본 smoke 전체 통과, 창 세션 68·메뉴 명령 56·키 매핑 101 검사 포함 |
+| `git diff --check` / `git diff --cached --check` | 0 |
 
 ## 환경과 증거
 
 - DEV-MAC, 이 전용 작업 트리에서 실행. CLI 로그: `/tmp/stellar-text-apply-cli.log`; IPC 직렬 로그: `/tmp/stellar-text-apply-ipc-serial.log`.
 - 이전 회차의 전체 검사 실패는 `target/xtask-logs/test.log`에서 IPC `slow_authenticated_peer_does_not_block_other_handshakes`, `trickling_hello_times_out_as_a_whole`, `pending_handshakes_are_capped_and_resume_when_one_finishes`의 시간 초과로 확인했습니다. 이번 병렬 재현에서 각각 2.574초, 기한 400ms 대비 1.774초, TimedOut이었습니다. 코드·시간 상한·테스트 제외 목록을 수정하지 않았습니다.
 - 새 테스트 최초 컴파일의 borrow/fixture 생성자·비교 타입 오류와 보고서 최초 검사의 필수 절 명칭 누락을 수정한 뒤 타깃·전체 검증과 보고서 검사를 통과했습니다.
-- 통합 전 전체 Rust 검증의 원시 로그는 `target/xtask-logs/{fmt,clippy,test,doc-test}.log`에서 별도 외부 인계 경로로 보존했습니다. 943efb19 통합 후에도 전체 검증을 재실행해 통과했습니다. 로그는 `/tmp/stellar-text-apply-check-core-integrated.log`와 `target/xtask-logs/`에 있으며 원본 사본은 저장소 밖 인계 경로에 보존했습니다. Swift smoke, 원격 CI, LAB·REF 성능은 이 단위의 검증 주장에 포함하지 않습니다.
+- 통합 전 전체 Rust 검증의 원시 로그는 `target/xtask-logs/{fmt,clippy,test,doc-test}.log`에서 별도 외부 인계 경로로 보존했습니다. 943efb19 통합 후에도 전체 검증을 재실행해 통과했습니다. 로그는 `/tmp/stellar-text-apply-check-core-integrated.log`와 `target/xtask-logs/`에 있으며 원본 사본은 저장소 밖 인계 경로에 보존했습니다. 후속 7f046069 통합은 fmt·clippy·관련 Rust 전체 타깃과 기본 macOS smoke로 재검증했습니다. 최종 로그는 `/tmp/stellar-text-apply-final-{clippy,targets,macos}.log`입니다. 원격 CI와 LAB·REF 성능은 이번 검증 주장에 포함하지 않습니다.
 
 ## 성능
 
@@ -67,5 +72,5 @@
 - V.10.6 전체의 선행·완료 기준이 남아 있어 verified로 승격하지 않습니다. 전체 의미 지원, 다중 파일 journal, 앱 기본 저장, clean/dirty 외부 변경 재로드·병합은 후속입니다.
 - 실제 의미 편집 시 v1 결정론 writer는 주석·서식을 다시 쓰므로 보존하지 않습니다. 무변경 저장만 원본 bytes를 보존합니다.
 - 같은 잠금을 사용하지 않는 외부 writer의 마지막 hash 검사와 rename 사이 경쟁은 기존 API의 한계입니다. 부모 fsync 실패는 게시 후 반환될 수 있어 모든 I/O 실패에서 미저장을 단정하면 안 됩니다. 오류 후 실제 파일을 다시 읽어야 합니다.
-- 기본 병렬 IPC 검증 실패는 별도 추적 대상입니다. 직렬 검증 통과와 구분합니다.
+- 기본 병렬 IPC 검증 실패는 별도 추적 대상입니다. 직렬 검증 통과와 구분합니다. 전체 workspace 검증의 기준은 943efb19이며, 마지막 7f046069 병합은 관련 Rust 타깃·fmt·clippy와 macOS smoke로 검증했습니다.
 - 직접 push·main checkout·release·배포는 수행하지 않습니다.

@@ -1,7 +1,8 @@
 # `stellar` 명령 사용 안내
 
 이 문서는 headless 명령 `stellar`(package `stellar-cli`, `tools/stellar-cli`)의 현재 동작과 계획을
-설명합니다. 현재 동작은 커밋 `993d7d0`의 코드를 읽고 직접 실행해 확인한 내용이고, 계획은
+설명합니다. 기존 `inspect` 실행 예시는 커밋 `993d7d0` 기준이며, 현재 명령 목록과
+정적 접근성 HTML 경로는 코드·CLI 통합 테스트 기준입니다. 계획은
 [ADR-0005](../adr/ADR-0005-agent-tool-layers.md)와 구현 계획서 Phase XXIV에서 옮긴 내용입니다.
 두 부분을 섞지 않았습니다. 문서와 코드가 다르면 코드가 기준입니다.
 
@@ -10,6 +11,7 @@
 - [요약](#요약)
 - [빌드와 실행](#빌드와-실행)
 - [명령](#명령)
+- [지정 View의 정적 접근성 HTML](#지정-view의-정적-접근성-html)
 - [출력 계약](#출력-계약)
 - [종료 코드](#종료-코드)
 - [inspect 오류 분류](#inspect-오류-분류)
@@ -24,10 +26,9 @@
   core crate로 프로젝트 파일을 직접 다룹니다.
 - Cargo package와 library 이름은 `stellar-cli`이고, 실행 파일 이름만 `stellar`입니다
   (`tools/stellar-cli/Cargo.toml`의 `[[bin]] name = "stellar"`).
-- 현재 명령은 `help`, `version`, `inspect` 세 개입니다. 세 명령 모두 읽기 전용이며 파일을 만들거나
-  고치지 않습니다.
-- 앱 UI, GUI, 네트워크 없이 동작합니다. 내부 직접 의존은 `stellar-project` 하나이고 외부 crate는
-  없습니다.
+- 현재 명령은 아래 표와 `stellar --help`에서 확인합니다. `export-accessibility`는 지정 View의
+  정적 접근성 HTML 조각을 읽기 전용으로 만듭니다. `apply`, `migrate`에는 쓰기 동작이 있습니다.
+- 앱 UI, GUI, 네트워크 없이 동작합니다. 내부 직접 의존은 `stellar-ops`이고 외부 crate 직접 의존은 없습니다.
 - 명령이 실행되면 stdout에는 결과 JSON 한 줄(schema `stellar-cli/result` v1)만, stderr에는 사람이
   읽는 진단만 씁니다. 텍스트 출력은 도움말뿐이고, 사용법 오류는 stderr에만 씁니다.
 
@@ -51,14 +52,23 @@ cargo run -q -p stellar-cli -- --help
 
 ## 명령
 
-형식은 `stellar <명령> [인자]`입니다. 첫 인자가 명령이고, 전역 옵션은 없습니다. 지금은 어떤 명령도
-옵션 플래그를 받지 않습니다.
+형식은 `stellar <명령> [인자]`입니다. 첫 인자가 명령이고, 전역 옵션은 없습니다.
+명령별 옵션은 `stellar --help`에 표시합니다.
 
 | 명령 | 같은 뜻의 인자 | 인자 | 출력 |
 |---|---|---|---|
 | `help` | `--help`, `-h` | 없음 | stdout에 텍스트 도움말, 종료 코드 0 |
 | `version` | `--version`, `-V` | 없음 | stdout에 결과 JSON |
-| `inspect` | 없음 | 프로젝트 경로 하나 | stdout에 결과 JSON |
+| `inspect` | 없음 | `<경로> [--structure]` | 프로젝트 검사, 구조·revision |
+| `query` | 없음 | `<경로> <대상>` | project·tree·node·tokens·components 조회 |
+| `validate` | 없음 | `<경로>` | 저장 문서 검증 |
+| `semantic-diff` | 없음 | `<base> <target>` | 의미 차이 |
+| `semantic-merge` | 없음 | `<base> <ours> <theirs>` | 메모리 내 merge·conflict |
+| `migrate` | 없음 | `<경로> [--check]` | 스키마 migration 또는 판정 |
+| `diff-summary` | 없음 | `<base> <target> [--output <파일>] [--include-content]` | 요약 artifact |
+| `ci` | 없음 | `<경로>` | lockfile·문서·migration 검사 |
+| `apply` | 없음 | `<경로> <입력 파일 또는 -> [--dry-run]` | transaction 검증·저장 또는 diff |
+| `export-accessibility` | 없음 | `<경로> <문서 id> <View id>` | 정적 접근성 HTML 조각·revision·진단 |
 
 명령이 없거나(`stellar`만 실행) 알 수 없는 명령이면 사용법 오류(64)입니다.
 
@@ -131,6 +141,58 @@ cargo run -q -p stellar-cli -- --help
 
 stdout JSON에는 입력 경로를 넣지 않습니다. 의존성의 `repository` URL과 `library_id`도 출력하지
 않습니다. 입력 경로는 stderr 진단에만 나타납니다.
+
+## 지정 View의 정적 접근성 HTML
+
+```sh
+# 저장된 문서·View ID는 이 조회 결과의 documents[].pages[].views[]에서 얻습니다.
+stellar query /path/to/project project
+
+stellar export-accessibility /path/to/project DOCUMENT_UUID VIEW_UUID > /tmp/view-result.json
+# 성공한 JSON 결과에서 HTML만 꺼냅니다. 출력 파일은 원본 프로젝트 밖에 둡니다.
+jq -je 'select(.ok == true) | .result.html' /tmp/view-result.json > /tmp/view.html
+```
+
+`export-accessibility`는 **정적 접근성 HTML 조각**을 제공합니다. `render/export` 전체, 디자인의 시각적
+재현, 실행 가능한 웹 앱 내보내기가 아닙니다. 입력은 저장된 generation이고 앱의 미저장 편집은 읽지 않습니다.
+명시한 문서의 `View.root_frame` 하위만 OrderKey·StableId 순으로 순회합니다. 다른 View는 결과에 포함하지
+않고 `view-not-selected` 진단에 ID를 남깁니다. View 이름이나 node 이름으로 의미를 추정하지 않습니다.
+
+| 입력 | 현재 출력·처리 |
+|---|---|
+| Frame | generic `div`; 이름으로 button·dialog·label을 만들지 않음 |
+| Fragment | 자체 element 없이 자식을 제자리에서 펼침 |
+| Text | 원문과 줄바꿈을 보존하는 `span`을 출력합니다. CR은 `&#13;`으로 기록하며, 선택한 View에 U+0000이 있으면 해당 노드에 `unsupported-text-character` 오류를 반환합니다. |
+| visible=false | 자신·하위 접근성 제외, 펼쳐진 subtree에 `aria-hidden`; 시각적으로 숨기는 CSS는 없음 |
+| Shape·Path·Image | `unsupported-node` 오류; 선택 View에 있으면 HTML 제공 안 함(숨김도 동일) |
+| layout·크기·transform·clipping·paint·텍스트 스타일 | `visuals-not-exported`; CSS 생성·측정·기하 재현 없음 |
+| layout 참조·modifier | 해당 node ID를 포함한 별도 누락 진단 |
+| control·binding·상태·token·Variant·Context·Motion | 저장 모델과 연결되지 않아 추정하지 않음; `static-accessibility-only` 진단 |
+| 프로젝트 target_profiles | `profiles-not-applied`; profile·registry pin·capability를 가정하지 않음 |
+| 문서 manifest/tree 이외 chunk | `chunk-not-exported`; kind·개수 진단, 내용을 임의로 해석하지 않음 |
+
+기존 접근성 생성기 → snapshot → codegen 접근성 전용 `IrTree` → `web/aria/map_accessibility`와 정적
+검사를 재사용합니다. 전체 `CodegenSources`가 요구하는 LayoutInput·profile capabilities·상태·token을
+빈 가상 값으로 채우지 않습니다. 매핑 노트나 정적 검사 오류가 있으면 실패합니다. 정적 검사 통과는
+브라우저·스크린리더·색 대비·키보드 상호작용 전체 적합성을 보증하지 않습니다.
+
+성공 시 `result`는 `revision`(generation, manifest hash, token), `document`, `view`, `root_frame`,
+`format: "static-accessibility-html-fragment"`, `html`을 담습니다. 진단은 envelope의 `diagnostics`와
+stderr에 함께 나옵니다. 같은 snapshot·문서·View는 같은 HTML·진단 순서를 냅니다. 정상 실행 후에도
+선택 범위·표현 한계 경고가 있으므로 stderr가 비어 있을 것으로 가정하지 않습니다.
+
+| 상황 | 종료 코드·오류 |
+|---|---|
+| 성공(범위·표현 한계 경고 포함) | 0 |
+| 미지원 node, 매핑 손실, 정적 검사 오류 | 1, `accessibility-export-failed`; revision·진단과 `html: null` |
+| 인자 부족·추가, 잘못된 UUID, 알 수 없는 옵션 | 64, stdout 없음 |
+| 저장 전 프로젝트·없는 문서·없는 View | 66, `unsaved-project`·`unknown-document`·`unknown-view` |
+| 손상된 문서 chunk·지원하지 않는 generation schema | 65, `document`·`unsupported-schema` |
+| 프로젝트 열기·출력 I/O 오류 | 기존 CLI 오류 분류 사용 |
+
+CLI 자체는 출력 파일을 만들지 않고 프로젝트·Git을 쓰지 않습니다. 셸 리다이렉션의 출력 위치는 사용자가
+정합니다. 실제 두 View 저장 fixture와 CLI subprocess 테스트는 HTML golden, 선택 범위, 오류 경로,
+반복 출력, 원본 파일·Git index·HEAD·objects 무변경을 검사합니다. text-source apply는 이 명령과 별개입니다.
 
 ## 출력 계약
 
@@ -489,8 +551,9 @@ missing-manifest
 
 ## 계획: ADR-0005 L1
 
-**이 절의 내용은 아직 구현되지 않았습니다.** ADR-0005 §1, §2, §7, §8과 구현 계획서 Phase XXIV의
-미착수 행을 옮겼습니다. 세부와 수치는 각 WBS 구현 작업에서 정합니다(ADR-0005 §9).
+이 절은 ADR-0005 §1, §2, §7, §8과 Phase XXIV의 범위를 설명합니다. 조회·검증·apply·CI 등
+현재 구현된 명령은 위 명령 표를 따릅니다. 일반 render/export·merge driver·설치는 별도 범위이며,
+세부와 수치는 각 WBS 구현 작업에서 정합니다(ADR-0005 §9).
 
 ### 계층 경계
 
@@ -501,12 +564,12 @@ missing-manifest
 - XXIV.4.7은 `stellar`에 AI·MCP·모델·에이전트 명령과 해당 crate로의 직접·전이 의존이 없음을 검사하는
   inventory test를 추가합니다.
 
-### 추가할 명령
+### 명령 로드맵과 범위
 
 | 명령 | 계획 내용 | WBS |
 |---|---|---|
 | `validate`, `semantic-diff`, `semantic-merge`, `migrate` | fixture corpus를 통과하는 기존 계획 명령 | XXIV.1.3 |
-| `render`/`export` | Phase XX 이후 추가 | XXIV.1.4 |
+| `render`/`export` | Phase XX 이후 일반 내보내기. 현재 `export-accessibility`는 위에서 정한 좁은 경로만 제공 | XXIV.1.4 |
 | `inspect` 확장, `query` | 프로젝트 구조, 문서 트리(cursor 분할), 노드 속성, 토큰, 컴포넌트를 revision과 함께 JSON으로 출력. 기존 `inspect` 결과 필드는 호환을 유지하고 파일을 쓰지 않음 | XXIV.4.3 |
 | `apply` | 파일이나 표준 입력으로 CommandTransaction JSON과 base revision을 받아 closed enum으로 검증하고 세대 전환 저장으로 원자적으로 기록. generation metadata에 writer 종류 headless CLI를 남김. `--dry-run`은 semantic diff만 출력 | XXIV.4.4 |
 | Git merge driver 모드 | base, ours, theirs, result 경로를 받아 Semantic Merge를 비대화형으로 실행. 해결되지 않은 semantic conflict가 있으면 원본을 보존하고 0이 아닌 코드로 끝남. `.gitattributes`·Git config 등록은 사용자 승인 명령으로만 하고 전역 config를 자동으로 바꾸지 않음 | XXIV.2.1\~XXIV.2.3 |
@@ -516,13 +579,9 @@ missing-manifest
 
 ### crate 구조
 
-- XXIV.4.2는 headless 조회·편집 공용 library `stellar-ops`(`crates/ops`)를 추가합니다. 허용 의존은
-  project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics이고,
-  local-ipc, agent-protocol, mcp-core, agent-host, ffi는 금지합니다.
-- XXIV.4.3은 `stellar-cli`의 직접 의존을 `stellar-ops`와 diagnostics로 줄이고, crate graph 정책의
-  `stellar-cli` 허용 의존도 같이 바꿉니다(ADR-0005 §8). 현재 정책
-  (`tools/xtask/src/crate_graph.rs`)은 core-types, project, document, storage, diagnostics를 허용하고,
-  실제 manifest는 project만 씁니다.
+- `stellar-ops`가 headless 공용 library이며 `stellar-cli`는 ops에 직접 의존합니다. 정적 접근성
+  HTML 연결은 ops에서 codegen·accessibility·target-profile을 재사용합니다(ADR-0049 후속 결정).
+  local-ipc·agent-protocol·mcp-core·agent-host·ffi로의 금지 경계는 유지합니다.
 - ADR-0020은 `stellar` JSON 입출력에 쓸 `serde`·`serde_json`을 승인했고, 도입 예정 행에 XXIV.4.3과
   XXIV.4.4가 있습니다. 현재 JSON은 외부 crate 없는 자체 모듈(`src/json.rs`)이며, `stellar-mcp`의 같은
   모듈과 본문이 일치하는지 `json_copy_sync` 테스트가 검사합니다.

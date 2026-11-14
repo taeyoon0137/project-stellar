@@ -287,7 +287,7 @@ Git merge driver 모드에서는 0이 아닌 코드가 모두 충돌로 취급�
 
 | crate | 위치 | 허용 직접 의존 | 전이적으로도 도달 금지 |
 |---|---|---|---|
-| `stellar-ops` | `crates/ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics | local-ipc, agent-protocol, mcp-core, agent-host, ffi |
+| `stellar-ops` | `crates/ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile(ADR-0049의 정적 HTML 연결) | local-ipc, agent-protocol, mcp-core, agent-host, ffi |
 | `stellar-cli`(package, 실행 이름 `stellar`) | XXIV.1.1이 정한 위치 | ops, diagnostics | local-ipc, agent-protocol, mcp-core, agent-host |
 | `stellar-local-ipc` | `crates/local-ipc` | core-types | document, commands, ops |
 | `stellar-agent-protocol` | `crates/agent-protocol` | core-types | commands, document, ops, agent-host |
