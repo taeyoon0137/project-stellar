@@ -11,8 +11,8 @@ use crate::json::JsonValue;
 use crate::output::{CliError, Success};
 use crate::views;
 
-pub(crate) fn operation_error(error: TextSourceOperationError) -> CliError {
-    let (status, code) = match &error {
+pub(crate) fn operation_error(error: &TextSourceOperationError) -> CliError {
+    let (status, code) = match error {
         TextSourceOperationError::Open(error) => return views::open_error(error),
         TextSourceOperationError::Document(error) => return views::document_error(error),
         TextSourceOperationError::Unsupported(_) => {
@@ -49,7 +49,7 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
             ))
         }
     };
-    let outcome = outcome.map_err(|error| operation_error(error).with_context(context))?;
+    let outcome = outcome.map_err(|error| operation_error(&error).with_context(context))?;
     Ok(Success {
         result: JsonValue::object(vec![
             ("operation", JsonValue::string(operation)),
@@ -115,7 +115,7 @@ fn run_apply(args: &[String]) -> Result<Success, CliError> {
         }
     };
     let outcome = text_source::apply(Path::new(path), &request, mode, &lock)
-        .map_err(|e| operation_error(e).with_context(*path))?;
+        .map_err(|e| operation_error(&e).with_context(*path))?;
     Ok(Success {
         result: JsonValue::object(vec![
             ("operation", JsonValue::string("apply")),

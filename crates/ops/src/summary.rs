@@ -72,6 +72,8 @@ pub struct SummaryEntry {
     pub kind: &'static str,
     /// 소유 문서.
     pub document: Option<StableId>,
+    /// 소유 컴포넌트.
+    pub component: Option<StableId>,
     /// 대상 객체.
     pub object: StableId,
     /// 객체 종류(추가·삭제).
@@ -111,6 +113,7 @@ fn entry(change: &DiffEntry, redaction: Redaction) -> SummaryEntry {
     SummaryEntry {
         kind: change.kind,
         document: change.document,
+        component: change.component,
         object: change.object,
         object_kind: change.object_kind.clone(),
         path: change.path.clone(),

@@ -86,17 +86,24 @@ pub struct ProjectComponents {
 /// 프로젝트 컴포넌트 조회. generation과 별도로 편집되는 YAML은 매번 다시 읽습니다.
 pub fn query(snapshot: &crate::snapshot::ProjectSnapshot) -> Result<ProjectComponents, Error> {
     let chunks = crate::query::components(snapshot);
-    let (library, files) = component_source::read_project_library(snapshot.root())?;
-    if chunks.chunk_count != 0 && !files.is_empty() {
-        return Err(Error::Unsupported(
-            "component-library chunk와 텍스트 원본이 함께 있습니다".into(),
-        ));
-    }
+    let (library, files) = project_library(snapshot)?;
     Ok(ProjectComponents {
         revision: chunks.revision,
         chunk_count: chunks.chunk_count,
         entries: entries(&library, files)?,
     })
+}
+
+pub(crate) fn project_library(
+    snapshot: &crate::snapshot::ProjectSnapshot,
+) -> Result<(ComponentLibrary, ComponentFiles), Error> {
+    let (library, files) = component_source::read_project_library(snapshot.root())?;
+    if !files.is_empty() && crate::query::components(snapshot).chunk_count != 0 {
+        return Err(Error::Unsupported(
+            "component-library chunk와 텍스트 원본이 함께 있습니다".into(),
+        ));
+    }
+    Ok((library, files))
 }
 
 fn entries(

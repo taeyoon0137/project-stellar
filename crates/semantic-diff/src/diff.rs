@@ -41,6 +41,7 @@ use crate::value::SemanticValue;
 pub fn object_provenance(object: &SemanticObject) -> Provenance {
     match object.origin() {
         Origin::Project => Provenance::Project,
+        Origin::ProjectComponent(component) => Provenance::ProjectComponentDefinition(component),
         Origin::Document(document) => Provenance::Document { document },
         Origin::Component {
             document,

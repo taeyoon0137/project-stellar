@@ -7,6 +7,7 @@
 use std::fmt;
 use std::path::Path;
 
+use stellar_semantic_diff::build::SnapshotBuilder;
 use stellar_semantic_diff::snapshot::SemanticSnapshot;
 use stellar_semantic_merge::merge::merge;
 use stellar_semantic_merge::model::{ConflictTarget, MergeInput, SemanticConflict, SideState};
@@ -35,6 +36,13 @@ pub enum CompareError {
         /// 원인.
         error: DocumentReadError,
     },
+    /// 입력의 프로젝트 컴포넌트 원본을 읽을 수 없습니다.
+    ComponentSource {
+        /// 입력 이름.
+        side: &'static str,
+        /// 원본 검증 오류.
+        error: crate::text_source::TextSourceOperationError,
+    },
     /// 입력들이 같은 프로젝트(project id)가 아닙니다.
     ProjectMismatch {
         /// 기준 project id.
@@ -55,6 +63,7 @@ impl fmt::Display for CompareError {
         match self {
             CompareError::Open { side, error } => write!(f, "{side} 프로젝트: {error}"),
             CompareError::Document { side, error } => write!(f, "{side} 프로젝트: {error}"),
+            CompareError::ComponentSource { side, error } => write!(f, "{side} 컴포넌트: {error}"),
             CompareError::ProjectMismatch {
                 expected,
                 found,
@@ -79,25 +88,32 @@ struct Side {
 
 fn open_side(path: &Path, side: &'static str) -> Result<Side, CompareError> {
     let snapshot = open_snapshot(path).map_err(|error| CompareError::Open { side, error })?;
-    let semantic = project_semantic_snapshot(&snapshot, side)?;
-    Ok(Side { snapshot, semantic })
+    let mut builder = document_builder(&snapshot, side)?;
+    let (library, _) = crate::component_source::project_library(&snapshot)
+        .map_err(|error| CompareError::ComponentSource { side, error })?;
+    builder
+        .add_project_component_library(&library)
+        .map_err(|error| CompareError::Projection(error.to_string()))?;
+    Ok(Side {
+        snapshot,
+        semantic: builder.finish(),
+    })
 }
 
-/// snapshot의 모든 문서를 semantic snapshot 하나로 투영합니다.
-fn project_semantic_snapshot(
+fn document_builder(
     snapshot: &ProjectSnapshot,
     side: &'static str,
-) -> Result<SemanticSnapshot, CompareError> {
-    let mut records = Vec::new();
+) -> Result<SnapshotBuilder, CompareError> {
+    let mut builder = SnapshotBuilder::new();
     for definition in snapshot.documents() {
-        records.push(
-            snapshot
-                .document_records(definition.id)
-                .map_err(|error| CompareError::Document { side, error })?,
-        );
+        let records = snapshot
+            .document_records(definition.id)
+            .map_err(|error| CompareError::Document { side, error })?;
+        builder
+            .add_document(&records)
+            .map_err(|error| CompareError::Projection(error.to_string()))?;
     }
-    let refs: Vec<_> = records.iter().collect();
-    snapshot_of(&refs).map_err(|e| CompareError::Projection(e.0))
+    Ok(builder)
 }
 
 fn same_project(base: &Side, other: &Side, side: &'static str) -> Result<(), CompareError> {
@@ -155,7 +171,7 @@ pub fn semantic_diff_head(
         .map_err(|e| CompareError::Projection(e.0))?;
     Ok(diff_snapshots(
         &base,
-        &project_semantic_snapshot(target, "target")?,
+        &document_builder(target, "target")?.finish(),
     ))
 }
 
@@ -190,6 +206,8 @@ pub struct ConflictEntry {
     pub kind: &'static str,
     /// 소유 문서(프로젝트 범위면 `None`).
     pub document: Option<StableId>,
+    /// 정의나 그 tree의 충돌이 속한 컴포넌트.
+    pub component: Option<StableId>,
     /// 대상 객체.
     pub object: StableId,
     /// 대상 종류: `object`, `position`, `property`.
@@ -214,6 +232,7 @@ impl From<&SemanticConflict> for ConflictEntry {
         ConflictEntry {
             kind: conflict.kind.name(),
             document: conflict.provenance.document(),
+            component: conflict.provenance.definition_component(),
             object: conflict.object,
             target,
             path,

@@ -35,7 +35,9 @@ use stellar_core_types::property::{PathSegment, PropertyKey, PropertyPath};
 
 use crate::change::SemanticChange;
 use crate::keys;
-use crate::snapshot::{ObjectKind, Origin, SemanticObject, SemanticSnapshot};
+#[cfg(test)]
+use crate::snapshot::Origin;
+use crate::snapshot::{ObjectKind, SemanticObject, SemanticSnapshot};
 use crate::stage::{ChangeId, ChangeUnit, SelectionOperation, StageSelection, UnknownChange};
 use crate::value::SemanticValue;
 
@@ -167,10 +169,10 @@ fn membership_list(object: &SemanticObject) -> Option<(StableId, PropertyKey)> {
     match object.kind() {
         ObjectKind::Page => object.parent().map(|doc| (doc, keys::DOCUMENT_PAGES)),
         ObjectKind::View => object.parent().map(|page| (page, keys::PAGE_VIEWS)),
-        ObjectKind::ComponentSlot => match object.origin() {
-            Origin::Component { component, .. } => Some((component, keys::COMPONENT_SLOTS)),
-            _ => None,
-        },
+        ObjectKind::ComponentSlot => object
+            .origin()
+            .component()
+            .map(|id| (id, keys::COMPONENT_SLOTS)),
         _ => None,
     }
 }

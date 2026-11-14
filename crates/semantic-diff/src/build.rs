@@ -194,13 +194,29 @@ impl SnapshotBuilder {
         document: StableId,
         library: &ComponentLibrary,
     ) -> Result<(), SnapshotError> {
+        self.component_library(library, |component| Origin::Component {
+            document,
+            component,
+        })
+    }
+
+    /// 특정 문서에 속하지 않는 프로젝트 공용 컴포넌트 정의를 추가합니다.
+    pub fn add_project_component_library(
+        &mut self,
+        library: &ComponentLibrary,
+    ) -> Result<(), SnapshotError> {
+        self.component_library(library, Origin::ProjectComponent)
+    }
+
+    fn component_library(
+        &mut self,
+        library: &ComponentLibrary,
+        owner: impl Fn(StableId) -> Origin,
+    ) -> Result<(), SnapshotError> {
         let mut objects = Vec::new();
         for entry in library.iter() {
             let definition = entry.definition();
-            let origin = Origin::Component {
-                document,
-                component: definition.id,
-            };
+            let origin = owner(definition.id);
             let mut component = SemanticObject::new(definition.id, ObjectKind::Component, origin);
             let props: [(PropertyKey, SemanticValue); 5] = [
                 (
@@ -1209,6 +1225,24 @@ pub(crate) mod tests {
         .unwrap();
         library.insert(definition, tree).unwrap();
         builder.add_component_library(sid(1), &library).unwrap();
+
+        let mut shared = SnapshotBuilder::new();
+        shared.add_project_component_library(&library).unwrap();
+        let shared = shared.finish();
+        let empty = SemanticSnapshot::new();
+        let diff = crate::diff::diff(&empty, &shared);
+        assert!(diff
+            .iter()
+            .all(|c| c.document().is_none()
+                && c.provenance().definition_component() == Some(sid(300))));
+        assert_eq!(
+            crate::codec::snapshot_from_bytes(&crate::codec::snapshot_to_bytes(&shared)).unwrap(),
+            shared
+        );
+        assert_eq!(
+            crate::diff::SemanticDiff::from_canonical_bytes(&diff.to_canonical_bytes()).unwrap(),
+            diff
+        );
 
         // 중복은 원자적으로 거부합니다.
         assert_eq!(

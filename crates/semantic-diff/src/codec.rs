@@ -357,6 +357,10 @@ pub fn read_opt_value(reader: &mut Reader<'_>) -> Result<Option<SemanticValue>, 
 fn put_origin(out: &mut Vec<u8>, origin: Origin) {
     match origin {
         Origin::Project => out.push(1),
+        Origin::ProjectComponent(component) => {
+            out.push(4);
+            out.extend_from_slice(&component.to_bytes());
+        }
         Origin::Document(document) => {
             out.push(2);
             out.extend_from_slice(&document.to_bytes());
@@ -375,6 +379,7 @@ fn put_origin(out: &mut Vec<u8>, origin: Origin) {
 fn read_origin(reader: &mut Reader<'_>) -> Result<Origin, DecodeError> {
     match reader.u8()? {
         1 => Ok(Origin::Project),
+        4 => Ok(Origin::ProjectComponent(reader.id()?)),
         2 => Ok(Origin::Document(reader.id()?)),
         3 => Ok(Origin::Component {
             document: reader.id()?,
@@ -487,6 +492,9 @@ pub fn put_provenance(out: &mut Vec<u8>, provenance: &Provenance) {
     out.push(provenance.code());
     match provenance {
         Provenance::Project => {}
+        Provenance::ProjectComponentDefinition(component) => {
+            out.extend_from_slice(&component.to_bytes())
+        }
         Provenance::Document { document } => out.extend_from_slice(&document.to_bytes()),
         Provenance::ComponentDefinition {
             document,
@@ -511,6 +519,7 @@ pub fn put_provenance(out: &mut Vec<u8>, provenance: &Provenance) {
 pub fn read_provenance(reader: &mut Reader<'_>) -> Result<Provenance, DecodeError> {
     match reader.u8()? {
         1 => Ok(Provenance::Project),
+        5 => Ok(Provenance::ProjectComponentDefinition(reader.id()?)),
         2 => Ok(Provenance::Document {
             document: reader.id()?,
         }),

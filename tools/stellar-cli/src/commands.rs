@@ -297,7 +297,7 @@ pub fn query(args: &[String]) -> Result<Success, CliError> {
         QueryPlan::Tokens => views::definition_set(&tokens(&snapshot)),
         QueryPlan::Components => {
             let set = stellar_ops::component_source::query(&snapshot)
-                .map_err(|err| crate::text_source::operation_error(err).with_context(context))?;
+                .map_err(|err| crate::text_source::operation_error(&err).with_context(context))?;
             JsonValue::object(vec![
                 ("revision", views::revision(set.revision)),
                 ("chunk_kind", JsonValue::string("component-library")),

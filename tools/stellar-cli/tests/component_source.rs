@@ -459,3 +459,143 @@ fn nested_frame_errors_preserve_every_component_file() {
     );
     assert_eq!(file_digest(&dir), malformed);
 }
+
+#[test]
+fn semantic_diff_compares_project_components_across_git_worktrees() {
+    let fixture = TempDir::new("component-worktree-diff");
+    let repo = fixture.path.join("repo");
+    let base = fixture.path.join("base");
+    let home = fixture.path.join("home");
+    fs::create_dir(&home).unwrap();
+    scaffold_project(&repo);
+    save_documents(&repo, &[&large_document(4)]);
+    git(&repo, &["init", "-q", "-b", "main"]);
+    let folder = "design/components";
+    fs::create_dir_all(repo.join(folder)).unwrap();
+    let a = cli(&repo, &home, &["create", folder, "Card", A, AR], 0);
+    let b = cli(&repo, &home, &["create", folder, "Badge", B, BR], 0);
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-qm", "base"]);
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            base.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    let path = value(&a, "file");
+    let resized = cli(
+        &repo,
+        &home,
+        &["resize", path, value(&a, "source_hash"), "160", "44"],
+        0,
+    );
+    cli(
+        &repo,
+        &home,
+        &[
+            "add-frame",
+            path,
+            value(&resized, "source_hash"),
+            AR,
+            FIRST,
+            "Label",
+            "40",
+            "14",
+        ],
+        0,
+    );
+    let new_path = path.replace("Card-", "Tile-");
+    git(&repo, &["mv", path, &new_path]);
+    let yaml = fs::read_to_string(repo.join(&new_path)).unwrap();
+    fs::write(
+        repo.join(&new_path),
+        yaml.replace("  name: Card\n", "  name: Tile\n"),
+    )
+    .unwrap();
+    fs::remove_file(repo.join(value(&b, "file"))).unwrap();
+
+    let args = [base.to_str().unwrap(), "."];
+    let observe = || run(&repo, &home, "semantic-diff", &args, 0);
+    let staged = git(&repo, &["write-tree"]);
+    let before = file_digest(&repo);
+    let result = observe();
+    assert_eq!(result.get("base_revision"), result.get("target_revision"));
+    let changes = result
+        .get("changes")
+        .unwrap()
+        .get("entries")
+        .unwrap()
+        .as_array()
+        .unwrap();
+    assert_eq!(changes.len(), 5, "{changes:?}");
+    for (id, kind, owner) in [
+        (A, "set-property", A),
+        (AR, "set-property", A),
+        (FIRST, "add-object", A),
+        (B, "remove-object", B),
+        (BR, "remove-object", B),
+    ] {
+        let change = changes.iter().find(|e| value(e, "object") == id).unwrap();
+        assert_eq!(value(change, "kind"), kind);
+        assert_eq!(change.get("document"), Some(&JsonValue::Null));
+        assert_eq!(value(change, "component"), owner);
+    }
+    assert_eq!(file_digest(&repo), before);
+    assert_eq!(git(&repo, &["write-tree"]), staged);
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(repo.join(&new_path))
+        .unwrap();
+    writeln!(file, "# formatting only").unwrap();
+    assert_eq!(observe(), result);
+
+    let summary = run(&repo, &home, "diff-summary", &args, 0);
+    assert_eq!(summary.get("total").and_then(JsonValue::as_i64), Some(5));
+    let entries = summary.get("changes").unwrap().as_array().unwrap();
+    assert_eq!(entries[0].get("component"), changes[0].get("component"));
+
+    // 같은 Frame에 서로 다른 크기를 준 두 작업 트리는 정확히 그 속성에서 충돌합니다.
+    let theirs = fixture.path.join("theirs");
+    git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            theirs.to_str().unwrap(),
+            "HEAD",
+        ],
+    );
+    cli(
+        &theirs,
+        &home,
+        &["resize", path, value(&a, "source_hash"), "200", "60"],
+        0,
+    );
+    let merge = run(
+        &repo,
+        &home,
+        "semantic-merge",
+        &[args[0], ".", theirs.to_str().unwrap()],
+        1,
+    );
+    let conflicts = merge.get("conflicts").unwrap().as_array().unwrap();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(value(&conflicts[0], "object"), AR);
+    assert_eq!(value(&conflicts[0], "component"), A);
+    assert_eq!(value(&conflicts[0], "kind"), "property-value");
+    assert_eq!(observe(), result);
+
+    // 손상된 텍스트 파일을 변경 없음으로 취급하거나 기록하지 않습니다.
+    fs::write(repo.join(&new_path), "invalid").unwrap();
+    let invalid = file_digest(&repo);
+    run(&repo, &home, "semantic-diff", &args, 65);
+    assert_eq!(file_digest(&repo), invalid);
+}

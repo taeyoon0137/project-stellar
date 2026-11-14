@@ -99,7 +99,7 @@ pub fn summary_json(summary: &DiffSummary) -> JsonValue {
                     .entries
                     .iter()
                     .map(|e| {
-                        JsonValue::object(vec![
+                        let mut fields = vec![
                             ("kind", JsonValue::string(e.kind)),
                             ("document", views::opt_id(e.document)),
                             ("object", views::id(e.object)),
@@ -112,7 +112,11 @@ pub fn summary_json(summary: &DiffSummary) -> JsonValue {
                             ("new", value_json(e.new.as_ref())),
                             ("from", position_json(e.from.as_ref())),
                             ("to", position_json(e.to.as_ref())),
-                        ])
+                        ];
+                        if let Some(component) = e.component {
+                            fields.push(("component", views::id(component)));
+                        }
+                        JsonValue::object(fields)
                     })
                     .collect(),
             ),

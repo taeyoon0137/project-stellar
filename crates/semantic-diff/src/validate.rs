@@ -25,7 +25,9 @@ use stellar_core_types::property::{PathSegment, PropertyKey, PropertyPath};
 
 use crate::dependency::sibling_class;
 use crate::keys;
-use crate::snapshot::{NodeKind, ObjectKind, Origin, SemanticObject, SemanticSnapshot};
+#[cfg(test)]
+use crate::snapshot::Origin;
+use crate::snapshot::{NodeKind, ObjectKind, SemanticObject, SemanticSnapshot};
 use crate::value::SemanticValue;
 
 /// snapshot 무결성 위반.
@@ -214,8 +216,8 @@ pub fn validate_snapshot(snapshot: &SemanticSnapshot) -> BTreeSet<SnapshotViolat
         let membership = match (object.kind(), object.origin()) {
             (ObjectKind::Page, _) => object.parent().map(|p| (p, keys::DOCUMENT_PAGES)),
             (ObjectKind::View, _) => object.parent().map(|p| (p, keys::PAGE_VIEWS)),
-            (ObjectKind::ComponentSlot, Origin::Component { component, .. }) => {
-                Some((component, keys::COMPONENT_SLOTS))
+            (ObjectKind::ComponentSlot, origin) => {
+                origin.component().map(|id| (id, keys::COMPONENT_SLOTS))
             }
             _ => None,
         };

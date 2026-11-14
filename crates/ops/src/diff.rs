@@ -58,6 +58,8 @@ pub struct DiffEntry {
     pub code: u8,
     /// 소유 문서(프로젝트 범위면 `None`).
     pub document: Option<StableId>,
+    /// 정의나 그 tree의 속성이 속한 컴포넌트.
+    pub component: Option<StableId>,
     /// 대상 객체.
     pub object: StableId,
     /// 대상 객체 종류(추가·삭제 변경에만, 예: `node:frame`).
@@ -99,6 +101,7 @@ impl From<&SemanticChange> for DiffEntry {
             kind: kind.name(),
             code: kind.code(),
             document: change.document(),
+            component: change.provenance().definition_component(),
             object: change.object_id(),
             object_kind: None,
             path: None,

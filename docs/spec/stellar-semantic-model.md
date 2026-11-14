@@ -308,6 +308,7 @@ code는 위 표와 정확히 같아야 합니다. 모르는 code(`0x0000`, `0x01
 | `Project` | 프로젝트 범위(metadata, 프로젝트 token, asset) | 없음 |
 | `Document(document)` | 문서 scene·정의 범위 | `document` |
 | `Component { document, component }` | 컴포넌트 정의 범위(정의 resource, 정의 tree node, Slot) | `document` |
+| `ProjectComponent(component)` | 프로젝트 공용 컴포넌트 정의와 그 tree·Slot | 없음 |
 
 두 객체가 같은 정체성이라는 것은 `id`, `kind`, `origin`이 모두 같다는 뜻입니다(`same_identity`).
 
@@ -425,7 +426,7 @@ snapshot 전용 key(`semantic-diff::keys`):
 | `DocumentRecords` | Document, Page, View | Document | Page → 문서, View → page | 없음 |
 | `DocumentRecords` | scene Node | Document | 레코드 parent | 레코드 OrderKey |
 | `DocumentRecords` | Modifier(stack 항목마다) | Document | 소유 node | 항목 OrderKey |
-| `ComponentLibrary` | Component, 정의 tree Node, ComponentSlot | Component | 정의 Node만 레코드 parent | 정의 Node만 OrderKey |
+| `ComponentLibrary` | Component, 정의 tree Node, ComponentSlot | 문서 라이브러리는 Component, 프로젝트 라이브러리는 ProjectComponent | 정의 Node만 레코드 parent | 정의 Node만 OrderKey |
 | `InstanceNode` | scene ComponentInstance Node | Document | 입력 parent | 입력 OrderKey |
 | `TokenEntry` | Token | 문서가 없으면 Project, 있으면 Document | 없음 | 없음 |
 | `AssetEntry` | Asset | Project | 없음 | 없음 |
@@ -576,9 +577,10 @@ snapshot 전용 key(`semantic-diff::keys`):
 | 2 | Document | document |
 | 3 | ComponentDefinition | document, component |
 | 4 | InstanceOverride | document, instance, component |
+| 5 | ProjectComponentDefinition | component |
 
 - 객체의 기본 출처는 Origin에서 유도합니다: Project → Project, Document → Document,
-  Component → ComponentDefinition(`object_provenance`). 추가·삭제는 그 객체, 위치·속성 변경은 target 객체의
+  Component → ComponentDefinition, ProjectComponent → ProjectComponentDefinition(`object_provenance`). 추가·삭제는 그 객체, 위치·속성 변경은 target 객체의
   Origin을 씁니다.
 - 속성 변경의 출처(`property_provenance`): target 객체가 Origin Document의 ComponentInstance Node이고 경로의 첫
   key가 `PROPERTY_OVERRIDES`·`SLOT_OVERRIDES`이면 InstanceOverride입니다. component는 target의
@@ -664,7 +666,7 @@ Snapshot은 저장하지 않습니다.
 | 속성 경로 | root raw16 ‖ key 수 `u32` ‖ key `u32`* ‖ tail tag `u8`(`0` 없음, `1` index, `2` key) ‖ (index `u32` \| `u32` 길이 ‖ UTF-8) |
 | OrderKey | `u32` 길이 ‖ bytes. 비었거나 `00`으로 끝나면 `InvalidValue { field: "order_key" }` |
 | 선택 id, 선택 OrderKey | flag ‖ 내용 |
-| Origin | `1` Project \| `2` ‖ document \| `3` ‖ document ‖ component |
+| Origin | `1` Project \| `2` ‖ document \| `3` ‖ document ‖ component \| `4` ‖ component |
 | 객체 | id raw16 ‖ kind code `u16`(§3.2) ‖ Origin ‖ 선택 parent ‖ 선택 OrderKey ‖ 속성 수 `u32` ‖ (경로 ‖ 값)* |
 | snapshot | `SSNP` ‖ version `u16` = 1 ‖ 객체 수 `u32` ‖ 객체* |
 
@@ -679,7 +681,7 @@ Floats `[1.0]` → `06 01000000 0000803f`, Bool true → `01 01`.
 
 | 요소 | 형식 |
 |---|---|
-| 출처 | code `u8`(§4.5) ‖ 종류별 id(2: document, 3: document ‖ component, 4: document ‖ instance ‖ component) |
+| 출처 | code `u8`(§4.5) ‖ 종류별 id(2: document, 3: document ‖ component, 4: document ‖ instance ‖ component, 5: component) |
 | 위치 | 선택 parent ‖ 선택 OrderKey |
 | 변경 | kind code `u8`(§4.4) ‖ 출처 ‖ 본문 |
 | 본문: 추가·삭제(1, 2, 6, 7) | 객체 |

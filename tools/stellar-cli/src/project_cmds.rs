@@ -155,6 +155,11 @@ fn compare_error(error: &CompareError) -> CliError {
         CompareError::ProjectMismatch { .. } => {
             CliError::new(ExitStatus::DataErr, "project-mismatch", error.to_string())
         }
+        CompareError::ComponentSource { error: source, .. } => {
+            let mut cli = crate::text_source::operation_error(source);
+            cli.message = error.to_string();
+            cli
+        }
         CompareError::Projection(_) => {
             CliError::new(ExitStatus::Software, "projection", error.to_string())
         }
@@ -210,7 +215,7 @@ fn side_json(side: &SideView) -> JsonValue {
 
 /// semantic conflict JSON.
 pub fn conflict_json(conflict: &ConflictEntry) -> JsonValue {
-    JsonValue::object(vec![
+    let mut fields = vec![
         ("kind", JsonValue::string(conflict.kind)),
         ("document", views::opt_id(conflict.document)),
         ("object", views::id(conflict.object)),
@@ -219,7 +224,11 @@ pub fn conflict_json(conflict: &ConflictEntry) -> JsonValue {
         ("base", side_json(&conflict.base)),
         ("ours", side_json(&conflict.ours)),
         ("theirs", side_json(&conflict.theirs)),
-    ])
+    ];
+    if let Some(component) = conflict.component {
+        fields.push(("component", views::id(component)));
+    }
+    JsonValue::object(fields)
 }
 
 /// `semantic-merge <base> <ours> <theirs>`.

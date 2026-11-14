@@ -180,6 +180,8 @@ pub enum Provenance {
         /// 인스턴스가 참조하는 컴포넌트 정의.
         component: StableId,
     },
+    /// 문서에 속하지 않는 프로젝트 공용 컴포넌트 정의.
+    ProjectComponentDefinition(StableId),
 }
 
 impl Provenance {
@@ -190,13 +192,23 @@ impl Provenance {
             Provenance::Document { .. } => 2,
             Provenance::ComponentDefinition { .. } => 3,
             Provenance::InstanceOverride { .. } => 4,
+            Provenance::ProjectComponentDefinition(_) => 5,
+        }
+    }
+
+    /// 변경이 정의 또는 그 tree에 속하면 소유 컴포넌트.
+    pub fn definition_component(&self) -> Option<StableId> {
+        match self {
+            Self::ProjectComponentDefinition(component)
+            | Self::ComponentDefinition { component, .. } => Some(*component),
+            _ => None,
         }
     }
 
     /// 소유 문서(프로젝트 범위면 `None`).
     pub fn document(&self) -> Option<StableId> {
         match self {
-            Provenance::Project => None,
+            Provenance::Project | Provenance::ProjectComponentDefinition(_) => None,
             Provenance::Document { document }
             | Provenance::ComponentDefinition { document, .. }
             | Provenance::InstanceOverride { document, .. } => Some(*document),
@@ -417,6 +429,7 @@ mod tests {
         let document = sid(1);
         let golden = [
             (Provenance::Project, 1, None),
+            (Provenance::ProjectComponentDefinition(sid(2)), 5, None),
             (Provenance::Document { document }, 2, Some(document)),
             (
                 Provenance::ComponentDefinition {

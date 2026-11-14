@@ -52,7 +52,9 @@ use stellar_semantic_diff::core_types::order_key::OrderKey;
 use stellar_semantic_diff::core_types::property::{PropertyKey, PropertyPath};
 use stellar_semantic_diff::diff::{diff, object_provenance, SemanticDiff};
 use stellar_semantic_diff::keys;
-use stellar_semantic_diff::snapshot::{ObjectKind, Origin, SemanticObject, SemanticSnapshot};
+#[cfg(test)]
+use stellar_semantic_diff::snapshot::Origin;
+use stellar_semantic_diff::snapshot::{ObjectKind, SemanticObject, SemanticSnapshot};
 use stellar_semantic_diff::value::SemanticValue;
 
 use crate::model::{
@@ -219,8 +221,8 @@ fn membership(object: &SemanticObject) -> Option<(StableId, PropertyKey)> {
     match (object.kind(), object.origin()) {
         (ObjectKind::Page, _) => object.parent().map(|p| (p, keys::DOCUMENT_PAGES)),
         (ObjectKind::View, _) => object.parent().map(|p| (p, keys::PAGE_VIEWS)),
-        (ObjectKind::ComponentSlot, Origin::Component { component, .. }) => {
-            Some((component, keys::COMPONENT_SLOTS))
+        (ObjectKind::ComponentSlot, origin) => {
+            origin.component().map(|id| (id, keys::COMPONENT_SLOTS))
         }
         _ => None,
     }
@@ -1574,8 +1576,8 @@ pub(crate) mod tests {
                     (ObjectKind::View, _) if key == keys::PAGE_VIEWS => {
                         member.parent() == Some(object.id())
                     }
-                    (ObjectKind::ComponentSlot, Origin::Component { component, .. }) => {
-                        key == keys::COMPONENT_SLOTS && component == object.id()
+                    (ObjectKind::ComponentSlot, origin) => {
+                        key == keys::COMPONENT_SLOTS && origin.component() == Some(object.id())
                     }
                     _ => false,
                 };

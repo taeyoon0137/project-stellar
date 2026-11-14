@@ -109,13 +109,25 @@ pub enum Origin {
         /// 소유 컴포넌트 정의.
         component: StableId,
     },
+    /// 프로젝트 공유 라이브러리의 정의·tree·Slot.
+    ProjectComponent(StableId),
 }
 
 impl Origin {
+    /// 정의 객체나 그 안의 tree·Slot이 속하는 컴포넌트.
+    pub fn component(self) -> Option<StableId> {
+        match self {
+            Self::Component { component, .. } | Self::ProjectComponent(component) => {
+                Some(component)
+            }
+            _ => None,
+        }
+    }
+
     /// 소유 문서. 프로젝트 범위면 `None`.
     pub fn document(&self) -> Option<StableId> {
         match self {
-            Origin::Project => None,
+            Origin::Project | Origin::ProjectComponent(_) => None,
             Origin::Document(document) | Origin::Component { document, .. } => Some(*document),
         }
     }

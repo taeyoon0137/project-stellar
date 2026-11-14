@@ -48,12 +48,12 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
         [op, dir, name, component, root] if op == "create" => {
             let source =
                 component_source::create(Path::new(dir), name.clone(), id(component)?, id(root)?)
-                    .map_err(|error| operation_error(error).with_context(dir))?;
+                    .map_err(|error| operation_error(&error).with_context(dir))?;
             component_json(source, true)
         }
         [op, dir] if op == "check" => {
             let components = component_source::check(Path::new(dir))
-                .map_err(|error| operation_error(error).with_context(dir))?;
+                .map_err(|error| operation_error(&error).with_context(dir))?;
             J::object(vec![(
                 "components",
                 J::Array(
@@ -68,7 +68,7 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
             let size = size(width, height)?;
             component_json(
                 component_source::resize(Path::new(file), hash, size)
-                    .map_err(|error| operation_error(error).with_context(file))?,
+                    .map_err(|error| operation_error(&error).with_context(file))?,
                 true,
             )
         }
@@ -82,7 +82,7 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
                     name.clone(),
                     size(width, height)?,
                 )
-                .map_err(|error| operation_error(error).with_context(file))?,
+                .map_err(|error| operation_error(&error).with_context(file))?,
                 true,
             )
         }

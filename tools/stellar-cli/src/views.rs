@@ -378,7 +378,7 @@ fn opt_value(value: Option<&OpsValue>) -> JsonValue {
 
 /// semantic diff 변경 한 건.
 pub fn diff_entry(entry: &DiffEntry) -> JsonValue {
-    JsonValue::object(vec![
+    let mut fields = vec![
         ("kind", JsonValue::string(entry.kind)),
         ("document", opt_id(entry.document)),
         ("object", id(entry.object)),
@@ -391,7 +391,11 @@ pub fn diff_entry(entry: &DiffEntry) -> JsonValue {
         ("new", opt_value(entry.new.as_ref())),
         ("from", diff_position(entry.from.as_ref())),
         ("to", diff_position(entry.to.as_ref())),
-    ])
+    ];
+    if let Some(component) = entry.component {
+        fields.push(("component", id(component)));
+    }
+    JsonValue::object(fields)
 }
 
 /// semantic diff: `{"count", "by_kind", "entries"}`(canonical 순서, XIV.3.8).
