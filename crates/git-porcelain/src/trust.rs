@@ -215,6 +215,19 @@ impl GatedGitRunner {
             .map_err(GatedRunError::Run)
     }
 
+    pub(crate) fn run_with_checked_input(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: &[u8],
+        cancel: &GitCancelToken,
+        check: crate::runner::InputCheck<'_>,
+    ) -> Result<GitOutput, GatedRunError> {
+        self.runner()?
+            .run_with_checked_input(args, cwd, input, cancel, check)
+            .map_err(GatedRunError::Run)
+    }
+
     /// 내부 실행기의 프로세스 생성 시도 횟수(gate 거부는 세지 않음).
     pub fn spawn_count(&self) -> u64 {
         self.runner.spawn_count()

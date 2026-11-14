@@ -42,6 +42,19 @@ use crate::trace::{
 /// stderr 조각을 받는 콜백.
 type StderrSink<'a> = &'a mut dyn FnMut(&[u8]);
 
+pub(crate) type InputCheck<'a> = &'a mut dyn FnMut(u32, Instant) -> Result<bool, GitRunError>;
+
+struct Input<'a> {
+    bytes: &'a [u8],
+    check: Option<InputCheck<'a>>,
+}
+
+impl<'a> Input<'a> {
+    fn immediate(bytes: &'a [u8]) -> Self {
+        Self { bytes, check: None }
+    }
+}
+
 /// 중단(timeout·취소) 뒤 pipe가 닫히기를 더 기다리는 시간. 지나면 drain 스레드를 분리합니다.
 const PIPE_DETACH_GRACE: Duration = Duration::from_millis(500);
 
@@ -208,6 +221,12 @@ impl GitRunner {
         self
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_test_executable(mut self, path: PathBuf) -> Self {
+        self.git_path = path;
+        self
+    }
+
     /// 지금까지 이 실행기(및 사본)가 시도한 프로세스 생성 횟수(XIV.1.1 계측).
     ///
     /// spawn이 실패한 시도도 셉니다. 실행 전에 거부된 요청(trust gate 등)은 세지 않습니다.
@@ -290,7 +309,7 @@ impl GitRunner {
         cwd: &Path,
         input: &[u8],
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, Some(input), None, None, 0)
+        self.run_inner(args, cwd, Some(Input::immediate(input)), None, None, 0)
     }
 
     /// [`GitRunner::run_with_input`]과 같지만 stdout buffer를 `stdout_capacity` bytes로 미리 잡습니다.
@@ -305,7 +324,14 @@ impl GitRunner {
         input: &[u8],
         stdout_capacity: usize,
     ) -> Result<GitOutput, GitRunError> {
-        self.run_inner(args, cwd, Some(input), None, None, stdout_capacity)
+        self.run_inner(
+            args,
+            cwd,
+            Some(Input::immediate(input)),
+            None,
+            None,
+            stdout_capacity,
+        )
     }
 
     /// 취소 가능한 실행(XIV.1.4). `cancel`이 취소되면 프로세스 tree를 종료하고
@@ -334,11 +360,40 @@ impl GitRunner {
         self.run_inner(args, cwd, None, Some(cancel), Some(on_stderr), 0)
     }
 
+    /// stdin을 열어 둔 채 호출자 검사를 반복합니다. 승인 전 EOF도 보내지 않습니다.
+    /// 검사는 deadline을 지켜야 하며 오류·취소·timeout에는 기존 process-tree 정리를 사용합니다.
+    pub(crate) fn run_with_checked_input(
+        &self,
+        args: &[OsString],
+        cwd: &Path,
+        input: &[u8],
+        cancel: &GitCancelToken,
+        check: InputCheck<'_>,
+    ) -> Result<GitOutput, GitRunError> {
+        self.run_inner(
+            args,
+            cwd,
+            Some(Input {
+                bytes: input,
+                check: Some(check),
+            }),
+            Some(cancel),
+            None,
+            0,
+        )
+    }
+
+    /// 하나의 operation deadline 안에서 중첩 읽기를 제한하는 사본입니다.
+    pub(crate) fn with_timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = timeout;
+        self
+    }
+
     fn run_inner(
         &self,
         args: &[OsString],
         cwd: &Path,
-        input: Option<&[u8]>,
+        input: Option<Input<'_>>,
         cancel: Option<&GitCancelToken>,
         on_stderr: Option<StderrSink<'_>>,
         stdout_capacity: usize,
@@ -392,7 +447,7 @@ impl GitRunner {
         &self,
         args: &[OsString],
         cwd: &Path,
-        input: Option<&[u8]>,
+        mut input: Option<Input<'_>>,
         cancel: Option<&GitCancelToken>,
         mut on_stderr: Option<StderrSink<'_>>,
         stdout_capacity: usize,
@@ -475,22 +530,13 @@ impl GitRunner {
                 }
             }
         };
-        // stdin 입력은 별도 스레드로 쓰고 닫습니다(자식이 출력하며 읽는 경우의 교착 방지).
-        // 자식이 다 읽지 않고 끝나면 쓰기 오류(BrokenPipe)가 나지만 결과는 종료 코드로 판단합니다.
-        let in_thread = match (input, child.stdin.take()) {
-            (Some(bytes), Some(mut stdin_pipe)) => {
-                let bytes = bytes.to_vec();
-                Some(thread::spawn(move || {
-                    let _ = stdin_pipe.write_all(&bytes);
-                }))
-            }
-            _ => None,
-        };
-
-        let pipes = PipeThreads {
+        // 승인 전에는 stdin을 이 스레드가 보유합니다. 닫으면 Git이 EOF를 commit 승인으로
+        // 해석할 수 있으므로 거부·취소 때도 Git 종료까지 보유합니다.
+        let mut held_stdin = child.stdin.take();
+        let mut pipes = PipeThreads {
             stdout: out_thread,
             stderr: err_thread,
-            stdin: in_thread,
+            stdin: None,
         };
 
         // 완료는 pipe가 모두 닫히고 leader가 끝난 때입니다. pipe가 열려 있는 동안에는 leader를
@@ -511,16 +557,47 @@ impl GitRunner {
                 }
             }
             let interrupted = if cancelled() {
-                GitRunError::Cancelled
+                Some(GitRunError::Cancelled)
             } else if Instant::now() >= deadline {
-                GitRunError::Timeout
+                Some(GitRunError::Timeout)
+            } else if let Some(pending) = input.as_mut() {
+                let approval = match pending.check.as_mut() {
+                    Some(check) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        check(child.id(), deadline)
+                    })),
+                    None => Ok(Ok(true)),
+                };
+                match approval {
+                    Err(panic) => {
+                        terminate_process_tree(&mut child, &|| pipes.finished());
+                        drop(held_stdin);
+                        pipes.discard(PIPE_DETACH_GRACE);
+                        std::panic::resume_unwind(panic);
+                    }
+                    Ok(Err(error)) => Some(error),
+                    Ok(Ok(true)) if !cancelled() && Instant::now() < deadline => {
+                        if let Some(mut stdin_pipe) = held_stdin.take() {
+                            let bytes = pending.bytes.to_vec();
+                            pipes.stdin = Some(thread::spawn(move || {
+                                let _ = stdin_pipe.write_all(&bytes);
+                            }));
+                        }
+                        input = None;
+                        None
+                    }
+                    Ok(Ok(_)) => None,
+                }
             } else {
+                None
+            };
+            let Some(interrupted) = interrupted else {
                 forward(&chunk_rx);
                 thread::sleep(Duration::from_millis(5));
                 continue;
             };
             // 중단: tree 종료 후 pipe가 닫히면 drain 스레드도 끝납니다. 부분 출력은 버립니다.
             terminate_process_tree(&mut child, &|| pipes.finished());
+            drop(held_stdin);
             pipes.discard(PIPE_DETACH_GRACE);
             return Err(interrupted);
         };

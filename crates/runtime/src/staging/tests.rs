@@ -361,3 +361,84 @@ fn no_op_uses_index_generation_and_rejects_worktree_temp_parent_and_untrusted_gi
     assert_eq!(file_digest(fx.work()), before);
     assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_revision() {
+    use stellar_commands::state::DocumentState;
+    use stellar_core_types::revision::DocumentRevision;
+    use stellar_git_porcelain::{
+        blob_write::write_candidate_blobs, cancel::GitCancelToken,
+        candidate_delta::compute_candidate_delta, index_publish::publish_candidate,
+    };
+    let fx = GitFixture::with_system_git("actual-semantic-stage")
+        .unwrap()
+        .expect("system Git required");
+    scaffold_project(fx.work());
+    let model = large_document(4);
+    save_documents(fx.work(), &[&model]);
+    fx.commit_all("baseline").unwrap();
+    fx.write("README.txt", b"unrelated staged").unwrap();
+    fx.git(["add", "README.txt"]).unwrap();
+    let mut records = model.to_records().unwrap();
+    let root = records
+        .nodes
+        .iter_mut()
+        .find(|n| n.parent.is_none())
+        .unwrap();
+    let id = root.id;
+    root.display_name = "selected A".into();
+    root.locked = true; // unselected B in the same chunk
+    let (working, _) = DocumentModel::from_records(records).unwrap();
+    save_documents(fx.work(), &[&working]);
+    fx.write("README.txt", b"unrelated working").unwrap();
+    let memory = DocumentState::with_revision(working, DocumentRevision(7));
+    let memory_before = memory.model().to_records().unwrap();
+    let working_before: std::collections::BTreeMap<_, _> = file_digest(fx.work())
+        .into_iter()
+        .filter(|(p, _)| !p.starts_with(".git/"))
+        .collect();
+    let parent = fx.root().join("candidates");
+    std::fs::create_dir(&parent).unwrap();
+    let request = StageSelectionRequest::stage([ChangeId::property(
+        stellar_core_types::property::PropertyPath::with_keys(
+            id,
+            vec![stellar_ops::candidate::DISPLAY_NAME],
+        ),
+    )]);
+    let prepared = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request).unwrap();
+    let delta = compute_candidate_delta(&fx.gated(), fx.work(), &prepared.tree).unwrap();
+    let written = write_candidate_blobs(&fx.gated(), fx.work(), &delta).unwrap();
+    let actual =
+        publish_candidate(&fx.gated(), fx.work(), &written, &GitCancelToken::new()).unwrap();
+    assert_eq!(actual, read_index_snapshot(&fx.gated(), fx.work()).unwrap());
+    let actual_tree =
+        materialize_snapshot(&fx.gated(), fx.work(), &actual.entries, &parent).unwrap();
+    let loaded = SavedProjectLoader::for_materialized_snapshot()
+        .open(actual_tree.root())
+        .unwrap();
+    assert_eq!(
+        &saved_semantic_snapshot(&loaded).unwrap(),
+        prepared.semantic.snapshot()
+    );
+    let actual_model = loaded
+        .load_document(model.document_id())
+        .unwrap()
+        .model
+        .to_records()
+        .unwrap();
+    let selected = actual_model.nodes.iter().find(|n| n.id == id).unwrap();
+    assert_eq!(selected.display_name, "selected A");
+    assert!(!selected.locked);
+    assert_eq!(
+        std::fs::read(actual_tree.root().join("README.txt")).unwrap(),
+        b"unrelated staged"
+    );
+    let working_after: std::collections::BTreeMap<_, _> = file_digest(fx.work())
+        .into_iter()
+        .filter(|(p, _)| !p.starts_with(".git/"))
+        .collect();
+    assert_eq!(working_after, working_before);
+    assert_eq!(memory.revision(), DocumentRevision(7));
+    assert_eq!(memory.model().to_records().unwrap(), memory_before);
+}
