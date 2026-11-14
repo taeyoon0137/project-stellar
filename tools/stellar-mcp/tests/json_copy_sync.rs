@@ -20,7 +20,10 @@ fn body(text: &str) -> &str {
 
 #[test]
 fn json_copies_have_identical_bodies() {
-    let own = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/json.rs"));
+    let own = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../crates/mcp-core/src/json.rs"
+    ));
     let other = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../stellar-cli/src/json.rs"

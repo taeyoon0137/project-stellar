@@ -108,6 +108,21 @@ fn selected_property_round_trips_without_changing_working_bytes_or_real_index() 
     }
     let repeated = prepare_stage_candidate(&fx.gated(), fx.work(), &parent, &request).unwrap();
     assert_eq!(candidate_files, file_digest(repeated.tree.root()));
+    let delta = stellar_git_porcelain::candidate_delta::compute_candidate_delta(
+        &fx.gated(),
+        fx.work(),
+        &candidate.tree,
+    )
+    .unwrap();
+    // A가 든 chunk와 새 generation, current만 바뀌며 다른 문서·기존 staged 파일은 제외됩니다.
+    assert_eq!(delta.changes().len(), 3);
+    assert!(delta.changes().iter().all(|change| {
+        matches!(
+            change,
+            stellar_git_porcelain::candidate_delta::FileDelta::Upsert { .. }
+        ) && change.path().as_bytes().starts_with(b"design/")
+    }));
+    assert_eq!(delta.base_index(), &index);
     assert_eq!(file_digest(fx.work()), before);
     assert_eq!(
         std::fs::read(fx.work().join(".git/index")).unwrap(),
@@ -278,6 +293,16 @@ fn no_op_uses_index_generation_and_rejects_worktree_temp_parent_and_untrusted_gi
     for (path, hash) in &candidate_files {
         assert_eq!(index_files.get(path), Some(hash), "{path}");
     }
+    assert!(
+        stellar_git_porcelain::candidate_delta::compute_candidate_delta(
+            &fx.gated(),
+            fx.work(),
+            &candidate.tree,
+        )
+        .unwrap()
+        .changes()
+        .is_empty()
+    );
     drop(candidate);
     assert!(matches!(
         prepare_stage_candidate(&fx.gated(), fx.work(), fx.work(), &request),

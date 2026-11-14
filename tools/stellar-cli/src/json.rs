@@ -4,7 +4,7 @@
 //!
 //! ## 의도적 사본
 //!
-//! 이 파일은 `tools/stellar-mcp/src/json.rs`와 module 문서(`//!`)만 다르고 본문이 같은 사본입니다.
+//! 이 파일은 `crates/mcp-core/src/json.rs`와 module 문서(`//!`)만 다르고 본문이 같은 사본입니다.
 //! ADR-0005 §8 허용 의존에서 L1(`stellar-cli`)과 L2(`stellar-mcp`)가 함께 의존할 수 있는 crate는
 //! `stellar-ops`·`stellar-diagnostics`뿐이고 JSON codec은 둘 중 어느 책임도 아닙니다. 공용 crate를
 //! 새로 두려면 두 도구의 허용 edge를 바꾸는 ADR 개정이 필요하므로(외부 JSON crate 도입은

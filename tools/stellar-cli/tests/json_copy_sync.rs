@@ -1,6 +1,6 @@
 //! 엄격 JSON reader·writer 사본 일치 검사.
 //!
-//! `src/json.rs`는 `tools/stellar-mcp/src/json.rs`와 본문이 같은 의도적 사본입니다(module 문서
+//! `src/json.rs`는 `crates/mcp-core/src/json.rs`와 본문이 같은 의도적 사본입니다(module 문서
 //! 참조). module 문서(`//!` 줄) 뒤의 본문이 byte 단위로 같아야 합니다. 한쪽만 고치면 이 테스트가
 //! 실패합니다. crate 의존이 아니라 소스 파일 비교이므로 L1 도구가 MCP 브리지에 의존하지 않습니다.
 
@@ -23,7 +23,7 @@ fn json_copies_have_identical_bodies() {
     let own = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/json.rs"));
     let other = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../stellar-mcp/src/json.rs"
+        "/../../crates/mcp-core/src/json.rs"
     ));
     let (own, other) = (body(own), body(other));
     assert!(own.starts_with("use "), "본문은 use 선언부터 시작");

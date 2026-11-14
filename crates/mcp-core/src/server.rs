@@ -8,8 +8,7 @@
 //! 1. `AwaitingInitialize`: `initialize` request와 `ping`만 처리합니다. 다른 request는
 //!    [`codes::SERVER_NOT_INITIALIZED`]로 거부합니다.
 //! 2. `Initialized`: `initialize` 응답 후. client의 `notifications/initialized`를 기다립니다.
-//! 3. `Ready`: 정상 운용. 현재는 `ping`만 제공하며 그 밖의 method는
-//!    [`codes::METHOD_NOT_FOUND`]입니다(resources·tools는 XIX.2).
+//! 3. `Ready`: 선택된 headless backend의 resource를 제공하며, 기본·attach 세션은 ping만 제공합니다.
 //!
 //! notification에는 응답하지 않습니다. client가 보낸 response는 서버가 request를 보내지 않으므로
 //! 로그만 남기고 무시합니다.
@@ -59,6 +58,7 @@ pub enum Phase {
 pub struct Server {
     phase: Phase,
     protocol: Result<ProtocolConfig, ProtocolConfigError>,
+    headless: Option<crate::headless::Headless>,
 }
 
 impl Default for Server {
@@ -76,6 +76,7 @@ impl Server {
         Server {
             phase: Phase::AwaitingInitialize,
             protocol: ProtocolConfig::builtin(),
+            headless: None,
         }
     }
 
@@ -84,6 +85,15 @@ impl Server {
         Server {
             phase: Phase::AwaitingInitialize,
             protocol: Ok(config),
+            headless: None,
+        }
+    }
+
+    /// 명시적으로 선택한 읽기 backend로 세션을 시작합니다. 이후 backend는 바뀌지 않습니다.
+    pub fn headless(backend: crate::headless::Headless) -> Self {
+        Self {
+            headless: Some(backend),
+            ..Self::new()
         }
     }
 
@@ -160,6 +170,22 @@ impl Server {
                 codes::SERVER_NOT_INITIALIZED,
                 "initialize 전에는 ping만 허용합니다",
             )),
+            "resources/list" | "resources/templates/list" | "resources/read" | "tools/list"
+                if self.headless.is_some() =>
+            {
+                if self.phase != Phase::Ready {
+                    return Err(RpcError::new(
+                        codes::SERVER_NOT_INITIALIZED,
+                        "initialized notification이 필요합니다",
+                    ));
+                }
+                let backend = self.headless.as_ref().expect("headless 분기");
+                if method == "resources/read" {
+                    backend.read(params)
+                } else {
+                    backend.list(method, params)
+                }
+            }
             // 오류 data의 method echo도 로그와 같은 길이 상한으로 자릅니다.
             _ => Err(
                 RpcError::new(codes::METHOD_NOT_FOUND, "알 수 없는 method입니다").with_data(
@@ -212,10 +238,20 @@ impl Server {
                 truncate_for_log(requested)
             )),
         }
+        if let Some(backend) = &self.headless {
+            backend.check()?;
+        }
         self.phase = Phase::Initialized;
         Ok(JsonValue::object(vec![
             ("protocolVersion", JsonValue::string(version)),
-            ("capabilities", JsonValue::Object(Vec::new())),
+            (
+                "capabilities",
+                if self.headless.is_some() {
+                    JsonValue::object(vec![("resources", JsonValue::Object(Vec::new()))])
+                } else {
+                    JsonValue::Object(Vec::new())
+                },
+            ),
             (
                 "serverInfo",
                 JsonValue::object(vec![
@@ -246,7 +282,16 @@ pub fn serve<R: BufRead, W: Write, L: Write>(
     output: &mut W,
     log: &mut Logger<L>,
 ) -> io::Result<()> {
-    let mut server = Server::new();
+    serve_with(Server::new(), input, output, log)
+}
+
+/// 시작 시 고정한 서버로 입력 끝까지 처리합니다.
+pub fn serve_with<R: BufRead, W: Write, L: Write>(
+    mut server: Server,
+    input: &mut R,
+    output: &mut W,
+    log: &mut Logger<L>,
+) -> io::Result<()> {
     log.info("stdio JSON-RPC 대기");
     loop {
         match read_frame(input, MAX_MESSAGE_BYTES)? {
@@ -466,6 +511,7 @@ mod tests {
         let mut server = Server {
             phase: Phase::AwaitingInitialize,
             protocol: Err(ProtocolConfigError::Empty),
+            headless: None,
         };
         let reply = handle(&mut server, INIT).unwrap();
         assert!(reply.contains("-32603"), "{reply}");

@@ -201,7 +201,10 @@ fn bridge_sources_have_no_file_mutation_api() {
     .iter()
     .map(|parts| parts.concat())
     .collect();
-    let mut stack = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+    let mut stack = vec![
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/mcp-core/src"),
+    ];
     let mut files = 0;
     while let Some(dir) = stack.pop() {
         for entry in std::fs::read_dir(&dir).unwrap() {

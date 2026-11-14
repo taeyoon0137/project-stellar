@@ -5,11 +5,15 @@ edition.workspace = true
 rust-version.workspace = true
 publish = false
 
-# L2 MCP stdio 브리지(XIX.1.1): 외부 crate와 FFI crate에 의존하지 않습니다.
+# L2 MCP stdio 진입점. 구현과 L1 연결은 mcp-core가 소유합니다.
 # network port를 열지 않으며, 로컬 IPC만 사용합니다.
 [dependencies]
+stellar-mcp-core = { path = "../../crates/mcp-core" }
 # bridge↔app 로컬 IPC(ADR-0005 §8 허용 edge).
 stellar-local-ipc = { path = "../../crates/local-ipc" }
+
+[dev-dependencies]
+stellar-mcp-core = { path = "../../crates/mcp-core", features = ["test-support"] }
 
 [lints]
 workspace = true

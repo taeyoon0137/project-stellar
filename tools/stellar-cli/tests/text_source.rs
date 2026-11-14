@@ -617,6 +617,30 @@ fn apply_frame_geometry_rejects_invalid_fields_and_rolls_back_wrong_node_kind() 
 }
 
 #[test]
+fn apply_after_a_source_rename_reports_the_same_missing_input_in_both_modes() {
+    let fixture = ApplyFixture::new("text-source-renamed");
+    let input = fixture.request(&format!(
+        r#"{{"kind":"rename","node":"{}","name":"New"}}"#,
+        fixture.node
+    ));
+    let renamed = fixture.source.path.join("renamed.stellar.yaml");
+    std::fs::rename(&fixture.path, &renamed).unwrap();
+    let before = file_digest(&fixture.source.path);
+    for dry_run in [true, false] {
+        let mut args = vec!["text-source", "apply", fixture.path.to_str().unwrap(), "-"];
+        if dry_run {
+            args.push("--dry-run");
+        }
+        let error = run_with_stdin(&args, &input, Some(&fixture.home.path), 66);
+        assert_eq!(
+            error.get("error").unwrap().get("code"),
+            Some(&JsonValue::string("text-source-io"))
+        );
+    }
+    assert_eq!(file_digest(&fixture.source.path), before);
+}
+
+#[test]
 fn apply_noop_preserves_comments_and_detects_comment_only_external_edits() {
     let fixture = ApplyFixture::new("text-source-cli-noop");
     let project_before = file_digest(&fixture.project.path);

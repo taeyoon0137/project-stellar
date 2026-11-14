@@ -13,6 +13,7 @@ use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
 use stellar_project::document_io::serialize::serialize_document;
 use stellar_project::document_io::text_source::{self, TextSourceError};
+use stellar_project::identity::ProjectIdentity;
 use stellar_storage::chunk::pointer::ChunkPointer;
 pub use stellar_storage::hash::ContentHash;
 
@@ -195,7 +196,9 @@ pub fn apply(
     let commands = decode_commands(&request.commands)?;
     let _guard = match (mode, lock) {
         (ApplyMode::Write, LockPolicy::Required { dir }) => {
-            Some(SaveLock::try_acquire(dir, request.document, path).map_err(ApplyError::Lock)?)
+            let identity = ProjectIdentity::new(request.document, path)
+                .map_err(|error| TextSourceOperationError::Io(error.kind()))?;
+            Some(SaveLock::for_identity(dir, &identity).map_err(ApplyError::Lock)?)
         }
         (ApplyMode::Write, LockPolicy::None) => {
             return Err(ApplyError::Lock(LockError::NoUserDataDir).into());

@@ -10,8 +10,8 @@
 //!   있어야 하므로 attached 전용입니다.
 //! - 큰 내용(문서 트리)은 page 단위입니다(XIX.2.2 [`super::paging`]). 모든 내용에는 revision이 있습니다.
 //!
-//! 이 목록은 정의입니다. backend 연결(XIX.9.3, XIX.9.4)과 `stellar-agent-protocol`로의 이동(XIX.9.2)은
-//! 후속 작업입니다. 서버는 아직 `resources` capability를 광고하지 않습니다.
+//! 이 목록은 정의입니다. headless는 구현한 project-structure·document만 광고합니다. 나머지
+//! backend 연결과 `stellar-agent-protocol`로의 이동(XIX.9.2)은 후속 작업입니다.
 
 use crate::json::JsonValue;
 
@@ -203,7 +203,7 @@ pub fn resource(name: &str) -> Option<&'static ResourceDef> {
     RESOURCES.iter().find(|r| r.name == name)
 }
 
-fn descriptor(def: &ResourceDef) -> JsonValue {
+pub(crate) fn descriptor(def: &ResourceDef) -> JsonValue {
     let uri_key = if def.template { "uriTemplate" } else { "uri" };
     JsonValue::object(vec![
         (uri_key, JsonValue::string(def.uri)),

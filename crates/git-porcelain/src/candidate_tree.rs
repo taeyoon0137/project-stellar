@@ -33,10 +33,10 @@ use crate::snapshot::blob::{BlobError, BlobLimits, OrderedBlobReader};
 use crate::snapshot::materialize::{
     materialize_with, validate_entries, MaterializeError, MaterializedSnapshot,
 };
-use crate::snapshot::read_index_snapshot;
 use crate::snapshot::working_tree::{
     list_working_tree_files, read_working_tree_file, WorkingTreeFile, WorkingTreeFileKind,
 };
+use crate::snapshot::{read_index_snapshot, IndexSnapshot};
 use crate::trust::GatedGitRunner;
 
 /// candidate Stellar 파일 하나(serializer 출력).
@@ -177,12 +177,18 @@ impl std::error::Error for CandidateTreeError {}
 /// 임시 디렉터리에 쓴 candidate project tree(drop 시 삭제).
 #[derive(Debug)]
 pub struct CandidateTree {
+    base: IndexSnapshot,
     snapshot: MaterializedSnapshot,
     files: Vec<CandidateTreeFile>,
     preserved_gitlinks: Vec<GitPath>,
 }
 
 impl CandidateTree {
+    /// 이 candidate를 만들 때 읽은 실제 index(후속 delta의 비교 기준).
+    pub fn base_index(&self) -> &IndexSnapshot {
+        &self.base
+    }
+
     /// candidate tree root(`.git` 없음).
     pub fn root(&self) -> &Path {
         self.snapshot.root()
@@ -378,6 +384,7 @@ pub fn write_candidate_tree(
         Err(error) => return Err(failure.unwrap_or(CandidateTreeError::Materialize(error))),
     };
     Ok(CandidateTree {
+        base: index,
         snapshot,
         files,
         preserved_gitlinks,

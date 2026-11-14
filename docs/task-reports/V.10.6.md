@@ -71,6 +71,11 @@ Frame 후속 단위는 `crates/ops/src/apply.rs`의 typed 입력 두 개와 `too
 | `RUST_TEST_THREADS=1 cargo xtask check-core` | 0 — fmt·clippy·workspace 3,852 passed/8 ignored·별도 doctest 54 passed |
 | `cargo xtask generate-ledger` / `cargo fmt --all -- --check` | 0 — 원본에서 1,152행 재생성, V.10.6 상태 유지 |
 | `target/debug/xtask sync-plan --check` / `validate-task-status` / `validate-task-report docs/task-reports/V.10.6.md` / `validate-adr` / `validate-crate-graph` | 0 |
+| `git fetch origin main` / `git merge --no-commit origin/main` (dfb11566) | fetch 0 / merge 1 — 같은 위치에 추가한 CLI 테스트 충돌. Frame 2개와 upstream 원본 rename 테스트 본문을 모두 그대로 보존해 해결 |
+| `cargo test -p stellar-cli --test text_source --locked` (dfb11566 통합) | 0 — 원본 rename 포함 10 passed |
+| `RUST_TEST_THREADS=1 cargo test -p stellar-ops -p stellar-cli -p stellar-mcp-core -p stellar-mcp --locked` (dfb11566 통합) | 0 — 204 passed, 0 failed, 0 ignored |
+| `cargo fmt --all -- --check` / `cargo clippy --workspace --all-targets --locked -- -D warnings` (dfb11566 통합) | 0 |
+| `./scripts/macos/smoke.sh` (dfb11566 통합) | 0 — 서명 없는 Debug 빌드와 기본 smoke 전체 통과, 창 세션 68·메뉴 명령 56·키 매핑 101 검사 포함 |
 
 ## 환경과 증거
 
@@ -79,6 +84,7 @@ Frame 후속 단위는 `crates/ops/src/apply.rs`의 typed 입력 두 개와 `too
 - 새 테스트 최초 컴파일의 borrow/fixture 생성자·비교 타입 오류와 보고서 최초 검사의 필수 절 명칭 누락을 수정한 뒤 타깃·전체 검증과 보고서 검사를 통과했습니다.
 - 통합 전 전체 Rust 검증의 원시 로그는 `target/xtask-logs/{fmt,clippy,test,doc-test}.log`에서 별도 외부 인계 경로로 보존했습니다. 943efb19 통합 후에도 전체 검증을 재실행해 통과했습니다. 로그는 `/tmp/stellar-text-apply-check-core-integrated.log`와 `target/xtask-logs/`에 있으며 원본 사본은 저장소 밖 인계 경로에 보존했습니다. 후속 7f046069 통합은 fmt·clippy·관련 Rust 전체 타깃과 기본 macOS smoke로 재검증했습니다. 최종 로그는 `/tmp/stellar-text-apply-final-{clippy,targets,macos}.log`입니다. 원격 CI와 LAB·REF 성능은 이번 검증 주장에 포함하지 않습니다.
 - Frame 후속 착수 때의 17:37 전체 검사 실패도 같은 IPC 3건이었습니다(5.474초·3.289초·TimedOut). 당시 로그는 저장소 밖 `frame-geometry-validation-20261114/previous-failure/`에 보존했습니다. 새 타깃 로그는 `/tmp/stellar-frame-geometry-{ops,ops-all,cli}.log`입니다. IPC 코드·시간 상한·제외 목록은 변경하지 않았습니다.
+- Frame 구현 커밋 `8043883b` 이후 원격 dfb11566을 병합했습니다. 두 production 입력 adapter 파일은 8043883b와 bytes가 같고, 충돌한 세 테스트 본문은 각 원본 Git 객체와 비교해 보존을 확인했습니다. 전체 Rust 검증 사본은 외부 `frame-geometry-validation-20261114/before-main-integration/`, 최종 통합 타깃·clippy·smoke 로그는 `/tmp/stellar-frame-geometry-integrated-*.log`입니다.
 
 ## 성능
 
@@ -93,5 +99,5 @@ Frame 후속 단위는 `crates/ops/src/apply.rs`의 typed 입력 두 개와 `too
 - V.10.6 전체의 선행·완료 기준이 남아 있어 verified로 승격하지 않습니다. 전체 의미 지원, 다중 파일 journal, 앱 기본 저장, clean/dirty 외부 변경 재로드·병합은 후속입니다.
 - 실제 의미 편집 시 v1 결정론 writer는 주석·서식을 다시 쓰므로 보존하지 않습니다. 무변경 저장만 원본 bytes를 보존합니다.
 - 같은 잠금을 사용하지 않는 외부 writer의 마지막 hash 검사와 rename 사이 경쟁은 기존 API의 한계입니다. 부모 fsync 실패는 게시 후 반환될 수 있어 모든 I/O 실패에서 미저장을 단정하면 안 됩니다. 오류 후 실제 파일을 다시 읽어야 합니다.
-- 기본 병렬 IPC 검증 실패는 별도 추적 대상입니다. 직렬 검증 통과와 구분합니다. Frame 후속 단위의 전체 workspace 검증 기준은 7f046069를 포함한 5d53de48 위 변경이며, 위 첫 CLI 연결 단위의 과거 검증과 구분합니다.
+- 기본 병렬 IPC 검증 실패는 별도 추적 대상입니다. 직렬 검증 통과와 구분합니다. Frame 후속 단위의 전체 workspace 검증 기준은 7f046069를 포함한 5d53de48 위 변경이며, 최종 dfb11566 병합은 관련 Rust 204개·전체 clippy·macOS smoke로 검증했습니다. 최종 병합에서 전체 workspace 검사를 다시 실행한 것으로 보고하지 않습니다.
 - 직접 push·main checkout·release·배포는 수행하지 않습니다.
