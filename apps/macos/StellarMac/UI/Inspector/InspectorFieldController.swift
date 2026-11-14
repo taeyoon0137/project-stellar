@@ -44,6 +44,11 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         refresh()
     }
 
+    deinit {
+        // 화살표 키 조정 중에 행이 사라져도 monitor가 남지 않게 합니다(종료 명령은 보낼 곳이 없음).
+        if let keyUpMonitor { NSEvent.removeMonitor(keyUpMonitor) }
+    }
+
     /// 같은 컨트롤 구성으로 새 값을 반영할 수 있는지.
     func canUpdate(to newField: InspectorField) -> Bool {
         newField.id == field.id && newField.control == field.control && newField.shortLabel == field.shortLabel
@@ -396,19 +401,39 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
     // MARK: - 편집 → 명령
 
     @objc private func numberCommitted(_ sender: NSTextField) {
-        guard case .number(let spec) = field.control, isInteractive else { return }
-        let text = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        commitNumber(text: sender.stringValue)
+    }
+
+    /// 수치 입력 확정(Return·포커스 이동). 화살표 키 조정 중이면 이 값으로 조정을 끝냅니다.
+    private func commitNumber(text rawText: String) {
+        guard case .number(let spec) = field.control, isInteractive else {
+            endGesture()
+            return
+        }
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
+            endGesture()
             refresh()
             return
         }
         guard let number = numberFormatter.number(from: text)?.doubleValue ?? Double(text) else {
             NSSound.beep()
+            endGesture()
             refresh()
             return
         }
         // NumberFormatter 해석은 반올림하지 않으므로(예: 자릿수 0에서 "6.7" → 6.7) 표시 자릿수로 직접 맞춥니다.
         let model = spec.modelValue(fromDisplay: number)
+        if gesture == .set {
+            // 화살표 키 조정 뒤 확정: 확정 값을 연속 조작의 최종 값으로 보내 한 Undo 단위로 끝냅니다.
+            // 값이 그대로여도 `.ended`를 보냅니다.
+            field.value = .number(model)
+            refresh()
+            endGesture()
+            return
+        }
+        // 혼합 값 상대 조정 중에 값을 입력했다면 상대 조정을 먼저 끝내고, 입력값은 별도 확정으로 보냅니다.
+        endGesture()
         if case .number(let current) = field.value, Self.same(current, model, spec: spec) {
             refresh()
             return
@@ -425,11 +450,13 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
             let model = spec.normalized(sender.doubleValue)
             field.value = .number(model)
             refresh()
+            beginGesture(.set, endsWith: .pointerRelease)
             send?(.setValue(field.id, .number(model), phase: .continuous))
         case .mixed:
             let delta = sender.doubleValue
             sender.doubleValue = 0
             if delta != 0 {
+                beginGesture(.adjust, endsWith: .pointerRelease)
                 send?(.adjustNumber(field.id, delta: delta, phase: .continuous))
             }
         default:
@@ -449,7 +476,8 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         guard isInteractive, let color = InspectorColor(sender.color) else { return }
         field.value = .color(color)
         mixedLabel?.isHidden = true
-        // 색 패널 드래그는 연속 입력이므로 코어가 같은 속성의 연속 변경을 한 Undo로 묶습니다.
+        // 색 패널 드래그는 연속 조작입니다. 마우스를 놓으면(또는 클릭 한 번이면 바로) `.ended`로 끝냅니다.
+        beginGesture(.set, endsWith: .pointerRelease)
         send?(.setValue(field.id, .color(color), phase: .continuous))
     }
 
@@ -489,6 +517,100 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         send?(.perform(field.id))
     }
 
+    // MARK: - 연속 조작(아키텍처 §23.3)
+
+    /// 연속 조작 종류: 값 설정(`setValue`) 또는 혼합 값 상대 조정(`adjustNumber`).
+    enum Gesture: Equatable {
+        case set
+        case adjust
+    }
+
+    /// 연속 조작이 끝나는 조건.
+    enum GestureEnd {
+        /// 마우스 추적(stepper 누름·자동 반복, 색 패널 드래그)이 끝나고 왼쪽 버튼이 놓였을 때.
+        /// 키보드·VoiceOver로 한 단계 바꾼 경우에는 다음 런 루프에서 바로 끝납니다.
+        case pointerRelease
+        /// 수치 필드 화살표 키를 놓았을 때, 또는 편집이 끝났을 때(Return·포커스 이동).
+        case arrowKeyRelease
+    }
+
+    /// 진행 중인 연속 조작. `nil`이면 없음.
+    private(set) var gesture: Gesture?
+    private var gestureEndScheduled = false
+    private var keyUpMonitor: Any?
+
+    /// 연속 조작을 시작하거나 이어 갑니다. 종류가 바뀌면 이전 조작을 먼저 끝냅니다.
+    private func beginGesture(_ kind: Gesture, endsWith end: GestureEnd) {
+        if let gesture, gesture != kind { endGesture() }
+        gesture = kind
+        switch end {
+        case .pointerRelease:
+            scheduleGestureEndCheck(after: 0)
+        case .arrowKeyRelease:
+            installKeyUpMonitor()
+        }
+    }
+
+    /// 마우스 추적 루프는 이벤트 추적 모드에서 돌므로 기본 모드 블록은 추적이 끝난 뒤 실행됩니다.
+    /// 그때도 왼쪽 버튼이 눌려 있으면(추적 루프 밖 드래그) 한 프레임 뒤 다시 확인합니다. 시간 제한으로 끝을
+    /// 추측하지 않고 버튼 상태로 판단합니다.
+    private func scheduleGestureEndCheck(after delay: TimeInterval) {
+        guard !gestureEndScheduled else { return }
+        gestureEndScheduled = true
+        let check: @Sendable () -> Void = { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.gestureEndScheduled = false
+                guard self.gesture != nil, self.keyUpMonitor == nil else { return }
+                if NSEvent.pressedMouseButtons & 1 != 0 {
+                    self.scheduleGestureEndCheck(after: 1.0 / 60)
+                } else {
+                    self.endGesture()
+                }
+            }
+        }
+        if delay > 0 {
+            let timer = Timer(timeInterval: delay, repeats: false) { _ in check() }
+            RunLoop.main.add(timer, forMode: .default)
+        } else {
+            RunLoop.main.perform(inModes: [.default], block: check)
+        }
+    }
+
+    /// 화살표 키를 놓으면 조정을 끝냅니다. 텍스트 편집은 중첩 추적 루프가 아니므로 key up이
+    /// `sendEvent`를 거쳐 로컬 monitor에 들어옵니다.
+    private func installKeyUpMonitor() {
+        guard keyUpMonitor == nil else { return }
+        keyUpMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyUp) { [weak self] event in
+            if event.specialKey == .upArrow || event.specialKey == .downArrow {
+                MainActor.assumeIsolated { self?.endGesture() }
+            }
+            return event
+        }
+    }
+
+    /// 진행 중인 연속 조작을 끝내고 최종 값과 함께 `.ended`를 보냅니다. 값이 더 바뀌지 않았어도 보냅니다.
+    /// 선택 변경 전에도 불러, 아직 바뀌지 않은 세대(이전 선택)로 끝을 알립니다.
+    func endGesture() {
+        if let keyUpMonitor {
+            NSEvent.removeMonitor(keyUpMonitor)
+            self.keyUpMonitor = nil
+        }
+        guard let gesture else { return }
+        self.gesture = nil
+        switch gesture {
+        case .set:
+            switch field.value {
+            case .number, .color:
+                send?(.setValue(field.id, field.value, phase: .ended))
+            default:
+                break
+            }
+        case .adjust:
+            send?(.adjustNumber(field.id, delta: 0, phase: .ended))
+        }
+    }
+
     // MARK: - NSTextFieldDelegate
 
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
@@ -512,11 +634,19 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
     }
 
     func controlTextDidEndEditing(_ notification: Notification) {
+        // AppKit은 이 통지를 확정 action보다 먼저 보냅니다. 화살표 키 조정 중이면 입력한 값으로 지금 확정해
+        // 조정을 끝냅니다(뒤따르는 action은 같은 값이라 명령을 다시 보내지 않음).
+        if gesture != nil, let textField {
+            let editorText = (notification.userInfo?["NSFieldEditor"] as? NSText)?.string ?? textField.stringValue
+            commitNumber(text: editorText)
+        }
+        endGesture()
         // 편집 중 건너뛴 snapshot 값을 다시 반영합니다.
         refresh()
     }
 
     /// 화살표 키 조정: 한 단계(Shift는 10단계). 혼합 값은 상대 조정 명령으로 보냅니다.
+    /// 키를 누르고 있는 동안(자동 반복 포함)이 연속 조작 하나이고, 키를 놓거나 편집이 끝나면 `.ended`를 보냅니다.
     private func nudge(by steps: Double, textView: NSTextView) -> Bool {
         guard case .number(let spec) = field.control else { return false }
         guard isInteractive else { return true }
@@ -530,8 +660,10 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
             textView.string = displayText()
             textView.selectAll(nil)
             stepper?.doubleValue = model
+            beginGesture(.set, endsWith: .arrowKeyRelease)
             send?(.setValue(field.id, .number(model), phase: .continuous))
         case .mixed:
+            beginGesture(.adjust, endsWith: .arrowKeyRelease)
             send?(.adjustNumber(field.id, delta: delta, phase: .continuous))
         default:
             break

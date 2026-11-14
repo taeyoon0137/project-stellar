@@ -8,11 +8,18 @@ import Foundation
 // 셸 → 코어: 편집은 `InspectorCommand`로만 보냅니다. 코어가 검증·Undo 그룹화·적용을 맡습니다.
 
 /// 편집 단계. 코어 `HistoryGroupingPolicy`가 Undo 단위를 정하는 근거입니다(아키텍처 §23.3).
+///
+/// 연속 조작(stepper 누름·자동 반복, 색 패널 드래그, 수치 필드 화살표 키 누름)은 `.continuous` 여러 개 뒤에
+/// 같은 속성의 `.ended` 하나로 끝납니다. 첫 `.continuous`부터 `.ended`까지가 Undo 한 단위입니다
+/// (아키텍처 §23.3 "조작 시작부터 종료까지 하나"). 셸은 값이 더 바뀌지 않았어도 `.ended`를 반드시 보내므로,
+/// 코어는 시간 제한으로 끝을 추측하지 않습니다.
 enum InspectorEditPhase: Equatable {
     /// 확정 입력(Return, 포커스 이동, popup 선택 등). 그 자체로 Undo 한 단위입니다.
     case commit
-    /// 연속 조정(화살표 키·stepper 반복, 색 패널 드래그). 같은 속성의 연속 입력은 코어가 병합합니다.
+    /// 진행 중인 연속 조작의 중간 값. 같은 속성의 `.ended`가 올 때까지 코어가 한 단위로 묶습니다.
     case continuous
+    /// 연속 조작의 끝과 최종 값. 상대 조정(`adjustNumber`)은 `delta: 0`으로 끝을 알립니다.
+    case ended
 }
 
 /// 셸이 코어로 보내는 인스펙터 편집 명령.

@@ -178,6 +178,11 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
         }
     }
 
+    /// 진행 중인 파라미터 연속 조작을 끝냅니다.
+    func endGestures() {
+        detailRows.endGestures()
+    }
+
     /// 키보드 포커스 순서.
     var keyViews: [NSView] {
         var views: [NSView] = [sectionView.disclosureButton]

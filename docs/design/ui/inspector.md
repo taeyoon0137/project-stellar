@@ -243,17 +243,19 @@
 
 | 조작 | 명령 | 단계 |
 |---|---|---|
-| 수치·텍스트 필드에서 Return 또는 포커스 이동 | `.setValue` | `.commit` |
-| 수치 필드 화살표 위·아래 | `.setValue`(단일), `.adjustNumber`(혼합) | `.continuous` |
-| `NSStepper` 누름·자동 반복 | 같음 | `.continuous` |
-| `NSColorWell`·색 패널 변경 | `.setValue` | `.continuous` |
+| 수치·텍스트 필드에서 Return 또는 포커스 이동 | `.setValue` | `.commit`(화살표 키 조정 중이면 `.ended`) |
+| 수치 필드 화살표 위·아래 | `.setValue`(단일), `.adjustNumber`(혼합) | `.continuous` … 키를 놓거나 편집이 끝나면 `.ended` |
+| `NSStepper` 누름·자동 반복 | 같음 | `.continuous` … 마우스 추적이 끝나면 `.ended` |
+| `NSColorWell`·색 패널 변경 | `.setValue` | `.continuous` … 마우스를 놓으면 `.ended` |
 | switch·popup·segmented | `.setValue` | `.commit` |
 | 명령 버튼(반전, 변환, Detach, Edit on Canvas) | `.perform` | — |
 | Value Binding 표시 클릭 | `.showBinding`(placeholder) | — |
 | modifier 추가·삭제·활성·이동 | `.addModifier`·`.removeModifier`·`.setModifierEnabled`·`.moveModifier` | — |
 | 오류 화면 Try Again | `.reload` | — |
 
-- `.continuous`는 같은 속성의 연속 입력을 코어 `HistoryGroupingPolicy`가 한 Undo로 묶으라는 표시입니다. [아키텍처 §23.3]
+- 연속 조작은 `.continuous` 여러 개 뒤에 같은 속성의 `.ended` 하나로 끝나고, 첫 `.continuous`부터 `.ended`까지가 Undo 한 단위입니다. 셸은 값이 더 바뀌지 않았어도 `.ended`를 반드시 보내므로 코어 `HistoryGroupingPolicy`는 시간 제한으로 끝을 추측하지 않습니다. `.ended`는 최종 값을 담고, 상대 조정(`.adjustNumber`)은 `delta: 0`으로 끝을 알립니다. [아키텍처 §23.3]
+- 끝 판정: 화살표 키는 키를 놓을 때(자동 반복 포함 누르는 동안이 한 조작, key up은 로컬 이벤트 monitor로 받음), 편집이 끝날 때, Return으로 값을 확정할 때입니다. 조정 뒤 입력한 값을 확정하면 그 값이 같은 조작의 최종 값(`.ended`)이고 별도 `.commit`은 없습니다. stepper·색 패널은 마우스 추적 루프(이벤트 추적 모드)가 끝난 다음 기본 모드 런 루프에서 왼쪽 버튼이 놓여 있으면 끝냅니다. 아직 눌려 있으면 한 프레임 뒤 다시 확인합니다. 키보드·VoiceOver로 한 단계 바꾸면 다음 런 루프에서 바로 끝납니다.
+- 선택이 바뀌거나 페이지·행이 바뀌어 컨트롤이 사라지기 전에, 진행 중인 연속 조작을 `.ended`로 끝냅니다(선택 변경이면 이전 세대로).
 - 수치 입력은 표시 단위로 받아 표시 자릿수(`fractionDigits`)로 반올림(0.5는 0에서 먼 쪽)한 뒤 `displayScale`로 나눠 모델 단위로 보냅니다. 화면에 보이는 값과 코어로 가는 값이 같습니다. 정수 필드(Polygon 변 수, Duration ms)는 정수만 보냅니다(예: "6.7" → 7). `NumberFormatter` 해석은 반올림하지 않으므로 직접 맞춥니다. 화살표 키·stepper 결과도 같은 격자로 맞춥니다. 범위 밖 값은 규격 하한·상한으로 clamp하고, 숫자가 아니면 경고음 후 이전 값으로 되돌립니다.
 - 모든 명령은 근거가 된 snapshot 세대(`basedOn`)와 함께 갑니다. 선택이 바뀌는 snapshot(`selectionToken` 변경)을 반영하기 전에 진행 중인 텍스트 편집을 이전 세대로 확정하고, 색 패널에 연결된 색 well을 끊습니다. 새 선택에 이전 입력이 잘못 적용되지 않게 하기 위함입니다.
 
@@ -355,7 +357,7 @@ protocol InspectorDataSource: AnyObject {
 | View Variant | Variant별 값 편집 | [아키텍처 §16] |
 | 접근성 의미 preview | 디자인 문서 role·label 등 읽기 | XII.8.3 [아키텍처 §18] |
 | Text style run | 선택 범위 기준 문자 style, OpenType feature·variation 편집 | `text.rs` VI.7.2 |
-| Undo 그룹화 | `.commit`·`.continuous` 단계를 `HistoryGroupingPolicy`에 연결 | [아키텍처 §23.3] |
+| Undo 그룹화 | `.commit`·`.continuous`·`.ended` 단계를 `HistoryGroupingPolicy`에 연결(`.continuous`…`.ended`가 한 단위) | [아키텍처 §23.3] |
 | 첫 페이지 생성 비용 | 행 `NSStackView`를 직접 제약으로 바꿔 제약 수 줄이기, 유휴 시간 분할 예열, Release 측정 | [아키텍처 §6.3] XVI.1 |
 | 셸 통합 | `NSSplitViewController` 3열 인스펙터 자리, Show Inspector 메뉴·툴바, 창 key view loop 연결, 섹션 접힘 상태 복원, scroll edge effect(macOS 26.1 이상) | XII.9.1, XII.6 [가이드 2.3, 2.6] |
 | 검사 연결 | `main.swift`에 `--inspector-ui-check` 분기를 두고 `scripts/macos/smoke.sh`에서 실행 | 10장 |
@@ -386,7 +388,7 @@ protocol InspectorDataSource: AnyObject {
 
 - 사용한 SF Symbols 이름이 모두 시스템에 있음(현재 41개).
 - Stub 17개 장면 × Light·Dark: Auto Layout 모호성 없음, 내용이 인스펙터 폭을 넓히지 않음, 컨트롤이 패널 여백 안에 있음, 크기 0 컨트롤 없음, 조작 컨트롤의 접근성 레이블, 장면별 섹션 구성, 파괴 동작 버튼 3종만 `hasDestructiveAction`이고 기본 버튼이 아님, key view 순서 연결.
-- 상호작용: 수치 확정·clamp·Escape 되돌리기·화살표 키, 이전 세대 명령은 이전 선택에 적용·새 선택 값과 표시 유지·만료 세대 거부, 표시 자릿수 반올림(변 수 "6.7" → 7, crop "12.34" → 12.3%), stepper, switch와 의존 필드, popup·동적 선택지, 색 well, segmented, 줄 높이 Auto, disclosure와 key view 제외, 오래된 세대 무시, 선택 종류 전환, modifier 선택·배율 변환·추가·활성·이동(Command-Option-↑)·삭제, 혼합 값 상대 조정(Shift-↑), Fragment 변환, 잠금 → 안내 → Unlock, 페이지 재사용 상한·재생성·접힘 상태 공유, 편집 중 선택 변경 시 이전 세대로 확정.
+- 상호작용: 수치 확정·clamp·Escape 되돌리기·화살표 키, 연속 조작 끝(`.ended`: 화살표 key up·확정 값·stepper·색·혼합 상대 조정·선택 변경 시 이전 세대), 이전 세대 명령은 이전 선택에 적용·새 선택 값과 표시 유지·만료 세대 거부, 표시 자릿수 반올림(변 수 "6.7" → 7, crop "12.34" → 12.3%), stepper, switch와 의존 필드, popup·동적 선택지, 색 well, segmented, 줄 높이 Auto, disclosure와 key view 제외, 오래된 세대 무시, 선택 종류 전환, modifier 선택·배율 변환·추가·활성·이동(Command-Option-↑)·삭제, 혼합 값 상대 조정(Shift-↑), Fragment 변환, 잠금 → 안내 → Unlock, 페이지 재사용 상한·재생성·접힘 상태 공유, 편집 중 선택 변경 시 이전 세대로 확정.
 - Stub 한계: 혼합 값 상대 조정을 적용하지 않음, Value Binding 요청에 snapshot을 내지 않음. [계획 1.2 규칙 6]
 - 반영 시간 참고값(8.3절)을 출력합니다. 판정 기준은 아닙니다.
 - 화면 밖에서 대비 높이기·투명도 줄이기 설정을 강제할 수 없어, 이 두 설정의 실제 화면은 검사하지 않습니다. XII.9.4 적합성 보고서에서 확인합니다.

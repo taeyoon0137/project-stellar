@@ -154,6 +154,12 @@ final class InspectorPageView: NSView {
         controller.apply(stack, forceDisabled: forceDisabled)
     }
 
+    /// 진행 중인 연속 조작(stepper·색·화살표 키)을 모두 `.ended`로 끝냅니다.
+    func endGestures() {
+        sections.forEach { $0.rows.endGestures() }
+        modifierController?.endGestures()
+    }
+
     /// 다른 페이지에서 바뀐 접힘 상태를 맞춥니다.
     func syncExpansion(_ collapsedSections: Set<InspectorSectionID>) {
         for section in sectionViews where section.isExpanded == collapsedSections.contains(section.sectionID) {

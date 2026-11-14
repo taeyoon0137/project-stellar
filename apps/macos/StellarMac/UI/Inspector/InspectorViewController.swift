@@ -94,8 +94,12 @@ final class InspectorViewController: NSViewController {
     private func apply(_ snapshot: InspectorSnapshot) {
         if let applied = appliedSnapshot, snapshot.generation < applied.generation { return }
         if let applied = appliedSnapshot, applied.selectionToken != snapshot.selectionToken {
-            // 선택이 바뀌기 전에, 진행 중인 편집을 이전 세대(이전 선택)로 확정합니다.
+            // 선택이 바뀌기 전에, 진행 중인 편집과 연속 조작을 이전 세대(이전 선택)로 확정합니다.
             finishInteractions()
+        } else if let activePage,
+                  snapshot.state != .ready || InspectorPageView.structureKey(of: snapshot) != activePage.structureKey {
+            // 같은 선택이라도 페이지가 바뀌면(예: Frame으로 변환) 사라질 컨트롤의 연속 조작을 먼저 끝냅니다.
+            activePage.endGestures()
         }
         appliedSnapshot = snapshot
         _ = view // loadView 보장
@@ -172,7 +176,7 @@ final class InspectorViewController: NSViewController {
         }
     }
 
-    /// 인스펙터 안에서 진행 중인 텍스트 편집을 확정하고, 색 패널과 연결된 색 well을 끊습니다.
+    /// 인스펙터 안에서 진행 중인 텍스트 편집과 연속 조작을 확정하고, 색 패널과 연결된 색 well을 끊습니다.
     /// 확정 명령은 아직 바뀌지 않은 `appliedSnapshot` 세대로 나갑니다.
     private func finishInteractions() {
         if let window = view.window, let responder = window.firstResponder as? NSView {
@@ -182,6 +186,7 @@ final class InspectorViewController: NSViewController {
                 window.makeFirstResponder(nil)
             }
         }
+        activePage?.endGestures()
         // 색 패널이 만들어진 적이 없으면 활성 well도 없으므로 뷰를 훑지 않습니다.
         if NSColorPanel.sharedColorPanelExists {
             Self.deactivateColorWells(in: view)

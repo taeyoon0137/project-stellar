@@ -196,6 +196,7 @@ enum InspectorUICheck {
 
     private static func checkInteractions(_ report: inout [String]) throws {
         try checkFrameEditing()
+        try checkContinuousGestures()
         try checkNumberRounding()
         try checkModifierStack()
         try checkMixedAndText()
@@ -241,7 +242,11 @@ enum InspectorUICheck {
         try require(source.receivedCommands.count == commandCount + 1 &&
                     source.receivedCommands.last == .setValue(try propertyID(harness, "frame.size.width"), .number(1), phase: .continuous),
                     "화살표 키 증가 명령 불일치: \(String(describing: source.receivedCommands.last))")
+        // 편집이 끝나면 값이 그대로여도 연속 조작 끝(`.ended`)을 한 번 보냅니다(별도 commit 없음).
         _ = harness.window.makeFirstResponder(nil)
+        try require(source.receivedCommands.count == commandCount + 2 &&
+                    source.receivedCommands.last == .setValue(try propertyID(harness, "frame.size.width"), .number(1), phase: .ended),
+                    "화살표 키 조정 종료 명령 불일치: \(String(describing: source.receivedCommands.last))")
         harness.flush()
         try require(width.stringValue == "1", "화살표 키 후 너비 '\(width.stringValue)'")
 
@@ -314,6 +319,125 @@ enum InspectorUICheck {
         lineMode.sendAction(lineMode.action, to: lineMode.target)
         harness.flush()
         try require(!isEnabled(controller, "text.paragraph.lineHeight.value"), "Auto 줄 높이 값이 편집 가능")
+    }
+
+    /// 연속 조작은 `.continuous` 뒤에 같은 속성의 `.ended` 하나로 끝납니다(아키텍처 §23.3).
+    /// 화살표 키는 key up·편집 끝·Return, stepper·색은 마우스 추적이 끝난 다음 런 루프에서 끝납니다.
+    private static func checkContinuousGestures() throws {
+        let harness = Harness(scenario: .frame, appearance: .aqua)
+        defer { harness.close() }
+        let source = harness.source
+        let widthID = try propertyID(harness, "frame.size.width")
+        let width = try control(harness.controller, "frame.size.width", as: NSTextField.self)
+        func commands(since start: Int) -> [InspectorCommand] { Array(source.receivedCommands[start...]) }
+
+        // 화살표 키 두 번 → key up에서 끝(값 322).
+        var start = source.receivedCommands.count
+        try require(harness.window.makeFirstResponder(width), "너비 first responder 실패")
+        guard let editor = width.currentEditor() as? NSTextView else { throw Failure(message: "field editor 없음") }
+        editor.doCommand(by: #selector(NSResponder.moveUp(_:)))
+        editor.doCommand(by: #selector(NSResponder.moveUp(_:)))
+        try sendArrowKeyUp(harness)
+        try require(commands(since: start) == [
+            .setValue(widthID, .number(321), phase: .continuous),
+            .setValue(widthID, .number(322), phase: .continuous),
+            .setValue(widthID, .number(322), phase: .ended),
+        ], "화살표 키 key up 종료 불일치: \(commands(since: start))")
+
+        // 다시 조정한 뒤 값을 입력하고 확정 → 확정 값이 같은 조작의 최종 값(`.ended`)이고 별도 commit은 없음.
+        start = source.receivedCommands.count
+        editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
+        editor.string = "400"
+        _ = harness.window.makeFirstResponder(nil)
+        try require(commands(since: start) == [
+            .setValue(widthID, .number(321), phase: .continuous),
+            .setValue(widthID, .number(400), phase: .ended),
+        ], "화살표 키 뒤 확정 종료 불일치: \(commands(since: start))")
+        harness.flush()
+
+        // stepper 자동 반복 두 번 → 추적이 끝난 다음 런 루프에서 `.ended`.
+        let rotationID = try propertyID(harness, "frame.transform.rotation")
+        let stepper = try control(harness.controller, "frame.transform.rotation.stepper", as: NSStepper.self)
+        start = source.receivedCommands.count
+        for _ in 0..<2 {
+            stepper.doubleValue += stepper.increment
+            stepper.sendAction(stepper.action, to: stepper.target)
+        }
+        try require(commands(since: start).allSatisfy {
+            if case .setValue(_, _, .continuous) = $0 { return true } else { return false }
+        }, "stepper 반복 중 종료 명령이 먼저 나감: \(commands(since: start))")
+        try pumpUntil("stepper 종료") { source.receivedCommands.count == start + 3 }
+        try require(commands(since: start) == [
+            .setValue(rotationID, .number(1), phase: .continuous),
+            .setValue(rotationID, .number(2), phase: .continuous),
+            .setValue(rotationID, .number(2), phase: .ended),
+        ], "stepper 종료 불일치: \(commands(since: start))")
+        harness.flush()
+
+        // 색 well(색 패널 변경) → 다음 런 루프에서 `.ended`.
+        let borderID = try propertyID(harness, "frame.border.color")
+        let border = try control(harness.controller, "frame.border.color", as: NSColorWell.self)
+        start = source.receivedCommands.count
+        border.color = NSColor(srgbRed: 0, green: 0, blue: 1, alpha: 1)
+        border.sendAction(border.action, to: border.target)
+        try pumpUntil("색 종료") { source.receivedCommands.count == start + 2 }
+        guard case .setValue(borderID, .color(let first), .continuous) = source.receivedCommands[start],
+              source.receivedCommands[start + 1] == .setValue(borderID, .color(first), phase: .ended) else {
+            throw Failure(message: "색 종료 불일치: \(commands(since: start))")
+        }
+        harness.flush()
+
+        // 선택이 바뀌면 진행 중인 stepper 조작을 이전 세대로 끝냅니다.
+        start = source.receivedCommands.count
+        let previousGeneration = source.snapshot.generation
+        stepper.doubleValue += stepper.increment
+        stepper.sendAction(stepper.action, to: stepper.target)
+        harness.flush()
+        let continuousGeneration = harness.controller.appliedSnapshot?.generation ?? 0
+        source.select(.text)
+        harness.flush()
+        try require(source.receivedCommands.count >= start + 2
+                    && source.receivedCommands[start + 1] == .setValue(rotationID, .number(3), phase: .ended),
+                    "선택 변경 시 stepper 조작이 끝나지 않음: \(commands(since: start))")
+        try require(source.receivedGenerations[start + 1] == continuousGeneration
+                    && continuousGeneration > previousGeneration,
+                    "조작 종료가 이전 선택 세대가 아님: \(source.receivedGenerations[start + 1])")
+
+        // 혼합 값 상대 조정 → key up에서 `delta: 0` 종료.
+        let mixed = Harness(scenario: .multipleFrames, appearance: .aqua)
+        defer { mixed.close() }
+        let mixedWidth = try control(mixed.controller, "frame.size.width", as: NSTextField.self)
+        try require(mixed.window.makeFirstResponder(mixedWidth), "혼합 너비 first responder 실패")
+        guard let mixedEditor = mixedWidth.currentEditor() as? NSTextView else {
+            throw Failure(message: "혼합 field editor 없음")
+        }
+        start = mixed.source.receivedCommands.count
+        mixedEditor.doCommand(by: #selector(NSResponder.moveDown(_:)))
+        try sendArrowKeyUp(mixed)
+        try require(Array(mixed.source.receivedCommands[start...]) == [
+            .adjustNumber(widthID, delta: -1, phase: .continuous),
+            .adjustNumber(widthID, delta: 0, phase: .ended),
+        ], "혼합 상대 조정 종료 불일치: \(Array(mixed.source.receivedCommands[start...]))")
+    }
+
+    /// 화살표 키 key up을 앱 이벤트 경로(`sendEvent`)로 보냅니다.
+    private static func sendArrowKeyUp(_ harness: Harness) throws {
+        let up = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        guard let event = NSEvent.keyEvent(
+            with: .keyUp, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: harness.window.windowNumber, context: nil, characters: up,
+            charactersIgnoringModifiers: up, isARepeat: false, keyCode: 126
+        ) else { throw Failure(message: "key up 이벤트 생성 실패") }
+        NSApplication.shared.sendEvent(event)
+    }
+
+    /// 기본 모드 런 루프를 조건이 맞을 때까지(최대 1초) 돌립니다.
+    private static func pumpUntil(_ label: String, _ condition: () -> Bool) throws {
+        let deadline = Date().addingTimeInterval(1)
+        while !condition(), Date() < deadline {
+            _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        try require(condition(), "\(label): 런 루프 대기 시간 초과")
     }
 
     /// 입력값을 표시 자릿수로 반올림해 보냅니다. 정수 필드(변 수)는 정수만, 배율 필드는 표시 자릿수 기준.
@@ -414,6 +538,9 @@ enum InspectorUICheck {
                         .adjustNumber(try propertyID(harness, "frame.size.width"), delta: 10, phase: .continuous),
                     "혼합 값 Shift-화살표 상대 조정 불일치: \(String(describing: harness.source.receivedCommands.last))")
         _ = harness.window.makeFirstResponder(nil)
+        try require(harness.source.receivedCommands.last ==
+                        .adjustNumber(try propertyID(harness, "frame.size.width"), delta: 0, phase: .ended),
+                    "혼합 값 상대 조정 종료 불일치: \(String(describing: harness.source.receivedCommands.last))")
         harness.flush()
 
         // Stub 한계(계획 1.2 규칙 6): 혼합 값 상대 조정은 node별 값이 없어 적용하지 않고,

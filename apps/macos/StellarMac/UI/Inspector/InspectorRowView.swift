@@ -233,6 +233,8 @@ final class InspectorRowsView: NSView {
                 if existing.canUpdate(to: row) {
                     existing.update(row, forceDisabled: forceDisabled)
                 } else {
+                    // 사라질 컨트롤의 연속 조작은 끝을 알린 뒤 버립니다.
+                    existing.fieldControllers.forEach { $0.endGesture() }
                     let replacement = InspectorRowView(row: row, forceDisabled: forceDisabled, send: send)
                     stack.insertArrangedSubview(replacement, at: index)
                     pinWidth(replacement)
@@ -241,6 +243,7 @@ final class InspectorRowsView: NSView {
                 }
             }
         } else {
+            endGestures()
             rowViews.forEach { $0.removeFromSuperview() }
             rowViews = rows.enumerated().map { index, row in
                 let view = InspectorRowView(row: row, forceDisabled: forceDisabled, send: send)
@@ -254,6 +257,11 @@ final class InspectorRowsView: NSView {
 
     /// 키보드 포커스 순서.
     var keyViews: [NSView] { rowViews.flatMap(\.keyViews) }
+
+    /// 진행 중인 연속 조작을 끝냅니다.
+    func endGestures() {
+        rowViews.forEach { $0.fieldControllers.forEach { $0.endGesture() } }
+    }
 
     private func applyNote(_ note: String?) {
         guard let note else {
