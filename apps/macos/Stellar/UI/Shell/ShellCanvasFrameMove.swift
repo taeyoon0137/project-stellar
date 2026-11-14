@@ -15,8 +15,10 @@ struct CanvasFrameDrag {
 extension ShellProjectWindow {
     func connectFrameInteractions() {
         let canvas = canvasHost.canvasView
+        var handDrag: (point: NSPoint, session: UInt64, size: NSSize)?
         canvas.cancelFrameGesture = { [weak self, weak canvas] in
-            guard let self, self.frameDrag != nil else { return false }
+            guard let self, self.frameDrag != nil || handDrag != nil else { return false }
+            handDrag = nil
             self.frameDrag = nil
             canvas?.setFrameDragPreview(id: nil, offset: .zero)
             canvas?.insertionOutline = nil
@@ -27,6 +29,29 @@ extension ShellProjectWindow {
             let point = CanvasInput.viewPoint(of: event, in: canvas)
             if self.frameDrag?.tool == .frame || (event.type == .leftMouseDown && self.toolsModel.snapshot.activeTool == .frame) {
                 return self.handleFrameInsertion(event, point: point, canvas: canvas)
+            }
+            if event.type == .leftMouseDown, self.toolsModel.snapshot.activeTool == .hand {
+                _ = canvas.cancelFrameGesture?()
+                guard event.modifierFlags.intersection([.command, .control, .shift, .option]).isEmpty,
+                      let session = self.windowController.windowSession,
+                      !session.isClosed, !session.isClosing, session.viewInfo?.has_view == 1 else { return false }
+                canvas.window?.makeFirstResponder(canvas)
+                handDrag = (point, session.session, canvas.bounds.size)
+                return true
+            }
+            if let drag = handDrag, event.type == .leftMouseDragged || event.type == .leftMouseUp {
+                guard self.toolsModel.snapshot.activeTool == .hand, canvas.bounds.size == drag.size,
+                      let session = self.windowController.windowSession, session.session == drag.session else {
+                    _ = canvas.cancelFrameGesture?()
+                    return true
+                }
+                let dx = Double(point.x - drag.point.x), dy = Double(point.y - drag.point.y)
+                guard dx.isFinite, dy.isFinite else { return true }
+                handDrag = event.type == .leftMouseUp ? nil : (point, drag.session, drag.size)
+                if !session.pan(dx: dx, dy: dy, completion: { [weak canvas] in canvas?.refreshFrames() }) {
+                    _ = canvas.cancelFrameGesture?()
+                }
+                return true
             }
             switch event.type {
             case .leftMouseDown:
