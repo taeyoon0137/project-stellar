@@ -48,7 +48,7 @@ thread 기본 2 MiB stack, 입력당 시간 상한 + 전체 watchdog, 발견 입
   - evaluator: 한도 오류가 아니면 bytecode 결과 = AST 기준 결과(오류 node 포함).
   - **instruction budget**: 성공한 평가의 명령 수 `n`에 대해 budget `n`은 같은 결과·같은 명령 수, budget `n − 1`은
     `InstructionBudgetExceeded { budget: n − 1 }`. stack 한도도 peak / peak − 1로 같은 검사. 무작위 작은 한도(명령
-    0~399, frame 1~8, stack 1~16, 값 0~4,095 bytes)에서 두 evaluator의 결과는 기본 한도 결과 또는 설정 값을 보고하는
+    0\~399, frame 1\~8, stack 1\~16, 값 0\~4,095 bytes)에서 두 evaluator의 결과는 기본 한도 결과 또는 설정 값을 보고하는
     한도 오류뿐입니다. trace는 항상 기본 한도 이하입니다.
 
 ### fuzz 발견과 수정

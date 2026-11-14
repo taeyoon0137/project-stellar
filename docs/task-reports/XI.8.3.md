@@ -62,9 +62,9 @@
 | 검사 | 결과 |
 |---|---|
 | vertex·uniform buffer로 그린 삼각형 (8,1)·(15,15)·(1,15)를 16×16 RGBA8에 readback: edge에서 0.75 px 이상 안쪽 pixel은 모두 green, 0.75 px 이상 바깥은 모두 black(`mock_geometry_triangle_renders_inside_pixels_only`) | 통과 |
-| index buffer + `base_vertex = 2` quad가 [4,12)² 안만 정확히 red, uniform offset 32의 tint 0.5 결과 (127~128, 0, 0, 127~128), 같은 key pipeline 1개만 생성(`indexed_quad_with_base_vertex_and_uniform_tint`) | 통과 |
+| index buffer + `base_vertex = 2` quad가 [4,12)² 안만 정확히 red, uniform offset 32의 tint 0.5 결과 (127\~128, 0, 0, 127\~128), 같은 key pipeline 1개만 생성(`indexed_quad_with_base_vertex_and_uniform_tint`) | 통과 |
 | scissor 사각형 안만 그림, attachment 밖으로 넘친 scissor는 잘림, 빈 scissor는 draw 생략, `None`은 전체(`scissor_clamps_to_attachment_and_empty_scissor_skips_draws`) | 통과 |
-| PremultipliedOver: blue 위 (0.5,0,0,0.5) → (127~128, 0, 127~128, 255)(`premultiplied_over_blends_with_destination`) | 통과 |
+| PremultipliedOver: blue 위 (0.5,0,0,0.5) → (127\~128, 0, 127\~128, 255)(`premultiplied_over_blends_with_destination`) | 통과 |
 | texture 전체·부분 upload 후 readback byte 일치, upload 뒤 `LoadOp::Load` frame이 upload 내용 위에 그림(`texture_upload_is_queue_ordered_before_the_next_frame`) | 통과 |
 | 없는 mip·범위 밖·0 크기·overflow·길이 불일치 upload 거부(`texture_upload_regions_are_validated`) | 통과 |
 | buffer 범위 쓰기·범위 밖 거부, 0 크기 거부, `u64::MAX` 크기 `OutOfDeviceMemory`, 파괴 후 stale(`buffers_map_usage_bounds_and_lifetime`) | 통과 |

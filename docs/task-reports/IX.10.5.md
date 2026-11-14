@@ -24,7 +24,7 @@
 
 - **상태**: Native=1, Approximated=2, Unsupported=3, Deprecated=4(안정 code·이름).
 - **subject**: crate graph상 문서 계층 타입을 쓸 수 없어 지역 numeric code로 표현합니다. element는 문서 `NodeKind`
-  번호(1~7), contract는 문서 `ContractKind` 번호(1~5, IX.6.7 registry 순서)와 같고, 속성은 상위 16bit 출처
+  번호(1\~7), contract는 문서 `ContractKind` 번호(1\~5, IX.6.7 registry 순서)와 같고, 속성은 상위 16bit 출처
   namespace(0 공통·1 CSS·2 Apple·3 Android)를 가진 `CapabilityPropertyId`입니다.
 - **규칙**: subject마다 Web·Apple·Android 상태 계단(`StatusLadder`)이 모두 필수이고(누락을 추정하지 않음) Apple 플랫폼별
   override 계단(예: SingleSelectionGroup은 iOS 근사, macOS Native)과 Deprecated 대체 subject를 가집니다. profile
@@ -48,7 +48,7 @@
 |---|---|
 | 상태 matrix fixture: 내장 release 1의 27개 subject × 7개 profile(web-2022·web-2024·ios-26·macos-26·android-27·android-31·android-35) 모든 칸 기대값 일치, 표와 matrix의 subject 집합 일치, 네 상태 모두 등장 (`release_one_status_matrix_is_golden`) | 통과 |
 | 표가 알려진 element·contract·대표 속성을 빠짐없이 포함, 속성 이름 namespace 일치 (`builtin_registry_covers_known_subjects`) | 통과 |
-| 상태 code golden, 문서 계층 번호(NodeKind 1~7·ContractKind 1~5)와 같음 (`status_codes_are_golden`) | 통과 |
+| 상태 code golden, 문서 계층 번호(NodeKind 1\~7·ContractKind 1\~5)와 같음 (`status_codes_are_golden`) | 통과 |
 | 계단 조회·수준 비교(`17.10` > `17.4`), 수준 표기 (`ladder_lookup_and_levels`) | 통과 |
 | 표 구조 오류 6종 거부 (`table_structure_is_checked`), Apple 플랫폼 override 우선·미등록 `None` (`apple_platform_override_wins`) | 통과 |
 
