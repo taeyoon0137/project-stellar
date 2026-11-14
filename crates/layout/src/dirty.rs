@@ -12,15 +12,17 @@
 //!      구한 합집합입니다(X.1.3: 콘텐츠 크기 node의 DescendantConstraint는 SelfSize 포함).
 //!    - `PaintOnly`: 렌더 dirty 집합에만 넣습니다.
 //!    - `None`(잠금·이름 등 layout·render 입력이 아님): 무시합니다.
-//!    - 알 수 없는 key(registry에 없음): 그 node의 무효화 class로 보수적으로 처리합니다(아래 4).
+//!    - 알 수 없는 key(registry에 없음): 그 node의 무효화 class로 보수적으로 처리합니다(아래 4·5).
 //! 2. **삽입**: 새 node에 SelfSize·ParentFlow·DescendantConstraint를 모두, 변경 후 부모에 자식 변경(Children)을
 //!    표시합니다.
 //! 3. **삭제**: 변경 전 부모에 자식 변경을 표시합니다(삭제된 node 자신은 레이아웃 대상이 아님).
 //! 4. **node 무효화**: `layout` class가 있는데 위 1~3의 layout 속성·자식 구조 변경으로 설명되지 않는 node(종류
 //!    변환, 알 수 없는 key)는 세 class를 모두 표시합니다. `layout` 없이 `paint`·`geometry`만 있으면 렌더
-//!    dirty입니다. 같은 command에서 종류 변환과 layout 속성 변경이 함께 기록된 node는 기록된 속성의 class만
-//!    얻지만 layout queue에는 들어가므로, 다시 읽은 입력의 차이(X.7.3, [`changed_properties`])가 정확한 class를
-//!    정합니다.
+//!    dirty입니다(무효화 class는 문서 속성 metadata registry가 정한 값입니다, VI.9.7). 같은 command에서 종류
+//!    변환과 layout 속성 변경이 함께 기록된 node는 기록된 속성의 class만 얻지만 layout queue에는 들어가므로, 다시
+//!    읽은 입력의 차이(X.7.3, [`changed_properties`])가 정확한 class를 정합니다.
+//! 5. **무효화가 보고되지 않은 알 수 없는 key**: [`LayoutChangeSource::changed_nodes`]에 없는 node의 알 수 없는
+//!    key는 판단 근거가 없으므로 레이아웃 node면 세 class를 모두, 아니면 렌더 dirty로 표시합니다(버리지 않음).
 //!
 //! **PaintOnly는 layout queue에 넣지 않습니다**: [`LayoutDirtySet::layout_queue`]는 레이아웃에 영향을 주는
 //! class가 있는 node만 돌려줍니다. PaintOnly class(예: transform)는 [`LayoutDirtySet::paint`]에만 남습니다.
@@ -472,7 +474,9 @@ pub fn dirty_set_from_changes(
         }
     }
     // 4. node 무효화: 설명되지 않은 layout 무효화(종류 변환 등)와 알 수 없는 key는 보수 처리합니다.
+    let mut reported: BTreeSet<StableId> = BTreeSet::new();
     for (node, invalidation) in changes.changed_nodes() {
+        reported.insert(node);
         if explained.contains(&node) && !unknown.contains(&node) {
             continue;
         }
@@ -480,6 +484,15 @@ pub fn dirty_set_from_changes(
             dirty.mark(node, ALL_LAYOUT_CLASSES);
         } else if invalidation.paint || invalidation.geometry || invalidation.layout {
             dirty.mark_paint(node);
+        }
+    }
+    // 5. 무효화가 보고되지 않은 node의 알 수 없는 key: 판단 근거가 없으므로 레이아웃 node면 세 class 모두,
+    //    아니면 렌더 dirty로 둡니다(변경을 버리지 않음).
+    for node in unknown.difference(&reported) {
+        if is_layout_node(*node) {
+            dirty.mark(*node, ALL_LAYOUT_CLASSES);
+        } else {
+            dirty.mark_paint(*node);
         }
     }
     dirty
@@ -784,6 +797,44 @@ mod tests {
             convert(&mixed, &doc, &doc).layout_queue(),
             vec![(id(3), ALL_LAYOUT_CLASSES)]
         );
+    }
+
+    #[test]
+    fn unknown_keys_without_node_invalidation_are_conservative() {
+        let doc = document();
+        // changed_nodes에 무효화가 없는 node의 알 수 없는 key: 판단 근거가 없으므로 세 class 모두.
+        let orphan = Changes {
+            properties: vec![(id(3), UNKNOWN)],
+            ..Changes::default()
+        };
+        let dirty = convert(&orphan, &doc, &doc);
+        assert_eq!(dirty.layout_queue(), vec![(id(3), ALL_LAYOUT_CLASSES)]);
+        // 정밀 속성과 섞여도 보수 처리가 이깁니다.
+        let mixed = Changes {
+            properties: vec![(id(4), TEXT), (id(4), UNKNOWN)],
+            ..Changes::default()
+        };
+        assert_eq!(
+            convert(&mixed, &doc, &doc).layout_queue(),
+            vec![(id(4), ALL_LAYOUT_CLASSES)]
+        );
+        // 레이아웃 node가 아닌 path root는 layout queue 없이 렌더 dirty.
+        let modifier = Changes {
+            properties: vec![(id(99), UNKNOWN)],
+            ..Changes::default()
+        };
+        let dirty = convert(&modifier, &doc, &doc);
+        assert!(dirty.is_layout_clean());
+        assert_eq!(dirty.paint(), vec![id(99)]);
+        // 다른 node의 무효화만 있어도 그 node의 누락은 그대로 보수 처리합니다.
+        let other = Changes {
+            nodes: vec![(id(5), CommandInvalidation::PAINT)],
+            properties: vec![(id(3), UNKNOWN), (id(5), FILL)],
+            ..Changes::default()
+        };
+        let dirty = convert(&other, &doc, &doc);
+        assert_eq!(dirty.layout_queue(), vec![(id(3), ALL_LAYOUT_CLASSES)]);
+        assert_eq!(dirty.paint(), vec![id(5)]);
     }
 
     #[test]

@@ -62,3 +62,18 @@
   들어감). 정확한 class는 다시 읽은 입력의 `changed_properties` 차이(X.7.3)가 정합니다.
 - Fragment·virtual node의 문서 id → layout id 대응은 adapter 책임입니다(X.1.2 `LayoutTreeView::layout_id`·
   `fragment_host` 사용).
+
+## 후속 수정 (리뷰 minor: 무효화가 보고되지 않은 node의 알 수 없는 key)
+
+- **결함**: `dirty_set_from_changes`는 알 수 없는 key를 그 node의 무효화(`changed_nodes`)로만 보수 처리했습니다. change
+  source가 `changed_nodes`에 없는 node의 알 수 없는 key를 보고하면 그 변경이 dirty set에서 조용히 빠졌습니다.
+- **수정**: 변환 규칙 5를 추가했습니다. `changed_nodes`에 무효화가 없는 node의 알 수 없는 key는 레이아웃 node면 세 class
+  모두, 아니면 렌더 dirty로 표시합니다.
+- **재현 테스트**(수정 전 실패 확인): `unknown_keys_without_node_invalidation_are_conservative` — 무효화 없는 알 수 없는 key,
+  정밀 속성과 섞인 경우, 레이아웃 node가 아닌 path root, 다른 node 무효화만 있는 경우.
+- **유지한 동작**: 무효화에 `layout`이 없는 node의 알 수 없는 key는 렌더 dirty로 둡니다. 무효화 class는 문서 속성 metadata
+  registry(VI.9.7, `stellar_commands::change`의 `ChangeRecorder`가 속성마다 node 무효화를 기록)가 정한 값이라, layout 쪽
+  key 표에 없다는 이유만으로 이를 뒤집지 않습니다(`unknown_keys_fall_back_to_node_invalidation`이 고정).
+- 검증(`DEV-MAC`): `cargo test -p stellar-layout` unit 172 + `component_layout_corpus` 4 + `layout_corpus` 2 + doctest 2
+  passed, 0 failed. `cargo clippy -p stellar-layout --all-targets -- -D warnings` 경고 0,
+  `cargo fmt -p stellar-layout -- --check` 종료 코드 0.
