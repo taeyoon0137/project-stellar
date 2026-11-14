@@ -30,12 +30,15 @@
 | `cargo xtask validate-task-report docs/task-reports/XIV.5.6.md` | 0 |
 | `cargo xtask validate-crate-graph` | 0 |
 | `cargo xtask validate-adr crates/git-porcelain/src/candidate_delta.rs crates/git-porcelain/src/candidate_tree.rs crates/runtime/src/staging/tests.rs` | 0 |
+| `cargo xtask generate-ledger` | 0 — Task 커밋 `68be98af` 이후 실행, 해당 작업만 갱신 |
+| `cargo xtask validate-task-status` / `cargo xtask sync-plan` / `cargo xtask verify-task XIV.5.6` | 모두 0 |
 | `git diff --check` | 0 |
 
 ## 환경과 증거
 
 - `DEV-MAC`: macOS 27.2 (26B123), Apple silicon, Rust/Cargo 1.96.0, Apple Git 2.54.0.
 - 실제 Git 검증은 기존 `GitFixture`가 만든 임시 프로젝트에서만 실행했습니다. 테스트가 Git을 발견하지 못하면 unit fixture 일부는 건너뛰지만, 이번 환경은 Git 버전을 확인했고 runtime fixture는 Git 필수 조건으로 실행했습니다.
+- 전체 check-core 집계: test 단계 3842 passed·8 ignored·0 failed(이 단계 doctest 포함), 별도 doc-test 54 passed·0 failed. 독립 코드 리뷰에서 새 확정 결함 없음.
 - CI·LAB·REF·실제 앱 QA 실행 없음. 이 결과는 플랫폼 동등성·릴리스 gate 통과 주장이 아닙니다.
 
 ## 테스트
