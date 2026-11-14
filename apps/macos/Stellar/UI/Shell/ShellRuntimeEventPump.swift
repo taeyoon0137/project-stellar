@@ -154,6 +154,17 @@ final class ShellRuntimeEventPump {
                                          node: node, revision: revision, name: name), completion)
     }
 
+    func setDocumentFont(session: UInt64, revision: UInt64, path: String, face: UInt32, size: UInt32,
+                         fill: StellarCanvasColor, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = Array(path.utf8).withUnsafeBufferPointer { bytes in
+            stellar_window_set_document_font(runtimeHandle, session, revision, bytes.baseAddress, bytes.count, face, size, fill, &request)
+        }
+        let result: Result<UInt64, CoreRuntimeCallError> = status == STELLAR_OK && request != 0
+            ? .success(request) : .failure(CoreRuntimeCallError(status: status))
+        return register(result, completion)
+    }
+
     func editFrame(_ frame: CanvasInspectorFrame, change: FrameInspectorEdit, completion: @escaping (CoreRuntimeEvent) -> Void)
         -> Result<UInt64, CoreRuntimeCallError> {
         switch change {

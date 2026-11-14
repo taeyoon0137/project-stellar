@@ -176,6 +176,7 @@ extension ShellCommandCoreIDs {
 /// 프로젝트 창의 셸 프레임 명령 ID(더 보기 메뉴·상태 화면 버튼).
 enum ShellProjectCommandID {
     static let revokeTrust = ShellCommandID("project.revokeTrust")
+    static let documentFont = ShellCommandID("project.documentFont")
     static let revealInFinder = ShellCommandID("project.revealInFinder")
     static let closeProject = ShellCommandID("project.close")
     static let locateFolder = ShellCommandID("project.locate")
@@ -266,8 +267,9 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
         guard session != nil else { return }
         var next = currentSnapshot
         next.subtitle = trusted ? "" : String(localized: "Restricted Mode")
-        next.moreActions.removeAll { $0.id == ShellProjectCommandID.revokeTrust }
+        next.moreActions.removeAll { $0.id == ShellProjectCommandID.revokeTrust || $0.id == ShellProjectCommandID.documentFont }
         if trusted {
+            next.moreActions.append(ShellActionDescriptor(id: ShellProjectCommandID.documentFont, title: String(localized: "Document Font…")))
             next.moreActions.append(ShellActionDescriptor(id: ShellProjectCommandID.revokeTrust,
                 title: String(localized: "Revoke Project Trust")))
         }

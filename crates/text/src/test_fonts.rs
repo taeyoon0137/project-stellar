@@ -59,8 +59,19 @@ pub fn outline_test_font() -> Vec<u8> {
     glyf.push(0);
     let mut loca = vec![0; 6];
     put_u16(&mut loca, (glyf.len() / 2) as u16);
-    spec.font()
-        .build_with_tables(BTreeMap::from([(*b"glyf", glyf), (*b"loca", loca)]))
+    let family: Vec<_> = "Stellar Fixture".encode_utf16().collect();
+    let mut name = Vec::new();
+    for n in [0, 1, 18, 3, 1, 0x409, 1, (family.len() * 2) as u16, 0] {
+        put_u16(&mut name, n);
+    }
+    for character in family {
+        put_u16(&mut name, character);
+    }
+    spec.font().build_with_tables(BTreeMap::from([
+        (*b"glyf", glyf),
+        (*b"loca", loca),
+        (*b"name", name),
+    ]))
 }
 
 impl TestFont {

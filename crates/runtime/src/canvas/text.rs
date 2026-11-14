@@ -219,3 +219,9 @@ impl TextHitGeometry for CanvasTextGeometry {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod document;
+pub use document::DocumentText;
+
+/// Native paint bridge에서 공통 outline을 순회합니다.
+pub use stellar_scene::geometry::PathCommand as CanvasPathCommand;

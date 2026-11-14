@@ -215,3 +215,99 @@ fn project_font_content_to_positioned_outlines_and_line_hits() {
     ));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn document_selection_projects_multiline_scalar_offsets_and_verifies_changed_registration() {
+    use crate::window_session::test_fixtures::{sample_document, sid, TempDir};
+    use stellar_core_types::color::{Color, ColorSpace};
+    use stellar_project::fonts::document::{import_default_font, DocumentFontSelection};
+    let project = TempDir::new("document-font");
+    let data = TempDir::new("document-font-origin");
+    let file = data.path().join("chosen.ttf");
+    std::fs::write(&file, stellar_text::test_support::outline_test_font()).unwrap();
+    let mut model = sample_document();
+    let fill = Color::new(ColorSpace::DisplayP3, 0.25, 0.5, 1., 0.5).unwrap();
+    let mut input = DocumentFontSelection {
+        file,
+        index: 1,
+        size: 20 * 64,
+        fill,
+    };
+    let ids = [sid(401), sid(402)];
+    let current = &model.definition().text_styles;
+    assert!(import_default_font(project.path(), data.path(), current, ids, &input).is_err());
+    assert!(!project.path().join("assets").exists());
+    input.index = 0;
+    let imported = import_default_font(project.path(), data.path(), current, ids, &input).unwrap();
+    assert_eq!(imported.styles.fonts.len(), 1);
+    let hash = imported.reference.file_hash();
+    model.replace_text_styles(imported.styles);
+    let payload = TextPayload::new(
+        UserText::new("A A\nA"),
+        vec![Paragraph { style: 0 }; 2],
+        vec![],
+    )
+    .unwrap();
+    let mut cache = document::FontCache::default();
+    cache.sync_registrations(&model.definition().text_styles);
+    let project_text = |cache: &mut document::FontCache, model: &_| {
+        cache.layout(model, project.path(), sid(502), &payload)
+    };
+    let (text, _, _) = project_text(&mut cache, &model).unwrap();
+    assert_eq!(text.fill, fill);
+    assert_eq!(text.glyphs.len(), 3);
+    assert_eq!(text.lines.len(), 2);
+    assert_eq!(text.hit(1., 22.).unwrap().0, 4);
+    assert_eq!(text.caret_rect(4, false).unwrap().origin().y(), 20.);
+    assert!(text.caret_rect(6, false).is_none());
+    assert_eq!(text.selection_rects(1, 5).unwrap().len(), 2);
+    let empty = TextPayload::new(UserText::new(""), vec![Paragraph { style: 0 }], vec![]).unwrap();
+    let (empty_text, _, _) = cache
+        .layout(&model, project.path(), sid(503), &empty)
+        .unwrap();
+    assert!(empty_text.glyphs.is_empty());
+    assert!(empty_text.caret_rect(0, false).unwrap().size().height() > 0.);
+    // 뒤의 run이 같은 범위를 완전히 덮습니다. 가려진 미해결 style은 결과에 영향을 주지 않습니다.
+    use stellar_document::text::{StyleRun, TextRange};
+    let overlaid = TextPayload::new(
+        UserText::new("AA"),
+        vec![Paragraph { style: 0 }],
+        vec![
+            StyleRun {
+                range: TextRange::new(0, 2).unwrap(),
+                style: 23,
+            },
+            StyleRun {
+                range: TextRange::new(0, 2).unwrap(),
+                style: 0,
+            },
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        cache
+            .layout(&model, project.path(), sid(502), &overlaid)
+            .unwrap()
+            .0
+            .glyphs
+            .len(),
+        2
+    );
+    let unicode = TextPayload::new(
+        UserText::new("é\nA"),
+        vec![Paragraph { style: 0 }; 2],
+        vec![],
+    )
+    .unwrap();
+    let unicode = cache
+        .layout(&model, project.path(), sid(502), &unicode)
+        .unwrap()
+        .0;
+    assert_eq!(unicode.hit(0., 21.).unwrap().0, 2);
+    assert!(unicode.caret_rect(3, false).is_some());
+    let mut changed = model.definition().text_styles.clone();
+    changed.fonts.get_mut(&hash).unwrap().asset_record.clear();
+    model.replace_text_styles(changed);
+    cache.sync_registrations(&model.definition().text_styles);
+    assert!(project_text(&mut cache, &model).is_none());
+}
