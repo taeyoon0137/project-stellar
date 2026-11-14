@@ -122,6 +122,12 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.gitNames(handle: runtimeHandle, session: session, selection: selection, stage: stage), completion)
     }
 
+    func placeInstance(session: UInt64, view: UUID, revision: UInt64, entry: LibraryComponent, x: Float, y: Float,
+                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.placeInstance(handle: runtimeHandle, session: session, view: view, revision: revision,
+                                           entry: entry, x: x, y: y), completion)
+    }
+
     func createComponent(session: UInt64, name: String, selection: StellarFrameSelection? = nil, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.createComponent(handle: runtimeHandle, session: session, name: name, selection: selection), completion)
     }

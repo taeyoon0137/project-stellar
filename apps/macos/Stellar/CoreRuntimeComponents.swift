@@ -17,6 +17,21 @@ enum ComponentLibraryResult: Sendable {
 }
 
 extension CoreRuntime {
+    static func placeInstance(handle: UInt64, session: UInt64, view: UUID, revision: UInt64,
+                              entry: LibraryComponent, x: Float, y: Float) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: entry.id.uuid) { componentBytes in
+                Array(entry.hash.utf8).withUnsafeBufferPointer { hash in
+                    stellar_window_place_component(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress, revision,
+                        componentBytes.bindMemory(to: UInt8.self).baseAddress, hash.baseAddress, hash.count, x, y, &request)
+                }
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func componentLibrary(handle: UInt64, session: UInt64) -> ComponentLibraryResult {
         precondition(!Thread.isMainThread)
         var buffer = [UInt8](repeating: 0, count: 16 * 1024)

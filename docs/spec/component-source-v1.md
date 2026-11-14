@@ -55,6 +55,12 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 라이브러리에서 행을 선택하고 **Width**, **Height**에 논리 픽셀 크기를 입력한 뒤 **Apply Size** 또는 Return을 누르면 해당 컴포넌트의 root Frame을 즉시 저장합니다. 유한한 0 이상의 크기를 받습니다. 코어는 행에 표시된 전체 component ID와 원본 hash를 확인합니다. Git checkout·수동 편집·CLI 저장으로 같은 파일의 내용이 바뀌었거나 root가 잠겼으면 값을 적용하지 않고 현재 목록을 다시 읽습니다. 무변경은 주석을 포함한 bytes를 보존합니다. 다른 원본의 변경은 선택한 정의가 유효한 한 충돌로 간주하지 않습니다. 이 편집은 문서 generation이나 캔버스 Undo 기록을 만들지 않습니다.
 
+## 라이브러리에서 인스턴스 배치
+
+신뢰한 프로젝트에서 **View → Component Library**로 정의를 선택하고 **Place Instance…**를 누릅니다. 활성 View의 root Frame을 기준으로 X·Y를 논리 픽셀로 입력합니다. 음수와 소수 좌표를 사용할 수 있습니다. **Place**는 새 StableId를 가진 ComponentInstance 한 개를 추가하고 선택합니다. 기존 정의를 여러 번 배치하면 각 인스턴스는 같은 component ID를 참조합니다. 표시되었던 원본의 hash, 활성 View, 문서 revision 또는 기반 generation이 바뀌면 배치하지 않습니다.
+
+각 배치는 Undo 한 단계이며 **Save Now**가 기존 문서 저장 절차로 기록합니다. 정의 YAML은 쓰지 않습니다. 인스턴스 payload에는 정의 참조와 override가 있고, 위치는 해당 노드 소유의 Transform modifier에 있습니다. 원본을 찾을 수 없으면 `stellar validate`가 인스턴스와 정의 ID를 포함하는 `missing-component-definition` 진단을 냅니다. 정의 이름을 다른 파일에 다시 사용하는 것은 이 참조를 바꾸지 않습니다.
+
 ## 프로젝트에서 조회
 
 프로젝트 루트 아래 `design/components/`에 원본을 두면 `stellar query . components`와 신뢰된 headless MCP의 `stellar://components`가 같은 라이브러리를 읽습니다. 다른 폴더의 원본은 기존 `component-source check <폴더>`로 조회할 수 있습니다. 각 항목은 전체 StableId, 이름, 루트 ID, 루트의 논리 픽셀 크기, 루트를 포함한 Frame 수, 원본 bytes의 `source_hash`를 담습니다. `source_hash`는 그대로 `resize`와 `add-frame`에 전달할 수 있습니다.

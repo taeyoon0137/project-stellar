@@ -130,6 +130,8 @@ mod create;
 mod frame_insert;
 mod frame_move;
 mod git_names;
+mod instance_place;
+pub use instance_place::InstancePlacement;
 mod node_delete;
 mod node_duplicate;
 mod node_paste;

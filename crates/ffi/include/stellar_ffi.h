@@ -285,6 +285,7 @@ StellarStatus stellar_window_component_create(uint64_t handle, uint64_t session,
 typedef struct StellarFrameSelection { uint64_t revision; uint8_t view[16], node[16]; } StellarFrameSelection;
 StellarStatus stellar_window_selected_frame(uint64_t handle, uint64_t session, StellarFrameSelection *out);
 StellarStatus stellar_window_component_from_selection(uint64_t handle, uint64_t session, const uint8_t *name, size_t name_len, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t *out_request);
+StellarStatus stellar_window_place_component(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, const uint8_t component[16], const uint8_t *hash, size_t hash_len, float x, float y, uint64_t *out_request);
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
 StellarStatus stellar_project_close(uint64_t handle, uint64_t project, uint64_t *out_request);
