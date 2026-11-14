@@ -10,6 +10,9 @@
 //!   [`SourceIndex`]로 조회합니다.
 //! - [`AccessibilityTree::validate_structure`]는 접근성 관계가 forest인지 검사합니다: 없는 자식, 중복 자식,
 //!   부모 둘 이상, 부모가 있는 root, 중복 root, cycle, root에서 도달 불가.
+//! - cycle은 강결합 요소(Tarjan)마다 대표 cycle **하나**로 보고합니다: 요소에서 StableId가 가장 작은 node에서
+//!   시작하는 최단 cycle(자식 목록 순 BFS). back edge마다 경로를 복사하지 않으므로, 형식만 맞는 임의 입력
+//!   ([`AccessibilityTree::from_bytes`])에서도 시간·보고 크기가 node·간선 수에 비례합니다.
 //!
 //! 검사는 모두 반복(비재귀) 순회이며 node·간선을 StableId·목록 순으로 방문해 결과가 결정론적입니다.
 //!
@@ -23,7 +26,7 @@
 //! `node`는 [`AccessibilityNode`] 본문 형식(IX.8.1)입니다. 디코더는 형식만 검사하고 관계 유효성은
 //! `validate`가 맡습니다.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
 use stellar_core_types::ids::StableId;
@@ -109,7 +112,8 @@ pub enum TreeIssue {
         /// 부모.
         parent: StableId,
     },
-    /// parent/child cycle. 경로는 시작 node로 끝납니다(예: `[a, b, a]`).
+    /// parent/child cycle. 강결합 요소마다 하나이며, 요소에서 StableId가 가장 작은 node에서 시작하는 최단
+    /// cycle입니다. 경로는 시작 node로 끝납니다(예: `[a, b, a]`).
     Cycle {
         /// cycle 경로.
         path: Vec<StableId>,
@@ -119,7 +123,7 @@ pub enum TreeIssue {
         /// 없는 부모.
         parent: StableId,
     },
-    /// root에서 도달할 수 없는 node(cycle에 속한 node는 [`TreeIssue::Cycle`]로만 보고).
+    /// root에서 도달할 수 없는 node([`TreeIssue::Cycle`] 경로에 있는 node는 cycle로만 보고).
     Unreachable {
         /// node.
         node: StableId,
@@ -161,6 +165,19 @@ impl fmt::Display for TreeIssue {
             }
         }
     }
+}
+
+/// 강결합 요소 분해 결과([`AccessibilityTree::components`]). node는 dense index(StableId 오름차순 위치)로
+/// 가리킵니다.
+pub(crate) struct Components {
+    /// dense index → node StableId(오름차순).
+    pub(crate) ids: Vec<StableId>,
+    /// dense index → 자식 dense index(자식 목록 순, 접근성 node가 없는 자식 제외).
+    pub(crate) adjacency: Vec<Vec<usize>>,
+    /// dense index → 요소 번호.
+    pub(crate) component: Vec<usize>,
+    /// 요소 번호 → 구성 dense index. 역위상 순서: 한 요소에서 도달하는 다른 요소는 항상 그 요소보다 앞에 옵니다.
+    pub(crate) members: Vec<Vec<usize>>,
 }
 
 /// 접근성 트리: source StableId → node, 접근성 parent/child 관계, root 목록.
@@ -323,7 +340,7 @@ impl AccessibilityTree {
             }
         }
 
-        // cycle: 반복 3색 DFS.
+        // cycle: 강결합 요소마다 대표 cycle 하나(반복 Tarjan + BFS).
         let cycles = self.find_cycles();
         let in_cycle: BTreeSet<StableId> = cycles.iter().flatten().copied().collect();
         issues.extend(cycles.into_iter().map(|path| TreeIssue::Cycle { path }));
@@ -351,53 +368,133 @@ impl AccessibilityTree {
         reachable
     }
 
-    /// 모든 cycle 경로(back edge마다 하나, node StableId 순 방문).
-    fn find_cycles(&self) -> Vec<Vec<StableId>> {
-        #[derive(Clone, Copy, PartialEq, Eq)]
-        enum Color {
-            Gray,
-            Black,
-        }
-        let mut color: BTreeMap<StableId, Color> = BTreeMap::new();
-        let mut cycles = Vec::new();
-        for start in self.nodes.keys() {
-            if color.contains_key(start) {
+    /// 강결합 요소 분해(Tarjan, 반복). 시간·메모리는 node·간선 수에 비례합니다.
+    pub(crate) fn components(&self) -> Components {
+        const UNSEEN: usize = usize::MAX;
+        let ids: Vec<StableId> = self.nodes.keys().copied().collect();
+        let adjacency: Vec<Vec<usize>> = ids
+            .iter()
+            .map(|id| {
+                self.children(*id)
+                    .iter()
+                    .filter_map(|child| ids.binary_search(child).ok())
+                    .collect()
+            })
+            .collect();
+        let count = ids.len();
+        let mut order = vec![UNSEEN; count];
+        let mut low = vec![0; count];
+        let mut on_stack = vec![false; count];
+        let mut component = vec![UNSEEN; count];
+        let mut members: Vec<Vec<usize>> = Vec::new();
+        let mut pending: Vec<usize> = Vec::new();
+        let mut next = 0;
+        for start in 0..count {
+            if order[start] != UNSEEN {
                 continue;
             }
+            order[start] = next;
+            low[start] = next;
+            next += 1;
+            pending.push(start);
+            on_stack[start] = true;
             // (node, 다음에 볼 자식 index)
-            let mut stack: Vec<(StableId, usize)> = vec![(*start, 0)];
-            color.insert(*start, Color::Gray);
-            while let Some(top) = stack.last_mut() {
-                let (node, index) = *top;
-                let children = self.children(node);
-                if index >= children.len() {
-                    color.insert(node, Color::Black);
-                    stack.pop();
+            let mut frames: Vec<(usize, usize)> = vec![(start, 0)];
+            while let Some(frame) = frames.last_mut() {
+                let (node, edge) = *frame;
+                if let Some(&child) = adjacency[node].get(edge) {
+                    frame.1 += 1;
+                    if order[child] == UNSEEN {
+                        order[child] = next;
+                        low[child] = next;
+                        next += 1;
+                        pending.push(child);
+                        on_stack[child] = true;
+                        frames.push((child, 0));
+                    } else if on_stack[child] {
+                        low[node] = low[node].min(order[child]);
+                    }
                     continue;
                 }
-                top.1 += 1;
-                let child = children[index];
-                if !self.nodes.contains_key(&child) {
-                    continue;
+                frames.pop();
+                if let Some(&(parent, _)) = frames.last() {
+                    low[parent] = low[parent].min(low[node]);
                 }
-                match color.get(&child) {
-                    None => {
-                        color.insert(child, Color::Gray);
-                        stack.push((child, 0));
+                if low[node] == order[node] {
+                    let number = members.len();
+                    let mut group = Vec::new();
+                    while let Some(member) = pending.pop() {
+                        on_stack[member] = false;
+                        component[member] = number;
+                        group.push(member);
+                        if member == node {
+                            break;
+                        }
                     }
-                    Some(Color::Gray) => {
-                        let from = stack
-                            .iter()
-                            .position(|(entry, _)| *entry == child)
-                            .unwrap_or(0);
-                        let mut path: Vec<StableId> =
-                            stack[from..].iter().map(|(entry, _)| *entry).collect();
-                        path.push(child);
-                        cycles.push(path);
-                    }
-                    Some(Color::Black) => {}
+                    members.push(group);
                 }
             }
+        }
+        Components {
+            ids,
+            adjacency,
+            component,
+            members,
+        }
+    }
+
+    /// 강결합 요소마다 대표 cycle 하나(시작 node StableId 순). 시작 node는 요소에서 StableId가 가장 작은 node이고,
+    /// 경로는 자식 목록 순 BFS로 찾은 최단 cycle입니다. 보고 크기는 node 수에 비례합니다.
+    fn find_cycles(&self) -> Vec<Vec<StableId>> {
+        const NONE: usize = usize::MAX;
+        let Components {
+            ids,
+            adjacency,
+            component,
+            members,
+        } = self.components();
+        let mut starts: Vec<usize> = members
+            .iter()
+            .filter_map(|group| {
+                let start = *group.iter().min()?;
+                (group.len() > 1 || adjacency[start].contains(&start)).then_some(start)
+            })
+            .collect();
+        starts.sort_unstable();
+        // BFS 이전 node. 요소끼리 겹치지 않으므로 배열 하나를 같이 씁니다.
+        let mut previous = vec![NONE; ids.len()];
+        let mut cycles = Vec::with_capacity(starts.len());
+        for start in starts {
+            let own = component[start];
+            previous[start] = start;
+            let mut queue = VecDeque::from([start]);
+            let mut closing = None;
+            'search: while let Some(node) = queue.pop_front() {
+                for &child in &adjacency[node] {
+                    if child == start {
+                        closing = Some(node);
+                        break 'search;
+                    }
+                    if component[child] == own && previous[child] == NONE {
+                        previous[child] = node;
+                        queue.push_back(child);
+                    }
+                }
+            }
+            // 강결합 요소라 항상 찾지만, 못 찾으면 보고하지 않습니다(panic 없음).
+            let Some(mut node) = closing else {
+                continue;
+            };
+            let mut reversed = Vec::new();
+            while node != start {
+                reversed.push(ids[node]);
+                node = previous[node];
+            }
+            let mut path = Vec::with_capacity(reversed.len() + 2);
+            path.push(ids[start]);
+            path.extend(reversed.into_iter().rev());
+            path.push(ids[start]);
+            cycles.push(path);
         }
         cycles
     }
@@ -548,6 +645,78 @@ mod tests {
             vec![TreeIssue::Cycle {
                 path: vec![id(5), id(5)]
             }]
+        );
+    }
+
+    #[test]
+    fn cycle_report_stays_linear_on_many_back_edges() {
+        // chain 0 > 1 > … > N-1 이고 모든 node가 node 0도 자식으로 가집니다(back edge N개, 형식만 맞는 입력).
+        // 보고 크기는 back edge × DFS 깊이가 아니라 node·간선 수에 비례해야 합니다.
+        const N: u32 = 2_000;
+        let node_id = |n: u32| {
+            let mut bytes = [0u8; 16];
+            bytes[12..].copy_from_slice(&n.to_be_bytes());
+            StableId::from_bytes(bytes)
+        };
+        let mut tree = AccessibilityTree::new();
+        for n in 0..N {
+            tree.insert(AccessibilityNode::new(
+                node_id(n),
+                AccessibilityRole::Generic,
+            ))
+            .expect("node");
+            let mut children = Vec::new();
+            if n + 1 < N {
+                children.push(node_id(n + 1));
+            }
+            children.push(node_id(0));
+            tree.set_children(node_id(n), children);
+        }
+        tree.push_root(node_id(0));
+        let issues = tree.validate_structure();
+        let reported: usize = issues
+            .iter()
+            .map(|issue| match issue {
+                TreeIssue::Cycle { path } => path.len(),
+                TreeIssue::MultipleParents { parents, .. } => parents.len() + 1,
+                _ => 2,
+            })
+            .sum();
+        assert!(reported <= 3 * N as usize, "보고 StableId {reported}개");
+        // 강결합 요소 하나 → 대표 cycle 하나(가장 작은 node 0에서 시작하는 최단 cycle = self loop).
+        let cycles: Vec<&TreeIssue> = issues
+            .iter()
+            .filter(|issue| matches!(issue, TreeIssue::Cycle { .. }))
+            .collect();
+        assert_eq!(
+            cycles,
+            vec![&TreeIssue::Cycle {
+                path: vec![node_id(0), node_id(0)]
+            }]
+        );
+
+        // 대표 경로에 없는 요소 node는 root에서 도달할 수 없으면 도달 불가로 보고합니다.
+        // 1 → (2, 3), 2 → 1, 3 → 2: 요소 {1, 2, 3}, 대표 cycle [1, 2, 1].
+        let mut tree = AccessibilityTree::new();
+        for n in [1, 2, 3] {
+            tree.insert(node(n, AccessibilityRole::Group))
+                .expect("node");
+        }
+        tree.set_children(id(1), vec![id(2), id(3)]);
+        tree.set_children(id(2), vec![id(1)]);
+        tree.set_children(id(3), vec![id(2)]);
+        assert_eq!(
+            tree.validate_structure(),
+            vec![
+                TreeIssue::MultipleParents {
+                    node: id(2),
+                    parents: vec![id(1), id(3)],
+                },
+                TreeIssue::Cycle {
+                    path: vec![id(1), id(2), id(1)]
+                },
+                TreeIssue::Unreachable { node: id(3) },
+            ]
         );
     }
 
