@@ -7,8 +7,10 @@ use stellar_commands::{
 };
 use stellar_document::{
     records::NodePayload,
-    text::{edit_text, TextError, TextPayload, TextRange},
+    text::{edit_text, TextError, TextPayload},
 };
+
+pub use stellar_document::text::TextRange;
 
 #[derive(Debug, Clone, Copy)]
 struct Target {

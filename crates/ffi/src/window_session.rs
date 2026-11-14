@@ -180,6 +180,9 @@ pub unsafe extern "C" fn stellar_window_session_close(
             Ok(app) => app.close_window_session(WindowSessionHandle(session)),
             Err(status) => return status,
         };
+        if result.is_ok() {
+            rt.text_inputs.close(session);
+        }
         unsafe { rt.finish_request(result, out_request) }
     })
 }
