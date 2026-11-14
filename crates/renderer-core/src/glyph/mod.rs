@@ -34,6 +34,11 @@ use stellar_scene::geometry::PathGeometry;
 
 use crate::digest::fnv1a64;
 
+/// atlas page 할당·eviction (XI.6.5).
+pub mod atlas;
+
+pub use atlas::{AtlasConfig, AtlasStats, ShelfGlyphAtlas, TrimOutcome};
+
 /// variation axis 최대 수.
 pub const MAX_VARIATION_AXES: usize = 64;
 
@@ -534,6 +539,8 @@ pub enum AtlasError {
     },
     /// 열린 frame이 없거나 frame 번호가 증가하지 않았습니다.
     FrameOrder,
+    /// bitmap format이 key의 rendering mode와 다릅니다.
+    FormatMismatch,
 }
 
 impl fmt::Display for AtlasError {
@@ -545,6 +552,9 @@ impl fmt::Display for AtlasError {
             AtlasError::Full => f.write_str("glyph atlas에 공간이 없습니다"),
             AtlasError::InvalidConfig { reason } => write!(f, "glyph atlas 설정 오류: {reason}"),
             AtlasError::FrameOrder => f.write_str("glyph atlas frame 순서 오류"),
+            AtlasError::FormatMismatch => {
+                f.write_str("glyph bitmap format이 rendering mode와 다릅니다")
+            }
         }
     }
 }
