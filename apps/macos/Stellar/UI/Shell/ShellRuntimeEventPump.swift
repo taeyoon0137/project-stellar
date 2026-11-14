@@ -116,6 +116,12 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.gitNames(handle: runtimeHandle, session: session, selection: selection, stage: stage), completion)
     }
 
+    func insertFrame(session: UInt64, parent: CanvasFrameHit, rect: CGRect,
+                     completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.insertFrame(handle: runtimeHandle, session: session, view: parent.viewID,
+                                         parent: parent.id, revision: parent.revision, rect: rect), completion)
+    }
+
     func moveFrame(session: UInt64, hit: CanvasFrameHit, delta: CGVector,
                    completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.moveFrame(handle: runtimeHandle, session: session, view: hit.viewID,

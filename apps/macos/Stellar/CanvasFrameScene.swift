@@ -4,6 +4,7 @@ struct CanvasFrameHit {
     let id: UUID
     let revision: UInt64
     let viewID: UUID
+    let localToWorld: CGAffineTransform
     let parentToWorld: CGAffineTransform
     let worldToView: CGAffineTransform
 }
@@ -148,7 +149,7 @@ final class CanvasFrameScene {
             while let i = ancestor, !frames[i].clips || frames[i].worldPath.contains(world) { ancestor = frames[i].parent }
             if ancestor == nil {
                 return CanvasFrameHit(id: frame.id, revision: revision, viewID: viewID,
-                                      parentToWorld: frame.parent.map { frames[$0].world } ?? .identity, worldToView: worldToView)
+                                      localToWorld: frame.world, parentToWorld: frame.parent.map { frames[$0].world } ?? .identity, worldToView: worldToView)
             }
         }
         return nil

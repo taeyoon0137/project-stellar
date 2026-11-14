@@ -33,6 +33,8 @@ final class CanvasView: NSView {
         needsDisplay = true
     }
 
+    var insertionOutline: CGPath? { didSet { needsDisplay = true } }
+
     func frameHit(at point: NSPoint) -> CanvasFrameHit? { frameScene.hit(at: point) }
 
     var framePointerHandler: ((NSEvent) -> Bool)?
@@ -98,7 +100,17 @@ final class CanvasView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         NSColor.windowBackgroundColor.setFill()
         dirtyRect.fill()
-        if let context = NSGraphicsContext.current?.cgContext { frameScene.draw(in: context) }
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        frameScene.draw(in: context)
+        if let path = insertionOutline {
+            context.saveGState()
+            context.addPath(path)
+            context.setFillColor(NSColor.controlAccentColor.withAlphaComponent(0.12).cgColor)
+            context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+            context.setLineWidth(1)
+            context.drawPath(using: .fillStroke)
+            context.restoreGState()
+        }
     }
 
     // MARK: - 입력 (XII.3.2)
