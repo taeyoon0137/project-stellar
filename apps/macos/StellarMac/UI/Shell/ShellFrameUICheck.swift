@@ -128,9 +128,12 @@ private final class ShellFrameUICheckRunner {
             abs(toolBar.frame.midX - contentHost.bounds.midX) < 1
                 && abs(toolBar.frame.minY - (contentHost.safeAreaInsets.bottom + ShellToolBarView.Metrics.bottomInset)) < 1,
             "도구 막대가 캔버스 하단 가운데가 아님: \(toolBar.frame) / \(contentHost.bounds)")
+        // 1× 화면에서는 38.5pt짜리 도구 세 칸의 너비가 반 픽셀 반올림됩니다.
+        let expectedWidth = ShellToolBarView.Metrics.cellWidth * CGFloat(ShellFrameDataSourceStub.sampleTools.count)
+        let halfPixel = 0.5 / window.backingScaleFactor
         expect(
-            abs(toolBar.frame.height - ShellToolBarView.Metrics.height) < 0.5
-                && abs(toolBar.frame.width - ShellToolBarView.Metrics.cellWidth * CGFloat(ShellFrameDataSourceStub.sampleTools.count)) < 0.5,
+            abs(toolBar.frame.height - ShellToolBarView.Metrics.height) <= halfPixel
+                && abs(toolBar.frame.width - expectedWidth) <= halfPixel,
             "도구 막대 치수가 툴바 도구 그룹과 다름: \(toolBar.frame.size)")
         expect(toolbar.autosavesConfiguration && toolbar.allowsUserCustomization, "툴바 구성 autosave·커스터마이즈 꺼짐")
         expect(controller.toolbarController.navigationGroup?.isNavigational == true, "내비게이션 그룹이 navigational이 아님")
