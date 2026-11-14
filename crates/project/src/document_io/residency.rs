@@ -104,10 +104,10 @@ fn read_index(
     lazy: &LazyGeneration,
 ) -> Result<(Vec<DocumentManifestChunk>, BTreeMap<ChunkId, ContentHash>), ResidencyError> {
     let mut index = Vec::new();
-    for (chunk, payload) in lazy.document_manifests() {
-        let manifest =
-            DocumentManifestChunk::decode(payload).map_err(|error| ResidencyError::Manifest {
-                chunk: *chunk,
+    for (pointer, payload) in lazy.document_manifest_records() {
+        let manifest = DocumentManifestChunk::decode_for_schema(pointer.schema_version, payload)
+            .map_err(|error| ResidencyError::Manifest {
+                chunk: pointer.chunk_id,
                 error,
             })?;
         index.push(manifest);

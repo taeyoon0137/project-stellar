@@ -153,6 +153,9 @@ impl DocumentModel {
                 *non_node_ids.entry(view.id).or_default() += 1;
             }
         }
+        for id in definition.text_styles.typography.keys() {
+            *non_node_ids.entry(*id).or_default() += 1;
+        }
         DocumentModel {
             non_node_ids,
             children: BTreeMap::new(),
@@ -165,7 +168,21 @@ impl DocumentModel {
         }
     }
 
-    /// 문서·페이지·View 정의.
+    /// 문서 스타일 표와 문서에서 점유하는 resource ID를 한 번에 바꿉니다.
+    pub fn replace_text_styles(
+        &mut self,
+        styles: crate::text_styles::DocumentTextStyles,
+    ) -> crate::text_styles::DocumentTextStyles {
+        for id in self.definition.text_styles.typography.keys() {
+            remove_non_node_id(&mut self.non_node_ids, *id);
+        }
+        for id in styles.typography.keys() {
+            *self.non_node_ids.entry(*id).or_default() += 1;
+        }
+        std::mem::replace(&mut self.definition.text_styles, styles)
+    }
+
+    /// 문서 정의.
     pub fn definition(&self) -> &DocumentDefinition {
         &self.definition
     }

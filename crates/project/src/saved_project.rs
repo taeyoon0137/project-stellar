@@ -134,10 +134,9 @@ impl SavedProject {
     /// 저장된 문서 id(DocumentManifest chunk 순서).
     pub fn document_ids(&self) -> Result<Vec<StableId>, LoadDocumentError> {
         self.generation
-            .document_manifests()
-            .iter()
-            .map(|(_, payload)| {
-                DocumentManifestChunk::decode(payload)
+            .document_manifest_records()
+            .map(|(pointer, payload)| {
+                DocumentManifestChunk::decode_for_schema(pointer.schema_version, payload)
                     .map(|manifest| manifest.definition.id)
                     .map_err(LoadDocumentError::Manifest)
             })

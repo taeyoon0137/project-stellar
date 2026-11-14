@@ -44,6 +44,8 @@ pub enum ManifestChunkError {
         /// 문제 위치(항목 index).
         index: usize,
     },
+    /// pointer의 schema version 또는 version과 payload의 조합을 해석할 수 없습니다.
+    UnsupportedSchema(u32),
     /// 문서 정의 디코딩 실패.
     Definition(DefinitionError),
     /// canonical 디코딩 실패.
@@ -57,6 +59,9 @@ impl fmt::Display for ManifestChunkError {
         match self {
             ManifestChunkError::ViewMismatch { index } => {
                 write!(f, "View 항목 {index}가 문서 정의의 View 순서와 다릅니다")
+            }
+            ManifestChunkError::UnsupportedSchema(version) => {
+                write!(f, "DocumentManifest schema {version} 해석 불가")
             }
             ManifestChunkError::Definition(e) => write!(f, "문서 정의: {e}"),
             ManifestChunkError::Decode(e) => write!(f, "DocumentManifest 디코딩: {e}"),
@@ -117,6 +122,27 @@ impl DocumentManifestChunk {
             enc.put_fixed_raw(&entry.chunk.to_bytes());
         }
         Ok(enc.into_bytes())
+    }
+
+    /// 이 payload를 가리키는 pointer의 schema. 기존 정의는 v1 bytes를 그대로 유지합니다.
+    pub fn schema_version(&self) -> u32 {
+        if self.definition.text_styles.is_empty() {
+            1
+        } else {
+            2
+        }
+    }
+
+    /// 제품 generation에서 읽을 때는 저장된 pointer version을 먼저 확인합니다.
+    pub fn decode_for_schema(version: u32, bytes: &[u8]) -> Result<Self, ManifestChunkError> {
+        if !matches!(version, 1 | 2) {
+            return Err(ManifestChunkError::UnsupportedSchema(version));
+        }
+        let manifest = Self::decode(bytes)?;
+        if version != manifest.schema_version() {
+            return Err(ManifestChunkError::UnsupportedSchema(version));
+        }
+        Ok(manifest)
     }
 
     /// payload bytes에서 디코딩하고 검증합니다.

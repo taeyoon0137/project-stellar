@@ -46,3 +46,5 @@ pub mod validate;
 
 /// snapshot → 영속 문서 레코드 역투영 (XIV.5.4).
 pub mod records;
+
+mod text_styles;

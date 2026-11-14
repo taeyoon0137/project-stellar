@@ -125,6 +125,13 @@ impl LazyGeneration {
         &self.document_manifests
     }
 
+    /// document payload와 그 encoding을 지정하는 저장 pointer를 함께 읽습니다.
+    pub fn document_manifest_records(&self) -> impl Iterator<Item = (ChunkPointer, &[u8])> {
+        self.document_manifests
+            .iter()
+            .map(|(id, bytes)| (self.by_id[id], bytes.as_slice()))
+    }
+
     /// 열린 manifest.
     pub fn manifest(&self) -> &crate::generation::manifest::GenerationManifest {
         &self.loaded.manifest

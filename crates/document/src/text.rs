@@ -294,6 +294,8 @@ impl OpenTypeTag {
 /// canonical 형식: feature·variation은 tag 오름차순, tag당 하나(마지막 값 우선).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextStyle {
+    /// run의 CSS letter-spacing. 없으면 Typography를 상속합니다.
+    pub letter_spacing: Option<stellar_core_types::typography::LetterSpacing>,
     /// typography(글꼴 family·크기 등) 정의 참조. 없으면 paragraph/문서 기본.
     pub typography: Option<StableId>,
     /// 글자 채우기 색. 없으면 상속.
@@ -320,6 +322,7 @@ impl TextStyle {
             map.into_iter().collect()
         }
         TextStyle {
+            letter_spacing: None,
             typography,
             fill,
             features: canonical(features),
@@ -434,18 +437,11 @@ pub enum WrappingMode {
 pub const MAX_LINE_HEIGHT_MULTIPLIER: f32 = 10.0;
 /// 고정 줄 높이 상한(논리 픽셀).
 pub const MAX_FIXED_LINE_HEIGHT: f32 = 10_000.0;
-/// 자간 하한(글꼴 크기 대비 비율, em).
-pub const MIN_LETTER_SPACING_EM: f32 = -1.0;
-/// 자간 상한(em).
-pub const MAX_LETTER_SPACING_EM: f32 = 10.0;
-
 /// paragraph 속성 검증 오류.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParagraphStyleError {
     /// 줄 높이가 범위를 벗어납니다.
     LineHeightOutOfRange,
-    /// 자간이 범위를 벗어납니다.
-    LetterSpacingOutOfRange,
 }
 
 impl fmt::Display for ParagraphStyleError {
@@ -453,9 +449,6 @@ impl fmt::Display for ParagraphStyleError {
         match self {
             ParagraphStyleError::LineHeightOutOfRange => {
                 f.write_str("줄 높이가 허용 범위를 벗어납니다")
-            }
-            ParagraphStyleError::LetterSpacingOutOfRange => {
-                f.write_str("자간이 허용 범위를 벗어납니다")
             }
         }
     }
@@ -466,23 +459,23 @@ impl std::error::Error for ParagraphStyleError {}
 /// paragraph 속성. 실제 layout은 Phase X에서 구현합니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParagraphStyle {
+    /// 문단의 CSS typography. 없으면 문서 기본을 상속합니다.
+    pub typography: Option<StableId>,
     /// 정렬.
     pub alignment: TextAlignment,
     /// 줄 높이.
     pub line_height: LineHeight,
-    /// 자간(em, 글꼴 크기 대비 비율). 기본 0.
-    pub letter_spacing_em: FiniteF32,
     /// 줄바꿈 방식.
     pub wrapping: WrappingMode,
 }
 
 impl Default for ParagraphStyle {
-    /// Start 정렬, Auto 줄 높이, 자간 0, Wrap.
+    /// Start 정렬, Auto 줄 높이, Wrap.
     fn default() -> ParagraphStyle {
         ParagraphStyle {
+            typography: None,
             alignment: TextAlignment::default(),
             line_height: LineHeight::default(),
-            letter_spacing_em: FiniteF32::ZERO,
             wrapping: WrappingMode::default(),
         }
     }
@@ -503,10 +496,6 @@ impl ParagraphStyle {
                     return Err(ParagraphStyleError::LineHeightOutOfRange);
                 }
             }
-        }
-        let ls = self.letter_spacing_em.get();
-        if !(MIN_LETTER_SPACING_EM..=MAX_LETTER_SPACING_EM).contains(&ls) {
-            return Err(ParagraphStyleError::LetterSpacingOutOfRange);
         }
         Ok(())
     }
@@ -806,7 +795,6 @@ mod tests {
         let d = ParagraphStyle::default();
         assert_eq!(d.alignment, TextAlignment::Start);
         assert_eq!(d.line_height, LineHeight::Auto);
-        assert_eq!(d.letter_spacing_em.get(), 0.0);
         assert_eq!(d.wrapping, WrappingMode::Wrap);
         assert!(d.validate().is_ok());
     }
@@ -814,53 +802,35 @@ mod tests {
     #[test]
     fn paragraph_style_boundary_values() {
         // 검증 기준(VI.7.3): 경계값 validation 통과.
-        let with = |line_height, ls: f32| ParagraphStyle {
+        let with = |line_height| ParagraphStyle {
             line_height,
-            letter_spacing_em: finite(ls),
             ..ParagraphStyle::default()
         };
         // 줄 높이 배수: 0 초과 ~ 10 이하.
-        assert!(with(
-            LineHeight::Multiplier(finite(MAX_LINE_HEIGHT_MULTIPLIER)),
-            0.0
-        )
-        .validate()
-        .is_ok());
-        assert!(with(LineHeight::Multiplier(finite(0.0001)), 0.0)
+        assert!(
+            with(LineHeight::Multiplier(finite(MAX_LINE_HEIGHT_MULTIPLIER)))
+                .validate()
+                .is_ok()
+        );
+        assert!(with(LineHeight::Multiplier(finite(0.0001)))
             .validate()
             .is_ok());
         for bad in [0.0, -1.0, MAX_LINE_HEIGHT_MULTIPLIER + 0.01] {
             assert_eq!(
-                with(LineHeight::Multiplier(finite(bad)), 0.0)
+                with(LineHeight::Multiplier(finite(bad)))
                     .validate()
                     .unwrap_err(),
                 ParagraphStyleError::LineHeightOutOfRange
             );
         }
         // 고정 줄 높이: 0 초과 ~ 10000 이하.
-        assert!(with(LineHeight::Fixed(finite(MAX_FIXED_LINE_HEIGHT)), 0.0)
+        assert!(with(LineHeight::Fixed(finite(MAX_FIXED_LINE_HEIGHT)))
             .validate()
             .is_ok());
-        assert!(with(LineHeight::Fixed(finite(0.0)), 0.0)
+        assert!(with(LineHeight::Fixed(finite(0.0))).validate().is_err());
+        assert!(with(LineHeight::Fixed(finite(MAX_FIXED_LINE_HEIGHT + 1.0)))
             .validate()
             .is_err());
-        assert!(
-            with(LineHeight::Fixed(finite(MAX_FIXED_LINE_HEIGHT + 1.0)), 0.0)
-                .validate()
-                .is_err()
-        );
-        // 자간: [-1, 10] em.
-        assert!(with(LineHeight::Auto, MIN_LETTER_SPACING_EM)
-            .validate()
-            .is_ok());
-        assert!(with(LineHeight::Auto, MAX_LETTER_SPACING_EM)
-            .validate()
-            .is_ok());
-        assert_eq!(
-            with(LineHeight::Auto, -1.01).validate().unwrap_err(),
-            ParagraphStyleError::LetterSpacingOutOfRange
-        );
-        assert!(with(LineHeight::Auto, 10.01).validate().is_err());
     }
 
     #[test]

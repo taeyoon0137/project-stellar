@@ -282,10 +282,9 @@ pub fn find_document_manifest(
     lazy: &LazyGeneration,
     document: StableId,
 ) -> Result<&[u8], LoadDocumentError> {
-    for (chunk, payload) in lazy.document_manifests() {
-        check_document_chunk_schema(lazy, *chunk).map_err(LoadDocumentError::Read)?;
-        let manifest =
-            DocumentManifestChunk::decode(payload).map_err(LoadDocumentError::Manifest)?;
+    for (pointer, payload) in lazy.document_manifest_records() {
+        let manifest = DocumentManifestChunk::decode_for_schema(pointer.schema_version, payload)
+            .map_err(LoadDocumentError::Manifest)?;
         if manifest.definition.id == document {
             return Ok(payload);
         }

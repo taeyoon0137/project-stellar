@@ -195,10 +195,14 @@ pub fn open_snapshot(path: &Path) -> Result<ProjectSnapshot, OpenError> {
                 manifest_hash,
             };
             let mut documents = Vec::new();
-            for (_, payload) in generation.document_manifests() {
-                let chunk = DocumentManifestChunk::decode(payload).map_err(|e| {
-                    OpenError::Document(DocumentReadError::Load(LoadDocumentError::Manifest(e)))
-                })?;
+            for (pointer, payload) in generation.document_manifest_records() {
+                let chunk =
+                    DocumentManifestChunk::decode_for_schema(pointer.schema_version, payload)
+                        .map_err(|e| {
+                            OpenError::Document(DocumentReadError::Load(
+                                LoadDocumentError::Manifest(e),
+                            ))
+                        })?;
                 documents.push(chunk.definition);
             }
             let mut counts: BTreeMap<u32, usize> = BTreeMap::new();

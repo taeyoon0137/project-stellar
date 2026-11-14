@@ -294,6 +294,10 @@ fn encode_payload(command: &Command, out: &mut Writer) {
         Command::ConvertFragmentToFrame(command) => command.encode_into(out),
         Command::ConvertShapeToPath(command) => command.encode_into(out),
         Command::RestoreNodeRecords(command) => command.encode_into(out),
+        Command::SetDocumentTextStyles { document, styles } => {
+            out.id(*document);
+            out.bytes(&styles.encode());
+        }
         Command::ReplaceText(edit) => {
             out.id(edit.node);
             out.u32(edit.range.start.0);
@@ -354,6 +358,16 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         CommandKind::RestoreNodeRecords => {
             RestoreNodeRecords::decode_from(input).map(Command::RestoreNodeRecords)
         }
+        CommandKind::SetDocumentTextStyles => Ok(Command::SetDocumentTextStyles {
+            document: input.id()?,
+            styles: Box::new(
+                stellar_document::text_styles::DocumentTextStyles::decode(input.bytes()?).map_err(
+                    |_| CommandCodecError::Malformed {
+                        reason: "Text style 표 형식",
+                    },
+                )?,
+            ),
+        }),
         CommandKind::ReplaceText => {
             let node = input.id()?;
             let range = stellar_document::text::TextRange::new(input.u32()?, input.u32()?).ok_or(

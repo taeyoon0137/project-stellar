@@ -154,17 +154,28 @@ impl Typography {
 
     /// v1 bytes. 정수·float는 LE이고 각 enum은 고정 u8 discriminator를 사용합니다.
     pub fn encode(&self) -> Result<Vec<u8>, TypographyError> {
-        self.validate()?;
         let mut out = HEADER.to_vec();
+        for bytes in self.longhand_bytes()? {
+            out.extend(bytes);
+        }
+        Ok(out)
+    }
+
+    /// font-family, size, weight, style, stretch, line-height, letter-spacing 순서의 canonical 값.
+    pub fn longhand_bytes(&self) -> Result<[Vec<u8>; 7], TypographyError> {
+        self.validate()?;
+        let mut pieces: [Vec<u8>; 7] = Default::default();
+        let out = &mut pieces[0];
         out.extend_from_slice(&(self.families.len() as u32).to_le_bytes());
         for family in &self.families {
             out.extend_from_slice(&(family.name.len() as u32).to_le_bytes());
             out.extend_from_slice(family.name.as_bytes());
             out.push(u8::from(family.face.is_some()));
             if let Some(face) = &family.face {
-                face.encode_into(&mut out);
+                face.encode_into(out);
             }
         }
+        let out = &mut pieces[1];
         match self.size {
             FontSize::Medium => out.push(0),
             FontSize::Subpixels(n) => {
@@ -172,7 +183,9 @@ impl Typography {
                 out.extend(n.to_le_bytes());
             }
         }
+        let out = &mut pieces[2];
         out.extend(self.weight.to_le_bytes());
+        let out = &mut pieces[3];
         match self.style {
             FontStyle::Normal => out.push(0),
             FontStyle::Italic => out.push(1),
@@ -181,7 +194,9 @@ impl Typography {
                 out.extend(v.to_le_bytes());
             }
         }
+        let out = &mut pieces[4];
         out.extend(self.stretch_percent.to_le_bytes());
+        let out = &mut pieces[5];
         match self.line_height {
             LineHeight::Normal => out.push(0),
             LineHeight::Number(v) => {
@@ -193,6 +208,7 @@ impl Typography {
                 out.extend(n.to_le_bytes());
             }
         }
+        let out = &mut pieces[6];
         match self.letter_spacing {
             LetterSpacing::Normal => out.push(0),
             LetterSpacing::Px(v) => {
@@ -204,7 +220,23 @@ impl Typography {
                 out.extend(v.to_le_bytes());
             }
         }
-        Ok(out)
+        Ok(pieces)
+    }
+
+    /// Semantic merge에서 독립적으로 편집된 longhand를 같은 versioned decoder로 검증합니다.
+    pub fn from_longhand_bytes(fields: &[Vec<u8>; 7]) -> Result<Self, TypographyError> {
+        if fields.iter().map(Vec::len).sum::<usize>() > MAX_RECORD_BYTES {
+            return Err(TypographyError);
+        }
+        let mut merged = HEADER.to_vec();
+        for field in fields {
+            merged.extend(field);
+        }
+        let record = Self::decode(&merged)?;
+        if &record.longhand_bytes()? != fields {
+            return Err(TypographyError);
+        }
+        Ok(record)
     }
 
     /// 현재 버전의 canonical bytes만 해석합니다.

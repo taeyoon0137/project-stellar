@@ -183,6 +183,11 @@ pub(super) fn node(record: &NodeRecord) -> Result<YamlValue, TextSourceError> {
 pub fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
     let records = model.to_records().map_err(invalid)?;
     validate_document(&records).map_err(invalid)?;
+    if !records.definition.text_styles.is_empty() {
+        return Err(TextSourceError::Unsupported(
+            "text source v1에는 문서 style 표가 없습니다".into(),
+        ));
+    }
     let [page] = records.definition.pages.as_slice() else {
         return Err(TextSourceError::Unsupported(
             "정확히 하나의 페이지가 필요합니다".into(),

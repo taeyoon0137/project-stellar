@@ -145,6 +145,8 @@ pub struct PageDefinition {
 /// 문서 정의: 페이지들을 담습니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentDefinition {
+    /// 문서 공통 Text style 표. 구형 정의에는 비어 있습니다.
+    pub text_styles: crate::text_styles::DocumentTextStyles,
     /// 고유 StableId.
     pub id: StableId,
     /// 표시 이름(식별·저장 경로에 사용 금지).
@@ -204,6 +206,7 @@ impl DocumentDefinition {
     /// 문서를 만듭니다.
     pub fn new(id: StableId, display_name: String) -> DocumentDefinition {
         DocumentDefinition {
+            text_styles: Default::default(),
             id,
             display_name,
             pages: Vec::new(),
@@ -419,6 +422,7 @@ impl DocumentDefinition {
             pages.push(PageDefinition::decode_from(reader)?);
         }
         Ok(DocumentDefinition {
+            text_styles: Default::default(),
             id,
             display_name,
             pages,
@@ -432,6 +436,9 @@ impl DocumentDefinition {
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         self.encode_into(&mut buf);
+        if !self.text_styles.is_empty() {
+            buf.extend(self.text_styles.encode());
+        }
         buf
     }
 
@@ -442,8 +449,20 @@ impl DocumentDefinition {
             input: bytes,
             pos: 0,
         };
-        let definition = DocumentDefinition::decode_from(&mut reader)?;
-        reader.expect_end()?;
+        let mut definition = DocumentDefinition::decode_from(&mut reader)?;
+        if reader.pos != bytes.len() {
+            definition.text_styles = crate::text_styles::DocumentTextStyles::decode(
+                &bytes[reader.pos..],
+            )
+            .map_err(|_| DefinitionError::Malformed {
+                reason: "Text style 표 형식",
+            })?;
+            if definition.text_styles.is_empty() {
+                return Err(DefinitionError::Malformed {
+                    reason: "빈 Text style 표 중복 표현",
+                });
+            }
+        }
         Ok(definition)
     }
 }
@@ -452,25 +471,46 @@ impl ProjectDocumentIndex {
     /// canonical binary bytes로 인코딩합니다.
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
+        let styled = self.documents.iter().any(|d| !d.text_styles.is_empty());
+        if styled {
+            buf.extend(b"STDI\x02");
+        }
         buf.extend_from_slice(&(self.documents.len() as u32).to_le_bytes());
         for document in &self.documents {
-            document.encode_into(&mut buf);
+            if styled {
+                let bytes = document.encode();
+                buf.extend((bytes.len() as u32).to_le_bytes());
+                buf.extend(bytes);
+            } else {
+                document.encode_into(&mut buf);
+            }
         }
         buf
     }
 
     /// binary bytes에서 디코딩합니다. malformed 입력은 panic 없이 거부합니다.
     pub fn decode(bytes: &[u8]) -> Result<ProjectDocumentIndex, DefinitionError> {
+        let styled = bytes.starts_with(b"STDI\x02");
         let mut reader = Reader {
-            input: bytes,
+            input: if styled { &bytes[5..] } else { bytes },
             pos: 0,
         };
         let count = reader.take_u32()? as usize;
         let mut documents = Vec::with_capacity(count.min(1024));
         for _ in 0..count {
-            documents.push(DocumentDefinition::decode_from(&mut reader)?);
+            if styled {
+                let n = reader.take_u32()? as usize;
+                documents.push(DocumentDefinition::decode(reader.take(n)?)?);
+            } else {
+                documents.push(DocumentDefinition::decode_from(&mut reader)?);
+            }
         }
         reader.expect_end()?;
+        if styled && documents.iter().all(|d| d.text_styles.is_empty()) {
+            return Err(DefinitionError::Malformed {
+                reason: "빈 style index 중복 표현",
+            });
+        }
         Ok(ProjectDocumentIndex { documents })
     }
 }
@@ -486,6 +526,7 @@ mod tests {
     fn sample_index() -> ProjectDocumentIndex {
         let mut index = ProjectDocumentIndex::new();
         let mut doc = DocumentDefinition {
+            text_styles: Default::default(),
             id: stable(1),
             display_name: "메인 문서".to_string(),
             pages: vec![],
@@ -522,6 +563,7 @@ mod tests {
         assert_eq!(
             index
                 .add_document(DocumentDefinition {
+                    text_styles: Default::default(),
                     id: stable(1),
                     display_name: String::new(),
                     pages: vec![],
@@ -574,6 +616,7 @@ mod tests {
         let mut index = ProjectDocumentIndex::new();
         index
             .add_document(DocumentDefinition {
+                text_styles: Default::default(),
                 id: stable(1),
                 display_name: "한글 이름 🎨".to_string(),
                 pages: vec![],
@@ -690,6 +733,7 @@ mod tests {
         let mut index = ProjectDocumentIndex::new();
         index
             .add_document(DocumentDefinition {
+                text_styles: Default::default(),
                 id: stable(1),
                 display_name: "ab".to_string(),
                 pages: vec![],

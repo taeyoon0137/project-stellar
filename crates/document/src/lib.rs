@@ -92,3 +92,6 @@ pub mod op_count;
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub mod test_support;
+
+/// 문서 단위 Text style 표 및 상속.
+pub mod text_styles;
