@@ -107,10 +107,10 @@ impl Default for PtyLauncher {
 }
 
 impl TerminalLauncher for PtyLauncher {
-    fn launch(&mut self, request: &LaunchRequest) -> Result<Box<dyn TerminalProcess>, LaunchError> {
+    fn launch(&mut self, request: LaunchRequest) -> Result<Box<dyn TerminalProcess>, LaunchError> {
         let pair = PtyPair::open(request.size()).map_err(LaunchError::Pty)?;
         self.spawn_count.fetch_add(1, Ordering::SeqCst);
-        let process = PtyProcess::spawn(pair, request, self.grace).map_err(LaunchError::Spawn)?;
+        let process = PtyProcess::spawn(pair, &request, self.grace).map_err(LaunchError::Spawn)?;
         Ok(Box::new(process))
     }
 }
@@ -675,11 +675,18 @@ impl Drop for PtyProcess {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::capability::{TerminalCapability, TerminalTrust};
     use crate::test_support::{pty_exclusive, pty_shared, OutputCollector, TempDir};
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
 
     pub(crate) const TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// 테스트 실행기용 token(신뢰된 가짜 프로젝트 창).
+    pub(crate) fn test_capability() -> TerminalCapability {
+        TerminalCapability::grant(crate::registry::tests::window(99), TerminalTrust::Trusted)
+            .unwrap()
+    }
 
     pub(crate) fn request_with_env(
         program: &str,
@@ -688,6 +695,7 @@ pub(crate) mod tests {
         env: Vec<(OsString, OsString)>,
     ) -> LaunchRequest {
         LaunchRequest::new(
+            test_capability(),
             PathBuf::from(program),
             args.iter().map(OsString::from).collect(),
             None,
@@ -706,7 +714,7 @@ pub(crate) mod tests {
         )
     }
 
-    fn launch(request: &LaunchRequest) -> Box<dyn TerminalProcess> {
+    fn launch(request: LaunchRequest) -> Box<dyn TerminalProcess> {
         PtyLauncher::with_grace(Duration::from_millis(500))
             .launch(request)
             .unwrap()
@@ -724,7 +732,7 @@ pub(crate) mod tests {
     }
 
     /// 실행해 끝날 때까지 기다리고 (종료 결과, 전체 출력)을 돌려줍니다.
-    fn run_to_end(request: &LaunchRequest) -> (ExitReport, String) {
+    fn run_to_end(request: LaunchRequest) -> (ExitReport, String) {
         let mut process = launch(request);
         let output = OutputCollector::start(process.output_reader().unwrap());
         let report = wait_exit(process.as_mut());
@@ -737,7 +745,7 @@ pub(crate) mod tests {
         let dir = TempDir::new();
         // 출력이 빠지지 않는지 여러 번 확인합니다(slave 보관·drain, 모듈 문서).
         for _ in 0..20 {
-            let (report, text) = run_to_end(&request(
+            let (report, text) = run_to_end(request(
                 "/bin/echo",
                 &["hello", "stellar terminal", "'quoted' $HOME"],
                 dir.path(),
@@ -756,7 +764,7 @@ pub(crate) mod tests {
             (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
             (OsString::from("STELLAR_TEST"), OsString::from("a b=c")),
         ];
-        let (report, text) = run_to_end(&request_with_env("/usr/bin/env", &[], dir.path(), env));
+        let (report, text) = run_to_end(request_with_env("/usr/bin/env", &[], dir.path(), env));
         assert_eq!(report.status, TerminalExitStatus::Exited(0));
         let mut lines: Vec<&str> = text
             .lines()
@@ -765,7 +773,7 @@ pub(crate) mod tests {
         lines.sort_unstable();
         assert_eq!(lines, ["PATH=/usr/bin:/bin", "STELLAR_TEST=a b=c"]);
 
-        let (_, text) = run_to_end(&request("/bin/pwd", &[], dir.path()));
+        let (_, text) = run_to_end(request("/bin/pwd", &[], dir.path()));
         assert_eq!(text, format!("{}\r\n", dir.path().display()));
     }
 
@@ -775,7 +783,7 @@ pub(crate) mod tests {
         let dir = TempDir::new();
         // `tty`는 stdin이 터미널이면 그 이름을 출력합니다. `/dev/tty`를 열 수 있으면 controlling
         // terminal이 있다는 뜻입니다.
-        let (report, text) = run_to_end(&request(
+        let (report, text) = run_to_end(request(
             "/bin/sh",
             &["-c", "/usr/bin/tty; exec 3</dev/tty && echo ctty-ok"],
             dir.path(),
@@ -789,7 +797,7 @@ pub(crate) mod tests {
     fn interactive_input_and_terminate() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&request("/bin/cat", &[], dir.path()));
+        let mut process = launch(request("/bin/cat", &[], dir.path()));
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         process.write_input(b"ping\n").unwrap();
         // tty echo와 cat 출력이 함께 옵니다.
@@ -819,7 +827,7 @@ pub(crate) mod tests {
         let dir = TempDir::new();
         let mut launcher = PtyLauncher::new();
         let err = launcher
-            .launch(&request("/nonexistent/stellar-shell", &[], dir.path()))
+            .launch(request("/nonexistent/stellar-shell", &[], dir.path()))
             .unwrap_err();
         assert!(
             matches!(err, LaunchError::Spawn(io) if io.kind == io::ErrorKind::NotFound),
@@ -835,6 +843,7 @@ pub(crate) mod tests {
         size: TerminalSize,
     ) -> LaunchRequest {
         LaunchRequest::new(
+            test_capability(),
             PathBuf::from(program),
             args.iter().map(OsString::from).collect(),
             None,
@@ -851,7 +860,7 @@ pub(crate) mod tests {
         for (rows, cols) in [(24, 80), (33, 101), (1, 1), (200, 500)] {
             let size = TerminalSize::new(rows, cols).unwrap();
             let (report, text) =
-                run_to_end(&request_sized("/bin/stty", &["size"], dir.path(), size));
+                run_to_end(request_sized("/bin/stty", &["size"], dir.path(), size));
             assert_eq!(report.status, TerminalExitStatus::Exited(0));
             assert_eq!(text, format!("{rows} {cols}\r\n"));
         }
@@ -861,7 +870,7 @@ pub(crate) mod tests {
     fn resize_fixture_columns_and_rows() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&request(
+        let mut process = launch(request(
             "/bin/sh",
             &["-c", "read line; /bin/stty size"],
             dir.path(),
@@ -882,7 +891,7 @@ pub(crate) mod tests {
     fn resize_delivers_sigwinch_to_foreground_job() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&request(
+        let mut process = launch(request(
             "/bin/sh",
             &[
                 "-c",
@@ -982,7 +991,7 @@ pub(crate) mod tests {
     fn child_exit_cleans_up_whole_session() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&tree_request("read line; exit 0", dir.path()));
+        let mut process = launch(tree_request("read line; exit 0", dir.path()));
         let leader = i32::try_from(process.pid()).unwrap();
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         let pids = wait_tree_ready(&mut output);
@@ -1005,7 +1014,7 @@ pub(crate) mod tests {
     fn external_signal_to_leader_cleans_up_session() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&tree_request("while :; do /bin/sleep 1; done", dir.path()));
+        let mut process = launch(tree_request("while :; do /bin/sleep 1; done", dir.path()));
         let leader = i32::try_from(process.pid()).unwrap();
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         let pids = wait_tree_ready(&mut output);
@@ -1022,7 +1031,7 @@ pub(crate) mod tests {
     fn terminate_kills_other_groups_and_sighup_ignoring_jobs() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&tree_request("while :; do /bin/sleep 1; done", dir.path()));
+        let mut process = launch(tree_request("while :; do /bin/sleep 1; done", dir.path()));
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         let pids = wait_tree_ready(&mut output);
         let _guard = KillOnDrop(pids.clone());
@@ -1041,7 +1050,7 @@ pub(crate) mod tests {
     fn dropping_unfinished_process_terminates_tree() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let process = launch(&tree_request("while :; do /bin/sleep 1; done", dir.path()));
+        let process = launch(tree_request("while :; do /bin/sleep 1; done", dir.path()));
         let leader = i32::try_from(process.pid()).unwrap();
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         let pids = wait_tree_ready(&mut output);
@@ -1058,7 +1067,7 @@ pub(crate) mod tests {
         let _pty = pty_exclusive();
         let before = tty_fd_count();
         let dir = TempDir::new();
-        let mut process = launch(&request("/bin/sleep", &["300"], dir.path()));
+        let mut process = launch(request("/bin/sleep", &["300"], dir.path()));
         // master + 부모가 보관한 slave.
         assert_eq!(tty_fd_count(), before + 2);
         process.terminate().unwrap();

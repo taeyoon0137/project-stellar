@@ -341,7 +341,9 @@ impl TerminalRegistry {
                 None,
             ),
         };
+        // token을 요청에 소비합니다. 요청은 이 경로에서만 만들어지고 실행기에 값으로 넘어갑니다.
         let request = LaunchRequest::new(
+            capability,
             program,
             args,
             arg0,
@@ -349,7 +351,7 @@ impl TerminalRegistry {
             env,
             environment.size,
         );
-        match launcher.launch(&request) {
+        match launcher.launch(request) {
             Ok(process) => {
                 let pid = process.pid();
                 session.state = TerminalProcessState::Running { pid };
@@ -620,10 +622,11 @@ pub(crate) mod tests {
     impl TerminalLauncher for FakeLauncher {
         fn launch(
             &mut self,
-            request: &LaunchRequest,
+            request: LaunchRequest,
         ) -> Result<Box<dyn TerminalProcess>, LaunchError> {
             self.counters.launches.fetch_add(1, Ordering::SeqCst);
-            self.requests.push(request.clone());
+            let size = request.size();
+            self.requests.push(request);
             if let Some(err) = self.fail {
                 return Err(err);
             }
@@ -631,7 +634,7 @@ pub(crate) mod tests {
             Ok(Box::new(FakeProcess {
                 pid,
                 counters: self.counters.clone(),
-                size: request.size(),
+                size,
             }))
         }
     }
@@ -740,6 +743,8 @@ pub(crate) mod tests {
         assert_eq!(launcher.counters.launches(), 2);
 
         let shell_request = &launcher.requests[0];
+        // 요청은 이 창의 token을 소비해 만들어졌습니다.
+        assert_eq!(shell_request.window(), window(13));
         assert_eq!(shell_request.program(), std::path::Path::new("/bin/sh"));
         assert_eq!(shell_request.arg0(), Some(&OsString::from("-sh")));
         assert!(shell_request.args().is_empty());

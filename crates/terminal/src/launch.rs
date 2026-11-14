@@ -3,18 +3,53 @@
 //! registry는 신뢰 gate·cwd·명령·환경을 확인한 뒤 [`LaunchRequest`]를 만들어 [`TerminalLauncher`]에
 //! 넘깁니다. 실제 PTY 생성과 child 실행은 플랫폼 실행기가 맡습니다(macOS POSIX PTY: XVIII.2.1).
 //! 실행 결과는 [`TerminalProcess`] trait object로 registry 세션에 붙습니다.
+//!
+//! **신뢰 gate 밖 실행 금지**(XVIII.1.4): child를 만드는 유일한 입력은 [`LaunchRequest`]이고, 요청은
+//! 이 crate 안에서 [`TerminalCapability`] token을 **소비**해야만 만들어집니다. 생성자는 crate 밖에
+//! 공개하지 않고, 요청은 `Clone`이 아니며, 실행기는 요청을 값으로 받아 소비합니다. 그래서 crate 밖
+//! 코드가 child를 만드는 경로는 [`TerminalRegistry::start`](crate::registry::TerminalRegistry::start)
+//! 하나뿐이고, gate 통과 한 번이 실행 한 번 이상으로 늘어나지 않습니다.
+//!
+//! ```compile_fail,E0624
+//! // crate 밖에서는 요청을 직접 만들 수 없습니다(생성자 비공개).
+//! use stellar_terminal::capability::{TerminalCapability, TerminalTrust};
+//! use stellar_terminal::launch::LaunchRequest;
+//! use stellar_terminal::size::TerminalSize;
+//! # use stellar_core_types::ids::{StableId, WindowSessionId};
+//! # let window = WindowSessionId::from_stable_id(StableId::from_bytes([1; 16]));
+//! let capability = TerminalCapability::grant(window, TerminalTrust::Trusted).unwrap();
+//! let _ = LaunchRequest::new(
+//!     capability,
+//!     "/bin/sh".into(),
+//!     Vec::new(),
+//!     None,
+//!     "/".into(),
+//!     Vec::new(),
+//!     TerminalSize::DEFAULT,
+//! );
+//! ```
+//!
+//! ```compile_fail,E0277
+//! // 실행기에 넘긴 요청을 복제해 두었다가 다시 실행할 수 없습니다(`Clone` 아님).
+//! fn assert_clone<T: Clone>() {}
+//! assert_clone::<stellar_terminal::launch::LaunchRequest>();
+//! ```
 
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use stellar_core_types::ids::WindowSessionId;
+
+use crate::capability::TerminalCapability;
 use crate::size::TerminalSize;
 use crate::state::{StartFailure, TerminalExitStatus};
 
-/// 실행기에 넘기는 검증된 실행 요청.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// 실행기에 넘기는 검증된 실행 요청. 신뢰 gate를 통과한 시작 한 번에 하나만 만들어집니다(모듈 문서).
+#[derive(Debug, PartialEq, Eq)]
 pub struct LaunchRequest {
+    window: WindowSessionId,
     program: PathBuf,
     args: Vec<OsString>,
     arg0: Option<OsString>,
@@ -24,8 +59,10 @@ pub struct LaunchRequest {
 }
 
 impl LaunchRequest {
-    /// 요청을 만듭니다. 값은 registry가 검증한 profile·cwd·환경에서 옵니다.
-    pub fn new(
+    /// 요청을 만듭니다. `capability`를 소비하므로 신뢰된 프로젝트 창의 token 없이는 만들 수 없습니다.
+    /// 값은 registry가 검증한 profile·cwd·환경에서 옵니다.
+    pub(crate) fn new(
+        capability: TerminalCapability,
         program: PathBuf,
         args: Vec<OsString>,
         arg0: Option<OsString>,
@@ -34,6 +71,7 @@ impl LaunchRequest {
         size: TerminalSize,
     ) -> LaunchRequest {
         LaunchRequest {
+            window: capability.window(),
             program,
             args,
             arg0,
@@ -41,6 +79,11 @@ impl LaunchRequest {
             env,
             size,
         }
+    }
+
+    /// 실행을 허가한 capability의 프로젝트 창.
+    pub fn window(&self) -> WindowSessionId {
+        self.window
     }
 
     /// 실행 파일 절대 경로.
@@ -181,8 +224,8 @@ pub trait TerminalProcess: fmt::Debug + Send {
 
 /// 터미널 child 실행기.
 pub trait TerminalLauncher {
-    /// 요청대로 PTY와 child를 만듭니다.
-    fn launch(&mut self, request: &LaunchRequest) -> Result<Box<dyn TerminalProcess>, LaunchError>;
+    /// 요청대로 PTY와 child를 만듭니다. 요청은 소비되어 다시 쓸 수 없습니다.
+    fn launch(&mut self, request: LaunchRequest) -> Result<Box<dyn TerminalProcess>, LaunchError>;
 }
 
 #[cfg(test)]
