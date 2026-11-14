@@ -90,8 +90,9 @@
 
 ## 남은 위험 / 한계
 
-- Metal device가 없는 환경(가상화 macOS runner 등)에서는 GPU 테스트가 메시지를 출력하고 검증 없이
-  끝납니다. CI-MAC runner의 GPU 유무는 이 작업에서 확인하지 못했습니다.
+- Metal device가 없는 환경(가상화 macOS runner 등)에서는 GPU 테스트가 실패합니다(리뷰 후 수정: 처음에는
+  메시지만 출력하고 검증 없이 통과했습니다). `STELLAR_ALLOW_MISSING_METAL=1`을 설정했을 때만 검증 없이
+  건너뜁니다. CI-MAC runner의 GPU 유무는 이 작업에서 확인하지 못했습니다.
 - 실제 창(CanvasHost) layer 연결과 display scale 변경은 XII.4.1에서 검증합니다.
 - Objective-C 예외는 Rust로 unwind할 수 없으므로 Metal에 넘기기 전 검사로 막습니다. 검사 밖 API 오용은
   여전히 process abort 위험이 있습니다.
