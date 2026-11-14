@@ -683,6 +683,86 @@ mod tests {
         assert_eq!(first.references(), BTreeSet::from([token(1), scheme()]));
     }
 
+    fn fixed(byte: u8) -> StableId {
+        StableId::from_bytes([byte; 16])
+    }
+
+    /// 버전 1 배치(ADR-0026 1절)를 고정합니다. 기대 bytes는 encoder를 쓰지 않고 형식 정의에서 직접
+    /// 조립합니다. round-trip test는 배치가 바뀌어도 encoder·decoder가 함께 바뀌면 통과하므로, 이 test가
+    /// 필드 순서·폭·엔디언을 지킵니다.
+    #[test]
+    fn canonical_bytes_golden() {
+        // (1) 환경 참조 source, Required Enum target, node owner, key 경로 + index tail.
+        let environment = ValueBinding::new(
+            BindingId::new(fixed(0x77)),
+            PropertyPath::with_keys(fixed(0x50), vec![PropertyKey(1), PropertyKey(0x0102_0304)])
+                .with_index(5),
+            ExpressionAst::new(
+                ExprNodeId::new(fixed(0x01)),
+                vec![ExprNode::reference(
+                    ExprNodeId::new(fixed(0x01)),
+                    ReferenceTarget::Environment(EnvironmentKey::new(4)),
+                )],
+            )
+            .expect("유효"),
+            TypeSpec::required(ExpressionType::Enum(EnumTypeId::new(0xE000_0002))),
+            ScopeOwner::Node(NodeRef::new(fixed(0x60))),
+        );
+        let mut expected = vec![0x01, 0x00]; // version u16 LE
+        expected.extend([0x77; 16]); // BindingId
+        expected.extend([0x21, 0x00, 0x00, 0x00]); // target blob 길이 33 (LE)
+        expected.extend([0x50; 16]); // PropertyPath root
+        expected.extend([0x00, 0x00, 0x00, 0x02]); // key 수 (BE)
+        expected.extend([0x00, 0x00, 0x00, 0x01, 0x01, 0x02, 0x03, 0x04]); // key (BE)
+        expected.extend([0x01, 0x00, 0x00, 0x00, 0x05]); // index tail (BE)
+        expected.extend([0x00, 0x04, 0x02, 0x00, 0x00, 0xE0]); // Required, Enum, enum_type (LE)
+        expected.push(0x01); // owner = Node
+        expected.extend([0x60; 16]);
+        expected.extend([0x22, 0x00, 0x00, 0x00]); // source blob 길이 34 (LE)
+        expected.extend([0x01, 0x00, 0x01, 0x00, 0x00, 0x00]); // AST version, node 수 (LE)
+        expected.extend([0x01; 16]);
+        expected.extend([0x02, 0x00, 0x00]); // op = Reference
+        expected.extend([0x04, 0x04, 0x00, 0x00, 0x00]); // environment key 4 (LE)
+        expected.extend([0x00, 0x00, 0x00, 0x00]); // child 수
+        assert_eq!(environment.to_bytes().expect("직렬화"), expected);
+        assert_eq!(ValueBinding::from_bytes(&expected), Ok(environment));
+
+        // (2) Enum literal source, Optional Enum target, component owner, key segment tail.
+        // 같은 EnumTypeId가 type_spec에서는 LE, literal 값(TypedValue) 안에서는 BE입니다.
+        let literal = ValueBinding::new(
+            BindingId::new(fixed(0x78)),
+            PropertyPath::new(fixed(0x51)).with_key_segment("가"),
+            ExpressionAst::new(
+                ExprNodeId::new(fixed(0x02)),
+                vec![ExprNode::literal(
+                    ExprNodeId::new(fixed(0x02)),
+                    TypedValue::Enum(EnumValue::new(0xE000_0002, 1)),
+                )],
+            )
+            .expect("유효"),
+            TypeSpec::optional(ExpressionType::Enum(EnumTypeId::new(0xE000_0002))),
+            ScopeOwner::Component(ComponentRef::new(fixed(0x61))),
+        );
+        let mut expected = vec![0x01, 0x00];
+        expected.extend([0x78; 16]);
+        expected.extend([0x1C, 0x00, 0x00, 0x00]); // target blob 길이 28 (LE)
+        expected.extend([0x51; 16]);
+        expected.extend([0x00, 0x00, 0x00, 0x00]); // key 수 0
+        expected.extend([0x02, 0x00, 0x00, 0x00, 0x03, 0xEA, 0xB0, 0x80]); // key segment "가" (길이 BE)
+        expected.extend([0x01, 0x04, 0x02, 0x00, 0x00, 0xE0]); // Optional, Enum, enum_type (LE)
+        expected.push(0x02); // owner = Component
+        expected.extend([0x61; 16]);
+        expected.extend([0x2B, 0x00, 0x00, 0x00]); // source blob 길이 43 (LE)
+        expected.extend([0x01, 0x00, 0x01, 0x00, 0x00, 0x00]);
+        expected.extend([0x02; 16]);
+        expected.extend([0x01, 0x00, 0x00]); // op = Literal
+        expected.extend([0x01, 0x09, 0x00, 0x00, 0x00]); // literal 값, TypedValue blob 길이 9 (LE)
+        expected.extend([0x04, 0xE0, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01]); // Enum (BE 필드)
+        expected.extend([0x00, 0x00, 0x00, 0x00]); // child 수
+        assert_eq!(literal.to_bytes().expect("직렬화"), expected);
+        assert_eq!(ValueBinding::from_bytes(&expected), Ok(literal));
+    }
+
     #[test]
     fn malformed_bytes_are_rejected() {
         let bytes = samples()[1].to_bytes().expect("직렬화");

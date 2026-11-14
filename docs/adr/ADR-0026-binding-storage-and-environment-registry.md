@@ -264,10 +264,13 @@ AST의 reference payload `0x04`에 `u32` LE로 기록됩니다.
   document List 계약의 `0x000C_0001`\~`0x000C_0003`이 있습니다. 대역 밖이라 충돌은 없습니다.
 - `environment.rs`의 "`0xE000_0000` 대역" 문구에는 상한이 없습니다. 이 ADR의 상한(`0xE000_FFFF`)을
   코드 주석에 반영하는 일은 후속 작업입니다.
-- `ValueBinding`에는 고정 golden bytes test가 없습니다. test는 round-trip, 머리 2바이트 버전, 손상
-  거부만 확인합니다. 그래서 배치가 바뀌어도 round-trip만 맞으면 통과합니다. canonical AST
+- `ValueBinding`에는 고정 golden bytes test가 없었습니다. test는 round-trip, 머리 2바이트 버전, 손상
+  거부만 확인했습니다. 그래서 배치가 바뀌어도 round-trip만 맞으면 통과했습니다. canonical AST
   (`canonical_bytes_golden`)와 key registry(`key_numeric_ids_match_golden`)에는 golden test가 있습니다.
-  binding golden fixture 추가는 후속 작업입니다.
+  사후 리뷰 뒤 `binding.rs`에 `canonical_bytes_golden`을 추가했습니다. 기대 bytes를 1절 배치에서
+  직접 조립해 두 binding(환경 참조 source + index tail + Node owner, Enum literal source + key segment
+  tail + Component owner)을 고정합니다. 같은 `EnumTypeId`가 `type_spec`에서는 LE, literal 값
+  안에서는 BE인 것도 포함합니다.
 - `adr_policy.rs` 보호 경로에 `crates/bindings/`·`crates/expressions/`가 없었습니다. 그래서 이 형식이나
   registry를 바꿔도 `validate-adr`가 실패하지 않았습니다. 사후 리뷰 뒤 이 ADR이 기록한 형식·registry
   파일 세 개를 정확히 일치하는 보호 경로로 추가했습니다: `crates/bindings/src/binding.rs`,

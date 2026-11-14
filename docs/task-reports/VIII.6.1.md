@@ -67,7 +67,11 @@
   프리픽스, Enum 필드, Gradient stop 수)가 big-endian이고 `f32` payload(Number·Length·Percentage·
   Angle·Duration, Color 채널, Shadow, Gradient stop 위치)가 little-endian입니다(ADR-0008,
   ADR-0026 1절). `binding.rs` 모듈 문서도 같은 내용으로 고쳤습니다.
-- **후속**: `ValueBinding` 고정 golden bytes test가 없습니다. 별도 변경으로 남깁니다.
+- **golden bytes(사후 리뷰 수정)**: `ValueBinding` 고정 golden bytes test가 없었습니다.
+  `canonical_bytes_golden`을 추가해 ADR-0026 1절 배치에서 직접 조립한 bytes로 binding 두 개를
+  고정했습니다. 확인을 위해 `type_spec`의 `enum_type`을 encoder·decoder 모두 big-endian으로 바꿔
+  보았습니다. 그러자 기존 test 51개는 모두 통과했고 `canonical_bytes_golden`만 실패했습니다. 바꾼
+  코드는 되돌렸습니다.
 - **보호 경로(사후 리뷰 수정)**: `crates/bindings/src/binding.rs`를 ADR 보호 경로
   (`tools/xtask/src/adr_policy.rs`의 정확히 일치 목록)에 추가했습니다. 이제 이 파일을 바꾸는 diff에
   ADR이 없으면 `validate-adr`가 실패합니다. 같은 변경에서 `crates/expressions/src/codec.rs`와
