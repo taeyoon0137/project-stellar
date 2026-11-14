@@ -259,5 +259,16 @@ pub fn corrupt_view_tree_chunks(root: &Path) -> usize {
 /// 저장 View 접근성 HTML fixture.
 pub mod accessibility;
 
+/// 저장 View 고정 Frame HTML+CSS fixture.
+pub mod web_frame;
+
 /// 임시 fixture의 기존 신뢰 등록을 준비하는 타입. 제품 API에는 재노출하지 않습니다.
 pub use stellar_project::{identity::ProjectIdentity, trust_store::FileTrustStore};
+
+/// 임시 신뢰 저장소에서 프로젝트를 선택합니다(전역 환경 변수 변경 없이 cache 검증).
+pub fn select_trusted_project(
+    project: StableId,
+    data: PathBuf,
+) -> Result<crate::trusted::TrustedProject, crate::trusted::TrustedReadError> {
+    crate::trusted::TrustedProject::select_in(project, data)
+}

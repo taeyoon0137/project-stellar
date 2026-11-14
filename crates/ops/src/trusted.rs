@@ -6,9 +6,10 @@ use std::path::PathBuf;
 use stellar_project::identity::ProjectIdentity;
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
+use stellar_storage::generation::current::{read_current_pointer, CurrentPointerError};
 
 use crate::core_types::ids::StableId;
-use crate::snapshot::{open_snapshot, probe, ProjectSnapshot};
+use crate::snapshot::{open_snapshot, probe, ProjectProbe, ProjectSnapshot};
 
 /// 신뢰를 확인할 수 없거나 고정한 프로젝트를 열 수 없음. 경로·내용은 노출하지 않습니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +37,10 @@ impl TrustedProject {
         Self::select_in(project_id, data_dir)
     }
 
-    fn select_in(project_id: StableId, data_dir: PathBuf) -> Result<Self, TrustedReadError> {
+    pub(crate) fn select_in(
+        project_id: StableId,
+        data_dir: PathBuf,
+    ) -> Result<Self, TrustedReadError> {
         let store = FileTrustStore::open(&data_dir).map_err(|_| TrustedReadError::NotTrusted)?;
         let target = store
             .unique_target(project_id)
@@ -59,6 +63,10 @@ impl TrustedProject {
 
     /// 최신 신뢰와 고정 경로의 매니페스트 ID를 확인합니다.
     pub fn check(&self) -> Result<(), TrustedReadError> {
+        self.checked_probe().map(|_| ())
+    }
+
+    fn checked_probe(&self) -> Result<ProjectProbe, TrustedReadError> {
         let store =
             FileTrustStore::open(&self.data_dir).map_err(|_| TrustedReadError::NotTrusted)?;
         let target = self.identity.canonical_target();
@@ -72,7 +80,27 @@ impl TrustedProject {
         if current.manifest.project.id.parse::<StableId>().ok() != Some(self.project_id()) {
             return Err(TrustedReadError::NotTrusted);
         }
-        Ok(())
+        Ok(current)
+    }
+
+    /// 신뢰·identity·프로젝트 설정·current pointer가 열린 snapshot과 같은지 확인합니다.
+    /// `stellar.yaml`은 generation hash에 포함되지 않으므로 매번 probe 전체를 비교합니다.
+    /// 문서 chunk는 다시 읽지 않습니다. 검증한 content-addressed 객체의 불변성을 사용합니다.
+    pub fn snapshot_is_current(
+        &self,
+        snapshot: &ProjectSnapshot,
+    ) -> Result<bool, TrustedReadError> {
+        let current = self.checked_probe()?;
+        let hash = match read_current_pointer(&current.root) {
+            Ok(hash) => Some(hash),
+            Err(CurrentPointerError::Missing { .. }) => None,
+            Err(_) => return Err(TrustedReadError::Unavailable),
+        };
+        Ok(snapshot.root() == current.root
+            && snapshot.project_id() == self.project_id()
+            && snapshot.git_link() == current.git_link
+            && snapshot.manifest() == &current.manifest
+            && snapshot.revision().manifest_hash() == hash)
     }
 
     /// 한 generation의 snapshot을 엽니다. 열기 전후 확인에 실패하면 내용을 반환하지 않습니다.
@@ -83,7 +111,9 @@ impl TrustedProject {
         if snapshot.project_id() != self.project_id() {
             return Err(TrustedReadError::NotTrusted);
         }
-        self.check()?;
+        if !self.snapshot_is_current(&snapshot)? {
+            return Err(TrustedReadError::Unavailable);
+        }
         Ok(snapshot)
     }
 }

@@ -26,6 +26,9 @@
 | `RUST_TEST_THREADS=4 cargo xtask check-core` | 65 — fmt/clippy 통과, 기존 IPC pending handshake 테스트 1건 TimedOut |
 | `cargo test -p stellar-local-ipc listener::tests::pending_handshakes_are_capped_and_resume_when_one_finishes --locked -- --exact` | 0 — 실패한 테스트 단독 실행 통과 |
 | `RUST_TEST_THREADS=1 cargo xtask check-core` | 0 — fmt/clippy, workspace 3,877 passed/0 failed/8 ignored, 별도 doctest 54 passed |
+| `RUST_TEST_THREADS=4 cargo test -p stellar-project -p stellar-ops -p stellar-cli -p stellar-codegen -p stellar-mcp-core -p stellar-mcp --locked` (bc5b2db2 병합 후) | 0 — 660 passed, 0 failed, 기존 3 ignored |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` (최종 통합) | 0 |
+| `cargo fmt --all -- --check` / `bash scripts/macos/smoke.sh` (최종 통합) | 0 — 서명 없는 기본 smoke, 창 세션68·명령56·닫기98·키 매핑101 포함 |
 | `cargo xtask generate-ledger` | 0 — 계획서에서 1,152행 재생성 |
 | `target/debug/xtask validate-task-status` / `sync-plan` | 0 |
 | `target/debug/xtask validate-task-report docs/task-reports/V.10.4.md` / `V.10.6.md` | 0 |
@@ -34,7 +37,7 @@
 
 ## 환경과 증거
 
-DEV-MAC: macOS 27.2 (26B123), arm64, Rust 1.96.0, Apple Git 2.54.0. 이 전용 작업 트리에서 최신 origin/main `c881c97e86c0a5db6efbc3441129f06db650346a`를 먼저 병합한 `ea4cc68` 위에서 구현했습니다. 초기 실패 로그는 `/tmp/stellar-text-node-red.log`, project 로그는 `/tmp/stellar-text-node-project.log`, 통합 타깃 로그는 `/tmp/stellar-text-node-targeted.log`입니다. 초기 테스트 작성의 import·참조 타입 오류와 빈 CLI 명령 요청 오류는 수정한 뒤 다시 검증했습니다. 스레드 4 전체 검사에서는 기존 `pending_handshakes_are_capped_and_resume_when_one_finishes`가 `listener.rs:1089`에서 TimedOut으로 실패했습니다(IPC 58 passed/1 failed). 단독 실행은 4.53초에 통과했습니다. 실패 로그는 프로젝트 밖 `text-node-validation-20261114/threads-4-failure/`에 보존했으며 IPC 코드·시간 상한·제외 목록은 변경하지 않았습니다. 이후 같은 소스의 전체 직렬 검사는 통과했으며, 원시 로그는 같은 외부 디렉터리의 `threads-1-success/`에 보존했습니다. 이 전체 검사에 Swift smoke·원격 CI 실행은 포함하지 않습니다.
+DEV-MAC: macOS 27.2 (26B123), arm64, Rust 1.96.0, Apple Git 2.54.0. 이 전용 작업 트리에서 최신 origin/main `c881c97e86c0a5db6efbc3441129f06db650346a`를 먼저 병합한 `ea4cc68` 위에서 구현했습니다. 초기 실패 로그는 `/tmp/stellar-text-node-red.log`, project 로그는 `/tmp/stellar-text-node-project.log`, 통합 타깃 로그는 `/tmp/stellar-text-node-targeted.log`입니다. 초기 테스트 작성의 import·참조 타입 오류와 빈 CLI 명령 요청 오류는 수정한 뒤 다시 검증했습니다. 스레드 4 전체 검사에서는 기존 `pending_handshakes_are_capped_and_resume_when_one_finishes`가 `listener.rs:1089`에서 TimedOut으로 실패했습니다(IPC 58 passed/1 failed). 단독 실행은 4.53초에 통과했습니다. 실패 로그는 프로젝트 밖 `text-node-validation-20261114/threads-4-failure/`에 보존했으며 IPC 코드·시간 상한·제외 목록은 변경하지 않았습니다. 이후 같은 소스의 전체 직렬 검사는 통과했으며, 원시 로그는 같은 외부 디렉터리의 `threads-1-success/`에 보존했습니다. 이 전체 Rust 검사의 기준은 c881c97e 포함 상태의 제품 커밋 `4670b5a4`입니다. 이후 `origin/main` bc5b2db2를 병합했고 Text codec·project/CLI 회귀 본문은 Git 객체 비교로 동일함을 확인했습니다. 최종 통합은 관련 Rust 6개 crate의 660개 테스트, 전체 clippy·fmt·기본 macOS smoke로 검증했습니다. 로그는 외부 `text-node-validation-20261114/final-bc5b2db2/`에 보존합니다. 최종 병합에서 전체 workspace 검사를 다시 실행했다고 주장하지 않으며 원격 CI는 이번 회차에 실행하지 않았습니다.
 
 ## 테스트
 

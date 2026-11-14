@@ -9,5 +9,8 @@ pub mod aria;
 /// 생성 HTML 정적 접근성 검사 (XXII.2.4).
 pub mod check;
 
+/// 고정 Free Frame의 CSS 출력 값과 formatter.
+pub mod frame;
+
 #[cfg(test)]
 mod tests;

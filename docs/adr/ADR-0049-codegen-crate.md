@@ -65,3 +65,16 @@ Accepted (2026-11-14). 제품 소유자가 기술 문서에 세부가 없는 설
   파일 출력 옵션은 없고 JSON의 `result.html`을 사용합니다. Git·프로젝트를 변경하지 않습니다.
 - 이는 정적 접근성 투영의 제품 경로이며 XXIV.1.4의 일반 render/export나 Phase XXII 전체 코드 생성
   완료가 아닙니다. 저장 형식·FFI·초기 앱 메뉴·text-source apply에는 영향이 없습니다.
+
+## 고정 Free Frame HTML+CSS 연결 (2026-11-14)
+
+- 저장된 지정 단일 View를 일반 CLI로 브라우저에 출력하는 사용자 요청 범위에서
+  `stellar export-web <경로> <문서 id> <View id>`를 추가합니다. 지원 범위와 실패 계약은
+  [web-frame-export](../spec/web-frame-export.md)에 둡니다. 기존 접근성 명령은 유지합니다.
+- 문서 해석은 ops가 맡고 구조는 기존 접근성 `IrTree`·Web mapper를 재사용합니다. 아직 없는 layout·
+  capability를 만들어 전체 `CodegenSources`를 채우지 않습니다. `web::frame::FrameStyle`은 저장된
+  core 값(크기·affine·색·테두리·반경)을 요소 하나의 CSS로 쓰는 좁은 출력 입력입니다. 새 범용 IR이나
+  property bundle·variant·longhand 스키마를 만들지 않고, codegen의 document 의존도 추가하지 않습니다.
+- Frame의 legacy 좌표·border 보정과 root 캔버스 이동 생략은 ADR-0024·속성 모델 5절의 변환을 출력에만
+  적용합니다. 저장 migration·ADR-0059 기본 전환을 실행하지 않습니다. 미지원 데이터는 node ID를 포함한
+  오류와 HTML 없음으로 반환하며 전체 코드 내보내기 WBS 상태는 변경하지 않습니다.
