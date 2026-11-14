@@ -99,7 +99,7 @@ struct Runtime {
     drawable: Option<Drawable>,
     /// 셸이 제출한 입력 이벤트(FIFO, 용량 [`INPUT_QUEUE_CAPACITY`], 연속 move/wheel 병합).
     input: InputQueue,
-    /// native 입력 시각 → 코어 단조 domain 변환기(첫 입력에서 기준점을 잡음).
+    /// native 입력 시각 → 코어 단조 domain 변환기(검증을 통과한 첫 입력에서 기준점을 잡음).
     input_domain: Option<InputTimeDomain>,
     /// 프로젝트·문서 요청을 처리하는 앱 runtime(첫 요청에서 시작).
     app: Option<AppRuntime>,
@@ -534,7 +534,9 @@ pub unsafe extern "C" fn stellar_runtime_drawable_size(
 
 /// macOS 셸이 받은 `NSEvent` 원시 필드를 공통 입력 이벤트로 변환해 입력 대기열에 넣습니다(XII.3.2).
 ///
-/// - 첫 입력에서 `receive_uptime`(셸 수신 시각)과 코어 단조 시계로 시간 domain 기준점을 잡습니다.
+/// - 검증을 통과한 첫 입력에서 `receive_uptime`(셸 수신 시각)과 코어 단조 시계로 시간 domain 기준점을
+///   잡습니다. 거부된 이벤트는 기준점을 잡지 않습니다. 수신 시각보다 10초 넘게 늦은 `timestamp`는 수신
+///   시각으로 자릅니다([`convert_mac_event`]).
 /// - 공통 집합에 없는 이벤트(enter/exit, gesture, 표에 없는 key 등)는 넣지 않고 `out_queued = 0`.
 /// - 대기열에 반영되면 `out_queued = 1`입니다. 끝 항목과 병합된 연속 move/wheel도 반영으로 셉니다(XII.3.4).
 /// - 규칙 위반은 `InvalidArgument`, 대기열이 가득 차면 `QueueFull`(둘 다 last error 설정, 입력은 버림).
@@ -564,7 +566,10 @@ pub unsafe extern "C" fn stellar_runtime_submit_mac_event(
             }
         };
         write_queued(0);
-        let domain = match rt.input_domain.as_mut() {
+        // 기준점이 없으면 이 이벤트의 수신 시각으로 임시 domain을 만들고, 이벤트가 검증을 통과했을
+        // 때만 runtime에 남깁니다. 거부될 이벤트가 기준점을 영구히 정하지 않게 합니다.
+        let anchored = rt.input_domain.is_some();
+        let mut domain = match rt.input_domain.take() {
             Some(domain) => domain,
             None => {
                 let anchor = InputTimeDomain::new(
@@ -572,7 +577,7 @@ pub unsafe extern "C" fn stellar_runtime_submit_mac_event(
                     &InstantClock,
                 );
                 match anchor {
-                    Ok(domain) => rt.input_domain.insert(domain),
+                    Ok(domain) => domain,
                     Err(error) => {
                         rt.last_error = Some((
                             StellarStatus::InvalidArgument,
@@ -583,7 +588,11 @@ pub unsafe extern "C" fn stellar_runtime_submit_mac_event(
                 }
             }
         };
-        match convert_mac_event(&raw, domain) {
+        let converted = convert_mac_event(&raw, &mut domain);
+        if anchored || converted.is_ok() {
+            rt.input_domain = Some(domain);
+        }
+        match converted {
             Ok(None) => StellarStatus::Ok,
             Ok(Some(input)) => match rt.input.push(input) {
                 PushOutcome::Queued | PushOutcome::Coalesced => {
@@ -1873,6 +1882,76 @@ mod tests {
             // 올바른 수신 시각이 오면 그때 기준점을 잡습니다.
             event.receive_uptime = 1.0;
             assert_eq!(submit(h, &event), (StellarStatus::Ok, 1));
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        /// 병합되지 않는 key down 이벤트(native 시각 `timestamp`, 수신 시각 `receive_uptime`).
+        fn key_at(timestamp: f64, receive_uptime: f64) -> StellarMacEvent {
+            StellarMacEvent {
+                key_code: 0x00,
+                receive_uptime,
+                ..mac_event(event_type::KEY_DOWN, timestamp)
+            }
+        }
+
+        fn poll_timestamp(h: u64) -> u64 {
+            poll(h).expect("입력 이벤트").timestamp().get()
+        }
+
+        #[test]
+        fn one_future_timestamp_does_not_latch_later_inputs() {
+            // 보안 리뷰 FR-3: 수신 시각보다 터무니없이 미래인 timestamp 하나가 이후 정상 입력의 시각을
+            // 그 값으로 고정하지 않습니다. 이벤트는 받은 뒤에 일어날 수 없으므로 수신 시각에서 자릅니다.
+            let h = create();
+            assert_eq!(submit(h, &key_at(100.0, 100.0)), (StellarStatus::Ok, 1));
+            assert_eq!(submit(h, &key_at(1.0e9, 100.1)), (StellarStatus::Ok, 1));
+            assert_eq!(submit(h, &key_at(100.2, 100.2)), (StellarStatus::Ok, 1));
+            assert_eq!(submit(h, &key_at(105.0, 105.0)), (StellarStatus::Ok, 1));
+            let t: Vec<u64> = (0..4).map(|_| poll_timestamp(h)).collect();
+            assert_eq!(
+                t[1] - t[0],
+                100_000_000,
+                "미래 timestamp는 수신 시각에서 자름"
+            );
+            assert_eq!(t[2] - t[0], 200_000_000);
+            assert_eq!(t[3] - t[2], 4_800_000_000, "이후 정상 입력 간격 보존");
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn rejected_first_event_does_not_set_the_time_anchor() {
+            // 보안 리뷰 FR-4: 거부된 첫 이벤트의 수신 시각이 기준점을 영구히 정하지 않습니다.
+            let h = create();
+            let mut bad_version = key_at(1.0e6, 1.0e6);
+            bad_version.version = 99;
+            assert_eq!(submit(h, &bad_version), (StellarStatus::InvalidArgument, 0));
+            let mut bad_click = mac_event(event_type::LEFT_MOUSE_DOWN, 2.0e6);
+            bad_click.click_count = 0;
+            assert_eq!(submit(h, &bad_click), (StellarStatus::InvalidArgument, 0));
+            assert_eq!(submit(h, &key_at(100.0, 100.0)), (StellarStatus::Ok, 1));
+            assert_eq!(submit(h, &key_at(200.0, 200.0)), (StellarStatus::Ok, 1));
+            let a = poll_timestamp(h);
+            let b = poll_timestamp(h);
+            assert!(a > 0, "첫 정상 이벤트가 기준점(코어 현재 시각)에 놓임");
+            assert_eq!(b - a, 100_000_000_000, "100초 간격 보존");
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+        }
+
+        #[test]
+        fn invalid_receive_uptime_is_rejected_after_the_anchor() {
+            // 기준점을 잡은 뒤에도 수신 시각은 유한한 음이 아닌 값이어야 합니다.
+            let h = create();
+            assert_eq!(submit(h, &key_at(1.0, 1.0)), (StellarStatus::Ok, 1));
+            for receive in [f64::NAN, f64::INFINITY, -1.0] {
+                assert_eq!(
+                    submit(h, &key_at(1.5, receive)),
+                    (StellarStatus::InvalidArgument, 0),
+                    "receive_uptime {receive}"
+                );
+            }
+            assert_eq!(submit(h, &key_at(2.0, 2.0)), (StellarStatus::Ok, 1));
+            let first = poll_timestamp(h);
+            assert_eq!(poll_timestamp(h) - first, 1_000_000_000);
             assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
         }
 

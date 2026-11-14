@@ -48,6 +48,13 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    시각, `NSEvent.timestamp`와 같은 축)과 코어 단조 시계 현재값으로 기준점을 잡습니다. 코어 단조 시계는
    `Instant` 기반이며 기준점을 첫 `stellar_runtime_create`에서 고정합니다(runtime 생성 뒤 발생한 입력이
    0으로 눌리지 않게). wall clock은 쓰지 않습니다(II.3.3).
+   - 2026-11-14 보완(보안 리뷰 FR-3·FR-4): 기준점은 검증(버전·예약·종류 변환)을 통과한 첫 이벤트에서만
+     잡습니다. 거부된 이벤트는 기준점을 정하지 않습니다. `receive_uptime`은 모든 이벤트에서 유한한 음이
+     아닌 값이어야 하고(위반은 `STELLAR_INVALID_ARGUMENT`), `receive_uptime`보다 10초 넘게 늦은
+     `timestamp`는 `receive_uptime`으로 자릅니다. 실제 이벤트는 받은 뒤에 일어날 수 없으므로, 미래 시각
+     하나가 단조 보정으로 이후 입력 시각을 고정하는 범위를 10초 안으로 묶습니다(허용 오차는 합성 이벤트를
+     최대 9초 앞선 timestamp로 만드는 셸 입력 검사 `InputCheck.swift` 때문입니다). 구조체·시그니처는
+     그대로입니다.
 
 ### XII.3.4 — 입력 대기열 coalescing
 

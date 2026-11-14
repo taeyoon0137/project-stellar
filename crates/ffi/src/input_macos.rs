@@ -10,6 +10,11 @@
 //! - **좌표**: `x`/`y`는 캔버스 view 기준 논리 point(좌상단 원점, y 아래로 증가)입니다. 셸의
 //!   캔버스 view는 `isFlipped == true`이므로 `convert(event.locationInWindow, from: nil)` 결과를
 //!   그대로 넣습니다. 값은 `f64`→`f32` IEEE 반올림 변환 후 유한해야 합니다.
+//! - **시각**: `timestamp`를 runtime 시간 domain([`InputTimeDomain`])으로 옮깁니다. `receive_uptime`
+//!   (셸 수신 시각)도 `timestamp`처럼 유한한 음이 아닌 값이어야 합니다. 수신 시각보다 10초 넘게 늦은
+//!   `timestamp`는 수신 시각으로 자릅니다. 이벤트는 받은 뒤에 일어날 수 없으므로, 합성 이벤트·셸 버그의
+//!   미래 시각 하나가 단조 보정으로 이후 입력 시각을 고정하는 범위를 10초 안으로 묶습니다. 수신 시각보다
+//!   이른 값(바쁜 main thread가 늦게 처리한 이벤트)은 그대로 둡니다.
 //! - **modifier**: `NSEvent.ModifierFlags`의 device-independent bit(Shift·Control·Option·Command·
 //!   Caps Lock)만 [`Modifiers`]로 옮깁니다. numericPad·help·function bit와 하위 16bit
 //!   device-dependent bit는 modifier로 쓰지 않습니다(단, `flagsChanged`의 좌우 key 판정에는 사용).
@@ -42,6 +47,13 @@ use crate::input::{
 
 /// [`StellarMacEvent`] 레이아웃 버전. 필드가 바뀌면 올리고 이전 버전은 거부합니다.
 pub const MAC_EVENT_VERSION: u32 = 1;
+
+/// `timestamp`가 `receive_uptime`보다 늦어도 그대로 쓰는 최대 초(모듈 문서 "시각").
+///
+/// 실제 AppKit 이벤트는 받은 뒤에 일어날 수 없어 이 값을 넘지 않습니다. 셸 입력 검사
+/// (`InputCheck.swift`)가 합성 이벤트 timestamp를 수신 시각보다 최대 9초 앞서 쓰므로 그보다 크게 둡니다.
+/// 미래 시각 하나가 이후 입력 시각을 고정하는 범위는 이 값 이하입니다.
+const MAX_TIMESTAMP_AHEAD_OF_RECEIVE_SECONDS: f64 = 10.0;
 
 /// AppKit `NSEvent` 원시 필드(C ABI 고정 구조체, 104 byte).
 ///
@@ -593,8 +605,20 @@ pub fn convert_mac_event(
     let Some(kind) = kind else {
         return Ok(None);
     };
+    // timestamp와 수신 시각은 모두 유한하고 음이 아니며 nanosecond u64 범위여야 합니다.
+    NativeTimestamp::MacEventSeconds(event.timestamp).to_native_nanos()?;
+    NativeTimestamp::MacEventSeconds(event.receive_uptime).to_native_nanos()?;
+    // 이벤트는 받은 뒤에 일어날 수 없으므로 수신 시각보다 허용 오차를 넘게 늦은 timestamp는 수신
+    // 시각으로 자릅니다. 합성 이벤트·셸 버그의 미래 시각 하나가 domain의 단조 상태를 끌어올려 이후
+    // 입력 시각을 고정하는 범위를 허용 오차 안으로 묶습니다.
+    let seconds = if event.timestamp - event.receive_uptime > MAX_TIMESTAMP_AHEAD_OF_RECEIVE_SECONDS
+    {
+        event.receive_uptime
+    } else {
+        event.timestamp
+    };
     // domain은 시각 변환이 성공할 때만 단조 상태를 갱신합니다.
-    let timestamp = domain.convert(NativeTimestamp::MacEventSeconds(event.timestamp))?;
+    let timestamp = domain.convert(NativeTimestamp::MacEventSeconds(seconds))?;
     Ok(Some(InputEvent::new(timestamp, kind)?))
 }
 
@@ -1278,6 +1302,70 @@ mod tests {
             convert_mac_event(&reserved, &mut domain),
             Err(MacEventError::ReservedNotZero)
         );
+    }
+
+    #[test]
+    fn timestamps_far_ahead_of_the_receive_time_are_cut() {
+        let mut domain = domain();
+        let at = |event: &StellarMacEvent, domain: &mut InputTimeDomain| {
+            convert_mac_event(event, domain)
+                .expect("ok")
+                .expect("event")
+                .timestamp()
+        };
+        // 수신 시각(+0.5초)보다 허용 오차를 넘게 미래인 timestamp는 수신 시각으로 자릅니다.
+        let mut future = mouse(t::MOUSE_MOVED, 0.5, (0.0, 0.0), 0, 0);
+        future.timestamp = 1.0e9;
+        assert_eq!(
+            at(&future, &mut domain),
+            MonotonicNanos::new(CORE_ANCHOR + 500_000_000)
+        );
+        // 그 뒤 정상 이벤트는 자기 시각을 그대로 씁니다(미래 값에 고정되지 않음).
+        let next = mouse(t::MOUSE_MOVED, 0.75, (0.0, 0.0), 0, 0);
+        assert_eq!(
+            at(&next, &mut domain),
+            MonotonicNanos::new(CORE_ANCHOR + 750_000_000)
+        );
+        // 경계: 허용 오차(10초) 안의 앞선 timestamp는 그대로, 넘으면 수신 시각입니다.
+        let mut within = mouse(t::MOUSE_MOVED, 1.0, (0.0, 0.0), 0, 0);
+        within.timestamp = within.receive_uptime + MAX_TIMESTAMP_AHEAD_OF_RECEIVE_SECONDS;
+        assert_eq!(
+            at(&within, &mut domain),
+            MonotonicNanos::new(CORE_ANCHOR + 11_000_000_000)
+        );
+        let mut beyond = mouse(t::MOUSE_MOVED, 20.0, (0.0, 0.0), 0, 0);
+        beyond.timestamp = beyond.receive_uptime + MAX_TIMESTAMP_AHEAD_OF_RECEIVE_SECONDS + 0.5;
+        assert_eq!(
+            at(&beyond, &mut domain),
+            MonotonicNanos::new(CORE_ANCHOR + 20_000_000_000)
+        );
+        // 수신 시각보다 이른 timestamp(늦게 처리한 이벤트)는 자르지 않고 단조 보정만 받습니다.
+        let mut late = mouse(t::MOUSE_MOVED, 30.0, (0.0, 0.0), 0, 0);
+        late.timestamp = MAC_ANCHOR_SECONDS + 25.0;
+        assert_eq!(
+            at(&late, &mut domain),
+            MonotonicNanos::new(CORE_ANCHOR + 25_000_000_000)
+        );
+        // 비유한 timestamp는 수신 시각보다 앞서도 자르지 않고 거부합니다.
+        let mut infinite = mouse(t::MOUSE_MOVED, 31.0, (0.0, 0.0), 0, 0);
+        infinite.timestamp = f64::INFINITY;
+        assert_eq!(
+            convert_mac_event(&infinite, &mut domain),
+            Err(MacEventError::Event(InputEventError::NonFiniteTimestamp))
+        );
+        // 수신 시각도 유한한 음이 아닌 값이어야 합니다.
+        for (receive, error) in [
+            (f64::NAN, InputEventError::NonFiniteTimestamp),
+            (f64::NEG_INFINITY, InputEventError::NonFiniteTimestamp),
+            (-0.5, InputEventError::NegativeTimestamp),
+        ] {
+            let mut bad = mouse(t::MOUSE_MOVED, 32.0, (0.0, 0.0), 0, 0);
+            bad.receive_uptime = receive;
+            assert_eq!(
+                convert_mac_event(&bad, &mut domain),
+                Err(MacEventError::Event(error))
+            );
+        }
     }
 
     #[test]

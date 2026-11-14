@@ -91,3 +91,24 @@
 - macOS 26 실제 HID 장치(ISO·JIS 배열 실물, pen tablet, 실제 momentum scroll 값)는 사람이 확인하지 않았습니다.
 - keyDown은 아직 `interpretKeyEvents`로 넘기지 않아 캔버스에서 IME 문자 입력은 없습니다(XII.5.3~XII.5.4 소관).
 - Windows 셸 변환(XII.3.3)은 ADR-0006으로 보류입니다.
+
+## 후속 수정(보안 리뷰 FR-3·FR-4 반영): 입력 시각 기준점과 미래 timestamp
+
+- **문제**: (FR-3) 수신 시각보다 터무니없이 미래인 `timestamp` 하나(CGEventSetTimestamp 합성 이벤트·셸 버그)가
+  `InputTimeDomain`의 단조 상태를 그 값으로 올려, 이후 정상 입력이 모두 같은 시각으로 고정됐습니다.
+  `timestamp`와 `receive_uptime`의 관계도 검사하지 않았습니다. (FR-4) `stellar_runtime_submit_mac_event`가
+  버전·예약·종류 검증보다 먼저 첫 호출의 `receive_uptime`으로 기준점을 고정해, 거부될 이벤트가 기준점을
+  영구히 정했습니다(실제 uptime보다 크면 이후 입력이 모두 0).
+- **수정**: `convert_mac_event`가 `receive_uptime`도 유한한 음이 아닌 값인지 검사하고, 수신 시각보다 10초
+  (`MAX_TIMESTAMP_AHEAD_OF_RECEIVE_SECONDS`) 넘게 늦은 `timestamp`를 수신 시각으로 자릅니다. 실제 이벤트는 받은
+  뒤에 일어날 수 없으므로 미래 시각 하나가 이후 입력 시각을 고정하는 범위가 10초 안으로 묶입니다. 이른 값은
+  그대로입니다. submit은 기준점이 없으면 임시 domain으로 변환하고 변환이 성공했을 때만 기준점을 runtime에
+  남깁니다. ADR-0014 XII.3.2 결정 7에 보완을 적었습니다. 구조체·시그니처·golden fixture는 그대로입니다.
+- **검증**: `one_future_timestamp_does_not_latch_later_inputs`(수정 전 이후 이벤트가 모두 `999999900000000000`
+  근처로 고정되어 실패), `rejected_first_event_does_not_set_the_time_anchor`(수정 전 100초 간격이 사라져 실패),
+  `invalid_receive_uptime_is_rejected_after_the_anchor`(수정 전 NaN 수신 시각을 받아 실패),
+  `timestamps_far_ahead_of_the_receive_time_are_cut`(변환 함수 단위, 10초 경계와 비유한 값 포함).
+- **한계**: 허용 오차 10초는 셸 입력 검사(`InputCheck.swift`)가 합성 이벤트 timestamp를 수신 시각보다 최대 9초
+  앞서 쓰기 때문입니다. 오차를 줄이려면 그 검사가 실제 시간 경과에 맞춘 timestamp를 쓰도록 바꿔야 합니다.
+  셸이 넘기는 `receive_uptime` 자체가 실제 uptime보다 미래인 값(셸 버그)은 코어 시계와 대조하지 않습니다.
+  `receive_uptime`은 셸이 `ProcessInfo.systemUptime`으로 직접 읽는 값이라 신뢰하는 기준으로 둡니다.
