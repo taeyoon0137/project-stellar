@@ -10,6 +10,11 @@
 use std::fmt;
 
 /// 형식 중립 값(제한 YAML의 매핑/시퀀스/스칼라와 같은 모양).
+///
+/// **깊이 전제**: derive한 `Clone`·`PartialEq`·`Debug`와 drop은 트리 깊이만큼 재귀하므로, 이 타입은 깊이가 제한된
+/// 트리만 다룹니다. `stellar.yaml`에서 온 트리는 project 제한 YAML loader의 중첩 상한(`MAX_NESTING_DEPTH` = 64, 넘으면
+/// `TooDeep`)을 이미 지킵니다. 프로그램으로 트리를 만드는 호출자도 같은 상한 안에서 만들어야 합니다. 이 crate의 스키마
+/// 해석(`target_profiles` 절)은 고정 깊이만 읽고, [`ManifestNode::canonical_bytes`]만 깊이와 무관하게 반복으로 동작합니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ManifestNode {
     /// 스칼라(문자열 그대로 보존, 암시적 타입 추론 없음).
@@ -337,7 +342,7 @@ mod tests {
             deep = ManifestNode::Sequence(vec![deep]);
         }
         assert_eq!(deep.canonical_bytes().len(), 100_000 * 5 + 9);
-        // 깊은 트리 drop도 재귀 없이(아래 반복 해체) 처리합니다.
+        // derive한 drop은 재귀이므로(타입 문서의 깊이 전제) 이 테스트의 깊은 트리는 직접 반복 해체합니다.
         let mut current = deep;
         while let ManifestNode::Sequence(mut items) = current {
             current = items.pop().unwrap_or(ManifestNode::scalar(""));

@@ -64,3 +64,18 @@
 - 기존 manifest 예제의 `platform` 외 필드(`minimum_os`·`baseline`)와 종류별 필수 필드는 IX.10.2에서 정의합니다.
 - 환경 key `platform` variant 번호와의 일치는 이 crate의 golden test로만 고정되며, expressions crate 상수와의
   교차 검사는 두 crate를 함께 쓰는 상위 crate에서 추가해야 합니다.
+
+## 후속 수정(리뷰 반영): `ManifestNode` 깊이 전제 문서화
+
+리뷰(TP-6)에서 공개 타입 `ManifestNode`가 derive한 `Clone`·`PartialEq`·`Debug`와 drop이 재귀라 깊은 트리에서 스택이 넘칠 수
+있는데 그 전제가 문서에 없다는 점이 지적되어 `Fix` commit으로 타입 문서에 깊이 전제를 적었습니다. `stellar.yaml`에서 온
+트리는 project 제한 YAML loader의 중첩 상한(`MAX_NESTING_DEPTH` = 64)을 지키고, 프로그램으로 만드는 트리도 같은 상한 안에서
+만들어야 하며, 깊이와 무관하게 반복으로 동작하는 것은 `canonical_bytes`뿐이라는 내용입니다.
+
+- 코드 동작은 바꾸지 않았습니다(문서만). 반복 `Drop`을 직접 구현하면 하위 crate가 값을 이동하는 패턴 분해를 쓸 수 없게
+  되고(E0509), `Clone`·`PartialEq`·`Debug`는 여전히 재귀라 문서화로 정리했습니다. 문서만 바꾼 수정이라 실패 테스트로 재현하지
+  않았습니다(재현하면 테스트 프로세스가 스택 넘침으로 종료됨).
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-target-profile` | 42 passed, 0 failed |
