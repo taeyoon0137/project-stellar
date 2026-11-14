@@ -1,0 +1,13 @@
+shown=false visible=true key=false active=false
+initial: mini=false visible=true Presented(SubmissionId(1)) size=960x640 stats=SurfaceStats { resizes: 0, skipped_empty: 0, skipped_no_drawable: 0, drawable_size_resyncs: 0 }
+minimized: mini=true visible=false Skipped(EmptySurface) size=0x0 stats=SurfaceStats { resizes: 1, skipped_empty: 1, skipped_no_drawable: 0, drawable_size_resyncs: 0 }
+minimized: mini=true visible=false Skipped(EmptySurface) size=0x0 stats=SurfaceStats { resizes: 1, skipped_empty: 2, skipped_no_drawable: 0, drawable_size_resyncs: 0 }
+minimized: mini=true visible=false Skipped(EmptySurface) size=0x0 stats=SurfaceStats { resizes: 1, skipped_empty: 3, skipped_no_drawable: 0, drawable_size_resyncs: 0 }
+restored: mini=false visible=true Presented(SubmissionId(2)) size=960x640 stats=SurfaceStats { resizes: 2, skipped_empty: 3, skipped_no_drawable: 0, drawable_size_resyncs: 0 }
+covered=false cover_visible=true target_frame=Rect { origin: Point { x: 120.0, y: 120.0 }, size: Size { width: 480.0, height: 352.0 } } cover_frame=Rect { origin: Point { x: 100.0, y: 100.0 }, size: Size { width: 520.0, height: 392.0 } }
+가림 상태 미관측: occluded 프레임 검증 미실행
+uncovered: mini=false visible=true Presented(SubmissionId(3)) size=960x640 stats=SurfaceStats { resizes: 2, skipped_empty: 3, skipped_no_drawable: 0, drawable_size_resyncs: 0 }
+resized: mini=false visible=true Presented(SubmissionId(4)) size=1040x720 stats=SurfaceStats { resizes: 3, skipped_empty: 3, skipped_no_drawable: 0, drawable_size_resyncs: 0 }
+ordered-out: mini=false visible=false Skipped(EmptySurface) size=0x0 stats=SurfaceStats { resizes: 4, skipped_empty: 4, skipped_no_drawable: 0, drawable_size_resyncs: 0 }
+ordered-in: mini=false visible=true Presented(SubmissionId(5)) size=1040x720 stats=SurfaceStats { resizes: 5, skipped_empty: 4, skipped_no_drawable: 0, drawable_size_resyncs: 0 }
+window_surface: minimize/restore/resize/order-out/in=passed worker=joined covered=false activated=false
