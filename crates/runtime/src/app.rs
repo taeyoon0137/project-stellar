@@ -812,6 +812,8 @@ pub struct WindowSessionSummary {
     pub redo_depth: u32,
     /// 선택된 node 수.
     pub selection_len: u32,
+    /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
+    pub has_unsaved_changes: bool,
     /// 열린 탭 수.
     pub tab_count: u32,
     /// active view(열린 탭이 없으면 `None`).
@@ -1229,6 +1231,7 @@ fn window_summary(handle: WindowSessionHandle, entry: &WindowEntry) -> WindowSes
         undo_depth: clamp(session.history().history().len()),
         redo_depth: clamp(session.history().history().redo_entries().len()),
         selection_len: clamp(session.view().selection().len()),
+        has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),
         active_view: session.tabs().active_view(),
         viewport: session.tabs().active_viewport(),
@@ -1696,6 +1699,51 @@ impl AppRuntime {
     /// 창 session의 작업 문서를 지금 저장합니다([`AppCommand::SaveNow`]).
     pub fn save_now(&self, session: WindowSessionHandle) -> Result<RequestId, RequestError> {
         self.perform(session, AppCommand::SaveNow)
+    }
+
+    /// Debug native 통합 검사만 쓰는 fixture 편집/검증. 실제 transaction·document queue를 거칩니다.
+    /// `verify`이면 이름을 검사하고, 아니면 node 이름을 바꿉니다. delay는 timeout 검사 전용입니다.
+    #[cfg(debug_assertions)]
+    pub fn check_window_edit(
+        &self,
+        session: WindowSessionHandle,
+        node: StableId,
+        name: String,
+        verify: bool,
+        delay_ms: u32,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            use stellar_commands::id::{CommandId, CommandOrigin};
+            use stellar_commands::{command::Command, transaction::CommandTransaction};
+
+            std::thread::sleep(Duration::from_millis(u64::from(delay_ms.min(500))));
+            let window = window_mut(ctx, session)?;
+            let document = window.document().ok_or_else(|| {
+                Failure::new(RequestFailure::SaveFailed, "검사 문서 없음".to_string())
+            })?;
+            if verify {
+                if document
+                    .model()
+                    .record(node)
+                    .map(|node| node.display_name)
+                    .as_deref()
+                    != Some(name.as_str())
+                {
+                    return Err(Failure::new(
+                        RequestFailure::SaveFailed,
+                        "검사 이름 불일치".to_string(),
+                    ));
+                }
+            } else {
+                let tx = CommandTransaction::new(
+                    CommandId::from_stable_id(StableId::new_v7(request.0, 0x0c0c, request.0)),
+                    CommandOrigin::User,
+                )
+                .with_command(document.revision(), Command::rename_node(node, name));
+                window.apply(&tx).map_err(view_failure)?;
+            }
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
     }
 
     /// 최신 상태 snapshot. document thread를 기다리지 않습니다.

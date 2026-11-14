@@ -81,6 +81,9 @@ pub mod candidate_tree;
 /// Stage candidate와 기준 index의 파일 변경 계산(XIV.5.6).
 pub mod candidate_delta;
 
+/// 후보 bytes의 Git blob 기록(XIV.6.1).
+pub mod blob_write;
+
 /// Remote 목록·연결·push(XIV.9.*).
 pub mod remote;
 

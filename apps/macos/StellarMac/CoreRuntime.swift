@@ -114,6 +114,26 @@ enum CoreRuntime {
         return info
     }
 
+    #if DEBUG
+    /// 저장 fixture의 실제 Rust transaction·재로드 검사. 일반 앱 경로는 호출하지 않습니다.
+    static func checkWindowEdit(
+        handle: UInt64, session: UInt64, node: UUID, name: String, verify: Bool, delayMS: UInt32
+    ) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let bytes = Array(name.utf8)
+        let status = withUnsafeBytes(of: node.uuid) { id in
+            bytes.withUnsafeBufferPointer { name in
+                stellar_window_session_check_edit(
+                    handle, session, id.baseAddress?.assumingMemoryBound(to: UInt8.self),
+                    name.baseAddress, name.count, verify ? 1 : 0, delayMS, &request
+                )
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+    #endif
+
     /// 최신 상태 snapshot 요약. document thread를 기다리지 않습니다.
     static func state(handle: UInt64) -> StellarRuntimeState? {
         var state = StellarRuntimeState()

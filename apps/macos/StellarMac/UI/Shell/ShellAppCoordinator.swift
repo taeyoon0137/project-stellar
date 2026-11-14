@@ -49,7 +49,7 @@ final class ShellAppCoordinator: NSObject {
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: String(localized: "OK", comment: "Button"))
-        if let window, window.isVisible, window.attachedSheet == nil {
+        if let window {
             alert.beginSheetModal(for: window)
         } else {
             alert.runModal()
@@ -458,11 +458,17 @@ final class ShellAppCoordinator: NSObject {
 
     /// 활성 에이전트 세션이 있으면 닫기 전에 확인합니다(ADR-0005 결정 4.5).
     private func shouldClose(_ projectWindow: ShellProjectWindow) -> Bool {
-        guard projectWindow.requiresConfirmationBeforeClosing, let window = projectWindow.window else { return true }
+        guard projectWindow.window?.attachedSheet == nil else { return false }
+        guard !projectWindow.closeConfirmationPending, !projectWindow.isWaitingToClose else { return false }
+        guard projectWindow.requiresConfirmationBeforeClosing, !projectWindow.agentCloseConfirmed,
+              let window = projectWindow.window else { return projectWindow.shouldCloseAfterSaving() }
         let alert = Self.makeAgentSessionCloseAlert()
-        alert.beginSheetModal(for: window) { response in
+        projectWindow.closeConfirmationPending = true
+        alert.beginSheetModal(for: window) { [weak self, weak projectWindow] response in
+            guard let self, let projectWindow, self.projectWindows.contains(where: { $0 === projectWindow }) else { return }
+            projectWindow.closeConfirmationPending = false
             guard response == .alertFirstButtonReturn else { return }
-            projectWindow.windowController.shouldCloseHandler = nil
+            projectWindow.agentCloseConfirmed = true
             window.performClose(nil)
         }
         return false

@@ -153,7 +153,7 @@ typedef struct StellarDocumentInfo {
 } StellarDocumentInfo;
 
 /* StellarWindowSessionInfo 레이아웃 버전. */
-#define STELLAR_WINDOW_SESSION_INFO_VERSION 1
+#define STELLAR_WINDOW_SESSION_INFO_VERSION 2
 
 /* 열린 창 session 정보(고정 88 byte, 코어가 씀). 창 controller 하나가 창 session handle 하나를 소유합니다. */
 typedef struct StellarWindowSessionInfo {
@@ -166,7 +166,7 @@ typedef struct StellarWindowSessionInfo {
     uint32_t undo_depth;      /* undo stack 깊이 */
     uint32_t redo_depth;      /* redo stack 깊이 */
     uint32_t selection_count; /* 선택된 node 수 */
-    uint32_t reserved;        /* 0 */
+    uint32_t has_unsaved_changes; /* 저장되지 않은 문서 변경 1, 선택·viewport 제외(v1 reserved) */
     uint8_t window_id[16];    /* 창 편집 session id(UUID 바이트 순서) */
     uint8_t document_id[16];  /* 작업 문서 StableId(없으면 0) */
 } StellarWindowSessionInfo;
@@ -269,6 +269,9 @@ StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, Stella
 
 /* 열린 창 session의 최신 snapshot 정보를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_session_info(uint64_t handle, uint64_t session, StellarWindowSessionInfo *out_info);
+
+/* Debug native integration check only; no symbol in Release. Real transaction/queue, delay capped at 500 ms. */
+StellarStatus stellar_window_session_check_edit(uint64_t handle, uint64_t session, const uint8_t *node, const uint8_t *name, size_t name_len, uint32_t verify, uint32_t delay_ms, uint64_t *out_request);
 
 /* 살아 있는 runtime handle 수(진단용). */
 uint64_t stellar_runtime_live_count(void);

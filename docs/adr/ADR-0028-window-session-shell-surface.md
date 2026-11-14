@@ -157,3 +157,35 @@ UI thread는 기다리지 않습니다.
 ## Migration
 
 기존 데이터 migration은 없습니다. 셸은 새 헤더로 다시 빌드합니다.
+
+## 정상 창 닫기 저장 보존 — XIII.1.6의 부분 근거
+
+- `StellarWindowSessionInfo`를 version 2로 올립니다. v1의 `reserved`(offset 52)를
+  `has_unsaved_changes`(u32, 0/1)로 정의합니다. 크기 88 byte와 나머지 offset은 유지합니다.
+  셸은 version을 확인합니다. runtime은 `revision != saved_revision`을 snapshot에 게시합니다.
+  선택·viewport는 dirty가 아니며, 실패한 저장은 dirty를 지우지 않습니다. 기존 변경 없는 Save Now의
+  O(1) revision 비교와 current manifest stale 검사는 그대로입니다.
+- 정상 `NSWindow.performClose`/닫기 버튼/Close Project는 delegate에서 clean이면 즉시 허용하고,
+  dirty 또는 해당 창의 미완료 명령이 있으면 창을 유지합니다. 미완료 명령 완료 뒤 dirty를 다시 확인하고
+  필요한 경우에만 기존 Save Now 요청을 보냅니다. 저장 성공 event의 session과 최신 clean 상태를 확인한
+  뒤 delegate를 다시 거쳐 닫습니다. 새 창별 명령 접수는 이 대기 중 거부합니다.
+- 저장 실패(stale 포함), 요청 거부, 정보 조회 실패, 응답 timeout은 실제 창과 메모리 session을 유지합니다.
+  sheet로 알리고 사용자가 다시 닫아 재시도할 수 있습니다. 자동 overwrite·자동 discard·재오픈은 없습니다.
+  timeout/취소/실제 닫힘/session 교체 뒤 늦은 callback은 자동 닫기를 실행하지 않습니다.
+- 셸 응답 watchdog은 10초입니다. 이는 무기한 자동 닫기 대기를 막는 임시 correctness 상한이며
+  `AutosavePolicy`의 성능 설정값이나 XIII.1.1의 벤치마크 확정값이 아닙니다. config 누락을 기본값으로
+  대체하지 않으며 config와 성능 예산은 변경하지 않습니다. timeout은 Rust 작업 취소를 뜻하지 않습니다.
+  이미 접수된 저장이 나중에 끝날 수 있으나, 그 응답으로 창을 닫지는 않습니다.
+- GUI thread는 run loop timer와 비동기 event만 사용합니다. 직렬화·쓰기의 기존 document thread 실행은
+  그대로이며 worker 이동·snapshot 캡처·autosave 병합(XIII.1.3~.5), 앱 비활성화 flush와 앱 종료는 미구현입니다.
+  따라서 XIII.1.6은 완료 처리하지 않습니다.
+- Debug에만 `stellar_window_session_check_edit` 검사 심벌을 추가합니다. 기존 저장 프로젝트 fixture의
+  node에 실제 `CommandTransaction`을 적용하거나 이름을 검증하며, 제한된 지연(최대 500ms)을 document queue에
+  넣습니다. Release에는 심벌이 없고 Swift 호출도 `#if DEBUG` 안입니다. 파일 쓰기·stale·저장 event는
+  제품 경로를 그대로 검사합니다. 헤더 생성기가 검사 선언도 소유합니다.
+- `stellar-ops::lock::SaveLock`은 headless writer용 비대기 advisory lock입니다. runtime의 기존 Save Now는
+  이 lock을 획득하지 않습니다. 같은 runtime의 독립 창은 단일 document thread와 저장 전 stale 검사로
+  순서가 정해지지만, 별도 앱·CLI의 검사/쓰기 간 경쟁은 이 변경에서 해결하지 않습니다. 공통 lock 경로와
+  모든 writer 적용은 별도 통합이 필요합니다.
+
+검증·남은 범위는 [정상 창 닫기 보고서](../status/window-close-save.md)를 따릅니다.
