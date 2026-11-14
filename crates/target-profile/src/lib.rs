@@ -33,3 +33,6 @@ pub mod environment;
 
 /// 공통 구조 + profile 희소 override resolver (IX.10.7).
 pub mod overrides;
+
+/// 한 View의 다중 profile capability 검사 (IX.10.8).
+pub mod validate;

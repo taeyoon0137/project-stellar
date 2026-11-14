@@ -1,0 +1,55 @@
+# 작업 보고서: IX.10.8 한 View의 다중 Target Profile capability 검사
+
+- WBS: IX.10.8
+- 작업명: 한 View를 여러 TargetProfile에 대해 동시에 validate하고 Native/Approximated/Unsupported/Deprecated diagnostic 생성
+- 상태: 완료 (`[x]`)
+- 선행: IX.10.6(이 lane `[x]`), IX.10.7(이 lane `[x]`)
+
+## 필수 실행 환경
+
+- `DEV-MAC` (순수 Rust, 로컬 검증).
+
+## 변경 파일 목록
+
+- `crates/target-profile/src/validate.rs`(신규) — `ViewNode`, `ViewModel`, `PropertyCapabilityMap`(trait),
+  `CapabilityDiagnosticCode`, `Severity`, `CapabilityFinding`, `ProfileOutcome`, `ProfileReport`, `MultiProfileReport`,
+  `validate_view`, `validate_profiles`, 테스트 공용 multi-profile fixture.
+- `crates/target-profile/src/lib.rs` — 모듈 등록.
+- `docs/task-reports/IX.10.8.md`(신규), 계획서(IX.10.8 `[ ]`→`[x]`).
+
+## 구현 요약
+
+- **입력**: 문서 계층에 의존하지 않는 `ViewModel`(node 문서 순서·parent·element 종류·contract, 공통값, profile override)과
+  PropertyPath → capability 속성 대응 trait `PropertyCapabilityMap`(문서 계층이 구현).
+- **profile마다**: pin한 release로 해석(IX.10.4) → 공통값 + profile override + variant 층 적용(IX.10.7) → 제외 node와 그 하위
+  node를 건너뛰고 element·contract(중복 제거)·속성 사용(같은 node의 같은 capability는 path 오름차순 첫 path 하나)을 진단합니다.
+- **진단**: Native(1, Note — 코드 생성 입력용 기록), Approximated(2, Info), Unsupported(3, Error), Deprecated(4, Warning, 대체
+  subject 포함), 미등록(5, Error). `problems()`는 Note를 뺀 목록, `count(code)`는 code별 개수입니다.
+- **profile 수준 결과**: pin한 release를 앱이 모르면 검사하지 않고 `RegistryUnavailable`로 보고합니다(오류로 집계). 프로젝트에 없는
+  profile의 override는 `unknown_override_profiles`로 보고합니다.
+- **결정론**: 결과 순서는 입력 profile 순서 → node 문서 순서 → element, contract 번호순, 속성 path순입니다.
+
+## 실행한 명령 / 검증 (`DEV-MAC`)
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-target-profile` | 35 passed, 0 failed |
+| `cargo clippy -p stellar-target-profile --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-target-profile -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| multi-profile fixture expected diagnostics: node 8개 View를 Web 2022·iOS 26·Android 30·Android 35에 동시에 검사, 네 profile의 진단 목록(node·subject·path·code)이 기대값과 정확히 일치 — Web의 backdrop 근사·subgrid 불가·clip rect Deprecated, iOS 전용 SF Symbol override, Android 35의 grid 하위 트리 제외·status bar Deprecated·미등록 capability; Web 상태별 개수 [14,1,1,1,0], 대체 subject, 심각도, 미등록 profile override 보고, 재실행 결과 동일 (`multi_profile_fixture_produces_expected_diagnostics`) | 통과 |
+| 앱이 모르는 release(pin 7)의 profile은 검사하지 않고 `RegistryUnavailable`, 문제 없는 View는 오류 없음·contract 중복 제거 (`profile_pinned_to_unknown_release_is_reported_not_validated`) | 통과 |
+
+## 차이(작업 지시와 다른 점)
+
+- crate graph상 document·diagnostics crate를 쓸 수 없어 View 입력과 진단 타입을 지역 모델로 정의했습니다. 문서 tree →
+  `ViewModel` 변환, `PropertyCapabilityMap` 구현, `stellar-diagnostics` 형식으로의 변환은 상위 crate 작업입니다.
+- Native 사용도 Note 심각도의 진단으로 기록합니다(코드 생성 IR, XXII.1.1 입력). 이 결정은 허용 경로 밖인 `docs/adr/` 대신 모듈
+  문서와 이 보고서에 기록했습니다.
+
+## 남은 위험 / 한계
+
+- 검사는 주어진 variant 층 하나에 대해서만 합니다. 모든 variant 조합 검사는 호출자가 조합별로 반복해야 합니다.
+- node 수가 큰 View에서 profile 수 × node 수만큼 진단이 생깁니다(Native 포함). 대량 View의 성능 예산은 아직 측정하지 않았습니다.
