@@ -85,64 +85,70 @@ impl ValidationReport {
 
 /// 열린 snapshot을 검증합니다.
 pub fn validate_snapshot(snapshot: &ProjectSnapshot) -> ValidationReport {
-    let mut documents = Vec::new();
-    for definition in snapshot.documents() {
-        let document = definition.id;
-        let mut findings = Vec::new();
-        let records = match snapshot.document_records(document) {
-            Ok(records) => records,
-            Err(e) => {
-                findings.push(Finding {
-                    severity: FindingSeverity::Error,
-                    code: "document-load",
-                    document,
-                    message: e.to_string(),
-                });
-                documents.push(DocumentValidation {
-                    document,
-                    node_count: None,
-                    findings,
-                });
-                continue;
-            }
-        };
-        match validate_document(&records) {
-            Ok(diagnostics) => {
-                for unresolved in &diagnostics.unresolved {
-                    findings.push(Finding {
-                        severity: FindingSeverity::Warning,
-                        code: "unresolved-reference",
-                        document,
-                        message: format!(
-                            "{:?} 참조 {}의 대상이 없습니다(위치 {} {})",
-                            unresolved.expected(),
-                            unresolved.original_id(),
-                            unresolved.location().root(),
-                            property_path_label(unresolved.location()),
-                        ),
-                    });
-                }
-            }
-            Err(error) => {
-                for violation in &error.violations {
-                    findings.push(Finding {
-                        severity: FindingSeverity::Error,
-                        code: "document-invalid",
-                        document,
-                        message: violation.to_string(),
-                    });
-                }
-            }
-        }
-        documents.push(DocumentValidation {
-            document,
-            node_count: Some(records.nodes.len()),
-            findings,
-        });
-    }
     ValidationReport {
         revision: snapshot.revision(),
-        documents,
+        documents: snapshot
+            .documents()
+            .iter()
+            .map(|document| validate_snapshot_document(snapshot, document.id))
+            .collect(),
+    }
+}
+
+/// 지정한 문서 하나의 chunk와 참조만 검증합니다. 읽기 실패는 같은 문서의 진단이 됩니다.
+pub fn validate_snapshot_document(
+    snapshot: &ProjectSnapshot,
+    document: StableId,
+) -> DocumentValidation {
+    let mut findings = Vec::new();
+    let records = match snapshot.document_records(document) {
+        Ok(records) => records,
+        Err(e) => {
+            findings.push(Finding {
+                severity: FindingSeverity::Error,
+                code: "document-load",
+                document,
+                message: e.to_string(),
+            });
+            return DocumentValidation {
+                document,
+                node_count: None,
+                findings,
+            };
+        }
+    };
+    match validate_document(&records) {
+        Ok(diagnostics) => {
+            for unresolved in &diagnostics.unresolved {
+                findings.push(Finding {
+                    severity: FindingSeverity::Warning,
+                    code: "unresolved-reference",
+                    document,
+                    message: format!(
+                        "{:?} 참조 {}의 대상이 없습니다(위치 {} {})",
+                        unresolved.expected(),
+                        unresolved.original_id(),
+                        unresolved.location().root(),
+                        property_path_label(unresolved.location()),
+                    ),
+                });
+            }
+        }
+        Err(error) => {
+            for violation in &error.violations {
+                findings.push(Finding {
+                    severity: FindingSeverity::Error,
+                    code: "document-invalid",
+                    document,
+                    message: violation.to_string(),
+                });
+            }
+        }
+    }
+    DocumentValidation {
+        document,
+        node_count: Some(records.nodes.len()),
+        findings,
     }
 }
 
