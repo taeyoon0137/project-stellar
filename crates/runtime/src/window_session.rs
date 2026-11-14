@@ -29,7 +29,7 @@
 //! [`ProjectWindowSession::undo`]·[`ProjectWindowSession::redo`]는 이 창 history만 재생하고 이 창 문서·선택만
 //! 바꿉니다(VII.5.2·VII.5.3). [`ProjectWindowSession::save_now`]는 작업 문서를 직렬화해(VI.10.2) loaded
 //! generation 위의 SavePlan(V.5.1)을 만들고, 작업 문서가 차지하지 않은 base chunk는 그대로 이어 씁니다. 쓰기 전에
-//! current pointer가 loaded generation과 같은지 확인하고(V.5.2) 다르면 [`WindowSessionSaveError::Stale`]로
+//! 앱·CLI 공용 저장 잠금을 잡고 current pointer가 loaded generation과 같은지 확인합니다(V.5.2). 다르면 [`WindowSessionSaveError::Stale`]로
 //! 아무것도 쓰지 않습니다(다른 창·프로세스가 먼저 저장함, 선택지는 XII.7). 바뀐 chunk가 없으면 새 generation을
 //! 만들지 않습니다(`written == false`). 성공하면 loaded generation을 새 generation으로 바꿉니다(V.5.4).
 //!
@@ -67,6 +67,7 @@ use stellar_core_types::revision::DocumentRevision;
 use stellar_core_types::value::Size2;
 use stellar_history::entry::{HistoryError, HistorySequence};
 use stellar_history::window::WindowHistory;
+use stellar_ops::lock::{default_lock_dir, LockError, SaveLock};
 use stellar_project::document_io::load::{load_document_from_generation, LoadDocumentError};
 use stellar_project::document_io::serialize::{serialize_document, SerializeError};
 use stellar_project::identity::ProjectIdentity;
@@ -132,6 +133,8 @@ pub struct SaveOutcome {
 /// Save Now 실패. loaded generation과 디스크는 저장 전 그대로입니다(commit 전 실패).
 #[derive(Debug)]
 pub enum WindowSessionSaveError {
+    /// 다른 writer가 잠금을 사용 중이거나 OS 사용자 데이터의 잠금을 열 수 없습니다.
+    Lock(LockError),
     /// current pointer가 loaded generation과 다릅니다(다른 저장이 먼저 끝남). 아무것도 쓰지 않았습니다.
     Stale(BaseCheckError),
     /// 작업 문서를 chunk로 직렬화하지 못했습니다.
@@ -147,6 +150,7 @@ pub enum WindowSessionSaveError {
 impl fmt::Display for WindowSessionSaveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            WindowSessionSaveError::Lock(error) => write!(f, "{error}"),
             WindowSessionSaveError::Stale(error) => {
                 write!(f, "다른 저장이 먼저 끝나 저장하지 않았습니다: {error}")
             }
@@ -201,7 +205,7 @@ impl ProjectWindowSession {
         identity: ProjectIdentity,
         window: WindowSessionId,
     ) -> Result<ProjectWindowSession, WindowSessionLoadError> {
-        let root = identity.root_path().to_path_buf();
+        let root = identity.canonical_target().to_path_buf();
         let project_id = identity.project_id();
         let lazy = match LazyGeneration::open(&root, project_id, &mut NoopRecorder) {
             Ok(lazy) => lazy,
@@ -496,7 +500,7 @@ impl ProjectWindowSession {
             });
         };
         let base = self.loaded.as_ref();
-        let root = self.identity.root_path();
+        let root = self.identity.canonical_target();
         let revision = document.state.revision();
         if let Some(base) = base {
             if revision == document.saved_revision {
@@ -547,13 +551,12 @@ impl ProjectWindowSession {
             roots,
         )
         .map_err(WindowSessionSaveError::Plan)?;
-        // 쓰기 전 optimistic check(V.5.2): 다른 저장이 먼저 끝났으면 아무것도 쓰지 않습니다.
-        check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
         if let Some(base) = base {
             let unchanged = plan.dirty_chunks.is_empty()
                 && plan.manifest.chunk_pointers == base.manifest.chunk_pointers
                 && plan.manifest.root_document_ids == base.manifest.root_document_ids;
             if unchanged {
+                check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
                 document.saved_revision = revision;
                 return Ok(SaveOutcome {
                     generation: base.manifest.generation,
@@ -561,6 +564,11 @@ impl ProjectWindowSession {
                 });
             }
         }
+        // 계획은 메모리에서만 만듭니다. 실제 쓰기만 CLI와 직렬화하고 잠금 안에서 base를 확인합니다.
+        let dir = default_lock_dir().map_err(WindowSessionSaveError::Lock)?;
+        let _guard =
+            SaveLock::for_identity(&dir, &self.identity).map_err(WindowSessionSaveError::Lock)?;
+        check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
         let mut memory = SavedGenerationState::new(
             base.map(|base| (base.manifest.generation, base.manifest_hash)),
         );
@@ -1109,6 +1117,129 @@ mod tests {
         ));
         assert_eq!(a.generation_number(), 1);
         assert_eq!(name_of(&a, 12), "n12");
+    }
+
+    /// 자식 프로세스만 임시 OS 사용자 데이터 환경에서 실제 Save Now를 실행합니다.
+    #[test]
+    fn cli_generation_lock_and_window_save_share_one_identity() {
+        use std::process::Command;
+        use stellar_ops::test_support::file_digest;
+
+        const PROJECT: &str = "STELLAR_TEST_WINDOW_SAVE_PROJECT";
+        if let Some(root) = std::env::var_os(PROJECT) {
+            let mut session =
+                ProjectWindowSession::load(identity(root.as_ref()), window(1)).unwrap();
+            assert!(!session.save_now().unwrap().written);
+            session
+                .apply(&rename(session.document().unwrap(), 500, 11, "앱 변경"))
+                .unwrap();
+            assert!(session.undo().unwrap());
+            assert!(!session.save_now().unwrap().written);
+            assert!(session.redo().unwrap());
+            match std::env::var("STELLAR_TEST_SAVE_MODE").unwrap().as_str() {
+                "write" => {
+                    assert!(session.save_now().unwrap().written);
+                    assert_eq!(session.generation_number(), 2);
+                }
+                mode => {
+                    let error = session.save_now().unwrap_err();
+                    match mode {
+                        "busy" => assert!(matches!(
+                            error,
+                            WindowSessionSaveError::Lock(LockError::Busy { .. })
+                        )),
+                        "missing-home" => assert!(matches!(
+                            error,
+                            WindowSessionSaveError::Lock(LockError::NoUserDataDir)
+                        )),
+                        _ => panic!("알 수 없는 fixture mode"),
+                    }
+                    assert!(session.has_unsaved_changes());
+                    assert_eq!(session.generation_number(), 1);
+                    assert_eq!(name_of(&session, 11), "앱 변경");
+                }
+            }
+            return;
+        }
+
+        let project = saved_project("cli-lock");
+        let home = TempDir::new("lock-user-data");
+        let base = if cfg!(target_os = "macos") {
+            home.path().join("Library/Application Support")
+        } else if cfg!(windows) {
+            home.path().join("AppData/Roaming")
+        } else {
+            home.path().join(".local/share")
+        };
+        let dir = base
+            .join(stellar_ops::lock::APP_DATA_DIR)
+            .join(stellar_ops::lock::LOCKS_DIR);
+        #[cfg(unix)]
+        let opened = home.path().join("opened-project");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(project.path(), &opened).unwrap();
+        #[cfg(not(unix))]
+        let opened = project.path();
+        let run = |mode: &str| {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "window_session::tests::cli_generation_lock_and_window_save_share_one_identity",
+                ])
+                .env_remove("XDG_DATA_HOME")
+                .env_remove("HOME")
+                .env_remove("APPDATA")
+                .env("STELLAR_TEST_SAVE_MODE", mode)
+                .env(PROJECT, &opened);
+            if mode != "missing-home" {
+                command.env("HOME", home.path()).env("APPDATA", &base);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+        };
+        let before = file_digest(project.path());
+        run("missing-home");
+        assert!(!dir.exists());
+        let held = SaveLock::try_acquire(&dir, project_id(), project.path()).unwrap();
+        run("busy");
+        assert_eq!(file_digest(project.path()), before);
+        drop(held);
+        run("write");
+        let reopened = ProjectWindowSession::load(identity(project.path()), window(2)).unwrap();
+        assert_eq!(name_of(&reopened, 11), "앱 변경");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_after_a_symlink_is_repointed_updates_the_opened_project() {
+        use std::os::unix::fs::symlink;
+        let first = saved_project("alias-original");
+        let second = saved_project("alias-new");
+        let dir = TempDir::new("alias");
+        let alias = dir.path().join("project");
+        symlink(first.path(), &alias).unwrap();
+        let mut session = ProjectWindowSession::load(identity(&alias), window(1)).unwrap();
+        session
+            .apply(&rename(
+                session.document().unwrap(),
+                500,
+                11,
+                "원래 프로젝트",
+            ))
+            .unwrap();
+        std::fs::remove_file(&alias).unwrap();
+        symlink(second.path(), &alias).unwrap();
+        assert!(session.save_now().unwrap().written);
+        let original = ProjectWindowSession::load(identity(first.path()), window(2)).unwrap();
+        let other = ProjectWindowSession::load(identity(&alias), window(3)).unwrap();
+        assert_eq!(name_of(&original, 11), "원래 프로젝트");
+        assert_eq!(other.generation_number(), 1);
+        assert_eq!(name_of(&other, 11), "n11");
     }
 
     #[test]

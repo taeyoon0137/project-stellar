@@ -1,8 +1,8 @@
 //! 교차 프로세스 저장 잠금 (XXIV.4.5).
 //!
-//! headless 쓰기(`stellar apply` 등)는 세대 전환 저장 전에 프로젝트별 배타 잠금을 잡고, 잠금을 쥔
+//! 앱의 Save Now와 headless 쓰기(`stellar apply` 등)는 세대 전환 저장 전에 프로젝트별 배타 잠금을 잡고, 잠금을 쥔
 //! 상태에서 디스크 generation을 base revision과 비교한 뒤 current pointer를 교체합니다. 그래서 두
-//! headless writer가 같은 base 위에서 동시에 저장해 한쪽 변경이 사라지는 일이 없습니다.
+//! writer가 같은 base 위에서 동시에 저장해 한쪽 변경이 사라지는 일이 없습니다.
 //!
 //! - **위치**: 프로젝트 폴더와 Git 밖의 OS 사용자 데이터 영역입니다.
 //!   `<OS 사용자 데이터>/xyz.taeyoon.stellar/locks/<key>.lock`이며, macOS의 OS 사용자 데이터는
@@ -134,10 +134,8 @@ impl SaveLock {
         Self::for_identity(dir, &project_identity(project_id, root)?)
     }
 
-    pub(crate) fn for_identity(
-        dir: &Path,
-        identity: &ProjectIdentity,
-    ) -> Result<SaveLock, LockError> {
+    /// 열린 프로젝트의 고정된 identity로 같은 사용자 데이터 잠금을 잡습니다.
+    pub fn for_identity(dir: &Path, identity: &ProjectIdentity) -> Result<SaveLock, LockError> {
         ensure_private_dir(dir)?;
         let path = dir.join(format!("{}.lock", identity_lock_key(identity)));
         let io_error = |e: io::Error| LockError::Io {

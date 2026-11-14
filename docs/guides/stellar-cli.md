@@ -619,13 +619,14 @@ missing-manifest
 
 ### 쓰기와 실행 중 앱과의 공존
 
-- 세대 전환 저장 직전에 교차 프로세스 저장 잠금을 잡고, 디스크 generation과 base generation을
-  비교합니다. 잠금은 프로젝트 폴더와 Git 밖의 OS 사용자 데이터에 둡니다. 잠금이 사용 중이면 일시적
-  실패(75)로 끝납니다(XXIV.4.5).
-- 저장한 generation에는 writer 종류(앱 창, headless CLI)를 기록합니다.
+- `stellar apply`와 앱 창의 Save Now는 같은 OS 사용자의 프로젝트 ID·canonical target별 잠금을 공유합니다.
+  CLI는 잠금 사용 중이면 `save-lock-busy`(75), 앱은 미저장 편집을 유지한 채 저장 실패를 반환합니다.
+  쓰기 전에 잠금 안에서 현재 세대를 확인합니다. CLI dry-run과 앱의 무변경 저장에는 잠금이 필요 없습니다.
+  잠금 파일은 프로젝트·Git 밖의 OS 사용자 데이터에 둡니다(XXIV.4.5).
+- generation의 writer 종류 기록은 XXIV.4.4의 남은 작업입니다.
 - merge driver 모드는 Git이 넘긴 임시 경로만 쓰므로 저장 잠금과 앱 공존 검사 대상이 아닙니다.
-- 앱이 같은 프로젝트를 열고 있어도 L1 쓰기를 막지 않습니다. 앱은 writer 종류가 앱 창이 아닌
-  generation을 두 선택지 정책이 아니라 semantic reconciliation 경로로 처리합니다(XXIV.4.6).
+- 앱이 같은 프로젝트를 열고 있어도 L1 쓰기를 허용합니다. CLI가 먼저 저장하면 옛 세대를 연 앱의
+  저장은 stale로 실패합니다. 외부 세대의 semantic reconciliation은 XXIV.4.6의 후속 작업입니다.
 - 변경이 에이전트 lease와 겹치면 그 에이전트 세션을 끝냅니다(자동 rollback 없음). L1 쓰기는 에이전트
   출처 표시 대상이 아닙니다.
 
