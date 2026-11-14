@@ -27,6 +27,9 @@ pub mod placeholder;
 /// content 기반 texture cache key (XI.7.3).
 pub mod texture_cache;
 
+/// mipmap 생성과 texture upload task (XI.7.2).
+pub mod mipmap;
+
 /// backend 독립 Render Graph (XI.4.1).
 pub mod render_graph;
 
