@@ -3,7 +3,7 @@
 #
 # Xcode는 build setting을 환경 변수로 script phase에 넘깁니다(MACOSX_DEPLOYMENT_TARGET=26.0 등). 이미 채워진 Rust
 # target에서는 host 산출물(build script·proc-macro)을 다시 링크하지 않으므로, 이 환경에서만 나는 실패가 가려집니다.
-# 그래서 이 검사는 project.pbxproj의 phase 스크립트를 그대로 꺼내 StellarMac target의 build setting을 환경으로 넣고,
+# 그래서 이 검사는 project.pbxproj의 phase 스크립트를 그대로 꺼내 Stellar target의 build setting을 환경으로 넣고,
 # 비어 있는 임시 CARGO_TARGET_DIR에서 실행합니다(Xcode처럼 현재 환경 위에 build setting을 얹습니다).
 #
 # 사용법: scripts/macos/rust_core_phase_check.sh [Release|Debug]   (기본 Release)
@@ -37,9 +37,9 @@ fail() {
   exit 1
 }
 
-PROJECT="$REPO_ROOT/apps/macos/StellarMac.xcodeproj"
+PROJECT="$REPO_ROOT/apps/macos/Stellar.xcodeproj"
 PBXPROJ="$PROJECT/project.pbxproj"
-TARGET_NAME="StellarMac"
+TARGET_NAME="Stellar"
 # project.pbxproj의 "Build Rust core (cargo)" PBXShellScriptBuildPhase object ID입니다. 이름이 다르면 ID가 바뀐 것이므로
 # 조용히 다른 phase를 검사하지 않고 실패합니다.
 PHASE_ID="AA0000000000000000000010"
@@ -48,8 +48,8 @@ PHASE_NAME="$(plutil -extract "objects.$PHASE_ID.name" raw -o - "$PBXPROJ" 2>/de
 PHASE_SCRIPT="$(plutil -extract "objects.$PHASE_ID.shellScript" raw -o - "$PBXPROJ")"
 PHASE_SHELL="$(plutil -extract "objects.$PHASE_ID.shellPath" raw -o - "$PBXPROJ")"
 
-# --- phase 환경: StellarMac target의 build setting(release_build.sh와 같은 package 옵션) ---
-SETTINGS="$(xcodebuild -project "$PROJECT" -scheme StellarMac -configuration "$CONFIGURATION" \
+# --- phase 환경: Stellar target의 build setting(release_build.sh와 같은 package 옵션) ---
+SETTINGS="$(xcodebuild -project "$PROJECT" -scheme Stellar -configuration "$CONFIGURATION" \
   -packageAuthorizationProvider netrc -disableAutomaticPackageResolution \
   -derivedDataPath "$REPO_ROOT/apps/macos/build" -showBuildSettings 2>/dev/null)"
 PHASE_ENV=()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # macOS 셸 smoke/lifecycle/canvas/text input/input/welcome test (II.5.2, II.5.3, II.5.4, XII.5.1, XII.3.2, XII.3.4, XVI.9.5,
 # XXIV.5.3~XXIV.5.6).
-# StellarMac 앱을 Debug로 빌드한 뒤:
+# Stellar 앱을 Debug로 빌드한 뒤:
 #  - --smoke: FFI로 코어 버전을 읽고 종료 코드 0
 #  - --lifecycle-check: runtime create/destroy가 1:1인지 확인하고 종료 코드 0
 #  - --canvas-check: drawable pixel == point × scale 및 코어 round-trip 확인
@@ -34,8 +34,8 @@ DERIVED="$REPO_ROOT/apps/macos/build"
 # Swift package(Sparkle, ADR-0017)는 Package.resolved 고정 버전만 쓰고 자격 증명 조회는 netrc로 합니다
 # (공개 package라 인증 불필요, 키체인 접근 대화상자 방지).
 xcodebuild \
-  -project "$REPO_ROOT/apps/macos/StellarMac.xcodeproj" \
-  -scheme StellarMac \
+  -project "$REPO_ROOT/apps/macos/Stellar.xcodeproj" \
+  -scheme Stellar \
   -configuration Debug \
   -derivedDataPath "$DERIVED" \
   -packageAuthorizationProvider netrc \
@@ -43,7 +43,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   build
 
-APP="$DERIVED/Build/Products/Debug/StellarMac.app/Contents/MacOS/StellarMac"
+APP="$DERIVED/Build/Products/Debug/Stellar.app/Contents/MacOS/Stellar"
 
 OUTPUT="$("$APP" --smoke)"
 echo "$OUTPUT"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 실사용 QA 실행(docs/qa/README.md).
 #
-# StellarMac 앱을 Debug로 빌드하고(smoke.sh와 같은 xcodebuild 설정), 저장소 밖 임시 폴더에 샘플 프로젝트를 만든 뒤
+# Stellar 앱을 Debug로 빌드하고(smoke.sh와 같은 xcodebuild 설정), 저장소 밖 임시 폴더에 샘플 프로젝트를 만든 뒤
 # 그 프로젝트로 앱을 엽니다.
 #
 # 사용법:
@@ -77,9 +77,9 @@ if ! xcodebuild -version >/dev/null 2>&1; then
 fi
 
 DERIVED="$REPO_ROOT/apps/macos/build"
-APP_BUNDLE="$DERIVED/Build/Products/Debug/StellarMac.app"
-APP_BINARY="$APP_BUNDLE/Contents/MacOS/StellarMac"
-# 앱 번들 ID(apps/macos/StellarMac.xcodeproj의 PRODUCT_BUNDLE_IDENTIFIER).
+APP_BUNDLE="$DERIVED/Build/Products/Debug/Stellar.app"
+APP_BINARY="$APP_BUNDLE/Contents/MacOS/Stellar"
+# 앱 번들 ID(apps/macos/Stellar.xcodeproj의 PRODUCT_BUNDLE_IDENTIFIER).
 BUNDLE_ID="xyz.taeyoon.stellar"
 
 # 실행 중인 Stellar 앱의 pid 목록. 이 worktree 빌드만이 아니라 같은 번들 ID를 쓰는 다른 빌드(main checkout,
@@ -87,7 +87,7 @@ BUNDLE_ID="xyz.taeyoon.stellar"
 # (smoke.sh의 화면 밖 검사 등)는 실행 파일 이름으로 찾습니다.
 running_stellar_pids() {
   {
-    pgrep -x StellarMac || true
+    pgrep -x Stellar || true
     for asn in $(lsappinfo find "bundleid=$BUNDLE_ID" 2>/dev/null | grep -Eo 'ASN:0x[0-9a-fA-F]+-0x[0-9a-fA-F]+' || true); do
       lsappinfo info -only pid "$asn" 2>/dev/null | sed -n 's/.*pid = \([0-9][0-9]*\).*/\1/p'
     done
@@ -118,8 +118,8 @@ fi
 if [ "$BUILD" -eq 1 ]; then
   echo "== 앱 빌드(Debug)"
   xcodebuild \
-    -project "$REPO_ROOT/apps/macos/StellarMac.xcodeproj" \
-    -scheme StellarMac \
+    -project "$REPO_ROOT/apps/macos/Stellar.xcodeproj" \
+    -scheme Stellar \
     -configuration Debug \
     -derivedDataPath "$DERIVED" \
     -packageAuthorizationProvider netrc \

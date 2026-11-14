@@ -12,17 +12,17 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		AA000000000000000000000F /* StellarMac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StellarMac.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA000000000000000000000F /* Stellar.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Stellar.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000015 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; name = AppIcon.icon; path = ../../assets/icons/AppIcon.icon; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		AA0000000000000000000014 /* Exceptions for "StellarMac" folder in "StellarMac" target */ = {
+		AA0000000000000000000014 /* Exceptions for "StellarMac" folder in "Stellar" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
 			);
-			target = AA0000000000000000000005 /* StellarMac */;
+			target = AA0000000000000000000005 /* Stellar */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -30,7 +30,7 @@
 		AA0000000000000000000004 /* StellarMac */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				AA0000000000000000000014 /* Exceptions for "StellarMac" folder in "StellarMac" target */,
+				AA0000000000000000000014 /* Exceptions for "StellarMac" folder in "Stellar" target */,
 			);
 			path = StellarMac;
 			sourceTree = "<group>";
@@ -61,7 +61,7 @@
 		AA0000000000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				AA000000000000000000000F /* StellarMac.app */,
+				AA000000000000000000000F /* Stellar.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -69,9 +69,9 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		AA0000000000000000000005 /* StellarMac */ = {
+		AA0000000000000000000005 /* Stellar */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = AA0000000000000000000006 /* Build configuration list for PBXNativeTarget "StellarMac" */;
+			buildConfigurationList = AA0000000000000000000006 /* Build configuration list for PBXNativeTarget "Stellar" */;
 			buildPhases = (
 				AA0000000000000000000010 /* Build Rust core (cargo) */,
 				AA000000000000000000000C /* Sources */,
@@ -85,12 +85,12 @@
 			fileSystemSynchronizedGroups = (
 				AA0000000000000000000004 /* StellarMac */,
 			);
-			name = StellarMac;
+			name = Stellar;
 			packageProductDependencies = (
 				AA0000000000000000000012 /* Sparkle */,
 			);
-			productName = StellarMac;
-			productReference = AA000000000000000000000F /* StellarMac.app */;
+			productName = Stellar;
+			productReference = AA000000000000000000000F /* Stellar.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -108,7 +108,7 @@
 					};
 				};
 			};
-			buildConfigurationList = AA0000000000000000000009 /* Build configuration list for PBXProject "StellarMac" */;
+			buildConfigurationList = AA0000000000000000000009 /* Build configuration list for PBXProject "Stellar" */;
 			compatibilityVersion = "Xcode 15.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -126,7 +126,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				AA0000000000000000000005 /* StellarMac */,
+				AA0000000000000000000005 /* Stellar */,
 			);
 		};
 /* End PBXProject section */
@@ -291,7 +291,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		AA0000000000000000000006 /* Build configuration list for PBXNativeTarget "StellarMac" */ = {
+		AA0000000000000000000006 /* Build configuration list for PBXNativeTarget "Stellar" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA0000000000000000000007 /* Debug */,
@@ -300,7 +300,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		AA0000000000000000000009 /* Build configuration list for PBXProject "StellarMac" */ = {
+		AA0000000000000000000009 /* Build configuration list for PBXProject "Stellar" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				AA000000000000000000000A /* Debug */,

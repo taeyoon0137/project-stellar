@@ -64,7 +64,7 @@ clean/선택 전용 즉시 닫기, 접수됐지만 아직 미반영인 편집, �
 활성 데스크톱 strict 검사는 다른 StellarMac/xcodebuild 검사 프로세스가 없는 것을 확인한 뒤 단독 실행했습니다.
 
 ```sh
-apps/macos/build/Build/Products/Debug/StellarMac.app/Contents/MacOS/StellarMac \
+apps/macos/build/Build/Products/Debug/Stellar.app/Contents/MacOS/Stellar \
   --window-close-check crates/runtime/tests/fixtures/window-session-project --native-close
 ```
 

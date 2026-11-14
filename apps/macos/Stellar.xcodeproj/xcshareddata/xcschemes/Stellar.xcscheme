@@ -15,9 +15,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "AA0000000000000000000005"
-               BuildableName = "StellarMac.app"
-               BlueprintName = "StellarMac"
-               ReferencedContainer = "container:StellarMac.xcodeproj">
+               BuildableName = "Stellar.app"
+               BlueprintName = "Stellar"
+               ReferencedContainer = "container:Stellar.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -43,9 +43,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA0000000000000000000005"
-            BuildableName = "StellarMac.app"
-            BlueprintName = "StellarMac"
-            ReferencedContainer = "container:StellarMac.xcodeproj">
+            BuildableName = "Stellar.app"
+            BlueprintName = "Stellar"
+            ReferencedContainer = "container:Stellar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -60,9 +60,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "AA0000000000000000000005"
-            BuildableName = "StellarMac.app"
-            BlueprintName = "StellarMac"
-            ReferencedContainer = "container:StellarMac.xcodeproj">
+            BuildableName = "Stellar.app"
+            BlueprintName = "Stellar"
+            ReferencedContainer = "container:Stellar.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>

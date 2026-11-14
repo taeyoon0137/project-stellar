@@ -66,7 +66,7 @@ macOS smoke 결과: shell 통합 120, 프로젝트 열기 177, 창 session 68, s
 추가 실제 활성 앱 검사:
 
 ```sh
-apps/macos/build/Build/Products/Debug/StellarMac.app/Contents/MacOS/StellarMac \
+apps/macos/build/Build/Products/Debug/Stellar.app/Contents/MacOS/Stellar \
   --key-mapping-check crates/runtime/tests/fixtures/window-session-project --native-menus
 ```
 

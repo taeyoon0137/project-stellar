@@ -70,7 +70,7 @@ macOS 앱에서 프로젝트 폴더를 열면 사이드바, 인스펙터, 캔버
 - Rust 1.96.0 (`rust-toolchain.toml`에 고정)
 - Xcode 26 이상 (macOS 26 SDK, macOS 앱 빌드)
 
-Rust workspace 전체 검사(fmt·clippy·test·doctest)와 macOS 앱 Debug 빌드·smoke 검사는 다음 명령으로 실행합니다. Xcode 프로젝트(`apps/macos/StellarMac.xcodeproj`)는 빌드 단계에서 Rust 코어(`stellar-ffi`)를 cargo로 함께 빌드합니다.
+Rust workspace 전체 검사(fmt·clippy·test·doctest)와 macOS 앱 Debug 빌드·smoke 검사는 다음 명령으로 실행합니다. Xcode 프로젝트(`apps/macos/Stellar.xcodeproj`)는 빌드 단계에서 Rust 코어(`stellar-ffi`)를 cargo로 함께 빌드합니다.
 
 ```bash
 cargo xtask check-core
@@ -114,7 +114,7 @@ git config core.hooksPath .githooks
 | `./scripts/macos/smoke.sh`              | macOS 앱을 Debug로 빌드하고 FFI·수명주기·캔버스·텍스트 입력·입력 이벤트·업데이트 smoke 검사를 실행합니다.                             |
 | `./scripts/macos/qa.sh` | macOS 앱을 Debug로 빌드하고 임시 샘플 프로젝트에서 [실사용 QA 절차](../../docs/qa/README.md)를 시작합니다. |
 | `./scripts/macos/release_build.sh`      | 서명하지 않은 arm64 Release 앱을 빌드하고 배포 구성과 번들 구조를 검사합니다.                                                         |
-| `./scripts/macos/bundle_check.sh`       | `StellarMac.app`의 번들 구조·링크·rpath·코드 서명 구조를 검사하고 재배치 실행 smoke를 실행합니다.                                     |
+| `./scripts/macos/bundle_check.sh`       | `Stellar.app`의 번들 구조·링크·rpath·코드 서명 구조를 검사하고 재배치 실행 smoke를 실행합니다.                                     |
 | `./scripts/macos/codesign_bundle.sh`    | 앱 번들을 안쪽 코드부터 Hardened Runtime으로 서명합니다.                                                                              |
 | `./scripts/macos/sign_release.sh`       | Release 빌드 후 Developer ID(`--development`이면 Apple Development)로 서명하고 검증합니다.                                            |
 | `./scripts/macos/notarize.sh`           | Developer ID로 서명된 앱을 공증·stapling하고 Gatekeeper 평가를 확인합니다.                                                            |
