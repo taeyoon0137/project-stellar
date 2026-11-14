@@ -171,6 +171,12 @@ pub enum ValueError {
     UnknownKind,
     /// 지원하지 않는 profile schema version.
     UnsupportedSchemaVersion,
+    /// 허용 범위 밖의 값.
+    OutOfRange,
+    /// `major[.minor[.patch]]` 형식이 아닌 version.
+    InvalidVersion,
+    /// 알 수 없는 Apple 플랫폼 이름.
+    UnknownApplePlatform,
 }
 
 impl fmt::Display for ValueError {
@@ -184,6 +190,11 @@ impl fmt::Display for ValueError {
             ValueError::UnsupportedSchemaVersion => {
                 f.write_str("지원하지 않는 profile schema version입니다")
             }
+            ValueError::OutOfRange => f.write_str("허용 범위 밖의 값입니다"),
+            ValueError::InvalidVersion => {
+                f.write_str("version은 'major[.minor[.patch]]' 10진 형식이어야 합니다")
+            }
+            ValueError::UnknownApplePlatform => f.write_str("알 수 없는 Apple 플랫폼입니다"),
         }
     }
 }

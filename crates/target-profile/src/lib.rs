@@ -9,3 +9,6 @@ pub mod node;
 
 /// Target Profile 식별자·종류·schema version (IX.10.1).
 pub mod profile;
+
+/// profile 종류별 필드와 Target Profile entry (IX.10.2).
+pub mod spec;

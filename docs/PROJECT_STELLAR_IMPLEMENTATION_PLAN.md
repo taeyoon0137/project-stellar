@@ -898,7 +898,7 @@ tools/xtask/
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | IX.10.1 | `[x]` | `TargetProfileId`, profile kind Web/Apple/Android, profile schema version을 정의합니다. | numeric kind와 round-trip golden test. | IV.1.1, VIII.7.1 |
-| IX.10.2 | `[ ]` | Apple profile에 platform 종류와 최소 OS version, Android profile에 API level과 UI system version, Web profile에 browser baseline과 capability set version을 정의합니다. | profile별 required field validation. | IX.10.1 |
+| IX.10.2 | `[x]` | Apple profile에 platform 종류와 최소 OS version, Android profile에 API level과 UI system version, Web profile에 browser baseline과 capability set version을 정의합니다. | profile별 required field validation. | IX.10.1 |
 | IX.10.3 | `[ ]` | `stellar.yaml`에 project target profile 목록과 기본 profile을 저장하고 존재하지 않는 default를 거부합니다. | manifest round-trip과 invalid default fixture. | IX.10.2, IV.1.5 |
 | IX.10.4 | `[ ]` | Stellar 앱 업데이트만으로 project profile version을 바꾸지 않게 합니다. profile registry version과 project pin을 분리합니다. | registry update 후 project bytes·resolved profile unchanged. | IX.10.3 |
 | IX.10.5 | `[ ]` | capability 상태를 Native, Approximated, Unsupported, Deprecated로 정의하고 element/property/semantic contract별 registry를 구현합니다. | 상태 matrix fixture 통과. | IX.10.2, IX.6.7 |
