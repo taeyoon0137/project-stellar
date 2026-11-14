@@ -72,3 +72,10 @@
 |---|---|
 | 2,000단계 선형 트리에서 중간 node 제외 시 그 node와 하위만 제외, parent 조회 ≤ node 수; 제외 없는 순환·제외 node가 있는 순환·목록에 없는 제외 조상·목록에 없는 조상에서 node별 `is_excluded`와 같은 결과 (`excluded_among_matches_is_excluded_with_linear_parent_lookups`) | 통과 |
 | 기존 multi-profile 진단 fixture(제외 node 하위 미검사 포함) | 통과(변경 없음) |
+
+## 상태 확인(리뷰 반영, 2026-11-14)
+
+- 리뷰(TP-2)는 이 행의 입력도 지역 모델이라는 점을 지적했습니다. 이 행의 작업명과 검증 열은 한 View의 다중 profile 검사 API와 기대 진단 fixture이고, 실제 문서·프로젝트
+  저장이나 command를 요구하지 않습니다. 검증 열은 fixture로 충족되므로 `[x]`를 유지합니다.
+- 사실: 입력 View는 지역 `ViewModel`이고, 문서 tree → `ViewModel` 변환과 `PropertyCapabilityMap` 구현이 아직 없습니다. 이 연결은 IX.10.3(`stellar.yaml` 연결)과 IX.10.10(override 저장 형식·command·실제 host)의 남은 범위로 두었고,
+  두 행은 `[~]`입니다.

@@ -62,3 +62,12 @@
 조회로 바꿨습니다(결과 같음, 첫 일치 규칙 유지). 동작 보존 재구성이라 비용을 직접 재는 실패 테스트는 만들지 않았고, 기존
 upgrade preview fixture가 그대로 통과합니다. 사용 수집(`collect_usages`)의 제외 판정 비용 수정은 IX.10.8 보고서의 후속 수정
 절에 있습니다.
+
+## 상태 확인(리뷰 반영, 2026-11-14)
+
+- 리뷰(TP-2)는 이 행의 입력도 지역 모델이라는 점을 지적했습니다. 이 행의 작업명과 검증 열은 upgrade plan API와 미리보기 fixture(revision 불변)이고, 실제 문서·프로젝트
+  저장이나 command를 요구하지 않습니다. 검증 열은 fixture로 충족되므로 `[x]`를 유지합니다.
+- 사실: 프로젝트 입력은 읽기 전용 trait `ProjectSnapshot`이고, 실제 문서 store·매니페스트에 대한 구현이 아직 없습니다. "적용 전 project를 수정하지 않음"은 `&self` 읽기 전용 trait과 테스트 snapshot으로 보장·검증했습니다. 이 연결은 IX.10.3(`stellar.yaml` 연결)과 IX.10.10(override 저장 형식·command·실제 host)의 남은 범위로 두었고,
+  두 행은 `[~]`입니다.
+- 선행 IX.10.4도 이번 정정으로 `[~]`입니다. 이 행이 쓰는 pin 기준 release 해석(`RegistryCatalog`)은 검증되었고, IX.10.4의 남은
+  범위는 실제 `stellar.yaml`에 pin을 저장하는 연결뿐입니다.

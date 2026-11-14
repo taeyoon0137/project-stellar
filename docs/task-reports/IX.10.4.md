@@ -2,7 +2,9 @@
 
 - WBS: IX.10.4
 - 작업명: Stellar 앱 업데이트만으로 project profile version을 바꾸지 않게 registry version과 project pin 분리
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — pin 분리와 pin 기준 해석은 구현·검증했지만, "project bytes"는 형식 중립
+  `ManifestNode` canonical bytes로만 검증했습니다. 실제 `stellar.yaml`은 `registry_version` pin을 아직 저장할 수
+  없습니다(IX.10.3 `[~]`, 아래 상태 정정).
 - 선행: IX.10.3(이 lane `[x]`)
 
 ## 필수 실행 환경
@@ -55,3 +57,12 @@
 
 - 앱 release 내용의 불변성(기존 버전을 수정하지 않음)은 계약이며 이 crate가 강제할 수 없습니다. 내장 release의 golden
   검사(IX.10.5 상태 matrix)로 변경을 감지합니다.
+
+## 상태 정정(리뷰 반영, 2026-11-14)
+
+- `[x]` → `[~]`: 리뷰(TP-1)에서 IX.10.3 형식이 실제 `stellar.yaml`(project crate 파서)에 저장되지 않는다는 점이 확인되었습니다.
+  project 파서는 `target_profiles[i].registry_version`을 `UnknownKey`로 거부하므로, 이 행의 검증 열 "registry update 후 project
+  bytes unchanged"는 실제 프로젝트 파일 bytes가 아니라 매니페스트 최상위 노드의 canonical bytes에서만 증명되었습니다(위 차이 절에
+  적은 한계와 같음).
+- `[x]`로 되돌리려면 IX.10.3의 project 연결 후, 실제 `stellar.yaml` 텍스트를 이전 앱 release와 새 앱 release로 열고 다시 기록해
+  bytes·해석 결과가 같음을 확인해야 합니다.

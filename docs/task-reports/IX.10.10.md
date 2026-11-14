@@ -2,7 +2,8 @@
 
 - WBS: IX.10.10
 - 작업명: 승인된 profile upgrade를 CommandTransaction과 manifest 변경으로 적용하고 자동 commit하지 않음
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 승인·적용·undo 계약과 원자 transaction 모델은 구현·검증했지만, 실제
+  `CommandTransaction`과 project 매니페스트 기록 경로를 거치지 않고 테스트 전용 host로만 검증했습니다(아래 상태 정정).
 - 선행: IX.10.9(이 lane `[x]`), Phase VII(단계 선행 — 완화 적용, `stellar-commands`의 `CommandTransaction` 존재)
 
 ## 필수 실행 환경
@@ -76,3 +77,23 @@
 | 검사 | 결과 |
 |---|---|
 | 빈 PATH 디렉터리·PATH 없음에서 기본값·`0`·`yes`는 panic, `1`만 `None`(건너뜀) (`missing_git_fails_unless_explicitly_allowed`) | 통과 |
+
+## 상태 정정(리뷰 반영, 2026-11-14)
+
+- `[x]` → `[~]`: 리뷰(TP-2) 지적을 확인했습니다. 작업명의 "CommandTransaction과 manifest 변경으로 적용"은 계약 수준에서만
+  충족됩니다.
+  - `UpgradeHost`는 trait뿐이고, 이 crate·상위 crate 어디에도 실제 구현이 없습니다. 테스트의 `WorkingTreeHost`는 `Vec<ViewModel>`
+    사본에 편집을 적용한 뒤 교체하는 메모리 host입니다. `stellar-commands::CommandTransaction`을 거치지 않습니다.
+  - 테스트의 `stellar.yaml`은 테스트 전용 기록기(`emit`)로 씁니다. 형식은 `key:` 다음 줄에 `"value"`를 쓰는 방식이라 project의
+    canonical YAML writer(IV.1.5) 출력이 아닙니다. Git working tree fixture(` M stellar.yaml`, HEAD 불변, undo 후 깨끗)는
+    실제 시스템 Git으로 실행했지만, 실제 매니페스트 writer와 문서 command가 아닌 테스트 host 위에서의 결과입니다.
+  - profile override(값과 node 제외, IX.10.7 `ProfileOverrides`)를 문서에 저장하는 형식과 command가 아직 없습니다.
+  - 이 연결을 맡은 다른 WBS 행은 계획서에서 찾지 못했습니다.
+- `[x]`로 되돌리려면 다음이 필요합니다(이 행의 남은 범위).
+  1. 문서 계층에 profile override 저장 형식과 그 편집 command 추가(document·commands crate).
+  2. 상위 crate에서 `UpgradeHost`·`ProjectSnapshot` 실제 구현. 문서 편집은 하나의 `CommandTransaction`으로 실행하고,
+     `stellar.yaml`은 project canonical writer로 기록합니다(IX.10.3 project 연결 필요).
+  3. 실제 host로 apply/undo와 Git working tree change fixture 재실행.
+- IX.10.7·IX.10.8·IX.10.9도 지역 입력 모델(`ViewModel`·`VariantLayer`·`ProjectSnapshot`)을 씁니다. 다만 그 행들의 작업명·검증
+  열은 resolver·validator·plan API와 fixture이고 실제 저장·command를 요구하지 않습니다. 그래서 `[x]`를 유지하고, 실제 입력
+  연결은 이 행과 IX.10.3의 남은 범위로 둡니다(각 보고서에 같은 사실을 적음).

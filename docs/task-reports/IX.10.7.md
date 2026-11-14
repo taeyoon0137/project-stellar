@@ -97,3 +97,10 @@ profile에서 false였습니다.
   `Always`와 활성 variant별 묶음으로 나눈 뒤 활성 순서대로 적용합니다. 적용 순서(활성 순서 → path 오름차순)와 우선순위는
   같고, 기존 우선순위 fixture(`common_profile_and_variant_priority`, `later_active_variant_wins_in_profile_variant_layer`)가
   그대로 통과합니다. 이 변경은 동작 보존 재구성이라 비용을 직접 재는 실패 테스트는 만들지 않았습니다.
+
+## 상태 확인(리뷰 반영, 2026-11-14)
+
+- 리뷰(TP-2)는 이 행의 입력도 지역 모델이라는 점을 지적했습니다. 이 행의 작업명과 검증 열은 희소 override resolver와 우선순위 fixture이고, 실제 문서·프로젝트
+  저장이나 command를 요구하지 않습니다. 검증 열은 fixture로 충족되므로 `[x]`를 유지합니다.
+- 사실: profile override는 아직 문서에 저장되지 않고(저장 형식 없음), View Variant 결과는 `VariantLayer`로, 환경 key는 같은 번호의 지역 상수로 받습니다. 이 연결은 IX.10.3(`stellar.yaml` 연결)과 IX.10.10(override 저장 형식·command·실제 host)의 남은 범위로 두었고,
+  두 행은 `[~]`입니다.
