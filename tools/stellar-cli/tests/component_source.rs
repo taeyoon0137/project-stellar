@@ -5,7 +5,9 @@ use std::{
     process::Command,
 };
 use stellar_cli::json::{parse, JsonLimits, JsonValue};
-use stellar_ops::test_support::TempDir;
+use stellar_ops::test_support::{
+    file_digest, large_document, save_documents, scaffold_project, TempDir,
+};
 
 const A: &str = "0195c530-3acd-7bc1-8414-c213f61cb965";
 const AR: &str = "0195c530-3acd-7bc1-8414-c213f61cb966";
@@ -65,6 +67,9 @@ fn value<'a>(v: &'a JsonValue, key: &str) -> &'a str {
 fn independent_component_files_merge_and_open_without_cache() {
     let fixture = TempDir::new("component-source-merge");
     let repo = fixture.path.join("repo");
+    scaffold_project(&repo);
+    save_documents(&repo, &[&large_document(4)]);
+    let project_before = file_digest(&repo);
     let folder = "design/components";
     fs::create_dir_all(repo.join(folder)).unwrap();
     let home = fixture.path.join("home");
@@ -76,12 +81,15 @@ fn independent_component_files_merge_and_open_without_cache() {
     let bp = value(&b, "file");
     assert_eq!(ap, "design/components/버튼-8c5619572809.stellar.yaml");
     assert_eq!(bp, "design/components/버튼-bc6dfb3d3aea.stellar.yaml");
-    git(&repo, &["add", folder]);
+    git(&repo, &["add", "."]);
     git(&repo, &["commit", "-qm", "base"]);
     let base = git(&repo, &["rev-parse", "HEAD"]);
     let edit = |branch: &str, file: &str, hash: &str, w: &str, h: &str| {
         git(&repo, &["checkout", "-qb", branch, &base]);
+        let other = repo.join(if file == ap { bp } else { ap });
+        let other_before = fs::read(&other).unwrap();
         let changed = cli(&repo, &home, &["resize", file, hash, w, h], 0);
+        assert_eq!(fs::read(&other).unwrap(), other_before);
         assert_ne!(hash, value(&changed, "source_hash"));
         assert_eq!(
             git(
@@ -117,7 +125,11 @@ fn independent_component_files_merge_and_open_without_cache() {
     assert_eq!(value(&entries[0], "width"), "240.5");
     assert_eq!(value(&entries[1], "height"), "55");
     assert!(git(&fresh, &["status", "--porcelain"]).is_empty());
-    assert_eq!(git(&fresh, &["ls-files"]).lines().count(), 2);
+    assert_eq!(git(&fresh, &["ls-files", folder]).lines().count(), 2);
+    let reopened_project = file_digest(&fresh);
+    for (path, hash) in project_before {
+        assert_eq!(reopened_project.get(&path), Some(&hash), "{path}");
+    }
 }
 
 #[test]
@@ -133,14 +145,20 @@ fn duplicate_ids_stale_writes_and_unsupported_sources_preserve_files() {
     let path = folder.join(&filename);
     let file = filename.to_str().unwrap();
     let hash = value(&a, "source_hash");
+    let created = file_digest(&folder);
     run(&["create", ".", "Alias", A, BR], 65);
     run(&["create", ".", "Other", B, AR], 65);
+    run(&["create", ".", "RootAsComponent", AR, BR], 65);
+    run(&["create", ".", "ComponentAsRoot", B, A], 65);
     run(&["create", ".", "Card", A, AR], 73);
+    assert_eq!(file_digest(&folder), created);
     assert_eq!(fs::read_dir(&folder).unwrap().count(), 1);
     let good = fs::read(&path).unwrap();
     let text = String::from_utf8(good.clone()).unwrap();
     fs::write(&path, format!("# review\n{text}")).unwrap();
+    let reviewed = file_digest(&folder);
     run(&["resize", file, hash, "10", "20"], 75);
+    assert_eq!(file_digest(&folder), reviewed);
     let unchanged = fs::read(&path).unwrap();
     let info = run(&["check", "."], 0);
     let current = value(
@@ -176,4 +194,68 @@ fn duplicate_ids_stale_writes_and_unsupported_sources_preserve_files() {
     assert_eq!(value(component, "name"), "Card Wide");
     assert_eq!(value(component, "id"), A);
     assert_eq!(value(component, "root"), AR);
+}
+
+#[test]
+fn nested_unsupported_records_and_invalid_references_are_never_rewritten() {
+    let fixture = TempDir::new("component-source-unsupported");
+    let folder = fixture.path.join("components");
+    let home = fixture.path.join("home");
+    fs::create_dir(&folder).unwrap();
+    fs::create_dir(&home).unwrap();
+    let run = |args: &[&str], code| cli(&folder, &home, args, code);
+    let a = run(&["create", ".", "Card", A, AR], 0);
+    run(&["create", ".", "Button", B, BR], 0);
+    let file = value(&a, "file");
+    let path = folder.join(file);
+    let original = fs::read_to_string(&path).unwrap();
+    let mut unsupported: Vec<_> = ["properties", "slots", "state_machine", "local_tokens"]
+        .into_iter()
+        .map(|key| {
+            (
+                original.replace("component:\n", &format!("component:\n  {key}: []\n")),
+                69,
+            )
+        })
+        .collect();
+    unsupported.extend([
+        (
+            original.replace("root_node:\n", "root_node:\n  children: []\n"),
+            69,
+        ),
+        (
+            original.replace("  payload:\n", "  payload:\n    future_property: 1\n"),
+            69,
+        ),
+        (
+            original.replace(&format!("  root: \"{AR}\""), &format!("  root: \"{BR}\"")),
+            65,
+        ),
+        (
+            original.replace("  parent: none", &format!("  parent: {BR}")),
+            65,
+        ),
+    ]);
+    for (text, code) in unsupported {
+        assert_ne!(text, original);
+        fs::write(&path, &text).unwrap();
+        let before = file_digest(&folder);
+        // 현재 hash로 요청해 오래된 쓰기 보호가 아니라 미지원 레코드 거부를 검사합니다.
+        let hash = before
+            .get(Path::new(file).file_name().unwrap().to_str().unwrap())
+            .unwrap();
+        run(&["check", "."], code);
+        run(&["resize", file, hash, "10", "20"], code);
+        run(
+            &[
+                "create",
+                ".",
+                "Another",
+                "0195c530-3acd-7bc1-8414-c213f61cb969",
+                "0195c530-3acd-7bc1-8414-c213f61cb96a",
+            ],
+            code,
+        );
+        assert_eq!(file_digest(&folder), before);
+    }
 }
