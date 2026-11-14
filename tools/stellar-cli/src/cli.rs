@@ -74,7 +74,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "apply",
         "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
     ),
-    ("component-source", "create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>: 컴포넌트별 Free Frame 트리"),
+    ("component-source", "create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | resize-frame <파일> <원본 hash> <node-id> <너비> <높이> | set-position <파일> <원본 hash> <node-id> <x> <y> | set-visible <파일> <원본 hash> <node-id> <true|false> | set-locked <파일> <원본 hash> <node-id> <true|false> | remove-frame <파일> <원본 hash> <node-id> | rename-frame <파일> <원본 hash> <node-id> <이름> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>: 컴포넌트별 Free Frame 트리"),
     (
         "text-source",
         "export <프로젝트> <새 파일> | check <파일> | apply <파일> <입력|-> [--dry-run]: 단일 View 텍스트 원본을 opt-in으로 검사·편집합니다",
