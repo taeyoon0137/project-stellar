@@ -107,7 +107,7 @@ final class ShellGitDataSource: GitPanelDataSource {
                 headValue: item?.head, indexValue: item?.index, workingValue: item?.working, requiredChanges: [])))
         case .setStaged(let requested, let targets, let stage):
             guard requested == generation else { return reject(command, .staleGeneration) }
-            guard trusted, stage, operation == nil, trustRequest == nil else { return reject(command, .unavailable) }
+            guard trusted, operation == nil, trustRequest == nil else { return reject(command, .unavailable) }
             var selected = IndexSet()
             for target in targets {
                 let siblings = target.parent.map { children[$0] ?? [] } ?? roots
@@ -118,10 +118,11 @@ final class ShellGitDataSource: GitPanelDataSource {
                     selected.formUnion(IndexSet(matches))
                 }
             }
-            guard selected.count == 1, let i = selected.first, items[i].index != items[i].working else {
+            guard selected.count == 1, let i = selected.first,
+                  stage ? items[i].index != items[i].working : items[i].staged else {
                 return reject(command, .unknownTarget)
             }
-            request((requested, UInt32(i)))
+            request((requested, UInt32(i)), stage: stage)
         case .resolvePendingAutosave(let saveFirst):
             if saveFirst {
                 guard let windowSession, let code = CoreRuntime.commandCode(name: "file.save_now"),
@@ -140,10 +141,10 @@ final class ShellGitDataSource: GitPanelDataSource {
         emit(.commandRejected(GitCommandRejection(command: cmd, reason: reason)))
     }
 
-    private func request(_ target: (UInt64, UInt32)?) {
+    private func request(_ target: (UInt64, UInt32)?, stage: Bool = true) {
         guard operation == nil, let session, let window = windowSession, !session.isClosed, !window.isClosed, trusted else { return }
-        let kind: GitOperationKind = target == nil ? .refresh : .stage
-        let result = session.pump.gitNames(window.session, selection: target) { [weak self, weak session, weak window] event in
+        let kind: GitOperationKind = target == nil ? .refresh : (stage ? .stage : .unstage)
+        let result = session.pump.gitNames(window.session, selection: target, stage: stage) { [weak self, weak session, weak window] event in
             guard let self, let session, let window, self.session === session, self.windowSession === window,
                   !window.isClosed, let id = event.request, self.operation == id else { return }
             if case .gitNames(let generation, let owner, let count, let other, let applied) = event, owner == window.session {
@@ -164,7 +165,7 @@ final class ShellGitDataSource: GitPanelDataSource {
                             self.message = nil
                             self.rebuild()
                             self.emit(.operationFinished(GitOperationResult(id: id, kind: kind,
-                                outcome: .succeeded(message: applied ? String(localized: "Staged node name.") : ""))))
+                                outcome: .succeeded(message: applied ? (stage ? String(localized: "Staged node name.") : String(localized: "Unstaged node name.")) : ""))))
                         } else {
                             self.clearRows()
                             let message = String(localized: "The Git change list changed. Refresh to read it again.")

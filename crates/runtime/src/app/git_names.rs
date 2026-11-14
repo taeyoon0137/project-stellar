@@ -29,7 +29,10 @@ use super::{
     AppRuntime, ProjectSummary, RequestError, RequestFailure, RequestId, RuntimeEvent,
     WindowSessionHandle,
 };
-use crate::staging::{apply_stage_candidate, prepare_stage_candidate_with_preview};
+use crate::staging::{
+    apply_stage_candidate, prepare_stage_candidate_with_preview, prepare_unstage_candidate,
+};
+pub use stellar_ops::candidate::SelectionOperation;
 
 /// 한 저장 노드에서 HEAD, index, working 이름이 어떻게 다른지 보여 줍니다.
 #[derive(Clone, Debug)]
@@ -46,7 +49,8 @@ pub struct GitNameRow {
     pub working: String,
     /// HEAD에서 index로 가는 이름 변경이 있는지.
     pub staged: bool,
-    preview: Option<SemanticDiff>,
+    staged_preview: Option<SemanticDiff>,
+    unstaged_preview: Option<SemanticDiff>,
 }
 
 #[derive(Default, Debug)]
@@ -226,14 +230,16 @@ fn read_names(
                 index: new.clone(),
                 working: new.clone(),
                 staged: false,
-                preview: None,
+                staged_preview: None,
+                unstaged_preview: None,
             });
             if in_index {
                 row.staged = true;
+                row.staged_preview = Some(SemanticDiff::new(vec![change]));
             } else {
                 row.index = old.clone();
                 row.working = new.clone();
-                row.preview = Some(SemanticDiff::new(vec![change]));
+                row.unstaged_preview = Some(SemanticDiff::new(vec![change]));
             }
         }
     }
@@ -282,6 +288,18 @@ impl AppRuntime {
         session: WindowSessionHandle,
         selection: Option<(RequestId, usize)>,
     ) -> Result<RequestId, RequestError> {
+        self.request_git_name_selection(
+            session,
+            selection.map(|(generation, row)| (generation, row, SelectionOperation::Stage)),
+        )
+    }
+
+    /// 표시한 이름의 Stage 또는 Unstage를 실제 Git index에 적용합니다.
+    pub fn request_git_name_selection(
+        &self,
+        session: WindowSessionHandle,
+        selection: Option<(RequestId, usize, SelectionOperation)>,
+    ) -> Result<RequestId, RequestError> {
         let state = self.state();
         let project = state
             .window(session)
@@ -297,13 +315,16 @@ impl AppRuntime {
         }
         let request = self.reserve_request()?;
         let token = GitCancelToken::new();
-        let preview = selection.and_then(|(generation, row)| {
+        let preview = selection.and_then(|(generation, row, operation)| {
             let (actual, rows) = jobs.snapshots.get(&session)?;
-            (*actual == generation)
-                .then(|| rows.get(row))
-                .flatten()?
-                .preview
-                .clone()
+            if *actual != generation {
+                return None;
+            }
+            let entry = rows.get(row)?;
+            match operation {
+                SelectionOperation::Stage => entry.unstaged_preview.clone(),
+                SelectionOperation::Unstage => entry.staged_preview.clone(),
+            }
         });
         jobs.active.insert(session, (request, token.clone()));
         drop(jobs);
@@ -324,21 +345,19 @@ impl AppRuntime {
                         GitTrust::Trusted,
                     );
                     let parent = TempParent::new()?;
-                    if selection.is_some() {
-                        let preview = preview
-                            .as_ref()
-                            .ok_or("표시 세대나 선택 행이 바뀌었습니다")?;
-                        let req = StageSelectionRequest::stage(
-                            preview.changes().iter().map(SemanticChange::id),
-                        );
-                        let prepared = prepare_stage_candidate_with_preview(
-                            &git,
-                            &project.canonical_root,
-                            &parent.0,
-                            &req,
-                            Some(preview),
-                        )
-                        .map_err(|e| e.to_string())?;
+                    if let Some((_, _, operation)) = selection {
+                        let preview = preview.as_ref().ok_or("표시 세대나 선택 행이 바뀌었습니다")?;
+                        let ids = preview.changes().iter().map(SemanticChange::id);
+                        let prepared = match operation {
+                            SelectionOperation::Stage => prepare_stage_candidate_with_preview(
+                                &git, &project.canonical_root, &parent.0,
+                                &StageSelectionRequest::stage(ids), Some(preview),
+                            ),
+                            SelectionOperation::Unstage => prepare_unstage_candidate(
+                                &git, &project.canonical_root, &parent.0,
+                                &StageSelectionRequest::unstage(ids), Some(preview),
+                            ),
+                        }.map_err(|e| e.to_string())?;
                         live(&token)?;
                         trust(project)?;
                         apply_stage_candidate(
@@ -392,7 +411,7 @@ impl AppRuntime {
                         RuntimeEvent::RequestFailed {
                             request,
                             failure: RequestFailure::GitNamesUnavailable,
-                            message: if published {format!("이름 Stage는 완료됐습니다. 목록을 다시 읽지 못했습니다. 새로고침하세요. {message}")} else {message},
+                            message: if published {format!("선택한 이름의 index 변경은 완료됐습니다. 목록을 다시 읽지 못했습니다. 새로고침하세요. {message}")} else {message},
                         }
                     }
                 };

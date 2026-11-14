@@ -44,6 +44,7 @@ def main(app, cli, fixture):
         def rename(name):
             return {"kind": "rename", "node": node, "name": name}
 
+        original_name = stellar("query", work, "node", document, node)["node"]["name"]
         edit([rename("Canvas B")])
         current = work / "design/current"
         before = current.read_bytes()
@@ -61,15 +62,21 @@ def main(app, cli, fixture):
         assert current.read_bytes() == after.read_bytes()
 
         # Git 자신의 checkout-index 결과를 별도로 열고, working과 같은 노드의 이름·잠금을 비교합니다.
-        index = base / "index"
-        index.mkdir()
-        subprocess.run(["git", "init", "-q", index], env=env, check=True)
-        git("checkout-index", "-a", "--prefix=" + str(index) + "/")
-        stored = stellar("query", index, "node", document, node)["node"]
+        def stored_node(directory, index_file):
+            folder = base / directory
+            folder.mkdir()
+            subprocess.run(["git", "init", "-q", folder], env=env, check=True)
+            subprocess.run(["git", "-C", work, "checkout-index", "-a", "--prefix=" + str(folder) + "/"],
+                           env=dict(env, GIT_INDEX_FILE=str(index_file)), check=True)
+            return stellar("query", folder, "node", document, node)["node"]
+
+        staged = stored_node("staged", after.with_suffix(".staged-index"))
+        unstaged = stored_node("unstaged", work / ".git/index")
         working = stellar("query", work, "node", document, node)["node"]
-        assert stored["name"] == working["name"] == "Canvas C", (stored, working)
-        assert stored["locked"] is False and working["locked"] is True, (stored, working)
-        print("git-stage disk ok: name C staged, same-chunk lock only in worktree")
+        assert staged["name"] == working["name"] == "Canvas C", (staged, working)
+        assert unstaged["name"] == original_name, (unstaged, original_name)
+        assert not staged["locked"] and not unstaged["locked"] and working["locked"]
+        print("git-stage disk ok: name staged, then unstaged to HEAD; working name and lock preserved")
 
 
 if __name__ == "__main__":

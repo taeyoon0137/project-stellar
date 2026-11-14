@@ -260,7 +260,7 @@ StellarStatus stellar_window_session_open(uint64_t handle, uint64_t project, uin
  * PROJECT_TRUST event: request u64, project u64, trusted u8. */
 StellarStatus stellar_project_trust(uint64_t handle, uint64_t project, uint32_t action, uint64_t *out_request);
 
-/* action 0: refresh, 1: stage displayed row. Event: request u64, session u64, rows u32, other_changes u8, staged u8.
+/* action 0: refresh, 1: stage displayed row, 2: unstage displayed row. Event: request u64, session u64, rows u32, other_changes u8, selection_applied u8.
  * A row contains document and node IDs (16 bytes each), staged u8, and HEAD/index/working names
  * (each u32 little-endian UTF-8 byte length followed by those bytes). No Git I/O occurs in the row getter. */
 StellarStatus stellar_git_names_request(uint64_t handle, uint64_t session, uint32_t action, uint64_t generation, uint32_t row, uint64_t *out_request);

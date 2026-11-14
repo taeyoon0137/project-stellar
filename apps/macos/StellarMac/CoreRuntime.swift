@@ -43,9 +43,9 @@ enum CoreRuntime {
         return .success(request)
     }
 
-    static func gitNames(handle: UInt64, session: UInt64, selection: (UInt64, UInt32)?) -> Result<UInt64, CoreRuntimeCallError> {
+    static func gitNames(handle: UInt64, session: UInt64, selection: (UInt64, UInt32)?, stage: Bool = true) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
-        let status = stellar_git_names_request(handle, session, selection == nil ? 0 : 1,
+        let status = stellar_git_names_request(handle, session, selection == nil ? 0 : (stage ? 1 : 2),
                                               selection?.0 ?? 0, selection?.1 ?? 0, &request)
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)

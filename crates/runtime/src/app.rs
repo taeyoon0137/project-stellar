@@ -124,7 +124,7 @@ use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
 mod git_names;
-pub use git_names::GitNameRow;
+pub use git_names::{GitNameRow, SelectionOperation};
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;

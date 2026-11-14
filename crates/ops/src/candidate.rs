@@ -28,7 +28,8 @@ pub use stellar_semantic_diff::keys::DISPLAY_NAME;
 pub use stellar_semantic_diff::snapshot::ObjectKind;
 pub use stellar_semantic_diff::snapshot::SemanticSnapshot;
 pub use stellar_semantic_diff::stage::{
-    build_stage_candidate, CandidateIndexSnapshot, ChangeId, StageError, StageSelectionRequest,
+    build_stage_candidate, build_unstage_candidate, CandidateIndexSnapshot, ChangeId,
+    SelectionOperation, StageError, StageSelectionRequest,
 };
 pub use stellar_semantic_diff::value::SemanticValue;
 

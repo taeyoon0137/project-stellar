@@ -36,7 +36,7 @@ enum ShellGitStageCheck {
             guard pump.waitForPendingRequests(timeout: 10) else { return nil }
             return coordinator.projectWindow(forPath: path)
         }
-        func click(_ panel: GitPanelViewController) -> Bool {
+        func click(_ panel: GitPanelViewController, state: GitStageState = .unstaged) -> Bool {
             let outline = panel.changeList.outlineView
             guard spin({
                 for i in 0..<outline.numberOfRows {
@@ -44,7 +44,7 @@ enum ShellGitStageCheck {
                           let row = panel.changeList.row(of: item) else { continue }
                     if row.level != .change {
                         if !outline.isItemExpanded(item) { outline.expandItem(item) }
-                    } else if row.title == String(localized: "Node name"), row.stageState == .unstaged {
+                    } else if row.title == String(localized: "Node name"), row.stageState == state {
                         outline.scrollRowToVisible(i)
                         guard let cell = outline.view(atColumn: 0, row: i, makeIfNecessary: true) as? GitChangeCellView,
                               cell.stageCheckbox.isEnabled else { continue }
@@ -110,6 +110,15 @@ enum ShellGitStageCheck {
         let reopened = again.panelsSlot.gitPanel
         reopened.loadViewIfNeeded()
         guard spin({ reopened.status?.stagedChangeCount == 1 && reopened.status?.unstagedChangeCount == 0 }) else { return fail("재열기 index 확인") }
+        // Python harness가 두 시점의 실제 index를 별도로 재열 수 있게 Stage 결과를 복사합니다.
+        do {
+            try Data(contentsOf: URL(fileURLWithPath: before)).write(
+                to: URL(fileURLWithPath: replacement).appendingPathExtension("staged-index"))
+        } catch { return fail("Stage index 복사") }
+        guard click(reopened, state: .staged),
+              spin({ reopened.status?.stagedChangeCount == 0 && reopened.status?.unstagedChangeCount == 1 }) else {
+            return fail("재열린 창에서 이름 Unstage: \(String(describing: reopened.status?.semanticStatusError))")
+        }
         guard let closingSession = again.windowController.windowSession else { return fail("재개한 창 session") }
         var late: CoreRuntimeEvent?
         _ = pump.gitNames(closingSession.session, selection: nil) { late = $0 }
@@ -117,7 +126,7 @@ enum ShellGitStageCheck {
         guard pump.waitForPendingRequests(timeout: 10), late != nil else { return fail("Git 조회 중 창 닫기") }
         guard CoreRuntime.gitNameRow(handle: pump.runtimeHandle, session: closingSession.session,
                                      generation: late?.request ?? 0, row: 0) == nil else { return fail("닫힌 창 행 유지") }
-        print("git-stage ok: trust revoked, cancel and stale click preserved index, current click staged, reopen and close during refresh")
+        print("git-stage ok: trust revoked, cancel and stale click preserved index, current click staged, reopen and unstage, close during refresh")
         return true
     }
 }

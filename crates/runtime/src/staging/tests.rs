@@ -514,6 +514,124 @@ fn actual_partial_stage_reopens_index_and_preserves_working_bytes_and_memory_rev
 }
 
 #[cfg(target_os = "macos")]
+#[test]
+fn unstage_only_the_selected_name_from_index_even_when_working_is_different() {
+    use stellar_git_porcelain::cancel::GitCancelToken;
+
+    let fx = GitFixture::with_system_git("actual-semantic-unstage")
+        .unwrap()
+        .unwrap();
+    scaffold_project(fx.work());
+    let model = large_document(4);
+    save_documents(fx.work(), &[&model]);
+    fx.commit_all("baseline").unwrap();
+
+    let mut records = model.to_records().unwrap();
+    let root = records
+        .nodes
+        .iter_mut()
+        .find(|r| r.parent.is_none())
+        .unwrap();
+    let id = root.id;
+    let original_name = root.display_name.clone();
+    root.display_name = "staged name".into();
+    root.locked = true;
+    let (staged, _) = DocumentModel::from_records(records).unwrap();
+    save_documents(fx.work(), &[&staged]);
+    fx.write("notes.txt", b"staged notes").unwrap();
+    fx.git(["add", "."]).unwrap();
+
+    // Working Tree를 재열 수도 없는 상태에서 index의 두 속성 중 이름만 되돌립니다.
+    fx.write("design/current", b"concurrent incomplete working save")
+        .unwrap();
+    fx.write("notes.txt", b"working notes").unwrap();
+    let working_files = || {
+        file_digest(fx.work())
+            .into_iter()
+            .filter(|(p, _)| !p.starts_with(".git/"))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let before = working_files();
+    let parent = fx.root().join("candidate");
+    std::fs::create_dir(&parent).unwrap();
+    let change = ChangeId::property(stellar_core_types::property::PropertyPath::with_keys(
+        id,
+        vec![stellar_ops::candidate::DISPLAY_NAME],
+    ));
+    let request = StageSelectionRequest::unstage([change]);
+    let git = fx.gated();
+    let preview = prepare_unstage_candidate(&git, fx.work(), &parent, &request, None)
+        .unwrap()
+        .semantic
+        .applied()
+        .inverse();
+    let index_before = std::fs::read(fx.work().join(".git/index")).unwrap();
+    assert!(matches!(
+        prepare_unstage_candidate(
+            &git,
+            fx.work(),
+            &parent,
+            &request,
+            Some(&SemanticDiff::default())
+        ),
+        Err(PrepareStageError::StalePreview)
+    ));
+    let prepare =
+        || prepare_unstage_candidate(&git, fx.work(), &parent, &request, Some(&preview)).unwrap();
+    let expired = prepare();
+    // 같은 tree인 빈 commit도 이미 준비한 HEAD 기준을 무효화합니다.
+    let original_head = fx.git(["rev-parse", "HEAD"]).unwrap();
+    let tree_oid = fx.git(["rev-parse", "HEAD^{tree}"]).unwrap();
+    let new_head = fx
+        .git([
+            "commit-tree",
+            std::str::from_utf8(&tree_oid.stdout).unwrap().trim(),
+            "-p",
+            "HEAD",
+            "-m",
+            "advancing ref",
+        ])
+        .unwrap();
+    fx.git([
+        "update-ref",
+        "HEAD",
+        std::str::from_utf8(&new_head.stdout).unwrap().trim(),
+        std::str::from_utf8(&original_head.stdout).unwrap().trim(),
+    ])
+    .unwrap();
+    assert!(matches!(
+        apply_stage_candidate(&git, fx.work(), &parent, &expired, &GitCancelToken::new()),
+        Err(ApplyStageError::Preparation(PrepareStageError::HeadChanged))
+    ));
+    assert_eq!(
+        std::fs::read(fx.work().join(".git/index")).unwrap(),
+        index_before
+    );
+
+    let prepared = prepare();
+    let actual =
+        apply_stage_candidate(&git, fx.work(), &parent, &prepared, &GitCancelToken::new()).unwrap();
+    let tree = materialize_snapshot(&git, fx.work(), &actual.entries, &parent).unwrap();
+    let loaded = SavedProjectLoader::for_materialized_snapshot()
+        .open(tree.root())
+        .unwrap();
+    let reopened = loaded
+        .load_document(model.document_id())
+        .unwrap()
+        .model
+        .to_records()
+        .unwrap();
+    let root = reopened.nodes.iter().find(|r| r.id == id).unwrap();
+    assert_eq!(root.display_name, original_name);
+    assert!(root.locked);
+    assert_eq!(
+        std::fs::read(tree.root().join("notes.txt")).unwrap(),
+        b"staged notes"
+    );
+    assert_eq!(working_files(), before);
+}
+
+#[cfg(target_os = "macos")]
 fn apply_fixture(
     tag: &str,
 ) -> (
@@ -570,6 +688,7 @@ fn actual_index_semantic_mismatch_restores_original_tree() {
         .collect();
     // 검증 후 내부 후보 대응이 잘못된 경우를 주입해 실제 publish 이후 비교·복원까지 실행합니다.
     let wrong = PreparedStageCandidate {
+        head: None,
         tree: selected.tree,
         semantic: unchanged.semantic,
     };
