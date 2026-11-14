@@ -5,10 +5,10 @@
 
 ## 요약
 
-- 추적 파일 수: 21
+- 추적 파일 수: 1457
 - 자동 생성물: 2
 - vendored code: 0
-- 순수 소스/문서: 19
+- 순수 소스/문서: 1455
 
 ## 확장자별 파일 수
 
@@ -16,15 +16,32 @@
 | --- | --- |
 | `(dotfile)` | 2 |
 | `(no-ext)` | 1 |
+| `c` | 1 |
+| `golden` | 5 |
+| `h` | 2 |
+| `hex` | 19 |
 | `jpg` | 1 |
-| `md` | 13 |
-| `sh` | 2 |
-| `svg` | 2 |
+| `json` | 12 |
+| `jsonl` | 3 |
+| `lock` | 1 |
+| `md` | 630 |
+| `pbxproj` | 1 |
+| `plist` | 1 |
+| `resolved` | 1 |
+| `rs` | 608 |
+| `sh` | 10 |
+| `svg` | 3 |
+| `swift` | 89 |
+| `toml` | 35 |
+| `txt` | 3 |
+| `xcscheme` | 1 |
+| `yaml` | 27 |
+| `yml` | 1 |
 
 ## 자동 생성물 (별도 집계)
 
 - `README.md`
-- `resources/readme-hero.svg`
+- `assets/docs/readme-hero.svg`
 
 ## vendored code (별도 집계)
 

@@ -44,8 +44,8 @@ Project Stellar는 폴더와 실제 Git 저장소를 원본으로 사용하는 �
 ## 파일 구조와 source of truth
 
 - `README.md`는 생성 결과물입니다. 직접 수정으로 끝내지 않습니다.
-- README 원본(source of truth)은 `resources/README.preset.md`입니다.
-- README 히어로 wrapper 원본은 `resources/readme-hero.preset.svg`이며, `resources/readme-hero.svg`는 생성 결과물입니다.
+- README 원본(source of truth)은 `assets/docs/README.preset.md`입니다.
+- README 히어로 wrapper 원본은 `assets/docs/readme-hero.preset.svg`이며, `assets/docs/readme-hero.svg`는 생성 결과물입니다.
 - `CLAUDE.md`는 `AGENTS.md`를 가리키는 심볼릭 링크입니다. 별도 사본으로 분리하지 않습니다.
 - `docs/`의 기술 문서는 수동 관리 원본입니다.
 
@@ -61,14 +61,14 @@ Project Stellar는 폴더와 실제 Git 저장소를 원본으로 사용하는 �
 
 ## README 유지보수
 
-- README 내용을 바꿀 때는 `README.md`가 아니라 `resources/README.preset.md`를 수정합니다.
-- `resources/README.preset.md` 또는 `resources/readme-hero.preset.svg`를 수정한 뒤 `./scripts/readme_update.sh`를 실행해 `README.md`와 `resources/readme-hero.svg`를 재생성합니다.
-- README H1 제목, 한 줄 설명, 히어로 `alt` 텍스트는 `resources/README.preset.md`에 최종 문구로 직접 작성합니다. placeholder를 남기거나 스크립트가 생성·덮어쓰게 하지 않습니다.
+- README 내용을 바꿀 때는 `README.md`가 아니라 `assets/docs/README.preset.md`를 수정합니다.
+- `assets/docs/README.preset.md` 또는 `assets/docs/readme-hero.preset.svg`를 수정한 뒤 `./scripts/readme_update.sh`를 실행해 `README.md`와 `assets/docs/readme-hero.svg`를 재생성합니다.
+- README H1 제목, 한 줄 설명, 히어로 `alt` 텍스트는 `assets/docs/README.preset.md`에 최종 문구로 직접 작성합니다. placeholder를 남기거나 스크립트가 생성·덮어쓰게 하지 않습니다.
 - 저장소 구성 섹션은 표가 아니라 `plaintext` 코드블록 tree로 작성하고, 실제로 존재하는 항목만 남깁니다.
 - 목차가 있으면 H2 섹션의 추가·삭제·이름 변경에 맞춰 함께 갱신합니다.
 - badge는 확인된 핵심 기술과 상태에만 추가하고, 추가·제거 시 README 원본과 생성 결과물을 함께 갱신합니다.
-- 히어로 이미지를 넣으려면 `resources/hero.png`(모드별은 `resources/hero.light.png`, `resources/hero.dark.png`)를 추가한 뒤 생성 명령을 실행합니다. 실제로 존재하는 이미지만 SVG에 내장됩니다.
-- `resources/readme-hero.preset.svg` 구조(히어로 wrapper)를 재설계하지 않습니다.
+- 히어로 이미지를 넣으려면 `assets/docs/hero.png`(모드별은 `assets/docs/hero.light.png`, `assets/docs/hero.dark.png`)를 추가한 뒤 생성 명령을 실행합니다. 실제로 존재하는 이미지만 SVG에 내장됩니다.
+- `assets/docs/readme-hero.preset.svg` 구조(히어로 wrapper)를 재설계하지 않습니다.
 - 원본의 placeholder, 경로, 섹션 구조가 바뀌면 `scripts/readme_update.sh`도 함께 갱신합니다.
 
 ## 검증 기준

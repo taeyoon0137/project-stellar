@@ -19,7 +19,7 @@ xcuserdata/
 # CMake / generic out-of-source build output
 build/
 
-# Generated README hero source images (add your own under resources/)
+# Generated README hero source images (add your own under assets/docs/)
 # (kept intentionally empty so contributors can add hero.png locally)
 
 # macOS

@@ -15,7 +15,7 @@ cd "$(git rev-parse --show-toplevel)"
 OUT="docs/status/source-inventory.md"
 
 # 자동 생성물 경로 (AGENTS.md의 source-of-truth 정의 기준)
-GEN_RE='^(README\.md|resources/readme-hero\.svg)$'
+GEN_RE='^(README\.md|assets/docs/readme-hero\.svg)$'
 # vendored code 경로 패턴
 VEN_RE='^(vendor|third_party|third-party|vendored)/|/vendor/|/third_party/'
 

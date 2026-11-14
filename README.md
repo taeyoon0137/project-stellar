@@ -1,19 +1,19 @@
 <!--
-  README.md는 resources/README.preset.md를 기반으로 자동 생성됩니다.
+  README.md는 assets/docs/README.preset.md를 기반으로 자동 생성됩니다.
   이 파일을 직접 수정한 내용은 재생성 시 사라집니다.
-  내용을 바꾸려면 resources/README.preset.md를 수정한 뒤 ./scripts/readme_update.sh를 실행하세요.
+  내용을 바꾸려면 assets/docs/README.preset.md를 수정한 뒤 ./scripts/readme_update.sh를 실행하세요.
 -->
 
 <!-- Hero Image -->
 <!--
-  히어로 이미지를 넣으려면 resources/hero.png를 추가하세요.
-  라이트/다크 모드별 이미지는 resources/hero.light.png, resources/hero.dark.png로 추가합니다.
+  히어로 이미지를 넣으려면 assets/docs/hero.png를 추가하세요.
+  라이트/다크 모드별 이미지는 assets/docs/hero.light.png, assets/docs/hero.dark.png로 추가합니다.
   같은 이름의 .jpg 파일도 지원합니다.
-  이미지를 추가한 뒤 ./scripts/readme_update.sh를 실행하면 실제 존재하는 이미지가 resources/readme-hero.svg에 base64로 내장됩니다.
+  이미지를 추가한 뒤 ./scripts/readme_update.sh를 실행하면 실제 존재하는 이미지가 assets/docs/readme-hero.svg에 base64로 내장됩니다.
 -->
 <p align="center">
   <a href="https://github.com/taeyoon0137/project-stellar">
-    <img src="./resources/readme-hero.svg" alt="Project Stellar 히어로 이미지" width="100%" />
+    <img src="./assets/docs/readme-hero.svg" alt="Project Stellar 히어로 이미지" width="100%" />
   </a>
 </p>
 
@@ -90,13 +90,13 @@ git config core.hooksPath .githooks
 
 <!--
   README.md는 생성 결과물입니다.
-  내용을 바꿀 때는 resources/README.preset.md를 수정한 뒤 ./scripts/readme_update.sh를 실행하세요.
+  내용을 바꿀 때는 assets/docs/README.preset.md를 수정한 뒤 ./scripts/readme_update.sh를 실행하세요.
   placeholder, 경로, 섹션 구조가 바뀌면 생성 스크립트도 함께 갱신합니다.
 -->
 
 | 명령                         | 설명                                                                                                                            |
 | :--------------------------- | :------------------------------------------------------------------------------------------------------------------------------ |
-| `./scripts/readme_update.sh` | `resources/README.preset.md`와 `resources/readme-hero.preset.svg`에서 `README.md`와 `resources/readme-hero.svg`를 재생성합니다. |
+| `./scripts/readme_update.sh` | `assets/docs/README.preset.md`와 `assets/docs/readme-hero.preset.svg`에서 `README.md`와 `assets/docs/readme-hero.svg`를 재생성합니다. |
 
 <a id="repository-structure"></a>
 
@@ -106,13 +106,15 @@ git config core.hooksPath .githooks
 project-stellar
 ├── .githooks/
 │   └── commit-msg              # 커밋 메시지 형식 검사 훅
+├── assets/
+│   └── docs/
+│       ├── README.preset.md        # README 생성 원본 (source of truth)
+│       ├── hero.jpg                # README 히어로 이미지 (로고 원본)
+│       ├── readme-hero.preset.svg  # README 히어로 wrapper 원본
+│       └── readme-hero.svg         # 생성된 README 히어로 SVG
 ├── docs/
 │   ├── PROJECT_STELLAR_IMPLEMENTATION_PLAN.md     # 원자적 구현·검증 실행 계획 (WBS)
 │   └── PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md  # 기술 아키텍처 기준 문서
-├── resources/
-│   ├── README.preset.md        # README 생성 원본 (source of truth)
-│   ├── readme-hero.preset.svg  # README 히어로 wrapper 원본
-│   └── readme-hero.svg         # 생성된 README 히어로 SVG
 ├── scripts/
 │   └── readme_update.sh        # README 생성 명령
 ├── .gitattributes              # 줄바꿈·속성 규칙

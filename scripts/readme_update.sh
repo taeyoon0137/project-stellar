@@ -6,9 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 README_FILE="$ROOT_DIR/README.md"
-PRESET_README_FILE="$ROOT_DIR/resources/README.preset.md"
-PRESET_HERO_FILE="$ROOT_DIR/resources/readme-hero.preset.svg"
-HERO_FILE="$ROOT_DIR/resources/readme-hero.svg"
+PRESET_README_FILE="$ROOT_DIR/assets/docs/README.preset.md"
+PRESET_HERO_FILE="$ROOT_DIR/assets/docs/readme-hero.preset.svg"
+HERO_FILE="$ROOT_DIR/assets/docs/readme-hero.svg"
 
 if [ ! -f "$PRESET_README_FILE" ]; then
   echo "Error: README.preset.md file not found at $PRESET_README_FILE"
@@ -33,7 +33,7 @@ REPOSITORY_URL="${REPOSITORY_URL#git+}"
 REPOSITORY_URL="${REPOSITORY_URL%.git}"
 REPOSITORY_URL="${REPOSITORY_URL/git@github.com:/https:\/\/github.com\/}"
 
-# Generate resources/readme-hero.svg:
+# Generate assets/docs/readme-hero.svg:
 # - replace the fallback text with the project name
 # - embed any existing hero images as base64 data URIs
 # - drop <image> tags for hero images that do not exist
@@ -59,7 +59,7 @@ perl -MMIME::Base64=encode_base64 -0pe '
 
   sub embed_image {
     my ($tag, $file_name) = @_;
-    my $path = "$root_dir/resources/$file_name";
+    my $path = "$root_dir/assets/docs/$file_name";
     return "" unless -f $path;
 
     my ($ext) = $file_name =~ /\.([^.]+)$/;
@@ -83,7 +83,7 @@ perl -MMIME::Base64=encode_base64 -0pe '
 
 # Generate README.md:
 # - substitute the repository URL
-# - rewrite ../<dir> source paths to ./<dir> for the root-level README
+# - rewrite ../../<path> source paths (relative to assets/docs/) to ./<path> for the root-level README
 perl -0pe '
   BEGIN {
     ($repository_url) = @ARGV;
@@ -91,11 +91,7 @@ perl -0pe '
   }
 
   s/\$\{repositoryUrl\}/$repository_url/g;
-  s|\.\./resources|./resources|g;
-  s|\.\./scripts|./scripts|g;
-  s|\.\./docs|./docs|g;
-  s|\.\./AGENTS\.md|./AGENTS.md|g;
-  s|\.\./CLAUDE\.md|./CLAUDE.md|g;
+  s|\.\./\.\./|./|g;
 ' "$REPOSITORY_URL" "$PRESET_README_FILE" > "$README_FILE"
 
 echo "README.md and readme-hero.svg updated successfully"
