@@ -55,6 +55,9 @@ pub mod migrate;
 /// CI 검사: lockfile·검증·migration 필요 여부 (XXIV.3.1).
 pub mod ci;
 
+/// redaction을 기본으로 하는 semantic diff 요약 artifact (XXIV.3.2).
+pub mod summary;
+
 /// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 pub mod test_support;

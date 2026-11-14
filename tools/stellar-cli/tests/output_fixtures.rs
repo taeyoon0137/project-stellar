@@ -1280,3 +1280,104 @@ fn ci_mode_fixtures() {
     let invalid = run(&["ci", corrupt.to_str().unwrap()]);
     assert_eq!(invalid.code, 65, "{}", invalid.stderr);
 }
+
+// --- XXIV.3.2: diff-summary artifact ---
+
+#[test]
+fn diff_summary_redacts_project_text_names_and_paths_by_default() {
+    // 검증 기준(XXIV.3.2): privacy fixture.
+    let dir = TempDir::new("summary-privacy-secret-dir");
+    let home = dir.path.join("home");
+    let (roots, model) = three_projects(&dir);
+    let [base, target] = [&roots[0], &roots[1]];
+    for root in [base, target] {
+        let manifest = root.join("stellar.yaml");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        assert!(text.contains("name: Fixture"));
+        std::fs::write(
+            &manifest,
+            text.replace("name: Fixture", "name: SECRET-PROJECT"),
+        )
+        .unwrap();
+    }
+    let document = model.document_id().to_string();
+    let kids = children(&model);
+    let original_name = model.record(kids[0].parse().unwrap()).unwrap().display_name;
+    assert!(!original_name.is_empty());
+    apply_one(
+        target,
+        &home,
+        &document,
+        &format!(
+            r#"{{"kind":"rename","node":"{}","name":"SECRET-RENAME"}},{{"kind":"set-visible","node":"{}","visible":false}}"#,
+            kids[0], kids[0]
+        ),
+    );
+    let secrets = [
+        "SECRET-RENAME",
+        "SECRET-PROJECT",
+        original_name.as_str(),
+        "summary-privacy-secret-dir",
+    ];
+    let (b, t) = (base.to_str().unwrap(), target.to_str().unwrap());
+
+    // 기본(redaction): 값의 종류만 남고 프로젝트 텍스트·이름·경로가 없습니다.
+    let redacted = run(&["diff-summary", b, t]);
+    check(
+        &redacted,
+        "diff-summary-redacted.json",
+        ExitStatus::Ok,
+        &[base, target],
+    );
+    for secret in secrets {
+        assert!(!redacted.stdout.contains(secret), "stdout에 {secret:?}");
+    }
+    let summary = result_of(&redacted);
+    assert_eq!(
+        summary.get("redaction").and_then(JsonValue::as_str),
+        Some("project-content")
+    );
+    assert_eq!(
+        summary.get("redacted_values").and_then(JsonValue::as_i64),
+        Some(2)
+    );
+
+    // artifact 파일: 같은 내용, stdout에는 크기·hash만.
+    let artifacts = TempDir::new("summary-artifacts");
+    let output = artifacts.path.join("diff-summary.json");
+    let written = run(&["diff-summary", b, t, "--output", output.to_str().unwrap()]);
+    assert_eq!(written.code, 0, "{}", written.stderr);
+    assert!(
+        !written.stdout.contains("diff-summary.json"),
+        "stdout에 경로 금지"
+    );
+    let artifact = std::fs::read_to_string(&output).unwrap();
+    for secret in secrets {
+        assert!(!artifact.contains(secret), "artifact에 {secret:?}");
+    }
+    let artifact_doc = parse(artifact.trim_end(), JsonLimits::default()).unwrap();
+    assert_eq!(&artifact_doc, &summary, "artifact = stdout 요약");
+    assert_eq!(
+        result_of(&written)
+            .get("artifact")
+            .and_then(|a| a.get("hash"))
+            .and_then(JsonValue::as_str)
+            .map(str::to_string),
+        Some(stellar_ops::summary::artifact_hash(artifact.as_bytes()))
+    );
+
+    // 명시적 --include-content만 값을 포함합니다(경로·프로젝트 이름은 여전히 없음).
+    let plain = run(&["diff-summary", b, t, "--include-content"]);
+    assert_eq!(plain.code, 0, "{}", plain.stderr);
+    assert!(plain.stdout.contains("SECRET-RENAME"));
+    assert!(!plain.stdout.contains("SECRET-PROJECT"));
+    assert!(!plain.stdout.contains("summary-privacy-secret-dir"));
+
+    // 입력 프로젝트 안에는 artifact를 쓰지 않습니다.
+    let before = file_digest(base);
+    let inside = base.join("diff.json");
+    let refused = run(&["diff-summary", b, t, "--output", inside.to_str().unwrap()]);
+    assert_eq!(refused.code, 73, "{}", refused.stderr);
+    assert!(refused.stdout.contains("output-inside-project"));
+    assert_eq!(file_digest(base), before);
+}

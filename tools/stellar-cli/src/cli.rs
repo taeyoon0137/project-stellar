@@ -55,6 +55,10 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "<경로> [--check]: generation 스키마를 이 도구의 버전으로 migration합니다(--check: 판정만)",
     ),
     (
+        "diff-summary",
+        "<base> <target> [--output <파일>] [--include-content]: semantic diff 요약 artifact를 만듭니다(기본: 프로젝트 텍스트·이름 redaction)",
+    ),
+    (
         "ci",
         "<경로>: CI 검사(lockfile·검증·migration 필요 여부)를 실행합니다(하나라도 실패하면 종료 코드 1)",
     ),
@@ -163,6 +167,8 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("migrate", crate::project_cmds::migrate_command(rest))
     } else if command == "ci" {
         ("ci", crate::project_cmds::ci(rest))
+    } else if command == "diff-summary" {
+        ("diff-summary", crate::summary::run(rest))
     } else {
         return usage_error(err, &format!("알 수 없는 명령: {command}"));
     };
@@ -352,6 +358,16 @@ mod tests {
             &["ci"][..],
             &["ci", "a", "b"][..],
             &["ci", "--strict", "a"][..],
+            &["diff-summary", "a"][..],
+            &["diff-summary", "a", "b", "--output"][..],
+            &["diff-summary", "a", "b", "--redact"][..],
+            &[
+                "diff-summary",
+                "a",
+                "b",
+                "--include-content",
+                "--include-content",
+            ][..],
         ] {
             let (code, out, err) = run_args(args);
             assert_eq!(code, EXIT_USAGE, "{args:?}");

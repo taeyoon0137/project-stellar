@@ -139,6 +139,11 @@ pub fn validate(args: &[String]) -> Result<Success, CliError> {
     Err(error)
 }
 
+/// 비교·병합 실패 분류(`diff-summary`와 공유).
+pub fn compare_error_public(error: &CompareError) -> CliError {
+    compare_error(error)
+}
+
 fn compare_error(error: &CompareError) -> CliError {
     match error {
         CompareError::Open { error: e, .. } => {

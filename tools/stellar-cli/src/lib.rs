@@ -18,8 +18,11 @@ pub mod commands;
 /// `stellar apply`: CommandTransaction JSON 적용 (XXIV.4.4).
 pub mod apply;
 
-/// `validate`, `semantic-diff`, `semantic-merge`, `migrate` (XXIV.1.3).
+/// `validate`, `semantic-diff`, `semantic-merge`, `migrate` (XXIV.1.3), `ci` (XXIV.3.1).
 pub mod project_cmds;
+
+/// `diff-summary`: redaction 기본 semantic diff 요약 artifact (XXIV.3.2).
+pub mod summary;
 
 /// 종료 코드 (XXIV.1.2).
 pub mod exit;
