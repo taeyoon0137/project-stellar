@@ -26,6 +26,8 @@
 | `cargo fmt -p stellar-git-porcelain -p stellar-runtime -- --check` | 0 |
 | `cargo xtask check-core` | 0 — workspace fmt·clippy·test·doc-test 통과, 경고 0 |
 | `cargo xtask validate-task-report docs/task-reports/XIV.6.1.md` | 0 |
+| `cargo xtask generate-ledger` | 0 — Task 커밋 `ba98f47c` 이후 실행, 해당 작업만 갱신 |
+| `cargo xtask validate-task-status` / `cargo xtask sync-plan` / `cargo xtask verify-task XIV.6.1` | 모두 0 |
 | `git diff --check` | 0 |
 
 ## 환경과 증거
