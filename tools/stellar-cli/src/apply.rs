@@ -192,6 +192,34 @@ fn command_input(value: &JsonValue, index: usize) -> Result<CommandInput, CliErr
                 name: text_field(value, "name", &at)?.to_string(),
             }
         }
+        "replace-text" => {
+            only_keys(value, &["kind", "node", "start", "end", "text"], &at)?;
+            let index = |key| {
+                field(value, key, &at)?
+                    .as_i64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .ok_or_else(|| {
+                        invalid(
+                            "invalid-transaction",
+                            format!("{at}.{key}는 음이 아닌 u32 정수여야 합니다"),
+                        )
+                    })
+            };
+            CommandInput::ReplaceText(
+                stellar_ops::apply::ReplaceText::new(
+                    id_field(value, "node", &at)?,
+                    index("start")?,
+                    index("end")?,
+                    text_field(value, "text", &at)?.into(),
+                )
+                .ok_or_else(|| {
+                    invalid(
+                        "invalid-transaction",
+                        "Text 범위의 시작은 끝 이하여야 합니다",
+                    )
+                })?,
+            )
+        }
         "set-frame-size" => {
             only_keys(value, &["kind", "node", "width", "height"], &at)?;
             let size = Size2::new(

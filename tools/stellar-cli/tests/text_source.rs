@@ -954,3 +954,62 @@ fn apply_never_discards_unknown_source_records() {
         assert_eq!(file_digest(&fixture.project.path), project_before);
     }
 }
+
+#[test]
+fn replace_text_uses_scalar_indices_and_keeps_failed_batches_off_disk() {
+    let model = text_document();
+    let node = model.to_records().unwrap().nodes.last().unwrap().id;
+    let fixture = ApplyFixture::from_model("text-source-range-edit", model);
+    let path = fixture.path.to_str().unwrap();
+    let original = std::fs::read_to_string(path).unwrap();
+    let project_before = file_digest(&fixture.project.path);
+    let replace = |start, end, text: &str| {
+        stellar_cli::json::write(&JsonValue::object(vec![
+            ("kind", JsonValue::string("replace-text")),
+            ("node", JsonValue::string(node.to_string())),
+            ("start", JsonValue::int(start)),
+            ("end", JsonValue::int(end)),
+            ("text", JsonValue::string(text)),
+        ]))
+    };
+    let edit = replace(9, 11, "새\n단락");
+    for (ops, expected) in [
+        (format!("{edit},{}", replace(1000, 1001, "x")), 1),
+        (replace(12, 11, "x"), 65),
+    ] {
+        run_with_stdin(
+            &["text-source", "apply", path, "-"],
+            &fixture.request(&ops),
+            Some(&fixture.home.path),
+            expected,
+        );
+        assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+    }
+    let input = fixture.request(&edit);
+    let result = run_with_stdin(
+        &["text-source", "apply", path, "-", "--dry-run"],
+        &input,
+        Some(&fixture.home.path),
+        0,
+    );
+    assert_eq!(
+        result
+            .get("result")
+            .unwrap()
+            .get("changes")
+            .unwrap()
+            .get("count"),
+        Some(&JsonValue::int(1))
+    );
+    assert_eq!(std::fs::read_to_string(path).unwrap(), original);
+    run_with_stdin(
+        &["text-source", "apply", path, "-"],
+        &input,
+        Some(&fixture.home.path),
+        0,
+    );
+    let yaml = std::fs::read_to_string(path).unwrap();
+    assert!(yaml.contains("Original 새\\n단락 e\u{301} 👩‍💻"), "{yaml}");
+    run(&["text-source", "check", path], 0);
+    assert_eq!(file_digest(&fixture.project.path), project_before);
+}

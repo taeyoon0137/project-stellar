@@ -81,6 +81,7 @@ cargo run -q -p stellar-cli -- --help
 `apply`와 `text-source apply`의 `commands` 배열에는 Frame 크기를 JSON 숫자로 지정하는
 `set-frame-size`(`node`, `width`, `height`)와 local 변환을 지정하는
 `set-frame-transform`(`node`, `a`, `b`, `c`, `d`, `tx`, `ty`)를 넣을 수 있습니다.
+Text 레이어 본문은 `replace-text`(`node`, Unicode scalar 정수 `start`와 `end`, 문자열 `text`)로 교체합니다.
 입력 예시와 dry-run→저장→재열기 절차는 [텍스트 원본 명령 적용](../spec/text-view-source-v1.md#명시적-명령-적용)을
 참고합니다. 두 경로의 요청은 각각 generation revision과 source hash를 사용합니다.
 

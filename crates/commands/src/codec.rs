@@ -294,6 +294,12 @@ fn encode_payload(command: &Command, out: &mut Writer) {
         Command::ConvertFragmentToFrame(command) => command.encode_into(out),
         Command::ConvertShapeToPath(command) => command.encode_into(out),
         Command::RestoreNodeRecords(command) => command.encode_into(out),
+        Command::ReplaceText(edit) => {
+            out.id(edit.node);
+            out.u32(edit.range.start.0);
+            out.u32(edit.range.end.0);
+            out.str(&edit.replacement);
+        }
         Command::DuplicateSubtree(command) => command.encode_into(out),
         #[cfg(test)]
         Command::TestProbe(probe) => {
@@ -347,6 +353,19 @@ fn decode_payload(kind: CommandKind, input: &mut Reader<'_>) -> Result<Command, 
         }
         CommandKind::RestoreNodeRecords => {
             RestoreNodeRecords::decode_from(input).map(Command::RestoreNodeRecords)
+        }
+        CommandKind::ReplaceText => {
+            let node = input.id()?;
+            let range = stellar_document::text::TextRange::new(input.u32()?, input.u32()?).ok_or(
+                CommandCodecError::Malformed {
+                    reason: "Text 교체 범위 역전",
+                },
+            )?;
+            Ok(Command::ReplaceText(crate::text_edit::ReplaceText {
+                node,
+                range,
+                replacement: input.string()?,
+            }))
         }
         CommandKind::DuplicateSubtree => {
             DuplicateSubtree::decode_from(input).map(Command::DuplicateSubtree)

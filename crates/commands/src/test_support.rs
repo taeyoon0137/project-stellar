@@ -371,6 +371,19 @@ pub fn generate(
                 }
             }
         }
+        CommandKind::ReplaceText => {
+            let candidates = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Text));
+            let node = pick(rng, &candidates)?;
+            let NodePayload::Text(text) = model.payload(node)? else {
+                return None;
+            };
+            let len = stellar_document::text::scalar_len(text.content());
+            let start = rng.below(u64::from(len) + 1) as u32;
+            let end = start + rng.below(u64::from(len - start) + 1) as u32;
+            let replacement = rng.pick(&["한글", "e\u{301}", "🎨\n"]).to_string();
+            crate::text_edit::ReplaceText::new(node, start, end, replacement)
+                .map(Command::ReplaceText)
+        }
         CommandKind::ConvertFragmentToFrame => {
             let fragments = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Fragment));
             Some(Command::ConvertFragmentToFrame(ConvertFragmentToFrame {

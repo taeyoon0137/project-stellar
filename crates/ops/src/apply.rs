@@ -21,6 +21,8 @@
 //! 마칠 때까지 쥡니다. 잠금을 쥔 동안 같은 잠금을 쓰는 앱 창과 CLI는 들어오지 못하므로, 잠금 안에서 한
 //! generation 비교와 pointer 교체 사이에 다른 저장이 끼어들 수 없습니다.
 
+pub use stellar_commands::text_edit::ReplaceText;
+
 use std::fmt;
 use std::path::Path;
 
@@ -86,6 +88,8 @@ pub enum CommandInput {
         /// 새 이름.
         name: String,
     },
+    /// Text node 본문의 scalar 범위를 교체합니다.
+    ReplaceText(ReplaceText),
     /// Frame의 비음수 크기 변경. 기존 size 속성 command로 실행합니다.
     SetFrameSize {
         /// 대상 Frame.
@@ -148,6 +152,7 @@ impl CommandInput {
                 *node,
                 name.clone(),
             ))),
+            CommandInput::ReplaceText(edit) => Ok(Command::ReplaceText(edit.clone())),
             CommandInput::SetFrameSize { node, size } => Ok(Command::SetProperty(SetProperty {
                 node: *node,
                 key: frame_keys::SIZE,

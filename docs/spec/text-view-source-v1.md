@@ -179,7 +179,7 @@ style_runs:
 
 `paragraphs` 길이는 본문의 LF 개수 + 1이어야 합니다. 빈 본문도 문단 하나를 가지며, 빈 `style_runs`는 `[]`입니다. 각 run은 `0 <= start <= end <= 본문 scalar 길이`를 만족해야 합니다. 정수는 `u32` 범위이며 음수·범위 초과는 거부합니다. 문단 style과 run style은 기존 모델의 숫자 index를 보존하며, 별도 font/style 정의를 이 파일 안에 만들어 넣지 않습니다.
 
-본문의 Unicode 정규화, CR/CRLF 변환, run 정렬·병합·겹침 제거를 하지 않습니다. 빈 run·겹치는 run·run 순서도 기존 payload 그대로 보존합니다. 제어 문자는 YAML 인용·이스케이프를 사용하고 읽을 수 없는 긴 scalar는 저장 전에 거부합니다. 본문 자체에 전용 CLI 편집 명령은 아직 없으며 외부 텍스트 편집 후 `check`로 검증할 수 있습니다. 기존 `rename`·표시 여부 등 CLI 명령은 Text payload 전체를 보존하면서 적용됩니다.
+본문의 Unicode 정규화, CR/CRLF 변환, run 정렬·병합·겹침 제거를 하지 않습니다. 빈 run·겹치는 run·run 순서도 기존 payload 그대로 보존합니다. 제어 문자는 YAML 인용·이스케이프를 사용하고 읽을 수 없는 긴 scalar는 저장 전에 거부합니다. 본문은 `apply`의 `replace-text` 명령으로 편집합니다. 예를 들어 `{"kind":"replace-text","node":"<Text ID>","start":0,"end":2,"text":"저장"}`은 처음 두 Unicode scalar를 교체합니다. 같은 위치의 start·end는 삽입, 빈 text는 삭제입니다. 기존 Text 편집 규칙으로 문단과 상속 스타일을 갱신하며, 동일한 문자열로 교체하면 원본 payload를 보존합니다. 잘못된 범위 또는 node 종류는 트랜잭션 전체를 거부합니다. 기존 `rename`·표시 여부 등 CLI 명령은 Text payload 전체를 보존하면서 적용됩니다.
 
 V.10.4의 부분 확장이므로 schema version은 1을 유지합니다. 이전 구현은 `kind: text`를 미지원으로 거부해 덮어쓰지 않으며, 기존 Frame/Fragment 파일의 bytes·문법은 바뀌지 않습니다.
 

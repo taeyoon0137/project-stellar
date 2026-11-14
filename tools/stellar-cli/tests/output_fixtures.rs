@@ -1442,3 +1442,35 @@ fn diff_summary_redacts_project_text_names_and_paths_by_default() {
     assert!(refused.stdout.contains("output-inside-project"));
     assert_eq!(file_digest(base), before);
 }
+
+#[test]
+fn saved_generation_reopens_with_edited_text_and_preserves_stale_edits() {
+    let dir = TempDir::new("apply-text-edit");
+    let root = dir.path.join("project");
+    std::fs::create_dir(&root).unwrap();
+    scaffold_project(&root);
+    let model = stellar_ops::test_support::text_document();
+    let node = model.to_records().unwrap().nodes.last().unwrap().id;
+    save_documents(&root, &[&model]);
+    let request = transaction(
+        &revision_token(&root),
+        &model.document_id().to_string(),
+        &format!(r#"{{"kind":"replace-text","node":"{node}","start":9,"end":11,"text":"버튼"}}"#),
+    );
+    let home = dir.path.join("home");
+    let path = root.to_str().unwrap();
+    let apply = || run_with_stdin(&["apply", path, "-"], &request, Some(&home));
+    assert_eq!(apply().code, 0);
+    assert!(revision_token(&root).starts_with("g2:"));
+    let target = dir.path.join("reopened.stellar.yaml");
+    assert_eq!(
+        run(&["text-source", "export", path, target.to_str().unwrap()]).code,
+        0
+    );
+    assert!(std::fs::read_to_string(target)
+        .unwrap()
+        .contains("Original 버튼 e\u{301} 👩‍💻"));
+    let after = file_digest(&root);
+    assert_ne!(apply().code, 0);
+    assert_eq!(file_digest(&root), after);
+}
