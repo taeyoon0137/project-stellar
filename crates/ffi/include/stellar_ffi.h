@@ -418,6 +418,8 @@ StellarStatus stellar_text_commit(uint64_t handle, uint64_t session, uint64_t to
 StellarStatus stellar_text_cancel(uint64_t handle, uint64_t session, uint64_t token);
 StellarStatus stellar_window_layer_rename(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, const uint8_t *name, size_t name_len, uint64_t *out_request);
 StellarStatus stellar_window_layer_page(uint64_t handle, uint64_t session, const StellarLayerQuery *query, StellarLayerInfo *info, StellarLayerRow *rows, uint8_t *text, size_t capacity);
+/* OK or BUFFER_TOO_SMALL writes the history sequence of the returned rows to optional out_history. */
+StellarStatus stellar_window_layer_page_with_history(uint64_t handle, uint64_t session, const StellarLayerQuery *query, StellarLayerInfo *info, StellarLayerRow *rows, uint8_t *text, size_t capacity, uint64_t *out_history);
 
 /* 열린 창 session의 view state(탭 수, active view, viewport)를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, StellarWindowViewInfo *out_info);

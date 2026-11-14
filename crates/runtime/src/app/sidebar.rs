@@ -30,6 +30,8 @@ pub struct LayerRow {
 /// 표시한 페이지·View 이름과 한 부모 바로 아래의 행을 함께 반환합니다.
 #[derive(Debug)]
 pub struct LayerPage {
+    /// 행의 선택 순서와 함께 문서 스레드에서 읽은 이 창의 history 위치.
+    pub history_sequence: u64,
     /// 활성 View를 소유한 페이지 ID.
     pub page: StableId,
     /// 활성 페이지의 표시 이름.
@@ -195,6 +197,7 @@ fn read_page(
         })
         .collect::<Option<Vec<_>>>()?;
     Some(LayerPage {
+        history_sequence: window.history_sequence(),
         page: page.id,
         page_name: page.display_name().to_owned(),
         view_name: view.display_name().to_owned(),
@@ -248,6 +251,40 @@ mod tests {
         assert_eq!(name(&session), "n12");
         assert!(session.redo().unwrap());
         assert_eq!(name(&session), "버튼");
+    }
+
+    #[test]
+    fn layer_selection_and_history_are_read_together_across_undo() {
+        let dir = saved_project("layer-selection-history");
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+        let revision = session.revision();
+        let page = |session: &ProjectWindowSession| {
+            read_page(session, sid(3), revision, None, None).unwrap()
+        };
+        for id in [11, 12] {
+            session
+                .select(stellar_commands::selection::Selection::new([sid(id)], None))
+                .unwrap();
+            let current = page(&session);
+            assert_eq!(current.history_sequence, session.history_sequence());
+            assert_eq!(current.primary, Some(sid(id)));
+            assert_eq!(
+                current
+                    .rows
+                    .iter()
+                    .find(|r| r.selection_order == Some(0))
+                    .unwrap()
+                    .id,
+                sid(id)
+            );
+        }
+        let second = page(&session);
+        assert!(session.undo().unwrap());
+        let first = page(&session);
+        assert_ne!(second.history_sequence, first.history_sequence);
+        assert_eq!(first.primary, Some(sid(11)));
+        assert!(session.redo().unwrap());
+        assert_eq!(page(&session).history_sequence, second.history_sequence);
     }
 
     #[test]

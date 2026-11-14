@@ -26,6 +26,7 @@ final class ShellSidebarSource: SidebarDataProvider {
     private var loaded: [Request] = []
     private var selectedOrder: [SidebarStableID: Int] = [:]
     private var running: Request?
+    var isReadingLayers: Bool { running != nil }
     private var epoch: UInt64 = 0
     private var version: UInt64 = 0
     private(set) var snapshot = SidebarSnapshot.empty
@@ -51,12 +52,13 @@ final class ShellSidebarSource: SidebarDataProvider {
             return
         }
         let next = Display(target: target)
-        guard next != display else { return }
+        guard next != display else { startNext(); return }
         let selectionOnly = display?.session == next.session && display?.view == next.view && display?.revision == next.revision
         display = next
         if selectionOnly && !loaded.isEmpty {
             // 선택 변경은 사용자가 열어 둔 형제 페이지와 disclosure를 유지합니다.
             epoch &+= 1
+            selectedOrder.removeAll()
             for request in loaded where !queued.contains(request) { queued.append(request) }
             if let running, !queued.contains(running) { queued.append(running) }
             startNext()
@@ -84,10 +86,10 @@ final class ShellSidebarSource: SidebarDataProvider {
     func validate(_ command: SidebarCommand) -> SidebarCommandValidation {
         switch command {
         case .duplicate(let ids):
-            return canEditSelection?(.duplicate) == true && ids.count == 1 && ids == snapshot.selection && display?.target.selection_count == 1
+            return canEditSelection?(.duplicate) == true && ids.count == 1 && matchesSelection(ids)
                 ? .allowed : .denied(.unsupported)
         case .delete(let ids):
-            return canEditSelection?(.delete) == true && !ids.isEmpty && display?.target.selection_count == UInt64(ids.count) && Set(ids) == Set(snapshot.selection)
+            return canEditSelection?(.delete) == true && !ids.isEmpty && matchesSelection(ids)
                 ? .allowed : .denied(.unsupported)
         case .reload: return display != nil ? .allowed : .denied(.unsupported)
         case .renameNode(let id, _):
@@ -107,6 +109,11 @@ final class ShellSidebarSource: SidebarDataProvider {
             return snapshot.layers.moreParents.contains(id) ? .allowed : .denied(.unsupported)
         default: return .denied(.unsupported)
         }
+    }
+
+    private func matchesSelection(_ ids: [SidebarStableID]) -> Bool {
+        display?.target.selection_count == UInt64(ids.count) && ids.count == selectedOrder.count
+            && Set(ids) == Set(selectedOrder.keys)
     }
 
     func perform(_ command: SidebarCommand) {
@@ -155,8 +162,15 @@ final class ShellSidebarSource: SidebarDataProvider {
                 guard let self else { return }
                 self.running = nil
                 if self.epoch == epoch, self.window?.isClosed == false {
-                    if let page { self.apply(page, for: request) }
-                    else {
+                    if let page {
+                        if page.historySequence == display.target.history_sequence {
+                            self.apply(page, for: request)
+                        } else {
+                            // Undo가 원래 선택을 복원했으면 다시 읽고, 아니면 다음 창 상태 갱신까지 기다립니다.
+                            if !self.queued.contains(request) { self.queued.append(request) }
+                            guard display.target.matches(self.window?.selectionTarget) else { return }
+                        }
+                    } else {
                         self.queued.removeAll()
                         self.snapshot.loadState = .failed(message: String(localized: "The layer list changed. Try again."))
                         self.publish()
