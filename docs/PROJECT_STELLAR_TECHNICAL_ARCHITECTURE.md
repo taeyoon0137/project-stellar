@@ -1415,6 +1415,11 @@ index lock inode를 쓰기 FD로 보유하는지 확인한 뒤 잠금 안에서 
 현재 검증된 OS/Git/index 지원 범위는
 `docs/task-reports/XIV.6.2.md`에 기록합니다.
 
+현재 runtime 부분 stage는 `SavedProjectLoader`가 여는 기존 `design/current`·generation·objects
+호환 형식을 대상으로 합니다. ADR-0059의 단일 View 텍스트 원본에 대한 의미 선택 stage는
+아직 연결하지 않았습니다. Git 적용·조건부 복원 경로는 재사용할 수 있지만 텍스트 후보의
+직렬화·검증은 V.10 전환에서 별도로 검증합니다. `.stellar/cache/`는 stage 원본으로 사용하지 않습니다.
+
 ---
 
 ## 27. Semantic Merge와 Conflict
