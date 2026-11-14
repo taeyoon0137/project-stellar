@@ -11,9 +11,9 @@
 //! | token 정의 편집(이름·타입·default expression) | 거부 |
 //! | library resource 삭제 | 거부 |
 //! | instance override 설정 | 공개 property이고 타입 표기가 같을 때만 허용 |
-//! | instance override reset | 허용(instance 쪽 sparse 값 삭제, property가 사라진 뒤 정리 포함) |
+//! | instance override reset | 항상 허용(instance 쪽 sparse 값 삭제. property가 사라졌거나 library를 쓸 수 없어도 정리 가능) |
 //!
-//! 판정은 snapshot(XV.5.1)만 읽습니다. command 계층(document·commands crate)은 외부 참조를 대상으로
+//! 판정은 snapshot(XV.5.1)만 읽습니다. reset은 snapshot을 읽지 않습니다. command 계층(document·commands crate)은 외부 참조를 대상으로
 //! 하는 command를 이 분류로 바꿔 transaction 적용 전에 [`check_library_edits`]를 호출합니다. 한 건이라도
 //! 거부되면 transaction 전체를 거부합니다.
 
@@ -111,12 +111,13 @@ pub enum AllowedLibraryEdit {
         /// property StableId.
         property: StableId,
     },
-    /// override reset.
+    /// override reset. snapshot과 무관하게 허용하므로 전역 key가 아니라 instance가 가진 외부 참조를
+    /// 그대로 담습니다(offline·library 불일치에서도 같은 값).
     ResetOverride {
         /// 사용 프로젝트 instance.
         instance: StableId,
-        /// 대상 component 전역 key.
-        component: LibraryResourceKey,
+        /// instance가 가리키는 외부 component 참조.
+        component: ExternalComponentRef,
         /// property StableId.
         property: StableId,
     },
@@ -218,25 +219,38 @@ impl std::error::Error for LibraryEditRejection {}
 ///
 /// 정의·property·token 편집과 삭제는 snapshot 내용과 무관하게 항상 거부합니다. override 설정은
 /// component·property가 있고 property가 공개이며 타입 표기가 같을 때만 허용합니다. reset은
-/// instance 쪽 값만 지우므로 component·property가 사라졌어도 허용합니다(update 후 orphan 정리).
+/// instance 쪽 값만 지우므로 snapshot을 보지 않고 허용합니다. component·property가 사라졌거나 참조
+/// library가 선언과 달라졌어도 정리할 수 있습니다(update 후 orphan 정리).
 pub fn check_library_edit(
     snapshot: &LibrarySnapshot,
     request: &LibraryEditRequest,
 ) -> Result<AllowedLibraryEdit, LibraryEditRejection> {
-    let expected = request.library_id();
-    if expected != snapshot.library_id() {
-        return Err(LibraryEditRejection::LibraryMismatch {
-            expected,
-            found: snapshot.library_id(),
-        });
-    }
-    let read_only = |resource: StableId, kind: LibraryResourceKind| {
+    let same_library = || {
+        let expected = request.library_id();
+        if expected == snapshot.library_id() {
+            Ok(())
+        } else {
+            Err(LibraryEditRejection::LibraryMismatch {
+                expected,
+                found: snapshot.library_id(),
+            })
+        }
+    };
+    let read_only = |resource: StableId,
+                     kind: LibraryResourceKind|
+     -> Result<AllowedLibraryEdit, LibraryEditRejection> {
+        same_library()?;
         Err(LibraryEditRejection::ReadOnlyResource {
             key: snapshot.key_of(resource),
             kind,
         })
     };
     match request {
+        LibraryEditRequest::ResetInstanceOverride {
+            instance,
+            component,
+            property,
+        } => Ok(reset_edit(*instance, component, *property)),
         LibraryEditRequest::EditComponentDefinition { component }
         | LibraryEditRequest::EditComponentProperty { component, .. } => {
             read_only(component.component().id(), LibraryResourceKind::Component)
@@ -253,6 +267,7 @@ pub fn check_library_edit(
             property,
             value_type,
         } => {
+            same_library()?;
             let found = snapshot.component(component.component()).ok_or_else(|| {
                 LibraryEditRejection::UnknownComponent {
                     component: snapshot.key_of(component.component().id()),
@@ -283,23 +298,40 @@ pub fn check_library_edit(
                 property: *property,
             })
         }
+    }
+}
+
+/// reset 허용 결과(snapshot을 읽지 않음).
+fn reset_edit(
+    instance: StableId,
+    component: &ExternalComponentRef,
+    property: StableId,
+) -> AllowedLibraryEdit {
+    AllowedLibraryEdit::ResetOverride {
+        instance,
+        component: component.clone(),
+        property,
+    }
+}
+
+/// reset 요청이면 snapshot 없이 허용 결과를 만듭니다.
+fn allowed_reset(request: &LibraryEditRequest) -> Option<AllowedLibraryEdit> {
+    match request {
         LibraryEditRequest::ResetInstanceOverride {
             instance,
             component,
             property,
-        } => Ok(AllowedLibraryEdit::ResetOverride {
-            instance: *instance,
-            component: snapshot.key_of(component.component().id()),
-            property: *property,
-        }),
+        } => Some(reset_edit(*instance, component, *property)),
+        _ => None,
     }
 }
 
 /// transaction의 외부 resource 변경 요청을 모두 판정합니다. 하나라도 거부되면 그 위치와 사유로 실패합니다.
 ///
-/// `snapshot_for`는 요청의 의존성 이름을 그 scope의 snapshot으로 바꿉니다(없으면 `None`). snapshot이
-/// 없으면 요청 종류와 무관하게 `LibraryUnavailable`로 거부합니다. 정의 편집·삭제는 어차피 허용되지
-/// 않고, override는 공개 여부를 확인할 수 없기 때문입니다.
+/// `snapshot_for`는 요청의 의존성 이름을 그 scope의 snapshot으로 바꿉니다(없으면 `None`). reset은
+/// snapshot 없이도 허용합니다(instance 쪽 값만 지움). 그 밖의 요청은 snapshot이 없으면
+/// `LibraryUnavailable`로 거부합니다. 정의 편집·삭제는 어차피 허용되지 않고, override 설정은 공개 여부를
+/// 확인할 수 없기 때문입니다.
 pub fn check_library_edits<'s, F>(
     requests: &[LibraryEditRequest],
     mut snapshot_for: F,
@@ -309,6 +341,10 @@ where
 {
     let mut allowed = Vec::with_capacity(requests.len());
     for (index, request) in requests.iter().enumerate() {
+        if let Some(reset) = allowed_reset(request) {
+            allowed.push(reset);
+            continue;
+        }
         let Some(snapshot) = snapshot_for(request.dependency()) else {
             return Err((
                 index,
@@ -462,7 +498,7 @@ mod tests {
         assert_eq!(
             check_library_edit(&snap, &set_override(99, "String")),
             Err(LibraryEditRejection::UnknownProperty {
-                component: key.clone(),
+                component: key,
                 property: rid(99),
             })
         );
@@ -502,9 +538,64 @@ mod tests {
             check_library_edit(&snap, &reset),
             Ok(AllowedLibraryEdit::ResetOverride {
                 instance: rid(900),
-                component: key,
+                component: button(),
                 property: rid(99),
             })
+        );
+    }
+
+    #[test]
+    fn reset_is_allowed_without_snapshot_or_with_mismatched_library() {
+        // reset은 instance 쪽 sparse 값만 지우므로 library를 쓸 수 없거나(offline) 선언이 다른 library로
+        // 바뀐 뒤에도 사용자가 자기 override를 정리할 수 있어야 합니다(리뷰 P3).
+        let snap = ds();
+        let lookup = |name: &LogicalName| (name.as_str() == "ds").then_some(&snap);
+        let icons = component_ref("icons", library(1), rid(BUTTON));
+        let offline_reset = [LibraryEditRequest::ResetInstanceOverride {
+            instance: rid(900),
+            component: icons.clone(),
+            property: rid(LABEL),
+        }];
+        assert_eq!(
+            check_library_edits(&offline_reset, lookup),
+            Ok(vec![AllowedLibraryEdit::ResetOverride {
+                instance: rid(900),
+                component: icons.clone(),
+                property: rid(LABEL),
+            }])
+        );
+        let foreign = component_ref("ds", library(2), rid(BUTTON));
+        let mismatched_reset = LibraryEditRequest::ResetInstanceOverride {
+            instance: rid(900),
+            component: foreign.clone(),
+            property: rid(LABEL),
+        };
+        assert_eq!(
+            check_library_edit(&snap, &mismatched_reset),
+            Ok(AllowedLibraryEdit::ResetOverride {
+                instance: rid(900),
+                component: foreign,
+                property: rid(LABEL),
+            })
+        );
+        // reset과 offline override가 섞이면 override 위치에서 거부(reset만 통과시키지 않음).
+        let mixed = [
+            offline_reset[0].clone(),
+            LibraryEditRequest::SetInstanceOverride {
+                instance: rid(900),
+                component: icons,
+                property: rid(LABEL),
+                value_type: "String".to_string(),
+            },
+        ];
+        assert_eq!(
+            check_library_edits(&mixed, lookup),
+            Err((
+                1,
+                LibraryEditRejection::LibraryUnavailable {
+                    dependency: LogicalName::new("icons").unwrap(),
+                }
+            ))
         );
     }
 

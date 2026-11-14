@@ -54,3 +54,16 @@
 
 - nested instance 경로를 거치는 override(`OverrideKey` 경로)는 직접 property override만 판정합니다. 경로
   override 허용 여부는 IX.2.3·IX.4.2 validator 규칙을 외부 component에 연결할 때 함께 정해야 합니다.
+
+## 리뷰 수정(9A 리뷰 P3, 2026-11-14)
+
+- 문제: 모듈 정책 표는 instance override reset을 항상 허용(instance 쪽 sparse 값 삭제)한다고 했지만,
+  `check_library_edits`는 의존성 snapshot이 없으면(offline·로드 실패) reset까지 `LibraryUnavailable`로
+  거부했고, `check_library_edit`는 참조 library가 선언과 다르면 reset을 `LibraryMismatch`로 거부했습니다.
+  그래서 library를 쓸 수 없을 때 사용자가 자기 override를 지울 수 없었습니다.
+- 재현: `reset_is_allowed_without_snapshot_or_with_mismatched_library`가 수정 전 실패했습니다.
+- 수정: reset은 snapshot을 읽지 않고 허용합니다. `AllowedLibraryEdit::ResetOverride`는 전역 key 대신
+  instance가 가진 외부 component 참조(`ExternalComponentRef`)를 담아 offline·library 불일치에서도 같은 값을
+  돌려줍니다. 정의 편집·삭제·override 설정의 판정은 그대로입니다(snapshot 없으면 `LibraryUnavailable`).
+- 검증: 위 테스트 통과(offline reset 허용, library 불일치 reset 허용, reset과 offline override가 섞인
+  transaction은 override 위치 1에서 거부), 기존 `read_only` 테스트 3건 통과.
