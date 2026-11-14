@@ -27,7 +27,7 @@ extension ShellProjectWindow {
         canvas.framePointerHandler = { [weak self, weak canvas] event in
             guard let self, let canvas else { return false }
             let point = CanvasInput.viewPoint(of: event, in: canvas)
-            if self.frameDrag?.tool == .frame || (event.type == .leftMouseDown && self.toolsModel.snapshot.activeTool == .frame) {
+            if self.frameDrag?.tool.insertsBounds == true || (event.type == .leftMouseDown && self.toolsModel.snapshot.activeTool.insertsBounds) {
                 return self.handleFrameInsertion(event, point: point, canvas: canvas)
             }
             if event.type == .leftMouseDown, self.toolsModel.snapshot.activeTool == .hand {
@@ -66,7 +66,7 @@ extension ShellProjectWindow {
                 guard session.info?.revision == hit.revision, UUID(uuid: viewport.active_view) == hit.viewID,
                       self.selectNodes([hit.id]) else { return false }
                 self.frameDrag = CanvasFrameDrag(hit: hit, start: point, session: session.session,
-                                                 size: canvas.bounds.size, viewport: viewport, canMove: self.gitSource.trusted, tool: .move)
+                                                 size: canvas.bounds.size, viewport: viewport, canMove: self.gitSource.trusted && !hit.isRectangle, tool: .move)
                 return true
             case .leftMouseDragged:
                 guard var drag = self.frameDrag else { return false }

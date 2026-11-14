@@ -11,6 +11,7 @@ struct CanvasInspectorFrame: Equatable {
 }
 
 struct CanvasFrameHit {
+    let isRectangle: Bool
     let id: UUID
     let revision: UInt64
     let viewID: UUID
@@ -65,6 +66,7 @@ private struct ProjectedFrame {
     let worldPath: CGPath
     let worldBounds: CGRect
     var subtreeBounds: CGRect
+    let isRectangle: Bool
     let clips: Bool
     let pickable: Bool
     let fill: CGColor?
@@ -82,6 +84,7 @@ private struct ProjectedFrame {
         worldPath = localPath.copy(using: &world)!
         worldBounds = worldPath.boundingBox
         subtreeBounds = worldBounds
+        isRectangle = row.flags & 4 != 0
         clips = row.flags & 1 != 0
         pickable = row.flags & 2 != 0
         fill = color(row.fill)
@@ -176,6 +179,7 @@ final class CanvasFrameScene {
     var selectedInspectorFrame: CanvasInspectorFrame? {
         guard let session, let viewID, let primaryIndex else { return nil }
         let selected = frames[primaryIndex]
+        guard !selected.isRectangle else { return nil }
         let background: InspectorColor?
         if let fill = selected.fill, let rgba = fill.components, rgba.count == 4 {
             let space: InspectorColor.Space = fill.colorSpace?.name == CGColorSpace.extendedDisplayP3 ? .displayP3 : .srgb
@@ -187,14 +191,14 @@ final class CanvasFrameScene {
                                      size: selected.localBounds.size, background: background, editable: selected.pickable)
     }
 
-    func hit(at point: CGPoint) -> CanvasFrameHit? {
+    func hit(at point: CGPoint, onlyFrames: Bool) -> CanvasFrameHit? {
         guard let viewID else { return nil }
         let world = point.applying(worldToView.inverted())
-        for frame in frames.reversed() where frame.pickable && frame.worldBounds.contains(world) && frame.worldPath.contains(world) {
+        for frame in frames.reversed() where (!onlyFrames || !frame.isRectangle) && frame.pickable && frame.worldBounds.contains(world) && frame.worldPath.contains(world) {
             var ancestor = frame.parent
             while let i = ancestor, !frames[i].clips || frames[i].worldPath.contains(world) { ancestor = frames[i].parent }
             if ancestor == nil {
-                return CanvasFrameHit(id: frame.id, revision: revision, viewID: viewID,
+                return CanvasFrameHit(isRectangle: frame.isRectangle, id: frame.id, revision: revision, viewID: viewID,
                                       localToWorld: frame.world, parentToWorld: frame.parent.map { frames[$0].world } ?? .identity, worldToView: worldToView)
             }
         }

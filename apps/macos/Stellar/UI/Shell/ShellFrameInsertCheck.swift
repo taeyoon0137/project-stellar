@@ -266,7 +266,66 @@ enum ShellFrameInsertCheck {
               other.sidebarSlot.sidebar.layersController.snapshot.selection.isEmpty else {
             return fail("Layers 선택 창 격리: undo=\(reopened.windowController.windowSession?.info?.undo_depth ?? 0)/\(beforeSelect.undo_depth + 1) top=\(layers.snapshot.layers.topLevelIDs.count) selectedRow=\(layers.outline.selectedRow) other=\(other.windowController.windowSession?.info?.selection_count ?? 0)")
         }
-        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, optional fill, P3/alpha, invalid input, undo/redo, trust and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
+        func loadShapeRow(_ owner: ShellProjectWindow, _ id: UUID) -> SidebarLayerRow? {
+            let sidebar = owner.sidebarSource, parentID = SidebarStableID(child), shapeID = SidebarStableID(id)
+            guard awaitSidebar({ sidebar.snapshot.layers.rows[parentID] != nil || sidebar.snapshot.layers.moreParents.contains(nil) })
+            else { return nil }
+            if sidebar.snapshot.layers.rows[parentID] == nil { sidebar.perform(.loadMore(nil)) }
+            guard awaitSidebar({ sidebar.snapshot.layers.rows[parentID] != nil }) else { return nil }
+            sidebar.perform(.loadChildren(parentID))
+            guard awaitSidebar({ sidebar.snapshot.layers.rows[shapeID] != nil }) else { return nil }
+            return sidebar.snapshot.layers.rows[shapeID]
+        }
+        guard let parent = shown.frameHit(at: viewPoint(116, 88, canvas: shown)), parent.id == child,
+              key(15, "r", canvas: shown), reopened.toolsModel.snapshot.activeTool == .rectangle,
+              pointer(.leftMouseDown, 104, 84, canvas: shown), pointer(.leftMouseDragged, 135, 106, canvas: shown),
+              shown.insertionOutline != nil, pointer(.leftMouseUp, 135, 106, canvas: shown), wait(),
+              let paintedShape = shown.frameHit(at: viewPoint(112, 90, canvas: shown)), paintedShape.isRectangle,
+              shown.frameHit(at: viewPoint(112, 90, canvas: shown), onlyFrames: true)?.id == child,
+              shown.frameHit(at: viewPoint(128, 92, canvas: shown))?.id != paintedShape.id,
+              reopened.inspectorSource.snapshot.state == .noSelection,
+              let shapeRow = loadShapeRow(reopened, paintedShape.id), shapeRow.kind == .shape, shapeRow.shapeKind == .rectangle else {
+            let center = shown.frameHit(at: viewPoint(112, 90, canvas: shown))
+            let parentHit = shown.frameHit(at: viewPoint(112, 90, canvas: shown), onlyFrames: true)
+            let found = center.flatMap { layers.snapshot.layers.rows[SidebarStableID($0.id)] }
+            return fail("R 도구·부모 clip·실제 Shape 레이어: tool=\(reopened.toolsModel.snapshot.activeTool) selected=\(center?.isRectangle == true) parent=\(parentHit?.id == child) kind=\(String(describing: found?.kind))/\(String(describing: found?.shapeKind))")
+        }
+        func blackShape(_ owner: ShellProjectWindow) -> Bool {
+            guard let window = owner.window else { return false }
+            let view = owner.canvasHost.canvasView
+            guard let image = ShellVisibleFramesCheck.bitmap(view, in: window) else { return false }
+            func sample(_ x: CGFloat, _ y: CGFloat) -> [Int] {
+                let point = viewPoint(x, y, canvas: view)
+                let col = Int(point.x * CGFloat(image.pixelsWide) / view.bounds.width)
+                let row = Int(point.y * CGFloat(image.pixelsHigh) / view.bounds.height)
+                guard col >= 0, col < image.pixelsWide, row >= 0, row < image.pixelsHigh else { return [] }
+                var pixel = [Int](repeating: 0, count: image.samplesPerPixel)
+                image.getPixel(&pixel, atX: col, y: row)
+                return Array(pixel.prefix(3))
+            }
+            return sample(112, 90) == [0, 0, 0] && sample(128, 92) == [255, 255, 255]
+        }
+        guard blackShape(reopened), reopened.performSessionCommand(.undo), wait(),
+              shown.frameHit(at: viewPoint(112, 90, canvas: shown))?.id == child,
+              reopened.performSessionCommand(.redo), wait(), blackShape(reopened),
+              reopened.performSessionCommand(.saveNow), wait(), let shapeWindow = reopened.window else {
+            return fail("사각형 픽셀·실행취소·다시실행·저장")
+        }
+        shapeWindow.close()
+        guard wait() else { return fail("사각형 프로젝트 창 닫기") }
+        app.openProject(atPath: path, origin: .application)
+        guard wait(), let again = app.projectWindow(forPath: path), again !== reopened else { return fail("사각형 재열기") }
+        again.window?.setContentSize(NSSize(width: 1300, height: 800))
+        again.window?.contentView?.layoutSubtreeIfNeeded()
+        let visibleShape = again.canvasHost.canvasView
+        guard blackShape(again), visibleShape.frameHit(at: viewPoint(112, 90, canvas: visibleShape))?.id == paintedShape.id,
+              loadShapeRow(again, paintedShape.id)?.kind == .shape,
+              pointer(.leftMouseDown, 112, 90, canvas: visibleShape), pointer(.leftMouseUp, 112, 90, canvas: visibleShape),
+              wait(), again.windowController.windowSession?.info?.selection_count == 1,
+              awaitSidebar({ again.sidebarSource.snapshot.primarySelection?.uuid == paintedShape.id }) else {
+            return fail("저장된 Shape 픽셀·안정 ID·클릭 선택")
+        }
+        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, optional fill, P3/alpha, invalid input, undo/redo, trust and reopen; R Rectangle Shape, clip, pixels and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
         return true
     }
 }

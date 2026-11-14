@@ -196,7 +196,7 @@ typedef struct StellarWindowSessionInfo {
 /* v1: 좌상단 원점 logical point. world/camera는 CGAffineTransform 순서 (a,b,c,d,tx,ty). */
 typedef struct StellarCanvasColor { uint32_t space; float rgba[4]; } StellarCanvasColor; /* 0 없음, 1 sRGB, 2 Display P3 */
 typedef struct StellarCanvasFrame {
-    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target */
+    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target, bit2 Rectangle Shape */
     float world[6], size[2], radii[4]; /* TL,TR,BR,BL */
     StellarCanvasColor fill, border; float border_width;
 } StellarCanvasFrame;
@@ -330,6 +330,8 @@ StellarStatus stellar_window_session_resize_frame(uint64_t handle, uint64_t sess
 StellarStatus stellar_window_session_set_frame_background(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, StellarCanvasColor color, uint64_t *out_request);
 /* 표시한 부모 Frame의 local rect에 자식 Free Frame을 삽입하고 한 history entry로 선택합니다. */
 StellarStatus stellar_window_session_insert_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, float width, float height, uint64_t *out_request);
+/* 실제 Rectangle Shape와 단색 Fill/Transform modifier를 생성합니다. */
+StellarStatus stellar_window_session_insert_rectangle(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, float width, float height, uint64_t *out_request);
 /* 창 session의 선택을 ids(StableId 16 byte × count)로 바꾸고 그 창 history에 기록합니다(count 0 = 비움). */
 StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, const uint8_t *ids, size_t count, uint64_t *out_request);
 

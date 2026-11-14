@@ -163,11 +163,12 @@ enum CoreRuntime {
     }
 
     static func insertFrame(handle: UInt64, session: UInt64, view: UUID, parent: UUID, revision: UInt64,
-                            rect: CGRect) -> Result<UInt64, CoreRuntimeCallError> {
+                            rect: CGRect, rectangle: Bool) -> Result<UInt64, CoreRuntimeCallError> {
+        let insert = rectangle ? stellar_window_session_insert_rectangle : stellar_window_session_insert_frame
         var request: UInt64 = 0
         let status = withUnsafeBytes(of: view.uuid) { viewBytes in
             withUnsafeBytes(of: parent.uuid) { parentBytes in
-                stellar_window_session_insert_frame(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                insert(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
                     parentBytes.bindMemory(to: UInt8.self).baseAddress, revision, Float(rect.minX), Float(rect.minY),
                     Float(rect.width), Float(rect.height), &request)
             }
