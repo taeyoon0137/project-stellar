@@ -32,8 +32,14 @@
 | `cargo xtask validate-crate-graph` | 0 |
 | `cargo xtask validate-adr crates/runtime/Cargo.toml crates/runtime/src/staging.rs docs/adr/ADR-0013-app-runtime-crate.md` | 0 |
 | `git diff --check` | 0 |
+| `cargo xtask validate-task-report docs/task-reports/XIV.5.5.md` | 0 — 최초 표 header 형식 오류(65)를 수정한 뒤 통과 |
+| `cargo xtask generate-ledger` | 0 — 1152 tasks 생성, XIV.5.5 record만 변경 |
+| `cargo xtask validate-task-status` | 0 |
+| `cargo xtask sync-plan` | 0 |
+| `cargo xtask verify-task XIV.5.5` | 0 |
+| `cargo xtask validate-commit-message 'Task(XIV.5.5): 선택 후보 저장 직렬화와 재열기 검증 완성'` | 0 |
 
-보고서·계획 상태·원장은 후속 기록 명령으로 검증하며, 원장은 직접 편집하지 않습니다.
+구현 근거 커밋은 `1af7e0f5c81ad6ef9786ace58b651dedad72d720`입니다. 원장은 위 생성기로 갱신했고 직접 편집하지 않았습니다.
 
 ## 환경과 증거
 
