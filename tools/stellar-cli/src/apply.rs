@@ -31,7 +31,7 @@ use std::path::Path;
 
 use stellar_ops::apply::{apply, ApplyError, ApplyMode, ApplyRequest, CommandInput, MAX_COMMANDS};
 use stellar_ops::core_types::ids::StableId;
-use stellar_ops::lock::{default_lock_dir, LockError, LockPolicy};
+use stellar_ops::lock::{default_lock_dir, LockPolicy};
 use stellar_ops::revision::ProjectRevision;
 
 use crate::exit::ExitStatus;
@@ -281,15 +281,7 @@ fn apply_error(error: &ApplyError) -> CliError {
             CliError::new(ExitStatus::Failure, "invalid-result", message)
         }
         ApplyError::Projection(_) => CliError::new(ExitStatus::Software, "projection", message),
-        ApplyError::Lock(LockError::Busy { .. }) => {
-            CliError::new(ExitStatus::TempFail, "save-lock-busy", message)
-        }
-        ApplyError::Lock(LockError::NoUserDataDir) => {
-            CliError::new(ExitStatus::Config, "no-user-data-dir", message)
-        }
-        ApplyError::Lock(LockError::Io { kind, .. }) => {
-            CliError::new(ExitStatus::from_io_kind(*kind), "save-lock-io", message)
-        }
+        ApplyError::Lock(lock) => crate::project_cmds::lock_error(lock),
         ApplyError::Save(_) => CliError::new(ExitStatus::CantCreate, "save", "저장 실패")
             .with_diagnostic(Diagnostic {
                 severity: Severity::Error,

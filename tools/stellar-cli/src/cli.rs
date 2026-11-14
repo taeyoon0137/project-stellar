@@ -39,6 +39,22 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "<경로> <대상>: 저장된 프로젝트를 읽기 전용으로 조회해 revision과 함께 JSON으로 출력합니다",
     ),
     (
+        "validate",
+        "<경로>: 저장된 모든 문서를 문서 validator로 다시 검증합니다(오류가 있으면 종료 코드 1)",
+    ),
+    (
+        "semantic-diff",
+        "<base 경로> <target 경로>: 같은 프로젝트 두 상태의 semantic diff를 출력합니다",
+    ),
+    (
+        "semantic-merge",
+        "<base> <ours> <theirs>: 3-way semantic merge 결과와 conflict를 출력합니다(conflict가 있으면 종료 코드 1, 파일을 쓰지 않음)",
+    ),
+    (
+        "migrate",
+        "<경로> [--check]: generation 스키마를 이 도구의 버전으로 migration합니다(--check: 판정만)",
+    ),
+    (
         "apply",
         "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
     ),
@@ -133,6 +149,14 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("query", commands::query(rest))
     } else if command == "apply" {
         ("apply", crate::apply::run(rest))
+    } else if command == "validate" {
+        ("validate", crate::project_cmds::validate(rest))
+    } else if command == "semantic-diff" {
+        ("semantic-diff", crate::project_cmds::semantic_diff(rest))
+    } else if command == "semantic-merge" {
+        ("semantic-merge", crate::project_cmds::semantic_merge(rest))
+    } else if command == "migrate" {
+        ("migrate", crate::project_cmds::migrate_command(rest))
     } else {
         return usage_error(err, &format!("알 수 없는 명령: {command}"));
     };
@@ -310,6 +334,15 @@ mod tests {
             &["apply", "p", "in.json", "extra"][..],
             &["apply", "p", "in.json", "--force"][..],
             &["apply", "p", "in.json", "--dry-run", "--dry-run"][..],
+            &["validate"][..],
+            &["validate", "a", "b"][..],
+            &["validate", "--strict", "a"][..],
+            &["semantic-diff", "a"][..],
+            &["semantic-merge", "a", "b"][..],
+            &["semantic-merge", "a", "b", "c", "d"][..],
+            &["migrate"][..],
+            &["migrate", "a", "--force"][..],
+            &["migrate", "a", "--check", "--check"][..],
         ] {
             let (code, out, err) = run_args(args);
             assert_eq!(code, EXIT_USAGE, "{args:?}");

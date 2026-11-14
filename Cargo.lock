@@ -301,6 +301,7 @@ dependencies = [
  "stellar-document",
  "stellar-project",
  "stellar-semantic-diff",
+ "stellar-semantic-merge",
  "stellar-storage",
 ]
 

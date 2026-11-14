@@ -43,6 +43,15 @@ pub mod apply;
 /// 교차 프로세스 저장 잠금 (XXIV.4.5).
 pub mod lock;
 
+/// 프로젝트 검증 (XXIV.1.3).
+pub mod validate;
+
+/// 프로젝트 사이 semantic diff와 3-way semantic merge (XXIV.1.3).
+pub mod compare;
+
+/// 저장 스키마 migration (XXIV.1.3).
+pub mod migrate;
+
 /// 테스트 전용 프로젝트 fixture 생성기. 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 pub mod test_support;

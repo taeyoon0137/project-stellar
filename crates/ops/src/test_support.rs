@@ -79,6 +79,11 @@ pub fn scaffold_project(root: &Path) {
 ///
 /// 주어진 문서가 새 generation의 문서 전체가 됩니다.
 pub fn save_documents(root: &Path, documents: &[&DocumentModel]) {
+    save_documents_with_schema(root, documents, 1);
+}
+
+/// [`save_documents`]와 같되 generation 스키마 버전을 지정합니다(migration fixture용).
+pub fn save_documents_with_schema(root: &Path, documents: &[&DocumentModel], schema: u32) {
     let base = load_current_generation(root, project_id()).ok();
     let serialized: Vec<_> = documents
         .iter()
@@ -89,7 +94,7 @@ pub fn save_documents(root: &Path, documents: &[&DocumentModel]) {
         .flat_map(|d| d.to_dirty_states())
         .collect();
     let roots = serialized.iter().map(|d| d.document_id).collect();
-    let plan = build_save_plan(base.as_ref(), project_id(), 1, &states, roots).expect("plan");
+    let plan = build_save_plan(base.as_ref(), project_id(), schema, &states, roots).expect("plan");
     let mut memory = SavedGenerationState::new(
         base.as_ref()
             .map(|b| (b.manifest.generation, b.manifest_hash)),
@@ -193,4 +198,23 @@ pub fn large_document(node_count: usize) -> DocumentModel {
         }
     }
     model
+}
+
+/// current generation에서 ViewTree kind chunk(ViewTree·subtree) 파일을 모두 망가뜨립니다.
+///
+/// DocumentManifest chunk는 그대로 두므로 프로젝트는 열리고 문서 내용 읽기만 실패합니다.
+/// 망가뜨린 파일 수를 반환합니다.
+pub fn corrupt_view_tree_chunks(root: &Path) -> usize {
+    let loaded = load_current_generation(root, project_id()).expect("generation");
+    let mut count = 0;
+    for pointer in &loaded.manifest.chunk_pointers {
+        if pointer.kind == stellar_storage::chunk::kinds::KIND_VIEW_TREE {
+            let relative =
+                stellar_storage::chunk::path::ChunkObjectPath::for_hash(&pointer.content_hash)
+                    .to_relative_path();
+            std::fs::write(root.join(relative), b"broken").expect("chunk 손상");
+            count += 1;
+        }
+    }
+    count
 }

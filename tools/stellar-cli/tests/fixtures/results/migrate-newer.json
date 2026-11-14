@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"migrate","ok":false,"exit_code":65,"exit_name":"dataerr","result":null,"error":{"code":"unsupported-schema","message":"generation 스키마 2가 이 도구의 스키마 1보다 새 버전입니다"},"diagnostics":[]}

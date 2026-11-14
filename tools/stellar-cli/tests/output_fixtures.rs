@@ -191,7 +191,20 @@ fn check(run: &Run, fixture: &str, expected: ExitStatus, private: &[&Path]) {
     );
 
     if expected == ExitStatus::Ok {
-        assert!(run.stderr.is_empty(), "{fixture}: 성공은 stderr 없음");
+        // 성공의 stderr는 JSON diagnostics(경고·정보)의 사람용 줄뿐입니다. 진단이 없으면 비어 있습니다.
+        let diagnostics = doc
+            .get("diagnostics")
+            .and_then(JsonValue::as_array)
+            .map_or(0, <[_]>::len);
+        assert_eq!(
+            run.stderr.lines().count(),
+            diagnostics,
+            "{fixture}: 성공 stderr는 진단 줄만: {}",
+            run.stderr
+        );
+        for line in run.stderr.lines() {
+            assert!(line.starts_with("stellar "), "{fixture}: {line}");
+        }
     } else {
         let code = doc
             .get("error")
@@ -975,4 +988,215 @@ fn concurrent_apply_processes_lose_no_update() {
             "손실 0"
         );
     }
+}
+
+// --- XXIV.1.3: validate, semantic-diff, semantic-merge, migrate ---
+
+/// 같은 문서로 저장한 세 사본(base·ours·theirs)과 문서.
+fn three_projects(dir: &TempDir) -> (Vec<PathBuf>, FixtureDocument) {
+    let roots: Vec<PathBuf> = ["base", "ours", "theirs"]
+        .iter()
+        .map(|name| {
+            let root = dir.path.join(name);
+            scaffold_project(&root);
+            save_documents(&root, &[&random_valid_document(QUERY_SEED)]);
+            root
+        })
+        .collect();
+    (roots, random_valid_document(QUERY_SEED))
+}
+
+/// `stellar apply`로 command 하나를 적용합니다.
+fn apply_one(root: &Path, home: &Path, document: &str, command: &str) {
+    let input = transaction(&revision_token(root), document, command);
+    let result = run_with_stdin(&["apply", root.to_str().unwrap(), "-"], &input, Some(home));
+    assert_eq!(result.code, 0, "{}", result.stderr);
+}
+
+fn children(model: &FixtureDocument) -> Vec<String> {
+    let root: stellar_ops::core_types::ids::StableId = first_root_frame(model).parse().unwrap();
+    model
+        .children_in_order(root)
+        .iter()
+        .map(|id| id.to_string())
+        .collect()
+}
+
+#[test]
+fn validate_corpus_fixtures() {
+    // 유효 corpus: 문서 여러 개를 가진 프로젝트, 저장 전 프로젝트.
+    let dir = TempDir::new("validate");
+    let root = dir.path.join("project");
+    scaffold_project(&root);
+    let documents: Vec<FixtureDocument> = (0..3).map(|i| random_valid_document(300 + i)).collect();
+    let refs: Vec<&FixtureDocument> = documents.iter().collect();
+    save_documents(&root, &refs);
+    let before = file_digest(&root);
+    check(
+        &run(&["validate", root.to_str().unwrap()]),
+        "validate-valid.json",
+        ExitStatus::Ok,
+        &[&root],
+    );
+    assert_eq!(file_digest(&root), before, "validate는 파일을 쓰지 않음");
+    let unsaved = dir.path.join("unsaved");
+    scaffold_project(&unsaved);
+    check(
+        &run(&["validate", unsaved.to_str().unwrap()]),
+        "validate-unsaved.json",
+        ExitStatus::Ok,
+        &[&unsaved],
+    );
+    // 손상 corpus: 문서 내용 chunk를 망가뜨리면 종료 코드 1이고 결과 object에 근거가 남습니다.
+    assert!(stellar_ops::test_support::corrupt_view_tree_chunks(&root) > 0);
+    let broken = run(&["validate", root.to_str().unwrap()]);
+    check(
+        &broken,
+        "validate-corrupt.json",
+        ExitStatus::Failure,
+        &[&root],
+    );
+    let result = result_of(&broken);
+    assert_eq!(result.get("valid"), Some(&JsonValue::Bool(false)));
+    assert!(
+        result
+            .get("error_count")
+            .and_then(JsonValue::as_i64)
+            .unwrap_or(0)
+            >= 1
+    );
+}
+
+#[test]
+fn semantic_diff_and_merge_fixtures() {
+    let dir = TempDir::new("semantic");
+    let home = dir.path.join("home");
+    let (roots, model) = three_projects(&dir);
+    let document = model.document_id().to_string();
+    let kids = children(&model);
+    assert!(kids.len() >= 2);
+    let [base, ours, theirs] = [&roots[0], &roots[1], &roots[2]];
+    let s = |p: &PathBuf| p.to_str().unwrap().to_string();
+
+    check(
+        &run(&["semantic-diff", &s(base), &s(ours)]),
+        "semantic-diff-none.json",
+        ExitStatus::Ok,
+        &[base, ours],
+    );
+    apply_one(
+        ours,
+        &home,
+        &document,
+        &format!(r#"{{"kind":"rename","node":"{}","name":"ours"}}"#, kids[0]),
+    );
+    apply_one(
+        theirs,
+        &home,
+        &document,
+        &format!(
+            r#"{{"kind":"set-locked","node":"{}","locked":true}}"#,
+            kids[1]
+        ),
+    );
+    let digests: Vec<_> = roots.iter().map(|r| file_digest(r)).collect();
+    check(
+        &run(&["semantic-diff", &s(base), &s(ours)]),
+        "semantic-diff.json",
+        ExitStatus::Ok,
+        &[base, ours],
+    );
+    check(
+        &run(&["semantic-merge", &s(base), &s(ours), &s(theirs)]),
+        "semantic-merge-clean.json",
+        ExitStatus::Ok,
+        &[base, ours, theirs],
+    );
+    // 같은 속성을 다른 값으로 바꾸면 미해결 conflict(종료 코드 1)이고 세 값이 결과에 남습니다.
+    apply_one(
+        theirs,
+        &home,
+        &document,
+        &format!(
+            r#"{{"kind":"rename","node":"{}","name":"theirs"}}"#,
+            kids[0]
+        ),
+    );
+    let digests_after: Vec<_> = roots.iter().map(|r| file_digest(r)).collect();
+    let conflict = run(&["semantic-merge", &s(base), &s(ours), &s(theirs)]);
+    check(
+        &conflict,
+        "semantic-merge-conflict.json",
+        ExitStatus::Failure,
+        &[base, ours, theirs],
+    );
+    let result = result_of(&conflict);
+    assert_eq!(result.get("clean"), Some(&JsonValue::Bool(false)));
+    assert_eq!(
+        result
+            .get("conflicts")
+            .and_then(JsonValue::as_array)
+            .map(<[_]>::len),
+        Some(1)
+    );
+    // diff·merge는 입력 프로젝트를 바꾸지 않습니다.
+    assert_eq!(digests_after[0], digests[0]);
+    assert_eq!(digests_after[1], digests[1]);
+    let now: Vec<_> = roots.iter().map(|r| file_digest(r)).collect();
+    assert_eq!(now, digests_after);
+}
+
+#[test]
+fn migrate_corpus_fixtures() {
+    let dir = TempDir::new("migrate");
+    let home = dir.path.join("home");
+    // 현재 스키마(1): --check와 실행 모두 최신, 파일 변경 0.
+    let current = dir.path.join("current");
+    scaffold_project(&current);
+    save_documents(&current, &[&random_valid_document(QUERY_SEED)]);
+    let before = file_digest(&current);
+    check(
+        &run(&["migrate", current.to_str().unwrap(), "--check"]),
+        "migrate-check-up-to-date.json",
+        ExitStatus::Ok,
+        &[&current],
+    );
+    check(
+        &run_with_stdin(&["migrate", current.to_str().unwrap()], "", Some(&home)),
+        "migrate-up-to-date.json",
+        ExitStatus::Ok,
+        &[&current, &home],
+    );
+    assert_eq!(file_digest(&current), before);
+    // 이 도구보다 새 스키마(2): 판정 65, 쓰기 거부, 파일 변경 0.
+    let newer = dir.path.join("newer");
+    scaffold_project(&newer);
+    stellar_ops::test_support::save_documents_with_schema(
+        &newer,
+        &[&random_valid_document(QUERY_SEED)],
+        2,
+    );
+    let before = file_digest(&newer);
+    check(
+        &run(&["migrate", newer.to_str().unwrap(), "--check"]),
+        "migrate-check-newer.json",
+        ExitStatus::DataErr,
+        &[&newer],
+    );
+    check(
+        &run_with_stdin(&["migrate", newer.to_str().unwrap()], "", Some(&home)),
+        "migrate-newer.json",
+        ExitStatus::DataErr,
+        &[&newer, &home],
+    );
+    assert_eq!(file_digest(&newer), before);
+    // 저장 전 프로젝트: 할 일 없음.
+    let unsaved = dir.path.join("unsaved");
+    scaffold_project(&unsaved);
+    check(
+        &run(&["migrate", unsaved.to_str().unwrap(), "--check"]),
+        "migrate-check-unsaved.json",
+        ExitStatus::Ok,
+        &[&unsaved],
+    );
 }
