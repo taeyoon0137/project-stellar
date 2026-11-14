@@ -4,8 +4,9 @@ import AppKit
 ///
 /// 실제 코어 runtime으로 임시 fixture 폴더를 열어 다음을 확인합니다.
 /// - 메뉴 막대 Open Project…(⌘O) → 폴더 선택 → 코어 열기(열기 분류·안전 probe) → 프로젝트 창, 선택 취소 시 요청 없음
-/// - 잘못된 폴더마다 코어 실패 코드와 셸 안내 원인이 정확히 대응: 폴더 없음, Git 저장소 아님, `stellar.yaml` 없음,
-///   YAML 손상, 1 MiB 초과, 스키마 위반, 잘못된 project.id, 심볼릭 링크 매니페스트, 읽기 권한 없음, 상대·빈 경로
+/// - 잘못된 폴더마다 코어 실패 코드와 셸 안내 원인이 정확히 대응: 폴더 없음, Git 저장소 아님, 폴더가 아닌 일반 파일,
+///   `stellar.yaml` 없음, YAML 손상, 1 MiB 초과, 스키마 위반, 잘못된 project.id, 심볼릭 링크 매니페스트, 읽기 권한 없음,
+///   상대·빈 경로
 /// - 안내 문구: 원인마다 제목이 다르고 문제·해결 방법이 있으며 폴더 이름을 보여 줌, 코어 진단 메시지를 쓰지 않음
 /// - 안내 위치: 메뉴에서 연 실패는 alert, 시작 창에서 연 실패는 시작 창 안내(`stellar.yaml` 없음·폴더 없음은 전용 안내),
 ///   복원 실패는 창의 실패 상태
@@ -68,7 +69,7 @@ private final class ShellProjectOpenCheckRunner {
         }
 
         if failures.isEmpty {
-            print("project-open ok: \(checks) checks (menu open via core, 11 invalid folder fixtures, mapping, alert/welcome/restore)")
+            print("project-open ok: \(checks) checks (menu open via core, 12 invalid path fixtures, mapping, alert/welcome/restore)")
             return true
         }
         for failure in failures {
@@ -80,12 +81,13 @@ private final class ShellProjectOpenCheckRunner {
     // MARK: - fixture
 
     private enum Fixture: CaseIterable {
-        case missing, plain, gitOnly, corrupt, oversized, schemaInvalid, badID, symlink, unreadable, valid
+        case missing, plain, regularFile, gitOnly, corrupt, oversized, schemaInvalid, badID, symlink, unreadable, valid
 
         var folderName: String {
             switch self {
             case .missing: return "Missing Folder"
             case .plain: return "Plain Folder"
+            case .regularFile: return "Plain File"
             case .gitOnly: return "Repository Without Manifest"
             case .corrupt: return "Corrupt Manifest"
             case .oversized: return "Oversized Manifest"
@@ -101,7 +103,7 @@ private final class ShellProjectOpenCheckRunner {
         var expected: ShellProjectOpenFailure? {
             switch self {
             case .missing: return .folderMissing
-            case .plain: return .notARepository
+            case .plain, .regularFile: return .notARepository
             case .gitOnly: return .notAStellarProject
             case .corrupt, .oversized: return .manifestCorrupt
             case .schemaInvalid: return .manifestInvalid
@@ -121,6 +123,13 @@ private final class ShellProjectOpenCheckRunner {
         let manager = FileManager.default
         let folder = fixtureRoot.appendingPathComponent(fixture.folderName, isDirectory: true)
         guard fixture != .missing else { return folder.path }
+        if fixture == .regularFile {
+            // Finder·`open` 명령으로 받은 일반 파일: 폴더는 아니지만 경로에 항목이 있습니다("폴더 없음"이 아님).
+            let file = fixtureRoot.appendingPathComponent(fixture.folderName, isDirectory: false)
+            try? manager.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
+            try? "not a project\n".write(to: file, atomically: true, encoding: .utf8)
+            return file.path
+        }
         try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
         if fixture != .plain {
             try? manager.createDirectory(at: folder.appendingPathComponent(".git", isDirectory: true), withIntermediateDirectories: true)
@@ -128,7 +137,7 @@ private final class ShellProjectOpenCheckRunner {
         let manifestURL = folder.appendingPathComponent("stellar.yaml")
         func write(_ text: String) { try? text.write(to: manifestURL, atomically: true, encoding: .utf8) }
         switch fixture {
-        case .missing, .plain, .gitOnly:
+        case .missing, .plain, .regularFile, .gitOnly:
             break
         case .corrupt:
             write("schema_version: \"1\"\nproject: [unclosed\n")
@@ -179,7 +188,7 @@ private final class ShellProjectOpenCheckRunner {
             expect(ShellProjectOpenFailure(coreFailure: UInt32(code)) == expected, "실패 코드 \(code) 대응 불일치")
         }
         expect(
-            ShellProjectOpenFailure(coreFailure: UInt32(STELLAR_FAILURE_NOT_A_REPOSITORY), folderExists: false) == .folderMissing,
+            ShellProjectOpenFailure(coreFailure: UInt32(STELLAR_FAILURE_NOT_A_REPOSITORY), itemExists: false) == .folderMissing,
             "폴더가 없을 때 NOT_A_REPOSITORY가 '폴더 없음'이 아님"
         )
         expect(ShellProjectOpenFailure(coreFailure: 999) == .unknown(code: 999), "모르는 실패 코드가 unknown이 아님")

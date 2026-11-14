@@ -239,6 +239,10 @@ final class ShellProjectWindow {
 
     var window: NSWindow? { windowController.window }
 
+    /// 이 창이 완료를 기다리는 코어 열기 요청 id(복원·Try Again·Locate Folder…). 창이 닫히면 nil로 지웁니다.
+    /// 완료 event의 요청 id가 이 값과 다르면(창이 닫혔거나 다른 요청으로 바뀜) 결과를 이 창에 붙이지 않습니다.
+    var pendingOpenRequest: UInt64?
+
     /// - Parameters:
     ///   - rootPath: 열 프로젝트 폴더(절대 경로). 창은 열기 중 상태로 시작합니다.
     ///   - runtimeHandle: 캔버스 drawable·입력을 받을 코어 runtime handle.

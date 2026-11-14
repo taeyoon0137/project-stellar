@@ -8,7 +8,8 @@ import Foundation
 enum ShellProjectOpenFailure: Equatable {
     /// 폴더에 `.git`이 없습니다(`STELLAR_FAILURE_NOT_A_REPOSITORY`, 폴더는 있음).
     case notARepository
-    /// 폴더 자체가 없습니다(`NOT_A_REPOSITORY`이면서 셸이 확인한 폴더 없음 — 옮겨졌거나 지워진 최근·복원 프로젝트).
+    /// 폴더 자체가 없습니다(`NOT_A_REPOSITORY`이면서 셸이 확인한 경로에 항목 없음 — 옮겨졌거나 지워진 최근·복원
+    /// 프로젝트). 경로에 일반 파일이 있으면 `notARepository`입니다.
     case folderMissing
     /// Git 저장소지만 `stellar.yaml`이 없습니다(`STELLAR_FAILURE_NOT_A_STELLAR_PROJECT`).
     case notAStellarProject
@@ -35,10 +36,10 @@ enum ShellProjectOpenFailure: Equatable {
     /// 열기 요청에 다른 종류의 완료 event가 왔습니다.
     case unexpectedResponse
 
-    /// 코어 실패 코드에서 원인을 만듭니다. `folderExists`는 `NOT_A_REPOSITORY`일 때만 씁니다.
-    init(coreFailure code: UInt32, folderExists: @autoclosure () -> Bool = true) {
+    /// 코어 실패 코드에서 원인을 만듭니다. `itemExists`는 `NOT_A_REPOSITORY`일 때만 씁니다.
+    init(coreFailure code: UInt32, itemExists: @autoclosure () -> Bool = true) {
         switch Int32(bitPattern: code) {
-        case STELLAR_FAILURE_NOT_A_REPOSITORY: self = folderExists() ? .notARepository : .folderMissing
+        case STELLAR_FAILURE_NOT_A_REPOSITORY: self = itemExists() ? .notARepository : .folderMissing
         case STELLAR_FAILURE_NOT_A_STELLAR_PROJECT: self = .notAStellarProject
         case STELLAR_FAILURE_MANIFEST_UNREADABLE: self = .manifestUnreadable
         case STELLAR_FAILURE_MANIFEST_CORRUPT: self = .manifestCorrupt
@@ -59,10 +60,12 @@ enum ShellProjectOpenFailure: Equatable {
         }
     }
 
-    /// 폴더가 실제로 있는지(디렉터리). `NOT_A_REPOSITORY` 실패 경로에서만 부릅니다(로컬 stat 한 번).
-    static func folderExists(atPath path: String) -> Bool {
-        var isDirectory: ObjCBool = false
-        return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue
+    /// 경로에 항목(폴더·파일)이 있는지. `NOT_A_REPOSITORY` 실패 경로에서만 부릅니다(로컬 stat 한 번).
+    ///
+    /// 폴더가 아닌 일반 파일(Finder·`open` 명령으로 받은 파일)도 있음으로 셉니다. 있는 파일을 "폴더가 더는 없음"으로
+    /// 안내하지 않고, 코어 코드대로 "Git 저장소 아님"(최상위 폴더를 고르라는 해결 방법)으로 안내합니다.
+    static func itemExists(atPath path: String) -> Bool {
+        FileManager.default.fileExists(atPath: path)
     }
 
     /// alert·실패 상태 제목.

@@ -10,6 +10,7 @@ import AppKit
 /// - 프로젝트 창 구성: 캔버스 호스트(runtime handle), 사이드바·인스펙터·Git·에이전트 영역, 캔버스 도구 그룹·줌 툴바 조합,
 ///   응답자 체인 router, 도구 선택·단일 키 단축키, 코어 경로 없는 명령 비활성
 /// - 같은 폴더 재열기 시 새 창 없음, 창 복원 상태 왕복, 없어진 폴더 복원의 복구 동작, 창 닫기 시 코어 session 닫기
+/// - 열기 중 창 닫기 시 늦게 연 session 닫기, Locate Folder…로 여는 중인 폴더를 골라도 같은 폴더 창 하나
 enum ShellIntegrationCheck {
     static func run() -> Bool {
         MainActor.assumeIsolated {
@@ -281,6 +282,10 @@ private final class ShellIntegrationCheckRunner {
         } else {
             expect(false, "없는 폴더 복원 창이 없음")
         }
+        expect(projectCount(host) == 0, "복원 검사 끝에 코어 프로젝트 session이 남음")
+
+        checkCloseWhileOpening(coordinator, host: host, projectPath: projectPath)
+        checkLocateFolderWhileOpening(coordinator, host: host, projectPath: projectPath, missingPath: missingPath)
         expect(projectCount(host) == 0, "검사 끝에 코어 프로젝트 session이 남음")
 
         // 앱 수준 Open Project 실패는 alert로, 시작 창 Open Project 실패는 시작 창 안내로 알립니다.
@@ -304,6 +309,63 @@ private final class ShellIntegrationCheckRunner {
         // 설정 창.
         coordinator.showSettings()
         expect(coordinator.settingsController?.window?.contentViewController != nil, "설정 창 없음")
+    }
+
+    /// 열기 중 창 닫기: 복원(Try Again·Locate Folder…도 같은 경로) 열기가 끝나기 전에 창을 닫으면, 늦게 온
+    /// `PROJECT_OPENED`를 닫힌 창에 붙이지 않고 그 session을 바로 닫습니다(창 닫기 = 프로젝트 닫기).
+    private func checkCloseWhileOpening(_ coordinator: ShellAppCoordinator, host: RuntimeHost, projectPath: String) {
+        guard let pump = coordinator.pump, let state = encodeRestorableState(path: projectPath),
+            coordinator.restoreProjectWindow(from: state) != nil
+        else {
+            expect(false, "열기 중 닫기 검사용 복원 창이 없음")
+            return
+        }
+        // 창 객체를 붙잡아 둡니다: 닫혔지만 아직 살아 있는 창에도 늦은 결과가 붙지 않아야 합니다.
+        let loadingWindow = coordinator.projectWindows.first
+        if case .loading = loadingWindow?.dataSource.currentSnapshot.status {} else {
+            expect(false, "열기 중 닫기 검사 창이 열기 중 상태가 아님")
+        }
+        expect(pump.pendingRequestCount == 1, "복원 열기 요청이 대기 중이 아님: \(pump.pendingRequestCount)")
+        loadingWindow?.window?.close()
+        expect(coordinator.projectWindows.isEmpty, "열기 중 닫은 창이 목록에 남음")
+        expect(coordinator.welcomeController != nil, "열기 중 마지막 창을 닫았는데 시작 창이 없음")
+        expect(pump.waitForPendingRequests(timeout: 10), "열기 중 닫은 창의 늦은 열기·닫기 완료 event가 오지 않음")
+        expect(loadingWindow?.dataSource.session == nil, "닫은 창에 늦게 연 session이 붙음")
+        expect(projectCount(host) == 0, "열기 중 창을 닫았는데 늦게 연 코어 프로젝트 session이 남음: \(projectCount(host))")
+    }
+
+    /// Locate Folder…로 고른 폴더를 다른 열기(메뉴·Finder)가 이미 여는 중이면, 같은 폴더 창을 둘 만들지 않고 이 창을
+    /// 닫습니다. 여는 중인 열기가 끝나면 그 창 하나만 남습니다(가이드 2.5).
+    private func checkLocateFolderWhileOpening(
+        _ coordinator: ShellAppCoordinator, host: RuntimeHost, projectPath: String, missingPath: String
+    ) {
+        guard let pump = coordinator.pump, let state = encodeRestorableState(path: missingPath),
+            coordinator.restoreProjectWindow(from: state) != nil, let failedWindow = coordinator.projectWindows.first
+        else {
+            expect(false, "Locate Folder 중복 검사용 복원 창이 없음")
+            return
+        }
+        expect(pump.waitForPendingRequests(timeout: 10), "없는 폴더 복원 완료 event가 오지 않음")
+        coordinator.openProject(atPath: projectPath, origin: .application)
+        expect(coordinator.pendingOpenPaths.contains(ShellAppCoordinator.canonicalPath(projectPath)),
+               "앱 수준 열기가 대기 중이 아님")
+        // 여는 중인 폴더의 창 복원도 새 창을 만들지 않습니다.
+        if let pendingState = encodeRestorableState(path: projectPath) {
+            expect(coordinator.restoreProjectWindow(from: pendingState) == nil && coordinator.projectWindows.count == 1,
+                   "여는 중인 폴더 복원이 새 창을 만듦")
+        }
+        nextChosenFolder = projectPath
+        failedWindow.dataSource.send(.perform(ShellProjectCommandID.locateFolder))
+        expect(pump.waitForPendingRequests(timeout: 10), "Locate Folder 중복 검사 완료 event가 오지 않음")
+        expect(coordinator.projectWindows.count == 1,
+               "여는 중인 폴더를 Locate Folder…로 골라 창이 \(coordinator.projectWindows.count)개가 됨")
+        expect(!coordinator.projectWindows.contains { $0 === failedWindow }, "여는 중인 폴더를 고른 실패 창이 남음")
+        expect(coordinator.projectWindows.first?.dataSource.currentSnapshot.status == .ready, "여는 중이던 폴더 창이 ready가 아님")
+        expect(projectCount(host) == 1, "같은 폴더 코어 프로젝트 session이 1이 아님: \(projectCount(host))")
+        for projectWindow in coordinator.projectWindows {
+            projectWindow.window?.close()
+        }
+        _ = pump.waitForPendingRequests(timeout: 10)
     }
 
     private func encodeRestorableState(_ projectWindow: ShellProjectWindow) -> NSCoder? {

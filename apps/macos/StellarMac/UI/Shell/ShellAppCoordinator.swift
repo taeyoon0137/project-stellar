@@ -238,26 +238,46 @@ final class ShellAppCoordinator: NSObject {
         if let existing = projectWindow(forPath: path) {
             return existing.window
         }
+        // 같은 폴더를 다른 열기가 여는 중이면 그 열기가 창을 만듭니다(같은 폴더 창 하나, 가이드 2.5).
+        guard !pendingOpenPaths.contains(Self.canonicalPath(path)) else { return nil }
         let projectWindow = makeProjectWindow(rootPath: path)
         reopen(projectWindow, atPath: path)
         return projectWindow.window
     }
 
     /// 이미 있는 창에서 폴더를 (다시) 엽니다(복원, Locate Folder…, Try Again).
+    ///
+    /// 완료 전에 창이 닫히면(또는 같은 창이 다른 요청을 보내면) 늦게 온 결과는 창에 붙이지 않고, 코어가 연 session은
+    /// 바로 닫습니다. 창 닫기가 곧 프로젝트 닫기라는 규칙을 열기 중에도 지킵니다.
     func reopen(_ projectWindow: ShellProjectWindow, atPath rawPath: String) {
         let path = Self.canonicalPath(rawPath)
         projectWindow.beginOpening(rootPath: path)
+        projectWindow.pendingOpenRequest = nil
         guard let pump else {
             projectWindow.didFail(.runtimeUnavailable, path: path)
             return
         }
         let result = pump.openProject(path: path) { [weak self, weak projectWindow] event in
-            guard let projectWindow else { return }
-            self?.finishReopening(projectWindow, path: path, event: event)
+            guard let self else { return }
+            guard let projectWindow, let request = event.request, projectWindow.pendingOpenRequest == request else {
+                self.discardLateOpen(event)
+                return
+            }
+            projectWindow.pendingOpenRequest = nil
+            self.finishReopening(projectWindow, path: path, event: event)
         }
-        if case .failure(let error) = result {
+        switch result {
+        case .success(let request):
+            projectWindow.pendingOpenRequest = request
+        case .failure(let error):
             projectWindow.didFail(ShellProjectOpenFailure(callStatus: error.status), path: path)
         }
+    }
+
+    /// 받을 창이 없는 열기 결과를 버립니다. 코어가 이미 연 session은 남기지 않고 닫습니다.
+    private func discardLateOpen(_ event: CoreRuntimeEvent) {
+        guard case .projectOpened(_, let project, _, _, _) = event, let pump else { return }
+        pump.closeProject(project)
     }
 
     private func finishReopening(_ projectWindow: ShellProjectWindow, path: String, event: CoreRuntimeEvent) {
@@ -279,7 +299,7 @@ final class ShellAppCoordinator: NSObject {
     /// 코어 실패 코드를 안내 원인으로 바꿉니다. `NOT_A_REPOSITORY`이면 폴더가 아직 있는지 확인해 "폴더 없음"과
     /// 구분합니다(실패 경로에서만 로컬 stat 한 번).
     static func failure(coreCode: UInt32, path: String) -> ShellProjectOpenFailure {
-        ShellProjectOpenFailure(coreFailure: coreCode, folderExists: ShellProjectOpenFailure.folderExists(atPath: path))
+        ShellProjectOpenFailure(coreFailure: coreCode, itemExists: ShellProjectOpenFailure.itemExists(atPath: path))
     }
 
     /// 열기 실패를 알립니다. 시작 창에서 연 경우 시작 창 안내(sheet), 그 밖에는 alert입니다.
@@ -349,6 +369,11 @@ final class ShellAppCoordinator: NSObject {
                     if self.presentsWindows { other.window?.makeKeyAndOrderFront(nil) }
                     return
                 }
+                if self.pendingOpenPaths.contains(Self.canonicalPath(path)) {
+                    // 같은 폴더를 다른 열기(메뉴·Finder)가 여는 중이면 그 열기가 창을 만듭니다. 이 창은 닫습니다.
+                    projectWindow.window?.performClose(nil)
+                    return
+                }
                 self.reopen(projectWindow, atPath: path)
             }
         default:
@@ -389,6 +414,8 @@ final class ShellAppCoordinator: NSObject {
     }
 
     private func projectWindowWillClose(_ projectWindow: ShellProjectWindow) {
+        // 열기 중이면 늦게 올 결과가 이 창에 붙지 않게 하고, 열린 session은 도착할 때 닫습니다(`reopen`).
+        projectWindow.pendingOpenRequest = nil
         projectWindow.dataSource.session?.close()
         projectWindows.removeAll { $0 === projectWindow }
         // 마지막 프로젝트 창이면 닫히기 전에 시작 창을 띄워 앱이 종료되지 않게 합니다(창 닫기 = 프로젝트 닫기).

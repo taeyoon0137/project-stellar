@@ -252,8 +252,9 @@ struct ShellFrameSlots {
 - `NativeFieldsPanel`(텍스트 입력 검증 fixture)은 `--text-input-check` 전용 창(`CanvasWindowController`)에 남아 있습니다. 셸 창의 텍스트 편집 중 Undo 경로는 `--tools-menus-ui-check`가 검사합니다. [가이드 10.1]
 - 영역별 코어 adapter(사이드바 snapshot, 선택 속성, Git 상태, 에이전트 세션)로 `ShellAreaDataStubs`를 바꿉니다. 보조 패널 노출 여부·위치는 가이드 2.4·O4·ADR-0005에 따릅니다.
 - 다중 창(XII.2.4)에서 창별 `ShellWindowConfiguration` 이름 규칙을 정합니다. 지금은 모든 프로젝트 창이 `.standard` 이름을 써서 둘째 창부터 frame autosave가 걸리지 않고 split autosave는 서로 덮어씁니다.
+- 모든 프로젝트 창의 캔버스(`CanvasView`)가 앱의 코어 runtime handle 하나를 함께 씁니다. 코어에 창별 session·view state가 없어 창마다 보내는 drawable 크기(`stellar_runtime_set_drawable_size`)와 입력(`stellar_runtime_submit_mac_event`)이 같은 runtime으로 가므로, 프로젝트 창이 둘 이상이면 마지막으로 보낸 창의 drawable 크기가 남습니다. 코어 `ProjectWindowSession`·창별 view state가 생기면 캔버스 호스트가 창 session으로 보내도록 바꿉니다. [계획 XII.2.1, XII.2.5]
 - 툴바 스타일(O1), 캔버스 확장(O2), 배치 수치 확정(가이드 12장)을 XII.9.1에서 정합니다.
-- UI 문자열 현지화 표(String Catalog)는 아직 없습니다. 셸 프레임 문자열은 `ShellFrameStrings`에서 `String(localized:)`로 만들고, "Show/Hide <pane>" 같은 상태 제목은 이어 붙이지 않고 형식 문자열 하나로 만듭니다. Stub 데이터 문자열은 코어가 줄 값의 표본이라 현지화 대상이 아닙니다.
+- UI 문자열 현지화 표(String Catalog)는 아직 없습니다. 셸 프레임 문자열은 `ShellFrameStrings`에서 `String(localized:)`로 만들고, "Show/Hide \<pane>" 같은 상태 제목은 이어 붙이지 않고 형식 문자열 하나로 만듭니다. Stub 데이터 문자열은 코어가 줄 값의 표본이라 현지화 대상이 아닙니다.
 - 실제 창에서 Liquid Glass 재질, 키 창 강조, 대비 높이기·투명도 줄이기 조합을 눈으로 확인하는 작업은 XII.9.4 적합성 보고서에서 합니다.
 
 ## 14. 앱 통합
@@ -276,9 +277,9 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 ```
 
 - 시작: `applicationWillFinishLaunching`에서 메뉴 설치와 복원 provider 등록(AppKit은 `applicationDidFinishLaunching` 전에 창을 복원), `applicationDidFinishLaunching`에서 복원된 프로젝트 창이 없으면 시작 창. `applicationSupportsSecureRestorableState`는 true.
-- 열기: 시작 창 Open Project…, 메뉴 막대 Open Project…(⌘O, 폴더 선택 패널), Finder·`open` 명령으로 받은 폴더(`application(_:open:)`)가 모두 `ShellAppCoordinator.openProject(atPath:origin:)`로 갑니다. 코어 `stellar_project_open`이 열기 분류와 안전 probe를 마치고 `PROJECT_OPENED`를 보내면 그때 창을 만들고 시작 창을 닫습니다. 같은 폴더(표준화·심볼릭 링크 해소 경로)를 연 창이 있으면 새 창·새 session 없이 그 창을 앞으로 가져오고, 같은 폴더 열기가 진행 중이면 다시 요청하지 않습니다(가이드 2.5).
+- 열기: 시작 창 Open Project…, 메뉴 막대 Open Project…(⌘O, 폴더 선택 패널), Finder·`open` 명령으로 받은 폴더(`application(_:open:)`)가 모두 `ShellAppCoordinator.openProject(atPath:origin:)`로 갑니다. 코어 `stellar_project_open`이 열기 분류와 안전 probe를 마치고 `PROJECT_OPENED`를 보내면 그때 창을 만들고 시작 창을 닫습니다. 같은 폴더(표준화·심볼릭 링크 해소 경로)를 연 창이 있으면 새 창·새 session 없이 그 창을 앞으로 가져오고, 같은 폴더 열기가 진행 중이면 다시 요청하지 않습니다(가이드 2.5). 실패 창의 Locate Folder…로 고른 폴더를 다른 열기가 여는 중이면 그 실패 창을 닫고 여는 중인 열기가 만드는 창 하나만 남기며, 여는 중인 폴더의 창 복원도 새 창을 만들지 않습니다.
 - 창 제목은 매니페스트의 프로젝트 이름, 부제목은 "Restricted Mode"입니다. 코어가 신뢰 저장소 연결 전이라 모든 프로젝트를 신뢰되지 않음으로 열기 때문입니다(가이드 7.2).
-- 닫기: 창이 닫히면 data source의 session handle이 `stellar_project_close`를 한 번 요청하고, 마지막 프로젝트 창이면 닫히기 전에 시작 창을 띄웁니다(앱 종료 아님). 시작 창만 남은 상태에서 그 창을 닫으면 앱이 종료됩니다(`applicationShouldTerminateAfterLastWindowClosed`, II.5.3 lifecycle 유지). 활성 에이전트 세션이 있으면 창 닫기·앱 종료 전에 확인합니다(ADR-0005 결정 4.5, Return은 Cancel).
+- 닫기: 창이 닫히면 data source의 session handle이 `stellar_project_close`를 한 번 요청하고, 마지막 프로젝트 창이면 닫히기 전에 시작 창을 띄웁니다(앱 종료 아님). 복원·Try Again·Locate Folder… 열기가 끝나기 전에 창을 닫으면 창이 기다리던 요청 id를 지우고, 늦게 온 `PROJECT_OPENED`는 창에 붙이지 않고 그 session을 바로 닫습니다(창 닫기 = 프로젝트 닫기). 시작 창만 남은 상태에서 그 창을 닫으면 앱이 종료됩니다(`applicationShouldTerminateAfterLastWindowClosed`, II.5.3 lifecycle 유지). 활성 에이전트 세션이 있으면 창 닫기·앱 종료 전에 확인합니다(ADR-0005 결정 4.5, Return은 Cancel).
 - 복원: 창 상태에는 프로젝트 폴더 경로 문자열 하나만 secure coding으로 넣습니다(`StellarProjectRootPath`). 복원 시 열기 중 창을 바로 만들고 같은 경로를 다시 엽니다. 실패하면 창에 실패 상태와 복구 동작(Locate Folder…[대표], Try Again, Close Window)을 보여 줍니다.
 - 이벤트 펌프: 코어는 callback 없이 완료 event를 큐에 쌓으므로 셸이 꺼냅니다. 기다리는 요청이 있을 때만 1/120초 주기 timer(common mode)를 켜고, 한 번에 최대 64개를 꺼내 요청 id별 완료 handler를 부릅니다. 기다리는 요청이 없으면 timer를 끕니다. UI 스레드는 코어 작업을 기다리지 않습니다. [아키텍처 §6.3, §9.2] [ADR-0009]
 - FFI 호출은 `CoreRuntime`(FFI 헬퍼)에만 둡니다. `UI/Shell`은 `stellar_` 함수를 직접 부르지 않고, `UI/Tools`는 FFI와 runtime handle을 모릅니다(smoke 구조 검사).
@@ -317,6 +318,8 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 - 도구: 툴바 도구 그룹 → 창 모델 → 메뉴 체크, 캔버스 R 키 → Rectangle, 도구 아닌 키·⌘R은 코어 입력으로, 코어 경로 없는 명령 비활성, Close Project·Show in Finder 활성, Search Project… 비활성
 - 같은 폴더 재열기 시 새 창·요청 없음, 복원 상태 secure coding 왕복(열린 폴더는 기존 창), 창 닫기 → session 닫기 → 시작 창 → 코어 session 0
 - 복원: 열기 중 → ready, 없어진 폴더 → 실패 상태·복구 동작 3개(대표 1개)·도구 비활성 → Locate Folder…로 같은 창에서 열기
+- 열기 중 닫기: 복원 열기 대기 중 창 닫기 → 목록에서 빠짐·시작 창 → 늦게 온 열기 결과가 닫힌 창에 붙지 않음 → 그 session 닫힘(코어 session 0)
+- 여는 중인 폴더: 앱 수준 열기 대기 중 같은 폴더 복원은 새 창 없음, 실패 창의 Locate Folder…로 같은 폴더를 고르면 실패 창이 닫히고 창 1개·코어 session 1개
 - 실패 안내: 앱 수준 열기 실패 → alert, 시작 창 열기 실패(stellar.yaml 없음) → 시작 창 안내, New Project → 미지원 안내(폴더를 만들지 않음), 설정 창. 원인별 문구 대응은 14.8의 `--project-open-check`가 검사합니다.
 
 ### 14.7 화면 확인(2026-11-14, macOS 27.2, Debug 앱)
@@ -332,8 +335,8 @@ Open Project는 폴더를 고른 뒤 코어 `stellar_project_open`에 넘기고,
 
 | 원인(코드) | 제목 | 해결 방법(요지) |
 |---|---|---|
-| `NOT_A_REPOSITORY`(10), 폴더 있음 | This Folder Isn’t a Git Repository | 프로젝트 최상위 폴더(Git 저장소 + stellar.yaml)를 고름 |
-| `NOT_A_REPOSITORY`(10), 폴더 없음 | Project Folder Not Found | 폴더 찾기 또는 다른 프로젝트 열기 |
+| `NOT_A_REPOSITORY`(10), 경로에 폴더·일반 파일 있음 | This Folder Isn’t a Git Repository | 프로젝트 최상위 폴더(Git 저장소 + stellar.yaml)를 고름 |
+| `NOT_A_REPOSITORY`(10), 경로에 항목 없음 | Project Folder Not Found | 폴더 찾기 또는 다른 프로젝트 열기 |
 | `NOT_A_STELLAR_PROJECT`(11) | This Folder Isn’t a Stellar Project | 저장소를 자동 변환하지 않음(가이드 7.2) |
 | `MANIFEST_UNREADABLE`(12) | The Project File Couldn’t Be Read | 폴더 읽기 권한 확인 후 다시 시도 |
 | `MANIFEST_CORRUPT`(13) | The Project File Is Damaged | YAML 손상·1 MiB 초과. Git 이력에서 복원 |
@@ -346,7 +349,7 @@ Open Project는 폴더를 고른 뒤 코어 `stellar_project_open`에 넘기고,
 | runtime 없음·그 밖의 호출 실패 | Stellar Can’t Open Projects Right Now | 앱을 다시 열기 |
 | 모르는 코드·예상 밖 event | The Project Couldn’t Be Opened | 다시 시도 또는 다른 프로젝트 |
 
-- "폴더 없음"은 코어가 `NOT_A_REPOSITORY`를 보낸 경우에만 셸이 폴더 존재를 한 번 확인해 구분합니다(실패 경로의 로컬 stat 한 번). 옮겨진 최근·복원 프로젝트를 "Git 저장소 아님"으로 잘못 안내하지 않기 위해서입니다.
+- "폴더 없음"은 코어가 `NOT_A_REPOSITORY`를 보낸 경우에만 셸이 경로에 항목이 있는지 한 번 확인해 구분합니다(실패 경로의 로컬 stat 한 번). 옮겨진 최근·복원 프로젝트를 "Git 저장소 아님"으로 잘못 안내하지 않기 위해서입니다. Finder·`open` 명령으로 받은 일반 파일은 폴더는 아니지만 있으므로 "폴더 없음"이 아니라 "Git 저장소 아님"(최상위 폴더를 고름)으로 안내합니다.
 - 안내 위치: 메뉴 막대·Finder에서 연 실패는 alert(열린 창이 있으면 sheet), 시작 창에서 연 실패는 시작 창 안내(`stellar.yaml` 없음은 `.notStellarProject`, 폴더 없음은 `.projectMissing`, 나머지는 원인 제목이 앞에 붙은 `.operationFailed`), 창 복원·Locate Folder… 실패는 그 창의 실패 상태(제목·해결 방법·복구 동작)입니다.
 - 실패한 열기는 창과 코어 session을 만들지 않습니다.
-- 검사: `--project-open-check`(`ShellProjectOpenCheck`). 대응표 전체, 원인별 제목이 서로 다름, 폴더 이름 표시·전체 경로 비노출, 메뉴 ⌘O → 폴더 선택(취소 시 요청 없음) → 코어 열기 → 창, 실제 코어로 연 잘못된 폴더 fixture 9종(폴더 없음, 일반 폴더, Git만, YAML 손상, 1 MiB 초과, 스키마 위반, 잘못된 project.id, 심볼릭 링크 매니페스트, 읽기 권한 없음)과 상대·빈 경로 2종의 코드 → 원인 대응, alert·시작 창·복원 안내 위치, 실패 후 창·session 0.
+- 검사: `--project-open-check`(`ShellProjectOpenCheck`). 대응표 전체, 원인별 제목이 서로 다름, 폴더 이름 표시·전체 경로 비노출, 메뉴 ⌘O → 폴더 선택(취소 시 요청 없음) → 코어 열기 → 창, 실제 코어로 연 잘못된 경로 fixture 10종(폴더 없음, 일반 폴더, 폴더가 아닌 일반 파일, Git만, YAML 손상, 1 MiB 초과, 스키마 위반, 잘못된 project.id, 심볼릭 링크 매니페스트, 읽기 권한 없음)과 상대·빈 경로 2종의 코드 → 원인 대응, alert·시작 창·복원 안내 위치, 실패 후 창·session 0.
