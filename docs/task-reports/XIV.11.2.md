@@ -97,3 +97,21 @@
 - **남은 한계**: 저장소 파일은 저장소 crate가 경로로 다시 열기 때문에 검사와 읽기 사이 교체(TOCTOU)는 막지
   못합니다. snapshot은 소유자 전용 session 디렉터리 안이라 같은 사용자 프로세스만 이 틈을 쓸 수 있습니다.
   검사 단계가 manifest를 한 번 더 읽어 열기 비용이 manifest 읽기·디코딩 한 번만큼 늘었습니다.
+
+## 후속 수정(2차 리뷰 반영): 검사 뒤 FIFO로 바뀐 `stellar.yaml` 열기가 멈추지 않음
+
+- **문제**: `read_manifest`는 `symlink_metadata`로 정규 파일임을 확인한 뒤 `File::open`(blocking)으로
+  열었습니다. 두 호출 사이에 `stellar.yaml`이 FIFO로 바뀌면 `open()`이 writer를 기다리며 멈춰, 그 뒤의
+  device·inode 비교(`ManifestChanged`)까지 가지 못했습니다. 위 남은 한계는 저장소 파일의 TOCTOU만 적었고 이
+  manifest 열기 멈춤은 적지 않았습니다.
+- **수정**(`crates/project/src/saved_project.rs`): macOS에서 `stellar.yaml`을 `O_NONBLOCK | O_NOFOLLOW`(SDK
+  header 값)로 엽니다(`open_manifest`). FIFO·장치로 바뀌어도 열기가 바로 돌아오고, 연 handle의 `fstat`이
+  정규 파일이 아니므로 `ManifestChanged`로 거부합니다. 검사 뒤 symlink로 바뀌면 `ELOOP`을 `ManifestChanged`로
+  보고합니다. 정규 파일 읽기에는 영향이 없습니다.
+- **검증**: `manifest_swapped_for_a_fifo_after_check_does_not_block_open`(lstat 검사와 열기 사이에 같은 경로를
+  FIFO로 바꿈: 수정 전 5초 안에 돌아오지 않아 실패, 수정 후 `ManifestChanged`),
+  `manifest_swapped_for_a_symlink_after_check_is_rejected`, 기존 `fifo_manifest_is_rejected_without_blocking`.
+- **남은 한계**: macOS 밖 unix는 flag 값이 플랫폼·아키텍처마다 달라 flag 없이 엽니다(그 사이 FIFO로 바뀌면
+  열기가 멈출 수 있음, 현재 지원 대상 아님). 저장소 파일의 검사·읽기 사이 교체(TOCTOU)는 위 한계 그대로이며,
+  그 사이 FIFO로 바뀌면 저장소 crate의 열기가 멈출 수 있습니다(저장소 crate 범위, 소유자 전용 session 디렉터리
+  안이라 같은 사용자 프로세스만 가능).

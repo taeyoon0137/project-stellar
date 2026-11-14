@@ -22,7 +22,9 @@
 //! 비신뢰 입력입니다. 저장소 파일이 장치·FIFO이거나 거대하면 읽기가 멈추거나 메모리를 무한히 쓰므로:
 //!
 //! - `stellar.yaml`은 symlink를 따르지 않고, 정규 파일만 loader 상한([`MAX_INPUT_BYTES`])까지만
-//!   읽습니다. 검사한 파일과 연 파일이 다르면(검사 뒤 교체) 거부합니다.
+//!   읽습니다. 검사한 파일과 연 파일이 다르면(검사 뒤 교체) 거부합니다. 검사 뒤 FIFO·장치로 바뀌어도
+//!   열기에서 멈추지 않도록 macOS에서는 non-blocking·no-follow로 엽니다(macOS 밖 unix는 flag 없이 열어
+//!   그 사이 FIFO로 바뀌면 열기가 writer를 기다릴 수 있음, Linux 등은 아직 지원 대상이 아님).
 //! - 저장소 파일은 정규 파일이어야 하고 [`StorageReadLimits`] 상한 이하여야 합니다. 디렉터리 구성
 //!   요소는 디렉터리여야 합니다.
 //! - [`StorageLinkPolicy::Reject`](materialize된 snapshot)는 `design/` 아래 저장소 경로의 어느 구성
@@ -469,9 +471,20 @@ fn entry_error(relative: &str, problem: StorageEntryProblem) -> SavedProjectErro
 
 /// `stellar.yaml`을 symlink를 따르지 않고 loader 상한까지만 읽어 검증합니다.
 ///
-/// 정규 파일만 엽니다(FIFO·장치에서 멈추지 않음). 연 handle이 검사한 파일과 다르면(검사 뒤 symlink 등으로
-/// 교체) 거부하고, 크기 확인 뒤 파일이 자라도 상한 + 1 바이트에서 읽기를 멈춥니다.
+/// 정규 파일만 엽니다(FIFO·장치에서 멈추지 않음). 검사(lstat)와 열기 사이에 FIFO·장치·symlink로 바뀌어도
+/// 열기가 멈추지 않도록 macOS에서는 `O_NONBLOCK | O_NOFOLLOW`로 엽니다([`open_manifest`]). 연 handle이
+/// 검사한 파일과 다르면(검사 뒤 교체) 거부하고, 크기 확인 뒤 파일이 자라도 상한 + 1 바이트에서 읽기를
+/// 멈춥니다.
 fn read_manifest(root: &Path) -> Result<Manifest, SavedProjectError> {
+    read_manifest_checked(root, |_| {})
+}
+
+/// [`read_manifest`] 본체. `after_check`는 lstat 검사와 열기 사이에 불립니다(테스트가 그 사이 교체를
+/// 재현하는 지점이며, 실제 경로는 아무것도 하지 않음).
+fn read_manifest_checked(
+    root: &Path,
+    after_check: impl FnOnce(&Path),
+) -> Result<Manifest, SavedProjectError> {
     let read_error = |e: io::Error| SavedProjectError::ManifestRead { kind: e.kind() };
     let path = root.join(MANIFEST_FILE);
     let meta = std::fs::symlink_metadata(&path).map_err(read_error)?;
@@ -485,7 +498,13 @@ fn read_manifest(root: &Path) -> Result<Manifest, SavedProjectError> {
     if meta.len() > limit {
         return Err(manifest_too_large(Some(meta.len())));
     }
-    let file = File::open(&path).map_err(read_error)?;
+    after_check(&path);
+    let file = match open_manifest(&path) {
+        Ok(file) => file,
+        // 검사 때 정규 파일이던 경로가 symlink로 바뀜.
+        Err(e) if is_symlink_refusal(&e) => return Err(SavedProjectError::ManifestChanged),
+        Err(e) => return Err(read_error(e)),
+    };
     let opened = file.metadata().map_err(read_error)?;
     if !opened.is_file() || !same_file(&meta, &opened) {
         return Err(SavedProjectError::ManifestChanged);
@@ -498,6 +517,43 @@ fn read_manifest(root: &Path) -> Result<Manifest, SavedProjectError> {
     })?;
     let value = load_restricted(&text).map_err(SavedProjectError::ManifestSyntax)?;
     Manifest::from_yaml(&value).map_err(SavedProjectError::ManifestSchema)
+}
+
+/// macOS `<sys/fcntl.h>`·`<sys/errno.h>` 값(SDK header로 확인).
+#[cfg(target_os = "macos")]
+mod open_flags {
+    pub const O_NONBLOCK: i32 = 0x0000_0004;
+    pub const O_NOFOLLOW: i32 = 0x0000_0100;
+    pub const ELOOP: i32 = 62;
+}
+
+/// `stellar.yaml`을 읽기 전용으로 엽니다.
+///
+/// macOS에서는 `O_NONBLOCK`(FIFO·장치로 바뀌어도 writer·장치를 기다리지 않음, 정규 파일 읽기에는 영향
+/// 없음)과 `O_NOFOLLOW`(마지막 구성 요소 symlink를 따르지 않음)를 줍니다. 다른 unix는 flag 값이
+/// 플랫폼·아키텍처마다 달라 주지 않고, 열기 뒤 handle 검사만 합니다(모듈 문서의 남은 한계).
+fn open_manifest(path: &Path) -> io::Result<File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(open_flags::O_NONBLOCK | open_flags::O_NOFOLLOW);
+    }
+    options.open(path)
+}
+
+/// [`open_manifest`]가 symlink 때문에 거부한 오류인지(macOS `ELOOP`).
+fn is_symlink_refusal(e: &io::Error) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        e.raw_os_error() == Some(open_flags::ELOOP)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = e;
+        false
+    }
 }
 
 /// 검사한 metadata와 연 handle의 metadata가 같은 파일인지(unix: device + inode).
@@ -934,6 +990,73 @@ pub(crate) mod tests {
             }
             other => panic!("input-too-large가 아님: {other:?}"),
         }
+    }
+
+    /// `mkfifo`로 FIFO를 만듭니다. 도구가 없으면 `false`.
+    #[cfg(unix)]
+    fn make_fifo(path: &Path) -> bool {
+        std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_swapped_for_a_fifo_after_check_does_not_block_open() {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        let dir = TempDir::new();
+        write_manifest(&dir.path, PROJECT_ID_TEXT);
+        let root = dir.path.clone();
+        let (sender, receiver) = mpsc::channel();
+        let fifo_ready = mpsc::channel::<bool>();
+        let worker = std::thread::spawn({
+            let fifo_ready = fifo_ready.0;
+            move || {
+                // lstat 검사(정규 파일) 뒤, 열기 전에 같은 경로를 FIFO로 바꿉니다.
+                let result = read_manifest_checked(&root, |path| {
+                    std::fs::remove_file(path).unwrap();
+                    fifo_ready.send(make_fifo(path)).unwrap();
+                });
+                sender.send(result.err()).unwrap();
+            }
+        });
+        if !fifo_ready.1.recv().unwrap() {
+            return; // mkfifo 없는 환경 건너뜀.
+        }
+        let outcome = receiver.recv_timeout(Duration::from_secs(5));
+        if outcome.is_err() {
+            // 열기가 writer를 기다리며 멈춤: writer 쪽을 열어 worker를 풀어 준 뒤 실패로 보고합니다.
+            let _ = std::fs::OpenOptions::new()
+                .write(true)
+                .open(dir.path.join(MANIFEST_FILE));
+            let _ = worker.join();
+            panic!("검사 뒤 FIFO로 바뀐 stellar.yaml 열기가 멈췄습니다");
+        }
+        worker.join().unwrap();
+        assert!(
+            matches!(outcome, Ok(Some(SavedProjectError::ManifestChanged))),
+            "{outcome:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn manifest_swapped_for_a_symlink_after_check_is_rejected() {
+        let dir = TempDir::new();
+        write_manifest(&dir.path, PROJECT_ID_TEXT);
+        let outside = TempDir::new();
+        write_manifest(&outside.path, PROJECT_ID_TEXT);
+        let target = outside.path.join(MANIFEST_FILE);
+        let result = read_manifest_checked(&dir.path, |path| {
+            std::fs::remove_file(path).unwrap();
+            std::os::unix::fs::symlink(&target, path).unwrap();
+        });
+        assert!(
+            matches!(result, Err(SavedProjectError::ManifestChanged)),
+            "{result:?}"
+        );
     }
 
     #[cfg(unix)]
