@@ -20,6 +20,7 @@ parser의 동작을 바꾸므로 이 ADR에 기록합니다.
 |---|---|---|---|---|
 | 2026-11-14 | XVI.6.2 | `ContentHash` 문자열 parse가 다중 byte UTF-8 문자에서 panic | `crates/storage/src/hash/mod.rs` | slice 전 문자 검사 |
 | 2026-11-14 | 보안 감사 STOR-1 | current pointer·manifest·chunk 읽기가 symlink를 따라 장치·FIFO·거대 파일을 크기 확인 없이 끝까지 읽음(`/dev/zero`에서 메모리 무한 할당, FIFO에서 무한 대기) | `crates/storage/src/generation/current.rs`, `crates/storage/src/generation/loader.rs`, `crates/storage/src/chunk/store.rs` | 연 handle `fstat`으로 정규 파일·크기 상한 확인, 상한 + 1 bytes에서 읽기 중단, macOS `O_NONBLOCK` |
+| 2026-11-14 | 보안 감사 STOR-2·3 | GC sweep 수집이 `is_dir()`(symlink를 따름)로 재귀해, commit된 symlink 디렉터리를 따라 프로젝트 밖 파일을 지우고 symlink 순환(`a -> .`, `b -> .`)에서 지수적으로 순회함 | `crates/storage/src/gc/sweep.rs` | `DirEntry::file_type`으로 고정 구조(`objects/<shard>/파일`, `generations/파일`)만 수집, symlink 디렉터리면 삭제 없음, 삭제 직전 identity 재확인 |
 | 2026-11-14 | 보안 감사 STOR-4 | chunk·manifest·current 쓰기가 `create_dir_all` 뒤 경로로 기록해 symlink 디렉터리를 따라 프로젝트 밖에 디렉터리·파일을 만듦 | 같은 세 파일 | 구성 요소별 `lstat`·한 단계 `create_dir`, temp 생성·rename 직전 identity 재확인, 기존 파일 검증은 `O_NOFOLLOW` |
 | 2026-11-14 | 보안 감사 STOR-5 | atomic write가 temp를 `O_TRUNC`로 열어, 예측 가능한 temp 이름에 심어 둔 symlink를 따라 프로젝트 밖 파일을 덮어씀 | `crates/storage/src/atomic_file.rs` | temp는 `create_new`로만 만들고 이미 있는 이름은 건너뜀 |
 
@@ -64,6 +65,12 @@ release profile은 `panic = "abort"`(II.1.3)이므로 손상·조작된 chunk �
      content-addressed 파일의 dedup 검증은 기존 항목을 따라가지 않고(macOS `O_NOFOLLOW`) 기대 크기까지만
      읽습니다. symlink·정규 파일이 아닌 항목·크기가 다른 파일은 불변성 위반(`CorruptExisting`)으로
      보고하고 덮어쓰지 않습니다.
+   - 저장소 GC sweep(STOR-2·3): 항목 종류는 `DirEntry::file_type`(따라가지 않음)으로만 판정하고
+     고정 구조만 수집합니다. `design/objects/<shard>/<algo>-<hex>.starchunk`(shard는 그 hash의 정규
+     shard)와 `design/generations/<algo>-<hex>.starmanifest`만 후보이고, 그 밖의 하위 디렉터리·symlink는
+     따라가지도 지우지도 않습니다. `design`·`design/objects`·`design/generations`·shard 이름 항목이
+     symlink면 아무 것도 지우지 않고 그 경로를 `carry_over`에 기록합니다(반환 타입을 바꾸지 않기 위해
+     오류 대신 이월). 삭제 직전에 파일과 위 디렉터리들의 identity를 다시 확인합니다.
    - 공통 검사는 crate 내부 `fs_guard` 모듈에 둡니다(공개 API 아님). 거부 이유는 `Io` variant의
      `std::io::Error`에 담깁니다.
    - atomic write temp(STOR-5): `create_new`(`O_CREAT`·`O_EXCL`, 마지막 구성 요소 symlink를 따르지
@@ -92,6 +99,9 @@ release profile은 `panic = "abort"`(II.1.3)이므로 손상·조작된 chunk �
 - (STOR-4) symlink 디렉터리 아래로의 저장은 거부됩니다. 읽기는 19.3에 따라 symlink를 따르므로, `design`
   등을 symlink로 둔 작업 트리는 열 수 있지만 저장할 수 없습니다. 저장소 경로가 아닌 프로젝트 root
   자체의 symlink는 그대로 허용합니다.
+- (STOR-2·3) 고정 구조 밖에 놓인 content-addressed 이름 파일(다른 shard, 하위 디렉터리)은 이제 GC가
+  지우지 않습니다. 저장소가 그런 위치에 쓰지 않으므로 정상 세대에는 영향이 없습니다. 방문 수는 실제
+  항목 수에 비례합니다.
 - 디렉터리 fd 기준 연산(`openat`·`renameat`)이 std에 없어, 디렉터리를 다시 확인한 직후와 경로 기반
   syscall 사이의 짧은 창은 남습니다. commit된(정적) symlink는 모두 차단하고, 그 창에 디렉터리를
   교체하는 동시 공격자만 남습니다. macOS 밖 Unix는 flag 없이 열기 전 `stat`으로 종류를 확인합니다.

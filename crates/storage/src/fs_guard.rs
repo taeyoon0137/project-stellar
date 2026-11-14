@@ -1,10 +1,10 @@
-//! 저장소 파일 접근 guard (보안 감사 STOR-1·4).
+//! 저장소 파일 접근 guard (보안 감사 STOR-1·2·4).
 //!
 //! 프로젝트 폴더는 Git으로 받은 비신뢰 입력일 수 있습니다. commit된 symlink·FIFO·장치 파일·거대한
 //! sparse 파일이 저장소 경로(`design/...`)에 있으면, 경로 기반 `std::fs::read`는 끝없이 읽거나
 //! (`/dev/zero`) 멈추고(FIFO), `create_dir_all`·rename은 symlink 디렉터리를 따라 프로젝트 밖에
-//! 씁니다. 이 모듈은 외부 crate 없이 그 경로를 막는 공통 도구를 둡니다(crate 내부 전용, 공개 API
-//! 아님).
+//! 쓰며, symlink를 따라가는 GC 탐색은 프로젝트 밖 파일을 지웁니다. 이 모듈은 외부 crate 없이 그
+//! 경로를 막는 공통 도구를 둡니다(crate 내부 전용, 공개 API 아님).
 //!
 //! - **읽기**([`read_regular_file`]): 연 handle을 `fstat`해 **정규 파일**이고 크기가 상한 이하일 때만
 //!   읽고, 읽기도 `상한 + 1` bytes에서 멈춥니다(검사 뒤 파일이 자라도 상한 유지). macOS에서는
@@ -16,7 +16,8 @@
 //!   따라가지 않고 거부하고, 없으면 한 단계씩 `create_dir`로 만듭니다(`create_dir_all`은 symlink
 //!   디렉터리를 그대로 통과하므로 쓰지 않음). [`DirGuard`]는 temp 생성과 rename 직전에 같은 디렉터리
 //!   identity(`(dev, ino)`)인지 다시 확인합니다.
-//! - **identity**([`FileIdentity`]): 검사 때 `lstat`한 항목과 사용 직전 항목이 같은지 비교합니다.
+//! - **identity**([`FileIdentity`]·[`same_dir`]): 검사 때 `lstat`한 항목과 사용(쓰기·삭제) 직전
+//!   항목이 같은지 비교합니다.
 //!
 //! 거부는 [`Refusal`]을 담은 `std::io::Error`로 돌려줍니다. 호출하는 공개 함수의 오류 enum(ADR 보호
 //! 공개 API)에 새 variant를 더하지 않고 기존 `Io` variant로 보고하기 위해서입니다.
@@ -130,6 +131,11 @@ impl FileIdentity {
         let identity = FileIdentity::of(&metadata);
         Ok((metadata, identity))
     }
+}
+
+/// 경로가 지금도 `identity`의 실제 디렉터리인지(`lstat`, 따라가지 않음).
+pub(crate) fn same_dir(path: &Path, identity: FileIdentity) -> bool {
+    matches!(FileIdentity::lstat(path), Ok((metadata, id)) if metadata.is_dir() && id == identity)
 }
 
 /// 읽을 때 마지막 구성 요소 symlink를 따를지.
@@ -476,8 +482,10 @@ mod tests {
         assert_eq!(dirs.len(), 3);
         assert!(dir.path.join("a/b/c").is_dir());
         for (path, identity) in &dirs {
-            assert_eq!(FileIdentity::lstat(path).unwrap().1, *identity);
+            assert!(same_dir(path, *identity));
         }
+        assert!(!same_dir(&dir.path.join("a/b"), dirs[2].1), "다른 디렉터리");
+        assert!(!same_dir(&dir.path.join("none"), dirs[0].1), "없는 경로");
         // 다시 불러도 같은 identity.
         let again = ensure_real_dirs(&dir.path, &["a", "b", "c"]).unwrap();
         assert_eq!(dirs, again);
