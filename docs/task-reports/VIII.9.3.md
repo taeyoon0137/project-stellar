@@ -2,13 +2,15 @@
 
 - WBS: VIII.9.3
 - 작업명: 양 플랫폼 evaluator golden corpus를 CI에 추가(모든 result bytes 동일)
-- 상태: 부분 완료 (`[~]`) — corpus·golden·macOS 검증 완료. CI job 등록과 Windows 실행은 미완료
-- 선행: VIII.4.6(`[~]`, Windows 증거만 보류 — ADR-0006으로 충족 처리), VIII.8.3(`[x]`)
+- 상태: 부분 완료 (`[~]`) — corpus·golden·macOS 검증 완료. Windows 실행은 미완료(ADR-0006, `libm` 60 case)이고, 엄격 선행
+  VIII.4.6이 `[~]`라 이 행은 `[x]`가 될 수 없습니다(아래 "선행 판단")
+- 선행: VIII.4.6(`[~]`, Windows 비교만 ADR-0006으로 보류 — **엄격 선행 미충족**, 아래 "선행 판단"), VIII.8.3(`[x]`)
 
 ## 필수 실행 환경
 
-- `DEV-MAC` (순수 Rust, 로컬 검증, debug·release 두 profile). `CI-MAC` job 등록은 미실행(아래 차이 참조), `CI-WIN`은
-  ADR-0006으로 보류.
+- `DEV-MAC` (순수 Rust, 로컬 검증, debug·release 두 profile). 행에 환경 표기가 없어 필수 환경은 `DEV-MAC`입니다(계획서 §1.3
+  적용 규칙 2). 제품 crate 테스트는 CI workflow에 추가하지 않고 통합 시 로컬 `cargo xtask check-core`로 검증합니다(계획서
+  개정 기록 2026-11-14 "제품 테스트 실행 위치"). `CI-WIN` 비교는 ADR-0006으로 보류.
 
 ## 변경 파일 목록
 
@@ -60,6 +62,9 @@
 | `cargo clippy -p stellar-expressions --all-targets -- -D warnings` | 종료 코드 0 (경고 0) |
 | `cargo clippy -p stellar-bindings --all-targets -- -D warnings` | 종료 코드 0 (경고 0) |
 | `cargo fmt -p stellar-expressions -- --check` / `cargo fmt -p stellar-bindings -- --check` | 종료 코드 0 |
+| (리뷰 후 재검증, XVI.6.4까지 쌓인 HEAD) `cargo test -p stellar-expressions -p stellar-bindings --locked` | 종료 코드 0 (bindings unit 51 + `fallback_golden_corpus` 2 + `token_change_benchmark` 3, expressions unit 129 + `evaluation_memory_bound` 3 + `evaluator_determinism` 3 + `evaluator_golden_corpus` 3 + `expression_fuzz` 3 + doctest 3 passed, 0 failed) |
+| (리뷰 후 재검증) `cargo clippy -p stellar-expressions -p stellar-bindings --all-targets --locked -- -D warnings` | 종료 코드 0 (경고 0) |
+| (리뷰 후 재검증) `cargo fmt -p stellar-expressions -p stellar-bindings -- --check` | 종료 코드 0 |
 
 | 검사 | 결과 |
 |---|---|
@@ -68,15 +73,29 @@
 | 손 계산: `12.5+4=16.5`, `12.5%4=0.5`, `0.1+0.2=0x3e99999a`, 0 나누기·overflow 오류, `round(-2.5)=-3`, `round(0.49999997)=0`, `2^130` 사슬 overflow, and/or short-circuit, with_alpha 채널 bytes, 한글 concat, 1 MiB 초과(`hand_checked_golden_entries`) | 통과 |
 | 안전값·orphan 기본값 80 case = golden bytes, 재열기 결정적, 입력 무수정(`fallback_results_match_golden_bytes`) | 통과(macOS debug·release) |
 | 손 계산: 정상 기본값 = 표본 값, 손상 3종 = 안전값 + 정확한 진단, Optional 손상 = null, `base 10px + 2px = 12px`, `12.5px + 1px = 13.5px`, 진단 48(`golden_semantics_are_hand_checked`) | 통과 |
-| **CI에 corpus 등록** | 미실행 — CI workflow 수정은 이 lane 허용 경로 밖 |
+| **CI에 corpus 등록** | CI workflow 미등록(개정 기록상 제품 crate 테스트는 CI에 추가하지 않음). 두 corpus는 `#[ignore]`·feature 조건이 없는 integration test라 로컬 통합 검증 `cargo xtask check-core`의 `cargo test --workspace --locked` 단계에 포함됩니다 |
 | **Windows 결과 bytes 동일** | 미실행(ADR-0006 보류) |
 
 ## 차이(작업 지시와 다른 점)
 
-- **CI 등록 미완료**: 현재 CI(`.github/workflows/bootstrap.yml`)는 xtask 검사만 실행하고 제품 crate 테스트를 실행하지
-  않습니다. corpus는 `cargo test -p stellar-expressions`·`-p stellar-bindings`와 `cargo xtask check-core`(workspace
-  test)에 포함되지만, CI job 추가는 이 작업 lane의 허용 경로(`crates/expressions/**`, `crates/bindings/**`) 밖이라
-  하지 않았습니다. 이 때문에 상태는 `[~]`입니다.
+- **선행 판단**(통합 리뷰 지적 후 정정): 행 선행 VIII.4.6은 `[~]`(macOS 부분 완료, Windows 비교만 ADR-0006으로 보류)입니다.
+  계획서 §1.2 규칙 4는 "선행 작업이 모두 `[x]`가 아니면 코드를 수정하지 않고 blocked 보고서만 작성"하라고 정하므로, 이 작업은
+  **엄격한 행 선행 충족이 아닙니다**. ADR-0006은 `[x]`·`[~]` 판정 규칙과 "양 플랫폼 비교가 들어 있는 행은 macOS 부분을
+  구현한다"(결정 4)만 정하고 선행 규칙을 완화한다고 쓰지 않습니다. 처음 보고서의 "ADR-0006으로 충족 처리"는 근거 없는
+  표현이라 정정합니다.
+  - 그래도 test·golden을 유지한 이유: 이 행은 ADR-0006 결정 4가 macOS 부분 구현을 지시하는 "양 플랫폼" 비교 행이고,
+    VIII.4.6에 남은 것은 이 행에도 똑같이 남는 Windows 증거뿐입니다(VIII.4.6이 `[x]`가 되려면 Windows 재개가 필요해, 규칙 4를
+    엄격히 적용하면 Windows 재개 전에는 이 행의 macOS 부분도 착수할 수 없습니다). 변경은 integration test 2개와 golden
+    fixture 2개뿐이고 제품 코드는 바꾸지 않습니다. 같은 선행(VIII.4.6 `[~]`)을 둔 VIII.5.4·VIII.6.4도 구현되어 있고,
+    XVI.6.7(선행 VII.6.3 `[~]`)도 코드를 두고 `[~]`로 남긴 같은 처리입니다.
+  - 결과: 상태는 `[~]`가 상한입니다. VIII.4.6이 `[x]`가 되기 전에는 이 행을 `[x]`로 올리지 않습니다.
+  - **필요한 결정**: "Windows 증거만 보류된 `[~]` 선행"을 규칙 4의 충족으로 볼지는 제품 소유자 결정 또는 ADR-0006 개정이
+    필요합니다(VIII.5.4·VIII.6.4에도 소급 적용됨). 엄격 적용으로 결정되면 이 작업의 test·golden 추가 커밋을 `git revert`로
+    되돌리고 이 보고서를 `docs/task-reports/VIII.9.3-blocked.md`로 바꿉니다.
+- **CI 등록**(정정): 처음 보고서는 CI job 미등록을 `[~]` 사유로 적었지만, 계획서 개정 기록(2026-11-14 "제품 테스트 실행
+  위치")은 제품 crate 테스트를 CI에 추가하지 않고 통합 시 로컬 `cargo xtask check-core`로 검증한다고 정합니다. 두 corpus는
+  기본 `cargo test`에 포함되는 integration test라 check-core의 `cargo test --workspace --locked` 단계에서 실행되므로, CI
+  workflow 미등록은 `[~]` 사유가 아닙니다. `[~]` 사유는 아래 ADR-0006 `libm` 판정과 위 선행 판단 두 가지입니다.
 - ADR-0006 규칙 4: `ieee` 847 case는 구성상 플랫폼 간 같아야 하지만, `libm` 60 case는 플랫폼 `powf` 구현에 의존하므로
   macOS 증거만으로 `[x]`를 줄 수 없습니다(VIII.4.6과 같은 판정).
 - VIII.4.6 corpus(14 case)는 그대로 두고 별도 파일로 확장했습니다. 오류 결과는 VIII.4.6과 달리 오류 node 번호까지
@@ -84,9 +103,11 @@
 
 ## 남은 위험 / 한계
 
-- **CI 재개 필요 작업**: macOS CI job에 `cargo test -p stellar-expressions --test evaluator_golden_corpus --test
-  evaluator_determinism --locked`와 `cargo test -p stellar-bindings --test fallback_golden_corpus --locked`를 추가해야
-  합니다(workflow 수정 권한이 있는 작업에서).
+- **CI 실행 위치**: 지금은 통합 시 로컬 `cargo xtask check-core`가 corpus를 실행합니다. 제품 테스트를 CI에서 실행하기로
+  결정이 바뀌면 macOS CI job에 `cargo test -p stellar-expressions --test evaluator_golden_corpus --test
+  evaluator_determinism --locked`와 `cargo test -p stellar-bindings --test fallback_golden_corpus --locked`를 추가합니다.
+- **선행 규칙 결정 대기**: 위 "선행 판단"의 결정이 엄격 적용이면 이 작업의 test·golden을 되돌리고 blocked 보고서로 바꿔야
+  합니다.
 - **Windows 재개 시**: 같은 테스트를 `CI-WIN`에서 실행해 golden과 bytes 단위로 같은지 확인합니다. `libm` 60 case
   (`mix`·`to_srgb`·`to_display_p3`)가 다르면 transfer 함수를 결정적 구현으로 바꾸거나 해당 case를 허용 오차 비교로
   분리하는 결정이 필요합니다.
