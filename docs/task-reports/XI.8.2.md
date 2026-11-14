@@ -2,7 +2,11 @@
 
 - WBS: XI.8.2
 - 작업명: resize와 drawable acquisition 구현, drawable 없음은 frame skip으로 처리
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`)
+  - 구현과 backend 처리 경로 테스트는 DEV-MAC 실제 GPU에서 통과했습니다.
+  - 검증 열 "minimized/occluded window crash 없음"을 실제 창이 아니라 재현(0 크기 resize, `#[cfg(test)]`
+    nil drawable 주입)으로만 확인했습니다. 계획 §1.3 규칙 5에 따라 모방한 증거로 `[x]`를 두지 않습니다
+    (아래 "상태 이력").
 - 선행: XI.8.1 (이 lane에서 `df9a2d2`로 `[x]`)
 
 ## 필수 실행 환경
@@ -66,3 +70,17 @@
 - 창 밖 layer는 drawable을 제한 없이 주므로 discard 테스트는 drawable 반환을 간접적으로만
   확인합니다(GPU 미제출·후속 frame 정상).
 - `nextDrawable` 대기(최대 1초)는 render thread를 막습니다. drawable timeout event화는 XI.8.7 범위입니다.
+- 남은 증거(실제 NSWindow를 최소화·가렸을 때 CanvasHost에 붙은 layer로 crash 없이 frame skip)는 CanvasHost
+  layer 연결(XII.4.1)이 있어야 얻을 수 있습니다. 그런데 XII.4.1은 이 행을 선행으로 두므로, 남은 증거를
+  XII.4.1 검증에 포함할지 별도 검증 행을 둘지는 계획 변경 결정이 필요합니다(이 수정에서는 계획 행 문구를
+  바꾸지 않았습니다).
+
+## 상태 이력
+
+- 2026-11-14 첫 구현(`cfe5323`): `[x]`.
+- 2026-11-14 리뷰 반영: `[~]`로 정정. 사유는 검증 열의 최소화·가림 창을 실제 창 없이 재현으로만 확인한
+  것입니다. 최소화는 셸이 넘길 0 크기 resize로, 가림은 `#[cfg(test)]` `drawable_failures` 주입(nil
+  drawable)으로 만들었고, 그 뒤 처리 경로만 실제 GPU로 확인했습니다. 실제 NSWindow 최소화·가림, 실제
+  `nextDrawable` timeout은 실행하지 않았습니다.
+- 같은 리뷰에서 Metal device가 없는 환경의 GPU 테스트가 검증 없이 통과하던 것을 고쳤습니다(`ded1435`,
+  기본 실패, `STELLAR_ALLOW_MISSING_METAL=1`일 때만 건너뜀). 이 행의 테스트 결과는 그대로입니다.
