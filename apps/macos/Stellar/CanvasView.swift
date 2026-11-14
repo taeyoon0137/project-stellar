@@ -19,11 +19,20 @@ final class CanvasView: NSView {
     var scrollWheelHandler: ((NSEvent) -> Bool)?
 
     private let frameScene = CanvasFrameScene()
+    var allowsImageContent = false {
+        didSet {
+            guard oldValue != allowsImageContent else { return }
+            frameScene.png.reset()
+            frameScene.allowsImageContent = allowsImageContent
+            needsDisplay = true
+        }
+    }
     var frameSession: UInt64? { didSet { refreshFrames() } }
 
     func invalidateComponentFrames() { frameScene.clear(); refreshFrames() }
 
     func refreshFrames() {
+        frameScene.redrawImage = { [weak self] in self?.needsDisplay = true }
         if let runtimeHandle, let frameSession, bounds.width > 0, bounds.height > 0 {
             frameScene.refresh(handle: runtimeHandle, session: frameSession, size: bounds.size)
         } else { frameScene.clear() }

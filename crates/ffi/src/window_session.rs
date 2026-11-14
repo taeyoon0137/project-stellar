@@ -335,7 +335,7 @@ pub struct StellarSelectionTarget {
 }
 
 impl StellarSelectionTarget {
-    fn runtime_target(self) -> SelectionEditTarget {
+    pub(crate) fn runtime_target(self) -> SelectionEditTarget {
         SelectionEditTarget {
             session: WindowSessionHandle(self.session),
             view: StableId::from_bytes(self.view),

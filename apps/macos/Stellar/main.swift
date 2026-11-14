@@ -65,6 +65,11 @@ if let flag = CommandLine.arguments.firstIndex(where: { ["--component-create-che
     exit(MainActor.assumeIsolated { ShellComponentCreateCheck.run(directory: URL(fileURLWithPath: home, isDirectory: true), fromSelection: CommandLine.arguments[flag] == "--selected-component-check") } ? 0 : 1)
 }
 
+if let flag = CommandLine.arguments.firstIndex(of: "--image-place-check"), CommandLine.arguments.indices.contains(flag + 1),
+   let home = ProcessInfo.processInfo.environment["HOME"], CommandLine.arguments[flag + 1] == home {
+    exit(MainActor.assumeIsolated { ShellImagePlacementCheck.run(directory: URL(fileURLWithPath: home, isDirectory: true)) } ? 0 : 1)
+}
+
 if let flag = CommandLine.arguments.firstIndex(of: "--frame-insert-check") {
     guard CommandLine.arguments.indices.contains(flag + 1), let home = ProcessInfo.processInfo.environment["HOME"],
           CommandLine.arguments[flag + 1] == home else { exit(1) }

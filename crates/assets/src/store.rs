@@ -235,6 +235,7 @@ pub struct ImportRequest {
     require_project_source: Option<String>,
     /// 원본을 이 identity의 항목으로만 읽습니다(판정한 canonical 경로, 보안 리뷰 S4).
     pinned_source: Option<FileIdentity>,
+    expected_content: Option<(ContentHash, u64)>,
 }
 
 impl ImportRequest {
@@ -255,7 +256,23 @@ impl ImportRequest {
             max_size: None,
             require_project_source: None,
             pinned_source: None,
+            expected_content: None,
         }
+    }
+
+    /// 사용자가 검토한 원본의 hash·길이를 고정합니다. 일치하지 않으면 저장소에 쓰지 않습니다.
+    pub fn with_expected_content(
+        mut self,
+        hash: ContentHash,
+        size: u64,
+    ) -> Result<Self, ImportError> {
+        // The caller supplies its resolved path. Pin it for both the hash and copy passes.
+        let (_, identity) = FileIdentity::lstat(&self.source)
+            .map_err(|e| ImportError::io(ImportOperation::OpenSource, &e))?;
+        self.pinned_source = Some(identity);
+        self.expected_content = Some((hash, size));
+        self.max_size = Some(size.min(self.max_size.unwrap_or(size)));
+        Ok(self)
     }
 
     /// 원본을 판정 때 `lstat`한 항목(`identity`)으로만 읽습니다(아무 것도 쓰기 전 검사).
@@ -461,6 +478,12 @@ impl AssetStore {
         };
         let mut buffer = vec![0u8; STREAM_BUFFER_SIZE];
         let digest = hash_source(source, &mut buffer, request.max_size)?;
+        if request
+            .expected_content
+            .is_some_and(|(hash, size)| hash != digest.hash || size != digest.size)
+        {
+            return Err(ImportError::SourceChanged);
+        }
         let (object_path, outcome) =
             match self.locate_verified_content(&digest.hash, digest.size, &mut buffer, None)? {
                 Some(existing) => (existing, ImportOutcome::Deduplicated),
@@ -989,6 +1012,22 @@ mod tests {
             outside,
             store,
         }
+    }
+
+    #[test]
+    fn changed_reviewed_content_is_rejected_before_installing_any_asset() {
+        let fx = fixture();
+        let source = fx.outside.join("Logo.png");
+        std::fs::write(&source, b"next").unwrap();
+        let request = ImportRequest::new(&source, png())
+            .without_source_metadata()
+            .with_expected_content(ContentHash::compute(b"seen"), 4)
+            .unwrap();
+        assert!(matches!(
+            fx.store.import_file(&request),
+            Err(ImportError::SourceChanged)
+        ));
+        assert!(files_under(&fx.project.join("assets")).is_empty());
     }
 
     #[test]

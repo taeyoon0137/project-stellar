@@ -22,6 +22,7 @@ use stellar_scene::node::{CornerRadii, RectPrimitive, SceneContent};
 use crate::window_session::ProjectWindowSession;
 
 mod component;
+mod image;
 pub(crate) mod shape;
 
 /// painter 순서의 사각형 하나. parent는 투명한 Fragment를 펼친 뒤의 가장 가까운 Frame입니다.
@@ -31,6 +32,8 @@ pub struct CanvasFrame {
     pub rectangle_shape: bool,
     /// 실제 문서의 ComponentInstance를 표시하는 투영 행입니다.
     pub instance_frame: bool,
+    /// PNG asset 참조. 픽셀은 worker에서 검증·디코드합니다.
+    pub image_asset: Option<StableId>,
     /// 문서 node 식별자.
     pub id: StableId,
     /// 같은 목록의 Frame 부모 index.
@@ -183,6 +186,7 @@ impl CanvasScene {
         self.frames.push(CanvasFrame {
             rectangle_shape: false,
             instance_frame: false,
+            image_asset: None,
             id,
             parent,
             world: spec.world_transform,
@@ -230,6 +234,22 @@ impl CanvasScene {
                     &mut builder,
                 ) {
                     result.frames.push(rectangle);
+                } else {
+                    result.skipped += 1;
+                }
+                continue;
+            }
+            if let Some(NodePayload::Image(payload)) = payload {
+                if let Some(row) = image::project(
+                    model,
+                    id,
+                    payload,
+                    &parent_scope,
+                    parent,
+                    fields.locked,
+                    &mut builder,
+                ) {
+                    result.frames.push(row);
                 } else {
                     result.skipped += 1;
                 }

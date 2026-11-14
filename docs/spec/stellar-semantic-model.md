@@ -245,7 +245,7 @@ entry = id:raw16 ‖ key_len:u32 LE ‖ key[key_len] ‖ kind:u16 LE ‖ enabled
 | 컴포넌트 library(정의, 정의 tree, Slot) | `document::component::definition::ComponentLibrary::encode` | `component-library`(등록만 됨) |
 | ComponentInstance node | `document::component::instance::ComponentInstancePayload::encode` | §2.3의 tag 7 payload |
 | token | `bindings::token`의 메모리 모델(`TokenSet`, `TokenDefinition`) | `token-set`(등록만 됨) |
-| asset record | `assets::record`(형식 명세 §15) | `asset-metadata`(등록만 됨) |
+| asset record | `assets::record`(형식 명세 §15) | `asset-metadata`(PNG 배치가 AssetId별 schema 1 record를 저장) |
 | expression AST | `expressions::codec`(AST canonical bytes) | 없음 |
 | View Variant override | `document::component::variant_override::VariantOverrideSet::encode` | 없음 |
 
