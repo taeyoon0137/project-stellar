@@ -1,4 +1,4 @@
-//! 화면 격자와 VT 동작 (XVIII.4.1).
+//! 화면 격자와 VT 동작 (XVIII.4.1), 화면 buffer·scrollback·선택·clipboard (XVIII.4.2).
 //!
 //! parser([`crate::vt::parser`])가 넘긴 동작을 행×열 격자에 적용합니다. 지원 범위는 `TERM`
 //! [`TERM_NAME`](super::TERM_NAME)(macOS terminfo `xterm-256color`)이 쓰는 기본 기능입니다.
@@ -15,6 +15,23 @@
 //!   디렉터리(OSC 7)는 [`TerminalEvent`]로 냅니다. 둘 다 상한이 있습니다.
 //! - RIS·DECSTR·DECALN.
 //!
+//! **화면 buffer**(XVIII.4.2):
+//!
+//! - **scrollback**: 주 화면에서 scroll region이 맨 위 줄부터일 때 올라간 줄과, 크기 축소로 위에서
+//!   빠진 줄을 [`Scrollback`]에 넣습니다(줄 수·메모리 상한, [`TerminalConfig::scrollback`]). scroll
+//!   region이 화면 중간이면 xterm처럼 기록하지 않습니다. ED 3은 기록을 지웁니다. RIS는 화면만
+//!   초기화하고 기록은 남깁니다.
+//! - **대체 화면**(DECSET 47·1047·1049): 전체 화면 프로그램용 화면입니다. 들어갈 때 빈 화면을 쓰고 나올
+//!   때 주 화면을 되돌립니다. 1049는 cursor 저장·복원도 합니다. 대체 화면의 줄은 기록하지 않고,
+//!   들어가 있는 동안 기록은 보이지 않습니다.
+//! - **보기 위치**: [`Screen::scroll_display`]로 기록을 거슬러 봅니다. 거슬러 보는 중에 출력이 쌓이면
+//!   같은 내용을 계속 보이게 위치를 옮기고, 버려진 줄만큼 줄입니다.
+//! - **줄 번호**: 기록 첫 줄부터 센 절대 번호([`BufferPoint::line`])로 줄을 찾습니다
+//!   ([`Screen::buffer_line`]). 선택 영역은 이 번호를 써서 출력이 쌓여도 같은 내용을 가리킵니다.
+//!   기록에서 버려진 줄은 선택에서 빠지고, 대체 화면 전환·크기 변경·RIS는 선택을 지웁니다.
+//! - **clipboard**: 선택 문자열 복사([`Screen::selected_text`])와 OSC 52 정책([`ClipboardAccess`],
+//!   기본 거부)은 [`clipboard`](super::clipboard) 모듈 문서를 따릅니다.
+//!
 //! 이 모듈은 출력 내용을 제품 상태로 해석하지 않습니다. 특정 CLI 출력용 parser를 두지 않습니다
 //! (기술 아키텍처 31.9 "터미널 경로에는 공급자별 출력 parser를 두지 않음").
 
@@ -22,6 +39,9 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use super::cell::{Attrs, Cell, CellWidth, Color, Style};
+use super::clipboard::{decode_base64, ClipboardAccess, CopiedText, MAX_COPY_BYTES};
+use super::scrollback::{HistoryLine, Scrollback, ScrollbackLimits};
+use super::selection::{is_word_char, BufferPoint, Selection, SelectionMode};
 use crate::cwd::check_path_syntax;
 use crate::size::TerminalSize;
 use crate::vt::parser::{Params, Perform};
@@ -57,6 +77,18 @@ pub enum TerminalEvent {
         /// 절대 경로(percent-decoding 결과).
         path: PathBuf,
     },
+    /// 프로그램이 clipboard 쓰기를 요청함(OSC 52, [`ClipboardAccess::AllowWrite`]일 때만). 실제로
+    /// 쓸지는 UI가 정합니다.
+    ClipboardWrite(String),
+}
+
+/// emulator 설정(사용자 설정 값, 프로젝트에 저장하지 않음).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TerminalConfig {
+    /// scrollback 상한.
+    pub scrollback: ScrollbackLimits,
+    /// 프로그램의 clipboard 요청 정책(OSC 52).
+    pub clipboard: ClipboardAccess,
 }
 
 /// cursor 모양(DECSCUSR).
@@ -116,6 +148,8 @@ pub struct Modes {
     pub mouse_sgr: bool,
     /// synchronized output(?2026) 진행 중.
     pub synchronized_output: bool,
+    /// 대체 화면(?47·?1047·?1049) 사용 중.
+    pub alt_screen: bool,
 }
 
 impl Default for Modes {
@@ -135,6 +169,7 @@ impl Default for Modes {
             mouse_tracking: MouseTracking::Off,
             mouse_sgr: false,
             synchronized_output: false,
+            alt_screen: false,
         }
     }
 }
@@ -226,19 +261,7 @@ impl Row {
 
     /// `[start, end)` 열의 문자열(넓은 문자 뒤 칸 제외, 결합 문자 포함, 줄 끝 공백 제외).
     pub fn text_range(&self, start: usize, end: usize) -> String {
-        let end = end.min(self.cells.len());
-        let mut text = String::new();
-        for col in start..end {
-            let cell = &self.cells[col];
-            if cell.width == CellWidth::WideSpacer {
-                continue;
-            }
-            text.push(cell.ch);
-            text.extend(self.combining(col));
-        }
-        let trimmed = text.trim_end_matches(' ').len();
-        text.truncate(trimmed);
-        text
+        BufferLine::Screen(self).text_range(start, end)
     }
 
     /// 줄 전체 문자열(줄 끝 공백 제외).
@@ -255,6 +278,18 @@ impl Row {
 
     pub(crate) fn set_wrapped(&mut self, wrapped: bool) {
         self.wrapped = wrapped;
+    }
+
+    pub(crate) fn into_parts(self) -> (Vec<Cell>, bool, Vec<(u16, char)>) {
+        (self.cells, self.wrapped, self.combining)
+    }
+
+    /// 테스트용: 0열부터 1칸 문자를 씁니다.
+    #[cfg(test)]
+    pub(crate) fn write_text(&mut self, text: &str) {
+        for (cell, ch) in self.cells.iter_mut().zip(text.chars()) {
+            cell.ch = ch;
+        }
     }
 
     fn remove_combining(&mut self, start: usize, end: usize) {
@@ -317,6 +352,96 @@ impl Row {
     }
 }
 
+/// 화면 buffer의 줄 하나(화면 줄 또는 scrollback 줄).
+#[derive(Debug, Clone, Copy)]
+pub enum BufferLine<'a> {
+    /// 현재 화면 줄.
+    Screen(&'a Row),
+    /// scrollback 줄(저장하지 않은 줄 끝은 기본 빈 칸).
+    History(&'a HistoryLine),
+}
+
+impl<'a> BufferLine<'a> {
+    /// 셀(저장 범위 밖은 기본 빈 칸).
+    pub fn cell(&self, col: usize) -> Cell {
+        self.stored_cells().get(col).copied().unwrap_or(Cell::BLANK)
+    }
+
+    /// 저장된 셀(scrollback 줄은 줄 끝 기본 빈 칸 제외).
+    pub fn stored_cells(&self) -> &'a [Cell] {
+        match self {
+            BufferLine::Screen(row) => &row.cells,
+            BufferLine::History(line) => line.cells(),
+        }
+    }
+
+    /// 자동 줄바꿈으로 다음 줄에 이어지는지.
+    pub fn is_wrapped(&self) -> bool {
+        match self {
+            BufferLine::Screen(row) => row.wrapped,
+            BufferLine::History(line) => line.is_wrapped(),
+        }
+    }
+
+    /// 결합 문자(열, 문자).
+    pub fn combining_marks(&self) -> &'a [(u16, char)] {
+        match self {
+            BufferLine::Screen(row) => &row.combining,
+            BufferLine::History(line) => line.combining_marks(),
+        }
+    }
+
+    /// `col`의 문자(넓은 문자 뒤 칸이면 앞 칸 문자).
+    pub fn char_at(&self, col: usize) -> char {
+        let cell = self.cell(col);
+        if cell.width == CellWidth::WideSpacer && col > 0 {
+            self.cell(col - 1).ch
+        } else {
+            cell.ch
+        }
+    }
+
+    /// `[start, end)` 열의 문자열(넓은 문자 뒤 칸 제외, 결합 문자 포함, 줄 끝 공백 제외).
+    pub fn text_range(&self, start: usize, end: usize) -> String {
+        self.text_with(start, end, true)
+    }
+
+    /// 줄 전체 문자열(줄 끝 공백 제외).
+    pub fn text(&self) -> String {
+        self.text_range(0, self.stored_cells().len())
+    }
+
+    fn text_with(&self, start: usize, end: usize, trim: bool) -> String {
+        let cells = self.stored_cells();
+        let marks = self.combining_marks();
+        let stored_end = end.min(cells.len());
+        let mut text = String::new();
+        for (col, cell) in cells.iter().enumerate().take(stored_end).skip(start) {
+            if cell.width == CellWidth::WideSpacer {
+                continue;
+            }
+            text.push(cell.ch);
+            text.extend(
+                marks
+                    .iter()
+                    .filter(|(at, _)| usize::from(*at) == col)
+                    .map(|(_, c)| *c),
+            );
+        }
+        if trim {
+            let trimmed = text.trim_end_matches(' ').len();
+            text.truncate(trimmed);
+        } else {
+            // 저장하지 않은 줄 끝 빈 칸(자동 줄바꿈 줄의 이어지는 공백 보존).
+            text.extend(std::iter::repeat_n(
+                ' ',
+                end.saturating_sub(cells.len().max(start)),
+            ));
+        }
+        text
+    }
+}
+
 /// 화면 상태: 격자, cursor, pen, mode, scroll region, tab stop, 알림·응답.
 #[derive(Debug)]
 pub struct Screen {
@@ -337,6 +462,13 @@ pub struct Screen {
     title: String,
     events: VecDeque<TerminalEvent>,
     replies: Vec<u8>,
+    history: Scrollback,
+    /// 기록을 거슬러 보는 줄 수(0이면 현재 화면).
+    display_offset: usize,
+    /// 대체 화면 사용 중 보관한 주 화면.
+    primary: Option<Vec<Row>>,
+    selection: Option<Selection>,
+    clipboard: ClipboardAccess,
 }
 
 fn default_tabs(cols: usize) -> Vec<bool> {
@@ -344,8 +476,13 @@ fn default_tabs(cols: usize) -> Vec<bool> {
 }
 
 impl Screen {
-    /// 빈 화면.
+    /// 기본 설정의 빈 화면.
     pub fn new(size: TerminalSize) -> Screen {
+        Screen::with_config(size, TerminalConfig::default())
+    }
+
+    /// 설정을 지정한 빈 화면.
+    pub fn with_config(size: TerminalSize, config: TerminalConfig) -> Screen {
         let rows = usize::from(size.rows());
         let cols = usize::from(size.cols());
         Screen {
@@ -366,6 +503,11 @@ impl Screen {
             title: String::new(),
             events: VecDeque::new(),
             replies: Vec::new(),
+            history: Scrollback::new(config.scrollback),
+            display_offset: 0,
+            primary: None,
+            selection: None,
+            clipboard: config.clipboard,
         }
     }
 
@@ -478,7 +620,8 @@ impl Screen {
         }
     }
 
-    /// scroll region을 `n`줄 올립니다. 맨 위 줄은 버려집니다.
+    /// scroll region을 `n`줄 올립니다. 주 화면이고 region이 맨 위 줄부터면 올라간 줄을 기록에
+    /// 넣고, 아니면 버립니다.
     pub(crate) fn scroll_up(&mut self, n: usize) {
         let (top, bottom) = (self.top, self.bottom);
         let n = n.min(bottom - top + 1);
@@ -486,7 +629,29 @@ impl Screen {
             return;
         }
         self.grid[top..=bottom].rotate_left(n);
-        self.clear_rows(bottom + 1 - n, bottom + 1);
+        if top == 0 && self.primary.is_none() {
+            let fill = self.erased();
+            let cols = self.cols;
+            let mut evicted = 0;
+            for index in bottom + 1 - n..=bottom {
+                let row = std::mem::replace(&mut self.grid[index], Row::blank(cols, fill));
+                evicted += self.history.push(row);
+            }
+            self.history_grew(n, evicted);
+        } else {
+            self.clear_rows(bottom + 1 - n, bottom + 1);
+        }
+    }
+
+    /// 기록에 `added`줄이 들어오고 `evicted`줄이 버려진 뒤 보기 위치와 선택을 맞춥니다.
+    fn history_grew(&mut self, added: usize, evicted: u64) {
+        if self.display_offset > 0 {
+            self.display_offset = (self.display_offset + added).min(self.history.len());
+        }
+        if evicted > 0 {
+            let first = self.first_line();
+            self.selection = self.selection.and_then(|s| s.clamp_to(first));
+        }
     }
 
     /// scroll region을 `n`줄 내립니다.
@@ -809,7 +974,12 @@ impl Screen {
                 self.erase_in_line(1);
             }
             2 => self.clear_rows(0, self.rows),
-            // 3(저장된 줄 지우기)은 이 화면 격자에 저장된 줄이 없어 바꿀 것이 없습니다.
+            3 => {
+                self.history.clear();
+                self.display_offset = 0;
+                let first = self.first_line();
+                self.selection = self.selection.and_then(|s| s.clamp_to(first));
+            }
             _ => {}
         }
     }
@@ -862,11 +1032,17 @@ impl Screen {
             u16::try_from(self.cols).unwrap_or(1),
         )
         .unwrap_or(TerminalSize::DEFAULT);
+        let config = TerminalConfig {
+            scrollback: self.history.limits(),
+            clipboard: self.clipboard,
+        };
         let events = std::mem::take(&mut self.events);
         let replies = std::mem::take(&mut self.replies);
-        *self = Screen::new(size);
+        let history = std::mem::replace(&mut self.history, Scrollback::new(config.scrollback));
+        *self = Screen::with_config(size, config);
         self.events = events;
         self.replies = replies;
+        self.history = history;
     }
 
     fn soft_reset(&mut self) {
@@ -904,8 +1080,13 @@ impl Screen {
     pub fn resize(&mut self, size: TerminalSize) {
         let rows = usize::from(size.rows());
         let cols = usize::from(size.cols());
+        self.selection = None;
         if cols != self.cols {
-            for row in &mut self.grid {
+            for row in self
+                .grid
+                .iter_mut()
+                .chain(self.primary.iter_mut().flatten())
+            {
                 row.resize_cols(cols);
             }
             let mut tabs = default_tabs(cols);
@@ -924,6 +1105,23 @@ impl Screen {
             self.grid
                 .extend((self.rows..rows).map(|_| Row::blank(cols, Cell::BLANK)));
         }
+        if let Some(primary) = self.primary.as_mut() {
+            // 보관한 주 화면은 1049가 저장한 cursor 줄이 보이게 맞춥니다.
+            let keep_row = self.saved.map_or(0, |saved| saved.cursor.row);
+            let removed = (keep_row + 1)
+                .saturating_sub(rows)
+                .min(primary.len().saturating_sub(rows));
+            let mut evicted = 0;
+            for row in primary.drain(..removed).collect::<Vec<Row>>() {
+                evicted += self.history.push(row);
+            }
+            primary.truncate(rows);
+            primary.extend((primary.len()..rows).map(|_| Row::blank(cols, Cell::BLANK)));
+            if let Some(saved) = self.saved.as_mut() {
+                saved.cursor.row = saved.cursor.row.saturating_sub(removed).min(rows - 1);
+            }
+            self.history_grew(removed, evicted);
+        }
         self.rows = rows;
         self.top = 0;
         self.bottom = rows - 1;
@@ -932,9 +1130,48 @@ impl Screen {
         self.cursor.pending_wrap = false;
     }
 
-    /// 크기 축소로 화면 위에서 빠지는 줄을 버립니다.
+    /// 크기 축소로 화면 위에서 빠지는 줄을 주 화면이면 기록에 넣고, 대체 화면이면 버립니다.
     fn remove_top_rows(&mut self, count: usize) {
-        self.grid.drain(..count);
+        let removed: Vec<Row> = self.grid.drain(..count).collect();
+        if self.primary.is_none() {
+            let mut evicted = 0;
+            for row in removed {
+                evicted += self.history.push(row);
+            }
+            self.history_grew(count, evicted);
+        }
+    }
+
+    // --- 대체 화면 ---
+
+    fn enter_alt_screen(&mut self, save_cursor: bool) {
+        if self.primary.is_some() {
+            return;
+        }
+        if save_cursor {
+            self.save_cursor();
+        }
+        let fill = self.erased();
+        let cols = self.cols;
+        let alt = (0..self.rows).map(|_| Row::blank(cols, fill)).collect();
+        self.primary = Some(std::mem::replace(&mut self.grid, alt));
+        self.modes.alt_screen = true;
+        self.display_offset = 0;
+        self.selection = None;
+    }
+
+    fn leave_alt_screen(&mut self, restore_cursor: bool) {
+        let Some(primary) = self.primary.take() else {
+            return;
+        };
+        self.grid = primary;
+        self.modes.alt_screen = false;
+        self.selection = None;
+        if restore_cursor {
+            self.restore_cursor();
+        }
+        self.cursor.row = self.cursor.row.min(self.rows - 1);
+        self.cursor.pending_wrap = false;
     }
 
     // --- SGR ---
@@ -1030,6 +1267,20 @@ impl Screen {
                 }
                 12 => self.modes.cursor_blinking = on,
                 25 => self.modes.cursor_visible = on,
+                47 | 1047 => {
+                    if on {
+                        self.enter_alt_screen(false);
+                    } else {
+                        self.leave_alt_screen(false);
+                    }
+                }
+                1049 => {
+                    if on {
+                        self.enter_alt_screen(true);
+                    } else {
+                        self.leave_alt_screen(true);
+                    }
+                }
                 1000 => self.set_mouse(MouseTracking::Click, on),
                 1002 => self.set_mouse(MouseTracking::Drag, on),
                 1003 => self.set_mouse(MouseTracking::Motion, on),
@@ -1200,7 +1451,216 @@ impl Screen {
                     self.push_event(TerminalEvent::WorkingDirectory { host, path });
                 }
             }
+            b"52" => self.clipboard_request(payload),
             _ => {}
+        }
+    }
+}
+
+/// 화면 buffer API(XVIII.4.2).
+impl Screen {
+    /// scrollback 기록.
+    pub fn history(&self) -> &Scrollback {
+        &self.history
+    }
+
+    /// 주소를 쓸 수 있는 첫 줄의 절대 번호(대체 화면이면 화면 첫 줄).
+    pub fn first_line(&self) -> u64 {
+        if self.primary.is_some() {
+            self.screen_top_line()
+        } else {
+            self.history.evicted()
+        }
+    }
+
+    /// 화면 첫 줄의 절대 번호.
+    pub fn screen_top_line(&self) -> u64 {
+        self.history.evicted() + self.history.len() as u64
+    }
+
+    /// 마지막 줄의 절대 번호.
+    pub fn last_line(&self) -> u64 {
+        self.screen_top_line() + self.rows as u64 - 1
+    }
+
+    /// 절대 번호의 줄. 버려졌거나(또는 대체 화면에서 기록 줄) 범위 밖이면 `None`.
+    pub fn buffer_line(&self, line: u64) -> Option<BufferLine<'_>> {
+        if line < self.first_line() || line > self.last_line() {
+            return None;
+        }
+        let top = self.screen_top_line();
+        if line >= top {
+            let row = usize::try_from(line - top).ok()?;
+            return self.grid.get(row).map(BufferLine::Screen);
+        }
+        let index = usize::try_from(line - self.history.evicted()).ok()?;
+        self.history.line(index).map(BufferLine::History)
+    }
+
+    /// 기록을 거슬러 보는 줄 수(0이면 현재 화면).
+    pub fn display_offset(&self) -> usize {
+        self.display_offset
+    }
+
+    /// 보기 위치를 옮깁니다. 양수는 기록 쪽(위), 음수는 현재 화면 쪽(아래)입니다. 대체 화면에서는
+    /// 움직이지 않습니다.
+    pub fn scroll_display(&mut self, delta: isize) {
+        if self.primary.is_some() {
+            return;
+        }
+        let max = self.history.len();
+        self.display_offset = self.display_offset.saturating_add_signed(delta).min(max);
+    }
+
+    /// 현재 화면으로 돌아갑니다(입력·붙여넣기 때).
+    pub fn scroll_display_to_bottom(&mut self) {
+        self.display_offset = 0;
+    }
+
+    /// 보기 위치 기준 `row`번째 표시 줄.
+    pub fn display_line(&self, row: usize) -> Option<BufferLine<'_>> {
+        if row >= self.rows {
+            return None;
+        }
+        let line = self.screen_top_line() - self.display_offset as u64 + row as u64;
+        self.buffer_line(line)
+    }
+
+    /// 선택 영역.
+    pub fn selection(&self) -> Option<&Selection> {
+        self.selection.as_ref()
+    }
+
+    /// 선택 영역을 정합니다. 버려진 줄은 잘라 내고, 전부 버려진 줄이면 선택을 지웁니다.
+    pub fn set_selection(&mut self, selection: Option<Selection>) {
+        let first = self.first_line();
+        self.selection = selection.and_then(|s| s.clamp_to(first));
+    }
+
+    /// 선택 방식을 적용해 넓힌 (앞, 뒤) 점. 블록 선택은 열 범위를 그대로 둡니다.
+    pub fn selection_bounds(&self) -> Option<(BufferPoint, BufferPoint)> {
+        let selection = self.selection?;
+        let (mut start, mut end) = selection.ordered();
+        start.line = start.line.max(self.first_line());
+        end.line = end.line.min(self.last_line());
+        if start.line > end.line {
+            return None;
+        }
+        let max_col = self.cols - 1;
+        start.col = start.col.min(max_col);
+        end.col = end.col.min(max_col);
+        match selection.mode() {
+            SelectionMode::Simple | SelectionMode::Block => {
+                if let Some(line) = self.buffer_line(start.line) {
+                    if line.cell(start.col).width == CellWidth::WideSpacer && start.col > 0 {
+                        start.col -= 1;
+                    }
+                }
+            }
+            SelectionMode::Word => {
+                if let Some(line) = self.buffer_line(start.line) {
+                    if is_word_char(line.char_at(start.col)) {
+                        while start.col > 0 && is_word_char(line.char_at(start.col - 1)) {
+                            start.col -= 1;
+                        }
+                    }
+                }
+                if let Some(line) = self.buffer_line(end.line) {
+                    if is_word_char(line.char_at(end.col)) {
+                        while end.col < max_col && is_word_char(line.char_at(end.col + 1)) {
+                            end.col += 1;
+                        }
+                    }
+                }
+            }
+            SelectionMode::Line => {
+                start.col = 0;
+                end.col = max_col;
+            }
+        }
+        Some((start, end))
+    }
+
+    /// 선택 영역에서 `line`의 선택된 열 범위(그릴 때 씀).
+    pub fn selected_columns(&self, line: u64) -> Option<std::ops::Range<usize>> {
+        let selection = self.selection?;
+        let (start, end) = self.selection_bounds()?;
+        if line < start.line || line > end.line {
+            return None;
+        }
+        if selection.mode() == SelectionMode::Block {
+            let (a, b) = (start.col.min(end.col), start.col.max(end.col));
+            return Some(a..b + 1);
+        }
+        let from = if line == start.line { start.col } else { 0 };
+        let to = if line == end.line {
+            end.col + 1
+        } else {
+            self.cols
+        };
+        (from < to).then_some(from..to)
+    }
+
+    /// 선택 영역 문자열(복사). 자동 줄바꿈 줄은 개행 없이 잇고 줄 끝 공백을 뺍니다.
+    pub fn selected_text(&self) -> Option<CopiedText> {
+        self.selected_text_capped(MAX_COPY_BYTES)
+    }
+
+    pub(crate) fn selected_text_capped(&self, cap: usize) -> Option<CopiedText> {
+        let selection = self.selection?;
+        let (start, end) = self.selection_bounds()?;
+        let mut text = String::new();
+        let block = selection.mode() == SelectionMode::Block;
+        let (block_from, block_to) = (start.col.min(end.col), start.col.max(end.col) + 1);
+        for number in start.line..=end.line {
+            let Some(line) = self.buffer_line(number) else {
+                continue;
+            };
+            let last = number == end.line;
+            let piece = if block {
+                line.text_with(block_from, block_to, true)
+            } else {
+                let from = if number == start.line { start.col } else { 0 };
+                let to = if last { end.col + 1 } else { self.cols };
+                // 다음 줄로 이어지는 줄은 공백도 내용입니다.
+                line.text_with(from, to, last || !line.is_wrapped())
+            };
+            text.push_str(&piece);
+            if !last && (block || !line.is_wrapped()) {
+                text.push('\n');
+            }
+            if text.len() > cap {
+                let mut cut = cap;
+                while !text.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                text.truncate(cut);
+                return Some(CopiedText {
+                    text,
+                    truncated: true,
+                });
+            }
+        }
+        Some(CopiedText {
+            text,
+            truncated: false,
+        })
+    }
+
+    /// OSC 52 요청(`대상;base64` 또는 `대상;?`).
+    fn clipboard_request(&mut self, payload: &[u8]) {
+        if self.clipboard != ClipboardAccess::AllowWrite {
+            return;
+        }
+        let Some(data) = payload.splitn(2, |&b| b == b';').nth(1) else {
+            return;
+        };
+        // 읽기 요청은 정책과 관계없이 거부합니다.
+        if data == b"?" {
+            return;
+        }
+        if let Some(text) = decode_base64(data).and_then(|bytes| String::from_utf8(bytes).ok()) {
+            self.push_event(TerminalEvent::ClipboardWrite(text));
         }
     }
 }

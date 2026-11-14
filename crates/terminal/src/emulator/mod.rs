@@ -1,7 +1,11 @@
-//! 터미널 emulator (XVIII.4.1).
+//! 터미널 emulator (XVIII.4.1, XVIII.4.2).
 //!
 //! PTY 출력 byte를 [`Terminal::feed`]로 받아 화면 격자([`Screen`])를 갱신합니다. UI(XVIII.4.3)는 화면을
 //! 읽어 그리고, [`Terminal::take_replies`]의 응답(DSR·DA)을 PTY 입력으로 돌려보냅니다.
+//!
+//! - [`scrollback`]: 줄 수·메모리 상한이 있는 기록.
+//! - [`selection`]: 절대 줄 번호 기반 선택 영역.
+//! - [`clipboard`]: 복사 문자열, 붙여넣기 입력 변환, OSC 52 정책.
 //!
 //! - **스레드**: `feed`는 출력 크기에 비례하는 일을 하므로 main thread가 아니라 출력 reader 쪽에서
 //!   부릅니다(기술 아키텍처 6 main-thread 예산). `Terminal`은 `Send`입니다.
@@ -11,13 +15,24 @@
 //! - **저장하지 않음**: 화면·출력은 세션 메모리에만 있습니다(crate 문서).
 
 pub mod cell;
+pub mod clipboard;
 pub mod screen;
+pub mod scrollback;
+pub mod selection;
 
+#[cfg(test)]
+mod buffer_tests;
 #[cfg(test)]
 mod corpus;
 
 pub use cell::{Attrs, Cell, CellWidth, Color, Style};
-pub use screen::{CursorShape, CursorState, Modes, MouseTracking, Row, Screen, TerminalEvent};
+pub use clipboard::{encode_paste, ClipboardAccess, CopiedText, PasteData, PasteError};
+pub use screen::{
+    BufferLine, CursorShape, CursorState, Modes, MouseTracking, Row, Screen, TerminalConfig,
+    TerminalEvent,
+};
+pub use scrollback::{HistoryLine, Scrollback, ScrollbackLimits};
+pub use selection::{BufferPoint, Selection, SelectionMode};
 
 use crate::size::TerminalSize;
 use crate::vt::parser::Parser;
@@ -36,11 +51,16 @@ pub struct Terminal {
 }
 
 impl Terminal {
-    /// 빈 화면의 emulator.
+    /// 기본 설정의 빈 화면 emulator.
     pub fn new(size: TerminalSize) -> Terminal {
+        Terminal::with_config(size, TerminalConfig::default())
+    }
+
+    /// 설정을 지정한 emulator.
+    pub fn with_config(size: TerminalSize, config: TerminalConfig) -> Terminal {
         Terminal {
             parser: Parser::new(),
-            screen: Screen::new(size),
+            screen: Screen::with_config(size, config),
         }
     }
 
@@ -53,6 +73,24 @@ impl Terminal {
     /// 화면.
     pub fn screen(&self) -> &Screen {
         &self.screen
+    }
+
+    /// 화면(보기 위치·선택 변경용).
+    pub fn screen_mut(&mut self) -> &mut Screen {
+        &mut self.screen
+    }
+
+    /// 선택 영역을 복사할 문자열.
+    pub fn copy_selection(&self) -> Option<CopiedText> {
+        self.screen.selected_text()
+    }
+
+    /// 붙여넣을 글을 현재 mode(bracketed paste)에 맞는 PTY 입력으로 바꿉니다. 보기 위치는 현재
+    /// 화면으로 돌아갑니다.
+    pub fn paste(&mut self, text: &str) -> Result<PasteData, PasteError> {
+        let data = encode_paste(text, self.screen.modes().bracketed_paste)?;
+        self.screen.scroll_display_to_bottom();
+        Ok(data)
     }
 
     /// 크기를 바꿉니다(PTY resize와 함께 호출).
