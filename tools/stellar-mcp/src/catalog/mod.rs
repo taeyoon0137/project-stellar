@@ -2,7 +2,8 @@
 //!
 //! - [`resources`]: read resource와 내용 schema (XIX.2.1).
 //! - [`paging`]: resource 응답의 revision과 page cursor (XIX.2.2).
-//! - [`tools`]: tool 정의와 annotation, 필요 권한 (XIX.2.3).
+//! - [`tools`]: tool 정의와 annotation, 필요 권한 (XIX.2.3), 문서·터미널·Git namespace 분리와
+//!   기본 비활성 (XIX.2.4).
 //!
 //! 이 모듈은 정의와 순수 판정만 담습니다. backend(headless XIX.9.3, attached XIX.9.4) 연결 전이라
 //! 서버는 아직 이 catalog를 `resources/list`·`tools/list`로 광고하지 않습니다. 정의는 XIX.9.2에서
@@ -43,8 +44,7 @@ pub fn catalog_snapshot() -> JsonValue {
             ])
         })
         .collect();
-    let tools = tools::DOCUMENT_TOOLS
-        .iter()
+    let tools = tools::all_tools()
         .map(|tool| {
             let mut fields = match tools::descriptor(tool) {
                 JsonValue::Object(fields) => fields,
@@ -55,6 +55,19 @@ pub fn catalog_snapshot() -> JsonValue {
                 JsonValue::string(tool.availability.name()),
             ));
             fields.push(("grant".to_string(), JsonValue::string(tool.grant.name())));
+            fields.push((
+                "namespace".to_string(),
+                JsonValue::string(
+                    tools::ToolNamespace::of(tool.name).map_or("", tools::ToolNamespace::prefix),
+                ),
+            ));
+            fields.push((
+                "enabledByDefault".to_string(),
+                JsonValue::Bool(
+                    tools::ToolNamespace::of(tool.name)
+                        .is_some_and(|n| tools::EnabledNamespaces::default().includes(n)),
+                ),
+            ));
             JsonValue::Object(fields)
         })
         .collect();

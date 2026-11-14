@@ -26,6 +26,12 @@ pub enum RequiredGrant {
     Propose,
     /// 변경 적용.
     Apply,
+    /// 터미널 실행(XIX.2.4).
+    Terminal,
+    /// Git commit(XIX.2.4).
+    GitCommit,
+    /// Git push(XIX.2.4).
+    GitPush,
 }
 
 impl RequiredGrant {
@@ -35,6 +41,9 @@ impl RequiredGrant {
             RequiredGrant::Read => "read",
             RequiredGrant::Propose => "propose",
             RequiredGrant::Apply => "apply",
+            RequiredGrant::Terminal => "terminal",
+            RequiredGrant::GitCommit => "git-commit",
+            RequiredGrant::GitPush => "git-push",
         }
     }
 }
@@ -174,9 +183,241 @@ pub fn document_tools(backend: Backend) -> impl Iterator<Item = &'static ToolDef
         .filter(move |t| t.availability.includes(backend))
 }
 
+/// tool namespace(XIX.2.4). 문서 편집 권한과 터미널·Git 권한을 결합하지 않도록(아키텍처 §31.3)
+/// namespace마다 따로 켭니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ToolNamespace {
+    /// 문서 조회·검증·제안·적용(`document.*`).
+    Document,
+    /// 터미널 실행(`terminal.*`).
+    Terminal,
+    /// Git commit·push(`git.*`).
+    Git,
+}
+
+impl ToolNamespace {
+    /// 모든 namespace(고정 순서).
+    pub const ALL: [ToolNamespace; 3] = [
+        ToolNamespace::Document,
+        ToolNamespace::Terminal,
+        ToolNamespace::Git,
+    ];
+
+    /// 이름 접두어(`<prefix>.<동작>`).
+    pub fn prefix(self) -> &'static str {
+        match self {
+            ToolNamespace::Document => "document",
+            ToolNamespace::Terminal => "terminal",
+            ToolNamespace::Git => "git",
+        }
+    }
+
+    /// tool 이름의 namespace.
+    pub fn of(name: &str) -> Option<ToolNamespace> {
+        let prefix = name.split_once('.')?.0;
+        ToolNamespace::ALL
+            .into_iter()
+            .find(|n| n.prefix() == prefix)
+    }
+}
+
+/// 켜진 namespace 집합. 기본(`Default`, 모든 field false)은 문서 namespace만입니다(XIX.2.4: 초기
+/// commit·push 비활성). 터미널·Git은 [`EnabledNamespaces::with_terminal`]·[`EnabledNamespaces::with_git`]로
+/// 명시적으로만 켭니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EnabledNamespaces {
+    terminal: bool,
+    git: bool,
+}
+
+impl EnabledNamespaces {
+    /// 터미널 namespace를 켭니다(명시적 선택).
+    pub fn with_terminal(mut self) -> EnabledNamespaces {
+        self.terminal = true;
+        self
+    }
+
+    /// Git namespace를 켭니다(명시적 선택).
+    pub fn with_git(mut self) -> EnabledNamespaces {
+        self.git = true;
+        self
+    }
+
+    /// `namespace`가 켜졌는지. 문서 namespace는 항상 켜져 있습니다.
+    pub fn includes(self, namespace: ToolNamespace) -> bool {
+        match namespace {
+            ToolNamespace::Document => true,
+            ToolNamespace::Terminal => self.terminal,
+            ToolNamespace::Git => self.git,
+        }
+    }
+}
+
+/// 터미널·Git namespace tool(기본 비활성, attached 전용).
+pub const SYSTEM_TOOLS: &[ToolDef] = &[
+    ToolDef {
+        name: "terminal.run",
+        title: "Run in terminal",
+        description: "결합된 창의 내장 터미널에서 명령을 실행합니다(사용자 확인 필요)",
+        input_schema: r#"{"type":"object","additionalProperties":false,"required":["command"],"properties":{"command":{"type":"string","minLength":1}}}"#,
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        availability: Availability::AttachedOnly,
+        grant: RequiredGrant::Terminal,
+    },
+    ToolDef {
+        name: "git.commit",
+        title: "Git commit",
+        description: "stage된 변경으로 commit을 만듭니다(개별 확인 필요)",
+        input_schema: r#"{"type":"object","additionalProperties":false,"required":["message"],"properties":{"message":{"type":"string","minLength":1}}}"#,
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        availability: Availability::AttachedOnly,
+        grant: RequiredGrant::GitCommit,
+    },
+    ToolDef {
+        name: "git.push",
+        title: "Git push",
+        description: "현재 branch를 설정된 remote로 push합니다(개별 확인 필요)",
+        input_schema: r#"{"type":"object","additionalProperties":false,"properties":{}}"#,
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        availability: Availability::AttachedOnly,
+        grant: RequiredGrant::GitPush,
+    },
+];
+
+/// 모든 정의 tool(문서 → 터미널·Git 순).
+pub fn all_tools() -> impl Iterator<Item = &'static ToolDef> {
+    DOCUMENT_TOOLS.iter().chain(SYSTEM_TOOLS.iter())
+}
+
+/// `backend`·`enabled`에서 노출하는 tool.
+pub fn listed_tools(
+    backend: Backend,
+    enabled: EnabledNamespaces,
+) -> impl Iterator<Item = &'static ToolDef> {
+    all_tools().filter(move |t| {
+        t.availability.includes(backend)
+            && ToolNamespace::of(t.name).is_some_and(|n| enabled.includes(n))
+    })
+}
+
+/// MCP `tools/list` 결과.
+pub fn tools_list(backend: Backend, enabled: EnabledNamespaces) -> JsonValue {
+    JsonValue::object(vec![(
+        "tools",
+        JsonValue::Array(listed_tools(backend, enabled).map(descriptor).collect()),
+    )])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permission_matrix_separates_document_terminal_and_git() {
+        // 검증 기준(XIX.2.4): permission matrix. (tool, namespace, 필요 권한)
+        let matrix: Vec<(&str, ToolNamespace, RequiredGrant)> = all_tools()
+            .map(|t| (t.name, ToolNamespace::of(t.name).unwrap(), t.grant))
+            .collect();
+        assert_eq!(
+            matrix,
+            [
+                (
+                    "document.semantic_diff",
+                    ToolNamespace::Document,
+                    RequiredGrant::Read
+                ),
+                (
+                    "document.render_preview",
+                    ToolNamespace::Document,
+                    RequiredGrant::Read
+                ),
+                (
+                    "document.validate",
+                    ToolNamespace::Document,
+                    RequiredGrant::Read
+                ),
+                (
+                    "document.propose_commands",
+                    ToolNamespace::Document,
+                    RequiredGrant::Propose
+                ),
+                (
+                    "document.apply_commands",
+                    ToolNamespace::Document,
+                    RequiredGrant::Apply
+                ),
+                (
+                    "terminal.run",
+                    ToolNamespace::Terminal,
+                    RequiredGrant::Terminal
+                ),
+                ("git.commit", ToolNamespace::Git, RequiredGrant::GitCommit),
+                ("git.push", ToolNamespace::Git, RequiredGrant::GitPush),
+            ]
+        );
+        // 문서 namespace tool은 터미널·Git 권한을 요구하지 않고, 그 반대도 같습니다.
+        for (name, namespace, grant) in &matrix {
+            let document_grant = matches!(
+                grant,
+                RequiredGrant::Read | RequiredGrant::Propose | RequiredGrant::Apply
+            );
+            assert_eq!(
+                *namespace == ToolNamespace::Document,
+                document_grant,
+                "{name}"
+            );
+        }
+        // 이름이 namespace 접두어로 시작하고 모두 고유합니다.
+        let mut names: Vec<&str> = matrix.iter().map(|m| m.0).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), matrix.len());
+        for tool in all_tools() {
+            assert!(valid_tool_name(tool.name), "{}", tool.name);
+        }
+    }
+
+    #[test]
+    fn commit_push_and_terminal_are_disabled_by_default() {
+        let names = |backend, enabled| -> Vec<&'static str> {
+            listed_tools(backend, enabled).map(|t| t.name).collect()
+        };
+        let default = names(Backend::Attached, EnabledNamespaces::default());
+        assert_eq!(default.len(), DOCUMENT_TOOLS.len());
+        assert!(default.iter().all(|n| n.starts_with("document.")));
+        // 문서 apply가 보여도 commit·push·terminal은 따로 켜야 합니다.
+        assert!(default.contains(&"document.apply_commands"));
+        let git = names(Backend::Attached, EnabledNamespaces::default().with_git());
+        assert!(git.contains(&"git.commit") && git.contains(&"git.push"));
+        assert!(!git.contains(&"terminal.run"));
+        let terminal = names(
+            Backend::Attached,
+            EnabledNamespaces::default().with_terminal(),
+        );
+        assert!(terminal.contains(&"terminal.run") && !terminal.contains(&"git.push"));
+        // headless는 켜도 터미널·Git·쓰기 tool이 없습니다.
+        let headless = names(
+            Backend::Headless,
+            EnabledNamespaces::default().with_git().with_terminal(),
+        );
+        assert_eq!(
+            headless,
+            [
+                "document.semantic_diff",
+                "document.validate",
+                "document.propose_commands"
+            ]
+        );
+        let listed =
+            crate::json::write(&tools_list(Backend::Attached, EnabledNamespaces::default()));
+        assert!(!listed.contains("git.") && !listed.contains("terminal."));
+    }
 
     #[test]
     fn document_tools_are_the_five_planned_operations() {
