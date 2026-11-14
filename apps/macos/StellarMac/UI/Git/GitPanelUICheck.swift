@@ -1076,11 +1076,13 @@ enum GitPanelUICheck {
         try expect(!changesOrder.contains { $0 === panel.conflictList.tableView }, "keyboard: 숨긴 conflict 화면이 Tab 순서에 보임")
 
         // 2) 진행 중 작업의 취소 버튼(Push)도 순서에 들어갑니다.
+        typical.dataSource.heldCompletionKind = .push
         panel.pushButton.performClick(nil)
         try expect(typical.spin { isShown(panel.cancelOperationButton) }, "keyboard: Push 취소 버튼이 보이지 않음")
         guard let progressOrder = typical.walkToBelow() else { throw Failure(message: "keyboard: 진행 중 Tab이 패널 밖으로 나가지 못함") }
         try expectOrder(progressOrder, [("mode", panel.modeControl), ("Cancel", panel.cancelOperationButton),
                                         ("changes list", panel.changeList.outlineView)], "keyboard 진행 배너")
+        typical.dataSource.releaseCompletion()
         try expect(typical.spin { panel.lastResult?.kind == .push && isShown(panel.dismissResultButton) }, "keyboard: Push 결과 배너 없음")
         guard let resultOrder = typical.walkToBelow() else { throw Failure(message: "keyboard: 결과 배너 뒤 Tab이 나가지 못함") }
         try expectOrder(resultOrder, [("Dismiss", panel.dismissResultButton), ("changes list", panel.changeList.outlineView)],

@@ -67,6 +67,15 @@ final class GitPanelStubDataSource: GitPanelDataSource {
     private(set) var sentCommands: [GitPanelCommand] = []
     /// 검사용: 이벤트를 하나 꺼낼 때마다 메인 스레드를 이 시간(초)만큼 점유합니다(느린 디코딩 모사). 0이면 없음.
     var pollDelay: TimeInterval = 0
+    /// 검사용: 키보드 검사가 진행 배너를 관찰하는 동안 지정 작업의 완료 전달을 보류합니다.
+    var heldCompletionKind: GitOperationKind?
+    private var heldCompletion: GitPanelEvent?
+
+    func releaseCompletion() {
+        heldCompletionKind = nil
+        onEventsAvailable?()
+    }
+
     /// 검사용: 아직 꺼내지 않은 이벤트 수.
     var queuedEventCount: Int { backend.queuedEventCount }
 
@@ -86,7 +95,16 @@ final class GitPanelStubDataSource: GitPanelDataSource {
     }
 
     func pollEvent() -> GitPanelEvent? {
+        if let held = heldCompletion {
+            guard heldCompletionKind == nil else { return nil }
+            heldCompletion = nil
+            return held
+        }
         guard let event = backend.popEvent() else { return nil }
+        if case let .operationFinished(result) = event, result.kind == heldCompletionKind {
+            heldCompletion = event
+            return nil
+        }
         if pollDelay > 0 {
             let end = ProcessInfo.processInfo.systemUptime + pollDelay
             while ProcessInfo.processInfo.systemUptime < end {}
