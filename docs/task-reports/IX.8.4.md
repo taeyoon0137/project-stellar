@@ -63,3 +63,26 @@
   제약). adapter를 추가할 때 대응표의 kind·field id와 일치하는지 검사하는 테스트가 필요합니다.
 - 연결 List가 flatten될 때 그 List의 작성자 label은 radio group으로 옮기지 않습니다.
 - DataKey 항목 identity의 runtime key 해석은 binding evaluator 몫이며, 이 매핑은 항목 source StableId를 씁니다.
+
+## 리뷰 후 수정(9A 리뷰, 2026-11-14)
+
+- 지적(A11Y-4, minor): SingleSelectionGroup 합성이 연결 List의 선택 방식(Single)을 확인하지 않아 Multiple List도
+  조용히 radio로 합성했고, Button이 아닌 항목은 flatten된 List의 항목 문맥(`ListItem`, 선택 상태, `Select`)을 잃고
+  `RadioGroup` 아래 `Generic`으로 남았습니다. 이 보고서는 두 경우를 적지 않았습니다.
+- 수정: 합성은 IX.6.6 검사 조건(연결 List의 선택 방식이 Single이고 collection 항목이 모두 Button 계약, 항목이
+  없어도 됨)을 만족할 때만 적용합니다. 조건을 어긴 그룹(문서 검사의 `InvalidLinkedContract`)은 `RadioGroup` role만
+  받고, 연결 List는 flatten되지 않고 일반 List 매핑(선택 방식, List 항목 문맥과 List 자신의 selection)을 그대로
+  가집니다. 따라서 의미를 잃는 항목이 없습니다.
+- 한계: 조건을 어긴 그룹을 접근성 진단(IX.8.5)이 따로 보고하지는 않습니다. 계약 오류는 문서 계약 검사(IX.6.6)가
+  보고합니다.
+- 완료 근거(control별 golden tree 통과)는 바뀌지 않으므로 상태 `[x]`를 유지합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-accessibility` | 36 passed, 0 failed |
+| `cargo clippy -p stellar-accessibility --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-accessibility -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| Multiple List·Button 아닌 항목이 있는 Single List를 가리키는 그룹은 List 매핑을 유지하고, 항목 없는 Single List 그룹은 합성(`invalid_selection_group_keeps_list_mapping`) | 수정 전 실패(Multiple List를 radio로 합성), 수정 후 통과 |

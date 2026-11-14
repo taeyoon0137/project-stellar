@@ -12,7 +12,7 @@
 //! | TextInput(0x0002) | value(1, 상태 변수), placeholder(2), focused(3) | `TextField`, value = 상태 변수, state `Editable`·focused, action `SetValue`(상태 변수), label 없으면 placeholder |
 //! | Modal(0x0003) | dismiss(3) | `Dialog`, state `Modal`, action `Dismiss`(semantic action) |
 //! | List(0x0004) | collection(1), selectionMode(3), selection(5) | `List`(Multiple이면 `Multiselectable`), collection 자식 = 항목 |
-//! | SingleSelectionGroup(0x0005) | list(1), selected(2) | `RadioGroup`, 연결 List의 항목 Button = `Radio` |
+//! | SingleSelectionGroup(0x0005) | list(1), selected(2) | `RadioGroup`, 연결 List의 항목 Button = `Radio`(IX.6.6 조건을 만족할 때) |
 //!
 //! 공통: 상호작용 계약이 focus 가능하면 state `Focusable`과 action `Focus`를 더합니다. 계약의 IME 입력·overlay·
 //! focus scope root·navigation 방향은 접근성 트리 의미가 아니어서 옮기지 않습니다. 모르는 계약 종류
@@ -27,6 +27,9 @@
 //! - Radio: SingleSelectionGroup이 가리키는 List의 항목입니다. Button 항목은 `Radio`가 되고 pressed 대신
 //!   state `Checked = SelectionMatches(선택, 항목)`과 action `Select`를 가집니다. 연결된 List node는 flatten되어
 //!   radio가 radio group 바로 아래에 옵니다. 선택 상태 변수는 그룹의 selected, 없으면 List의 selection입니다.
+//!   이 합성은 IX.6.6 검사 조건(연결 List의 선택 방식이 Single이고 collection 항목이 모두 Button 계약, 항목이
+//!   없어도 됨)을 만족할 때만 적용합니다. 조건을 어긴 그룹(문서 검사의 `InvalidLinkedContract`)은 `RadioGroup`
+//!   role만 받고, 연결 List는 flatten되지 않고 일반 List 매핑(선택 방식·List 항목 문맥)을 그대로 가집니다.
 //!
 //! 항목 identity는 항목 source node StableId입니다(List itemIdentity NodeId 방식). DataKey 방식의 runtime key
 //! 해석은 binding evaluator가 맡습니다. 한 node가 둘 이상 List의 항목이면 StableId가 작은 List가 정합니다.
@@ -212,6 +215,23 @@ fn list_semantics(
     }
 }
 
+/// List collection의 항목(시각 자식)이 모두 Button 계약인지. IX.6.6 검사와 같이 collection이 없거나 항목이 없으면
+/// 참입니다.
+fn items_are_buttons(source: &SourceTree, collection: Option<StableId>) -> bool {
+    let Some(collection) = collection.and_then(|id| source.node(id)) else {
+        return true;
+    };
+    collection.children.iter().all(|item| {
+        matches!(
+            source
+                .node(*item)
+                .and_then(|item| item.control.as_ref())
+                .map(|control| &control.semantics),
+            Some(ControlSemantics::Button { .. })
+        )
+    })
+}
+
 impl ControlContext {
     /// source tree의 모든 List·SingleSelectionGroup 계약에서 문맥을 만듭니다(StableId 순, 결정론).
     pub(crate) fn build(source: &SourceTree) -> ControlContext {
@@ -229,9 +249,15 @@ impl ControlContext {
             if *list == node.id || grouped_lists.contains_key(list) {
                 continue;
             }
-            let Some((_, _, list_selection)) = source.node(*list).and_then(list_semantics) else {
+            let Some((collection, selection_mode, list_selection)) =
+                source.node(*list).and_then(list_semantics)
+            else {
                 continue;
             };
+            // IX.6.6 검사 조건을 어긴 그룹(`InvalidLinkedContract`)은 합성하지 않고 List 매핑을 그대로 둡니다.
+            if selection_mode != SelectionMode::Single || !items_are_buttons(source, collection) {
+                continue;
+            }
             grouped_lists.insert(*list, selected.or(list_selection));
             context.absorbed.insert(*list);
         }
@@ -624,6 +650,74 @@ radioGroup #1 label=\"크기\"
         assert!(
             golden(&fallback).contains("radio #3 state{focusable=true,checked=selection:#52==#3}")
         );
+    }
+
+    #[test]
+    fn invalid_selection_group_keeps_list_mapping() {
+        // IX.6.6 검사 조건(연결 List가 Single이고 항목이 모두 Button)을 어긴 그룹은 radio로 합성하지 않습니다.
+        // 연결 List는 flatten되지 않고 자기 List 매핑(선택 방식·항목 문맥)을 그대로 가집니다.
+        let multiple = source(
+            vec![
+                frame(1)
+                    .with_control(SourceControl::single_selection_group(id(2), Some(id(50))))
+                    .with_children([id(2)]),
+                frame(2)
+                    .with_control(SourceControl::list(id(2), SelectionMode::Multiple, None))
+                    .with_children([id(3)]),
+                frame(3).with_control(SourceControl::button(id(13))),
+            ],
+            1,
+        );
+        assert_eq!(
+            golden(&multiple),
+            "\
+radioGroup #1
+  list #2 state{focusable=true,multiselectable=true} action{focus}
+    button #3 state{focusable=true} action{activate=action:#13,focus,select}
+"
+        );
+
+        // Single이지만 Button이 아닌 항목(#4)이 있음: 모든 항목이 List 항목 문맥(선택 상태·Select)을 유지합니다.
+        let mixed = source(
+            vec![
+                frame(1)
+                    .with_control(SourceControl::single_selection_group(id(2), Some(id(50))))
+                    .with_children([id(2)]),
+                frame(2)
+                    .with_control(SourceControl::list(
+                        id(2),
+                        SelectionMode::Single,
+                        Some(id(52)),
+                    ))
+                    .with_children([id(3), id(4)]),
+                frame(3).with_control(SourceControl::button(id(13))),
+                frame(4).with_children([id(5)]),
+                text(5),
+            ],
+            1,
+        );
+        assert_eq!(
+            golden(&mixed),
+            "\
+radioGroup #1
+  list #2 state{focusable=true} action{focus}
+    button #3 state{focusable=true,selected=selection:#52==#3} action{activate=action:#13,focus,select=state:#52}
+    listItem #4 state{selected=selection:#52==#4} action{select=state:#52}
+      staticText #5 label=text:#5
+"
+        );
+
+        // 항목이 없는 Single List는 IX.6.6 조건을 만족하므로 합성합니다(List flatten).
+        let empty = source(
+            vec![
+                frame(1)
+                    .with_control(SourceControl::single_selection_group(id(2), Some(id(50))))
+                    .with_children([id(2)]),
+                frame(2).with_control(SourceControl::list(id(2), SelectionMode::Single, None)),
+            ],
+            1,
+        );
+        assert_eq!(golden(&empty), "radioGroup #1\n");
     }
 
     #[test]
