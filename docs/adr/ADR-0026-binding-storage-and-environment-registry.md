@@ -53,9 +53,16 @@ blob      := len:u32 LE ++ bytes
 
 - `value_tag`는 `TypedValue` type tag(ADR-0008)와 같은 번호입니다(`codec::value_type_tag`). Enum
   타입에는 `EnumTypeId`를 붙입니다.
-- 하위 형식은 다시 인코딩하지 않고 그대로 blob에 담습니다. 따라서 binding이 직접 쓰는 정수(version,
-  blob 길이, `enum_type`)만 little-endian(V.1.1)입니다. `StableId`는 RFC 9562 바이트 순서이고,
-  `PropertyPath` 내부 정수와 AST literal 안 `TypedValue`의 길이·Enum 필드는 big-endian입니다.
+- 하위 형식은 다시 인코딩하지 않고 그대로 blob에 담습니다. 그래서 한 record 안에 엔디언이 섞입니다.
+  - little-endian(V.1.1): binding이 직접 쓰는 정수(version, blob 길이, `enum_type`)와 canonical
+    AST가 직접 쓰는 정수(version, node·child·pattern 수, op operand, child slot index, environment
+    key, blob 길이, type의 `enum_type`).
+  - big-endian: `PropertyPath` 내부 정수(key 수, key, index, key 길이)와 `TypedValue` 안의 정수
+    (String·Gradient·Typography 길이 프리픽스, Enum의 `enum_type`·`variant`, Gradient stop 수).
+  - little-endian: `TypedValue` 안의 `f32` payload(Number·Length·Percentage·Angle·Duration,
+    Color 채널, Shadow offset·blur, Gradient stop 위치). ADR-0008이 기록한 core-types 형식 그대로입니다.
+  - `StableId`는 RFC 9562 바이트 순서입니다.
+
   ADR-0007·ADR-0008이 열어 둔 질문에 대해, canonical AST와 binding 형식 안에서는 하위 bytes를
   "그대로 포함"하는 것으로 정합니다.
 - binding이 의존하는 canonical AST 부분은 다음과 같습니다(전체 배치는 `codec.rs` 모듈 문서).
@@ -228,9 +235,10 @@ AST의 reference payload `0x04`에 `u32` LE로 기록됩니다.
 - 같은 binding은 항상 같은 bytes입니다. 그래서 bytes 비교와 hash로 변경을 판정할 수 있습니다.
 - 저장 형식에는 environment key 이름이 아니라 번호가 들어갑니다. 표현식 bytes는 이름 문자열에
   의존하지 않습니다.
-- 한 record 안에 엔디언이 섞입니다. binding·AST 머리는 LE이고, `PropertyPath`·`TypedValue` 내부는
-  BE입니다. 같은 `EnumTypeId` 값이 type 위치(`type_spec`, AST Null literal)에서는 LE로, Enum literal
-  값 안에서는 BE로 기록됩니다.
+- 한 record 안에 엔디언이 섞입니다(1절). binding·AST가 직접 쓰는 정수는 LE이고, `PropertyPath`
+  내부 정수와 `TypedValue` 안의 정수(길이 프리픽스, Enum 필드, Gradient stop 수)는 BE입니다.
+  `TypedValue` 안의 `f32` payload는 LE입니다. 같은 `EnumTypeId` 값이 type 위치(`type_spec`, AST Null
+  literal)에서는 LE로, Enum literal 값 안에서는 BE로 기록됩니다.
 - 구버전 reader는 새 environment key를 미등록으로 봅니다. type 검사에서는 모르는 참조 오류가 됩니다.
   `BindingWorld`가 key registry로 타입을 알려 주면 orphan validator는 그 binding을 `SourceMissing`
   orphan으로 판정합니다. key 추가는 binding·AST 배치를 바꾸지 않습니다. 하지만 binding 저장을 연결한
@@ -241,11 +249,14 @@ AST의 reference payload `0x04`에 `u32` LE로 기록됩니다.
   않습니다.
 - orphan 손상 기본값의 안전값 표(VIII.8.3, `fallback.rs`)는 이 ADR 범위 밖입니다.
 
-이 ADR을 쓰며 확인한, 코드·보고서와 다른 점입니다(코드는 바꾸지 않았습니다).
+이 ADR을 쓰며 확인한, 코드·보고서와 다른 점입니다. ADR을 처음 기록할 때는 코드를 바꾸지 않았고,
+사후 리뷰 뒤 고친 항목은 그 항목에 적었습니다.
 
 - `binding.rs` 모듈 문서와 VIII.6.1 보고서는 형식이 "V.1.1 규칙(little-endian)"을 따른다고 적었습니다.
-  실제로 LE는 binding이 직접 쓰는 정수에만 해당하고, 포함된 `PropertyPath`·`TypedValue` bytes는
-  BE입니다(1절). `decode_property_path` 주석에는 BE가 적혀 있습니다.
+  실제로 binding이 직접 쓰는 정수는 LE이지만, 포함된 `PropertyPath` 내부 정수와 `TypedValue` 안의
+  정수는 BE이고 `TypedValue` 안의 `f32` payload는 LE입니다(1절). `decode_property_path` 주석에는
+  BE가 적혀 있습니다. 사후 리뷰 뒤 `binding.rs` 모듈 문서와 VIII.6.1 보고서의 정정을 이 내용으로
+  맞췄습니다.
 - ADR-0007·ADR-0008은 `PropertyPath`·`TypedValue` bytes가 "core-types 밖에서 사용되지 않는다"고
   적었습니다. 실제로는 canonical AST(VIII.2.2, VIII.2.5)와 binding 형식(VIII.6.1)이 이 bytes를 그대로
   포함합니다.

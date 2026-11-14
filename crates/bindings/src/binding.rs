@@ -8,7 +8,10 @@
 //!   ([`assignable`]: `Required(T)` ← `Required(T)`, `Optional(T)` ← `Required(T)`·`Optional(T)`).
 //! - **scope owner**: binding을 소유하는 node 또는 ComponentDefinition. Property Drilling 경계(§14.3)의 기준입니다.
 //!
-//! binding은 canonical binary 형식으로 round-trip합니다(V.1.1 규칙: 다중 바이트 little-endian, `u32` LE 길이 프리픽스).
+//! binding은 canonical binary 형식으로 round-trip합니다(ADR-0026). binding이 직접 쓰는 정수(version, blob 길이,
+//! `enum_type`)는 V.1.1 규칙(little-endian, `u32` LE 길이 프리픽스)을 따릅니다. 담는 하위 bytes는 다시 인코딩하지
+//! 않고 각 형식 그대로 둡니다. `PropertyPath` canonical bytes의 내부 정수는 big-endian이고, AST literal 안
+//! `TypedValue` bytes는 정수(길이 프리픽스·Enum 필드)가 big-endian, `f32` payload가 little-endian입니다.
 //!
 //! ```text
 //! binding   := version:u16 (= 1) ++ id[16] ++ blob(target) ++ type_spec ++ owner ++ blob(source)

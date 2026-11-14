@@ -58,11 +58,14 @@
 
 이 작업이 정한 binding binary 형식(`BINDING_FORMAT_VERSION = 1`)을
 `docs/adr/ADR-0026-binding-storage-and-environment-registry.md`에 Accepted(소급)로 기록했습니다.
-바이트 배치, 디코더 규칙, V.8 기준 버전·migration 규칙이 들어 있습니다. 문서만 변경했고 코드는
-바꾸지 않았습니다.
+바이트 배치, 디코더 규칙, V.8 기준 버전·migration 규칙이 들어 있습니다. ADR 기록 커밋은 문서만
+바꿨습니다. 그 뒤 사후 리뷰 수정에서 바꾼 코드는 아래 항목에 적었습니다.
 
 - **정정**: 위 "round-trip 형식"의 "V.1.1 규칙(LE)"은 binding이 직접 쓰는 정수(version, blob 길이,
-  `enum_type`)에만 해당합니다. 담겨 있는 `PropertyPath` bytes(III.2.2)와 AST literal 안
-  `TypedValue` bytes(III.3.5)는 big-endian 그대로입니다.
+  `enum_type`)에 해당합니다. 담겨 있는 하위 bytes는 각 형식 그대로입니다. `PropertyPath` bytes
+  (III.2.2)의 내부 정수는 big-endian입니다. AST literal 안 `TypedValue` bytes(III.3.5)는 정수(길이
+  프리픽스, Enum 필드, Gradient stop 수)가 big-endian이고 `f32` payload(Number·Length·Percentage·
+  Angle·Duration, Color 채널, Shadow, Gradient stop 위치)가 little-endian입니다(ADR-0008,
+  ADR-0026 1절). `binding.rs` 모듈 문서도 같은 내용으로 고쳤습니다.
 - **후속**: `ValueBinding` 고정 golden bytes test가 없습니다. 또 `crates/bindings/`가 ADR 보호 경로
   (`tools/xtask/src/adr_policy.rs`)에 없습니다. 둘 다 별도 변경으로 남깁니다.
