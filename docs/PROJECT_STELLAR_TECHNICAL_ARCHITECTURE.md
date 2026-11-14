@@ -1412,8 +1412,10 @@ index lock inode를 쓰기 FD로 보유하는지 확인한 뒤 잠금 안에서 
 적용 뒤에는 Index provider를 다시 읽습니다. 결과 소유를 확인할 수 없는 상태는 진단하며 외부
 변경을 무조건 복원으로 덮지 않습니다. 확인된 성공에는 일회용 복원 증표를 발급하고, 복원도
 잠금 안에서 증표의 전체 index bytes가 유지되는지 검사한 뒤 공식 Git으로 inverse 경로를 적용합니다.
-현재 검증된 OS/Git/index 지원 범위는
-`docs/task-reports/XIV.6.2.md`에 기록합니다.
+부모 종료가 일부 입력만 EOF로 확정하지 않도록 현재는 적용과 inverse 입력 모두 macOS의
+atomic pipe 쓰기 한도(512 bytes)에 맞는 후보만 승인합니다. 초과 후보는 분할하지 않고 진단합니다.
+검증된 OS/Git/index 지원 범위와 후속 보강은 `docs/task-reports/XIV.6.2.md`와
+`docs/task-reports/XIV.6.4.md`에 기록합니다.
 
 ---
 

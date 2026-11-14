@@ -209,15 +209,45 @@ fn expected_index(candidate: &WrittenCandidate) -> Result<IndexSnapshot, Publish
     })
 }
 
-fn input(candidate: &WrittenCandidate) -> Vec<u8> {
-    let mut input = Vec::new();
-    let oid_len = candidate
+fn oid_len(candidate: &WrittenCandidate) -> usize {
+    candidate
         .base_index()
         .entries
         .first()
         .map(|e| e.oid.as_str().len())
-        .unwrap_or(40);
-    let removal = format!("0 {}\t", "0".repeat(oid_len));
+        .or_else(|| {
+            candidate.changes().iter().find_map(|change| match change {
+                WrittenFileDelta::Upsert { oid, .. } => Some(oid.as_str().len()),
+                WrittenFileDelta::Remove { .. } => None,
+            })
+        })
+        .unwrap_or(40)
+}
+
+fn check_input_budget(candidate: &WrittenCandidate) -> Result<(), PublishError> {
+    // macOS sys/syslimits.h PIPE_BUF = 512. EOF가 commit인 protocol에서 부모 종료가
+    // 유효한 일부 레코드만 전달하지 않도록 적용과 inverse 모두 한 atomic write에 맞춥니다.
+    // 6-digit mode + space + OID + tab + path + NUL (remove는 더 짧습니다).
+    let record_overhead = oid_len(candidate) + 9;
+    let budget = candidate.changes().iter().fold(0usize, |total, change| {
+        total.saturating_add(
+            change_path(change)
+                .as_bytes()
+                .len()
+                .saturating_add(record_overhead),
+        )
+    });
+    if budget > 512 {
+        return Err(PublishError::Unsupported(
+            "index-info 적용/복원 입력의 512-byte 한도",
+        ));
+    }
+    Ok(())
+}
+
+fn input(candidate: &WrittenCandidate) -> Vec<u8> {
+    let mut input = Vec::new();
+    let removal = format!("0 {}\t", "0".repeat(oid_len(candidate)));
     // 삭제를 먼저 모두 적용하므로 정상적인 D/F 전환도 하나의 transaction입니다.
     for change in candidate.changes() {
         if let WrittenFileDelta::Remove { path } = change {
@@ -331,6 +361,7 @@ fn index_read_ready(pid: u32, stderr: &[u8]) -> bool {
 /// Working Tree나 인메모리 문서에 접근하지 않습니다. 아직 UI/FFI staging 진입점은 아닙니다.
 /// macOS의 Apple/upstream Git 2.54.0에서 자식의 FD 소유를 확인할 수 있을 때만 승인합니다.
 /// Linux 등 다른 OS·Git 버전은 실측 검증 전까지 진단합니다.
+/// 적용과 복원 입력 모두 atomic pipe 쓰기 한도(512 bytes) 안에 들어야 합니다.
 pub fn publish_candidate(
     git: &GatedGitRunner,
     worktree: &Path,
@@ -377,6 +408,7 @@ fn publish_inner(
         ));
     }
     let expected = expected_index(candidate)?;
+    check_input_budget(candidate)?;
     let root = git_path(
         git,
         worktree,

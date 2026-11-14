@@ -37,7 +37,7 @@
 
 ## 테스트
 
-- 잘못된 마지막 index-info 레코드의 경우 Git 자체 rollback으로 원본 index bytes가 유지됩니다. 한 번의 입력에서 일부 path만 commit하지 않습니다.
+- 잘못된 마지막 index-info 레코드의 경우 Git 자체 rollback으로 원본 index bytes가 유지됩니다. 완전한 입력의 처리 중 오류에서 일부 path만 commit하지 않습니다.
 - 성공 확인과 provider 읽기 전후 index bytes가 일치해야 복원 증표가 나옵니다. 증표는 복제·외부 생성이 불가능하고 해당 worktree에 묶입니다.
 - 복원은 같은 승인 경로로 inverse 여러 path를 전달합니다. 원래 snapshot·mode·삭제·D/F 전환과 unrelated flags/REUC가 유지됩니다.
 - 증표 이후 same-path·unrelated 내용·flags-only 변경은 StaleBase로 거부하고 외부 bytes를 그대로 둡니다. 실제 복원도 잠금 안에서 다시 bytes/snapshot을 검사합니다.
@@ -58,3 +58,11 @@
 - 입력 승인 이후 결과 미확정, 조기 강제 종료의 잔류 lock, 권한 부족은 자동 삭제/복원하지 않습니다. 재조회와 사용자 진단이 필요합니다.
 - Git lock 규약을 무시하는 직접 파일 교체나 강제 unlink는 지원 범위가 아닙니다. 지원 OS/버전/index 상태 제한은 XIV.6.2와 같습니다.
 - 제품 semantic 실패 처리는 XIV.6.5에서 이 증표를 사용해 연결합니다. UI/FFI·원격·release 작업은 실행하지 않았습니다.
+
+## 후속 입력 경계 보강
+
+- EOF를 commit으로 해석하는 Git에 큰 입력을 여러 write로 전송하면 부모 종료가 유효한 prefix만 확정할 수 있습니다. 현재 적용과 inverse 레코드를 모두 6자리 mode 기준으로 계산한 보수적 길이가 512 bytes를 넘으면 시작 전에 거부합니다. batch 분할은 없습니다.
+- 로컬 macOS SDK의 `sys/syslimits.h`에 `PIPE_BUF=512`가 정의되어 있습니다. [Apple XNU pipe 구현](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/sys_pipe.c)은 이 크기 이하의 입력 전체를 담을 공간을 확보하고 reader에게 count를 공개합니다. 기존 blocking ChildStdin의 첫 write에 전체 batch가 들어가도록 제한한 근거입니다. 전원 장애 durability나 SIGKILL 뒤 자동 복구를 보장한다는 의미는 아닙니다.
+- 456-byte/8-path 적용·복원 성공, 513-byte/9-path 거부, 정방향 삭제는 512 미만이지만 inverse가 초과하는 후보의 무변경 거부를 검증했습니다.
+- `core.splitIndex=true`, worktree 설정의 `index.sparse=true`도 입력 전에 진단하고 bytes/config를 보존합니다. 최초 성공 예상 probe는 각각 Unsupported 진단으로 실패했고, 기대를 무변경 거부로 고친 회귀 테스트가 통과했습니다.
+- 전용 target의 `cargo test -p stellar-git-porcelain index_publish::`: Apple와 임시 upstream Git 2.54.0 각각 종료 0, 21개 통과. `cargo test -p stellar-runtime staging::tests --no-default-features`: 종료 0, 7개 통과. runtime 실제 적용 테스트는 지원 환경인 macOS로 한정합니다.

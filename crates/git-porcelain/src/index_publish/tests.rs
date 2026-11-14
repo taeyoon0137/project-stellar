@@ -818,3 +818,102 @@ fn timeout_and_cancel_after_git_commit_issue_no_restore_receipt() {
         assert!(!fx.work().join(".git/index.lock").exists());
     }
 }
+
+#[test]
+fn configured_split_index_is_diagnosed_before_publish() {
+    let fx = fixture("publish-split-config");
+    fx.git(["config", "core.splitIndex", "true"]).unwrap();
+    let before = index_bytes(&fx.work().join(".git/index")).unwrap();
+    let c = candidate(
+        &fx,
+        vec![upsert(&fx, "selected", FileMode::REGULAR, b"candidate")],
+    );
+    assert!(matches!(
+        publish_with_receipt(&fx.gated(), fx.work(), &c, &GitCancelToken::new()),
+        Err(PublishError::Unsupported("split index"))
+    ));
+    assert_eq!(index_bytes(&fx.work().join(".git/index")).unwrap(), before);
+    assert!(!fx.work().join(".git/index.lock").exists());
+}
+
+#[test]
+fn configured_sparse_conversion_is_diagnosed_before_publish() {
+    let fx = fixture("publish-sparse-config");
+    for p in ["selected", "keep/a", "hide/a"] {
+        fx.write(p, b"base").unwrap();
+    }
+    fx.commit_all("baseline").unwrap();
+    fx.git(["sparse-checkout", "init", "--cone", "--no-sparse-index"])
+        .unwrap();
+    fx.git(["sparse-checkout", "set", "keep"]).unwrap();
+    fx.git(["config", "--worktree", "index.sparse", "true"])
+        .unwrap();
+    let c = candidate(
+        &fx,
+        vec![upsert(&fx, "selected", FileMode::REGULAR, b"candidate")],
+    );
+    let before = index_bytes(&fx.work().join(".git/index")).unwrap();
+    assert!(matches!(
+        publish_with_receipt(&fx.gated(), fx.work(), &c, &GitCancelToken::new()),
+        Err(PublishError::Unsupported("sparse index"))
+    ));
+    assert_eq!(index_bytes(&fx.work().join(".git/index")).unwrap(), before);
+    assert!(!fx.work().join(".git/index.lock").exists());
+    assert_eq!(
+        fx.git(["config", "--get", "index.sparse"]).unwrap().stdout,
+        b"true\n"
+    );
+}
+
+#[test]
+fn atomic_pipe_budget_covers_forward_and_inverse_before_any_index_update() {
+    let fx = fixture("publish-pipe-budget");
+    let oid = write_blob(&fx.gated(), fx.work(), b"blob").unwrap();
+    let changes = |count| {
+        (0..count)
+            .map(|i| WrittenFileDelta::Upsert {
+                path: path(&format!("file{i:04}")),
+                mode: FileMode::REGULAR,
+                oid: oid.clone(),
+            })
+            .collect()
+    };
+    let small = candidate(&fx, changes(8));
+    assert_eq!(input(&small).len(), 456);
+    let receipt =
+        publish_with_receipt(&fx.gated(), fx.work(), &small, &GitCancelToken::new()).unwrap();
+    assert_eq!(
+        restore_published(&fx.gated(), receipt, &GitCancelToken::new()).unwrap(),
+        *small.base_index()
+    );
+    let large = candidate(&fx, changes(9));
+    assert_eq!(input(&large).len(), 513);
+    let before = index_bytes(&fx.work().join(".git/index")).unwrap();
+    assert!(matches!(
+        publish(&fx, &large),
+        Err(PublishError::Unsupported(_))
+    ));
+    assert_eq!(index_bytes(&fx.work().join(".git/index")).unwrap(), before);
+
+    // 삭제 입력은 작아도 역방향 upsert가 한도를 넘으면 시작하지 않습니다.
+    for i in 0..9 {
+        fx.write(&format!("file{i:04}"), b"base").unwrap();
+    }
+    fx.git(["add", "-A"]).unwrap();
+    let removal = candidate(
+        &fx,
+        (0..9)
+            .map(|i| WrittenFileDelta::Remove {
+                path: path(&format!("file{i:04}")),
+            })
+            .collect(),
+    );
+    assert!(input(&removal).len() < 512);
+    let before = index_bytes(&fx.work().join(".git/index")).unwrap();
+    assert!(matches!(
+        publish(&fx, &removal),
+        Err(PublishError::Unsupported(_))
+    ));
+    assert_eq!(index_bytes(&fx.work().join(".git/index")).unwrap(), before);
+    assert!(!fx.work().join(".git/index.lock").exists());
+}

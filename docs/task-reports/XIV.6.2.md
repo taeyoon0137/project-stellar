@@ -62,5 +62,6 @@ Cargo 명령은 모두 `CARGO_TARGET_DIR="$PWD/target/semantic-index-publish"`�
 
 - 입력 승인 뒤 timeout·취소·Git 실패·재조회 불일치는 결과 미확정입니다. 이 단계는 무조건 rollback하지 않습니다. 성공이 확인된 publish의 조건부 복원과 semantic 검증 실패 처리(XIV.6.4/6.5)는 후속 단위입니다.
 - selected assume/skip/ITA 등 flags, split/sparse index, Git 저장소/index 환경 경로 재지정, Linux/Windows·다른 Git 버전은 지원하지 않습니다. unrelated flags/REUC는 유지합니다.
+- 후속 입력 보강은 XIV.6.4 보고서에 기록했습니다. 현재 적용·복원 양방향의 보수적 index-info 길이가 512 bytes를 넘으면 입력 전에 거부합니다.
 - 직접 index/lock을 강제 조작하는 writer 및 SIGKILL 뒤 잔류 lock을 자동 삭제하지 않습니다. FD 조회 권한·형식이 불확실하면 입력을 보내지 않습니다.
 - 동기 filesystem 읽기 자체는 OS에서 막힐 수 있습니다. Git 자식 실행/승인 대기에는 deadline·취소가 적용됩니다. 실제 앱 QA·CI·REF·release는 실행하지 않았습니다.
