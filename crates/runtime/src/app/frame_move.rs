@@ -1,0 +1,223 @@
+//! 활성 창에 표시된 Frame을 한 드래그당 하나의 문서 transaction으로 옮깁니다.
+
+use super::*;
+use stellar_commands::command::Command;
+use stellar_commands::document::{
+    frame::{keys, Clipping},
+    records::NodePayload,
+};
+use stellar_commands::id::{CommandId, CommandOrigin};
+use stellar_commands::property::{PropertyValue, SetProperty};
+use stellar_commands::transaction::CommandTransaction;
+use stellar_core_types::value::{Transform2D, Vec2};
+
+impl AppRuntime {
+    /// 표시한 View와 revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다.
+    /// 신뢰, 활성 View, 선택 및 조상 잠금은 document thread에서 다시 확인합니다.
+    pub fn move_canvas_frame(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        node: StableId,
+        delta: Vec2,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let sessions = ctx.app_sessions();
+            let entry = sessions
+                .windows
+                .get(&session)
+                .ok_or_else(|| unknown_window(session))?;
+            let trusted = sessions
+                .projects
+                .get(&entry.project)
+                .is_some_and(|p| p.trust == TrustStatus::Trusted);
+            if !trusted {
+                return Err(Failure::new(
+                    RequestFailure::TrustUnavailable,
+                    "Frame 이동에 프로젝트 신뢰가 필요합니다",
+                ));
+            }
+            let window = window_mut(ctx, session)?;
+            move_selected(window, request, view, revision, node, delta)?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+}
+
+fn move_selected(
+    window: &mut ProjectWindowSession,
+    request: RequestId,
+    view: StableId,
+    revision: DocumentRevision,
+    node: StableId,
+    delta: Vec2,
+) -> Result<(), Failure> {
+    let stale = || {
+        Failure::new(
+            RequestFailure::UnknownView,
+            "Frame의 선택·뷰·편집 상태가 변경되었습니다",
+        )
+    };
+    if window.revision() != revision
+        || window.tabs().active_view() != Some(view)
+        || window.view().selection().ids() != [node]
+    {
+        return Err(stale());
+    }
+    let model = window.document().ok_or_else(stale)?.model();
+    let root = model
+        .definition()
+        .pages
+        .iter()
+        .flat_map(|page| &page.views)
+        .find(|v| v.id == view)
+        .ok_or_else(stale)?
+        .root_frame;
+    let Some(NodePayload::Frame(target)) = model.payload(node) else {
+        return Err(stale());
+    };
+    let mut current = node;
+    loop {
+        let fields = model
+            .runtime_id(current)
+            .and_then(|id| model.columns().get(id))
+            .ok_or_else(stale)?;
+        if !fields.visible || fields.locked || model.modifier_stack(current).is_some() {
+            return Err(stale());
+        }
+        match model.payload(current) {
+            Some(NodePayload::Frame(frame))
+                if frame.layout_mode.is_none() && !matches!(frame.clipping, Clipping::Path(_)) => {}
+            Some(NodePayload::Fragment(_)) => {}
+            _ => return Err(stale()),
+        }
+        if current == root {
+            break;
+        }
+        current = fields
+            .parent
+            .and_then(|id| model.stable_id(id))
+            .ok_or_else(stale)?;
+    }
+    let (a, b, c, d, x, y) = target.transform.components();
+    let transform =
+        Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).map_err(|_| stale())?;
+    if transform != target.transform {
+        let command = Command::SetProperty(SetProperty {
+            node,
+            key: keys::TRANSFORM,
+            value: PropertyValue::Transform(transform),
+        });
+        let transaction =
+            CommandTransaction::new(command_id(window.window(), request), CommandOrigin::User)
+                .with_command(revision, command);
+        window.apply(&transaction).map_err(view_failure)?;
+    }
+    Ok(())
+}
+
+/// 요청 순번은 runtime 안에서만 유일하므로 창의 영속 ID와 함께 식별합니다.
+fn command_id(window: WindowSessionId, request: RequestId) -> CommandId {
+    let mut key = [0; 24];
+    key[..16].copy_from_slice(&window.stable_id().to_bytes());
+    key[16..].copy_from_slice(&request.0.to_le_bytes());
+    let digest = stellar_storage::hash::ContentHash::compute(&key);
+    let mut raw = [0; 16];
+    raw.copy_from_slice(&digest.digest()[..16]);
+    CommandId::from_bytes(raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_window_tests::{next_event, open_project, open_window};
+    use crate::window_session::test_fixtures::{
+        identity, sample_document, saved_project_with, sid, window,
+    };
+    use stellar_commands::selection::Selection;
+
+    fn transform_of(window: &ProjectWindowSession, node: StableId) -> Transform2D {
+        match window.document().unwrap().model().payload(node).unwrap() {
+            NodePayload::Frame(frame) => frame.transform,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn move_uses_visible_revision_selection_and_persists_one_transform() {
+        let mut model = sample_document();
+        let node = sid(11);
+        let Some(NodePayload::Frame(mut frame)) = model.payload(node).cloned() else {
+            unreachable!()
+        };
+        let original = Transform2D::new(0.5, 0.25, -0.25, 0.5, 12.5, -6.0).unwrap();
+        frame.transform = original;
+        model.set_payload(node, NodePayload::Frame(frame)).unwrap();
+        let project = saved_project_with("canvas-move", &[&model]);
+        let mut session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
+        let delta = Vec2::new(16.0, -3.5).unwrap();
+        let revision = session.revision();
+        assert!(move_selected(&mut session, RequestId(1), sid(3), revision, node, delta).is_err());
+        session.select(Selection::new([node], None)).unwrap();
+        assert!(move_selected(&mut session, RequestId(2), sid(4), revision, node, delta).is_err());
+        assert!(move_selected(&mut session, RequestId(3), sid(3), revision, node, delta).is_ok());
+        let translated = Transform2D::new(0.5, 0.25, -0.25, 0.5, 28.5, -9.5).unwrap();
+        assert_eq!(transform_of(&session, node), translated);
+        assert!(move_selected(&mut session, RequestId(4), sid(3), revision, node, delta).is_err());
+        assert!(session.undo().unwrap());
+        assert_eq!(transform_of(&session, node), original);
+        assert_eq!(session.view().selection().ids(), [node]);
+        assert!(session.redo().unwrap());
+        session.save_now().unwrap();
+        let reopened = ProjectWindowSession::load(identity(project.path()), window(2)).unwrap();
+        assert_eq!(transform_of(&reopened, node), translated);
+        assert_eq!(reopened.generation_number(), 2);
+    }
+
+    #[test]
+    fn locked_ancestor_prevents_moving_a_selected_child() {
+        let mut model = sample_document();
+        model.replace_flags(sid(10), true, true).unwrap();
+        let project = saved_project_with("canvas-move-locked", &[&model]);
+        let mut session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
+        let revision = session.revision();
+        session.select(Selection::new([sid(11)], None)).unwrap();
+        let delta = Vec2::new(12.0, -8.5).unwrap();
+        assert!(
+            move_selected(&mut session, RequestId(1), sid(3), revision, sid(11), delta).is_err()
+        );
+        assert_eq!(session.revision(), revision);
+        assert!(!session.has_unsaved_changes());
+    }
+
+    #[test]
+    fn untrusted_window_can_select_but_cannot_move_a_frame() {
+        let project = saved_project_with("canvas-move-restricted", &[&sample_document()]);
+        let app = AppRuntime::start().unwrap();
+        let owner = open_project(&app, project.path());
+        let (session, _, _) = open_window(&app, owner);
+        app.set_selection(session, vec![sid(11)]).unwrap();
+        assert!(matches!(
+            next_event(&app),
+            RuntimeEvent::WindowViewChanged { .. }
+        ));
+        let rev = app.state().window(session).unwrap().revision;
+        let attempted = app
+            .move_canvas_frame(
+                session,
+                sid(3),
+                rev,
+                sid(11),
+                Vec2::new(20.0, 10.0).unwrap(),
+            )
+            .unwrap();
+        assert!(
+            matches!(next_event(&app),RuntimeEvent::RequestFailed{request,failure: RequestFailure::TrustUnavailable,..} if request == attempted)
+        );
+        let state = app.state();
+        let summary = state.window(session).unwrap();
+        assert_eq!(summary.revision, rev);
+        assert!(!summary.has_unsaved_changes);
+    }
+}

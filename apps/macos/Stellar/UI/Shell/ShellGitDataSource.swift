@@ -8,7 +8,7 @@ final class ShellGitDataSource: GitPanelDataSource {
     private weak var session: ShellProjectSessionHandle?
     private weak var windowSession: ShellWindowSessionHandle?
     private var events: [GitPanelEvent] = []
-    private var trusted = false
+    private(set) var trusted = false
     private var message: String?
     private var trustRequest: UInt64?
     private var operation: UInt64?

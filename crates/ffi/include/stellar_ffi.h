@@ -295,6 +295,8 @@ StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, 
 
 /* Pan active viewport content in screen points; completes with WINDOW_VIEW_CHANGED or REQUEST_FAILED. */
 StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);
+/* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
+StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float dx, float dy, uint64_t *out_request);
 /* 창 session의 선택을 ids(StableId 16 byte × count)로 바꾸고 그 창 history에 기록합니다(count 0 = 비움). */
 StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, const uint8_t *ids, size_t count, uint64_t *out_request);
 
