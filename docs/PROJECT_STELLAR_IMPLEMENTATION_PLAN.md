@@ -1504,7 +1504,7 @@ tools/xtask/
 | XIV.14.3 | `[ ]` | component/token dependency staging scenario를 만듭니다. | invalid partial 차단, dependency 승인 후 성공. | XIV.5.4 |
 | XIV.14.4 | `[ ]` | branch merge conflict를 시스템 Git으로 만든 뒤 Semantic Conflict 해결·git add까지 통합 실행합니다. | unmerged entries 0, merge state 유지. | XIV.12.5 |
 | XIV.14.5 | `[ ]` | linked worktree에서 open/status/stage/commit을 실행해 common git dir과 per-worktree index가 올바른지 검증합니다. | 다른 worktree index 변경 없음. | XIV.1.2, XIV.6.6 |
-| XIV.14.6 | `[ ]` | non-UTF8 path, symlink, executable, LFS pointer, corrupt project scenario를 추가합니다. | 각 정책 결과 정확. | XIV.1.5, XIII.4, XIII.7.5 |
+| XIV.14.6 | `[x]` | non-UTF8 path, symlink, executable, LFS pointer, corrupt project scenario를 추가합니다. | 각 정책 결과 정확. | XIV.1.5, XIII.4, XIII.7.5 |
 
 **Phase XIV 완료 조건:** G7 통과.
 

@@ -107,6 +107,10 @@ mod test_support;
 #[cfg(any(test, feature = "test-support"))]
 pub mod fixture;
 
+/// Git 통합 corpus: 특수 경로·mode·LFS pointer·손상 프로젝트(XIV.14.6, 테스트 빌드 전용).
+#[cfg(all(test, unix))]
+mod corpus;
+
 /// Git snapshot 원천과 provider(XIV.2.3~).
 pub mod snapshot;
 
