@@ -70,3 +70,14 @@ release 측정 1회 결과(JSON 원문, 20,000 query, warmup 2,000):
 - scene은 작은 card 격자라 query당 후보가 적습니다(p99 8). 큰 node가 많이 겹치는 문서나 복잡한 path(cubic 수천 개)는
   비용이 다를 수 있어 XVI.3 fixture로 추가 측정이 필요합니다.
 - Text는 layout 상자 정책(`LayoutBoxesOnly`)으로 측정했습니다. line rect 제공자 비용은 포함하지 않습니다.
+
+## 후속 측정 (XI.3.4 narrow-phase 후속 수정 뒤)
+
+XI.3.4 후속 수정(허용 거리를 Butt cap 끝 너머·Inside/Outside 띠 반대쪽·열린 fill의 닫는 변까지 적용, 폭 0 stroke만 있는
+path 미적중, 반복 끝점 cap)으로 같은 seed의 적중 집계가 바뀌었습니다. benchmark 코드와 scene 구성은 그대로입니다.
+
+- `hit_count`: `narrow_hits` 46,028 → 46,214, `content_missed` 3,438 → 3,252. `queries_with_hit` 19,865, `broad_hits`
+  32,497, `hidden` 2,870, 후보 수 합계 61,038은 같습니다.
+- release 3회(`cargo test --release -p stellar-scene --test hit_test_benchmark -- --ignored --nocapture`)의 scene hit test
+  p50/p95/p99/max(ns): 1,125/2,166/5,792/28,875, 1,083/1,875/4,208/27,708, 1,083/1,833/2,333/36,417. p99는 모두 §6.2 목표
+  350,000 ns의 약 1.7% 이하입니다.

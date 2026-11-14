@@ -649,9 +649,231 @@ fn huge_or_degenerate_geometry_stays_bounded() {
     ] {
         let lines = flatten(&PathGeometry::new(commands).unwrap(), 0.05);
         assert_eq!(
-            outline_within(&lines, Pt::of(p(6.0, 6.0)), 2.0, cap),
+            outline_within(&lines, Pt::of(p(6.0, 6.0)), 2.0, 0.0, cap),
             expected,
             "{cap:?}"
         );
     }
+}
+
+fn tolerant(index: &SceneSpatialIndex, x: f32, y: f32, tolerance: f32) -> bool {
+    let options = NarrowPhaseOptions::with_tolerance(tolerance).unwrap();
+    !hit_test(index, p(x, y), &options, &LayoutBoxesOnly)
+        .hits
+        .is_empty()
+}
+
+#[test]
+fn zero_width_stroke_only_path_has_no_hit_area() {
+    // 리뷰 지적: 폭 0 stroke만 있는 path는 paint layer가 있으므로 내부 정책이 아니고, 폭 0 stroke는 띠가
+    // 없어 어디도 맞지 않습니다(허용 거리를 줘도 빈 영역은 넓어지지 않음).
+    let zero = || stroke(0.0, StrokeAlign::Center, StrokeCap::Round);
+    let index = index_of(vec![node(
+        1,
+        1,
+        path(square(20.0, 20.0, 80.0, 80.0, true), FillRule::NonZero),
+        Transform2D::identity(),
+        vec![zero()],
+    )]);
+    for (x, y) in [(50.0, 50.0), (20.0, 50.0), (21.0, 50.0)] {
+        let result = narrow(&index, x, y);
+        assert!(result.hits.is_empty(), "({x}, {y})");
+        assert_eq!(result.stats.content_missed, 1, "({x}, {y})");
+        assert!(!tolerant(&index, x, y, 2.0), "허용 거리 ({x}, {y})");
+    }
+    // fill이 함께 있으면 fill 영역은 그대로 맞습니다.
+    let index = index_of(vec![node(
+        1,
+        1,
+        path(square(20.0, 20.0, 80.0, 80.0, true), FillRule::NonZero),
+        Transform2D::identity(),
+        vec![zero(), fill()],
+    )]);
+    assert!(!narrow(&index, 50.0, 50.0).hits.is_empty());
+    assert!(narrow(&index, 10.0, 50.0).hits.is_empty());
+}
+
+#[test]
+fn repeated_end_points_do_not_change_caps() {
+    // 리뷰 지적: 열린 subpath가 같은 점으로 시작·끝나도(길이 0 선분) cap은 첫·마지막 길이 있는 선분이
+    // 받습니다. 가로선 (10,50)→(90,50), 폭 10, open_path_caps_follow_stroke_cap과 같은 기대값.
+    let (a, b) = (p(10.0, 50.0), p(90.0, 50.0));
+    let variants = [
+        vec![a, a, b],
+        vec![a, b, b],
+        vec![a, a, a, b, b],
+        vec![a, p(50.0, 50.0), p(50.0, 50.0), b],
+    ];
+    let cases = [
+        // (x, y, butt, round, square)
+        (5.0, 50.0, false, true, true),
+        (6.0, 50.0, false, true, true),
+        (6.0, 46.0, false, false, true),
+        (11.0, 46.0, true, true, true),
+        (50.0, 54.5, true, true, true),
+        (94.0, 50.0, false, true, true),
+        (94.0, 54.0, false, false, true),
+        (96.0, 50.0, false, false, false),
+    ];
+    for points in variants {
+        let mut commands = vec![PathCommand::MoveTo(points[0])];
+        commands.extend(points[1..].iter().map(|&point| PathCommand::LineTo(point)));
+        for (cap, column) in [
+            (StrokeCap::Butt, 0usize),
+            (StrokeCap::Round, 1),
+            (StrokeCap::Square, 2),
+        ] {
+            let index = index_of(vec![node(
+                1,
+                1,
+                path(commands.clone(), FillRule::NonZero),
+                Transform2D::identity(),
+                vec![stroke(10.0, StrokeAlign::Center, cap)],
+            )]);
+            for (x, y, butt, round, square) in cases {
+                let expected = [butt, round, square][column];
+                assert_eq!(
+                    !narrow(&index, x, y).hits.is_empty(),
+                    expected,
+                    "{points:?} {cap:?} ({x}, {y})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn tolerance_widens_aligned_stroke_bands_on_both_sides() {
+    // 리뷰 지적: 사각형 20~80, fill 없는 stroke 폭 6, 허용 거리 2. Inside 띠는 바깥으로, Outside 띠는
+    // 안쪽으로도 허용 거리만큼 넓어집니다.
+    let cases = [
+        // (x, center, inside, outside)
+        (28.5, false, false, false),
+        (27.5, false, true, false),
+        (25.5, false, true, false),
+        (24.5, true, true, false),
+        (22.5, true, true, false),
+        (21.0, true, true, true),
+        (19.0, true, true, true),
+        (17.5, true, false, true),
+        (16.5, true, false, true),
+        (14.5, false, false, true),
+        (12.5, false, false, true),
+        (11.5, false, false, false),
+    ];
+    for (align, column) in [
+        (StrokeAlign::Center, 0usize),
+        (StrokeAlign::Inside, 1),
+        (StrokeAlign::Outside, 2),
+    ] {
+        let index = index_of(vec![node(
+            1,
+            1,
+            path(square(20.0, 20.0, 80.0, 80.0, true), FillRule::NonZero),
+            Transform2D::identity(),
+            vec![stroke(6.0, align, StrokeCap::Butt)],
+        )]);
+        for (x, center, inside, outside) in cases {
+            let expected = [center, inside, outside][column];
+            assert_eq!(tolerant(&index, x, 50.0, 2.0), expected, "{align:?} x={x}");
+        }
+        // fill이 없으므로 중앙은 허용 거리가 있어도 통과합니다.
+        assert!(!tolerant(&index, 50.0, 50.0, 2.0), "{align:?}");
+    }
+}
+
+#[test]
+fn tolerance_follows_cap_shape_and_implicit_fill_edge() {
+    // 가로선 (10,50)→(90,50), 폭 10(반폭 5), 허용 거리 2.
+    let line = |cap| {
+        index_of(vec![node(
+            1,
+            1,
+            path(
+                vec![
+                    PathCommand::MoveTo(p(10.0, 50.0)),
+                    PathCommand::LineTo(p(90.0, 50.0)),
+                ],
+                FillRule::NonZero,
+            ),
+            Transform2D::identity(),
+            vec![stroke(10.0, StrokeAlign::Center, cap)],
+        )])
+    };
+    // Butt: 끝점 너머로도 허용 거리만큼(모서리는 둥글게) 넓어집니다.
+    let butt = line(StrokeCap::Butt);
+    for (x, y, expected) in [
+        (9.0, 50.0, true),
+        (8.5, 50.0, true),
+        (7.5, 50.0, false),
+        (9.0, 55.5, true),
+        (8.5, 56.5, false),
+        (91.5, 50.0, true),
+        (92.5, 50.0, false),
+    ] {
+        assert_eq!(tolerant(&butt, x, y, 2.0), expected, "Butt ({x}, {y})");
+    }
+    // Square: 연장 사각형을 둥글게 넓힙니다(모서리 대각 바깥 √2·1.5 > 2는 제외).
+    let square_cap = line(StrokeCap::Square);
+    for (x, y, expected) in [
+        (3.5, 50.0, true),
+        (2.5, 50.0, false),
+        (4.0, 56.0, true),
+        (3.5, 56.5, false),
+    ] {
+        assert_eq!(
+            tolerant(&square_cap, x, y, 2.0),
+            expected,
+            "Square ({x}, {y})"
+        );
+    }
+    // 열린 path의 fill은 암묵적으로 닫는 변((100,100)→(0,0))도 허용 거리만큼 넓어집니다.
+    let index = index_of(vec![node(
+        1,
+        1,
+        path(
+            vec![
+                PathCommand::MoveTo(p(0.0, 0.0)),
+                PathCommand::LineTo(p(100.0, 0.0)),
+                PathCommand::LineTo(p(100.0, 100.0)),
+            ],
+            FillRule::NonZero,
+        ),
+        Transform2D::identity(),
+        vec![fill()],
+    )]);
+    assert!(narrow(&index, 40.0, 41.0).hits.is_empty());
+    assert!(tolerant(&index, 40.0, 41.0, 1.0));
+    assert!(!tolerant(&index, 40.0, 42.0, 1.0));
+}
+
+#[test]
+fn outside_square_cap_corner_is_inside_broad_phase_bounds() {
+    // 리뷰 지적: Outside stroke의 Square cap은 끝점 너머로 폭만큼 연장되어 대각 모서리가 폭·√2까지
+    // 나갑니다. 대각선 (0,0)→(100,100), Outside 폭 10, fill 없음(면적 0이라 어디나 바깥).
+    let index = index_of(vec![node(
+        1,
+        1,
+        path(
+            vec![
+                PathCommand::MoveTo(p(0.0, 0.0)),
+                PathCommand::LineTo(p(100.0, 100.0)),
+            ],
+            FillRule::NonZero,
+        ),
+        Transform2D::identity(),
+        vec![stroke(10.0, StrokeAlign::Outside, StrokeCap::Square)],
+    )]);
+    // (0, -12.7)은 시작점에서 선 반대 방향·수직으로 각각 약 8.98: 연장 사각형 안이고 bounds 확장 10
+    // 밖입니다.
+    let node = index.node(ZOrder(1)).unwrap();
+    assert!(content_contains(
+        node,
+        p(0.0, -12.7),
+        &NarrowPhaseOptions::EXACT,
+        &LayoutBoxesOnly
+    ));
+    assert_eq!(sources(&narrow(&index, 0.0, -12.7)), vec![id(1)]);
+    // 연장 사각형 모서리 (0, -10√2) 바깥은 맞지 않습니다.
+    assert!(narrow(&index, 0.0, -14.5).hits.is_empty());
 }

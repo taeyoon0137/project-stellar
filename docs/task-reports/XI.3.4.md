@@ -86,3 +86,57 @@
 - 경계 위 점은 부동소수 오차 범위에서 어느 쪽이든 될 수 있습니다(oracle은 경계 0.1 이내를 비교에서 제외).
 - `TextHitGeometry`를 실제 text layout cache(X.10.5)에 연결하는 것은 runtime 통합 작업 몫입니다.
 - 지연(p99) 측정은 XI.3.6 benchmark 범위입니다.
+
+## 후속 수정 (리뷰 minor: path stroke 띠·허용 거리 경계 사례)
+
+리뷰가 지적한 경계 사례 3건을 고쳤습니다. 검증 기준 fixture(node kind별)는 수정 전에도 통과했고 지금도 통과하므로
+상태는 `[x]` 그대로입니다. 각 사례는 먼저 실패하는 테스트로 재현한 뒤 고쳤습니다.
+
+- **폭 0 stroke만 있는 path**: 폭 0 stroke를 "stroke 없음"으로 세어 paint 없는 path의 내부 정책으로 떨어졌고, 그래서
+  내부 전체가 맞았습니다. 모듈 문서대로 내부 정책은 paint layer가 하나도 없을 때만 쓰고(`PaintStack::paints_nothing`과
+  같은 기준인 layer 목록 비어 있음), 폭 0 stroke는 띠가 없으므로 이런 path는 어디도 맞지 않습니다(허용 거리로도
+  넓어지지 않음).
+- **열린 subpath의 반복 끝점**: `MoveTo a, LineTo a, LineTo b`처럼 길이 0 선분으로 시작·끝나면 cap이 길이 0 선분에
+  붙고, 실제 첫·마지막 선분 끝은 round join으로 판정되어 Butt·Square cap 끝이 Round처럼 넓게 맞았습니다. 이제 길이 0
+  선분은 끝 모양을 정하지 않고 첫·마지막 길이 있는 선분이 cap을 받습니다. 모든 점이 같은 열린 subpath는 전처럼 Round
+  cap일 때만 점(원)입니다.
+- **허용 거리**: 모듈 문서의 "모든 content 영역을 넓힘"과 달리 ① fill 없는 Inside 띠는 바깥쪽, Outside 띠는 안쪽으로
+  넓어지지 않았고, ② broad-phase stroke 확장(`StrokeLayer::outset`)이 Outside + Square cap의 대각 모서리(폭·√2)를 폭까지만
+  잡아 narrow-phase가 맞다고 볼 점을 미리 버렸습니다. 고치면서 같은 문서 계약을 어기던 두 곳도 함께 고쳤습니다. ③ Butt
+  cap 끝 너머로는 허용 거리가 적용되지 않았고 Square cap 연장부는 모서리가 각진 채로 넓어졌습니다. ④ 열린 path fill은
+  암묵적으로 닫는 변 근처에서 넓어지지 않았습니다.
+  - 선분 띠 판정(`segment_band_within`)이 반폭과 허용 거리를 따로 받아, 끝 모양 그대로의 띠를 허용 거리만큼 둥글게
+    넓힙니다(Butt·Square 끝 너머 포함). tolerance 0에서는 이전 판정과 같습니다.
+  - Inside·Outside 띠의 반대쪽은 그린 윤곽에서 허용 거리 이내로 근사합니다. fill이 면적 없는 곳(직선 하나 등)에서는 그
+    쪽에 실제 띠가 없어도 허용 거리 안이면 맞을 수 있습니다(모듈 문서에 적음).
+  - fill의 허용 거리는 암묵적으로 닫는 변을 포함한 fill 경계에서 잽니다(`fill_boundary_within`).
+  - `StrokeLayer::outset`의 Square cap 확장은 띠 반폭(Center 폭/2, Outside 폭)의 √2배입니다. Inside는 이전과 같은 폭/2·√2
+    (보수적)입니다. 이 값은 hit·render bounds에 쓰이므로 Outside + Square stroke node의 bounds만 넓어집니다.
+- **회귀 테스트**(`crates/scene/src/narrow_phase/tests.rs`, `crates/scene/src/stack.rs`):
+  - `zero_width_stroke_only_path_has_no_hit_area`: 폭 0 stroke만 있는 사각형 path는 내부·윤곽 위 모두 미적중(허용 거리 2도
+    미적중), fill을 더하면 fill 영역은 적중.
+  - `repeated_end_points_do_not_change_caps`: 시작·끝·중간 반복점 4가지 변형에서 Butt/Round/Square 기대값이 반복점 없는
+    선과 같음.
+  - `tolerance_widens_aligned_stroke_bands_on_both_sides`: 사각형 20\~80, 폭 6, 허용 거리 2에서 Center·Inside·Outside 띠
+    경계 11점.
+  - `tolerance_follows_cap_shape_and_implicit_fill_edge`: Butt 끝 너머·둥근 모서리, Square 연장부 둥근 모서리, 열린 삼각형
+    fill의 암묵적으로 닫는 변.
+  - `outside_square_cap_corner_is_inside_broad_phase_bounds`: 대각선 Outside 폭 10 Square cap의 연장 모서리 점이 narrow
+    판정과 같게 `hit_test`에서도 적중.
+  - `stack::tests::paint_values_are_validated`: Outside + Square `outset` = 폭·√2.
+- **변이 확인**: 수정 전 코드에서 위 테스트 6개가 모두 실패했습니다. 수정 뒤 ⓐ fill 허용 거리를 닫는 변 없는 윤곽으로,
+  ⓑ 띠 확장 모서리를 각진 거리(`max(dx, dy)`)로, ⓒ cap을 첫·마지막 선분 번호에 다시 붙이는 3개 변이가 각각 해당 테스트를
+  실패시켰고, 원본으로 복원했습니다.
+- **XI.3.6 benchmark 영향**: 같은 seed에서 view 허용 거리 2 px 적중이 늘어 `narrow_hits` 46,028 → 46,214,
+  `content_missed` 3,438 → 3,252가 되었습니다(후보 수 61,038·broad 기준선은 같음). release 3회 p99는 5,792 / 4,208 /
+  2,333 ns로 §6.2 목표 350,000 ns보다 훨씬 낮습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-scene` | unit 100, hit_test_benchmark 1 passed·1 ignored, doc 2 passed, 0 failed |
+| `cargo clippy -p stellar-scene --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-scene -- --check` | 통과 |
+| `cargo test -p stellar-renderer-core -p stellar-export` | export unit 55·doc 0, renderer-core unit 95·doc 3 passed, 0 failed |
+| `cargo test -p stellar-runtime -p stellar-renderer-metal` | runtime unit 41·통합 8+2·doc 11, renderer-metal unit 0·doc 0, 0 failed |
+| `cargo run -q -p xtask -- validate-task-report`(XI.3.4, XI.3.6)·`validate-task-status`·`sync-plan --check`, `git diff --check` | 모두 exit 0 |
+| `cargo test --release -p stellar-scene --test hit_test_benchmark -- --ignored --nocapture`(3회) | 통과, p99 위 값 |

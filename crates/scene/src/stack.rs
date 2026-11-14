@@ -297,9 +297,11 @@ impl StrokeLayer {
             StrokeAlign::Inside => 0.0,
             StrokeAlign::Outside => width,
         };
-        // Square cap은 끝점 너머로 반폭만큼 연장되므로 대각 방향으로 반폭의 √2배까지 나갑니다.
+        // Square cap은 끝점 너머로 띠 반폭만큼 연장되므로 대각 방향으로 그 √2배까지 나갑니다. 띠 반폭은
+        // Center 폭/2, Outside 폭(두 배 폭 stroke의 바깥쪽)입니다. Inside 연장은 fill 안으로 잘려 geometry
+        // 밖으로 나가지 않지만 폭/2 기준으로 보수적으로 잡습니다.
         match self.cap {
-            StrokeCap::Square => along_edge.max(width / 2.0 * std::f32::consts::SQRT_2),
+            StrokeCap::Square => along_edge.max(width / 2.0) * std::f32::consts::SQRT_2,
             StrokeCap::Butt | StrokeCap::Round => along_edge,
         }
     }
@@ -572,6 +574,10 @@ mod tests {
         assert_eq!(inside.outset(), 0.0);
         assert_eq!(outside.outset(), 4.0);
         assert!(square.outset() > 2.0 && square.outset() < 3.0);
+        // Outside stroke의 Square cap은 끝점 너머로 폭만큼 연장되어 대각 모서리가 폭·√2까지 나갑니다.
+        let outside_square =
+            StrokeLayer::new(red, 4.0, StrokeAlign::Outside, StrokeCap::Square).unwrap();
+        assert!((outside_square.outset() - 4.0 * std::f32::consts::SQRT_2).abs() < 1e-5);
         assert!(PaintStack::empty().paints_nothing());
         assert_eq!(PaintStackRef::empty(), PaintStackRef::default());
     }

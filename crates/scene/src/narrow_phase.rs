@@ -6,7 +6,7 @@
 //! | content | 원본 node | 정책 | 맞는 영역 |
 //! |---|---|---|---|
 //! | `Rect` | Frame | geometry | 실효 모서리 radius 둥근 사각형 전체(칠 유무 무관) + stroke가 상자 밖으로 나가는 띠 |
-//! | `Path` | Shape(VI.5.6 평가 결과)·Path | geometry | fill layer가 있으면 fill rule 내부, stroke layer마다 정렬·끝 모양별 띠. paint layer가 하나도 없으면 내부 |
+//! | `Path` | Shape(VI.5.6 평가 결과)·Path | geometry | fill layer가 있으면 fill rule 내부, stroke layer마다 정렬·끝 모양별 띠. paint layer가 하나도 없으면 내부(폭 0 stroke만 있으면 맞는 곳 없음) |
 //! | `Text` | Text | bounds | [`TextHitGeometry`]가 line rect(X.10.3 selection rect)를 주면 그 합집합, 없거나 비면 layout 상자. glyph 윤곽은 보지 않음 |
 //! | `Image` | Image | bounds | 배치 상자 전체(fit·crop·투명 픽셀과 무관) |
 //!
@@ -21,8 +21,10 @@
 //! - **join**: stroke join은 아직 정의되지 않아(XI.6.2) round join으로 봅니다. miter join의 뾰족한
 //!   끝은 맞지 않을 수 있고, bevel보다는 넓게 맞습니다.
 //! - **cap**: 열린 subpath 끝만 [`StrokeCap`]을 따릅니다. Butt은 끝점에서 자르고, Round는 반원,
-//!   Square는 반폭만큼 연장한 사각형입니다. 닫힌 subpath(Close)는 끝 모양이 없습니다. 점 하나뿐인
-//!   subpath(MoveTo만)와 길이 0 선분 하나뿐인 열린 subpath는 Round cap일 때만 원으로 맞습니다.
+//!   Square는 반폭만큼 연장한 사각형입니다(Inside·Outside 띠의 반폭은 폭). 닫힌 subpath(Close)는 끝
+//!   모양이 없습니다. 열린 subpath의 길이 0 선분(같은 점 반복)은 끝 모양을 정하지 않고, 첫·마지막 길이
+//!   있는 선분이 cap을 받습니다. 모든 점이 같은 열린 subpath(MoveTo만 포함)는 Round cap일 때만 원으로
+//!   맞습니다.
 //! - **상자형 content**(Frame·Text·Image): stroke는 상자 밖으로 나가는 거리(Center 폭/2, Outside 폭,
 //!   Inside 0)만큼 상자를 넓힙니다.
 //! - **곡선**: cubic은 world 기준 허용 오차 [`FLATTEN_TOLERANCE`]를 node 평균 축척으로 나눈 local 허용
@@ -31,8 +33,11 @@
 //! - **path clip**: broad-phase의 control 껍질 대신 clip path 내부(clip fill rule)로 정밀 판정합니다.
 //!   rect clip은 broad-phase가 이미 정확합니다.
 //! - **허용 거리**: [`NarrowPhaseOptions::tolerance`](world 단위)만큼 모든 content 영역을 넓힙니다
-//!   (가는 선·작은 node 선택용). local 거리는 node 평균 축척(`√|det|`)으로 나눈 근사입니다. clip은
-//!   넓히지 않습니다.
+//!   (가는 선·작은 node 선택용). fill은 암묵적으로 닫는 변을 포함한 경계에서, stroke 띠는 끝 모양
+//!   그대로(Butt·Square 끝 너머도, 모서리는 둥글게) 넓힙니다. Inside 띠의 바깥쪽과 Outside 띠의 안쪽은
+//!   그린 윤곽에서 허용 거리 이내로 근사합니다(면적 없는 fill처럼 그 쪽에 띠가 실제로 없어도 맞을 수
+//!   있음). 빈 영역(폭 0 stroke)은 넓히지 않습니다. local 거리는 node 평균 축척(`√|det|`)으로 나눈
+//!   근사입니다. clip은 넓히지 않습니다.
 
 use stellar_core_types::value::{FiniteF32, Rect, Transform2D, Vec2};
 
@@ -252,93 +257,114 @@ fn fill_contains(lines: &[Polyline], fill_rule: FillRule, point: Pt) -> bool {
     }
 }
 
-/// 선분 `a→b`에서 `point`까지 거리가 `reach` 이내인지. 열린 끝(`cap_start`, `cap_end`)은 `cap`을
-/// 따르고, 나머지 끝은 round(join)입니다.
-fn segment_within(
+/// `point`가 점 `center` 둘레 반지름 `radius` 원 안인지.
+fn in_disc(center: Pt, radius: f64, point: Pt) -> bool {
+    point.sub(center).len2() <= radius * radius
+}
+
+/// 선분 `a→b`의 stroke 띠(반폭 `half`)를 `tolerance`만큼 넓힌 영역(모서리는 둥글게) 안에 `point`가
+/// 있는지.
+///
+/// 열린 끝(`cap_start`, `cap_end`)은 `cap`을 따르고(Butt 자름, Round 반원, Square 반폭 연장), 나머지
+/// 끝은 round(join)입니다. 길이 0 선분은 열린 끝이 있으면 Round만 점(원)으로 그립니다.
+#[allow(clippy::too_many_arguments)]
+fn segment_band_within(
     a: Pt,
     b: Pt,
     point: Pt,
-    reach: f64,
+    half: f64,
+    tolerance: f64,
     cap: StrokeCap,
     cap_start: bool,
     cap_end: bool,
 ) -> bool {
+    let round_start = !cap_start || cap == StrokeCap::Round;
+    let round_end = !cap_end || cap == StrokeCap::Round;
+    let reach = half + tolerance;
     let ab = b.sub(a);
-    let ap = point.sub(a);
     let len2 = ab.len2();
     if len2 == 0.0 {
-        // 길이 0 선분: 열린 끝이 있으면 Round만 점(원)으로 그립니다.
-        let round = !(cap_start || cap_end) || cap == StrokeCap::Round;
-        return round && ap.len2() <= reach * reach;
+        return round_start && round_end && in_disc(a, reach, point);
     }
-    let t = ap.dot(ab) / len2;
+    if (round_start && in_disc(a, reach, point)) || (round_end && in_disc(b, reach, point)) {
+        return true;
+    }
     let len = len2.sqrt();
-    let (start_limit, end_limit) = {
-        let extend = |open: bool| match (open, cap) {
-            (false, _) | (true, StrokeCap::Round) => f64::INFINITY,
-            (true, StrokeCap::Butt) => 0.0,
-            (true, StrokeCap::Square) => reach / len,
-        };
-        (extend(cap_start), extend(cap_end))
+    let ap = point.sub(a);
+    // 선분 방향 좌표(a에서 b 쪽)와 수직 거리.
+    let along = ap.dot(ab) / len;
+    let across = (ab.cross(ap) / len).abs();
+    // 몸통 사각형(Square 끝은 반폭만큼 연장)까지의 거리가 허용 거리 이내인지.
+    let start = if cap_start && cap == StrokeCap::Square {
+        -half
+    } else {
+        0.0
     };
-    if t < -start_limit || t > 1.0 + end_limit {
-        return false;
-    }
-    if (t < 0.0 && cap_start && cap == StrokeCap::Square)
-        || (t > 1.0 && cap_end && cap == StrokeCap::Square)
-    {
-        // Square cap 연장부: 선분 방향 사각형 안.
-        return (ab.cross(ap) / len).abs() <= reach;
-    }
-    let clamped = t.clamp(0.0, 1.0);
-    let nearest = Pt {
-        x: a.x + ab.x * clamped,
-        y: a.y + ab.y * clamped,
+    let end = if cap_end && cap == StrokeCap::Square {
+        len + half
+    } else {
+        len
     };
-    point.sub(nearest).len2() <= reach * reach
+    let dx = (start - along).max(along - end).max(0.0);
+    let dy = (across - half).max(0.0);
+    dx * dx + dy * dy <= tolerance * tolerance
 }
 
-/// 선분화한 윤곽에서 `point`까지 거리가 `reach` 이내인지(열린 끝은 `cap`).
-fn outline_within(lines: &[Polyline], point: Pt, reach: f64, cap: StrokeCap) -> bool {
-    for line in lines {
-        let points = &line.points;
-        match points.len() {
-            0 => continue,
-            1 => {
-                // MoveTo만 있는 subpath: Round cap만 점으로 그립니다.
-                if !line.closed
-                    && cap == StrokeCap::Round
-                    && point.sub(points[0]).len2() <= reach * reach
-                {
-                    return true;
-                }
-                continue;
-            }
-            _ => {}
-        }
-        let segments = points.len() - 1;
-        for i in 0..segments {
-            let open = !line.closed;
-            if segment_within(
-                points[i],
-                points[i + 1],
-                point,
-                reach,
-                cap,
-                open && i == 0,
-                open && i + 1 == segments,
-            ) {
-                return true;
-            }
-        }
-        if line.closed {
-            let (last, first) = (points[segments], points[0]);
-            if segment_within(last, first, point, reach, cap, false, false) {
-                return true;
-            }
-        }
+/// 선분화한 윤곽의 stroke 띠(반폭 `half`, 열린 끝은 `cap`)를 `tolerance`만큼 넓힌 영역 안에 `point`가
+/// 있는지.
+///
+/// 열린 subpath의 길이 0 선분(같은 점 반복)은 끝 모양을 정하지 않습니다. 첫·마지막 길이 있는 선분이
+/// cap을 받고, 길이 있는 선분이 없으면(점 하나뿐) Round cap일 때만 점(원)으로 그립니다.
+fn outline_within(
+    lines: &[Polyline],
+    point: Pt,
+    half: f64,
+    tolerance: f64,
+    cap: StrokeCap,
+) -> bool {
+    lines
+        .iter()
+        .any(|line| polyline_within(line, point, half, tolerance, cap))
+}
+
+fn polyline_within(line: &Polyline, point: Pt, half: f64, tolerance: f64, cap: StrokeCap) -> bool {
+    let points = &line.points;
+    let within = |a: Pt, b: Pt, cap_start: bool, cap_end: bool| {
+        segment_band_within(a, b, point, half, tolerance, cap, cap_start, cap_end)
+    };
+    if line.closed {
+        // 닫힌 subpath: 끝 모양이 없고 모든 꼭짓점이 join입니다. 점 하나뿐이면 띠가 없습니다.
+        let count = points.len();
+        return count >= 2
+            && (0..count).any(|i| within(points[i], points[(i + 1) % count], false, false));
     }
-    false
+    let Some(&origin) = points.first() else {
+        return false;
+    };
+    let segments = points.len() - 1;
+    let degenerate = |i: usize| points[i + 1].sub(points[i]).len2() == 0.0;
+    let (Some(first), Some(last)) = (
+        (0..segments).find(|&i| !degenerate(i)),
+        (0..segments).rev().find(|&i| !degenerate(i)),
+    ) else {
+        // 모든 점이 같은 열린 subpath(MoveTo만 포함): Round cap만 점으로 그립니다.
+        return cap == StrokeCap::Round && in_disc(origin, half + tolerance, point);
+    };
+    // 사이의 길이 0 선분은 이웃 선분의 round join 원에 포함되므로 건너뜁니다.
+    (first..=last)
+        .filter(|&i| !degenerate(i))
+        .any(|i| within(points[i], points[i + 1], i == first, i == last))
+}
+
+/// fill 영역 경계(열린 subpath는 암묵적으로 닫음)에서 `point`까지 거리가 `tolerance` 이내인지.
+fn fill_boundary_within(lines: &[Polyline], point: Pt, tolerance: f64) -> bool {
+    lines.iter().any(|line| {
+        let count = line.points.len();
+        (0..count).any(|i| {
+            let (a, b) = (line.points[i], line.points[(i + 1) % count]);
+            segment_band_within(a, b, point, 0.0, tolerance, StrokeCap::Round, false, false)
+        })
+    })
 }
 
 /// stroke가 상자 밖으로 나가는 거리(상자형 content용, 끝 모양 없음).
@@ -413,41 +439,40 @@ fn path_contains(
 ) -> bool {
     let lines = flatten(geometry, scale.flatten);
     let layers = &node.paint().get().layers;
+    let tolerance = scale.tolerance;
     let has_fill = layers
         .iter()
         .any(|layer| matches!(layer, PaintLayer::Fill(_)));
+    // 폭 0 stroke는 띠가 없어 건너뜁니다(허용 거리로도 넓어지지 않음).
     let strokes = layers.iter().filter_map(|layer| match layer {
         PaintLayer::Stroke(stroke) if stroke.width() > 0.0 => Some(stroke),
         _ => None,
     });
-    let mut has_stroke = false;
     let mut inside: Option<bool> = None;
     let mut inside_fill = || *inside.get_or_insert_with(|| fill_contains(&lines, fill_rule, point));
     for stroke in strokes {
-        has_stroke = true;
         let width = f64::from(stroke.width());
         let hit = match stroke.align() {
             StrokeAlign::Center => {
-                outline_within(&lines, point, width / 2.0 + scale.tolerance, stroke.cap())
+                outline_within(&lines, point, width / 2.0, tolerance, stroke.cap())
             }
-            StrokeAlign::Inside => {
-                inside_fill()
-                    && outline_within(&lines, point, width + scale.tolerance, stroke.cap())
-            }
-            StrokeAlign::Outside => {
-                !inside_fill()
-                    && outline_within(&lines, point, width + scale.tolerance, stroke.cap())
+            StrokeAlign::Inside | StrokeAlign::Outside => {
+                // 띠 쪽(Inside는 fill 안, Outside는 밖)은 폭까지, 반대쪽은 윤곽에서 허용 거리까지입니다.
+                if inside_fill() == (stroke.align() == StrokeAlign::Inside) {
+                    outline_within(&lines, point, width, tolerance, stroke.cap())
+                } else {
+                    tolerance > 0.0 && outline_within(&lines, point, 0.0, tolerance, stroke.cap())
+                }
             }
         };
         if hit {
             return true;
         }
     }
-    if has_fill || !has_stroke {
-        // fill 영역(paint가 없으면 내부 정책). 허용 거리는 윤곽 근처까지 넓힙니다.
+    if has_fill || layers.is_empty() {
+        // fill 영역(paint layer가 하나도 없으면 내부 정책). 허용 거리는 fill 경계 근처까지 넓힙니다.
         return inside_fill()
-            || (scale.tolerance > 0.0
-                && outline_within(&lines, point, scale.tolerance, StrokeCap::Round));
+            || (tolerance > 0.0 && fill_boundary_within(&lines, point, tolerance));
     }
     false
 }
