@@ -24,3 +24,6 @@ pub mod capability;
 
 /// 앱 내장 profile registry release (IX.10.5).
 pub mod builtin;
+
+/// 선택 profile의 생성 가능 여부와 비활성화 사유 조회 (IX.10.6).
+pub mod query;
