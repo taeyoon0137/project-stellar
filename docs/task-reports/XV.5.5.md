@@ -68,7 +68,7 @@
   미해결 형태가 같아져 실패했습니다(수정 전 `assertion left != right failed`).
 - 수정: 참조 전체(선언 이름·LibraryId·종류·StableId)와 위치를 보존하는 `UnresolvedExternalRef`를 추가하고
   `unresolved_external`·`unresolved_at`이 이 타입을 돌려줍니다. core-types 변환은 `diagnostic_ref()`(진단
-  집계용 손실 변환)로만 남겼습니다. 모듈 문서와 ADR-0023 결정 7을 함께 고쳤습니다.
+  집계용 손실 변환)로만 남겼습니다. 모듈 문서와 ADR-0027 결정 7을 함께 고쳤습니다.
 - 검증: 위 재현 테스트 통과, canonical 참조 텍스트 + 위치로 다시 만든 값이 같음
   (`unresolved_external_preserves_reference_identity`), offline fixture의 미해결 참조가 선언 이름 `c`·
   library 3·StableId를 보존(`offline_missing_library_opens_partially_with_unavailable_diagnostic`).

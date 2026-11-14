@@ -135,7 +135,7 @@ impl fmt::Display for ResourceUnavailable<'_> {
 ///
 /// 원래 [`ExternalResourceRef`] 전체(선언 이름·LibraryId·종류·StableId)와 발견 위치를 그대로 보존합니다.
 /// 그래서 cache가 돌아오거나 의존성을 다시 받은 뒤 [`reference`](Self::reference)를 그대로 다시 해석하면
-/// 원래 resource에 연결됩니다. 저장할 때는 참조의 canonical 텍스트(ADR-0023 결정 7)와 위치를 함께
+/// 원래 resource에 연결됩니다. 저장할 때는 참조의 canonical 텍스트(ADR-0027 결정 7)와 위치를 함께
 /// 씁니다.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct UnresolvedExternalRef {

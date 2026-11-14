@@ -11,7 +11,7 @@
 //! - `library_id`: 그 이름이 가리켜야 하는 library. 선언이 다른 library로 바뀌면 해석 단계(XV.5.4)가
 //!   불일치로 거부합니다.
 //!
-//! canonical 텍스트 형식(ADR-0023):
+//! canonical 텍스트 형식(ADR-0027):
 //!
 //! ```text
 //! component:<logical name>@<library id>/<component StableId>

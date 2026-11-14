@@ -17,7 +17,7 @@
   (library scope 외부 참조) 추가, `SnapshotLimits::max_references_per_resource`(기본 65,536)와
   `SnapshotError::TooManyReferences`, 상한 테스트.
 - `crates/dependencies/src/lib.rs` — 모듈 등록.
-- `docs/adr/ADR-0023-library-snapshot-resource-key.md` — 결정 8(참조 scope) 추가.
+- `docs/adr/ADR-0027-library-snapshot-resource-key.md` — 결정 8(참조 scope) 추가.
 - `docs/task-reports/XV.5.4.md`(신규), 계획서(XV.5.4 `[ ]`→`[x]`).
 
 ## 구현 요약

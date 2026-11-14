@@ -10,7 +10,7 @@
 //! - **형식 중립 export record**: ComponentDefinition(document crate)·TokenSet(bindings crate)은 이
 //!   crate가 의존할 수 없는 crate에 있습니다(crate 의존 방향: dependencies → core-types만). library
 //!   저장 데이터를 읽어 [`LibraryExports`]로 바꾸는 일은 [`LibraryExportSource`] 구현이 담당하고,
-//!   이 crate는 그 결과를 검증해 snapshot으로 만듭니다(ADR-0023).
+//!   이 crate는 그 결과를 검증해 snapshot으로 만듭니다(ADR-0027).
 //! - **읽기 전용**: snapshot 필드는 비공개이고 변경 API가 없습니다. 검증을 통과한 결과만
 //!   [`LibrarySnapshot::new`]로 만들 수 있습니다.
 //! - **비신뢰 입력 상한**: export는 외부 저장소에서 옵니다. resource 수·이름 길이·fingerprint

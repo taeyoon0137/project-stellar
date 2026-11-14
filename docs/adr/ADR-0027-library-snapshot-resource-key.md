@@ -1,4 +1,4 @@
-# ADR-0023: 읽기 전용 library snapshot, resource key와 외부 참조 형식
+# ADR-0027: 읽기 전용 library snapshot, resource key와 외부 참조 형식
 
 ## Status
 

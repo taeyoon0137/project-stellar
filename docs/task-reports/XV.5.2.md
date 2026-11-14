@@ -14,13 +14,13 @@
 - `crates/dependencies/src/external_ref.rs`(신규) — `ExternalComponentRef`, `ExternalTokenRef`,
   `ExternalResourceRef`, `ExternalRefParseError`, 접두사·길이 상수, 테스트 fixture.
 - `crates/dependencies/src/lib.rs` — 모듈 등록.
-- `docs/adr/ADR-0023-library-snapshot-resource-key.md` — 결정 7(외부 참조 형식)과 대안·호환성 추가.
+- `docs/adr/ADR-0027-library-snapshot-resource-key.md` — 결정 7(외부 참조 형식)과 대안·호환성 추가.
 - `docs/task-reports/XV.5.2.md`(신규), 계획서(XV.5.2 `[ ]`→`[x]`).
 
 ## 구현 요약
 
 - **저장 값**: 참조하는 쪽 `stellar.yaml`의 의존성 logical name(DependencyInstanceId), LibraryId, resource
-  StableId. commit은 저장하지 않고 scope의 lock이 정합니다(update 후 문서 재기록 없음, ADR-0023 결정 7).
+  StableId. commit은 저장하지 않고 scope의 lock이 정합니다(update 후 문서 재기록 없음, ADR-0027 결정 7).
 - **타입 분리**: component·token 참조는 서로 다른 타입이고(core-types `ComponentRef`·`TokenRef`를 감쌈),
   `ExternalResourceRef`가 둘을 묶습니다. 해석 실패 시 `UnresolvedRef`에 남길 `ExpectedRefType`을 줍니다.
 - **canonical 텍스트**: `component:<name>@<library id>/<stable id>`, `token:<name>@<library id>/<stable id>`.
@@ -51,7 +51,7 @@
 
 ## 남은 위험 / 한계
 
-- 문서 chunk에 이 텍스트를 저장하는 통합 작업이 형식을 바꾸면 ADR-0023 결정 7을 함께 갱신해야 합니다.
+- 문서 chunk에 이 텍스트를 저장하는 통합 작업이 형식을 바꾸면 ADR-0027 결정 7을 함께 갱신해야 합니다.
 
 ## 상태 검토(9A 리뷰 P2, 2026-11-14)
 

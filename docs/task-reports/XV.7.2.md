@@ -55,4 +55,4 @@
 ## 남은 위험 / 한계
 
 - default·값 비교는 producer canonical encoding(`ExportFingerprint`)의 bytes 같음입니다. 같은 의미의 다른 encoding은
-  변경으로 보입니다(ADR-0023 결과 참고). component 정의 tree 내부 변경은 export record에 없으므로 보이지 않습니다.
+  변경으로 보입니다(ADR-0027 결과 참고). component 정의 tree 내부 변경은 export record에 없으므로 보이지 않습니다.

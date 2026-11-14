@@ -17,7 +17,7 @@
   `LibrarySnapshot`(+ `LibraryComponent`·`LibraryToken` view), `LibraryExportSource` trait,
   `ExportReadFailure`, `SnapshotRequest`, `SnapshotLoadError`, `load_cached_snapshot`, 테스트 fixture.
 - `crates/dependencies/src/lib.rs` — 모듈 등록.
-- `docs/adr/ADR-0023-library-snapshot-resource-key.md`(신규) — resource key·형식 중립 export·상한 결정.
+- `docs/adr/ADR-0027-library-snapshot-resource-key.md`(신규) — resource key·형식 중립 export·상한 결정.
 - `docs/task-reports/XV.5.1.md`(신규), `docs/task-reports/XV.5.1-blocked.md`(삭제, 차단 사유였던
   VIII.5.1이 `[x]`가 됨), 계획서(XV.5.1 `[!]`→`[x]`).
 
@@ -28,7 +28,7 @@
   StableId이고 표시는 `<library>@<commit>#<stable id>`입니다.
 - **export record**: ComponentDefinition(id, 표시 이름, 공개·비공개 property, slot)과 TokenSet(id,
   token: id·이름·타입 표기·값 encoding)을 형식 중립 record로 받습니다. document·bindings crate에 의존할
-  수 없어(crate graph) 저장 데이터 → record 변환은 `LibraryExportSource` 구현이 맡습니다(ADR-0023).
+  수 없어(crate graph) 저장 데이터 → record 변환은 `LibraryExportSource` 구현이 맡습니다(ADR-0027).
 - **검증**: 상한(component·property·slot·TokenSet·token 수, 이름·타입 표기·encoding 크기), 같은 library
   안 resource StableId 중복, component 안 property·slot 중복, set 안 token 이름 중복, 빈·제어 문자 타입
   표기를 거부합니다. token은 set 안에서 StableId 순으로 정렬합니다.
@@ -65,7 +65,7 @@
 
 - export 타입 표기·encoding의 canonical 규칙은 운영 `LibraryExportSource` 구현이 정해야 합니다. 규칙이
   바뀌면 XV.7.2 diff가 변경으로 판정합니다.
-- ADR 번호 0023은 병렬 lane과 겹칠 수 있습니다. 통합 시 번호를 다시 맞춰야 할 수 있습니다.
+- ADR 번호 0023은 병렬 lane과 겹쳐 통합 때 ADR-0027로 옮겼습니다(0023 번호는 다른 결정용으로 비워 둡니다).
 
 ## 리뷰 수정(9A 리뷰 P4, 2026-11-14)
 
@@ -79,7 +79,7 @@
   `max_total_references` 각 1,000,000, `max_total_bytes` 256 MiB)와 `SnapshotError::TotalLimitExceeded`를
   추가하고, `LibrarySnapshot::new`가 resource별 색인 전에 합계를 검사합니다. `read_exports`는 호출자의
   `SnapshotLimits`를 받고, 공급자가 읽는 중 상한을 넘으면 `ExportReadFailure::LimitExceeded`로 멈춥니다
-  (trait 문서·모듈 문서·ADR-0023 결정 3·5·Security 갱신).
+  (trait 문서·모듈 문서·ADR-0027 결정 3·5·Security 갱신).
 - 검증: `export_totals_are_enforced` 통과. 실제 Git으로 materialize한 entry에서 공급자가 호출자 상한을
   받고, 1,000개 중 2개만 만든 뒤 `LimitExceeded`로 멈추며, 상한 안이면 같은 공급자로 snapshot을 만듦
   (`cached_snapshot_is_read_under_shared_lock_and_detached_after` 확장).
