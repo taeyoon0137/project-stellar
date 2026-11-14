@@ -4,8 +4,8 @@
 
 - WBS: XXII.4.2
 - 작업명: layout, control semantics, accessibility를 Compose API로 매핑
-- 상태: 완료 (`[x]`)
-- 선행: Phase X(phase 수준 선행 — 완화, 아래 "차이" 참조), IX.8.6(기준 브랜치 `[x]`)
+- 현재 상태: 일부 검증 (`[~]`). 현행 WBS에서 XXII.1.4의 공통 capability 변환 행렬에서 Compose layout 결과와 진단을 얻는 연결이 남았습니다.
+- 최초 구현 당시 선행: Phase X(phase 수준 선행 — 완화, 아래 "차이" 참조), IX.8.6(기준 브랜치 `[x]`)
 
 ## 변경 파일
 
