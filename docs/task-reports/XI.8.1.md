@@ -79,8 +79,8 @@
 ## 차이(작업 지시와 다른 점)
 
 - 외부 binding crate(objc2-metal 계열)는 승인 목록에 없어 쓰지 않고, 작업 지시가 허용한 최소
-  hand-written Objective-C runtime FFI로 구현했습니다. 따라서 ADR-0018과 의존성 목록은 바꾸지
-  않았습니다.
+  hand-written Objective-C runtime FFI로 구현했습니다. 새 외부 의존이 없으므로 ADR과 의존성 승인 목록
+  (`config/dependencies.yaml`)은 바꾸지 않았습니다.
 - crate graph 정책상 이 crate는 `stellar-renderer-core`만 의존하므로 scene 타입(`ColorSpace`,
   `FiniteF32`)을 이름으로 쓰지 못합니다. backend는 `ColorSpace::tag()`(저장 포맷 계약 tag)와
   `FiniteF32::get()` method로만 값을 읽고, 테스트는 renderer-core 공개 값(placeholder의 sRGB, graph

@@ -27,8 +27,9 @@
 - **결과 JSON**: `to_json`은 key 순서가 고정된 정수 전용 객체
   `{"present_queue":{"limit","max_depth","ticks","offered","submitted","dropped_stale_frames","dropped_before_encode",
   "dropped_after_encode","throttled_ticks","skipped_ticks","pending_at_end","depth_histogram":[...]}}`를 만들고, `fields`는 같은
-  값을 (정적 key, 값) 배열로 줍니다(XI.4.6 trace와 같은 비민감 기록 규칙). 단계별 timing benchmark(XI.11.4)의 결과 JSON에 이
-  객체를 포함합니다.
+  값을 (정적 key, 값) 배열로 줍니다(XI.4.6 trace와 같은 비민감 기록 규칙). 실제 benchmark 결과 JSON에 이 객체를 넣는 연결은
+  단계별 timing benchmark를 만드는 XI.11.4(`[ ]`)에서 합니다. 지금 renderer-core 밖에서 `PresentRecorder`를 쓰는 benchmark는
+  없습니다.
 
 ## 실행한 명령 / 검증 (`DEV-MAC`)
 
@@ -56,3 +57,14 @@
 - 실제 Metal 실행에서는 `GpuProgress.presented`가 드라이버 present 완료 시점에 의존하므로 throttle·폐기 수가 모사와 다릅니다.
   queue depth ≤ 1 assertion은 그대로 적용됩니다.
 - CI benchmark 실행·G6 판정(XI.11.6)은 후속 작업입니다.
+
+## 상태 확인(통합 검증 반영, 2026-11-14)
+
+- 구현 요약의 "XI.11.4 결과 JSON에 포함" 문장이 차이 절("XI.11.4는 아직 없음")과 모순되어 사실대로 고쳤습니다. 실제
+  benchmark JSON 연결은 XI.11.4 범위입니다.
+- 상태는 `[x]`를 유지합니다. 같은 통합에서 XI.8.2를 `[~]`로 낮춘 기준은 계획 §1.3 규칙 5(필수 환경·조건을 모방한 증거로
+  `[x]` 금지)였습니다. XI.8.2의 검증 열은 실제 창 상태(최소화·가림)를 요구했는데 재현으로만 확인했습니다. 이 행의 검증 열은
+  "queue depth≤1 assertion"이고 필수 환경은 `DEV-MAC`(순수 Rust)입니다. assertion은 실제 XI.5.5 frame scheduler 출력에 대해
+  `DEV-MAC`에서 실행했고, mock backend는 GPU 진행 시점만 대신합니다. 검증 열이 실제 GPU나 실제 benchmark 실행을 요구하지
+  않습니다. 또 계획 선행상 이 행(선행 XI.5.5)은 XI.11.4보다 먼저 완료될 수 있습니다. 그래서 XI.8.2와 같은 모방 증거 문제로
+  보지 않았습니다.

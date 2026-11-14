@@ -67,8 +67,8 @@
 
 ## 차이(작업 지시와 다른 점)
 
-- T0~T3는 입력·document 계층 측정이라 이 crate에서 만들 수 없습니다. backend는 T5(와 encode·present
-  시각)를 기록하고, T4는 같은 시계를 공유해 비교할 수 있게 했습니다. 전체 T0~T5 trace 조립은
+- T0\~T3는 입력·document 계층 측정이라 이 crate에서 만들 수 없습니다. backend는 T5(와 encode·present
+  시각)를 기록하고, T4는 같은 시계를 공유해 비교할 수 있게 했습니다. 전체 T0\~T5 trace 조립은
   runtime(XII) 범위입니다.
 - compute·transfer pass(blur·copy)는 공통 `DrawCommand`에 대응 command가 없어 `Unsupported`로 둡니다
   (XI.10.4에서 추가).
