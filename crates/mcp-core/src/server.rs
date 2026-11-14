@@ -8,7 +8,7 @@
 //! 1. `AwaitingInitialize`: `initialize` request와 `ping`만 처리합니다. 다른 request는
 //!    [`codes::SERVER_NOT_INITIALIZED`]로 거부합니다.
 //! 2. `Initialized`: `initialize` 응답 후. client의 `notifications/initialized`를 기다립니다.
-//! 3. `Ready`: 선택된 headless backend의 resource를 제공하며, 기본·attach 세션은 ping만 제공합니다.
+//! 3. `Ready`: 선택된 headless backend의 resource와 검증 tool을 제공하며, 기본·attach 세션은 ping만 제공합니다.
 //!
 //! notification에는 응답하지 않습니다. client가 보낸 response는 서버가 request를 보내지 않으므로
 //! 로그만 남기고 무시합니다.
@@ -170,7 +170,11 @@ impl Server {
                 codes::SERVER_NOT_INITIALIZED,
                 "initialize 전에는 ping만 허용합니다",
             )),
-            "resources/list" | "resources/templates/list" | "resources/read" | "tools/list"
+            "resources/list"
+            | "resources/templates/list"
+            | "resources/read"
+            | "tools/list"
+            | "tools/call"
                 if self.headless.is_some() =>
             {
                 if self.phase != Phase::Ready {
@@ -180,10 +184,10 @@ impl Server {
                     ));
                 }
                 let backend = self.headless.as_ref().expect("headless 분기");
-                if method == "resources/read" {
-                    backend.read(params)
-                } else {
-                    backend.list(method, params)
+                match method {
+                    "resources/read" => backend.read(params),
+                    "tools/call" => backend.call(params),
+                    _ => backend.list(method, params),
                 }
             }
             // 오류 data의 method echo도 로그와 같은 길이 상한으로 자릅니다.
@@ -247,7 +251,10 @@ impl Server {
             (
                 "capabilities",
                 if self.headless.is_some() {
-                    JsonValue::object(vec![("resources", JsonValue::Object(Vec::new()))])
+                    JsonValue::object(vec![
+                        ("resources", JsonValue::Object(Vec::new())),
+                        ("tools", JsonValue::Object(Vec::new())),
+                    ])
                 } else {
                     JsonValue::Object(Vec::new())
                 },

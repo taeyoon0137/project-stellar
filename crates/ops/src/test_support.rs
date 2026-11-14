@@ -202,6 +202,32 @@ pub fn large_document(node_count: usize) -> DocumentModel {
     model
 }
 
+/// 서로 다른 누락 Path를 clip하는 Frame을 만들어 실제 validator 경고를 생성합니다.
+pub fn document_with_unresolved_clips(count: usize) -> DocumentModel {
+    use crate::core_types::reference::NodeRef;
+    use stellar_document::frame::Clipping;
+    let mut records = large_document(count + 1).to_records().expect("records");
+    let root = records.definition.pages[0].views[0].root_frame;
+    for (index, record) in records
+        .nodes
+        .iter_mut()
+        .filter(|n| n.id != root)
+        .enumerate()
+    {
+        record.payload = NodePayload::Frame(FramePayload {
+            clipping: Clipping::Path(NodeRef::new(StableId::new_v7(
+                1_950_000_000_000,
+                0,
+                index as u64,
+            ))),
+            ..FramePayload::default()
+        });
+    }
+    DocumentModel::from_records(records)
+        .expect("미해결 참조만 포함한 문서")
+        .0
+}
+
 /// 단일 View의 Text 원본 왕복 fixture. Unicode와 비정규화된 run 순서를 보존해야 합니다.
 pub fn text_document() -> DocumentModel {
     let mut records = large_document(4).to_records().expect("records");

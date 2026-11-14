@@ -1,4 +1,5 @@
-//! 고정한 신뢰 프로젝트의 읽기 resource만 제공하는 L2 backend (XIX.9.3).
+//! 고정한 신뢰 프로젝트의 저장 문서 조회·검증 L2 backend (XIX.9.3).
+mod validation;
 use std::cell::RefCell;
 
 use stellar_ops::core_types::ids::StableId;
@@ -10,6 +11,7 @@ use stellar_ops::trusted::{TrustedProject, TrustedReadError};
 use crate::catalog::paging::{self, PageSource};
 use crate::catalog::resources::{descriptor, resource};
 use crate::catalog::scope::{ApprovedScope, ProjectDocuments, ScopedPayload};
+use crate::catalog::tools::{self, VALIDATE_DOCUMENT};
 use crate::json::{self, JsonNumber, JsonValue};
 use crate::jsonrpc::{codes, RpcError};
 
@@ -24,11 +26,12 @@ pub struct Headless {
     loads: std::cell::Cell<(usize, usize)>,
 }
 
-/// 연결에 고정한 프로젝트의 snapshot 하나와 가장 최근 문서 하나만 보관합니다.
+/// 연결별 snapshot, 최근 문서 트리, 최근 검증 대상의 진단을 각 하나씩 보관합니다.
 #[derive(Debug)]
 struct CachedRead {
     snapshot: ProjectSnapshot,
     tree: Option<(StableId, DocumentTree)>,
+    validation: Option<validation::FindingsPage>,
 }
 
 impl Headless {
@@ -61,66 +64,92 @@ impl Headless {
         })
     }
 
-    /// 구현한 resource·template과 빈 tool 목록만 노출합니다.
+    /// 구현한 resource와 template, 저장 문서 검증 tool을 노출합니다.
     pub fn list(&self, method: &str, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
         self.check()?;
         check_fields(params, &[])?;
+        if method == "tools/list" {
+            return Ok(JsonValue::object(vec![(
+                "tools",
+                JsonValue::Array(vec![tools::descriptor(&VALIDATE_DOCUMENT)]),
+            )]));
+        }
         let (field, name) = match method {
-            "resources/list" => ("resources", Some("project-structure")),
-            "resources/templates/list" => ("resourceTemplates", Some("document")),
-            _ => ("tools", None),
+            "resources/list" => ("resources", "project-structure"),
+            "resources/templates/list" => ("resourceTemplates", "document"),
+            _ => return Err(invalid("제공하지 않는 목록입니다")),
         };
         Ok(JsonValue::object(vec![(
             field,
-            JsonValue::Array(
-                name.into_iter()
-                    .map(|name| descriptor(resource(name).expect("catalog resource")))
-                    .collect(),
-            ),
+            JsonValue::Array(vec![descriptor(resource(name).expect("catalog resource"))]),
         )]))
     }
 
     /// scope 확인 → ops snapshot → 기존 catalog 결과 → scope release.
     pub fn read(&self, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
-        // 성공하고 응답 직전에도 같은 원천일 때만 다시 보관합니다. 어느 실패에도 잔여 cache 없음.
-        let mut cache = self.cache.borrow_mut().take();
-        let result = self.read_cached(params, &mut cache);
-        if result.is_ok() {
-            *self.cache.borrow_mut() = cache;
-        }
-        result
+        self.with_snapshot(|cached| self.read_cached(params, cached))
     }
 
-    fn read_cached(
+    /// 조회와 검증은 같은 세션의 snapshot과 진입·응답 시점의 신뢰 확인을 공유합니다.
+    fn with_snapshot(
         &self,
-        params: Option<&JsonValue>,
-        cache: &mut Option<CachedRead>,
+        build: impl FnOnce(&mut CachedRead) -> Result<JsonValue, RpcError>,
     ) -> Result<JsonValue, RpcError> {
-        if let Some(cached) = cache {
+        let mut cache = self.cache.borrow_mut().take();
+        if let Some(cached) = cache.as_ref() {
             if !self
                 .project
                 .snapshot_is_current(&cached.snapshot)
                 .map_err(read_error)?
             {
-                *cache = None;
+                cache = None;
             }
         } else {
             self.check()?;
         }
+        if cache.is_none() {
+            #[cfg(test)]
+            self.loads.set((self.loads.get().0 + 1, self.loads.get().1));
+            cache = Some(CachedRead {
+                snapshot: self.project.snapshot().map_err(read_error)?,
+                tree: None,
+                validation: None,
+            });
+        }
+        let cached = cache.as_mut().expect("snapshot을 열었음");
+        let result = build(cached)?;
+        if json::write(&result).len() > crate::server::MAX_MESSAGE_BYTES - 1024 {
+            return Err(invalid("응답 크기 상한을 넘습니다"));
+        }
+        if !self
+            .project
+            .snapshot_is_current(&cached.snapshot)
+            .map_err(read_error)?
+        {
+            return Err(read_error(TrustedReadError::Unavailable));
+        }
+        let released = self
+            .scope
+            .release(ScopedPayload {
+                project: cached.snapshot.project_id().to_string(),
+                session: self.session.clone(),
+                body: result,
+            })
+            .map_err(|e| invalid(e.to_string()))?;
+        *self.cache.borrow_mut() = cache;
+        Ok(released)
+    }
+
+    fn read_cached(
+        &self,
+        params: Option<&JsonValue>,
+        cached: &mut CachedRead,
+    ) -> Result<JsonValue, RpcError> {
         check_fields(params, &["uri"])?;
         let uri = params
             .and_then(|p| p.get("uri"))
             .and_then(JsonValue::as_str)
             .ok_or_else(|| invalid("resource URI가 필요합니다"))?;
-        if cache.is_none() {
-            #[cfg(test)]
-            self.loads.set((self.loads.get().0 + 1, self.loads.get().1));
-            *cache = Some(CachedRead {
-                snapshot: self.project.snapshot().map_err(read_error)?,
-                tree: None,
-            });
-        }
-        let cached = cache.as_mut().expect("snapshot을 열었음");
         let snapshot = &cached.snapshot;
         let target = self
             .scope
@@ -167,24 +196,7 @@ impl Headless {
         if json::write(&body).len() > paging::MAX_PAGE_BYTES {
             return Err(invalid("resource가 응답 크기 상한을 넘습니다"));
         }
-        let result = paging::read_result(uri, &body);
-        if json::write(&result).len() > crate::server::MAX_MESSAGE_BYTES - 1024 {
-            return Err(invalid("resource가 응답 크기 상한을 넘습니다"));
-        }
-        if !self
-            .project
-            .snapshot_is_current(snapshot)
-            .map_err(read_error)?
-        {
-            return Err(read_error(TrustedReadError::Unavailable));
-        }
-        self.scope
-            .release(ScopedPayload {
-                project: snapshot.project_id().to_string(),
-                session: self.session.clone(),
-                body: result,
-            })
-            .map_err(|e| invalid(e.to_string()))
+        Ok(paging::read_result(uri, &body))
     }
 }
 
@@ -451,7 +463,22 @@ mod tests {
         );
         assert_eq!(read(&backend, &a).unwrap(), page);
         read(&backend, "stellar://project/structure").unwrap();
-        assert_eq!(backend.loads.get(), (1, 1));
+        backend
+            .call(Some(&JsonValue::object(vec![
+                ("name", JsonValue::string(VALIDATE_DOCUMENT.name)),
+                (
+                    "arguments",
+                    JsonValue::object(vec![("document", id(second.document_id()))]),
+                ),
+            ])))
+            .unwrap();
+        assert_eq!(read(&backend, &a).unwrap(), page);
+        assert_eq!(
+            backend.loads.get(),
+            (1, 1),
+            "검증한 뒤에도 최근 문서 트리를 재사용"
+        );
+
         read(&backend, &b).unwrap();
         read(&backend, &a).unwrap();
         assert_eq!(backend.loads.get(), (1, 3), "이전 문서는 보관하지 않음");

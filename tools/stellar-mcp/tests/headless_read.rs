@@ -9,8 +9,9 @@ use stellar_mcp::catalog::{paging, resources};
 use stellar_mcp::json::{self, JsonLimits, JsonValue as J};
 use stellar_mcp::server::MAX_MESSAGE_BYTES;
 use stellar_mcp::test_support::{
-    file_digest, large_document, project_id, random_valid_document, save_documents,
-    scaffold_project, FileTrustStore, ProjectIdentity, TempDir, PROJECT_ID_TEXT,
+    corrupt_view_tree_chunks, document_with_unresolved_clips, file_digest, large_document,
+    project_id, random_valid_document, save_documents, scaffold_project, FileTrustStore,
+    ProjectIdentity, TempDir, PROJECT_ID_TEXT,
 };
 
 const BIN: &str = env!("CARGO_BIN_EXE_stellar-mcp");
@@ -131,6 +132,9 @@ impl Client {
         result
     }
     fn initialize(&mut self) {
+        self.initialize_with_tools(true);
+    }
+    fn initialize_with_tools(&mut self, tools: bool) {
         let reply = self.call(
             "initialize",
             J::object(vec![
@@ -145,15 +149,25 @@ impl Client {
                 ),
             ]),
         );
-        assert_eq!(
-            reply.get("result").unwrap().get("capabilities"),
-            Some(&J::object(vec![("resources", empty())]))
-        );
+        let capabilities = reply.get("result").unwrap().get("capabilities").unwrap();
+        assert_eq!(capabilities.get("resources"), Some(&empty()));
+        if tools {
+            assert_eq!(capabilities.get("tools"), Some(&empty()));
+        }
         assert_error(&self.call("resources/list", empty()), -32002);
         self.send(J::object(vec![
             ("jsonrpc", J::string("2.0")),
             ("method", J::string("notifications/initialized")),
         ]));
+    }
+    fn validate(&mut self, arguments: J) -> J {
+        self.call(
+            "tools/call",
+            J::object(vec![
+                ("name", J::string("document.validate")),
+                ("arguments", arguments),
+            ]),
+        )
     }
     fn read(&mut self, uri: &str) -> J {
         self.call("resources/read", J::object(vec![("uri", J::string(uri))]))
@@ -244,13 +258,13 @@ fn approved_snapshot_lists_only_implemented_resources_and_pages_without_writes()
         templates[0].get("uriTemplate").map(text),
         Some(resources::resource("document").unwrap().uri)
     );
+    let tools = client.call("tools/list", empty());
+    let tools = array(tools.get("result").unwrap().get("tools").unwrap());
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].get("name").map(text), Some("document.validate"));
     assert_eq!(
-        client
-            .call("tools/list", empty())
-            .get("result")
-            .unwrap()
-            .get("tools"),
-        Some(&J::Array(vec![]))
+        tools[0].get("annotations").unwrap().get("readOnlyHint"),
+        Some(&J::Bool(true))
     );
     let structure = content(&client.read(STRUCTURE), STRUCTURE);
     let documents = array(structure.get("documents").unwrap());
@@ -323,7 +337,7 @@ fn scope_revision_limits_and_write_requests_return_normal_errors() {
         -32602,
     );
     for tool in [
-        "document.validate",
+        "document.semantic_diff",
         "document.apply_commands",
         "terminal.run",
         "git.commit",
@@ -334,7 +348,7 @@ fn scope_revision_limits_and_write_requests_return_normal_errors() {
                 "tools/call",
                 J::object(vec![("name", J::string(tool)), ("arguments", empty())]),
             ),
-            -32601,
+            -32602,
         );
     }
     assert_eq!(file_digest(&fx.temp.path), before);
@@ -362,6 +376,136 @@ fn scope_revision_limits_and_write_requests_return_normal_errors() {
     assert_error(&client.call("resources/list", empty()), -32000);
     client.finish();
     assert_eq!(file_digest(&fx.temp.path), after_revoke);
+}
+
+fn tool_page(reply: &J) -> J {
+    let parts = array(
+        reply
+            .get("result")
+            .expect("tool result")
+            .get("content")
+            .unwrap(),
+    );
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0].get("type").map(text), Some("text"));
+    let text = text(parts[0].get("text").unwrap());
+    assert!(text.len() <= paging::MAX_PAGE_BYTES);
+    json::parse(text, JsonLimits::default()).unwrap()
+}
+
+#[test]
+fn validation_pages_share_the_cli_validator_and_only_read_the_selected_project() {
+    let fx = Fixture::new();
+    let warned = document_with_unresolved_clips(5);
+    let other = random_valid_document(26);
+    save_documents(&fx.project, &[&warned, &other]);
+    fx.grant();
+    let before = file_digest(&fx.temp.path);
+    let mut client = fx.launch();
+    assert_error(&client.validate(empty()), -32002);
+    client.initialize();
+    let project = tool_page(&client.validate(empty()));
+    assert_eq!(project.get("documents_checked"), Some(&J::int(2)));
+    assert_eq!(project.get("document"), Some(&J::Null));
+
+    let document = warned.document_id().to_string();
+    let mut arguments = vec![("document", J::string(&document)), ("limit", J::int(2))];
+    let mut cursor = None;
+    let mut messages = std::collections::BTreeSet::new();
+    for offset in [0, 2, 4] {
+        let mut args = arguments.clone();
+        if let Some(previous) = &cursor {
+            args.push(("cursor", J::string(previous)));
+        }
+        let page = tool_page(&client.validate(J::object(args)));
+        assert_eq!(page.get("valid"), Some(&J::Bool(true)));
+        assert_eq!(page.get("documents_checked"), Some(&J::int(1)));
+        assert_eq!(page.get("errors"), Some(&J::int(0)));
+        assert_eq!(page.get("warnings"), Some(&J::int(5)));
+        assert_eq!(page.get("total"), Some(&J::int(5)));
+        assert_eq!(page.get("offset"), Some(&J::int(offset)));
+        assert_eq!(page.get("revision"), project.get("revision"));
+        let items = array(page.get("items").unwrap());
+        assert_eq!(items.len(), if offset == 4 { 1 } else { 2 });
+        for finding in items {
+            assert_eq!(finding.get("document").map(text), Some(document.as_str()));
+            assert_eq!(finding.get("severity").map(text), Some("warning"));
+            assert_eq!(finding.get("code").map(text), Some("unresolved-reference"));
+            assert!(messages.insert(text(finding.get("message").unwrap()).to_owned()));
+        }
+        cursor = page.get("next_cursor").unwrap().as_str().map(str::to_owned);
+        if offset == 0 {
+            assert_error(
+                &client.validate(J::object(vec![(
+                    "cursor",
+                    J::string(cursor.as_ref().unwrap()),
+                )])),
+                -32602,
+            );
+        }
+    }
+    assert!(cursor.is_none());
+    assert_eq!(messages.len(), 5);
+    let first = tool_page(&client.validate(J::object(arguments.clone())));
+    arguments.push(("cursor", first.get("next_cursor").unwrap().clone()));
+    for bad in [
+        J::object(vec![("document", J::string(OTHER))]),
+        J::object(vec![("path", J::string("."))]),
+        J::object(vec![("limit", J::int(0))]),
+        J::object(vec![("limit", J::int(2001))]),
+        J::object(vec![("limit", J::string("2"))]),
+    ] {
+        assert_error(&client.validate(bad), -32602);
+    }
+    assert_eq!(file_digest(&fx.temp.path), before);
+    save_documents(&fx.project, &[&warned]);
+    let saved = file_digest(&fx.temp.path);
+    assert_error(&client.validate(J::object(arguments)), -32602);
+    assert_eq!(file_digest(&fx.temp.path), saved);
+    FileTrustStore::open(&fx.data)
+        .unwrap()
+        .revoke(&fx.identity())
+        .unwrap();
+    let revoked = file_digest(&fx.temp.path);
+    assert_error(&client.validate(empty()), -32000);
+    assert_error(&client.call("tools/list", empty()), -32000);
+    client.finish();
+    assert_eq!(file_digest(&fx.temp.path), revoked);
+}
+
+#[test]
+fn validation_reports_clean_and_unreadable_saved_documents_without_writes() {
+    let fx = Fixture::new();
+    save_documents(&fx.project, &[&large_document(5)]);
+    fx.grant();
+    let read = || {
+        let before = file_digest(&fx.temp.path);
+        let mut client = fx.launch();
+        client.initialize();
+        let reply = client.call(
+            "tools/call",
+            J::object(vec![("name", J::string("document.validate"))]),
+        );
+        let page = tool_page(&reply);
+        client.finish();
+        assert_eq!(file_digest(&fx.temp.path), before);
+        page
+    };
+    let clean = read();
+    assert_eq!(clean.get("valid"), Some(&J::Bool(true)));
+    assert_eq!(clean.get("next_cursor"), Some(&J::Null));
+    assert!(array(clean.get("items").unwrap()).is_empty());
+    assert!(corrupt_view_tree_chunks(&fx.project) > 0);
+    let damaged = read();
+    assert_eq!(damaged.get("valid"), Some(&J::Bool(false)));
+    assert_eq!(damaged.get("errors"), Some(&J::int(1)));
+    assert_eq!(
+        array(damaged.get("items").unwrap())[0]
+            .get("code")
+            .map(text),
+        Some("document-load")
+    );
+    assert!(!json::write(&damaged).contains(fx.project.to_str().unwrap()));
 }
 
 #[test]
@@ -524,11 +668,11 @@ fn release_page_rtt() {
     for turn in 0..10 {
         for index in 0..runs.len() {
             let index = (turn + index) % runs.len();
-            let (_, binary, [first, next, repeated]) = &mut runs[index];
+            let (label, binary, [first, next, repeated]) = &mut runs[index];
             let mut client = Client::new(
                 fx.command_with_binary(&binary, &["--headless", "--project", PROJECT_ID_TEXT]),
             );
-            client.initialize();
+            client.initialize_with_tools(*label == "after");
             // 구조 조회 없이 연결의 첫 resource read를 측정합니다.
             let uri = format!("{base}?limit=500");
             let start = Instant::now();
