@@ -13,6 +13,10 @@ numeric registry를 정했지만 같은 diff에 ADR이 없었습니다(사후 �
 | VIII.7.1 | `a61f9aa` | 환경 입력 key ID 1\~11, 환경 enum 타입 ID와 variant 번호 |
 | VIII.7.2 | `6f170d3` | `EvaluationEnvironment`와 missing key 기본값 정책 |
 
+개정(2026-11-14, 통합 검증 반영): `3357da5`(IX.10.7 후속 수정)가 `os_version` 값의 인코딩을 정하고 보호 경로
+`crates/expressions/src/environment.rs`의 주석을 고쳤지만 이 ADR에는 기록하지 않았습니다. 3절에 그 인코딩과
+`stellar-target-profile`이 둔 registry 사본의 규칙을 추가합니다. key 번호·타입·variant와 저장 형식은 바뀌지 않습니다.
+
 ## Context
 
 - I.3.5는 storage format과 numeric registry 변경에 ADR을 요구합니다. 그런데
@@ -148,6 +152,22 @@ AST의 reference payload `0x04`에 `u32` LE로 기록됩니다.
 - 0은 할당하지 않습니다(`key_info(EnvironmentKey::new(0))`은 `None`). 이름은 snake_case이고
   유일합니다(`key_by_name`).
 - 환경 참조의 타입은 항상 `Required(value_type)`입니다(5절).
+- **`os_version` 값 인코딩**(`3357da5`): 값 타입은 Number이고, 값은 Target Profile(IX.10.7)이 정합니다.
+  - Apple profile: 최소 OS `major.minor`를 정수 `major × 1000 + minor`로 둡니다(patch는 넣지 않음, 예: 17.4 →
+    17004). major는 9999 이하, minor는 999 이하입니다. 이 범위에서 서로 다른 버전은 서로 다른 값이고 수 순서가
+    버전 순서와 같습니다. 최댓값 9,999,999는 f32로 정확합니다. target-profile의 Apple `minimum_os` 파싱(IX.10.2)은
+    범위 밖을 거부하고, 직접 만든 범위 밖 값은 상한으로 포화합니다.
+  - 그 밖의 종류와 profile 없음: 0(5절 missing 기본값과 같음).
+  - 10진 소수(`17.4`)로 읽지 않는 이유: `17.1`과 `17.10`이 같아지고 `10.15 < 10.9`처럼 순서가 뒤집힙니다.
+  - 저장된 표현식은 이 인코딩의 수로 비교합니다(예: iOS 17.4 이상은 `os_version >= 17004`). 그래서 인코딩은
+    key 타입과 같은 계약이며, 바꾸면 저장된 표현식의 결과가 바뀝니다. 바꾸려면 이 ADR을 갱신하거나 대체합니다.
+  - `api_level`은 Android API level 정수이고, 그 밖은 0입니다.
+- **Target Profile의 registry 사본**: crate graph상 `stellar-target-profile`은 expressions에 의존할 수 없습니다.
+  그래서 profile이 정하는 key 1\~3, `platform` 타입 `0xE000_0001`, variant 번호(generic 0·web 1·apple 2·android
+  3), `os_version` 인코딩 상한을 `crates/target-profile/src/environment.rs`에 지역 상수로 복제합니다. 이 사본은 보호
+  경로가 아닙니다. 두 사본의 key 번호·이름·타입·enum 타입·variant·인코딩 일치는 정책 밖 통합 테스트
+  `tests/integration/tests/constant_copies.rs`가 검사합니다. 이 절의 key·variant를 바꾸면 두 사본과 그 테스트를 함께
+  고칩니다.
 - golden test `key_numeric_ids_match_golden`이 ID·이름·타입·variant 수 표를 고정합니다.
   `registry_lookup_and_types`는 번호가 1부터 빈틈없이 이어지는지와 이름이 유일한지 검사합니다.
 
@@ -287,8 +307,8 @@ AST의 reference payload `0x04`에 `u32` LE로 기록됩니다.
 ## Compatibility
 
 - 파일 포맷: `ValueBinding` 버전 1 배치, environment key ID 1\~11, 환경 enum 타입 ID와 variant 번호,
-  missing 기본값이 계약입니다. 바꾸려면 위 변경 규칙을 따르고 이 ADR을 갱신하거나 대체합니다. 현재
-  이 bytes를 담은 프로젝트 파일은 없습니다.
+  missing 기본값, `os_version` 값 인코딩(3절)이 계약입니다. 바꾸려면 위 변경 규칙을 따르고 이 ADR을 갱신하거나
+  대체합니다. 현재 이 bytes를 담은 프로젝트 파일은 없습니다.
 - 공개 API: `BINDING_FORMAT_VERSION`, `ValueBinding::to_bytes`·`from_bytes`, `BindingCodecError`,
   `environment` 모듈의 key 상수·`*_TYPE` 상수·variant 모듈, `key_info`, `key_by_name`,
   `missing_default`, `check_value`, `EvaluationEnvironment`가 이 결정에 묶입니다. 이 ADR은 API를
