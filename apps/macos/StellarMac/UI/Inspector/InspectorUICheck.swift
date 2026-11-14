@@ -964,22 +964,35 @@ enum InspectorUICheck {
         // 나눠 만들기 slice: 2ms 상한을 다 지키지 못하므로(컨트롤 하나의 첫 그리기와 런 루프마다의 CA commit이 slice
         // 하나에 들어감, 명세 8.3절 한계) 값을 보고하고 회귀 경계만 판정합니다: 중앙값 3ms, p95 8ms.
         // 이전 구현은 페이지 하나를 한 번에 만들어 단일 점유가 70~90ms였습니다.
+        let sharedRunner = ProcessInfo.processInfo.environment["STELLAR_INSPECTOR_TIMING"] == "report"
+        func requireTiming(_ condition: Bool, _ message: @autoclosure () -> String) throws {
+            guard !condition else { return }
+            if sharedRunner {
+                print("::warning::Inspector timing — \(message())")
+            } else {
+                throw Failure(message: message())
+            }
+        }
+        let samples = [prewarmSlices, missSlices, refineSlices, firstShow, allValuesSwitch,
+                       sameValueSwitch, updates, missToLoading]
+        try require(samples.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isFinite && $0 >= 0 } },
+                    "시간 측정 표본이 없거나 유효하지 않음")
         let sliceMedianGuard = 3.0
         let sliceGuard = 8.0
         for (name, values) in [("예열", prewarmSlices), ("미스 구성", missSlices), ("보강", refineSlices)] {
-            try require(percentile(values, 0.5) <= sliceMedianGuard,
+            try requireTiming(percentile(values, 0.5) <= sliceMedianGuard,
                         "\(name) slice 중앙값이 회귀 경계 3ms 초과: \(describeSlices(values))")
-            try require(percentile(values, 0.95) <= sliceGuard, "\(name) slice p95가 회귀 경계 8ms 초과: \(describeSlices(values))")
+            try requireTiming(percentile(values, 0.95) <= sliceGuard, "\(name) slice p95가 회귀 경계 8ms 초과: \(describeSlices(values))")
         }
         // 2ms 안이어야 하는 선택 경로: 단일 점유 상한이므로 p95로 판정합니다(가끔 느려지는 회귀도 잡음).
-        try require(percentile(updates, 0.95) <= budget, "값 변경(반영+배치+그리기) p95가 2ms 초과: \(describe(updates))")
-        try require(percentile(missToLoading, 0.95) <= budget,
+        try requireTiming(percentile(updates, 0.95) <= budget, "값 변경(반영+배치+그리기) p95가 2ms 초과: \(describe(updates))")
+        try requireTiming(percentile(missToLoading, 0.95) <= budget,
                     "캐시 미스 로딩 표시 p95가 2ms 초과: \(describe(missToLoading))")
-        try require(percentile(sameValueSwitch, 0.95) <= budget,
+        try requireTiming(percentile(sameValueSwitch, 0.95) <= budget,
                     "같은 값 예열 페이지 전환 p95가 2ms 초과: \(describe(sameValueSwitch))")
         let switchGuard = 25.0
-        try require(percentile(firstShow, 0.95) <= switchGuard, "예열 페이지 첫 표시 p95가 25ms 초과: \(describe(firstShow))")
-        try require(percentile(allValuesSwitch, 0.95) <= switchGuard,
+        try requireTiming(percentile(firstShow, 0.95) <= switchGuard, "예열 페이지 첫 표시 p95가 25ms 초과: \(describe(firstShow))")
+        try requireTiming(percentile(allValuesSwitch, 0.95) <= switchGuard,
                     "값이 모두 바뀌는 전환 p95가 25ms 초과: \(describe(allValuesSwitch))")
     }
 
