@@ -572,3 +572,93 @@ fn change_between_snapshot_and_lock_is_rejected_including_flags_only() {
         assert!(!fx.work().join(".git/index.lock").exists());
     }
 }
+
+#[test]
+fn mode_only_changes_and_deletions_keep_gitlinks_and_working_types() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let fx = fixture("publish-mode-only");
+    fx.write("script", b"unchanged bytes").unwrap();
+    let outside = fx.root().join("outside");
+    std::fs::write(&outside, b"sentinel").unwrap();
+    symlink(&outside, fx.work().join("link")).unwrap();
+    fx.commit_all("baseline").unwrap();
+    let head = fx.git(["rev-parse", "HEAD"]).unwrap().stdout;
+    let head = std::str::from_utf8(&head).unwrap().trim();
+    assert!(fx
+        .gated()
+        .run_with_input(
+            &argv(["update-index", "--index-info"]),
+            fx.work(),
+            format!("160000 {head}\tmodule\n").as_bytes()
+        )
+        .unwrap()
+        .success());
+    let working_mode = std::fs::metadata(fx.work().join("script"))
+        .unwrap()
+        .permissions()
+        .mode();
+    let before = read_index_snapshot(&fx.gated(), fx.work()).unwrap();
+    let script_oid = before
+        .entries
+        .iter()
+        .find(|e| e.path == path("script"))
+        .unwrap()
+        .oid
+        .clone();
+    let gitlink = before
+        .entries
+        .iter()
+        .find(|e| e.path == path("module"))
+        .unwrap()
+        .clone();
+    let c = candidate(
+        &fx,
+        vec![
+            upsert(&fx, "script", FileMode::EXECUTABLE, b"unchanged bytes"),
+            upsert(&fx, "link", FileMode::REGULAR, b"index regular file"),
+        ],
+    );
+    let staged = publish(&fx, &c).unwrap();
+    assert_eq!(
+        staged
+            .entries
+            .iter()
+            .find(|e| e.path == path("script"))
+            .unwrap()
+            .oid,
+        script_oid
+    );
+    assert_eq!(
+        staged.entries.iter().find(|e| e.path == path("module")),
+        Some(&gitlink)
+    );
+    let remove = candidate(
+        &fx,
+        vec![
+            WrittenFileDelta::Remove {
+                path: path("script"),
+            },
+            WrittenFileDelta::Remove { path: path("link") },
+        ],
+    );
+    assert_eq!(publish(&fx, &remove).unwrap().entries, vec![gitlink]);
+    assert_eq!(
+        std::fs::read(fx.work().join("script")).unwrap(),
+        b"unchanged bytes"
+    );
+    assert_eq!(
+        std::fs::metadata(fx.work().join("script"))
+            .unwrap()
+            .permissions()
+            .mode(),
+        working_mode
+    );
+    assert_eq!(std::fs::read_link(fx.work().join("link")).unwrap(), outside);
+    assert_eq!(std::fs::read(outside).unwrap(), b"sentinel");
+    let unknown_flags =
+        b"module\0  ctime: 0:0\n  mtime: 0:0\n  dev: 0\n  uid: 0\n  size: 0\tflags: 200000\n";
+    assert_eq!(
+        check_flags(unknown_flags, &c),
+        Err(PublishError::Unsupported("검증되지 않은 index flags"))
+    );
+}
