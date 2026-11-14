@@ -101,7 +101,7 @@ final class CanvasView: NSView {
         NSColor.windowBackgroundColor.setFill()
         dirtyRect.fill()
         guard let context = NSGraphicsContext.current?.cgContext else { return }
-        frameScene.draw(in: context)
+        frameScene.draw(in: context, dirtyRect: dirtyRect)
         if let path = insertionOutline {
             context.saveGState()
             context.addPath(path)

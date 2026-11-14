@@ -53,6 +53,8 @@ private struct ProjectedFrame {
     let localBounds: CGRect
     let localPath: CGPath
     let worldPath: CGPath
+    let worldBounds: CGRect
+    var subtreeBounds: CGRect
     let clips: Bool
     let pickable: Bool
     let fill: CGColor?
@@ -68,6 +70,8 @@ private struct ProjectedFrame {
         localBounds = CGRect(x: 0, y: 0, width: CGFloat(row.size.0), height: CGFloat(row.size.1))
         localPath = outline(row)
         worldPath = localPath.copy(using: &world)!
+        worldBounds = worldPath.boundingBox
+        subtreeBounds = worldBounds
         clips = row.flags & 1 != 0
         pickable = row.flags & 2 != 0
         fill = color(row.fill)
@@ -83,12 +87,19 @@ final class CanvasFrameScene {
     private var viewID: UUID?
     private var revision: UInt64 = 0
     private var session: UInt64?
+    private static let emptyID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
     private var primary: UUID?
+    private var primaryIndex: Int?
     private var previewID: UUID?
+    private var previewRange: ClosedRange<Int>?
     private var previewOffset = CGVector.zero
 
     func setDragPreview(id: UUID?, offset: CGVector) {
-        previewID = id
+        if previewID != id {
+            previewID = id
+            previewRange = id.flatMap { id in frames.firstIndex { $0.id == id } }
+                .map { $0...frames[$0].lastDescendant }
+        }
         let inverse = worldToView.inverted()
         previewOffset = CGVector(dx: inverse.a * offset.dx + inverse.c * offset.dy,
                                  dy: inverse.b * offset.dx + inverse.d * offset.dy)
@@ -102,7 +113,9 @@ final class CanvasFrameScene {
         session = nil
         skipped = 0
         primary = nil
+        primaryIndex = nil
         previewID = nil
+        previewRange = nil
     }
 
     func refresh(handle: UInt64, session: UInt64, size: CGSize) {
@@ -114,6 +127,9 @@ final class CanvasFrameScene {
         }
         if self.session != session || viewID != UUID(uuid: info.view) || revision != info.revision {
             previewID = nil
+            previewRange = nil
+            primary = nil
+            primaryIndex = nil
             // 사이에 document thread가 더 큰 revision을 게시할 수 있습니다. 두 번째 호출의 metadata와 행을 함께 채택합니다.
             var rows = [StellarCanvasFrame](repeating: StellarCanvasFrame(), count: max(1, Int(info.count)))
             var status = rows.withUnsafeMutableBufferPointer { stellar_window_canvas(handle, session, width, height, &info, $0.baseAddress, $0.count) }
@@ -128,6 +144,8 @@ final class CanvasFrameScene {
             frames = rows.prefix(Int(info.count)).enumerated().map { ProjectedFrame($0.element, index: $0.offset) }
             for i in frames.indices.reversed() {
                 if let parent = frames[i].parent {
+                    let bounds = frames[i].subtreeBounds
+                    frames[parent].subtreeBounds = frames[parent].subtreeBounds.union(bounds)
                     let last = frames[i].lastDescendant
                     frames[parent].lastDescendant = max(frames[parent].lastDescendant, last)
                 }
@@ -136,7 +154,11 @@ final class CanvasFrameScene {
         self.session = session
         viewID = UUID(uuid: info.view)
         revision = info.revision
-        primary = UUID(uuid: info.primary)
+        let selected = UUID(uuid: info.primary)
+        if primary != selected {
+            primary = selected
+            primaryIndex = selected == Self.emptyID ? nil : frames.firstIndex { $0.id == selected }
+        }
         skipped = info.skipped
         worldToView = transform(info.camera)
     }
@@ -144,7 +166,7 @@ final class CanvasFrameScene {
     func hit(at point: CGPoint) -> CanvasFrameHit? {
         guard let viewID else { return nil }
         let world = point.applying(worldToView.inverted())
-        for frame in frames.reversed() where frame.pickable && frame.worldPath.boundingBox.contains(world) && frame.worldPath.contains(world) {
+        for frame in frames.reversed() where frame.pickable && frame.worldBounds.contains(world) && frame.worldPath.contains(world) {
             var ancestor = frame.parent
             while let i = ancestor, !frames[i].clips || frames[i].worldPath.contains(world) { ancestor = frames[i].parent }
             if ancestor == nil {
@@ -155,32 +177,37 @@ final class CanvasFrameScene {
         return nil
     }
 
-    func draw(in context: CGContext) {
+    func draw(in context: CGContext, dirtyRect: CGRect) {
+        // damage 경계의 안티앨리어싱을 보존하도록 한 포인트의 여유를 둡니다.
+        let dirty = dirtyRect.intersection(context.boundingBoxOfClipPath)
+        let query = dirty.isNull ? CGRect.null : dirty.insetBy(dx: -1, dy: -1).applying(worldToView.inverted())
+        let previewQuery = query.offsetBy(dx: -previewOffset.dx, dy: -previewOffset.dy)
         context.saveGState()
         context.concatenate(worldToView)
         var clipEnds: [Int] = []
-        var selectionPath: CGPath?
-        var previewEnd = -1
-        for (index, frame) in frames.enumerated() {
+        var index = 0
+        while index < frames.count {
+            let frame = frames[index]
             while let end = clipEnds.last, end < index {
                 context.restoreGState()
                 clipEnds.removeLast()
             }
-            if frame.id == previewID {
+            let frameQuery = previewRange?.contains(index) == true ? previewQuery : query
+            let visible = frame.worldBounds.intersects(frameQuery)
+            if !visible {
+                // 원래 subtree 전체가 화면 밖이어도 드래그 중인 자식이 들어올 수 있습니다.
+                let movingChild = previewRange.map { index < $0.lowerBound && $0.lowerBound <= frame.lastDescendant } ?? false
+                if frame.clips || (!movingChild && !frame.subtreeBounds.intersects(frameQuery)) {
+                    index = frame.lastDescendant + 1
+                    continue
+                }
+            }
+            if index == previewRange?.lowerBound {
                 context.saveGState()
                 context.translateBy(x: previewOffset.dx, y: previewOffset.dy)
                 clipEnds.append(frame.lastDescendant)
-                previewEnd = frame.lastDescendant
             }
-            if frame.id == primary {
-                var placement = frame.world
-                if index <= previewEnd {
-                    placement = placement.concatenating(CGAffineTransform(translationX: previewOffset.dx, y: previewOffset.dy))
-                }
-                placement = placement.concatenating(worldToView)
-                selectionPath = CGPath(rect: frame.localBounds, transform: &placement)
-            }
-            if (frame.fill != nil || frame.border != nil) && context.boundingBoxOfClipPath.intersects(frame.worldPath.boundingBox) {
+            if visible && (frame.fill != nil || frame.border != nil) {
                 context.saveGState()
                 context.concatenate(frame.world)
                 if let fill = frame.fill {
@@ -204,10 +231,19 @@ final class CanvasFrameScene {
                 context.clip()
                 clipEnds.append(frame.lastDescendant)
             }
+            index += 1
         }
         for _ in clipEnds { context.restoreGState() }
         context.restoreGState()
-        if let path = selectionPath {
+        // 선택 외곽선은 조상의 clip과 관계없이 scene 위에 표시합니다.
+        if let i = primaryIndex {
+            let frame = frames[i]
+            var placement = frame.world
+            if previewRange?.contains(i) == true {
+                placement = placement.concatenating(CGAffineTransform(translationX: previewOffset.dx, y: previewOffset.dy))
+            }
+            placement = placement.concatenating(worldToView)
+            let path = CGPath(rect: frame.localBounds, transform: &placement)
             context.saveGState()
             context.setStrokeColor(NSColor.controlAccentColor.cgColor)
             context.setLineWidth(1.5)

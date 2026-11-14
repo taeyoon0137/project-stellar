@@ -61,6 +61,9 @@ enum ShellVisibleFramesCheck {
         pixel(first, 82, 24, (0,0,1), "nested Frame through Fragment")
         pixel(first, 95, 24, (1,1,1), "ancestor bounds clip")
         pixel(first, 62, 54, (0,1,0), "painter order")
+        pixel(first, 140, 120, (1,1,0), "rotated child of offscreen unclipped parent")
+        pixel(first, 133, 120, (0,0,0), "rotated child's inside border")
+        pixel(first, 190, 168, (1,1,1), "onscreen child stays hidden by offscreen ancestor clip")
         check(canvas.frameHit(at: viewPoint(82,24))?.id == blueID, "nested hit")
         check(canvas.frameHit(at: viewPoint(95,24))?.id != blueID, "clipped hit")
         check(canvas.frameHit(at: viewPoint(30,34))?.id == redID, "red hit")
@@ -69,7 +72,16 @@ enum ShellVisibleFramesCheck {
         pixel(moved, 30, 34, (1,1,1), "preview uncovers root")
         pixel(moved, 127, 24, (0,0,1), "preview moves child and its clip")
         pixel(moved, 62, 54, (0,1,0), "preview keeps sibling painter order")
+        let outsideChild = UUID(uuidString: "00000000-0013-7000-8000-000000000013")!
+        canvas.setFrameDragPreview(id: outsideChild, offset: CGVector(dx: -1050, dy: 0))
+        guard let incoming = bitmap(canvas, in: window) else { return false }
+        pixel(incoming, 170, 150, (0,1,1), "preview enters from outside original subtree")
         canvas.setFrameDragPreview(id: nil, offset: .zero)
+        let clippedChild = UUID(uuidString: "00000000-0016-7000-8000-000000000016")!
+        check(shell.selectNodes([clippedChild]) && pump.waitForPendingRequests(timeout: 10), "clipped child selection")
+        guard let outline = bitmap(canvas, in: window), let original = first.bitmapData, let marked = outline.bitmapData else { return false }
+        check(memcmp(original, marked, first.bytesPerRow * first.pixelsHigh) != 0, "selection overlay remains outside the culled clip")
+        check(shell.selectNodes([]) && pump.waitForPendingRequests(timeout: 10), "clear clipped child selection")
         check(shell.performSessionCommand(.zoomIn) && pump.waitForPendingRequests(timeout: 10), "normal zoom command")
         guard let zoom = bitmap(canvas, in: window) else { return false }
         pixel(zoom, 60, 68, (1,0,0), "zoomed red Frame")
