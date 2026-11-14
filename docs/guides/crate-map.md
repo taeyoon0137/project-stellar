@@ -80,7 +80,7 @@
 | accessibility | `crates/accessibility` | core-types | core-types | 없음 |
 | `xtask` | `tools/xtask` | 정책 밖 | storage, core-types | `yaml-rust2 =0.11.0` |
 | bench-fixtures | `benchmarks/fixtures` | 정책 밖 | core-types, document, expressions, storage, project, layout, assets | 없음 |
-| integration-tests | `tests/integration` | 정책 밖 | dev만: core-types, document`[test-support]`, commands`[test-support]`, history, storage, project, git-porcelain, semantic-diff, semantic-merge | 없음 |
+| integration-tests | `tests/integration` | 정책 밖 | dev만: core-types, document`[test-support]`, commands`[test-support]`, history, storage, project, git-porcelain`[test-support]`, semantic-diff, semantic-merge | 없음 |
 
 `test-support` feature를 정의한 crate는 document, commands(document의 `test-support`를 함께 켬),
 git-porcelain입니다. 세 crate 모두 기본값은 꺼져 있고, manifest 주석은 다른 crate가
@@ -451,11 +451,17 @@ core-types, document, expressions, storage, project, layout, assets이고 crate 
 ### stellar-integration-tests
 
 `tests/integration`은 여러 crate를 잇는 종단 시나리오 테스트 전용 crate입니다(ADR-0019와 같은 개발용
-crate 원칙). 제품 crate는 이 crate에 의존하지 않고, 테스트는 crate의 `tests/` 아래에 두도록 정했지만
-커밋 `993d7d0`에는 `src/lib.rs`(module 문서 한 줄)와 `Cargo.toml`만 있고 `tests/` 디렉터리는 아직
-없습니다. `[dependencies]`는 비어 있고, `[dev-dependencies]`에 core-types, document(`test-support`),
-commands(`test-support`), history, storage, project, git-porcelain, semantic-diff, semantic-merge가
-있습니다. crate graph 정책 검사 대상은 아닙니다.
+crate 원칙). 제품 crate는 이 crate에 의존하지 않고, 테스트는 crate의 `tests/` 아래에 둡니다.
+
+- 프로젝트 시나리오: `project_lifecycle`, `recovery_round_trip`, `chunk_layout`, `component_library`,
+  `gesture_grouping`, `multi_window`, `random_sequences`. 공용 helper는 `tests/common/`(`mod.rs`,
+  `builders.rs`)입니다.
+- Git 시나리오: `git_snapshot_diff`, `git_semantic_merge`, `git_trust_gate`. 공용 helper는
+  `tests/git_common/mod.rs`입니다(git-porcelain fixture harness 사용).
+
+`[dependencies]`는 비어 있고, `[dev-dependencies]`에 core-types, document(`test-support`),
+commands(`test-support`), history, storage, project, git-porcelain(`test-support`), semantic-diff,
+semantic-merge가 있습니다. crate graph 정책 검사 대상은 아닙니다.
 
 ## 관련 문서
 
