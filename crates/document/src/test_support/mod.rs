@@ -19,3 +19,6 @@ pub mod semantic_snapshot;
 
 /// seed 기반 random valid document 생성기 (VI.10.5).
 pub mod random_document;
+
+/// compact/error/dark nullable Variant 조합 fixture (IX.9.3).
+pub mod variant_fixtures;

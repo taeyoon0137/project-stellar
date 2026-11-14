@@ -1,0 +1,400 @@
+{
+  "cases": [
+    {
+      "ambiguous": false,
+      "case": "default",
+      "conflicts": [],
+      "matched": [],
+      "properties": {
+        "banner.height": {
+          "source": "base",
+          "value": 0
+        },
+        "banner.text": {
+          "source": "base",
+          "value": ""
+        },
+        "banner.visible": {
+          "source": "base",
+          "value": false
+        },
+        "card.fill": {
+          "source": "base",
+          "value": "surface"
+        },
+        "card.padding": {
+          "source": "base",
+          "value": 16
+        },
+        "title.color": {
+          "source": "base",
+          "value": "on-surface"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    },
+    {
+      "ambiguous": false,
+      "case": "compact",
+      "conflicts": [],
+      "matched": [
+        "compact"
+      ],
+      "properties": {
+        "banner.height": {
+          "source": "base",
+          "value": 0
+        },
+        "banner.text": {
+          "source": "base",
+          "value": ""
+        },
+        "banner.visible": {
+          "source": "base",
+          "value": false
+        },
+        "card.fill": {
+          "source": "base",
+          "value": "surface"
+        },
+        "card.padding": {
+          "source": "compact",
+          "value": 8
+        },
+        "title.color": {
+          "source": "base",
+          "value": "on-surface"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    },
+    {
+      "ambiguous": false,
+      "case": "error",
+      "conflicts": [],
+      "matched": [
+        "error"
+      ],
+      "properties": {
+        "banner.height": {
+          "source": "error",
+          "value": 48
+        },
+        "banner.text": {
+          "source": "base",
+          "value": ""
+        },
+        "banner.visible": {
+          "source": "error",
+          "value": true
+        },
+        "card.fill": {
+          "source": "error",
+          "value": "danger-subtle"
+        },
+        "card.padding": {
+          "source": "base",
+          "value": 16
+        },
+        "title.color": {
+          "source": "base",
+          "value": "on-surface"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    },
+    {
+      "ambiguous": false,
+      "case": "dark",
+      "conflicts": [],
+      "matched": [
+        "dark"
+      ],
+      "properties": {
+        "banner.height": {
+          "source": "base",
+          "value": 0
+        },
+        "banner.text": {
+          "source": "base",
+          "value": ""
+        },
+        "banner.visible": {
+          "source": "base",
+          "value": false
+        },
+        "card.fill": {
+          "source": "dark",
+          "value": "surface-dark"
+        },
+        "card.padding": {
+          "source": "base",
+          "value": 16
+        },
+        "title.color": {
+          "source": "dark",
+          "value": "on-dark"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    },
+    {
+      "ambiguous": false,
+      "case": "compact+error",
+      "conflicts": [],
+      "matched": [
+        "compact",
+        "error",
+        "compactError"
+      ],
+      "properties": {
+        "banner.height": {
+          "source": "compactError",
+          "value": 32
+        },
+        "banner.text": {
+          "source": "base",
+          "value": ""
+        },
+        "banner.visible": {
+          "source": "error",
+          "value": true
+        },
+        "card.fill": {
+          "source": "error",
+          "value": "danger-subtle"
+        },
+        "card.padding": {
+          "source": "compact",
+          "value": 8
+        },
+        "title.color": {
+          "source": "base",
+          "value": "on-surface"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    },
+    {
+      "ambiguous": false,
+      "case": "compact+dark",
+      "conflicts": [],
+      "matched": [
+        "compact",
+        "dark"
+      ],
+      "properties": {
+        "banner.height": {
+          "source": "base",
+          "value": 0
+        },
+        "banner.text": {
+          "source": "base",
+          "value": ""
+        },
+        "banner.visible": {
+          "source": "base",
+          "value": false
+        },
+        "card.fill": {
+          "source": "dark",
+          "value": "surface-dark"
+        },
+        "card.padding": {
+          "source": "compact",
+          "value": 8
+        },
+        "title.color": {
+          "source": "dark",
+          "value": "on-dark"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    },
+    {
+      "ambiguous": true,
+      "case": "error+dark",
+      "conflicts": [
+        {
+          "property": "card.fill",
+          "specificity": 1,
+          "variants": [
+            "error",
+            "dark"
+          ]
+        }
+      ],
+      "matched": [
+        "error",
+        "dark"
+      ],
+      "properties": {
+        "banner.height": {
+          "source": "error",
+          "value": 48
+        },
+        "banner.text": {
+          "source": "base",
+          "value": ""
+        },
+        "banner.visible": {
+          "source": "error",
+          "value": true
+        },
+        "card.fill": {
+          "source": "base",
+          "value": "surface"
+        },
+        "card.padding": {
+          "source": "base",
+          "value": 16
+        },
+        "title.color": {
+          "source": "dark",
+          "value": "on-dark"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    },
+    {
+      "ambiguous": false,
+      "case": "compact+error+dark",
+      "conflicts": [],
+      "matched": [
+        "compact",
+        "error",
+        "dark",
+        "compactError",
+        "compactErrorDark"
+      ],
+      "properties": {
+        "banner.height": {
+          "source": "compactError",
+          "value": 32
+        },
+        "banner.text": {
+          "source": "base",
+          "value": ""
+        },
+        "banner.visible": {
+          "source": "error",
+          "value": true
+        },
+        "card.fill": {
+          "source": "compactErrorDark",
+          "value": "danger-dark"
+        },
+        "card.padding": {
+          "source": "compact",
+          "value": 8
+        },
+        "title.color": {
+          "source": "dark",
+          "value": "on-dark"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    },
+    {
+      "ambiguous": false,
+      "case": "compact+processing",
+      "conflicts": [],
+      "matched": [
+        "compact"
+      ],
+      "properties": {
+        "banner.height": {
+          "source": "base",
+          "value": 0
+        },
+        "banner.text": {
+          "source": "base",
+          "value": ""
+        },
+        "banner.visible": {
+          "source": "base",
+          "value": false
+        },
+        "card.fill": {
+          "source": "base",
+          "value": "surface"
+        },
+        "card.padding": {
+          "source": "compact",
+          "value": 8
+        },
+        "title.color": {
+          "source": "base",
+          "value": "on-surface"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    },
+    {
+      "ambiguous": false,
+      "case": "payment=null",
+      "conflicts": [],
+      "matched": [
+        "noPayment"
+      ],
+      "properties": {
+        "banner.height": {
+          "source": "base",
+          "value": 0
+        },
+        "banner.text": {
+          "source": "noPayment",
+          "value": "\uacb0\uc81c \uc218\ub2e8 \uc5c6\uc74c"
+        },
+        "banner.visible": {
+          "source": "noPayment",
+          "value": true
+        },
+        "card.fill": {
+          "source": "base",
+          "value": "surface"
+        },
+        "card.padding": {
+          "source": "base",
+          "value": 16
+        },
+        "title.color": {
+          "source": "base",
+          "value": "on-surface"
+        },
+        "title.size": {
+          "source": "base",
+          "value": 20
+        }
+      }
+    }
+  ],
+  "fixture": "checkout compact/error/dark"
+}

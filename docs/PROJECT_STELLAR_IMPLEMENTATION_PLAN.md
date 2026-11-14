@@ -886,7 +886,7 @@ tools/xtask/
 |---|---|---|---|---|
 | IX.9.1 | `[ ]` | Button, TextInput, Modal, List, Radio 합성 예제 component library fixture를 만듭니다. | document validator 0 오류. | IX.6, IX.8 |
 | IX.9.2 | `[ ]` | 10단계 nested component property drilling fixture를 만듭니다. | 최종 value provenance가 전체 chain 포함. | IX.4.5 |
-| IX.9.3 | `[ ]` | compact/error/dark nullable variant 조합 fixture를 만듭니다. | 예상 override resolution과 ambiguity diagnostic 통과. | IX.7.6 |
+| IX.9.3 | `[x]` | compact/error/dark nullable variant 조합 fixture를 만듭니다. | 예상 override resolution과 ambiguity diagnostic 통과. | IX.7.6 |
 | IX.9.4 | `[ ]` | 위 fixture를 macOS·Windows CI에서 semantic snapshot 비교합니다. | byte-identical. | IX.9.1~IX.9.3 |
 
 **Phase IX 완료 조건:** G5 통과.
