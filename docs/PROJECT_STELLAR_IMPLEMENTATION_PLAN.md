@@ -905,7 +905,7 @@ tools/xtask/
 | IX.10.6 | `[x]` | selected TargetProfile에 따라 element·property 생성 가능 여부와 비활성화 사유를 조회하는 API를 구현합니다. 실제 UI는 Phase XII에 연결합니다. | Button/TextInput/Modal/List와 대표 CSS/Apple/Android property fixture 통과. | IX.10.5 |
 | IX.10.7 | `[x]` | 공통 structure에 profile-specific sparse override를 적용하는 resolver를 구현하고 View Variant·Binding environment와 결합합니다. | 공통값·profile override·variant override 우선순위 fixture 통과. | IX.7.6, VIII.7.3, IX.10.5 |
 | IX.10.8 | `[x]` | 한 View를 여러 TargetProfile에 대해 동시에 validate하고 Native/Approximated/Unsupported/Deprecated diagnostic을 생성합니다. | multi-profile fixture expected diagnostics. | IX.10.6, IX.10.7 |
-| IX.10.9 | `[ ]` | profile upgrade plan을 구현해 old/new capability registry의 semantic diff와 영향받는 nodes/properties를 반환합니다. 적용 전 project를 수정하지 않습니다. | upgrade preview fixture revision unchanged. | IX.10.4, IX.10.8, XIV.3.2 |
+| IX.10.9 | `[x]` | profile upgrade plan을 구현해 old/new capability registry의 semantic diff와 영향받는 nodes/properties를 반환합니다. 적용 전 project를 수정하지 않습니다. | upgrade preview fixture revision unchanged. | IX.10.4, IX.10.8, XIV.3.2 |
 | IX.10.10 | `[ ]` | 승인된 profile upgrade를 CommandTransaction과 manifest 변경으로 적용하고 자동 commit하지 않습니다. | apply/undo, Git working tree change fixture 통과. | IX.10.9, Phase VII |
 
 **Phase IX 추가 완료 조건:** TargetProfile pin, capability filtering, 다중 profile validation을 통과합니다.

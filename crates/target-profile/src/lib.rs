@@ -36,3 +36,6 @@ pub mod overrides;
 
 /// 한 View의 다중 profile capability 검사 (IX.10.8).
 pub mod validate;
+
+/// profile upgrade plan(semantic diff와 영향 범위) (IX.10.9).
+pub mod upgrade;

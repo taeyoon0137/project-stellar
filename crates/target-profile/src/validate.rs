@@ -234,13 +234,11 @@ pub fn validate_profiles(
     catalog: &RegistryCatalog,
     variants: &VariantLayer,
 ) -> MultiProfileReport {
-    let parents: BTreeMap<StableId, Option<StableId>> =
-        view.nodes.iter().map(|n| (n.id, n.parent)).collect();
     let reports = profiles
         .iter()
         .map(|profile| ProfileReport {
             profile: profile.id.clone(),
-            outcome: validate_one(view, map, profile, catalog, variants, &parents),
+            outcome: validate_one(view, map, profile, catalog, variants),
         })
         .collect();
     MultiProfileReport {
@@ -249,21 +247,28 @@ pub fn validate_profiles(
     }
 }
 
-fn validate_one(
+/// profile 하나에서 사용 중인 capability subject.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CapabilityUsage {
+    /// node.
+    pub node: StableId,
+    /// 대상.
+    pub subject: CapabilitySubject,
+    /// 속성이면 그 path.
+    pub path: Option<PropertyPath>,
+}
+
+/// profile 하나에서 View가 사용하는 element·contract·속성 capability를 결정론적 순서로 모읍니다(모듈 문서 규칙).
+///
+/// registry와 무관하므로 upgrade plan(IX.10.9)이 old/new release 비교에 같은 사용 목록을 씁니다.
+pub fn collect_usages(
     view: &ViewModel,
     map: &dyn PropertyCapabilityMap,
     profile: &TargetProfile,
-    catalog: &RegistryCatalog,
     variants: &VariantLayer,
-    parents: &BTreeMap<StableId, Option<StableId>>,
-) -> ProfileOutcome {
-    let resolved = match catalog.resolve(profile) {
-        Ok(resolved) => resolved,
-        Err(ResolveError::RegistryVersionUnavailable { pinned, latest, .. }) => {
-            return ProfileOutcome::RegistryUnavailable { pinned, latest };
-        }
-    };
-    let table = resolved.registry().capabilities();
+) -> Vec<CapabilityUsage> {
+    let parents: BTreeMap<StableId, Option<StableId>> =
+        view.nodes.iter().map(|n| (n.id, n.parent)).collect();
     let values = resolve_for_profile(&view.common, &view.overrides, profile, variants);
     let parent_of = |id: StableId| parents.get(&id).copied().flatten();
     let included: BTreeSet<StableId> = view
@@ -290,44 +295,70 @@ fn validate_one(
         }
     }
 
-    let finding = |node: StableId, subject: CapabilitySubject, path: Option<PropertyPath>| {
-        let status = table.status(profile, subject);
-        let replacement = match status {
-            Some(CapabilityStatus::Deprecated) => table.rule(subject).and_then(|r| r.replacement),
-            _ => None,
-        };
-        CapabilityFinding {
-            node,
-            subject,
-            path,
-            status,
-            code: CapabilityDiagnosticCode::for_status(status),
-            replacement,
-        }
-    };
-    let mut findings = Vec::new();
+    let mut usages = Vec::new();
     for node in view.nodes.iter().filter(|n| included.contains(&n.id)) {
-        findings.push(finding(
-            node.id,
-            CapabilitySubject::Element(node.element),
-            None,
-        ));
+        usages.push(CapabilityUsage {
+            node: node.id,
+            subject: CapabilitySubject::Element(node.element),
+            path: None,
+        });
         let mut contracts = node.contracts.clone();
         contracts.sort();
         contracts.dedup();
         for code in contracts {
-            findings.push(finding(node.id, CapabilitySubject::Contract(code), None));
+            usages.push(CapabilityUsage {
+                node: node.id,
+                subject: CapabilitySubject::Contract(code),
+                path: None,
+            });
         }
         if let Some(used) = properties.get(&node.id) {
             for (id, path) in used {
-                findings.push(finding(
-                    node.id,
-                    CapabilitySubject::Property(*id),
-                    Some(path.clone()),
-                ));
+                usages.push(CapabilityUsage {
+                    node: node.id,
+                    subject: CapabilitySubject::Property(*id),
+                    path: Some(path.clone()),
+                });
             }
         }
     }
+    usages
+}
+
+fn validate_one(
+    view: &ViewModel,
+    map: &dyn PropertyCapabilityMap,
+    profile: &TargetProfile,
+    catalog: &RegistryCatalog,
+    variants: &VariantLayer,
+) -> ProfileOutcome {
+    let resolved = match catalog.resolve(profile) {
+        Ok(resolved) => resolved,
+        Err(ResolveError::RegistryVersionUnavailable { pinned, latest, .. }) => {
+            return ProfileOutcome::RegistryUnavailable { pinned, latest };
+        }
+    };
+    let table = resolved.registry().capabilities();
+    let findings = collect_usages(view, map, profile, variants)
+        .into_iter()
+        .map(|usage| {
+            let status = table.status(profile, usage.subject);
+            let replacement = match status {
+                Some(CapabilityStatus::Deprecated) => {
+                    table.rule(usage.subject).and_then(|r| r.replacement)
+                }
+                _ => None,
+            };
+            CapabilityFinding {
+                node: usage.node,
+                subject: usage.subject,
+                path: usage.path,
+                status,
+                code: CapabilityDiagnosticCode::for_status(status),
+                replacement,
+            }
+        })
+        .collect();
     ProfileOutcome::Validated {
         registry_version: resolved.registry().version(),
         findings,
