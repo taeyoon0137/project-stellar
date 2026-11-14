@@ -303,6 +303,13 @@ impl ProjectWindowSession {
             .map_or(DocumentRevision(0), DocumentState::revision)
     }
 
+    /// 마지막 저장 뒤 문서가 바뀌었는지(O(1)). 선택·viewport는 문서 revision을 바꾸지 않습니다.
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.document
+            .as_ref()
+            .is_some_and(|document| document.state.revision() != document.saved_revision)
+    }
+
     /// 작업 문서가 base generation에서 차지한 chunk(DocumentManifest·ViewTree·subtree). 문서가 없으면
     /// `None`. 저장은 이 집합 밖의 base chunk만 그대로 이어 씁니다.
     pub fn document_chunks(&self) -> Option<&BTreeSet<ChunkId>> {

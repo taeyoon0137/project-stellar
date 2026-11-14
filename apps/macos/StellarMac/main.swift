@@ -67,6 +67,12 @@ if CommandLine.arguments.contains("--session-commands-check") {
     exit(ShellSessionCommandsCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
 }
 
+#if DEBUG
+if CommandLine.arguments.contains("--window-close-check") {
+    exit(ShellWindowCloseCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
+}
+#endif
+
 // 단축키 대응 검사 모드: 코어가 공유하는 command ID와 macOS 관례 단축키(⌘Z·⇧⌘Z·⌘S)의 대응, 메뉴 action이 창 session에
 // 도착하는지 저장 프로젝트 fixture(다음 인자)로 검사하고 종료합니다(XII.6.5).
 if CommandLine.arguments.contains("--key-mapping-check") {

@@ -332,6 +332,14 @@ fn undo_redo_and_save_now_reach_only_the_target_window() {
     );
     assert_eq!(state.window(b).unwrap().undo_depth, 1);
     assert_eq!(state.window(b).unwrap().revision, DocumentRevision(1));
+    assert!(
+        !state.window(a).unwrap().has_unsaved_changes,
+        "선택은 clean"
+    );
+    assert!(
+        state.window(b).unwrap().has_unsaved_changes,
+        "문서 편집은 dirty"
+    );
 
     // A undo는 A의 선택만 되돌립니다.
     assert_eq!(replay(&app, a, false), (true, DocumentRevision(0)));
@@ -352,10 +360,15 @@ fn undo_redo_and_save_now_reach_only_the_target_window() {
         a_current
     );
     assert_eq!(save(&app, b), (2, true));
+    assert!(!app.state().window(b).unwrap().has_unsaved_changes);
     assert_eq!(app.state().window(b).unwrap().generation, 2);
     assert_eq!(app.state().window(a).unwrap().generation, 1);
     // B undo 후 다시 저장하면 generation 3.
     assert_eq!(replay(&app, b, false), (true, DocumentRevision(2)));
+    assert!(
+        app.state().window(b).unwrap().has_unsaved_changes,
+        "문서 Undo도 dirty"
+    );
     assert_eq!(save(&app, b), (3, true));
 
     // 같은 프로젝트의 둘째 창(B2)은 loaded generation 3이고, B가 다시 저장하면 B2 저장은 Stale입니다.
@@ -368,6 +381,14 @@ fn undo_redo_and_save_now_reach_only_the_target_window() {
     let request = app.save_now(b2).unwrap();
     expect_failure(&app, request, RequestFailure::SaveStale);
     assert_eq!(app.state().window(b2).unwrap().generation, 3);
+    assert!(
+        app.state().window(b2).unwrap().has_unsaved_changes,
+        "실패 후 편집 보존"
+    );
+    assert!(
+        !app.state().window(b).unwrap().has_unsaved_changes,
+        "다른 창은 clean 유지"
+    );
 
     // 없는 창.
     let request = app.undo(WindowSessionHandle(999)).unwrap();
