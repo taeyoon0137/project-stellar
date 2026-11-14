@@ -11,8 +11,8 @@ macOS 앱을 직접 써 보며 화면과 동작을 확인하는 절차입니다.
 | 단계 | 문서 | 내용 | 지금 확인할 수 있는 범위 |
 |---|---|---|---|
 | QA0 | [qa0-shell.md](qa0-shell.md) | 셸 체감: 시작 창, Open Project, 창 구성, 하단 도구 막대, 상단 바, 메뉴·단축키, 다크 모드, 창 크기, 접근성 기본 | 대부분 |
-| QA1 | [qa1-view.md](qa1-view.md) | 문서 보기: 페이지·View·레이어 목록, 캔버스 렌더, 이동·확대, 선택, 인스펙터 | 활성 페이지·View와 Layers, 고정 Frame 표시·탐색 |
-| QA2 | [qa2-edit.md](qa2-edit.md) | 편집: 만들기 도구, 이동·크기, Undo, 이름·순서, 텍스트, 저장 | Free Frame·Rectangle 작성과 이동, Frame 치수·채우기, 레이어 이름·복제·삭제, 컴포넌트 원본 생성·루트 크기, 저장·재열기 |
+| QA1 | [qa1-view.md](qa1-view.md) | 문서 보기: 페이지·View·레이어 목록, 캔버스 렌더, 이동·확대, 선택, 인스펙터 | 활성 페이지·View와 Layers, 고정 Frame·Rectangle 표시·탐색, 프로젝트 글꼴로 지정한 Text, 새로 배치한 PNG와 컴포넌트 |
+| QA2 | [qa2-edit.md](qa2-edit.md) | 편집: 만들기 도구, 이동·크기, Undo, 이름·순서, 텍스트, 저장 | Frame·Rectangle·텍스트·PNG 작성, 레이어 복사·붙여넣기, 컴포넌트 재사용, 저장·재열기와 강제 종료 복구 |
 
 QA0부터 진행합니다. 앞 단계에서 막히는 문제(앱이 뜨지 않음, 프로젝트가 열리지 않음)가 있으면 다음 단계로 넘어가지 않고 먼저 알려 줍니다.
 
@@ -56,7 +56,7 @@ QA0부터 진행합니다. 앞 단계에서 막히는 문제(앱이 뜨지 않�
 
 - 도형·텍스트·이미지는 Transform·Fill modifier로 위치와 색을 가집니다. Divider 선은 Fill 없이 Stroke(두께 1), Hexagon은 Fill과 Stroke(두께 2)를 함께 가집니다. 인스펙터 Modifiers 섹션 확인용입니다.
 - 이미지 원본은 저장소의 README 히어로 이미지(`assets/docs/hero.jpg`)를 `assets/<prefix>/<hash>.jpg`로 복사한 것입니다.
-- 한계: Component 정의·인스턴스는 문서 저장 포맷에 아직 표현할 수 없어 넣지 못했습니다. "Components" 페이지의 버튼은 일반 Frame입니다. 에셋 catalog(asset id → 파일)도 아직 프로젝트에 저장되지 않아 이미지 레이어의 asset 참조는 복사한 파일과 이어져 있지 않습니다.
+- 이 샘플의 “Components” 페이지에는 일반 Frame 버튼이 들어 있습니다. 샘플 생성기는 Hero Image 레이어와 복사한 JPEG를 연결하지 않습니다. 실제 공유 컴포넌트와 PNG의 저장·재열기는 QA2-03, QA2-78~80에서 직접 만든 항목으로 확인합니다.
 
 ## 4. 진행 방식
 
