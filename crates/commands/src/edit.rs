@@ -17,7 +17,7 @@
 
 use std::fmt;
 
-use stellar_core_types::ids::StableId;
+use stellar_core_types::{ids::StableId, order_key::OrderKey};
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::ModifierStack;
 use stellar_document::records::{NodePayload, NodeRecord};
@@ -36,6 +36,8 @@ enum UndoOp {
     Payload(StableId, Box<NodePayload>),
     /// 문서 Text style 표 교체를 되돌립니다.
     TextStyles(Box<stellar_document::text_styles::DocumentTextStyles>),
+    /// 같은 부모 안의 순서 변경을 되돌립니다.
+    ChildOrder(StableId, OrderKey),
     /// 이름 변경을 되돌림.
     Name(StableId, String),
     /// 표시·잠금 변경을 되돌림.
@@ -286,6 +288,18 @@ impl<'a> EditContext<'a> {
         self.changes
     }
 
+    /// 노드를 다시 삽입하지 않고 같은 부모 안의 OrderKey 하나를 바꿉니다.
+    pub(crate) fn replace_child_order(
+        &mut self,
+        node: StableId,
+        order: OrderKey,
+    ) -> Result<(), CommandError> {
+        self.before_primitive()?;
+        let previous = self.model.replace_child_order(node, order)?;
+        self.journal.push(UndoOp::ChildOrder(node, previous));
+        Ok(())
+    }
+
     /// journal을 역순으로 재생해 context를 연 시점의 의미 상태로 되돌립니다.
     ///
     /// 각 역 primitive는 해당 primitive가 성공했던 상태에서 재생되므로 실패하지 않아야
@@ -321,6 +335,9 @@ fn undo(model: &mut DocumentModel, op: UndoOp) -> Result<(), CommandError> {
         UndoOp::Payload(id, payload) => model.set_payload(id, *payload)?,
         UndoOp::TextStyles(previous) => {
             model.replace_text_styles(*previous);
+        }
+        UndoOp::ChildOrder(id, key) => {
+            model.replace_child_order(id, key)?;
         }
         UndoOp::Name(id, name) => model.set_display_name(id, name)?,
         UndoOp::Flags {

@@ -12,6 +12,8 @@ pub enum SelectionEdit {
     Delete,
     /// 단일 선택 subtree를 복제합니다.
     Duplicate,
+    /// 같은 부모 안에서 단일 선택의 저장 순서를 바꿉니다.
+    Reorder(stellar_document::model::SiblingOrder),
 }
 
 /// 하나의 게시 시점에 읽은 창·뷰·문서·선택 history 위치.
@@ -114,6 +116,9 @@ impl AppRuntime {
                 ));
             }
             match edit {
+                SelectionEdit::Reorder(direction) => {
+                    super::node_order::reorder(window, request, direction)?
+                }
                 SelectionEdit::Delete => {
                     delete_selected(window, request, target.view, target.revision)?
                 }
@@ -378,7 +383,12 @@ mod tests {
         let second = take_target();
         assert_eq!(first.revision, second.revision);
         assert_ne!(first.history_sequence, second.history_sequence);
-        for edit in [SelectionEdit::Delete, SelectionEdit::Duplicate] {
+        for edit in [
+            SelectionEdit::Delete,
+            SelectionEdit::Duplicate,
+            SelectionEdit::Reorder(SiblingOrder::Front),
+            SelectionEdit::Reorder(SiblingOrder::Back),
+        ] {
             rejected(app.edit_selection(first, edit, None).unwrap());
             rejected(
                 app.edit_selection(second, edit, Some(vec![sid(11)]))

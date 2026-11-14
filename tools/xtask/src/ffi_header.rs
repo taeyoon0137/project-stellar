@@ -364,6 +364,14 @@ typedef struct StellarSelectionTarget {
 } StellarSelectionTarget;
 #define STELLAR_SELECTION_DELETE 1
 #define STELLAR_SELECTION_DUPLICATE 2
+#define STELLAR_SELECTION_FORWARD 3
+#define STELLAR_SELECTION_BACKWARD 4
+#define STELLAR_SELECTION_FRONT 5
+#define STELLAR_SELECTION_BACK 6
+#define STELLAR_ORDER_CAN_FORWARD 1
+#define STELLAR_ORDER_CAN_BACKWARD 2
+#define STELLAR_ORDER_FLOW_PARENT 4
+uint32_t stellar_window_layer_order_flags(uint64_t handle, const StellarSelectionTarget *target);
 /* 활성 View가 없으면 STELLAR_NO_ERROR, 열려 있지 않은 창이면 STELLAR_INVALID_ARGUMENT입니다. */
 StellarStatus stellar_window_selection_target(uint64_t handle, uint64_t session, StellarSelectionTarget *out);
 /* NULL/0은 위 target의 선택 전체, ids가 있으면 순서와 무관하게 실제 선택 전체와 일치해야 합니다. */

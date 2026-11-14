@@ -108,9 +108,60 @@ enum ShellCanvasMixedMediaCheck {
             return textInk > 20
         }
         guard until({ verify(project) }) else { return fail("mixed pixels, order, picking or partial redraw") }
+        guard let rectID = canvas.frameHit(at: point(project, 156, 41))?.id else { return fail("rectangle") }
+        let header = SidebarStableID(parent.id)
+        func order(_ owner: ShellProjectWindow) -> [UUID]? {
+            owner.sidebarSource.perform(.loadChildren(header))
+            return owner.sidebarSlot.sidebar.layersController.snapshot.layers.childIDs[header]?.map(\.uuid)
+        }
+        func menu(_ command: ShellCommand) -> NSMenuItem { MainMenuBuilder.makeItem(for: command, target: nil) }
+        func enabled(_ command: ShellCommand) -> Bool { project.router.validateMenuItem(menu(command)) }
+        func move(_ command: ShellCommand) -> Bool {
+            guard enabled(command) else { return false }
+            project.router.performShellCommand(menu(command))
+            return wait()
+        }
+        func matches(_ owner: ShellProjectWindow, _ front: [UUID]) -> Bool {
+            until { order(owner).map { Array($0.prefix(front.count)) } == front }
+        }
+        func overText(_ owner: ShellProjectWindow) -> Bool {
+            let c = owner.canvasHost.canvasView
+            guard c.frameHit(at: point(owner, 104, 41))?.id == text, let win = owner.window,
+                  let rep = ShellVisibleFramesCheck.bitmap(c, in: win) else { return false }
+            var ink = 0, blue = 0
+            for x in 94..<113 {
+                for y in 39..<44 {
+                    let pos = point(owner, CGFloat(x), CGFloat(y))
+                    var rgba = [Int](repeating: 0, count: rep.samplesPerPixel)
+                    rep.getPixel(&rgba, atX: Int(pos.x * CGFloat(rep.pixelsWide)/c.bounds.width),
+                                 y: Int(pos.y * CGFloat(rep.pixelsHigh)/c.bounds.height))
+                    if rgba.prefix(3).allSatisfy({ $0 < 65 }) { ink += 1 }
+                    if rgba[2] > 160 && rgba[0] < 80 { blue += 1 }
+                }
+            }
+            return ink >= 3 && blue >= 3
+        }
+        guard !enabled(.bringForward), !enabled(.sendToBack),
+              project.selectNodes([image.id,text]), wait(), !enabled(.sendBackward), !enabled(.bringToFront),
+              project.selectNodes([image.id]), wait(), !enabled(.bringForward),
+              menu(.bringForward).keyEquivalent == "]", menu(.sendBackward).keyEquivalent == "[",
+              matches(project, [image.id, rectID, text]) else { return fail("initial Layers or menu truth") }
+        guard move(.sendBackward), matches(project, [rectID, image.id, text]), enabled(.bringToFront),
+              move(.sendBackward), matches(project, [rectID, text, image.id]), until({ overText(project) }),
+              move(.bringForward), matches(project, [rectID, image.id, text]),
+              move(.bringToFront), matches(project, [image.id, rectID, text]), !enabled(.bringToFront),
+              move(.sendToBack), !enabled(.sendBackward), until({ order(project)?.last == image.id }),
+              until({ overText(project) }) else { return fail("four menu actions, Layers and paint/hit order") }
+        guard project.performSessionCommand(.undo), wait(), matches(project, [image.id, rectID, text]),
+              canvas.frameHit(at: point(project, 104, 41))?.id == image.id,
+              project.performSessionCommand(.redo), wait(), until({ order(project)?.last == image.id }),
+              until({ overText(project) }) else { return fail("layer order undo and redo") }
         guard project.performSessionCommand(.saveNow), wait() else { return fail("save") }
         do { try FileManager.default.removeItem(at: file) } catch { return fail("delete PNG source") }
-        guard let next = reopen(), until({ next.gitSource.trusted && verify(next) }) else { return fail("reopen") }
+        guard let next = reopen(), until({ next.gitSource.trusted && overText(next) }), until({ order(next)?.last == image.id }),
+              next.selectNodes([image.id]), wait(), next.router.dispatch(.bringToFront), wait(),
+              next.selectNodes([]), wait(), until({ verify(next) }) else { return fail("reopen stored order, then bring to front") }
+        print("layer-order ok: four Object menu commands, one-step vs ends, disabled boundaries and multi-selection, actual Layers front to back, glyph/PNG hit and pixels, Undo/Redo, Save and reopen")
         print("mixed canvas ok: same scene glyph ink, rectangle, component and PNG; frontmost hits, parent hit, dirty pixels equal full render, source-free reopen")
         return true
     }

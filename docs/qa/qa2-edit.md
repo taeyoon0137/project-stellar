@@ -49,7 +49,7 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA2-40 | Bring Forward(⌘]), Send Backward(⌘[), Bring to Front, Send to Back | 형제 순서가 바뀌고 레이어 목록도 같은 순서. **구현 대기**(코어 명령 경로). 지금: Object 메뉴 전체 비활성 |
+| QA2-40 | Bring Forward(⌘]), Send Backward(⌘[), Bring to Front, Send to Back | 신뢰한 창의 단일 레이어가 같은 부모 안에서 이동합니다. 가장 앞·뒤 경계, 뷰 루트 및 잠금은 해당 명령을 비활성화합니다. Layers에서 위에 표시된 형제가 겹친 위치에서 먼저 선택되는지와 Undo·Redo·저장 후 다시 열기를 확인합니다. |
 | QA2-41 | Align Left(⌘{)·Center(⌘\|)·Right(⌘}), Distribute | 다중 선택 정렬·분배. **구현 대기** |
 | QA2-42 | Flip Horizontal·Vertical, Lock, Hide | 메뉴 제목이 상태를 반영(Lock/Unlock, Hide/Show). **구현 대기** |
 

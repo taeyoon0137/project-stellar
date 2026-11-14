@@ -185,6 +185,9 @@ enum MainMenuBuilder {
             // 단일 키는 메뉴 key equivalent가 아니므로 도움말 태그로 알립니다(디자인 가이드 8.1, 8.2).
             item.toolTip = "Canvas shortcut: \(String(key).uppercased())"
         }
+        if command.layerOrderFlag != nil {
+            item.toolTip = String(localized: "Change this layer’s order among its siblings. In flow containers, this also changes layout order.")
+        }
         item.isAlternate = command.isDynamicAlternate
         return item
     }
