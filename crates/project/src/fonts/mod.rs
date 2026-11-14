@@ -13,6 +13,7 @@
 //!   adapter는 `system_macos`(CoreText)입니다.
 //! - [`external`]: External Font — 관리형 패키지의 고정 hash/face 참조 인터페이스(다운로드 없음).
 //! - [`reproducibility`]: 같은 family 이름·다른 파일 hash를 다른 face로 보고 재현성 경고를 만듭니다.
+//! - [`missing`]: missing face에 명시 fallback chain만 적용하고 줄바꿈 변경 진단을 만듭니다.
 //!
 //! 하위 모듈 선언에는 바깥 doc 주석(`///`)을 달지 않습니다. 바깥 doc이 있으면 rustdoc이 각 모듈의
 //! 안쪽 doc(`//!`) 링크를 이 모듈 기준으로 해석해 깨집니다. 설명은 각 파일의 안쪽 doc에 둡니다.
@@ -38,6 +39,9 @@ pub mod external;
 
 // 폰트 파일 hash 불일치 재현성 경고 (XIII.6.5).
 pub mod reproducibility;
+
+// missing font의 명시 fallback 적용과 줄바꿈 변경 진단 (XIII.6.7).
+pub mod missing;
 
 #[cfg(test)]
 pub(crate) mod test_fixtures;
