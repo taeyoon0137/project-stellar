@@ -199,6 +199,13 @@ impl JournalStore {
             reason.token()
         ));
         std::fs::rename(&active, &path)?;
+        // retention 나이는 봉인 시점부터 셉니다(XXV.1.5). 내용은 바꾸지 않고 수정 시각만 갱신하며, 실패해도
+        // 봉인 자체는 끝났으므로 마지막 기록 시각 기준으로 남습니다(더 일찍 정리될 뿐 섞이지 않음).
+        let _ = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()));
+        self.prune_after_seal(&path);
         Ok(Some(SealedJournal {
             path,
             window,

@@ -548,6 +548,61 @@ fn check_sequences(
 /// header 고정 길이(magic 8 + version 4×4 + window 16 + generation 8 + manifest hash 32).
 pub const JOURNAL_HEADER_LEN: usize = 8 + 4 * 4 + 16 + 8 + 32;
 
+/// 항목이 없는 journal 길이(header + next sequence 8 + undo·redo 항목 수 4×2).
+pub const JOURNAL_EMPTY_LEN: usize = JOURNAL_HEADER_LEN + 8 + 4 + 4;
+
+/// compaction 결과(XXV.1.5): 버린 항목 수.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct JournalCompaction {
+    /// 버린 가장 오래된 undo 항목 수.
+    pub dropped_undo: usize,
+    /// 버린 가장 먼 redo 항목 수.
+    pub dropped_redo: usize,
+    /// compaction 뒤 encoding 길이.
+    pub encoded_len: u64,
+}
+
+impl JournalCompaction {
+    /// 버린 항목이 있는지.
+    pub fn is_compacted(&self) -> bool {
+        self.dropped_undo + self.dropped_redo > 0
+    }
+}
+
+/// 현재 위치에서 먼 항목부터 버리는 계획(항목 bytes는 길이 프리픽스 제외).
+fn plan_compaction(
+    undo: &[Vec<u8>],
+    redo: &[Vec<u8>],
+    max_bytes: u64,
+    max_entries: usize,
+) -> JournalCompaction {
+    let entry_len = |bytes: &Vec<u8>| 4 + bytes.len() as u64;
+    let mut total = JOURNAL_EMPTY_LEN as u64
+        + undo.iter().map(entry_len).sum::<u64>()
+        + redo.iter().map(entry_len).sum::<u64>();
+    let (mut dropped_undo, mut dropped_redo) = (0, 0);
+    loop {
+        let (left_undo, left_redo) = (undo.len() - dropped_undo, redo.len() - dropped_redo);
+        if (left_undo + left_redo <= max_entries && total <= max_bytes)
+            || left_undo + left_redo == 0
+        {
+            break;
+        }
+        if left_undo >= left_redo {
+            total -= entry_len(&undo[dropped_undo]);
+            dropped_undo += 1;
+        } else {
+            total -= entry_len(&redo[dropped_redo]);
+            dropped_redo += 1;
+        }
+    }
+    JournalCompaction {
+        dropped_undo,
+        dropped_redo,
+        encoded_len: total,
+    }
+}
+
 /// header를 읽습니다. format version 불일치는 그 뒤 layout을 알 수 없으므로 바로 거부합니다.
 fn read_header(input: &mut In<'_>) -> Result<JournalHeader, JournalError> {
     if input.take(8).map_err(|_| JournalError::BadMagic)? != JOURNAL_MAGIC {
@@ -641,6 +696,14 @@ impl HistoryJournal {
     /// canonical bytes.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Out::default();
+        self.write_prefix(&mut out);
+        write_stack(&mut out, &self.undo);
+        write_stack(&mut out, &self.redo);
+        out.0
+    }
+
+    /// header와 next sequence.
+    fn write_prefix(&self, out: &mut Out) {
         out.0.extend_from_slice(&JOURNAL_MAGIC);
         out.u32(self.header.format_version);
         out.u32(self.header.schema_version);
@@ -650,9 +713,43 @@ impl HistoryJournal {
         out.u64(self.header.base.generation.0);
         out.0.extend_from_slice(&self.header.base.manifest_hash);
         out.u64(self.next_sequence);
-        write_stack(&mut out, &self.undo);
-        write_stack(&mut out, &self.redo);
-        out.0
+    }
+
+    /// 경계 안으로 compaction한 canonical bytes(XXV.1.5). 항목 수가 `max_entries`, 전체 bytes가 `max_bytes`
+    /// 이하가 될 때까지 **현재 위치에서 가장 먼 항목**부터 버립니다: 남은 undo 수가 redo 수 이상이면 가장
+    /// 오래된 undo(맨 아래), 아니면 가장 먼 redo(맨 아래)를 버립니다. 남은 항목은 현재 위치 앞뒤로 연속이라
+    /// 그대로 undo·redo할 수 있고 sequence 무결성도 유지됩니다. 항목을 모두 버려도 넘치면(경계가
+    /// [`JOURNAL_EMPTY_LEN`]보다 작음) 빈 journal입니다. 각 항목은 한 번만 인코딩합니다.
+    pub fn encode_bounded(
+        &self,
+        max_bytes: u64,
+        max_entries: usize,
+    ) -> (Vec<u8>, JournalCompaction) {
+        let undo: Vec<Vec<u8>> = self.undo.iter().map(encode_entry).collect();
+        let redo: Vec<Vec<u8>> = self.redo.iter().map(encode_entry).collect();
+        let compaction = plan_compaction(&undo, &redo, max_bytes, max_entries);
+        let mut out = Out::default();
+        self.write_prefix(&mut out);
+        for (stack, dropped) in [
+            (&undo, compaction.dropped_undo),
+            (&redo, compaction.dropped_redo),
+        ] {
+            out.len(stack.len() - dropped);
+            for bytes in &stack[dropped..] {
+                out.bytes(bytes);
+            }
+        }
+        (out.0, compaction)
+    }
+
+    /// [`HistoryJournal::encode_bounded`]과 같은 규칙으로 이 journal 자체를 줄입니다.
+    pub fn compact(&mut self, max_bytes: u64, max_entries: usize) -> JournalCompaction {
+        let undo: Vec<Vec<u8>> = self.undo.iter().map(encode_entry).collect();
+        let redo: Vec<Vec<u8>> = self.redo.iter().map(encode_entry).collect();
+        let compaction = plan_compaction(&undo, &redo, max_bytes, max_entries);
+        self.undo.drain(..compaction.dropped_undo);
+        self.redo.drain(..compaction.dropped_redo);
+        compaction
     }
 
     /// 이 reader(schema [`JOURNAL_SCHEMA_VERSION`])로 디코딩합니다.
