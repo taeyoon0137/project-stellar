@@ -42,7 +42,8 @@ use crate::trace::{
 /// stderr 조각을 받는 콜백.
 type StderrSink<'a> = &'a mut dyn FnMut(&[u8]);
 
-pub(crate) type InputCheck<'a> = &'a mut dyn FnMut(u32, Instant) -> Result<bool, GitRunError>;
+pub(crate) type InputCheck<'a> =
+    &'a mut dyn FnMut(u32, Instant, &[u8]) -> Result<bool, GitRunError>;
 
 struct Input<'a> {
     bytes: &'a [u8],
@@ -498,12 +499,14 @@ impl GitRunner {
             buf
         });
         // streaming이면 stderr 조각을 channel로도 보냅니다(호출 스레드가 콜백 실행).
-        let (chunk_tx, chunk_rx) = match on_stderr {
-            Some(_) => {
-                let (tx, rx) = mpsc::channel::<Vec<u8>>();
-                (Some(tx), Some(rx))
-            }
-            None => (None, None),
+        let checked_input = input
+            .as_ref()
+            .is_some_and(|pending| pending.check.is_some());
+        let (chunk_tx, chunk_rx) = if on_stderr.is_some() || checked_input {
+            let (tx, rx) = mpsc::channel::<Vec<u8>>();
+            (Some(tx), Some(rx))
+        } else {
+            (None, None)
         };
         let err_thread = thread::spawn(move || {
             let mut buf = Vec::new();
@@ -523,10 +526,23 @@ impl GitRunner {
             }
             buf
         });
-        let mut forward = |rx: &Option<mpsc::Receiver<Vec<u8>>>| {
-            if let (Some(rx), Some(cb)) = (rx, on_stderr.as_mut()) {
+        let mut check_stderr = Vec::new();
+        let mut capture_overflow = false;
+        let mut forward = |rx: &Option<mpsc::Receiver<Vec<u8>>>, captured: &mut Vec<u8>| {
+            if let Some(rx) = rx {
                 while let Ok(piece) = rx.try_recv() {
-                    cb(&piece);
+                    // 승인 protocol의 초기 stderr만 보관합니다. 초과하면 신호를 놓쳐도 fail closed.
+                    if checked_input && !capture_overflow {
+                        if captured.len() + piece.len() <= 256 * 1024 {
+                            captured.extend_from_slice(&piece);
+                        } else {
+                            captured.clear();
+                            capture_overflow = true;
+                        }
+                    }
+                    if let Some(cb) = on_stderr.as_mut() {
+                        cb(&piece);
+                    }
                 }
             }
         };
@@ -563,7 +579,7 @@ impl GitRunner {
             } else if let Some(pending) = input.as_mut() {
                 let approval = match pending.check.as_mut() {
                     Some(check) => std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        check(child.id(), deadline)
+                        check(child.id(), deadline, &check_stderr)
                     })),
                     None => Ok(Ok(true)),
                 };
@@ -591,7 +607,7 @@ impl GitRunner {
                 None
             };
             let Some(interrupted) = interrupted else {
-                forward(&chunk_rx);
+                forward(&chunk_rx, &mut check_stderr);
                 thread::sleep(Duration::from_millis(5));
                 continue;
             };
@@ -604,7 +620,7 @@ impl GitRunner {
 
         let (stdout, stderr) = pipes.join();
         // drain 스레드가 끝난 뒤 남은 조각까지 전달합니다.
-        forward(&chunk_rx);
+        forward(&chunk_rx, &mut check_stderr);
         Ok(GitOutput {
             exit_code: status.code(),
             stdout,

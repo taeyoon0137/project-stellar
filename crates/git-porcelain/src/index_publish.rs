@@ -17,6 +17,61 @@ use crate::trust::{GatedGitRunner, GatedRunError, GitTrust};
 
 mod ownership;
 
+/// 성공 확인 뒤 발급하는 일회용 조건부 복원 증표입니다. 외부에서 만들거나 복제할 수 없습니다.
+/// 이후 index bytes가 달라지면 복원하지 않습니다. drop은 아무 쓰기도 하지 않습니다.
+#[derive(Debug)]
+pub struct PublishedIndex {
+    inverse: WrittenCandidate,
+    bytes: Option<Vec<u8>>,
+    root: PathBuf,
+}
+
+impl PublishedIndex {
+    /// 실제 Index provider로 확인한 적용 결과.
+    pub fn snapshot(&self) -> &IndexSnapshot {
+        self.inverse.base_index()
+    }
+}
+
+struct AppliedIndex {
+    snapshot: IndexSnapshot,
+    bytes: Option<Vec<u8>>,
+    root: PathBuf,
+}
+
+/// 실제 적용과 provider 확인이 성공한 경우에만 복원 증표를 발급합니다.
+pub fn publish_with_receipt(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    candidate: &WrittenCandidate,
+    cancel: &GitCancelToken,
+) -> Result<PublishedIndex, PublishError> {
+    let applied = publish_inner(git, worktree, candidate, cancel, None)?;
+    Ok(PublishedIndex {
+        inverse: candidate.inverse(applied.snapshot),
+        bytes: applied.bytes,
+        root: applied.root,
+    })
+}
+
+/// 성공 증표를 소비해 공식 Git 명령으로 원래 mode/OID/path를 복원합니다.
+/// 잠금 안에서 증표의 전체 index bytes와 비교하며, 외부 변경이면 StaleBase입니다.
+/// stat cache의 바이트 표현까지 복원하지는 않습니다. unrelated flags/REUC는 현재 Git이 유지합니다.
+pub fn restore_published(
+    git: &GatedGitRunner,
+    receipt: PublishedIndex,
+    cancel: &GitCancelToken,
+) -> Result<IndexSnapshot, PublishError> {
+    publish_inner(
+        git,
+        &receipt.root,
+        &receipt.inverse,
+        cancel,
+        Some(&receipt.bytes),
+    )
+    .map(|r| r.snapshot)
+}
+
 /// 실제 index 적용 실패. `OutcomeUnknown`이면 재조회가 필요하며 임의 rollback하면 안 됩니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PublishError {
@@ -26,6 +81,8 @@ pub enum PublishError {
     StaleBase,
     /// 자식의 쓰기 FD와 lock inode의 소유 관계를 증명하지 못했습니다.
     LockOwnershipUnconfirmed,
+    /// 취소한 Git 뒤 lock이 남거나 상태를 읽을 수 없습니다. 직접 삭제하지 않습니다.
+    LockCleanupUnconfirmed,
     /// 현재 지원하지 않는 index 상태입니다. 입력은 전달하지 않습니다.
     Unsupported(&'static str),
     /// 읽기 전용 파일 확인 실패.
@@ -44,6 +101,9 @@ impl std::fmt::Display for PublishError {
             Self::StaleBase => f.write_str("기준 index가 변경되어 적용하지 않았습니다"),
             Self::LockOwnershipUnconfirmed => {
                 f.write_str("Git 자식의 index lock 소유를 확인하지 못했습니다")
+            }
+            Self::LockCleanupUnconfirmed => {
+                f.write_str("Git 취소 뒤 lock 정리를 확인하지 못했습니다")
             }
             Self::Unsupported(reason) => write!(f, "지원하지 않는 index 상태: {reason}"),
             Self::Io(kind) => write!(f, "index 읽기 실패: {kind:?}"),
@@ -234,6 +294,46 @@ fn check_flags(mut output: &[u8], candidate: &WrittenCandidate) -> Result<(), Pu
     Ok(())
 }
 
+fn protocol_runner(git: &GatedGitRunner) -> Result<GatedGitRunner, GatedRunError> {
+    Ok(GatedGitRunner::new(
+        git.runner()?.clone().with_added_env(
+            [
+                ("GIT_TRACE2_EVENT", "2"),
+                ("GIT_TRACE2_EVENT_BRIEF", "0"),
+                ("GIT_TRACE2_EVENT_NESTING", "10"),
+                ("GIT_TRACE2_PARENT_SID", ""),
+                ("GIT_TRACE2_CONFIG_PARAMS", ""),
+                ("GIT_TRACE2_ENV_VARS", ""),
+            ]
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect(),
+        ),
+        GitTrust::Trusted,
+    ))
+}
+
+// v2.54.0 read_index_from emits this after lock creation/cleanup registration even for an absent index.
+// This is readiness only: the separate kernel FD check still proves lock ownership.
+fn index_read_ready(pid: u32, stderr: &[u8]) -> bool {
+    let suffix = format!("-P{pid:08x}");
+    stderr.split(|b| *b == b'\n').any(|line| {
+        let Ok(line) = std::str::from_utf8(line) else {
+            return false;
+        };
+        let Some(rest) = line.strip_prefix("{\"event\":\"region_leave\",\"sid\":\"") else {
+            return false;
+        };
+        let Some((sid, fields)) = rest.split_once('"') else {
+            return false;
+        };
+        sid.ends_with(&suffix)
+            && line.ends_with('}')
+            && fields.contains("\"category\":\"index\"")
+            && fields.contains("\"label\":\"do_read_index\"")
+    })
+}
+
 /// 승인된 blob 후보를 실제 index에 적용하고 Index provider 결과를 대조합니다.
 /// Working Tree나 인메모리 문서에 접근하지 않습니다. 아직 UI/FFI staging 진입점은 아닙니다.
 /// macOS에서 실제 update-index 자식의 쓰기 FD 소유와 선택한 Git의 index 조회 결과를 확인한 뒤 승인합니다.
@@ -243,6 +343,16 @@ pub fn publish_candidate(
     candidate: &WrittenCandidate,
     cancel: &GitCancelToken,
 ) -> Result<IndexSnapshot, PublishError> {
+    publish_inner(git, worktree, candidate, cancel, None).map(|r| r.snapshot)
+}
+
+fn publish_inner(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    candidate: &WrittenCandidate,
+    cancel: &GitCancelToken,
+    required_bytes: Option<&Option<Vec<u8>>>,
+) -> Result<AppliedIndex, PublishError> {
     let runner = git.runner()?;
     if !cfg!(target_os = "macos") {
         return Err(PublishError::Unsupported(
@@ -265,13 +375,6 @@ pub fn publish_candidate(
         return Err(GatedRunError::Run(GitRunError::Cancelled).into());
     }
     let expected = expected_index(candidate)?;
-    if candidate.changes().is_empty() {
-        return if read_index_snapshot_cancellable(git, worktree, cancel)? == expected {
-            Ok(expected)
-        } else {
-            Err(PublishError::StaleBase)
-        };
-    }
     let root = git_path(
         git,
         worktree,
@@ -288,17 +391,39 @@ pub fn publish_candidate(
     lock.push(".lock");
     let lock = PathBuf::from(lock);
     let before = index_bytes(&index)?;
+    if required_bytes.is_some_and(|required| required != &before) {
+        return Err(PublishError::StaleBase);
+    }
+    if candidate.changes().is_empty() {
+        return if read_index_snapshot_cancellable(git, &root, cancel)? == expected
+            && index_bytes(&index)? == before
+        {
+            Ok(AppliedIndex {
+                snapshot: expected,
+                bytes: before,
+                root,
+            })
+        } else {
+            Err(PublishError::StaleBase)
+        };
+    }
     let bytes = input(candidate);
     let mut failure = None;
     let mut approved = false;
-    let mut check = |pid, deadline: Instant| {
+    let mut owned = false;
+    let mut check = |pid, deadline: Instant, stderr: &[u8]| {
+        if !index_read_ready(pid, stderr) {
+            return Ok(false);
+        }
         match ownership::owns_lock(pid, &lock) {
             Ok(false) => return Ok(false),
             Err(_) => {
                 failure = Some(PublishError::LockOwnershipUnconfirmed);
                 return Err(GitRunError::Cancelled);
             }
-            Ok(true) => {}
+            Ok(true) => {
+                owned = true;
+            }
         }
         let validate = || -> Result<(), PublishError> {
             if index_bytes(&index)? != before {
@@ -352,7 +477,8 @@ pub fn publish_candidate(
             }
         }
     };
-    let result = git.run_with_checked_input(
+    let protocol_git = protocol_runner(git)?;
+    let result = protocol_git.run_with_checked_input(
         &argv([
             "-c",
             "core.fsmonitor=false",
@@ -367,6 +493,13 @@ pub fn publish_candidate(
         cancel,
         &mut check,
     );
+    if !approved && lock.try_exists().unwrap_or(true) {
+        return Err(if owned {
+            PublishError::LockCleanupUnconfirmed
+        } else {
+            PublishError::LockOwnershipUnconfirmed
+        });
+    }
     if let Some(error) = failure {
         return Err(error);
     }
@@ -380,8 +513,20 @@ pub fn publish_candidate(
     if let Err(cause) = completion {
         return Err(PublishError::OutcomeUnknown { cause: Some(cause) });
     }
+    // 하나의 안정된 실제 index 표현을 provider 결과에 묶습니다. 이후 복원은 이 bytes와 CAS합니다.
+    let installed =
+        index_bytes(&index).map_err(|_| PublishError::OutcomeUnknown { cause: None })?;
     match read_index_snapshot_cancellable(git, &root, cancel) {
-        Ok(actual) if actual == expected => Ok(actual),
+        Ok(actual) if actual == expected => {
+            if index_bytes(&index).ok().as_ref() != Some(&installed) {
+                return Err(PublishError::OutcomeUnknown { cause: None });
+            }
+            Ok(AppliedIndex {
+                snapshot: actual,
+                bytes: installed,
+                root,
+            })
+        }
         Ok(_) => Err(PublishError::OutcomeUnknown { cause: None }),
         Err(cause) => Err(PublishError::OutcomeUnknown { cause: Some(cause) }),
     }
