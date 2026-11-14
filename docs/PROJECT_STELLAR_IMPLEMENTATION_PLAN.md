@@ -2186,7 +2186,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XXII.3.1 | `[ ]` | Apple TargetProfile에 맞춰 SwiftUI/AppKit 중 지정된 output dialect로 Control contract를 매핑합니다. | golden source. | XXII.1.1 |
 | XXII.3.2 | `[ ]` | common layout을 platform layout code로 변환하고 unsupported constraint를 diagnostic합니다. 변환과 진단은 XXII.1.4 matrix 규칙만 씁니다. | compile fixture. | Phase X, XXII.3.1, XXII.1.4 |
-| XXII.3.3 | `[ ]` | accessibility semantics와 color space를 Apple API 표현으로 내보냅니다. | compile/static fixture. | IX.8.6, III.4.2 |
+| XXII.3.3 | `[x]` | accessibility semantics와 color space를 Apple API 표현으로 내보냅니다. | compile/static fixture. | IX.8.6, III.4.2 |
 | XXII.3.4 | `[ ]` | Context를 Apple dialect의 Environment 값으로, 상태 머신과 `MotionSpec`을 dialect의 상태·animation API로 내보냅니다. 표현할 수 없는 항목은 XXII.1.7 규칙에 따라 진단합니다. Environment가 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11). | compile/static fixture, Context shadowing·slot 결과가 XXX.7.4와 같음. | XXII.3.1, XXII.1.5, XXII.1.6, XXII.1.7 |
 
 ### XXII.4 Android Adapter

@@ -152,6 +152,11 @@ pub fn ios_profile() -> TargetProfile {
     apple_profile("ios", ApplePlatform::Ios)
 }
 
+/// Apple profile `mac`(macOS 26).
+pub fn mac_profile() -> TargetProfile {
+    apple_profile("mac", ApplePlatform::MacOs)
+}
+
 fn apple_profile(name: &str, platform: ApplePlatform) -> TargetProfile {
     TargetProfile::new(
         profile_id(name),

@@ -18,5 +18,8 @@ pub mod facet;
 /// Web adapter (XXII.2).
 pub mod web;
 
+/// Apple adapter (XXII.3).
+pub mod apple;
+
 #[cfg(test)]
 pub(crate) mod fixture;
