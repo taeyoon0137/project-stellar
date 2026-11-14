@@ -328,6 +328,78 @@ mod tests {
     }
 
     #[test]
+    fn frame_geometry_commands_reopen_identically_from_text_and_generation() {
+        use crate::apply::{self, ApplyRequest};
+        use crate::core_types::value::{Size2, Transform2D};
+        use stellar_document::records::NodePayload;
+
+        let project = TempDir::new("frame-geometry-project");
+        let source = TempDir::new("frame-geometry-source");
+        let locks = TempDir::new("frame-geometry-locks");
+        let model = large_document(4);
+        let mut expected = model.to_records().unwrap();
+        let root = expected
+            .nodes
+            .iter_mut()
+            .find(|n| n.parent.is_none())
+            .unwrap();
+        let node = root.id;
+        let NodePayload::Frame(frame) = &mut root.payload else {
+            panic!("fixture root Frame");
+        };
+        let size = Size2::new(320.5, 240.25).unwrap();
+        let transform = Transform2D::new(0.0, 1.0, -1.0, 0.0, 12.5, -24.25).unwrap();
+        frame.size = size;
+        frame.transform = transform;
+        expected.sort_canonical();
+        let commands = vec![
+            CommandInput::SetFrameSize { node, size },
+            CommandInput::SetFrameTransform { node, transform },
+        ];
+        scaffold_project(&project.path);
+        save_documents(&project.path, &[&model]);
+        let path = source.path.join("view.stellar.yaml");
+        let hash = export(&project.path, &path).unwrap().source_hash;
+        let source_request = TextSourceApplyRequest {
+            base_source_hash: hash,
+            document: model.document_id(),
+            commands: commands.clone(),
+        };
+        let policy = LockPolicy::Required {
+            dir: locks.path.clone(),
+        };
+        let before = file_digest(&project.path);
+        let saved = apply(&path, &source_request, ApplyMode::Write, &policy).unwrap();
+        assert_eq!(saved.diff.entries.len(), 2);
+        assert_eq!(file_digest(&project.path), before);
+        let mut text_records = text_source::open(&path)
+            .unwrap()
+            .model
+            .to_records()
+            .unwrap();
+        text_records.sort_canonical();
+        assert_eq!(text_records, expected);
+
+        let request = ApplyRequest {
+            base_revision: open_snapshot(&project.path).unwrap().revision(),
+            document: model.document_id(),
+            commands,
+        };
+        let preview = apply::apply(&project.path, &request, ApplyMode::DryRun, &policy).unwrap();
+        assert_eq!(file_digest(&project.path), before);
+        assert_eq!(preview.diff.entries, saved.diff.entries);
+        apply::apply(&project.path, &request, ApplyMode::Write, &policy).unwrap();
+        let mut generation_records = open_snapshot(&project.path)
+            .unwrap()
+            .document_model(request.document)
+            .unwrap()
+            .to_records()
+            .unwrap();
+        generation_records.sort_canonical();
+        assert_eq!(generation_records, expected);
+    }
+
+    #[test]
     fn unsupported_command_result_is_rejected_even_in_dry_run() {
         use stellar_commands::command::Command;
         use stellar_commands::node_ops::InsertNode;

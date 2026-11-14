@@ -29,10 +29,11 @@ use stellar_commands::command::Command;
 use stellar_commands::id::{CommandId, CommandOrigin};
 use stellar_commands::kind::CommandKind;
 use stellar_commands::node_ops::{DeleteSubtree, MoveNode};
-use stellar_commands::property::SetProperty;
+use stellar_commands::property::{PropertyValue, SetProperty};
 use stellar_commands::request::CommandRequest;
 use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
+use stellar_document::frame::keys as frame_keys;
 use stellar_project::document_io::serialize::serialize_document;
 use stellar_project::identity::parse_project_id;
 use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
@@ -48,6 +49,7 @@ use stellar_storage::save::plan::build_save_plan;
 use crate::core_types::ids::StableId;
 use crate::core_types::order_key::OrderKey;
 use crate::core_types::revision::DocumentRevision;
+use crate::core_types::value::{Size2, Transform2D};
 use crate::diff::{diff_records, DiffReport};
 use crate::error::{DocumentReadError, OpenError};
 use crate::lock::{LockError, LockPolicy, SaveLock};
@@ -84,6 +86,20 @@ pub enum CommandInput {
         /// 새 이름.
         name: String,
     },
+    /// Frame의 비음수 크기 변경. 기존 size 속성 command로 실행합니다.
+    SetFrameSize {
+        /// 대상 Frame.
+        node: StableId,
+        /// 유한·비음수 크기.
+        size: Size2,
+    },
+    /// Frame의 local 아핀 변환 변경. 기존 transform 속성 command로 실행합니다.
+    SetFrameTransform {
+        /// 대상 Frame.
+        node: StableId,
+        /// 유한 성분의 아핀 변환.
+        transform: Transform2D,
+    },
     /// subtree 삭제(VII.2.1).
     DeleteSubtree {
         /// subtree root.
@@ -108,10 +124,12 @@ pub enum CommandInput {
 }
 
 /// 필드 형식으로 받는 종류 이름.
-pub const FIELD_KINDS: [&str; 5] = [
+pub const FIELD_KINDS: [&str; 7] = [
     "set-visible",
     "set-locked",
     "rename",
+    "set-frame-size",
+    "set-frame-transform",
     "delete-subtree",
     "move-node",
 ];
@@ -130,6 +148,18 @@ impl CommandInput {
                 *node,
                 name.clone(),
             ))),
+            CommandInput::SetFrameSize { node, size } => Ok(Command::SetProperty(SetProperty {
+                node: *node,
+                key: frame_keys::SIZE,
+                value: PropertyValue::Size(*size),
+            })),
+            CommandInput::SetFrameTransform { node, transform } => {
+                Ok(Command::SetProperty(SetProperty {
+                    node: *node,
+                    key: frame_keys::TRANSFORM,
+                    value: PropertyValue::Transform(*transform),
+                }))
+            }
             CommandInput::DeleteSubtree { root } => {
                 Ok(Command::DeleteSubtree(DeleteSubtree { root: *root }))
             }
@@ -815,6 +845,14 @@ mod tests {
                 visible: true,
             },
             CommandInput::DeleteSubtree { root: node },
+            CommandInput::SetFrameSize {
+                node,
+                size: Size2::new(320.5, 240.25).unwrap(),
+            },
+            CommandInput::SetFrameTransform {
+                node,
+                transform: Transform2D::new(1.0, 0.0, 0.0, -1.0, 12.5, -24.25).unwrap(),
+            },
         ];
         for input in inputs {
             let command = input.to_command().unwrap();
