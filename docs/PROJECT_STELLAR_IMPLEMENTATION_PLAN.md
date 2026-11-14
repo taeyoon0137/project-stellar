@@ -824,7 +824,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| IX.4.1 | `[ ]` | component boundary를 넘는 binding은 각 경계의 ComponentProperty StableId chain을 필수로 갖게 합니다. | chain 누락 fixture 거부. | IX.1.2, VIII.6.1 |
+| IX.4.1 | `[x]` | component boundary를 넘는 binding은 각 경계의 ComponentProperty StableId chain을 필수로 갖게 합니다. | chain 누락 fixture 거부. | IX.1.2, VIII.6.1 |
 | IX.4.2 | `[x]` | nested instance property를 상위 instance에서 직접 수정하는 API를 제공하지 않고 validator에서도 거부합니다. | prohibited direct path fixture 실패. | IX.2.3 |
 | IX.4.3 | `[ ]` | 사용자가 내부 property를 상위로 노출할 때 필요한 중간 property와 binding chain을 계산하는 `DrillingPlan`을 구현합니다. 아직 적용하지 않습니다. | 1·2·10단계 nesting fixture의 계획 정확. | IX.4.1 |
 | IX.4.4 | `[ ]` | DrillingPlan preview에 생성될 property 이름, type, default, component 경로를 포함합니다. 이름 충돌은 deterministic suffix를 제안합니다. | 동일 입력 동일 plan. | IX.4.3 |

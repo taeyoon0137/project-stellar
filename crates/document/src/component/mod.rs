@@ -50,6 +50,9 @@ pub mod override_commands;
 /// nested instance property 직접 수정 금지 (IX.4.2).
 pub mod encapsulation;
 
+/// 컴포넌트 경계를 넘는 drilling binding (IX.4.1).
+pub mod drilling;
+
 /// 인스턴스 expansion view (IX.2.2).
 pub mod expansion;
 

@@ -358,6 +358,18 @@ impl DefinitionTree {
         Ok(())
     }
 
+    /// node payload를 교체합니다(테스트 전용). node가 없으면 `false`.
+    #[cfg(test)]
+    pub(crate) fn set_payload(&mut self, id: StableId, payload: Vec<u8>) -> bool {
+        match self.nodes.get_mut(&id) {
+            Some(node) => {
+                node.payload = payload;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// id로 node를 찾습니다.
     pub fn node(&self, id: StableId) -> Option<&DefinitionNode> {
         self.nodes.get(&id)
@@ -712,6 +724,18 @@ impl ComponentEntry {
     /// host node에 붙은 slot.
     pub fn slot_for_host(&self, host: StableId) -> Option<&ComponentSlot> {
         self.slots.values().find(|slot| slot.host.id() == host)
+    }
+
+    /// 정의(가변). root·tree 소유 관계를 바꾸지 않는 interface 편집(Property 선언 등)에만 씁니다.
+    #[cfg(test)]
+    pub(super) fn definition_mut(&mut self) -> &mut ComponentDefinition {
+        &mut self.definition
+    }
+
+    /// 정의 tree(가변, 테스트 전용 — node payload 교체).
+    #[cfg(test)]
+    pub(crate) fn tree_mut(&mut self) -> &mut DefinitionTree {
+        &mut self.tree
     }
 
     pub(super) fn insert_slot(&mut self, slot: ComponentSlot) {
