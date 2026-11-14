@@ -38,6 +38,8 @@ pub enum UnavailableReason {
     MissingCacheEntry,
     /// cache entry content hash가 lock 값과 다름(손상, 다른 commit을 고르지 않음).
     ContentHashMismatch,
+    /// 같은 node의 lock entry들이 content hash·schema version·전이 의존성에서 서로 다름(손상).
+    InconsistentLockEntries,
     /// cache index·lock 읽기 실패.
     CacheFailure,
     /// export 읽기 실패.
@@ -54,6 +56,9 @@ impl fmt::Display for UnavailableReason {
             }
             UnavailableReason::ContentHashMismatch => {
                 f.write_str("cache 내용이 lockfile content hash와 다릅니다(손상)")
+            }
+            UnavailableReason::InconsistentLockEntries => {
+                f.write_str("lockfile에서 같은 library node의 entry들이 서로 다릅니다(손상)")
             }
             UnavailableReason::CacheFailure => f.write_str("cache를 읽지 못했습니다"),
             UnavailableReason::ExportUnreadable(e) => write!(f, "{e}"),
@@ -305,9 +310,11 @@ impl LoadedLibraries {
 
 /// lock의 모든 node를 cache에서 로드합니다(Git·network 없음).
 ///
-/// node마다 lock entry를 순서대로 시도해 cache에서 찾은 첫 entry를 씁니다(같은 node를 다른 repository
-/// 표기로 선언한 경우). 모두 실패하면 node를 진단으로 남깁니다. lock 구조(부모 경로)가 잘못된 경우만
-/// 오류입니다.
+/// 같은 node의 lock entry(다른 경로로 도달)는 content hash·schema version·전이 의존성이 모두 같아야
+/// 합니다. 다르면 어느 값이 맞는지 정할 수 없으므로 첫 entry를 조용히 쓰지 않고 그 node를
+/// [`UnavailableReason::InconsistentLockEntries`] 진단으로 남깁니다. 일치하면 entry를 순서대로 시도해
+/// cache에서 찾은 첫 entry를 씁니다(같은 node를 다른 repository 표기로 선언한 경우). 모두 실패하면 node를
+/// 진단으로 남깁니다. lock 구조(부모 경로)가 잘못된 경우만 오류입니다.
 pub fn load_locked_libraries<H: Sha256Digest, K: RepositoryKeyer>(
     lock: &LockDocument,
     store: &LibraryEntryStore<H, K>,
@@ -324,7 +331,14 @@ pub fn load_locked_libraries<H: Sha256Digest, K: RepositoryKeyer>(
     let mut unavailable = BTreeMap::new();
     for (node, entries) in by_node {
         let mut outcome = Err(UnavailableReason::MissingCacheEntry);
-        for entry in &entries {
+        // 불일치 entry는 어느 것도 시도하지 않음.
+        let candidates: &[&crate::lock::LockEntry] = if entries_agree(&entries) {
+            &entries
+        } else {
+            outcome = Err(UnavailableReason::InconsistentLockEntries);
+            &[]
+        };
+        for entry in candidates {
             let request = SnapshotRequest {
                 repository: &entry.repository,
                 node: &node,
@@ -363,6 +377,18 @@ pub fn load_locked_libraries<H: Sha256Digest, K: RepositoryKeyer>(
     Ok(LoadedLibraries {
         instance: LibraryGraphInstance::new(scopes, snapshots),
         unavailable,
+    })
+}
+
+/// 같은 node의 entry들이 node 자체를 같은 값으로 기록하는지(content hash·schema version·전이 의존성).
+///
+/// repository 표기와 선택자는 선언한 부모마다 다를 수 있으므로 비교하지 않습니다.
+fn entries_agree(entries: &[&crate::lock::LockEntry]) -> bool {
+    entries.windows(2).all(|pair| {
+        let (a, b) = (pair[0], pair[1]);
+        a.content_hash == b.content_hash
+            && a.schema_version == b.schema_version
+            && a.dependencies == b.dependencies
     })
 }
 
@@ -700,6 +726,78 @@ mod tests {
             loaded.resolve(&RefScope::Project, &badge),
             ResourceResolution::Unavailable(_)
         ));
+    }
+
+    #[test]
+    fn inconsistent_entries_for_one_node_make_it_unavailable() {
+        // 같은 node(a)에 두 경로로 도달하는 lock에서 두 번째 entry만 다른 content hash·schema version을
+        // 가짐. 어느 값이 맞는지 알 수 없으므로 첫 entry를 조용히 쓰지 않고 node를 진단으로 남김(리뷰 P5).
+        let Some(mut f) = fixture() else {
+            return;
+        };
+        let original = f
+            .lock
+            .entries()
+            .iter()
+            .find(|e| e.library_id == library(1))
+            .cloned()
+            .unwrap();
+        let mut alias = original.clone();
+        alias.dependency_path = DependencyPath::from_names(vec![
+            LogicalName::new("b").unwrap(),
+            LogicalName::new("a").unwrap(),
+        ]);
+        let variants: [fn(&mut LockEntry); 3] = [
+            |e| e.content_hash = ContentHashText::from_sha256_digest([0xab; 32]),
+            |e| e.schema_version += 1,
+            |e| e.dependencies.clear(),
+        ];
+        for tamper in variants {
+            let mut second = alias.clone();
+            tamper(&mut second);
+            let mut entries = f.lock.entries().to_vec();
+            entries.push(second);
+            let lock = lock_of(entries);
+            let loaded = load_locked_libraries(
+                &lock,
+                &f.store,
+                &mut f.source,
+                &SnapshotLimits::default(),
+                8,
+            )
+            .unwrap();
+            assert!(
+                loaded.instance().snapshot(&f.a).is_none(),
+                "불일치 entry가 있는 node는 로드하지 않음"
+            );
+            assert!(loaded.instance().snapshot(&f.b).is_some());
+            let diagnostic = loaded.unavailable().find(|d| d.node == f.a).unwrap();
+            assert_eq!(
+                diagnostic.reason,
+                UnavailableReason::InconsistentLockEntries
+            );
+            assert_eq!(
+                diagnostic
+                    .paths
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                ["a", "b > a"]
+            );
+            assert!(diagnostic.to_string().contains("손상"));
+        }
+        // 일치하는 두 번째 경로는 정상(같은 node를 두 경로로 선언).
+        let mut entries = f.lock.entries().to_vec();
+        entries.push(alias);
+        let loaded = load_locked_libraries(
+            &lock_of(entries),
+            &f.store,
+            &mut f.source,
+            &SnapshotLimits::default(),
+            9,
+        )
+        .unwrap();
+        assert!(loaded.instance().snapshot(&f.a).is_some());
     }
 
     #[test]

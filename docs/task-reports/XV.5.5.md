@@ -72,3 +72,17 @@
 - 검증: 위 재현 테스트 통과, canonical 참조 텍스트 + 위치로 다시 만든 값이 같음
   (`unresolved_external_preserves_reference_identity`), offline fixture의 미해결 참조가 선언 이름 `c`·
   library 3·StableId를 보존(`offline_missing_library_opens_partially_with_unavailable_diagnostic`).
+
+## 리뷰 수정(9A 리뷰 P5, 2026-11-14)
+
+- 문제: `load_locked_libraries`는 node별 lock entry 중 cache에서 찾은 첫 entry를 쓰고, 같은 node의 다른
+  entry가 content hash·schema version을 다르게 기록해도 확인하지 않았습니다. 변조되었거나 서로 맞지 않는
+  entry가 entry 순서에 따라 조용히 무시되었습니다.
+- 재현: `inconsistent_entries_for_one_node_make_it_unavailable` — node a에 두 번째 경로(`b > a`) entry를
+  추가하고 content hash·schema version·전이 의존성 중 하나만 바꾼 lock에서 수정 전에는 a가 로드되어
+  실패했습니다.
+- 수정: 같은 node의 entry는 content hash·schema version·전이 의존성이 모두 같아야 합니다. 다르면 어느
+  entry도 시도하지 않고 `UnavailableReason::InconsistentLockEntries` 진단(두 경로 포함)으로 남깁니다.
+  repository 표기와 선택자는 선언한 부모마다 다를 수 있어 비교하지 않습니다.
+- 검증: 위 테스트 통과(세 변조 모두 a unavailable·b 정상, 일치하는 두 번째 경로는 정상 로드).
+- 한계: 같은 검사를 lock validator(XV.4.2 `LockDocument::from_node`)에 넣는 일은 이 수정 범위 밖입니다.

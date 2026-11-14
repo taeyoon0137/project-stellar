@@ -94,18 +94,30 @@ pub struct DependencyScopes {
 
 impl DependencyScopes {
     /// resolver 그래프의 edge에서 만듭니다.
-    pub fn from_graph(graph: &DependencyGraph) -> DependencyScopes {
+    ///
+    /// [`from_lock`](Self::from_lock)과 같은 규칙으로, 같은 scope의 같은 선언 이름이 서로 다른 node를
+    /// 가리키면 덮어쓰지 않고 [`ScopeError::Conflict`]로 거부합니다. 같은 node를 가리키는 중복 edge(같은
+    /// 부모 node에 여러 경로로 도달)는 허용합니다.
+    pub fn from_graph(graph: &DependencyGraph) -> Result<DependencyScopes, ScopeError> {
         let mut children = BTreeMap::new();
         for edge in graph.edges() {
             let scope = match &edge.parent {
                 None => RefScope::Project,
                 Some(parent) => RefScope::Library(parent.clone()),
             };
-            if let Some(name) = edge.path.last() {
-                children.insert((scope, name.clone()), edge.child.clone());
+            let Some(name) = edge.path.last() else {
+                continue;
+            };
+            match children.insert((scope, name.clone()), edge.child.clone()) {
+                Some(existing) if existing != edge.child => {
+                    return Err(ScopeError::Conflict {
+                        path: edge.path.clone(),
+                    })
+                }
+                _ => {}
             }
         }
-        DependencyScopes { children }
+        Ok(DependencyScopes { children })
     }
 
     /// lock entry에서 만듭니다. 부모는 entry 경로에서 마지막 이름을 뺀 경로의 entry입니다.
@@ -490,7 +502,7 @@ mod tests {
 
     fn instance() -> LibraryGraphInstance {
         LibraryGraphInstance::new(
-            DependencyScopes::from_graph(&graph()),
+            DependencyScopes::from_graph(&graph()).unwrap(),
             [
                 parent(1, 0xa1, CARD),
                 parent(2, 0xb1, TILE),
@@ -595,7 +607,7 @@ mod tests {
             .collect();
         let lock = LockDocument::from_graph(&graph, &hashes).unwrap();
         let from_lock = DependencyScopes::from_lock(&lock).unwrap();
-        assert_eq!(from_lock, DependencyScopes::from_graph(&graph));
+        assert_eq!(from_lock, DependencyScopes::from_graph(&graph).unwrap());
         assert_eq!(
             from_lock.child(
                 &RefScope::Library(key(2, 0xb1)),
@@ -604,6 +616,34 @@ mod tests {
             Some(&key(3, 0xc2))
         );
         assert_eq!(from_lock.nodes().len(), 4);
+    }
+
+    #[test]
+    fn conflicting_graph_edges_are_rejected_like_lock() {
+        // 같은 scope의 같은 선언 이름이 서로 다른 node를 가리키는 그래프. lock 경로(from_lock)는
+        // `Conflict`로 거부하므로 그래프 경로도 덮어쓰지 않고 같은 오류를 돌려야 합니다(리뷰 P5).
+        let mut broken = graph();
+        let mut extra = broken
+            .edges
+            .iter()
+            .find(|e| e.parent.is_none())
+            .cloned()
+            .unwrap();
+        extra.child = key(9, 0x99);
+        broken.edges.push(extra.clone());
+        assert_eq!(
+            DependencyScopes::from_graph(&broken),
+            Err(ScopeError::Conflict { path: extra.path })
+        );
+        // 같은 node를 가리키는 중복 edge(diamond로 같은 부모 node에 두 경로로 도달)는 허용.
+        let mut diamond = graph();
+        let mut same = diamond.edges[0].clone();
+        same.path = DependencyPath::from_names(vec![
+            LogicalName::new("other").unwrap(),
+            same.path.last().unwrap().clone(),
+        ]);
+        diamond.edges.push(same);
+        assert!(DependencyScopes::from_graph(&diamond).is_ok());
     }
 
     #[test]
@@ -674,7 +714,7 @@ mod tests {
         );
         // snapshot이 없는 node.
         let partial = LibraryGraphInstance::new(
-            DependencyScopes::from_graph(&self::graph()),
+            DependencyScopes::from_graph(&self::graph()).unwrap(),
             [parent(1, 0xa1, CARD)],
         );
         assert_eq!(

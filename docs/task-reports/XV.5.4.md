@@ -59,3 +59,14 @@
 ## 남은 위험 / 한계
 
 - 전이 closure는 첫 해석 실패에서 멈춥니다. 일부 library가 없을 때의 부분 해석·진단은 XV.5.5가 다룹니다.
+
+## 리뷰 수정(9A 리뷰 P5, 2026-11-14)
+
+- 문제: `DependencyScopes::from_graph`는 같은 scope의 같은 선언 이름이 서로 다른 node를 가리키면
+  `BTreeMap::insert`로 조용히 덮어썼고, `from_lock`은 같은 입력을 `ScopeError::Conflict`로 거부했습니다. 두
+  생성자가 잘못된 입력에서 다르게 동작했습니다.
+- 재현: `conflicting_graph_edges_are_rejected_like_lock` — root edge와 같은 이름으로 다른 node를 가리키는
+  edge를 추가한 그래프가 수정 전 `Ok`로 만들어져 실패했습니다.
+- 수정: `from_graph`가 `Result<DependencyScopes, ScopeError>`를 돌려주고 충돌을 `Conflict`로 거부합니다.
+  같은 node를 가리키는 중복 edge는 허용합니다.
+- 검증: 위 테스트 통과, 기존 `lock_scopes_match_graph_scopes`(그래프·lock scope 표 동일) 등 통과.
