@@ -32,7 +32,6 @@ use crate::command::CommandError;
 use crate::edit::EditContext;
 use crate::node_ops::{decode_order_key, existing_stacks};
 use crate::property::{PropertyValue, PropertyValueType};
-use crate::tree::{id_owners, IdOwner};
 
 fn modifier_error(owner: StableId, error: ModifierError) -> CommandError {
     CommandError::Modifier { owner, error }
@@ -67,7 +66,7 @@ fn validate_stack(model: &DocumentModel, stack: &ModifierStack) -> Result<(), Co
         .payload(owner)
         .map(NodePayload::kind)
         .ok_or(CommandError::UnknownNode { id: owner })?;
-    let owners = id_owners(model);
+    let mut has_references = false;
     for entry in stack.entries() {
         validate_modifier_owner(kind, entry.kind).map_err(|error| modifier_error(owner, error))?;
         entry
@@ -75,11 +74,15 @@ fn validate_stack(model: &DocumentModel, stack: &ModifierStack) -> Result<(), Co
             .validate()
             .map_err(|error| modifier_error(owner, error))?;
         for target in entry.payload.referenced_nodes() {
-            match owners.get(&target) {
-                None | Some(IdOwner::Node(_)) => {}
-                Some(_) => return Err(CommandError::ReferenceTypeMismatch { owner, target }),
+            has_references = true;
+            if model.contains_persistent_id(target) && !model.contains(target) {
+                return Err(CommandError::ReferenceTypeMismatch { owner, target });
             }
         }
+    }
+    // 소유 node의 outbound edge가 없으면 이 편집으로 새 순환을 만들 수 없습니다.
+    if !has_references {
+        return Ok(());
     }
     let mut stacks: Vec<ModifierStack> = existing_stacks(model)
         .into_iter()
@@ -145,7 +148,7 @@ impl InsertModifier {
         if id == StableId::NIL {
             return Err(CommandError::NilId);
         }
-        if id_owners(model).contains_key(&id) {
+        if model.contains_persistent_id(id) {
             return Err(CommandError::DuplicateId { id });
         }
         let stack = self.next_stack(model)?;
