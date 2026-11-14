@@ -57,6 +57,7 @@ final class ShellCommandRouter: NSResponder, NSMenuItemValidation {
 
     /// 텍스트 편집 중 창 undo manager에 넘기는 표준 action.
     static let textEditingPassThroughActions: Set<Selector> = [
+        #selector(ShellCommandRouter.delete(_:)),
         #selector(ShellCommandRouter.undo(_:)),
         #selector(ShellCommandRouter.redo(_:)),
     ]

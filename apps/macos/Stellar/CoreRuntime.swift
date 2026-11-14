@@ -162,6 +162,24 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    static func deleteSelection(handle: UInt64, session: UInt64, view: UUID, revision: UInt64) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { bytes in
+            stellar_window_session_delete_selection(handle, session, bytes.bindMemory(to: UInt8.self).baseAddress, revision, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    static func duplicateSelection(handle: UInt64, session: UInt64, view: UUID, revision: UInt64) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { bytes in
+            stellar_window_session_duplicate_selection(handle, session, bytes.bindMemory(to: UInt8.self).baseAddress, revision, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func insertFrame(handle: UInt64, session: UInt64, view: UUID, parent: UUID, revision: UInt64,
                             rect: CGRect) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0

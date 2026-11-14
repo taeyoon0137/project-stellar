@@ -84,6 +84,20 @@ final class ShellWindowSessionHandle {
         pump.closeWindowSession(session, completion: completion)
     }
 
+    func deleteSelection(completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed, !isClosing, let view = viewInfo, view.has_view == 1, let info else { return false }
+        return track { done in
+            pump.deleteSelection(session: session, view: UUID(uuid: view.active_view), revision: info.revision, completion: done)
+        } completion: { completion($0) }
+    }
+
+    func duplicateSelection(completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed, !isClosing, let view = viewInfo, view.has_view == 1, let info else { return false }
+        return track { done in
+            pump.duplicateSelection(session: session, view: UUID(uuid: view.active_view), revision: info.revision, completion: done)
+        } completion: { completion($0) }
+    }
+
     func insertFrame(parent: CanvasFrameHit, rect: CGRect, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
         guard !isClosed, !isClosing else { return false }
         return track { done in pump.insertFrame(session: session, parent: parent, rect: rect, completion: done) } completion: { completion($0) }
@@ -477,8 +491,13 @@ final class ShellProjectWindow {
         )
         gitSource.trustDidChange = { [weak self] trusted in
             self?.dataSource.updateTrust(trusted)
+            self?.refreshSessionCommands()
             if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
         }
+        sidebarSource.duplicate = { [weak self] in _ = self?.router.dispatch(.duplicate) }
+        sidebarSource.canDuplicate = { [weak self] in self?.toolsModel.snapshot.enabledCommands.contains(.duplicate) == true }
+        sidebarSource.delete = { [weak self] in _ = self?.router.dispatch(.delete) }
+        sidebarSource.canDelete = { [weak self] in self?.toolsModel.snapshot.enabledCommands.contains(.delete) == true }
         sidebarSource.select = { [weak self] ids in _ = self?.selectNodes(ids) }
         connectFrameInteractions()
         panelsSlot.gitPanel.host = self
@@ -488,6 +507,10 @@ final class ShellProjectWindow {
         }
         // 캔버스 포커스 중 단일 키 도구 단축키(tools_menus 6.2). 도구로 해석되지 않거나 비활성이면 코어 입력으로 보냅니다.
         canvasHost.canvasView.keyDownHandler = { [weak router] event in
+            if event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty,
+               event.keyCode == 51 || event.keyCode == 117 {
+                return router?.dispatch(.delete) ?? false
+            }
             guard let router, let tool = CanvasToolShortcut.tool(for: event) else { return false }
             return router.dispatch(tool.command)
         }
@@ -574,8 +597,10 @@ final class ShellProjectWindow {
            view?.zoom != drag.viewport.zoom {
             _ = canvasHost.canvasView.cancelFrameGesture?()
         }
-        let commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
+        var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
+        if gitSource.trusted, (info?.selection_count ?? 0) > 0 { commands.insert(.delete) }
+        if gitSource.trusted, info?.selection_count == 1 { commands.insert(.duplicate) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
 
@@ -588,6 +613,22 @@ final class ShellProjectWindow {
     /// 메뉴·단축키는 응답자 체인으로 key 창의 router가 받으므로 여기 오는 명령은 언제나 이 창(활성 창)의 것입니다.
     @discardableResult
     func performSessionCommand(_ command: ShellCommand) -> Bool {
+        if command == .delete {
+            guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession else { return false }
+            _ = canvasHost.canvasView.cancelFrameGesture?()
+            return session.deleteSelection { [weak self, weak session] event in
+                guard let self, self.windowController.windowSession === session else { return }
+                self.finishSessionCommand(command, event: event)
+            }
+        }
+        if command == .duplicate {
+            guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession else { return false }
+            _ = canvasHost.canvasView.cancelFrameGesture?()
+            return session.duplicateSelection { [weak self, weak session] event in
+                guard let self, self.windowController.windowSession === session else { return }
+                self.finishSessionCommand(command, event: event)
+            }
+        }
         guard let code = coreCommandIDs.coreCommandID(for: command), let session = windowController.windowSession else {
             return false
         }

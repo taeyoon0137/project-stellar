@@ -26,6 +26,10 @@ final class ShellSidebarSource: SidebarDataProvider {
     private var version: UInt64 = 0
     private(set) var snapshot = SidebarSnapshot.empty
     var snapshotDidChange: (() -> Void)?
+    var duplicate: (() -> Void)?
+    var canDuplicate: (() -> Bool)?
+    var delete: (() -> Void)?
+    var canDelete: (() -> Bool)?
     var select: (([UUID]) -> Void)?
 
     func refresh(runtime: UInt64?, session: ShellWindowSessionHandle?, info: StellarWindowSessionInfo?, view: StellarWindowViewInfo?) {
@@ -74,6 +78,12 @@ final class ShellSidebarSource: SidebarDataProvider {
 
     func validate(_ command: SidebarCommand) -> SidebarCommandValidation {
         switch command {
+        case .duplicate(let ids):
+            return canDuplicate?() == true && ids.count == 1 && ids == snapshot.selection
+                ? .allowed : .denied(.unsupported)
+        case .delete(let ids):
+            return canDelete?() == true && !ids.isEmpty && Set(ids) == Set(snapshot.selection)
+                ? .allowed : .denied(.unsupported)
         case .reload: return display != nil ? .allowed : .denied(.unsupported)
         case .setSelection(let ids, _):
             return display != nil && ids.allSatisfy { snapshot.layers.rows[$0] != nil } ? .allowed : .denied(.unknownNode)
@@ -88,6 +98,8 @@ final class ShellSidebarSource: SidebarDataProvider {
     func perform(_ command: SidebarCommand) {
         guard validate(command).isAllowed else { return }
         switch command {
+        case .duplicate: duplicate?()
+        case .delete: delete?()
         case .reload:
             reset()
             enqueue(Request(parent: nil, after: nil))

@@ -156,7 +156,53 @@ enum ShellCanvasMoveCheck {
               reopened.windowController.windowSession?.info?.generation == saved.generation,
               at(30, in: reopened.canvasHost.canvasView) == node, at(-30, in: reopened.canvasHost.canvasView) != node
         else { return fail("저장된 원본 재열기 좌표") }
-        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save and reopen")
+        // 기존 일반 창 경로에서 Delete/Backspace → Undo/Redo → 저장·재열기를 검사합니다.
+        reopened.gitSource.updateTrust(true)
+        guard pump.waitForPendingRequests(timeout: 10), let deleteSession = reopened.windowController.windowSession,
+              reopened.selectNodes([node]), pump.waitForPendingRequests(timeout: 10) else { return fail("삭제 선택") }
+        let deleteCanvas = reopened.canvasHost.canvasView
+        // Duplicate 메뉴(⌘D)도 실제 창의 선택과 동일한 history를 사용합니다.
+        let beforeDuplicate = deleteSession.info
+        guard action(reopened, .duplicate), let copy = at(30, in: deleteCanvas), copy != node,
+              deleteSession.info?.selection_count == 1,
+              deleteSession.info?.undo_depth == (beforeDuplicate?.undo_depth ?? 0) + 1,
+              action(reopened, .undo), at(30, in: deleteCanvas) == node,
+              action(reopened, .redo), at(30, in: deleteCanvas) == copy,
+              action(reopened, .undo), at(30, in: deleteCanvas) == node
+        else { return fail("단일 선택 복제·Undo·Redo") }
+        let layerDuplicate = SidebarCommand.duplicate([SidebarStableID(node)])
+        guard reopened.sidebarSource.validate(layerDuplicate).isAllowed else { return fail("Layers 복제 활성") }
+        reopened.sidebarSource.perform(layerDuplicate)
+        guard pump.waitForPendingRequests(timeout: 10), let layerCopy = at(30, in: deleteCanvas), layerCopy != node,
+              action(reopened, .undo), at(30, in: deleteCanvas) == node
+        else { return fail("Layers 복제·Undo") }
+        for code in [UInt16(51), UInt16(117)] {
+            guard let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 1,
+                windowNumber: reopened.window?.windowNumber ?? 0, context: nil, characters: "\u{7f}",
+                charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: code) else { return fail("삭제 키 생성") }
+            let before = deleteSession.info
+            deleteCanvas.keyDown(with: key)
+            guard pump.waitForPendingRequests(timeout: 10), deleteSession.info?.selection_count == 0,
+                  deleteSession.info?.undo_depth == (before?.undo_depth ?? 0) + 1,
+                  at(30, in: deleteCanvas) != node, action(reopened, .undo),
+                  deleteSession.info?.selection_count == 1, at(30, in: deleteCanvas) == node
+            else { return fail("삭제 키·Undo 선택 복원") }
+        }
+        // Layers의 삭제 요청도 같은 transaction으로 이어집니다.
+        let layerDelete = SidebarCommand.delete([SidebarStableID(node)])
+        guard reopened.sidebarSource.validate(layerDelete).isAllowed else { return fail("Layers 삭제 활성") }
+        reopened.sidebarSource.perform(layerDelete)
+        guard pump.waitForPendingRequests(timeout: 10), at(30, in: deleteCanvas) != node,
+              action(reopened, .undo), at(30, in: deleteCanvas) == node,
+              action(reopened, .redo), at(30, in: deleteCanvas) != node,
+              action(reopened, .saveNow), deleteSession.info?.has_unsaved_changes == 0
+        else { return fail("Layers 삭제·Undo·Redo·저장") }
+        let deletedGeneration = deleteSession.info?.generation
+        reopened.window?.close()
+        guard pump.waitForPendingRequests(timeout: 10), let deleted = open(path), deleted !== reopened,
+              deleted.windowController.windowSession?.info?.generation == deletedGeneration,
+              at(30, in: deleted.canvasHost.canvasView) != node else { return fail("삭제 저장 재열기") }
+        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen")
         return true
     }
 }

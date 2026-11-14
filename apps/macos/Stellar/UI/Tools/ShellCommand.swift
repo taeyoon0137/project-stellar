@@ -317,7 +317,7 @@ enum ShellCommand: String, CaseIterable {
     /// 표준 편집 action은 field editor가 먼저 받으므로 여기에 넣지 않습니다.
     var isSuppressedDuringTextEditing: Bool {
         switch self {
-        case .duplicate, .deselectAll,
+        case .delete, .duplicate, .deselectAll,
              .group, .ungroup, .frameSelection,
              .bringToFront, .bringForward, .sendBackward, .sendToBack,
              .alignLeft, .alignCenter, .alignRight, .alignTop, .alignMiddle, .alignBottom,
