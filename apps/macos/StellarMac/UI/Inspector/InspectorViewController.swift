@@ -6,18 +6,26 @@ import AppKit
 /// 자체 배경을 그리지 않습니다(가이드 3.2). 데이터는 `InspectorDataSource` snapshot으로만 받고,
 /// 편집은 `InspectorCommand`로만 보냅니다.
 ///
-/// 성능(아키텍처 §6.3, 가이드 9장):
+/// 성능(아키텍처 §6.3·§6.4, 가이드 9장, docs/design/ui/inspector.md 8.3절):
 /// - 연속으로 도착한 snapshot은 다음 런 루프에서 한 번만 반영하고, 오래된 세대는 버립니다.
 /// - 같은 구성의 snapshot은 바뀐 행만 제자리에서 갱신합니다.
-/// - 구성(섹션 id 목록)별 페이지를 창 안에 숨겨 두고 재사용합니다. macOS 26에서는 popup·segmented·button
-///   크기 계산과 뷰가 창에 들어갈 때의 제약 갱신 비용이 커서, 선택 종류가 바뀔 때 컨트롤을 새로 만들거나
-///   창 밖으로 뺐다 넣지 않습니다. 처음 보는 구성만 새로 만듭니다.
+/// - 구성별 페이지를 창 안에 alpha 0으로 미리 만들어 두고(예열), 선택이 바뀌면 alpha만 바꿔 전환합니다.
+///   예열은 `InspectorBuildQueue`가 컨트롤 하나 정도의 단계로 나눠 유휴 런 루프에서 합니다.
+/// - 아직 없는 구성(캐시 미스)은 저비용 대체(로딩 상태)를 먼저 보이고, 페이지를 최우선으로 나눠 만든 뒤
+///   보입니다(아키텍처 §6.4 "저비용 대체 결과를 우선 표시하고 비동기 정교화"). 선택 경로에서 컨트롤을 만들지 않습니다.
 final class InspectorViewController: NSViewController {
-    /// 창에 숨겨 둘 수 있는 최대 페이지 수. 넘으면 가장 오래 안 쓴 페이지를 버립니다.
-    /// 창의 제약 엔진 하나가 숨은 페이지 제약까지 함께 최적화하므로, 많이 둘수록 새 구성을 처음 만들 때 느려집니다.
-    static let maximumCachedPages = 4
+    /// 창에 둘 수 있는 최대 페이지 수. 넘으면 가장 오래 안 쓴 대기 페이지를 유휴 시간에 나눠 제거합니다.
+    /// 대기 페이지는 제약을 쓰지 않아 배치 엔진 비용은 없지만, 페이지당 메모리 약 6.5MB와 창의 그리기 주기마다
+    /// 약 0.02~0.05ms(뷰 약 480개 순회)를 씁니다(명세 8.3절 측정). 그래서 상한을 작게 둡니다.
+    static let maximumCachedPages = 6
+    /// 처음 표시 뒤 예열할 카탈로그 구성 수(자주 쓰는 순서: Frame, Text, Rectangle, Image).
+    static let prewarmedCatalogPageCount = 4
 
     let dataSource: InspectorDataSource
+    /// 페이지 예열·제거·캐시 미스 구성을 나눠 실행하는 대기열.
+    let buildQueue = InspectorBuildQueue()
+    /// 처음 표시 뒤 카탈로그 구성 페이지를 유휴 시간에 예열할지.
+    let prewarmsCatalogPages: Bool
     /// 마지막으로 화면에 반영한 snapshot.
     private(set) var appliedSnapshot: InspectorSnapshot?
     private var pendingSnapshot: InspectorSnapshot?
@@ -30,13 +38,14 @@ final class InspectorViewController: NSViewController {
     private var pages: [String: InspectorPageView] = [:]
     private var pageOrder: [String] = []
     private(set) var activePage: InspectorPageView?
-    private var evictionScheduled = false
+    private var laidOutSize: NSSize = .zero
 
     /// 인스펙터 안의 키보드 포커스 순서. 통합 시 창의 key view loop에 앞뒤를 잇습니다.
     private(set) var keyViewChain: [NSView] = []
 
-    init(dataSource: InspectorDataSource) {
+    init(dataSource: InspectorDataSource, prewarmsCatalogPages: Bool = true) {
         self.dataSource = dataSource
+        self.prewarmsCatalogPages = prewarmsCatalogPages
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -48,16 +57,17 @@ final class InspectorViewController: NSViewController {
     // MARK: - 뷰 구성
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: InspectorMetrics.typicalWidth, height: 600))
+        let root = InspectorRootView(frame: NSRect(x: 0, y: 0, width: InspectorMetrics.typicalWidth, height: 600))
         root.setAccessibilityElement(true)
         root.setAccessibilityRole(.group)
         root.setAccessibilityLabel("Inspector")
         root.identifier = NSUserInterfaceItemIdentifier("inspector")
+        root.onLayout = { [weak self] in self?.layoutRoot() }
 
         stateView.onRetry = { [weak self] in self?.send(.reload) }
         stateView.isHidden = true
+        stateView.frame = root.bounds
         root.addSubview(stateView)
-        pin(stateView, to: root)
         view = root
     }
 
@@ -67,6 +77,27 @@ final class InspectorViewController: NSViewController {
             self?.receive(snapshot)
         }
         apply(dataSource.snapshot)
+        if prewarmsCatalogPages {
+            prewarm(Array(InspectorPropertyCatalog.prewarmSnapshots().prefix(Self.prewarmedCatalogPageCount)))
+        }
+    }
+
+    // MARK: - 예열
+
+    /// 구성 페이지를 유휴 시간에 나눠 미리 만듭니다. 이미 있는 구성은 건너뜁니다. 코어 adapter는 문서의
+    /// Component 정의처럼 카탈로그에 없는 구성도 이 경로로 예열할 수 있습니다(값은 쓰지 않고 구성만 봄).
+    func prewarm(_ snapshots: [InspectorSnapshot]) {
+        _ = view
+        for snapshot in snapshots where snapshot.state == .ready {
+            let key = InspectorPageView.structureKey(of: snapshot)
+            guard pages[key] == nil else { continue }
+            makePage(key: key, snapshot: snapshot, priority: .background)
+        }
+    }
+
+    /// 구성 페이지가 완성돼 있는지(검사·진단용).
+    func hasCompletePage(for snapshot: InspectorSnapshot) -> Bool {
+        pages[InspectorPageView.structureKey(of: snapshot)]?.isComplete ?? false
     }
 
     // MARK: - snapshot 수신
@@ -105,74 +136,144 @@ final class InspectorViewController: NSViewController {
         _ = view // loadView 보장
 
         guard snapshot.state == .ready else {
-            stateView.show(snapshot.state)
-            stateView.isHidden = false
-            activePage?.isHidden = true
-            activePage = nil
-            rebuildKeyViewChain()
+            showState(snapshot.state)
             return
         }
-        stateView.isHidden = true
 
         let key = InspectorPageView.structureKey(of: snapshot)
         pageOrder.removeAll { $0 == key }
         pageOrder.append(key)
-        let page: InspectorPageView
-        if let existing = pages[key] {
-            page = existing
+        // 이전 선택 때문에 급하게 만들던 다른 페이지는 배경으로 낮춥니다(지금 선택의 페이지가 먼저).
+        buildQueue.demote(keysWithPrefix: "page:")
+        if let page = pages[key], page.isComplete {
             page.apply(snapshot, collapsedSections: collapsedSections)
+            activate(page)
+            return
+        }
+        // 캐시 미스: 로딩 상태를 먼저 보이고, 페이지를 최우선으로 나눠 만든 뒤 보입니다.
+        showState(.loading)
+        if pages[key] != nil {
+            buildQueue.promote(Self.buildKey(key))
         } else {
-            page = makePage(key: key, snapshot: snapshot)
+            makePage(key: key, snapshot: snapshot, priority: .active)
         }
-        if page !== activePage {
-            activePage?.isHidden = true
-            page.syncExpansion(collapsedSections)
-            page.isHidden = false
-            activePage = page
-        }
-        rebuildKeyViewChain()
     }
 
-    /// 새 구성의 페이지를 만듭니다. 창 밖에서 내용을 채우고 배치한 뒤 한 번에 창에 넣어,
-    /// 창 안 다른 페이지가 만드는 중간 배치에 끌려 들어가지 않게 합니다.
-    private func makePage(key: String, snapshot: InspectorSnapshot) -> InspectorPageView {
+    /// 새 구성의 페이지를 대기 상태로 창에 넣고 나눠 만들기를 맡깁니다.
+    @discardableResult
+    private func makePage(key: String, snapshot: InspectorSnapshot, priority: InspectorBuildQueue.Priority)
+        -> InspectorPageView
+    {
         let page = InspectorPageView(
             structureKey: key,
             send: { [weak self] command in self?.send(command) },
             onExpansionChange: { [weak self] id, expanded in self?.sectionExpansionChanged(id, expanded: expanded) }
         )
         page.onStructureChange = { [weak self] in self?.rebuildKeyViewChain() }
-        page.apply(snapshot, collapsedSections: collapsedSections)
-        page.isHidden = true
-        // 페이지 외곽은 autoresizing으로 root를 따릅니다. 모든 페이지를 root 가장자리 제약으로 묶으면
-        // 페이지들이 root 폭 변수를 공유해, 새 페이지를 넣을 때 숨은 페이지 제약까지 다시 풀게 됩니다.
-        page.translatesAutoresizingMaskIntoConstraints = true
-        page.autoresizingMask = [.width, .height]
+        page.scheduleBuild = { [weak self, weak page] buildKey, steps, completion in
+            guard let self else { return }
+            self.buildQueue.enqueue(
+                key: buildKey + "@" + key, priority: .active, steps: steps,
+                afterSlice: { page?.layoutSubtreeIfNeeded() },
+                completion: { [weak self] in
+                    completion()
+                    self?.rebuildKeyViewChain()
+                }
+            )
+        }
         page.frame = view.bounds
         view.addSubview(page, positioned: .below, relativeTo: stateView)
         pages[key] = page
-        scheduleEviction()
+        if !pageOrder.contains(key) {
+            // 예열 페이지는 아직 쓰지 않았으므로 가장 오래된 쪽에 둡니다.
+            pageOrder.insert(key, at: 0)
+        }
+        buildQueue.enqueue(
+            key: Self.buildKey(key), priority: priority,
+            // 예열(배경)은 견본 값 변경까지 미리 치르고, 지금 필요한 구성(미스)은 바로 보이게 건너뜁니다.
+            steps: page.buildSteps(from: snapshot, collapsedSections: collapsedSections,
+                                   warmsUpValues: priority == .background),
+            afterSlice: { [weak page] in page?.layoutSubtreeIfNeeded() },
+            completion: { [weak self, weak page] in
+                guard let self, let page else { return }
+                self.pageDidFinishBuilding(page)
+            }
+        )
+        evictOverflowPages()
         return page
     }
 
-    /// 넘친 페이지 제거는 선택 변경 경로에서 하지 않고, 이벤트 추적 중이 아닐 때 다음 런 루프에서 합니다
-    /// (제약 수천 개 제거 비용이 큼).
-    private func scheduleEviction() {
-        guard pageOrder.count > Self.maximumCachedPages, !evictionScheduled else { return }
-        evictionScheduled = true
-        RunLoop.main.perform(inModes: [.default]) { [weak self] in
-            MainActor.assumeIsolated { self?.evictOverflowPages() }
+    private static func buildKey(_ structureKey: String) -> String { "page:" + structureKey }
+
+    /// 다 만든 페이지가 지금 필요한 구성이면 최신 snapshot을 반영해 보입니다.
+    private func pageDidFinishBuilding(_ page: InspectorPageView) {
+        // 구성 중이라 제거하지 못한 넘친 페이지가 있으면 지금 제거를 맡깁니다.
+        evictOverflowPages()
+        guard let snapshot = appliedSnapshot, snapshot.state == .ready,
+              InspectorPageView.structureKey(of: snapshot) == page.structureKey else { return }
+        page.apply(snapshot, collapsedSections: collapsedSections)
+        activate(page)
+    }
+
+    /// 페이지를 화면에 보입니다. 이전 페이지는 대기(alpha 0)로 돌립니다.
+    private func activate(_ page: InspectorPageView) {
+        if activePage !== page {
+            let previous = activePage
+            previous?.isActive = false
+            if let previous { releaseFocus(from: previous) }
+            page.syncExpansion(collapsedSections)
+            if page.frame != view.bounds { page.frame = view.bounds }
+            page.isActive = true
+            activePage = page
+        }
+        if !stateView.isHidden { stateView.isHidden = true }
+        rebuildKeyViewChain()
+    }
+
+    private func showState(_ state: InspectorContentState) {
+        stateView.show(state)
+        stateView.isHidden = false
+        if let activePage {
+            activePage.isActive = false
+            releaseFocus(from: activePage)
+            self.activePage = nil
+        }
+        rebuildKeyViewChain()
+    }
+
+    /// 대기로 돌린 페이지 안에 키보드 포커스가 남지 않게 합니다(보이지 않는 컨트롤로 입력이 가지 않게).
+    private func releaseFocus(from page: InspectorPageView) {
+        guard let window = view.window, let responder = window.firstResponder as? NSView else { return }
+        let owner = ((responder as? NSText)?.delegate as? NSView) ?? responder
+        if owner.isDescendant(of: page) {
+            window.makeFirstResponder(nil)
         }
     }
 
-    /// 가장 오래 안 쓴 페이지부터 상한까지 제거합니다(활성 페이지는 남깁니다).
+    /// 넘친 페이지 제거. 활성·구성 중 페이지는 남기고, 가장 오래 안 쓴 페이지부터 유휴 시간에 나눠 제거합니다.
     func evictOverflowPages() {
-        evictionScheduled = false
-        var candidates = pageOrder.filter { pages[$0] !== activePage }
-        while pages.count > Self.maximumCachedPages, !candidates.isEmpty {
-            let oldest = candidates.removeFirst()
-            pageOrder.removeAll { $0 == oldest }
-            pages.removeValue(forKey: oldest)?.removeFromSuperview()
+        while pages.count > Self.maximumCachedPages {
+            guard let victim = pageOrder.first(where: { key in
+                pages[key] !== activePage && !buildQueue.contains(Self.buildKey(key))
+            }), let page = pages.removeValue(forKey: victim) else { break }
+            pageOrder.removeAll { $0 == victim }
+            buildQueue.enqueue(key: "evict:\(ObjectIdentifier(page).hashValue)", priority: .background,
+                               steps: page.teardownSteps())
+        }
+    }
+
+    /// 루트 배치: 상태 화면과 활성 페이지를 루트에 맞추고, 폭이 바뀌면 대기 페이지를 유휴 시간에 다시 배치합니다.
+    private func layoutRoot() {
+        let bounds = view.bounds
+        if stateView.frame != bounds { stateView.frame = bounds }
+        if let activePage, activePage.frame != bounds { activePage.frame = bounds }
+        guard bounds.size != laidOutSize else { return }
+        let widthChanged = bounds.width != laidOutSize.width
+        laidOutSize = bounds.size
+        guard widthChanged else { return }
+        for page in pages.values where page !== activePage && page.isComplete {
+            buildQueue.enqueue(key: "relayout:" + page.structureKey, priority: .background,
+                               steps: page.relayoutSteps(to: bounds.size))
         }
     }
 
@@ -188,8 +289,8 @@ final class InspectorViewController: NSViewController {
         }
         activePage?.endGestures()
         // 색 패널이 만들어진 적이 없으면 활성 well도 없으므로 뷰를 훑지 않습니다.
-        if NSColorPanel.sharedColorPanelExists {
-            Self.deactivateColorWells(in: view)
+        if NSColorPanel.sharedColorPanelExists, let activePage {
+            Self.deactivateColorWells(in: activePage)
         }
     }
 
@@ -222,10 +323,10 @@ final class InspectorViewController: NSViewController {
         var chain: [NSView] = []
         if let activePage {
             chain = activePage.keyViews
-        } else if !stateView.retryButton.isHidden {
+        } else if !stateView.isHidden, !stateView.retryButton.isHidden {
             chain.append(stateView.retryButton)
         }
-        for (current, next) in zip(chain, chain.dropFirst()) {
+        for (current, next) in zip(chain, chain.dropFirst()) where current.nextKeyView !== next {
             current.nextKeyView = next
         }
         chain.last?.nextKeyView = nil
@@ -240,13 +341,19 @@ final class InspectorViewController: NSViewController {
     /// 현재 페이지의 modifier 목록 controller(있으면).
     var modifierStackController: InspectorModifierStackController? { activePage?.modifierController }
 
-    /// 창에 숨겨 둔 페이지 수.
+    /// 창에 둔 페이지 수(제거 대기 중인 페이지 제외).
     var cachedPageCount: Int { pages.count }
+
+    /// 창에 둔 모든 페이지(검사용).
+    var allPages: [InspectorPageView] { Array(pages.values) }
+
+    /// 상태 화면(선택 없음·로딩·오류)이 보이는지.
+    var isShowingState: Bool { !stateView.isHidden }
 
     /// 현재 화면(활성 페이지 또는 상태 화면)에서 식별자로 컨트롤을 찾습니다.
     func control(identifier: String) -> NSView? {
         if let activePage, let found = Self.find(identifier, in: activePage) { return found }
-        return Self.find(identifier, in: stateView)
+        return stateView.isHidden ? nil : Self.find(identifier, in: stateView)
     }
 
     private static func find(_ identifier: String, in view: NSView) -> NSView? {
@@ -256,14 +363,20 @@ final class InspectorViewController: NSViewController {
         }
         return nil
     }
+}
 
-    private func pin(_ child: NSView, to parent: NSView) {
-        child.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            child.leadingAnchor.constraint(equalTo: parent.leadingAnchor),
-            child.trailingAnchor.constraint(equalTo: parent.trailingAnchor),
-            child.topAnchor.constraint(equalTo: parent.topAnchor),
-            child.bottomAnchor.constraint(equalTo: parent.bottomAnchor),
-        ])
+/// 인스펙터 루트. 상태 화면과 페이지를 frame으로 배치합니다(제약 없음).
+final class InspectorRootView: NSView {
+    var onLayout: (() -> Void)?
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize != frame.size
+        super.setFrameSize(newSize)
+        if changed { needsLayout = true }
+    }
+
+    override func layout() {
+        super.layout()
+        onLayout?()
     }
 }

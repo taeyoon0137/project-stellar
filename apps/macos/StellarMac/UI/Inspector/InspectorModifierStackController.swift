@@ -5,52 +5,121 @@ import AppKit
 /// 표준 `NSTableView` 목록으로 순서·활성 상태를 보여 주고, 선택한 항목의 파라미터를 목록 아래 행으로
 /// 편집합니다. 재정렬은 드래그 또는 Command-Option-위/아래, 삭제는 Delete, 활성 전환은 Space입니다.
 /// 순서·id·검증은 코어가 맡고 셸은 명령만 보냅니다.
+///
+/// 성능: 섹션 틀·추가 메뉴·목록·행 셀 몇 개는 페이지를 나눠 만들 때 함께 만듭니다(`buildSteps()`).
+/// 파라미터 행은 modifier 구성(종류)별로 한 번 만들어 두고, 같은 구성의 다른 항목을 고르면 속성 id만 바꿔
+/// 다시 씁니다. 처음 보는 구성은 화면 갱신을 막지 않도록 `scheduleBuild`로 나눠 만든 뒤 보입니다.
 @MainActor
 final class InspectorModifierStackController: NSObject, NSTableViewDataSource, NSTableViewDelegate,
     NSMenuItemValidation
 {
     /// 드래그 재정렬용 앱 내부 pasteboard 형식.
     static let dragType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.inspector.modifier")
+    /// 미리 만들어 둘 목록 행 셀 수.
+    static let prebuiltCellCount = 3
+    private static let cellIdentifier = NSUserInterfaceItemIdentifier("InspectorModifierCell")
 
     let sectionView: InspectorSectionView
     let tableView = InspectorModifierTableView()
     let addButton = NSPopUpButton(frame: .zero, pullsDown: true)
-    let removeButton: NSButton
+    let removeButton = NSButton()
     private let tableScrollView = InspectorEmbeddedScrollView()
-    private var tableHeight: NSLayoutConstraint?
+    private let content = InspectorModifierContentView()
     private let emptyLabel = InspectorWrappingLabel(text: "No modifiers. Use the Add button to add one.")
     private let unavailableLabel = InspectorWrappingLabel(text: "")
-    private let detailRows: InspectorRowsView
+    /// 파라미터 행 구성 키 → 행 묶음. 고른 항목의 것만 보입니다.
+    private var detailViews: [String: InspectorRowsView] = [:]
+    /// 나눠 만드는 중인 파라미터 행 구성 키.
+    private var pendingDetailKeys: Set<String> = []
+    private var cellPool: [InspectorModifierCellView] = []
+    private var builtAddableKinds: [InspectorModifierKind]?
     private(set) var stack = InspectorModifierStack(availability: .available, items: [], addableKinds: [],
                                                     isEditable: false)
     private(set) var selectedID: String?
     private var forceDisabled = false
     private var hasApplied = false
+    private var builtStepCount = 0
+    private var warmUpRows = 0
+    private var addButtonSize = NSSize.zero
+    private var removeButtonSize = NSSize.zero
     private let send: (InspectorCommand) -> Void
     /// 선택·구성이 바뀌어 키보드 순서를 다시 계산해야 할 때 호출됩니다.
     var onStructureChange: (() -> Void)?
+    /// 처음 보는 파라미터 행 구성을 나눠 만들 때 씁니다(키, 단계, 완료). 없으면 바로 만듭니다.
+    var scheduleBuild: ((String, [InspectorBuildStep], @escaping () -> Void) -> Void)?
 
     init(expanded: Bool, send: @escaping (InspectorCommand) -> Void) {
         self.send = send
         sectionView = InspectorSectionView(id: .modifiers, title: "Modifiers", expanded: expanded)
-        removeButton = NSButton()
-        detailRows = InspectorRowsView(send: send)
         super.init()
-        build()
     }
 
     private var isInteractive: Bool { stack.isEditable && !forceDisabled }
 
-    // MARK: - 구성
+    // MARK: - 구성(나눠 만들기)
 
-    private func build() {
+    /// 섹션 내용을 만드는 단계 수. 각 단계는 컨트롤 하나 정도입니다. 마지막 두 단계는 목록 예열입니다.
+    static var buildStepCount: Int { 7 + prebuiltCellCount }
+
+    /// 단계별 비용 등급(추가 popup 측정, 삭제 버튼, 목록, 행 셀, 목록 예열은 혼자 slice 하나를 씁니다).
+    static func buildStepCost(_ index: Int) -> InspectorBuildStep.Cost {
+        index == 0 || index == 3 ? .light : .heavy
+    }
+
+    /// `index`번째 구성 단계(0..<buildStepCount)를 실행합니다.
+    func runBuildStep(_ index: Int) {
+        guard index == builtStepCount, index < Self.buildStepCount else { return }
+        switch index {
+        case 0: buildAddButton()
+        case 1: addButtonSize = InspectorLayout.measure(addButton)
+        case 2: buildRemoveButton()
+        case 3: sectionView.setAccessoryViews([(addButton, addButtonSize), (removeButton, removeButtonSize)])
+        case 4: buildTable()
+        case Self.buildStepCount - 2: warmUpTable(rows: Self.prebuiltCellCount)
+        case Self.buildStepCount - 1: warmUpTable(rows: 0)
+        default: cellPool.append(InspectorModifierCellView(identifier: Self.cellIdentifier))
+        }
+        builtStepCount += 1
+    }
+
+    /// 목록 예열: 자리표시 항목으로 행 뷰·셀을 한 번 만들고(배치·그리기는 대기 페이지에서) 비웁니다. 처음 실제
+    /// stack을 보일 때 NSTableView가 재사용 대기열의 행 뷰·셀을 다시 써서 목록 첫 표시 비용이 줄어듭니다.
+    private func warmUpTable(rows: Int) {
+        warmUpRows = rows
+        content.show(rows > 0 ? .list : .empty)
+        tableView.reloadData()
+        if rows > 0 {
+            content.tableHeight = NSScrollView.frameSize(
+                forContentSize: NSSize(width: 0, height: tableView.rect(ofRow: rows - 1).maxY),
+                horizontalScrollerClass: nil, verticalScrollerClass: nil, borderType: tableScrollView.borderType,
+                controlSize: .regular, scrollerStyle: .overlay
+            ).height
+        }
+    }
+
+    /// 목록이 보이는 항목: 예열 중이면 자리표시, 아니면 snapshot 항목.
+    private var displayedItems: [InspectorModifierItem] {
+        guard warmUpRows > 0 else { return stack.items }
+        return (0..<warmUpRows).map {
+            InspectorModifierItem(id: "warm-up-\($0)", kind: .fill, isEnabled: true, summary: "", parameters: [])
+        }
+    }
+
+    /// 아직 실행하지 않은 구성 단계를 지금 모두 실행합니다.
+    func buildNow() {
+        while builtStepCount < Self.buildStepCount { runBuildStep(builtStepCount) }
+    }
+
+    private func buildAddButton() {
         addButton.controlSize = InspectorMetrics.controlSize
         addButton.autoenablesItems = false
         addButton.setAccessibilityLabel("Add Modifier")
         addButton.toolTip = "Add Modifier"
         addButton.identifier = NSUserInterfaceItemIdentifier("modifiers.add")
-        InspectorFieldController.hug(addButton)
+        rebuildAddMenu([])
+    }
 
+    private func buildRemoveButton() {
         if let image = InspectorSymbols.image(InspectorSymbols.remove, label: "Remove Modifier") {
             removeButton.image = image
             removeButton.imagePosition = .imageOnly
@@ -65,9 +134,10 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
         removeButton.setAccessibilityLabel("Remove Modifier")
         removeButton.toolTip = "Remove Modifier"
         removeButton.identifier = NSUserInterfaceItemIdentifier("modifiers.remove")
-        InspectorFieldController.hug(removeButton)
-        sectionView.setAccessoryViews([addButton, removeButton])
+        removeButtonSize = InspectorLayout.measure(removeButton)
+    }
 
+    private func buildTable() {
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("modifier"))
         column.resizingMask = .autoresizingMask
         tableView.addTableColumn(column)
@@ -90,12 +160,9 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
         tableScrollView.hasVerticalScroller = false
         tableScrollView.hasHorizontalScroller = false
         tableScrollView.borderType = .lineBorder
-        tableScrollView.translatesAutoresizingMaskIntoConstraints = false
-        let height = tableScrollView.heightAnchor.constraint(equalToConstant: 0)
-        height.isActive = true
-        tableHeight = height
 
-        sectionView.setContent([unavailableLabel, emptyLabel, tableScrollView, detailRows])
+        content.configure(unavailable: unavailableLabel, empty: emptyLabel, table: tableScrollView)
+        sectionView.setContent(content)
     }
 
     private func makeContextMenu() -> NSMenu {
@@ -120,6 +187,7 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
 
     /// stack snapshot을 반영합니다. 선택한 항목은 id로 유지합니다.
     func apply(_ newStack: InspectorModifierStack, forceDisabled: Bool) {
+        buildNow()
         if hasApplied, newStack == stack, forceDisabled == self.forceDisabled {
             // 바뀐 것이 없으면 목록을 다시 그리지 않습니다. 파라미터 필드의 낙관적 표시만 snapshot 값으로 맞춥니다.
             refreshDetail()
@@ -130,28 +198,25 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
         stack = newStack
         self.forceDisabled = forceDisabled
 
-        rebuildAddMenu()
+        if builtAddableKinds != newStack.addableKinds { rebuildAddMenu(newStack.addableKinds) }
         switch newStack.availability {
         case .unavailable(let reason):
-            unavailableLabel.stringValue = reason
-            unavailableLabel.isHidden = false
-            emptyLabel.isHidden = true
-            tableScrollView.isHidden = true
-            detailRows.isHidden = true
-            sectionView.setAccessoryViews([])
-            selectedID = nil
+            if unavailableLabel.stringValue != reason { unavailableLabel.stringValue = reason }
+            content.show(.unavailable)
+            sectionView.setAccessoriesHidden(true)
+            if selectedID != nil || !previousIDs.isEmpty {
+                selectedID = nil
+                tableView.reloadData()
+            }
+            refreshDetail()
             onStructureChange?()
             return
         case .available:
-            unavailableLabel.isHidden = true
-            if addButton.superview == nil {
-                sectionView.setAccessoryViews([addButton, removeButton])
-            }
+            sectionView.setAccessoriesHidden(false)
         }
 
         let hasItems = !newStack.items.isEmpty
-        emptyLabel.isHidden = hasItems
-        tableScrollView.isHidden = !hasItems
+        content.show(hasItems ? .list : .empty)
         if previousIDs == newStack.items.map(\.id) {
             // 구성이 같으면 보이는 행만 다시 그립니다.
             tableView.reloadData(forRowIndexes: IndexSet(integersIn: 0..<newStack.items.count),
@@ -166,8 +231,10 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
             self.selectedID = newStack.items.first?.id
         }
         if let selectedID, let index = newStack.items.firstIndex(where: { $0.id == selectedID }) {
-            tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-        } else {
+            if tableView.selectedRow != index {
+                tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            }
+        } else if tableView.selectedRow >= 0 {
             tableView.deselectAll(nil)
         }
         updateTableHeight()
@@ -180,7 +247,7 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
 
     /// 진행 중인 파라미터 연속 조작을 끝냅니다.
     func endGestures() {
-        detailRows.endGestures()
+        detailViews.values.forEach { $0.endGestures() }
     }
 
     /// 키보드 포커스 순서.
@@ -190,17 +257,21 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
         views += [addButton, removeButton]
         if !stack.items.isEmpty {
             views.append(tableView)
-            views += detailRows.keyViews
+            views += visibleDetail?.keyViews ?? []
         }
         return views
     }
 
-    private func rebuildAddMenu() {
+    /// 지금 보이는 파라미터 행 묶음.
+    var visibleDetail: InspectorRowsView? { content.detail }
+
+    private func rebuildAddMenu(_ kinds: [InspectorModifierKind]) {
+        builtAddableKinds = kinds
         addButton.removeAllItems()
         let title = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         title.image = InspectorSymbols.image(InspectorSymbols.add, label: "Add Modifier")
         addButton.menu?.addItem(title)
-        for kind in stack.addableKinds {
+        for kind in kinds {
             let item = NSMenuItem(title: kind.title, action: #selector(addPressed(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = Int(kind.rawValue)
@@ -220,22 +291,51 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
             controlSize: .regular,
             scrollerStyle: .overlay
         )
-        tableHeight?.constant = frame.height
+        content.tableHeight = frame.height
     }
 
+    /// 고른 항목의 파라미터 행을 보입니다. 같은 구성의 행 묶음이 있으면 속성 id·값만 바꿔 다시 쓰고,
+    /// 처음 보는 구성이면 나눠 만들기를 맡기고 그동안 비워 둡니다.
     private func refreshDetail() {
-        guard let item = selectedItem else {
-            detailRows.isHidden = true
-            detailRows.apply(rows: [], note: nil, forceDisabled: true)
+        guard let item = selectedItem, stack.availability == .available else {
+            content.detail = nil
             return
         }
-        detailRows.isHidden = false
-        detailRows.apply(rows: item.parameters, note: nil, forceDisabled: forceDisabled)
+        let key = InspectorRowsView.compositionKey(rows: item.parameters, note: nil)
+        if let detail = detailViews[key] {
+            detail.apply(rows: item.parameters, note: nil, forceDisabled: forceDisabled)
+            if content.detail !== detail {
+                content.detail = detail
+                onStructureChange?()
+            }
+            return
+        }
+        content.detail = nil
+        guard !pendingDetailKeys.contains(key) else { return }
+        let detail = InspectorRowsView(send: send)
+        let steps = detail.buildSteps(rows: item.parameters, note: nil, forceDisabled: forceDisabled)
+        let finish = { [weak self] in
+            guard let self else { return }
+            self.pendingDetailKeys.remove(key)
+            self.detailViews[key] = detail
+            self.refreshDetail()
+        }
+        // 나눠 만드는 동안에도 창 안에 두어(숨김) 컨트롤 배치·측정이 단계 안에서 끝나게 합니다.
+        content.addDetail(detail)
+        if let scheduleBuild {
+            pendingDetailKeys.insert(key)
+            scheduleBuild("detail:\(key)", steps, finish)
+        } else {
+            steps.forEach { $0.run() }
+            finish()
+        }
     }
 
     private func refreshButtons() {
-        addButton.isEnabled = isInteractive && !stack.addableKinds.isEmpty
-        removeButton.isEnabled = isInteractive && selectedItem != nil
+        let canAdd = isInteractive && !stack.addableKinds.isEmpty
+        if addButton.isEnabled != canAdd { addButton.isEnabled = canAdd }
+        let canRemove = isInteractive && selectedItem != nil
+        if removeButton.isEnabled != canRemove { removeButton.isEnabled = canRemove }
     }
 
     private var selectedItem: InspectorModifierItem? {
@@ -246,20 +346,21 @@ final class InspectorModifierStackController: NSObject, NSTableViewDataSource, N
     // MARK: - NSTableViewDataSource / Delegate
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        stack.items.count
+        displayedItems.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let identifier = NSUserInterfaceItemIdentifier("InspectorModifierCell")
-        let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? InspectorModifierCellView)
-            ?? InspectorModifierCellView(identifier: identifier)
+        let cell = (tableView.makeView(withIdentifier: Self.cellIdentifier, owner: self) as? InspectorModifierCellView)
+            ?? cellPool.popLast()
+            ?? InspectorModifierCellView(identifier: Self.cellIdentifier)
         cell.checkbox.target = self
         cell.checkbox.action = #selector(checkboxToggled(_:))
-        cell.configure(stack.items[row], isEditable: isInteractive)
+        cell.configure(displayedItems[row], isEditable: isInteractive && warmUpRows == 0)
         return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        guard warmUpRows == 0 else { return }
         let row = tableView.selectedRow
         let newID = stack.items.indices.contains(row) ? stack.items[row].id : nil
         guard newID != selectedID else { return }
@@ -398,12 +499,17 @@ final class InspectorModifierTableView: NSTableView {
     }
 }
 
-/// modifier 목록 행: 활성 체크박스 + 종류 아이콘 + 이름 + 요약.
+/// modifier 목록 행: 활성 체크박스 + 종류 아이콘 + 이름 + 요약. frame으로 배치합니다.
 final class InspectorModifierCellView: NSTableCellView {
     let checkbox = NSButton()
     private let iconView = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
     private let summaryLabel = NSTextField(labelWithString: "")
+    private var checkboxSize = NSSize.zero
+    private var iconSize = NSSize.zero
+    private var nameSize = NSSize.zero
+    private var summaryHeight: CGFloat = 0
+    private var iconKind: InspectorModifierKind?
 
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
@@ -411,33 +517,19 @@ final class InspectorModifierCellView: NSTableCellView {
         checkbox.setButtonType(.switch)
         checkbox.title = ""
         checkbox.controlSize = InspectorMetrics.controlSize
-        InspectorFieldController.hug(checkbox)
         iconView.setAccessibilityElement(false)
-        InspectorFieldController.hug(iconView)
         nameLabel.font = InspectorFonts.control
         nameLabel.setAccessibilityElement(false)
-        InspectorFieldController.hug(nameLabel)
         summaryLabel.font = InspectorFonts.control
         summaryLabel.textColor = .secondaryLabelColor
         summaryLabel.lineBreakMode = .byTruncatingTail
         summaryLabel.alignment = .right
-        summaryLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        summaryLabel.setContentHuggingPriority(.init(1), for: .horizontal)
         summaryLabel.setAccessibilityElement(false)
         imageView = iconView
         textField = nameLabel
-
-        let stack = NSStackView(views: [checkbox, iconView, nameLabel, summaryLabel])
-        stack.orientation = .horizontal
-        stack.alignment = .centerY
-        stack.spacing = InspectorMetrics.groupSpacing
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: InspectorMetrics.groupSpacing),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -InspectorMetrics.groupSpacing),
-            stack.centerYAnchor.constraint(equalTo: centerYAnchor),
-        ])
+        for view in [checkbox, iconView, nameLabel, summaryLabel] as [NSView] { addSubview(view) }
+        checkboxSize = InspectorLayout.measure(checkbox)
+        summaryHeight = InspectorLayout.measure(summaryLabel).height
     }
 
     @available(*, unavailable)
@@ -446,16 +538,126 @@ final class InspectorModifierCellView: NSTableCellView {
     }
 
     func configure(_ item: InspectorModifierItem, isEditable: Bool) {
-        iconView.image = InspectorSymbols.image(InspectorSymbols.modifier(item.kind), label: item.kind.title)
-        nameLabel.stringValue = item.kind.title
-        nameLabel.textColor = item.isEnabled ? .labelColor : .disabledControlTextColor
-        summaryLabel.stringValue = item.summary
-        checkbox.state = item.isEnabled ? .on : .off
-        checkbox.isEnabled = isEditable
+        if iconKind != item.kind {
+            iconKind = item.kind
+            iconView.image = InspectorSymbols.image(InspectorSymbols.modifier(item.kind), label: item.kind.title)
+            iconSize = InspectorLayout.measure(iconView)
+            nameLabel.stringValue = item.kind.title
+            nameSize = InspectorLayout.measure(nameLabel)
+            needsLayout = true
+        }
+        let nameColor: NSColor = item.isEnabled ? .labelColor : .disabledControlTextColor
+        if nameLabel.textColor != nameColor { nameLabel.textColor = nameColor }
+        if summaryLabel.stringValue != item.summary { summaryLabel.stringValue = item.summary }
+        let state: NSControl.StateValue = item.isEnabled ? .on : .off
+        if checkbox.state != state { checkbox.state = state }
+        if checkbox.isEnabled != isEditable { checkbox.isEnabled = isEditable }
         checkbox.setAccessibilityLabel("Enable \(item.kind.title)")
         checkbox.identifier = NSUserInterfaceItemIdentifier("modifier.\(item.id).enabled")
         // 행 하나를 한 요소로 읽히게 합니다(가이드 8.3). 체크박스는 조작 가능한 하위 요소로 남깁니다.
-        let state = item.isEnabled ? "Enabled" : "Disabled"
-        setAccessibilityLabel("\(item.kind.title), \(item.summary), \(state)")
+        let stateText = item.isEnabled ? "Enabled" : "Disabled"
+        setAccessibilityLabel("\(item.kind.title), \(item.summary), \(stateText)")
+    }
+
+    override func layout() {
+        super.layout()
+        let height = bounds.height
+        let spacing = InspectorMetrics.groupSpacing
+        var x = spacing
+        InspectorLayout.place(checkbox, x: x, width: checkboxSize.width, size: checkboxSize, lineY: 0,
+                              lineHeight: height)
+        x += checkboxSize.width + spacing
+        InspectorLayout.place(iconView, x: x, width: iconSize.width, size: iconSize, lineY: 0, lineHeight: height)
+        x += iconSize.width + spacing
+        InspectorLayout.place(nameLabel, x: x, width: nameSize.width, size: nameSize, lineY: 0, lineHeight: height)
+        x += nameSize.width + spacing
+        let summaryWidth = max(0, bounds.width - spacing - x)
+        InspectorLayout.place(summaryLabel, x: x, width: summaryWidth,
+                              size: NSSize(width: summaryWidth, height: summaryHeight), lineY: 0, lineHeight: height)
+    }
+}
+
+/// modifier 섹션 본문: 사용 불가 안내 / 빈 목록 안내 / 목록 + 고른 항목의 파라미터 행.
+final class InspectorModifierContentView: InspectorFlowView {
+    enum Mode {
+        case unavailable
+        case empty
+        case list
+    }
+
+    private var unavailableLabel: InspectorWrappingLabel?
+    private var emptyLabel: InspectorWrappingLabel?
+    private var tableScrollView: NSScrollView?
+    private var mode: Mode = .empty
+    /// 목록 높이(행 수에서 계산).
+    var tableHeight: CGFloat = 0 {
+        didSet { if tableHeight != oldValue { invalidateFlow() } }
+    }
+    /// 보이는 파라미터 행 묶음. 다른 묶음은 숨깁니다.
+    var detail: InspectorRowsView? {
+        didSet {
+            guard detail !== oldValue else { return }
+            oldValue?.isHidden = true
+            detail?.isHidden = mode != .list
+            invalidateFlow()
+        }
+    }
+
+    func configure(unavailable: InspectorWrappingLabel, empty: InspectorWrappingLabel, table: NSScrollView) {
+        unavailableLabel = unavailable
+        emptyLabel = empty
+        tableScrollView = table
+        for view in [unavailable, empty, table] as [NSView] { addSubview(view) }
+        show(.empty)
+    }
+
+    /// 파라미터 행 묶음을 숨긴 채로 붙입니다(나눠 만드는 동안에도 창 안에 있게).
+    func addDetail(_ view: InspectorRowsView) {
+        guard view.superview !== self else { return }
+        view.isHidden = true
+        addSubview(view)
+    }
+
+    func show(_ newMode: Mode) {
+        mode = newMode
+        setHidden(unavailableLabel, newMode != .unavailable)
+        setHidden(emptyLabel, newMode != .empty)
+        setHidden(tableScrollView, newMode != .list)
+        setHidden(detail, newMode != .list)
+        invalidateFlow()
+    }
+
+    private func setHidden(_ view: NSView?, _ hidden: Bool) {
+        if let view, view.isHidden != hidden { view.isHidden = hidden }
+    }
+
+    private func visibleEntries(forWidth width: CGFloat) -> [(view: NSView, height: CGFloat)] {
+        var entries: [(NSView, CGFloat)] = []
+        switch mode {
+        case .unavailable:
+            if let unavailableLabel { entries.append((unavailableLabel, unavailableLabel.flowHeight(forWidth: width))) }
+        case .empty:
+            if let emptyLabel { entries.append((emptyLabel, emptyLabel.flowHeight(forWidth: width))) }
+        case .list:
+            if let tableScrollView { entries.append((tableScrollView, tableHeight)) }
+            if let detail, !detail.rowViews.isEmpty { entries.append((detail, detail.flowHeight(forWidth: width))) }
+        }
+        return entries
+    }
+
+    override func flowHeight(forWidth width: CGFloat) -> CGFloat {
+        let entries = visibleEntries(forWidth: width)
+        guard !entries.isEmpty else { return 0 }
+        return ceil(entries.reduce(0) { $0 + $1.height } + CGFloat(entries.count - 1) * InspectorMetrics.rowSpacing)
+    }
+
+    override func layout() {
+        super.layout()
+        var y: CGFloat = 0
+        for entry in visibleEntries(forWidth: bounds.width) {
+            let frame = NSRect(x: 0, y: y, width: bounds.width, height: entry.height)
+            if entry.view.frame != frame { entry.view.frame = frame }
+            y += entry.height + InspectorMetrics.rowSpacing
+        }
     }
 }

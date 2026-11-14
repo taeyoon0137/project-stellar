@@ -23,18 +23,19 @@ enum InspectorUICheck {
     private static func runOnMainActor() -> Bool {
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
+        var report: [String] = []
         do {
-            var report: [String] = []
             try checkSymbols(&report)
+            // 시간 측정은 다른 검사가 창을 많이 만들기 전에 합니다.
+            try checkTiming(&report)
             try checkScenarios(&report)
             try checkInteractions(&report)
             print("inspector-ui ok: \(report.joined(separator: ", "))")
             return true
-        } catch let failure as Failure {
-            FileHandle.standardError.write(Data("inspector-ui 실패: \(failure.message)\n".utf8))
-            return false
         } catch {
-            FileHandle.standardError.write(Data("inspector-ui 실패: \(error)\n".utf8))
+            let message = (error as? Failure)?.message ?? "\(error)"
+            // 실패해도 그때까지 잰 값은 남깁니다(측정 보고).
+            FileHandle.standardError.write(Data("inspector-ui 실패: \(message)\n  측정: \(report.joined(separator: ", "))\n".utf8))
             return false
         }
     }
@@ -69,14 +70,15 @@ enum InspectorUICheck {
         report.append("\(destructiveFound.count) destructive buttons")
     }
 
-    private static func checkLayout(_ harness: Harness, label: String) throws {
+    private static func checkLayout(_ harness: Harness, label: String,
+                                    width: CGFloat = InspectorMetrics.typicalWidth) throws {
         let views = visibleViews(in: harness.controller.view)
         let ambiguous = views.filter(\.hasAmbiguousLayout)
         try require(ambiguous.isEmpty, "\(label): 모호한 Auto Layout \(ambiguous.map(describe).joined(separator: ", "))")
 
         // 내용이 pane 폭을 밀어내지 않아야 합니다.
         let root = harness.controller.view
-        try require(abs(root.bounds.width - InspectorMetrics.typicalWidth) < 0.5,
+        try require(abs(root.bounds.width - width) < 0.5,
                     "\(label): 내용이 인스펙터 폭을 \(root.bounds.width)로 넓힘")
         // 패널 여백 안에 있어야 합니다(스크롤러 같은 시스템 뷰는 제외).
         let inset = InspectorMetrics.panelInset
@@ -202,9 +204,10 @@ enum InspectorUICheck {
         try checkMixedAndText()
         try checkLockFlow()
         try checkPageCache()
+        try checkResize()
         try checkSelectionChangeCommitsEdit()
         report.append("interactions")
-        report.append(try measureApply())
+        try checkPrewarmAndStandby(&report)
     }
 
     /// 수치·switch·popup·disclosure·Escape·세대 순서.
@@ -479,6 +482,9 @@ enum InspectorUICheck {
         // 불투명도 선택 → 상세 행(0.95 → 95%).
         stack.tableView.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
         guard let opacityID = stack.selectedID else { throw Failure(message: "modifier 선택 실패") }
+        // 처음 보는 파라미터 구성은 화면 갱신을 막지 않도록 나눠 만든 뒤 보입니다.
+        try require(stack.visibleDetail == nil, "처음 보는 파라미터 구성을 선택 경로에서 바로 만듦")
+        harness.flush()
         let opacity = try control(controller, "modifier.\(opacityID).opacity.value", as: NSTextField.self)
         try require(opacity.stringValue == "95", "불투명도 표시 '\(opacity.stringValue)'")
         opacity.stringValue = "50"
@@ -619,7 +625,7 @@ enum InspectorUICheck {
         try require(source.snapshot.field(widthID)?.value == .number(320), "거부한 명령이 적용됨")
     }
 
-    /// 페이지 재사용: 상한·제거 후 재생성·접힘 상태 공유.
+    /// 페이지 재사용: 접힘 상태 공유, 상한 초과 시 유휴 시간 제거, 제거 뒤 재생성.
     private static func checkPageCache() throws {
         let harness = Harness(scenario: .frame, appearance: .aqua)
         defer { harness.close() }
@@ -635,9 +641,17 @@ enum InspectorUICheck {
             let shared = controller.sectionViews.first { $0.sectionID == .layer }
             try require(shared?.isExpanded == false, "\(scenario.rawValue): 접힌 Layer 섹션 상태가 페이지 사이에 공유되지 않음")
         }
-        controller.evictOverflowPages()
+        layer.disclosureButton.performClick(nil)
+
+        // 상한을 넘기면 가장 오래 안 쓴 대기 페이지를 유휴 시간(배경 작업)에 제거합니다.
+        controller.prewarm((1...InspectorViewController.maximumCachedPages + 2).map(componentSnapshot(propertyCount:)))
+        harness.runAllWork()
         try require(controller.cachedPageCount <= InspectorViewController.maximumCachedPages,
                     "페이지 상한 초과 \(controller.cachedPageCount)")
+        let attached = controller.view.subviews.filter { $0 is InspectorPageView }.count
+        try require(attached == controller.cachedPageCount, "제거한 페이지가 창에 남음 \(attached) ≠ \(controller.cachedPageCount)")
+        try require(controller.activePage?.superview != nil, "활성 페이지가 제거됨")
+
         harness.source.select(.frame)
         harness.flush()
         try require(controller.sectionViews.map(\.sectionID) == [.layer, .frameLayout, .frameAppearance, .modifiers],
@@ -646,68 +660,348 @@ enum InspectorUICheck {
         try require(width.stringValue == "320", "재생성 페이지 값 '\(width.stringValue)'")
     }
 
-    /// snapshot 반영(배치 포함)에 걸린 메인 스레드 시간(참고값, 판정 기준 아님).
-    ///
-    /// Stub의 snapshot 생성 시간은 빼고 `flush`(반영 + 배치)만 잽니다. 처음 보는 종류의 섹션을 만드는
-    /// 비용(cold), 이미 만든 섹션을 재사용하는 선택 종류 전환, 값 하나 변경을 따로 보고합니다.
-    /// 실제 판정은 XVI.1 계측이 맡습니다.
-    private static func measureApply() throws -> String {
-        let harness = Harness(scenario: .frame, appearance: .aqua)
+    /// 폭 변경: 활성 페이지는 바로, 대기 페이지는 유휴 시간에 새 폭으로 다시 배치합니다. 이어서 대기 페이지를
+    /// 보이면 컨트롤이 새 폭의 패널 여백 안에 있어야 합니다.
+    private static func checkResize() throws {
+        let harness = Harness(scenario: .frame, appearance: .aqua, prewarms: true)
         defer { harness.close() }
-        func median(_ samples: [Double]) -> Double { samples.sorted()[samples.count / 2] }
-        func measureFlush() -> Double {
-            let start = DispatchTime.now().uptimeNanoseconds
-            harness.flush()
-            return Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
-        }
-        harness.source.select(.image)
-        let cold = measureFlush()
-        var switches: [Double] = []
-        var updates: [Double] = []
-        for iteration in 0..<12 {
-            let even = iteration.isMultiple(of: 2)
-            harness.source.select(even ? .text : .frame)
-            let switchTime = measureFlush()
-            let path = even ? "text.paragraph.letterSpacing" : "frame.size.width"
-            harness.source.submit(.setValue(try propertyID(harness, path), .number(Double(iteration)), phase: .commit),
-                                  basedOn: harness.source.snapshot.generation)
-            let updateTime = measureFlush()
-            if iteration > 1 {
-                switches.append(switchTime)
-                updates.append(updateTime)
+        harness.runAllWork()
+        for width: CGFloat in [360, 260] {
+            harness.window.setContentSize(NSSize(width: width, height: 900))
+            harness.window.contentView?.layoutSubtreeIfNeeded()
+            try checkLayout(harness, label: "resize \(Int(width))/active", width: width)
+            harness.runAllWork() // 대기 페이지 재배치(배경 작업)
+            for scenario in [InspectorStubDataSource.Scenario.text, .rectangle, .image, .frame] {
+                harness.source.select(scenario)
+                harness.flush()
+                try require(!harness.controller.isShowingState, "resize \(Int(width))/\(scenario.rawValue): 캐시 미스")
+                try checkLayout(harness, label: "resize \(Int(width))/\(scenario.rawValue)", width: width)
             }
         }
-        return String(format: "apply: new page %.2fms, cached page switch %.2fms, value change %.2fms (median)",
-                      cold, median(switches), median(updates))
+    }
+
+    /// 공개 Property가 `propertyCount`개인 Component Instance 구성(구성 수를 늘리는 검사용).
+    private static func componentSnapshot(propertyCount: Int) -> InspectorSnapshot {
+        let resolve: InspectorFieldResolver = { _ in InspectorFieldState(value: .none) }
+        let properties = (0..<propertyCount).map { (id: "p\($0)", name: "Property \($0)",
+                                                    kind: InspectorPropertyCatalog.ComponentValueKind.string) }
+        let sections = [InspectorPropertyCatalog.layerSection.make(resolve)]
+            + InspectorPropertyCatalog.kindSections(.componentInstance, shape: nil).map { $0.make(resolve) }
+            + [InspectorPropertyCatalog.componentPropertiesSection(properties).make(resolve),
+               InspectorPropertyCatalog.componentSlotsSection([]).make(resolve)]
+        return InspectorSnapshot(
+            generation: 0, selectionToken: 0, state: .ready,
+            selection: InspectorSelectionSummary(count: 1, nodeKinds: [.componentInstance], shapeKind: nil,
+                                                 displayName: nil),
+            editability: .editable, sections: sections,
+            modifiers: InspectorModifierStack(availability: .available, items: [], addableKinds: [], isEditable: true)
+        )
+    }
+
+    /// 예열: 자주 쓰는 카탈로그 구성 페이지가 유휴 작업으로 만들어지고, 그 구성의 Stub 장면은 캐시 미스 없이
+    /// 바로 보입니다. 나머지 구성은 로딩 상태를 먼저 보인 뒤 나눠 만들어 보입니다. 대기 페이지는 보이지 않고
+    /// (alpha 0) hit test·접근성 트리에서 빠집니다.
+    private static func checkPrewarmAndStandby(_ report: inout [String]) throws {
+        let harness = Harness(scenario: .noSelection, appearance: .aqua, prewarms: true)
+        defer { harness.close() }
+        let controller = harness.controller
+        let prewarm = Array(InspectorPropertyCatalog.prewarmSnapshots()
+            .prefix(InspectorViewController.prewarmedCatalogPageCount))
+        harness.runAllWork()
+        let prewarmKeys = Set(prewarm.map(InspectorPageView.structureKey(of:)))
+        for snapshot in prewarm {
+            try require(controller.hasCompletePage(for: snapshot),
+                        "예열 페이지 없음: \(InspectorPageView.structureKey(of: snapshot).prefix(60))")
+        }
+        // 예열 구성 장면을 먼저 봅니다(미스로 만든 페이지가 상한을 넘겨 예열 페이지를 밀어내기 전에).
+        let scenarios = InspectorStubDataSource.Scenario.allCases.filter {
+            InspectorStubDataSource(scenario: $0).snapshot.state == .ready
+        }
+        let expectsHit = { (scenario: InspectorStubDataSource.Scenario) in
+            prewarmKeys.contains(InspectorPageView.structureKey(of: InspectorStubDataSource(scenario: scenario).snapshot))
+        }
+        var hits = 0
+        var misses = 0
+        for scenario in scenarios.filter(expectsHit) + scenarios.filter({ !expectsHit($0) }) {
+            harness.source.select(scenario)
+            controller.flushPendingSnapshot() // 대기열을 돌리지 않음: 예열 페이지가 있으면 바로 보여야 함
+            harness.window.contentView?.layoutSubtreeIfNeeded()
+            let hit = expectsHit(scenario)
+            try require(controller.isShowingState == !hit,
+                        "\(scenario.rawValue): \(hit ? "예열 페이지가 바로 보이지 않음" : "예열 밖 구성인데 로딩 상태가 아님")")
+            if hit { hits += 1 } else { misses += 1 }
+            harness.flush()
+            try require(!controller.isShowingState, "\(scenario.rawValue): 나눠 만든 페이지가 보이지 않음")
+            try checkStandby(harness, label: scenario.rawValue)
+        }
+        report.append("prewarm \(prewarm.count) layouts, \(hits) scenarios without miss, \(misses) via loading")
+    }
+
+    /// 대기 페이지 격리: 보이지 않고, hit test·접근성 트리·key view 순서에 없습니다.
+    private static func checkStandby(_ harness: Harness, label: String) throws {
+        let controller = harness.controller
+        guard let active = controller.activePage else { throw Failure(message: "\(label): 활성 페이지 없음") }
+        try require(active.alphaValue == 1 && active.isActive, "\(label): 활성 페이지가 보이지 않음")
+        let center = NSPoint(x: active.bounds.midX, y: active.bounds.midY)
+        for page in controller.allPages where page !== active {
+            try require(page.alphaValue == 0 && !page.isActive, "\(label): 대기 페이지가 보임")
+            try require(page.hitTest(page.convert(center, to: page.superview)) == nil, "\(label): 대기 페이지가 클릭을 받음")
+            try require((page.accessibilityChildren() ?? []).isEmpty, "\(label): 대기 페이지가 접근성 트리에 있음")
+        }
+        // 접근성 트리를 루트부터 따라가도 활성 페이지 밖의 뷰가 나오지 않아야 합니다.
+        var pending: [Any] = controller.view.accessibilityChildren() ?? []
+        var visited = 0
+        while let element = pending.popLast(), visited < 5000 {
+            visited += 1
+            var children: [Any]?
+            if let view = element as? NSView {
+                try require(view.isDescendant(of: active), "\(label): 접근성 트리에 대기 페이지 요소 \(describe(view))")
+                children = view.accessibilityChildren()
+            } else if let node = element as? NSAccessibilityElement {
+                children = node.accessibilityChildren()
+            }
+            pending += children ?? []
+        }
+        if let window = harness.window.contentView,
+           let hit = window.hitTest(window.convert(center, from: active)) {
+            try require(hit.isDescendant(of: active), "\(label): 클릭이 활성 페이지가 아닌 \(describe(hit))로 감")
+        }
+        for view in controller.keyViewChain {
+            try require(view.isDescendant(of: active), "\(label): key view 순서에 대기 페이지 컨트롤")
+        }
+    }
+
+    /// 메인 스레드 점유 시간(아키텍처 §6.3 단일 점유 2ms, 가이드 9장). 판정과 측정값 보고를 함께 합니다.
+    /// 다른 검사가 창을 많이 만들기 전에(프로세스 첫 단계로) 돌립니다.
+    ///
+    /// - 나눠 만들기(예열·캐시 미스·보강): slice마다 그 slice가 붙인 컨트롤의 배치와 화면 그리기
+    ///   (`displayIfNeeded`)까지 잽니다. 2ms 상한을 다 지키지 못해 분포를 보고하고 회귀 경계(중앙값 3ms, p95 8ms)만 봅니다.
+    /// - 선택 경로: 값 하나 변경과 캐시 미스(로딩 표시)는 반영 + 배치 + 그리기 합이 2ms 이하여야 합니다.
+    /// - 예열 페이지 전환: 값이 같으면 alpha 전환뿐이고, 값이 모두 바뀌면(처음 표시 포함) AppKit 컨트롤 갱신
+    ///   (popup·segmented 하나당 0.5~0.8ms 재배치)이 들어 2ms를 넘습니다. 측정값만 보고하고 회귀 경계(25ms)만 봅니다.
+    /// Stub snapshot 생성 시간은 뺍니다. 실제 판정은 Release·통합 창에서 XVI.1 계측이 맡습니다.
+    private static func checkTiming(_ report: inout [String]) throws {
+        let budget = 2.0
+        let harness = Harness(scenario: .noSelection, appearance: .aqua, prewarms: true)
+        defer { harness.close() }
+        let controller = harness.controller
+        let queue = controller.buildQueue
+        queue.sliceEpilogue = { harness.display() }
+
+        // 1) 예열.
+        let footprintBefore = memoryFootprintMB()
+        queue.resetMeasurements()
+        harness.runAllWork()
+        let prewarmSlices = queue.sliceDurations
+        let footprintAfter = memoryFootprintMB()
+        harness.display()
+
+        // 2) 예열 페이지 처음 표시(값이 모두 없음 → 실제 값). 이어서 보강 작업(처음 보는 modifier 파라미터 구성).
+        let kinds: [InspectorStubDataSource.Scenario] = [.frame, .text, .rectangle, .image]
+        var refineSlices: [Double] = []
+        func finishRefinement() {
+            queue.resetMeasurements()
+            queue.finishActiveWork()
+            refineSlices += queue.sliceDurations
+        }
+        var firstShow: [Double] = []
+        for scenario in kinds {
+            harness.source.select(scenario)
+            firstShow.append(harness.measureFlush().total)
+            try require(!controller.isShowingState, "\(scenario.rawValue): 예열 페이지 전환이 캐시 미스")
+            finishRefinement()
+        }
+
+        // 3) 예열 페이지 사이 전환: 같은 값(같은 Stub 장면)으로 돌아올 때.
+        var sameValueSwitch: [Double] = []
+        for _ in 0..<3 {
+            for scenario in kinds {
+                harness.source.select(scenario)
+                sameValueSwitch.append(harness.measureFlush().total)
+                finishRefinement()
+            }
+        }
+
+        // 4) 같은 종류의 다른 layer로 전환: 모든 필드 값이 바뀜(현실적인 선택 변경).
+        var allValuesSwitch: [Double] = []
+        for scenario in [InspectorStubDataSource.Scenario.frame, .text, .image] {
+            harness.source.select(scenario)
+            _ = harness.measureFlush()
+            finishRefinement()
+            let base = harness.source.snapshot
+            for round in 1...6 {
+                var snapshot = base.withAllValuesChanged(seed: round)
+                snapshot.generation = (controller.appliedSnapshot?.generation ?? 0) + 1
+                snapshot.selectionToken = UInt64.max - UInt64(round)
+                controller.receive(snapshot)
+                allValuesSwitch.append(harness.measureFlush().total)
+                finishRefinement()
+            }
+            // Stub 세대로 돌아가도록 Stub 쪽 세대를 앞으로 당깁니다.
+            while harness.source.snapshot.generation <= (controller.appliedSnapshot?.generation ?? 0) {
+                harness.source.submit(.reload, basedOn: harness.source.snapshot.generation)
+            }
+            harness.flush()
+        }
+
+        // 5) 값 하나 변경(같은 페이지).
+        harness.source.select(.frame)
+        _ = harness.measureFlush()
+        finishRefinement()
+        let widthID = try propertyID(harness, "frame.size.width")
+        var updates: [Double] = []
+        for iteration in 0..<16 {
+            harness.source.submit(.setValue(widthID, .number(Double(100 + iteration)), phase: .commit),
+                                  basedOn: harness.source.snapshot.generation)
+            updates.append(harness.measureFlush().total)
+        }
+
+        // 6) 캐시 미스(예열 밖 구성): 로딩 표시까지(반영 + 배치 + 그리기), 이어지는 구성 slice.
+        var missToLoading: [Double] = []
+        var missSlices: [Double] = []
+        for count in 1...6 {
+            harness.source.select(.frame)
+            harness.flush()
+            // 선택 사이의 유휴 시간: 넘친 페이지 제거 같은 배경 작업을 마칩니다.
+            harness.runAllWork()
+            var snapshot = componentSnapshot(propertyCount: 10 + count)
+            // 다음 Stub 세대와 같은 번호를 쓰면 이후 Stub snapshot이 오래된 세대로 버려지지 않습니다.
+            snapshot.generation = harness.source.snapshot.generation + 1
+            snapshot.selectionToken = UInt64.max - 100 - UInt64(count)
+            controller.receive(snapshot)
+            missToLoading.append(harness.measureFlush().total)
+            try require(controller.isShowingState, "예열 밖 구성인데 로딩 상태가 아님")
+            queue.resetMeasurements()
+            queue.finishActiveWork()
+            missSlices += queue.sliceDurations
+            try require(!controller.isShowingState && controller.activePage != nil, "캐시 미스 페이지가 보이지 않음")
+        }
+
+        func percentile(_ values: [Double], _ p: Double) -> Double {
+            guard !values.isEmpty else { return 0 }
+            let sorted = values.sorted()
+            return sorted[min(sorted.count - 1, Int((Double(sorted.count - 1) * p).rounded()))]
+        }
+        func describeSlices(_ values: [Double]) -> String {
+            String(format: "%d slices p50 %.2f p95 %.2f max %.2f ms, %d over 2ms", values.count,
+                   percentile(values, 0.5), percentile(values, 0.95), values.max() ?? 0,
+                   values.filter { $0 > budget }.count)
+        }
+        func describe(_ values: [Double]) -> String {
+            String(format: "p50 %.2f p95 %.2f max %.2f ms", percentile(values, 0.5), percentile(values, 0.95),
+                   values.max() ?? 0)
+        }
+        report.append("timing[prewarm \(InspectorViewController.prewarmedCatalogPageCount) pages: \(describeSlices(prewarmSlices)), "
+            + String(format: "footprint +%.1fMB]", footprintAfter - footprintBefore))
+        report.append("timing[first show \(describe(firstShow)); same-value switch \(describe(sameValueSwitch)); "
+            + "all-values switch \(describe(allValuesSwitch))]")
+        report.append("timing[value change \(describe(updates)); miss to loading \(describe(missToLoading))]")
+        report.append("timing[miss build \(describeSlices(missSlices)); refinement \(describeSlices(refineSlices))]")
+
+        // 나눠 만들기 slice: 2ms 상한을 다 지키지 못하므로(컨트롤 하나의 첫 그리기와 런 루프마다의 CA commit이 slice
+        // 하나에 들어감, 명세 8.3절 한계) 값을 보고하고 회귀 경계만 판정합니다: 중앙값 3ms, p95 8ms.
+        // 이전 구현은 페이지 하나를 한 번에 만들어 단일 점유가 70~90ms였습니다.
+        let sliceMedianGuard = 3.0
+        let sliceGuard = 8.0
+        for (name, values) in [("예열", prewarmSlices), ("미스 구성", missSlices), ("보강", refineSlices)] {
+            try require(percentile(values, 0.5) <= sliceMedianGuard,
+                        "\(name) slice 중앙값이 회귀 경계 3ms 초과: \(describeSlices(values))")
+            try require(percentile(values, 0.95) <= sliceGuard, "\(name) slice p95가 회귀 경계 8ms 초과: \(describeSlices(values))")
+        }
+        try require(percentile(updates, 0.5) <= budget, "값 변경(반영+배치+그리기) 중앙값이 2ms 초과: \(describe(updates))")
+        try require(percentile(missToLoading, 0.5) <= budget,
+                    "캐시 미스 로딩 표시 중앙값이 2ms 초과: \(describe(missToLoading))")
+        try require(percentile(sameValueSwitch, 0.5) <= budget,
+                    "같은 값 예열 페이지 전환 중앙값이 2ms 초과: \(describe(sameValueSwitch))")
+        let switchGuard = 25.0
+        try require(percentile(firstShow, 0.95) <= switchGuard, "예열 페이지 첫 표시 p95가 25ms 초과: \(describe(firstShow))")
+        try require(percentile(allValuesSwitch, 0.95) <= switchGuard,
+                    "값이 모두 바뀌는 전환 p95가 25ms 초과: \(describe(allValuesSwitch))")
+    }
+
+    /// 이 프로세스의 물리 메모리 사용량(MB, phys_footprint).
+    private static func memoryFootprintMB() -> Double {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) { pointer in
+            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1_048_576 : -1
     }
 
     // MARK: - 도우미
 
-    /// 화면 밖 창 하나에 인스펙터를 넣은 검사 환경.
+    /// 화면 밖 창 하나에 인스펙터를 넣은 검사 환경. 대기열은 런 루프에 예약하지 않고 검사가 직접 돌립니다.
+    /// 통합 창(`NSSplitViewItem`)처럼 인스펙터 뷰를 제약으로 담아, 창이 Auto Layout 엔진을 가진 상태에서 잽니다
+    /// (제약이 하나도 없는 창은 배치마다 뷰 트리 전체에서 제약 사용 뷰를 찾아 실제보다 느립니다).
     @MainActor
     private final class Harness {
         let source: InspectorStubDataSource
         let controller: InspectorViewController
         let window: NSWindow
 
-        init(scenario: InspectorStubDataSource.Scenario, appearance: NSAppearance.Name) {
+        init(scenario: InspectorStubDataSource.Scenario, appearance: NSAppearance.Name, prewarms: Bool = false) {
             source = InspectorStubDataSource(scenario: scenario)
-            controller = InspectorViewController(dataSource: source)
+            controller = InspectorViewController(dataSource: source, prewarmsCatalogPages: prewarms)
+            controller.buildQueue.schedulesAutomatically = false
             window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: InspectorMetrics.typicalWidth, height: 900),
                 styleMask: [.titled, .resizable], backing: .buffered, defer: false
             )
             window.isReleasedWhenClosed = false
             window.appearance = NSAppearance(named: appearance)
-            window.contentViewController = controller
+            let container = NSView(frame: NSRect(x: 0, y: 0, width: InspectorMetrics.typicalWidth, height: 900))
+            window.contentView = container
+            let inspector = controller.view
+            inspector.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(inspector)
+            NSLayoutConstraint.activate([
+                inspector.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                inspector.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                inspector.topAnchor.constraint(equalTo: container.topAnchor),
+                inspector.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            ])
             window.setContentSize(NSSize(width: InspectorMetrics.typicalWidth, height: 900))
+            flush()
+        }
+
+        /// 대기 snapshot을 반영하고, 지금 필요한 페이지 구성(급한 작업)을 끝까지 실행한 뒤 배치합니다.
+        func flush() {
+            controller.flushPendingSnapshot()
+            controller.buildQueue.finishActiveWork()
             window.contentView?.layoutSubtreeIfNeeded()
         }
 
-        /// 대기 snapshot을 반영하고 배치합니다.
-        func flush() {
+        /// 예열·제거를 포함해 대기열을 비웁니다.
+        func runAllWork() {
+            controller.buildQueue.runSlices { true }
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+
+        /// 창을 화면에 내놓지 않은 채 그리기를 강제합니다(그리기 비용 측정).
+        func display() {
+            window.displayIfNeeded()
+            CATransaction.flush()
+        }
+
+        /// 반영 + 배치(ms)와 이어지는 그리기(ms).
+        struct Sample {
+            let apply: Double
+            let display: Double
+            var total: Double { apply + display }
+        }
+
+        /// 대기 snapshot 반영 + 배치와 이어지는 그리기를 잽니다(대기열은 돌리지 않음).
+        func measureFlush() -> Sample {
+            let start = DispatchTime.now().uptimeNanoseconds
             controller.flushPendingSnapshot()
             window.contentView?.layoutSubtreeIfNeeded()
+            let applied = DispatchTime.now().uptimeNanoseconds
+            display()
+            let drawn = DispatchTime.now().uptimeNanoseconds
+            return Sample(apply: Double(applied - start) / 1_000_000, display: Double(drawn - applied) / 1_000_000)
         }
 
         func close() {
@@ -752,11 +1046,12 @@ enum InspectorUICheck {
         }
     }
 
-    /// 숨지 않은 하위 뷰 전체(스크롤러 등 시스템 내부 뷰 포함).
+    /// 숨지 않은 하위 뷰 전체(스크롤러 등 시스템 내부 뷰 포함). 대기 페이지(alpha 0)는 뺍니다.
     private static func visibleViews(in root: NSView) -> [NSView] {
         var result: [NSView] = []
         func walk(_ view: NSView) {
             guard !view.isHidden else { return }
+            if let page = view as? InspectorPageView, !page.isActive { return }
             result.append(view)
             view.subviews.forEach(walk)
         }
@@ -774,5 +1069,66 @@ enum InspectorUICheck {
             ancestor = current.superview
         }
         return name(view) + (ancestor.map { " in \(name($0))" } ?? "")
+    }
+}
+
+// MARK: - 검사용 snapshot 변형
+
+private extension InspectorSnapshot {
+    /// 모든 필드 값(과 modifier 요약·이름)을 다른 값으로 바꾼 snapshot. 같은 구성의 다른 layer 선택을 흉내 냅니다.
+    func withAllValuesChanged(seed: Int) -> InspectorSnapshot {
+        var copy = self
+        copy.sections = sections.map { section in
+            var changed = section
+            changed.rows = section.rows.map { $0.withValuesChanged(seed: seed) }
+            return changed
+        }
+        if var stack = modifiers {
+            stack.items = stack.items.map { item in
+                var changed = item
+                changed.summary += " \(seed)"
+                changed.parameters = item.parameters.map { $0.withValuesChanged(seed: seed) }
+                return changed
+            }
+            copy.modifiers = stack
+        }
+        copy.selection.displayName = (selection.displayName ?? "Layer") + " \(seed)"
+        return copy
+    }
+}
+
+private extension InspectorRow {
+    func withValuesChanged(seed: Int) -> InspectorRow {
+        var copy = self
+        copy.fields = fields.map { field in
+            var changed = field
+            changed.value = Self.changed(field.value, control: field.control, seed: seed)
+            return changed
+        }
+        return copy
+    }
+
+    static func changed(_ value: InspectorValue, control: InspectorControl, seed: Int) -> InspectorValue {
+        switch value {
+        case .number(let number):
+            return .number(number + Double(seed))
+        case .bool(let on):
+            return .bool(seed.isMultiple(of: 2) ? on : !on)
+        case .choice(let id):
+            let choices: [InspectorChoice]
+            switch control {
+            case .popup(let list), .segmented(let list): choices = list
+            default: choices = []
+            }
+            guard let index = choices.firstIndex(where: { $0.id == id }), choices.count > 1 else { return value }
+            return .choice(choices[(index + seed) % choices.count].id)
+        case .color(var color):
+            color.red = (color.red + 0.1 * Double(seed)).truncatingRemainder(dividingBy: 1)
+            return .color(color)
+        case .text(let text):
+            return .text(text + " \(seed)")
+        case .none, .mixed:
+            return value
+        }
     }
 }

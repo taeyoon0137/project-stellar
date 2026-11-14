@@ -295,17 +295,10 @@ struct InspectorStubModel {
     }
 
     private func componentSections(_ resolve: InspectorFieldResolver) -> [InspectorSection] {
-        let properties = InspectorSectionTemplate(.componentProperties, "Properties", rows: componentProperties.map {
-            InspectorRowTemplate(id: $0.id, label: $0.name, fields: [
-                InspectorPropertyCatalog.componentProperty(id: $0.id, name: $0.name, kind: $0.kind),
-            ])
-        })
-        let slots = InspectorSectionTemplate(
-            .componentSlots, "Slots",
-            rows: componentSlots.map { InspectorPropertyCatalog.componentSlot(id: $0.id, name: $0.name) },
-            note: "Add content to a slot on the canvas or in the layer list."
-        )
-        return [properties.make(resolve), slots.make(resolve)]
+        [
+            InspectorPropertyCatalog.componentPropertiesSection(componentProperties).make(resolve),
+            InspectorPropertyCatalog.componentSlotsSection(componentSlots).make(resolve),
+        ]
     }
 
     /// 템플릿 → 상태. 잠금·읽기 전용이면 레이어 이름·표시·잠금 외 편집을 막습니다.

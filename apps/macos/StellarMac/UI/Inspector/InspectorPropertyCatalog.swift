@@ -492,6 +492,26 @@ enum InspectorPropertyCatalog {
         ])
     }
 
+    /// 공개 Component Property 섹션(정의마다 다름). adapter·Stub·예열이 같은 템플릿을 씁니다.
+    static func componentPropertiesSection(
+        _ properties: [(id: String, name: String, kind: ComponentValueKind)]
+    ) -> InspectorSectionTemplate {
+        InspectorSectionTemplate(.componentProperties, "Properties", rows: properties.map {
+            InspectorRowTemplate(id: $0.id, label: $0.name, fields: [
+                componentProperty(id: $0.id, name: $0.name, kind: $0.kind),
+            ])
+        })
+    }
+
+    /// 공개 Slot 섹션(정의마다 다름).
+    static func componentSlotsSection(_ slots: [(id: String, name: String)]) -> InspectorSectionTemplate {
+        InspectorSectionTemplate(
+            .componentSlots, "Slots",
+            rows: slots.map { componentSlot(id: $0.id, name: $0.name) },
+            note: "Add content to a slot on the canvas or in the layer list."
+        )
+    }
+
     // MARK: Modifier(VI.9, modifier_metadata.rs key 0x1001~0x10C1)
 
     static let booleanOpChoices = [
@@ -613,6 +633,47 @@ enum InspectorPropertyCatalog {
         // Component Property·Slot 섹션은 정의마다 다르므로 adapter가 동적으로 만듭니다.
         case .componentInstance: return [componentSection]
         }
+    }
+
+    // MARK: 예열(docs/design/ui/inspector.md 8.3절)
+
+    /// 카탈로그만으로 정해지는 구성(선택 종류·도형 종류·다른 종류 다중 선택)의 예열용 snapshot.
+    ///
+    /// 페이지 구성 키는 섹션·행·필드 구성으로 정하므로(값·속성 id 제외) 실제 선택 snapshot이 같은 페이지를 씁니다.
+    /// 값은 모두 없음(`.none`)입니다(견본 값으로 예열해도 처음 표시 비용이 줄지 않고 대기 페이지만 무거워짐, 8.3절).
+    /// Binding 대상 필드는 실제 adapter처럼 binding 상태를 가집니다(`.fixed`). Component Property·Slot 구성은
+    /// 정의마다 달라 공개 Property·Slot이 없는 경우만 넣습니다(정의별 구성은 adapter가
+    /// `InspectorViewController.prewarm(_:)`으로 예열). 순서는 자주 쓰는 종류부터이고, 인스펙터는 앞에서부터
+    /// `prewarmedCatalogPageCount`개만 예열합니다.
+    static func prewarmSnapshots() -> [InspectorSnapshot] {
+        let resolve: InspectorFieldResolver = { _ in InspectorFieldState(value: .none) }
+        let stack = InspectorModifierStack(availability: .available, items: [],
+                                           addableKinds: InspectorModifierKind.allCases, isEditable: true)
+        func snapshot(_ kinds: [InspectorNodeKind], shape: InspectorShapeKind? = nil) -> InspectorSnapshot {
+            var sections = [layerSection.make(resolve)]
+            var modifiers: InspectorModifierStack? = stack
+            if kinds.count == 1 {
+                let kind = kinds[0]
+                sections += kindSections(kind, shape: shape).map { $0.make(resolve) }
+                if kind == .componentInstance {
+                    sections.append(componentPropertiesSection([]).make(resolve))
+                    sections.append(componentSlotsSection([]).make(resolve))
+                }
+                if kind == .fragment { modifiers = nil }
+            }
+            return InspectorSnapshot(
+                generation: 0, selectionToken: 0, state: .ready,
+                selection: InspectorSelectionSummary(count: kinds.count, nodeKinds: kinds, shapeKind: shape,
+                                                     displayName: nil),
+                editability: .editable, sections: sections, modifiers: modifiers
+            )
+        }
+        return [
+            snapshot([.frame]), snapshot([.text]), snapshot([.shape], shape: .rectangle), snapshot([.image]),
+            snapshot([.path]), snapshot([.shape], shape: .ellipse), snapshot([.shape], shape: .line),
+            snapshot([.shape], shape: .polygon), snapshot([.componentInstance]), snapshot([.fragment]),
+            snapshot([.frame, .shape]),
+        ]
     }
 
     // MARK: 내부 도우미

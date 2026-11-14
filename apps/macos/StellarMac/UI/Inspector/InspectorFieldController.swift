@@ -1,24 +1,36 @@
 import AppKit
 
+/// 행 안 배치 단위 하나: 뷰, 남는 폭을 나눠 가질지, 만들 때 잰 정렬 사각형 크기.
+struct InspectorRowItem {
+    let view: NSView
+    /// 남는 폭을 다른 유연한 뷰와 같은 폭으로 나눠 가지는지(입력 필드, popup, segmented, 읽기 전용 값).
+    let isFlexible: Bool
+    /// 정렬 사각형 기준 크기. 유연한 뷰는 높이만 씁니다.
+    var size: NSSize
+}
+
 /// 필드 하나(`InspectorField`)를 네이티브 컨트롤로 표시하고 편집을 명령으로 바꿉니다.
 ///
-/// 뷰를 직접 소유하지 않고 행(`InspectorRowView`)에 넣을 뷰 목록을 만듭니다. 컨트롤 종류는 모두
+/// 뷰를 직접 소유하지 않고 행(`InspectorRowView`)에 넣을 배치 단위를 만듭니다. 컨트롤 종류는 모두
 /// AppKit 표준 컨트롤입니다(가이드 5.1, 5.2). 값의 의미·검증은 코어가 맡고, 여기서는 표시 단위
-/// 변환(`displayScale`)과 범위 clamp만 합니다.
+/// 변환(`displayScale`)과 범위 clamp만 합니다. 컨트롤 크기는 만들 때 한 번만 잽니다(배치는 행이 frame으로 함).
 @MainActor
 final class InspectorFieldController: NSObject, NSTextFieldDelegate {
     private(set) var field: InspectorField
-    /// 행에 순서대로 넣을 뷰.
-    private(set) var views: [NSView] = []
-    /// 행의 남는 폭을 나눠 가질 뷰.
-    private(set) var flexibleViews: [NSView] = []
+    /// 행에 순서대로 넣을 배치 단위.
+    private(set) var items: [InspectorRowItem] = []
     /// 키보드 포커스 순서에 들어갈 컨트롤.
     private(set) var keyViews: [NSView] = []
     /// 편집 명령 전달.
     var send: ((InspectorCommand) -> Void)?
+    /// 배치 단위의 크기·표시가 바뀌어 행을 다시 배치해야 할 때 호출됩니다.
+    var onLayoutChange: (() -> Void)?
+    /// 구성 뒤 새 배치 단위(혼합 대시)를 만들었을 때 호출됩니다. 행이 뷰를 붙입니다.
+    var onItemAdded: ((NSView) -> Void)?
 
     private var forceDisabled: Bool
     private var textField: NSTextField?
+    private var unitLabel: NSTextField?
     private var stepper: NSStepper?
     private var toggle: NSSwitch?
     private var colorWell: NSColorWell?
@@ -42,6 +54,7 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         super.init()
         build()
         refresh()
+        measureItems()
     }
 
     deinit {
@@ -49,16 +62,67 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         if let keyUpMonitor { NSEvent.removeMonitor(keyUpMonitor) }
     }
 
-    /// 같은 컨트롤 구성으로 새 값을 반영할 수 있는지.
-    func canUpdate(to newField: InspectorField) -> Bool {
-        newField.id == field.id && newField.control == field.control && newField.shortLabel == field.shortLabel
+    /// 뷰 구성을 정하는 값(컨트롤 종류, 짧은 레이블, 단위·stepper 유무, 명령 버튼 내용).
+    /// 같으면 컨트롤을 다시 만들지 않고 속성 id·레이블·값·선택지·수치 규격을 제자리에서 바꿀 수 있습니다.
+    static func compositionKey(of field: InspectorField) -> String {
+        var key: String
+        switch field.control {
+        case .number(let spec): key = "n" + (spec.unit == .none ? "" : "u") + (spec.showsStepper ? "s" : "")
+        case .toggle: key = "t"
+        case .color: key = "c"
+        case .popup: key = "p"
+        case .segmented: key = "g"
+        case .text: key = "x"
+        case .readOnly: key = "r"
+        case .action(let title, let symbolName, let destructive):
+            key = "a(\(title)|\(symbolName ?? "")|\(destructive ? "d" : ""))"
+        }
+        if let short = field.shortLabel { key += "[\(short)]" }
+        return key
     }
 
-    /// 값·편집 가능 상태를 제자리에서 갱신합니다.
+    /// 처음 만들고 재는 데 0.3ms 이상 드는 컨트롤(popup, segmented, stepper, switch, push 버튼)을 쓰는지.
+    /// 나눠 만들 때 이런 필드는 slice 하나를 혼자 씁니다(`InspectorBuildStep.Cost.heavy`).
+    static func isExpensiveToBuild(_ field: InspectorField) -> Bool {
+        switch field.control {
+        case .popup, .segmented, .toggle, .action: return true
+        case .number(let spec): return spec.showsStepper
+        case .color, .text, .readOnly: return false
+        }
+    }
+
+    /// 같은 컨트롤 구성으로 새 필드를 반영할 수 있는지.
+    func canUpdate(to newField: InspectorField) -> Bool {
+        Self.compositionKey(of: newField) == Self.compositionKey(of: field)
+    }
+
+    /// 값·편집 가능 상태·속성 id·선택지를 제자리에서 갱신합니다. 먼저 `canUpdate(to:)`로 확인합니다.
     func update(_ newField: InspectorField, forceDisabled: Bool) {
+        let previous = field
+        if previous.id != newField.id {
+            // 다른 속성으로 바뀌기 전에 이전 속성의 편집·연속 조작을 이전 id로 끝냅니다.
+            commitPendingEdit()
+            endGesture()
+        }
         field = newField
         self.forceDisabled = forceDisabled
+        if previous.id != newField.id || previous.label != newField.label {
+            retarget()
+        }
+        if previous.control != newField.control {
+            reconfigure()
+        }
         refresh()
+        if previous.id != newField.id {
+            showValueInEditor()
+        }
+    }
+
+    /// 편집 중이면 편집 텍스트를 현재 값으로 바꾸고 전체 선택합니다(포커스는 유지).
+    func showValueInEditor() {
+        guard let editor = textField?.currentEditor() as? NSTextView else { return }
+        editor.string = displayText()
+        editor.selectAll(nil)
     }
 
     /// 사용자가 편집할 수 있는 상태인지.
@@ -70,7 +134,7 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         if let short = field.shortLabel {
             let label = Self.makeLabel(short, color: .secondaryLabelColor)
             label.setAccessibilityElement(false)
-            views.append(label)
+            append(label, flexible: false)
         }
         switch field.control {
         case .number(let spec): buildNumber(spec)
@@ -83,33 +147,42 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         case .action(let title, let symbolName, let destructive):
             buildAction(title: title, symbolName: symbolName, destructive: destructive)
         }
+        retarget()
+    }
+
+    private func append(_ view: NSView, flexible: Bool, focusable: Bool = false) {
+        items.append(InspectorRowItem(view: view, isFlexible: flexible, size: .zero))
+        if focusable { keyViews.append(view) }
+    }
+
+    /// 정렬 크기를 한 번 잽니다(macOS 26 popup·segmented는 첫 측정이 비쌈). 이후에는 저장한 값만 씁니다.
+    private func measureItems() {
+        for index in items.indices {
+            items[index].size = InspectorLayout.measure(items[index].view)
+        }
     }
 
     private func buildNumber(_ spec: InspectorNumberSpec) {
         numberFormatter.numberStyle = .decimal
         numberFormatter.usesGroupingSeparator = false
         numberFormatter.minimumFractionDigits = 0
-        numberFormatter.maximumFractionDigits = spec.fractionDigits
         // 표시 반올림을 `InspectorNumberSpec.modelValue(fromDisplay:)`와 같게 둡니다(0.5는 0에서 먼 쪽).
         numberFormatter.roundingMode = .halfUp
         numberFormatter.isLenient = true
+        configureFormatter(spec)
 
         let field = NativeTextControls.makeGeneralField(placeholder: "")
         configureTextField(field, font: InspectorFonts.number)
         field.alignment = .right
         field.action = #selector(numberCommitted(_:))
-        if spec.unit != .none {
-            field.setAccessibilityHelp("Value in \(spec.unit.spokenName)")
-        }
         textField = field
-        views.append(field)
-        flexibleViews.append(field)
-        keyViews.append(field)
+        append(field, flexible: true, focusable: true)
 
         if spec.unit != .none {
             let unit = Self.makeLabel(spec.unit.rawValue, color: .secondaryLabelColor)
             unit.setAccessibilityElement(false)
-            views.append(unit)
+            unitLabel = unit
+            append(unit, flexible: false)
         }
         if spec.showsStepper {
             let stepper = NSStepper()
@@ -119,13 +192,13 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
             stepper.increment = spec.step
             stepper.target = self
             stepper.action = #selector(stepperChanged(_:))
-            stepper.setAccessibilityLabel(self.field.label)
-            stepper.identifier = NSUserInterfaceItemIdentifier(self.field.id.path + ".stepper")
-            Self.hug(stepper)
             self.stepper = stepper
-            views.append(stepper)
-            keyViews.append(stepper)
+            append(stepper, flexible: false, focusable: true)
         }
+    }
+
+    private func configureFormatter(_ spec: InspectorNumberSpec) {
+        numberFormatter.maximumFractionDigits = spec.fractionDigits
     }
 
     private func buildToggle() {
@@ -133,14 +206,8 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         toggle.controlSize = InspectorMetrics.controlSize
         toggle.target = self
         toggle.action = #selector(toggleChanged(_:))
-        toggle.setAccessibilityLabel(field.label)
-        toggle.toolTip = field.label
-        toggle.identifier = NSUserInterfaceItemIdentifier(field.id.path)
-        Self.hug(toggle)
         self.toggle = toggle
-        views.append(toggle)
-        keyViews.append(toggle)
-        appendMixedLabel()
+        append(toggle, flexible: false, focusable: true)
     }
 
     private func buildColor() {
@@ -149,14 +216,8 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         well.supportsAlpha = true
         well.target = self
         well.action = #selector(colorChanged(_:))
-        well.setAccessibilityLabel(field.label)
-        well.toolTip = field.label
-        well.identifier = NSUserInterfaceItemIdentifier(field.id.path)
-        Self.hug(well)
         colorWell = well
-        views.append(well)
-        keyViews.append(well)
-        appendMixedLabel()
+        append(well, flexible: false, focusable: true)
     }
 
     private func buildPopup(_ choices: [InspectorChoice]) {
@@ -164,6 +225,16 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         popup.controlSize = InspectorMetrics.controlSize
         popup.font = InspectorFonts.control
         popup.autoenablesItems = false
+        popup.target = self
+        popup.action = #selector(popupChanged(_:))
+        self.popup = popup
+        setPopupChoices(choices)
+        append(popup, flexible: true, focusable: true)
+    }
+
+    private func setPopupChoices(_ choices: [InspectorChoice]) {
+        guard let popup else { return }
+        popup.removeAllItems()
         for choice in choices {
             let item = NSMenuItem(title: choice.title, action: nil, keyEquivalent: "")
             item.representedObject = choice.id
@@ -172,44 +243,34 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
             }
             popup.menu?.addItem(item)
         }
-        popup.target = self
-        popup.action = #selector(popupChanged(_:))
-        popup.setAccessibilityLabel(field.label)
-        popup.toolTip = field.label
-        popup.identifier = NSUserInterfaceItemIdentifier(field.id.path)
-        // 좁은 폭에서는 제목을 줄여 표시합니다(행 밖으로 넘치지 않게).
-        popup.setContentCompressionResistancePriority(.init(450), for: .horizontal)
-        self.popup = popup
-        views.append(popup)
-        flexibleViews.append(popup)
-        keyViews.append(popup)
     }
 
     private func buildSegmented(_ choices: [InspectorChoice]) {
         let control = NSSegmentedControl()
-        control.segmentCount = choices.count
         control.trackingMode = .selectOne
         control.controlSize = InspectorMetrics.controlSize
         control.font = InspectorFonts.control
         control.segmentDistribution = .fillEqually
+        control.target = self
+        control.action = #selector(segmentChanged(_:))
+        segmented = control
+        setSegmentChoices(choices)
+        append(control, flexible: true, focusable: true)
+    }
+
+    private func setSegmentChoices(_ choices: [InspectorChoice]) {
+        guard let control = segmented else { return }
+        control.segmentCount = choices.count
         for (index, choice) in choices.enumerated() {
             if let symbol = choice.symbolName, let image = InspectorSymbols.image(symbol, label: choice.title) {
                 control.setImage(image, forSegment: index)
                 control.setLabel("", forSegment: index)
             } else {
+                control.setImage(nil, forSegment: index)
                 control.setLabel(choice.title, forSegment: index)
             }
             control.setToolTip(choice.title, forSegment: index)
         }
-        control.target = self
-        control.action = #selector(segmentChanged(_:))
-        control.setAccessibilityLabel(field.label)
-        control.identifier = NSUserInterfaceItemIdentifier(field.id.path)
-        control.setContentCompressionResistancePriority(.init(450), for: .horizontal)
-        segmented = control
-        views.append(control)
-        flexibleViews.append(control)
-        keyViews.append(control)
     }
 
     private func buildText(_ placeholder: String) {
@@ -217,22 +278,15 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         configureTextField(field, font: InspectorFonts.control)
         field.action = #selector(textCommitted(_:))
         textField = field
-        views.append(field)
-        flexibleViews.append(field)
-        keyViews.append(field)
+        append(field, flexible: true, focusable: true)
     }
 
     private func buildReadOnly() {
         let label = Self.makeLabel("", color: .labelColor)
         label.isSelectable = true
         label.lineBreakMode = .byTruncatingMiddle
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.setContentHuggingPriority(.init(200), for: .horizontal)
-        label.setAccessibilityLabel(field.label)
-        label.identifier = NSUserInterfaceItemIdentifier(field.id.path)
         valueLabel = label
-        views.append(label)
-        flexibleViews.append(label)
+        append(label, flexible: true)
     }
 
     private func buildAction(title: String, symbolName: String?, destructive: Bool) {
@@ -252,24 +306,24 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         button.bezelStyle = .push
         button.controlSize = InspectorMetrics.controlSize
         button.font = InspectorFonts.control
-        button.setAccessibilityLabel(field.label)
-        button.toolTip = field.label
-        button.identifier = NSUserInterfaceItemIdentifier(field.id.path)
-        Self.hug(button)
         self.button = button
-        views.append(button)
-        keyViews.append(button)
+        append(button, flexible: false, focusable: true)
     }
 
     /// switch·색 well은 혼합 상태를 그릴 수 없으므로 옆에 macOS 혼합 상태 표기(대시)를 둡니다.
     /// 화면 폭을 아끼려 글자 대신 대시를 쓰고, 툴팁과 컨트롤 접근성 값은 "Mixed"입니다.
-    private func appendMixedLabel() {
+    /// 처음 혼합 값을 보일 때 만듭니다(혼합이 아닌 필드에 숨은 뷰를 두지 않음). 행이 새 배치 단위를 붙입니다.
+    private func makeMixedLabel() -> NSTextField {
         let label = Self.makeLabel(Self.mixedGlyph, color: .secondaryLabelColor)
         label.toolTip = Self.mixedText
         label.setAccessibilityElement(false)
-        label.isHidden = true
         mixedLabel = label
-        views.append(label)
+        let item = InspectorRowItem(view: label, isFlexible: false, size: InspectorLayout.measure(label))
+        // 컨트롤 바로 뒤(이전 배치와 같은 자리)에 둡니다.
+        let index = items.firstIndex { $0.view === toggle || $0.view === colorWell }.map { $0 + 1 } ?? items.count
+        items.insert(item, at: index)
+        onItemAdded?(label)
+        return label
     }
 
     private func configureTextField(_ field: NSTextField, font: NSFont) {
@@ -279,84 +333,136 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         field.delegate = self
         // 포커스를 잃을 때도 확정합니다(Return과 같은 경로).
         field.cell?.sendsActionOnEndEditing = true
-        field.setAccessibilityLabel(self.field.label)
-        field.toolTip = self.field.label
-        field.identifier = NSUserInterfaceItemIdentifier(self.field.id.path)
-        field.setContentHuggingPriority(.init(200), for: .horizontal)
-        field.setContentCompressionResistancePriority(.init(400), for: .horizontal)
-        // 최소 폭은 행 clipping 저항(490)보다 약간 낮게 둬, 아주 좁을 때는 잘리기 전에 필드가 먼저 줄게 합니다.
-        let minimum = field.widthAnchor.constraint(greaterThanOrEqualToConstant: InspectorMetrics.minimumFieldWidth)
-        minimum.priority = .init(480)
-        minimum.isActive = true
+    }
+
+    /// 속성 id·이름에 따라 붙는 식별자·접근성 레이블·툴팁을 맞춥니다(구성 후, 다른 속성으로 바꿀 때).
+    private func retarget() {
+        let path = field.id.path
+        let label = field.label
+        let identifier = NSUserInterfaceItemIdentifier(path)
+        for control in [textField, toggle, colorWell, popup, segmented, button, valueLabel] as [NSView?] {
+            guard let control else { continue }
+            control.identifier = identifier
+            control.setAccessibilityLabel(label)
+            if control !== valueLabel { control.toolTip = label }
+        }
+        if let stepper {
+            stepper.identifier = NSUserInterfaceItemIdentifier(path + ".stepper")
+            stepper.setAccessibilityLabel(label)
+        }
+        if let button, case .action(let title, _, _) = field.control, title.isEmpty, button.image == nil {
+            button.title = label
+        }
+        if case .number(let spec) = field.control {
+            textField?.setAccessibilityHelp(spec.unit == .none ? nil : "Value in \(spec.unit.spokenName)")
+        }
+    }
+
+    /// 같은 구성 안에서 바뀐 컨트롤 세부(수치 규격, popup·segmented 선택지)를 반영합니다.
+    private func reconfigure() {
+        switch field.control {
+        case .number(let spec):
+            configureFormatter(spec)
+            stepper?.increment = spec.step
+            textField?.setAccessibilityHelp(spec.unit == .none ? nil : "Value in \(spec.unit.spokenName)")
+            if let unitLabel, unitLabel.stringValue != spec.unit.rawValue {
+                unitLabel.stringValue = spec.unit.rawValue
+                if let index = items.firstIndex(where: { $0.view === unitLabel }) {
+                    items[index].size = InspectorLayout.measure(unitLabel)
+                }
+                onLayoutChange?()
+            }
+        case .popup(let choices):
+            setPopupChoices(choices)
+        case .segmented(let choices):
+            setSegmentChoices(choices)
+        default:
+            break
+        }
     }
 
     // MARK: - 표시
 
-    /// 현재 `field`를 컨트롤에 반영합니다. 편집 중인 텍스트는 덮어쓰지 않습니다.
+    /// 현재 `field`를 컨트롤에 반영합니다. 편집 중인 텍스트는 덮어쓰지 않고, 같은 값은 다시 넣지 않습니다
+    /// (바뀐 컨트롤만 다시 그리게).
     private func refresh() {
         let interactive = isInteractive
         let isMixed = field.value == .mixed
 
         if let textField {
-            textField.isEnabled = interactive
+            Self.setEnabled(textField, interactive)
             if textField.currentEditor() == nil {
-                textField.stringValue = displayText()
+                let text = displayText()
+                if textField.stringValue != text { textField.stringValue = text }
             }
-            textField.placeholderString = isMixed ? Self.mixedText : (field.value == .none ? Self.noValueText : nil)
-            if case .text(let placeholder) = field.control, !isMixed, field.value != .none {
-                textField.placeholderString = placeholder
+            var placeholder = isMixed ? Self.mixedText : (field.value == .none ? Self.noValueText : nil)
+            if case .text(let textPlaceholder) = field.control, !isMixed, field.value != .none {
+                placeholder = textPlaceholder
             }
+            if textField.placeholderString != placeholder { textField.placeholderString = placeholder }
         }
         if let stepper, case .number(let spec) = field.control {
-            stepper.isEnabled = interactive && field.value != .none
+            Self.setEnabled(stepper, interactive && field.value != .none)
             if case .number(let value) = field.value {
                 stepper.minValue = spec.minimum ?? -Double(Int32.max)
                 stepper.maxValue = spec.maximum ?? Double(Int32.max)
-                stepper.doubleValue = value
+                if stepper.doubleValue != value { stepper.doubleValue = value }
             } else {
                 // 혼합 값: 기준 0에서 한 단계 이동량만 읽고 상대 조정으로 보냅니다.
                 stepper.minValue = -Double(Int32.max)
                 stepper.maxValue = Double(Int32.max)
-                stepper.doubleValue = 0
+                if stepper.doubleValue != 0 { stepper.doubleValue = 0 }
             }
         }
         if let toggle {
-            toggle.isEnabled = interactive
-            if case .bool(let on) = field.value {
-                toggle.state = on ? .on : .off
-            } else {
-                toggle.state = .off
-            }
+            Self.setEnabled(toggle, interactive)
+            var state = NSControl.StateValue.off
+            if case .bool(true) = field.value { state = .on }
+            if toggle.state != state { toggle.state = state }
             toggle.setAccessibilityValueDescription(isMixed ? Self.mixedText : nil)
         }
         if let colorWell {
-            colorWell.isEnabled = interactive
-            if case .color(let color) = field.value {
+            Self.setEnabled(colorWell, interactive)
+            if case .color(let color) = field.value, InspectorColor(colorWell.color) != color {
                 colorWell.color = color.nsColor
             }
             colorWell.setAccessibilityValueDescription(isMixed ? Self.mixedText : nil)
         }
-        mixedLabel?.isHidden = !isMixed
+        if toggle != nil || colorWell != nil {
+            if isMixed, mixedLabel == nil {
+                _ = makeMixedLabel()
+                onLayoutChange?()
+            } else if let mixedLabel, mixedLabel.isHidden == isMixed {
+                mixedLabel.isHidden = !isMixed
+                onLayoutChange?()
+            }
+        }
         if let popup {
-            popup.isEnabled = interactive
+            Self.setEnabled(popup, interactive)
             refreshPopupSelection(popup, isMixed: isMixed)
         }
         if let segmented, case .segmented(let choices) = field.control {
-            segmented.isEnabled = interactive
+            Self.setEnabled(segmented, interactive)
+            var selected = -1
             if case .choice(let id) = field.value, let index = choices.firstIndex(where: { $0.id == id }) {
-                segmented.selectedSegment = index
-            } else {
-                segmented.selectedSegment = -1
+                selected = index
             }
+            if segmented.selectedSegment != selected { segmented.selectedSegment = selected }
             segmented.setAccessibilityValueDescription(isMixed ? Self.mixedText : nil)
         }
         if let valueLabel {
             let text = displayText()
-            valueLabel.stringValue = text
-            valueLabel.toolTip = text
-            valueLabel.setAccessibilityValue(text)
+            if valueLabel.stringValue != text {
+                valueLabel.stringValue = text
+                valueLabel.toolTip = text
+                valueLabel.setAccessibilityValue(text)
+            }
         }
-        button?.isEnabled = interactive
+        if let button { Self.setEnabled(button, interactive) }
+    }
+
+    private static func setEnabled(_ control: NSControl, _ enabled: Bool) {
+        if control.isEnabled != enabled { control.isEnabled = enabled }
     }
 
     private func refreshPopupSelection(_ popup: NSPopUpButton, isMixed: Bool) {
@@ -367,7 +473,7 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
                 item.isEnabled = false
                 popup.menu?.insertItem(item, at: 0)
             }
-            popup.selectItem(at: 0)
+            if popup.indexOfSelectedItem != 0 { popup.selectItem(at: 0) }
             return
         }
         if let mixedItemIndex {
@@ -375,8 +481,8 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         }
         if case .choice(let id) = field.value,
            let index = popup.itemArray.firstIndex(where: { ($0.representedObject as? String) == id }) {
-            popup.selectItem(at: index)
-        } else {
+            if popup.indexOfSelectedItem != index { popup.selectItem(at: index) }
+        } else if popup.selectedItem != nil {
             popup.select(nil)
         }
     }
@@ -395,6 +501,17 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         case .color(let color): return color.hexString
         case .choice(let id): return id
         case .text(let text): return text
+        }
+    }
+
+    /// 편집 중인 텍스트를 지금 값으로 확정합니다(속성이 바뀌기 전). 편집 중이 아니면 아무것도 하지 않습니다.
+    func commitPendingEdit() {
+        guard let textField, let editor = textField.currentEditor() else { return }
+        let text = editor.string
+        switch field.control {
+        case .number: commitNumber(text: text)
+        case .text: commitText(text)
+        default: break
         }
     }
 
@@ -475,7 +592,10 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
     @objc private func colorChanged(_ sender: NSColorWell) {
         guard isInteractive, let color = InspectorColor(sender.color) else { return }
         field.value = .color(color)
-        mixedLabel?.isHidden = true
+        if let mixedLabel, !mixedLabel.isHidden {
+            mixedLabel.isHidden = true
+            onLayoutChange?()
+        }
         // 색 패널 드래그는 연속 조작입니다. 마우스를 놓으면(또는 클릭 한 번이면 바로) `.ended`로 끝냅니다.
         beginGesture(.set, endsWith: .pointerRelease)
         send?(.setValue(field.id, .color(color), phase: .continuous))
@@ -498,8 +618,11 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
     }
 
     @objc private func textCommitted(_ sender: NSTextField) {
+        commitText(sender.stringValue)
+    }
+
+    private func commitText(_ text: String) {
         guard isInteractive else { return }
-        let text = sender.stringValue
         switch field.value {
         case .text(let current) where current == text:
             return
@@ -678,13 +801,7 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         label.font = InspectorFonts.control
         label.textColor = color
         label.lineBreakMode = .byTruncatingTail
-        hug(label)
         return label
-    }
-
-    static func hug(_ view: NSView) {
-        view.setContentHuggingPriority(.defaultHigh, for: .horizontal)
-        view.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
     }
 
     private static func plainNumber(_ value: Double) -> String {
