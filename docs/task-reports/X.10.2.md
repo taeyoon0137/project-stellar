@@ -86,3 +86,26 @@
 | `cargo clippy -p stellar-text --all-targets -- -D warnings` | 0 |
 | `cargo clippy -p stellar-text --release -- -D warnings` | 0 |
 | `cargo fmt -p stellar-text -- --check` | 0 |
+
+## 후속 수정 (posthoc 수정 리뷰: 이분 탐색 정렬 불변식 미확인)
+
+- **결함**: 위 수정의 이분 탐색(`overlapping_runs`, `trailing_len`, `BidiParagraph::line_levels`)은 glyph run·segment·BiDi
+  paragraph가 텍스트를 순서대로 빈틈없이 나눈다는 불변식에 기대지만, 이 불변식을 문서 주석으로만 적고 코드로
+  확인하지 않았습니다. `shape_paragraph`가 순서를 어기는 결과를 내면 줄 배치가 panic 없이 잘못 나올 수 있었습니다.
+- **수정**: `crates/text/src/tiling.rs`(신규)의 `debug_assert_tiles`로 목록을 만드는 곳(`shape_paragraph`,
+  `BidiParagraph::analyze`)과 쓰는 곳(`lay_out_paragraph` 진입, paragraph당 한 번)에서 debug 빌드일 때 확인합니다.
+  release 빌드에서는 확인하지 않으며 배치 결과는 같습니다(golden 불변).
+- **회귀 테스트**: `text_layout::tests::unordered_runs_panic_in_debug_build`,
+  `unordered_segments_panic_in_debug_build`, `unordered_bidi_paragraphs_panic_in_debug_build`는 shaping 결과의 run·
+  segment·BiDi paragraph 순서를 바꿔 `lay_out_paragraph`를 부르고 debug 빌드에서 panic하는지 봅니다. 수정 전에는
+  셋 다 panic하지 않아 실패했습니다. `paragraph::tests::run_segment_and_bidi_ranges_tile_the_text`는 혼합 script
+  입력에서 세 목록이 텍스트를 나누는지 release 빌드에서도 고정합니다.
+- **한계**: 작업량 테스트(`op_count`)는 계측한 루프 안의 퇴행만 잡습니다. 계측하지 않은 새 루프는 잡지 못합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-text` | 0 (120 unit passed, golden 포함) |
+| `cargo test --release -p stellar-text` | 0 (117 unit passed, debug 전용 panic 테스트 3개 제외) |
+| `cargo clippy -p stellar-text --all-targets -- -D warnings` | 0 |
+| `cargo clippy -p stellar-text --release --all-targets -- -D warnings` | 0 |
+| `cargo fmt -p stellar-text -- --check` | 0 |
