@@ -27,6 +27,11 @@
 //! snapshot에는 들어가고(XIV.2.7) Index snapshot에는 없습니다. 그 안의 객체는 unstaged
 //! AddObject/AddToken이며 [`SemanticStatus::working_tree_additions`]로 모아 봅니다. 파일 단위
 //! 표시(`Untracked` file change)는 git-porcelain `file_status`가 담당합니다.
+//!
+//! **손상된 snapshot(XIV.4.5)**: 어느 snapshot이든 읽지 못하면(예: 손상된 WorkingTree chunk) 일부
+//! 영역만 계산해 내놓지 않고 [`SemanticStatus::try_classify`]가 실패한 쪽과 원인을 모두
+//! [`StatusFailure`]로 돌려줍니다. raw Git status는 이와 별개로 계속 제공되며(git-porcelain
+//! `project_status`), 이 모듈은 snapshot을 고치지 않습니다.
 
 use std::collections::BTreeMap;
 
@@ -172,6 +177,20 @@ impl PropertyLayers {
     }
 }
 
+/// semantic status 계산 실패(XIV.4.5): 읽지 못한 snapshot 쪽과 원인.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusFailure<E> {
+    /// 실패한 쪽과 원인(Head → Index → WorkingTree 순, 하나 이상).
+    pub failures: Vec<(SnapshotSide, E)>,
+}
+
+impl<E> StatusFailure<E> {
+    /// 그 쪽이 실패했는지.
+    pub fn failed(&self, side: SnapshotSide) -> bool {
+        self.failures.iter().any(|(s, _)| *s == side)
+    }
+}
+
 /// 세 snapshot의 semantic status.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SemanticStatus {
@@ -181,6 +200,33 @@ pub struct SemanticStatus {
 }
 
 impl SemanticStatus {
+    /// 세 snapshot 읽기 결과로 status를 분류합니다(XIV.4.5).
+    ///
+    /// 하나라도 실패하면 일부 영역만 계산하지 않고 실패한 모든 쪽을 돌려줍니다. 손상을 고치거나
+    /// 빈 snapshot으로 대체하지 않습니다.
+    pub fn try_classify<E>(
+        head: Result<&SemanticSnapshot, E>,
+        index: Result<&SemanticSnapshot, E>,
+        working: Result<&SemanticSnapshot, E>,
+    ) -> Result<SemanticStatus, StatusFailure<E>> {
+        match (head, index, working) {
+            (Ok(head), Ok(index), Ok(working)) => {
+                Ok(SemanticStatus::classify(head, index, working))
+            }
+            (head, index, working) => {
+                let failures = [
+                    (SnapshotSide::Head, head.err()),
+                    (SnapshotSide::Index, index.err()),
+                    (SnapshotSide::WorkingTree, working.err()),
+                ]
+                .into_iter()
+                .filter_map(|(side, error)| error.map(|e| (side, e)))
+                .collect();
+                Err(StatusFailure { failures })
+            }
+        }
+    }
+
     /// HEAD → Index를 staged, Index → WorkingTree를 unstaged로 분류합니다. 어느 영역에서든 바뀐
     /// 속성 경로는 세 값을 함께 보존합니다(XIV.4.2).
     pub fn classify(
@@ -626,6 +672,51 @@ pub(crate) mod tests {
             .unwrap();
         let status = SemanticStatus::classify(&head, &working_snapshot, &replaced);
         assert_eq!(status.working_tree_additions().count(), 0);
+    }
+
+    #[test]
+    fn corrupt_snapshot_fails_semantic_status_without_partial_result() {
+        let [head, index, _] = partial_staged().map(|r| build(&r));
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        struct Corrupt(&'static str);
+        // 손상된 WorkingTree chunk: chunk bytes를 해석할 수 없음.
+        let [_, _, working] = partial_staged();
+        let subtree = working.view_subtrees().unwrap().remove(0).1;
+        let mut bytes = subtree.encode();
+        bytes.truncate(bytes.len() / 2);
+        let read_working = SubtreeRecords::decode(&bytes)
+            .map(|_| unreachable!("잘린 chunk는 해석되지 않아야 합니다"))
+            .map_err(|_| Corrupt("design/objects/aa/view.starchunk"));
+        let failure = SemanticStatus::try_classify(Ok(&head), Ok(&index), read_working)
+            .expect_err("WorkingTree 손상은 semantic status 실패");
+        assert_eq!(
+            failure.failures,
+            vec![(
+                SnapshotSide::WorkingTree,
+                Corrupt("design/objects/aa/view.starchunk")
+            )]
+        );
+        assert!(failure.failed(SnapshotSide::WorkingTree));
+        assert!(!failure.failed(SnapshotSide::Index));
+
+        // 여러 쪽이 실패하면 모두 보고합니다(Head → Index → WorkingTree 순).
+        let failure = SemanticStatus::try_classify(
+            Err(Corrupt("head")),
+            Ok(&index),
+            Err::<&SemanticSnapshot, _>(Corrupt("wt")),
+        )
+        .unwrap_err();
+        assert_eq!(
+            failure.failures,
+            vec![
+                (SnapshotSide::Head, Corrupt("head")),
+                (SnapshotSide::WorkingTree, Corrupt("wt"))
+            ]
+        );
+
+        // 모두 읽히면 classify와 같습니다.
+        let ok = SemanticStatus::try_classify::<Corrupt>(Ok(&head), Ok(&index), Ok(&index));
+        assert_eq!(ok, Ok(SemanticStatus::classify(&head, &index, &index)));
     }
 
     #[test]
