@@ -196,6 +196,7 @@ enum InspectorUICheck {
 
     private static func checkInteractions(_ report: inout [String]) throws {
         try checkFrameEditing()
+        try checkNumberRounding()
         try checkModifierStack()
         try checkMixedAndText()
         try checkLockFlow()
@@ -313,6 +314,33 @@ enum InspectorUICheck {
         lineMode.sendAction(lineMode.action, to: lineMode.target)
         harness.flush()
         try require(!isEnabled(controller, "text.paragraph.lineHeight.value"), "Auto 줄 높이 값이 편집 가능")
+    }
+
+    /// 입력값을 표시 자릿수로 반올림해 보냅니다. 정수 필드(변 수)는 정수만, 배율 필드는 표시 자릿수 기준.
+    private static func checkNumberRounding() throws {
+        let harness = Harness(scenario: .polygon, appearance: .aqua)
+        defer { harness.close() }
+        let source = harness.source
+        let sides = try control(harness.controller, "shape.polygon.sides", as: NSTextField.self)
+        let sidesID = try propertyID(harness, "shape.polygon.sides")
+        for (typed, expected, shown) in [("6.7", 7.0, "7"), ("4.5", 5.0, "5"), ("2.2", 3.0, "3")] {
+            sides.stringValue = typed
+            sides.sendAction(sides.action, to: sides.target)
+            try require(source.receivedCommands.last == .setValue(sidesID, .number(expected), phase: .commit),
+                        "변 수 '\(typed)' 반올림 명령 불일치: \(String(describing: source.receivedCommands.last))")
+            harness.flush()
+            try require(sides.stringValue == shown, "변 수 '\(typed)' 표시 '\(sides.stringValue)' ≠ '\(shown)'")
+        }
+
+        source.select(.image)
+        harness.flush()
+        let cropX = try control(harness.controller, "image.crop.x", as: NSTextField.self)
+        cropX.stringValue = "12.34"
+        cropX.sendAction(cropX.action, to: cropX.target)
+        guard case .setValue(_, .number(let crop), .commit)? = source.receivedCommands.last, abs(crop - 0.123) < 1e-9
+        else { throw Failure(message: "crop 반올림 명령 불일치: \(String(describing: source.receivedCommands.last))") }
+        harness.flush()
+        try require(cropX.stringValue == "12.3", "crop 표시 '\(cropX.stringValue)'")
     }
 
     /// modifier 목록: 선택·단위 배율·추가·활성·이동·삭제.

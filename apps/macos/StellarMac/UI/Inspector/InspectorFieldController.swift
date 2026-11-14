@@ -85,6 +85,8 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         numberFormatter.usesGroupingSeparator = false
         numberFormatter.minimumFractionDigits = 0
         numberFormatter.maximumFractionDigits = spec.fractionDigits
+        // 표시 반올림을 `InspectorNumberSpec.modelValue(fromDisplay:)`와 같게 둡니다(0.5는 0에서 먼 쪽).
+        numberFormatter.roundingMode = .halfUp
         numberFormatter.isLenient = true
 
         let field = NativeTextControls.makeGeneralField(placeholder: "")
@@ -405,7 +407,8 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
             refresh()
             return
         }
-        let model = spec.clamped(number / spec.displayScale)
+        // NumberFormatter 해석은 반올림하지 않으므로(예: 자릿수 0에서 "6.7" → 6.7) 표시 자릿수로 직접 맞춥니다.
+        let model = spec.modelValue(fromDisplay: number)
         if case .number(let current) = field.value, Self.same(current, model, spec: spec) {
             refresh()
             return
@@ -419,7 +422,7 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         guard case .number(let spec) = field.control, isInteractive else { return }
         switch field.value {
         case .number:
-            let model = spec.clamped(sender.doubleValue)
+            let model = spec.normalized(sender.doubleValue)
             field.value = .number(model)
             refresh()
             send?(.setValue(field.id, .number(model), phase: .continuous))
@@ -521,8 +524,8 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         let typed = numberFormatter.number(from: textView.string)?.doubleValue
         switch field.value {
         case .number(let current):
-            let base = typed.map { $0 / spec.displayScale } ?? current
-            let model = spec.clamped(base + delta)
+            let base = typed.map { spec.modelValue(fromDisplay: $0) } ?? current
+            let model = spec.normalized(base + delta)
             field.value = .number(model)
             textView.string = displayText()
             textView.selectAll(nil)

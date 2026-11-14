@@ -197,6 +197,20 @@ struct InspectorNumberSpec: Equatable {
         if let maximum { result = min(maximum, result) }
         return result
     }
+
+    /// 입력한 표시 값을 표시 자릿수(`fractionDigits`)로 반올림(0.5는 0에서 먼 쪽)하고 모델 단위로 바꿔
+    /// 범위 안으로 맞춥니다. 정수 필드(`fractionDigits == 0`, 예: 다각형 변 수, ms)는 정수만 보냅니다.
+    /// 화면에 보이는 값과 코어로 보내는 값이 같아야 합니다.
+    func modelValue(fromDisplay display: Double) -> Double {
+        let factor = pow(10, Double(max(fractionDigits, 0)))
+        let rounded = (display * factor).rounded(.toNearestOrAwayFromZero) / factor
+        return clamped(rounded / displayScale)
+    }
+
+    /// 모델 값을 표시 자릿수 격자에 맞춥니다(화살표 키·stepper 누적 오차 제거).
+    func normalized(_ model: Double) -> Double {
+        modelValue(fromDisplay: model * displayScale)
+    }
 }
 
 /// popup·segmented 선택지. `id`는 코어 enum 이름(저장 tag와 1:1)입니다.
