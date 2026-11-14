@@ -24,6 +24,9 @@ pub mod project_cmds;
 /// `diff-summary`: redaction 기본 semantic diff 요약 artifact (XXIV.3.2).
 pub mod summary;
 
+/// `text-source`: opt-in 단일 View 텍스트 export·읽기 전용 검사 (ADR-0059).
+pub mod text_source;
+
 /// 종료 코드 (XXIV.1.2).
 pub mod exit;
 

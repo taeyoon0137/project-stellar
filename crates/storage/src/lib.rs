@@ -12,6 +12,9 @@ pub mod chunk;
 /// atomic 파일 쓰기 (V.2.5).
 pub mod atomic_file;
 
+/// ADR-0059 단일 텍스트 원본의 제한 읽기·비교 후 원자 저장.
+pub mod source_file;
+
 /// 저장소 파일 접근 guard(보안 감사 STOR, crate 내부 전용).
 mod fs_guard;
 
