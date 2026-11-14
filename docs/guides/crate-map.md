@@ -31,7 +31,7 @@
 - **전이 도달 금지**: `tools/xtask/src/crate_graph/reach.rs`의 `FORBIDDEN_REACH`가 ADR-0005 §8 표의
   "전이적으로도 도달 금지" 열을 인코딩합니다. 시작 crate는 dev를 포함한 모든 표에서 출발하고, 그
   뒤로는 normal·build 의존만 따라갑니다. 지금 workspace에 있는 crate 중 규칙이 걸린 것은
-  `stellar-cli`, `stellar-local-ipc`, `stellar-mcp`입니다. `stellar-ops`, `stellar-agent-protocol`,
+  `stellar-cli`, `stellar-ops`, `stellar-local-ipc`, `stellar-mcp-core`, `stellar-mcp`입니다. `stellar-agent-protocol`,
   `stellar-agent-host` 규칙은 그 crate가 추가되는 순간부터 적용됩니다.
 - **검사 범위 밖**: `tools/xtask`(디렉터리 이름이 `stellar-`로 시작하지 않음), `benchmarks/fixtures`,
   `tests/integration`은 graph 검사 대상 manifest가 아니고 정책 표에도 없습니다.
@@ -70,23 +70,22 @@
 | project | `crates/project` | core-types, document, storage, assets, dependencies, git-porcelain, commands, history, text | core-types, document, storage, assets, dependencies, git-porcelain, commands, history, text. dev: document`[test-support]` | `yaml-rust2 =0.11.0` |
 | semantic-diff | `crates/semantic-diff` | document, core-types | document, core-types. dev: document`[test-support]` | 없음 |
 | semantic-merge | `crates/semantic-merge` | semantic-diff | semantic-diff | 없음 |
-| runtime | `crates/runtime` | core-types, document, commands, history, project, storage, assets, renderer-core | core-types, document, project, renderer-core | 없음 |
+| runtime | `crates/runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene, ops, git-porcelain | core-types, document, commands, history, project, storage, renderer-core, scene, ops, git-porcelain. dev: document·ops·git-porcelain`[test-support]` | 없음 |
 | ffi | `crates/ffi` | core-types, runtime | core-types, runtime | 없음 |
 | terminal | `crates/terminal` | core-types | core-types | 없음 |
 | local-ipc | `crates/local-ipc` | core-types | 없음 | 없음 |
-| cli | `tools/stellar-cli` | core-types, project, document, storage, diagnostics | project | 없음 |
-| mcp | `tools/stellar-mcp` | core-types, diagnostics, local-ipc | local-ipc | 없음 |
+| ops | `crates/ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics, codegen, accessibility, target-profile | project, document, commands, storage, semantic-diff, semantic-merge, codegen, accessibility, target-profile. dev: document`[test-support]` | 없음 |
+| cli | `tools/stellar-cli` | ops, diagnostics | ops. dev: ops`[test-support]` | 없음 |
+| mcp-core | `crates/mcp-core` | ops, agent-protocol, local-ipc, diagnostics | ops, local-ipc. dev: ops`[test-support]` | 없음 |
+| mcp | `tools/stellar-mcp` | mcp-core, core-types, diagnostics, local-ipc | mcp-core, local-ipc. dev: mcp-core`[test-support]` | 없음 |
 | target-profile | `crates/target-profile` | core-types | core-types | 없음 |
 | accessibility | `crates/accessibility` | core-types | core-types | 없음 |
 | `xtask` | `tools/xtask` | 정책 밖 | storage, core-types | `yaml-rust2 =0.11.0` |
 | bench-fixtures | `benchmarks/fixtures` | 정책 밖 | core-types, document, expressions, storage, project, layout, assets | 없음 |
 | integration-tests | `tests/integration` | 정책 밖 | dev만: core-types, document`[test-support]`, commands`[test-support]`, history, storage, project, git-porcelain`[test-support]`, semantic-diff, semantic-merge, expressions`[test-support]`, renderer-core`[test-support]`, target-profile | 없음 |
 
-`test-support` feature를 정의한 crate는 document, commands(document의 `test-support`를 함께 켬),
-git-porcelain, expressions, renderer-core입니다. 다섯 crate 모두 기본값은 꺼져 있고, manifest 주석은 다른
-crate가 `[dev-dependencies]`에서만 켜도록 정합니다. document의 `workspace_production_code_does_not_use_test_support`
-테스트가 workspace 모든 manifest의 `[dependencies]`·`[build-dependencies]`·`[features]`가 이 feature를 켜지
-않는지 검사합니다.
+테스트 fixture는 `test-support` feature로 엽니다. commands와 ops는 document의 feature를 전달하고,
+mcp-core는 ops의 feature를 전달합니다. CLI·MCP의 통합 테스트는 dev 의존에서 이를 켭니다.
 
 ## 공통 기반
 
@@ -382,11 +381,9 @@ loop(`document_thread`), UI에서 DocumentThread로 가는 bounded command queue
 (`command_queue`), RenderThread와 최신 scene snapshot의 lock-free handoff(`render_thread`), 셸 경계용
 앱 runtime(프로젝트·문서 session, 완료 event, 상태 snapshot, `app`)입니다. 외부 의존 없이 표준
 라이브러리 thread·동기화만 씁니다. 네이티브 셸은 `stellar-ffi`를 거쳐 이 crate에 도달하고, 이 crate는
-ffi를 역참조하지 않습니다. 허용 직접 의존은 core-types, document, commands, history, project, storage,
-assets, renderer-core이고, 실제로는 core-types, document, project, renderer-core를 씁니다. 주요 ADR은
-crate 경계와 thread 모델의 ADR-0013, 셸↔코어 FFI 표면의 ADR-0014입니다. ADR-0005 §8은 이후
-agent-host, agent-protocol, ops와 에이전트 편집 구현 crate를 허용 의존에 더하는 작업을 XXIX.3.1로
-둡니다.
+ffi를 역참조하지 않습니다. 창별 편집·저장은 commands, history, project, storage를 거치며 viewport는 scene에,
+Git 선택 staging 후보 검증은 ops와 git-porcelain에 연결합니다. 허용 의존과 실제 의존은 위 표를
+참고합니다. 주요 ADR은 crate 경계와 thread 모델의 ADR-0013, 셸↔코어 FFI의 ADR-0014입니다.
 
 ### stellar-ffi
 
@@ -428,35 +425,31 @@ registry와 handshake 구현은 처음에 `tools/stellar-mcp`에 있었고 앱 r
 crate로 옮겼습니다. 허용 직접 의존은 core-types이지만 실제 manifest에는 내부·외부 의존이 없습니다.
 전이 도달 금지 대상은 document, commands, ops입니다. 주요 ADR은 ADR-0005 §5·§8과 ADR-0006입니다.
 
-### stellar-cli (`stellar` 명령)
+### stellar-ops와 stellar-cli (`stellar` 명령)
 
-`tools/stellar-cli`는 ADR-0005의 L1 headless 명령줄 도구입니다. package·library 이름은 `stellar-cli`,
-실행 파일 이름은 `stellar`이고, 앱 UI·GUI·네트워크 없이 동작하며 AI·모델·agent 코드나 의존을 두지
-않습니다. module은 명령 registry·도움말·인자 해석(`cli`), 명령 구현(`commands`), 종료 코드(`exit`),
-외부 crate 없는 엄격한 JSON reader·writer(`json`), 결과 envelope와 stdout·stderr 역할(`output`)입니다.
-현재 명령은 `help`, `version`, `inspect`이고 사용법은 [stellar 명령 사용 안내](stellar-cli.md)에
-정리했습니다. `json` module은 `tools/stellar-mcp/src/json.rs`와 module 문서만 다른 의도적 사본이고
-`json_copy_sync` 테스트가 본문 일치를 검사합니다. 허용 직접 의존은 core-types, project, document,
-storage, diagnostics이고 실제로는 project 하나만 씁니다. 전이 도달 금지 대상은 코드 기준으로
-`stellar-local-ipc`, `stellar-agent-protocol`, `stellar-mcp`, `stellar-agent-host`입니다(ADR-0005 §8
-표는 이 열에 mcp-core를 적고 있고, 코드 목록에는 `stellar-mcp-core` 대신 `stellar-mcp`가 있습니다).
-주요 ADR은 ADR-0005, 외부 JSON crate 승인의 ADR-0020, `inspect` 출력의 필드 접근을 바꾼 ADR-0021입니다.
+`crates/ops`는 저장 프로젝트의 조회·검증·변경을 제공하는 L1 library입니다. CLI와 MCP의
+headless 읽기 모드는 같은 snapshot과 문서 조회 코드를 사용합니다. CLI 진입점 `tools/stellar-cli`는
+`stellar` 실행 파일을 제공하며 앱을 실행하지 않고 동작합니다. 명령 예시는 [stellar 명령 사용 안내](stellar-cli.md)에
+있습니다. 예를 들어 `query tree`는 저장된 노드를 페이지로 읽고, `export-accessibility`는 지정 View를
+정적 HTML로 내보냅니다. `apply`와 `text-source apply`는 변경 전 미리보기를 지원합니다.
+실행 시 전체 명령과 사용법은 `stellar --help`에서 확인합니다.
 
-### stellar-mcp
+CLI는 결과 envelope를 stdout에, 사람이 읽는 진단을 stderr에 씁니다. 엄격한 JSON 구현은
+`tools/stellar-cli/src/json.rs`와 `crates/mcp-core/src/json.rs`에 두며 `json_copy_sync` 테스트가
+두 본문이 같은지 검사합니다. L1에서 L2 MCP·IPC로 향하는 의존은 crate graph가 차단합니다(ADR-0005).
 
-`tools/stellar-mcp`는 ADR-0005의 L2 MCP stdio 브리지입니다. AI client(외부 agent CLI)와 stdin·stdout
-JSON-RPC 2.0으로 통신하고, network port를 열지 않으며, stdout은 protocol 메시지 전용이고 로그는 모두
-stderr(`log`)에 씁니다. 인자 없이 실행하면 MCP 서버를 돌리고, `--attach [--instance <id>]`는 세션 전에
-실행 중 앱을 골라 인증·handshake하며(macOS 전용), `--connection-info`는 client 등록 정보 JSON 한 줄만
-쓰고 끝납니다. module은 JSON(`json`), 등록 정보(`connection_info`), XXIV.1.2 표와 같은 종료
-코드(`exit`), 앱 연결(`attach`, macOS), 프레이밍(`framing`), JSON-RPC 모델(`jsonrpc`), 부모 프로세스
-종료 감지(`parent`, macOS), protocol version 협상(`protocol`), 서버 루프(`server`)이고,
-`pub use stellar_local_ipc as ipc`로 기존 경로를 유지합니다. 서버는 현재 `initialize`, `ping`,
-`notifications/initialized`만 처리합니다. 초기화 전의 다른 request는 `SERVER_NOT_INITIALIZED`, 초기화 뒤의
-다른 method는 `METHOD_NOT_FOUND`로 응답합니다(resources·tools는 XIX.2). headless 도구 `stellar-cli`는 이 브리지에 의존할 수 없습니다. 허용 직접 의존은 core-types,
-diagnostics, local-ipc이고 실제로는 local-ipc만 씁니다. 전이 도달 금지 대상은 agent-host, ffi입니다.
-주요 ADR은 ADR-0005, ADR-0006, ADR-0020입니다. ADR-0005 §3은 로직을 `crates/mcp-core`의
-`stellar-mcp-core` library로 옮기고 이 package는 진입점만 갖게 하는 계획을 둡니다.
+### stellar-mcp-core와 stellar-mcp
+
+`tools/stellar-mcp`는 stdio JSON-RPC 진입점입니다. protocol, framing, server, attach,
+headless와 resource catalog는 `crates/mcp-core`에 있습니다. 실행 파일은 stdout을 protocol에
+사용하고 로그를 stderr에 씁니다. 기존 library 경로는 mcp-core의 모듈을 재노출합니다.
+
+인자 없이 실행하면 기본 MCP 세션을 시작합니다. `--attach [--instance <id>]`는 macOS에서 실행 중인
+앱을 인증·연결합니다. `--connection-info`는 클라이언트 등록 정보를 출력합니다.
+`--headless --project <id>`는 신뢰 등록된 프로젝트 ID를 선택합니다. 이 모드에서 클라이언트는
+resource 목록·template을 조회하고 프로젝트 구조와 문서 트리를 읽을 수 있습니다. 문서 페이지는
+revision과 cursor로 이어 읽고, 쓰기 도구 목록은 비어 있습니다. 실제 stdio 요청·응답 검증은
+`tools/stellar-mcp/tests/headless_read.rs`에 있습니다(ADR-0005, XIX.9.3).
 
 ## Target Profile과 접근성
 

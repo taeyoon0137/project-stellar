@@ -27,7 +27,7 @@
 - Cargo package와 library 이름은 `stellar-cli`이고, 실행 파일 이름만 `stellar`입니다
   (`tools/stellar-cli/Cargo.toml`의 `[[bin]] name = "stellar"`).
 - 현재 명령은 아래 표와 `stellar --help`에서 확인합니다. `export-accessibility`는 지정 View의
-  정적 접근성 HTML 조각을 읽기 전용으로 만듭니다. `apply`, `migrate`에는 쓰기 동작이 있습니다.
+  정적 접근성 HTML 조각을 읽기 전용으로 만듭니다. `apply`, `migrate`, `text-source`에는 쓰기 동작이 있습니다.
 - 앱 UI, GUI, 네트워크 없이 동작합니다. 내부 직접 의존은 `stellar-ops`이고 외부 crate 직접 의존은 없습니다.
 - 명령이 실행되면 stdout에는 결과 JSON 한 줄(schema `stellar-cli/result` v1)만, stderr에는 사람이
   읽는 진단만 씁니다. 텍스트 출력은 도움말뿐이고, 사용법 오류는 stderr에만 씁니다.
@@ -68,6 +68,7 @@ cargo run -q -p stellar-cli -- --help
 | `diff-summary` | 없음 | `<base> <target> [--output <파일>] [--include-content]` | 요약 artifact |
 | `ci` | 없음 | `<경로>` | lockfile·문서·migration 검사 |
 | `apply` | 없음 | `<경로> <입력 파일 또는 -> [--dry-run]` | transaction 검증·저장 또는 diff |
+| `text-source` | 없음 | `export <프로젝트> <새 파일>`, `check <파일>`, `apply <파일> <입력 파일 또는 -> [--dry-run]` | 단일 View 텍스트 원본 생성·검사·편집. [문법과 지원 범위](../spec/text-view-source-v1.md) |
 | `export-accessibility` | 없음 | `<경로> <문서 id> <View id>` | 정적 접근성 HTML 조각·revision·진단 |
 
 명령이 없거나(`stellar`만 실행) 알 수 없는 명령이면 사용법 오류(64)입니다.

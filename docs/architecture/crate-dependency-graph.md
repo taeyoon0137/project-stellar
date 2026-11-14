@@ -33,7 +33,6 @@
 | `stellar-export` | core-types, scene |
 | `stellar-mcp` | mcp-core, core-types, diagnostics, local-ipc |
 | `stellar-mcp-core` | ops, agent-protocol, local-ipc, diagnostics |
-| `stellar-ops` | project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics |
 | `stellar-local-ipc` | core-types |
 | `stellar-terminal` | core-types |
 | `stellar-codegen` | core-types, target-profile, accessibility, layout |
@@ -47,7 +46,12 @@
 ```mermaid
 graph TD
   mcp --> mcp_core
+  mcp --> core_types
+  mcp --> diagnostics
+  mcp --> local_ipc
   mcp_core --> ops
+  mcp_core --> agent_protocol
+  mcp_core --> diagnostics
   mcp_core --> local_ipc
   document --> core_types
   document --> expressions
@@ -69,6 +73,8 @@ graph TD
   assets --> core_types
   dependencies --> core_types
   project --> document
+  project --> core_types
+  project --> git_porcelain
   project --> storage
   project --> assets
   project --> dependencies
@@ -91,9 +97,18 @@ graph TD
   codegen --> accessibility
   codegen --> layout
   ops --> codegen
+  ops --> project
+  ops --> document
+  ops --> commands
+  ops --> history
+  ops --> storage
+  ops --> semantic_diff
+  ops --> semantic_merge
+  ops --> diagnostics
   ops --> accessibility
   ops --> target_profile
   stellar_cli --> ops
+  stellar_cli --> diagnostics
   runtime --> core_types
   runtime --> document
   runtime --> commands
