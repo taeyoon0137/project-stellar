@@ -15,9 +15,7 @@
 //! - **selector·class**: [`sel!`]·[`class!`]는 이름 조회 결과를 정적 cache에 둡니다(hot path 조회 비용
 //!   제거).
 
-#[cfg(test)]
-use std::ffi::CStr;
-use std::ffi::{c_char, c_void};
+use std::ffi::{c_char, c_void, CStr};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicPtr, Ordering};
 
@@ -285,7 +283,6 @@ pub(crate) fn ns_string(text: &str) -> Option<Id> {
 /// `NSString`을 최대 `max_bytes` byte의 Rust 문자열로 옮깁니다(UTF-8 경계에서 자름).
 ///
 /// `string`은 null이거나 유효한 `NSString`이어야 합니다(호출자가 selector 반환값을 그대로 넘김).
-#[cfg(test)]
 pub(crate) fn rust_string(string: RawId, max_bytes: usize) -> Option<String> {
     if string.is_null() {
         return None;

@@ -1110,7 +1110,7 @@ tools/xtask/
 | XI.8.1 | `[x]` | `renderer-metal`에서 MTLDevice, command queue, CAMetalLayer 연결과 pixel format을 초기화합니다. | macOS smoke frame clear 통과. | XI.5.1, II.5.4 |
 | XI.8.2 | `[x]` | resize와 drawable acquisition을 구현하고 drawable 없음은 frame skip으로 처리합니다. | minimized/occluded window crash 없음. | XI.8.1 |
 | XI.8.3 | `[x]` | 공통 vertex/index/uniform buffer abstraction을 Metal resource로 매핑합니다. | mock geometry triangle render fixture 통과. | XI.5.3, XI.8.1 |
-| XI.8.4 | `[ ]` | pipeline state와 shader library cache를 구현합니다. shader compile 실패는 구조화 오류로 반환합니다. | known shader fixture 렌더. | XI.8.3 |
+| XI.8.4 | `[x]` | pipeline state와 shader library cache를 구현합니다. shader compile 실패는 구조화 오류로 반환합니다. | known shader fixture 렌더. | XI.8.3 |
 | XI.8.5 | `[ ]` | RenderGraph pass encoding, submit, `present` 예약, CPU timestamp를 구현합니다. | T0-T5 trace에 submit/present timestamp 존재. | XI.4.6, XI.8.4 |
 | XI.8.6 | `[ ]` | Metal GPU timestamp query를 연결해 pass별 GPU 시간을 측정합니다. | simple scene GPU duration report. | XI.8.5 |
 | XI.8.7 | `[ ]` | device error·memory pressure·drawable timeout 처리 테스트를 추가합니다. | 앱 crash 없이 error event 발생. | XI.5.4, XI.8.5 |

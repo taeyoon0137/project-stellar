@@ -37,7 +37,7 @@ mod buffer;
 /// shader 소스와 ABI.
 mod shaders;
 
-/// pipeline state cache.
+/// shader library·pipeline state cache (XI.8.4).
 mod pipeline;
 
 /// draw command 해석·기록 (XI.8.3).
@@ -50,6 +50,7 @@ mod encode;
 mod backend;
 
 pub use backend::MetalBackend;
+pub use pipeline::{ShaderError, ShaderErrorStage};
 pub use surface::{LayerOptions, SurfaceStats};
 
 /// backend 식별자.

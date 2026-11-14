@@ -1,4 +1,4 @@
-//! pass [`DrawCommand`] → `MTLRenderCommandEncoder` 호출 (XI.8.3).
+//! pass [`DrawCommand`] → `MTLRenderCommandEncoder` 호출 (XI.8.3, texture·depth-stencil XI.8.4).
 //!
 //! [`plan_commands`]가 command 목록을 상태 기계로 따라가며 handle을 native 객체로 해석하고, GPU가
 //! buffer 밖을 읽지 않도록 범위를 모두 검사한 [`Op`] 목록을 만듭니다. 검사는 encoder를 열기 전에
@@ -10,20 +10,28 @@
 //!   `base_vertex + index`가 모두 vertex 용량 안인지 확인합니다(index 수에 비례하는 CPU 비용).
 //! - scissor는 attachment 크기로 자릅니다. 잘린 결과가 비면 다음 scissor 변경까지 draw를 건너뜁니다.
 //! - vertex 수·instance 수가 0인 draw는 건너뜁니다.
+//! - sampling program(`Texture`·`LayerComposite`·`GlyphMask`)은 draw 전에 texture slot 0이 있어야
+//!   합니다. bind하는 texture는 sampled 용도·single sample·color format이어야 합니다.
+//! - depth·stencil attachment가 있는 pass는 pipeline마다 depth-stencil state도 bind합니다.
+//!   `DecrementWhereEqual`은 "reference + 1과 같은 값"을 비교하므로 backend가 Metal reference를 1 올려
+//!   넣습니다(reference 255는 비교 대상이 없어 `InvalidUsage`).
 
 use stellar_renderer_core::backend::{
     BackendError, BackendErrorKind, BufferHandle, BufferUsage, DrawCommand, PipelineKey,
+    StencilMode, TextureSource,
 };
-use stellar_renderer_core::gpu_handle::{BufferKind, HandleTable};
+use stellar_renderer_core::gpu_handle::{BufferKind, HandleTable, TextureKind};
 use stellar_renderer_core::render_graph::{SampleCount, TextureFormat};
 
 use crate::buffer::MetalBuffer;
 use crate::objc::{sel, send, Id, NSUInteger, RawId};
 use crate::pipeline::PipelineCache;
 use crate::shaders::{
-    vertex_stride, DRAW_UNIFORMS_SIZE, UNIFORM_OFFSET_ALIGNMENT, VERTEX_OFFSET_ALIGNMENT,
+    program_layout, ProgramLayout, DRAW_UNIFORMS_SIZE, MAX_TEXTURE_SLOTS, UNIFORM_OFFSET_ALIGNMENT,
+    VERTEX_OFFSET_ALIGNMENT,
 };
 use crate::sys::{MTLScissorRect, INDEX_TYPE_UINT32, PRIMITIVE_TRIANGLE};
+use crate::texture::MetalTexture;
 
 fn invalid(detail: &'static str) -> BackendError {
     BackendError::new(BackendErrorKind::InvalidUsage, detail)
@@ -42,6 +50,8 @@ pub(crate) struct PassFormat {
     pub(crate) width: u32,
     /// attachment 높이.
     pub(crate) height: u32,
+    /// depth·stencil attachment format(없으면 `None`).
+    pub(crate) depth_format: Option<TextureFormat>,
 }
 
 /// command 해석 문맥.
@@ -50,6 +60,8 @@ pub(crate) struct CommandContext<'a> {
     pub(crate) device: &'a Id,
     /// backend buffer table.
     pub(crate) buffers: &'a HandleTable<BufferKind, MetalBuffer>,
+    /// backend texture table.
+    pub(crate) textures: &'a HandleTable<TextureKind, MetalTexture>,
     /// pipeline cache.
     pub(crate) pipelines: &'a mut PipelineCache,
 }
@@ -59,6 +71,17 @@ pub(crate) struct CommandContext<'a> {
 pub(crate) enum Op {
     /// `setRenderPipelineState:`.
     Pipeline(RawId),
+    /// `setDepthStencilState:`.
+    DepthStencil(RawId),
+    /// fragment texture·sampler slot.
+    Texture {
+        /// slot.
+        slot: NSUInteger,
+        /// `id<MTLTexture>`.
+        texture: RawId,
+        /// `id<MTLSamplerState>`.
+        sampler: RawId,
+    },
     /// `setScissorRect:`.
     Scissor(MTLScissorRect),
     /// `setStencilReferenceValue:`.
@@ -103,26 +126,69 @@ pub(crate) enum Op {
 
 #[derive(Debug, Default)]
 struct DrawState {
-    pipeline: Option<PipelineKey>,
+    pipeline: Option<(PipelineKey, ProgramLayout)>,
     vertex: Option<(BufferHandle, u64)>,
     index: Option<(BufferHandle, u64)>,
     uniforms: bool,
+    textures: [bool; MAX_TEXTURE_SLOTS as usize],
     scissor_empty: bool,
+    reference: u8,
+    emitted_reference: Option<u32>,
+}
+
+impl DrawState {
+    /// draw 직전 공통 검사. pipeline layout을 돌려줍니다.
+    fn ready(&self) -> Result<ProgramLayout, BackendError> {
+        let (_, layout) = self
+            .pipeline
+            .ok_or(invalid("draw 전에 pipeline을 bind해야 합니다"))?;
+        if !self.uniforms {
+            return Err(invalid("draw 전에 uniform을 bind해야 합니다"));
+        }
+        if layout.needs_texture && !self.textures[0] {
+            return Err(invalid("sampling program은 texture slot 0이 필요합니다"));
+        }
+        Ok(layout)
+    }
+
+    /// 현재 pipeline stencil mode에 맞춘 Metal stencil reference.
+    fn effective_reference(&self) -> Result<u32, BackendError> {
+        match self.pipeline.map(|(key, _)| key.stencil) {
+            Some(StencilMode::DecrementWhereEqual) => {
+                if self.reference == u8::MAX {
+                    return Err(invalid(
+                        "stencil reference 255는 감소 비교를 할 수 없습니다",
+                    ));
+                }
+                Ok(u32::from(self.reference) + 1)
+            }
+            _ => Ok(u32::from(self.reference)),
+        }
+    }
+
+    /// depth·stencil attachment가 있으면 reference가 바뀔 때만 Op를 냅니다.
+    fn sync_reference(&mut self, pass: &PassFormat, ops: &mut Vec<Op>) -> Result<(), BackendError> {
+        if pass.depth_format.is_none() {
+            return Ok(());
+        }
+        let effective = self.effective_reference()?;
+        if self.emitted_reference != Some(effective) {
+            ops.push(Op::StencilReference(effective));
+            self.emitted_reference = Some(effective);
+        }
+        Ok(())
+    }
 }
 
 /// bind한 vertex buffer에 들어가는 vertex 수.
 fn vertex_capacity(
     ctx: &CommandContext<'_>,
     state: &DrawState,
-    key: &PipelineKey,
+    layout: &ProgramLayout,
 ) -> Result<u64, BackendError> {
     let (handle, offset) = state.vertex.ok_or(invalid("vertex buffer가 없습니다"))?;
     let buffer = ctx.buffers.get(handle)?;
-    let stride = vertex_stride(key.program).ok_or(BackendError::new(
-        BackendErrorKind::Unsupported,
-        "vertex layout이 없는 shader program",
-    ))?;
-    Ok(buffer.desc.size.saturating_sub(offset) / u64::from(stride))
+    Ok(buffer.desc.size.saturating_sub(offset) / u64::from(layout.stride))
 }
 
 /// command 목록을 검사하고 encoder 호출로 바꿉니다.
@@ -147,9 +213,22 @@ pub(crate) fn plan_commands(
                         "pipeline format·sample 수가 pass attachment와 다릅니다",
                     ));
                 }
-                let pipeline = ctx.pipelines.get(ctx.device, &key)?;
-                state.pipeline = Some(key);
+                let layout = program_layout(key.program).ok_or(BackendError::new(
+                    BackendErrorKind::Unsupported,
+                    "Metal backend가 아직 구현하지 않은 shader program",
+                ))?;
+                let pipeline = ctx
+                    .pipelines
+                    .pipeline(ctx.device, &key, pass.depth_format)?;
                 ops.push(Op::Pipeline(pipeline));
+                if pass.depth_format.is_some() {
+                    let depth = ctx
+                        .pipelines
+                        .depth_stencil(ctx.device, key.depth, key.stencil)?;
+                    ops.push(Op::DepthStencil(depth));
+                }
+                state.pipeline = Some((key, layout));
+                state.sync_reference(pass, &mut ops)?;
             }
             DrawCommand::SetScissor(rect) => {
                 let (x0, y0, x1, y1) = match rect {
@@ -172,7 +251,8 @@ pub(crate) fn plan_commands(
                 }
             }
             DrawCommand::SetStencilReference(reference) => {
-                ops.push(Op::StencilReference(u32::from(reference)));
+                state.reference = reference;
+                state.sync_reference(pass, &mut ops)?;
             }
             DrawCommand::SetVertexBuffer { buffer, offset } => {
                 let native = ctx.buffers.get(buffer)?;
@@ -216,24 +296,45 @@ pub(crate) fn plan_commands(
                     offset: offset as NSUInteger,
                 });
             }
-            DrawCommand::BindTexture { .. } => {
-                return Err(BackendError::new(
-                    BackendErrorKind::Unsupported,
-                    "texture binding은 아직 지원하지 않습니다",
-                ));
+            DrawCommand::BindTexture {
+                slot,
+                texture,
+                sampler,
+            } => {
+                if slot >= MAX_TEXTURE_SLOTS {
+                    return Err(invalid("texture slot 범위 밖"));
+                }
+                let native = match texture {
+                    TextureSource::Handle(handle) => ctx.textures.get(handle)?,
+                    TextureSource::Graph(_) => {
+                        return Err(BackendError::new(
+                            BackendErrorKind::Unsupported,
+                            "graph resource sampling은 아직 지원하지 않습니다",
+                        ));
+                    }
+                };
+                let desc = native.desc;
+                if !desc.usage.sampled
+                    || desc.samples != SampleCount::X1
+                    || desc.format.is_depth_stencil()
+                {
+                    return Err(invalid("sampling할 수 없는 texture입니다"));
+                }
+                let sampler = ctx.pipelines.sampler(ctx.device, sampler)?;
+                state.textures[usize::from(slot)] = true;
+                ops.push(Op::Texture {
+                    slot: NSUInteger::from(slot),
+                    texture: native.texture.as_raw(),
+                    sampler,
+                });
             }
             DrawCommand::Draw {
                 vertex_start,
                 vertex_count,
                 instance_count,
             } => {
-                let key = state
-                    .pipeline
-                    .ok_or(invalid("draw 전에 pipeline을 bind해야 합니다"))?;
-                if !state.uniforms {
-                    return Err(invalid("draw 전에 uniform을 bind해야 합니다"));
-                }
-                let capacity = vertex_capacity(ctx, &state, &key)?;
+                let layout = state.ready()?;
+                let capacity = vertex_capacity(ctx, &state, &layout)?;
                 if u64::from(vertex_start) + u64::from(vertex_count) > capacity {
                     return Err(invalid("vertex 범위가 vertex buffer 밖입니다"));
                 }
@@ -252,13 +353,8 @@ pub(crate) fn plan_commands(
                 base_vertex,
                 instance_count,
             } => {
-                let key = state
-                    .pipeline
-                    .ok_or(invalid("draw 전에 pipeline을 bind해야 합니다"))?;
-                if !state.uniforms {
-                    return Err(invalid("draw 전에 uniform을 bind해야 합니다"));
-                }
-                let capacity = vertex_capacity(ctx, &state, &key)?;
+                let layout = state.ready()?;
+                let capacity = vertex_capacity(ctx, &state, &layout)?;
                 let (index_handle, index_offset) = state
                     .index
                     .ok_or(invalid("indexed draw 전에 index buffer를 bind해야 합니다"))?;
@@ -297,7 +393,9 @@ pub(crate) fn record(encoder: RawId, ops: &[Op], width: u32, height: u32) {
     }
     let target: [f32; 2] = [width as f32, height as f32];
     // SAFETY: render command encoder method 시그니처: setVertexBytes:length:atIndex:(const void*,
-    // NSUInteger, NSUInteger), setRenderPipelineState:(id), setScissorRect:(MTLScissorRect),
+    // NSUInteger, NSUInteger), setRenderPipelineState:/setDepthStencilState:(id),
+    // setFragmentTexture:atIndex:/setFragmentSamplerState:atIndex:(id, NSUInteger),
+    // setScissorRect:(MTLScissorRect),
     // setStencilReferenceValue:(uint32_t), set{Vertex,Fragment}Buffer:offset:atIndex:(id, NSUInteger,
     // NSUInteger), drawPrimitives:vertexStart:vertexCount:instanceCount:(NSUInteger ×4),
     // drawIndexedPrimitives:indexCount:indexType:indexBuffer:indexBufferOffset:instanceCount:
@@ -317,6 +415,25 @@ pub(crate) fn record(encoder: RawId, ops: &[Op], width: u32, height: u32) {
             match *op {
                 Op::Pipeline(state) => {
                     let _: () = send(encoder, sel!("setRenderPipelineState:"), (state,));
+                }
+                Op::DepthStencil(state) => {
+                    let _: () = send(encoder, sel!("setDepthStencilState:"), (state,));
+                }
+                Op::Texture {
+                    slot,
+                    texture,
+                    sampler,
+                } => {
+                    let _: () = send(
+                        encoder,
+                        sel!("setFragmentTexture:atIndex:"),
+                        (texture, slot),
+                    );
+                    let _: () = send(
+                        encoder,
+                        sel!("setFragmentSamplerState:atIndex:"),
+                        (sampler, slot),
+                    );
                 }
                 Op::Scissor(rect) => {
                     let _: () = send(encoder, sel!("setScissorRect:"), (rect,));

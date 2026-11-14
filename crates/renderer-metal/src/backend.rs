@@ -30,7 +30,7 @@ use crate::device::MetalDevice;
 use crate::encode::{encode_pass, plan_pass, FrameTargets};
 use crate::format::bytes_per_pixel;
 use crate::objc::{autoreleasepool, sel, Id, NSUInteger, RawId};
-use crate::pipeline::PipelineCache;
+use crate::pipeline::{PipelineCache, ShaderError};
 use crate::surface::{check_surface_size, Drawable, LayerOptions, LayerSurface, SurfaceStats};
 use crate::sys::{command_buffer_status, resource_options, MTLOrigin, MTLSize};
 use crate::texture::{create_texture, MetalTexture};
@@ -149,6 +149,17 @@ impl MetalBackend {
     /// 현재 surface pixel 크기(마지막 `init`·`resize` 값).
     pub fn surface_size(&self) -> SurfaceSize {
         self.surface_size
+    }
+
+    /// 마지막 shader compile·pipeline 생성 오류(단계와 Metal compiler log). `PipelineCreation` 오류의
+    /// 개발자 context입니다.
+    pub fn last_shader_error(&self) -> Option<ShaderError> {
+        self.pipelines.last_error().cloned()
+    }
+
+    /// 현재 device에서 MSL library를 실제로 compile한 횟수(cache 적중은 세지 않음, 실패 포함).
+    pub fn shader_compile_count(&self) -> u64 {
+        self.pipelines.library_compiles()
     }
 
     /// init이 돌려준 capability(init 전이면 `None`).
@@ -318,6 +329,12 @@ impl MetalBackend {
         Ok(self.progress)
     }
 
+    /// 테스트용: 내장 shader 대신 `source`로 pipeline을 만듭니다(compile 실패 경로 재현).
+    #[cfg(test)]
+    pub(crate) fn use_shader_source(&mut self, source: &'static str) {
+        self.pipelines = PipelineCache::with_source(source);
+    }
+
     /// 테스트용: 만든 pipeline state 수.
     #[cfg(test)]
     pub(crate) fn pipeline_count(&self) -> usize {
@@ -448,6 +465,7 @@ impl MetalBackend {
         let mut commands = CommandContext {
             device: device.device(),
             buffers: &self.buffers,
+            textures: &self.textures,
             pipelines: &mut self.pipelines,
         };
         let plans = request

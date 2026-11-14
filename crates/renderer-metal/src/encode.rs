@@ -213,6 +213,7 @@ pub(crate) fn plan_pass(
         color_count: colors.len(),
         width,
         height,
+        depth_format: None,
     };
     let ops = match targets.request.commands_for(pass) {
         Some(list) => plan_commands(commands, &format, &list.commands)?,
