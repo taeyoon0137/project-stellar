@@ -383,7 +383,7 @@ pub fn generate(
             let NodePayload::Shape(geometry) = model.payload(node)? else {
                 return None;
             };
-            let count = ConvertShapeToPath::required_ids(geometry);
+            let count = ConvertShapeToPath::required_ids(geometry).ok()?;
             Some(Command::ConvertShapeToPath(ConvertShapeToPath {
                 node,
                 element_ids: (0..count).map(|_| ids.fresh()).collect(),

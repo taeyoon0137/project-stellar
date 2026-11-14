@@ -646,7 +646,8 @@ pub fn plan_shape_to_path(
     geometry: &crate::shape::ShapeGeometry,
     next_id: &mut dyn FnMut() -> StableId,
 ) -> Result<ShapeToPathPlan, PathError> {
-    let commands = crate::shape::evaluate_shape_path(geometry);
+    // 평가 좌표가 f32 범위를 넘는 geometry(디코딩은 거부)는 panic 대신 오류입니다.
+    let commands = crate::shape::evaluate_shape_path(geometry).map_err(|_| PathError::NonFinite)?;
     let data = PathData::new(WindingRule::NonZero, commands)?;
     Ok(ShapeToPathPlan {
         stable_id,
@@ -1011,7 +1012,11 @@ mod tests {
             let ellipse = EllipseParams {
                 bounds: Rect::new(p(10.0, 20.0), Size2::new(200.0, 100.0).unwrap()),
             };
-            assert_bounds(&ellipse.to_path(), (10.0, 20.0, 200.0, 100.0), 1e-3);
+            assert_bounds(
+                &ellipse.to_path().unwrap(),
+                (10.0, 20.0, 200.0, 100.0),
+                1e-3,
+            );
         }
 
         #[test]
@@ -1073,13 +1078,13 @@ mod tests {
                 assert_eq!(plan.new_kind, NodeKind::Path);
                 assert_eq!(
                     plan.path.data().commands(),
-                    evaluate_shape_path(&geometry).as_slice(),
+                    evaluate_shape_path(&geometry).unwrap().as_slice(),
                     "{}: 렌더 geometry 동일",
                     geometry.kind().name()
                 );
                 assert_eq!(
                     path_bounds(plan.path.data().commands()),
-                    path_bounds(&evaluate_shape_path(&geometry))
+                    path_bounds(&evaluate_shape_path(&geometry).unwrap())
                 );
                 // 모든 point에 id 부여.
                 assert!(plan
