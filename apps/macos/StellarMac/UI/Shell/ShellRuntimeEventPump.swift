@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// 코어 완료 event를 메인 스레드에서 pull해 요청별 완료 handler로 나눠 주는 펌프(ADR-0009, 아키텍처 §8.2).
@@ -101,6 +102,12 @@ final class ShellRuntimeEventPump {
     func gitNames(_ session: UInt64, selection: (UInt64, UInt32)?, completion: @escaping (CoreRuntimeEvent) -> Void)
         -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.gitNames(handle: runtimeHandle, session: session, selection: selection), completion)
+    }
+
+    func moveFrame(session: UInt64, hit: CanvasFrameHit, delta: CGVector,
+                   completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.moveFrame(handle: runtimeHandle, session: session, view: hit.viewID,
+                                       node: hit.id, revision: hit.revision, delta: delta), completion)
     }
 
     private func register(

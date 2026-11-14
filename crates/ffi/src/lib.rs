@@ -1492,6 +1492,7 @@ mod tests {
             "stellar_window_session_info",
             "stellar_window_session_perform",
             "stellar_window_session_select",
+            "stellar_window_session_move_frame",
             "stellar_command_code",
             "stellar_window_view_info",
         ] {

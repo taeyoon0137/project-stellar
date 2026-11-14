@@ -84,6 +84,13 @@ final class ShellWindowSessionHandle {
         pump.closeWindowSession(session, completion: completion)
     }
 
+    func moveFrame(_ hit: CanvasFrameHit, delta: CGVector, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed, !isClosing else { return false }
+        return track { done in
+            pump.moveFrame(session: session, hit: hit, delta: delta, completion: done)
+        } completion: { completion($0) }
+    }
+
     /// 이 창 session에 코어 명령 코드를 보냅니다(XII.6.4). 닫혔거나 요청을 받지 않으면 false입니다.
     @discardableResult
     func perform(
@@ -429,6 +436,7 @@ final class ShellProjectWindow {
     private var closeTimer: Timer?
     /// 저장 응답을 기다리는 셸 watchdog. AutosavePolicy의 미확정 성능 수치를 대체하지 않습니다.
     var closeReplyTimeout: TimeInterval = 10
+    var frameDrag: CanvasFrameDrag?
     var isWaitingToClose: Bool { closeAttempt != nil }
 
     /// - Parameters:
@@ -461,7 +469,11 @@ final class ShellProjectWindow {
             ),
             toolbarItemProvider: toolsToolbar
         )
-        gitSource.trustDidChange = { [weak dataSource] trusted in dataSource?.updateTrust(trusted) }
+        gitSource.trustDidChange = { [weak self] trusted in
+            self?.dataSource.updateTrust(trusted)
+            if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
+        }
+        connectFrameInteractions()
         panelsSlot.gitPanel.host = self
         if let window = windowController.window {
             // 응답자 체인: content view → router → split controller → 창. 텍스트 편집 중에는 field editor가 먼저 받습니다.
@@ -476,6 +488,7 @@ final class ShellProjectWindow {
             guard let session = self?.windowController.windowSession, event.hasPreciseScrollingDeltas,
                   event.modifierFlags.intersection([.command, .shift, .option, .control]).isEmpty else { return false }
             // AppKit이 시스템 스크롤 방향을 적용한 delta를 그대로 사용합니다. flipped canvas의 y는 아래로 증가합니다.
+            _ = self?.canvasHost.canvasView.cancelFrameGesture?()
             let dx = Double(event.scrollingDeltaX)
             let dy = Double(event.scrollingDeltaY)
             guard dx.isFinite, dy.isFinite else { return false }
@@ -533,7 +546,14 @@ final class ShellProjectWindow {
         let session = windowController.windowSession
         canvasHost.canvasView.frameSession = session?.session
         let view = session?.viewInfo
-        let commands = ShellWindowToolsModelStub.sessionCommands(info: session?.info, view: view)
+        let info = session?.info
+        if let drag = frameDrag,
+           info?.revision != drag.hit.revision || view.map({ UUID(uuid: $0.active_view) }) != drag.hit.viewID ||
+           view?.center_x != drag.viewport.center_x || view?.center_y != drag.viewport.center_y ||
+           view?.zoom != drag.viewport.zoom {
+            _ = canvasHost.canvasView.cancelFrameGesture?()
+        }
+        let commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
@@ -565,6 +585,7 @@ final class ShellProjectWindow {
         }
         let attempt = UUID()
         closeAttempt = attempt
+        _ = canvasHost.canvasView.cancelFrameGesture?()
         session.isClosing = true
         let timer = Timer(timeInterval: closeReplyTimeout, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -658,8 +679,7 @@ final class ShellProjectWindow {
         windowController.windowSession?.commandsDidFinish = nil
     }
 
-    /// 이 창 session의 선택을 바꿉니다(그 창 history에 기록, 끝나면 명령 활성 상태 갱신). 캔버스 선택 도구가 생기기 전에는
-    /// 검사만 부릅니다.
+    /// 캔버스가 고른 node를 이 창의 선택 history에 기록하고 명령 활성 상태를 갱신합니다.
     @discardableResult
     func selectNodes(_ ids: [UUID]) -> Bool {
         guard let session = windowController.windowSession else { return false }

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Rust 코어(stellar-ffi)를 호출하는 FFI 헬퍼.
@@ -139,6 +140,19 @@ enum CoreRuntime {
         var request: UInt64 = 0
         let status = bytes.withUnsafeBufferPointer { raw in
             stellar_window_session_select(handle, session, raw.baseAddress, ids.count, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    static func moveFrame(handle: UInt64, session: UInt64, view: UUID, node: UUID,
+                          revision: UInt64, delta: CGVector) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: node.uuid) { nodeBytes in
+                stellar_window_session_move_frame(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, Float(delta.dx), Float(delta.dy), &request)
+            }
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)

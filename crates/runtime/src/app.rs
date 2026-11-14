@@ -123,6 +123,7 @@ use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
+mod frame_move;
 mod git_names;
 pub use git_names::GitNameRow;
 

@@ -35,6 +35,29 @@ final class CanvasView: NSView {
 
     func frameHit(at point: NSPoint) -> CanvasFrameHit? { frameScene.hit(at: point) }
 
+    var framePointerHandler: ((NSEvent) -> Bool)?
+    var cancelFrameGesture: (() -> Bool)?
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if let window {
+            NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: window)
+        }
+        _ = cancelFrameGesture?()
+        if let newWindow {
+            NotificationCenter.default.addObserver(self, selector: #selector(cancelOnWindowBlur),
+                name: NSWindow.didResignKeyNotification, object: newWindow)
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    @objc private func cancelOnWindowBlur(_ notification: Notification) { _ = cancelFrameGesture?() }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { _ = cancelFrameGesture?() }
+        return resigned
+    }
+
     private var mouseTrackingArea: NSTrackingArea?
 
     override var isFlipped: Bool { true }
@@ -96,9 +119,15 @@ final class CanvasView: NSView {
         mouseTrackingArea = area
     }
 
-    override func mouseDown(with event: NSEvent) { submitInput(event) }
-    override func mouseUp(with event: NSEvent) { submitInput(event) }
-    override func mouseDragged(with event: NSEvent) { submitInput(event) }
+    override func mouseDown(with event: NSEvent) {
+        if framePointerHandler?(event) != true { submitInput(event) }
+    }
+    override func mouseUp(with event: NSEvent) {
+        if framePointerHandler?(event) != true { submitInput(event) }
+    }
+    override func mouseDragged(with event: NSEvent) {
+        if framePointerHandler?(event) != true { submitInput(event) }
+    }
     override func mouseMoved(with event: NSEvent) { submitInput(event) }
     override func rightMouseDown(with event: NSEvent) { submitInput(event) }
     override func rightMouseUp(with event: NSEvent) { submitInput(event) }
@@ -111,7 +140,7 @@ final class CanvasView: NSView {
         submitInput(event)
     }
     override func keyDown(with event: NSEvent) {
-        if let keyDownHandler, keyDownHandler(event) {
+        if (event.keyCode == 53 && cancelFrameGesture?() == true) || keyDownHandler?(event) == true {
             handledKeyCodes.insert(event.keyCode)
             return
         }

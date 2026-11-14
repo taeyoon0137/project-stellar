@@ -73,8 +73,8 @@ WindowSessionId, 독립 document state, view state, history, loaded generation)�
    `STELLAR_FAILURE_SAVE_STALE`(21)로 아무것도 쓰지 않습니다(두 선택지 정책은 XII.7). 그 밖의 저장 실패는
    `STELLAR_FAILURE_SAVE_FAILED`(22), history 재생 불가(preview 진행 중 등)는 `STELLAR_FAILURE_HISTORY_UNAVAILABLE`(23).
 4. **선택**: `stellar_window_session_select(handle, session, ids, count, out_request)`(StableId 16 byte × count)가 그
-   창 선택을 바꾸고 history에 기록합니다(VII.4.6). 완료는 `WINDOW_VIEW_CHANGED`입니다. 캔버스 선택 도구가 생기기 전에는
-   셸 검사가 Undo 대상 history를 만들 때 씁니다.
+   창 선택을 바꾸고 history에 기록합니다(VII.4.6). 완료는 `WINDOW_VIEW_CHANGED`입니다. 이동 도구는 창이 표시한 scene에서
+   클릭한 Frame의 StableId를 보내고 빈 영역을 누르면 선택을 비웁니다. 제한 모드에서도 선택할 수 있습니다.
 5. **셸**: 메뉴·단축키는 응답자 체인으로 key 창의 router가 받으므로 명령은 언제나 그 창의 창 session으로 갑니다.
    Undo·Redo는 그 창 undo·redo stack이 비어 있지 않을 때, Save Now는 작업 문서가 있을 때만 활성입니다. 저장 실패는 alert
    한 번으로 알립니다.
@@ -201,3 +201,17 @@ UI thread는 기다리지 않습니다.
   일반 휠(line 단위), 수식키 조합, 준비되지 않은 창은 기존 입력 경로를 유지합니다.
 - 합성 AppKit 입력의 창별 camera 이동, 연속 입력과 저장 불변성은 호스트 앱에서 확인했습니다.
   [스크롤 팬 검증 기록](../status/canvas-scroll-pan.md)에 명령과 남은 범위를 기록합니다.
+
+
+### 저장된 Frame의 이동
+
+기본 창의 이동 도구는 표시된 Frame을 드래그할 때 해당 창 scene에서 그 하위 트리를 임시 이동합니다.
+마우스를 놓으면 `stellar_window_session_move_frame`에 창 session, 클릭 시점의 View ID와 문서 revision,
+Frame ID, 부모 좌표계 이동량을 보냅니다. document thread는 신뢰와 현재 선택·View·revision·조상 잠금을
+확인한 뒤 Frame transform 속성 transaction 하나를 기록합니다. 기존 아핀의 회전·배율은 보존합니다.
+Escape·창 포커스 상실로 미리보기를 취소하면 문서 변경이 없습니다. 창의 Undo·Redo 및 Save Now가
+이 transaction을 처리합니다. 현재 표시 가능한 자유 배치 Frame 한 개 이동이 지원 범위입니다.
+
+호스트 검사 `scripts/macos/canvas-move-check.py`는 CLI로 부모 2배 변환과 자식 Frame의 위치를 저장하고,
+실제 기본 창에 합성 AppKit 입력을 보냅니다. 50% 배율에서의 이동량, 미리보기·Escape 원복 픽셀,
+다른 창 상태, Undo·Redo와 Save Now 뒤 재열기 좌표를 확인합니다.
