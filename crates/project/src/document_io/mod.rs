@@ -37,5 +37,10 @@ pub mod load;
 /// 비활성 문서 chunk unload와 재로드 (XVI.5.5).
 pub mod residency;
 
+/// ADR-0059의 명시적 단일 View 텍스트 원본 저장·열기.
+pub mod text_source;
+
+mod text_codec;
+
 /// 문서 chunk payload 스키마 version. chunk pointer(V.3.1)에 기록됩니다.
 pub const DOCUMENT_CHUNK_SCHEMA_VERSION: u32 = 1;
