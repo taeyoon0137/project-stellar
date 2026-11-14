@@ -120,6 +120,16 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.createComponent(handle: runtimeHandle, session: session, name: name), completion)
     }
 
+    func deleteSelection(session: UInt64, view: UUID, revision: UInt64,
+                         completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.deleteSelection(handle: runtimeHandle, session: session, view: view, revision: revision), completion)
+    }
+
+    func duplicateSelection(session: UInt64, view: UUID, revision: UInt64,
+                         completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.duplicateSelection(handle: runtimeHandle, session: session, view: view, revision: revision), completion)
+    }
+
     func insertFrame(session: UInt64, parent: CanvasFrameHit, rect: CGRect,
                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.insertFrame(handle: runtimeHandle, session: session, view: parent.viewID,

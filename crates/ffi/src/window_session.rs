@@ -265,6 +265,80 @@ pub unsafe extern "C" fn stellar_window_session_pan(
     })
 }
 
+/// 현재 창 선택을 하나의 삭제 transaction으로 적용합니다.
+/// # Safety
+/// `view`는 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_delete_selection(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    revision: u64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let view = StableId::from_bytes(unsafe { *view });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.delete_selected_nodes(
+                WindowSessionHandle(session),
+                view,
+                stellar_core_types::revision::DocumentRevision(revision),
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 현재 창의 단일 선택 subtree를 복제합니다.
+/// # Safety
+/// `view`는 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_duplicate_selection(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    revision: u64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let view = StableId::from_bytes(unsafe { *view });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.duplicate_selected_node(
+                WindowSessionHandle(session),
+                view,
+                stellar_core_types::revision::DocumentRevision(revision),
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 /// 표시된 Frame을 부모 좌표계 delta만큼 이동하도록 요청합니다.
 ///
 /// # Safety

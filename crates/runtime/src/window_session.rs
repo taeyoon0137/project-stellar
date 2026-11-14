@@ -508,6 +508,13 @@ impl ProjectWindowSession {
 
     /// 작업 문서를 지금 저장합니다(모듈 문서 "Undo·Redo·Save Now").
     pub fn save_now(&mut self) -> Result<SaveOutcome, WindowSessionSaveError> {
+        self.save_with_lock_dir(default_lock_dir)
+    }
+
+    pub(crate) fn save_with_lock_dir(
+        &mut self,
+        lock_dir: impl FnOnce() -> Result<std::path::PathBuf, LockError>,
+    ) -> Result<SaveOutcome, WindowSessionSaveError> {
         let Some(document) = self.document.as_mut() else {
             return Ok(SaveOutcome {
                 generation: self.generation_number(),
@@ -580,7 +587,7 @@ impl ProjectWindowSession {
             }
         }
         // 계획은 메모리에서만 만듭니다. 실제 쓰기만 CLI와 직렬화하고 잠금 안에서 base를 확인합니다.
-        let dir = default_lock_dir().map_err(WindowSessionSaveError::Lock)?;
+        let dir = lock_dir().map_err(WindowSessionSaveError::Lock)?;
         let _guard =
             SaveLock::for_identity(&dir, &self.identity).map_err(WindowSessionSaveError::Lock)?;
         check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;

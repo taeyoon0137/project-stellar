@@ -335,6 +335,8 @@ StellarStatus stellar_window_session_fit_root(uint64_t handle, uint64_t session,
 /* Pan active viewport content in screen points; completes with WINDOW_VIEW_CHANGED or REQUEST_FAILED. */
 StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);
 /* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
+StellarStatus stellar_window_session_delete_selection(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint64_t *out_request);
+StellarStatus stellar_window_session_duplicate_selection(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint64_t *out_request);
 StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float dx, float dy, uint64_t *out_request);
 StellarStatus stellar_window_session_resize_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float width, float height, uint64_t *out_request);
 /* 선택한 Free Frame 배경. space가 0이면 제거합니다. */

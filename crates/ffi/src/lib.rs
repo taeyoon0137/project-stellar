@@ -1586,6 +1586,8 @@ mod tests {
             "stellar_window_session_resize_frame",
             "stellar_window_session_set_frame_background",
             "stellar_window_session_insert_frame",
+            "stellar_window_session_delete_selection",
+            "stellar_window_session_duplicate_selection",
             "stellar_command_code",
             "stellar_window_view_info",
         ] {
