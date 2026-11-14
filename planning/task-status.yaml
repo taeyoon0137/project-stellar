@@ -3927,19 +3927,26 @@ tasks:
     verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.9.2"
     title: "단일 token 변경의 evaluation count와 duration을 측정하는 benchmark를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.9.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.9.2.md"
+    commit: "a239b9b8ca5ee79e95447f0a92f10dde527aade8"
+    report: "docs/task-reports/VIII.9.2.md"
+    verified_at: "2026-11-14T11:44:50+09:00"
   - id: "VIII.9.3"
     title: "양 플랫폼 evaluator golden corpus를 CI에 추가합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VIII.4.6"
       - "VIII.8.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/VIII.9.3.md"
   - id: "IX.1.1"
     title: "`ComponentDefinition` resource에 StableId, root FrameRef, 공개 Property 목록, Slot 목록, local token scope를 정의합니다."
     status: verified
@@ -3967,20 +3974,32 @@ tasks:
     verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.1.3"
     title: "Property 생성·rename·default 변경·삭제 command를 구현합니다. inbound drilling이 있는 삭제는 orphan 정보를 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.1.2"
       - "VIII.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.1.3.md"
+    commit: "3806c3c0c38b2798e6a4058fa4906b519da8e2e3"
+    report: "docs/task-reports/IX.1.3.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "IX.1.4"
     title: "component property의 runtime evaluated value를 instance별로 캐시하고 definition revision과 override revision으로 invalidate합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.1.2"
       - "VIII.6.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.1.4.md"
+    commit: "2d3130d0edcb1597e7afdef54cc8930b18824f64"
+    report: "docs/task-reports/IX.1.4.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "IX.2.1"
     title: "ComponentInstance node payload에 ComponentRef, sparse PropertyOverride map, SlotOverride map을 정의합니다."
     status: verified
@@ -4104,12 +4123,18 @@ tasks:
     verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.4.1"
     title: "component boundary를 넘는 binding은 각 경계의 ComponentProperty StableId chain을 필수로 갖게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.1.2"
       - "VIII.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.4.1.md"
+    commit: "8e38bdfde7359ca88cd577b2732acb9fb746c69e"
+    report: "docs/task-reports/IX.4.1.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "IX.4.2"
     title: "nested instance property를 상위 instance에서 직접 수정하는 API를 제공하지 않고 validator에서도 거부합니다."
     status: verified
@@ -4125,34 +4150,58 @@ tasks:
     verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.4.3"
     title: "사용자가 내부 property를 상위로 노출할 때 필요한 중간 property와 binding chain을 계산하는 `DrillingPlan`을 구현합니다. 아직 적용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.4.3.md"
+    commit: "76dbc61d1681c2093abc1c68e60e861fc4a8c8ea"
+    report: "docs/task-reports/IX.4.3.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "IX.4.4"
     title: "DrillingPlan preview에 생성될 property 이름, type, default, component 경로를 포함합니다. 이름 충돌은 deterministic suffix를 제안합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.4.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.4.4.md"
+    commit: "04322af02f1deb9a7f242175a01ee298e0bdcf04"
+    report: "docs/task-reports/IX.4.4.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "IX.4.5"
     title: "승인된 DrillingPlan을 하나의 CommandTransaction으로 적용합니다. 중간 실패 시 property 하나도 남기지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.4.4"
       - "VII.1.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.4.5.md"
+    commit: "d5f3d6886e1230532103d7f5da70c200f1b706b7"
+    report: "docs/task-reports/IX.4.5.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "IX.4.6"
     title: "chain 일부 삭제·타입 변경 시 상위 chain 전체를 orphan 상태로 표시하되 저장에서 삭제하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.4.5"
       - "VIII.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.4.6.md"
+    commit: "75a23ebc2154835bfe2c28221ca1d2be3a24b0c0"
+    report: "docs/task-reports/IX.4.6.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "IX.5.1"
     title: "component local state variable에 StableId, name, type, initial expression을 정의합니다."
     status: verified
@@ -4444,61 +4493,104 @@ tasks:
     verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.7.9"
     title: "캔버스에 같은 View를 여러 variable assignment로 배치하는 `ViewPresentation` 런타임 타입을 정의합니다. definition을 복제하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.7.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.7.9.md"
+    commit: "8799f0eefde0870123e459ecc36739b53c607dd9"
+    report: "docs/task-reports/IX.7.9.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "IX.8.1"
     title: "`AccessibilityNode`에 source StableId, role, label binding, value binding, state, action, reading order를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.6.1"
       - "VIII.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.8.1.md"
+    commit: "2e5af78eac89ba00d3cb7ee274597dd5e4dba32e"
+    report: "docs/task-reports/IX.8.1.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.8.2"
     title: "시각 tree와 별도 accessibility parent/child 관계를 허용하되 source node는 정확히 하나여야 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.8.2.md"
+    commit: "c55a36709f75e846af0f395b6a3f4c8d28b779ef"
+    report: "docs/task-reports/IX.8.2.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.8.3"
     title: "decorative node 제외, Fragment flatten, hidden node 제외 규칙을 적용한 기본 accessibility tree generator를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.8.2"
       - "VI.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.8.3.md"
+    commit: "28c3a21421ad64efc9b533a2dd5b4232f86cd185"
+    report: "docs/task-reports/IX.8.3.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.8.4"
     title: "Button, TextInput, Modal, List, SingleSelectionGroup contract를 role/state/action으로 매핑합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.6.7"
       - "IX.8.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.8.4.md"
+    commit: "a76cabbc1c1a9c5f98a951a9b87b68e64f3a2595"
+    report: "docs/task-reports/IX.8.4.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.8.5"
     title: "label 누락, invalid nesting, focusable action 없음, duplicate reading order diagnostic을 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.8.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.8.5.md"
+    commit: "88d21b9b37dc82c464660faabe6efb150ac980de"
+    report: "docs/task-reports/IX.8.5.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.8.6"
     title: "Target adapter가 사용할 중립 accessibility snapshot을 정의합니다. 플랫폼 API 호출은 Phase XII로 미룹니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.8.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.8.6.md"
+    commit: "4bfc8083329a07d57ff195fdc938d1b5c621947f"
+    report: "docs/task-reports/IX.8.6.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.9.1"
     title: "Button, TextInput, Modal, List, Radio 합성 예제 component library fixture를 만듭니다."
-    status: not_started
+    status: reported_done
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.9.1.md"
   - id: "IX.9.2"
     title: "10단계 nested component property drilling fixture를 만듭니다."
     status: not_started
@@ -4508,11 +4600,17 @@ tasks:
       - DEV-MAC
   - id: "IX.9.3"
     title: "compact/error/dark nullable variant 조합 fixture를 만듭니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.7.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.9.3.md"
+    commit: "9a8c280dfc9d7d26f142c43ba50c2366ef411243"
+    report: "docs/task-reports/IX.9.3.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "IX.9.4"
     title: "위 fixture를 macOS·Windows CI에서 semantic snapshot 비교합니다."
     status: not_started
@@ -4520,82 +4618,122 @@ tasks:
       - DEV-MAC
   - id: "IX.10.1"
     title: "`TargetProfileId`, profile kind Web/Apple/Android, profile schema version을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IV.1.1"
       - "VIII.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.10.1.md"
+    commit: "4192f6735b613e9630c8e89539ed3d7b97fdf89f"
+    report: "docs/task-reports/IX.10.1.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.10.2"
     title: "Apple profile에 platform 종류와 최소 OS version, Android profile에 API level과 UI system version, Web profile에 browser baseline과 capability set version을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.10.2.md"
+    commit: "57b2ea6146206594e3f65837d672861f3a05cbcb"
+    report: "docs/task-reports/IX.10.2.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.10.3"
     title: "`stellar.yaml`에 project target profile 목록과 기본 profile을 저장하고 존재하지 않는 default를 거부합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.10.2"
       - "IV.1.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.10.3.md"
   - id: "IX.10.4"
     title: "Stellar 앱 업데이트만으로 project profile version을 바꾸지 않게 합니다. profile registry version과 project pin을 분리합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.10.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.10.4.md"
   - id: "IX.10.5"
     title: "capability 상태를 Native, Approximated, Unsupported, Deprecated로 정의하고 element/property/semantic contract별 registry를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.10.2"
       - "IX.6.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.10.5.md"
+    commit: "95e4be79e6787509db63704f85f6d65b0a3e636f"
+    report: "docs/task-reports/IX.10.5.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.10.6"
     title: "selected TargetProfile에 따라 element·property 생성 가능 여부와 비활성화 사유를 조회하는 API를 구현합니다. 실제 UI는 Phase XII에 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.10.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.10.6.md"
+    commit: "304e2f73e7fe4afa6b2c9e6049aab80b56759712"
+    report: "docs/task-reports/IX.10.6.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.10.7"
     title: "공통 structure에 profile-specific sparse override를 적용하는 resolver를 구현하고 View Variant·Binding environment와 결합합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.7.6"
       - "VIII.7.3"
       - "IX.10.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.10.7.md"
+    commit: "bc6085c12a5072cf2fa16dfcaefec82118f04624"
+    report: "docs/task-reports/IX.10.7.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.10.8"
     title: "한 View를 여러 TargetProfile에 대해 동시에 validate하고 Native/Approximated/Unsupported/Deprecated diagnostic을 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.10.6"
       - "IX.10.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.10.8.md"
+    commit: "7c4f86fd7aa645bd7948a6df1169b858c3e657b3"
+    report: "docs/task-reports/IX.10.8.md"
+    verified_at: "2026-11-14T11:44:48+09:00"
   - id: "IX.10.9"
     title: "profile upgrade plan을 구현해 old/new capability registry의 semantic diff와 영향받는 nodes/properties를 반환합니다. 적용 전 project를 수정하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.10.4"
       - "IX.10.8"
       - "XIV.3.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.10.9.md"
   - id: "IX.10.10"
     title: "승인된 profile upgrade를 CommandTransaction과 manifest 변경으로 적용하고 자동 commit하지 않습니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "IX.10.9"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/IX.10.10.md"
   - id: "IX.11.1"
     title: "`crates/document`에 registry 항목별 CSS 매핑 metadata 타입을 정의합니다. 필드는 CSS longhand 이름 목록, 값 문법 종류, 매핑 상태(`exact`·`converted`·`approximated`·`stellar-only`), `initial-differs`·`subset` 표시, 차이 설명입니다. `Length`=`px`, `Angle`=`deg`, `Duration`=`ms`, `Percentage`=`%` 단위 계약을 `core-types` 문서 주석에 고정합니다. `crates/core-types/`는 I.3.5 보호 경로이므로 같은 diff에서 ADR-0008을 개정해 단위 계약을 기록합니다(새 ADR도 허용). 저장 bytes는 바꾸지 않습니다."
     status: not_started
@@ -4847,13 +4985,19 @@ tasks:
     verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.1.2"
     title: "layout tree view는 Fragment를 flatten하고 ComponentInstance virtual subtree와 View Variant 적용 결과를 읽도록 합니다. 원본 document를 수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.4.1"
       - "IX.2.2"
       - "IX.7.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.1.2.md"
+    commit: "2034c0483b578540ec2f09889ad89fcb236ba038"
+    report: "docs/task-reports/X.1.2.md"
+    verified_at: "2026-11-14T11:44:49+09:00"
   - id: "X.1.3"
     title: "layout property registry에 각 속성의 dirty class를 SelfSize, ParentFlow, DescendantConstraint, PaintOnly로 분류합니다."
     status: verified
@@ -5218,12 +5362,18 @@ tasks:
     verified_at: "2026-11-14T09:54:37+09:00"
   - id: "X.7.1"
     title: "command invalidation을 layout dirty set으로 변환합니다. PaintOnly는 layout queue에 넣지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.4"
       - "X.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.1.md"
+    commit: "2573e803b87b71d511e2e83bc1f50b5e453ecec2"
+    report: "docs/task-reports/X.7.1.md"
+    verified_at: "2026-11-14T11:44:49+09:00"
   - id: "X.7.2"
     title: "bottom-up intrinsic measurement와 top-down placement를 분리하고 cache key를 정의합니다."
     status: verified
@@ -5240,18 +5390,30 @@ tasks:
     verified_at: "2026-11-14T09:54:37+09:00"
   - id: "X.7.3"
     title: "dirty node의 ancestor propagation을 layout mode별로 최소화합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.3.md"
+    commit: "e9ff30e53355bc37dc3a81b644bc9bfde8a59329"
+    report: "docs/task-reports/X.7.3.md"
+    verified_at: "2026-11-14T11:44:49+09:00"
   - id: "X.7.4"
     title: "20만 node synthetic document에서 단일 leaf 변경 방문 node count를 기록하는 benchmark를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.7.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.4.md"
+    commit: "4b577a8f3b68d28fde87fc46bfbc47809117dbf3"
+    report: "docs/task-reports/X.7.4.md"
+    verified_at: "2026-11-14T11:44:49+09:00"
   - id: "X.7.5"
     title: "layout result가 DocumentRevision과 input hash에 맞지 않으면 폐기하는 worker result guard를 구현합니다."
     status: verified
@@ -5268,11 +5430,17 @@ tasks:
     verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.7.6"
     title: "전체 layout fallback 경로를 테스트·진단용으로만 제공하고 일반 property 변경에서 호출되면 debug assertion과 metric을 남깁니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.7.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.6.md"
+    commit: "7cbed16b48f3060e5599f051d92e9c4cd6f3dcdb"
+    report: "docs/task-reports/X.7.6.md"
+    verified_at: "2026-11-14T11:44:49+09:00"
   - id: "X.8.1"
     title: "`FontSource`를 Project, System, External로 정의하고 `FontFaceRef`에 file hash, face index, variation axes를 포함합니다."
     status: verified
@@ -5508,9 +5676,10 @@ tasks:
     verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.11.2"
     title: "nested component, variant, token 조건이 포함된 layout fixture 20개를 추가합니다."
-    status: not_started
+    status: reported_done
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/X.11.2.md"
   - id: "X.11.3"
     title: "양 플랫폼에서 logical layout result를 비교하는 CI job을 추가합니다."
     status: not_started
@@ -5699,7 +5868,7 @@ tasks:
     verified_at: "2026-11-14T02:08:23+09:00"
   - id: "XI.3.4"
     title: "Shape/Path/Text/Image별 narrow-phase hit test를 구현합니다. alpha pixel hit test는 초기 제외하고 bounds 또는 geometry policy를 명시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.3.3"
       - "VI.5.6"
@@ -5707,21 +5876,39 @@ tasks:
       - "X.10.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.3.4.md"
+    commit: "e0d8a613290216dfabf3a9c815a7516750963fe2"
+    report: "docs/task-reports/XI.3.4.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "XI.3.5"
     title: "selection handle와 modifier control point를 별도 transient hit-test layer로 추가합니다. project 저장에 포함하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.3.3"
       - "VII.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.3.5.md"
+    commit: "7908d38d731b89aea75c243cbb467644eb0bd6e7"
+    report: "docs/task-reports/XI.3.5.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "XI.3.6"
     title: "2만 가시 node 기준 hit test p99 benchmark를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.3.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.3.6.md"
+    commit: "6a3c1c11493f8ad1936c85ce8763d6234f4067ec"
+    report: "docs/task-reports/XI.3.6.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "XI.4.1"
     title: "`renderer-core`에 backend 독립 `RenderGraph`, pass, attachment, resource lifetime 타입을 정의합니다."
     status: verified
@@ -5887,40 +6074,70 @@ tasks:
     verified_at: "2026-11-14T00:38:58+09:00"
   - id: "XI.6.2"
     title: "stroke tessellation에 width, join, cap, dash를 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.6.2.md"
+    commit: "62c59430835e1cde842cde26735ecaa38e35fb22"
+    report: "docs/task-reports/XI.6.2.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.6.3"
     title: "tessellation 작업을 worker pool에서 실행하고 stale scene revision 결과를 버립니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.7.5"
       - "XI.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.6.3.md"
+    commit: "18a77392fa21679e37a991763d88b078de55ce84"
+    report: "docs/task-reports/XI.6.3.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.6.4"
     title: "glyph outline/bitmap atlas interface와 key를 font hash, glyph id, size, variation, rendering mode로 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.10.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.6.4.md"
+    commit: "bf675417730b25b2e720ebeb758cf043825355e6"
+    report: "docs/task-reports/XI.6.4.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.6.5"
     title: "atlas page allocation·eviction을 구현하고 현재 frame 사용 glyph는 제거하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.6.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.6.5.md"
+    commit: "f6897e48abc2a437558762ea3bb4c725e1f9533e"
+    report: "docs/task-reports/XI.6.5.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.6.6"
     title: "cache miss 시 placeholder가 아니라 outline rasterization 완료 전 이전 valid glyph 또는 빈 glyph 정책을 명시하고 테스트합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.6.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.6.6.md"
+    commit: "a4dd8280a6cad82da86bda4cd292081066c3df89"
+    report: "docs/task-reports/XI.6.6.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.7.1"
     title: "이미지 decoder interface를 worker 전용으로 정의하고 decoded pixel format을 명시합니다."
     status: verified
@@ -5936,12 +6153,18 @@ tasks:
     verified_at: "2026-11-14T00:38:58+09:00"
   - id: "XI.7.2"
     title: "mipmap 생성과 texture upload task를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.7.1"
       - "XI.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.7.2.md"
+    commit: "97545c3ae29e0949fc64bfa9384270749495aa8f"
+    report: "docs/task-reports/XI.7.2.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.7.3"
     title: "texture cache key를 asset content hash, decode settings, color transform으로 정의합니다."
     status: verified
@@ -5966,57 +6189,94 @@ tasks:
     report: "docs/task-reports/XI.7.4.md"
   - id: "XI.8.1"
     title: "`renderer-metal`에서 MTLDevice, command queue, CAMetalLayer 연결과 pixel format을 초기화합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.5.1"
       - "II.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.8.1.md"
+    commit: "28c00c8b891af5025344690169f951b3148b3818"
+    report: "docs/task-reports/XI.8.1.md"
+    verified_at: "2026-11-14T11:44:45+09:00"
   - id: "XI.8.2"
     title: "resize와 drawable acquisition을 구현하고 drawable 없음은 frame skip으로 처리합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XI.8.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XI.8.2.md"
   - id: "XI.8.3"
     title: "공통 vertex/index/uniform buffer abstraction을 Metal resource로 매핑합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.5.3"
       - "XI.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.8.3.md"
+    commit: "a8ff5e9d6ea79844da22b9747ac974e00d783b14"
+    report: "docs/task-reports/XI.8.3.md"
+    verified_at: "2026-11-14T11:44:45+09:00"
   - id: "XI.8.4"
     title: "pipeline state와 shader library cache를 구현합니다. shader compile 실패는 구조화 오류로 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.8.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.8.4.md"
+    commit: "df340095d214d165e25acdf42169a2e002ee10fc"
+    report: "docs/task-reports/XI.8.4.md"
+    verified_at: "2026-11-14T11:44:45+09:00"
   - id: "XI.8.5"
     title: "RenderGraph pass encoding, submit, `present` 예약, CPU timestamp를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.4.6"
       - "XI.8.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.8.5.md"
+    commit: "5fb0ba7f55af4d2d591851584c262dba07d37f78"
+    report: "docs/task-reports/XI.8.5.md"
+    verified_at: "2026-11-14T11:44:45+09:00"
   - id: "XI.8.6"
     title: "Metal GPU timestamp query를 연결해 pass별 GPU 시간을 측정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.8.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.8.6.md"
+    commit: "abe8201077158c914705ef4955d5bd391844c599"
+    report: "docs/task-reports/XI.8.6.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.8.7"
     title: "device error·memory pressure·drawable timeout 처리 테스트를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.5.4"
       - "XI.8.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.8.7.md"
+    commit: "5cc0e8f6cea782c83dac7ec5c68a190cd1d8bf63"
+    report: "docs/task-reports/XI.8.7.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.9.1"
     title: "`renderer-d3d12`에서 adapter, device, command queue, swap chain을 Windows 11 x64에 초기화합니다."
     status: blocked
@@ -6104,19 +6364,31 @@ tasks:
       - DEV-MAC
   - id: "XI.10.5"
     title: "Display P3 surface 지원 여부를 플랫폼 capability로 감지하고 unsupported display에서는 sRGB 변환과 gamut warning을 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.4.2"
       - "XI.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.10.5.md"
+    commit: "65d415152ebde53c852c8bca005052c6db29931c"
+    report: "docs/task-reports/XI.10.5.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.10.6"
     title: "HDR path는 명시적 unsupported 상태로 유지하고 extended value를 silent clamp하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.10.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.10.6.md"
+    commit: "b10d2b0c9dc1f59fa08146b169d335f8a14a27a5"
+    report: "docs/task-reports/XI.10.6.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.11.1"
     title: "common scene fixture를 offscreen render해 PNG-like raw RGBA reference를 생성하는 테스트 harness를 양 backend에 구현합니다. 제품 export 기능은 아닙니다."
     status: not_started
@@ -6153,11 +6425,17 @@ tasks:
       - DEV-MAC
   - id: "XI.11.5"
     title: "Present queue depth와 dropped stale frame count를 benchmark 결과에 포함합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.5.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.11.5.md"
+    commit: "8c8c4eb13116fe83fbe14f244bf433c3367bc388"
+    report: "docs/task-reports/XI.11.5.md"
+    verified_at: "2026-11-14T11:44:46+09:00"
   - id: "XI.11.6"
     title: "Metal/D3D12 conformance CI에서 모든 fixture와 smoke benchmark를 실행합니다."
     status: not_started
@@ -7000,12 +7278,18 @@ tasks:
     report: "docs/task-reports/XIII.1.1.md"
   - id: "XIII.1.2"
     title: "완료된 document CommandTransaction만 autosave dirty state를 만들고 Selection·viewport·preview event는 만들지 않게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.3.2"
       - "V.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.1.2.md"
+    commit: "199752c94c02dbfe20673445ce0a126b48616ec9"
+    report: "docs/task-reports/XIII.1.2.md"
+    verified_at: "2026-11-14T11:44:50+09:00"
   - id: "XIII.1.3"
     title: "연속 command 후 debounce timer를 재설정하고 최대 지연에 도달하면 입력이 이어져도 snapshot을 캡처합니다. 캡처는 document thread에서 짧게 수행합니다."
     status: not_started
@@ -7114,12 +7398,18 @@ tasks:
     verified_at: "2026-11-14T02:08:53+09:00"
   - id: "XIII.3.1"
     title: "창에 로컬 미저장 변경이 없으면 외부의 새 정상 generation을 자동 reload하고 history를 폐기합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIII.2.5"
       - "VII.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.3.1.md"
+    commit: "67127094807f242e664c6f3056b43d321c9756c6"
+    report: "docs/task-reports/XIII.3.1.md"
+    verified_at: "2026-11-14T11:44:50+09:00"
   - id: "XIII.3.2"
     title: "로컬 변경이 있으면 LoadedBase, CurrentMemory, ExternalDisk snapshot을 보존한 `ExternalChangePending` 상태를 생성합니다."
     status: verified
@@ -7390,13 +7680,19 @@ tasks:
     verified_at: "2026-11-14T03:12:00+09:00"
   - id: "XIII.6.7"
     title: "missing font에서 명시 fallback chain만 적용하고 줄바꿈 변경 진단을 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.8.3"
       - "XIII.6.2"
       - "XIII.6.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIII.6.7.md"
+    commit: "79da4e50b39f75a04a190cf88020fab00e0a966b"
+    report: "docs/task-reports/XIII.6.7.md"
+    verified_at: "2026-11-14T11:44:50+09:00"
   - id: "XIII.7.1"
     title: "`git lfs version`을 시스템 Git 환경에서 실행해 설치 상태와 버전을 읽습니다."
     status: verified
@@ -7835,27 +8131,45 @@ tasks:
     verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.4.1"
     title: "HEAD→Index diff를 Staged, Index→WorkingTree diff를 Unstaged로 계산합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.10"
       - "XIV.2.5"
       - "XIV.2.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.4.1.md"
+    commit: "4dde36549598e1895d81f74232054907985ce990"
+    report: "docs/task-reports/XIV.4.1.md"
+    verified_at: "2026-11-14T11:44:50+09:00"
   - id: "XIV.4.2"
     title: "같은 PropertyPath가 staged와 unstaged에서 연속 수정된 경우 base/head, staged, working 세 값을 모두 보존합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.4.2.md"
+    commit: "6b9e133a273f13dec85a87dc841fadeb5614c6eb"
+    report: "docs/task-reports/XIV.4.2.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.4.3"
     title: "untracked Stellar files는 WorkingTree snapshot에 포함하되 index snapshot에는 없는 AddObject/File change로 표시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.4.3.md"
+    commit: "939449489ea922e2ba2dba2e052dd97671b29e2d"
+    report: "docs/task-reports/XIV.4.3.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.4.4"
     title: "non-Stellar files는 raw Git file status로만 표시하고 semantic parser로 해석하지 않습니다."
     status: verified
@@ -7871,53 +8185,84 @@ tasks:
     verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.4.5"
     title: "corrupt WorkingTree Stellar state는 semantic status를 실패시키되 raw Git status는 계속 제공하고 자동 수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.4.1"
       - "V.4.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.4.5.md"
+    commit: "70cbdb3be2b1facfee2f70398ff2234030c8c94c"
+    report: "docs/task-reports/XIV.4.5.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.5.1"
     title: "선택한 SemanticChange ID 목록을 받는 `StageSelectionRequest`와 결과 dependency closure를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.5.1.md"
+    commit: "f872a7b876d8fc2bb39d9c25414f6673948c7b16"
+    report: "docs/task-reports/XIV.5.1.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.5.2"
     title: "change dependency graph를 작성합니다. 새 object의 property, binding이 참조하는 token/property, component interface와 instance override 관계를 포함합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.2"
       - "VI.2.5"
       - "VIII.6.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.5.2.md"
+    commit: "3766e053a3c52a180b4521e7c6b85e374742b530"
+    report: "docs/task-reports/XIV.5.2.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.5.3"
     title: "선택 변경만으로 snapshot validator가 실패하면 필수 dependency를 `required_additions`로 반환하고 자동 stage하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.5.2"
       - "VI.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.5.3.md"
+    commit: "afbd0937a42bb552e37c6e7d7fc5b64d57b75282"
+    report: "docs/task-reports/XIV.5.3.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.5.4"
     title: "caller가 dependencies 포함을 승인한 뒤 Index snapshot에 selected+required changes를 적용해 CandidateIndexSnapshot을 만듭니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.5.3"
       - "XIV.3.9"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.5.4.md"
+    commit: "ca2c9a23f1c92c836989cd04a3c5579b838ac3bd"
+    report: "docs/task-reports/XIV.5.4.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.5.5"
     title: "CandidateIndexSnapshot을 deterministic project files/chunks로 serialize하되 WorkingTree를 수정하지 않는 temp directory writer를 구현합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XIV.5.4"
       - "VI.10.2"
       - "V.5.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XIV.5.5.md"
   - id: "XIV.5.6"
     title: "candidate와 기존 index tree의 file-level diff를 계산해 update할 path와 blob bytes만 산출합니다."
     status: not_started
@@ -7972,20 +8317,32 @@ tasks:
       - DEV-MAC
   - id: "XIV.7.1"
     title: "선택 staged changes를 Index snapshot에서 inverse 적용해 CandidateIndexSnapshot을 계산합니다. 기준은 HEAD가 아니라 현재 Index입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.4.1"
       - "XIV.3.10"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.7.1.md"
+    commit: "17a3757f4f6f7286267127c17d582e7821905596"
+    report: "docs/task-reports/XIV.7.1.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.7.2"
     title: "unstage dependency graph를 검사하고 남은 index snapshot이 invalid하면 필수 함께-unstage 변경을 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.5.2"
       - "XIV.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.7.2.md"
+    commit: "0704fe8e07abdcbfb8304f574bb5c4deefa56e8d"
+    report: "docs/task-reports/XIV.7.2.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XIV.7.3"
     title: "승인된 candidate를 Phase XIV.6 index 기록 경로로 적용합니다."
     status: not_started
@@ -8416,12 +8773,18 @@ tasks:
       - DEV-MAC
   - id: "XIV.14.6"
     title: "non-UTF8 path, symlink, executable, LFS pointer, corrupt project scenario를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.1.5"
       - "XIII.7.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.14.6.md"
+    commit: "6bff423d4e51c3cd5c79ba53f9a104412c3c088f"
+    report: "docs/task-reports/XIV.14.6.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XV.1.1"
     title: "`stellar.yaml` dependency entry에 logical name, library id, source kind Git, repository URL, version selector(tag/commit/branch), optional local override를 정의합니다."
     status: verified
@@ -8687,44 +9050,64 @@ tasks:
     verified_at: "2026-11-14T09:54:38+09:00"
   - id: "XV.5.1"
     title: "library project에서 export된 ComponentDefinition·TokenSet index를 읽는 `LibrarySnapshot`을 정의합니다. 모든 resource key에 LibraryId+commit+StableId를 포함합니다."
-    status: blocked
+    status: verified
     depends_on:
       - "XV.2.1"
       - "IX.1.1"
       - "VIII.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.5.1.md"
+    commit: "88a93a9a79cda6f28fa84457a260ad5538237278"
+    report: "docs/task-reports/XV.5.1.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XV.5.2"
     title: "사용 project document가 library resource를 참조할 수 있게 `ExternalComponentRef`, `ExternalTokenRef`를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XV.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.5.2.md"
+    commit: "96ba766896b267b53f85a76efbb7a3bc1746f864"
+    report: "docs/task-reports/XV.5.2.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XV.5.3"
     title: "library resource를 수정하는 command를 사용 project에서 거부합니다. instance 공개 override만 허용합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XV.5.2"
       - "IX.2.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XV.5.3.md"
   - id: "XV.5.4"
     title: "library의 transitive resource ref를 동일 dependency graph instance 안에서 resolve합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XV.2.2"
       - "XV.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.5.4.md"
+    commit: "08446dc8bfee9b4ad8c6c29650fc124d8b786166"
+    report: "docs/task-reports/XV.5.4.md"
+    verified_at: "2026-11-14T11:44:51+09:00"
   - id: "XV.5.5"
     title: "missing cache/offline entry는 library resource unavailable diagnostic을 생성하고 project 기본 데이터는 읽을 수 있게 합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XV.3.3"
       - "III.2.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XV.5.5.md"
   - id: "XV.6.1"
     title: "`stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다."
     status: verified
@@ -8772,20 +9155,32 @@ tasks:
       - DEV-MAC
   - id: "XV.7.1"
     title: "dependency update request가 selector 재해석 후 CurrentLibrarySnapshot과 CandidateLibrarySnapshot을 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XV.2.4"
       - "XV.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.7.1.md"
+    commit: "bc7e44f00c13f0f6931535bd67e24feef20cdb73"
+    report: "docs/task-reports/XV.7.1.md"
+    verified_at: "2026-11-14T11:44:52+09:00"
   - id: "XV.7.2"
     title: "library resource Semantic Diff를 ComponentDefinition·Property·Token 단위로 계산합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.7"
       - "XV.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.7.2.md"
+    commit: "ec9211256c12a59aad325eb163e27fd9d3b20d27"
+    report: "docs/task-reports/XV.7.2.md"
+    verified_at: "2026-11-14T11:44:52+09:00"
   - id: "XV.7.3"
     title: "candidate library를 적용하기 전 사용 project의 external refs와 instance overrides를 검증합니다."
     status: not_started
@@ -8796,7 +9191,7 @@ tasks:
       - DEV-MAC
   - id: "XV.7.4"
     title: "사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.7.3"
       - "XV.4.5"
@@ -8804,7 +9199,7 @@ tasks:
       - DEV-MAC
   - id: "XV.7.5"
     title: "update 실패 시 이전 lock/cache snapshot을 유지합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.7.4"
     required_environments:
@@ -8840,7 +9235,7 @@ tasks:
     verified_at: "2026-11-14T02:08:56+09:00"
   - id: "XV.8.4"
     title: "외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update."
-    status: not_started
+    status: blocked
     required_environments:
       - DEV-MAC
   - id: "XVI.1.1"
@@ -9107,18 +9502,30 @@ tasks:
     verified_at: "2026-11-14T02:07:37+09:00"
   - id: "XVI.6.3"
     title: "document loader/validator fuzz target을 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.10.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.6.3.md"
+    commit: "9bd7de4bd56f3e752604f0f03a7e77313ecb9fa0"
+    report: "docs/task-reports/XVI.6.3.md"
+    verified_at: "2026-11-14T11:44:47+09:00"
   - id: "XVI.6.4"
     title: "expression AST/typechecker/evaluator fuzz target을 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.4.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.6.4.md"
+    commit: "e8dc1a4fcbd549359ef40584c9ae1140f39265b4"
+    report: "docs/task-reports/XVI.6.4.md"
+    verified_at: "2026-11-14T11:44:50+09:00"
   - id: "XVI.6.5"
     title: "Semantic Diff/apply/inverse fuzz target을 추가합니다."
     status: verified
