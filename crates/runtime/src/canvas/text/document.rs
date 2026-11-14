@@ -10,7 +10,7 @@ use stellar_core_types::{
 };
 use stellar_document::{
     model::DocumentModel,
-    modifier::ModifierPayload,
+    modifier::{ModifierPayload, ModifierStack},
     text::{TextAlignment, TextPayload, WrappingMode},
     text_styles::{DocumentFontAsset, DocumentTextStyles},
 };
@@ -210,9 +210,28 @@ impl FontCache {
         payload: &TextPayload,
         engine: &mut IncrementalTextLayout,
     ) -> Option<(DocumentText, Size2, Transform2D)> {
+        self.layout_input(
+            root,
+            id,
+            payload,
+            &model.definition().text_styles,
+            model.modifier_stack(id),
+            engine,
+        )
+    }
+
+    pub(crate) fn layout_input(
+        &mut self,
+        root: &Path,
+        id: StableId,
+        payload: &TextPayload,
+        table: &DocumentTextStyles,
+        modifiers: Option<&ModifierStack>,
+        engine: &mut IncrementalTextLayout,
+    ) -> Option<(DocumentText, Size2, Transform2D)> {
         let mut transform = Transform2D::identity();
         let mut modifier_fill = None;
-        if let Some(stack) = model.modifier_stack(id) {
+        if let Some(stack) = modifiers {
             for entry in stack.entries().iter().filter(|e| e.enabled) {
                 match entry.payload {
                     ModifierPayload::Transform(next) if modifier_fill.is_none() => {
@@ -225,7 +244,6 @@ impl FontCache {
                 }
             }
         }
-        let table = &model.definition().text_styles;
         // 저장 이전/legacy run은 겹치거나 순서가 바뀔 수 있습니다. 편집기의 나중 run 우선 규칙을 씁니다.
         let raw_runs = payload.style_runs();
         let normalized;

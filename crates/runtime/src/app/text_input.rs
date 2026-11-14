@@ -68,7 +68,96 @@ impl CanvasTextInput {
     }
 }
 
+/// 문서 스레드에서 캡처한 편집 입력. 글꼴 읽기와 shaping은 호출자의 worker에서 수행합니다.
+pub struct CanvasTextPreview {
+    root: std::path::PathBuf,
+    styles: stellar_document::text_styles::DocumentTextStyles,
+    modifiers: Option<stellar_document::modifier::ModifierStack>,
+    node: StableId,
+    original: TextPayload,
+}
+
+/// 창 입력 worker가 소유하는 글꼴 캐시입니다.
+#[derive(Default)]
+pub struct TextPreviewCache {
+    root: Option<std::path::PathBuf>,
+    engine: stellar_text::incremental::IncrementalTextLayout,
+    fonts: crate::canvas::text::document::FontCache,
+}
+
+impl TextPreviewCache {
+    /// 문서 확정과 같은 문단·run 편집 규칙으로 조합을 레이아웃합니다.
+    pub fn layout(
+        &mut self,
+        input: CanvasTextPreview,
+        range: TextRange,
+        value: &str,
+    ) -> Option<crate::canvas::text::DocumentText> {
+        if self.root.as_deref() != Some(&input.root) {
+            self.fonts = Default::default();
+            self.engine = stellar_text::incremental::IncrementalTextLayout::new();
+            self.root = Some(input.root.clone());
+        }
+        self.fonts.sync_registrations(&input.styles);
+        let text = if input.original.slice(range)? == value {
+            input.original
+        } else {
+            edit_text(&input.original, range, value, &[]).ok()?
+        };
+        self.fonts
+            .layout_input(
+                &input.root,
+                input.node,
+                &text,
+                &input.styles,
+                input.modifiers.as_ref(),
+                &mut self.engine,
+            )
+            .map(|(text, _, _)| text)
+    }
+}
+
 impl AppRuntime {
+    /// A new text location is validated against its writable parent. No temporary node is inserted.
+    pub fn canvas_text_preview_input(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        node_or_parent: StableId,
+        new_text: bool,
+    ) -> Result<JobTicket<Option<CanvasTextPreview>>, SubmitError> {
+        self.sender.submit(move |ctx| {
+            let window = trusted_canvas_window(ctx, session).ok()?;
+            if window.revision() != revision || window.tabs().active_view() != Some(view) {
+                return None;
+            }
+            let model = window.document()?.model();
+            let (original, modifiers) = if new_text {
+                super::frame_move::editable_frame(model, view, node_or_parent)?;
+                (TextPayload::empty(0), None)
+            } else {
+                let target = Target {
+                    session,
+                    view,
+                    revision,
+                    node: node_or_parent,
+                };
+                (
+                    editable_text(window, target)?.clone(),
+                    model.modifier_stack(node_or_parent).cloned(),
+                )
+            };
+            Some(CanvasTextPreview {
+                node: node_or_parent,
+                original,
+                modifiers,
+                root: window.identity().canonical_target().to_owned(),
+                styles: model.definition().text_styles.clone(),
+            })
+        })
+    }
+
     /// UI는 ticket을 비동기로 받습니다. 문서 스레드에서 신뢰·선택·View·revision을 확인합니다.
     pub fn begin_canvas_text(
         &self,

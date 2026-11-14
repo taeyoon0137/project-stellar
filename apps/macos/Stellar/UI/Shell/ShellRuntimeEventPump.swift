@@ -192,6 +192,10 @@ final class ShellRuntimeEventPump {
                 stellar_window_recovery_apply(runtimeHandle, session, token.baseAddress, token.count, path.baseAddress, path.count, &request)
             }
         }
+        return trackRequest(status, request, completion: completion)
+    }
+
+    func trackRequest(_ status: StellarStatus, _ request: UInt64, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return register(.success(request), completion)
     }

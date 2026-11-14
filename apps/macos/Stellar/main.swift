@@ -72,6 +72,12 @@ if let flag = CommandLine.arguments.firstIndex(where: { ["--component-create-che
 }
 
 #if DEBUG
+if let flag = CommandLine.arguments.firstIndex(of: "--canvas-ime-check") {
+    guard CommandLine.arguments.indices.contains(flag + 3), CommandLine.arguments[flag + 3] == ProcessInfo.processInfo.environment["HOME"] else { exit(1) }
+    let fixture = URL(fileURLWithPath: CommandLine.arguments[flag+1])
+    let font = URL(fileURLWithPath: CommandLine.arguments[flag+2])
+    exit(MainActor.assumeIsolated { ShellCanvasTextInputCheck.run(fixture: fixture, font: font) } ? 0 : 1)
+}
 if let flag = CommandLine.arguments.firstIndex(of: "--document-font-check") {
     guard CommandLine.arguments.indices.contains(flag + 3), CommandLine.arguments[flag + 3] == ProcessInfo.processInfo.environment["HOME"] else { exit(1) }
     let fixture = URL(fileURLWithPath: CommandLine.arguments[flag+1])

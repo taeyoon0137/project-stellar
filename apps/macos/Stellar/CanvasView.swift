@@ -19,6 +19,11 @@ final class CanvasView: NSView {
     var scrollWheelHandler: ((NSEvent) -> Bool)?
 
     private let frameScene = CanvasFrameScene()
+    var typingLayer: CanvasFrameScene.TypingLayer? {
+        get { frameScene.typingLayer }
+        set { frameScene.typingLayer = newValue; needsDisplay = true }
+    }
+    func textHit(id: UUID? = nil) -> CanvasFrameHit? { frameScene.textHit(id: id) }
     var frameSession: UInt64? { didSet { refreshFrames() } }
 
     func invalidateComponentFrames() { frameScene.clear(); refreshFrames() }

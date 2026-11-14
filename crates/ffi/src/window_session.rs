@@ -181,7 +181,7 @@ pub unsafe extern "C" fn stellar_window_session_close(
             Err(status) => return status,
         };
         if result.is_ok() {
-            rt.text_inputs.close(session);
+            rt.text_inputs.close_window(session);
         }
         unsafe { rt.finish_request(result, out_request) }
     })

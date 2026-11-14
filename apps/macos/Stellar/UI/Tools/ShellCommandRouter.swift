@@ -52,7 +52,7 @@ final class ShellCommandRouter: NSResponder, NSMenuItemValidation {
 
     /// 텍스트 컨트롤(field editor 포함)이 first responder인지.
     var isTextEditing: Bool {
-        window?.firstResponder is NSText
+        window?.firstResponder is NSText || window?.firstResponder is CanvasTextInputView
     }
 
     /// 텍스트 편집 중 창 undo manager에 넘기는 표준 action.
