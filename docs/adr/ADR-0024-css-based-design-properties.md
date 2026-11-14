@@ -273,6 +273,16 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
   행에서 ADR-0014 절차로 다룹니다.
 - 파일 포맷 공개 명세(Phase XXVIII)에는 CSS 매핑 표를 부록으로 포함합니다.
 
+### Typography value v1 (IX.11.11)
+
+`TypedValue::Typography`는 tag `0x0C`와 기존 외부 길이 envelope를 유지합니다. 내부 `STTY` + u8 version 1은
+가족 이름의 순서와 선택적 고정 FontFaceRef, font-size, weight, style, stretch, line-height, letter-spacing을 기록합니다.
+FontFaceRef는 X.8.1의 canonical bytes를 공유합니다. 이름마다 길이(u32 LE)와 UTF-8, face 유무(u8)를 기록하며,
+빈 가족 목록과 medium은 design profile이 해석할 CSS initial입니다. medium의 기기별 px나 설치된 family를 저장 시 추정하지 않습니다.
+크기는 1/64 logical px, 굵기·너비(%)·각도(deg)·배수·자간(px 또는 em)은 유한한 canonical f32입니다.
+normal line-height와 inline box별 CSS half-leading, normal letter-spacing과 명시적 0을 구분합니다.
+읽을 수 없는 버전·기존 blob은 원래 bytes를 갖고 `typography-unrecognized`를 반환합니다.
+
 ## Performance
 
 - registry CSS metadata는 정적 표이므로 런타임 비용이 없습니다.
