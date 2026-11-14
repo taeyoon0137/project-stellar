@@ -15,6 +15,7 @@ use stellar_document::frame::{Clipping, FramePayload};
 use stellar_document::modifier::{ModifierPayload, ModifierStack};
 use stellar_document::records::NodePayload;
 use stellar_document::shape::{RectangleParams, ShapeGeometry};
+use stellar_storage::chunk::kinds::KIND_DOCUMENT_MANIFEST;
 use stellar_target_profile::capability::ElementKind;
 use stellar_target_profile::validate::ViewNode;
 
@@ -95,7 +96,7 @@ pub fn export_web_frame(
         diagnostics: Vec::new(),
     };
     result.note(false, "fixed-free-frame-only", root,
-        "저장된 고정 Free Frame·Fragment만 출력합니다. root 캔버스 이동은 생략합니다. 이름에서 Text·control·의미를 추정하지 않으며 동작·반응형·Variant·Context·Motion·전체 코드 생성을 지원하지 않습니다.");
+        "저장된 고정 Free Frame·Fragment·Rectangle Shape를 출력합니다. root 캔버스 이동은 생략합니다. 이름에서 Text·control·의미를 추정하지 않으며 동작·반응형·Variant·Context·Motion·전체 코드 생성을 지원하지 않습니다.");
     if !snapshot.manifest().target_profiles.is_empty() {
         result.note(
             true,
@@ -118,17 +119,14 @@ pub fn export_web_frame(
             );
         }
     }
-    if generation
-        .manifest()
-        .chunk_pointers
-        .iter()
-        .any(|p| p.schema_version != 1)
-    {
+    if generation.manifest().chunk_pointers.iter().any(|p| {
+        p.schema_version != 1 && !(p.kind == KIND_DOCUMENT_MANIFEST && p.schema_version == 2)
+    }) {
         result.note(
             true,
             "unsupported-record-schema",
             root,
-            "chunk schema 1만 해석합니다",
+            "문서 manifest는 schema 1·2, 고정 도형을 담는 View와 subtree는 schema 1을 지원합니다",
         );
     }
     // 문서 전체를 매 node마다 훑지 않고 한 번만 OrderKey 순서를 구성합니다.
@@ -174,12 +172,6 @@ pub fn export_web_frame(
             &record.payload,
             NodePayload::Shape(ShapeGeometry::Rectangle(_))
         );
-        if rectangle {
-            result.diagnostics[0].message = result.diagnostics[0].message.replace(
-                "Free Frame·Fragment만",
-                "Free Frame·Fragment·Rectangle Shape만",
-            );
-        }
         let projected = if let NodePayload::Shape(ShapeGeometry::Rectangle(shape)) = &record.payload
         {
             let (tl, tr, br, bl) = shape.effective_corner_radius();
@@ -483,6 +475,27 @@ mod tests {
             first
         );
         assert_eq!(file_digest(&dir.path), before);
+    }
+
+    #[test]
+    fn document_typography_leaves_geometric_export_unchanged() {
+        let dir = TempDir::new("web-document-typography");
+        scaffold_project(&dir.path);
+        let model = fixture::rectangle("supported");
+        save_documents(&dir.path, &[&model]);
+        let export = || {
+            let snapshot = open_snapshot(&dir.path).unwrap();
+            export_web_frame(&snapshot, fixture::id(1), fixture::id(4)).unwrap()
+        };
+        let before = export().html.expect("v1 geometry");
+        let mut records = model.to_records().unwrap();
+        records.definition.text_styles =
+            stellar_document::text_styles::DocumentTextStyles::initial(fixture::id(99));
+        let (styled, _) = stellar_document::model::DocumentModel::from_records(records).unwrap();
+        save_documents(&dir.path, &[&styled]);
+        let digest = file_digest(&dir.path);
+        assert_eq!(export().html.as_deref(), Some(before.as_str()));
+        assert_eq!(file_digest(&dir.path), digest);
     }
 
     #[test]

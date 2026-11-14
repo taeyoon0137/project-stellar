@@ -25,6 +25,8 @@ ADR-0059는 텍스트 원본 전환 방향을 정하지만 현재 기본 loader�
 내장 CSS를 가진 독립 문서입니다. 외부 stylesheet·script·font·asset·네트워크 요청이 없습니다.
 CLI 자체는 파일을 만들거나 Git·프로젝트를 수정하지 않습니다. 리다이렉션 위치는 호출자가 정합니다.
 
+새 프로젝트가 저장하는 문서 manifest v2의 기본 글꼴 표는 Frame과 Rectangle의 기하·색에 영향을 주지 않습니다. 선택한 View에 실제 Text 레이어가 있으면 해당 노드 ID와 함께 오류를 반환합니다.
+
 ## 허용 부분집합과 근거
 
 정책은 ADR-0024·0025와 `docs/design/property_model.md` 3·4.6·5·8.2절, 실제 값은
@@ -108,7 +110,7 @@ Rectangle은 node ID를 포함한 `browser-rectangle-curve` 경고를 반환합�
 | 숫자·테두리·변환 범위 위반 | `unsupported-frame-value` |
 | 설정된 target profile(저장 profile ↔ capability pin 연결 없음) | `unsupported-target-profile` |
 | document-manifest/view-tree 외 chunk | `unsupported-record` |
-| chunk schema 1 이외 | `unsupported-record-schema` |
+| 문서 manifest schema 1·2 또는 View/subtree schema 1을 벗어난 경우 | `unsupported-record-schema` |
 | 기존 접근성 mapper/정적 검사 오류 | `accessibility-mapping`, `html-accessibility-check` |
 
 해석하지 못하는 project chunk·profile은 선택 View에 대한 영향 범위를 판정할 수 없으므로 **선택 root ID**에
