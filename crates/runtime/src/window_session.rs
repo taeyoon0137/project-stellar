@@ -40,6 +40,12 @@
 //! (XI.3.2)·hit test·pass 계획이 이 값을 씁니다. 이동·확대([`ProjectWindowSession::pan`]·[`ProjectWindowSession::zoom`])는
 //! 창 view state의 viewport만 바꾸므로 작업 문서 revision·history·저장 bytes는 그대로입니다.
 //!
+//! # selection overlay (XII.4.4)
+//!
+//! [`ProjectWindowSession::selection_overlay`]는 이 창의 화면에 보일 선택(영역 선택 중이면 preview)과 camera로 문서 scene
+//! 위에 그릴 transient scene layer([`SelectionOverlay`])를 만듭니다. overlay는 작업 문서·scene snapshot·저장 경로에
+//! 들어가지 않습니다.
+//!
 //! # view state (XII.2.5)
 //!
 //! 작업 문서를 로드하면 문서의 첫 View(첫 페이지의 첫 View) 탭을 기본 viewport로 열어 active view로 둡니다. 탭
@@ -65,6 +71,10 @@ use stellar_project::document_io::load::{load_document_from_generation, LoadDocu
 use stellar_project::document_io::serialize::{serialize_document, SerializeError};
 use stellar_project::identity::ProjectIdentity;
 use stellar_project::manifest::CURRENT_SCHEMA_VERSION;
+use stellar_scene::overlay::{
+    build_selection_overlay, OverlayError, OverlayStyle, SelectionOverlay,
+};
+use stellar_scene::snapshot::SceneSnapshot;
 use stellar_scene::visibility::Viewport;
 use stellar_storage::chunk::id::ChunkId;
 use stellar_storage::chunk::planner::LogicalChunkState;
@@ -380,6 +390,25 @@ impl ProjectWindowSession {
             .map_err(WindowSessionEditError::Viewport)?;
         self.set_viewport(next)?;
         Ok(next)
+    }
+
+    /// 문서 scene `scene`(이 창 active view에서 만든 snapshot) 위에 그릴 selection overlay를 만듭니다(XII.4.4). active 탭이
+    /// 없거나 화면 크기가 유효하지 않으면 `None`입니다. 표시할 선택은 영역 선택 preview를 포함한 화면 선택입니다.
+    pub fn selection_overlay(
+        &self,
+        scene: &SceneSnapshot,
+        view_size: Size2,
+        style: &OverlayStyle,
+    ) -> Option<Result<SelectionOverlay, OverlayError>> {
+        let camera = self.camera(view_size)?;
+        let selection = self.view().displayed_selection();
+        Some(build_selection_overlay(
+            scene,
+            selection.ids(),
+            selection.primary(),
+            &camera,
+            style,
+        ))
     }
 
     fn active_viewport(&self) -> Result<CanvasViewport, WindowSessionEditError> {
@@ -1226,6 +1255,113 @@ mod tests {
         let roots = builder.finish(root);
         stellar_scene::snapshot::SceneSnapshot::new(DocumentRevision(0), SceneRevision(0), roots)
             .unwrap()
+    }
+
+    fn overlay_style() -> OverlayStyle {
+        use stellar_core_types::color::{Color, ColorSpace};
+        use stellar_scene::transient::HandleMetrics;
+        let accent = Color::new(ColorSpace::Srgb, 0.0, 0.48, 1.0, 1.0).unwrap();
+        OverlayStyle {
+            outline: accent,
+            outline_width: 1.0,
+            handle_fill: Color::new(ColorSpace::Srgb, 1.0, 1.0, 1.0, 1.0).unwrap(),
+            handle_stroke: accent,
+            handle_stroke_width: 1.0,
+            handle_half: 4.0,
+            hit: HandleMetrics::new(5.0, 4.0, 12.0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn selection_overlay_renders_as_a_transient_layer_outside_the_project_snapshot() {
+        // 검증 기준(XII.4.4): project snapshot에 overlay node 없음.
+        use stellar_project::document_io::serialize::serialize_document;
+        use stellar_renderer_core::clip_plan::ClipCapabilities;
+        use stellar_renderer_core::pass_compiler::{compile_frame, CompileInput, EffectBoundaries};
+        use stellar_renderer_core::render_graph::{ClearColor, SampleCount, TextureFormat};
+
+        let project = saved_project("overlay");
+        let design = project.path().join("design");
+        let disk_before = tree(&design);
+        let mut session = ProjectWindowSession::load(identity(project.path()), window(61)).unwrap();
+        let records_before = session.document().unwrap().model().to_records().unwrap();
+        let chunks_before = serialize_document(session.document().unwrap().model()).unwrap();
+        // 문서 View 3(root 10)의 scene: root 10 아래 11·12 위치를 둔 Frame scene.
+        let scene = frame_scene(&[(11, 0.0, 0.0, 120.0, 80.0), (12, 200.0, 0.0, 60.0, 60.0)]);
+        let scene_hash = scene.semantic_hash();
+        let size = Size2::new(800.0, 600.0).unwrap();
+
+        // 선택이 없으면 빈 overlay.
+        let empty = session
+            .selection_overlay(&scene, size, &overlay_style())
+            .unwrap()
+            .unwrap();
+        assert!(empty.is_empty());
+
+        session.select(Selection::new([sid(11)], None)).unwrap();
+        session.zoom(2.0, 0.0, 0.0).unwrap();
+        let overlay = session
+            .selection_overlay(&scene, size, &overlay_style())
+            .unwrap()
+            .unwrap();
+        assert_eq!(overlay.targets().len(), 1);
+        assert_eq!(overlay.targets()[0].node, sid(11));
+        // camera: view = world × 2 + (400, 300).
+        assert_eq!(
+            overlay.targets()[0].view_quad[2],
+            stellar_core_types::value::Vec2::new(640.0, 460.0).unwrap()
+        );
+        assert_eq!(overlay.handle_count(), 4);
+        assert_eq!(overlay.layer().node_count(), 1 + 4);
+        assert_eq!(overlay.hit_layer().len(), 12, "회전 4·변 4·모서리 4");
+
+        // overlay layer는 공통 pass compiler로 그릴 수 있는 transient layer입니다(항등 view, 화면 좌표).
+        let screen =
+            Viewport::new(size, stellar_core_types::value::Transform2D::identity()).unwrap();
+        let plan = compile_frame(&CompileInput {
+            snapshot: overlay.layer(),
+            viewport: &screen,
+            visible: None,
+            surface_format: TextureFormat::Bgra8Unorm,
+            clear: ClearColor::TRANSPARENT,
+            boundaries: EffectBoundaries::Minimal,
+            clip_caps: ClipCapabilities {
+                stencil_bits: 8,
+                samples: SampleCount::X1,
+            },
+        })
+        .unwrap();
+        assert!(
+            plan.draw_count() >= 5,
+            "외곽선 1 + handle 4 draw: {}",
+            plan.draw_count()
+        );
+
+        // project snapshot(문서 scene·문서 모델·저장 chunk·디스크)에는 overlay node가 없습니다.
+        assert_eq!(scene.semantic_hash(), scene_hash);
+        assert_eq!(scene.node_count(), 2);
+        assert_eq!(
+            session.document().unwrap().model().to_records().unwrap(),
+            records_before
+        );
+        assert_eq!(
+            serialize_document(session.document().unwrap().model()).unwrap(),
+            chunks_before
+        );
+        assert_eq!(
+            session.save_now().unwrap(),
+            SaveOutcome {
+                generation: 1,
+                written: false
+            }
+        );
+        assert_eq!(tree(&design), disk_before);
+
+        // active 탭이 없으면 overlay도 없습니다.
+        session.close_view(sid(3)).unwrap();
+        assert!(session
+            .selection_overlay(&scene, size, &overlay_style())
+            .is_none());
     }
 
     #[test]
