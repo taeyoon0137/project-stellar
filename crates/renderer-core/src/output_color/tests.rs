@@ -1,9 +1,10 @@
-//! 출력 색공간 협상·gamut 경고 테스트 (XI.10.5).
+//! 출력 색공간 협상·gamut 경고 테스트 (XI.10.5), HDR 미지원 상태 테스트 (XI.10.6).
 
 use super::*;
 use crate::backend::mock::MockBackend;
 use crate::backend::tests::device_config;
 use crate::backend::{CheckedBackend, RendererBackend};
+use crate::render_graph::TextureFormat;
 use crate::test_scene::{opaque, rect, snapshot};
 
 /// mock backend를 `display_p3` capability로 초기화해 capability를 얻습니다.
@@ -177,4 +178,137 @@ fn reported_node_ids_are_bounded() {
     assert_eq!(report.clipped_nodes, 100);
     assert_eq!(report.node_ids.len(), MAX_REPORTED_NODES);
     assert_eq!(report.node_ids[0], [1u8; 16]);
+}
+
+// --- HDR 미지원 상태 (XI.10.6) ---
+
+#[test]
+fn hdr_request_is_explicitly_unsupported() {
+    for (p3_display, expected) in [
+        (true, vec![OutputColorWarning::HdrUnsupported]),
+        (
+            false,
+            vec![
+                OutputColorWarning::DisplayP3Unsupported,
+                OutputColorWarning::HdrUnsupported,
+            ],
+        ),
+    ] {
+        let plan = OutputColorPlan::negotiate_output(
+            ColorSpace::DisplayP3,
+            DynamicRange::Hdr,
+            &mock_caps(p3_display),
+        );
+        assert_eq!(plan.requested_range(), DynamicRange::Hdr);
+        assert_eq!(plan.output_range(), DynamicRange::Sdr);
+        assert_eq!(plan.negotiation_warnings(), expected);
+    }
+    assert_eq!(
+        OutputColorWarning::HdrUnsupported.code(),
+        "render.color.hdr_unsupported"
+    );
+    // SDR 요청은 HDR 경고가 없습니다.
+    let sdr = OutputColorPlan::negotiate(ColorSpace::DisplayP3, &mock_caps(true));
+    assert_eq!(sdr.requested_range(), DynamicRange::Sdr);
+    assert!(sdr.negotiation_warnings().is_empty());
+    // 확장 범위 float drawable은 8-bit SDR drawable로 바꿉니다.
+    let base = device_config(8, 8).surface;
+    let float = sdr.surface_config(SurfaceConfig {
+        format: TextureFormat::Rgba16Float,
+        ..base
+    });
+    assert_eq!(float.format, TextureFormat::Bgra8Unorm);
+    let srgb_format = sdr.surface_config(SurfaceConfig {
+        format: TextureFormat::Bgra8UnormSrgb,
+        ..base
+    });
+    assert_eq!(srgb_format.format, TextureFormat::Bgra8UnormSrgb);
+}
+
+#[test]
+fn extended_values_are_flagged_not_silently_clamped() {
+    let srgb_surface = OutputColorPlan::negotiate(ColorSpace::Srgb, &mock_caps(true));
+    let p3_surface = OutputColorPlan::negotiate(ColorSpace::DisplayP3, &mock_caps(true));
+    // HDR 흰색 sRGB 1.5: 표시 값은 1로 자르지만 판정·자르기 전 값을 남깁니다.
+    let bright = srgb_surface.convert(srgb(1.5, 1.5, 1.5));
+    assert_eq!(bright.gamut, GamutStatus::ExtendedRange);
+    assert_close(bright.linear, [1.0, 1.0, 1.0], 0.0);
+    let expected = ColorSpace::Srgb.decode_channel(1.5);
+    assert!(expected > 2.0);
+    assert_close(bright.unclamped_linear, [expected; 3], 1e-5);
+    // P3 surface에서도 확장 값입니다(가장 넓은 SDR gamut 밖).
+    assert_eq!(
+        p3_surface.convert(srgb(1.5, 1.5, 1.5)).gamut,
+        GamutStatus::ExtendedRange
+    );
+    // 음수 채널(P3로도 음수) → 확장 값.
+    assert_eq!(
+        srgb_surface.convert(srgb(-0.2, 0.0, 0.0)).gamut,
+        GamutStatus::ExtendedRange
+    );
+    // P3 안의 확장 sRGB 표현(빨강 1.05)은 HDR이 아닙니다: P3 surface는 그대로, sRGB surface는 gamut 잘림.
+    assert_eq!(
+        p3_surface.convert(srgb(1.05, 0.0, 0.0)).gamut,
+        GamutStatus::InGamut
+    );
+    assert_eq!(
+        srgb_surface.convert(srgb(1.05, 0.0, 0.0)).gamut,
+        GamutStatus::Clipped
+    );
+    // 범위 안 색은 unclamped와 clamped가 같습니다.
+    let normal = srgb_surface.convert(srgb(0.25, 0.5, 0.75));
+    assert_eq!(normal.gamut, GamutStatus::InGamut);
+    assert_eq!(normal.linear, normal.unclamped_linear);
+}
+
+#[test]
+fn hdr_fixture_scene_emits_warnings() {
+    // 검증 기준(XI.10.6): HDR fixture warning 발생.
+    let scene = snapshot(&[
+        // sRGB HDR 흰색 fill(2.0).
+        rect(1, [0.0, 0.0, 4.0, 4.0], opaque(2.0, 2.0, 2.0)),
+        // 일반 P3 색.
+        rect(2, [0.0, 0.0, 4.0, 4.0], opaque(0.6, 0.5, 0.4)).in_display_p3(),
+        // P3 확장 stroke(1.2).
+        rect(3, [0.0, 0.0, 4.0, 4.0], opaque(0.2, 0.2, 0.2))
+            .with_stroke(opaque(1.2, 0.5, 0.5), 1.0)
+            .in_display_p3(),
+    ]);
+    let plan = OutputColorPlan::negotiate_output(
+        ColorSpace::DisplayP3,
+        DynamicRange::Hdr,
+        &mock_caps(true),
+    );
+    let report = plan.scan(&scene);
+    assert_eq!(report.checked, 4);
+    assert_eq!((report.extended_colors, report.extended_nodes), (2, 2));
+    assert_eq!(report.clipped_colors, 0);
+    let warnings = plan.warnings(&scene);
+    assert_eq!(
+        warnings,
+        vec![
+            OutputColorWarning::HdrUnsupported,
+            OutputColorWarning::ExtendedRangeClamped {
+                colors: 2,
+                nodes: 2,
+                node_ids: vec![[1u8; 16], [3u8; 16]],
+            },
+        ]
+    );
+    assert_eq!(warnings[1].code(), "render.color.extended_range_clamped");
+    // scene에 저장된 값은 바뀌지 않습니다(조용한 clamp 없음).
+    let node = scene.iter_preorder().next().unwrap();
+    let PaintLayer::Fill(paint) = node.paint().get().layers[0] else {
+        panic!("fill layer");
+    };
+    assert_eq!(OutputColor::from_paint(paint).rgb, [2.0, 2.0, 2.0]);
+
+    // SDR 요청 + sRGB 전용 display: P3 fallback 경고와 확장 값 경고(확장 값은 gamut 경고로 세지 않음).
+    let fallback = OutputColorPlan::negotiate(ColorSpace::DisplayP3, &mock_caps(false));
+    let warnings = fallback.warnings(&scene);
+    assert_eq!(warnings[0], OutputColorWarning::DisplayP3Unsupported);
+    assert!(warnings.iter().any(|w| matches!(
+        w,
+        OutputColorWarning::ExtendedRangeClamped { colors: 2, .. }
+    )));
 }

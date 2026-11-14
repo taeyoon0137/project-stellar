@@ -1136,7 +1136,7 @@ tools/xtask/
 | XI.10.3 | `[ ]` | gradient 렌더링을 구현하고 stop tie-order를 Phase III 규칙대로 적용합니다. | gradient pixel fixture 통과. | III.4.3, XI.10.1 |
 | XI.10.4 | `[ ]` | clip, mask, opacity, shadow, blur를 순차적으로 구현하고 각 기능마다 독립 image fixture를 추가합니다. | 기능별 Metal/D3D12 비교 통과. | XI.4.4, XI.10.1 |
 | XI.10.5 | `[x]` | Display P3 surface 지원 여부를 플랫폼 capability로 감지하고 unsupported display에서는 sRGB 변환과 gamut warning을 생성합니다. | mock capability fixture 통과. | III.4.2, XI.5.1 |
-| XI.10.6 | `[ ]` | HDR path는 명시적 unsupported 상태로 유지하고 extended value를 silent clamp하지 않습니다. | HDR fixture warning 발생. | XI.10.5 |
+| XI.10.6 | `[x]` | HDR path는 명시적 unsupported 상태로 유지하고 extended value를 silent clamp하지 않습니다. | HDR fixture warning 발생. | XI.10.5 |
 
 ### XI.11 렌더 적합성·성능
 

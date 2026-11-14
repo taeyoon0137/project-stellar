@@ -1,4 +1,4 @@
-//! surface 출력 색공간 협상과 gamut 경고 (XI.10.5).
+//! surface 출력 색공간 협상과 gamut 경고 (XI.10.5), HDR 미지원 상태 (XI.10.6).
 //!
 //! 아키텍처 §10.3: 초기 지원 색공간은 sRGB와 Display P3이며 Target Profile로 변환할 때 gamut 경고를 줍니다.
 //!
@@ -16,12 +16,25 @@
 //! encode. 행렬은 expressions crate 색 함수(VIII.4.4)와 같은 상수입니다(crate 의존 정책상 각자 보관).
 //! gamut 판정 허용 오차는 [`GAMUT_EPSILON`]입니다(행렬 반올림이 경계 색을 잘못 경고하지 않게).
 //!
+//! ## HDR (XI.10.6)
+//!
+//! HDR 출력은 초기 범위에서 제외합니다(아키텍처 §10.3). 출력 dynamic range는 항상 SDR이며 이 상태를 숨기지 않습니다.
+//!
+//! - HDR을 요청하면([`DynamicRange::Hdr`]) SDR로 렌더링하고 [`OutputColorWarning::HdrUnsupported`]를 냅니다.
+//!   확장 범위 float drawable(`Rgba16Float`)도 8-bit SDR drawable로 바꿉니다([`OutputColorPlan::surface_config`]).
+//! - **확장 값**: 지원하는 가장 넓은 SDR gamut(Display P3 `[0, 1]`)으로 옮겨도 범위 밖인 색(예: sRGB 1.5 흰색, 음수
+//!   채널)은 HDR·확장 범위 값입니다. 표시할 때는 잘라야 하지만 조용히 자르지 않습니다 — 판정은
+//!   [`GamutStatus::ExtendedRange`], 자르기 전 값은 [`SurfaceColor::unclamped_linear`]로 남기고, scene 검사는
+//!   [`OutputColorWarning::ExtendedRangeClamped`]를 냅니다. 문서·scene의 저장 값은 바꾸지 않습니다.
+//! - P3 안이지만 sRGB surface 밖인 색은 확장 값이 아니라 gamut 문제이므로 [`GamutStatus::Clipped`]입니다.
+//!
 //! 경고에는 정적 종류와 개수, node의 안정 ID만 담습니다(이름·내용 없음).
 
 use stellar_scene::stack::{Paint, PaintLayer};
 use stellar_scene::{ColorSpace, SceneSnapshot};
 
 use crate::backend::{DeviceCapabilities, SurfaceConfig};
+use crate::render_graph::TextureFormat;
 
 /// 선형 Display P3 → 선형 sRGB (D65). 행 우선.
 const P3_TO_SRGB: [[f32; 3]; 3] = [
@@ -67,13 +80,25 @@ impl OutputColor {
     }
 }
 
+/// 출력 dynamic range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum DynamicRange {
+    /// SDR(지원).
+    #[default]
+    Sdr,
+    /// HDR·EDR(초기 범위에서 명시적으로 미지원, XI.10.6).
+    Hdr,
+}
+
 /// gamut 판정.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum GamutStatus {
     /// surface 색공간 안입니다.
     InGamut,
-    /// 색공간 변환 결과가 surface 범위 밖이라 잘랐습니다.
+    /// Display P3 안이지만 색공간 변환 결과가 surface 범위 밖이라 잘랐습니다(gamut 경고).
     Clipped,
+    /// Display P3 `[0, 1]`로도 표현할 수 없는 HDR·확장 범위 값이라 SDR로 잘랐습니다(XI.10.6).
+    ExtendedRange,
 }
 
 /// surface 색공간으로 변환한 색.
@@ -81,6 +106,8 @@ pub enum GamutStatus {
 pub struct SurfaceColor {
     /// surface 색공간 선형광 RGB(`[0, 1]`로 자른 값).
     pub linear: [f32; 3],
+    /// 자르기 전 surface 색공간 선형광 RGB(확장 값 보존, XI.10.6).
+    pub unclamped_linear: [f32; 3],
     /// surface 색공간 인코딩 RGB.
     pub encoded: [f32; 3],
     /// 알파.
@@ -103,6 +130,17 @@ pub enum OutputColorWarning {
         /// 해당 node 안정 ID(앞에서부터 최대 [`MAX_REPORTED_NODES`]개, pre-order 순서).
         node_ids: Vec<[u8; 16]>,
     },
+    /// HDR 출력을 요청했지만 초기 범위에서 지원하지 않아 SDR로 렌더링합니다(XI.10.6).
+    HdrUnsupported,
+    /// HDR·확장 범위 색을 SDR 표시를 위해 잘랐습니다(저장 값은 그대로, XI.10.6).
+    ExtendedRangeClamped {
+        /// 잘린 확장 값 색 수.
+        colors: u64,
+        /// 확장 값 색이 있는 node 수.
+        nodes: u64,
+        /// 해당 node 안정 ID(앞에서부터 최대 [`MAX_REPORTED_NODES`]개, pre-order 순서).
+        node_ids: Vec<[u8; 16]>,
+    },
 }
 
 impl OutputColorWarning {
@@ -111,6 +149,10 @@ impl OutputColorWarning {
         match self {
             OutputColorWarning::DisplayP3Unsupported => "render.color.display_p3_unsupported",
             OutputColorWarning::GamutClipped { .. } => "render.color.gamut_clipped",
+            OutputColorWarning::HdrUnsupported => "render.color.hdr_unsupported",
+            OutputColorWarning::ExtendedRangeClamped { .. } => {
+                "render.color.extended_range_clamped"
+            }
         }
     }
 }
@@ -120,6 +162,7 @@ impl OutputColorWarning {
 pub struct OutputColorPlan {
     requested: ColorSpace,
     surface: ColorSpace,
+    requested_range: DynamicRange,
 }
 
 fn multiply(matrix: &[[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
@@ -127,14 +170,54 @@ fn multiply(matrix: &[[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
     [row(&matrix[0]), row(&matrix[1]), row(&matrix[2])]
 }
 
+/// 선형광 `linear`(`from` 색공간)을 `to` 색공간 선형광으로 옮깁니다.
+fn to_space(linear: [f32; 3], from: ColorSpace, to: ColorSpace) -> [f32; 3] {
+    match (from, to) {
+        (ColorSpace::DisplayP3, ColorSpace::Srgb) => multiply(&P3_TO_SRGB, linear),
+        (ColorSpace::Srgb, ColorSpace::DisplayP3) => multiply(&SRGB_TO_P3, linear),
+        (ColorSpace::Srgb, ColorSpace::Srgb) | (ColorSpace::DisplayP3, ColorSpace::DisplayP3) => {
+            linear
+        }
+    }
+}
+
+fn in_unit_range(values: &[f32; 3]) -> bool {
+    values
+        .iter()
+        .all(|c| (-GAMUT_EPSILON..=1.0 + GAMUT_EPSILON).contains(c))
+}
+
 impl OutputColorPlan {
-    /// 요청 색공간과 device capability로 surface 색공간을 정합니다.
+    /// SDR 요청 색공간과 device capability로 surface 색공간을 정합니다.
     pub fn negotiate(requested: ColorSpace, caps: &DeviceCapabilities) -> OutputColorPlan {
+        OutputColorPlan::negotiate_output(requested, DynamicRange::Sdr, caps)
+    }
+
+    /// 요청 색공간·dynamic range와 capability로 출력을 정합니다. HDR은 항상 SDR로 떨어집니다(XI.10.6).
+    pub fn negotiate_output(
+        requested: ColorSpace,
+        range: DynamicRange,
+        caps: &DeviceCapabilities,
+    ) -> OutputColorPlan {
         let surface = match requested {
             ColorSpace::DisplayP3 if caps.display_p3_surface => ColorSpace::DisplayP3,
             ColorSpace::DisplayP3 | ColorSpace::Srgb => ColorSpace::Srgb,
         };
-        OutputColorPlan { requested, surface }
+        OutputColorPlan {
+            requested,
+            surface,
+            requested_range: range,
+        }
+    }
+
+    /// 요청 dynamic range.
+    pub const fn requested_range(&self) -> DynamicRange {
+        self.requested_range
+    }
+
+    /// 실제 출력 dynamic range(항상 SDR, XI.10.6).
+    pub const fn output_range(&self) -> DynamicRange {
+        DynamicRange::Sdr
     }
 
     /// 요청 색공간.
@@ -152,58 +235,67 @@ impl OutputColorPlan {
         self.requested != self.surface
     }
 
-    /// surface 설정에 결정된 색공간을 넣습니다.
+    /// surface 설정에 결정된 색공간을 넣습니다. 확장 범위 float drawable(`Rgba16Float`)은 HDR 미지원이므로
+    /// 8-bit SDR drawable(`Bgra8Unorm`)로 바꿉니다.
     pub fn surface_config(&self, base: SurfaceConfig) -> SurfaceConfig {
+        let format = match base.format {
+            TextureFormat::Rgba16Float => TextureFormat::Bgra8Unorm,
+            other => other,
+        };
         SurfaceConfig {
             color_space: self.surface,
+            format,
             ..base
         }
     }
 
-    /// 협상 경고(fallback이면 [`OutputColorWarning::DisplayP3Unsupported`]).
+    /// 협상 경고: Display P3 fallback이면 [`OutputColorWarning::DisplayP3Unsupported`], HDR 요청이면
+    /// [`OutputColorWarning::HdrUnsupported`].
     pub fn negotiation_warnings(&self) -> Vec<OutputColorWarning> {
+        let mut warnings = Vec::new();
         if self.is_fallback() {
-            vec![OutputColorWarning::DisplayP3Unsupported]
-        } else {
-            Vec::new()
+            warnings.push(OutputColorWarning::DisplayP3Unsupported);
         }
+        if self.requested_range == DynamicRange::Hdr {
+            warnings.push(OutputColorWarning::HdrUnsupported);
+        }
+        warnings
     }
 
     /// 색을 surface 색공간으로 변환합니다(모듈 문서 변환식).
     pub fn convert(&self, color: OutputColor) -> SurfaceColor {
         let source = color.space;
         let linear = color.rgb.map(|c| source.decode_channel(c));
-        let converted = match (source, self.surface) {
-            (ColorSpace::DisplayP3, ColorSpace::Srgb) => multiply(&P3_TO_SRGB, linear),
-            (ColorSpace::Srgb, ColorSpace::DisplayP3) => multiply(&SRGB_TO_P3, linear),
-            (ColorSpace::Srgb, ColorSpace::Srgb)
-            | (ColorSpace::DisplayP3, ColorSpace::DisplayP3) => linear,
+        let converted = to_space(linear, source, self.surface);
+        // 확장 값: 가장 넓은 지원 SDR gamut(Display P3)에서도 범위 밖(XI.10.6).
+        let extended = !in_unit_range(&to_space(linear, source, ColorSpace::DisplayP3));
+        let gamut = if extended {
+            GamutStatus::ExtendedRange
+        } else if in_unit_range(&converted) {
+            GamutStatus::InGamut
+        } else {
+            GamutStatus::Clipped
         };
-        let in_gamut = converted
-            .iter()
-            .all(|c| (-GAMUT_EPSILON..=1.0 + GAMUT_EPSILON).contains(c));
         let clipped = converted.map(|c| c.clamp(0.0, 1.0));
         SurfaceColor {
             linear: clipped,
+            unclamped_linear: converted,
             encoded: clipped.map(|c| self.surface.encode_channel(c)),
             alpha: color.alpha,
-            gamut: if in_gamut {
-                GamutStatus::InGamut
-            } else {
-                GamutStatus::Clipped
-            },
+            gamut,
         }
     }
 
-    /// snapshot의 모든 단색 paint(fill·stroke·shadow)를 변환해 gamut 경고를 만듭니다.
-    ///
-    /// 협상 경고를 앞에 두고, 잘린 색이 있으면 [`OutputColorWarning::GamutClipped`]를 덧붙입니다.
+    /// snapshot의 모든 단색 paint(fill·stroke·shadow)를 변환해 gamut·확장 값 판정을 모읍니다.
     pub fn scan(&self, snapshot: &SceneSnapshot) -> GamutReport {
         let mut report = GamutReport {
             checked: 0,
             clipped_colors: 0,
             clipped_nodes: 0,
             node_ids: Vec::new(),
+            extended_colors: 0,
+            extended_nodes: 0,
+            extended_node_ids: Vec::new(),
         };
         for node in snapshot.iter_preorder() {
             let paint = node.paint().get();
@@ -224,29 +316,42 @@ impl OutputColorPlan {
                 }
             }));
             let mut node_clipped = false;
+            let mut node_extended = false;
             for color in colors {
                 report.checked += 1;
-                if self.convert(color).gamut == GamutStatus::Clipped {
-                    report.clipped_colors += 1;
-                    node_clipped = true;
+                match self.convert(color).gamut {
+                    GamutStatus::InGamut => {}
+                    GamutStatus::Clipped => {
+                        report.clipped_colors += 1;
+                        node_clipped = true;
+                    }
+                    GamutStatus::ExtendedRange => {
+                        report.extended_colors += 1;
+                        node_extended = true;
+                    }
                 }
             }
+            let id = node.source().to_bytes();
             if node_clipped {
                 report.clipped_nodes += 1;
                 if report.node_ids.len() < MAX_REPORTED_NODES {
-                    report.node_ids.push(node.source().to_bytes());
+                    report.node_ids.push(id);
+                }
+            }
+            if node_extended {
+                report.extended_nodes += 1;
+                if report.extended_node_ids.len() < MAX_REPORTED_NODES {
+                    report.extended_node_ids.push(id);
                 }
             }
         }
         report
     }
 
-    /// 협상 경고와 snapshot gamut 경고를 합칩니다.
+    /// 협상 경고와 snapshot gamut·확장 값 경고를 합칩니다.
     pub fn warnings(&self, snapshot: &SceneSnapshot) -> Vec<OutputColorWarning> {
         let mut warnings = self.negotiation_warnings();
-        if let Some(warning) = self.scan(snapshot).warning() {
-            warnings.push(warning);
-        }
+        warnings.extend(self.scan(snapshot).warnings());
         warnings
     }
 }
@@ -262,16 +367,33 @@ pub struct GamutReport {
     pub clipped_nodes: u64,
     /// 해당 node 안정 ID(최대 [`MAX_REPORTED_NODES`]개).
     pub node_ids: Vec<[u8; 16]>,
+    /// 확장 값 색 수(XI.10.6).
+    pub extended_colors: u64,
+    /// 확장 값 색이 있는 node 수.
+    pub extended_nodes: u64,
+    /// 해당 node 안정 ID(최대 [`MAX_REPORTED_NODES`]개).
+    pub extended_node_ids: Vec<[u8; 16]>,
 }
 
 impl GamutReport {
-    /// 잘린 색이 있으면 gamut 경고.
-    pub fn warning(&self) -> Option<OutputColorWarning> {
-        (self.clipped_colors > 0).then(|| OutputColorWarning::GamutClipped {
-            colors: self.clipped_colors,
-            nodes: self.clipped_nodes,
-            node_ids: self.node_ids.clone(),
-        })
+    /// gamut 경고(잘린 색이 있으면)와 확장 값 경고(확장 값이 있으면), 이 순서.
+    pub fn warnings(&self) -> Vec<OutputColorWarning> {
+        let mut out = Vec::new();
+        if self.clipped_colors > 0 {
+            out.push(OutputColorWarning::GamutClipped {
+                colors: self.clipped_colors,
+                nodes: self.clipped_nodes,
+                node_ids: self.node_ids.clone(),
+            });
+        }
+        if self.extended_colors > 0 {
+            out.push(OutputColorWarning::ExtendedRangeClamped {
+                colors: self.extended_colors,
+                nodes: self.extended_nodes,
+                node_ids: self.extended_node_ids.clone(),
+            });
+        }
+        out
     }
 }
 
