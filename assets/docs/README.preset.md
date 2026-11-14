@@ -112,6 +112,7 @@ git config core.hooksPath .githooks
 | `./scripts/readme_update.sh`            | `assets/docs/README.preset.md`와 `assets/docs/readme-hero.preset.svg`에서 `README.md`와 `assets/docs/readme-hero.svg`를 재생성합니다. |
 | `./scripts/source_inventory.sh`         | 추적 파일의 확장자별 수와 자동 생성물·vendored code를 집계해 `docs/status/source-inventory.md`를 재생성합니다.                        |
 | `./scripts/macos/smoke.sh`              | macOS 앱을 Debug로 빌드하고 FFI·수명주기·캔버스·텍스트 입력·입력 이벤트·업데이트 smoke 검사를 실행합니다.                             |
+| `./scripts/macos/qa.sh` | macOS 앱을 Debug로 빌드하고 임시 샘플 프로젝트에서 [실사용 QA 절차](../../docs/qa/README.md)를 시작합니다. |
 | `./scripts/macos/release_build.sh`      | 서명하지 않은 arm64 Release 앱을 빌드하고 배포 구성과 번들 구조를 검사합니다.                                                         |
 | `./scripts/macos/bundle_check.sh`       | `StellarMac.app`의 번들 구조·링크·rpath·코드 서명 구조를 검사하고 재배치 실행 smoke를 실행합니다.                                     |
 | `./scripts/macos/codesign_bundle.sh`    | 앱 번들을 안쪽 코드부터 Hardened Runtime으로 서명합니다.                                                                              |
