@@ -64,3 +64,40 @@
 - 결과 channel은 상한이 없지만 진행 중 job 수(`max_in_flight`)가 결과 수를 제한합니다.
 - 다중 worker 교차 테스트의 stale 발생 횟수는 thread 스케줄에 따라 달라집니다. 폐기 동작 자체는 gate로 순서를
   고정한 테스트가 결정적으로 검증합니다.
+
+## 후속 수정 (리뷰 반영)
+
+리뷰 지적 두 건을 `Fix: tessellation 결과 판정을 render thread frame revision 기준으로 바꾸고 panic job 정리`
+commit으로 고쳤습니다. 위 "구현 요약"의 stale 기준과 "남은 위험"의 panic 항목은 이 절로 대체됩니다.
+
+- **starvation(major)**: 최초 구현은 결과의 필요 revision을 document thread가 publish한 최신 세대
+  (`LatestSceneRevision`)와 비교했습니다. render thread는 아직 받지 않은 snapshot의 요청을 알 수 없으므로,
+  document가 frame마다 새 revision을 내는 편집 중에는 도착한 결과가 항상 `wanted < latest`로 버려지고 같은
+  key가 frame마다 다시 제출되어 cache에 한 번도 들어가지 못했습니다. 리뷰 재현 순서(frame마다 collect →
+  request(rev = frame) → publish(frame + 1), worker 1개, 50 frame)를 lane HEAD(`b971205`)에서 probe 테스트로
+  돌려 `submitted: 50, applied: 0, discarded_stale: 49`로 실패를 확인했습니다.
+- **변경**: 판정 기준을 render thread가 처리 중인 scene revision(현재 frame revision)으로 바꿨습니다.
+  `AsyncTessellation::new(pool, max_in_flight)`는 더 이상 `LatestSceneRevision`을 받지 않습니다.
+  `begin_frame(revision)`·`begin_frame_for(snapshot)`이 현재 frame revision을 올리고(줄지 않음), `request`도
+  넘긴 revision까지 올립니다. 필요 revision이 현재 frame revision보다 작은 결과만 `DiscardedStale`(필드
+  `current`)로 버립니다. frame 규약은 `begin_frame` → `request` → `collect`이며 모듈 문서에 적었습니다.
+  stale 정의("render thread가 처리 중인 scene이 요청하지 않은 key의 결과는 cache에 넣지 않음")와 검증 기준
+  "stale result 적용 0"은 그대로 유지됩니다.
+- **panic 정리(minor)**: worker가 `catch_unwind`로 tessellator panic을 잡아 그 job을
+  `TessellationError::Failed` 결과로 보내고 계속 실행합니다. 그래서 진행 중 기록이 정리되고 같은 key가
+  영구히 `Pending`으로 합쳐지지 않습니다. release는 `panic = "abort"`라 이 경로는 dev·test 안전장치입니다
+  (`docs/architecture/panic-policy.md`). lane HEAD에서 probe 테스트로 결과가 오지 않고(`None`) worker가
+  끝나는 것을 먼저 확인했습니다.
+- **고치지 않은 부분**: 모든 worker가 끝났을 때 `SubmitError::Disconnected`를 `Deferred`와 구분해 보고하는 것은
+  넣지 않았습니다. panic을 잡은 뒤에는 pool이 살아 있는 동안 worker가 끝나는 경로(역할 bind 실패, queue lock
+  poison, 결과 receiver drop)가 실제로 생기지 않아 재현·검증할 수 없기 때문입니다.
+
+| 명령 / 검사 | 결과 |
+|---|---|
+| lane HEAD에서 리뷰 재현 probe(`collect → request → publish` 50 frame) | 실패 재현: `submitted: 50, applied: 0, discarded_stale: 49` |
+| lane HEAD에서 panic probe(worker 1개, panic job 결과 대기) | 실패 재현: 결과 `None`, `in_flight` 남음 |
+| `unchanged_key_is_cached_during_continuous_edits`(frame 시작 collect 순서, 50 frame) | 통과: frame 2부터 `Ready`, `submitted 1 · applied 1 · discarded_stale 0` |
+| `rerequested_key_is_applied_at_current_frame_revision`(권장 순서, 결과가 3 frame 뒤 도착) | 통과: `Applied { revision: 3 }`, `submitted 1 · coalesced 2` |
+| `key_not_requested_by_current_frame_is_discarded`(요청 없는 frame 2) | 통과: `DiscardedStale { revision: 1, current: 2 }`, cache 없음 |
+| `tessellator_panic_reports_failure_and_keeps_worker`(worker 1개) | 통과: panic job 2번 모두 `Failed`·재제출, 이어진 job `Applied` |
+| `cargo test -q -p stellar-renderer-core tessellation_worker` 30회 반복 | 30회 모두 9 passed |

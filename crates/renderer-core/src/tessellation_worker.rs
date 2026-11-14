@@ -10,21 +10,37 @@
 //!   mesh가 같으므로(결정론 계약) 같은 key의 진행 중 job은 하나로 합칩니다.
 //! - **세대**: render thread는 [`AsyncTessellation::request`]에 그 key를 필요로 하는 scene revision을
 //!   넘깁니다. 진행 중인 key를 더 새 revision이 다시 요청하면 job의 "필요 revision"을 올립니다.
-//! - **stale 폐기**: [`AsyncTessellation::collect`]는 결과의 필요 revision이 [`LatestSceneRevision`]의
-//!   최신 세대보다 작으면(최신 scene이 그 key를 요청하지 않았으면) cache에 넣지 않고 버립니다. 실패
+//! - **현재 frame revision**: 판정 기준은 render thread가 지금 처리 중인 scene revision입니다
+//!   ([`AsyncTessellation::begin_frame`]으로 알리거나, `request`에 넘긴 revision 중 가장 큰 값). document
+//!   thread가 publish한 최신 세대([`stellar_scene::freshness::LatestSceneRevision`])는 기준으로 쓰지
+//!   않습니다. render thread는 아직 받지 않은 snapshot이 무엇을 요청할지 알 수 없으므로, 그 세대와 비교하면
+//!   편집이 이어지는 동안(frame마다 새 revision) 도착하는 결과가 모두 오래된 것으로 판정되어 같은 key를
+//!   계속 다시 제출하고 cache에는 영영 들어가지 못합니다.
+//! - **stale 폐기**: [`AsyncTessellation::collect`]는 결과의 필요 revision이 현재 frame revision보다
+//!   작으면(render thread가 처리 중인 scene이 그 key를 요청하지 않았으면) cache에 넣지 않고 버립니다. 실패
 //!   결과도 cache에 넣지 않습니다(다음 요청에서 재시도).
 //!
+//! ## frame 규약
+//!
+//! render thread는 frame마다 `begin_frame(revision)` → 그 scene이 필요로 하는 key마다 `request` →
+//! `collect` 순서로 호출합니다. 이 순서면 "현재 scene이 요청한 key의 결과만 적용"이 정확히 성립합니다.
+//! frame 시작에 `begin_frame` 전에 `collect`를 호출해도 직전 frame 기준으로 판정하므로 starvation은 없습니다
+//! (직전 frame이 요청한 key는 적용). `begin_frame` 뒤, 그 frame의 `request` 전에 `collect`를 호출하면 안
+//! 됩니다(직전 frame이 요청한 key가 모두 stale로 판정됨).
+//!
 //! interactive·background 작업 분류(XII.1.4)는 후속 작업입니다. tessellator는 panic하지 않는다는
-//! 계약(XI.6.1·XI.6.2)을 전제합니다. release profile은 `panic = "abort"`입니다.
+//! 계약(XI.6.1·XI.6.2)을 전제합니다. release profile은 `panic = "abort"`이므로 panic은 process를
+//! 끝냅니다. dev·test profile에서 tessellator가 panic하면 worker가 그 job을 [`TessellationError::Failed`]
+//! 결과로 보내고 계속 실행합니다(진행 중 기록이 남아 같은 key가 영구히 `Pending`이 되지 않게 함).
 
 use std::collections::HashMap;
 use std::fmt;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use stellar_scene::freshness::LatestSceneRevision;
 use stellar_scene::geometry::PathGeometry;
 use stellar_scene::handle::SnapshotHandle;
 
@@ -181,7 +197,13 @@ fn worker_loop(
             // queue가 닫혔습니다(pool drop).
             return;
         };
-        let mesh = tessellators.run(&job.input);
+        // dev·test profile에서 tessellator가 panic해도 결과를 보내야 render thread의 진행 중 기록이
+        // 정리됩니다(release는 panic = "abort"라 여기까지 오지 않음).
+        let mesh = catch_unwind(AssertUnwindSafe(|| tessellators.run(&job.input))).unwrap_or(Err(
+            TessellationError::Failed {
+                reason: "tessellator가 panic했습니다",
+            },
+        ));
         let output = TessellationOutput {
             key: job.key,
             revision: job.revision,
@@ -287,14 +309,14 @@ pub enum CollectedResult {
         /// 결과를 필요로 한 scene revision.
         revision: u64,
     },
-    /// 최신 scene이 요청하지 않은 오래된 결과라 버렸습니다.
+    /// render thread가 처리 중인 scene이 요청하지 않은 오래된 결과라 버렸습니다.
     DiscardedStale {
         /// key.
         key: TessellationKey,
         /// 결과를 필요로 한 scene revision.
         revision: u64,
-        /// 판정 시점 최신 scene revision.
-        latest: u64,
+        /// 판정 시점 현재 frame revision([`AsyncTessellation::frame_revision`]).
+        current: u64,
     },
     /// tessellation이 실패했습니다(cache에 넣지 않음).
     Failed {
@@ -322,11 +344,12 @@ pub struct AsyncTessellationStats {
     pub failed: u64,
 }
 
-/// render thread 쪽 비동기 tessellation 관리자: 요청 합치기·제출·stale 폐기.
+/// render thread 쪽 비동기 tessellation 관리자: 요청 합치기·제출·stale 폐기(모듈 문서의 frame 규약).
 #[derive(Debug)]
 pub struct AsyncTessellation {
     pool: TessellationWorkerPool,
-    latest: LatestSceneRevision,
+    /// render thread가 처리 중인 scene revision(단조 증가, 0은 아직 없음).
+    frame_revision: u64,
     /// 진행 중 key → 그 key를 필요로 한 가장 새 scene revision.
     in_flight: HashMap<TessellationKey, u64>,
     max_in_flight: usize,
@@ -334,20 +357,33 @@ pub struct AsyncTessellation {
 }
 
 impl AsyncTessellation {
-    /// pool과 document thread가 공유하는 최신 세대로 만듭니다. 진행 중 job은 최대
-    /// `max_in_flight`개입니다(0이면 1로 둡니다).
-    pub fn new(
-        pool: TessellationWorkerPool,
-        latest: LatestSceneRevision,
-        max_in_flight: usize,
-    ) -> AsyncTessellation {
+    /// pool로 만듭니다. 진행 중 job은 최대 `max_in_flight`개입니다(0이면 1로 둡니다).
+    pub fn new(pool: TessellationWorkerPool, max_in_flight: usize) -> AsyncTessellation {
         AsyncTessellation {
             pool,
-            latest,
+            frame_revision: 0,
             in_flight: HashMap::new(),
             max_in_flight: max_in_flight.max(1),
             stats: AsyncTessellationStats::default(),
         }
+    }
+
+    /// render thread가 scene revision `revision`의 frame을 시작합니다(모듈 문서의 frame 규약).
+    ///
+    /// 현재 frame revision은 줄어들지 않습니다(더 작은 값은 무시). 요청이 하나도 없는 frame도 이것으로
+    /// 알려야 이전 frame만 요청한 key의 결과가 stale로 판정됩니다.
+    pub fn begin_frame(&mut self, revision: u64) {
+        self.frame_revision = self.frame_revision.max(revision);
+    }
+
+    /// snapshot의 scene revision으로 [`AsyncTessellation::begin_frame`]을 호출합니다.
+    pub fn begin_frame_for(&mut self, snapshot: &SnapshotHandle) {
+        self.begin_frame(snapshot.scene_revision().0);
+    }
+
+    /// 현재 frame revision(stale 판정 기준, 0은 아직 없음).
+    pub fn frame_revision(&self) -> u64 {
+        self.frame_revision
     }
 
     /// 통계.
@@ -365,20 +401,17 @@ impl AsyncTessellation {
         self.in_flight.get(key).copied()
     }
 
-    fn latest_revision(&self) -> u64 {
-        self.latest.latest().map_or(0, |revision| revision.0)
-    }
-
     /// scene revision `revision`이 `input` mesh를 요청합니다.
     ///
-    /// cache에 있으면 바로 돌려주고, 같은 key가 진행 중이면 필요 revision만 올립니다. 아니면 worker에
-    /// 제출합니다.
+    /// 현재 frame revision을 `revision`까지 올립니다([`AsyncTessellation::begin_frame`]과 같음). cache에
+    /// 있으면 바로 돌려주고, 같은 key가 진행 중이면 필요 revision만 올립니다. 아니면 worker에 제출합니다.
     pub fn request(
         &mut self,
         cache: &mut TessellationCache,
         revision: u64,
         input: TessellationInput,
     ) -> RequestOutcome {
+        self.begin_frame(revision);
         let key = input.key();
         if let Some(mesh) = cache.lookup(&key) {
             return RequestOutcome::Ready(mesh);
@@ -430,13 +463,15 @@ impl AsyncTessellation {
             .in_flight
             .remove(&output.key)
             .map_or(output.revision, |wanted| wanted.max(output.revision));
-        let latest = self.latest_revision();
-        if wanted < latest {
+        // 기준은 render thread가 처리 중인 scene입니다(document thread의 최신 publish 세대가 아님,
+        // 모듈 문서). 현재 scene이 다시 요청한 key는 wanted가 현재 frame revision까지 올라와 있습니다.
+        let current = self.frame_revision;
+        if wanted < current {
             self.stats.discarded_stale += 1;
             return CollectedResult::DiscardedStale {
                 key: output.key,
                 revision: wanted,
-                latest,
+                current,
             };
         }
         match output.mesh {
@@ -458,7 +493,7 @@ impl AsyncTessellation {
         }
     }
 
-    /// 끝난 결과를 막힘 없이 모두 처리합니다(frame 시작 시 호출).
+    /// 끝난 결과를 막힘 없이 모두 처리합니다(frame의 `request`를 마친 뒤 호출, 모듈 문서의 frame 규약).
     pub fn collect(&mut self, cache: &mut TessellationCache) -> Vec<CollectedResult> {
         let mut out = Vec::new();
         while let Some(output) = self.pool.try_recv() {
