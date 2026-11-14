@@ -246,8 +246,16 @@ impl BidiParagraph {
     pub fn line_levels(&self, text: &str, line: Range<usize>) -> Result<Vec<BidiLevel>, BidiError> {
         self.check_line(text, &line)?;
         let mut out = self.levels[line.clone()].to_vec();
-        // BiDi paragraph 경계마다 따로 L1을 적용합니다.
-        for (para_range, para_level) in &self.paragraphs {
+        // BiDi paragraph 경계마다 따로 L1을 적용합니다. BiDi paragraph는 텍스트를 순서대로 빈틈없이 나누므로
+        // 줄과 겹치는 첫 paragraph를 이분 탐색하고 겹치는 동안만 훑습니다(줄마다 전체를 훑지 않음).
+        let first = self
+            .paragraphs
+            .partition_point(|(range, _)| range.end <= line.start);
+        let overlapping = self.paragraphs[first..]
+            .iter()
+            .take_while(|(range, _)| range.start < line.end);
+        for (para_range, para_level) in overlapping {
+            crate::op_count::tick(1);
             let start = para_range.start.max(line.start);
             let end = para_range.end.min(line.end);
             if start >= end {
