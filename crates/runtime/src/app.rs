@@ -133,6 +133,8 @@ mod git_names;
 mod node_delete;
 mod node_duplicate;
 pub mod sidebar;
+/// 캔버스의 미확정 입력과 한 번의 본문 확정.
+pub mod text_input;
 pub use git_names::{GitNameRow, SelectionOperation};
 
 use crate::app_command::AppCommand;
