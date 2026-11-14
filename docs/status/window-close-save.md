@@ -89,6 +89,14 @@ cc -Icrates/ffi/include crates/ffi/tests/runtime_abi.c target/debug/libstellar_f
 원시 로그는 `/tmp/stellar-close-{rust,clippy,build,native-target,strict,smoke}.log`입니다.
 임시 로그 보존을 전제로 하지 않으며 위 명령과 결과가 인계 근거입니다.
 
+## 닫기 도중 다른 시트가 열리는 경우
+
+`651d3d92`에서 저장을 기다리는 동안 같은 창에 다른 시트가 붙는 경우를 추가했습니다.
+기존 동작은 저장에 성공해도 시트가 닫기를 거부하면서 원래 닫기 요청을 잃었습니다.
+이제 시트가 끝날 때까지 요청을 보관하고, 원래 창과 session의 편집 상태를 다시 확인한 뒤 닫습니다.
+`--window-close-check`의 98개 검사와 `scripts/macos/smoke.sh`가 통과했습니다. 활성 key 창 검사는
+여전히 위 명령의 활성화 단계에서 종료 코드 1이었습니다.
+
 ## 한계와 후속
 
 - 응답 watchdog 10초는 이 correctness slice의 셸 상한입니다. 성능 benchmark 결과나 AutosavePolicy 설정을
@@ -105,4 +113,3 @@ cc -Icrates/ffi/include crates/ffi/tests/runtime_abi.c target/debug/libstellar_f
   native close·저장·재로드·오류는 제품 코드로 확인합니다. 시뮬레이터의 가짜 저장 성공을 근거로 쓰지 않습니다.
 - 저수준 `NSWindow.close()`와 `stellar_window_session_close`는 명시적 폐기 API로 유지합니다. 정상 사용자 닫기는
   `performClose`를 거쳐야 합니다. 테스트 정리에서만 저수준 close를 사용합니다.
-- 다른 작업 트리·원격·배포·계정은 변경하지 않았고 추가 에이전트는 사용하지 않았습니다.
