@@ -16,7 +16,7 @@
 //! [`resolve_for_profile`]은 결과와 함께 선택 profile의 Binding 환경([`ProfileEnvironment`])을 돌려줍니다. 결과의 모든
 //! 값은 출처([`ValueOrigin`])를 가집니다. 제외된 node를 root로 하는 값은 결과에서 빠집니다(하위 node 제외 판정은
 //! [`ResolvedView::is_excluded`]가 parent 조회로 하고, View 전체 판정은 결과를 재사용하는
-//! [`ResolvedView::excluded_among`]이 합니다).
+//! `ResolvedView::excluded_among`이 합니다).
 
 use std::collections::{BTreeMap, BTreeSet};
 

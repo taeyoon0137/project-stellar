@@ -10,8 +10,8 @@
 //! | 3 | `api_level` | Number — Android API level, 그 밖은 0 |
 //!
 //! **`os_version` 인코딩**: `major.minor`를 10진 소수로 읽으면 `17.1`과 `17.10`이 같은 값이 되고 `10.15 < 10.9`처럼
-//! 순서가 뒤집힙니다. 그래서 정수 `major × 1000 + minor`로 둡니다(patch는 넣지 않음). major [`MAX_OS_MAJOR`]·minor
-//! [`MAX_OS_MINOR`] 이하에서 서로 다른 버전은 서로 다른 값이고 수 순서가 버전 순서와 같으며, 최댓값 9,999,999는
+//! 순서가 뒤집힙니다. 그래서 정수 `major × 1000 + minor`로 둡니다(patch는 넣지 않음). major `MAX_OS_MAJOR`·minor
+//! `MAX_OS_MINOR` 이하에서 서로 다른 버전은 서로 다른 값이고 수 순서가 버전 순서와 같으며, 최댓값 9,999,999는
 //! f32로 정확합니다. `stellar.yaml`의 Apple `minimum_os`는 이 범위 밖을 거부하고(IX.10.2), 직접 만든 범위 밖 값은
 //! 상한으로 포화합니다(순서는 뒤집지 않음). 표현식은 같은 인코딩으로 비교합니다(예: iOS 17.4 이상은
 //! `os_version >= 17004`).
