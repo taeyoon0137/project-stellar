@@ -49,6 +49,15 @@
 - 새 sparse 회귀는 `git config --worktree index.sparse true`의 유효값을 적용 전에 확인합니다. 지원하지 않는 sparse index는 거부하며 index bytes·유효 설정값·잠금 정리를 확인했습니다. local 설정만 바꾸면 기존 worktree 설정이 우선하므로, 사전 값 확인 없이 설정 변경 여부를 판단하지 않습니다.
 - 원장은 병합 커밋이 HEAD 이력에 들어간 뒤 `cargo xtask generate-ledger`로 생성했습니다. 병합 전에는 신규 WBS의 커밋 근거를 찾지 못해 생성이 거부됐으며, validator를 우회하거나 원장을 직접 수정하지 않았습니다.
 
+### 통합 재개 검증
+
+- 부모 통합본 `d27cad14`의 입력·inverse 512-byte 상한, XIV.6.6 원본 불변성 검증, `f324b85b`의 앱·CLI 공용 저장 잠금을 `19713932`로 병합했습니다. 위 ADR-0059 호환 범위는 유지합니다.
+- `CARGO_BUILD_JOBS=3 RUST_TEST_THREADS=1 CARGO_NET_OFFLINE=true cargo test --locked --offline -p stellar-git-porcelain -p stellar-runtime --no-default-features`: 종료 0, 483개 통과(문서 테스트 14개 포함). Apple Git 2.54.0의 index publish 23개가 포함됩니다. Fork Git 2.50.1을 지정한 `cargo test --locked --offline -p stellar-git-porcelain index_publish::`도 종료 0, 23개 통과입니다.
+- 같은 환경의 `bash scripts/macos/smoke.sh`: 종료 0. 실제 Swift compile/link와 앱 실행, window-session 68개, session-commands 56개, window-close 98개, key-mapping 101개 및 기본 셸 검사를 통과했습니다. 활성 창의 native 메뉴·트랙패드 사용자 QA는 포함하지 않습니다.
+- 이전 전체 Rust 검사는 `stellar-local-ipc`의 `pending_handshakes_are_capped_and_resume_when_one_finishes`에서 timeout으로 실패했습니다. `crates/local-ipc/src/listener.rs`의 이 테스트만 수정해 인증된 pending 상태·fd readiness로 cap, EOF 후 슬롯 해제, 실제 backlog 인증과 WELCOME을 확인합니다. 두 번째 backlog 연결로 accept 상한도 확인하고 watchdog으로 테스트 대기를 제한합니다. 제품 인증·기본 timeout은 그대로입니다. 수정 후 단독 실행과 compiled binary 10회 반복 모두 통과했습니다.
+- 수정 후 `CARGO_BUILD_JOBS=3 RUST_TEST_THREADS=1 CARGO_NET_OFFLINE=true cargo xtask check-core`: 종료 0. workspace fmt·전체 clippy(경고 0), workspace 테스트 3,916 passed·10 ignored(문서 테스트 포함), 별도 doctest 54 passed입니다. 이전에 실패한 IPC 테스트도 전체 실행에서 통과했습니다.
+- `generate-ledger`, `validate-task-status`, `sync-plan --check`, `validate-crate-graph`, 변경 경로의 `validate-adr`, XIV.6.2~6.6의 `verify-task` 및 보고서 검사는 종료 0입니다. 추가 확인한 `verify-task XXIV.4.5`는 기존 선행 XXIV.4.4 미완료에 따른 `missing-dependency`로 종료 65였습니다. 기존 `[~]`와 `reported_done`을 유지하며 완료로 올리지 않습니다.
+
 ## 차이
 
 - 현재 index를 무조건 덮는 복원 대신 성공 증표의 전체 bytes가 유지될 때만 복원합니다. 미확정 publish에는 증표가 없어 역쓰지 않습니다. 이는 사용자의 경합 보존 요구를 우선한 완료 범위입니다.

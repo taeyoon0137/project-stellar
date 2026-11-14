@@ -1067,31 +1067,112 @@ mod tests {
     fn pending_handshakes_are_capped_and_resume_when_one_finishes() {
         let tmp = TempDir::new();
         let policy = PeerPolicy::for_current_process().unwrap();
-        let app = listener(&tmp, policy.clone());
-        let mut silent: Vec<UnixStream> = (0..MAX_PENDING_HANDSHAKES)
-            .map(|_| UnixStream::connect(app.socket_path()).unwrap())
-            .collect();
-        let endpoint = Endpoint {
-            instance: id(1),
-            socket_path: app.socket_path().to_path_buf(),
+        let registry = Registry::at(tmp.path.join("r"), os::current_uid());
+        let endpoint = AppEndpoint::bind(&registry, id(1)).unwrap();
+        endpoint.listener.set_nonblocking(true).unwrap();
+        let mut bridge = UnixStream::connect(&endpoint.endpoint().socket_path).unwrap();
+        authenticate(&bridge, &policy).unwrap();
+        set_timeouts(&bridge, DEFAULT_TIMEOUT).unwrap();
+        let client = Nonce::from_bytes([23; 16]);
+        write_message(&mut bridge, &Message::Hello { client }).unwrap();
+        // 한 슬롯이 났을 때 accept_ready가 bridge 하나만 받고 다시 멈추는지도 확인합니다.
+        let _queued = UnixStream::connect(&endpoint.endpoint().socket_path).unwrap();
+
+        // 같은 프로세스의 실제 인증 결과로 pending을 준비합니다. 준비 중 16번의 코드 서명 검사와
+        // bridge 응답 기한을 경쟁시키지 않고, backlog의 bridge는 accept 경로에서 실제 인증합니다.
+        let peer = {
+            let (stream, _other) = UnixStream::pair().unwrap();
+            authenticate(&stream, &policy).unwrap()
         };
-        let bridge = std::thread::spawn(move || {
-            connect(&endpoint, &policy, &mut NonceLedger::new()).map(|s| s.client_nonce())
+        let (waker, wake_rx) = UnixStream::pair().unwrap();
+        let (done_tx, done_rx) = mpsc::channel();
+        // 준비 확인 뒤 오래 멈춰 pending이 전부 만료돼도 poll이 무기한 기다리지 않게 합니다.
+        // 정상 진행은 watchdog을 기다리지 않고, 실패로 완료 채널이 닫혀도 즉시 깨웁니다.
+        let watchdog = std::thread::spawn(move || {
+            if done_rx.recv_timeout(WAIT).is_err() {
+                let _ = waker.shutdown(Shutdown::Both);
+            }
         });
+        let (tx, events) = mpsc::channel();
+        let thread = std::thread::current().id();
+        let mut io_loop = IoLoop {
+            endpoint,
+            policy,
+            wake_rx,
+            bindings: None,
+            handshake_timeout: DEFAULT_TIMEOUT,
+            tx,
+            thread,
+            ledger: NonceLedger::new(),
+            pending: Vec::new(),
+        };
+        let mut silent = Vec::new();
+        for _ in 0..MAX_PENDING_HANDSHAKES {
+            let (stream, other) = UnixStream::pair().unwrap();
+            assert!(io_loop.begin_handshake(stream, peer).is_ok());
+            silent.push(other);
+        }
+        let readable = |fd| os::poll_readable(&[fd], Some(Duration::ZERO)).unwrap()[0];
+        let listener_fd = io_loop.endpoint.listener.as_raw_fd();
+
+        // 각 step 전에 준비된 fd를 확인해 poll이 외부 스레드나 고정 sleep에 의존하지 않게 합니다.
+        // partial HELLO는 pending을 유지하면서 가득 찬 loop를 한 번 깨웁니다.
+        silent[0].write_all(b"S").unwrap();
+        assert!(readable(io_loop.pending[0].stream.as_raw_fd()));
+        assert!(readable(listener_fd));
+        assert!(io_loop.step().is_ok());
+        assert_eq!(io_loop.pending.len(), MAX_PENDING_HANDSHAKES);
+        assert_eq!(io_loop.pending[0].line, b"S");
         assert!(
-            app.events()
-                .recv_timeout(Duration::from_millis(500))
-                .is_err(),
-            "자리가 없으면 새 연결을 처리하지 않음"
+            readable(listener_fd),
+            "자리가 없으면 새 연결은 backlog에 남음"
         );
-        // 진행 중 하나가 HELLO 없이 닫으면 자리가 납니다.
+        assert!(!readable(bridge.as_raw_fd()));
+        assert!(matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+        // HELLO를 보내지 않은 pending 하나의 EOF만 처리하면 슬롯 하나가 납니다.
+        let closing_fd = io_loop.pending.last().unwrap().stream.as_raw_fd();
         drop(silent.pop());
-        let client = bridge.join().unwrap().expect("자리가 나면 handshake 성공");
-        let ListenerEvent::Connected { connection, .. } = app.events().recv_timeout(WAIT).unwrap()
+        assert!(readable(closing_fd));
+        assert!(io_loop.step().is_ok());
+        assert_eq!(io_loop.pending.len(), MAX_PENDING_HANDSHAKES - 1);
+        assert!(matches!(events.try_recv(), Err(mpsc::TryRecvError::Empty)));
+
+        // 다음 step은 backlog 연결을 실제 인증하고, 그다음 step은 이미 도착한 HELLO에 답합니다.
+        assert!(readable(listener_fd));
+        assert!(io_loop.step().is_ok());
+        assert_eq!(io_loop.pending.len(), MAX_PENDING_HANDSHAKES);
+        assert!(readable(listener_fd), "두 번째 연결은 backlog에 남음");
+        assert!(readable(io_loop.pending.last().unwrap().stream.as_raw_fd()));
+        assert!(io_loop.step().is_ok());
+        assert_eq!(io_loop.pending.len(), MAX_PENDING_HANDSHAKES - 1);
+        assert!(
+            readable(listener_fd),
+            "가득 찬 상태로 시작한 step은 accept하지 않음"
+        );
+        assert!(readable(bridge.as_raw_fd()));
+        let Message::Welcome {
+            client: echoed,
+            session,
+        } = Message::decode(&read_line(&mut bridge).unwrap()).unwrap()
+        else {
+            panic!("자리가 나면 WELCOME 응답")
+        };
+        let ListenerEvent::Connected {
+            connection,
+            thread: processed,
+        } = events.try_recv().unwrap()
         else {
             panic!("정상 연결 전달")
         };
+        assert_eq!(echoed, client);
+        assert_ne!(session, client);
         assert_eq!(connection.client_nonce(), client);
+        assert_eq!(connection.session_nonce(), session);
+        assert_eq!(connection.peer(), peer);
+        assert_eq!(processed, thread);
+        done_tx.send(()).unwrap();
+        watchdog.join().unwrap();
     }
 
     #[test]
