@@ -81,6 +81,7 @@ pub struct CanvasTextPreview {
 #[derive(Default)]
 pub struct TextPreviewCache {
     root: Option<std::path::PathBuf>,
+    engine: stellar_text::incremental::IncrementalTextLayout,
     fonts: crate::canvas::text::document::FontCache,
 }
 
@@ -94,6 +95,7 @@ impl TextPreviewCache {
     ) -> Option<crate::canvas::text::DocumentText> {
         if self.root.as_deref() != Some(&input.root) {
             self.fonts = Default::default();
+            self.engine = stellar_text::incremental::IncrementalTextLayout::new();
             self.root = Some(input.root.clone());
         }
         self.fonts.sync_registrations(&input.styles);
@@ -109,6 +111,7 @@ impl TextPreviewCache {
                 &text,
                 &input.styles,
                 input.modifiers.as_ref(),
+                &mut self.engine,
             )
             .map(|(text, _, _)| text)
     }

@@ -57,7 +57,7 @@ pub struct CanvasScene {
     /// 아래에서 위로 칠하는 Frame·Rectangle·ComponentInstance·Text 목록.
     pub frames: Vec<CanvasFrame>,
     /// Text 행 번호별 layout 및 glyph path.
-    pub text: std::collections::BTreeMap<u32, text::DocumentText>,
+    pub text: std::collections::BTreeMap<u32, Arc<text::DocumentText>>,
     /// 해석하지 못한 subtree 수. 그 자손도 잘못된 위치·clip으로 표시하지 않습니다.
     pub skipped: u32,
 }
@@ -65,6 +65,7 @@ pub struct CanvasScene {
 #[derive(Debug, Default)]
 pub(crate) struct CanvasCache {
     pub(crate) fonts: text::document::FontCache,
+    saved_text: text::saved::SavedTextLayouts,
     library_request: u64,
     latest: Option<(DocumentRevision, StableId, Arc<CanvasScene>)>,
     library: Option<(
@@ -110,12 +111,18 @@ impl CanvasCache {
             .root_frame;
         self.fonts
             .sync_registrations(&model.definition().text_styles);
+        self.saved_text.begin_view(&model.definition().text_styles);
         let scene = Arc::new(CanvasScene::with_library(
             model,
             root,
             self.library.as_ref().map(|v| &v.1),
-            Some((session.identity().canonical_target(), &mut self.fonts)),
+            Some((
+                session.identity().canonical_target(),
+                &mut self.fonts,
+                &mut self.saved_text,
+            )),
         ));
+        self.saved_text.end_view();
         self.latest = Some((state.revision(), view, scene.clone()));
         Some(scene)
     }
@@ -213,7 +220,11 @@ impl CanvasScene {
         model: &DocumentModel,
         root: StableId,
         library: Option<&stellar_document::component::definition::ComponentLibrary>,
-        mut fonts: Option<(&std::path::Path, &mut text::document::FontCache)>,
+        mut fonts: Option<(
+            &std::path::Path,
+            &mut text::document::FontCache,
+            &mut text::saved::SavedTextLayouts,
+        )>,
     ) -> Self {
         let mut result = Self::default();
         let mut builder = SceneBuilder::new();
@@ -229,7 +240,7 @@ impl CanvasScene {
             if let Some(NodePayload::Text(payload)) = payload {
                 let prepared = fonts
                     .as_mut()
-                    .and_then(|(root, cache)| cache.layout(model, root, id, payload));
+                    .and_then(|(root, faces, saved)| saved.layout(faces, root, model, id, payload));
                 let row = prepared.and_then(|(text, size, transform)| {
                     let mut node = NodeInput::new(id, transform);
                     node.locked = fields.locked;

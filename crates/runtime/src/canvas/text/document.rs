@@ -199,12 +199,24 @@ impl FontCache {
         id: StableId,
         payload: &TextPayload,
     ) -> Option<(DocumentText, Size2, Transform2D)> {
+        self.layout_with(model, root, id, payload, &mut IncrementalTextLayout::new())
+    }
+
+    pub(super) fn layout_with(
+        &mut self,
+        model: &DocumentModel,
+        root: &Path,
+        id: StableId,
+        payload: &TextPayload,
+        engine: &mut IncrementalTextLayout,
+    ) -> Option<(DocumentText, Size2, Transform2D)> {
         self.layout_input(
             root,
             id,
             payload,
             &model.definition().text_styles,
             model.modifier_stack(id),
+            engine,
         )
     }
 
@@ -215,6 +227,7 @@ impl FontCache {
         payload: &TextPayload,
         table: &DocumentTextStyles,
         modifiers: Option<&ModifierStack>,
+        engine: &mut IncrementalTextLayout,
     ) -> Option<(DocumentText, Size2, Transform2D)> {
         let mut transform = Transform2D::identity();
         let mut modifier_fill = None;
@@ -399,9 +412,7 @@ impl FontCache {
             paragraph_spacing: TextUnit::ZERO,
             text_box: TextBox::default(),
         };
-        let (layout, _) = IncrementalTextLayout::new()
-            .layout(&request, &self.faces)
-            .ok()?;
+        let (layout, _) = engine.layout(&request, &self.faces).ok()?;
         let key = TextLayoutKey::from_bytes(id.to_bytes());
         let geometry = CanvasTextGeometry::from_layout(key, &layout).ok()?;
         let rasterizer = TextOutlineRasterizer {
