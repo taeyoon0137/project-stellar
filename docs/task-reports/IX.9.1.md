@@ -2,7 +2,7 @@
 
 - WBS: IX.9.1
 - 작업명: Button, TextInput, Modal, List, Radio 합성 예제 component library fixture
-- 상태: 완료 (`[x]`)
+- 상태: 부분 완료 (`[~]`) — 선행 IX.8(접근성 의미 트리)이 미착수이고, scene document validator(VI.10.1)는 ComponentInstance를 표현하지 못해 "document validator 0 오류"를 컴포넌트 계층 검사기로만 확인했습니다(아래 "후속 수정 (리뷰 반영)").
 - 선행: IX.6(`[x]` 전체), IX.8(section 단위 선행 — 완화 적용, 아래 "차이" 참고)
 
 ## 필수 실행 환경
@@ -59,3 +59,40 @@
 ## 남은 위험 / 한계
 
 - 플랫폼 간 byte 비교는 IX.9.4 범위입니다(Windows는 ADR-0006 보류).
+
+## 후속 수정 (리뷰 반영)
+
+리뷰 지적 두 가지(선행 IX.8 미완료, "document validator" 범위 재해석)에 따라 상태를 `[x]`에서 `[~]`로 낮추고 검사
+범위를 넓혔습니다.
+
+- **상태를 낮춘 근거**
+  - 계획서 1.2 원자적 작업 패키지 규칙 4는 선행 작업이 모두 `[x]`가 아니면 코드를 수정하지 않게 합니다. 이 행의 선행
+    IX.8(IX.8.1\~IX.8.6)은 모두 `[ ]`입니다. section 단위 선행이라 ledger `depends_on`에는 나타나지 않지만 규칙의
+    예외는 아닙니다. IX.8.4는 이 fixture의 Button·TextInput·Modal·List·SingleSelectionGroup contract를
+    role·state·action으로 매핑하고 IX.8.5는 label 누락 등 접근성 진단을 추가합니다. 따라서 IX.8이 들어오면 "document
+    validator 0 오류"에 접근성 진단과 golden이 더해져야 합니다.
+  - VI.10.1 `validate_document`는 `DocumentRecords`를 검사하는데 `NodePayload`에 ComponentInstance가 없습니다. 이
+    fixture의 scene(인스턴스 5개)을 그 validator에 넣을 수 없고, 넣으려면 파일 포맷을 바꿔야 합니다. 그래서 "document
+    validator"는 컴포넌트 계층 검사기 전부로만 확인했습니다. 문서 전체 validator로 확인한 것은 아닙니다.
+- **검사 범위 확장**(`Test: IX.9.1 fixture에 정의 tree override·scene 캡슐화 검사 추가`)
+  - 컴포넌트마다 `validate_definition_property_overrides`와 `validate_definition_slot_overrides`를 미해결 참조 건너뛰기
+    없이 실행합니다. library 디코딩 경로는 미해결 참조를 건너뜁니다. Modal의 nested 닫기 Button 인스턴스는 override가
+    없어서, 이 검사는 참조 컴포넌트 해석과 빈 override 검사만 합니다.
+  - scene 전체 node(root, 인스턴스 5개, 투영 Text)에 `validate_scene_encapsulation`(IX.4.2 nested 직접 경로 금지)을
+    실행합니다.
+  - 모두 0 오류로 통과했습니다.
+- **`[x]`로 올릴 조건**: IX.8 완료 후 이 fixture에 접근성 tree golden과 IX.8.5 진단 0건을 추가하고, scene document
+  validator가 ComponentInstance를 다루게 되면 그 validator 0 오류를 함께 확인합니다.
+- **ledger**: 계획서 상태를 바꾼 뒤 `cargo run -q -p xtask -- generate-ledger`로 `planning/task-status.yaml`을 다시
+  만들었습니다. 이 lane이 ledger를 재생성하지 않아서, 같은 재생성으로 lane의 나머지 `[x]` 행(IX.1.3, IX.1.4,
+  IX.4.1\~IX.4.6, IX.7.9, IX.9.3, XVI.6.3)도 `verified`로 함께 반영됐습니다. IX.9.1은 `reported_done`입니다.
+
+| 명령(후속 수정) | 결과 |
+|---|---|
+| `cargo test -p stellar-document` | unit 354 passed, 통합 7+1+1, doc 4 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo clippy -p stellar-document --features test-support -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -- --check` | 통과 |
+| `cargo run -q -p xtask -- generate-ledger` | 1023 tasks 생성, 종료 코드 0 |
+| `cargo run -q -p xtask -- validate-task-status` | 종료 코드 0 |
+| `cargo run -q -p xtask -- sync-plan` | 종료 코드 0 |
