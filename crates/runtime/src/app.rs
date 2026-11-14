@@ -128,6 +128,7 @@ mod create;
 mod frame_insert;
 mod frame_move;
 mod git_names;
+pub mod sidebar;
 pub use git_names::{GitNameRow, SelectionOperation};
 
 use crate::app_command::AppCommand;

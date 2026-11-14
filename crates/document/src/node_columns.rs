@@ -136,6 +136,11 @@ impl NodeColumns {
         })
     }
 
+    /// 이름·순서 키를 복제하지 않고 현재 부모를 읽습니다.
+    pub fn parent(&self, id: RuntimeEntityId) -> Option<RuntimeEntityId> {
+        self.parent[self.alloc.live_slot(id)?]
+    }
+
     /// 부모를 갱신합니다. stale 핸들이면 `false`.
     pub fn set_parent(&mut self, id: RuntimeEntityId, parent: Option<RuntimeEntityId>) -> bool {
         match self.alloc.live_slot(id) {

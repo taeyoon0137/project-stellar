@@ -74,46 +74,15 @@ final class ShellPanelTabsSlot: ShellAuxiliaryPanelSlot {
 ///
 /// 영역별 코어 adapter가 생기기 전까지 쓰는 의도적 placeholder입니다(계획 1.2 규칙 6, 이름에 "Stub").
 /// 열린 프로젝트와 어긋난 표본 내용을 보여 주지 않도록 각 Stub의 "비어 있음"에 가까운 상태를 고릅니다.
-/// - 사이드바: 페이지·레이어 없음(코어가 문서 내용을 아직 셸에 주지 않음).
 /// - 인스펙터: 선택 없음.
 /// - 에이전트: 세션 없음.
 @MainActor
 enum ShellAreaDataStubs {
-    static func makeSidebarProvider() -> SidebarDataProvider {
-        ShellEmptySidebarProviderStub()
-    }
-
     static func makeInspectorDataSource() -> InspectorDataSource {
         InspectorStubDataSource(scenario: .noSelection)
     }
 
     static func makeAgentSource() -> AgentPanelSource {
         AgentSessionStub(scenario: .noSession)
-    }
-}
-
-/// 페이지·레이어가 없는 사이드바 공급자(의도적 placeholder).
-///
-/// 코어가 사이드바 snapshot을 내보내기 전까지 프로젝트 창은 빈 문서 상태를 보여 줍니다. 모든 명령은 지원하지 않음으로
-/// 검증하고 보내도 아무것도 바꾸지 않습니다(받은 명령은 `performedCommands`에 기록).
-@MainActor
-final class ShellEmptySidebarProviderStub: SidebarDataProvider {
-    private(set) var snapshot: SidebarSnapshot
-    var snapshotDidChange: (() -> Void)?
-    private(set) var performedCommands: [SidebarCommand] = []
-
-    init() {
-        var snapshot = SidebarSnapshot.empty
-        snapshot.generation = 1
-        snapshot.loadState = .ready
-        self.snapshot = snapshot
-    }
-
-    func validate(_ command: SidebarCommand) -> SidebarCommandValidation {
-        .denied(.unsupported)
-    }
-
-    func perform(_ command: SidebarCommand) {
-        performedCommands.append(command)
     }
 }

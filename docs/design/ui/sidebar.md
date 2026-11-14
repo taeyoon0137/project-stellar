@@ -1,6 +1,6 @@
 # 사이드바(페이지·레이어) UI 명세
 
-- 상태: 초안(2026-11-14), 코어 미연결(Stub provider)
+- 상태: 기본 창의 활성 Page·View 및 문서 레이어 읽기 연결(2026-11-14)
 - 코드: `apps/macos/Stellar/UI/Sidebar/`
 - 상위 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처")
 - 근거 표기는 가이드 0.1절을 따릅니다. 이 문서는 가이드·아키텍처·구현 계획을 바꾸지 않으며, 어긋나면 그 문서들이 우선입니다.
@@ -35,7 +35,8 @@
 | 파일 | 역할 |
 |---|---|
 | `SidebarModel.swift` | 값 snapshot·command·검증 결과 타입, `SidebarDataProvider` 프로토콜 |
-| `SidebarStubDataProvider.swift` | 의도된 placeholder provider(메모리 트리, 예시 데이터) |
+| `../Shell/ShellSidebarSource.swift` | 기본 창의 코어 페이지 조회·펼친 행·창별 선택 |
+| `SidebarStubDataProvider.swift` | UI 상호작용 검사용 메모리 트리 |
 | `SidebarViewController.swift` | 구성, snapshot 반영 병합, 상태 화면 결정, split view item·accessory 연결, `SidebarMetrics` |
 | `SidebarPagesController.swift` | 페이지·View outline, 공통 outline 생성(`SidebarOutlineFactory`), `SidebarOutlineItem` |
 | `SidebarLayersController.swift` | 레이어 outline: 데이터·선택·펼침·이름 변경·토글·문맥 메뉴·드래그 |
@@ -230,19 +231,19 @@ protocol SidebarDataProvider: AnyObject {
 - 동작: 선택 command, 외부 선택 펼침, 페이지 행 선택 → active View 행 선택(재선택·접기·펼치기 포함), 페이지 목록 화살표·←·→ 키 이동(active 페이지 행을 지나 위아래로 이동, ←로 부모 페이지 행과 접기, →로 펼치기, 각 단계 command, active가 그대로인 snapshot에서 페이지 행 선택 유지), Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화와 단축키 표시 없음, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행의 값 변경·대비 높이기 반영, 변경 통지 병합.
 - 검사하지 않는 것: 실제 마우스 드래그 세션, 실제 마우스 클릭 이벤트(토글 hit test는 view 계층의 `hitTest`만 부름), VoiceOver 음성 출력, 시스템 접근성 설정을 실제로 켠 상태, 시스템 사이드바 크기 설정을 실제로 바꾼 상태, 화면 픽셀.
 
-통합 때 `main.swift`에 `--sidebar-ui-check` 같은 인자로 `exit(SidebarUICheck.run() ? 0 : 1)`을 연결하고 `scripts/macos/smoke.sh`에서 호출합니다. 아직 연결되지 않았으므로(두 파일은 이 영역 밖) 지금은 자동 회귀 방지가 없습니다. 지금까지의 결과는 이 폴더의 소스와 `SidebarUICheck.run()`만 부르는 임시 진입점을 저장소 밖에서 컴파일해 얻은 것입니다.
+`scripts/macos/smoke.sh`는 `--sidebar-ui-check`로 위 fixture를 검사하고, `--frame-insert-check`로 기본 창에서 실제 문서를 편집해 검사합니다. 후자는 F 생성, Undo·Redo, 저장·재열기, 중첩 행, 두 창의 격리, 형제 65개의 다음 페이지 버튼을 확인합니다.
 
-## 12. 코어 연결 시 남은 일
+## 12. 기본 창 연결 범위와 남은 일
+
+Pages는 활성 Page와 View 이름을 표시합니다. Layers는 이 View의 실제 직계 자식을 위에 그린 순서로 보여 주며, 선택과 disclosure를 사용할 수 있습니다. 숨김·잠금과 종류도 원본의 값을 사용합니다. 제한 모드에서도 열려 있는 창 문서를 읽을 수 있습니다. 부모를 펼치거나 **Show More Layers**를 눌렀을 때만 그 부모의 다음 64행을 가져옵니다. 코어는 문서 스레드에서 현재 View·revision을 확인하고 형제 순서 인덱스에서 직접 다음 페이지를 읽습니다. 셸의 worker가 문자열과 행을 변환하며 창을 닫거나 View·revision이 바뀐 결과는 폐기합니다.
 
 | 항목 | 관련 WBS·문서 |
 |---|---|
-| `SidebarDataProvider` 코어 구현: poll 이벤트로 snapshot 갱신, command를 문서 스레드로 전달 | ADR-0009, 아키텍처 §8.2, §9 |
 | 이름·표시·잠금 command | 계획 VII.2.5(SetProperty specialization) |
 | 이동·복제·삭제 command, 사전 검증 | 계획 VII.2.3, VII.2.8, VII.2.2, VI.2.3 |
 | 묶기·풀기 command(그룹 marker 생성·제거) | 전용 WBS 없음(계획 반영 필요, 그때까지 `group`·`ungroup` command는 잠정), Fragment 규칙은 아키텍처 §12.4 |
-| 선택 command·창별 선택·Undo 통합 | 계획 VII.3.1~VII.3.4, VII.4.6, XII.2.5 |
-| 페이지·View 이름 변경, active View | 계획 VI.1.3, XII.2.5 |
-| 필터 질의 실행(문서 스레드 밖), 부모 단위·부모 내부 페이지 분할 | 아키텍처 §6.3, §6.4 |
+| 다른 페이지·View 탐색과 이름 변경 | 계획 VI.1.3, XII.2.5 |
+| 필터 질의 실행(문서 스레드 밖) | 아키텍처 §6.3, §6.4 |
 | 메뉴 막대 항목·단축키 확정(⇧⌘H·⇧⌘L 잠정) | 계획 XII.6.5, 열린 결정 O8 |
 | 창의 key view loop(캔버스·인스펙터와 연결) | 계획 XII.8.1 |
 | 3열 골격에 연결(`makeSplitViewItem()`), 사이드바 폭 범위 | 계획 XII.9.1 |
@@ -250,7 +251,7 @@ protocol SidebarDataProvider: AnyObject {
 
 ## 13. 한계와 열린 사항
 
-- 빈 레이어 상태에 "다음 동작 버튼"이 없습니다. 가이드 7.1은 버튼을 요구하지만 노드 생성 command(Frame·Shape·Text 생성 도구)는 WBS가 없습니다(가이드 10.4). 생성 command가 생기면 버튼을 더합니다.
+- 빈 레이어 상태에 "다음 동작 버튼"이 없습니다. 가이드 7.1은 버튼을 요구하지만 기본 창에서는 F를 눌러 Frame 안에 첫 자식을 드래그해 생성할 수 있습니다(계획 XII.10.26).
 - 문서 목록(프로젝트의 여러 문서)은 이 영역에 없습니다. 가이드 6.2의 "문서·페이지·View 목록" 중 문서 단계는 문서 탭·창 구성과 함께 정해야 합니다.
 - 컴포넌트 인스턴스 내부(Slot 등)는 펼치지 않습니다. Stub은 Frame·Fragment만 자식을 가질 수 있게 하며, 실제 규칙은 코어 Capability가 정합니다. [아키텍처 §12.3, §15]
 - View를 바꾸면 펼침 상태를 버립니다. View별 유지는 WindowViewState(XII.2.5)와 함께 정합니다.

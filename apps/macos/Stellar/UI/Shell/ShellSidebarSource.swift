@@ -1,0 +1,167 @@
+import Foundation
+
+/// 실제 창에서 열어 본 부모만 읽습니다. UI는 디스크 또는 document thread를 기다리지 않습니다.
+@MainActor
+final class ShellSidebarSource: SidebarDataProvider {
+    private struct Display: Equatable {
+        let session: UInt64
+        let view: UUID
+        let revision: UInt64
+        let undo: UInt32
+        let redo: UInt32
+    }
+    private struct Request: Hashable {
+        let parent: SidebarStableID?
+        let after: SidebarStableID?
+    }
+    private let queue = DispatchQueue(label: "xyz.taeyoon.stellar.layers", qos: .userInitiated)
+    private var runtime: UInt64?
+    private var display: Display?
+    private weak var window: ShellWindowSessionHandle?
+    private var queued: [Request] = []
+    private var loaded: [Request] = []
+    private var selectedOrder: [SidebarStableID: Int] = [:]
+    private var running: Request?
+    private var epoch: UInt64 = 0
+    private var version: UInt64 = 0
+    private(set) var snapshot = SidebarSnapshot.empty
+    var snapshotDidChange: (() -> Void)?
+    var select: (([UUID]) -> Void)?
+
+    func refresh(runtime: UInt64?, session: ShellWindowSessionHandle?, info: StellarWindowSessionInfo?, view: StellarWindowViewInfo?) {
+        self.runtime = runtime
+        window = session
+        guard let session, !session.isClosed, let info, let view, view.has_view == 1 else {
+            if display != nil || snapshot.loadState != .ready {
+                display = nil
+                reset()
+                snapshot.loadState = .ready
+                publish()
+            }
+            return
+        }
+        let next = Display(session: session.session, view: UUID(uuid: view.active_view), revision: info.revision,
+                           undo: info.undo_depth, redo: info.redo_depth)
+        guard next != display else { return }
+        let selectionOnly = display?.session == next.session && display?.view == next.view && display?.revision == next.revision
+        display = next
+        if selectionOnly && !loaded.isEmpty {
+            // 선택 변경은 사용자가 열어 둔 형제 페이지와 disclosure를 유지합니다.
+            epoch &+= 1
+            for request in loaded where !queued.contains(request) { queued.append(request) }
+            if let running, !queued.contains(running) { queued.append(running) }
+            startNext()
+        } else {
+            reset()
+            enqueue(Request(parent: nil, after: nil))
+        }
+    }
+
+    private func reset() {
+        epoch &+= 1
+        queued.removeAll()
+        loaded.removeAll()
+        selectedOrder.removeAll()
+        snapshot = .empty
+    }
+
+    private func publish(structureChanged: Bool = true) {
+        version &+= 1
+        snapshot.generation = version
+        if structureChanged { snapshot.layers.structureRevision = version }
+        snapshotDidChange?()
+    }
+
+    func validate(_ command: SidebarCommand) -> SidebarCommandValidation {
+        switch command {
+        case .reload: return display != nil ? .allowed : .denied(.unsupported)
+        case .setSelection(let ids, _):
+            return display != nil && ids.allSatisfy { snapshot.layers.rows[$0] != nil } ? .allowed : .denied(.unknownNode)
+        case .loadChildren(let id):
+            return snapshot.layers.rows[id]?.hasChildren == true ? .allowed : .denied(.unknownNode)
+        case .loadMore(let id):
+            return snapshot.layers.moreParents.contains(id) ? .allowed : .denied(.unsupported)
+        default: return .denied(.unsupported)
+        }
+    }
+
+    func perform(_ command: SidebarCommand) {
+        guard validate(command).isAllowed else { return }
+        switch command {
+        case .reload:
+            reset()
+            enqueue(Request(parent: nil, after: nil))
+        case .loadChildren(let id):
+            if snapshot.layers.childIDs[id] == nil { enqueue(Request(parent: id, after: nil)) }
+        case .loadMore(let parent):
+            let ids = parent.map { snapshot.layers.childIDs[$0] ?? [] } ?? snapshot.layers.topLevelIDs
+            if let last = ids.last { enqueue(Request(parent: parent, after: last)) }
+        case .setSelection(let ids, let primary):
+            // 기존 코어 API는 배열의 마지막 항목을 primary로 해석합니다.
+            if let primary, ids.last != primary {
+                select?((ids.filter { $0 != primary } + [primary]).map(\.uuid))
+            } else {
+                select?(ids.map(\.uuid))
+            }
+        default: break
+        }
+    }
+
+    private func enqueue(_ request: Request) {
+        if !queued.contains(request) { queued.append(request) }
+        startNext()
+    }
+
+    private func startNext() {
+        guard running == nil, !queued.isEmpty, let display, let runtime, let window, !window.isClosed else { return }
+        let request = queued.removeFirst(), epoch = self.epoch
+        running = request
+        queue.async { [weak self] in
+            let page = CoreRuntime.layerPage(handle: runtime, session: display.session, view: display.view,
+                                             revision: display.revision, parent: request.parent, after: request.after)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.running = nil
+                if self.epoch == epoch, self.window?.isClosed == false {
+                    if let page { self.apply(page, for: request) }
+                    else {
+                        self.queued.removeAll()
+                        self.snapshot.loadState = .failed(message: String(localized: "The layer list changed. Try again."))
+                        self.publish()
+                    }
+                }
+                self.startNext()
+            }
+        }
+    }
+
+    private func apply(_ page: WindowLayerPage, for request: Request) {
+        let refreshing = loaded.contains(request)
+        var ids = request.parent.map { snapshot.layers.childIDs[$0] ?? [] } ?? snapshot.layers.topLevelIDs
+        // 삭제·이동 또는 같은 페이지의 중복 요청 결과를 현재 목록에 이어 붙이지 않습니다.
+        guard refreshing || request.after == nil || ids.last == request.after else { return }
+        snapshot.pages = [page.page]
+        snapshot.activePageID = page.page.id
+        snapshot.activeViewID = page.page.views.first?.id
+        if !refreshing {
+            loaded.append(request)
+            for row in page.rows {
+                ids.append(row.id)
+                snapshot.layers.rows[row.id] = row
+            }
+            if let parent = request.parent { snapshot.layers.childIDs[parent] = ids }
+            else { snapshot.layers.topLevelIDs = ids }
+            if page.hasMore { snapshot.layers.moreParents.insert(request.parent) }
+            else { snapshot.layers.moreParents.remove(request.parent) }
+        }
+        for row in page.rows { selectedOrder[row.id] = page.selected[row.id] }
+        snapshot.selection = selectedOrder.sorted { $0.value < $1.value }.map(\.key)
+        snapshot.primarySelection = page.primary
+        snapshot.loadState = .ready
+        publish(structureChanged: !refreshing)
+        if let child = page.revealChild, child != page.primary, snapshot.layers.rows[child]?.hasChildren == true,
+           snapshot.layers.childIDs[child] == nil {
+            enqueue(Request(parent: child, after: nil))
+        }
+    }
+}

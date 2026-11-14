@@ -9,6 +9,7 @@ final class SidebarOutlineItem: NSObject {
         case page
         case view
         case layer
+        case more
     }
 
     let role: Role
@@ -210,7 +211,7 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
         switch item.role {
         case .header: return snapshot.pages.count
         case .page: return page(item.id)?.views.count ?? 0
-        case .view, .layer: return 0
+        case .view, .layer, .more: return 0
         }
     }
 
@@ -231,7 +232,7 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
         switch item.role {
         case .header: return true
         case .page: return !(page(item.id)?.views.isEmpty ?? true)
-        case .view, .layer: return false
+        case .view, .layer, .more: return false
         }
     }
 
@@ -290,11 +291,13 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
             )
         }
         if let id = item.id {
-            cell.setAccessibilityCustomActions([
+            let canRename = canRename(id: id, role: item.role)
+            cell.nameField.isEditable = canRename
+            cell.setAccessibilityCustomActions(canRename ? [
                 NSAccessibilityCustomAction(name: SidebarStrings.rename) { [weak self] in
                     self?.beginRename(id: id, role: item.role) ?? false
                 },
-            ])
+            ] : [])
         }
         return cell
     }
@@ -304,7 +307,7 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
         switch item.role {
         case .page: return page(item.id)?.name
         case .view: return view(item.id)?.name
-        case .header, .layer: return nil
+        case .header, .layer, .more: return nil
         }
     }
 
@@ -347,8 +350,13 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
 
     // MARK: 이름 변경
 
+    private func canRename(id: SidebarStableID, role: SidebarOutlineItem.Role) -> Bool {
+        provider.validate(role == .page ? .renamePage(id, name: "") : .renameView(id, name: "")).isAllowed
+    }
+
     @discardableResult
     func beginRename(id: SidebarStableID, role: SidebarOutlineItem.Role) -> Bool {
+        guard canRename(id: id, role: role) else { return false }
         let item = role == .page ? pageItems[id] : viewItems[id]
         guard let item else { return false }
         let row = outline.row(forItem: item)
@@ -391,8 +399,7 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
               let id = item.id else {
             return false
         }
-        let command: SidebarCommand = item.role == .page ? .renamePage(id, name: "") : .renameView(id, name: "")
-        return provider.validate(command).isAllowed
+        return canRename(id: id, role: item.role)
     }
 
     func sidebarOutline(_ outline: SidebarOutlineView, perform action: SidebarOutlineAction) {
@@ -413,8 +420,7 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
         let menuItem = NSMenuItem(title: SidebarStrings.rename, action: #selector(renameFromMenu(_:)), keyEquivalent: "")
         menuItem.target = self
         menuItem.representedObject = item
-        let command: SidebarCommand = item.role == .page ? .renamePage(id, name: "") : .renameView(id, name: "")
-        menuItem.isEnabled = provider.validate(command).isAllowed
+        menuItem.isEnabled = canRename(id: id, role: item.role)
         menu.addItem(menuItem)
     }
 

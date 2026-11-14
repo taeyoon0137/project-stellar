@@ -96,6 +96,8 @@ struct SidebarLayerTree: Equatable {
     var topLevelIDs: [SidebarStableID]
     /// 로드된 부모별 자식, 표시 순서(위→아래).
     var childIDs: [SidebarStableID: [SidebarStableID]]
+    /// 더 읽을 직계 자식이 남은 부모. nil은 View root의 자식 목록입니다.
+    var moreParents: Set<SidebarStableID?> = []
     /// 이 snapshot에 포함된 모든 행.
     var rows: [SidebarStableID: SidebarLayerRow]
 
@@ -205,6 +207,8 @@ enum SidebarCommand: Equatable {
     case setFilter(String)
     /// 부모 하나의 자식 목록 요청(페이지 단위 로드).
     case loadChildren(SidebarStableID)
+    /// 이미 표시한 자식 다음 페이지 요청. nil은 View root입니다.
+    case loadMore(SidebarStableID?)
     /// 실패 상태에서 다시 시도.
     case reload
 }
@@ -249,9 +253,8 @@ enum SidebarDenialReason: Equatable {
 
 /// 사이드바가 필요로 하는 데이터와 동작의 공급자.
 ///
-/// 현재 구현은 `SidebarStubDataProvider`(placeholder)뿐입니다. 코어 연결 시에는
-/// `stellar_runtime_poll_event`로 받은 "사이드바 snapshot 변경" 이벤트에서 `snapshot`을 새로 읽고
-/// `snapshotDidChange`를 호출하며, `perform`은 command를 문서 스레드로 넘기고 즉시 반환합니다(ADR-0009).
+/// 프로젝트 창은 실제 창 문서를 읽으며 UI 검사는 fixture provider를 씁니다.
+/// provider는 새 값을 게시한 뒤 `snapshotDidChange`로 알립니다(ADR-0009).
 /// 모든 메서드는 메인 스레드에서 호출되며 2ms 예산 안에서 반환해야 합니다(아키텍처 §6.3).
 @MainActor
 protocol SidebarDataProvider: AnyObject {

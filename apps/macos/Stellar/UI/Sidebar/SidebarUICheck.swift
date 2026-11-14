@@ -1056,6 +1056,7 @@ enum SidebarUICheck {
         headerTitle: String
     ) -> (label: String, actions: [String])? {
         switch item.role {
+        case .more: return nil
         case .header:
             return (headerTitle, [])
         case .page:
