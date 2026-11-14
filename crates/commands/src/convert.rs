@@ -33,9 +33,7 @@ use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::shape::{
     evaluate_shape_path, EllipseParams, LineParams, PolygonParams, ShapeGeometry,
 };
-use stellar_document::validate::{
-    can_have_children, validate_document, DocumentValidationError, DocumentViolation,
-};
+use stellar_document::validate::can_have_children;
 
 use crate::change::{node_field_invalidation, node_keys};
 use crate::codec::{CommandCodecError, Reader, Writer};
@@ -393,13 +391,18 @@ impl ConvertShapeToPath {
 /// `replacements`로 같은 id의 node 레코드를 바꾼 **결과 문서**가 전체 validator(VI.10.1)에서 새 위반을
 /// 만들지 않는지 확인합니다. 문서를 바꾸지 않습니다.
 ///
-/// 결과 레코드를 한 번 만들어(O(N)) 검사합니다. 이미 있던 위반은 이 command의 책임이 아니므로, 결과에
-/// 위반이 있을 때만 변경 전 문서를 다시 검사해 **새로 생긴 위반**만 오류로 보고합니다(이미 잘못된 문서의
-/// 다른 부분 수정은 막지 않음).
+/// 결과 레코드를 통째로 만들어(O(N), 모든 레코드 clone) 검사하므로 command 검증 경로에서는 쓰지 않고,
+/// [`RestoreNodeRecords::validate`]의 범위 검사가 이 전체 검사와 같은 판정을 내리는지 확인하는 test oracle로만
+/// 씁니다. 이미 있던 위반은 이 command의 책임이 아니므로, 결과에 위반이 있을 때만 변경 전 문서를 다시 검사해
+/// **새로 생긴 위반**만 오류로 보고합니다.
+#[cfg(test)]
 pub(crate) fn ensure_no_new_violations(
     model: &DocumentModel,
     replacements: &[NodeRecord],
 ) -> Result<(), CommandError> {
+    use stellar_document::validate::{
+        validate_document, DocumentValidationError, DocumentViolation,
+    };
     let by_id: BTreeMap<StableId, &NodeRecord> = replacements.iter().map(|r| (r.id, r)).collect();
     let mut records = model.to_records()?;
     let mut originals: Vec<(usize, NodeRecord)> = Vec::with_capacity(by_id.len());
@@ -438,8 +441,13 @@ pub(crate) fn ensure_no_new_violations(
 ///
 /// 각 레코드의 node가 있어야 하고 부모·OrderKey는 현재와 같아야 합니다. 바뀐 종류가 자식·modifier
 /// stack·들어오는 clip 참조와 맞는지, 새 payload의 clip 대상과 path element id가 유효한지 검사합니다.
-/// View root(부모 없는 node)는 Frame이 아닌 종류로 바꿀 수 없습니다. 마지막으로 **적용 결과 문서**를
-/// 전체 validator(VI.10.1)로 검사해, 대상 검사가 놓친 불변식 위반도 변경 전에 거부합니다.
+/// View root(부모 없는 node)는 Frame이 아닌 종류로 바꿀 수 없습니다. 새로 path element가 되는 id를 다른
+/// 참조(clip·modifier, 교체 레코드의 새 clip 포함)가 가리키는 결과도 거부합니다.
+///
+/// 부모·순서·modifier stack은 바뀌지 않으므로, 전체 validator(VI.10.1)의 위반 중 이 command가 새로 만들 수
+/// 있는 것은 위 대상 검사가 모두 다룹니다(종류 변경: root·자식·modifier owner·들어오는 clip, payload 변경:
+/// clip 대상·path element id). 그래서 결과 문서 전체를 다시 만들어 검사하지 않습니다(undo·redo 비용).
+/// 같은 판정인지는 test oracle([`ensure_no_new_violations`])과 비교하는 property test가 확인합니다.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RestoreNodeRecords {
     /// 되돌릴 레코드(같은 id의 기존 node를 대체).
@@ -553,7 +561,50 @@ impl RestoreNodeRecords {
                 }
             }
         }
-        ensure_no_new_violations(model, &self.records)
+        // 새로 path element가 되는 id(교체 전에는 교체 node의 path element가 아니던 id)를 참조가 가리키면 결과
+        // 문서에서 참조 대상 종류가 어긋납니다(VI.10.1 RefTypeMismatch: clip은 Path node, modifier는 node 기대).
+        let released: BTreeSet<StableId> = replaced
+            .iter()
+            .filter_map(|id| model.payload(*id))
+            .flat_map(path_element_ids)
+            .collect();
+        for &element in claimed.difference(&released) {
+            for from in references.inbound(element) {
+                // 교체되는 node의 clip은 새 payload로 바뀌므로(아래에서 검사) modifier 참조만 남습니다.
+                let still_refers = !replaced.contains(&from)
+                    || model.modifier_stack(from).is_some_and(|stack| {
+                        stack
+                            .entries()
+                            .iter()
+                            .any(|entry| entry.payload.referenced_nodes().contains(&element))
+                    });
+                if still_refers {
+                    return Err(CommandError::ReferenceTypeMismatch {
+                        owner: from,
+                        target: element,
+                    });
+                }
+            }
+        }
+        for record in &self.records {
+            let NodePayload::Frame(frame) = &record.payload else {
+                continue;
+            };
+            let stellar_document::frame::Clipping::Path(target) = frame.clipping else {
+                continue;
+            };
+            let unchanged = matches!(
+                model.payload(record.id),
+                Some(NodePayload::Frame(current)) if current.clipping == frame.clipping
+            );
+            if claimed.contains(&target.id()) && !unchanged {
+                return Err(CommandError::ReferenceTypeMismatch {
+                    owner: record.id,
+                    target: target.id(),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn invert(&self, model: &DocumentModel) -> Result<RestoreNodeRecords, CommandError> {
@@ -1144,5 +1195,208 @@ mod tests {
         let mut child = broken.record(sid(11)).unwrap();
         child.display_name = "수정".into();
         ensure_no_new_violations(&broken, &[child]).unwrap();
+    }
+
+    /// 점 2개짜리 Path payload. element id는 `ids`에서 차례로 씁니다(모자라면 9_000번대 fresh id).
+    fn path_with(ids: &[u64]) -> NodePayload {
+        let data = PathData::new(
+            stellar_document::path::WindingRule::NonZero,
+            vec![
+                PathCommand::MoveTo(Vec2::ZERO),
+                PathCommand::LineTo(v(5.0, 5.0)),
+                PathCommand::Close,
+            ],
+        )
+        .unwrap();
+        let mut queue = ids.to_vec();
+        queue.reverse();
+        let mut fresh = 9_000u64;
+        NodePayload::Path(IdentifiedPath::assign(data, &mut || {
+            sid(queue.pop().unwrap_or_else(|| {
+                fresh += 1;
+                fresh
+            }))
+        }))
+    }
+
+    fn clip_to(target: u64) -> NodePayload {
+        NodePayload::Frame(FramePayload {
+            clipping: Clipping::Path(NodeRef::new(sid(target))),
+            ..FramePayload::default()
+        })
+    }
+
+    fn restore(records: Vec<NodeRecord>) -> RestoreNodeRecords {
+        RestoreNodeRecords { records }
+    }
+
+    #[test]
+    fn restore_rejects_new_path_elements_that_references_point_to() {
+        // 회귀(review RESTORE-BACKSTOP-PERF): 결과 문서 전체 재검사를 범위 검사로 바꾼 뒤에도, 대상 검사가 놓치던
+        // 유일한 경우 — 새 path element id를 다른 참조가 이미 가리키는 결과(RefTypeMismatch) — 를 거부합니다.
+        // 11은 없는 id 500을 clip, 13의 Boolean modifier는 없는 id 501을 참조합니다.
+        use stellar_document::modifier::{BooleanOp, ModifierEntry, ModifierPayload};
+        let mut model = small_model();
+        model.set_payload(sid(11), clip_to(500)).unwrap();
+        let mut stack = ModifierStack::new(sid(13));
+        stack
+            .insert(ModifierEntry {
+                id: ModifierId::new(sid(60)),
+                order: OrderKey::from_bytes(vec![0x10]).unwrap(),
+                kind: ModifierKind::Boolean,
+                enabled: true,
+                payload: ModifierPayload::Boolean {
+                    op: BooleanOp::Union,
+                    operands: vec![NodeRef::new(sid(501))],
+                },
+            })
+            .unwrap();
+        model.set_modifier_stack(stack).unwrap();
+        stellar_document::validate::validate_document(&model.to_records().unwrap())
+            .expect("미해결 참조만 있는 유효 문서");
+        let as_path = |ids: &[u64]| {
+            let mut record = model.record(sid(12)).unwrap();
+            record.payload = path_with(ids);
+            record
+        };
+        let cases = [
+            // 다른 Frame의 clip 대상이 path element가 됨.
+            (
+                restore(vec![as_path(&[500])]),
+                CommandError::ReferenceTypeMismatch {
+                    owner: sid(11),
+                    target: sid(500),
+                },
+            ),
+            // modifier 참조 대상이 path element가 됨.
+            (
+                restore(vec![as_path(&[501])]),
+                CommandError::ReferenceTypeMismatch {
+                    owner: sid(13),
+                    target: sid(501),
+                },
+            ),
+            // 같은 command 안 다른 교체 레코드의 새 clip이 새 path element를 가리킴.
+            (
+                restore(vec![as_path(&[502]), {
+                    let mut root = model.record(sid(10)).unwrap();
+                    root.payload = clip_to(502);
+                    root
+                }]),
+                CommandError::ReferenceTypeMismatch {
+                    owner: sid(10),
+                    target: sid(502),
+                },
+            ),
+        ];
+        for (command, expected) in cases {
+            assert!(
+                matches!(
+                    ensure_no_new_violations(&model, &command.records),
+                    Err(CommandError::InvalidResult(_))
+                ),
+                "전체 validator(oracle)도 거부하는 결과"
+            );
+            assert_eq!(command.validate(&model), Err(expected));
+        }
+        // 11 자신을 Path로 바꾸면 그 clip은 사라지므로 500을 element로 써도 됩니다(교체 node의 옛 clip은 무시).
+        let mut own = model.record(sid(11)).unwrap();
+        own.payload = path_with(&[500]);
+        let command = restore(vec![own]);
+        assert!(!matches!(
+            command.validate(&model),
+            Err(CommandError::ReferenceTypeMismatch { .. })
+        ));
+        // 아무도 참조하지 않는 fresh element는 허용합니다.
+        let command = restore(vec![as_path(&[])]);
+        command.validate(&model).unwrap();
+        ensure_no_new_violations(&model, &command.records).unwrap();
+    }
+
+    #[test]
+    fn scoped_restore_validation_never_accepts_what_the_full_validator_rejects() {
+        // 범위 검사가 결과 문서 전체 validator(test oracle)보다 느슨하지 않은지: random 문서·random 복원 후보에서
+        // validate가 통과하면 oracle도 새 위반이 없어야 합니다. 후보는 종류 변경, 기존·미해결 참조 대상을 element로
+        // 재사용하는 Path, 기존·새 element·없는 id를 clip하는 Frame을 섞습니다.
+        use stellar_document::test_support::random_document::{random_valid_document, SplitMix64};
+        let (mut accepted, mut rejected) = (0usize, 0usize);
+        for seed in 0..150u64 {
+            let model = random_valid_document(seed);
+            let mut rng = SplitMix64::new(seed ^ 0xC0FF_EE00);
+            let ids = crate::tree::node_ids(&model);
+            if ids.is_empty() {
+                continue;
+            }
+            let references = reference_index(&model);
+            // 참조 대상 후보: 기존 node, 다른 node의 path element, 미해결 참조 대상, fresh id.
+            let mut targets: Vec<StableId> = ids.clone();
+            for id in &ids {
+                targets.extend(references.outbound(*id));
+                if let Some(payload) = model.payload(*id) {
+                    targets.extend(path_element_ids(payload));
+                }
+            }
+            for _ in 0..12 {
+                let mut records = Vec::new();
+                for _ in 0..(1 + rng.below(2)) {
+                    let id = *rng.pick(&ids);
+                    if records.iter().any(|r: &NodeRecord| r.id == id) {
+                        continue;
+                    }
+                    let mut record = model.record(id).unwrap();
+                    let pick = |rng: &mut SplitMix64| *rng.pick(&targets);
+                    record.payload = match rng.below(5) {
+                        0 => NodePayload::Frame(FramePayload {
+                            clipping: Clipping::Path(NodeRef::new(pick(&mut rng))),
+                            ..FramePayload::default()
+                        }),
+                        1 => {
+                            let data = PathData::new(
+                                stellar_document::path::WindingRule::NonZero,
+                                vec![
+                                    PathCommand::MoveTo(Vec2::ZERO),
+                                    PathCommand::LineTo(v(1.0, 2.0)),
+                                ],
+                            )
+                            .unwrap();
+                            let mut fresh = 7_000_000 + rng.below(1_000);
+                            let reuse = rng.one_in(2);
+                            let first = pick(&mut rng);
+                            let mut used = false;
+                            NodePayload::Path(IdentifiedPath::assign(data, &mut || {
+                                if reuse && !used {
+                                    used = true;
+                                    first
+                                } else {
+                                    fresh += 1;
+                                    sid(fresh)
+                                }
+                            }))
+                        }
+                        2 => NodePayload::Fragment(FragmentPayload),
+                        3 => NodePayload::Text(TextPayload::empty(0)),
+                        _ => record.payload.clone(),
+                    };
+                    record.display_name = format!("후보 {}", rng.below(100));
+                    records.push(record);
+                }
+                let command = restore(records);
+                match command.validate(&model) {
+                    Ok(()) => {
+                        accepted += 1;
+                        assert_eq!(
+                            ensure_no_new_violations(&model, &command.records),
+                            Ok(()),
+                            "seed {seed}: 범위 검사가 통과시킨 후보를 전체 validator가 거부"
+                        );
+                    }
+                    Err(_) => rejected += 1,
+                }
+            }
+        }
+        assert!(
+            accepted > 200 && rejected > 200,
+            "통과 {accepted}, 거부 {rejected}"
+        );
     }
 }
