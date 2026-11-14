@@ -15,6 +15,9 @@ fn initialize(request: &ProjectCreateRequest) -> Result<u32, String> {
         [
             "HOME",
             "XDG_CONFIG_HOME",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_NOSYSTEM",
             "PATH",
             "GIT_AUTHOR_NAME",
             "GIT_AUTHOR_EMAIL",
