@@ -23,6 +23,7 @@ parser의 동작을 바꾸므로 이 ADR에 기록합니다.
 | 2026-11-14 | 보안 감사 STOR-2·3 | GC sweep 수집이 `is_dir()`(symlink를 따름)로 재귀해, commit된 symlink 디렉터리를 따라 프로젝트 밖 파일을 지우고 symlink 순환(`a -> .`, `b -> .`)에서 지수적으로 순회함 | `crates/storage/src/gc/sweep.rs` | `DirEntry::file_type`으로 고정 구조(`objects/<shard>/파일`, `generations/파일`)만 수집, symlink 디렉터리면 삭제 없음, 삭제 직전 identity 재확인 |
 | 2026-11-14 | 보안 감사 STOR-4 | chunk·manifest·current 쓰기가 `create_dir_all` 뒤 경로로 기록해 symlink 디렉터리를 따라 프로젝트 밖에 디렉터리·파일을 만듦 | 같은 세 파일 | 구성 요소별 `lstat`·한 단계 `create_dir`, temp 생성·rename 직전 identity 재확인, 기존 파일 검증은 `O_NOFOLLOW` |
 | 2026-11-14 | 보안 감사 STOR-5 | atomic write가 temp를 `O_TRUNC`로 열어, 예측 가능한 temp 이름에 심어 둔 symlink를 따라 프로젝트 밖 파일을 덮어씀 | `crates/storage/src/atomic_file.rs` | temp는 `create_new`로만 만들고 이미 있는 이름은 건너뜀 |
+| 2026-11-14 | 보안 감사 STOR-6 | 알 수 없는 hash 알고리즘 오류가 입력의 `:` 앞부분을 길이 제한 없이 메시지에 넣어, 비밀 파일 내용이 current pointer·envelope 오류로 로그·UI에 남음 | `crates/storage/src/hash/mod.rs` | `Display`·`Debug`에 원문 대신 byte 길이만 |
 
 XVI.6.2 발견의 원인: parse는 hex 부분의 **byte 길이**(64)만 확인한 뒤 2 byte 단위로 slice합니다.
 hex 자리에 2·3·4 byte 문자가 있으면 byte 길이는 맞아도 slice 경계가 문자 안쪽에 떨어져 panic합니다
@@ -71,6 +72,8 @@ release profile은 `panic = "abort"`(II.1.3)이므로 손상·조작된 chunk �
      따라가지도 지우지도 않습니다. `design`·`design/objects`·`design/generations`·shard 이름 항목이
      symlink면 아무 것도 지우지 않고 그 경로를 `carry_over`에 기록합니다(반환 타입을 바꾸지 않기 위해
      오류 대신 이월). 삭제 직전에 파일과 위 디렉터리들의 identity를 다시 확인합니다.
+   - hash 문자열 오류 출력(STOR-6): `ParseContentHashError::UnknownAlgorithm`의 `Display`와 `Debug`는
+     입력 이름 대신 byte 길이만 보여 줍니다. 공개 field(`name`)와 비교 동작은 그대로입니다.
    - 공통 검사는 crate 내부 `fs_guard` 모듈에 둡니다(공개 API 아님). 거부 이유는 `Io` variant의
      `std::io::Error`에 담깁니다.
    - atomic write temp(STOR-5): `create_new`(`O_CREAT`·`O_EXCL`, 마지막 구성 요소 symlink를 따르지
@@ -105,21 +108,34 @@ release profile은 `panic = "abort"`(II.1.3)이므로 손상·조작된 chunk �
 - 디렉터리 fd 기준 연산(`openat`·`renameat`)이 std에 없어, 디렉터리를 다시 확인한 직후와 경로 기반
   syscall 사이의 짧은 창은 남습니다. commit된(정적) symlink는 모두 차단하고, 그 창에 디렉터리를
   교체하는 동시 공격자만 남습니다. macOS 밖 Unix는 flag 없이 열기 전 `stat`으로 종류를 확인합니다.
+- (STOR-6) 알 수 없는 알고리즘 오류 문구가 이름 대신 길이를 보여 주므로, 진단에서 어떤 알고리즘
+  이름이었는지는 오류 값의 `name` field로만 알 수 있습니다.
 - (STOR-5) temp 이름 16개가 모두 이미 있으면 저장 단계가 `AlreadyExists`로 실패합니다. 이전에는 그
   항목을 열어 덮어썼습니다. 이름 형식(`.<이름>.tmp-<pid>-<n>`)은 그대로입니다.
 
 ## Compatibility
 
 - 파일 포맷·문자열 형식·공개 API·FFI 변경 없음.
+- (STOR) 공개 오류 enum의 variant와 함수 signature는 그대로이고, 새 거부는 기존 `Io` variant로
+  보고합니다. manifest 64 MiB·chunk 256 MiB 상한은 형식 변경이 아니라 읽기·쓰기 수용 범위의
+  상한입니다. temp 이름 형식은 그대로입니다.
 
 ## Performance
 
 - 성능 예산 영향 없음(hash parse당 64자 추가 순회 1회).
+- (STOR) 저장소 파일 읽기마다 `fstat` 1회, 쓰기마다 저장소 디렉터리 구성 요소 `lstat`(확인·temp 생성
+  직전·rename 직전), GC 삭제 후보마다 `lstat` 몇 회가 늘어납니다. 쓰기의 fsync에 비해 작아 성능 예산
+  영향은 없습니다.
 
 ## Security
 
 - §37.2 파서 경계: 신뢰되지 않은 프로젝트의 chunk·manifest·current pointer·파일 이름이 앱을
   종료시키는 경로(서비스 거부)를 제거합니다.
+- 보안 감사 STOR 수정: Git으로 받은 프로젝트 폴더의 commit된 symlink·장치·FIFO·거대 파일이 저장소
+  열기를 멈추거나 메모리를 소진시키는 경로(STOR-1), 쓰기·GC 삭제를 프로젝트 밖으로 돌리는 경로
+  (STOR-2·4), GC를 끝나지 않게 하는 경로(STOR-3), 예측 가능한 temp 이름으로 밖의 파일을 덮어쓰는
+  경로(STOR-5), 파일 원문을 오류 문구로 노출하는 경로(STOR-6)를 막습니다. 남는 한계는 Consequences의
+  디렉터리 교체 경합입니다.
 
 ## Migration
 

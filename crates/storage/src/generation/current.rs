@@ -352,6 +352,22 @@ mod tests {
         assert_eq!(read_current_pointer(&dir.path).unwrap(), hash);
     }
 
+    /// 보안 감사 STOR-6: 형식 오류 메시지(watcher가 UI·로그로 넘김)에 파일 원문을 넣지 않습니다.
+    #[test]
+    fn invalid_format_message_does_not_echo_file_contents() {
+        let dir = TempDir::new();
+        let path = current_pointer_path(&dir.path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"tok_SECRETVALUE_0123456:x\n").unwrap();
+        let err = read_current_pointer(&dir.path).unwrap_err();
+        assert!(
+            matches!(err, CurrentPointerError::InvalidFormat { .. }),
+            "{err:?}"
+        );
+        assert!(!err.to_string().contains("SECRET"), "{err}");
+        assert!(!format!("{err:?}").contains("SECRET"), "{err:?}");
+    }
+
     /// 보안 감사 STOR-4: `design`이 symlink면 따라가지 않고 쓰기를 거부합니다(프로젝트 밖에 쓰지 않음).
     #[cfg(unix)]
     #[test]
