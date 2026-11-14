@@ -21,5 +21,8 @@ pub mod web;
 /// Apple adapter (XXII.3).
 pub mod apple;
 
+/// Android adapter (XXII.4).
+pub mod android;
+
 #[cfg(test)]
 pub(crate) mod fixture;

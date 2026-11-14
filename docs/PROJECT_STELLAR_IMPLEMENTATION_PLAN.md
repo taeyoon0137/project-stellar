@@ -2194,7 +2194,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XXII.4.1 | `[ ]` | Android TargetProfile에 맞춰 Compose output을 생성합니다. | golden source/compile fixture. | XXII.1.1 |
-| XXII.4.2 | `[ ]` | layout, control semantics, accessibility를 Compose API로 매핑합니다. layout 변환과 진단은 XXII.1.4 matrix 규칙만 씁니다. | compile/static fixture. | Phase X, IX.8.6, XXII.1.4 |
+| XXII.4.2 | `[~]` | layout, control semantics, accessibility를 Compose API로 매핑합니다. layout 변환과 진단은 XXII.1.4 matrix 규칙만 씁니다. | compile/static fixture. | Phase X, IX.8.6, XXII.1.4 |
 | XXII.4.3 | `[ ]` | Context를 CompositionLocal로, 상태 머신과 `MotionSpec`을 Compose 상태·animation API로 내보냅니다. 값 변경 빈도에 따라 추적형과 비추적형 local을 고르는 규칙을 고정합니다. 표현할 수 없는 항목은 XXII.1.7 규칙에 따라 진단합니다. CompositionLocal이 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11). | compile/static fixture, local 선택 규칙 fixture 정확, Context slot fixture 결과가 XXX.7.4와 같음. | XXII.4.1, XXII.1.5, XXII.1.6, XXII.1.7 |
 
 ### XXII.5 결정론·출력 정책
