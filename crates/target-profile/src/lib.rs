@@ -27,3 +27,9 @@ pub mod builtin;
 
 /// 선택 profile의 생성 가능 여부와 비활성화 사유 조회 (IX.10.6).
 pub mod query;
+
+/// 선택 profile의 Binding 환경 입력 (IX.10.7).
+pub mod environment;
+
+/// 공통 구조 + profile 희소 override resolver (IX.10.7).
+pub mod overrides;
