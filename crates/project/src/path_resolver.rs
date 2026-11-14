@@ -565,13 +565,12 @@ impl PathResolver {
     /// 프로젝트 root부터 트리를 순회합니다. 디렉터리 symlink(내부·외부)를 따라 내려가지만 무한
     /// 순회하지 않고, 같은 실제 디렉터리의 목록은 **한 번만** 읽습니다.
     ///
-    /// - `include(path)`가 `false`인 항목(프로젝트 상대 경로)은 목록에 넣지 않고 내려가지도 않습니다.
-    ///   **`include`는 첫 구성 요소(최상위 이름)만 보고 판단해야 합니다.** 공유 디렉터리의 하위 항목은
-    ///   처음 도달한 경로 하나로만 나오므로(아래 [`WalkIssue::AlreadyTraversed`]), 더 깊은 경로로 거르는
-    ///   `include`는 어느 경로가 먼저 도달했는지에 따라 다른 별칭 경로의 하위 항목까지 함께 사라지게
-    ///   합니다. 최상위 이름으로 거르면 포함된 최상위 아래에서는 하위 항목이 모두 포함되므로 공유
-    ///   디렉터리의 하위 항목 집합이 도달 순서와 무관합니다(현재 호출자 watcher capture·외부 target
-    ///   계산은 모두 최상위 이름으로 거릅니다).
+    /// - `include(name)`은 root 바로 아래 항목의 이름(최상위 이름)으로**만** 불립니다. `false`면 그
+    ///   항목과 그 아래 전체를 목록에 넣지 않고 내려가지도 않습니다. 더 깊은 경로는 `include`에 넘기지
+    ///   않습니다(코드로 강제). 공유 디렉터리의 하위 항목은 처음 도달한 경로 하나로만 나오므로(아래
+    ///   [`WalkIssue::AlreadyTraversed`]), 더 깊은 경로로 거를 수 있으면 어느 경로가 먼저 도달했는지에
+    ///   따라 다른 별칭 경로의 하위 항목까지 함께 사라집니다. 최상위 이름으로만 거르면 포함된 최상위
+    ///   아래의 하위 항목은 모두 포함되므로 공유 디렉터리의 하위 항목 집합이 도달 순서와 무관합니다.
     /// - 현재 순회 경로의 조상 디렉터리를 다시 가리키는 디렉터리는 [`WalkIssue::DirectoryCycle`]로
     ///   표시하고 들어가지 않습니다.
     /// - 이미 다른 경로로 목록을 읽은 실제 디렉터리(symlink DAG의 공유 디렉터리)는 항목으로 넣되
@@ -634,14 +633,15 @@ impl PathResolver {
                     });
                     continue;
                 };
+                // include는 최상위 이름에만 적용합니다(문서: 도달 순서와 무관한 공유 하위 항목).
                 let path = if dir.path.is_empty() {
+                    if !include(name) {
+                        continue;
+                    }
                     name.to_string()
                 } else {
                     format!("{}/{name}", dir.path)
                 };
-                if !include(&path) {
-                    continue;
-                }
                 let resolved = match self.resolve(&path) {
                     Ok(resolved) => resolved,
                     Err(error) => {
@@ -701,7 +701,8 @@ impl PathResolver {
 
     /// 트리를 순회해 깨진 링크·순환 링크를 표시용 진단으로 모읍니다(경로 순).
     ///
-    /// 링크는 삭제·수정하지 않습니다. `include`는 [`PathResolver::walk_tree`]와 같습니다.
+    /// 링크는 삭제·수정하지 않습니다. `include`는 [`PathResolver::walk_tree_with`]와 같습니다(최상위
+    /// 이름만 받음).
     pub fn symlink_diagnostics(
         &self,
         include: impl Fn(&str) -> bool,
@@ -1602,6 +1603,36 @@ mod tests {
         assert!(walk.entries.iter().all(|e| !e.path.starts_with(".git")));
         assert!(walk.issues.is_empty());
         assert_eq!(walk.entries.len(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn include_sees_only_top_level_names_so_shared_children_do_not_depend_on_arrival_order() {
+        use std::cell::RefCell;
+        use std::os::unix::fs::symlink;
+        let fx = fixture();
+        // 외부 `shared`를 두 별칭(mm이 먼저 도달)으로 가리킴.
+        symlink(fx.outside.join("shared"), fx.project.join("zz")).unwrap();
+        symlink(fx.outside.join("shared"), fx.project.join("mm")).unwrap();
+        let resolver = PathResolver::new(&fx.project).unwrap();
+        let seen = RefCell::new(Vec::new());
+        let all = resolver
+            .walk_tree(|path| {
+                seen.borrow_mut().push(path.to_string());
+                true
+            })
+            .unwrap();
+        let seen = seen.into_inner();
+        assert!(!seen.is_empty());
+        // 계약은 코드로 강제됩니다: include는 최상위 이름만 받습니다(더 깊은 경로로 거를 수 없음).
+        assert!(
+            seen.iter().all(|path| !path.contains('/')),
+            "include가 하위 경로를 받음: {seen:?}"
+        );
+        // 그래서 하위 경로를 거르려는 include도 먼저 도달한 별칭(mm)의 공유 하위 항목을 지우지 못합니다.
+        let deeper = resolver.walk_tree(|path| path != "mm/asset.bin").unwrap();
+        assert_eq!(deeper.entries, all.entries);
+        assert!(all.entries.iter().any(|e| e.path == "mm/asset.bin"));
     }
 
     /// 순회가 목록을 읽은 디렉터리(내용 접근 기록 중 디렉터리만).

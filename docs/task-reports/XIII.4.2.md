@@ -66,3 +66,16 @@
   같은 실제 디렉터리를 여러 링크로 가리키는 DAG는 링크 수만큼 다시 방문합니다(유한).
 - 해석과 실제 읽기 사이에 링크가 바뀌는 경쟁은 막지 않습니다(읽기는 해석된 실제 경로를 엽니다).
 - Windows symlink·junction fixture는 실행하지 않았습니다(ADR-0006, `cfg(unix)` 테스트만 실행).
+
+## 후속 수정(리뷰 반영): `include`는 최상위 이름만 받음
+
+- **문제**: 같은 실제 디렉터리를 한 번만 읽는 순회(`WalkIssue::AlreadyTraversed`)에서 공유 디렉터리의 하위
+  항목은 처음 도달한 경로 하나로만 나옵니다. `include`가 더 깊은 경로로 거르면 어느 별칭 경로가 먼저
+  도달했는지에 따라 다른 별칭의 하위 항목까지 사라질 수 있었습니다. 이전 수정(da58da7)은 "최상위 이름만 보고
+  판단해야 한다"는 문서만 추가해, 이 규칙을 어기는 호출자를 막거나 검출하지 못했습니다.
+- **수정**(`crates/project/src/path_resolver.rs`): `walk_tree_with`가 `include`를 root 바로 아래 항목의
+  이름으로만 부르고, 더 깊은 항목에는 부르지 않습니다(포함된 최상위 아래는 모두 포함). 기존 호출자(watcher
+  capture·외부 target 계산·테스트)는 모두 최상위 이름으로 걸렀으므로 결과가 같습니다.
+- **검증**: `include_sees_only_top_level_names_so_shared_children_do_not_depend_on_arrival_order`(수정 전
+  `include`가 `data/real.txt`·`mm/asset.bin` 등 하위 경로를 받아 실패, 수정 후 최상위 이름만 받고 하위 경로
+  필터가 먼저 도달한 별칭 `mm`의 공유 하위 항목을 지우지 않음), 기존 path resolver·watcher unit 테스트 통과.
