@@ -38,7 +38,7 @@
 
 ## 일반 마우스 휠 호스트 검증
 
-macOS 호스트에서 Debug 앱을 다시 빌드하고 `StellarMac --session-commands-check`에
+macOS 호스트에서 Debug 앱을 다시 빌드하고 앱의 `--session-commands-check`에
 같은 저장 fixture를 전달해 123개 검사를 통과했습니다. 합성 AppKit 일반 휠 입력으로
 수직·수평·양축 이동을 50%와 100% 배율에서 검사했습니다. 창 camera 이동량은 각 축에서
 `-scrollingDelta × 10 / zoom`이었고 배율과 다른 창의 camera는 그대로였습니다.

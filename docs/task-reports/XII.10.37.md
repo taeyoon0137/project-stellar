@@ -1,9 +1,9 @@
-# 작업 보고서: XII.10.37 정밀 스크롤의 창별 팬 통합
+# 작업 보고서: XII.10.37 스크롤의 창별 팬 통합
 
 ## WBS
 
 - WBS: XII.10.37
-- 상태: `[~]` — 수식키 없는 정밀 스크롤과 관성 delta의 창별 camera 연결을 부분 구현했습니다.
+- 상태: `[~]` — 수식키 없는 정밀 스크롤·일반 휠과 관성 delta의 창별 camera 연결을 부분 구현했습니다.
 - 통합 기준: `757f246b9ff823e0b42372ad4d0fbecf5da08914`
 - 보존한 후보: `f27f182aea089a7d70f3e24d681661386787811a` (분기 기준 `bc5b2db2`)
 - 후보 작업트리의 clean 상태, Git 객체·실제 diff·호스트 검증 기록을 확인하고 merge했습니다.
@@ -68,3 +68,47 @@ T0→T5, Metal Present, 실제 장치 입력 지연은 측정하지 않았습니
 - `QueueFull`로 접수 거부된 delta의 재시도는 없습니다. 공용 입력 큐로의 fallback을 창별 팬 복구로 해석하지 않습니다.
 - 팬 요청이 미완료인 상태의 실제 창 닫기와 공용 입력 큐의 중복 전달 여부는 직접 교차 검증하지 않았습니다.
 - 창별 camera의 재실행 복구와 비 macOS 플랫폼은 이번 검증 대상이 아닙니다.
+
+## 일반 마우스 휠 후속 통합 — 2026-11-14
+
+`f00505680ec5843636fcdc866c725f5b52aa347f` 위에
+`31b56c8380c4269f30794327e028d17098cd7ac3`의 이력을 보존해 병합했습니다.
+후보의 clean 상태와 실제 diff·호스트 검증 기록을 확인했으며 충돌은 없었습니다.
+아래는 앞선 정밀 스크롤 검증과 별도로 통합 소스에서 재실행한 결과입니다.
+
+### 변경과 지원 범위
+
+- `ShellProjectWindow.swift`: 수식키 없는 일반 휠 한 단위를 10 point로 환산해 창 session에 전달합니다.
+  정밀 스크롤·관성의 배율과 AppKit이 적용한 시스템 방향은 그대로 유지합니다.
+- `ShellSessionCommandsCheck.swift`: 수직·수평·양축 일반 휠을 50%·100% 배율에서 실제 CanvasView에 전달합니다.
+  camera 이동량 `-scrollingDelta × 10 / zoom`, 다른 창과 배율, 문서 revision·history·dirty·저장 bytes 보존을 검사합니다.
+  일반·정밀 입력 모두 수식키 조합은 팬 handler가 소비하지 않습니다.
+- `docs/adr/ADR-0028-window-session-shell-surface.md`, `docs/status/canvas-scroll-pan.md`: 일반 휠을 제외한다는
+  옛 설명을 실제 동작에 맞췄습니다. 독립 코드 리뷰에서 기능 차단 결함은 없었고 ADR 설명 불일치를 보완했습니다.
+- XII.10.37은 계속 부분 구현입니다. 미구현 제스처나 전체 성능 계약을 완료로 올리지 않았습니다.
+
+### 통합 검증
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test --locked --offline -p stellar-ffi` | 0, 71 passed |
+| `cargo test --locked --offline -p stellar-runtime --lib pan_` | 0, 2 passed / 93 filtered out; 창 격리·scene camera·저장 bytes 보존 |
+| `./scripts/macos/smoke.sh` | 0, Debug 빌드 및 전체 smoke OK; session-commands 123, window-session 68, window-close 98, key-mapping 101 |
+| `cargo fmt --all -- --check` | 0 |
+| `cargo run --locked --offline -q -p xtask -- generate-ffi-header --check` | 0, 생성 헤더 일치 |
+| `cargo run --locked --offline -q -p xtask -- sync-plan --check`, `validate-task-status`, `validate-adr`, `validate-crate-graph` | 각각 0 |
+| `cargo run --locked --offline -q -p xtask -- validate-task-report docs/task-reports/XII.10.37.md` | 0 |
+| `git diff --check`, `git diff --cached --check` | 각각 0 |
+
+전체 smoke는 Git 패널 stub 검사와 별도로 실제 코어의 신뢰 철회·취소·stale 클릭 거부,
+현재 이름 Stage·index 재조회 및 같은 청크의 잠금 변경이 worktree에만 남는 검사도 통과했습니다.
+이번 Swift 경로 변경에서 전체 Rust workspace 검증은 재실행하지 않았습니다.
+기준 원격 `f0050568`의 [bootstrap 실행](https://github.com/taeyoon0137/project-stellar/actions/runs/43590407104)은
+성공했으며 이 결과를 새 통합 커밋의 원격 CI로 간주하지 않습니다.
+
+### 남은 범위
+
+합성 AppKit 입력과 실제 코어 camera를 검사했습니다. 물리 마우스의 조작감, 가시 Frame 렌더·이동,
+Metal Present·T0→T5·Windows는 이번 단위에서 검증하지 않았습니다.
+별도 렌더링·드래그 통합의 팬 완료 화면 갱신과 제스처 취소 연결은 그 소유 브랜치에서 보존합니다.
+`QueueFull` 재시도·창별 camera 재실행 복구·핀치·수식키 줌 등 기존 한계는 유지합니다.
