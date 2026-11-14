@@ -1270,7 +1270,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XII.6.1 | `[ ]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
+| XII.6.1 | `[~]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
 | XII.6.2 | `[x]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
 | XII.6.3 | `[ ]` | Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다. | local fixture remote clone 통과. | IV.6.4 |
 | XII.6.4 | `[~]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
