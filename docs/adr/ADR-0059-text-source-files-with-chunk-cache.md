@@ -41,6 +41,7 @@ Accepted (2026-11-14). 제품 책임자가 결정했습니다("바꾸는 게 나
 - [text-view-source-v1](../spec/text-view-source-v1.md): 기존 제한 YAML 파서·writer를 재사용하며 `.stellar.yaml` 파일 하나에 단일 문서·페이지·View와 Frame/Fragment를 기록합니다. V.10.4의 첫 부분은 Text 본문·문단 style index·style run의 순서와 범위까지 보존하며 지원 범위를 확장합니다. 모든 Frame 속성은 사람이 읽는 값으로 기록하고, 지원하지 않는 node·modifier·필드·schema는 오류로 거부합니다.
 - `stellar text-source export <프로젝트> <새 파일>`은 실제 기존 generation을 읽고 재직렬화 chunk pointer 집합 전체가 같을 때만 별도 파일을 만듭니다. 모르는 optional chunk도 묵시적으로 버리지 않습니다. `check <파일>`은 실제 DocumentModel을 재구축해 읽기 전용 검증합니다.
 - V.10.6의 첫 부분으로 `text-source apply <파일> <입력|-> [--dry-run]`을 연결합니다. 실제 원본 hash·문서 ID 확인, 필수 저장 잠금, 기존 command transaction·semantic diff, 미지원 결과의 dry-run 거부, 단일 파일 조건부 저장을 사용합니다. 전체 파일 감시·dirty 재로드·병합·여러 파일 journal의 완료를 뜻하지 않습니다.
+- V.10.4의 컴포넌트 원본 첫 범위는 독립 파일 하나에 빈 인터페이스와 root Frame을 기록합니다. 이름과 StableId 유래 고정 접미사로 파일을 찾고, 전체 StableId로 정의와 root를 조립합니다. 기존 generation의 전체 라이브러리를 변환하지 않습니다. [컴포넌트 원본 v1](../spec/component-source-v1.md)
 - 기본 앱·CLI 저장 경로는 그대로 둡니다. 이 파일은 전체 프로젝트 변환 완료의 표식이 아닙니다. 다중 페이지·View/전체 의미는 V.10.4, journal은 V.10.5, 외부 변경/명령 연결은 V.10.6, 기본 전환과 성능 측정은 V.10.7입니다.
 - 단일 파일은 기존 atomic writer와 handle 검사를 재사용합니다(`crates/storage/source_file`). 새 파일의 기존 대상은 거부하고, 수정 저장은 열린 bytes hash를 다시 검사합니다. 원본 읽기의 사용자 symlink 허용은 §19.3을 유지하고, 원자 쓰기와 cache 경로는 symlink를 따라 교체하지 않습니다.
 - 선택적 `open_with_cache`는 원본을 검증한 뒤 기존 ChunkId·envelope로 `.stellar/cache/text-source-v1/<source-hash>/`를 재생성합니다. 누락·손상은 재생성, cache I/O 실패는 원본 열기 성공과 별도 상태로 반환합니다. 매번 원본을 해석하므로 빠른 열기 성능 완료로 보지 않습니다.

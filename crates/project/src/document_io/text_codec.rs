@@ -21,15 +21,15 @@ use stellar_document::validate::validate_document;
 use super::text_source::TextSourceError;
 use crate::yaml::{load_restricted, write_canonical_checked, YamlValue};
 
-fn invalid(error: impl Display) -> TextSourceError {
+pub(super) fn invalid(error: impl Display) -> TextSourceError {
     TextSourceError::Invalid(error.to_string())
 }
 
-fn scalar(value: impl Display) -> YamlValue {
+pub(super) fn scalar(value: impl Display) -> YamlValue {
     YamlValue::scalar(value.to_string())
 }
 
-fn mapping<const N: usize>(fields: [(&str, YamlValue); N]) -> YamlValue {
+pub(super) fn mapping<const N: usize>(fields: [(&str, YamlValue); N]) -> YamlValue {
     YamlValue::Mapping(
         fields
             .into_iter()
@@ -148,7 +148,7 @@ fn text_payload(payload: &TextPayload) -> Result<YamlValue, TextSourceError> {
     ]))
 }
 
-fn node(record: &NodeRecord) -> Result<YamlValue, TextSourceError> {
+pub(super) fn node(record: &NodeRecord) -> Result<YamlValue, TextSourceError> {
     let (kind, payload) = match &record.payload {
         NodePayload::Frame(value) => ("frame", frame(value)),
         NodePayload::Fragment(_) => ("fragment", scalar("none")),
@@ -228,7 +228,7 @@ pub fn encode(model: &DocumentModel) -> Result<String, TextSourceError> {
     write_canonical_checked(&value).map_err(invalid)
 }
 
-fn fields(value: &YamlValue, required: &[&str]) -> Result<(), TextSourceError> {
+pub(super) fn fields(value: &YamlValue, required: &[&str]) -> Result<(), TextSourceError> {
     let pairs = value
         .as_mapping()
         .ok_or_else(|| invalid("mapping이 필요합니다"))?;
@@ -246,19 +246,19 @@ fn fields(value: &YamlValue, required: &[&str]) -> Result<(), TextSourceError> {
     Ok(())
 }
 
-fn field<'a>(value: &'a YamlValue, key: &str) -> Result<&'a YamlValue, TextSourceError> {
+pub(super) fn field<'a>(value: &'a YamlValue, key: &str) -> Result<&'a YamlValue, TextSourceError> {
     value
         .get(key)
         .ok_or_else(|| invalid(format!("필수 키 누락: {key}")))
 }
 
-fn text(value: &YamlValue) -> Result<&str, TextSourceError> {
+pub(super) fn text(value: &YamlValue) -> Result<&str, TextSourceError> {
     value
         .as_scalar()
         .ok_or_else(|| invalid("scalar가 필요합니다"))
 }
 
-fn parse<T: FromStr>(value: &YamlValue) -> Result<T, TextSourceError> {
+pub(super) fn parse<T: FromStr>(value: &YamlValue) -> Result<T, TextSourceError> {
     text(value)?
         .parse()
         .map_err(|_| invalid("scalar 값 형식이 잘못되었습니다"))
@@ -413,7 +413,7 @@ fn parse_text_payload(value: &YamlValue) -> Result<TextPayload, TextSourceError>
     .map_err(invalid)
 }
 
-fn parse_node(value: &YamlValue) -> Result<NodeRecord, TextSourceError> {
+pub(super) fn parse_node(value: &YamlValue) -> Result<NodeRecord, TextSourceError> {
     fields(
         value,
         &[
