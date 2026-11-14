@@ -12,3 +12,6 @@ pub mod profile;
 
 /// profile 종류별 필드와 Target Profile entry (IX.10.2).
 pub mod spec;
+
+/// `stellar.yaml` 프로젝트 profile 목록과 기본 profile (IX.10.3).
+pub mod manifest;
