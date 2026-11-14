@@ -12,6 +12,9 @@ pub mod stroke;
 /// tessellation worker pool과 stale revision 결과 폐기 (XI.6.3).
 pub mod tessellation_worker;
 
+/// glyph outline/bitmap atlas interface와 key (XI.6.4).
+pub mod glyph;
+
 /// thread 역할 표시 (XI.7.1).
 pub mod thread_role;
 
