@@ -806,6 +806,46 @@ pub unsafe extern "C" fn stellar_project_open(
     path_len: usize,
     out_request: *mut u64,
 ) -> StellarStatus {
+    unsafe {
+        project_path_request(
+            handle,
+            path,
+            path_len,
+            out_request,
+            AppRuntime::open_project,
+        )
+    }
+}
+
+/// 새 폴더로 프로젝트 생성 요청. 결과는 PROJECT_CREATED 또는 REQUEST_FAILED입니다.
+///
+/// # Safety
+/// path와 out_request의 조건은 stellar_project_open과 같습니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_project_create(
+    handle: u64,
+    path: *const u8,
+    path_len: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    unsafe {
+        project_path_request(
+            handle,
+            path,
+            path_len,
+            out_request,
+            AppRuntime::create_project,
+        )
+    }
+}
+
+unsafe fn project_path_request(
+    handle: u64,
+    path: *const u8,
+    path_len: usize,
+    out_request: *mut u64,
+    submit: fn(&AppRuntime, &std::path::Path) -> Result<RequestId, RequestError>,
+) -> StellarStatus {
     ffi_guard(move || {
         let Ok(mut reg) = registry().lock() else {
             return StellarStatus::Internal;
@@ -821,7 +861,7 @@ pub unsafe extern "C" fn stellar_project_open(
             }
         };
         let result = match rt.app() {
-            Ok(app) => app.open_project(std::path::Path::new(&root)),
+            Ok(app) => submit(app, std::path::Path::new(&root)),
             Err(status) => return status,
         };
         unsafe { rt.finish_request(result, out_request) }
@@ -1351,6 +1391,7 @@ mod tests {
             ("STELLAR_EVENT_PROJECT_OPENED", event_kind::PROJECT_OPENED),
             ("STELLAR_EVENT_PROJECT_TRUST", event_kind::PROJECT_TRUST),
             ("STELLAR_EVENT_GIT_NAMES", event_kind::GIT_NAMES),
+            ("STELLAR_EVENT_PROJECT_CREATED", event_kind::PROJECT_CREATED),
             ("STELLAR_EVENT_PROJECT_CLOSED", event_kind::PROJECT_CLOSED),
             ("STELLAR_EVENT_DOCUMENT_OPENED", event_kind::DOCUMENT_OPENED),
             ("STELLAR_EVENT_DOCUMENT_CLOSED", event_kind::DOCUMENT_CLOSED),
@@ -1412,6 +1453,7 @@ mod tests {
             ("HISTORY_UNAVAILABLE", RequestFailure::HistoryUnavailable),
             ("INVALID_VIEWPORT", RequestFailure::InvalidViewport),
             ("TRUST_UNAVAILABLE", RequestFailure::TrustUnavailable),
+            ("PROJECT_CREATE_FAILED", RequestFailure::ProjectCreateFailed),
             ("GIT_NAMES_UNAVAILABLE", RequestFailure::GitNamesUnavailable),
         ];
         assert_eq!(
@@ -1629,6 +1671,85 @@ mod tests {
                 unsafe { stellar_last_error(h, buf.as_mut_ptr(), buf.len(), &mut written) };
             assert_eq!(status, StellarStatus::Ok);
             String::from_utf8(buf[..written].to_vec()).unwrap()
+        }
+
+        #[test]
+        fn create_via_abi_reopens_in_an_editable_window_and_preserves_existing_folder() {
+            use crate::window_session::{
+                stellar_window_session_open, stellar_window_view_info, StellarWindowViewInfo,
+            };
+            // 실제 앱과 같은 프로세스 환경에서 사용자 전역 Git 설정·서명·hook과 분리합니다.
+            const FIXTURE_HOME: &str = "STELLAR_CREATE_ABI_FIXTURE_HOME";
+            let parent = TempDir::new("new-project");
+            if std::env::var_os(FIXTURE_HOME).is_none() {
+                let output = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args(["--exact", "tests::project_session::create_via_abi_reopens_in_an_editable_window_and_preserves_existing_folder", "--nocapture"])
+                    .env_clear()
+                    .env("HOME", &parent.path)
+                    .env("XDG_CONFIG_HOME", &parent.path)
+                    .env(FIXTURE_HOME, "1")
+                    .output().unwrap();
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                assert!(
+                    output.status.success() && stdout.contains("1 passed"),
+                    "{stdout} {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                return;
+            }
+            let path = parent.path.join("새 프로젝트");
+            let bytes = path.as_os_str().as_encoded_bytes();
+            let h = create();
+            let mut request = 0;
+            let create_at = |request: &mut u64| unsafe {
+                stellar_project_create(h, bytes.as_ptr(), bytes.len(), request)
+            };
+            assert_eq!(create_at(&mut request), StellarStatus::Ok);
+            let RuntimeEvent::ProjectCreated {
+                request: done,
+                git_state,
+            } = next_runtime_event(h)
+            else {
+                panic!("create event expected");
+            };
+            assert_eq!(done.0, request);
+            assert!(git_state <= 3);
+            assert_eq!(state(h).project_count, 0);
+            assert_eq!(open_project(h, bytes).0, StellarStatus::Ok);
+            let RuntimeEvent::ProjectOpened { project, name, .. } = next_runtime_event(h) else {
+                panic!("open event expected");
+            };
+            assert_eq!(name, "새 프로젝트");
+            assert_eq!(
+                unsafe { stellar_window_session_open(h, project.0, &mut request) },
+                StellarStatus::Ok
+            );
+            let RuntimeEvent::WindowSessionOpened {
+                session,
+                document_id,
+                generation,
+                ..
+            } = next_runtime_event(h)
+            else {
+                panic!("window event expected");
+            };
+            assert_ne!(document_id, StableId::NIL);
+            assert_eq!(generation, 1);
+            let mut info = StellarWindowViewInfo::default();
+            assert_eq!(
+                unsafe { stellar_window_view_info(h, session.0, &mut info) },
+                StellarStatus::Ok
+            );
+            assert_eq!((info.has_view, info.tab_count), (1, 1));
+            assert_eq!(create_at(&mut request), StellarStatus::Ok);
+            assert!(matches!(
+                next_runtime_event(h),
+                RuntimeEvent::RequestFailed {
+                    failure: RequestFailure::ProjectCreateFailed,
+                    ..
+                }
+            ));
+            assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
         }
 
         #[test]

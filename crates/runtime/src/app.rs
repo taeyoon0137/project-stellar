@@ -103,6 +103,7 @@
 //! | `0x010A` | WindowSessionSaved | request u64, session u64, generation u64, written u8 |
 //! | `0x010B` | ProjectTrust | request u64, project u64, trusted u8 |
 //! | `0x010C` | GitNames | request u64, session u64, rows u32, other_changes u8, staged u8 |
+//! | `0x010D` | ProjectCreated | request u64, git_state u32 |
 //!
 //! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다.
 
@@ -123,6 +124,7 @@ use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
+mod create;
 mod git_names;
 pub use git_names::{GitNameRow, SelectionOperation};
 
@@ -166,6 +168,8 @@ pub mod event_kind {
     pub const PROJECT_TRUST: u32 = 0x010B;
     /// 저장된 노드 이름의 Git 비교 목록이 준비됐거나 한 건을 Stage했습니다.
     pub const GIT_NAMES: u32 = 0x010C;
+    /// 새 프로젝트 디스크 생성이 끝났습니다.
+    pub const PROJECT_CREATED: u32 = 0x010D;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,11 +254,13 @@ pub enum RequestFailure {
     TrustUnavailable,
     /// 저장된 이름의 Git 조회나 선택 Stage 실패.
     GitNamesUnavailable,
+    /// 새 프로젝트 생성 실패.
+    ProjectCreateFailed,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 21] = [
+    pub const ALL: [RequestFailure; 22] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -276,6 +282,7 @@ impl RequestFailure {
         RequestFailure::InvalidViewport,
         RequestFailure::TrustUnavailable,
         RequestFailure::GitNamesUnavailable,
+        RequestFailure::ProjectCreateFailed,
     ];
 
     /// C ABI 코드 값.
@@ -302,6 +309,7 @@ impl RequestFailure {
             RequestFailure::InvalidViewport => 24,
             RequestFailure::TrustUnavailable => 25,
             RequestFailure::GitNamesUnavailable => 26,
+            RequestFailure::ProjectCreateFailed => 27,
         }
     }
 
@@ -316,6 +324,13 @@ impl RequestFailure {
 /// 요청 완료 event. 요청마다 정확히 하나가 outbox에 쌓입니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeEvent {
+    /// 새 프로젝트·첫 저장 세대가 준비됐습니다. 프로젝트 session은 아직 열지 않았습니다.
+    ProjectCreated {
+        /// 요청 ID.
+        request: RequestId,
+        /// 최초 commit 상태(0 완료, 1 신원 필요, 2 add 실패, 3 commit 실패).
+        git_state: u32,
+    },
     /// 프로젝트를 열었습니다.
     ProjectOpened {
         /// 요청 id.
@@ -591,6 +606,7 @@ impl RuntimeEvent {
     /// event 종류 코드([`event_kind`]).
     pub fn kind(&self) -> u32 {
         match self {
+            RuntimeEvent::ProjectCreated { .. } => event_kind::PROJECT_CREATED,
             RuntimeEvent::ProjectOpened { .. } => event_kind::PROJECT_OPENED,
             RuntimeEvent::ProjectClosed { .. } => event_kind::PROJECT_CLOSED,
             RuntimeEvent::ProjectTrust { .. } => event_kind::PROJECT_TRUST,
@@ -610,6 +626,7 @@ impl RuntimeEvent {
     pub fn request(&self) -> RequestId {
         match self {
             RuntimeEvent::ProjectOpened { request, .. }
+            | RuntimeEvent::ProjectCreated { request, .. }
             | RuntimeEvent::GitNames { request, .. }
             | RuntimeEvent::ProjectTrust { request, .. }
             | RuntimeEvent::ProjectClosed { request, .. }
@@ -628,6 +645,10 @@ impl RuntimeEvent {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
         match self {
+            RuntimeEvent::ProjectCreated { request, git_state } => {
+                w.u64(request.0);
+                w.u32(*git_state);
+            }
             RuntimeEvent::ProjectOpened {
                 request,
                 project,
@@ -754,6 +775,10 @@ impl RuntimeEvent {
             return Err(EventDecodeError::UnsupportedVersion(version));
         }
         let event = match kind {
+            event_kind::PROJECT_CREATED => RuntimeEvent::ProjectCreated {
+                request: RequestId(r.u64()?),
+                git_state: r.u32()?,
+            },
             event_kind::PROJECT_OPENED => RuntimeEvent::ProjectOpened {
                 request: RequestId(r.u64()?),
                 project: ProjectSessionId(r.u64()?),
@@ -1505,6 +1530,7 @@ pub enum EventPoll {
 /// UI thread와 document thread가 공유하는 outbox·snapshot.
 #[derive(Debug)]
 struct AppShared {
+    creating: std::sync::atomic::AtomicBool,
     git_names: Mutex<git_names::WindowGit>,
     outbox: Mutex<VecDeque<RuntimeEvent>>,
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
@@ -1564,6 +1590,25 @@ impl Drop for AppRuntime {
     }
 }
 
+fn validate_project_path(root: &Path) -> Result<(), RequestError> {
+    if root.as_os_str().is_empty() {
+        return Err(RequestError::InvalidPath {
+            reason: "빈 경로입니다",
+        });
+    }
+    if root.as_os_str().as_encoded_bytes().contains(&0) {
+        return Err(RequestError::InvalidPath {
+            reason: "NUL 바이트를 포함합니다",
+        });
+    }
+    if !root.is_absolute() {
+        return Err(RequestError::InvalidPath {
+            reason: "절대 경로가 아닙니다",
+        });
+    }
+    Ok(())
+}
+
 impl AppRuntime {
     /// 완료 event를 꺼내지 않은 요청 수 기본 상한.
     pub const DEFAULT_EVENT_CAPACITY: usize = 1024;
@@ -1585,6 +1630,7 @@ impl AppRuntime {
         Ok(AppRuntime {
             sender: document.sender(),
             shared: Arc::new(AppShared {
+                creating: false.into(),
                 git_names: Mutex::default(),
                 outbox: Mutex::new(VecDeque::new()),
                 outstanding: AtomicUsize::new(0),
@@ -1649,21 +1695,7 @@ impl AppRuntime {
 
     /// 프로젝트 폴더를 엽니다(모듈 문서). 경로는 절대 경로여야 하고 NUL을 포함할 수 없습니다.
     pub fn open_project(&self, root: &Path) -> Result<RequestId, RequestError> {
-        if root.as_os_str().is_empty() {
-            return Err(RequestError::InvalidPath {
-                reason: "빈 경로입니다",
-            });
-        }
-        if root.as_os_str().as_encoded_bytes().contains(&0) {
-            return Err(RequestError::InvalidPath {
-                reason: "NUL 바이트를 포함합니다",
-            });
-        }
-        if !root.is_absolute() {
-            return Err(RequestError::InvalidPath {
-                reason: "절대 경로가 아닙니다",
-            });
-        }
+        validate_project_path(root)?;
         let root = root.to_path_buf();
         self.submit(move |ctx, request| open_project_on_thread(ctx, request, &root))
     }
@@ -2197,7 +2229,7 @@ mod tests {
         let codes: Vec<u32> = RequestFailure::ALL.iter().map(|f| f.code()).collect();
         assert_eq!(
             codes,
-            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 26]
+            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
         );
         let unique: BTreeSet<u32> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len());
