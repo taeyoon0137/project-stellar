@@ -4,6 +4,7 @@
 //! - [`paging`]: resource 응답의 revision과 page cursor (XIX.2.2).
 //! - [`tools`]: tool 정의와 annotation, 필요 권한 (XIX.2.3), 문서·터미널·Git namespace 분리와
 //!   기본 비활성 (XIX.2.4).
+//! - [`scope`]: 요청 URI·tool 인자·응답 payload의 승인 프로젝트·세션 범위 제한 (XIX.2.5).
 //!
 //! 이 모듈은 정의와 순수 판정만 담습니다. backend(headless XIX.9.3, attached XIX.9.4) 연결 전이라
 //! 서버는 아직 이 catalog를 `resources/list`·`tools/list`로 광고하지 않습니다. 정의는 XIX.9.2에서
@@ -15,8 +16,11 @@ pub mod resources;
 /// resource 응답 revision과 page cursor (XIX.2.2).
 pub mod paging;
 
-/// tool 정의 (XIX.2.3).
+/// tool 정의 (XIX.2.3), namespace (XIX.2.4).
 pub mod tools;
+
+/// payload의 프로젝트·세션 범위 제한 (XIX.2.5).
+pub mod scope;
 
 use crate::json::{self, JsonLimits, JsonValue};
 
