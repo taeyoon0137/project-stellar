@@ -167,6 +167,7 @@ dependencies = [
  "stellar-assets",
  "stellar-core-types",
  "stellar-document",
+ "stellar-expressions",
  "stellar-layout",
  "stellar-project",
  "stellar-storage",

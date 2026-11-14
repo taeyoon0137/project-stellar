@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 stellar-core-types = { path = "../../crates/core-types" }
 stellar-document = { path = "../../crates/document" }
+stellar-expressions = { path = "../../crates/expressions" }
 stellar-storage = { path = "../../crates/storage" }
 stellar-project = { path = "../../crates/project" }
 stellar-layout = { path = "../../crates/layout" }

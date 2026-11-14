@@ -8,6 +8,7 @@ use std::fmt;
 use crate::asset_provider::AssetFixtureError;
 use stellar_document::component::definition::ComponentDefinitionError;
 use stellar_document::component::expansion::ExpansionError;
+use stellar_document::component::property::ComponentPropertyError;
 use stellar_document::definitions::DefinitionError;
 use stellar_document::model::{LoadModelError, ModelError};
 use stellar_document::record_codec::PartitionError;
@@ -44,6 +45,8 @@ pub enum FixtureError {
     Split(SplitError),
     /// 컴포넌트 정의·library 구성 또는 round-trip 실패.
     Component(ComponentDefinitionError),
+    /// 컴포넌트 Property record 구성 실패(IX.1.2).
+    ComponentProperty(ComponentPropertyError),
     /// 인스턴스 expansion 실패(미해결·재귀·중첩 상한·payload).
     Expansion(ExpansionError),
     /// 레이아웃 입력 검증 또는 배치 실패.
@@ -67,6 +70,7 @@ impl fmt::Display for FixtureError {
             FixtureError::SplitTree(e) => write!(f, "split 입력: {e}"),
             FixtureError::Split(e) => write!(f, "split 계획: {e}"),
             FixtureError::Component(e) => write!(f, "컴포넌트 정의: {e}"),
+            FixtureError::ComponentProperty(e) => write!(f, "컴포넌트 Property: {e}"),
             FixtureError::Expansion(e) => write!(f, "인스턴스 expansion: {e}"),
             FixtureError::Layout(e) => write!(f, "레이아웃: {e}"),
             FixtureError::Asset(e) => write!(f, "{e}"),

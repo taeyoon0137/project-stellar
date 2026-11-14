@@ -28,6 +28,7 @@ use stellar_document::component::expansion::{
     ExpandedNodeId, InstanceExpansion, SceneIndex, ScenePayloads,
 };
 use stellar_document::component::instance::{ComponentInstancePayload, OverrideKey};
+use stellar_document::component::property::{ComponentProperty, PropertyVisibility};
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
 use stellar_document::frame::FramePayload;
 use stellar_document::model::DocumentModel;
@@ -37,6 +38,8 @@ use stellar_document::path::PathCommand;
 use stellar_document::record_codec::encode_payload;
 use stellar_document::records::{DocumentRecords, NodePayload, NodeRecord};
 use stellar_document::shape::{EllipseParams, RectangleParams, ShapeGeometry};
+use stellar_expressions::ast::{ExprNode, ExprNodeId, ExpressionAst};
+use stellar_expressions::types::{ExpressionType, TypeSpec};
 use stellar_storage::hash::ContentHash;
 
 use crate::build::{self, finish_document, BuiltDocument, Quarter};
@@ -557,11 +560,11 @@ impl<'a> TreeBuilder<'a> {
         self,
         library: &mut ComponentLibrary,
         name: &str,
-        properties: &[ComponentPropertyId],
+        properties: &[(ComponentPropertyId, &str, TypedValue)],
     ) -> Result<StableId, FixtureError> {
         let mut definition =
             ComponentDefinition::new(self.component, name.to_string(), NodeRef::new(self.root));
-        for property in properties {
+        for (property, _, _) in properties {
             definition
                 .add_property(*property)
                 .map_err(component_error)?;
@@ -569,8 +572,29 @@ impl<'a> TreeBuilder<'a> {
         library
             .insert(definition, self.tree)
             .map_err(component_error)?;
+        // IX.1.2: 선언한 공개 Property마다 이름·타입·닫힌 default 표현식 record가 있어야 합니다.
+        for (property, property_name, default) in properties {
+            let record = ComponentProperty::new(
+                *property,
+                (*property_name).to_string(),
+                TypeSpec::required(ExpressionType::of(default)),
+                literal_default(*property, default.clone()),
+                PropertyVisibility::Public,
+            )
+            .map_err(FixtureError::ComponentProperty)?;
+            library
+                .add_property(ComponentRef::new(self.component), record)
+                .map_err(FixtureError::ComponentProperty)?;
+        }
         Ok(self.component)
     }
+}
+
+/// Property default용 단일 literal 표현식. node id는 Property id에서 결정론적으로 만듭니다.
+fn literal_default(property: ComponentPropertyId, value: TypedValue) -> ExpressionAst {
+    let root = ExprNodeId::new(property.stable_id());
+    ExpressionAst::new(root, vec![ExprNode::literal(root, value)])
+        .expect("단일 literal 표현식은 항상 유효합니다")
 }
 
 fn component_error(error: ComponentDefinitionError) -> FixtureError {
@@ -636,7 +660,14 @@ fn design_system_library(
             (NodeKind::ComponentInstance, instance_bytes(icon_id)),
         ],
     )?;
-    let button_id = button.finish(&mut library, "Button", &[label, disabled])?;
+    let button_id = button.finish(
+        &mut library,
+        "Button",
+        &[
+            (label, "label", TypedValue::String("Button".into())),
+            (disabled, "disabled", TypedValue::Boolean(false)),
+        ],
+    )?;
     out.push((button_id, vec![label, disabled]));
 
     // Card: Frame ← Image, Text(title), Text(body), Frame(actions) ← Instance(Button).
@@ -672,7 +703,11 @@ fn design_system_library(
         kids[3],
         vec![(NodeKind::ComponentInstance, instance_bytes(button_id))],
     )?;
-    let card_id = card.finish(&mut library, "Card", &[title])?;
+    let card_id = card.finish(
+        &mut library,
+        "Card",
+        &[(title, "title", TypedValue::String("Card".into()))],
+    )?;
     out.push((card_id, vec![title]));
 
     // ListRow: Frame ← Instance(Icon), Text, Text.
@@ -689,7 +724,11 @@ fn design_system_library(
             t2,
         ],
     )?;
-    let row_id = row.finish(&mut library, "ListRow", &[primary])?;
+    let row_id = row.finish(
+        &mut library,
+        "ListRow",
+        &[(primary, "primary", TypedValue::String("Row".into()))],
+    )?;
     out.push((row_id, vec![primary]));
 
     Ok((library, out))
