@@ -69,6 +69,9 @@ pub mod guard;
 /// 영향 범위만 다시 배치하는 증분 레이아웃 (X.7.3).
 pub mod incremental;
 
+/// 증분 레이아웃 단일 leaf 변경 benchmark (X.7.4).
+pub mod bench;
+
 /// 문서 원천을 Fragment flatten한 layout tree view (X.1.2).
 pub mod view;
 

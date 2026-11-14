@@ -217,6 +217,14 @@ impl IncrementalLayout {
         Ok((session, stats))
     }
 
+    /// id의 현재 node 입력(index 조회).
+    pub fn node(&self, id: StableId) -> Option<&LayoutNode> {
+        self.tree
+            .index
+            .get(&id)
+            .map(|&index| &self.input.nodes[index])
+    }
+
     /// 현재 레이아웃 입력(node 순서는 edit에 따라 바뀔 수 있음).
     pub fn input(&self) -> &LayoutInput {
         &self.input
