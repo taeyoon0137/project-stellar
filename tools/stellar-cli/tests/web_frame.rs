@@ -231,7 +231,12 @@ fn chrome_computed_styles_bounds_stacking_and_clipping() {
     let version = Command::new(&chrome).arg("--version").output().unwrap();
     assert!(version.status.success());
     eprintln!("{}", String::from_utf8_lossy(&version.stdout));
-    for (view, file) in [(3, "view-a"), (4, "view-b"), (5, "view-subpixel")] {
+    for (view, file) in [
+        (3, "view-a"),
+        (4, "view-b"),
+        (5, "view-subpixel"),
+        (6, "view-rounded-clip"),
+    ] {
         let value = export(&project, view);
         let probe = format!(
             "<script>const selectedView = {view};\n{}</script>\n",

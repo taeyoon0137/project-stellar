@@ -43,7 +43,7 @@ CLI 자체는 파일을 만들거나 Git·프로젝트를 수정하지 않습니
 | border | 네 변의 width·style·color longhand. 동일 두께, `solid`; 없음은 0px·none·transparent |
 | 네 corner radius | 좌상·우상·우하·좌하 각각 px longhand. CSS의 겹침 반경 정규화 적용 |
 | `Clipping::Disabled` | `overflow-x/y: visible` |
-| `Clipping::FrameBounds` | `overflow-x/y: clip; overflow-clip-margin: border-box`로 바깥 경계·radius에서 자식을 자름 |
+| `Clipping::FrameBounds` | `overflow-x/y: clip; overflow-clip-margin: border-box`로 바깥 경계까지 자식을 표시하고, 둥근 모서리가 있으면 `clip-path: border-box`로 그 윤곽을 적용 |
 | `visible: false` | `display: none`과 기존 접근성 mapper의 숨김 처리. Fragment 조상 숨김도 상속 |
 | Fragment | element·좌표계 없이 자식을 제자리에서 펼침 |
 | OrderKey | DOM 순서. 모든 Frame에 `z-index: 0`으로 stacking context 생성 |
@@ -57,7 +57,7 @@ CLI 자체는 파일을 만들거나 Git·프로젝트를 수정하지 않습니
 뜻은 아닙니다. 부분 투명 색은 node ID가 있는 `browser-color-compositing` 경고를 반환합니다.
 
 브라우저 기준은 **Chromium, DPR 1, zoom 100%**, CSS Color 4와
-`overflow-clip-margin: border-box` 지원입니다. 고정 CSS 값의 범위를 다음처럼 제한합니다.
+`overflow-clip-margin: border-box`와 `clip-path: border-box` 지원입니다. 고정 CSS 값의 범위를 다음처럼 제한합니다.
 
 - 크기·자식 위치·반경은 절댓값 1,000,000px 이하입니다. 크기·반경은 모델처럼 비음수입니다.
 - affine 선형 성분은 절댓값 1024 이하이며 누적 변환 후 네 모서리는 유한한 ±1,000,000px 안이어야 합니다.
@@ -119,7 +119,7 @@ cargo test -p stellar-cli --test web_frame -- --include-ignored --nocapture
 일반 테스트는 실제 두 View를 저장하고 실제 `stellar` subprocess에서 HTML golden·반복 stdout/stderr·
 revision·선택 범위·실패·프로젝트와 Git index/refs/objects 바이트 불변을 검사합니다. 별도 snapshot 테스트는
 다른 저장 이후에도 이전 revision이 고정되는지와 root 이동만 바꿔도 HTML이 같음을 확인합니다.
-Chrome 테스트는 두 기본 View와 고배율 소수 이동 View에 별도 임시 profile을 사용하고 테스트에만 script를 주입해 computed style·bounding rect·
+Chrome 테스트는 두 기본 View, 고배율 소수 이동 View와 두꺼운 테두리·비대칭 모서리 View에 별도 임시 profile을 사용하고 테스트에만 script를 주입해 computed style·bounding rect·
 elementFromPoint를 확인합니다. 제품 HTML에는 script가 없습니다. 실행한 Chrome 버전과 JSON 증거는 위
 evidence 디렉터리에 남습니다. 이 테스트가 ignore 상태인 일반 테스트만 실행한 경우 브라우저 검증 완료로
 보고하지 않습니다.
