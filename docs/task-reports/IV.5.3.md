@@ -55,3 +55,21 @@
 - 본 probe는 매니페스트만 읽습니다. 신뢰 프로젝트의 전체 문서 로드·git 연동은 후속 Phase에서
   trust를 확인한 뒤 수행합니다.
 - Phase IV(프로젝트 매니페스트·생성·열기) 전체가 완료되었습니다.
+
+## 후속 수정(보안 리뷰 FR-1·FR-2 반영): 매니페스트를 연 handle 기준으로 판정
+
+- **문제**: `safe_probe`는 `symlink_metadata`로 symlink 여부를 본 뒤 `File::open`(symlink를 따라감)으로
+  다시 열었고, root 검증의 `is_file()`과 열기 사이에도 간격이 있었습니다. 그 사이 `stellar.yaml`을 외부 파일
+  symlink로 바꾸면 비신뢰 probe가 프로젝트 밖 파일을 매니페스트로 읽었고(FR-2), FIFO로 바꾸면 blocking
+  `open()`이 writer를 기다리며 document thread를 멈췄습니다(FR-1 트리거).
+- **수정**: 판정을 연 handle로 옮겼습니다. macOS에서는 `O_NONBLOCK`으로 열고(FIFO·장치에서 멈추지 않음),
+  비신뢰 probe는 `O_NOFOLLOW`를 함께 줘 검사 뒤 symlink로 바뀌면 `ELOOP`를
+  `UntrustedSymlinkRefused`로 보고합니다. 연 handle의 `fstat`이 정규 파일이 아니면
+  `ManifestRead(InvalidInput)`입니다. 경로 사전 검사(lstat)는 일찍 거부하는 데만 씁니다. macOS 밖
+  unix는 flag 값이 플랫폼마다 달라 주지 않고, 비신뢰 probe는 lstat한 항목과 연 handle의 device·inode가
+  다르면 거부합니다(FIFO 교체로 멈출 수 있는 한계는 남음, ADR-0006 보류 플랫폼).
+- **검증**: `untrusted_probe_never_reads_a_manifest_swapped_to_an_external_symlink`(rename 교체 4,000회 경합,
+  수정 전 외부 파일 내용을 매니페스트로 읽어 실패), `probe_does_not_block_on_a_manifest_swapped_to_a_fifo`
+  (FIFO hard link 교체 경합, 수정 전 5초 안에 probe가 돌아오지 않아 실패),
+  `opened_handle_decides_fifo_and_symlink_manifests`(읽기 함수 직접 호출: FIFO·FIFO symlink는 바로
+  `InvalidInput`, Refuse 정책 symlink는 거부, Follow 정책 symlink는 대상을 읽음).
