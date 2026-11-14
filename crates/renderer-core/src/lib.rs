@@ -60,6 +60,9 @@ pub mod batching;
 /// RenderGraph compile trace (XI.4.6).
 pub mod graph_trace;
 
+/// surface 출력 색공간 협상과 gamut 경고 (XI.10.5).
+pub mod output_color;
+
 /// 테스트 전용 SHA-256 (asset 계층 모사).
 #[cfg(test)]
 mod test_sha256;
