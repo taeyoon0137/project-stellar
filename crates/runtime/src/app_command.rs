@@ -1,8 +1,15 @@
-//! 창 session 명령 (XII.6.4).
+//! 창 session 명령과 셸 공유 command ID (XII.6.4, XII.6.5).
 //!
-//! 셸 메뉴·단축키가 활성 창 session에 보내는 명령입니다. 값은 C ABI(`STELLAR_COMMAND_*`)에 노출되므로 바꾸지 않고
-//! 끝에 덧붙입니다. 명령은 [`AppRuntime::perform`](crate::app::AppRuntime::perform)으로 창 session 하나에 보내고,
-//! 결과는 명령별 완료 event 하나로 돌아옵니다.
+//! 셸 메뉴·단축키가 활성 창 session에 보내는 명령입니다. 명령마다 두 식별자가 있고 둘 다 코어가 정합니다.
+//!
+//! - **코드**([`AppCommand::code`]): C ABI 정수(`STELLAR_COMMAND_*`). 값은 바꾸지 않고 끝에 덧붙입니다.
+//! - **공유 이름**([`AppCommand::name`]): 셸의 명령 식별자와 같은 문자열(예: `edit.undo`). macOS·Windows 셸은 각자
+//!   운영체제 관례의 단축키(macOS `⌘Z`·`⇧⌘Z`·`⌘S`, Windows `Ctrl+Z`·`Ctrl+Y`·`Ctrl+S`)를 메뉴에 두고, 메뉴 항목의
+//!   명령 이름을 이 이름으로 코어에 물어 코드를 얻습니다(`stellar_command_code`). 단축키는 셸이, 명령 ID는 코어가
+//!   소유합니다.
+//!
+//! 명령은 [`AppRuntime::perform`](crate::app::AppRuntime::perform)으로 창 session 하나에 보내고, 결과는 명령별 완료
+//! event 하나로 돌아옵니다.
 
 /// 창 session 명령.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -28,11 +35,27 @@ impl AppCommand {
         }
     }
 
+    /// 셸과 공유하는 command 이름(셸 메뉴 명령 식별자와 같은 문자열).
+    pub const fn name(self) -> &'static str {
+        match self {
+            AppCommand::Undo => "edit.undo",
+            AppCommand::Redo => "edit.redo",
+            AppCommand::SaveNow => "file.save_now",
+        }
+    }
+
     /// 코드 값에서 복원합니다.
     pub fn from_code(code: u32) -> Option<AppCommand> {
         AppCommand::ALL
             .into_iter()
             .find(|command| command.code() == code)
+    }
+
+    /// 공유 이름에서 복원합니다. 코어가 구현하지 않은 이름은 `None`입니다.
+    pub fn from_name(name: &str) -> Option<AppCommand> {
+        AppCommand::ALL
+            .into_iter()
+            .find(|command| command.name() == name)
     }
 }
 
@@ -49,5 +72,18 @@ mod tests {
         }
         assert_eq!(AppCommand::from_code(0), None);
         assert_eq!(AppCommand::from_code(4), None);
+    }
+
+    #[test]
+    fn shared_names_are_stable_and_unique() {
+        let names: Vec<&str> = AppCommand::ALL.iter().map(|c| c.name()).collect();
+        assert_eq!(names, ["edit.undo", "edit.redo", "file.save_now"]);
+        for command in AppCommand::ALL {
+            assert_eq!(AppCommand::from_name(command.name()), Some(command));
+        }
+        // 셸 전용 명령과 아직 구현하지 않은 명령은 코어 ID가 없습니다.
+        for name in ["app.quit", "edit.copy", "view.zoom_in", "", "EDIT.UNDO"] {
+            assert_eq!(AppCommand::from_name(name), None, "{name}");
+        }
     }
 }

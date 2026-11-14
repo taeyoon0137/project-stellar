@@ -99,7 +99,7 @@ private final class ShellSessionCommandsCheckRunner {
             expect(false, "프로젝트 창·창 session 없음")
             return
         }
-        expect(ShellWindowSessionCommand.allCases.map(\.coreCode)
+        expect([ShellCommand.undo, .redo, .saveNow].map { a.coreCommandIDs.coreCommandID(for: $0) }
             == [UInt32(STELLAR_COMMAND_UNDO), UInt32(STELLAR_COMMAND_REDO), UInt32(STELLAR_COMMAND_SAVE_NOW)],
             "창 session 명령 코드가 코어 상수와 다름")
         for window in [a, b] {

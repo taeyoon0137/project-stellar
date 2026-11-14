@@ -59,7 +59,19 @@ enum ToolsUICheck {
     // MARK: 1. 명령 메타데이터
 
     private static func checkCommands(_ recorder: Recorder) {
-        var coreIDs: Set<String> = []
+        // 코어 command ID 표(XII.6.5): 공유 이름으로 물은 ID만 담고, 셸 전용 명령은 조회 결과와 관계없이 ID가 없습니다.
+        // 이 검사는 코어 FFI를 쓰지 않으므로 모든 이름에 서로 다른 값을 주는 조회 함수로 표 규칙만 확인합니다.
+        var next: UInt32 = 0
+        let resolved = ShellCommandCoreIDs.resolve { _ in
+            next += 1
+            return next
+        }
+        let partial = ShellCommandCoreIDs.resolve { $0 == ShellCommand.undo.rawValue ? 7 : nil }
+        recorder.expect(partial.ids == [.undo: 7], "코어가 구현하지 않은 명령에 ID가 생김: \(partial.ids)")
+        recorder.expect(partial.command(forCoreID: 7) == .undo, "코어 ID 역 조회 실패")
+        recorder.expect(ShellCommandCoreIDs.resolve { _ in 0 }.ids.isEmpty, "ID 0이 표에 들어감")
+        recorder.expect(ShellCommandCoreIDs.empty.coreCommandID(for: .undo) == nil, "빈 표에 ID가 있음")
+        var coreIDs: Set<UInt32> = []
         for command in ShellCommand.allCases {
             recorder.expect(!command.title.isEmpty, "\(command.rawValue) 제목 없음")
             recorder.expect(
@@ -74,20 +86,15 @@ enum ToolsUICheck {
                 ShellCommand(menuItemIdentifier: command.menuItemIdentifier) == command,
                 "\(command.rawValue) identifier 왕복 실패"
             )
-            let coreID = ShellCommandCoreIDStub.coreCommandID(for: command)
+            let coreID = resolved.coreCommandID(for: command)
             switch command.owner {
             case .shell:
                 recorder.expect(coreID == nil, "셸 전용 \(command.rawValue)에 코어 ID가 있음")
             case .core:
                 if let coreID {
                     recorder.expect(coreIDs.insert(coreID).inserted, "코어 ID 중복: \(coreID)")
-                    // Stub 제한: 코어 ID 체계가 생기기 전까지 임시 접두사만 씁니다.
-                    recorder.expect(
-                        coreID.hasPrefix(ShellCommandCoreIDStub.provisionalPrefix),
-                        "코어 ID Stub이 임시 접두사를 쓰지 않음: \(coreID)"
-                    )
                 } else {
-                    recorder.expect(false, "코어 명령 \(command.rawValue)에 코어 ID 없음")
+                    recorder.expect(false, "코어 명령 \(command.rawValue)이 표에 없음")
                 }
             }
             if command.isSuppressedDuringTextEditing {

@@ -29,6 +29,8 @@ final class ShellAppCoordinator: NSObject {
     let applicationModel = ShellApplicationCommandModel()
     let applicationRouter: ShellCommandRouter
     let welcomeData = ShellWelcomeDataSource()
+    /// 코어 command ID 표(XII.6.5). 코어에 공유 이름으로 물어 한 번 만들고 프로젝트 창마다 넘깁니다.
+    let coreCommandIDs = ShellCommandCoreIDs.fromCore()
     private(set) var projectWindows: [ShellProjectWindow] = []
     private(set) var welcomeController: WelcomeWindowController?
     private(set) var settingsController: NSWindowController?
@@ -392,6 +394,7 @@ final class ShellAppCoordinator: NSObject {
                 projectWindow?.performSessionCommand(command)
             }
         }
+        projectWindow.coreCommandIDs = coreCommandIDs
         projectWindow.alertPresenter = { [weak self] title, message, window in
             self?.alertPresenter(title, message, window)
         }

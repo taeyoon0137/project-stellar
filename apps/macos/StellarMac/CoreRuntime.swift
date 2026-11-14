@@ -61,6 +61,17 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    /// 공유 command 이름(예: `edit.undo`)의 코어 명령 코드(XII.6.5). 코어 명령이 아니면 nil입니다(handle 불필요).
+    static func commandCode(name: String) -> UInt32? {
+        var code: UInt32 = 0
+        let bytes = Array(name.utf8)
+        let status = bytes.withUnsafeBufferPointer { raw in
+            stellar_command_code(raw.baseAddress, raw.count, &code)
+        }
+        guard status == STELLAR_OK, code != 0 else { return nil }
+        return code
+    }
+
     /// 창 session에 명령 코드(`STELLAR_COMMAND_*`)를 보냅니다(XII.6.4). 결과는 `.historyReplayed`·`.windowSessionSaved`
     /// 또는 `.requestFailed`입니다. 모르는 코드는 `STELLAR_INVALID_ARGUMENT`(요청 없음)입니다.
     static func perform(handle: UInt64, session: UInt64, command: UInt32) -> Result<UInt64, CoreRuntimeCallError> {

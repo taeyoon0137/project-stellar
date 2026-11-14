@@ -7,6 +7,9 @@
 //! 활성 창의 Undo·Redo·Save Now(XII.6.4)는 [`stellar_window_session_perform`]에 명령 코드
 //! (`STELLAR_COMMAND_*`)를 넘겨 그 창 session에만 보냅니다. 선택 변경([`stellar_window_session_select`])은 그 창
 //! history에 기록됩니다.
+//!
+//! 명령 코드는 코어가 정하고 셸과 공유합니다(XII.6.5). 셸은 메뉴 명령 식별자(공유 이름, 예: `edit.undo`)로
+//! [`stellar_command_code`]에 물어 코드를 얻고, 단축키는 각 운영체제 관례대로 셸 메뉴에 둡니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_runtime::app::{AppRuntime, ProjectSessionId, WindowSessionHandle};
@@ -98,6 +101,39 @@ pub unsafe extern "C" fn stellar_window_session_close(
             Err(status) => return status,
         };
         unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 공유 command 이름(UTF-8 ptr+len, 예: `edit.undo`)의 코어 명령 코드를 씁니다(XII.6.5). runtime handle이 필요 없는
+/// 순수 조회입니다.
+///
+/// 코어가 구현하는 이름이면 `Ok`와 코드(`STELLAR_COMMAND_*`), 코어 명령이 아닌 이름(셸 전용·미구현)이면
+/// `STELLAR_NO_ERROR`와 코드 0입니다. 유효하지 않은 UTF-8은 `InvalidUtf8`, null `out_code`는 `NullPointer`입니다.
+///
+/// # Safety
+/// `name_len > 0`이면 `name`은 `name_len` 바이트 읽기가 유효해야 하고, `out_code`는 `u32` 쓰기가 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_command_code(
+    name: *const u8,
+    name_len: usize,
+    out_code: *mut u32,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_code.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { *out_code = 0 };
+        let text = match unsafe { crate::decode_utf8_owned(name, name_len) } {
+            Ok(text) => text,
+            Err(status) => return status,
+        };
+        match AppCommand::from_name(&text) {
+            Some(command) => {
+                unsafe { *out_code = command.code() };
+                StellarStatus::Ok
+            }
+            None => StellarStatus::NoError,
+        }
     })
 }
 
@@ -534,6 +570,34 @@ pub(crate) mod tests {
             StellarStatus::NullPointer
         );
         assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
+    }
+
+    fn code_of(name: &str) -> (StellarStatus, u32) {
+        let mut code = 77u32;
+        let status = unsafe { stellar_command_code(name.as_ptr(), name.len(), &mut code) };
+        (status, code)
+    }
+
+    #[test]
+    fn command_codes_are_looked_up_by_shared_name() {
+        // 검증 기준(XII.6.5, C ABI): command ID는 코어가 공유 이름으로 알려 줍니다.
+        for command in AppCommand::ALL {
+            assert_eq!(code_of(command.name()), (StellarStatus::Ok, command.code()));
+        }
+        for name in ["app.quit", "edit.copy", "view.toggle_sidebar", ""] {
+            assert_eq!(code_of(name), (StellarStatus::NoError, 0), "{name}");
+        }
+        let bad = [0xFFu8, 0xFE];
+        let mut code = 5u32;
+        assert_eq!(
+            unsafe { stellar_command_code(bad.as_ptr(), bad.len(), &mut code) },
+            StellarStatus::InvalidUtf8
+        );
+        assert_eq!(code, 0);
+        assert_eq!(
+            unsafe { stellar_command_code(bad.as_ptr(), bad.len(), std::ptr::null_mut()) },
+            StellarStatus::NullPointer
+        );
     }
 
     #[test]

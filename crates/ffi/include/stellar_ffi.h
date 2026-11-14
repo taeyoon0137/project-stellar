@@ -112,7 +112,9 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_SAVE_FAILED 22
 #define STELLAR_FAILURE_HISTORY_UNAVAILABLE 23
 
-/* 창 session 명령 코드(stellar_window_session_perform). */
+/* 창 session 명령 코드(stellar_window_session_perform). 코어가 정하고 셸과 공유합니다. 셸은 메뉴 명령의 공유 이름
+ * (edit.undo, edit.redo, file.save_now)으로 stellar_command_code에 물어 코드를 얻습니다. 단축키는 셸이 운영체제
+ * 관례로 둡니다(macOS ⌘Z·⇧⌘Z·⌘S). */
 #define STELLAR_COMMAND_UNDO 1
 #define STELLAR_COMMAND_REDO 2
 #define STELLAR_COMMAND_SAVE_NOW 3
@@ -230,6 +232,9 @@ StellarStatus stellar_window_session_open(uint64_t handle, uint64_t project, uin
 
 /* 창 session 닫기를 요청합니다(문서 state·history·선택 폐기, 저장하지 않음). */
 StellarStatus stellar_window_session_close(uint64_t handle, uint64_t session, uint64_t *out_request);
+
+/* 공유 command 이름(UTF-8 ptr+len)의 코어 명령 코드를 씁니다. 코어 명령이 아니면 STELLAR_NO_ERROR와 0(handle 불필요). */
+StellarStatus stellar_command_code(const uint8_t *name, size_t name_len, uint32_t *out_code);
 
 /* 창 session에 명령(STELLAR_COMMAND_*)을 보냅니다. 모르는 코드는 STELLAR_INVALID_ARGUMENT(요청 없음). */
 StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, uint32_t command, uint64_t *out_request);

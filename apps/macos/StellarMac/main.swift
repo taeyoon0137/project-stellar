@@ -67,6 +67,12 @@ if CommandLine.arguments.contains("--session-commands-check") {
     exit(ShellSessionCommandsCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
 }
 
+// 단축키 대응 검사 모드: 코어가 공유하는 command ID와 macOS 관례 단축키(⌘Z·⇧⌘Z·⌘S)의 대응, 메뉴 action이 창 session에
+// 도착하는지 저장 프로젝트 fixture(다음 인자)로 검사하고 종료합니다(XII.6.5).
+if CommandLine.arguments.contains("--key-mapping-check") {
+    exit(ShellKeyMappingCheck.run(arguments: CommandLine.arguments) ? 0 : 1)
+}
+
 // smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다(II.5.2).
 if CommandLine.arguments.contains("--smoke") {
     let host = RuntimeHost()

@@ -1258,7 +1258,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XII.6.2 | `[x]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
 | XII.6.3 | `[ ]` | Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다. | local fixture remote clone 통과. | IV.6.4 |
 | XII.6.4 | `[x]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
-| XII.6.5 | `[ ]` | 앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다. | key mapping smoke test. | XII.6.4 |
+| XII.6.5 | `[~]` | 앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다. | key mapping smoke test. | XII.6.4 |
 
 ### XII.7 동일 프로젝트 다중 창 저장 충돌
 

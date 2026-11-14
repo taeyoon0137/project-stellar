@@ -79,6 +79,18 @@ WindowSessionId, 독립 document state, view state, history, loaded generation)�
    Undo·Redo는 그 창 undo·redo stack이 비어 있지 않을 때, Save Now는 작업 문서가 있을 때만 활성입니다. 저장 실패는 alert
    한 번으로 알립니다.
 
+### XII.6.5 — 코어가 공유하는 command ID와 운영체제별 단축키
+
+1. **공유 이름**: 코어 명령마다 셸 메뉴 명령 식별자와 같은 공유 이름을 둡니다(`edit.undo`, `edit.redo`,
+   `file.save_now`, `AppCommand::name`). 코드(`STELLAR_COMMAND_*`)와 이름은 코어가 정합니다.
+2. **조회**: `stellar_command_code(name, name_len, out_code)`는 runtime handle 없이 공유 이름의 코드를 씁니다. 코어
+   명령이 아닌 이름(셸 전용·미구현)은 `STELLAR_NO_ERROR`와 0입니다. 셸은 앱을 구성할 때 코어 소유 메뉴 명령마다 이
+   함수로 물어 command ID 표(`ShellCommandCoreIDs`)를 만들고, 그 표에 있는 ID로만 `stellar_window_session_perform`을
+   부릅니다. 셸은 숫자 ID를 직접 적지 않습니다.
+3. **단축키**: 단축키는 셸이 운영체제 관례로 정합니다. macOS는 HIG 표준 Undo ⌘Z, Redo ⇧⌘Z, Save Now ⌘S이고(기존
+   `ShellCommand.shortcut`, `ShortcutPolicy` 감사), Windows 셸(ADR-0006로 보류)은 같은 공유 이름·코드에 Ctrl+Z,
+   Ctrl+Y(보조 Ctrl+Shift+Z), Ctrl+S를 둡니다. 단축키를 바꿔도 command ID는 바뀌지 않습니다.
+
 ## Alternatives
 
 - **프로젝트 session handle에 창 상태를 합침**: 같은 프로젝트를 연 두 창(XII.2.4)이 독립 문서·history를
@@ -94,6 +106,10 @@ WindowSessionId, 독립 document state, view state, history, loaded generation)�
   같은 type에 둡니다.
 - **viewport 변경을 history에 기록**: §23.2는 문서 편집과 선택만 같은 stack에 기록합니다. 이동·확대는
   Undo 대상이 아닙니다.
+- **셸이 `STELLAR_COMMAND_*` 상수를 직접 메뉴 명령에 대응**: 두 셸이 같은 대응표를 따로 적게 되고 코어가 명령을
+  늘릴 때 셸 표가 어긋납니다. 공유 이름 조회로 코어 표 하나만 기준으로 둡니다.
+- **단축키 표를 코어에 둠**: 단축키는 운영체제 관례·지역화 키보드·시스템 단축키 충돌 규칙에 따르는 셸의 몫입니다
+  (§8.1 운영체제 네이티브 메뉴). 코어는 명령 의미와 ID만 소유합니다.
 
 ## Consequences
 

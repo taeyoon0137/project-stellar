@@ -74,11 +74,11 @@ final class ShellWindowSessionHandle {
         pump.closeWindowSession(session, completion: completion)
     }
 
-    /// 이 창 session에 명령을 보냅니다(XII.6.4). 닫혔거나 요청을 받지 않으면 false입니다.
+    /// 이 창 session에 코어 명령 코드를 보냅니다(XII.6.4). 닫혔거나 요청을 받지 않으면 false입니다.
     @discardableResult
-    func perform(_ command: ShellWindowSessionCommand, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+    func perform(coreCommand code: UInt32, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
         guard !isClosed else { return false }
-        if case .success = pump.perform(session: session, command: command.coreCode, completion: completion) {
+        if case .success = pump.perform(session: session, command: code, completion: completion) {
             return true
         }
         return false
@@ -95,29 +95,10 @@ final class ShellWindowSessionHandle {
     }
 }
 
-/// 활성 창 session에 보내는 코어 명령(XII.6.4). 코드는 코어 C ABI 상수(`STELLAR_COMMAND_*`)입니다.
-enum ShellWindowSessionCommand: CaseIterable {
-    case undo
-    case redo
-    case saveNow
-
-    /// 셸 명령에 대응하는 창 session 명령. 창 session으로 가지 않는 명령은 nil입니다.
-    init?(_ command: ShellCommand) {
-        switch command {
-        case .undo: self = .undo
-        case .redo: self = .redo
-        case .saveNow: self = .saveNow
-        default: return nil
-        }
-    }
-
-    /// 코어 명령 코드.
-    var coreCode: UInt32 {
-        switch self {
-        case .undo: return UInt32(STELLAR_COMMAND_UNDO)
-        case .redo: return UInt32(STELLAR_COMMAND_REDO)
-        case .saveNow: return UInt32(STELLAR_COMMAND_SAVE_NOW)
-        }
+extension ShellCommandCoreIDs {
+    /// 코어에 공유 이름으로 물어 만든 command ID 표(XII.6.5). 앱 구성이 한 번 만들어 프로젝트 창에 넘깁니다.
+    static func fromCore() -> ShellCommandCoreIDs {
+        resolve { CoreRuntime.commandCode(name: $0) }
     }
 }
 
@@ -459,16 +440,20 @@ final class ShellProjectWindow {
         toolsModel.setSessionCommands(from: windowController.windowSession?.info)
     }
 
-    /// Undo·Redo·Save Now를 이 창의 창 session(활성 창 session)에 보냅니다(XII.6.4). 다른 명령은 false입니다.
+    /// 코어 command ID 표(XII.6.5). 코어가 공유 이름으로 알려 준 ID로만 명령을 보냅니다.
+    var coreCommandIDs = ShellCommandCoreIDs.empty
+
+    /// 코어 명령(Undo·Redo·Save Now)을 이 창의 창 session(활성 창 session)에 보냅니다(XII.6.4, XII.6.5). 코어 ID가 없는
+    /// 명령이면 false입니다.
     ///
     /// 메뉴·단축키는 응답자 체인으로 key 창의 router가 받으므로 여기 오는 명령은 언제나 이 창(활성 창)의 것입니다.
     @discardableResult
     func performSessionCommand(_ command: ShellCommand) -> Bool {
-        guard let sessionCommand = ShellWindowSessionCommand(command), let session = windowController.windowSession else {
+        guard let code = coreCommandIDs.coreCommandID(for: command), let session = windowController.windowSession else {
             return false
         }
-        return session.perform(sessionCommand) { [weak self] event in
-            self?.finishSessionCommand(sessionCommand, event: event)
+        return session.perform(coreCommand: code) { [weak self] event in
+            self?.finishSessionCommand(command, event: event)
         }
     }
 
@@ -482,7 +467,7 @@ final class ShellProjectWindow {
         }
     }
 
-    private func finishSessionCommand(_ command: ShellWindowSessionCommand, event: CoreRuntimeEvent) {
+    private func finishSessionCommand(_ command: ShellCommand, event: CoreRuntimeEvent) {
         lastSessionCommandEvent = event
         refreshSessionCommands()
         guard command == .saveNow, case .requestFailed(_, let failure, _) = event else { return }

@@ -28,7 +28,7 @@
 | `CanvasTool.swift` | 도구 enum(11개), `CanvasToolShortcut` 단일 키 해석기 |
 | `KeyShortcut.swift` | 단축키 값 타입, 표시 문자열, 물리 키 정규화 |
 | `ShortcutPolicy.swift` | HIG 표준·시스템 단축키 표와 충돌 감사 |
-| `ToolsMenuModel.swift` | snapshot·프로토콜, `ShellCommandPresentation`, `ZoomFormat`, `ShellCommandCoreIDStub`, `ToolsMenuModelStub` |
+| `ToolsMenuModel.swift` | snapshot·프로토콜, `ShellCommandPresentation`, `ZoomFormat`, `ShellCommandCoreIDs`, `ToolsMenuModelStub` |
 | `ShellCommandRouter.swift` | 응답자 체인 router, 메뉴 검증 |
 | `MainMenuBuilder.swift` | 메뉴 막대 구성과 앱 연결 |
 | `ToolsToolbarController.swift` | 도구 그룹·줌 툴바 항목, 툴바 delegate |
@@ -320,7 +320,7 @@ protocol ToolsMenuModel: AnyObject {
 - 값 snapshot이 들어오고 명령이 나가는 구조이며 Rust 타입이 없습니다. 코어 연결 시 pull 이벤트 큐(`stellar_runtime_poll_event`)로 받은 버전형 메시지를 이 구조체로 디코드하고, `send`는 command ID와 인자를 Document Thread 큐에 넣기만 합니다. [아키텍처 §8.2, §9.2] [ADR-0009]
 - FFI 표현 제안: `enabledCommands`는 command ID 비트셋, `activeTool`은 작은 정수 tag, 이름 문자열은 UTF-8 `(ptr, len)`. 형식은 코어 command ID가 정해질 때 함께 정합니다.
 - 메뉴 검증은 `snapshot` 읽기와 제목 비교만 하므로 메인 스레드 예산 안입니다. 측정값은 10장에 있습니다. [아키텍처 §6.3]
-- `ShellCommandCoreIDStub`: 코어 command ID 체계가 아직 없어(`crates/commands`는 골격) 코어 소유 명령에 임시 문자열 `stellar.stub.<rawValue>`를 주고, 셸 전용 명령(창·메뉴·툴바·시스템 동작)은 nil을 줍니다. [계획 XII.6.5]
+- `ShellCommandCoreIDs`: command ID는 코어가 정합니다. 앱 구성(UI/Shell)이 코어 소유 명령마다 공유 이름(`rawValue`, 예: `edit.undo`)으로 코어에 물어(`stellar_command_code`) 표를 만들고, 셸 전용 명령(창·메뉴·툴바·시스템 동작)과 코어가 아직 구현하지 않은 명령은 ID가 없습니다. UI/Tools는 FFI를 모르므로 조회 함수를 받기만 합니다. [계획 XII.6.5] [ADR-0028]
 - `ToolsMenuModelStub`: 코어 없이 영역을 띄우는 의도적 placeholder입니다. FFI를 호출하지 않고, 도구 전환·줌·Lock/Hide만 흉내 내며, 눈금자와 Redo를 비활성으로 둡니다. 이 제한은 검사가 확인합니다. [계획 1.2 규칙 6]
 
 ## 10. 검사
@@ -343,7 +343,7 @@ protocol ToolsMenuModel: AnyObject {
 
 ## 11. 코어 연결·통합에 남은 일
 
-- **command ID**: 코어가 command ID를 정의하면 `ShellCommandCoreIDStub`을 그 표로 바꿉니다. [계획 XII.6.5]
+- **command ID(완료)**: 코어가 정한 command ID를 공유 이름으로 조회한 `ShellCommandCoreIDs` 표로 바꿨습니다. 단축키는 macOS 관례 그대로이고, 키 조합 → 메뉴 항목 → 셸 명령 → 코어 ID → 창 session 도착을 `--key-mapping-check`가 확인합니다. Windows 셸의 같은 대응(Ctrl+Z·Ctrl+Y·Ctrl+S)은 ADR-0006으로 보류했습니다. [계획 XII.6.5] [ADR-0028]
 - **snapshot 수신**: pull 이벤트 디코더와 `ToolsMenuModel` 실제 구현(창 session별 1개, 앱 수준 1개). `ToolsMenuModelStub`은 검사·미리보기용으로만 남깁니다. `MainMenuBuilder.build(applicationTarget:)`의 target은 필수 인자입니다(빠뜨리면 창이 없을 때 New/Open/Clone Project가 비활성으로 남음).
 - **도구 상태 기계**: Space 일시 Hand, Escape 복귀, Image 파일 선택 흐름. [계획 XII.3.6]
 - **줌**: camera 입력과 줌 단계·맞춤 계산. [계획 XII.4.3]
