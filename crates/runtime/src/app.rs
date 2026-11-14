@@ -62,6 +62,13 @@
 //! [`RuntimeEvent::WindowSessionSaved`](바뀐 것이 없으면 `written == false`)를 보냅니다. 다른 저장이 먼저
 //! 끝났으면 쓰지 않고 [`RequestFailure::SaveStale`]입니다.
 //!
+//! # viewport 이동·확대 (XII.4.3)
+//!
+//! Zoom In·Zoom Out·Actual Size([`AppCommand`](crate::app_command::AppCommand))와 [`AppRuntime::pan_viewport`]는 그 창
+//! active 탭 viewport만 바꾸고 [`RuntimeEvent::WindowViewChanged`]를 보냅니다. 문서 revision·history·저장 bytes는
+//! 그대로입니다. scene camera 입력은 [`ProjectWindowSession::camera`](crate::window_session::ProjectWindowSession::camera)가
+//! viewport와 캔버스 화면 크기로 만듭니다.
+//!
 //! # outbox 상한
 //!
 //! 완료 event를 꺼내지 않은 요청 수(실행 중 포함)가 상한([`AppRuntime::DEFAULT_EVENT_CAPACITY`])에
@@ -103,7 +110,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use stellar_commands::view_tabs::{CanvasViewport, ViewTabsError};
+use stellar_commands::view_tabs::{CanvasViewport, ViewTabsError, ZOOM_STEP};
 use stellar_core_types::ids::{StableId, WindowSessionId};
 use stellar_core_types::revision::DocumentRevision;
 use stellar_document::open_set::{OpenDocumentHandle, OpenOutcome};
@@ -226,11 +233,13 @@ pub enum RequestFailure {
     SaveFailed,
     /// history를 재생할 수 없음(preview 진행 중 등).
     HistoryUnavailable,
+    /// 이동·확대 결과 viewport가 유효하지 않음(유한 값 아님).
+    InvalidViewport,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 18] = [
+    pub const ALL: [RequestFailure; 19] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -249,6 +258,7 @@ impl RequestFailure {
         RequestFailure::SaveStale,
         RequestFailure::SaveFailed,
         RequestFailure::HistoryUnavailable,
+        RequestFailure::InvalidViewport,
     ];
 
     /// C ABI 코드 값.
@@ -272,6 +282,7 @@ impl RequestFailure {
             RequestFailure::SaveStale => 21,
             RequestFailure::SaveFailed => 22,
             RequestFailure::HistoryUnavailable => 23,
+            RequestFailure::InvalidViewport => 24,
         }
     }
 
@@ -1241,6 +1252,7 @@ fn view_failure(error: WindowSessionEditError) -> Failure {
     let failure = match &error {
         WindowSessionEditError::View(ViewTabsError::NoActiveTab) => RequestFailure::NoActiveView,
         WindowSessionEditError::History(_) => RequestFailure::HistoryUnavailable,
+        WindowSessionEditError::Viewport(_) => RequestFailure::InvalidViewport,
         _ => RequestFailure::UnknownView,
     };
     Failure::new(failure, error.to_string())
@@ -1268,6 +1280,15 @@ fn perform_on_thread(
                 applied,
                 revision: window.revision(),
             })
+        }
+        AppCommand::ZoomIn | AppCommand::ZoomOut | AppCommand::ZoomToActualSize => {
+            let zoomed = match command {
+                AppCommand::ZoomIn => window.zoom(ZOOM_STEP, 0.0, 0.0),
+                AppCommand::ZoomOut => window.zoom(1.0 / ZOOM_STEP, 0.0, 0.0),
+                _ => window.zoom_to_actual_size(),
+            };
+            zoomed.map_err(view_failure)?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
         }
         AppCommand::SaveNow => {
             let outcome = window.save_now().map_err(|error| {
@@ -1625,6 +1646,21 @@ impl AppRuntime {
         })
     }
 
+    /// 창 session의 active 탭 viewport를 화면에서 `(dx, dy)` point만큼 옮깁니다(XII.4.3). 문서·history·저장에는
+    /// 영향이 없습니다.
+    pub fn pan_viewport(
+        &self,
+        session: WindowSessionHandle,
+        dx: f64,
+        dy: f64,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| {
+                window.pan(dx, dy).map(|_| ())
+            })
+        })
+    }
+
     /// 창 session의 active 탭 viewport를 바꿉니다. 문서·history·저장에는 영향이 없습니다.
     pub fn set_viewport(
         &self,
@@ -1929,7 +1965,7 @@ mod tests {
         let codes: Vec<u32> = RequestFailure::ALL.iter().map(|f| f.code()).collect();
         assert_eq!(
             codes,
-            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23]
+            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24]
         );
         let unique: BTreeSet<u32> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len());

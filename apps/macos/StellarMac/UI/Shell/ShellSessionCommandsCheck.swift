@@ -8,6 +8,8 @@ import AppKit
 /// - A 창에서 선택(history 1개) → A만 Undo 활성 → A Undo → A 선택만 되돌아가고 B는 그대로 → A Redo
 /// - 비활성 명령(B의 Undo)은 코어로 보내지 않음
 /// - A Save Now → 코어 저장 완료(바뀐 문서가 없어 generation 1 그대로, alert 없음)
+/// - A 메뉴 Zoom In·Zoom Out·Actual Size(XII.4.3) → A viewport 배율과 툴바 배율 표시만 바뀌고 B는 그대로, 이동·확대 뒤
+///   Save Now도 디자인 폴더 bytes를 바꾸지 않음
 /// - B 폴더의 current pointer를 지운 뒤 B Save Now → 코어가 Stale로 거부, 저장 실패 alert 한 번, 디스크 그대로
 enum ShellSessionCommandsCheck {
     static func run(arguments: [String]) -> Bool {
@@ -88,6 +90,44 @@ private final class ShellSessionCommandsCheckRunner {
         window.router.validateMenuItem(MainMenuBuilder.makeItem(for: command, target: nil))
     }
 
+    /// 디자인 폴더 아래 파일의 상대 경로 → bytes.
+    private func designBytes(_ path: String) -> [String: Data] {
+        let root = URL(fileURLWithPath: path).appendingPathComponent("design")
+        var out: [String: Data] = [:]
+        let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)
+        while let url = enumerator?.nextObject() as? URL {
+            if let data = try? Data(contentsOf: url) {
+                out[url.path.replacingOccurrences(of: root.path, with: "")] = data
+            }
+        }
+        return out
+    }
+
+    private func checkZoom(_ coordinator: ShellAppCoordinator, a: ShellProjectWindow, b: ShellProjectWindow, pathA: String) {
+        let before = designBytes(pathA)
+        expect(!before.isEmpty, "A 디자인 폴더를 읽지 못함")
+        expect(a.toolsModel.snapshot.zoomScale == 1.0, "처음 배율이 100%가 아님")
+        expect(enabled(.zoomIn, in: a) && enabled(.zoomOut, in: a), "active view가 있는데 Zoom In·Out이 비활성")
+        expect(!enabled(.zoomToActualSize, in: a), "100%에서 Actual Size가 활성")
+        expect(!enabled(.zoomToFit, in: a) && !enabled(.zoomToSelection, in: a), "코어 경로 없는 맞춤 줌이 활성")
+        for (command, expected) in [(ShellCommand.zoomIn, 2.0), (.zoomIn, 4.0), (.zoomOut, 2.0), (.zoomToActualSize, 1.0), (.zoomOut, 0.5)] {
+            a.router.performShellCommand(MainMenuBuilder.makeItem(for: command, target: nil))
+            wait(coordinator, "A \(command.rawValue)")
+            expect(a.windowController.windowSession?.viewInfo?.zoom == expected, "\(command.rawValue) 뒤 코어 배율이 \(expected)가 아님")
+            expect(a.toolsModel.snapshot.zoomScale == expected, "\(command.rawValue) 뒤 배율 표시가 \(expected)가 아님")
+        }
+        expect(enabled(.zoomToActualSize, in: a), "50%에서 Actual Size가 비활성")
+        expect(b.windowController.windowSession?.viewInfo?.zoom == 1.0 && b.toolsModel.snapshot.zoomScale == 1.0,
+               "A 줌이 B viewport·배율 표시를 바꿈")
+        expect(a.windowController.windowSession?.info?.undo_depth == 1, "줌이 history에 기록됨")
+        a.router.performShellCommand(MainMenuBuilder.makeItem(for: .saveNow, target: nil))
+        wait(coordinator, "줌 뒤 A Save Now")
+        if case .windowSessionSaved(_, _, 1, false)? = a.lastSessionCommandEvent {} else {
+            expect(false, "줌 뒤 Save Now가 새 generation을 씀: \(String(describing: a.lastSessionCommandEvent))")
+        }
+        expect(designBytes(pathA) == before, "pan/zoom 뒤 저장이 디자인 폴더 bytes를 바꿈")
+    }
+
     private func check(_ coordinator: ShellAppCoordinator, host: RuntimeHost, pathA: String, pathB: String) {
         coordinator.openProject(atPath: pathA, origin: .application)
         wait(coordinator, "A 열기")
@@ -145,6 +185,8 @@ private final class ShellSessionCommandsCheckRunner {
             expect(false, "A Save Now 완료 event 없음: \(String(describing: a.lastSessionCommandEvent))")
         }
         expect(alerts.isEmpty, "성공한 Save Now가 alert를 띄움: \(alerts)")
+
+        checkZoom(coordinator, a: a, b: b, pathA: pathA)
 
         // B: 디스크 current pointer가 사라지면(다른 쓰기) 코어가 Stale로 거부하고 alert 한 번.
         let current = URL(fileURLWithPath: pathB).appendingPathComponent("design/current")

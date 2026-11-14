@@ -355,6 +355,7 @@ dependencies = [
  "stellar-history",
  "stellar-project",
  "stellar-renderer-core",
+ "stellar-scene",
  "stellar-storage",
 ]
 

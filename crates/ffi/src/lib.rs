@@ -1365,6 +1365,7 @@ mod tests {
             ("SAVE_STALE", RequestFailure::SaveStale),
             ("SAVE_FAILED", RequestFailure::SaveFailed),
             ("HISTORY_UNAVAILABLE", RequestFailure::HistoryUnavailable),
+            ("INVALID_VIEWPORT", RequestFailure::InvalidViewport),
         ];
         assert_eq!(
             failures.len(),
@@ -1397,6 +1398,14 @@ mod tests {
             "STELLAR_WINDOW_SESSION_INFO_VERSION",
             window_session::WINDOW_SESSION_INFO_VERSION.to_string(),
         );
+        define(
+            "STELLAR_WINDOW_VIEW_INFO_VERSION",
+            window_session::WINDOW_VIEW_INFO_VERSION.to_string(),
+        );
+        assert!(header.contains(&format!(
+            "sizeof(StellarWindowViewInfo) == {}",
+            std::mem::size_of::<window_session::StellarWindowViewInfo>()
+        )));
         assert!(header.contains(&format!(
             "sizeof(StellarWindowSessionInfo) == {}",
             std::mem::size_of::<window_session::StellarWindowSessionInfo>()
@@ -1407,6 +1416,15 @@ mod tests {
             (
                 "SAVE_NOW",
                 stellar_runtime::app_command::AppCommand::SaveNow,
+            ),
+            ("ZOOM_IN", stellar_runtime::app_command::AppCommand::ZoomIn),
+            (
+                "ZOOM_OUT",
+                stellar_runtime::app_command::AppCommand::ZoomOut,
+            ),
+            (
+                "ZOOM_ACTUAL_SIZE",
+                stellar_runtime::app_command::AppCommand::ZoomToActualSize,
             ),
         ];
         assert_eq!(
@@ -1427,6 +1445,7 @@ mod tests {
             "stellar_window_session_perform",
             "stellar_window_session_select",
             "stellar_command_code",
+            "stellar_window_view_info",
         ] {
             assert!(
                 header.contains(&format!("StellarStatus {function}(")),

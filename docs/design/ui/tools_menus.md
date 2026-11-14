@@ -346,7 +346,7 @@ protocol ToolsMenuModel: AnyObject {
 - **command ID(완료)**: 코어가 정한 command ID를 공유 이름으로 조회한 `ShellCommandCoreIDs` 표로 바꿨습니다. 단축키는 macOS 관례 그대로이고, 키 조합 → 메뉴 항목 → 셸 명령 → 코어 ID → 창 session 도착을 `--key-mapping-check`가 확인합니다. Windows 셸의 같은 대응(Ctrl+Z·Ctrl+Y·Ctrl+S)은 ADR-0006으로 보류했습니다. [계획 XII.6.5] [ADR-0028]
 - **snapshot 수신**: pull 이벤트 디코더와 `ToolsMenuModel` 실제 구현(창 session별 1개, 앱 수준 1개). `ToolsMenuModelStub`은 검사·미리보기용으로만 남깁니다. `MainMenuBuilder.build(applicationTarget:)`의 target은 필수 인자입니다(빠뜨리면 창이 없을 때 New/Open/Clone Project가 비활성으로 남음).
 - **도구 상태 기계**: Space 일시 Hand, Escape 복귀, Image 파일 선택 흐름. [계획 XII.3.6]
-- **줌**: camera 입력과 줌 단계·맞춤 계산. [계획 XII.4.3]
+- **줌(일부 완료)**: Zoom In(×2)·Zoom Out(÷2)·Actual Size(100%)는 코어 창 session viewport를 바꾸고(화면 중심 고정, 2%\~25600%), 툴바 배율 제목은 코어 viewport 값입니다. active view가 없으면 비활성입니다. viewport는 scene camera 입력(`ProjectWindowSession::camera`)입니다. Zoom to Fit·Zoom to Selection(내용·선택 bounds 필요)과 트랙패드 이동·확대 입력 연결은 남았습니다. [계획 XII.4.3] [ADR-0028]
 - **프로젝트 명령**: New/Open/Clone Project 흐름과 패널. [계획 XII.6.1~XII.6.3]
 - **Undo/Redo/Save Now(완료)**: 메뉴·단축키는 응답자 체인으로 key 창의 router가 받아 그 창의 코어 창 session(`ShellWindowSessionHandle`)에 `stellar_window_session_perform`으로 보냅니다. Undo는 그 창 undo stack, Redo는 redo stack이 비어 있지 않을 때, Save Now는 작업 문서가 있을 때 활성입니다. 저장 실패(다른 저장이 먼저 끝남, 쓰기 실패)는 alert 한 번으로 알립니다. 검사는 `--session-commands-check`입니다. [계획 XII.6.4] [ADR-0028]
 - **접근성**: 캔버스 호스트의 도구 상태 노출과 VoiceOver 자동화. [계획 XII.8.1]

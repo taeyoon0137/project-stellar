@@ -33,7 +33,7 @@
 | `stellar-export` | core-types, scene |
 | `stellar-local-ipc` | core-types |
 | `stellar-terminal` | core-types |
-| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core |
+| `stellar-runtime` | core-types, document, commands, history, project, storage, assets, renderer-core, scene |
 | `stellar-ffi` | core-types, runtime |
 
 ## Mermaid
@@ -85,6 +85,7 @@ graph TD
   runtime --> storage
   runtime --> assets
   runtime --> renderer_core
+  runtime --> scene
   ffi --> core_types
   ffi --> runtime
 ```
@@ -93,6 +94,7 @@ graph TD
 
 - `document`·`bindings`는 표현식 AST를 저장·평가 입력으로 쓰므로 `expressions`에 의존합니다. `project`는 Command 단위 자동 저장·복구를 위해 `commands`·`history`에 의존하고, 프로젝트·시스템 폰트 등록(XIII.6)을 위해 `text`에 의존합니다(2026-11-14, 순환 없음).
 - 셸 경계(`ffi`)는 문서·프로젝트 작업에 `runtime`을 통해서만 도달합니다(ADR-0013, 2026-11-14).
+- `runtime`은 창 session의 viewport를 scene camera 입력(`stellar_scene::visibility::Viewport`)으로 만들고 selection overlay를 transient scene layer로 만들기 위해 `scene`에 직접 의존합니다(ADR-0028, 2026-11-14, 순환 없음).
 - `commands`와 `history`는 이미 `document`를 거쳐 `core-types`에 전이 의존하므로, StableId·WindowSessionId·DocumentRevision 같은 기본 타입을 직접 쓰도록 `core-types` 직접 의존을 허용합니다(2026-11-14, `semantic-diff` 선례와 같음).
 - `assets`도 같은 이유로 `core-types` 직접 의존을 허용합니다. AssetId는 계획서(XIII.5.1)대로 StableId newtype입니다(2026-11-14).
 - `git-porcelain`은 `document`를 직접 의존하지 않고 snapshot 인터페이스(빈 trait)에만 의존합니다.

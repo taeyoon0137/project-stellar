@@ -33,6 +33,13 @@
 //! 아무것도 쓰지 않습니다(다른 창·프로세스가 먼저 저장함, 선택지는 XII.7). 바뀐 chunk가 없으면 새 generation을
 //! 만들지 않습니다(`written == false`). 성공하면 loaded generation을 새 generation으로 바꿉니다(V.5.4).
 //!
+//! # scene camera (XII.4.3)
+//!
+//! [`ProjectWindowSession::camera`]는 active 탭 viewport와 캔버스 화면 크기로 scene camera 입력
+//! ([`Viewport`](stellar_scene::visibility::Viewport): 화면 크기 + 문서 → 화면 변환)을 만듭니다. 가시 후보 계산
+//! (XI.3.2)·hit test·pass 계획이 이 값을 씁니다. 이동·확대([`ProjectWindowSession::pan`]·[`ProjectWindowSession::zoom`])는
+//! 창 view state의 viewport만 바꾸므로 작업 문서 revision·history·저장 bytes는 그대로입니다.
+//!
 //! # view state (XII.2.5)
 //!
 //! 작업 문서를 로드하면 문서의 첫 View(첫 페이지의 첫 View) 탭을 기본 viewport로 열어 active view로 둡니다. 탭
@@ -46,15 +53,19 @@ use stellar_commands::change::ChangeSet;
 use stellar_commands::selection::{Selection, SetSelection, WindowViewState};
 use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
-use stellar_commands::view_tabs::{first_view, CanvasViewport, ViewTabs, ViewTabsError};
+use stellar_commands::view_tabs::{
+    first_view, CanvasViewport, ViewTabs, ViewTabsError, ViewportError,
+};
 use stellar_core_types::ids::{StableId, WindowSessionId};
 use stellar_core_types::revision::DocumentRevision;
+use stellar_core_types::value::Size2;
 use stellar_history::entry::{HistoryError, HistorySequence};
 use stellar_history::window::WindowHistory;
 use stellar_project::document_io::load::{load_document_from_generation, LoadDocumentError};
 use stellar_project::document_io::serialize::{serialize_document, SerializeError};
 use stellar_project::identity::ProjectIdentity;
 use stellar_project::manifest::CURRENT_SCHEMA_VERSION;
+use stellar_scene::visibility::Viewport;
 use stellar_storage::chunk::id::ChunkId;
 use stellar_storage::chunk::planner::LogicalChunkState;
 use stellar_storage::chunk::pointer::ChunkPointer;
@@ -325,6 +336,58 @@ impl ProjectWindowSession {
             .map_err(WindowSessionEditError::View)
     }
 
+    /// active 탭 viewport와 캔버스 화면 크기(point)로 scene camera 입력을 만듭니다(XII.4.3). active 탭이 없거나 크기·
+    /// 변환이 유효하지 않으면(0 크기, f32 범위 초과) `None`입니다.
+    pub fn camera(&self, view_size: Size2) -> Option<Viewport> {
+        let viewport = self.tabs().active_viewport()?;
+        if view_size.width() <= 0.0 || view_size.height() <= 0.0 {
+            return None;
+        }
+        let view = viewport.world_to_view(view_size.width(), view_size.height())?;
+        Viewport::new(view_size, view).ok()
+    }
+
+    /// active 탭 viewport를 화면에서 `(dx, dy)` point만큼 옮깁니다(XII.4.3). 문서는 바뀌지 않습니다.
+    pub fn pan(&mut self, dx: f64, dy: f64) -> Result<CanvasViewport, WindowSessionEditError> {
+        let current = self.active_viewport()?;
+        let next = current
+            .panned(dx, dy)
+            .map_err(WindowSessionEditError::Viewport)?;
+        self.set_viewport(next)?;
+        Ok(next)
+    }
+
+    /// active 탭 배율을 `factor`배 합니다. 화면 중심에서 `(anchor_x, anchor_y)` point인 점을 고정합니다(XII.4.3).
+    pub fn zoom(
+        &mut self,
+        factor: f64,
+        anchor_x: f64,
+        anchor_y: f64,
+    ) -> Result<CanvasViewport, WindowSessionEditError> {
+        let current = self.active_viewport()?;
+        let next = current
+            .zoomed(factor, anchor_x, anchor_y)
+            .map_err(WindowSessionEditError::Viewport)?;
+        self.set_viewport(next)?;
+        Ok(next)
+    }
+
+    /// active 탭 배율을 100%로 되돌립니다(화면 중심 고정).
+    pub fn zoom_to_actual_size(&mut self) -> Result<CanvasViewport, WindowSessionEditError> {
+        let current = self.active_viewport()?;
+        let next = current
+            .with_zoom(1.0)
+            .map_err(WindowSessionEditError::Viewport)?;
+        self.set_viewport(next)?;
+        Ok(next)
+    }
+
+    fn active_viewport(&self) -> Result<CanvasViewport, WindowSessionEditError> {
+        self.tabs()
+            .active_viewport()
+            .ok_or(WindowSessionEditError::View(ViewTabsError::NoActiveTab))
+    }
+
     /// active 탭의 viewport를 바꾸고 이전 값을 돌려줍니다. 문서·history는 바뀌지 않습니다.
     pub fn set_viewport(
         &mut self,
@@ -498,6 +561,8 @@ pub enum WindowSessionEditError {
     History(HistoryError),
     /// 탭·viewport 조작 실패.
     View(ViewTabsError),
+    /// 이동·확대 결과 viewport가 유효하지 않음(유한 값 아님).
+    Viewport(ViewportError),
 }
 
 impl fmt::Display for WindowSessionEditError {
@@ -506,6 +571,7 @@ impl fmt::Display for WindowSessionEditError {
             WindowSessionEditError::NoDocument => f.write_str("편집할 문서가 없습니다"),
             WindowSessionEditError::History(error) => write!(f, "{error}"),
             WindowSessionEditError::View(error) => write!(f, "{error}"),
+            WindowSessionEditError::Viewport(error) => write!(f, "{error}"),
         }
     }
 }
@@ -1129,5 +1195,126 @@ mod tests {
             snapshot(&session),
             model_snapshot_json(&sample_document()).unwrap()
         );
+    }
+
+    /// world (x, y)에 크기 w×h인 Frame node 하나씩을 둔 scene(테스트용, z = 1부터 순서대로).
+    pub(crate) fn frame_scene(
+        frames: &[(u64, f32, f32, f32, f32)],
+    ) -> stellar_scene::snapshot::SceneSnapshot {
+        use stellar_core_types::revision::SceneRevision;
+        use stellar_core_types::value::Transform2D;
+        use stellar_scene::builder::{FrameClipInput, FrameInput, NodeInput, SceneBuilder};
+        use stellar_scene::node::CornerRadii;
+
+        let mut builder = SceneBuilder::new();
+        let mut root = builder.root_scope();
+        for &(node, x, y, width, height) in frames {
+            let input = FrameInput {
+                node: NodeInput::new(
+                    sid(node),
+                    Transform2D::new(1.0, 0.0, 0.0, 1.0, x, y).unwrap(),
+                ),
+                size: Size2::new(width, height).unwrap(),
+                corner_radii: CornerRadii::ZERO,
+                background: None,
+                border: None,
+                clip: FrameClipInput::None,
+            };
+            let frame = builder.begin_frame(&root, &input).unwrap();
+            builder.finish_frame(&mut root, frame).unwrap();
+        }
+        let roots = builder.finish(root);
+        stellar_scene::snapshot::SceneSnapshot::new(DocumentRevision(0), SceneRevision(0), roots)
+            .unwrap()
+    }
+
+    #[test]
+    fn pan_and_zoom_move_the_scene_camera_without_changing_saved_bytes() {
+        // 검증 기준(XII.4.3): pan/zoom 후 save bytes 동일, viewport matrix는 scene camera 입력.
+        use stellar_commands::view_tabs::ZOOM_STEP;
+        use stellar_project::document_io::serialize::serialize_document;
+        use stellar_scene::spatial::SceneSpatialIndex;
+        use stellar_scene::visibility::visible_candidates;
+
+        let project = saved_project("camera");
+        let design = project.path().join("design");
+        let disk_before = tree(&design);
+        let mut session = ProjectWindowSession::load(identity(project.path()), window(51)).unwrap();
+        let chunks_before = serialize_document(session.document().unwrap().model()).unwrap();
+        let size = Size2::new(800.0, 600.0).unwrap();
+
+        // 기본 viewport(원점 중심, 100%): 문서 원점이 화면 중심(400, 300).
+        let camera = session.camera(size).unwrap();
+        assert_eq!(
+            camera.view().components(),
+            (1.0, 0.0, 0.0, 1.0, 400.0, 300.0)
+        );
+        // 문서 (0,0) 근처 Frame 11과 멀리 있는 Frame 12(x = 2000).
+        let scene = frame_scene(&[
+            (11, -50.0, -50.0, 100.0, 100.0),
+            (12, 2_000.0, 0.0, 100.0, 100.0),
+        ]);
+        let index = SceneSpatialIndex::build(&scene);
+        let visible = |camera: &Viewport| {
+            visible_candidates(&index, camera)
+                .items
+                .iter()
+                .map(|item| item.node.source())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(visible(&camera), vec![sid(11)]);
+
+        // 확대 ×2 → 이동(내용을 왼쪽으로 4000pt) → 축소 ÷2 at anchor → 100%.
+        session.zoom(ZOOM_STEP, 0.0, 0.0).unwrap();
+        assert_eq!(
+            session.camera(size).unwrap().view().components(),
+            (2.0, 0.0, 0.0, 2.0, 400.0, 300.0)
+        );
+        session.pan(-4_100.0, 0.0).unwrap();
+        let moved = session.camera(size).unwrap();
+        assert_eq!(
+            session.tabs().active_viewport().unwrap().center_x(),
+            2_050.0
+        );
+        assert_eq!(
+            visible(&moved),
+            vec![sid(12)],
+            "camera가 scene 가시 후보를 바꿈"
+        );
+        session.zoom(1.0 / ZOOM_STEP, 100.0, 0.0).unwrap();
+        session.zoom_to_actual_size().unwrap();
+        assert_eq!(session.tabs().active_viewport().unwrap().zoom(), 1.0);
+        assert!(
+            session.camera(Size2::new(0.0, 600.0).unwrap()).is_none(),
+            "0 크기 화면"
+        );
+
+        // 문서 geometry·revision·history는 그대로이고, 저장해도 새 bytes가 없습니다.
+        assert_eq!(session.revision(), DocumentRevision(0));
+        assert!(session.history().history().is_empty());
+        assert_eq!(
+            serialize_document(session.document().unwrap().model()).unwrap(),
+            chunks_before
+        );
+        assert_eq!(
+            session.save_now().unwrap(),
+            SaveOutcome {
+                generation: 1,
+                written: false
+            }
+        );
+        assert_eq!(tree(&design), disk_before, "pan/zoom 후 저장 bytes 동일");
+
+        // 이동·확대 오류는 viewport를 바꾸지 않습니다.
+        let before = session.tabs().active_viewport();
+        assert!(matches!(
+            session.pan(f64::NAN, 0.0),
+            Err(WindowSessionEditError::Viewport(_))
+        ));
+        assert!(matches!(
+            session.zoom(0.0, 0.0, 0.0),
+            Err(WindowSessionEditError::Viewport(_))
+        ));
+        assert_eq!(session.tabs().active_viewport(), before);
     }
 }

@@ -5,7 +5,8 @@ import AppKit
 /// command ID는 코어가 정하고 단축키는 셸이 macOS 관례로 둡니다. 실제 앱 구성과 실제 코어 runtime으로 다음을 확인합니다.
 /// - 코어 command ID 표: 코어가 공유 이름으로 알려 준 Undo·Redo·Save Now ID가 코어 C ABI 상수와 같고, 셸 전용 명령에는
 ///   ID가 없으며, 표의 모든 ID가 서로 다르고 역 조회가 됨
-/// - 메인 메뉴의 macOS 관례 단축키: Undo ⌘Z, Redo ⇧⌘Z, Save Now ⌘S(HIG 표준, `ShortcutPolicy` 감사 0건)
+/// - 메인 메뉴의 macOS 관례 단축키: Undo ⌘Z, Redo ⇧⌘Z, Save Now ⌘S, Zoom In ⌘+, Actual Size ⌘0, Zoom Out ⌘-(HIG,
+///   `ShortcutPolicy` 감사 0건)
 /// - 키 조합 → 메뉴 항목 → 셸 명령 → 코어 ID 대응: ⌘Z → UNDO, ⇧⌘Z → REDO, ⌘S → SAVE_NOW, 대문자·Caps Lock 무관
 /// - 저장 프로젝트 fixture 창에서 같은 메뉴 항목 action을 응답자 체인(그 창 router)으로 보내면 그 창 session에 해당 코어
 ///   명령이 도착함(완료 event 종류로 확인)
@@ -45,6 +46,10 @@ private final class ShellKeyMappingCheckRunner {
         (.undo, "z", [.command], UInt32(STELLAR_COMMAND_UNDO)),
         (.redo, "z", [.shift, .command], UInt32(STELLAR_COMMAND_REDO)),
         (.saveNow, "s", [.command], UInt32(STELLAR_COMMAND_SAVE_NOW)),
+        // 줌(XII.4.3): 배율이 바뀌어야 다음 명령이 활성이므로 확대 → 100% → 축소 순서로 확인합니다.
+        (.zoomIn, "+", [.command], UInt32(STELLAR_COMMAND_ZOOM_IN)),
+        (.zoomToActualSize, "0", [.command], UInt32(STELLAR_COMMAND_ZOOM_ACTUAL_SIZE)),
+        (.zoomOut, "-", [.command], UInt32(STELLAR_COMMAND_ZOOM_OUT)),
     ]
 
     func run() -> Bool {
@@ -79,7 +84,7 @@ private final class ShellKeyMappingCheckRunner {
             expect(false, "fixture 복사 실패: \(fixture.path)")
         }
         if failures.isEmpty {
-            print("key-mapping ok: \(checks) checks (core-shared command IDs, macOS shortcuts ⌘Z ⇧⌘Z ⌘S → core commands)")
+            print("key-mapping ok: \(checks) checks (core-shared command IDs, macOS shortcuts ⌘Z ⇧⌘Z ⌘S ⌘+ ⌘0 ⌘- → core commands)")
             return true
         }
         for failure in failures {
@@ -176,7 +181,8 @@ private final class ShellKeyMappingCheckRunner {
             let arrived: Bool
             switch (expectation.command, window.lastSessionCommandEvent) {
             case (.undo, .historyReplayed(_, _, false, true, _)?), (.redo, .historyReplayed(_, _, true, true, _)?),
-                 (.saveNow, .windowSessionSaved(_, _, 1, false)?):
+                 (.saveNow, .windowSessionSaved(_, _, 1, false)?),
+                 (.zoomIn, .windowViewChanged?), (.zoomToActualSize, .windowViewChanged?), (.zoomOut, .windowViewChanged?):
                 arrived = true
             default:
                 arrived = false

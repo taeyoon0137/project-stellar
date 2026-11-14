@@ -12,8 +12,16 @@
 //! - active 탭을 닫으면 오른쪽 이웃이, 없으면 왼쪽 이웃이 active가 됩니다. 마지막 탭을 닫으면 active가 없습니다.
 //! - viewport는 유한 값이고 배율은 [`MIN_ZOOM`]~[`MAX_ZOOM`]입니다. 범위 밖 배율은 경계로 맞춥니다.
 //! - 문서에서 View가 사라지면(재로드·외부 변경) [`ViewTabs::prune_missing`]으로 그 탭을 닫습니다.
+//!
+//! # camera (XII.4.3)
+//!
+//! viewport는 scene camera의 입력입니다. [`CanvasViewport::world_to_view`]는 화면(view, 캔버스 view 좌표: 좌상단 원점,
+//! y 아래로 증가, point 단위) 크기를 받아 문서 좌표 → 화면 좌표 아핀 변환을 만듭니다:
+//! `view = (world − center) × zoom + size / 2`. 이동([`CanvasViewport::panned`])과 확대([`CanvasViewport::zoomed`])는 이
+//! 값만 바꾸고 문서 geometry를 바꾸지 않습니다. 메뉴 확대·축소 단계는 ×2·÷2([`ZOOM_STEP`])이고 화면 중심을 고정합니다.
 
 use stellar_core_types::ids::StableId;
+use stellar_core_types::value::Transform2D;
 use stellar_document::model::DocumentModel;
 
 /// 최소 배율(2%).
@@ -21,6 +29,9 @@ pub const MIN_ZOOM: f64 = 0.02;
 
 /// 최대 배율(25600%).
 pub const MAX_ZOOM: f64 = 256.0;
+
+/// 메뉴 확대·축소 한 단계 배율(Zoom In ×2, Zoom Out ÷2).
+pub const ZOOM_STEP: f64 = 2.0;
 
 /// 캔버스 viewport: 화면 중심이 가리키는 문서 좌표(View root 좌표계)와 배율(1.0 = 100%).
 ///
@@ -92,6 +103,56 @@ impl CanvasViewport {
     /// 배율.
     pub const fn zoom(&self) -> f64 {
         self.zoom
+    }
+}
+
+impl CanvasViewport {
+    /// 화면에서 `(dx, dy)` point만큼 내용을 옮긴 viewport(내용이 오른쪽·아래로 가면 중심은 왼쪽·위 문서 좌표로).
+    pub fn panned(&self, dx: f64, dy: f64) -> Result<CanvasViewport, ViewportError> {
+        CanvasViewport::new(
+            self.center_x - dx / self.zoom,
+            self.center_y - dy / self.zoom,
+            self.zoom,
+        )
+    }
+
+    /// 배율을 `factor`배 한 viewport. 화면 중심에서 `(anchor_x, anchor_y)` point 떨어진 화면 점이 가리키는 문서 점을
+    /// 고정합니다(메뉴 명령은 `(0, 0)` = 화면 중심). 결과 배율은 [`MIN_ZOOM`]~[`MAX_ZOOM`]으로 맞춥니다.
+    pub fn zoomed(
+        &self,
+        factor: f64,
+        anchor_x: f64,
+        anchor_y: f64,
+    ) -> Result<CanvasViewport, ViewportError> {
+        if !(factor.is_finite() && anchor_x.is_finite() && anchor_y.is_finite()) {
+            return Err(ViewportError::NonFinite);
+        }
+        if factor <= 0.0 {
+            return Err(ViewportError::NonPositiveZoom);
+        }
+        let zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        // anchor 화면 점의 문서 좌표: center + anchor / zoom. 확대 뒤에도 같은 문서 점이 같은 화면 점에 오게 합니다.
+        let anchor_world_x = self.center_x + anchor_x / self.zoom;
+        let anchor_world_y = self.center_y + anchor_y / self.zoom;
+        CanvasViewport::new(
+            anchor_world_x - anchor_x / zoom,
+            anchor_world_y - anchor_y / zoom,
+            zoom,
+        )
+    }
+
+    /// 배율만 `zoom`으로 바꾼 viewport(화면 중심 고정).
+    pub fn with_zoom(&self, zoom: f64) -> Result<CanvasViewport, ViewportError> {
+        CanvasViewport::new(self.center_x, self.center_y, zoom)
+    }
+
+    /// 화면 크기 `width × height` point의 문서 좌표 → 화면 좌표 변환(scene camera 입력). 결과가 f32 범위를 넘으면
+    /// `None`입니다.
+    pub fn world_to_view(&self, width: f32, height: f32) -> Option<Transform2D> {
+        let zoom = self.zoom as f32;
+        let tx = f64::from(width) / 2.0 - self.center_x * self.zoom;
+        let ty = f64::from(height) / 2.0 - self.center_y * self.zoom;
+        Transform2D::new(zoom, 0.0, 0.0, zoom, tx as f32, ty as f32).ok()
     }
 }
 
@@ -333,6 +394,51 @@ mod tests {
             .unwrap()
             .center_x()
             .is_sign_positive());
+    }
+
+    #[test]
+    fn pan_and_zoom_move_the_camera_only() {
+        let viewport = CanvasViewport::new(100.0, 50.0, 2.0).unwrap();
+        // 화면 800×600의 중심(400, 300)이 문서 (100, 50)을 가리킵니다.
+        let camera = viewport.world_to_view(800.0, 600.0).unwrap();
+        assert_eq!(camera.components(), (2.0, 0.0, 0.0, 2.0, 200.0, 200.0));
+        let center = camera
+            .apply(stellar_core_types::value::Vec2::new(100.0, 50.0).unwrap())
+            .unwrap();
+        assert_eq!((center.x(), center.y()), (400.0, 300.0));
+
+        // 내용을 화면 오른쪽으로 40pt 옮기면 중심 문서 좌표는 40 / 2 = 20만큼 왼쪽.
+        let panned = viewport.panned(40.0, -10.0).unwrap();
+        assert_eq!(
+            (panned.center_x(), panned.center_y(), panned.zoom()),
+            (80.0, 55.0, 2.0)
+        );
+
+        // 화면 중심 고정 확대·축소.
+        let zoomed = viewport.zoomed(ZOOM_STEP, 0.0, 0.0).unwrap();
+        assert_eq!(
+            (zoomed.center_x(), zoomed.center_y(), zoomed.zoom()),
+            (100.0, 50.0, 4.0)
+        );
+        assert_eq!(zoomed.zoomed(1.0 / ZOOM_STEP, 0.0, 0.0).unwrap(), viewport);
+        // anchor 고정: 중심에서 (+100, 0)pt인 점이 가리키는 문서 x = 100 + 100 / 2 = 150은 확대 뒤에도 같은 화면 점.
+        let anchored = viewport.zoomed(2.0, 100.0, 0.0).unwrap();
+        assert_eq!(anchored.zoom(), 4.0);
+        assert_eq!(anchored.center_x() + 100.0 / anchored.zoom(), 150.0);
+        // 경계와 오류.
+        assert_eq!(viewport.zoomed(1e9, 0.0, 0.0).unwrap().zoom(), MAX_ZOOM);
+        assert_eq!(
+            viewport.zoomed(0.0, 0.0, 0.0),
+            Err(ViewportError::NonPositiveZoom)
+        );
+        assert_eq!(
+            viewport.zoomed(f64::NAN, 0.0, 0.0),
+            Err(ViewportError::NonFinite)
+        );
+        assert_eq!(viewport.with_zoom(1.0).unwrap().zoom(), 1.0);
+        // f32 범위를 넘는 camera는 만들지 않습니다.
+        let far = CanvasViewport::new(1e300, 0.0, 1.0).unwrap();
+        assert_eq!(far.world_to_view(800.0, 600.0), None);
     }
 
     #[test]

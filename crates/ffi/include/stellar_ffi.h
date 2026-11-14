@@ -111,13 +111,18 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_SAVE_STALE 21
 #define STELLAR_FAILURE_SAVE_FAILED 22
 #define STELLAR_FAILURE_HISTORY_UNAVAILABLE 23
+#define STELLAR_FAILURE_INVALID_VIEWPORT 24
 
 /* 창 session 명령 코드(stellar_window_session_perform). 코어가 정하고 셸과 공유합니다. 셸은 메뉴 명령의 공유 이름
- * (edit.undo, edit.redo, file.save_now)으로 stellar_command_code에 물어 코드를 얻습니다. 단축키는 셸이 운영체제
- * 관례로 둡니다(macOS ⌘Z·⇧⌘Z·⌘S). */
+ * (edit.undo, edit.redo, file.save_now, view.zoom_in, view.zoom_out, view.zoom_actual_size)으로
+ * stellar_command_code에 물어 코드를 얻습니다. 단축키는 셸이 운영체제 관례로 둡니다(macOS ⌘Z·⇧⌘Z·⌘S·⌘+·⌘-·⌘0).
+ * 줌 명령은 active 탭 viewport만 바꾸고(×2·÷2·100%, 화면 중심 고정) WINDOW_VIEW_CHANGED를 보냅니다. */
 #define STELLAR_COMMAND_UNDO 1
 #define STELLAR_COMMAND_REDO 2
 #define STELLAR_COMMAND_SAVE_NOW 3
+#define STELLAR_COMMAND_ZOOM_IN 4
+#define STELLAR_COMMAND_ZOOM_OUT 5
+#define STELLAR_COMMAND_ZOOM_ACTUAL_SIZE 6
 
 /* StellarRuntimeState 레이아웃 버전. 2: window_session_count 추가. */
 #define STELLAR_RUNTIME_STATE_VERSION 2
@@ -166,14 +171,31 @@ typedef struct StellarWindowSessionInfo {
     uint8_t document_id[16];  /* 작업 문서 StableId(없으면 0) */
 } StellarWindowSessionInfo;
 
+/* StellarWindowViewInfo 레이아웃 버전. */
+#define STELLAR_WINDOW_VIEW_INFO_VERSION 1
+
+/* 창 view state 정보(고정 56 byte, 코어가 씀): 탭 수, active view와 그 viewport(scene camera 입력). */
+typedef struct StellarWindowViewInfo {
+    uint32_t version;         /* STELLAR_WINDOW_VIEW_INFO_VERSION */
+    uint32_t has_view;        /* active 탭이 있으면 1(없으면 아래 값은 0) */
+    uint32_t tab_count;       /* 열린 탭 수 */
+    uint32_t reserved;        /* 0 */
+    double center_x;          /* 화면 중심의 문서 x */
+    double center_y;          /* 화면 중심의 문서 y */
+    double zoom;              /* 배율(1.0 = 100%, 0.02~256) */
+    uint8_t active_view[16];  /* active view StableId */
+} StellarWindowViewInfo;
+
 #ifdef __cplusplus
 static_assert(sizeof(StellarRuntimeState) == 48, "StellarRuntimeState layout");
 static_assert(sizeof(StellarDocumentInfo) == 56, "StellarDocumentInfo layout");
 static_assert(sizeof(StellarWindowSessionInfo) == 88, "StellarWindowSessionInfo layout");
+static_assert(sizeof(StellarWindowViewInfo) == 56, "StellarWindowViewInfo layout");
 #else
 _Static_assert(sizeof(StellarRuntimeState) == 48, "StellarRuntimeState layout");
 _Static_assert(sizeof(StellarDocumentInfo) == 56, "StellarDocumentInfo layout");
 _Static_assert(sizeof(StellarWindowSessionInfo) == 88, "StellarWindowSessionInfo layout");
+_Static_assert(sizeof(StellarWindowViewInfo) == 56, "StellarWindowViewInfo layout");
 #endif
 
 /* runtime을 생성하고 handle을 out_handle에 씁니다. */
@@ -241,6 +263,9 @@ StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, 
 
 /* 창 session의 선택을 ids(StableId 16 byte × count)로 바꾸고 그 창 history에 기록합니다(count 0 = 비움). */
 StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, const uint8_t *ids, size_t count, uint64_t *out_request);
+
+/* 열린 창 session의 view state(탭 수, active view, viewport)를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
+StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, StellarWindowViewInfo *out_info);
 
 /* 열린 창 session의 최신 snapshot 정보를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_session_info(uint64_t handle, uint64_t session, StellarWindowSessionInfo *out_info);

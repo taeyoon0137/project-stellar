@@ -61,6 +61,15 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    /// 열린 창 session의 view 정보(탭 수, active view, viewport, XII.4.3). 열려 있지 않으면 nil입니다.
+    static func windowViewInfo(handle: UInt64, session: UInt64) -> StellarWindowViewInfo? {
+        var info = StellarWindowViewInfo()
+        guard stellar_window_view_info(handle, session, &info) == STELLAR_OK,
+            info.version == UInt32(STELLAR_WINDOW_VIEW_INFO_VERSION)
+        else { return nil }
+        return info
+    }
+
     /// 공유 command 이름(예: `edit.undo`)의 코어 명령 코드(XII.6.5). 코어 명령이 아니면 nil입니다(handle 불필요).
     static func commandCode(name: String) -> UInt32? {
         var code: UInt32 = 0

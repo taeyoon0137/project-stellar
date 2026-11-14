@@ -20,11 +20,24 @@ pub enum AppCommand {
     Redo,
     /// 작업 문서를 지금 저장(§22.1 `Save Now`).
     SaveNow,
+    /// active 탭 확대 한 단계(×2, 화면 중심 고정, XII.4.3).
+    ZoomIn,
+    /// active 탭 축소 한 단계(÷2, 화면 중심 고정).
+    ZoomOut,
+    /// active 탭 배율 100%(화면 중심 고정).
+    ZoomToActualSize,
 }
 
 impl AppCommand {
     /// 전체 명령(코드 순).
-    pub const ALL: [AppCommand; 3] = [AppCommand::Undo, AppCommand::Redo, AppCommand::SaveNow];
+    pub const ALL: [AppCommand; 6] = [
+        AppCommand::Undo,
+        AppCommand::Redo,
+        AppCommand::SaveNow,
+        AppCommand::ZoomIn,
+        AppCommand::ZoomOut,
+        AppCommand::ZoomToActualSize,
+    ];
 
     /// C ABI 코드 값.
     pub const fn code(self) -> u32 {
@@ -32,6 +45,9 @@ impl AppCommand {
             AppCommand::Undo => 1,
             AppCommand::Redo => 2,
             AppCommand::SaveNow => 3,
+            AppCommand::ZoomIn => 4,
+            AppCommand::ZoomOut => 5,
+            AppCommand::ZoomToActualSize => 6,
         }
     }
 
@@ -41,6 +57,9 @@ impl AppCommand {
             AppCommand::Undo => "edit.undo",
             AppCommand::Redo => "edit.redo",
             AppCommand::SaveNow => "file.save_now",
+            AppCommand::ZoomIn => "view.zoom_in",
+            AppCommand::ZoomOut => "view.zoom_out",
+            AppCommand::ZoomToActualSize => "view.zoom_actual_size",
         }
     }
 
@@ -66,23 +85,33 @@ mod tests {
     #[test]
     fn codes_are_stable_and_unique() {
         let codes: Vec<u32> = AppCommand::ALL.iter().map(|c| c.code()).collect();
-        assert_eq!(codes, [1, 2, 3]);
+        assert_eq!(codes, [1, 2, 3, 4, 5, 6]);
         for command in AppCommand::ALL {
             assert_eq!(AppCommand::from_code(command.code()), Some(command));
         }
         assert_eq!(AppCommand::from_code(0), None);
-        assert_eq!(AppCommand::from_code(4), None);
+        assert_eq!(AppCommand::from_code(7), None);
     }
 
     #[test]
     fn shared_names_are_stable_and_unique() {
         let names: Vec<&str> = AppCommand::ALL.iter().map(|c| c.name()).collect();
-        assert_eq!(names, ["edit.undo", "edit.redo", "file.save_now"]);
+        assert_eq!(
+            names,
+            [
+                "edit.undo",
+                "edit.redo",
+                "file.save_now",
+                "view.zoom_in",
+                "view.zoom_out",
+                "view.zoom_actual_size"
+            ]
+        );
         for command in AppCommand::ALL {
             assert_eq!(AppCommand::from_name(command.name()), Some(command));
         }
         // 셸 전용 명령과 아직 구현하지 않은 명령은 코어 ID가 없습니다.
-        for name in ["app.quit", "edit.copy", "view.zoom_in", "", "EDIT.UNDO"] {
+        for name in ["app.quit", "edit.copy", "view.zoom_to_fit", "", "EDIT.UNDO"] {
             assert_eq!(AppCommand::from_name(name), None, "{name}");
         }
     }

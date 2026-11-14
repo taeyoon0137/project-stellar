@@ -20,6 +20,31 @@ use crate::{ffi_guard, registry, StellarStatus};
 /// `StellarWindowSessionInfo` 레이아웃 버전.
 pub const WINDOW_SESSION_INFO_VERSION: u32 = 1;
 
+/// `StellarWindowViewInfo` 레이아웃 버전.
+pub const WINDOW_VIEW_INFO_VERSION: u32 = 1;
+
+/// 창 view state 정보(고정 56 byte, C ABI, XII.4.3): 열린 탭 수, active view와 그 viewport(scene camera 입력).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[repr(C)]
+pub struct StellarWindowViewInfo {
+    /// [`WINDOW_VIEW_INFO_VERSION`](코어가 씀).
+    pub version: u32,
+    /// active 탭이 있으면 1(없으면 아래 viewport·view 값은 0).
+    pub has_view: u32,
+    /// 열린 탭 수.
+    pub tab_count: u32,
+    /// 0.
+    pub reserved: u32,
+    /// 화면 중심의 문서 x.
+    pub center_x: f64,
+    /// 화면 중심의 문서 y.
+    pub center_y: f64,
+    /// 배율(1.0 = 100%).
+    pub zoom: f64,
+    /// active view StableId 16 byte.
+    pub active_view: [u8; 16],
+}
+
 /// 열린 창 session 정보(고정 88 byte, C ABI).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]
@@ -231,6 +256,56 @@ pub unsafe extern "C" fn stellar_window_session_select(
     })
 }
 
+/// 열린 창 session의 view state(탭 수, active view, viewport)를 씁니다(XII.4.3). document thread를 기다리지 않습니다.
+///
+/// 열려 있지 않은 창 session은 `InvalidArgument`(last error 설정)입니다.
+///
+/// # Safety
+/// `out_info`는 `StellarWindowViewInfo` 쓰기가 유효한 포인터여야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_view_info(
+    handle: u64,
+    session: u64,
+    out_info: *mut StellarWindowViewInfo,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out_info.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let snapshot = rt.app.as_ref().map(AppRuntime::state);
+        let Some(summary) = snapshot
+            .as_ref()
+            .and_then(|state| state.window(WindowSessionHandle(session)))
+        else {
+            rt.last_error = Some((
+                StellarStatus::InvalidArgument,
+                format!("열려 있지 않은 창 session입니다: {session}"),
+            ));
+            return StellarStatus::InvalidArgument;
+        };
+        let mut info = StellarWindowViewInfo {
+            version: WINDOW_VIEW_INFO_VERSION,
+            tab_count: summary.tab_count,
+            ..StellarWindowViewInfo::default()
+        };
+        if let (Some(view), Some(viewport)) = (summary.active_view, summary.viewport) {
+            info.has_view = 1;
+            info.center_x = viewport.center_x();
+            info.center_y = viewport.center_y();
+            info.zoom = viewport.zoom();
+            info.active_view = view.to_bytes();
+        }
+        unsafe { *out_info = info };
+        StellarStatus::Ok
+    })
+}
+
 /// 열린 창 session의 최신 snapshot 정보를 씁니다. document thread를 기다리지 않습니다.
 ///
 /// 열려 있지 않은 창 session은 `InvalidArgument`(last error 설정)입니다.
@@ -428,6 +503,58 @@ pub(crate) mod tests {
     fn info_layout_is_fixed() {
         assert_eq!(std::mem::size_of::<StellarWindowSessionInfo>(), 88);
         assert_eq!(std::mem::align_of::<StellarWindowSessionInfo>(), 8);
+        assert_eq!(std::mem::size_of::<StellarWindowViewInfo>(), 56);
+        assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, center_x), 16);
+        assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, active_view), 40);
+    }
+
+    fn view_info(h: u64, session: u64) -> StellarWindowViewInfo {
+        let mut info = StellarWindowViewInfo::default();
+        assert_eq!(
+            unsafe { stellar_window_view_info(h, session, &mut info) },
+            StellarStatus::Ok
+        );
+        info
+    }
+
+    #[test]
+    fn zoom_commands_update_the_view_info_of_their_window() {
+        // XII.4.3(C ABI): 줌 명령은 그 창 viewport만 바꾸고 view 정보로 읽습니다.
+        let first = FixtureProject::copy("zoom-a");
+        let second = FixtureProject::copy("zoom-b");
+        let h = create();
+        let a = open_window(h, open_project(h, &first.path));
+        let b = open_window(h, open_project(h, &second.path));
+        let initial = view_info(h, a);
+        assert_eq!(initial.version, WINDOW_VIEW_INFO_VERSION);
+        assert_eq!(
+            (initial.has_view, initial.tab_count, initial.zoom),
+            (1, 1, 1.0)
+        );
+        assert_eq!(
+            initial.active_view,
+            StableId::new_v7(3, 0, 3).to_bytes(),
+            "첫 View"
+        );
+        for command in [AppCommand::ZoomIn, AppCommand::ZoomIn, AppCommand::ZoomOut] {
+            assert!(matches!(
+                perform(h, a, command.code()),
+                RuntimeEvent::WindowViewChanged { session, .. } if session.0 == a
+            ));
+        }
+        assert_eq!(view_info(h, a).zoom, 2.0);
+        assert_eq!(view_info(h, b).zoom, 1.0, "B viewport 그대로");
+        assert!(matches!(
+            perform(h, a, AppCommand::ZoomToActualSize.code()),
+            RuntimeEvent::WindowViewChanged { .. }
+        ));
+        assert_eq!(view_info(h, a).zoom, 1.0);
+        let mut info = StellarWindowViewInfo::default();
+        assert_eq!(
+            unsafe { stellar_window_view_info(h, 999, &mut info) },
+            StellarStatus::InvalidArgument
+        );
+        assert_eq!(stellar_runtime_destroy(h), StellarStatus::Ok);
     }
 
     #[test]

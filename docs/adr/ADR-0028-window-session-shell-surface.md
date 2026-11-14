@@ -91,6 +91,23 @@ WindowSessionId, 독립 document state, view state, history, loaded generation)�
    `ShellCommand.shortcut`, `ShortcutPolicy` 감사), Windows 셸(ADR-0006로 보류)은 같은 공유 이름·코드에 Ctrl+Z,
    Ctrl+Y(보조 Ctrl+Shift+Z), Ctrl+S를 둡니다. 단축키를 바꿔도 command ID는 바뀌지 않습니다.
 
+### XII.4.3 — viewport와 scene camera
+
+1. **camera 입력**: 창 session의 active 탭 viewport(화면 중심 문서 좌표 + 배율)와 캔버스 화면 크기(point)로
+   `stellar_scene::visibility::Viewport`(화면 크기 + 문서 → 화면 변환 `view = (world − center) × zoom + size / 2`)를
+   만듭니다(`ProjectWindowSession::camera`). 가시 후보 계산(XI.3.2)·hit test·pass 계획이 이 값을 씁니다. 문서 geometry는
+   바꾸지 않습니다.
+2. **crate 경계**: 이를 위해 `stellar-runtime → stellar-scene` 직접 의존을 허용합니다(`tools/xtask/src/crate_graph.rs`,
+   `docs/architecture/crate-dependency-graph.md`). scene은 core-types에만 의존하므로 순환이 없습니다. ADR-0013의 runtime
+   허용 의존 목록에 scene을 덧붙이는 결정입니다.
+3. **줌 명령**: `STELLAR_COMMAND_ZOOM_IN`(4, ×2), `_ZOOM_OUT`(5, ÷2), `_ZOOM_ACTUAL_SIZE`(6, 100%)는 화면 중심을 고정하고
+   배율을 2%\~25600%로 맞춥니다. 공유 이름은 `view.zoom_in`·`view.zoom_out`·`view.zoom_actual_size`이고 완료는
+   `WINDOW_VIEW_CHANGED`입니다. 이동은 runtime `pan_viewport`(화면 point 단위)로 합니다(입력 파이프라인 연결은 XII.3 범위).
+   유한하지 않은 결과는 `STELLAR_FAILURE_INVALID_VIEWPORT`(24)입니다. 이동·확대는 history에 기록하지 않습니다.
+4. **view 정보**: `stellar_window_view_info(handle, session, out_info)`가 고정 56 byte `StellarWindowViewInfo`(version 1:
+   has_view, tab_count, center_x, center_y, zoom, active_view)를 씁니다. 셸은 이 배율로 툴바 줌 제목을 보이고, active view가
+   있을 때만 줌 명령을 활성화합니다.
+
 ## Alternatives
 
 - **프로젝트 session handle에 창 상태를 합침**: 같은 프로젝트를 연 두 창(XII.2.4)이 독립 문서·history를

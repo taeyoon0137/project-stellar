@@ -67,6 +67,12 @@ final class ShellWindowSessionHandle {
         return CoreRuntime.windowSessionInfo(handle: pump.runtimeHandle, session: session)
     }
 
+    /// 코어 상태 snapshot의 최신 창 view 정보(탭 수, active view, viewport, XII.4.3). 닫혔으면 nil입니다.
+    var viewInfo: StellarWindowViewInfo? {
+        guard !isClosed else { return nil }
+        return CoreRuntime.windowViewInfo(handle: pump.runtimeHandle, session: session)
+    }
+
     /// 창 session을 닫습니다. 여러 번 불러도 한 번만 요청합니다.
     func close(completion: ((CoreRuntimeEvent) -> Void)? = nil) {
         guard !isClosed else { return }
@@ -245,9 +251,11 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
 /// 프로젝트 창의 도구·메뉴 모델(의도적 placeholder, 계획 1.2 규칙 6).
 ///
 /// 코어 도구 상태 기계(XII.3.6)가 없으므로, 창별 현재 도구만 셸이 보관합니다. 제한:
-/// - 실행 가능한 명령은 도구 선택 11개, Close Project, 그리고 창 session 상태에 따른 Undo·Redo·Save Now(XII.6.4)입니다.
-///   Undo는 그 창 undo stack이, Redo는 redo stack이 비어 있지 않을 때, Save Now는 창 session에 작업 문서가 있을 때
-///   활성입니다(`setSessionCommands`). 편집·객체 명령과 줌(camera, XII.4.3)은 코어 경로가 없어 숨기지 않고 비활성입니다.
+/// - 실행 가능한 명령은 도구 선택 11개, Close Project, 그리고 창 session 상태에 따른 Undo·Redo·Save Now(XII.6.4)와
+///   Zoom In·Zoom Out·Actual Size(XII.4.3)입니다. Undo는 그 창 undo stack이, Redo는 redo stack이 비어 있지 않을 때,
+///   Save Now는 창 session에 작업 문서가 있을 때, 줌은 active view가 있고 배율이 경계(2%·25600%)에 닿지 않았을 때
+///   활성입니다(`setSessionState`, 코어 command ID가 있는 명령만). 배율 표시는 코어 viewport 값입니다. 편집·객체 명령과
+///   Zoom to Fit·Zoom to Selection은 코어 경로가 없어 숨기지 않고 비활성입니다.
 /// - 프로젝트가 ready가 아니면 도구 선택도 비활성입니다.
 /// - 도구 선택은 코어로 보내지 않습니다. 다른 명령은 `commandHandler`(프로젝트 창)로 넘깁니다.
 final class ShellWindowToolsModelStub: ToolsMenuModel {
@@ -302,15 +310,34 @@ final class ShellWindowToolsModelStub: ToolsMenuModel {
         republishEnabledCommands()
     }
 
-    /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 바꿉니다(XII.6.4). nil이면 모두 비활성입니다.
-    func setSessionCommands(from info: StellarWindowSessionInfo?) {
+    /// 코어 viewport 배율 경계(`stellar-commands` `MIN_ZOOM`·`MAX_ZOOM`과 같은 값).
+    static let minimumZoomScale = 0.02
+    static let maximumZoomScale = 256.0
+
+    /// 창 session·view 정보로 실행할 수 있는 창 session 명령을 계산합니다(XII.6.4, XII.4.3). 정보가 없으면 비어 있습니다.
+    static func sessionCommands(info: StellarWindowSessionInfo?, view: StellarWindowViewInfo?) -> Set<ShellCommand> {
         var commands: Set<ShellCommand> = []
         if let info {
             if info.undo_depth > 0 { commands.insert(.undo) }
             if info.redo_depth > 0 { commands.insert(.redo) }
             if info.has_document != 0 { commands.insert(.saveNow) }
         }
+        if let view, view.has_view != 0 {
+            if view.zoom < maximumZoomScale { commands.insert(.zoomIn) }
+            if view.zoom > minimumZoomScale { commands.insert(.zoomOut) }
+            if view.zoom != 1.0 { commands.insert(.zoomToActualSize) }
+        }
+        return commands
+    }
+
+    /// 창 session 명령 활성 상태와 배율 표시를 바꿉니다. `zoomScale`이 nil이면 마지막 배율 표시를 유지합니다.
+    func setSessionState(commands: Set<ShellCommand>, zoomScale: Double?) {
         sessionCommands = commands
+        if let zoomScale, zoomScale != snapshot.zoomScale {
+            var next = snapshot
+            next.zoomScale = zoomScale
+            publish(next)
+        }
         republishEnabledCommands()
     }
 
@@ -437,7 +464,11 @@ final class ShellProjectWindow {
 
     /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
     func refreshSessionCommands() {
-        toolsModel.setSessionCommands(from: windowController.windowSession?.info)
+        let session = windowController.windowSession
+        let view = session?.viewInfo
+        let commands = ShellWindowToolsModelStub.sessionCommands(info: session?.info, view: view)
+            .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
+        toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
 
     /// 코어 command ID 표(XII.6.5). 코어가 공유 이름으로 알려 준 ID로만 명령을 보냅니다.
@@ -493,7 +524,7 @@ final class ShellProjectWindow {
         windowController.windowSession = nil
         dataSource.didFail(title: failure.title, message: failure.message(path: path))
         toolsModel.setProjectReady(false)
-        toolsModel.setSessionCommands(from: nil)
+        toolsModel.setSessionState(commands: [], zoomScale: nil)
     }
 
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.

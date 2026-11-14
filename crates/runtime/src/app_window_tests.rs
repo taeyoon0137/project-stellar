@@ -374,3 +374,60 @@ fn undo_redo_and_save_now_reach_only_the_target_window() {
     expect_failure(&app, request, RequestFailure::UnknownWindowSession);
     app.shutdown().unwrap();
 }
+
+#[test]
+fn zoom_commands_and_pan_change_only_the_target_viewport() {
+    // XII.4.3(runtime 경계): Zoom In·Out·Actual Size·pan은 그 창 viewport만 바꾸고 저장 bytes를 바꾸지 않습니다.
+    use crate::app_command::AppCommand;
+
+    let first = saved_project("app-zoom-a");
+    let second = saved_project("app-zoom-b");
+    let app = AppRuntime::start().unwrap();
+    let (a, _, _) = open_window(&app, open_project(&app, first.path()));
+    let (b, _, _) = open_window(&app, open_project(&app, second.path()));
+    let zoom_of = |session| {
+        app.state()
+            .window(session)
+            .unwrap()
+            .viewport
+            .unwrap()
+            .zoom()
+    };
+    let perform = |command| {
+        let request = app.perform(a, command).unwrap();
+        assert!(matches!(
+            next_event(&app),
+            RuntimeEvent::WindowViewChanged { request: got, session } if got == request && session == a
+        ));
+    };
+    perform(AppCommand::ZoomIn);
+    perform(AppCommand::ZoomIn);
+    assert_eq!(zoom_of(a), 4.0);
+    perform(AppCommand::ZoomOut);
+    assert_eq!(zoom_of(a), 2.0);
+    let request = app.pan_viewport(a, 20.0, 10.0).unwrap();
+    assert!(matches!(
+        next_event(&app),
+        RuntimeEvent::WindowViewChanged { request: got, .. } if got == request
+    ));
+    let viewport = app.state().window(a).unwrap().viewport.unwrap();
+    assert_eq!((viewport.center_x(), viewport.center_y()), (-10.0, -5.0));
+    perform(AppCommand::ZoomToActualSize);
+    assert_eq!(zoom_of(a), 1.0);
+    assert_eq!(zoom_of(b), 1.0, "B viewport 그대로");
+    assert_eq!(
+        app.state().window(a).unwrap().undo_depth,
+        0,
+        "이동·확대는 history 아님"
+    );
+    let current = std::fs::read(first.path().join("design").join("current")).unwrap();
+    assert_eq!(save(&app, a), (1, false));
+    assert_eq!(
+        std::fs::read(first.path().join("design").join("current")).unwrap(),
+        current
+    );
+    // 유한하지 않은 이동은 거부합니다.
+    let request = app.pan_viewport(a, f64::INFINITY, 0.0).unwrap();
+    expect_failure(&app, request, RequestFailure::InvalidViewport);
+    app.shutdown().unwrap();
+}
