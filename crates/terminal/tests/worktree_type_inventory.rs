@@ -25,7 +25,7 @@ const AGENT_ONLY_MARKERS: &[&str] = &["shadow", "agent", "sandbox", "ephemeral"]
 
 /// Rust 타입을 찾는 workspace 디렉터리. 모든 workspace member가 이 아래에 있어야 합니다
 /// (`scanned_rust_roots_cover_every_workspace_member`).
-const RUST_ROOTS: &[&str] = &["crates", "tools", "benchmarks"];
+const RUST_ROOTS: &[&str] = &["crates", "tools", "benchmarks", "tests"];
 
 const RUST_TYPE_KEYWORDS: &[&str] = &["struct", "enum", "trait", "type", "union"];
 const SWIFT_TYPE_KEYWORDS: &[&str] = &["class", "struct", "enum", "protocol", "typealias", "actor"];
