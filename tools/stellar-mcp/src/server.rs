@@ -39,6 +39,9 @@ pub const PROTOCOL_VERSION: &str = PREFERRED_VERSION;
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// 수신 JSON 최대 중첩 깊이.
 pub const MAX_MESSAGE_DEPTH: usize = 64;
+/// 수신 JSON 최대 값 개수([`JsonLimits::max_nodes`]). 크기 상한 안의 작은 값 flood가 메시지 하나로
+/// 수십 MiB를 쓰지 않게 합니다.
+pub const MAX_MESSAGE_NODES: usize = 65_536;
 
 /// 서버 수명주기 단계.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +101,7 @@ impl Server {
         let limits = JsonLimits {
             max_bytes: MAX_MESSAGE_BYTES,
             max_depth: MAX_MESSAGE_DEPTH,
+            max_nodes: MAX_MESSAGE_NODES,
         };
         let value = match json::parse_bytes(bytes, limits) {
             Ok(value) => value,
@@ -114,7 +118,7 @@ impl Server {
                 return Some(response_err(None, &error));
             }
         };
-        match classify(&value) {
+        match classify(value) {
             Err(invalid) => {
                 log.warn(&format!("잘못된 request: {}", invalid.error.message));
                 Some(response_err(invalid.id.as_ref(), &invalid.error))

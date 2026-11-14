@@ -131,44 +131,49 @@ fn invalid(id: Option<RequestId>, message: &str) -> Invalid {
 }
 
 /// 파싱한 JSON 값을 JSON-RPC 메시지로 분류합니다.
-pub fn classify(value: &JsonValue) -> Result<Incoming, Invalid> {
-    if value.as_array().is_some() {
-        return Err(invalid(None, "batch 요청은 지원하지 않습니다"));
+///
+/// 값의 소유권을 받아 `id`·`method`·`params`를 복제하지 않고 옮깁니다. 큰 `params`도 메모리에 한
+/// 벌만 있습니다(IPC-05). reader가 중복 key를 거부하므로 각 member는 한 번만 나타납니다.
+pub fn classify(value: JsonValue) -> Result<Incoming, Invalid> {
+    let pairs = match value {
+        JsonValue::Object(pairs) => pairs,
+        JsonValue::Array(_) => return Err(invalid(None, "batch 요청은 지원하지 않습니다")),
+        _ => return Err(invalid(None, "JSON-RPC 메시지는 object여야 합니다")),
+    };
+    let (mut id, mut jsonrpc, mut params, mut method) = (None, None, None, None);
+    let mut has_result_or_error = false;
+    for (key, item) in pairs {
+        match key.as_str() {
+            "id" => id = Some(item),
+            "jsonrpc" => jsonrpc = Some(item),
+            "params" => params = Some(item),
+            "method" => method = Some(item),
+            "result" | "error" => has_result_or_error = true,
+            _ => {}
+        }
     }
-    if value.as_object().is_none() {
-        return Err(invalid(None, "JSON-RPC 메시지는 object여야 합니다"));
-    }
-    let id = match value.get("id") {
+    let id = match id {
         None => None,
-        Some(JsonValue::String(s)) => Some(RequestId::String(s.clone())),
-        Some(JsonValue::Number(n)) if n.is_integer() => Some(RequestId::Number(n.clone())),
+        Some(JsonValue::String(s)) => Some(RequestId::String(s)),
+        Some(JsonValue::Number(n)) if n.is_integer() => Some(RequestId::Number(n)),
         Some(JsonValue::Null) => return Err(invalid(None, "id는 null일 수 없습니다")),
         Some(_) => return Err(invalid(None, "id는 문자열 또는 정수여야 합니다")),
     };
-    if value.get("jsonrpc").and_then(JsonValue::as_str) != Some(JSONRPC_VERSION) {
+    if jsonrpc.as_ref().and_then(JsonValue::as_str) != Some(JSONRPC_VERSION) {
         return Err(invalid(id, "jsonrpc는 \"2.0\"이어야 합니다"));
     }
-    let params = match value.get("params") {
+    let params = match params {
         None => None,
-        Some(p @ (JsonValue::Object(_) | JsonValue::Array(_))) => Some(p.clone()),
+        Some(p @ (JsonValue::Object(_) | JsonValue::Array(_))) => Some(p),
         Some(_) => return Err(invalid(id, "params는 object 또는 array여야 합니다")),
     };
-    match value.get("method") {
+    match method {
         Some(JsonValue::String(method)) => Ok(match id {
-            Some(id) => Incoming::Request {
-                id,
-                method: method.clone(),
-                params,
-            },
-            None => Incoming::Notification {
-                method: method.clone(),
-                params,
-            },
+            Some(id) => Incoming::Request { id, method, params },
+            None => Incoming::Notification { method, params },
         }),
         Some(_) => Err(invalid(id, "method는 문자열이어야 합니다")),
-        None if value.get("result").is_some() || value.get("error").is_some() => {
-            Ok(Incoming::Response { id })
-        }
+        None if has_result_or_error => Ok(Incoming::Response { id }),
         None => Err(invalid(id, "method가 없습니다")),
     }
 }
@@ -197,7 +202,7 @@ mod tests {
     use crate::json::{parse, write, JsonLimits};
 
     fn classify_text(text: &str) -> Result<Incoming, Invalid> {
-        classify(&parse(text, JsonLimits::default()).unwrap())
+        classify(parse(text, JsonLimits::default()).unwrap())
     }
 
     #[test]
