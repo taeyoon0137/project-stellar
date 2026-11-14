@@ -61,3 +61,25 @@
 - 위 줄 끝 재shaping 부재는 아랍어·인도계 script 품질 문제입니다. `ShapedGlyph::unsafe_to_break`가 보존되어 있어
   후속 작업에서 줄 끝 cluster만 다시 shaping할 수 있습니다.
 - hyphenation(자동 하이픈)은 범위 밖입니다.
+
+## 후속 수정 (posthoc 리뷰 TS-1: segment advance 계산의 제곱 비용)
+
+- **결함**: `push_segments`가 shaping cluster segment마다 run의 모든 glyph를 다시 훑어 advance를 더했습니다.
+  단일 run paragraph에서 비용이 glyph 수의 제곱이라, 리뷰 측정(release)에서 40k자 `shape_paragraph`가 3.13s
+  걸렸습니다(엔진 `shaping::shape`만은 0.55ms). 텍스트가 바뀌면 paragraph 전체를 다시 shaping하므로 긴
+  paragraph에서는 입력마다 이 비용이 듭니다.
+- **수정**: glyph를 (cluster, advance)로 한 번 정렬하고 segment 순서로 한 번만 훑어 더합니다(O(n log n)).
+  segment 경계·advance 합·공백 판정은 같습니다(golden 불변).
+- **작업량 계수기**: `crates/text/src/op_count.rs`(신규)를 추가했습니다. 내부 루프가 방문 수를 `tick`으로
+  알리고, 테스트 빌드에서만 thread-local로 셉니다(일반 빌드는 빈 함수). wall-clock이 아니라 결정론적 횟수로
+  선형 상한과 크기 비례를 확인합니다.
+- **회귀 테스트**: `paragraph::tests::segment_work_is_linear_in_glyph_count`는 `"abcd "` 반복 2,000자·8,000자
+  paragraph에서 방문 수가 글자 수의 4배 이하이고, 입력을 4배로 늘려도 방문 수가 5배 이하인지 봅니다.
+  수정 전 알고리즘에 같은 계수를 넣으면 8,000자에서 64,000,000회로 실패합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-text` | 0 (109 unit passed, golden 포함) |
+| `cargo clippy -p stellar-text --all-targets -- -D warnings` | 0 |
+| `cargo clippy -p stellar-text --release -- -D warnings` | 0 |
+| `cargo fmt -p stellar-text -- --check` | 0 |

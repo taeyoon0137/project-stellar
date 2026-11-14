@@ -374,6 +374,9 @@ fn default_metrics<S: FaceSource + ?Sized>(
 }
 
 /// run 하나를 shaping cluster segment로 나눕니다. glyph가 없는 run은 grapheme segment(폭 0)입니다.
+///
+/// glyph를 cluster 오름차순으로 한 번 정렬한 뒤 segment 순서로 한 번만 훑어 advance를 더합니다. segment
+/// 마다 run 전체 glyph를 다시 훑지 않으므로 비용은 glyph 수 n에 대해 O(n log n)입니다.
 fn push_segments(
     text: &str,
     range: &Range<usize>,
@@ -381,27 +384,47 @@ fn push_segments(
     run: usize,
     out: &mut Vec<Segment>,
 ) -> Result<(), UnitError> {
+    // (cluster, advance). RTL run은 glyph가 cluster 내림차순이므로 정렬해 논리 순서로 맞춥니다.
+    let mut by_cluster: Vec<(usize, i64)> = glyphs
+        .iter()
+        .map(|g| (g.cluster as usize, i64::from(g.x_advance.raw())))
+        .collect();
+    by_cluster.sort_unstable();
     let mut starts: Vec<usize> = if glyphs.is_empty() {
         text[range.clone()]
             .grapheme_indices(true)
             .map(|(i, _)| range.start + i)
             .collect()
     } else {
-        glyphs.iter().map(|g| g.cluster as usize).collect()
+        by_cluster.iter().map(|&(cluster, _)| cluster).collect()
     };
     starts.push(range.start);
     starts.sort_unstable();
     starts.dedup();
+    // by_cluster에서 아직 segment에 더하지 않은 첫 glyph 위치.
+    let mut next = 0;
     for (i, &start) in starts.iter().enumerate() {
         let end = starts.get(i + 1).copied().unwrap_or(range.end);
         if start >= end {
             continue;
         }
-        let advance: i64 = glyphs
-            .iter()
-            .filter(|g| (start..end).contains(&(g.cluster as usize)))
-            .map(|g| i64::from(g.x_advance.raw()))
-            .sum();
+        // segment `[start, end)`에 cluster가 든 glyph만 더합니다. start 앞 glyph는 앞 segment 몫입니다.
+        while by_cluster
+            .get(next)
+            .is_some_and(|&(cluster, _)| cluster < start)
+        {
+            crate::op_count::tick(1);
+            next += 1;
+        }
+        let mut advance = 0i64;
+        while let Some(&(cluster, glyph_advance)) = by_cluster.get(next) {
+            if cluster >= end {
+                break;
+            }
+            crate::op_count::tick(1);
+            advance += glyph_advance;
+            next += 1;
+        }
         out.push(Segment {
             range: start..end,
             advance: TextUnit::from_i64(advance)?,
@@ -496,6 +519,30 @@ pub(crate) mod tests {
         assert_eq!(para.default_metrics(), para.runs()[0].metrics);
         assert!(para.missing().is_empty());
         assert_eq!(para.text(), "office 日本");
+    }
+
+    #[test]
+    fn segment_work_is_linear_in_glyph_count() {
+        // posthoc TS-1 회귀: segment마다 run 전체 glyph를 다시 훑으면 작업량이 glyph 수의 제곱입니다.
+        // 단일 run Latin paragraph는 glyph·segment가 글자마다 하나입니다.
+        let fx = Fixture::new();
+        let work = |n: usize| {
+            let text = "abcd ".repeat(n / 5);
+            let (para, units) =
+                crate::op_count::measure(|| fx.shape(&text, 16, BaseDirection::LeftToRight));
+            assert_eq!(para.runs().len(), 1);
+            assert_eq!(para.segments().len(), n);
+            units
+        };
+        let (small, large) = (work(2_000), work(8_000));
+        assert!(
+            large <= 4 * 8_000,
+            "glyph 하나당 상수 번만 방문해야 합니다: 작업량 {large}"
+        );
+        assert!(
+            large <= 5 * small,
+            "입력 4배에 작업량 {small} → {large}(선형이면 4배 남짓, 제곱이면 16배)"
+        );
     }
 
     #[test]

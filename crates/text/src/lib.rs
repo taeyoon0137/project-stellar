@@ -54,6 +54,9 @@ pub mod cache;
 /// paragraph 단위 증분 텍스트 레이아웃 (X.10.6).
 pub mod incremental;
 
+/// 내부 루프 작업량 계수기(테스트 빌드에서만 셈, 성능 회귀 검사용).
+mod op_count;
+
 #[cfg(test)]
 pub(crate) mod test_fonts;
 
