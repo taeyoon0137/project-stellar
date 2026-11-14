@@ -45,6 +45,43 @@ def main(app, cli):
             [item] = json.loads(run.stdout)["entries"]
             assert item.pop("filename") == path.name
             assert item == dict(card, width=float(card["width"]), height=float(card["height"]))
+        doc = json.loads(subprocess.check_output([cli, "query", clone, "project"], env=clone_env))["result"]["documents"][0]["id"]
+        def instance_nodes(project):
+            tree = json.loads(subprocess.check_output([cli, "query", project, "tree", doc], env=clone_env))["result"]
+            return [row["id"] for row in tree["nodes"] if row["kind"] == "component-instance"]
+
+        with subprocess.Popen([app, "--component-library-check", clone_home], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=clone_env) as proc:
+            def command(line):
+                proc.stdin.write(line + "\n")
+                proc.stdin.flush()
+                if not select.select([proc.stdout], [], [], 30)[0]:
+                    raise TimeoutError("native instance action: " + line)
+                return json.loads(proc.stdout.readline())
+            command("initial")
+            command("select " + card["id"])
+            first = command("place 30 20")
+            assert first["message"] == "Instance placed." and first["selection"] == 1, first
+            again = command("place 230.5 -10")
+            assert again["message"] == "Instance placed." and again["undo"] == first["undo"] + 1, again
+            assert command("undo")["undo"] == first["undo"]
+            assert command("redo")["undo"] == again["undo"]
+            assert command("save")["generation"] > first["generation"]
+            assert len(instance_nodes(clone)) == 2
+            # Stale library row cannot insert a new instance after a real source edit.
+            old_path = clone / path.relative_to(source)
+            subprocess.run([cli, "component-source", "resize", old_path, card["source_hash"], "201", "77"], env=clone_env, check=True, stdout=subprocess.DEVNULL)
+            stale = command("place 10 10")
+            assert stale["message"] != "Instance placed." and stale["undo"] == again["undo"], stale
+            restored = command("reopen")
+            assert restored["entries"][0]["width"] == 201
+            proc.stdin.write("done\n"); proc.stdin.flush()
+            assert proc.wait(timeout=15) == 0
+        ids = instance_nodes(clone)
+        assert len(set(ids + [card["id"], card["root"]])) == 4
+        for node in ids:
+            detail = json.loads(subprocess.check_output([cli, "query", clone, "node", doc, node], env=clone_env))["result"]["node"]
+            assert detail["modifier_count"] == 1 and card["id"] in json.dumps(detail["properties"])
+        print("instance placement ok: native Place twice at different positions, Undo/Redo, Save Now, reopen, 2 independent kind-7 nodes sharing original definition, stale source rejected")
         print("selected-component ok: original and local Git clone opened in native Component Library and CLI, identical IDs/hash/tree, single changed source")
         subprocess.run([app, "--component-create-check", home], env=env, check=True, timeout=90)
         project = home / "Component Project"

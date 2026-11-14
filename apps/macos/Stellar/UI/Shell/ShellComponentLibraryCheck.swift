@@ -60,6 +60,30 @@ enum ShellComponentLibraryCheck {
             } else if command.hasPrefix("select ") {
                 guard let id = UUID(uuidString: String(command.dropFirst(7))), let index = library.rows.firstIndex(where: { $0.id == id }) else { return false }
                 library.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            } else if command.hasPrefix("place ") {
+                let parts = command.split(separator: " ")
+                guard parts.count == 3, library.placeInstance.isEnabled else { return false }
+                library.message.stringValue = ""
+                library.placeInstance.performClick(nil)
+                func until(_ condition: () -> Bool) -> Bool {
+                    let limit = Date().addingTimeInterval(10)
+                    while !condition(), Date() < limit { RunLoop.current.run(until: Date().addingTimeInterval(0.01)) }
+                    return condition()
+                }
+                guard until({ library.panel.attachedSheet != nil }), let sheet = library.panel.attachedSheet else { return false }
+                func field(_ id: String, in view: NSView) -> NSTextField? {
+                    if view.identifier?.rawValue == id { return view as? NSTextField }
+                    return view.subviews.lazy.compactMap { field(id, in: $0) }.first
+                }
+                guard let content = sheet.contentView, let x = field("instance.x", in: content),
+                      let y = field("instance.y", in: content) else { return false }
+                x.stringValue = String(parts[1])
+                y.stringValue = String(parts[2])
+                library.panel.endSheet(sheet, returnCode: .alertFirstButtonReturn)
+                guard until({ !library.message.stringValue.isEmpty }), pump.waitForPendingRequests(timeout: 10) else { return false }
+            } else if ["undo", "redo", "save"].contains(command) {
+                let action: ShellCommand = command == "undo" ? .undo : (command == "redo" ? .redo : .saveNow)
+                guard shell.performSessionCommand(action), pump.waitForPendingRequests(timeout: 10) else { return false }
             } else if command.hasPrefix("resize ") {
                 let parts = command.split(separator: " ")
                 guard parts.count == 3, library.applySize.isEnabled else { return false }
@@ -74,7 +98,7 @@ enum ShellComponentLibraryCheck {
                 ["id": $0.id.uuidString.lowercased(), "root": $0.root.uuidString.lowercased(), "name": $0.name,
                  "node_count": $0.nodeCount, "width": $0.width, "height": $0.height, "filename": $0.filename, "source_hash": $0.hash]
             }
-            guard let bytes = try? JSONSerialization.data(withJSONObject: ["entries": rows, "message": library.message.stringValue]) else { return false }
+            guard let bytes = try? JSONSerialization.data(withJSONObject: ["entries": rows, "message": library.message.stringValue, "selection": shell.windowController.windowSession?.info?.selection_count ?? 0, "undo": shell.windowController.windowSession?.info?.undo_depth ?? 0, "generation": shell.windowController.windowSession?.info?.generation ?? 0]) else { return false }
             FileHandle.standardOutput.write(bytes + Data([10]))
         }
         return false

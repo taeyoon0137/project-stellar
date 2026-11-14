@@ -146,3 +146,62 @@ pub unsafe extern "C" fn stellar_window_component_resize(
         StellarStatus::Ok
     })
 }
+
+/// 선택된 정의를 표시한 View에 배치합니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED입니다.
+/// # Safety
+/// view와 component는 각각 16바이트 UUID이고 hash는 71바이트 UTF-8, out_request는 쓸 수 있는 u64입니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_place_component(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    revision: u64,
+    component: *const [u8; 16],
+    hash: *const u8,
+    hash_len: usize,
+    x: f32,
+    y: f32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    use stellar_core_types::{ids::StableId, revision::DocumentRevision, value::Vec2};
+    use stellar_runtime::app::InstancePlacement;
+    ffi_guard(move || {
+        if out_request.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe {
+            *out_request = 0;
+        }
+        if view.is_null() || component.is_null() || hash.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        if hash_len != 71 {
+            return StellarStatus::InvalidArgument;
+        }
+        let Ok(position) = Vec2::new(x, y) else {
+            return StellarStatus::InvalidArgument;
+        };
+        let hash = unsafe { std::slice::from_raw_parts(hash, hash_len) };
+        let Some(source_hash) = std::str::from_utf8(hash).ok().and_then(|s| s.parse().ok()) else {
+            return StellarStatus::InvalidArgument;
+        };
+        let input = InstancePlacement {
+            component: StableId::from_bytes(unsafe { *component }),
+            source_hash,
+            view: StableId::from_bytes(unsafe { *view }),
+            revision: DocumentRevision(revision),
+            position,
+        };
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.place_component_instance(WindowSessionHandle(session), input),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
