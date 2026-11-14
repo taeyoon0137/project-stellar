@@ -96,7 +96,7 @@ if [ -z "$UPDATE_PUBLIC_KEY" ] && [ "$MODE" = "developer-id" ]; then
 fi
 
 # --- 서명: 안쪽 코드부터, 모두 Hardened Runtime(공증 필수) ---
-# Rust 코어는 staticlib으로 실행 파일에 링크되어 별도 서명 대상이 없습니다(bundle_check.sh가 확인).
+# 번들 CLI와 Sparkle의 중첩 코드를 먼저 서명하고, 마지막에 앱을 서명합니다.
 "$REPO_ROOT/scripts/macos/codesign_bundle.sh" "$IDENTITY" "$TIMESTAMP_FLAG" "$APP"
 
 # --- 검증 ---
