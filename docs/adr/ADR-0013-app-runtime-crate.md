@@ -30,6 +30,13 @@ Render(불변 scene snapshot 읽기), Worker Pool로 나누고 "문서 모델에
      `stellar-history`, `stellar-project`, `stellar-storage`, `stellar-assets`,
      `stellar-renderer-core`. Phase XXIX 에이전트 기능을 위한 runtime 허용 의존 확장(agent-host,
      agent-protocol, ops 등)은 ADR-0005 §8을 따릅니다.
+   - XIV.5.5의 선택 staging 준비를 위해 `stellar-ops`, `stellar-git-porcelain` 직접 의존을
+     추가합니다(2026-11-14). ops가 기존 project·storage·semantic-diff 경계 안에서 무손실을
+     검사하고 candidate storage bytes를 만들며 runtime이 index materialize·임시 tree writer·
+     기존 loader 재열기를 조합합니다. git-porcelain·semantic-diff에 project/storage 의존을
+     추가하지 않습니다. 이 동기식 준비 API는 새 thread·worker나 FFI·UI 경로를 만들지 않습니다.
+     ADR-0059 전환 완료 전의 기존 generation 형식만 다루며, 문서 밖 chunk·opaque field를
+     보존할 증거가 없으면 unsupported입니다. 외부 library와 lockfile은 index bytes를 유지합니다.
    - `stellar-ffi` → `stellar-core-types`, `stellar-runtime`. ffi는 runtime을 우회해
      document·project에 직접 의존하지 않습니다(단일 작성자 규칙을 셸 경계에서도 유지).
    - 역방향 금지: runtime은 ffi에 의존하지 않고, runtime 아래 crate는 runtime을 참조하지
