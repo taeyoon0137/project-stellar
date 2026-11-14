@@ -354,6 +354,74 @@ mod tests {
         assert_eq!(engine.lines.len(), 4);
     }
 
+    /// 글꼴 크기만 다른 fixture style.
+    fn sized_style(fx: &Fixture, px: i32) -> TextStyleSpec<'_> {
+        TextStyleSpec {
+            chain: fx.chain.resolve(&fx.set.registry),
+            shaping: crate::font_runs::ShapingStyle::default(),
+            font_size: crate::units::FontSize::from_px(px).expect("크기"),
+        }
+    }
+
+    #[test]
+    fn style_change_reshapes_only_paragraphs_using_that_style() {
+        // posthoc TS-4 회귀: style·font face hash가 style 표 전체를 담으면, 다른 paragraph만 쓰는 style이
+        // 바뀌어도 모든 paragraph를 다시 shaping합니다.
+        let fx = Fixture::new();
+        let texts = ["first uses style zero", "second uses style one", ""];
+        let spans = [
+            spans(texts[0]),
+            vec![StyleSpan {
+                range: 0..texts[1].len(),
+                style: 1,
+                language: None,
+            }],
+            // span 없는 빈 paragraph: 기본 줄 metric은 첫 style을 씁니다.
+            vec![],
+        ];
+        let specs: Vec<ParagraphSpec<'_>> = texts
+            .iter()
+            .zip(&spans)
+            .map(|(text, spans)| ParagraphSpec {
+                text,
+                spans,
+                base_direction: BaseDirection::LeftToRight,
+                style: ParagraphLayoutStyle::default(),
+            })
+            .collect();
+        let options = LineBreakOptions::new(LanguageTag::parse("en").expect("en"));
+        let layout = |engine: &mut IncrementalTextLayout, sizes: [i32; 2]| {
+            let styles = vec![sized_style(&fx, sizes[0]), sized_style(&fx, sizes[1])];
+            engine
+                .layout(
+                    &LayoutRequest {
+                        paragraphs: &specs,
+                        styles: &styles,
+                        line_break: &options,
+                        target_profile: TargetProfileKey(1),
+                        max_width: Some(TextUnit::from_px(200).expect("폭")),
+                        paragraph_spacing: TextUnit::ZERO,
+                        text_box: TextBox::default(),
+                    },
+                    &fx.set.faces,
+                )
+                .expect("layout")
+        };
+        let mut engine = IncrementalTextLayout::new();
+        let (_, report) = layout(&mut engine, [16, 16]);
+        assert_eq!(report.reshaped, vec![0, 1, 2]);
+        // style 1(둘째 paragraph만 씀)만 바꾸면 둘째만 다시 shaping·줄 나누기합니다.
+        let (after, report) = layout(&mut engine, [16, 20]);
+        assert_eq!(report.reshaped, vec![1]);
+        assert_eq!(report.relaid, vec![1]);
+        assert_eq!(after, layout(&mut IncrementalTextLayout::new(), [16, 20]).0);
+        // style 0은 첫 paragraph와 span 없는 빈 paragraph(기본 줄 metric)가 씁니다.
+        let (after, report) = layout(&mut engine, [18, 20]);
+        assert_eq!(report.reshaped, vec![0, 2]);
+        assert_eq!(report.relaid, vec![0, 2]);
+        assert_eq!(after, layout(&mut IncrementalTextLayout::new(), [18, 20]).0);
+    }
+
     #[test]
     fn affected_paragraph_ranges() {
         let text = "one\ntwo\nthree";
