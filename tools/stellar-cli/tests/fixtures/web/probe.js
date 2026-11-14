@@ -79,10 +79,19 @@ try {
     equal(shear.transform, 'matrix(1, 0.25, 0.5, 1, 0, 0)', 'shear retained');
     equal(shear.background, 'color(display-p3 1.2 -0.1 0.3 / 0.25)', 'extended RGB channels and alpha retained');
     equal(element(10), null, 'View A excluded');
-  } else {
+  } else if (selectedView === 5) {
     equal(inspect(30, [0, 0, 512, 384]).borderWidth, '1px', 'scaled parent inside border');
     inspect(31, [0.64, -0.64, 128, 256]);
     equal(document.elementFromPoint(1, 4).id, id(31), 'fractional child painted over parent border');
+  } else {
+    const root = inspect(40, [0, 0, 100, 100]);
+    inspect(41, [-5, -5, 110, 110]);
+    equal(root.borderWidth, '20px', 'thick parent border');
+    equal(root.radii.join(','), '20px,10px,0px,30px', 'mixed outer radii');
+    for (const [x, y, visible] of [[1, 1, false], [98, 1, false], [2, 98, false],
+                                   [99, 99, true], [35, 1, true], [20, 20, true], [101, 50, false]]) {
+      equal(document.elementFromPoint(x, y).id === id(41), visible, `rounded outer clip at ${x},${y}`);
+    }
   }
 } catch (error) {
   failures.push(String(error));

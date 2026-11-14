@@ -131,6 +131,11 @@ impl FrameStyle {
         );
         if self.clip {
             declaration("overflow-clip-margin", "border-box".into());
+            // 테두리가 반경 이상이면 Chromium의 overflow clip edge에서 안쪽 반경이 0이 됩니다.
+            // border-box 자체의 둥근 윤곽을 적용해 모서리 밖의 자식도 같은 경계에서 자릅니다.
+            if self.radii.iter().any(|r| r.get() > 0.0) {
+                declaration("clip-path", "border-box".into());
+            }
         }
         declaration(
             "background-color",

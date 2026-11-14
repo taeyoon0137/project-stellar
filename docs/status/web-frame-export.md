@@ -88,3 +88,15 @@ LayoutUnit 반올림이 1/64px를 넘을 수 있는 경우 해당 노드를 진�
 - 다음 단계는 실제 layout/Text 영속 record와 capability 해석 경로가 마련된 뒤 해당 입력을 연결하고,
   각 부분집합의 브라우저 fixture를 추가하는 것입니다. 현재 스키마를 추측해 선행 정의하지 않습니다.
 - 원격 push·release·서명·추가 작업자 실행을 하지 않았고 다른 checkout에 쓰지 않았습니다.
+
+## 두꺼운 테두리의 자식 클리핑
+
+100×100 Frame에 20px 테두리와 좌상·우상·우하·좌하 반경 20·10·0·30px를 주고,
+모든 모서리를 덮는 초록색 자식을 저장했습니다. 실제 CLI 출력에서 Chrome 157.0.8103.51은
+`overflow-clip-margin: border-box`만 적용하면 (1,1)과 (98,1)에 자식을 그렸고
+`elementFromPoint`도 자식을 반환했습니다. 둥근 FrameBounds에 `clip-path: border-box`를
+함께 출력한 뒤 두 점은 흰 배경이 됐습니다. 사각 모서리 (99,99), 테두리 안 (35,1), 중앙 쪽
+(20,20)은 계속 초록색이었습니다. 픽셀은 DPR 1·100% 줌의 headless 스크린샷에서 확인했습니다.
+
+[Chrome 검증 명령](../spec/web-frame-export.md#구현-경계와-검증)의 네 번째 저장 View가
+같은 점들의 자식 hit와 bounds를 검사합니다. 실기기 GPU 및 다른 브라우저 결과는 미측정입니다.
