@@ -28,7 +28,7 @@ Accepted (2026-11-14). 제품 소유자가 2026-11-14에 잘 관리되는 MIT·A
 4. **사용 범위**: 기계 검사가 아니라 이 ADR과 리뷰로 지킵니다.
    - `serde`·`serde_json`은 에이전트 도구 계층(L1 `stellar` JSON 입출력 포함)과 그 protocol 타입에만 씁니다. 프로젝트 파일 포맷, storage canonical encoding, content hash 입력에는 쓰지 않습니다.
    - `libc`·`security-framework`는 macOS IPC 상대 인증과 실행 파일 신원 확인을 맡는 crate에서만 씁니다. 사용할 OS API와 인증 기준은 XIX.1.6, XIX.1.7, XXIX.2.3이 Apple 공식 문서를 근거로 정합니다(ADR-0005 §5, §4.3). 코어 문서·저장 crate에서는 쓰지 않습니다.
-5. **검사 범위**: `cargo xtask validate-dependencies`는 workspace 모든 member의 외부 직접 의존(normal·build·dev, 모든 target)을 검사합니다. 목록은 `cargo tree --workspace -e normal,build,dev --target all --depth 1 --prefix depth --no-dedupe` 출력에서 workspace member 자신(이름·버전·출처가 같은 package)을 뺀 깊이 1 package입니다. 출력 형식이 예상과 다르면 실패합니다.
+5. **검사 범위**: `cargo xtask validate-dependencies`는 workspace 모든 member의 외부 직접 의존(normal·build·dev, 모든 target, 모든 feature)을 검사합니다. 목록은 `cargo tree --workspace --all-features -e normal,build,dev --target all --depth 1 --prefix depth --no-dedupe` 출력에서 workspace member 자신(이름·버전·출처가 같은 package)을 뺀 깊이 1 package입니다. `--all-features`가 없으면 기본 feature로 켜지지 않는 optional 의존이 목록에서 빠지므로 필수입니다(2026-11-14 보완, 인자는 `tools/xtask/src/dependencies.rs`의 `CARGO_TREE_ARGS`). 출력 형식이 예상과 다르면 실패합니다.
 6. **도입 예정 표기(`planned_for`)**: 승인 항목의 선택 필드입니다. 값은 쉼표로 구분한 WBS ID이고 approved 항목에만 쓸 수 있습니다.
    - 어떤 member도 쓰지 않는 approved 항목은 `planned_for`가 있을 때만 통과합니다.
    - `planned_for` 행이 계획서에 없으면 `unknown-planned-for`로 실패합니다.
