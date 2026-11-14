@@ -477,6 +477,7 @@ final class ShellProjectWindow {
         )
         gitSource.trustDidChange = { [weak self] trusted in
             self?.dataSource.updateTrust(trusted)
+            self?.refreshSessionCommands()
             if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
         }
         sidebarSource.select = { [weak self] ids in _ = self?.selectNodes(ids) }
@@ -574,8 +575,9 @@ final class ShellProjectWindow {
            view?.zoom != drag.viewport.zoom {
             _ = canvasHost.canvasView.cancelFrameGesture?()
         }
-        let commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
+        var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
+        if gitSource.trusted, session != nil { commands.insert(.newComponent) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
 
@@ -771,7 +773,7 @@ extension ShellProjectWindow: GitPanelHostActions {
         guard let window, let session = dataSource.session, !session.isClosed else { return }
         let alert = NSAlert()
         alert.messageText = String(localized: "Trust This Project?")
-        alert.informativeText = String(localized: "Trusting this folder allows Stellar to run Git commands for it.") + "\n" + session.rootPath
+        alert.informativeText = String(localized: "Trusting this folder allows Stellar to edit project files and run Git commands for it.") + "\n" + session.rootPath
         alert.addButton(withTitle: String(localized: "Cancel"))
         alert.addButton(withTitle: String(localized: "Trust Project"))
         alert.beginSheetModal(for: window) { [weak self, weak session] response in

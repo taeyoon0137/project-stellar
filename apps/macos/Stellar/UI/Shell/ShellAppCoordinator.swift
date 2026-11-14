@@ -443,7 +443,9 @@ final class ShellAppCoordinator: NSObject {
             self.performFrameCommand(id, in: projectWindow)
         }
         projectWindow.toolsModel.commandHandler = { [weak projectWindow] command in
-            if command == .closeProject {
+            if command == .newComponent {
+                projectWindow?.promptForComponent()
+            } else if command == .closeProject {
                 projectWindow?.window?.performClose(nil)
             } else {
                 // Undo·Redo·Save Now는 이 창(key 창)의 창 session으로 갑니다(XII.6.4).

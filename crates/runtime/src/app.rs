@@ -104,6 +104,7 @@
 //! | `0x010B` | ProjectTrust | request u64, project u64, trusted u8 |
 //! | `0x010C` | GitNames | request u64, session u64, rows u32, other_changes u8, staged u8 |
 //! | `0x010D` | ProjectCreated | request u64, git_state u32 |
+//! | `0x010E` | ComponentCreated | request u64, session u64, filename text |
 //!
 //! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다.
 
@@ -124,6 +125,7 @@ use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
+mod component_create;
 mod create;
 mod frame_insert;
 mod frame_move;
@@ -173,6 +175,8 @@ pub mod event_kind {
     pub const GIT_NAMES: u32 = 0x010C;
     /// 새 프로젝트 디스크 생성이 끝났습니다.
     pub const PROJECT_CREATED: u32 = 0x010D;
+    /// 컴포넌트 파일 하나를 새로 기록했습니다.
+    pub const COMPONENT_CREATED: u32 = 0x010E;
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +331,15 @@ impl RequestFailure {
 /// 요청 완료 event. 요청마다 정확히 하나가 outbox에 쌓입니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeEvent {
+    /// 열린 창에서 독립 컴포넌트 원본 한 개를 생성했습니다.
+    ComponentCreated {
+        /// 요청 ID.
+        request: RequestId,
+        /// 원본 파일을 생성한 창.
+        session: WindowSessionHandle,
+        /// 실제 생성한 파일 이름.
+        filename: String,
+    },
     /// 새 프로젝트·첫 저장 세대가 준비됐습니다. 프로젝트 session은 아직 열지 않았습니다.
     ProjectCreated {
         /// 요청 ID.
@@ -609,6 +622,7 @@ impl RuntimeEvent {
     /// event 종류 코드([`event_kind`]).
     pub fn kind(&self) -> u32 {
         match self {
+            RuntimeEvent::ComponentCreated { .. } => event_kind::COMPONENT_CREATED,
             RuntimeEvent::ProjectCreated { .. } => event_kind::PROJECT_CREATED,
             RuntimeEvent::ProjectOpened { .. } => event_kind::PROJECT_OPENED,
             RuntimeEvent::ProjectClosed { .. } => event_kind::PROJECT_CLOSED,
@@ -629,6 +643,7 @@ impl RuntimeEvent {
     pub fn request(&self) -> RequestId {
         match self {
             RuntimeEvent::ProjectOpened { request, .. }
+            | RuntimeEvent::ComponentCreated { request, .. }
             | RuntimeEvent::ProjectCreated { request, .. }
             | RuntimeEvent::GitNames { request, .. }
             | RuntimeEvent::ProjectTrust { request, .. }
@@ -648,6 +663,15 @@ impl RuntimeEvent {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
         match self {
+            RuntimeEvent::ComponentCreated {
+                request,
+                session,
+                filename,
+            } => {
+                w.u64(request.0);
+                w.u64(session.0);
+                w.text(filename);
+            }
             RuntimeEvent::ProjectCreated { request, git_state } => {
                 w.u64(request.0);
                 w.u32(*git_state);
@@ -778,6 +802,11 @@ impl RuntimeEvent {
             return Err(EventDecodeError::UnsupportedVersion(version));
         }
         let event = match kind {
+            event_kind::COMPONENT_CREATED => RuntimeEvent::ComponentCreated {
+                request: RequestId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+                filename: r.text()?,
+            },
             event_kind::PROJECT_CREATED => RuntimeEvent::ProjectCreated {
                 request: RequestId(r.u64()?),
                 git_state: r.u32()?,
@@ -883,6 +912,29 @@ pub struct ProjectSummary {
     pub canonical_root: PathBuf,
     /// OS 사용자 신뢰 저장소에서 마지막으로 확인한 상태.
     pub trust: TrustStatus,
+}
+
+impl ProjectSummary {
+    fn verify_trust(&self) -> Result<(), String> {
+        let root = &self.canonical_root;
+        if self.root.canonicalize().ok().as_deref() != Some(root) {
+            return Err("열린 프로젝트 폴더가 바뀌었습니다".into());
+        }
+        let identity = ProjectIdentity::new(self.project_id, root).map_err(|e| e.to_string())?;
+        let dir = os_user_data_base()
+            .filter(|p| p.is_absolute())
+            .ok_or("사용자 데이터 경로 없음")?;
+        let store = FileTrustStore::open(&dir.join(stellar_ops::lock::APP_DATA_DIR))
+            .map_err(|e| e.to_string())?;
+        if store.status(&identity) != TrustStatus::Trusted {
+            return Err("프로젝트 신뢰가 필요합니다".into());
+        }
+        let probe = safe_probe(root, TrustStatus::NotTrusted).map_err(|e| e.to_string())?;
+        if parse_project_id(&probe.manifest.project.id) != Some(self.project_id) {
+            return Err("열린 프로젝트 ID가 바뀌었습니다".into());
+        }
+        Ok(())
+    }
 }
 
 /// 열린 문서 session 요약.
@@ -1547,6 +1599,7 @@ pub enum EventPoll {
 #[derive(Debug)]
 struct AppShared {
     creating: std::sync::atomic::AtomicBool,
+    creating_component: std::sync::atomic::AtomicBool,
     git_names: Mutex<git_names::WindowGit>,
     outbox: Mutex<VecDeque<RuntimeEvent>>,
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
@@ -1647,6 +1700,7 @@ impl AppRuntime {
             sender: document.sender(),
             shared: Arc::new(AppShared {
                 creating: false.into(),
+                creating_component: false.into(),
                 git_names: Mutex::default(),
                 outbox: Mutex::new(VecDeque::new()),
                 outstanding: AtomicUsize::new(0),

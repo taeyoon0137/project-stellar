@@ -135,6 +135,38 @@ fn write_checked_observed(
     )
 }
 
+/// 프로젝트 안에서 해석을 마친 절대 경로에 새 원본을 기록합니다. 기존 파일을 덮어쓰지 않으며
+/// temp·게시 직전에 canonical root 이하 디렉터리의 identity를 검사합니다.
+pub fn write_new_resolved(root: &Path, path: &Path, bytes: &[u8], limit: u64) -> io::Result<()> {
+    if bytes.len() as u64 > limit {
+        return Err(io::ErrorKind::FileTooLarge.into());
+    }
+    let parent = path.parent().ok_or(io::ErrorKind::InvalidInput)?;
+    let relative = parent
+        .strip_prefix(root)
+        .map_err(|_| io::ErrorKind::InvalidInput)?;
+    if root.canonicalize()? != root || parent.canonicalize()? != parent {
+        return Err(Refusal::Changed.into_io());
+    }
+    let mut dirs = Vec::new();
+    for ancestor in parent.ancestors().take(relative.components().count() + 1) {
+        let (meta, id) = FileIdentity::lstat(ancestor)?;
+        if !meta.is_dir() {
+            return Err(Refusal::NotDirectory.into_io());
+        }
+        dirs.push((ancestor.to_path_buf(), id));
+    }
+    let mut inner = NoopObserver;
+    let mut expected = Expected {
+        path,
+        hash: None,
+        limit,
+        observer: &mut inner,
+    };
+    let mut guard = DirGuard::new(&mut expected, dirs);
+    write_file_atomic_observed_with_permissions(path, bytes, &mut guard, None, false)
+}
+
 /// 원본 hash에 속한 파생 cache chunk 하나를 검증하고 없거나 손상됐으면 다시 씁니다.
 /// 원본 파일과 달리 cache만 교체할 수 있습니다. 반환값은 기존 bytes 재사용 여부입니다.
 /// cache 전용 `.gitignore`를 먼저 보장하며 다른 설정은 덮어쓰지 않습니다.

@@ -1,7 +1,6 @@
 //! 새 편집 프로젝트의 첫 저장 세대. 신규 폴더 트랜잭션 안에서만 호출합니다.
 use std::io;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::ids::StableId;
@@ -17,35 +16,6 @@ use stellar_storage::save::plan::build_save_plan;
 
 use crate::document_io::serialize::serialize_document;
 use crate::manifest::CURRENT_SCHEMA_VERSION;
-
-/// 프로젝트·문서·페이지·뷰·루트 노드의 UUIDv7. 같은 시각의 독립 생성에도 OS 난수를 사용합니다.
-pub(super) fn new_ids() -> io::Result<[StableId; 5]> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(io::Error::other)?;
-    let ms = u64::try_from(now.as_millis()).map_err(io::Error::other)?;
-    let mut entropy = [[0u8; 10]; 5];
-    fill_entropy(entropy.as_flattened_mut())?;
-    Ok(entropy.map(|bytes| {
-        StableId::new_v7(
-            ms,
-            u16::from_be_bytes([bytes[0], bytes[1]]),
-            u64::from_be_bytes(bytes[2..].try_into().expect("8 bytes")),
-        )
-    }))
-}
-
-/// Unix 시스템 난수 adapter. 다른 플랫폼 구현은 ADR-0006의 지원 재개 시 추가합니다.
-#[cfg(unix)]
-fn fill_entropy(bytes: &mut [u8]) -> io::Result<()> {
-    use std::io::Read;
-    std::fs::File::open("/dev/urandom")?.read_exact(bytes)
-}
-
-#[cfg(not(unix))]
-fn fill_entropy(_: &mut [u8]) -> io::Result<()> {
-    Err(io::ErrorKind::Unsupported.into())
-}
 
 pub(super) fn save(
     root: &Path,

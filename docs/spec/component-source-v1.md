@@ -39,6 +39,12 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 기존 바이너리 프로젝트를 변환하는 경로는 없습니다. 등록된 Property·Slot·token·state machine, Frame 이외의 자식 종류, 외부 layout 참조, Path clip, 알 수 없는 필드나 버전을 만나면 축소해서 저장하지 않습니다. opt-in 원본을 기본 앱의 컴포넌트 라이브러리로 불러오기와 다중 파일 복구는 후속 범위입니다. [ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)
 
+## macOS 프로젝트 창에서 생성
+
+열린 프로젝트의 Git 패널에서 **Trust Project…**로 폴더를 신뢰한 뒤 **Insert → New Component…**에서 이름을 입력합니다. **Create**는 `design/components/`에 독립된 v1 정의와 기본 root Frame을 파일 하나로 저장합니다. 같은 이름을 다시 입력하면 별도의 UUIDv7 두 개(component와 root)를 생성하므로 두 정의가 공존합니다. 완성된 파일의 경로를 창에 표시하며, Git staging과 commit은 사용자가 진행합니다.
+
+이 작업은 캔버스 선택을 복제하지 않으며, 생성 직전의 문서 generation·선택·Undo 기록을 보존합니다. 생성 결과는 프로젝트를 다시 열거나 다른 브랜치를 checkout한 뒤에도 현재 폴더에서 CLI와 MCP로 조회할 수 있습니다. 캔버스 Undo는 이 파일 생성을 취소하지 않습니다. GUI에서 원본 트리를 편집하는 동작은 별도 범위입니다. 신뢰를 해제한 프로젝트, 기존 component-library chunk가 있는 프로젝트, 잘못된 이름·원본 또는 외부나 Git 내부를 가리키는 쓰기 폴더에서는 새 파일을 기록하지 않습니다. 같은 사용자로 동작하는 프로젝트 writer와 source CLI의 잠금을 사용합니다.
+
 ## 프로젝트에서 조회
 
 프로젝트 루트 아래 `design/components/`에 원본을 두면 `stellar query . components`와 신뢰된 headless MCP의 `stellar://components`가 같은 라이브러리를 읽습니다. 다른 폴더의 원본은 기존 `component-source check <폴더>`로 조회할 수 있습니다. 각 항목은 전체 StableId, 이름, 루트 ID, 루트의 논리 픽셀 크기, 루트를 포함한 Frame 수, 원본 bytes의 `source_hash`를 담습니다. `source_hash`는 그대로 `resize`와 `add-frame`에 전달할 수 있습니다.

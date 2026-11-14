@@ -132,6 +132,7 @@ done
 WINDOW_SESSION_FIXTURE="$REPO_ROOT/crates/runtime/tests/fixtures/window-session-project"
 cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --locked -p stellar-cli
 cli_target="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
+python3 "$REPO_ROOT/scripts/macos/component-create-check.py" "$APP" "$cli_target/debug/stellar"
 python3 "$REPO_ROOT/scripts/macos/git-stage-check.py" "$APP" "$cli_target/debug/stellar" "$WINDOW_SESSION_FIXTURE"
 python3 "$REPO_ROOT/scripts/macos/canvas-move-check.py" "$APP" "$cli_target/debug/stellar" "$WINDOW_SESSION_FIXTURE"
 (
