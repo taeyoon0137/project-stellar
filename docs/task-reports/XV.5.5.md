@@ -58,3 +58,17 @@
 - 진단 집계(XXV.2.1 DiagnosticIndex)와 UI 표시는 후속 작업입니다.
 - cache entry 손상 판정은 cache index의 content hash 비교입니다. entry 파일 내용 재계산 검사는
   XV.4.4 `verify_lock_against_cache`를 따로 호출해야 합니다.
+
+## 리뷰 수정(9A 리뷰 P1, 2026-11-14)
+
+- 문제: `unresolved_external`·`ResourceUnavailable::unresolved_at`이 외부 참조를 core-types `UnresolvedRef`로
+  바꿔 의존성 선언 이름과 LibraryId를 잃었습니다. 모듈 문서는 이 값을 문서에 남겨도 된다고 안내했으므로,
+  offline으로 열고 저장하면 cache가 돌아온 뒤 어느 의존성의 참조였는지 알 수 없어 다시 연결할 수 없었습니다.
+- 재현: `unresolved_external_keeps_dependency_name_and_library` — 선언 이름 또는 LibraryId만 다른 두 참조의
+  미해결 형태가 같아져 실패했습니다(수정 전 `assertion left != right failed`).
+- 수정: 참조 전체(선언 이름·LibraryId·종류·StableId)와 위치를 보존하는 `UnresolvedExternalRef`를 추가하고
+  `unresolved_external`·`unresolved_at`이 이 타입을 돌려줍니다. core-types 변환은 `diagnostic_ref()`(진단
+  집계용 손실 변환)로만 남겼습니다. 모듈 문서와 ADR-0023 결정 7을 함께 고쳤습니다.
+- 검증: 위 재현 테스트 통과, canonical 참조 텍스트 + 위치로 다시 만든 값이 같음
+  (`unresolved_external_preserves_reference_identity`), offline fixture의 미해결 참조가 선언 이름 `c`·
+  library 3·StableId를 보존(`offline_missing_library_opens_partially_with_unavailable_diagnostic`).

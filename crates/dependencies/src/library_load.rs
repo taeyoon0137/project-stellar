@@ -6,14 +6,16 @@
 //! 그대로 엽니다(부분 열기, 아키텍처 30.1 "오프라인에서는 캐시 사용").
 //!
 //! 사용할 수 없는 library를 가리키는 참조는 [`ResourceResolution::Unavailable`]이 되고, 문서 쪽에는 원래
-//! StableId·기대 타입·발견 위치를 보존한 `UnresolvedRef`(III.2.4)로 남길 수 있습니다. 참조를 지우거나
+//! 참조 전체(선언 이름·LibraryId·종류·StableId)와 발견 위치를 보존한 [`UnresolvedExternalRef`]로 남깁니다.
+//! core-types `UnresolvedRef`(III.2.4)는 선언 이름과 LibraryId를 담지 못해 cache가 돌아온 뒤 원래
+//! 의존성에 다시 연결할 수 없으므로 문서 저장에 쓰지 않습니다(진단 집계용 변환만 제공). 참조를 지우거나
 //! 다른 버전으로 바꾸지 않습니다. 오류·진단 문자열에는 repository URL을 넣지 않습니다(XV.1.4).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use stellar_core_types::property::PropertyPath;
-use stellar_core_types::reference::UnresolvedRef;
+use stellar_core_types::reference::{ExpectedRefType, UnresolvedRef};
 
 use crate::cache_entry::{LibraryEntryStore, Sha256Digest};
 use crate::external_ref::ExternalResourceRef;
@@ -108,8 +110,8 @@ pub struct ResourceUnavailable<'a> {
 }
 
 impl ResourceUnavailable<'_> {
-    /// 문서에 남길 미해결 참조(원래 StableId·기대 타입·위치 보존).
-    pub fn unresolved_at(&self, location: PropertyPath) -> UnresolvedRef {
+    /// 문서에 남길 미해결 외부 참조(원래 참조 전체·위치 보존).
+    pub fn unresolved_at(&self, location: PropertyPath) -> UnresolvedExternalRef {
         unresolved_external(&self.reference, location)
     }
 }
@@ -124,16 +126,61 @@ impl fmt::Display for ResourceUnavailable<'_> {
     }
 }
 
-/// 외부 참조를 미해결 참조로 바꿉니다(원래 StableId·기대 타입·위치 보존, III.2.4).
+/// 해석할 수 없는 외부 참조(III.2.4 미해결 참조의 외부 library판).
+///
+/// 원래 [`ExternalResourceRef`] 전체(선언 이름·LibraryId·종류·StableId)와 발견 위치를 그대로 보존합니다.
+/// 그래서 cache가 돌아오거나 의존성을 다시 받은 뒤 [`reference`](Self::reference)를 그대로 다시 해석하면
+/// 원래 resource에 연결됩니다. 저장할 때는 참조의 canonical 텍스트(ADR-0023 결정 7)와 위치를 함께
+/// 씁니다.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UnresolvedExternalRef {
+    reference: ExternalResourceRef,
+    location: PropertyPath,
+}
+
+impl UnresolvedExternalRef {
+    /// 미해결 외부 참조를 만듭니다.
+    pub fn new(reference: ExternalResourceRef, location: PropertyPath) -> UnresolvedExternalRef {
+        UnresolvedExternalRef {
+            reference,
+            location,
+        }
+    }
+
+    /// 원래 외부 참조(선언 이름·LibraryId·StableId).
+    pub fn reference(&self) -> &ExternalResourceRef {
+        &self.reference
+    }
+
+    /// 참조가 발견된 위치.
+    pub fn location(&self) -> &PropertyPath {
+        &self.location
+    }
+
+    /// 기대했던 참조 종류.
+    pub fn expected(&self) -> ExpectedRefType {
+        self.reference.expected_ref_type()
+    }
+
+    /// 진단 집계용 core-types 미해결 참조.
+    ///
+    /// **손실 변환**입니다. 선언 이름과 LibraryId가 빠지므로 문서에 저장하거나 다시 연결하는 데 쓰지
+    /// 않습니다.
+    pub fn diagnostic_ref(&self) -> UnresolvedRef {
+        UnresolvedRef::new(
+            self.reference.resource(),
+            self.expected(),
+            self.location.clone(),
+        )
+    }
+}
+
+/// 외부 참조를 미해결 외부 참조로 바꿉니다(원래 참조 전체·위치 보존).
 pub fn unresolved_external(
     reference: &ExternalResourceRef,
     location: PropertyPath,
-) -> UnresolvedRef {
-    UnresolvedRef::new(
-        reference.resource(),
-        reference.expected_ref_type(),
-        location,
-    )
+) -> UnresolvedExternalRef {
+    UnresolvedExternalRef::new(reference.clone(), location)
 }
 
 /// 참조 해석 결과.
@@ -324,7 +371,6 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use stellar_core_types::property::PropertyKey;
-    use stellar_core_types::reference::ExpectedRefType;
 
     use super::*;
     use crate::cache_root::LibraryCacheRoot;
@@ -566,11 +612,14 @@ mod tests {
             assert_eq!(missing.library.node, f.c);
             assert!(missing.to_string().contains("사용할 수 없습니다"));
         }
-        // 문서에는 원래 StableId·기대 타입·위치를 보존한 미해결 참조로 남김.
+        // 문서에는 원래 참조 전체(선언 이름·LibraryId·StableId)와 위치를 보존한 미해결 참조로 남김.
         let location = PropertyPath::with_keys(rid(900), vec![PropertyKey(0x0A01)]);
         let chip = &closure.unavailable[0];
         let unresolved = chip.unresolved_at(location.clone());
-        assert_eq!(unresolved.original_id(), rid(CHIP));
+        assert_eq!(unresolved.reference(), &chip.reference);
+        assert_eq!(unresolved.reference().dependency().as_str(), "c");
+        assert_eq!(unresolved.reference().library_id(), library(3));
+        assert_eq!(unresolved.reference().resource(), rid(CHIP));
         assert_eq!(unresolved.expected(), ExpectedRefType::Component);
         assert_eq!(unresolved.location(), &location);
         assert_eq!(closure.unavailable[1].reference.resource(), rid(INK));
@@ -654,12 +703,36 @@ mod tests {
     }
 
     #[test]
+    fn unresolved_external_keeps_dependency_name_and_library() {
+        // 같은 StableId·종류라도 선언 이름이나 library가 다르면 다른 참조입니다. offline에서 남긴 미해결
+        // 형태도 서로 구분되어야 cache가 돌아온 뒤 원래 의존성에 다시 연결할 수 있습니다(리뷰 P1).
+        let path = PropertyPath::with_keys(rid(901), vec![PropertyKey(7)]);
+        let ds: ExternalResourceRef = token_ref("ds", library(1), rid(5)).into();
+        let renamed: ExternalResourceRef = token_ref("ds-next", library(1), rid(5)).into();
+        let foreign: ExternalResourceRef = token_ref("ds", library(2), rid(5)).into();
+        let kept = unresolved_external(&ds, path.clone());
+        assert_ne!(kept, unresolved_external(&renamed, path.clone()));
+        assert_ne!(kept, unresolved_external(&foreign, path));
+    }
+
+    #[test]
     fn unresolved_external_preserves_reference_identity() {
         let token: ExternalResourceRef = token_ref("ds", library(1), rid(5)).into();
         let path = PropertyPath::with_keys(rid(901), vec![PropertyKey(7)]);
         let unresolved = unresolved_external(&token, path.clone());
-        assert_eq!(unresolved.original_id(), rid(5));
+        assert_eq!(unresolved.reference(), &token);
         assert_eq!(unresolved.expected(), ExpectedRefType::Token);
         assert_eq!(unresolved.location(), &path);
+        // 저장 형식(canonical 참조 텍스트 + 위치)으로 다시 만들어도 같음(정보 손실 없음).
+        let rebuilt = UnresolvedExternalRef::new(
+            unresolved.reference().to_string().parse().unwrap(),
+            unresolved.location().clone(),
+        );
+        assert_eq!(rebuilt, unresolved);
+        // 진단용 core-types 변환은 StableId·기대 타입·위치만 담음(손실 변환).
+        let diagnostic = unresolved.diagnostic_ref();
+        assert_eq!(diagnostic.original_id(), rid(5));
+        assert_eq!(diagnostic.expected(), ExpectedRefType::Token);
+        assert_eq!(diagnostic.location(), &path);
     }
 }

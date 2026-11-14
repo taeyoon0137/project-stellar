@@ -59,6 +59,11 @@ XV.5.1은 library 프로젝트가 export한 ComponentDefinition·TokenSet index�
    logical name은 `@`·`/`·공백을 쓸 수 없어 구분자가 모호하지 않습니다. UUID는 소문자 hyphen 형식만
    받고, canonical이 아닌 입력과 종류가 다른 참조(component 자리의 token 참조)는 거부합니다. 최대 길이는
    `component:` + 128 + 1 + 36 + 1 + 36 byte입니다.
+
+   해석할 수 없는 외부 참조(offline·cache 누락, XV.5.5)는 core-types `UnresolvedRef`로 바꿔 남기지
+   않습니다. `UnresolvedRef`는 선언 이름과 LibraryId를 담지 못해 cache가 돌아온 뒤 원래 의존성에 다시
+   연결할 수 없기 때문입니다. 대신 참조 전체와 발견 위치를 보존한 `UnresolvedExternalRef`로 남기고,
+   `UnresolvedRef` 변환(`diagnostic_ref`)은 진단 집계용으로만 둡니다.
 8. **참조 scope(XV.5.4)**: 참조의 선언 이름은 참조가 속한 scope에서 해석합니다. 사용 프로젝트 문서는 lock의
    root edge, library resource(export record의 `references`)는 그 node에서 나가는 edge를 씁니다. scope 표는
    resolver 그래프나 lock entry의 canonical dependency path에서 만듭니다. 사용 프로젝트는 직접 선언하지 않은
