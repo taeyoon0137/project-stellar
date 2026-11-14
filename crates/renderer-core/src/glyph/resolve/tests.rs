@@ -442,3 +442,118 @@ fn random_workload_never_shows_a_wrong_or_stale_glyph() {
     assert!(stats.exact > 0 && stats.empty > 0);
     assert!(atlas.stats().evicted_pages > 0);
 }
+
+#[test]
+fn full_pending_set_drops_oldest_so_new_glyphs_are_still_requested() {
+    // 리뷰 회귀(XI.6.6 pending 상한): 가져간 요청이 끝나지 않아(worker 종료·요청 폐기) 대기 집합이 상한까지
+    // 차도 새 glyph는 계속 요청됩니다. 대기 집합은 다른 기록처럼 오래된 항목부터 버립니다.
+    let mut atlas = atlas(256, 2);
+    let mut resolver = GlyphResolver::new();
+    atlas.begin_frame(1).unwrap();
+    let cap = MAX_PENDING_GLYPHS as u32;
+    for glyph in 1..=cap {
+        resolver.resolve(&mut atlas, &coverage_key(glyph, 12.0));
+    }
+    assert_eq!(resolver.take_requests().len(), MAX_PENDING_GLYPHS);
+    assert_eq!(resolver.pending(), MAX_PENDING_GLYPHS);
+
+    let fresh = coverage_key(cap + 1, 12.0);
+    assert_eq!(
+        resolver.resolve(&mut atlas, &fresh),
+        GlyphDraw::Empty(EmptyReason::Pending)
+    );
+    assert_eq!(resolver.take_requests(), vec![fresh.clone()]);
+    assert_eq!(resolver.pending(), MAX_PENDING_GLYPHS);
+
+    // 가장 오래된 요청(glyph 1)은 대기 집합에서 빠졌으므로 다시 그리려 하면 다시 요청됩니다.
+    let oldest = coverage_key(1, 12.0);
+    resolver.resolve(&mut atlas, &oldest);
+    assert_eq!(resolver.take_requests(), vec![oldest.clone()]);
+    // 아직 대기 중인 key는 중복 요청하지 않습니다.
+    resolver.resolve(&mut atlas, &coverage_key(cap, 12.0));
+    assert!(resolver.take_requests().is_empty());
+
+    // 버려진 요청의 늦은 결과도 정상 반영됩니다.
+    let late = coverage_key(2, 12.0);
+    assert!(matches!(
+        resolver.complete(&mut atlas, late.clone(), Ok(render(&late))),
+        CompleteOutcome::Placed(_)
+    ));
+    assert!(matches!(
+        resolver.resolve(&mut atlas, &late),
+        GlyphDraw::Exact(_)
+    ));
+    assert!(resolver.pending() <= MAX_PENDING_GLYPHS);
+}
+
+#[test]
+fn pending_bookkeeping_stays_bounded() {
+    // 상한으로 버리기·완료·취소를 오래 반복해도 내부 순서·요청 기록이 대기 항목 수의 상수배를 넘지 않습니다.
+    let mut atlas = atlas(256, 2);
+    let mut resolver = GlyphResolver::new();
+    atlas.begin_frame(1).unwrap();
+    let bound = |r: &GlyphResolver| 2 * r.pending.len() + PENDING_COMPACT_SLACK;
+    // 요청을 꺼내지 않는 호출자: 요청 목록도 대기 집합 상한 근처에서 멈춥니다.
+    for glyph in 1..=3 * MAX_PENDING_GLYPHS as u32 {
+        resolver.resolve(&mut atlas, &coverage_key(glyph, 9.0));
+        assert!(resolver.pending.order.len() <= bound(&resolver));
+        assert!(resolver.pending.requests.len() <= bound(&resolver));
+    }
+    assert_eq!(resolver.pending(), MAX_PENDING_GLYPHS);
+    // 요청·완료 반복: 대기 항목이 거의 없어도 낡은 기록이 쌓이지 않습니다.
+    resolver.cancel_all_pending();
+    for glyph in 1..=20_000u32 {
+        let k = coverage_key(glyph, 3.0);
+        resolver.resolve(&mut atlas, &k);
+        if glyph % 2 == 0 {
+            resolver.cancel_pending(&k);
+        } else {
+            let taken = resolver.take_requests();
+            assert_eq!(taken, vec![k.clone()]);
+            resolver.complete(
+                &mut atlas,
+                k,
+                Err(GlyphError::Rasterize {
+                    reason: "테스트"
+                }),
+            );
+        }
+        assert!(resolver.pending.order.len() <= bound(&resolver));
+        assert!(resolver.pending.requests.len() <= bound(&resolver));
+    }
+    assert_eq!(resolver.pending(), 0);
+}
+
+#[test]
+fn cancelled_pending_requests_are_requested_again() {
+    // 리뷰 회귀(XI.6.6 pending 정리): 끝나지 않을 요청을 취소하면 다음 resolve에서 다시 요청합니다.
+    let mut atlas = atlas(256, 2);
+    let mut resolver = GlyphResolver::new();
+    atlas.begin_frame(1).unwrap();
+    let a = coverage_key(1, 12.0);
+    let b = coverage_key(2, 12.0);
+    resolver.resolve(&mut atlas, &a);
+    assert_eq!(resolver.take_requests(), vec![a.clone()]);
+    // 가져간 요청은 대기 중이라 다시 요청하지 않습니다.
+    resolver.resolve(&mut atlas, &a);
+    assert!(resolver.take_requests().is_empty());
+    assert!(resolver.cancel_pending(&a));
+    assert!(!resolver.cancel_pending(&a));
+    assert_eq!(resolver.pending(), 0);
+    resolver.resolve(&mut atlas, &a);
+    assert_eq!(resolver.take_requests(), vec![a.clone()]);
+
+    // 아직 가져가지 않은 요청을 취소하면 요청 목록에서도 빠집니다.
+    resolver.resolve(&mut atlas, &b);
+    assert!(resolver.cancel_pending(&b));
+    assert!(resolver.take_requests().is_empty());
+
+    // worker 종료: 모두 취소하면 대기 집합이 비고 이후 resolve가 다시 요청합니다.
+    resolver.resolve(&mut atlas, &b);
+    assert_eq!(resolver.cancel_all_pending(), 2);
+    assert_eq!(resolver.pending(), 0);
+    assert!(resolver.take_requests().is_empty());
+    resolver.resolve(&mut atlas, &a);
+    resolver.resolve(&mut atlas, &b);
+    assert_eq!(resolver.take_requests(), vec![a, b]);
+}

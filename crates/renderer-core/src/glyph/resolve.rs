@@ -13,13 +13,19 @@
 //!    경우입니다. 아무것도 그리지 않습니다(layout advance는 text engine이 이미 정했으므로 줄 배치는 변하지
 //!    않음).
 //!
-//! miss인 key는 rasterize 요청 목록([`GlyphResolver::take_requests`])에 한 번만 들어갑니다. worker 결과는
-//! [`GlyphResolver::complete`]로 반영하며, mode와 맞지 않는 결과는 실패로 처리합니다. 대체로 고른 glyph도
-//! atlas `lookup`으로 현재 frame 사용 표시가 되므로 그 frame 동안 eviction되지 않습니다(XI.6.5).
+//! miss인 key는 rasterize 요청 목록([`GlyphResolver::take_requests`])에 한 번만 들어가고, 결과가 올 때까지
+//! 대기 중으로 남습니다. worker 결과는 [`GlyphResolver::complete`]로 반영하며, mode와 맞지 않는 결과는 실패로
+//! 처리합니다. 대체로 고른 glyph도 atlas `lookup`으로 현재 frame 사용 표시가 되므로 그 frame 동안 eviction되지
+//! 않습니다(XI.6.5).
 //!
-//! 모든 내부 집합에는 상한이 있습니다(오래된 항목부터 버림).
+//! 가져간 요청이 끝나지 않으면(worker 종료, 요청 폐기) 호출자는 [`GlyphResolver::cancel_pending`] 또는
+//! [`GlyphResolver::cancel_all_pending`]으로 알립니다. 취소한 key는 다음 `resolve`에서 다시 요청됩니다.
+//!
+//! 모든 내부 집합에는 상한이 있습니다(오래된 항목부터 버림). 대기 집합도 [`MAX_PENDING_GLYPHS`]를 넘으면 가장
+//! 오래된 대기 항목을 버리므로, 끝나지 않은 요청이 쌓여도 새 glyph 요청이 막히지 않습니다. 버린 key는 다시
+//! `resolve`될 때 다시 요청되고, 늦게 도착한 그 key의 결과도 정상 반영됩니다.
 
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::hash::Hash;
 
 use stellar_scene::geometry::PathGeometry;
@@ -150,6 +156,106 @@ impl<K: Clone + Eq + Hash, V> BoundedMap<K, V> {
     }
 }
 
+/// 제거로 남은 낡은 기록이 살아 있는 항목보다 이만큼 넘게 쌓이면 정리합니다.
+const PENDING_COMPACT_SLACK: usize = 32;
+
+/// rasterize 대기 집합과 아직 가져가지 않은 요청 목록(모듈 문서).
+///
+/// 상한을 넘으면 가장 오래된 대기 항목부터 버립니다. 버리거나 취소한 항목은 요청 목록에서도 빠집니다.
+/// 항목마다 일련번호를 두어, 버린 뒤 다시 넣은 key의 낡은 순서·요청 기록과 구분합니다.
+#[derive(Debug, Clone)]
+struct PendingSet {
+    live: HashMap<GlyphKey, u64>,
+    order: VecDeque<(GlyphKey, u64)>,
+    requests: Vec<(GlyphKey, u64)>,
+    next: u64,
+    limit: usize,
+}
+
+impl PendingSet {
+    fn new(limit: usize) -> PendingSet {
+        PendingSet {
+            live: HashMap::new(),
+            order: VecDeque::new(),
+            requests: Vec::new(),
+            next: 0,
+            limit: limit.max(1),
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.live.len()
+    }
+
+    fn is_live(&self, key: &GlyphKey, seq: u64) -> bool {
+        self.live.get(key) == Some(&seq)
+    }
+
+    /// 대기 중이 아니면 넣고 요청 목록에 올립니다. 새로 넣었으면 참입니다.
+    fn insert(&mut self, key: &GlyphKey) -> bool {
+        if self.live.contains_key(key) {
+            return false;
+        }
+        let seq = self.next;
+        self.next = self.next.wrapping_add(1);
+        self.live.insert(key.clone(), seq);
+        self.order.push_back((key.clone(), seq));
+        self.requests.push((key.clone(), seq));
+        while self.live.len() > self.limit {
+            let Some((old, old_seq)) = self.order.pop_front() else {
+                break;
+            };
+            if self.is_live(&old, old_seq) {
+                self.live.remove(&old);
+            }
+        }
+        self.compact();
+        true
+    }
+
+    /// 대기 중이었으면 빼고 참입니다.
+    fn remove(&mut self, key: &GlyphKey) -> bool {
+        let removed = self.live.remove(key).is_some();
+        if removed {
+            self.compact();
+        }
+        removed
+    }
+
+    /// 모두 비우고 비운 대기 항목 수를 돌려줍니다.
+    fn clear(&mut self) -> usize {
+        let count = self.live.len();
+        self.live.clear();
+        self.order.clear();
+        self.requests.clear();
+        count
+    }
+
+    /// 아직 대기 중인 요청만 요청 순서대로 꺼냅니다.
+    fn take_requests(&mut self) -> Vec<GlyphKey> {
+        let requests = std::mem::take(&mut self.requests);
+        requests
+            .into_iter()
+            .filter(|(key, seq)| self.is_live(key, *seq))
+            .map(|(key, _)| key)
+            .collect()
+    }
+
+    /// 낡은 순서·요청 기록이 쌓이지 않게 정리합니다(길이를 대기 항목 수의 상수배로 유지).
+    fn compact(&mut self) {
+        let bound = 2 * self.live.len() + PENDING_COMPACT_SLACK;
+        if self.order.len() > bound {
+            let live = &self.live;
+            self.order.retain(|(key, seq)| live.get(key) == Some(seq));
+        }
+        if self.requests.len() > bound {
+            let live = &self.live;
+            self.requests
+                .retain(|(key, seq)| live.get(key) == Some(seq));
+        }
+    }
+}
+
 /// 통계.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct ResolverStats {
@@ -181,8 +287,7 @@ pub enum CompleteOutcome {
 /// glyph cache miss 정책 관리자(모듈 문서).
 #[derive(Debug, Clone)]
 pub struct GlyphResolver {
-    pending: HashSet<GlyphKey>,
-    requests: Vec<GlyphKey>,
+    pending: PendingSet,
     sizes: BoundedMap<ShapeKey, BTreeSet<GlyphSize>>,
     outlines: BoundedMap<GlyphKey, PathGeometry>,
     no_ink: BoundedMap<GlyphKey, ()>,
@@ -200,8 +305,7 @@ impl GlyphResolver {
     /// 빈 관리자.
     pub fn new() -> GlyphResolver {
         GlyphResolver {
-            pending: HashSet::new(),
-            requests: Vec::new(),
+            pending: PendingSet::new(MAX_PENDING_GLYPHS),
             sizes: BoundedMap::new(MAX_GLYPH_RECORDS),
             outlines: BoundedMap::new(MAX_GLYPH_RECORDS),
             no_ink: BoundedMap::new(MAX_GLYPH_RECORDS),
@@ -220,9 +324,23 @@ impl GlyphResolver {
         self.pending.len()
     }
 
-    /// 새로 생긴 rasterize 요청을 꺼냅니다(worker에 보낼 목록).
+    /// 새로 생긴 rasterize 요청을 꺼냅니다(worker에 보낼 목록). 꺼내기 전에 취소했거나 상한으로 버린 요청은
+    /// 빠집니다.
     pub fn take_requests(&mut self) -> Vec<GlyphKey> {
-        std::mem::take(&mut self.requests)
+        self.pending.take_requests()
+    }
+
+    /// 끝나지 않을 요청(worker 종료, 요청 폐기)을 대기 집합에서 뺍니다. 대기 중이었으면 참입니다.
+    ///
+    /// 다음 [`GlyphResolver::resolve`]에서 그 key를 다시 요청합니다. 아직 꺼내지 않은 요청이면 요청 목록에서도
+    /// 빠집니다.
+    pub fn cancel_pending(&mut self, key: &GlyphKey) -> bool {
+        self.pending.remove(key)
+    }
+
+    /// 모든 대기 요청을 취소하고 취소한 수를 돌려줍니다(worker pool 종료·재시작 시).
+    pub fn cancel_all_pending(&mut self) -> usize {
+        self.pending.clear()
     }
 
     /// 실패 기록을 지웁니다(폰트 재등록 등으로 다시 시도할 때).
@@ -239,8 +357,8 @@ impl GlyphResolver {
     }
 
     fn request(&mut self, key: &GlyphKey) {
-        if self.pending.len() < MAX_PENDING_GLYPHS && self.pending.insert(key.clone()) {
-            self.requests.push(key.clone());
+        // 대기 집합이 차 있으면 가장 오래된 대기 항목을 버리고 넣습니다(모듈 문서).
+        if self.pending.insert(key) {
             self.stats.requested += 1;
         }
     }

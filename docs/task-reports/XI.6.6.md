@@ -59,3 +59,28 @@
   있으므로 XVI 성능 측정에서 확인해야 합니다.
 - 실패 기록은 `forget_failures` 전까지 유지되어 일시적 실패도 빈 glyph로 남습니다. 폰트 재등록 이벤트에서 호출해야
   합니다.
+
+## 후속 수정 (리뷰 반영)
+
+`Fix: glyph 대기 집합을 오래된 항목부터 버리고 대기 요청 취소 API 추가` commit으로 리뷰 지적(minor)을
+고쳤습니다. 위 "상한"의 대기 집합 동작은 이 절로 대체됩니다.
+
+- **문제**: 대기 집합은 `complete`에서만 줄었습니다. `take_requests`로 가져간 요청이 끝나지 않으면(worker 종료,
+  요청 폐기) 대기 집합이 상한(4096)까지 차고, 그 뒤에는 새 glyph를 요청하지 못해 계속 `Empty(Pending)`으로
+  남았습니다. 끝나지 않은 key 하나도 다시 요청할 방법이 없었습니다. lane HEAD(`b971205`)에서
+  `full_pending_set_drops_oldest_so_new_glyphs_are_still_requested`를 먼저 돌려 새 glyph 요청이 0건인 실패를
+  확인했습니다.
+- **변경**: 대기 집합을 삽입 순서와 일련번호를 기억하는 내부 `PendingSet`으로 바꿨습니다. 상한을 넘으면 다른
+  기록처럼 가장 오래된 대기 항목부터 버리고(모듈 문서의 "오래된 항목부터 버림"과 일치), 버린 key는 다시
+  `resolve`될 때 다시 요청되며 늦게 온 결과도 정상 반영됩니다. 호출자가 끝나지 않을 요청을 알리는
+  `cancel_pending(&key)`·`cancel_all_pending()`을 추가했습니다. 꺼내기 전에 취소했거나 상한으로 버린 요청은
+  `take_requests`에서 빠집니다. 낡은 순서·요청 기록은 대기 항목 수의 2배 + 32를 넘으면 정리합니다.
+- 검증 기준 "잘못된 glyph 표시 없음"에는 영향이 없습니다(대기 집합은 무엇을 그릴지 정하지 않고 요청 중복만
+  막음). 기존 무작위 workload 테스트도 그대로 통과합니다.
+
+| 검사 | 결과 |
+|---|---|
+| lane HEAD에서 `full_pending_set_drops_oldest_so_new_glyphs_are_still_requested` | 실패 재현: 상한 뒤 새 glyph 요청 `[]` |
+| `full_pending_set_drops_oldest_so_new_glyphs_are_still_requested`(수정 후) | 통과: 새 glyph 요청, 가장 오래된 key 재요청, 대기 중 key 중복 요청 없음, 늦은 결과 `Exact` |
+| `cancelled_pending_requests_are_requested_again` | 통과: 취소 후 재요청, 꺼내기 전 취소는 요청 목록에서 빠짐, 전체 취소 2건 |
+| `pending_bookkeeping_stays_bounded`(꺼내지 않는 호출자 12,288 key, 요청·완료·취소 20,000회) | 통과: 순서·요청 기록이 항상 2 × 대기 수 + 32 이하 |
