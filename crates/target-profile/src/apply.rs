@@ -379,10 +379,15 @@ pub fn undo_upgrade(
 
 #[cfg(test)]
 mod test_git {
-    //! hermetic 시스템 Git fixture(사용자·시스템 설정을 섞지 않음). Git이 없으면 `None`.
+    //! hermetic 시스템 Git fixture(사용자·시스템 설정을 섞지 않음). Git이 없으면 테스트가 실패하고,
+    //! `STELLAR_ALLOW_MISSING_GIT=1`일 때만 Git 확인을 건너뜁니다.
+    use std::ffi::{OsStr, OsString};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// 시스템 Git이 없을 때 Git fixture 확인을 건너뛰도록 명시적으로 허용하는 환경 변수(dependencies crate와 같은 이름).
+    pub const ALLOW_MISSING_GIT_ENV: &str = "STELLAR_ALLOW_MISSING_GIT";
 
     pub struct TempDir(PathBuf);
 
@@ -417,15 +422,41 @@ mod test_git {
 
     impl FixtureGit {
         pub fn find(home: &Path) -> Option<FixtureGit> {
-            let path = std::env::var_os("PATH")?;
-            let git = std::env::split_paths(&path)
-                .map(|dir| dir.join("git"))
-                .find(|candidate| candidate.is_file());
-            if git.is_none() {
-                eprintln!("시스템 git 없음 — Git working tree 확인을 건너뜁니다");
-            }
+            FixtureGit::locate(
+                std::env::var_os("PATH"),
+                std::env::var_os(ALLOW_MISSING_GIT_ENV).as_deref(),
+                home,
+            )
+        }
+
+        /// `path`(PATH 값)에서 git을 찾습니다. `allow_missing`은 [`ALLOW_MISSING_GIT_ENV`] 값입니다.
+        ///
+        /// git이 없으면 기본적으로 **panic**(테스트 실패)합니다. 검증 없이 통과하는 Git fixture 테스트를 만들지 않기
+        /// 위해서입니다. `allow_missing`이 정확히 `1`일 때만 경고를 남기고 `None`을 돌려줘 Git 확인을 건너뜁니다.
+        pub fn locate(
+            path: Option<OsString>,
+            allow_missing: Option<&OsStr>,
+            home: &Path,
+        ) -> Option<FixtureGit> {
+            let git = path.and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|dir| dir.join("git"))
+                    .find(|candidate| candidate.is_file())
+            });
+            let Some(git) = git else {
+                if allow_missing == Some(OsStr::new("1")) {
+                    eprintln!(
+                        "시스템 git 없음 — {ALLOW_MISSING_GIT_ENV}=1 이므로 Git working tree 확인을 건너뜁니다"
+                    );
+                    return None;
+                }
+                panic!(
+                    "Git working tree fixture에는 시스템 git이 필요합니다(PATH에 없음). \
+                     건너뛰려면 {ALLOW_MISSING_GIT_ENV}=1을 설정하세요"
+                );
+            };
             Some(FixtureGit {
-                git: git?,
+                git,
                 home: home.to_path_buf(),
             })
         }
@@ -591,6 +622,26 @@ mod tests {
             self.project.revision = DocumentRevision(self.project.revision.0 + 1);
             Ok(self.project.revision)
         }
+    }
+
+    #[test]
+    fn missing_git_fails_unless_explicitly_allowed() {
+        use std::ffi::OsStr;
+        let home = TempDir::new("no-git");
+        let empty_bin = home.path().join("bin");
+        std::fs::create_dir_all(&empty_bin).expect("빈 bin");
+        let path = Some(empty_bin.into_os_string());
+        // 명시적 허용(`1`)일 때만 건너뜁니다.
+        assert!(FixtureGit::locate(path.clone(), Some(OsStr::new("1")), home.path()).is_none());
+        // 기본값과 다른 값은 테스트 실패(검증 없이 통과하지 않음).
+        for allow in [None, Some(OsStr::new("0")), Some(OsStr::new("yes"))] {
+            let path = path.clone();
+            let result =
+                std::panic::catch_unwind(|| FixtureGit::locate(path, allow, home.path()).is_some());
+            assert!(result.is_err(), "{allow:?}: git이 없는데 실패하지 않음");
+        }
+        // PATH 자체가 없어도 같은 규칙입니다.
+        assert!(std::panic::catch_unwind(|| FixtureGit::locate(None, None, home.path())).is_err());
     }
 
     fn setup(dir: &Path) -> (WorkingTreeHost, Option<FixtureGit>) {

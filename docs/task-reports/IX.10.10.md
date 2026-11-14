@@ -60,3 +60,19 @@
 - profile override를 문서 저장 형식에 기록하는 command(문서 crate)와 history 연결은 아직 없습니다. 연결 전까지 undo는 이 crate의
   `undo_upgrade` 경로로만 검증되었습니다.
 - 여러 profile을 한 번에 upgrade하는 transaction은 지원하지 않습니다(profile마다 plan·적용).
+
+## 후속 수정(리뷰 반영): 시스템 Git이 없으면 테스트 실패
+
+리뷰(TP-4)에서 PATH에 `git`이 없으면 Git working tree 단언을 건너뛴 채 테스트가 통과한다는 점이 지적되어 `Fix` commit으로
+고쳤습니다. 이제 테스트 fixture(`test_git::FixtureGit::locate`)는 시스템 Git이 없으면 panic(테스트 실패)하고,
+`STELLAR_ALLOW_MISSING_GIT=1`일 때만 경고를 남기고 건너뜁니다(dependencies crate와 같은 규칙과 환경 변수 이름).
+
+| 명령 | 결과 |
+|---|---|
+| 수정 전 `cargo test -p stellar-target-profile apply::` | 1 failed(`missing_git_fails_unless_explicitly_allowed`: git 없는 PATH에서 실패하지 않음) |
+| 수정 후 `cargo test -p stellar-target-profile` | 41 passed, 0 failed |
+| 수정 후 `cargo test -p stellar-target-profile apply:: -- --nocapture` | 3 passed. 건너뜀 메시지는 정책 테스트의 명시적 허용(`1`) 경우에서만 나오고, 실제 Git fixture 테스트 2개는 시스템 Git으로 실행 |
+
+| 검사 | 결과 |
+|---|---|
+| 빈 PATH 디렉터리·PATH 없음에서 기본값·`0`·`yes`는 panic, `1`만 `None`(건너뜀) (`missing_git_fails_unless_explicitly_allowed`) | 통과 |
