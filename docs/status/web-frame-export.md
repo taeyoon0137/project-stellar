@@ -63,6 +63,20 @@ revision을 읽고, root 이동만 ±f32::MAX로 바꿔 저장해도 출력 HTML
 `evidence/view-{a,b}.html`, `evidence/view-{a,b}.dom.html`, `evidence/view-{a,b}.computed.json`,
 `evidence/chrome-version.txt`에 있습니다. target 산출물은 Git에 추가하지 않습니다.
 
+## 확대된 소수 좌표 회귀 검증
+
+`108f2808`에서 2px border를 가진 부모를 128배 확대한 뒤 자식의 tx를 0.005px로 저장하면 CLI는 성공했지만
+Chrome의 x는 기대값 0.64px에서 2px로 바뀌었습니다. 너비 10.005px도 같은 확대에서 1280.64px 대신 1280px였습니다.
+
+자식의 이동을 위치 정수부와 transform 소수부로 나눈 뒤 Chrome 157.0.8103.51(DPR 1)에서
+1px inside border, 128배 확대, 90도 회전, 양·음 소수 이동을 함께 확인했습니다. 예상 DOM rect는
+`(0.64, -0.64, 128, 256)`, 관측값은 `(0.63999939, -0.63999999, 128, 256)`입니다.
+테두리 영역의 hit test와 기존 두 View의 회전·겹침·clip 검사도 통과했습니다. 크기는 누적 변환 후
+LayoutUnit 반올림이 1/64px를 넘을 수 있는 경우 해당 노드를 진단하고 전체 HTML 출력을 거부합니다.
+
+관련 세 crate 테스트 160개 통과, 기본 제외 1개를 포함한 실제 Chrome CLI 검사 5개 통과,
+세 crate의 all-targets Clippy와 변경 Rust 파일의 rustfmt 검사 통과를 확인했습니다.
+
 ## 한계와 다음 단계
 
 - 저장된 고정 Free Frame·Fragment만 지원합니다. Text·반응형 layout·control·modifier는 오류이며,

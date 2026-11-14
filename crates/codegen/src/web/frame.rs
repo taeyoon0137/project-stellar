@@ -58,7 +58,20 @@ impl FrameStyle {
         Ok(())
     }
 
-    /// 검증된 값의 선언 블록. 위치 보정은 calc로 출력해 Rust f32 뺄셈 손실을 피합니다.
+    /// 브라우저가 크기를 LayoutUnit으로 맞출 때 화면의 모서리·bounds가 1/64px 안에 남는지 검사합니다.
+    pub fn size_rounding_fits(&self, world: &Transform2D) -> bool {
+        let error = |size: f32| {
+            let units = f64::from(size) * 64.0;
+            (units.ceil() - units).max(units - units.floor())
+        };
+        let w = error(self.size.width());
+        let h = error(self.size.height());
+        let (a, b, c, d, _, _) = world.components();
+        f64::from(a.abs()) * w + f64::from(c.abs()) * h <= 1.0
+            && f64::from(b.abs()) * w + f64::from(d.abs()) * h <= 1.0
+    }
+
+    /// 정수 위치는 layout에 두고 소수 이동은 같은 부모 좌표계의 matrix에 두어 확대 전 반올림을 피합니다.
     pub fn declarations(&self) -> String {
         let mut out = String::new();
         let mut declaration = |name: &str, value: String| {
@@ -86,19 +99,26 @@ impl FrameStyle {
             for (name, value) in [("left", x), ("top", y)] {
                 declaration(
                     name,
-                    format!("calc({}px - {}px)", num(value), num(border.get())),
+                    format!("calc({}px - {}px)", num(value.trunc()), num(border.get())),
                 );
             }
         }
         declaration("transform-origin", "0px 0px".into());
+        let (tx, ty) = if self.parent_border.is_some() {
+            (x.fract(), y.fract())
+        } else {
+            (0.0, 0.0)
+        };
         declaration(
             "transform",
             format!(
-                "matrix({}, {}, {}, {}, 0, 0)",
+                "matrix({}, {}, {}, {}, {}, {})",
                 num(a),
                 num(b),
                 num(c),
-                num(d)
+                num(d),
+                num(tx),
+                num(ty)
             ),
         );
         declaration(

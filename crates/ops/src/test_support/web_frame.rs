@@ -1,4 +1,4 @@
-//! 저장·CLI·브라우저 검증용 고정 크기 두 View. UI의 카드·겹침·중첩과 affine을 포함합니다.
+//! 저장·CLI·브라우저 검증용 고정 크기 View. UI의 카드·겹침·중첩과 affine을 포함합니다.
 
 use stellar_document::definitions::{DocumentDefinition, PageDefinition, ViewDefinition};
 use stellar_document::fragment::FragmentPayload;
@@ -29,11 +29,11 @@ fn frame(w: f32, h: f32, x: f32, y: f32, rgba: [f32; 4]) -> FramePayload {
     }
 }
 
-/// View 3: 카드 UI, View 4: scale·rotation·mirror·shear. 삽입·ID·OrderKey 순서를 다르게 둡니다.
+/// View 3은 카드 UI, 4는 여러 affine, 5는 확대된 소수 이동입니다. 삽입·ID·OrderKey 순서를 다르게 둡니다.
 pub fn document() -> DocumentModel {
     let mut definition = DocumentDefinition::new(id(1), "고정 Frame fixture".into());
     let mut page = PageDefinition::new(id(2), "페이지".into());
-    for (view, root) in [(3, 10), (4, 20)] {
+    for (view, root) in [(3, 10), (4, 20), (5, 30)] {
         page.add_view(ViewDefinition::new(
             id(view),
             format!("View {view}"),
@@ -65,6 +65,11 @@ pub fn document() -> DocumentModel {
     let mut sheared = frame(40.0, 24.0, 0.0, 0.0, [0.4, 0.2, 0.9, 0.5]);
     sheared.background = Some(color(ColorSpace::DisplayP3, [1.2, -0.1, 0.3, 0.25]));
     sheared.transform = Transform2D::new(1.0, 0.25, 0.5, 1.0, 20.0, 100.0).unwrap();
+    let mut zoomed = frame(4.0, 3.0, 0.0, 0.0, [1.0; 4]);
+    zoomed.transform = Transform2D::new(128.0, 0.0, 0.0, 128.0, 700.0, -900.0).unwrap();
+    zoomed.border = Some(Border::new(color(ColorSpace::Srgb, [0.0, 0.0, 0.0, 1.0]), 1.0).unwrap());
+    let mut subpixel = frame(2.0, 1.0, 0.0, 0.0, [0.0, 1.0, 0.0, 1.0]);
+    subpixel.transform = Transform2D::new(0.0, 1.0, -1.0, 0.0, 1.005, -0.005).unwrap();
     let f = NodePayload::Frame;
     for (n, parent, order, visible, payload) in [
         (10, None, 1, true, f(root)),
@@ -123,6 +128,8 @@ pub fn document() -> DocumentModel {
         (21, Some(20), 1, true, f(rotated)),
         (22, Some(20), 2, true, f(mirrored)),
         (23, Some(20), 3, true, f(sheared)),
+        (30, None, 3, true, f(zoomed)),
+        (31, Some(30), 1, true, f(subpixel)),
     ] {
         model
             .insert_node(NodeRecord {
@@ -155,6 +162,10 @@ pub fn unsupported(case: &str) -> DocumentModel {
             frame.border = Some(Border::new(color(ColorSpace::Srgb, [1.0; 4]), 11.0).unwrap())
         }
         "range" => frame.size = Size2::new(2_000_000.0, 20.0).unwrap(),
+        "amplified-size-rounding" => {
+            frame.size = Size2::new(10.005, 2.0).unwrap();
+            frame.transform = Transform2D::new(0.0, 128.0, -128.0, 0.0, 100.0, 25.0).unwrap();
+        }
         "matrix-range" => {
             frame.transform = Transform2D::new(1025.0, 0.0, 0.0, 1.0, 0.0, 0.0).unwrap();
         }

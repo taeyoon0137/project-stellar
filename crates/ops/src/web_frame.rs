@@ -244,6 +244,10 @@ pub fn export_web_frame(
                     );
                 }
                 if let Ok(world) = world {
+                    if !style.size_rounding_fits(&world) {
+                        result.note(true, "unsupported-frame-value", id,
+                            "누적 affine이 CSS 크기의 LayoutUnit 반올림을 화면에서 1/64px보다 크게 확대할 수 있습니다");
+                    }
                     child_transform = world;
                 }
                 if frame
