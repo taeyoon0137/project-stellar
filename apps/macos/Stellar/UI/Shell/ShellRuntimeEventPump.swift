@@ -46,6 +46,12 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.openProject(handle: runtimeHandle, path: path), completion)
     }
 
+    func pasteSubtree(session: UInt64, view: UUID, revision: UInt64, data: Data,
+                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.pasteSubtree(handle: runtimeHandle, session: session, view: view,
+            parent: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)), revision: revision, data: data), completion)
+    }
+
     /// 프로젝트 session 닫기를 요청합니다. 완료 event는 `completion`이 없으면 버립니다.
     @discardableResult
     func closeProject(

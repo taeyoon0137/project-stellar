@@ -130,6 +130,7 @@ mod frame_move;
 mod git_names;
 mod node_delete;
 mod node_duplicate;
+mod node_paste;
 pub mod sidebar;
 pub use git_names::{GitNameRow, SelectionOperation};
 

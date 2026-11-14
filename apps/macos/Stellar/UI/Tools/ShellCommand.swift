@@ -314,10 +314,10 @@ enum ShellCommand: String, CaseIterable {
 
     /// 텍스트 컨트롤 편집 중에는 비활성화하는 캔버스 객체 명령.
     ///
-    /// 표준 편집 action은 field editor가 먼저 받으므로 여기에 넣지 않습니다.
+    /// Copy/Paste는 field editor가 먼저 받고, router 직접 전달도 객체 편집을 억제합니다.
     var isSuppressedDuringTextEditing: Bool {
         switch self {
-        case .delete, .duplicate, .deselectAll,
+        case .copy, .paste, .delete, .duplicate, .deselectAll,
              .group, .ungroup, .frameSelection,
              .bringToFront, .bringForward, .sendBackward, .sendToBack,
              .alignLeft, .alignCenter, .alignRight, .alignTop, .alignMiddle, .alignBottom,

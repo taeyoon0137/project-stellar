@@ -98,6 +98,14 @@ final class ShellWindowSessionHandle {
         } completion: { completion($0) }
     }
 
+    func pasteSubtree(_ data: Data, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed, !isClosing, let view = viewInfo, view.has_view == 1, let info else { return false }
+        return track { done in
+            pump.pasteSubtree(session: session, view: UUID(uuid: view.active_view), revision: info.revision,
+                              data: data, completion: done)
+        } completion: { completion($0) }
+    }
+
     func insertFrame(parent: CanvasFrameHit, rect: CGRect, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
         guard !isClosed, !isClosing else { return false }
         return track { done in pump.insertFrame(session: session, parent: parent, rect: rect, completion: done) } completion: { completion($0) }
@@ -585,6 +593,10 @@ final class ShellProjectWindow {
     private(set) var lastSessionCommandEvent: CoreRuntimeEvent?
 
     /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
+    var subtreePasteboard: NSPasteboard = .general
+    private static let subtreePasteboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
+    private let clipboardQueue = DispatchQueue(label: "xyz.taeyoon.stellar.clipboard", qos: .userInitiated)
+
     func refreshSessionCommands() {
         let session = windowController.windowSession
         canvasHost.canvasView.frameSession = session?.session
@@ -601,6 +613,8 @@ final class ShellProjectWindow {
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
         if gitSource.trusted, (info?.selection_count ?? 0) > 0 { commands.insert(.delete) }
         if gitSource.trusted, info?.selection_count == 1 { commands.insert(.duplicate) }
+        if gitSource.trusted, info?.selection_count == 1 { commands.insert(.copy) }
+        if gitSource.trusted, view?.has_view == 1 { commands.insert(.paste) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
     }
 
@@ -613,6 +627,40 @@ final class ShellProjectWindow {
     /// 메뉴·단축키는 응답자 체인으로 key 창의 router가 받으므로 여기 오는 명령은 언제나 이 창(활성 창)의 것입니다.
     @discardableResult
     func performSessionCommand(_ command: ShellCommand) -> Bool {
+        if command == .copy {
+            guard gitSource.trusted, !router.isTextEditing,
+                  let session = windowController.windowSession, !session.isClosing, !session.isClosed,
+                  session.pendingCommandCount == 0,
+                  let info = session.info, let view = session.viewInfo, view.has_view == 1,
+                  let runtime = dataSource.session?.pump.runtimeHandle else { return false }
+            let changeCount = subtreePasteboard.changeCount
+            let sessionID = session.session
+            clipboardQueue.async { [weak self, weak session] in
+                let data = CoreRuntime.copySubtree(handle: runtime, session: sessionID,
+                                                   view: UUID(uuid: view.active_view), revision: info.revision)
+                DispatchQueue.main.async { [weak self, weak session] in
+                    guard let self, let session, self.windowController.windowSession === session,
+                          !session.isClosed, !session.isClosing, self.gitSource.trusted,
+                          self.subtreePasteboard.changeCount == changeCount, let data else { return }
+                    let item = NSPasteboardItem()
+                    item.setData(data, forType: Self.subtreePasteboardType)
+                    self.subtreePasteboard.clearContents()
+                    self.subtreePasteboard.writeObjects([item])
+                }
+            }
+            return true
+        }
+        if command == .paste {
+            guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession,
+                  session.pendingCommandCount == 0,
+                  let data = subtreePasteboard.data(forType: Self.subtreePasteboardType),
+                  !data.isEmpty, data.count <= 16 * 1024 * 1024 else { return false }
+            _ = canvasHost.canvasView.cancelFrameGesture?()
+            return session.pasteSubtree(data) { [weak self, weak session] event in
+                guard let self, self.windowController.windowSession === session else { return }
+                self.finishSessionCommand(command, event: event)
+            }
+        }
         if command == .delete {
             guard gitSource.trusted, !router.isTextEditing, let session = windowController.windowSession else { return false }
             _ = canvasHost.canvasView.cancelFrameGesture?()
