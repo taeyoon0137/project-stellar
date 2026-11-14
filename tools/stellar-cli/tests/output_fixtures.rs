@@ -56,6 +56,7 @@ fn project(dir: &TempDir, manifest: Option<&str>, git: bool) -> PathBuf {
     root
 }
 
+#[derive(Debug)]
 struct Run {
     code: i32,
     stdout: String,
@@ -277,6 +278,50 @@ fn inspect_data_error_fixtures_exit_65() {
         ExitStatus::DataErr,
         &[&root],
     );
+}
+
+/// 신뢰할 수 없는 저장소의 manifest 값·key와 디렉터리 이름에 든 터미널 제어 문자가 stderr에
+/// 그대로 나가지 않습니다(터미널 escape 주입, 줄 위조 방지).
+#[test]
+fn inspect_stderr_escapes_hostile_manifest_and_path() {
+    const ESC: &str = "\u{1b}]0;PWNED\u{7}\u{1b}[2J\u{202e}";
+    let manifests = [
+        // InvalidSchemaVersion { value }: YAML escape와 원문 제어 문자 둘 다.
+        "schema_version: \"\\e]0;PWNED\\a\\e[2J\\u202e1\"\n".to_string(),
+        format!("schema_version: \"{ESC}1\"\n"),
+        // UnknownKey { path }: key에 든 escape.
+        "schema_version: 1\nproject:\n  id: 0195c530-3acd-7bc1-8414-c213f61cb965\n  \
+         name: Fixture Project\ntarget_profiles: []\ndependencies: {}\n\
+         \"\\e[31mEVIL\\e[0m\\nstellar inspect: 위조\": 1\n"
+            .to_string(),
+    ];
+    for (i, manifest) in manifests.iter().enumerate() {
+        let dir = TempDir::new("hostile");
+        // 디렉터리 이름(context)에도 제어 문자를 넣습니다.
+        let root = dir.path.join(format!("p{ESC}\n{i}"));
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join("stellar.yaml"), manifest).unwrap();
+        let run = run(&["inspect", root.to_str().unwrap()]);
+        assert_eq!(
+            run.code,
+            i32::from(ExitStatus::DataErr.code()),
+            "{i}: {run:?}"
+        );
+        for forbidden in ['\u{1b}', '\u{7}', '\r', '\u{202e}'] {
+            assert!(
+                !run.stderr.contains(forbidden),
+                "{i}: stderr에 {forbidden:?}: {:?}",
+                run.stderr
+            );
+        }
+        let lines: Vec<&str> = run.stderr.lines().collect();
+        assert_eq!(lines.len(), 2, "{i}: 오류·진단 각 한 줄: {:?}", run.stderr);
+        for line in lines {
+            assert!(line.starts_with("stellar inspect: "), "{i}: {line}");
+        }
+        // stdout JSON은 writer가 이스케이프하므로 한 줄입니다.
+        assert_eq!(run.stdout.matches('\n').count(), 1, "{i}");
+    }
 }
 
 #[test]
