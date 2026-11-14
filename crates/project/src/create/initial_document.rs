@@ -1,5 +1,5 @@
 //! 새 편집 프로젝트의 첫 저장 세대. 신규 폴더 트랜잭션 안에서만 호출합니다.
-use std::io::{self, Read};
+use std::io;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,10 +25,7 @@ pub(super) fn new_ids() -> io::Result<[StableId; 5]> {
         .map_err(io::Error::other)?;
     let ms = u64::try_from(now.as_millis()).map_err(io::Error::other)?;
     let mut entropy = [[0u8; 10]; 5];
-    let mut random = std::fs::File::open("/dev/urandom")?;
-    for bytes in &mut entropy {
-        random.read_exact(bytes)?;
-    }
+    fill_entropy(entropy.as_flattened_mut())?;
     Ok(entropy.map(|bytes| {
         StableId::new_v7(
             ms,
@@ -36,6 +33,18 @@ pub(super) fn new_ids() -> io::Result<[StableId; 5]> {
             u64::from_be_bytes(bytes[2..].try_into().expect("8 bytes")),
         )
     }))
+}
+
+/// Unix 시스템 난수 adapter. 다른 플랫폼 구현은 ADR-0006의 지원 재개 시 추가합니다.
+#[cfg(unix)]
+fn fill_entropy(bytes: &mut [u8]) -> io::Result<()> {
+    use std::io::Read;
+    std::fs::File::open("/dev/urandom")?.read_exact(bytes)
+}
+
+#[cfg(not(unix))]
+fn fill_entropy(_: &mut [u8]) -> io::Result<()> {
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 pub(super) fn save(

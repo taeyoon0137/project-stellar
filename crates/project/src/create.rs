@@ -504,6 +504,24 @@ mod tests {
             assert_eq!(records.definition.pages.len(), 1);
             assert_eq!(records.definition.pages[0].views.len(), 1);
             assert_eq!(records.nodes.len(), 1);
+            let page = &records.definition.pages[0];
+            let persistent_ids = [
+                loaded.project_id,
+                ids[0],
+                page.id,
+                page.views[0].id,
+                records.nodes[0].id,
+            ];
+            assert_eq!(
+                persistent_ids
+                    .into_iter()
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                5
+            );
+            for stable_id in persistent_ids {
+                assert_eq!((stable_id.version(), stable_id.variant()), (7, 2));
+            }
             assert_eq!(
                 records.nodes[0].id,
                 records.definition.pages[0].views[0].root_frame
