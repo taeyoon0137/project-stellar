@@ -116,6 +116,7 @@ final class CanvasFrameScene {
     var allowsImageContent = false
     private var imageRuntime: UInt64?
     var redrawImage: ((CGRect) -> Void)?
+    private var documentTexts: [UUID: CanvasDocumentText] = [:]
     private var viewID: UUID?
     private var revision: UInt64 = 0
     private var session: UInt64?
@@ -143,6 +144,7 @@ final class CanvasFrameScene {
         png.reset()
         frames.removeAll()
         typingIndex = nil
+        documentTexts.removeAll()
         viewID = nil
         session = nil
         skipped = 0
@@ -178,18 +180,22 @@ final class CanvasFrameScene {
             }
             png.reset()
             var projected: [ProjectedFrame] = []
+            var nextTexts: [UUID: CanvasDocumentText] = [:]
             projected.reserveCapacity(Int(info.count))
             for (index, row) in rows.prefix(Int(info.count)).enumerated() {
                 var text: CanvasDocumentText?
                 if row.flags & 16 != 0 {
                     let query = StellarCanvasTextQuery(view: info.view, node: row.id, revision: info.revision, row: UInt32(index))
-                    guard let prepared = CanvasDocumentText(handle: handle, session: session, query: query) else { clear(); return }
+                    let id = UUID(uuid: row.id)
+                    guard let prepared = CanvasDocumentText(handle: handle, session: session, query: query, previous: documentTexts[id]) else { clear(); return }
                     text = prepared
+                    nextTexts[id] = prepared
                 }
                 projected.append(ProjectedFrame(row, index: index, text: text))
             }
             frames = projected
             typingIndex = typingLayer.flatMap { layer in frames.firstIndex { $0.id == (layer.node ?? layer.parent) } }
+            documentTexts = nextTexts
             for i in frames.indices.reversed() {
                 if let parent = frames[i].parent {
                     let bounds = frames[i].subtreeBounds
@@ -350,7 +356,7 @@ final class CanvasFrameScene {
                 if let fill = frame.fill {
                     context.setFillColor(fill)
                     if let text = frame.text {
-                        for path in text.glyphs { context.addPath(path); context.fillPath() }
+                        text.draw(in: context)
                     } else {
                         context.addPath(frame.localPath)
                         context.fillPath()
