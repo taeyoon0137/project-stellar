@@ -6591,12 +6591,13 @@ tasks:
     verified_at: "2026-11-14T02:08:22+09:00"
   - id: "XII.3.5"
     title: "InputEvent 수신 T0 trace를 찍고 DocumentThread hit-test request까지 queue latency를 측정합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XI.3.4"
       - "XII.1.2"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.3.5.md"
   - id: "XII.3.6"
     title: "Pan, Zoom, Select, Drag, Resize, Rotate interaction state machine을 각 도구별 closed enum으로 구현합니다."
     status: not_started

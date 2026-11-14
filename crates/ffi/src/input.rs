@@ -22,6 +22,7 @@ use std::fmt;
 
 use stellar_core_types::clock::MonotonicClock;
 use stellar_core_types::value::{FiniteF32, Size2, Vec2};
+use stellar_runtime::command_queue::InputEventClass;
 
 /// 직렬화 레이아웃 버전. 레이아웃이 바뀌면 올리고 이전 버전 decoder는 거부합니다.
 pub const INPUT_EVENT_SCHEMA_VERSION: u8 = 1;
@@ -779,6 +780,24 @@ impl InputEvent {
         &self.kind
     }
 
+    /// document thread 수신함 접수 분류(XII.1.2). 모든 입력은 input 우선순위이며, pointer move는
+    /// 장치별로, resize는 최신 값으로 병합하고 그 밖은 병합하지 않습니다.
+    pub fn queue_class(&self) -> InputEventClass {
+        match &self.kind {
+            InputEventKind::Pointer(pointer) if pointer.phase == PointerPhase::Move => {
+                InputEventClass::PointerMove {
+                    device: pointer.device.tag(),
+                }
+            }
+            InputEventKind::Resize(_) => InputEventClass::Resize,
+            InputEventKind::Wheel(_) => InputEventClass::Wheel,
+            InputEventKind::Pointer(_)
+            | InputEventKind::Key(_)
+            | InputEventKind::TextComposition(_)
+            | InputEventKind::Focus(_) => InputEventClass::Discrete,
+        }
+    }
+
     /// 플랫폼 공통 little-endian 레이아웃으로 직렬화합니다.
     ///
     /// ```text
@@ -1219,6 +1238,40 @@ mod tests {
         tags.sort_unstable();
         tags.dedup();
         assert_eq!(tags, vec![1, 2, 3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn queue_class_merges_only_moves_and_resizes() {
+        // XII.3.5: hit-test request 접수 분류. 모든 golden 이벤트가 정해진 분류로 갑니다.
+        for (name, event) in platform_events(Platform::WindowsQpc) {
+            let expected = match event.kind() {
+                InputEventKind::Pointer(pointer) if pointer.phase == PointerPhase::Move => {
+                    InputEventClass::PointerMove {
+                        device: PointerDevice::Mouse.tag(),
+                    }
+                }
+                InputEventKind::Resize(_) => InputEventClass::Resize,
+                InputEventKind::Wheel(_) => InputEventClass::Wheel,
+                _ => InputEventClass::Discrete,
+            };
+            assert_eq!(event.queue_class(), expected, "{name}");
+        }
+        let pen_move = InputEvent::new(
+            MonotonicNanos::new(1),
+            InputEventKind::Pointer(PointerEvent {
+                phase: PointerPhase::Move,
+                button: PointerButton::Primary,
+                device: PointerDevice::Pen,
+                position: v(0.0, 0.0),
+                modifiers: Modifiers::NONE,
+                click_count: 0,
+            }),
+        )
+        .expect("pen move");
+        assert_eq!(
+            pen_move.queue_class(),
+            InputEventClass::PointerMove { device: 2 }
+        );
     }
 
     #[test]
