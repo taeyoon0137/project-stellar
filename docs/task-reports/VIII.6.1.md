@@ -53,3 +53,16 @@
 - `expected_type`이 실제 target 속성의 선언 타입과 같은지는 속성 metadata registry(document crate, 허용 edge 밖)가
   필요해 binding 단독으로는 확인하지 않습니다. 호출자가 선언 타입을 넣어야 합니다.
 - PropertyPath decoder는 expressions crate의 비공개 decoder와 같은 규칙을 이 crate에 다시 구현했습니다(공용화는 후속).
+
+## 후속 기록 (사후 리뷰 EB-4: ADR-0026)
+
+이 작업이 정한 binding binary 형식(`BINDING_FORMAT_VERSION = 1`)을
+`docs/adr/ADR-0026-binding-storage-and-environment-registry.md`에 Accepted(소급)로 기록했습니다.
+바이트 배치, 디코더 규칙, V.8 기준 버전·migration 규칙이 들어 있습니다. 문서만 변경했고 코드는
+바꾸지 않았습니다.
+
+- **정정**: 위 "round-trip 형식"의 "V.1.1 규칙(LE)"은 binding이 직접 쓰는 정수(version, blob 길이,
+  `enum_type`)에만 해당합니다. 담겨 있는 `PropertyPath` bytes(III.2.2)와 AST literal 안
+  `TypedValue` bytes(III.3.5)는 big-endian 그대로입니다.
+- **후속**: `ValueBinding` 고정 golden bytes test가 없습니다. 또 `crates/bindings/`가 ADR 보호 경로
+  (`tools/xtask/src/adr_policy.rs`)에 없습니다. 둘 다 별도 변경으로 남깁니다.
