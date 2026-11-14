@@ -81,3 +81,20 @@
 - root 권한으로 실행하면 권한 비트로 막히지 않으므로 권한 의존 테스트 일부는 의미가 줄어듭니다.
 - 이번 세션의 전체 `cargo test` 병렬 실행 중 이 작업과 무관한 timing 테스트(FSEvents live, 제한 YAML
   fuzz 입력당 시간 상한)가 한 번씩 실패했고 단독·재실행에서는 통과했습니다.
+
+## 후속 수정(리뷰 반영): 잔여 정리가 다른 기계의 staging을 지우지 않음
+
+- **문제**: `clone_project`는 사용자가 고른 `parent_dir`를 clone마다 정리하고, 잔여 여부를 이 기계의
+  `kill(pid, 0) == ESRCH`로만 판정했습니다. `parent_dir`가 공유·네트워크 volume이면 다른 기계(같은 uid)의
+  살아 있는 Stellar process가 쓰는 staging을 지울 수 있었습니다(이름에 host 식별자가 없음).
+- **수정**(`crates/project/src/private_temp.rs`): 표식 파일에 만든 host 이름(`host=<gethostname>\n`)을
+  기록하고, `sweep_stale_private_temps`는 표식 내용이 이 host의 것과 정확히 같은 디렉터리만 pid 검사로
+  지웁니다. 다른 host·이전 형식(빈 표식)·1 KiB를 넘는 표식은 `SweepReport::other_host`로 보고하고
+  남깁니다(남겨도 디렉터리가 남을 뿐 데이터를 잃지 않음). `gethostname`은 기존 `kill`·`geteuid`와 같은
+  최소 extern 선언으로 부르고, NUL 종료가 없거나 UTF-8이 아닌 이름은 쓰지 않습니다.
+- **검증**: `marker_records_this_host`, `sweep_keeps_dirs_marked_by_another_host_or_legacy_markers`(다른
+  host·빈 표식·큰 표식 남김, 이 host 표식만 지움), 기존 `sweep_removes_only_stale_marked_private_dirs`,
+  `clone_sweeps_stale_staging_left_by_a_dead_process`(이 host 표식으로 갱신).
+- **남은 한계**: macOS host 이름이 네트워크에 따라 바뀌면 이전 이름으로 남은 잔여는 정리하지 않습니다(누수만,
+  삭제 오판 없음). 리뷰가 함께 지적한 상태 표시(비-unix에서 이 모듈이 검사·정리를 하지 않으므로 ADR-0006
+  규칙 4에 따라 `[~]`이 맞는지)는 이 행의 상태 표식 결정이라 이 수정 범위 밖으로 남깁니다.

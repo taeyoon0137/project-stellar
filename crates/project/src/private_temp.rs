@@ -14,7 +14,9 @@
 //!   디렉터리(읽기 전용으로 만들어진 checkout 등)가 있어도 symlink를 따르지 않고 소유자 권한을 되돌린 뒤
 //!   다시 지웁니다(명시 stack으로 반복 순회, 재귀 없음). [`PrivateTempDir::cleanup`]은 실패를 돌려줍니다.
 //! - **잔여 정리**: 비정상 종료로 남은 디렉터리는 [`sweep_stale_private_temps`]가 지웁니다. 이름에 기록한
-//!   process id가 아직 살아 있으면(또는 이 process 자신이면) 건너뜁니다.
+//!   process id가 아직 살아 있으면(또는 이 process 자신이면) 건너뜁니다. pid 검사는 이 기계에서만 의미가
+//!   있으므로 표식에 만든 host 이름(`host=<이름>`)을 기록하고, 이 host가 만든 표식만 지웁니다(공유·네트워크
+//!   volume에서 다른 기계의 살아 있는 process가 쓰는 디렉터리를 지우지 않음).
 //!
 //! Windows는 ADR-0006에 따라 지원을 미룹니다. 비-unix 빌드는 권한 검사를 하지 않고 잔여 정리도 하지
 //! 않습니다(어떤 process도 죽었다고 판정하지 않음).
@@ -193,8 +195,9 @@ fn create_private_dir(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// 표식 파일을 `0600`으로 새로 만듭니다.
+/// 표식 파일을 `0600`으로 새로 만들고 만든 host를 기록합니다([`marker_contents`]).
 fn write_marker(dir: &Path) -> io::Result<()> {
+    use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -202,14 +205,66 @@ fn write_marker(dir: &Path) -> io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(MARKER_FILE_MODE);
     }
-    let file = options.open(dir.join(PRIVATE_TEMP_MARKER))?;
+    let mut file = options.open(dir.join(PRIVATE_TEMP_MARKER))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         file.set_permissions(std::fs::Permissions::from_mode(MARKER_FILE_MODE))?;
     }
+    if let Some(contents) = marker_contents() {
+        file.write_all(contents.as_bytes())?;
+    }
     drop(file);
     Ok(())
+}
+
+/// 표식 파일 내용 접두사. 뒤에 만든 host 이름과 LF가 옵니다.
+const MARKER_HOST_PREFIX: &str = "host=";
+
+/// 표식 파일 최대 크기. 넘으면 다른 host가 만든 것으로 봅니다(지우지 않음).
+const MAX_MARKER_BYTES: u64 = 1024;
+
+/// 이 host의 표식 파일 내용(`host=<이름>\n`). host 이름을 얻지 못하면 `None`(빈 표식).
+pub(crate) fn marker_contents() -> Option<String> {
+    current_host_name().map(|host| format!("{MARKER_HOST_PREFIX}{host}\n"))
+}
+
+/// 표식이 이 host에서 만든 것인지. 내용이 이 host의 [`marker_contents`]와 정확히 같을 때만 `true`입니다.
+///
+/// 공유·네트워크 volume에서 같은 사용자의 다른 기계 process가 쓰는 디렉터리를 이 기계의 pid 검사만으로
+/// 지우지 않게 합니다. host 이름이 없거나 다른 표식(이전 형식의 빈 표식 포함)은 지우지 않습니다(남겨도
+/// 디렉터리가 남을 뿐 데이터를 잃지 않음).
+fn marker_is_from_this_host(dir: &Path) -> bool {
+    use std::io::Read;
+    let Some(expected) = marker_contents() else {
+        return false;
+    };
+    let Ok(file) = std::fs::File::open(dir.join(PRIVATE_TEMP_MARKER)) else {
+        return false;
+    };
+    let mut contents = Vec::new();
+    if file
+        .take(MAX_MARKER_BYTES + 1)
+        .read_to_end(&mut contents)
+        .is_err()
+    {
+        return false;
+    }
+    contents == expected.as_bytes()
+}
+
+/// 이 host 이름(unix `gethostname`). 비었거나 UTF-8이 아니거나 제어 문자가 있으면 `None`.
+#[cfg(unix)]
+fn current_host_name() -> Option<String> {
+    let name = sys::host_name()?;
+    let valid = !name.is_empty() && !name.chars().any(char::is_control);
+    valid.then_some(name)
+}
+
+/// 비-unix(Windows, ADR-0006 보류)는 host 이름을 기록하지 않습니다(잔여 정리도 하지 않음).
+#[cfg(not(unix))]
+fn current_host_name() -> Option<String> {
+    None
 }
 
 #[cfg(unix)]
@@ -297,13 +352,17 @@ pub struct SweepReport {
     pub live: Vec<PathBuf>,
     /// 지우지 못한 디렉터리와 오류 종류.
     pub failed: Vec<(PathBuf, io::ErrorKind)>,
+    /// 표식이 이 host에서 만든 것이 아니라(다른 기계·host 이름 변경·이전 형식) 남긴 디렉터리.
+    pub other_host: Vec<PathBuf>,
 }
 
 /// `parent` 아래에서 `prefix`로 만든 잔여 비공개 임시 디렉터리를 지웁니다.
 ///
 /// 다음을 모두 만족하는 항목만 지웁니다: 이름이 `<prefix>-<pid>-…`, symlink가 아닌 실제 디렉터리,
-/// 이 사용자 소유, 권한 `0700`(unix), 표식 파일이 일반 파일로 있음, `pid` process가 없음. 그 밖의 항목은
-/// 보고하지 않고 그대로 둡니다.
+/// 이 사용자 소유, 권한 `0700`(unix), 표식 파일이 일반 파일로 있음, 표식이 이 host에서 만든 것,
+/// `pid` process가 없음. pid 생존 검사는 이 기계에서만 의미가 있으므로, 공유·네트워크 volume에서 다른
+/// 기계의 살아 있는 process가 쓰는 디렉터리는 host 표식이 달라 지우지 않습니다. 그 밖의 항목은 보고하지
+/// 않고 그대로 둡니다.
 pub fn sweep_stale_private_temps(
     parent: &Path,
     prefix: &str,
@@ -329,6 +388,10 @@ pub fn sweep_stale_private_temps(
         };
         let path = parent.join(&name);
         if !is_private_temp(&path) {
+            continue;
+        }
+        if !marker_is_from_this_host(&path) {
+            report.other_host.push(path);
             continue;
         }
         if pid == std::process::id() || process_may_be_alive(pid) {
@@ -381,10 +444,29 @@ mod sys {
         fn geteuid() -> u32;
         /// `int kill(pid_t pid, int sig)`.
         fn kill(pid: i32, sig: i32) -> i32;
+        /// `int gethostname(char *name, size_t namelen)`.
+        fn gethostname(name: *mut u8, namelen: usize) -> i32;
     }
 
     /// `ESRCH`(macOS·Linux 공통 값): 그런 process가 없음.
     const ESRCH: i32 = 3;
+
+    /// host 이름 buffer 크기(macOS `MAXHOSTNAMELEN` 256, Linux `HOST_NAME_MAX` 64 + NUL 이상).
+    const HOST_NAME_BUFFER: usize = 256;
+
+    /// 이 host 이름. 실패하거나 NUL 종료가 없거나 UTF-8이 아니면 `None`.
+    pub(super) fn host_name() -> Option<String> {
+        let mut buffer = [0u8; HOST_NAME_BUFFER];
+        // SAFETY: buffer는 HOST_NAME_BUFFER bytes의 쓰기 가능한 지역 배열이고 같은 길이를 넘깁니다.
+        // gethostname은 그 범위 안에만 씁니다.
+        let rc = unsafe { gethostname(buffer.as_mut_ptr(), buffer.len()) };
+        if rc != 0 {
+            return None;
+        }
+        // 잘린 이름은 NUL 종료가 보장되지 않으므로 NUL이 없으면 쓰지 않습니다.
+        let end = buffer.iter().position(|&b| b == 0)?;
+        String::from_utf8(buffer[..end].to_vec()).ok()
+    }
 
     /// 현재 프로세스의 effective 사용자 id.
     pub(super) fn current_uid() -> u32 {
@@ -563,7 +645,8 @@ mod tests {
         std::fs::create_dir_all(path.join("checkout/sub")).unwrap();
         std::fs::write(path.join("checkout/sub/data"), b"d").unwrap();
         if marker {
-            std::fs::write(path.join(PRIVATE_TEMP_MARKER), b"").unwrap();
+            let contents = marker_contents().expect("테스트 host 이름");
+            std::fs::write(path.join(PRIVATE_TEMP_MARKER), contents).unwrap();
         }
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(dir_mode)).unwrap();
         path
@@ -605,5 +688,54 @@ mod tests {
             .file_type()
             .is_symlink());
         assert!(own.path().is_dir());
+        assert!(report.other_host.is_empty(), "{:?}", report.other_host);
+    }
+
+    #[test]
+    fn marker_records_this_host() {
+        let work = Work::new();
+        let own = PrivateTempDir::create_in(&work.path, PREFIX).unwrap();
+        let contents = std::fs::read_to_string(own.path().join(PRIVATE_TEMP_MARKER)).unwrap();
+        let host = contents
+            .strip_prefix(MARKER_HOST_PREFIX)
+            .and_then(|rest| rest.strip_suffix('\n'))
+            .unwrap();
+        assert!(!host.is_empty());
+        assert!(marker_is_from_this_host(own.path()));
+    }
+
+    #[test]
+    fn sweep_keeps_dirs_marked_by_another_host_or_legacy_markers() {
+        let work = Work::new();
+        let parent = &work.path;
+        // 공유 volume에서 다른 기계(같은 uid)가 만든 staging: 이 기계에서 pid가 죽었어도 지우지 않음.
+        let foreign = leftover(parent, &format!("{PREFIX}-{DEAD_PID}-0-0"), 0o700, true);
+        std::fs::set_permissions(&foreign, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::write(
+            foreign.join(PRIVATE_TEMP_MARKER),
+            format!("{MARKER_HOST_PREFIX}another-machine.invalid\n"),
+        )
+        .unwrap();
+        // 이전 형식(빈 표식)과 지나치게 큰 표식도 남김.
+        let legacy = leftover(parent, &format!("{PREFIX}-{DEAD_PID}-1-0"), 0o700, true);
+        std::fs::write(legacy.join(PRIVATE_TEMP_MARKER), b"").unwrap();
+        let huge = leftover(parent, &format!("{PREFIX}-{DEAD_PID}-2-0"), 0o700, true);
+        let mut big = marker_contents().unwrap().into_bytes();
+        big.resize(usize::try_from(MAX_MARKER_BYTES).unwrap() + 2, b'x');
+        std::fs::write(huge.join(PRIVATE_TEMP_MARKER), big).unwrap();
+        // 이 host 표식의 잔여는 지움.
+        let stale = leftover(parent, &format!("{PREFIX}-{DEAD_PID}-3-0"), 0o700, true);
+
+        let report = sweep_stale_private_temps(parent, PREFIX).unwrap();
+        assert_eq!(report.removed, vec![stale.clone()]);
+        assert_eq!(
+            report.other_host,
+            vec![foreign.clone(), legacy.clone(), huge.clone()]
+        );
+        assert!(report.live.is_empty());
+        for kept in [&foreign, &legacy, &huge] {
+            assert!(kept.join("checkout/sub/data").exists(), "{kept:?}");
+        }
+        assert!(!stale.exists());
     }
 }
