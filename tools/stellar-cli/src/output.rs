@@ -6,7 +6,9 @@
 //!   하나만 씁니다. 다른 텍스트는 쓰지 않습니다. 예외는 사용자가 요청한 도움말(`help`)뿐입니다.
 //! - **stderr**: 사람이 읽는 진단만 씁니다. 형식은 계약이 아니며 경로 같은 지역 정보를 담을 수
 //!   있습니다. stdout JSON에는 경로를 넣지 않습니다. 줄 접두어는 실행 이름 `stellar`입니다
-//!   (XXIV.4.1, [`PROGRAM`]).
+//!   (XXIV.4.1, [`PROGRAM`]). manifest 값·key, 경로, 인자 echo처럼 신뢰할 수 없는 값은
+//!   [`escape_for_terminal`]로 제어 문자·bidi 서식 문자를 이스케이프해 진단 한 건이 한 줄을 넘지
+//!   않고 터미널 escape sequence를 보내지 않습니다.
 //! - schema 식별자 `stellar-cli/result`는 실행 이름과 무관한 계약이라 XXIV.4.1에서도 바꾸지 않습니다.
 //! - 사용법 오류(64)는 명령이 실행되지 않은 상태이므로 stdout에 아무것도 쓰지 않고 stderr로만
 //!   안내합니다.
@@ -204,16 +206,53 @@ pub fn error_envelope(command: &str, error: &CliError) -> JsonValue {
     )
 }
 
-/// stderr에 쓸 사람용 진단 줄.
+/// 제어 문자는 아니지만 터미널 줄을 시각적으로 위조할 수 있는 문자인지 확인합니다: Unicode bidi
+/// 서식 문자(U+061C, U+200E, U+200F, U+202A\~U+202E, U+2066\~U+2069)와 줄·문단 구분자(U+2028,
+/// U+2029).
+fn is_bidi_or_line_separator(c: char) -> bool {
+    matches!(
+        c,
+        '\u{61c}'
+            | '\u{200e}'
+            | '\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
+}
+
+/// stderr에 쓸 텍스트에서 터미널 제어·bidi 문자를 `\u{..}`·`\n` 같은 표기로 바꿉니다.
+///
+/// manifest 값·key, 경로, 인자처럼 신뢰할 수 없는 값이 터미널 escape sequence(창 제목 변경, 화면
+/// 지우기)나 개행으로 진단 줄을 위조하지 못하게 합니다. 제어 문자(`char::is_control`: ESC·BEL·
+/// CR·LF·DEL 등)는 `char::escape_default`로, bidi 서식 문자와 줄·문단 구분자는 `\u{..}`로 씁니다.
+/// 규칙은 stellar-mcp 로그의 이스케이프와 같습니다.
+pub fn escape_for_terminal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_control() {
+            out.extend(c.escape_default());
+        } else if is_bidi_or_line_separator(c) {
+            out.push_str(&format!("\\u{{{:x}}}", u32::from(c)));
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// stderr에 쓸 사람용 진단 줄. message·context·진단 message는 [`escape_for_terminal`]을 거칩니다.
 pub fn stderr_text(command: &str, error: Option<&CliError>, diagnostics: &[Diagnostic]) -> String {
     let mut out = String::new();
     if let Some(e) = error {
         out.push_str(&format!(
             "{PROGRAM} {command}: 오류({}): {}",
-            e.code, e.message
+            e.code,
+            escape_for_terminal(&e.message)
         ));
         if let Some(context) = &e.context {
-            out.push_str(&format!(" [{context}]"));
+            out.push_str(&format!(" [{}]", escape_for_terminal(context)));
         }
         out.push('\n');
     }
@@ -222,7 +261,7 @@ pub fn stderr_text(command: &str, error: Option<&CliError>, diagnostics: &[Diagn
             "{PROGRAM} {command}: {}({}): {}\n",
             d.severity.name(),
             d.code,
-            d.message
+            escape_for_terminal(&d.message)
         ));
     }
     out
@@ -276,5 +315,46 @@ mod tests {
         let text = stderr_text("inspect", Some(&error), &error.diagnostics);
         assert!(text.contains("/private/path"));
         assert!(text.contains("error(missing): 자세히"));
+    }
+
+    /// 신뢰할 수 없는 저장소 값(manifest 값·key, 디렉터리 이름)이 stderr에 그대로 나가지 않습니다.
+    const HOSTILE: &str =
+        "\u{1b}]0;PWNED\u{7}\u{1b}[2J\r\nstellar inspect: 오류(fake): 위조\u{202e}lmth\u{2066}";
+
+    #[test]
+    fn stderr_text_escapes_terminal_control_and_bidi_characters() {
+        let error = CliError::new(ExitStatus::DataErr, "manifest-schema", HOSTILE)
+            .with_context(format!("/tmp/{HOSTILE}"))
+            .with_diagnostic(Diagnostic {
+                severity: Severity::Error,
+                code: "schema",
+                message: HOSTILE.into(),
+            });
+        let text = stderr_text("inspect", Some(&error), &error.diagnostics);
+        assert_eq!(
+            text.matches('\n').count(),
+            2,
+            "오류 한 줄 + 진단 한 줄: {text:?}"
+        );
+        for forbidden in ['\u{1b}', '\u{7}', '\r', '\u{202e}', '\u{2066}'] {
+            assert!(!text.contains(forbidden), "{forbidden:?}: {text:?}");
+        }
+        assert!(
+            text.contains("\\u{1b}]0;PWNED\\u{7}\\u{1b}[2J\\r\\n"),
+            "{text}"
+        );
+        assert!(text.contains("\\u{202e}lmth\\u{2066}"), "{text}");
+        for line in text.lines() {
+            assert!(line.starts_with("stellar inspect: "), "{line}");
+        }
+    }
+
+    #[test]
+    fn terminal_escape_keeps_printable_text() {
+        assert_eq!(escape_for_terminal("경로 /a b/c.yaml"), "경로 /a b/c.yaml");
+        assert_eq!(
+            escape_for_terminal("\u{200e}\u{200f}\u{61c}\u{2028}\u{2029}\u{7f}"),
+            "\\u{200e}\\u{200f}\\u{61c}\\u{2028}\\u{2029}\\u{7f}"
+        );
     }
 }

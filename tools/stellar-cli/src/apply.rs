@@ -204,6 +204,7 @@ pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
     let limits = JsonLimits {
         max_bytes: MAX_INPUT_BYTES,
         max_depth: 16,
+        ..JsonLimits::default()
     };
     let doc = json::parse_bytes(bytes, limits).map_err(|e| {
         invalid(

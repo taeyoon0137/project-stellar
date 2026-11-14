@@ -6,11 +6,23 @@
 use std::ffi::OsString;
 use std::io;
 use std::os::unix::ffi::OsStringExt;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::time::Duration;
 
 mod sys {
+    /// `<poll.h>` `struct pollfd`.
+    #[repr(C)]
+    pub struct PollFd {
+        /// 기다릴 fd.
+        pub fd: i32,
+        /// 기다릴 event.
+        pub events: i16,
+        /// 일어난 event(커널이 씀).
+        pub revents: i16,
+    }
+
     extern "C" {
         /// `uid_t geteuid(void)`.
         pub fn geteuid() -> u32;
@@ -18,10 +30,14 @@ mod sys {
         pub fn confstr(name: i32, buf: *mut u8, len: usize) -> usize;
         /// `int getpeereid(int socket, uid_t *euid, gid_t *egid)`.
         pub fn getpeereid(socket: i32, euid: *mut u32, egid: *mut u32) -> i32;
+        /// `int poll(struct pollfd fds[], nfds_t nfds, int timeout)`(`nfds_t`는 `unsigned int`).
+        pub fn poll(fds: *mut PollFd, nfds: u32, timeout: i32) -> i32;
     }
 
     /// `<unistd.h>` `_CS_DARWIN_USER_TEMP_DIR`.
     pub const CS_DARWIN_USER_TEMP_DIR: i32 = 65537;
+    /// `<poll.h>` `POLLIN`.
+    pub const POLLIN: i16 = 0x0001;
 }
 
 /// 현재 프로세스의 effective 사용자 id.
@@ -44,6 +60,43 @@ pub fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
     } else {
         Err(io::Error::last_os_error())
     }
+}
+
+/// `fds` 중 하나가 읽을 수 있게 되거나(EOF·연결 끊김·오류 포함) `timeout`이 지날 때까지 기다립니다
+/// (`poll(2)`, IPC I/O 스레드의 연결 다중화).
+///
+/// 반환값은 `fds`와 같은 순서의 준비 여부입니다. `timeout`이 `None`이면 무기한 기다리고, 1 ms 단위로
+/// 올림합니다. 신호로 중단되면(`EINTR`) 모두 `false`입니다.
+pub(crate) fn poll_readable(fds: &[RawFd], timeout: Option<Duration>) -> io::Result<Vec<bool>> {
+    let mut entries: Vec<sys::PollFd> = fds
+        .iter()
+        .map(|&fd| sys::PollFd {
+            fd,
+            events: sys::POLLIN,
+            revents: 0,
+        })
+        .collect();
+    let nfds = u32::try_from(entries.len())
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "poll fd가 너무 많습니다"))?;
+    let timeout_ms = match timeout {
+        None => -1,
+        Some(d) => {
+            let ms = d.as_nanos().div_ceil(1_000_000);
+            i32::try_from(ms).unwrap_or(i32::MAX)
+        }
+    };
+    // SAFETY: entries는 nfds개의 초기화된 `struct pollfd`이고 호출 동안 살아 있습니다. poll은 각
+    // 항목의 revents만 씁니다.
+    let rc = unsafe { sys::poll(entries.as_mut_ptr(), nfds, timeout_ms) };
+    if rc < 0 {
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Interrupted {
+            return Ok(vec![false; fds.len()]);
+        }
+        return Err(error);
+    }
+    // POLLIN 외에 POLLHUP·POLLERR·POLLNVAL도 다음 read·accept가 바로 결과를 내는 상태입니다.
+    Ok(entries.iter().map(|e| e.revents != 0).collect())
 }
 
 /// 현재 사용자의 임시 디렉터리(`_CS_DARWIN_USER_TEMP_DIR`).
@@ -100,6 +153,28 @@ mod tests {
         assert!(meta.is_dir());
         assert_eq!(meta.uid(), current_uid());
         assert_eq!(meta.mode() & 0o077, 0, "다른 사용자 접근 불가");
+    }
+
+    #[test]
+    fn poll_readable_reports_data_eof_and_timeout() {
+        use std::io::Write;
+        let (a, mut b) = UnixStream::pair().unwrap();
+        let (c, d) = UnixStream::pair().unwrap();
+        let fds = [a.as_raw_fd(), c.as_raw_fd()];
+        let started = std::time::Instant::now();
+        assert_eq!(
+            poll_readable(&fds, Some(Duration::from_millis(20))).unwrap(),
+            vec![false, false]
+        );
+        assert!(started.elapsed() >= Duration::from_millis(20));
+        b.write_all(b"x").unwrap();
+        assert_eq!(poll_readable(&fds, None).unwrap(), vec![true, false]);
+        // 상대가 닫으면(EOF) 읽을 수 있는 상태입니다.
+        drop(d);
+        assert_eq!(
+            poll_readable(&fds, Some(Duration::ZERO)).unwrap(),
+            vec![true, true]
+        );
     }
 
     #[test]

@@ -27,7 +27,7 @@ const VERSIONS_KEY: &str = "supported_versions";
 /// config의 선호(첫) version. 빌드 시 [`CONFIG_TEXT`]에서 계산합니다.
 pub const PREFERRED_VERSION: &str = first_version(CONFIG_TEXT);
 
-/// 로그에 남기는 요청 version 최대 문자 수.
+/// 로그·오류 echo에 남기는 client 문자열(요청 version, method 이름) 최대 문자 수.
 pub const MAX_ECHO_CHARS: usize = 64;
 
 /// config에서 `supported_versions:` 줄의 첫 항목을 찾습니다(빌드 시 평가 전용).
@@ -228,9 +228,10 @@ impl<'a> Negotiation<'a> {
     }
 }
 
-/// 로그용으로 요청 version을 [`MAX_ECHO_CHARS`]자까지 자릅니다(넘으면 끝에 `…`).
+/// 로그·오류 echo용으로 client가 정한 문자열(요청 version, method 이름)을 [`MAX_ECHO_CHARS`]자까지
+/// 자릅니다(넘으면 끝에 `…`). 입력 길이와 무관하게 앞 [`MAX_ECHO_CHARS`]+1자만 봅니다.
 pub fn truncate_for_log(requested: &str) -> String {
-    if requested.chars().count() > MAX_ECHO_CHARS {
+    if requested.chars().nth(MAX_ECHO_CHARS).is_some() {
         requested
             .chars()
             .take(MAX_ECHO_CHARS)

@@ -207,11 +207,13 @@ fn emit(
     i32::from(status.code())
 }
 
-/// 사용법 오류를 stderr에 알리고 [`EXIT_USAGE`]를 반환합니다.
+/// 사용법 오류를 stderr에 알리고 [`EXIT_USAGE`]를 반환합니다. message에 든 인자 echo는
+/// [`output::escape_for_terminal`]을 거칩니다.
 fn usage_error(err: &mut dyn Write, message: &str) -> i32 {
     let _ = writeln!(
         err,
-        "{PROGRAM}: {message}\n`{PROGRAM} --help`로 사용법을 확인하세요."
+        "{PROGRAM}: {}\n`{PROGRAM} --help`로 사용법을 확인하세요.",
+        output::escape_for_terminal(message)
     );
     EXIT_USAGE
 }
@@ -261,6 +263,28 @@ mod tests {
             assert_eq!(code, EXIT_USAGE, "{args:?}");
             assert!(out.is_empty(), "{args:?}: stdout에 결과가 없어야 함");
             assert!(err.contains("--help"), "{args:?}: 안내는 stderr");
+        }
+    }
+
+    #[test]
+    fn usage_error_echo_escapes_control_characters() {
+        for args in [
+            &["\u{1b}]0;PWNED\u{7}\nstellar: 위조"][..],
+            &["help", "\u{1b}[2J\u{202e}x"][..],
+            &["inspect", "--\u{1b}[31m"][..],
+            &["version", "\r\u{2066}"][..],
+        ] {
+            let (code, out, err) = run_args(args);
+            assert_eq!(code, EXIT_USAGE, "{args:?}");
+            assert!(out.is_empty(), "{args:?}");
+            for forbidden in ['\u{1b}', '\u{7}', '\r', '\u{202e}', '\u{2066}'] {
+                assert!(!err.contains(forbidden), "{args:?}: {err:?}");
+            }
+            assert_eq!(
+                err.matches('\n').count(),
+                2,
+                "{args:?}: 안내 두 줄: {err:?}"
+            );
         }
     }
 

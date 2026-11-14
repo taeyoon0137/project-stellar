@@ -14,6 +14,8 @@
 //! reader는 다음을 거부합니다.
 //!
 //! - 입력 크기 제한([`JsonLimits::max_bytes`]) 초과, 중첩 깊이 제한([`JsonLimits::max_depth`]) 초과
+//! - 값 개수 제한([`JsonLimits::max_nodes`]) 초과: 작은 값이 많은 입력은 값마다 node·원문 할당이
+//!   생겨 메모리가 입력 크기의 수십 배로 늘므로, 크기 제한과 별도로 값 수를 제한합니다
 //! - 문법 오류(후행 쉼표, 따옴표 없는 키, 주석, `NaN`·`Infinity`, 선행 0, BOM 등)
 //! - 문자열 안의 이스케이프되지 않은 제어 문자, 잘못된 이스케이프, 짝 없는 surrogate
 //! - 같은 object 안의 중복 key
@@ -33,14 +35,18 @@ pub struct JsonLimits {
     pub max_bytes: usize,
     /// array·object 최대 중첩 깊이(최상위 컨테이너가 1).
     pub max_depth: usize,
+    /// 값(null·bool·숫자·문자열·array·object) 최대 개수. 최상위 값과 컨테이너도 하나씩 세며, object
+    /// 항목은 key와 값 한 쌍을 하나로 셉니다.
+    pub max_nodes: usize,
 }
 
 impl Default for JsonLimits {
-    /// 기본 제한: 1 MiB, 깊이 64.
+    /// 기본 제한: 1 MiB, 깊이 64, 값 65,536개.
     fn default() -> Self {
         JsonLimits {
             max_bytes: 1024 * 1024,
             max_depth: 64,
+            max_nodes: 65_536,
         }
     }
 }
@@ -173,6 +179,8 @@ pub enum JsonErrorKind {
     TooLarge,
     /// 중첩이 [`JsonLimits::max_depth`]를 넘습니다.
     TooDeep,
+    /// 값 개수가 [`JsonLimits::max_nodes`]를 넘습니다.
+    TooManyNodes,
     /// UTF-8이 아닌 입력.
     InvalidUtf8,
     /// 값이 끝나기 전에 입력이 끝났습니다.
@@ -199,6 +207,7 @@ impl JsonErrorKind {
         match self {
             JsonErrorKind::TooLarge => "too-large",
             JsonErrorKind::TooDeep => "too-deep",
+            JsonErrorKind::TooManyNodes => "too-many-nodes",
             JsonErrorKind::InvalidUtf8 => "invalid-utf8",
             JsonErrorKind::UnexpectedEnd => "unexpected-end",
             JsonErrorKind::UnexpectedChar => "unexpected-char",
@@ -261,6 +270,7 @@ pub fn parse(input: &str, limits: JsonLimits) -> Result<JsonValue, JsonError> {
         bytes: input.as_bytes(),
         pos: 0,
         limits,
+        nodes: 0,
     };
     parser.skip_ws();
     let value = parser.value(0)?;
@@ -275,6 +285,8 @@ struct Parser<'a> {
     bytes: &'a [u8],
     pos: usize,
     limits: JsonLimits,
+    /// 지금까지 시작한 값 수.
+    nodes: usize,
 }
 
 impl Parser<'_> {
@@ -306,8 +318,12 @@ impl Parser<'_> {
         Ok(())
     }
 
-    /// `depth`는 이 값을 감싼 컨테이너 수입니다.
+    /// `depth`는 이 값을 감싼 컨테이너 수입니다. 값을 할당하기 전에 값 개수 제한을 검사합니다.
     fn value(&mut self, depth: usize) -> Result<JsonValue, JsonError> {
+        self.nodes += 1;
+        if self.nodes > self.limits.max_nodes {
+            return Err(self.err(JsonErrorKind::TooManyNodes));
+        }
         match self.peek() {
             None => Err(self.err(JsonErrorKind::UnexpectedEnd)),
             Some(b'n') => self.expect_literal(b"null").map(|()| JsonValue::Null),
@@ -711,6 +727,7 @@ mod tests {
         let limits = JsonLimits {
             max_bytes: 64,
             max_depth: 3,
+            ..JsonLimits::default()
         };
         assert!(parse("[[[1]]]", limits).is_ok());
         assert_eq!(
@@ -731,6 +748,37 @@ mod tests {
         assert_eq!(
             parse(&deep, JsonLimits::default()).unwrap_err().kind,
             JsonErrorKind::TooDeep
+        );
+    }
+
+    #[test]
+    fn node_count_limit_is_enforced_before_allocation() {
+        let limits = JsonLimits {
+            max_nodes: 4,
+            ..JsonLimits::default()
+        };
+        // 최상위 array 1개 + 원소 3개 = 4개.
+        assert!(parse("[0,0,0]", limits).is_ok());
+        let err = parse("[0,0,0,0]", limits).unwrap_err();
+        assert_eq!(err.kind, JsonErrorKind::TooManyNodes);
+        assert_eq!(err.offset, 7, "다섯 번째 값의 위치");
+        // object 항목은 key·값 한 쌍을 하나로 셉니다. 중첩 컨테이너도 값입니다.
+        assert!(parse(r#"{"a":1,"b":[2]}"#, limits).is_ok());
+        assert_eq!(
+            parse(r#"{"a":1,"b":[2,3]}"#, limits).unwrap_err().kind,
+            JsonErrorKind::TooManyNodes
+        );
+        assert_eq!(JsonErrorKind::TooManyNodes.code(), "too-many-nodes");
+
+        // 기본 제한: 1 MiB 안에 들어가는 `[0,0,…]`(약 52만 값)은 거부합니다.
+        let count = JsonLimits::default().max_nodes;
+        let ok = format!("[{}]", vec!["0"; count - 1].join(","));
+        assert!(parse(&ok, JsonLimits::default()).is_ok());
+        let flood = format!("[{}]", vec!["0"; 500_000].join(","));
+        assert!(flood.len() <= JsonLimits::default().max_bytes);
+        assert_eq!(
+            parse(&flood, JsonLimits::default()).unwrap_err().kind,
+            JsonErrorKind::TooManyNodes
         );
     }
 
