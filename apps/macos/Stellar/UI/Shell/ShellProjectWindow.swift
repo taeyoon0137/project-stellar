@@ -635,6 +635,7 @@ final class ShellProjectWindow {
         var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
         if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .componentLibrary]) }
+        if gitSource.trusted, selectedComponentFrame != nil { commands.insert(.componentFromSelection) }
         if gitSource.trusted, (info?.selection_count ?? 0) > 0 { commands.insert(.delete) }
         if gitSource.trusted, info?.selection_count == 1 { commands.insert(.duplicate) }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })

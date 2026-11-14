@@ -78,7 +78,17 @@ pub fn create_in_project(
 ) -> Result<ComponentInfo, Error> {
     let [id, root_id] = stellar_project::new_ids::new_ids().map_err(|e| Error::Io(e.kind()))?;
     let source = ComponentSource::new(id, name, root_id)?;
-    let _project = lock_source_project(root, project_id)?;
+    create_project_source(root, project_id, &source, None)
+}
+
+/// 선택한 Frame에서 복제한 정의는 창에서 읽은 것과 같은 generation에만 추가합니다.
+pub fn create_project_source(
+    root: &Path,
+    project_id: StableId,
+    source: &ComponentSource,
+    expected: Option<crate::revision::ProjectRevision>,
+) -> Result<ComponentInfo, Error> {
+    let _project = lock_source_project(root, project_id, expected)?;
     let design = root
         .join("design")
         .canonicalize()
@@ -89,27 +99,41 @@ pub fn create_in_project(
         ));
     }
     let folder = design.join("components");
-    match std::fs::create_dir(&folder) {
-        Ok(()) => (),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+    let created = match std::fs::create_dir(&folder) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => false,
         Err(e) => return Err(Error::Io(e.kind())),
+    };
+    let result = (|| {
+        let target = folder.canonicalize().map_err(|e| Error::Io(e.kind()))?;
+        if !target.is_dir() || !source_directory(root, &target) {
+            return Err(Error::Invalid(
+                "프로젝트 내부의 컴포넌트 폴더가 필요합니다".into(),
+            ));
+        }
+        let _folder = lock(&target)?;
+        let (file, hash) = component_source::create_in_project(root, &target, source)?;
+        Ok(info(source, file, hash))
+    })();
+    if result.is_err() && created {
+        // 동시 writer가 추가한 파일이 있으면 디렉터리는 보존됩니다.
+        let _ = std::fs::remove_dir(folder);
     }
-    let folder = folder.canonicalize().map_err(|e| Error::Io(e.kind()))?;
-    if !folder.is_dir() || !source_directory(root, &folder) {
-        return Err(Error::Invalid(
-            "프로젝트 내부의 컴포넌트 폴더가 필요합니다".into(),
-        ));
-    }
-    let _folder = lock(&folder)?;
-    let (file, hash) = component_source::create_in_project(root, &folder, &source)?;
-    Ok(info(&source, file, hash))
+    result
 }
 
-fn lock_source_project(root: &Path, project_id: StableId) -> Result<SaveLock, Error> {
+fn lock_source_project(
+    root: &Path,
+    project_id: StableId,
+    expected: Option<crate::revision::ProjectRevision>,
+) -> Result<SaveLock, Error> {
     let locks = default_lock_dir().map_err(ApplyError::Lock)?;
     let guard = SaveLock::try_acquire(&locks, project_id, root).map_err(ApplyError::Lock)?;
     let snapshot = crate::snapshot::open_snapshot(root).map_err(Error::Open)?;
-    if snapshot.project_id() != project_id || snapshot.root() != root {
+    if snapshot.project_id() != project_id
+        || snapshot.root() != root
+        || expected.is_some_and(|r| r != snapshot.revision())
+    {
         return Err(Error::Changed);
     }
     if crate::query::components(&snapshot).chunk_count != 0 {
@@ -128,7 +152,7 @@ pub fn resize_project_root(
     hash: ContentHash,
     size: Size2,
 ) -> Result<ComponentInfo, Error> {
-    let _project = lock_source_project(root, project_id)?;
+    let _project = lock_source_project(root, project_id, None)?;
     let folder = root
         .join("design/components")
         .canonicalize()

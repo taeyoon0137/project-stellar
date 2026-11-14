@@ -17,6 +17,35 @@ def main(app, cli):
         env = dict(os.environ, HOME=str(home), GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
                    GIT_ALLOW_PROTOCOL="file", GIT_AUTHOR_NAME="Fixture", GIT_COMMITTER_NAME="Fixture",
                    GIT_AUTHOR_EMAIL="fixture@example.invalid", GIT_COMMITTER_EMAIL="fixture@example.invalid")
+        fixture = home / "selected"
+        fixture.mkdir()
+        app_env = dict(env, HOME=str(fixture))
+        subprocess.run([app, "--selected-component-check", fixture], env=app_env, check=True, timeout=90)
+        source = fixture / "Component Project"
+        rows = json.loads(subprocess.check_output([cli, "query", source, "components"], env=app_env))["result"]
+        assert rows["revision"]["generation"] == 1 and rows["chunk_count"] == 0
+        [card] = rows["entries"]
+        assert (card["name"], card["node_count"], float(card["width"]), float(card["height"])) == ("Card", 3, 230, 97)
+        git = ["git", "-C", source]
+        [path] = (source / "design/components").glob("*.stellar.yaml")
+        assert subprocess.check_output([*git, "status", "--porcelain", "--untracked-files=all"], env=app_env).decode().splitlines() == [
+            "?? " + path.relative_to(source).as_posix()]
+        subprocess.run([*git, "add", "--", path], env=app_env, check=True)
+        subprocess.run([*git, "commit", "-qm", "selection component"], env=app_env, check=True)
+        clone_home = home / "clone"
+        clone_home.mkdir()
+        clone = clone_home / "Component Project"
+        subprocess.run(["git", "clone", "--quiet", "--no-local", source, clone], env=app_env, check=True)
+        clone_env = dict(env, HOME=str(clone_home))
+        assert (clone / path.relative_to(source)).read_bytes() == path.read_bytes()
+        assert json.loads(subprocess.check_output([cli, "query", clone, "components"], env=clone_env))["result"] == rows
+        for folder, instance_env in [(fixture, app_env), (clone_home, clone_env)]:
+            run = subprocess.run([app, "--component-library-check", folder], input="initial\ndone\n", text=True,
+                                 capture_output=True, env=instance_env, check=True, timeout=45)
+            [item] = json.loads(run.stdout)["entries"]
+            assert item.pop("filename") == path.name
+            assert item == dict(card, width=float(card["width"]), height=float(card["height"]))
+        print("selected-component ok: original and local Git clone opened in native Component Library and CLI, identical IDs/hash/tree, single changed source")
         subprocess.run([app, "--component-create-check", home], env=env, check=True, timeout=90)
         project = home / "Component Project"
         folder = project / "design/components"

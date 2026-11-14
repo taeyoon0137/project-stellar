@@ -45,6 +45,59 @@ pub struct StellarWindowViewInfo {
     pub active_view: [u8; 16],
 }
 
+/// 표시 중인 View의 단일 Frame 선택. viewport 밖에서 선택한 레이어도 포함합니다.
+#[repr(C)]
+#[derive(Default)]
+pub struct StellarFrameSelection {
+    /// 문서 revision.
+    pub revision: u64,
+    /// 활성 View ID.
+    pub view: [u8; 16],
+    /// 선택 노드 ID.
+    pub node: [u8; 16],
+}
+
+/// 하나의 게시된 snapshot에서 선택·뷰·revision을 읽습니다.
+/// # Safety
+/// out은 StellarFrameSelection을 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_selected_frame(
+    handle: u64,
+    session: u64,
+    out: *mut StellarFrameSelection,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { *out = StellarFrameSelection::default() };
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let state = rt.app.as_ref().map(AppRuntime::state);
+        let Some(w) = state
+            .as_ref()
+            .and_then(|s| s.window(WindowSessionHandle(session)))
+        else {
+            return StellarStatus::NoError;
+        };
+        let (Some(view), Some(node)) = (w.active_view, w.selected_frame) else {
+            return StellarStatus::NoError;
+        };
+        unsafe {
+            *out = StellarFrameSelection {
+                revision: w.revision.0,
+                view: view.to_bytes(),
+                node: node.to_bytes(),
+            }
+        };
+        StellarStatus::Ok
+    })
+}
+
 /// 열린 창 session 정보(고정 88 byte, C ABI).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[repr(C)]

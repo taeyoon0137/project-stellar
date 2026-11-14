@@ -84,7 +84,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 - **Edit**: Undo, Redo | Cut, Copy, Paste, Delete, Duplicate | Select All, Deselect All | Find ▸ (Find…, Find Next, Find Previous)
 - **View**: Show Toolbar, Customize Toolbar… | Show Sidebar, Show Inspector | Zoom In, Zoom Out, Actual Size, Zoom to Fit, Zoom to Selection | Move Tool, Hand Tool, Zoom Tool | Show Rulers | Enter Full Screen
 - **Insert**: Frame | Rectangle, Ellipse, Line, Polygon | Pen, Text | Image
-- **Object**: Group, Ungroup, Frame Selection | Bring to Front, Bring Forward, Send Backward, Send to Back | Align ▸ (Align Left, Align Center, Align Right | Align Top, Align Middle, Align Bottom), Distribute ▸ (Distribute Horizontally, Distribute Vertically) | Flip Horizontal, Flip Vertical | Lock, Hide
+- **Object**: Create Component from Selection… | Group, Ungroup, Frame Selection | Bring to Front, Bring Forward, Send Backward, Send to Back | Align ▸ (Align Left, Align Center, Align Right | Align Top, Align Middle, Align Bottom), Distribute ▸ (Distribute Horizontally, Distribute Vertically) | Flip Horizontal, Flip Vertical | Lock, Hide
 - **Window**: Minimize, Minimize All(Option 동적 항목), Zoom | Bring All to Front (창 목록은 시스템이 덧붙임)
 - **Help**: Stellar Help
 
@@ -201,6 +201,7 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | Insert | Image | ⇧⌘K | `tool.image` | 사용자 정의 |
 | Object | Group | ⌥⌘G | `object.group` | 사용자 정의(예외, 6.3) |
 | Object | Ungroup | ⌥⇧⌘G | `object.ungroup` | 사용자 정의(예외, 6.3) |
+| Object | Create Component from Selection… | — | `object.component_from_selection` | 신뢰한 프로젝트, 단일 Frame 선택 |
 | Object | Frame Selection | — | `object.frame_selection` | — |
 | Object | Bring to Front | — | `object.bring_to_front` | — |
 | Object | Bring Forward | ⌘] | `object.bring_forward` | 사용자 정의 |

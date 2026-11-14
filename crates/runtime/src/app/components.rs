@@ -1,5 +1,7 @@
 //! 독립 컴포넌트 파일은 창 문서의 undo/history에 속하지 않습니다.
 use super::*;
+use stellar_ops::revision::ProjectRevision;
+use stellar_project::document_io::component_source::ComponentSource;
 
 /// 프로젝트 범위 디스크 작업은 document thread 밖에서 실행합니다.
 impl AppRuntime {
@@ -9,16 +11,53 @@ impl AppRuntime {
         session: WindowSessionHandle,
         name: String,
     ) -> Result<RequestId, RequestError> {
+        self.create_named_component(session, name, None)
+    }
+
+    /// 이름 sheet를 열 때 표시한 단일 Frame을 현재 문서에서 복제합니다.
+    pub fn create_component_from_selection(
+        &self,
+        session: WindowSessionHandle,
+        name: String,
+        view: StableId,
+        revision: DocumentRevision,
+        selected: StableId,
+    ) -> Result<RequestId, RequestError> {
+        self.create_named_component(session, name, Some((view, revision, selected)))
+    }
+
+    fn create_named_component(
+        &self,
+        session: WindowSessionHandle,
+        name: String,
+        selection: Option<(StableId, DocumentRevision, StableId)>,
+    ) -> Result<RequestId, RequestError> {
         let request = self.reserve_request()?;
         if self.shared.creating_component.swap(true, Ordering::AcqRel) {
             self.shared.release_one();
             return Err(RequestError::QueueFull);
         }
+        let sender = self.sender.clone();
         let shared = Arc::clone(&self.shared);
         let spawned = std::thread::Builder::new()
             .name("stellar-component-create".into())
             .spawn(move || {
                 let create = || -> Result<RuntimeEvent, Failure> {
+                    let captured = if let Some((view, revision, node)) = selection {
+                        let name = name.clone();
+                        let ticket = sender
+                            .submit(move |ctx| {
+                                let window =
+                                    super::frame_move::trusted_canvas_window(ctx, session)?;
+                                capture_selection(window, name, view, revision, node)
+                            })
+                            .map_err(|e| Failure::new(RequestFailure::SaveFailed, e.to_string()))?;
+                        Some(ticket.wait().map_err(|e| {
+                            Failure::new(RequestFailure::SaveFailed, e.to_string())
+                        })??)
+                    } else {
+                        None
+                    };
                     let state = shared.current_state();
                     let project = state
                         .window(session)
@@ -33,11 +72,21 @@ impl AppRuntime {
                     project
                         .verify_trust()
                         .map_err(|e| Failure::new(RequestFailure::TrustUnavailable, e))?;
-                    let info = stellar_ops::component_source::create_in_project(
-                        &project.canonical_root,
-                        project.project_id,
-                        name,
-                    )
+                    let info = match captured {
+                        Some((source, base)) => {
+                            stellar_ops::component_source::create_project_source(
+                                &project.canonical_root,
+                                project.project_id,
+                                &source,
+                                Some(base),
+                            )
+                        }
+                        None => stellar_ops::component_source::create_in_project(
+                            &project.canonical_root,
+                            project.project_id,
+                            name,
+                        ),
+                    }
                     .map_err(|e| Failure::new(RequestFailure::SaveFailed, e.to_string()))?;
                     let filename = info
                         .file
@@ -74,6 +123,37 @@ impl AppRuntime {
         }
         Ok(request)
     }
+}
+
+fn capture_selection(
+    window: &ProjectWindowSession,
+    name: String,
+    view: StableId,
+    revision: DocumentRevision,
+    node: StableId,
+) -> Result<(ComponentSource, ProjectRevision), Failure> {
+    if window.tabs().active_view() != Some(view)
+        || window.revision() != revision
+        || window.view().selection().ids() != [node]
+    {
+        return Err(Failure::new(
+            RequestFailure::UnknownView,
+            "선택이나 문서가 변경되었습니다. Frame을 다시 선택하세요",
+        ));
+    }
+    let model = window
+        .document()
+        .ok_or_else(|| Failure::new(RequestFailure::UnknownView, "문서가 없습니다"))?
+        .model();
+    let source = ComponentSource::from_selection(model, view, node, name)
+        .map_err(|e| Failure::new(RequestFailure::SaveFailed, e.to_string()))?;
+    let base = window
+        .loaded_generation()
+        .map_or(ProjectRevision::Unsaved, |g| ProjectRevision::Saved {
+            generation: g.manifest.generation,
+            manifest_hash: g.manifest_hash,
+        });
+    Ok((source, base))
 }
 
 impl ProjectSummary {
@@ -120,5 +200,85 @@ impl ProjectSummary {
         let library = stellar_ops::component_source::query(&snapshot).map_err(|e| e.to_string())?;
         self.verify_trust()?;
         Ok(library)
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use crate::window_session::test_fixtures::{
+        identity, sample_document, saved_project_with, sid, window,
+    };
+    use stellar_commands::selection::Selection;
+    use stellar_document::{
+        fragment::FragmentPayload,
+        frame::FramePayload,
+        modifier::{ModifierId, ModifierKind, ModifierStack},
+        records::NodePayload,
+    };
+
+    #[test]
+    fn selection_identity_generation_and_unsupported_data_are_checked_before_writing() {
+        use stellar_core_types::reference::NodeRef;
+        use stellar_document::frame::Clipping;
+        let model = sample_document();
+        let dir = saved_project_with("component-selection", &[&model]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        session.select(Selection::new([sid(11)], None)).unwrap();
+        let revision = session.revision();
+        let undo = session.history().history().len();
+        for (view, rev, selected) in [
+            (3, revision, 12),
+            (4, revision, 11),
+            (3, DocumentRevision(revision.0 + 1), 11),
+        ] {
+            assert!(
+                capture_selection(&session, "Card".into(), sid(view), rev, sid(selected)).is_err()
+            );
+        }
+        let (source, _) = capture_selection(&session, "Card".into(), sid(3), revision, sid(11))
+            .unwrap_or_else(|e| panic!("{}", e.message));
+        assert!(stellar_ops::component_source::create_project_source(
+            dir.path(),
+            session.identity().project_id(),
+            &source,
+            Some(ProjectRevision::Unsaved)
+        )
+        .is_err());
+        assert!(!dir.path().join("design/components").exists());
+        assert_eq!(session.view().selection().ids(), [sid(11)]);
+        assert_eq!(session.history().history().len(), undo);
+        assert_eq!(
+            session.document().unwrap().model().to_records().unwrap(),
+            model.to_records().unwrap()
+        );
+        for restriction in 0..4 {
+            let mut model = sample_document();
+            let mut child = model.remove_leaf(sid(12)).unwrap();
+            child.parent = Some(sid(11));
+            child.payload = match restriction {
+                0 => NodePayload::Fragment(FragmentPayload),
+                1 => NodePayload::Frame(FramePayload {
+                    layout_mode: Some(sid(400)),
+                    ..FramePayload::default()
+                }),
+                2 => NodePayload::Frame(FramePayload {
+                    clipping: Clipping::Path(NodeRef::new(sid(400))),
+                    ..FramePayload::default()
+                }),
+                _ => NodePayload::Frame(FramePayload::default()),
+            };
+            model.insert_node(child).unwrap();
+            if restriction == 3 {
+                let mut stack = ModifierStack::new(sid(12));
+                stack
+                    .push_back(ModifierId::new(sid(90)), ModifierKind::Fill)
+                    .unwrap();
+                model.set_modifier_stack(stack).unwrap();
+            }
+            assert!(
+                ComponentSource::from_selection(&model, sid(3), sid(11), "Card".into()).is_err()
+            );
+        }
     }
 }

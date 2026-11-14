@@ -3,7 +3,7 @@ import AppKit
 /// 메뉴의 실제 입력 sheet, 창 재열기 및 component-source CLI와 공유할 프로젝트 fixture.
 @MainActor
 enum ShellComponentCreateCheck {
-    static func run(directory: URL) -> Bool {
+    static func run(directory: URL, fromSelection: Bool = false) -> Bool {
         NSApplication.shared.setActivationPolicy(.accessory)
         let host = RuntimeHost()
         defer { host.shutdown() }
@@ -29,7 +29,7 @@ enum ShellComponentCreateCheck {
         app.createProject(parentDirectory: directory.path, folderName: "Component Project")
         guard wait(), let first = app.projectWindow(forPath: project.path), let firstWindow = first.window,
               let session = first.windowController.windowSession, let info = session.info else { return fail("open") }
-        let menu = MainMenuBuilder.makeItem(for: .newComponent, target: nil)
+        let menu = MainMenuBuilder.makeItem(for: fromSelection ? .componentFromSelection : .newComponent, target: nil)
         guard !first.router.validateMenuItem(menu) else { return fail("restricted menu") }
         let folder = project.appendingPathComponent("design/components")
         var denied = false
@@ -38,7 +38,7 @@ enum ShellComponentCreateCheck {
         }
         guard wait(), denied, !FileManager.default.fileExists(atPath: folder.path) else { return fail("restricted write") }
         first.gitSource.updateTrust(true)
-        guard wait(), first.router.validateMenuItem(menu) else { return fail("trust") }
+        guard wait(), first.router.validateMenuItem(menu) == !fromSelection else { return fail("trust") }
         func input(_ shell: ShellProjectWindow, _ name: String, cancel: Bool = false) -> Bool {
             guard let window = shell.window, shell.router.validateMenuItem(menu) else { return false }
             // AppKit은 표시되지 않은 부모 창에는 sheet를 연결하지 않습니다.
@@ -56,6 +56,53 @@ enum ShellComponentCreateCheck {
             guard until({ window.attachedSheet == nil }) else { return fail("sheet still attached") }
             if cancel { return true }
             return until { !notices.isEmpty } && wait()
+        }
+        if fromSelection {
+            firstWindow.setContentSize(NSSize(width: 1300, height: 800))
+            firstWindow.contentView?.layoutSubtreeIfNeeded()
+            let canvas = first.canvasHost.canvasView
+            first.refreshSessionCommands()
+            guard let camera = session.viewInfo else { return fail("active view") }
+            let center = CGPoint(x: canvas.bounds.midX + (50 - camera.center_x) * camera.zoom,
+                                 y: canvas.bounds.midY + (50 - camera.center_y) * camera.zoom)
+            guard let viewRoot = canvas.frameHit(at: center)?.id else { return fail("view root") }
+            func insert(_ parent: UUID, _ rect: CGRect, rectangle: Bool = false) -> Bool {
+                guard let state = session.info else { return false }
+                let hit = CanvasFrameHit(isRectangle: false, id: parent, revision: state.revision,
+                    viewID: UUID(uuid: camera.active_view), localToWorld: .identity,
+                    parentToWorld: .identity, worldToView: .identity)
+                var applied = false
+                _ = pump.insertFrame(session: session.session, parent: hit, rect: rect, rectangle: rectangle) { event in
+                    if case .windowViewChanged = event { applied = true }
+                }
+                guard wait(), applied else { return false }
+                first.refreshSessionCommands()
+                return true
+            }
+            guard insert(viewRoot, CGRect(x: 40, y: 30, width: 230, height: 97)),
+                  let parent = first.selectedComponentFrame.map({ UUID(uuid: $0.node) }),
+                  insert(parent, CGRect(x: 12, y: 6, width: 80, height: 34)),
+                  let child = first.selectedComponentFrame.map({ UUID(uuid: $0.node) }),
+                  insert(child, CGRect(x: 2, y: 3, width: 12, height: 8)),
+                  first.selectNodes([parent]), wait() else { return fail("insert selected subtree") }
+            let before = session.info
+            notices.removeAll()
+            guard input(first, "Card"), notices.first?.hasPrefix("design/components/Card-") == true,
+                  session.info?.revision == before?.revision, session.info?.undo_depth == before?.undo_depth,
+                  session.info?.generation == before?.generation, session.info?.has_unsaved_changes == before?.has_unsaved_changes,
+                  first.selectedComponentFrame.map({ UUID(uuid: $0.node) }) == parent,
+                  let path = try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil).first,
+                  let bytes = try? Data(contentsOf: path) else { return fail("save without touching selection/history") }
+            guard insert(child, CGRect(x: 3, y: 4, width: 4, height: 2), rectangle: true),
+                  first.selectNodes([parent]), wait() else { return fail("insert unsupported grandchild") }
+            let state = session.info
+            notices.removeAll()
+            guard input(first, "Lossy"), notices.count == 1, !notices[0].hasPrefix("design/components/"),
+                  (try? FileManager.default.contentsOfDirectory(atPath: folder.path).count) == 1,
+                  (try? Data(contentsOf: path)) == bytes, session.info?.undo_depth == state?.undo_depth,
+                  session.info?.revision == state?.revision, session.info?.generation == state?.generation else { return fail("unsupported subtree") }
+            print("selected-component ok: three unsaved Frames, menu and sheet, nested Shape rejected, original selection, generation and history preserved")
+            return true
         }
         notices.removeAll()
         guard input(first, "Cancelled", cancel: true), !FileManager.default.fileExists(atPath: folder.path) else {

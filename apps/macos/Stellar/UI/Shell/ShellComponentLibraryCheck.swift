@@ -18,6 +18,10 @@ enum ShellComponentLibraryCheck {
               let window = opened.window else { return false }
         var shell = opened
         let menu = MainMenuBuilder.makeItem(for: .componentLibrary, target: nil)
+        if !shell.gitSource.trusted {
+            shell.gitSource.updateTrust(true)
+            guard pump.waitForPendingRequests(timeout: 10) else { return false }
+        }
         guard shell.router.validateMenuItem(menu) else { return false }
         window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
         shell.router.performShellCommand(menu)
