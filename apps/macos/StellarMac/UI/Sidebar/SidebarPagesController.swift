@@ -378,8 +378,8 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
         menu.removeAllItems()
         let row = outline.clickedRow
         guard row >= 0, let item = outline.item(atRow: row) as? SidebarOutlineItem, let id = item.id else { return }
+        // 문맥 메뉴에는 단축키 표시를 넣지 않습니다(HIG Context menus).
         let menuItem = NSMenuItem(title: SidebarStrings.rename, action: #selector(renameFromMenu(_:)), keyEquivalent: "")
-        SidebarKeyboardShortcuts.apply(.rename, to: menuItem)
         menuItem.target = self
         menuItem.representedObject = item
         let command: SidebarCommand = item.role == .page ? .renamePage(id, name: "") : .renameView(id, name: "")

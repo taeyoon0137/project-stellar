@@ -8,8 +8,8 @@ import AppKit
 /// - Auto Layout 모호성 없음(Light·Dark 모두), 앱 크롬 색이 시스템 의미 색(catalog)임, 토글 클릭 대상 최소 크기
 /// - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로(`AXNode`)로 읽습니다. 목록 → `AXRow` → `AXCell`의
 ///   행 레이블·custom action(실행 포함), 장식 아이콘 미노출, 토글·필터·상태 화면 레이블, 선택 행, key view 순서
-/// - 선택, 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증,
-///   키보드 단축키, 드롭 사전 검증·재지정, 필터·결과 없음·필터 해제 후 펼침 복원, 빈 View,
+/// - 선택, 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증
+///   (단축키 표시 없음), 키보드 단축키, 드롭 사전 검증·재지정, 필터·결과 없음·필터 해제 후 펼침 복원, 빈 View,
 ///   로드 중·실패·재시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행 갱신, snapshot 변경 통지 병합
 /// 실제 마우스 드래그 세션, VoiceOver 음성 출력, 화면 픽셀은 검사하지 않습니다.
 enum SidebarUICheck {
@@ -535,16 +535,22 @@ enum SidebarUICheck {
         let starID = try harness.id("Star")
         let dividerID = try harness.id("Divider")
 
+        var shortcutTitles: [String] = []
         func menuState(_ targets: [SidebarStableID]) -> [String: Bool] {
             let menu = NSMenu()
             layers.fill(menu, targets: targets)
             var state: [String: Bool] = [:]
-            for item in menu.items where !item.isSeparatorItem { state[item.title] = item.isEnabled }
+            for item in menu.items where !item.isSeparatorItem {
+                state[item.title] = item.isEnabled
+                if !item.keyEquivalent.isEmpty { shortcutTitles.append(item.title) }
+            }
             return state
         }
 
         let fragmentMenu = menuState([iconsID])
         try require(fragmentMenu.count == 7, "문맥 메뉴 항목 수 불일치: \(fragmentMenu)")
+        // 문맥 메뉴에는 단축키 표시가 없습니다(HIG Context menus). 단축키는 메뉴 막대가 보입니다.
+        try require(shortcutTitles.isEmpty, "문맥 메뉴에 단축키 표시가 있음: \(shortcutTitles)")
         try require(fragmentMenu[SidebarStrings.ungroup] == true, "그룹 marker에서 Ungroup이 비활성")
         try require(fragmentMenu[SidebarStrings.rename] == true, "단일 대상 Rename이 비활성")
         let mixedMenu = menuState([starID, dividerID])

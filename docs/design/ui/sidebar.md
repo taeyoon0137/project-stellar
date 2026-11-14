@@ -96,6 +96,7 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 - 항목: Rename / Duplicate / Delete — Group Selection / Ungroup — Hide·Show / Lock·Unlock. 지금 쓸 수 없는 항목은 숨기지 않고 비활성화하며, 활성화 여부는 provider 사전 검증(`validate`)으로 정합니다. [가이드 8.1] [HIG The menu bar]
 - Group은 대상을 새 그룹 marker(Fragment) 아래로 옮기는 command이고, Ungroup은 그룹 marker를 지우고 자식을 그 자리로 올리는 command입니다. 실제 의미(어떤 노드를 쓸지, 위치)는 코어가 정합니다. [아키텍처 §12.4]
 - 페이지 구획의 문맥 메뉴는 Rename만 있습니다.
+- 문맥 메뉴 항목에는 단축키 표시(key equivalent)를 넣지 않습니다. 단축키는 메뉴 막대 항목(XII.6.5)이 보입니다. [HIG Context menus]
 
 ### 4.5 드래그 재정렬·재부모화
 
@@ -222,7 +223,7 @@ protocol SidebarDataProvider: AnyObject {
 - 구조: SF Symbol 21개 해석, source list 스타일, `NSSearchField`, 사이드바 behavior, accessory 부착, 이 영역이 넣은 `NSVisualEffectView` 없음(시스템 행의 선택 재질은 제외), 행 수, group row, active View 선택, key view 순서.
 - layout: Light·Dark·결과 없음 상태에서 Auto Layout 모호성 없음, 이름 필드가 토글과 겹치지 않음, 토글 클릭 대상 20×20pt 이상이고 행 안에 들어감, 앱 크롬 색이 시스템 catalog 색.
 - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로로 읽습니다(`AXNode`: NSAccessibility 프로토콜 객체는 프로토콜 메서드, AppKit 표의 `AXRow`·`AXCell`은 legacy attribute 질의). 모든 행이 `AXCell` 하나로 묶임, 행 레이블·custom action(명세로 따로 계산한 값과 비교), 장식 아이콘 `AXImage` 없음, 보이는 토글만 노출되고 레이블이 다음 동작, custom action을 접근성 서버 방식(이름 있는 AX action)으로 실행(Hide·Lock → command, 선택 유지, Rename → 편집 시작·취소), 선택 행(`AXSelectedRows`)의 레이블, 필터 필드 cell 레이블, 상태 화면 group 레이블과 아이콘 미노출, 숨김·잠김·필터 문맥 문구, 빈 이름 placeholder.
-- 동작: 선택 command, 외부 선택 펼침, Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행의 값 변경·대비 높이기 반영, 변경 통지 병합.
+- 동작: 선택 command, 외부 선택 펼침, Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화와 단축키 표시 없음, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행의 값 변경·대비 높이기 반영, 변경 통지 병합.
 - 검사하지 않는 것: 실제 마우스 드래그 세션, VoiceOver 음성 출력, 시스템 접근성 설정을 실제로 켠 상태, 화면 픽셀.
 
 통합 때 `main.swift`에 `--sidebar-ui-check` 같은 인자로 `exit(SidebarUICheck.run() ? 0 : 1)`을 연결하고 `scripts/macos/smoke.sh`에서 호출합니다. 아직 연결되지 않았으므로(두 파일은 이 영역 밖) 지금은 자동 회귀 방지가 없습니다. 지금까지의 결과는 이 폴더의 소스와 `SidebarUICheck.run()`만 부르는 임시 진입점을 저장소 밖에서 컴파일해 얻은 것입니다.
@@ -234,7 +235,7 @@ protocol SidebarDataProvider: AnyObject {
 | `SidebarDataProvider` 코어 구현: poll 이벤트로 snapshot 갱신, command를 문서 스레드로 전달 | ADR-0009, 아키텍처 §8.2, §9 |
 | 이름·표시·잠금 command | 계획 VII.2.5(SetProperty specialization) |
 | 이동·복제·삭제 command, 사전 검증 | 계획 VII.2.3, VII.2.8, VII.2.2, VI.2.3 |
-| 묶기·풀기 command(그룹 marker 생성·제거) | 전용 WBS 없음, Fragment 규칙은 아키텍처 §12.4 |
+| 묶기·풀기 command(그룹 marker 생성·제거) | 전용 WBS 없음(계획 반영 필요, 그때까지 `group`·`ungroup` command는 잠정), Fragment 규칙은 아키텍처 §12.4 |
 | 선택 command·창별 선택·Undo 통합 | 계획 VII.3.1~VII.3.4, VII.4.6, XII.2.5 |
 | 페이지·View 이름 변경, active View | 계획 VI.1.3, XII.2.5 |
 | 필터 질의 실행(문서 스레드 밖), 부모 단위·부모 내부 페이지 분할 | 아키텍처 §6.3, §6.4 |

@@ -462,6 +462,8 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     /// 대상에 대한 문맥 메뉴 항목을 채웁니다. 활성화 여부는 provider 사전 검증으로 정합니다.
+    ///
+    /// 문맥 메뉴에는 단축키 표시를 넣지 않습니다(HIG Context menus). 단축키는 메뉴 막대 항목(XII.6.5)이 보입니다.
     func fill(_ menu: NSMenu, targets: [SidebarStableID]) {
         menu.removeAllItems()
         menuTargets = targets
@@ -481,7 +483,6 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
             if index > 0 { menu.addItem(.separator()) }
             for (action, title) in group {
                 let item = NSMenuItem(title: title, action: #selector(contextAction(_:)), keyEquivalent: "")
-                SidebarKeyboardShortcuts.apply(action, to: item)
                 item.target = self
                 item.tag = SidebarOutlineAction.allCases.firstIndex(of: action) ?? 0
                 item.isEnabled = canPerform(action, targets: targets)
