@@ -102,7 +102,7 @@ pub enum FuzzInput {
         bytes: Vec<u8>,
     },
     /// 레코드 변형 입력.
-    Records(DocumentRecords),
+    Records(Box<DocumentRecords>),
 }
 
 /// 레코드를 validator·loader에 넣고 불변식을 확인합니다. 위반은 설명 문자열입니다.
@@ -518,13 +518,22 @@ pub fn campaign(seeds: &Seeds, seed: u64, count: usize) -> Vec<FuzzInput> {
             target: *target,
             bytes: bytes.clone(),
         })
-        .chain(seeds.documents.iter().cloned().map(FuzzInput::Records))
+        .chain(
+            seeds
+                .documents
+                .iter()
+                .cloned()
+                .map(Box::new)
+                .map(FuzzInput::Records),
+        )
         .collect();
     out.reserve(count);
     for _ in 0..count {
         if rng.one_in(3) && !seeds.documents.is_empty() {
             let source = rng.pick(&seeds.documents);
-            out.push(FuzzInput::Records(mutate_records(&mut rng, source)));
+            out.push(FuzzInput::Records(Box::new(mutate_records(
+                &mut rng, source,
+            ))));
         } else if !seeds.bytes.is_empty() {
             let (target, source) = rng.pick(&seeds.bytes).clone();
             let (_, other) = rng.pick(&seeds.bytes);
