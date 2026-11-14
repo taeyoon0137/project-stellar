@@ -8,7 +8,7 @@ import AppKit
 /// - Auto Layout 모호성 없음(Light·Dark 모두), 앱 크롬 색이 시스템 의미 색(catalog)임, 토글 클릭 대상 최소 크기
 /// - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로(`AXNode`)로 읽습니다. 목록 → `AXRow` → `AXCell`의
 ///   행 레이블·custom action(실행 포함), 장식 아이콘 미노출, 토글·필터·상태 화면 레이블, 선택 행, key view 순서
-/// - 선택(페이지 행 → active View 행 포함), 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증
+/// - 선택(페이지 행 → active View 행, 화살표·←·→ 키 이동 포함), 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증
 ///   (단축키 표시 없음), 키보드 단축키, 드롭 사전 검증·재지정, 필터·결과 없음·필터 해제 후 펼침 복원, 빈 View,
 ///   로드 중·실패·재시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행 갱신, snapshot 변경 통지 병합
 /// 실제 마우스 드래그 세션, VoiceOver 음성 출력, 화면 픽셀은 검사하지 않습니다.
@@ -220,8 +220,8 @@ enum SidebarUICheck {
         try checkCoalescing()
 
         return "symbols \(SidebarSymbols.allNames.count), pages+layers outline, AX rows/cells/custom actions, "
-            + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/page selection/lazy/offscreen rows/coalescing, "
-            + "no ambiguous layout (Light, Dark)"
+            + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/page selection/page arrow keys/lazy/offscreen rows/"
+            + "coalescing, no ambiguous layout (Light, Dark)"
     }
 
     /// 상태 화면: 하나의 group 요소가 제목·설명을 레이블로 내고, 장식 아이콘은 노출하지 않습니다.
@@ -252,22 +252,94 @@ enum SidebarUICheck {
         try require(outline.selectedRow == harness.row(of: welcomeID, in: outline),
                     "페이지 활성화 후 active View 행이 선택되지 않음(선택 행 \(outline.selectedRow))")
 
-        // 이미 active인 페이지 행을 다시 고름 → command 없음, 선택은 active View 행으로 돌아감.
+        // 이미 active인 페이지 행을 다시 고름 → command 없음, 선택은 그 페이지 행에 머묾(되돌리면 키보드 함정).
         mark = harness.provider.performedCommands.count
         outline.selectRowIndexes(IndexSet(integer: harness.row(of: onboarding.id, in: outline)), byExtendingSelection: false)
+        harness.refresh()
         try require(harness.commands(since: mark).isEmpty, "active 페이지 재선택이 command를 만듦: \(harness.commands(since: mark))")
-        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline), "active 페이지 재선택 후 선택이 View 행으로 돌아가지 않음")
+        try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline),
+                    "active 페이지 재선택 후 선택이 페이지 행에 머물지 않음(선택 행 \(outline.selectedRow))")
 
-        // 페이지를 접으면 페이지 행, 다시 펼치면 active View 행.
+        // View 행이 선택된 채로 페이지를 접으면 페이지 행, 다시 펼쳐도 선택을 옮기지 않아 페이지 행.
+        outline.selectRowIndexes(IndexSet(integer: harness.row(of: welcomeID, in: outline)), byExtendingSelection: false)
         guard let pageItem = outline.item(atRow: harness.row(of: onboarding.id, in: outline)) else {
             throw Failure(message: "페이지 행 없음")
         }
         outline.collapseItem(pageItem)
         try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline), "접은 active 페이지 행이 선택되지 않음")
         outline.expandItem(pageItem)
-        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline), "다시 펼친 뒤 active View 행이 선택되지 않음")
+        harness.refresh()
+        try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline), "다시 펼친 뒤 선택이 페이지 행에 머물지 않음")
         try require(harness.commands(since: mark).isEmpty, "접기·펼치기가 command를 만듦: \(harness.commands(since: mark))")
         try require(harness.layers.outline.numberOfRows == 9, "Welcome 레이어가 다시 보이지 않음: \(harness.layers.outline.numberOfRows)")
+
+        // active View 행을 다시 고름 → command 없음.
+        outline.selectRowIndexes(IndexSet(integer: harness.row(of: welcomeID, in: outline)), byExtendingSelection: false)
+        try require(harness.commands(since: mark).isEmpty, "active View 재선택이 command를 만듦: \(harness.commands(since: mark))")
+
+        try checkPageKeyboard(harness)
+    }
+
+    /// 페이지 목록 키보드 이동: 화살표로 active 페이지 행을 지나 위아래로 움직이고, ←로 부모 페이지 행에 닿아 접을 수
+    /// 있어야 합니다(키보드 함정 없음, HIG Keyboard). active 페이지 행에 선택이 닿아도 View 행으로 되돌리지 않습니다.
+    @MainActor
+    private static func checkPageKeyboard(_ harness: Harness) throws {
+        let outline = harness.pages.outline
+        guard let onboarding = harness.provider.snapshot.pages.first(where: { $0.name == "Onboarding" }),
+              let settings = harness.provider.snapshot.pages.first(where: { $0.name == "Settings" }),
+              let welcomeID = harness.provider.viewID(named: "Welcome"),
+              let signInID = harness.provider.viewID(named: "Sign In"),
+              let generalID = harness.provider.viewID(named: "General") else {
+            throw Failure(message: "예시 페이지·View 없음")
+        }
+        try require(harness.window.makeFirstResponder(outline), "페이지 목록 first responder 실패")
+        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline), "키보드 검사 시작 행이 Welcome이 아님")
+
+        // 화살표 키 하나를 보내고 snapshot을 반영한 뒤, 선택 행과 그동안 만든 command를 확인합니다.
+        func press(_ arrow: Int, keyCode: UInt16, expect id: SidebarStableID, commands expected: [SidebarCommand],
+                   _ step: String) throws {
+            let mark = harness.provider.performedCommands.count
+            let characters = String(Character(UnicodeScalar(UInt16(arrow))!))
+            outline.keyDown(with: harness.key(characters, keyCode: keyCode, modifiers: [.numericPad, .function]))
+            harness.refresh()
+            let selected = (outline.item(atRow: outline.selectedRow) as? SidebarOutlineItem)?.id
+            try require(selected == id && outline.selectedRowIndexes.count == 1,
+                        "[\(step)] 선택 행 불일치: \(outline.selectedRow) != \(harness.row(of: id, in: outline))")
+            try require(harness.commands(since: mark) == expected, "[\(step)] command 불일치: \(harness.commands(since: mark))")
+        }
+        let up = (NSUpArrowFunctionKey, UInt16(126))
+        let down = (NSDownArrowFunctionKey, UInt16(125))
+        let left = (NSLeftArrowFunctionKey, UInt16(123))
+        let right = (NSRightArrowFunctionKey, UInt16(124))
+
+        // Welcome → ↑ active 페이지 행(command 없음, 그대로 머묾) → ↑ 맨 위(제목 행은 선택되지 않음) → ↓ Welcome.
+        try press(up.0, keyCode: up.1, expect: onboarding.id, commands: [], "↑ active 페이지 행")
+        try press(up.0, keyCode: up.1, expect: onboarding.id, commands: [], "↑ 맨 위 페이지 행")
+        try press(down.0, keyCode: down.1, expect: welcomeID, commands: [], "↓ active View 행")
+        // ↓ Sign In(.activateView) → ↓ Settings 페이지 행(.activatePage, 코어가 고른 General 행으로 선택이 옮겨 감).
+        try press(down.0, keyCode: down.1, expect: signInID, commands: [.activateView(signInID)], "↓ 다른 View")
+        try press(down.0, keyCode: down.1, expect: generalID, commands: [.activatePage(settings.id)], "↓ 다른 페이지")
+        // ↑ active 페이지(Settings) 행에 머묾 → ↑ 위 페이지의 Sign In(.activateView). 함정이면 General로 되돌아감.
+        try press(up.0, keyCode: up.1, expect: settings.id, commands: [], "↑ active 페이지 행(함정 없음)")
+        try press(up.0, keyCode: up.1, expect: signInID, commands: [.activateView(signInID)], "↑ 위 페이지의 View")
+        // ← 부모 페이지 행(active, command 없음) → ← 접기 → → 펼치기(선택은 페이지 행 유지) → ↓ Welcome.
+        try press(left.0, keyCode: left.1, expect: onboarding.id, commands: [], "← 부모 페이지 행")
+        try press(left.0, keyCode: left.1, expect: onboarding.id, commands: [], "← 접기")
+        try require(!outline.isItemExpanded(outline.item(atRow: outline.selectedRow)), "←로 active 페이지가 접히지 않음")
+        try press(right.0, keyCode: right.1, expect: onboarding.id, commands: [], "→ 펼치기")
+        try require(outline.isItemExpanded(outline.item(atRow: outline.selectedRow)), "→로 active 페이지가 펼쳐지지 않음")
+        try press(down.0, keyCode: down.1, expect: welcomeID, commands: [.activateView(welcomeID)], "↓ 첫 View")
+
+        // active 페이지 행이 선택된 채로 active가 바뀌지 않는 snapshot(다른 페이지 이름 변경 → 목록 reload)이 와도
+        // 선택을 View 행으로 옮기지 않습니다.
+        try press(up.0, keyCode: up.1, expect: onboarding.id, commands: [], "↑ active 페이지 행(재확인)")
+        for name in ["Preferences", settings.name] {
+            harness.provider.perform(.renamePage(settings.id, name: name))
+            harness.refresh()
+            try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline),
+                        "active가 그대로인 snapshot 뒤 선택이 페이지 행에서 옮겨 감(선택 행 \(outline.selectedRow))")
+        }
+        try press(down.0, keyCode: down.1, expect: welcomeID, commands: [], "↓ active View 행(복귀)")
     }
 
     // MARK: 구조·layout·접근성
