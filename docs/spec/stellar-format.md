@@ -2,7 +2,7 @@
 
 - 문서 종류: 규범(normative) 명세. 구현된 형식을 코드에서 옮겨 적었습니다.
 - WBS: XXVIII.1.2
-- 기준 commit: `78a574a` 위의 구현. 이 문서의 모든 규칙은 아래 근거 표기에 적은 crate·module과
+- 기준 commit: `78a574a` 위의 구현(§14.2, §14.4~§14.6은 `24728e3` 구현에 맞춰 갱신). 이 문서의 모든 규칙은 아래 근거 표기에 적은 crate·module과
   일치해야 합니다. 코드와 이 문서가 다르면 이 문서가 틀린 것이며, 문서를 고칩니다.
 - 공개 상태: 내부 명세입니다. 기술 아키텍처 §35의 공개 전 조건(포맷 버전 정책 안정화, 독립 구현,
   conformance CI 등)은 아직 충족되지 않았습니다.
@@ -571,9 +571,14 @@ document 하나의 매핑·시퀀스·스칼라만 허용합니다. root가 스�
 - 중복 키는 마지막 값으로 덮어쓰지 않고 거부합니다. 다른 매핑의 같은 키는 허용합니다.
 - 값이나 시퀀스 항목으로 나온 `<<`는 문자열로 허용합니다.
 - 선행 `---`, `%YAML`·`%TAG` directive는 document가 하나면 허용합니다.
-- 오류는 1-기반 줄·열과 위 고유 코드를 가집니다(`LoaderError`). 크기·문자·깊이·선읽기 한도 오류
+- 오류는 줄·열과 위 고유 코드를 가집니다(`LoaderError`). 크기·문자·깊이·선읽기 한도 오류
   코드(`input-too-large`, `non-printable`, `nesting-too-deep`, `lookahead-too-large`)는 보안 문서 §4에
   있습니다.
+- **현재 구현**: 위치의 기준은 오류 종류마다 다릅니다. `non-printable`·`lookahead-too-large`는 줄·열 모두
+  1부터 셉니다. 하위 parser 위치를 쓰는 오류(`parse`, `anchor`, `alias`, `custom-tag`, `merge-key`,
+  `non-scalar-key`, `duplicate-key`, `multiple-documents`, `nesting-too-deep`)는 줄은 1부터, 열은 0부터
+  셉니다(예: 2번째 줄 첫 열의 중복 키 → `(2, 0)`). `input-too-large`와 `empty-document`는 `(0, 0)`입니다.
+  golden corpus(`conformance/manifest.yaml`)의 `restricted-yaml` 항목이 이 값을 고정합니다.
 
 ### 14.3 스칼라 해석
 
@@ -594,6 +599,8 @@ document 하나의 매핑·시퀀스·스칼라만 허용합니다. root가 스�
 - 키 순서는 값 트리의 저장 순서를 그대로 씁니다(재정렬 없음). 들여쓰기는 단계마다 공백 2칸, 줄바꿈은
   LF, 파일은 LF 하나로 끝납니다. 주석은 쓰지 않습니다.
 - 매핑 값·시퀀스 항목은 `key: value`, `- item` 형태이며, 빈 매핑은 `{}`, 빈 시퀀스는 `[]`입니다.
+  비어 있지 않은 매핑·시퀀스인 값과 항목은 `key:` 또는 `-`만 쓴 줄 다음 줄부터 한 단계(공백 2칸) 더
+  들여 씁니다(`write_child`). 그래서 매핑을 담은 시퀀스 항목은 `-` 한 줄 뒤에 키들이 옵니다.
 - 스칼라 인용: 영문자로 시작하고 영문자·숫자·`_`·`-`로만 된 문자열 중 `true`·`false`·`null`·`yes`·
   `no`·`on`·`off`·`y`·`n`(대소문자 무시)이 아닌 것만 따옴표 없이 씁니다. 나머지는 큰따옴표로 감싸고
   `\\`, `\"`, `\n`, `\t`, `\r`을 이스케이프합니다. C0·DEL·C1 제어 문자, U+2028, U+2029, U+FEFF,
@@ -616,14 +623,40 @@ document 하나의 매핑·시퀀스·스칼라만 허용합니다. root가 스�
 | `project.name` | 예 | 스칼라 |
 | `target_profiles` | 예 | 시퀀스 |
 | `target_profiles[i]` | — | 매핑, 키 `id`(필수)·`platform`(필수)·`minimum_os`·`baseline` |
-| `dependencies` | 예 | 매핑, 키 = 의존성 이름(스칼라) |
-| `dependencies.<name>` | — | 매핑, 키 `source`·`repository`·`version` 모두 필수, 값은 스칼라 |
+| `dependencies` | 예 | 매핑, 키 = 의존성 logical name(스칼라) |
+| `dependencies.<name>` | — | 매핑, 키 `source`·`library_id`·`repository`·`version` 필수, `local_override` 선택 |
+| `dependencies.<name>.source` | 예 | 스칼라, `git`만 |
+| `dependencies.<name>.library_id` | 예 | 스칼라, UUID 문자열(§5.1 `StableId` 형식). 라이브러리 프로젝트의 `project.id` |
+| `dependencies.<name>.repository` | 예 | 스칼라, repository URL |
+| `dependencies.<name>.version` | 예 | tag 이름 스칼라, 또는 `tag`·`branch`·`commit` 중 정확히 한 키를 가진 매핑 |
+| `dependencies.<name>.local_override` | 아니오 | 스칼라, 로컬 경로 |
+
+`dependencies` 절의 형식은 `stellar-dependencies`의 선언 모델(`dependencies::declaration`) 하나이며,
+project crate는 제한 YAML 값을 형식 중립 트리로 1:1 바꿔 그 모델로 검증합니다(ADR-0021,
+`project::manifest_node`). 값 규칙(`dependencies::declaration`):
+
+| 값 | 규칙 | 위반 |
+|---|---|---|
+| logical name | 1~128 byte, ASCII 영숫자로 시작, ASCII 영숫자·`-`·`_`·`.`만 | `InvalidValue`(`Empty`, `TooLong`, `InvalidCharacter`) |
+| `source` | `git` | `InvalidValue`(`UnknownSource`) |
+| `library_id` | `StableId` parse 성공 | `InvalidValue`(`InvalidLibraryId`) |
+| `repository` | 1~4096 byte, 제어 문자·공백 없음, `-`로 시작하지 않음, 대소문자 무시 `ext::`·`fd::`로 시작하지 않음 | `InvalidValue`(`Empty`, `TooLong`, `InvalidCharacter`, `LeadingDash`, `ForbiddenTransport`) |
+| tag·branch 이름 | 1~255 byte, 제어 문자·공백·`~^:?*[\` 없음, `-`로 시작하지 않음, 단독 `@`·`/` 시작·`/` 끝·`.` 끝·`..`·`@{`·`//`·`.` 시작 component·`.lock` 끝 component 금지 | `InvalidValue`(`InvalidRefName` 등) |
+| `commit` | 16진수 40자 또는 64자. 소문자로 정규화 | `InvalidValue`(`InvalidCommitLength`, `InvalidHexDigit`) |
+| `version` 매핑 | 키가 정확히 하나 | `InvalidValue`(`InvalidSelector`), 모르는 키는 `UnknownKey` |
+| `local_override` | 1~4096 byte, 제어 문자·`\` 없음, (선행 `/`를 뗀 뒤) 빈 component·`.` component 없음. `..`은 허용 | `InvalidValue`(`InvalidOverridePath` 등) |
 
 - 모든 매핑에서 정의되지 않은 키는 `UnknownKey`입니다. 필수 키 누락은 `MissingField`, 종류 불일치는
-  `WrongType`, 버전 형식 위반은 `InvalidSchemaVersion`입니다.
+  `WrongType`, 버전 형식 위반은 `InvalidSchemaVersion`, 값 규칙 위반은 `InvalidValue { path, error }`,
+  의존성 절 중첩 깊이가 64를 넘으면 `TooDeep`입니다. 오류 경로는 `dependencies.<name>.<key>` 형태입니다.
 - 키는 어떤 순서로 와도 됩니다. writer는 `schema_version`, `project`(`id`, `name`), `target_profiles`
-  (`id`, `platform`, `minimum_os`, `baseline`), `dependencies`(이름: `source`, `repository`, `version`)
-  순서로 씁니다. 숫자로 시작하는 스칼라는 인용되므로 canonical 출력은 `schema_version: "1"`입니다.
+  (`id`, `platform`, `minimum_os`, `baseline`), `dependencies`(이름: `source`, `library_id`, `repository`,
+  `version`, `local_override`) 순서로 씁니다. tag는 스칼라로, branch·commit은 한 키 매핑으로 씁니다. 입력의
+  `version: {tag: ...}` 매핑은 스칼라 tag로 정규화됩니다. 숫자로 시작하는 스칼라는 인용되므로 canonical 출력은
+  `schema_version: "1"`입니다.
+- `library_id` 없는 이전 형식 entry는 `MissingField`(`dependencies.<name>.library_id`)로 거부합니다. 같은
+  logical name 중복 판정은 이 단계가 아니라 선언 검증(`dependencies::validation`)이 합니다. 제한 loader는
+  같은 매핑의 중복 키를 이미 거부합니다.
 - 새 프로젝트의 `schema_version`은 `CURRENT_SCHEMA_VERSION` = `1`입니다.
 - **현재 구현**: `from_yaml`은 `schema_version` 값을 1과 비교하지 않고 모든 `u32`를 받습니다.
   `project.id` 형식도 이 단계에서 검사하지 않습니다(§5.4의 변환은 별도 함수).
@@ -641,35 +674,44 @@ dependencies: {}
 
 ### 14.6 `stellar.lock.yaml`
 
-근거: `project::lock`, `project::scaffold`.
+근거: `project::lock`, `project::scaffold`, `dependencies::lock`(`LockDocument::from_node`,
+`LockEntry::from_node`), ADR-0021.
+
+`project::lock::Lockfile`은 제한 YAML 값을 형식 중립 트리로 바꿔 `dependencies::lock` 모델로 검증합니다.
+lock entry 형식은 이 모델 하나입니다(ADR-0021).
 
 | 경로 | 필수 | 형식 |
 |---|---|---|
-| `schema_version` | 예 | 스칼라, `parse_u32` |
-| `resolved` | 예 | 시퀀스(같은 라이브러리의 여러 항목 허용) |
-| `resolved[i]` | — | 매핑, 아래 6개 키 모두 필수, 다른 키 금지 |
-| `resolved[i].logical_id` | 예 | 스칼라 |
-| `resolved[i].source` | 예 | 스칼라 |
-| `resolved[i].exact_commit` | 예 | 스칼라 |
-| `resolved[i].content_hash` | 예 | 스칼라 |
-| `resolved[i].schema_version` | 예 | 스칼라, `parse_u32` |
-| `resolved[i].dependency_path` | 예 | 스칼라의 시퀀스 |
+| `schema_version` | 예 | 스칼라, 엄격 `u32`이고 정확히 `1`(`LOCK_SCHEMA_VERSION`) |
+| `resolved` | 예 | 시퀀스 |
+| `resolved[i]` | — | 매핑, 아래 10개 키 모두 필수, 다른 키 금지 |
+| `resolved[i].logical_id` | 예 | 스칼라, `dependency_path`의 마지막 이름과 같아야 함 |
+| `resolved[i].library_id` | 예 | 스칼라, `StableId` 형식(§14.5) |
+| `resolved[i].source` | 예 | 스칼라, `git` |
+| `resolved[i].repository` | 예 | 스칼라, §14.5 repository 규칙 |
+| `resolved[i].requested` | 예 | §14.5 `version`과 같은 선택자 형식 |
+| `resolved[i].exact_commit` | 예 | 스칼라, 16진수 40자 또는 64자(소문자로 정규화) |
+| `resolved[i].content_hash` | 예 | 스칼라, `sha256:` + 소문자 16진수 64자 |
+| `resolved[i].schema_version` | 예 | 스칼라, 엄격 `u32`(라이브러리 매니페스트 스키마 버전) |
+| `resolved[i].dependency_path` | 예 | logical name 스칼라의 비어 있지 않은 시퀀스 |
+| `resolved[i].dependencies` | 예 | 시퀀스. 항목은 키 `library_id`·`exact_commit`만 가진 매핑 |
 
+- 최상위 `schema_version`이 엄격 정수가 아니면 `InvalidValue`(`InvalidInteger`), 1이 아니면
+  `InvalidValue`(`UnsupportedVersion`)입니다.
+- entry 검사 순서: 모르는 키 `UnknownKey` → 10개 키 누락 `MissingField` → `library_id`·`source`·
+  `repository`·`requested`·`exact_commit`·`content_hash`·`schema_version` 값 규칙 `InvalidValue`
+  (`InvalidContentHash`, `InvalidCommitLength`, `InvalidInteger` 등) → `dependency_path`가 비면
+  `InvalidValue`(`Empty`), 이름 규칙 위반도 `InvalidValue` → `logical_id` 불일치 `InvalidValue`(`Inconsistent`)
+  → `dependencies` 항목의 키·값 규칙과 순서.
+- `dependencies` 항목은 `(library_id, exact_commit)` 오름차순으로 **엄격히 증가**해야 하고, `resolved`
+  entry는 `(library_id, exact_commit, dependency_path)` 오름차순으로 **엄격히 증가**해야 합니다. 위반은
+  `InvalidValue`(`Inconsistent`)입니다. 같은 라이브러리의 서로 다른 commit·경로 entry는 허용합니다.
+- 오류 경로는 최상위 키가 `schema_version`·`resolved`, entry가 `resolved[i].<key>` 형태입니다(`<root>.`
+  접두어 없음).
 - writer 키 순서는 위 표의 순서입니다. 새 프로젝트는 `schema_version: "1"`과 `resolved: []`를 씁니다
-  (`CURRENT_LOCK_SCHEMA_VERSION` = `1`).
+  (`CURRENT_LOCK_SCHEMA_VERSION` = `LOCK_SCHEMA_VERSION` = `1`). 6필드 이전 형식 entry는
+  `MissingField`(`resolved[i].library_id`)로 거부합니다.
 - 기술 아키텍처 §20.3 예시의 `lock_version`이 아니라 `schema_version` 키를 씁니다.
-- **현재 구현**: `from_yaml`은 최상위 `schema_version`을 1과 비교하지 않습니다. `exact_commit`과
-  `content_hash`의 값 형식도 검사하지 않습니다.
-
-`stellar-dependencies`에는 다른 모델이 있습니다.
-
-- `dependencies::declaration`(XV.1.1)은 `dependencies.<name>`에 `library_id`, `local_override`, 매핑
-  형태의 `version`(`branch`·`commit`)을 둡니다.
-- `dependencies::lock`(XV.4.1)은 `resolved[i]`에 10개 키(`library_id`, `repository`, `requested`,
-  `dependencies` 등)를 두고 `schema_version`이 정확히 1이어야 합니다.
-- 두 모델은 `project` crate의 열기·쓰기 경로에 연결되지 않았고 위 §14.5·§14.6 스키마와 호환되지
-  않습니다(`library_id`는 `UnknownKey`). 어느 쪽을 파일 형식으로 할지 정하지 않았습니다. 이 명세의
-  규범 스키마는 열기 경로가 실제로 쓰는 §14.5·§14.6입니다.
 
 ## 15. unknown field·unknown 요소 규칙
 
