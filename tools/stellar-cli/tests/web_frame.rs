@@ -120,6 +120,10 @@ fn two_selected_views_are_deterministic_and_leave_project_and_git_bytes_unchange
         }
         assert_eq!(html(&value), std::fs::read_to_string(golden).unwrap());
     }
+    let enlarged = export(&dir.path, 5);
+    assert!(html(&enlarged).contains("transform: matrix(0, 1, -1, 0, 0.004999995, -0.005)"));
+    assert!(html(&enlarged).contains("left: calc(1px - 1px)"));
+    assert!(html(&enlarged).contains("top: calc(0px - 1px)"));
     assert_eq!(git(&dir.path, &["rev-parse", "HEAD"]), head);
     assert_eq!(git(&dir.path, &["status", "--porcelain=v1"]), status);
     assert_eq!(
@@ -144,6 +148,7 @@ fn unsupported_values_fail_only_in_the_selected_view_including_hidden_nodes() {
         ("range", "unsupported-frame-value"),
         ("matrix-range", "unsupported-frame-value"),
         ("world-range", "unsupported-frame-value"),
+        ("amplified-size-rounding", "unsupported-frame-value"),
     ] {
         save_documents(&dir.path, &[&fixture::unsupported(case)]);
         let before = file_digest(&dir.path);
@@ -226,7 +231,7 @@ fn chrome_computed_styles_bounds_stacking_and_clipping() {
     let version = Command::new(&chrome).arg("--version").output().unwrap();
     assert!(version.status.success());
     eprintln!("{}", String::from_utf8_lossy(&version.stdout));
-    for (view, file) in [(3, "view-a"), (4, "view-b")] {
+    for (view, file) in [(3, "view-a"), (4, "view-b"), (5, "view-subpixel")] {
         let value = export(&project, view);
         let probe = format!(
             "<script>const selectedView = {view};\n{}</script>\n",

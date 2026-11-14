@@ -68,7 +68,7 @@ try {
     equal(document.elementFromPoint(635, 310).id, id(19), 'inside root clip');
     equal(document.elementFromPoint(645, 310).id === id(19), false, 'outside root clip');
     for (const n of [11, 14, 16, 20]) equal(element(n), null, `node ${n} absent`);
-  } else {
+  } else if (selectedView === 4) {
     const root = inspect(20, [0, 0, 300, 240]);
     equal(root.width, '240px', 'root untransformed width');
     equal(root.height, '160px', 'root untransformed height');
@@ -79,6 +79,10 @@ try {
     equal(shear.transform, 'matrix(1, 0.25, 0.5, 1, 0, 0)', 'shear retained');
     equal(shear.background, 'color(display-p3 1.2 -0.1 0.3 / 0.25)', 'extended RGB channels and alpha retained');
     equal(element(10), null, 'View A excluded');
+  } else {
+    equal(inspect(30, [0, 0, 512, 384]).borderWidth, '1px', 'scaled parent inside border');
+    inspect(31, [0.64, -0.64, 128, 256]);
+    equal(document.elementFromPoint(1, 4).id, id(31), 'fractional child painted over parent border');
   }
 } catch (error) {
   failures.push(String(error));

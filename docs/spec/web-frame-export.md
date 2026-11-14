@@ -36,9 +36,9 @@ CLI 자체는 파일을 만들거나 Git·프로젝트를 수정하지 않습니
 |---|---|
 | `layout_mode: None` Frame | 고정 Free 배치. root는 `position: relative`, 자식은 `absolute` |
 | `size` | `width`, `height` px; `box-sizing: border-box` |
-| 자식 affine의 tx·ty | `left: calc(tx px - 부모 border px)`, `top`도 동일. Fragment는 건너뛰고 가장 가까운 Frame 부모 사용 |
+| 자식 affine의 tx·ty | `left`와 `top`에 이동의 정수부에서 가장 가까운 Frame 부모의 border 두께를 뺀 값을 둡니다. 소수부는 같은 부모 좌표계의 CSS matrix 이동에 둡니다. Fragment는 좌표계를 만들지 않습니다 |
 | root affine의 tx·ty | 페이지 캔버스 배치이므로 생략. 다른 선형 성분은 보존 |
-| affine a·b·c·d | `matrix(a, b, c, d, 0, 0)`와 `transform-origin: 0px 0px`. 회전·scale 분해 없음 |
+| affine a·b·c·d | `matrix(a, b, c, d, tx소수부, ty소수부)`와 `transform-origin: 0px 0px`. root의 마지막 두 값은 0입니다. 회전·scale 분해 없음 |
 | 단색 background | `background-color`. 없음은 `transparent` |
 | border | 네 변의 width·style·color longhand. 동일 두께, `solid`; 없음은 0px·none·transparent |
 | 네 corner radius | 좌상·우상·우하·좌하 각각 px longhand. CSS의 겹침 반경 정규화 적용 |
@@ -64,7 +64,10 @@ CLI 자체는 파일을 만들거나 Git·프로젝트를 수정하지 않습니
   출력하지 않는 root 캔버스 tx·ty에는 이 제한을 적용하지 않습니다.
 - 테두리는 비음수 **정수 px**이고 두 배 두께가 너비·높이를 넘지 않아야 합니다. 소수 폭은 device-pixel
   snapping으로 바뀌고, 과도한 두께는 CSS의 최소 border box가 저장 크기보다 커지므로 거부합니다.
-- 크기·위치의 브라우저 LayoutUnit 반올림은 속성 모델 1.3절의 1/64px 기준을 따릅니다. zoom·DPR 변경이나
+- 위치의 정수부는 0 방향으로 절삭합니다. 소수부는 CSS transform에서 더하므로 확대 전에 LayoutUnit으로 반올림되지 않습니다.
+- 너비·높이가 1/64px 격자 밖이면 인접한 두 격자점 중 먼 쪽까지의 거리를 사용해 누적 affine 이후 각 축의 오차 상한을 계산합니다.
+  화면에서 1/64px를 넘을 수 있으면 해당 node에 `unsupported-frame-value`를 반환합니다. 예를 들어 128배 확대에서
+  너비 10.005px는 브라우저가 10px로 배치해 화면 너비가 0.64px 달라지므로 거부합니다. zoom·DPR 변경이나
   모든 브라우저 버전에 대한 적합성을 보장하지 않습니다. 출력 문서에 다른 CSS를 주입하는 경우도 범위 밖입니다.
 
 CSS 근거: [border width 계산](https://www.w3.org/TR/css-backgrounds-3/#border-width),
@@ -116,7 +119,7 @@ cargo test -p stellar-cli --test web_frame -- --include-ignored --nocapture
 일반 테스트는 실제 두 View를 저장하고 실제 `stellar` subprocess에서 HTML golden·반복 stdout/stderr·
 revision·선택 범위·실패·프로젝트와 Git index/refs/objects 바이트 불변을 검사합니다. 별도 snapshot 테스트는
 다른 저장 이후에도 이전 revision이 고정되는지와 root 이동만 바꿔도 HTML이 같음을 확인합니다.
-Chrome 테스트는 별도 임시 profile을 사용하고 테스트에만 script를 주입해 computed style·bounding rect·
+Chrome 테스트는 두 기본 View와 고배율 소수 이동 View에 별도 임시 profile을 사용하고 테스트에만 script를 주입해 computed style·bounding rect·
 elementFromPoint를 확인합니다. 제품 HTML에는 script가 없습니다. 실행한 Chrome 버전과 JSON 증거는 위
 evidence 디렉터리에 남습니다. 이 테스트가 ignore 상태인 일반 테스트만 실행한 경우 브라우저 검증 완료로
 보고하지 않습니다.
