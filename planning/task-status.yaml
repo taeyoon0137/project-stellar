@@ -7194,13 +7194,14 @@ tasks:
       - DEV-MAC
   - id: "XII.10.26"
     title: "Frame·Rectangle·Ellipse·Line·Polygon 생성 도구를 구현합니다. 드래그는 영역 생성(Shift 정비례·45도, Option 중심 기준, 드래그 중 Space는 시작점 이동), 클릭은 기본 크기 생성이며, 흐름 컨테이너 위에서 만들면 pointer 위치의 흐름 순서에 넣습니다. InsertNode와 새 선택을 한 entry로 묶고 생성 후 도구는 Move로 돌아갑니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XII.10.1"
       - "VII.2.1"
       - "XII.10.9"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XII.10.26.md"
   - id: "XII.10.27"
     title: "Image 도구를 구현합니다. `NSOpenPanel`로 고른 파일을 XIII.5.2 import로 asset에 넣고 Image node를 삽입하며, 취소하면 이전 도구로 돌아갑니다. 캔버스로 파일을 끌어 놓는 경로도 같은 import를 씁니다."
     status: not_started
