@@ -23,6 +23,9 @@ pub mod property;
 /// Property 생성·rename·default 변경·삭제 command (IX.1.3).
 pub mod property_commands;
 
+/// Property runtime 평가 값 instance별 캐시 (IX.1.4).
+pub mod property_cache;
+
 /// 상태 머신 이벤트 종류 (IX.5.2).
 pub mod event;
 
