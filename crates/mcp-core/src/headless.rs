@@ -1,8 +1,8 @@
 //! 고정한 신뢰 프로젝트의 읽기 resource만 제공하는 L2 backend (XIX.9.3).
+use std::cell::RefCell;
+
 use stellar_ops::core_types::ids::StableId;
-use stellar_ops::query::{
-    project_structure, DocumentOutline, DocumentTree, ProjectStructure, TreeCursor,
-};
+use stellar_ops::query::{project_structure, DocumentOutline, DocumentTree, ProjectStructure};
 use stellar_ops::revision::ProjectRevision;
 use stellar_ops::snapshot::ProjectSnapshot;
 use stellar_ops::trusted::{TrustedProject, TrustedReadError};
@@ -19,6 +19,16 @@ pub struct Headless {
     project: TrustedProject,
     scope: ApprovedScope,
     session: String,
+    cache: RefCell<Option<CachedRead>>,
+    #[cfg(test)]
+    loads: std::cell::Cell<(usize, usize)>,
+}
+
+/// 연결에 고정한 프로젝트의 snapshot 하나와 가장 최근 문서 하나만 보관합니다.
+#[derive(Debug)]
+struct CachedRead {
+    snapshot: ProjectSnapshot,
+    tree: Option<(StableId, DocumentTree)>,
 }
 
 impl Headless {
@@ -28,17 +38,27 @@ impl Headless {
             .parse::<StableId>()
             .map_err(|_| crate::exit::USAGE)?;
         let project = TrustedProject::select(id).map_err(|_| crate::exit::NOPERM)?;
+        Ok(Self::new(project))
+    }
+
+    fn new(project: TrustedProject) -> Self {
         let session = format!("headless-{}", std::process::id());
-        Ok(Self {
-            scope: ApprovedScope::new(id.to_string(), session.clone()),
+        Self {
+            scope: ApprovedScope::new(project.project_id().to_string(), session.clone()),
             project,
             session,
-        })
+            cache: RefCell::new(None),
+            #[cfg(test)]
+            loads: std::cell::Cell::new((0, 0)),
+        }
     }
 
     /// 요청과 응답 시점의 기존 신뢰·identity 확인.
     pub fn check(&self) -> Result<(), RpcError> {
-        self.project.check().map_err(read_error)
+        self.project.check().map_err(|error| {
+            self.cache.borrow_mut().take();
+            read_error(error)
+        })
     }
 
     /// 구현한 resource·template과 빈 tool 목록만 노출합니다.
@@ -62,20 +82,53 @@ impl Headless {
 
     /// scope 확인 → ops snapshot → 기존 catalog 결과 → scope release.
     pub fn read(&self, params: Option<&JsonValue>) -> Result<JsonValue, RpcError> {
-        self.check()?;
+        // 성공하고 응답 직전에도 같은 원천일 때만 다시 보관합니다. 어느 실패에도 잔여 cache 없음.
+        let mut cache = self.cache.borrow_mut().take();
+        let result = self.read_cached(params, &mut cache);
+        if result.is_ok() {
+            *self.cache.borrow_mut() = cache;
+        }
+        result
+    }
+
+    fn read_cached(
+        &self,
+        params: Option<&JsonValue>,
+        cache: &mut Option<CachedRead>,
+    ) -> Result<JsonValue, RpcError> {
+        if let Some(cached) = cache {
+            if !self
+                .project
+                .snapshot_is_current(&cached.snapshot)
+                .map_err(read_error)?
+            {
+                *cache = None;
+            }
+        } else {
+            self.check()?;
+        }
         check_fields(params, &["uri"])?;
         let uri = params
             .and_then(|p| p.get("uri"))
             .and_then(JsonValue::as_str)
             .ok_or_else(|| invalid("resource URI가 필요합니다"))?;
-        let snapshot = self.project.snapshot().map_err(read_error)?;
+        if cache.is_none() {
+            #[cfg(test)]
+            self.loads.set((self.loads.get().0 + 1, self.loads.get().1));
+            *cache = Some(CachedRead {
+                snapshot: self.project.snapshot().map_err(read_error)?,
+                tree: None,
+            });
+        }
+        let cached = cache.as_mut().expect("snapshot을 열었음");
+        let snapshot = &cached.snapshot;
         let target = self
             .scope
-            .check_resource_uri(uri, &Documents(&snapshot))
+            .check_resource_uri(uri, &Documents(snapshot))
             .map_err(|e| invalid(e.to_string()))?;
         let body = match target.name {
             "project-structure" => {
-                JsonValue::object(structure_fields(&project_structure(&snapshot)))
+                JsonValue::object(structure_fields(&project_structure(snapshot)))
             }
             "document" => {
                 let document = target
@@ -85,10 +138,25 @@ impl Headless {
                     .ok_or_else(|| invalid("승인된 문서 ID가 필요합니다"))?;
                 let (_, request) =
                     paging::parse_page_query(uri).map_err(|e| invalid(e.to_string()))?;
-                let tree = DocumentTree::load(&snapshot, document)
-                    .map_err(|_| RpcError::new(-32000, "문서 snapshot을 읽을 수 없습니다"))?;
+                paging::validate_request(
+                    &document.to_string(),
+                    &snapshot.revision().token(),
+                    &request,
+                )
+                .map_err(|e| invalid(e.to_string()))?;
+                if cached.tree.as_ref().is_none_or(|(id, _)| *id != document) {
+                    cached.tree = None;
+                    #[cfg(test)]
+                    self.loads.set((self.loads.get().0, self.loads.get().1 + 1));
+                    cached.tree = Some((
+                        document,
+                        DocumentTree::load(snapshot, document).map_err(|_| {
+                            RpcError::new(-32000, "문서 snapshot을 읽을 수 없습니다")
+                        })?,
+                    ));
+                }
                 let source = TreeSource {
-                    tree,
+                    tree: &cached.tree.as_ref().expect("문서 tree를 열었음").1,
                     document,
                     revision: snapshot.revision(),
                 };
@@ -103,7 +171,13 @@ impl Headless {
         if json::write(&result).len() > crate::server::MAX_MESSAGE_BYTES - 1024 {
             return Err(invalid("resource가 응답 크기 상한을 넘습니다"));
         }
-        self.check()?;
+        if !self
+            .project
+            .snapshot_is_current(snapshot)
+            .map_err(read_error)?
+        {
+            return Err(read_error(TrustedReadError::Unavailable));
+        }
         self.scope
             .release(ScopedPayload {
                 project: snapshot.project_id().to_string(),
@@ -153,12 +227,12 @@ impl ProjectDocuments for Documents<'_> {
     }
 }
 
-struct TreeSource {
-    tree: DocumentTree,
+struct TreeSource<'a> {
+    tree: &'a DocumentTree,
     document: StableId,
     revision: ProjectRevision,
 }
-impl PageSource for TreeSource {
+impl PageSource for TreeSource<'_> {
     fn key(&self) -> String {
         self.document.to_string()
     }
@@ -175,18 +249,10 @@ impl PageSource for TreeSource {
         vec![("document", id(self.document))]
     }
     fn item(&self, index: usize) -> JsonValue {
-        let page = self
+        let node = self
             .tree
-            .page(
-                Some(&TreeCursor {
-                    document: self.document,
-                    offset: index,
-                    revision: self.revision,
-                }),
-                1,
-            )
+            .node(index)
             .expect("PageSource index는 같은 tree의 total 미만");
-        let node = &page.nodes[0];
         JsonValue::object(vec![
             ("id", id(node.id)),
             ("parent", opt_id(node.parent)),
@@ -301,4 +367,223 @@ fn structure_fields(structure: &ProjectStructure) -> Vec<(&'static str, JsonValu
             ),
         ),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use stellar_ops::test_support::{
+        file_digest, large_document, project_id, random_valid_document, save_documents,
+        scaffold_project, select_trusted_project, FileTrustStore, ProjectIdentity, TempDir,
+        PROJECT_ID_TEXT,
+    };
+
+    struct Fixture {
+        temp: TempDir,
+        project: std::path::PathBuf,
+        data: std::path::PathBuf,
+    }
+
+    impl Fixture {
+        fn new() -> Self {
+            let temp = TempDir::new("read-cache");
+            let project = temp.path.join("project");
+            let data = temp.path.join("data");
+            scaffold_project(&project);
+            let fixture = Self {
+                temp,
+                project,
+                data,
+            };
+            fixture.grant();
+            fixture
+        }
+
+        fn identity(&self) -> ProjectIdentity {
+            ProjectIdentity::new(project_id(), &self.project).unwrap()
+        }
+
+        fn grant(&self) {
+            FileTrustStore::open(&self.data)
+                .unwrap()
+                .grant(&self.identity())
+                .unwrap();
+        }
+
+        fn backend(&self) -> Headless {
+            Headless::new(select_trusted_project(project_id(), self.data.clone()).unwrap())
+        }
+    }
+
+    fn read(backend: &Headless, uri: &str) -> Result<JsonValue, RpcError> {
+        let result = backend.read(Some(&JsonValue::object(vec![(
+            "uri",
+            JsonValue::string(uri),
+        )])))?;
+        let text = result.get("contents").unwrap().as_array().unwrap()[0]
+            .get("text")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        Ok(json::parse(text, json::JsonLimits::default()).unwrap())
+    }
+
+    #[test]
+    fn one_snapshot_and_latest_tree_survive_only_successful_current_reads() {
+        let fx = Fixture::new();
+        let first = large_document(2101);
+        let second = random_valid_document(91);
+        assert!(second.node_count() > 2);
+        save_documents(&fx.project, &[&first, &second]);
+        let backend = fx.backend();
+        let a = format!("stellar://documents/{}?limit=2", first.document_id());
+        let b = format!("stellar://documents/{}?limit=2", second.document_id());
+        let before = file_digest(&fx.temp.path);
+        let page = read(&backend, &a).unwrap();
+        let cursor = page.get("next_cursor").unwrap().as_str().unwrap();
+        let next = format!(
+            "stellar://documents/{}?cursor={cursor}&limit=2",
+            first.document_id()
+        );
+        assert_eq!(
+            read(&backend, &next).unwrap().get("offset"),
+            Some(&JsonValue::int(2))
+        );
+        assert_eq!(read(&backend, &a).unwrap(), page);
+        read(&backend, "stellar://project/structure").unwrap();
+        assert_eq!(backend.loads.get(), (1, 1));
+        read(&backend, &b).unwrap();
+        read(&backend, &a).unwrap();
+        assert_eq!(backend.loads.get(), (1, 3), "이전 문서는 보관하지 않음");
+        assert_eq!(file_digest(&fx.temp.path), before);
+
+        // generation이 그대로여도 같은 길이의 정상 프로젝트 설정 변경을 숨기지 않습니다.
+        let manifest = fx.project.join("stellar.yaml");
+        let original = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(&manifest, original.replace("Fixture", "Changed")).unwrap();
+        let after_settings = file_digest(&fx.temp.path);
+        assert_eq!(read(&backend, &a).unwrap(), page);
+        assert_eq!(backend.loads.get(), (2, 4));
+        assert_eq!(
+            backend
+                .cache
+                .borrow()
+                .as_ref()
+                .unwrap()
+                .snapshot
+                .manifest()
+                .project
+                .name,
+            "Changed"
+        );
+        assert_eq!(file_digest(&fx.temp.path), after_settings);
+
+        // 다른 generation cursor는 새 snapshot만 열고 큰 tree를 읽기 전에 거부합니다.
+        let changed = large_document(2102);
+        save_documents(&fx.project, &[&changed, &second]);
+        let after_save = file_digest(&fx.temp.path);
+        let error = read(&backend, &next).unwrap_err();
+        assert_eq!(error.message, paging::PageError::StaleCursor.to_string());
+        assert_eq!(backend.loads.get(), (3, 4));
+        assert!(
+            backend.cache.borrow().is_none(),
+            "실패한 요청은 cache를 남기지 않음"
+        );
+        assert_eq!(
+            read(&backend, &a).unwrap().get("total"),
+            Some(&JsonValue::int(2102))
+        );
+        assert_eq!(backend.loads.get(), (4, 5));
+        assert_eq!(file_digest(&fx.temp.path), after_save);
+
+        // 문서 전환 중 실제 chunk 읽기가 실패해도 이전 tree로 대체하지 않습니다.
+        let objects = fx.project.join("design/objects");
+        let moved_objects = fx.temp.path.join("saved-objects");
+        std::fs::rename(&objects, &moved_objects).unwrap();
+        let unavailable = file_digest(&fx.temp.path);
+        assert_eq!(read(&backend, &b).unwrap_err().code, -32000);
+        assert_eq!(backend.loads.get(), (4, 6));
+        assert!(backend.cache.borrow().is_none());
+        assert_eq!(file_digest(&fx.temp.path), unavailable);
+        std::fs::rename(moved_objects, objects).unwrap();
+        read(&backend, &a).unwrap();
+        assert_eq!(backend.loads.get(), (5, 7));
+        assert_eq!(file_digest(&fx.temp.path), after_save);
+
+        let fresh_session = fx.backend();
+        read(&fresh_session, &a).unwrap();
+        assert_eq!(
+            fresh_session.loads.get(),
+            (1, 1),
+            "연결 사이 cache 공유 없음"
+        );
+        assert_eq!(file_digest(&fx.temp.path), after_save);
+    }
+
+    #[test]
+    fn revoked_identity_unavailable_source_and_missing_pointer_clear_cache() {
+        let fx = Fixture::new();
+        save_documents(&fx.project, &[&large_document(5)]);
+        let backend = fx.backend();
+        let uri = format!(
+            "stellar://documents/{}?limit=2",
+            large_document(5).document_id()
+        );
+        read(&backend, &uri).unwrap();
+        FileTrustStore::open(&fx.data)
+            .unwrap()
+            .revoke(&fx.identity())
+            .unwrap();
+        let revoked = file_digest(&fx.temp.path);
+        assert!(backend.list("resources/list", None).is_err());
+        assert!(backend.cache.borrow().is_none());
+        assert!(read(&backend, &uri).is_err());
+        assert_eq!(file_digest(&fx.temp.path), revoked);
+        fx.grant();
+        read(&backend, &uri).unwrap();
+        assert_eq!(backend.loads.get(), (2, 2));
+
+        let manifest = fx.project.join("stellar.yaml");
+        let original = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(
+            &manifest,
+            original.replace(PROJECT_ID_TEXT, "0195c530-3acd-7bc1-8414-c213f61cb999"),
+        )
+        .unwrap();
+        assert!(read(&backend, &uri).is_err());
+        assert!(backend.cache.borrow().is_none());
+        std::fs::write(&manifest, original).unwrap();
+        read(&backend, &uri).unwrap();
+        assert_eq!(backend.loads.get(), (3, 3));
+
+        // 정상 파일을 잠시 이동한 동안 실패하고 복구 후 새로 엽니다.
+        let moved = fx.temp.path.join("moved-project");
+        std::fs::rename(&fx.project, &moved).unwrap();
+        assert!(read(&backend, &uri).is_err());
+        assert!(backend.cache.borrow().is_none());
+        std::fs::rename(moved, &fx.project).unwrap();
+        read(&backend, &uri).unwrap();
+        assert_eq!(backend.loads.get(), (4, 4));
+
+        let pointer = fx.project.join("design/current");
+        let moved_pointer = fx.temp.path.join("saved-current");
+        std::fs::rename(&pointer, &moved_pointer).unwrap();
+        let unsaved = read(&backend, "stellar://project/structure").unwrap();
+        assert_eq!(
+            unsaved
+                .get("revision")
+                .unwrap()
+                .get("token")
+                .unwrap()
+                .as_str(),
+            Some("g0")
+        );
+        assert!(read(&backend, &uri).is_err());
+        assert!(backend.cache.borrow().is_none());
+        std::fs::rename(moved_pointer, pointer).unwrap();
+        let restored = file_digest(&fx.temp.path);
+        read(&backend, &uri).unwrap();
+        assert_eq!(backend.loads.get(), (6, 5));
+        assert_eq!(file_digest(&fx.temp.path), restored);
+    }
 }
