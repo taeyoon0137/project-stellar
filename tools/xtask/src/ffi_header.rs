@@ -276,6 +276,8 @@ StellarStatus stellar_command_code(const uint8_t *name, size_t name_len, uint32_
 /* 창 session에 명령(STELLAR_COMMAND_*)을 보냅니다. 모르는 코드는 STELLAR_INVALID_ARGUMENT(요청 없음). */
 StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, uint32_t command, uint64_t *out_request);
 
+/* Pan active viewport content in screen points; completes with WINDOW_VIEW_CHANGED or REQUEST_FAILED. */
+StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);
 /* 창 session의 선택을 ids(StableId 16 byte × count)로 바꾸고 그 창 history에 기록합니다(count 0 = 비움). */
 StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, const uint8_t *ids, size_t count, uint64_t *out_request);
 
