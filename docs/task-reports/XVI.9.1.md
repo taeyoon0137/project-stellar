@@ -106,3 +106,29 @@
 
 - **남은 한계**: Debug 경로(`scripts/macos/smoke.sh`, Xcode IDE 빌드)의 `LIBRARY_SEARCH_PATHS`는 여전히 저장소
   `target/debug`입니다. `CARGO_TARGET_DIR`을 설정한 채 Debug를 빌드하면 같은 불일치가 생깁니다(이번 수정 범위 밖).
+
+## 후속 수정 (Xcode 밖 release cargo 빌드의 proc-macro strip)
+
+- **증상**: MF-1 수정은 Xcode phase의 환경 변수에만 걸려 있었습니다. 그래서 터미널·CI처럼 Xcode 밖에서
+  `MACOSX_DEPLOYMENT_TARGET`(12.0 이상)을 설정하고 release cargo 빌드를 하면 같은 E0463이 났습니다. 비어 있는 Rust
+  target에서 `MACOSX_DEPLOYMENT_TARGET=26.0 cargo build -p zerofrom --release --locked`는
+  `--target aarch64-apple-darwin`이 있든 없든 `can't find crate for zerofrom_derive`로 종료 101이었습니다.
+- **수정**: 루트 `Cargo.toml`에 `[profile.release.build-override] strip = "none"`을 추가했습니다. host 산출물(build
+  script·proc-macro와 그 의존성)에만 적용되고, 앱에 링크되는 staticlib·deployment target·`panic = "abort"`는 바뀌지
+  않습니다. Xcode phase의 `CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=none`은 같은 값이라 그대로 둡니다.
+- **회귀 검사**: `scripts/macos/release_proc_macro_check.sh`(신규)는 profile override 환경 변수(`CARGO_PROFILE_*`)를 모두
+  지운 채 빈 임시 `CARGO_TARGET_DIR`에서
+  `MACOSX_DEPLOYMENT_TARGET=26.0 cargo build -p stellar-ffi --release --locked --target aarch64-apple-darwin`을 실행하고 arm64
+  staticlib을 확인합니다. `tools/xtask/tests/release_profile.rs`에는 build-override 설정 검사를 추가했습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `scripts/macos/release_proc_macro_check.sh`(수정 전, `CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=none`을 넘겨도 검사가 지움) | `error[E0463]: can't find crate for zerofrom_derive`, 종료 1 |
+| `cargo test -p xtask --test release_profile`(수정 전) | `release_build_override_keeps_host_artifacts_unstripped` 실패 |
+| `scripts/macos/release_proc_macro_check.sh`(수정 후, `CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=debuginfo`를 넘겨도 검사가 지움) | `✓ release proc-macro: Xcode 밖 새 target에서 성공, MACOSX_DEPLOYMENT_TARGET=26.0, staticlib arm64`, 종료 0 |
+| `cargo test -p xtask --test release_profile`(수정 후) | 3 passed |
+| `MACOSX_DEPLOYMENT_TARGET=26.0 cargo build -p zerofrom --release --locked`(빈 target, `--target` 없음, 수정 후) | 종료 0 |
+| `scripts/macos/rust_core_phase_check.sh Release`(수정 후) | `✓ Rust 코어 phase(Release): 새 target에서 성공, MACOSX_DEPLOYMENT_TARGET=26.0, staticlib arm64`, 종료 0 |
+| `scripts/macos/release_target_dir_check.sh`(수정 후) | Release 구성·번들 검사(재배치 `--update-check` 포함) 모두 ✓, `✓ release target 디렉터리: CARGO_TARGET_DIR의 staticlib을 링크·검사, Release 구성 검사 통과`, 종료 0 |
+
+- **남은 한계(변경 없음)**: 위 절의 Debug 경로 `LIBRARY_SEARCH_PATHS` 한계는 그대로입니다.
