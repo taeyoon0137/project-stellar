@@ -79,8 +79,10 @@ use stellar_scene::visibility::Viewport;
 use stellar_storage::chunk::id::ChunkId;
 use stellar_storage::chunk::planner::LogicalChunkState;
 use stellar_storage::chunk::pointer::ChunkPointer;
-use stellar_storage::generation::current::CurrentPointerError;
-use stellar_storage::generation::lazy::{ChunkReadRecorder, LazyGeneration, LazyLoadError};
+use stellar_storage::generation::current::{read_current_pointer, CurrentPointerError};
+use stellar_storage::generation::lazy::{
+    ChunkReadRecorder, LazyGeneration, LazyLoadError, NoopRecorder,
+};
 use stellar_storage::generation::loader::{load_current_generation, LoadError, LoadedGeneration};
 use stellar_storage::save::cancel::{run_save, CancelToken, SaveRunError};
 use stellar_storage::save::commit::SavedGenerationState;
@@ -191,13 +193,6 @@ impl ChunkReadRecorder for ChunkCollector {
     }
 }
 
-fn is_missing_current(error: &LoadError) -> bool {
-    matches!(
-        error,
-        LoadError::CurrentPointer(CurrentPointerError::Missing { .. })
-    )
-}
-
 impl ProjectWindowSession {
     /// 프로젝트 `identity`의 current generation과 첫 root 문서를 로드해 창 `window`의 session을 만듭니다.
     ///
@@ -208,24 +203,16 @@ impl ProjectWindowSession {
     ) -> Result<ProjectWindowSession, WindowSessionLoadError> {
         let root = identity.root_path().to_path_buf();
         let project_id = identity.project_id();
-        let loaded = match load_current_generation(&root, project_id) {
-            Ok(loaded) => loaded,
-            Err(error) if is_missing_current(&error) => {
+        let lazy = match LazyGeneration::open(&root, project_id, &mut NoopRecorder) {
+            Ok(lazy) => lazy,
+            Err(LazyLoadError::Load(LoadError::CurrentPointer(CurrentPointerError::Missing {
+                ..
+            }))) => {
                 return Ok(ProjectWindowSession::empty(identity, window));
             }
-            Err(error) => {
-                return Err(WindowSessionLoadError::Generation(LazyLoadError::Load(
-                    error,
-                )))
-            }
+            Err(error) => return Err(WindowSessionLoadError::Generation(error)),
         };
-        let mut collector = ChunkCollector::default();
-        let lazy = LazyGeneration::open(&root, project_id, &mut collector)
-            .map_err(WindowSessionLoadError::Generation)?;
-        if lazy.manifest() != &loaded.manifest {
-            return Err(WindowSessionLoadError::ConcurrentSave);
-        }
-        let document = match loaded.manifest.root_document_ids.first().copied() {
+        let document = match lazy.manifest().root_document_ids.first().copied() {
             None => None,
             Some(document_id) => {
                 let mut owned = ChunkCollector::default();
@@ -252,6 +239,15 @@ impl ProjectWindowSession {
                 })
             }
         };
+        let loaded = lazy.into_loaded();
+        let current = read_current_pointer(&root).map_err(|error| {
+            WindowSessionLoadError::Generation(LazyLoadError::Load(LoadError::CurrentPointer(
+                error,
+            )))
+        })?;
+        if loaded.manifest_hash != current {
+            return Err(WindowSessionLoadError::ConcurrentSave);
+        }
         let mut history = WindowHistory::new(window);
         if let Some(document) = &document {
             let model = document.state.model();

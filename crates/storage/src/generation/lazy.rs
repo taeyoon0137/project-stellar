@@ -130,6 +130,11 @@ impl LazyGeneration {
         &self.loaded.manifest
     }
 
+    /// 지연 읽기를 마친 호출자에게 검증된 manifest와 그 hash의 소유권을 넘깁니다.
+    pub fn into_loaded(self) -> LoadedGeneration {
+        self.loaded
+    }
+
     /// 요청 시 chunk payload를 읽습니다(전체 검증, V.2.6).
     ///
     /// 모든 lazy 읽기는 이 경로를 지나므로 recorder가 실제 파일 읽기와 1:1로
