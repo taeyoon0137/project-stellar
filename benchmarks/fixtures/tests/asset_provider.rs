@@ -9,7 +9,9 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
 use stellar_assets::media_type::MediaType;
-use stellar_assets::store::{AssetStore, ImportRequest};
+use stellar_assets::origin::OriginKey;
+use stellar_assets::policy::AssetImportPolicy;
+use stellar_assets::store::AssetStore;
 use stellar_bench_fixtures::asset_provider::{
     materialize, materialize_set, stream_digest, AssetFixtureError, AssetManifest,
     SyntheticAssetSet, ASSET_CLASSES, BLOCK_BYTES, REFERENCE_MANIFEST_PATH, REFERENCE_TOTAL_BYTES,
@@ -107,7 +109,12 @@ fn small_set_streams_through_the_real_import_path() {
     let project = TempDir::new("import");
     let staging = project.0.join("staging");
     std::fs::create_dir_all(project.0.join("assets")).unwrap();
-    let store = AssetStore::new(&project.0);
+    // 에셋 보안 수정(XIII.5.x) 이후 공개 import 경로는 import 정책과 기기별 출처 key를 요구합니다.
+    let store = AssetStore::new(&project.0).with_origin_key(OriginKey::generate().unwrap());
+    let policy = AssetImportPolicy::from_config_file(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/asset-import.yaml"),
+    )
+    .unwrap();
     let mut seen_classes = std::collections::BTreeSet::new();
     for asset in &set.assets {
         if !seen_classes.insert(asset.class) {
@@ -122,10 +129,11 @@ fn small_set_streams_through_the_real_import_path() {
         let path = materialize(asset, &staging).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
         let imported = store
-            .import_file(&ImportRequest::new(
-                &path,
-                MediaType::new(asset.media_type()).unwrap(),
-            ))
+            .import_file(
+                &policy
+                    .request(&path, &MediaType::new(asset.media_type()).unwrap())
+                    .unwrap(),
+            )
             .unwrap();
         assert_eq!(imported.record.content_hash, streamed.hash);
         assert_eq!(imported.record.size, asset.size);
