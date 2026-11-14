@@ -442,7 +442,7 @@ pub(crate) fn ensure_no_new_violations(
 /// 각 레코드의 node가 있어야 하고 부모·OrderKey는 현재와 같아야 합니다. 바뀐 종류가 자식·modifier
 /// stack·들어오는 clip 참조와 맞는지, 새 payload의 clip 대상과 path element id가 유효한지 검사합니다.
 /// View root(부모 없는 node)는 Frame이 아닌 종류로 바꿀 수 없습니다. 새로 path element가 되는 id를 다른
-/// 참조(clip·modifier, 교체 레코드의 새 clip 포함)가 가리키는 결과도 거부합니다.
+/// 참조(clip·modifier, 교체 레코드의 clip — 바꾼 clip이든 그대로 둔 clip이든)가 가리키는 결과도 거부합니다.
 ///
 /// 부모·순서·modifier stack은 바뀌지 않으므로, 전체 validator(VI.10.1)의 위반 중 이 command가 새로 만들 수
 /// 있는 것은 위 대상 검사가 모두 다룹니다(종류 변경: root·자식·modifier owner·들어오는 clip, payload 변경:
@@ -570,7 +570,8 @@ impl RestoreNodeRecords {
             .collect();
         for &element in claimed.difference(&released) {
             for from in references.inbound(element) {
-                // 교체되는 node의 clip은 새 payload로 바뀌므로(아래에서 검사) modifier 참조만 남습니다.
+                // 교체되는 node의 clip은 새 payload의 clip으로 바뀌므로(clip을 유지해도 아래 반복에서 검사) 여기서는
+                // modifier 참조만 남습니다.
                 let still_refers = !replaced.contains(&from)
                     || model.modifier_stack(from).is_some_and(|stack| {
                         stack
@@ -593,14 +594,18 @@ impl RestoreNodeRecords {
             let stellar_document::frame::Clipping::Path(target) = frame.clipping else {
                 continue;
             };
+            // 새 clip 대상이 이 command가 claim한 path element이면 결과에서 RefTypeMismatch입니다. clip을 그대로 둔
+            // 레코드라도 대상이 새로 element가 된 id(교체 전에는 element가 아니던 id)면 새 위반입니다. clip을 유지했고
+            // 대상이 교체 전에도 교체 node의 element였으면 이미 있던 위반이므로 이 command의 책임이 아닙니다.
             let unchanged = matches!(
                 model.payload(record.id),
                 Some(NodePayload::Frame(current)) if current.clipping == frame.clipping
             );
-            if claimed.contains(&target.id()) && !unchanged {
+            let target = target.id();
+            if claimed.contains(&target) && (!unchanged || !released.contains(&target)) {
                 return Err(CommandError::ReferenceTypeMismatch {
                     owner: record.id,
-                    target: target.id(),
+                    target,
                 });
             }
         }
@@ -1199,6 +1204,11 @@ mod tests {
 
     /// 점 2개짜리 Path payload. element id는 `ids`에서 차례로 씁니다(모자라면 9_000번대 fresh id).
     fn path_with(ids: &[u64]) -> NodePayload {
+        path_with_ids(&ids.iter().map(|n| sid(*n)).collect::<Vec<_>>())
+    }
+
+    /// [`path_with`]와 같되 element id를 [`StableId`]로 받습니다.
+    fn path_with_ids(ids: &[StableId]) -> NodePayload {
         let data = PathData::new(
             stellar_document::path::WindingRule::NonZero,
             vec![
@@ -1212,10 +1222,10 @@ mod tests {
         queue.reverse();
         let mut fresh = 9_000u64;
         NodePayload::Path(IdentifiedPath::assign(data, &mut || {
-            sid(queue.pop().unwrap_or_else(|| {
+            queue.pop().unwrap_or_else(|| {
                 fresh += 1;
-                fresh
-            }))
+                sid(fresh)
+            })
         }))
     }
 
@@ -1259,6 +1269,11 @@ mod tests {
             record.payload = path_with(ids);
             record
         };
+        let renamed = |id: u64| {
+            let mut record = model.record(sid(id)).unwrap();
+            record.display_name = "이름만".into();
+            record
+        };
         let cases = [
             // 다른 Frame의 clip 대상이 path element가 됨.
             (
@@ -1288,6 +1303,22 @@ mod tests {
                     target: sid(502),
                 },
             ),
+            // 교체 레코드가 clip을 그대로 둔 채(이름만 변경) 그 미해결 clip 대상을 같은 command의 다른 레코드가 새
+            // path element로 씀(사후 리뷰: clip 유지 + id 재사용 조합). 레코드 순서와 무관합니다.
+            (
+                restore(vec![renamed(11), as_path(&[500])]),
+                CommandError::ReferenceTypeMismatch {
+                    owner: sid(11),
+                    target: sid(500),
+                },
+            ),
+            (
+                restore(vec![as_path(&[500]), renamed(11)]),
+                CommandError::ReferenceTypeMismatch {
+                    owner: sid(11),
+                    target: sid(500),
+                },
+            ),
         ];
         for (command, expected) in cases {
             assert!(
@@ -1314,12 +1345,54 @@ mod tests {
     }
 
     #[test]
+    fn restore_keeps_allowing_unchanged_clip_to_reclaimed_element() {
+        // 이미 잘못된 문서(11의 clip이 12의 path element 500을 가리킴)에서 11의 이름만 바꾸고 12의 path를 그대로
+        // 되돌리는 복원은 새 위반을 만들지 않으므로(500은 교체 전에도 element) 범위 검사·oracle 모두 허용합니다.
+        let mut model = DocumentModel::new(crate::command::test_fixtures::definition());
+        model.insert_node(frame(10, None, 0x10)).unwrap();
+        model
+            .insert_node(record(11, 10, 0x10, clip_to(500)))
+            .unwrap();
+        model
+            .insert_node(record(12, 10, 0x20, path_with(&[500])))
+            .unwrap();
+        assert!(
+            stellar_document::validate::validate_document(&model.to_records().unwrap()).is_err(),
+            "clip이 path element를 가리키는 이미 잘못된 문서"
+        );
+        let mut clip_owner = model.record(sid(11)).unwrap();
+        clip_owner.display_name = "이름만".into();
+        let command = restore(vec![clip_owner, model.record(sid(12)).unwrap()]);
+        ensure_no_new_violations(&model, &command.records).unwrap();
+        command.validate(&model).unwrap();
+    }
+
+    #[test]
     fn scoped_restore_validation_never_accepts_what_the_full_validator_rejects() {
         // 범위 검사가 결과 문서 전체 validator(test oracle)보다 느슨하지 않은지: random 문서·random 복원 후보에서
         // validate가 통과하면 oracle도 새 위반이 없어야 합니다. 후보는 종류 변경, 기존·미해결 참조 대상을 element로
-        // 재사용하는 Path, 기존·새 element·없는 id를 clip하는 Frame을 섞습니다.
+        // 재사용하는 Path, 기존·새 element·없는 id를 clip하는 Frame을 섞습니다. 우연히 나오기 어려운 조합 — payload를
+        // 유지한(이름만 바꾼) Frame의 미해결 clip 대상을 같은 command의 다른 레코드가 path element로 재사용 — 은
+        // 문서마다 의도적으로 만듭니다(사후 리뷰 회귀).
         use stellar_document::test_support::random_document::{random_valid_document, SplitMix64};
         let (mut accepted, mut rejected) = (0usize, 0usize);
+        let mut reused_dangling = 0usize;
+        let check = |model: &DocumentModel,
+                     command: RestoreNodeRecords,
+                     seed: u64,
+                     accepted: &mut usize,
+                     rejected: &mut usize| match command.validate(model) {
+            Ok(()) => {
+                *accepted += 1;
+                assert_eq!(
+                    ensure_no_new_violations(model, &command.records),
+                    Ok(()),
+                    "seed {seed}: 범위 검사가 통과시킨 후보 {:?}를 전체 validator가 거부",
+                    command.records.iter().map(|r| r.id).collect::<Vec<_>>()
+                );
+            }
+            Err(_) => *rejected += 1,
+        };
         for seed in 0..150u64 {
             let model = random_valid_document(seed);
             let mut rng = SplitMix64::new(seed ^ 0xC0FF_EE00);
@@ -1335,6 +1408,34 @@ mod tests {
                 if let Some(payload) = model.payload(*id) {
                     targets.extend(path_element_ids(payload));
                 }
+            }
+            // payload를 유지한 Frame의 미해결 clip 대상을 다른 node의 새 Path element로 재사용하는 후보.
+            let owners = id_owners(&model);
+            for &frame_id in &ids {
+                let Some(NodePayload::Frame(current)) = model.payload(frame_id) else {
+                    continue;
+                };
+                let Clipping::Path(target) = current.clipping else {
+                    continue;
+                };
+                if target.id() == StableId::NIL || owners.contains_key(&target.id()) {
+                    continue;
+                }
+                let other = *rng.pick(&ids);
+                if other == frame_id {
+                    continue;
+                }
+                let mut kept = model.record(frame_id).unwrap();
+                kept.display_name = format!("유지 {}", rng.below(100));
+                let mut reuse = model.record(other).unwrap();
+                reuse.payload = path_with_ids(&[target.id()]);
+                let records = if rng.one_in(2) {
+                    vec![kept, reuse]
+                } else {
+                    vec![reuse, kept]
+                };
+                reused_dangling += 1;
+                check(&model, restore(records), seed, &mut accepted, &mut rejected);
             }
             for _ in 0..12 {
                 let mut records = Vec::new();
@@ -1380,23 +1481,16 @@ mod tests {
                     record.display_name = format!("후보 {}", rng.below(100));
                     records.push(record);
                 }
-                let command = restore(records);
-                match command.validate(&model) {
-                    Ok(()) => {
-                        accepted += 1;
-                        assert_eq!(
-                            ensure_no_new_violations(&model, &command.records),
-                            Ok(()),
-                            "seed {seed}: 범위 검사가 통과시킨 후보를 전체 validator가 거부"
-                        );
-                    }
-                    Err(_) => rejected += 1,
-                }
+                check(&model, restore(records), seed, &mut accepted, &mut rejected);
             }
         }
         assert!(
             accepted > 200 && rejected > 200,
             "통과 {accepted}, 거부 {rejected}"
+        );
+        assert!(
+            reused_dangling > 50,
+            "미해결 clip 대상 재사용 후보 {reused_dangling}"
         );
     }
 }

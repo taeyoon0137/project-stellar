@@ -66,9 +66,11 @@
   전체 backstop(`model.to_records()`로 모든 레코드 clone + `validate_document` 최대 2회)이 레코드 하나만 바뀌어도 매번 돌아,
   두 변환의 undo·redo(역 command가 RestoreNodeRecords) 비용이 문서 크기에 비례해 크게 늘었습니다.
 - **수정**: 부모·순서·modifier stack이 바뀌지 않는 이 command가 새로 만들 수 있는 VI.10.1 위반을 대상 검사가 모두 다루도록
-  하고 전체 재구성 검사를 뺐습니다. 대상 검사가 놓치던 유일한 경우 — 새로 path element가 되는 id를 다른 참조(clip·modifier,
+  하고 전체 재구성 검사를 뺐습니다. 대상 검사가 놓치던 경우 — 새로 path element가 되는 id를 다른 참조(clip·modifier,
   교체 레코드의 새 clip)가 이미 가리키는 결과 — 를 `ReferenceTypeMismatch`로 거부합니다(교체 node의 옛 clip과 원래 있던
-  element 재사용은 제외). 전체 검사 함수는 test oracle(`#[cfg(test)]`)로만 남겼습니다.
+  element 재사용은 제외). 전체 검사 함수는 test oracle(`#[cfg(test)]`)로만 남겼습니다. 이때 이것을 "유일한 경우"로 보고
+  "범위 검사 통과 ⇒ 전체 validator 통과"라고 적었으나 틀렸습니다. clip을 그대로 둔 교체 레코드가 빠져 있었고, 아래
+  "사후 수정 — 유지한 clip과 path element id 재사용"에서 고쳤습니다.
 - **측정**(`DEV-MAC`, release, root ← group 100개 ← Frame, 이름만 바꾸는 복원 1건의 validate 평균, 임시 측정 test — 커밋하지
   않음, node 수는 leaf Frame 기준이고 root·group 101개 별도): node 1,000: 1.47 ms → 0.27 ms, 10,000: 85.4 ms → 3.70 ms,
   50,000: 247 ms → 28.9 ms.
@@ -79,3 +81,36 @@
   -D warnings` 경고 0, `cargo fmt -p stellar-commands -- --check` 통과.
 - **남은 한계**: 대상 검사가 쓰는 문서 전체 index(`id_owners`·`ChildIndex`·`reference_index`, 각 O(N))는 그대로라 50,000 node에서
   28.9 ms로 undo·redo 10 ms 예산을 아직 넘습니다. 모델 수준 자식·참조·id index(증분 유지)가 필요하며 이 수정 범위(함수 단위) 밖입니다.
+  계획서 XVI.4.7로 등록했습니다(아래 사후 수정 절).
+
+## 사후 수정 — 유지한 clip과 path element id 재사용 (2026-11-14, 사후 리뷰 posthoc_expr_comp_cmd)
+
+- **지적**: 위 범위 검사에 검증 구멍이 있었습니다(회귀). 같은 RestoreNodeRecords 안에서 (a) clip을 그대로 둔 채 이름만 바꾼
+  Frame F(clip 대상은 미해결 id X)와 (b) X를 새 path element로 쓰는 Path 레코드를 함께 보내면, 범위 검사는 통과하지만 결과
+  문서는 VI.10.1 `RefTypeMismatch`(clip 대상이 PathElement)를 어겼습니다. 둘째 반복은 교체 node의 clip을 새 payload 검사에
+  맡기고 넘어갔고, 셋째 반복은 clip이 그대로면 대상이 새로 claim된 element여도 건너뛰었습니다. RestoreNodeRecords는 codec에
+  등록된 command(`0x0032`)라 디코드된 입력으로도 이 경로에 닿습니다.
+- **수정**: 교체 레코드 clip 검사의 예외를 좁혔습니다. clip을 그대로 두었더라도 대상이 이 command가 새로 claim한 element(교체
+  전에는 교체 node의 element가 아니던 id)면 `ReferenceTypeMismatch`로 거부합니다. 계속 허용하는 경우는 clip을 그대로 두었고
+  대상이 교체 전에도 교체 node의 element였던 경우(이미 있던 위반이라 이 command가 만든 것이 아님)뿐입니다.
+- **경우 정리**: 부모·순서·modifier stack이 그대로인 이 command가 VI.10.1에서 새로 만들 수 있는 위반은 root 종류, 자식이 있는
+  node의 종류, modifier owner 종류, path element id(NIL·중복), 참조 대상 종류입니다. 참조 대상 종류는 다음처럼 나눠 검사합니다.
+  - 교체되지 않은 Frame의 clip이 종류가 바뀌는 node를 가리킴: 첫 반복의 들어오는 clip 검사(modifier 참조는 종류와 무관).
+  - 교체되지 않은 clip, 모든 modifier 참조(교체 node 것 포함)가 새로 claim한 element를 가리킴: 둘째 반복.
+  - 교체 레코드의 clip(바꿨든 유지했든)이 기존 element·다른 종류 id를 가리킴: 첫 반복(`kind_after`). 새로 claim한 element를
+    가리킴: 셋째 반복. 다시 claim한 element(교체 전에도 element)는 clip을 바꾼 경우만 거부.
+  - 교체되지 않은 clip이 다시 claim한 element를 가리킴: 교체 전에도 element였으므로 이미 있던 위반입니다.
+
+  이 정리는 사람이 한 분석이며 증명은 아닙니다. 그래서 "전체 validator와 같은 판정"은 아래 property test로 확인한 범위에서만
+  주장합니다.
+- **test**: `restore_rejects_new_path_elements_that_references_point_to`에 이 조합을 레코드 순서 두 가지로 추가했습니다.
+  `restore_keeps_allowing_unchanged_clip_to_reclaimed_element`(이미 잘못된 문서에서 clip 유지 + element 다시 claim은 범위 검사와
+  oracle 모두 허용)를 새로 만들었습니다. property test `scoped_restore_validation_never_accepts_what_the_full_validator_rejects`에는
+  문서마다 "payload를 유지한 Frame의 미해결 clip 대상을 다른 node의 새 Path element로 재사용"하는 후보를 의도적으로 섞고, 그런
+  후보가 50건을 넘는지 확인합니다. 수정 전 코드에서는 회귀 test(이 조합이 `Ok`)와 property test(seed 1)가 모두 실패했고, 수정 후
+  모두 통과합니다.
+- 검증(`DEV-MAC`): `cargo test -p stellar-commands` unit 85 passed(1 ignored는 기존 장기 fuzz), doctest 3 passed. clippy·fmt는
+  마지막 `cargo xtask check-core`에 포함했습니다.
+- **남은 한계(등록)**: 50,000 node에서 28.9 ms인 O(N) 문서 index 비용은 계획서 XVI.4.7(모델 수준 증분 id·자식·참조 index)로
+  등록했습니다. 성능 예산 파일(`config/performance-budgets.yaml`)은 ADR 보호 경로라 이 수정에서 항목을 추가하지 않았고, 측정
+  기준은 XVI.4.7 검증 열에 두었습니다.
