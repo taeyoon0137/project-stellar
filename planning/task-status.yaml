@@ -4666,13 +4666,19 @@ tasks:
     verified_at: "2026-11-14T02:14:06+09:00"
   - id: "X.1.2"
     title: "layout tree view는 Fragment를 flatten하고 ComponentInstance virtual subtree와 View Variant 적용 결과를 읽도록 합니다. 원본 document를 수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.4.1"
       - "IX.2.2"
       - "IX.7.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.1.2.md"
+    commit: "ec1107c9f88edd39c7fe78ca64aea8b7dc0b8a40"
+    report: "docs/task-reports/X.1.2.md"
+    verified_at: "2026-11-14T10:23:28+09:00"
   - id: "X.1.3"
     title: "layout property registry에 각 속성의 dirty class를 SelfSize, ParentFlow, DescendantConstraint, PaintOnly로 분류합니다."
     status: verified
@@ -5037,12 +5043,18 @@ tasks:
     verified_at: "2026-11-14T09:54:37+09:00"
   - id: "X.7.1"
     title: "command invalidation을 layout dirty set으로 변환합니다. PaintOnly는 layout queue에 넣지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VII.1.4"
       - "X.1.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.1.md"
+    commit: "a7f696025f182950c5b70f3d88154721c708e7a7"
+    report: "docs/task-reports/X.7.1.md"
+    verified_at: "2026-11-14T10:29:05+09:00"
   - id: "X.7.2"
     title: "bottom-up intrinsic measurement와 top-down placement를 분리하고 cache key를 정의합니다."
     status: verified
@@ -5059,18 +5071,30 @@ tasks:
     verified_at: "2026-11-14T09:54:37+09:00"
   - id: "X.7.3"
     title: "dirty node의 ancestor propagation을 layout mode별로 최소화합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.3.md"
+    commit: "51dc6b1809edbc580800f8835f51bc9a204b2831"
+    report: "docs/task-reports/X.7.3.md"
+    verified_at: "2026-11-14T10:47:45+09:00"
   - id: "X.7.4"
     title: "20만 node synthetic document에서 단일 leaf 변경 방문 node count를 기록하는 benchmark를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.7.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.4.md"
+    commit: "d27820b39ed3944495633582460dd13d70c8d6c9"
+    report: "docs/task-reports/X.7.4.md"
+    verified_at: "2026-11-14T10:53:41+09:00"
   - id: "X.7.5"
     title: "layout result가 DocumentRevision과 input hash에 맞지 않으면 폐기하는 worker result guard를 구현합니다."
     status: verified
@@ -5087,11 +5111,17 @@ tasks:
     verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.7.6"
     title: "전체 layout fallback 경로를 테스트·진단용으로만 제공하고 일반 property 변경에서 호출되면 debug assertion과 metric을 남깁니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.7.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.6.md"
+    commit: "cea5b757fe3b943c0ee586d7861a8168ad717d7b"
+    report: "docs/task-reports/X.7.6.md"
+    verified_at: "2026-11-14T10:56:45+09:00"
   - id: "X.8.1"
     title: "`FontSource`를 Project, System, External로 정의하고 `FontFaceRef`에 file hash, face index, variation axes를 포함합니다."
     status: verified
@@ -5327,9 +5357,10 @@ tasks:
     verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.11.2"
     title: "nested component, variant, token 조건이 포함된 layout fixture 20개를 추가합니다."
-    status: not_started
+    status: reported_done
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/X.11.2.md"
   - id: "X.11.3"
     title: "양 플랫폼에서 logical layout result를 비교하는 CI job을 추가합니다."
     status: not_started
