@@ -309,7 +309,7 @@ fn apply_key_value(
     line: usize,
 ) -> Result<(), ManifestError> {
     if full == ["package", "name"] {
-        let name = string_value(value).ok_or_else(|| {
+        let name = string_value(value, line)?.ok_or_else(|| {
             ManifestError::at("package-name", line, "[package].name은 문자열이어야 합니다")
         })?;
         parsed.package = Some(name);
@@ -349,7 +349,7 @@ fn package_override(
     };
     match raw {
         None => Ok(None),
-        Some(raw) => string_value(&raw).map(Some).ok_or_else(|| {
+        Some(raw) => string_value(&raw, line)?.map(Some).ok_or_else(|| {
             ManifestError::at(
                 "dependency-package",
                 line,
@@ -759,15 +759,9 @@ fn parse_dotted_key(text: &str, line: usize) -> Result<Vec<String>, ManifestErro
     let mut segments = Vec::new();
     for raw in split_top_level(text, '.') {
         let raw = raw.trim();
-        let segment = if let Some(inner) = raw.strip_prefix('"') {
-            inner
-                .strip_suffix('"')
-                .map(unescape_basic)
-                .ok_or_else(|| ManifestError::at("manifest-syntax", line, "잘못된 따옴표 key"))?
-        } else if let Some(inner) = raw.strip_prefix('\'') {
-            inner
-                .strip_suffix('\'')
-                .map(str::to_string)
+        let segment = if raw.starts_with('"') || raw.starts_with('\'') {
+            // 따옴표 key는 한 줄 문자열 하나여야 하며, escape는 값 문자열과 같은 규칙으로 풉니다.
+            string_value(raw, line)?
                 .ok_or_else(|| ManifestError::at("manifest-syntax", line, "잘못된 따옴표 key"))?
         } else {
             let bare = !raw.is_empty()
@@ -788,36 +782,75 @@ fn parse_dotted_key(text: &str, line: usize) -> Result<Vec<String>, ManifestErro
     Ok(segments)
 }
 
-/// 한 줄 문자열 값(`"..."`, `'...'`)을 읽습니다. 그 밖의 값은 `None`.
-fn string_value(value: &str) -> Option<String> {
+/// 한 줄 문자열 값(`"..."`, `'...'`)을 읽습니다. 문자열이 아닌 값(여러 줄 문자열 포함)은
+/// `Ok(None)`, 문자열 본문이 잘못되었으면(escape 오류, 닫는 따옴표 앞의 따옴표) 오류입니다.
+fn string_value(value: &str, line: usize) -> Result<Option<String>, ManifestError> {
     let value = value.trim();
     if value.starts_with("\"\"\"") || value.starts_with("'''") {
-        return None;
+        return Ok(None);
     }
     if let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')) {
-        return Some(unescape_basic(inner));
+        return unescape_basic(inner, line).map(Some);
     }
-    value
-        .strip_prefix('\'')
-        .and_then(|v| v.strip_suffix('\''))
-        .map(str::to_string)
+    match value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')) {
+        Some(inner) if inner.contains('\'') => Err(ManifestError::at(
+            "manifest-syntax",
+            line,
+            "literal string 안에 작은따옴표가 있습니다",
+        )),
+        Some(inner) => Ok(Some(inner.to_string())),
+        None => Ok(None),
+    }
 }
 
-/// basic string의 단순 escape(`\"`, `\\`)만 풉니다. package 이름에는 그 밖의 escape가 없습니다.
-fn unescape_basic(inner: &str) -> String {
+/// basic string 본문의 escape를 TOML 규칙대로 풉니다(`\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX`).
+///
+/// Cargo는 `"stellar-ffi"`를 `stellar-ffi`로 읽으므로 같은 이름으로 풀어야 내부 의존 판정에서
+/// 빠지지 않습니다. 그 밖의 escape, 끝나지 않은 escape, escape하지 않은 `"`, 유니코드 scalar가
+/// 아닌 코드는 거부합니다(fail closed).
+fn unescape_basic(inner: &str, line: usize) -> Result<String, ManifestError> {
+    let invalid = || {
+        ManifestError::at(
+            "manifest-syntax",
+            line,
+            "basic string의 escape나 따옴표가 잘못되었습니다",
+        )
+    };
     let mut out = String::with_capacity(inner.len());
-    let mut escaped = false;
-    for c in inner.chars() {
-        if escaped {
-            out.push(c);
-            escaped = false;
-        } else if c == '\\' {
-            escaped = true;
-        } else {
-            out.push(c);
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return Err(invalid()),
+            '\\' => {
+                let decoded = match chars.next().ok_or_else(invalid)? {
+                    'b' => '\u{8}',
+                    't' => '\t',
+                    'n' => '\n',
+                    'f' => '\u{c}',
+                    'r' => '\r',
+                    '"' => '"',
+                    '\\' => '\\',
+                    'u' => hex_scalar(&mut chars, 4).ok_or_else(invalid)?,
+                    'U' => hex_scalar(&mut chars, 8).ok_or_else(invalid)?,
+                    _ => return Err(invalid()),
+                };
+                out.push(decoded);
+            }
+            _ => out.push(c),
         }
     }
-    out
+    Ok(out)
+}
+
+/// 16진 숫자 `digits`개를 읽어 유니코드 scalar 값으로 바꿉니다. 숫자가 모자라거나 16진이 아니거나
+/// scalar가 아니면(surrogate, `U+10FFFF` 초과) `None`.
+fn hex_scalar(chars: &mut std::str::Chars<'_>, digits: usize) -> Option<char> {
+    let mut code: u32 = 0;
+    for _ in 0..digits {
+        // 8자리여도 `0xFFFF_FFFF` 이하라 u32에서 넘치지 않습니다.
+        code = code * 16 + chars.next()?.to_digit(16)?;
+    }
+    char::from_u32(code)
 }
 
 /// 크기 상한을 지켜 manifest를 읽습니다.
@@ -1208,6 +1241,70 @@ flag = true
 stellar-b = { path = "../b", features = ["x"], default-features = false }
 "#;
         assert_eq!(internal(ok), vec![pair("stellar-b", "[dependencies]")]);
+    }
+
+    #[test]
+    fn escaped_names_resolve_like_cargo() {
+        // Cargo는 basic string escape를 풀어 읽습니다. 이전 해석기는 `\u0073`를 `u0073`로 읽어
+        // 내부 의존을 `stellar-` prefix 판정에서 놓쳤습니다.
+        let text = r#"
+[package]
+name = "\u0073tellar-sample"
+
+[dependencies]
+"\u0073tellar-ffi" = { path = "../ffi" }
+alias = { package = "stellar\u002Druntime", path = "../runtime" }
+other.package = "\U00000073tellar-project"
+"tab\tkey" = "1"
+
+[dependencies."stellar\u002ddocument"]
+path = "../document"
+"#;
+        let parsed = parse_manifest(text).unwrap();
+        assert_eq!(parsed.package.as_deref(), Some("stellar-sample"));
+        let mut got = internal(text);
+        got.sort();
+        let mut want = vec![
+            pair("stellar-ffi", "[dependencies]"),
+            pair("stellar-runtime", "[dependencies]"),
+            pair("stellar-project", "[dependencies]"),
+            pair("stellar-document", "[dependencies]"),
+        ];
+        want.sort();
+        assert_eq!(got, want);
+        assert!(parsed.deps.iter().any(|d| d.key == "tab\tkey"));
+        let root = parse_manifest(
+            "[workspace.dependencies]\ncore = { package = \"stellar\\u002dcore-types\" }\n",
+        )
+        .unwrap();
+        assert_eq!(
+            root.workspace_renames.get("core").map(String::as_str),
+            Some("stellar-core-types")
+        );
+    }
+
+    #[test]
+    fn invalid_string_escapes_and_quotes_fail_closed() {
+        for text in [
+            "[dependencies]\n\"\\x73tellar-ffi\" = \"1\"\n",
+            "[dependencies]\n\"\\e\" = \"1\"\n",
+            "[dependencies]\n\"\\u00\" = \"1\"\n",
+            "[dependencies]\n\"\\u00zz\" = \"1\"\n",
+            "[dependencies]\n\"\\uD800\" = \"1\"\n",
+            "[dependencies]\n\"\\U00110000\" = \"1\"\n",
+            "[dependencies]\n\"a\\q\" = \"1\"\n",
+            "[dependencies]\n\"a\" \"b\" = \"1\"\n",
+            "[dependencies]\n'a' 'b' = \"1\"\n",
+            "[dependencies]\na = { package = \"stellar\\-ffi\" }\n",
+            "[dependencies]\na.package = \"\\u0073tellar-ffi\\\"\n",
+            "[package]\nname = \"\\z\"\n",
+        ] {
+            assert_eq!(
+                parse_manifest(text).unwrap_err().code,
+                "manifest-syntax",
+                "{text:?}"
+            );
+        }
     }
 
     #[test]
