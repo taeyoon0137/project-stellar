@@ -24,12 +24,18 @@
 | `cargo test -p stellar-git-porcelain -p stellar-runtime --no-default-features` | 0 — Git 351 unit + 3 doctest, runtime 91 unit + 22 integration + 11 doctest 통과 |
 | `cargo clippy -p stellar-git-porcelain -p stellar-runtime --all-targets --no-default-features -- -D warnings` | 0·경고 0 |
 | `cargo fmt -p stellar-git-porcelain -p stellar-runtime` / `git diff --check` | 모두 0 |
+| `cargo fmt --all -- --check` | 0 |
+| `cargo xtask generate-ledger` | 0 — 원장 변경은 XIV.6.2~6.6의 5개 작업만 |
+| `cargo xtask validate-task-status` / `cargo xtask sync-plan --check` | 모두 0 |
+| `cargo xtask verify-task <ID>` — XIV.6.2, XIV.6.3, XIV.6.4, XIV.6.5, XIV.6.6 각각 | 모두 0 |
+| `cargo xtask validate-task-report <path>` — XIV.6.2-blocked 및 XIV.6.2~6.6 보고서 각각 | 모두 0 |
 
 ## 환경과 증거
 
 - `DEV-MAC`, macOS 27.2, Apple Git 2.54.0 (Apple Git-157). 임시 upstream Git 2.54.0으로도 porcelain 적용 경계를 확인했습니다.
 - 새 GitFixture만 사용했습니다. 제품 저장소의 index·worktree·config에는 실험하지 않았으며 다른 checkout에 쓰지 않았습니다. 원격 push·release·서명·추가 작업자 실행은 없습니다.
 - 전체 실행 로그는 전용 target의 `final-full-tests.log`, `final-clippy.log`, `final-upstream-tests.log`에 있습니다. 커밋된 테스트가 재현 원본입니다.
+- 구현 커밋: XIV.6.2 `169903b0`, XIV.6.3 `636034ba`, XIV.6.4 `b0e99ea9`, XIV.6.5 `63c2fc96`, 입력 경계 `0a549a33`, XIV.6.6 `9ec7820d`.
 
 ## 테스트
 
