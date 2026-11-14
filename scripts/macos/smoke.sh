@@ -7,6 +7,9 @@
 #  - --text-input-check: 네이티브 UI 텍스트 컨트롤의 undo/IME(marked text) smoke
 #  - --input-check: mouse·trackpad·keyboard NSEvent → 공통 InputEvent 변환과 연속 move coalescing
 #  - --update-check: 업데이트 구성·채널 격리·appcast 서명·승인 gate(Sparkle, loopback fixture)
+#  - --<영역>-ui-check: UI 영역별 화면 밖 검사(shell-frame, tools-menus, sidebar, inspector, git-panel, agent-panel, welcome)
+#  - --shell-integration-check: 실제 앱 구성(메뉴, 시작 창, 코어로 프로젝트 열기, 프로젝트 창 영역·도구, 복원·닫기)
+#  - UI 구조 검사: UI/Tools는 코어 FFI를 모르고, UI/Shell은 stellar_ 함수를 직접 부르지 않음(CoreRuntime 경유)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -98,5 +101,41 @@ echo "text 구조 ok: ${NATIVE_UI_SOURCES[*]}"
 # update: Info.plist 업데이트 구성, Stable/Beta appcast 채널 격리, appcast 서명 검증, 승인 전 다운로드 금지
 #         (XVI.9.5, ADR-0017; 실제 Sparkle updater와 127.0.0.1 fixture 서버, 외부 네트워크 없음).
 "$APP" --update-check
+
+# UI 영역 검사: 각 영역(docs/design/ui/*.md)을 화면 밖 창으로 만들어 레이아웃·접근성·명령·snapshot 반영을 확인합니다.
+AREA_UI_CHECKS=(shell-frame tools-menus sidebar inspector git-panel agent-panel welcome)
+for area in "${AREA_UI_CHECKS[@]}"; do
+  "$APP" "--${area}-ui-check"
+done
+
+# 셸 통합: 앱이 실제로 쓰는 구성을 화면 밖에서 검사합니다(실제 코어 runtime으로 임시 fixture 프로젝트를 엽니다).
+"$APP" --shell-integration-check
+
+# UI 구조 검사(grep 종료 코드 0 = 발견 = 실패, 2 이상 = 읽기 오류 = 실패).
+# - UI/Tools(메뉴·도구 명령)는 코어 FFI와 runtime handle을 모릅니다. 명령은 ToolsMenuModel로만 나갑니다.
+# - UI/Shell은 stellar_ 함수를 직접 부르지 않고 CoreRuntime(FFI 헬퍼)을 거칩니다.
+check_ui_structure() {
+  local label="$1" pattern="$2" dir="$3"
+  if [ ! -d "$dir" ]; then
+    echo "UI 구조 실패: $dir 가 없습니다." >&2
+    exit 1
+  fi
+  local status=0
+  grep -rnE "$pattern" "$dir" --include='*.swift' || status=$?
+  case "$status" in
+    0)
+      echo "UI 구조 실패: $label" >&2
+      exit 1
+      ;;
+    1) ;;
+    *)
+      echo "UI 구조 실패: $dir 검사 중 grep 오류(종료 $status)." >&2
+      exit 1
+      ;;
+  esac
+}
+check_ui_structure "UI/Tools가 코어 FFI·runtime을 참조합니다." 'stellar_|CoreRuntime|RuntimeHost|runtimeHandle' "$SOURCES_DIR/UI/Tools"
+check_ui_structure "UI/Shell이 stellar_ 함수를 직접 호출합니다(CoreRuntime 경유)." '\bstellar_[a-z_]+\(' "$SOURCES_DIR/UI/Shell"
+echo "UI 구조 ok: UI/Tools FFI 없음, UI/Shell FFI는 CoreRuntime 경유"
 
 echo "smoke OK"

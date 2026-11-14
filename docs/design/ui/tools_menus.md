@@ -137,7 +137,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 
 - Undo, Redo, Cut, Copy, Paste, Delete, Select All은 AppKit 표준 action을 target 없이 보냅니다. 텍스트 컨트롤 편집 중에는 field editor가 먼저 받아 네이티브 클립보드를 처리하고, 캔버스·목록 포커스에서는 `ShellCommandRouter`가 받아 활성 창 session으로 보냅니다. [가이드 8.2] [아키텍처 §11.2, §23]
 - 텍스트 편집 중 Undo·Redo: field editor(`NSTextView`)는 `undo:`·`redo:`를 구현하지 않고 창 undo manager가 처리합니다. 그래서 router는 텍스트 컨트롤이 first responder이면 `responds(to:)`에서 `undo:`·`redo:`에 응답하지 않는다고 알려 응답자 체인과 메뉴 검증이 창까지 가게 합니다(메뉴 제목 "Undo Typing"). 직접 불려도 창으로 넘깁니다. 이 경로가 없으면 이름 입력 중 ⌘Z가 캔버스 "Undo Move"를 보냅니다(리뷰에서 재현). [가이드 5.2, 8.2]
-- `NSWindow`가 `undo:`·`redo:`에 응답하므로 router는 `install(in:)`으로 content view와 창 사이에 끼웁니다. content view를 바꾸면 다시 호출해야 합니다.
+- `NSWindow`가 `undo:`·`redo:`에 응답하므로 router는 `install(in:)`으로 창 바로 앞에 끼웁니다. 창에 `contentViewController`가 있으면 그 controller와 창 사이(content view → controller → router → 창), 없으면 content view와 창 사이입니다. AppKit은 view controller가 소유한 view의 `nextResponder` 설정을 controller로 넘기므로 content view에 직접 끼우면 체인이 순환합니다(셸 통합 중 확인). content view나 controller를 바꾸면 다시 호출해야 합니다.
 - Undo·Redo 제목은 snapshot의 대상 이름을 붙입니다(예: "Undo Move"). [HIG The menu bar]
 - Delete 키 자체(⌫)는 메뉴 key equivalent로 두지 않습니다. 텍스트 입력을 가로채지 않도록 캔버스 `keyDown`→`deleteBackward(_:)` 경로로 `.delete`를 보내는 연결은 통합 단계에서 합니다.
 
@@ -350,10 +350,10 @@ protocol ToolsMenuModel: AnyObject {
 - **프로젝트 명령**: New/Open/Clone Project 흐름과 패널. [계획 XII.6.1~XII.6.3]
 - **Undo/Redo/Save Now**: 활성 WindowSession 연결. [계획 XII.6.4]
 - **접근성**: 캔버스 호스트의 도구 상태 노출과 VoiceOver 자동화. [계획 XII.8.1]
-- **창 통합**: AppDelegate에서 `MainMenuBuilder.build(applicationTarget:)`와 `install(on:)`, 창 controller에서 `ShellCommandRouter.install(in:)`과 툴바 연결(검색 등 다른 영역 항목과 delegate 조합). `toggleSidebar:`·`toggleInspector:`가 동작하려면 `NSSplitViewController`가 응답자 체인에 있어야 합니다. [가이드 2.3, 2.5]
-- **캔버스 keyDown**: `CanvasToolShortcut.tool(for:)`와 Delete 키(`deleteBackward(_:)` → `.delete`) 연결.
+- **창 통합(완료, shell_frame 14장)**: `ShellAppCoordinator`가 `MainMenuBuilder.build(applicationTarget:)`·`install(on:)`을 하고, 프로젝트 창마다 `ShellCommandRouter.install(in:)`과 셸 툴바 조합(`ToolsToolbarController`가 `ShellToolbarItemProviding`으로 가운데 도구 그룹·줌 제공)을 합니다. 창 모델은 `ShellWindowToolsModelStub`(창별 도구 상태, 코어 경로 없는 명령 비활성)입니다. [가이드 2.3, 2.5]
+- **캔버스 keyDown(단일 키 완료)**: `CanvasView.keyDownHandler`가 `CanvasToolShortcut.tool(for:)`로 도구를 구해 `router.dispatch`합니다. 처리한 키는 key down·짝 key up 모두 코어 입력으로 보내지 않고, 도구가 아니거나 비활성이면 코어 입력으로 보냅니다. Delete 키(`deleteBackward(_:)` → `.delete`)는 코어 삭제 명령 경로가 없어 아직 연결하지 않았습니다.
 - **앱 이름**: 메뉴 막대의 굵은 앱 이름은 번들 이름에서 옵니다. 현재 `PRODUCT_NAME`이 `StellarMac`이므로 표시 이름을 "Stellar"로 맞추는 프로젝트 설정 변경이 필요합니다(이 작업 범위 밖, 프로젝트 파일 미수정).
-- **smoke 연결**: 실행 인자(예: `--tools-menus-check`)로 `ToolsUICheck.run()` 호출, `UI/Tools/`가 코어 FFI(`stellar_`)를 직접 호출하지 않는다는 구조 검사.
+- **smoke 연결(완료)**: `--tools-menus-ui-check`로 `ToolsUICheck.run()`을 실행하고, `UI/Tools/`가 코어 FFI·runtime(`stellar_`, `CoreRuntime`, `RuntimeHost`, `runtimeHandle`)을 참조하지 않는다는 구조 검사를 `scripts/macos/smoke.sh`가 합니다.
 - **WBS 없음**: 눈금자(placeholder), Open Recent, Open in New Window(XII.2.4), Export, Format 메뉴, Help Book(현재 Stellar Help는 시스템 "도움말 없음" 동작), 메뉴 문자열 지역화.
 - **실화면 확인**: 화면 밖 bitmap 캡처에서는 선택된 도구 세그먼트의 아이콘이 보이지 않았습니다. 캡처가 시스템 glass·선택 레이어를 담지 못한 것으로 보이나, 실제 키 창 화면에서는 확인하지 않았습니다.
 

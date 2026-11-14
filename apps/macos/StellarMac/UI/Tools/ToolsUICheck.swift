@@ -381,6 +381,7 @@ enum ToolsUICheck {
             "툴바에 도구·줌 항목 없음: \(identifiers.map(\.rawValue))"
         )
 
+        checkRouterWithContentViewController(recorder)
         checkObservers(model: model, controller: controller, recorder)
         checkPaletteCopies(controller: controller, toolbar: toolbar, recorder)
 
@@ -394,6 +395,31 @@ enum ToolsUICheck {
             timing = measure(mainMenu: mainMenu, model: model, router: router, controller: controller, recorder)
         }
         return timing
+    }
+
+    /// content view controller가 있는 창(셸 프레임 창): router는 controller와 창 사이에 들어가고 체인이 순환하지 않습니다.
+    private static func checkRouterWithContentViewController(_ recorder: Recorder) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+            styleMask: [.titled, .closable], backing: .buffered, defer: true
+        )
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let controller = NSViewController()
+        controller.view = NSView()
+        window.contentViewController = controller
+        let router = ShellCommandRouter(model: ToolsMenuModelStub())
+        recorder.expect(router.install(in: window), "content view controller 창에 router 설치 실패")
+        recorder.expect(router.install(in: window), "content view controller 창에 router 재설치 실패")
+        var chain: [NSResponder] = []
+        var cursor: NSResponder? = window.contentView
+        while let responder = cursor, chain.count < 16 {
+            chain.append(responder)
+            cursor = responder.nextResponder
+        }
+        recorder.expect(chain.count < 16, "router 설치 후 응답자 체인이 순환함")
+        recorder.expect(chain.filter { $0 === router }.count == 1, "router가 체인에 한 번 있지 않음")
+        recorder.expect(controller.nextResponder === router && router.nextResponder === window, "router가 controller와 창 사이에 없음")
     }
 
     /// snapshot 구독이 여럿이어도 서로 덮어쓰지 않고, 토큰을 취소하면 그 구독만 끝납니다.

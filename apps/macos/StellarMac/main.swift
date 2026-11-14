@@ -28,6 +28,27 @@ if CommandLine.arguments.contains("--update-check") {
     exit(UpdateCheck.run() ? 0 : 1)
 }
 
+// 영역별 UI 검사 모드: 각 UI 영역을 화면 밖 창으로 만들어 검사하고 종료합니다(docs/design/ui/*.md 검사 절).
+// 인자 이름은 `--<영역>-ui-check`이고, scripts/macos/smoke.sh가 같은 순서로 모두 실행합니다.
+let areaUIChecks: [(argument: String, run: () -> Bool)] = [
+    ("--shell-frame-ui-check", ShellFrameUICheck.run),
+    ("--tools-menus-ui-check", ToolsUICheck.run),
+    ("--sidebar-ui-check", SidebarUICheck.run),
+    ("--inspector-ui-check", InspectorUICheck.run),
+    ("--git-panel-ui-check", GitPanelUICheck.run),
+    ("--agent-panel-ui-check", AgentPanelUICheck.run),
+    ("--welcome-ui-check", WelcomeUICheck.run),
+]
+for check in areaUIChecks where CommandLine.arguments.contains(check.argument) {
+    exit(check.run() ? 0 : 1)
+}
+
+// 셸 통합 검사 모드: 실제 앱 구성(메뉴, 시작 창, 코어로 프로젝트 열기, 프로젝트 창 영역·도구, 복원·닫기)을 화면 밖에서
+// 검사하고 종료합니다(docs/design/ui/shell_frame.md 통합 절).
+if CommandLine.arguments.contains("--shell-integration-check") {
+    exit(ShellIntegrationCheck.run() ? 0 : 1)
+}
+
 // smoke 모드: GUI를 띄우지 않고 FFI로 코어 버전을 읽어 출력한 뒤 종료합니다(II.5.2).
 if CommandLine.arguments.contains("--smoke") {
     let host = RuntimeHost()

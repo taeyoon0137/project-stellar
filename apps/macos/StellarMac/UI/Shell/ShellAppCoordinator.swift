@@ -1,0 +1,587 @@
+import AppKit
+import SwiftUI
+
+/// 앱 수준 셸 구성: 메인 메뉴, 시작 창, 프로젝트 창 열기·복원·닫기, 설정 창.
+///
+/// - 열린 프로젝트 창이 없으면 시작 창(`WelcomeWindowController`)을 보여 주고, 프로젝트 창이 열리면 닫습니다
+///   (가이드 7.1 "열린 프로젝트가 없음").
+/// - Open Project(메뉴·시작 창·Finder에서 폴더 열기)는 코어 `stellar_project_open`으로 열고, 완료 event를 받은 뒤
+///   프로젝트 창을 만듭니다. 같은 폴더를 연 창이 이미 있으면 새 창을 만들지 않고 그 창을 앞으로 가져옵니다(가이드 2.5).
+/// - 창 복원은 프로젝트 폴더 경로만 창 상태에 저장하고, 복원할 때 같은 경로를 다시 엽니다(가이드 2.6).
+/// - New Project·Clone Project는 코어 FFI 경로가 아직 없어 메뉴에서 비활성이고, 시작 창에서 고르면 안내만 합니다.
+@MainActor
+final class ShellAppCoordinator: NSObject {
+    /// 창 복원 상태에 프로젝트 폴더 경로를 넣는 키.
+    static let restorationRootPathKey = "StellarProjectRootPath"
+
+    /// 프로젝트 열기를 시작한 곳. 실패 안내 위치가 달라집니다.
+    enum OpenOrigin: Equatable {
+        /// 시작 창의 Open Project…: 시작 창 안내(sheet)로 알립니다.
+        case welcome
+        /// 메뉴 막대 Open Project…·Finder·`open` 명령: alert로 알립니다.
+        case application
+    }
+
+    let runtimeHandle: UInt64?
+    let pump: ShellRuntimeEventPump?
+    let applicationModel = ShellApplicationCommandModel()
+    let applicationRouter: ShellCommandRouter
+    let welcomeData = ShellWelcomeDataSource()
+    private(set) var projectWindows: [ShellProjectWindow] = []
+    private(set) var welcomeController: WelcomeWindowController?
+    private(set) var settingsController: NSWindowController?
+    /// 열기 요청을 보냈고 완료를 기다리는 폴더(같은 폴더 중복 요청 방지).
+    private(set) var pendingOpenPaths: Set<String> = []
+
+    /// false이면 창을 화면에 올리지 않습니다(화면 밖 검사).
+    var presentsWindows = true
+    /// 프로젝트 열기 실패를 alert로 알립니다. 검사에서 바꿉니다.
+    lazy var alertPresenter: (_ title: String, _ message: String, _ window: NSWindow?) -> Void = { title, message, window in
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: String(localized: "OK", comment: "Button"))
+        if let window, window.isVisible, window.attachedSheet == nil {
+            alert.beginSheetModal(for: window)
+        } else {
+            alert.runModal()
+        }
+    }
+    /// 프로젝트 폴더를 고릅니다(NSOpenPanel). 검사에서 바꿉니다.
+    lazy var folderChooser: (_ window: NSWindow?, _ completion: @escaping (String?) -> Void) -> Void = { window, completion in
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.prompt = String(localized: "Open", comment: "Open panel button")
+        panel.message = String(localized: "Choose a Stellar project folder.", comment: "Open panel message")
+        let finish: (NSApplication.ModalResponse) -> Void = { response in
+            completion(response == .OK ? panel.url?.path : nil)
+        }
+        if let window, window.isVisible {
+            panel.beginSheetModal(for: window, completionHandler: finish)
+        } else {
+            finish(panel.runModal())
+        }
+    }
+
+    init(runtimeHandle: UInt64?) {
+        self.runtimeHandle = runtimeHandle
+        pump = runtimeHandle.map { ShellRuntimeEventPump(runtimeHandle: $0) }
+        applicationRouter = ShellCommandRouter(model: applicationModel)
+        super.init()
+        applicationModel.commandHandler = { [weak self] command in
+            self?.performApplicationCommand(command)
+        }
+        welcomeData.coordinator = self
+    }
+
+    // MARK: - 앱 시작
+
+    /// 메인 메뉴를 만들어 앱에 연결합니다(MainMenuBuilder + 셸 프레임 항목).
+    @discardableResult
+    func installMainMenu(on application: NSApplication) -> MainMenuBuilder.MainMenu {
+        let mainMenu = MainMenuBuilder.build(applicationTarget: applicationRouter)
+        ShellMainMenuInstaller.install(into: mainMenu)
+        mainMenu.install(on: application)
+        return mainMenu
+    }
+
+    /// 창 복원 진입점을 등록합니다. AppKit은 `applicationDidFinishLaunching` 전에 복원하므로 그 전에 부릅니다.
+    func registerWindowRestoration() {
+        ShellWindowRestoration.windowProvider = { [weak self] _, state in
+            self?.restoreProjectWindow(from: state)
+        }
+    }
+
+    /// 열린 프로젝트 창이 없으면 시작 창을 보여 줍니다.
+    func showWelcomeIfNeeded() {
+        guard projectWindows.isEmpty else { return }
+        showWelcome()
+    }
+
+    func showWelcome() {
+        let controller: WelcomeWindowController
+        if let welcomeController {
+            controller = welcomeController
+        } else {
+            controller = WelcomeWindowController(dataSource: welcomeData)
+            welcomeController = controller
+        }
+        guard presentsWindows else { return }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.presentCommandInstallOfferIfNeeded()
+    }
+
+    private func closeWelcome() {
+        welcomeController?.close()
+        welcomeController = nil
+    }
+
+    // MARK: - 앱 수준 명령
+
+    private func performApplicationCommand(_ command: ShellCommand) {
+        switch command {
+        case .openProject:
+            chooseProjectToOpen(origin: .application)
+        case .settings:
+            showSettings()
+        default:
+            break
+        }
+    }
+
+    /// 폴더를 골라 프로젝트를 엽니다.
+    func chooseProjectToOpen(origin: OpenOrigin) {
+        let window = origin == .welcome ? welcomeController?.window : NSApp.keyWindow
+        folderChooser(window) { [weak self] path in
+            guard let path else { return }
+            self?.openProject(atPath: path, origin: origin)
+        }
+    }
+
+    /// 설정 창(SwiftUI placeholder, 가이드 5.5).
+    func showSettings() {
+        let controller: NSWindowController
+        if let settingsController {
+            controller = settingsController
+        } else {
+            let hosting = NSHostingController(rootView: SettingsPlaceholderView())
+            let window = NSWindow(contentViewController: hosting)
+            window.title = String(localized: "Settings", comment: "Settings window title")
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            controller = NSWindowController(window: window)
+            settingsController = controller
+        }
+        guard presentsWindows else { return }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: - 프로젝트 열기 (XII.6.2)
+
+    /// 경로를 비교할 수 있게 표준화합니다(심볼릭 링크·`..` 해소).
+    static func canonicalPath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+    }
+
+    /// 같은 폴더를 연(또는 여는) 프로젝트 창.
+    func projectWindow(forPath path: String) -> ShellProjectWindow? {
+        let canonical = Self.canonicalPath(path)
+        return projectWindows.first {
+            Self.canonicalPath($0.dataSource.rootPath) == canonical
+                || $0.dataSource.session.map { Self.canonicalPath($0.rootPath) } == canonical
+        }
+    }
+
+    /// 프로젝트 폴더를 엽니다. 코어가 열기 분류·안전 probe를 마친 뒤에만 창을 만듭니다.
+    func openProject(atPath rawPath: String, origin: OpenOrigin) {
+        let path = Self.canonicalPath(rawPath)
+        if let existing = projectWindow(forPath: path) {
+            if presentsWindows {
+                existing.windowController.showWindow(nil)
+                existing.window?.makeKeyAndOrderFront(nil)
+            }
+            return
+        }
+        guard !pendingOpenPaths.contains(path) else { return }
+        guard let pump else {
+            presentOpenFailure(.runtimeUnavailable, path: path, origin: origin)
+            return
+        }
+        if origin == .welcome {
+            welcomeData.setOpening(projectName: ShellProjectFrameDataSource.folderName(path))
+        }
+        let result = pump.openProject(path: path) { [weak self] event in
+            self?.finishOpening(path: path, origin: origin, event: event)
+        }
+        switch result {
+        case .success:
+            pendingOpenPaths.insert(path)
+        case .failure(let error):
+            welcomeData.setOpening(projectName: nil)
+            presentOpenFailure(.call(error.status), path: path, origin: origin)
+        }
+    }
+
+    private func finishOpening(path: String, origin: OpenOrigin, event: CoreRuntimeEvent) {
+        pendingOpenPaths.remove(path)
+        welcomeData.setOpening(projectName: nil)
+        switch event {
+        case .projectOpened(_, let project, let projectID, let name, let root):
+            guard let pump else { return }
+            let projectWindow = makeProjectWindow(rootPath: root)
+            projectWindow.didOpen(ShellProjectSessionHandle(
+                project: project, projectID: projectID, name: name, rootPath: root, pump: pump
+            ))
+            present(projectWindow)
+        case .requestFailed(_, let failure, _):
+            presentOpenFailure(.core(failure), path: path, origin: origin)
+        default:
+            presentOpenFailure(.unexpectedEvent, path: path, origin: origin)
+        }
+    }
+
+    /// 창 복원: 저장한 폴더를 열기 중 상태의 창으로 만들고 다시 엽니다. 실패하면 창에 복구 동작을 보여 줍니다.
+    func restoreProjectWindow(from state: NSCoder) -> NSWindow? {
+        guard let path = state.decodeObject(of: NSString.self, forKey: Self.restorationRootPathKey) as String?,
+            !path.isEmpty
+        else { return nil }
+        if let existing = projectWindow(forPath: path) {
+            return existing.window
+        }
+        let projectWindow = makeProjectWindow(rootPath: path)
+        reopen(projectWindow, atPath: path)
+        return projectWindow.window
+    }
+
+    /// 이미 있는 창에서 폴더를 (다시) 엽니다(복원, Locate Folder…, Try Again).
+    func reopen(_ projectWindow: ShellProjectWindow, atPath rawPath: String) {
+        let path = Self.canonicalPath(rawPath)
+        projectWindow.beginOpening(rootPath: path)
+        guard let pump else {
+            let text = Self.failureText(.runtimeUnavailable, path: path)
+            projectWindow.didFail(title: text.title, message: text.message)
+            return
+        }
+        let result = pump.openProject(path: path) { [weak self, weak projectWindow] event in
+            guard let projectWindow else { return }
+            self?.finishReopening(projectWindow, path: path, event: event)
+        }
+        if case .failure(let error) = result {
+            let text = Self.failureText(.call(error.status), path: path)
+            projectWindow.didFail(title: text.title, message: text.message)
+        }
+    }
+
+    private func finishReopening(_ projectWindow: ShellProjectWindow, path: String, event: CoreRuntimeEvent) {
+        switch event {
+        case .projectOpened(_, let project, let projectID, let name, let root):
+            guard let pump else { return }
+            projectWindow.didOpen(ShellProjectSessionHandle(
+                project: project, projectID: projectID, name: name, rootPath: root, pump: pump
+            ))
+        case .requestFailed(_, let failure, _):
+            let text = Self.failureText(.core(failure), path: path)
+            projectWindow.didFail(title: text.title, message: text.message)
+        default:
+            let text = Self.failureText(.unexpectedEvent, path: path)
+            projectWindow.didFail(title: text.title, message: text.message)
+        }
+    }
+
+    // MARK: - 실패 안내
+
+    /// 프로젝트 열기 실패 원인.
+    enum OpenFailureSource: Equatable {
+        /// 코어 `REQUEST_FAILED` 실패 코드(`STELLAR_FAILURE_*`).
+        case core(UInt32)
+        /// FFI 호출이 요청을 받지 않음(`StellarStatus`).
+        case call(StellarStatus)
+        /// 코어 runtime을 만들지 못함.
+        case runtimeUnavailable
+        /// 열기 요청에 다른 종류의 완료 event가 옴.
+        case unexpectedEvent
+
+        static func == (lhs: OpenFailureSource, rhs: OpenFailureSource) -> Bool {
+            switch (lhs, rhs) {
+            case (.core(let a), .core(let b)): return a == b
+            case (.call(let a), .call(let b)): return a.rawValue == b.rawValue
+            case (.runtimeUnavailable, .runtimeUnavailable), (.unexpectedEvent, .unexpectedEvent): return true
+            default: return false
+            }
+        }
+    }
+
+    /// 실패 안내 문구.
+    static func failureText(_ source: OpenFailureSource, path: String) -> (title: String, message: String) {
+        (
+            String(localized: "The Project Couldn’t Be Opened", comment: "Alert title"),
+            String(
+                localized: "“\(ShellProjectFrameDataSource.folderName(path))” couldn’t be opened as a Stellar project.",
+                comment: "Alert message; the argument is the folder name"
+            )
+        )
+    }
+
+    private func presentOpenFailure(_ source: OpenFailureSource, path: String, origin: OpenOrigin) {
+        if origin == .welcome, welcomeController != nil {
+            if case .core(let code) = source, code == UInt32(STELLAR_FAILURE_NOT_A_STELLAR_PROJECT) {
+                welcomeData.postNotice(.notStellarProject(path: path))
+            } else {
+                welcomeData.postNotice(.operationFailed(detail: Self.failureText(source, path: path).message))
+            }
+            return
+        }
+        let text = Self.failureText(source, path: path)
+        alertPresenter(text.title, text.message, NSApp.keyWindow)
+    }
+
+    // MARK: - 프로젝트 창
+
+    private func makeProjectWindow(rootPath: String) -> ShellProjectWindow {
+        let projectWindow = ShellProjectWindow(rootPath: rootPath, runtimeHandle: runtimeHandle)
+        projectWindow.dataSource.commandHandler = { [weak self, weak projectWindow] id in
+            guard let self, let projectWindow else { return }
+            self.performFrameCommand(id, in: projectWindow)
+        }
+        projectWindow.toolsModel.commandHandler = { [weak projectWindow] command in
+            if command == .closeProject {
+                projectWindow?.window?.performClose(nil)
+            }
+        }
+        let controller = projectWindow.windowController
+        controller.shouldCloseHandler = { [weak self, weak projectWindow] in
+            guard let self, let projectWindow else { return true }
+            return self.shouldClose(projectWindow)
+        }
+        controller.willCloseHandler = { [weak self, weak projectWindow] in
+            guard let self, let projectWindow else { return }
+            self.projectWindowWillClose(projectWindow)
+        }
+        controller.restorableStateEncoder = { [weak projectWindow] state in
+            guard let projectWindow else { return }
+            let path = projectWindow.dataSource.session?.rootPath ?? projectWindow.dataSource.rootPath
+            state.encode(path as NSString, forKey: Self.restorationRootPathKey)
+        }
+        projectWindows.append(projectWindow)
+        return projectWindow
+    }
+
+    private func present(_ projectWindow: ShellProjectWindow) {
+        closeWelcome()
+        guard presentsWindows else { return }
+        projectWindow.windowController.showWindow(nil)
+        projectWindow.window?.makeKeyAndOrderFront(nil)
+    }
+
+    private func performFrameCommand(_ id: ShellCommandID, in projectWindow: ShellProjectWindow) {
+        switch id {
+        case ShellProjectCommandID.revealInFinder:
+            guard let root = projectWindow.dataSource.session?.rootPath else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root)])
+        case ShellProjectCommandID.closeProject:
+            projectWindow.window?.performClose(nil)
+        case ShellProjectCommandID.retryOpen:
+            reopen(projectWindow, atPath: projectWindow.dataSource.rootPath)
+        case ShellProjectCommandID.locateFolder:
+            folderChooser(projectWindow.window) { [weak self, weak projectWindow] path in
+                guard let self, let projectWindow, let path else { return }
+                if let other = self.projectWindow(forPath: path), other !== projectWindow {
+                    // 같은 폴더를 연 다른 창이 있으면 그 창을 보여 주고 이 창은 닫습니다(새 창 남발 방지, 가이드 2.5).
+                    projectWindow.window?.performClose(nil)
+                    if self.presentsWindows { other.window?.makeKeyAndOrderFront(nil) }
+                    return
+                }
+                self.reopen(projectWindow, atPath: path)
+            }
+        default:
+            break
+        }
+    }
+
+    /// 활성 에이전트 세션이 있으면 닫기 전에 확인합니다(ADR-0005 결정 4.5).
+    private func shouldClose(_ projectWindow: ShellProjectWindow) -> Bool {
+        guard projectWindow.requiresConfirmationBeforeClosing, let window = projectWindow.window else { return true }
+        let alert = Self.makeAgentSessionCloseAlert()
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            projectWindow.windowController.shouldCloseHandler = nil
+            window.performClose(nil)
+        }
+        return false
+    }
+
+    static func makeAgentSessionCloseAlert() -> NSAlert {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = String(
+            localized: "Close the Window and Stop the Agent Session?",
+            comment: "Alert title shown before closing a window with an active agent session"
+        )
+        alert.informativeText = String(
+            localized: "Changes the agent already applied stay in the project. You can undo them later.",
+            comment: "Alert message"
+        )
+        alert.addButton(withTitle: String(localized: "Close Window", comment: "Destructive alert button"))
+        alert.addButton(withTitle: String(localized: "Cancel", comment: "Button"))
+        alert.buttons.first?.hasDestructiveAction = true
+        // 키보드 기본 동작만으로 확정되지 않게 Return 키를 Cancel에 둡니다(가이드 6.5).
+        alert.buttons.first?.keyEquivalent = ""
+        alert.buttons.last?.keyEquivalent = "\r"
+        return alert
+    }
+
+    private func projectWindowWillClose(_ projectWindow: ShellProjectWindow) {
+        projectWindow.dataSource.session?.close()
+        projectWindows.removeAll { $0 === projectWindow }
+        // 마지막 프로젝트 창이면 닫히기 전에 시작 창을 띄워 앱이 종료되지 않게 합니다(창 닫기 = 프로젝트 닫기).
+        showWelcomeIfNeeded()
+    }
+
+    /// 앱 종료 전 확인이 필요한 창이 있는지(활성 에이전트 세션).
+    var requiresConfirmationBeforeTerminating: Bool {
+        projectWindows.contains { $0.requiresConfirmationBeforeClosing }
+    }
+}
+
+/// 앱 수준 메뉴 모델: 창이 없어도 동작하는 셸 명령(tools_menus 5.4).
+///
+/// New Project·Clone Project는 코어 FFI 경로(프로젝트 생성·clone)가 없어 비활성입니다(XII.6.1, XII.6.3).
+final class ShellApplicationCommandModel: ToolsMenuModel {
+    static let availableCommands: Set<ShellCommand> = [.openProject, .settings]
+
+    let snapshot = ToolsMenuSnapshot(
+        generation: 1,
+        activeTool: .move,
+        zoomScale: 1.0,
+        enabledCommands: ShellApplicationCommandModel.availableCommands,
+        undoActionName: nil,
+        redoActionName: nil,
+        rulersVisible: false,
+        selectionIsLocked: false,
+        selectionIsHidden: false
+    )
+    let observers = ToolsMenuObservers()
+    var commandHandler: ((ShellCommand) -> Void)?
+
+    func addSnapshotObserver(_ handler: @escaping (ToolsMenuSnapshot) -> Void) -> ToolsMenuObservation {
+        observers.add(handler)
+    }
+
+    func send(_ command: ShellCommand) {
+        guard snapshot.enabledCommands.contains(command) else { return }
+        commandHandler?(command)
+    }
+}
+
+/// 시작 창 data source(코어 연결 부분).
+///
+/// Open Project는 코어로 엽니다. 최근 프로젝트 목록과 Git 탐색 결과를 셸에 주는 코어 경로가 아직 없으므로 최근
+/// 목록은 비어 있고 Git 상태는 "탐색 중"(안내 없음, 동작 막지 않음)으로 둡니다. New Project·Clone Project는 코어 경로가
+/// 없어 고르면 사용할 수 없다고 안내합니다. 시작 창 protocol은 actor 표기가 없으므로 모든 호출이 메인 스레드라는
+/// 전제(protocol 문서)를 `MainActor.assumeIsolated`로 확인하고 coordinator를 부릅니다.
+final class ShellWelcomeDataSource: WelcomeDataSource {
+    weak var coordinator: ShellAppCoordinator?
+    var snapshotDidChange: (() -> Void)?
+    private var snapshot = WelcomeSnapshot(
+        generation: 1,
+        recentProjects: .loaded([]),
+        git: .checking,
+        activity: nil,
+        notice: nil,
+        defaultParentDirectory: nil
+    )
+    private var nextNoticeID: UInt64 = 1
+    /// 받은 명령(검사용).
+    private(set) var sentCommands: [WelcomeCommand] = []
+
+    func currentSnapshot() -> WelcomeSnapshot {
+        snapshot
+    }
+
+    func send(_ command: WelcomeCommand) {
+        sentCommands.append(command)
+        switch command {
+        case .openProject(let directory):
+            MainActor.assumeIsolated {
+                coordinator?.openProject(atPath: directory, origin: .welcome)
+            }
+        case .createProject:
+            postNotice(.operationFailed(detail: String(
+                localized: "Creating projects isn’t available in this build yet. Open an existing Stellar project instead.",
+                comment: "Welcome notice"
+            )))
+        case .cloneProject:
+            postNotice(.operationFailed(detail: String(
+                localized: "Cloning projects isn’t available in this build yet. Clone the repository with Git, then open the folder.",
+                comment: "Welcome notice"
+            )))
+        case .dismissNotice(let id):
+            guard snapshot.notice?.id == id else { return }
+            update { $0.notice = nil }
+        case .openRecent, .removeRecent, .reloadRecentProjects, .recheckGit, .useGitExecutable, .cancelActivity:
+            // 최근 목록·Git 탐색 코어 경로가 없고, 열기 요청은 취소할 수 없습니다(isCancellable == false).
+            break
+        }
+    }
+
+    /// 열기 진행 표시. nil이면 지웁니다.
+    func setOpening(projectName: String?) {
+        let activity = projectName.map {
+            WelcomeActivity(kind: .opening, projectName: $0, fractionCompleted: nil, isCancellable: false)
+        }
+        guard activity != snapshot.activity else { return }
+        update { $0.activity = activity }
+    }
+
+    func postNotice(_ kind: WelcomeNotice.Kind) {
+        let notice = WelcomeNotice(id: nextNoticeID, kind: kind)
+        nextNoticeID += 1
+        update { $0.notice = notice }
+    }
+
+    private func update(_ change: (inout WelcomeSnapshot) -> Void) {
+        change(&snapshot)
+        snapshot.generation += 1
+        snapshotDidChange?()
+    }
+}
+
+/// `MainMenuBuilder` 메뉴에 셸 프레임 명령 항목을 끼웁니다(가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도").
+///
+/// - View: 사이드바·인스펙터 묶음 뒤에 보조 패널(Show/Hide Panels), 그다음 묶음에 Back·Forward
+/// - Edit ▸ Find: Search Project…
+/// - File: Save Now 뒤에 Show in Finder(더 보기 메뉴와 같은 동작)
+@MainActor
+enum ShellMainMenuInstaller {
+    /// 보조 패널 이름(`ShellPanelTabsSlot.paneTitle`과 같은 값).
+    static var auxiliaryPanelTitle: String {
+        String(localized: "Panels", comment: "Name of the area below the canvas; used in Show/Hide Panels")
+    }
+
+    static func install(into mainMenu: MainMenuBuilder.MainMenu) {
+        let menu = mainMenu.menu
+        if let view = submenu(titled: "View", in: menu),
+            let inspectorIndex = view.items.firstIndex(where: { $0.action == #selector(NSSplitViewController.toggleInspector(_:)) })
+        {
+            if let auxiliary = ShellFrameMenuItems.makeViewMenuItems(auxiliaryTitle: auxiliaryPanelTitle).last {
+                auxiliary.image = NSImage(systemSymbolName: "rectangle.bottomthird.inset.filled", accessibilityDescription: nil)
+                view.insertItem(auxiliary, at: inspectorIndex + 1)
+            }
+            let navigation = ShellFrameMenuItems.makeNavigationMenuItems()
+            var index = inspectorIndex + 2
+            view.insertItem(.separator(), at: index)
+            for (item, symbol) in zip(navigation.prefix(2), [ShellFrameSymbols.navigateBack, ShellFrameSymbols.navigateForward]) {
+                index += 1
+                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+                view.insertItem(item, at: index)
+            }
+            if let find = submenu(titled: "Edit", in: menu).flatMap({ submenu(titled: "Find", in: $0) }),
+                let search = navigation.last
+            {
+                find.addItem(.separator())
+                search.image = NSImage(systemSymbolName: "text.magnifyingglass", accessibilityDescription: nil)
+                find.addItem(search)
+            }
+        }
+        if let file = submenu(titled: "File", in: menu) {
+            let reveal = ShellFrameMenuItems.makeFrameActionItem(
+                title: String(localized: "Show in Finder", comment: "File menu item"),
+                id: ShellProjectCommandID.revealInFinder
+            )
+            reveal.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
+            file.addItem(.separator())
+            file.addItem(reveal)
+        }
+    }
+
+    static func submenu(titled title: String, in menu: NSMenu) -> NSMenu? {
+        menu.items.first { $0.submenu?.title == title }?.submenu
+    }
+}

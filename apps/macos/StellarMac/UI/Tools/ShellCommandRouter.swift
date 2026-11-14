@@ -27,15 +27,25 @@ final class ShellCommandRouter: NSResponder, NSMenuItemValidation {
         fatalError("ShellCommandRouter는 코드로만 생성합니다")
     }
 
-    /// 창 응답자 체인(content view → router → window)에 끼웁니다.
+    /// 창 응답자 체인에 끼웁니다: content view → (content view controller) → router → window.
     ///
-    /// content view를 바꾸면 다시 호출해야 합니다. 이미 끼워져 있으면 그대로 둡니다.
+    /// 창에 `contentViewController`가 있으면 그 controller와 창 사이에 끼웁니다. AppKit은 view controller가 소유한
+    /// view의 `nextResponder` 설정을 controller의 `nextResponder`로 넘기므로, content view에 직접 끼우면
+    /// view → controller → router → controller …로 체인이 순환합니다(AppKit 경고 "infinite loop responder chain").
+    /// content view나 content view controller를 바꾸면 다시 호출해야 합니다. 이미 끼워져 있으면 그대로 둡니다.
     @discardableResult
     func install(in window: NSWindow) -> Bool {
-        guard let contentView = window.contentView else { return false }
-        if contentView.nextResponder === self { return true }
-        nextResponder = contentView.nextResponder
-        contentView.nextResponder = self
+        let anchor: NSResponder
+        if let controller = window.contentViewController {
+            anchor = controller
+        } else if let contentView = window.contentView {
+            anchor = contentView
+        } else {
+            return false
+        }
+        if anchor.nextResponder === self { return true }
+        nextResponder = anchor.nextResponder
+        anchor.nextResponder = self
         self.window = window
         return true
     }

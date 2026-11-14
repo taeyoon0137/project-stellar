@@ -8,7 +8,8 @@ import AppKit
 /// `NSWindowRestoration`이 맡습니다(가이드 2.6).
 ///
 /// 코어 연결 시 이 controller가 창의 `ProjectWindowSession` handle을 소유합니다(가이드 2.5, XII.2.2).
-/// 지금은 `ShellFrameDataSource`만 받습니다.
+/// 지금은 `ShellFrameDataSource`만 받습니다. 프로젝트 창에서는 data source(`ShellProjectFrameDataSource`)가 코어
+/// 프로젝트 session handle을 소유하고, 이 controller가 data source를 소유합니다.
 final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation,
     NSToolbarItemValidation
 {
@@ -25,10 +26,18 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// 반영 횟수(검사용).
     private(set) var appliedSnapshotCount = 0
 
+    /// 창을 닫아도 되는지 묻는 hook(예: 활성 에이전트 세션 확인). nil이면 항상 닫습니다.
+    var shouldCloseHandler: (() -> Bool)?
+    /// 창이 닫힐 때 한 번 호출합니다(프로젝트 session 닫기, 시작 창 표시).
+    var willCloseHandler: (() -> Void)?
+    /// 창 복원 상태에 값을 더하는 hook(예: 프로젝트 경로). `NSWindowRestoration`이 다시 읽습니다(가이드 2.6).
+    var restorableStateEncoder: ((NSCoder) -> Void)?
+
     init(
         configuration: ShellWindowConfiguration = .standard,
         dataSource: any ShellFrameDataSource,
-        slots: ShellFrameSlots
+        slots: ShellFrameSlots,
+        toolbarItemProvider: ShellToolbarItemProviding? = nil
     ) {
         self.configuration = configuration
         self.dataSource = dataSource
@@ -53,7 +62,9 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         window.restorationClass = ShellWindowRestoration.self
 
         splitController = ShellSplitViewController(slots: slots, configuration: configuration)
-        toolbarController = ShellToolbarController(identifier: configuration.toolbarIdentifier, snapshot: initial)
+        toolbarController = ShellToolbarController(
+            identifier: configuration.toolbarIdentifier, snapshot: initial, itemProvider: toolbarItemProvider
+        )
         super.init(window: window)
 
         window.delegate = self
@@ -192,6 +203,21 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         toolbarController.searchToolbarItem?.beginSearchInteraction()
     }
 
+    /// 더 보기 메뉴 동작의 메뉴 막대 항목(`ShellFrameMenuItems.makeFrameActionItem`). sender의 명령 ID를 보냅니다.
+    @objc func performFrameAction(_ sender: Any?) {
+        guard let id = Self.frameActionID(from: sender), isFrameActionEnabled(id) else { return }
+        dataSource.send(.perform(id))
+    }
+
+    private static func frameActionID(from sender: Any?) -> ShellCommandID? {
+        guard let raw = (sender as? NSMenuItem)?.representedObject as? String else { return nil }
+        return ShellCommandID(raw)
+    }
+
+    private func isFrameActionEnabled(_ id: ShellCommandID) -> Bool {
+        snapshot.moreActions.contains { $0.id == id && $0.isEnabled }
+    }
+
     // first responder가 창 자체일 때도 pane 명령이 split controller에 닿도록 창 delegate에서
     // 전달합니다. first responder가 pane 안에 있으면 split controller가 먼저 받습니다.
 
@@ -205,6 +231,22 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     @objc func toggleAuxiliaryPanel(_ sender: Any?) {
         splitController.toggleAuxiliaryPanel(sender)
+    }
+
+    // MARK: - NSWindowDelegate
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        shouldCloseHandler?() ?? true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        let handler = willCloseHandler
+        willCloseHandler = nil
+        handler?()
+    }
+
+    func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
+        restorableStateEncoder?(state)
     }
 
     // MARK: - 활성화 검사(숨기지 않고 비활성화, 가이드 8.1)
@@ -225,6 +267,9 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             return canNavigateForward
         case #selector(focusProjectSearch(_:)):
             return toolbarController.isSearchUsable && toolbarController.searchToolbarItem != nil
+        case #selector(performFrameAction(_:)):
+            guard let id = Self.frameActionID(from: item) else { return false }
+            return isFrameActionEnabled(id)
         case #selector(toggleSidebar(_:)), #selector(toggleInspector(_:)), #selector(toggleAuxiliaryPanel(_:)):
             return splitController.validateUserInterfaceItem(item)
         default:
