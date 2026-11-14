@@ -137,9 +137,7 @@ pub unsafe extern "C" fn stellar_window_component_resize(
             id,
             hash,
             hash_len,
-            error,
-            capacity,
-            out_len,
+            (error, capacity, out_len),
             |p, id, hash| p.resize_component_root(id, hash, width, height),
         )
     }
@@ -167,9 +165,7 @@ pub unsafe extern "C" fn stellar_window_component_set_fill(
             id,
             hash,
             hash_len,
-            error,
-            capacity,
-            out_len,
+            (error, capacity, out_len),
             |p, id, hash| {
                 let color = fill
                     .decode()
@@ -186,9 +182,7 @@ unsafe fn edit_component_root(
     id: *const u8,
     hash: *const u8,
     hash_len: usize,
-    error: *mut u8,
-    capacity: usize,
-    out_len: *mut usize,
+    (error, capacity, out_len): (*mut u8, usize, *mut usize),
     edit: impl FnOnce(
         &stellar_runtime::app::ProjectSummary,
         stellar_core_types::ids::StableId,
