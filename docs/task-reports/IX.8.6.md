@@ -57,3 +57,25 @@
 - Windows를 재개하면 `tests/fixtures/snapshot_v1.golden`을 Windows CI에서도 같은 테스트로 다시 확인해야 합니다.
 - 플랫폼 접근성 API 변환(NSAccessibility·UIA·ARIA)은 Phase XII·XXII 작업입니다. 디자인 문서 snapshot을 preview
   inspector가 읽는 bridge(XII.8.3)는 문서 → `SourceTree` adapter(IX.8.3 보고서 참조)가 먼저 필요합니다.
+
+## 리뷰 후 수정(9A 리뷰, 2026-11-14)
+
+- 지적(A11Y-3, minor): `AccessibilitySnapshot::children(index)`가 뒤따르는 더 깊은 entry를 모두 훑어, adapter가 entry마다
+  한 번씩 부르면 깊은 chain에서 O(entry 수 × 깊이)였습니다.
+- 수정: 생성(`from_tree`)·디코딩(`from_bytes`) 때 entry마다 subtree 끝 index를 한 번 계산해 두고, `children`은
+  첫 자식(바로 다음 entry)부터 subtree 끝 index로 형제 subtree를 건너뜁니다. 비용은 자식 수에 비례합니다. 이 값은
+  entry 목록에서 정해지는 파생 값이라 snapshot bytes 형식과 golden(`tests/fixtures/snapshot_v1.golden`)은 바뀌지
+  않았습니다.
+- 완료 근거(snapshot bytes가 고정 golden과 같음)는 바뀌지 않으므로 상태 `[x]`를 유지합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-accessibility` | 35 passed, 0 failed |
+| `cargo clippy -p stellar-accessibility --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-accessibility -- --check` | 통과 |
+
+| 검사 | 결과 |
+|---|---|
+| 깊이 40,000 chain에서 entry마다 `children`을 부른 전체 시간 상한 1초(debug 참고용)(`children_lookup_stays_linear_on_deep_snapshot`) | 수정 전 실패(debug 12.9초), 수정 후 통과 |
+| fixture와 디코딩한 snapshot 모든 entry의 `children`이 부모 index로 찾은 목록과 같음(`snapshot_applies_reading_order_in_preorder`) | 통과 |
+| golden bytes 불변(`snapshot_bytes_match_cross_platform_golden`) | 통과 |

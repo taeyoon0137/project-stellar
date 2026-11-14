@@ -7,7 +7,8 @@
 //!   나머지를 트리 순서로 둡니다(tabindex 규칙과 같음). snapshot의 node는 이미 이 순서이므로 읽기 순서 field는
 //!   비웁니다.
 //! - **preorder 평탄화**: entry는 root부터 preorder이고 부모 entry index를 가집니다. adapter는 entry를 앞에서부터
-//!   한 번 읽어 플랫폼 tree를 만들 수 있습니다.
+//!   한 번 읽어 플랫폼 tree를 만들 수 있습니다. [`AccessibilitySnapshot::children`]은 생성·디코딩 때 한 번 계산한
+//!   subtree 끝 index로 형제 subtree를 건너뛰므로 자식 수에 비례합니다.
 //! - **결정론**: 정수는 고정 폭 little-endian, 문자열은 UTF-8, map은 tag 오름차순입니다. `usize`·pointer·hash
 //!   순서·부동소수점 연산을 쓰지 않으므로 같은 tree는 어느 플랫폼에서나 같은 bytes를 만듭니다(ADR-0006 4번:
 //!   정수 연산만으로 정해지는 결과).
@@ -82,6 +83,8 @@ impl std::error::Error for SnapshotError {}
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AccessibilitySnapshot {
     entries: Vec<SnapshotEntry>,
+    /// entry마다 subtree 끝(배타) index. entry 목록에서 정해지는 파생 값이라 bytes에는 기록하지 않습니다.
+    subtree_ends: Vec<usize>,
 }
 
 /// 형제를 읽기 순서로 정렬합니다: 명시 순서(값 오름차순, 같은 값은 트리 순서) 다음 나머지(트리 순서).
@@ -103,6 +106,27 @@ fn in_reading_order(tree: &AccessibilityTree, siblings: &[StableId]) -> Vec<Stab
 }
 
 impl AccessibilitySnapshot {
+    /// preorder entry 목록(깊이가 부모 + 1)에서 subtree 끝 index를 한 번 계산해 snapshot을 만듭니다.
+    fn from_entries(entries: Vec<SnapshotEntry>) -> AccessibilitySnapshot {
+        // preorder이므로 entry의 subtree는 깊이가 그 entry 이하인 다음 entry 앞에서 끝납니다.
+        let mut subtree_ends = vec![entries.len(); entries.len()];
+        let mut open: Vec<usize> = Vec::new();
+        for (index, entry) in entries.iter().enumerate() {
+            while let Some(&top) = open.last() {
+                if entries[top].depth < entry.depth {
+                    break;
+                }
+                subtree_ends[top] = index;
+                open.pop();
+            }
+            open.push(index);
+        }
+        AccessibilitySnapshot {
+            entries,
+            subtree_ends,
+        }
+    }
+
     /// 구조가 유효한 tree에서 snapshot을 만듭니다(source 검사는 호출자가 `validate`로 먼저 합니다).
     pub fn from_tree(tree: &AccessibilityTree) -> Result<AccessibilitySnapshot, SnapshotError> {
         let issues = tree.validate_structure();
@@ -136,7 +160,7 @@ impl AccessibilitySnapshot {
                     .map(|child| (child, Some(index), depth.saturating_add(1))),
             );
         }
-        Ok(AccessibilitySnapshot { entries })
+        Ok(AccessibilitySnapshot::from_entries(entries))
     }
 
     /// entry 목록(preorder, 읽기 순서 적용).
@@ -154,19 +178,17 @@ impl AccessibilitySnapshot {
         self.entries.is_empty()
     }
 
-    /// `index` entry의 자식 entry index(읽기 순서). preorder이므로 뒤따르는 더 깊은 entry만 훑습니다.
+    /// `index` entry의 자식 entry index(읽기 순서). 첫 자식은 바로 다음 entry이고, 미리 계산한 subtree 끝
+    /// index로 형제 subtree를 건너뛰므로 비용은 자식 수에 비례합니다(entry마다 한 번 불러도 전체가 entry 수에 비례).
     pub fn children(&self, index: usize) -> Vec<usize> {
-        let Some(entry) = self.entries.get(index) else {
+        let Some(&end) = self.subtree_ends.get(index) else {
             return Vec::new();
         };
         let mut children = Vec::new();
-        for (offset, candidate) in self.entries[index + 1..].iter().enumerate() {
-            if candidate.depth <= entry.depth {
-                break;
-            }
-            if candidate.parent.map(|p| p as usize) == Some(index) {
-                children.push(index + 1 + offset);
-            }
+        let mut child = index + 1;
+        while child < end {
+            children.push(child);
+            child = self.subtree_ends[child];
         }
         children
     }
@@ -230,7 +252,7 @@ impl AccessibilitySnapshot {
             });
         }
         reader.expect_end()?;
-        let snapshot = AccessibilitySnapshot { entries };
+        let snapshot = AccessibilitySnapshot::from_entries(entries);
         if snapshot.to_bytes() != bytes {
             return Err(CodecError::new("canonical 형식이 아님"));
         }
@@ -357,6 +379,57 @@ mod tests {
         assert_eq!(snapshot.children(3), vec![4, 6]);
         assert_eq!(snapshot.children(6), Vec::<usize>::new());
         assert_eq!(snapshot.children(99), Vec::<usize>::new());
+        // 모든 entry의 자식은 부모 index로 찾은 목록과 같습니다(디코딩한 snapshot도).
+        let decoded = AccessibilitySnapshot::from_bytes(&snapshot.to_bytes()).expect("decode");
+        for index in 0..snapshot.len() {
+            let expected: Vec<usize> = snapshot
+                .entries()
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.parent.map(|p| p as usize) == Some(index))
+                .map(|(child, _)| child)
+                .collect();
+            assert_eq!(snapshot.children(index), expected);
+            assert_eq!(decoded.children(index), expected);
+        }
+    }
+
+    #[test]
+    fn children_lookup_stays_linear_on_deep_snapshot() {
+        // adapter가 entry마다 children을 한 번씩 부르는 경우. 깊이 40,000 chain에서도 전체 비용이 entry 수에
+        // 비례해야 합니다. 시간 상한은 debug에서도 넉넉한 참고용입니다(뒤따르는 더 깊은 entry를 매번 훑는 구현은
+        // 넘습니다).
+        const DEPTH: u32 = 40_000;
+        let node_id = |n: u32| {
+            let mut bytes = [0u8; 16];
+            bytes[12..].copy_from_slice(&n.to_be_bytes());
+            StableId::from_bytes(bytes)
+        };
+        let mut tree = AccessibilityTree::new();
+        for n in 0..DEPTH {
+            tree.insert(AccessibilityNode::new(
+                node_id(n),
+                AccessibilityRole::Generic,
+            ))
+            .expect("node");
+            if n + 1 < DEPTH {
+                tree.set_children(node_id(n), vec![node_id(n + 1)]);
+            }
+        }
+        tree.push_root(node_id(0));
+        let snapshot = AccessibilitySnapshot::from_tree(&tree).expect("snapshot");
+        assert_eq!(snapshot.len(), DEPTH as usize);
+        let started = std::time::Instant::now();
+        for index in 0..snapshot.len() {
+            let expected: &[usize] = if index + 1 < snapshot.len() {
+                &[index + 1]
+            } else {
+                &[]
+            };
+            assert_eq!(snapshot.children(index), expected);
+        }
+        let elapsed = started.elapsed();
+        assert!(elapsed < std::time::Duration::from_secs(1), "{elapsed:?}");
     }
 
     #[test]
