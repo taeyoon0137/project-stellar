@@ -104,8 +104,8 @@ enum InspectorModifierKind: UInt16, CaseIterable {
 
 /// 문서 색 값. 앱 크롬 색이 아니라 사용자 디자인 콘텐츠의 색입니다(가이드 4.2).
 /// `space` 숫자 값은 core-types `ColorSpace` tag와 같습니다. 채널은 비연관 알파 RGBA입니다.
-struct InspectorColor: Equatable {
-    enum Space: UInt8 {
+struct InspectorColor: Equatable, Sendable {
+    enum Space: UInt8, Sendable {
         case srgb = 1
         case displayP3 = 2
     }

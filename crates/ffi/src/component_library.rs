@@ -1,4 +1,4 @@
-//! 현재 프로젝트 라이브러리의 읽기 전용 셸 payload.
+//! 컴포넌트 라이브러리 조회와 원본 편집을 위한 네이티브 셸 API.
 use crate::{ffi_guard, registry, StellarStatus};
 use stellar_runtime::app::WindowSessionHandle;
 
@@ -17,6 +17,31 @@ pub unsafe extern "C" fn stellar_window_component_library(
     buf: *mut u8,
     capacity: usize,
     out_len: *mut usize,
+) -> StellarStatus {
+    unsafe { read_component_library(handle, session, buf, capacity, out_len, false) }
+}
+
+/// 라이브러리의 각 행에 root 채우기(u8 색공간, 0이면 없음, 있으면 f32le RGBA)를 덧붙입니다.
+/// # Safety
+/// 출력 버퍼 조건은 stellar_window_component_library와 같습니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_component_library_with_fill(
+    handle: u64,
+    session: u64,
+    buf: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+) -> StellarStatus {
+    unsafe { read_component_library(handle, session, buf, capacity, out_len, true) }
+}
+
+unsafe fn read_component_library(
+    handle: u64,
+    session: u64,
+    buf: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+    with_fill: bool,
 ) -> StellarStatus {
     ffi_guard(move || {
         if out_len.is_null() {
@@ -58,6 +83,13 @@ pub unsafe extern "C" fn stellar_window_component_library(
                     };
                     text(&mut bytes, filename);
                     text(&mut bytes, &entry.hash.to_string());
+                    if with_fill {
+                        if let Some(color) = entry.background {
+                            bytes.extend_from_slice(&color.to_bytes());
+                        } else {
+                            bytes.push(0);
+                        }
+                    }
                 }
             }
             Err(message) => {
@@ -98,6 +130,65 @@ pub unsafe extern "C" fn stellar_window_component_resize(
     capacity: usize,
     out_len: *mut usize,
 ) -> StellarStatus {
+    unsafe {
+        edit_component_root(
+            handle,
+            session,
+            id,
+            hash,
+            hash_len,
+            (error, capacity, out_len),
+            |p, id, hash| p.resize_component_root(id, hash, width, height),
+        )
+    }
+}
+
+/// 프로젝트 root Frame의 저장 채우기를 기존 hash와 비교한 뒤 교체합니다.
+/// # Safety
+/// 입력·출력 버퍼 조건은 stellar_window_component_resize와 같습니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_component_set_fill(
+    handle: u64,
+    session: u64,
+    id: *const u8,
+    hash: *const u8,
+    hash_len: usize,
+    fill: crate::canvas::StellarCanvasColor,
+    error: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+) -> StellarStatus {
+    unsafe {
+        edit_component_root(
+            handle,
+            session,
+            id,
+            hash,
+            hash_len,
+            (error, capacity, out_len),
+            |p, id, hash| {
+                let color = fill
+                    .decode()
+                    .map_err(|_| "잘못된 색공간 또는 RGBA".to_owned())?;
+                p.set_component_root_background(id, hash, color)
+            },
+        )
+    }
+}
+
+unsafe fn edit_component_root(
+    handle: u64,
+    session: u64,
+    id: *const u8,
+    hash: *const u8,
+    hash_len: usize,
+    (error, capacity, out_len): (*mut u8, usize, *mut usize),
+    edit: impl FnOnce(
+        &stellar_runtime::app::ProjectSummary,
+        stellar_core_types::ids::StableId,
+        &str,
+    ) -> Result<(), String>,
+) -> StellarStatus {
     ffi_guard(move || {
         if out_len.is_null() || id.is_null() || hash.is_null() || error.is_null() {
             return StellarStatus::NullPointer;
@@ -132,7 +223,7 @@ pub unsafe extern "C" fn stellar_window_component_resize(
         else {
             return StellarStatus::InvalidHandle;
         };
-        if let Err(message) = project.resize_component_root(id, hash, width, height) {
+        if let Err(message) = edit(project, id, hash) {
             let mut len = message.len().min(stellar_runtime::app::EVENT_TEXT_MAX);
             while !message.is_char_boundary(len) {
                 len -= 1;

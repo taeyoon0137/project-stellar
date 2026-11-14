@@ -101,6 +101,58 @@ def main(app, cli):
             # Keep the document generation and original SHA while replacing only this definition, as a checkout would.
             old_path = clone / path.relative_to(source)
             original_source = old_path.read_bytes()
+            # Isolate a real one-file source diff from the earlier native Save Now.
+            clone_git = ["git", "-C", clone]
+            subprocess.run([*clone_git, "add", "-A"], env=clone_env, check=True)
+            subprocess.run([*clone_git, "commit", "-qm", "persist placed instances"], env=clone_env, check=True)
+            def edit_fill(action, value):
+                command("fill-open")
+                changed = command("fill-" + action + " " + value)
+                assert changed["selected"] == card["id"] and not changed["message"], changed
+                return changed["fill"]
+
+            assert edit_fill("cancel", "2 0.5 0.125 0.75 0.5") == [1, 1, 1, 1, 1]
+            assert old_path.read_bytes() == original_source
+            assert edit_fill("apply", "1 0 0 1 0.5") == [1, 0, 0, 1, 0.5]
+            assert old_path.read_bytes() == original_source.replace(b'rgba: "1 1 1 1"', b'rgba: "0 0 1 0.5"', 1)
+            changed_paths = subprocess.check_output([*clone_git, "status", "--porcelain", "--untracked-files=all"], env=clone_env, text=True)
+            assert changed_paths.splitlines() == [" M " + path.relative_to(source).as_posix()], changed_paths
+            def both_translucent_blue(samples):
+                r, g, b = samples[0]["rgb"]
+                return (samples[1]["rgb"] == [r, g, b] and b > r + 40 and abs(r - g) < 4
+                        and r > 10 and [p["id"] for p in samples] == [p["id"] for p in initial]
+                        and samples[2:4] == initial[2:4])
+            assert wait_canvas("native translucent fill at both positions", both_translucent_blue)["revision"] == revision
+
+            annotated = b"# preserve unchanged colors verbatim\n" + old_path.read_bytes()
+            old_path.write_bytes(annotated)
+            command("refresh")
+            assert edit_fill("apply", "1 0 0 1 0.5") == [1, 0, 0, 1, 0.5]
+            assert old_path.read_bytes() == annotated
+            extended = annotated.replace(b'rgba: "0 0 1 0.5"', b'rgba: "-0.125 1.25 1 0.5"')
+            old_path.write_bytes(extended)
+            command("refresh")
+            assert edit_fill("apply", "unchanged") == [1, -0.125, 1.25, 1, 0.5]
+            assert old_path.read_bytes() == extended
+            assert edit_fill("apply", "none") is None
+            assert b'background: none' in old_path.read_bytes()
+            assert edit_fill("apply", "2 0.5 0.125 0.75 0") == [2, 0.5, 0.125, 0.75, 0]
+            p3_source = old_path.read_bytes()
+            assert b'display-p3' in p3_source and b'rgba: "0.5 0.125 0.75 0"' in p3_source
+            command("reopen")
+            command("fit")
+            selected = command("select " + card["id"])
+            assert selected["fill"] == [2, 0.5, 0.125, 0.75, 0]
+            command("fill-open")
+            subprocess.run([*clone_git, "restore", "--", old_path], env=clone_env, check=True)
+            command("refresh")  # A focus-triggered refresh must retain the sheet's original hash.
+            rejected = command("fill-apply 1 1 0 0 1")
+            assert rejected["message"] and rejected["selected"] == card["id"], rejected
+            assert old_path.read_bytes() == original_source
+            assert command("refresh")["fill"] == [1, 1, 1, 1, 1]
+            before_stale = command("refresh")
+            revision = command("canvas")["revision"]
+            # Replacing only the definition again simulates a checkout between reading and placing.
             subprocess.run([cli, "component-source", "resize", old_path, card["source_hash"], "201", "77"], env=clone_env, check=True, stdout=subprocess.DEVNULL)
             named_sections = old_path.read_text().split('root_node:', 1)
             assert len(named_sections) == 2
@@ -109,7 +161,7 @@ def main(app, cli):
             old_path.write_text(head + 'root_node:' + root_tail.replace('rgba: "1 1 1 1"', 'rgba: "0 0 1 1"', 1))
             blue_source = old_path.read_bytes()
             stale = command("place 10 10")
-            assert stale["message"] != "Instance placed." and stale["undo"] == again["undo"], stale
+            assert stale["message"] != "Instance placed." and stale["undo"] == before_stale["undo"], stale
             assert command("refresh")["entries"][0]["width"] == 201
             assert wait_canvas("external edit updates both instances", pixels_changed)["revision"] == revision
             subprocess.run(["git", "-C", clone, "restore", "--source=HEAD", "--", old_path], env=clone_env, check=True)
@@ -142,6 +194,7 @@ def main(app, cli):
         for node in ids:
             detail = json.loads(subprocess.check_output([cli, "query", clone, "node", doc, node], env=clone_env))["result"]["node"]
             assert detail["modifier_count"] == 1 and card["id"] in json.dumps(detail["properties"])
+        print("component root fill ok: native Apply/Cancel, translucent pixels at both instances, single-file Git diff, no fill, transparent Display P3 reopen, byte-preserving no-op and stale open sheet")
         print("instance rendering ok: two independent picks and offsets, nested hits, size/fill propagate at same document revision, Git restore, missing/invalid repair, reopen and trust revocation")
         print("instance placement ok: native Place twice at different positions, Undo/Redo, Save Now, reopen, 2 independent kind-7 nodes sharing original definition, stale source rejected")
         print("selected-component ok: original and local Git clone opened in native Component Library and CLI, identical IDs/hash/tree, single changed source")
@@ -216,6 +269,9 @@ def main(app, cli):
                 untouched = {path: path.read_bytes() for path in folder.glob("*.stellar.yaml") if path != original_path}
                 changed = read_panel("resize 248.5 44")
                 assert not changed["message"]
+                read_panel("fill-open")
+                changed = read_panel("fill-apply 1 0.25 0.5 0.75 1")
+                assert changed["fill"] == [1, 0.25, 0.5, 0.75, 1] and not changed["message"]
                 assert all(path.read_bytes() == expected for path, expected in untouched.items())
                 paths = subprocess.check_output([*git, "diff", "--name-only", "-z"], env=env)
                 assert paths.decode().split("\0")[:-1] == [str(original_path.relative_to(project))]

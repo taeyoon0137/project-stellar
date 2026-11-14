@@ -21,7 +21,8 @@ def main(app, cli, fixture):
         root = "00000000-000a-7000-8000-00000000000a"
         child = "00000000-000b-7000-8000-00000000000b"
         layout = [(root, 200, 120, 2, 2, -200, -120), (child, 15, 15, 1, 1, 80, 50)]
-        commands = []
+        # Copying this frame must retry the C ABI using its reported byte count.
+        commands = [dict(kind="rename", node=child, name="Clipboard " + "x" * 5000)]
         for node, w, h, sx, sy, x, y in layout:
             commands.append(dict(kind="set-frame-size", node=node, width=w, height=h))
             commands.append(dict(kind="set-frame-transform", node=node, a=sx, b=0, c=0, d=sy, tx=x, ty=y))
