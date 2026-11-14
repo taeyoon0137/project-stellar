@@ -67,6 +67,9 @@ pub mod local_override;
 /// 읽기 전용 library snapshot과 resource key (XV.5.1).
 pub mod library_snapshot;
 
+/// 외부 library component·token 참조 (XV.5.2).
+pub mod external_ref;
+
 /// 다중 버전 경고 상세: 경로·예상 추가 용량·UI/telemetry 분리 (XV.8.3).
 pub mod duplicate_report;
 

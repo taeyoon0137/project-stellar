@@ -1,4 +1,4 @@
-# ADR-0023: 읽기 전용 library snapshot과 resource key
+# ADR-0023: 읽기 전용 library snapshot, resource key와 외부 참조 형식
 
 ## Status
 
@@ -45,6 +45,20 @@ XV.5.1은 library 프로젝트가 export한 ComponentDefinition·TokenSet index�
 6. **cache 읽기**: `load_cached_snapshot`은 cache entry를 공유 read lock(XV.3.6)을 잡은 채 읽고,
    snapshot을 만든 뒤 lock을 풉니다. Git·network를 쓰지 않습니다. 기대 content hash(lock 값)가 cache
    index 값과 다르면 export를 읽지 않고 실패하며, 다른 entry를 고르지 않습니다(XV.4.4와 같은 정책).
+7. **외부 참조(XV.5.2)**: 문서가 저장하는 참조는 `ExternalComponentRef`·`ExternalTokenRef`이고, 값은
+   참조하는 쪽 `stellar.yaml`의 의존성 logical name(아키텍처 30.3의 DependencyInstanceId), LibraryId,
+   resource StableId 세 개입니다. **commit은 저장하지 않습니다.** commit은 참조가 속한 scope의 lock이
+   정하므로 update 후에도 문서를 다시 쓰지 않고 같은 StableId로 새 버전에 연결됩니다(아키텍처 30.2).
+   canonical 텍스트는 다음과 같습니다.
+
+   ```text
+   component:<logical name>@<library id>/<component StableId>
+   token:<logical name>@<library id>/<token StableId>
+   ```
+
+   logical name은 `@`·`/`·공백을 쓸 수 없어 구분자가 모호하지 않습니다. UUID는 소문자 hyphen 형식만
+   받고, canonical이 아닌 입력과 종류가 다른 참조(component 자리의 token 참조)는 거부합니다. 최대 길이는
+   `component:` + 128 + 1 + 36 + 1 + 36 byte입니다.
 
 ## Alternatives
 
@@ -54,6 +68,10 @@ XV.5.1은 library 프로젝트가 export한 ComponentDefinition·TokenSet index�
   모델과 snapshot이 서로 다른 crate에 흩어집니다. 탈락했습니다.
 - **resource key에 선언 경로 포함:** diamond로 같은 node에 두 경로로 도달하면 같은 resource가 두
   key를 갖게 됩니다. 탈락했습니다.
+- **외부 참조에 commit 저장:** update마다 사용 프로젝트의 모든 문서 참조를 다시 써야 하고, lock과 문서가
+  서로 다른 commit을 가리킬 수 있습니다. 탈락했습니다.
+- **외부 참조에 선언 이름 대신 LibraryId만 저장:** 같은 library를 두 이름으로 다른 버전에 선언하면 참조가
+  어느 버전인지 정할 수 없습니다. 탈락했습니다.
 
 ## Consequences
 
@@ -65,8 +83,11 @@ XV.5.1은 library 프로젝트가 export한 ComponentDefinition·TokenSet index�
 
 ## Compatibility
 
-- 파일 포맷 변경은 없습니다. snapshot은 메모리 모델이고 저장하지 않습니다.
-- 공개 API: `stellar_dependencies::library_snapshot` 모듈이 추가됩니다. FFI 영향은 없습니다.
+- snapshot은 메모리 모델이고 저장하지 않습니다.
+- 외부 참조 canonical 텍스트(결정 7)는 문서에 저장될 값의 형식입니다. 문서 chunk에 넣는 통합은 후속
+  작업이며, 그 전까지 기존 문서 포맷은 바뀌지 않습니다. 형식이 바뀌면 새 ADR이 필요합니다.
+- 공개 API: `stellar_dependencies::library_snapshot`, `stellar_dependencies::external_ref` 모듈이
+  추가됩니다. FFI 영향은 없습니다.
 
 ## Performance
 
