@@ -572,6 +572,39 @@ fn sparse_index_and_selected_intent_to_add_are_diagnosed() {
 }
 
 #[test]
+fn configured_sparse_index_preserves_effective_config_and_index() {
+    let fx = fixture("publish-effective-sparse-config");
+    for path in ["selected", "keep/a", "hide/a"] {
+        fx.write(path, b"base").unwrap();
+    }
+    fx.commit_all("baseline").unwrap();
+    fx.git(["sparse-checkout", "init", "--cone", "--no-sparse-index"])
+        .unwrap();
+    fx.git(["sparse-checkout", "set", "keep"]).unwrap();
+    fx.git(["config", "--worktree", "index.sparse", "true"])
+        .unwrap();
+    assert_eq!(
+        fx.git(["config", "--get", "index.sparse"]).unwrap().stdout,
+        b"true\n"
+    );
+    let c = candidate(
+        &fx,
+        vec![upsert(&fx, "selected", FileMode::REGULAR, b"candidate")],
+    );
+    let before = index_bytes(&fx.work().join(".git/index")).unwrap();
+    assert!(matches!(
+        publish_with_receipt(&fx.gated(), fx.work(), &c, &GitCancelToken::new()),
+        Err(PublishError::Unsupported("sparse index"))
+    ));
+    assert_eq!(index_bytes(&fx.work().join(".git/index")).unwrap(), before);
+    assert_eq!(
+        fx.git(["config", "--get", "index.sparse"]).unwrap().stdout,
+        b"true\n"
+    );
+    assert!(!fx.work().join(".git/index.lock").exists());
+}
+
+#[test]
 fn change_between_snapshot_and_lock_is_rejected_including_flags_only() {
     use std::os::unix::fs::PermissionsExt;
     for (target, external) in [
