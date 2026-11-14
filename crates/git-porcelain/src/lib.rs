@@ -75,6 +75,9 @@ pub mod file_status;
 /// raw Git status와 semantic status 실패 분리(XIV.4.5).
 pub mod project_status;
 
+/// Stage candidate 임시 project tree writer(XIV.5.5).
+pub mod candidate_tree;
+
 /// Remote 목록·연결·push(XIV.9.*).
 pub mod remote;
 

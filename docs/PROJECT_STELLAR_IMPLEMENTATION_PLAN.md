@@ -1405,7 +1405,7 @@ tools/xtask/
 | XIV.5.2 | `[x]` | change dependency graph를 작성합니다. 새 object의 property, binding이 참조하는 token/property, component interface와 instance override 관계를 포함합니다. | dependency fixture 정확. | XIV.3.2, VI.2.5, VIII.6.2 |
 | XIV.5.3 | `[x]` | 선택 변경만으로 snapshot validator가 실패하면 필수 dependency를 `required_additions`로 반환하고 자동 stage하지 않습니다. | invalid partial fixture expected dependencies. | XIV.5.2, VI.10.1 |
 | XIV.5.4 | `[x]` | caller가 dependencies 포함을 승인한 뒤 Index snapshot에 selected+required changes를 적용해 CandidateIndexSnapshot을 만듭니다. | candidate가 document validator 통과. | XIV.5.3, XIV.3.9 |
-| XIV.5.5 | `[ ]` | CandidateIndexSnapshot을 deterministic project files/chunks로 serialize하되 WorkingTree를 수정하지 않는 temp directory writer를 구현합니다. | write 전후 working tree file hash 동일. | XIV.5.4, VI.10.2, V.5.1 |
+| XIV.5.5 | `[~]` | CandidateIndexSnapshot을 deterministic project files/chunks로 serialize하되 WorkingTree를 수정하지 않는 temp directory writer를 구현합니다. | write 전후 working tree file hash 동일. | XIV.5.4, VI.10.2, V.5.1 |
 | XIV.5.6 | `[ ]` | candidate와 기존 index tree의 file-level diff를 계산해 update할 path와 blob bytes만 산출합니다. | unchanged path update 0. | XIV.5.5, XIV.2.5 |
 
 ### XIV.6 Git index 기록
