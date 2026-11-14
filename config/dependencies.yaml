@@ -36,9 +36,9 @@ dependencies:
     version: "0.2.191"
     license: "MIT OR Apache-2.0"
     approval: approved
-    purpose: "macOS IPC 상대 인증용 시스템 호출 binding(peer 자격 증명·audit token 조회) (ADR-0020)"
+    purpose: "macOS IPC 상대 인증용 시스템 호출 binding(peer 자격 증명·audit token 조회) (ADR-0020). XIX.1.6·XIX.1.7은 최소 extern 선언으로 끝나 아직 쓰지 않습니다"
     replaceable: true
-    planned_for: "XIX.1.6, XIX.1.7"
+    planned_for: "XIX.1.8, XXIX.2.3"
   - name: security-framework
     ecosystem: cargo
     version: "3.7.0"

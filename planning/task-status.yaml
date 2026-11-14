@@ -3673,144 +3673,258 @@ tasks:
     report: "docs/task-reports/VIII.4.6.md"
   - id: "VIII.5.1"
     title: "`TokenSet`, `TokenDefinition`, `TokenName`, `TokenType`, default expression을 정의합니다. 참조는 StableId를 사용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.5.1.md"
+    commit: "445fa41c56c9b5d6c6574578af8df725ac56dccb"
+    report: "docs/task-reports/VIII.5.1.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.5.2"
     title: "프로젝트·라이브러리·문서 scope token registry를 구현하고 동일 이름 허용 여부와 ID 우선 resolution을 명시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.5.2.md"
+    commit: "0dcb40a25fbb4d5241c867e92584e991fdb6dc2c"
+    report: "docs/task-reports/VIII.5.2.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.5.3"
     title: "token dependency graph를 구축하고 cycle을 저장 전 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.5.1"
       - "VIII.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.5.3.md"
+    commit: "f9216b58d18cd9f2ef91c898fdd443e750e474a7"
+    report: "docs/task-reports/VIII.5.3.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.5.4"
     title: "token value evaluation cache를 구현하고 dependency revision이 바뀐 token만 invalidate합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.4.6"
       - "VIII.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.5.4.md"
+    commit: "6beaf6e8a2c6b4ae8799567dff13a0075321c303"
+    report: "docs/task-reports/VIII.5.4.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.5.5"
     title: "token 생성·삭제·rename·expression 변경 command를 구현합니다. inbound 참조가 있는 삭제는 orphan plan 없이는 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.5.5.md"
+    commit: "aaeae703761637c4bf2ba326a459cd60f7181007"
+    report: "docs/task-reports/VIII.5.5.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.6.1"
     title: "`ValueBinding`에 target PropertyPath, source expression root, expected type, scope owner를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.2.2"
       - "VIII.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.6.1.md"
+    commit: "6fc6aa36db7a3a21bc7bccc794d097d27b36cbd0"
+    report: "docs/task-reports/VIII.6.1.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.6.2"
     title: "binding dependency graph가 token, property, component property, environment input을 공통 node로 표현하게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.6.1"
       - "VIII.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.6.2.md"
+    commit: "6181b50d358eec0a5d0e251dc9f036439c573ad1"
+    report: "docs/task-reports/VIII.6.2.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.6.3"
     title: "binding cycle detector를 구현하고 Property A↔B, token↔property cycle을 모두 탐지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.6.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.6.3.md"
+    commit: "24a43fdbbb71f63d841ccc9ec25023b3ecf35aca"
+    report: "docs/task-reports/VIII.6.3.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.6.4"
     title: "source 변경 시 영향받는 binding만 topological order로 재평가하는 scheduler를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.6.2"
       - "VIII.4.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.6.4.md"
+    commit: "58519cc57d7580453b31a2ecdaca4ad531522f63"
+    report: "docs/task-reports/VIII.6.4.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.6.5"
     title: "evaluated value provenance chain에 token, expression node, component property, environment branch를 기록합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.6.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.6.5.md"
+    commit: "1e88b8cb0ec81ad06bcd7af60392f349ccffe314"
+    report: "docs/task-reports/VIII.6.5.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.6.6"
     title: "binding 생성·교체·삭제 command를 구현합니다. type mismatch는 command validate에서 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.6.6.md"
+    commit: "65d021459a70db68a072db0cfb5db5897a47a9a4"
+    report: "docs/task-reports/VIII.6.6.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.7.1"
     title: "environment key registry에 platform, OS/API version, color scheme, contrast, reduced motion, viewport, locale, density, interaction state를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.7.1.md"
+    commit: "a61f9aadef7c561ec0c8e5e39bf72f97a5a4b449"
+    report: "docs/task-reports/VIII.7.1.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.7.2"
     title: "`EvaluationEnvironment`를 immutable map으로 정의하고 missing key의 기본값 정책을 key registry에 고정합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.7.2.md"
+    commit: "6f170d3d5a5b9b7e903427bd30c7a803c8bf072b"
+    report: "docs/task-reports/VIII.7.2.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.7.3"
     title: "environment 변경 시 해당 key를 참조한 expression만 invalidate하는 reverse index를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.6.4"
       - "VIII.7.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.7.3.md"
+    commit: "6f992f0414f851a126cead8352657b0ce8491686"
+    report: "docs/task-reports/VIII.7.3.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.8.1"
     title: "target/source ref가 사라진 binding을 삭제하지 않고 `OrphanedBinding`으로 변환하는 validator를 구현합니다. 원래 ID·타입·path·원인을 보존합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.6.1"
       - "III.2.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.8.1.md"
+    commit: "9fd6888e17fda60e525091f4ef79a15afd31d0b5"
+    report: "docs/task-reports/VIII.8.1.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.8.2"
     title: "orphaned binding 평가 결과는 대상 Component Property의 선언된 기본값을 사용하게 합니다. 마지막 계산값 저장은 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.8.2.md"
+    commit: "b015ae7fa94dc0ce6a02538314595758145f37f5"
+    report: "docs/task-reports/VIII.8.2.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.8.3"
     title: "기본값이 없거나 잘못된 파일은 타입별 안전값과 corruption diagnostic을 사용하되 프로젝트 파일을 자동 수정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.8.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.8.3.md"
+    commit: "7728f95c0f0c9e3fa43af2b68fdb2b0949981cb8"
+    report: "docs/task-reports/VIII.8.3.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.8.4"
     title: "orphaned binding 재연결과 명시 삭제 command를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.8.4.md"
+    commit: "2ec6b07da589fb43caf61b845336c9d357fe4e59"
+    report: "docs/task-reports/VIII.8.4.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.9.1"
     title: "100만 token/binding edge synthetic graph 생성기를 추가합니다. 활성 document 한도 fixture는 20만 node 기준으로 별도 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.6.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/VIII.9.1.md"
+    commit: "8f70a02fb03006d14869d5747967c6122b8e94fa"
+    report: "docs/task-reports/VIII.9.1.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "VIII.9.2"
     title: "단일 token 변경의 evaluation count와 duration을 측정하는 benchmark를 추가합니다."
     status: not_started
@@ -3839,12 +3953,18 @@ tasks:
     verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.1.2"
     title: "`ComponentProperty`에 StableId, 이름, type, 필수 default expression, 공개 여부를 정의합니다. default 없는 property는 생성 불가입니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.1.1"
       - "VIII.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.1.2.md"
+    commit: "800535eb9d066a62d394d47afc91802371c0ba2d"
+    report: "docs/task-reports/IX.1.2.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.1.3"
     title: "Property 생성·rename·default 변경·삭제 command를 구현합니다. inbound drilling이 있는 삭제는 orphan 정보를 생성합니다."
     status: not_started
@@ -3890,19 +4010,31 @@ tasks:
     verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.2.3"
     title: "공개 Property만 instance에서 override 가능하게 validator를 구현합니다. private·nested property 직접 접근은 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.1.2"
       - "IX.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.2.3.md"
+    commit: "6a9cc9447c906d82f83bbb3254c82f0b1a325ea2"
+    report: "docs/task-reports/IX.2.3.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.2.4"
     title: "override 생성·변경·reset command를 구현합니다. reset은 map entry를 삭제하고 default로 돌아갑니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.2.4.md"
+    commit: "3d9112c408ad8470136737b4587f080ff3176c4c"
+    report: "docs/task-reports/IX.2.4.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.2.5"
     title: "자유 구조 편집은 금지하고 definition이 허용한 Slot만 변경 가능하게 virtual subtree mutation validator를 구현합니다."
     status: verified
@@ -3980,11 +4112,17 @@ tasks:
       - DEV-MAC
   - id: "IX.4.2"
     title: "nested instance property를 상위 instance에서 직접 수정하는 API를 제공하지 않고 validator에서도 거부합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.2.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.4.2.md"
+    commit: "8975c46edad91c91b4281a6a14e0a1cb6417eb30"
+    report: "docs/task-reports/IX.4.2.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.4.3"
     title: "사용자가 내부 property를 상위로 노출할 때 필요한 중간 property와 binding chain을 계산하는 `DrillingPlan`을 구현합니다. 아직 적용하지 않습니다."
     status: not_started
@@ -4017,122 +4155,218 @@ tasks:
       - DEV-MAC
   - id: "IX.5.1"
     title: "component local state variable에 StableId, name, type, initial expression을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.2.5"
       - "IX.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.5.1.md"
+    commit: "aa95e4b689e248efd3a4a88876a52627b43cf170"
+    report: "docs/task-reports/IX.5.1.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.5.2"
     title: "EventKind에 Activate, Input, Focus, Blur, Key, SelectionChange, Open, Close를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.5.2.md"
+    commit: "bc3eeb0690770b9de14f45b3b8b088ca1b8e1d14"
+    report: "docs/task-reports/IX.5.2.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.5.3"
     title: "Transition에 source event, condition expression, ordered actions를 정의합니다. action은 state set과 semantic action emit으로 제한합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.5.2"
       - "VIII.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.5.3.md"
+    commit: "d45320165d36c6d7f715191e20a0dbcea32de769"
+    report: "docs/task-reports/IX.5.3.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.5.4"
     title: "runtime state store를 preview session별로 유지하고 project 저장에는 definition·initial state만 포함합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.5.4.md"
+    commit: "7c21f9457aeacd6bc2384bcf0493a8c668c24a3b"
+    report: "docs/task-reports/IX.5.4.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.5.5"
     title: "이벤트 dispatch와 condition 평가, action commit을 원자적으로 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.5.3"
       - "IX.5.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.5.5.md"
+    commit: "f69caba48be9c07fec80307642e00728f3598a9a"
+    report: "docs/task-reports/IX.5.5.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.5.6"
     title: "nested component state는 직접 수정할 수 없고 공개 Property/Event chain을 통해서만 연결되게 validator를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.4.2"
       - "IX.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.5.6.md"
+    commit: "1295273c31209f53c526830a2ebd30531b4b95ba"
+    report: "docs/task-reports/IX.5.6.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.5.7"
     title: "state machine의 unreachable transition, duplicate condition, missing target를 진단합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.5.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.5.7.md"
+    commit: "680724cd82d4b6544f940837fcb98929d25daa32"
+    report: "docs/task-reports/IX.5.7.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.6.1"
     title: "Control을 node kind가 아닌 Frame에 부착하는 `SemanticContract`와 `InteractionContract`로 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.3.1"
       - "IX.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.6.1.md"
+    commit: "5c9e167ffe2ef4e6ae1a058d20150c4cdd8c27a3"
+    report: "docs/task-reports/IX.6.1.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.6.2"
     title: "Button contract에 activate, focused, disabled, pressed 의미를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.6.2.md"
+    commit: "7ffee7244d951b98a96709422b60d16df27f528c"
+    report: "docs/task-reports/IX.6.2.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.6.3"
     title: "TextInput contract에 editable value, placeholder, focus, IME input 의미를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.6.1"
       - "VI.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.6.3.md"
+    commit: "f39e3f1e0d95007d25959139fd1f3731164c544f"
+    report: "docs/task-reports/IX.6.3.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.6.4"
     title: "Modal contract에 overlay, focus scope, dismiss event 의미를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.6.4.md"
+    commit: "8e90297de8797a3d0ac4999c438f2f65980f1359"
+    report: "docs/task-reports/IX.6.4.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "IX.6.5"
     title: "List contract에 collection, item identity, selection mode, navigation 의미를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.6.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.6.5.md"
+    commit: "a2d88a97b1005ab187824cabaf6a4df163636e38"
+    report: "docs/task-reports/IX.6.5.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.6.6"
     title: "SingleSelectionGroup contract를 추가해 List+Button 합성 Radio UI를 표현합니다. 별도 RadioButton node는 만들지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.6.2"
       - "IX.6.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.6.6.md"
+    commit: "a5f7b7a8ad9944b5560181ba995cb3f87c4cb92d"
+    report: "docs/task-reports/IX.6.6.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.6.7"
     title: "contract별 유효성 registry와 target export hint를 정의합니다. 코드 생성은 하지 않습니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.6.7.md"
+    commit: "09086c98280cd2d3dfd97529dcdce6301a1b3d04"
+    report: "docs/task-reports/IX.6.7.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.7.1"
     title: "ViewVariable에 StableId, type, default value, allowed enum values를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.1.2"
       - "VIII.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.7.1.md"
+    commit: "229b3df1dd903352e690e67dd0a8a324fcb3b0e3"
+    report: "docs/task-reports/IX.7.1.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.7.2"
     title: "VariantCondition은 변수별 `Any` 또는 `Equals(value)`만 저장합니다. `Any`와 실제 nullable 값은 별도 tag로 구분합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.7.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.7.2.md"
+    commit: "d314e4d4dce095bf2ab5b8917279c9fafc1e8c79"
+    report: "docs/task-reports/IX.7.2.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.7.3"
     title: "VariantOverrideSet에 sparse property patches, node add/delete/move/replace, slot changes를 정의합니다."
     status: verified
@@ -4146,38 +4380,68 @@ tasks:
     verified_at: "2026-11-14T01:09:48+09:00"
   - id: "IX.7.4"
     title: "현재 변수 assignment와 일치하는 모든 variant를 찾고 specificity 순으로 정렬하는 resolver를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.7.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.7.4.md"
+    commit: "32476504a743c67c12aa28d1b7cb88a6079f65ac"
+    report: "docs/task-reports/IX.7.4.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.7.5"
     title: "동일 specificity variant가 같은 PropertyPath를 다르게 override하면 conflict diagnostic을 생성하고 임의 순서로 적용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.7.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.7.5.md"
+    commit: "5cd77b8d662ee43f9c04da18f14b9e338cd22280"
+    report: "docs/task-reports/IX.7.5.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.7.6"
     title: "구체 variant가 일반 variant 값을 덮어쓰고 존재하지 않는 조합은 추가 override 없이 base+일반 variant만 적용하게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.7.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.7.6.md"
+    commit: "0446e7bf4ec7c006625e014e7d3c6f833c7bbdde"
+    report: "docs/task-reports/IX.7.6.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.7.7"
     title: "variant structure override도 ComponentInstance 내부 캡슐화를 침범하지 못하게 validator를 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.7.3"
       - "IX.2.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.7.7.md"
+    commit: "3dacb9366cd53f618c7e34e31bb07f328024de49"
+    report: "docs/task-reports/IX.7.7.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.7.8"
     title: "View variable/variant 생성·변경·삭제 command를 구현합니다. 삭제 시 참조 variant는 orphan diagnostic으로 남깁니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/IX.7.8.md"
+    commit: "5ca097e292beb524397256075c5801684aa2bad1"
+    report: "docs/task-reports/IX.7.8.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "IX.7.9"
     title: "캔버스에 같은 View를 여러 variable assignment로 배치하는 `ViewPresentation` 런타임 타입을 정의합니다. definition을 복제하지 않습니다."
     status: not_started
@@ -4573,12 +4837,18 @@ tasks:
     verified_at: "2026-11-14T02:14:07+09:00"
   - id: "X.4.5"
     title: "content-based track sizing을 텍스트·이미지 intrinsic size hook으로 연결합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.4.2"
       - "X.7.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.4.5.md"
+    commit: "bf3eb09dbfe89b03d192c19395b10a0b8363cadd"
+    report: "docs/task-reports/X.4.5.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "X.5.1"
     title: "Overlay layout에서 모든 child가 같은 containing block을 사용하고 z-order는 OrderKey를 따르게 합니다."
     status: verified
@@ -4686,18 +4956,30 @@ tasks:
     verified_at: "2026-11-14T02:14:08+09:00"
   - id: "X.6.4"
     title: "content intrinsic measurement trait를 Shape, Text, Image, ComponentInstance별로 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "IX.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.6.4.md"
+    commit: "8c8cbf13ee67474f3d388407342cded288f6d8ea"
+    report: "docs/task-reports/X.6.4.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "X.6.5"
     title: "HugContent cycle을 탐지하고 무한 상호 의존을 diagnostic으로 반환합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.6.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.6.5.md"
+    commit: "33d26f6dd37b38bc972d5df78c6d91da5d3448db"
+    report: "docs/task-reports/X.6.5.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "X.7.1"
     title: "command invalidation을 layout dirty set으로 변환합니다. PaintOnly는 layout queue에 넣지 않습니다."
     status: not_started
@@ -4708,12 +4990,18 @@ tasks:
       - DEV-MAC
   - id: "X.7.2"
     title: "bottom-up intrinsic measurement와 top-down placement를 분리하고 cache key를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.6.4"
       - "X.1.4"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.7.2.md"
+    commit: "c7573e2fc5351d598098410d930aa06dd8ca0fd8"
+    report: "docs/task-reports/X.7.2.md"
+    verified_at: "2026-11-14T09:54:37+09:00"
   - id: "X.7.3"
     title: "dirty node의 ancestor propagation을 layout mode별로 최소화합니다."
     status: not_started
@@ -4805,77 +5093,131 @@ tasks:
     verified_at: "2026-11-14T02:07:37+09:00"
   - id: "X.9.1"
     title: "승인된 HarfBuzz binding을 dependencies policy에 등록하고 `text` crate에 안전 wrapper를 구현합니다. raw pointer는 wrapper 밖에 노출하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "I.3.2"
       - "X.8.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.9.1.md"
+    commit: "c61485ff1b7a0adac676a100ac1558eb5665e368"
+    report: "docs/task-reports/X.9.1.md"
+    verified_at: "2026-11-14T09:54:34+09:00"
   - id: "X.9.2"
     title: "script/language/direction itemization을 구현합니다. 입력 문자열과 style run을 shaping runs로 분할합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.9.1"
       - "VI.7.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.9.2.md"
+    commit: "5ddb3d708e08c32e12aedcd7accfdb9521d840b6"
+    report: "docs/task-reports/X.9.2.md"
+    verified_at: "2026-11-14T09:54:34+09:00"
   - id: "X.9.3"
     title: "Unicode BiDi 알고리즘 구현 또는 승인 dependency wrapper를 추가합니다. visual order와 logical cluster mapping을 모두 유지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.9.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.9.3.md"
+    commit: "f4a55f492d97966d9005b8b3f65c7f7b0deb74cf"
+    report: "docs/task-reports/X.9.3.md"
+    verified_at: "2026-11-14T09:54:34+09:00"
   - id: "X.9.4"
     title: "line break opportunity 계산을 공통 엔진으로 구현하고 locale 입력을 명시합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.9.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.9.4.md"
+    commit: "6894ff6d9a8d958b832a494cb0d24333abed5a9e"
+    report: "docs/task-reports/X.9.4.md"
+    verified_at: "2026-11-14T09:54:34+09:00"
   - id: "X.9.5"
     title: "font fallback을 grapheme/script run 단위로 적용하고 missing glyph cluster 정보를 보존합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.8.3"
       - "X.9.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.9.5.md"
+    commit: "a9a6fc0bd29c926da16322a6fc40a29b35d9f8c9"
+    report: "docs/task-reports/X.9.5.md"
+    verified_at: "2026-11-14T09:54:34+09:00"
   - id: "X.9.6"
     title: "OpenType feature와 variation axes를 shaping input에 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.9.1"
       - "VI.7.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.9.6.md"
+    commit: "1bae6f72e6f72d7c7b515ae8b470f014345dc8b6"
+    report: "docs/task-reports/X.9.6.md"
+    verified_at: "2026-11-14T09:54:34+09:00"
   - id: "X.10.1"
     title: "shaped glyph runs를 width constraint에 맞춰 line으로 나누고 cluster를 쪼개지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.9.4"
       - "X.9.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.10.1.md"
+    commit: "a699a390d1aa448a332c12ea7c828b5d42963bd5"
+    report: "docs/task-reports/X.10.1.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "X.10.2"
     title: "line height, paragraph spacing, alignment을 적용합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.10.1"
       - "VI.7.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.10.2.md"
+    commit: "fb3b36ff548a74761fe6a25a7f2c4af458f9745f"
+    report: "docs/task-reports/X.10.2.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "X.10.3"
     title: "caret positions, selection rects, hit-test cluster mapping을 생성합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.10.1"
       - "X.9.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.10.3.md"
+    commit: "9b575e26b1a0a0ec160e01fd29bd7928e4cd85b1"
+    report: "docs/task-reports/X.10.3.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "X.10.4"
     title: "Text intrinsic width/height와 baseline을 layout intrinsic hook에 연결합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "X.10.2"
       - "X.6.4"
@@ -4883,27 +5225,40 @@ tasks:
       - DEV-MAC
   - id: "X.10.5"
     title: "shaping·line layout cache key에 text hash, style hash, font face hash, width, locale, target profile을 포함합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "X.10.1"
       - "X.8.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.10.5.md"
+    commit: "8ac14322545aac999a20656e15f144f2d0187a0a"
+    report: "docs/task-reports/X.10.5.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "X.10.6"
     title: "텍스트 일부 편집 시 영향 paragraph와 이후 line만 재배치하는 incremental API를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.7.5"
       - "X.10.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/X.10.6.md"
+    commit: "a5d5657938d6fca93cb9e552db6ef86396929131"
+    report: "docs/task-reports/X.10.6.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "X.10.7"
     title: "macOS·Windows 동일 font files로 glyph IDs, advances, line breaks golden 비교를 CI에 추가합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "X.10.6"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/X.10.7.md"
   - id: "X.11.1"
     title: "Free, Stack, Grid, Overlay, Constraint 각각 최소 50개 fixture를 생성하는 schema와 runner를 작성합니다."
     status: verified
@@ -5133,87 +5488,153 @@ tasks:
       - DEV-MAC
   - id: "XI.4.1"
     title: "`renderer-core`에 backend 독립 `RenderGraph`, pass, attachment, resource lifetime 타입을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.4.1.md"
+    commit: "efa8fc215533eb762244b538424af48d3b5cf0b6"
+    report: "docs/task-reports/XI.4.1.md"
+    verified_at: "2026-11-14T09:54:17+09:00"
   - id: "XI.4.2"
     title: "scene primitive를 opaque/transparent/effect pass로 분류하는 compiler를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.2.2"
       - "XI.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.4.2.md"
+    commit: "4d3a3170293acde04b11ba39fbd28207e2b5621f"
+    report: "docs/task-reports/XI.4.2.md"
+    verified_at: "2026-11-14T09:54:18+09:00"
   - id: "XI.4.3"
     title: "clip stack을 scissor, stencil, offscreen mask 중 하나로 계획하는 backend-neutral decision table을 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.4.3.md"
+    commit: "08e44492e5bfbc85a3fc92251e74ebb74b76a5f5"
+    report: "docs/task-reports/XI.4.3.md"
+    verified_at: "2026-11-14T09:54:18+09:00"
   - id: "XI.4.4"
     title: "blend/opacity/filter dependency를 분석해 필요한 최소 offscreen subtree 경계를 계산합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.9.2"
       - "XI.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.4.4.md"
+    commit: "4eea4271f9570f522cd6731d63d493d31f45e64a"
+    report: "docs/task-reports/XI.4.4.md"
+    verified_at: "2026-11-14T09:54:18+09:00"
   - id: "XI.4.5"
     title: "draw item batching key를 pipeline, texture/atlas, clip state, blend state로 정의합니다. z-order를 바꾸는 batch는 금지합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.4.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.4.5.md"
+    commit: "923b97a7b7e92217aae7e849abd566a45e7a8415"
+    report: "docs/task-reports/XI.4.5.md"
+    verified_at: "2026-11-14T09:54:18+09:00"
   - id: "XI.4.6"
     title: "RenderGraph compile 결과의 CPU 시간, pass count, draw count, batch count를 trace합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.4.5"
       - "II.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.4.6.md"
+    commit: "9c66473e555b3c2ec6b8d63cdccba173256c285f"
+    report: "docs/task-reports/XI.4.6.md"
+    verified_at: "2026-11-14T09:54:18+09:00"
   - id: "XI.5.1"
     title: "`RendererBackend` trait에 device init, resize, resource create/update/destroy, encode, submit, present 예약, timestamp query를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.4.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.5.1.md"
+    commit: "b1ad6c185edf7e7703e8f6d4cba2678d6c2c654d"
+    report: "docs/task-reports/XI.5.1.md"
+    verified_at: "2026-11-14T09:54:17+09:00"
   - id: "XI.5.2"
     title: "GPU handle을 generational ID로 감싸고 backend native pointer를 공통 scene에 노출하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.1.3"
       - "XI.5.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.5.2.md"
+    commit: "ff340c56308f5518c6f32a9db8a43f17270002a1"
+    report: "docs/task-reports/XI.5.2.md"
+    verified_at: "2026-11-14T09:54:17+09:00"
   - id: "XI.5.3"
     title: "resource upload queue와 frame-local allocator interface를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.5.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.5.3.md"
+    commit: "45c5413b593d9b241d0918d07da71a8121420045"
+    report: "docs/task-reports/XI.5.3.md"
+    verified_at: "2026-11-14T09:54:17+09:00"
   - id: "XI.5.4"
     title: "device lost/out-of-memory/error 분류와 복구 가능 여부를 구조화합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.5.1"
       - "II.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.5.4.md"
+    commit: "282e233fd67af9e42221652aa558ed7565c2b840"
+    report: "docs/task-reports/XI.5.4.md"
+    verified_at: "2026-11-14T09:54:18+09:00"
   - id: "XI.5.5"
     title: "present queue depth를 최대 1로 유지하는 frame scheduler를 구현합니다. 새 snapshot이 오면 아직 제출 전 오래된 frame을 drop합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XI.5.1"
       - "XI.1.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XI.5.5.md"
+    commit: "5fa0b8c60ab92b72cc14f75562807f590b17d6ba"
+    report: "docs/task-reports/XI.5.5.md"
+    verified_at: "2026-11-14T09:54:18+09:00"
   - id: "XI.6.1"
     title: "Shape/Path fill tessellation interface와 cache key를 정의합니다."
     status: verified
@@ -6614,76 +7035,136 @@ tasks:
       - DEV-MAC
   - id: "XIV.3.1"
     title: "`SemanticSnapshot`을 프로젝트 metadata, documents, nodes, properties, tokens, components, assets refs의 StableId index로 정의합니다. runtime cache는 제외합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VI.10.4"
       - "XIV.2.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.1.md"
+    commit: "7e562e7af2a9062fc4c0952d565c9b6ecb37afac"
+    report: "docs/task-reports/XIV.3.1.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.3.2"
     title: "`SemanticChange` kind에 AddObject, RemoveObject, MoveObject, ReorderObject, SetProperty, Add/Remove/ChangeToken, ComponentInterfaceChange, AssetRefChange를 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.2.md"
+    commit: "cc15edfd3d5031d0d678b47c05dfa007cd32c1ce"
+    report: "docs/task-reports/XIV.3.2.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.3.3"
     title: "object match는 StableId로만 수행하고 이름·geometry 유사도로 rename 추정하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.3.md"
+    commit: "9c6435f7d9ff6eba1d943b33a94ccc697a0ff013"
+    report: "docs/task-reports/XIV.3.3.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.3.4"
     title: "property diff는 `StableId + PropertyPath`와 canonical TypedValue를 비교합니다. float epsilon diff를 사용하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.2.2"
       - "XIV.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.4.md"
+    commit: "9d2f34dee672b82db1aad1939bbac8920a06ab37"
+    report: "docs/task-reports/XIV.3.4.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.3.5"
     title: "move/reorder는 parent ID와 OrderKey의 의미 순서를 비교해 분류합니다. 저장 chunk 이동은 semantic change로 표시하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.5.2"
       - "V.6.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.5.md"
+    commit: "68d95675590ced462f5d83458bc7d16fb856172b"
+    report: "docs/task-reports/XIV.3.5.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.3.6"
     title: "component definition과 instance override diff를 별도 provenance와 함께 생성합니다."
-    status: not_started
+    status: verified
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.6.md"
+    commit: "cdc9eed013c8ed0e7e73752c8237bb90e0b072eb"
+    report: "docs/task-reports/XIV.3.6.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.3.7"
     title: "variant·binding·expression AST는 StableId node 단위로 diff하고 전체 blob 변경으로 축약하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "VIII.2.1"
       - "IX.7.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.7.md"
+    commit: "5ca7b84465ca87ddd082c7a8ac42328fc57e8ec9"
+    report: "docs/task-reports/XIV.3.7.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.3.8"
     title: "semantic changes를 deterministic sort key로 정렬합니다: document, object path, property path, change kind."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.8.md"
+    commit: "4b02c654e5ed0b8144b27b199da9ee2cf32bb7b1"
+    report: "docs/task-reports/XIV.3.8.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.3.9"
     title: "diff apply 함수를 구현해 base snapshot에 change list를 적용하고 target snapshot을 재현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.8"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.9.md"
+    commit: "48c9b9f7cc2fc8cef24461b215629e3790c3e996"
+    report: "docs/task-reports/XIV.3.9.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.3.10"
     title: "diff inverse를 구현합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.9"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.3.10.md"
+    commit: "90a492a16cfe12304afebe63ac4c9056fbdaf9f6"
+    report: "docs/task-reports/XIV.3.10.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.4.1"
     title: "HEAD→Index diff를 Staged, Index→WorkingTree diff를 Unstaged로 계산합니다."
     status: not_started
@@ -6986,48 +7467,84 @@ tasks:
     verified_at: "2026-11-14T02:14:04+09:00"
   - id: "XIV.10.1"
     title: "`MergeInput { base, ours, theirs }`, `MergeResult`, `SemanticConflict` 모델을 정의합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.10.1.md"
+    commit: "38433d3d1c41d48adf2de60f759811082cc82ce8"
+    report: "docs/task-reports/XIV.10.1.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.10.2"
     title: "서로 다른 StableId 변경과 같은 object의 서로 다른 PropertyPath 변경을 자동 병합합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.10.1"
       - "XIV.3.9"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.10.2.md"
+    commit: "2314608ee160f07875dc8d9ba0bf12523942953f"
+    report: "docs/task-reports/XIV.10.2.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.10.3"
     title: "같은 PropertyPath를 양쪽이 같은 값으로 바꾼 경우 conflict 없이 한 변경으로 합칩니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.10.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.10.3.md"
+    commit: "8b5c71740df742c9d892cfd799f7c1f00d03510f"
+    report: "docs/task-reports/XIV.10.3.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.10.4"
     title: "same property different value conflict를 생성하고 base/ours/theirs 값을 모두 보존합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.10.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.10.4.md"
+    commit: "37edfb89f565a1b037d88e509f039c1894074eec"
+    report: "docs/task-reports/XIV.10.4.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.10.5"
     title: "delete-vs-modify, delete-vs-move, type-change-vs-value-change conflict를 각각 다른 kind로 분류합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.10.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.10.5.md"
+    commit: "d77dd7d8cc345cffc9b3349c298f5319d4fae28c"
+    report: "docs/task-reports/XIV.10.5.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.10.6"
     title: "OrderKey independent insertion을 자동 병합하고 같은 child conflicting reorder를 conflict로 분류합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "III.5.4"
       - "XIV.10.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XIV.10.6.md"
+    commit: "e0da50e2ddd6d0411bd70caf8311f482ddd4835b"
+    report: "docs/task-reports/XIV.10.6.md"
+    verified_at: "2026-11-14T09:54:35+09:00"
   - id: "XIV.10.7"
     title: "component property 삭제 vs instance override 추가, token type 변경 vs value 변경, drilling chain break를 전용 conflict로 분류합니다."
     status: not_started
@@ -7239,112 +7756,178 @@ tasks:
       - DEV-MAC
   - id: "XV.1.1"
     title: "`stellar.yaml` dependency entry에 logical name, library id, source kind Git, repository URL, version selector(tag/commit/branch), optional local override를 정의합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "IV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.1.1.md"
+    commit: "c35f69f8d96369dddcd73fd8af2444e9f752d46f"
     report: "docs/task-reports/XV.1.1.md"
+    verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XV.1.2"
     title: "branch selector는 개발 편의 선언으로 허용하되 lockfile에는 항상 exact commit을 기록하게 합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.1.2.md"
+    commit: "c7144addac77e8714f28b25e11f88e1d055aeef3"
     report: "docs/task-reports/XV.1.2.md"
+    verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XV.1.3"
     title: "같은 logical name 중복, 같은 LibraryId 다른 selector, 다른 LibraryId 같은 URL을 구분해 validation합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.1.3.md"
+    commit: "8b4006e51829c5f6d0e0682fa942b77007713da3"
     report: "docs/task-reports/XV.1.3.md"
+    verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XV.1.4"
     title: "dependency URL과 local override path를 telemetry 민감값으로 분류합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "II.3.2"
       - "XV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.1.4.md"
+    commit: "9f43f99133cd7b84e2bdbc8ab4b37673143c01bd"
     report: "docs/task-reports/XV.1.4.md"
+    verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XV.2.1"
     title: "`DependencyNodeKey`를 LibraryId+ResolvedCommit으로 정의해 동일 library 여러 버전을 별도 node로 허용합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.2.1.md"
+    commit: "f1a8f60d535b14c67b405f2e7406f7fff65b4766"
     report: "docs/task-reports/XV.2.1.md"
+    verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XV.2.2"
     title: "dependency graph edge에 parent dependency path를 기록합니다. 같은 resolved node는 그래프에서 dedup합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.2.2.md"
+    commit: "8c54a95b4a685238673df727d41b074120334c5e"
     report: "docs/task-reports/XV.2.2.md"
+    verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XV.2.3"
     title: "transitive cycle을 탐지하고 dependency path 전체를 오류로 반환합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.2.3.md"
+    commit: "fccb61d881dff60c589c0a9ff82d0b057e9da0f1"
     report: "docs/task-reports/XV.2.3.md"
+    verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XV.2.4"
     title: "version selector resolution은 시스템 Git의 `ls-remote`, fetch된 refs, commit verification을 사용합니다. Git 객체를 직접 파싱하지 않습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.1.3"
       - "XV.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.2.4.md"
+    commit: "88acc43ef359d93e536de60242cfde45353523ff"
     report: "docs/task-reports/XV.2.4.md"
+    verified_at: "2026-11-14T02:08:54+09:00"
   - id: "XV.2.5"
     title: "같은 LibraryId의 여러 resolved commit이 그래프에 존재하면 오류가 아니라 `DuplicateLibraryVersionWarning`을 생성합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.2.5.md"
+    commit: "019cdd5e07140d3000dbe113a98b466f8d22fc70"
     report: "docs/task-reports/XV.2.5.md"
+    verified_at: "2026-11-14T02:08:55+09:00"
   - id: "XV.2.6"
     title: "resolver 결과를 LibraryId, commit, dependency path로 deterministic sort합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.2.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.2.6.md"
+    commit: "283df6206d63e0018f854b05c908c8792b4bf0bf"
     report: "docs/task-reports/XV.2.6.md"
+    verified_at: "2026-11-14T02:08:55+09:00"
   - id: "XV.3.1"
     title: "사용자별 OS app data에 library cache root와 cache index를 정의합니다. project folder 안에는 의존성 checkout을 만들지 않습니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "V.1.5"
       - "XV.2.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.3.1.md"
+    commit: "561b944740015735b9dccd3ad06f47b6f6322c58"
     report: "docs/task-reports/XV.3.1.md"
+    verified_at: "2026-11-14T02:08:55+09:00"
   - id: "XV.3.2"
     title: "repository URL별 bare mirror 또는 동등 system Git cache를 생성하고 fetch를 GitRunner로 수행합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XIV.1.3"
       - "XV.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.3.2.md"
+    commit: "04e9aefca806f0022bdefd6b37f612b4311962b2"
     report: "docs/task-reports/XV.3.2.md"
+    verified_at: "2026-11-14T02:08:55+09:00"
   - id: "XV.3.3"
     title: "exact commit의 Stellar project files를 content-addressed immutable cache entry로 materialize합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XV.3.2"
       - "XIV.2.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.3.3.md"
+    commit: "01eed748d4f553998743a061d82388f9d16bb277"
+    report: "docs/task-reports/XV.3.3.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "XV.3.4"
     title: "cache entry를 ProjectProbe와 storage validator로 검증하고 일반 Git repo 또는 손상 library를 거부합니다."
     status: reported_done
@@ -7356,29 +7939,45 @@ tasks:
     report: "docs/task-reports/XV.3.4.md"
   - id: "XV.3.5"
     title: "cache index에 repository URL 원문 대신 keyed identifier와 commit/content hash만 저장하는 privacy mode를 구현합니다. 원본 URL은 local secure config에만 둡니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.1.4"
       - "XV.3.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.3.5.md"
+    commit: "7f944d29b3fdc0e2a5c2a267ab85c55ec6173a79"
     report: "docs/task-reports/XV.3.5.md"
+    verified_at: "2026-11-14T02:08:55+09:00"
   - id: "XV.3.6"
     title: "cache read lock과 fetch/write lock을 분리해 여러 Stellar project가 같은 entry를 동시에 읽을 수 있게 합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XV.3.3"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.3.6.md"
+    commit: "ea70fe40de1b9e2b684eeccbbc07dcc74c45d273"
+    report: "docs/task-reports/XV.3.6.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "XV.4.1"
     title: "resolver graph를 `stellar.lock.yaml`의 resolved entries와 dependency paths로 변환합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "IV.1.6"
       - "XV.2.6"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.4.1.md"
+    commit: "e2b1b8a0a754ffb592fda57b085b5c546d3d0a29"
     report: "docs/task-reports/XV.4.1.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "XV.4.2"
     title: "각 entry에 exact commit, cached content hash, library schema version, transitive dependencies를 기록합니다."
     status: reported_done
@@ -7390,7 +7989,7 @@ tasks:
     report: "docs/task-reports/XV.4.2.md"
   - id: "XV.4.3"
     title: "lockfile가 존재하면 선언 selector가 바뀌지 않은 dependency는 network 없이 lock commit을 우선 사용합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.4.2"
       - "XV.3.3"
@@ -7406,15 +8005,21 @@ tasks:
     report: "docs/task-reports/XV.4.4.md"
   - id: "XV.4.5"
     title: "resolve 성공 후 lockfile을 canonical write하고 autosave와 별도 project file transaction으로 기록합니다. 자동 commit하지 않습니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XV.4.1"
       - "IV.1.7"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.4.5.md"
+    commit: "7158fa5f20cb941ec4d7035a5e7964e8a6d3935e"
+    report: "docs/task-reports/XV.4.5.md"
+    verified_at: "2026-11-14T09:54:38+09:00"
   - id: "XV.5.1"
     title: "library project에서 export된 ComponentDefinition·TokenSet index를 읽는 `LibrarySnapshot`을 정의합니다. 모든 resource key에 LibraryId+commit+StableId를 포함합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.2.1"
       - "IX.1.1"
@@ -7454,12 +8059,17 @@ tasks:
       - DEV-MAC
   - id: "XV.6.1"
     title: "`stellar.yaml` local override는 특정 dependency logical name을 local Stellar project root로 매핑합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.6.1.md"
+    commit: "7022b12a371af30cbc99c8bf9e00f3c54bc2f8d8"
     report: "docs/task-reports/XV.6.1.md"
+    verified_at: "2026-11-14T02:08:55+09:00"
   - id: "XV.6.2"
     title: "local path가 일반 repo 또는 잘못된 library id이면 거부합니다."
     status: reported_done
@@ -7471,7 +8081,7 @@ tasks:
     report: "docs/task-reports/XV.6.2.md"
   - id: "XV.6.3"
     title: "local override의 current commit과 working tree dirty 상태를 진단에 표시하되 lockfile exact remote commit은 유지합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.6.2"
       - "XIV.2.2"
@@ -7479,7 +8089,7 @@ tasks:
       - DEV-MAC
   - id: "XV.6.4"
     title: "linked worktree path도 ProjectProbe로 허용합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XIV.1.2"
       - "XV.6.2"
@@ -7487,7 +8097,7 @@ tasks:
       - DEV-MAC
   - id: "XV.6.5"
     title: "local override는 개발 세션에서만 사용하고 release validation에서 존재하면 경고 또는 정책 오류를 config로 제어합니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.6.3"
     required_environments:
@@ -7533,7 +8143,7 @@ tasks:
       - DEV-MAC
   - id: "XV.8.1"
     title: "최근 사용 시각과 lockfile reference set을 기준으로 cache GC 후보를 계산합니다. 삭제 임계치는 config에 둡니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.3.6"
       - "XV.4.2"
@@ -7541,20 +8151,25 @@ tasks:
       - DEV-MAC
   - id: "XV.8.2"
     title: "여러 project가 참조하는 cache entry는 마지막 참조가 사라질 때까지 삭제하지 않습니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XV.8.1"
     required_environments:
       - DEV-MAC
   - id: "XV.8.3"
     title: "duplicate library version warning에 dependency paths와 예상 추가 용량을 포함합니다. repository URL은 표시 UI에만 local source로 전달하고 telemetry에는 제외합니다."
-    status: reported_done
+    status: verified
     depends_on:
       - "XV.2.5"
       - "XV.3.5"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XV.8.3.md"
+    commit: "62f66c4b768b7d066a2398df948e98a6eb601abe"
     report: "docs/task-reports/XV.8.3.md"
+    verified_at: "2026-11-14T02:08:56+09:00"
   - id: "XV.8.4"
     title: "외부 library 전체 integration fixture를 생성합니다: A→C v1, B→C v2, local override, offline cache, update."
     status: not_started
@@ -7838,11 +8453,17 @@ tasks:
       - DEV-MAC
   - id: "XVI.6.5"
     title: "Semantic Diff/apply/inverse fuzz target을 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XIV.3.10"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XVI.6.5.md"
+    commit: "c250e7445471e48300deb9a814e9dc75e0fe4cd5"
+    report: "docs/task-reports/XVI.6.5.md"
+    verified_at: "2026-11-14T09:54:36+09:00"
   - id: "XVI.6.6"
     title: "Semantic Merge fuzz target을 추가해 결과 valid 또는 명시 conflict/error만 허용합니다."
     status: not_started
@@ -7852,11 +8473,12 @@ tasks:
       - DEV-MAC
   - id: "XVI.6.7"
     title: "command sequence fuzz target을 장기 nightly job으로 추가합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "VII.6.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XVI.6.7.md"
   - id: "XVI.7.1"
     title: "untrusted mode capability matrix를 코드로 정의합니다: 문서 제한 읽기 허용, Git/terminal/future MCP/external filter/external symlink read 금지."
     status: verified
@@ -8005,7 +8627,7 @@ tasks:
     report: "docs/task-reports/XVI.9.5.md"
   - id: "XVI.9.6"
     title: "업데이트 전 open project 상태를 저장·복구하고 강제 종료하지 않습니다."
-    status: not_started
+    status: blocked
     depends_on:
       - "XIII.1.6"
       - "XVI.9.5"
@@ -9503,18 +10125,30 @@ tasks:
     verified_at: "2026-11-14T02:39:41+09:00"
   - id: "XXV.1.2"
     title: "completed transaction과 inverse를 project-local ignored path 또는 OS app data 정책에 따라 기록합니다. Git 추적 금지 검사를 추가합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXV.1.1"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXV.1.2.md"
+    commit: "b88b65dbed5971180b2bb93855564495f1138f63"
+    report: "docs/task-reports/XXV.1.2.md"
+    verified_at: "2026-11-14T09:54:53+09:00"
   - id: "XXV.1.3"
     title: "앱 재실행 후 current generation과 journal base가 같을 때만 history를 복원합니다."
-    status: not_started
+    status: verified
     depends_on:
       - "XXV.1.2"
     required_environments:
       - DEV-MAC
+    evidence:
+      - environment: DEV-MAC
+        locator: "docs/task-reports/XXV.1.3.md"
+    commit: "83ff5259c40d28b3a0f990dea98c7a65dea141b0"
+    report: "docs/task-reports/XXV.1.3.md"
+    verified_at: "2026-11-14T09:54:53+09:00"
   - id: "XXV.1.4"
     title: "checkout/merge/rebase 등 기준점 변경 시 journal을 별도 sealed session으로 이동합니다."
     status: not_started
