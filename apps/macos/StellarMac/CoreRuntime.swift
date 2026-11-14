@@ -43,6 +43,14 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    static func projectTrust(handle: UInt64, project: UInt64, decision: Bool?) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let action: UInt32 = decision.map { $0 ? 1 : 2 } ?? 0
+        let status = stellar_project_trust(handle, project, action, &request)
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     // MARK: - 창 session (XII.2.2)
 
     /// 프로젝트 session 아래에서 창 session 열기를 요청합니다. 결과는 `.windowSessionOpened` 또는 `.requestFailed`입니다.
@@ -174,6 +182,7 @@ struct CoreRuntimeCallError: Error, Equatable {
 enum CoreRuntimeEvent: Equatable {
     case projectOpened(request: UInt64, project: UInt64, projectID: UUID, name: String, root: String)
     case projectClosed(request: UInt64, project: UInt64, closedDocuments: UInt32)
+    case projectTrust(request: UInt64, project: UInt64, trusted: Bool)
     case documentOpened(request: UInt64, project: UInt64, document: UInt64, documentID: UUID, alreadyOpen: Bool)
     case documentClosed(request: UInt64, document: UInt64)
     case requestFailed(request: UInt64, failure: UInt32, message: String)
@@ -194,7 +203,7 @@ enum CoreRuntimeEvent: Equatable {
     /// event가 완료한 요청 id. 해석하지 못한 event는 nil입니다.
     var request: UInt64? {
         switch self {
-        case .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _),
+        case .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _), .projectTrust(let request, _, _),
              .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
              .requestFailed(let request, _, _), .windowSessionOpened(let request, _, _, _, _, _),
              .windowSessionClosed(let request, _), .windowViewChanged(let request, _),
@@ -221,6 +230,12 @@ enum CoreRuntimeEvent: Equatable {
                             }
                         }
                     }
+                }
+            }
+        case UInt32(STELLAR_EVENT_PROJECT_TRUST):
+            event = reader.u64().flatMap { request in
+                reader.u64().flatMap { project in
+                    reader.bool().map { .projectTrust(request: request, project: project, trusted: $0) }
                 }
             }
         case UInt32(STELLAR_EVENT_PROJECT_CLOSED):

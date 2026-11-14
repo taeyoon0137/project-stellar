@@ -118,6 +118,7 @@ use stellar_project::identity::{parse_project_id, ProjectIdentity};
 use stellar_project::probe::{safe_probe, ProbeError, SafeProbeError};
 use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
+use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
@@ -155,6 +156,8 @@ pub mod event_kind {
     pub const HISTORY_REPLAYED: u32 = 0x0109;
     /// 창 작업 문서를 저장했습니다(Save Now).
     pub const WINDOW_SESSION_SAVED: u32 = 0x010A;
+    /// 열린 프로젝트에서 확인한 OS 신뢰 등록 상태입니다.
+    pub const PROJECT_TRUST: u32 = 0x010B;
 }
 
 // ---------------------------------------------------------------------------
@@ -235,11 +238,13 @@ pub enum RequestFailure {
     HistoryUnavailable,
     /// 이동·확대 결과 viewport가 유효하지 않음(유한 값 아님).
     InvalidViewport,
+    /// 프로젝트 신뢰 등록을 확인하거나 갱신하지 못했습니다.
+    TrustUnavailable,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 19] = [
+    pub const ALL: [RequestFailure; 20] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -259,6 +264,7 @@ impl RequestFailure {
         RequestFailure::SaveFailed,
         RequestFailure::HistoryUnavailable,
         RequestFailure::InvalidViewport,
+        RequestFailure::TrustUnavailable,
     ];
 
     /// C ABI 코드 값.
@@ -283,6 +289,7 @@ impl RequestFailure {
             RequestFailure::SaveFailed => 22,
             RequestFailure::HistoryUnavailable => 23,
             RequestFailure::InvalidViewport => 24,
+            RequestFailure::TrustUnavailable => 25,
         }
     }
 
@@ -309,6 +316,15 @@ pub enum RuntimeEvent {
         name: String,
         /// 연 경로(절대·lexical, symlink 보존).
         root: String,
+    },
+    /// 현재 열린 프로젝트에서 OS 신뢰 등록의 target과 project id를 확인했습니다.
+    ProjectTrust {
+        /// 요청 id.
+        request: RequestId,
+        /// 프로젝트 session.
+        project: ProjectSessionId,
+        /// 등록이 확인되었는지.
+        trusted: bool,
     },
     /// 프로젝트를 닫았습니다.
     ProjectClosed {
@@ -552,6 +568,7 @@ impl RuntimeEvent {
         match self {
             RuntimeEvent::ProjectOpened { .. } => event_kind::PROJECT_OPENED,
             RuntimeEvent::ProjectClosed { .. } => event_kind::PROJECT_CLOSED,
+            RuntimeEvent::ProjectTrust { .. } => event_kind::PROJECT_TRUST,
             RuntimeEvent::DocumentOpened { .. } => event_kind::DOCUMENT_OPENED,
             RuntimeEvent::DocumentClosed { .. } => event_kind::DOCUMENT_CLOSED,
             RuntimeEvent::RequestFailed { .. } => event_kind::REQUEST_FAILED,
@@ -567,6 +584,7 @@ impl RuntimeEvent {
     pub fn request(&self) -> RequestId {
         match self {
             RuntimeEvent::ProjectOpened { request, .. }
+            | RuntimeEvent::ProjectTrust { request, .. }
             | RuntimeEvent::ProjectClosed { request, .. }
             | RuntimeEvent::DocumentOpened { request, .. }
             | RuntimeEvent::DocumentClosed { request, .. }
@@ -637,6 +655,15 @@ impl RuntimeEvent {
                 w.id(*document_id);
                 w.u64(*generation);
             }
+            RuntimeEvent::ProjectTrust {
+                request,
+                project,
+                trusted,
+            } => {
+                w.u64(request.0);
+                w.u64(project.0);
+                w.u8(u8::from(*trusted));
+            }
             RuntimeEvent::WindowSessionClosed { request, session }
             | RuntimeEvent::WindowViewChanged { request, session } => {
                 w.u64(request.0);
@@ -693,6 +720,11 @@ impl RuntimeEvent {
                 project_id: r.id()?,
                 name: r.text()?,
                 root: r.text()?,
+            },
+            event_kind::PROJECT_TRUST => RuntimeEvent::ProjectTrust {
+                request: RequestId(r.u64()?),
+                project: ProjectSessionId(r.u64()?),
+                trusted: r.bool()?,
             },
             event_kind::PROJECT_CLOSED => RuntimeEvent::ProjectClosed {
                 request: RequestId(r.u64()?),
@@ -772,7 +804,7 @@ pub struct ProjectSummary {
     pub name: String,
     /// 연 경로(절대·lexical).
     pub root: PathBuf,
-    /// 신뢰 상태(신뢰 저장소 연결 전에는 항상 `NotTrusted`).
+    /// OS 사용자 신뢰 저장소에서 마지막으로 확인한 상태.
     pub trust: TrustStatus,
 }
 
@@ -868,6 +900,7 @@ impl RuntimeState {
 #[derive(Debug)]
 struct ProjectSession {
     identity: ProjectIdentity,
+    trust: TrustStatus,
     name: String,
     documents: BTreeSet<DocumentSessionId>,
     windows: BTreeSet<WindowSessionHandle>,
@@ -1023,6 +1056,7 @@ fn open_project_on_thread(
         project,
         ProjectSession {
             identity,
+            trust: TrustStatus::NotTrusted,
             name: name.clone(),
             documents: BTreeSet::new(),
             windows: BTreeSet::new(),
@@ -1338,7 +1372,7 @@ fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
             project_id: session.identity.project_id(),
             name: session.name.clone(),
             root: session.identity.root_path().to_path_buf(),
-            trust: TrustStatus::NotTrusted,
+            trust: session.trust,
         })
         .collect();
     let documents = sessions
@@ -1571,6 +1605,59 @@ impl AppRuntime {
         }
         let root = root.to_path_buf();
         self.submit(move |ctx, request| open_project_on_thread(ctx, request, &root))
+    }
+
+    /// 열린 프로젝트의 사용자별 신뢰 상태를 다시 읽거나, 확인한 사용자의 결정을 기록합니다.
+    /// 처음 여는 창은 제한 모드이며, 확인 실패는 Git 사용을 허용하지 않습니다.
+    pub fn project_trust(
+        &self,
+        project: ProjectSessionId,
+        decision: Option<bool>,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let session = ctx
+                .app_sessions_mut()
+                .projects
+                .get_mut(&project)
+                .ok_or_else(|| {
+                    Failure::new(RequestFailure::UnknownProject, "이미 닫힌 프로젝트입니다")
+                })?;
+            let unavailable =
+                |message: &str| Failure::new(RequestFailure::TrustUnavailable, message);
+            let dir = os_user_data_base()
+                .filter(|base| base.is_absolute())
+                .ok_or_else(|| unavailable("사용자 데이터 위치를 찾지 못했습니다"))?
+                .join(stellar_ops::lock::APP_DATA_DIR);
+            let identity = &session.identity;
+            let mut store =
+                FileTrustStore::open(&dir).map_err(|error| unavailable(&error.to_string()))?;
+            if decision == Some(false) {
+                store
+                    .revoke(identity)
+                    .map_err(|error| unavailable(&error.to_string()))?;
+            } else {
+                let probe = safe_probe(identity.root_path(), TrustStatus::NotTrusted)
+                    .map_err(|error| unavailable(&error.to_string()))?;
+                let id = parse_project_id(&probe.manifest.project.id);
+                if id != Some(identity.project_id())
+                    || identity.root_path().canonicalize().ok().as_deref()
+                        != Some(identity.canonical_target())
+                {
+                    return Err(unavailable("열린 폴더나 프로젝트 ID가 바뀌었습니다"));
+                }
+                if decision == Some(true) {
+                    store
+                        .grant(identity)
+                        .map_err(|error| unavailable(&error.to_string()))?;
+                }
+            }
+            session.trust = store.status(identity);
+            Ok(RuntimeEvent::ProjectTrust {
+                request,
+                project,
+                trusted: session.trust == TrustStatus::Trusted,
+            })
+        })
     }
 
     /// 프로젝트 session을 닫습니다. 그 아래 열린 문서도 닫습니다.
