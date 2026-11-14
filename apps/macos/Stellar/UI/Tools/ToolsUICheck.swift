@@ -623,6 +623,10 @@ enum ToolsUICheck {
         }
         recorder.expect(model.sentCommands.count == countBefore, "텍스트 편집 중 표준 편집 action이 router로 감")
         recorder.expect(!router.dispatch(.duplicate), "텍스트 편집 중 Duplicate 직접 전달이 허용됨")
+        recorder.expect(!router.dispatch(.copy), "텍스트 편집 중 객체 Copy 직접 전달이 허용됨")
+        recorder.expect(!router.dispatch(.paste), "텍스트 편집 중 객체 Paste 직접 전달이 허용됨")
+        recorder.expect(!router.responds(to: #selector(ShellCommandRouter.copy(_:))), "텍스트 편집 중 Copy를 router가 가로챔")
+        recorder.expect(!router.responds(to: #selector(ShellCommandRouter.paste(_:))), "텍스트 편집 중 Paste를 router가 가로챔")
         recorder.expect(!router.dispatch(.delete), "텍스트 편집 중 객체 삭제 직접 전달이 허용됨")
         recorder.expect(!router.responds(to: #selector(ShellCommandRouter.delete(_:))), "텍스트 편집 중 삭제 action을 router가 가로챔")
         checkTextEditingUndo(window: window, router: router, model: model, undoItem: item(.undo), redoItem: item(.redo), recorder)

@@ -161,6 +161,24 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleteSession = reopened.windowController.windowSession,
               reopened.selectNodes([node]), pump.waitForPendingRequests(timeout: 10) else { return fail("삭제 선택") }
         let deleteCanvas = reopened.canvasHost.canvasView
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        reopened.subtreePasteboard = board
+        let clipboardDepth = deleteSession.info?.undo_depth
+        guard reopened.router.dispatch(.copy) else { return fail("선택 복사 요청") }
+        let clipboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
+        let deadline = Date().addingTimeInterval(5)
+        while board.availableType(from: [clipboardType]) == nil && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        guard board.data(forType: clipboardType)?.isEmpty == false,
+              clipboardDepth == deleteSession.info?.undo_depth,
+              action(reopened, .delete), action(reopened, .paste),
+              let pasted = at(30, in: deleteCanvas), pasted != node,
+              action(reopened, .undo), at(30, in: deleteCanvas) != pasted,
+              action(reopened, .redo), at(30, in: deleteCanvas) == pasted,
+              action(reopened, .undo), action(reopened, .undo), at(30, in: deleteCanvas) == node
+        else { return fail("원본 삭제 후 pasteboard 복제·Undo·Redo") }
         // Duplicate 메뉴(⌘D)도 실제 창의 선택과 동일한 history를 사용합니다.
         let beforeDuplicate = deleteSession.info
         guard action(reopened, .duplicate), let copy = at(30, in: deleteCanvas), copy != node,
@@ -236,7 +254,7 @@ enum ShellCanvasMoveCheck {
         guard pump.waitForPendingRequests(timeout: 10), let deleted = open(path), deleted !== reopened,
               deleted.windowController.windowSession?.info?.generation == deletedGeneration,
               at(30, in: deleted.canvasHost.canvasView) != node else { return fail("삭제 저장 재열기") }
-        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
+        print("canvas-move ok: restricted select, Hand pan/display/isolation/cancel, Escape, two drag updates/one undo, second window, save/reopen, Copy/Paste after source deletion, Duplicate history, Delete/Backspace and Layers deletion history/save/reopen, stale same-count menu and Layers targets")
         return true
     }
 }
