@@ -1061,6 +1061,10 @@ enum GitPanelUICheck {
         let typical = HostedPanel(.typical)
         defer { typical.close() }
         let panel = typical.controller
+        // 이 fixture는 배너 애니메이션을 검사합니다. 시스템 접근성 설정과 독립적으로 재생 조건을 만듭니다.
+        var displayOptions = panel.displayOptions
+        displayOptions.reduceMotion = false
+        panel.apply(displayOptions: displayOptions)
         try expect(typical.spin { panel.status != nil && isShown(panel.autosaveBanner) }, "keyboard: 상태·배너가 오지 않음")
         guard let changesOrder = typical.walkToBelow() else { throw Failure(message: "keyboard: Tab이 패널 밖으로 나가지 못함(변경 화면)") }
         try expectOrder(changesOrder, [
@@ -1122,7 +1126,7 @@ enum GitPanelUICheck {
                         "keyboard 제한 모드")
 
         // 화면에 보이는 창(배너 페이드 경로 실행)에서도 한 차례 점유가 Debug 상한 안이어야 합니다.
-        try expect(panel.diagnostics.animatedUIUpdates > 0, "keyboard: 보이는 창에서 배너 페이드 경로가 실행되지 않음")
+        try expect(panel.diagnostics.animatedUIUpdates > 0, "keyboard: 배너 페이드가 실행되지 않음 (visible=\(typical.window.isVisible), duration=\(panel.displayOptions.revealDuration))")
         try expect(maxTurn(panel) < debugTurnLimit, "keyboard: 보이는 창 한 차례 점유가 상한을 넘음 \(occupancy(panel))")
         report.append("keyboard loop changes \(changesOrder.count)/conflicts \(conflictOrder.count)/restricted \(restrictedOrder.count) views, exits panel; ⌘Return scoped; visible window animated UI \(panel.diagnostics.animatedUIUpdates), \(occupancy(panel))")
     }
