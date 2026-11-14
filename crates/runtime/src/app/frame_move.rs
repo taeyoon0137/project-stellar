@@ -1,4 +1,4 @@
-//! 활성 창에 표시된 Frame을 한 드래그당 하나의 문서 transaction으로 옮깁니다.
+//! 활성 창에 표시된 Free Frame의 위치·크기를 하나의 문서 transaction으로 편집합니다.
 
 use super::*;
 use stellar_commands::command::Command;
@@ -9,7 +9,13 @@ use stellar_commands::document::{
 use stellar_commands::id::{CommandId, CommandOrigin};
 use stellar_commands::property::{PropertyValue, SetProperty};
 use stellar_commands::transaction::CommandTransaction;
-use stellar_core_types::value::{Transform2D, Vec2};
+use stellar_core_types::value::{Size2, Transform2D, Vec2};
+
+#[derive(Clone, Copy)]
+enum FrameEdit {
+    Move(Vec2),
+    Resize(Size2),
+}
 
 impl AppRuntime {
     /// 표시한 View와 revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다.
@@ -24,7 +30,37 @@ impl AppRuntime {
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let window = trusted_canvas_window(ctx, session)?;
-            move_selected(window, request, view, revision, node, delta)?;
+            edit_selected(
+                window,
+                request,
+                view,
+                revision,
+                node,
+                FrameEdit::Move(delta),
+            )?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
+    /// 선택된 Free Frame의 고정 크기를 하나의 Undo 가능한 문서 편집으로 바꿉니다.
+    pub fn resize_canvas_frame(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        node: StableId,
+        size: Size2,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let window = trusted_canvas_window(ctx, session)?;
+            edit_selected(
+                window,
+                request,
+                view,
+                revision,
+                node,
+                FrameEdit::Resize(size),
+            )?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
@@ -52,13 +88,13 @@ pub(super) fn trusted_canvas_window(
     window_mut(ctx, session)
 }
 
-fn move_selected(
+fn edit_selected(
     window: &mut ProjectWindowSession,
     request: RequestId,
     view: StableId,
     revision: DocumentRevision,
     node: StableId,
-    delta: Vec2,
+    edit: FrameEdit,
 ) -> Result<(), Failure> {
     let stale = || {
         Failure::new(
@@ -74,20 +110,28 @@ fn move_selected(
     }
     let model = window.document().ok_or_else(stale)?.model();
     let target = editable_frame(model, view, node).ok_or_else(stale)?;
-    let (a, b, c, d, x, y) = target.transform.components();
-    let transform =
-        Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).map_err(|_| stale())?;
-    if transform != target.transform {
-        let command = Command::SetProperty(SetProperty {
-            node,
-            key: keys::TRANSFORM,
-            value: PropertyValue::Transform(transform),
-        });
-        let transaction =
-            CommandTransaction::new(command_id(window.window(), request), CommandOrigin::User)
-                .with_command(revision, command);
-        window.apply(&transaction).map_err(view_failure)?;
-    }
+    let (key, value) = match edit {
+        FrameEdit::Move(delta) => {
+            let (a, b, c, d, x, y) = target.transform.components();
+            let next =
+                Transform2D::new(a, b, c, d, x + delta.x(), y + delta.y()).map_err(|_| stale())?;
+            if next == target.transform {
+                return Ok(());
+            }
+            (keys::TRANSFORM, PropertyValue::Transform(next))
+        }
+        FrameEdit::Resize(size) => {
+            if size == target.size {
+                return Ok(());
+            }
+            (keys::SIZE, PropertyValue::Size(size))
+        }
+    };
+    let command = Command::SetProperty(SetProperty { node, key, value });
+    let transaction =
+        CommandTransaction::new(command_id(window.window(), request), CommandOrigin::User)
+            .with_command(revision, command);
+    window.apply(&transaction).map_err(view_failure)?;
     Ok(())
 }
 
@@ -169,13 +213,45 @@ mod tests {
         let mut session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
         let delta = Vec2::new(16.0, -3.5).unwrap();
         let revision = session.revision();
-        assert!(move_selected(&mut session, RequestId(1), sid(3), revision, node, delta).is_err());
+        assert!(edit_selected(
+            &mut session,
+            RequestId(1),
+            sid(3),
+            revision,
+            node,
+            FrameEdit::Move(delta)
+        )
+        .is_err());
         session.select(Selection::new([node], None)).unwrap();
-        assert!(move_selected(&mut session, RequestId(2), sid(4), revision, node, delta).is_err());
-        assert!(move_selected(&mut session, RequestId(3), sid(3), revision, node, delta).is_ok());
+        assert!(edit_selected(
+            &mut session,
+            RequestId(2),
+            sid(4),
+            revision,
+            node,
+            FrameEdit::Move(delta)
+        )
+        .is_err());
+        assert!(edit_selected(
+            &mut session,
+            RequestId(3),
+            sid(3),
+            revision,
+            node,
+            FrameEdit::Move(delta)
+        )
+        .is_ok());
         let translated = Transform2D::new(0.5, 0.25, -0.25, 0.5, 28.5, -9.5).unwrap();
         assert_eq!(transform_of(&session, node), translated);
-        assert!(move_selected(&mut session, RequestId(4), sid(3), revision, node, delta).is_err());
+        assert!(edit_selected(
+            &mut session,
+            RequestId(4),
+            sid(3),
+            revision,
+            node,
+            FrameEdit::Move(delta)
+        )
+        .is_err());
         assert!(session.undo().unwrap());
         assert_eq!(transform_of(&session, node), original);
         assert_eq!(session.view().selection().ids(), [node]);
@@ -195,9 +271,24 @@ mod tests {
         let revision = session.revision();
         session.select(Selection::new([sid(11)], None)).unwrap();
         let delta = Vec2::new(12.0, -8.5).unwrap();
-        assert!(
-            move_selected(&mut session, RequestId(1), sid(3), revision, sid(11), delta).is_err()
-        );
+        assert!(edit_selected(
+            &mut session,
+            RequestId(1),
+            sid(3),
+            revision,
+            sid(11),
+            FrameEdit::Move(delta)
+        )
+        .is_err());
+        assert!(edit_selected(
+            &mut session,
+            RequestId(2),
+            sid(3),
+            revision,
+            sid(11),
+            FrameEdit::Resize(Size2::new(45.0, 70.0).unwrap())
+        )
+        .is_err());
         assert_eq!(session.revision(), revision);
         assert!(!session.has_unsaved_changes());
     }
@@ -225,6 +316,18 @@ mod tests {
             .unwrap();
         assert!(
             matches!(next_event(&app),RuntimeEvent::RequestFailed{request,failure: RequestFailure::TrustUnavailable,..} if request == attempted)
+        );
+        let resized = app
+            .resize_canvas_frame(
+                session,
+                sid(3),
+                rev,
+                sid(11),
+                Size2::new(10.0, 15.0).unwrap(),
+            )
+            .unwrap();
+        assert!(
+            matches!(next_event(&app),RuntimeEvent::RequestFailed{request,failure: RequestFailure::TrustUnavailable,..} if request == resized)
         );
         let state = app.state();
         let summary = state.window(session).unwrap();

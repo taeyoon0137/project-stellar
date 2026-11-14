@@ -312,6 +312,53 @@ pub unsafe extern "C" fn stellar_window_session_move_frame(
     })
 }
 
+/// 선택한 고정 Free Frame의 크기 변경을 요청합니다.
+///
+/// # Safety
+/// `view`와 `node`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_resize_frame(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    node: *const [u8; 16],
+    revision: u64,
+    width: f32,
+    height: f32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || node.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(size) = stellar_core_types::value::Size2::new(width, height) else {
+            return StellarStatus::InvalidArgument;
+        };
+        let view = StableId::from_bytes(unsafe { *view });
+        let node = StableId::from_bytes(unsafe { *node });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.resize_canvas_frame(
+                WindowSessionHandle(session),
+                view,
+                stellar_core_types::revision::DocumentRevision(revision),
+                node,
+                size,
+            ),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 /// 창에 표시한 자유 배치 부모 Frame의 local 영역에 자식 Frame을 생성합니다.
 ///
 /// # Safety

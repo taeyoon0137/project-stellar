@@ -134,6 +134,12 @@ final class ShellRuntimeEventPump {
                                          node: node, revision: revision, name: name), completion)
     }
 
+    func resizeFrame(_ frame: CanvasFrameDimensions, size: CGSize, completion: @escaping (CoreRuntimeEvent) -> Void)
+        -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.resizeFrame(handle: runtimeHandle, session: frame.session, view: frame.view,
+                                         node: frame.node, revision: frame.revision, size: size), completion)
+    }
+
     private func register(
         _ result: Result<UInt64, CoreRuntimeCallError>,
         _ completion: @escaping (CoreRuntimeEvent) -> Void

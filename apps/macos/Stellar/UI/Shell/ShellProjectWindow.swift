@@ -427,6 +427,7 @@ final class ShellProjectWindow {
     let panelsSlot: ShellPanelTabsSlot
     let gitSource = ShellGitDataSource()
     let sidebarSource = ShellSidebarSource()
+    let inspectorSource = ShellFrameInspectorSource()
     /// 창 도구 모델 → 하단 도구 막대(셸 프레임 snapshot 도구 목록) 구독.
     private var toolsObservation: ToolsMenuObservation?
 
@@ -461,7 +462,7 @@ final class ShellProjectWindow {
             sidebar: SidebarViewController(provider: sidebarSource)
         )
         inspectorSlot = ShellInspectorAreaSlot(
-            inspector: InspectorViewController(dataSource: ShellAreaDataStubs.makeInspectorDataSource())
+            inspector: InspectorViewController(dataSource: inspectorSource)
         )
         panelsSlot = ShellPanelTabsSlot(
             gitPanel: GitPanelViewController(dataSource: gitSource),
@@ -478,7 +479,17 @@ final class ShellProjectWindow {
         gitSource.trustDidChange = { [weak self] trusted in
             self?.dataSource.updateTrust(trusted)
             self?.sidebarSource.trusted = trusted
+            self?.refreshInspector()
             if !trusted { _ = self?.canvasHost.canvasView.cancelFrameGesture?() }
+        }
+        inspectorSource.resize = { [weak self] frame, size, completion in
+            guard let self, let session = self.windowController.windowSession, session.session == frame.session,
+                  !session.isClosed, !session.isClosing, self.gitSource.trusted,
+                  let pump = self.dataSource.session?.pump else { return false }
+            return session.track({ pump.resizeFrame(frame, size: size, completion: $0) }) { event in
+                self.refreshSessionCommands()
+                if case .windowViewChanged = event { completion(true) } else { completion(false) }
+            }
         }
         sidebarSource.select = { [weak self] ids in _ = self?.selectNodes(ids) }
         sidebarSource.rename = { [weak self] view, revision, id, name in
@@ -574,10 +585,17 @@ final class ShellProjectWindow {
     /// 창 session 명령(Undo·Redo·Save Now)이 끝날 때마다 받은 완료 event(검사용).
     private(set) var lastSessionCommandEvent: CoreRuntimeEvent?
 
+    private func refreshInspector() {
+        let selected = windowController.windowSession?.info?.selection_count == 1
+            ? canvasHost.canvasView.selectedFrameDimensions : nil
+        inspectorSource.refresh(selected, trusted: gitSource.trusted)
+    }
+
     /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.
     func refreshSessionCommands() {
         let session = windowController.windowSession
         canvasHost.canvasView.frameSession = session?.session
+        refreshInspector()
         let view = session?.viewInfo
         let info = session?.info
         sidebarSource.refresh(runtime: dataSource.session?.pump.runtimeHandle, session: session, info: info, view: view)
@@ -749,6 +767,7 @@ final class ShellProjectWindow {
     /// 열기에 실패했습니다. 창에 원인과 복구 동작을 보여 줍니다.
     func didFail(_ failure: ShellProjectOpenFailure, path: String) {
         canvasHost.canvasView.frameSession = nil
+        inspectorSource.refresh(nil, trusted: false)
         gitSource.attach(nil)
         sidebarSource.refresh(runtime: nil, session: nil, info: nil, view: nil)
         cancelPendingClose()
@@ -762,6 +781,7 @@ final class ShellProjectWindow {
     /// 창을 닫습니다: 창 session을 먼저, 그다음 프로젝트 session을 한 번씩 닫습니다.
     func closeSessions() {
         canvasHost.canvasView.frameSession = nil
+        inspectorSource.refresh(nil, trusted: false)
         gitSource.attach(nil)
         sidebarSource.refresh(runtime: nil, session: nil, info: nil, view: nil)
         cancelPendingClose()

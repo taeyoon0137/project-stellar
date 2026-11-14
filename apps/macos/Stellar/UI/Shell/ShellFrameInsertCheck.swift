@@ -105,6 +105,7 @@ enum ShellFrameInsertCheck {
               other.sidebarSlot.sidebar.layersController.snapshot.layers.rows.isEmpty else { return fail("추가된 실제 행·이름 편집·창 격리") }
         guard action(.undo), awaitSidebar({ layerRow(child, in: project) == nil }), canvas.frameHit(at: viewPoint(50, 50))?.id == root, session.info?.selection_count == 0,
               action(.redo), awaitSidebar({ layerRow(child, in: project) != nil }), canvas.frameHit(at: viewPoint(50, 50))?.id == child, session.info?.selection_count == 1,
+              other.inspectorSource.snapshot.state == .noSelection,
               let beforeRename = session.info,
               project.sidebarSlot.sidebar.layersController.beginRename(SidebarStableID(child)),
               let editor = window.firstResponder as? NSTextView else { return fail("Undo·Redo·이름 편집기") }
@@ -114,8 +115,30 @@ enum ShellFrameInsertCheck {
         guard window.makeFirstResponder(firstOutline), wait(), awaitSidebar({ layerName() == "설정 카드" }),
               session.info?.undo_depth == beforeRename.undo_depth + 1,
               action(.undo), awaitSidebar({ layerName() == "Frame" }),
-              action(.redo), awaitSidebar({ layerName() == "설정 카드" }),
-              action(.saveNow), session.info?.generation == initial.generation + 1 else { return fail("레이어 이름 변경·Undo·Redo·저장") }
+              action(.redo), awaitSidebar({ layerName() == "설정 카드" }) else { return fail("레이어 이름 변경·Undo·Redo") }
+
+        func field(_ axis: String, _ owner: ShellProjectWindow) -> NSTextField? {
+            owner.inspectorSlot.inspector.control(identifier: "frame.size." + axis) as? NSTextField
+        }
+        func sizeIs(_ width: Double, _ height: Double, _ owner: ShellProjectWindow) -> Bool {
+            awaitSidebar {
+                guard let w = field("width", owner), let h = field("height", owner) else { return false }
+                return w.doubleValue == width && h.doubleValue == height
+            }
+        }
+        func enter(_ text: String, in field: NSTextField) -> Bool {
+            field.stringValue = text
+            return field.sendAction(field.action, to: field.target)
+        }
+        guard sizeIs(60, 60, project), let width = field("width", project), let height = field("height", project),
+              let before = session.info, enter("28oops", in: width), enter("NaN", in: height), wait(),
+              sizeIs(60, 60, project), session.info?.revision == before.revision,
+              enter("78.5", in: width), enter("68", in: height), wait(), sizeIs(78.5, 68, project),
+              session.info?.undo_depth == before.undo_depth + 2,
+              action(.undo), sizeIs(78.5, 60, project), action(.undo), sizeIs(60, 60, project),
+              action(.redo), sizeIs(78.5, 60, project), action(.redo), sizeIs(78.5, 68, project),
+              action(.saveNow), session.info?.generation == initial.generation + 1 else { return fail("Inspector 입력·Undo·Redo·저장") }
+
         window.close()
         guard wait() else { return fail("닫기") }
         app.openProject(atPath: path, origin: .application)
@@ -127,7 +150,21 @@ enum ShellFrameInsertCheck {
               reopened.sidebarSlot.sidebar.layersController.snapshot.layers.rows[SidebarStableID(child)]?.name == "설정 카드",
               shown.frameHit(at: viewPoint(41, 31, canvas: shown))?.id == child,
               shown.frameHit(at: viewPoint(99, 89, canvas: shown))?.id == child,
-              shown.frameHit(at: viewPoint(101, 91, canvas: shown))?.id == root else { return fail("재열기 후 자식 위치·크기") }
+              shown.frameHit(at: viewPoint(117, 97, canvas: shown))?.id == child,
+              shown.frameHit(at: viewPoint(120, 99, canvas: shown))?.id == root,
+              reopened.selectNodes([child]), wait(), sizeIs(78.5, 68, reopened) else { return fail("재열기 후 자식 위치·크기") }
+        reopened.gitSource.updateTrust(false)
+        guard wait(), awaitSidebar({ field("width", reopened)?.isEnabled == false }),
+              let restrictedSession = reopened.windowController.windowSession,
+              let restricted = restrictedSession.info, let lockedWidth = field("width", reopened),
+              !lockedWidth.isEnabled, !restrictedSession.isClosing else { return fail("읽기 전용 Inspector 필드") }
+        let restrictedSource = reopened.inspectorSource
+        restrictedSource.submit(.setValue(InspectorPropertyID("frame.size.width"), .number(12), phase: .commit),
+                                basedOn: restrictedSource.snapshot.generation)
+        guard wait(), restrictedSession.info?.revision == restricted.revision, sizeIs(78.5, 68, reopened)
+        else { return fail("읽기 전용 Inspector 크기 보존") }
+        reopened.gitSource.updateTrust(true)
+        guard wait(), awaitSidebar({ field("width", reopened)?.isEnabled == true }) else { return fail("신뢰 후 Inspector 복구") }
         guard key(3, "f", canvas: shown), pointer(.leftMouseDown, 45, 36, canvas: shown),
               pointer(.leftMouseDragged, 62, 52, canvas: shown), pointer(.leftMouseUp, 62, 52, canvas: shown), wait(),
               let nested = shown.frameHit(at: viewPoint(46, 37, canvas: shown))?.id,
@@ -181,7 +218,7 @@ enum ShellFrameInsertCheck {
               other.sidebarSlot.sidebar.layersController.snapshot.selection.isEmpty else {
             return fail("Layers 선택 창 격리: undo=\(reopened.windowController.windowSession?.info?.undo_depth ?? 0)/\(beforeSelect.undo_depth + 1) top=\(layers.snapshot.layers.topLevelIDs.count) selectedRow=\(layers.outline.selectedRow) other=\(other.windowController.windowSession?.info?.selection_count ?? 0)")
         }
-        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
+        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, invalid input, undo/redo, trust and reopen; live Layers, inline rename with undo/redo and reopen, nested disclosure, 64+1 pagination and two windows")
         return true
     }
 }

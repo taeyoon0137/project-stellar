@@ -189,6 +189,19 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    static func resizeFrame(handle: UInt64, session: UInt64, view: UUID, node: UUID,
+                          revision: UInt64, size: CGSize) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: node.uuid) { nodeBytes in
+                stellar_window_session_resize_frame(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, Float(size.width), Float(size.height), &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     /// 열린 창 session의 최신 정보. 열려 있지 않으면 nil입니다. document thread를 기다리지 않습니다.
     static func windowSessionInfo(handle: UInt64, session: UInt64) -> StellarWindowSessionInfo? {
         var info = StellarWindowSessionInfo()

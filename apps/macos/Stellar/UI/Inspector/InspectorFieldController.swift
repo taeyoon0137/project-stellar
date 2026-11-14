@@ -533,7 +533,10 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
             refresh()
             return
         }
-        guard let number = numberFormatter.number(from: text)?.doubleValue ?? Double(text) else {
+        let scanner = Scanner(string: text)
+        scanner.locale = numberFormatter.locale
+        let localized = scanner.scanDouble()
+        guard let number = (scanner.isAtEnd ? localized : nil) ?? Double(text), number.isFinite else {
             NSSound.beep()
             endGesture()
             refresh()
@@ -541,6 +544,11 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
         }
         // NumberFormatter 해석은 반올림하지 않으므로(예: 자릿수 0에서 "6.7" → 6.7) 표시 자릿수로 직접 맞춥니다.
         let model = spec.modelValue(fromDisplay: number)
+        guard model.isFinite else {
+            endGesture()
+            refresh()
+            return
+        }
         if gesture == .set {
             // 화살표 키 조정 뒤 확정: 확정 값을 연속 조작의 최종 값으로 보내 한 Undo 단위로 끝냅니다.
             // 값이 그대로여도 `.ended`를 보냅니다.
