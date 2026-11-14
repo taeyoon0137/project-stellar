@@ -39,7 +39,7 @@
 | chunk kind code | 형식 명세 §7 표 | ADR-0010, `storage::chunk::kinds` golden test |
 | tagged field tag(AssetRecord, SourceMetadata) | 형식 명세 §15 표 | `assets::record` |
 | 문서 ChunkId family | 1, 2, 3 | `project::document_io::serialize` |
-| 의미 모델 payload 안의 registry(NodeKind `u16`, `ColorSpace` tag, OrderKey 등) | XXVIII.1.3 범위 | `document::node_kind`, ADR-0003, ADR-0008 |
+| 의미 모델 payload 안의 registry(NodeKind `u16`, `ColorSpace` tag, OrderKey 등) | [`stellar-semantic-model.md`](stellar-semantic-model.md) §2 | `document::node_kind`, ADR-0003, ADR-0008 |
 
 `ErrorCode`, FFI `StellarStatus` 등 ABI 값은 파일 형식이 아니므로 이 문서의 범위 밖입니다(ADR-0007,
 ADR-0009).

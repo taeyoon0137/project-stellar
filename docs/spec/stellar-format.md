@@ -47,8 +47,9 @@ big-endian입니다.
 
 - 문서 의미 모델 payload의 내부 형식(`document::definitions`의 `DocumentDefinition`,
   `document::record_codec`의 node 레코드·`SubtreeRecords`, `document::modifier`의 `ModifierStack`).
-  semantic model 명세(XXVIII.1.3)의 범위입니다. 이 문서는 바깥 틀(§9)만 정합니다.
-- Semantic Diff·Merge 규칙(XXVIII.1.3).
+  [`stellar-semantic-model.md`](stellar-semantic-model.md)(XXVIII.1.3) §2에 있습니다. 이 문서는 바깥
+  틀(§9)만 정합니다.
+- Semantic Diff·Merge 규칙. [`stellar-semantic-model.md`](stellar-semantic-model.md) §3~§7에 있습니다.
 - 에셋 content 파일(`assets/`)의 내용. 에셋 파일은 원본 bytes 그대로입니다(§2).
 - 프로젝트 밖에 저장되는 형식: 복구 스냅샷(`project::recovery_payload`), 신뢰 목록
   (`project::trust_store`). 버전 목록만 호환성 문서에 있습니다.
