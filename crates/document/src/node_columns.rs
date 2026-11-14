@@ -187,6 +187,20 @@ impl NodeColumns {
         }
     }
 
+    /// 표시·잠금 필드를 한 slot에서 함께 교체하고 이전 값을 돌려줍니다.
+    pub(crate) fn replace_flags(
+        &mut self,
+        id: RuntimeEntityId,
+        visible: bool,
+        locked: bool,
+    ) -> Option<(bool, bool)> {
+        let slot = self.alloc.live_slot(id)?;
+        let previous = (self.visible[slot], self.locked[slot]);
+        self.visible[slot] = visible;
+        self.locked[slot] = locked;
+        Some(previous)
+    }
+
     /// 표시 이름을 갱신합니다. stale 핸들이면 `false`.
     pub fn set_display_name(&mut self, id: RuntimeEntityId, display_name: String) -> bool {
         match self.alloc.live_slot(id) {

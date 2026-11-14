@@ -134,6 +134,44 @@ mod tests {
     }
 
     #[test]
+    fn flag_edits_preserve_parent_and_child_handles_through_rollback_and_undo() {
+        let mut model = small_model();
+        let before = model.record(sid(11)).unwrap();
+        let handles = [sid(11), sid(13)].map(|id| model.runtime_id(id).unwrap());
+        let mut pending = before.clone();
+        pending.visible = false;
+        pending.locked = true;
+        pending.display_name.push('!');
+        let mut guard = TransactionGuard::begin(&mut model);
+        guard.ctx().inject_fault_after(1);
+        assert!(guard.ctx().replace_record(pending).is_err());
+        let partial = guard.ctx().model().record(sid(11)).unwrap();
+        assert!(!partial.visible && partial.locked);
+        guard.rollback().unwrap();
+        assert_eq!(model.record(sid(11)).unwrap(), before);
+
+        let mut state = DocumentState::new(model);
+        for command in [
+            Command::set_visibility(sid(11), false),
+            Command::set_locked(sid(11), true),
+        ] {
+            let request = CommandRequest::at(&state, command);
+            let inverse = state.execute(&request).unwrap().inverse;
+            assert_eq!(
+                [sid(11), sid(13)].map(|id| state.model().runtime_id(id).unwrap()),
+                handles
+            );
+            let undo = CommandRequest::at(&state, inverse);
+            state.execute(&undo).unwrap();
+        }
+        assert_eq!(state.model().record(sid(11)).unwrap(), before);
+        assert_eq!(
+            [sid(11), sid(13)].map(|id| state.model().runtime_id(id).unwrap()),
+            handles
+        );
+    }
+
+    #[test]
     fn mid_apply_fault_rolls_back_to_identical_semantic_snapshot() {
         // 검증 기준(VII.1.5): 중간 실패 fault injection 후 semantic snapshot 동일.
         let mut mutated_seeds = 0;

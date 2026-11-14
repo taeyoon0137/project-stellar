@@ -36,6 +36,12 @@ enum UndoOp {
     Payload(StableId, Box<NodePayload>),
     /// 이름 변경을 되돌림.
     Name(StableId, String),
+    /// 표시·잠금 변경을 되돌림.
+    Flags {
+        id: StableId,
+        visible: bool,
+        locked: bool,
+    },
     /// stack 교체를 되돌림(`None`이면 stack 제거).
     Stack(StableId, Option<ModifierStack>),
 }
@@ -198,20 +204,9 @@ impl<'a> EditContext<'a> {
     /// node 레코드 전체(부모·순서·표시·잠금·이름·payload, 종류 포함)를 `record`로 바꾸고 이전
     /// 레코드를 반환합니다. 자손과 modifier stack은 그대로 유지합니다(composite primitive).
     ///
-    /// `DocumentModel`이 공통 필드 제자리 변경을 공개하지 않으므로, 이름·같은 종류 payload만
-    /// 바뀌면 해당 primitive를 쓰고(이름 변경은 이미 제자리 O(log N)), 그 밖의 변경은 subtree를
-    /// 자손부터 지운 뒤 새 레코드와 원래 자손·stack을 다시 넣습니다. 모든 단계가 journal에 남아 실패
-    /// 시 함께 되돌려집니다. 결과 문서의 유효성(부모 종류·OrderKey·modifier 소유)은 호출하는
-    /// command가 먼저 검증합니다.
-    ///
-    /// **비용(review PERF-REWRITE, 2026-11-14)**: 구조 경로는 `ChildIndex` 구성 O(N)에 subtree node마다
-    /// 삭제·재삽입 O(log N)을 더한 O(N + subtree × log N)입니다. `DocumentModel::remove_leaf`의 자식
-    /// 확인은 column 자식 수로 O(1)이라(posthoc CMD-DELETE-QUADRATIC) 이 경로와 `DeleteSubtree`, rollback의
-    /// `UndoOp::Remove`가 더는 node마다 전체 column을 훑지 않습니다. 남은 한계: 표시·잠금·부모·순서만
-    /// 바뀌어도 subtree 전체를 지웠다 다시 넣습니다. 제자리 갱신은 `NodeColumns`의 `set_visible`·
-    /// `set_locked`·`set_order_key`·`set_parent`를 감싼 `DocumentModel` primitive가 있어야 안전하게 만들 수
-    /// 있는데(runtime 핸들·ID registry를 그대로 두는 경로), 그 API는 아직 없습니다. 추가되면 이 함수의
-    /// 표시·잠금 분기를 그 primitive와 대응 `UndoOp`로 바꾸면 됩니다.
+    /// 이름·표시·잠금과 같은 종류의 payload 변경은 기존 runtime 핸들에서 처리합니다.
+    /// 부모·순서·종류가 바뀌면 전체 문서의 자식 인덱스를 만든 뒤 해당 subtree를 다시 넣습니다.
+    /// 호출 command가 결과를 먼저 검증하며, 적용 중 오류가 나면 journal이 성공한 단계를 되돌립니다.
     pub fn replace_record(&mut self, record: NodeRecord) -> Result<NodeRecord, CommandError> {
         let id = record.id;
         let previous = self
@@ -223,10 +218,19 @@ impl<'a> EditContext<'a> {
         }
         let structural = previous.parent != record.parent
             || previous.order_key != record.order_key
-            || previous.visible != record.visible
-            || previous.locked != record.locked
             || previous.kind() != record.kind();
         if !structural {
+            if previous.visible != record.visible || previous.locked != record.locked {
+                self.before_primitive()?;
+                let (visible, locked) =
+                    self.model
+                        .replace_flags(id, record.visible, record.locked)?;
+                self.journal.push(UndoOp::Flags {
+                    id,
+                    visible,
+                    locked,
+                });
+            }
             if previous.display_name != record.display_name {
                 self.set_display_name(id, record.display_name.clone())?;
             }
@@ -302,6 +306,13 @@ fn undo(model: &mut DocumentModel, op: UndoOp) -> Result<(), CommandError> {
         }
         UndoOp::Payload(id, payload) => model.set_payload(id, *payload)?,
         UndoOp::Name(id, name) => model.set_display_name(id, name)?,
+        UndoOp::Flags {
+            id,
+            visible,
+            locked,
+        } => {
+            model.replace_flags(id, visible, locked)?;
+        }
         UndoOp::Stack(owner, previous) => {
             model.set_modifier_stack(previous.unwrap_or_else(|| ModifierStack::new(owner)))?;
         }

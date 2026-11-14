@@ -296,6 +296,22 @@ impl DocumentModel {
         Ok(())
     }
 
+    /// node의 표시·잠금 필드를 바꾸고 이전 (표시, 잠금)을 반환합니다.
+    pub fn replace_flags(
+        &mut self,
+        id: StableId,
+        visible: bool,
+        locked: bool,
+    ) -> Result<(bool, bool), ModelError> {
+        let handle = self.runtime_id(id).ok_or(ModelError::UnknownNode { id })?;
+        self.columns
+            .replace_flags(handle, visible, locked)
+            .ok_or(ModelError::Inconsistent {
+                id,
+                reason: "registry 핸들이 살아 있지 않음",
+            })
+    }
+
     /// 표시 이름을 바꿉니다.
     pub fn set_display_name(&mut self, id: StableId, name: String) -> Result<(), ModelError> {
         let handle = self
