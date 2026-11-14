@@ -124,6 +124,40 @@ fn selected_property_round_trips_without_changing_working_bytes_or_real_index() 
     }));
     assert_eq!(delta.base_index(), &index);
     assert_eq!(file_digest(fx.work()), before);
+    let gate = fx.gated();
+    let before_write = gate.spawn_count();
+    let written =
+        stellar_git_porcelain::blob_write::write_candidate_blobs(&gate, fx.work(), &delta).unwrap();
+    assert_eq!(gate.spawn_count() - before_write, 3);
+    assert_eq!(written.base_index(), &index);
+    for (file, stored) in delta.changes().iter().zip(written.changes()) {
+        let stellar_git_porcelain::candidate_delta::FileDelta::Upsert { path, mode, bytes } = file
+        else {
+            panic!("unexpected deletion");
+        };
+        let stellar_git_porcelain::blob_write::WrittenFileDelta::Upsert {
+            path: actual_path,
+            mode: actual_mode,
+            oid,
+        } = stored
+        else {
+            panic!("unexpected deletion");
+        };
+        assert_eq!(path, actual_path);
+        assert_eq!(mode, actual_mode);
+        assert_eq!(
+            fx.git(["cat-file", "blob", oid.as_str()]).unwrap().stdout,
+            *bytes
+        );
+    }
+    let after_blobs = file_digest(fx.work());
+    for (path, hash) in &before {
+        assert_eq!(after_blobs.get(path), Some(hash), "existing bytes: {path}");
+    }
+    assert!(after_blobs
+        .keys()
+        .filter(|path| !before.contains_key(*path))
+        .all(|path| path.starts_with(".git/objects/")));
     assert_eq!(
         std::fs::read(fx.work().join(".git/index")).unwrap(),
         index_bytes
@@ -293,16 +327,22 @@ fn no_op_uses_index_generation_and_rejects_worktree_temp_parent_and_untrusted_gi
     for (path, hash) in &candidate_files {
         assert_eq!(index_files.get(path), Some(hash), "{path}");
     }
+    let delta = stellar_git_porcelain::candidate_delta::compute_candidate_delta(
+        &fx.gated(),
+        fx.work(),
+        &candidate.tree,
+    )
+    .unwrap();
+    assert!(delta.changes().is_empty());
+    let gate = fx.gated();
+    let before_write = gate.spawn_count();
     assert!(
-        stellar_git_porcelain::candidate_delta::compute_candidate_delta(
-            &fx.gated(),
-            fx.work(),
-            &candidate.tree,
-        )
-        .unwrap()
-        .changes()
-        .is_empty()
+        stellar_git_porcelain::blob_write::write_candidate_blobs(&gate, fx.work(), &delta)
+            .unwrap()
+            .changes()
+            .is_empty()
     );
+    assert_eq!(gate.spawn_count(), before_write);
     drop(candidate);
     assert!(matches!(
         prepare_stage_candidate(&fx.gated(), fx.work(), fx.work(), &request),
