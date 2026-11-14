@@ -20,6 +20,11 @@ pub fn id(n: u64) -> StableId {
 /// View A: 중첩 Fragment·한글/줄바꿈/HTML 문자·숨김 Text. View B: 별도 문자열.
 /// node 삽입 순서·StableId 순서와 OrderKey 순서를 의도적으로 다르게 둡니다.
 pub fn document() -> DocumentModel {
+    document_with_second_view_text("두 번째 View 전용")
+}
+
+/// 두 번째 View의 본문 문자열을 지정하는 왕복 fixture.
+pub fn document_with_second_view_text(value: &str) -> DocumentModel {
     let mut definition = DocumentDefinition::new(id(1), "접근성 fixture".into());
     let mut page = PageDefinition::new(id(2), "페이지".into());
     page.add_view(ViewDefinition::new(id(3), "A".into(), id(10)))
@@ -83,7 +88,7 @@ pub fn document() -> DocumentModel {
             true,
             NodePayload::Frame(FramePayload::default()),
         ),
-        (21, Some(20), 1, true, text("두 번째 View 전용")),
+        (21, Some(20), 1, true, text(value)),
     ] {
         model
             .insert_node(NodeRecord {

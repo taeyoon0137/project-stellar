@@ -147,6 +147,43 @@ fn unsupported_data_fails_only_when_its_view_is_selected_and_keeps_revision() {
 }
 
 #[test]
+fn preserves_carriage_returns_and_diagnoses_null_in_the_selected_view() {
+    let dir = TempDir::new("html-text-characters");
+    scaffold_project(&dir.path);
+    let document = fixture::id(1).to_string();
+    let view = fixture::id(4).to_string();
+    save_documents(
+        &dir.path,
+        &[&fixture::document_with_second_view_text("a\rb\r\nc")],
+    );
+    let result = envelope(&run(&dir.path, &document, &view), 0);
+    let html = result
+        .get("result")
+        .unwrap()
+        .get("html")
+        .unwrap()
+        .as_str()
+        .unwrap();
+    assert!(html.contains("a&#13;b&#13;\nc"));
+
+    save_documents(
+        &dir.path,
+        &[&fixture::document_with_second_view_text("a\0b")],
+    );
+    let before = file_digest(&dir.path);
+    envelope(&run(&dir.path, &document, &fixture::id(3).to_string()), 0);
+    let failure = envelope(&run(&dir.path, &document, &view), 1);
+    assert_eq!(
+        failure.get("result").unwrap().get("html"),
+        Some(&JsonValue::Null)
+    );
+    let diagnostics = json::write(failure.get("diagnostics").unwrap());
+    assert!(diagnostics.contains("unsupported-text-character"));
+    assert!(diagnostics.contains(&fixture::id(21).to_string()));
+    assert_eq!(file_digest(&dir.path), before);
+}
+
+#[test]
 fn missing_unsaved_unknown_and_corrupt_inputs_have_explicit_errors_and_no_writes() {
     let dir = TempDir::new("html-errors");
     let document = fixture::id(1).to_string();

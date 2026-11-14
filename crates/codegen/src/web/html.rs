@@ -73,6 +73,7 @@ fn escape_attribute(value: &str) -> String {
         match ch {
             '&' => out.push_str("&amp;"),
             '"' => out.push_str("&quot;"),
+            '\r' => out.push_str("&#13;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             _ => out.push(ch),
@@ -86,6 +87,7 @@ fn escape_text(value: &str) -> String {
     for ch in value.chars() {
         match ch {
             '&' => out.push_str("&amp;"),
+            '\r' => out.push_str("&#13;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             _ => out.push(ch),

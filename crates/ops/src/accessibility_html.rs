@@ -206,6 +206,14 @@ pub fn export_accessibility(
             }
             NodePayload::Fragment(_) => (SourceKind::Fragment, ElementKind::FRAGMENT),
             NodePayload::Text(text) => {
+                if text.content().contains('\0') {
+                    result.note(
+                        true,
+                        "unsupported-text-character",
+                        format!("node {id}의 U+0000은 HTML 본문에서 보존할 수 없습니다"),
+                    );
+                    continue;
+                }
                 texts.insert(id, text.content().to_string());
                 (SourceKind::Text, ElementKind::TEXT)
             }

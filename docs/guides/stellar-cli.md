@@ -162,7 +162,7 @@ jq -je 'select(.ok == true) | .result.html' /tmp/view-result.json > /tmp/view.ht
 |---|---|
 | Frame | generic `div`; 이름으로 button·dialog·label을 만들지 않음 |
 | Fragment | 자체 element 없이 자식을 제자리에서 펼침 |
-| Text | 저장된 문자열을 `span` 내용으로 출력; 한글·줄바꿈 보존, HTML 문자 escaping |
+| Text | 원문과 줄바꿈을 보존하는 `span`을 출력합니다. CR은 `&#13;`으로 기록하며, 선택한 View에 U+0000이 있으면 해당 노드에 `unsupported-text-character` 오류를 반환합니다. |
 | visible=false | 자신·하위 접근성 제외, 펼쳐진 subtree에 `aria-hidden`; 시각적으로 숨기는 CSS는 없음 |
 | Shape·Path·Image | `unsupported-node` 오류; 선택 View에 있으면 HTML 제공 안 함(숨김도 동일) |
 | layout·크기·transform·clipping·paint·텍스트 스타일 | `visuals-not-exported`; CSS 생성·측정·기하 재현 없음 |
