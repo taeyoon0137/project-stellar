@@ -15,8 +15,10 @@
 //!   다시 지웁니다(명시 stack으로 반복 순회, 재귀 없음). [`PrivateTempDir::cleanup`]은 실패를 돌려줍니다.
 //! - **잔여 정리**: 비정상 종료로 남은 디렉터리는 [`sweep_stale_private_temps`]가 지웁니다. 이름에 기록한
 //!   process id가 아직 살아 있으면(또는 이 process 자신이면) 건너뜁니다. pid 검사는 이 기계에서만 의미가
-//!   있으므로 표식에 만든 host 이름(`host=<이름>`)을 기록하고, 이 host가 만든 표식만 지웁니다(공유·네트워크
-//!   volume에서 다른 기계의 살아 있는 process가 쓰는 디렉터리를 지우지 않음).
+//!   있으므로 표식에 만든 host 이름과 기계 식별자(`host=<이름>`, `machine=<식별자>`)를 기록하고, 둘 다 이
+//!   기계와 같은 표식만 지웁니다(공유·네트워크 volume에서 다른 기계의 살아 있는 process가 쓰는 디렉터리를
+//!   지우지 않음). host 이름은 기본 이름 등으로 기계끼리 겹칠 수 있으므로 기계 식별자(macOS
+//!   `gethostuuid`, 그 밖의 unix `/etc/machine-id`)가 없으면 표식을 비워 두고 잔여 정리도 하지 않습니다.
 //!
 //! Windows는 ADR-0006에 따라 지원을 미룹니다. 비-unix 빌드는 권한 검사를 하지 않고 잔여 정리도 하지
 //! 않습니다(어떤 process도 죽었다고 판정하지 않음).
@@ -218,22 +220,30 @@ fn write_marker(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// 표식 파일 내용 접두사. 뒤에 만든 host 이름과 LF가 옵니다.
+/// 표식 파일 첫 줄 접두사. 뒤에 만든 host 이름과 LF가 옵니다.
 const MARKER_HOST_PREFIX: &str = "host=";
+
+/// 표식 파일 둘째 줄 접두사. 뒤에 만든 기계 식별자와 LF가 옵니다.
+const MARKER_MACHINE_PREFIX: &str = "machine=";
 
 /// 표식 파일 최대 크기. 넘으면 다른 host가 만든 것으로 봅니다(지우지 않음).
 const MAX_MARKER_BYTES: u64 = 1024;
 
-/// 이 host의 표식 파일 내용(`host=<이름>\n`). host 이름을 얻지 못하면 `None`(빈 표식).
+/// 이 기계의 표식 파일 내용(`host=<이름>\nmachine=<식별자>\n`). host 이름이나 기계 식별자를 얻지
+/// 못하면 `None`(빈 표식, 잔여 정리 안 함).
 pub(crate) fn marker_contents() -> Option<String> {
-    current_host_name().map(|host| format!("{MARKER_HOST_PREFIX}{host}\n"))
+    let host = current_host_name()?;
+    let machine = current_machine_id()?;
+    Some(format!(
+        "{MARKER_HOST_PREFIX}{host}\n{MARKER_MACHINE_PREFIX}{machine}\n"
+    ))
 }
 
-/// 표식이 이 host에서 만든 것인지. 내용이 이 host의 [`marker_contents`]와 정확히 같을 때만 `true`입니다.
+/// 표식이 이 기계에서 만든 것인지. 내용이 이 기계의 [`marker_contents`]와 정확히 같을 때만 `true`입니다.
 ///
 /// 공유·네트워크 volume에서 같은 사용자의 다른 기계 process가 쓰는 디렉터리를 이 기계의 pid 검사만으로
-/// 지우지 않게 합니다. host 이름이 없거나 다른 표식(이전 형식의 빈 표식 포함)은 지우지 않습니다(남겨도
-/// 디렉터리가 남을 뿐 데이터를 잃지 않음).
+/// 지우지 않게 합니다. host 이름이 같아도 기계 식별자가 다르거나 없는 표식(host 이름만 있는 이전 형식,
+/// 빈 표식 포함)은 지우지 않습니다(남겨도 디렉터리가 남을 뿐 데이터를 잃지 않음).
 fn marker_is_from_this_host(dir: &Path) -> bool {
     use std::io::Read;
     let Some(expected) = marker_contents() else {
@@ -264,6 +274,33 @@ fn current_host_name() -> Option<String> {
 /// 비-unix(Windows, ADR-0006 보류)는 host 이름을 기록하지 않습니다(잔여 정리도 하지 않음).
 #[cfg(not(unix))]
 fn current_host_name() -> Option<String> {
+    None
+}
+
+/// 이 기계의 식별자(macOS hardware UUID, `gethostuuid`). 얻지 못하면 `None`.
+#[cfg(target_os = "macos")]
+fn current_machine_id() -> Option<String> {
+    sys::machine_uuid()
+}
+
+/// macOS 밖 unix: `/etc/machine-id`(소문자 hex 32자). 없거나 형식이 다르면 `None`.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn current_machine_id() -> Option<String> {
+    use std::io::Read;
+    let mut text = String::new();
+    std::fs::File::open("/etc/machine-id")
+        .ok()?
+        .take(64)
+        .read_to_string(&mut text)
+        .ok()?;
+    let id = text.trim_end_matches('\n');
+    let valid = id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit());
+    valid.then(|| id.to_ascii_lowercase())
+}
+
+/// 비-unix(Windows, ADR-0006 보류)는 기계 식별자를 기록하지 않습니다(잔여 정리도 하지 않음).
+#[cfg(not(unix))]
+fn current_machine_id() -> Option<String> {
     None
 }
 
@@ -352,17 +389,18 @@ pub struct SweepReport {
     pub live: Vec<PathBuf>,
     /// 지우지 못한 디렉터리와 오류 종류.
     pub failed: Vec<(PathBuf, io::ErrorKind)>,
-    /// 표식이 이 host에서 만든 것이 아니라(다른 기계·host 이름 변경·이전 형식) 남긴 디렉터리.
+    /// 표식이 이 기계에서 만든 것이 아니라(다른 기계·같은 host 이름의 다른 기계·host 이름 변경·이전
+    /// 형식) 남긴 디렉터리.
     pub other_host: Vec<PathBuf>,
 }
 
 /// `parent` 아래에서 `prefix`로 만든 잔여 비공개 임시 디렉터리를 지웁니다.
 ///
 /// 다음을 모두 만족하는 항목만 지웁니다: 이름이 `<prefix>-<pid>-…`, symlink가 아닌 실제 디렉터리,
-/// 이 사용자 소유, 권한 `0700`(unix), 표식 파일이 일반 파일로 있음, 표식이 이 host에서 만든 것,
-/// `pid` process가 없음. pid 생존 검사는 이 기계에서만 의미가 있으므로, 공유·네트워크 volume에서 다른
-/// 기계의 살아 있는 process가 쓰는 디렉터리는 host 표식이 달라 지우지 않습니다. 그 밖의 항목은 보고하지
-/// 않고 그대로 둡니다.
+/// 이 사용자 소유, 권한 `0700`(unix), 표식 파일이 일반 파일로 있음, 표식이 이 기계에서 만든 것(host
+/// 이름과 기계 식별자 모두 같음), `pid` process가 없음. pid 생존 검사는 이 기계에서만 의미가 있으므로,
+/// 공유·네트워크 volume에서 다른 기계(같은 host 이름 포함)의 살아 있는 process가 쓰는 디렉터리는 기계
+/// 표식이 달라 지우지 않습니다. 그 밖의 항목은 보고하지 않고 그대로 둡니다.
 pub fn sweep_stale_private_temps(
     parent: &Path,
     prefix: &str,
@@ -436,7 +474,8 @@ fn process_may_be_alive(_pid: u32) -> bool {
     true
 }
 
-/// 최소 libc 선언(macOS `<unistd.h>`·`<signal.h>`). libc crate 없이 안전한 wrapper로만 씁니다.
+/// 최소 libc 선언(macOS `<unistd.h>`·`<signal.h>`·`<gethostuuid.h>`). libc crate 없이 안전한 wrapper로만
+/// 씁니다.
 #[cfg(unix)]
 mod sys {
     extern "C" {
@@ -446,6 +485,46 @@ mod sys {
         fn kill(pid: i32, sig: i32) -> i32;
         /// `int gethostname(char *name, size_t namelen)`.
         fn gethostname(name: *mut u8, namelen: usize) -> i32;
+    }
+
+    /// `struct timespec`(macOS `<sys/_types/_timespec.h>`: `__darwin_time_t`(= `long`), `long`).
+    #[cfg(target_os = "macos")]
+    #[repr(C)]
+    struct Timespec {
+        tv_sec: std::ffi::c_long,
+        tv_nsec: std::ffi::c_long,
+    }
+
+    #[cfg(target_os = "macos")]
+    extern "C" {
+        /// `int gethostuuid(uuid_t id, const struct timespec *wait)`(`uuid_t` = `unsigned char[16]`).
+        fn gethostuuid(id: *mut u8, wait: *const Timespec) -> i32;
+    }
+
+    /// 이 기계의 hardware UUID(소문자 hex, 8-4-4-4-12). 실패하거나 모두 0이면 `None`.
+    #[cfg(target_os = "macos")]
+    pub(super) fn machine_uuid() -> Option<String> {
+        let mut id = [0u8; 16];
+        // 0은 무한 대기이므로 상한을 둡니다.
+        let wait = Timespec {
+            tv_sec: 1,
+            tv_nsec: 0,
+        };
+        // SAFETY: id는 uuid_t 크기(16 bytes)의 쓰기 가능한 지역 배열이고, wait는 유효한 timespec을
+        // 가리킵니다. gethostuuid는 id 16 bytes에만 쓰고 wait는 읽기만 합니다.
+        let rc = unsafe { gethostuuid(id.as_mut_ptr(), &wait) };
+        if rc != 0 || id == [0u8; 16] {
+            return None;
+        }
+        let hex: String = id.iter().map(|b| format!("{b:02x}")).collect();
+        Some(format!(
+            "{}-{}-{}-{}-{}",
+            &hex[0..8],
+            &hex[8..12],
+            &hex[12..16],
+            &hex[16..20],
+            &hex[20..32]
+        ))
     }
 
     /// `ESRCH`(macOS·Linux 공통 값): 그런 process가 없음.
@@ -696,12 +775,57 @@ mod tests {
         let work = Work::new();
         let own = PrivateTempDir::create_in(&work.path, PREFIX).unwrap();
         let contents = std::fs::read_to_string(own.path().join(PRIVATE_TEMP_MARKER)).unwrap();
-        let host = contents
-            .strip_prefix(MARKER_HOST_PREFIX)
-            .and_then(|rest| rest.strip_suffix('\n'))
-            .unwrap();
+        let lines: Vec<&str> = contents.split_terminator('\n').collect();
+        assert_eq!(lines.len(), 2, "{contents:?}");
+        let host = lines[0].strip_prefix(MARKER_HOST_PREFIX).unwrap();
+        let machine = lines[1].strip_prefix(MARKER_MACHINE_PREFIX).unwrap();
         assert!(!host.is_empty());
+        assert_eq!(machine.len(), 36, "{machine:?}");
+        assert!(contents.ends_with('\n'));
+        assert_eq!(Some(machine.to_string()), current_machine_id());
         assert!(marker_is_from_this_host(own.path()));
+    }
+
+    #[test]
+    fn sweep_keeps_dirs_of_another_machine_with_the_same_host_name() {
+        let work = Work::new();
+        let parent = &work.path;
+        let host = current_host_name().expect("테스트 host 이름");
+        // 공유 volume에서 같은 host 이름(기본 이름 등)·같은 uid인 다른 기계가 만든 staging(리뷰 재현).
+        // host 이름만 적힌 표식은 이 기계 것과 구분되지 않으므로 지우면 안 됩니다.
+        let same_name = leftover(parent, &format!("{PREFIX}-{DEAD_PID}-0-0"), 0o700, true);
+        std::fs::write(
+            same_name.join(PRIVATE_TEMP_MARKER),
+            format!("{MARKER_HOST_PREFIX}{host}\n"),
+        )
+        .unwrap();
+        // 같은 host 이름이지만 기계 식별자가 다른 표식.
+        let other_machine = leftover(parent, &format!("{PREFIX}-{DEAD_PID}-1-0"), 0o700, true);
+        std::fs::write(
+            other_machine.join(PRIVATE_TEMP_MARKER),
+            format!(
+                "{MARKER_HOST_PREFIX}{host}\n{MARKER_MACHINE_PREFIX}00000000-0000-0000-0000-000000000001\n"
+            ),
+        )
+        .unwrap();
+
+        let report = sweep_stale_private_temps(parent, PREFIX).unwrap();
+        assert!(report.removed.is_empty(), "{:?}", report.removed);
+        assert_eq!(
+            report.other_host,
+            vec![same_name.clone(), other_machine.clone()]
+        );
+        for kept in [&same_name, &other_machine] {
+            assert!(kept.join("checkout/sub/data").exists(), "{kept:?}");
+        }
+        // 이 기계가 만든 표식은 host 이름과 함께 기계 식별자를 기록합니다.
+        let contents = marker_contents().unwrap();
+        assert!(
+            contents
+                .lines()
+                .any(|line| line.starts_with(MARKER_MACHINE_PREFIX)),
+            "{contents:?}"
+        );
     }
 
     #[test]

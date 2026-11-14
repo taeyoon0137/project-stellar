@@ -98,3 +98,24 @@
 - **남은 한계**: macOS host 이름이 네트워크에 따라 바뀌면 이전 이름으로 남은 잔여는 정리하지 않습니다(누수만,
   삭제 오판 없음). 리뷰가 함께 지적한 상태 표시(비-unix에서 이 모듈이 검사·정리를 하지 않으므로 ADR-0006
   규칙 4에 따라 `[~]`이 맞는지)는 이 행의 상태 표식 결정이라 이 수정 범위 밖으로 남깁니다.
+
+## 후속 수정(2차 리뷰 반영): 같은 host 이름의 다른 기계 staging을 지우지 않음
+
+- **문제**: 위 수정의 다른 기계 판정은 `gethostname()`만 비교했습니다. 같은 host 이름(기본 이름 등)·같은 uid인
+  두 기계가 공유 volume을 쓰면 서로의 살아 있는 staging을 지울 수 있었고, 위 남은 한계는 host 이름 변경만
+  적고 이름 충돌은 적지 않았습니다.
+- **수정**(`crates/project/src/private_temp.rs`): 표식에 host 이름과 함께 기계 식별자를 기록합니다
+  (`host=<이름>\nmachine=<식별자>\n`). macOS는 `gethostuuid`(hardware UUID, 1초 대기 상한, 기존 `kill`·`geteuid`와
+  같은 최소 extern 선언), macOS 밖 unix는 `/etc/machine-id`입니다. sweep은 두 값이 모두 이 기계와 같은 표식만
+  pid 검사로 지웁니다. host 이름만 있는 표식(이전 형식, 같은 이름의 다른 기계가 이전 형식으로 쓴 것과 구분 불가)과
+  기계 식별자가 다른 표식은 `other_host`로 남깁니다. 기계 식별자를 얻지 못하면 표식을 비워 두고 잔여 정리를
+  하지 않습니다(누수만, 삭제 오판 없음).
+- **검증**: `sweep_keeps_dirs_of_another_machine_with_the_same_host_name`(수정 전: 같은 host 이름만 적힌 표식의
+  잔여가 지워져 실패. 수정 후: 그 표식과 기계 식별자가 다른 표식 모두 `other_host`로 남음),
+  `marker_records_this_host`(두 줄 형식, 식별자 36자), 기존 sweep·clone 테스트. 이 기계에서 `gethostuuid` 결과와
+  `ioreg`의 `IOPlatformUUID`가 같은 값임을 확인했습니다.
+- **남은 한계**: host 이름이나 기계 식별자가 바뀌면 이전 표식의 잔여는 정리하지 않습니다(누수만).
+  `gethostuuid`가 실패하는 환경에서는 잔여 정리를 하지 않습니다(App Sandbox에서의 동작은 확인하지 않았고,
+  저장소의 앱 서명 스크립트에는 App Sandbox entitlement가 없음). 같은 hardware UUID를 공유하는 복제 VM끼리는
+  host 이름까지 같으면 구분하지 못합니다. macOS 밖 unix 경로(`/etc/machine-id`)는
+  이 세션에서 컴파일·실행하지 않았습니다(현재 지원 대상 아님).
