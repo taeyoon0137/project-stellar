@@ -39,3 +39,6 @@ pub mod validate;
 
 /// profile upgrade plan(semantic diff와 영향 범위) (IX.10.9).
 pub mod upgrade;
+
+/// 승인된 profile upgrade 적용과 undo (IX.10.10).
+pub mod apply;
