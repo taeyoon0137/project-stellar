@@ -95,7 +95,7 @@ pub const QUERY_TARGETS: &[(&str, &str)] = &[
     ("tokens", "token 집합(저장 포맷 미정: chunk 수만 보고)"),
     (
         "components",
-        "component library(저장 포맷 미정: chunk 수만 보고)",
+        "design/components의 컴포넌트 원본과 generation의 component-library chunk 수",
     ),
 ];
 

@@ -15,8 +15,11 @@ const B: &str = "0195c530-3acd-7bc1-8414-c213f61cb967";
 const BR: &str = "0195c530-3acd-7bc1-8414-c213f61cb968";
 
 fn cli(work: &Path, home: &Path, args: &[&str], exit: i32) -> JsonValue {
+    run(work, home, "component-source", args, exit)
+}
+fn run(work: &Path, home: &Path, command: &str, args: &[&str], exit: i32) -> JsonValue {
     let out = Command::new(env!("CARGO_BIN_EXE_stellar"))
-        .arg("component-source")
+        .arg(command)
         .args(args)
         .current_dir(work)
         .env_clear()
@@ -124,6 +127,26 @@ fn independent_component_files_merge_and_open_without_cache() {
     assert_eq!(value(&entries[1], "root"), BR);
     assert_eq!(value(&entries[0], "width"), "240.5");
     assert_eq!(value(&entries[1], "height"), "55");
+    let before_query = file_digest(&fresh);
+    let summary = run(&fresh, &home, "query", &[".", "components"], 0);
+    assert_eq!(summary.get("chunk_count").unwrap().as_i64(), Some(0));
+    let queried = summary.get("entries").unwrap().as_array().unwrap();
+    assert_eq!(queried.len(), entries.len());
+    for (result, file) in queried.iter().zip(entries) {
+        for field in [
+            "id",
+            "root",
+            "name",
+            "width",
+            "height",
+            "node_count",
+            "source_hash",
+        ] {
+            assert_eq!(result.get(field), file.get(field), "{field}");
+        }
+        assert!(result.get("file").is_none());
+    }
+    assert_eq!(file_digest(&fresh), before_query);
     assert!(git(&fresh, &["status", "--porcelain"]).is_empty());
     assert_eq!(git(&fresh, &["ls-files", folder]).lines().count(), 2);
     let reopened_project = file_digest(&fresh);

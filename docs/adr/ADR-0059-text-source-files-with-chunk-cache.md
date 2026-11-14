@@ -44,6 +44,7 @@ Accepted (2026-11-14). 제품 책임자가 결정했습니다("바꾸는 게 나
 - V.10.4의 컴포넌트 원본 첫 범위는 독립 파일 하나에 빈 인터페이스와 root Frame을 기록합니다. 이름과 StableId 유래 고정 접미사로 파일을 찾고, 전체 StableId로 정의와 root를 조립합니다. 기존 generation의 전체 라이브러리를 변환하지 않습니다. [컴포넌트 원본 v1](../spec/component-source-v1.md)
 - 기본 앱·CLI 저장 경로는 그대로 둡니다. 이 파일은 전체 프로젝트 변환 완료의 표식이 아닙니다. 다중 페이지·View/전체 의미는 V.10.4, journal은 V.10.5, 외부 변경/명령 연결은 V.10.6, 기본 전환과 성능 측정은 V.10.7입니다.
 - 단일 파일은 기존 atomic writer와 handle 검사를 재사용합니다(`crates/storage/source_file`). 새 파일의 기존 대상은 거부하고, 수정 저장은 열린 bytes hash를 다시 검사합니다. 원본 읽기의 사용자 symlink 허용은 §19.3을 유지하고, 원자 쓰기와 cache 경로는 symlink를 따라 교체하지 않습니다.
+- 컴포넌트 원본을 프로젝트에 포함할 때 쓰는 opt-in 위치는 `design/components/`입니다. 프로젝트 CLI·headless MCP 조회는 이 내부의 원본 파일을 다시 읽고, 기존 component-library chunk와의 이중 원본은 거부합니다. 사용자가 명시한 단독 파일의 링크 읽기 정책은 유지하며, 프로젝트 단위 조회는 내부로 해석된 실제 경로의 제한된 bytes만 읽습니다. [원본과 조회 계약](../spec/component-source-v1.md)
 - 선택적 `open_with_cache`는 원본을 검증한 뒤 기존 ChunkId·envelope로 `.stellar/cache/text-source-v1/<source-hash>/`를 재생성합니다. 누락·손상은 재생성, cache I/O 실패는 원본 열기 성공과 별도 상태로 반환합니다. 매번 원본을 해석하므로 빠른 열기 성능 완료로 보지 않습니다.
 
 정하지 않은 사항(후속 결정):

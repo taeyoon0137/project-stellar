@@ -143,7 +143,7 @@ pub const RESOURCES: &[ResourceDef] = &[
     ResourceDef {
         name: "components",
         title: "Components",
-        description: "component library 항목",
+        description: "프로젝트 안의 컴포넌트 텍스트 원본 요약과 generation의 바이너리 chunk 수",
         uri: "stellar://components",
         template: false,
         availability: Availability::All,
@@ -151,7 +151,7 @@ pub const RESOURCES: &[ResourceDef] = &[
         content_schema: concat!(
             r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"required":["revision","chunk_count","entries"],"properties":{"revision":"#,
             revision_schema!(),
-            r#","chunk_count":{"type":"integer","minimum":0},"entries":{"type":"array"}}}"#
+            r#","chunk_count":{"type":"integer","minimum":0},"entries":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["id","root","node_count","name","width","height","source_hash"],"properties":{"id":{"type":"string"},"root":{"type":"string"},"node_count":{"type":"integer","minimum":1},"name":{"type":"string"},"width":{"type":"string"},"height":{"type":"string"},"source_hash":{"type":"string","pattern":"^sha256:[0-9a-f]{64}$"}}}}}}"#
         ),
     },
     ResourceDef {

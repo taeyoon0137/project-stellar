@@ -49,16 +49,17 @@ stellar-mcp --headless --project <project-id>
 | 호출 | 제공 범위 |
 |---|---|
 | `initialize` | 기존 protocol 협상, `resources: {}`와 `tools: {}` capability 광고 |
-| `resources/list` | 기존 `project-structure`, `stellar://project/structure` 한 항목 |
+| `resources/list` | `stellar://project/structure`, `stellar://components` |
 | `resources/templates/list` | 기존 `document`, `stellar://documents/{document}{?cursor,limit}` 한 항목 |
 | `resources/read` 구조 | 저장된 문서 ID·이름, page·View 개요, chunk 종류별 개수, revision |
+| `resources/read` 컴포넌트 | 프로젝트 안의 개별 Git 원본에서 component ID·이름, 루트 ID·크기, Frame 수, 파일 hash를 읽음 |
 | `resources/read` 문서 | 승인 프로젝트의 저장된 문서 트리 page: node ID·부모·View·깊이·종류·이름·표시/잠금 여부·자식 수, revision·cursor |
 | `tools/list` | `document.semantic_diff`, `document.validate`(읽기 전용) |
 | `tools/call` | 저장 문서의 Git HEAD 대비 변경 목록 또는 전체·선택 문서의 검증 진단. 미등록 tool 이름은 `-32602` |
 
-- revision은 ops의 `token`, `generation`, `manifest_hash` 그대로입니다. 매 읽기는 하나의 디스크 generation을 사용합니다. 다음 요청에서 정상 저장이 관찰되면 이전 revision의 cursor는 기존 `PageError::StaleCursor`로 거부합니다(`-32602`).
+- revision은 ops의 `token`, `generation`, `manifest_hash` 그대로입니다. 문서 읽기는 하나의 디스크 generation을 사용합니다. 다음 요청에서 정상 저장이 관찰되면 이전 revision의 cursor는 기존 `PageError::StaleCursor`로 거부합니다(`-32602`).
 - 문서 page는 기존 XIX.2.2의 기본 500개, 최대 2,000개, 내용 JSON 최대 512 KiB를 적용합니다. byte 한도에 맞춰 page를 줄이고, 한 item이 한도를 넘으면 오류입니다. 인코딩된 resource envelope에도 stdio 1 MiB 한도를 검사합니다.
-- project structure는 기존 catalog에서 비페이지 resource입니다. URI·결과 schema에 임의 pagination 필드를 추가하지 않고, 내용이 512 KiB를 넘으면 오류로 닫습니다.
+- project structure와 components는 기존 catalog에서 비페이지 resource입니다. URI·결과 schema에 임의 pagination 필드를 추가하지 않고, 내용이 512 KiB를 넘으면 오류로 닫습니다.
 - 다른 프로젝트 ID/문서, URI의 프로젝트 선택, 선언 밖 인자, 다른 문서 cursor, 잘못된 limit은 `-32602`; 세션 중 신뢰를 확인할 수 없으면 내용 없는 `-32000`입니다. 미초기화 요청은 기존 `-32002`입니다.
 
 ## 실행한 명령 / 검증
@@ -171,7 +172,7 @@ Apple M3 Max에서 기준 커밋 `47cba3e6`의 release 바이너리와 변경 �
 ## 남은 위험 / 한계
 
 - XIX.9.1의 agent-protocol 등록·공용 정의 이동, XIX.9.2 카탈로그 생성은 후속입니다. 현재 catalog는 이동한 mcp-core 안에 있고 기존 golden을 유지합니다.
-- 앱의 미저장 문서·현재 선택·current document는 읽지 않습니다. token/component/target-profile/Git 상태·임의 Git revision 비교·dry-run·모든 쓰기·attached resource 전달은 제공하지 않습니다.
+- 앱의 미저장 문서·현재 선택·current document는 읽지 않습니다. token/target-profile/Git 상태·임의 Git revision 비교·dry-run·모든 쓰기·attached resource 전달은 제공하지 않습니다.
 - 신뢰 등록 UI와 앱의 grant 호출 연결은 이번 범위가 아닙니다. 기존 등록이 없거나 위치/ID가 불명확하면 비활성으로 남습니다. 동일 ID의 신뢰된 복사본이 둘 이상이면 하나를 임의 선택하지 않습니다.
 - 문서 page는 기존 ops의 검증된 문서 단위 로딩을 재사용합니다. 후속 변경으로 연결별 snapshot 하나와 최근 문서의 트리 행만 유지합니다. 최초 로드·문서 전환·원천 변경 뒤 로드는 여전히 문서 크기에 비례하며, node 단위 lazy paging·RSS 측정은 후속입니다.
 - 신뢰 확인과 snapshot 응답은 OS 파일 시스템의 원자적 승인 transaction이 아닙니다. 요청 전후 재확인과 ops의 고정 generation 일관성을 사용하며 watcher 기반 즉시 종료·강한 원자성은 구현하지 않았습니다.
@@ -185,3 +186,7 @@ Apple M3 Max에서 기준 커밋 `47cba3e6`의 release 바이너리와 변경 �
 실제 임시 Git 브랜치 두 개로 `tools/stellar-mcp/tests/headless_read.rs`의 `head_diff_pages_follow_real_branches_and_preserve_all_inputs`를 실행했습니다. 변경 없음, 한글 노드 이름의 이전·이후 값, 개수·512 KiB 제한에 따른 페이지와 단일 대형 항목의 오류, 작업 트리를 유지한 HEAD 이동, 후속 저장, 다른 project ID와 신뢰 철회를 확인합니다. 프로젝트 파일·index·refs·신뢰 등록 내용은 요청 전후 byte hash로 대조합니다. 커밋이 없거나 한쪽에 유효한 저장 세대가 없으면 비교할 수 없습니다. 이 검사는 문서 generation만 비교하며 프로젝트 매니페스트 설정·독립 텍스트 원본을 비교하지 않습니다.
 
 50,000개 노드의 기존 문서 읽기 release stdio 검사에서 500개 항목의 후속 페이지 RTT는 p50 2.367 ms, p95 3.718 ms(50회)였습니다. 첫 페이지 p95는 98.429 ms(10회)입니다. 측정 대상은 문서 resource이며 Git 비교 시간은 포함하지 않습니다.
+
+## 컴포넌트별 Git 원본 조회
+
+`resources/read stellar://components`는 고정한 신뢰 프로젝트의 `design/components`에서 v1·v2 YAML을 읽습니다. 구성 원본만 바뀌면 문서 generation은 같으므로 각 항목의 `source_hash`를 파일 버전으로 보고합니다. `cargo test -p stellar-mcp --test headless_read`의 실제 stdio 검사는 하나의 연결에서 빈 목록, 디스크 파일 추가, Git 브랜치 전환, 커밋 전 편집, 신뢰 철회를 순서대로 확인합니다. 읽기 전후 Git 및 프로젝트·사용자 데이터의 파일 digest를 대조합니다. [원본 선택과 조회 제한](../spec/component-source-v1.md)

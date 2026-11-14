@@ -156,7 +156,7 @@ stdout JSON에는 입력 경로를 넣지 않습니다. 의존성의 `repository
 
 ## 신뢰된 프로젝트를 MCP로 읽기
 
-`stellar-mcp`는 앱이 닫혀 있어도 디스크에 저장된 프로젝트 구조와 문서 노드를 읽을 수 있습니다.
+`stellar-mcp`는 앱이 닫혀 있어도 디스크에 저장된 프로젝트 구조, 문서 노드, 프로젝트 안의 opt-in 컴포넌트 원본을 읽을 수 있습니다.
 대상은 현재 OS 사용자의 기존 신뢰 등록에서 프로젝트 ID가 정확히 한 작업 폴더를 가리켜야 합니다.
 `stellar inspect`는 매니페스트의 ID를 읽습니다. 같은 ID로 등록된 작업 폴더가 여러 개이거나
 등록이 없으면 headless 서버는 종료 코드 77로 끝납니다.
@@ -202,6 +202,14 @@ stellar-mcp --connection-info
 다음 페이지가 필요하면 같은 문서 URI의 `cursor`에 반환된 `next_cursor`를 넣습니다.
 `next_cursor`가 `null`이면 마지막 페이지입니다. 이 모드는 저장된 데이터만 읽으며
 에디터의 현재 선택이나 미저장 편집은 노출하지 않습니다.
+
+### 프로젝트 컴포넌트 조회
+
+`stellar query . components`는 프로젝트의 `design/components/*.stellar.yaml`을 StableId 순서로 읽습니다. headless MCP에서 `resources/list`의 `stellar://components`를 선택하면 동일한 항목을 읽습니다. 각 `source_hash`는 현재 Git 작업 트리 파일의 실제 bytes에서 계산합니다. [컴포넌트 원본 형식과 조회 범위](../spec/component-source-v1.md)
+
+```jsonl
+{"jsonrpc":"2.0","id":6,"method":"resources/read","params":{"uri":"stellar://components"}}
+```
 
 ### 저장된 문서의 진단 조회
 

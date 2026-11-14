@@ -24,6 +24,7 @@ use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_chec
 
 const EXT: &str = ".stellar.yaml";
 const MAX_COMPONENT_FILES: usize = 4096;
+const MAX_PROJECT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// 빈 공개 인터페이스와 Free Frame tree의 편집 원본.
 #[derive(Debug)]
@@ -232,13 +233,20 @@ pub fn open(path: &Path) -> Result<(ComponentSource, ContentHash), TextSourceErr
 
 fn read_source(path: &Path) -> Result<(ComponentSource, ContentHash), TextSourceError> {
     let bytes = source_file::read(path, MAX_INPUT_BYTES as u64)?;
-    let source = ComponentSource::decode(std::str::from_utf8(&bytes).map_err(invalid)?)?;
+    decode_named(path, &bytes)
+}
+
+fn decode_named(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let source = ComponentSource::decode(std::str::from_utf8(bytes).map_err(invalid)?)?;
     if path.file_name() != Some(source.filename()?.as_ref()) {
         return Err(invalid(
             "파일명이 정의의 이름·StableId 접미사와 일치하지 않습니다",
         ));
     }
-    Ok((source, ContentHash::compute(&bytes)))
+    Ok((source, ContentHash::compute(bytes)))
 }
 
 /// 기존 원본을 대체하지 않고 지정 폴더에 새 컴포넌트를 기록합니다.
@@ -346,6 +354,46 @@ pub type ComponentFiles = BTreeMap<StableId, (PathBuf, ContentHash)>;
 
 /// 같은 폴더의 컴포넌트 정의를 기존 library로 재조립합니다. 참조는 전체 StableId를 사용합니다.
 pub fn read_library(dir: &Path) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
+    assemble_library(dir, read_source)
+}
+
+/// 고정 프로젝트의 opt-in 텍스트 라이브러리. 폴더 부재는 빈 집합입니다. 명시적 폴더 편집과
+/// 달리 프로젝트 밖 경로는 열지 않으며, 한 요청의 전체 YAML 읽기를 64 MiB로 제한합니다.
+pub fn read_project_library(
+    root: &Path,
+) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
+    use crate::path_resolver::{PathResolver, ResolveError, TargetKind, TargetLocation};
+    let resolver = PathResolver::new(root)?;
+    let folder = match resolver.resolve("design/components") {
+        Ok(target)
+            if target.location == TargetLocation::Internal
+                && target.kind == TargetKind::Directory =>
+        {
+            target
+        }
+        Ok(_) => return Err(invalid("프로젝트 안의 컴포넌트 폴더가 필요합니다")),
+        Err(ResolveError::Io {
+            kind: std::io::ErrorKind::NotFound,
+            ..
+        }) => return Ok((ComponentLibrary::new(), BTreeMap::new())),
+        Err(_) => return Err(invalid("컴포넌트 폴더를 해석할 수 없습니다")),
+    };
+    let mut remaining = MAX_PROJECT_SOURCE_BYTES;
+    assemble_library(&folder.target, |path| {
+        let target = path.canonicalize()?;
+        if !target.starts_with(resolver.canonical_root()) {
+            return Err(invalid("프로젝트 밖의 컴포넌트 원본입니다"));
+        }
+        let bytes = source_file::read_resolved(&target, remaining.min(MAX_INPUT_BYTES as u64))?;
+        remaining -= bytes.len() as u64;
+        decode_named(path, &bytes)
+    })
+}
+
+fn assemble_library(
+    dir: &Path,
+    mut read: impl FnMut(&Path) -> Result<(ComponentSource, ContentHash), TextSourceError>,
+) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
     let mut paths = Vec::new();
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
@@ -365,7 +413,7 @@ pub fn read_library(dir: &Path) -> Result<(ComponentLibrary, ComponentFiles), Te
     let mut index = BTreeMap::new();
     let mut filenames = BTreeSet::new();
     for path in paths {
-        let (source, hash) = read_source(&path)?;
+        let (source, hash) = read(&path)?;
         if !filenames.insert(collision_key(&source.filename()?)) {
             return Err(invalid("대소문자 무시 파일명 충돌"));
         }

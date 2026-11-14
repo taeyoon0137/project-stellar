@@ -633,9 +633,8 @@ pub fn project_structure(snapshot: &ProjectSnapshot) -> ProjectStructure {
 
 /// token·component 같은 정의 집합 조회 결과.
 ///
-/// token(Phase VIII)과 component library(Phase IX)는 아직 프로젝트 저장 포맷이 정해지지 않아
-/// 디스크에서 항목을 해석할 수 없습니다. 그래서 `entries`는 언제나 비어 있고, 해당 kind의 chunk
-/// pointer 수만 사실대로 보고합니다(V.6.1 `token-set`·`component-library`).
+/// generation의 token·component chunk pointer를 셉니다. 별도로 저장한 컴포넌트 YAML의
+/// 프로젝트 수준 조회는 [`crate::component_source::query`]로 수행합니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DefinitionSet {
     /// 조회한 revision.
@@ -666,7 +665,7 @@ pub fn tokens(snapshot: &ProjectSnapshot) -> DefinitionSet {
     definition_set(snapshot, "token-set")
 }
 
-/// component library를 조회합니다([`DefinitionSet`] 한계 참조).
+/// generation에 저장된 component-library chunk 개요. 프로젝트 원본은 [`crate::component_source::query`]로 조회합니다.
 pub fn components(snapshot: &ProjectSnapshot) -> DefinitionSet {
     definition_set(snapshot, "component-library")
 }

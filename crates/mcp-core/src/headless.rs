@@ -79,14 +79,19 @@ impl Headless {
                 ]),
             )]));
         }
-        let (field, name) = match method {
-            "resources/list" => ("resources", "project-structure"),
-            "resources/templates/list" => ("resourceTemplates", "document"),
+        let (field, names): (_, &[&str]) = match method {
+            "resources/list" => ("resources", &["project-structure", "components"]),
+            "resources/templates/list" => ("resourceTemplates", &["document"]),
             _ => return Err(invalid("제공하지 않는 목록입니다")),
         };
         Ok(JsonValue::object(vec![(
             field,
-            JsonValue::Array(vec![descriptor(resource(name).expect("catalog resource"))]),
+            JsonValue::Array(
+                names
+                    .iter()
+                    .map(|name| descriptor(resource(name).expect("catalog resource")))
+                    .collect(),
+            ),
         )]))
     }
 
@@ -212,6 +217,31 @@ impl Headless {
         let body = match target.name {
             "project-structure" => {
                 JsonValue::object(structure_fields(&project_structure(snapshot)))
+            }
+            "components" => {
+                let set = stellar_ops::component_source::query(snapshot).map_err(|_| {
+                    RpcError::new(-32000, "프로젝트의 컴포넌트 원본을 읽을 수 없습니다")
+                })?;
+                let entries = set
+                    .entries
+                    .into_iter()
+                    .map(|entry| {
+                        JsonValue::object(vec![
+                            ("id", id(entry.id)),
+                            ("root", id(entry.root)),
+                            ("node_count", count(entry.node_count)),
+                            ("name", JsonValue::string(entry.name)),
+                            ("width", JsonValue::string(entry.size.width().to_string())),
+                            ("height", JsonValue::string(entry.size.height().to_string())),
+                            ("source_hash", JsonValue::string(entry.hash.to_string())),
+                        ])
+                    })
+                    .collect();
+                JsonValue::object(vec![
+                    ("revision", revision(set.revision)),
+                    ("chunk_count", count(set.chunk_count)),
+                    ("entries", JsonValue::Array(entries)),
+                ])
             }
             "document" => {
                 let document = target
