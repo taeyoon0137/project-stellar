@@ -175,3 +175,74 @@ fn window_session_failures_have_fixed_codes() {
     assert_eq!(app.state().windows.len(), 1);
     app.shutdown().unwrap();
 }
+
+#[test]
+fn view_state_changes_stay_in_their_window() {
+    // 검증 기준(XII.2.5, runtime 경계): 창간 상태 격리 — 탭·active view·viewport.
+    use stellar_commands::view_tabs::CanvasViewport;
+
+    let first = saved_project("app-view-a");
+    let second = saved_project("app-view-b");
+    let app = AppRuntime::start().unwrap();
+    let (a, _, _) = open_window(&app, open_project(&app, first.path()));
+    let (b, _, _) = open_window(&app, open_project(&app, second.path()));
+    let state = app.state();
+    for session in [a, b] {
+        let summary = state.window(session).unwrap();
+        assert_eq!(summary.tab_count, 1);
+        assert_eq!(summary.active_view, Some(sid(3)));
+        assert_eq!(summary.viewport, Some(CanvasViewport::DEFAULT));
+    }
+
+    let request = app.open_view_tab(a, sid(4)).unwrap();
+    assert_eq!(
+        next_event(&app),
+        RuntimeEvent::WindowViewChanged {
+            request,
+            session: a
+        }
+    );
+    let zoomed = CanvasViewport::new(64.0, 32.0, 2.0).unwrap();
+    let request = app.set_viewport(a, zoomed).unwrap();
+    assert_eq!(
+        next_event(&app),
+        RuntimeEvent::WindowViewChanged {
+            request,
+            session: a
+        }
+    );
+    let state = app.state();
+    let summary_a = state.window(a).unwrap();
+    let summary_b = state.window(b).unwrap();
+    assert_eq!(
+        (summary_a.tab_count, summary_a.active_view),
+        (2, Some(sid(4)))
+    );
+    assert_eq!(summary_a.viewport, Some(zoomed));
+    assert_eq!(
+        (summary_b.tab_count, summary_b.active_view),
+        (1, Some(sid(3)))
+    );
+    assert_eq!(summary_b.viewport, Some(CanvasViewport::DEFAULT));
+    // view state 변경은 문서 revision·history를 바꾸지 않습니다.
+    assert_eq!(summary_a.revision, DocumentRevision(0));
+    assert_eq!(summary_a.undo_depth, 0);
+
+    // 실패: 없는 View, 닫힌 탭, 없는 창.
+    let request = app.open_view_tab(b, sid(99)).unwrap();
+    expect_failure(&app, request, RequestFailure::UnknownView);
+    let request = app.close_view_tab(b, sid(4)).unwrap();
+    expect_failure(&app, request, RequestFailure::UnknownView);
+    let request = app.set_viewport(WindowSessionHandle(999), zoomed).unwrap();
+    expect_failure(&app, request, RequestFailure::UnknownWindowSession);
+    // 마지막 탭을 닫으면 active 탭이 없어 viewport를 바꿀 수 없습니다.
+    let request = app.close_view_tab(b, sid(3)).unwrap();
+    assert!(matches!(
+        next_event(&app),
+        RuntimeEvent::WindowViewChanged { request: got, .. } if got == request
+    ));
+    let request = app.set_viewport(b, zoomed).unwrap();
+    expect_failure(&app, request, RequestFailure::NoActiveView);
+    assert_eq!(app.state().window(a).unwrap().viewport, Some(zoomed));
+    app.shutdown().unwrap();
+}

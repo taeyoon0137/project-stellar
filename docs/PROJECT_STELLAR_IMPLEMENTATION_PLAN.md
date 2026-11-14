@@ -1216,7 +1216,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XII.2.2 | `[x]` | macOS `NSWindowController`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.5.3, XII.2.1 |
 | XII.2.3 | `[!]` | Windows `MainWindow`가 한 ProjectWindowSession handle을 소유하도록 연결합니다. | 창 2개 open/close lifecycle 통과. | II.6.3, XII.2.1 |
 | XII.2.4 | `[ ]` | 같은 project path를 여러 창에서 열 수 있게 하되 각 창이 독립 base generation과 memory model을 로드하게 합니다. | 한 창 edit가 다른 창에 즉시 나타나지 않습니다. | XII.2.2, XII.2.3 |
-| XII.2.5 | `[ ]` | 창별 열린 tab, active view, viewport, selection을 WindowViewState에 연결합니다. | 창간 상태 격리. | VII.3.1, XII.2.1 |
+| XII.2.5 | `[x]` | 창별 열린 tab, active view, viewport, selection을 WindowViewState에 연결합니다. | 창간 상태 격리. | VII.3.1, XII.2.1 |
 
 ### XII.3 Canvas 입력 파이프라인
 

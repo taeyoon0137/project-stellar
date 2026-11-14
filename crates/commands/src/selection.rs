@@ -10,6 +10,9 @@
 //! 선택 변경은 문서 command가 아니라 history event [`SetSelection`](VII.3.2)입니다. 적용할 때 문서에
 //! 없는 id와 숨김 정책([`SelectionPolicy`])상 선택할 수 없는 id를 거르고, 이전 선택을 역 event로
 //! 돌려줍니다.
+//!
+//! 같은 view 상태에 창별 열린 탭·active view·탭별 viewport([`ViewTabs`], XII.2.5)도 있습니다. 탭과
+//! viewport는 history event가 아니며 저장되지 않습니다.
 
 use stellar_core_types::ids::StableId;
 use stellar_document::model::DocumentModel;
@@ -18,6 +21,7 @@ use crate::change::ChangeSet;
 use crate::codec::{CommandCodecError, Reader, Writer};
 use crate::id::WindowSessionId;
 use crate::tree::parent_of;
+use crate::view_tabs::ViewTabs;
 
 /// 순서 있는 선택 집합 + primary.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -89,6 +93,7 @@ pub struct WindowViewState {
     window: WindowSessionId,
     selection: Selection,
     area: Option<AreaPreview>,
+    tabs: ViewTabs,
 }
 
 /// 삭제된 node를 선택에서 지운 system event(VII.3.4). 사용자 history 항목이 아닙니다.
@@ -141,13 +146,24 @@ impl std::fmt::Display for AreaSelectionError {
 impl std::error::Error for AreaSelectionError {}
 
 impl WindowViewState {
-    /// 빈 선택의 view 상태.
+    /// 빈 선택·열린 탭 없음의 view 상태.
     pub fn new(window: WindowSessionId) -> WindowViewState {
         WindowViewState {
             window,
             selection: Selection::empty(),
             area: None,
+            tabs: ViewTabs::new(),
         }
+    }
+
+    /// 열린 탭·active view·탭별 viewport(XII.2.5).
+    pub fn tabs(&self) -> &ViewTabs {
+        &self.tabs
+    }
+
+    /// 열린 탭·active view·탭별 viewport(변경). history에 기록하지 않습니다.
+    pub fn tabs_mut(&mut self) -> &mut ViewTabs {
+        &mut self.tabs
     }
 
     /// 소유 창.

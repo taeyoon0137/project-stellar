@@ -72,7 +72,8 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
  *   REQUEST_FAILED : request u64, failure u32 (STELLAR_FAILURE_*), message str
  *   WINDOW_SESSION_OPENED: request u64, project u64, session u64, window_id[16],
  *                          document_id[16] (작업 문서 없으면 0), generation u64
- *   WINDOW_SESSION_CLOSED: request u64, session u64 */
+ *   WINDOW_SESSION_CLOSED: request u64, session u64
+ *   WINDOW_VIEW_CHANGED  : request u64, session u64 (탭·active view·viewport, 새 값은 상태 snapshot) */
 #define STELLAR_EVENT_SCHEMA_VERSION 1
 #define STELLAR_EVENT_TEXT_MAX 4096
 #define STELLAR_EVENT_PROJECT_OPENED 0x0101
@@ -82,6 +83,7 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_EVENT_REQUEST_FAILED 0x0105
 #define STELLAR_EVENT_WINDOW_SESSION_OPENED 0x0106
 #define STELLAR_EVENT_WINDOW_SESSION_CLOSED 0x0107
+#define STELLAR_EVENT_WINDOW_VIEW_CHANGED 0x0108
 
 /* 완료 event를 아직 꺼내지 않은 요청(실행 중 포함) 상한. 닿으면 새 요청은 STELLAR_QUEUE_FULL. */
 #define STELLAR_EVENT_CAPACITY 1024
@@ -100,6 +102,8 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_PATH_UNRESOLVED 17
 #define STELLAR_FAILURE_UNKNOWN_WINDOW_SESSION 4
 #define STELLAR_FAILURE_WINDOW_SESSION_LOAD_FAILED 18
+#define STELLAR_FAILURE_UNKNOWN_VIEW 19
+#define STELLAR_FAILURE_NO_ACTIVE_VIEW 20
 
 /* StellarRuntimeState 레이아웃 버전. 2: window_session_count 추가. */
 #define STELLAR_RUNTIME_STATE_VERSION 2

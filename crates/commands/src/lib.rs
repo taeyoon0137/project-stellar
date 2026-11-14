@@ -59,6 +59,9 @@ pub mod duplicate;
 /// 창별 선택 상태와 selection command (VII.3).
 pub mod selection;
 
+/// 창별 열린 탭·active view·viewport (XII.2.5).
+pub mod view_tabs;
+
 /// 테스트 전용 command 생성기 (VII.6). 프로덕션 경로에서 사용하지 않습니다.
 #[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]

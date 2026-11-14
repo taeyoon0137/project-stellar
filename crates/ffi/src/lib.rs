@@ -1318,6 +1318,10 @@ mod tests {
                 "STELLAR_EVENT_WINDOW_SESSION_CLOSED",
                 event_kind::WINDOW_SESSION_CLOSED,
             ),
+            (
+                "STELLAR_EVENT_WINDOW_VIEW_CHANGED",
+                event_kind::WINDOW_VIEW_CHANGED,
+            ),
         ] {
             define(name, format!("{kind:#06x}"));
         }
@@ -1348,6 +1352,8 @@ mod tests {
                 "WINDOW_SESSION_LOAD_FAILED",
                 RequestFailure::WindowSessionLoadFailed,
             ),
+            ("UNKNOWN_VIEW", RequestFailure::UnknownView),
+            ("NO_ACTIVE_VIEW", RequestFailure::NoActiveView),
         ];
         assert_eq!(
             failures.len(),

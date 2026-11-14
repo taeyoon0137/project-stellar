@@ -8,7 +8,7 @@
 //! | [`ProjectIdentity`] | 연 프로젝트(project StableId + root 경로, IV.2.3) |
 //! | [`WindowSessionId`] | 창 편집 session id(V.9.1, VII.1.1) |
 //! | 문서 state | 이 창만의 [`DocumentState`](모델 + revision). 다른 session과 공유하지 않습니다 |
-//! | view state | 이 창의 [`WindowViewState`](선택, VII.3.1). history가 함께 소유합니다 |
+//! | view state | 이 창의 [`WindowViewState`](선택 VII.3.1, 열린 탭·active view·탭별 viewport XII.2.5). history가 함께 소유합니다 |
 //! | history | 이 창의 [`WindowHistory`](VII.5.1) |
 //! | loaded generation | 창을 열 때 읽은 current generation([`LoadedGeneration`], 첫 저장 전이면 없음) |
 //!
@@ -21,8 +21,14 @@
 //! 없습니다.
 //!
 //! 로드할 때마다 디스크에서 새 모델을 만들므로, 같은 프로젝트를 연 두 session도 모델·revision·history·
-//! 선택을 공유하지 않습니다. session은 document thread(유일한 작성자, XII.1.1)의 session 표에서만
+//! 선택·탭·viewport를 공유하지 않습니다. session은 document thread(유일한 작성자, XII.1.1)의 session 표에서만
 //! 살아 있고 `Send`가 아닌 context 밖으로 나가지 않습니다.
+//!
+//! # view state (XII.2.5)
+//!
+//! 작업 문서를 로드하면 문서의 첫 View(첫 페이지의 첫 View) 탭을 기본 viewport로 열어 active view로 둡니다. 탭
+//! 열기·닫기·viewport 변경은 이 창의 [`WindowViewState`]만 바꾸고 문서 revision·history·저장 bytes에는 영향이
+//! 없습니다.
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -31,6 +37,7 @@ use stellar_commands::change::ChangeSet;
 use stellar_commands::selection::{Selection, SetSelection, WindowViewState};
 use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
+use stellar_commands::view_tabs::{first_view, CanvasViewport, ViewTabs, ViewTabsError};
 use stellar_core_types::ids::{StableId, WindowSessionId};
 use stellar_core_types::revision::DocumentRevision;
 use stellar_history::entry::{HistoryError, HistorySequence};
@@ -160,11 +167,20 @@ impl ProjectWindowSession {
                 })
             }
         };
+        let mut history = WindowHistory::new(window);
+        if let Some(document) = &document {
+            let model = document.state.model();
+            if let Some(view) = first_view(model) {
+                // 같은 모델에서 고른 View이므로 열기는 실패하지 않습니다(UnknownView만 가능한 오류).
+                let opened = history.view_mut().tabs_mut().open(model, view);
+                debug_assert_eq!(opened, Ok(true));
+            }
+        }
         Ok(ProjectWindowSession {
             identity,
             window,
             document,
-            history: WindowHistory::new(window),
+            history,
             loaded: Some(loaded),
         })
     }
@@ -219,9 +235,48 @@ impl ProjectWindowSession {
         &self.history
     }
 
-    /// 이 창의 view state(선택).
+    /// 이 창의 view state(선택, 탭, viewport).
     pub fn view(&self) -> &WindowViewState {
         self.history.view()
+    }
+
+    /// 열린 탭·active view·탭별 viewport.
+    pub fn tabs(&self) -> &ViewTabs {
+        self.history.view().tabs()
+    }
+
+    /// 작업 문서의 View 탭을 열고 active로 만듭니다(이미 열려 있으면 active만, `Ok(false)`).
+    pub fn open_view(&mut self, view: StableId) -> Result<bool, WindowSessionEditError> {
+        let document = self
+            .document
+            .as_ref()
+            .ok_or(WindowSessionEditError::NoDocument)?;
+        self.history
+            .view_mut()
+            .tabs_mut()
+            .open(document.state.model(), view)
+            .map_err(WindowSessionEditError::View)
+    }
+
+    /// 열린 View 탭을 닫습니다.
+    pub fn close_view(&mut self, view: StableId) -> Result<(), WindowSessionEditError> {
+        self.history
+            .view_mut()
+            .tabs_mut()
+            .close(view)
+            .map_err(WindowSessionEditError::View)
+    }
+
+    /// active 탭의 viewport를 바꾸고 이전 값을 돌려줍니다. 문서·history는 바뀌지 않습니다.
+    pub fn set_viewport(
+        &mut self,
+        viewport: CanvasViewport,
+    ) -> Result<CanvasViewport, WindowSessionEditError> {
+        self.history
+            .view_mut()
+            .tabs_mut()
+            .set_active_viewport(viewport)
+            .map_err(WindowSessionEditError::View)
     }
 
     /// 창을 열 때(또는 마지막 저장 뒤) 기준이 된 generation. 첫 저장 전이면 `None`.
@@ -273,6 +328,8 @@ pub enum WindowSessionEditError {
     NoDocument,
     /// history 기록 또는 transaction 실행 실패.
     History(HistoryError),
+    /// 탭·viewport 조작 실패.
+    View(ViewTabsError),
 }
 
 impl fmt::Display for WindowSessionEditError {
@@ -280,6 +337,7 @@ impl fmt::Display for WindowSessionEditError {
         match self {
             WindowSessionEditError::NoDocument => f.write_str("편집할 문서가 없습니다"),
             WindowSessionEditError::History(error) => write!(f, "{error}"),
+            WindowSessionEditError::View(error) => write!(f, "{error}"),
         }
     }
 }
@@ -532,6 +590,71 @@ mod tests {
     }
 
     #[test]
+    fn view_state_opens_the_first_view_and_stays_per_window() {
+        // 검증 기준(XII.2.5): 창간 상태 격리 — 탭·active view·viewport·선택.
+        let project = saved_project("view-state");
+        let mut a = ProjectWindowSession::load(identity(project.path()), window(11)).unwrap();
+        let mut b = ProjectWindowSession::load(identity(project.path()), window(12)).unwrap();
+        for session in [&a, &b] {
+            assert_eq!(session.tabs().len(), 1);
+            assert_eq!(session.tabs().active_view(), Some(sid(3)), "첫 View");
+            assert_eq!(
+                session.tabs().active_viewport(),
+                Some(CanvasViewport::DEFAULT)
+            );
+        }
+        let saved_records = a.document().unwrap().model().to_records().unwrap();
+
+        // A: 둘째 View 탭을 열고 확대·이동, 선택.
+        assert_eq!(a.open_view(sid(4)), Ok(true));
+        let zoomed = CanvasViewport::new(320.0, -40.0, 3.0).unwrap();
+        assert_eq!(a.set_viewport(zoomed), Ok(CanvasViewport::DEFAULT));
+        a.select(Selection::new([sid(11)], None)).unwrap();
+        // B: 첫 탭 viewport만 바꿉니다.
+        let panned = CanvasViewport::new(-10.0, 5.0, 0.5).unwrap();
+        b.set_viewport(panned).unwrap();
+
+        assert_eq!(a.tabs().len(), 2);
+        assert_eq!(a.tabs().active_view(), Some(sid(4)));
+        assert_eq!(a.tabs().active_viewport(), Some(zoomed));
+        assert_eq!(b.tabs().len(), 1, "A가 연 탭은 B에 없음");
+        assert_eq!(b.tabs().active_view(), Some(sid(3)));
+        assert_eq!(b.tabs().active_viewport(), Some(panned));
+        assert_eq!(a.view().selection().ids(), &[sid(11)]);
+        assert!(b.view().selection().is_empty());
+
+        // 탭·viewport는 문서 revision·history·레코드를 바꾸지 않습니다(선택만 history에 1개).
+        assert_eq!(a.revision(), DocumentRevision(0));
+        assert_eq!(a.history().history().len(), 1);
+        assert!(b.history().history().is_empty());
+        assert_eq!(
+            a.document().unwrap().model().to_records().unwrap(),
+            saved_records
+        );
+
+        // A에서 첫 탭으로 돌아가면 그 탭 viewport는 기본값 그대로, 탭을 닫으면 B는 영향 없음.
+        a.open_view(sid(3)).unwrap();
+        assert_eq!(a.tabs().active_viewport(), Some(CanvasViewport::DEFAULT));
+        a.close_view(sid(3)).unwrap();
+        assert_eq!(a.tabs().active_view(), Some(sid(4)));
+        assert_eq!(b.tabs().active_view(), Some(sid(3)));
+
+        // 문서에 없는 View·열리지 않은 탭은 오류.
+        assert_eq!(
+            a.open_view(sid(99)),
+            Err(WindowSessionEditError::View(ViewTabsError::UnknownView {
+                view: sid(99)
+            }))
+        );
+        assert_eq!(
+            b.close_view(sid(4)),
+            Err(WindowSessionEditError::View(ViewTabsError::NotOpen {
+                view: sid(4)
+            }))
+        );
+    }
+
+    #[test]
     fn unsaved_project_opens_without_document_or_generation() {
         let project = unsaved_project("unsaved");
         let mut session = ProjectWindowSession::load(identity(project.path()), window(3)).unwrap();
@@ -541,6 +664,15 @@ mod tests {
         assert_eq!(
             session.select(Selection::empty()),
             Err(WindowSessionEditError::NoDocument)
+        );
+        assert!(session.tabs().is_empty());
+        assert_eq!(
+            session.open_view(sid(3)),
+            Err(WindowSessionEditError::NoDocument)
+        );
+        assert_eq!(
+            session.set_viewport(CanvasViewport::DEFAULT),
+            Err(WindowSessionEditError::View(ViewTabsError::NoActiveTab))
         );
     }
 

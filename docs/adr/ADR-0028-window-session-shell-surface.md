@@ -47,6 +47,19 @@ WindowSessionId, 독립 document state, view state, history, loaded generation)�
    프로젝트 session을 닫고 열기 실패로 안내합니다. 창을 닫으면 창 session → 프로젝트 session 순서로 한 번씩
    닫습니다.
 
+### XII.2.5 — 창별 탭·active view·viewport
+
+1. **위치**: 열린 탭(표시 순), active 탭, 탭별 viewport(화면 중심 문서 좌표 + 배율, `CanvasViewport`)를
+   `stellar-commands`의 `WindowViewState`(선택과 같은 창 view state)에 둡니다. history event가 아니고 저장하지
+   않습니다. 배율은 2%\~25600%(`MIN_ZOOM`·`MAX_ZOOM`)로 맞추고 유한 값만 받습니다.
+2. **기본 탭**: 창 session이 작업 문서를 로드하면 첫 페이지의 첫 View 탭을 기본 viewport(원점, 100%)로 열어
+   active로 둡니다.
+3. **runtime 요청**: `open_view_tab`·`close_view_tab`·`set_viewport`는 성공하면
+   `STELLAR_EVENT_WINDOW_VIEW_CHANGED`(`0x0108`: request, session)를 보내고 새 값은 상태 snapshot에 둡니다.
+   실패 코드 `STELLAR_FAILURE_UNKNOWN_VIEW`(19, 문서에 없는 View·열리지 않은 탭·작업 문서 없음),
+   `STELLAR_FAILURE_NO_ACTIVE_VIEW`(20, active 탭 없음)를 덧붙입니다. 이 행에서는 C 함수를 더하지 않고 event
+   kind와 실패 코드만 헤더에 노출합니다(셸 viewport 연결은 XII.4.3).
+
 ## Alternatives
 
 - **프로젝트 session handle에 창 상태를 합침**: 같은 프로젝트를 연 두 창(XII.2.4)이 독립 문서·history를
@@ -57,6 +70,11 @@ WindowSessionId, 독립 document state, view state, history, loaded generation)�
   규칙(ADR-0014)과 맞지 않습니다. version을 올려 필드를 덧붙입니다.
 - **영속 `WindowSessionId`를 FFI handle로 사용**: 16 byte id를 매 호출에 넘기게 되고, 닫은 뒤 같은 id를
   다시 쓸 수 있는지 규칙이 필요해집니다. runtime 정수 handle을 쓰고 id는 정보로만 노출합니다.
+- **viewport를 runtime 창 session에만 두고 `WindowViewState`와 분리**: 선택과 탭·viewport가 같은 "창 view
+  state"(§22.3 복구 대상)인데 위치가 갈리면 복구 snapshot(V.9)과 창 닫기 폐기 규칙을 두 곳에서 맞춰야 합니다.
+  같은 type에 둡니다.
+- **viewport 변경을 history에 기록**: §23.2는 문서 편집과 선택만 같은 stack에 기록합니다. 이동·확대는
+  Undo 대상이 아닙니다.
 
 ## Consequences
 

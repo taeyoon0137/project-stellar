@@ -49,6 +49,11 @@
 //! 하나를 보관하고 창을 닫을 때 [`AppRuntime::close_window_session`]으로 한 번 닫습니다. 프로젝트 session을
 //! 닫으면 그 아래 창 session도 닫습니다. 창 session은 서로 문서·history·선택을 공유하지 않습니다(XII.2.1).
 //!
+//! 창별 열린 탭·active view·탭별 viewport(XII.2.5)는 [`AppRuntime::open_view_tab`]·
+//! [`AppRuntime::close_view_tab`]·[`AppRuntime::set_viewport`]로 바꿉니다. 이 요청은 그 창의 view state만
+//! 바꾸고 문서 revision·history·저장 bytes에 영향이 없으며, 성공하면 [`RuntimeEvent::WindowViewChanged`]가
+//! 옵니다.
+//!
 //! # outbox 상한
 //!
 //! 완료 event를 꺼내지 않은 요청 수(실행 중 포함)가 상한([`AppRuntime::DEFAULT_EVENT_CAPACITY`])에
@@ -77,6 +82,7 @@
 //! | `0x0105` | RequestFailed | request u64, failure u32, message str |
 //! | `0x0106` | WindowSessionOpened | request u64, project u64, session u64, window_id \[16\], document_id \[16\], generation u64 |
 //! | `0x0107` | WindowSessionClosed | request u64, session u64 |
+//! | `0x0108` | WindowViewChanged | request u64, session u64 |
 //!
 //! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다.
 
@@ -87,6 +93,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use stellar_commands::view_tabs::{CanvasViewport, ViewTabsError};
 use stellar_core_types::ids::{StableId, WindowSessionId};
 use stellar_core_types::revision::DocumentRevision;
 use stellar_document::open_set::{OpenDocumentHandle, OpenOutcome};
@@ -100,7 +107,7 @@ use crate::document_thread::{
     DocumentContext, DocumentLoopStats, DocumentSender, DocumentThread, DocumentThreadError,
     SubmitError,
 };
-use crate::window_session::ProjectWindowSession;
+use crate::window_session::{ProjectWindowSession, WindowSessionEditError};
 
 /// event payload 스키마 버전.
 pub const EVENT_SCHEMA_VERSION: u32 = 1;
@@ -124,6 +131,8 @@ pub mod event_kind {
     pub const WINDOW_SESSION_OPENED: u32 = 0x0106;
     /// 창 session을 닫았습니다.
     pub const WINDOW_SESSION_CLOSED: u32 = 0x0107;
+    /// 창 view state(탭·active view·viewport)를 바꿨습니다.
+    pub const WINDOW_VIEW_CHANGED: u32 = 0x0108;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,11 +201,15 @@ pub enum RequestFailure {
     UnknownWindowSession,
     /// 창 session의 generation·작업 문서를 로드하지 못함.
     WindowSessionLoadFailed,
+    /// 작업 문서에 없는 View이거나 열리지 않은 탭(작업 문서가 없는 창 포함).
+    UnknownView,
+    /// active 탭이 없어 viewport를 바꿀 수 없음.
+    NoActiveView,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 13] = [
+    pub const ALL: [RequestFailure; 15] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -210,6 +223,8 @@ impl RequestFailure {
         RequestFailure::PathUnresolved,
         RequestFailure::UnknownWindowSession,
         RequestFailure::WindowSessionLoadFailed,
+        RequestFailure::UnknownView,
+        RequestFailure::NoActiveView,
     ];
 
     /// C ABI 코드 값.
@@ -228,6 +243,8 @@ impl RequestFailure {
             RequestFailure::PathUnresolved => 17,
             RequestFailure::UnknownWindowSession => 4,
             RequestFailure::WindowSessionLoadFailed => 18,
+            RequestFailure::UnknownView => 19,
+            RequestFailure::NoActiveView => 20,
         }
     }
 
@@ -304,6 +321,13 @@ pub enum RuntimeEvent {
         /// 요청 id.
         request: RequestId,
         /// 닫은 창 session handle.
+        session: WindowSessionHandle,
+    },
+    /// 창 view state(탭·active view·viewport)를 바꿨습니다. 새 값은 상태 snapshot에 있습니다.
+    WindowViewChanged {
+        /// 요청 id.
+        request: RequestId,
+        /// 창 session handle.
         session: WindowSessionHandle,
     },
     /// 요청이 실패했습니다. 상태는 바뀌지 않았습니다.
@@ -471,6 +495,7 @@ impl RuntimeEvent {
             RuntimeEvent::RequestFailed { .. } => event_kind::REQUEST_FAILED,
             RuntimeEvent::WindowSessionOpened { .. } => event_kind::WINDOW_SESSION_OPENED,
             RuntimeEvent::WindowSessionClosed { .. } => event_kind::WINDOW_SESSION_CLOSED,
+            RuntimeEvent::WindowViewChanged { .. } => event_kind::WINDOW_VIEW_CHANGED,
         }
     }
 
@@ -483,6 +508,7 @@ impl RuntimeEvent {
             | RuntimeEvent::DocumentClosed { request, .. }
             | RuntimeEvent::WindowSessionOpened { request, .. }
             | RuntimeEvent::WindowSessionClosed { request, .. }
+            | RuntimeEvent::WindowViewChanged { request, .. }
             | RuntimeEvent::RequestFailed { request, .. } => *request,
         }
     }
@@ -545,7 +571,8 @@ impl RuntimeEvent {
                 w.id(*document_id);
                 w.u64(*generation);
             }
-            RuntimeEvent::WindowSessionClosed { request, session } => {
+            RuntimeEvent::WindowSessionClosed { request, session }
+            | RuntimeEvent::WindowViewChanged { request, session } => {
                 w.u64(request.0);
                 w.u64(session.0);
             }
@@ -602,6 +629,10 @@ impl RuntimeEvent {
                 generation: r.u64()?,
             },
             event_kind::WINDOW_SESSION_CLOSED => RuntimeEvent::WindowSessionClosed {
+                request: RequestId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+            },
+            event_kind::WINDOW_VIEW_CHANGED => RuntimeEvent::WindowViewChanged {
                 request: RequestId(r.u64()?),
                 session: WindowSessionHandle(r.u64()?),
             },
@@ -678,6 +709,12 @@ pub struct WindowSessionSummary {
     pub redo_depth: u32,
     /// 선택된 node 수.
     pub selection_len: u32,
+    /// 열린 탭 수.
+    pub tab_count: u32,
+    /// active view(열린 탭이 없으면 `None`).
+    pub active_view: Option<StableId>,
+    /// active 탭의 viewport(열린 탭이 없으면 `None`).
+    pub viewport: Option<CanvasViewport>,
 }
 
 /// document thread가 게시한 불변 상태 snapshot.
@@ -1089,7 +1126,42 @@ fn window_summary(handle: WindowSessionHandle, entry: &WindowEntry) -> WindowSes
         undo_depth: clamp(session.history().history().len()),
         redo_depth: clamp(session.history().history().redo_entries().len()),
         selection_len: clamp(session.view().selection().len()),
+        tab_count: clamp(session.tabs().len()),
+        active_view: session.tabs().active_view(),
+        viewport: session.tabs().active_viewport(),
     }
+}
+
+/// 창 session 하나를 찾습니다.
+fn window_mut(
+    ctx: &mut DocumentContext,
+    session: WindowSessionHandle,
+) -> Result<&mut ProjectWindowSession, Failure> {
+    ctx.app_sessions_mut()
+        .windows
+        .get_mut(&session)
+        .map(|entry| &mut entry.session)
+        .ok_or_else(|| unknown_window(session))
+}
+
+/// 탭·viewport 조작 실패를 고정 코드로 바꿉니다.
+fn view_failure(error: WindowSessionEditError) -> Failure {
+    let failure = match &error {
+        WindowSessionEditError::View(ViewTabsError::NoActiveTab) => RequestFailure::NoActiveView,
+        _ => RequestFailure::UnknownView,
+    };
+    Failure::new(failure, error.to_string())
+}
+
+/// document thread에서 창 view state를 바꿉니다(XII.2.5).
+fn change_view_on_thread(
+    ctx: &mut DocumentContext,
+    request: RequestId,
+    session: WindowSessionHandle,
+    change: impl FnOnce(&mut ProjectWindowSession) -> Result<(), WindowSessionEditError>,
+) -> Result<RuntimeEvent, Failure> {
+    change(window_mut(ctx, session)?).map_err(view_failure)?;
+    Ok(RuntimeEvent::WindowViewChanged { request, session })
 }
 
 /// 현재 session 표로 불변 상태 snapshot을 만듭니다(세대 1 증가).
@@ -1379,6 +1451,43 @@ impl AppRuntime {
         self.submit(move |ctx, request| close_window_session_on_thread(ctx, request, session))
     }
 
+    /// 창 session에서 작업 문서의 View 탭을 열고 active로 만듭니다(이미 열려 있으면 active만, XII.2.5).
+    pub fn open_view_tab(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| {
+                window.open_view(view).map(|_| ())
+            })
+        })
+    }
+
+    /// 창 session의 View 탭을 닫습니다(active면 이웃 탭이 active).
+    pub fn close_view_tab(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| window.close_view(view))
+        })
+    }
+
+    /// 창 session의 active 탭 viewport를 바꿉니다. 문서·history·저장에는 영향이 없습니다.
+    pub fn set_viewport(
+        &self,
+        session: WindowSessionHandle,
+        viewport: CanvasViewport,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            change_view_on_thread(ctx, request, session, |window| {
+                window.set_viewport(viewport).map(|_| ())
+            })
+        })
+    }
+
     /// 최신 상태 snapshot. document thread를 기다리지 않습니다.
     pub fn state(&self) -> Arc<RuntimeState> {
         self.shared.current_state()
@@ -1484,6 +1593,10 @@ mod tests {
             },
             RuntimeEvent::WindowSessionClosed {
                 request: RequestId(15),
+                session: WindowSessionHandle(11),
+            },
+            RuntimeEvent::WindowViewChanged {
+                request: RequestId(16),
                 session: WindowSessionHandle(11),
             },
         ]
@@ -1627,7 +1740,10 @@ mod tests {
     #[test]
     fn failure_codes_are_stable_and_unique() {
         let codes: Vec<u32> = RequestFailure::ALL.iter().map(|f| f.code()).collect();
-        assert_eq!(codes, [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18]);
+        assert_eq!(
+            codes,
+            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20]
+        );
         let unique: BTreeSet<u32> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len());
         for failure in RequestFailure::ALL {

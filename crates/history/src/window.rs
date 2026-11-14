@@ -78,6 +78,12 @@ impl WindowHistory {
         &self.view
     }
 
+    /// 이 창의 view 상태(변경). 확정 선택은 history 경로([`WindowHistory::record_selection`])로만 바뀌고, 이
+    /// 참조로는 탭·viewport(XII.2.5)와 영역 선택 preview처럼 기록하지 않는 상태만 바꿉니다.
+    pub fn view_mut(&mut self) -> &mut WindowViewState {
+        &mut self.view
+    }
+
     /// 선택 정책.
     pub fn selection_policy(&self) -> SelectionPolicy {
         self.selection_policy
