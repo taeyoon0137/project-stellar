@@ -459,3 +459,600 @@ fn nested_frame_errors_preserve_every_component_file() {
     );
     assert_eq!(file_digest(&dir), malformed);
 }
+
+#[test]
+fn rename_frame_persists_names_and_preserves_source_on_rejected_edits() {
+    let fixture = TempDir::new("component-frame-rename");
+    let home = fixture.path.join("home");
+    let folder = fixture.path.join("components");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&folder).unwrap();
+    let folder = folder.to_str().unwrap();
+    let created = cli(&fixture.path, &home, &["create", folder, "Card", A, AR], 0);
+    let file = value(&created, "file");
+    let added = cli(
+        &fixture.path,
+        &home,
+        &[
+            "add-frame",
+            file,
+            value(&created, "source_hash"),
+            AR,
+            BR,
+            "Child",
+            "32",
+            "16",
+        ],
+        0,
+    );
+    let name = "새 이름 / : # \"버튼\"\n다음 줄";
+    let renamed = cli(
+        &fixture.path,
+        &home,
+        &["rename-frame", file, value(&added, "source_hash"), BR, name],
+        0,
+    );
+    let hash = value(&renamed, "source_hash");
+    assert_ne!(hash, value(&added, "source_hash"));
+    let text = fs::read_to_string(file).unwrap();
+    assert!(text.contains("새 이름 / : #"));
+    let checked = stellar_ops::component_source::check(Path::new(folder)).unwrap();
+    assert_eq!(checked[0].name, "Card");
+    assert_eq!(checked[0].node_count, 2);
+    let before = fs::read(file).unwrap();
+    let noop = cli(
+        &fixture.path,
+        &home,
+        &["rename-frame", file, hash, BR, name],
+        0,
+    );
+    assert_eq!(value(&noop, "source_hash"), hash);
+    for (expected, node, exit) in [(value(&added, "source_hash"), BR, 75), (hash, B, 65)] {
+        cli(
+            &fixture.path,
+            &home,
+            &["rename-frame", file, expected, node, "Rejected"],
+            exit,
+        );
+        assert_eq!(fs::read(file).unwrap(), before);
+    }
+    cli(
+        &fixture.path,
+        &home,
+        &["rename-frame", file, hash, AR, ""],
+        0,
+    );
+    assert_ne!(fs::read(file).unwrap(), before);
+}
+
+#[test]
+fn resize_frame_changes_only_nested_geometry_and_rejects_invalid_edits() {
+    let fixture = TempDir::new("component-frame-resize");
+    let home = fixture.path.join("home");
+    let dir = fixture.path.join("components");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&dir).unwrap();
+    let run = |args: &[&str], code| cli(&dir, &home, args, code);
+    let created = run(&["create", ".", "Card", A, AR], 0);
+    let file = value(&created, "file");
+    let parent = run(
+        &[
+            "add-frame",
+            file,
+            value(&created, "source_hash"),
+            AR,
+            FIRST,
+            "Parent",
+            "20",
+            "30",
+        ],
+        0,
+    );
+    let child = run(
+        &[
+            "add-frame",
+            file,
+            value(&parent, "source_hash"),
+            FIRST,
+            NESTED,
+            "Child",
+            "12",
+            "8",
+        ],
+        0,
+    );
+    let path = dir.join(file);
+    let before = fs::read_to_string(&path).unwrap();
+    let changed = run(
+        &[
+            "resize-frame",
+            file,
+            value(&child, "source_hash"),
+            NESTED,
+            "19.25",
+            "0",
+        ],
+        0,
+    );
+    let hash = value(&changed, "source_hash");
+    assert_ne!(hash, value(&child, "source_hash"));
+    let after = fs::read_to_string(&path).unwrap();
+    assert_eq!(after, before.replace("size: \"12 8\"", "size: \"19.25 0\""));
+    let reopened = stellar_ops::component_source::check(&dir).unwrap();
+    assert_eq!(reopened[0].hash.to_string(), hash);
+    let noop = run(&["resize-frame", file, hash, NESTED, "19.25", "0"], 0);
+    assert_eq!(value(&noop, "source_hash"), hash);
+    for (expected, node, width, height, code) in [
+        (value(&child, "source_hash"), NESTED, "10", "10", 75),
+        (hash, B, "10", "10", 65),
+        (hash, NESTED, "NaN", "10", 65),
+        (hash, NESTED, "10", "-1", 65),
+    ] {
+        run(&["resize-frame", file, expected, node, width, height], code);
+        assert_eq!(fs::read_to_string(&path).unwrap(), after);
+    }
+    let root = run(&["resize-frame", file, hash, AR, "100", "50"], 0);
+    assert_eq!(value(&root, "width"), "100");
+    assert_eq!(value(&root, "height"), "50");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        after.replacen("size: \"0 0\"", "size: \"100 50\"", 1)
+    );
+}
+
+#[test]
+fn remove_frame_deletes_only_subtree_and_reopens_root_only_source() {
+    let fixture = TempDir::new("component-frame-remove");
+    let home = fixture.path.join("home");
+    let dir = fixture.path.join("components");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&dir).unwrap();
+    let run = |args: &[&str], code| cli(&dir, &home, args, code);
+    let created = run(&["create", ".", "Card", A, AR], 0);
+    let file = value(&created, "file");
+    run(&["create", ".", "Badge", B, BR], 0);
+    let mut info = created.clone();
+    for (parent, id) in [(AR, FIRST), (FIRST, NESTED), (AR, SECOND)] {
+        info = run(
+            &[
+                "add-frame",
+                file,
+                value(&info, "source_hash"),
+                parent,
+                id,
+                "Child",
+                "12",
+                "8",
+            ],
+            0,
+        );
+    }
+    let before = file_digest(&dir);
+    let hash = value(&info, "source_hash");
+    for (expected, id, code) in [
+        (value(&created, "source_hash"), FIRST, 75),
+        (hash, AR, 65),
+        (hash, BR, 65),
+        (hash, A, 65),
+    ] {
+        run(&["remove-frame", file, expected, id], code);
+        assert_eq!(file_digest(&dir), before);
+    }
+    let original = fs::read_to_string(dir.join(file)).unwrap();
+    let (root, children) = original.split_once("children:\n").unwrap();
+    let sibling = children
+        .split("  -\n")
+        .find(|record| record.contains(SECOND))
+        .unwrap();
+    let removed = run(&["remove-frame", file, hash, FIRST], 0);
+    assert_eq!(removed.get("node_count").unwrap().as_i64(), Some(2));
+    let text = fs::read_to_string(dir.join(file)).unwrap();
+    assert!(!text.contains(FIRST));
+    assert!(!text.contains(NESTED));
+    assert_eq!(text, format!("{root}children:\n  -\n{sibling}"));
+    let after = file_digest(&dir);
+    for (path, bytes) in &before {
+        if Path::new(file).file_name().unwrap().to_str().unwrap() != path {
+            assert_eq!(after.get(path), Some(bytes));
+        }
+    }
+    run(
+        &["remove-frame", file, value(&removed, "source_hash"), FIRST],
+        65,
+    );
+    assert_eq!(file_digest(&dir), after);
+    let empty = run(
+        &["remove-frame", file, value(&removed, "source_hash"), SECOND],
+        0,
+    );
+    assert_eq!(empty.get("node_count").unwrap().as_i64(), Some(1));
+    assert_eq!(value(&empty, "source_hash"), value(&created, "source_hash"));
+    let checked = run(&["check", "."], 0);
+    assert_eq!(
+        checked.get("components").unwrap().as_array().unwrap().len(),
+        2
+    );
+}
+
+#[test]
+fn set_visible_preserves_children_and_rejects_invalid_edits() {
+    let fixture = TempDir::new("component-frame-visible");
+    let home = fixture.path.join("home");
+    let dir = fixture.path.join("components");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&dir).unwrap();
+    let run = |args: &[&str], code| cli(&dir, &home, args, code);
+    let created = run(&["create", ".", "Card", A, AR], 0);
+    let file = value(&created, "file");
+    let added = run(
+        &[
+            "add-frame",
+            file,
+            value(&created, "source_hash"),
+            AR,
+            FIRST,
+            "Child",
+            "20",
+            "30",
+        ],
+        0,
+    );
+    let path = dir.join(file);
+    let before = fs::read_to_string(&path).unwrap();
+    let hidden = run(
+        &[
+            "set-visible",
+            file,
+            value(&added, "source_hash"),
+            AR,
+            "false",
+        ],
+        0,
+    );
+    let hash = value(&hidden, "source_hash");
+    let after = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        after,
+        before.replacen("visible: \"true\"", "visible: \"false\"", 1)
+    );
+    let checked = stellar_ops::component_source::check(&dir).unwrap();
+    assert_eq!(checked[0].hash.to_string(), hash);
+    assert_eq!(checked[0].node_count, 2);
+    // A no-op must retain comments as well as the semantic value.
+    fs::write(&path, format!("# retained comment\n{after}")).unwrap();
+    let checked = stellar_ops::component_source::check(&dir).unwrap();
+    let current = checked[0].hash.to_string();
+    let unchanged = fs::read(&path).unwrap();
+    let noop = run(&["set-visible", file, &current, AR, "false"], 0);
+    assert_eq!(value(&noop, "source_hash"), current);
+    for (expected, node, visible, code) in [
+        (hash, AR, "true", 75),
+        (&current, B, "false", 65),
+        (&current, FIRST, "False", 65),
+        (&current, FIRST, "1", 65),
+    ] {
+        run(&["set-visible", file, expected, node, visible], code);
+        assert_eq!(fs::read(&path).unwrap(), unchanged);
+    }
+    let child = run(&["set-visible", file, &current, FIRST, "false"], 0);
+    let child_text = fs::read_to_string(&path).unwrap();
+    assert_eq!(child_text.matches("visible: \"false\"").count(), 2);
+    let shown = run(
+        &[
+            "set-visible",
+            file,
+            value(&child, "source_hash"),
+            AR,
+            "true",
+        ],
+        0,
+    );
+    assert_ne!(value(&shown, "source_hash"), value(&child, "source_hash"));
+    assert_eq!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .matches("visible: \"false\"")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn set_locked_preserves_children_and_rejects_invalid_edits() {
+    let fixture = TempDir::new("component-frame-locked");
+    let home = fixture.path.join("home");
+    let dir = fixture.path.join("components");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&dir).unwrap();
+    let run = |args: &[&str], code| cli(&dir, &home, args, code);
+    let created = run(&["create", ".", "Card", A, AR], 0);
+    let file = value(&created, "file");
+    let added = run(
+        &[
+            "add-frame",
+            file,
+            value(&created, "source_hash"),
+            AR,
+            FIRST,
+            "Child",
+            "20",
+            "30",
+        ],
+        0,
+    );
+    let path = dir.join(file);
+    let before = fs::read_to_string(&path).unwrap();
+    let locked = run(
+        &["set-locked", file, value(&added, "source_hash"), AR, "true"],
+        0,
+    );
+    let hash = value(&locked, "source_hash");
+    let after = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        after,
+        before.replacen("locked: \"false\"", "locked: \"true\"", 1)
+    );
+    let checked = stellar_ops::component_source::check(&dir).unwrap();
+    assert_eq!(checked[0].hash.to_string(), hash);
+    assert_eq!(checked[0].node_count, 2);
+    // A no-op must retain comments as well as the semantic value.
+    fs::write(&path, format!("# retained comment\n{after}")).unwrap();
+    let checked = stellar_ops::component_source::check(&dir).unwrap();
+    let current = checked[0].hash.to_string();
+    let unchanged = fs::read(&path).unwrap();
+    let noop = run(&["set-locked", file, &current, AR, "true"], 0);
+    assert_eq!(value(&noop, "source_hash"), current);
+    for (expected, node, locked, code) in [
+        (hash, AR, "false", 75),
+        (&current, B, "true", 65),
+        (&current, FIRST, "False", 65),
+        (&current, FIRST, "1", 65),
+    ] {
+        run(&["set-locked", file, expected, node, locked], code);
+        assert_eq!(fs::read(&path).unwrap(), unchanged);
+    }
+    let child = run(&["set-locked", file, &current, FIRST, "true"], 0);
+    let child_text = fs::read_to_string(&path).unwrap();
+    assert_eq!(child_text.matches("locked: \"true\"").count(), 2);
+    let unlocked = run(
+        &[
+            "set-locked",
+            file,
+            value(&child, "source_hash"),
+            AR,
+            "false",
+        ],
+        0,
+    );
+    assert_ne!(
+        value(&unlocked, "source_hash"),
+        value(&child, "source_hash")
+    );
+    assert_eq!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .matches("locked: \"true\"")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn set_position_preserves_affine_children_and_rejects_invalid_edits() {
+    let fixture = TempDir::new("component-position");
+    let home = fixture.path.join("home");
+    let dir = fixture.path.join("components");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&dir).unwrap();
+    let run = |args: &[&str], code| cli(&dir, &home, args, code);
+    let created = run(&["create", ".", "Card", A, AR], 0);
+    let file = value(&created, "file");
+    let parent = run(
+        &[
+            "add-frame",
+            file,
+            value(&created, "source_hash"),
+            AR,
+            FIRST,
+            "Parent",
+            "20",
+            "30",
+        ],
+        0,
+    );
+    run(
+        &[
+            "add-frame",
+            file,
+            value(&parent, "source_hash"),
+            FIRST,
+            NESTED,
+            "Child",
+            "12",
+            "8",
+        ],
+        0,
+    );
+    let path = dir.join(file);
+    let original = fs::read_to_string(&path).unwrap();
+    assert!(original.contains("transform: \"1 0 0 1 0 0\""));
+    let before = original.replace("transform: \"1 0 0 1 0 0\"", "transform: \"0 2 -3 0 4 5\"");
+    fs::write(&path, &before).unwrap();
+    let hash = stellar_ops::component_source::check(&dir).unwrap()[0]
+        .hash
+        .to_string();
+    let changed = run(&["set-position", file, &hash, FIRST, "-19.25", "0"], 0);
+    let next = value(&changed, "source_hash");
+    let after = fs::read_to_string(&path).unwrap();
+    assert_eq!(after.matches("transform: \"0 2 -3 0 -19.25 0\"").count(), 1);
+    assert_eq!(
+        after.replace(
+            "transform: \"0 2 -3 0 -19.25 0\"",
+            "transform: \"0 2 -3 0 4 5\""
+        ),
+        before
+    );
+    for (expected, node, x, y, code) in [
+        (&hash[..], FIRST, "1", "2", 75),
+        (next, B, "1", "2", 65),
+        (next, FIRST, "NaN", "2", 65),
+        (next, FIRST, "1", "inf", 65),
+        (next, FIRST, "bad", "2", 65),
+    ] {
+        run(&["set-position", file, expected, node, x, y], code);
+        assert_eq!(fs::read_to_string(&path).unwrap(), after);
+    }
+    // A no-op must preserve comments as well as geometry.
+    fs::write(&path, format!("# preserved\n{after}")).unwrap();
+    let commented = fs::read(&path).unwrap();
+    let hash = stellar_ops::component_source::check(&dir).unwrap()[0]
+        .hash
+        .to_string();
+    let noop = run(&["set-position", file, &hash, FIRST, "-19.25", "0"], 0);
+    assert_eq!(value(&noop, "source_hash"), hash);
+    assert_eq!(fs::read(&path).unwrap(), commented);
+    run(&["set-position", file, &hash, AR, "10", "-20"], 0);
+    let reopened = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        reopened,
+        after.replacen(
+            "transform: \"0 2 -3 0 4 5\"",
+            "transform: \"0 2 -3 0 10 -20\"",
+            1
+        )
+    );
+    stellar_ops::component_source::check(&dir).unwrap();
+}
+
+#[test]
+fn geometry_edits_respect_self_and_ancestor_locks_without_writing() {
+    let fixture = TempDir::new("component-geometry-lock");
+    let home = fixture.path.join("home");
+    let dir = fixture.path.join("components");
+    fs::create_dir(&home).unwrap();
+    fs::create_dir(&dir).unwrap();
+    let run = |args: &[&str], code| cli(&dir, &home, args, code);
+    let created = run(&["create", ".", "Card", A, AR], 0);
+    let file = value(&created, "file");
+    let parent = run(
+        &[
+            "add-frame",
+            file,
+            value(&created, "source_hash"),
+            AR,
+            FIRST,
+            "Parent",
+            "20",
+            "30",
+        ],
+        0,
+    );
+    let child = run(
+        &[
+            "add-frame",
+            file,
+            value(&parent, "source_hash"),
+            FIRST,
+            NESTED,
+            "Child",
+            "12",
+            "8",
+        ],
+        0,
+    );
+    let locked_child = run(
+        &[
+            "set-locked",
+            file,
+            value(&child, "source_hash"),
+            NESTED,
+            "true",
+        ],
+        0,
+    );
+    let locked_root = run(
+        &[
+            "set-locked",
+            file,
+            value(&locked_child, "source_hash"),
+            AR,
+            "true",
+        ],
+        0,
+    );
+    let path = dir.join(file);
+    // Preserve comments and exact bytes on both no-op and changing requests.
+    let original = fs::read_to_string(&path).unwrap();
+    fs::write(&path, format!("# locked geometry\n{original}")).unwrap();
+    let before = fs::read(&path).unwrap();
+    let hash = stellar_ops::component_source::check(&dir).unwrap()[0]
+        .hash
+        .to_string();
+    for node in [AR, FIRST, NESTED] {
+        for command in ["set-position", "resize-frame"] {
+            for (x, y) in [("0", "0"), ("42", "24")] {
+                run(&[command, file, &hash, node, x, y], 65);
+                assert_eq!(fs::read(&path).unwrap(), before);
+            }
+        }
+    }
+    run(&["resize", file, &hash, "42", "24"], 65);
+    run(
+        &[
+            "set-position",
+            file,
+            value(&locked_root, "source_hash"),
+            FIRST,
+            "1",
+            "2",
+        ],
+        75,
+    );
+    assert_eq!(fs::read(&path).unwrap(), before);
+
+    let unlocked = run(&["set-locked", file, &hash, AR, "false"], 0);
+    let hash = value(&unlocked, "source_hash");
+    let before = fs::read(&path).unwrap();
+    // Unlocking an ancestor leaves the child's own lock intact.
+    run(&["set-position", file, hash, NESTED, "1", "2"], 65);
+    run(&["resize-frame", file, hash, NESTED, "42", "24"], 65);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let moved = run(&["set-position", file, hash, FIRST, "1", "2"], 0);
+    let resized = run(
+        &["resize", file, value(&moved, "source_hash"), "42", "24"],
+        0,
+    );
+    let unlocked = run(
+        &[
+            "set-locked",
+            file,
+            value(&resized, "source_hash"),
+            NESTED,
+            "false",
+        ],
+        0,
+    );
+    let moved = run(
+        &[
+            "set-position",
+            file,
+            value(&unlocked, "source_hash"),
+            NESTED,
+            "1",
+            "2",
+        ],
+        0,
+    );
+    run(
+        &[
+            "resize-frame",
+            file,
+            value(&moved, "source_hash"),
+            NESTED,
+            "42",
+            "24",
+        ],
+        0,
+    );
+    stellar_ops::component_source::check(&dir).unwrap();
+}

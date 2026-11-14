@@ -7,7 +7,7 @@ use stellar_core_types::{
     ids::StableId,
     order_key::OrderKey,
     reference::{ComponentRef, NodeRef},
-    value::Size2,
+    value::{Size2, Transform2D, Vec2},
 };
 use stellar_document::component::definition::{
     ComponentDefinition, ComponentLibrary, DefinitionNode, DefinitionTree,
@@ -69,12 +69,32 @@ impl ComponentSource {
         self.children.len() + 1
     }
 
-    /// root Frame의 크기만 변경합니다.
-    fn set_size(&mut self, size: Size2) {
-        let NodePayload::Frame(frame) = &mut self.root.payload else {
-            unreachable!("validated Frame")
-        };
-        frame.size = size;
+    fn record_mut(&mut self, id: StableId) -> Result<&mut NodeRecord, TextSourceError> {
+        if self.root.id == id {
+            Ok(&mut self.root)
+        } else {
+            self.children
+                .get_mut(&id)
+                .ok_or_else(|| invalid("같은 컴포넌트에 Frame이 필요합니다"))
+        }
+    }
+
+    fn ensure_geometry_editable(&self, id: StableId) -> Result<(), TextSourceError> {
+        let mut current = Some(id);
+        while let Some(id) = current {
+            let record = if id == self.root.id {
+                &self.root
+            } else {
+                self.children
+                    .get(&id)
+                    .ok_or_else(|| invalid("같은 컴포넌트에 Frame이 필요합니다"))?
+            };
+            if record.locked {
+                return Err(invalid("대상 또는 조상 Frame이 잠겨 있습니다"));
+            }
+            current = record.parent;
+        }
+        Ok(())
     }
 
     /// 직렬화 순서(StableId)와 부모·자식 순서를 분리합니다. 순환·끊긴 부모도 거부합니다.
@@ -332,20 +352,144 @@ fn save_changed(
     Ok((source, ContentHash::compute(encoded.as_bytes())))
 }
 
+fn open_expected(
+    path: &Path,
+    expected: ContentHash,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let (source, hash) = open(path)?;
+    if hash != expected {
+        return Err(TextSourceError::Changed);
+    }
+    Ok((source, hash))
+}
+
+/// root 또는 자식 Frame의 표시 이름을 바꿉니다. 파일명과 component 이름은 유지합니다.
+pub fn rename_frame(
+    path: &Path,
+    expected: ContentHash,
+    id: StableId,
+    name: String,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let (mut source, hash) = open_expected(path, expected)?;
+    let record = source.record_mut(id)?;
+    if record.display_name == name {
+        return Ok((source, hash));
+    }
+    record.display_name = name;
+    save_changed(path, hash, source)
+}
+
+/// root 또는 자식 Frame의 표시 여부를 바꿉니다. 자식의 자체 표시 여부는 유지합니다.
+pub fn set_visible(
+    path: &Path,
+    expected: ContentHash,
+    id: StableId,
+    visible: bool,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let (mut source, hash) = open_expected(path, expected)?;
+    let record = source.record_mut(id)?;
+    if record.visible == visible {
+        return Ok((source, hash));
+    }
+    record.visible = visible;
+    save_changed(path, hash, source)
+}
+
+/// root 또는 자식 Frame의 잠금 여부를 바꿉니다. 자식의 자체 잠금 여부는 유지합니다.
+pub fn set_locked(
+    path: &Path,
+    expected: ContentHash,
+    id: StableId,
+    locked: bool,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let (mut source, hash) = open_expected(path, expected)?;
+    let record = source.record_mut(id)?;
+    if record.locked == locked {
+        return Ok((source, hash));
+    }
+    record.locked = locked;
+    save_changed(path, hash, source)
+}
+
+/// 부모 좌표계의 위치만 변경하며 affine 선형부와 자식 좌표는 유지합니다.
+pub fn set_position(
+    path: &Path,
+    expected: ContentHash,
+    id: StableId,
+    position: Vec2,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let (mut source, hash) = open_expected(path, expected)?;
+    source.ensure_geometry_editable(id)?;
+    let record = source.record_mut(id)?;
+    let NodePayload::Frame(frame) = &mut record.payload else {
+        unreachable!("validated Frame")
+    };
+    let (a, b, c, d, x, y) = frame.transform.components();
+    if (x, y) == (position.x(), position.y()) {
+        return Ok((source, hash));
+    }
+    frame.transform = Transform2D::new(a, b, c, d, position.x(), position.y()).map_err(invalid)?;
+    save_changed(path, hash, source)
+}
+
+/// 자식 Frame과 그 하위 트리를 조건부 삭제합니다. 컴포넌트 root는 삭제할 수 없습니다.
+pub fn remove_frame(
+    path: &Path,
+    expected: ContentHash,
+    id: StableId,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let (mut source, hash) = open_expected(path, expected)?;
+    if !source.children.contains_key(&id) {
+        return Err(invalid("삭제할 자식 Frame이 같은 컴포넌트에 필요합니다"));
+    }
+    let tree = source.definition_tree()?;
+    let mut pending = vec![id];
+    while let Some(id) = pending.pop() {
+        pending.extend(tree.children(id));
+        source.children.remove(&id);
+    }
+    source.definition_tree()?;
+    save_changed(path, hash, source)
+}
+
 /// 기존 hash로 단일 파일의 Frame 크기를 조건부 저장합니다.
 pub fn resize(
     path: &Path,
     expected: ContentHash,
     size: Size2,
 ) -> Result<(ComponentSource, ContentHash), TextSourceError> {
-    let (mut source, hash) = open(path)?;
-    if hash != expected {
-        return Err(TextSourceError::Changed);
-    }
-    if matches!(&source.root.payload, NodePayload::Frame(frame) if frame.size == size) {
+    let (source, hash) = open_expected(path, expected)?;
+    let id = source.root.id;
+    resize_record(path, source, hash, id, size)
+}
+
+/// root 또는 자식 Frame의 크기를 조건부 저장합니다.
+pub fn resize_frame(
+    path: &Path,
+    expected: ContentHash,
+    id: StableId,
+    size: Size2,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    let (source, hash) = open_expected(path, expected)?;
+    resize_record(path, source, hash, id, size)
+}
+
+fn resize_record(
+    path: &Path,
+    mut source: ComponentSource,
+    hash: ContentHash,
+    id: StableId,
+    size: Size2,
+) -> Result<(ComponentSource, ContentHash), TextSourceError> {
+    source.ensure_geometry_editable(id)?;
+    let record = source.record_mut(id)?;
+    let NodePayload::Frame(frame) = &mut record.payload else {
+        unreachable!("validated Frame")
+    };
+    if frame.size == size {
         return Ok((source, hash));
     }
-    source.set_size(size);
+    frame.size = size;
     save_changed(path, hash, source)
 }
 

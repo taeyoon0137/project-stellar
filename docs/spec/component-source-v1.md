@@ -35,6 +35,8 @@ hash=$(stellar component-source add-frame "$file" "$hash" "$root" "$group" Conte
 stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 ```
 
+`remove-frame <파일> <source_hash> <node-id>`는 지정한 자식 Frame과 모든 하위 Frame을 같은 파일에서 삭제합니다. root 또는 없는 ID는 거부하며, 오래된 hash는 종료 코드 75로 실패합니다. 남은 Frame의 속성과 순서는 유지합니다. 마지막 자식을 삭제하면 root만 담는 v1으로 저장합니다.
+
 파일 하나를 직접 고칠 때도 `component.root`와 `root_node.id`는 같은 전체 ID여야 합니다. 이름을 수동으로 변경하면 같은 변경에서 파일명도 새 이름·기존 접미사로 맞춰야 합니다. `check`는 불일치 상태를 거부합니다. CLI는 파일명 변경이나 여러 파일의 원자 저장을 제공하지 않습니다.
 
 기존 바이너리 프로젝트를 변환하는 경로는 없습니다. 등록된 Property·Slot·token·state machine, Frame 이외의 자식 종류, 외부 layout 참조, Path clip, 알 수 없는 필드나 버전을 만나면 축소해서 저장하지 않습니다. opt-in 원본을 기본 앱의 컴포넌트 라이브러리로 불러오기와 다중 파일 복구는 후속 범위입니다. [ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)
@@ -54,3 +56,9 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 `cargo test -p stellar-project frame_and_component_library_bytes_survive_a_source_round_trip`는 회전·이동, Display P3 배경·테두리, 서로 다른 모서리 반경, 표시·잠금 값을 설정하고 YAML 왕복 전후 실제 라이브러리의 canonical binary bytes를 비교합니다.
 
 `nested_frames_survive_a_component_rename_and_fresh_clone`은 형제 두 개와 손자 하나를 CLI로 생성합니다. 루트 resize 시 크기 한 줄만 달라지는지, 두 번째 컴포넌트 파일의 bytes가 같은지 검사합니다. 이름 변경을 실제 Git rename commit으로 만들고 새 clone의 라이브러리 결과를 비교합니다. `nested_frame_errors_preserve_every_component_file`은 중복 ID·다른 파일의 부모·미지원 종류·오래된 hash 요청 전후 모든 원본 hash를 검사합니다. 도메인 검사에서는 재조립한 정의를 참조하는 두 개의 scene 인스턴스에서 동일한 자식 순서와 손자의 Frame payload를 각각 확인합니다.
+
+`set-visible <파일> <source_hash> <node-id> <true|false>`는 root 또는 자식 Frame의 자체 표시 여부를 저장합니다. 하위 Frame의 자체 표시 값은 유지합니다. 무변경은 원본 bytes를 보존하며 없는 ID·잘못된 bool은 거부하고 오래된 hash는 종료 코드 75로 실패합니다.
+
+`set-locked <파일> <source_hash> <node-id> <true|false>`는 root 또는 자식 Frame의 자체 잠금 값을 저장합니다. 하위 Frame의 자체 값은 유지하고 잠금 해제도 같은 명령으로 수행합니다. 무변경은 주석과 서식을 보존하며 없는 ID·잘못된 bool은 거부하고 오래된 hash는 종료 코드 75로 실패합니다. `set-position`, `resize`, `resize-frame`은 대상 또는 조상 Frame이 잠겨 있으면 무변경 요청도 종료 코드 65로 거부하고 원본 bytes를 보존합니다. 오래된 hash 검사는 잠금 검사보다 우선합니다. geometry 편집을 재개하려면 대상과 조상의 잠금을 모두 해제해야 하며, 조상을 해제해도 자식의 자체 잠금 값은 유지합니다. 이름·표시·구조 편집의 잠금 강제와 macOS UI 연결은 별도 범위입니다.
+
+`set-position <파일> <source_hash> <node-id> <x> <y>`는 root 또는 자식 Frame의 부모 좌표계 위치를 유한한 f32로 저장합니다. 음수 좌표를 허용하며 affine 선형부(회전·배율 등)와 하위 Frame의 로컬 좌표는 유지합니다. 무변경은 원본 bytes를 보존하며 없는 ID·비유한 좌표는 거부하고 오래된 hash는 종료 코드 75로 실패합니다.
