@@ -114,6 +114,20 @@ impl ChangeId {
         }
     }
 
+    /// 역변경의 ID(XIV.7.1): 객체 추가 ↔ 삭제, 위치·속성은 같은 ID입니다.
+    /// `change.inverse().id() == change.id().inverse()`가 성립합니다.
+    pub fn inverse(&self) -> ChangeId {
+        let unit = match &self.unit {
+            ChangeUnit::Remove => ChangeUnit::Add,
+            ChangeUnit::Add => ChangeUnit::Remove,
+            other => other.clone(),
+        };
+        ChangeId {
+            object: self.object,
+            unit,
+        }
+    }
+
     /// canonical bytes를 기록합니다.
     pub fn write_canonical(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(&self.object.to_bytes());
@@ -356,6 +370,16 @@ impl StageSelection {
     /// 필수 함께-변경이 없는지(선택만으로 완결).
     pub fn is_self_contained(&self) -> bool {
         self.closure.len() == self.selected.len()
+    }
+
+    /// 모든 ID를 역변경 ID로 바꿉니다(unstage 계산 방향 ↔ staged 표시 방향).
+    pub(crate) fn inverted(self) -> StageSelection {
+        let invert = |ids: BTreeSet<ChangeId>| ids.iter().map(ChangeId::inverse).collect();
+        StageSelection {
+            operation: self.operation,
+            selected: invert(self.selected),
+            closure: invert(self.closure),
+        }
     }
 
     /// canonical bytes.
@@ -688,6 +712,67 @@ pub fn build_stage_candidate(
         });
     }
     build_candidate(index, working, SelectionOperation::Stage, request)
+}
+
+/// ID를 담은 오류를 역변경 ID로 바꿉니다(unstage 계산 결과를 staged ID로 보고).
+fn inverted_error(error: StageError) -> StageError {
+    let invert = |ids: BTreeSet<ChangeId>| ids.iter().map(ChangeId::inverse).collect();
+    match error {
+        StageError::UnknownChange(UnknownChange { id }) => {
+            StageError::UnknownChange(UnknownChange { id: id.inverse() })
+        }
+        StageError::ApprovalRequired { required } => StageError::ApprovalRequired {
+            required: invert(required),
+        },
+        StageError::UnexpectedApproval { id } => {
+            StageError::UnexpectedApproval { id: id.inverse() }
+        }
+        other => other,
+    }
+}
+
+/// unstage 요청(staged ID)을 Index → HEAD 방향 계산 요청(역변경 ID)으로 바꿉니다.
+fn inverted_request(request: &StageSelectionRequest) -> StageSelectionRequest {
+    StageSelectionRequest {
+        operation: request.operation,
+        selected: request.selected.iter().map(ChangeId::inverse).collect(),
+        approved: request.approved.iter().map(ChangeId::inverse).collect(),
+    }
+}
+
+fn require_unstage(request: &StageSelectionRequest) -> Result<(), StageError> {
+    if request.operation == SelectionOperation::Unstage {
+        Ok(())
+    } else {
+        Err(StageError::WrongOperation {
+            expected: SelectionOperation::Unstage,
+            found: request.operation,
+        })
+    }
+}
+
+/// 선택 unstage candidate(XIV.7.1): 선택한 staged 변경(HEAD → Index)을 **현재 Index**에서 역적용합니다.
+///
+/// 기준은 HEAD가 아니라 Index입니다 — 선택하지 않은 staged 변경은 그대로 남습니다. 요청·결과·오류의 ID는
+/// staged 목록의 ID이고, 계산은 Index → HEAD 방향 diff(staged의 역변경)에서 합니다. 필수 함께-unstage 변경
+/// (XIV.7.2)은 stage와 같은 승인 규칙을 따릅니다. HEAD·Index snapshot은 바꾸지 않습니다.
+pub fn build_unstage_candidate(
+    head: &SemanticSnapshot,
+    index: &SemanticSnapshot,
+    request: &StageSelectionRequest,
+) -> Result<CandidateIndexSnapshot, StageError> {
+    require_unstage(request)?;
+    let candidate = build_candidate(
+        index,
+        head,
+        SelectionOperation::Unstage,
+        &inverted_request(request),
+    )
+    .map_err(inverted_error)?;
+    Ok(CandidateIndexSnapshot {
+        selection: candidate.selection.inverted(),
+        ..candidate
+    })
 }
 
 const REQUEST_MAGIC: &[u8; 4] = b"SSRQ";
@@ -1117,6 +1202,113 @@ pub(crate) mod tests {
                 found: SelectionOperation::Unstage
             })
         );
+    }
+
+    /// staged A+B fixture(HEAD, Index): A = rect 11 크기(10→30), B = ellipse 14 추가.
+    pub(crate) fn staged_pair() -> (SemanticSnapshot, SemanticSnapshot) {
+        let [head, index, _] = partial_staged();
+        (build(&head), build(&index))
+    }
+
+    #[test]
+    fn unstaging_one_of_two_staged_changes_inverts_it_on_the_index() {
+        use crate::status::SemanticStatus;
+        let (head, index) = staged_pair();
+        let status = SemanticStatus::classify(&head, &index, &index);
+        let staged: Vec<ChangeId> = status.staged().iter().map(SemanticChange::id).collect();
+        let a = ChangeId::property(path(11, keys::RECT_SIZE));
+        let b = ChangeId::add(sid(14));
+        assert_eq!(staged, vec![a.clone(), b.clone()]);
+
+        // A만 unstage: 기준은 Index — B는 남고 A만 HEAD 값으로 돌아갑니다.
+        let candidate =
+            build_unstage_candidate(&head, &index, &StageSelectionRequest::unstage([a.clone()]))
+                .unwrap();
+        let snapshot = candidate.snapshot();
+        let size = path(11, keys::RECT_SIZE);
+        assert_eq!(
+            snapshot.get(sid(11)).unwrap().property(&size),
+            head.get(sid(11)).unwrap().property(&size)
+        );
+        assert!(snapshot.contains(sid(14)));
+        assert_eq!(candidate.selection().selected(), &[a.clone()].into());
+        assert!(candidate.selection().is_self_contained());
+        assert_eq!(
+            candidate.selection().operation(),
+            SelectionOperation::Unstage
+        );
+        // 결과 = Index에 A의 역변경 적용.
+        let a_change = status
+            .staged()
+            .iter()
+            .find(|c| c.id() == a)
+            .unwrap()
+            .inverse();
+        assert_eq!(snapshot, &apply(&index, &[a_change]).unwrap());
+        // 남은 staged는 B뿐입니다.
+        let remaining = SemanticStatus::classify(&head, snapshot, snapshot);
+        assert_eq!(
+            remaining
+                .staged()
+                .iter()
+                .map(SemanticChange::id)
+                .collect::<Vec<_>>(),
+            vec![b.clone()]
+        );
+
+        // B만 unstage: 14가 빠지고 A는 Index 값 유지.
+        let candidate =
+            build_unstage_candidate(&head, &index, &StageSelectionRequest::unstage([b.clone()]))
+                .unwrap();
+        assert!(!candidate.snapshot().contains(sid(14)));
+        assert_eq!(
+            candidate.snapshot().get(sid(11)).unwrap().property(&size),
+            index.get(sid(11)).unwrap().property(&size)
+        );
+        assert_eq!(candidate.selection().selected(), &[b.clone()].into());
+
+        // 둘 다 unstage하면 HEAD와 같습니다.
+        let both = build_unstage_candidate(&head, &index, &StageSelectionRequest::unstage([a, b]))
+            .unwrap();
+        assert_eq!(both.snapshot(), &head);
+    }
+
+    #[test]
+    fn unstage_rejects_stale_ids_and_stage_requests() {
+        let (head, index) = staged_pair();
+        // unstaged 목록의 ID(또는 없는 ID)는 staged 목록에 없으므로 오래된 요청입니다.
+        assert_eq!(
+            build_unstage_candidate(
+                &head,
+                &index,
+                &StageSelectionRequest::unstage([ChangeId::remove(sid(13))])
+            ),
+            Err(StageError::UnknownChange(UnknownChange {
+                id: ChangeId::remove(sid(13))
+            }))
+        );
+        assert_eq!(
+            build_unstage_candidate(
+                &head,
+                &index,
+                &StageSelectionRequest::stage([ChangeId::add(sid(14))])
+            ),
+            Err(StageError::WrongOperation {
+                expected: SelectionOperation::Unstage,
+                found: SelectionOperation::Stage
+            })
+        );
+        assert_eq!(ChangeId::add(sid(1)).inverse(), ChangeId::remove(sid(1)));
+        assert_eq!(ChangeId::remove(sid(1)).inverse(), ChangeId::add(sid(1)));
+        let p = ChangeId::property(path(1, keys::VISIBLE));
+        assert_eq!(p.inverse(), p);
+        assert_eq!(
+            ChangeId::position(sid(1)).inverse(),
+            ChangeId::position(sid(1))
+        );
+        for change in diff(&head, &index).iter() {
+            assert_eq!(change.inverse().id(), change.id().inverse());
+        }
     }
 
     #[test]
