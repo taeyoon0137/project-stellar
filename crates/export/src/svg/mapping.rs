@@ -388,7 +388,7 @@ pub const SVG_MAPPING: [SvgMapping; 34] = [
         SvgFeature::BlendMode,
         "PaintStack::blend ≠ Normal(Blend modifier)",
         "mix-blend-mode — 외부 backdrop 의존 범위 분석(XX.4.1) 후 래스터 경계 포함",
-        SvgSupport::Rasterize { row: "XX.4.1" },
+        SvgSupport::Rasterize { row: "XX.4.2" },
     ),
     row(
         SvgFeature::RectClip,
@@ -827,7 +827,7 @@ mod tests {
                 ),
                 (
                     SvgFeature::BlendMode,
-                    SvgSupport::Rasterize { row: "XX.4.1" }
+                    SvgSupport::Rasterize { row: "XX.4.2" }
                 ),
                 (SvgFeature::LinearGradient, SvgSupport::NotInScene),
                 (SvgFeature::RadialGradient, SvgSupport::NotInScene),

@@ -18,4 +18,8 @@ pub mod id;
 /// SVG 문서 writer (XX.3.3).
 pub mod writer;
 
+/// 부분 래스터화 경계 planner (XX.4.1).
+pub mod raster;
+
+pub use raster::{plan_raster, RasterBoundary, RasterCause, RasterPlan, RasterRegion};
 pub use writer::{write_svg, SvgDocument, SvgExportError, SvgWriteOptions};

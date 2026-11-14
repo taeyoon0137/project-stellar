@@ -1975,7 +1975,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XX.4.1 | `[ ]` | unsupported effect를 가진 최소 scene subtree와 외부 blend dependency를 분석하는 raster boundary planner를 구현합니다. | nested blur/blend fixture boundary 정확. | XI.4.4, XX.3.1 |
+| XX.4.1 | `[x]` | unsupported effect를 가진 최소 scene subtree와 외부 blend dependency를 분석하는 raster boundary planner를 구현합니다. | nested blur/blend fixture boundary 정확. | XI.4.4, XX.3.1 |
 | XX.4.2 | `[ ]` | boundary를 offscreen PNG data로 렌더하고 SVG image element로 삽입합니다. | 위치·scale·alpha fixture 통과. | XX.2.1, XX.4.1 |
 | XX.4.3 | `[ ]` | rasterized subtree 목록과 이유를 export report에 기록합니다. | report fixture 정확. | XX.4.2 |
 | XX.4.4 | `[ ]` | 한 unsupported effect가 전체 View를 불필요하게 rasterize하지 않는 회귀 테스트를 추가합니다. | vector node count 유지. | XX.4.2 |
