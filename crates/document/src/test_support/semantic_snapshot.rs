@@ -386,11 +386,17 @@ fn definition(value: &DocumentDefinition) -> Json {
             ])
         })
         .collect();
-    Json::object([
+    let mut object = Json::object([
         ("id", id(value.id)),
         ("name", Json::str(value.display_name())),
         ("pages", Json::Array(pages)),
-    ])
+    ]);
+    if !value.text_styles.is_empty() {
+        if let Json::Object(fields) = &mut object {
+            fields.insert("text_styles".to_string(), hex(&value.text_styles.encode()));
+        }
+    }
+    object
 }
 
 /// 레코드의 semantic snapshot JSON 값. 입력 레코드 순서와 무관합니다.

@@ -43,6 +43,19 @@ pub const PAGE_VIEWS: PropertyKey = PropertyKey(0xE102);
 /// View의 root Frame.
 pub const VIEW_ROOT_FRAME: PropertyKey = PropertyKey(0xE103);
 
+/// 문서 기본 typography 참조.
+pub const TEXT_DEFAULT_TYPOGRAPHY: PropertyKey = PropertyKey(0xE104);
+/// 문서 기본 글자색.
+pub const TEXT_DEFAULT_FILL: PropertyKey = PropertyKey(0xE105);
+/// 문단 style entry, 원래 u32 index.
+pub const TEXT_PARAGRAPH_STYLE: PropertyKey = PropertyKey(0xE106);
+/// 문자 style entry, 원래 u32 index.
+pub const TEXT_RUN_STYLE: PropertyKey = PropertyKey(0xE107);
+/// 알 수 없는 버전의 Typography 원본.
+pub const TEXT_OPAQUE_TYPOGRAPHY: PropertyKey = PropertyKey(0xE108);
+/// hash로 등록한 프로젝트 글꼴 record.
+pub const TEXT_FONT_ASSET: PropertyKey = PropertyKey(0xE109);
+
 // --- 프로젝트 metadata (0xE2xx) ---
 
 /// 프로젝트 metadata 항목. 마지막 segment가 항목 이름(map key)입니다.
@@ -182,6 +195,12 @@ mod tests {
             ("display_name", DISPLAY_NAME),
             ("document.pages", DOCUMENT_PAGES),
             ("page.views", PAGE_VIEWS),
+            ("document.text_default_typography", TEXT_DEFAULT_TYPOGRAPHY),
+            ("document.text_default_fill", TEXT_DEFAULT_FILL),
+            ("document.text_paragraph_style", TEXT_PARAGRAPH_STYLE),
+            ("document.text_run_style", TEXT_RUN_STYLE),
+            ("document.text_opaque_typography", TEXT_OPAQUE_TYPOGRAPHY),
+            ("document.text_font_asset", TEXT_FONT_ASSET),
             ("view.root_frame", VIEW_ROOT_FRAME),
             ("project.metadata", PROJECT_METADATA),
             ("shape.kind", SHAPE_KIND),

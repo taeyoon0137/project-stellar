@@ -371,6 +371,12 @@ pub fn generate(
                 }
             }
         }
+        CommandKind::SetDocumentTextStyles => Some(Command::SetDocumentTextStyles {
+            document: model.document_id(),
+            styles: Box::new(stellar_document::text_styles::DocumentTextStyles::initial(
+                ids.fresh(),
+            )),
+        }),
         CommandKind::ReplaceText => {
             let candidates = nodes_where(model, |id| kind_of(model, id) == Some(NodeKind::Text));
             let node = pick(rng, &candidates)?;

@@ -347,3 +347,59 @@ fn stored_empty_modifier_stack_record_is_rejected() {
     let loaded = load_document(&serialized.manifest.payload, &mut clean).unwrap();
     assert_eq!(serialize_document(&loaded.model).unwrap(), serialized);
 }
+
+#[test]
+fn adding_a_style_table_reuses_legacy_text_chunks_and_preserves_previous_generation() {
+    use stellar_document::text_styles::DocumentTextStyles;
+    use stellar_project::document_io::manifest::DocumentManifestChunk;
+    use stellar_storage::generation::loader::load_current_generation;
+
+    let dir = TempDir::new("stellar-doc-style-versions");
+    let project = id(8, 8);
+    let mut original = golden_document(5);
+    let doc = original.document_id();
+    let legacy = serialize_document(&original).unwrap();
+    let plan = build_save_plan(None, project, 1, &legacy.to_dirty_states(), vec![doc]).unwrap();
+    let mut memory = SavedGenerationState::new(None);
+    run_save(&dir.path, &plan, &mut memory, &CancelToken::new()).unwrap();
+    let base = load_current_generation(&dir.path, project).unwrap();
+    let mut table = DocumentTextStyles::initial(id(90, 80));
+    table.paragraphs.insert(u32::MAX, Default::default());
+    original.replace_text_styles(table);
+    let styled = serialize_document(&original).unwrap();
+    assert_eq!(legacy.manifest.schema_version, 1);
+    assert_eq!(styled.manifest.schema_version, 2);
+    assert_eq!(legacy.subtrees, styled.subtrees);
+    assert_eq!(legacy.view_trees, styled.view_trees);
+    for (version, payload) in [
+        (2, &legacy.manifest.payload),
+        (1, &styled.manifest.payload),
+        (99, &styled.manifest.payload),
+    ] {
+        assert!(DocumentManifestChunk::decode_for_schema(version, payload).is_err());
+    }
+    let plan = build_save_plan(
+        Some(&base),
+        project,
+        1,
+        &styled.to_dirty_states(),
+        vec![doc],
+    )
+    .unwrap();
+    run_save(&dir.path, &plan, &mut memory, &CancelToken::new()).unwrap();
+    let mut recorder = Recorder::default();
+    let lazy = LazyGeneration::open(&dir.path, project, &mut recorder).unwrap();
+    assert_eq!(lazy.manifest().generation, base.manifest.generation + 1);
+    let loaded = load_document_from_generation(&lazy, doc, &mut recorder).unwrap();
+    assert_eq!(loaded.model.definition(), original.definition());
+    let old_pointer = base
+        .manifest
+        .chunk_pointers
+        .iter()
+        .find(|c| c.chunk_id == legacy.manifest.chunk_id)
+        .unwrap();
+    let old_bytes = stellar_storage::chunk::store::ChunkStore::new(&dir.path)
+        .read_chunk(&old_pointer.content_hash, old_pointer.kind)
+        .unwrap();
+    assert_eq!(old_bytes, legacy.manifest.payload);
+}

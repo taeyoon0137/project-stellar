@@ -501,6 +501,14 @@ mod tests {
                 .model
                 .to_records()
                 .unwrap();
+            let style = records.definition.text_styles.resolve(0, None).unwrap();
+            let typography = style.typography.record().unwrap();
+            assert!(typography.families.is_empty());
+            assert_eq!(
+                typography.size,
+                stellar_core_types::typography::FontSize::Medium
+            );
+            assert_eq!(style.fill, None);
             assert_eq!(records.definition.pages.len(), 1);
             assert_eq!(records.definition.pages[0].views.len(), 1);
             assert_eq!(records.nodes.len(), 1);

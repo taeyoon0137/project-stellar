@@ -19,9 +19,10 @@ use crate::manifest::CURRENT_SCHEMA_VERSION;
 
 pub(super) fn save(
     root: &Path,
-    [project, document, page, view, frame]: [StableId; 5],
+    [project, document, page, view, frame, typography]: [StableId; 6],
 ) -> io::Result<()> {
     let mut definition = DocumentDefinition::new(document, "Document".into());
+    definition.text_styles = stellar_document::text_styles::DocumentTextStyles::initial(typography);
     let mut first_page = PageDefinition::new(page, "Page 1".into());
     first_page
         .add_view(ViewDefinition::new(view, "View 1".into(), frame))

@@ -200,16 +200,17 @@ pub fn serialize_records(records: &DocumentRecords) -> Result<SerializedDocument
     let manifest = DocumentManifestChunk {
         definition: records.definition.clone(),
         view_trees: refs,
-    }
-    .encode()
-    .map_err(SerializeError::Manifest)?;
+    };
+    let version = manifest.schema_version();
+    let mut manifest = chunk(
+        manifest_chunk_id(document_id),
+        KIND_DOCUMENT_MANIFEST,
+        manifest.encode().map_err(SerializeError::Manifest)?,
+    );
+    manifest.schema_version = version;
     Ok(SerializedDocument {
         document_id,
-        manifest: chunk(
-            manifest_chunk_id(document_id),
-            KIND_DOCUMENT_MANIFEST,
-            manifest,
-        ),
+        manifest,
         view_trees,
         subtrees,
     })

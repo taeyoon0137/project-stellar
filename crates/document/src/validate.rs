@@ -44,6 +44,8 @@ pub const MAX_NODE_DEPTH: u32 = 64;
 pub enum ViolationLocation {
     /// 문서 정의.
     Document(StableId),
+    /// Typography resource.
+    Typography(StableId),
     /// 페이지 정의.
     Page(StableId),
     /// View 정의.
@@ -90,6 +92,7 @@ impl fmt::Display for ViolationLocation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ViolationLocation::Document(id) => write!(f, "문서 {id}"),
+            ViolationLocation::Typography(id) => write!(f, "Typography {id}"),
             ViolationLocation::Page(id) => write!(f, "페이지 {id}"),
             ViolationLocation::View(id) => write!(f, "View {id}"),
             ViolationLocation::Node { index, id } => write!(f, "node {id}(#{index})"),
@@ -130,6 +133,8 @@ pub enum RefTarget {
     Node(NodeKind),
     /// 문서 정의.
     Document,
+    /// Typography resource.
+    Typography,
     /// 페이지 정의.
     Page,
     /// View 정의.
@@ -145,6 +150,7 @@ impl fmt::Display for RefTarget {
         match self {
             RefTarget::Node(kind) => write!(f, "{} node", kind.name()),
             RefTarget::Document => f.write_str("문서"),
+            RefTarget::Typography => f.write_str("Typography"),
             RefTarget::Page => f.write_str("페이지"),
             RefTarget::View => f.write_str("View"),
             RefTarget::Modifier => f.write_str("modifier"),
@@ -525,6 +531,13 @@ impl Validator<'_> {
             RefTarget::Document,
             ViolationLocation::Document(document.id),
         );
+        for id in document.text_styles.typography.keys() {
+            self.register(
+                *id,
+                RefTarget::Typography,
+                ViolationLocation::Typography(*id),
+            );
+        }
         for page in &document.pages {
             self.register(page.id, RefTarget::Page, ViolationLocation::Page(page.id));
             for view in &page.views {

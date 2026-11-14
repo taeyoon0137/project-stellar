@@ -464,6 +464,7 @@ fn definition_objects(
         document.path(&[keys::DOCUMENT_PAGES]),
         SemanticValue::Ids(definition.pages.iter().map(|p| p.id).collect()),
     )?;
+    crate::text_styles::project(&definition.text_styles, &mut document)?;
     objects.push(document);
     for page in &definition.pages {
         let mut object = SemanticObject::new(page.id, ObjectKind::Page, origin)

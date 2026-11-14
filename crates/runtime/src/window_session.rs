@@ -223,16 +223,16 @@ impl ProjectWindowSession {
                 let document = load_document_from_generation(&lazy, document_id, &mut owned)
                     .map_err(WindowSessionLoadError::Document)?;
                 // DocumentManifest chunk는 열기 때 읽었으므로 그 문서의 것만 골라 더합니다.
-                for (chunk, payload) in lazy.document_manifests() {
+                for (pointer, payload) in lazy.document_manifest_records() {
                     let manifest =
-                        stellar_project::document_io::manifest::DocumentManifestChunk::decode(
-                            payload,
+                        stellar_project::document_io::manifest::DocumentManifestChunk::decode_for_schema(
+                            pointer.schema_version, payload,
                         )
                         .map_err(|error| {
                             WindowSessionLoadError::Document(LoadDocumentError::Manifest(error))
                         })?;
                     if manifest.definition.id == document_id {
-                        owned.0.insert(*chunk);
+                        owned.0.insert(pointer.chunk_id);
                     }
                 }
                 let state = DocumentState::new(document.model);

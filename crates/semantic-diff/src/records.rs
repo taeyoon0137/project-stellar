@@ -447,6 +447,7 @@ fn definition(
         .ok_or(fail(document, ProjectionFailure::MissingDocument))?;
     let r = Reader { object: doc };
     let mut definition = DocumentDefinition::new(document, r.text(keys::DISPLAY_NAME)?);
+    definition.text_styles = crate::text_styles::restore(doc)?;
     for page_id in r.ids(keys::DOCUMENT_PAGES)? {
         let page = snapshot
             .get(page_id)

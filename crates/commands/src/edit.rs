@@ -34,6 +34,8 @@ enum UndoOp {
     Reinsert(Box<NodeRecord>, Option<ModifierStack>),
     /// payload 교체를 되돌림.
     Payload(StableId, Box<NodePayload>),
+    /// 문서 Text style 표 교체를 되돌립니다.
+    TextStyles(Box<stellar_document::text_styles::DocumentTextStyles>),
     /// 이름 변경을 되돌림.
     Name(StableId, String),
     /// 표시·잠금 변경을 되돌림.
@@ -174,7 +176,19 @@ impl<'a> EditContext<'a> {
         Ok(previous)
     }
 
-    /// 표시 이름을 바꿉니다. 이전 이름을 반환합니다.
+    /// 스타일 표 전체를 rollback journal과 함께 교체합니다.
+    pub(crate) fn set_text_styles(
+        &mut self,
+        styles: stellar_document::text_styles::DocumentTextStyles,
+    ) -> Result<(), CommandError> {
+        self.before_primitive()?;
+        let previous = self.model.replace_text_styles(styles);
+        self.journal.push(UndoOp::TextStyles(Box::new(previous)));
+        self.changes.structure(self.model.document_id());
+        Ok(())
+    }
+
+    /// node 표시 이름 변경.
     pub fn set_display_name(&mut self, id: StableId, name: String) -> Result<String, CommandError> {
         self.before_primitive()?;
         let previous = self
@@ -305,6 +319,9 @@ fn undo(model: &mut DocumentModel, op: UndoOp) -> Result<(), CommandError> {
             }
         }
         UndoOp::Payload(id, payload) => model.set_payload(id, *payload)?,
+        UndoOp::TextStyles(previous) => {
+            model.replace_text_styles(*previous);
+        }
         UndoOp::Name(id, name) => model.set_display_name(id, name)?,
         UndoOp::Flags {
             id,
