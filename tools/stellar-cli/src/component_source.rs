@@ -1,4 +1,4 @@
-//! 컴포넌트별 root Frame 원본 생성·조회·크기 편집 (ADR-0059).
+//! 컴포넌트별 Free Frame 트리 생성·조회·편집 (ADR-0059).
 use crate::exit::ExitStatus;
 use crate::json::JsonValue as J;
 use crate::output::{CliError, Success};
@@ -20,10 +20,15 @@ fn dimension(value: &str) -> Result<f32, CliError> {
         .parse()
         .map_err(|_| argument("크기는 유한한 비음수여야 합니다"))
 }
+fn size(width: &str, height: &str) -> Result<Size2, CliError> {
+    Size2::new(dimension(width)?, dimension(height)?)
+        .map_err(|_| argument("크기는 유한한 비음수여야 합니다"))
+}
 fn json(info: ComponentInfo) -> J {
     J::object(vec![
         ("id", views::id(info.id)),
         ("root", views::id(info.root)),
+        ("node_count", views::count(info.node_count)),
         ("name", J::string(info.name)),
         ("file", J::string(info.file.to_string_lossy())),
         ("width", J::string(info.size.width().to_string())),
@@ -33,7 +38,7 @@ fn json(info: ComponentInfo) -> J {
 }
 
 pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
-    const USAGE: &str = "component-source create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이>";
+    const USAGE: &str = "component-source create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>";
     let result = match args {
         [op, dir, name, component, root] if op == "create" => {
             let source =
@@ -50,13 +55,23 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
             )])
         }
         [op, file, hash, width, height] if op == "resize" => {
-            let size = Size2::new(dimension(width)?, dimension(height)?)
-                .map_err(|_| argument("크기는 유한한 비음수여야 합니다"))?;
+            let size = size(width, height)?;
             json(
                 component_source::resize(Path::new(file), hash, size)
                     .map_err(|error| operation_error(error).with_context(file))?,
             )
         }
+        [op, file, hash, parent, child, name, width, height] if op == "add-frame" => json(
+            component_source::add_frame(
+                Path::new(file),
+                hash,
+                id(parent)?,
+                id(child)?,
+                name.clone(),
+                size(width, height)?,
+            )
+            .map_err(|error| operation_error(error).with_context(file))?,
+        ),
         _ => return Err(CliError::usage(USAGE)),
     };
     Ok(Success {

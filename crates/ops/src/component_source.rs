@@ -20,6 +20,8 @@ pub struct ComponentInfo {
     pub name: String,
     /// root Frame의 논리 픽셀 크기.
     pub size: Size2,
+    /// root를 포함한 실제 Frame 수.
+    pub node_count: usize,
     /// 원본 경로와 bytes hash.
     pub file: PathBuf,
     /// 다음 쓰기에 사용할 실제 bytes hash.
@@ -43,6 +45,7 @@ fn info(source: &ComponentSource, file: PathBuf, hash: ContentHash) -> Component
     ComponentInfo {
         id: source.definition().id,
         root: source.root().id,
+        node_count: source.node_count(),
         name: source.definition().display_name().into(),
         size: frame.size,
         file,
@@ -82,6 +85,7 @@ pub fn check(dir: &Path) -> Result<Vec<ComponentInfo>, Error> {
         result.push(ComponentInfo {
             id: definition.id,
             root: root.id,
+            node_count: entry.tree().len(),
             name: definition.display_name().into(),
             size: frame.size,
             file,
@@ -93,6 +97,26 @@ pub fn check(dir: &Path) -> Result<Vec<ComponentInfo>, Error> {
 
 /// 파일을 열 때 관측한 hash가 일치하면 root Frame 크기를 바꿉니다.
 pub fn resize(file: &Path, expected: &str, size: Size2) -> Result<ComponentInfo, Error> {
+    let (_guard, hash) = lock_file(file, expected)?;
+    let (source, hash) = component_source::resize(file, hash, size)?;
+    Ok(info(&source, file.into(), hash))
+}
+
+/// 컴포넌트 한 개의 지정 부모에 Free Frame을 추가합니다.
+pub fn add_frame(
+    file: &Path,
+    expected: &str,
+    parent: StableId,
+    id: StableId,
+    name: String,
+    size: Size2,
+) -> Result<ComponentInfo, Error> {
+    let (_guard, hash) = lock_file(file, expected)?;
+    let (source, hash) = component_source::add_frame(file, hash, parent, id, name, size)?;
+    Ok(info(&source, file.into(), hash))
+}
+
+fn lock_file(file: &Path, expected: &str) -> Result<(SaveLock, ContentHash), Error> {
     let hash = expected
         .parse()
         .map_err(|_| Error::Invalid("원본 hash 형식".into()))?;
@@ -100,7 +124,5 @@ pub fn resize(file: &Path, expected: &str, size: Size2) -> Result<ComponentInfo,
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let _guard = lock(dir)?;
-    let (source, hash) = component_source::resize(file, hash, size)?;
-    Ok(info(&source, file.into(), hash))
+    Ok((lock(dir)?, hash))
 }

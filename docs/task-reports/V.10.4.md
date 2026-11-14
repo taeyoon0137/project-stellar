@@ -3,7 +3,7 @@
 ## WBS
 
 - WBS: V.10.4
-- 상태: 부분 구현 (`[~]`). 단일 View의 Text payload 전체 왕복과 빈 공개 인터페이스·root Frame 컴포넌트의 독립 파일을 지원합니다. 전체 node·modifier·component·token·resource, 다중 파일 참조 및 마이그레이션은 완료 처리하지 않습니다.
+- 상태: 부분 구현 (`[~]`). 단일 View의 Text payload 전체 왕복과 빈 공개 인터페이스·중첩 Free Frame 컴포넌트의 독립 파일을 지원합니다. 전체 node·modifier·component·token·resource, 다중 파일 참조 및 마이그레이션은 완료 처리하지 않습니다.
 - 기본 generation 저장 경로와 기존 Frame/Fragment 문법은 유지합니다.
 
 ## 변경 파일
@@ -74,7 +74,14 @@
 - 실제 저장 generation을 가진 프로젝트에서 동일 표시 이름의 두 정의를 CLI로 만들고 각 브랜치에서 한 root의 크기만 바꿉니다. `git diff --name-only`와 다른 파일의 직접 bytes 비교로 독립 편집을 확인합니다. 일반 `git merge --no-ff` 후 새 clone에서 cache 없이 두 정의의 전체 component/root ID·크기·source hash가 재현되고 기존 프로젝트 설정과 generation 파일 hash가 모두 유지됩니다.
 - Frame의 transform·색 공간·테두리·모서리·표시·잠금은 텍스트 왕복 전후 실제 library canonical bytes 비교로 확인합니다.
 - 같은 ID·root와 component/root 교차 충돌, stale hash, 이름/접미사 불일치를 거부합니다. 무변경 resize는 주석을 포함한 원본 bytes를 유지합니다.
-- component 내부 Property·Slot·state·token, root 자식 및 Frame 추가 필드, root ID 불일치와 parent 참조는 `check`·`resize`·새 정의 생성에서 거부합니다. 현재 source hash로 요청해도 거부하며 폴더 전체 파일 hash가 같습니다.
+- component 내부 Property·Slot·state·token, root_node에 직접 삽입한 미정의 필드, root ID 불일치와 parent 참조는 `check`·`resize`·새 정의 생성에서 거부합니다. 현재 source hash로 요청해도 거부하며 폴더 전체 파일 hash가 같습니다.
+
+## 중첩 Frame 정의 파일
+
+`component-source add-frame`은 기존 hash를 확인한 다음 지정한 부모에 마지막 자식 Frame을 추가합니다. 기존 root-only 파일은 v1 bytes를 유지하고 실제 자식 Frame이 있는 파일만 v2가 됩니다. 모든 자식의 id·parent·order_key와 payload를 복원해 실제 `ComponentLibrary`로 조립합니다. 생성과 크기 편집은 파일 하나에 적용합니다.
+
+- `cargo test -p stellar-cli --test component_source`로 v1 병합, v2 형제·손자 생성과 이름 변경 후 새 Git clone, 라이브러리 ID 중복·미지원 입력 보존을 검사합니다.
+- `cargo test -p stellar-project frame_and_component_library_bytes_survive_a_source_round_trip`으로 YAML 왕복 전후 라이브러리 binary와 재사용 인스턴스 두 개의 자식 순서·손자 payload를 비교합니다.
 
 ## 성능
 
@@ -97,7 +104,7 @@
 
 컴포넌트 범위의 남은 한계:
 
-- 빈 공개 인터페이스와 root Frame 한 개만 지원합니다. 정의 사이의 instance 참조·자식 tree·Property·Slot·토큰·상태 머신과 기존 generation의 전체 라이브러리 변환은 제공하지 않습니다. 미지원 내용을 생략하는 변환 경로도 없습니다.
+- 빈 공개 인터페이스와 Free Frame tree를 지원합니다. 정의 사이의 instance 참조·Property·Slot·토큰·상태 머신과 기존 generation의 전체 라이브러리 변환은 제공하지 않습니다. 미지원 내용을 생략하는 변환 경로도 없습니다.
 - 이 opt-in 폴더를 기본 앱 라이브러리로 여는 경로와 컴포넌트 CLI dry-run은 없습니다. `resize`는 기대 hash에 대한 단일 파일 저장만 제공합니다. V.10.5 journal·여러 파일 rename 원자성·V.10.7 기본 전환은 별도입니다.
 - cache를 쓰지 않고 각 파일을 해석하므로 cache 가속이나 T0→T5 성능 완료를 주장하지 않습니다. 파일당 1 MiB·폴더당 4,096개 상한과 기존 비협조적 외부 writer 경쟁·게시 후 fsync 실패 한계를 유지합니다.
 - 이번 전체 스레드 4 실행의 IPC 벽시계 상한 실패는 잔여 검증 한계입니다. 단독·전체 직렬 결과와 구분하며 병렬 안정성 완료로 표시하지 않습니다.
