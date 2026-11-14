@@ -12,9 +12,7 @@ enum GitPanelMetrics {
     static let rowSpacing: CGFloat = 6
     /// 한 줄 안 요소 간격.
     static let inlineSpacing: CGFloat = 4
-    /// 목록 계층 들여쓰기(문서 → 객체 → 변경).
-    static let indentPerLevel: CGFloat = 14
-    /// 목록 행 위아래 여백.
+    /// 목록 행 위아래 여백. 계층 들여쓰기는 NSOutlineView 시스템 값을 씁니다.
     static let rowPadding: CGFloat = 3
 
     /// 한 번에 요청하는 목록 행 수(XIV.13.1).
@@ -140,9 +138,13 @@ enum GitPanelStrings {
     static let notRepositoryBanner = "This project folder isn't a Git repository."
     static let pendingAutosaveBanner = "Some edits aren't saved yet. Git status shows the saved files."
 
-    static func stageCheckbox(_ title: String) -> String { "Stage \(title)" }
-    static func expand(_ title: String) -> String { "Expand \(title)" }
-    static func collapse(_ title: String) -> String { "Collapse \(title)" }
+    static let documentLevel = "Document"
+    static let objectLevel = "Object"
+
+    /// 변경 행 하나를 VoiceOver가 한 번에 읽는 문구: 제목, 보조 문구, 종류, Stage 상태.
+    static func changeRowLabel(title: String, detail: String, kind: String, state: String) -> String {
+        [title, detail, kind, state].filter { !$0.isEmpty }.joined(separator: ", ")
+    }
     static func resolution(_ title: String) -> String { "Resolution for \(title)" }
     static func conflictsTab(count: Int) -> String { count > 0 ? "Conflicts (\(count))" : conflictsTab }
     static func changeCount(_ count: Int) -> String { count == 1 ? "1 change" : "\(count) changes" }

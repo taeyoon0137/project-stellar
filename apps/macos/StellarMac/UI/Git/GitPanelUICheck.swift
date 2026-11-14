@@ -5,10 +5,13 @@ import AppKit
 /// Stub data source로 패널을 화면에 표시하지 않고 만든 뒤 일반 크기에서 layout을 강제하고 다음을 확인합니다.
 /// - 모든 SF Symbols 이름이 시스템에 있음
 /// - 표시 중인 뷰에 모호한 Auto Layout이 없음(Light·Dark, 변경·conflict 화면)
-/// - 핵심 컨트롤과 보이는 목록 행에 접근성 레이블이 있음
+/// - 핵심 컨트롤에 접근성 레이블이 있고, 변경 행은 하나의 접근성 요소(제목·종류·Stage 상태 + custom action)임
+/// - 변경 목록이 `NSOutlineView` 계층이며 수준·펼침 상태가 outline에 있음
 /// - Commit 비활성 이유(Stage 없음, identity 없음, 신뢰 전 프로젝트)와 Push·해결 적용 이유
 /// - Stage 체크박스·필수 동반 변경 확인·키보드(Space, ←/→, B/O/T)·Commit·Push·Conflict 해결 흐름
-/// - 100만 change에서 보이는 페이지만 요청하고 캐시·행 뷰 수가 제한됨(XIV.13.1)
+/// - 코어가 거부한 명령(세대 불일치)에서 미리 보여 준 체크박스가 되돌아가고 같은 페이지를 다시 요청할 수 있음
+/// - 구조가 바뀐 뒤(커밋) 펼침 상태가 노드 ID로 복원됨
+/// - 100만 change와 자식이 여러 페이지인 묶음에서 보이는 페이지만 요청하고 캐시·행 뷰 수가 제한됨(XIV.13.1)
 /// 실제 Git, 코어 FFI, 화면 표시, VoiceOver 읽기 순서, sheet 경로는 검사하지 않습니다.
 enum GitPanelUICheck {
     static func run() -> Bool {
@@ -32,6 +35,7 @@ enum GitPanelUICheck {
             try checkClean(&report)
             try checkConflicts(&report)
             try checkMillion(&report)
+            try checkWide(&report)
         } catch let failure as Failure {
             FileHandle.standardError.write(Data("git-panel 실패: \(failure.message)\n".utf8))
             return false
@@ -88,6 +92,9 @@ enum GitPanelUICheck {
             layout()
         }
 
+        var list: GitChangeListController { controller.changeList }
+        var outline: GitChangeOutlineView { controller.changeList.outlineView }
+
         func layout() {
             window.contentView?.layoutSubtreeIfNeeded()
         }
@@ -108,24 +115,53 @@ enum GitPanelUICheck {
         /// 보이는 변경 행이 모두 fresh 페이지로 채워질 때까지 기다립니다.
         func waitForVisibleChangeRows(timeout: TimeInterval = 10) -> Bool {
             spin(timeout: timeout) {
-                let list = controller.changeList
-                guard list.rowCount > 0 else { return false }
-                let visible = list.tableView.rows(in: list.tableView.visibleRect)
+                guard list.documentCount > 0 else { return false }
+                let visible = outline.rows(in: outline.visibleRect)
                 guard visible.length > 0 else { return false }
-                return (visible.location..<(visible.location + visible.length)).allSatisfy { list.row(at: $0) != nil }
+                return (visible.location..<(visible.location + visible.length)).allSatisfy { row in
+                    list.item(atRow: row).flatMap { list.row(of: $0) } != nil
+                }
             }
         }
 
-        func changeCell(_ row: Int) -> GitChangeCellView? {
-            controller.changeList.tableView.scrollRowToVisible(row)
+        func changeCell(_ item: GitChangeOutlineItem) -> GitChangeCellView? {
+            let row = outline.row(forItem: item)
+            guard row >= 0 else { return nil }
+            outline.scrollRowToVisible(row)
             layout()
-            return controller.changeList.tableView.view(atColumn: 0, row: row, makeIfNecessary: true) as? GitChangeCellView
+            return outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? GitChangeCellView
         }
 
-        func conflictCell(_ row: Int) -> GitConflictCellView? {
-            controller.conflictList.tableView.scrollRowToVisible(row)
+        /// 항목을 선택하고 outline에 키를 보냅니다(포커스 포함).
+        func select(_ item: GitChangeOutlineItem) {
+            let row = outline.row(forItem: item)
+            guard row >= 0 else { return }
+            outline.scrollRowToVisible(row)
+            outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            window.makeFirstResponder(outline)
             layout()
-            return controller.conflictList.tableView.view(atColumn: 0, row: row, makeIfNecessary: true) as? GitConflictCellView
+        }
+
+        /// 항목을 펼치고 자식 행 페이지가 올 때까지 기다립니다.
+        func expand(_ item: GitChangeOutlineItem, timeout: TimeInterval = 10) -> Bool {
+            outline.expandItem(item)
+            layout()
+            return outline.isItemExpanded(item) && waitForVisibleChangeRows(timeout: timeout)
+        }
+
+        /// 부모의 n번째 자식 항목(펼쳐져 있어야 함).
+        func child(_ index: Int, of parent: GitChangeOutlineItem?) -> GitChangeOutlineItem? {
+            outline.child(index, ofItem: parent) as? GitChangeOutlineItem
+        }
+
+        /// 항목 행이 fresh로 올 때까지 스크롤해 기다립니다.
+        func loadedRow(_ item: GitChangeOutlineItem, timeout: TimeInterval = 10) -> GitChangeRow? {
+            let row = outline.row(forItem: item)
+            guard row >= 0 else { return nil }
+            outline.scrollRowToVisible(row)
+            layout()
+            spin(timeout: timeout) { list.row(of: item) != nil }
+            return list.row(of: item)
         }
 
         func key(_ characters: String, keyCode: UInt16, to view: NSView) {
@@ -200,7 +236,7 @@ enum GitPanelUICheck {
         let controls: [(String, NSView)] = [
             ("refresh", panel.refreshButton),
             ("mode", panel.modeControl),
-            ("changes list", panel.changeList.tableView),
+            ("changes list", panel.changeList.outlineView),
             ("conflicts list", panel.conflictList.tableView),
             ("commit message", panel.commitTextView),
             ("commit", panel.commitButton),
@@ -215,26 +251,37 @@ enum GitPanelUICheck {
         }
         try expect(!(panel.refreshButton.toolTip ?? "").isEmpty, "\(context): 아이콘 버튼 도움말 태그 없음")
 
-        var missing: [String] = []
-        panel.changeList.tableView.enumerateAvailableRowViews { rowView, row in
-            guard let cell = rowView.view(atColumn: 0) as? GitChangeCellView else { return }
-            if !cell.stageCheckbox.isHidden, (cell.stageCheckbox.accessibilityLabel() ?? "").isEmpty {
-                missing.append("change \(row) checkbox")
+        // 변경 행: 셀 하나가 요소이고(레이블에 제목과 Stage 상태), 하위 뷰는 요소가 아니며, Stage 동작이 custom action.
+        var problems: [String] = []
+        let outline = panel.changeList.outlineView
+        outline.enumerateAvailableRowViews { rowView, row in
+            guard let cell = rowView.view(atColumn: 0) as? GitChangeCellView,
+                  let item = panel.changeList.item(atRow: row), let value = panel.changeList.row(of: item)
+            else { return }
+            let label = cell.accessibilityLabel() ?? ""
+            if !label.contains(value.title)
+                || !label.contains(GitPanelStrings.stageState(value.stageState)) {
+                problems.append("row \(row) label '\(label)'")
             }
-            if !cell.disclosureButton.isHidden, (cell.disclosureButton.accessibilityLabel() ?? "").isEmpty {
-                missing.append("change \(row) disclosure")
+            // NSControl의 접근성은 cell이 노출하므로 view와 cell을 함께 확인합니다.
+            let parts: [NSControl] = [cell.stageCheckbox, cell.kindImageView, cell.titleField, cell.detailField]
+            if parts.contains(where: { $0.isAccessibilityElement() || $0.cell?.isAccessibilityElement() == true }) {
+                problems.append("row \(row) 하위 요소 노출")
             }
-            if cell.kindImageView.image != nil, (cell.kindImageView.accessibilityLabel() ?? "").isEmpty {
-                missing.append("change \(row) icon")
+            if panel.changeList.isInteractive, (cell.accessibilityCustomActions() ?? []).isEmpty {
+                problems.append("row \(row) custom action 없음")
+            }
+            if cell.stageCheckbox.acceptsFirstResponder {
+                problems.append("row \(row) 체크박스가 Tab 순서에 있음")
             }
         }
         panel.conflictList.tableView.enumerateAvailableRowViews { rowView, row in
             guard let cell = rowView.view(atColumn: 0) as? GitConflictCellView else { return }
             if !cell.choiceControl.isHidden, (cell.choiceControl.accessibilityLabel() ?? "").isEmpty {
-                missing.append("conflict \(row) choice")
+                problems.append("conflict \(row) choice")
             }
         }
-        try expect(missing.isEmpty, "\(context): 접근성 레이블 누락 \(missing.prefix(5))")
+        try expect(problems.isEmpty, "\(context): 접근성 \(problems.prefix(5))")
     }
 
     // MARK: 개별 검사
@@ -251,11 +298,16 @@ enum GitPanelUICheck {
         let harness = Harness(.typical)
         defer { harness.close() }
         let panel = harness.controller
+        let list = harness.list
+        let outline = harness.outline
         try expect(harness.waitForVisibleChangeRows(), "typical: 변경 목록 페이지가 오지 않음")
         guard let initial = panel.status else { throw Failure(message: "typical: status 없음") }
 
-        // 구조: 표준 AppKit 목록·텍스트 컨트롤.
-        try expect(type(of: panel.changeList.tableView).isSubclass(of: NSTableView.self), "typical: 변경 목록이 NSTableView가 아님")
+        // 구조: 표준 AppKit outline·텍스트 컨트롤. 처음에는 문서 행만 보입니다(펼침은 보기 상태).
+        try expect(outline.outlineTableColumn != nil && outline.accessibilityRole() == .outline,
+                   "typical: 변경 목록이 NSOutlineView 계층이 아님")
+        try expect(outline.numberOfRows == initial.changes.documentCount && outline.numberOfRows == 6,
+                   "typical: 최상위 행 수 불일치 \(outline.numberOfRows)")
         try expect(panel.commitScrollView.documentView === panel.commitTextView, "typical: 커밋 메시지가 NSTextView가 아님")
         try expect(!panel.commitTextView.isRichText && panel.commitTextView.allowsUndo, "typical: 커밋 메시지 plain text·undo 아님")
         try expect(panel.commitButton.keyEquivalent == "\r" && panel.commitButton.keyEquivalentModifierMask == [.command],
@@ -276,25 +328,34 @@ enum GitPanelUICheck {
         harness.typeCommitMessage("Update button colors")
         try expect(panel.commitBlockers.isEmpty && panel.commitButton.isEnabled, "typical: 메시지 입력 후 Commit 비활성")
 
+        // 키보드 →: 첫 문서 펼치기(NSOutlineView 기본 동작). 객체 4개가 수준 1로 나타납니다.
+        guard let document = list.item(atRow: 0) else { throw Failure(message: "typical: 문서 항목 없음") }
+        harness.select(document)
+        harness.key(functionKey(NSRightArrowFunctionKey), keyCode: 124, to: outline)
+        try expect(harness.spin { outline.isItemExpanded(document) && outline.numberOfRows == 10 },
+                   "typical: → 펼치기 실패 (행 \(outline.numberOfRows))")
+        try expect(outline.level(forRow: 1) == 1 && outline.level(forItem: document) == 0, "typical: 계층 수준 불일치")
+        try expect(harness.waitForVisibleChangeRows(), "typical: 객체 행 페이지가 오지 않음")
+
         // 필수 동반 변경: 새 객체의 속성만 Stage하면 AddObject 포함 확인을 받습니다(XIV.5.3).
-        let list = panel.changeList
-        var target: Int?
-        var row = 0
-        while row < list.rowCount, target == nil {
-            if list.row(at: row) == nil {
-                list.tableView.scrollRowToVisible(row)
-                _ = harness.waitForVisibleChangeRows()
-            }
-            if let header = list.row(at: row), header.level == .object, header.detail.hasPrefix("New"),
-               let add = list.row(at: row + 1), add.kind == .addObject, add.stageState == .unstaged,
-               let property = list.row(at: row + 2), property.level == .change, property.stageState == .unstaged {
-                target = row + 2
-            }
-            row += 1
+        var target: GitChangeOutlineItem?
+        for index in 0..<outline.numberOfChildren(ofItem: document) {
+            guard let object = harness.child(index, of: document), let header = harness.loadedRow(object),
+                  header.detail.hasPrefix("New")
+            else { continue }
+            guard harness.expand(object), let add = harness.child(0, of: object), let property = harness.child(1, of: object),
+                  harness.loadedRow(add)?.kind == .addObject, harness.loadedRow(add)?.stageState == .unstaged,
+                  harness.loadedRow(property)?.stageState == .unstaged
+            else { continue }
+            target = property
+            break
         }
-        guard let dependentRow = target else { throw Failure(message: "typical: 의존 변경 fixture 행을 찾지 못함") }
+        guard let dependent = target, let dependentObject = dependent.parent else {
+            throw Failure(message: "typical: 의존 변경 fixture 행을 찾지 못함")
+        }
+        try expect(outline.level(forItem: dependent) == 2, "typical: 변경 행 수준이 2가 아님")
         let stagedBefore = panel.status?.stagedChangeCount ?? 0
-        guard let cell = harness.changeCell(dependentRow) else { throw Failure(message: "typical: 셀 없음") }
+        guard let cell = harness.changeCell(dependent) else { throw Failure(message: "typical: 셀 없음") }
         cell.stageCheckbox.performClick(nil)
         try expect(harness.spin { panel.pendingPrompt != nil }, "typical: 필수 동반 변경 확인이 오지 않음")
         try expect(isShown(panel.dependencyBanner) && !panel.changeList.isInteractive,
@@ -302,37 +363,56 @@ enum GitPanelUICheck {
         panel.includeRequiredButton.performClick(nil)
         try expect(harness.spin { (panel.status?.stagedChangeCount ?? 0) == stagedBefore + 2 },
                    "typical: 동반 변경 포함 Stage 결과 불일치")
+        // 구조는 그대로이므로 펼침이 유지됩니다.
+        try expect(outline.isItemExpanded(document) && outline.isItemExpanded(dependentObject),
+                   "typical: Stage 후 펼침이 풀림")
 
         // 상세 요약: 변경 행 선택 → HEAD/Index/Working 값.
         _ = harness.waitForVisibleChangeRows()
-        list.tableView.selectRowIndexes(IndexSet(integer: dependentRow), byExtendingSelection: false)
-        try expect(harness.spin { panel.currentDetail?.row == dependentRow }, "typical: 변경 상세가 오지 않음")
+        harness.select(dependent)
+        try expect(harness.spin { panel.currentDetail?.node == dependent.nodeID }, "typical: 변경 상세가 오지 않음")
         try expect(panel.detailRows[.kind].map(isShown) == true && panel.detailRows[.object].map(isShown) == true,
                    "typical: 상세 행이 보이지 않음")
 
         // 키보드 Space: 선택 행 Stage 토글.
         let beforeSpace = panel.status?.stagedChangeCount ?? 0
-        harness.window.makeFirstResponder(list.tableView)
-        harness.key(" ", keyCode: 49, to: list.tableView)
+        harness.key(" ", keyCode: 49, to: outline)
         try expect(harness.spin { (panel.status?.stagedChangeCount ?? 0) == beforeSpace - 1 },
                    "typical: Space Unstage 결과 불일치")
         _ = harness.waitForVisibleChangeRows()
-        harness.key(" ", keyCode: 49, to: list.tableView)
+        harness.key(" ", keyCode: 49, to: outline)
         try expect(harness.spin { (panel.status?.stagedChangeCount ?? 0) == beforeSpace },
                    "typical: Space Stage 결과 불일치")
 
-        // 키보드 ←/→: 문서 묶음 접기·펼치기.
-        let rowsBefore = list.rowCount
-        list.tableView.scrollRowToVisible(0)
-        list.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        // 거부: 세대가 지난 Stage 요청은 실행되지 않고, 미리 보여 준 체크박스가 코어 값으로 돌아갑니다.
         _ = harness.waitForVisibleChangeRows()
-        harness.key(functionKey(NSLeftArrowFunctionKey), keyCode: 123, to: list.tableView)
-        try expect(harness.spin { list.rowCount < rowsBefore }, "typical: ← 접기 실패")
-        _ = harness.waitForVisibleChangeRows()
-        harness.key(functionKey(NSRightArrowFunctionKey), keyCode: 124, to: list.tableView)
-        try expect(harness.spin { list.rowCount == rowsBefore }, "typical: → 펼치기 실패")
+        guard let shownCell = harness.changeCell(dependent), let shownRow = list.row(of: dependent) else {
+            throw Failure(message: "typical: 거부 검사 셀 없음")
+        }
+        let truth: NSControl.StateValue = shownRow.stageState == .staged ? .on : (shownRow.stageState == .unstaged ? .off : .mixed)
+        shownCell.stageCheckbox.state = truth == .on ? .off : .on
+        let rejectionsBefore = panel.diagnostics.rejections
+        let stagedBeforeStale = panel.status?.stagedChangeCount ?? 0
+        harness.dataSource.send(.setStaged(
+            generation: list.generation &- 1,
+            targets: [GitChangeRange(parent: nil, children: IndexSet(integer: 0))],
+            staged: true))
+        // 이미 받은 페이지를 지난 세대로 다시 요청하면 거부되고, 요청 중 표시가 남지 않습니다.
+        harness.dataSource.send(.loadChangePage(generation: list.generation &- 1, parent: nil, children: 0..<6))
+        try expect(harness.spin { panel.diagnostics.rejections == rejectionsBefore + 2 }, "typical: 거부 이벤트가 오지 않음")
+        try expect(shownCell.stageCheckbox.state == truth, "typical: 거부 뒤 체크박스가 코어 값으로 돌아가지 않음")
+        try expect(panel.status?.stagedChangeCount == stagedBeforeStale, "typical: 거부된 Stage가 실행됨")
 
-        // Commit → 메시지 비움, staged 0, ahead 증가.
+        // 키보드 ←: 선택한 변경 → 부모로 이동, 다시 ←: 객체 접기(기본 outline 동작).
+        harness.select(dependent)
+        harness.key(functionKey(NSLeftArrowFunctionKey), keyCode: 123, to: outline)
+        harness.key(functionKey(NSLeftArrowFunctionKey), keyCode: 123, to: outline)
+        try expect(harness.spin { !outline.isItemExpanded(dependentObject) }, "typical: ← 접기 실패")
+        harness.key(functionKey(NSRightArrowFunctionKey), keyCode: 124, to: outline)
+        try expect(harness.spin { outline.isItemExpanded(dependentObject) }, "typical: → 다시 펼치기 실패")
+
+        // Commit → 메시지 비움, staged 0, ahead 증가. 구조가 바뀌어 다시 읽은 뒤 펼침을 노드 ID로 복원합니다.
+        guard let documentID = document.nodeID else { throw Failure(message: "typical: 문서 ID 없음") }
         let aheadBefore = panel.status?.upstream?.ahead ?? 0
         try expect(panel.commitButton.isEnabled, "typical: Commit 직전 비활성 \(panel.commitBlockers)")
         panel.commitButton.performClick(nil)
@@ -345,6 +425,9 @@ enum GitPanelUICheck {
         try expect(panel.status?.stagedChangeCount == 0 && panel.status?.upstream?.ahead == aheadBefore + 1,
                    "typical: Commit 후 상태 불일치")
         try expect(panel.commitBlockers.first == .nothingStaged, "typical: Commit 후 비활성 이유 불일치 \(panel.commitBlockers)")
+        try expect(harness.spin { list.item(for: documentID).map(outline.isItemExpanded) == true },
+                   "typical: 구조 변경 뒤 문서 펼침이 복원되지 않음")
+        try expect(list.item(for: documentID) !== document, "typical: 구조 변경 뒤 항목을 다시 만들지 않음")
 
         // Push(강제 없음) → ahead 0.
         try expect(panel.pushBlockers.isEmpty && panel.pushButton.isEnabled, "typical: Push 비활성 \(panel.pushBlockers)")
@@ -359,12 +442,14 @@ enum GitPanelUICheck {
         let dark = Harness(.typical, appearance: .darkAqua)
         defer { dark.close() }
         try expect(dark.waitForVisibleChangeRows(), "typical dark: 페이지 없음")
+        if let first = dark.list.item(atRow: 0) { _ = dark.expand(first) }
         try expect(dark.controller.view.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua,
                    "typical dark: Dark 외형 아님")
         try expectNoAmbiguity(dark, "typical dark")
+        try expectAccessibility(dark, "typical dark")
 
         let typicalDrain = String(format: "%.2f", panel.diagnostics.maxDrainSeconds * 1000)
-        report.append("typical stage/deps/detail/space/arrows/commit/push ok, rows \(list.rowCount), max drain \(typicalDrain)ms")
+        report.append("typical outline/stage/deps/detail/space/arrows/reject/commit/restore/push ok, rows \(outline.numberOfRows), max drain \(typicalDrain)ms")
     }
 
     @MainActor
@@ -445,11 +530,20 @@ enum GitPanelUICheck {
         try expectAccessibility(harness, "conflicts")
 
         // 종류별 허용 선택: 삭제 대 수정은 Base를 고를 수 없습니다(XIV.12.1).
-        guard let card = harness.conflictCell(1) else { throw Failure(message: "conflicts: 셀 없음") }
+        guard let card = conflictCell(harness, 1) else { throw Failure(message: "conflicts: 셀 없음") }
         try expect(!card.choiceControl.isEnabled(forSegment: 0) && card.choiceControl.isEnabled(forSegment: 1),
                    "conflicts: 허용 선택 제한 불일치")
-        guard let raw = harness.conflictCell(5) else { throw Failure(message: "conflicts: raw 셀 없음") }
+        guard let raw = conflictCell(harness, 5) else { throw Failure(message: "conflicts: raw 셀 없음") }
         try expect(raw.choiceControl.isHidden && !raw.rawHintField.isHidden, "conflicts: raw conflict 표시 불일치")
+
+        // 거부: 세대가 지난 해결 선택은 기록되지 않고, 미리 바꾼 segment가 코어 값으로 돌아갑니다.
+        guard let first = conflictCell(harness, 0) else { throw Failure(message: "conflicts: 첫 셀 없음") }
+        first.choiceControl.selectedSegment = 2
+        let rejectionsBefore = panel.diagnostics.rejections
+        harness.dataSource.send(.chooseResolution(generation: list.generation &- 1, rows: IndexSet(integer: 0), choice: .theirs))
+        try expect(harness.spin { panel.diagnostics.rejections == rejectionsBefore + 1 }, "conflicts: 거부 이벤트가 오지 않음")
+        try expect(first.choiceControl.selectedSegment == -1 && list.row(at: 0)?.choice == nil,
+                   "conflicts: 거부 뒤 선택이 되돌아가지 않음")
 
         // 키보드 O: 첫 conflict에 Ours.
         list.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
@@ -462,7 +556,7 @@ enum GitPanelUICheck {
         // 나머지는 행의 segmented control로 고릅니다.
         for index in 1..<5 {
             harness.spin { list.row(at: index) != nil }
-            guard let value = list.row(at: index), let cell = harness.conflictCell(index),
+            guard let value = list.row(at: index), let cell = conflictCell(harness, index),
                   let choice = GitConflictChoice.allCases.first(where: value.allowedChoices.contains),
                   let segment = GitConflictChoice.allCases.firstIndex(of: choice)
             else { throw Failure(message: "conflicts: \(index) 행 준비 실패") }
@@ -481,7 +575,15 @@ enum GitPanelUICheck {
         try expect(panel.status?.rawConflictCount == 1 && isShown(panel.continueHintLabel),
                    "conflicts: raw conflict·continue 안내 불일치")
         try expect(panel.commitBlockers.contains(.unresolvedConflicts(count: 1)), "conflicts: raw conflict가 Commit을 막지 않음")
-        report.append("conflicts choose/keys/apply ok")
+        report.append("conflicts choose/keys/reject/apply ok")
+    }
+
+    @MainActor
+    private static func conflictCell(_ harness: Harness, _ row: Int) -> GitConflictCellView? {
+        let table = harness.controller.conflictList.tableView
+        table.scrollRowToVisible(row)
+        harness.layout()
+        return table.view(atColumn: 0, row: row, makeIfNecessary: true) as? GitConflictCellView
     }
 
     @MainActor
@@ -489,24 +591,36 @@ enum GitPanelUICheck {
         let harness = Harness(.million)
         defer { harness.close() }
         let panel = harness.controller
-        let list = panel.changeList
-        let expectedRows = 1_000 + 100_000 + 1_000_000
+        let list = harness.list
+        let outline = harness.outline
         try expect(harness.spin(timeout: 120) { panel.status != nil }, "million: status 없음")
-        try expect(panel.status?.changes.rowCount == expectedRows && list.tableView.numberOfRows == expectedRows,
-                   "million: 행 수 불일치 \(panel.status?.changes.rowCount ?? -1)")
+        let total = (panel.status?.stagedChangeCount ?? 0) + (panel.status?.unstagedChangeCount ?? 0)
+        try expect(total == 1_000_000 && panel.status?.changes.documentCount == 1_000 && outline.numberOfRows == 1_000,
+                   "million: 규모 불일치 changes \(total), rows \(outline.numberOfRows)")
         try expect(harness.waitForVisibleChangeRows(timeout: 30), "million: 첫 페이지 없음")
 
-        for target in [expectedRows - 1, expectedRows / 2, 123_457, 0] {
-            list.tableView.scrollRowToVisible(target)
+        // 끝 문서와 가운데 문서를 펼치고 그 안의 객체를 펼칩니다. 펼친 묶음마다 보이는 페이지만 요청합니다.
+        for documentIndex in [999, 500] {
+            guard let document = harness.child(documentIndex, of: nil) else { throw Failure(message: "million: 문서 \(documentIndex) 없음") }
+            outline.scrollRowToVisible(outline.row(forItem: document))
             harness.layout()
-            try expect(harness.waitForVisibleChangeRows(timeout: 30) && list.row(at: target) != nil,
-                       "million: \(target) 행 페이지 없음")
+            try expect(harness.waitForVisibleChangeRows(timeout: 30), "million: 문서 \(documentIndex) 페이지 없음")
+            try expect(harness.expand(document, timeout: 30), "million: 문서 \(documentIndex) 펼치기 실패")
+            guard let object = harness.child(99, of: document), harness.loadedRow(object) != nil,
+                  harness.expand(object, timeout: 30), let change = harness.child(9, of: object),
+                  harness.loadedRow(change)?.level == .change
+            else { throw Failure(message: "million: 문서 \(documentIndex) 객체·변경 행 없음") }
+            try expect(outline.level(forItem: change) == 2, "million: 변경 행 수준 불일치")
         }
-        let lastCell = harness.changeCell(expectedRows - 1)
-        try expect(lastCell.map { $0.titleField.stringValue != GitPanelStrings.loading } == true, "million: 마지막 행이 placeholder")
+        try expect(outline.numberOfRows == 1_000 + 2 * 100 + 2 * 10, "million: 펼친 뒤 행 수 불일치 \(outline.numberOfRows)")
+        for target in [outline.numberOfRows - 1, 0] {
+            outline.scrollRowToVisible(target)
+            harness.layout()
+            try expect(harness.waitForVisibleChangeRows(timeout: 30), "million: \(target) 행 페이지 없음")
+        }
 
         var rowViews = 0
-        list.tableView.enumerateAvailableRowViews { _, _ in rowViews += 1 }
+        outline.enumerateAvailableRowViews { _, _ in rowViews += 1 }
         let requested = list.cache.requestCount
         let cached = list.cache.cachedPageCount
         try expect(requested <= 16, "million: 페이지 요청이 너무 많음 \(requested)")
@@ -514,22 +628,15 @@ enum GitPanelUICheck {
         try expect(rowViews <= 200, "million: 행 뷰가 너무 많음 \(rowViews)")
         try expectNoAmbiguity(harness, "million")
 
-        // 큰 목록에서 문서 묶음 접기·펼치기(코어 평탄화, 새 세대).
-        list.tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        harness.window.makeFirstResponder(list.tableView)
-        harness.key(functionKey(NSLeftArrowFunctionKey), keyCode: 123, to: list.tableView)
-        try expect(harness.spin(timeout: 30) { list.rowCount == expectedRows - 1_100 }, "million: 접기 결과 불일치 \(list.rowCount)")
-        try expect(harness.waitForVisibleChangeRows(timeout: 30), "million: 접은 뒤 페이지 없음")
-        list.tableView.scrollRowToVisible(0)
-        try expect(harness.waitForVisibleChangeRows(timeout: 30) && list.row(at: 0)?.isExpanded == false,
-                   "million: 접은 묶음 행 페이지 없음")
-        harness.key(functionKey(NSRightArrowFunctionKey), keyCode: 124, to: list.tableView)
-        try expect(harness.spin(timeout: 30) { list.rowCount == expectedRows }, "million: 펼치기 결과 불일치 \(list.rowCount)")
-        try expect(harness.waitForVisibleChangeRows(timeout: 30), "million: 펼친 뒤 페이지 없음")
-
-        // 전체 선택 후 Stage: 100만 행 선택도 범위 하나로 전달합니다.
-        list.tableView.selectAll(nil)
+        // 전체 선택 후 Stage: 100만 change를 최상위 범위 하나로 보냅니다.
+        outline.selectAll(nil)
         list.toggleSelection()
+        guard case .setStaged(_, let targets, _)? = harness.dataSource.sentCommands.last(where: {
+            if case .setStaged = $0 { return true }
+            return false
+        }) else { throw Failure(message: "million: Stage 명령 없음") }
+        try expect(targets == [GitChangeRange(parent: nil, children: IndexSet(integersIn: 0..<1_000))],
+                   "million: 전체 선택 대상이 최상위 범위 하나가 아님 \(targets.count)")
         try expect(harness.spin(timeout: 120) { panel.status?.stagedChangeCount == 1_000_000 },
                    "million: 전체 Stage 결과 불일치 \(panel.status?.stagedChangeCount ?? -1)")
 
@@ -537,6 +644,32 @@ enum GitPanelUICheck {
         try expect(panel.diagnostics.maxDrainSeconds < 1.0 / 60.0,
                    "million: 이벤트 반영 한 번이 한 프레임을 넘음 \(panel.diagnostics.maxDrainSeconds * 1000)ms")
         let maxDrain = String(format: "%.2f", panel.diagnostics.maxDrainSeconds * 1000)
-        report.append("million rows \(expectedRows), pages requested \(requested), cached \(cached), row views \(rowViews), max drain \(maxDrain)ms")
+        report.append("million changes 1000000 (documents 1000), pages requested \(requested), cached \(cached), row views \(rowViews), max drain \(maxDrain)ms")
+    }
+
+    /// 한 부모 아래 자식이 페이지 여러 개(2,000 객체)인 묶음: 그 부모의 보이는 페이지만 요청합니다.
+    @MainActor
+    private static func checkWide(_ report: inout [String]) throws {
+        let harness = Harness(.wide)
+        defer { harness.close() }
+        let list = harness.list
+        let outline = harness.outline
+        try expect(harness.waitForVisibleChangeRows(), "wide: 첫 페이지 없음")
+        guard let document = harness.child(0, of: nil), harness.expand(document) else {
+            throw Failure(message: "wide: 문서 펼치기 실패")
+        }
+        try expect(outline.numberOfRows == 2_001, "wide: 펼친 뒤 행 수 불일치 \(outline.numberOfRows)")
+        let before = list.cache.requestCount
+        guard let last = harness.child(1_999, of: document), let lastRow = harness.loadedRow(last) else {
+            throw Failure(message: "wide: 마지막 객체 행 없음")
+        }
+        try expect(lastRow.level == .object, "wide: 마지막 행 종류 불일치")
+        let requested = list.cache.requestCount - before
+        try expect(requested <= 2, "wide: 끝으로 이동할 때 페이지를 너무 많이 요청함 \(requested)")
+        try expect(harness.dataSource.sentCommands.contains {
+            if case .loadChangePage(_, let parent, let children) = $0 { return parent == document.nodeID && children.lowerBound == 1_792 }
+            return false
+        }, "wide: 마지막 페이지를 부모 기준으로 요청하지 않음")
+        report.append("wide parent pages ok (2000 children, \(list.cache.requestCount) requests)")
     }
 }

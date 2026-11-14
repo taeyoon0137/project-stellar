@@ -51,6 +51,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
     struct Diagnostics {
         var drains = 0
         var events = 0
+        var rejections = 0
         var maxDrainSeconds: TimeInterval = 0
     }
 
@@ -68,7 +69,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
 
     private var drainScheduled = false
     private var detailUpdateScheduled = false
-    private var requestedDetail: (generation: UInt64, row: Int)?
+    private var requestedDetail: (generation: UInt64, node: GitChangeNodeID)?
     private var presentingDependencySheet = false
     private var displayOptionsToken: GitNotificationToken?
     private var secondaryLabels: [NSTextField] = []
@@ -282,14 +283,10 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
                            commitReasonLabel, pushInfoLabel, conflictDetailPlaceholder, applyReasonLabel, continueHintLabel]
             + detailRows.values.map(\.nameField) + conflictRows.values.map(\.nameField)
 
-        changeList.requestPage = { [weak self] generation, rows in
-            self?.dataSource.send(.loadChangePage(generation: generation, rows: rows))
+        changeList.requestPage = { [weak self] generation, parent, children in
+            self?.dataSource.send(.loadChangePage(generation: generation, parent: parent, children: children))
         }
-        changeList.setStaged = { [weak self] rows, staged in self?.setStaged(rows: rows, staged: staged) }
-        changeList.setExpanded = { [weak self] row, expanded in
-            guard let self else { return }
-            self.dataSource.send(.setGroupExpanded(generation: self.changeList.generation, row: row, expanded: expanded))
-        }
+        changeList.setStaged = { [weak self] targets, staged in self?.setStaged(targets: targets, staged: staged) }
         changeList.selectionChanged = { [weak self] in self?.scheduleDetailUpdate() }
 
         conflictList.requestPage = { [weak self] generation, rows in
@@ -316,7 +313,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         }
 
         // 변경 목록 영역: 목록 위에 빈 상태·로딩 오버레이를 겹칩니다.
-        install(list: changeList.scrollView, overlay: changesOverlay, in: changeListArea, rowHeight: changeList.tableView.rowHeight)
+        install(list: changeList.scrollView, overlay: changesOverlay, in: changeListArea, rowHeight: changeList.outlineView.rowHeight)
         install(list: conflictList.scrollView, overlay: conflictsOverlay, in: conflictListArea, rowHeight: conflictList.tableView.rowHeight)
 
         detailColumn.setItems([detailPlaceholder] + DetailField.allCases.compactMap { detailRows[$0] })
@@ -387,7 +384,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         let chain: [NSView]
         switch mode {
         case .changes:
-            chain = [modeControl, changeList.tableView, commitTextView, commitButton, identityButton, pushButton, remotePopup, refreshButton]
+            chain = [modeControl, changeList.outlineView, commitTextView, commitButton, identityButton, pushButton, remotePopup, refreshButton]
         case .conflicts:
             chain = [modeControl, conflictList.tableView, revealButton, applyButton, refreshButton]
         }
@@ -436,14 +433,17 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
                 if previous?.conflicts != snapshot.conflicts { needsConflictDetail = true }
             case .changePage(let page):
                 changeList.receive(page)
-                let selected = changeList.tableView.selectedRow
-                if selected >= page.startRow, selected < page.startRow + page.rows.count { needsDetail = true }
+                if let selected = changeList.singleSelectedItem, changeList.page(page, contains: selected) {
+                    needsDetail = true
+                }
             case .changeDetail(let detail):
-                let selection = changeList.tableView.selectedRowIndexes
-                if detail.generation == changeList.generation, selection.count == 1, selection.first == detail.row {
+                if detail.generation == changeList.generation, let selected = changeList.singleSelectedItem,
+                   selected.nodeID == detail.node {
                     currentDetail = detail
                     showDetail(detail)
                 }
+            case .commandRejected(let rejection):
+                handleRejection(rejection)
             case .conflictPage(let page):
                 conflictList.receive(page)
                 needsConflictDetail = true
@@ -469,6 +469,25 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         if needsConflictDetail { updateConflictDetail() }
         diagnostics.drains += 1
         diagnostics.maxDrainSeconds = max(diagnostics.maxDrainSeconds, ProcessInfo.processInfo.systemUptime - start)
+    }
+
+    /// 코어가 버린 명령: 미리 보여 준 값을 캐시(코어) 값으로 되돌리고, 요청 중 표시를 지워 다시 요청할 수 있게 합니다.
+    private func handleRejection(_ rejection: GitCommandRejection) {
+        diagnostics.rejections += 1
+        switch rejection.command {
+        case .loadChangePage(let generation, let parent, let children):
+            changeList.cancelRequest(generation: generation, parent: parent, children: children)
+        case .loadChangeDetail(let generation, let node):
+            if requestedDetail?.generation == generation, requestedDetail?.node == node { requestedDetail = nil }
+        case .setStaged:
+            changeList.refreshVisibleRows()
+        case .loadConflictPage(let generation, let rows):
+            conflictList.cancelRequest(generation: generation, rows: rows)
+        case .chooseResolution:
+            conflictList.refreshVisibleRows()
+        default:
+            break
+        }
     }
 
     private func handleFinished(_ result: GitOperationResult) {
@@ -560,7 +579,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         configureOverlay(
             changesOverlay,
             list: changeList.scrollView,
-            rowCount: status?.changes.rowCount ?? 0,
+            rowCount: status?.changes.documentCount ?? 0,
             emptyTitle: GitPanelStrings.noChangesTitle,
             emptyMessage: GitPanelStrings.noChangesMessage
         )
@@ -767,31 +786,36 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
     }
 
     func updateDetail() {
-        let selection = changeList.tableView.selectedRowIndexes
-        guard selection.count == 1, let row = selection.first else {
+        let selection = changeList.outlineView.selectedRowIndexes
+        guard selection.count == 1, let item = changeList.singleSelectedItem else {
             currentDetail = nil
             requestedDetail = nil
             showDetailPlaceholder(selection.isEmpty ? GitPanelStrings.selectChange : GitPanelStrings.selectedCount(selection.count))
             return
         }
         let generation = changeList.generation
-        if let value = changeList.displayedRow(at: row), value.level != .change {
+        if let value = changeList.displayedRow(of: item), value.level != .change {
             currentDetail = nil
             showGroupDetail(value)
             return
         }
-        if let detail = currentDetail, detail.row == row {
+        guard let node = item.nodeID else {
+            // 행 페이지가 오면 다시 불립니다.
+            showDetailPlaceholder(GitPanelStrings.loading)
+            return
+        }
+        if let detail = currentDetail, detail.node == node {
             if detail.generation == generation {
                 showDetail(detail)
                 return
             }
-            // 같은 행의 새 세대 상세가 올 때까지 이전 값을 유지합니다(깜빡임·재배치 방지).
+            // 같은 노드의 새 세대 상세가 올 때까지 이전 값을 유지합니다(깜빡임·재배치 방지).
         } else {
             showDetailPlaceholder(GitPanelStrings.loading)
         }
-        if requestedDetail?.generation != generation || requestedDetail?.row != row {
-            requestedDetail = (generation, row)
-            dataSource.send(.loadChangeDetail(generation: generation, row: row))
+        if requestedDetail?.generation != generation || requestedDetail?.node != node {
+            requestedDetail = (generation, node)
+            dataSource.send(.loadChangeDetail(generation: generation, node: node))
         }
     }
 
@@ -820,7 +844,7 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
 
     private func showGroupDetail(_ row: GitChangeRow) {
         showDetailFields([
-            .kind: row.level == .document ? "Document" : "Object",
+            .kind: row.level == .document ? GitPanelStrings.documentLevel : GitPanelStrings.objectLevel,
             .object: row.title,
             .status: "\(GitPanelStrings.stageState(row.stageState)) · \(GitPanelStrings.changeCount(row.changeCount))",
         ])
@@ -834,7 +858,9 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         values[.index] = detail.indexValue
         values[.working] = detail.workingValue
         if !detail.requiredChanges.isEmpty { values[.requires] = detail.requiredChanges.joined(separator: ", ") }
-        if let row = changeList.displayedRow(at: detail.row) { values[.status] = GitPanelStrings.stageState(row.stageState) }
+        if let item = changeList.item(for: detail.node), let row = changeList.displayedRow(of: item) {
+            values[.status] = GitPanelStrings.stageState(row.stageState)
+        }
         showDetailFields(values)
     }
 
@@ -899,9 +925,9 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         dataSource.send(.refreshStatus)
     }
 
-    private func setStaged(rows: IndexSet, staged: Bool) {
-        guard status?.availability == .ready, !isBusy, pendingPrompt == nil else { return }
-        dataSource.send(.setStaged(generation: changeList.generation, rows: rows, staged: staged))
+    private func setStaged(targets: [GitChangeRange], staged: Bool) {
+        guard status?.availability == .ready, !isBusy, pendingPrompt == nil, !targets.isEmpty else { return }
+        dataSource.send(.setStaged(generation: changeList.generation, targets: targets, staged: staged))
     }
 
     @objc func commit(_ sender: Any?) {

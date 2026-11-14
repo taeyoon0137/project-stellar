@@ -6,8 +6,10 @@ import Foundation
 //   실행합니다(아키텍처 §6.4, 디자인 가이드 6.4).
 // - 결과는 pull 방식 이벤트 큐로 받습니다. 셸은 `pollEvent()`로 하나씩 꺼냅니다. callback으로 코어가
 //   셸을 재진입하지 않습니다(ADR-0009 "이벤트").
-// - 큰 목록은 세대(generation)와 행 범위로 페이지 단위 요청합니다(XIV.13.1). 행 → 변경 ID 해석은
-//   코어가 같은 세대 기준으로 합니다. 세대가 다르면 코어는 요청을 거부합니다.
+// - 큰 목록은 세대(generation)와 범위로 페이지 단위 요청합니다(XIV.13.1). 변경 목록은 부모 노드별 자식
+//   범위로, conflict 목록은 행 범위로 요청합니다. 부모·순번 → 변경 ID 해석은 코어가 같은 세대 기준으로 합니다.
+// - 세대가 다르거나 지금 실행할 수 없는 명령은 코어가 버리고 `.commandRejected`로 알립니다. 셸은 미리 보여 준
+//   값을 되돌리고 요청 중 표시를 지웁니다. 조용히 버리지 않습니다.
 
 /// 셸 → 코어 명령.
 ///
@@ -16,14 +18,12 @@ import Foundation
 enum GitPanelCommand: Equatable {
     /// 저장소 상태를 다시 계산합니다. 결과는 `.status` 이벤트입니다.
     case refreshStatus
-    /// 변경 목록 페이지를 요청합니다. 결과는 `.changePage` 이벤트입니다.
-    case loadChangePage(generation: UInt64, rows: Range<Int>)
-    /// 변경 행 하나의 상세를 요청합니다. 결과는 `.changeDetail` 이벤트입니다.
-    case loadChangeDetail(generation: UInt64, row: Int)
-    /// 선택 행(묶음 행은 하위 전체)을 Stage 또는 Unstage합니다(XIV.13.2).
-    case setStaged(generation: UInt64, rows: IndexSet, staged: Bool)
-    /// 묶음 행을 펼치거나 접습니다. 평탄화는 코어가 하고 새 세대를 돌려줍니다.
-    case setGroupExpanded(generation: UInt64, row: Int, expanded: Bool)
+    /// 한 부모(nil이면 최상위 문서 목록)의 자식 페이지를 요청합니다. 결과는 `.changePage` 이벤트입니다.
+    case loadChangePage(generation: UInt64, parent: GitChangeNodeID?, children: Range<Int>)
+    /// 변경 노드 하나의 상세를 요청합니다. 결과는 `.changeDetail` 이벤트입니다.
+    case loadChangeDetail(generation: UInt64, node: GitChangeNodeID)
+    /// 범위(묶음 노드는 하위 전체)를 Stage 또는 Unstage합니다(XIV.13.2).
+    case setStaged(generation: UInt64, targets: [GitChangeRange], staged: Bool)
     /// `.dependencyPrompt`에 대한 사용자 응답입니다.
     case answerDependencyPrompt(requestID: UInt64, includeRequired: Bool)
     /// staged snapshot을 커밋합니다. 메시지는 Git에 stdin·임시 파일로 전달됩니다(XIV.8.2).
@@ -54,6 +54,8 @@ enum GitPanelEvent: Equatable {
     case dependencyPrompt(GitDependencyPrompt)
     case operationProgress(GitOperationProgress)
     case operationFinished(GitOperationResult)
+    /// 코어가 실행하지 않고 버린 명령(세대 불일치 등).
+    case commandRejected(GitCommandRejection)
 }
 
 /// Git 패널이 필요로 하는 데이터·동작 경계.
