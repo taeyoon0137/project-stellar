@@ -177,7 +177,7 @@ enum ShellProjectOpenFailure: Equatable {
         switch self {
         case .notAStellarProject: return .notStellarProject(path: path)
         case .folderMissing: return .projectMissing(path: path)
-        default: return .operationFailed(detail: "\(title). \(message(path: path))")
+        default: return .operationFailed(.projectOpenFailed(self, path: path))
         }
     }
 }

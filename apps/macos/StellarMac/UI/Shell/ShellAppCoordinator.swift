@@ -197,24 +197,24 @@ final class ShellAppCoordinator: NSObject {
             presentOpenFailure(.runtimeUnavailable, path: path, origin: origin)
             return
         }
-        if origin == .welcome {
-            welcomeData.setOpening(projectName: ShellProjectFrameDataSource.folderName(path))
-        }
         let result = pump.openProject(path: path) { [weak self] event in
             self?.finishOpening(path: path, origin: origin, event: event)
         }
         switch result {
-        case .success:
+        case .success(let request):
             pendingOpenPaths.insert(path)
+            if origin == .welcome {
+                // 진행 표시의 작업 식별자는 코어 열기 요청 id입니다(열기는 취소할 수 없음).
+                welcomeData.setOpening((id: request, projectName: ShellProjectFrameDataSource.folderName(path)))
+            }
         case .failure(let error):
-            welcomeData.setOpening(projectName: nil)
             presentOpenFailure(ShellProjectOpenFailure(callStatus: error.status), path: path, origin: origin)
         }
     }
 
     private func finishOpening(path: String, origin: OpenOrigin, event: CoreRuntimeEvent) {
         pendingOpenPaths.remove(path)
-        welcomeData.setOpening(projectName: nil)
+        welcomeData.setOpening(nil)
         switch event {
         case .projectOpened(_, let project, let projectID, let name, let root):
             guard let pump else { return }
@@ -491,15 +491,9 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
                 coordinator?.openProject(atPath: directory, origin: .welcome)
             }
         case .createProject:
-            postNotice(.operationFailed(detail: String(
-                localized: "Creating projects isn’t available in this build yet. Open an existing Stellar project instead.",
-                comment: "Welcome notice"
-            )))
+            postNotice(.operationFailed(.projectCreationUnavailable))
         case .cloneProject:
-            postNotice(.operationFailed(detail: String(
-                localized: "Cloning projects isn’t available in this build yet. Clone the repository with Git, then open the folder.",
-                comment: "Welcome notice"
-            )))
+            postNotice(.operationFailed(.projectCloneUnavailable))
         case .dismissNotice(let id):
             guard snapshot.notice?.id == id else { return }
             update { $0.notice = nil }
@@ -509,10 +503,10 @@ final class ShellWelcomeDataSource: WelcomeDataSource {
         }
     }
 
-    /// 열기 진행 표시. nil이면 지웁니다.
-    func setOpening(projectName: String?) {
-        let activity = projectName.map {
-            WelcomeActivity(kind: .opening, projectName: $0, fractionCompleted: nil, isCancellable: false)
+    /// 열기 진행 표시. `id`는 코어 열기 요청 id(작업 식별자)입니다. nil이면 지웁니다.
+    func setOpening(_ opening: (id: UInt64, projectName: String)?) {
+        let activity = opening.map {
+            WelcomeActivity(id: $0.id, kind: .opening, projectName: $0.projectName, fractionCompleted: nil, isCancellable: false)
         }
         guard activity != snapshot.activity else { return }
         update { $0.activity = activity }

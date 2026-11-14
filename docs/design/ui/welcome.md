@@ -90,7 +90,7 @@
 | `projectMissing` | Project Not Found | — |
 | `folderAlreadyExists` | A Folder with This Name Already Exists | — |
 | `gitIdentityRequired` | Set Your Git Name and Email — 최초 커밋 전에 `user.name`·`user.email` 필요 | 아키텍처 §25.1, 가이드 7.2 |
-| `operationFailed(reason)` | The Operation Couldn’t Be Completed + 이유 코드에서 만든 설명(권한, 디스크 공간, 네트워크, 원격 인증, 원격 없음, Git 종료 상태, 그 밖의 오류 코드) | 아키텍처 §37.3(자격 증명은 시스템 Git) |
+| `operationFailed(reason)` | The Operation Couldn’t Be Completed + 이유 코드에서 만든 설명(권한, 디스크 공간, 네트워크, 원격 인증, 원격 없음, Git 종료 상태, 그 밖의 오류 코드, 프로젝트 열기 실패 원인, 이 빌드에 없는 New·Clone) | 아키텍처 §37.3(자격 증명은 시스템 Git) |
 
 문구는 셸이 종류·이유 코드에서 만듭니다. 코어는 문구가 아니라 코드를 보냅니다(지역화 대비). 경로, 버전, 종료 상태, 오류 식별자 같은 값만 그대로 끼워 넣습니다.
 
@@ -257,7 +257,7 @@
 - Clone은 자주 쓰는 명령이 아니므로 별도 단축키를 두지 않습니다(가이드 8.1 "커스텀 단축키는 자주 쓰는 앱 고유 명령에만").
 - ⌘N·⌘O는 File 메뉴 항목(Tools 영역 `ShellCommand.newProject`·`.openProject`)이 소유합니다. 시작 창 버튼에는 같은 단축키를 걸지 않습니다(메뉴와 중복 등록 방지, 가이드 8.1 "모든 명령은 메인 메뉴 항목으로 존재"). 현재 앱은 메인 메뉴(`MainMenuBuilder`)도 시작 창도 띄우지 않으므로(15장 3·4) 앱 통합 전에는 시작 창 단축키가 동작하지 않습니다.
 - 실제 File 메뉴 항목은 `MainMenuBuilder`가 만들며 action은 `performShellCommand:`, identifier는 `ShellCommand`입니다. `WelcomeViewController`는 이 모양을 그대로 받습니다.
-  - 응답자 체인 경로(앱 수준 target 없이 만든 메뉴): `performShellCommand(_:)`가 New·Open·Clone을 처리하고, `NSMenuItemValidation`이 버튼과 같은 판정(`WelcomeCommandAvailability`: Git 필요 여부, 진행 중 작업, 창에 붙은 sheet)을 돌려줍니다. 시작 창 명령이 아닌 셸 명령은 실행·판정을 응답자 체인의 다음 대상(없으면 비활성)에 넘겨 가로채지 않습니다.
+  - 응답자 체인 경로(target 없는 항목. 실제 앱 메뉴는 `build(applicationTarget:)`로 New·Open·Clone에 앱 수준 router를 명시 target으로 달므로, 검사는 그 target을 뗀 항목으로 이 경로를 봅니다): `performShellCommand(_:)`가 New·Open·Clone을 처리하고, `NSMenuItemValidation`이 버튼과 같은 판정(`WelcomeCommandAvailability`: Git 필요 여부, 진행 중 작업, 창에 붙은 sheet)을 돌려줍니다. 시작 창 명령이 아닌 셸 명령은 실행·판정을 응답자 체인의 다음 대상(없으면 비활성)에 넘겨 가로채지 않습니다.
   - 명시 target 경로(Tools 영역 설계: 앱 수준 명령은 창이 없어도 동작하도록 앱 수준 router가 target): router는 시작 창에 묻지 않으므로, 통합 어댑터가 시작 창이 떠 있으면 `availability(of:)`를 메뉴 snapshot의 `enabledCommands`에 싣고 `run(_:)`으로 명령을 넘깁니다(15장 4).
   - 버튼 action(`newStellarProject:`, `openStellarProject:`, `cloneStellarProject:`)도 같은 판정을 씁니다. 지금 쓸 수 없는 항목은 숨기지 않고 비활성화합니다(가이드 8.1).
 
@@ -307,7 +307,7 @@ protocol WelcomeDataSource: AnyObject {
 ```
 
 - `WelcomeSnapshot`: `generation`(세대 번호, 오래된 snapshot 폐기), `recentProjects`(loading / loaded / failed(`WelcomeFailureReason`)), `git`(checking / available / notFound / unusable(`WelcomeGitProblem`)), `activity?`(`id` 포함), `notice?`, `defaultParentDirectory?`.
-- `WelcomeFailureReason`: `permissionDenied(path)`, `notEnoughSpace`, `networkUnavailable`, `authenticationFailed`, `remoteNotFound`, `gitCommandFailed(exitStatus)`, `internalError(code)`. 코어 오류는 어댑터가 이 코드로 바꿉니다.
+- `WelcomeFailureReason`: `permissionDenied(path)`, `notEnoughSpace`, `networkUnavailable`, `authenticationFailed`, `remoteNotFound`, `gitCommandFailed(exitStatus)`, `internalError(code)`, `projectOpenFailed(ShellProjectOpenFailure, path)`(셸 어댑터가 코어 열기 실패 코드에서 고른 원인, 문구는 원인 제목과 해결 방법, XII.6.2), `projectCreationUnavailable`·`projectCloneUnavailable`(이 빌드에 코어 경로 없음). 코어 오류는 어댑터가 이 코드로 바꿉니다.
 - `WelcomeCommand`: `createProject`, `openProject`, `cloneProject`, `openRecent`, `removeRecent`, `reloadRecentProjects`, `recheckGit`, `useGitExecutable`, `cancelActivity(id:)`, `dismissNotice`.
 - 경로는 `String`(UTF-8)이라 ADR-0009의 `(ptr, len)` 문자열 규칙으로 옮기기 쉽습니다. 최근 항목 식별자는 코어가 발급한 불투명 문자열입니다.
 - 표본 구현 `WelcomeDataSourceStub`은 의도적 placeholder입니다(계획 1.2 규칙 6). 실제 프로젝트를 만들거나 열지 않고, 받은 명령을 기록하며 최근 목록 제거·안내 확인·작업 취소만 흉내 냅니다.

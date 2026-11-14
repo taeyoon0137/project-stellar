@@ -225,8 +225,9 @@ private final class ShellProjectOpenCheckRunner {
                "'stellar.yaml 없음' 시작 창 안내 종류 불일치")
         expect(ShellProjectOpenFailure.folderMissing.welcomeNotice(path: path) == .projectMissing(path: path),
                "'폴더 없음' 시작 창 안내 종류 불일치")
-        if case .operationFailed(let detail) = ShellProjectOpenFailure.manifestCorrupt.welcomeNotice(path: path) {
-            expect(detail.hasPrefix(ShellProjectOpenFailure.manifestCorrupt.title), "일반 시작 창 안내에 원인 제목이 없음")
+        if case .operationFailed(let reason) = ShellProjectOpenFailure.manifestCorrupt.welcomeNotice(path: path) {
+            expect(WelcomeStrings.failureReason(reason).hasPrefix(ShellProjectOpenFailure.manifestCorrupt.title),
+                   "일반 시작 창 안내에 원인 제목이 없음")
         } else {
             expect(false, "손상 매니페스트 시작 창 안내가 operationFailed가 아님")
         }
@@ -319,7 +320,9 @@ private final class ShellProjectOpenCheckRunner {
             (.gitOnly, { if case .notStellarProject? = $0 { return true }; return false }),
             (.missing, { if case .projectMissing? = $0 { return true }; return false }),
             (.corrupt, {
-                if case .operationFailed(let detail)? = $0 { return detail.hasPrefix(ShellProjectOpenFailure.manifestCorrupt.title) }
+                if case .operationFailed(let reason)? = $0 {
+                    return WelcomeStrings.failureReason(reason).hasPrefix(ShellProjectOpenFailure.manifestCorrupt.title)
+                }
                 return false
             }),
         ]

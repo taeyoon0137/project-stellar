@@ -1134,13 +1134,18 @@ enum WelcomeUICheck {
             cloneProject: enabled(#selector(WelcomeViewController.cloneStellarProject(_:))))
     }
 
-    /// 실제 File 메뉴(Tools 영역 `MainMenuBuilder`)의 명령 항목. 앱 수준 target 없이 만들면 New·Open·Clone은
-    /// target 없이 응답자 체인으로 `performShellCommand:`를 보내고, identifier로 `ShellCommand`를 싣습니다.
+    /// 실제 File 메뉴(Tools 영역 `MainMenuBuilder`)의 명령 항목. 항목은 `performShellCommand:`를 보내고 identifier로
+    /// `ShellCommand`를 싣습니다. 실제 앱은 New·Open·Clone에 앱 수준 router를 명시 target으로 달므로
+    /// (`build(applicationTarget:)`), 이 검사는 검사용 target으로 만든 뒤 target을 떼어 응답자 체인 경로를 봅니다.
     static let fileMenuItems: [ShellCommand: NSMenuItem] = {
         var items: [ShellCommand: NSMenuItem] = [:]
-        let file = MainMenuBuilder.build().menu.items.first { $0.title == "File" }?.submenu
+        let applicationTarget = NSObject()
+        let file = MainMenuBuilder.build(applicationTarget: applicationTarget).menu.items.first { $0.title == "File" }?.submenu
         for item in file?.items ?? [] {
-            if let command = ShellCommand.resolve(from: item), items[command] == nil { items[command] = item }
+            if let command = ShellCommand.resolve(from: item), items[command] == nil {
+                item.target = nil
+                items[command] = item
+            }
         }
         return items
     }()

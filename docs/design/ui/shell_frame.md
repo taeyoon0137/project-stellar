@@ -354,6 +354,6 @@ Open Project는 폴더를 고른 뒤 코어 `stellar_project_open`에 넘기고,
 | 모르는 코드·예상 밖 event | The Project Couldn’t Be Opened | 다시 시도 또는 다른 프로젝트 |
 
 - "폴더 없음"은 코어가 `NOT_A_REPOSITORY`를 보낸 경우에만 셸이 경로에 항목이 있는지 한 번 확인해 구분합니다(실패 경로의 로컬 stat 한 번). 옮겨진 최근·복원 프로젝트를 "Git 저장소 아님"으로 잘못 안내하지 않기 위해서입니다. Finder·`open` 명령으로 받은 일반 파일은 폴더는 아니지만 있으므로 "폴더 없음"이 아니라 "Git 저장소 아님"(최상위 폴더를 고름)으로 안내합니다.
-- 안내 위치: 메뉴 막대·Finder에서 연 실패는 alert(열린 창이 있으면 sheet), 시작 창에서 연 실패는 시작 창 안내(`stellar.yaml` 없음은 `.notStellarProject`, 폴더 없음은 `.projectMissing`, 나머지는 원인 제목이 앞에 붙은 `.operationFailed`), 창 복원·Locate Folder… 실패는 그 창의 실패 상태(제목·해결 방법·복구 동작)입니다.
+- 안내 위치: 메뉴 막대·Finder에서 연 실패는 alert(열린 창이 있으면 sheet), 시작 창에서 연 실패는 시작 창 안내(`stellar.yaml` 없음은 `.notStellarProject`, 폴더 없음은 `.projectMissing`, 나머지는 `.operationFailed(.projectOpenFailed)`이며 문구는 원인 제목이 앞에 붙음), 창 복원·Locate Folder… 실패는 그 창의 실패 상태(제목·해결 방법·복구 동작)입니다.
 - 실패한 열기는 창과 코어 session을 만들지 않습니다.
 - 검사: `--project-open-check`(`ShellProjectOpenCheck`). 대응표 전체, 원인별 제목이 서로 다름, 폴더 이름 표시·전체 경로 비노출, 메뉴 ⌘O → 폴더 선택(취소 시 요청 없음) → 코어 열기 → 창, 실제 코어로 연 잘못된 경로 fixture 10종(폴더 없음, 일반 폴더, 폴더가 아닌 일반 파일, Git만, YAML 손상, 1 MiB 초과, 스키마 위반, 잘못된 project.id, 심볼릭 링크 매니페스트, 읽기 권한 없음)과 상대·빈 경로 2종의 코드 → 원인 대응, alert·시작 창·복원 안내 위치, 실패 후 창·session 0.
