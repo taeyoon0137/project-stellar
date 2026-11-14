@@ -288,6 +288,8 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
     private func configure(_ cell: SidebarLayerCellView, row: SidebarLayerRow) {
         cell.configure(row: row)
         let id = row.id
+        // VoiceOver custom action. AppKit이 셀 view의 값을 행의 AXCell 동작으로 내보냅니다(`SidebarAccessibility`).
+        // 행 하나에만 적용하고 선택은 바꾸지 않습니다.
         cell.setAccessibilityCustomActions([
             NSAccessibilityCustomAction(name: SidebarStrings.rename) { [weak self] in
                 self?.beginRename(id) ?? false

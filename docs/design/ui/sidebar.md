@@ -138,10 +138,12 @@ AppKit만 씁니다. 가이드 5.3은 빈 상태 화면에 SwiftUI를 허용하�
 ## 6. 접근성
 
 - 목록: "Pages", "Layers" 레이블. 필터 필드: "Filter Layers" 레이블과 도움말 태그. [가이드 8.3] [아키텍처 §18 "앱 자체 UI는 네이티브 접근성 API"]
-- 레이어 행 셀 레이블: `이름, 종류[, Hidden][, Locked][, Contains matches]`. 이름이 비면 종류 이름을 씁니다. 종류 아이콘은 장식으로 보고 접근성 트리에서 뺍니다. 선택 상태는 시스템 행(AXRow)이 노출합니다. [가이드 8.3] [HIG Accessibility]
-- 토글 버튼 레이블은 다음 동작을 말합니다(예: "Hide Header", "Unlock Background"). 도움말 태그도 둡니다. [가이드 5.4, 8.1]
-- VoiceOver custom action(행마다): Rename, Hide·Show, Lock·Unlock, Duplicate, Delete. 페이지·View 행: Rename. [가이드 8.3 "제스처 동작에 접근성 기본 동작 연결"]
-- 상태 화면은 하나의 group 요소로 제목과 설명을 함께 읽습니다.
+- 접근성 서버가 내보내는 행 구조(macOS 27.2 실측): 목록(`AXOutline`) → 행(`AXRow`) → 셀(`AXCell`) 하나 → 이름 필드·보이는 토글·펼침 삼각형. `AXRow`·`AXCell`은 AppKit 내부 요소이며, AppKit은 `AXCell`의 설명과 custom action을 셀 view(`NSTableCellView`)의 `accessibilityLabel()`·`accessibilityCustomActions()`에서 가져옵니다. 그래서 행 레이블과 custom action은 셀 view에 둡니다. 행 view(`NSTableRowView`)에 둔 값은 `AXRow`에 쓰이지 않습니다. VoiceOver는 키보드 포커스 목록의 선택 행(`AXSelectedRows`)을 읽고, 그 행의 유일한 자식인 `AXCell`이 행 전체를 대표합니다. [가이드 8.3 "하나의 요소로 묶어"] [AppKit 문서 NSAccessibility]
+- AppKit 컨트롤의 접근성 요소는 view가 아니라 cell(`NSButtonCell`, `NSImageCell`, `NSSearchFieldCell`)입니다. view에만 넣은 레이블·제외 설정은 그 요소에 닿지 않으므로 cell에도 둡니다(`SidebarAccessibility`). 예: view에만 레이블을 둔 토글은 symbol 기본 설명(eye → "show")을 읽어 실제 동작(Hide)과 반대로 들렸고, view만 뺀 종류 아이콘은 `AXImage`("Rectangle with a dashed outline")로 남았습니다.
+- 레이어 행 레이블(`AXCell` 설명): `이름, 종류[, Hidden][, Locked][, Contains matches]`. 이름이 비면 종류 이름을 씁니다. 종류 아이콘은 장식으로 보고 접근성 트리에서 뺍니다. 선택 상태는 시스템 행(`AXRow`)이 노출합니다. [가이드 8.3] [HIG Accessibility]
+- 토글 버튼 레이블은 다음 동작을 말합니다(예: "Hide Header", "Unlock Background"). 도움말 태그도 둡니다. 숨긴 토글은 접근성 트리에서도 빠지고, 보이는 토글은 화면 순서(표시 → 잠금)로 노출됩니다. [가이드 5.4, 8.1, 8.3]
+- VoiceOver custom action(`AXCell`, 행마다): Rename, Hide·Show, Lock·Unlock, Duplicate, Delete. 페이지·View 행: Rename. 해당 행 하나에만 적용하고 선택을 바꾸지 않습니다. 토글이 숨겨져 있어도 이 동작으로 닿습니다. [가이드 8.3 "제스처 동작에 접근성 기본 동작 연결"]
+- 상태 화면은 하나의 group 요소로 제목과 설명을 함께 읽고, 상태 아이콘은 노출하지 않습니다.
 - 시스템 접근성 설정 [가이드 8.4]
   - 대비 높이기: 토글을 모든 행에서 보입니다. 색은 모두 시스템 의미 색이라 시스템이 대비를 올립니다.
   - 투명도 줄이기: 직접 그리는 반투명 표면이 없습니다. 사이드바 재질은 split view item이 시스템 설정대로 그립니다.
@@ -216,11 +218,11 @@ protocol SidebarDataProvider: AnyObject {
 
 - 구조: SF Symbol 21개 해석, source list 스타일, `NSSearchField`, 사이드바 behavior, accessory 부착, 이 영역이 넣은 `NSVisualEffectView` 없음(시스템 행의 선택 재질은 제외), 행 수, group row, active View 선택, key view 순서.
 - layout: Light·Dark·결과 없음 상태에서 Auto Layout 모호성 없음, 이름 필드가 토글과 겹치지 않음, 앱 크롬 색이 시스템 catalog 색.
-- 접근성: 목록·필터·모든 행 셀·토글 레이블, 도움말 태그, custom action, 장식 아이콘 제외, 숨김·잠김 문구, 빈 이름 placeholder.
+- 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로로 읽습니다(`AXNode`: NSAccessibility 프로토콜 객체는 프로토콜 메서드, AppKit 표의 `AXRow`·`AXCell`은 legacy attribute 질의). 모든 행이 `AXCell` 하나로 묶임, 행 레이블·custom action(명세로 따로 계산한 값과 비교), 장식 아이콘 `AXImage` 없음, 보이는 토글만 노출되고 레이블이 다음 동작, custom action을 접근성 서버 방식(이름 있는 AX action)으로 실행(Hide·Lock → command, 선택 유지, Rename → 편집 시작·취소), 선택 행(`AXSelectedRows`)의 레이블, 필터 필드 cell 레이블, 상태 화면 group 레이블과 아이콘 미노출, 숨김·잠김·필터 문맥 문구, 빈 이름 placeholder.
 - 동작: 선택 command, 외부 선택 펼침, Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 변경 통지 병합.
 - 검사하지 않는 것: 실제 마우스 드래그 세션, VoiceOver 음성 출력, 시스템 접근성 설정을 실제로 켠 상태, 화면 픽셀.
 
-통합 때 `main.swift`에 `--sidebar-ui-check` 같은 인자로 `exit(SidebarUICheck.run() ? 0 : 1)`을 연결하고 `scripts/macos/smoke.sh`에서 호출합니다.
+통합 때 `main.swift`에 `--sidebar-ui-check` 같은 인자로 `exit(SidebarUICheck.run() ? 0 : 1)`을 연결하고 `scripts/macos/smoke.sh`에서 호출합니다. 아직 연결되지 않았으므로(두 파일은 이 영역 밖) 지금은 자동 회귀 방지가 없습니다. 지금까지의 결과는 이 폴더의 소스와 `SidebarUICheck.run()`만 부르는 임시 진입점을 저장소 밖에서 컴파일해 얻은 것입니다.
 
 ## 12. 코어 연결 시 남은 일
 
@@ -245,3 +247,5 @@ protocol SidebarDataProvider: AnyObject {
 - 컴포넌트 인스턴스 내부(Slot 등)는 펼치지 않습니다. Stub은 Frame·Fragment만 자식을 가질 수 있게 하며, 실제 규칙은 코어 Capability가 정합니다. [아키텍처 §12.3, §15]
 - View를 바꾸면 펼침 상태를 버립니다. View별 유지는 WindowViewState(XII.2.5)와 함께 정합니다.
 - 검사는 화면 밖 창에서 합니다. 화면 표시 상태는 임시 harness로 Dark 외형에서 한 번 캡처해 확인했으며, 시스템 접근성 설정을 실제로 켠 상태는 확인하지 않았습니다.
+- VoiceOver 음성과 동작 메뉴(VO-Command-Space)는 실제로 켜서 확인하지 않았습니다. 접근성 서버 경로의 값(접근성 권한이 있는 임시 harness에서 `AXUIElement`로 읽은 값 포함)만 확인했습니다. `AXRow` 자체는 설명·custom action을 갖지 않으며(AppKit 내부 요소), 행 단위 동작을 `AXRow`에 두는 공개 경로는 `NSTableViewRowAction`(트랙패드 밀기 동작 UI가 함께 생김)뿐이라 쓰지 않았습니다. VoiceOver가 `AXRow`에 커서를 둔 상태에서 자식 `AXCell`의 custom action을 동작 메뉴에 보이는지는 실기기 VoiceOver로 확인해야 합니다.
+- macOS 27.2에서 `AXUIElementCopyActionNames`가 `AXCell`의 custom action을 두 번씩 돌려줍니다(일반 NSView 요소는 한 번). AppKit 내부 동작으로 보이며, VoiceOver 동작 메뉴에 항목이 겹쳐 보이는지는 확인하지 못했습니다.
