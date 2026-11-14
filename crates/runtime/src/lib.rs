@@ -27,6 +27,9 @@ pub mod app;
 /// 창 하나의 프로젝트 편집 session (XII.2.1).
 pub mod window_session;
 
+/// 창의 고정 Free Frame scene.
+pub mod canvas;
+
 /// 창 session 명령 (XII.6.4).
 pub mod app_command;
 

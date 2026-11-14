@@ -1,8 +1,8 @@
 //! 창의 저장 노드 이름 변경 조회 및 선택 Stage C ABI.
 use crate::{ffi_guard, registry, write_len, StellarStatus};
-use stellar_runtime::app::{RequestId, WindowSessionHandle};
+use stellar_runtime::app::{RequestId, SelectionOperation, WindowSessionHandle};
 
-/// action 0은 새로고침, 1은 표시 세대의 행 하나를 stage합니다.
+/// action 0은 새로고침, 1은 표시한 이름 Stage, 2는 Unstage입니다.
 /// # Safety
 /// `out_request`는 null이거나 u64를 쓸 수 있어야 합니다.
 #[no_mangle]
@@ -21,7 +21,15 @@ pub unsafe extern "C" fn stellar_git_names_request(
         unsafe { *out_request = 0 }
         let chosen = match action {
             0 if generation == 0 && row == 0 => None,
-            1 if generation != 0 => Some((RequestId(generation), row as usize)),
+            1 | 2 if generation != 0 => Some((
+                RequestId(generation),
+                row as usize,
+                if action == 1 {
+                    SelectionOperation::Stage
+                } else {
+                    SelectionOperation::Unstage
+                },
+            )),
             _ => return StellarStatus::InvalidArgument,
         };
         let Ok(mut reg) = registry().lock() else {
@@ -33,7 +41,7 @@ pub unsafe extern "C" fn stellar_git_names_request(
         let Some(app) = rt.app.as_ref() else {
             return StellarStatus::InvalidArgument;
         };
-        let result = app.request_git_names(WindowSessionHandle(session), chosen);
+        let result = app.request_git_name_selection(WindowSessionHandle(session), chosen);
         unsafe { rt.finish_request(result, out_request) }
     })
 }

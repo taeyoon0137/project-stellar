@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Developer ID로 서명된 StellarMac.app의 공증(notarization)과 ticket stapling, Gatekeeper 검사(XVI.9.4).
+# Developer ID로 서명된 Stellar.app의 공증(notarization)과 ticket stapling, Gatekeeper 검사(XVI.9.4).
 #
 # 선행: scripts/macos/sign_release.sh (Developer ID 서명)
 #
@@ -19,7 +19,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROFILE="${STELLAR_NOTARY_PROFILE:-stellar-notary}"
-APP="$REPO_ROOT/apps/macos/build/Build/Products/Release/StellarMac.app"
+APP="$REPO_ROOT/apps/macos/build/Build/Products/Release/Stellar.app"
 EVIDENCE="$REPO_ROOT/apps/macos/build/notarization"
 
 if [ ! -d "$APP" ]; then
@@ -40,7 +40,7 @@ fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
-ZIP="$WORK/StellarMac.zip"
+ZIP="$WORK/Stellar.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
 
 mkdir -p "$EVIDENCE"
@@ -69,7 +69,7 @@ printf '%s\n' "$SPCTL"
 printf '%s\n' "$SPCTL" | grep -q "source=Notarized Developer ID" || fail "Gatekeeper source가 Notarized Developer ID가 아님"
 
 # 다운로드 상태 모사: quarantine 속성을 붙인 사본을 Gatekeeper 평가와 배포 점검에 통과시킵니다.
-QUARANTINED="$WORK/quarantine/StellarMac.app"
+QUARANTINED="$WORK/quarantine/Stellar.app"
 mkdir -p "$WORK/quarantine"
 ditto "$APP" "$QUARANTINED"
 xattr -w com.apple.quarantine "0083;$(printf '%x' "$(date +%s)");stellar-notarize-check;" "$QUARANTINED"

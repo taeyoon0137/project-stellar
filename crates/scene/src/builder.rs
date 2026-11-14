@@ -334,6 +334,11 @@ pub struct FrameScope {
 }
 
 impl FrameScope {
+    /// 자식을 추가하기 전에도 확정되는 이 Frame의 scene primitive·좌표·입력 상태.
+    pub const fn spec(&self) -> &SceneNodeSpec {
+        &self.spec
+    }
+
     /// 자식 scope.
     pub fn scope_mut(&mut self) -> &mut SceneScope {
         &mut self.children

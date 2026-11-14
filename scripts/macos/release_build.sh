@@ -24,7 +24,7 @@
 #   STELLAR_UPDATE_PUBLIC_ED_KEY                          Sparkle EdDSA 공개 키(base64). 비어 있으면 앱은 업데이트를
 #                                                         시작하지 않습니다. 키 생성은 사용자 단계입니다(ADR-0017).
 #
-# 산출물: apps/macos/build/Build/Products/Release/StellarMac.app (build/는 git ignore)
+# 산출물: apps/macos/build/Build/Products/Release/Stellar.app (build/는 git ignore)
 # 종료 코드: 0 성공, 그 외 빌드·검사 실패.
 set -euo pipefail
 
@@ -48,7 +48,7 @@ fail() {
   exit 1
 }
 
-PROJECT="$REPO_ROOT/apps/macos/StellarMac.xcodeproj"
+PROJECT="$REPO_ROOT/apps/macos/Stellar.xcodeproj"
 DERIVED="$REPO_ROOT/apps/macos/build"
 PACKAGE_FLAGS=(-packageAuthorizationProvider netrc -disableAutomaticPackageResolution)
 UPDATE_OVERRIDES=()
@@ -70,7 +70,7 @@ CORE_LIB_DIR="$RUST_TARGET_DIR/$RUST_TARGET/release"
 LINK_OVERRIDES=("LIBRARY_SEARCH_PATHS=\"$CORE_LIB_DIR\"")
 
 # --- Xcode Release 설정 고정값 ---
-SETTINGS="$(xcodebuild -project "$PROJECT" -scheme StellarMac -configuration Release "${PACKAGE_FLAGS[@]}" \
+SETTINGS="$(xcodebuild -project "$PROJECT" -scheme Stellar -configuration Release "${PACKAGE_FLAGS[@]}" \
   -derivedDataPath "$DERIVED" "${LINK_OVERRIDES[@]}" ${UPDATE_OVERRIDES[@]+"${UPDATE_OVERRIDES[@]}"} \
   -showBuildSettings 2>/dev/null)"
 setting() {
@@ -88,7 +88,7 @@ echo "✓ Xcode Release 설정: ARCHS=arm64, ONLY_ACTIVE_ARCH=NO, macOS $EXPECTE
 # --- 빌드(서명 없음; Xcode build phase가 arm64 release staticlib을 --locked로 빌드) ---
 xcodebuild \
   -project "$PROJECT" \
-  -scheme StellarMac \
+  -scheme Stellar \
   -configuration Release \
   -derivedDataPath "$DERIVED" \
   "${PACKAGE_FLAGS[@]}" \
@@ -97,8 +97,8 @@ xcodebuild \
   ${UPDATE_OVERRIDES[@]+"${UPDATE_OVERRIDES[@]}"} \
   build
 
-APP="$DERIVED/Build/Products/Release/StellarMac.app"
-BIN="$APP/Contents/MacOS/StellarMac"
+APP="$DERIVED/Build/Products/Release/Stellar.app"
+BIN="$APP/Contents/MacOS/Stellar"
 CORE_LIB="$CORE_LIB_DIR/libstellar_ffi.a"
 [ -x "$BIN" ] || fail "실행 파일 없음: $BIN"
 [ -f "$CORE_LIB" ] || fail "Rust 코어 staticlib 없음: $CORE_LIB"
@@ -123,7 +123,8 @@ plist() {
 }
 [ "$(plist CFBundleIdentifier)" = "$EXPECTED_BUNDLE_ID" ] || fail "CFBundleIdentifier=$(plist CFBundleIdentifier)"
 [ "$(plist LSMinimumSystemVersion)" = "$EXPECTED_MIN_OS" ] || fail "LSMinimumSystemVersion=$(plist LSMinimumSystemVersion)"
-[ "$(plist CFBundleExecutable)" = "StellarMac" ] || fail "CFBundleExecutable=$(plist CFBundleExecutable)"
+[ "$(plist CFBundleDisplayName)" = "Stellar" ] || fail "CFBundleDisplayName=$(plist CFBundleDisplayName)"
+[ "$(plist CFBundleExecutable)" = "Stellar" ] || fail "CFBundleExecutable=$(plist CFBundleExecutable)"
 echo "✓ Info.plist: $EXPECTED_BUNDLE_ID, LSMinimumSystemVersion $EXPECTED_MIN_OS"
 
 # --- Info.plist 업데이트 구성(ADR-0017) ---

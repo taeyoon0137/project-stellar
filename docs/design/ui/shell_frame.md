@@ -1,7 +1,7 @@
 # 셸 프레임(메인 창 구성) UI 명세
 
 - 상태: 초안(2026-11-14). 앱 창으로 통합됨(14장). 프로젝트 열기·닫기는 코어 FFI, 영역 내용은 Stub data source
-- 영역: `shell_frame` — 코드 위치 `apps/macos/StellarMac/UI/Shell/`
+- 영역: `shell_frame` — 코드 위치 `apps/macos/Stellar/UI/Shell/`
 - 기준 문서: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), Apple HIG(Windows, Toolbars, Sidebars, Split views, Keyboard, Accessibility, Materials, Writing)
 - WBS 대응은 통합 단계에서 정합니다. 관련 행은 XII.9.1(toolbar·sidebar·inspector 골격)과 가이드 10.4의 "창 상태 저장·복원"(전용 WBS 없음)입니다.
 
@@ -322,7 +322,7 @@ AppDelegate ─ RuntimeHost(코어 runtime 1개)
 - 복원: 열기 중 → ready, 없어진 폴더 → 실패 상태·복구 동작 3개(대표 1개)·도구 명령과 하단 도구 막대 비활성 → Locate Folder…로 같은 창에서 열기
 - 열기 중 닫기: 복원 열기 대기 중 창 닫기 → 목록에서 빠짐·시작 창 → 늦게 온 열기 결과가 닫힌 창에 붙지 않음 → 그 session 닫힘(코어 session 0)
 - 여는 중인 폴더: 앱 수준 열기 대기 중 같은 폴더 복원은 새 창 없음, 실패 창의 Locate Folder…로 같은 폴더를 고르면 실패 창이 닫히고 창 1개·코어 session 1개
-- 실패 안내: 앱 수준 열기 실패 → alert, 시작 창 열기 실패(stellar.yaml 없음) → 시작 창 안내, New Project → 미지원 안내(폴더를 만들지 않음), 설정 창. 원인별 문구 대응은 14.8의 `--project-open-check`가 검사합니다.
+- 실패 안내: 앱 수준 열기 실패 → alert, 시작 창 열기 실패(stellar.yaml 없음) → 시작 창 안내, New Project → 이름 선택·취소, 폴더 생성과 최초 문서 열기, 같은 이름 보호, 재열기, 설정 창. 원인별 문구 대응은 14.8의 `--project-open-check`가 검사합니다.
 
 ### 14.7 화면 확인(2026-11-14, macOS 27.2, Debug 앱)
 

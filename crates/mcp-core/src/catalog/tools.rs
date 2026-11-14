@@ -78,19 +78,36 @@ macro_rules! commands_schema {
     };
 }
 
+/// 저장 문서 검증. headless가 실제 제공하는 읽기 tool입니다.
+pub const VALIDATE_DOCUMENT: ToolDef = ToolDef {
+    name: "document.validate",
+    title: "Validate document",
+    description:
+        "저장된 문서의 검증 진단을 페이지로 읽습니다(문서를 지정하지 않으면 프로젝트 전체)",
+    input_schema: r#"{"type":"object","additionalProperties":false,"properties":{"document":{"type":"string"},"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":2000}}}"#,
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    availability: Availability::All,
+    grant: RequiredGrant::Read,
+};
+
+/// Git HEAD 대비 저장 문서 변경. 기준은 고정 HEAD입니다.
+pub const SEMANTIC_DIFF: ToolDef = ToolDef {
+    name: "document.semantic_diff",
+    title: "Semantic diff",
+    description: "같은 프로젝트의 Git HEAD와 현재 저장 세대의 문서 변경을 페이지로 읽습니다",
+    input_schema: r#"{"type":"object","additionalProperties":false,"properties":{"base":{"type":"string","enum":["HEAD"]},"cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":2000}}}"#,
+    read_only: true,
+    destructive: false,
+    idempotent: true,
+    availability: Availability::All,
+    grant: RequiredGrant::Read,
+};
+
 /// 정의된 문서 tool(고정 순서).
 pub const DOCUMENT_TOOLS: &[ToolDef] = &[
-    ToolDef {
-        name: "document.semantic_diff",
-        title: "Semantic diff",
-        description: "현재 저장된 프로젝트와 Git 기준(기본 HEAD)의 semantic diff를 만듭니다",
-        input_schema: r#"{"type":"object","additionalProperties":false,"properties":{"base":{"type":"string","description":"Git revision(기본 HEAD)"}}}"#,
-        read_only: true,
-        destructive: false,
-        idempotent: true,
-        availability: Availability::All,
-        grant: RequiredGrant::Read,
-    },
+    SEMANTIC_DIFF,
     ToolDef {
         name: "document.render_preview",
         title: "Render preview",
@@ -102,17 +119,7 @@ pub const DOCUMENT_TOOLS: &[ToolDef] = &[
         availability: Availability::AttachedOnly,
         grant: RequiredGrant::Read,
     },
-    ToolDef {
-        name: "document.validate",
-        title: "Validate document",
-        description: "저장된 문서를 문서 validator로 검증합니다(문서를 지정하지 않으면 전체)",
-        input_schema: r#"{"type":"object","additionalProperties":false,"properties":{"document":{"type":"string"}}}"#,
-        read_only: true,
-        destructive: false,
-        idempotent: true,
-        availability: Availability::All,
-        grant: RequiredGrant::Read,
-    },
+    VALIDATE_DOCUMENT,
     ToolDef {
         name: "document.propose_commands",
         title: "Propose commands",

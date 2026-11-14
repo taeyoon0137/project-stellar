@@ -2,7 +2,7 @@
 
 - 상태: 초안(2026-11-14). 코어 미연결, Stub 데이터로만 동작합니다.
 - 영역: 내장 에이전트 패널(로드맵). 초기 릴리스 빌드에는 노출하지 않습니다. [가이드 6.5] [계획 XVI.11.8]
-- 코드: `apps/macos/StellarMac/UI/Agent/`
+- 코드: `apps/macos/Stellar/UI/Agent/`
 - 상위 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md), 기술 아키텍처 명세, ADR-0005(Proposed), ADR-0009
 
 ## 0. 근거 표기

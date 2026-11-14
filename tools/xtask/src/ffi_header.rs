@@ -80,6 +80,7 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
  * 요청마다 정확히 하나가 옵니다. payload는 little-endian이고 u32 schema version
  * (STELLAR_EVENT_SCHEMA_VERSION)으로 시작합니다. str은 u32 길이 + UTF-8 바이트
  * (최대 STELLAR_EVENT_TEXT_MAX byte, 문자 경계에서 자름), id는 StableId 16 byte입니다.
+ *   PROJECT_CREATED: request u64, git_state u32 (0 committed, 1 missing identity, 2 add failed, 3 commit failed)
  *   PROJECT_OPENED : request u64, project u64, project_id[16], name str, root str
  *   PROJECT_CLOSED : request u64, project u64, closed_documents u32
  *   DOCUMENT_OPENED: request u64, project u64, document u64, document_id[16], already_open u8
@@ -105,6 +106,7 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_EVENT_WINDOW_SESSION_SAVED 0x010a
 #define STELLAR_EVENT_PROJECT_TRUST 0x010b
 #define STELLAR_EVENT_GIT_NAMES 0x010c
+#define STELLAR_EVENT_PROJECT_CREATED 0x010d
 
 /* 완료 event를 아직 꺼내지 않은 요청(실행 중 포함) 상한. 닿으면 새 요청은 STELLAR_QUEUE_FULL. */
 #define STELLAR_EVENT_CAPACITY 1024
@@ -131,6 +133,7 @@ _Static_assert(sizeof(StellarMacEvent) == 104, "StellarMacEvent layout");
 #define STELLAR_FAILURE_INVALID_VIEWPORT 24
 #define STELLAR_FAILURE_TRUST_UNAVAILABLE 25
 #define STELLAR_FAILURE_GIT_NAMES_UNAVAILABLE 26
+#define STELLAR_FAILURE_PROJECT_CREATE_FAILED 27
 
 /* 창 session 명령 코드(stellar_window_session_perform). 코어가 정하고 셸과 공유합니다. 셸은 메뉴 명령의 공유 이름
  * (edit.undo, edit.redo, file.save_now, view.zoom_in, view.zoom_out, view.zoom_actual_size)으로
@@ -189,6 +192,17 @@ typedef struct StellarWindowSessionInfo {
     uint8_t window_id[16];    /* 창 편집 session id(UUID 바이트 순서) */
     uint8_t document_id[16];  /* 작업 문서 StableId(없으면 0) */
 } StellarWindowSessionInfo;
+
+/* v1: 좌상단 원점 logical point. world/camera는 CGAffineTransform 순서 (a,b,c,d,tx,ty). */
+typedef struct StellarCanvasColor { uint32_t space; float rgba[4]; } StellarCanvasColor; /* 0 없음, 1 sRGB, 2 Display P3 */
+typedef struct StellarCanvasFrame {
+    uint8_t id[16]; uint32_t parent, flags; /* parent: root UINT32_MAX, flags: bit0 clip children, bit1 hit target */
+    float world[6], size[2], radii[4]; /* TL,TR,BR,BL */
+    StellarCanvasColor fill, border; float border_width;
+} StellarCanvasFrame;
+typedef struct StellarCanvasInfo {
+    uint64_t revision; uint8_t view[16], primary[16]; float camera[6]; uint32_t count, skipped;
+} StellarCanvasInfo;
 
 /* StellarWindowViewInfo 레이아웃 버전. */
 #define STELLAR_WINDOW_VIEW_INFO_VERSION 1
@@ -253,6 +267,9 @@ StellarStatus stellar_runtime_poll_input(uint64_t handle, uint8_t *buf, size_t b
 /* 프로젝트 폴더 열기를 요청합니다(입력: 절대 경로 UTF-8 ptr+len). 기다리지 않고 request id를 씁니다(실패 시 0). */
 StellarStatus stellar_project_open(uint64_t handle, const uint8_t *path, size_t path_len, uint64_t *out_request);
 
+/* 새 폴더 생성. 완료 event 뒤 같은 path로 stellar_project_open을 호출할 수 있습니다. */
+StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_t path_len, uint64_t *out_request);
+
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
 StellarStatus stellar_project_close(uint64_t handle, uint64_t project, uint64_t *out_request);
 
@@ -275,7 +292,7 @@ StellarStatus stellar_window_session_open(uint64_t handle, uint64_t project, uin
  * PROJECT_TRUST event: request u64, project u64, trusted u8. */
 StellarStatus stellar_project_trust(uint64_t handle, uint64_t project, uint32_t action, uint64_t *out_request);
 
-/* action 0: refresh, 1: stage displayed row. Event: request u64, session u64, rows u32, other_changes u8, staged u8.
+/* action 0: refresh, 1: stage displayed row, 2: unstage displayed row. Event: request u64, session u64, rows u32, other_changes u8, selection_applied u8.
  * A row contains document and node IDs (16 bytes each), staged u8, and HEAD/index/working names
  * (each u32 little-endian UTF-8 byte length followed by those bytes). No Git I/O occurs in the row getter. */
 StellarStatus stellar_git_names_request(uint64_t handle, uint64_t session, uint32_t action, uint64_t generation, uint32_t row, uint64_t *out_request);
@@ -291,10 +308,18 @@ StellarStatus stellar_command_code(const uint8_t *name, size_t name_len, uint32_
 /* 창 session에 명령(STELLAR_COMMAND_*)을 보냅니다. 모르는 코드는 STELLAR_INVALID_ARGUMENT(요청 없음). */
 StellarStatus stellar_window_session_perform(uint64_t handle, uint64_t session, uint32_t command, uint64_t *out_request);
 
+/* 새 창의 실제 canvas 크기(logical point)로 active View의 root를 맞춥니다. 완료는 WINDOW_VIEW_CHANGED. */
+StellarStatus stellar_window_session_fit_root(uint64_t handle, uint64_t session, double width, double height, uint64_t *out_request);
 /* Pan active viewport content in screen points; completes with WINDOW_VIEW_CHANGED or REQUEST_FAILED. */
 StellarStatus stellar_window_session_pan(uint64_t handle, uint64_t session, double dx, double dy, uint64_t *out_request);
+/* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
+StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float dx, float dy, uint64_t *out_request);
 /* 창 session의 선택을 ids(StableId 16 byte × count)로 바꾸고 그 창 history에 기록합니다(count 0 = 비움). */
 StellarStatus stellar_window_session_select(uint64_t handle, uint64_t session, const uint8_t *ids, size_t count, uint64_t *out_request);
+
+/* 활성 View의 같은 게시 snapshot에서 카메라와 painter 순서 목록 조회. rows=NULL이면 metadata만 씁니다.
+ * 용량 부족 시 최신 count와 STELLAR_BUFFER_TOO_SMALL, active View 없음은 STELLAR_NO_ERROR. */
+StellarStatus stellar_window_canvas(uint64_t handle, uint64_t session, float width, float height, StellarCanvasInfo *info, StellarCanvasFrame *rows, size_t capacity);
 
 /* 열린 창 session의 view state(탭 수, active view, viewport)를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, StellarWindowViewInfo *out_info);
@@ -302,8 +327,10 @@ StellarStatus stellar_window_view_info(uint64_t handle, uint64_t session, Stella
 /* 열린 창 session의 최신 snapshot 정보를 씁니다(없는 창 session은 STELLAR_INVALID_ARGUMENT). */
 StellarStatus stellar_window_session_info(uint64_t handle, uint64_t session, StellarWindowSessionInfo *out_info);
 
+#if defined(DEBUG) && DEBUG
 /* Debug native integration check only; no symbol in Release. Real transaction/queue, delay capped at 500 ms. */
 StellarStatus stellar_window_session_check_edit(uint64_t handle, uint64_t session, const uint8_t *node, const uint8_t *name, size_t name_len, uint32_t verify, uint32_t delay_ms, uint64_t *out_request);
+#endif
 
 /* 살아 있는 runtime handle 수(진단용). */
 uint64_t stellar_runtime_live_count(void);

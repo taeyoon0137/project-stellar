@@ -2,7 +2,7 @@
 
 - 상태: 초안(2026-11-14). 코어 연결 전 Stub 단계입니다.
 - 범위: 계획 XIV.13.5의 macOS 최소 Git 패널 중 셸 UI 부분. 코어 API(XIV.13.1~XIV.13.4)와 연결은 남은 일입니다(11장).
-- 코드: `apps/macos/StellarMac/UI/Git/`
+- 코드: `apps/macos/Stellar/UI/Git/`
 - 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처"), Apple HIG.
 
 ## 1. 범위

@@ -40,6 +40,8 @@
 //!
 //! 이 loader는 디스크 bytes를 바꾸지 않습니다(읽기 전용).
 
+pub mod head;
+
 use std::collections::BTreeSet;
 use std::fmt;
 use std::fs::File;
@@ -512,6 +514,10 @@ fn read_manifest_checked(
     let bytes = read_at_most(file, MAX_INPUT_BYTES)
         .map_err(read_error)?
         .ok_or_else(|| manifest_too_large(None))?;
+    parse_manifest_bytes(bytes)
+}
+
+fn parse_manifest_bytes(bytes: Vec<u8>) -> Result<Manifest, SavedProjectError> {
     let text = String::from_utf8(bytes).map_err(|_| SavedProjectError::ManifestRead {
         kind: io::ErrorKind::InvalidData,
     })?;

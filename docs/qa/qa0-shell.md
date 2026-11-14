@@ -13,7 +13,7 @@
 | QA0-01 | 프로젝트 창 없이 앱 실행(`--welcome`) | 시작 창 하나. 왼쪽에 앱 아이콘, "Stellar", 버전, New Project…·Open Project…·Clone Project… 버튼. 오른쪽에 "No Recent Projects"와 안내문. 두 열 사이 시스템 구분선. 창 제목 글자는 보이지 않음 |
 | QA0-02 | 시작 창 가장자리를 끌어 크기 바꾸기 | 크기가 바뀌지 않음 |
 | QA0-03 | Window 메뉴 열기 | 창 목록에 "Welcome" |
-| QA0-04 | New Project…(⌘N) → 이름 입력 → Create | 저장 패널(제목 "New Project", 버튼 "Create"). Create 뒤 "The Operation Couldn’t Be Completed" 안내 sheet(설명 "Creating projects isn’t available in this build yet…"), 폴더는 생기지 않음. 실제 생성은 **구현 대기**(XII.6.1) |
+| QA0-04 | New Project…(⌘N) → 상위 폴더와 새 이름 선택 → Create | 새 Git 저장소와 최초 문서를 만들고 프로젝트 창을 엽니다. 창을 닫고 같은 폴더를 열면 같은 문서가 나타납니다. Git 신원을 설정한 환경에서는 최초 커밋이 있고, 신원이 없으면 설정 방법을 안내합니다. |
 | QA0-05 | Clone Project… → Repository URL에 `https://example.com/team/design-system.git` 입력 | Clone sheet(Repository URL, Name, Location). Name이 `design-system`으로 자동 채워짐. URL을 비우면 Clone 버튼 꺼짐. Escape로 닫힘 |
 | QA0-06 | Clone sheet에서 Clone | "The Operation Couldn’t Be Completed" 안내(설명 "Cloning projects isn’t available in this build yet…"). 실제 Clone은 **구현 대기**(XII.6.3) |
 | QA0-07 | 최근 프로젝트 목록 | **구현 대기**(코어 최근 목록 경로, 전용 WBS 없음). 지금: 프로젝트를 열어도 항상 "No Recent Projects" |
@@ -71,7 +71,7 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA0-37 | 메뉴 막대 보기 | 순서: 앱 메뉴, File, Edit, View, Insert, Object, Window, Help. 앱 메뉴 이름은 지금 "StellarMac"(번들 이름, 표시 이름 변경은 별도 작업) |
+| QA0-37 | 메뉴 막대 보기 | 순서: 앱 메뉴, File, Edit, View, Insert, Object, Window, Help. 앱 메뉴 이름은 "Stellar" |
 | QA0-38 | 각 메뉴를 펼쳐 보기 | 지금 쓸 수 없는 항목(Undo, Redo, Save Now, Cut·Copy·Paste(캔버스 포커스), Object 메뉴 전체, Show Rulers, Search Project…, New·Clone Project…)은 숨지 않고 비활성. 한 묶음 안의 아이콘은 모두 있거나 모두 없음 |
 | QA0-39 | Settings…(⌘,) | 설정 창이 열림. 지금은 "Stellar Settings" 글자만 있는 placeholder(설정 창 전용 WBS 없음) |
 | QA0-40 | File ▸ Show in Finder | QA0-33과 같음 |

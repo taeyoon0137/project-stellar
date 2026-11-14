@@ -2,7 +2,7 @@
 
 - WBS: XIX.9.3
 - 작업명: 기존 신뢰 프로젝트 하나의 snapshot 읽기를 정상 stdio CLI에 연결
-- 상태: 부분 완료 (`[~]`) — 이번 수직 경로는 구현·검증했으며, WBS 전체의 검증·dry-run tool과 agent-protocol 카탈로그 이동은 남았습니다.
+- 상태: 부분 완료 (`[~]`) — 이번 수직 경로는 구현·검증했으며, 같은 프로젝트의 Git HEAD 비교까지 연결했습니다. 다른 Git revision, dry-run tool과 agent-protocol 카탈로그 이동은 남았습니다.
 - 선행: XIX.9.2 미완료, XXIV.4.3의 ops 조회와 XVI.7.2 신뢰 저장소를 재사용. XIX.3.3의 headless 예외는 ADR-0005 §3 및 아키텍처 §31.3의 기존 결정을 적용합니다.
 
 ## 필수 실행 환경
@@ -48,13 +48,13 @@ stellar-mcp --headless --project <project-id>
 
 | 호출 | 제공 범위 |
 |---|---|
-| `initialize` | 기존 protocol 협상, `resources: {}` capability만 광고 |
+| `initialize` | 기존 protocol 협상, `resources: {}`와 `tools: {}` capability 광고 |
 | `resources/list` | 기존 `project-structure`, `stellar://project/structure` 한 항목 |
 | `resources/templates/list` | 기존 `document`, `stellar://documents/{document}{?cursor,limit}` 한 항목 |
 | `resources/read` 구조 | 저장된 문서 ID·이름, page·View 개요, chunk 종류별 개수, revision |
 | `resources/read` 문서 | 승인 프로젝트의 저장된 문서 트리 page: node ID·부모·View·깊이·종류·이름·표시/잠금 여부·자식 수, revision·cursor |
-| `tools/list` | 빈 목록. 구현하지 않은 읽기·검증·dry-run·쓰기 tool은 모두 광고하지 않음 |
-| `tools/call` | 제공하지 않음(`-32601`) |
+| `tools/list` | `document.semantic_diff`, `document.validate`(읽기 전용) |
+| `tools/call` | 저장 문서의 Git HEAD 대비 변경 목록 또는 전체·선택 문서의 검증 진단. 미등록 tool 이름은 `-32602` |
 
 - revision은 ops의 `token`, `generation`, `manifest_hash` 그대로입니다. 매 읽기는 하나의 디스크 generation을 사용합니다. 다음 요청에서 정상 저장이 관찰되면 이전 revision의 cursor는 기존 `PageError::StaleCursor`로 거부합니다(`-32602`).
 - 문서 page는 기존 XIX.2.2의 기본 500개, 최대 2,000개, 내용 JSON 최대 512 KiB를 적용합니다. byte 한도에 맞춰 page를 줄이고, 한 item이 한도를 넘으면 오류입니다. 인코딩된 resource envelope에도 stdio 1 MiB 한도를 검사합니다.
@@ -143,17 +143,45 @@ STELLAR_MCP_BENCH_BASELINE=/tmp/stellar-page-cache-baseline-bin cargo test --rel
 
 검증된 content-addressed generation/chunk는 불변이라는 기존 storage 계약을 사용합니다. 동일 hash 경로의 객체를 매 cache hit마다 다시 읽거나 존재/권한을 전수 검사하지 않습니다. 정상 저장의 pointer 전환과 설정 변경은 확인하지만, hash를 유지한 객체 직접 수정·삭제를 즉시 감시하는 기능은 아닙니다. 신뢰·source 검사와 반환은 파일시스템 전체의 원자적 transaction이 아니며 최종 검사 직후의 경합까지 없애지는 못합니다.
 
+## 저장 문서 검증 tool
+
+`document.validate`는 XIX.2.3 카탈로그의 기존 Read tool입니다. 선택한 문서 또는 전체 프로젝트의 진단을 ops의 CLI validator에서 읽고, 같은 대상·revision의 후속 페이지에는 다시 검증하지 않습니다. 캐시는 이 연결의 최근 검증 대상 하나만 보관합니다. 각 페이지에서 resource 조회와 같은 프로젝트 신뢰·identity·현재 snapshot 재확인 절차를 거칩니다. 새 generation 또는 대상 변경 시 재검사합니다. 진단이 없으면 `items: []`, `next_cursor: null`입니다. 경고와 문서 오류는 tool이 성공적으로 돌려준 검사 결과에 포함됩니다.
+
+- 실제 stdio 통합 검증은 저장된 문서 2개, 서로 다른 미해결 참조 5개의 단일 문서를 대상으로 전체 검사와 문서 필터, 정상·손상 문서의 valid/errors, 2·2·1개 페이지, 범위 밖 문서, 과다 limit, 저장 후 cursor, 신뢰 철회, 파일 목록·hash 보존을 확인합니다. 재현 명령은 `cargo test -p stellar-mcp --test headless_read`입니다.
+- 저장된 프로젝트 간 비교는 CLI의 `semantic-diff <base 경로> <target 경로>`가 지원합니다. MCP 카탈로그의 `document.semantic_diff`는 같은 신뢰 프로젝트의 Git revision을 기준으로 삼습니다. HEAD의 저장 세대를 여는 경로는 아래 후속 구현에서 연결했습니다.
+- 첫 검증은 대상 문서들의 모든 레코드를 읽습니다. 페이지 크기는 출력량을 제한합니다. 서버가 최근 검사에서 기억하는 진단 수의 합과 처음 검증하는 비용은 대상에 비례합니다.
+
+### 기존 문서 트리 RTT 재검증
+
+Apple M3 Max에서 기준 커밋 `47cba3e6`의 release 바이너리와 변경 후 바이너리를 같은 5만 node 저장 문서에 번갈아 연결했습니다. `STELLAR_MCP_BENCH_BASELINE=<기준 바이너리> cargo test --release -p stellar-mcp --test headless_read release_page_rtt -- --ignored --nocapture`를 두 번 실행했습니다. 각 회차·바이너리마다 새 프로세스 10개에서 다음 페이지 50개(500 node/페이지)를 읽었습니다.
+
+| 다음 페이지 왕복 | 기준 p50 / p95 | 변경 후 p50 / p95 |
+|---|---:|---:|
+| 1회차 | 2.567 / 4.119 ms | 2.783 / 7.189 ms |
+| 2회차 | 3.794 / 18.326 ms | 3.252 / 6.094 ms |
+
+같은 장비에서 회차 간 p95 편차가 있어 고정 지연 상한이나 개선율을 확정하지 않았습니다. 모델 로딩 횟수 검사는 캐시된 문서 조회 사이에 다른 문서의 검증을 호출해도 원래 문서의 snapshot과 tree를 각각 한 번만 로드함을 확인합니다.
+
 ## 차이(작업 지시와 다른 점)
 
-- 사용자 요청은 좁은 첫 읽기 경로입니다. WBS XIX.9.3 전체의 검증·dry-run tool은 구현하지 않았으며 상태를 `[x]`로 올리지 않습니다.
+- 사용자 요청은 좁은 첫 읽기 경로입니다. HEAD 비교·검증 연결 후에도 다른 Git revision 비교와 dry-run이 남아 XIX.9.3은 부분 완료입니다.
 - 임의 경로를 받지 않으라는 요청을 적용해 실행 인자는 루트 경로 대신 기존 신뢰 등록의 ID입니다. 해석한 루트 하나를 세션에 고정하므로 ADR-0005의 고정 프로젝트 경계를 유지합니다.
 - 직접 `tools/stellar-mcp → ops` edge를 새로 허용하지 않았습니다. 필요한 library 이동은 기존 ADR-0005 §8·XIX.9.1 경로를 따른 것으로 ADR·서명·승인 정책 변경은 없습니다.
 
 ## 남은 위험 / 한계
 
 - XIX.9.1의 agent-protocol 등록·공용 정의 이동, XIX.9.2 카탈로그 생성은 후속입니다. 현재 catalog는 이동한 mcp-core 안에 있고 기존 golden을 유지합니다.
-- 앱의 미저장 문서·현재 선택·current document는 읽지 않습니다. token/component/target-profile/Git 상태·semantic diff·검증·dry-run·모든 쓰기·attached resource 전달은 제공하지 않습니다.
+- 앱의 미저장 문서·현재 선택·current document는 읽지 않습니다. token/component/target-profile/Git 상태·임의 Git revision 비교·dry-run·모든 쓰기·attached resource 전달은 제공하지 않습니다.
 - 신뢰 등록 UI와 앱의 grant 호출 연결은 이번 범위가 아닙니다. 기존 등록이 없거나 위치/ID가 불명확하면 비활성으로 남습니다. 동일 ID의 신뢰된 복사본이 둘 이상이면 하나를 임의 선택하지 않습니다.
 - 문서 page는 기존 ops의 검증된 문서 단위 로딩을 재사용합니다. 후속 변경으로 연결별 snapshot 하나와 최근 문서의 트리 행만 유지합니다. 최초 로드·문서 전환·원천 변경 뒤 로드는 여전히 문서 크기에 비례하며, node 단위 lazy paging·RSS 측정은 후속입니다.
 - 신뢰 확인과 snapshot 응답은 OS 파일 시스템의 원자적 승인 transaction이 아닙니다. 요청 전후 재확인과 ops의 고정 generation 일관성을 사용하며 watcher 기반 즉시 종료·강한 원자성은 구현하지 않았습니다.
 - Phase XIX 전체 완료나 앱 번들 배포·외부 클라이언트 설정 설치를 의미하지 않습니다. 다른 worktree·작업자·예약 실행·push·계정·서명 작업은 수행하지 않았습니다.
+
+
+## 같은 프로젝트의 Git HEAD 비교
+
+`tools/list`에 `document.semantic_diff`를 추가했습니다. `project`의 기존 Git provider가 HEAD를 commit/tree로 고정하고, 저장된 매니페스트 ID를 확인한 뒤 current 세대가 참조하는 chunk만 프로젝트 외부 임시 디렉터리에 복원합니다. `ops`의 문서 semantic projection과 diff 엔진으로 작업 트리의 고정 generation을 비교합니다. cache와 페이지 커서는 commit ID와 저장 revision 모두에 종속됩니다.
+
+실제 임시 Git 브랜치 두 개로 `tools/stellar-mcp/tests/headless_read.rs`의 `head_diff_pages_follow_real_branches_and_preserve_all_inputs`를 실행했습니다. 변경 없음, 한글 노드 이름의 이전·이후 값, 개수·512 KiB 제한에 따른 페이지와 단일 대형 항목의 오류, 작업 트리를 유지한 HEAD 이동, 후속 저장, 다른 project ID와 신뢰 철회를 확인합니다. 프로젝트 파일·index·refs·신뢰 등록 내용은 요청 전후 byte hash로 대조합니다. 커밋이 없거나 한쪽에 유효한 저장 세대가 없으면 비교할 수 없습니다. 이 검사는 문서 generation만 비교하며 프로젝트 매니페스트 설정·독립 텍스트 원본을 비교하지 않습니다.
+
+50,000개 노드의 기존 문서 읽기 release stdio 검사에서 500개 항목의 후속 페이지 RTT는 p50 2.367 ms, p95 3.718 ms(50회)였습니다. 첫 페이지 p95는 98.429 ms(10회)입니다. 측정 대상은 문서 resource이며 Git 비교 시간은 포함하지 않습니다.

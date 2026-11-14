@@ -18,7 +18,7 @@
 # 업데이트 공개 키(ADR-0017): release_build.sh와 같은 STELLAR_UPDATE_* 환경 변수로 전달합니다. 배포 서명에서
 # RFC 8032 test vector 키(headless fixture 전용)는 거부하고, 키가 없으면 업데이트가 꺼진 배포본임을 경고합니다.
 #
-# 산출물: apps/macos/build/Build/Products/Release/StellarMac.app (build/는 git ignore)
+# 산출물: apps/macos/build/Build/Products/Release/Stellar.app (build/는 git ignore)
 #
 # 종료 코드: 0 성공, 64 사용법 오류, 69 서명 identity 없음/모호, 그 외 빌드·검증 실패.
 set -euo pipefail
@@ -79,8 +79,8 @@ fi
 # --- 빌드와 배포 구성 검사: 서명하지 않은 Release(arm64 전용·macOS 26·번들 ID, 번들 구조) ---
 "$REPO_ROOT/scripts/macos/release_build.sh"
 
-APP="$REPO_ROOT/apps/macos/build/Build/Products/Release/StellarMac.app"
-BIN="$APP/Contents/MacOS/StellarMac"
+APP="$REPO_ROOT/apps/macos/build/Build/Products/Release/Stellar.app"
+BIN="$APP/Contents/MacOS/Stellar"
 
 # --- 업데이트 공개 키(ADR-0017) ---
 # RFC 8032 §7.1 TEST 1 공개 키: 개인 키가 공개된 test vector라 배포본에 들어가면 누구나 업데이트를 서명할 수 있습니다.

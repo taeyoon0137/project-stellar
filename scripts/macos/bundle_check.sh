@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# StellarMac.app 번들 구조·링크·rpath·코드 서명 구조 검사와 재배치 실행 smoke(XVI.9.2, ADR-0017).
+# Stellar.app 번들 구조·링크·rpath·코드 서명 구조 검사와 재배치 실행 smoke(XVI.9.2, ADR-0017).
 #
 # 사용법:
 #   scripts/macos/bundle_check.sh --adhoc-sign APP   # 서명 안 된 앱: 임시 사본에 ad-hoc(Hardened Runtime) 서명 후 검사
 #   scripts/macos/bundle_check.sh APP                # 이미 서명된 앱(예: Developer ID)을 그대로 검사
 #
 # 검사(하나라도 어긋나면 실패):
-#  1. 번들 구조 allowlist: Contents/{Info.plist, PkgInfo, MacOS/StellarMac, _CodeSignature/CodeResources,
+#  1. 번들 구조 allowlist: Contents/{Info.plist, PkgInfo, MacOS/Stellar, _CodeSignature/CodeResources,
 #     CodeResources(stapled 공증 ticket), Resources/**, Frameworks/Sparkle.framework/**}만 허용(빌드 중간물·dSYM·
 #     헤더·module·staticlib·다른 framework 혼입 금지)
 #  2. Mach-O 파일은 실행 파일과 Sparkle.framework의 고정 목록(framework·Autoupdate·Updater·XPC service 2개)뿐이고
@@ -39,7 +39,7 @@ if [ "${1:-}" = "--adhoc-sign" ]; then
   shift
 fi
 if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then
-  echo "사용법: $0 [--adhoc-sign] StellarMac.app" >&2
+  echo "사용법: $0 [--adhoc-sign] Stellar.app" >&2
   exit 64
 fi
 SOURCE_APP="$(cd "$1" && pwd)"
@@ -53,10 +53,10 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # 서명 검사는 사본에서 합니다(원본 빌드 산출물을 바꾸지 않음).
-APP="$WORK/sign/StellarMac.app"
+APP="$WORK/sign/Stellar.app"
 mkdir -p "$WORK/sign"
 ditto "$SOURCE_APP" "$APP"
-BIN="$APP/Contents/MacOS/StellarMac"
+BIN="$APP/Contents/MacOS/Stellar"
 [ -x "$BIN" ] || fail "실행 파일 없음"
 
 # --- 1. 번들 구조 allowlist ---
@@ -68,7 +68,7 @@ while IFS= read -r entry; do
       fail "Sparkle.framework에 개발 전용 항목이 남아 있음: $entry" ;;
   esac
   case "$entry" in
-    Contents | Contents/Info.plist | Contents/PkgInfo | Contents/MacOS | Contents/MacOS/StellarMac) ;;
+    Contents | Contents/Info.plist | Contents/PkgInfo | Contents/MacOS | Contents/MacOS/Stellar) ;;
     Contents/_CodeSignature | Contents/_CodeSignature/CodeResources) ;;
     Contents/CodeResources) ;; # stapler가 붙인 공증 ticket(XVI.9.4)
     Contents/Resources | Contents/Resources/*) ;;
@@ -80,7 +80,7 @@ echo "✓ 번들 구조: allowlist 통과"
 
 # --- 2. Mach-O 목록 고정, 모두 arm64 포함 ---
 EXPECTED_MACHO="$(printf '%s\n' \
-  "Contents/MacOS/StellarMac" \
+  "Contents/MacOS/Stellar" \
   "$SPARKLE_VERSION_DIR/Autoupdate" \
   "$SPARKLE_VERSION_DIR/Sparkle" \
   "$SPARKLE_VERSION_DIR/Updater.app/Contents/MacOS/Updater" \
@@ -135,7 +135,7 @@ echo "✓ rpath: $( [ -n "$RPATHS" ] && printf '%s' "$RPATHS" | tr '\n' ' ' || p
 
 # --- 5. Rust 코어 C ABI가 실행 파일에 정적으로 포함 ---
 DEFINED="$(nm -gU "$BIN" | awk '{print $NF}')"
-ABI_FUNCTIONS="$(grep -oE '\bstellar_[a-z_]+\(' "$HEADER" | tr -d '(' | sort -u)"
+ABI_FUNCTIONS="$(xcrun clang -E -P -x c "$HEADER" | grep -oE '\bstellar_[a-z_]+\(' | tr -d '(' | sort -u)"
 [ -n "$ABI_FUNCTIONS" ] || fail "헤더에서 C ABI 함수를 찾지 못함"
 ABI_COUNT=0
 while IFS= read -r symbol; do
@@ -181,7 +181,7 @@ echo "✓ 코드 서명 구조: verify --deep --strict, Sealed Resources v2, Inf
 # --- 7. 재배치 실행 smoke(개발 도구·빌드 트리 읽기 차단) ---
 RUN="$WORK/run"
 mkdir -p "$RUN/home"
-ditto "$APP" "$RUN/StellarMac.app"
+ditto "$APP" "$RUN/Stellar.app"
 DENY="(deny file-read* (subpath \"$REPO_ROOT\") (subpath \"$HOME/Library/Developer\")"
 DENY="$DENY (subpath \"/Applications/Xcode.app\") (subpath \"/Applications/Xcode-beta.app\")"
 DENY="$DENY (subpath \"/Library/Developer/CommandLineTools\") (subpath \"$HOME/.cargo\") (subpath \"$HOME/.rustup\"))"
@@ -192,7 +192,7 @@ if sandbox-exec -p "$PROFILE" /bin/cat "$REPO_ROOT/Cargo.toml" >/dev/null 2>&1; 
 fi
 for mode in --smoke --lifecycle-check --canvas-check --update-check; do
   env -i HOME="$RUN/home" PATH=/usr/bin:/bin TMPDIR="$RUN/home" \
-    sandbox-exec -p "$PROFILE" "$RUN/StellarMac.app/Contents/MacOS/StellarMac" "$mode" \
+    sandbox-exec -p "$PROFILE" "$RUN/Stellar.app/Contents/MacOS/Stellar" "$mode" \
     || fail "재배치 실행 $mode 실패"
 done
 echo "✓ 재배치 실행: 임시 폴더·최소 환경·개발 경로 읽기 차단에서 --smoke/--lifecycle-check/--canvas-check/--update-check 통과"

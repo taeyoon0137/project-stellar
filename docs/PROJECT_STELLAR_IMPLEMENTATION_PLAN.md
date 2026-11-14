@@ -264,7 +264,7 @@ tools/xtask/
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| II.5.1 | `[x]` | `apps/macos`에 macOS 26, arm64 전용 AppKit 앱 프로젝트를 생성합니다. SwiftUI는 앱 설정 화면용 placeholder target만 두고 캔버스는 AppKit view로 둡니다. | `xcodebuild -project ... -scheme StellarMac -configuration Debug CODE_SIGNING_ALLOWED=NO build` 통과. | II.4.6 |
+| II.5.1 | `[x]` | `apps/macos`에 macOS 26, arm64 전용 AppKit 앱 프로젝트를 생성합니다. SwiftUI는 앱 설정 화면용 placeholder target만 두고 캔버스는 AppKit view로 둡니다. | `xcodebuild -project ... -scheme Stellar -configuration Debug CODE_SIGNING_ALLOWED=NO build` 통과. | II.4.6 |
 | II.5.2 | `[x]` | Rust static 또는 dynamic library를 Debug 빌드에 연결하고 앱 시작 시 `stellar_runtime_version`을 호출해 로그에 기록합니다. | 앱 smoke test가 FFI 버전 문자열을 읽고 종료 코드 0. | II.5.1 |
 | II.5.3 | `[x]` | `NSApplicationDelegate`와 빈 `NSWindowController`를 추가합니다. 창 닫기·앱 종료 시 runtime destroy가 정확히 한 번 호출되게 합니다. | lifecycle UI test에서 create/destroy count가 1:1입니다. | II.5.2 |
 | II.5.4 | `[x]` | 최소 `NSView` CanvasHost를 추가하고 backing scale과 drawable size 변경 이벤트를 Rust core에 전달하는 구조만 만듭니다. 렌더링은 하지 않습니다. | resize fixture에서 pixel size가 point size×scale과 일치합니다. | II.5.3 |
@@ -1270,7 +1270,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XII.6.1 | `[ ]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
+| XII.6.1 | `[~]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
 | XII.6.2 | `[x]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
 | XII.6.3 | `[ ]` | Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다. | local fixture remote clone 통과. | IV.6.4 |
 | XII.6.4 | `[~]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
@@ -1534,7 +1534,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XIV.7.1 | `[x]` | 선택 staged changes를 Index snapshot에서 inverse 적용해 CandidateIndexSnapshot을 계산합니다. 기준은 HEAD가 아니라 현재 Index입니다. | staged A+B에서 A만 제거 fixture 통과. | XIV.4.1, XIV.3.10 |
 | XIV.7.2 | `[x]` | unstage dependency graph를 검사하고 남은 index snapshot이 invalid하면 필수 함께-unstage 변경을 반환합니다. | component property/override fixture 통과. | XIV.5.2, XIV.7.1 |
-| XIV.7.3 | `[ ]` | 승인된 candidate를 Phase XIV.6 index 기록 경로로 적용합니다. | WorkingTree 변경 없음, index semantic 결과 정확. | XIV.7.2, XIV.6.6 |
+| XIV.7.3 | `[x]` | 현재 Index에서 선택·승인한 변경을 HEAD 값으로 되돌린 후보를 Phase XIV.6 index 기록 경로로 적용합니다. | 실제 Git 재열기에서 다른 staged 속성·파일과 Working Tree 보존, HEAD 변경 거부, macOS 창의 이름 Unstage 검증. | XIV.7.2, XIV.6.6 |
 
 ### XIV.8 Commit
 

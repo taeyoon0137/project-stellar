@@ -2,7 +2,7 @@
 
 - 상태: 초안(2026-11-14), Stub 데이터 기준 구현
 - 범위: macOS 셸 오른쪽 인스펙터 pane의 내용(선택 종류별 속성 섹션, modifier stack, Value Binding 표시 자리)
-- 코드: `apps/macos/StellarMac/UI/Inspector/`
+- 코드: `apps/macos/Stellar/UI/Inspector/`
 - 상위 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처")
 
 근거 표기는 가이드 0.1절을 따릅니다. `[가이드 n]`은 가이드의 절, `[아키텍처 §n]`은 아키텍처 명세의 절, `[HIG <주제>]`는 Apple Human Interface Guidelines의 해당 주제, `[계획 n]`은 구현 계획의 해당 항목입니다.

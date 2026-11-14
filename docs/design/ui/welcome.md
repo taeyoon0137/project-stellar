@@ -1,7 +1,7 @@
 # 시작 창(Welcome)과 첫 실행 UI 명세
 
 - 상태: 초안(2026-11-14), 코어 연결 전(Stub 데이터)
-- 영역: `apps/macos/StellarMac/UI/Welcome/`
+- 영역: `apps/macos/Stellar/UI/Welcome/`
 - 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), Apple Human Interface Guidelines(이하 "HIG")
 - WBS 연결
   - New Project·Open·Clone 명령: 계획 XII.6.1~XII.6.3.
@@ -307,7 +307,7 @@ protocol WelcomeDataSource: AnyObject {
 ```
 
 - `WelcomeSnapshot`: `generation`(세대 번호, 오래된 snapshot 폐기), `recentProjects`(loading / loaded / failed(`WelcomeFailureReason`)), `git`(checking / available / notFound / unusable(`WelcomeGitProblem`)), `activity?`(`id` 포함), `notice?`, `defaultParentDirectory?`.
-- `WelcomeFailureReason`: `permissionDenied(path)`, `notEnoughSpace`, `networkUnavailable`, `authenticationFailed`, `remoteNotFound`, `gitCommandFailed(exitStatus)`, `internalError(code)`, `projectOpenFailed(ShellProjectOpenFailure, path)`(셸 어댑터가 코어 열기 실패 코드에서 고른 원인, 문구는 원인 제목과 해결 방법, XII.6.2), `projectCreationUnavailable`·`projectCloneUnavailable`(이 빌드에 코어 경로 없음). 코어 오류는 어댑터가 이 코드로 바꿉니다.
+- `WelcomeFailureReason`: `permissionDenied(path)`, `notEnoughSpace`, `networkUnavailable`, `authenticationFailed`, `remoteNotFound`, `gitCommandFailed(exitStatus)`, `internalError(code)`, `projectOpenFailed(ShellProjectOpenFailure, path)`(셸 어댑터가 코어 열기 실패 코드에서 고른 원인, 문구는 원인 제목과 해결 방법, XII.6.2), `projectCreationFailed(message)`(코어의 생성 실패 원인), `projectCloneUnavailable`(Clone 경로 준비 중). 코어 오류는 어댑터가 이 코드로 바꿉니다.
 - `WelcomeCommand`: `createProject`, `openProject`, `cloneProject`, `openRecent`, `removeRecent`, `reloadRecentProjects`, `recheckGit`, `useGitExecutable`, `cancelActivity(id:)`, `dismissNotice`.
 - 경로는 `String`(UTF-8)이라 ADR-0009의 `(ptr, len)` 문자열 규칙으로 옮기기 쉽습니다. 최근 항목 식별자는 코어가 발급한 불투명 문자열입니다.
 - 표본 구현 `WelcomeDataSourceStub`은 의도적 placeholder입니다(계획 1.2 규칙 6). 실제 프로젝트를 만들거나 열지 않고, 받은 명령을 기록하며 최근 목록 제거·안내 확인·작업 취소만 흉내 냅니다.
@@ -331,7 +331,7 @@ protocol WelcomeDataSource: AnyObject {
 
 ## 13. 검사
 
-`WelcomeUICheck.run() -> Bool`이 화면 밖에서 검사합니다. `StellarMac --welcome-ui-check`로 실행하며(`main.swift`), `scripts/macos/smoke.sh`가 다른 검사 뒤에 실행합니다.
+`WelcomeUICheck.run() -> Bool`이 화면 밖에서 검사합니다. `Stellar --welcome-ui-check`로 실행하며(`main.swift`), `scripts/macos/smoke.sh`가 다른 검사 뒤에 실행합니다.
 
 - 시작 창 6개 상태(목록, 빈 목록, 읽는 중, 실패, Git 없음, Clone 진행 중)와 가장 긴 내용(쓸 수 없는 Git + 진행 중), Clone sheet, 설치 sheet 13개 단계를 Light, Dark, 대비 높이기 Light·Dark에서 레이아웃합니다.
 - 모호한 Auto Layout, 세로로 잘린 여러 줄 레이블, 직접 넣은 반투명 표면이 없는지 확인합니다(`NSScrollView`가 스스로 넣는 표면은 시스템 소유라 제외).

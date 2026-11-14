@@ -203,6 +203,27 @@ stellar-mcp --connection-info
 `next_cursor`가 `null`이면 마지막 페이지입니다. 이 모드는 저장된 데이터만 읽으며
 에디터의 현재 선택이나 미저장 편집은 노출하지 않습니다.
 
+### 저장된 문서의 진단 조회
+
+현재 headless 서버는 `initialize`에서 `resources`와 `tools`를 광고합니다. `tools/list`에 있는 `document.validate`는 CLI `stellar validate`와 같은 validator를 사용합니다. `document`를 생략하면 이 세션의 프로젝트 전체, 지정하면 해당 문서만 검사합니다.
+
+```jsonl
+{"jsonrpc":"2.0","id":6,"method":"tools/list","params":{}}
+{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"document.validate","arguments":{"document":"00000000-0001-7000-8000-000000000001","limit":100}}}
+```
+
+`result.content[0].text`를 JSON으로 읽습니다. `valid`, `errors`, `warnings`는 전체 검사 결과이고 `items`에는 이 페이지의 문서 ID·심각도·진단 코드·메시지가 있습니다. 미해결 참조는 경고입니다. `next_cursor`가 문자열이면 같은 대상의 다음 호출에서 `arguments.cursor`로 전달합니다. 개수는 기본 500개, 최대 2,000개이며 JSON 페이지 한도는 512 KiB입니다. 저장 후 오래된 cursor는 거부되므로 첫 페이지부터 다시 읽습니다.
+
+### Git HEAD와 저장 문서의 변경 조회
+
+같은 headless 세션의 `document.semantic_diff`는 현재 브랜치의 HEAD에 커밋한 문서와 디스크에 저장된 문서를 StableId로 비교합니다. 인자는 생략하거나 `base`에 `HEAD`를 지정합니다.
+
+```jsonl
+{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"document.semantic_diff","arguments":{"base":"HEAD","limit":100}}}
+```
+
+`result.content[0].text`의 JSON에서 `base_commit`은 실제 비교한 commit ID이고 `revision`은 현재 저장 세대입니다. `items`에는 변경 종류, 대상 문서·객체 ID, 속성 경로와 이전·이후 값 또는 이동 위치가 있습니다. `next_cursor`가 있으면 같은 도구의 `arguments.cursor`에 전달합니다. 기준 commit이나 저장 세대가 바뀌면 첫 페이지를 다시 요청합니다. 두 입력 모두 같은 project ID의 `design/current`가 있어야 합니다. 외부 에셋·옵트인 YAML 원본·Git index·저장 전 편집은 이 도구의 비교 범위 밖입니다.
+
 ## 지정 View의 정적 접근성 HTML
 
 ```sh

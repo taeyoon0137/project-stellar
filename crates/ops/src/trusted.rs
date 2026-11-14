@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use stellar_project::identity::ProjectIdentity;
+pub use stellar_project::saved_project::head::ProjectHead;
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 use stellar_storage::generation::current::{read_current_pointer, CurrentPointerError};
@@ -101,6 +102,13 @@ impl TrustedProject {
             && snapshot.git_link() == current.git_link
             && snapshot.manifest() == &current.manifest
             && snapshot.revision().manifest_hash() == hash)
+    }
+
+    /// 신뢰와 고정 프로젝트 root를 확인해 현재 Git HEAD를 고릅니다.
+    pub fn head(&self) -> Result<ProjectHead, TrustedReadError> {
+        self.check()?;
+        ProjectHead::open(self.identity.canonical_target(), TrustStatus::Trusted)
+            .map_err(|_| TrustedReadError::Unavailable)
     }
 
     /// 한 generation의 snapshot을 엽니다. 열기 전후 확인에 실패하면 내용을 반환하지 않습니다.

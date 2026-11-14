@@ -103,6 +103,7 @@
 //! | `0x010A` | WindowSessionSaved | request u64, session u64, generation u64, written u8 |
 //! | `0x010B` | ProjectTrust | request u64, project u64, trusted u8 |
 //! | `0x010C` | GitNames | request u64, session u64, rows u32, other_changes u8, staged u8 |
+//! | `0x010D` | ProjectCreated | request u64, git_state u32 |
 //!
 //! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다.
 
@@ -123,8 +124,10 @@ use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
+mod create;
+mod frame_move;
 mod git_names;
-pub use git_names::GitNameRow;
+pub use git_names::{GitNameRow, SelectionOperation};
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
@@ -166,6 +169,8 @@ pub mod event_kind {
     pub const PROJECT_TRUST: u32 = 0x010B;
     /// 저장된 노드 이름의 Git 비교 목록이 준비됐거나 한 건을 Stage했습니다.
     pub const GIT_NAMES: u32 = 0x010C;
+    /// 새 프로젝트 디스크 생성이 끝났습니다.
+    pub const PROJECT_CREATED: u32 = 0x010D;
 }
 
 // ---------------------------------------------------------------------------
@@ -250,11 +255,13 @@ pub enum RequestFailure {
     TrustUnavailable,
     /// 저장된 이름의 Git 조회나 선택 Stage 실패.
     GitNamesUnavailable,
+    /// 새 프로젝트 생성 실패.
+    ProjectCreateFailed,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 21] = [
+    pub const ALL: [RequestFailure; 22] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -276,6 +283,7 @@ impl RequestFailure {
         RequestFailure::InvalidViewport,
         RequestFailure::TrustUnavailable,
         RequestFailure::GitNamesUnavailable,
+        RequestFailure::ProjectCreateFailed,
     ];
 
     /// C ABI 코드 값.
@@ -302,6 +310,7 @@ impl RequestFailure {
             RequestFailure::InvalidViewport => 24,
             RequestFailure::TrustUnavailable => 25,
             RequestFailure::GitNamesUnavailable => 26,
+            RequestFailure::ProjectCreateFailed => 27,
         }
     }
 
@@ -316,6 +325,13 @@ impl RequestFailure {
 /// 요청 완료 event. 요청마다 정확히 하나가 outbox에 쌓입니다.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeEvent {
+    /// 새 프로젝트·첫 저장 세대가 준비됐습니다. 프로젝트 session은 아직 열지 않았습니다.
+    ProjectCreated {
+        /// 요청 ID.
+        request: RequestId,
+        /// 최초 commit 상태(0 완료, 1 신원 필요, 2 add 실패, 3 commit 실패).
+        git_state: u32,
+    },
     /// 프로젝트를 열었습니다.
     ProjectOpened {
         /// 요청 id.
@@ -591,6 +607,7 @@ impl RuntimeEvent {
     /// event 종류 코드([`event_kind`]).
     pub fn kind(&self) -> u32 {
         match self {
+            RuntimeEvent::ProjectCreated { .. } => event_kind::PROJECT_CREATED,
             RuntimeEvent::ProjectOpened { .. } => event_kind::PROJECT_OPENED,
             RuntimeEvent::ProjectClosed { .. } => event_kind::PROJECT_CLOSED,
             RuntimeEvent::ProjectTrust { .. } => event_kind::PROJECT_TRUST,
@@ -610,6 +627,7 @@ impl RuntimeEvent {
     pub fn request(&self) -> RequestId {
         match self {
             RuntimeEvent::ProjectOpened { request, .. }
+            | RuntimeEvent::ProjectCreated { request, .. }
             | RuntimeEvent::GitNames { request, .. }
             | RuntimeEvent::ProjectTrust { request, .. }
             | RuntimeEvent::ProjectClosed { request, .. }
@@ -628,6 +646,10 @@ impl RuntimeEvent {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
         match self {
+            RuntimeEvent::ProjectCreated { request, git_state } => {
+                w.u64(request.0);
+                w.u32(*git_state);
+            }
             RuntimeEvent::ProjectOpened {
                 request,
                 project,
@@ -754,6 +776,10 @@ impl RuntimeEvent {
             return Err(EventDecodeError::UnsupportedVersion(version));
         }
         let event = match kind {
+            event_kind::PROJECT_CREATED => RuntimeEvent::ProjectCreated {
+                request: RequestId(r.u64()?),
+                git_state: r.u32()?,
+            },
             event_kind::PROJECT_OPENED => RuntimeEvent::ProjectOpened {
                 request: RequestId(r.u64()?),
                 project: ProjectSessionId(r.u64()?),
@@ -893,6 +919,8 @@ pub struct WindowSessionSummary {
     pub redo_depth: u32,
     /// 선택된 node 수.
     pub selection_len: u32,
+    /// 표시 중인 primary 선택.
+    pub primary_selection: Option<StableId>,
     /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
     pub has_unsaved_changes: bool,
     /// 열린 탭 수.
@@ -901,6 +929,8 @@ pub struct WindowSessionSummary {
     pub active_view: Option<StableId>,
     /// active 탭의 viewport(열린 탭이 없으면 `None`).
     pub viewport: Option<CanvasViewport>,
+    /// 활성 View의 painter 목록. 문서 또는 View가 바뀔 때만 다시 평가합니다.
+    pub canvas: Option<Arc<crate::canvas::CanvasScene>>,
 }
 
 /// document thread가 게시한 불변 상태 snapshot.
@@ -960,6 +990,7 @@ struct ProjectSession {
 pub(crate) struct WindowEntry {
     pub(crate) project: ProjectSessionId,
     pub(crate) session: ProjectWindowSession,
+    canvas: crate::canvas::CanvasCache,
 }
 
 #[derive(Debug)]
@@ -1268,9 +1299,14 @@ fn open_window_session_on_thread(
     let document_id = session.document_id().unwrap_or(StableId::NIL);
     let generation = session.generation_number();
     let handle = sessions.allocate_window();
-    sessions
-        .windows
-        .insert(handle, WindowEntry { project, session });
+    sessions.windows.insert(
+        handle,
+        WindowEntry {
+            project,
+            session,
+            canvas: Default::default(),
+        },
+    );
     if let Some(owner) = sessions.projects.get_mut(&project) {
         owner.windows.insert(handle);
     }
@@ -1301,7 +1337,7 @@ fn close_window_session_on_thread(
 }
 
 /// 창 session 요약(상태 snapshot용).
-fn window_summary(handle: WindowSessionHandle, entry: &WindowEntry) -> WindowSessionSummary {
+fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> WindowSessionSummary {
     let session = &entry.session;
     let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
     WindowSessionSummary {
@@ -1314,10 +1350,12 @@ fn window_summary(handle: WindowSessionHandle, entry: &WindowEntry) -> WindowSes
         undo_depth: clamp(session.history().history().len()),
         redo_depth: clamp(session.history().history().redo_entries().len()),
         selection_len: clamp(session.view().selection().len()),
+        primary_selection: session.view().displayed_selection().primary(),
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),
         active_view: session.tabs().active_view(),
         viewport: session.tabs().active_viewport(),
+        canvas: entry.canvas.current(session),
     }
 }
 
@@ -1438,9 +1476,10 @@ fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
                 .map_or(0, |view| view.len() as u64),
         })
         .collect();
-    let windows = sessions
+    let windows = ctx
+        .app_sessions_mut()
         .windows
-        .iter()
+        .iter_mut()
         .map(|(handle, entry)| window_summary(*handle, entry))
         .collect();
     RuntimeState {
@@ -1505,6 +1544,7 @@ pub enum EventPoll {
 /// UI thread와 document thread가 공유하는 outbox·snapshot.
 #[derive(Debug)]
 struct AppShared {
+    creating: std::sync::atomic::AtomicBool,
     git_names: Mutex<git_names::WindowGit>,
     outbox: Mutex<VecDeque<RuntimeEvent>>,
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
@@ -1564,6 +1604,25 @@ impl Drop for AppRuntime {
     }
 }
 
+fn validate_project_path(root: &Path) -> Result<(), RequestError> {
+    if root.as_os_str().is_empty() {
+        return Err(RequestError::InvalidPath {
+            reason: "빈 경로입니다",
+        });
+    }
+    if root.as_os_str().as_encoded_bytes().contains(&0) {
+        return Err(RequestError::InvalidPath {
+            reason: "NUL 바이트를 포함합니다",
+        });
+    }
+    if !root.is_absolute() {
+        return Err(RequestError::InvalidPath {
+            reason: "절대 경로가 아닙니다",
+        });
+    }
+    Ok(())
+}
+
 impl AppRuntime {
     /// 완료 event를 꺼내지 않은 요청 수 기본 상한.
     pub const DEFAULT_EVENT_CAPACITY: usize = 1024;
@@ -1585,6 +1644,7 @@ impl AppRuntime {
         Ok(AppRuntime {
             sender: document.sender(),
             shared: Arc::new(AppShared {
+                creating: false.into(),
                 git_names: Mutex::default(),
                 outbox: Mutex::new(VecDeque::new()),
                 outstanding: AtomicUsize::new(0),
@@ -1649,21 +1709,7 @@ impl AppRuntime {
 
     /// 프로젝트 폴더를 엽니다(모듈 문서). 경로는 절대 경로여야 하고 NUL을 포함할 수 없습니다.
     pub fn open_project(&self, root: &Path) -> Result<RequestId, RequestError> {
-        if root.as_os_str().is_empty() {
-            return Err(RequestError::InvalidPath {
-                reason: "빈 경로입니다",
-            });
-        }
-        if root.as_os_str().as_encoded_bytes().contains(&0) {
-            return Err(RequestError::InvalidPath {
-                reason: "NUL 바이트를 포함합니다",
-            });
-        }
-        if !root.is_absolute() {
-            return Err(RequestError::InvalidPath {
-                reason: "절대 경로가 아닙니다",
-            });
-        }
+        validate_project_path(root)?;
         let root = root.to_path_buf();
         self.submit(move |ctx, request| open_project_on_thread(ctx, request, &root))
     }
@@ -1833,6 +1879,34 @@ impl AppRuntime {
             change_view_on_thread(ctx, request, session, |window| {
                 window.pan(dx, dy).map(|_| ())
             })
+        })
+    }
+
+    /// 새로 만든 프로젝트의 첫 Frame에 맞도록 최초 창의 실제 캔버스 크기로 viewport를 설정합니다.
+    pub fn fit_root_frame(
+        &self,
+        session: WindowSessionHandle,
+        width: f64,
+        height: f64,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let entry = ctx
+                .app_sessions_mut()
+                .windows
+                .get_mut(&session)
+                .ok_or_else(|| unknown_window(session))?;
+            let viewport = entry
+                .canvas
+                .current(&entry.session)
+                .and_then(|scene| scene.root_viewport(width, height))
+                .ok_or_else(|| {
+                    Failure::new(
+                        RequestFailure::InvalidViewport,
+                        "유효한 Frame 또는 캔버스 크기가 없습니다",
+                    )
+                })?;
+            entry.session.set_viewport(viewport).map_err(view_failure)?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
 
@@ -2197,7 +2271,7 @@ mod tests {
         let codes: Vec<u32> = RequestFailure::ALL.iter().map(|f| f.code()).collect();
         assert_eq!(
             codes,
-            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 26]
+            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]
         );
         let unique: BTreeSet<u32> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len());

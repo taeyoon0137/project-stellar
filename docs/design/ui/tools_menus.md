@@ -1,7 +1,7 @@
 # 도구·메뉴 영역 명세 (tools_menus)
 
 - 상태: 초안(2026-11-14)
-- 코드: `apps/macos/StellarMac/UI/Tools/`
+- 코드: `apps/macos/Stellar/UI/Tools/`
 - 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md)(이하 "가이드"), 기술 아키텍처 명세(이하 "아키텍처"), 구현 계획(이하 "계획"), Apple HIG
 - 근거 표기는 가이드 0.1절을 따릅니다. 이 문서는 가이드·아키텍처·계획을 바꾸지 않으며, 어긋나면 그 문서들이 우선입니다. [가이드 0.2]
 
@@ -352,7 +352,7 @@ protocol ToolsMenuModel: AnyObject {
 - **접근성**: 캔버스 호스트의 도구 상태 노출과 VoiceOver 자동화. [계획 XII.8.1]
 - **창 통합(완료, shell_frame 14장)**: `ShellAppCoordinator`가 `MainMenuBuilder.build(applicationTarget:)`·`install(on:)`을 하고, 프로젝트 창마다 `ShellCommandRouter.install(in:)`과 셸 툴바 조합(`ToolsToolbarController`가 `ShellToolbarItemProviding`으로 줌 제공)을 합니다. 캔버스 도구 그룹은 셸 툴바에 넣지 않고, 같은 도구 11개를 프로젝트 창이 셸 프레임 snapshot 도구 목록으로 캔버스 하단 가운데 도구 막대(`ShellToolBarView`)에 보냅니다(shell_frame 14.2). 창 모델은 `ShellWindowToolsModelStub`(창별 도구 상태, 코어 경로 없는 명령 비활성)입니다. [가이드 2.3, 2.5]
 - **캔버스 keyDown(단일 키 완료)**: `CanvasView.keyDownHandler`가 `CanvasToolShortcut.tool(for:)`로 도구를 구해 `router.dispatch`합니다. 처리한 키는 key down·짝 key up 모두 코어 입력으로 보내지 않고, 도구가 아니거나 비활성이면 코어 입력으로 보냅니다. Delete 키(`deleteBackward(_:)` → `.delete`)는 코어 삭제 명령 경로가 없어 아직 연결하지 않았습니다.
-- **앱 이름**: 메뉴 막대의 굵은 앱 이름은 번들 이름에서 옵니다. 현재 `PRODUCT_NAME`이 `StellarMac`이므로 표시 이름을 "Stellar"로 맞추는 프로젝트 설정 변경이 필요합니다(이 작업 범위 밖, 프로젝트 파일 미수정).
+- **앱 이름**: 메뉴 막대에는 번들 이름인 `Stellar`가 표시됩니다.
 - **smoke 연결(완료)**: `--tools-menus-ui-check`로 `ToolsUICheck.run()`을 실행하고, `UI/Tools/`가 코어 FFI·runtime(`stellar_`, `CoreRuntime`, `RuntimeHost`, `runtimeHandle`)을 참조하지 않는다는 구조 검사를 `scripts/macos/smoke.sh`가 합니다.
 - **눈금자**: 지금은 placeholder이고 동작은 계획 XII.10.19가 구현합니다.
 - **WBS 없음**: Open Recent, Open in New Window(XII.2.4), Export, Format 메뉴, Help Book(현재 Stellar Help는 시스템 "도움말 없음" 동작), 메뉴 문자열 지역화.

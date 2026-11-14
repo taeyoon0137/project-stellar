@@ -76,5 +76,7 @@
 
 ## 남은 위험
 
-- 캔버스에 아직 그림이 없어 줌은 툴바 배율 표시로만 보입니다(XII.4.1 차단).
+- macOS 일반 프로젝트 창이 저장된 고정 Free Frame의 배경·안쪽 테두리·개별 radius, 자식 bounds clip 및 Fragment의 순서를 그립니다. 문서 thread에서 `SceneBuilder`가 active View의 affine과 입력 상태를 평가하며, 창은 카메라와 같은 snapshot의 표시 목록을 사용합니다. 창의 primary 선택을 화면 좌표 외곽선으로 표시합니다.
+- `scripts/macos/smoke.sh`는 저장된 800×600 root 및 중첩·겹침 fixture를 일반 `NSWindow`로 열어 sRGB bitmap의 색과 입력 ID를 확인합니다. 이 검사는 View 좌상단 logical point, 확대·팬, drag 중의 subtree 표시, 선택 해제 시 원래 픽셀 복원을 포함합니다.
+- 이 경로는 Core Graphics 기반입니다. Metal surface 연결(XII.4.1), 전체 문서 layout·modifier·Path clip·Text/Shape/Image, 다중 선택 및 변형 handle은 후속 범위입니다. 미지원 subtree가 있으면 캔버스에 안내를 표시합니다. 큰 문서에서는 revision 변경 시 active View의 표시 목록을 재평가하고, hit 후보를 painter 역순으로 확인하는 비용이 남습니다.
 - viewport는 저장하지 않으므로 창을 닫으면 사라집니다(복구 snapshot 연결은 V.9 범위).

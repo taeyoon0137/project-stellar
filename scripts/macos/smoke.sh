@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # macOS 셸 smoke/lifecycle/canvas/text input/input/welcome test (II.5.2, II.5.3, II.5.4, XII.5.1, XII.3.2, XII.3.4, XVI.9.5,
 # XXIV.5.3~XXIV.5.6).
-# StellarMac 앱을 Debug로 빌드한 뒤:
+# Stellar 앱을 Debug로 빌드한 뒤:
 #  - --smoke: FFI로 코어 버전을 읽고 종료 코드 0
 #  - --lifecycle-check: runtime create/destroy가 1:1인지 확인하고 종료 코드 0
 #  - --canvas-check: drawable pixel == point × scale 및 코어 round-trip 확인
@@ -34,8 +34,8 @@ DERIVED="$REPO_ROOT/apps/macos/build"
 # Swift package(Sparkle, ADR-0017)는 Package.resolved 고정 버전만 쓰고 자격 증명 조회는 netrc로 합니다
 # (공개 package라 인증 불필요, 키체인 접근 대화상자 방지).
 xcodebuild \
-  -project "$REPO_ROOT/apps/macos/StellarMac.xcodeproj" \
-  -scheme StellarMac \
+  -project "$REPO_ROOT/apps/macos/Stellar.xcodeproj" \
+  -scheme Stellar \
   -configuration Debug \
   -derivedDataPath "$DERIVED" \
   -packageAuthorizationProvider netrc \
@@ -43,7 +43,7 @@ xcodebuild \
   CODE_SIGNING_ALLOWED=NO \
   build
 
-APP="$DERIVED/Build/Products/Debug/StellarMac.app/Contents/MacOS/StellarMac"
+APP="$DERIVED/Build/Products/Debug/Stellar.app/Contents/MacOS/Stellar"
 
 OUTPUT="$("$APP" --smoke)"
 echo "$OUTPUT"
@@ -57,13 +57,14 @@ fi
 
 # canvas: drawable pixel == point × scale + 코어 round-trip.
 "$APP" --canvas-check
+STELLAR_TEST_CANVAS_APP="$APP" cargo test --locked --manifest-path "$REPO_ROOT/Cargo.toml" -p stellar-runtime --lib canvas::tests::saved_frames_open_in_window_painter_order -- --exact --nocapture
 
 # 네이티브 UI 텍스트 컨트롤은 코어 텍스트 엔진(FFI)을 직접·간접으로 호출하지 않습니다(XII.5.1 구조 검사).
 # - 대상: 고정 목록 + `Native*.swift`로 추가되는 네이티브 UI 파일 전부.
 # - 목록의 파일이 없으면(이름 변경·삭제) 검사가 조용히 통과하지 않도록 실패합니다.
 # - 직접 호출(`stellar_`)뿐 아니라 셸 FFI wrapper(`CoreRuntime`, `RuntimeHost`)와 runtime handle 전달도 금지합니다.
 # - grep 종료 코드 0(발견)과 2 이상(읽기 오류)은 모두 실패로 처리합니다.
-SOURCES_DIR="$REPO_ROOT/apps/macos/StellarMac"
+SOURCES_DIR="$REPO_ROOT/apps/macos/Stellar"
 NATIVE_UI_SOURCES=(NativeTextControls.swift NativeFieldsPanel.swift)
 for path in "$SOURCES_DIR"/Native*.swift; do
   [ -e "$path" ] || continue
@@ -132,6 +133,7 @@ WINDOW_SESSION_FIXTURE="$REPO_ROOT/crates/runtime/tests/fixtures/window-session-
 cargo build --manifest-path "$REPO_ROOT/Cargo.toml" --locked -p stellar-cli
 cli_target="${CARGO_TARGET_DIR:-$REPO_ROOT/target}"
 python3 "$REPO_ROOT/scripts/macos/git-stage-check.py" "$APP" "$cli_target/debug/stellar" "$WINDOW_SESSION_FIXTURE"
+python3 "$REPO_ROOT/scripts/macos/canvas-move-check.py" "$APP" "$cli_target/debug/stellar" "$WINDOW_SESSION_FIXTURE"
 "$APP" --window-session-check "$WINDOW_SESSION_FIXTURE"
 
 # 창 session 명령(XII.6.4): 메뉴 Undo·Redo·Save Now를 그 창의 창 session에 보내고, 다른 창 history·디스크는 그대로인지,

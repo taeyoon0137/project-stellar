@@ -25,10 +25,10 @@
 
 ## 변경 파일
 
-- `apps/macos/StellarMac/UI/Shell/ShellProjectWindow.swift`, `ShellAppCoordinator.swift`: 닫기 보류·실패 보존·재시도.
+- `apps/macos/Stellar/UI/Shell/ShellProjectWindow.swift`, `ShellAppCoordinator.swift`: 닫기 보류·실패 보존·재시도.
 - `crates/runtime/src/window_session.rs`, `app.rs`, `app_window_tests.rs`: O(1) dirty snapshot과 검사.
 - `crates/ffi/src/window_session.rs`, `tools/xtask/src/ffi_header.rs`, `crates/ffi/include/stellar_ffi.h`: ABI·Debug 검사 bridge.
-- `apps/macos/StellarMac/CoreRuntime.swift`, `UI/Shell/ShellRuntimeEventPump.swift`,
+- `apps/macos/Stellar/CoreRuntime.swift`, `UI/Shell/ShellRuntimeEventPump.swift`,
   `UI/Shell/ShellWindowCloseCheck.swift`, `main.swift`, `scripts/macos/smoke.sh`: 실제 AppKit→Rust 통합 검사.
 - ADR-0028, 이 보고서, XII.6.4 보고서, UI shell 문서: 계약·증거·한계.
 
@@ -43,7 +43,7 @@
 | `cargo xtask validate-adr crates/ffi/src/window_session.rs docs/adr/ADR-0028-window-session-shell-surface.md` | 종료 0 |
 | `cargo xtask validate-task-status` / `cargo xtask sync-plan --check` | 종료 0. WBS 상태 변경 없음 |
 | Debug `xcodebuild … CODE_SIGNING_ALLOWED=NO build` | 종료 0. Swift warning 0. AppIntents 미사용 metadata 경고 1건 |
-| `StellarMac --window-close-check crates/runtime/tests/fixtures/window-session-project` | 종료 0, 87 checks |
+| `Stellar --window-close-check crates/runtime/tests/fixtures/window-session-project` | 종료 0, 87 checks |
 | `scripts/macos/smoke.sh` | 종료 0, `smoke OK` |
 | C ABI `cc … runtime_abi.c … libstellar_ffi.a` 후 실행 | 종료 0, 1,000 create/destroy cycle·0 leaks·session events |
 | `git diff --check` / `git status --short` | 공백 오류 없음, 요청 범위의 변경 파일만 확인 |
@@ -64,7 +64,7 @@ clean/선택 전용 즉시 닫기, 접수됐지만 아직 미반영인 편집, �
 활성 데스크톱 strict 검사는 다른 StellarMac/xcodebuild 검사 프로세스가 없는 것을 확인한 뒤 단독 실행했습니다.
 
 ```sh
-apps/macos/build/Build/Products/Debug/StellarMac.app/Contents/MacOS/StellarMac \
+apps/macos/build/Build/Products/Debug/Stellar.app/Contents/MacOS/Stellar \
   --window-close-check crates/runtime/tests/fixtures/window-session-project --native-close
 ```
 

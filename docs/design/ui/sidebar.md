@@ -1,7 +1,7 @@
 # 사이드바(페이지·레이어) UI 명세
 
 - 상태: 초안(2026-11-14), 코어 미연결(Stub provider)
-- 코드: `apps/macos/StellarMac/UI/Sidebar/`
+- 코드: `apps/macos/Stellar/UI/Sidebar/`
 - 상위 기준: `docs/design/macos-shell-design.md`(이하 "가이드"), `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`(이하 "아키텍처")
 - 근거 표기는 가이드 0.1절을 따릅니다. 이 문서는 가이드·아키텍처·구현 계획을 바꾸지 않으며, 어긋나면 그 문서들이 우선입니다.
 

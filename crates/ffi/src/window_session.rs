@@ -202,6 +202,41 @@ pub unsafe extern "C" fn stellar_window_session_perform(
     })
 }
 
+/// 실제 canvas 크기(logical point)로 active View root에 초기 카메라를 맞춥니다.
+///
+/// # Safety
+/// `out_request`는 null이거나 `u64` 쓰기가 유효해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_fit_root(
+    handle: u64,
+    session: u64,
+    width: f64,
+    height: f64,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe {
+                *out_request = 0;
+            }
+        }
+        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 {
+            return StellarStatus::InvalidArgument;
+        }
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.fit_root_frame(WindowSessionHandle(session), width, height),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 /// 창의 active viewport 내용을 화면 point 단위로 이동합니다. 문서·history는 바꾸지 않습니다.
 /// 완료는 `STELLAR_EVENT_WINDOW_VIEW_CHANGED` 또는 `STELLAR_EVENT_REQUEST_FAILED`입니다.
 ///
@@ -224,6 +259,53 @@ pub unsafe extern "C" fn stellar_window_session_pan(
         };
         let result = match rt.app() {
             Ok(app) => app.pan_viewport(WindowSessionHandle(session), dx, dy),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 표시된 Frame을 부모 좌표계 delta만큼 이동하도록 요청합니다.
+///
+/// # Safety
+/// `view`와 `node`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_session_move_frame(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    node: *const [u8; 16],
+    revision: u64,
+    dx: f32,
+    dy: f32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || node.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(delta) = stellar_core_types::value::Vec2::new(dx, dy) else {
+            return StellarStatus::InvalidArgument;
+        };
+        let view = StableId::from_bytes(unsafe { *view });
+        let node = StableId::from_bytes(unsafe { *node });
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.move_canvas_frame(
+                WindowSessionHandle(session),
+                view,
+                stellar_core_types::revision::DocumentRevision(revision),
+                node,
+                delta,
+            ),
             Err(status) => return status,
         };
         unsafe { rt.finish_request(result, out_request) }

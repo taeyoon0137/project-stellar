@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# StellarMac.app을 안쪽 코드부터 서명합니다(XVI.9.2·XVI.9.3, ADR-0017).
+# Stellar.app을 안쪽 코드부터 서명합니다(XVI.9.2·XVI.9.3, ADR-0017).
 #
 # 사용법:
 #   scripts/macos/codesign_bundle.sh IDENTITY TIMESTAMP_FLAG APP [APP_ENTITLEMENTS]
@@ -13,7 +13,7 @@
 #   Sparkle.framework/Versions/B/Autoupdate
 #   Sparkle.framework/Versions/B/Updater.app
 #   Sparkle.framework
-#   StellarMac.app
+#   Stellar.app
 # 공증은 모든 중첩 코드가 같은 Developer ID·Hardened Runtime·secure timestamp로 서명되어야 통과합니다.
 # `codesign --deep`으로 서명하지 않습니다(중첩 코드별 옵션을 잃음).
 #
@@ -21,7 +21,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 3 ] || [ "$#" -gt 4 ] || [ ! -d "$3" ]; then
-  echo "사용법: $0 IDENTITY TIMESTAMP_FLAG StellarMac.app [APP_ENTITLEMENTS]" >&2
+  echo "사용법: $0 IDENTITY TIMESTAMP_FLAG Stellar.app [APP_ENTITLEMENTS]" >&2
   exit 64
 fi
 IDENTITY="$1"
