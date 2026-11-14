@@ -12,6 +12,8 @@
 //!   `--others --exclude-standard`) index snapshot에는 없습니다. 그래서 unstaged
 //!   [`FileChange::Untracked`]이고 `in_index == false`입니다. 그 안의 객체는 semantic 쪽에서
 //!   WorkingTree에만 있는 AddObject가 됩니다.
+//! - rename/copy의 원래 경로는 `R`·`C`가 있는 영역에 붙습니다. intent-to-add 경로의 worktree 쪽
+//!   rename(`.R`)은 unstaged [`FileChange::Renamed`]입니다.
 //! - ignored 항목은 WorkingTree snapshot에 들어가지 않으므로 목록에서 뺍니다.
 //! - unmerged 항목은 conflict 흐름(XIV.11)으로 넘기므로 영역 변경 없이 `conflicted`로만 표시합니다.
 //! - non-Stellar 파일과 경계를 넘는 rename/copy는 raw status(XIV.4.4)로만 표시하고 여기 넣지
@@ -86,13 +88,17 @@ fn code_change(code: StatusCode, from: Option<&GitPath>) -> Option<FileChange> {
     }
 }
 
+/// 두 영역의 변경. rename/copy 항목(`2`)의 `from`은 `R`·`C` 코드를 가진 영역에 붙습니다. index 쪽은
+/// HEAD→Index rename(`R.`), worktree 쪽은 intent-to-add 경로의 Index→WorkingTree rename(`.R`)입니다. Git은
+/// 항목마다 원래 경로를 하나만 내보내고, intent-to-add 경로는 HEAD→Index diff에 나오지 않으므로 두 영역이
+/// 동시에 rename/copy인 항목은 만들지 않습니다(만일 오면 같은 `from`을 양쪽에 붙여 변경을 버리지 않습니다).
 fn changed(
     entry: &ChangedEntry,
     from: Option<&GitPath>,
 ) -> (Option<FileChange>, Option<FileChange>) {
     (
         code_change(entry.index, from),
-        code_change(entry.worktree, None),
+        code_change(entry.worktree, from),
     )
 }
 
@@ -221,6 +227,51 @@ mod tests {
         assert_eq!(untracked, vec![&b"design/objects/new.starchunk"[..]]);
     }
 
+    #[test]
+    fn worktree_side_rename_and_copy_keep_their_origin_as_unstaged_changes() {
+        // intent-to-add(`git add -N`) 경로는 Index→WorkingTree 쪽 rename/copy(`.R`·`.C`)로 나옵니다.
+        let bytes = format!(
+            "# branch.oid {E1}\0# branch.head main\0\
+             2 .R N... 100644 100644 100644 {E1} {E1} R100 assets/new.png\0assets/old.png\0\
+             2 .C N... 100644 100644 100644 {E1} {E1} C90 design/objects/bb/b.starchunk\0design/objects/aa/a.starchunk\0\
+             2 RM N... 100644 100644 100644 {E1} {E1} R100 design/x.starchunk\0design/y.starchunk\0"
+        );
+        let report = parse_status_v2(bytes.as_bytes()).unwrap();
+        let statuses = stellar_file_statuses(&report.entries);
+        let summary: Vec<(&[u8], Option<FileChange>, Option<FileChange>)> = statuses
+            .iter()
+            .map(|s| (s.path.as_bytes(), s.staged.clone(), s.unstaged.clone()))
+            .collect();
+        let from = |p: &str| GitPath::from_bytes(p.as_bytes());
+        assert_eq!(
+            summary,
+            vec![
+                (
+                    &b"assets/new.png"[..],
+                    None,
+                    Some(FileChange::Renamed {
+                        from: from("assets/old.png")
+                    })
+                ),
+                (
+                    b"design/objects/bb/b.starchunk",
+                    None,
+                    Some(FileChange::Copied {
+                        from: from("design/objects/aa/a.starchunk")
+                    })
+                ),
+                // index 쪽 rename의 origin은 staged에만 붙고 worktree 쪽 수정은 그대로입니다.
+                (
+                    b"design/x.starchunk",
+                    Some(FileChange::Renamed {
+                        from: from("design/y.starchunk")
+                    }),
+                    Some(FileChange::Modified)
+                ),
+            ]
+        );
+    }
+
     #[cfg(unix)]
     mod real_git {
         use super::*;
@@ -299,6 +350,45 @@ mod tests {
                 assert!(!index.entries.iter().any(|e| e.path.as_bytes() == *path));
                 assert!(listing.files.iter().any(|f| f.path.as_bytes() == *path));
             }
+        }
+
+        #[test]
+        fn intent_to_add_rename_in_real_git_is_an_unstaged_rename() {
+            let Some(git) = system_git() else {
+                return; // git 미설치 환경 건너뜀.
+            };
+            let dir = TempDir::new("file-status-ita-rename");
+            let runner = hermetic_runner(git);
+            let repo = dir.path();
+            init_repo_with_identity(&runner, repo);
+            let full = repo.join("assets/sha256/aa/old.png");
+            std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+            std::fs::write(&full, b"\x89PNG same asset bytes for rename detection\n").unwrap();
+            git_ok(&runner, repo, ["add", "-A"]);
+            git_ok(&runner, repo, ["commit", "-q", "-m", "base"]);
+            std::fs::rename(&full, repo.join("assets/sha256/aa/new.png")).unwrap();
+            git_ok(
+                &runner,
+                repo,
+                ["add", "--intent-to-add", "assets/sha256/aa/new.png"],
+            );
+
+            let gate = GatedGitRunner::new(runner, GitTrust::Trusted);
+            let statuses = read_stellar_file_statuses(&gate, repo).unwrap();
+            let summary: Vec<(&[u8], Option<FileChange>, Option<FileChange>)> = statuses
+                .iter()
+                .map(|s| (s.path.as_bytes(), s.staged.clone(), s.unstaged.clone()))
+                .collect();
+            assert_eq!(
+                summary,
+                vec![(
+                    &b"assets/sha256/aa/new.png"[..],
+                    None,
+                    Some(FileChange::Renamed {
+                        from: GitPath::from_bytes(b"assets/sha256/aa/old.png")
+                    })
+                )]
+            );
         }
     }
 }
