@@ -129,6 +129,7 @@ mod components;
 mod create;
 mod frame_insert;
 mod frame_move;
+mod git_components;
 mod git_names;
 mod instance_place;
 pub use instance_place::InstancePlacement;
@@ -138,6 +139,7 @@ mod node_paste;
 pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
+pub use git_components::GitComponentRow;
 pub use git_names::{GitNameRow, SelectionOperation};
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
 

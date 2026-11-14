@@ -390,9 +390,7 @@ pub fn apply_stage_candidate(
 ) -> Result<stellar_git_porcelain::snapshot::IndexSnapshot, ApplyStageError> {
     use stellar_git_porcelain::blob_write::write_candidate_blobs;
     use stellar_git_porcelain::candidate_delta::compute_candidate_delta;
-    use stellar_git_porcelain::index_publish::{
-        publish_with_receipt, restore_published, PublishError,
-    };
+    use stellar_git_porcelain::index_publish::{publish_isolated, restore_published, PublishError};
     use stellar_git_porcelain::snapshot::index::read_index_snapshot_cancellable;
     let check_cancel = || {
         if cancel.is_cancelled() {
@@ -417,8 +415,8 @@ pub fn apply_stage_candidate(
     let written = write_candidate_blobs(git, worktree, &delta).map_err(ApplyStageError::Blob)?;
     check_cancel()?;
     check_head(git, worktree, prepared.head.as_ref()).map_err(ApplyStageError::Preparation)?;
-    let receipt =
-        publish_with_receipt(git, worktree, &written, cancel).map_err(ApplyStageError::Publish)?;
+    let receipt = publish_isolated(git, worktree, &parent, &written, cancel)
+        .map_err(ApplyStageError::Publish)?;
     let verify = || -> Result<(), PrepareStageError> {
         check_head(git, worktree, prepared.head.as_ref())?;
         let actual = read_index_snapshot_cancellable(git, worktree, cancel)

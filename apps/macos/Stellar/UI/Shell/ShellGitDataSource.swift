@@ -13,7 +13,7 @@ final class ShellGitDataSource: GitPanelDataSource {
     private var trustRequest: UInt64?
     private var operation: UInt64?
     private var generation: UInt64 = 0
-    private var items: [CoreGitName] = []
+    private var items: [CoreGitChange] = []
     private var otherChanges = false
 
     // 충돌 가능한 해시 대신 이 창 안에서 UUID·종류별 표시 ID를 발급합니다.
@@ -103,7 +103,7 @@ final class ShellGitDataSource: GitPanelDataSource {
             guard requested == generation, let row = rows[id] else { return reject(command, .staleGeneration) }
             let item = (selection[id]?.count == 1) ? selection[id]?.first.map { items[$0] } : nil
             emit(.changeDetail(GitChangeDetail(generation: requested, node: id, title: row.title, kind: row.kind,
-                objectPath: item?.node.uuidString ?? "", propertyPath: row.level == .change ? "displayName" : nil,
+                objectPath: item?.componentPath ?? item?.node.uuidString ?? "", propertyPath: row.level == .change && item?.componentPath == nil ? "displayName" : nil,
                 headValue: item?.head, indexValue: item?.index, workingValue: item?.working, requiredChanges: [])))
         case .setStaged(let requested, let targets, let stage):
             guard requested == generation else { return reject(command, .staleGeneration) }
@@ -119,7 +119,7 @@ final class ShellGitDataSource: GitPanelDataSource {
                 }
             }
             guard selected.count == 1, let i = selected.first,
-                  stage ? items[i].index != items[i].working : items[i].staged else {
+                  stage ? items[i].unstaged : items[i].staged else {
                 return reject(command, .unknownTarget)
             }
             request((requested, UInt32(i)), stage: stage)
@@ -151,7 +151,7 @@ final class ShellGitDataSource: GitPanelDataSource {
                 let handle = session.pump.runtimeHandle
                 DispatchQueue.global(qos: .userInitiated).async { [weak self, weak window] in
                     let found = (0..<count).compactMap {
-                        CoreRuntime.gitNameRow(handle: handle, session: owner, generation: generation, row: $0)
+                        CoreRuntime.gitPanelRow(handle: handle, session: owner, generation: generation, row: $0)
                     }
                     DispatchQueue.main.async { [weak self, weak window] in
                         guard let self, let window, self.windowSession === window, !window.isClosed,
@@ -165,7 +165,7 @@ final class ShellGitDataSource: GitPanelDataSource {
                             self.message = nil
                             self.rebuild()
                             self.emit(.operationFinished(GitOperationResult(id: id, kind: kind,
-                                outcome: .succeeded(message: applied ? (stage ? String(localized: "Staged node name.") : String(localized: "Unstaged node name.")) : ""))))
+                                outcome: .succeeded(message: applied ? (stage ? String(localized: "Staged selected change.") : String(localized: "Unstaged selected change.")) : ""))))
                         } else {
                             self.clearRows()
                             let message = String(localized: "The Git change list changed. Refresh to read it again.")
@@ -180,7 +180,7 @@ final class ShellGitDataSource: GitPanelDataSource {
                 self.clearRows()
                 let message: String
                 if case .requestFailed(_, _, let text) = event { message = text }
-                else { message = String(localized: "Couldn’t load the saved node names.") }
+                else { message = String(localized: "Couldn’t load the saved changes.") }
                 self.message = message
                 self.emit(.operationFinished(GitOperationResult(id: id, kind: kind, outcome: .failed(message: message))))
                 self.emitStatus()
@@ -189,7 +189,7 @@ final class ShellGitDataSource: GitPanelDataSource {
         if case .success(let id) = result {
             operation = id
             emit(.operationProgress(GitOperationProgress(id: id, kind: kind, fraction: nil,
-                message: kind == .stage ? String(localized: "Staging node name…") : String(localized: "Reading saved node names…"),
+                message: kind == .stage ? String(localized: "Staging selected change…") : String(localized: "Reading saved changes…"),
                 isCancellable: true)))
         } else {
             message = String(localized: "Another Git operation is still running. Refresh to try again.")
@@ -207,7 +207,7 @@ final class ShellGitDataSource: GitPanelDataSource {
 
     private func rebuild() {
         let byDocument = Dictionary(grouping: items.indices, by: { items[$0].document })
-        let documents = byDocument.keys.sorted { $0.uuidString < $1.uuidString }
+        let documents = byDocument.keys.compactMap { $0 }.sorted { $0.uuidString < $1.uuidString }
         for document in documents {
             guard let indices = byDocument[document] else { continue }
             let doc = id(document, 0)
@@ -227,20 +227,41 @@ final class ShellGitDataSource: GitPanelDataSource {
                 return object
             }
         }
+        let components = items.indices.compactMap { i in items[i].componentPath.map { (i, $0) } }
+        if !components.isEmpty {
+            let group = id(CoreRuntimeEvent.nilID, 3)
+            roots.append(group)
+            rows[group] = GitChangeRow(id: group, level: .document, title: String(localized: "Components"), detail: "",
+                kind: nil, stageState: aggregate(components.map { $0.0 }), childCount: components.count, changeCount: components.count)
+            selection[group] = components.map { $0.0 }
+            children[group] = components.map { i, path in
+                let file = items[i], object = id(file.node, 4), source = id(file.node, 5)
+                let filename = (path as NSString).lastPathComponent
+                children[object] = [source]
+                selection[object] = [i]
+                selection[source] = [i]
+                rows[object] = GitChangeRow(id: object, level: .object, title: filename, detail: file.node.uuidString,
+                    kind: nil, stageState: aggregate([i]), childCount: 1, changeCount: 1)
+                rows[source] = GitChangeRow(id: source, level: .change, title: String(localized: "Component source"),
+                    detail: path, kind: file.head.isEmpty ? .addObject : .rawFile,
+                    stageState: aggregate([i]), childCount: 0, changeCount: 1)
+                return object
+            }
+        }
     }
 
     private func aggregate(_ indexes: [Int]) -> GitStageState {
         let staged = indexes.contains { items[$0].staged }
-        let unstaged = indexes.contains { items[$0].index != items[$0].working }
+        let unstaged = indexes.contains { items[$0].unstaged }
         return staged && unstaged ? .partiallyStaged : (staged ? .staged : .unstaged)
     }
 
     private func emitStatus() {
         let status = GitStatusSnapshot(availability: trusted ? .ready : .restricted, head: .unknown,
             upstream: nil, remotes: [], identityConfigured: false, stagedChangeCount: items.filter(\.staged).count,
-            unstagedChangeCount: items.filter { $0.index != $0.working }.count, mergeState: .none,
+            unstagedChangeCount: items.filter { $0.unstaged }.count, mergeState: .none,
             semanticConflictCount: 0, unresolvedConflictCount: 0, rawConflictCount: 0,
-            stagedSnapshotIssue: nil, semanticStatusError: message ?? (otherChanges ? String(localized: "Only saved node name changes are shown.") : nil),
+            stagedSnapshotIssue: nil, semanticStatusError: message ?? (otherChanges ? String(localized: "Some saved changes can’t be staged here.") : nil),
             pendingAutosave: (windowSession?.info?.has_unsaved_changes ?? 0) != 0,
             changes: GitChangeTreeInfo(generation: generation, structure: generation, documentCount: roots.count), conflicts: .empty)
         emit(.status(status))

@@ -5,10 +5,10 @@ enum ShellGitStageCheck {
     static func run() -> Bool {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "--git-stage-check"), args.indices.contains(i + 2) else { return false }
-        return MainActor.assumeIsolated { check(path: args[i + 1], replacement: args[i + 2]) }
+        return MainActor.assumeIsolated { check(path: args[i + 1], replacement: args[i + 2], component: args.count > i + 3 ? args[i + 3] : nil) }
     }
 
-    @MainActor private static func check(path: String, replacement: String) -> Bool {
+    @MainActor private static func check(path: String, replacement: String, component: String?) -> Bool {
         NSApplication.shared.setActivationPolicy(.accessory)
         let runtime = RuntimeHost()
         defer { runtime.shutdown() }
@@ -53,11 +53,23 @@ enum ShellGitStageCheck {
             guard spin({
                 guard panel.changeList.generation == panel.status?.changes.generation, !panel.isBusy else { return false }
                 for i in 0..<outline.numberOfRows {
-                    guard let item = outline.item(atRow: i) as? GitChangeOutlineItem,
-                          let row = panel.changeList.row(of: item) else { continue }
+                    guard let item = outline.item(atRow: i) as? GitChangeOutlineItem else { continue }
+                    if panel.changeList.row(of: item) == nil {
+                        outline.scrollRowToVisible(i)
+                        _ = outline.view(atColumn: 0, row: i, makeIfNecessary: true)
+                        continue
+                    }
+                    guard let row = panel.changeList.row(of: item) else { continue }
                     if row.level != .change {
-                        if !outline.isItemExpanded(item) { outline.expandItem(item) }
-                    } else if row.title == String(localized: "Node name"), row.stageState == state {
+                        if component != nil, row.level == .document, row.title != String(localized: "Components") { continue }
+                        if let component, row.level == .object, row.title != component { continue }
+                        if !outline.isItemExpanded(item) {
+                            outline.scrollRowToVisible(i)
+                            _ = outline.view(atColumn: 0, row: i, makeIfNecessary: true)
+                            outline.expandItem(item)
+                            return false
+                        }
+                    } else if (component.map { row.detail == "design/components/" + $0 } ?? (row.title == String(localized: "Node name"))), row.stageState == state {
                         outline.scrollRowToVisible(i)
                         guard let cell = outline.view(atColumn: 0, row: i, makeIfNecessary: true) as? GitChangeCellView,
                               cell.stageCheckbox.isEnabled, !cell.stageCheckbox.isHidden,
@@ -67,11 +79,50 @@ enum ShellGitStageCheck {
                     }
                 }
                 return false
-            }) else { return false }
+            }) else {
+                let details = (0..<outline.numberOfRows).compactMap { i -> String? in
+                    guard let item = outline.item(atRow: i) as? GitChangeOutlineItem, let row = panel.changeList.row(of: item) else { return nil }
+                    return "\(row.title) \(row.detail) \(row.stageState)"
+                }
+                return fail("선택 가능한 Git 행: \(details)")
+            }
             return true
         }
         guard let window = open() else { return fail("프로젝트 창 열기") }
         guard let panel = showGitPanel(window) else { return fail("프로젝트 창의 Git 패널 표시") }
+        if let component {
+            let file = URL(fileURLWithPath: path).appendingPathComponent("design/components").appendingPathComponent(component)
+            let gitIndex = URL(fileURLWithPath: path).appendingPathComponent(".git/index")
+            func counts(_ staged: Int, _ unstaged: Int) -> Bool {
+                spin { !panel.isBusy && panel.status?.stagedChangeCount == staged && panel.status?.unstagedChangeCount == unstaged }
+            }
+            guard spin({ panel.status?.availability == .ready && (panel.status?.unstagedChangeCount ?? 0) > 0 }),
+                  let staged = panel.status?.stagedChangeCount, let unstaged = panel.status?.unstagedChangeCount,
+                  let original = try? Data(contentsOf: gitIndex), let baseline = try? Data(contentsOf: file),
+                  let owner = window.windowController.windowSession, let shown = panel.status?.changes.generation
+            else { return fail("컴포넌트 파일 변경 조회: \(String(describing: panel.status?.semanticStatusError))") }
+            // 같은 파일에 편집이 추가되면 이전 checkbox로 준비된 bytes를 index에 넣지 않습니다.
+            do { try (baseline + Data("\n".utf8)).write(to: file, options: .atomic) } catch { return fail("선택 파일 재편집") }
+            guard click(panel), spin({ panel.status?.semanticStatusError?.contains("바뀌") == true }),
+                  (try? Data(contentsOf: gitIndex)) == original else { return fail("오래된 컴포넌트 편집 보존: error=\(String(describing: panel.status?.semanticStatusError)), selected=\(component), staged=\(panel.status?.stagedChangeCount ?? -1), unstaged=\(panel.status?.unstagedChangeCount ?? -1), unchanged=\((try? Data(contentsOf: gitIndex)) == original)") }
+            do { try baseline.write(to: file, options: .atomic) } catch { return fail("fixture 원본 복원") }
+            window.gitSource.updateTrust(false)
+            guard spin({ panel.status?.availability == .restricted }) else { return fail("컴포넌트 신뢰 철회") }
+            var rejected: CoreRuntimeEvent?
+            _ = pump.gitNames(owner.session, selection: (shown, 0)) { rejected = $0 }
+            guard pump.waitForPendingRequests(timeout: 10), case .requestFailed? = rejected,
+                  (try? Data(contentsOf: gitIndex)) == original else { return fail("제한 모드 index 불변") }
+            window.gitSource.updateTrust(true)
+            guard counts(staged, unstaged), click(panel), counts(staged + 1, unstaged - 1) else {
+                return fail("컴포넌트 파일 Stage: \(String(describing: panel.status?.semanticStatusError))")
+            }
+            do { try Data(contentsOf: gitIndex).write(to: URL(fileURLWithPath: replacement)) }
+            catch { return fail("검사용 stage 결과 저장") }
+            guard click(panel, state: .staged), counts(staged, unstaged),
+                  (try? Data(contentsOf: file)) == baseline else { return fail("컴포넌트 파일 Unstage") }
+            print("component-stage ok: stale same-file edit and revoked trust rejected; selected checkbox staged and unstaged")
+            return true
+        }
         guard spin({ panel.status?.availability == .ready && panel.status?.unstagedChangeCount == 1 }) else {
             return fail("실제 저장된 이름 변경 조회: \(String(describing: panel.status?.semanticStatusError))")
         }
@@ -138,7 +189,7 @@ enum ShellGitStageCheck {
         _ = pump.gitNames(closingSession.session, selection: nil) { late = $0 }
         again.window?.close()
         guard pump.waitForPendingRequests(timeout: 10), late != nil else { return fail("Git 조회 중 창 닫기") }
-        guard CoreRuntime.gitNameRow(handle: pump.runtimeHandle, session: closingSession.session,
+        guard CoreRuntime.gitPanelRow(handle: pump.runtimeHandle, session: closingSession.session,
                                      generation: late?.request ?? 0, row: 0) == nil else { return fail("닫힌 창 행 유지") }
         print("git-stage ok: trust revoked, cancel and stale click preserved index, current click staged, reopen and unstage, close during refresh")
         return true

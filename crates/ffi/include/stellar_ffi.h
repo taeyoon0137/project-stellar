@@ -312,6 +312,9 @@ StellarStatus stellar_project_trust(uint64_t handle, uint64_t project, uint32_t 
  * (each u32 little-endian UTF-8 byte length followed by those bytes). No Git I/O occurs in the row getter. */
 StellarStatus stellar_git_names_request(uint64_t handle, uint64_t session, uint32_t action, uint64_t generation, uint32_t row, uint64_t *out_request);
 StellarStatus stellar_git_names_row(uint64_t handle, uint64_t session, uint64_t generation, uint32_t row, uint8_t *buf, size_t capacity, size_t *out_len);
+/* Component row: component ID (16 bytes), staged u8, unstaged u8, then path and HEAD/index/working
+ * SHA-256 strings (each u32 little-endian length + UTF-8, empty means absent). */
+StellarStatus stellar_git_component_row(uint64_t handle, uint64_t session, uint64_t generation, uint32_t row, uint8_t *buf, size_t capacity, size_t *out_len);
 StellarStatus stellar_git_names_cancel(uint64_t handle, uint64_t session, uint64_t request);
 
 /* 창 session 닫기를 요청합니다(문서 state·history·선택 폐기, 저장하지 않음). */

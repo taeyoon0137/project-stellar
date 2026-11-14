@@ -105,35 +105,6 @@ impl ProjectHead {
         blobs.remove(&entry.oid).ok_or(HeadUnavailable)
     }
 
-    fn component_library(
-        &self,
-        entries: &[SnapshotEntry],
-    ) -> Result<(ComponentLibrary, ComponentFiles), HeadUnavailable> {
-        let sources = component_entries(entries)?;
-        if sources.is_empty() {
-            return Ok((ComponentLibrary::new(), ComponentFiles::new()));
-        }
-        let ids: Vec<_> = sources.iter().map(|entry| entry.oid.clone()).collect();
-        let mut blobs = read_blobs_with_limits(
-            &self.git,
-            &self.root,
-            &ids,
-            &BlobLimits {
-                max_blob_bytes: MAX_INPUT_BYTES as u64,
-                max_batch_bytes: 4 * 1024 * 1024,
-                max_total_bytes: MAX_PROJECT_SOURCE_BYTES,
-            },
-        )
-        .map_err(|_| HeadUnavailable)?;
-        let mut files = Vec::with_capacity(sources.len());
-        for entry in sources {
-            // 두 경로가 같은 bytes면 파일명·StableId 계약상 적어도 하나는 잘못되었습니다.
-            let bytes = blobs.remove(&entry.oid).ok_or(HeadUnavailable)?;
-            files.push((entry.path.to_path_buf().ok_or(HeadUnavailable)?, bytes));
-        }
-        library_from_blobs(files).map_err(|_| HeadUnavailable)
-    }
-
     /// 현재 세대와 프로젝트 공유 컴포넌트 파일을 고정한 tree에서 읽습니다.
     pub fn saved(&self, project: StableId) -> Result<HeadGeneration, HeadUnavailable> {
         let entries =
@@ -174,7 +145,7 @@ impl ProjectHead {
         if decoded.project_id != project {
             return Err(HeadUnavailable);
         }
-        let (library, component_files) = self.component_library(&entries)?;
+        let (library, component_files) = git_component_library(&self.git, &self.root, &entries)?;
         if !library.is_empty()
             && decoded
                 .chunk_pointers
@@ -214,6 +185,37 @@ impl ProjectHead {
             _files: files,
         })
     }
+}
+
+/// 이미 고정한 Git tree 또는 index 항목에서 파일명·StableId·총량을 검증한 라이브러리를 읽습니다.
+pub fn git_component_library(
+    git: &GatedGitRunner,
+    root: &Path,
+    entries: &[SnapshotEntry],
+) -> Result<(ComponentLibrary, ComponentFiles), HeadUnavailable> {
+    let sources = component_entries(entries)?;
+    if sources.is_empty() {
+        return Ok((ComponentLibrary::new(), ComponentFiles::new()));
+    }
+    let ids: Vec<_> = sources.iter().map(|entry| entry.oid.clone()).collect();
+    let mut blobs = read_blobs_with_limits(
+        git,
+        root,
+        &ids,
+        &BlobLimits {
+            max_blob_bytes: MAX_INPUT_BYTES as u64,
+            max_batch_bytes: 4 * 1024 * 1024,
+            max_total_bytes: MAX_PROJECT_SOURCE_BYTES,
+        },
+    )
+    .map_err(|_| HeadUnavailable)?;
+    let mut files = Vec::with_capacity(sources.len());
+    for entry in sources {
+        // 두 경로가 같은 bytes면 파일명·StableId 계약상 적어도 하나는 잘못되었습니다.
+        let bytes = blobs.remove(&entry.oid).ok_or(HeadUnavailable)?;
+        files.push((entry.path.to_path_buf().ok_or(HeadUnavailable)?, bytes));
+    }
+    library_from_blobs(files).map_err(|_| HeadUnavailable)
 }
 
 fn component_entries(entries: &[SnapshotEntry]) -> Result<Vec<&SnapshotEntry>, HeadUnavailable> {
