@@ -9,6 +9,9 @@ pub mod tessellation;
 /// stroke tessellation: 폭·join·cap·dash (XI.6.2).
 pub mod stroke;
 
+/// tessellation worker pool과 stale revision 결과 폐기 (XI.6.3).
+pub mod tessellation_worker;
+
 /// thread 역할 표시 (XI.7.1).
 pub mod thread_role;
 
