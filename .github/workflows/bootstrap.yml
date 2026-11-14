@@ -7,9 +7,6 @@ name: bootstrap
 # Windows job은 ADR-0006에 따라 현재 비활성입니다.
 
 on:
-  push:
-    branches: [develop, main]
-  pull_request:
   workflow_dispatch:
 
 concurrency:
