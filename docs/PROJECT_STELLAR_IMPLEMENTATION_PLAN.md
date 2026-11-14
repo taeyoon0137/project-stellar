@@ -3,7 +3,7 @@
 - 기준 아키텍처: `PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md`
 - 기준일: 2026-06-23
 - 현재 상태: `I.1.1`~`I.1.9` DEV-MAC 검증 완료(이력 정합화·`Task(...)` 일원화 반영). 다음 작업은 `I.1.10`(Bootstrap CI). Windows·CI 증거는 미확보
-- 원자 작업 수: 1023개
+- 원자 작업 수: 1043개
 - 구현 Phase 수: 29개 (`I`~`XXIX`)
 - 초기 릴리스 범위: Phase `I`~`XVII`, G8 통과
 - 로드맵 범위: Phase `XVIII`~`XXIX`
@@ -21,6 +21,7 @@
 - **2026-11-14 — 커밋 규칙 정합:** 지침 우선순위상 위인 `AGENTS.md`에 맞춰 WBS 작업은 `Task(<WBS-ID>)`, WBS 밖 유지보수는 `Feat:`·`Docs:`·`Refactor:`·`Fix:`·`Chore:`·`Test:`를 허용합니다. 2026-06-23 "커밋 규칙 고정"을 대체하며, `cargo xtask validate-commit-message`와 CI commit subject 검사도 같은 기준을 씁니다.
 - **2026-11-14 — 제품 테스트 실행 위치:** 제품 crate 테스트는 CI에 추가하지 않고, 통합 시 로컬 `cargo xtask check-core`(workspace fmt·clippy·test·doctest)로 검증합니다. 행 지시의 "CI smoke"는 이 로컬 통합 검증을 뜻합니다(VI.10.5 문구 수정).
 - **2026-11-14 — 3계층 에이전트 도구 결정 반영(ADR-0005 Accepted):** 제품 소유자 결정에 따라 내장 에이전트는 사용자가 설치하고 직접 로그인한 공급자 공식 CLI를 공식 문서의 비대화형 인터페이스로만 실행하고, Stellar는 인증·자격 증명·사용량 중개에 참여하지 않습니다. 출력은 채팅 보기(기본)와 원문 보기를 함께 제공하고 공급자 출력 디코드는 표시 전용으로 격리합니다. 앱 없이 동작하는 읽기 전용 MCP backend를 신뢰된 고정 프로젝트에 한해 허용합니다. 에이전트 세션이 끊기거나 중지돼도 적용 변경은 자동 rollback하지 않고 출처 표시와 함께 남겨 사용자가 변경·세션 단위로 직접 되돌립니다. headless 명령의 실행 이름은 `stellar`이며 macOS 앱 첫 실행 때 명령 설치 화면을 제공합니다. 목적이 사라진 행은 폐기 표기 없이 삭제하는 규칙으로 바꿨습니다(3. 계획 변경 규칙). XIX.1.4, XIX.3.3, XIX.6.1, XIX.6.3, XIX.6.4, XIX.7.2와 Phase XIX 완료 조건을 그 자리에서 고쳤으며, XIX.1.6\~XIX.1.9, XIX.6.7\~XIX.6.10, XIX.9, XXIV.4, XXIV.5와 Phase XXIX를 추가했습니다.
+- **2026-11-14 — CSS 기반 디자인 속성 어휘(ADR-0024 Accepted):** 제품 소유자 방향에 따라 인스펙터가 편집하는 디자인 속성의 이름·값 문법·단위·레이아웃 의미는 CSS longhand를 정본으로 삼습니다. 저장은 바이너리 chunk와 숫자 `PropertyKey`를 유지하고 CSS 텍스트를 파일에 저장하지 않습니다. 영속 record는 longhand만 저장하고, Stellar가 받아들인 선언은 CSS와 같은 결과를 내야 하며 예외는 `docs/design/property_model.md` 14장 목록뿐입니다. 이미 저장되는 속성의 기본값은 바꾸지 않습니다. 완료된 행은 고치지 않고 Phase IX에 IX.11(CSS 기반 속성 체계, 20행)을 추가했습니다. 내용은 registry CSS 매핑, 레이아웃 의미 정렬과 CSS 적합성 fixture, 영속 layout record, Frame·Text migration, CSS 값 형식화·파싱과 복사·붙여넣기, 인스펙터 CSS 범주, export 정렬입니다.
 
 ---
 
@@ -909,6 +910,35 @@ tools/xtask/
 | IX.10.10 | `[ ]` | 승인된 profile upgrade를 CommandTransaction과 manifest 변경으로 적용하고 자동 commit하지 않습니다. | apply/undo, Git working tree change fixture 통과. | IX.10.9, Phase VII |
 
 **Phase IX 추가 완료 조건:** TargetProfile pin, capability filtering, 다중 profile validation을 통과합니다.
+
+### IX.11 CSS 기반 속성 체계
+
+> 기준: ADR-0024, `docs/design/property_model.md`(이하 "속성 모델"). 디자인 속성의 이름·값 문법·단위·레이아웃 의미는 CSS longhand를 따르고, 저장은 바이너리 chunk와 숫자 `PropertyKey`를 유지합니다. CSS 텍스트를 파일에 저장하지 않습니다.
+
+| ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
+|---|---|---|---|---|
+| IX.11.1 | `[ ]` | `crates/document`에 registry 항목별 CSS 매핑 metadata 타입을 정의합니다. 필드는 CSS longhand 이름 목록, 값 문법 종류, 매핑 상태(`exact`·`converted`·`approximated`·`stellar-only`), `initial-differs`·`subset` 표시, 차이 설명입니다. `Length`=`px`, `Angle`=`deg`, `Duration`=`ms`, `Percentage`=`%` 단위 계약을 `core-types` 문서 주석에 고정합니다. 저장 bytes는 바꾸지 않습니다. | 타입 golden test, CSS longhand 이름 inventory 상수(이 작업에서 추가)의 중복·형식 검사 test 통과, storage golden 불변. | VI.3.5, VI.9.7 |
+| IX.11.2 | `[ ]` | Frame·Modifier metadata registry의 모든 항목에 속성 모델 5장·9장 대응을 채웁니다. registry `name`을 CSS longhand 또는 `stellar-only` 이름으로 맞추고 semantic diff 표시 문자열을 같은 이름으로 바꿉니다. FrameBounds clip의 기준 box와 radius 반영을 scene 코드에서 확인해 기록합니다. | 매핑 누락 0 검사, 속성 모델 표와 registry snapshot 일치 test, PropertyKey 숫자와 storage golden 불변. | IX.11.1 |
+| IX.11.3 | `[ ]` | Shape·Path·Text·Image property metadata registry를 Frame registry(VI.3.5)와 같은 방식으로 추가합니다. node kind 상위 byte 규칙(Frame `0x01xx`, Image `0x06xx`)으로 PropertyKey를 할당하고 기존 key는 재사용하지 않습니다. 각 항목에 속성 모델 6장·7장 CSS 매핑을 채웁니다. | payload 필드와 registry 1:1 누락 검사, key 중복 0, CSS 매핑 누락 0. | IX.11.1, VI.5.6, VI.6.2, VI.7.3, VI.8.1 |
+| IX.11.4 | `[ ]` | layout 엔진 Stack 의미를 CSS Flexbox에 맞춥니다. `flex-shrink` 기본 1, `align-items`·`align-content` 생략값 `normal`(stretch), 자식별 `align-self`, flex item 자동 최소 크기(`min-width: auto`), 축 고정 `row-gap`·`column-gap` 입력을 구현합니다. 바뀐 X.11.1 corpus 기대값은 fixture별 변경 이유와 함께 갱신합니다. | 속성 모델 4.2절 행별 fixture 통과, 갱신 fixture 목록이 보고서와 일치, 같은 입력 결정론 test 통과. | IX.11.1, X.3.5, X.6.4 |
+| IX.11.5 | `[ ]` | Grid·Free·Overlay 의미를 CSS에 맞춥니다. grid item 생략 정렬을 `normal`(stretch)로 하고 `justify-self`·`align-self`를 추가하며, Free containing block을 padding box로 바꾸고, absolute 자식이 부모 Hug 크기에 기여하지 않게 합니다. Overlay 정렬 이름을 `justify-items`·`align-items`로 맞춥니다. | 속성 모델 4.4절·4.5절 행별 fixture 통과, 갱신 corpus 목록과 이유 기록, HugContent cycle 진단 fixture 유지. | IX.11.1, X.2.3, X.4.5, X.5.1, X.6.5 |
+| IX.11.6 | `[ ]` | 레이아웃 container·item 속성을 CSS longhand로 저장하는 영속 record와 schema version을 정의합니다. 생략값은 CSS initial value입니다. 저장 위치(Frame payload 확장 또는 `layout_mode` 참조 resource)와 Frame `size` 흡수 방식을 이 작업의 ADR로 정합니다. | ADR 존재, record round-trip과 canonical bytes golden, unknown field 정책 fixture, `cargo xtask test-migrations` 통과. | IX.11.4, IX.11.5, V.8.6 |
+| IX.11.7 | `[ ]` | sizing preset(Fixed·Percentage·HugContent·Fill)과 longhand 사이의 순수 변환 함수를 구현합니다. preset→longhand는 속성 모델 4.3절 표를 따르고, longhand→preset은 표와 정확히 일치할 때만 preset을 돌려주며 아니면 Custom입니다. | 부모 방식·축별 왕복 fixture, Custom 판정 fixture, 같은 입력 같은 결과. | IX.11.6 |
+| IX.11.8 | `[ ]` | CSS 레이아웃 적합성 fixture를 추가합니다. Flexbox 60개, Grid 40개, positioning 30개 이상이며 각 fixture는 CSS 선언과 기대 border box rect를 가집니다. 기대값은 고정 버전 브라우저로 생성한 JSON을 커밋하고, 생성 절차와 브라우저 버전을 fixture README에 기록합니다. 테스트는 브라우저를 실행하지 않습니다. 텍스트는 고정 intrinsic 크기 대체 요소로 둡니다. | 모든 fixture rect가 1 LayoutUnit 안에서 일치, 속성 모델 14장 확장에 해당하는 fixture만 예외 표시, fixture count 검사 통과. | IX.11.4, IX.11.5, X.11.1 |
+| IX.11.9 | `[ ]` | Frame 위치와 transform 분리 migration을 구현합니다. 행렬 이동 성분은 위치 longhand로, 나머지는 `rotate`·`scale`과 잔여 `transform`으로 옮기고, migration된 노드에는 `transform-origin: 0 0`을 명시 저장합니다. 새 노드 기본 origin은 `50% 50%`입니다. 인스펙터 위치 X·Y 편집 경로를 새 속성으로 바꿉니다. | migration golden fixture에서 migration 전후 scene geometry 동일, 원본 generation hash 유지, 자동 commit 없음, `cargo xtask test-migrations` 통과. | IX.11.6, V.8.6 |
+| IX.11.10 | `[ ]` | Frame border를 4변 `border-*-width`·`-style`·`-color` longhand로 migration합니다. 기존 `Border{color, thickness}`는 4변 같은 값과 style `solid`로, 없음은 `none`으로 옮깁니다. border가 CSS처럼 padding box를 줄이도록 layout 입력에 border 두께를 넣습니다. | migration golden fixture 외형 동일, 4변 다른 값 round-trip, border가 있는 Stack 자식 위치 fixture가 IX.11.8 기대값과 일치. | IX.11.6, V.8.6 |
+| IX.11.11 | `[ ]` | Typography record를 CSS longhand(`font-family`, `font-size`, `font-weight`, `font-style`, `font-stretch`, `line-height`, `letter-spacing`)로 정의하고 `TextStyle.typography` 참조 대상으로 연결합니다. family 해석 결과는 `FontFaceRef`로 고정하고 누락 글꼴은 진단합니다. | record round-trip, 생략값이 CSS initial value와 같은지 test, missing font diagnostic fixture. | IX.11.1, VI.7.2, X.8.4 |
+| IX.11.12 | `[ ]` | Text paragraph 속성을 CSS에 맞춥니다. `letter_spacing_em`을 run 단위 `letter-spacing`으로 옮기는 schema migration을 구현하고, `line-height` 배율을 inline box별 font-size 기준으로 해석하도록 text layout을 고칩니다. 바뀐 X.10 golden은 이유와 함께 갱신합니다. | migration golden fixture, 혼합 크기 run line box fixture, 단일 크기 문단 결과 불변 test. | IX.11.11, X.10.2, V.8.6 |
+| IX.11.13 | `[ ]` | registry 값 문법별 CSS 값 formatter를 구현합니다. 속성 모델 8.2절·8.3절 정규 형식(가장 짧은 왕복 10진, 소문자 keyword, 색 hex 또는 `color()`)을 따르고 토큰 참조는 `var(--name)`으로 씁니다. | 값 문법별 golden 출력, 같은 값 byte-identical 출력, f32 왕복 property test 통과. | IX.11.2, IX.11.3 |
+| IX.11.14 | `[ ]` | registry 값 문법별 CSS 값 parser와 shorthand 확장을 구현합니다. 속성 모델 2장의 입력 형태만 받고 그 밖은 `unsupported-unit`·`unsupported-value`·`unknown-token`·`forbidden-value` 오류를 구조화해 반환합니다. 입력 길이 상한과 재귀 없는 문법을 지킵니다. | parse(format(v)) == v property test, 11장 shorthand 확장 fixture, 거부 입력 fixture, parser fuzz target이 panic 0. | IX.11.13 |
+| IX.11.15 | `[ ]` | 선택 노드 속성을 CSS 선언 블록 텍스트로 복사하고, CSS 선언 블록을 붙여넣어 하나의 CommandTransaction으로 적용하는 core API를 구현합니다. 알 수 없는 속성과 받을 수 없는 값은 건너뛴 목록으로 돌려주고 조용히 버리지 않습니다. 클립보드 연결은 셸이 맡습니다. | copy→paste 왕복 후 semantic snapshot 동일, 건너뜀 보고 fixture, undo 한 번으로 전체 복원. | IX.11.14, IX.11.16, VII.2.4, VII.2.6 |
+| IX.11.16 | `[ ]` | TokenName에서 CSS custom property 이름을 결정론적으로 파생합니다. 속성 모델 10장 규칙(구분자 치환, identifier escape, 충돌 시 StableId 접미사와 진단)을 구현하고 parser의 `var()` 해석에 연결합니다. | 이름 파생 golden, 충돌 진단 fixture, rename 후 StableId 참조 유지. | IX.11.13, VIII.5.2 |
+| IX.11.17 | `[ ]` | macOS 인스펙터 섹션을 속성 모델 12장 CSS 범주로 재구성합니다. `InspectorPropertyCatalog`와 `docs/design/ui/inspector.md`를 갱신하고, sizing preset, 4변·4모서리 묶음 편집, CSS 값 입력·오류 표시, longhand 이름 툴팁을 연결합니다. 외형은 가이드와 인스펙터 명세를 따릅니다. | `--inspector-ui-check` 통과(Light·Dark, 섹션 구성, 접근성 레이블, key view 순서), 모든 행에 registry CSS 이름 연결. | IX.11.2, IX.11.3, IX.11.7, IX.11.14 |
+| IX.11.18 | `[ ]` | modifier stack을 CSS 고정 적용 순서로 선형화하는 export 계획 함수를 구현합니다. 속성 모델 9.1절 규칙으로 요소·wrapper 구조, filter 목록, path 굽기 지점을 계산하고 wrapper마다 `approximated` 진단을 냅니다. | 순서별 기대 구조 fixture, 같은 stack 같은 구조, stellar-only modifier 굽기 지점 fixture. | IX.11.2, IX.10.5 |
+| IX.11.19 | `[ ]` | registry CSS 매핑과 Web·Apple·Android TargetProfile을 잇는 초기 capability matrix를 IX.10.5 registry에 등록합니다. XXII.2.2, XXII.2.3, XXII.3.2, XXII.4.2는 이 matrix를 입력으로 씁니다. | 모든 registry 항목에 profile kind별 상태 존재, 속성 모델 14장 확장이 `approximated` 이상으로 표시. | IX.11.2, IX.11.3, IX.10.5 |
+| IX.11.20 | `[ ]` | SVG export 매핑표(`crates/export/src/svg/mapping.rs`)의 각 행에 registry CSS 매핑을 연결하고, `fill`·`stroke`·`opacity`·`mix-blend-mode`·`filter` 출력이 registry 값 문법과 formatter를 쓰게 합니다. | 매핑 inventory 누락 0, SVG 출력 문자열이 IX.11.13 formatter 결과와 일치, same snapshot byte-identical. | IX.11.2, IX.11.13, XX.3.1 |
+
+**IX.11 완료 조건:** 모든 registry 항목이 CSS 매핑을 갖고, CSS 레이아웃 적합성 fixture와 의미가 다른 구현 속성의 migration fixture가 통과하며, 인스펙터가 CSS 범주와 CSS 값 입력을 사용합니다.
 
 ## Phase X. 결정론적 레이아웃과 텍스트 엔진
 

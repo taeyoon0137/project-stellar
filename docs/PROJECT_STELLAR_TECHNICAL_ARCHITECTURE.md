@@ -635,6 +635,8 @@ Stellar는 운영체제의 실제 CSS, Auto Layout, SwiftUI, Compose 엔진을 �
 
 Target Profile Adapter는 공통 결과가 Web·Apple·Android에서 표현 가능한지 검사합니다. 표현할 수 없는 설정을 조용히 왜곡하지 않고 `unsupported`, `approximated`, `fallback` 등의 진단 상태를 제공합니다.
 
+디자인 속성의 이름, 값 문법, 단위, 상자·레이아웃 의미는 CSS longhand를 정본 어휘로 삼습니다(ADR-0024). 이는 어휘 결정이며 저장 형식은 바이너리 청크(§21)와 숫자 속성 키를 그대로 쓰고, 계산은 위 공통 결정론적 엔진이 합니다. Stellar가 받아들인 선언은 같은 CSS 선언과 같은 결과를 내야 하며, 허용하는 예외와 세부 대응은 `docs/design/property_model.md`에 둡니다.
+
 ---
 
 ## 14. 토큰, 표현식과 Binding
