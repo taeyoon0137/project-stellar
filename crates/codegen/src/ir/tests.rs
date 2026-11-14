@@ -511,3 +511,96 @@ fn view_without_semantics_or_tokens_still_builds() {
         .semantic_snapshot()
         .starts_with(snapshot::SNAPSHOT_HEADER));
 }
+
+#[test]
+fn accessibility_only_input_has_no_invented_layout_profile_or_values() {
+    use crate::web::{aria::map_accessibility, check::check_document};
+    let nodes = vec![
+        ViewNode {
+            id: sid(1),
+            parent: None,
+            element: ElementKind::FRAME,
+            contracts: vec![],
+        },
+        ViewNode {
+            id: sid(2),
+            parent: Some(sid(1)),
+            element: ElementKind::TEXT,
+            contracts: vec![],
+        },
+    ];
+    let mut tree = AccessibilityTree::new();
+    tree.insert(
+        AccessibilityNode::new(sid(1), AccessibilityRole::Group)
+            .with_label(AccessibilityBinding::text("이름 \" & < >")),
+    )
+    .unwrap();
+    tree.insert(
+        AccessibilityNode::new(sid(2), AccessibilityRole::StaticText)
+            .with_label(AccessibilityBinding::NodeText(sid(2))),
+    )
+    .unwrap();
+    tree.push_root(sid(1));
+    tree.push_child(sid(1), sid(2));
+    let snapshot = AccessibilitySnapshot::from_tree(&tree).unwrap();
+    let texts = BTreeMap::from([(sid(2), "내용 < & >".to_string())]);
+    let ir = build_accessibility_ir(&nodes, &snapshot, &texts).unwrap();
+    assert!(ir
+        .nodes
+        .iter()
+        .all(|n| n.layout.is_none() && n.properties.is_empty() && n.capabilities.is_empty()));
+    assert!(ir.states.is_empty() && ir.tokens.is_empty());
+    let mapped = map_accessibility(&ir);
+    assert_eq!(mapped.to_html(), "<div role=\"group\" aria-label=\"이름 &quot; &amp; &lt; &gt;\">\n  <span>내용 &lt; &amp; &gt;</span>\n</div>\n");
+    assert!(mapped.notes.is_empty());
+    assert!(check_document(&mapped.document).is_empty());
+    assert_eq!(
+        build_accessibility_ir(
+            &nodes,
+            &snapshot,
+            &BTreeMap::from([(sid(99), "outside".into())])
+        ),
+        Err(IrError::TextOutsideView(sid(99)))
+    );
+    assert_eq!(
+        build_accessibility_ir(&nodes[..1], &snapshot, &BTreeMap::new()),
+        Err(IrError::AccessibilityOutsideView(sid(2)))
+    );
+}
+
+#[test]
+fn accessibility_only_input_does_not_resolve_missing_state_or_hide_mapping_and_check_errors() {
+    use crate::web::{aria::map_accessibility, check::check_document};
+    let nodes = [ViewNode {
+        id: sid(1),
+        parent: None,
+        element: ElementKind::FRAME,
+        contracts: vec![],
+    }];
+    for label in [
+        AccessibilityBinding::State(sid(7)),
+        AccessibilityBinding::NodeText(sid(99)),
+    ] {
+        let mut tree = AccessibilityTree::new();
+        tree.insert(
+            AccessibilityNode::new(sid(1), AccessibilityRole::Button).with_label(label.clone()),
+        )
+        .unwrap();
+        tree.push_root(sid(1));
+        let snapshot = AccessibilitySnapshot::from_tree(&tree).unwrap();
+        let ir = build_accessibility_ir(&nodes, &snapshot, &BTreeMap::new());
+        if matches!(label, AccessibilityBinding::State(_)) {
+            assert_eq!(
+                ir,
+                Err(IrError::UnknownState {
+                    node: sid(1),
+                    state: sid(7)
+                })
+            );
+        } else {
+            let mapped = map_accessibility(&ir.unwrap());
+            assert_eq!(mapped.notes.len(), 1);
+            assert!(!check_document(&mapped.document).is_empty());
+        }
+    }
+}

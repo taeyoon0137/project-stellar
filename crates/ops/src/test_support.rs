@@ -218,3 +218,6 @@ pub fn corrupt_view_tree_chunks(root: &Path) -> usize {
     }
     count
 }
+
+/// 저장 View 접근성 HTML fixture.
+pub mod accessibility;

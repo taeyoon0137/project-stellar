@@ -7,7 +7,7 @@ publish = false
 
 # L1 headless 조회·편집 공용 library (XXIV.4.2, ADR-0005 §1·§8).
 # 허용 직접 의존: project, document, commands, history, storage, semantic-diff, semantic-merge,
-# diagnostics. local-ipc·agent-protocol·mcp-core·agent-host·ffi에는 직접·전이 모두 도달하지 않습니다.
+# diagnostics, codegen, accessibility, target-profile. local-ipc·agent-protocol·mcp-core·agent-host·ffi에는 직접·전이 모두 도달하지 않습니다.
 # 앱 UI·GUI·네트워크 없이 동작하며 AI·모델·에이전트 코드를 두지 않습니다.
 [dependencies]
 # stellar.yaml probe, 저장된 문서 chunk loader (IV.5.1, VI.10.3).
@@ -22,6 +22,10 @@ stellar-storage = { path = "../storage" }
 stellar-semantic-diff = { path = "../semantic-diff" }
 # 3-way semantic merge 엔진 (XIV.10).
 stellar-semantic-merge = { path = "../semantic-merge" }
+# 저장 View의 정적 접근성 HTML 투영(ADR-0049 후속).
+stellar-codegen = { path = "../codegen" }
+stellar-accessibility = { path = "../accessibility" }
+stellar-target-profile = { path = "../target-profile" }
 
 [features]
 # 테스트 전용 fixture 생성기를 상위 도구(stellar-cli)의 테스트에 노출합니다. 기본값은 꺼져 있고
