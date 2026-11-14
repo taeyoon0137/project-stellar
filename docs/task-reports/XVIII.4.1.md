@@ -77,6 +77,24 @@
 | 셀 폭 표: 한글·CJK·전각·emoji 2, 결합 부호·NFD 중성/종성·ZWJ·VS16 0, 표 정렬·서로소(`vt::width::tests` 2개) | 통과 |
 | registry 시작 요청 환경에 `COLORTERM`·`TERM` 기본값, profile 지정 `TERM` 유지(`trusted_start_builds_request_and_close_terminates_child`, `missing_shell_is_reported_without_spawning`) | 통과 |
 
+## 리뷰 후 수정(`Fix:` 커밋)
+
+- **CPR 뺄셈 넘침**: origin mode(DECOM)가 켜진 채 DECRC·1049 복원으로 cursor가 지금 scroll region
+  위에 놓이면 DSR 6·`?6` 응답 계산(`cursor.row - region top`)이 넘쳤습니다(debug panic, release는 잘못된
+  CPR). 복원할 때 origin mode면 cursor 줄을 region 안으로 맞추고(DECOM은 cursor를 region 밖으로 내보내지
+  않음), 응답 계산은 포화 뺄셈으로 바꿨습니다. corpus에 region 위·아래 복원 fixture를 넣고, 무작위
+  입력에 DSR(`n`)·SCOSC/SCORC(`s`·`u`)를 더해 origin mode의 cursor가 region 안에 있는지 매 chunk
+  확인합니다.
+- **OSC 7 percent escape**: `%` 뒤 두 글자를 `u8::from_str_radix`로 읽어 `%+1`이 0x01로 해독됐습니다.
+  16진수 두 글자만 받도록 고쳤습니다(`%+1`·`%-1`·`% 1`·잘린 `%1` 거부, 대소문자 `%2F`·`%2f` 해독).
+
+| 명령 | 결과 |
+|---|---|
+| 수정 전 `cargo test -p stellar-terminal --lib emulator::corpus` | `save_restore_and_origin_mode`(screen.rs CPR 뺄셈 넘침 panic)·`replies_events_and_bounds`(`%+1` 해독) 실패 |
+| 수정 뒤 `cargo test -p stellar-terminal --lib emulator` | 35 passed, 0 failed |
+| `cargo fmt -p stellar-terminal -- --check` | 통과 |
+| `cargo clippy -p stellar-terminal --all-targets -- -D warnings` | 경고 0 |
+
 ## 차이(작업 지시와 다른 점)
 
 - **외부 parser/emulator dependency를 등록하지 않고 crate 안에서 구현했습니다.** 이유:

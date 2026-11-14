@@ -141,6 +141,14 @@ fn save_restore_and_origin_mode() {
     assert_eq!(t.take_replies(), b"\x1b[2;3R");
     let mut t = run(5, 10, b"\x1b[3;7H\x1b[6n\x1b[?6n");
     assert_eq!(t.take_replies(), b"\x1b[3;7R\x1b[?3;7R");
+    // origin mode로 복원한 위치가 지금 region 밖이면 region 안으로 맞춥니다. CPR은 region 기준
+    // 좌표이므로 region 위 위치에서 뺄셈이 넘치면 안 됩니다.
+    let mut t = run(24, 80, b"\x1b[?6h\x1b[?1049h\x1b[5;10r\x1b8\x1b[6n\x1b[?6n");
+    assert_eq!(at(&t), (4, 0));
+    assert_eq!(t.take_replies(), b"\x1b[1;1R\x1b[?1;1R");
+    let mut t = run(24, 80, b"\x1b[?6h\x1b[20;3H\x1b7\x1b[5;10r\x1b8\x1b[6n");
+    assert_eq!(at(&t), (9, 2));
+    assert_eq!(t.take_replies(), b"\x1b[6;3R");
 }
 
 #[test]
@@ -378,6 +386,21 @@ fn replies_events_and_bounds() {
         b"\x1b]7;http://h/x\x07\x1b]7;file://host\x07\x1b]7;file://h/%zz\x07\x1b]7;file://h/a%00b\x07",
     );
     assert!(t.take_events().is_empty());
+    // percent escape는 16진수 두 글자만 받습니다(`+`·`-` 부호나 공백을 숫자로 읽지 않음).
+    let mut t = run(
+        2,
+        5,
+        b"\x1b]7;file://h/a%+1b\x07\x1b]7;file://h/a%-1b\x07\x1b]7;file://h/a% 1b\x07\x1b]7;file://h/a%1\x07",
+    );
+    assert!(t.take_events().is_empty());
+    let mut t = run(2, 5, b"\x1b]7;file://h/a%2Fb%2fc\x07");
+    assert_eq!(
+        t.take_events(),
+        [TerminalEvent::WorkingDirectory {
+            host: "h".to_owned(),
+            path: PathBuf::from("/a/b/c"),
+        }]
+    );
 
     // 응답과 알림은 상한을 넘지 않습니다.
     let mut t = Terminal::new(size(24, 80));
@@ -465,8 +488,9 @@ impl Rng {
 
 #[test]
 fn random_input_never_panics_and_stays_bounded() {
-    // sequence가 자주 생기도록 ESC·`[`·숫자·`;`·최종 byte 쪽으로 치우친 입력.
-    const ALPHABET: &[u8] = b"\x1b\x1b\x1b[[];:?>0123456789mHJKABCDPLMr@Xh l\x07\x08\t\n\r\x0e\x0fq(0#8\xed\x95\x9c\x80\xff";
+    // sequence가 자주 생기도록 ESC·`[`·숫자·`;`·최종 byte 쪽으로 치우친 입력. `n`(DSR·CPR)과
+    // `s`·`u`(cursor 저장·복원)도 넣어 origin mode·region과 cursor 복원이 섞이게 합니다.
+    const ALPHABET: &[u8] = b"\x1b\x1b\x1b[[];:?>0123456789mHJKABCDPLMr@Xh lnsu\x07\x08\t\n\r\x0e\x0fq(0#8\xed\x95\x9c\x80\xff";
     let mut rng = Rng(0x5eed_1234_abcd_ef01);
     let mut t = Terminal::new(size(7, 13));
     let mut input = Vec::with_capacity(512 * 1024);
@@ -487,6 +511,11 @@ fn random_input_never_panics_and_stays_bounded() {
         offset = end;
         let cursor = t.screen().cursor();
         assert!(cursor.row < t.screen().rows() && cursor.col < t.screen().cols());
+        if t.screen().modes().origin {
+            // origin mode에서는 cursor가 scroll region 밖에 있지 않습니다.
+            let (top, bottom) = t.screen().scroll_region();
+            assert!(top <= cursor.row && cursor.row <= bottom, "{cursor:?}");
+        }
         if rng.next().is_multiple_of(256) {
             let rows = 1 + (rng.next() % 30) as u16;
             let cols = 1 + (rng.next() % 30) as u16;

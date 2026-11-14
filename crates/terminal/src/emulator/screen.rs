@@ -1014,6 +1014,11 @@ impl Screen {
                 self.modes.origin = saved.origin;
                 self.charsets = saved.charsets;
                 self.gl = saved.gl;
+                // origin mode에서는 cursor가 scroll region 밖으로 나가지 않습니다(DECOM). 저장 뒤
+                // region이 바뀌었으면 복원한 줄을 지금 region 안으로 맞춥니다.
+                if self.modes.origin {
+                    self.cursor.row = self.cursor.row.clamp(self.top, self.bottom);
+                }
             }
             None => {
                 self.cursor = Cursor::default();
@@ -1302,7 +1307,9 @@ impl Screen {
     }
 
     fn report_cursor(&mut self, private: bool) {
-        let row = self.cursor.row - self.origin_top() + 1;
+        // origin mode의 cursor는 region 안에 있지만(`restore_cursor`), child 출력으로 만든 어떤
+        // 상태에서도 뺄셈이 넘치지 않게 포화 뺄셈을 씁니다.
+        let row = self.cursor.row.saturating_sub(self.origin_top()) + 1;
         let col = self.cursor.col + 1;
         let reply = if private {
             format!("\x1b[?{row};{col}R")
@@ -1723,9 +1730,11 @@ fn parse_file_url(payload: &[u8]) -> Option<(String, PathBuf)> {
     while index < path.len() {
         let byte = path[index];
         if byte == b'%' {
+            // `%` 뒤 정확히 16진수 두 글자(`u8::from_str_radix`는 `+` 부호를 받으므로 직접 확인).
             let hex = path.get(index + 1..index + 3)?;
-            let value = u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?;
-            decoded.push(value);
+            let high = char::from(hex[0]).to_digit(16)?;
+            let low = char::from(hex[1]).to_digit(16)?;
+            decoded.push(u8::try_from(high * 16 + low).ok()?);
             index += 3;
         } else {
             decoded.push(byte);
