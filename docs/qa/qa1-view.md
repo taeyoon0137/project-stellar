@@ -4,7 +4,7 @@
 
 - 실행: `./scripts/macos/qa.sh`(샘플이 바뀌었으면 `--fresh`)
 - 기준 명세: [사이드바](../design/ui/sidebar.md), [인스펙터](../design/ui/inspector.md), [셸 프레임](../design/ui/shell_frame.md), [macOS 셸 디자인 가이드](../design/macos-shell-design.md) 6장
-- 지금 빌드는 프로젝트를 열 때 매니페스트(`stellar.yaml`)만 읽고, 저장된 문서 내용을 셸에 보내지 않습니다. 그래서 이 단계의 대부분은 **구현 대기**입니다. 관련 작업: 창이 소유하는 프로젝트 세션과 로드한 generation(XII.2.1, XII.2.2), 창별 active View·선택(XII.2.5), 사이드바·인스펙터 내용을 코어에 연결하는 adapter(전용 WBS 없음, 가이드 10.4).
+- 열린 창은 저장된 활성 View의 Layers를 읽고 지원하는 Free Frame을 캔버스에 표시합니다. 각 항목에서 전체 샘플과 비교할 때는 미지원 노드·modifier, 페이지·View 전환을 따로 확인합니다.
 
 ## 1. 지금 확인할 수 있는 것
 
@@ -12,13 +12,13 @@
 |---|---|---|
 | QA1-01 | 더 보기(…) ▸ Show in Finder → 샘플 폴더 | `stellar.yaml`, `stellar.lock.yaml`, `design`(`current`, `generations`, `objects`), `assets`(`<prefix>/<hash>.jpg` 하나) |
 | QA1-02 | 터미널에서 `git -C <샘플 폴더> log --oneline` | 커밋 2개("New Stellar project initialized", "QA 샘플 문서와 에셋 추가"). Git identity가 없었으면 커밋 없음 |
-| QA1-03 | 사이드바 필터 필드에 "Card" 입력 | 필드 입력은 되지만 지금은 레이어가 없어 결과 변화 없음(필터 실행은 코어 몫) |
+| QA1-03 | 사이드바 필터 필드 보기 | 실제 문서 필터는 **구현 대기**이며 입력이 비활성입니다. |
 
 ## 2. 페이지·View 목록(사이드바 Pages)
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA1-10 | 샘플을 열고 Pages 구획 보기 | Home ▸ Desktop, Mobile / Components ▸ Buttons. 페이지 → View 두 단계. **구현 대기**. 지금: 빈 Pages, "No View Selected" |
+| QA1-10 | 샘플을 열고 Pages 구획 보기 | 현재 활성 페이지와 View 이름이 표시됩니다. 전체 페이지·View 목록 탐색은 **구현 대기**입니다. |
 | QA1-11 | Mobile View 클릭 | Mobile이 active View로 선택되고 Layers 구획과 캔버스가 Mobile 내용으로 바뀜. **구현 대기** |
 | QA1-12 | View 행에서 Return 또는 더블클릭 | 인라인 이름 변경 시작(편집 확인은 QA2). **구현 대기** |
 
@@ -37,7 +37,7 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA1-30 | Desktop View 캔버스 | 1440 × 1024 흰 Frame 위에 회색 Header, 둥근 Hero, 그림자 있는 카드 3개. 숨김 레이어(Accent)는 보이지 않음. **구현 대기**(CanvasHost ↔ Metal 연결 XII.4.1). 지금: 빈 캔버스 |
+| QA1-30 | 새 프로젝트와 샘플의 캔버스 비교 | 새 프로젝트의 흰 Frame, 지원되는 자유 배치 Frame의 단색·테두리·모서리·자식 클리핑을 확인합니다. 샘플 그림자·텍스트·이미지는 전체 렌더링 **구현 대기**입니다. |
 | QA1-31 | Headline 텍스트 | 한글 "폴더와 Git이 원본인 디자인 도구"와 영문 둘째 줄이 깨지지 않고 표시. **구현 대기**(XII.4.1 이후 텍스트 렌더 경로) |
 | QA1-32 | Hero Image | README 히어로 이미지가 Cover 맞춤으로 표시. **구현 대기**: 렌더 연결(XII.4.1)과 함께 에셋 catalog 저장이 필요합니다(전용 WBS 없음). 연결 전에는 이미지 자리에 누락 에셋 표시가 정상 |
 | QA1-33 | 창 크기·화면 배율(다른 모니터로 옮기기) 바꾸기 | 흐려지거나 늘어나지 않고 다시 그려짐. **구현 대기**(XII.4.1) |
@@ -48,8 +48,8 @@
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
 | QA1-40 | 트랙패드 두 손가락 스크롤, 핀치 | 캔버스가 바로 따라 움직이고 확대·축소됨. **구현 대기**(viewport camera XII.4.3, 도구 상태 기계 XII.3.6) |
-| QA1-41 | Hand(H)로 끌기, Zoom(Z)으로 클릭 | 이동·확대. Space를 누르는 동안 Hand 일시 전환. **구현 대기**(XII.3.6) |
-| QA1-42 | ⌘+, ⌘-, ⌘0, ⌘9, ⌘* 와 툴바 줌 메뉴 | 확대·축소·실제 크기·맞춤·선택 맞춤, 툴바 배율 제목 갱신. **구현 대기**(XII.4.3). 지금: 메뉴·툴바 줌 비활성, "100%" |
+| QA1-41 | Hand(H)를 선택해 캔버스 드래그 | 문서의 위치를 바꾸지 않고 화면을 이동합니다. Zoom 도구 클릭 및 Space 일시 전환은 별도 확인 대상입니다. |
+| QA1-42 | 열린 창에서 확대·축소·실제 크기 메뉴 사용 | 캔버스와 배율 표시가 함께 바뀝니다. 최초 새 프로젝트는 창에 맞춰 열립니다. |
 | QA1-43 | 이동·확대 뒤 저장 상태 | 문서가 바뀌지 않음(`git status` 변화 없음). **구현 대기**(XII.4.3 완료 기준) |
 
 ## 6. 선택과 인스펙터
@@ -57,14 +57,14 @@
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
 | QA1-50 | 캔버스에서 Card 1 클릭 | 선택 표시와 핸들, 사이드바 Card 1 행 선택. **구현 대기**(XII.3.6, 선택 overlay XII.4.4, 창별 선택 XII.2.5) |
-| QA1-51 | 사이드바에서 Card 1 선택 | 캔버스 선택이 같이 바뀜. 인스펙터에 Layer · Frame · Appearance · Modifiers 섹션(크기 380 × 280, corner radius 16, 배경 색, Shadow). **구현 대기**(인스펙터 코어 adapter, 전용 WBS 없음) |
+| QA1-51 | 신뢰한 새 프로젝트에서 F로 추가한 자식 Frame 하나를 Layers에서 선택 | 캔버스 선택과 Inspector의 W/H가 같은 Frame을 가리킵니다. 전체 Appearance·Modifiers 편집은 **구현 대기**입니다. |
 | QA1-52 | Headline(Text) 선택 | Layer · Text · Character · Paragraph · Modifiers. **구현 대기** |
 | QA1-53 | Hero Image 선택 | Layer · Image(fit Cover) · Modifiers. 누락 에셋이면 진단 아이콘. **구현 대기** |
 | QA1-54 | Icon Group(Fragment) 선택 | Layer · Fragment 안내와 Convert to Frame. Modifier 섹션 없음. **구현 대기** |
 | QA1-55 | Divider, Hexagon, Star 선택 | 도형 섹션 제목이 Line·Polygon, path는 Path 섹션. Modifiers에 Divider는 Transform·Stroke(두께 1), Hexagon은 Transform·Fill·Stroke(두께 2). **구현 대기** |
 | QA1-56 | Card 1\~3 다중 선택(⌘-클릭) | 같은 값은 그대로, 다른 값은 혼합 표시. **구현 대기** |
 | QA1-57 | Footer (Locked) 선택 | 잠금 안내와 Unlock 버튼, 속성 필드는 비활성(이름·표시·잠금만 편집 가능). **구현 대기** |
-| QA1-58 | 선택 해제(Esc, 빈 곳 클릭) | 인스펙터 "No Selection". **구현 대기**. 지금: 항상 "No Selection" |
+| QA1-58 | 새로 연 창에서 아무 레이어도 선택하지 않고 Inspector 보기 | No Selection을 표시합니다. 단일 Free Frame을 선택하면 W/H가 나타납니다. |
 
 ## 7. Component
 
