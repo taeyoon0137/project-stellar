@@ -16,9 +16,20 @@
 //!   staged 추가입니다.
 //! - 두 영역은 각각 [`diff`]의 결과라 같은 결정론(XIV.3.8)과 적용 가능성(XIV.3.9)을 가집니다:
 //!   `apply(staged, HEAD) == Index`, `apply(unstaged, Index) == WorkingTree`.
+//!
+//! **세 값 보존(XIV.4.2)**: 같은 `StableId + PropertyPath`를 staged와 unstaged에서 연속으로 바꾸면
+//! (예: HEAD=1, Index=2, WorkingTree=3) 두 영역의 변경만으로는 한 영역에 한 쌍씩만 보입니다. 그래서
+//! 어느 영역에서든 바뀐 모든 속성 경로에 대해 HEAD·Index·WorkingTree 세 값을 [`PropertyLayers`]로
+//! 함께 보존합니다. 값은 snapshot에서 직접 읽으므로 객체 추가·삭제와 겹쳐도(객체 없음 =
+//! [`LayerValue::NoObject`]) 정확합니다.
+
+use std::collections::BTreeMap;
+
+use stellar_core_types::property::PropertyPath;
 
 use crate::diff::{diff, SemanticDiff};
 use crate::snapshot::SemanticSnapshot;
+use crate::value::SemanticValue;
 
 /// status 영역.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -59,23 +70,133 @@ pub enum SnapshotSide {
     WorkingTree,
 }
 
+/// 한 snapshot에서 본 속성 상태(XIV.4.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayerValue {
+    /// 속성을 가진 객체가 그 snapshot에 없음.
+    NoObject,
+    /// 객체는 있으나 속성이 없음.
+    Unset,
+    /// 속성 값.
+    Value(SemanticValue),
+}
+
+impl LayerValue {
+    /// snapshot에서 경로의 상태를 읽습니다.
+    pub fn read(snapshot: &SemanticSnapshot, path: &PropertyPath) -> LayerValue {
+        match snapshot.get(path.root()) {
+            None => LayerValue::NoObject,
+            Some(object) => match object.property(path) {
+                None => LayerValue::Unset,
+                Some(value) => LayerValue::Value(value.clone()),
+            },
+        }
+    }
+
+    /// 값(없으면 `None`).
+    pub fn value(&self) -> Option<&SemanticValue> {
+        match self {
+            LayerValue::Value(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// canonical 비교(float bit 단위, XIV.3.4).
+    pub fn canonical_eq(&self, other: &LayerValue) -> bool {
+        match (self, other) {
+            (LayerValue::Value(a), LayerValue::Value(b)) => a.canonical_eq(b),
+            (LayerValue::NoObject, LayerValue::NoObject)
+            | (LayerValue::Unset, LayerValue::Unset) => true,
+            _ => false,
+        }
+    }
+}
+
+/// 속성 하나의 HEAD·Index·WorkingTree 세 값(XIV.4.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PropertyLayers {
+    /// 속성 경로.
+    pub path: PropertyPath,
+    /// HEAD 값(base).
+    pub head: LayerValue,
+    /// Index 값(staged).
+    pub index: LayerValue,
+    /// WorkingTree 값.
+    pub working: LayerValue,
+}
+
+impl PropertyLayers {
+    /// 세 snapshot에서 경로의 값을 읽습니다.
+    pub fn read(
+        path: &PropertyPath,
+        head: &SemanticSnapshot,
+        index: &SemanticSnapshot,
+        working: &SemanticSnapshot,
+    ) -> PropertyLayers {
+        PropertyLayers {
+            path: path.clone(),
+            head: LayerValue::read(head, path),
+            index: LayerValue::read(index, path),
+            working: LayerValue::read(working, path),
+        }
+    }
+
+    /// 한 쪽 값.
+    pub fn side(&self, side: SnapshotSide) -> &LayerValue {
+        match side {
+            SnapshotSide::Head => &self.head,
+            SnapshotSide::Index => &self.index,
+            SnapshotSide::WorkingTree => &self.working,
+        }
+    }
+
+    /// HEAD와 Index가 다른지(staged 변경).
+    pub fn is_staged(&self) -> bool {
+        !self.head.canonical_eq(&self.index)
+    }
+
+    /// Index와 WorkingTree가 다른지(unstaged 변경).
+    pub fn is_unstaged(&self) -> bool {
+        !self.index.canonical_eq(&self.working)
+    }
+
+    /// staged와 unstaged에서 연속 수정됐는지.
+    pub fn is_layered(&self) -> bool {
+        self.is_staged() && self.is_unstaged()
+    }
+}
+
 /// 세 snapshot의 semantic status.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SemanticStatus {
     staged: SemanticDiff,
     unstaged: SemanticDiff,
+    properties: BTreeMap<PropertyPath, PropertyLayers>,
 }
 
 impl SemanticStatus {
-    /// HEAD → Index를 staged, Index → WorkingTree를 unstaged로 분류합니다.
+    /// HEAD → Index를 staged, Index → WorkingTree를 unstaged로 분류합니다. 어느 영역에서든 바뀐
+    /// 속성 경로는 세 값을 함께 보존합니다(XIV.4.2).
     pub fn classify(
         head: &SemanticSnapshot,
         index: &SemanticSnapshot,
         working: &SemanticSnapshot,
     ) -> SemanticStatus {
+        let staged = diff(head, index);
+        let unstaged = diff(index, working);
+        let mut properties = BTreeMap::new();
+        for change in staged.iter().chain(unstaged.iter()) {
+            if let Some(path) = change.property_path() {
+                if !properties.contains_key(path) {
+                    let layers = PropertyLayers::read(path, head, index, working);
+                    properties.insert(path.clone(), layers);
+                }
+            }
+        }
         SemanticStatus {
-            staged: diff(head, index),
-            unstaged: diff(index, working),
+            staged,
+            unstaged,
+            properties,
         }
     }
 
@@ -101,6 +222,21 @@ impl SemanticStatus {
     pub fn is_clean(&self) -> bool {
         self.staged.is_empty() && self.unstaged.is_empty()
     }
+
+    /// 어느 영역에서든 속성 변경이 있는 경로의 세 값(경로 오름차순).
+    pub fn properties(&self) -> impl Iterator<Item = &PropertyLayers> + '_ {
+        self.properties.values()
+    }
+
+    /// 경로의 세 값. 어느 영역에서도 그 경로의 속성 변경이 없으면 `None`.
+    pub fn property(&self, path: &PropertyPath) -> Option<&PropertyLayers> {
+        self.properties.get(path)
+    }
+
+    /// staged와 unstaged에서 연속 수정된 속성(경로 오름차순).
+    pub fn layered_properties(&self) -> impl Iterator<Item = &PropertyLayers> + '_ {
+        self.properties.values().filter(|p| p.is_layered())
+    }
 }
 
 #[cfg(test)]
@@ -112,7 +248,7 @@ pub(crate) mod tests {
     use crate::keys;
     use stellar_core_types::ids::StableId;
     use stellar_core_types::property::PropertyPath;
-    use stellar_core_types::value::{Rect, Size2, Vec2};
+    use stellar_core_types::value::{FiniteF32, Rect, Size2, Vec2};
     use stellar_document::record_codec::SubtreeRecords;
     use stellar_document::records::{DocumentRecords, NodePayload};
     use stellar_document::shape::{EllipseParams, ShapeGeometry};
@@ -252,6 +388,115 @@ pub(crate) mod tests {
         let clean = SemanticStatus::classify(&index, &index, &index);
         assert!(clean.is_clean());
         assert_eq!(clean, SemanticStatus::default());
+    }
+
+    fn width_layers(widths: [f32; 3]) -> SemanticStatus {
+        let [head, index, working] = widths.map(|w| {
+            let mut records = head_records();
+            records.nodes[1].payload = rect(w, 20.0);
+            build(&records)
+        });
+        SemanticStatus::classify(&head, &index, &working)
+    }
+
+    fn width(w: f32) -> LayerValue {
+        LayerValue::Value(SemanticValue::Floats(vec![
+            FiniteF32::new(w).unwrap(),
+            FiniteF32::new(20.0).unwrap(),
+        ]))
+    }
+
+    #[test]
+    fn same_property_staged_then_modified_keeps_three_values() {
+        // H=1, I=2, W=3.
+        let status = width_layers([1.0, 2.0, 3.0]);
+        let size = PropertyPath::with_keys(sid(11), vec![keys::RECT_SIZE]);
+        let layers = status.property(&size).unwrap();
+        assert_eq!(layers.head, width(1.0));
+        assert_eq!(layers.index, width(2.0));
+        assert_eq!(layers.working, width(3.0));
+        assert_eq!(layers.side(SnapshotSide::Head), &width(1.0));
+        assert_eq!(layers.side(SnapshotSide::Index), &width(2.0));
+        assert_eq!(layers.side(SnapshotSide::WorkingTree), &width(3.0));
+        assert!(layers.is_staged() && layers.is_unstaged() && layers.is_layered());
+        let layered: Vec<&PropertyLayers> = status.layered_properties().collect();
+        assert_eq!(layered, vec![layers]);
+        // 두 영역에 같은 경로의 변경이 하나씩: staged 1→2, unstaged 2→3.
+        let values = |changes: &SemanticDiff| {
+            changes
+                .iter()
+                .filter_map(|c| match c {
+                    SemanticChange::SetProperty(p) if p.path == size => {
+                        Some((p.old.clone(), p.new.clone()))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let pair = |a: f32, b: f32| (width(a).value().cloned(), width(b).value().cloned());
+        assert_eq!(values(status.staged()), vec![pair(1.0, 2.0)]);
+        assert_eq!(values(status.unstaged()), vec![pair(2.0, 3.0)]);
+
+        // staged만(1,2,2)·unstaged만(1,1,3)은 한 영역만 표시합니다.
+        let staged_only = width_layers([1.0, 2.0, 2.0]);
+        let layers = staged_only.property(&size).unwrap();
+        assert!(layers.is_staged() && !layers.is_unstaged());
+        assert_eq!(layers.working, width(2.0));
+        assert_eq!(staged_only.layered_properties().count(), 0);
+        let unstaged_only = width_layers([1.0, 1.0, 3.0]);
+        let layers = unstaged_only.property(&size).unwrap();
+        assert!(!layers.is_staged() && layers.is_unstaged());
+        assert_eq!((&layers.head, &layers.index), (&width(1.0), &width(1.0)));
+        // HEAD 값으로 되돌린 경우(1,2,1)도 세 값 모두 보존합니다.
+        let reverted = width_layers([1.0, 2.0, 1.0]);
+        let layers = reverted.property(&size).unwrap();
+        assert!(layers.is_layered());
+        assert_eq!(layers.working, width(1.0));
+        // 바뀌지 않은 경로는 없습니다.
+        let name = PropertyPath::with_keys(sid(11), vec![keys::DISPLAY_NAME]);
+        assert_eq!(reverted.property(&name), None);
+    }
+
+    #[test]
+    fn layers_cover_object_addition_and_removal() {
+        // 부분 staged fixture: 14는 staged 추가, 13은 unstaged 삭제, 11은 영역별 다른 속성.
+        let [head, index, working] = partial_staged().map(|r| build(&r));
+        let status = SemanticStatus::classify(&head, &index, &working);
+        let size = PropertyPath::with_keys(sid(11), vec![keys::RECT_SIZE]);
+        let visible = PropertyPath::with_keys(sid(11), vec![keys::VISIBLE]);
+        let paths: Vec<&PropertyPath> = status.properties().map(|p| &p.path).collect();
+        assert_eq!(paths, vec![&visible, &size]);
+        let v = status.property(&visible).unwrap();
+        assert_eq!(v.head, LayerValue::Value(SemanticValue::Bool(true)));
+        assert_eq!(v.index, LayerValue::Value(SemanticValue::Bool(true)));
+        assert_eq!(v.working, LayerValue::Value(SemanticValue::Bool(false)));
+
+        // 추가된 객체의 속성을 WorkingTree에서 다시 바꾸면 HEAD 쪽은 객체 없음입니다.
+        let mut later = working.clone();
+        let mut dot = later.remove(sid(14)).unwrap();
+        dot.set_property(
+            dot.path(&[keys::DISPLAY_NAME]),
+            SemanticValue::Text("점".into()),
+        )
+        .unwrap();
+        later.insert(dot).unwrap();
+        let status = SemanticStatus::classify(&head, &index, &later);
+        let name = PropertyPath::with_keys(sid(14), vec![keys::DISPLAY_NAME]);
+        let layers = status.property(&name).unwrap();
+        assert_eq!(layers.head, LayerValue::NoObject);
+        assert_eq!(
+            layers.index,
+            LayerValue::Value(SemanticValue::Text("dot".into()))
+        );
+        assert_eq!(
+            layers.working,
+            LayerValue::Value(SemanticValue::Text("점".into()))
+        );
+        assert!(layers.is_layered());
+        let unset = PropertyPath::with_keys(sid(11), vec![keys::IMAGE_SIZE]);
+        assert_eq!(LayerValue::read(&head, &unset), LayerValue::Unset);
+        assert!(LayerValue::Unset.canonical_eq(&LayerValue::Unset));
+        assert!(!LayerValue::Unset.canonical_eq(&LayerValue::NoObject));
     }
 
     #[test]
