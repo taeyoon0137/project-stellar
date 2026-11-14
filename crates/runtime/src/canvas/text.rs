@@ -221,6 +221,7 @@ impl TextHitGeometry for CanvasTextGeometry {
 mod tests;
 
 pub(crate) mod document;
+pub(crate) mod saved;
 pub use document::DocumentText;
 
 /// Native paint bridge에서 공통 outline을 순회합니다.
