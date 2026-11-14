@@ -62,6 +62,9 @@ pub mod drilling;
 /// Property drilling 계획 (IX.4.3).
 pub mod drilling_plan;
 
+/// 승인된 DrillingPlan의 transaction 적용 (IX.4.5).
+pub mod drilling_apply;
+
 /// 인스턴스 expansion view (IX.2.2).
 pub mod expansion;
 
