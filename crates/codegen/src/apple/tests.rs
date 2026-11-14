@@ -216,7 +216,21 @@ fn generated_swift_typechecks_against_apple_sdks() {
         "macosx",
         "arm64-apple-macos26.0",
     );
-    let appkit = export(&fx::mac_profile(), AppleDialect::AppKit);
+    let mut fixture = Fixture::new();
+    for state in &mut fixture.states {
+        if state.name == "selectedSize" {
+            state.name = "onStateChange".into();
+        } else if state.name == "memo" {
+            state.name = "views".into();
+        }
+    }
+    let appkit = export_apple(
+        &fixture.ir(&fx::mac_profile()),
+        &AppleOptions::new(AppleDialect::AppKit),
+    )
+    .unwrap();
+    assert!(appkit.source.contains("onStateChange_2"));
+    assert!(appkit.source.contains("views_2"));
     typecheck(
         &appkit.source,
         "mac-appkit",

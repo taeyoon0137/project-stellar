@@ -40,6 +40,7 @@ pub const RESERVED: &[&str] = &[
     "let",
     "nil",
     "onAction",
+    "onStateChange",
     "open",
     "operator",
     "private",
@@ -62,6 +63,7 @@ pub const RESERVED: &[&str] = &[
     "typealias",
     "var",
     "view",
+    "views",
     "where",
     "while",
 ];
