@@ -109,7 +109,7 @@ pub fn locate_repository(
         return Err(LocationError::NotInsideWorkTree);
     }
 
-    let worktree_root = query_path(git, cwd, "--show-toplevel")?;
+    let worktree_root = worktree_root(git, cwd)?;
     let git_dir = query_path(git, cwd, "--git-dir")?;
     let common_dir = query_path(git, cwd, "--git-common-dir")?;
 
@@ -138,6 +138,11 @@ fn rev_parse(git: &GatedGitRunner, cwd: &Path, flags: &[&str]) -> Result<Vec<u8>
         .require_success()
         .map_err(LocationError::Git)?;
     Ok(result.stdout().to_vec())
+}
+
+/// 현재 디렉터리가 속한 실제 작업 트리 최상위 경로. bare 또는 Git 디렉터리이면 실패합니다.
+pub fn worktree_root(git: &GatedGitRunner, cwd: &Path) -> Result<PathBuf, LocationError> {
+    query_path(git, cwd, "--show-toplevel")
 }
 
 /// 절대 경로 질의(`--path-format=absolute <query>`).

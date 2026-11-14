@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_git_porcelain::discovery::{discover_git, GitDiscoveryConfig};
-use stellar_git_porcelain::location::locate_repository;
+use stellar_git_porcelain::location::worktree_root;
 use stellar_git_porcelain::object::{FileModeKind, ObjectId};
 use stellar_git_porcelain::runner::GitRunner;
-use stellar_git_porcelain::snapshot::tree::read_tree_entries;
+use stellar_git_porcelain::snapshot::tree::{head_commit, read_tree_entries};
 use stellar_git_porcelain::snapshot::{
     materialize_snapshot, read_blobs_with_limits, resolve_tree, BlobLimits, MaterializedSnapshot,
     ResolvedTree, SnapshotEntry, SnapshotSource,
@@ -25,7 +25,7 @@ use super::{
 };
 use crate::capability::git_trust;
 use crate::document_io::component_source::{
-    library_from_blobs, EXT, MAX_COMPONENT_FILES, MAX_PROJECT_SOURCE_BYTES,
+    library_from_blobs, ComponentFiles, EXT, MAX_COMPONENT_FILES, MAX_PROJECT_SOURCE_BYTES,
 };
 use crate::trust::TrustStatus;
 
@@ -53,9 +53,9 @@ impl ProjectHead {
                 ("GIT_NO_REPLACE_OBJECTS".into(), "1".into()),
             ]);
         let git = GatedGitRunner::new(runner, git_trust(trust));
-        let location = locate_repository(&git, root).map_err(|_| HeadUnavailable)?;
+        let location = worktree_root(&git, root).map_err(|_| HeadUnavailable)?;
         let root = root.canonicalize().map_err(|_| HeadUnavailable)?;
-        if location.worktree_root != root {
+        if location != root {
             return Err(HeadUnavailable);
         }
         let ResolvedTree::Tree {
@@ -85,10 +85,10 @@ impl ProjectHead {
 
     /// HEAD가 여전히 같은 commit/tree를 가리키는지 검사합니다.
     pub fn is_current(&self) -> Result<bool, HeadUnavailable> {
-        Ok(
-            matches!(resolve_tree(&self.git, &self.root, &SnapshotSource::Head).map_err(|_| HeadUnavailable)?,
-            ResolvedTree::Tree { commit: Some(commit), tree } if commit == self.commit && tree == self.tree),
-        )
+        Ok(head_commit(&self.git, &self.root)
+            .map_err(|_| HeadUnavailable)?
+            .as_ref()
+            == Some(&self.commit))
     }
 
     fn read_blob(&self, entry: &SnapshotEntry, max_bytes: u64) -> Result<Vec<u8>, HeadUnavailable> {
@@ -108,10 +108,10 @@ impl ProjectHead {
     fn component_library(
         &self,
         entries: &[SnapshotEntry],
-    ) -> Result<ComponentLibrary, HeadUnavailable> {
+    ) -> Result<(ComponentLibrary, ComponentFiles), HeadUnavailable> {
         let sources = component_entries(entries)?;
         if sources.is_empty() {
-            return Ok(ComponentLibrary::new());
+            return Ok((ComponentLibrary::new(), ComponentFiles::new()));
         }
         let ids: Vec<_> = sources.iter().map(|entry| entry.oid.clone()).collect();
         let mut blobs = read_blobs_with_limits(
@@ -174,7 +174,7 @@ impl ProjectHead {
         if decoded.project_id != project {
             return Err(HeadUnavailable);
         }
-        let library = self.component_library(&entries)?;
+        let (library, component_files) = self.component_library(&entries)?;
         if !library.is_empty()
             && decoded
                 .chunk_pointers
@@ -207,6 +207,8 @@ impl ProjectHead {
             return Err(HeadUnavailable);
         }
         Ok(HeadGeneration {
+            manifest_hash: hash,
+            component_files,
             library,
             saved,
             _files: files,
@@ -251,6 +253,10 @@ fn component_entries(entries: &[SnapshotEntry]) -> Result<Vec<&SnapshotEntry>, H
 
 /// 참조할 chunk가 남아 있는 동안 임시 디렉터리를 보존합니다.
 pub struct HeadGeneration {
+    /// 고정 Git commit의 검증된 저장 세대 manifest hash.
+    pub manifest_hash: ContentHash,
+    /// 검증한 HEAD 컴포넌트별 경로와 bytes hash.
+    pub component_files: ComponentFiles,
     library: ComponentLibrary,
     saved: SavedProject,
     _files: MaterializedSnapshot,

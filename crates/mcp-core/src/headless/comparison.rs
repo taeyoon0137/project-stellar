@@ -3,7 +3,7 @@ use super::{id, invalid, opt_id, read_error, revision, uint, CachedRead};
 use crate::catalog::paging::{self, PageRequest, PageSource};
 use crate::json::{self, JsonLimits, JsonValue};
 use crate::jsonrpc::RpcError;
-use stellar_ops::compare::{semantic_diff_head_with_source_hash, working_component_hash};
+use stellar_ops::compare::{working_components, HeadDiffBase};
 use stellar_ops::diff::{DiffEntry, DiffPosition, DiffReport};
 use stellar_ops::query::OpsValue;
 use stellar_ops::revision::ProjectRevision;
@@ -11,7 +11,7 @@ use stellar_ops::trusted::{TrustedProject, TrustedReadError};
 
 #[derive(Debug)]
 pub(super) struct DiffPage {
-    head: String,
+    base: HeadDiffBase,
     revision: ProjectRevision,
     component_source_hash: String,
     report: DiffReport,
@@ -26,7 +26,11 @@ impl PageSource for DiffPage {
         "semantic-diff".into()
     }
     fn revision_token(&self) -> String {
-        cursor_revision(&self.head, self.revision, &self.component_source_hash)
+        cursor_revision(
+            self.base.commit(),
+            self.revision,
+            &self.component_source_hash,
+        )
     }
     fn revision_json(&self) -> JsonValue {
         revision(self.revision)
@@ -36,7 +40,7 @@ impl PageSource for DiffPage {
     }
     fn header(&self) -> Vec<(&'static str, JsonValue)> {
         vec![
-            ("base_commit", JsonValue::string(&self.head)),
+            ("base_commit", JsonValue::string(self.base.commit())),
             (
                 "component_source_hash",
                 JsonValue::string(&self.component_source_hash),
@@ -67,7 +71,30 @@ pub(super) fn page(
         other => read_error(other),
     })?;
     let revision = cached.snapshot.revision();
-    let source_hash = working_component_hash(&cached.snapshot).map_err(|_| unavailable())?;
+    let current = cached
+        .comparison
+        .take()
+        .filter(|page| page.base.commit() == head.commit());
+    let observe = || working_components(&cached.snapshot).map_err(|_| unavailable());
+    let mut observed_sources = None;
+    if let Some(page) = current.as_ref() {
+        // 페이지를 준비한 뒤 마지막에 작업 파일을 확인해 cache hit에 중복 I/O를 하지 않습니다.
+        let page_result = paging::build_page(page, request);
+        let checked = observe()?;
+        if page.component_source_hash == checked.hash().to_string() {
+            if !head.is_current().map_err(|_| unavailable())? {
+                return Err(unavailable());
+            }
+            cached.comparison = current;
+            return page_result.map_err(|e| invalid(e.to_string()));
+        }
+        observed_sources = Some(checked);
+    }
+    let observed = match observed_sources {
+        Some(hash) => hash,
+        None => observe()?,
+    };
+    let source_hash = observed.hash();
     let tag = source_hash.to_string();
     paging::validate_request(
         "semantic-diff",
@@ -75,32 +102,27 @@ pub(super) fn page(
         request,
     )
     .map_err(|e| invalid(e.to_string()))?;
-
-    if cached
-        .comparison
-        .as_ref()
-        .is_none_or(|page| page.head != head.commit() || page.component_source_hash != tag)
-    {
-        cached.comparison = None;
-        let (report, actual_hash) = semantic_diff_head_with_source_hash(&head, &cached.snapshot)
-            .map_err(|_| unavailable())?;
-        if actual_hash != source_hash {
-            return Err(unavailable());
-        }
-        cached.comparison = Some(DiffPage {
-            head: head.commit().into(),
-            revision,
-            component_source_hash: tag,
-            report,
-        });
+    let base = match current {
+        Some(page) => page.base,
+        None => HeadDiffBase::open(&head, &cached.snapshot).map_err(|_| unavailable())?,
+    };
+    let (report, actual_hash) = base
+        .compare(&cached.snapshot, &observed)
+        .map_err(|_| unavailable())?;
+    if actual_hash != source_hash {
+        return Err(unavailable());
     }
-    let body = paging::build_page(cached.comparison.as_ref().expect("비교가 끝남"), request)
-        .map_err(|e| invalid(e.to_string()))?;
-    if working_component_hash(&cached.snapshot).map_err(|_| unavailable())? != source_hash
-        || !head.is_current().map_err(|_| unavailable())?
-    {
-        return Err(read_error(TrustedReadError::Unavailable));
+    let page = DiffPage {
+        base,
+        revision,
+        component_source_hash: tag,
+        report,
+    };
+    let body = paging::build_page(&page, request).map_err(|e| invalid(e.to_string()))?;
+    if observe()?.hash() != source_hash || !head.is_current().map_err(|_| unavailable())? {
+        return Err(unavailable());
     }
+    cached.comparison = Some(page);
     Ok(body)
 }
 

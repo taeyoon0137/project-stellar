@@ -73,6 +73,11 @@ pub(crate) fn verify_rev(
     }
 }
 
+/// 현재 HEAD의 commit ID. unborn이면 None이며 replace/lazy fetch 정책은 runner를 따릅니다.
+pub fn head_commit(git: &GatedGitRunner, worktree: &Path) -> Result<Option<ObjectId>, GitOpError> {
+    verify_rev(git, worktree, "HEAD^{commit}")
+}
+
 /// Head·Commit·Tree 원천을 tree ID로 해석합니다.
 pub fn resolve_tree(
     git: &GatedGitRunner,
@@ -83,7 +88,7 @@ pub fn resolve_tree(
         source: source.clone(),
     };
     let commit = match source {
-        SnapshotSource::Head => match verify_rev(git, worktree, "HEAD^{commit}")? {
+        SnapshotSource::Head => match head_commit(git, worktree)? {
             Some(commit) => commit,
             None => return Ok(ResolvedTree::Unborn),
         },
