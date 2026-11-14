@@ -6,8 +6,8 @@
   resolver 결과와 같은지는 확인하지 않았습니다.
 - 선행: IX.9(절 단위, IX.9.1~IX.9.4 모두 `[ ]`), X.7(절 단위)
   - **완화**: 절 단위 선행이므로 필요한 코드가 있으면 완화합니다. IX.9 통합 fixture는 미완이지만 이 행이 쓰는 계약 —
-    instance expansion(IX.2.2 `[x]`), variant override 우선순위(IX.7.6 `[x]`), token 모델·평가(VIII.5.1~VIII.5.4 `[x]`) —
-    과 layout tree view(X.1.2, 이 lane `ec1107c`)가 있습니다. X.7은 X.7.1~X.7.6 모두 `[x]`(X.7.1·X.7.3·X.7.4·X.7.6은 이 lane).
+    instance expansion(IX.2.2 `[x]`), variant override 우선순위(IX.7.6 `[x]`), token 모델·평가(VIII.5.1\~VIII.5.4 `[x]`) —
+    과 layout tree view(X.1.2, 이 lane `ec1107c`)가 있습니다. X.7은 X.7.1\~X.7.6 모두 `[x]`(X.7.1·X.7.3·X.7.4·X.7.6은 이 lane).
 
 ## 필수 실행 환경
 
