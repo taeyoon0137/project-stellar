@@ -68,7 +68,7 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ),
     (
         "text-source",
-        "export <프로젝트> <새 파일> | check <파일>: 단일 View 텍스트 원본을 opt-in으로 내보내거나 읽기 전용 검사합니다",
+        "export <프로젝트> <새 파일> | check <파일> | apply <파일> <입력|-> [--dry-run]: 단일 View 텍스트 원본을 opt-in으로 검사·편집합니다",
     ),
 ];
 

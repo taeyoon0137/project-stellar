@@ -2361,13 +2361,14 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "V.10.6"
-    title: "텍스트 원본을 파일 감시·외부 변경·명령 저장 및 재열기 경로에 연결합니다. 열린 뒤 외부 편집이나 git pull이 있으면 dirty 편집을 보존하고 재로드·병합합니다."
-    status: not_started
+    title: "텍스트 원본을 파일 감시·외부 변경·명령 저장 및 재열기 경로에 연결합니다. 첫 부분은 opt-in 단일 파일 CLI apply의 source hash·필수 잠금·명령 transaction·dry-run 및 조건부 저장입니다. 열린 뒤 외부 편집이나 git pull이 있으면 dirty 편집을 보존하고 재로드·병합하는 전체 연결은 후속입니다."
+    status: reported_done
     depends_on:
       - "V.10.5"
       - "XIII.3.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/V.10.6.md"
   - id: "V.10.7"
     title: "검증된 전체 변환 경로에서만 기본 원본을 텍스트로 전환하고 기존 chunk 저장은 로컬 cache로 내립니다. source hash 기반 빠른 열기·부분 로딩과 cache GC를 연결합니다."
     status: not_started

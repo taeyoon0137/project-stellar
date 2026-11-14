@@ -50,7 +50,7 @@ fn invalid(code: &'static str, message: impl Into<String>) -> CliError {
     CliError::new(ExitStatus::DataErr, code, message)
 }
 
-fn read_input(source: &str) -> Result<Vec<u8>, CliError> {
+pub(crate) fn read_input(source: &str) -> Result<Vec<u8>, CliError> {
     let mut bytes = Vec::new();
     let limit = (MAX_INPUT_BYTES as u64) + 1;
     let result = if source == "-" {
@@ -92,7 +92,11 @@ fn field<'a>(value: &'a JsonValue, key: &str, at: &str) -> Result<&'a JsonValue,
         .ok_or_else(|| invalid("invalid-transaction", format!("{at}에 {key}가 없습니다")))
 }
 
-fn text_field<'a>(value: &'a JsonValue, key: &str, at: &str) -> Result<&'a str, CliError> {
+pub(crate) fn text_field<'a>(
+    value: &'a JsonValue,
+    key: &str,
+    at: &str,
+) -> Result<&'a str, CliError> {
     field(value, key, at)?.as_str().ok_or_else(|| {
         invalid(
             "invalid-transaction",
@@ -101,7 +105,7 @@ fn text_field<'a>(value: &'a JsonValue, key: &str, at: &str) -> Result<&'a str, 
     })
 }
 
-fn id_field(value: &JsonValue, key: &str, at: &str) -> Result<StableId, CliError> {
+pub(crate) fn id_field(value: &JsonValue, key: &str, at: &str) -> Result<StableId, CliError> {
     text_field(value, key, at)?
         .parse::<StableId>()
         .map_err(|_| {
@@ -200,7 +204,11 @@ fn command_input(value: &JsonValue, index: usize) -> Result<CommandInput, CliErr
 }
 
 /// 입력 JSON을 적용 요청으로 해석합니다.
-pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
+pub(crate) fn parse_envelope(
+    bytes: &[u8],
+    format: &str,
+    revision_key: &str,
+) -> Result<JsonValue, CliError> {
     let limits = JsonLimits {
         max_bytes: MAX_INPUT_BYTES,
         max_depth: 16,
@@ -217,16 +225,16 @@ pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
         &[
             "format",
             "format_version",
-            "base_revision",
+            revision_key,
             "document",
             "commands",
         ],
         "입력",
     )?;
-    if text_field(&doc, "format", "입력")? != FORMAT {
+    if text_field(&doc, "format", "입력")? != format {
         return Err(invalid(
             "invalid-transaction",
-            format!("입력.format은 {FORMAT:?}이어야 합니다"),
+            format!("입력.format은 {format:?}이어야 합니다"),
         ));
     }
     if field(&doc, "format_version", "입력")?.as_i64() != Some(FORMAT_VERSION) {
@@ -235,11 +243,11 @@ pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
             format!("입력.format_version은 {FORMAT_VERSION}이어야 합니다"),
         ));
     }
-    let base_revision = text_field(&doc, "base_revision", "입력")?
-        .parse::<ProjectRevision>()
-        .map_err(|e| invalid("invalid-transaction", format!("입력.base_revision: {e}")))?;
-    let document = id_field(&doc, "document", "입력")?;
-    let items = field(&doc, "commands", "입력")?
+    Ok(doc)
+}
+
+pub(crate) fn parse_commands(doc: &JsonValue) -> Result<Vec<CommandInput>, CliError> {
+    let items = field(doc, "commands", "입력")?
         .as_array()
         .ok_or_else(|| invalid("invalid-transaction", "입력.commands는 배열이어야 합니다"))?;
     if items.len() > MAX_COMMANDS {
@@ -251,11 +259,21 @@ pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
             ),
         ));
     }
-    let commands = items
+    items
         .iter()
         .enumerate()
         .map(|(i, item)| command_input(item, i))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect()
+}
+
+/// generation 원본용 입력 JSON을 적용 요청으로 해석합니다.
+pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
+    let doc = parse_envelope(bytes, FORMAT, "base_revision")?;
+    let base_revision = text_field(&doc, "base_revision", "입력")?
+        .parse::<ProjectRevision>()
+        .map_err(|e| invalid("invalid-transaction", format!("입력.base_revision: {e}")))?;
+    let document = id_field(&doc, "document", "입력")?;
+    let commands = parse_commands(&doc)?;
     Ok(ApplyRequest {
         base_revision,
         document,
@@ -263,7 +281,7 @@ pub fn parse_request(bytes: &[u8]) -> Result<ApplyRequest, CliError> {
     })
 }
 
-fn apply_error(error: &ApplyError) -> CliError {
+pub(crate) fn apply_error(error: &ApplyError) -> CliError {
     let message = error.to_string();
     match error {
         ApplyError::Open(e) => views::open_error(e),

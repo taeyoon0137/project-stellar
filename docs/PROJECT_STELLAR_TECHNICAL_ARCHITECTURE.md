@@ -947,7 +947,7 @@ Stellar 애플리케이션 자체 UI는 각 운영체제의 네이티브 접근�
 
 Stellar는 단일 패키지 파일이 아니라 프로젝트 폴더 자체를 엽니다.
 
-[ADR-0059](adr/ADR-0059-text-source-files-with-chunk-cache.md)에 따라 목표 Git 원본은 의미 단위 텍스트 파일이고 chunk는 `.stellar/cache/`의 파생 데이터입니다. 아래 구조는 아직 기본인 기존 generation 형식입니다. 첫 전환 단위(V.10.1~V.10.3)는 [단일 View 텍스트 문법](spec/text-view-source-v1.md)의 명시적 export/open만 지원합니다. 전체 의미 왕복·저장 복구·외부 변경 검증(V.10.4~V.10.7)이 끝나기 전에는 기존 프로젝트의 기본 저장을 바꾸지 않습니다.
+[ADR-0059](adr/ADR-0059-text-source-files-with-chunk-cache.md)에 따라 목표 Git 원본은 의미 단위 텍스트 파일이고 chunk는 `.stellar/cache/`의 파생 데이터입니다. 아래 구조는 아직 기본인 기존 generation 형식입니다. 첫 전환 단위(V.10.1~V.10.3)는 [단일 View 텍스트 문법](spec/text-view-source-v1.md)의 명시적 export/open을 지원하며, V.10.6의 첫 부분은 같은 단일 파일의 opt-in CLI 명령 편집입니다. 전체 의미 왕복·저장 복구·외부 변경 검증(V.10.4~V.10.7)이 끝나기 전에는 기존 프로젝트의 기본 저장을 바꾸지 않습니다.
 
 ```text
 ProjectName/
