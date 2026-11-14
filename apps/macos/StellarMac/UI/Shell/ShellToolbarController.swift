@@ -3,17 +3,18 @@ import AppKit
 /// 메인 창 통합 툴바(가이드 6.1).
 ///
 /// - 앞쪽 끝: 사이드바 토글(시스템 항목), 사이드바 경계 추적 구분자, 뒤로·앞으로 내비게이션
-/// - 가운데: 도구 영역(placeholder, 도구 상태 기계는 XII.3.6)
 /// - 뒤쪽 끝: 프로젝트 검색, 더 보기 메뉴, 인스펙터 경계 추적 구분자, 인스펙터 토글(시스템 항목)
 ///
+/// 도구 영역(placeholder, 도구 상태 기계는 XII.3.6)은 툴바가 아니라 캔버스 하단 가운데의
+/// `ShellToolBarView`에 둡니다. 이 controller가 그 막대의 도구 목록·선택·활성 상태를 맡습니다.
+///
 /// 항목 위치는 시스템 식별자(`.toggleSidebar`, `.sidebarTrackingSeparator`, `.toggleInspector`,
-/// `.inspectorTrackingSeparator`)와 `centeredItemIdentifiers`로만 정하고 직접 계산하지 않습니다.
+/// `.inspectorTrackingSeparator`)로만 정하고 직접 계산하지 않습니다.
 /// 사용자 구성은 `autosavesConfiguration`으로 AppKit이 저장합니다.
 final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemValidation {
     static let navigationItem = NSToolbarItem.Identifier("stellar.shell.navigation")
     static let navigateBackItem = NSToolbarItem.Identifier("stellar.shell.navigation.back")
     static let navigateForwardItem = NSToolbarItem.Identifier("stellar.shell.navigation.forward")
-    static let toolAreaItem = NSToolbarItem.Identifier("stellar.shell.toolArea")
     static let searchItem = NSToolbarItem.Identifier("stellar.shell.search")
     static let moreItem = NSToolbarItem.Identifier("stellar.shell.more")
 
@@ -22,8 +23,6 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         .toggleSidebar,
         .sidebarTrackingSeparator,
         navigationItem,
-        .flexibleSpace,
-        toolAreaItem,
         .flexibleSpace,
         searchItem,
         moreItem,
@@ -45,7 +44,8 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
 
     private(set) var snapshot: ShellFrameSnapshot
     private(set) weak var navigationGroup: NSToolbarItemGroup?
-    private(set) weak var toolGroup: NSToolbarItemGroup?
+    /// 캔버스 하단 가운데 도구 막대. 셸 창 controller가 캔버스 영역에 붙입니다.
+    let toolBar = ShellToolBarView()
     private(set) weak var searchToolbarItem: NSSearchToolbarItem?
     private(set) weak var moreToolbarItem: NSMenuToolbarItem?
     /// 현재 도구 영역 항목이 만들어진 도구 목록.
@@ -59,7 +59,10 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
-        toolbar.centeredItemIdentifiers = [Self.toolAreaItem]
+        toolBar.selectionHandler = { [weak self] index in
+            self?.toolSelected(at: index)
+        }
+        rebuildTools()
     }
 
     /// snapshot을 반영합니다. 바뀐 항목만 갱신합니다(가이드 9장).
@@ -67,12 +70,9 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         let previous = snapshot
         snapshot = newSnapshot
 
-        if newSnapshot.tools != builtTools, let index = toolbar.items.firstIndex(where: {
-            $0.itemIdentifier == Self.toolAreaItem
-        }) {
-            // 도구 목록 자체가 바뀌면 도구 영역 항목을 다시 만듭니다(드문 경우).
-            toolbar.removeItem(at: index)
-            toolbar.insertItem(withItemIdentifier: Self.toolAreaItem, at: index)
+        if newSnapshot.tools != builtTools {
+            // 도구 목록 자체가 바뀌면 도구 막대를 다시 만듭니다(드문 경우).
+            rebuildTools()
         } else if newSnapshot.activeToolID != previous.activeToolID {
             syncToolSelection()
         }
@@ -88,15 +88,11 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
 
     /// 셸 프레임 항목의 활성 상태를 즉시 다시 계산합니다.
     ///
-    /// 내비게이션 항목은 셸 창 controller의 `validateToolbarItem(_:)`로 자동 검사합니다. 도구 영역과
+    /// 내비게이션 항목은 셸 창 controller의 `validateToolbarItem(_:)`로 자동 검사합니다. 도구 막대와
     /// 더 보기 항목은 snapshot에서 바로 정하므로 자동 검사를 끄고 여기서 지정합니다.
     func validateItems() {
         navigationGroup?.subitems.forEach { $0.validate() }
-        if let toolGroup {
-            let enabled = validateToolbarItem(toolGroup)
-            toolGroup.isEnabled = enabled
-            toolGroup.subitems.forEach { $0.isEnabled = enabled }
-        }
+        toolBar.isEnabled = snapshot.status == .ready && !builtTools.isEmpty
         if let moreToolbarItem {
             moreToolbarItem.isEnabled = validateToolbarItem(moreToolbarItem)
         }
@@ -138,8 +134,6 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         switch itemIdentifier {
         case Self.navigationItem:
             item = makeNavigationGroup()
-        case Self.toolAreaItem:
-            item = makeToolGroup()
         case Self.searchItem:
             item = makeSearchItem()
         case Self.moreItem:
@@ -190,30 +184,10 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
         return item
     }
 
-    private func makeToolGroup() -> NSToolbarItemGroup {
-        let tools = snapshot.tools
-        builtTools = tools
-        let images = tools.map { tool in
-            NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.label) ?? NSImage()
-        }
-        let group = NSToolbarItemGroup(
-            itemIdentifier: Self.toolAreaItem,
-            images: images,
-            selectionMode: .selectOne,
-            labels: tools.map(\.label),
-            target: self,
-            action: #selector(toolSelected(_:))
-        )
-        group.label = "Tools"
-        group.paletteLabel = "Tools"
-        group.autovalidates = false
-        for (subitem, tool) in zip(group.subitems, tools) {
-            subitem.toolTip = tool.label
-            subitem.autovalidates = false
-        }
-        toolGroup = group
+    private func rebuildTools() {
+        builtTools = snapshot.tools
+        toolBar.setTools(builtTools)
         syncToolSelection()
-        return group
     }
 
     private func makeSearchItem() -> NSSearchToolbarItem {
@@ -261,18 +235,17 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
     }
 
     private func syncToolSelection() {
-        guard let group = toolGroup else { return }
         if let activeID = snapshot.activeToolID, let index = builtTools.firstIndex(where: { $0.id == activeID }) {
-            group.selectedIndex = index
+            toolBar.selectedIndex = index
         } else {
-            group.selectedIndex = -1
+            toolBar.selectedIndex = -1
         }
     }
 
     // MARK: - 동작
 
-    @objc func toolSelected(_ sender: NSToolbarItemGroup) {
-        let index = sender.selectedIndex
+    /// 도구 막대에서 도구를 골랐습니다. 선택 표시는 코어 snapshot이 돌아올 때 바뀝니다.
+    func toolSelected(at index: Int) {
         guard builtTools.indices.contains(index) else { return }
         commandHandler?(.selectTool(builtTools[index].id))
     }
@@ -290,8 +263,6 @@ final class ShellToolbarController: NSObject, NSToolbarDelegate, NSToolbarItemVa
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
         switch item.itemIdentifier {
-        case Self.toolAreaItem:
-            return snapshot.status == .ready && !builtTools.isEmpty
         case Self.moreItem:
             return snapshot.moreActions.contains(where: \.isEnabled)
         default:

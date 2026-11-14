@@ -66,6 +66,13 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
             self?.dataSource.send(command)
         }
         window.toolbar = toolbarController.toolbar
+        // 상단 바: 구분선 없이 블러 배경만 둡니다.
+        window.titlebarSeparatorStyle = .none
+        for item in splitController.splitViewItems {
+            item.titlebarSeparatorStyle = .none
+        }
+        Self.installTitlebarBackground(in: splitController.contentContainer.view)
+        Self.installToolBar(toolbarController.toolBar, in: splitController.contentContainer.view)
 
         splitController.contentContainer.actionHandler = { [weak self] id in
             self?.dataSource.send(.perform(id))
@@ -90,6 +97,35 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("ShellWindowController는 코드로만 생성합니다")
+    }
+
+    /// 가운데 영역의 상단 바 뒤에 블러 배경을 깝니다(safe area 위쪽, 툴바 높이만큼).
+    private static func installTitlebarBackground(in contentView: NSView) {
+        let background = NSVisualEffectView()
+        background.material = .titlebar
+        background.blendingMode = .withinWindow
+        background.state = .followsWindowActiveState
+        background.translatesAutoresizingMaskIntoConstraints = false
+        background.identifier = NSUserInterfaceItemIdentifier("stellar.shell.titlebarBackground")
+        contentView.addSubview(background, positioned: .below, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            background.topAnchor.constraint(equalTo: contentView.topAnchor),
+            background.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            background.bottomAnchor.constraint(equalTo: contentView.safeAreaLayoutGuide.topAnchor),
+        ])
+    }
+
+    /// 도구 막대를 캔버스 영역 하단 가운데에 띄웁니다.
+    private static func installToolBar(_ toolBar: ShellToolBarView, in contentView: NSView) {
+        toolBar.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(toolBar)
+        let safeArea = contentView.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            toolBar.centerXAnchor.constraint(equalTo: safeArea.centerXAnchor),
+            toolBar.bottomAnchor.constraint(
+                equalTo: safeArea.bottomAnchor, constant: -ShellToolBarView.Metrics.bottomInset),
+        ])
     }
 
     // MARK: - snapshot 반영

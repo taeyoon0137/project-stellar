@@ -45,7 +45,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 | 위치 | 항목 | 구성요소 |
 |---|---|---|
 | 앞쪽 끝 | 사이드바 토글, 사이드바 경계 구분선 | `.toggleSidebar`, `.sidebarTrackingSeparator`(커스터마이즈 불가) |
-| 가운데 | 도구 그룹(Tools) | `NSToolbarItemGroup`, `selectOne`, 펼친 표현, `centeredItemIdentifiers` |
+| (툴바 밖) | 도구 그룹(Tools) | 캔버스 하단 가운데 도구 막대 `ShellToolBarView`로 옮김(2026-11-14, [셸 프레임 명세](shell_frame.md) 툴바 절) |
 | 가운데 | (유연 공간) | `.flexibleSpace` |
 | 뒤쪽 끝 | 줌(Zoom) | `NSMenuToolbarItem`, 제목은 현재 배율 |
 | 뒤쪽 끝 | 인스펙터 경계 구분선, 인스펙터 토글 | `.inspectorTrackingSeparator`, `.toggleInspector` |

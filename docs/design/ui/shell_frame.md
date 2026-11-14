@@ -11,11 +11,12 @@
 
 ```text
 ┌ NSToolbar(통합, 스타일 automatic) ─────────────────────────────────────────────┐
-│ [사이드바 토글] │ [‹ ›] 제목/부제목   [도구 영역(가운데)]   [검색] [⋯] │ [인스펙터 토글] │
+│ [사이드바 토글] │ [‹ ›] 제목/부제목                     [검색] [⋯] │ [인스펙터 토글] │
 ├──────────────┬──────────────────────────────────────────┬────────────────────┤
 │ 사이드바 슬롯  │ 콘텐츠 슬롯(캔버스 호스트, safe area 안)  │ 인스펙터 슬롯        │
 │ (sidebar     │  └ 상태 화면: 빈·로딩·오류               │ (inspector         │
-│  item)       ├──────────────────────────────────────────┤  item)            │
+│  item)       │        [도구 막대(하단 가운데)]           │  item)            │
+│              ├──────────────────────────────────────────┤                    │
 │              │ 보조 패널 슬롯(선택, 처음엔 접힘)          │                    │
 └──────────────┴──────────────────────────────────────────┴────────────────────┘
 ```
@@ -117,15 +118,16 @@ struct ShellFrameSlots {
 | 앞쪽 끝 | 사이드바 토글 | 시스템 `.toggleSidebar`, 사용자 구성에서 옮기거나 뺄 수 없음 |
 | 앞쪽 끝 | 사이드바 경계 추적 | 시스템 `.sidebarTrackingSeparator`, 고정 |
 | 앞쪽(내용 영역 시작) | 뒤로·앞으로 | `NSToolbarItemGroup`(버튼 두 개), `isNavigational = true`라 창 제목 앞에 놓임 |
-| 가운데 | 도구 영역 | `NSToolbarItemGroup`(selectOne), `centeredItemIdentifiers`로 가운데 고정, 좁아지면 시스템 overflow |
 | 뒤쪽 | 프로젝트 검색 | `NSSearchToolbarItem`(AppKit 검색 필드) |
 | 뒤쪽 | 더 보기 | `NSMenuToolbarItem`, 표시 화살표 없음 |
 | 뒤쪽 끝 | 인스펙터 경계 추적, 인스펙터 토글 | 시스템 `.inspectorTrackingSeparator`, `.toggleInspector` |
 
-- 항목 위치는 시스템 식별자와 `centeredItemIdentifiers`로만 정하고 직접 계산하지 않습니다. [가이드 6.1]
+- 항목 위치는 시스템 식별자로만 정하고 직접 계산하지 않습니다. [가이드 6.1]
+- 상단 바에는 구분선을 두지 않고(`titlebarSeparatorStyle = .none`, 창과 모든 분할 항목) 블러 배경만 둡니다. 콘텐츠 영역의 상단 바 뒤에는 `NSVisualEffectView`(`.titlebar`, within-window)를 깝니다(2026-11-14 사용자 결정).
+- 도구 영역은 툴바가 아니라 콘텐츠 슬롯 하단 가운데에 떠 있는 도구 막대(`ShellToolBarView`)에 둡니다(2026-11-14 사용자 결정). 모양은 상단 툴바에 있던 도구 그룹과 같게 유지합니다: Liquid Glass 캡슐(`NSGlassEffectView`, 높이 36pt, 반경 18pt), 도구 칸 38.5pt, 선택한 도구 뒤 32.5 × 28pt 둥근 회색 선택 표시, 구분선 없음. 캔버스 아래 가장자리와 16pt 떨어지고, 사이드바·인스펙터가 열리고 닫혀도 콘텐츠 영역 기준 가운데에 있습니다.
 - 아이콘만 있는 항목에는 레이블, 도움말 태그, 이미지 접근성 설명을 모두 둡니다. 같은 묶음에서 텍스트 항목과 아이콘 항목을 섞지 않습니다. [가이드 5.4, 8.1]
 - 사용자 구성은 `allowsUserCustomization`과 `autosavesConfiguration`으로 AppKit이 저장합니다.
-- 도구 영역은 placeholder입니다. 받은 도구 목록을 그리고 선택을 `selectTool`로 보낼 뿐이며, 도구 상태 기계는 XII.3.6, 생성 도구는 WBS 없음(가이드 10.4)입니다.
+- 도구 막대는 placeholder입니다. 받은 도구 목록을 그리고 선택을 `selectTool`로 보낼 뿐이며, 도구 상태 기계는 XII.3.6, 생성 도구는 WBS 없음(가이드 10.4)입니다.
 - Branch·Pull·Fetch 같은 Git 동작은 툴바에 두지 않습니다. [가이드 6.1]
 
 ### 6.2 pane 전환
@@ -215,7 +217,7 @@ struct ShellFrameSlots {
 
 `ShellFrameUICheck.run() -> Bool`은 Stub data source와 Stub 슬롯으로 창을 화면에 띄우지 않고 만들어 일반 크기(1200 × 760)로 layout한 뒤 다음을 확인합니다. 통합 시 `scripts/macos/smoke.sh`에 연결합니다.
 
-- 창 크롬: full-size content, 표준 스타일 마스크, 툴바 스타일 automatic, 기본 툴바 항목 전체, 가운데 도구 영역, 툴바 구성 autosave, 내비게이션 그룹 navigational
+- 창 크롬: full-size content, 표준 스타일 마스크, 툴바 스타일 automatic, 기본 툴바 항목 전체, 툴바에 도구 영역 없음, 상단 바 구분선 없음, 도구 막대가 콘텐츠 하단 가운데에 있고 치수가 도구 그룹과 같음, 툴바 구성 autosave, 내비게이션 그룹 navigational
 - 분할: 항목 3개, sidebar·inspector behavior, autosave 이름, 보조 패널 처음 접힘, pane 폭이 허용 범위 안, 창 폭 변경 시 캔버스만 변함, 캔버스가 툴바·사이드바·인스펙터와 겹치지 않음, drawable 크기 > 0
 - Auto Layout: ready, 각 pane 전환 후, 로딩·오류·빈 상태에서 모호한 레이아웃 없음(숨긴 뷰 제외)
 - 접근성: pane·캔버스 레이블, 툴바·도구·검색·더 보기 레이블과 도움말, 상태 화면 레이블, SF Symbol 이름 유효

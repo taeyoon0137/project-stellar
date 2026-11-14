@@ -116,7 +116,22 @@ private final class ShellFrameUICheckRunner {
         for required in ShellToolbarController.defaultItemIdentifiers where required != .flexibleSpace {
             expect(identifiers.contains(required), "툴바 항목 없음: \(required.rawValue)")
         }
-        expect(toolbar.centeredItemIdentifiers == [ShellToolbarController.toolAreaItem], "도구 영역이 가운데 항목이 아님")
+        expect(
+            !identifiers.contains(NSToolbarItem.Identifier("stellar.shell.toolArea")) && toolbar.centeredItemIdentifiers.isEmpty,
+            "상단 툴바에 도구 영역이 남음")
+        expect(window.titlebarSeparatorStyle == .none, "상단 바 구분선이 남음")
+        expect(split.splitViewItems.allSatisfy { $0.titlebarSeparatorStyle == .none }, "분할 항목 상단 바 구분선이 남음")
+        let contentHost = split.contentContainer.view
+        let toolBar = controller.toolbarController.toolBar
+        expect(toolBar.superview === contentHost, "도구 막대가 캔버스 영역에 없음")
+        expect(
+            abs(toolBar.frame.midX - contentHost.bounds.midX) < 1
+                && abs(toolBar.frame.minY - (contentHost.safeAreaInsets.bottom + ShellToolBarView.Metrics.bottomInset)) < 1,
+            "도구 막대가 캔버스 하단 가운데가 아님: \(toolBar.frame) / \(contentHost.bounds)")
+        expect(
+            abs(toolBar.frame.height - ShellToolBarView.Metrics.height) < 0.5
+                && abs(toolBar.frame.width - ShellToolBarView.Metrics.cellWidth * CGFloat(ShellFrameDataSourceStub.sampleTools.count)) < 0.5,
+            "도구 막대 치수가 툴바 도구 그룹과 다름: \(toolBar.frame.size)")
         expect(toolbar.autosavesConfiguration && toolbar.allowsUserCustomization, "툴바 구성 autosave·커스터마이즈 꺼짐")
         expect(controller.toolbarController.navigationGroup?.isNavigational == true, "내비게이션 그룹이 navigational이 아님")
 
@@ -239,10 +254,13 @@ private final class ShellFrameUICheckRunner {
             expect(!item.label.isEmpty && item.toolTip?.isEmpty == false, "내비게이션 항목 레이블·도움말 없음")
             expect(item.image?.accessibilityDescription?.isEmpty == false, "내비게이션 아이콘 설명 없음")
         }
-        let tools = toolbarController.toolGroup?.subitems ?? []
-        expect(tools.count == ShellFrameDataSourceStub.sampleTools.count, "도구 영역 항목 수 불일치")
-        for item in tools {
-            expect(!item.label.isEmpty && item.toolTip?.isEmpty == false, "도구 항목 레이블·도움말 없음")
+        let tools = toolbarController.toolBar.buttons
+        expect(tools.count == ShellFrameDataSourceStub.sampleTools.count, "도구 막대 항목 수 불일치")
+        for button in tools {
+            expect(
+                button.accessibilityLabel()?.isEmpty == false && button.toolTip?.isEmpty == false
+                    && button.image?.accessibilityDescription?.isEmpty == false,
+                "도구 항목 레이블·도움말 없음")
         }
         if let search = toolbarController.searchToolbarItem {
             expect(search.searchField.isEditable, "검색 필드가 편집 불가")
@@ -303,13 +321,16 @@ private final class ShellFrameUICheckRunner {
     private func checkSnapshotFlow(_ controller: ShellWindowController, stub: ShellFrameDataSourceStub) {
         let toolbarController = controller.toolbarController
         let tools = ShellFrameDataSourceStub.sampleTools
-        expect(toolbarController.toolGroup?.selectedIndex == 0, "초기 도구 선택 미반영")
+        expect(toolbarController.toolBar.selectedIndex == 0, "초기 도구 선택 미반영")
 
         // 다음 런 루프에서 반영: 받은 직후에는 그대로, flush 후 반영.
         stub.send(.selectTool(tools[2].id))
-        expect(toolbarController.toolGroup?.selectedIndex == 0, "snapshot이 즉시 반영됨(병합 안 됨)")
+        expect(toolbarController.toolBar.selectedIndex == 0, "snapshot이 즉시 반영됨(병합 안 됨)")
         controller.flushPendingSnapshot()
-        expect(toolbarController.toolGroup?.selectedIndex == 2, "도구 선택 snapshot 미반영")
+        expect(toolbarController.toolBar.selectedIndex == 2, "도구 선택 snapshot 미반영")
+        expect(
+            toolbarController.toolBar.buttons.enumerated().allSatisfy { $0.element.isSelectedTool == ($0.offset == 2) },
+            "도구 선택 표시가 한 항목에만 있지 않음")
 
         // 연속 snapshot은 한 번만 반영합니다.
         let appliedBefore = controller.appliedSnapshotCount
@@ -346,12 +367,14 @@ private final class ShellFrameUICheckRunner {
         controller.navigateForward(nil)
         controller.flushPendingSnapshot()
 
-        // 도구 영역 UI 선택 → 명령.
-        if let group = toolbarController.toolGroup {
-            group.selectedIndex = 1
-            toolbarController.toolSelected(group)
+        // 도구 막대 UI 선택 → 명령.
+        if toolbarController.toolBar.buttons.indices.contains(1) {
+            toolbarController.toolBar.buttons[1].performClick(nil)
             expect(stub.sentCommands.last == .selectTool(tools[1].id), "도구 선택 명령 미전달")
             controller.flushPendingSnapshot()
+            expect(toolbarController.toolBar.selectedIndex == 1, "도구 선택 후 선택 표시 미반영")
+        } else {
+            expect(false, "도구 막대 항목 부족")
         }
 
         // 검색: Return 확정 질의만 전달.
@@ -384,7 +407,7 @@ private final class ShellFrameUICheckRunner {
         expect(contentView.isHidden && !container.statusView.isHidden, "로딩 상태 화면 미표시")
         expect(!container.progressIndicator.isHidden, "로딩 진행 표시기 미표시")
         expect(container.progressIndicator.accessibilityLabel()?.isEmpty == false, "로딩 접근성 레이블 없음")
-        expect(toolbarController.toolGroup?.isEnabled == false, "로딩 중 도구 영역이 활성")
+        expect(toolbarController.toolBar.isEnabled == false && toolbarController.toolBar.buttons.allSatisfy { !$0.isEnabled }, "로딩 중 도구 막대가 활성")
         expect(toolbarController.searchToolbarItem?.searchField.isEnabled == false, "로딩 중 검색이 활성")
         checkNoAmbiguity(window, context: "loading")
 
@@ -411,7 +434,7 @@ private final class ShellFrameUICheckRunner {
         stub.setStatus(.ready)
         controller.flushPendingSnapshot()
         expect(!contentView.isHidden && container.statusView.isHidden, "ready 복귀 후 캔버스 미표시")
-        expect(toolbarController.toolGroup?.isEnabled == true, "ready 복귀 후 도구 영역 비활성")
+        expect(toolbarController.toolBar.isEnabled == true && toolbarController.toolBar.buttons.allSatisfy(\.isEnabled), "ready 복귀 후 도구 막대 비활성")
     }
 
     private func checkAnimatedToggle(_ controller: ShellWindowController, window: NSWindow) {
