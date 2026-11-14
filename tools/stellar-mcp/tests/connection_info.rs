@@ -215,8 +215,8 @@ fn bridge_sources_have_no_file_mutation_api() {
             }
             files += 1;
             let text = std::fs::read_to_string(&path).unwrap();
-            // 테스트 module(`#[cfg(test)]` 뒤)은 임시 파일을 만들 수 있으므로 제외합니다.
-            let shipped = text.split("#[cfg(test)]").next().unwrap_or("");
+            // 파일 끝의 테스트 module만 제외합니다. 중간 계측 field·statement 뒤 제품 코드는 검사합니다.
+            let shipped = text.split("\n#[cfg(test)]\nmod tests").next().unwrap_or("");
             for pattern in &forbidden {
                 assert!(
                     !shipped.contains(pattern.as_str()),
