@@ -268,8 +268,14 @@ AST의 reference payload `0x04`에 `u32` LE로 기록됩니다.
   거부만 확인합니다. 그래서 배치가 바뀌어도 round-trip만 맞으면 통과합니다. canonical AST
   (`canonical_bytes_golden`)와 key registry(`key_numeric_ids_match_golden`)에는 golden test가 있습니다.
   binding golden fixture 추가는 후속 작업입니다.
-- `adr_policy.rs` 보호 경로에 `crates/bindings/`·`crates/expressions/`가 없습니다. 이 형식이나
-  registry를 바꿔도 `validate-adr`가 실패하지 않습니다. 보호 경로 추가는 후속 작업입니다.
+- `adr_policy.rs` 보호 경로에 `crates/bindings/`·`crates/expressions/`가 없었습니다. 그래서 이 형식이나
+  registry를 바꿔도 `validate-adr`가 실패하지 않았습니다. 사후 리뷰 뒤 이 ADR이 기록한 형식·registry
+  파일 세 개를 정확히 일치하는 보호 경로로 추가했습니다: `crates/bindings/src/binding.rs`,
+  `crates/expressions/src/codec.rs`, `crates/expressions/src/environment.rs`. xtask test
+  `binding_and_expression_format_files_are_protected`가 이를 확인합니다. crate 전체를 보호하지
+  않은 이유는 두 crate의 나머지 코드(평가기, command, scheduler 등)가 저장 형식도 numeric registry도
+  아니기 때문입니다. canonical AST bytes에 들어가는 연산 tag(`ops.rs` 등)와 함수 ID(`functions.rs`)는
+  어느 ADR에도 기록되지 않았고, 보호 경로도 아닙니다. 아래 canonical AST ADR을 정할 때 함께 정합니다.
 - canonical AST 형식(VIII.2.5, `AST_FORMAT_VERSION = 1`) 자체에도 ADR이 없습니다. 이 ADR은 binding이
   의존하는 부분(머리 버전, environment key 기록)만 다룹니다.
 

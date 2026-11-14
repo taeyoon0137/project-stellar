@@ -27,8 +27,14 @@ const PROTECTED_PREFIXES: [&str; 4] = [
     "schemas/",
 ];
 
-/// 보호 경로(정확히 일치).
-const PROTECTED_EXACT: [&str; 1] = ["config/performance-budgets.yaml"];
+/// 보호 경로(정확히 일치). performance budget과, crate 전체가 아니라 파일 하나에 모인 저장 형식·numeric
+/// registry입니다(ADR-0026: `ValueBinding` 형식, canonical AST 형식, 환경 입력 key·enum registry).
+const PROTECTED_EXACT: [&str; 4] = [
+    "config/performance-budgets.yaml",
+    "crates/bindings/src/binding.rs",
+    "crates/expressions/src/codec.rs",
+    "crates/expressions/src/environment.rs",
+];
 
 fn is_protected(path: &str) -> bool {
     PROTECTED_PREFIXES.iter().any(|p| path.starts_with(p)) || PROTECTED_EXACT.contains(&path)
@@ -71,6 +77,25 @@ mod tests {
         assert!(codes(&["crates/storage/src/format.rs"]).contains(&"missing-adr"));
         assert!(codes(&["crates/ffi/src/lib.rs"]).contains(&"missing-adr"));
         assert!(codes(&["config/performance-budgets.yaml"]).contains(&"missing-adr"));
+    }
+
+    #[test]
+    fn binding_and_expression_format_files_are_protected() {
+        // ADR-0026: ValueBinding 형식, canonical AST 형식, 환경 입력 registry.
+        for path in [
+            "crates/bindings/src/binding.rs",
+            "crates/expressions/src/codec.rs",
+            "crates/expressions/src/environment.rs",
+        ] {
+            assert!(codes(&[path]).contains(&"missing-adr"), "{path}");
+            assert!(check_adr_policy(&[path, "docs/adr/ADR-0026-x.md"]).is_empty());
+        }
+        // 형식·registry가 아닌 평가·command 코드는 보호 경로가 아닙니다.
+        assert!(check_adr_policy(&[
+            "crates/bindings/src/fallback.rs",
+            "crates/expressions/src/vm.rs",
+        ])
+        .is_empty());
     }
 
     #[test]
