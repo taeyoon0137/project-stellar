@@ -35,6 +35,14 @@
 //! 바뀐 node·자식 관계와 옮겨진 subtree에 비례하며, 실패하면 상태를 바꾸지 않고 오류를 돌려줍니다. 계산 중
 //! 오류(수치 범위 초과 등)는 edit를 반영한 채 결과를 무효로 두고([`LayoutError::LayoutUnavailable`]), 다음 edit가
 //! 전체 계산으로 복구합니다.
+//!
+//! # 전체 레이아웃 fallback (X.7.6)
+//!
+//! 재사용 없이 root부터 전부 배치하는 경로는 정해진 이유([`FullLayoutReason`])에서만 씁니다: 세션 시작, 측정기
+//! revision 변경, 계산 실패 뒤 복구, 테스트·진단용 명시 호출([`IncrementalLayout::full_layout_for_diagnostics`]).
+//! 일반 edit 처리 중 증분 경로가 표시 node의 이전 배치를 찾지 못해 전체 레이아웃으로 대신하는 것
+//! ([`FullLayoutReason::UnexpectedFallback`])은 증분 불변식이 깨졌다는 뜻이라, metric([`LayoutMetrics`])을 남기고 debug
+//! build에서는 assertion으로 실패합니다(release는 결과 정확성을 위해 전체 레이아웃으로 계속).
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -105,6 +113,56 @@ pub struct UpdateStats {
     pub measurer_calls: u64,
     /// 전체 레이아웃(재사용 없는 root부터의 배치) 횟수.
     pub full_layouts: u64,
+    /// 전체 레이아웃을 했다면 그 이유(X.7.6).
+    pub full_layout_reason: Option<FullLayoutReason>,
+}
+
+/// 전체 레이아웃(재사용 없는 root부터의 배치)을 한 이유 (X.7.6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FullLayoutReason {
+    /// 세션 시작.
+    Initial,
+    /// 측정기 revision이 바뀜(폰트 로드 등, 모든 측정 무효).
+    MeasurerChanged,
+    /// 직전 계산 실패 뒤 복구.
+    Recovery,
+    /// 테스트·진단용 명시 호출.
+    Diagnostic,
+    /// 일반 edit 처리 중 증분 경로가 대신함. 정상 경로에서는 일어나면 안 됩니다(debug assertion).
+    UnexpectedFallback,
+}
+
+/// 세션 누적 metric (X.7.6). 값은 포화 증가합니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LayoutMetrics {
+    /// 적용한 edit batch 수(검증 실패 제외).
+    pub updates: u64,
+    /// 전체 레이아웃 총 횟수.
+    pub full_layouts: u64,
+    /// 세션 시작 전체 레이아웃.
+    pub initial: u64,
+    /// 측정기 revision 변경 전체 레이아웃.
+    pub measurer_changed: u64,
+    /// 실패 뒤 복구 전체 레이아웃.
+    pub recovery: u64,
+    /// 테스트·진단용 전체 레이아웃.
+    pub diagnostic: u64,
+    /// 일반 edit 중 예상치 못한 전체 레이아웃 대체(0이어야 함).
+    pub unexpected_fallback: u64,
+}
+
+impl LayoutMetrics {
+    fn record(&mut self, reason: FullLayoutReason) {
+        self.full_layouts = self.full_layouts.saturating_add(1);
+        let counter = match reason {
+            FullLayoutReason::Initial => &mut self.initial,
+            FullLayoutReason::MeasurerChanged => &mut self.measurer_changed,
+            FullLayoutReason::Recovery => &mut self.recovery,
+            FullLayoutReason::Diagnostic => &mut self.diagnostic,
+            FullLayoutReason::UnexpectedFallback => &mut self.unexpected_fallback,
+        };
+        *counter = counter.saturating_add(1);
+    }
 }
 
 impl UpdateStats {
@@ -183,6 +241,7 @@ pub struct IncrementalLayout {
     measurer_revision: u64,
     valid: bool,
     arrangement: Arrangement,
+    metrics: LayoutMetrics,
 }
 
 impl IncrementalLayout {
@@ -212,9 +271,39 @@ impl IncrementalLayout {
                 update: 0,
                 last_arranged: Vec::new(),
             },
+            metrics: LayoutMetrics::default(),
         };
-        let stats = session.relayout_all(measurer, UpdateStats::default())?;
+        let stats =
+            session.relayout_all(measurer, UpdateStats::default(), FullLayoutReason::Initial)?;
         Ok((session, stats))
+    }
+
+    /// 테스트 전용: node의 이전 배치를 잊게 해 증분 불변식 위반(X.7.6 fallback)을 재현합니다.
+    #[cfg(test)]
+    fn forget_layout(&mut self, id: StableId) {
+        if let Some(&index) = self.tree.index.get(&id) {
+            self.arrangement.layouts[index] = None;
+        }
+    }
+
+    /// 세션 누적 metric(X.7.6).
+    pub const fn metrics(&self) -> LayoutMetrics {
+        self.metrics
+    }
+
+    /// 테스트·진단용 전체 레이아웃(재사용 없이 root부터 다시 배치, X.7.6).
+    ///
+    /// 결과는 증분 경로와 같아야 하므로 증분 결과 검증에 씁니다. metric의 `diagnostic`으로 셉니다. 일반 edit 처리에서
+    /// 호출하지 않습니다.
+    pub fn full_layout_for_diagnostics(
+        &mut self,
+        measurer: &dyn ContentMeasurer,
+    ) -> Result<UpdateStats, LayoutError> {
+        self.relayout_all(
+            measurer,
+            UpdateStats::default(),
+            FullLayoutReason::Diagnostic,
+        )
     }
 
     /// id의 현재 node 입력(index 조회).
@@ -299,8 +388,12 @@ impl IncrementalLayout {
         let staged = self.stage(edits)?;
         let mut stats = UpdateStats::default();
         let dirty = self.commit(staged, &mut stats);
-        if !self.valid || measurer.revision() != self.measurer_revision {
-            return self.relayout_all(measurer, stats);
+        self.metrics.updates = self.metrics.updates.saturating_add(1);
+        if !self.valid {
+            return self.relayout_all(measurer, stats, FullLayoutReason::Recovery);
+        }
+        if measurer.revision() != self.measurer_revision {
+            return self.relayout_all(measurer, stats, FullLayoutReason::MeasurerChanged);
         }
         self.relayout_dirty(&dirty, measurer, stats)
     }
@@ -721,7 +814,10 @@ impl IncrementalLayout {
         &mut self,
         measurer: &dyn ContentMeasurer,
         mut stats: UpdateStats,
+        reason: FullLayoutReason,
     ) -> Result<UpdateStats, LayoutError> {
+        self.metrics.record(reason);
+        stats.full_layout_reason = Some(reason);
         let revision = measurer.revision();
         if revision != self.measurer_revision {
             self.cache.clear();
@@ -826,8 +922,15 @@ impl IncrementalLayout {
                 self.valid = true;
                 Ok(stats)
             }
-            // 이전 배치가 없는 표시 node: 전체 레이아웃으로 대신합니다(X.7.6 소관).
-            None => self.relayout_all(measurer, stats),
+            // 이전 배치가 없는 표시 node: 증분 불변식 위반. metric을 남기고 debug build에서는 실패합니다.
+            None => {
+                let stats =
+                    self.relayout_all(measurer, stats, FullLayoutReason::UnexpectedFallback)?;
+                if cfg!(debug_assertions) {
+                    panic!("증분 레이아웃이 일반 edit에서 전체 레이아웃으로 대체되었습니다(X.7.6)");
+                }
+                Ok(stats)
+            }
         }
     }
 }
@@ -1981,5 +2084,176 @@ mod tests {
                 .join()
                 .unwrap();
         });
+    }
+
+    // --- 전체 레이아웃 fallback (X.7.6) ---
+
+    /// node 하나에 대한 단일 edit 종류.
+    fn single_edit(kind: usize, node: &mut LayoutNode) {
+        match kind {
+            0 => {
+                if let SizingMode::Fixed(width) = node.width {
+                    node.width = SizingMode::Fixed(len(width.get() + 1.0));
+                }
+            }
+            1 => node.padding = Insets::new(2.0, 1.0, 0.0, 3.0).unwrap(),
+            2 => node.visible = !node.visible,
+            3 => node.position = FreePosition::at(len(3.0), len(1.0)),
+            4 => node.transform = Transform2D::new(1.0, 0.0, 0.0, 1.0, 2.0, 2.0).unwrap(),
+            5 => node.limits.max_height = Some(len(500.0)),
+            _ => {
+                let one = Scalar::new(1.0).unwrap();
+                node.flex = FlexItem::new(one, one, FlexBasis::Auto);
+            }
+        }
+    }
+
+    #[test]
+    fn single_edit_fixtures_never_use_full_layout() {
+        // 검증 기준(X.7.6): 단일 edit fixture에서 full layout count 0.
+        let (mut session, initial) =
+            IncrementalLayout::new(modes_document(), &DefaultMeasurer).unwrap();
+        assert_eq!(initial.full_layout_reason, Some(FullLayoutReason::Initial));
+        let ids: Vec<StableId> = session.input().nodes.iter().map(|n| n.id).collect();
+        let mut updates = 0;
+        for kind in 0..7 {
+            for node in &ids {
+                let change = edited(&session, node_number(*node), |n| single_edit(kind, n));
+                let Ok(stats) = session.apply(vec![change], &DefaultMeasurer) else {
+                    // 조합 오류(예: root 숨김·Fill)는 검증에서 거부되어 레이아웃과 무관합니다.
+                    continue;
+                };
+                updates += 1;
+                assert_eq!(stats.full_layouts, 0, "kind {kind} node {node}");
+                assert_eq!(stats.full_layout_reason, None);
+                assert_matches_full(&session, &format!("kind {kind} node {node}"));
+            }
+        }
+        let metrics = session.metrics();
+        assert_eq!(metrics.full_layouts, 1);
+        assert_eq!(metrics.initial, 1);
+        assert_eq!(metrics.unexpected_fallback, 0);
+        assert_eq!(metrics.updates, updates);
+        assert!(updates > 100, "{updates}");
+        // 무작위 edit corpus도 예상치 못한 fallback 0(복구 외 전체 레이아웃 없음).
+        for (n, fixture) in generate_corpus(4).into_iter().enumerate() {
+            let mut rng = Rng(0x76 + n as u64);
+            let mut next_id = 2_000_000;
+            let (mut session, _) =
+                IncrementalLayout::new(fixture.input.clone(), &DefaultMeasurer).unwrap();
+            for _ in 0..16 {
+                let edits = random_edits(session.input(), &mut rng, &mut next_id);
+                let _ = session.apply(edits, &DefaultMeasurer);
+            }
+            let metrics = session.metrics();
+            assert_eq!(metrics.unexpected_fallback, 0, "{}", fixture.name);
+            assert_eq!(
+                metrics.full_layouts,
+                1 + metrics.recovery,
+                "{}",
+                fixture.name
+            );
+        }
+    }
+
+    /// 테스트 id(`test_support::id`)의 번호.
+    fn node_number(id: StableId) -> u64 {
+        id.timestamp_ms()
+    }
+
+    #[test]
+    fn diagnostic_and_recovery_full_layouts_are_counted_by_reason() {
+        let (mut session, _) = IncrementalLayout::new(modes_document(), &Revisioned(0)).unwrap();
+        let change = edited(&session, 4, |node| {
+            node.width = SizingMode::Fixed(len(14.0))
+        });
+        session.apply(vec![change], &Revisioned(0)).unwrap();
+        let incremental = session.result().unwrap();
+        // 진단용 전체 레이아웃은 증분 결과와 같고 diagnostic으로 셉니다.
+        let stats = session.full_layout_for_diagnostics(&Revisioned(0)).unwrap();
+        assert_eq!(stats.full_layout_reason, Some(FullLayoutReason::Diagnostic));
+        assert_eq!(session.result().unwrap(), incremental);
+        // 측정기 revision 변경.
+        let change = edited(&session, 4, |node| {
+            node.width = SizingMode::Fixed(len(15.0))
+        });
+        let stats = session.apply(vec![change], &Revisioned(1)).unwrap();
+        assert_eq!(
+            stats.full_layout_reason,
+            Some(FullLayoutReason::MeasurerChanged)
+        );
+        // 계산 실패(Hug Stack 합이 레이아웃 수치 범위를 넘음) 뒤 다음 edit는 복구 전체 레이아웃입니다.
+        let huge = |w: f32| move |node: &mut LayoutNode| node.width = SizingMode::Fixed(len(w));
+        let overflow = vec![
+            edited(&session, 4, huge(30_000_000.0)),
+            edited(&session, 6, huge(30_000_000.0)),
+        ];
+        assert!(session.apply(overflow, &Revisioned(1)).is_err());
+        assert_eq!(session.result(), Err(LayoutError::LayoutUnavailable));
+        assert!(session.layout_box(id(1)).is_none());
+        let fix = vec![
+            edited(&session, 4, huge(10.0)),
+            edited(&session, 6, huge(5.0)),
+        ];
+        let stats = session.apply(fix, &Revisioned(1)).unwrap();
+        assert_eq!(stats.full_layout_reason, Some(FullLayoutReason::Recovery));
+        assert_eq!(
+            session.result().unwrap(),
+            compute_layout_with(session.input(), &Revisioned(1)).unwrap()
+        );
+        let metrics = session.metrics();
+        assert_eq!(
+            (
+                metrics.initial,
+                metrics.diagnostic,
+                metrics.measurer_changed,
+                metrics.recovery,
+                metrics.unexpected_fallback
+            ),
+            (1, 1, 1, 1, 0)
+        );
+        assert_eq!(metrics.full_layouts, 4);
+        assert_eq!(metrics.updates, 4);
+    }
+
+    /// 표시 node의 이전 배치를 잊게 한 뒤 그 node가 relayout root가 되는 edit.
+    fn broken_session() -> (IncrementalLayout, LayoutEdit) {
+        let (mut session, _) = IncrementalLayout::new(modes_document(), &DefaultMeasurer).unwrap();
+        session.forget_layout(id(2));
+        let change = edited(&session, 4, |node| {
+            node.width = SizingMode::Fixed(len(21.0))
+        });
+        (session, change)
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "전체 레이아웃으로 대체")]
+    fn unexpected_fallback_asserts_in_debug_builds() {
+        let (mut session, change) = broken_session();
+        let _ = session.apply(vec![change], &DefaultMeasurer);
+    }
+
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn unexpected_fallback_is_counted_in_release_builds() {
+        let (mut session, change) = broken_session();
+        let stats = session.apply(vec![change], &DefaultMeasurer).unwrap();
+        assert_eq!(
+            stats.full_layout_reason,
+            Some(FullLayoutReason::UnexpectedFallback)
+        );
+        assert_eq!(session.metrics().unexpected_fallback, 1);
+        assert_matches_full(&session, "fallback");
+    }
+
+    #[test]
+    fn unexpected_fallback_metric_is_recorded_before_the_assertion() {
+        let (mut session, change) = broken_session();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = session.apply(vec![change], &DefaultMeasurer);
+        }));
+        assert_eq!(outcome.is_err(), cfg!(debug_assertions));
+        assert_eq!(session.metrics().unexpected_fallback, 1);
     }
 }
