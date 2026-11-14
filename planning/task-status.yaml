@@ -4606,7 +4606,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.2"
-    title: "Frame·Modifier metadata registry의 모든 항목에 속성 모델 5장·9장 대응을 채웁니다. registry `name`을 CSS longhand 또는 `stellar-only` 이름으로 맞추고 semantic diff 표시 문자열을 같은 이름으로 바꿉니다. 묶음 key(IX.11.22)는 대응 longhand 목록으로 표시합니다. `clipping` 항목에는 확인된 clip 기준(border box와 바깥 corner radius, `crates/scene/src/builder.rs` `FrameClipInput::Bounds`)과 CSS 대응(`overflow: clip` + `overflow-clip-margin: border-box`)을 차이 설명으로 기록합니다."
+    title: "Frame·Modifier metadata registry의 모든 항목에 속성 모델 5장·9장 대응을 채웁니다. registry `name`을 CSS longhand 또는 `stellar-only` 이름으로 맞추고 semantic diff 표시 문자열을 같은 이름으로 바꿉니다. 묶음 key(IX.11.22)는 대응 longhand 목록으로 표시합니다. `clipping`(0x0103)은 CSS longhand로 나누지 않는 Stellar 고유 이름의 단일 속성으로 두고(ADR-0024 결정 14), 확인된 clip 기준(border box와 바깥 corner radius, `crates/scene/src/builder.rs` `FrameClipInput::Bounds`)과 변형별 CSS 대응(Disabled `overflow: visible`, FrameBounds `overflow: clip` + `overflow-clip-margin: border-box`, Path `clip-path`)을 변환 규칙과 차이 설명으로 기록합니다."
     status: not_started
     depends_on:
       - "IX.11.1"
@@ -4636,7 +4636,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.5"
-    title: "Grid·Free·Overlay 의미를 CSS에 맞춥니다. grid item 생략 정렬을 `normal`(stretch)로 하고 `justify-self`·`align-self`를 추가합니다. track 최솟값 `auto`(item 최소 기여)를 추가해 bare `fr`을 CSS `minmax(auto, <n>fr)`로 해석하고, 기존 `TrackSize::Fraction`은 `minmax(0, <n>fr)`과 같게 둡니다. Free containing block을 padding box로 바꾸고 백분율 위치·크기의 기준도 content rect(X.2.3)에서 padding box로 바꾸며, anchor 없는 축은 시작 anchor 0으로 해석합니다. absolute 자식이 부모 Hug 크기에 기여하지 않게 합니다. Overlay 정렬 이름을 `justify-items`·`align-items`로 맞추고 생략값을 CSS initial value(`normal`, stretch)로 바꿉니다. 영속 record 생략값은 CSS initial value, 새 노드 생성 preset은 명시 값입니다."
+    title: "Grid·Free·Overlay 의미를 CSS에 맞춥니다. grid item 생략 정렬을 `normal`(stretch)로 하고 `justify-self`·`align-self`를 추가합니다. track 최솟값 `auto`(item 최소 기여)를 추가해 bare `fr`을 CSS `minmax(auto, <n>fr)`로 해석하고, 기존 `TrackSize::Fraction`은 `minmax(0, <n>fr)`과 같게 둡니다. Free containing block을 padding box로 바꾸고 백분율 위치·크기의 기준도 content rect(X.2.3)에서 padding box로 바꾸며, anchor 없는 축은 시작 anchor 0으로 해석합니다. absolute 자식이 부모 Hug 크기에 기여하지 않게 합니다. Overlay 정렬 이름을 `justify-items`·`align-items`로 맞추고, `OverlayAlignment`(지금 Start·Center·End, `crates/layout/src/overlay.rs`)에 stretch를 더해 생략값을 CSS initial value(`normal`, stretch)로 바꿉니다. stretch는 크기가 auto인 축만 영역 크기로 늘리고 Fixed 크기 자식은 시작 쪽에 놓습니다. `grid-auto-rows`의 CSS initial value `auto`는 지금 track 어휘로 표현할 수 없으므로(엔진 기본 `TrackSize::MaxContent`, 속성 모델 4.4절 `implicit_row` 행) `auto` track을 추가할지, 영속 record가 `grid-auto-rows`를 생략 없이 명시 `max-content`로 저장할지를 이 행에서 정해 보고서에 기록하고 IX.11.6이 따릅니다. 영속 record 생략값은 CSS initial value, 새 노드 생성 preset은 명시 값입니다."
     status: not_started
     depends_on:
       - "IX.11.1"
@@ -4647,7 +4647,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.6"
-    title: "레이아웃 container·item 속성을 CSS longhand로 저장하는 영속 record와 schema version을 정의합니다. 생략값은 CSS initial value입니다. 저장 위치(Frame payload 확장 또는 `layout_mode` 참조 resource)와 Frame `size` 흡수 방식을 이 작업의 ADR로 정합니다. longhand key는 ADR-0024 결정 14로 할당하고, schema version 증가는 IX.11.21이 정한 묶음 규칙을 따릅니다."
+    title: "레이아웃 container·item 속성을 CSS longhand로 저장하는 영속 record와 schema version을 정의합니다. 생략값은 CSS initial value입니다. container 저장 위치(Frame payload 확장 또는 `layout_mode` 참조 resource)와 Frame `size` 흡수 방식을 이 작업의 ADR로 정합니다. item longhand(inset, `flex-*`, `align-self`·`justify-self`, `grid-*-start`·`-end`, sizing longhand)는 Frame만이 아니라 상자를 가진 모든 node 종류(Frame, Shape, Path, Text, Image, ComponentInstance)의 자식에 붙습니다. 지금 Frame이 아닌 node에는 위치 필드가 없으므로(`crates/document/src/records.rs` `NodeRecord`, Rectangle은 크기만 가짐) item record 저장 위치(NodeRecord 공통 필드 또는 node별 layout item record)와 Shape·Image payload 크기의 흡수 방식도 같은 ADR로 정합니다. 상자가 없는 Fragment는 item이 아니고 그 자식이 item입니다(아키텍처 §12.4). Ellipse·Polygon `bounds` 원점은 shape local 좌표의 기하 offset으로, Transform modifier 이동 성분은 layout 뒤에 적용하는 시각 변형으로 그대로 두고 위치 longhand로 migration하지 않으며, 새 위치 편집은 item record 위치 longhand를 씁니다(속성 모델 12장 Position 행). longhand key는 ADR-0024 결정 14로 할당하고, schema version 증가는 IX.11.21이 정한 묶음 규칙을 따릅니다."
     status: not_started
     depends_on:
       - "IX.11.4"
@@ -4696,17 +4696,19 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.11"
-    title: "Typography record를 CSS longhand(`font-family`, `font-size`, `font-weight`, `font-style`, `font-stretch`, `line-height`, `letter-spacing`)로 정의하고 `TextStyle.typography` 참조 대상으로 연결합니다. family 해석 결과는 `FontFaceRef`로 고정하고 누락 글꼴은 진단합니다. 지금 `TextPayload`는 content와 paragraph·run의 style index만 저장하고 `TextStyle`·`ParagraphStyle` 표는 저장하지 않으므로(`crates/document/src/text.rs` `encode`), style 표 저장 형식을 이 행에서 정하고 Text payload schema 변경으로 IX.11.21 step에 넣습니다(옛 payload는 기본 style 표로 migration). `ParagraphStyle`에 문단 typography 참조(CSS의 문단 요소 자신의 `font-*`, root inline box strut의 글꼴 출처)를 추가하고, typography 없는 run은 문단 typography, 그다음 문서 기본 typography를 상속합니다(문서 기본의 저장 위치도 이 행에서 정함). `letter-spacing`은 `ParagraphStyle.letter_spacing_em`에서 run `TextStyle`의 선택 필드(없으면 Typography 값)로 옮기며 Typography resource를 복제하지 않습니다. 저장된 값이 없으므로 이 이동은 파일 migration이 아닙니다. `TypedValue::Typography` tag는 유지하고 payload를 Typography canonical encoding으로 정의하며, 새 encoding으로 decode되지 않는 기존 불투명 blob은 bytes를 보존하고 `typography-unrecognized` 진단을 냅니다. style longhand에는 ADR-0024 결정 14로 key를 할당합니다."
+    title: "Typography record를 CSS longhand(`font-family`, `font-size`, `font-weight`, `font-style`, `font-stretch`, `line-height`, `letter-spacing`)로 정의하고 `TextStyle.typography` 참조 대상으로 연결합니다. family 해석 결과는 `FontFaceRef`로 고정하고 누락 글꼴은 진단합니다. 지금 `TextPayload`는 content와 paragraph·run의 style index만 저장하고 `TextStyle`·`ParagraphStyle` 표는 저장하지 않으므로(`crates/document/src/text.rs` `encode`), style 표 저장 형식을 이 행에서 정하고 Text payload schema 변경으로 IX.11.21 step에 넣습니다(옛 payload는 기본 style 표로 migration). `ParagraphStyle`에 문단 typography 참조(CSS의 문단 요소 자신의 `font-*`, root inline box strut의 글꼴 출처)를 추가하고, typography 없는 run은 문단 typography, 그다음 문서 기본 typography를 상속합니다(문서 기본의 저장 위치도 이 행에서 정함). `letter-spacing`은 `ParagraphStyle.letter_spacing_em`에서 run `TextStyle`의 선택 필드(없으면 Typography 값)로 옮기며 Typography resource를 복제하지 않습니다. 저장된 값이 없으므로 이 이동은 파일 migration이 아닙니다. `TypedValue::Typography` tag는 유지하고 payload를 Typography canonical encoding으로 정의하며, 새 encoding으로 decode되지 않는 기존 불투명 blob은 bytes를 보존하고 `typography-unrecognized` 진단을 냅니다. style longhand에는 IX.11.3 Text registry에 ADR-0024 결정 14로 key를 할당하고, semantic snapshot(`crates/semantic-diff/src/build.rs`)의 Text style 경로를 `TEXT_PAYLOAD` 하나에서 style longhand key 경로로 바꿉니다. 이때부터 Text style은 longhand 단위로 merge합니다(속성 모델 15장 O12)."
     status: not_started
     depends_on:
       - "IX.11.1"
+      - "IX.11.3"
       - "IX.11.21"
       - "VI.7.2"
       - "X.8.4"
+      - "XIV.10.2"
     required_environments:
       - DEV-MAC
   - id: "IX.11.12"
-    title: "Text paragraph 속성을 CSS에 맞춥니다. `line-height` 배율을 inline box별 font-size 기준으로 해석하도록 text layout을 고치고, root inline box strut는 문단 typography(IX.11.11)의 첫 사용 가능 글꼴과 font-size로 만듭니다. run `letter-spacing`(IX.11.11)을 text 엔진 입력에 연결합니다. style 표가 아직 저장되지 않으므로 이 행은 파일 migration을 만들지 않습니다. 바뀐 X.10 golden은 이유와 함께 갱신합니다."
+    title: "Text paragraph 속성을 CSS에 맞춥니다. `line-height` 배율(`<number>`)과 고정 길이(`<length>`)를 CSS처럼 inline box마다 자기 글꼴 metric에 half-leading을 적용해 해석하도록 text layout을 고칩니다. 지금은 둘 다 줄 전체 높이를 정하고 줄 안 최대 ascent·descent로 baseline을 정합니다(`crates/text/src/text_layout.rs`). root inline box strut는 문단 typography(IX.11.11)의 첫 사용 가능 글꼴과 font-size로 만듭니다. run `letter-spacing`(IX.11.11)을 text 엔진 입력에 연결합니다. style 표가 아직 저장되지 않으므로 이 행은 파일 migration을 만들지 않습니다. 바뀐 X.10 golden은 이유와 함께 갱신합니다."
     status: not_started
     depends_on:
       - "IX.11.11"
@@ -4759,7 +4761,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.18"
-    title: "modifier stack을 CSS 고정 적용 순서로 선형화하는 export 계획 함수를 구현합니다. 속성 모델 9.1절 규칙으로 요소·wrapper 구조, filter 목록, path 굽기 지점을 계산하고 wrapper마다 `approximated` 진단을 냅니다. 요소 구조에는 모든 요소가 같은 층(`z-index: 0`)의 stacking context를 만들어 DOM 순서대로 그려지게 하는 출력 규칙(속성 모델 3장, 14장 E3)을 넣습니다."
+    title: "modifier stack을 CSS 고정 적용 순서로 선형화하는 export 계획 함수를 구현합니다. 속성 모델 9.1절 규칙으로 요소·wrapper 구조, filter 목록, path 굽기 지점을 계산하고 wrapper마다 `approximated` 진단을 냅니다. 요소 구조에는 모든 요소가 같은 층(`z-index: 0`)의 stacking context를 만들어 DOM 순서대로 그려지게 하는 출력 규칙(속성 모델 3장, 14장 E3), Frame 칠하기 층과 Path clip의 분리 규칙(속성 모델 9.2절), Transform modifier 행렬을 `transform-origin` 반대 이동으로 감싸는 규칙(9장 Transform 행)을 넣습니다. 이 행은 파일을 출력하지 않는 core 계획 함수이고, 실제 HTML·CSS 출력은 로드맵 XXII.2가 합니다."
     status: not_started
     depends_on:
       - "IX.11.2"
@@ -4767,16 +4769,17 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.19"
-    title: "registry CSS 매핑과 Web·Apple·Android TargetProfile을 잇는 초기 capability matrix를 IX.10.5 registry에 등록합니다. XXII.2.2, XXII.2.3, XXII.3.2, XXII.4.2는 이 matrix를 입력으로 씁니다."
+    title: "registry CSS 매핑과 Web TargetProfile을 잇는 초기 capability matrix를 IX.10.5 registry에 등록합니다. 상태는 IX.10.5 어휘(Native·Approximated·Unsupported·Deprecated)이고, CSS 매핑 상태에서 ADR-0025 결정 1.3 대응표로 정합니다. `stellar-only` 항목은 구조 변환·path 굽기·래스터화 규칙이 있으면 Approximated, 출력이 없으면 Unsupported입니다. Deprecated는 CSS 매핑 상태에서 나오지 않으므로 이 행에서 쓰지 않습니다. 기준 browser baseline이 지원하지 않는 CSS 기능(예: `overflow-clip-margin`의 `<visual-box>` 값, 속성 모델 5장 `clipping` 행)은 그 항목을 Approximated로 둡니다. Apple·Android profile 항목은 CSS 매핑 상태에서 유도하지 않으므로(ADR-0025 결정 1.3) 이 행에서 등록하지 않고 XXII.1.4가 더합니다. XXII.1.1, XXII.1.4, XXII.2.2는 이 matrix를 입력으로 쓰고, XXII.3.2·XXII.4.2는 XXII.1.4를 거쳐 씁니다."
     status: not_started
     depends_on:
       - "IX.11.2"
       - "IX.11.3"
+      - "IX.11.18"
       - "IX.10.5"
     required_environments:
       - DEV-MAC
   - id: "IX.11.20"
-    title: "SVG export 매핑표(`crates/export/src/svg/mapping.rs`)의 각 행에 registry CSS 매핑을 연결하고, `fill`·`stroke`·`opacity`·`mix-blend-mode`·`filter` 출력이 registry 값 문법과 formatter를 쓰게 합니다."
+    title: "SVG export 매핑표(`crates/export/src/svg/mapping.rs`)의 각 행에 registry CSS 매핑을 연결하고, `fill`·`stroke`·`opacity`·`mix-blend-mode`·`filter` 출력이 registry 값 문법과 IX.11.13 formatter를 쓰게 합니다. formatter에 SVG profile을 더합니다. SVG profile은 지금 SVG 표기(`crates/export/src/svg/format.rs`, XX.3.1)를 따릅니다. 범위 안 sRGB는 SVG 1.1 호환 `rgb(R%,G%,B%)`, 그 밖의 색은 alpha 없는 `color()`, alpha는 별도 `*-opacity` 속성, 행렬은 `matrix(a b c d e f)`이며 수 표기는 CSS profile과 같습니다(속성 모델 8.2절). 이미 구현된 SVG export의 값 표기를 formatter 한 곳으로 모으는 정리이며 SVG 출력 bytes를 바꾸지 않습니다."
     status: not_started
     depends_on:
       - "IX.11.2"
@@ -4785,7 +4788,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "IX.11.21"
-    title: "제품 문서 migration registry를 document와 storage에 모두 의존하는 crate(지금은 `crates/project`)에 만들고 project 열기에 연결합니다. 지금 step 등록은 test와 xtask의 noop v1→v2뿐이고(`tools/xtask/src/migration_fixtures.rs` `LATEST_SCHEMA = 2`), 제품 manifest schema는 1이며(`crates/project/src/manifest.rs` `CURRENT_SCHEMA_VERSION`), `SavedProjectLoader::open`은 migration 없이 current generation을 엽니다. storage crate는 document에 의존하지 않아 node record를 해석하지 못합니다. schema version별 payload decoder(Frame·Text 등)는 고정 사본으로 보관합니다. `FramePayload::decode`는 version 없이 잉여 bytes를 거부하므로(`crates/document/src/frame.rs`) 현재 decoder로 옛 bytes를 읽을 수 없습니다. 옛 schema 문서는 열 때 V.8.4 경로(temp generation, 검증 후 전환)로 migration하고 결과를 자동 commit하지 않습니다(아키텍처 §36, §40.4). 제품 step 번호는 test noop step과 섞이지 않게 정합니다. IX.11.6·IX.11.9·IX.11.10·IX.11.11의 schema 변경을 공개 포맷(Phase XXVIII) 전 version 증가 한 번으로 묶을지 검토하고, 결정을 착수 시 ADR로 기록합니다."
+    title: "제품 문서 migration registry를 document와 storage에 모두 의존하는 crate(지금은 `crates/project`)에 만들고 project 열기에 연결합니다. 지금 step 등록은 test와 xtask의 noop v1→v2뿐이고(`tools/xtask/src/migration_fixtures.rs` `LATEST_SCHEMA = 2`), 제품 manifest schema는 1이며(`crates/project/src/manifest.rs` `CURRENT_SCHEMA_VERSION`), `SavedProjectLoader::open`은 migration 없이 current generation을 엽니다. storage crate는 document에 의존하지 않아 node record를 해석하지 못합니다. schema version별 payload decoder(Frame·Text 등)는 고정 사본으로 보관합니다. `FramePayload::decode`는 version 없이 잉여 bytes를 거부하므로(`crates/document/src/frame.rs`) 현재 decoder로 옛 bytes를 읽을 수 없습니다. 옛 schema 문서는 열 때 V.8.4 경로(temp generation, 검증 후 전환)로 migration하고 결과를 자동 commit하지 않습니다(아키텍처 §36, §40.4). Semantic Diff·Staging·Merge가 읽는 Git snapshot 원천(HEAD·Index·commit·merge base, XIV.2.6이 임시 디렉터리에 materialize)은 고정 decoder로 읽어 메모리에서 최신 schema로 migration하고 쓰지 않습니다. 그래서 migration 직후 옛 schema HEAD와 새 schema Working Tree를 같은 schema로 비교하고, 옛 schema merge base로 3-way merge합니다. 제품 step 번호는 test noop step과 섞이지 않게 정합니다. IX.11.6·IX.11.9·IX.11.10·IX.11.11의 schema 변경을 공개 포맷(Phase XXVIII) 전 version 증가 한 번으로 묶을지 검토하고, 결정을 착수 시 ADR로 기록합니다."
     status: not_started
     depends_on:
       - "V.8.1"
@@ -4793,6 +4796,9 @@ tasks:
       - "V.8.5"
       - "V.8.6"
       - "VI.10.2"
+      - "XIV.2.6"
+      - "XIV.3.1"
+      - "XIV.10.2"
     required_environments:
       - DEV-MAC
   - id: "IX.11.22"
@@ -6566,7 +6572,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.3"
-    title: "클릭 선택을 구현합니다. hit test 결과를 현재 편집 범위(Editing Scope)의 직계 자식까지 올려 선택하고, Shift-클릭은 토글 추가, 빈 곳 클릭과 Escape는 선택 해제, ⌘A는 편집 범위 형제 전체 선택입니다. Fragment는 묶음 단위, ComponentInstance는 한 덩어리로 선택하고 결과는 SetSelection 하나입니다."
+    title: "클릭 선택을 구현합니다. hit test 결과를 현재 편집 범위(Editing Scope)의 직계 자식까지 올려 선택하고, Shift-클릭은 토글 추가, 빈 곳 클릭은 선택 해제, ⌘A는 편집 범위 형제 전체 선택입니다. Escape는 캔버스 명세 3.2절 순서(진행 중 제스처 취소, 그다음 Move가 아닌 도구에서 Move로 복귀, 그다음 편집 범위 한 단계 위, 최상위 편집 범위이면 선택 해제)를 따르며, 이 행은 최상위 편집 범위의 선택 해제를 맡고 편집 범위 한 단계 위는 XII.10.4가 맡습니다. 다중 선택에서 이미 선택된 node를 Option-클릭하면 primary로 지정합니다(캔버스 명세 3.3절, 8장). Fragment는 묶음 단위, ComponentInstance는 한 덩어리로 선택하고 결과는 SetSelection 하나입니다."
     status: not_started
     depends_on:
       - "XI.3.4"
@@ -6575,7 +6581,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.4"
-    title: "깊은 선택과 편집 범위 이동을 구현합니다. ⌘-클릭은 가장 깊은 선택 가능 node, 더블클릭·Return은 한 단계 아래, Shift-Return은 부모, Tab·Shift-Tab은 OrderKey 순 형제 이동, Shift-더블클릭은 깊은 node 추가입니다. 편집 범위는 WindowViewState에 두고, 선택이 범위 밖으로 나가면 선택의 가장 가까운 공통 조상으로 다시 맞춥니다."
+    title: "깊은 선택과 편집 범위 이동을 구현합니다. ⌘-클릭은 가장 깊은 선택 가능 node, 더블클릭·Return은 한 단계 아래, Shift-Return은 부모, Tab·Shift-Tab은 OrderKey 순 형제 이동, Shift-더블클릭은 깊은 node 추가이며, 편집 범위가 최상위가 아니면 Escape는 편집 범위를 한 단계 위로 올립니다(캔버스 명세 3.2절). 편집 범위는 WindowViewState에 두고, 선택이 범위 밖으로 나가면 선택의 가장 가까운 공통 조상으로 다시 맞춥니다."
     status: not_started
     depends_on:
       - "XII.10.3"
@@ -6637,7 +6643,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.11"
-    title: "모서리 반경 핸들을 Frame·Rectangle·Polygon에 구현합니다. 드래그는 네 모서리 동시, Option은 그 모서리만 바꾸고, bounds를 넘는 값은 VI.5.2 평가 규칙으로 표시만 줄이며 저장값은 입력값을 유지합니다. 반경은 4 모서리 `border-*-radius` longhand key로 씁니다. Frame key는 IX.11.22가 `corner_radius`(0x0106)를 나눠 만들고, Rectangle·Polygon key는 IX.11.3이 만듭니다(ADR-0024 결정 14)."
+    title: "모서리 반경 핸들을 Frame·Rectangle·Polygon에 구현합니다. Frame·Rectangle은 드래그가 네 모서리 동시, Option은 그 모서리만 바꾸고, bounds를 넘는 값은 VI.5.2 평가 규칙으로 표시만 줄이며 저장값은 입력값을 유지합니다. 반경은 4 모서리 `border-*-radius` longhand key로 씁니다. Frame key는 IX.11.22가 `corner_radius`(0x0106)를 나눠 만들고, Rectangle key는 IX.11.3이 만듭니다(ADR-0024 결정 14). Polygon은 모든 꼭짓점에 쓰는 반경 하나만 있으므로(`crates/document/src/shape.rs` `corner_radius: f32`, 속성 모델 6장 `stellar-only`) IX.11.3의 단일 stellar-only key를 바꾸며 Option 개별 편집이 없고, 표시는 Polygon path 평가(VI.5.6) 결과를 따릅니다."
     status: not_started
     depends_on:
       - "XII.10.8"
@@ -6647,33 +6653,37 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.12"
-    title: "비례 확대(Scale) 명령을 구현합니다. 크기 조절과 달리 선 두께, 반경, 그림자·블러 반경, 글자 크기(`font-size`, IX.11.11 Typography record)까지 같은 비율로 바꾸고 modifier 값 변경을 같은 CommandTransaction에 넣습니다. Object 메뉴와 인스펙터 비율 입력으로 실행하며 단일 키 배정은 XII.10.2 ADR이 정합니다."
+    title: "비례 확대(Scale) 명령을 구현합니다. 크기 조절과 달리 선 두께, 반경, 그림자·블러 반경, 글자 크기(`font-size`, IX.11.11 Typography record)까지 같은 비율로 바꾸고 modifier 값 변경을 같은 CommandTransaction에 넣습니다. 선 두께는 modifier Stroke 두께와 Frame `border-*-width` longhand(IX.11.10)이며, 묶음 key 0x0105를 쓰지 않습니다. Object 메뉴와 인스펙터 비율 입력으로 실행하며, 메뉴 막대 Object 메뉴에 Scale 항목을 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다. 단일 키 배정은 XII.10.2 ADR이 정합니다."
     status: not_started
     depends_on:
       - "XII.10.9"
       - "VII.2.6"
       - "IX.11.3"
+      - "IX.11.10"
       - "IX.11.11"
+      - "XII.6.5"
     required_environments:
       - DEV-MAC
   - id: "XII.10.13"
-    title: "이동 드래그를 구현합니다. Shift는 축 고정, Option으로 시작하면 복제 후 복제본 이동(DuplicateSubtree와 이동을 한 transaction), 자유 배치 컨테이너 사이로 끌면 world 위치를 유지한 채 MoveNode로 부모를 바꿉니다. 결과는 IX.11.9가 transform에서 분리한 위치 longhand 편집(위치 지정 자식은 현재 anchor의 inset, `docs/design/property_model.md` 4.5절·5장)이며 ComponentInstance 안에는 공개 Slot에만 놓입니다."
+    title: "이동 드래그를 구현합니다. Shift는 축 고정, Option으로 시작하면 복제 후 복제본 이동(DuplicateSubtree와 이동을 한 transaction), 자유 배치 컨테이너 사이로 끌면 world 위치를 유지한 채 MoveNode로 부모를 바꿉니다. 결과는 위치 longhand 편집(위치 지정 자식은 현재 anchor의 inset, `docs/design/property_model.md` 4.5절·5장·12장)이며 ComponentInstance 안에는 공개 Slot에만 놓입니다. Frame의 위치 longhand는 IX.11.9가 transform에서 분리하고, Frame이 아닌 node의 위치 longhand는 IX.11.6 item record에 있습니다. Ellipse·Polygon `bounds` 원점과 Transform modifier 이동 성분은 바꾸지 않습니다."
     status: not_started
     depends_on:
       - "XII.10.5"
       - "XII.3.7"
       - "VII.2.8"
       - "VII.2.3"
+      - "IX.11.6"
       - "IX.11.9"
     required_environments:
       - DEV-MAC
   - id: "XII.10.14"
-    title: "키보드 이동·크기 조절을 구현합니다. 화살표와 Shift-화살표는 XII.10.2 단위로 위치 longhand(IX.11.9)를 바꿔 이동하고, 크기 조절 키는 오른쪽·아래 가장자리를 옮기며, 흐름 컨테이너 자식은 주축 화살표로 흐름 순서를 바꾸고, 선택이 없으면 화살표가 camera를 팬합니다. 키 반복은 VII.4.4 규칙으로 한 entry로 합칩니다."
+    title: "키보드 이동·크기 조절을 구현합니다. 화살표와 Shift-화살표는 XII.10.2 단위로 위치 longhand(Frame은 IX.11.9, 그 밖의 node는 IX.11.6 item record)를 바꿔 이동하고, 크기 조절 키는 오른쪽·아래 가장자리를 옮기며, 흐름 컨테이너 자식은 주축 화살표로 흐름 순서를 바꾸고, 선택이 없으면 화살표가 camera를 팬합니다. 키 반복은 VII.4.4 규칙으로 한 entry로 합칩니다."
     status: not_started
     depends_on:
       - "XII.10.2"
       - "VII.4.4"
       - "XII.10.3"
+      - "IX.11.6"
       - "IX.11.9"
     required_environments:
       - DEV-MAC
@@ -6687,11 +6697,12 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.16"
-    title: "스마트 가이드와 측정 overlay를 transient scene layer로 그립니다. 정렬선, 가장자리 거리 수치, 같은 간격·같은 크기 표시, 선택 후 Option-hover 거리 측정을 포함하고, 대비 높이기·투명도 줄이기 ShellTheme 값을 반영합니다. 측정 라벨 glyph 출처와 Text baseline 기준 측정 방법(캔버스 명세 C2, C5)을 이 행에서 정합니다."
+    title: "스마트 가이드와 측정 overlay를 transient scene layer로 그립니다. 정렬선, 가장자리 거리 수치, 같은 간격·같은 크기 표시, 선택 후 Option-hover 거리 측정을 포함하고, 대비 높이기·투명도 줄이기 ShellTheme 값(XII.9.3, 투명도 줄이기 포함 여부는 가이드 O6으로 XII.9.3이 정함)을 반영합니다. 측정 라벨 glyph 출처와 Text baseline 기준 측정 방법(캔버스 명세 C2, C5)을 이 행에서 정합니다."
     status: not_started
     depends_on:
       - "XII.10.15"
       - "XII.4.4"
+      - "XII.9.3"
     required_environments:
       - DEV-MAC
   - id: "XII.10.17"
@@ -6725,7 +6736,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.21"
-    title: "정렬 6종, 분배 2종, 행·열 정리(Arrange in Rows and Columns, 선택을 같은 간격 행·열로 재배치하며 흐름 컨테이너를 만들지 않음)를 구현합니다. 단일 선택은 부모 기준, 다중 선택은 선택 bounds 기준이며 primary selection을 기준 객체로 쓸 수 있고, 분배는 가장 바깥 두 객체를 고정합니다. 흐름 밖 node는 위치 longhand(IX.11.9)를 바꿉니다. 흐름 자식은 캔버스 명세 8장 규칙을 따릅니다. Stack 자식의 주축 정렬은 비활성화하고 컨테이너 `justify-content` 안내를 도움말로 보이며, 교차축 정렬은 자식 `align-self`를 바꿉니다. Grid 자식은 `justify-self`·`align-self`를 바꾸고, Overlay 자식의 정렬과 모든 흐름 자식의 분배·행·열 정리는 비활성화합니다. 결과는 CommandTransaction 하나입니다."
+    title: "정렬 6종, 분배 2종, 행·열 정리(Arrange in Rows and Columns, 선택을 같은 간격 행·열로 재배치하며 흐름 컨테이너를 만들지 않음)를 구현합니다. 단일 선택은 부모 기준, 다중 선택은 선택 bounds 기준이며 primary selection을 기준 객체로 쓸 수 있고, 분배는 가장 바깥 두 객체를 고정합니다. 흐름 밖 node는 위치 longhand(Frame은 IX.11.9, 그 밖의 node는 IX.11.6 item record)를 바꿉니다. 흐름 자식은 캔버스 명세 8장 규칙을 따릅니다. Stack 자식의 주축 정렬은 비활성화하고 컨테이너 `justify-content` 안내를 도움말로 보이며, 교차축 정렬은 자식 `align-self`를 바꿉니다. Grid 자식은 `justify-self`·`align-self`를 바꾸고, Overlay 자식의 정렬과 모든 흐름 자식의 분배·행·열 정리는 비활성화합니다. 결과는 CommandTransaction 하나입니다. 메뉴 막대에 없는 행·열 정리는 Object 메뉴에 항목을 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다."
     status: not_started
     depends_on:
       - "VII.1.6"
@@ -6735,6 +6746,7 @@ tasks:
       - "IX.11.5"
       - "IX.11.6"
       - "IX.11.9"
+      - "XII.6.5"
     required_environments:
       - DEV-MAC
   - id: "XII.10.22"
@@ -6744,6 +6756,7 @@ tasks:
       - "XII.10.21"
       - "XII.10.8"
       - "XII.10.15"
+      - "IX.11.6"
       - "IX.11.9"
     required_environments:
       - DEV-MAC
@@ -6825,11 +6838,12 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.31"
-    title: "Boolean 명령을 Object 메뉴와 문맥 메뉴에 연결합니다. 같은 부모의 Shape·Path 둘 이상을 선택하면 맨 뒤 node에 Boolean modifier를 넣고 나머지를 operand로 연결하며, 연산 종류 변경과 operand 분리를 지원합니다. Path로 굽는 평탄화는 별도 명시 명령으로만 실행합니다."
+    title: "Boolean 명령을 Object 메뉴와 문맥 메뉴에 연결합니다. 메뉴 막대 Object 메뉴에 Boolean 하위 메뉴(연산 4종)를 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다. 같은 부모의 Shape·Path 둘 이상을 선택하면 맨 뒤 node에 Boolean modifier를 넣고 나머지를 operand로 연결하며, 연산 종류 변경과 operand 분리를 지원합니다. Path로 굽는 평탄화는 별도 명시 명령으로만 실행합니다."
     status: not_started
     depends_on:
       - "XII.10.30"
       - "VII.2.6"
+      - "XII.6.5"
     required_environments:
       - DEV-MAC
   - id: "XII.10.32"
@@ -6853,7 +6867,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.34"
-    title: "ComponentInstance 캔버스 편집을 구현합니다. 인스턴스 안 깊은 선택은 읽기 전용 윤곽으로 보이고 공개 Property에 연결된 값 편집만 PropertyOverrideCommand Set으로 보내며, 허용되지 않은 편집은 적용하지 않고 이유와 Detach 경로를 보입니다. 문맥 메뉴로 속성별·전체 Reset, Detach(IX.2.6), 정의로 이동을 제공하고 공개 Slot에는 끌어 놓기로 콘텐츠를 넣습니다."
+    title: "ComponentInstance 캔버스 편집을 구현합니다. 인스턴스 안 깊은 선택은 읽기 전용 윤곽으로 보이고 공개 Property에 연결된 값 편집만 PropertyOverrideCommand Set으로 보내며, 허용되지 않은 편집은 적용하지 않고 이유와 Detach 경로를 보입니다. 문맥 메뉴로 속성별·전체 Reset, Detach(IX.2.6), 정의로 이동을 제공하고 공개 Slot에는 끌어 놓기로 콘텐츠를 넣습니다. Reset Overrides·Detach Instance·정의로 이동은 메뉴 막대 Object 메뉴에도 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다."
     status: not_started
     depends_on:
       - "IX.2.4"
@@ -6861,15 +6875,17 @@ tasks:
       - "IX.3.3"
       - "IX.4.2"
       - "XII.10.4"
+      - "XII.6.5"
     required_environments:
       - DEV-MAC
   - id: "XII.10.35"
-    title: "인스턴스 교체(swap) command를 추가합니다. ComponentRef를 바꾸면서 이름과 TypeSpec이 같은 공개 Property의 override를 보존하고, 보존하지 못하는 override 목록을 적용 전 preview로 반환합니다. 크기는 새 정의 기본 크기를 쓰고 현재 크기 유지 선택지를 둡니다. CommandKind registry 변경이므로 전역 mutex 작업입니다."
+    title: "인스턴스 교체(swap) command를 추가합니다. ComponentRef를 바꾸면서 이름과 TypeSpec이 같은 공개 Property의 override를 보존하고, 보존하지 못하는 override 목록을 적용 전 preview로 반환합니다. 크기는 새 정의 기본 크기를 쓰고 현재 크기 유지 선택지를 둡니다. 메뉴 막대 Object 메뉴에 Swap… 항목을 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다. CommandKind registry 변경이므로 전역 mutex 작업입니다."
     status: not_started
     depends_on:
       - "IX.2.4"
       - "IX.1.2"
       - "VII.1.6"
+      - "XII.6.5"
     required_environments:
       - DEV-MAC
   - id: "XII.10.36"
@@ -6899,11 +6915,16 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XII.10.39"
-    title: "캔버스 문맥 메뉴를 구현합니다. 우클릭·Control-클릭 위치의 hit 결과와 현재 선택으로 `ShellCommand` 항목만 담은 `NSMenu`를 만들고, 겹친 레이어 고르기 하위 메뉴(Select Overlapping, XII.10.5), 순서·묶음·Boolean·변환·인스턴스 항목을 상황에 맞게 비활성화하며, VoiceOver AXShowMenu로도 같은 메뉴를 엽니다."
+    title: "캔버스 문맥 메뉴를 구현합니다. 우클릭·Control-클릭 위치의 hit 결과와 현재 선택으로 `ShellCommand` 항목만 담은 `NSMenu`를 만들고, 겹친 레이어 고르기 하위 메뉴(Select Overlapping, XII.10.5), 순서·묶음·Boolean·변환·인스턴스 항목을 상황에 맞게 비활성화하며, VoiceOver AXShowMenu로도 같은 메뉴를 엽니다. 메뉴 막대에 아직 없는 Convert to Path·Convert to Frame(VII.2.7)은 Object 메뉴에 추가하고 `docs/design/ui/tools_menus.md` 3.2·6.1절 표와 `ShortcutPolicy`를 함께 갱신합니다. Scale, 행·열 정리, Boolean, 인스턴스 항목의 메뉴 막대 추가는 XII.10.12, XII.10.21, XII.10.31, XII.10.34, XII.10.35가 맡습니다."
     status: not_started
     depends_on:
       - "XII.6.5"
       - "XII.10.5"
+      - "XII.10.12"
+      - "XII.10.21"
+      - "XII.10.31"
+      - "XII.10.34"
+      - "XII.10.35"
     required_environments:
       - DEV-MAC
   - id: "XII.10.40"
@@ -9460,7 +9481,7 @@ tasks:
     report: "docs/task-reports/XVIII.2.4.md"
     verified_at: "2026-11-14T03:30:17+09:00"
   - id: "XVIII.2.5"
-    title: "대화형 terminal session의 child 환경을 ADR-0023에 맞춥니다. 이 행은 완료 행 XVIII.1.1이 정의한 \"environment allowlist\"(구현 타입 `EnvironmentPolicy`, `crates/terminal/src/env.rs`)를 대화형 세션에 대해 대체하며, XVIII.1.1 문구와 상태는 그대로 둡니다(ADR-0023 Consequences). spawn 경로에서 `env_clear`와 상속 허용 목록(`DEFAULT_INHERITED_ENV`)을 제거하고 앱 프로세스 환경을 그대로 물려준 뒤, 터미널 식별 변수 `TERM`·`COLORTERM`·`TERM_PROGRAM`·`TERM_PROGRAM_VERSION`을 설정하고 profile 명시 지정을 마지막에 적용합니다. 식별 변수 값은 spawn 입력으로 받으며 `TERM`·`COLORTERM` 값은 XVIII.4.1이 emulator에 맞춰 확정합니다. 그 밖의 변수는 추가하지 않고 사용자 셸 설정 파일을 만들거나 고치지 않습니다. 허용 목록 환경은 agent CLI 실행기(XXIX.2.4, ADR-0023 결정 9)에만 둡니다."
+    title: "대화형 terminal session의 child 환경을 ADR-0023에 맞춥니다. 이 행은 완료 행 XVIII.1.1이 정의한 \"environment allowlist\"(구현 타입 `EnvironmentPolicy`, `crates/terminal/src/env.rs`)를 대화형 세션에 대해 대체하며, XVIII.1.1 문구와 상태는 그대로 둡니다(ADR-0023 Consequences). spawn 경로에서 `env_clear`와 상속 허용 목록(`DEFAULT_INHERITED_ENV`)을 제거하고 앱 프로세스 환경을 그대로 물려준 뒤, 터미널 식별 변수 `TERM`·`COLORTERM`·`TERM_PROGRAM`·`TERM_PROGRAM_VERSION`을 설정하고, 기본 셸 profile이면 `SHELL`을 실제로 실행하는 셸 경로로 설정하며(지금 동작 유지, argv profile은 상속값 유지), profile 명시 지정을 마지막에 적용합니다(ADR-0023 결정 4·5). 식별 변수 값은 spawn 입력으로 받으며 `TERM`·`COLORTERM` 값은 XVIII.4.1이 emulator에 맞춰 확정합니다. 그 밖의 변수는 추가하지 않고 사용자 셸 설정 파일을 만들거나 고치지 않습니다. 허용 목록 환경은 agent CLI 실행기(XXIX.2.4, ADR-0023 결정 9)에만 둡니다."
     status: not_started
     depends_on:
       - "XVIII.1.4"
@@ -9496,7 +9517,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XVIII.4.1"
-    title: "승인된 terminal parser/emulator dependency를 등록하고 VT sequence corpus를 테스트합니다."
+    title: "승인된 terminal parser/emulator dependency를 등록하고 VT sequence corpus를 테스트합니다. 고른 emulator가 지원하는 terminfo 항목으로 대화형 세션의 `TERM` 값을 정하고, emulator의 24-bit 색 지원 여부로 `COLORTERM`을 `truecolor`로 설정할지 상속값을 제거할지 정해 근거와 함께 보고서에 기록합니다(ADR-0023 결정 4). 두 값은 terminal crate 상수로 두고 XVIII.2.5의 spawn 입력이 받습니다."
     status: not_started
     depends_on:
       - "I.3.2"
@@ -10365,14 +10386,13 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.1.1"
-    title: "resolved View를 CSS 기반 속성 record, layout, semantics, state, Context 선언·provision·소비, tokens, target capability가 포함된 `CodegenIR`로 변환합니다(ADR-0025 결정 4.1). CSS 문자열을 다시 parse하지 않고 타입 있는 속성 record(IX.11.6 layout record, IX.11.11 Typography record)를 그대로 쓰며, target capability는 IX.11.19 matrix에서 읽습니다."
+    title: "resolved View를 CSS 기반 속성 record, layout, semantics, state, tokens, target capability가 포함된 `CodegenIR`로 변환합니다(ADR-0025 결정 4.1). CSS 문자열을 다시 parse하지 않고 타입 있는 속성 record(IX.11.6 layout record, IX.11.11 Typography record)를 그대로 쓰며, target capability는 IX.11.19 matrix에서 읽습니다. Context 선언·provision·소비는 XXII.1.6, 상태 머신과 `MotionSpec`은 XXII.1.5가 IR에 더하므로 이 행은 Phase XXX를 기다리지 않습니다."
     status: not_started
     depends_on:
       - "IX.10.8"
       - "IX.11.6"
       - "IX.11.11"
       - "IX.11.19"
-      - "XXX.7.4"
     required_environments:
       - DEV-MAC
   - id: "XXII.1.2"
@@ -10390,14 +10410,13 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.1.4"
-    title: "IX.11.19 capability matrix와 IX.11.18 modifier stack 선형화 계획을 코드 생성용으로 확장합니다. 더하는 것은 Apple·Android profile의 lowering 규칙, Context·`MotionSpec` 항목의 profile kind별 상태와 lowering 규칙뿐입니다. Web의 CSS 속성 매핑과 modifier 선형화는 IX.11.18·IX.11.19 결과를 그대로 쓰고 다시 정의하지 않습니다. 비Web 항목 중 1:1이 아닌 것(modifier 적용 순서, 블렌드 합성 색공간 차이, 자유 배치·constraint, Stellar와 대상 플랫폼의 기본값 차이, timing function 종류)은 lowering 규칙과 진단을 한 쌍으로 정의하고, IR lowering은 이 matrix만 참조합니다. 상태 어휘는 IX.10.5의 Native·Approximated·Unsupported·Deprecated이며 IX.11 CSS 매핑 상태와의 대응은 ADR-0025 결정 1.3을 따릅니다(ADR-0025 결정 4.2)."
+    title: "IX.11.19 capability matrix와 IX.11.18 modifier stack 선형화 계획을 코드 생성용으로 확장합니다. 이 행이 더하는 것은 CSS 기반 속성 registry 항목에 대한 Apple·Android profile의 상태와 lowering 규칙뿐입니다. Context·`MotionSpec` 항목은 XXII.1.7이 더하므로 이 행은 Phase XXX를 기다리지 않습니다. Web의 CSS 속성 매핑과 modifier 선형화는 IX.11.18·IX.11.19 결과를 그대로 쓰고 다시 정의하지 않습니다. 비Web 항목 중 1:1이 아닌 것(modifier 적용 순서, 블렌드 합성 색공간 차이, 자유 배치·constraint, Stellar와 대상 플랫폼의 기본값 차이)은 lowering 규칙과 진단을 한 쌍으로 정의하고, IR lowering은 이 matrix만 참조합니다. 상태 어휘는 IX.10.5의 Native·Approximated·Unsupported·Deprecated이며 Apple·Android 상태는 CSS 매핑 상태에서 유도하지 않고 이 행의 lowering 규칙이 정합니다(ADR-0025 결정 1.3, 4.2)."
     status: not_started
     depends_on:
       - "XXII.1.2"
       - "IX.11.6"
       - "IX.11.18"
       - "IX.11.19"
-      - "XXX.1.1"
     required_environments:
       - DEV-MAC
   - id: "XXII.1.5"
@@ -10407,6 +10426,23 @@ tasks:
       - "XXII.1.1"
       - "XXX.1.1"
       - "IX.5.3"
+    required_environments:
+      - DEV-MAC
+  - id: "XXII.1.6"
+    title: "Context 선언·provision·소비를 CodegenIR에 포함합니다(ADR-0025 결정 4.1). 소비 지점마다 XXX.7.4 해석기가 정한 값의 출처(provision node 또는 key default)와 slot 경계 정보를 IR에 보존하고, 생성 코드가 다시 해석하지 않게 합니다."
+    status: not_started
+    depends_on:
+      - "XXII.1.1"
+      - "XXX.7.4"
+    required_environments:
+      - DEV-MAC
+  - id: "XXII.1.7"
+    title: "XXII.1.4 matrix에 Context·`MotionSpec` 항목의 Web·Apple·Android profile kind별 상태와 lowering 규칙을 더합니다(ADR-0025 결정 4.2). timing function 종류(spring 등)와 Context 전달 방식처럼 1:1이 아닌 항목은 lowering 규칙과 진단을 한 쌍으로 정의합니다. CSS 기반 속성 항목은 바꾸지 않습니다."
+    status: not_started
+    depends_on:
+      - "XXII.1.4"
+      - "XXII.1.5"
+      - "XXII.1.6"
     required_environments:
       - DEV-MAC
   - id: "XXII.2.1"
@@ -10426,9 +10462,10 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.2.3"
-    title: "token을 CSS custom property 또는 generated constants로 내보냅니다. CSS 이름은 IX.11.16 파생 규칙, 등록 방식은 속성 모델 10장을 따릅니다."
+    title: "token을 CSS custom property 또는 generated constants로 내보냅니다. CSS 이름은 IX.11.16 파생 규칙, 등록 방식은 속성 모델 10장(`inherits: true`, 값은 `:root`와 `:root`를 감싼 `@media` 블록에서만 선언)을 따릅니다."
     status: not_started
     depends_on:
+      - "IX.11.8"
       - "IX.11.16"
     required_environments:
       - DEV-MAC
@@ -10444,7 +10481,8 @@ tasks:
     status: not_started
     depends_on:
       - "XXII.2.3"
-      - "XXII.1.1"
+      - "XXII.1.6"
+      - "XXII.1.7"
       - "IX.11.16"
       - "XXX.7.4"
     required_environments:
@@ -10454,6 +10492,7 @@ tasks:
     status: not_started
     depends_on:
       - "XXII.1.5"
+      - "XXII.1.7"
       - "XXII.2.1"
     required_environments:
       - DEV-MAC
@@ -10481,12 +10520,13 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.3.4"
-    title: "Context를 Apple dialect의 Environment 값으로, 상태 머신과 `MotionSpec`을 dialect의 상태·animation API로 내보냅니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다. Environment가 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
+    title: "Context를 Apple dialect의 Environment 값으로, 상태 머신과 `MotionSpec`을 dialect의 상태·animation API로 내보냅니다. 표현할 수 없는 항목은 XXII.1.7 규칙에 따라 진단합니다. Environment가 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
     status: not_started
     depends_on:
       - "XXII.3.1"
       - "XXII.1.5"
-      - "XXII.1.4"
+      - "XXII.1.6"
+      - "XXII.1.7"
     required_environments:
       - DEV-MAC
   - id: "XXII.4.1"
@@ -10505,12 +10545,13 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXII.4.3"
-    title: "Context를 CompositionLocal로, 상태 머신과 `MotionSpec`을 Compose 상태·animation API로 내보냅니다. 값 변경 빈도에 따라 추적형과 비추적형 local을 고르는 규칙을 고정합니다. 표현할 수 없는 항목은 XXII.1.4 규칙에 따라 진단합니다. CompositionLocal이 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
+    title: "Context를 CompositionLocal로, 상태 머신과 `MotionSpec`을 Compose 상태·animation API로 내보냅니다. 값 변경 빈도에 따라 추적형과 비추적형 local을 고르는 규칙을 고정합니다. 표현할 수 없는 항목은 XXII.1.7 규칙에 따라 진단합니다. CompositionLocal이 렌더 트리로 전달되므로 slot 삽입 위치에서는 Slot이 공개하지 않은 key를 instance 바깥 값으로 다시 공급합니다(ADR-0025 결정 3.11)."
     status: not_started
     depends_on:
       - "XXII.4.1"
       - "XXII.1.5"
-      - "XXII.1.4"
+      - "XXII.1.6"
+      - "XXII.1.7"
     required_environments:
       - DEV-MAC
   - id: "XXII.5.1"
@@ -11594,7 +11635,7 @@ tasks:
     required_environments:
       - DEV-MAC
   - id: "XXX.1.2"
-    title: "프로토타입 socket 종류 State와 Pulse를 정의하고 expression socket 연결 가능 API를 확장합니다. State와 Pulse의 직접 연결은 거부하고 등록된 변환 node(상태 변화→펄스, 펄스→상태 토글·카운터)만 허용합니다. 속성 입력 포트의 State socket 타입은 registry 항목의 CSS 값 문법을 ADR-0025 결정 1.2 대응으로 바꾼 `ExpressionType` 하나이며, 대응이 없는 값 문법의 속성은 포트로 노출하지 않고 진단합니다."
+    title: "프로토타입 socket 종류 State와 Pulse를 정의하고 expression socket 연결 가능 API를 확장합니다. State와 Pulse의 직접 연결은 거부하고 등록된 변환 node(상태 변화→펄스, 펄스→상태 토글·카운터)만 허용합니다. 속성 입력 포트의 State socket 타입은 registry 항목의 CSS 값 문법을 ADR-0025 결정 1.2 대응으로 바꾼 `ExpressionType`이며, 합집합 문법(`width` 등)은 구성 타입별 `ExpressionType`의 집합입니다. 연결된 식의 정적 타입이 그 집합에 속해야 하고 저장 값 variant는 그 타입을 따릅니다. 대응이 없는 값 문법의 속성은 포트로 노출하지 않고 진단합니다."
     status: not_started
     depends_on:
       - "VIII.3.2"

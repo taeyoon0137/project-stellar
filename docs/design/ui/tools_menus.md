@@ -186,7 +186,7 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | View | Move Tool | 캔버스 V | `tool.move` | 단일 키(6.2) |
 | View | Hand Tool | 캔버스 H | `tool.hand` | 단일 키 |
 | View | Zoom Tool | 캔버스 Z | `tool.zoom` | 단일 키 |
-| View | Show/Hide Rulers | ⌘R | `view.toggle_rulers` | 사용자 정의(전용 WBS 없음, Stub에서 비활성) |
+| View | Show/Hide Rulers | ⌘R | `view.toggle_rulers` | 사용자 정의(계획 XII.10.19, Stub에서 비활성) |
 | View | Enter/Exit Full Screen | ⌃⌘F | `view.toggle_full_screen` | 표준 |
 | Insert | Frame | 캔버스 F | `tool.frame` | 단일 키 |
 | Insert | Rectangle | 캔버스 R | `tool.rectangle` | 단일 키 |
@@ -346,7 +346,8 @@ protocol ToolsMenuModel: AnyObject {
 - **캔버스 keyDown**: `CanvasToolShortcut.tool(for:)`와 Delete 키(`deleteBackward(_:)` → `.delete`) 연결.
 - **앱 이름**: 메뉴 막대의 굵은 앱 이름은 번들 이름에서 옵니다. 현재 `PRODUCT_NAME`이 `StellarMac`이므로 표시 이름을 "Stellar"로 맞추는 프로젝트 설정 변경이 필요합니다(이 작업 범위 밖, 프로젝트 파일 미수정).
 - **smoke 연결**: 실행 인자(예: `--tools-menus-check`)로 `ToolsUICheck.run()` 호출, `UI/Tools/`가 코어 FFI(`stellar_`)를 직접 호출하지 않는다는 구조 검사.
-- **WBS 없음**: 눈금자(placeholder), Open Recent, Open in New Window(XII.2.4), Export, Format 메뉴, Help Book(현재 Stellar Help는 시스템 "도움말 없음" 동작), 메뉴 문자열 지역화.
+- **눈금자**: 지금은 placeholder이고 동작은 계획 XII.10.19가 구현합니다.
+- **WBS 없음**: Open Recent, Open in New Window(XII.2.4), Export, Format 메뉴, Help Book(현재 Stellar Help는 시스템 "도움말 없음" 동작), 메뉴 문자열 지역화.
 - **실화면 확인**: 화면 밖 bitmap 캡처에서는 선택된 도구 세그먼트의 아이콘이 보이지 않았습니다. 캡처가 시스템 glass·선택 레이어를 담지 못한 것으로 보이나, 실제 키 창 화면에서는 확인하지 않았습니다.
 
 ## 12. 이 영역이 제안하는 결정(확정 아님)

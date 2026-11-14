@@ -17,8 +17,10 @@ Accepted (2026-11-14, 제품 소유자 결정)
 - `crates/terminal/src/env.rs`(XVIII.1.1 `[x]`)는 child를 실행할 때 환경을 모두 지우고(`env_clear`)
   상속 허용 목록 9개(`HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `LOGNAME`, `PATH`, `TMPDIR`, `TZ`,
   `USER`)와 profile의 명시 지정만 전달합니다. 근거는 ADR-0019 보안 절의 "환경 변수 허용 목록 원칙"입니다.
-- 이 방식에서는 사용자 계정 환경에 있는 변수(예: `SHELL`, `SSH_AUTH_SOCK`, 사용자가 launchd에 등록한
-  변수)가 셸에 전달되지 않습니다. login 셸이 rc 파일을 읽어 `PATH`·prompt·alias·plugin을 다시 만들기는
+  예외로 기본 셸 profile은 profile이 `SHELL`을 명시하지 않으면 Stellar가 `SHELL`을 실제로 실행하는 셸
+  경로로 설정합니다(`crates/terminal/src/registry.rs`).
+- 이 방식에서는 사용자 계정 환경에 있는 변수(예: `SSH_AUTH_SOCK`, 사용자가 launchd에 등록한 변수)가
+  셸에 전달되지 않습니다. login 셸이 rc 파일을 읽어 `PATH`·prompt·alias·plugin을 다시 만들기는
   하지만, rc 파일이 기대하는 상속 변수가 없어 일반 터미널 앱과 다르게 동작할 수 있습니다.
 - 계획 행 XVIII.1.1은 "environment allowlist"를 세션 기본 타입의 하나로 적고 있어, 대화형 터미널에도
   허용 목록이 요구사항인 것처럼 읽힙니다. 구현 타입 이름은 이미 `EnvironmentPolicy`입니다.
@@ -46,12 +48,16 @@ rc 파일이 만드는 `PATH` 추가분 등은 이 환경에 없고, login 셸�
    목록을 쓰지 않습니다. 그 위에서 login 셸이 사용자의 rc·profile 파일을 읽어 `PATH`, prompt, alias,
    plugin 등 사용자 설정을 만듭니다. Stellar는 셸 환경을 미리 수집하거나 가공하지 않습니다.
 4. **Stellar가 설정하는 변수**: 터미널 식별 변수 `TERM`, `COLORTERM`, `TERM_PROGRAM`,
-   `TERM_PROGRAM_VERSION`만 설정하며, 상속값이 있으면 이 값으로 덮어씁니다.
+   `TERM_PROGRAM_VERSION`과 셸 경로 `SHELL`만 설정하며, 상속값이 있으면 이 값으로 덮어씁니다.
    - `TERM` 값은 emulator가 실제로 지원하는 terminfo 항목이어야 하며, 구체 값은 emulator 의존성을
      정하는 XVIII.4.1에서 정해 보고서에 기록합니다.
    - `COLORTERM`은 emulator가 24-bit 색을 지원할 때만 `truecolor`로 설정하고, 지원하지 않으면 상속값을
      제거합니다.
    - `TERM_PROGRAM`은 Stellar 제품 식별자, `TERM_PROGRAM_VERSION`은 앱 버전입니다.
+   - `SHELL`은 기본 셸 profile(XVIII.2.2)로 셸을 실행할 때만 실제로 실행하는 셸의 경로로 설정합니다.
+     사용자가 계정 로그인 셸과 다른 셸을 고르면 상속된 `SHELL`이 실행 중인 셸과 달라지기 때문이며, 지금
+     구현의 동작을 유지합니다. 사용자가 명령(argv)을 직접 지정한 profile에서는 `SHELL`을 바꾸지 않고
+     상속값을 그대로 둡니다.
    - 그 밖의 변수(Stellar 내부 상태, MCP 연결 정보, 토큰 등)는 넣지 않습니다. 변수를 더하려면 이 ADR을
      개정합니다.
 5. **사용자 명시 지정**: profile에 사용자가 직접 적은 환경 변수 지정(아키텍처 §32 "환경 변수 프로필")은
@@ -92,6 +98,8 @@ rc 파일이 만드는 `PATH` 추가분 등은 이 환경에 없고, login 셸�
 - **앱 시작 시 숨은 login 셸을 실행해 환경을 수집하고 앱 프로세스에 반영**: 터미널 없이 사용자 rc 파일을
   실행하고, 앱 시작 시간을 늘리며, 수집한 환경이 다른 하위 프로세스(Git, 에이전트 CLI)에도 퍼집니다. login 셸이
   어차피 rc 파일을 읽으므로 필요하지 않습니다. 채택하지 않습니다.
+- **`SHELL`을 설정하지 않고 상속값을 그대로 둠**: 사용자가 계정 로그인 셸과 다른 셸을 고르면 `SHELL`이
+  실행 중인 셸과 달라져, `SHELL`로 하위 셸을 여는 프로그램이 다른 셸을 엽니다. 채택하지 않습니다.
 - **Stellar가 `LANG` 등 locale 변수도 설정**: 방향이 정한 범위(식별 변수와 테마)를 넘습니다. locale은
   사용자 계정 환경과 셸 설정이 정합니다. 필요해지면 이 ADR을 개정합니다.
 - **shell integration을 기본으로 주입**: 사용자 셸 시작 과정을 바꾸므로 "셸 설정 무변경"과 충돌합니다.

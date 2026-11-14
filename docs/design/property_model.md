@@ -168,7 +168,7 @@ IX.11.6이 CSS longhand로 정의합니다. 그래서 이 장의 migration은 �
 | preset | 부모 방식·축 | 쓰는 longhand(가로 축 예) |
 |---|---|---|
 | Fixed | 모든 방식 | `width: <length>`, Stack main 축이면 `flex: 0 0 auto`(`flex-grow: 0`, `flex-shrink: 0`, `flex-basis: auto`) |
-| Percentage | 모든 방식 | `width: <percentage>` |
+| Percentage | 모든 방식 | `width: <percentage>`, Stack main 축이면 `flex-grow: 0`, `flex-shrink: 0`, `flex-basis: auto` |
 | HugContent | 모든 방식 | `width: fit-content`, Stack main 축이면 `flex-grow: 0`, `flex-shrink: 0`, `flex-basis: auto` |
 | Fill | Stack main 축 | `flex-grow: 1`, `flex-shrink: 1`, `flex-basis: 0px`, `min-width: 0px`, `width: auto` |
 | Fill | Stack cross 축 | `align-self: stretch`, `width: auto` |
@@ -190,7 +190,7 @@ IX.11.6이 CSS longhand로 정의합니다. 그래서 이 장의 migration은 �
 | `TrackSize::Fraction(f)` | `minmax(0, <f>fr)` | `converted` | 엔진은 Fraction을 (최솟값 0, 최댓값 f fr)로 봅니다(`grid_tracks.rs` 규칙 절). CSS bare `<f>fr`은 `minmax(auto, <f>fr)`이라 콘텐츠 최소 크기 아래로 줄지 않으므로 다릅니다. export는 항상 `minmax(0, <f>fr)`로 냅니다 | `rename` |
 | bare `<flex>` 입력 | `minmax(auto, <flex>)` | 없음 | parser는 bare `fr`을 CSS 의미(track 최솟값 `auto` = item 최소 기여)로 받습니다. 엔진 `TrackBreadth`에 최솟값 `auto`를 추가합니다(`grid.rs`). 그 전에는 bare `fr`을 `unsupported-value`로 거부합니다 | `semantic`(IX.11.5) |
 | `column_gap`, `row_gap` | `column-gap`, `row-gap` | `exact` | | `rename` |
-| `implicit_row` | `grid-auto-rows` | `exact` | `grid-auto-columns`는 받지 않습니다 | `rename` |
+| `implicit_row` | `grid-auto-rows` | 다름 | 엔진 기본값은 `TrackSize::MaxContent`(`grid.rs`)이고 CSS initial value는 `auto`입니다. `auto` track은 지금 track 어휘에 없어(위 `columns` 행, 15장 O11) 영속 record 생략값을 CSS initial value로 둘 수 없습니다. `auto` track을 추가할지, 영속 record가 `grid-auto-rows`를 생략 없이 명시 `max-content`로 저장할지는 IX.11.5가 정하고 IX.11.6이 따릅니다. `grid-auto-columns`는 받지 않습니다 | `semantic`(IX.11.5) |
 | 자동 배치 | `grid-auto-flow: row` | `subset` | `column`·`dense`는 받지 않습니다 | `none` |
 | `GridPlacement::Auto{span}` | `grid-column: span <n>` 등 | `exact` | | `rename` |
 | `GridPlacement::Span{start, span}` | `grid-column-start: <n>`, `grid-column-end: span <n>` | `exact` | 음수 line은 거부합니다 | `rename` |
@@ -210,7 +210,7 @@ IX.11.6이 CSS longhand로 정의합니다. 그래서 이 장의 migration은 �
 | start + end + definite 크기 | over-constrained 해석 | `subset` | Stellar는 오류로 거부합니다 [계획 X.2.2] | `none` |
 | start + end + 크기 auto | `left`+`right`, `width: auto` | `exact` | 4.3절 Free Fill | `rename` |
 | end anchor 없는 자식의 Hug 기여 | absolute 자식은 부모 크기에 기여하지 않음 | 다름 | CSS에 맞춥니다. 내용에 맞춰 커지는 묶음이 필요하면 Stack·Grid·Overlay를 씁니다 | `semantic`(IX.11.5) |
-| Overlay `horizontal`·`vertical` | `justify-items`·`align-items: start \| center \| end` | 다름 | 지금 기본값은 Start(`overlay.rs`)이고 CSS initial value는 `normal`(grid item에서 stretch)입니다. Stack cross 정렬과 같게 영속 record 생략값은 CSS initial value, 새 Overlay 생성 preset은 명시 값으로 저장합니다 | `semantic`(IX.11.5) |
+| Overlay `horizontal`·`vertical` | `justify-items`·`align-items: normal \| stretch \| start \| center \| end` | 다름 | 지금 기본값은 Start이고 엔진 `OverlayAlignment`에는 Start·Center·End만 있습니다(`overlay.rs`). CSS initial value는 `normal`(grid item에서 stretch)입니다. IX.11.5가 `OverlayAlignment`에 stretch를 더하고 `normal`을 stretch로 해석합니다. stretch는 크기가 auto인 축만 영역 크기로 늘리고, Fixed 크기 자식은 시작 쪽에 놓습니다(CSS `stretch`가 definite 크기 item에 `start`처럼 동작하는 것과 같음). Stack cross 정렬과 같게 영속 record 생략값은 CSS initial value, 새 Overlay 생성 preset은 명시 값으로 저장합니다 | `semantic`(IX.11.5) |
 | Constraint Parent edge(Left·Right·Top·Bottom) | inset | `converted` | | `none` |
 | Constraint CenterX·CenterY | `left: calc(50% + <offset>)` + `translate: -50%` | `converted` | 결과 위치가 같습니다. 붙여넣기 parser는 길이·백분율 혼합 `calc()`를 받지 않으므로(2장) 복사→붙여넣기 왕복에서 건너뜀으로 보고합니다 [계획 IX.11.15] | `none` |
 | Constraint Sibling·Baseline | anchor positioning | `stellar-only` | Web profile capability가 없으면 `unsupported` 진단 | `none` |
@@ -235,9 +235,9 @@ IX.11.6이 CSS longhand로 정의합니다. 그래서 이 장의 migration은 �
 | `size`(0x0101) | `width`, `height` | `converted` | Fixed 크기만 표현합니다. 합성 key라 `width`·`height` key로 나누고 0x0101은 묶음 key로 남깁니다(ADR-0024 결정 14). 영속 layout record가 sizing longhand를 가지면 Frame size를 그 Fixed 경우로 흡수합니다. 방식은 IX.11.6 ADR이 정합니다 | `key`(IX.11.22), `schema`(IX.11.6) |
 | `transform`(0x0102) 이동 성분 | 위치(Free 자식 `left`·`top`, flow 자식 `translate`) | 다름 | 지금 인스펙터는 위치 X·Y를 transform 이동 성분으로 편집합니다(인스펙터 명세 5.2). CSS에서 위치는 레이아웃 속성입니다. migration은 이동 성분만 옮깁니다. 지금 저장 형식에는 layout 정의 record가 없어(`frame.rs` `layout_mode` 주석) 모든 자식이 Free 자식입니다. 화면 위치는 layout 반올림 때문에 1 LayoutUnit 안에서 보존됩니다 | `schema`(IX.11.9), `key` |
 | `transform`(0x0102) 선형 부분 | `transform: matrix(a, b, c, d, 0, 0)`, `transform-origin` | `converted` | migration은 선형 부분을 bit 그대로 행렬로 보존하고 `rotate`·`scale`로 분해하지 않습니다. 분해에 쓰는 atan2·sin·cos는 플랫폼 의존 결과입니다(ADR-0006). 인스펙터의 회전·배율 표시는 행렬에서 계산한 표시 전용 파생값이며 저장하지 않습니다. 새 편집은 `rotate`·`scale`·`translate` longhand를 씁니다. 지금 원점은 border box 좌상단(`0 0`)이고 CSS initial value는 `50% 50%`입니다. migration된 노드는 `0 0`을 명시 저장합니다. 0x0102는 묶음 key로 남고 migration 이후 새 command로 받지 않습니다 | `schema`(IX.11.9), `key` |
-| `clipping`(0x0103) Disabled | `overflow: visible` | `exact` | | `rename` |
+| `clipping`(0x0103) Disabled | `overflow: visible` | `exact` | `clipping`은 CSS longhand로 나누지 않는 Stellar 고유 이름의 단일 속성입니다(ADR-0024 결정 14). Stellar clip은 하나라 `overflow-x`·`overflow-y`를 따로 바꿀 수 없고, 아래 세 변형은 서로 다른 CSS longhand 조합으로 나갑니다. merge·semantic diff 단위는 key 하나이고, 값에 NodeRef가 있어 대응 `ExpressionType`이 없으므로 포트·binding 대상이 아닙니다 | `rename` |
 | `clipping` FrameBounds | `overflow: clip` + `overflow-clip-margin: border-box` | `converted`(capability), `initial-differs` | Stellar는 자식을 border box(0..size)와 바깥 corner radius로 자릅니다(`crates/scene/src/builder.rs` `FrameClipInput::Bounds`). CSS `overflow: clip`의 기본 clip 경계는 padding box와 안쪽 radius라 border가 0보다 크면 다릅니다. `overflow-clip-margin: border-box`로 경계를 border box로 맞춥니다. 이 값을 지원하지 않는 Web profile에서는 `approximated`입니다 [계획 IX.11.19] | `rename` |
-| `clipping` Path(NodeRef) | `clip-path` | `converted` | Web은 inline SVG `clipPath`를 `url(#id)`로 참조합니다 | `none` |
+| `clipping` Path(NodeRef) | `clip-path` | `converted`, `approximated`(분리 시) | Web은 inline SVG `clipPath`를 `url(#id)`로 참조합니다. Stellar Frame clip은 자식 scope에만 걸리고 Frame 자신의 배경·테두리·modifier 칠하기는 자르지 않습니다(`crates/scene/src/builder.rs`). CSS `clip-path`는 요소 자신도 자르므로 Frame 자신이 칠하는 것이 없을 때만 Frame에 바로 씁니다. 그 밖에는 9.2절 분리 규칙을 씁니다 | `none` |
 | `background`(0x0104) | `background-color`(없음 = `transparent`) | `exact` | 한 겹 단색만 있습니다. gradient·image layer는 15장 O2 | `rename` |
 | `border`(0x0105) | `border-{top,right,bottom,left}-{width,style,color}` | `converted` | 4변 같은 값, style `solid` 하나, 없음 = `none`입니다. 지금은 레이아웃 공간을 차지하지 않습니다(scene에서 Inside로 그림). CSS처럼 border box 안쪽을 padding box로 만듭니다. 레이아웃이 아직 문서와 연결되지 않아 flow 결과에는 영향이 없고, Free 자식의 화면 위치는 migration이 부모 border 두께만큼 보정해 보존합니다. 12개 longhand에 key를 나누고 0x0105는 묶음 key로 남깁니다 | `schema`(IX.11.10), `key` |
 | `corner_radius`(0x0106) | `border-{top-left,top-right,bottom-right,bottom-left}-radius` | `exact` | px 원형 반경만 받습니다(타원 x/y·`%`는 `subset`). bounds를 넘으면 모든 반경을 같은 비율로 줄이는 규칙은 CSS와 같습니다. 지금은 4 모서리를 key 하나와 semantic snapshot 경로 하나에 둡니다(`crates/semantic-diff/src/build.rs`). 모서리마다 key를 나누고 0x0106은 묶음 key로 남깁니다 | `key`(IX.11.22) |
@@ -285,7 +285,7 @@ Shape·Path에는 fill·stroke 필드가 없고 칠하기는 modifier가 맡습�
 | `ParagraphStyle.alignment` | `text-align: start \| center \| end \| justify` | `exact` | 마지막 줄 처리도 CSS 기본과 같습니다 | `rename` |
 | `line_height` Auto | `line-height: normal` | `approximated` | CSS `normal`은 UA가 정합니다. Stellar는 font metric + half-leading입니다 | `rename` |
 | `line_height` Multiplier | `line-height: <number>` | 다름 | Stellar는 줄 안 최대 글꼴 크기 × 배율, CSS는 inline box마다 자기 font-size × 배율입니다. 혼합 크기 run에서 결과가 다릅니다. CSS 의미에는 root inline box strut가 필요하고, strut는 문단 typography의 첫 사용 가능 글꼴과 font-size로 만듭니다 | `semantic`(IX.11.12) |
-| `line_height` Fixed | `line-height: <length>` | `exact` | | `rename` |
+| `line_height` Fixed | `line-height: <length>` | 다름 | Stellar는 run 크기와 관계없이 줄 높이를 고정하고 줄 안 최대 ascent·descent로 baseline을 정합니다(`crates/text/src/text_layout.rs`). CSS는 inline box마다 자기 글꼴의 ascent+descent에 half-leading을 적용한 뒤 baseline을 맞추므로, 크기가 섞인 줄에서는 line box가 지정값보다 커질 수 있습니다. Multiplier와 같은 종류의 차이라 같은 strut 규칙으로 고칩니다 | `semantic`(IX.11.12) |
 | `letter_spacing_em` | `letter-spacing: <number>em` | 다름 | Stellar는 paragraph 단위, CSS는 inline(run) 단위입니다. text 엔진이 아직 이 값을 쓰지 않습니다. run `TextStyle`의 선택 필드(없으면 Typography 값)로 옮기고 Typography resource를 복제하지 않습니다. 저장된 값이 없어 파일 migration은 없습니다 | `none`(IX.11.11 타입 변경) |
 | `wrapping` Wrap | `white-space: pre-wrap` + `overflow-wrap: break-word` | `converted` | 문서 모델이 공백을 보존하므로 CSS 기본(`normal`, 공백 접기)과 다릅니다. export는 항상 명시합니다 | `rename` |
 | `wrapping` NoWrap | `white-space: pre` | `converted` | 강제 줄바꿈은 유지합니다 | `rename` |
@@ -338,10 +338,13 @@ type tag는 유지하고 payload를 Typography canonical encoding으로 정의�
   1. sRGB이고 네 채널이 모두 [0,1] 안이며, 각 채널을 `round(v × 255) / 255`로 되돌린 f32가 원래 값과
      같으면 소문자 hex `#rrggbb`(alpha 1) 또는 `#rrggbbaa`로 씁니다.
   2. 그 밖의 sRGB는 `color(srgb r g b)` 또는 `color(srgb r g b / a)`로 씁니다.
-  3. Display P3는 `color(display-p3 r g b)` 또는 `color(display-p3 r g b / a)`로 씁니다. export는
-     이미 이 표기를 씁니다.
+  3. Display P3는 `color(display-p3 r g b)` 또는 `color(display-p3 r g b / a)`로 씁니다.
   4. 수는 f32를 왕복하는 가장 짧은 10진 표기로 씁니다. 지수 표기를 쓰지 않고, 끝의 0을 빼고, `-0`은
      `0`으로 씁니다.
+- SVG 표기: SVG export는 SVG 1.1 소비자 호환을 위해 범위 안 sRGB를 `rgb(R%,G%,B%)`로 쓰고, 그 밖의 색은
+  위 2·3번의 `color()` 표기에서 alpha를 뺀 형태로 쓰며, alpha는 별도 `*-opacity` 속성으로 씁니다
+  (`crates/export/src/svg/format.rs`, 계획 XX.3.1). 행렬은 `matrix(a b c d e f)`입니다. 이 표기는 formatter의
+  SVG profile로 따로 두고(IX.11.20), 수 표기(4번)는 CSS 표기와 같습니다.
 - 합성: Stellar는 선형 공간에서 premultiplied 합성을 합니다(아키텍처 §10.3). 웹은 sRGB 합성이므로
   Blend·겹친 Opacity·Blur 결과는 Web profile에서 `approximated`입니다.
 
@@ -361,14 +364,14 @@ modifier stack은 Stellar 고유 구조로 유지합니다. 파라미터 이름�
 |---|---|---|---|---|
 | 공통 enabled(0x1001) | — | `stellar-only` | 비활성 항목은 출력하지 않습니다 | `none` |
 | 공통 order(0x1002) | 9.1절 | `stellar-only` | | `none` |
-| Transform(0x1011) | 추가 `transform: matrix(a, b, c, d, tx, ty)` | `converted` | 원점 문제는 Frame `transform`과 같습니다 | `rename` |
+| Transform(0x1011) | 추가 `transform: matrix(a, b, c, d, tx, ty)` | `converted` | 행렬은 node border box 좌상단 원점 기준입니다. CSS는 `transform-origin` o를 기준으로 적용하므로 export는 그 modifier를 담은 요소의 o에 대해 `translate(-o) matrix(…) translate(o)`로 감싸(conjugate) transform 목록에 붙입니다. o가 `%`이면 같은 `%` 값의 부호를 바꿔 씁니다(`translate()`의 `%`도 border box 기준) | `rename` |
 | Boolean(0x1021, 0x1022) | — | `stellar-only` | Union·Subtract·Intersect·Exclude. export에서 path로 굽습니다 | `none` |
 | StrokeExpand(0x1031) | — | `stellar-only` | path로 굽습니다 | `none` |
 | Corner(0x1041) | — | `stellar-only` | Frame·Rectangle 반경은 `border-*-radius`가 맡습니다. path 모서리 처리는 굽습니다 | `none` |
 | Mask(0x1051) | `mask-image: url(#id)` | `converted` | Web은 inline SVG `mask`를 참조합니다 | `none` |
 | Clip(0x1061) | `clip-path: url(#id)` | `converted` | | `none` |
-| Fill(0x1071) | Frame: 배경 layer(`background-image: linear-gradient(c, c)`), Shape·Path: `fill` | `converted` | 단색만 있습니다 | `rename` |
-| Stroke(0x1081, 0x1082) | Shape·Path: `stroke`, `stroke-width`, Frame: `box-shadow: inset 0 0 0 <w> <c>` 또는 `outline` + 음수 `outline-offset` | `converted` | 정렬은 node 종류로 정해집니다(Frame=Inside, Shape·Path=Center). `stroke-linejoin`·`stroke-dasharray`·`stroke-miterlimit`는 이름만 예약합니다 [계획 XI.6.2] | `rename` |
+| Fill(0x1071) | Frame: 배경 layer(`background-image: linear-gradient(c, c)`), Shape·Path: `fill` | `converted`, Frame border가 있으면 `approximated`(overlay) | 단색만 있습니다. Stellar Frame은 배경 → 테두리 → modifier Fill → modifier Stroke → 자식 순서로 칠하므로(`crates/scene/src/builder.rs` `paint_stack`) Fill이 테두리 위에 옵니다. CSS background layer는 border 아래라 border가 없을 때만 같습니다. border가 있으면 9.2절 overlay 요소에 칠합니다 | `rename` |
+| Stroke(0x1081, 0x1082) | Shape·Path: `stroke`, `stroke-width`, Frame: `box-shadow: inset 0 0 0 <w> <c>` | `converted`, Frame border가 있으면 `approximated`(overlay) | 정렬은 node 종류로 정해집니다(Frame=Inside, Shape·Path=Center). Stellar Frame stroke는 border box 가장자리 안쪽에 테두리 위·자식 아래로 칠합니다. CSS inset `box-shadow`는 padding edge 안쪽에 border 아래로 그려지므로 border가 없을 때만 같고, border가 있으면 9.2절 overlay 요소에 냅니다. `outline`은 자식 위에 그려져 쓰지 않습니다. `stroke-linejoin`·`stroke-dasharray`·`stroke-miterlimit`는 이름만 예약합니다 [계획 XI.6.2] | `rename` |
 | Shadow(0x1091\~0x1093) | Frame: `box-shadow`, 그 밖: `filter: drop-shadow()` | `approximated` | spread·inset이 없습니다. Stellar blur 반경과 CSS 표준편차의 관계는 렌더러 효과 구현(XI.10.4)에서 고정합니다. CSS는 `box-shadow` blur를 반경(표준편차의 2배)으로, `blur()`를 표준편차로 정의합니다. offset(0x1092)은 x·y를 담은 합성 key라 offset x·y key로 나누고 0x1092는 묶음 key로 남깁니다 | `rename`, `key`(IX.11.22) |
 | Blur(0x10A1) | `filter: blur()` | `approximated` | 같음 | `rename` |
 | Blend(0x10B1) | `mix-blend-mode: normal \| multiply \| screen \| overlay \| darken \| lighten` | `approximated` | keyword는 같고 합성 색공간이 다릅니다. CSS 16종 중 나머지는 추가 후보입니다. 그룹 경계는 `isolation: isolate`로 냅니다 | `rename` |
@@ -390,6 +393,26 @@ CSS는 한 요소에 효과를 고정 순서로 적용합니다. `transform` →
 4. `stellar-only` modifier(Boolean·StrokeExpand·Corner)가 있으면 그 지점까지를 path로 굽습니다. 굽기가
    불가능하면 최소 하위 트리만 래스터화합니다. [계획 XX.4.1]
 5. 같은 stack은 항상 같은 요소 구조를 만듭니다.
+
+### 9.2 Frame 칠하기 층과 clip의 분리 규칙
+
+Stellar Frame은 배경 → 테두리 → modifier Fill → modifier Stroke → 자식 순서로 칠하고, clip(FrameBounds·
+Path)은 자식 scope에만 겁니다(`crates/scene/src/builder.rs`). CSS 한 요소로 이 순서를 낼 수 없는 경우
+export(IX.11.18)는 다음 규칙으로 요소를 나눕니다. 나누면 그 노드는 9.1절 3번처럼 `approximated`(구조
+변경)로 진단합니다.
+
+1. **overlay.** Frame에 border가 있고 Fill 또는 Stroke modifier가 있으면, Frame의 첫 자식으로 overlay
+   요소를 하나 둡니다. overlay는 `position: absolute`로 흐름에서 빠지고, 음수 inset(부모 border 두께)으로
+   Frame border box 전체를 덮으며, 3장 stacking 규칙에 따라 DOM 순서상 다른 자식보다 먼저 그려집니다.
+   Fill은 overlay의 `background-color`·`background-image`로, Stroke는 overlay의 `box-shadow: inset`으로
+   냅니다. overlay는 border가 없으므로 inset 그림자가 Frame border box 가장자리에 놓입니다.
+2. **Path clip 분리.** Frame에 Path clip이 있고 Frame 자신이 칠하는 것(배경, 테두리, Fill·Stroke, Shadow)이
+   있으면, Frame 요소는 상자·item longhand와 자기 칠하기만 갖고, 안쪽 wrapper가 container longhand
+   (`display`, `padding-*`, gap, 정렬)와 자식을 가지며 `clip-path`를 씁니다. wrapper는 Frame padding box를
+   채우고 clip 좌표는 Frame border box 원점 기준으로 맞춥니다. 자식은 wrapper의 flex·grid item이 되므로
+   레이아웃 결과는 같습니다. 1번 overlay도 함께 필요하면 overlay는 Frame 요소에 두고 wrapper 앞에
+   놓습니다. Stellar에서 Frame 자신의 Fill·Stroke는 자기 clip에 잘리지 않기 때문입니다.
+3. FrameBounds clip(`overflow: clip`)은 요소 자신의 배경·테두리를 자르지 않으므로 나누지 않습니다.
 
 ## 10. 토큰과 환경
 
@@ -472,7 +495,7 @@ CSS custom property 상속은 트리 아래로 값을 공급하는 메커니즘�
 |---|---|---|
 | Layer | 이름, 표시, 잠금 | 모든 노드 |
 | Layout | `display`, `flex-*`, `justify-*`, `align-*`, `grid-template-*`, `grid-auto-*` | container Frame |
-| Position | `position`, `top`·`right`·`bottom`·`left`, 자식 배치(`align-self`, `grid-*-start`·`-end`) | 부모가 있는 노드 |
+| Position | `position`, `top`·`right`·`bottom`·`left`, 자식 배치(`align-self`, `grid-*-start`·`-end`) | 부모가 있는 노드(Fragment 제외). 저장은 IX.11.6 item record입니다. Ellipse·Polygon `bounds` 원점은 shape local 좌표의 기하 offset으로, Transform modifier 이동 성분은 layout 뒤에 적용하는 시각 변형(9장)으로 그대로 두며 위치 longhand로 migration하지 않습니다. 새 위치 편집은 위치 longhand를 씁니다 |
 | Size | `width`, `height`, `min-*`, `max-*`, `aspect-ratio`, sizing preset | Frame, Shape, Image, Text |
 | Spacing | `padding-*`, `row-gap`, `column-gap` | container Frame |
 | Overflow | `overflow`, `clip-path` | Frame |
@@ -531,7 +554,7 @@ CSS custom property 상속은 트리 아래로 값을 공급하는 메커니즘�
 
 | ID | 내용 | 정할 곳 |
 |---|---|---|
-| O1 | 영속 layout record 저장 위치(Frame payload 확장 또는 `layout_mode`가 참조하는 resource)와 Frame `size` 흡수 방식 | IX.11.6 ADR |
+| O1 | 영속 layout record 저장 위치(Frame payload 확장 또는 `layout_mode`가 참조하는 resource)와 Frame `size` 흡수 방식. item longhand(inset, `flex-*`, `align-self`·`justify-self`, `grid-*-start`·`-end`)는 Frame만이 아니라 상자를 가진 모든 node 종류(Frame, Shape, Path, Text, Image, ComponentInstance)에 붙으므로, 그 저장 위치(NodeRecord 공통 필드 또는 node별 layout item record)와 Shape·Image payload 크기의 흡수 방식도 함께 정합니다. 상자가 없는 Fragment는 item이 아니고 그 자식이 item입니다(아키텍처 §12.4). Ellipse·Polygon `bounds` 원점과 Transform modifier 이동 성분은 옮기지 않습니다(12장 Position 행) | IX.11.6 ADR |
 | O2 | Gradient 종류·기하(linear·radial·conic)와 다중 background layer | 별도 ADR, scene gradient Paint와 함께 |
 | O3 | `<length-percentage>`(길이·백분율 혼합) 값 타입 | ADR-0008 개정 |
 | O4 | `margin` 어휘와 음수 간격(겹치는 배치) | 별도 ADR |

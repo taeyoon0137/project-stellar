@@ -93,7 +93,7 @@ NSEvent(셸)
 | Text 범위 편집(가칭 `TextEdit`) | 신규 XII.10.32 | 캔버스 텍스트 |
 | 인스턴스 교체(가칭 `SwapInstanceComponent`) | 신규 XII.10.35 | 인스턴스 swap |
 
-속성 편집 의도를 `SetProperty`의 PropertyKey와 저장 필드로 옮기는 규칙은 속성 모델이 정합니다. 예를 들어 위치는 이동 변환이 아니라 inset 또는 흐름으로 저장합니다(속성 모델 4.6절·5장, 계획 IX.11.9). 이 문서는 CSS 속성 이름까지만 정합니다. 영속 record는 longhand만 저장하므로 캔버스 조작은 shorthand(`gap`, `inset`, `padding` 등)를 쓰지 않고 longhand만 바꿉니다. [속성 모델 11장] [ADR-0024 결정 4]
+속성 편집 의도를 `SetProperty`의 PropertyKey와 저장 필드로 옮기는 규칙은 속성 모델이 정합니다. 예를 들어 위치는 이동 변환이 아니라 inset 또는 흐름으로 저장합니다(속성 모델 4.6절·5장·12장, 계획 IX.11.6, IX.11.9). Frame의 위치 longhand는 IX.11.9가 transform에서 분리하고, Frame이 아닌 node의 위치 longhand는 IX.11.6 item record에 있습니다. Ellipse·Polygon `bounds` 원점과 Transform modifier 이동 성분은 캔버스 이동으로 바꾸지 않습니다. 이 문서는 CSS 속성 이름까지만 정합니다. 영속 record는 longhand만 저장하므로 캔버스 조작은 shorthand(`gap`, `inset`, `padding` 등)를 쓰지 않고 longhand만 바꿉니다. [속성 모델 11장] [ADR-0024 결정 4]
 
 CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니다. 그 속성을 편집하는 XII.10 행은 해당 IX.11 행을 선행으로 둡니다(24장). [계획 IX.11]
 
@@ -125,7 +125,9 @@ CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니
 | Space 누름 | 누르는 동안 Hand | Space 놓음 | XII.10.1 |
 | 생성·마퀴 드래그 중 Space | 시작점을 함께 옮김(크기 유지) | Space 놓음 | XII.10.26 |
 | ⌘ 누름(Move 도구) | 누르는 동안 깊은 선택 hover·클릭 | ⌘ 놓음 | XII.10.4 |
-| Escape | 진행 중 제스처 취소. 제스처가 없으면 편집 범위 한 단계 위, 최상위면 선택 해제 | — | XII.10.1, XII.10.3 |
+| Escape | 아래 순서에서 처음 해당하는 하나: 진행 중 제스처 취소, Move가 아닌 도구이면 Move로 복귀, 편집 범위가 최상위가 아니면 한 단계 위, 최상위면 선택 해제 | — | XII.10.1, XII.10.3, XII.10.4 |
+
+- 텍스트 편집 모드와 벡터 편집 모드에서는 Escape가 먼저 그 모드를 끝냅니다(12.2절, 14.1절). 위 순서는 모드 밖에서 씁니다.
 
 ### 3.3 수식키 의미(제안)
 
@@ -134,7 +136,7 @@ CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니
 | 수식키 | 클릭 | 드래그로 이동 | 크기 조절·생성 | 회전 | 기타 |
 |---|---|---|---|---|---|
 | Shift | 선택 토글 추가 | 축 고정(가로·세로·45도) | 비율 고정(비율 고정 속성이 켜져 있으면 일시 해제) | 15도 단위 | 화살표 이동을 큰 단위로 |
-| Option(⌥) | — | 시작할 때 누르면 복제 후 이동 | 중심 기준 | — | 선택 후 hover로 거리 측정, 마퀴는 완전히 포함된 node만 |
+| Option(⌥) | 다중 선택에서 이미 선택된 node를 primary로 지정(8장) | 시작할 때 누르면 복제 후 이동 | 중심 기준 | — | 선택 후 hover로 거리 측정, 마퀴는 완전히 포함된 node만 |
 | Command(⌘) | 깊은 선택 | 드래그 도중 새로 누르면 스냅 일시 해제 | 같음 | 같음 | pointer down 때 이미 누른 ⌘는 깊은 선택에만 쓰고 스냅 해제로 해석하지 않음 |
 | Control(⌃) | 문맥 메뉴(시스템 규칙) | 쓰지 않음 | 쓰지 않음 | 쓰지 않음 | HIG에 따라 단축키에 쓰지 않음 |
 
@@ -243,12 +245,13 @@ CSS 속성의 PropertyKey·영속 record·migration은 계획 IX.11이 만듭니
 
 ### 5.4 모서리 반경
 
-- 반경 핸들 드래그는 네 모서리를 함께, Option은 그 모서리만 바꿉니다. 결과는 `border-radius` 계열 속성입니다(속성 모델). [관례] [계획 XII.10.11]
-- bounds보다 큰 반경은 저장값을 유지하고 표시만 평가 규칙으로 줄입니다. 핸들 옆 수치는 저장값을 보여 줍니다. [계획 VI.5.2]
+- Frame·Rectangle에서 반경 핸들 드래그는 네 모서리를 함께, Option은 그 모서리만 바꿉니다. 결과는 `border-*-radius` longhand입니다(속성 모델 5장·6장). [관례] [계획 XII.10.11]
+- Polygon은 모든 꼭짓점에 쓰는 반경 하나만 가지므로(속성 모델 6장 `stellar-only`) 핸들은 그 값 하나를 바꾸고 Option 개별 편집이 없습니다. [계획 VI.5.5, XII.10.11]
+- Frame·Rectangle에서 bounds보다 큰 반경은 저장값을 유지하고 표시만 평가 규칙으로 줄입니다. 핸들 옆 수치는 저장값을 보여 줍니다. Polygon 표시는 Polygon path 평가를 따릅니다. [계획 VI.5.2, VI.5.6]
 
 ### 5.5 비례 확대(Scale)
 
-- Object 메뉴 명령과 인스펙터 비율 입력으로 실행하며, 크기와 함께 선 두께·반경·그림자와 블러 반경·글자 크기(`font-size`)를 같은 비율로 바꿉니다. modifier 값은 `SetModifierProperty`로 함께 바꿔 한 transaction으로 묶습니다. `font-size`는 Typography record(계획 IX.11.11)에, Shape·Text 속성의 PropertyKey는 IX.11.3에 생깁니다. [관례] [속성 모델 7장] [계획 XII.10.12, VII.2.6, IX.11.3, IX.11.11]
+- Object 메뉴 명령과 인스펙터 비율 입력으로 실행하며, 크기와 함께 선 두께(modifier Stroke 두께와 Frame `border-*-width`)·반경·그림자와 블러 반경·글자 크기(`font-size`)를 같은 비율로 바꿉니다. modifier 값은 `SetModifierProperty`로 함께 바꿔 한 transaction으로 묶습니다. `font-size`는 Typography record(계획 IX.11.11)에, Frame border longhand는 IX.11.10에, Shape·Text 속성의 PropertyKey는 IX.11.3에 생깁니다. Scale은 메뉴 막대 Object 메뉴에도 추가합니다(XII.10.12). [관례] [속성 모델 7장] [계획 XII.10.12, VII.2.6, IX.11.3, IX.11.10, IX.11.11]
 - 캔버스 단일 키를 줄지는 XII.10.2가 정합니다(도구·메뉴 6.2절은 Shift+글자를 도구 변형용으로 비워 두었습니다).
 
 ### 5.6 뒤집기
@@ -263,7 +266,7 @@ Object ▸ Flip Horizontal·Flip Vertical은 선택 bounds 중심 기준 반전 
 
 | 조작 | 결과 | Command | 구현 |
 |---|---|---|---|
-| 선택 드래그 | 위치 longhand 편집(위치 지정 자식은 현재 anchor의 inset, 계획 IX.11.9) | `SetProperty`(transaction) | XII.10.13 |
+| 선택 드래그 | 위치 longhand 편집(위치 지정 자식은 현재 anchor의 inset, Frame은 계획 IX.11.9, 그 밖의 node는 IX.11.6 item record) | `SetProperty`(transaction) | XII.10.13 |
 | Shift | 처음 움직인 축으로 고정 | 같음 | XII.10.13 |
 | Option으로 시작 | 복제 후 복제본 이동 | `DuplicateSubtree` + `SetProperty` | XII.10.13, VII.2.8 |
 | 자유 배치 컨테이너 사이로 끌기 | world 위치를 유지하며 부모 변경 | `MoveNode` + `SetProperty` | XII.10.13, VII.2.3 |
@@ -345,7 +348,7 @@ Object ▸ Flip Horizontal·Flip Vertical은 선택 bounds 중심 기준 반전 
   - Stack 자식: 주축 정렬은 흐름이 정하므로 비활성화하고, 도움말 태그로 컨테이너의 `justify-content`를 바꾸라고 안내합니다. 교차축 정렬은 그 자식의 `align-self`(`flex-start`·`center`·`flex-end`)를 바꿉니다. `align-self`는 계획 IX.11.4가 레이아웃 엔진에, IX.11.6이 영속 record에 추가합니다.
   - Grid 자식: 가로 정렬은 `justify-self`, 세로 정렬은 `align-self`(`start`·`center`·`end`)를 바꿔 grid 영역 안에서 맞춥니다. 두 속성은 계획 IX.11.5가 엔진에, IX.11.6이 영속 record에 추가합니다.
   - Overlay 자식: 컨테이너 `justify-items`·`align-items`가 정하므로 비활성화하고 도움말 태그로 안내합니다.
-- 흐름 밖 node의 정렬·분배·행·열 정리는 위치 longhand(위치 지정 자식은 현재 anchor의 inset)를 바꿉니다. [계획 IX.11.9]
+- 흐름 밖 node의 정렬·분배·행·열 정리는 위치 longhand(위치 지정 자식은 현재 anchor의 inset)를 바꿉니다. [계획 IX.11.6, IX.11.9]
 - 바꾼 값은 인스펙터 Position 섹션에 보입니다(속성 모델 12장).
 - 메뉴 위치와 단축키는 도구·메뉴 명세의 Object ▸ Align·Distribute를 씁니다. 인스펙터 위쪽에 같은 명령의 momentary segmented control을 둘지는 인스펙터 명세가 정합니다. [도구·메뉴 3.2, 6.1] [HIG Segmented controls]
 
@@ -498,7 +501,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 - 인스턴스 편집은 공개 Property, 허용된 Override, 공개 Slot으로 제한하고 자유 편집은 명시적 Detach로만 엽니다. 중첩 인스턴스 내부를 바깥에서 직접 고치지 않으며, 안쪽 Property를 바깥에서 다루려면 명시적 Property Drilling을 거칩니다. [아키텍처 §14.3, §15.1] [계획 IX.4.2, IX.4.3]
 - override된 값은 인스펙터와 캔버스 윤곽에서 기본값과 구분해 표시합니다. 표시 방식은 인스펙터 명세가 정합니다. [인스펙터 9장]
 - Swap 전에 보존하지 못하는 override 목록을 preview로 보여 줍니다. override가 사라지는 일을 조용히 일으키지 않는 것이 목적입니다. [관례] [계획 XII.10.35]
-- Context 공급·소비(PO 방향)를 캔버스에서 어떻게 보일지는 이 문서 범위 밖이며, 아키텍처의 "경계를 건너는 암묵적 참조 금지"와 함께 별도 결정으로 다룹니다. [PO 2026-11-14 편집 UX] [아키텍처 §15.1]
+- Context 공급·소비(PO 방향)는 ADR-0025 결정 3과 아키텍처 §14.5가 선언된 인터페이스로 정했습니다. 인스펙터의 Value Binding 선택기, 제공한 조상 node로 이동, requirement·Slot 공개 목록 표시는 로드맵 XXX.7.12가 맡고, 캔버스에는 별도 Context 표시를 두지 않습니다. [ADR-0025 결정 3] [아키텍처 §14.5] [계획 XXX.7.12]
 
 ---
 
@@ -546,6 +549,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 | ComponentInstance 추가 | Reset Overrides, Swap…, Detach Instance, 정의로 이동 |
 | 빈 캔버스 | Paste, Select All, Zoom to Fit, Zoom to Selection, Show Rulers |
 
+- 메뉴 막대(도구·메뉴 3.2절)에 아직 없는 항목은 구현 행이 Object 메뉴에 함께 추가합니다. Scale은 XII.10.12, 행·열 정리는 XII.10.21, Boolean ▸은 XII.10.31, Reset Overrides·Detach Instance·정의로 이동은 XII.10.34, Swap…은 XII.10.35, Convert to Path·Convert to Frame은 XII.10.39입니다. Select Overlapping의 레이어 목록은 hit 결과로 만드는 동적 항목이라 메뉴 막대에 두지 않습니다. [계획 XII.10.39]
 - VoiceOver는 AXShowMenu 동작으로 같은 메뉴를 엽니다. [HIG Accessibility] [AppKit 문서 NSAccessibility]
 
 ---
@@ -580,7 +584,7 @@ Path command는 MoveTo·LineTo·CubicTo·Close만 씁니다. point와 handle은 
 |---|---|---|
 | 캔버스로 포커스 | Tab·Shift-Tab, Full Keyboard Access | XII.10.41, XII.8.1 |
 | 선택 이동 | Tab·Shift-Tab(형제), Return(안으로), Shift-Return(밖으로) | XII.10.4 |
-| 전체 선택·해제 | ⌘A, ⇧⌘A, Escape | XII.10.3 |
+| 전체 선택·해제 | ⌘A, ⇧⌘A, Escape(최상위 편집 범위에서, 3.2절 순서) | XII.10.3 |
 | 이동 | 화살표, Shift-화살표 | XII.10.14 |
 | 크기 조절 | 키보드 크기 조절 키, 인스펙터 W·H 필드 | XII.10.14, 인스펙터 5장 |
 | 회전·반경·padding·gap | 인스펙터 필드 | 인스펙터 5장 |
@@ -672,12 +676,12 @@ CSS 속성을 편집하는 행은 그 속성의 PropertyKey·영속 record·migr
 |---|---|---|
 | XII.10.9 | `width`·`height`, sizing preset(`fit-content` 등) | IX.11.3, IX.11.6, IX.11.7 |
 | XII.10.10 | `rotate`, 위치 보정(inset·`translate`) | IX.11.9 |
-| XII.10.11 | `border-*-radius`(Frame·Rectangle·Polygon) | IX.11.3, IX.11.22 |
-| XII.10.12 | 크기, `font-size` 등 비례 값 | IX.11.3, IX.11.11 |
-| XII.10.13, XII.10.14 | 위치 longhand | IX.11.9 |
+| XII.10.11 | `border-*-radius`(Frame·Rectangle), Polygon 단일 반경 | IX.11.3, IX.11.22 |
+| XII.10.12 | 크기, `border-*-width`, `font-size` 등 비례 값 | IX.11.3, IX.11.10, IX.11.11 |
+| XII.10.13, XII.10.14 | 위치 longhand(Frame은 IX.11.9, 그 밖의 node는 IX.11.6 item record) | IX.11.6, IX.11.9 |
 | XII.10.21 | `align-self`·`justify-self`, 위치 longhand | IX.11.4, IX.11.5, IX.11.6, IX.11.9 |
-| XII.10.22 | 위치 longhand | IX.11.9 |
+| XII.10.22 | 위치 longhand | IX.11.6, IX.11.9 |
 | XII.10.24 | inset(흐름 순서는 OrderKey) | IX.11.6 |
 | XII.10.25 | `padding-*`, `row-gap`, `column-gap` | IX.11.6 |
 
-가이드 10.4절이 "WBS 없음"으로 둔 항목 중 생성 도구(XII.10.26, XII.10.27, XII.10.29, XII.10.33)와 가이드·측정 표시(XII.10.16, XII.10.19)가 이 행들로 채워집니다. 가이드 본문 갱신은 가이드를 고치는 작업에서 합니다. [가이드 0.2, 10.4]
+가이드 10.4절이 "WBS 없음"으로 두었던 항목 중 생성 도구(XII.10.26, XII.10.27, XII.10.29, XII.10.33), 가이드·측정 표시(XII.10.16), 눈금자(XII.10.19)가 이 행들로 채워졌고, 가이드와 도구·메뉴 명세의 해당 문장도 이 행 번호로 고쳤습니다. 셸 프레임 명세 6.1절의 같은 문장은 그 문서를 고치는 다음 작업에서 맞춥니다. [가이드 0.2, 10.4]

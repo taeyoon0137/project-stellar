@@ -159,9 +159,10 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
 13. **포트 단위.** 노드 기반 프로토타이핑 포트, Component Property 타입, binding 대상은 registry의 CSS
     longhand 단위로 노출합니다. 포트 하나는 longhand 하나(결정 14에 따라 PropertyKey 하나)이고, 값
     타입은 registry의 값 문법입니다. 그래프 모델과 포트 타입(`ExpressionType`)은 ADR-0025 결정 1·2가
-    정합니다. 값 문법과 `ExpressionType`의 대응(예: `width`처럼 `<length>`·`<percentage>`·keyword를
-    함께 받는 문법)도 ADR-0025 결정 1이 정하며, 대응이 정해지지 않은 longhand(예: `transform` 행렬)는
-    그때까지 포트·binding 대상이 아닙니다.
+    정합니다. 값 문법과 `ExpressionType`의 대응은 ADR-0025 결정 1.2가 정합니다. `width`처럼
+    `<length>`·`<percentage>`·keyword를 함께 받는 합집합 문법은 구성 타입별 `ExpressionType`의
+    집합이 되고, 포트·binding 대상은 그 집합에 속한 타입의 식만 받습니다. 대응하는 구성 타입이 없는
+    longhand(예: `transform` 행렬)는 포트·binding 대상이 아닙니다.
 14. **longhand 하나는 PropertyKey 하나입니다.** 영속 record의 longhand마다 PropertyKey를 하나
     할당하고, longhand 주소는 key 하나로 끝나는 `PropertyPath`입니다. 경로의 두 번째 key(sub-key)로
     longhand를 가리키지 않습니다. 결정 4의 merge 단위, 결정 13의 포트·binding 대상, semantic diff의
@@ -173,6 +174,13 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
       새 command, 인스펙터 묶음 편집, merge, 포트는 longhand key를 씁니다. `transform`·`border`는
       payload 의미가 바뀌므로 해당 schema migration(IX.11.9, IX.11.10) 이후 문서에서 묶음 key를 새
       command로 받지 않습니다.
+    - Stellar 값 하나가 변형에 따라 서로 다른 CSS longhand 조합으로 나가는 key는 나누지 않고 Stellar
+      고유 이름의 단일 속성으로 둡니다. Frame `clipping`(0x0103, Disabled·FrameBounds·Path)이 이
+      경우입니다. Stellar clip은 하나라 `overflow-x`·`overflow-y`를 따로 바꿀 수 없고, FrameBounds는
+      `overflow: clip` + `overflow-clip-margin`, Path는 `clip-path`로 나갑니다(`docs/design/property_model.md`
+      5장). merge·semantic diff 단위는 key 하나이고, 값에 NodeRef가 있어 대응 `ExpressionType`이 없으므로
+      포트·binding 대상이 아닙니다. registry 이름은 Stellar 고유 이름(`clipping`)이고 변형별 CSS 대응은
+      매핑 metadata의 변환 규칙으로 기록합니다(IX.11.2).
     - payload bytes는 key를 담지 않으므로 key 분할만으로는 파일 bytes가 바뀌지 않습니다. 바뀌는 것은
       registry, command 경로, semantic snapshot 경로입니다.
     - 묶음 key를 가리키는 저장된 참조는 자동 변환하지 않습니다. 참조 값 타입(`TypedValue`·
@@ -225,6 +233,12 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
   migration이 필요합니다. 그 전에 제품 문서 migration registry를 project 열기에 연결해야 합니다
   (IX.11.21).
 - 합성 key를 longhand key로 나눕니다(IX.11.22). 묶음 key를 가리키는 저장 참조는 진단 대상이 됩니다.
+- export 정렬 중 IX.11.18(modifier stack 선형화 계획)과 IX.11.20(SVG 값 표기 정렬)은 내보내기(Phase
+  XX)·코드 생성(Phase XXII)이 로드맵인데도 초기 릴리스 Phase IX에 둡니다. IX.11.18은 파일을 출력하지 않는
+  core 계획 함수이며, 초기 capability matrix(IX.11.19)가 modifier 항목의 Web 상태를 정하는 근거입니다.
+  IX.11.20은 이미 구현된 SVG export(XX.3.1)의 값 표기를 IX.11.13 formatter 한 곳으로 모으는 정리이고 SVG
+  출력 bytes를 바꾸지 않습니다. 같은 값의 표기 규칙이 두 곳에 생기지 않게 formatter와 같은 Phase에서
+  맞춥니다. 실제 HTML·CSS 출력은 로드맵 XXII.2가 합니다.
 - 인스펙터 섹션을 CSS 범주로 재구성해야 합니다.
 - CSS가 직접 표현하지 않는 디자인 도구 개념(채움, 내용 맞춤)은 preset 계층이 필요합니다.
 - CSS 명세가 바뀌면 추적해야 합니다. 이 부담은 Web Target Profile의 capability 버전 고정(IX.10.4)으로

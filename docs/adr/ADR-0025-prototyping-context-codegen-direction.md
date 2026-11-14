@@ -61,14 +61,23 @@ registry 값, 공개 API 시그니처는 이 ADR에서 고정하지 않습니다
    Property, Context, 조건식이 모두 이 대상에 연결됩니다(§14.2).
 2. **노드 그래프 포트.** 프로토타입 그래프에서 속성은 타입 있는 입력 포트로 나타납니다. 포트 하나는
    registry longhand 하나이고, 포트의 값 타입은 registry 항목의 CSS 값 문법입니다(ADR-0024 결정 13).
-   그래프의 연결 검사는 그 값 문법을 `ExpressionType` 하나로 바꿔서 합니다. 대응은 한 가지이며 속성
-   모델 2장·8.1절의 Stellar 타입↔CSS 값 타입 표를 그대로 씁니다(예: `<length>`→Length,
+   그래프의 연결 검사는 그 값 문법을 `ExpressionType`으로 바꿔서 합니다. 구성 타입 하나의 대응은 한
+   가지이며 속성 모델 2장·8.1절의 Stellar 타입↔CSS 값 타입 표를 그대로 씁니다(예: `<length>`→Length,
    `<time>`→Duration, keyword→속성별 Enum). `ExpressionType`이 없는 Stellar 타입에 대응하는 값
    문법(Grid track `<track-size>` 등)의 속성은 포트로 노출하지 않고 진단합니다(XXX.1.2).
+   - **합집합 문법.** `width`(`auto | <length> | <percentage> | fit-content`)처럼 구성 타입이 둘 이상인
+     문법은 구성 타입마다 위 대응으로 바꾼 `ExpressionType`의 집합이 됩니다. keyword 구성 요소는 그
+     속성의 keyword만 담은 Enum 하나로 모읍니다. 포트와 binding 대상은 이 집합에 속한 타입의 식만
+     받고, 연결된 식의 정적 타입이 저장 값의 variant를 정합니다. 저장된 값 variant에 따라 포트 타입을
+     바꾸지 않으므로 값을 바꿔도 연결 검사 결과가 달라지지 않습니다. 대응이 없는 구성 타입은 집합에서
+     빼고, 집합이 비면 포트로 노출하지 않습니다. 길이·백분율을 섞은 `calc()`는 구성 타입이 아니며
+     `<length-percentage>` 값 타입(속성 모델 15장 O3)이 정해지기 전에는 받지 않습니다. `MotionSpec`
+     보간은 같은 구성 타입 사이에서만 하고, 시작값과 끝값의 타입이 다르면 진단합니다(XXX.1.1).
+     `height`, inset longhand(`top` 등), `flex-basis`, `min-*`, `max-*`도 같은 규칙을 씁니다.
 3. **코드 생성 매핑 단위.** Target Profile capability registry(IX.10.5)는 CSS 기반 속성마다 profile
    kind별로 Native·Approximated·Unsupported·Deprecated를 기록합니다. Web 항목은 IX.11.19 matrix와
-   IX.11.18 modifier stack 선형화 계획(ADR-0024)이 정하고, 코드 생성(XXII.1.4)은 그 matrix에
-   Apple·Android lowering 규칙과 Context·`MotionSpec` 항목만 더합니다. Web adapter는 같은 이름의 CSS
+   IX.11.18 modifier stack 선형화 계획(ADR-0024)이 정하고, 코드 생성은 그 matrix에 Apple·Android
+   lowering 규칙(XXII.1.4)과 Context·`MotionSpec` 항목(XXII.1.7)만 더합니다. Web adapter는 같은 이름의 CSS
    속성으로 출력하고, Apple·Android adapter는 이 registry를 거쳐 SwiftUI·Compose 표현으로 낮춥니다.
    registry 항목의 CSS 매핑 상태(속성 모델 1.1절)와 Web profile capability 상태는 다음처럼
    대응합니다.
@@ -79,8 +88,9 @@ registry 값, 공개 API 시그니처는 이 ADR에서 고정하지 않습니다
    - Deprecated는 CSS 매핑 상태에서 나오지 않습니다. 프로젝트가 고정한 Web profile 버전(IX.10.4)이
      정합니다.
    - `initial-differs`·`subset` 표시는 상태를 바꾸지 않습니다.
-   - Apple·Android profile의 상태는 CSS 매핑 상태에서 유도하지 않고 XXII.1.4의 lowering 규칙이
-     정합니다.
+   - Apple·Android profile의 상태는 CSS 매핑 상태에서 유도하지 않고 lowering 규칙(CSS 기반 속성은
+     XXII.1.4, Context·`MotionSpec`은 XXII.1.7)이 정합니다. 초기 capability matrix(IX.11.19)는 Web
+     profile 항목만 등록합니다.
 
 속성 이름과 값 문법은 CSS를 따르지만, 저장 원본은 CSS 문자열이 아니라 타입 있는 속성 record입니다.
 CSS 문자열을 저장하지 않으므로 parser를 문서 열기 경로에 두지 않고, 타깃별로 낮추는 과정에서 손실을
@@ -195,11 +205,12 @@ XXX.7이 맡습니다(결정 6).
 
 ### 4. 실제 코드 변환
 
-1. CodegenIR(XXII.1.1)은 CSS 기반 속성 record(IX.11.6 layout record, IX.11.11 Typography record,
-   ADR-0024), Context 선언·provision·소비, 상태 머신, `MotionSpec`을 입력으로 받습니다.
+1. CodegenIR은 CSS 기반 속성 record(IX.11.6 layout record, IX.11.11 Typography record, ADR-0024)를
+   XXII.1.1에서, 상태 머신과 `MotionSpec`을 XXII.1.5에서, Context 선언·provision·소비를 XXII.1.6에서
+   입력으로 받습니다.
 2. 속성 매핑은 capability registry 한 곳에서 관리합니다. Web 매핑과 modifier stack 선형화는 IX.11.19
-   matrix와 IX.11.18 계획을 그대로 쓰고 다시 정의하지 않습니다. 코드 생성(XXII.1.4)은 그 matrix에
-   Apple·Android lowering 규칙과 Context·`MotionSpec` 항목만 더합니다. 속성×TargetProfile마다
+   matrix와 IX.11.18 계획을 그대로 쓰고 다시 정의하지 않습니다. 코드 생성은 그 matrix에 Apple·Android
+   lowering 규칙(XXII.1.4)과 Context·`MotionSpec` 항목(XXII.1.7)만 더합니다. 속성×TargetProfile마다
    결정 1.3의 상태와 낮추는 규칙을 기록하고, 1:1이 아닌 항목(modifier 적용 순서, 블렌드 합성 색공간
    차이, 자유 배치·constraint 변환, 기본값 차이)은 규칙과 진단을 함께 둡니다.
 3. Context는 타깃별로 낮춥니다. Web은 CSS로 표현 가능한 스타일 값이면 등록된 custom property 상속으로,
@@ -250,7 +261,10 @@ Phase XXVIII 자체가 로드맵이고, 포맷 공개 전에 필요한 것은 �
   인스펙터 연결(XXX.7). 노드 기반 프로토타이핑 편집기의 모델(`MotionSpec`, 배치 hint, 제스처 이벤트),
   그래프 projection·편집, 결정론적 평가, 프리뷰, macOS UI(XXX.1\~XXX.6).
 - **로드맵(Phase XXII 조정):** CSS 기반 속성 registry, Context, 상태 머신, `MotionSpec`을 소비하는 코드
-  생성.
+  생성. CSS 기반 속성·레이아웃을 낮추는 행(XXII.1.1\~XXII.1.4, XXII.2.1\~XXII.2.4, XXII.3.1\~XXII.3.3,
+  XXII.4.1, XXII.4.2)은 Phase XXX를 기다리지 않습니다. 상태 머신·`MotionSpec`·Context를 낮추는 행
+  (XXII.1.5\~XXII.1.7, XXII.2.5, XXII.2.6, XXII.3.4, XXII.4.3)과 XXII.5는 `MotionSpec` record(XXX.1.1)와
+  Context 해석기(XXX.7.4) 뒤에 진행합니다. 로드맵 Phase 번호는 진행 순서가 아닙니다.
 
 ## Alternatives
 
