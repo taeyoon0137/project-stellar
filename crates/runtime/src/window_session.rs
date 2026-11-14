@@ -84,7 +84,9 @@ use stellar_storage::generation::lazy::{ChunkReadRecorder, LazyGeneration, LazyL
 use stellar_storage::generation::loader::{load_current_generation, LoadError, LoadedGeneration};
 use stellar_storage::save::cancel::{run_save, CancelToken, SaveRunError};
 use stellar_storage::save::commit::SavedGenerationState;
-use stellar_storage::save::optimistic::{check_base_generation, BaseCheckError};
+use stellar_storage::save::optimistic::{
+    check_base_generation, check_base_manifest, BaseCheckError,
+};
 use stellar_storage::save::plan::{build_save_plan, SavePlanError};
 
 /// session 로드 실패.
@@ -162,6 +164,8 @@ impl std::error::Error for WindowSessionSaveError {}
 #[derive(Debug)]
 pub(crate) struct WindowDocument {
     pub(crate) state: DocumentState,
+    /// 마지막으로 디스크의 loaded generation과 내용이 같음을 확인한 문서 revision.
+    saved_revision: DocumentRevision,
     /// 로드할 때 읽은 이 문서의 chunk(DocumentManifest·ViewTree·subtree). 저장할 때 다른 문서의 chunk와
     /// 구분해, 이 집합 밖의 base chunk만 그대로 이어 씁니다.
     pub(crate) owned_chunks: BTreeSet<ChunkId>,
@@ -240,8 +244,10 @@ impl ProjectWindowSession {
                         owned.0.insert(*chunk);
                     }
                 }
+                let state = DocumentState::new(document.model);
                 Some(WindowDocument {
-                    state: DocumentState::new(document.model),
+                    saved_revision: state.revision(),
+                    state,
                     owned_chunks: owned.0,
                 })
             }
@@ -480,12 +486,25 @@ impl ProjectWindowSession {
 
     /// 작업 문서를 지금 저장합니다(모듈 문서 "Undo·Redo·Save Now").
     pub fn save_now(&mut self) -> Result<SaveOutcome, WindowSessionSaveError> {
-        let Some(document) = self.document.as_ref() else {
+        let Some(document) = self.document.as_mut() else {
             return Ok(SaveOutcome {
                 generation: self.generation_number(),
                 written: false,
             });
         };
+        let base = self.loaded.as_ref();
+        let root = self.identity.root_path();
+        let revision = document.state.revision();
+        if let Some(base) = base {
+            if revision == document.saved_revision {
+                check_base_manifest(root, Some(base.manifest_hash))
+                    .map_err(WindowSessionSaveError::Stale)?;
+                return Ok(SaveOutcome {
+                    generation: base.manifest.generation,
+                    written: false,
+                });
+            }
+        }
         let serialized = serialize_document(document.state.model())
             .map_err(WindowSessionSaveError::Serialize)?;
         let document_id = serialized.document_id;
@@ -495,7 +514,6 @@ impl ProjectWindowSession {
             .map(|chunk| chunk.chunk_id)
             .collect();
         let mut states = serialized.to_dirty_states();
-        let base = self.loaded.as_ref();
         let mut roots = base.map_or_else(Vec::new, |base| base.manifest.root_document_ids.clone());
         if let Some(base) = base {
             // 작업 문서가 차지하지 않은 base chunk(다른 문서·에셋 등)는 그대로 이어 씁니다. 작업 문서가 로드할 때
@@ -526,7 +544,6 @@ impl ProjectWindowSession {
             roots,
         )
         .map_err(WindowSessionSaveError::Plan)?;
-        let root = self.identity.root_path();
         // 쓰기 전 optimistic check(V.5.2): 다른 저장이 먼저 끝났으면 아무것도 쓰지 않습니다.
         check_base_generation(root, &plan).map_err(WindowSessionSaveError::Stale)?;
         if let Some(base) = base {
@@ -534,6 +551,7 @@ impl ProjectWindowSession {
                 && plan.manifest.chunk_pointers == base.manifest.chunk_pointers
                 && plan.manifest.root_document_ids == base.manifest.root_document_ids;
             if unchanged {
+                document.saved_revision = revision;
                 return Ok(SaveOutcome {
                     generation: base.manifest.generation,
                     written: false,
@@ -557,9 +575,8 @@ impl ProjectWindowSession {
         };
         let generation = loaded.manifest.generation;
         self.loaded = Some(loaded);
-        if let Some(document) = self.document.as_mut() {
-            document.owned_chunks = new_chunks;
-        }
+        document.owned_chunks = new_chunks;
+        document.saved_revision = revision;
         Ok(SaveOutcome {
             generation,
             written: true,
@@ -1058,6 +1075,37 @@ mod tests {
             1,
             "저장은 history를 바꾸지 않음"
         );
+    }
+
+    #[test]
+    fn unchanged_save_checks_the_disk_even_after_undo_restores_saved_content() {
+        let project = saved_project("save-revision");
+        let mut a = ProjectWindowSession::load(identity(project.path()), window(31)).unwrap();
+        let mut b = ProjectWindowSession::load(identity(project.path()), window(32)).unwrap();
+        a.apply(&rename(a.document().unwrap(), 500, 11, "임시 이름"))
+            .unwrap();
+        assert!(a.undo().unwrap());
+        assert_eq!(
+            a.save_now().unwrap(),
+            SaveOutcome {
+                generation: 1,
+                written: false
+            }
+        );
+        assert_eq!(a.document.as_ref().unwrap().saved_revision, a.revision());
+        assert!(!a.save_now().unwrap().written);
+
+        b.apply(&rename(b.document().unwrap(), 600, 12, "외부 창 편집"))
+            .unwrap();
+        assert!(b.save_now().unwrap().written);
+        assert!(matches!(
+            a.save_now(),
+            Err(WindowSessionSaveError::Stale(
+                BaseCheckError::StaleBase { .. }
+            ))
+        ));
+        assert_eq!(a.generation_number(), 1);
+        assert_eq!(name_of(&a, 12), "n12");
     }
 
     #[test]
