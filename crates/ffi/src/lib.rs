@@ -17,6 +17,7 @@ mod canvas_text;
 mod component_library;
 mod git_names;
 /// 양 플랫폼 공통 입력 이벤트와 native timestamp 변환 (XII.3.1).
+pub mod image;
 pub mod input;
 /// macOS `NSEvent` → 공통 입력 이벤트 adapter (XII.3.2).
 pub mod input_macos;

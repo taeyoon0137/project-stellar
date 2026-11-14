@@ -46,6 +46,21 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.openProject(handle: runtimeHandle, path: path), completion)
     }
 
+    func placePNG(_ image: PickedPNG, parent: UUID, at position: CGPoint,
+                  completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        var target = image.target, request: UInt64 = 0
+        let status = withUnsafeBytes(of: parent.uuid) { id in
+            image.digest.withUnsafeBytes { digest in
+                Array(image.url.path.utf8).withUnsafeBufferPointer { path in
+                    stellar_window_place_png(runtimeHandle, &target, id.bindMemory(to: UInt8.self).baseAddress,
+                        Float(position.x), Float(position.y), path.baseAddress, path.count, digest.bindMemory(to: UInt8.self).baseAddress, &request)
+                }
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return register(.success(request), completion)
+    }
+
     func pasteSubtree(target: StellarSelectionTarget, data: Data,
                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.pasteSubtree(handle: runtimeHandle, target: target, data: data), completion)

@@ -13,6 +13,7 @@ struct CanvasInspectorFrame: Equatable {
 struct CanvasFrameHit {
     var textQuery: StellarCanvasTextQuery? = nil
     var isText: Bool { textQuery != nil }
+    var isImage = false
     let isInstance: Bool
     let isRectangle: Bool
     let id: UUID
@@ -62,6 +63,7 @@ private func outline(_ row: StellarCanvasFrame) -> CGPath {
 
 private struct ProjectedFrame {
     let text: CanvasDocumentText?
+    var isFrame: Bool { !isImage && !isRectangle && !isInstance && text == nil }
     let id: UUID
     let parent: Int?
     let world: CGAffineTransform
@@ -71,6 +73,7 @@ private struct ProjectedFrame {
     let worldBounds: CGRect
     var subtreeBounds: CGRect
     let isInstance: Bool
+    let isImage: Bool
     let isRectangle: Bool
     let clips: Bool
     let pickable: Bool
@@ -94,6 +97,7 @@ private struct ProjectedFrame {
             worldBounds = worldPath.boundingBox
         }
         subtreeBounds = worldBounds
+        isImage = row.flags & 32 != 0
         isInstance = row.flags & 8 != 0
         isRectangle = row.flags & 4 != 0
         clips = row.flags & 1 != 0
@@ -108,6 +112,10 @@ private struct ProjectedFrame {
 /// 한 창에서 마지막으로 표시한 scene. 카메라 또는 선택만 바뀌면 path를 다시 만들지 않습니다.
 final class CanvasFrameScene {
     private var frames: [ProjectedFrame] = []
+    let png = CanvasPNGCache()
+    var allowsImageContent = false
+    private var imageRuntime: UInt64?
+    var redrawImage: ((CGRect) -> Void)?
     private var viewID: UUID?
     private var revision: UInt64 = 0
     private var session: UInt64?
@@ -132,6 +140,7 @@ final class CanvasFrameScene {
     private(set) var skipped: UInt32 = 0
 
     func clear() {
+        png.reset()
         frames.removeAll()
         viewID = nil
         session = nil
@@ -143,6 +152,7 @@ final class CanvasFrameScene {
     }
 
     func refresh(handle: UInt64, session: UInt64, size: CGSize) {
+        imageRuntime = handle
         var info = StellarCanvasInfo()
         let width = Float(size.width), height = Float(size.height)
         guard stellar_window_canvas(handle, session, width, height, &info, nil, 0) == STELLAR_OK else {
@@ -165,6 +175,7 @@ final class CanvasFrameScene {
                 clear()
                 return
             }
+            png.reset()
             var projected: [ProjectedFrame] = []
             projected.reserveCapacity(Int(info.count))
             for (index, row) in rows.prefix(Int(info.count)).enumerated() {
@@ -201,7 +212,7 @@ final class CanvasFrameScene {
     var selectedInspectorFrame: CanvasInspectorFrame? {
         guard let session, let viewID, let primaryIndex else { return nil }
         let selected = frames[primaryIndex]
-        guard !selected.isRectangle, !selected.isInstance, selected.text == nil else { return nil }
+        guard selected.isFrame else { return nil }
         let background: InspectorColor?
         if let fill = selected.fill, let rgba = fill.components, rgba.count == 4 {
             let space: InspectorColor.Space = fill.colorSpace?.name == CGColorSpace.extendedDisplayP3 ? .displayP3 : .srgb
@@ -216,15 +227,24 @@ final class CanvasFrameScene {
     func hit(at point: CGPoint, onlyFrames: Bool) -> CanvasFrameHit? {
         guard let viewID else { return nil }
         let world = point.applying(worldToView.inverted())
-        for frame in frames.reversed() where (!onlyFrames || (!frame.isRectangle && !frame.isInstance && frame.text == nil)) && frame.pickable && frame.worldBounds.contains(world) && frame.worldPath.contains(world) {
+        for frame in frames.reversed() where (!onlyFrames || frame.isFrame) && frame.pickable && frame.worldBounds.contains(world) && frame.worldPath.contains(world) {
             var ancestor = frame.parent
             while let i = ancestor, !frames[i].clips || frames[i].worldPath.contains(world) { ancestor = frames[i].parent }
             if ancestor == nil {
-                return CanvasFrameHit(textQuery: frame.text?.query, isInstance: frame.isInstance, isRectangle: frame.isRectangle, id: frame.id, revision: revision, viewID: viewID,
+                return CanvasFrameHit(textQuery: frame.text?.query, isImage: frame.isImage, isInstance: frame.isInstance, isRectangle: frame.isRectangle, id: frame.id, revision: revision, viewID: viewID,
                                       localToWorld: frame.world, parentToWorld: frame.parent.map { frames[$0].world } ?? .identity, worldToView: worldToView)
             }
         }
         return nil
+    }
+
+    private func imageReady(at index: Int) {
+        guard allowsImageContent, frames.indices.contains(index) else { return }
+        var damage = frames[index].worldBounds
+        if previewRange?.contains(index) == true {
+            damage = damage.offsetBy(dx: previewOffset.dx, dy: previewOffset.dy)
+        }
+        redrawImage?(damage.applying(worldToView).insetBy(dx: -1, dy: -1))
     }
 
     func draw(in context: CGContext, dirtyRect: CGRect) {
@@ -257,9 +277,25 @@ final class CanvasFrameScene {
                 context.translateBy(x: previewOffset.dx, y: previewOffset.dy)
                 clipEnds.append(frame.lastDescendant)
             }
-            if visible && (frame.fill != nil || frame.border != nil) {
+            if visible && (frame.isImage || frame.fill != nil || frame.border != nil) {
                 context.saveGState()
                 context.concatenate(frame.world)
+                if frame.isImage, allowsImageContent, let recordSession = session, let handle = imageRuntime {
+                    if let image = png.image(frame.id) {
+                        context.saveGState()
+                        context.translateBy(x: 0, y: frame.localBounds.height)
+                        context.scaleBy(x: 1, y: -1)
+                        let scale = min(frame.localBounds.width / CGFloat(image.width), frame.localBounds.height / CGFloat(image.height))
+                        let w = CGFloat(image.width) * scale, h = CGFloat(image.height) * scale
+                        context.draw(image, in: CGRect(x: (frame.localBounds.width - w)/2, y: (frame.localBounds.height - h)/2, width: w, height: h))
+                        context.restoreGState()
+                    } else {
+                        let row = index
+                        png.request(handle: handle, session: recordSession, revision: revision, row: row, node: frame.id) { [weak self] in
+                            self?.imageReady(at: row)
+                        }
+                    }
+                }
                 if let fill = frame.fill {
                     context.setFillColor(fill)
                     if let text = frame.text {

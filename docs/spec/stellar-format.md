@@ -346,7 +346,7 @@ reader는 `(요청 hash, 기대 kind)`로 chunk를 읽고 다음을 순서대로
   `SkipUnknownOptional`, 모르는 required code는 `UnknownRequiredKind` 오류입니다. code·이름 중복
   등록은 거부합니다.
 - 현재 구현에서 payload 형식이 정해진 kind는 `document-manifest`(§9.2)와 `view-tree`(§9.1,
-  §9.3)뿐입니다. 나머지 kind의 payload는 정하지 않았습니다(ADR-0010).
+  §9.3), PNG 에셋의 `asset-metadata`(§15)입니다.
 - **현재 구현**: 열기 경로(§12)는 registry를 호출하지 않습니다. manifest에 모르는 required kind
   pointer가 있어도 열기는 성공합니다. 자세한 내용은 호환성 문서 §4.3에 있습니다.
 
@@ -740,8 +740,7 @@ lock entry 형식은 이 모델 하나입니다(ADR-0021).
 - 결정론: 보존 정책을 쓰는 형식은 decode → encode 결과가 원래 bytes와 같아야 합니다(`assets::record`
   테스트). 건너뛰기 정책은 다시 쓰면 그 field가 사라집니다.
 - 모르는 tag는 정렬·중복 검사에서 아는 tag와 똑같이 다룹니다.
-- **현재 구현**: chunk kind 해석은 열기 경로에서 쓰이지 않습니다(§7). AssetRecord는 encoder·decoder만
-  있고 아직 chunk로 저장되지 않습니다(`assets::catalog`는 메모리 index입니다).
+- **현재 구현**: chunk kind 해석은 열기 경로에서 쓰이지 않습니다(§7). 앱에서 배치한 PNG 하나의 `asset-metadata`는 schema 1이며, 논리 ChunkId는 노드의 AssetRef ID와 같은 16바이트이고 payload는 아래 canonical AssetRecord입니다. media type은 `image/png`, 외부 source metadata는 생략합니다. 원본 pixels는 `assets/<prefix>/<content hash>.png`의 PNG bytes에 있습니다. 같은 내용은 기존 에셋 저장소가 재사용합니다. 저장 시 세대가 문서와 에셋 record를 함께 참조하며 CLI/Git으로 다른 폴더에 옮겨도 외부 원본이 필요하지 않습니다.
 
 AssetRecord field 표(`assets::record`):
 

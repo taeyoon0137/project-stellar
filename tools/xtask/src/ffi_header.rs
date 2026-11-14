@@ -365,6 +365,9 @@ StellarStatus stellar_window_selection_target(uint64_t handle, uint64_t session,
 /* NULL/0은 위 target의 선택 전체, ids가 있으면 순서와 무관하게 실제 선택 전체와 일치해야 합니다. */
 StellarStatus stellar_window_edit_selection(uint64_t handle, const StellarSelectionTarget *target, uint32_t action, const uint8_t *ids, size_t count, uint64_t *out_request);
 /* Clipboard subtree data uses caller-owned byte buffers. */
+/* Place selected, decoded PNG bytes by SHA-256. Read validated image content on a worker. */
+StellarStatus stellar_window_place_png(uint64_t handle, const StellarSelectionTarget *target, const uint8_t parent[16], float x, float y, const uint8_t *path, size_t path_len, const uint8_t digest[32], uint64_t *out_request);
+StellarStatus stellar_window_canvas_png(uint64_t handle, uint64_t session, uint64_t revision, uint32_t row, const uint8_t node[16], uint8_t digest[32], uint8_t *buf, size_t capacity, size_t *out_len);
 StellarStatus stellar_window_copy_selection(uint64_t handle, const StellarSelectionTarget *target, uint8_t *bytes, size_t capacity, size_t *out_len);
 StellarStatus stellar_window_paste_selection(uint64_t handle, const StellarSelectionTarget *target, const uint8_t *bytes, size_t len, uint64_t *out_request);
 StellarStatus stellar_window_session_copy_subtree(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint8_t *bytes, size_t capacity, size_t *out_len);
