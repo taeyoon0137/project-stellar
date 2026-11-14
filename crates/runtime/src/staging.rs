@@ -1,9 +1,10 @@
 //! 실제 index → semantic 선택 → 임시 저장 후보 → 기존 loader 재열기(XIV.5.5).
-//! 동기식 준비 작업이며 호출자가 기존 worker 실행 문맥을 선택합니다. index·작업 트리는 읽기만 합니다.
+//! 동기식 API이며 호출자가 기존 worker 실행 문맥을 선택합니다. prepare는 읽기 전용이고,
+//! apply는 gated Git으로 index만 적용·검증·조건부 복원합니다. 작업 트리·문서는 쓰지 않습니다.
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use stellar_git_porcelain::candidate_tree::{
     write_candidate_tree, CandidateFile, CandidateTree, CandidateTreeError,
@@ -39,6 +40,8 @@ pub struct PreparedStageCandidate {
 pub enum PrepareStageError {
     /// Git index 읽기 실패(신뢰 거부 포함).
     Git(GitOpError),
+    /// Git 저장소 위치 판별 실패.
+    Location(stellar_git_porcelain::location::LocationError),
     /// index에 conflict가 있습니다.
     Conflicted,
     /// 기준 index materialize 실패.
@@ -65,6 +68,7 @@ impl fmt::Display for PrepareStageError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Git(e) => write!(f, "{e}"),
+            Self::Location(e) => write!(f, "{e}"),
             Self::Materialize(e) => write!(f, "{e}"),
             Self::Open(e) => write!(f, "{e}"),
             Self::Selection(e) => write!(f, "{e}"),
@@ -81,6 +85,32 @@ impl fmt::Display for PrepareStageError {
 
 impl std::error::Error for PrepareStageError {}
 
+fn checked_temp_parent(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    parent: &Path,
+) -> Result<PathBuf, PrepareStageError> {
+    let canonical_worktree = worktree
+        .canonicalize()
+        .map_err(|e| PrepareStageError::TempParent(e.kind()))?;
+    let location = stellar_git_porcelain::location::locate_repository(git, worktree)
+        .map_err(PrepareStageError::Location)?;
+    if canonical_worktree != location.worktree_root {
+        return Err(PrepareStageError::Storage(
+            CandidateStorageError::Unsupported("worktree root 경로가 필요합니다"),
+        ));
+    }
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|e| PrepareStageError::TempParent(e.kind()))?;
+    if canonical_parent.starts_with(&canonical_worktree) {
+        return Err(PrepareStageError::Storage(
+            CandidateStorageError::Unsupported("임시 디렉터리는 작업 트리 밖이어야 합니다"),
+        ));
+    }
+    Ok(canonical_parent)
+}
+
 /// 현재 실제 index와 저장된 working generation에서 선택 후보를 준비합니다.
 /// `parent`는 작업 트리 밖의 호출자 소유 임시 디렉터리여야 합니다.
 pub fn prepare_stage_candidate(
@@ -93,17 +123,7 @@ pub fn prepare_stage_candidate(
     if index.has_conflicts() {
         return Err(PrepareStageError::Conflicted);
     }
-    let canonical_worktree = worktree
-        .canonicalize()
-        .map_err(|e| PrepareStageError::TempParent(e.kind()))?;
-    let canonical_parent = parent
-        .canonicalize()
-        .map_err(|e| PrepareStageError::TempParent(e.kind()))?;
-    if canonical_parent.starts_with(&canonical_worktree) {
-        return Err(PrepareStageError::Storage(
-            CandidateStorageError::Unsupported("임시 디렉터리는 작업 트리 밖이어야 합니다"),
-        ));
-    }
+    let canonical_parent = checked_temp_parent(git, worktree, parent)?;
     let base_tree = materialize_snapshot(git, worktree, &index.entries, &canonical_parent)
         .map_err(PrepareStageError::Materialize)?;
     let loader = SavedProjectLoader::for_materialized_snapshot();
@@ -198,6 +218,118 @@ pub fn prepare_stage_candidate(
         return Err(PrepareStageError::IndexChanged);
     }
     Ok(PreparedStageCandidate { semantic, tree })
+}
+
+/// 실제 stage 준비·적용·검증 실패입니다.
+#[derive(Debug)]
+pub enum ApplyStageError {
+    /// 임시 경로 확인 실패. index 적용 전입니다.
+    Preparation(PrepareStageError),
+    /// 기존 candidate file delta 계산 실패.
+    Delta(stellar_git_porcelain::candidate_delta::CandidateDeltaError),
+    /// blob 기록 실패. 미참조 object는 Git GC에 맡깁니다.
+    Blob(GitOpError),
+    /// 적용 실패 또는 결과 미확정. 복원 증표가 없어 역쓰기하지 않습니다.
+    Publish(stellar_git_porcelain::index_publish::PublishError),
+    /// 실제 Index provider의 semantic 재검증 실패와 조건부 복원 결과.
+    Verification {
+        /// 검증 실패 원인.
+        cause: Box<PrepareStageError>,
+        /// Ok는 원래 index tree 복원, Err는 경합·취소·결과 미확정 진단입니다.
+        rollback: Result<(), stellar_git_porcelain::index_publish::PublishError>,
+    },
+}
+
+impl fmt::Display for ApplyStageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Preparation(e) => write!(f, "{e}"),
+            Self::Delta(e) => write!(f, "{e}"),
+            Self::Blob(e) => write!(f, "{e}"),
+            Self::Publish(e) => write!(f, "{e}"),
+            Self::Verification { cause, rollback } => {
+                write!(f, "실제 index 검증 실패: {cause}; ")?;
+                match rollback {
+                    Ok(()) => f.write_str("원래 index tree를 복원했습니다"),
+                    Err(error) => write!(f, "복원 미확정: {error}"),
+                }
+            }
+        }
+    }
+}
+impl std::error::Error for ApplyStageError {}
+
+/// 준비된 의미 후보를 stage하고 실제 Index provider로 다시 열어 검증합니다.
+/// 실패한 검증은 성공 증표가 여전히 현재 index와 일치할 때만 복원합니다.
+/// `parent`는 작업 트리 밖이어야 합니다. 문서 상태를 받거나 수정하지 않습니다.
+/// 기존 delta/blob 준비는 각 Git 명령 timeout을 따르며 취소를 단계 사이에서 관찰합니다.
+pub fn apply_stage_candidate(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    parent: &Path,
+    prepared: &PreparedStageCandidate,
+    cancel: &stellar_git_porcelain::cancel::GitCancelToken,
+) -> Result<stellar_git_porcelain::snapshot::IndexSnapshot, ApplyStageError> {
+    use stellar_git_porcelain::blob_write::write_candidate_blobs;
+    use stellar_git_porcelain::candidate_delta::compute_candidate_delta;
+    use stellar_git_porcelain::index_publish::{
+        publish_with_receipt, restore_published, PublishError,
+    };
+    use stellar_git_porcelain::snapshot::index::read_index_snapshot_cancellable;
+    let check_cancel = || {
+        if cancel.is_cancelled() {
+            Err(ApplyStageError::Publish(PublishError::Git(
+                GitOpError::Gate(stellar_git_porcelain::trust::GatedRunError::Run(
+                    stellar_git_porcelain::runner::GitRunError::Cancelled,
+                )),
+            )))
+        } else {
+            Ok(())
+        }
+    };
+    git.runner()
+        .map_err(|e| ApplyStageError::Preparation(PrepareStageError::Git(e.into())))?;
+    check_cancel()?;
+    let parent =
+        checked_temp_parent(git, worktree, parent).map_err(ApplyStageError::Preparation)?;
+    let delta =
+        compute_candidate_delta(git, worktree, &prepared.tree).map_err(ApplyStageError::Delta)?;
+    check_cancel()?;
+    let written = write_candidate_blobs(git, worktree, &delta).map_err(ApplyStageError::Blob)?;
+    check_cancel()?;
+    let receipt =
+        publish_with_receipt(git, worktree, &written, cancel).map_err(ApplyStageError::Publish)?;
+    let verify = || -> Result<(), PrepareStageError> {
+        let actual = read_index_snapshot_cancellable(git, worktree, cancel)
+            .map_err(PrepareStageError::Git)?;
+        if &actual != receipt.snapshot() {
+            return Err(PrepareStageError::IndexChanged);
+        }
+        let tree = materialize_snapshot(git, worktree, &actual.entries, &parent)
+            .map_err(PrepareStageError::Materialize)?;
+        let loaded = SavedProjectLoader::for_materialized_snapshot()
+            .open(tree.root())
+            .map_err(PrepareStageError::Open)?;
+        if saved_semantic_snapshot(&loaded).map_err(PrepareStageError::Storage)?
+            != *prepared.semantic.snapshot()
+        {
+            return Err(PrepareStageError::ReopenMismatch);
+        }
+        if read_index_snapshot_cancellable(git, worktree, cancel).map_err(PrepareStageError::Git)?
+            != actual
+        {
+            return Err(PrepareStageError::IndexChanged);
+        }
+        Ok(())
+    };
+    if let Err(cause) = verify() {
+        let rollback = restore_published(git, receipt, cancel).map(|_| ());
+        return Err(ApplyStageError::Verification {
+            cause: Box::new(cause),
+            rollback,
+        });
+    }
+    Ok(receipt.snapshot().clone())
 }
 
 #[cfg(all(test, unix))]
