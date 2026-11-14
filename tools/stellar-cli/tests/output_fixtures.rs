@@ -668,11 +668,15 @@ fn query_tree_splits_a_two_hundred_thousand_node_document() {
 
 // --- XXIV.4.4: apply ---
 
-fn run_with_stdin(args: &[&str], input: &str) -> Run {
+/// 표준 입력을 주고 실행합니다. `home`이 있으면 그 경로만 `HOME`으로 둡니다(저장 잠금 위치).
+fn run_with_stdin(args: &[&str], input: &str, home: Option<&Path>) -> Run {
     use std::io::Write as _;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_stellar"))
-        .args(args)
-        .env_clear()
+    let mut command = Command::new(env!("CARGO_BIN_EXE_stellar"));
+    command.args(args).env_clear();
+    if let Some(home) = home {
+        command.env("HOME", home);
+    }
+    let mut child = command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -741,7 +745,8 @@ fn apply_dry_run_and_write_fixtures() {
     assert_eq!(revision_token(&root), base, "dry-run 전후 revision 동일");
 
     // 표준 입력으로 받은 같은 transaction을 세대 전환 저장으로 기록합니다.
-    let write = run_with_stdin(&["apply", path, "-"], &input);
+    let home = dir.path.join("home");
+    let write = run_with_stdin(&["apply", path, "-"], &input, Some(&home));
     check(&write, "apply-write.json", ExitStatus::Ok, &[&root]);
     let after = revision_token(&root);
     assert!(after.starts_with("g2:"), "{after}");
@@ -814,8 +819,9 @@ fn apply_rejection_fixtures_write_nothing() {
             ExitStatus::DataErr,
         ),
     ];
+    let home = dir.path.join("home");
     for (input, fixture, status) in cases {
-        let result = run_with_stdin(&["apply", path, "-"], &input);
+        let result = run_with_stdin(&["apply", path, "-"], &input, Some(&home));
         check(&result, fixture, status, &[&root]);
     }
     assert_eq!(
@@ -824,4 +830,149 @@ fn apply_rejection_fixtures_write_nothing() {
         "거부된 apply는 파일을 쓰지 않음"
     );
     assert_eq!(revision_token(&root), base);
+}
+
+// --- XXIV.4.5: 교차 프로세스 저장 잠금 ---
+
+/// `HOME`을 `home`으로 둔 `stellar`의 저장 잠금 디렉터리(macOS).
+#[cfg(target_os = "macos")]
+fn lock_dir(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Application Support")
+        .join(stellar_ops::lock::APP_DATA_DIR)
+        .join(stellar_ops::lock::LOCKS_DIR)
+}
+
+#[test]
+fn apply_write_without_user_data_dir_is_config_error_and_dry_run_still_works() {
+    let dir = TempDir::new("apply-no-home");
+    let (root, model) = saved_project(&dir);
+    let path = root.to_str().unwrap();
+    let base = revision_token(&root);
+    let node = first_child(&model);
+    let input = transaction(
+        &base,
+        &model.document_id().to_string(),
+        &format!(r#"{{"kind":"set-locked","node":"{node}","locked":true}}"#),
+    );
+    let before = file_digest(&root);
+    check(
+        &run_with_stdin(&["apply", path, "-"], &input, None),
+        "apply-no-user-data-dir.json",
+        ExitStatus::Config,
+        &[&root],
+    );
+    let dry = run_with_stdin(&["apply", path, "-", "--dry-run"], &input, None);
+    assert_eq!(dry.code, 0, "{}", dry.stderr);
+    assert_eq!(file_digest(&root), before);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn apply_exits_75_while_another_writer_holds_the_save_lock() {
+    // 검증 기준(XXIV.4.5): 잠금 경합 시 exit 75, 파일 변경 0.
+    let dir = TempDir::new("apply-lock-busy");
+    let (root, model) = saved_project(&dir);
+    let path = root.to_str().unwrap();
+    let home = dir.path.join("home");
+    let base = revision_token(&root);
+    let node = first_child(&model);
+    let input = transaction(
+        &base,
+        &model.document_id().to_string(),
+        &format!(r#"{{"kind":"set-locked","node":"{node}","locked":true}}"#),
+    );
+    let project_id = stellar_ops::test_support::project_id();
+    let held =
+        stellar_ops::lock::SaveLock::try_acquire(&lock_dir(&home), project_id, &root).unwrap();
+    let before = file_digest(&root);
+    check(
+        &run_with_stdin(&["apply", path, "-"], &input, Some(&home)),
+        "apply-lock-busy.json",
+        ExitStatus::TempFail,
+        &[&root, &home],
+    );
+    assert_eq!(file_digest(&root), before, "잠금 경합은 아무것도 쓰지 않음");
+    drop(held);
+    let ok = run_with_stdin(&["apply", path, "-"], &input, Some(&home));
+    assert_eq!(ok.code, 0, "{}", ok.stderr);
+    // 잠금 파일은 프로젝트 밖(OS 사용자 데이터)에만 있습니다.
+    assert!(!file_digest(&root).keys().any(|k| k.ends_with(".lock")));
+    assert_eq!(std::fs::read_dir(lock_dir(&home)).unwrap().count(), 1);
+}
+
+#[test]
+fn concurrent_apply_processes_lose_no_update() {
+    // 검증 기준(XXIV.4.5): 동시 쓰기 fixture 손실 0. 여러 `stellar apply` 프로세스가 서로 다른
+    // node 이름을 바꾸고, 75(잠금 사용 중)·65(base 불일치)면 최신 revision으로 다시 시도합니다.
+    let dir = TempDir::new("apply-concurrent");
+    let (root, model) = saved_project(&dir);
+    let home = dir.path.join("home");
+    let document = model.document_id().to_string();
+    let records = model.to_records().unwrap();
+    let targets: Vec<String> = records
+        .nodes
+        .iter()
+        .filter(|n| n.parent.is_some())
+        .map(|n| n.id.to_string())
+        .take(4)
+        .collect();
+    assert_eq!(targets.len(), 4);
+    let mut retries = 0usize;
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = targets
+            .iter()
+            .enumerate()
+            .map(|(i, node)| {
+                let (root, home, document) = (&root, &home, &document);
+                scope.spawn(move || {
+                    let mut retried = 0usize;
+                    for _ in 0..500 {
+                        let base = revision_token(root);
+                        let input = transaction(
+                            &base,
+                            document,
+                            &format!(r#"{{"kind":"rename","node":"{node}","name":"proc-{i}"}}"#),
+                        );
+                        let result = run_with_stdin(
+                            &["apply", root.to_str().unwrap(), "-"],
+                            &input,
+                            Some(home),
+                        );
+                        match result.code {
+                            0 => return retried,
+                            65 | 75 => retried += 1,
+                            other => panic!("예상하지 못한 종료 코드 {other}: {}", result.stderr),
+                        }
+                    }
+                    panic!("writer {i}가 끝나지 못했습니다");
+                })
+            })
+            .collect();
+        for handle in handles {
+            retries += handle.join().unwrap();
+        }
+    });
+    let token = revision_token(&root);
+    assert!(
+        token.starts_with("g5:"),
+        "writer 4개 → generation 5: {token} (재시도 {retries})"
+    );
+    for (i, node) in targets.iter().enumerate() {
+        let detail = result_of(&run(&[
+            "query",
+            root.to_str().unwrap(),
+            "node",
+            &document,
+            node,
+        ]));
+        assert_eq!(
+            detail
+                .get("node")
+                .and_then(|n| n.get("name"))
+                .and_then(JsonValue::as_str),
+            Some(format!("proc-{i}").as_str()),
+            "손실 0"
+        );
+    }
 }

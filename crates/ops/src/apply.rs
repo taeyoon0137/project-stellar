@@ -16,6 +16,10 @@
 //!    (project metadata·token·component·asset)는 base pointer를 그대로 씁니다. 계획과 교체 사이에
 //!    다른 writer가 current pointer를 바꿨으면 optimistic check(V.5.2)가 쓰기 전에 거부합니다
 //!    ([`ApplyError::ConcurrentWrite`]).
+//!
+//! 쓰기 모드는 1번 전에 프로젝트별 교차 프로세스 저장 잠금([`crate::lock`], XXIV.4.5)을 잡고 저장을
+//! 마칠 때까지 쥡니다. 잠금을 쥔 동안 다른 headless writer는 들어오지 못하므로, 잠금 안에서 한
+//! generation 비교와 pointer 교체 사이에 다른 headless 저장이 끼어들 수 없습니다.
 
 use std::fmt;
 use std::path::Path;
@@ -30,6 +34,7 @@ use stellar_commands::request::CommandRequest;
 use stellar_commands::state::DocumentState;
 use stellar_commands::transaction::CommandTransaction;
 use stellar_project::document_io::serialize::serialize_document;
+use stellar_project::identity::parse_project_id;
 use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
 use stellar_storage::chunk::planner::LogicalChunkState;
 use stellar_storage::generation::loader::LoadedGeneration;
@@ -45,8 +50,9 @@ use crate::core_types::order_key::OrderKey;
 use crate::core_types::revision::DocumentRevision;
 use crate::diff::{diff_records, DiffReport};
 use crate::error::{DocumentReadError, OpenError};
+use crate::lock::{LockError, LockPolicy, SaveLock};
 use crate::revision::ProjectRevision;
-use crate::snapshot::open_snapshot;
+use crate::snapshot::{open_snapshot, probe};
 
 /// 요청 하나에 담을 수 있는 command 수 상한.
 pub const MAX_COMMANDS: usize = 10_000;
@@ -250,6 +256,8 @@ pub enum ApplyError {
     Projection(String),
     /// 계획 뒤 다른 writer가 current generation을 바꿨습니다(쓰기 시작 전 거부).
     ConcurrentWrite,
+    /// 저장 잠금을 잡지 못했습니다(사용 중이면 일시적 실패, XXIV.4.5).
+    Lock(LockError),
     /// 저장 실패(쓰다 만 파일은 current에 연결되지 않음).
     Save(String),
 }
@@ -281,6 +289,7 @@ impl fmt::Display for ApplyError {
             ApplyError::ConcurrentWrite => f.write_str(
                 "계획 뒤 다른 writer가 current generation을 바꿨습니다(아무것도 쓰지 않음)",
             ),
+            ApplyError::Lock(e) => write!(f, "{e}"),
             ApplyError::Save(e) => write!(f, "저장 실패: {e}"),
         }
     }
@@ -342,12 +351,30 @@ fn command_id(document: StableId, commands: &[Command]) -> CommandId {
 }
 
 /// 요청을 적용합니다(모듈 문서 순서).
+///
+/// 쓰기 모드에서 `lock`이 [`LockPolicy::Required`]이면 프로젝트별 저장 잠금(XXIV.4.5)을 기다리지
+/// 않고 잡은 **뒤에** generation을 열어 base revision을 비교하고, 저장을 마칠 때까지 잠금을 쥡니다.
+/// 잠금이 사용 중이면 아무것도 읽거나 쓰지 않고 [`ApplyError::Lock`]입니다. dry-run은 쓰지 않으므로
+/// 잠금을 잡지 않습니다.
 pub fn apply(
     path: &Path,
     request: &ApplyRequest,
     mode: ApplyMode,
+    lock: &LockPolicy,
 ) -> Result<ApplyOutcome, ApplyError> {
     let commands = decode_commands(&request.commands)?;
+    let _guard = match (mode, lock) {
+        (ApplyMode::Write, LockPolicy::Required { dir }) => {
+            let probe = probe(path).map_err(ApplyError::Open)?;
+            let project_id = parse_project_id(&probe.manifest.project.id).ok_or_else(|| {
+                ApplyError::Open(OpenError::InvalidProjectId {
+                    id: probe.manifest.project.id.clone(),
+                })
+            })?;
+            Some(SaveLock::try_acquire(dir, project_id, &probe.root).map_err(ApplyError::Lock)?)
+        }
+        _ => None,
+    };
     let snapshot = open_snapshot(path).map_err(ApplyError::Open)?;
     let base_revision = snapshot.revision();
     if base_revision != request.base_revision {
@@ -479,13 +506,132 @@ mod tests {
     };
     use stellar_document::test_support::semantic_snapshot::model_snapshot_json;
 
-    fn project_with(seed: u64) -> (TempDir, crate::test_support::FixtureDocument) {
-        let dir = TempDir::new("apply");
+    /// 프로젝트 root(`path`)와 프로젝트 밖 잠금 디렉터리(OS 사용자 데이터 대역)를 가진 fixture.
+    struct ProjectDir {
+        _tmp: TempDir,
+        path: std::path::PathBuf,
+        locks: std::path::PathBuf,
+    }
+
+    fn locks(dir: &ProjectDir) -> LockPolicy {
+        LockPolicy::Required {
+            dir: dir.locks.clone(),
+        }
+    }
+
+    fn project_with(seed: u64) -> (ProjectDir, crate::test_support::FixtureDocument) {
+        let tmp = TempDir::new("apply");
+        let dir = ProjectDir {
+            path: tmp.path.join("project"),
+            locks: tmp.path.join("user-data").join("locks"),
+            _tmp: tmp,
+        };
         scaffold_project(&dir.path);
         let model = random_valid_document(seed);
         let other = random_valid_document(seed + 1000);
         save_documents(&dir.path, &[&model, &other]);
         (dir, model)
+    }
+
+    #[test]
+    fn held_lock_makes_write_fail_without_touching_files_and_dry_run_skips_the_lock() {
+        // 검증 기준(XXIV.4.5): 잠금 경합 시 일시적 실패, 파일 변경 0.
+        let (dir, model) = project_with(7);
+        let snapshot = open_snapshot(&dir.path).unwrap();
+        let request = ApplyRequest {
+            base_revision: snapshot.revision(),
+            document: model.document_id(),
+            commands: vec![CommandInput::SetVisible {
+                node: some_child(&model),
+                visible: false,
+            }],
+        };
+        let held = SaveLock::try_acquire(&dir.locks, snapshot.project_id(), &dir.path).unwrap();
+        let before = file_digest(&dir.path);
+        assert!(matches!(
+            apply(&dir.path, &request, ApplyMode::Write, &locks(&dir)),
+            Err(ApplyError::Lock(LockError::Busy { .. }))
+        ));
+        assert_eq!(file_digest(&dir.path), before);
+        // dry-run은 쓰지 않으므로 잠금이 잡혀 있어도 동작합니다.
+        apply(&dir.path, &request, ApplyMode::DryRun, &locks(&dir)).unwrap();
+        drop(held);
+        let outcome = apply(&dir.path, &request, ApplyMode::Write, &locks(&dir)).unwrap();
+        assert_eq!(outcome.revision.generation(), 2);
+        // 잠금 파일은 프로젝트 밖에만 있습니다.
+        assert!(!file_digest(&dir.path).keys().any(|k| k.ends_with(".lock")));
+    }
+
+    #[test]
+    fn concurrent_writers_lose_no_update() {
+        // 검증 기준(XXIV.4.5): 동시 쓰기 fixture 손실 0. 여러 thread가 서로 다른 node 이름을 바꾸며
+        // 잠금 사용 중·base 불일치면 최신 revision으로 다시 시도합니다. 모든 변경이 남아야 합니다.
+        let (dir, model) = project_with(7);
+        let records = model.to_records().unwrap();
+        let targets: Vec<StableId> = records
+            .nodes
+            .iter()
+            .filter(|n| n.parent.is_some())
+            .map(|n| n.id)
+            .take(6)
+            .collect();
+        assert!(targets.len() >= 4, "{}", targets.len());
+        let document = model.document_id();
+        std::thread::scope(|scope| {
+            for (i, node) in targets.iter().copied().enumerate() {
+                let dir = &dir;
+                scope.spawn(move || {
+                    for _ in 0..10_000 {
+                        let base = open_snapshot(&dir.path).unwrap().revision();
+                        let request = ApplyRequest {
+                            base_revision: base,
+                            document,
+                            commands: vec![CommandInput::Rename {
+                                node,
+                                name: format!("writer-{i}"),
+                            }],
+                        };
+                        match apply(&dir.path, &request, ApplyMode::Write, &locks(dir)) {
+                            Ok(_) => return,
+                            Err(ApplyError::Lock(LockError::Busy { .. }))
+                            | Err(ApplyError::BaseRevisionMismatch { .. }) => {
+                                std::thread::yield_now();
+                            }
+                            Err(e) => panic!("{e}"),
+                        }
+                    }
+                    panic!("writer {i}가 끝나지 못했습니다");
+                });
+            }
+        });
+        let snapshot = open_snapshot(&dir.path).unwrap();
+        assert_eq!(
+            snapshot.revision().generation(),
+            1 + targets.len() as u64,
+            "writer마다 generation 하나"
+        );
+        let records = snapshot.document_records(document).unwrap();
+        for (i, node) in targets.iter().enumerate() {
+            let record = records.nodes.iter().find(|n| n.id == *node).unwrap();
+            assert_eq!(record.display_name, format!("writer-{i}"), "손실 0");
+        }
+    }
+
+    #[test]
+    fn lock_policy_none_never_creates_the_lock_dir() {
+        // merge driver 모드(LockPolicy::None)는 잠금을 쓰지 않습니다.
+        let (dir, model) = project_with(7);
+        let snapshot = open_snapshot(&dir.path).unwrap();
+        let request = ApplyRequest {
+            base_revision: snapshot.revision(),
+            document: model.document_id(),
+            commands: vec![CommandInput::SetLocked {
+                node: some_child(&model),
+                locked: true,
+            }],
+        };
+        apply(&dir.path, &request, ApplyMode::Write, &LockPolicy::None).unwrap();
+        assert!(!dir.locks.exists());
     }
 
     fn some_child(model: &crate::test_support::FixtureDocument) -> StableId {
@@ -513,7 +659,7 @@ mod tests {
                 name: "renamed".into(),
             }],
         };
-        let outcome = apply(&dir.path, &request, ApplyMode::DryRun).unwrap();
+        let outcome = apply(&dir.path, &request, ApplyMode::DryRun, &locks(&dir)).unwrap();
         assert_eq!(outcome.revision, outcome.base_revision);
         assert_eq!(outcome.written_chunks, 0);
         assert_eq!(outcome.diff.entries.len(), 1);
@@ -544,7 +690,7 @@ mod tests {
                 },
             ],
         };
-        let outcome = apply(&dir.path, &request, ApplyMode::Write).unwrap();
+        let outcome = apply(&dir.path, &request, ApplyMode::Write, &locks(&dir)).unwrap();
         assert_eq!(outcome.revision.generation(), 2);
         assert_ne!(outcome.revision, snapshot.revision());
         assert!(outcome.written_chunks >= 1);
@@ -592,7 +738,7 @@ mod tests {
             commands: vec![ok.clone()],
         };
         assert!(matches!(
-            apply(&dir.path, &stale, ApplyMode::Write),
+            apply(&dir.path, &stale, ApplyMode::Write, &locks(&dir)),
             Err(ApplyError::BaseRevisionMismatch { .. })
         ));
         let unknown = ApplyRequest {
@@ -607,7 +753,7 @@ mod tests {
             ],
         };
         assert!(matches!(
-            apply(&dir.path, &unknown, ApplyMode::Write),
+            apply(&dir.path, &unknown, ApplyMode::Write, &locks(&dir)),
             Err(ApplyError::UnknownCommand { index: 1, .. })
         ));
         // 등록된 이름이라도 bytes의 kind가 registry 밖이면 거부합니다.
@@ -620,7 +766,7 @@ mod tests {
             }],
         };
         assert!(matches!(
-            apply(&dir.path, &forged, ApplyMode::Write),
+            apply(&dir.path, &forged, ApplyMode::Write, &locks(&dir)),
             Err(ApplyError::UnknownCommand { index: 0, .. })
         ));
         // 두 번째 command가 거부되면 첫 번째도 적용되지 않습니다.
@@ -635,7 +781,7 @@ mod tests {
             ],
         };
         assert!(matches!(
-            apply(&dir.path, &rejected, ApplyMode::Write),
+            apply(&dir.path, &rejected, ApplyMode::Write, &locks(&dir)),
             Err(ApplyError::Rejected { index: 1, .. })
         ));
         let empty = ApplyRequest {
@@ -644,7 +790,7 @@ mod tests {
             commands: Vec::new(),
         };
         assert!(matches!(
-            apply(&dir.path, &empty, ApplyMode::Write),
+            apply(&dir.path, &empty, ApplyMode::Write, &locks(&dir)),
             Err(ApplyError::EmptyTransaction)
         ));
         assert_eq!(file_digest(&dir.path), before);

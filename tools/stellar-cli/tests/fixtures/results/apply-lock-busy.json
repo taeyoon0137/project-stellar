@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"apply","ok":false,"exit_code":75,"exit_name":"tempfail","result":null,"error":{"code":"save-lock-busy","message":"다른 writer가 이 프로젝트의 저장 잠금을 쓰고 있습니다"},"diagnostics":[]}

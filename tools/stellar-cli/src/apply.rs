@@ -21,12 +21,17 @@
 //!
 //! 모든 object는 표에 있는 key만 가질 수 있습니다. 등록되지 않은 `kind`는 `unknown-command`(65)로
 //! 거부하고 아무것도 쓰지 않습니다. `--dry-run`은 파일을 쓰지 않고 semantic diff만 출력합니다.
+//!
+//! 쓰기는 OS 사용자 데이터의 프로젝트별 저장 잠금을 잡은 뒤에 generation을 비교하고 교체합니다
+//! (XXIV.4.5, `stellar_ops::lock`). 잠금이 사용 중이면 `save-lock-busy`(75, 재시도 가능)로 끝나고
+//! 아무것도 쓰지 않습니다. OS 사용자 데이터 위치(`HOME`)를 알 수 없으면 `no-user-data-dir`(78)입니다.
 
 use std::io::Read;
 use std::path::Path;
 
 use stellar_ops::apply::{apply, ApplyError, ApplyMode, ApplyRequest, CommandInput, MAX_COMMANDS};
 use stellar_ops::core_types::ids::StableId;
+use stellar_ops::lock::{default_lock_dir, LockError, LockPolicy};
 use stellar_ops::revision::ProjectRevision;
 
 use crate::exit::ExitStatus;
@@ -276,6 +281,15 @@ fn apply_error(error: &ApplyError) -> CliError {
             CliError::new(ExitStatus::Failure, "invalid-result", message)
         }
         ApplyError::Projection(_) => CliError::new(ExitStatus::Software, "projection", message),
+        ApplyError::Lock(LockError::Busy { .. }) => {
+            CliError::new(ExitStatus::TempFail, "save-lock-busy", message)
+        }
+        ApplyError::Lock(LockError::NoUserDataDir) => {
+            CliError::new(ExitStatus::Config, "no-user-data-dir", message)
+        }
+        ApplyError::Lock(LockError::Io { kind, .. }) => {
+            CliError::new(ExitStatus::from_io_kind(*kind), "save-lock-io", message)
+        }
         ApplyError::Save(_) => CliError::new(ExitStatus::CantCreate, "save", "저장 실패")
             .with_diagnostic(Diagnostic {
                 severity: Severity::Error,
@@ -315,8 +329,15 @@ pub fn run(args: &[String]) -> Result<Success, CliError> {
     } else {
         ApplyMode::Write
     };
-    let outcome =
-        apply(path, &request, mode).map_err(|e| apply_error(&e).with_context(context.clone()))?;
+    // 쓰기 모드만 OS 사용자 데이터의 저장 잠금을 씁니다(XXIV.4.5). dry-run은 잠금이 필요 없습니다.
+    let lock = match mode {
+        ApplyMode::DryRun => LockPolicy::None,
+        ApplyMode::Write => LockPolicy::Required {
+            dir: default_lock_dir().map_err(|e| apply_error(&ApplyError::Lock(e)))?,
+        },
+    };
+    let outcome = apply(path, &request, mode, &lock)
+        .map_err(|e| apply_error(&e).with_context(context.clone()))?;
     Ok(Success {
         result: JsonValue::object(vec![
             (
