@@ -1682,11 +1682,15 @@ mod tests {
             const FIXTURE_HOME: &str = "STELLAR_CREATE_ABI_FIXTURE_HOME";
             let parent = TempDir::new("new-project");
             if std::env::var_os(FIXTURE_HOME).is_none() {
+                // 사용자가 Git 자체의 전역 설정 경로를 지정한 경우 해당 identity를 그대로 씁니다.
+                let config = parent.path.join("my-git-config");
+                std::fs::write(&config, "[user]\n name = Create Fixture\n email = create@example.invalid\n[commit]\n gpgsign = false\n[core]\n hooksPath = /dev/null\n").unwrap();
                 let output = std::process::Command::new(std::env::current_exe().unwrap())
                     .args(["--exact", "tests::project_session::create_via_abi_reopens_in_an_editable_window_and_preserves_existing_folder", "--nocapture"])
                     .env_clear()
                     .env("HOME", &parent.path)
                     .env("XDG_CONFIG_HOME", &parent.path)
+                    .env("GIT_CONFIG_GLOBAL", &config)
                     .env(FIXTURE_HOME, "1")
                     .output().unwrap();
                 let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1713,7 +1717,17 @@ mod tests {
                 panic!("create event expected");
             };
             assert_eq!(done.0, request);
-            assert!(git_state <= 3);
+            assert_eq!(git_state, 0, "Git가 선택한 신원으로 최초 커밋 생성");
+            let author = std::process::Command::new("git")
+                .args(["log", "-1", "--format=%an <%ae>"])
+                .current_dir(&path)
+                .output()
+                .unwrap();
+            assert!(author.status.success());
+            assert_eq!(
+                String::from_utf8(author.stdout).unwrap().trim(),
+                "Create Fixture <create@example.invalid>"
+            );
             assert_eq!(state(h).project_count, 0);
             assert_eq!(open_project(h, bytes).0, StellarStatus::Ok);
             let RuntimeEvent::ProjectOpened { project, name, .. } = next_runtime_event(h) else {
