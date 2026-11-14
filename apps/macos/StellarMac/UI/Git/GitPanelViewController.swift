@@ -1,5 +1,30 @@
 import AppKit
 
+/// Git 패널 루트 뷰. 패널 단축키(⌘Return 커밋)를 패널 안에 포커스가 있을 때만 처리합니다.
+///
+/// 버튼 key equivalent는 창 전체에서 발동하므로(캔버스·다른 패널에서 ⌘Return) 쓰지 않습니다(가이드 8.1, 8.2).
+final class GitPanelRootView: NSView {
+    /// 처리했으면 true.
+    var commitShortcutHandler: (() -> Bool)?
+
+    /// first responder가 이 패널 안에 있는지. field editor는 편집 중인 필드의 하위로 붙으므로 함께 판정됩니다.
+    var containsFirstResponder: Bool {
+        guard let responder = window?.firstResponder as? NSView else { return false }
+        return responder === self || responder.isDescendant(of: self)
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.type == .keyDown,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting([.numericPad, .function]) == .command,
+           ["\r", "\u{3}"].contains(event.charactersIgnoringModifiers ?? ""),
+           containsFirstResponder,
+           commitShortcutHandler?() == true {
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+}
+
 /// 최소 Git 패널(아키텍처 §24.4, §26, §27; 계획 XIV.13.5 범위).
 ///
 /// Status·Semantic Diff, 객체·속성 단위 Stage·Unstage, Commit, Push(강제 없음), Semantic Conflict 해결만
@@ -192,7 +217,8 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
     // MARK: 생명주기
 
     override func loadView() {
-        let root = NSView()
+        let root = GitPanelRootView()
+        root.commitShortcutHandler = { [weak self] in self?.handleCommitShortcut() ?? false }
         root.setAccessibilityElement(true)
         root.setAccessibilityRole(.group)
         root.setAccessibilityLabel(GitPanelStrings.panelTitle)
@@ -256,10 +282,9 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         }
 
         // 커밋: 이 문맥의 대표 동작 하나만 prominent로 둡니다(디자인 가이드 4.2, 5.1).
-        // 여러 줄 입력에서 Return은 줄바꿈이므로 Command-Return을 키 등가로 씁니다.
+        // 여러 줄 입력에서 Return은 줄바꿈이므로 Command-Return을 쓰되, 버튼 키 등가가 아니라 패널 루트 뷰가
+        // 패널 안 포커스일 때만 처리합니다(`GitPanelRootView`).
         commitButton.tintProminence = .primary
-        commitButton.keyEquivalent = "\r"
-        commitButton.keyEquivalentModifierMask = [.command]
         commitButton.toolTip = "\(GitPanelStrings.commit) (⌘↩)"
         applyButton.tintProminence = .primary
         pushButton.image = GitPanelSymbols.image(GitPanelSymbols.ahead, label: GitPanelStrings.push)
@@ -377,20 +402,6 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
             overlay.bottomAnchor.constraint(equalTo: area.bottomAnchor),
             area.heightAnchor.constraint(greaterThanOrEqualToConstant: ceil(rowHeight * GitPanelMetrics.minimumVisibleRows)),
         ])
-    }
-
-    /// 키보드 포커스 순서(디자인 가이드 8.2). 숨긴 화면의 컨트롤은 건너뜁니다.
-    private func configureKeyLoop() {
-        let chain: [NSView]
-        switch mode {
-        case .changes:
-            chain = [modeControl, changeList.outlineView, commitTextView, commitButton, identityButton, pushButton, remotePopup, refreshButton]
-        case .conflicts:
-            chain = [modeControl, conflictList.tableView, revealButton, applyButton, refreshButton]
-        }
-        for (index, view) in chain.enumerated() {
-            view.nextKeyView = chain[(index + 1) % chain.count]
-        }
     }
 
     private func applyDisplayOptions() {
@@ -914,7 +925,6 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
         rootColumn.setItem(changesColumn, visible: newMode == .changes)
         rootColumn.setItem(conflictsColumn, visible: newMode == .conflicts)
         rootColumn.flexibleView = newMode == .changes ? changesColumn : conflictsColumn
-        configureKeyLoop()
     }
 
     @objc private func modeChanged(_ sender: NSSegmentedControl) {
@@ -928,6 +938,14 @@ final class GitPanelViewController: NSViewController, NSTextViewDelegate {
     private func setStaged(targets: [GitChangeRange], staged: Bool) {
         guard status?.availability == .ready, !isBusy, pendingPrompt == nil, !targets.isEmpty else { return }
         dataSource.send(.setStaged(generation: changeList.generation, targets: targets, staged: staged))
+    }
+
+    /// ⌘Return(패널 안 포커스일 때만): Changes 화면에서 커밋합니다. 막혀 있으면 `commit(_:)`이 경고음을 내며,
+    /// 이 경우에도 처리한 것으로 보아 같은 창의 다른 패널로 넘기지 않습니다.
+    private func handleCommitShortcut() -> Bool {
+        guard mode == .changes else { return false }
+        commit(nil)
+        return true
     }
 
     @objc func commit(_ sender: Any?) {

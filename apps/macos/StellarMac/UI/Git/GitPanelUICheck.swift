@@ -36,6 +36,7 @@ enum GitPanelUICheck {
             try checkConflicts(&report)
             try checkMillion(&report)
             try checkWide(&report)
+            try checkKeyboard(&report)
         } catch let failure as Failure {
             FileHandle.standardError.write(Data("git-panel 실패: \(failure.message)\n".utf8))
             return false
@@ -310,8 +311,9 @@ enum GitPanelUICheck {
                    "typical: 최상위 행 수 불일치 \(outline.numberOfRows)")
         try expect(panel.commitScrollView.documentView === panel.commitTextView, "typical: 커밋 메시지가 NSTextView가 아님")
         try expect(!panel.commitTextView.isRichText && panel.commitTextView.allowsUndo, "typical: 커밋 메시지 plain text·undo 아님")
-        try expect(panel.commitButton.keyEquivalent == "\r" && panel.commitButton.keyEquivalentModifierMask == [.command],
-                   "typical: Commit 키 등가가 Command-Return이 아님")
+        // ⌘Return은 패널 루트 뷰가 포커스를 확인해 처리합니다. 버튼 키 등가는 창 전체에서 발동하므로 두지 않습니다.
+        try expect(panel.commitButton.keyEquivalent.isEmpty && panel.view is GitPanelRootView,
+                   "typical: Commit 버튼에 창 전체 키 등가가 있음")
 
         try expectNoAmbiguity(harness, "typical light")
         try expectAccessibility(harness, "typical")
@@ -671,5 +673,197 @@ enum GitPanelUICheck {
             return false
         }, "wide: 마지막 페이지를 부모 기준으로 요청하지 않음")
         report.append("wide parent pages ok (2000 children, \(list.cache.requestCount) requests)")
+    }
+
+    // MARK: 키보드 순서·단축키 범위
+
+    /// 셸 창처럼 패널 위·아래에 다른 컨트롤이 있는 창.
+    @MainActor
+    private final class HostedPanel {
+        let dataSource: GitPanelStubDataSource
+        let host = HostRecorder()
+        let controller: GitPanelViewController
+        let window: NSWindow
+        let above = NSTextField(string: "")
+        let below = NSTextField(string: "")
+
+        init(_ scenario: GitPanelStubScenario) {
+            dataSource = GitPanelStubDataSource(scenario: scenario)
+            controller = GitPanelViewController(dataSource: dataSource, host: host)
+            let size = NSSize(width: 320, height: 860)
+            window = NSWindow(
+                contentRect: NSRect(origin: .zero, size: size),
+                styleMask: [.titled, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.isReleasedWhenClosed = false
+            // 셸 창(ShellWindowController)과 같이 시스템이 위치 순서로 key view loop를 계산하게 합니다.
+            window.autorecalculatesKeyViewLoop = true
+            let container = NSView()
+            window.contentView = container
+            let panel = controller.view
+            for view in [above, panel, below] {
+                view.translatesAutoresizingMaskIntoConstraints = false
+                container.addSubview(view)
+            }
+            NSLayoutConstraint.activate([
+                above.topAnchor.constraint(equalTo: container.topAnchor, constant: 8),
+                above.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+                above.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+                panel.topAnchor.constraint(equalTo: above.bottomAnchor, constant: 8),
+                panel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                panel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                below.topAnchor.constraint(equalTo: panel.bottomAnchor, constant: 8),
+                below.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+                below.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+                below.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+            ])
+            // 시스템 key view loop는 창이 화면 목록에 있어야 계산됩니다. 화면 밖 좌표에 두어 보이지 않게 합니다.
+            window.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
+            window.orderFrontRegardless()
+            container.layoutSubtreeIfNeeded()
+        }
+
+        @discardableResult
+        func spin(timeout: TimeInterval = 10, until condition: () -> Bool) -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while !condition() {
+                if Date() > deadline { return false }
+                RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.005))
+                window.contentView?.layoutSubtreeIfNeeded()
+            }
+            window.contentView?.layoutSubtreeIfNeeded()
+            return true
+        }
+
+        /// 위 컨트롤에서 Tab 순서(nextKeyView 고리)를 따라 아래 컨트롤까지 갑니다. 보이는 패널 뷰를 순서대로 돌려주고,
+        /// 아래 컨트롤에 닿지 못하면(패널 안에서 맴돌면) nil입니다.
+        ///
+        /// 실제 Tab 정지 여부는 시스템 "키보드 탐색" 설정(Full Keyboard Access)에 따라 버튼을 건너뛰므로,
+        /// 설정과 무관한 고리 소속을 확인합니다.
+        func walkToBelow() -> [NSView]? {
+            // 실제 Tab처럼 창에 다음 key view로 옮겨 달라고 해, 필요하면(뷰가 추가·제거됨) 시스템이 스스로 고리를 다시
+            // 계산하게 합니다. 강제로 다시 계산하지 않으므로 패널이 직접 이은 고리(nextKeyView)가 있으면 그대로 드러납니다.
+            window.makeFirstResponder(above)
+            window.selectKeyView(following: above)
+            var visited: [NSView] = []
+            var seen = Set<ObjectIdentifier>()
+            var current: NSView? = above.nextKeyView
+            while let view = current, seen.insert(ObjectIdentifier(view)).inserted {
+                if view === below { return visited }
+                if view.isDescendant(of: controller.view), !view.isHiddenOrHasHiddenAncestor { visited.append(view) }
+                current = view.nextKeyView
+            }
+            return nil
+        }
+
+        func commandKey(_ characters: String, keyCode: UInt16) -> NSEvent? {
+            NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [.command],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode)
+        }
+
+        func close() {
+            window.close()
+        }
+    }
+
+    /// 순서대로 들어 있는지(사이에 다른 뷰가 있어도 됨).
+    @MainActor
+    private static func expectOrder(_ visited: [NSView], _ expected: [(String, NSView)], _ context: String) throws {
+        var index = 0
+        for (name, view) in expected {
+            guard let found = visited[index...].firstIndex(where: { $0 === view }) else {
+                let present = visited.contains { $0 === view }
+                throw Failure(message: "\(context): Tab 순서에 \(name) \(present ? "순서 어긋남" : "없음")")
+            }
+            index = found + 1
+        }
+    }
+
+    @MainActor
+    private static func checkKeyboard(_ report: inout [String]) throws {
+        // 0) 패널은 key view를 직접 잇지 않습니다(닫힌 고리 금지). 창에 넣기 전, 두 화면을 오가도 연결이 없어야 합니다.
+        let bare = GitPanelViewController(dataSource: GitPanelStubDataSource(scenario: .typical))
+        bare.loadViewIfNeeded()
+        bare.setMode(.conflicts)
+        bare.setMode(.changes)
+        let controls: [NSView] = [
+            bare.refreshButton, bare.modeControl, bare.saveNowButton, bare.useSavedButton, bare.retryButton,
+            bare.includeRequiredButton, bare.declineRequiredButton, bare.cancelOperationButton, bare.dismissResultButton,
+            bare.changesOverlay.actionButton, bare.changeList.outlineView, bare.commitTextView, bare.commitButton,
+            bare.identityButton, bare.pushButton, bare.remotePopup, bare.conflictsOverlay.actionButton,
+            bare.conflictList.tableView, bare.revealButton, bare.applyButton,
+        ]
+        let linked = controls.filter { $0.nextKeyView != nil }
+        try expect(linked.isEmpty, "keyboard: 패널이 key view를 직접 이음 \(linked.map { String(describing: type(of: $0)) })")
+
+        // 1) 변경 화면 + 저장 대기 배너: 배너 버튼까지 위치 순서로 닿고, 패널 밖(아래 컨트롤)으로 나갑니다.
+        let typical = HostedPanel(.typical)
+        defer { typical.close() }
+        let panel = typical.controller
+        try expect(typical.spin { panel.status != nil && isShown(panel.autosaveBanner) }, "keyboard: 상태·배너가 오지 않음")
+        guard let changesOrder = typical.walkToBelow() else { throw Failure(message: "keyboard: Tab이 패널 밖으로 나가지 못함(변경 화면)") }
+        try expectOrder(changesOrder, [
+            ("refresh", panel.refreshButton), ("mode", panel.modeControl), ("Save Now", panel.saveNowButton),
+            ("Use Saved Version", panel.useSavedButton), ("changes list", panel.changeList.outlineView),
+            ("commit message", panel.commitTextView), ("commit", panel.commitButton), ("push", panel.pushButton),
+            ("push destination", panel.remotePopup),
+        ], "keyboard 변경 화면")
+        try expect(!changesOrder.contains { $0 === panel.conflictList.tableView }, "keyboard: 숨긴 conflict 화면이 Tab 순서에 보임")
+
+        // 2) 진행 중 작업의 취소 버튼(Push)도 순서에 들어갑니다.
+        panel.pushButton.performClick(nil)
+        try expect(typical.spin { isShown(panel.cancelOperationButton) }, "keyboard: Push 취소 버튼이 보이지 않음")
+        guard let progressOrder = typical.walkToBelow() else { throw Failure(message: "keyboard: 진행 중 Tab이 패널 밖으로 나가지 못함") }
+        try expectOrder(progressOrder, [("mode", panel.modeControl), ("Cancel", panel.cancelOperationButton),
+                                        ("changes list", panel.changeList.outlineView)], "keyboard 진행 배너")
+        try expect(typical.spin { panel.lastResult?.kind == .push && isShown(panel.dismissResultButton) }, "keyboard: Push 결과 배너 없음")
+        guard let resultOrder = typical.walkToBelow() else { throw Failure(message: "keyboard: 결과 배너 뒤 Tab이 나가지 못함") }
+        try expectOrder(resultOrder, [("Dismiss", panel.dismissResultButton), ("changes list", panel.changeList.outlineView)],
+                        "keyboard 결과 배너")
+
+        // 3) ⌘Return: 패널 밖 포커스에서는 처리하지 않고(다른 패널로 넘김), 커밋 메시지 포커스에서는 커밋합니다.
+        guard let commitKey = typical.commandKey("\r", keyCode: 36) else { throw Failure(message: "keyboard: 키 이벤트 생성 실패") }
+        try expect(typical.spin { panel.status?.stagedChangeCount ?? 0 > 0 && !panel.isBusy }, "keyboard: Stage된 변경 없음")
+        typical.window.makeFirstResponder(panel.commitTextView)
+        panel.commitTextView.insertText("Scoped commit", replacementRange: NSRange(location: NSNotFound, length: 0))
+        typical.window.makeFirstResponder(typical.above)
+        let commitsBefore = typical.dataSource.sentCommands.filter { if case .commit = $0 { return true }; return false }.count
+        try expect(!typical.window.performKeyEquivalent(with: commitKey), "keyboard: 패널 밖 포커스에서 ⌘Return이 처리됨")
+        let commitsOutside = typical.dataSource.sentCommands.filter { if case .commit = $0 { return true }; return false }.count
+        try expect(commitsOutside == commitsBefore, "keyboard: 패널 밖 포커스에서 커밋 명령이 나감")
+        typical.window.makeFirstResponder(panel.commitTextView)
+        try expect(typical.window.performKeyEquivalent(with: commitKey), "keyboard: 커밋 메시지 포커스에서 ⌘Return 미처리")
+        try expect(typical.dataSource.sentCommands.last == .commit(message: "Scoped commit"), "keyboard: ⌘Return 커밋 명령 없음")
+
+        // 4) conflict 화면: 목록·적용 버튼에 닿고 나갑니다. 변경 화면 컨트롤은 건너뜁니다.
+        let conflicts = HostedPanel(.conflicts)
+        defer { conflicts.close() }
+        let conflictPanel = conflicts.controller
+        try expect(conflicts.spin { conflictPanel.status != nil }, "keyboard conflicts: status 없음")
+        conflictPanel.setMode(.conflicts)
+        guard let conflictOrder = conflicts.walkToBelow() else { throw Failure(message: "keyboard: Tab이 패널 밖으로 나가지 못함(conflict 화면)") }
+        try expectOrder(conflictOrder, [("mode", conflictPanel.modeControl), ("conflicts list", conflictPanel.conflictList.tableView),
+                                        ("apply", conflictPanel.applyButton)], "keyboard conflict 화면")
+        try expect(!conflictOrder.contains { $0 === conflictPanel.commitTextView }, "keyboard: 숨긴 변경 화면이 Tab 순서에 보임")
+        // conflict 화면에서는 ⌘Return이 커밋하지 않습니다.
+        conflicts.window.makeFirstResponder(conflictPanel.conflictList.tableView)
+        guard let conflictKey = conflicts.commandKey("\r", keyCode: 36) else { throw Failure(message: "keyboard: 키 이벤트 생성 실패") }
+        try expect(!conflicts.window.performKeyEquivalent(with: conflictKey), "keyboard: conflict 화면에서 ⌘Return이 처리됨")
+
+        // 5) 제한 모드: 유일한 동작인 "Trust Project…"에 키보드로 닿습니다.
+        let restricted = HostedPanel(.restricted)
+        defer { restricted.close() }
+        let restrictedPanel = restricted.controller
+        try expect(restricted.spin { restrictedPanel.status != nil && !restrictedPanel.changesOverlay.isHidden },
+                   "keyboard restricted: 상태 없음")
+        guard let restrictedOrder = restricted.walkToBelow() else { throw Failure(message: "keyboard: Tab이 패널 밖으로 나가지 못함(제한 모드)") }
+        try expectOrder(restrictedOrder, [("mode", restrictedPanel.modeControl), ("Trust Project", restrictedPanel.changesOverlay.actionButton)],
+                        "keyboard 제한 모드")
+
+        report.append("keyboard loop changes \(changesOrder.count)/conflicts \(conflictOrder.count)/restricted \(restrictedOrder.count) views, exits panel; ⌘Return scoped")
     }
 }

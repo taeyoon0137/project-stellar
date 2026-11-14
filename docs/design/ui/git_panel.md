@@ -92,12 +92,15 @@
 | Space | 선택 행 Stage 토글(마지막 선택 행 상태 기준) | 변경 목록 |
 | ← / → | 선택한 묶음 행 접기 / 펼치기, 펼쳐지지 않은 행에서 ←는 부모로 이동(NSOutlineView 기본) | 변경 목록 |
 | B / O / T | 선택 conflict에 Base / Ours / Theirs | conflict 목록 |
-| ⌘↩ | Commit(버튼 키 등가; 메시지 입력 중에도 동작) | Changes 화면 |
+| ⌘↩ | Commit(메시지 입력 중에도 동작). 패널 안에 포커스가 있을 때만 패널 루트 뷰(`GitPanelRootView`)가 처리합니다. 버튼 key equivalent는 창 전체(캔버스·다른 패널)에서 발동하므로 두지 않습니다 | Changes 화면, 패널 안 포커스 |
 | Tab / ⇧Tab | 커밋 메시지에서 다음·이전 컨트롤로 이동. 탭 문자는 ⌥Tab | 커밋 메시지 |
 
 - 수식키 없는 한 글자 키는 메뉴 key equivalent가 아니라 목록 `keyDown`에서만 처리하므로 텍스트 입력 중에는 발동하지 않습니다. [가이드 8.2]
 - 목록은 type select를 끕니다(100만 행을 훑지 않게).
-- 포커스 순서: 화면 전환 → 목록 → (Changes) 메시지 → Commit → identity → Push → remote → 새로고침 / (Conflicts) 목록 → Show on Canvas → Apply → 새로고침. Full Keyboard Access로 모든 컨트롤에 도달합니다. [가이드 8.2]
+- 포커스 순서: 패널은 `nextKeyView`를 직접 잇지 않습니다(닫힌 고리를 만들지 않음). 셸 창은 `autorecalculatesKeyViewLoop`로 시스템이 위치 순서로 고리를 계산하므로, 머리 줄(새로고침) → 화면 전환 → 보이는 배너의 버튼 → 목록 또는 빈 상태 동작(예: Trust Project…) → 상세 값(선택 가능한 텍스트) → (Changes) 메시지 → Commit → identity → Push → remote / (Conflicts) Show on Canvas → Apply 순서로 닿고, 마지막 컨트롤 다음에는 패널 밖의 다음 뷰로 나갑니다. 숨긴 화면·배너는 건너뜁니다. [가이드 8.2]
+- 버튼에서 실제로 멈추는지는 시스템 "키보드 탐색"(Full Keyboard Access) 설정을 따릅니다. 켜면 위 모든 컨트롤에 닿습니다.
+- 패널을 셸 창이 아닌 다른 창에 넣을 때도 그 창에 `autorecalculatesKeyViewLoop`를 켭니다. 배너 버튼처럼 나중에 계층에 들어오는 컨트롤이 고리에 들어가려면 필요합니다.
+- 목록 행 안 체크박스는 Tab 순서에 넣지 않습니다. 키보드는 Space·문맥 메뉴, VoiceOver는 행 custom action으로 같은 동작에 닿습니다.
 - Commit·Push·Apply는 통합 시 메뉴 막대 명령으로도 등록해야 합니다(11장). [가이드 6.1, 8.1]
 
 ## 7. 접근성과 외형
@@ -192,13 +195,15 @@ Stub: `GitPanelStubDataSource`(메인 스레드 adapter) + `GitStubBackend`(백�
 - 표시 중인 뷰에 모호한 Auto Layout 없음(Light·Dark, 제한 모드, 빈 상태, identity, conflict, 100만 행).
   - 예외: `NSTextView` 안의 비공개 TextKit 2 하위 뷰(`_NSTextContentView` 등)는 검사하지 않습니다. 제약으로 배치한 scroll view 안의 기본 `NSTextView`만 둔 별도 프로그램에서도 같은 보고가 나와 셸 코드와 무관함을 확인했습니다. `NSTextView` 자체는 검사합니다.
 - 핵심 컨트롤과 보이는 목록 행의 접근성 레이블, 아이콘 버튼 도움말 태그.
-- 구조: 변경 목록은 `NSOutlineView`(outline 열, 접근성 역할 outline, 처음엔 문서 6행), 계층 수준 0·1·2, conflict 목록은 `NSTableView`, 커밋 메시지는 plain text·Undo `NSTextView`, Commit 키 등가 ⌘↩.
+- 구조: 변경 목록은 `NSOutlineView`(outline 열, 접근성 역할 outline, 처음엔 문서 6행), 계층 수준 0·1·2, conflict 목록은 `NSTableView`, 커밋 메시지는 plain text·Undo `NSTextView`, Commit 버튼에 창 전체 키 등가 없음(루트 뷰가 `GitPanelRootView`).
 - 변경 행 접근성: 셀 레이블에 제목과 Stage 상태, 체크박스·아이콘·label의 view와 cell이 요소가 아님, 조작 가능할 때 custom action 있음, 체크박스가 Tab 순서에 없음(Light·Dark).
 - 흐름: 저장 대기 배너와 Save Now, 빈 메시지 비활성, → 문서 펼침(행 6 → 10), 새 객체를 펼쳐 체크박스 Stage → 필수 동반 변경 확인 → 포함 Stage(펼침 유지), 상세 HEAD·Working 값, Space Unstage·Stage, 세대가 지난 Stage·페이지 요청 거부(체크박스가 코어 값으로 돌아가고 Stage가 실행되지 않음), ←로 부모 이동·접기와 →로 다시 펼치기, Commit(메시지 비움·Undo 복원·staged 0, 구조 변경 뒤 항목을 새로 만들고 문서 펼침을 노드 ID로 복원), Push 진행 배너·취소 버튼·결과.
 - 비활성 이유: Stage 없음, identity 없음(+ host 호출), 제한 모드(+ 신뢰 부여 host 호출).
 - Conflict: 허용 선택 제한, raw conflict 표시, 세대가 지난 해결 선택 거부(미리 바꾼 segment가 돌아감), O 키 선택, segment 선택, 적용 후 raw conflict와 continue 안내 유지, raw conflict가 Commit을 막음.
 - 100만 change: change 1,000,000·최상위 1,000행, 끝·가운데 문서와 그 안 객체 펼치기(행 1,220), 보이는 페이지만 요청(요청 16회 이하), 캐시 32페이지 이하, 행 뷰 200개 이하, 전체 선택 Stage가 최상위 범위 하나로 나감, 이벤트 드레인 최대 한 프레임(1/60초) 미만(회귀 방지용 상한).
 - wide: 자식 2,000개 묶음을 펼친 뒤 마지막 자식으로 가면 그 부모의 마지막 페이지(1,792~)만 요청(2회 이하).
+- 키보드: 창에 넣기 전 두 화면을 오가도 패널 컨트롤 20개에 직접 이은 `nextKeyView`가 없음. 셸 창처럼 위·아래에 다른 컨트롤이 있고 `autorecalculatesKeyViewLoop`를 켠 창(화면 밖 좌표에 표시)에서, 실제 Tab처럼 창에 다음 key view를 물은 뒤 고리를 따라가면 위 컨트롤 → 패널 → 아래 컨트롤로 나감. 순서: (변경 화면) 새로고침 → 화면 전환 → Save Now → Use Saved Version → 목록 → 메시지 → Commit → Push → remote, (진행 중) Cancel, (결과) Dismiss, (conflict 화면) 화면 전환 → 목록 → Apply, (제한 모드) 화면 전환 → Trust Project…. 고리 소속을 보며, 시스템 키보드 탐색 설정에 따른 실제 정지 여부는 보지 않음.
+- ⌘↩ 범위: 패널 밖 포커스에서는 처리하지 않고 커밋 명령도 나가지 않음, 커밋 메시지 포커스에서는 처리하고 `.commit(message:)`이 나감, conflict 화면에서는 처리하지 않음.
 
 검사하지 않은 것: 실제 Git·코어 FFI, 화면 표시(on-screen) 렌더, VoiceOver 실제 낭독 순서와 outline 행 요소 트리(7장의 한 번 확인 외), sheet 경로의 필수 동반 변경 확인, 대비 높이기·투명도 줄이기 켠 상태의 시각 결과, Release 빌드·기준 하드웨어 성능.
 
