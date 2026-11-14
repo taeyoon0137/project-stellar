@@ -51,3 +51,25 @@
 
 - 두 결과를 한 UI 목록으로 합치는 연결(파일 경로 ↔ 객체 매핑)은 semantic-diff와 project를 함께 쓰는
   통합 crate가 필요합니다(XIV.4.1 보고서와 같은 crate 그래프 한계).
+
+## 후속 수정 (리뷰 반영)
+
+- **worktree 쪽 rename·copy 누락**: `file_status::changed`가 rename 항목(`2`)의 원래 경로를 index 쪽(`R.`)에만
+  넘겨, intent-to-add 경로의 Index→WorkingTree rename(`.R`)·copy(`.C`)가 unstaged 변경 없음(`None`)으로
+  사라졌습니다. 로컬 시스템 Git 2.54에서 `git add -N` 뒤 `2 .R N... ... R100 new\0old`가 실제로 나오는 것을
+  확인했고, 아래 두 테스트가 수정 전에 실패하는 것을 본 뒤 `R`·`C` 코드가 있는 영역에 원래 경로를 붙이도록
+  고쳤습니다(`Fix: worktree 쪽 rename·copy를 unstaged 변경으로 보존`). Git은 항목마다 원래 경로를 하나만
+  내보내고 intent-to-add 경로는 HEAD→Index diff에 나오지 않으므로 두 영역이 동시에 rename/copy인 항목은 없습니다.
+  - `worktree_side_rename_and_copy_keep_their_origin_as_unstaged_changes`(합성 `.R`·`.C`·`RM`)
+  - `intent_to_add_rename_in_real_git_is_an_unstaged_rename`(실제 Git, `cfg(unix)`)
+- **semantic 쪽 fixture는 메모리 구성**(리뷰 minor, 사실 기록): `working_tree_additions` 검사는 XIV.4.1과 같은
+  chunk bytes 경유 메모리 fixture입니다. 실제 Git index·작업 트리에서 semantic snapshot을 읽는 연결은 없습니다
+  (XIV.4.1 보고서 후속 절). 파일 단위 검사(`untracked_chunk_and_asset_are_working_tree_only_file_changes`)는
+  실제 Git입니다. 상태 `[x]`는 유지합니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-git-porcelain` | lib 297 passed + doc 3 passed, 0 failed |
+| `cargo clippy -p stellar-git-porcelain --all-targets -- -D warnings` | 경고 0 |
+| `cargo clippy -p stellar-git-porcelain --all-targets --features test-support -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-git-porcelain -- --check` | 통과 |

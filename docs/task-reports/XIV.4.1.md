@@ -51,3 +51,15 @@
 - 실제 Git(materialize → `SavedProjectLoader` → `SnapshotBuilder`) 연결은 project crate와
   semantic-diff를 함께 쓰는 crate가 필요합니다. 현재 허용 의존 표(`tools/xtask/src/crate_graph.rs`)에는
   project → semantic-diff edge가 없어 이 연결 위치는 crate 그래프 결정(ADR)이 먼저 필요합니다.
+
+## 후속 수정 (리뷰 반영)
+
+- **Git 연결 없음(리뷰 minor, 사실 기록)**: XIV.4.1·XIV.4.2·XIV.4.3(semantic 쪽)의 부분 staged fixture는 메모리의
+  `DocumentRecords`를 View subtree chunk bytes로 직렬화·복원해 만든 것이고, 실제 Git index(XIV.2.5)·작업
+  트리(XIV.2.7)에서 읽은 snapshot이 아닙니다. 실제 연결(materialize → `SavedProjectLoader` → `SnapshotBuilder` →
+  `classify`)을 둘 crate가 crate 그래프에 없고, 그 결정은 ADR이 필요해 이 lane에서 하지 않았습니다.
+- 상태 `[x]` 유지 근거: 이 행의 산출물은 분류 계산(HEAD→Index=staged, Index→WorkingTree=unstaged)이고 검증 열은
+  "부분 staged fixture 분류 정확"입니다. 분류 계산은 실제 코드이며 fixture도 저장 형식(chunk bytes)을 거칩니다.
+  XIV.5.5는 산출물 자체(serializer)가 없어 `[~]`이고, 이 행은 산출물이 있고 통합 연결만 없다는 점이 다릅니다.
+- 후속 필요: 통합 crate 위치를 ADR로 정한 뒤 실제 Git 저장소에서 HEAD·Index·WorkingTree를 읽어 같은 부분
+  staged 분류를 확인하는 종단 테스트를 추가해야 합니다.

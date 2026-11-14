@@ -61,3 +61,27 @@
   `CandidateFile::Bytes`로 넘기는 serializer를 연결하고, (3) 실제 저장 파이프라인으로 만든 프로젝트 fixture에서
   candidate tree를 열어(`SavedProjectLoader`) semantic snapshot이 candidate와 같은지 확인해야 합니다.
 - XIV.5.6 이후(file-level diff, blob 기록, index 갱신)는 이 행이 `[~]`라 선행 조건상 진행하지 않았습니다.
+
+## 후속 수정 (리뷰 반영)
+
+- **후보 수 × 작업 트리 파일 수 탐색**: `FromWorkingTree` 항목마다 `listing.files.iter().find`로 찾던 것을 경로 →
+  관찰 항목 `BTreeMap` index로 바꿨습니다.
+- **index blob 전체를 한 번에 메모리로 읽음**: 모든 non-Stellar·`KeepIndex` blob을 `read_blobs`로 먼저 읽던 것을,
+  쓰는 순서대로 `BATCH_CHUNK`(256)개씩 읽어 그 batch만 메모리에 두도록 바꿨습니다(XIV.2.6
+  `materialize_snapshot`과 같은 상한). 작업 트리 파일도 미리 모으지 않고 쓸 때 읽으며, `Bytes`는 복사본을 미리
+  만들지 않습니다. blob·작업 트리 읽기 실패는 그대로 `CandidateTreeError::Blob`·`WorkingTreeRead`로 돌려주고,
+  실패 시 임시 디렉터리는 남지 않습니다.
+- 두 항목은 성능·메모리 지적이라 기능 실패 테스트로 재현할 수 없었습니다. 대신 동작 보존 회귀 테스트를 먼저
+  추가해 수정 전후 모두 통과함을 확인했습니다: `index_blobs_spanning_several_batches_are_written_exactly`
+  (`BATCH_CHUNK`+45개 non-Stellar 파일, 같은 blob ID가 batch 경계 양쪽에 걸침, 작업 트리 asset 40개),
+  `unreadable_working_tree_file_keeps_its_error_and_leaves_no_directory`(권한 0 파일 → `WorkingTreeRead`
+  `PermissionDenied`, 임시 디렉터리 0). 커밋: `Fix: stage candidate tree writer의 작업 트리 탐색을 경로 index로
+  바꾸고 blob을 batch 단위로 읽음`.
+- 상태 `[~]`와 그 사유(candidate 문서 레코드 → storage 파일 serializer 연결 없음)는 바뀌지 않습니다.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-git-porcelain` | lib 297 passed + doc 3 passed, 0 failed |
+| `cargo clippy -p stellar-git-porcelain --all-targets -- -D warnings` | 경고 0 |
+| `cargo clippy -p stellar-git-porcelain --all-targets --features test-support -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-git-porcelain -- --check` | 통과 |

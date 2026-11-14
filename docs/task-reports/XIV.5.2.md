@@ -68,3 +68,20 @@
   StableId를 원시 16바이트·문자열·16진수 이외 형태로 담는 미래 형식에서 생길 수 있어, 새 값 형식이 생기면 이
   scan 규칙을 함께 갱신해야 합니다.
 - base 전체를 scan하는 참조 해제 규칙은 삭제가 있을 때 base 값 bytes 총량에 선형입니다.
+
+## 후속 수정 (리뷰 반영)
+
+- **새 root Frame 소속 규칙의 이중 반복**: parent 없는 새 Node마다 모든 변경을 `introduces_root`로 훑어 (새 root
+  수 × 변경 수 × 속성 수) 비용이었고, 모듈 문서의 "선형" 설명과 맞지 않았습니다. 변경 목록을 한 번 scan해 root id
+  → root 참조를 도입하는 변경 index(`introduced_roots`)를 만들고 조회하도록 바꿨습니다. 의존 결과는 같습니다.
+  모듈 문서도 실제 비용(BTreeMap 조회 log 인자 제외 선형)으로 고쳤습니다.
+- 성능 지적이라 기능 실패 테스트로 재현할 수 없었습니다. 동작 보존 회귀 테스트
+  `many_new_root_frames_each_depend_only_on_their_introducer`(새 View 40개와 각 root frame, 기존 View 3의 root
+  교체)를 먼저 추가해 수정 전후 모두 통과함을 확인했습니다. 커밋: `Fix: 새 root Frame의 소속 dependency를 변경
+  목록 한 번 scan한 index로 찾음`.
+
+| 명령 | 결과 |
+|---|---|
+| `cargo test -p stellar-semantic-diff` | unit 78 passed + fuzz 통합 4 passed, 0 failed |
+| `cargo clippy -p stellar-semantic-diff --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-semantic-diff -- --check` | 통과 |

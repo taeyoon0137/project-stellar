@@ -62,3 +62,11 @@ XIV.14.1 fixture harness(hermetic·`GIT_ALLOW_PROTOCOL=file`)로 실제 Git 저�
 
 - non-UTF8 materialize 결과는 파일 시스템에 따라 다릅니다. 테스트는 macOS에서 거부 경로를 강제하고, 그 밖의
   파일 시스템에서는 같은 bytes 이름으로 만들어졌는지만 확인합니다(Windows는 ADR-0006으로 보류).
+
+## 후속 수정 (리뷰 반영)
+
+- **section 선행 완화 근거 보강(리뷰 minor, 사실 기록)**: 선행 XIII.4 section 중 XIII.4.4만 `[~]`입니다. 그
+  보고서의 사유는 "macOS adapter로 구현·검증 완료, 선행 XIII.2.3(Windows adapter)은 ADR-0006으로 `[!]`"이며,
+  Windows 보류(ADR-0006, 사용자 결정) 외의 미완료는 없습니다. 이 corpus는 watcher 동적 등록을 쓰지 않습니다.
+  계획 규칙 1.2.4를 엄격히 읽으면 이 행은 차단 대상이므로, 완화 허용 여부는 통합 담당이 확인해야 합니다. 상태는
+  바꾸지 않았습니다.

@@ -52,3 +52,22 @@
 - 실제 provider 연결 위치는 semantic-diff와 project를 함께 쓰는 crate가 필요합니다(현재 crate 그래프에
   edge 없음, XIV.4.1 보고서 참고).
 - provider가 계약을 어기고 파일을 쓰는 경우는 막지 못합니다(trait 문서 계약).
+
+## 후속 수정 (리뷰 반영)
+
+- **종단 검사의 provider는 테스트용(리뷰 minor, 사실 기록)**: 실제 Git corrupt chunk fixture
+  (`corrupt_chunk_fails_semantic_status_but_raw_status_remains`)의 `SemanticStatusProvider`는 테스트 구현
+  (`ChunkCheckingProvider`)입니다. fixture chunk 형식(`CHUNK` 머리·본문·본문 바이트 합 1바이트)으로 손상을
+  판단하며, V.4.4 loader와 semantic-diff `try_classify`를 쓰지 않습니다. fixture chunk도 실제 `.starchunk` 형식이
+  아닙니다. XIV.14.6 corpus의 손상 프로젝트 scenario provider(`schema_version: 1` 접두어·`CHUNK:` 머리 검사)도
+  같은 성격입니다. 두 반쪽은 각각
+  실제 코드로 검사됩니다. semantic-diff `try_classify`는 실제로 잘린 `SubtreeRecords` chunk에서 부분 결과 없이
+  실패하고(`corrupt_snapshot_fails_semantic_status_without_partial_result`), git-porcelain
+  `read_project_status`는 provider가 실패해도 실제 Git raw status를 유지하며 아무것도 쓰지 않습니다.
+- 상태 `[x]` 유지 근거: 검증 열은 "corrupt chunk fixture raw status 가능"이고, 이것은 실제 Git 저장소에서 작업 트리
+  chunk를 손상시킨 상태로 확인했습니다. raw status 유지·무수정 계약은 provider 구현과 무관하게
+  `read_project_status`가 보장합니다. 실제 provider(`SavedProjectLoader` + `SnapshotBuilder` + `try_classify`)를
+  둘 crate가 crate 그래프에 없습니다(git-porcelain은 dev-dependency로도 project·semantic-diff에 의존할 수 없음).
+  XIV.5.5는 산출물(serializer) 자체가 없어 `[~]`이고, 이 행은 통합 연결만 없다는 점이 다릅니다.
+- 후속 필요: 통합 crate 위치를 ADR로 정한 뒤 실제 저장 파이프라인으로 만든 프로젝트의 chunk를 손상시켜 V.4.4
+  loader 실패 → semantic status 실패 → raw status 유지를 한 번에 확인하는 종단 테스트를 추가해야 합니다.
