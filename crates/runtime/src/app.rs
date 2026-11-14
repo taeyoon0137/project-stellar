@@ -982,6 +982,8 @@ pub struct WindowSessionSummary {
     pub history_sequence: u64,
     /// 표시 중인 primary 선택.
     pub primary_selection: Option<StableId>,
+    /// 현재 확정된 단일 선택이 Frame일 때 그 ID. viewport 가시성과 독립적입니다.
+    pub selected_frame: Option<StableId>,
     /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
     pub has_unsaved_changes: bool,
     /// 열린 탭 수.
@@ -1413,6 +1415,17 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         selection_len: clamp(session.view().selection().len()),
         history_sequence: session.history_sequence(),
         primary_selection: session.view().displayed_selection().primary(),
+        selected_frame: match session.view().selection().ids() {
+            [node]
+                if matches!(
+                    session.document().and_then(|d| d.model().payload(*node)),
+                    Some(stellar_document::records::NodePayload::Frame(_))
+                ) =>
+            {
+                Some(*node)
+            }
+            _ => None,
+        },
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),
         active_view: session.tabs().active_view(),

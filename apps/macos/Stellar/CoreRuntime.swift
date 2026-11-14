@@ -22,10 +22,25 @@ enum CoreRuntime {
 
     // MARK: - 프로젝트 session (XII.6.2)
 
-    static func createComponent(handle: UInt64, session: UInt64, name: String) -> Result<UInt64, CoreRuntimeCallError> {
+    static func selectedFrame(handle: UInt64, session: UInt64) -> StellarFrameSelection? {
+        var frame = StellarFrameSelection()
+        return stellar_window_selected_frame(handle, session, &frame) == STELLAR_OK ? frame : nil
+    }
+
+    static func createComponent(handle: UInt64, session: UInt64, name: String,
+                                selection: StellarFrameSelection? = nil) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
-        let status = Array(name.utf8).withUnsafeBufferPointer {
-            stellar_window_component_create(handle, session, $0.baseAddress, $0.count, &request)
+        let status = Array(name.utf8).withUnsafeBufferPointer { bytes in
+            guard let selection else {
+                return stellar_window_component_create(handle, session, bytes.baseAddress, bytes.count, &request)
+            }
+            return withUnsafeBytes(of: selection.view) { view in
+                withUnsafeBytes(of: selection.node) { node in
+                    stellar_window_component_from_selection(handle, session, bytes.baseAddress, bytes.count,
+                        view.bindMemory(to: UInt8.self).baseAddress, node.bindMemory(to: UInt8.self).baseAddress,
+                        selection.revision, &request)
+                }
+            }
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)

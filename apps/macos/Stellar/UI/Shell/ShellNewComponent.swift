@@ -1,13 +1,21 @@
 import AppKit
 
 extension ShellProjectWindow {
-    /// 새 정의는 독립 프로젝트 파일이며 현재 캔버스의 선택·문서 history를 사용하지 않습니다.
-    func promptForComponent() {
+    var selectedComponentFrame: StellarFrameSelection? {
+        guard let session = windowController.windowSession, let project = dataSource.session else { return nil }
+        return CoreRuntime.selectedFrame(handle: project.pump.runtimeHandle, session: session.session)
+    }
+
+    func promptForComponent(fromSelection: Bool = false) {
         guard let window, let project = dataSource.session, let session = windowController.windowSession,
               !session.isClosing, !session.isClosed, gitSource.trusted else { return }
+        let selection = fromSelection ? selectedComponentFrame : nil
+        if fromSelection && selection == nil { return }
         let sheet = NSAlert()
-        sheet.messageText = String(localized: "New Component")
-        sheet.informativeText = String(localized: "Name the new component to save it in design/components.")
+        sheet.messageText = fromSelection ? String(localized: "Create Component from Selection") : String(localized: "New Component")
+        sheet.informativeText = fromSelection
+            ? String(localized: "Save a copy of the selected Frame and its child Frames in design/components.")
+            : String(localized: "Name the new component to save it in design/components.")
         let name = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         name.placeholderString = String(localized: "Component name")
         name.setAccessibilityLabel(String(localized: "Component name"))
@@ -25,7 +33,7 @@ extension ShellProjectWindow {
                 return
             }
             let submitted = session.track({ done in
-                project.pump.createComponent(session: session.session, name: value, completion: done)
+                project.pump.createComponent(session: session.session, name: value, selection: selection, completion: done)
             }, completion: { [weak self] event in
                 guard let self, self.dataSource.session === project else { return }
                 switch event {

@@ -5,19 +5,33 @@ use stellar_core_types::ids::StableId;
 
 /// 현재 시각과 OS 난수로 서로 독립적인 UUIDv7을 생성합니다.
 pub fn new_ids<const N: usize>() -> io::Result<[StableId; N]> {
+    let mut entropy = [[0u8; 10]; N];
+    fill_entropy(entropy.as_flattened_mut())?;
+    let ms = timestamp_ms()?;
+    Ok(entropy.map(|bytes| uuid(ms, bytes)))
+}
+
+/// 한 번의 OS 난수 읽기로 가변 길이 subtree의 독립 식별자를 만듭니다.
+pub(crate) fn new_ids_vec(count: usize) -> io::Result<Vec<StableId>> {
+    let mut entropy = vec![[0u8; 10]; count];
+    fill_entropy(entropy.as_flattened_mut())?;
+    let ms = timestamp_ms()?;
+    Ok(entropy.into_iter().map(|bytes| uuid(ms, bytes)).collect())
+}
+
+fn timestamp_ms() -> io::Result<u64> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(io::Error::other)?;
-    let ms = u64::try_from(now.as_millis()).map_err(io::Error::other)?;
-    let mut entropy = [[0u8; 10]; N];
-    fill_entropy(entropy.as_flattened_mut())?;
-    Ok(entropy.map(|bytes| {
-        StableId::new_v7(
-            ms,
-            u16::from_be_bytes([bytes[0], bytes[1]]),
-            u64::from_be_bytes(bytes[2..].try_into().expect("8 bytes")),
-        )
-    }))
+    u64::try_from(now.as_millis()).map_err(io::Error::other)
+}
+
+fn uuid(ms: u64, bytes: [u8; 10]) -> StableId {
+    StableId::new_v7(
+        ms,
+        u16::from_be_bytes([bytes[0], bytes[1]]),
+        u64::from_be_bytes(bytes[2..].try_into().expect("8 bytes")),
+    )
 }
 
 /// Unix 시스템 난수 adapter. 다른 플랫폼 구현은 ADR-0006의 지원 재개 시 추가합니다.
