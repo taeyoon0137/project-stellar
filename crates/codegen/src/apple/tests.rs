@@ -217,6 +217,13 @@ fn generated_swift_typechecks_against_apple_sdks() {
         "arm64-apple-macos26.0",
     );
     let mut fixture = Fixture::new();
+    let property_name = "n0000000000000000000000000000000c_4";
+    let accent = fixture
+        .tokens
+        .iter_mut()
+        .find(|token| token.id == sid(fx::TOKEN_ACCENT))
+        .unwrap();
+    accent.name = property_name.into();
     for state in &mut fixture.states {
         if state.name == "selectedSize" {
             state.name = "onStateChange".into();
@@ -231,6 +238,9 @@ fn generated_swift_typechecks_against_apple_sdks() {
     .unwrap();
     assert!(appkit.source.contains("onStateChange_2"));
     assert!(appkit.source.contains("views_2"));
+    assert!(appkit
+        .source
+        .contains(&format!("static let {property_name}_2 = {property_name}")));
     typecheck(
         &appkit.source,
         "mac-appkit",

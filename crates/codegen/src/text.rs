@@ -41,19 +41,25 @@ pub fn unique_identifiers<'a>(
 ) -> Vec<String> {
     let mut used: std::collections::BTreeSet<String> =
         reserved.iter().map(|word| word.to_string()).collect();
-    let mut out = Vec::new();
-    for name in names {
-        let base = identifier(name, fallback);
-        let mut candidate = base.clone();
-        let mut suffix = 2u32;
-        while used.contains(&candidate) {
-            candidate = format!("{base}_{suffix}");
-            suffix += 1;
-        }
-        used.insert(candidate.clone());
-        out.push(candidate);
+    names
+        .into_iter()
+        .map(|name| allocate_identifier(&mut used, identifier(name, fallback)))
+        .collect()
+}
+
+/// 같은 출력 범위에서 만든 식별자까지 고려해 다음 이름을 배정합니다.
+pub(crate) fn allocate_identifier(
+    used: &mut std::collections::BTreeSet<String>,
+    base: String,
+) -> String {
+    let mut candidate = base.clone();
+    let mut suffix = 2;
+    while used.contains(&candidate) {
+        candidate = format!("{base}_{suffix}");
+        suffix += 1;
     }
-    out
+    used.insert(candidate.clone());
+    candidate
 }
 
 #[cfg(test)]

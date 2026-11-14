@@ -18,11 +18,11 @@ use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::property::PathSegment;
 use stellar_core_types::typed_value::TypedValue;
 
-use crate::apple::swift::{identifiers, number};
+use crate::apple::swift::{number, RESERVED};
 use crate::apple::{AppleNote, AppleNoteKind, AppleNoteSubject};
 use crate::ir::snapshot::id_hex;
 use crate::ir::CodegenIr;
-use crate::text::identifier;
+use crate::text::{allocate_identifier, identifier};
 
 /// 색 표현 API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -130,9 +130,10 @@ pub(crate) fn colors_enum(
             _ => None,
         })
         .collect();
-    let names = identifiers(color_tokens.iter().map(|(t, _)| t.name.as_str()), "token");
+    let mut used = RESERVED.iter().map(|word| word.to_string()).collect();
     let mut token_names = std::collections::BTreeMap::new();
-    for ((token, color), name) in color_tokens.iter().zip(&names) {
+    for (token, color) in color_tokens {
+        let name = allocate_identifier(&mut used, identifier(&token.name, "token"));
         let expression = color_expression(color, api);
         for note in &expression.notes {
             notes.push(AppleNote {
@@ -141,14 +142,17 @@ pub(crate) fn colors_enum(
             });
         }
         let _ = writeln!(out, "    static let {name} = {}", expression.expression);
-        token_names.insert(token.id, name.clone());
+        token_names.insert(token.id, name);
     }
     for node in &ir.nodes {
         for property in &node.properties {
             let TypedValue::Color(color) = &property.value else {
                 continue;
             };
-            let name = format!("n{}_{}", id_hex(node.id), path_suffix(&property.path));
+            let name = allocate_identifier(
+                &mut used,
+                format!("n{}_{}", id_hex(node.id), path_suffix(&property.path)),
+            );
             match property.token.and_then(|token| token_names.get(&token)) {
                 Some(token) => {
                     let _ = writeln!(out, "    static let {name} = {token}");
