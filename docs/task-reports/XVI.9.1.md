@@ -57,3 +57,26 @@
 
 - 깨끗한 CI(`CI-MAC`) runner에서는 실행하지 않았습니다. x86_64 host에서 실행하려면 `rustup target add aarch64-apple-darwin`이 필요합니다.
 - 버전 번호(`MARKETING_VERSION` 0.0.0, `CURRENT_PROJECT_VERSION` 1) 정책은 정하지 않았습니다(업데이트 feed와 함께 결정 필요).
+
+## 후속 수정 (리뷰 MF-1: 새 Rust target에서 Release 빌드 실패)
+
+- **증상**: 비어 있는 Rust target에서 `scripts/macos/release_build.sh`가 Xcode Rust 코어 phase에서
+  `error[E0463]: can't find crate for zerofrom_derive`(`bytemuck_derive`도 같음)로 실패했습니다. 이미 채워진 target에서는
+  host 산출물을 다시 링크하지 않아 드러나지 않았습니다. X.9.1 text-shaping 의존성 통합(`c61485f`)으로 release 그래프에
+  proc-macro crate가 들어온 뒤 생긴 문제입니다.
+- **원인**: Xcode는 build setting `MACOSX_DEPLOYMENT_TARGET=26.0`을 phase 환경으로 넘깁니다. host와 target이 같은
+  `aarch64-apple-darwin`이라 host 산출물인 proc-macro dylib도 이 값으로 링크되고, 12.0 이상에서는 chained fixups 형식이
+  됩니다. release profile 기본 `strip = "debuginfo"`가 이 dylib를 `dyld_info` 기준 `mis-aligned LINKEDIT string pool`
+  상태로 만들어 rustc가 proc-macro를 읽지 못합니다. 같은 `cargo build -p zerofrom --release --target aarch64-apple-darwin`이
+  변수 없음·11.0에서는 통과하고 12.0·26.0에서는 실패했으며, strip을 끄면 26.0에서도 통과했습니다.
+- **수정**: Release phase가 `CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=none`으로 host 산출물(build script·proc-macro와 그
+  의존성)만 strip하지 않습니다. 링크되는 staticlib과 deployment target(26.0)은 바뀌지 않습니다.
+- **회귀 검사**: `scripts/macos/rust_core_phase_check.sh`(신규)는 pbxproj의 phase 스크립트를 그대로 꺼내 StellarMac
+  build setting 환경과 빈 임시 `CARGO_TARGET_DIR`에서 실행합니다. 수정 전 Release는 E0463으로 종료 1, 수정 후 종료 0입니다.
+
+| 명령 | 결과 |
+|---|---|
+| `scripts/macos/rust_core_phase_check.sh`(수정 전 phase) | `error[E0463]: can't find crate for zerofrom_derive`, 종료 1 |
+| `scripts/macos/rust_core_phase_check.sh`(수정 후) | `✓ Rust 코어 phase(Release): 새 target에서 성공, MACOSX_DEPLOYMENT_TARGET=26.0, staticlib arm64`, 종료 0 |
+| `scripts/macos/rust_core_phase_check.sh Debug` | 종료 0(dev profile은 strip하지 않아 원래 통과) |
+| `plutil -lint apps/macos/StellarMac.xcodeproj/project.pbxproj` | `OK` |

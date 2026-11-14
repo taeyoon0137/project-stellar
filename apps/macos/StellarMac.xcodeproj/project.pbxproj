@@ -160,7 +160,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nexport PATH=\"$HOME/.cargo/bin:$PATH\"\nif ! command -v cargo >/dev/null 2>&1; then\n  echo \"error: cargo not found in PATH\" >&2\n  exit 1\nfi\ncd \"$SRCROOT/../..\"\n# Release는 arm64 전용 release staticlib(lockfile 고정)을 링크합니다(XVI.9.1).\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n  cargo build -p stellar-ffi --release --locked --target aarch64-apple-darwin\nelse\n  cargo build -p stellar-ffi\nfi\n";
+			shellScript = "set -e\nexport PATH=\"$HOME/.cargo/bin:$PATH\"\nif ! command -v cargo >/dev/null 2>&1; then\n  echo \"error: cargo not found in PATH\" >&2\n  exit 1\nfi\ncd \"$SRCROOT/../..\"\n# Release는 arm64 전용 release staticlib(lockfile 고정)을 링크합니다(XVI.9.1).\n# Xcode가 넘기는 MACOSX_DEPLOYMENT_TARGET(12.0 이상)에서는 host 산출물(proc-macro dylib)이 chained fixups로 링크되고,\n# release profile 기본 strip(debuginfo)이 LINKEDIT 정렬이 깨진 dylib를 만들어 새 target에서 rustc가 proc-macro를\n# 읽지 못합니다(E0463). host 산출물(build-override)만 strip하지 않습니다. 링크되는 staticlib은 strip 대상이 아닙니다.\n# 회귀 검사: scripts/macos/rust_core_phase_check.sh\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n  CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=none cargo build -p stellar-ffi --release --locked --target aarch64-apple-darwin\nelse\n  cargo build -p stellar-ffi\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
