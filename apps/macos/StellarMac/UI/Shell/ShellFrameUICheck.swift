@@ -291,14 +291,12 @@ private final class ShellFrameUICheckRunner {
     ) {
         let toolbarController = controller.toolbarController
         let identifiers = [
-            ShellToolbarController.navigationItem, ShellToolbarController.toolAreaItem,
-            ShellToolbarController.searchItem, ShellToolbarController.moreItem,
+            ShellToolbarController.navigationItem, ShellToolbarController.searchItem, ShellToolbarController.moreItem,
         ]
         func realItem(_ identifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
             toolbar.items.first { $0.itemIdentifier == identifier }
         }
         expect(toolbarController.navigationGroup === realItem(ShellToolbarController.navigationItem), "내비게이션 참조가 실제 항목이 아님")
-        expect(toolbarController.toolGroup === realItem(ShellToolbarController.toolAreaItem), "도구 영역 참조가 실제 항목이 아님")
         expect(toolbarController.searchToolbarItem === realItem(ShellToolbarController.searchItem), "검색 참조가 실제 항목이 아님")
         expect(toolbarController.moreToolbarItem === realItem(ShellToolbarController.moreItem), "더 보기 참조가 실제 항목이 아님")
 
@@ -320,32 +318,32 @@ private final class ShellFrameUICheckRunner {
                 expect(searchCopy.searchField.target == nil, "palette 검색 사본이 명령을 보낼 수 있음")
             }
         }
-        expect(toolbarController.navigationGroup != nil && toolbarController.toolGroup != nil
+        expect(toolbarController.navigationGroup != nil
             && toolbarController.searchToolbarItem != nil && toolbarController.moreToolbarItem != nil,
             "palette를 닫은 뒤 항목 참조가 nil이 됨")
-        expect(toolbarController.toolGroup === realItem(ShellToolbarController.toolAreaItem), "palette 뒤 도구 영역 참조가 사본으로 바뀜")
         expect(toolbarController.searchToolbarItem === realItem(ShellToolbarController.searchItem), "palette 뒤 검색 참조가 사본으로 바뀜")
 
-        // palette 뒤에도 snapshot이 실제 항목에 닿고, 메뉴 검증이 실제 검색 항목을 봅니다.
+        // palette 뒤에도 snapshot이 실제 항목과 도구 막대에 닿고, 메뉴 검증이 실제 검색 항목을 봅니다.
+        // 도구 막대는 툴바 항목이 아니라 controller가 직접 가지므로 palette 사본과 관계없습니다.
         let tools = ShellFrameDataSourceStub.sampleTools
         let initialTool = stub.currentSnapshot.activeToolID
         stub.send(.selectTool(tools[2].id))
         controller.flushPendingSnapshot()
-        let realTools = realItem(ShellToolbarController.toolAreaItem) as? NSToolbarItemGroup
-        expect(realTools?.selectedIndex == 2, "palette 뒤 도구 선택 snapshot이 실제 항목에 닿지 않음")
+        let toolBar = toolbarController.toolBar
+        expect(toolBar.selectedIndex == 2, "palette 뒤 도구 선택 snapshot이 도구 막대에 닿지 않음")
         let searchMenu = ShellFrameMenuItems.makeNavigationMenuItems()[2]
         expect(controller.validateMenuItem(searchMenu), "palette 뒤 Search Project… 메뉴가 비활성")
         stub.setStatus(ShellFrameDataSourceStub.sampleLoadingStatus)
         controller.flushPendingSnapshot()
         let realSearch = realItem(ShellToolbarController.searchItem) as? NSSearchToolbarItem
         expect(realSearch?.searchField.isEnabled == false, "palette 뒤 로딩 상태에서 실제 검색 필드가 활성")
-        expect(realTools?.isEnabled == false, "palette 뒤 로딩 상태에서 실제 도구 영역이 활성")
+        expect(!toolBar.isEnabled, "palette 뒤 로딩 상태에서 도구 막대가 활성")
         stub.setStatus(.ready)
         if let initialTool {
             stub.send(.selectTool(initialTool))
         }
         controller.flushPendingSnapshot()
-        expect(realTools?.selectedIndex == 0, "도구 선택 복귀 실패")
+        expect(toolBar.selectedIndex == 0, "도구 선택 복귀 실패")
 
         // 코어가 검색을 제공하지 않으면 ready여도 검색 필드와 메뉴를 비활성화합니다.
         var noSearch = stub.currentSnapshot

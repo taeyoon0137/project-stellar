@@ -226,7 +226,7 @@ struct ShellFrameSlots {
 - 분할: 항목 3개, sidebar·inspector behavior, autosave 이름, 보조 패널 처음 접힘, pane 폭이 허용 범위 안, 창 폭 변경 시 캔버스만 변함, 캔버스가 툴바·사이드바·인스펙터와 겹치지 않음, drawable 크기 > 0
 - Auto Layout: ready, 각 pane 전환 후, 로딩·오류·빈 상태에서 모호한 레이아웃 없음(숨긴 뷰 제외)
 - 접근성: pane·캔버스 레이블(캔버스 컨테이너는 요소 아님), 툴바·도구·검색·더 보기 레이블과 도움말, 내비게이션 아이콘 테두리 없음, 상태 화면 레이블(제목 레이블 중복 없음), SF Symbol 이름 유효
-- 사용자 구성 palette: `willBeInsertedIntoToolbar: false` 사본을 만들고 해제한 뒤에도 항목 참조가 실제 툴바 항목이고, 도구 선택 snapshot·로딩 비활성·"Search Project…" 검증이 실제 항목에 닿음. 사본은 명령을 보내지 않음
+- 사용자 구성 palette: `willBeInsertedIntoToolbar: false` 사본을 만들고 해제한 뒤에도 항목 참조(내비게이션·검색·더 보기)가 실제 툴바 항목이고, 도구 선택 snapshot·로딩 비활성이 도구 막대에, "Search Project…" 검증이 실제 검색 항목에 닿음. 사본은 명령을 보내지 않음
 - O2 설정 값: 가운데 항목 `automaticallyAdjustsSafeAreaInsets == false`(겹침 검사만으로는 잡히지 않음)
 - 검색 미제공(`isSearchAvailable == false`): ready에서도 검색 필드·메뉴 비활성
 - 동작 메서드 guard: 로딩 상태에서 `navigateBack(_:)`·`navigateForward(_:)`를 직접 불러도 명령을 보내지 않음

@@ -11,7 +11,7 @@ enum ShellFrameStrings {
     static var backForward: String {
         String(localized: "Back/Forward", comment: "Toolbar customization label for the back/forward group")
     }
-    static var tools: String { String(localized: "Tools", comment: "Toolbar label for the tool area") }
+    static var tools: String { String(localized: "Tools", comment: "Accessibility label for the tool bar at the bottom of the canvas") }
     static var search: String { String(localized: "Search", comment: "Toolbar label for project search") }
     static var searchProject: String {
         String(localized: "Search Project", comment: "Toolbar palette label and help tag for project search")
