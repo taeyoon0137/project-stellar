@@ -28,8 +28,19 @@
 //! (직전 frame이 요청한 key는 적용). `begin_frame` 뒤, 그 frame의 `request` 전에 `collect`를 호출하면 안
 //! 됩니다(직전 frame이 요청한 key가 모두 stale로 판정됨).
 //!
-//! interactive·background 작업 분류(XII.1.4)는 후속 작업입니다. tessellator는 panic하지 않는다는
-//! 계약(XI.6.1·XI.6.2)을 전제합니다. release profile은 `panic = "abort"`이므로 panic은 process를
+//! ## runtime worker pool과의 관계
+//!
+//! 작업 class·priority 분류는 runtime의 worker pool(XII.1.4, `stellar_runtime::worker_pool`)에 있고, 이
+//! pool은 아직 그쪽으로 옮기지 않은 **별도 thread pool**입니다. `AsyncTessellation`이 이 pool을 구체
+//! 타입으로 소유하고 renderer-core는 runtime에 의존하지 않으므로, 옮기려면 job 제출을 추상화하는
+//! renderer-core API 변경이 필요합니다. 옮기는 일과 그 전까지의 thread 수 조정은
+//! `docs/task-reports/XII.1.4.md` "남은 위험"에 적은 후속 작업입니다. 두 pool을 함께 띄우면 이 pool의
+//! thread는 runtime pool 크기 계산(`WorkerPoolConfig::for_available_parallelism`)에 들어가지 않으므로
+//! CPU를 과다 점유할 수 있습니다.
+//!
+//! ## panic
+//!
+//! tessellator는 panic하지 않는다는 계약(XI.6.1·XI.6.2)을 전제합니다. release profile은 `panic = "abort"`이므로 panic은 process를
 //! 끝냅니다. dev·test profile에서 tessellator가 panic하면 worker가 그 job을 [`TessellationError::Failed`]
 //! 결과로 보내고 계속 실행합니다(진행 중 기록이 남아 같은 key가 영구히 `Pending`이 되지 않게 함).
 
