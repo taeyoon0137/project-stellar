@@ -964,8 +964,10 @@ fn read_bounded(path: &Path) -> Result<String, ManifestError> {
     Ok(text)
 }
 
-/// crate graph 검사에서 빼는 workspace member(ADR-0019): 개발 도구와 benchmark fixture crate.
-pub const EXCLUDED_MEMBERS: &[&str] = &["tools/xtask", "benchmarks/fixtures"];
+/// crate graph 검사에서 빼는 workspace member: 개발 도구, benchmark fixture crate(ADR-0019 결정 3), crate 사이
+/// 종단 시나리오 테스트 crate(`tests/integration`, dev 의존만 있고 제품 crate가 의존하지 않음). 셋 다 제품 crate가
+/// 아닌 개발용 crate입니다.
+pub const EXCLUDED_MEMBERS: &[&str] = &["tools/xtask", "benchmarks/fixtures", "tests/integration"];
 
 /// workspace 탐색을 시작할 manifest 경로(경로 순 정렬·중복 제거).
 ///
@@ -1870,7 +1872,14 @@ other.workspace = true
     fn without_policy_excluded(names: Vec<String>) -> Vec<String> {
         names
             .into_iter()
-            .filter(|name| name != "xtask" && name != "stellar-bench-fixtures")
+            .filter(|name| {
+                ![
+                    "xtask",
+                    "stellar-bench-fixtures",
+                    "stellar-integration-tests",
+                ]
+                .contains(&name.as_str())
+            })
             .collect()
     }
 
