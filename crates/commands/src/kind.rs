@@ -37,6 +37,8 @@ pub enum CommandKind {
     RestoreNodeRecords,
     /// subtree 복제 (VII.2.8).
     DuplicateSubtree,
+    /// Unicode scalar 범위의 Text 본문 교체.
+    ReplaceText,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -57,6 +59,7 @@ impl CommandKind {
         CommandKind::ConvertShapeToPath,
         CommandKind::RestoreNodeRecords,
         CommandKind::DuplicateSubtree,
+        CommandKind::ReplaceText,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -77,6 +80,7 @@ impl CommandKind {
             CommandKind::ConvertShapeToPath => 0x0031,
             CommandKind::RestoreNodeRecords => 0x0032,
             CommandKind::DuplicateSubtree => 0x0040,
+            CommandKind::ReplaceText => 0x0050,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -109,6 +113,7 @@ impl CommandKind {
             CommandKind::ConvertShapeToPath => "convert-shape-to-path",
             CommandKind::RestoreNodeRecords => "restore-node-records",
             CommandKind::DuplicateSubtree => "duplicate-subtree",
+            CommandKind::ReplaceText => "replace-text",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -162,6 +167,7 @@ mod tests {
                 (0x0031, "convert-shape-to-path"),
                 (0x0032, "restore-node-records"),
                 (0x0040, "duplicate-subtree"),
+                (0x0050, "replace-text"),
             ]
         );
     }

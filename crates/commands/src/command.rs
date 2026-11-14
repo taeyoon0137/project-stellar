@@ -311,6 +311,8 @@ pub enum Command {
     RestoreNodeRecords(RestoreNodeRecords),
     /// subtree 복제 (VII.2.8).
     DuplicateSubtree(DuplicateSubtree),
+    /// Text node의 부분 문자열을 편집합니다.
+    ReplaceText(crate::text_edit::ReplaceText),
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -346,6 +348,7 @@ impl Command {
             Command::ConvertFragmentToFrame(_) => CommandKind::ConvertFragmentToFrame,
             Command::ConvertShapeToPath(_) => CommandKind::ConvertShapeToPath,
             Command::RestoreNodeRecords(_) => CommandKind::RestoreNodeRecords,
+            Command::ReplaceText(_) => CommandKind::ReplaceText,
             Command::DuplicateSubtree(_) => CommandKind::DuplicateSubtree,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
@@ -366,6 +369,7 @@ impl Command {
             Command::ConvertFragmentToFrame(command) => command.validate(model),
             Command::ConvertShapeToPath(command) => command.validate(model),
             Command::RestoreNodeRecords(command) => command.validate(model),
+            Command::ReplaceText(command) => command.validate(model),
             Command::DuplicateSubtree(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
@@ -394,6 +398,7 @@ impl Command {
             Command::RestoreNodeRecords(command) => {
                 command.invert(model).map(Command::RestoreNodeRecords)
             }
+            Command::ReplaceText(command) => command.invert(model).map(Command::RestoreNodeRecords),
             Command::DuplicateSubtree(command) => command.invert().map(Command::DeleteSubtree),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
@@ -414,6 +419,7 @@ impl Command {
             Command::ConvertFragmentToFrame(command) => command.apply(ctx),
             Command::ConvertShapeToPath(command) => command.apply(ctx),
             Command::RestoreNodeRecords(command) => command.apply(ctx),
+            Command::ReplaceText(command) => command.apply(ctx),
             Command::DuplicateSubtree(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),

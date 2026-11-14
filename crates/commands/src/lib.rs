@@ -20,6 +20,9 @@ pub mod command;
 /// command 적용 context (VII.1.2).
 pub mod edit;
 
+/// 본문과 스타일을 함께 갱신하는 Text node 편집.
+pub mod text_edit;
+
 /// command canonical 직렬화 (VII.1.2).
 pub mod codec;
 
