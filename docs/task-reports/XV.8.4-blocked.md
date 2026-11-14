@@ -33,3 +33,9 @@
 
 - 위 행이 `[x]`가 된 뒤 착수합니다. fixture 재료: XV.5.4 그래프 scope 테스트(`ref_resolution`), XV.5.5 offline
   부분 열기 테스트(`library_load`), XV.7.1 실제 Git update 후보 테스트(`library_update`).
+
+## 통합 후 확인 (2026-11-14)
+
+- update 구성 요소의 차단 사슬 끝이 바뀌었습니다. IX.4.6은 통합 후 `[x]`이고 XV.7.3은 `[ ]`(미착수)입니다
+  (`docs/task-reports/XV.7.3-blocked.md` "통합 후 확인"). 적용 단계 XV.7.4는 여전히 `[!]`이므로 위 실패 선행조건과 이 행의
+  `[!]`는 그대로입니다.

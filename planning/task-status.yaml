@@ -8515,7 +8515,7 @@ tasks:
     verified_at: "2026-11-14T11:44:52+09:00"
   - id: "XV.7.3"
     title: "candidate library를 적용하기 전 사용 project의 external refs와 instance overrides를 검증합니다."
-    status: blocked
+    status: not_started
     depends_on:
       - "IX.4.6"
       - "XV.5.2"

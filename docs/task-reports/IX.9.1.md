@@ -2,8 +2,8 @@
 
 - WBS: IX.9.1
 - 작업명: Button, TextInput, Modal, List, Radio 합성 예제 component library fixture
-- 상태: 부분 완료 (`[~]`) — 선행 IX.8(접근성 의미 트리)이 미착수이고, scene document validator(VI.10.1)는 ComponentInstance를 표현하지 못해 "document validator 0 오류"를 컴포넌트 계층 검사기로만 확인했습니다(아래 "후속 수정 (리뷰 반영)").
-- 선행: IX.6(`[x]` 전체), IX.8(section 단위 선행 — 완화 적용, 아래 "차이" 참고)
+- 상태: 부분 완료 (`[~]`) — 이 fixture에 접근성 tree golden과 IX.8.5 접근성 진단 0건 확인이 아직 없고, scene document validator(VI.10.1)는 ComponentInstance를 표현하지 못해 "document validator 0 오류"를 컴포넌트 계층 검사기로만 확인했습니다(아래 "후속 수정 (리뷰 반영)", "통합 후 확인").
+- 선행: IX.6(`[x]` 전체), IX.8(section 단위 선행. 작성 당시 미착수라 완화 적용, 통합 후 IX.8.1\~IX.8.6 모두 `[x]` — 아래 "차이"·"통합 후 확인" 참고)
 
 ## 필수 실행 환경
 
@@ -96,3 +96,11 @@
 | `cargo run -q -p xtask -- generate-ledger` | 1023 tasks 생성, 종료 코드 0 |
 | `cargo run -q -p xtask -- validate-task-status` | 종료 코드 0 |
 | `cargo run -q -p xtask -- sync-plan` | 종료 코드 0 |
+
+## 통합 후 확인 (2026-11-14)
+
+- 통합 브랜치 계획서에서 IX.8.1\~IX.8.6이 모두 `[x]`입니다. 위 "차이"와 "상태를 낮춘 근거"의 "IX.8 미착수"는 작성 당시
+  상태이며, 이제 선행 부족은 `[~]` 사유가 아닙니다.
+- `[~]`는 유지합니다. 남은 조건은 위 "`[x]`로 올릴 조건"과 같습니다. 이 fixture에 접근성 tree golden(IX.8.3·IX.8.4
+  생성기)과 IX.8.5 진단 0건 확인을 추가하고, scene document validator가 ComponentInstance를 다루게 되면 그 validator 0 오류를
+  함께 확인해야 합니다. 이 수정에서는 코드와 fixture를 바꾸지 않았습니다.

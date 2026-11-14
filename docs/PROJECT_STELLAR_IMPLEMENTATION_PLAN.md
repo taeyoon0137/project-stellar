@@ -1579,7 +1579,7 @@ tools/xtask/
 |---|---|---|---|---|
 | XV.7.1 | `[x]` | dependency update request가 selector 재해석 후 CurrentLibrarySnapshot과 CandidateLibrarySnapshot을 생성합니다. | current/candidate commit 정확. | XV.2.4, XV.5.1 |
 | XV.7.2 | `[x]` | library resource Semantic Diff를 ComponentDefinition·Property·Token 단위로 계산합니다. | resource 변경 fixture 정확. | XIV.3.7, XV.5.1 |
-| XV.7.3 | `[!]` | candidate library를 적용하기 전 사용 project의 external refs와 instance overrides를 검증합니다. | removed property override가 orphan diagnostic. | IX.4.6, XV.5.2 |
+| XV.7.3 | `[ ]` | candidate library를 적용하기 전 사용 project의 external refs와 instance overrides를 검증합니다. | removed property override가 orphan diagnostic. | IX.4.6, XV.5.2 |
 | XV.7.4 | `[!]` | 사용자 승인 후 lockfile과 in-memory library snapshot을 원자적으로 갱신합니다. 사용 project document override는 StableId로 재적용합니다. | update 후 render/semantic snapshot expected. | XV.7.3, XV.4.5 |
 | XV.7.5 | `[!]` | update 실패 시 이전 lock/cache snapshot을 유지합니다. | network/cache/schema fault fixture 통과. | XV.7.4 |
 
