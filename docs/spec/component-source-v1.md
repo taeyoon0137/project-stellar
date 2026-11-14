@@ -55,6 +55,8 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 라이브러리에서 행을 선택하고 **Width**, **Height**에 논리 픽셀 크기를 입력한 뒤 **Apply Size** 또는 Return을 누르면 해당 컴포넌트의 root Frame을 즉시 저장합니다. 유한한 0 이상의 크기를 받습니다. 코어는 행에 표시된 전체 component ID와 원본 hash를 확인합니다. Git checkout·수동 편집·CLI 저장으로 같은 파일의 내용이 바뀌었거나 root가 잠겼으면 값을 적용하지 않고 현재 목록을 다시 읽습니다. 무변경은 주석을 포함한 bytes를 보존합니다. 다른 원본의 변경은 선택한 정의가 유효한 한 충돌로 간주하지 않습니다. 이 편집은 문서 generation이나 캔버스 Undo 기록을 만들지 않습니다.
 
+같은 행의 **Edit Fill…**에서 root Frame의 채우기를 편집합니다. **Fill**을 켜면 sRGB 또는 Display P3의 RGB와 알파를 지정할 수 있습니다. 알파 0인 색도 색공간과 RGB를 보존합니다. **Fill**을 끄고 **Apply**를 누르면 해당 Frame의 채우기가 없어집니다. **Cancel**은 파일을 쓰지 않습니다. **Apply**는 시트를 열 때 읽은 원본 hash와 root 잠금을 크기 편집과 같은 규칙으로 확인합니다. 저장하면 현재 문서에서 그 정의를 참조하는 인스턴스들이 같은 문서 revision에서 갱신됩니다.
+
 ## 라이브러리에서 인스턴스 배치
 
 신뢰한 프로젝트에서 **View → Component Library**로 정의를 선택하고 **Place Instance…**를 누릅니다. 활성 View의 root Frame을 기준으로 X·Y를 논리 픽셀로 입력합니다. 음수와 소수 좌표를 사용할 수 있습니다. **Place**는 새 StableId를 가진 ComponentInstance 한 개를 추가하고 선택합니다. 기존 정의를 여러 번 배치하면 각 인스턴스는 같은 component ID를 참조합니다. 표시되었던 원본의 hash, 활성 View, 문서 revision 또는 기반 generation이 바뀌면 배치하지 않습니다.

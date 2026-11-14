@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use stellar_core_types::{
+    color::Color,
     ids::{IdRemapTable, StableId},
     order_key::OrderKey,
     reference::{ComponentRef, NodeRef},
@@ -26,6 +27,15 @@ use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_chec
 pub(crate) const EXT: &str = ".stellar.yaml";
 pub(crate) const MAX_COMPONENT_FILES: usize = 4096;
 pub(crate) const MAX_PROJECT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// 기본 앱이 선택된 원본 한 개에 수행하는 root Frame 편집.
+#[derive(Clone, Copy)]
+pub enum ComponentRootEdit {
+    /// 논리 픽셀 크기.
+    Size(Size2),
+    /// 원본 색 공간과 비연관 RGBA. None이면 배경 없음.
+    Background(Option<Color>),
+}
 
 /// 빈 공개 인터페이스와 Free Frame tree의 편집 원본.
 #[derive(Debug)]
@@ -191,7 +201,7 @@ impl ComponentSource {
         }
     }
 
-    fn ensure_geometry_editable(&self, id: StableId) -> Result<(), TextSourceError> {
+    fn ensure_unlocked(&self, id: StableId) -> Result<(), TextSourceError> {
         let mut current = Some(id);
         while let Some(id) = current {
             let record = if id == self.root.id {
@@ -211,14 +221,25 @@ impl ComponentSource {
 
     /// CLI 및 프로젝트 창에서 같은 Frame 잠금과 무변경 판정을 사용합니다.
     fn set_frame_size(&mut self, id: StableId, size: Size2) -> Result<bool, TextSourceError> {
-        self.ensure_geometry_editable(id)?;
+        self.edit_frame(id, ComponentRootEdit::Size(size))
+    }
+
+    fn edit_frame(
+        &mut self,
+        id: StableId,
+        edit: ComponentRootEdit,
+    ) -> Result<bool, TextSourceError> {
+        self.ensure_unlocked(id)?;
         let NodePayload::Frame(frame) = &mut self.record_mut(id)?.payload else {
             unreachable!("validated Frame");
         };
-        if frame.size == size {
-            return Ok(false);
+        match edit {
+            ComponentRootEdit::Size(size) if size != frame.size => frame.size = size,
+            ComponentRootEdit::Background(fill) if fill != frame.background => {
+                frame.background = fill
+            }
+            _ => return Ok(false),
         }
-        frame.size = size;
         Ok(true)
     }
 
@@ -585,7 +606,7 @@ pub fn set_position(
     position: Vec2,
 ) -> Result<(ComponentSource, ContentHash), TextSourceError> {
     let (mut source, hash) = open_expected(path, expected)?;
-    source.ensure_geometry_editable(id)?;
+    source.ensure_unlocked(id)?;
     let record = source.record_mut(id)?;
     let NodePayload::Frame(frame) = &mut record.payload else {
         unreachable!("validated Frame")
@@ -665,15 +686,26 @@ pub fn resize_project_root(
     expected: ContentHash,
     size: Size2,
 ) -> Result<(ComponentSource, PathBuf, ContentHash), TextSourceError> {
-    resize_project_root_with_budget(root, dir, id, expected, size, MAX_PROJECT_SOURCE_BYTES)
+    edit_project_root(root, dir, id, expected, ComponentRootEdit::Size(size))
 }
 
-fn resize_project_root_with_budget(
+/// 선택한 원본의 크기·채우기를 동일한 CAS·잠금·용량 예산으로 기록합니다.
+pub fn edit_project_root(
     root: &Path,
     dir: &Path,
     id: StableId,
     expected: ContentHash,
-    size: Size2,
+    edit: ComponentRootEdit,
+) -> Result<(ComponentSource, PathBuf, ContentHash), TextSourceError> {
+    edit_project_root_with_budget(root, dir, id, expected, edit, MAX_PROJECT_SOURCE_BYTES)
+}
+
+fn edit_project_root_with_budget(
+    root: &Path,
+    dir: &Path,
+    id: StableId,
+    expected: ContentHash,
+    edit: ComponentRootEdit,
     limit: u64,
 ) -> Result<(ComponentSource, PathBuf, ContentHash), TextSourceError> {
     let (_, mut files, remaining) = project_library(root, limit)?;
@@ -693,7 +725,7 @@ fn resize_project_root_with_budget(
     if actual != expected || source.definition().id != id {
         return Err(TextSourceError::Changed);
     }
-    if !source.set_frame_size(source.root.id, size)? {
+    if !source.edit_frame(source.root.id, edit)? {
         return Ok((source, path, actual));
     }
     let encoded = source.to_yaml()?;
@@ -984,16 +1016,55 @@ mod tests {
             std::fs::metadata(&sibling).unwrap().len() + first.to_yaml().unwrap().len() as u64;
         let original = std::fs::read(&file).unwrap();
         let other_bytes = std::fs::read(&sibling).unwrap();
-        assert!(
-            resize_project_root_with_budget(&root, &dir, id(1), hash, size, exact - 1).is_err()
-        );
+        assert!(edit_project_root_with_budget(
+            &root,
+            &dir,
+            id(1),
+            hash,
+            ComponentRootEdit::Size(size),
+            exact - 1
+        )
+        .is_err());
         assert_eq!(std::fs::read(&file).unwrap(), original);
-        resize_project_root_with_budget(&root, &dir, id(1), hash, size, exact).unwrap();
+        edit_project_root_with_budget(
+            &root,
+            &dir,
+            id(1),
+            hash,
+            ComponentRootEdit::Size(size),
+            exact,
+        )
+        .unwrap();
         assert_eq!(
             std::fs::read_to_string(&file).unwrap(),
             first.to_yaml().unwrap()
         );
         assert_eq!(std::fs::read(&sibling).unwrap(), other_bytes);
+    }
+
+    #[test]
+    fn locked_root_rejects_fill_even_if_unchanged() {
+        let temp = crate::saved_project::tests::TempDir::new();
+        let root = temp.path.canonicalize().unwrap();
+        let dir = root.join("design/components");
+        std::fs::create_dir_all(&dir).unwrap();
+        let id = |n| StableId::new_v7(1, 0, n);
+        let mut component = ComponentSource::new(id(1), "Card".into(), id(2)).unwrap();
+        component.root.locked = true;
+        let (file, hash) = create_in_project(&root, &dir, &component).unwrap();
+        let original = std::fs::read(&file).unwrap();
+        let NodePayload::Frame(frame) = &component.root.payload else {
+            unreachable!()
+        };
+        let result = edit_project_root(
+            &root,
+            &dir,
+            id(1),
+            hash,
+            ComponentRootEdit::Background(frame.background),
+        );
+        assert!(matches!(result, Err(TextSourceError::Invalid(_))));
+        assert_eq!(std::fs::read(file).unwrap(), original);
     }
 
     #[test]

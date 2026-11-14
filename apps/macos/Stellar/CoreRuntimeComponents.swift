@@ -9,6 +9,7 @@ struct LibraryComponent: Equatable, Sendable {
     let name: String
     let filename: String
     let hash: String
+    let background: InspectorColor?
 }
 
 enum ComponentLibraryResult: Sendable {
@@ -39,7 +40,7 @@ extension CoreRuntime {
         // 두 호출 사이에 checkout으로 결과 크기가 바뀔 수 있습니다. 매 호출은 독립 snapshot입니다.
         for _ in 0..<3 {
             let status = buffer.withUnsafeMutableBufferPointer {
-                stellar_window_component_library(handle, session, $0.baseAddress, $0.count, &length)
+                stellar_window_component_library_with_fill(handle, session, $0.baseAddress, $0.count, &length)
             }
             if status == STELLAR_BUFFER_TOO_SMALL, length > buffer.count, length <= 4 * 1024 * 1024 {
                 buffer = [UInt8](repeating: 0, count: length)
@@ -55,8 +56,17 @@ extension CoreRuntime {
                 guard let id = reader.uuid(), let root = reader.uuid(), let nodes = reader.u32(),
                       let width = reader.u32(), let height = reader.u32(), let name = reader.text(),
                       let filename = reader.text(), let hash = reader.text() else { break }
+                guard let space = reader.u8() else { break }
+                let fill: InspectorColor?
+                if space == 0 { fill = nil }
+                else {
+                    guard let space = InspectorColor.Space(rawValue: space),
+                          let red = reader.u32(), let green = reader.u32(), let blue = reader.u32(), let alpha = reader.u32() else { break }
+                    fill = InspectorColor(space: space, red: Double(Float(bitPattern: red)), green: Double(Float(bitPattern: green)),
+                                          blue: Double(Float(bitPattern: blue)), alpha: Double(Float(bitPattern: alpha)))
+                }
                 rows.append(LibraryComponent(id: id, root: root, nodeCount: nodes, width: Float(bitPattern: width),
-                                             height: Float(bitPattern: height), name: name, filename: filename, hash: hash))
+                                             height: Float(bitPattern: height), name: name, filename: filename, hash: hash, background: fill))
             }
             if rows.count == Int(count), reader.isAtEnd { return .loaded(rows, legacyChunks: Int(chunks)) }
             break
@@ -65,22 +75,48 @@ extension CoreRuntime {
     }
 }
 
+extension StellarCanvasColor {
+    init(_ background: InspectorColor?) {
+        self.init()
+        if let background {
+            space = UInt32(background.space.rawValue)
+            rgba = (Float(background.red), Float(background.green), Float(background.blue), Float(background.alpha))
+        }
+    }
+}
+
+enum ComponentRootChange: Sendable {
+    case size(Float, Float)
+    case background(InspectorColor?)
+}
+
 extension CoreRuntime {
-    /// writer 결과는 단일 호출에서 수신합니다. 읽기처럼 작은 출력 버퍼로 쓰기를 재시도하지 않습니다.
     static func resizeComponent(handle: UInt64, session: UInt64, entry: LibraryComponent, width: Float, height: Float) -> String? {
+        editComponent(handle: handle, session: session, entry: entry, change: .size(width, height))
+    }
+
+    /// writer 결과는 단일 호출에서 수신합니다. 읽기처럼 작은 출력 버퍼로 쓰기를 재시도하지 않습니다.
+    static func editComponent(handle: UInt64, session: UInt64, entry: LibraryComponent, change: ComponentRootChange) -> String? {
         precondition(!Thread.isMainThread)
         var id = entry.id.uuid, length = 0
         var bytes = [UInt8](repeating: 0, count: Int(STELLAR_EVENT_TEXT_MAX))
         let status = withUnsafeBytes(of: &id) { id in
             Array(entry.hash.utf8).withUnsafeBufferPointer { hash in
                 bytes.withUnsafeMutableBufferPointer { error in
-                    stellar_window_component_resize(handle, session, id.bindMemory(to: UInt8.self).baseAddress,
-                                                    hash.baseAddress, hash.count, width, height, error.baseAddress, error.count, &length)
+                    let node = id.bindMemory(to: UInt8.self).baseAddress
+                    switch change {
+                    case .size(let width, let height):
+                        return stellar_window_component_resize(handle, session, node, hash.baseAddress, hash.count, width, height,
+                                                               error.baseAddress, error.count, &length)
+                    case .background(let fill):
+                        return stellar_window_component_set_fill(handle, session, node, hash.baseAddress, hash.count,
+                                                                 StellarCanvasColor(fill), error.baseAddress, error.count, &length)
+                    }
                 }
             }
         }
         guard status != STELLAR_OK else { return nil }
         return length > 0 && length <= bytes.count ? String(decoding: bytes.prefix(length), as: UTF8.self)
-            : String(localized: "Couldn’t save the component size.")
+            : String(localized: "Couldn’t update the component.")
     }
 }

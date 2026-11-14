@@ -286,11 +286,7 @@ enum CoreRuntime {
 
     static func setFrameBackground(handle: UInt64, session: UInt64, view: UUID, node: UUID,
                           revision: UInt64, background: InspectorColor?) -> Result<UInt64, CoreRuntimeCallError> {
-        var color = StellarCanvasColor()
-        if let background {
-            color.space = UInt32(background.space.rawValue)
-            color.rgba = (Float(background.red), Float(background.green), Float(background.blue), Float(background.alpha))
-        }
+        let color = StellarCanvasColor(background)
         var request: UInt64 = 0
         let status = withUnsafeBytes(of: view.uuid) { viewBytes in
             withUnsafeBytes(of: node.uuid) { nodeBytes in
