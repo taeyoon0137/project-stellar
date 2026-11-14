@@ -10156,34 +10156,38 @@ tasks:
       - CI-MAC
   - id: "XXIV.5.3"
     title: "명령줄 설치 위치 결정을 구현합니다. 위치와 근거는 §37 보안 경계(최소 권한)와 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하고(ADR-0005 §7), 계산은 UI·Document 스레드 밖에서 합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIV.5.1"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIV.5.3.md"
   - id: "XXIV.5.4"
     title: "`stellar` 명령 설치·제거 로직을 구현합니다(2026-11-14 제품 소유자 결정). 사용자 동의 뒤에만 파일을 바꾸고, PATH에서 `stellar`가 Stellar 자기 링크가 아닌 다른 프로그램으로 해석되면(설치 위치에 있거나 PATH 앞쪽에 있는 경우) 덮어쓰지 않고 `stellar-cli` 이름으로 설치하고, `stellar-cli`도 다른 프로그램이 쓰고 있으면 설치하지 않고 알립니다(ADR-0005 §2). 그 밖의 설치 방식과 안전 조건은 §37과 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 설치 상태는 OS 사용자 데이터에만 둡니다(ADR-0005 §7)."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIV.5.3"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIV.5.4.md"
   - id: "XXIV.5.5"
     title: "설치 상태 확인을 구현합니다. 확인 시점·방법과 확인 결과의 처리는 Apple 공식 문서와 각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 처리는 XXIV.5.4와 같은 조건을 지킵니다. 확인은 UI 스레드 밖에서 합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIV.5.4"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIV.5.5.md"
   - id: "XXIV.5.6"
     title: "macOS 첫 실행 명령줄 설치 화면을 구현합니다(2026-11-14 제품 소유자 결정). `stellar` helper를 포함한 빌드를 처음 실행하면 설치 화면을 제공하고, 사용자가 명시적으로 동의하기 전에는 파일을 만들거나 바꾸지 않습니다. 설치를 되돌리는 진입점도 제공하고, 실제로 설치한 명령 이름(`stellar` 또는 `stellar-cli`)을 보여 줍니다. 화면 구성과 진입점 배치는 HIG를 근거로 정해 보고서에 기록합니다."
-    status: not_started
+    status: reported_done
     depends_on:
       - "XXIV.5.5"
       - "XII.9.1"
       - "XII.6.5"
     required_environments:
       - DEV-MAC
+    report: "docs/task-reports/XXIV.5.6.md"
   - id: "XXV.1.1"
     title: "session-only HistoryEntry의 stable journal schema와 version을 정의합니다."
     status: verified
