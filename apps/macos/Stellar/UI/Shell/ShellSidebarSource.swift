@@ -4,11 +4,15 @@ import Foundation
 @MainActor
 final class ShellSidebarSource: SidebarDataProvider {
     private struct Display: Equatable {
-        let session: UInt64
-        let view: UUID
-        let revision: UInt64
-        let undo: UInt32
-        let redo: UInt32
+        let target: StellarSelectionTarget
+        var session: UInt64 { target.session }
+        var view: UUID { UUID(uuid: target.view) }
+        var revision: UInt64 { target.revision }
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.session == rhs.session && lhs.view == rhs.view && lhs.revision == rhs.revision
+                && lhs.target.history_sequence == rhs.target.history_sequence
+        }
     }
     private struct Request: Hashable {
         let parent: SidebarStableID?
@@ -26,20 +30,18 @@ final class ShellSidebarSource: SidebarDataProvider {
     private var version: UInt64 = 0
     private(set) var snapshot = SidebarSnapshot.empty
     var snapshotDidChange: (() -> Void)?
-    var duplicate: (() -> Void)?
-    var canDuplicate: (() -> Bool)?
-    var delete: (() -> Void)?
-    var canDelete: (() -> Bool)?
+    var editSelection: ((ShellCommand, StellarSelectionTarget, [UUID]) -> Void)?
+    var canEditSelection: ((ShellCommand) -> Bool)?
     var select: (([UUID]) -> Void)?
     var rename: ((_ view: UUID, _ revision: UInt64, _ id: UUID, _ name: String) -> Void)?
     var trusted = false {
         didSet { if oldValue != trusted { publish() } }
     }
 
-    func refresh(runtime: UInt64?, session: ShellWindowSessionHandle?, info: StellarWindowSessionInfo?, view: StellarWindowViewInfo?) {
+    func refresh(runtime: UInt64?, session: ShellWindowSessionHandle?, target: StellarSelectionTarget?) {
         self.runtime = runtime
         window = session
-        guard let session, !session.isClosed, let info, let view, view.has_view == 1 else {
+        guard let session, !session.isClosed, let target, session.session == target.session else {
             if display != nil || snapshot.loadState != .ready {
                 display = nil
                 reset()
@@ -48,8 +50,7 @@ final class ShellSidebarSource: SidebarDataProvider {
             }
             return
         }
-        let next = Display(session: session.session, view: UUID(uuid: view.active_view), revision: info.revision,
-                           undo: info.undo_depth, redo: info.redo_depth)
+        let next = Display(target: target)
         guard next != display else { return }
         let selectionOnly = display?.session == next.session && display?.view == next.view && display?.revision == next.revision
         display = next
@@ -83,10 +84,10 @@ final class ShellSidebarSource: SidebarDataProvider {
     func validate(_ command: SidebarCommand) -> SidebarCommandValidation {
         switch command {
         case .duplicate(let ids):
-            return canDuplicate?() == true && ids.count == 1 && ids == snapshot.selection
+            return canEditSelection?(.duplicate) == true && ids.count == 1 && ids == snapshot.selection && display?.target.selection_count == 1
                 ? .allowed : .denied(.unsupported)
         case .delete(let ids):
-            return canDelete?() == true && !ids.isEmpty && Set(ids) == Set(snapshot.selection)
+            return canEditSelection?(.delete) == true && !ids.isEmpty && display?.target.selection_count == UInt64(ids.count) && Set(ids) == Set(snapshot.selection)
                 ? .allowed : .denied(.unsupported)
         case .reload: return display != nil ? .allowed : .denied(.unsupported)
         case .renameNode(let id, _):
@@ -111,8 +112,10 @@ final class ShellSidebarSource: SidebarDataProvider {
     func perform(_ command: SidebarCommand) {
         guard validate(command).isAllowed else { return }
         switch command {
-        case .duplicate: duplicate?()
-        case .delete: delete?()
+        case .duplicate(let ids):
+            if let display { editSelection?(.duplicate, display.target, ids.map(\.uuid)) }
+        case .delete(let ids):
+            if let display { editSelection?(.delete, display.target, ids.map(\.uuid)) }
         case .reload:
             reset()
             enqueue(Request(parent: nil, after: nil))

@@ -171,19 +171,23 @@ enum CoreRuntime {
         return .success(request)
     }
 
-    static func deleteSelection(handle: UInt64, session: UInt64, view: UUID, revision: UInt64) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = withUnsafeBytes(of: view.uuid) { bytes in
-            stellar_window_session_delete_selection(handle, session, bytes.bindMemory(to: UInt8.self).baseAddress, revision, &request)
-        }
-        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
-        return .success(request)
+    static func selectionTarget(handle: UInt64, session: UInt64) -> StellarSelectionTarget? {
+        var target = StellarSelectionTarget()
+        return stellar_window_selection_target(handle, session, &target) == STELLAR_OK ? target : nil
     }
 
-    static func duplicateSelection(handle: UInt64, session: UInt64, view: UUID, revision: UInt64) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = withUnsafeBytes(of: view.uuid) { bytes in
-            stellar_window_session_duplicate_selection(handle, session, bytes.bindMemory(to: UInt8.self).baseAddress, revision, &request)
+    static func editSelection(handle: UInt64, target: StellarSelectionTarget, action: UInt32,
+                              ids: [UUID]?) -> Result<UInt64, CoreRuntimeCallError> {
+        var target = target, request: UInt64 = 0
+        let status: StellarStatus
+        if let ids {
+            guard !ids.isEmpty else { return .failure(CoreRuntimeCallError(status: STELLAR_INVALID_ARGUMENT)) }
+            let bytes = ids.map(\.uuid)
+            status = bytes.withUnsafeBytes { raw in
+                stellar_window_edit_selection(handle, &target, action, raw.bindMemory(to: UInt8.self).baseAddress, ids.count, &request)
+            }
+        } else {
+            status = stellar_window_edit_selection(handle, &target, action, nil, 0, &request)
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
         return .success(request)

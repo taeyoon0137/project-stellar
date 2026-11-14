@@ -136,6 +136,7 @@ pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
 pub use git_names::{GitNameRow, SelectionOperation};
+pub use node_delete::{SelectionEdit, SelectionEditTarget};
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
@@ -977,6 +978,8 @@ pub struct WindowSessionSummary {
     pub redo_depth: u32,
     /// 선택된 node 수.
     pub selection_len: u32,
+    /// Undo 스택 끝의 sequence. 문서 revision이 같은 선택 변경도 구분합니다.
+    pub history_sequence: u64,
     /// 표시 중인 primary 선택.
     pub primary_selection: Option<StableId>,
     /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
@@ -1408,6 +1411,7 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         undo_depth: clamp(session.history().history().len()),
         redo_depth: clamp(session.history().history().redo_entries().len()),
         selection_len: clamp(session.view().selection().len()),
+        history_sequence: session.history_sequence(),
         primary_selection: session.view().displayed_selection().primary(),
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),

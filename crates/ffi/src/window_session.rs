@@ -12,7 +12,9 @@
 //! [`stellar_command_code`]에 물어 코드를 얻고, 단축키는 각 운영체제 관례대로 셸 메뉴에 둡니다.
 
 use stellar_core_types::ids::StableId;
-use stellar_runtime::app::{AppRuntime, ProjectSessionId, WindowSessionHandle};
+use stellar_runtime::app::{
+    AppRuntime, ProjectSessionId, SelectionEdit, SelectionEditTarget, WindowSessionHandle,
+};
 use stellar_runtime::app_command::AppCommand;
 
 use crate::{ffi_guard, registry, StellarStatus};
@@ -259,6 +261,125 @@ pub unsafe extern "C" fn stellar_window_session_pan(
         };
         let result = match rt.app() {
             Ok(app) => app.pan_viewport(WindowSessionHandle(session), dx, dy),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
+/// 표시된 선택의 문서 편집 기준(기존 창·뷰 ABI와 독립).
+#[derive(Debug, Default, Clone, Copy)]
+#[repr(C)]
+pub struct StellarSelectionTarget {
+    session: u64,
+    revision: u64,
+    history_sequence: u64,
+    selection_count: u64,
+    view: [u8; 16],
+}
+
+/// 한 번 게시된 snapshot에서 선택과 활성 View를 함께 읽습니다.
+/// # Safety
+/// `out`은 대상 구조체 하나를 쓸 수 있어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_selection_target(
+    handle: u64,
+    session: u64,
+    out: *mut StellarSelectionTarget,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if out.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { out.write(StellarSelectionTarget::default()) };
+        let Ok(reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let state = rt.app.as_ref().map(AppRuntime::state);
+        let Some(summary) = state
+            .as_ref()
+            .and_then(|s| s.window(WindowSessionHandle(session)))
+        else {
+            return StellarStatus::InvalidArgument;
+        };
+        let Some(view) = summary.active_view else {
+            return StellarStatus::NoError;
+        };
+        unsafe {
+            out.write(StellarSelectionTarget {
+                session,
+                revision: summary.revision.0,
+                history_sequence: summary.history_sequence,
+                selection_count: u64::from(summary.selection_len),
+                view: view.to_bytes(),
+            })
+        };
+        StellarStatus::Ok
+    })
+}
+
+/// 표시된 선택에 문서 명령을 접수합니다. Layers 요청은 대상 ID도 함께 고정합니다.
+/// # Safety
+/// `target`은 구조체 하나, `ids`는 null 또는 `count * 16`바이트를 읽을 수 있어야 합니다.
+/// `out_request`는 null 또는 쓰기가 가능한 u64 포인터입니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_edit_selection(
+    handle: u64,
+    target: *const StellarSelectionTarget,
+    action: u32,
+    ids: *const [u8; 16],
+    count: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        let Some(target) = (unsafe { target.as_ref() }) else {
+            return StellarStatus::NullPointer;
+        };
+        let edit = match action {
+            1 => SelectionEdit::Delete,
+            2 => SelectionEdit::Duplicate,
+            _ => return StellarStatus::InvalidArgument,
+        };
+        if ids.is_null() && count != 0 {
+            return StellarStatus::NullPointer;
+        }
+        if count > isize::MAX as usize / 16 {
+            return StellarStatus::InvalidArgument;
+        }
+        let ids = if ids.is_null() {
+            None
+        } else {
+            if count == 0 || count as u64 != target.selection_count {
+                return StellarStatus::InvalidArgument;
+            }
+            Some(
+                unsafe { std::slice::from_raw_parts(ids, count) }
+                    .iter()
+                    .copied()
+                    .map(StableId::from_bytes)
+                    .collect(),
+            )
+        };
+        let target = SelectionEditTarget {
+            session: WindowSessionHandle(target.session),
+            view: StableId::from_bytes(target.view),
+            revision: stellar_core_types::revision::DocumentRevision(target.revision),
+            history_sequence: target.history_sequence,
+        };
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.edit_selection(target, edit, ids),
             Err(status) => return status,
         };
         unsafe { rt.finish_request(result, out_request) }
@@ -960,6 +1081,8 @@ pub(crate) mod tests {
             std::mem::offset_of!(StellarWindowSessionInfo, window_id),
             56
         );
+        assert_eq!(std::mem::size_of::<StellarSelectionTarget>(), 48);
+        assert_eq!(std::mem::offset_of!(StellarSelectionTarget, view), 32);
         assert_eq!(WINDOW_SESSION_INFO_VERSION, 2);
         assert_eq!(std::mem::size_of::<StellarWindowViewInfo>(), 56);
         assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, center_x), 16);

@@ -1,5 +1,5 @@
 //! 단일 선택 subtree를 같은 부모 아래에 복제하고 한 history 항목으로 선택합니다.
-use super::frame_move::{command_id, trusted_canvas_window};
+use super::frame_move::command_id;
 use super::node_delete::editable_selected_roots;
 use super::*;
 use stellar_commands::{
@@ -8,27 +8,7 @@ use stellar_commands::{
 };
 use stellar_core_types::{clock::ManualClock, ids::StableIdGenerator};
 
-impl AppRuntime {
-    /// 신뢰한 창의 단일 선택 subtree를 복제하고 복제본을 선택합니다.
-    pub fn duplicate_selected_node(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-    ) -> Result<RequestId, RequestError> {
-        self.submit(move |ctx, request| {
-            duplicate_selected(
-                trusted_canvas_window(ctx, session)?,
-                request,
-                view,
-                revision,
-            )?;
-            Ok(RuntimeEvent::WindowViewChanged { request, session })
-        })
-    }
-}
-
-fn duplicate_selected(
+pub(super) fn duplicate_selected(
     window: &mut ProjectWindowSession,
     request: RequestId,
     view: StableId,
