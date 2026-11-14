@@ -1,7 +1,7 @@
 # Workspace crate 지도
 
 이 문서는 루트 `Cargo.toml`의 workspace member 32개를 crate마다 한 문단으로 설명합니다. 커밋
-`993d7d0`의 코드에서 확인한 내용만 적었습니다. 근거는 각 crate의 `Cargo.toml`, `src/lib.rs` module
+`939d142`의 코드에서 확인한 내용만 적었습니다. 근거는 각 crate의 `Cargo.toml`, `src/lib.rs` module
 문서와 module 선언, 그리고 의존 정책 `tools/xtask/src/crate_graph.rs`입니다. 문서와 코드가 다르면
 코드가 기준입니다.
 
@@ -15,7 +15,7 @@
 - [저장, 프로젝트, Git](#저장-프로젝트-git)
 - [앱 runtime과 셸 경계](#앱-runtime과-셸-경계)
 - [에이전트 도구 계층](#에이전트-도구-계층)
-- [아직 내용이 없는 crate](#아직-내용이-없는-crate)
+- [Target Profile과 접근성](#target-profile과-접근성)
 - [개발 도구 crate](#개발-도구-crate)
 - [관련 문서](#관련-문서)
 
@@ -80,11 +80,13 @@
 | accessibility | `crates/accessibility` | core-types | core-types | 없음 |
 | `xtask` | `tools/xtask` | 정책 밖 | storage, core-types | `yaml-rust2 =0.11.0` |
 | bench-fixtures | `benchmarks/fixtures` | 정책 밖 | core-types, document, expressions, storage, project, layout, assets | 없음 |
-| integration-tests | `tests/integration` | 정책 밖 | dev만: core-types, document`[test-support]`, commands`[test-support]`, history, storage, project, git-porcelain`[test-support]`, semantic-diff, semantic-merge | 없음 |
+| integration-tests | `tests/integration` | 정책 밖 | dev만: core-types, document`[test-support]`, commands`[test-support]`, history, storage, project, git-porcelain`[test-support]`, semantic-diff, semantic-merge, expressions`[test-support]`, renderer-core`[test-support]`, target-profile | 없음 |
 
 `test-support` feature를 정의한 crate는 document, commands(document의 `test-support`를 함께 켬),
-git-porcelain입니다. 세 crate 모두 기본값은 꺼져 있고, manifest 주석은 다른 crate가
-`[dev-dependencies]`에서만 켜도록 정합니다.
+git-porcelain, expressions, renderer-core입니다. 다섯 crate 모두 기본값은 꺼져 있고, manifest 주석은 다른
+crate가 `[dev-dependencies]`에서만 켜도록 정합니다. document의 `workspace_production_code_does_not_use_test_support`
+테스트가 workspace 모든 manifest의 `[dependencies]`·`[build-dependencies]`·`[features]`가 이 feature를 켜지
+않는지 검사합니다.
 
 ## 공통 기반
 
@@ -118,8 +120,10 @@ type rule(`rules`, `arithmetic`, `logic`), 함수 signature registry(`functions`
 checker(`typecheck`)가 중심입니다. GUI 편집용 block·edge projection(`graph_view`), socket 타입(`sockets`),
 편집 command plan(`edit_plan`), 오류의 block·socket 매핑(`gui_diagnostics`)도 있습니다. 평가는 공통
 의미(`eval`), bytecode compiler(`bytecode`)와 evaluator(`vm`), AST evaluator(`ast_eval`), 함수
-evaluator(`function_eval`), 환경 입력 key registry(`environment`)로 나뉩니다. 허용 직접 의존과 실제
-의존은 core-types입니다.
+evaluator(`function_eval`), 환경 입력 key registry(`environment`)로 나뉩니다. `test_support` module은
+기본값이 꺼진 `test-support` feature나 unit test에서만 빌드되며, renderer-core와 따로 보관하는 Display P3 ↔
+sRGB 행렬을 통합 테스트 대조용으로 다시 내보냅니다. 허용 직접 의존과 실제 의존은 core-types입니다. 주요 ADR은
+환경 입력 key registry와 `os_version` 인코딩을 정한 ADR-0026입니다.
 
 ### stellar-document
 
@@ -129,7 +133,8 @@ SoA 저장(`node_columns`), 문서 소유자와 읽기 전용 snapshot view(`sna
 index(`reference_index`), node 수·깊이 훅(`tree_stats`)으로 구성됩니다. node payload는 `frame`,
 `fragment`, `shape`, `path`, `text`, `image`이고, modifier stack(`modifier`), capability
 validator(`capabilities`), 컴포넌트 정의·인스턴스·Slot(`component`), Frame control 계약(`control`),
-View 변수와 Variant(`view_variant`)가 붙습니다. 영속 레코드(`records`), 전체 validator(`validate`),
+View 변수와 Variant(`view_variant`)가 붙습니다. Frame property metadata registry(`frame_metadata`)와 modifier
+property metadata·무효화 class registry(`modifier_metadata`)도 있습니다. 영속 레코드(`records`), 전체 validator(`validate`),
 canonical 인코딩과 View subtree 분할(`record_codec`), 런타임 문서 모델(`model`), 열린 문서 집합과
 제한(`open_set`, `open_limits`)도 이 crate에 있습니다. `test_support` module은 기본값이 꺼진
 `test-support` feature나 이 crate의 unit test에서만 컴파일됩니다. 허용 직접 의존과 실제 의존은
@@ -176,13 +181,16 @@ Component Property·환경 입력을 묶은 dependency graph(`graph`), 영향받
 ### stellar-layout
 
 `crates/layout`은 결정론적 레이아웃 엔진입니다. 입력 tree(`input`), 출력 box(`output`), 좌표·크기
-(`geometry`), 입력 속성과 dirty class registry(`property`), 진입점(`engine`)을 중심으로 자유
+(`geometry`), 입력 속성과 dirty class registry(`property`), layout revision(`revision`), 오류(`error`),
+진입점(`engine`)을 중심으로 자유
 배치(`free`), Stack 배치(`stack`)와 grow·shrink·basis(`flex`), Grid 배치(`grid`, 내부 `grid_tracks`),
 Overlay(`overlay`), Anchor·Constraint(`constraint`), local transform(`transform`)을 구현합니다. 크기
 결정(`sizing`), content intrinsic 측정 hook(`intrinsic`), 측정 cache(`measure`), node별 input hash와
 output cache(`cache`), rounding 정책과 logical subpixel 단위(`rounding`), worker result
-guard(`guard`), 적합성 fixture corpus(`corpus`)도 있습니다. document에 의존하지 않고 자체 입력 tree를
-받습니다. 허용 직접 의존과 실제 의존은 core-types입니다.
+guard(`guard`), 적합성 fixture corpus(`corpus`)도 있습니다. 증분 레이아웃 쪽은 command invalidation을 layout
+dirty set으로 바꾸는 `dirty`, 영향 범위만 다시 배치하는 `incremental`, 단일 leaf 변경 benchmark(`bench`)입니다.
+문서 원천을 Fragment flatten한 layout tree view(`view`)가 있고, 내부 module로 canonical bytes reader·writer
+(`codec`)와 공간 분배(`distribute`)가 있습니다. document에 의존하지 않고 자체 입력 tree를 받습니다. 허용 직접 의존과 실제 의존은 core-types입니다.
 
 ### stellar-text
 
@@ -191,7 +199,8 @@ dedup(`registry`), 명시적 fallback chain(`fallback`), missing font 진단(`mi
 (`shaping`), BiDi(`bidi`), script·language·direction itemization(`itemize`), 줄바꿈 기회(`line_break`),
 grapheme 단위 font fallback(`font_runs`), 고정소수점 단위(`units`), paragraph pipeline(`paragraph`),
 줄 나누기(`line_layout`), 줄 높이·정렬(`text_layout`), caret·선택·hit test(`caret`), cache key(`cache`),
-paragraph 단위 증분 레이아웃(`incremental`)으로 구성됩니다. `#![forbid(unsafe_code)]`로 unsafe 코드를
+paragraph 단위 증분 레이아웃(`incremental`)으로 구성됩니다. 내부 module로 테스트 빌드 전용 작업량
+계수기(`op_count`)와 debug 빌드 정렬 불변식 검사(`tiling`)가 있습니다. `#![forbid(unsafe_code)]`로 unsafe 코드를
 금지합니다. 허용 직접 의존과 실제 내부 의존은 core-types이고, 외부 의존은 ADR-0016이 승인한 순수
 Rust shaping·Unicode crate(`harfrust`, `unicode-bidi`, `unicode-segmentation`, `unicode-linebreak`)뿐입니다.
 
@@ -203,7 +212,9 @@ Rust shaping·Unicode crate(`harfrust`, `unicode-bidi`, `unicode-segmentation`, 
 (`persistent`), node와 resource 참조(`node`), clip·paint stack(`stack`), 불변 snapshot(`snapshot`)과
 canonical serialization(`codec`), DocumentRevision에서 SceneRevision으로의 매핑(`revision`), render
 thread용 읽기 전용 handle(`handle`), 오래된 snapshot 감지(`freshness`), node 종류별 builder(`builder`),
-bounds·공간 인덱스·가시 후보·broad-phase hit test(`bounds`, `spatial`, `visibility`, `hit_test`)입니다.
+bounds·공간 인덱스·가시 후보·broad-phase hit test(`bounds`, `spatial`, `visibility`, `hit_test`), node
+종류별 narrow-phase hit test(`narrow_phase`), selection handle·modifier control point의 transient hit-test
+layer(`transient`)입니다.
 renderer-core가 scene에만 직접 의존하므로 `ColorSpace`, `FiniteF32`, `NonFiniteError`, `Size2`, `Vec2`
 같은 core-types 기본 타입을 다시 내보냅니다. 허용 직접 의존과 실제 의존은 core-types입니다.
 
@@ -214,16 +225,31 @@ backend 독립 Render Graph(`render_graph`), GPU backend interface(`backend`), g
 handle(`gpu_handle`), upload queue와 frame-local allocator(`frame_resources`), present queue 깊이 1 이하
 frame scheduler(`frame_scheduler`)가 중심입니다. scene primitive를 pass로 나누는 compiler
 (`pass_compiler`), clip 계획(`clip_plan`), offscreen 경계 분석(`offscreen`), batching(`batching`),
-compile trace(`graph_trace`), tessellation interface(`tessellation`), content 기반 texture cache
-key(`texture_cache`), worker 전용 이미지 decoder interface(`image_decode`), asset placeholder
-(`placeholder`), thread 역할 표시(`thread_role`)도 있습니다. 허용 직접 의존과 실제 의존은 scene
+compile trace(`graph_trace`), tessellation interface(`tessellation`), stroke tessellation(`stroke`),
+tessellation worker pool과 stale 결과 폐기(`tessellation_worker`), glyph atlas interface(`glyph`), content 기반
+texture cache key(`texture_cache`), mipmap 생성과 upload task(`mipmap`), worker 전용 이미지 decoder
+interface(`image_decode`), asset placeholder(`placeholder`), thread 역할 표시(`thread_role`)도 있습니다.
+benchmark용 present queue 깊이·dropped stale frame 지표(`present_metrics`)와 surface 출력 색공간 협상·gamut
+경고·HDR 미지원 상태(`output_color`)도 이 crate에 있습니다. 내부 module `digest`는 결정론적 digest입니다.
+`test_support` module은 기본값이 꺼진 `test-support` feature나 unit test에서만 빌드되며, expressions와 따로
+보관하는 Display P3 ↔ sRGB 행렬을 통합 테스트 대조용으로 다시 내보냅니다. 허용 직접 의존과 실제 의존은 scene
 하나입니다. runtime이 이 crate의 thread 역할 표시를 runtime thread에 bind합니다(ADR-0013).
 
 ### stellar-renderer-metal
 
-`crates/renderer-metal`은 macOS Metal backend 골격입니다. `#![cfg(target_os = "macos")]`로 게이트되고,
-내용은 backend 식별자 상수 `BACKEND = "metal"` 하나입니다. 허용 직접 의존과 실제 의존은 renderer-core
-입니다.
+`crates/renderer-metal`은 macOS Metal backend입니다. `#![cfg(target_os = "macos")]`로 게이트되고,
+`MetalBackend`가 renderer-core의 `RendererBackend`를 Metal로 구현합니다. 공통 계층은 handle·descriptor·graph만
+넘기고 Metal 객체는 이 crate 밖으로 나가지 않습니다. 외부 binding crate 없이 Objective-C runtime(`objc_msgSend`)과
+Metal·QuartzCore·CoreGraphics C 함수를 직접 선언합니다(`objc`, `sys`). module은 모두 crate 내부입니다. format
+대응(`format`), `MTLDevice`·command queue(`device`), CAMetalLayer 연결·drawable·resize·frame skip(`surface`),
+texture 생성(`texture`), buffer와 upload(`buffer`), shader 소스·ABI(`shaders`), shader library·pipeline
+cache(`pipeline`), draw command 기록(`commands`), transient texture pool(`transient`), RenderGraph pass
+encoding(`encode`), frame CPU timestamp trace(`trace`), GPU timestamp query(`timestamps`), 오류 event·GPU 메모리
+예산(`events`), backend 구현(`backend`)이 있습니다. 공개 API는 `MetalBackend`(`with_layer`로 셸의 CAMetalLayer를
+받거나 `headless`로 external texture에만 그림), `MemoryUsage`, `MetalEvent`, `ShaderError`, `LayerOptions`,
+`SurfaceStats`, `MetalFrameTrace`, timing 상수, backend 식별자 `BACKEND = "metal"`입니다. 테스트(XI.8.1\~XI.8.7)는
+실제 Metal device에서 돌고, device가 없으면 실패하며 `STELLAR_ALLOW_MISSING_METAL=1`일 때만 건너뜁니다. 허용 직접
+의존과 실제 의존은 renderer-core이고 외부 의존은 없습니다. 대상 플랫폼은 ADR-0006에 따라 macOS입니다.
 
 ### stellar-renderer-d3d12
 
@@ -269,8 +295,14 @@ crate가 이 crate의 trait과 형식 중립 트리(`node`)를 구현·연결합
 해석(`git`, `git_refs`), library cache(`content_hash`, `cache_root`, `cache_index`, `mirror`,
 `cache_entry`, `cache_lock`, `entry_validation`, `cache_privacy`), lock 변환과 무결성(`lock`,
 `lock_integrity`), local path override(`local_override`), 다중 버전 경고(`duplicate_report`)가 주요
-module입니다. 허용 직접 의존과 실제 의존은 core-types입니다. 주요 ADR은 의존성 entry와 lock entry
-형식을 단일화한 ADR-0021, library cache entry 범위와 content hash의 ADR-0022입니다.
+module입니다. 사용 프로젝트 쪽 library 모델(Phase XV.5·XV.7)은 읽기 전용 library snapshot과 resource
+key(`library_snapshot`), 외부 component·token 참조(`external_ref`), library resource 읽기 전용 정책
+(`read_only`), 외부 참조 scope 해석(`ref_resolution`), lock 기준 library 로드와 부분 열기(`library_load`),
+update 후보 준비(`library_update`), library resource Semantic Diff(`resource_diff`)입니다. 허용 직접 의존과
+실제 의존은 core-types입니다. document·commands crate는 이 crate에 의존할 수 없으므로, `read_only` 판정을
+command 경로에 연결하는 위치는 project crate(또는 project를 거치는 runtime)이며 아직 연결은 없습니다. 주요
+ADR은 의존성 entry와 lock entry 형식을 단일화한 ADR-0021, library cache entry 범위와 content hash의 ADR-0022,
+library snapshot resource key의 ADR-0027입니다.
 
 ### stellar-git-porcelain
 
@@ -280,11 +312,14 @@ module입니다. 허용 직접 의존과 실제 의존은 core-types입니다. �
 취소와 프로세스 tree 종료(`cancel`), 결과·출력 디코딩·trace redaction(`command`, `decode`, `trace`)
 입니다. 설치 쪽은 상태 머신(`install_state`), macOS·Windows 설치 어댑터(`install_macos`,
 `install_windows`), 재탐지(`reprobe`)입니다. 저장소 연산은 `repo`, `ops`, `status`, `repo_status`,
-`classify`, `commit`, `identity`, `object`, `remote`, `refname`, 신뢰 gate(`trust`), 위치
+`classify`, 파일 단위 영역별 status(`file_status`), raw status와 semantic status 실패 분리(`project_status`),
+stage candidate 임시 tree writer(`candidate_tree`), `commit`, `identity`, `object`, `remote`, `refname`, 신뢰
+gate(`trust`), 위치
 판별(`location`), capability probe(`capability`), conflict 수집과 virtual snapshot(`conflict`,
 `conflict_snapshot`), snapshot provider(`snapshot`), Git LFS 감지(`lfs`)이고, 로드맵 기능으로 고급 Git
 core API(`advanced`)와 Merge Composer(`composer`)가 있습니다. `fixture` module은 `test-support` feature
-뒤의 Git 통합 fixture harness입니다. 허용 직접 의존과 실제 의존은 core-types입니다. Windows 설치
+뒤의 Git 통합 fixture harness이고, `corpus`(unix 테스트 빌드 전용)는 특수 경로·mode·LFS pointer·손상
+프로젝트 Git corpus입니다. 허용 직접 의존과 실제 의존은 core-types입니다. Windows 설치
 어댑터는 ADR-0006에 따라 유지되는 Windows 지향 코드입니다.
 
 ### stellar-project
@@ -297,7 +332,8 @@ transaction(`lock`, `lockfile_write`)이 파일 형식을 맡습니다. 폴더 �
 신뢰 상태·저장소·capability matrix(`trust`, `trust_store`, `capability`), clone 요청(`clone`), 복구
 스냅샷(`recovery`, `recovery_payload`, `recovery_probe`, `recovery_shutdown`), 경로 resolver
 (`path_resolver`), 문서와 chunk model 입출력(`document_io`), 파일 감시와 외부 변경
-(`watcher`, `external_change`), 지연 자동 저장(`autosave`), 저장된 프로젝트 loader(`saved_project`),
+(`watcher`, `external_change`), 창 문서 세션과 clean 창의 외부 generation 자동 reload(`window_session`), 지연
+자동 저장(`autosave`), 저장된 프로젝트 loader(`saved_project`),
 비공개 임시 디렉터리(`private_temp`), conflict virtual project 열기(`conflict_open`), 폰트(`fonts`)가
 수명주기를 맡습니다. 허용 직접 의존은 core-types, document, storage, assets, dependencies,
 git-porcelain, commands, history, text이고, 아홉 개를 모두 씁니다(commands·history는 autosave dirty
@@ -309,7 +345,10 @@ git-porcelain, commands, history, text이고, 아홉 개를 모두 씁니다(com
 `crates/semantic-diff`는 의미 기반 diff(Phase XIV.3)입니다. Git HEAD·Index·Working Tree에서 읽은 영속
 레코드를 `SemanticSnapshot`(StableId index)으로 펼치고, 두 snapshot의 차이를 `StableId + PropertyPath`
 단위로 계산합니다. module은 속성 값과 key(`value`, `keys`), snapshot 모델과 구성(`snapshot`,
-`build`), 변경 모델(`change`), diff(`diff`), canonical 인코딩(`codec`), diff 적용(`apply`)입니다.
+`build`), 변경 모델(`change`), diff(`diff`), canonical 인코딩(`codec`), diff 적용(`apply`)입니다. Git 화면용
+module로 HEAD·Index·WorkingTree semantic status 분류(`status`), 선택 변경 Staging 계획(`stage`), 변경
+dependency graph(`dependency`), snapshot 무결성 validator(`validate`), snapshot을 영속 문서 레코드로 되돌리는
+역투영(`records`)이 있습니다.
 semantic-merge가 이 crate에만 의존하므로 `pub use stellar_core_types as core_types`로 공용 값 타입을
 다시 내보냅니다. 허용 직접 의존과 실제 의존은 document, core-types입니다.
 
@@ -318,7 +357,9 @@ semantic-merge가 이 crate에만 의존하므로 `pub use stellar_core_types as
 `crates/semantic-merge`는 3-way Semantic Merge(Phase XIV.10)입니다. base·ours·theirs
 `SemanticSnapshot`을 `StableId + PropertyPath` 단위로 비교해 겹치지 않는 변경은 자동 병합하고, 겹치는
 변경은 세 상태를 모두 담은 conflict로 남깁니다. module은 입력·결과·conflict 모델(`model`)과 merge
-엔진(`merge`)입니다. 허용 직접 의존과 실제 의존은 semantic-diff 하나입니다.
+엔진(`merge`)입니다. 허용 직접 의존과 실제 의존은 semantic-diff 하나입니다. 알려진 결함 SM-1(독립 페이지·View
+삽입이 목록 conflict가 되고 candidate 정의 목록이 객체와 어긋남)은 XIV.10.6 작업 보고서에 있고, 재현 테스트는
+`#[ignore]` 상태입니다.
 
 ## 앱 runtime과 셸 경계
 
@@ -406,17 +447,37 @@ diagnostics, local-ipc이고 실제로는 local-ipc만 씁니다. 전이 도달 
 주요 ADR은 ADR-0005, ADR-0006, ADR-0020입니다. ADR-0005 §3은 로직을 `crates/mcp-core`의
 `stellar-mcp-core` library로 옮기고 이 package는 진입점만 갖게 하는 계획을 둡니다.
 
-## 아직 내용이 없는 crate
+## Target Profile과 접근성
 
 ### stellar-target-profile
 
-`crates/target-profile`은 Target Profile·Capability 모델 자리입니다. `src/lib.rs`에는 module 문서 한
-줄만 있고 코드는 없습니다. 허용 직접 의존과 실제 의존은 core-types입니다.
+`crates/target-profile`은 Target Profile과 Capability Registry(Phase IX.10)입니다. core-types에만 의존하므로
+`stellar.yaml` 텍스트는 project crate가 형식 중립 트리(`node`)로 바꿔 주고받는 구조이고, 문서·command·binding
+계층의 입력은 이 crate의 지역 타입과 trait(예: upgrade의 `ProjectSnapshot`, 적용의 `UpgradeHost`)으로 받아 상위
+crate가 구현합니다. module은 형식 중립 매니페스트 트리와 스키마 오류(`node`), profile 식별자·종류·schema
+version(`profile`), 종류별 필드(`spec`), 프로젝트 profile 목록과 기본 profile(`manifest`), registry 버전과
+프로젝트 pin(`registry`), capability 상태와 element·property·contract별 registry 표(`capability`), 앱 내장
+registry release(`builtin`), 생성 가능 여부와 비활성화 사유 조회(`query`), Binding 환경 입력(`environment`),
+profile 희소 override resolver(`overrides`), 다중 profile 검사(`validate`), upgrade plan(`upgrade`), 승인된
+upgrade 적용과 undo(`apply`)입니다.
+
+- `spec`·`manifest`가 정한 `target_profiles` 키와 `default_target_profile`은 미연결 초안입니다. project crate
+  파서(`docs/spec/stellar-format.md` §14.5)와 호환되지 않고 crate graph에 project → target-profile edge도
+  없습니다. 형식 통합과 연결 방식은 ADR 결정이 남아 있습니다(IX.10.3·IX.10.4 `[~]`).
+- `environment`는 crate graph상 expressions를 쓸 수 없어 ADR-0026 환경 key registry의 profile key 1\~3과
+  `platform` enum 번호를 지역 상수로 복제합니다. 통합 테스트 `constant_copies`가 두 사본을 대조합니다.
+
+허용 직접 의존과 실제 의존은 core-types입니다.
 
 ### stellar-accessibility
 
-`crates/accessibility`는 접근성 모델 자리입니다. `src/lib.rs`에는 module 문서 한 줄만 있고 코드는
-없습니다. 허용 직접 의존과 실제 의존은 core-types입니다.
+`crates/accessibility`는 시각 layer와 독립된 접근성 의미 모델(기술 아키텍처 §18, Phase IX.8)입니다.
+document·bindings 값을 직접 읽지 않고 StableId·PropertyPath·TypedValue로 출처를 가리킵니다. module은
+canonical binary 도우미(`codec`), 접근성 의미 node(`node`), 시각 tree와 별도 parent/child를 갖는 접근성
+트리(`tree`), 생성기 입력인 중립 시각 source tree(`source`), 기본 접근성 트리 생성기(`generate`), Control
+contract의 role·state·action 매핑(`control`), label 누락·잘못된 중첩·focus·동작 불일치·읽기 순서 중복
+진단(`diagnostics`), Target adapter용 중립 접근성 snapshot(`snapshot`)이고, `test_support`는 unit test
+전용입니다. 허용 직접 의존과 실제 의존은 core-types입니다.
 
 ## 개발 도구 crate
 
@@ -429,9 +490,11 @@ diagnostics, local-ipc이고 실제로는 local-ipc만 씁니다. 전이 도달 
 `sync-plan`, `check-core`, `validate-crate-graph`, `validate-storage-fixtures`, `bench-chunk-size`,
 `test-migrations` 17개이고, 종료 코드는 성공 0, 입력 오류 64, 정책 위반 65, 내부 오류 70입니다. 의존
 방향 정책(`crate_graph`), ADR 보호 경로 정책(`adr_policy`), 의존성 승인 검사(`dependencies`), 커밋
-제목 검사(`commit_message`), FFI 헤더 생성(`ffi_header`), chunk 크기 측정(`chunk_bench`), migration
-fixture runner(`migration_fixtures`), 계획서·작업 추적·보고서 검증(`plan`, `task_status`,
-`task_report`, `sync`), 제한 YAML(`yaml`)이 module로 나뉩니다. 내부 도구라 `main.rs`에서
+제목 검사(`commit_message`), PR 본문 검사(`pr_body`), 버전 검사(`versions`), FFI 헤더 생성(`ffi_header`),
+chunk 크기 측정(`chunk_bench`), migration fixture runner(`migration_fixtures`), storage fixture 검사
+(`storage_fixtures`), workspace fmt·clippy·test·doctest 통합 검증(`check_core`), 명령 dispatch(`commands`),
+계획서·작업 추적·보고서 검증(`plan`, `task_status`, `task_report`, `sync`), 제한 YAML(`yaml`)이 module로
+나뉩니다. 내부 도구라 `main.rs`에서
 `missing_docs`를 allow 하고, edition은 workspace 값을 상속하지 않고 직접 `"2021"`로 적습니다. 의존은
 storage, core-types(chunk 크기 측정 harness용)와 `yaml-rust2 =0.11.0`이며, crate graph 정책 검사 대상은
 아닙니다.
@@ -443,7 +506,9 @@ crate에 의존하지 않습니다. fixture 파일을 저장소에 넣지 않고
 규모 매개변수로 필요할 때 다시 만듭니다. 문서는 실제 문서 모델로 조립해 전체 validator를 통과시키고,
 `stellar_project::document_io`로 chunk model을 만든 뒤 content hash를 계산합니다. module은 대규모
 synthetic fixture(`synthetic`), 한계 fixture(`limits`), workload fixture(`workload`), sparse synthetic
-asset provider(`asset_provider`), chunk split 계획 요약(`split`), content hash(`digest`)이고, 실행
+asset provider(`asset_provider`), chunk split 계획 요약(`split`), content hash(`digest`)이고, 공용 부품으로
+결정론적 PRNG(`rng`), StableId 발급기(`ids`), 생성 오류(`error`), payload factory와 문서 마무리(`build`),
+생성 CLI(`cli`)가 있습니다. 실행
 파일은 `cargo run -p stellar-bench-fixtures --release -- <fixture>`로 요약 JSON을 출력합니다. 의존은
 core-types, document, expressions, storage, project, layout, assets이고 crate graph 정책 검사 대상은
 아닙니다. 주요 ADR은 ADR-0019입니다.
@@ -458,10 +523,17 @@ crate 원칙). 제품 crate는 이 crate에 의존하지 않고, 테스트는 cr
   `builders.rs`)입니다.
 - Git 시나리오: `git_snapshot_diff`, `git_semantic_merge`, `git_trust_gate`. 공용 helper는
   `tests/git_common/mod.rs`입니다(git-porcelain fixture harness 사용).
+- 상수 사본 대조: `constant_copies`. crate graph상 서로 의존할 수 없는 crate가 따로 보관하는 같은 계약 값이
+  같은지 검사합니다. 대상은 환경 key registry의 target-profile 사본과 expressions 원본, Display P3 ↔ sRGB
+  행렬의 expressions·renderer-core 사본입니다.
+- 알려진 결함을 재현하는 테스트 두 개는 `#[ignore]`입니다. `git_semantic_merge`의
+  `independent_page_and_view_insertions_merge_cleanly`(SM-1, XIV.10.6 보고서)와 `chunk_layout`의
+  `product_serializer_splits_views_over_approved_threshold`(V.6.4 보고서 "남은 위험")입니다.
 
 `[dependencies]`는 비어 있고, `[dev-dependencies]`에 core-types, document(`test-support`),
 commands(`test-support`), history, storage, project, git-porcelain(`test-support`), semantic-diff,
-semantic-merge가 있습니다. crate graph 정책 검사 대상은 아닙니다.
+semantic-merge, expressions(`test-support`), renderer-core(`test-support`), target-profile이 있습니다. crate
+graph 정책 검사 대상은 아닙니다.
 
 ## 관련 문서
 
