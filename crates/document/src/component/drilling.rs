@@ -630,12 +630,20 @@ fn nested_payload(
     })
 }
 
+#[cfg(test)]
+thread_local! {
+    /// 테스트 전용: 현재 thread의 [`resolve_path`] 호출 수(전파 탐색 비용 회귀 검사).
+    pub(crate) static RESOLVE_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// owner 정의 tree에서 시작하는 nested instance `path`의 경계별 컴포넌트(바깥 → 안쪽)를 해석합니다.
 pub fn resolve_path(
     library: &ComponentLibrary,
     owner: ComponentRef,
     path: &[StableId],
 ) -> Result<Vec<ComponentRef>, DrillingError> {
+    #[cfg(test)]
+    RESOLVE_CALLS.with(|calls| calls.set(calls.get() + 1));
     if path.len() > MAX_DRILLING_DEPTH {
         return Err(DrillingError::TooDeep { depth: path.len() });
     }
@@ -991,6 +999,9 @@ impl DrillingSet {
     /// `library`는 변경 **후** 상태입니다(정의 tree는 바뀌지 않으므로 path 해석은 같습니다). `retyped`(타입이 바뀐
     /// property와 이전 타입)가 주어지면 그 property가 target인 binding의 마지막 유효 타입은 이전 타입입니다. 새로 표시한
     /// binding을 id 오름차순으로 돌려줍니다.
+    ///
+    /// 비용: 시작할 때 binding마다 경로를 한 번 해석해 경계 자리 색인을 만들고, 전파는 색인 조회로 합니다. 경로 해석은
+    /// binding 수 B에 대해 최대 2B번(색인 B + 표시한 binding의 target 타입 조회)이고 전체 O(B·d)입니다(d = 경계 수).
     pub(crate) fn orphan_chain(
         &mut self,
         library: &ComponentLibrary,
@@ -998,6 +1009,33 @@ impl DrillingSet {
         cause: OrphanCause,
         retyped: Option<(ComponentRef, ComponentPropertyId, TypeSpec)>,
     ) -> Result<Vec<(DrillingBindingId, DrillingOrphan)>, DrillingError> {
+        // 경로 해석은 binding마다 한 번: (경계 컴포넌트, 경계 chain property) → 그 자리를 처음 지나는 경계와 이전
+        // 타입(target이 바뀐 property면). 목록은 id 오름차순입니다. 탐색 중 library·binding 목록은 바뀌지 않습니다.
+        type Feeder = (DrillingBindingId, usize, Option<TypeSpec>);
+        let mut feeders_of: BTreeMap<(ComponentRef, ComponentPropertyId), Vec<Feeder>> =
+            BTreeMap::new();
+        for binding in self.bindings.values() {
+            let Ok(components) = binding.resolve_components(library) else {
+                continue;
+            };
+            let previous = retyped.and_then(|(c, p, previous)| {
+                (components.last() == Some(&c) && binding.target == p).then_some(previous)
+            });
+            let mut seen = BTreeSet::new();
+            for (k, key) in components
+                .iter()
+                .copied()
+                .zip(binding.chain.iter().copied())
+                .enumerate()
+            {
+                if seen.insert(key) {
+                    feeders_of
+                        .entry(key)
+                        .or_default()
+                        .push((binding.id, k, previous));
+                }
+            }
+        }
         let mut newly = BTreeMap::new();
         let mut visited = BTreeSet::new();
         let mut work: Vec<(DrillingBindingId, DrillingBindingId, TypeSpec)> = Vec::new();
@@ -1018,22 +1056,12 @@ impl DrillingSet {
             let Some(broken) = self.bindings.get(&id) else {
                 continue;
             };
-            let (owner, source) = (broken.owner, broken.source);
-            let feeders: Vec<(DrillingBindingId, usize, Option<TypeSpec>)> = self
-                .bindings
-                .values()
-                .filter(|binding| !visited.contains(&binding.id))
-                .filter_map(|binding| {
-                    let components = binding.resolve_components(library).ok()?;
-                    let k = components
-                        .iter()
-                        .zip(&binding.chain)
-                        .position(|(c, p)| *c == owner && *p == source)?;
-                    let previous = retyped.and_then(|(c, p, previous)| {
-                        (components.last() == Some(&c) && binding.target == p).then_some(previous)
-                    });
-                    Some((binding.id, k, previous))
-                })
+            let feeders: Vec<Feeder> = feeders_of
+                .get(&(broken.owner, broken.source))
+                .into_iter()
+                .flatten()
+                .filter(|(feeder, ..)| !visited.contains(feeder))
+                .copied()
                 .collect();
             for (feeder, k, previous) in feeders {
                 visited.insert(feeder);
@@ -1655,6 +1683,71 @@ mod tests {
                 "경우 {i}"
             );
         }
+    }
+
+    #[test]
+    fn upstream_propagation_resolves_paths_linearly_in_binding_count() {
+        // 리뷰 회귀: 상위 chain 전파는 binding 경로를 binding 수에 비례한 횟수만 해석합니다. 작업 항목마다 모음 전체를
+        // 다시 해석하면 32단계 직선 chain에서 수백 번(O(B²))입니다.
+        const DEPTH: usize = 32;
+        let string = TypeSpec::required(stellar_expressions::types::ExpressionType::String);
+        let mut library = nested_library(DEPTH);
+        let mut set = DrillingSet::new();
+        let property = |k: usize| {
+            if k == DEPTH {
+                pid(LABEL)
+            } else {
+                pid(41_000 + k as u64)
+            }
+        };
+        for k in 0..DEPTH {
+            declare(&mut library, k, string_property(41_000 + k as u64, "label"));
+            set.insert(DrillingBinding::link(
+                bid(100 + k as u64),
+                component(k),
+                property(k),
+                instance(k),
+                property(k + 1),
+            ))
+            .unwrap();
+        }
+        set.validate(&library).unwrap();
+        let direct: Vec<_> = set
+            .uses_of(&library, component(DEPTH), pid(LABEL))
+            .into_iter()
+            .map(|(id, at)| (id, at, string))
+            .collect();
+        assert_eq!(
+            direct,
+            vec![(bid(100 + DEPTH as u64 - 1), BreakPoint::Boundary(0), string)]
+        );
+        RESOLVE_CALLS.with(|calls| calls.set(0));
+        let newly = set
+            .orphan_chain(
+                &library,
+                direct,
+                OrphanCause::PropertyDeleted {
+                    component: component(DEPTH),
+                    property: pid(LABEL),
+                },
+                None,
+            )
+            .unwrap();
+        let calls = RESOLVE_CALLS.with(|calls| calls.get());
+        // 전체 chain이 orphan이고 전파 결과는 그대로입니다.
+        assert_eq!(newly.len(), DEPTH);
+        let origin = bid(100 + DEPTH as u64 - 1);
+        for (id, orphan) in &newly {
+            if *id == origin {
+                assert!(matches!(orphan.cause, OrphanCause::PropertyDeleted { .. }));
+            } else {
+                assert_eq!(orphan.cause, OrphanCause::UpstreamOfBreak { origin });
+            }
+            assert_eq!(orphan.break_point, BreakPoint::Boundary(0));
+            assert_eq!(orphan.last_valid_type, string);
+        }
+        assert_eq!(set.affected_chain(origin).len(), DEPTH);
+        assert!(calls <= 2 * DEPTH, "경로 해석 {calls}회(binding {DEPTH}개)");
     }
 
     #[test]

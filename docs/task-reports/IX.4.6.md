@@ -54,7 +54,7 @@
 ## 남은 위험 / 한계
 
 - 전파 탐색은 끊긴 binding마다 모음 전체를 훑습니다(binding 수 B, 깊이 d일 때 최악 O(B²·d)). 대규모 모음에서는 경계 값
-  자리 index가 필요할 수 있습니다.
+  자리 index가 필요할 수 있습니다. (후속 수정에서 해소했습니다. 아래 "전파 탐색 비용" 참고.)
 - orphan binding 재연결 command(VIII.8.4 대응)는 아직 없습니다. 현재 orphan 해제는 undo 경로뿐입니다.
 
 ## 후속 수정 (리뷰 반영)
@@ -84,4 +84,27 @@
 | `cargo test -p stellar-document --lib decode_rejects_orphan_information`(수정 전) | 1 failed(경우 0이 디코딩됨) |
 | `cargo test -p stellar-document` | unit 353 passed, 통합 7+1+1, doc 2 passed, 0 failed |
 | `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -- --check` | 통과 |
+
+### 전파 탐색 비용
+
+`Fix: drilling orphan 전파 탐색을 경계 자리 색인으로 선형화` 커밋에서 고쳤습니다.
+
+- **문제**: `orphan_chain`이 작업 항목을 꺼낼 때마다 모음 전체 binding의 경로를 다시 해석했습니다(instance payload
+  디코딩 포함). 넓은 chain을 끊는 삭제·타입 변경 한 번이 O(B²·d)였습니다.
+- **변경**: 시작할 때 binding마다 경로를 한 번 해석해 (경계 컴포넌트, 경계 chain property) → (binding, 처음 지나는 경계,
+  이전 타입) 색인을 만들고, 전파는 색인 조회로 합니다. 목록은 id 오름차순이고 binding별로 처음 지나는 경계만 넣어 이전
+  `position` 결과와 같습니다. 탐색 중 library와 binding 목록은 바뀌지 않으므로 결과(표시 대상·원인·break point·마지막
+  유효 타입)는 같습니다. 경로 해석은 최대 2B번(색인 B + 표시한 binding의 target 타입 조회)이고 전체 O(B·d)입니다.
+- **검증**: 테스트 build에만 있는 `resolve_path` 호출 수 계수기(`RESOLVE_CALLS`, `cfg(test)`)를 두고
+  `upstream_propagation_resolves_paths_linearly_in_binding_count`(32단계 직선 chain의 가장 안쪽 property 삭제)를 먼저
+  추가했습니다. 수정 전에는 경로 해석이 527회라 상한 2B = 64를 넘어 실패했습니다. 수정 후에는 64회 이하로 통과합니다.
+  전파 결과(32개 전부 orphan, origin·break point·마지막 유효 타입)와 기존 IX.1.3·IX.4.6 테스트도 그대로 통과합니다.
+
+| 명령(후속 수정) | 결과 |
+|---|---|
+| `cargo test -p stellar-document --lib upstream_propagation_resolves`(수정 전) | 1 failed("경로 해석 527회(binding 32개)") |
+| `cargo test -p stellar-document` | unit 354 passed, 통합 7+1+1, doc 4 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo clippy -p stellar-document --features test-support -- -D warnings` | 경고 0 |
 | `cargo fmt -p stellar-document -- --check` | 통과 |
