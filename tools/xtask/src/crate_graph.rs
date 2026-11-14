@@ -4,9 +4,10 @@
 //! 보고합니다. `docs/architecture/crate-dependency-graph.md`와 동일한 방향을 인코딩합니다.
 //!
 //! XXIX.1.1 확장:
-//! - [`manifest`]: `crates/*`, `tools/stellar-*`, 루트 `[workspace].members`(xtask·bench fixture
-//!   제외) manifest의 `[dependencies]`·`[build-dependencies]`·`[dev-dependencies]`·
-//!   `[target.<spec>.*]` 표(inline table 형태 포함)에서 내부 의존을 읽습니다.
+//! - [`manifest`]: `crates/*`, `tools/stellar-*`와 Cargo workspace member 전체(루트
+//!   `[workspace].members`, path 의존으로 생기는 자동 member, root package. `exclude` 반영,
+//!   xtask·bench fixture 제외) manifest의 `[dependencies]`·`[build-dependencies]`·
+//!   `[dev-dependencies]`·`[target.<spec>.*]` 표(inline table 형태 포함)에서 내부 의존을 읽습니다.
 //! - [`reach`]: 모든 표의 직접 edge를 이 정책으로 검사하고, ADR-0005 §8의 전이 도달 금지
 //!   규칙([`reach::FORBIDDEN_REACH`])을 적용합니다.
 

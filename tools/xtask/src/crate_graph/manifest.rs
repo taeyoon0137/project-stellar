@@ -10,16 +10,20 @@
 //!   `[target.'cfg(unix)']` 아래 `dependencies = { .. }`, `[target]` 아래 `'cfg(unix)' = { .. }`,
 //!   `target = { .. }`, `workspace = { dependencies = { .. } }`)
 //! - `package = "..."` 이름 변경과 `[workspace.dependencies]`를 상속하는 `workspace = true`
+//! - 의존의 `path = "..."`(자동 workspace member 판정용)와 루트 `[workspace].members`·`exclude`
+//!
+//! 검사 대상 manifest는 [`scan_workspace`]가 Cargo의 workspace member 규칙(path 의존 자동 member,
+//! `exclude`, root package)대로 모읍니다.
 //!
 //! 문자열·배열·inline table·주석을 구분해 문장 단위로 나누므로, 여러 줄 배열이나 문자열 안의
 //! `stellar-*` 텍스트를 의존으로 오인하지 않습니다. 해석할 수 없는 구문(값 하나 뒤에 다른 내용이
 //! 붙은 문장, 의존 표 위치에 표가 아닌 값 등)은 오류로 거부합니다(fail closed). 입력 크기는
 //! [`MAX_MANIFEST_BYTES`]로 제한하고 모든 처리는 반복문입니다.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::File;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 /// manifest 한 개의 최대 크기(bytes). 넘으면 `manifest-too-large`로 거부합니다.
 pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
@@ -111,6 +115,9 @@ pub struct DeclaredDep {
     pub package: Option<String>,
     /// `workspace = true`로 `[workspace.dependencies]`를 상속하는지 여부.
     pub inherits_workspace: bool,
+    /// `path = "..."` 원문(이 manifest 디렉터리 기준). `workspace = true`로 상속한 path는 루트의
+    /// [`ParsedManifest::workspace_dep_paths`]에 있습니다.
+    pub path: Option<String>,
     pub table: DepTable,
 }
 
@@ -138,8 +145,12 @@ pub struct ParsedManifest {
     pub deps: Vec<DeclaredDep>,
     /// `[workspace.dependencies]`에서 `package = "..."`로 이름을 바꾼 항목(key → package).
     pub workspace_renames: BTreeMap<String, String>,
+    /// `[workspace.dependencies]`의 `path = "..."` 원문(key → path, workspace 루트 기준).
+    pub workspace_dep_paths: BTreeMap<String, String>,
     /// `[workspace].members`(선언 순서). 없으면 `None`.
     pub workspace_members: Option<Vec<String>>,
+    /// `[workspace].exclude`(선언 순서). 없으면 `None`.
+    pub workspace_exclude: Option<Vec<String>>,
 }
 
 /// workspace 내부 의존 edge.
@@ -299,6 +310,7 @@ fn dep_entry<'a>(
             key: key.to_string(),
             package: None,
             inherits_workspace: false,
+            path: None,
             table,
         })
 }
@@ -328,10 +340,24 @@ fn apply_key_value(
         parsed.workspace_members = Some(members);
         return Ok(());
     }
+    if full == ["workspace", "exclude"] {
+        let exclude = string_array(value, line)?.ok_or_else(|| {
+            ManifestError::at(
+                "workspace-exclude",
+                line,
+                "[workspace].exclude는 문자열 배열이어야 합니다",
+            )
+        })?;
+        parsed.workspace_exclude = Some(exclude);
+        return Ok(());
+    }
     if let [workspace, dependencies, key, rest @ ..] = full {
         if workspace == "workspace" && dependencies == "dependencies" {
             if let Some(package) = package_override(rest, value, line)? {
                 parsed.workspace_renames.insert(key.clone(), package);
+            }
+            if let Some(path) = path_override(rest, value, line)? {
+                parsed.workspace_dep_paths.insert(key.clone(), path);
             }
             return Ok(());
         }
@@ -340,10 +366,14 @@ fn apply_key_value(
         return Ok(());
     };
     let package = package_override(rest, value, line)?;
+    let path = path_override(rest, value, line)?;
     let inherits = inherits_workspace(rest, value, line)?;
     let entry = dep_entry(deps, table, key);
     if package.is_some() {
         entry.package = package;
+    }
+    if path.is_some() {
+        entry.path = path;
     }
     entry.inherits_workspace |= inherits;
     Ok(())
@@ -355,19 +385,37 @@ fn package_override(
     value: &str,
     line: usize,
 ) -> Result<Option<String>, ManifestError> {
+    dep_string_field(rest, value, "package", "dependency-package", line)
+}
+
+/// `path` 지정(`rest == ["path"]` 또는 inline table의 `path` key)을 읽습니다. path 의존은
+/// workspace 자동 member 판정에 쓰입니다([`scan_workspace`]).
+fn path_override(
+    rest: &[String],
+    value: &str,
+    line: usize,
+) -> Result<Option<String>, ManifestError> {
+    dep_string_field(rest, value, "path", "dependency-path", line)
+}
+
+/// 의존 항목의 문자열 field 하나를 읽습니다. `rest == [field]`(dotted key·하위 표)이면 값 자체를,
+/// `rest`가 비어 있으면 inline table 값의 `field` key를 봅니다. 문자열이 아니면 `code` 오류입니다.
+fn dep_string_field(
+    rest: &[String],
+    value: &str,
+    field: &str,
+    code: &'static str,
+    line: usize,
+) -> Result<Option<String>, ManifestError> {
     let raw = match rest {
-        [] => inline_table_value(value, "package", line)?,
-        [key] if key == "package" => Some(value.trim().to_string()),
+        [] => inline_table_value(value, field, line)?,
+        [key] if key == field => Some(value.trim().to_string()),
         _ => None,
     };
     match raw {
         None => Ok(None),
         Some(raw) => string_value(&raw, line)?.map(Some).ok_or_else(|| {
-            ManifestError::at(
-                "dependency-package",
-                line,
-                "package 값은 문자열이어야 합니다",
-            )
+            ManifestError::at(code, line, format!("{field} 값은 문자열이어야 합니다"))
         }),
     }
 }
@@ -915,15 +963,20 @@ fn read_bounded(path: &Path) -> Result<String, ManifestError> {
 /// crate graph 검사에서 빼는 workspace member(ADR-0019): 개발 도구와 benchmark fixture crate.
 pub const EXCLUDED_MEMBERS: &[&str] = &["tools/xtask", "benchmarks/fixtures"];
 
-/// 검사 대상 manifest 경로(경로 순 정렬·중복 제거).
+/// workspace 탐색을 시작할 manifest 경로(경로 순 정렬·중복 제거).
 ///
 /// - `crates/*/Cargo.toml`(필수 디렉터리)과 `tools/stellar-*/Cargo.toml`
-/// - 루트 `[workspace].members`의 모든 member([`EXCLUDED_MEMBERS`] 제외). 디렉터리 패턴 밖
-///   (`tools/agent-host`, `apps/*` 등)에 추가한 product crate도 검사하기 위해서입니다. glob은
-///   마지막 segment 전체가 `*`인 형태만 펼치고, 그 밖의 glob은 거부합니다(fail closed).
+/// - 루트 `[workspace].members`의 모든 member. 디렉터리 패턴 밖(`tools/agent-host`, `apps/*` 등)에
+///   추가한 product crate도 검사하기 위해서입니다. glob은 마지막 segment 전체가 `*`인 형태만
+///   펼치고, 그 밖의 glob은 거부합니다(fail closed). glob으로 펼친 디렉터리는 Cargo처럼
+///   `[workspace].exclude`를 적용합니다([`cargo_excluded`]).
+///
+/// [`EXCLUDED_MEMBERS`]도 결과에 남깁니다. 그 path 의존이 자동 member가 될 수 있어서이며, graph
+/// 검사에서 빼는 일은 [`scan_workspace`]가 합니다.
 pub fn member_manifests(
     repo_root: &Path,
     workspace_members: &[String],
+    workspace_exclude: &[String],
 ) -> Result<Vec<PathBuf>, ManifestError> {
     let mut manifests = Vec::new();
     let crates = repo_root.join("crates");
@@ -950,11 +1003,14 @@ pub fn member_manifests(
             if dir.is_dir() {
                 collect_manifests(
                     &dir,
-                    |name| !EXCLUDED_MEMBERS.contains(&format!("{parent}/{name}").as_str()),
+                    |name| {
+                        let manifest = dir.join(name).join("Cargo.toml");
+                        !cargo_excluded(repo_root, &manifest, workspace_members, workspace_exclude)
+                    },
                     &mut manifests,
                 )?;
             }
-        } else if !EXCLUDED_MEMBERS.contains(&member.as_str()) {
+        } else {
             let manifest = repo_root.join(&member).join("Cargo.toml");
             if !manifest.is_file() {
                 return Err(ManifestError::new(
@@ -1022,24 +1078,160 @@ fn collect_manifests(
 
 /// 저장소의 검사 대상 manifest 전체를 읽어 내부 의존 graph를 만듭니다.
 ///
-/// 루트 `Cargo.toml`의 `[workspace].members`를 검사 대상에 더하고([`member_manifests`]),
-/// `[workspace.dependencies]` 이름 변경을 `workspace = true` 의존에 반영합니다.
+/// 검사 대상은 Cargo workspace member 전체에서 [`EXCLUDED_MEMBERS`]를 뺀 것에 디렉터리 패턴
+/// (`crates/*`, `tools/stellar-*`)을 더한 것입니다. member는 Cargo 규칙대로 모읍니다.
+///
+/// - [`member_manifests`]의 시작 manifest와, 루트 manifest가 package면 루트 자신
+/// - 자동 member: 위 manifest의 모든 의존 표(dev·build·target 한정·optional 포함)에 있는 path
+///   의존과 `workspace = true`로 상속한 `[workspace.dependencies]` path 의존 중, workspace 루트
+///   안에 있고 [`cargo_excluded`]가 아닌 manifest입니다. 자동 member의 path 의존도 같은 규칙으로
+///   따라갑니다. `[patch]`·`[replace]`의 path와 쓰이지 않는 `[workspace.dependencies]` path는
+///   member가 아닙니다.
+///
+/// 이름이 `stellar-`로 시작하지 않는 자동 member도 검사하므로, 그런 crate를 거쳐 금지 edge를
+/// 숨길 수 없습니다(정책에 없는 crate로 거부). 루트 안 path 의존의 manifest가 없으면 Cargo처럼
+/// `missing-path-dependency`로 거부합니다. `[workspace.dependencies]` 이름 변경은
+/// `workspace = true` 의존에 반영합니다.
 pub fn scan_workspace(repo_root: &Path) -> Result<WorkspaceGraph, ManifestError> {
+    let repo_root = absolute_root(repo_root)?;
     let root_manifest = repo_root.join("Cargo.toml");
     let root = if root_manifest.is_file() {
         parse_manifest(&read_bounded(&root_manifest)?).map_err(|e| with_path(e, &root_manifest))?
     } else {
         ParsedManifest::default()
     };
-    let renames = root.workspace_renames;
-    let members = root.workspace_members.unwrap_or_default();
-    let mut sources = Vec::new();
-    for path in member_manifests(repo_root, &members)? {
-        let text = read_bounded(&path)?;
-        let parsed = parse_manifest(&text).map_err(|e| with_path(e, &path))?;
-        sources.push((path, parsed));
+    let members = root.workspace_members.clone().unwrap_or_default();
+    let exclude = root.workspace_exclude.clone().unwrap_or_default();
+    let mut queue: VecDeque<PathBuf> = member_manifests(&repo_root, &members, &exclude)?.into();
+    if root.package.is_some() {
+        queue.push_back(root_manifest.clone());
     }
-    build_graph(&sources, &renames)
+    // 방문 집합을 쓰는 반복 BFS입니다. manifest 수는 저장소 안 파일 수를 넘지 않습니다.
+    let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut loaded: BTreeMap<PathBuf, ParsedManifest> = BTreeMap::new();
+    while let Some(path) = queue.pop_front() {
+        if !seen.insert(path.clone()) {
+            continue;
+        }
+        let parsed = if path == root_manifest {
+            root.clone()
+        } else {
+            parse_manifest(&read_bounded(&path)?).map_err(|e| with_path(e, &path))?
+        };
+        let dir = path.parent().unwrap_or(&repo_root);
+        for dep in &parsed.deps {
+            let Some(target_dir) = dependency_dir(dep, dir, &repo_root, &root.workspace_dep_paths)
+            else {
+                continue;
+            };
+            let target = target_dir.join("Cargo.toml");
+            if seen.contains(&target)
+                || !target_dir.starts_with(&repo_root)
+                || cargo_excluded(&repo_root, &target, &members, &exclude)
+            {
+                continue;
+            }
+            if !target.is_file() {
+                return Err(ManifestError::new(
+                    "missing-path-dependency",
+                    format!(
+                        "{}: path 의존 `{}`의 Cargo.toml이 없습니다: {}",
+                        path.display(),
+                        dep.key,
+                        target.display()
+                    ),
+                ));
+            }
+            queue.push_back(target);
+        }
+        loaded.insert(path, parsed);
+    }
+    let mut checked = Vec::new();
+    let mut skipped_names = BTreeSet::new();
+    for (path, parsed) in loaded {
+        if policy_excluded(&repo_root, &path) {
+            skipped_names.extend(parsed.package);
+        } else {
+            checked.push((path, parsed));
+        }
+    }
+    build_graph_with(&checked, &root.workspace_renames, &skipped_names)
+}
+
+/// 상대 경로면 현재 디렉터리에 이어 붙이고, `.`·`..`를 글자 그대로 정리한 절대 경로입니다.
+fn absolute_root(repo_root: &Path) -> Result<PathBuf, ManifestError> {
+    if repo_root.is_absolute() {
+        return Ok(normalize_path(repo_root));
+    }
+    let cwd = std::env::current_dir()
+        .map_err(|e| ManifestError::new("io", format!("현재 디렉터리: {e}")))?;
+    Ok(normalize_path(&cwd.join(repo_root)))
+}
+
+/// Cargo `paths::normalize_path`와 같은 글자 단위 정리입니다(`.` 제거, `..`는 앞 segment 제거).
+/// symlink는 풀지 않습니다.
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
+/// path 의존이 가리키는 디렉터리(정리된 절대 경로). path 의존이 아니면 `None`.
+///
+/// 의존 자신의 `path`는 그 manifest 디렉터리 기준이고, `workspace = true`로 상속한 path는
+/// workspace 루트 기준입니다.
+fn dependency_dir(
+    dep: &DeclaredDep,
+    manifest_dir: &Path,
+    repo_root: &Path,
+    workspace_dep_paths: &BTreeMap<String, String>,
+) -> Option<PathBuf> {
+    if let Some(path) = &dep.path {
+        return Some(normalize_path(&manifest_dir.join(path)));
+    }
+    if dep.inherits_workspace {
+        if let Some(path) = workspace_dep_paths.get(&dep.key) {
+            return Some(normalize_path(&repo_root.join(path)));
+        }
+    }
+    None
+}
+
+/// Cargo의 `[workspace].exclude` 판정입니다. manifest가 exclude 경로 아래에 있고, members에 글자
+/// 그대로 쓴 경로 아래에는 없으면 제외입니다. glob member(`apps/*`)는 글자 그대로 비교하므로
+/// 펼친 디렉터리의 제외를 막지 않습니다.
+fn cargo_excluded(
+    repo_root: &Path,
+    manifest: &Path,
+    workspace_members: &[String],
+    workspace_exclude: &[String],
+) -> bool {
+    let under = |entries: &[String]| {
+        entries
+            .iter()
+            .any(|entry| manifest.starts_with(normalize_path(&repo_root.join(entry))))
+    };
+    under(workspace_exclude) && !under(workspace_members)
+}
+
+/// crate graph 검사에서 빼는 member([`EXCLUDED_MEMBERS`])의 manifest인지 여부.
+fn policy_excluded(repo_root: &Path, manifest: &Path) -> bool {
+    manifest
+        .parent()
+        .and_then(|dir| dir.strip_prefix(repo_root).ok())
+        .is_some_and(|dir| {
+            EXCLUDED_MEMBERS
+                .iter()
+                .any(|member| dir == Path::new(member))
+        })
 }
 
 /// 해석된 manifest 목록으로 graph를 만듭니다(fixture 테스트용 진입점).
@@ -1047,8 +1239,20 @@ pub fn build_graph(
     sources: &[(PathBuf, ParsedManifest)],
     workspace_renames: &BTreeMap<String, String>,
 ) -> Result<WorkspaceGraph, ManifestError> {
+    build_graph_with(sources, workspace_renames, &BTreeSet::new())
+}
+
+/// [`build_graph`]에 검사하지 않는 workspace member 이름(`other_members`)을 더해 graph를 만듭니다.
+///
+/// 의존 이름이 `stellar-`로 시작하거나 workspace member(검사 대상과 `other_members`) 이름이면
+/// 내부 edge로 기록합니다.
+fn build_graph_with(
+    sources: &[(PathBuf, ParsedManifest)],
+    workspace_renames: &BTreeMap<String, String>,
+    other_members: &BTreeSet<String>,
+) -> Result<WorkspaceGraph, ManifestError> {
     let mut packages = BTreeSet::new();
-    let mut edges = BTreeSet::new();
+    let mut named = Vec::with_capacity(sources.len());
     for (path, parsed) in sources {
         let Some(package) = &parsed.package else {
             return Err(ManifestError::new(
@@ -1062,9 +1266,16 @@ pub fn build_graph(
                 format!("{}: package 이름 중복: {package}", path.display()),
             ));
         }
+        named.push((package, parsed));
+    }
+    let mut edges = BTreeSet::new();
+    for (package, parsed) in named {
         for dep in &parsed.deps {
             let to = dep.resolved_name(workspace_renames);
-            if to.starts_with(INTERNAL_PREFIX) {
+            if to.starts_with(INTERNAL_PREFIX)
+                || packages.contains(&to)
+                || other_members.contains(&to)
+            {
                 edges.insert(ManifestEdge {
                     from: package.clone(),
                     to,
@@ -1523,7 +1734,7 @@ other.workspace = true
             .workspace_members
             .expect("root members");
         assert!(members.iter().any(|m| m == "tools/xtask"));
-        let scanned = member_manifests(root, &members).unwrap();
+        let scanned = member_manifests(root, &members, &[]).unwrap();
         for member in members
             .iter()
             .filter(|m| !EXCLUDED_MEMBERS.contains(&m.as_str()))
@@ -1564,6 +1775,242 @@ other.workspace = true
                 &format!("[package]\nname = \"{name}\"\n\n[dependencies]\n{deps}"),
             );
         }
+
+        /// `cargo metadata`도 읽을 수 있는 package(버전·edition·빈 lib target)를 씁니다.
+        /// `tables`는 `[package]` 뒤에 붙는 표 원문입니다.
+        fn cargo_package(&self, dir: &str, name: &str, tables: &str) {
+            self.write(
+                &format!("{dir}/Cargo.toml"),
+                &format!(
+                    "[package]\nname = \"{name}\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n{tables}"
+                ),
+            );
+            self.write(&format!("{dir}/src/lib.rs"), "");
+        }
+    }
+
+    /// `cargo metadata --no-deps`가 보고한 workspace member의 package 이름(정렬).
+    ///
+    /// `--no-deps` 출력의 `packages`는 workspace member뿐이고 `manifest_path` key는 package에만
+    /// 있으므로, 그 값만 모아 각 manifest의 `[package].name`을 읽습니다.
+    fn cargo_member_names(repo_root: &Path) -> Vec<String> {
+        let output = std::process::Command::new("cargo")
+            .current_dir(repo_root)
+            .args([
+                "metadata",
+                "--no-deps",
+                "--offline",
+                "--format-version",
+                "1",
+            ])
+            .output()
+            .expect("cargo 실행");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let json = String::from_utf8(output.stdout).expect("utf-8 출력");
+        let key = "\"manifest_path\":\"";
+        let mut names: Vec<String> = json
+            .match_indices(key)
+            .map(|(at, _)| {
+                let rest = &json[at + key.len()..];
+                let path = &rest[..rest.find('"').expect("닫는 따옴표")];
+                let text = std::fs::read_to_string(path).expect("member manifest");
+                parse_manifest(&text)
+                    .unwrap()
+                    .package
+                    .expect("package 이름")
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// cargo member 목록에서 crate graph 검사 제외 대상(ADR-0019)을 뺍니다.
+    fn without_policy_excluded(names: Vec<String>) -> Vec<String> {
+        names
+            .into_iter()
+            .filter(|name| name != "xtask" && name != "stellar-bench-fixtures")
+            .collect()
+    }
+
+    #[test]
+    fn implicit_path_dependency_member_cannot_launder_forbidden_edge() {
+        // 리뷰 probe 재현: root members에 없는 `misc/helper`(이름 `helper`)는 document의 path 의존이라
+        // Cargo가 자동 member로 넣습니다. 이전 검사기는 helper를 읽지 않고, helper로 가는 edge도
+        // `stellar-` 이름이 아니라 버려서, helper를 거친 git-porcelain 도달을 놓쳤습니다.
+        let repo = TempRepo::new("implicit-member");
+        repo.write(
+            "Cargo.toml",
+            "[workspace]\nresolver = \"2\"\nmembers = [\"crates/document\", \"crates/git-porcelain\"]\n",
+        );
+        repo.cargo_package(
+            "crates/document",
+            "stellar-document",
+            "[dependencies]\nhelper = { path = \"../../misc/helper\" }\n",
+        );
+        repo.cargo_package("crates/git-porcelain", "stellar-git-porcelain", "");
+        repo.cargo_package(
+            "misc/helper",
+            "helper",
+            "[dependencies]\nstellar-git-porcelain = { path = \"../../crates/git-porcelain\" }\n",
+        );
+        assert_eq!(
+            cargo_member_names(&repo.0),
+            ["helper", "stellar-document", "stellar-git-porcelain"]
+        );
+
+        let graph = scan_workspace(&repo.0).unwrap();
+        assert_eq!(
+            graph.packages,
+            ["helper", "stellar-document", "stellar-git-porcelain"]
+        );
+        let violations = crate::crate_graph::check_workspace_graph(&graph);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.code == "unknown-crate" && v.message.contains("helper")),
+            "{violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.code == "forbidden-edge"
+                    && v.message.contains("stellar-document -> helper")),
+            "{violations:?}"
+        );
+    }
+
+    #[test]
+    fn scanned_packages_match_cargo_workspace_members() {
+        // 자동 member 규칙(모든 의존 표·target 한정·optional·`workspace = true` 상속 path, 재귀,
+        // 제외 대상 member에서 시작한 path 포함), `[workspace].exclude`, root package member를 Cargo와
+        // 같게 따릅니다. 검사 대상 = Cargo workspace member - ADR-0019 제외 대상입니다.
+        let repo = TempRepo::new("cargo-members");
+        repo.write(
+            "Cargo.toml",
+            "[package]\nname = \"root-tool\"\nversion = \"0.0.0\"\nedition = \"2021\"\n\n\
+             [workspace]\nresolver = \"2\"\n\
+             members = [\"crates/a\", \"apps/*\", \"tools/xtask\", \"benchmarks/fixtures\"]\n\
+             exclude = [\"apps/legacy\", \"./misc/excluded\"]\n\n\
+             [workspace.dependencies]\ninherited = { path = \"misc/inherited\" }\n\
+             unused = { path = \"misc/unused\" }\n\n\
+             [patch.crates-io]\npatched = { path = \"misc/patched\" }\n",
+        );
+        repo.write("src/lib.rs", "");
+        repo.cargo_package(
+            "crates/a",
+            "stellar-a",
+            "[dependencies]\nnormal = { path = \"../../misc/normal\" }\n\
+             inherited = { workspace = true }\n\
+             excluded = { path = \"../../misc/excluded\" }\n\
+             [dependencies.opt]\npath = \"../../misc/opt\"\noptional = true\n\
+             [dev-dependencies]\ndevdep.path = \"../../misc/devdep\"\n\
+             [build-dependencies]\nbuilddep = { path = \"../../misc/builddep\" }\n\
+             [target.'cfg(windows)'.dependencies]\nwindep = { path = \"../../misc/windep\" }\n",
+        );
+        repo.cargo_package("apps/viewer", "stellar-viewer", "");
+        repo.cargo_package("apps/legacy", "legacy-tool", "[workspace]\n");
+        repo.cargo_package(
+            "tools/xtask",
+            "xtask",
+            "[dependencies]\nfrom-tool = { path = \"../../misc/from-tool\" }\n",
+        );
+        repo.cargo_package("benchmarks/fixtures", "stellar-bench-fixtures", "");
+        repo.cargo_package(
+            "misc/normal",
+            "normal",
+            "[dependencies]\nnested = { path = \"../nested\" }\n",
+        );
+        for name in [
+            "inherited",
+            "unused",
+            "patched",
+            "excluded",
+            "opt",
+            "devdep",
+            "builddep",
+            "windep",
+            "from-tool",
+            "nested",
+        ] {
+            repo.cargo_package(&format!("misc/{name}"), name, "");
+        }
+
+        let want = without_policy_excluded(cargo_member_names(&repo.0));
+        assert_eq!(
+            want,
+            [
+                "builddep",
+                "devdep",
+                "from-tool",
+                "inherited",
+                "nested",
+                "normal",
+                "opt",
+                "root-tool",
+                "stellar-a",
+                "stellar-viewer",
+                "windep"
+            ]
+        );
+        let graph = scan_workspace(&repo.0).unwrap();
+        assert_eq!(graph.packages, want);
+        // `workspace = true`로 상속한 path 의존도 workspace member로 가는 edge입니다.
+        assert!(graph
+            .edges
+            .iter()
+            .any(|e| e.from == "stellar-a" && e.to == "inherited"));
+        // 제외(exclude)된 path 의존은 workspace member가 아니므로 edge로 세지 않습니다.
+        assert!(!graph.edges.iter().any(|e| e.to == "excluded"));
+    }
+
+    #[test]
+    fn real_workspace_scan_matches_cargo_members() {
+        let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."));
+        let graph = scan_workspace(root).expect("scan");
+        assert_eq!(
+            graph.packages,
+            without_policy_excluded(cargo_member_names(root))
+        );
+    }
+
+    #[test]
+    fn missing_member_path_dependency_fails_closed() {
+        // Cargo도 다른 target 한정 표의 없는 path 의존까지 읽다가 실패합니다.
+        let repo = TempRepo::new("missing-path-dep");
+        repo.write("Cargo.toml", "[workspace]\nmembers = [\"crates/a\"]\n");
+        repo.write(
+            "crates/a/Cargo.toml",
+            "[package]\nname = \"stellar-a\"\n\n[target.'cfg(none)'.dev-dependencies]\ngone = { path = \"../../misc/gone\" }\n",
+        );
+        assert_eq!(
+            scan_workspace(&repo.0).unwrap_err().code,
+            "missing-path-dependency"
+        );
+        // workspace 루트 밖 path는 member가 아니므로(외부 의존 검사 대상) 따라가지 않습니다.
+        repo.write(
+            "crates/a/Cargo.toml",
+            "[package]\nname = \"stellar-a\"\n\n[dependencies]\nfar = { path = \"../../../far-away\" }\n",
+        );
+        assert_eq!(scan_workspace(&repo.0).unwrap().packages, ["stellar-a"]);
+    }
+
+    #[test]
+    fn non_string_paths_and_excludes_fail_closed() {
+        for (text, code) in [
+            ("[dependencies]\na = { path = 1 }\n", "dependency-path"),
+            ("[dependencies.a]\npath = [\"x\"]\n", "dependency-path"),
+            (
+                "[workspace.dependencies]\na = { path = true }\n",
+                "dependency-path",
+            ),
+            ("[workspace]\nexclude = \"apps/x\"\n", "workspace-exclude"),
+        ] {
+            assert_eq!(parse_manifest(text).unwrap_err().code, code, "{text:?}");
+        }
     }
 
     impl Drop for TempRepo {
@@ -1590,7 +2037,8 @@ other.workspace = true
         );
         repo.package("apps/viewer", "stellar-viewer", "");
         repo.write("apps/notes/README.md", "manifest 없는 디렉터리\n");
-        repo.package("tools/xtask", "xtask", "stellar-ffi = { path = \"x\" }\n");
+        // 제외 대상의 의존은 검사하지 않습니다(path 의존은 자동 member 탐색에만 쓰이므로 버전 의존으로 둠).
+        repo.package("tools/xtask", "xtask", "stellar-ffi = \"0.0.0\"\n");
         repo.package("benchmarks/fixtures", "stellar-bench-fixtures", "");
 
         let graph = scan_workspace(&repo.0).unwrap();
