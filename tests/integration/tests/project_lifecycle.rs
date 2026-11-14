@@ -274,7 +274,7 @@ fn build_landing(editor: &mut Editor) -> (Timeline, StableId) {
     else {
         panic!("타원은 Shape");
     };
-    let element_ids = (0..ConvertShapeToPath::required_ids(&geometry))
+    let element_ids = (0..ConvertShapeToPath::required_ids(&geometry).expect("평가 가능한 타원"))
         .map(|_| element())
         .collect();
     editor.apply(

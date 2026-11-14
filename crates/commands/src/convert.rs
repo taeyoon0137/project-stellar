@@ -69,7 +69,10 @@ fn leaf_bounds(payload: &NodePayload) -> Option<Rect> {
                 Size2::new(max.0 - min.0, max.1 - min.1).ok()?,
             ))
         }
-        NodePayload::Shape(geometry) => path_bounds(&evaluate_shape_path(geometry)),
+        // 평가할 수 없는 geometry(좌표가 f32 범위 밖)는 bounds 없음으로 둡니다(panic 금지).
+        NodePayload::Shape(geometry) => evaluate_shape_path(geometry)
+            .ok()
+            .and_then(|commands| path_bounds(&commands)),
         NodePayload::Path(path) => path_bounds(path.data().commands()),
         NodePayload::Image(image) => Some(image.layout_bounds()),
         NodePayload::Text(_) | NodePayload::Fragment(_) => None,
@@ -100,8 +103,10 @@ fn translate(payload: &NodePayload, offset: Vec2) -> Result<Option<NodePayload>,
         }
         NodePayload::Shape(geometry) => match geometry {
             ShapeGeometry::Rectangle(_) => return Err(()),
+            // 옮긴 bounds도 끝 좌표가 유한해야 저장·재로드할 수 있습니다(`EllipseParams::new`).
             ShapeGeometry::Ellipse(params) => shift_rect(params.bounds, offset)
-                .map(|bounds| NodePayload::Shape(ShapeGeometry::Ellipse(EllipseParams { bounds }))),
+                .and_then(|bounds| EllipseParams::new(bounds).ok())
+                .map(|params| NodePayload::Shape(ShapeGeometry::Ellipse(params))),
             ShapeGeometry::Line(params) => {
                 match (shift(params.start, offset), shift(params.end, offset)) {
                     (Some(start), Some(end)) => {
@@ -296,15 +301,21 @@ pub struct ConvertShapeToPath {
 
 impl ConvertShapeToPath {
     /// geometry를 path로 바꿀 때 필요한 point·handle id 수.
-    pub fn required_ids(geometry: &ShapeGeometry) -> usize {
-        evaluate_shape_path(geometry)
+    ///
+    /// geometry를 평가할 수 없으면(좌표가 f32 범위 밖) panic 대신
+    /// [`CommandError::InvalidRequest`]입니다.
+    pub fn required_ids(geometry: &ShapeGeometry) -> Result<usize, CommandError> {
+        let commands = evaluate_shape_path(geometry).map_err(|_| CommandError::InvalidRequest {
+            reason: "Shape geometry를 path로 만들 수 없습니다",
+        })?;
+        Ok(commands
             .iter()
             .map(|command| match command {
                 PathCommand::MoveTo(_) | PathCommand::LineTo(_) => 1,
                 PathCommand::CubicTo { .. } => 3,
                 PathCommand::Close => 0,
             })
-            .sum()
+            .sum())
     }
 
     fn converted(&self, model: &DocumentModel) -> Result<NodeRecord, CommandError> {
@@ -314,7 +325,7 @@ impl ConvertShapeToPath {
         let NodePayload::Shape(geometry) = &record.payload else {
             return Err(kind_error(self.node, NodeKind::Shape, record.kind()));
         };
-        if self.element_ids.len() != ConvertShapeToPath::required_ids(geometry) {
+        if self.element_ids.len() != ConvertShapeToPath::required_ids(geometry)? {
             return Err(CommandError::InvalidRequest {
                 reason: "path point·handle id 수가 변환 결과와 다릅니다",
             });
@@ -816,7 +827,7 @@ mod tests {
         let NodePayload::Shape(geometry) = state.model().payload(sid(40)).unwrap().clone() else {
             panic!("Shape");
         };
-        let needed = ConvertShapeToPath::required_ids(&geometry);
+        let needed = ConvertShapeToPath::required_ids(&geometry).unwrap();
         assert!(needed > 4);
         let command = Command::ConvertShapeToPath(ConvertShapeToPath {
             node: sid(40),
@@ -830,7 +841,7 @@ mod tests {
         // 변환 전 렌더 geometry와 같은 command, StableId·stack 유지.
         assert_eq!(
             path.data().commands(),
-            evaluate_shape_path(&geometry).as_slice()
+            evaluate_shape_path(&geometry).unwrap().as_slice()
         );
         assert!(state.model().modifier_stack(sid(40)).is_some());
         assert_eq!(state.model().children_in_order(sid(12)), vec![sid(40)]);
@@ -844,13 +855,78 @@ mod tests {
     }
 
     #[test]
+    fn unevaluable_shapes_are_rejected_without_panic() {
+        // posthoc DOC-SHAPE-PANIC 회귀(종단): 크기 0 bounds + radius polygon과 끝 좌표가 f32 범위를 넘는
+        // ellipse에서 `ConvertShapeToPath`(id 수 검사 전 `required_ids` 평가)와 부모 Fragment의
+        // `ConvertFragmentToFrame`(leaf bounds 평가)이 panic했습니다(release는 abort).
+        let mut polygon = vec![4u8];
+        for value in [0.0f32; 4] {
+            polygon.extend_from_slice(&value.to_le_bytes());
+        }
+        polygon.extend_from_slice(&3u32.to_le_bytes());
+        polygon.extend_from_slice(&0.0f32.to_le_bytes());
+        polygon.extend_from_slice(&1.0f32.to_le_bytes());
+        let degenerate = ShapeGeometry::decode(&polygon).expect("디코딩은 수용");
+        // 디코딩은 끝 좌표가 넘치는 bounds를 거부하므로, 필드를 직접 채운 in-memory geometry로 만듭니다.
+        let hostile = ShapeGeometry::Ellipse(EllipseParams {
+            bounds: Rect::new(v(f32::MAX, 0.0), Size2::new(f32::MAX, 1.0).unwrap()),
+        });
+        let mut state = DocumentState::new(small_model());
+        run(
+            &mut state,
+            Command::InsertNode(InsertNode {
+                nodes: vec![
+                    record(30, 11, 0x40, NodePayload::Fragment(FragmentPayload)),
+                    record(31, 30, 0x10, NodePayload::Shape(degenerate)),
+                    record(32, 30, 0x20, NodePayload::Shape(hostile)),
+                ],
+                modifier_stacks: Vec::new(),
+            }),
+        )
+        .unwrap();
+        let convert = |node: u64, ids: Vec<StableId>| {
+            Command::ConvertShapeToPath(ConvertShapeToPath {
+                node: sid(node),
+                element_ids: ids,
+            })
+        };
+        assert!(matches!(
+            ConvertShapeToPath::required_ids(&hostile),
+            Err(CommandError::InvalidRequest { .. })
+        ));
+        assert!(matches!(
+            run(&mut state, convert(32, Vec::new())),
+            Err(CommandError::InvalidRequest { .. })
+        ));
+        // 평가할 수 없는 자식은 bounds 없음으로 빠지고, Fragment 변환은 남은 자식으로 진행합니다.
+        let inverse = run(
+            &mut state,
+            Command::ConvertFragmentToFrame(ConvertFragmentToFrame { node: sid(30) }),
+        )
+        .expect("Fragment 변환");
+        run(&mut state, inverse).unwrap();
+        // 크기 0 polygon은 직선 꼭짓점 path(MoveTo + LineTo 2개 + Close)로 변환됩니다.
+        let needed = ConvertShapeToPath::required_ids(&degenerate).unwrap();
+        assert_eq!(needed, 3);
+        assert!(matches!(
+            run(&mut state, convert(31, Vec::new())),
+            Err(CommandError::InvalidRequest { .. })
+        ));
+        run(&mut state, convert(31, element_ids(needed))).expect("변환");
+        assert_eq!(
+            state.model().payload(sid(31)).unwrap().kind(),
+            NodeKind::Path
+        );
+    }
+
+    #[test]
     fn shape_to_path_rejects_bad_ids_and_kinds() {
         let mut state = rectangle_state();
         let needed = {
             let NodePayload::Shape(geometry) = state.model().payload(sid(40)).unwrap() else {
                 panic!("Shape");
             };
-            ConvertShapeToPath::required_ids(geometry)
+            ConvertShapeToPath::required_ids(geometry).unwrap()
         };
         let before = snapshot(&state);
         let convert = |ids: Vec<StableId>| {
@@ -899,7 +975,7 @@ mod tests {
             let NodePayload::Shape(geometry) = state.model().payload(sid(40)).unwrap() else {
                 panic!("Shape");
             };
-            ConvertShapeToPath::required_ids(geometry)
+            ConvertShapeToPath::required_ids(geometry).unwrap()
         };
         run(
             &mut state,

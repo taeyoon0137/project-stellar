@@ -40,6 +40,8 @@ pub enum ShapeError {
     },
     /// corner radius가 음수이거나 비유한입니다.
     InvalidCornerRadius,
+    /// bounds 끝 좌표(origin + size)나 path 평가 결과가 f32 유한 범위를 벗어납니다.
+    NonFiniteGeometry,
 }
 
 impl fmt::Display for ShapeError {
@@ -57,6 +59,9 @@ impl fmt::Display for ShapeError {
             ),
             ShapeError::InvalidCornerRadius => {
                 f.write_str("corner radius는 비음수 유한 값이어야 합니다")
+            }
+            ShapeError::NonFiniteGeometry => {
+                f.write_str("도형 좌표가 f32 유한 범위를 벗어납니다(bounds 끝 좌표 또는 path 평가)")
             }
         }
     }
@@ -150,6 +155,8 @@ impl RectangleParams {
         let (tl, tr, br, bl) = self.effective_corner_radius();
         let w = self.size.width();
         let h = self.size.height();
+        // size·실효 radius가 유한 비음수이고 각 좌표가 [0, w]·[0, h] 안이므로 항상 유한합니다
+        // (origin 없음, 합이 넘칠 수 없음).
         let p = |x: f32, y: f32| Vec2::new(x, y).expect("finite rectangle");
         let k = CIRCLE_KAPPA;
         let mut path = vec![PathCommand::MoveTo(p(tl, 0.0))];
@@ -234,7 +241,26 @@ fn rect_from_bytes(bytes: &[u8]) -> Result<Rect, ShapeError> {
     let size = Size2::new(f(8), f(12)).map_err(|_| ShapeError::Malformed {
         reason: "bounds 음수·비유한",
     })?;
-    Ok(Rect::new(origin, size))
+    let rect = Rect::new(origin, size);
+    check_far_edge(&rect)?;
+    Ok(rect)
+}
+
+/// bounds의 먼 쪽 끝 좌표(origin + size)도 유한해야 합니다. origin과 size가 각각 유한해도 합이
+/// f32 범위를 넘으면 path 평가 좌표가 무한대가 됩니다(posthoc DOC-SHAPE-PANIC).
+fn check_far_edge(rect: &Rect) -> Result<(), ShapeError> {
+    let far_x = rect.origin().x() + rect.size().width();
+    let far_y = rect.origin().y() + rect.size().height();
+    if far_x.is_finite() && far_y.is_finite() {
+        Ok(())
+    } else {
+        Err(ShapeError::NonFiniteGeometry)
+    }
+}
+
+/// path 평가 좌표. 비유한이면 panic 대신 [`ShapeError::NonFiniteGeometry`]입니다.
+fn finite_point(x: f32, y: f32) -> Result<Vec2, ShapeError> {
+    Vec2::new(x, y).map_err(|_| ShapeError::NonFiniteGeometry)
 }
 
 fn rect_to_bytes(rect: &Rect) -> Vec<u8> {
@@ -251,6 +277,12 @@ fn rect_to_bytes(rect: &Rect) -> Vec<u8> {
 }
 
 impl EllipseParams {
+    /// 검증된 ellipse를 만듭니다. bounds 끝 좌표(origin + size)가 비유한이면 거부합니다.
+    pub fn new(bounds: Rect) -> Result<EllipseParams, ShapeError> {
+        check_far_edge(&bounds)?;
+        Ok(EllipseParams { bounds })
+    }
+
     /// tagged field로 기록합니다.
     pub fn to_fields(&self) -> Vec<RawField> {
         vec![RawField {
@@ -280,7 +312,10 @@ impl EllipseParams {
 
     /// 전체 타원 path(4개 cubic). 오른쪽 끝에서 시작해 y-down 좌표 기준
     /// 시계 방향(오른쪽 → 아래 → 왼쪽 → 위)으로 그리고 닫습니다.
-    pub fn to_path(&self) -> Vec<PathCommand> {
+    ///
+    /// bounds 필드를 직접 채워 끝 좌표가 f32 범위를 넘으면(디코딩·[`EllipseParams::new`]는 거부)
+    /// [`ShapeError::NonFiniteGeometry`]를 반환합니다.
+    pub fn to_path(&self) -> Result<Vec<PathCommand>, ShapeError> {
         let o = self.bounds.origin();
         let s = self.bounds.size();
         let rx = s.width() / 2.0;
@@ -289,31 +324,31 @@ impl EllipseParams {
         let cy = o.y() + ry;
         let kx = rx * CIRCLE_KAPPA;
         let ky = ry * CIRCLE_KAPPA;
-        let p = |x: f32, y: f32| Vec2::new(x, y).expect("finite bounds");
-        vec![
-            PathCommand::MoveTo(p(cx + rx, cy)),
+        let p = finite_point;
+        Ok(vec![
+            PathCommand::MoveTo(p(cx + rx, cy)?),
             PathCommand::CubicTo {
-                c1: p(cx + rx, cy + ky),
-                c2: p(cx + kx, cy + ry),
-                to: p(cx, cy + ry),
+                c1: p(cx + rx, cy + ky)?,
+                c2: p(cx + kx, cy + ry)?,
+                to: p(cx, cy + ry)?,
             },
             PathCommand::CubicTo {
-                c1: p(cx - kx, cy + ry),
-                c2: p(cx - rx, cy + ky),
-                to: p(cx - rx, cy),
+                c1: p(cx - kx, cy + ry)?,
+                c2: p(cx - rx, cy + ky)?,
+                to: p(cx - rx, cy)?,
             },
             PathCommand::CubicTo {
-                c1: p(cx - rx, cy - ky),
-                c2: p(cx - kx, cy - ry),
-                to: p(cx, cy - ry),
+                c1: p(cx - rx, cy - ky)?,
+                c2: p(cx - kx, cy - ry)?,
+                to: p(cx, cy - ry)?,
             },
             PathCommand::CubicTo {
-                c1: p(cx + kx, cy - ry),
-                c2: p(cx + rx, cy - ky),
-                to: p(cx + rx, cy),
+                c1: p(cx + kx, cy - ry)?,
+                c2: p(cx + rx, cy - ky)?,
+                to: p(cx + rx, cy)?,
             },
             PathCommand::Close,
-        ]
+        ])
     }
 }
 
@@ -431,7 +466,7 @@ pub struct PolygonParams {
 
 impl PolygonParams {
     /// 검증된 polygon을 만듭니다. 변 수 < 3(또는 상한 초과), 비유한 회전, 음수
-    /// radius는 거부합니다.
+    /// radius, 끝 좌표(origin + size)가 비유한인 bounds는 거부합니다.
     pub fn new(
         bounds: Rect,
         sides: u32,
@@ -444,6 +479,7 @@ impl PolygonParams {
         if !corner_radius.is_finite() || corner_radius < 0.0 {
             return Err(ShapeError::InvalidCornerRadius);
         }
+        check_far_edge(&bounds)?;
         Ok(PolygonParams {
             bounds,
             sides,
@@ -494,17 +530,20 @@ impl PolygonParams {
     /// polygon path. corner radius가 0이면 직선 polygon, 양수면 각 꼭짓점을
     /// 원호(cubic 근사)로 둥글립니다. 인접 변 길이의 절반을 넘는 radius는
     /// 평가에서 clamp합니다(저장값은 원본 유지).
-    pub fn to_path(&self) -> Vec<PathCommand> {
+    ///
+    /// 인접 꼭짓점과 겹쳐 변 길이가 0인 꼭짓점(예: 크기 0 bounds)은 둥글릴 방향이 없으므로 직선
+    /// 꼭짓점으로 둡니다. 좌표가 f32 범위를 넘으면 [`ShapeError::NonFiniteGeometry`]입니다.
+    pub fn to_path(&self) -> Result<Vec<PathCommand>, ShapeError> {
         let vertices = self.vertices();
-        let p = |x: f32, y: f32| Vec2::new(x, y).expect("finite polygon");
+        let p = finite_point;
         let n = vertices.len();
         if self.corner_radius == 0.0 {
-            let mut path = vec![PathCommand::MoveTo(p(vertices[0].0, vertices[0].1))];
+            let mut path = vec![PathCommand::MoveTo(p(vertices[0].0, vertices[0].1)?)];
             for v in &vertices[1..] {
-                path.push(PathCommand::LineTo(p(v.0, v.1)));
+                path.push(PathCommand::LineTo(p(v.0, v.1)?));
             }
             path.push(PathCommand::Close);
-            return path;
+            return Ok(path);
         }
         let mut path = Vec::with_capacity(2 * n + 1);
         for i in 0..n {
@@ -516,6 +555,17 @@ impl PolygonParams {
             let la = (ax * ax + ay * ay).sqrt();
             let lb = (bx * bx + by * by).sqrt();
             let cos_alpha = ((ax * bx + ay * by) / (la * lb)).clamp(-1.0, 1.0);
+            if la == 0.0 || lb == 0.0 || cos_alpha.is_nan() {
+                // 길이 0인 변(또는 길이 곱이 0으로 underflow한 극소 변): 방향이 없어 rounding을
+                // 건너뛰고 직선 꼭짓점으로 둡니다(0으로 나누기 NaN 방지).
+                let vertex = p(vx, vy)?;
+                path.push(if i == 0 {
+                    PathCommand::MoveTo(vertex)
+                } else {
+                    PathCommand::LineTo(vertex)
+                });
+                continue;
+            }
             let alpha = cos_alpha.acos(); // 내각.
             let tan_half = (alpha / 2.0).tan();
             let mut t = if tan_half > 0.0 {
@@ -532,18 +582,18 @@ impl PolygonParams {
             let c1 = (start.0 - ax / la * handle, start.1 - ay / la * handle);
             let c2 = (end.0 - bx / lb * handle, end.1 - by / lb * handle);
             if i == 0 {
-                path.push(PathCommand::MoveTo(p(start.0, start.1)));
+                path.push(PathCommand::MoveTo(p(start.0, start.1)?));
             } else {
-                path.push(PathCommand::LineTo(p(start.0, start.1)));
+                path.push(PathCommand::LineTo(p(start.0, start.1)?));
             }
             path.push(PathCommand::CubicTo {
-                c1: p(c1.0, c1.1),
-                c2: p(c2.0, c2.1),
-                to: p(end.0, end.1),
+                c1: p(c1.0, c1.1)?,
+                c2: p(c2.0, c2.1)?,
+                to: p(end.0, end.1)?,
             });
         }
         path.push(PathCommand::Close);
-        path
+        Ok(path)
     }
 }
 
@@ -577,11 +627,14 @@ impl ShapeGeometry {
 /// node를 Path로 바꾸지 않습니다 — 렌더·hit test·boolean이 쓰는 geometry만
 /// 계산합니다. 같은 입력은 항상 bit 단위로 같은 command를 냅니다. 파괴 변환
 /// (Shape node → Path node)은 사용자 명시 command만 수행합니다(VI.6.5).
-pub fn evaluate_shape_path(geometry: &ShapeGeometry) -> Vec<PathCommand> {
+///
+/// 평가 좌표가 f32 범위를 넘으면 panic 대신 [`ShapeError::NonFiniteGeometry`]를 반환합니다. 디코딩한
+/// geometry는 bounds 끝 좌표를 검사했으므로 정상 크기에서는 실패하지 않습니다.
+pub fn evaluate_shape_path(geometry: &ShapeGeometry) -> Result<Vec<PathCommand>, ShapeError> {
     match geometry {
-        ShapeGeometry::Rectangle(params) => params.to_path(),
+        ShapeGeometry::Rectangle(params) => Ok(params.to_path()),
         ShapeGeometry::Ellipse(params) => params.to_path(),
-        ShapeGeometry::Line(params) => params.to_path(),
+        ShapeGeometry::Line(params) => Ok(params.to_path()),
         ShapeGeometry::Polygon(params) => params.to_path(),
     }
 }
@@ -797,7 +850,7 @@ mod tests {
         let ellipse = EllipseParams {
             bounds: rect(0.0, 0.0, 200.0, 100.0),
         };
-        let path = ellipse.to_path();
+        let path = ellipse.to_path().unwrap();
         // 손 계산 reference: cx=100, cy=50, rx=100, ry=50, k=0.5522848.
         let reference: [(f32, f32); 13] = [
             (200.0, 50.0),
@@ -832,7 +885,7 @@ mod tests {
         }
         assert_eq!(path.last(), Some(&PathCommand::Close));
         // 결정론: 같은 입력 → 같은 command(bit 동일).
-        assert_eq!(ellipse.to_path(), path);
+        assert_eq!(ellipse.to_path().unwrap(), path);
     }
 
     #[test]
@@ -978,7 +1031,7 @@ mod tests {
         // 검증 기준(VI.5.5): 3·4·100 sides path fixture 통과.
         for sides in [3u32, 4, 100] {
             let poly = polygon(sides, 0.0, 0.0).unwrap();
-            let path = poly.to_path();
+            let path = poly.to_path().unwrap();
             // MoveTo + (n−1) LineTo + Close.
             assert_eq!(path.len(), sides as usize + 1, "{sides} sides");
             assert!(matches!(path[0], PathCommand::MoveTo(_)));
@@ -1000,8 +1053,8 @@ mod tests {
         }
         // 결정론.
         assert_eq!(
-            polygon(100, 0.0, 0.0).unwrap().to_path(),
-            polygon(100, 0.0, 0.0).unwrap().to_path()
+            polygon(100, 0.0, 0.0).unwrap().to_path().unwrap(),
+            polygon(100, 0.0, 0.0).unwrap().to_path().unwrap()
         );
     }
 
@@ -1014,7 +1067,7 @@ mod tests {
         assert!((square[0].1 - (50.0 - half)).abs() < 1e-3);
 
         // 둥근 모서리: MoveTo + n·Cubic + (n−1)·LineTo + Close.
-        let rounded = polygon(4, 45.0, 10.0).unwrap().to_path();
+        let rounded = polygon(4, 45.0, 10.0).unwrap().to_path().unwrap();
         assert_eq!(rounded.len(), 1 + 4 + 3 + 1);
         let cubics = rounded
             .iter()
@@ -1022,7 +1075,7 @@ mod tests {
             .count();
         assert_eq!(cubics, 4);
         // 과도한 radius는 변 절반으로 clamp되어도 유한 path.
-        let clamped = polygon(3, 0.0, 10_000.0).unwrap().to_path();
+        let clamped = polygon(3, 0.0, 10_000.0).unwrap().to_path().unwrap();
         assert_eq!(clamped.len(), 1 + 3 + 2 + 1);
     }
 
@@ -1045,10 +1098,10 @@ mod tests {
         // 검증 기준(VI.5.6): 동일 입력 bit-stable path commands.
         use crate::path::encode_commands;
         for geometry in sample_geometries() {
-            let first = encode_commands(&evaluate_shape_path(&geometry));
+            let first = encode_commands(&evaluate_shape_path(&geometry).unwrap());
             for _ in 0..100 {
                 assert_eq!(
-                    encode_commands(&evaluate_shape_path(&geometry)),
+                    encode_commands(&evaluate_shape_path(&geometry).unwrap()),
                     first,
                     "{}",
                     geometry.kind().name()
@@ -1181,5 +1234,165 @@ mod tests {
         .encode();
         bytes[1..5].copy_from_slice(&f32::NAN.to_le_bytes());
         assert!(ShapeGeometry::decode(&bytes).is_err());
+    }
+
+    /// shape payload bytes: kind tag + f32 LE 값들 + 꼬리 bytes.
+    fn payload(tag: u8, values: &[f32], tail: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![tag];
+        for v in values {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        bytes.extend_from_slice(tail);
+        bytes
+    }
+
+    fn polygon_tail(sides: u32, rotation: f32, radius: f32) -> Vec<u8> {
+        let mut tail = sides.to_le_bytes().to_vec();
+        tail.extend_from_slice(&rotation.to_le_bytes());
+        tail.extend_from_slice(&radius.to_le_bytes());
+        tail
+    }
+
+    #[test]
+    fn zero_size_polygon_with_radius_evaluates_without_panic() {
+        // posthoc DOC-SHAPE-PANIC 회귀: 크기 0 bounds + radius 1인 삼각형은 디코딩·validator를
+        // 통과하지만, 변 길이 0으로 나누어 NaN 좌표가 생기고 `expect("finite polygon")`이 panic했습니다
+        // (release는 abort). 이제 길이 0인 변은 rounding을 건너뛴 직선 꼭짓점입니다.
+        let bytes = payload(4, &[0.0; 4], &polygon_tail(3, 0.0, 1.0));
+        let geometry = ShapeGeometry::decode(&bytes).expect("디코딩은 수용");
+        let zero = PathCommand::LineTo(Vec2::ZERO);
+        assert_eq!(
+            evaluate_shape_path(&geometry).unwrap(),
+            vec![
+                PathCommand::MoveTo(Vec2::ZERO),
+                zero,
+                zero,
+                PathCommand::Close
+            ]
+        );
+        // 일부 꼭짓점만 겹치는 경우(높이 0, 45° 회전 사각형: v0=v1, v2=v3)도 유한 path입니다.
+        let flat = PolygonParams::new(
+            rect(0.0, 0.0, 100.0, 0.0),
+            4,
+            stellar_core_types::value::Angle::new(45.0).unwrap(),
+            5.0,
+        )
+        .unwrap();
+        let path = flat.to_path().unwrap();
+        assert!(matches!(path[0], PathCommand::MoveTo(_)));
+        assert_eq!(path.last(), Some(&PathCommand::Close));
+        assert!(crate::path::path_bounds(&path).is_some());
+    }
+
+    #[test]
+    fn bounds_whose_far_edge_overflows_are_rejected_without_panic() {
+        // posthoc DOC-SHAPE-PANIC 회귀: origin·size가 각각 유한해도 합(origin + size)이 f32 범위를
+        // 넘으면 평가 좌표가 무한대가 되어 panic했습니다. 디코딩·생성자는 거부하고, 필드를 직접
+        // 채운 geometry의 평가·변환 계획은 panic 대신 오류입니다.
+        let huge = [f32::MAX, 0.0, f32::MAX, 1.0];
+        assert_eq!(
+            ShapeGeometry::decode(&payload(2, &huge, &[])),
+            Err(ShapeError::NonFiniteGeometry)
+        );
+        assert_eq!(
+            ShapeGeometry::decode(&payload(4, &huge, &polygon_tail(5, 0.0, 0.0))),
+            Err(ShapeError::NonFiniteGeometry)
+        );
+        let bounds = rect(huge[0], huge[1], huge[2], huge[3]);
+        assert_eq!(
+            EllipseParams::new(bounds),
+            Err(ShapeError::NonFiniteGeometry)
+        );
+        assert_eq!(
+            PolygonParams::new(
+                bounds,
+                5,
+                stellar_core_types::value::Angle::new(0.0).unwrap(),
+                0.0
+            ),
+            Err(ShapeError::NonFiniteGeometry)
+        );
+        let field = ShapeGeometry::Ellipse(EllipseParams { bounds });
+        assert_eq!(
+            evaluate_shape_path(&field),
+            Err(ShapeError::NonFiniteGeometry)
+        );
+        let mut next = || stellar_core_types::ids::StableId::new_v7(1, 0, 1);
+        assert_eq!(
+            crate::path::plan_shape_to_path(
+                stellar_core_types::ids::StableId::new_v7(2, 0, 2),
+                &field,
+                &mut next
+            ),
+            Err(crate::path::PathError::NonFinite)
+        );
+        // 경계 안(끝 좌표가 정확히 f32::MAX)은 수용하고 평가합니다.
+        let edge = ShapeGeometry::decode(&payload(2, &[0.0, 0.0, f32::MAX, 2.0], &[])).unwrap();
+        assert!(evaluate_shape_path(&edge).is_ok());
+    }
+
+    #[test]
+    fn extreme_value_sweep_never_panics() {
+        // posthoc DOC-SHAPE-PANIC 회귀: 극단값 조합 sweep(감사 시 ellipse 1,070건·polygon 10,773건
+        // panic). 디코딩을 통과한 모든 geometry의 평가는 panic하지 않고, 성공하면 변환 계획도
+        // 성공합니다. 디코딩을 통과한 ellipse·rectangle·line은 평가가 항상 성공합니다.
+        let values = [
+            0.0,
+            1.0,
+            -1.0,
+            1.0e-45,
+            1.0e-20,
+            1.0e20,
+            f32::MAX / 2.0,
+            f32::MAX,
+            -f32::MAX,
+        ];
+        let mut decoded = 0usize;
+        let mut check = |bytes: Vec<u8>| {
+            let Ok(geometry) = ShapeGeometry::decode(&bytes) else {
+                return;
+            };
+            decoded += 1;
+            match evaluate_shape_path(&geometry) {
+                Ok(commands) => {
+                    let data =
+                        crate::path::PathData::new(crate::path::WindingRule::NonZero, commands);
+                    assert!(data.is_ok(), "평가 결과는 유효 path: {bytes:?}");
+                }
+                Err(error) => {
+                    assert_eq!(error, ShapeError::NonFiniteGeometry);
+                    assert_eq!(
+                        geometry.kind(),
+                        ShapeKind::Polygon,
+                        "디코딩한 {}의 평가 실패: {bytes:?}",
+                        geometry.kind().name()
+                    );
+                }
+            }
+        };
+        for &x in &values {
+            for &y in &values {
+                for &w in &values {
+                    for &h in &values {
+                        check(payload(2, &[x, y, w, h], &[]));
+                        check(payload(3, &[x, y, w, h], &[0]));
+                        for sides in [3, 4, 5] {
+                            for radius in [0.0, 0.5, f32::MAX] {
+                                for rotation in [0.0, 45.0] {
+                                    check(payload(
+                                        4,
+                                        &[x, y, w, h],
+                                        &polygon_tail(sides, rotation, radius),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    check(payload(1, &[x, y, w, w, w, w], &[]));
+                    check(payload(1, &[x, y, 0.0, w, 0.0, w], &[]));
+                }
+            }
+        }
+        assert!(decoded > 10_000, "디코딩된 조합 {decoded}");
     }
 }

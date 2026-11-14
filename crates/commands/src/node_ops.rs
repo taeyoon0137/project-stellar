@@ -882,6 +882,53 @@ mod tests {
         record
     }
 
+    /// root(10) → 12 아래 Frame(20)과 그 자식 `n`개를 가진 상태.
+    fn wide_state(n: u64) -> DocumentState {
+        let mut model = small_model();
+        model.insert_node(frame(20, Some(12), 0x30)).unwrap();
+        for i in 0..n {
+            let mut child = frame(1_000 + i, Some(20), 0x01);
+            child.order_key = OrderKey::from_bytes(vec![(i >> 8) as u8, i as u8, 1]).unwrap();
+            model.insert_node(child).unwrap();
+        }
+        DocumentState::new(model)
+    }
+
+    #[test]
+    fn delete_subtree_and_undo_work_is_linear_in_subtree_size() {
+        // posthoc CMD-DELETE-QUADRATIC 회귀: node마다 `remove_leaf`가 전체 column을 훑어 자식을 확인해
+        // 삭제 비용이 O(subtree × N)였습니다(자식 1.6만 개 삭제 8.7초). 작업량은 문서 전체 순회에서
+        // 방문한 live node 수(`op_count`)입니다 — 순회 횟수가 상수여야 선형입니다.
+        let work = |n: u64| {
+            let mut state = wide_state(n);
+            let before = snapshot(&state);
+            let delete = Command::DeleteSubtree(DeleteSubtree { root: sid(20) });
+            let (inverse, deleted) =
+                stellar_document::op_count::measure(|| run(&mut state, delete));
+            assert_eq!(state.model().node_count(), 4);
+            // 되돌리기(InsertNode, 실패 시 rollback의 `UndoOp::Remove` 경로와 같은 primitive)도 선형.
+            let (restored, undo) = stellar_document::op_count::measure(|| {
+                run(&mut state, inverse.expect("삭제 성공"))
+            });
+            restored.expect("되돌리기 성공");
+            assert_eq!(snapshot(&state), before);
+            (deleted, undo)
+        };
+        let (small, large) = (work(500), work(2_000));
+        let nodes = 2_000 + 5;
+        for (name, small, large) in [("삭제", small.0, large.0), ("되돌리기", small.1, large.1)]
+        {
+            assert!(
+                large <= 16 * nodes,
+                "{name}: node 하나당 상수 번만 순회해야 합니다: 작업량 {large}"
+            );
+            assert!(
+                large <= 5 * small,
+                "{name}: 입력 4배에 작업량 {small} → {large}(선형이면 4배 남짓, 제곱이면 16배)"
+            );
+        }
+    }
+
     #[test]
     fn delete_subtree_preserves_internal_references_and_rejects_external() {
         // 검증 기준(VII.2.2): delete→undo semantic snapshot 동일.

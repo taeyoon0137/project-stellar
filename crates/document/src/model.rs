@@ -233,9 +233,17 @@ impl DocumentModel {
 
     /// 자식이 없는 node를 지우고 그 레코드를 반환합니다. modifier stack도 함께 지웁니다.
     /// 다른 node가 이 node를 참조하는지는 command 단계의 정책입니다(VI.2.5).
+    ///
+    /// 자식 확인은 column의 자식 수([`NodeColumns::child_count`], O(1))로 합니다 — 전체 column을
+    /// 훑으면 subtree 삭제·되돌리기가 O(subtree × N)이 됩니다(posthoc CMD-DELETE-QUADRATIC).
     pub fn remove_leaf(&mut self, id: StableId) -> Result<NodeRecord, ModelError> {
         let record = self.record(id).ok_or(ModelError::UnknownNode { id })?;
-        if !self.children_in_order(id).is_empty() {
+        let has_children = self
+            .ids
+            .runtime_for(id)
+            .and_then(|handle| self.columns.child_count(handle))
+            .is_some_and(|count| count > 0);
+        if has_children {
             return Err(ModelError::HasChildren { id });
         }
         let handle = self
