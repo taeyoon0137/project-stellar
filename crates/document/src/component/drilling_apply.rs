@@ -30,6 +30,51 @@ use super::drilling_plan::{DrillingPlan, DrillingPlanError, PlannedProperty};
 use super::property::{ComponentProperty, ComponentPropertyError, PropertyVisibility};
 use super::property_commands::{PropertyCommand, PropertyCommandError};
 
+/// `Remove`가 지운 binding과 그때의 orphan 정보.
+///
+/// [`DrillingCommand::Remove`]의 inverse로만 만들어집니다. 필드가 비공개라 crate 밖에서 임의 binding·orphan 정보로
+/// 만들 수 없으므로, 검증 없이 되살리는 [`DrillingCommand::Restore`]가 `Add`의 IX.4.1 의미 검증을 우회하는 경로가
+/// 되지 않습니다. 읽기는 할 수 있습니다:
+///
+/// ```
+/// use stellar_document::component::drilling_apply::{DrillingCommand, RemovedBinding};
+///
+/// fn removed(command: &DrillingCommand) -> Option<&RemovedBinding> {
+///     match command {
+///         DrillingCommand::Restore(removed) => Some(removed),
+///         _ => None,
+///     }
+/// }
+/// ```
+///
+/// 만들 수는 없습니다:
+///
+/// ```compile_fail
+/// use stellar_document::component::drilling::DrillingBinding;
+/// use stellar_document::component::drilling_apply::{DrillingCommand, RemovedBinding};
+///
+/// fn forge(binding: DrillingBinding) -> DrillingCommand {
+///     DrillingCommand::Restore(RemovedBinding { binding, orphan: None })
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedBinding {
+    binding: DrillingBinding,
+    orphan: Option<DrillingOrphan>,
+}
+
+impl RemovedBinding {
+    /// 지운 binding.
+    pub fn binding(&self) -> &DrillingBinding {
+        &self.binding
+    }
+
+    /// 지울 때의 orphan 정보(live였으면 `None`).
+    pub fn orphan(&self) -> Option<&DrillingOrphan> {
+        self.orphan.as_ref()
+    }
+}
+
 /// drilling 모음 command.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DrillingCommand {
@@ -40,13 +85,9 @@ pub enum DrillingCommand {
         /// binding.
         binding: DrillingBindingId,
     },
-    /// `Remove`의 inverse 전용: 지운 binding과 orphan 정보를 검사 없이 되살립니다.
-    Restore {
-        /// binding.
-        binding: DrillingBinding,
-        /// 지울 때의 orphan 정보.
-        orphan: Option<DrillingOrphan>,
-    },
+    /// `Remove`의 inverse 전용: 지운 binding과 orphan 정보를 검사 없이 되살립니다. [`RemovedBinding`]은 `Remove`
+    /// 적용 결과로만 얻을 수 있습니다.
+    Restore(RemovedBinding),
 }
 
 impl DrillingCommand {
@@ -67,12 +108,12 @@ impl DrillingCommand {
             DrillingCommand::Remove { binding } => {
                 let orphan = drilling.orphan(*binding).cloned();
                 let removed = drilling.remove(*binding)?;
-                Ok(DrillingCommand::Restore {
+                Ok(DrillingCommand::Restore(RemovedBinding {
                     binding: removed,
                     orphan,
-                })
+                }))
             }
-            DrillingCommand::Restore { binding, orphan } => {
+            DrillingCommand::Restore(RemovedBinding { binding, orphan }) => {
                 drilling.insert(binding.clone())?;
                 if let Some(orphan) = orphan {
                     drilling.mark_orphan(binding.id(), orphan.clone())?;
@@ -528,6 +569,12 @@ mod tests {
         let with_link = set.encode();
         let undo_remove = undo_add.apply(&library, &mut set).unwrap();
         assert!(set.is_empty());
+        // Remove의 inverse만 Restore를 만들고, 지운 binding과 orphan 정보를 그대로 담습니다.
+        let DrillingCommand::Restore(removed) = &undo_remove else {
+            panic!("Remove의 inverse는 Restore여야 함: {undo_remove:?}");
+        };
+        assert_eq!(removed.binding(), &link);
+        assert_eq!(removed.orphan(), None);
         undo_remove.apply(&library, &mut set).unwrap();
         assert_eq!(set.encode(), with_link);
     }

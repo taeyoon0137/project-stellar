@@ -55,3 +55,43 @@
 
 - 롤백 중 inverse가 실패하는 경우(정상 경로에서는 발생하지 않음)는 `TransactionError::rollback`으로 알리지만 상태 복구를
   보장하지 않습니다.
+
+## 후속 수정 (리뷰 반영)
+
+### inverse 전용 `DrillingCommand::Restore`의 공개 생성 차단
+
+`Fix: DrillingCommand::Restore를 Remove inverse로만 만들 수 있게 제한` 커밋에서 고쳤습니다.
+
+- **문제**: `Restore { binding, orphan }`은 inverse 전용이라 검사 없이 binding을 넣고 orphan 표시를 붙이는데, 공개 enum
+  variant라 crate 밖에서 임의 binding·orphan 정보로 만들 수 있었습니다. `Add`가 강제하는 IX.4.1 의미 검증과 crate
+  내부 전용 `mark_orphan`을 우회하는 공개 경로였습니다.
+- **변경**: variant를 `Restore(RemovedBinding)`으로 바꿨습니다. `RemovedBinding`(지운 binding + 그때의 orphan 정보)은
+  필드가 비공개이고 `Remove` 적용 결과로만 만들어집니다. 읽기 accessor(`binding`, `orphan`)는 공개입니다. `Restore`
+  적용 시 검증을 추가하지 않은 이유: 롤백·undo 경로에서 `Restore`가 실패하면 상태 복구가 깨집니다. 모든 library
+  변경이 drilling 모음 검증을 유지한다는 보장이 이 계층에는 없습니다(아래 `RestoreRecord` 참고). 그래서 지우기 전
+  live binding이 되살릴 때도 의미 검증을 통과한다고 가정할 수 없습니다.
+- **검증**: `DrillingCommand` 문서에 crate 밖 위조를 시도하는 `compile_fail` doctest를 먼저 추가했고, 수정 전에는
+  "Test compiled successfully, but it's marked `compile_fail`"로 실패했습니다. 수정 후에는 새 형태로 위조를
+  시도하는 doctest가 컴파일되지 않습니다. 원인이 비공개 필드(E0451)인지는 표시를 잠시 빼고 실행해 확인했습니다. 읽기용
+  doctest와 `drilling_commands_apply_and_invert`(Remove inverse가 지운 binding·orphan 정보를 그대로 담음)는 통과합니다.
+
+| 명령(후속 수정) | 결과 |
+|---|---|
+| `cargo test -p stellar-document --doc`(수정 전) | 1 failed(위조 snippet이 컴파일됨) |
+| `cargo test -p stellar-document` | unit 353 passed, 통합 7+1+1, doc 4 passed, 0 failed |
+| `cargo clippy -p stellar-document --all-targets -- -D warnings` | 경고 0 |
+| `cargo fmt -p stellar-document -- --check` | 통과 |
+
+### `CommandTransaction` 미연동 (사실 기록, 코드 변경 없음)
+
+- 이 행은 "하나의 CommandTransaction으로 적용"을 요구합니다. 실제 적용 단위는 document 컴포넌트 계층의
+  `ComponentTransaction`입니다. `stellar-commands`의 `CommandTransaction`(VII.1.6)은 `DocumentModel`(scene) 대상
+  closed enum만 담고, `DocumentModel`은 `ComponentLibrary`·`DrillingSet`을 소유하지 않습니다. 그래서 drilling 적용은
+  앱 history(VII.4.1 `HistoryEntry`)에 들어가지 않고 앱 Undo/Redo로 되돌릴 수 없습니다.
+- 행의 검증 열("fault injection rollback")은 실제 테스트로 충족했고, 전부 적용 또는 전부 롤백이라는 계약도
+  `ComponentTransaction`이 지킵니다. 따라서 상태 `[x]`는 유지합니다. 연동(문서 모델의 component library 소유 +
+  `stellar-commands` closed enum 등록 + history 연결)을 맡는 WBS 행은 계획서에 아직 없습니다. 계획 변경으로 행을
+  추가해야 합니다.
+- 관련 위험: `PropertyCommand::RestoreRecord`(IX.4.6, inverse 전용)도 공개 variant입니다. 같은 id·이름 검사와 revive
+  검사는 하지만, 임의 record로 타입·공개 여부를 바꿔도 끊긴 binding을 orphan으로 표시하지 않습니다. 이번 리뷰 지적
+  범위 밖이라 고치지 않았습니다.
