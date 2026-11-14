@@ -75,3 +75,11 @@
      허용(`YamlValue` ↔ `ManifestNode` 변환).
   3. `docs/spec/stellar-format.md` §14.5 스키마 표 갱신.
   4. 실제 `stellar.yaml` 텍스트로 manifest round-trip과 invalid default fixture 재검증.
+
+## 후속 확인(통합 검증 반영, 2026-11-14)
+
+- 통합 검증이 같은 문제(두 crate의 `target_profiles` 형식 중복, ADR 없는 형식 결정)를 다시 지적했습니다. 위 "`[x]`로 되돌리려면"
+  1\~4는 그대로 남아 있습니다.
+- 그 사이 이 crate의 형식이 아직 파일 형식이 아님을 `crates/target-profile/src/lib.rs`·`spec.rs`·`manifest.rs` 모듈 문서와
+  `docs/spec/stellar-format.md` §14.5에 "미연결 초안"으로 적었습니다. §14.5 표 자체는 project 파서 기준 그대로이며, 형식
+  통합 후 갱신합니다(위 3). 상태 `[~]`는 바꾸지 않았습니다.

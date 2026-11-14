@@ -16,6 +16,12 @@
 //!
 //! canonical 키 순서는 머리(`id`, `platform`, `profile_schema_version`), `registry_version`, 위 표의 종류별 순서입니다.
 //! version 텍스트는 정규화합니다(`26` → `26.0`, `17.4.0` → `17.4`).
+//!
+//! **미연결 초안**: 위 키 표는 형식 중립 `ManifestNode` 수준의 초안이며 아직 `stellar.yaml` 파일 형식이 아닙니다.
+//! project crate 파서는 `target_profiles[i]`에 `id`·`platform`·`minimum_os`·`baseline`(자유 문자열)만 받으므로
+//! (`docs/spec/stellar-format.md` §14.5), 이 crate가 요구하는 `profile_schema_version`·`registry_version`과 종류별 키는
+//! 그 파서에서 `UnknownKey`입니다. 반대로 그 파서 형식의 entry는 이 crate에서 필수 키 누락입니다. 키 이름·필수 여부와
+//! project 연결 방식은 ADR로 정해야 합니다(미결, crate 문서 참고).
 
 use std::fmt;
 

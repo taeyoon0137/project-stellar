@@ -17,6 +17,11 @@
 //! 다른 최상위 키(`schema_version`, `project`, `dependencies` …)는 project crate의 매니페스트 모델이 소유합니다.
 //! [`ProjectTargetProfiles::write_into_root`]는 두 키만 교체·삽입·삭제하고 나머지 키와 순서를 보존합니다. 새 기본
 //! profile 키는 `target_profiles` 바로 뒤에 넣습니다.
+//!
+//! **미연결 초안**: 이 절 형식은 아직 `stellar.yaml` 파일 형식이 아닙니다. project crate 파서는 최상위 키를
+//! `schema_version`·`project`·`target_profiles`·`dependencies`만 받아 `default_target_profile`을 `UnknownKey`로 거부하고,
+//! `target_profiles[i]`도 다른 키 집합으로 읽습니다(`docs/spec/stellar-format.md` §14.5). 연결과 형식 통합은 ADR 결정
+//! 뒤의 작업입니다(IX.10.3 `[~]`, crate 문서 참고).
 
 use std::collections::BTreeSet;
 use std::fmt;

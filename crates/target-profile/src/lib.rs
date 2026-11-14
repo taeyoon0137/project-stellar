@@ -3,6 +3,12 @@
 //! 의존: core-types만(crate graph). `stellar.yaml` 텍스트(제한 YAML)는 project crate가 형식 중립 트리
 //! ([`node`])로 바꿔 주고받습니다. 문서·command·binding 계층의 입력은 이 crate의 지역 타입과 trait으로
 //! 표현하며, 상위 crate가 구현·연결합니다.
+//!
+//! **`stellar.yaml` 형식은 미연결 초안입니다.** [`spec`]·[`manifest`]가 정한 `target_profiles` 키와
+//! `default_target_profile`은 아직 파일 형식이 아닙니다. 실제 `stellar.yaml` 파서(project crate `manifest`,
+//! `docs/spec/stellar-format.md` §14.5)는 다른 키 집합만 받아 두 형식이 호환되지 않고, crate graph에도 project →
+//! target-profile edge가 없습니다. 두 형식의 통합과 연결 방식은 ADR로 정해야 하며(미결), 그 전까지 이 crate의
+//! 매니페스트 round-trip은 형식 중립 [`node::ManifestNode`] 수준에서만 성립합니다(IX.10.3·IX.10.4 `[~]`).
 
 /// 형식 중립 매니페스트 트리와 스키마 오류 (IX.10.1).
 pub mod node;

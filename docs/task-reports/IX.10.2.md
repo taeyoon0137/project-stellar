@@ -62,3 +62,17 @@
 IX.10.7 Binding 환경 `os_version` 인코딩(`major × 1000 + minor`, 리뷰 TP-3)이 정확히 담는 범위만 받도록 Apple
 `minimum_os`에 major 9999·minor 999 상한을 추가했습니다. 범위 밖은 `ValueError::OutOfRange`입니다. 다른 `DottedVersion`
 필드(Android `ui_system_version`)는 바꾸지 않았습니다. 자세한 내용과 검증은 IX.10.7 보고서의 후속 수정 절에 있습니다.
+
+## 상태 확인(통합 검증 반영, 2026-11-14): 키 표는 미연결 초안
+
+- 통합 검증은 `stellar.yaml` `target_profiles` 절을 이 crate와 project crate가 서로 호환되지 않는 형식으로 따로 정의하고,
+  이 형식 결정이 ADR 없이 들어왔다고 지적했습니다(IX.10.3 TP-1과 같은 문제).
+- 이 보고서의 "canonical 키 순서"와 종류별 키 이름은 형식 중립 `ManifestNode` 수준의 초안이며 `stellar.yaml` 파일 형식을
+  정한 것이 아닙니다. 이 사실을 `crates/target-profile/src/lib.rs`·`spec.rs`·`manifest.rs` 모듈 문서와
+  `docs/spec/stellar-format.md` §14.5에 "미연결 초안"으로 적었습니다. 파일 형식의 기준은 §14.5 표(project 파서)입니다.
+- 상태는 `[x]`를 유지합니다. 이 행의 작업은 종류별 필드 정의이고 검증 열은 "profile별 required field validation"입니다.
+  파일 저장 형식은 요구하지 않으며, 그 검증은 위 표대로 통과했습니다. `stellar.yaml` 저장과 형식 통합은 IX.10.3(`[~]`)의 남은
+  범위입니다.
+- 남은 결정: 키 이름·필수 여부·`registry_version`·`profile_schema_version`·`default_target_profile`과 project →
+  target-profile 연결 방식(crate graph edge 또는 ADR-0021 같은 형식 중립 노드)을 정하는 ADR이 필요합니다. 이번 수정에서는
+  새 ADR을 만들지 않았습니다.
