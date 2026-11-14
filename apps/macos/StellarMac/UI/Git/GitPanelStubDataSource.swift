@@ -3,8 +3,8 @@ import Foundation
 // 의도적인 placeholder 구현입니다(계획 규칙: 이름에 "Stub" 포함).
 //
 // 코어 Git API(XIV.13.1~XIV.13.4)가 없으므로, 백그라운드 큐에서 합성 데이터로 같은 계약
-// (명령 → pull 이벤트, 세대·페이지 단위 목록)을 흉내 냅니다. 실제 Git을 실행하지 않고 파일을
-// 읽거나 쓰지 않습니다. 코어 연결 시 이 파일은 FFI adapter로 교체합니다.
+// (명령 → pull 이벤트, 세대·부모별 페이지 목록, 처리하지 않은 명령의 거부 이벤트)을 흉내 냅니다.
+// 실제 Git을 실행하지 않고 파일을 읽거나 쓰지 않습니다. 코어 연결 시 이 파일은 FFI adapter로 교체합니다.
 
 /// Stub이 흉내 내는 저장소 상황.
 struct GitPanelStubScenario {
@@ -46,6 +46,16 @@ struct GitPanelStubScenario {
         partialEvery: 0,
         newObjectEvery: 0
     )
+    /// 한 문서 아래 자식이 페이지 여러 개인 경우(1 문서 × 2,000 객체 × 2 변경). 부모별 페이지 경로를 확인합니다.
+    static let wide = GitPanelStubScenario(
+        name: "wide",
+        documentCount: 1,
+        objectsPerDocument: 2_000,
+        changesPerObject: 2,
+        stagedEvery: 0,
+        partialEvery: 0,
+        newObjectEvery: 0
+    )
 }
 
 /// `GitPanelDataSource`의 Stub 구현. 메인 스레드 쪽 adapter입니다.
@@ -55,6 +65,10 @@ final class GitPanelStubDataSource: GitPanelDataSource {
     private let backend: GitStubBackend
     /// 검사용: 보낸 명령 기록(최근 256개).
     private(set) var sentCommands: [GitPanelCommand] = []
+    /// 검사용: 이벤트를 하나 꺼낼 때마다 메인 스레드를 이 시간(초)만큼 점유합니다(느린 디코딩 모사). 0이면 없음.
+    var pollDelay: TimeInterval = 0
+    /// 검사용: 아직 꺼내지 않은 이벤트 수.
+    var queuedEventCount: Int { backend.queuedEventCount }
 
     init(scenario: GitPanelStubScenario = .typical) {
         backend = GitStubBackend(scenario: scenario)
@@ -72,13 +86,21 @@ final class GitPanelStubDataSource: GitPanelDataSource {
     }
 
     func pollEvent() -> GitPanelEvent? {
-        backend.popEvent()
+        guard let event = backend.popEvent() else { return nil }
+        if pollDelay > 0 {
+            let end = ProcessInfo.processInfo.systemUptime + pollDelay
+            while ProcessInfo.processInfo.systemUptime < end {}
+        }
+        return event
     }
 }
 
 // MARK: - 백그라운드 "코어" 모사
 
 /// 큐 하나에서만 상태를 바꾸는 Stub backend. 이벤트 큐만 lock으로 보호합니다.
+///
+/// 세대가 다르거나 대상이 없는 명령, 그리고 Commit·Push·해결 적용이 진행 중일 때 들어온 이 세 명령은 실행하지 않고
+/// 거부 이벤트로 알립니다.
 final class GitStubBackend: @unchecked Sendable {
     private let queue = DispatchQueue(label: "dev.stellar.git-panel-stub", qos: .userInitiated)
     private let lock = NSLock()
@@ -97,6 +119,8 @@ final class GitStubBackend: @unchecked Sendable {
     private var nextOperationID: UInt64 = 1
     private var nextPromptID: UInt64 = 1
     private var pendingStage: (id: UInt64, changes: IndexSet, required: IndexSet, staged: Bool)?
+    /// 진행 중인 배타 작업(Commit·Push·해결 적용). 끝날 때까지 이 세 명령은 busy로 거부합니다.
+    private var exclusiveOperation: UInt64?
     private var headHash = "3f9a2c1"
     private var commitCounter = 0
     private var ahead: Int
@@ -129,6 +153,13 @@ final class GitStubBackend: @unchecked Sendable {
         queue.async { self.handle(command) }
     }
 
+    /// 아직 꺼내지 않은 이벤트 수(검사용).
+    var queuedEventCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return outbox.count - outboxHead
+    }
+
     func popEvent() -> GitPanelEvent? {
         lock.lock()
         defer { lock.unlock() }
@@ -152,6 +183,10 @@ final class GitStubBackend: @unchecked Sendable {
         handler?()
     }
 
+    private func reject(_ command: GitPanelCommand, _ reason: GitRejectionReason) {
+        post(.commandRejected(GitCommandRejection(command: command, reason: reason)))
+    }
+
     private func isCancelled(_ id: UInt64) -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -168,28 +203,23 @@ final class GitStubBackend: @unchecked Sendable {
             if isReady, store == nil { store = GitStubChangeStore(scenario: scenario) }
             post(.status(makeStatus()))
 
-        case .loadChangePage(let generation, let rows):
-            guard generation == changeGeneration, let store else { return }
-            let upper = min(rows.upperBound, store.rowCount)
-            guard rows.lowerBound < upper else { return }
-            let page = (rows.lowerBound..<upper).map(store.row(at:))
-            post(.changePage(GitChangePage(generation: generation, startRow: rows.lowerBound, rows: page)))
+        case .loadChangePage(let generation, let parent, let children):
+            guard let store else { return reject(command, .unavailable) }
+            guard generation == changeGeneration else { return reject(command, .staleGeneration) }
+            guard let rows = store.children(of: parent, in: children) else { return reject(command, .unknownTarget) }
+            post(.changePage(GitChangePage(generation: generation, parent: parent, startIndex: children.lowerBound, rows: rows)))
 
-        case .loadChangeDetail(let generation, let row):
-            guard generation == changeGeneration, let store, row < store.rowCount else { return }
-            post(.changeDetail(store.detail(at: row, generation: generation)))
+        case .loadChangeDetail(let generation, let node):
+            guard let store else { return reject(command, .unavailable) }
+            guard generation == changeGeneration else { return reject(command, .staleGeneration) }
+            guard let detail = store.detail(of: node, generation: generation) else { return reject(command, .unknownTarget) }
+            post(.changeDetail(detail))
 
-        case .setStaged(let generation, let rows, let staged):
-            requestStage(generation: generation, rows: rows, staged: staged)
-
-        case .setGroupExpanded(let generation, let row, let expanded):
-            guard generation == changeGeneration, let store else { return }
-            store.setExpanded(row: row, expanded: expanded)
-            changeGeneration += 1
-            post(.status(makeStatus()))
+        case .setStaged(let generation, let targets, let staged):
+            requestStage(command, generation: generation, targets: targets, staged: staged)
 
         case .answerDependencyPrompt(let requestID, let include):
-            guard let pending = pendingStage, pending.id == requestID else { return }
+            guard let pending = pendingStage, pending.id == requestID else { return reject(command, .unknownTarget) }
             pendingStage = nil
             if include {
                 runStage(pending.changes.union(pending.required), staged: pending.staged)
@@ -199,15 +229,17 @@ final class GitStubBackend: @unchecked Sendable {
             }
 
         case .commit(let message):
+            guard exclusiveOperation == nil else { return reject(command, .busy) }
             commit(message: message)
 
         case .push(let remote):
+            guard exclusiveOperation == nil else { return reject(command, .busy) }
             push(remote: remote)
 
         case .loadConflictPage(let generation, let rows):
-            guard generation == conflictGeneration else { return }
+            guard generation == conflictGeneration else { return reject(command, .staleGeneration) }
             let upper = min(rows.upperBound, conflicts.count)
-            guard rows.lowerBound < upper else { return }
+            guard rows.lowerBound < upper else { return reject(command, .unknownTarget) }
             post(.conflictPage(GitConflictPage(
                 generation: generation,
                 startRow: rows.lowerBound,
@@ -215,7 +247,8 @@ final class GitStubBackend: @unchecked Sendable {
             )))
 
         case .chooseResolution(let generation, let rows, let choice):
-            guard isReady, generation == conflictGeneration else { return }
+            guard isReady else { return reject(command, .unavailable) }
+            guard generation == conflictGeneration else { return reject(command, .staleGeneration) }
             for row in rows where row < conflicts.count && conflicts[row].allowedChoices.contains(choice) {
                 conflicts[row].choice = choice
             }
@@ -223,11 +256,12 @@ final class GitStubBackend: @unchecked Sendable {
             post(.status(makeStatus()))
 
         case .applyResolutions:
+            guard exclusiveOperation == nil else { return reject(command, .busy) }
             applyResolutions()
 
-        case .revealConflict:
-            // 캔버스 선택 연결은 코어·캔버스 작업의 몫입니다. Stub은 기록만 합니다.
-            break
+        case .revealConflict(let generation, _):
+            // 캔버스 선택 연결은 코어·캔버스 작업의 몫입니다. Stub은 세대만 확인합니다.
+            if generation != conflictGeneration { reject(command, .staleGeneration) }
 
         case .resolvePendingAutosave(let saveFirst):
             pendingAutosave = false
@@ -252,6 +286,7 @@ final class GitStubBackend: @unchecked Sendable {
     }
 
     private func finish(_ id: UInt64, _ kind: GitOperationKind, _ outcome: GitOperationOutcome) {
+        if exclusiveOperation == id { exclusiveOperation = nil }
         post(.operationFinished(GitOperationResult(id: id, kind: kind, outcome: outcome)))
     }
 
@@ -260,13 +295,13 @@ final class GitStubBackend: @unchecked Sendable {
         finish(id, kind, .failed(message: message))
     }
 
-    private func requestStage(generation: UInt64, rows: IndexSet, staged: Bool) {
+    /// 세대 불일치와 없는 대상은 거부 이벤트로, Git 사용 불가는 실패 결과로 알립니다.
+    private func requestStage(_ command: GitPanelCommand, generation: UInt64, targets: [GitChangeRange], staged: Bool) {
         let kind: GitOperationKind = staged ? .stage : .unstage
         guard isReady, let store else { return fail(kind, "Git isn't available for this project.") }
-        guard generation == changeGeneration else {
-            return fail(kind, "The change list was updated. Try again.")
-        }
-        let changes = store.changeIndexes(forRows: rows)
+        guard generation == changeGeneration else { return reject(command, .staleGeneration) }
+        guard pendingStage == nil else { return reject(command, .busy) }
+        guard let changes = store.changeIndexes(for: targets) else { return reject(command, .unknownTarget) }
         let required = staged ? store.requiredForStaging(changes) : store.requiredForUnstaging(changes)
         if !required.isEmpty {
             let id = nextPromptID
@@ -305,6 +340,7 @@ final class GitStubBackend: @unchecked Sendable {
             return fail(.commit, "Enter a commit message.")
         }
         let id = beginOperation(.commit, message: "Committing…", cancellable: false)
+        exclusiveOperation = id
         queue.asyncAfter(deadline: .now() + scenario.stepDelay) {
             store.commitStaged()
             self.commitCounter += 1
@@ -321,6 +357,7 @@ final class GitStubBackend: @unchecked Sendable {
         guard scenario.remotes.contains(remote) else { return fail(.push, "Remote “\(remote)” isn't set up.") }
         guard ahead > 0 || !hasUpstream else { return fail(.push, "No commits to push.") }
         let id = beginOperation(.push, message: "Pushing to \(remote)…", cancellable: true)
+        exclusiveOperation = id
         pushStep(id: id, remote: remote, step: 1, steps: 5)
     }
 
@@ -357,6 +394,7 @@ final class GitStubBackend: @unchecked Sendable {
             return fail(.applyResolutions, "Choose a resolution for every conflict first.")
         }
         let id = beginOperation(.applyResolutions, message: "Applying resolutions…", cancellable: false)
+        exclusiveOperation = id
         queue.asyncAfter(deadline: .now() + scenario.stepDelay) {
             self.conflicts.removeAll { $0.kind != .raw }
             self.conflictGeneration += 1
@@ -385,7 +423,11 @@ final class GitStubBackend: @unchecked Sendable {
             stagedSnapshotIssue: nil,
             semanticStatusError: scenario.semanticStatusError,
             pendingAutosave: ready && pendingAutosave,
-            changes: GitListInfo(generation: changeGeneration, rowCount: ready ? store?.rowCount ?? 0 : 0),
+            changes: GitChangeTreeInfo(
+                generation: changeGeneration,
+                structure: store?.structure ?? 0,
+                documentCount: ready ? store?.documentCount ?? 0 : 0
+            ),
             conflicts: GitListInfo(generation: conflictGeneration, rowCount: ready ? conflicts.count : 0)
         )
     }
@@ -419,21 +461,27 @@ final class GitStubBackend: @unchecked Sendable {
 
 // MARK: - 합성 변경 저장소
 
-/// 문서 → 객체 → 변경 3단 합성 데이터와 평탄화 색인. queue 하나에서만 씁니다.
+/// 문서 → 객체 → 변경 3단 합성 데이터. queue 하나에서만 씁니다.
+///
+/// 노드 ID는 생성 시점의 순번(문서·객체 key, 객체 안 변경 key)에서 만들어 커밋으로 노드가 빠져도 남은 노드의
+/// ID가 바뀌지 않습니다. 구조 번호는 노드가 빠지는 커밋에서만 올라갑니다.
 final class GitStubChangeStore {
     struct Change {
         var kind: GitChangeKind
         var state: GitStageState
         var object: Int32
         var variant: UInt16
+        /// 객체 안에서의 생성 순번(ID용).
+        var localKey: UInt16
     }
 
     struct Object {
+        /// 생성 순번(ID용).
+        var key: Int32
         var document: Int32
         var nameIndex: Int32
         var changes: Range<Int>
         var isNew: Bool
-        var collapsed = false
         /// staged + 부분 staged 수.
         var stagedCount = 0
         /// unstaged + 부분 staged 수.
@@ -441,12 +489,12 @@ final class GitStubChangeStore {
     }
 
     struct Document {
-        var nameIndex: Int
+        /// 생성 순번(ID용, 이름 순번과 같음).
+        var key: Int32
         var objects: Range<Int>
-        var collapsed = false
     }
 
-    enum RowRef {
+    enum Node {
         case document(Int)
         case object(Int)
         case change(Int)
@@ -455,13 +503,13 @@ final class GitStubChangeStore {
     private(set) var changes: [Change] = []
     private(set) var objects: [Object] = []
     private(set) var documents: [Document] = []
-    private var documentRowStart: [Int] = [0]
-    /// 객체 머리 행의 문서 머리 행 기준 상대 위치.
-    private var objectRowOffset: [Int] = []
+    private var documentByKey: [Int32: Int] = [:]
+    private var objectByKey: [Int32: Int] = [:]
     private(set) var stagedTotal = 0
     private(set) var unstagedTotal = 0
+    private(set) var structure: UInt64 = 1
 
-    var rowCount: Int { documentRowStart.last ?? 0 }
+    var documentCount: Int { documents.count }
 
     private static let documentNames = ["Home", "Onboarding", "Settings", "Profile", "Checkout", "Components"]
     private static let objectNames = ["Header", "Button/Primary", "Card", "Avatar", "Tab Bar", "Title", "List Row", "Badge"]
@@ -502,10 +550,13 @@ final class GitStubChangeStore {
                     } else if scenario.stagedEvery > 0, global % scenario.stagedEvery == 0 {
                         state = .staged
                     }
-                    changes.append(Change(kind: kind, state: state, object: Int32(objects.count), variant: UInt16(global % 997)))
+                    changes.append(Change(
+                        kind: kind, state: state, object: Int32(objects.count),
+                        variant: UInt16(global % 997), localKey: UInt16(truncatingIfNeeded: changeIndex)))
                 }
                 var object = Object(
-                    document: Int32(documentIndex),
+                    key: Int32(globalObject),
+                    document: Int32(documents.count),
                     nameIndex: Int32(objectIndex),
                     changes: first..<changes.count,
                     isNew: isNew
@@ -524,9 +575,9 @@ final class GitStubChangeStore {
                 objects.append(object)
                 globalObject += 1
             }
-            documents.append(Document(nameIndex: documentIndex, objects: firstObject..<objects.count))
+            documents.append(Document(key: Int32(documentIndex), objects: firstObject..<objects.count))
         }
-        rebuildIndex()
+        rebuildKeys()
     }
 
     private static func contribution(_ state: GitStageState) -> (staged: Int, unstaged: Int) {
@@ -543,49 +594,52 @@ final class GitStubChangeStore {
         return .partiallyStaged
     }
 
-    private func rebuildIndex() {
-        documentRowStart = [0]
-        documentRowStart.reserveCapacity(documents.count + 1)
-        objectRowOffset = Array(repeating: 1, count: objects.count)
-        var total = 0
-        for document in documents {
-            var rows = 1
-            if !document.collapsed {
-                for index in document.objects {
-                    objectRowOffset[index] = rows
-                    rows += 1 + (objects[index].collapsed ? 0 : objects[index].changes.count)
-                }
-            }
-            total += rows
-            documentRowStart.append(total)
+    private func rebuildKeys() {
+        documentByKey = Dictionary(uniqueKeysWithValues: documents.enumerated().map { ($0.element.key, $0.offset) })
+        objectByKey = Dictionary(uniqueKeysWithValues: objects.enumerated().map { ($0.element.key, $0.offset) })
+    }
+
+    // MARK: 노드 ID
+
+    private static let documentTag: UInt64 = 1 << 60
+    private static let objectTag: UInt64 = 2 << 60
+    private static let changeTag: UInt64 = 3 << 60
+    private static let tagMask: UInt64 = 0xF << 60
+
+    private func id(_ node: Node) -> GitChangeNodeID {
+        switch node {
+        case .document(let index):
+            return GitChangeNodeID(rawValue: Self.documentTag | UInt64(UInt32(bitPattern: documents[index].key)))
+        case .object(let index):
+            return GitChangeNodeID(rawValue: Self.objectTag | UInt64(UInt32(bitPattern: objects[index].key)))
+        case .change(let index):
+            let change = changes[index]
+            let objectKey = UInt64(UInt32(bitPattern: objects[Int(change.object)].key))
+            return GitChangeNodeID(rawValue: Self.changeTag | (objectKey << 16) | UInt64(change.localKey))
         }
     }
 
-    func resolve(_ row: Int) -> RowRef? {
-        guard row >= 0, row < rowCount, !documents.isEmpty else { return nil }
-        var low = 0
-        var high = documents.count - 1
-        while low < high {
-            let mid = (low + high + 1) / 2
-            if documentRowStart[mid] <= row { low = mid } else { high = mid - 1 }
+    func resolve(_ id: GitChangeNodeID) -> Node? {
+        let payload = id.rawValue & ~Self.tagMask
+        switch id.rawValue & Self.tagMask {
+        case Self.documentTag:
+            return documentByKey[Int32(truncatingIfNeeded: payload)].map(Node.document)
+        case Self.objectTag:
+            return objectByKey[Int32(truncatingIfNeeded: payload)].map(Node.object)
+        case Self.changeTag:
+            guard let object = objectByKey[Int32(truncatingIfNeeded: payload >> 16)] else { return nil }
+            let local = UInt16(truncatingIfNeeded: payload)
+            return objects[object].changes.first { changes[$0].localKey == local }.map(Node.change)
+        default:
+            return nil
         }
-        let document = low
-        let relative = row - documentRowStart[document]
-        if relative == 0 { return .document(document) }
-        let range = documents[document].objects
-        var first = range.lowerBound
-        var last = range.upperBound - 1
-        while first < last {
-            let mid = (first + last + 1) / 2
-            if objectRowOffset[mid] <= relative { first = mid } else { last = mid - 1 }
-        }
-        let inner = relative - objectRowOffset[first]
-        if inner == 0 { return .object(first) }
-        return .change(objects[first].changes.lowerBound + inner - 1)
     }
 
-    private func documentName(_ index: Int) -> String {
+    // MARK: 조회
+
+    private func documentName(_ key: Int32) -> String {
         let names = Self.documentNames
+        let index = Int(key)
         return index < names.count ? names[index] : "\(names[index % names.count]) \(index / names.count + 1)"
     }
 
@@ -629,59 +683,81 @@ final class GitStubChangeStore {
         }
     }
 
-    func row(at index: Int) -> GitChangeRow {
-        switch resolve(index) {
-        case .document(let documentIndex)?:
-            let document = documents[documentIndex]
+    /// 부모(nil이면 최상위)의 자식 범위를 현재 순번으로 바꿉니다. 부모가 없거나 변경 행이면 nil입니다.
+    private func childNodes(of parent: GitChangeNodeID?) -> (count: Int, node: (Int) -> Node)? {
+        guard let parent else { return (documents.count, { Node.document($0) }) }
+        switch resolve(parent) {
+        case .document(let index)?:
+            let range = documents[index].objects
+            return (range.count, { Node.object(range.lowerBound + $0) })
+        case .object(let index)?:
+            let range = objects[index].changes
+            return (range.count, { Node.change(range.lowerBound + $0) })
+        default:
+            return nil
+        }
+    }
+
+    func children(of parent: GitChangeNodeID?, in range: Range<Int>) -> [GitChangeRow]? {
+        guard let (count, node) = childNodes(of: parent), range.lowerBound >= 0, range.lowerBound < count else { return nil }
+        return (range.lowerBound..<min(range.upperBound, count)).map { row(for: node($0)) }
+    }
+
+    func row(for node: Node) -> GitChangeRow {
+        switch node {
+        case .document(let index):
+            let document = documents[index]
             let counts = documentCounts(document)
             return GitChangeRow(
+                id: id(node),
                 level: .document,
-                title: documentName(document.nameIndex),
+                title: documentName(document.key),
                 detail: GitPanelStrings.changeCount(counts.total),
                 kind: nil,
                 stageState: Self.aggregate(staged: counts.staged, unstaged: counts.unstaged),
-                isExpanded: !document.collapsed,
+                childCount: document.objects.count,
                 changeCount: counts.total
             )
-        case .object(let objectIndex)?:
-            let object = objects[objectIndex]
+        case .object(let index):
+            let object = objects[index]
             let count = GitPanelStrings.changeCount(object.changes.count)
             return GitChangeRow(
+                id: id(node),
                 level: .object,
                 title: objectName(object),
                 detail: object.isNew ? "New · \(count)" : count,
                 kind: nil,
                 stageState: Self.aggregate(staged: object.stagedCount, unstaged: object.unstagedCount),
-                isExpanded: !object.collapsed,
+                childCount: object.changes.count,
                 changeCount: object.changes.count
             )
-        case .change(let changeIndex)?:
-            let change = changes[changeIndex]
+        case .change(let index):
+            let change = changes[index]
             let text = changeText(change)
             return GitChangeRow(
+                id: id(node),
                 level: .change,
                 title: text.title,
                 detail: text.detail,
                 kind: change.kind,
                 stageState: change.state,
-                isExpanded: false,
+                childCount: 0,
                 changeCount: 1
             )
-        case nil:
-            return GitChangeRow(level: .change, title: "", detail: "", kind: nil, stageState: .unstaged, isExpanded: false, changeCount: 0)
         }
     }
 
-    func detail(at row: Int, generation: UInt64) -> GitChangeDetail {
-        let base = self.row(at: row)
-        guard case .change(let changeIndex)? = resolve(row) else {
-            return GitChangeDetail(generation: generation, row: row, title: base.title, kind: nil,
+    func detail(of id: GitChangeNodeID, generation: UInt64) -> GitChangeDetail? {
+        guard let node = resolve(id) else { return nil }
+        let base = row(for: node)
+        guard case .change(let changeIndex) = node else {
+            return GitChangeDetail(generation: generation, node: id, title: base.title, kind: nil,
                                    objectPath: base.title, propertyPath: nil, headValue: nil, indexValue: nil,
                                    workingValue: nil, requiredChanges: [])
         }
         let change = changes[changeIndex]
         let object = objects[Int(change.object)]
-        let path = "\(documentName(Int(object.document))) / \(objectName(object))"
+        let path = "\(documentName(documents[Int(object.document)].key)) / \(objectName(object))"
         let property = Self.properties[Int(change.variant) % Self.properties.count]
         var head: String? = property.head
         var index: String?
@@ -700,7 +776,7 @@ final class GitStubChangeStore {
         }
         return GitChangeDetail(
             generation: generation,
-            row: row,
+            node: id,
             title: base.title,
             kind: change.kind,
             objectPath: path,
@@ -712,17 +788,19 @@ final class GitStubChangeStore {
         )
     }
 
-    /// 행 선택을 변경 순번 집합으로 바꿉니다. 묶음 행은 접혀 있어도 하위 전체를 포함합니다.
-    func changeIndexes(forRows rows: IndexSet) -> IndexSet {
-        if rows.count >= rowCount { return IndexSet(integersIn: 0..<changes.count) }
+    /// 범위를 변경 순번 집합으로 바꿉니다. 묶음 노드는 하위 전체입니다. 없는 부모·순번이 있으면 nil입니다.
+    func changeIndexes(for targets: [GitChangeRange]) -> IndexSet? {
         var result = IndexSet()
-        for range in rows.rangeView {
-            for row in range {
-                switch resolve(row) {
-                case .document(let index)?: result.insert(integersIn: documentChanges(documents[index]))
-                case .object(let index)?: result.insert(integersIn: objects[index].changes)
-                case .change(let index)?: result.insert(index)
-                case nil: break
+        for target in targets {
+            guard let (count, node) = childNodes(of: target.parent) else { return nil }
+            for range in target.children.rangeView {
+                guard range.lowerBound >= 0, range.upperBound <= count else { return nil }
+                for index in range {
+                    switch node(index) {
+                    case .document(let document): result.insert(integersIn: documentChanges(documents[document]))
+                    case .object(let object): result.insert(integersIn: objects[object].changes)
+                    case .change(let change): result.insert(change)
+                    }
                 }
             }
         }
@@ -763,7 +841,7 @@ final class GitStubChangeStore {
         }
     }
 
-    /// 상태를 바꾸고 실제로 바뀐 변경 수를 반환합니다.
+    /// 상태를 바꾸고 실제로 바뀐 변경 수를 반환합니다. 구조는 그대로입니다.
     @discardableResult
     func setStaged(_ targets: IndexSet, staged: Bool) -> Int {
         let target: GitStageState = staged ? .staged : .unstaged
@@ -782,16 +860,7 @@ final class GitStubChangeStore {
         return changed
     }
 
-    func setExpanded(row: Int, expanded: Bool) {
-        switch resolve(row) {
-        case .document(let index)?: documents[index].collapsed = !expanded
-        case .object(let index)?: objects[index].collapsed = !expanded
-        default: return
-        }
-        rebuildIndex()
-    }
-
-    /// staged 변경은 목록에서 빠지고, 부분 staged는 unstaged로 남습니다(커밋 후 Index == HEAD).
+    /// staged 변경은 목록에서 빠지고, 부분 staged는 unstaged로 남습니다(커밋 후 Index == HEAD). 구조 번호가 올라갑니다.
     func commitStaged() {
         var newChanges: [Change] = []
         var newObjects: [Object] = []
@@ -811,6 +880,7 @@ final class GitStubChangeStore {
                 }
                 guard newChanges.count > first else { continue }
                 object.changes = first..<newChanges.count
+                object.document = Int32(newDocuments.count)
                 object.isNew = object.isNew && newChanges[first].kind == .addObject
                 object.stagedCount = 0
                 object.unstagedCount = object.changes.count
@@ -825,6 +895,7 @@ final class GitStubChangeStore {
         changes = newChanges
         objects = newObjects
         documents = newDocuments
-        rebuildIndex()
+        rebuildKeys()
+        structure += 1
     }
 }

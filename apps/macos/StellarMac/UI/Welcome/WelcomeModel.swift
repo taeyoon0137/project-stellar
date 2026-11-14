@@ -29,8 +29,8 @@ enum WelcomeRecentProjectsState: Equatable {
     case loading
     /// 목록을 읽었습니다. 빈 배열이면 빈 상태를 보여 줍니다. 순서는 코어가 정합니다(최근 사용 순).
     case loaded([WelcomeRecentProject])
-    /// 목록을 읽지 못했습니다. `detail`은 보조 설명으로만 표시합니다.
-    case failed(detail: String)
+    /// 목록을 읽지 못했습니다. 문구는 셸이 이유 코드에서 만듭니다.
+    case failed(WelcomeFailureReason)
 }
 
 /// 최근 프로젝트 한 행.
@@ -53,8 +53,8 @@ enum WelcomeGitState: Equatable {
     case available(version: String)
     /// 사용자 지정 경로, 표준 설치 경로, PATH 어디에서도 Git을 찾지 못했습니다.
     case notFound
-    /// Git을 찾았지만 버전·기능 검사를 통과하지 못했습니다.
-    case unusable(detail: String)
+    /// Git을 찾았지만 버전·기능 검사를 통과하지 못했습니다. 문구는 셸이 문제 코드에서 만듭니다.
+    case unusable(WelcomeGitProblem)
 
     /// 새 프로젝트(git init)와 Clone에 Git을 쓸 수 있는지. 탐색 중에는 막지 않습니다.
     var allowsGitOperations: Bool {
@@ -65,6 +65,41 @@ enum WelcomeGitState: Equatable {
     }
 }
 
+/// Git을 쓸 수 없는 이유(코어 → 셸 코드, 아키텍처 §24.1).
+enum WelcomeGitProblem: Equatable {
+    /// 찾은 Git이 Stellar가 요구하는 최소 버전보다 낮습니다. 버전 문자열은 값이므로 그대로 표시합니다.
+    case versionTooOld(found: String, minimum: String)
+    /// 지정한 경로가 실행 파일이 아닙니다.
+    case notExecutable(path: String)
+    /// Git을 실행했지만 버전 확인에 실패했습니다.
+    case launchFailed
+}
+
+/// 작업 실패 이유 코드. 코어 오류는 어댑터가 이 코드로 바꾸고, 문구는 셸이 만듭니다(지역화 대비).
+enum WelcomeFailureReason: Equatable {
+    /// 폴더를 읽거나 쓸 권한이 없습니다.
+    case permissionDenied(path: String)
+    /// 디스크 공간이 부족합니다.
+    case notEnoughSpace
+    /// 원격 저장소에 연결하지 못했습니다.
+    case networkUnavailable
+    /// 원격 저장소 인증이 필요하거나 실패했습니다(자격 증명은 시스템 Git이 다룸, 아키텍처 §37.3).
+    case authenticationFailed
+    /// 원격 저장소를 찾지 못했습니다.
+    case remoteNotFound
+    /// Git 명령이 실패했습니다. 종료 상태는 진단용 숫자입니다.
+    case gitCommandFailed(exitStatus: Int32)
+    /// 그 밖의 코어 오류. `code`는 사람이 읽는 문장이 아닌 안정 식별자이며 진단 표시용입니다.
+    case internalError(code: String)
+    /// 프로젝트 열기 실패(XII.6.2). 원인은 셸 어댑터가 코어 실패 코드에서 고른 `ShellProjectOpenFailure`이고, 문구는
+    /// 그 원인의 제목과 해결 방법입니다. `path`는 고른 폴더입니다(문구에는 폴더 이름만 씀).
+    case projectOpenFailed(ShellProjectOpenFailure, path: String)
+    /// 이 빌드에는 프로젝트 만들기 코어 경로가 아직 없습니다(New Project).
+    case projectCreationUnavailable
+    /// 이 빌드에는 Clone 코어 경로가 아직 없습니다(Clone Project).
+    case projectCloneUnavailable
+}
+
 /// 진행 중 작업.
 struct WelcomeActivity: Equatable {
     enum Kind: Equatable {
@@ -73,6 +108,8 @@ struct WelcomeActivity: Equatable {
         case cloning
     }
 
+    /// 코어가 발급한 작업 식별자. 취소 명령에 그대로 돌려주어, 끝난 작업 대신 새 작업을 취소하는 일을 막습니다.
+    var id: UInt64
     var kind: Kind
     /// 대상 프로젝트 표시 이름. Clone URL은 넣지 않습니다(§39 Git URL은 민감값).
     var projectName: String
@@ -93,8 +130,8 @@ struct WelcomeNotice: Equatable {
         case folderAlreadyExists(path: String)
         /// 최초 커밋 전에 Git `user.name`·`user.email`이 필요합니다(아키텍처 §25.1).
         case gitIdentityRequired
-        /// 그 밖의 실패. `detail`은 보조 설명입니다.
-        case operationFailed(detail: String)
+        /// 그 밖의 실패. 문구는 셸이 이유 코드에서 만듭니다.
+        case operationFailed(WelcomeFailureReason)
     }
 
     /// 같은 안내를 두 번 띄우지 않기 위한 식별자.
@@ -120,8 +157,8 @@ enum WelcomeCommand: Equatable {
     case recheckGit
     /// 사용자가 고른 Git 실행 파일을 탐색 1순위로 지정합니다(아키텍처 §24.1 탐색 순서 1).
     case useGitExecutable(path: String)
-    /// 진행 중 작업을 취소합니다.
-    case cancelActivity
+    /// 진행 중 작업을 취소합니다. 식별자가 현재 작업과 다르면 코어가 무시합니다.
+    case cancelActivity(id: UInt64)
     /// 표시한 안내를 확인했습니다.
     case dismissNotice(id: UInt64)
 }

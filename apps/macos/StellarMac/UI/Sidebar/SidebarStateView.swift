@@ -36,7 +36,8 @@ final class SidebarStateView: NSView {
 
         symbolView.symbolConfiguration = NSImage.SymbolConfiguration(textStyle: .title1)
         symbolView.contentTintColor = .secondaryLabelColor
-        symbolView.setAccessibilityElement(false)
+        // 상태 의미는 group 레이블이 전달하므로 아이콘은 접근성 트리에서 뺍니다(cell까지, 디자인 가이드 8.3).
+        SidebarAccessibility.hideDecoration(symbolView)
 
         titleField.font = NSFont.preferredFont(forTextStyle: .headline)
         titleField.textColor = .labelColor

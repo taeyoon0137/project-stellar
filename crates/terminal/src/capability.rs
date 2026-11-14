@@ -14,6 +14,16 @@
 //!   상태로 새로 받아야 하므로, 신뢰를 철회한 뒤 예전 판정을 재사용할 수 없습니다.
 //! - registry는 token을 다른 어떤 검사(cwd·셸·환경)보다 먼저 확인하고, 실패하면 실행기를 호출하지
 //!   않습니다([`TerminalRegistry::start`](crate::registry::TerminalRegistry::start)).
+//! - token은 실행 요청([`LaunchRequest`](crate::launch::LaunchRequest))을 만들 때 그 안으로
+//!   소비됩니다. 요청 생성자는 crate 밖에 공개하지 않으므로, token 없이 실행기
+//!   ([`TerminalLauncher`](crate::launch::TerminalLauncher), macOS `PtyLauncher`)를 직접 불러 child를
+//!   만드는 경로가 없습니다(`launch` 모듈 문서의 `compile_fail` 예).
+//!
+//! **연결 지점**: [`TerminalCapability::grant`]에 넘기는 [`TerminalTrust`]는 이 crate가 검증할 수
+//! 없습니다. 의존 정책상(ADR-0019, `tools/xtask/src/crate_graph.rs`) 이 crate는 project crate를 볼 수
+//! 없기 때문입니다. 이 crate를 앱 셸에 연결하는 계층이 XVI.7.1 matrix 판정
+//! (`check_capability(ProjectCapability::Terminal, trust)`)만으로 이 값을 정해야 하며, 다른 근거로
+//! `Trusted`를 만들지 않습니다. 이 crate가 보장하는 범위는 "token 없이는 child를 만들 수 없다"까지입니다.
 
 use std::fmt;
 

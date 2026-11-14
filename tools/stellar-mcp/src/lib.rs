@@ -9,6 +9,9 @@
 /// 엄격한 JSON reader·writer (XIX.1.1).
 pub mod json;
 
+/// MCP resource·tool catalog 정의 (XIX.2).
+pub mod catalog;
+
 /// MCP client 등록 정보 (XIX.9.8).
 pub mod connection_info;
 

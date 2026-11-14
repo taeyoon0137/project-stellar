@@ -1,0 +1,21 @@
+%YAML 1.2
+%TAG ! tag:example.com,2000:
+---
+a: ~
+b: null
+c:
+d: "123"
+e: 'single '' quoted'
+f: "esc \t \n é \x41 \U0001F600"
+g: |
+  literal
+   block
+h: >-
+  folded
+  text
+# comment
+i: [a, {b: c}, [d]]
+j: plain multi
+  line scalar
+k: "한글 é"
+...

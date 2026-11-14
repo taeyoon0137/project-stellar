@@ -11,7 +11,9 @@ use crate::check_core::run_check_core;
 use crate::commit_message::validate_commit_subject;
 use crate::crate_graph::check_workspace_graph;
 use crate::crate_graph::manifest::scan_workspace;
-use crate::dependencies::{parse_workspace_direct_deps, validate_dependencies_with, PlanProgress};
+use crate::dependencies::{
+    parse_workspace_direct_deps, validate_dependencies_with, PlanProgress, CARGO_TREE_ARGS,
+};
 use crate::ffi_header::generate_header;
 use crate::pr_body::validate_pr_body;
 use crate::storage_fixtures::check_canonical_primitives;
@@ -345,7 +347,8 @@ fn cmd_sync_plan(repo_root: &Path) -> Result<(), i32> {
 }
 
 fn cmd_validate_crate_graph(repo_root: &Path) -> Result<(), i32> {
-    // XXIX.1.1: crates/*와 tools/stellar-* manifest의 모든 의존 표를 읽고 전이 도달도 검사합니다.
+    // XXIX.1.1: crates/*, tools/stellar-*와 Cargo workspace member 전체(자동 path member 포함,
+    // xtask·bench fixture 제외) manifest의 모든 의존 표를 읽고 전이 도달도 검사합니다.
     let graph = scan_workspace(repo_root).map_err(|e| match e.code {
         "missing-crates-dir" => usage_err(&e.message),
         "io" => internal(&e.message),
@@ -391,23 +394,12 @@ fn cmd_generate_ffi_header(repo_root: &Path, rest: &[String]) -> Result<(), i32>
 
 /// `cargo tree`로 workspace 모든 member의 외부 직접 의존성 이름을 수집합니다(XXIX.1.2).
 ///
-/// normal·build·dev 의존을 모든 target에 대해 모으고, 내부 workspace path 의존은 제외합니다.
+/// normal·build·dev 의존을 모든 target과 모든 feature(optional 의존 포함)에 대해 모으고, 내부
+/// workspace path 의존은 제외합니다. 인자는 [`CARGO_TREE_ARGS`]입니다.
 fn direct_dependencies(repo_root: &Path) -> Result<Vec<String>, i32> {
     let output = Command::new("cargo")
         .current_dir(repo_root)
-        .args([
-            "tree",
-            "--workspace",
-            "-e",
-            "normal,build,dev",
-            "--target",
-            "all",
-            "--depth",
-            "1",
-            "--prefix",
-            "depth",
-            "--no-dedupe",
-        ])
+        .args(CARGO_TREE_ARGS)
         .output()
         .map_err(|e| internal(&format!("cargo tree 실행 실패: {e}")))?;
     if !output.status.success() {
@@ -487,9 +479,78 @@ mod tests {
         assert_eq!(run(&args(&["validate-task-status"]), &root()), EXIT_OK);
     }
 
+    /// 테스트가 끝나면 지우는 임시 디렉터리.
+    struct TempDir(std::path::PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default();
+            let dir =
+                std::env::temp_dir().join(format!("xtask-{tag}-{}-{nanos}", std::process::id()));
+            std::fs::create_dir_all(&dir).unwrap();
+            TempDir(dir)
+        }
+
+        fn write(&self, relative: &str, text: &str) {
+            let path = self.0.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn direct_dependencies_include_optional_dependencies() {
+        // workspace 밖 path crate(`ext`)를 기본 feature로 켜지지 않는 optional 의존으로 둡니다.
+        // workspace 디렉터리 밖에 있어야 자동 member가 되지 않고 외부 직접 의존으로 보입니다.
+        let tmp = TempDir::new("optional-deps");
+        tmp.write(
+            "ws/Cargo.toml",
+            "[workspace]\nresolver = \"2\"\nmembers = [\"a\"]\n",
+        );
+        tmp.write(
+            "ws/a/Cargo.toml",
+            "[package]\nname = \"stellar-a\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n\
+             [dependencies]\nextdep = { path = \"../../ext\", optional = true }\n\n\
+             [features]\nx = [\"dep:extdep\"]\n",
+        );
+        tmp.write("ws/a/src/lib.rs", "");
+        tmp.write(
+            "ext/Cargo.toml",
+            "[package]\nname = \"extdep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        );
+        tmp.write("ext/src/lib.rs", "");
+        let ws = tmp.0.join("ws");
+
+        assert_eq!(direct_dependencies(&ws), Ok(vec!["extdep".to_string()]));
+
+        // `--all-features`를 빼면 같은 의존이 출력에서 빠집니다(이 fixture가 optional 경로를 검사함).
+        let without: Vec<&str> = CARGO_TREE_ARGS
+            .iter()
+            .copied()
+            .filter(|arg| *arg != "--all-features")
+            .collect();
+        let output = Command::new("cargo")
+            .current_dir(&ws)
+            .args(&without)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(parse_workspace_direct_deps(&text), Ok(Vec::new()));
+    }
+
     #[test]
     fn validate_crate_graph_on_real_workspace() {
-        // XXIX.1.1: crates/*와 tools/stellar-*의 모든 의존 표와 전이 도달 규칙을 통과합니다.
+        // XXIX.1.1: 검사 대상 manifest의 모든 의존 표와 전이 도달 규칙을 통과합니다.
         assert_eq!(run(&args(&["validate-crate-graph"]), &root()), EXIT_OK);
     }
 }

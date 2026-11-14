@@ -32,10 +32,59 @@ struct ToolsMenuSnapshot: Equatable {
 protocol ToolsMenuModel: AnyObject {
     /// 마지막으로 받은 snapshot. 메뉴 검증이 자주 읽으므로 계산 없이 저장 값을 돌려줘야 합니다.
     var snapshot: ToolsMenuSnapshot { get }
-    /// snapshot이 바뀌면 메인 스레드에서 호출됩니다(구독자 하나: 창의 툴바 컨트롤러).
-    var snapshotDidChange: ((ToolsMenuSnapshot) -> Void)? { get set }
+    /// snapshot 변경 구독을 추가합니다. 변경되면 메인 스레드에서 등록 순서대로 호출됩니다.
+    ///
+    /// 구독자는 여럿일 수 있습니다(툴바, 캔버스 호스트, 인스펙터 등 같은 창 session을 보는 영역). 반환한
+    /// 토큰이 해제되거나 `cancel()`되면 구독이 끝납니다. 토큰을 보관하지 않으면 바로 해제됩니다.
+    func addSnapshotObserver(_ handler: @escaping (ToolsMenuSnapshot) -> Void) -> ToolsMenuObservation
     /// 명령을 보냅니다(비동기 반영).
     func send(_ command: ShellCommand)
+}
+
+/// `ToolsMenuModel` snapshot 구독 토큰. 해제되면 구독이 끝납니다.
+final class ToolsMenuObservation {
+    private var onCancel: (() -> Void)?
+
+    init(onCancel: @escaping () -> Void) {
+        self.onCancel = onCancel
+    }
+
+    /// 구독을 끝냅니다. 여러 번 불러도 한 번만 처리합니다.
+    func cancel() {
+        let action = onCancel
+        onCancel = nil
+        action?()
+    }
+
+    deinit {
+        cancel()
+    }
+}
+
+/// 구현체가 공유하는 구독자 목록(메인 스레드 전용).
+///
+/// 알림 중에 구독이 추가·취소되어도 그 알림은 시작 시점의 구독자에게만 갑니다.
+final class ToolsMenuObservers {
+    private var handlers: [(id: UInt64, handler: (ToolsMenuSnapshot) -> Void)] = []
+    private var nextID: UInt64 = 0
+
+    /// 살아 있는 구독 수(검사용).
+    var count: Int { handlers.count }
+
+    func add(_ handler: @escaping (ToolsMenuSnapshot) -> Void) -> ToolsMenuObservation {
+        nextID += 1
+        let id = nextID
+        handlers.append((id, handler))
+        return ToolsMenuObservation { [weak self] in
+            self?.handlers.removeAll { $0.id == id }
+        }
+    }
+
+    func notify(_ snapshot: ToolsMenuSnapshot) {
+        for entry in handlers {
+            entry.handler(snapshot)
+        }
+    }
 }
 
 /// 상태에 따라 바뀌는 메뉴 표시(제목·체크·활성).
@@ -125,12 +174,16 @@ final class ToolsMenuModelStub: ToolsMenuModel {
     static let maximumZoomScale = 256.0
 
     private(set) var snapshot: ToolsMenuSnapshot
-    var snapshotDidChange: ((ToolsMenuSnapshot) -> Void)?
+    let observers = ToolsMenuObservers()
     /// 받은 명령 기록(검사용).
     private(set) var sentCommands: [ShellCommand] = []
 
     init(snapshot: ToolsMenuSnapshot = ToolsMenuModelStub.sampleSnapshot) {
         self.snapshot = snapshot
+    }
+
+    func addSnapshotObserver(_ handler: @escaping (ToolsMenuSnapshot) -> Void) -> ToolsMenuObservation {
+        observers.add(handler)
     }
 
     func send(_ command: ShellCommand) {
@@ -156,13 +209,13 @@ final class ToolsMenuModelStub: ToolsMenuModel {
         guard next != snapshot else { return }
         next.generation = snapshot.generation + 1
         snapshot = next
-        snapshotDidChange?(next)
+        observers.notify(next)
     }
 
     /// 검사·미리보기용: 외부에서 만든 snapshot을 그대로 반영합니다(코어 이벤트 수신 흉내).
     func receive(_ incoming: ToolsMenuSnapshot) {
         guard incoming.generation > snapshot.generation else { return }
         snapshot = incoming
-        snapshotDidChange?(incoming)
+        observers.notify(incoming)
     }
 }

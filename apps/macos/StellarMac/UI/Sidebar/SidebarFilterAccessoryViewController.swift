@@ -14,7 +14,8 @@ final class SidebarFilterAccessoryViewController: NSSplitViewItemAccessoryViewCo
     override func loadView() {
         searchField.translatesAutoresizingMaskIntoConstraints = false
         searchField.placeholderString = SidebarStrings.filterPlaceholder
-        searchField.setAccessibilityLabel(SidebarStrings.filterLabel)
+        // 접근성 서버가 읽는 요소는 검색 필드 cell이므로 cell에도 레이블을 둡니다.
+        SidebarAccessibility.setLabel(SidebarStrings.filterLabel, of: searchField)
         searchField.toolTip = SidebarStrings.filterLabel
         // 입력이 잠시 멈췄을 때 action을 보내는 시스템 지연을 씁니다. 키 입력마다 코어 질의를 만들지 않습니다.
         searchField.sendsSearchStringImmediately = false

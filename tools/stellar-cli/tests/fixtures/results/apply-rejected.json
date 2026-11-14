@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"apply","ok":false,"exit_code":1,"exit_name":"failure","result":null,"error":{"code":"rejected-command","message":"command #1가 거부되었습니다: node 0195c530-3acd-7bc1-8414-c213f61cb999가 없습니다"},"diagnostics":[]}

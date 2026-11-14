@@ -76,6 +76,9 @@ struct ShellFrameSnapshot: Equatable, Sendable {
     var moreActions: [ShellActionDescriptor]
     /// 프로젝트 전체 검색 필드의 placeholder.
     var searchPlaceholder: String
+    /// 코어가 프로젝트 검색을 제공하는지. false이면 ready 상태에서도 검색 필드와 "Search Project…" 메뉴를
+    /// 숨기지 않고 비활성화합니다(가이드 8.1). 검색 질의를 받을 코어 경로가 없을 때 씁니다.
+    var isSearchAvailable: Bool = true
 }
 
 /// 셸 프레임이 코어로 보내는 명령(아키텍처 §8.2).
@@ -96,6 +99,10 @@ enum ShellFrameCommand: Equatable, Sendable {
 ///
 /// 구현체는 snapshot을 메인 스레드에서 `snapshotHandler`로 전달하고, `send(_:)`는 즉시 반환해야
 /// 합니다. 무거운 일(검색, 프로젝트 열기)은 코어가 메인 스레드 밖에서 처리합니다(아키텍처 §6.3, §9.2).
+///
+/// data source 하나는 창 하나(창의 프로젝트 session 하나)에 대응합니다. `snapshotHandler`는 구독자 하나만
+/// 받으며, `ShellWindowController`가 만들어질 때 덮어씁니다. 같은 data source로 두 번째 창을 만들면 첫 창은
+/// 더 이상 snapshot을 받지 못하므로, 창마다 별도 data source를 만듭니다.
 @MainActor
 protocol ShellFrameDataSource: AnyObject {
     /// 현재 snapshot. 창을 만들 때 한 번 읽습니다.

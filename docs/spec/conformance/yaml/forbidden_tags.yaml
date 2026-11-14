@@ -1,0 +1,10 @@
+a: !!str 123
+num: !!int 42
+value: !!null
+items: !!seq
+  - a
+config: !!map
+  key: value
+v: !<tag:yaml.org,2002:str> hello
+flow: [!tag a, b]
+c: !custom 1

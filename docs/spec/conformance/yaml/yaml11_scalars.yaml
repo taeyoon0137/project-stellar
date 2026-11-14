@@ -1,0 +1,15 @@
+flag: yes
+no: off
+num: 010
+hex: 0x1F
+oct: 0o17
+bin: 0b101
+signed: +5
+sep: 1_000
+float: 1.0
+inf: .inf
+nan: .NaN
+date: 2020-01-01
+ts: 2001-12-14t21:59:43.10-05:00
+tilde: ~
+empty:

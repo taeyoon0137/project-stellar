@@ -37,9 +37,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use stellar_commands::id::WindowSessionId;
 
 use crate::journal::{
-    HistoryJournal, JournalAccess, JournalBase, JournalError, JournalHeader, JOURNAL_HEADER_LEN,
-    JOURNAL_SCHEMA_VERSION,
+    HistoryJournal, JournalAccess, JournalBase, JournalCompaction, JournalError, JournalHeader,
+    JOURNAL_HEADER_LEN, JOURNAL_SCHEMA_VERSION,
 };
+use crate::journal_retention::JournalRetention;
 use crate::window::WindowHistory;
 
 /// journal 파일 확장자.
@@ -113,6 +114,8 @@ pub enum JournalStoreError {
     GuardMismatch,
     /// preview가 진행 중이라 완료된 상태가 아닙니다.
     PreviewActive,
+    /// undo·redo 재생 중이라 완료된 상태가 아닙니다(XXV.1.4 기준점 변경).
+    Replaying,
     /// 기존 journal이 이 writer보다 높은 최소 writer version을 요구합니다(V.8.1 읽기 전용).
     WriterTooOld {
         /// journal이 요구하는 최소 writer schema.
@@ -124,6 +127,11 @@ pub enum JournalStoreError {
     NotWritable(JournalError),
     /// 파일 이름과 journal 안 창 id가 다릅니다.
     WindowMismatch,
+    /// retention 정책 값이 모순입니다(XXV.1.5).
+    InvalidRetention {
+        /// 원인.
+        reason: &'static str,
+    },
     /// journal bytes 오류.
     Journal(JournalError),
     /// 파일시스템 I/O 실패.
@@ -157,6 +165,9 @@ impl fmt::Display for JournalStoreError {
             JournalStoreError::PreviewActive => {
                 f.write_str("preview가 진행 중이라 journal을 기록할 수 없습니다")
             }
+            JournalStoreError::Replaying => {
+                f.write_str("undo·redo 재생 중이라 journal session을 바꿀 수 없습니다")
+            }
             JournalStoreError::WriterTooOld { required, writer } => write!(
                 f,
                 "기존 journal은 schema {required} 이상 writer만 덮어쓸 수 있습니다(현재 {writer})"
@@ -166,6 +177,9 @@ impl fmt::Display for JournalStoreError {
             }
             JournalStoreError::WindowMismatch => {
                 f.write_str("journal 파일의 창 id가 파일 이름과 다릅니다")
+            }
+            JournalStoreError::InvalidRetention { reason } => {
+                write!(f, "journal retention 정책 오류: {reason}")
             }
             JournalStoreError::Journal(error) => write!(f, "{error}"),
             JournalStoreError::Io { kind } => write!(f, "journal I/O 실패: {kind:?}"),
@@ -218,6 +232,9 @@ pub(crate) fn resolve_lenient(path: &Path) -> Result<PathBuf, JournalStoreError>
     }
 }
 
+/// 임시 파일 이름 표지(`.<name>.tmp-<pid>-<n>`). retention이 남은 임시 파일을 찾을 때 씁니다.
+pub(crate) const TEMP_MARKER: &str = ".tmp-";
+
 /// 같은 디렉터리 임시 파일에 쓰고 rename으로 교체합니다. 임시 파일 이름은 `.`으로 시작합니다.
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), JournalStoreError> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -229,7 +246,7 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), JournalStore
         .and_then(|n| n.to_str())
         .ok_or(JournalStoreError::NotNormalizedAbsolute)?;
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let temp = dir.join(format!(".{name}.tmp-{}-{n}", std::process::id()));
+    let temp = dir.join(format!(".{name}{TEMP_MARKER}{}-{n}", std::process::id()));
     let result = (|| {
         let mut file = std::fs::File::create(&temp)?;
         file.write_all(bytes)?;
@@ -249,6 +266,7 @@ pub struct JournalStore {
     project_root: PathBuf,
     dir: PathBuf,
     location: JournalLocation,
+    retention: JournalRetention,
 }
 
 impl JournalStore {
@@ -279,6 +297,7 @@ impl JournalStore {
             project_root,
             dir,
             location,
+            retention: JournalRetention::default(),
         };
         store.check_location()?;
         std::fs::create_dir_all(&store.dir)?;
@@ -287,6 +306,21 @@ impl JournalStore {
         }
         store.check_untracked()?;
         Ok(store)
+    }
+
+    /// retention 정책을 바꿉니다(XXV.1.5). 정책이 모순이면 거부합니다.
+    pub fn with_retention(
+        mut self,
+        retention: JournalRetention,
+    ) -> Result<JournalStore, JournalStoreError> {
+        retention.validate()?;
+        self.retention = retention;
+        Ok(self)
+    }
+
+    /// retention 정책(XXV.1.5).
+    pub fn retention(&self) -> &JournalRetention {
+        &self.retention
     }
 
     /// journal 디렉터리.
@@ -389,13 +423,26 @@ impl JournalStore {
         }
     }
 
-    /// journal을 그 창의 파일로 기록합니다(원자적 교체). 기록한 경로를 돌려줍니다.
+    /// journal을 그 창의 파일로 기록합니다(원자적 교체). 기록한 경로를 돌려줍니다. retention 정책의 journal
+    /// 하나 상한을 넘으면 현재 위치에서 먼 항목부터 버려 기록합니다(XXV.1.5 compaction).
     pub fn write(&self, journal: &HistoryJournal) -> Result<PathBuf, JournalStoreError> {
+        Ok(self.write_reporting(journal)?.0)
+    }
+
+    /// [`JournalStore::write`]와 같고 compaction 결과도 돌려줍니다.
+    pub fn write_reporting(
+        &self,
+        journal: &HistoryJournal,
+    ) -> Result<(PathBuf, JournalCompaction), JournalStoreError> {
         self.check_untracked()?;
         let path = self.journal_path(journal.header.window);
         self.ensure_overwritable(&path)?;
-        write_atomic(&path, &journal.encode())?;
-        Ok(path)
+        let (bytes, compaction) = journal.encode_bounded(
+            self.retention.max_journal_bytes,
+            self.retention.max_journal_entries,
+        );
+        write_atomic(&path, &bytes)?;
+        Ok((path, compaction))
     }
 
     /// 저장 직후(문서 = base 세대) 창 history의 완료된 항목 전체(undo·redo, 정방향·역방향)를 기록합니다.

@@ -69,7 +69,8 @@ enum SidebarKeyboardShortcuts {
         return SidebarOutlineAction.allCases.first { shortcut(for: $0) == pressed }
     }
 
-    /// 메뉴 항목에 key equivalent를 표시합니다(표시용, 실제 처리는 목록 또는 메뉴 막대).
+    /// 메뉴 막대 항목에 key equivalent를 표시합니다(표시용, 실제 처리는 목록 또는 메뉴 막대).
+    /// 문맥 메뉴에는 쓰지 않습니다(HIG Context menus).
     static func apply(_ action: SidebarOutlineAction, to item: NSMenuItem) {
         switch action {
         case .delete:

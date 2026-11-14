@@ -2,7 +2,7 @@ import AppKit
 
 /// 네이티브 UI 텍스트 컨트롤의 undo/IME smoke를 headless로 검증합니다(XII.5.1).
 ///
-/// 앱 창(`CanvasWindowController`)을 화면에 표시하지 않고 만든 뒤 `NativeFieldsPanel`의 각 컨트롤에서
+/// 검사용 창(`CanvasWindowController`)을 화면에 표시하지 않고 만든 뒤 `NativeFieldsPanel`의 각 컨트롤에서
 /// - IME 조합: `NSTextInputClient`의 `setMarkedText`로 한글 조합 중간("ㅎ"→"하"→"한")을 만들고
 ///   `insertText`로 확정, 빈 marked text로 조합 취소
 /// - native undo/redo: 창 undo manager로 확정 입력을 되돌리고 다시 적용
@@ -26,7 +26,8 @@ enum TextInputCheck {
         let application = NSApplication.shared
         application.setActivationPolicy(.accessory)
 
-        // 앱이 실제로 여는 창 구성(CanvasWindowController)을 화면에 표시하지 않고 사용합니다.
+        // 네이티브 필드 fixture 창(CanvasWindowController)을 화면에 표시하지 않고 사용합니다. 셸 프레임 창의 텍스트 편집
+        // 중 Undo 경로는 `--tools-menus-ui-check`가, 실제 창 구성은 `--shell-integration-check`가 검사합니다.
         let controller = CanvasWindowController(runtimeHandle: nil)
         guard let window = controller.window, let panel = controller.fieldsPanel else {
             return fail("창에 NativeFieldsPanel이 없음")

@@ -4,8 +4,10 @@
 //! 보고합니다. `docs/architecture/crate-dependency-graph.md`와 동일한 방향을 인코딩합니다.
 //!
 //! XXIX.1.1 확장:
-//! - [`manifest`]: `crates/*`와 `tools/stellar-*` manifest의 `[dependencies]`·`[build-dependencies]`·
-//!   `[dev-dependencies]`·`[target.<spec>.*]` 표에서 내부 의존을 읽습니다.
+//! - [`manifest`]: `crates/*`, `tools/stellar-*`와 Cargo workspace member 전체(루트
+//!   `[workspace].members`, path 의존으로 생기는 자동 member, root package. `exclude` 반영,
+//!   xtask·bench fixture 제외) manifest의 `[dependencies]`·`[build-dependencies]`·
+//!   `[dev-dependencies]`·`[target.<spec>.*]` 표(inline table 형태 포함)에서 내부 의존을 읽습니다.
 //! - [`reach`]: 모든 표의 직접 edge를 이 정책으로 검사하고, ADR-0005 §8의 전이 도달 금지
 //!   규칙([`reach::FORBIDDEN_REACH`])을 적용합니다.
 
@@ -90,18 +92,10 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         ),
         // 셸 경계는 runtime을 통해서만 문서·프로젝트 작업에 도달합니다(ADR-0013).
         ("stellar-ffi", &[core, "stellar-runtime"]),
-        // headless 도구(XXIV.1.1, `tools/stellar-cli`): core crate만 사용합니다. MCP·agent·FFI·
-        // GUI(renderer) crate에 의존하지 않습니다.
-        (
-            "stellar-cli",
-            &[
-                core,
-                "stellar-project",
-                "stellar-document",
-                "stellar-storage",
-                "stellar-diagnostics",
-            ],
-        ),
+        // headless 도구(XXIV.1.1, `tools/stellar-cli`, 실행 이름 `stellar`): 직접 의존은 L1 공용
+        // library와 diagnostics뿐입니다(ADR-0005 §8, XXIV.4.3). MCP·agent·FFI·GUI(renderer)
+        // crate에 의존하지 않습니다.
+        ("stellar-cli", &["stellar-ops", "stellar-diagnostics"]),
         // MCP stdio 브리지(XIX.1.1, `tools/stellar-mcp`): FFI·GUI crate에 의존하지 않습니다.
         // headless 도구(stellar-cli)는 이 브리지에 의존할 수 없습니다(위 항목에 없음).
         (
@@ -111,6 +105,22 @@ pub fn allowed_edges() -> HashMap<&'static str, Vec<&'static str>> {
         // bridge↔app 로컬 IPC(ADR-0005 §8, `crates/local-ipc`): core-types만 허용합니다.
         // document·commands·ops에 도달하지 않습니다.
         ("stellar-local-ipc", &[core]),
+        // L1 headless 조회·편집 공용 library(XXIV.4.2, ADR-0005 §8, `crates/ops`).
+        // local-ipc·agent-protocol·mcp-core·agent-host·ffi는 직접 edge가 없고 전이 도달도
+        // `reach::FORBIDDEN_REACH`가 막습니다.
+        (
+            "stellar-ops",
+            &[
+                "stellar-project",
+                "stellar-document",
+                "stellar-commands",
+                "stellar-history",
+                "stellar-storage",
+                "stellar-semantic-diff",
+                "stellar-semantic-merge",
+                "stellar-diagnostics",
+            ],
+        ),
     ];
     entries.iter().map(|(k, v)| (*k, v.to_vec())).collect()
 }
@@ -185,12 +195,23 @@ mod tests {
     fn stellar_cli_uses_only_core_crates() {
         // XXIV.1.1: 실제 manifest의 내부 의존이 정책을 따릅니다.
         assert!(check_crate_graph(&tool_edges("stellar-cli")).is_empty());
-        // L1 headless 도구는 MCP·FFI·GUI(renderer) crate에 의존할 수 없습니다.
+        // L1 headless 도구는 MCP·FFI·GUI(renderer) crate와, ops를 우회한 core crate에 직접
+        // 의존할 수 없습니다(XXIV.4.3: 직접 의존은 ops·diagnostics뿐).
+        assert!(check_crate_graph(&[
+            edge("stellar-cli", "stellar-ops"),
+            edge("stellar-cli", "stellar-diagnostics"),
+        ])
+        .is_empty());
         for forbidden in [
             "stellar-mcp",
+            "stellar-mcp-core",
             "stellar-ffi",
             "stellar-renderer-core",
             "stellar-renderer-metal",
+            "stellar-core-types",
+            "stellar-project",
+            "stellar-document",
+            "stellar-storage",
         ] {
             let codes: Vec<&str> = check_crate_graph(&[edge("stellar-cli", forbidden)])
                 .iter()
@@ -248,6 +269,55 @@ mod tests {
             .map(|v| v.code)
             .collect();
         assert_eq!(codes, vec!["forbidden-edge"]);
+    }
+
+    #[test]
+    fn ops_edges_follow_adr_0005() {
+        // XXIV.4.2, ADR-0005 §8: ops의 실제 manifest 의존이 허용 목록 안에 있습니다.
+        let path = format!("{}/../../crates/ops/Cargo.toml", env!("CARGO_MANIFEST_DIR"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        let parsed = manifest::parse_manifest(&text).unwrap();
+        assert_eq!(parsed.package.as_deref(), Some("stellar-ops"));
+        let edges: Vec<(String, String)> = parsed
+            .deps
+            .iter()
+            .map(|dep| dep.resolved_name(&std::collections::BTreeMap::new()))
+            .filter(|dep| dep.starts_with(manifest::INTERNAL_PREFIX))
+            .map(|dep| ("stellar-ops".to_string(), dep))
+            .collect();
+        assert!(!edges.is_empty());
+        assert!(check_crate_graph(&edges).is_empty(), "{edges:?}");
+        for allowed in [
+            "stellar-project",
+            "stellar-document",
+            "stellar-commands",
+            "stellar-history",
+            "stellar-storage",
+            "stellar-semantic-diff",
+            "stellar-semantic-merge",
+            "stellar-diagnostics",
+        ] {
+            assert!(
+                check_crate_graph(&[edge("stellar-ops", allowed)]).is_empty(),
+                "{allowed}"
+            );
+        }
+        for forbidden in [
+            "stellar-local-ipc",
+            "stellar-agent-protocol",
+            "stellar-mcp-core",
+            "stellar-mcp",
+            "stellar-agent-host",
+            "stellar-ffi",
+            "stellar-runtime",
+            "stellar-cli",
+        ] {
+            let codes: Vec<&str> = check_crate_graph(&[edge("stellar-ops", forbidden)])
+                .iter()
+                .map(|v| v.code)
+                .collect();
+            assert_eq!(codes, vec!["forbidden-edge"], "{forbidden}");
+        }
     }
 
     #[test]

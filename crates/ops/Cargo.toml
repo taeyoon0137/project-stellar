@@ -1,0 +1,36 @@
+[package]
+name = "stellar-ops"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# L1 headless 조회·편집 공용 library (XXIV.4.2, ADR-0005 §1·§8).
+# 허용 직접 의존: project, document, commands, history, storage, semantic-diff, semantic-merge,
+# diagnostics. local-ipc·agent-protocol·mcp-core·agent-host·ffi에는 직접·전이 모두 도달하지 않습니다.
+# 앱 UI·GUI·네트워크 없이 동작하며 AI·모델·에이전트 코드를 두지 않습니다.
+[dependencies]
+# stellar.yaml probe, 저장된 문서 chunk loader (IV.5.1, VI.10.3).
+stellar-project = { path = "../project" }
+# 문서 영속 레코드·정의 타입 (VI.10).
+stellar-document = { path = "../document" }
+# closed enum command·CommandTransaction 적용 (VII.1.2, VII.1.6).
+stellar-commands = { path = "../commands" }
+# current generation·manifest 읽기와 세대 전환 저장 (V.4.4, V.5, V.6.6).
+stellar-storage = { path = "../storage" }
+# StableId·PropertyPath(core-types 재노출)와 semantic snapshot 속성 투영 (XIV.3.1).
+stellar-semantic-diff = { path = "../semantic-diff" }
+# 3-way semantic merge 엔진 (XIV.10).
+stellar-semantic-merge = { path = "../semantic-merge" }
+
+[features]
+# 테스트 전용 fixture 생성기를 상위 도구(stellar-cli)의 테스트에 노출합니다. 기본값은 꺼져 있고
+# document의 test-support만 전달합니다. 다른 crate는 `[dev-dependencies]`에서만 켭니다.
+test-support = ["stellar-document/test-support"]
+
+[dev-dependencies]
+# 테스트만 document 테스트 지원 코드(random valid document, VI.10.5)를 씁니다.
+stellar-document = { path = "../document", features = ["test-support"] }
+
+[lints]
+workspace = true

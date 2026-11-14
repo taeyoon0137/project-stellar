@@ -72,6 +72,8 @@ pub struct History {
     open_group: Option<OpenGroup>,
     /// undo·redo 재생 중인지(VII.5.5 reentrancy guard).
     replaying: bool,
+    /// 이 sequence 미만 항목은 journal에 기록하지 않습니다(XXV.1.4 기준점 변경 이전 항목).
+    journal_floor: u64,
 }
 
 impl History {
@@ -128,6 +130,53 @@ impl History {
     /// 다음 항목에 할당할 sequence 값(journal 기록용, XXV.1.1).
     pub fn next_sequence(&self) -> u64 {
         self.sequences.peek()
+    }
+
+    /// journal 기록 하한(XXV.1.4). 이 값 미만 sequence의 항목은 마지막 기준점 변경 이전 항목이라 journal에
+    /// 기록하지 않습니다. 기준점 변경이 없었으면 0입니다.
+    pub fn journal_floor(&self) -> u64 {
+        self.journal_floor
+    }
+
+    /// journal에 기록할 undo·redo stack(XXV.1.4). 메모리 history는 그대로 두고, 기준점 변경 이후 항목만
+    /// 고릅니다.
+    ///
+    /// - undo: sequence가 하한 이상인 항목(undo는 sequence 증가 순이라 항상 뒤쪽 연속 구간).
+    /// - redo: 다음 redo(맨 위)가 하한 이상일 때만 전부. 맨 위가 하한 미만이면 현재 위치가 기준점 변경
+    ///   이전이라 하한 이상 redo 항목도 그 앞 항목 없이는 다시 적용할 수 없으므로 기록하지 않습니다.
+    ///
+    /// 두 경우 모두 기록한 항목을 전부 undo하면 기준점 변경 직후 상태 또는 현재 상태에 머물러, 이전 기준점의
+    /// history와 섞이지 않습니다.
+    pub fn journal_stacks(&self) -> (&[HistoryEntry], &[HistoryEntry]) {
+        let floor = self.journal_floor;
+        let start = self.entries.partition_point(|e| e.sequence.get() < floor);
+        let redo = match self.redo.last() {
+            Some(next) if next.sequence.get() < floor => &self.redo[..0],
+            _ => &self.redo[..],
+        };
+        (&self.entries[start..], redo)
+    }
+
+    /// 기준점 변경(checkout·merge·rebase 등) 뒤 새 journal session을 시작합니다(XXV.1.4). 이후 journal에는
+    /// 지금의 다음 sequence 이상 항목만 기록되고, 열린 grouping을 닫아 새 입력이 이전 항목에 합쳐지지
+    /// 않게 합니다. 메모리 undo·redo stack은 그대로입니다(§22.5 synthetic command undo). preview·재생
+    /// 중에는 완료된 상태가 아니라 거부합니다. 새 하한을 돌려줍니다.
+    pub(crate) fn begin_journal_session(&mut self) -> Result<u64, HistoryError> {
+        self.check_journal_session()?;
+        self.open_group = None;
+        self.journal_floor = self.sequences.peek();
+        Ok(self.journal_floor)
+    }
+
+    /// [`History::begin_journal_session`]을 할 수 있는지(상태는 바꾸지 않음).
+    pub(crate) fn check_journal_session(&self) -> Result<(), HistoryError> {
+        if self.replaying {
+            return Err(HistoryError::Replaying);
+        }
+        if self.preview.is_some() {
+            return Err(HistoryError::PreviewActive);
+        }
+        Ok(())
     }
 
     /// 항목 수.

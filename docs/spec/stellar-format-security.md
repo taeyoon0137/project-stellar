@@ -2,7 +2,7 @@
 
 - 문서 종류: 규범(normative) 명세. 구현된 한도와 동작을 코드에서 모았습니다.
 - WBS: XXVIII.1.4
-- 기준 commit: `78a574a` 위의 구현. 형식 자체는 [`stellar-format.md`](stellar-format.md)(XXVIII.1.2,
+- 기준 commit: `78a574a` 위의 구현(§9.2 seed 설명·§9.3 fuzz 목록·R5는 `24728e3`에 맞춰 갱신). 형식 자체는 [`stellar-format.md`](stellar-format.md)(XXVIII.1.2,
   이하 "형식 명세")가 정합니다. 이 문서의 절 번호 앞의 "형식 §"는 그 문서의 절입니다.
 - 표기: 형식 명세 §0과 같습니다("해야 합니다", "하면 안 됩니다", "현재 구현", 근거 표기
   `storage::chunk::store` 등).
@@ -374,8 +374,8 @@ seed corpus `crates/project/tests/fuzz_corpus/restricted_yaml/`(12개, 파일별
 | `forbidden_anchor_alias.yaml` | anchor, alias, 없는 alias | 형식 §14.2 `anchor`·`alias` |
 | `forbidden_merge_key.yaml` | block·flow `<<` 키, 값·항목 `<<` | 형식 §14.2 `merge-key` |
 | `forbidden_tags.yaml` | core schema·verbatim·custom tag | 형식 §14.2 `custom-tag` |
-| `lock_multi_version.yaml` | 같은 라이브러리 두 버전 lock | 형식 §14.6 |
-| `manifest_full.yaml` | 모든 선택 필드가 있는 매니페스트 | 형식 §14.5 |
+| `lock_multi_version.yaml` | 같은 라이브러리 두 버전 lock(6필드 이전 형식. loader는 받고 스키마 단계는 `MissingField`) | 형식 §14.6 |
+| `manifest_full.yaml` | 모든 선택 필드가 있는 매니페스트(`library_id` 없는 이전 의존성 형식. loader는 받고 스키마 단계는 `MissingField`) | 형식 §14.5 |
 | `manifest_yaml11_confusables.yaml` | `yes`, `on`, `010`, 날짜 값 | 형식 §14.3 |
 | `multiple_documents.yaml` | `---`, `...` 뒤 document | 형식 §14.2 `multiple-documents` |
 | `non_scalar_keys.yaml` | 시퀀스·매핑 explicit key | 형식 §14.2 `non-scalar-key` |
@@ -398,9 +398,11 @@ seed corpus `crates/project/tests/fuzz_corpus/restricted_yaml/`(12개, 파일별
 
 ### 9.3 fuzz 대상이 아닌 parser
 
-다음은 아직 fuzz target이 없습니다(XVI.6.3~XVI.6.7 미착수): 문서 loader·validator(`document_io::load`,
-`document::record_codec`, `document::validate`), DocumentManifest payload, 표현식, Semantic Diff·Merge,
-command 열. 복구 스냅샷 decoder와 AssetRecord decoder도 fuzz target이 없습니다(단위 테스트만 있음).
+다음은 아직 fuzz target이 없습니다: 문서 loader·validator(`document_io::load`, `document::record_codec`,
+`document::validate`, XVI.6.3), DocumentManifest payload, 표현식(XVI.6.4), Semantic Merge(XVI.6.6). 이 문서를
+쓴 뒤 Semantic Diff/apply/inverse(`crates/semantic-diff/tests/semantic_diff_fuzz.rs`, XVI.6.5)와 command
+실행·sequence(`commands::fuzz`, `commands::sequence_fuzz`, VII.6.3·XVI.6.7) target이 추가되었습니다. 이 둘의
+corpus는 이 문서 §9 연결 대상에 넣지 않았습니다. 복구 스냅샷 decoder와 AssetRecord decoder도 fuzz target이 없습니다(단위 테스트만 있음).
 
 ## 10. 알려진 위험과 차이
 
@@ -410,10 +412,10 @@ command 열. 복구 스냅샷 decoder와 AssetRecord decoder도 fuzz target이 �
 | R2 | chunk·manifest·`design/current`·`stellar.yaml` 읽기에 파일 크기 상한이 없음(전체를 읽은 뒤 검증) | `storage::chunk::store`, `storage::generation::{loader, current}`, `project::probe` | 미해결 |
 | R3 | 열기 경로가 모르는 required chunk kind와 manifest `schema_version`으로 거부하지 않음 | `storage::generation::{loader, lazy}` | 미해결(호환성 문서 §4) |
 | R4 | 선행 BOM이 첫 키에 붙어 `stellar.yaml`이 `UnknownKey`로 거부됨(조용한 오독은 아님) | `project::yaml::loader` | 동작 기록 |
-| R5 | `stellar.lock.yaml`의 `exact_commit`·`content_hash` 값 형식과 최상위 버전을 검사하지 않음 | `project::lock` | 미해결 |
+| R5 | `stellar.lock.yaml`의 `exact_commit`·`content_hash` 값 형식과 최상위 버전을 검사하지 않음 | `project::lock` | 해결: lock 검증이 `dependencies::lock` 모델로 통합되어 commit 길이·hex, `sha256:` hash 형식, `schema_version` = 1을 검사함(ADR-0021, 형식 명세 §14.6) |
 | R6 | `StableId`의 version·variant bit를 검사하지 않음 | `core-types::ids` | 동작 기록(형식 §5.1) |
 | R7 | fallback scanner 후보 수 상한 없음 | `storage::generation::scanner` | 미해결(§3.4) |
 | R8 | 강제 종료로 남은 임시 파일을 정리하지 않음 | `storage::atomic_file`, `storage::gc::sweep` | 미해결 |
 
-R1·R2·R3·R5·R7·R8의 수정은 보호 경로(`crates/storage/`) 또는 해당 crate의 코드 변경이며, 이 문서
+R1·R2·R3·R7·R8의 수정은 보호 경로(`crates/storage/`) 또는 해당 crate의 코드 변경이며, 이 문서
 작업의 범위 밖입니다.

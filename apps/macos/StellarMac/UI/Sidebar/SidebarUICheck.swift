@@ -5,11 +5,13 @@ import AppKit
 /// `SidebarStubDataProvider` 데이터로 실제 배치(`NSSplitViewController` + 사이드바 item + 필터 accessory)를
 /// 일반적인 창 크기에서 만들고 layout을 강제한 뒤 다음을 확인합니다.
 /// - SF Symbols 이름이 실행 OS에서 해석됨, source list 스타일, 네이티브 텍스트 컨트롤, `NSVisualEffectView` 없음
-/// - Auto Layout 모호성 없음(Light·Dark 모두), 앱 크롬 색이 시스템 의미 색(catalog)임
-/// - 목록·행·토글·필터·상태 화면의 접근성 레이블, key view 순서
-/// - 선택, 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증, 키보드 단축키,
-///   드롭 사전 검증·재지정, 필터·결과 없음·필터 해제 후 펼침 복원, 빈 View, 로드 중·실패·재시도,
-///   지연 자식 로드, snapshot 변경 통지 병합
+/// - Auto Layout 모호성 없음(Light·Dark, 사이드바 크기 설정 작게·중간·크게), 앱 크롬 색이 시스템 의미 색(catalog)임,
+///   토글의 눌리는 영역 최소 크기(창 hit test로 확인)
+/// - 접근성: setter 값을 되읽지 않고 접근성 서버가 질의하는 경로(`AXNode`)로 읽습니다. 목록 → `AXRow` → `AXCell`의
+///   행 레이블·custom action(실행 포함), 장식 아이콘 미노출, 토글·필터·상태 화면 레이블, 선택 행, key view 순서
+/// - 선택(페이지 행 → active View 행, 화살표·←·→ 키 이동 포함), 인라인 이름 변경(확정·Escape 취소·무변경), 토글, 문맥 메뉴 검증
+///   (단축키 표시 없음), 키보드 단축키, 드롭 사전 검증·재지정, 필터·결과 없음·필터 해제 후 펼침 복원, 빈 View,
+///   로드 중·실패·재시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행 갱신, snapshot 변경 통지 병합
 /// 실제 마우스 드래그 세션, VoiceOver 음성 출력, 화면 픽셀은 검사하지 않습니다.
 enum SidebarUICheck {
     static func run() -> Bool {
@@ -103,6 +105,14 @@ enum SidebarUICheck {
             return row >= 0 ? cell(at: row, in: layers.outline) as? SidebarLayerCellView : nil
         }
 
+        /// 접근성 서버가 보는 `id` 행의 `AXCell`(행 레이블·custom action을 내보내는 요소).
+        func axCell(_ id: SidebarStableID, in outline: NSOutlineView) -> AXNode? {
+            let index = row(of: id, in: outline)
+            let rows = AXNode.rows(of: outline)
+            guard index >= 0, rows.indices.contains(index) else { return nil }
+            return rows[index].cell
+        }
+
         func id(_ name: String) throws -> SidebarStableID {
             guard let id = provider.nodeID(named: name) else { throw Failure(message: "예시 노드 없음: \(name)") }
             return id
@@ -158,6 +168,10 @@ enum SidebarUICheck {
             "선택 command 불일치: \(harness.commands(since: mark))"
         )
         harness.refresh()
+        // VoiceOver는 키보드 포커스 목록의 선택 행(AXSelectedRows)을 읽습니다. 그 행의 AXCell이 행 레이블을 냅니다.
+        let selectedAX = AXNode.selectedRows(of: layers.outline)
+        try require(selectedAX.count == 1 && selectedAX[0].cell?.label == "Header, \(SidebarStrings.kindName(.frame, shapeKind: nil))",
+                    "선택 행의 접근성 레이블 불일치: \(selectedAX.map { $0.cell?.label ?? "nil" })")
 
         // 외부 선택(캔버스 등): 깊은 노드를 선택하면 조상이 펼쳐지고 행이 선택됩니다.
         let privacyID = try harness.id("Privacy")
@@ -183,7 +197,7 @@ enum SidebarUICheck {
         harness.refresh()
         try require(sidebar.stateView.content == .empty && !sidebar.stateView.isHidden, "빈 레이어 상태가 보이지 않음")
         try require(layers.outline.numberOfRows == 1, "빈 View에 레이어 행이 남음")
-        try require(!(sidebar.stateView.accessibilityLabel() ?? "").isEmpty, "빈 상태 접근성 레이블 없음")
+        try checkStateAccessibility(sidebar.stateView, label: "빈 상태")
 
         // 로드 중·실패·재시도.
         harness.provider.simulateLoadState(.loading)
@@ -193,18 +207,141 @@ enum SidebarUICheck {
         harness.refresh()
         try require(sidebar.stateView.content == .failed(message: "The document couldn’t be read."), "실패 상태 불일치")
         try require(!sidebar.stateView.actionButton.isHidden, "실패 상태에 다시 시도 버튼 없음")
+        try checkStateAccessibility(sidebar.stateView, label: "실패 상태")
         mark = harness.provider.performedCommands.count
         sidebar.stateView.actionButton.performClick(nil)
         try require(harness.commands(since: mark) == [.reload], "다시 시도 command 불일치")
         harness.refresh()
         try require(sidebar.stateView.content == .empty, "다시 시도 후 상태 불일치")
 
+        try checkPageSelection(harness)
         try checkLayout(harness, label: "Dark", appearance: .darkAqua)
+        try checkRowSizeStyles(harness)
         try checkLazyChildren()
+        try checkAvailableRows()
         try checkCoalescing()
 
-        return "symbols \(SidebarSymbols.allNames.count), pages+layers outline, rename/toggle/menu/keyboard/drop/filter/"
-            + "empty/loading/failed/lazy/coalescing, no ambiguous layout (Light, Dark)"
+        return "symbols \(SidebarSymbols.allNames.count), pages+layers outline, AX rows/cells/custom actions, "
+            + "rename/toggle/menu/keyboard/drop/filter/empty/loading/failed/page selection/page arrow keys/lazy/offscreen rows/"
+            + "coalescing, no ambiguous layout (Light, Dark, small/medium/large rows), toggle hit test"
+    }
+
+    /// 상태 화면: 하나의 group 요소가 제목·설명을 레이블로 내고, 장식 아이콘은 노출하지 않습니다.
+    @MainActor
+    private static func checkStateAccessibility(_ stateView: SidebarStateView, label: String) throws {
+        guard let node = AXNode(stateView) else { throw Failure(message: "\(label) 접근성 요소 없음") }
+        try require(node.role == NSAccessibility.Role.group.rawValue, "\(label)이 group 요소가 아님: \(node.role ?? "nil")")
+        try require(!(node.label ?? "").isEmpty && (node.label ?? "").hasPrefix(stateView.titleField.stringValue),
+                    "\(label) 접근성 레이블 불일치: \(node.label ?? "nil")")
+        try require(node.descendants(role: .image).isEmpty, "\(label) 장식 아이콘이 AXImage로 노출됨")
+    }
+
+    /// 페이지 목록: 선택 = active 페이지·View. 페이지 행을 고르면 코어가 고른 active View 행으로 선택이 옮겨 갑니다.
+    @MainActor
+    private static func checkPageSelection(_ harness: Harness) throws {
+        let pages = harness.pages
+        let outline = pages.outline
+        guard let onboarding = harness.provider.snapshot.pages.first(where: { $0.name == "Onboarding" }),
+              let welcomeID = harness.provider.viewID(named: "Welcome") else {
+            throw Failure(message: "예시 페이지 없음")
+        }
+        // 다른 페이지(Settings)가 active인 상태에서 Onboarding 페이지 행을 고름 → .activatePage → 첫 View 행 선택.
+        var mark = harness.provider.performedCommands.count
+        outline.selectRowIndexes(IndexSet(integer: harness.row(of: onboarding.id, in: outline)), byExtendingSelection: false)
+        try require(harness.commands(since: mark) == [.activatePage(onboarding.id)], "페이지 활성화 command 불일치: \(harness.commands(since: mark))")
+        harness.refresh()
+        try require(harness.provider.snapshot.activeViewID == welcomeID, "예시 active View 불일치")
+        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline),
+                    "페이지 활성화 후 active View 행이 선택되지 않음(선택 행 \(outline.selectedRow))")
+
+        // 이미 active인 페이지 행을 다시 고름 → command 없음, 선택은 그 페이지 행에 머묾(되돌리면 키보드 함정).
+        mark = harness.provider.performedCommands.count
+        outline.selectRowIndexes(IndexSet(integer: harness.row(of: onboarding.id, in: outline)), byExtendingSelection: false)
+        harness.refresh()
+        try require(harness.commands(since: mark).isEmpty, "active 페이지 재선택이 command를 만듦: \(harness.commands(since: mark))")
+        try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline),
+                    "active 페이지 재선택 후 선택이 페이지 행에 머물지 않음(선택 행 \(outline.selectedRow))")
+
+        // View 행이 선택된 채로 페이지를 접으면 페이지 행, 다시 펼쳐도 선택을 옮기지 않아 페이지 행.
+        outline.selectRowIndexes(IndexSet(integer: harness.row(of: welcomeID, in: outline)), byExtendingSelection: false)
+        guard let pageItem = outline.item(atRow: harness.row(of: onboarding.id, in: outline)) else {
+            throw Failure(message: "페이지 행 없음")
+        }
+        outline.collapseItem(pageItem)
+        try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline), "접은 active 페이지 행이 선택되지 않음")
+        outline.expandItem(pageItem)
+        harness.refresh()
+        try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline), "다시 펼친 뒤 선택이 페이지 행에 머물지 않음")
+        try require(harness.commands(since: mark).isEmpty, "접기·펼치기가 command를 만듦: \(harness.commands(since: mark))")
+        try require(harness.layers.outline.numberOfRows == 9, "Welcome 레이어가 다시 보이지 않음: \(harness.layers.outline.numberOfRows)")
+
+        // active View 행을 다시 고름 → command 없음.
+        outline.selectRowIndexes(IndexSet(integer: harness.row(of: welcomeID, in: outline)), byExtendingSelection: false)
+        try require(harness.commands(since: mark).isEmpty, "active View 재선택이 command를 만듦: \(harness.commands(since: mark))")
+
+        try checkPageKeyboard(harness)
+    }
+
+    /// 페이지 목록 키보드 이동: 화살표로 active 페이지 행을 지나 위아래로 움직이고, ←로 부모 페이지 행에 닿아 접을 수
+    /// 있어야 합니다(키보드 함정 없음, HIG Keyboard). active 페이지 행에 선택이 닿아도 View 행으로 되돌리지 않습니다.
+    @MainActor
+    private static func checkPageKeyboard(_ harness: Harness) throws {
+        let outline = harness.pages.outline
+        guard let onboarding = harness.provider.snapshot.pages.first(where: { $0.name == "Onboarding" }),
+              let settings = harness.provider.snapshot.pages.first(where: { $0.name == "Settings" }),
+              let welcomeID = harness.provider.viewID(named: "Welcome"),
+              let signInID = harness.provider.viewID(named: "Sign In"),
+              let generalID = harness.provider.viewID(named: "General") else {
+            throw Failure(message: "예시 페이지·View 없음")
+        }
+        try require(harness.window.makeFirstResponder(outline), "페이지 목록 first responder 실패")
+        try require(outline.selectedRow == harness.row(of: welcomeID, in: outline), "키보드 검사 시작 행이 Welcome이 아님")
+
+        // 화살표 키 하나를 보내고 snapshot을 반영한 뒤, 선택 행과 그동안 만든 command를 확인합니다.
+        func press(_ arrow: Int, keyCode: UInt16, expect id: SidebarStableID, commands expected: [SidebarCommand],
+                   _ step: String) throws {
+            let mark = harness.provider.performedCommands.count
+            let characters = String(Character(UnicodeScalar(UInt16(arrow))!))
+            outline.keyDown(with: harness.key(characters, keyCode: keyCode, modifiers: [.numericPad, .function]))
+            harness.refresh()
+            let selected = (outline.item(atRow: outline.selectedRow) as? SidebarOutlineItem)?.id
+            try require(selected == id && outline.selectedRowIndexes.count == 1,
+                        "[\(step)] 선택 행 불일치: \(outline.selectedRow) != \(harness.row(of: id, in: outline))")
+            try require(harness.commands(since: mark) == expected, "[\(step)] command 불일치: \(harness.commands(since: mark))")
+        }
+        let up = (NSUpArrowFunctionKey, UInt16(126))
+        let down = (NSDownArrowFunctionKey, UInt16(125))
+        let left = (NSLeftArrowFunctionKey, UInt16(123))
+        let right = (NSRightArrowFunctionKey, UInt16(124))
+
+        // Welcome → ↑ active 페이지 행(command 없음, 그대로 머묾) → ↑ 맨 위(제목 행은 선택되지 않음) → ↓ Welcome.
+        try press(up.0, keyCode: up.1, expect: onboarding.id, commands: [], "↑ active 페이지 행")
+        try press(up.0, keyCode: up.1, expect: onboarding.id, commands: [], "↑ 맨 위 페이지 행")
+        try press(down.0, keyCode: down.1, expect: welcomeID, commands: [], "↓ active View 행")
+        // ↓ Sign In(.activateView) → ↓ Settings 페이지 행(.activatePage, 코어가 고른 General 행으로 선택이 옮겨 감).
+        try press(down.0, keyCode: down.1, expect: signInID, commands: [.activateView(signInID)], "↓ 다른 View")
+        try press(down.0, keyCode: down.1, expect: generalID, commands: [.activatePage(settings.id)], "↓ 다른 페이지")
+        // ↑ active 페이지(Settings) 행에 머묾 → ↑ 위 페이지의 Sign In(.activateView). 함정이면 General로 되돌아감.
+        try press(up.0, keyCode: up.1, expect: settings.id, commands: [], "↑ active 페이지 행(함정 없음)")
+        try press(up.0, keyCode: up.1, expect: signInID, commands: [.activateView(signInID)], "↑ 위 페이지의 View")
+        // ← 부모 페이지 행(active, command 없음) → ← 접기 → → 펼치기(선택은 페이지 행 유지) → ↓ Welcome.
+        try press(left.0, keyCode: left.1, expect: onboarding.id, commands: [], "← 부모 페이지 행")
+        try press(left.0, keyCode: left.1, expect: onboarding.id, commands: [], "← 접기")
+        try require(!outline.isItemExpanded(outline.item(atRow: outline.selectedRow)), "←로 active 페이지가 접히지 않음")
+        try press(right.0, keyCode: right.1, expect: onboarding.id, commands: [], "→ 펼치기")
+        try require(outline.isItemExpanded(outline.item(atRow: outline.selectedRow)), "→로 active 페이지가 펼쳐지지 않음")
+        try press(down.0, keyCode: down.1, expect: welcomeID, commands: [.activateView(welcomeID)], "↓ 첫 View")
+
+        // active 페이지 행이 선택된 채로 active가 바뀌지 않는 snapshot(다른 페이지 이름 변경 → 목록 reload)이 와도
+        // 선택을 View 행으로 옮기지 않습니다.
+        try press(up.0, keyCode: up.1, expect: onboarding.id, commands: [], "↑ active 페이지 행(재확인)")
+        for name in ["Preferences", settings.name] {
+            harness.provider.perform(.renamePage(settings.id, name: name))
+            harness.refresh()
+            try require(outline.selectedRow == harness.row(of: onboarding.id, in: outline),
+                        "active가 그대로인 snapshot 뒤 선택이 페이지 행에서 옮겨 감(선택 행 \(outline.selectedRow))")
+        }
+        try press(down.0, keyCode: down.1, expect: welcomeID, commands: [], "↓ active View 행(복귀)")
     }
 
     // MARK: 구조·layout·접근성
@@ -246,6 +383,62 @@ enum SidebarUICheck {
         try require(layers.outline.acceptsFirstResponder && pages.outline.acceptsFirstResponder, "목록이 first responder를 받지 않음")
     }
 
+    /// 시스템 사이드바 크기 설정(작게·중간·크게)마다 layout 검사를 다시 합니다. 검사 시스템의 현재 설정과 무관하게
+    /// 목록의 row size style을 직접 지정해 각 크기의 행 높이·글꼴로 만들고, 끝나면 시스템 설정(.default)으로 되돌립니다.
+    @MainActor
+    private static func checkRowSizeStyles(_ harness: Harness) throws {
+        let outlines: [NSOutlineView] = [harness.pages.outline, harness.layers.outline]
+        defer {
+            for outline in outlines { outline.rowSizeStyle = .default }
+            harness.refresh()
+        }
+        for (style, name) in [(NSTableView.RowSizeStyle.small, "small"), (.medium, "medium"), (.large, "large")] {
+            for outline in outlines { outline.rowSizeStyle = style }
+            harness.refresh()
+            try require(outlines.allSatisfy { $0.effectiveRowSizeStyle == style }, "[\(name)] row size style이 적용되지 않음")
+            let rowHeight = harness.layers.outline.rect(ofRow: 1).height
+            try require(rowHeight > 0, "[\(name)] 레이어 행 높이 없음")
+            try checkLayout(harness, label: "Light, \(name) rows \(rowHeight)pt", appearance: .aqua)
+        }
+    }
+
+    /// 보이는 레이어 행마다 토글의 눌리는 영역 가운데 최소 크기 정사각형 네 모서리를 창의 hit test로 짚어, 그 토글이
+    /// 받는지 확인합니다(`checkLayout`의 크기 계산이 AppKit의 실제 클릭 판정과 같은지). 기본 상태라 숨겨 둔 토글도
+    /// 잠시 보이게 해서 짚습니다.
+    @MainActor
+    private static func checkToggleHitTest(_ harness: Harness, label: String) throws {
+        guard let content = harness.window.contentView, let frameView = content.superview else {
+            throw Failure(message: "[\(label)] 창 view 계층 없음")
+        }
+        let outline = harness.layers.outline
+        let half = SidebarMetrics.minimumHitTarget / 2 - 0.5
+        var missed: [String] = []
+        var layerRows = 0
+        var tested = 0
+        for row in 0..<outline.numberOfRows {
+            guard let cell = harness.cell(at: row, in: outline) as? SidebarLayerCellView else { continue }
+            layerRows += 1
+            let showedAlways = cell.showsTogglesAlways
+            cell.showsTogglesAlways = true
+            defer { cell.showsTogglesAlways = showedAlways }
+            for button in [cell.visibilityButton, cell.lockButton] {
+                let clickable = button.frame.intersection(cell.bounds)
+                let square = NSRect(x: clickable.midX - half, y: clickable.midY - half, width: half * 2, height: half * 2)
+                guard outline.visibleRect.contains(cell.convert(square, to: outline)) else { continue }
+                tested += 1
+                let corners = [
+                    NSPoint(x: square.minX, y: square.minY), NSPoint(x: square.minX, y: square.maxY),
+                    NSPoint(x: square.maxX, y: square.minY), NSPoint(x: square.maxX, y: square.maxY),
+                ]
+                for corner in corners where content.hitTest(frameView.convert(cell.convert(corner, to: nil), from: nil)) !== button {
+                    missed.append("\(cell.nameField.stringValue) \(corner)")
+                }
+            }
+        }
+        try require(layerRows == 0 || tested > 0, "[\(label)] 레이어 행이 있는데 hit test로 짚을 토글이 없음")
+        try require(missed.isEmpty, "[\(label)] 토글 최소 클릭 대상 안의 점을 토글이 받지 않음: \(missed)")
+    }
+
     @MainActor
     private static func checkLayout(_ harness: Harness, label: String, appearance: NSAppearance.Name) throws {
         harness.window.appearance = NSAppearance(named: appearance)
@@ -260,6 +453,7 @@ enum SidebarUICheck {
         var ambiguous: [String] = []
         var nonSemantic: [String] = []
         var overlapping: [String] = []
+        var smallTargets: [String] = []
         let roots: [NSView] = [harness.sidebar.view, harness.sidebar.filterAccessory.view]
         for root in roots {
             visit(root) { view in
@@ -267,6 +461,18 @@ enum SidebarUICheck {
                 if let cell = view as? SidebarLayerCellView,
                    cell.nameField.frame.width <= 0 || cell.nameField.frame.maxX > cell.visibilityButton.frame.minX {
                     overlapping.append(cell.nameField.stringValue)
+                }
+                // 토글 클릭 대상: 실제로 눌리는 영역이 HIG 최소 컨트롤 크기 이상(디자인 가이드 4.4). 눌리는 영역은
+                // 버튼 frame과 셀(행) 영역의 겹침입니다. AppKit hit test는 상위 뷰 frame 밖의 점을 하위 뷰로 넘기지
+                // 않습니다. 버튼 frame은 symbol 정렬 여백만큼 크기 제약(alignment rect)보다 커서 작은 행에서는 셀 밖으로
+                // 나갈 수 있는데, 그 부분은 눌리지 않으므로 셈하지 않습니다.
+                if let cell = view as? SidebarLayerCellView {
+                    for button in [cell.visibilityButton, cell.lockButton] {
+                        let clickable = button.frame.intersection(cell.bounds)
+                        if clickable.width < SidebarMetrics.minimumHitTarget || clickable.height < SidebarMetrics.minimumHitTarget {
+                            smallTargets.append("\(cell.nameField.stringValue) \(clickable.size)")
+                        }
+                    }
                 }
                 if view.hasAmbiguousLayout {
                     let owner = view.superview.map { String(describing: type(of: $0)) } ?? "-"
@@ -287,6 +493,8 @@ enum SidebarUICheck {
         try require(ambiguous.isEmpty, "[\(label)] Auto Layout 모호성: \(Set(ambiguous).sorted())")
         try require(nonSemantic.isEmpty, "[\(label)] 시스템 의미 색이 아닌 색: \(Set(nonSemantic).sorted())")
         try require(overlapping.isEmpty, "[\(label)] 이름 필드 폭 없음 또는 토글과 겹침: \(overlapping)")
+        try require(smallTargets.isEmpty, "[\(label)] 토글의 눌리는 영역이 최소 크기보다 작음: \(smallTargets)")
+        try checkToggleHitTest(harness, label: label)
         let sidebarWidth = harness.sidebar.view.frame.width
         try require(abs(sidebarWidth - Harness.sidebarWidth) < 1, "[\(label)] 사이드바 폭이 검사 폭과 다름: \(sidebarWidth)")
 
@@ -302,47 +510,70 @@ enum SidebarUICheck {
     private static func checkAccessibility(_ harness: Harness) throws {
         let layers = harness.layers
         let pages = harness.pages
-        try require(!(layers.outline.accessibilityLabel() ?? "").isEmpty, "레이어 목록 접근성 레이블 없음")
-        try require(!(pages.outline.accessibilityLabel() ?? "").isEmpty, "페이지 목록 접근성 레이블 없음")
-        try require(!(harness.sidebar.filterAccessory.searchField.accessibilityLabel() ?? "").isEmpty, "필터 필드 접근성 레이블 없음")
+        try require(AXNode(layers.outline)?.label == SidebarStrings.layersOutline, "레이어 목록 접근성 레이블 불일치")
+        try require(AXNode(pages.outline)?.label == SidebarStrings.pagesOutline, "페이지 목록 접근성 레이블 불일치")
+        // 필터 필드: 접근성 요소는 검색 필드 cell입니다.
+        let searchField = harness.sidebar.filterAccessory.searchField
+        try require(AXNode(NSAccessibility.unignoredDescendant(of: searchField))?.label == SidebarStrings.filterLabel,
+                    "필터 필드 접근성 레이블이 접근성 요소에 없음")
 
-        for outline in [pages.outline, layers.outline] as [NSOutlineView] {
-            for row in 0..<outline.numberOfRows {
-                guard let cell = harness.cell(at: row, in: outline) else {
-                    throw Failure(message: "행 \(row) 셀 없음")
+        // 행: 목록 → AXRow → AXCell 하나. 행 레이블과 custom action은 AXCell에 있고, 장식 아이콘은 노출되지 않습니다.
+        for (outline, title) in [(pages.outline, SidebarStrings.pages), (layers.outline, SidebarStrings.layers)] {
+            let rows = AXNode.rows(of: outline)
+            try require(rows.count == outline.numberOfRows, "[\(title)] AXRow 수 불일치: \(rows.count) != \(outline.numberOfRows)")
+            for (index, row) in rows.enumerated() {
+                guard let item = outline.item(atRow: index) as? SidebarOutlineItem,
+                      let expected = expectedAccessibility(of: item, snapshot: harness.provider.snapshot, headerTitle: title) else {
+                    throw Failure(message: "[\(title)] 행 \(index) 항목 없음")
                 }
-                try require(!(cell.accessibilityLabel() ?? "").isEmpty, "행 \(row) 접근성 레이블 없음")
-                if let named = cell as? SidebarNameCellView {
-                    try require(named.iconView.image != nil, "행 \(row) 아이콘 없음")
-                    try require(!named.iconView.isAccessibilityElement(), "행 \(row) 장식 아이콘이 접근성 요소임")
+                guard row.children.count == 1, let cell = row.cell else {
+                    throw Failure(message: "[\(title)] 행 \(index) AXRow가 AXCell 하나로 묶이지 않음: \(row.children.map(\.role))")
                 }
-                if let layer = cell as? SidebarLayerCellView {
-                    try require(!(layer.visibilityButton.accessibilityLabel() ?? "").isEmpty, "행 \(row) 표시 토글 레이블 없음")
-                    try require(!(layer.lockButton.accessibilityLabel() ?? "").isEmpty, "행 \(row) 잠금 토글 레이블 없음")
-                    try require(layer.visibilityButton.toolTip != nil && layer.lockButton.toolTip != nil, "행 \(row) 토글 도움말 없음")
-                    try require((layer.accessibilityCustomActions()?.count ?? 0) >= 4, "행 \(row) VoiceOver custom action 없음")
+                try require(cell.label == expected.label,
+                            "[\(title)] 행 \(index) AXCell 레이블 불일치: \(cell.label ?? "nil") != \(expected.label)")
+                try require(cell.customActionNames == expected.actions,
+                            "[\(title)] 행 \(index) custom action 불일치: \(cell.customActionNames) != \(expected.actions)")
+                try require(cell.descendants(role: .image).isEmpty, "[\(title)] 행 \(index) 장식 아이콘이 AXImage로 노출됨")
+
+                // 토글: 보이는 토글만 노출되고, 레이블은 누르면 일어날 동작입니다.
+                guard let id = item.layerID, let view = harness.layerCell(id), let layer = harness.provider.snapshot.layers.rows[id] else {
+                    continue
                 }
+                try require(view.visibilityButton.toolTip != nil && view.lockButton.toolTip != nil, "행 \(index) 토글 도움말 없음")
+                let display = layer.name.isEmpty ? SidebarStrings.kindName(layer.kind, shapeKind: layer.shapeKind) : layer.name
+                var expectedButtons: [String] = []
+                if !view.visibilityButton.isHidden {
+                    expectedButtons.append(layer.isVisible ? SidebarStrings.hideLayer(display) : SidebarStrings.showLayer(display))
+                }
+                if !view.lockButton.isHidden {
+                    expectedButtons.append(layer.isLocked ? SidebarStrings.unlockLayer(display) : SidebarStrings.lockLayer(display))
+                }
+                let buttons = cell.descendants(role: .button).map { $0.label ?? "nil" }
+                try require(buttons == expectedButtons, "행 \(index) 토글 접근성 레이블 불일치: \(buttons) != \(expectedButtons)")
             }
         }
 
-        // 상태 표시: 숨김·잠김은 아이콘 모양과 레이블로도 알립니다.
-        guard let glow = harness.layerCell(try harness.id("Glow")),
-              let background = harness.layerCell(try harness.id("Background")) else {
+        // 상태 표시: 숨김·잠김은 아이콘 모양과 레이블로도 알립니다. 기본 상태의 토글은 마우스를 올리기 전까지 숨김
+        // (접근성 트리에서도 빠짐)이며, 같은 동작은 custom action으로 닿습니다.
+        let glowID = try harness.id("Glow")
+        let backgroundID = try harness.id("Background")
+        let dividerID = try harness.id("Divider")
+        guard let glow = harness.layerCell(glowID), let background = harness.layerCell(backgroundID),
+              let glowAX = harness.axCell(glowID, in: layers.outline), let backgroundAX = harness.axCell(backgroundID, in: layers.outline),
+              let dividerAX = harness.axCell(dividerID, in: layers.outline) else {
             throw Failure(message: "예시 숨김·잠김 행 없음")
         }
-        try require(!glow.visibilityButton.isHidden && (glow.accessibilityLabel() ?? "").contains(SidebarStrings.hiddenState),
-                    "숨김 행 표시 불일치")
-        try require(!background.lockButton.isHidden && (background.accessibilityLabel() ?? "").contains(SidebarStrings.lockedState),
-                    "잠김 행 표시 불일치")
+        try require(!glow.visibilityButton.isHidden && (glowAX.label ?? "").contains(SidebarStrings.hiddenState), "숨김 행 표시 불일치")
+        try require(!background.lockButton.isHidden && (backgroundAX.label ?? "").contains(SidebarStrings.lockedState), "잠김 행 표시 불일치")
+        try require(dividerAX.descendants(role: .button).isEmpty, "숨긴 토글이 접근성 트리에 남음")
 
         // 이름이 빈 행은 종류 이름을 placeholder와 레이블로 씁니다.
-        let unnamed = harness.provider.nodeID(named: "")
-        if let unnamed, let cell = harness.layerCell(unnamed) {
-            try require(cell.nameField.placeholderString == SidebarStrings.kindName(.text, shapeKind: nil), "빈 이름 placeholder 불일치")
-            try require((cell.accessibilityLabel() ?? "").hasPrefix(SidebarStrings.kindName(.text, shapeKind: nil)), "빈 이름 레이블 불일치")
-        } else {
+        guard let unnamed = harness.provider.nodeID(named: ""), let cell = harness.layerCell(unnamed),
+              let unnamedAX = harness.axCell(unnamed, in: layers.outline) else {
             throw Failure(message: "빈 이름 예시 행 없음")
         }
+        try require(cell.nameField.placeholderString == SidebarStrings.kindName(.text, shapeKind: nil), "빈 이름 placeholder 불일치")
+        try require((unnamedAX.label ?? "").hasPrefix(SidebarStrings.kindName(.text, shapeKind: nil)), "빈 이름 레이블 불일치")
     }
 
     // MARK: 동작
@@ -414,11 +645,55 @@ enum SidebarUICheck {
         harness.refresh()
         // 구조가 같으면 같은 셀을 제자리에서 다시 채웁니다.
         try require(harness.layerCell(dividerID) === cell, "값만 바뀌었는데 셀이 교체됨")
-        try require((cell.accessibilityLabel() ?? "").contains(SidebarStrings.hiddenState), "숨김 반영 실패")
-        try require((cell.accessibilityLabel() ?? "").contains(SidebarStrings.lockedState), "잠금 반영 실패")
-        try require(cell.visibilityButton.accessibilityLabel()?.hasPrefix(SidebarStrings.show) ?? false, "토글 레이블이 다음 동작을 말하지 않음")
+        let axLabel = harness.axCell(dividerID, in: harness.layers.outline)?.label ?? ""
+        try require(axLabel.contains(SidebarStrings.hiddenState), "숨김 반영 실패: \(axLabel)")
+        try require(axLabel.contains(SidebarStrings.lockedState), "잠금 반영 실패: \(axLabel)")
+        let buttonLabels = harness.axCell(dividerID, in: harness.layers.outline)?.descendants(role: .button).map { $0.label ?? "" } ?? []
+        try require(buttonLabels.first?.hasPrefix(SidebarStrings.show) ?? false, "토글 레이블이 다음 동작을 말하지 않음: \(buttonLabels)")
         harness.provider.perform(.setVisible([dividerID], true))
         harness.provider.perform(.setLocked([dividerID], false))
+        harness.refresh()
+
+        // VoiceOver custom action: 접근성 서버가 실행하는 방식(AXCell의 이름 있는 action)으로 실행합니다.
+        // 행 하나에만 적용하고 선택을 바꾸지 않습니다.
+        let layers = harness.layers
+        let selectionBefore = layers.outline.selectedRowIndexes
+        var mark2 = harness.provider.performedCommands.count
+        guard let dividerAX = harness.axCell(dividerID, in: layers.outline) else { throw Failure(message: "Divider AXCell 없음") }
+        try require(dividerAX.performCustomAction(named: SidebarStrings.hide), "Hide custom action을 실행하지 못함")
+        harness.refresh()
+        guard let hiddenAX = harness.axCell(dividerID, in: layers.outline) else { throw Failure(message: "Divider AXCell 없음") }
+        try require(hiddenAX.customActionNames.contains(SidebarStrings.show), "숨긴 뒤 custom action이 Show로 바뀌지 않음: \(hiddenAX.customActionNames)")
+        try require(hiddenAX.performCustomAction(named: SidebarStrings.lock), "Lock custom action을 실행하지 못함")
+        try require(harness.commands(since: mark2) == [.setVisible([dividerID], false), .setLocked([dividerID], true)],
+                    "custom action command 불일치: \(harness.commands(since: mark2))")
+        try require(layers.outline.selectedRowIndexes == selectionBefore, "custom action이 선택을 바꿈")
+        harness.provider.perform(.setVisible([dividerID], true))
+        harness.provider.perform(.setLocked([dividerID], false))
+        harness.refresh()
+
+        // Rename custom action은 인라인 편집을 시작합니다(취소 시 command 없음).
+        mark2 = harness.provider.performedCommands.count
+        guard let renameAX = harness.axCell(dividerID, in: layers.outline) else { throw Failure(message: "Divider AXCell 없음") }
+        try require(renameAX.performCustomAction(named: SidebarStrings.rename) && SidebarInlineRename.isEditing(in: layers.outline),
+                    "Rename custom action이 편집을 시작하지 않음")
+        guard let editor = harness.window.firstResponder as? NSTextView else { throw Failure(message: "field editor 없음") }
+        editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        try require(!SidebarInlineRename.isEditing(in: layers.outline), "Rename custom action 편집이 취소되지 않음")
+        try require(harness.commands(since: mark2).filter { if case .renameNode = $0 { return true }; return false }.isEmpty,
+                    "취소한 Rename custom action이 command를 만듦")
+        harness.refresh()
+
+        // 페이지·View 행의 Rename custom action.
+        guard let welcomeID = harness.provider.viewID(named: "Welcome"),
+              let welcomeAX = harness.axCell(welcomeID, in: harness.pages.outline) else {
+            throw Failure(message: "Welcome AXCell 없음")
+        }
+        try require(welcomeAX.performCustomAction(named: SidebarStrings.rename) && SidebarInlineRename.isEditing(in: harness.pages.outline),
+                    "View 행 Rename custom action이 편집을 시작하지 않음")
+        guard let pageEditor = harness.window.firstResponder as? NSTextView else { throw Failure(message: "field editor 없음") }
+        pageEditor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        try require(!SidebarInlineRename.isEditing(in: harness.pages.outline), "View 행 Rename 편집이 취소되지 않음")
         harness.refresh()
     }
 
@@ -430,16 +705,22 @@ enum SidebarUICheck {
         let starID = try harness.id("Star")
         let dividerID = try harness.id("Divider")
 
+        var shortcutTitles: [String] = []
         func menuState(_ targets: [SidebarStableID]) -> [String: Bool] {
             let menu = NSMenu()
             layers.fill(menu, targets: targets)
             var state: [String: Bool] = [:]
-            for item in menu.items where !item.isSeparatorItem { state[item.title] = item.isEnabled }
+            for item in menu.items where !item.isSeparatorItem {
+                state[item.title] = item.isEnabled
+                if !item.keyEquivalent.isEmpty { shortcutTitles.append(item.title) }
+            }
             return state
         }
 
         let fragmentMenu = menuState([iconsID])
         try require(fragmentMenu.count == 7, "문맥 메뉴 항목 수 불일치: \(fragmentMenu)")
+        // 문맥 메뉴에는 단축키 표시가 없습니다(HIG Context menus). 단축키는 메뉴 막대가 보입니다.
+        try require(shortcutTitles.isEmpty, "문맥 메뉴에 단축키 표시가 있음: \(shortcutTitles)")
         try require(fragmentMenu[SidebarStrings.ungroup] == true, "그룹 marker에서 Ungroup이 비활성")
         try require(fragmentMenu[SidebarStrings.rename] == true, "단일 대상 Rename이 비활성")
         let mixedMenu = menuState([starID, dividerID])
@@ -572,10 +853,10 @@ enum SidebarUICheck {
         let footerID = try harness.id("Footer")
         let footerRow = harness.row(of: footerID, in: layers.outline)
         guard footerRow >= 0, let footerItem = layers.outline.item(atRow: footerRow),
-              let footerCell = harness.cell(at: footerRow, in: layers.outline) else {
+              let footerAX = harness.axCell(footerID, in: layers.outline) else {
             throw Failure(message: "필터 문맥 행 없음")
         }
-        try require((footerCell.accessibilityLabel() ?? "").contains(SidebarStrings.contextOnly), "필터 문맥 행 레이블 없음")
+        try require((footerAX.label ?? "").contains(SidebarStrings.contextOnly), "필터 문맥 행 레이블 없음: \(footerAX.label ?? "nil")")
         try require(layers.outlineView(layers.outline, pasteboardWriterForItem: footerItem) == nil, "필터 중 드래그를 허용함")
 
         // 결과 없음 → "Clear Filter" → 필터 해제와 펼침 복원.
@@ -614,6 +895,47 @@ enum SidebarUICheck {
         try require(harness.row(of: try harness.id("Title"), in: layers.outline) > row, "로드된 자식이 보이지 않음")
     }
 
+    /// 보이는 범위 밖에 만들어 둔 행 뷰(NSTableView가 스크롤 준비로 미리 만드는 행)도 값만 바뀐 snapshot과
+    /// 대비 높이기 변경을 반영해야 합니다. 그 행은 화면에 들어올 때 `viewFor`를 다시 거치지 않습니다.
+    @MainActor
+    private static func checkAvailableRows() throws {
+        let harness = Harness(provider: SidebarStubDataProvider())
+        defer { harness.close() }
+        let layers = harness.layers
+        let outline = layers.outline
+        // 모두 펼쳐 행이 레이어 구획 높이를 넘게 합니다.
+        outline.expandItem(nil, expandChildren: true)
+        harness.refresh()
+        outline.scrollRowToVisible(0)
+        harness.refresh()
+        let visible = outline.rows(in: outline.visibleRect)
+        let last = outline.numberOfRows - 1
+        try require(last >= visible.location + visible.length, "검사 전제: 보이는 범위 밖 행 없음(보임 \(visible), 행 \(outline.numberOfRows))")
+        guard let id = (outline.item(atRow: last) as? SidebarOutlineItem)?.layerID,
+              let cell = outline.view(atColumn: 0, row: last, makeIfNecessary: true) as? SidebarLayerCellView else {
+            throw Failure(message: "보이는 범위 밖 행 셀을 만들지 못함")
+        }
+        var available: [Int] = []
+        outline.enumerateAvailableRowViews { _, row in available.append(row) }
+        try require(available.contains(last), "검사 전제: 보이는 범위 밖 행 뷰가 목록에 남지 않음(\(available))")
+
+        // 값만 바뀐 snapshot(구조 같음): 보이는 범위 밖 행도 제자리에서 다시 채웁니다.
+        let structure = harness.provider.snapshot.layers.structureRevision
+        harness.provider.perform(.setVisible([id], false))
+        try require(harness.provider.snapshot.layers.structureRevision == structure, "검사 전제: 값 변경이 구조 변경으로 처리됨")
+        harness.sidebar.applySnapshotNow()
+        try require(outline.view(atColumn: 0, row: last, makeIfNecessary: false) === cell, "검사 전제: 보이는 범위 밖 행 셀이 교체됨")
+        try require((cell.accessibilityLabel() ?? "").contains(SidebarStrings.hiddenState),
+                    "보이는 범위 밖 행이 값 변경을 반영하지 않음: \(cell.accessibilityLabel() ?? "nil")")
+
+        // 대비 높이기: 보이는 범위 밖 행도 토글을 항상 보입니다.
+        try require(cell.lockButton.isHidden, "검사 전제: 기본 상태 잠금 토글이 보임")
+        layers.showsTogglesAlways = true
+        try require(cell.showsTogglesAlways && !cell.lockButton.isHidden, "보이는 범위 밖 행에 대비 높이기가 반영되지 않음")
+        layers.showsTogglesAlways = false
+        try require(cell.lockButton.isHidden, "대비 높이기 해제가 보이는 범위 밖 행에 반영되지 않음")
+    }
+
     @MainActor
     private static func checkCoalescing() throws {
         let harness = Harness(provider: SidebarStubDataProvider())
@@ -627,6 +949,137 @@ enum SidebarUICheck {
         spinRunLoop(until: { harness.sidebar.appliedGeneration == harness.provider.snapshot.generation })
         try require(harness.sidebar.appliedGeneration == harness.provider.snapshot.generation, "다음 런 루프에서 반영되지 않음")
         try require(harness.layers.snapshot.layers.rows[titleID]?.name == "Heading", "병합 반영 값 불일치")
+    }
+
+    // MARK: 접근성 서버 경로
+
+    /// 접근성 서버(VoiceOver가 질의하는 쪽)가 보는 요소 하나.
+    ///
+    /// AppKit 접근성 서버는 NSAccessibility 프로토콜을 쓰는 객체(`NSView`, `NSCell`)에는 프로토콜 메서드로 묻고,
+    /// 그렇지 않은 객체에는 legacy attribute 질의(`accessibilityAttributeValue:`)로 묻습니다. view-based 표의 행
+    /// (`AXRow`)과 셀(`AXCell`)은 후자에 속하는 AppKit 내부 객체입니다. 이 타입은 같은 규칙으로 읽으므로, setter에 넣은
+    /// 값이 아니라 실제로 노출되는 값을 확인합니다. legacy 메서드는 구현 쪽 API로는 deprecated라 selector로 부릅니다.
+    @MainActor
+    struct AXNode {
+        let object: NSObject
+
+        private static let roleSelector = NSSelectorFromString("accessibilityRole")
+        private static let attributeSelector = NSSelectorFromString("accessibilityAttributeValue:")
+        private static let actionNamesSelector = NSSelectorFromString("accessibilityActionNames")
+        private static let performActionSelector = NSSelectorFromString("accessibilityPerformAction:")
+        private static let customActionsSelector = NSSelectorFromString("accessibilityCustomActions")
+        private static let selectedRowsSelector = NSSelectorFromString("accessibilitySelectedRows")
+
+        init?(_ value: Any?) {
+            guard let object = value as? NSObject else { return nil }
+            self.object = object
+        }
+
+        /// 프로토콜 메서드로 답하는 요소인지(아니면 legacy attribute 질의).
+        private var usesProtocol: Bool { object.responds(to: Self.roleSelector) }
+
+        private func call(_ selector: Selector) -> Any? {
+            guard object.responds(to: selector) else { return nil }
+            return object.perform(selector)?.takeUnretainedValue()
+        }
+
+        private func legacy(_ attribute: String) -> Any? {
+            guard object.responds(to: Self.attributeSelector) else { return nil }
+            return object.perform(Self.attributeSelector, with: attribute as NSString)?.takeUnretainedValue()
+        }
+
+        var role: String? {
+            if usesProtocol { return ((object as AnyObject).accessibilityRole?() ?? nil)?.rawValue }
+            return legacy(NSAccessibility.Attribute.role.rawValue) as? String
+        }
+
+        /// 접근성 설명(VoiceOver가 읽는 레이블, AXDescription).
+        var label: String? {
+            if usesProtocol { return (object as AnyObject).accessibilityLabel?() ?? nil }
+            return legacy(NSAccessibility.Attribute.description.rawValue) as? String
+        }
+
+        var children: [AXNode] {
+            if usesProtocol {
+                let children = ((object as AnyObject).accessibilityChildren?() ?? nil) ?? []
+                return NSAccessibility.unignoredChildren(from: children).compactMap(AXNode.init)
+            }
+            return ((legacy(NSAccessibility.Attribute.children.rawValue) as? [Any]) ?? []).compactMap(AXNode.init)
+        }
+
+        var descendants: [AXNode] { children.flatMap { [$0] + $0.descendants } }
+
+        func children(role: NSAccessibility.Role) -> [AXNode] { children.filter { $0.role == role.rawValue } }
+
+        func descendants(role: NSAccessibility.Role) -> [AXNode] { descendants.filter { $0.role == role.rawValue } }
+
+        /// 행 안의 유일한 `AXCell`.
+        var cell: AXNode? {
+            let cells = children(role: .cell)
+            return cells.count == 1 ? cells[0] : nil
+        }
+
+        /// 이 요소가 내보내는 custom action 이름(VoiceOver 동작 메뉴 항목).
+        var customActionNames: [String] {
+            ((call(Self.customActionsSelector) as? [NSAccessibilityCustomAction]) ?? []).map(\.name)
+        }
+
+        /// 접근성 서버가 custom action을 실행하는 방식(이름이 담긴 AX action 실행)으로 실행합니다.
+        @discardableResult
+        func performCustomAction(named name: String) -> Bool {
+            guard let names = call(Self.actionNamesSelector) as? [String],
+                  let action = names.first(where: { $0.hasPrefix("Name:\(name)\n") }),
+                  object.responds(to: Self.performActionSelector) else {
+                return false
+            }
+            _ = object.perform(Self.performActionSelector, with: action as NSString)
+            return true
+        }
+
+        /// 목록의 `AXRow` 요소(표시 순서).
+        static func rows(of outline: NSOutlineView) -> [AXNode] {
+            AXNode(outline)?.children(role: .row) ?? []
+        }
+
+        /// 목록이 선택 행으로 내보내는 `AXRow` 요소.
+        static func selectedRows(of outline: NSOutlineView) -> [AXNode] {
+            ((AXNode(outline)?.call(selectedRowsSelector) as? [Any]) ?? []).compactMap(AXNode.init)
+        }
+    }
+
+    /// 행 항목이 내보내야 할 `AXCell` 레이블과 custom action(명세 기준으로 따로 계산).
+    @MainActor
+    private static func expectedAccessibility(
+        of item: SidebarOutlineItem,
+        snapshot: SidebarSnapshot,
+        headerTitle: String
+    ) -> (label: String, actions: [String])? {
+        switch item.role {
+        case .header:
+            return (headerTitle, [])
+        case .page:
+            guard let page = snapshot.pages.first(where: { $0.id == item.id }) else { return nil }
+            let name = page.name.isEmpty ? SidebarStrings.pageKind : page.name
+            return ("\(name), \(SidebarStrings.pageKind)", [SidebarStrings.rename])
+        case .view:
+            guard let view = snapshot.pages.flatMap(\.views).first(where: { $0.id == item.id }) else { return nil }
+            let name = view.name.isEmpty ? SidebarStrings.viewKind : view.name
+            return ("\(name), \(SidebarStrings.viewKind)", [SidebarStrings.rename])
+        case .layer:
+            guard let id = item.layerID, let row = snapshot.layers.rows[id] else { return nil }
+            let kind = SidebarStrings.kindName(row.kind, shapeKind: row.shapeKind)
+            var parts = [row.name.isEmpty ? kind : row.name, kind]
+            if !row.isVisible { parts.append(SidebarStrings.hiddenState) }
+            if row.isLocked { parts.append(SidebarStrings.lockedState) }
+            if !row.isFilterMatch { parts.append(SidebarStrings.contextOnly) }
+            return (parts.joined(separator: ", "), [
+                SidebarStrings.rename,
+                row.isVisible ? SidebarStrings.hide : SidebarStrings.show,
+                row.isLocked ? SidebarStrings.unlock : SidebarStrings.lock,
+                SidebarStrings.duplicate,
+                SidebarStrings.delete,
+            ])
+        }
     }
 
     // MARK: 보조

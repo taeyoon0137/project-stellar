@@ -8,11 +8,18 @@ import Foundation
 // 셸 → 코어: 편집은 `InspectorCommand`로만 보냅니다. 코어가 검증·Undo 그룹화·적용을 맡습니다.
 
 /// 편집 단계. 코어 `HistoryGroupingPolicy`가 Undo 단위를 정하는 근거입니다(아키텍처 §23.3).
+///
+/// 연속 조작(stepper 누름·자동 반복, 색 패널 드래그, 수치 필드 화살표 키 누름)은 `.continuous` 여러 개 뒤에
+/// 같은 속성의 `.ended` 하나로 끝납니다. 첫 `.continuous`부터 `.ended`까지가 Undo 한 단위입니다
+/// (아키텍처 §23.3 "조작 시작부터 종료까지 하나"). 셸은 값이 더 바뀌지 않았어도 `.ended`를 반드시 보내므로,
+/// 코어는 시간 제한으로 끝을 추측하지 않습니다.
 enum InspectorEditPhase: Equatable {
     /// 확정 입력(Return, 포커스 이동, popup 선택 등). 그 자체로 Undo 한 단위입니다.
     case commit
-    /// 연속 조정(화살표 키·stepper 반복, 색 패널 드래그). 같은 속성의 연속 입력은 코어가 병합합니다.
+    /// 진행 중인 연속 조작의 중간 값. 같은 속성의 `.ended`가 올 때까지 코어가 한 단위로 묶습니다.
     case continuous
+    /// 연속 조작의 끝과 최종 값. 상대 조정(`adjustNumber`)은 `delta: 0`으로 끝을 알립니다.
+    case ended
 }
 
 /// 셸이 코어로 보내는 인스펙터 편집 명령.
@@ -39,13 +46,16 @@ enum InspectorCommand: Equatable {
 
 /// 인스펙터 데이터 공급자. 모든 호출과 콜백은 메인 스레드에서 일어납니다.
 ///
+/// `@MainActor`로 컴파일러가 이 규칙을 강제합니다. 코어 adapter는 다른 스레드에서 받은 결과를
+/// 메인 actor로 옮긴 뒤 `snapshotHandler`를 호출해야 합니다(Swift 5 모드에서도 명시한 actor 격리는 검사됨).
 /// 구현은 무거운 작업(문서 질의, 값 해석)을 메인 스레드에서 하지 않고, 준비된 snapshot만
 /// 넘깁니다(아키텍처 §6.3 UI 스레드 2ms 상한, §9.2).
+@MainActor
 protocol InspectorDataSource: AnyObject {
     /// 가장 최근 snapshot.
     var snapshot: InspectorSnapshot { get }
     /// 새 snapshot이 준비되면 호출할 콜백. 인스펙터가 설정합니다.
-    var snapshotHandler: ((InspectorSnapshot) -> Void)? { get set }
+    var snapshotHandler: (@MainActor (InspectorSnapshot) -> Void)? { get set }
     /// 편집 명령을 보냅니다. `generation`은 명령의 근거가 된 snapshot 세대입니다.
     /// 코어는 오래된 세대에 근거한 명령을 거부하거나 재해석할 수 있습니다.
     func submit(_ command: InspectorCommand, basedOn generation: UInt64)

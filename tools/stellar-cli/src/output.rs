@@ -23,7 +23,7 @@
 //! | `ok` | 성공이면 `true` |
 //! | `exit_code` | 프로세스 종료 코드와 같은 값 |
 //! | `exit_name` | [`ExitStatus::name`] |
-//! | `result` | 명령별 결과 object, 없으면 `null` |
+//! | `result` | 명령별 결과 object, 없으면 `null`. 도메인 실패(1)도 판정 근거 object를 담을 수 있습니다(XXIV.1.3) |
 //! | `error` | `{"code", "message"}`, 성공이면 `null` |
 //! | `diagnostics` | `{"severity", "code", "message"}` 배열(비어 있을 수 있음) |
 
@@ -103,6 +103,8 @@ pub struct CliError {
     pub diagnostics: Vec<Diagnostic>,
     /// stderr 전용 부가 정보(경로 등). stdout JSON에는 넣지 않습니다.
     pub context: Option<String>,
+    /// 도메인 실패(1)에서도 판정 근거를 담는 결과 object(XXIV.1.3). 없으면 envelope `result`는 null.
+    pub result: Option<Box<JsonValue>>,
 }
 
 impl CliError {
@@ -114,6 +116,7 @@ impl CliError {
             message: message.into(),
             diagnostics: Vec::new(),
             context: None,
+            result: None,
         }
     }
 
@@ -131,6 +134,12 @@ impl CliError {
     /// stderr 전용 부가 정보를 덧붙입니다.
     pub fn with_context(mut self, context: impl Into<String>) -> CliError {
         self.context = Some(context.into());
+        self
+    }
+
+    /// 실패 envelope의 `result`에 결과 object를 담습니다(경로 미포함이어야 함).
+    pub fn with_result(mut self, result: JsonValue) -> CliError {
+        self.result = Some(Box::new(result));
         self
     }
 }
@@ -186,7 +195,7 @@ pub fn error_envelope(command: &str, error: &CliError) -> JsonValue {
     envelope(
         command,
         error.status,
-        JsonValue::Null,
+        error.result.as_deref().cloned().unwrap_or(JsonValue::Null),
         JsonValue::object(vec![
             ("code", JsonValue::string(error.code)),
             ("message", JsonValue::string(error.message.clone())),

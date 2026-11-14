@@ -111,6 +111,12 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
         isApplyingSnapshot = true
         defer { isApplyingSnapshot = false }
 
+        // active 페이지·View가 바뀐 snapshot에서만 선택을 active View 행으로 옮깁니다. 그 밖에는 사용자가 고른
+        // active 페이지 행 선택을 그대로 둡니다(키보드로 그 행을 지나갈 수 있게). 목록 reload가 선택을 비우므로
+        // 그 전에 기억해 둡니다.
+        let activeChanged = old.generation == 0 || old.activePageID != new.activePageID || old.activeViewID != new.activeViewID
+        let keptPageItem = activeChanged ? nil : selectedActivePageItem
+
         if old.pages != new.pages || old.generation == 0 {
             let pageIDs = Set(new.pages.map(\.id))
             let viewIDs = Set(new.pages.flatMap { $0.views.map(\.id) })
@@ -122,7 +128,24 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
                 outline.expandItem(item(page: page.id))
             }
         }
-        syncSelection()
+        let keptRow = keptPageItem.map { outline.row(forItem: $0) } ?? -1
+        if keptRow >= 0 {
+            if outline.selectedRowIndexes != IndexSet(integer: keptRow) {
+                outline.selectRowIndexes(IndexSet(integer: keptRow), byExtendingSelection: false)
+            }
+        } else {
+            syncSelection()
+        }
+    }
+
+    /// 선택이 active 페이지 행 하나이면 그 항목.
+    private var selectedActivePageItem: SidebarOutlineItem? {
+        guard outline.selectedRowIndexes.count == 1,
+              let item = outline.item(atRow: outline.selectedRow) as? SidebarOutlineItem,
+              item.role == .page, item.id == snapshot.activePageID else {
+            return nil
+        }
+        return item
     }
 
     /// 편집 종료 알림은 field editor가 아직 first responder인 동안 오므로 다음 런 루프에서 반영합니다.
@@ -153,11 +176,10 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
     }
 
     /// active View 행(페이지가 펼쳐져 있을 때) 또는 active 페이지 행을 선택합니다.
+    ///
+    /// 페이지 행을 눌러 그 페이지가 active가 되어도, 코어가 고른 active View 행이 보이면 그 행으로 선택을 옮깁니다
+    /// (선택 = active 페이지·View).
     private func syncSelection() {
-        if let current = outline.item(atRow: outline.selectedRow) as? SidebarOutlineItem {
-            if current.role == .view, current.id == snapshot.activeViewID { return }
-            if current.role == .page, current.id == snapshot.activePageID { return }
-        }
         var row = -1
         if let viewID = snapshot.activeViewID, let item = viewItems[viewID] {
             row = outline.row(forItem: item)
@@ -166,10 +188,19 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
             row = outline.row(forItem: item)
         }
         if row >= 0 {
-            outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-        } else {
+            if outline.selectedRowIndexes != IndexSet(integer: row) {
+                outline.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            }
+        } else if !outline.selectedRowIndexes.isEmpty {
             outline.deselectAll(nil)
         }
+    }
+
+    /// 사용자 조작 뒤 선택 표시를 active 상태에 다시 맞춥니다(command를 만들지 않음).
+    private func resyncSelection() {
+        isApplyingSnapshot = true
+        defer { isApplyingSnapshot = false }
+        syncSelection()
     }
 
     // MARK: NSOutlineViewDataSource
@@ -287,9 +318,7 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
         guard !isApplyingSnapshot else { return }
         guard let item = outline.item(atRow: outline.selectedRow) as? SidebarOutlineItem, let id = item.id else {
             // 빈 곳 클릭 등으로 선택이 비면 active 페이지·View 표시를 되살립니다(선택이 곧 active 상태).
-            isApplyingSnapshot = true
-            syncSelection()
-            isApplyingSnapshot = false
+            resyncSelection()
             return
         }
         switch item.role {
@@ -298,6 +327,8 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
         case .view where id != snapshot.activeViewID:
             provider.perform(.activateView(id))
         default:
+            // 이미 active인 페이지·View 행을 고르면 바뀌는 것이 없습니다. 선택을 되돌리지 않습니다: active 페이지 행도
+            // active 상태를 나타내며, 되돌리면 화살표·← 이동이 그 행에서 막힙니다(키보드 함정).
             break
         }
     }
@@ -378,8 +409,8 @@ final class SidebarPagesController: NSObject, NSOutlineViewDataSource, NSOutline
         menu.removeAllItems()
         let row = outline.clickedRow
         guard row >= 0, let item = outline.item(atRow: row) as? SidebarOutlineItem, let id = item.id else { return }
+        // 문맥 메뉴에는 단축키 표시를 넣지 않습니다(HIG Context menus).
         let menuItem = NSMenuItem(title: SidebarStrings.rename, action: #selector(renameFromMenu(_:)), keyEquivalent: "")
-        SidebarKeyboardShortcuts.apply(.rename, to: menuItem)
         menuItem.target = self
         menuItem.representedObject = item
         let command: SidebarCommand = item.role == .page ? .renamePage(id, name: "") : .renameView(id, name: "")

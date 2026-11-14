@@ -32,7 +32,57 @@ pub const COMMANDS: &[(&str, &str)] = &[
     ("version", "도구 이름·버전을 JSON으로 출력합니다"),
     (
         "inspect",
-        "<경로>의 프로젝트 root와 stellar.yaml을 읽기 전용으로 검사해 JSON으로 출력합니다",
+        "<경로>의 프로젝트 root와 stellar.yaml을 읽기 전용으로 검사해 JSON으로 출력합니다(--structure: 문서 개요와 revision 추가)",
+    ),
+    (
+        "query",
+        "<경로> <대상>: 저장된 프로젝트를 읽기 전용으로 조회해 revision과 함께 JSON으로 출력합니다",
+    ),
+    (
+        "validate",
+        "<경로>: 저장된 모든 문서를 문서 validator로 다시 검증합니다(오류가 있으면 종료 코드 1)",
+    ),
+    (
+        "semantic-diff",
+        "<base 경로> <target 경로>: 같은 프로젝트 두 상태의 semantic diff를 출력합니다",
+    ),
+    (
+        "semantic-merge",
+        "<base> <ours> <theirs>: 3-way semantic merge 결과와 conflict를 출력합니다(conflict가 있으면 종료 코드 1, 파일을 쓰지 않음)",
+    ),
+    (
+        "migrate",
+        "<경로> [--check]: generation 스키마를 이 도구의 버전으로 migration합니다(--check: 판정만)",
+    ),
+    (
+        "diff-summary",
+        "<base> <target> [--output <파일>] [--include-content]: semantic diff 요약 artifact를 만듭니다(기본: 프로젝트 텍스트·이름 redaction)",
+    ),
+    (
+        "ci",
+        "<경로>: CI 검사(lockfile·검증·migration 필요 여부)를 실행합니다(하나라도 실패하면 종료 코드 1)",
+    ),
+    (
+        "apply",
+        "<경로> <입력 파일|-> [--dry-run]: CommandTransaction JSON(base revision 포함)을 검증해 세대 전환 저장으로 기록합니다(--dry-run: semantic diff만)",
+    ),
+];
+
+/// `query` 대상: (사용법, 한 줄 설명). 도움말에 이 순서로 나타납니다.
+pub const QUERY_TARGETS: &[(&str, &str)] = &[
+    (
+        "project",
+        "프로젝트 구조(문서·페이지·View 개요, chunk 요약)",
+    ),
+    (
+        "tree <문서 id> [--cursor <c>] [--limit <n>]",
+        "문서 트리 한 page(깊이 우선, 기본 1000·최대 10000 node, next_cursor로 이어 조회)",
+    ),
+    ("node <문서 id> <node id>", "node 공통 필드와 속성"),
+    ("tokens", "token 집합(저장 포맷 미정: chunk 수만 보고)"),
+    (
+        "components",
+        "component library(저장 포맷 미정: chunk 수만 보고)",
     ),
 ];
 
@@ -54,6 +104,10 @@ pub fn usage() -> String {
         .unwrap_or(0);
     for (name, summary) in COMMANDS {
         out.push_str(&format!("    {name:<width$}  {summary}\n"));
+    }
+    out.push_str("\nquery 대상:\n");
+    for (usage, summary) in QUERY_TARGETS {
+        out.push_str(&format!("    {usage}\n        {summary}\n"));
     }
     out.push_str(
         "\n출력:\n    \
@@ -99,6 +153,22 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("version", commands::version(rest))
     } else if command == "inspect" {
         ("inspect", commands::inspect(rest))
+    } else if command == "query" {
+        ("query", commands::query(rest))
+    } else if command == "apply" {
+        ("apply", crate::apply::run(rest))
+    } else if command == "validate" {
+        ("validate", crate::project_cmds::validate(rest))
+    } else if command == "semantic-diff" {
+        ("semantic-diff", crate::project_cmds::semantic_diff(rest))
+    } else if command == "semantic-merge" {
+        ("semantic-merge", crate::project_cmds::semantic_merge(rest))
+    } else if command == "migrate" {
+        ("migrate", crate::project_cmds::migrate_command(rest))
+    } else if command == "ci" {
+        ("ci", crate::project_cmds::ci(rest))
+    } else if command == "diff-summary" {
+        ("diff-summary", crate::summary::run(rest))
     } else {
         return usage_error(err, &format!("알 수 없는 명령: {command}"));
     };
@@ -240,6 +310,64 @@ mod tests {
             &["inspect", "--json", "x"][..],
             &["inspect", "--bogus"][..],
             &["inspect", "a", "b"][..],
+            &["inspect", "a", "--structure", "--structure"][..],
+            &["query"][..],
+            &["query", "p"][..],
+            &["query", "--x", "project"][..],
+            &["query", "p", "nothing"][..],
+            &["query", "p", "project", "extra"][..],
+            &["query", "p", "tree"][..],
+            &["query", "p", "tree", "not-an-id"][..],
+            &[
+                "query",
+                "p",
+                "tree",
+                "0195c530-3acd-7bc1-8414-c213f61cb965",
+                "--limit",
+                "0",
+            ][..],
+            &[
+                "query",
+                "p",
+                "tree",
+                "0195c530-3acd-7bc1-8414-c213f61cb965",
+                "--limit",
+            ][..],
+            &[
+                "query",
+                "p",
+                "tree",
+                "0195c530-3acd-7bc1-8414-c213f61cb965",
+                "--bogus",
+            ][..],
+            &["query", "p", "node", "0195c530-3acd-7bc1-8414-c213f61cb965"][..],
+            &["apply"][..],
+            &["apply", "p"][..],
+            &["apply", "p", "in.json", "extra"][..],
+            &["apply", "p", "in.json", "--force"][..],
+            &["apply", "p", "in.json", "--dry-run", "--dry-run"][..],
+            &["validate"][..],
+            &["validate", "a", "b"][..],
+            &["validate", "--strict", "a"][..],
+            &["semantic-diff", "a"][..],
+            &["semantic-merge", "a", "b"][..],
+            &["semantic-merge", "a", "b", "c", "d"][..],
+            &["migrate"][..],
+            &["migrate", "a", "--force"][..],
+            &["migrate", "a", "--check", "--check"][..],
+            &["ci"][..],
+            &["ci", "a", "b"][..],
+            &["ci", "--strict", "a"][..],
+            &["diff-summary", "a"][..],
+            &["diff-summary", "a", "b", "--output"][..],
+            &["diff-summary", "a", "b", "--redact"][..],
+            &[
+                "diff-summary",
+                "a",
+                "b",
+                "--include-content",
+                "--include-content",
+            ][..],
         ] {
             let (code, out, err) = run_args(args);
             assert_eq!(code, EXIT_USAGE, "{args:?}");

@@ -9,6 +9,12 @@ final class CanvasView: NSView {
     /// drawable·입력을 전달할 대상 runtime handle. 미설정 시 전달하지 않습니다.
     var runtimeHandle: UInt64?
 
+    /// 셸이 코어보다 먼저 해석할 key down(캔버스 단일 키 도구 단축키, tools_menus 6.2). true를 돌려주면 그 키의
+    /// key down과 짝 key up을 코어 입력으로 보내지 않습니다. nil이면 모든 키를 코어로 보냅니다.
+    var keyDownHandler: ((NSEvent) -> Bool)?
+    /// `keyDownHandler`가 처리해 짝 key up도 삼킬 key code.
+    private var handledKeyCodes: Set<UInt16> = []
+
     private var mouseTrackingArea: NSTrackingArea?
 
     override var isFlipped: Bool { true }
@@ -79,8 +85,18 @@ final class CanvasView: NSView {
     override func otherMouseUp(with event: NSEvent) { submitInput(event) }
     override func otherMouseDragged(with event: NSEvent) { submitInput(event) }
     override func scrollWheel(with event: NSEvent) { submitInput(event) }
-    override func keyDown(with event: NSEvent) { submitInput(event) }
-    override func keyUp(with event: NSEvent) { submitInput(event) }
+    override func keyDown(with event: NSEvent) {
+        if let keyDownHandler, keyDownHandler(event) {
+            handledKeyCodes.insert(event.keyCode)
+            return
+        }
+        submitInput(event)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if handledKeyCodes.remove(event.keyCode) != nil { return }
+        submitInput(event)
+    }
 
     override func flagsChanged(with event: NSEvent) {
         submitInput(event)

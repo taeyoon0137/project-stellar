@@ -50,7 +50,8 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 | 뒤쪽 끝 | 줌(Zoom) | `NSMenuToolbarItem`, 제목은 현재 배율 |
 | 뒤쪽 끝 | 인스펙터 경계 구분선, 인스펙터 토글 | `.inspectorTrackingSeparator`, `.toggleInspector` |
 
-- 프로젝트 검색 툴바 항목과 더 보기 메뉴는 검색 영역이 같은 delegate에 추가합니다. 이 영역은 `ToolsToolbarController.item(for:)`로 항목만 내줄 수 있습니다. [가이드 6.1]
+- 프로젝트 검색 툴바 항목과 더 보기 메뉴는 검색 영역이 같은 delegate에 추가합니다. 이 영역은 `ToolsToolbarController.item(for:willBeInsertedIntoToolbar:)`로 항목만 내줄 수 있습니다. [가이드 6.1]
+- 사용자 구성 palette: AppKit은 palette에 보일 항목을 `willBeInsertedIntoToolbar: false`로 따로 요청하고 palette를 닫으면 해제합니다. 이때는 `paletteItem(for:)`가 실제 항목과 다른 사본을 만들고 target·action을 달지 않습니다. 실제 항목 인스턴스를 palette에 넘기면 한 항목이 두 곳에 놓입니다.
 - 도구 그룹은 한 번 클릭으로 도구를 바꿔야 하므로 펼친 표현을 고정합니다. macOS 26 SDK로 빌드해 macOS 27.2에서 실행해 보니 `.automatic`은 이 11개 그룹을 창 폭과 상관없이 pull-down 하나로 접었습니다. 창이 좁으면 시스템 overflow 메뉴가 처리하고, 줌 항목(`visibilityPriority = .low`)이 도구 그룹(`.high`)보다 먼저 overflow로 넘어갑니다. [HIG Toolbars]
 - 측정값(같은 환경, 화면 밖 창, 참고용이며 확정 수치 아님): 펼친 도구 그룹 폭 423.5pt. 툴바만 있는 창(분할 뷰 없음)에서 폭 1000pt 이상이면 모든 기본 항목이 보이고, 900pt이면 줌 항목만 overflow로 넘어갑니다. 분할 뷰가 붙으면 사용 가능한 폭이 달라지므로 통합 후 다시 측정합니다. 확정 수치는 가이드 12장에 기록하는 별도 작업으로 정합니다. [가이드 0.2]
 
@@ -82,7 +83,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 - **File**: New Project…, Open Project…, Clone Project… | Close, Close Project | Save Now
 - **Edit**: Undo, Redo | Cut, Copy, Paste, Delete, Duplicate | Select All, Deselect All | Find ▸ (Find…, Find Next, Find Previous)
 - **View**: Show Toolbar, Customize Toolbar… | Show Sidebar, Show Inspector | Zoom In, Zoom Out, Actual Size, Zoom to Fit, Zoom to Selection | Move Tool, Hand Tool, Zoom Tool | Show Rulers | Enter Full Screen
-- **Insert**: Frame | Rectangle, Ellipse, Line, Polygon | Pen, Text | Image…
+- **Insert**: Frame | Rectangle, Ellipse, Line, Polygon | Pen, Text | Image
 - **Object**: Group, Ungroup, Frame Selection | Bring to Front, Bring Forward, Send Backward, Send to Back | Align ▸ (Align Left, Align Center, Align Right | Align Top, Align Middle, Align Bottom), Distribute ▸ (Distribute Horizontally, Distribute Vertically) | Flip Horizontal, Flip Vertical | Lock, Hide
 - **Window**: Minimize, Minimize All(Option 동적 항목), Zoom | Bring All to Front (창 목록은 시스템이 덧붙임)
 - **Help**: Stellar Help
@@ -91,7 +92,8 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 
 - 모든 명령 항목은 `ShellCommand` 하나에 대응합니다. 항목 identifier는 `xyz.taeyoon.stellar.command.<rawValue>`이고, 하위 메뉴 컨테이너만 명령이 없습니다. [계획 XII.6.5]
 - 툴바의 모든 명령은 메뉴 막대에도 있습니다(도구 11개는 View·Insert, 줌 5개는 View). [HIG Toolbars] [가이드 6.1]
-- 추가 입력이 필요한 명령에만 말줄임표를 붙입니다(Settings…, New/Open/Clone Project…, Find…, Customize Toolbar…, Image…). [HIG The menu bar] [가이드 8.1]
+- 추가 입력이 필요한 명령에만 말줄임표를 붙입니다(Settings…, New/Open/Clone Project…, Find…, Customize Toolbar…). 도구 선택은 체크 표시가 붙는 모드 전환이라 Image를 포함해 말줄임표를 붙이지 않습니다. [HIG The menu bar] [가이드 8.1]
+- 제목 형식: View 메뉴의 Move Tool·Hand Tool·Zoom Tool은 탐색 도구라 "Tool"을 붙이고, Insert 메뉴 항목은 만들 대상 이름(Frame, Rectangle, …)만 씁니다. 메뉴 이름이 이미 "삽입"을 말하므로 대상 이름이 더 짧고 명확합니다.
 - 지금 쓸 수 없는 항목은 숨기지 않고 비활성화합니다. [HIG The menu bar] [가이드 8.1]
 - 표시·숨김 항목의 제목은 현재 상태를 반영합니다. Show/Hide Sidebar·Inspector·Toolbar와 Enter/Exit Full Screen은 AppKit이 바꾸고, Show/Hide Rulers, Lock/Unlock, Hide/Show는 `ShellCommandPresentation`이 snapshot으로 바꿉니다. [HIG The menu bar]
 - 메뉴 아이콘: macOS 26은 표준 action 항목(undo:, copy:, performClose: 등)에 시스템 아이콘을 붙입니다. 셸 명령 항목에는 같은 의미의 SF Symbol을 붙이고, 구분선으로 나뉜 그룹에 아이콘이 없는 표준 항목(예: toggleInspector:, toggleToolbarShown:)이 섞이면 그 항목만 SF Symbol로 채웁니다. 시스템 아이콘은 바꾸지 않습니다. 결과적으로 모든 그룹이 아이콘을 모두 갖거나 모두 갖지 않습니다. [가이드 8.1] [HIG The menu bar]
@@ -104,7 +106,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 | 빈 상태(열린 프로젝트 창 없음) | 창 router가 응답자 체인에 없음 | 앱 수준 셸 명령(Settings…, New/Open/Clone Project…)은 앱 수준 router가 받아 활성. About·Hide·Quit·Help는 AppKit 표준 동작. 창 수준 명령은 받을 대상이 없어 AppKit이 비활성화 | 창이 없으므로 툴바 없음 |
 | 로딩(세션 준비 중) | 코어가 `enabledCommands`를 비우거나 줄여 보냄 | 숨기지 않고 비활성 | 도구 그룹·줌 항목 `isEnabled = false`, 마지막 배율 제목 유지 |
 | 오류(명령 거부·실패) | 명령 뒤 snapshot이 바뀌지 않거나 다른 값을 보고함 | 다음 snapshot 기준으로 다시 검증 | 도구 클릭으로 바뀐 선택을 snapshot의 도구로 되돌림. 오류 설명 alert는 해당 기능이 맡음 |
-| 텍스트 편집 중 | first responder가 `NSText`(field editor 포함) | 객체 명령(Duplicate, Deselect All, Object 메뉴 전체) 비활성. 표준 편집 명령은 field editor가 처리 | 변화 없음(도구·줌은 텍스트 편집과 무관) |
+| 텍스트 편집 중 | first responder가 `NSText`(field editor 포함) | 객체 명령(Duplicate, Deselect All, Object 메뉴 전체) 비활성. Cut·Copy·Paste·Delete·Select All은 field editor가, Undo·Redo는 창 undo manager가 처리("Undo Typing") | 변화 없음(도구·줌은 텍스트 편집과 무관) |
 | 오래된 snapshot | `generation`이 이미 반영한 값보다 작음 | 해당 없음(메뉴는 매번 최신 snapshot을 읽음) | 무시 |
 
 - 셸은 낙관적으로 상태를 바꾸지 않습니다. 단 도구 그룹 세그먼트는 클릭 순간 AppKit이 먼저 선택을 바꾸므로, 명령이 거부되면 snapshot의 도구로 되돌립니다. [아키텍처 §9.3]
@@ -122,7 +124,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 
 명령은 `ToolsMenuModel.send`로 나가고, 결과 snapshot의 `activeTool`이 툴바 선택과 메뉴 체크를 정합니다.
 
-- Image 도구는 파일 선택이 필요하므로 메뉴 제목이 "Image…"입니다. 파일 선택 패널 표시와 취소 시 이전 도구 복귀는 코어 연결 시 정합니다.
+- Image 도구 선택은 다른 도구처럼 모드 전환이므로 메뉴 제목이 "Image"이고 체크 표시가 붙습니다. 이미지 파일 선택 패널은 도구를 쓰는 단계(캔버스 클릭)에서 열고, 취소 시 이전 도구 복귀와 함께 코어 연결 시 정합니다.
 - Space를 누르는 동안 Hand로 전환, Escape로 Move 복귀 같은 일시 전환은 도구 상태 기계의 일입니다. [계획 XII.3.6] [가이드 O10]
 
 ### 5.2 줌
@@ -133,8 +135,9 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 
 ### 5.3 편집 명령 라우팅
 
-- Undo, Redo, Cut, Copy, Paste, Delete, Select All은 AppKit 표준 action을 target 없이 보냅니다. 텍스트 컨트롤 편집 중에는 field editor가 먼저 받아 네이티브 Undo·클립보드를 처리하고, 캔버스·목록 포커스에서는 `ShellCommandRouter`가 받아 활성 창 session으로 보냅니다. [가이드 8.2] [아키텍처 §11.2, §23]
-- `NSWindow`가 `undo:`·`redo:`에 응답하므로 router는 `install(in:)`으로 content view와 창 사이에 끼웁니다. content view를 바꾸면 다시 호출해야 합니다.
+- Undo, Redo, Cut, Copy, Paste, Delete, Select All은 AppKit 표준 action을 target 없이 보냅니다. 텍스트 컨트롤 편집 중에는 field editor가 먼저 받아 네이티브 클립보드를 처리하고, 캔버스·목록 포커스에서는 `ShellCommandRouter`가 받아 활성 창 session으로 보냅니다. [가이드 8.2] [아키텍처 §11.2, §23]
+- 텍스트 편집 중 Undo·Redo: field editor(`NSTextView`)는 `undo:`·`redo:`를 구현하지 않고 창 undo manager가 처리합니다. 그래서 router는 텍스트 컨트롤이 first responder이면 `responds(to:)`에서 `undo:`·`redo:`에 응답하지 않는다고 알려 응답자 체인과 메뉴 검증이 창까지 가게 합니다(메뉴 제목 "Undo Typing"). 직접 불려도 창으로 넘깁니다. 이 경로가 없으면 이름 입력 중 ⌘Z가 캔버스 "Undo Move"를 보냅니다(리뷰에서 재현). [가이드 5.2, 8.2]
+- `NSWindow`가 `undo:`·`redo:`에 응답하므로 router는 `install(in:)`으로 창 바로 앞에 끼웁니다. 창에 `contentViewController`가 있으면 그 controller와 창 사이(content view → controller → router → 창), 없으면 content view와 창 사이입니다. AppKit은 view controller가 소유한 view의 `nextResponder` 설정을 controller로 넘기므로 content view에 직접 끼우면 체인이 순환합니다(셸 통합 중 확인). content view나 controller를 바꾸면 다시 호출해야 합니다.
 - Undo·Redo 제목은 snapshot의 대상 이름을 붙입니다(예: "Undo Move"). [HIG The menu bar]
 - Delete 키 자체(⌫)는 메뉴 key equivalent로 두지 않습니다. 텍스트 입력을 가로채지 않도록 캔버스 `keyDown`→`deleteBackward(_:)` 경로로 `.delete`를 보내는 연결은 통합 단계에서 합니다.
 
@@ -195,7 +198,7 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | Insert | Polygon | — | `tool.polygon` | — |
 | Insert | Pen | 캔버스 P | `tool.pen` | 단일 키 |
 | Insert | Text | 캔버스 T | `tool.text` | 단일 키 |
-| Insert | Image… | ⇧⌘K | `tool.image` | 사용자 정의 |
+| Insert | Image | ⇧⌘K | `tool.image` | 사용자 정의 |
 | Object | Group | ⌥⌘G | `object.group` | 사용자 정의(예외, 6.3) |
 | Object | Ungroup | ⌥⇧⌘G | `object.ungroup` | 사용자 정의(예외, 6.3) |
 | Object | Frame Selection | — | `object.frame_selection` | — |
@@ -307,11 +310,13 @@ struct ToolsMenuSnapshot: Equatable {
 
 protocol ToolsMenuModel: AnyObject {
     var snapshot: ToolsMenuSnapshot { get }                          // 저장 값, 계산 없음
-    var snapshotDidChange: ((ToolsMenuSnapshot) -> Void)? { get set } // 메인 스레드, 구독자 하나
+    func addSnapshotObserver(_ handler: @escaping (ToolsMenuSnapshot) -> Void) -> ToolsMenuObservation
+                                                                     // 메인 스레드, 구독자 여럿, 토큰 해제 시 끝
     func send(_ command: ShellCommand)                               // 비동기 반영
 }
 ```
 
+- 구독은 여럿일 수 있습니다(툴바, 캔버스 호스트, 그 밖에 같은 창 session을 보는 영역). 구현체는 `ToolsMenuObservers`로 구독자 목록을 두고, 반환한 `ToolsMenuObservation` 토큰이 해제되거나 `cancel()`되면 그 구독만 끝납니다. 한 구독자가 다른 구독자를 덮어쓰지 않습니다.
 - 값 snapshot이 들어오고 명령이 나가는 구조이며 Rust 타입이 없습니다. 코어 연결 시 pull 이벤트 큐(`stellar_runtime_poll_event`)로 받은 버전형 메시지를 이 구조체로 디코드하고, `send`는 command ID와 인자를 Document Thread 큐에 넣기만 합니다. [아키텍처 §8.2, §9.2] [ADR-0009]
 - FFI 표현 제안: `enabledCommands`는 command ID 비트셋, `activeTool`은 작은 정수 tag, 이름 문자열은 UTF-8 `(ptr, len)`. 형식은 코어 command ID가 정해질 때 함께 정합니다.
 - 메뉴 검증은 `snapshot` 읽기와 제목 비교만 하므로 메인 스레드 예산 안입니다. 측정값은 10장에 있습니다. [아키텍처 §6.3]
@@ -327,6 +332,9 @@ protocol ToolsMenuModel: AnyObject {
 - 단일 키 해석: 11개 도구, Caps Lock, 수식키·반복 거부, 한글 입력 소스(물리 키), `NSEvent` 경로
 - 메뉴: 최상위 순서, 모든 명령 항목의 `ShellCommand` 대응·action·target·key equivalent, 모든 명령이 메뉴에 정확히 한 번 보임, 동적 항목, 아이콘 그룹 균일, Services 연결
 - 라우팅: 응답자 체인 위치(content view → router → window), 캔버스 포커스의 copy:·undo:·셸 명령 전달, 메뉴 제목·체크·활성, 도구 그룹 클릭과 snapshot 반영, 오래된 snapshot 폐기, 비활성 도구 거부와 선택 복귀, 로딩 상태, 텍스트 편집 중 억제와 field editor 우선, 창 없이 New Project
+- 텍스트 편집 중 Undo·Redo: router가 `undo:`·`redo:`에 응답하지 않고 체인의 처리 대상이 창, 창 검증 제목이 캔버스 명령 이름이 아님, ⌘Z·⇧⌘Z가 field editor 입력을 되돌리고 다시 적용, router 직접 호출도 창으로 넘김, 코어 명령 미전달
+- 구독: 두 번째 구독자가 snapshot을 받고 툴바 구독을 덮어쓰지 않음, 취소한 구독은 더 받지 않음
+- palette 사본: 도구 그룹·줌 사본이 실제 항목과 다르고 router로 명령을 보내지 않음, 실제 항목 유지
 - 툴바: 레이블·도움말 태그·아이콘 접근성 설명, 펼친 표현, overflow 우선순위, 커스텀 뷰 없음, 1280pt에서 overflow 없음
 - 레이아웃: 4개 외형과 좁은 폭(560pt)에서 창 전체 뷰 계층의 모호한 Auto Layout 없음
 - 성능: snapshot 반영과 View 메뉴 전체 검증 median이 2ms 미만
@@ -336,16 +344,16 @@ protocol ToolsMenuModel: AnyObject {
 ## 11. 코어 연결·통합에 남은 일
 
 - **command ID**: 코어가 command ID를 정의하면 `ShellCommandCoreIDStub`을 그 표로 바꿉니다. [계획 XII.6.5]
-- **snapshot 수신**: pull 이벤트 디코더와 `ToolsMenuModel` 실제 구현(창 session별 1개, 앱 수준 1개). `ToolsMenuModelStub`은 검사·미리보기용으로만 남깁니다.
+- **snapshot 수신**: pull 이벤트 디코더와 `ToolsMenuModel` 실제 구현(창 session별 1개, 앱 수준 1개). `ToolsMenuModelStub`은 검사·미리보기용으로만 남깁니다. `MainMenuBuilder.build(applicationTarget:)`의 target은 필수 인자입니다(빠뜨리면 창이 없을 때 New/Open/Clone Project가 비활성으로 남음).
 - **도구 상태 기계**: Space 일시 Hand, Escape 복귀, Image 파일 선택 흐름. [계획 XII.3.6]
 - **줌**: camera 입력과 줌 단계·맞춤 계산. [계획 XII.4.3]
 - **프로젝트 명령**: New/Open/Clone Project 흐름과 패널. [계획 XII.6.1~XII.6.3]
 - **Undo/Redo/Save Now**: 활성 WindowSession 연결. [계획 XII.6.4]
 - **접근성**: 캔버스 호스트의 도구 상태 노출과 VoiceOver 자동화. [계획 XII.8.1]
-- **창 통합**: AppDelegate에서 `MainMenuBuilder.build(applicationTarget:)`와 `install(on:)`, 창 controller에서 `ShellCommandRouter.install(in:)`과 툴바 연결(검색 등 다른 영역 항목과 delegate 조합). `toggleSidebar:`·`toggleInspector:`가 동작하려면 `NSSplitViewController`가 응답자 체인에 있어야 합니다. [가이드 2.3, 2.5]
-- **캔버스 keyDown**: `CanvasToolShortcut.tool(for:)`와 Delete 키(`deleteBackward(_:)` → `.delete`) 연결.
+- **창 통합(완료, shell_frame 14장)**: `ShellAppCoordinator`가 `MainMenuBuilder.build(applicationTarget:)`·`install(on:)`을 하고, 프로젝트 창마다 `ShellCommandRouter.install(in:)`과 셸 툴바 조합(`ToolsToolbarController`가 `ShellToolbarItemProviding`으로 줌 제공)을 합니다. 캔버스 도구 그룹은 셸 툴바에 넣지 않고, 같은 도구 11개를 프로젝트 창이 셸 프레임 snapshot 도구 목록으로 캔버스 하단 가운데 도구 막대(`ShellToolBarView`)에 보냅니다(shell_frame 14.2). 창 모델은 `ShellWindowToolsModelStub`(창별 도구 상태, 코어 경로 없는 명령 비활성)입니다. [가이드 2.3, 2.5]
+- **캔버스 keyDown(단일 키 완료)**: `CanvasView.keyDownHandler`가 `CanvasToolShortcut.tool(for:)`로 도구를 구해 `router.dispatch`합니다. 처리한 키는 key down·짝 key up 모두 코어 입력으로 보내지 않고, 도구가 아니거나 비활성이면 코어 입력으로 보냅니다. Delete 키(`deleteBackward(_:)` → `.delete`)는 코어 삭제 명령 경로가 없어 아직 연결하지 않았습니다.
 - **앱 이름**: 메뉴 막대의 굵은 앱 이름은 번들 이름에서 옵니다. 현재 `PRODUCT_NAME`이 `StellarMac`이므로 표시 이름을 "Stellar"로 맞추는 프로젝트 설정 변경이 필요합니다(이 작업 범위 밖, 프로젝트 파일 미수정).
-- **smoke 연결**: 실행 인자(예: `--tools-menus-check`)로 `ToolsUICheck.run()` 호출, `UI/Tools/`가 코어 FFI(`stellar_`)를 직접 호출하지 않는다는 구조 검사.
+- **smoke 연결(완료)**: `--tools-menus-ui-check`로 `ToolsUICheck.run()`을 실행하고, `UI/Tools/`가 코어 FFI·runtime(`stellar_`, `CoreRuntime`, `RuntimeHost`, `runtimeHandle`)을 참조하지 않는다는 구조 검사를 `scripts/macos/smoke.sh`가 합니다.
 - **눈금자**: 지금은 placeholder이고 동작은 계획 XII.10.19가 구현합니다.
 - **WBS 없음**: Open Recent, Open in New Window(XII.2.4), Export, Format 메뉴, Help Book(현재 Stellar Help는 시스템 "도움말 없음" 동작), 메뉴 문자열 지역화.
 - **실화면 확인**: 화면 밖 bitmap 캡처에서는 선택된 도구 세그먼트의 아이콘이 보이지 않았습니다. 캡처가 시스템 glass·선택 레이어를 담지 못한 것으로 보이나, 실제 키 창 화면에서는 확인하지 않았습니다.

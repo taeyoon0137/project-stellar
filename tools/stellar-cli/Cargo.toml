@@ -11,11 +11,16 @@ publish = false
 name = "stellar"
 path = "src/main.rs"
 
-# L1 headless 도구(XXIV.1.1): 앱 UI·GUI·네트워크 없이 core crate만 사용합니다.
+# L1 headless 도구(XXIV.1.1): 앱 UI·GUI·네트워크 없이 L1 공용 library만 사용합니다.
+# 직접 의존은 stellar-ops·diagnostics뿐입니다(ADR-0005 §8, XXIV.4.3).
 # AI·MCP·모델·agent 관련 crate와 외부 crate를 직접 의존성으로 두지 않습니다.
 [dependencies]
-# 읽기 전용 프로젝트 검사(`inspect`, XXIV.1.2): root 검증·stellar.yaml probe.
-stellar-project = { path = "../../crates/project" }
+# 프로젝트 검사·조회(`inspect`, `query`): probe, snapshot, 문서 트리, node 속성.
+stellar-ops = { path = "../../crates/ops" }
+
+[dev-dependencies]
+# 통합 테스트가 저장된 프로젝트 fixture를 만들 때만 씁니다(ops test-support).
+stellar-ops = { path = "../../crates/ops", features = ["test-support"] }
 
 [lints]
 workspace = true

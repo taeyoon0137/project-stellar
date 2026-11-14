@@ -20,11 +20,12 @@
 ## 구현 요약
 
 - **manifest 해석(`manifest.rs`)**: 문자 단위 lexer가 basic·literal·여러 줄 문자열, 주석, 배열·inline table 괄호 깊이를 추적해 문장 단위로 나눈 뒤, 표 머리글 경로 + dotted key 경로로 위치를 판정합니다.
-  - 읽는 표: `[dependencies]`, `[build-dependencies]`, `[dev-dependencies]`(밑줄 표기 포함), `[target.<spec>.*]`, `[dependencies.<name>]` 하위 표, `<name>.path = ...` dotted key.
+  - 읽는 표: `[dependencies]`, `[build-dependencies]`, `[dev-dependencies]`(밑줄 표기 포함), `[target.<spec>.*]`, `[dependencies.<name>]` 하위 표, `<name>.path = ...` dotted key. 의존 표나 그 상위 표를 inline table로 쓴 형태(`dev-dependencies = { .. }`, `[target.'cfg(unix)']` 아래 `dependencies = { .. }`, `[target]` 아래 `'cfg(unix)' = { .. }`, `target = { .. }`, `workspace = { dependencies = { .. } }`)도 펼쳐 읽습니다(리뷰 후속 수정).
   - `package = "..."` 이름 변경과 루트 `[workspace.dependencies]`를 상속하는 `workspace = true`를 실제 package 이름으로 해석합니다.
+  - basic string escape는 Cargo 1.96의 TOML 해석기와 같게 풉니다. TOML 1.0의 `\b \t \n \f \r \" \\ \uXXXX \UXXXXXXXX`와 TOML 1.1의 `\e`·`\xHH`이고, 따옴표 key 안의 escape된 `"`와 `=`도 읽습니다. 그 밖의 escape는 거부합니다(리뷰 후속 수정).
   - `[[bin]]` 같은 array table, `[features]`, 문자열·주석 안의 `stellar-*` 텍스트는 의존으로 세지 않습니다.
-  - 닫히지 않은 문자열·괄호, 머리글 뒤 잔여 내용, 잘못된 key, 문자열이 아닌 `name`·`package`는 오류로 거부합니다(fail closed). manifest당 256 KiB 상한, 재귀 없음.
-  - 검사 대상: `crates/*/Cargo.toml`(디렉터리 필수)과 `tools/stellar-*/Cargo.toml`. `tools/xtask`와 `benchmarks/fixtures`는 ADR-0019대로 제외합니다. package 이름 누락·중복은 오류입니다.
+  - 닫히지 않은 문자열·괄호, 머리글 뒤 잔여 내용, 값 하나 뒤에 다른 내용이 붙은 문장, 의존 표 위치에 표가 아닌 값, 잘못된 key, 문자열이 아닌 `name`·`package`·`path`는 오류로 거부합니다(fail closed). manifest당 256 KiB 상한, 재귀 없음.
+  - 검사 대상: `crates/*/Cargo.toml`(디렉터리 필수)과 `tools/stellar-*/Cargo.toml`에 더해, Cargo workspace member 전체를 Cargo 규칙대로 모읍니다(리뷰 후속 수정). 루트 `[workspace].members`(`dir/*` glob만 펼치고 그 밖의 glob은 거부), 루트가 package면 루트 자신, member의 모든 의존 표(dev·build·target 한정·optional 포함)와 `workspace = true` 상속의 path 의존 중 workspace 루트 안에 있는 자동 member(재귀)이고, `[workspace].exclude`를 Cargo처럼 적용합니다. `stellar-`로 시작하지 않는 자동 member도 검사하므로 그런 crate를 거친 금지 edge는 정책에 없는 crate로 거부됩니다. `tools/xtask`와 `benchmarks/fixtures`는 ADR-0019대로, crate 사이 종단 시나리오 테스트 crate `tests/integration`(dev 의존만 있는 개발용 crate, 9B 통합에서 추가)도 graph 검사에서 제외하되, 그 path 의존으로 생기는 자동 member는 검사합니다. 루트 안 path 의존의 manifest가 없으면 `missing-path-dependency`, package 이름 누락·중복은 오류입니다. 검사 대상이 `cargo metadata --no-deps`의 member 목록(제외 대상 제외)과 같음을 실제 workspace와 fixture test로 확인합니다.
 - **정책 검사(`reach.rs`)**:
   - 검사 대상 package가 정책 표에 없으면 의존이 없어도 `unknown-crate`입니다(이전에는 edge가 있을 때만 보고).
   - 모든 표의 내부 edge를 `allowed_edges()`로 검사하고, 위반 메시지에 선언된 표를 적습니다(예: `([target.'cfg(unix)'.dependencies])`).
@@ -63,9 +64,10 @@
 ## 남은 위험 / 한계
 
 - **후속(이 행을 `[x]`로 올리기 위한 남은 일)**: `docs/architecture/crate-dependency-graph.md`에 다음을 반영해야 합니다. 첫 문단의 "허용된 **직접** 의존 방향"을 "허용 직접 의존과 전이 도달 금지"로 바꾸고, 다음 두 절을 추가합니다.
-  - "검사 범위": `crates/*`와 `tools/stellar-*` manifest의 `[dependencies]`·`[build-dependencies]`·`[dev-dependencies]`·`[target.<spec>.*]` 표(하위 표·dotted key·`package` 이름 변경·`workspace = true` 포함)를 모두 같은 허용 표로 검사합니다. `tools/xtask`와 `benchmarks/fixtures`는 제외합니다(ADR-0019). 정책 표에 없는 package는 의존이 없어도 거부합니다.
+  - "검사 범위": `crates/*`와 `tools/stellar-*` manifest, 그리고 Cargo workspace member 전체(루트 `[workspace].members`, path 의존으로 생기는 자동 member, root package, `[workspace].exclude` 반영)의 `[dependencies]`·`[build-dependencies]`·`[dev-dependencies]`·`[target.<spec>.*]` 표(하위 표·dotted key·inline table 형태·`package` 이름 변경·`workspace = true` 포함)를 모두 같은 허용 표로 검사합니다. `tools/xtask`와 `benchmarks/fixtures`(ADR-0019), 종단 시나리오 테스트 crate `tests/integration`은 제외합니다. 정책 표에 없는 package는 `stellar-` 이름이 아니어도, 의존이 없어도 거부합니다.
   - "전이 도달 금지(ADR-0005 §8)": ops → local-ipc·agent-protocol·mcp·agent-host·ffi, cli → local-ipc·agent-protocol·mcp·agent-host, local-ipc → document·commands·ops, agent-protocol → commands·document·ops·agent-host, mcp → agent-host·ffi, agent-host → document·commands·history·storage·ops. 도달은 자신의 모든 표에서 시작해 normal·build 의존만 따라갑니다. 정책 위치는 `tools/xtask/src/crate_graph/reach.rs`입니다.
   - 기준 문서의 허용 표에는 이미 `allowed_edges()`에 있는 `stellar-cli`, `stellar-mcp` 행이 빠져 있습니다(이 작업 전부터 있던 차이).
-- manifest 해석기는 Cargo가 쓰는 TOML의 부분 집합입니다. 해석할 수 없는 구문은 거부하므로 위반을 통과시키지는 않지만, 유효한 TOML이라도 지원하지 않는 형태(예: 따옴표 key 안의 escape된 `"`와 `=`)는 오류가 날 수 있습니다.
-- 내부 crate 판정은 package 이름 `stellar-` prefix 기준입니다. prefix가 다른 내부 crate가 생기면 정책과 함께 판정 기준을 바꿔야 합니다.
+- manifest 해석기는 Cargo가 쓰는 TOML의 부분 집합입니다. 해석할 수 없는 구문은 거부하므로 위반을 통과시키지는 않지만, Cargo가 받는 manifest라도 지원하지 않는 형태(예: `dir/*` 밖의 members glob)는 오류가 날 수 있습니다.
+- 내부 edge 판정은 의존 이름이 `stellar-`로 시작하거나 workspace member 이름인 경우입니다. 외부 crate와 이름이 같은 workspace member가 생기면 그 외부 의존도 내부 edge로 보고 거부할 수 있습니다(통과 쪽으로는 틀리지 않음).
+- workspace member 판정은 Cargo 규칙을 파일 기준으로 다시 구현한 것입니다(`cargo metadata`를 실행하지 않음). 경로는 글자 단위로 정리하고 symlink는 풀지 않으며, workspace 루트 밖에 있으면서 `package.workspace`로 이 workspace를 가리키는 package는 다루지 않습니다.
 - `stellar-mcp` 전이 금지 규칙은 package 이름으로 적용됩니다. XIX.9.1에서 library(`crates/mcp`)와 실행 파일(`tools/stellar-mcp`)의 package 이름이 나뉘면 규칙 대상 이름도 함께 맞춰야 합니다.

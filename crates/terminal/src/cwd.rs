@@ -6,6 +6,9 @@
 //! - **preset**: [`CwdContext::presets`]는 프로젝트 루트와 worktree root 목록을 UI 선택지로 줍니다.
 //!   worktree root 목록은 호출자가 시스템 Git으로 얻어 공급합니다(XIV.1.2의 `git rev-parse`
 //!   결과 등). 이 crate는 Git을 실행하거나 `.git` 구조로 경로를 추측하지 않습니다.
+//! - **worktree는 시스템 Git 기능**(XVIII.5.3): worktree 생성·삭제·전환은 시스템 Git(외부 터미널이나
+//!   Git UI)이 하고, 터미널은 그 결과 root를 cwd preset으로만 제공합니다. 외부 CLI 에이전트 세션도
+//!   같은 preset을 쓰며, agent 전용 worktree 타입을 두지 않습니다(`tests/worktree_type_inventory.rs`).
 //! - **임의 cwd**: [`ExplicitCwd::from_user_input`]으로 사용자가 명시 입력한 경로만 허용합니다.
 //! - **검증**([`CwdContext::resolve`]): 실행 직전에 경로 문법(비어 있음·NUL·길이·절대 경로)과
 //!   실제 디렉터리 여부를 확인하고 symlink를 해석한 canonical 경로를 돌려줍니다. worktree 선택은

@@ -189,7 +189,7 @@ fn check_component(value: &OsStr, index: Option<usize>) -> Result<(), ProfileErr
 pub enum ProfileCommand {
     /// 설정에서 고른 사용자 셸(XVIII.2.2).
     DefaultShell,
-    /// 지정 argv 명령(예: 외부 CLI 에이전트, XVIII.5.1).
+    /// 지정 argv 명령. 외부 CLI 에이전트도 이 일반 명령으로 실행합니다(XVIII.5.1, `program` 모듈).
     Argv(ArgvCommand),
 }
 
@@ -212,6 +212,17 @@ impl TerminalProfile {
         TerminalProfile {
             name,
             command: ProfileCommand::DefaultShell,
+            environment: EnvironmentPolicy::with_defaults(),
+            cwd: CwdSelection::ProjectRoot,
+        }
+    }
+
+    /// argv 명령·기본 환경·프로젝트 루트 cwd profile. 외부 CLI 에이전트를 포함한 임의 명령에 쓰며
+    /// 명령 종류에 따라 다르게 다루지 않습니다(XVIII.5.1).
+    pub fn command(name: ProfileName, command: ArgvCommand) -> TerminalProfile {
+        TerminalProfile {
+            name,
+            command: ProfileCommand::Argv(command),
             environment: EnvironmentPolicy::with_defaults(),
             cwd: CwdSelection::ProjectRoot,
         }
@@ -279,6 +290,15 @@ mod tests {
                 len: MAX_ARG_BYTES + 1
             })
         );
+    }
+
+    #[test]
+    fn command_profile_is_a_plain_argv_profile() {
+        let command = ArgvCommand::new("/usr/local/bin/agent", ["--flag", "two words"]).unwrap();
+        let profile = TerminalProfile::command(ProfileName::new("agent").unwrap(), command.clone());
+        assert_eq!(profile.command, ProfileCommand::Argv(command));
+        assert_eq!(profile.cwd, CwdSelection::ProjectRoot);
+        assert_eq!(profile.environment, EnvironmentPolicy::with_defaults());
     }
 
     #[test]

@@ -1264,7 +1264,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XII.6.1 | `[ ]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
-| XII.6.2 | `[ ]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
+| XII.6.2 | `[x]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
 | XII.6.3 | `[ ]` | Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다. | local fixture remote clone 통과. | IV.6.4 |
 | XII.6.4 | `[ ]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
 | XII.6.5 | `[ ]` | 앱 메뉴 단축키를 macOS·Windows native convention으로 연결하되 command ID는 core에서 공유합니다. | key mapping smoke test. | XII.6.4 |
@@ -1921,8 +1921,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XVIII.4.1 | `[ ]` | 승인된 terminal parser/emulator dependency를 등록하고 VT sequence corpus를 테스트합니다. 고른 emulator가 지원하는 terminfo 항목으로 대화형 세션의 `TERM` 값을 정하고, emulator의 24-bit 색 지원 여부로 `COLORTERM`을 `truecolor`로 설정할지 상속값을 제거할지 정해 근거와 함께 보고서에 기록합니다(ADR-0023 결정 4). 두 값은 terminal crate 상수로 두고 XVIII.2.5의 spawn 입력이 받습니다. | 기본 cursor/color/erase fixture 통과, 정한 `TERM` 항목이 선언하는 색 수·cursor 이동·지우기 capability를 VT corpus fixture로 확인, 24-bit 색 sequence fixture 결과가 `COLORTERM` 결정과 일치, 보고서에 `TERM`·`COLORTERM` 값과 근거 존재. | I.3.2, XVIII.2.1, XVIII.3.1 |
-| XVIII.4.2 | `[ ]` | terminal screen buffer, scrollback, selection, clipboard 모델을 구현합니다. | 100만 line memory cap 유지. | XVIII.4.1 |
+| XVIII.4.1 | `[x]` | 승인된 terminal parser/emulator dependency를 등록하고 VT sequence corpus를 테스트합니다. 고른 emulator가 지원하는 terminfo 항목으로 대화형 세션의 `TERM` 값을 정하고, emulator의 24-bit 색 지원 여부로 `COLORTERM`을 `truecolor`로 설정할지 상속값을 제거할지 정해 근거와 함께 보고서에 기록합니다(ADR-0023 결정 4). 두 값은 terminal crate 상수로 두고 XVIII.2.5의 spawn 입력이 받습니다. | 기본 cursor/color/erase fixture 통과, 정한 `TERM` 항목이 선언하는 색 수·cursor 이동·지우기 capability를 VT corpus fixture로 확인, 24-bit 색 sequence fixture 결과가 `COLORTERM` 결정과 일치, 보고서에 `TERM`·`COLORTERM` 값과 근거 존재. | I.3.2, XVIII.2.1, XVIII.3.1 |
+| XVIII.4.2 | `[x]` | terminal screen buffer, scrollback, selection, clipboard 모델을 구현합니다. | 100만 line memory cap 유지. | XVIII.4.1 |
 | XVIII.4.3 | `[ ]` | macOS terminal view가 screen buffer를 표시하고 keyboard/IME input을 PTY로 전달합니다. | interactive smoke. | XVIII.2.3, XVIII.4.2 |
 | XVIII.4.4 | `[!]` | Windows terminal view를 연결합니다. | interactive smoke. | XVIII.3.3, XVIII.4.2 |
 | XVIII.4.5 | `[x]` | 일반 terminal과 특정 worktree terminal의 header metadata를 분리 표시할 data model을 추가합니다. | wrong cwd session 경고. | XVIII.1.3 |
@@ -1933,8 +1933,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XVIII.5.1 | `[ ]` | Claude Code, Codex 등을 특별 파서 없이 일반 terminal profile command로 실행할 수 있게 합니다. | arbitrary CLI command smoke. | XVIII.4.5 |
-| XVIII.5.3 | `[ ]` | 일반 Git worktree 생성·사용은 시스템 Git 기능으로 남기고 terminal cwd preset만 제공합니다. agent 전용 ShadowWorktree 타입을 만들지 않습니다. | type inventory 검사 통과. | XVIII.1.3, XIV.1.2 |
+| XVIII.5.1 | `[x]` | Claude Code, Codex 등을 특별 파서 없이 일반 terminal profile command로 실행할 수 있게 합니다. | arbitrary CLI command smoke. | XVIII.4.5 |
+| XVIII.5.3 | `[x]` | 일반 Git worktree 생성·사용은 시스템 Git 기능으로 남기고 terminal cwd preset만 제공합니다. agent 전용 ShadowWorktree 타입을 만들지 않습니다. | type inventory 검사 통과. | XVIII.1.3, XIV.1.2 |
 
 **Phase XVIII 완료 조건:** 다중 PTY 세션이 양 플랫폼에서 동작하며 프로젝트 신뢰·종료 정책을 준수합니다.
 
@@ -1953,18 +1953,18 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XIX.1.5 | `[x]` | MCP protocol version을 config에 고정하고, 지원하지 않는 client version 요청에는 MCP 수명주기 명세대로 지원하는 version으로 응답합니다(client가 계속할지 정함). 형식이 틀린 요청은 명확한 오류를 반환합니다. | version matrix fixture. | XIX.1.1 |
 | XIX.1.6 | `[x]` | 앱 쪽 IPC가 데이터 교환 전에 연결 상대를 인증합니다(ADR-0005 §5, 아키텍처 37 신뢰 경계). 인증 기준과 방법은 Apple 공식 문서를 근거로 정해 보고서에 기록하고, 인증은 UI·Document 스레드 밖에서 합니다. | `[DEV-MAC]` 인증 실패 fixture에서 데이터 교환 0, UI·Document 스레드 호출 0. | XIX.1.3 |
 | XIX.1.7 | `[x]` | `stellar-mcp` 쪽 IPC가 데이터 교환 전에 연결 상대를 XIX.1.6과 같은 기준으로 인증합니다(ADR-0005 §5). 실패 시 종료 코드는 XXIV.1.2 표를 따릅니다. | `[DEV-MAC]` 인증 실패 fixture에서 데이터 교환 0, 종료 코드가 XXIV.1.2 표와 일치. | XIX.1.6, XXIV.1.2 |
-| XIX.1.8 | `[ ]` | 앱이 시작한 bridge를 그 세션에만 결합합니다(아키텍처 31.3, ADR-0005 §5). 세션이 끝나면 결합 수단은 무효가 되고, 결합은 권한을 부여하지 않으며 XIX.3 승인을 대체하지 않습니다. 결합 수단과 검증 방법은 Apple 공식 문서와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 다른 세션·종료된 세션 결합 거부, 결합만으로 얻는 권한 0. | XIX.1.3, XVI.7.5 |
+| XIX.1.8 | `[~]` | 앱이 시작한 bridge를 그 세션에만 결합합니다(아키텍처 31.3, ADR-0005 §5). 세션이 끝나면 결합 수단은 무효가 되고, 결합은 권한을 부여하지 않으며 XIX.3 승인을 대체하지 않습니다. 결합 수단과 검증 방법은 Apple 공식 문서와 각 CLI 공식 문서를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 다른 세션·종료된 세션 결합 거부, 결합만으로 얻는 권한 0. | XIX.1.3, XVI.7.5 |
 | XIX.1.9 | `[x]` | `stellar-mcp`가 표준 입력 EOF나 부모 프로세스 종료를 감지하면 스스로 종료합니다. 앱은 이를 연결 종료로 처리하고 XIX.1.4를 따릅니다. | `[DEV-MAC]` 부모 강제 종료 fixture에서 bridge 잔존 0. | XIX.1.1 |
 
 ### XIX.2 MCP Resources와 Tools
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIX.2.1 | `[ ]` | read resources에 project structure, current document, selection, components, tokens, target profile, Git status를 정의합니다. | schema fixture. | XIX.1.4, G8 |
-| XIX.2.2 | `[ ]` | resource response에 revision과 pagination cursor를 포함하고 전체 대형 document를 한 응답에 보내지 않습니다. | 20만 node pagination 통과. | XIX.2.1 |
-| XIX.2.3 | `[ ]` | tools를 semantic diff 생성, render preview request, document validation, command proposal, command apply로 분리합니다. | tool inventory 정확. | XIX.2.1 |
-| XIX.2.4 | `[ ]` | MCP는 terminal, commit, push 권한을 문서 apply 권한과 별도 tool namespace로 구분합니다. 초기에는 commit/push tool을 비활성 기본값으로 둡니다. | permission matrix 통과. | XIX.2.3 |
-| XIX.2.5 | `[ ]` | 모든 MCP payload에서 project content가 agent에 전달되는 범위를 user-approved project/session으로 제한합니다. | cross-project access 거부. | XIX.1.4 |
+| XIX.2.1 | `[x]` | read resources에 project structure, current document, selection, components, tokens, target profile, Git status를 정의합니다. | schema fixture. | XIX.1.4, G8 |
+| XIX.2.2 | `[x]` | resource response에 revision과 pagination cursor를 포함하고 전체 대형 document를 한 응답에 보내지 않습니다. | 20만 node pagination 통과. | XIX.2.1 |
+| XIX.2.3 | `[x]` | tools를 semantic diff 생성, render preview request, document validation, command proposal, command apply로 분리합니다. | tool inventory 정확. | XIX.2.1 |
+| XIX.2.4 | `[x]` | MCP는 terminal, commit, push 권한을 문서 apply 권한과 별도 tool namespace로 구분합니다. 초기에는 commit/push tool을 비활성 기본값으로 둡니다. | permission matrix 통과. | XIX.2.3 |
+| XIX.2.5 | `[~]` | 모든 MCP payload에서 project content가 agent에 전달되는 범위를 user-approved project/session으로 제한합니다. | cross-project access 거부. | XIX.1.4 |
 
 ### XIX.3 권한 모델
 
@@ -2079,7 +2079,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XX.4.1 | `[ ]` | unsupported effect를 가진 최소 scene subtree와 외부 blend dependency를 분석하는 raster boundary planner를 구현합니다. | nested blur/blend fixture boundary 정확. | XI.4.4, XX.3.1 |
+| XX.4.1 | `[x]` | unsupported effect를 가진 최소 scene subtree와 외부 blend dependency를 분석하는 raster boundary planner를 구현합니다. | nested blur/blend fixture boundary 정확. | XI.4.4, XX.3.1 |
 | XX.4.2 | `[ ]` | boundary를 offscreen PNG data로 렌더하고 SVG image element로 삽입합니다. | 위치·scale·alpha fixture 통과. | XX.2.1, XX.4.1 |
 | XX.4.3 | `[ ]` | rasterized subtree 목록과 이유를 export report에 기록합니다. | report fixture 정확. | XX.4.2 |
 | XX.4.4 | `[ ]` | 한 unsupported effect가 전체 View를 불필요하게 rasterize하지 않는 회귀 테스트를 추가합니다. | vector node count 유지. | XX.4.2 |
@@ -2254,7 +2254,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XXIV.1.1 | `[x]` | `stellar-cli`를 app UI와 분리된 binary로 생성하고 core crate만 사용합니다. | headless machine에서 help 실행. | G8 |
 | XXIV.1.2 | `[x]` | exit code와 machine-readable JSON output schema를 정의합니다. stdout/stderr 역할을 분리합니다. | success/error fixture. | XXIV.1.1 |
-| XXIV.1.3 | `[ ]` | `validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다. | fixture corpus 통과. | Phase XIV, V.8.6 |
+| XXIV.1.3 | `[~]` | `validate`, `semantic-diff`, `semantic-merge`, `migrate` 명령을 구현합니다. | fixture corpus 통과. | Phase XIV, V.8.6 |
 | XXIV.1.4 | `[ ]` | Phase XX 이후 `render/export` 명령을 추가합니다. | golden output. | Phase XX |
 
 ### XXIV.2 Git custom driver
@@ -2269,8 +2269,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXIV.3.1 | `[ ]` | lockfile resolve check, project validation, migration-required check를 CI mode로 제공합니다. | invalid project CI failure. | XXIV.1.3 |
-| XXIV.3.2 | `[ ]` | semantic diff summary를 artifact로 생성하되 project text/name/path redaction option을 기본으로 합니다. | privacy fixture. | XIV.3.8, XXIV.1.2 |
+| XXIV.3.1 | `[~]` | lockfile resolve check, project validation, migration-required check를 CI mode로 제공합니다. | invalid project CI failure. | XXIV.1.3 |
+| XXIV.3.2 | `[x]` | semantic diff summary를 artifact로 생성하되 project text/name/path redaction option을 기본으로 합니다. | privacy fixture. | XIV.3.8, XXIV.1.2 |
 | XXIV.3.3 | `[ ]` | performance replay CLI를 reference runner에서 실행할 수 있게 합니다. | result schema identical. | XVI.2.2 |
 
 ### XXIV.4 L1 확장과 실행 이름
@@ -2278,10 +2278,10 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
 | XXIV.4.1 | `[x]` | 사용자가 부르는 명령 이름을 `stellar`로 고정합니다(2026-11-14 제품 소유자 결정). `stellar-cli` package에 `[[bin]] name = "stellar"`를 추가하고 package·library 이름 `stellar-cli`는 유지합니다. help·usage·stderr 진단 접두어를 `stellar`로 바꾸고, XXIV.1.2 JSON 결과 schema 식별자와 fixture는 바꾸지 않습니다. | `[DEV-MAC]` `cargo build -p stellar-cli` 산출 실행 파일 이름 `stellar`, help snapshot이 `stellar` 사용, XXIV.1.2 JSON fixture 무변경, `cargo test -p stellar-cli` 통과. | XXIV.1.2 |
-| XXIV.4.2 | `[ ]` | headless 조회·편집 공용 library crate `stellar-ops`(`crates/ops`)를 추가하고 crate graph 정책과 문서에 등록합니다. 의존은 project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics만 허용하고 local-ipc, agent-protocol, mcp-core, agent-host, ffi는 금지합니다. 앱 없이 프로젝트를 열어 revision을 포함한 읽기 전용 snapshot을 반환합니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, 앱 미실행 snapshot fixture revision 일치. | XXIV.1.2, VII.1.6 |
-| XXIV.4.3 | `[ ]` | `stellar inspect`를 확장하고 `stellar query`를 추가합니다. 프로젝트 구조, 문서 트리(cursor 분할), 노드 속성, 토큰, 컴포넌트를 revision과 함께 JSON으로 출력합니다. XXIV.1.2의 기존 inspect 결과 필드는 호환을 유지합니다. 앱 없이 동작하며 파일을 쓰지 않습니다. `stellar-cli`의 직접 의존을 `stellar-ops`·diagnostics로 줄이고(ADR-0005 §8), crate graph 정책의 `stellar-cli` 허용 의존도 ops·diagnostics로 갱신합니다. | `[DEV-MAC]` JSON golden 일치, 20만 node 문서 page 분할 통과, 실행 전후 프로젝트 파일 hash 동일, 기존 inspect fixture 통과, `cargo xtask validate-crate-graph` 통과, `stellar-cli` 직접 의존이 ops·diagnostics뿐. | XXIV.4.1, XXIV.4.2 |
-| XXIV.4.4 | `[ ]` | `stellar apply`를 추가합니다. 파일이나 표준 입력으로 CommandTransaction JSON과 base revision을 받아 closed enum으로 검증한 뒤 세대 전환 저장으로 원자적으로 기록하고, generation metadata에 writer 종류 headless CLI를 남깁니다. `--dry-run`은 semantic diff만 출력합니다. storage는 보호 경로이므로 같은 변경에 ADR을 갱신합니다. | `[DEV-MAC]` dry-run 전후 revision 동일, base revision 불일치와 unknown command 거부, 적용 후 reopen semantic snapshot 일치, writer 종류 기록 확인. | XXIV.4.2, VII.1.6, XIV.3.8 |
-| XXIV.4.5 | `[ ]` | `stellar-ops` 쓰기 경로에 교차 프로세스 저장 잠금을 추가합니다. 잠금은 프로젝트·Git 밖의 OS 사용자 데이터에 두고, 잠금을 잡은 뒤 generation을 비교하고 교체하며, 잠금 사용 중이면 일시적 실패 종료 코드로 끝냅니다. Git merge driver 모드는 잠금 대상에서 제외합니다. 사용 OS API는 Apple 공식 문서를 근거로 보고서에 기록합니다. | `[DEV-MAC]` 동시 쓰기 fixture 손실 0, 잠금 경합 시 exit 75, merge driver 모드 잠금 미사용. | XXIV.4.4, IV.2.3 |
+| XXIV.4.2 | `[~]` | headless 조회·편집 공용 library crate `stellar-ops`(`crates/ops`)를 추가하고 crate graph 정책과 문서에 등록합니다. 의존은 project, document, commands, history, storage, semantic-diff, semantic-merge, diagnostics만 허용하고 local-ipc, agent-protocol, mcp-core, agent-host, ffi는 금지합니다. 앱 없이 프로젝트를 열어 revision을 포함한 읽기 전용 snapshot을 반환합니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, 앱 미실행 snapshot fixture revision 일치. | XXIV.1.2, VII.1.6 |
+| XXIV.4.3 | `[~]` | `stellar inspect`를 확장하고 `stellar query`를 추가합니다. 프로젝트 구조, 문서 트리(cursor 분할), 노드 속성, 토큰, 컴포넌트를 revision과 함께 JSON으로 출력합니다. XXIV.1.2의 기존 inspect 결과 필드는 호환을 유지합니다. 앱 없이 동작하며 파일을 쓰지 않습니다. `stellar-cli`의 직접 의존을 `stellar-ops`·diagnostics로 줄이고(ADR-0005 §8), crate graph 정책의 `stellar-cli` 허용 의존도 ops·diagnostics로 갱신합니다. | `[DEV-MAC]` JSON golden 일치, 20만 node 문서 page 분할 통과, 실행 전후 프로젝트 파일 hash 동일, 기존 inspect fixture 통과, `cargo xtask validate-crate-graph` 통과, `stellar-cli` 직접 의존이 ops·diagnostics뿐. | XXIV.4.1, XXIV.4.2 |
+| XXIV.4.4 | `[~]` | `stellar apply`를 추가합니다. 파일이나 표준 입력으로 CommandTransaction JSON과 base revision을 받아 closed enum으로 검증한 뒤 세대 전환 저장으로 원자적으로 기록하고, generation metadata에 writer 종류 headless CLI를 남깁니다. `--dry-run`은 semantic diff만 출력합니다. storage는 보호 경로이므로 같은 변경에 ADR을 갱신합니다. | `[DEV-MAC]` dry-run 전후 revision 동일, base revision 불일치와 unknown command 거부, 적용 후 reopen semantic snapshot 일치, writer 종류 기록 확인. | XXIV.4.2, VII.1.6, XIV.3.8 |
+| XXIV.4.5 | `[~]` | `stellar-ops` 쓰기 경로에 교차 프로세스 저장 잠금을 추가합니다. 잠금은 프로젝트·Git 밖의 OS 사용자 데이터에 두고, 잠금을 잡은 뒤 generation을 비교하고 교체하며, 잠금 사용 중이면 일시적 실패 종료 코드로 끝냅니다. Git merge driver 모드는 잠금 대상에서 제외합니다. 사용 OS API는 Apple 공식 문서를 근거로 보고서에 기록합니다. | `[DEV-MAC]` 동시 쓰기 fixture 손실 0, 잠금 경합 시 exit 75, merge driver 모드 잠금 미사용. | XXIV.4.4, IV.2.3 |
 | XXIV.4.6 | `[ ]` | 앱이 writer 종류가 앱 창이 아닌 generation을 감지하면 XII.7.5 두 선택지 대신 XIII.3.4 semantic reconciliation으로 처리합니다. 변경이 에이전트 lease와 겹치면 XIX.7.2 절차를 따릅니다. | `[DEV-MAC]` CLI writer generation fixture에서 두 선택지 alert 0, reconciliation 결과 snapshot 일치. | XXIV.4.5, XIII.3.4, XII.7.5 |
 | XXIV.4.7 | `[ ]` | `stellar`에 AI·MCP·모델·에이전트 관련 명령과 해당 crate로의 직접·전이 의존이 없음을 검사하는 inventory test를 추가합니다. | `[DEV-MAC]` help 명령 inventory와 전이 도달 금지 검사 통과. | XXIV.4.3, XXIV.4.4, XXIX.1.1 |
 
@@ -2291,10 +2291,10 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XXIV.5.1 | `[ ]` | macOS 앱 번들에 `stellar`를 helper로 넣습니다. 릴리스 서명 스크립트가 helper와 앱을 Apple 공식 코드 서명·공증 문서에 따라 서명하도록 바꾸고(helper에 앱 entitlement 없음), "중첩 서명 대상 없음" 전제를 고치며 helper에도 arm64·서명 검사를 적용합니다. 번들 안 배치와 구체 서명 옵션은 보고서에 기록합니다(ADR-0005 §7). | `[DEV-MAC]` `codesign --verify --strict` 통과, `[CI-MAC]` 공증 후 clean runner에서 helper `stellar --version` 실행. | XVI.9.4, XXIV.4.1 |
 | XXIV.5.2 | `[ ]` | 앱 없는 macOS headless·CI 머신용 `stellar` 단독 서명·공증 배포물을 만듭니다. `stellar-mcp`는 넣지 않습니다. | `[CI-MAC]` 앱 미설치 runner에서 `stellar validate` fixture 실행 성공. | XXIV.5.1 |
-| XXIV.5.3 | `[ ]` | 명령줄 설치 위치 결정을 구현합니다. 위치와 근거는 §37 보안 경계(최소 권한)와 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하고(ADR-0005 §7), 계산은 UI·Document 스레드 밖에서 합니다. | `[DEV-MAC]` 위치 결정 fixture가 보고서 정의와 일치, UI 스레드 호출 0. | XXIV.5.1 |
-| XXIV.5.4 | `[ ]` | `stellar` 명령 설치·제거 로직을 구현합니다(2026-11-14 제품 소유자 결정). 사용자 동의 뒤에만 파일을 바꾸고, PATH에서 `stellar`가 Stellar 자기 링크가 아닌 다른 프로그램으로 해석되면(설치 위치에 있거나 PATH 앞쪽에 있는 경우) 덮어쓰지 않고 `stellar-cli` 이름으로 설치하고, `stellar-cli`도 다른 프로그램이 쓰고 있으면 설치하지 않고 알립니다(ADR-0005 §2). 그 밖의 설치 방식과 안전 조건은 §37과 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 설치 상태는 OS 사용자 데이터에만 둡니다(ADR-0005 §7). | `[DEV-MAC]` 설치·제거 fixture 통과, 동의 없는 파일 변경 0, 다른 프로그램의 `stellar`가 설치 위치나 PATH 앞쪽에 있는 fixture에서 덮어쓰기 0·`stellar-cli` 설치, `stellar-cli`도 다른 프로그램인 fixture에서 설치 0·알림, Stellar 자기 링크만 있는 fixture에서 `stellar` 유지. | XXIV.5.3 |
-| XXIV.5.5 | `[ ]` | 설치 상태 확인을 구현합니다. 확인 시점·방법과 확인 결과의 처리는 Apple 공식 문서와 각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 처리는 XXIV.5.4와 같은 조건을 지킵니다. 확인은 UI 스레드 밖에서 합니다. | `[DEV-MAC]` 상태 fixture 판정이 보고서 정의와 일치, 동의 없는 파일 변경 0. | XXIV.5.4 |
-| XXIV.5.6 | `[ ]` | macOS 첫 실행 명령줄 설치 화면을 구현합니다(2026-11-14 제품 소유자 결정). `stellar` helper를 포함한 빌드를 처음 실행하면 설치 화면을 제공하고, 사용자가 명시적으로 동의하기 전에는 파일을 만들거나 바꾸지 않습니다. 설치를 되돌리는 진입점도 제공하고, 실제로 설치한 명령 이름(`stellar` 또는 `stellar-cli`)을 보여 줍니다. 화면 구성과 진입점 배치는 HIG를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 첫 실행 설치 화면 표시, 동의 없는 파일 변경 0, 되돌리기 후 설치 항목 0, 키보드·VoiceOver smoke. | XXIV.5.5, XII.9.1, XII.6.5 |
+| XXIV.5.3 | `[~]` | 명령줄 설치 위치 결정을 구현합니다. 위치와 근거는 §37 보안 경계(최소 권한)와 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하고(ADR-0005 §7), 계산은 UI·Document 스레드 밖에서 합니다. | `[DEV-MAC]` 위치 결정 fixture가 보고서 정의와 일치, UI 스레드 호출 0. | XXIV.5.1 |
+| XXIV.5.4 | `[~]` | `stellar` 명령 설치·제거 로직을 구현합니다(2026-11-14 제품 소유자 결정). 사용자 동의 뒤에만 파일을 바꾸고, PATH에서 `stellar`가 Stellar 자기 링크가 아닌 다른 프로그램으로 해석되면(설치 위치에 있거나 PATH 앞쪽에 있는 경우) 덮어쓰지 않고 `stellar-cli` 이름으로 설치하고, `stellar-cli`도 다른 프로그램이 쓰고 있으면 설치하지 않고 알립니다(ADR-0005 §2). 그 밖의 설치 방식과 안전 조건은 §37과 Apple·각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 설치 상태는 OS 사용자 데이터에만 둡니다(ADR-0005 §7). | `[DEV-MAC]` 설치·제거 fixture 통과, 동의 없는 파일 변경 0, 다른 프로그램의 `stellar`가 설치 위치나 PATH 앞쪽에 있는 fixture에서 덮어쓰기 0·`stellar-cli` 설치, `stellar-cli`도 다른 프로그램인 fixture에서 설치 0·알림, Stellar 자기 링크만 있는 fixture에서 `stellar` 유지. | XXIV.5.3 |
+| XXIV.5.5 | `[~]` | 설치 상태 확인을 구현합니다. 확인 시점·방법과 확인 결과의 처리는 Apple 공식 문서와 각 셸 공식 문서를 근거로 정해 보고서에 기록하며, 처리는 XXIV.5.4와 같은 조건을 지킵니다. 확인은 UI 스레드 밖에서 합니다. | `[DEV-MAC]` 상태 fixture 판정이 보고서 정의와 일치, 동의 없는 파일 변경 0. | XXIV.5.4 |
+| XXIV.5.6 | `[~]` | macOS 첫 실행 명령줄 설치 화면을 구현합니다(2026-11-14 제품 소유자 결정). `stellar` helper를 포함한 빌드를 처음 실행하면 설치 화면을 제공하고, 사용자가 명시적으로 동의하기 전에는 파일을 만들거나 바꾸지 않습니다. 설치를 되돌리는 진입점도 제공하고, 실제로 설치한 명령 이름(`stellar` 또는 `stellar-cli`)을 보여 줍니다. 화면 구성과 진입점 배치는 HIG를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 첫 실행 설치 화면 표시, 동의 없는 파일 변경 0, 되돌리기 후 설치 항목 0, 키보드·VoiceOver smoke. | XXIV.5.5, XII.9.1, XII.6.5 |
 
 ---
 
@@ -2307,8 +2307,8 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XXV.1.1 | `[x]` | session-only HistoryEntry의 stable journal schema와 version을 정의합니다. | round-trip. | Phase VII, V.8.1 |
 | XXV.1.2 | `[x]` | completed transaction과 inverse를 project-local ignored path 또는 OS app data 정책에 따라 기록합니다. Git 추적 금지 검사를 추가합니다. | `git status` 변화 없음. | XXV.1.1 |
 | XXV.1.3 | `[x]` | 앱 재실행 후 current generation과 journal base가 같을 때만 history를 복원합니다. | mismatched base 봉인. | XXV.1.2 |
-| XXV.1.4 | `[ ]` | checkout/merge/rebase 등 기준점 변경 시 journal을 별도 sealed session으로 이동합니다. | history 혼합 없음. | XIV.2.2, XXV.1.3 |
-| XXV.1.5 | `[ ]` | retention size/age policy와 compaction을 구현합니다. | bounded storage. | XXV.1.2 |
+| XXV.1.4 | `[x]` | checkout/merge/rebase 등 기준점 변경 시 journal을 별도 sealed session으로 이동합니다. | history 혼합 없음. | XIV.2.2, XXV.1.3 |
+| XXV.1.5 | `[x]` | retention size/age policy와 compaction을 구현합니다. | bounded storage. | XXV.1.2 |
 
 ### XXV.2 무결성 진단 수집
 
@@ -2394,14 +2394,14 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 |---|---|---|---|---|
 | XXVIII.1.1 | `[ ]` | 공개 전 최소 두 개 major app version에서 format/migration 사용 데이터를 검토하고 변경 빈도 보고서를 작성합니다. | stability report. | G8 이후 누적 |
 | XXVIII.1.2 | `[x]` | canonical encoding, chunk envelope, generation manifest, YAML, StableId, unknown field, migration rules를 문서화합니다. | internal implementation과 spec fixture 일치. | Phase V |
-| XXVIII.1.3 | `[ ]` | semantic model과 Git diff/merge 규칙을 별도 normative section으로 작성합니다. | merge corpus와 spec mapping 완전. | Phase XIV |
+| XXVIII.1.3 | `[x]` | semantic model과 Git diff/merge 규칙을 별도 normative section으로 작성합니다. | merge corpus와 spec mapping 완전. | Phase XIV |
 | XXVIII.1.4 | `[x]` | 보안 한도, 최대 크기, parser 요구사항, malformed input behavior를 명시합니다. | fuzz corpus category 전부 문서 연결. | XVI.6 |
 
 ### XXVIII.2 Conformance Suite
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXVIII.2.1 | `[ ]` | valid/invalid binary/YAML golden corpus를 라이선스와 함께 공개 가능한 형태로 정리합니다. project content는 synthetic만 사용합니다. | corpus manifest 완전. | XXVIII.1.2 |
+| XXVIII.2.1 | `[~]` | valid/invalid binary/YAML golden corpus를 라이선스와 함께 공개 가능한 형태로 정리합니다. project content는 synthetic만 사용합니다. | corpus manifest 완전. | XXVIII.1.2 |
 | XXVIII.2.2 | `[ ]` | parser/writer conformance runner와 expected result schema를 제공합니다. | official implementation 통과. | XXVIII.2.1 |
 | XXVIII.2.3 | `[ ]` | semantic diff/merge conformance corpus와 runner를 제공합니다. | official implementation 통과. | XXVIII.1.3 |
 | XXVIII.2.4 | `[x]` | version compatibility matrix와 deprecation policy를 공개합니다. | historical fixture 검증. | V.8.6 |
@@ -2410,7 +2410,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXVIII.3.1 | `[ ]` | 공개 format version을 동결하고 이후 incompatible change는 major format bump와 migration을 요구하도록 governance를 적용합니다. IX.12.1이 예약한 Component Context 번호는 동결 명세에 예약 항목으로 표시합니다. | breaking fixture without bump CI 실패, 동결 명세의 예약 번호가 IX.12.1 golden과 같음. | XXVIII.2.4, IX.12.1 |
+| XXVIII.3.1 | `[!]` | 공개 format version을 동결하고 이후 incompatible change는 major format bump와 migration을 요구하도록 governance를 적용합니다. IX.12.1이 예약한 Component Context 번호는 동결 명세에 예약 항목으로 표시합니다. | breaking fixture without bump CI 실패, 동결 명세의 예약 번호가 IX.12.1 golden과 같음. | XXVIII.2.4, IX.12.1 |
 | XXVIII.3.2 | `[ ]` | 공개 문서, reference parser API 범위, issue process를 게시합니다. reference parser는 headless CLI와 분리할 수 있습니다. | clean-room sample parser가 최소 fixture 읽기 성공. | XXVIII.3.1 |
 | XXVIII.3.3 | `[ ]` | 공개 명세가 있어도 Stellar 제품의 지원 보장은 minimum reader/writer version 규칙을 따른다는 호환성 문서를 제공합니다. | version matrix 일치. | XXVIII.3.1 |
 

@@ -7,6 +7,32 @@ enum SidebarCellIdentifier {
     static let layer = NSUserInterfaceItemIdentifier("SidebarLayerCell")
 }
 
+/// 사이드바 접근성 설정 보조(디자인 가이드 8.3).
+///
+/// AppKit 컨트롤이 접근성 서버에 내보내는 요소는 컨트롤 view가 아니라 그 cell(`NSButtonCell`, `NSImageCell`,
+/// `NSSearchFieldCell` 등)입니다. view에만 넣은 값은 그 요소에 닿지 않습니다. 예를 들어 symbol 이미지만 있는 버튼은
+/// view의 레이블 대신 이미지 기본 설명("show" 등)을 읽고, view만 접근성에서 뺀 `NSImageView`는 `AXImage`로 남습니다.
+/// 그래서 view와 cell에 함께 설정합니다.
+///
+/// 목록 행의 레이블·custom action은 `NSTableCellView`에 둡니다. AppKit은 view-based 표의 각 행을 내부 `AXRow`
+/// 요소로, 그 안의 셀 view를 `AXCell` 요소 하나로 내보내며, `AXCell`의 설명과 동작 목록을 셀 view의
+/// `accessibilityLabel()`·`accessibilityCustomActions()`에서 가져옵니다(`SidebarUICheck`가 접근성 서버 경로로 확인).
+/// 행 view(`NSTableRowView`)에 둔 레이블·custom action은 `AXRow`에 쓰이지 않습니다(macOS 27.2 실측).
+@MainActor
+enum SidebarAccessibility {
+    /// 컨트롤의 접근성 레이블. 접근성 서버가 읽는 cell 요소에도 같은 값을 둡니다.
+    static func setLabel(_ label: String, of control: NSControl) {
+        control.setAccessibilityLabel(label)
+        control.cell?.setAccessibilityLabel(label)
+    }
+
+    /// 장식용 컨트롤(아이콘)을 접근성 트리에서 뺍니다. 의미는 행·화면 레이블이 전달합니다.
+    static func hideDecoration(_ control: NSControl) {
+        control.setAccessibilityElement(false)
+        control.cell?.setAccessibilityElement(false)
+    }
+}
+
 /// 구획 제목 행(group row) 셀. "Pages", "Layers" 같은 source list 구획 제목을 보여 줍니다.
 final class SidebarHeaderCellView: NSTableCellView {
     private let titleField = NSTextField(labelWithString: "")
@@ -58,7 +84,7 @@ class SidebarNameCellView: NSTableCellView {
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
         // 행 의미는 셀 접근성 레이블이 전달하므로 아이콘은 접근성 트리에서 뺍니다(디자인 가이드 8.3).
-        iconView.setAccessibilityElement(false)
+        SidebarAccessibility.hideDecoration(iconView)
         iconView.image = SidebarSymbols.image(SidebarSymbols.frame)
 
         nameField.translatesAutoresizingMaskIntoConstraints = false
@@ -89,12 +115,15 @@ class SidebarNameCellView: NSTableCellView {
             nameField.centerYAnchor.constraint(equalTo: centerYAnchor),
         ]
         // 오른쪽 부속 컨트롤(레이어 행의 표시·잠금 토글)은 끝에서부터 시스템 간격으로 붙입니다.
-        var trailingAnchor = self.trailingAnchor
-        for accessory in trailingAccessories.reversed() {
+        // 하위 뷰는 화면 순서(왼쪽→오른쪽)로 넣어 접근성 요소 순서도 같게 합니다.
+        for accessory in trailingAccessories {
             accessory.translatesAutoresizingMaskIntoConstraints = false
             accessory.setContentHuggingPriority(.required, for: .horizontal)
             accessory.setContentCompressionResistancePriority(.required, for: .horizontal)
             addSubview(accessory)
+        }
+        var trailingAnchor = self.trailingAnchor
+        for accessory in trailingAccessories.reversed() {
             constraints.append(trailingAnchor.constraint(equalToSystemSpacingAfter: accessory.trailingAnchor, multiplier: 0.5))
             constraints.append(accessory.centerYAnchor.constraint(equalTo: centerYAnchor))
             trailingAnchor = accessory.leadingAnchor
@@ -116,8 +145,8 @@ class SidebarNameCellView: NSTableCellView {
         nameField.stringValue = name
         nameField.placeholderString = placeholder
         let display = name.isEmpty ? placeholder : name
+        // 행 레이블(AXCell 설명). 이름 필드는 값(이름)과 placeholder(종류)를 그대로 내보냅니다.
         setAccessibilityLabel("\(display), \(kindLabel)")
-        nameField.setAccessibilityLabel(display)
     }
 }
 
@@ -156,6 +185,15 @@ final class SidebarLayerCellView: SidebarNameCellView {
         visibilityButton.action = #selector(toggleVisibility(_:))
         lockButton.target = self
         lockButton.action = #selector(toggleLock(_:))
+        // 클릭 대상은 symbol 크기가 아니라 HIG 최소 컨트롤 크기 이상으로 둡니다. 이미지는 가운데에 그대로 그립니다
+        // (디자인 가이드 4.4).
+        let minimum = SidebarMetrics.minimumHitTarget
+        NSLayoutConstraint.activate([visibility, lock].flatMap { button in
+            [
+                button.widthAnchor.constraint(greaterThanOrEqualToConstant: minimum),
+                button.heightAnchor.constraint(greaterThanOrEqualToConstant: minimum),
+            ]
+        })
     }
 
     @available(*, unavailable)
@@ -185,7 +223,6 @@ final class SidebarLayerCellView: SidebarNameCellView {
         iconView.image = SidebarSymbols.image(SidebarSymbols.name(for: row.kind, shapeKind: row.shapeKind))
         nameField.stringValue = row.name
         nameField.placeholderString = kindName
-        nameField.setAccessibilityLabel(display)
         // 숨김 행과 필터 문맥(직접 일치하지 않은 조상) 행은 보조 label 계층으로 낮춥니다(디자인 가이드 4.1).
         switch (row.isVisible, row.isFilterMatch) {
         case (true, true): nameField.textColor = .labelColor
@@ -193,16 +230,23 @@ final class SidebarLayerCellView: SidebarNameCellView {
         default: nameField.textColor = .secondaryLabelColor
         }
 
+        // 레이블은 현재 상태가 아니라 누르면 일어날 동작을 말합니다(예: 보이는 행의 눈 아이콘 → "Hide Header").
+        // 버튼 cell 레이블이 없으면 symbol 기본 설명(eye → "show", lock.fill → "lock")이 읽혀 동작과 반대가 되므로
+        // cell과 symbol 이미지에 같은 레이블을 둡니다.
         let visibilityLabel = row.isVisible ? SidebarStrings.hideLayer(display) : SidebarStrings.showLayer(display)
-        visibilityButton.image = SidebarSymbols.image(row.isVisible ? SidebarSymbols.visible : SidebarSymbols.hidden)
-        visibilityButton.setAccessibilityLabel(visibilityLabel)
+        visibilityButton.image = SidebarSymbols.image(
+            row.isVisible ? SidebarSymbols.visible : SidebarSymbols.hidden,
+            label: visibilityLabel
+        )
+        SidebarAccessibility.setLabel(visibilityLabel, of: visibilityButton)
         visibilityButton.toolTip = row.isVisible ? SidebarStrings.hide : SidebarStrings.show
 
         let lockLabel = row.isLocked ? SidebarStrings.unlockLayer(display) : SidebarStrings.lockLayer(display)
-        lockButton.image = SidebarSymbols.image(row.isLocked ? SidebarSymbols.locked : SidebarSymbols.unlocked)
-        lockButton.setAccessibilityLabel(lockLabel)
+        lockButton.image = SidebarSymbols.image(row.isLocked ? SidebarSymbols.locked : SidebarSymbols.unlocked, label: lockLabel)
+        SidebarAccessibility.setLabel(lockLabel, of: lockButton)
         lockButton.toolTip = row.isLocked ? SidebarStrings.unlock : SidebarStrings.lock
 
+        // 행 레이블(AXCell 설명). custom action은 controller가 같은 셀에 둡니다.
         var parts = [display, kindName]
         if !row.isVisible { parts.append(SidebarStrings.hiddenState) }
         if row.isLocked { parts.append(SidebarStrings.lockedState) }

@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"validate","ok":true,"exit_code":0,"exit_name":"ok","result":{"revision":{"token":"g0","generation":0,"manifest_hash":null},"valid":true,"error_count":0,"warning_count":0,"documents":[]},"error":null,"diagnostics":[]}

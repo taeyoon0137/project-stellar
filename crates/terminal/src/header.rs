@@ -7,14 +7,19 @@
 //! - **범위**([`HeaderScope`]): `Project`(프로젝트 루트에서 시작한 일반 터미널), `Worktree`(사용자가
 //!   고른 worktree에 귀속), `Custom`(명시 입력 cwd, 귀속 없음).
 //! - **현재 cwd**: 호출자가 관찰한 값(셸이 보고한 작업 디렉터리 등)을 받고, 없으면 시작 cwd로 봅니다.
-//!   이 모듈은 셸 출력을 해석하지 않습니다.
+//!   이 모듈은 셸 출력을 해석하지 않습니다. 관찰값은 절대 경로여야 합니다. 상대 경로·빈 값·NUL·길이
+//!   초과는 앱 프로세스의 cwd로 해석하지 않고 [`CwdWarning::UnusableObservedCwd`]로 알립니다.
+//! - **파일 시스템 I/O**: [`TerminalHeader::build`]는 symlink 해석(`canonicalize`)을 하므로 파일
+//!   시스템을 읽습니다. UI는 매 frame 부르지 말고, cwd 관찰값이 바뀔 때 main thread 밖에서 만들어
+//!   결과를 보관해 씁니다(기술 아키텍처 6 main-thread 예산).
 //! - **잘못된 cwd 경고**([`CwdWarning`]): 귀속 root 밖으로 나감, 다른 worktree 안에 있음, 귀속
 //!   worktree가 프로젝트 worktree 목록에서 사라짐. 사용자가 다른 worktree를 고친다고 착각하지 않게
 //!   합니다. worktree 판정은 [`CwdContext`]의 root 목록(시스템 Git이 보고한 값)으로만 합니다.
 
 use std::path::{Path, PathBuf};
 
-use crate::cwd::{CwdBinding, CwdContext, CwdSelection, ResolvedCwd};
+use crate::cwd::{check_path_syntax, CwdBinding, CwdContext, CwdSelection, ResolvedCwd};
+use crate::profile::ProfileCommand;
 
 /// header가 보여 줄 세션 범위.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,6 +83,11 @@ pub enum CwdWarning {
         /// 귀속 worktree root.
         root: PathBuf,
     },
+    /// 관찰한 현재 cwd를 쓸 수 없습니다(절대 경로가 아님 등). 현재 cwd는 알 수 없음으로 둡니다.
+    UnusableObservedCwd {
+        /// 관찰값 그대로.
+        observed: PathBuf,
+    },
 }
 
 impl CwdWarning {
@@ -87,6 +97,37 @@ impl CwdWarning {
             CwdWarning::OutsideBinding { .. } => "outside-binding",
             CwdWarning::InsideOtherWorktree { .. } => "inside-other-worktree",
             CwdWarning::BindingMissing { .. } => "binding-missing",
+            CwdWarning::UnusableObservedCwd { .. } => "unusable-observed-cwd",
+        }
+    }
+}
+
+/// header가 보여 줄 실행 명령(일반 셸 세션과 명령 세션 구분, 기술 아키텍처 32 "일반 세션과 외부
+/// 에이전트 세션 구분 가능"). 명령 이름만 보여 주며 명령 종류를 해석하지 않습니다(XVIII.5.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderCommand {
+    /// 설정의 사용자 셸.
+    Shell,
+    /// argv 명령(실행 파일 이름).
+    Program {
+        /// 실행 파일 이름(경로의 마지막 요소).
+        name: String,
+    },
+}
+
+impl HeaderCommand {
+    /// profile 명령에서 만듭니다.
+    pub fn of(command: &ProfileCommand) -> HeaderCommand {
+        match command {
+            ProfileCommand::DefaultShell => HeaderCommand::Shell,
+            ProfileCommand::Argv(argv) => HeaderCommand::Program {
+                name: argv
+                    .program()
+                    .file_name()
+                    .unwrap_or(argv.program().as_os_str())
+                    .to_string_lossy()
+                    .into_owned(),
+            },
         }
     }
 }
@@ -96,11 +137,13 @@ impl CwdWarning {
 pub struct TerminalHeader {
     /// 표시 이름(profile 이름).
     pub title: String,
+    /// 실행 명령.
+    pub command: HeaderCommand,
     /// 범위.
     pub scope: HeaderScope,
     /// 시작 시 검증한 cwd(시작 전이면 `None`).
     pub start_cwd: Option<PathBuf>,
-    /// 현재 cwd(관찰값, 없으면 시작 cwd).
+    /// 현재 cwd(관찰값, 없으면 시작 cwd). 관찰값을 쓸 수 없으면 `None`.
     pub current_cwd: Option<PathBuf>,
     /// 현재 cwd를 담은 가장 깊은 worktree root(없으면 `None`).
     pub containing_worktree: Option<PathBuf>,
@@ -114,9 +157,12 @@ impl TerminalHeader {
     /// - `selection`: 세션 cwd 선택(시작 전 범위 판단용).
     /// - `resolved`: 시작할 때 검증한 cwd(시작 전이면 `None`).
     /// - `context`: 프로젝트 창의 **현재** cwd 기준(worktree 목록이 바뀌면 다시 만든 값).
-    /// - `observed_cwd`: 호출자가 관찰한 현재 cwd(없으면 시작 cwd).
+    /// - `observed_cwd`: 호출자가 관찰한 현재 cwd(없으면 시작 cwd). 절대 경로여야 합니다.
+    ///
+    /// symlink 해석 때문에 파일 시스템을 읽습니다(모듈 문서).
     pub fn build(
         title: &str,
+        command: HeaderCommand,
         selection: &CwdSelection,
         resolved: Option<&ResolvedCwd>,
         context: &CwdContext,
@@ -124,14 +170,26 @@ impl TerminalHeader {
     ) -> TerminalHeader {
         let scope = scope_of(selection, resolved, context);
         let start_cwd = resolved.map(|cwd| cwd.path().to_path_buf());
-        let current_cwd = observed_cwd.map(normalize).or_else(|| start_cwd.clone());
+        let mut unusable = None;
+        let current_cwd = match observed_cwd {
+            Some(observed) if check_path_syntax(observed).is_ok() => Some(normalize(observed)),
+            Some(observed) => {
+                unusable = Some(CwdWarning::UnusableObservedCwd {
+                    observed: observed.to_path_buf(),
+                });
+                None
+            }
+            None => start_cwd.clone(),
+        };
         let containing_worktree = current_cwd
             .as_deref()
             .and_then(|cwd| deepest_worktree(context, cwd))
             .map(Path::to_path_buf);
-        let warnings = warnings_for(&scope, current_cwd.as_deref(), context);
+        let mut warnings = warnings_for(&scope, current_cwd.as_deref(), context);
+        warnings.extend(unusable);
         TerminalHeader {
             title: title.to_owned(),
+            command,
             scope,
             start_cwd,
             current_cwd,
@@ -255,7 +313,61 @@ mod tests {
 
     fn header(f: &Fixture, selection: CwdSelection, observed: Option<&Path>) -> TerminalHeader {
         let resolved = f.context.resolve(&selection).unwrap();
-        TerminalHeader::build("zsh", &selection, Some(&resolved), &f.context, observed)
+        TerminalHeader::build(
+            "zsh",
+            HeaderCommand::Shell,
+            &selection,
+            Some(&resolved),
+            &f.context,
+            observed,
+        )
+    }
+
+    #[test]
+    fn header_command_names_the_program_without_interpreting_it() {
+        use crate::profile::ArgvCommand;
+        assert_eq!(
+            HeaderCommand::of(&ProfileCommand::DefaultShell),
+            HeaderCommand::Shell
+        );
+        let argv = ArgvCommand::new("/opt/tools/bin/agent-cli", ["--flag"]).unwrap();
+        assert_eq!(
+            HeaderCommand::of(&ProfileCommand::Argv(argv)),
+            HeaderCommand::Program {
+                name: "agent-cli".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn relative_or_malformed_observed_cwd_is_not_resolved_against_app_cwd() {
+        let f = fixture();
+        for observed in ["src", "", "./repo", "a\0b"] {
+            let observed = Path::new(observed);
+            let bound = header(
+                &f,
+                CwdSelection::WorktreeRoot(f.sibling.clone()),
+                Some(observed),
+            );
+            assert_eq!(bound.current_cwd, None, "{observed:?}");
+            assert_eq!(bound.containing_worktree, None);
+            assert_eq!(
+                bound.warnings,
+                [CwdWarning::UnusableObservedCwd {
+                    observed: observed.to_path_buf()
+                }]
+            );
+            assert_eq!(bound.warnings[0].code(), "unusable-observed-cwd");
+        }
+        // 절대 경로 관찰값은 그대로 판단합니다.
+        let inside = f.sibling.join("src");
+        let ok = header(
+            &f,
+            CwdSelection::WorktreeRoot(f.sibling.clone()),
+            Some(&inside),
+        );
+        assert_eq!(ok.current_cwd.as_deref(), Some(inside.as_path()));
+        assert!(!ok.has_warning());
     }
 
     #[test]
@@ -377,7 +489,14 @@ mod tests {
         let resolved = f.context.resolve(&selection).unwrap();
         // worktree가 목록에서 빠진 뒤 다시 만든 context.
         let updated = CwdContext::new(&f.repo, &[f.repo.clone(), f.nested.clone()]).unwrap();
-        let header = TerminalHeader::build("zsh", &selection, Some(&resolved), &updated, None);
+        let header = TerminalHeader::build(
+            "zsh",
+            HeaderCommand::Shell,
+            &selection,
+            Some(&resolved),
+            &updated,
+            None,
+        );
         assert_eq!(
             header.warnings,
             [CwdWarning::BindingMissing {
@@ -391,7 +510,14 @@ mod tests {
     fn header_before_start_uses_selection() {
         let f = fixture();
         let selection = CwdSelection::WorktreeRoot(f.nested.clone());
-        let header = TerminalHeader::build("agent", &selection, None, &f.context, None);
+        let header = TerminalHeader::build(
+            "agent",
+            HeaderCommand::Shell,
+            &selection,
+            None,
+            &f.context,
+            None,
+        );
         assert_eq!(
             header.scope,
             HeaderScope::Worktree {
@@ -401,8 +527,14 @@ mod tests {
         assert_eq!(header.start_cwd, None);
         assert_eq!(header.current_cwd, None);
         assert!(!header.has_warning());
-        let project =
-            TerminalHeader::build("agent", &CwdSelection::ProjectRoot, None, &f.context, None);
+        let project = TerminalHeader::build(
+            "agent",
+            HeaderCommand::Shell,
+            &CwdSelection::ProjectRoot,
+            None,
+            &f.context,
+            None,
+        );
         assert_eq!(project.scope, HeaderScope::Project { root: f.repo });
     }
 }

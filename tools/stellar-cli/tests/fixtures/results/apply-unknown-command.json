@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"apply","ok":false,"exit_code":65,"exit_name":"dataerr","result":null,"error":{"code":"unknown-command","message":"commands[1]: 알 수 없는 command 종류 \"run-script\""},"diagnostics":[]}

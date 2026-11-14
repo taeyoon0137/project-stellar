@@ -123,12 +123,42 @@ enum WelcomeViews {
     }
 }
 
+/// VoiceOver 알림. 상태 문구처럼 포커스가 없는 요소의 변화는 `.valueChanged`로는 읽히지 않을 수 있으므로
+/// 앱 요소에 `.announcementRequested`를 보냅니다(AppKit NSAccessibility.Notification.announcementRequested).
+enum WelcomeAccessibility {
+    /// 검사용 관찰자. 알림 문구를 받습니다.
+    static var announcementObserver: ((String) -> Void)?
+
+    static func announce(_ text: String) {
+        guard !text.isEmpty else { return }
+        announcementObserver?(text)
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: text,
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ]
+        )
+    }
+}
+
 /// 글자를 클립보드에 복사하는 아이콘 버튼. 아이콘만 있으므로 레이블과 도움말을 반드시 붙입니다(가이드 8.1, 8.3).
+/// 복사하면 잠시 체크 표시와 "Copied" 도움말로 바꾸고 VoiceOver에도 알립니다.
 final class WelcomeCopyButton: NSButton {
+    static let feedbackDuration: TimeInterval = 1.5
+
     var textToCopy = ""
+    /// 검사에서 일반 클립보드 대신 쓸 pasteboard.
+    var pasteboard: NSPasteboard = .general
+    /// 복사 직후 피드백을 보이는 중인지.
+    private(set) var isShowingCopiedFeedback = false
+    private var label = ""
+    private var feedbackToken = 0
 
     convenience init(accessibilityLabel label: String) {
         self.init(frame: .zero)
+        self.label = label
         image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: label)
         imagePosition = .imageOnly
         bezelStyle = .push
@@ -142,13 +172,29 @@ final class WelcomeCopyButton: NSButton {
     }
 
     @objc private func copyText(_ sender: Any?) {
-        let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(textToCopy, forType: .string)
+        showCopiedFeedback()
+    }
+
+    private func showCopiedFeedback() {
+        feedbackToken += 1
+        let token = feedbackToken
+        isShowingCopiedFeedback = true
+        image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: WelcomeStrings.copied)
+        toolTip = WelcomeStrings.copied
+        WelcomeAccessibility.announce(WelcomeStrings.copied)
+        DispatchQueue.main.asyncAfter(deadline: .now() + WelcomeCopyButton.feedbackDuration) { [weak self] in
+            guard let self, token == self.feedbackToken else { return }
+            self.isShowingCopiedFeedback = false
+            self.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: self.label)
+            self.toolTip = self.label
+        }
     }
 }
 
-/// 첫 실행 제안을 한 번만 보이기 위한 기록(앱 사용자 기본값). 프로젝트·Git에는 넣지 않습니다.
+/// 첫 실행 제안을 한 번만 보이기 위한 기록(앱 사용자 기본값 = OS 사용자 데이터, ADR-0005 §7).
+/// 프로젝트, Git, 텔레메트리에는 넣지 않습니다. 설치 여부 자체는 기록하지 않고 매번 파일 시스템에서 판정합니다(XXIV.5.5).
 struct WelcomeFirstLaunchPolicy {
     static let commandInstallOfferedKey = "StellarCommandInstallOffered"
 
@@ -158,22 +204,20 @@ struct WelcomeFirstLaunchPolicy {
         self.defaults = defaults
     }
 
-    /// 아직 제안하지 않았고, 설치하거나 고칠 수 있는 상태일 때만 제안합니다.
-    /// 보조 실행 파일이 없는 빌드(초기 릴리스, ADR-0005 결정 7)에서는 제안하지 않습니다.
+    /// 아직 답하지 않았을 때, 설치·다시 연결·대체 이름 설치를 고를 수 있거나 알려야 할 상태(ADR-0005 §2 "설치하지 않고
+    /// 알림")면 제안합니다. helper가 없는 빌드, 임시·읽기 전용 위치, 이미 설치된 경우에는 띄우지 않습니다.
+    /// 임시 위치에서는 기록도 하지 않으므로 앱을 옮긴 뒤 첫 실행에 다시 제안합니다.
     func shouldOfferCommandInstall(for status: StellarCommandInstallStatus) -> Bool {
         guard !defaults.bool(forKey: WelcomeFirstLaunchPolicy.commandInstallOfferedKey) else { return false }
         switch status {
-        case .ready, .needsRepair:
+        case .ready, .needsRepair, .shadowed, .namesUnavailable, .noWritableLocation:
             return true
-        case .blocked(_, let fallback):
-            // 대체 이름으로도 설치할 수 없으면 첫 실행에 막다른 안내를 띄우지 않습니다.
-            return fallback != nil
-        case .helperUnavailable, .unsupportedAppLocation, .installed, .noWritableLocation:
+        case .helperUnavailable, .unsupportedAppLocation, .installed:
             return false
         }
     }
 
-    /// 사용자가 제안에 답했습니다(설치 또는 나중에).
+    /// 사용자가 제안에 답했습니다(설치, 나중에, 닫기).
     func recordCommandInstallOffered() {
         defaults.set(true, forKey: WelcomeFirstLaunchPolicy.commandInstallOfferedKey)
     }

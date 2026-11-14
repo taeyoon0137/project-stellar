@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"apply","ok":false,"exit_code":65,"exit_name":"dataerr","result":null,"error":{"code":"invalid-transaction","message":"commands[0]에 허용되지 않은 key \"extra\"가 있습니다"},"diagnostics":[]}

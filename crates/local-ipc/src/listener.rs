@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::thread::{JoinHandle, ThreadId};
 
 use crate::auth::{authenticate, AuthError, AuthenticatedPeer, PeerPolicy};
+use crate::binding::{BindingError, BindingSession, SessionBindings};
 use crate::code_identity::{CodeIdentityError, ERR_NO_SUCH_CODE};
 use crate::handshake::{
     read_line, set_timeouts, write_message, HandshakeError, Message, DEFAULT_TIMEOUT,
@@ -149,6 +150,7 @@ pub struct AppConnection {
     peer: AuthenticatedPeer,
     client_nonce: Nonce,
     session_nonce: Nonce,
+    bound: Option<BindingSession>,
 }
 
 impl AppConnection {
@@ -165,6 +167,22 @@ impl AppConnection {
     /// 앱이 만든 session nonce.
     pub fn session_nonce(&self) -> Nonce {
         self.session_nonce
+    }
+
+    /// 세션 결합(XIX.1.8)으로 묶인 세션. 외부 client 연결이면 `None`.
+    ///
+    /// 결합은 세션 식별일 뿐 권한이 아닙니다. 결합된 연결도 권한 0에서 시작하며 XIX.3 승인을
+    /// 대체하지 않습니다.
+    pub fn bound_session(&self) -> Option<BindingSession> {
+        self.bound
+    }
+
+    /// 세션을 시작한 쪽: 결합됐으면 앱이 시작한 세션, 아니면 외부 client.
+    pub fn origin(&self) -> crate::session::SessionOrigin {
+        match self.bound {
+            Some(_) => crate::session::SessionOrigin::AppStarted,
+            None => crate::session::SessionOrigin::External,
+        }
     }
 
     /// 연결 stream.
@@ -226,15 +244,33 @@ pub struct AppListener {
 }
 
 impl AppListener {
-    /// IPC I/O 스레드를 시작합니다. 인증 기준은 `policy`입니다.
+    /// IPC I/O 스레드를 시작합니다. 인증 기준은 `policy`입니다. 세션 결합(XIX.1.8)은 받지 않습니다
+    /// (결합 token을 보낸 연결은 `REJECT binding-rejected`).
     pub fn spawn(endpoint: AppEndpoint, policy: PeerPolicy) -> io::Result<AppListener> {
+        AppListener::spawn_inner(endpoint, policy, None)
+    }
+
+    /// [`AppListener::spawn`]과 같되, 앱이 시작한 세션의 결합 token을 `bindings`로 검증합니다.
+    pub fn spawn_with_bindings(
+        endpoint: AppEndpoint,
+        policy: PeerPolicy,
+        bindings: Arc<SessionBindings>,
+    ) -> io::Result<AppListener> {
+        AppListener::spawn_inner(endpoint, policy, Some(bindings))
+    }
+
+    fn spawn_inner(
+        endpoint: AppEndpoint,
+        policy: PeerPolicy,
+        bindings: Option<Arc<SessionBindings>>,
+    ) -> io::Result<AppListener> {
         let (tx, events) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let socket_path = endpoint.endpoint.socket_path.clone();
         let thread_stop = Arc::clone(&stop);
         let thread = std::thread::Builder::new()
             .name(IO_THREAD_NAME.into())
-            .spawn(move || accept_loop(endpoint, policy, &thread_stop, &tx))?;
+            .spawn(move || accept_loop(endpoint, policy, bindings, &thread_stop, &tx))?;
         let thread_id = thread.thread().id();
         Ok(AppListener {
             events,
@@ -275,6 +311,7 @@ impl Drop for AppListener {
 fn accept_loop(
     endpoint: AppEndpoint,
     policy: PeerPolicy,
+    bindings: Option<Arc<SessionBindings>>,
     stop: &AtomicBool,
     tx: &Sender<ListenerEvent>,
 ) {
@@ -298,7 +335,7 @@ fn accept_loop(
             })) => None,
             // 인증 전에는 읽거나 쓰지 않았으므로 그대로 닫습니다.
             Err(error) => Some(ListenerEvent::Rejected { error, thread }),
-            Ok(peer) => match serve_handshake(stream, peer, &mut ledger) {
+            Ok(peer) => match serve_handshake(stream, peer, &mut ledger, bindings.as_deref()) {
                 Ok(Some(connection)) => Some(ListenerEvent::Connected { connection, thread }),
                 Ok(None) => None,
                 Err(error) => Some(ListenerEvent::HandshakeFailed { error, thread }),
@@ -317,14 +354,17 @@ fn serve_handshake(
     mut stream: UnixStream,
     peer: AuthenticatedPeer,
     ledger: &mut NonceLedger,
+    bindings: Option<&SessionBindings>,
 ) -> Result<Option<AppConnection>, HandshakeError> {
     // timeout 설정 중이나 HELLO 전에 상대가 닫으면 탐색 연결과 같이 조용히 끝냅니다.
     let line = match set_timeouts(&stream, DEFAULT_TIMEOUT).and_then(|()| read_line(&mut stream)) {
         Err(HandshakeError::Closed) => return Ok(None),
         other => other?,
     };
-    let Some(Message::Hello { client }) = Message::decode(&line) else {
-        return Err(HandshakeError::Malformed);
+    let (client, binding) = match Message::decode(&line) {
+        Some(Message::Hello { client }) => (client, None),
+        Some(Message::BoundHello { client, binding }) => (client, Some(binding)),
+        _ => return Err(HandshakeError::Malformed),
     };
     if ledger.record(client).is_err() {
         let reject = Message::Reject {
@@ -333,6 +373,25 @@ fn serve_handshake(
         let _ = write_message(&mut stream, &reject);
         return Err(HandshakeError::NonceReused);
     }
+    // 세션 결합(XIX.1.8): 인증·nonce 검사를 통과한 연결에서만 token을 봅니다.
+    let bound = match binding {
+        None => None,
+        Some(token) => {
+            let verified = bindings
+                .ok_or(BindingError::Unsupported)
+                .and_then(|b| b.verify(&token));
+            match verified {
+                Ok(session) => Some(session),
+                Err(error) => {
+                    let reject = Message::Reject {
+                        reason: "binding-rejected".into(),
+                    };
+                    let _ = write_message(&mut stream, &reject);
+                    return Err(HandshakeError::BindingRejected(error));
+                }
+            }
+        }
+    };
     let session = Nonce::generate().map_err(|e| HandshakeError::Io { kind: e.kind() })?;
     ledger
         .record(session)
@@ -343,6 +402,7 @@ fn serve_handshake(
         peer,
         client_nonce: client,
         session_nonce: session,
+        bound,
     }))
 }
 
@@ -528,6 +588,128 @@ mod tests {
             app.events().recv_timeout(WAIT).unwrap(),
             ListenerEvent::HandshakeFailed {
                 error: HandshakeError::NonceReused,
+                ..
+            }
+        ));
+    }
+
+    fn bound_listener(tmp: &TempDir, bindings: Arc<SessionBindings>) -> AppListener {
+        let registry = Registry::at(tmp.path.join("r"), os::current_uid());
+        let endpoint = AppEndpoint::bind(&registry, id(1)).unwrap();
+        AppListener::spawn_with_bindings(
+            endpoint,
+            PeerPolicy::for_current_process().unwrap(),
+            bindings,
+        )
+        .unwrap()
+    }
+
+    fn endpoint_of(app: &AppListener) -> Endpoint {
+        Endpoint {
+            instance: id(1),
+            socket_path: app.socket_path().to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn bound_bridge_is_tied_to_the_issuing_session_only() {
+        // 검증 기준(XIX.1.8): 결합은 token을 만든 세션 하나에만 묶이고, 결합만으로 얻는 권한은 0입니다.
+        use crate::binding::{BindingSession, BindingToken};
+        use crate::handshake::connect_bound;
+        use crate::session::SessionOrigin;
+        let tmp = TempDir::new();
+        let bindings = Arc::new(SessionBindings::new());
+        let a = bindings.issue(BindingSession(10)).unwrap();
+        let _b = bindings.issue(BindingSession(20)).unwrap();
+        let app = bound_listener(&tmp, Arc::clone(&bindings));
+        let policy = PeerPolicy::for_current_process().unwrap();
+
+        connect_bound(
+            &endpoint_of(&app),
+            &policy,
+            &mut NonceLedger::new(),
+            Some(&a),
+        )
+        .unwrap();
+        let ListenerEvent::Connected { connection, thread } =
+            app.events().recv_timeout(WAIT).unwrap()
+        else {
+            panic!("결합 연결 실패")
+        };
+        assert_eq!(thread, app.io_thread());
+        assert_eq!(connection.bound_session(), Some(BindingSession(10)));
+        assert_ne!(connection.bound_session(), Some(BindingSession(20)));
+        assert_eq!(connection.origin(), SessionOrigin::AppStarted);
+
+        // 결합 없는 연결은 외부 client 세션입니다.
+        connect_bound(&endpoint_of(&app), &policy, &mut NonceLedger::new(), None).unwrap();
+        let ListenerEvent::Connected { connection, .. } = app.events().recv_timeout(WAIT).unwrap()
+        else {
+            panic!("외부 연결 실패")
+        };
+        assert_eq!(connection.bound_session(), None);
+        assert_eq!(connection.origin(), SessionOrigin::External);
+
+        // 끝난 세션과 모르는 token은 거부합니다.
+        assert!(bindings.end(BindingSession(10)));
+        let forged = BindingToken::from_bytes([3; 32]);
+        for (token, expected) in [(a, BindingError::Ended), (forged, BindingError::Unknown)] {
+            let error = connect_bound(
+                &endpoint_of(&app),
+                &policy,
+                &mut NonceLedger::new(),
+                Some(&token),
+            )
+            .unwrap_err();
+            assert_eq!(
+                error,
+                HandshakeError::Rejected {
+                    reason: "binding-rejected".into()
+                }
+            );
+            match app.events().recv_timeout(WAIT).unwrap() {
+                ListenerEvent::HandshakeFailed {
+                    error: HandshakeError::BindingRejected(found),
+                    thread,
+                } => {
+                    assert_eq!(found, expected);
+                    assert_eq!(thread, app.io_thread());
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        assert!(
+            app.events()
+                .recv_timeout(Duration::from_millis(100))
+                .is_err(),
+            "거부된 결합은 연결 전달 0"
+        );
+    }
+
+    #[test]
+    fn listener_without_bindings_rejects_any_binding() {
+        use crate::binding::BindingToken;
+        use crate::handshake::connect_bound;
+        let tmp = TempDir::new();
+        let app = listener(&tmp, PeerPolicy::for_current_process().unwrap());
+        let token = BindingToken::from_bytes([5; 32]);
+        let error = connect_bound(
+            &endpoint_of(&app),
+            &PeerPolicy::for_current_process().unwrap(),
+            &mut NonceLedger::new(),
+            Some(&token),
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            HandshakeError::Rejected {
+                reason: "binding-rejected".into()
+            }
+        );
+        assert!(matches!(
+            app.events().recv_timeout(WAIT).unwrap(),
+            ListenerEvent::HandshakeFailed {
+                error: HandshakeError::BindingRejected(BindingError::Unsupported),
                 ..
             }
         ));

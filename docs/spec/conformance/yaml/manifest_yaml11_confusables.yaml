@@ -1,0 +1,8 @@
+schema_version: 1
+project:
+  id: yes
+  name: 2020-01-01
+target_profiles:
+  - id: 010
+    platform: on
+dependencies: {}

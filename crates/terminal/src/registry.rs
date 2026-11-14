@@ -11,7 +11,7 @@
 //! - **시작 gate**([`TerminalRegistry::start`]): 신뢰된 프로젝트 창의 [`TerminalCapability`]를
 //!   가장 먼저 확인합니다. token이 없거나 다른 창의 것이면 cwd·명령·환경을 보지도 않고, 실행기를
 //!   호출하지 않습니다(untrusted spawn 0). 그다음 cwd 검증(XVIII.1.3), 셸 해석(XVIII.2.2)·명령·환경
-//!   구성, 실행 순입니다.
+//!   구성(`TERM`·`COLORTERM` 기본값 포함, XVIII.4.1), 실행 순입니다.
 //! - 닫기([`TerminalRegistry::close`])는 실행 중인 child를 종료한 뒤 세션을 제거합니다.
 //! - **프로세스 tree 정리**(XVIII.2.4): child 스스로 종료·외부 신호 종료는 [`TerminalRegistry::poll`]이
 //!   비차단으로 정리하고 세션을 `Finished{ChildExited}`로 남깁니다. 취소([`TerminalRegistry::cancel`])는
@@ -27,7 +27,8 @@ use stellar_core_types::ids::WindowSessionId;
 
 use crate::capability::{TerminalCapability, TerminalNotTrusted};
 use crate::cwd::{CwdContext, CwdError, ResolvedCwd};
-use crate::header::TerminalHeader;
+use crate::emulator::{COLORTERM, TERM_NAME};
+use crate::header::{HeaderCommand, TerminalHeader};
 use crate::id::{SessionIdAllocator, TerminalSessionId};
 use crate::launch::{
     ExitReport, LaunchError, LaunchRequest, TerminalIoError, TerminalLauncher, TerminalProcess,
@@ -213,10 +214,12 @@ impl TerminalSession {
         self.process.as_deref_mut()
     }
 
-    /// child를 종료하고 상태를 `Finished`로 바꿉니다. child가 없으면 상태를 그대로 둡니다.
+    /// child를 종료하고 상태를 `Finished`로 바꿉니다. child가 없으면 상태를 그대로 둡니다. 종료가
+    /// 실패하면 child handle을 세션에 그대로 남겨 호출자가 다시 시도하거나 보고할 수 있게 합니다.
     fn finish(&mut self, reason: TerminationReason) -> Result<(), TerminalIoError> {
-        if let Some(mut process) = self.process.take() {
+        if let Some(process) = self.process.as_mut() {
             let report = process.terminate()?;
+            self.process = None;
             self.record_exit(report, reason);
         }
         Ok(())
@@ -321,6 +324,13 @@ impl TerminalRegistry {
             .resolve(&session.profile.cwd)
             .map_err(StartError::Cwd)?;
         let mut env = session.profile.environment.resolve(environment.env_lookup);
+        // child가 보는 터미널 종류는 이 crate의 emulator가 해석하는 sequence 집합입니다(XVIII.4.1).
+        // 앱 프로세스에서 상속한 값보다 우선하고, profile이 명시한 값은 그대로 둡니다.
+        for (name, value) in [("TERM", TERM_NAME), ("COLORTERM", COLORTERM)] {
+            if session.profile.environment.assignment(name).is_none() {
+                set_env(&mut env, name, std::ffi::OsStr::new(value));
+            }
+        }
         let (program, args, arg0) = match &session.profile.command {
             ProfileCommand::DefaultShell => {
                 let shell = resolve_shell(environment.shell, environment.shell_source)
@@ -341,7 +351,9 @@ impl TerminalRegistry {
                 None,
             ),
         };
+        // token을 요청에 소비합니다. 요청은 이 경로에서만 만들어지고 실행기에 값으로 넘어갑니다.
         let request = LaunchRequest::new(
+            capability,
             program,
             args,
             arg0,
@@ -349,7 +361,7 @@ impl TerminalRegistry {
             env,
             environment.size,
         );
-        match launcher.launch(&request) {
+        match launcher.launch(request) {
             Ok(process) => {
                 let pid = process.pid();
                 session.state = TerminalProcessState::Running { pid };
@@ -367,15 +379,20 @@ impl TerminalRegistry {
     }
 
     /// 세션을 닫고 registry에서 제거합니다. 실행 중이면 child를 종료한 뒤 최종 상태를 돌려줍니다.
+    ///
+    /// child 종료가 실패하면([`RegistryError::Terminate`]) 세션을 제거하지 않습니다. 세션은 실행 중
+    /// 상태와 child handle을 그대로 가지므로 다시 닫거나 취소할 수 있습니다.
     pub fn close(&mut self, id: TerminalSessionId) -> Result<TerminalProcessState, RegistryError> {
-        let mut session = self
+        let session = self
             .sessions
-            .remove(&id)
+            .get_mut(&id)
             .ok_or(RegistryError::UnknownSession)?;
         session
             .finish(TerminationReason::Closed)
             .map_err(RegistryError::Terminate)?;
-        Ok(session.state)
+        let state = session.state;
+        self.sessions.remove(&id);
+        Ok(state)
     }
 
     /// 세션.
@@ -385,7 +402,8 @@ impl TerminalRegistry {
 
     /// 실행 중 세션의 종료를 비차단으로 확인하고 정리를 진행합니다. 이번에 끝난 세션 식별자를
     /// 돌려줍니다. 끝난 세션은 사용자가 닫을 때까지 `Finished{ChildExited}`로 남고 child handle은
-    /// 해제됩니다. OS 호출 오류는 다음 호출에서 다시 확인합니다.
+    /// 해제됩니다. OS 호출 오류는 다음 호출에서 다시 확인합니다. leader를 이 crate 밖에서 회수한
+    /// 경우(`ECHILD`)는 오류가 아니라 종료 상태 `Unknown`으로 끝납니다(`pty` 모듈 문서).
     pub fn poll(&mut self) -> Vec<TerminalSessionId> {
         let mut finished = Vec::new();
         for session in self.sessions.values_mut() {
@@ -417,6 +435,8 @@ impl TerminalRegistry {
     }
 
     /// 모든 세션을 닫고 제거합니다(창·앱 종료). 각 세션의 최종 상태를 만든 순서로 돌려줍니다.
+    /// 종료에 실패한 세션도 결과와 함께 제거하며, macOS PTY handle은 drop에서 마지막 `SIGKILL`만
+    /// 보내고 다시 기다리지 않습니다.
     pub fn close_all(
         &mut self,
         reason: TerminationReason,
@@ -466,6 +486,7 @@ impl TerminalRegistry {
         let session = self.sessions.get(&id)?;
         Some(TerminalHeader::build(
             session.profile.name.as_str(),
+            HeaderCommand::of(&session.profile.command),
             &session.profile.cwd,
             session.cwd.as_ref(),
             context,
@@ -519,7 +540,7 @@ pub(crate) mod tests {
     use crate::state::{StartFailure, TerminalExitStatus};
     use crate::test_support::TempDir;
     use std::path::PathBuf;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
     use stellar_core_types::ids::StableId;
 
@@ -538,6 +559,8 @@ pub(crate) mod tests {
         terminated: Arc<AtomicUsize>,
         dropped: Arc<AtomicUsize>,
         resized: Arc<AtomicUsize>,
+        /// 켜져 있으면 terminate가 `TimedOut`으로 실패합니다.
+        fail_terminate: Arc<AtomicBool>,
     }
 
     impl FakeCounters {
@@ -555,6 +578,10 @@ pub(crate) mod tests {
 
         pub(crate) fn resized(&self) -> usize {
             self.resized.load(Ordering::SeqCst)
+        }
+
+        pub(crate) fn set_fail_terminate(&self, fail: bool) {
+            self.fail_terminate.store(fail, Ordering::SeqCst);
         }
     }
 
@@ -578,6 +605,13 @@ pub(crate) mod tests {
 
         fn terminate(&mut self) -> Result<ExitReport, TerminalIoError> {
             self.counters.terminated.fetch_add(1, Ordering::SeqCst);
+            if self.counters.fail_terminate.load(Ordering::SeqCst) {
+                return Err(TerminalIoError {
+                    operation: "terminate",
+                    kind: std::io::ErrorKind::TimedOut,
+                    os_code: None,
+                });
+            }
             Ok(ExitReport {
                 status: TerminalExitStatus::Signaled(1),
                 remaining_processes: 0,
@@ -620,10 +654,11 @@ pub(crate) mod tests {
     impl TerminalLauncher for FakeLauncher {
         fn launch(
             &mut self,
-            request: &LaunchRequest,
+            request: LaunchRequest,
         ) -> Result<Box<dyn TerminalProcess>, LaunchError> {
             self.counters.launches.fetch_add(1, Ordering::SeqCst);
-            self.requests.push(request.clone());
+            let size = request.size();
+            self.requests.push(request);
             if let Some(err) = self.fail {
                 return Err(err);
             }
@@ -631,7 +666,7 @@ pub(crate) mod tests {
             Ok(Box::new(FakeProcess {
                 pid,
                 counters: self.counters.clone(),
-                size: request.size(),
+                size,
             }))
         }
     }
@@ -740,6 +775,8 @@ pub(crate) mod tests {
         assert_eq!(launcher.counters.launches(), 2);
 
         let shell_request = &launcher.requests[0];
+        // 요청은 이 창의 token을 소비해 만들어졌습니다.
+        assert_eq!(shell_request.window(), window(13));
         assert_eq!(shell_request.program(), std::path::Path::new("/bin/sh"));
         assert_eq!(shell_request.arg0(), Some(&OsString::from("-sh")));
         assert!(shell_request.args().is_empty());
@@ -747,9 +784,11 @@ pub(crate) mod tests {
         assert_eq!(
             shell_request.env(),
             [
+                (OsString::from("COLORTERM"), OsString::from("truecolor")),
                 (OsString::from("HOME"), OsString::from("/Users/example")),
                 (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
                 (OsString::from("SHELL"), OsString::from("/bin/sh")),
+                (OsString::from("TERM"), OsString::from("xterm-256color")),
             ]
         );
 
@@ -882,6 +921,67 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn failed_termination_keeps_session_for_retry() {
+        let dir = TempDir::new();
+        let context = CwdContext::new(dir.path(), &[]).unwrap();
+        let shell = sh();
+        let environment = LaunchEnvironment {
+            cwd: &context,
+            shell: &shell,
+            shell_source: &NO_SHELL_SOURCE,
+            env_lookup: fake_env,
+            size: TerminalSize::DEFAULT,
+        };
+        let mut launcher = FakeLauncher::default();
+        let mut registry = TerminalRegistry::new(window(22));
+        let id = registry.create(profile("stuck")).unwrap();
+        let pid = registry
+            .start(id, trusted(&registry), &environment, &mut launcher)
+            .unwrap();
+        launcher.counters.set_fail_terminate(true);
+        let timed_out = Err(RegistryError::Terminate(TerminalIoError {
+            operation: "terminate",
+            kind: std::io::ErrorKind::TimedOut,
+            os_code: None,
+        }));
+        // 닫기 실패: 세션·handle이 그대로 남고 다시 시도할 수 있습니다(handle drop 0).
+        assert_eq!(registry.close(id), timed_out);
+        assert_eq!(registry.len(), 1);
+        assert_eq!(registry.resolve_handle(id.to_handle()), Some(id));
+        assert_eq!(
+            registry.session(id).unwrap().state(),
+            TerminalProcessState::Running { pid }
+        );
+        assert!(registry.session(id).unwrap().process().is_some());
+        assert_eq!(registry.cancel(id), timed_out);
+        assert!(registry.session(id).unwrap().process().is_some());
+        assert_eq!(launcher.counters.dropped(), 0);
+        // 원인이 사라지면 같은 세션을 닫을 수 있습니다.
+        launcher.counters.set_fail_terminate(false);
+        assert!(matches!(
+            registry.close(id),
+            Ok(TerminalProcessState::Finished {
+                reason: TerminationReason::Closed,
+                ..
+            })
+        ));
+        assert!(registry.is_empty());
+        assert_eq!(launcher.counters.terminated(), 3);
+        assert_eq!(launcher.counters.dropped(), 1);
+
+        // 창 종료(close_all)는 실패한 세션도 결과와 함께 제거합니다.
+        let id = registry.create(profile("stuck-on-close")).unwrap();
+        registry
+            .start(id, trusted(&registry), &environment, &mut launcher)
+            .unwrap();
+        launcher.counters.set_fail_terminate(true);
+        let results = registry.close_all(TerminationReason::AppClosed);
+        assert_eq!(results, [(id, timed_out)]);
+        assert!(registry.is_empty());
+        assert_eq!(launcher.counters.dropped(), 2);
+    }
+
+    #[test]
     fn twenty_sessions_create_and_close_without_leaks() {
         let mut registry = TerminalRegistry::new(window(1));
         let mut all_ids = Vec::new();
@@ -995,6 +1095,7 @@ pub(crate) mod tests {
         assert_eq!(launcher.requests[0].arg0(), None);
         let mut explicit = profile("explicit-shell-env");
         explicit.environment.set("SHELL", "/custom/shell").unwrap();
+        explicit.environment.set("TERM", "dumb").unwrap();
         let explicit_id = registry.create(explicit).unwrap();
         let shell = sh();
         let environment = LaunchEnvironment {
@@ -1008,6 +1109,14 @@ pub(crate) mod tests {
             .env()
             .iter()
             .any(|(name, value)| name == "SHELL" && value == "/custom/shell"));
+        // profile이 정한 TERM은 기본값으로 바꾸지 않습니다.
+        let terms: Vec<&OsString> = launcher.requests[1]
+            .env()
+            .iter()
+            .filter(|(name, _)| name == "TERM")
+            .map(|(_, value)| value)
+            .collect();
+        assert_eq!(terms, [&OsString::from("dumb")]);
     }
 
     /// 실제 PTY에서 login/non-login 셸의 `$0`과 `SHELL`을 확인합니다.

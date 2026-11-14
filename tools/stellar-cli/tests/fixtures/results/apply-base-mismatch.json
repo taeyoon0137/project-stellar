@@ -1,0 +1,1 @@
+{"schema":"stellar-cli/result","schema_version":1,"command":"apply","ok":false,"exit_code":65,"exit_name":"dataerr","result":null,"error":{"code":"base-revision-mismatch","message":"base revision이 현재 revision과 다릅니다(요청 g0, 현재 g1:sha256:ad3d9660b13bd507a8f1b76daa6b2b2536f0dabfc182c356da0337eaac57538f)"},"diagnostics":[]}

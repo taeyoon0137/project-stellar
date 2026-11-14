@@ -56,6 +56,20 @@ struct GitListInfo: Equatable {
     static let empty = GitListInfo(generation: 0, rowCount: 0)
 }
 
+/// 변경 계층(문서 → 객체 → 변경)의 세대·구조 번호와 최상위 행 수(XIV.13.1).
+///
+/// - `generation`: 값(Stage 상태, 표시 문구)이나 구조가 바뀌면 올라갑니다. 이전 세대의 페이지·상세는 버립니다.
+/// - `structure`: 노드가 추가·삭제·이동될 때만 올라갑니다. 같으면 같은 부모 아래 같은 순번은 같은 노드이고,
+///   셸은 펼침 상태와 항목을 유지한 채 보이는 행 값만 다시 받습니다.
+struct GitChangeTreeInfo: Equatable {
+    var generation: UInt64
+    var structure: UInt64
+    /// 최상위(문서) 행 수.
+    var documentCount: Int
+
+    static let empty = GitChangeTreeInfo(generation: 0, structure: 0, documentCount: 0)
+}
+
 /// 패널 전체 상태 snapshot. 작고 자주 바뀌지 않는 값만 담습니다.
 struct GitStatusSnapshot: Equatable {
     var availability: GitAvailability
@@ -82,7 +96,7 @@ struct GitStatusSnapshot: Equatable {
     var semanticStatusError: String?
     /// 저장 대기 중인 메모리 편집이 있는지(XIV.2.8). Git status는 저장된 파일 기준입니다.
     var pendingAutosave: Bool
-    var changes: GitListInfo
+    var changes: GitChangeTreeInfo
     var conflicts: GitListInfo
 }
 
@@ -113,15 +127,33 @@ enum GitStageState: Equatable {
     case partiallyStaged
 }
 
-/// 평탄화된 변경 목록의 행 계층. 문서 → 객체 → 변경 순서로 코어가 정렬합니다(XIV.3.8).
+/// 변경 계층의 단계. 문서 → 객체 → 변경 순서이며 같은 부모 안 순서는 코어가 정합니다(XIV.3.8).
 enum GitChangeRowLevel: Equatable {
     case document
     case object
     case change
+
+    /// 바로 아래 단계. 변경 행은 자식이 없습니다.
+    var childLevel: GitChangeRowLevel? {
+        switch self {
+        case .document: return .object
+        case .object: return .change
+        case .change: return nil
+        }
+    }
 }
 
-/// 변경 목록 한 행. 묶음 행의 접힘 상태와 집계 Stage 상태도 코어가 계산합니다.
+/// 변경 계층 노드 식별자.
+///
+/// 코어가 문서 경로·객체 StableId·변경 정렬 키에서 만든 값입니다. 같은 대상이면 세대·구조 번호가 바뀌어도
+/// 같으므로, 셸은 이 값으로 구조가 바뀐 뒤의 펼침·선택을 복원합니다. 요청에는 항상 세대를 함께 보냅니다.
+struct GitChangeNodeID: Hashable {
+    var rawValue: UInt64
+}
+
+/// 변경 목록 한 행. 묶음 행의 집계 Stage 상태도 코어가 계산합니다. 펼침 상태는 셸 outline의 보기 상태입니다.
 struct GitChangeRow: Equatable {
+    var id: GitChangeNodeID
     var level: GitChangeRowLevel
     var title: String
     /// 보조 문구(값 변화 요약, 하위 변경 수 등). 코어가 만든 표시 문자열입니다.
@@ -129,23 +161,31 @@ struct GitChangeRow: Equatable {
     /// 변경 행에서만 값이 있습니다.
     var kind: GitChangeKind?
     var stageState: GitStageState
-    /// 묶음 행의 펼침 상태.
-    var isExpanded: Bool
-    /// 묶음 행의 하위 변경 수(변경 행은 1).
+    /// 바로 아래 자식 행 수(문서 → 객체 수, 객체 → 변경 수, 변경 행은 0).
+    var childCount: Int
+    /// 하위 semantic change 수(변경 행은 1).
     var changeCount: Int
 }
 
-/// 변경 목록 한 페이지.
+/// 한 부모의 자식 행 한 페이지. `parent`가 nil이면 최상위(문서) 목록입니다.
 struct GitChangePage: Equatable {
     var generation: UInt64
-    var startRow: Int
+    var parent: GitChangeNodeID?
+    var startIndex: Int
     var rows: [GitChangeRow]
+}
+
+/// 한 부모 아래 자식 순번 범위. Stage·Unstage 대상 표현이며, 묶음 행은 하위 전체를 뜻합니다.
+/// `parent`가 nil이면 최상위(문서) 목록입니다. 100만 change 전체 선택도 최상위 범위 하나로 보냅니다.
+struct GitChangeRange: Equatable {
+    var parent: GitChangeNodeID?
+    var children: IndexSet
 }
 
 /// 선택한 변경 한 개의 상세 요약(XIV.4.2: HEAD, Index, Working Tree 세 값 보존).
 struct GitChangeDetail: Equatable {
     var generation: UInt64
-    var row: Int
+    var node: GitChangeNodeID
     var title: String
     var kind: GitChangeKind?
     /// 문서와 객체 경로(표시용).
@@ -237,6 +277,25 @@ struct GitOperationResult: Equatable {
     var id: UInt64
     var kind: GitOperationKind
     var outcome: GitOperationOutcome
+}
+
+/// 코어가 실행하지 않고 버린 명령의 이유.
+enum GitRejectionReason: Equatable {
+    /// 요청 세대가 현재 세대와 다릅니다. 셸은 새 `.status`를 받은 뒤 다시 요청합니다.
+    case staleGeneration
+    /// 대상 행·노드가 없습니다(구조가 바뀜).
+    case unknownTarget
+    /// 제한 모드·Git 없음 등으로 지금 실행할 수 없습니다.
+    case unavailable
+    /// 다른 Git 작업이 진행 중입니다.
+    case busy
+}
+
+/// 코어가 처리하지 않은 명령. 셸은 미리 보여 준 값(체크박스, 해결 선택)을 코어 값으로 되돌리고,
+/// 요청 중 표시를 지워 같은 페이지를 다시 요청할 수 있게 합니다.
+struct GitCommandRejection: Equatable {
+    var command: GitPanelCommand
+    var reason: GitRejectionReason
 }
 
 /// 선택 변경만으로는 무결성이 깨질 때 코어가 돌려주는 필수 동반 변경(XIV.5.3, XIV.7.2).

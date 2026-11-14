@@ -185,7 +185,7 @@ dependencies = [
 name = "stellar-cli"
 version = "0.0.0"
 dependencies = [
- "stellar-project",
+ "stellar-ops",
 ]
 
 [[package]]
@@ -291,6 +291,18 @@ name = "stellar-mcp"
 version = "0.0.0"
 dependencies = [
  "stellar-local-ipc",
+]
+
+[[package]]
+name = "stellar-ops"
+version = "0.0.0"
+dependencies = [
+ "stellar-commands",
+ "stellar-document",
+ "stellar-project",
+ "stellar-semantic-diff",
+ "stellar-semantic-merge",
+ "stellar-storage",
 ]
 
 [[package]]

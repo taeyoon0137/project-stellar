@@ -38,7 +38,15 @@
 //!    [`ExitReport::remaining_processes`]로 보고합니다.
 //! 4. 경로별: child 스스로 종료·외부 신호로 종료 → [`TerminalProcess::poll_exit`]가 비차단 단계로
 //!    정리. 닫기·취소·앱 종료 → [`TerminalProcess::terminate`](차단, 유예 + [`KILL_WAIT`] 상한).
-//!    정리하지 않은 `PtyProcess`를 drop하면 `terminate`를 실행합니다.
+//!    정리하지 않은 `PtyProcess`를 drop하면 `terminate`를 실행합니다. 단 `terminate`가 이미 실패한
+//!    handle(예: `SIGKILL` 뒤에도 끝나지 않는 leader)은 drop에서 마지막 `SIGKILL`만 보내고 다시
+//!    기다리지 않습니다(같은 상한을 두 번 기다리지 않음).
+//!
+//! **회수 전제**: 위 정리는 leader를 이 모듈만 회수한다는 전제에 기댑니다. 앱 프로세스는 `SIGCHLD`를
+//! `SIG_IGN`으로 두거나 `waitpid(-1)` 같은 전체 회수로 터미널 child를 가져가지 않아야 합니다. 그래도
+//! 다른 곳에서 회수하면 `waitid`가 `ECHILD`를 돌려주는데, 이때는 오류를 반복하지 않고 종료 상태
+//! [`TerminalExitStatus::Unknown`]으로 끝내며 보관한 slave를 닫습니다. pid가 더 이상 예약되어 있지
+//! 않으므로 group 신호·세션 정리는 하지 않고, 같은 세션 id로 남은 프로세스 수만 보고합니다.
 
 mod sys;
 
@@ -107,10 +115,10 @@ impl Default for PtyLauncher {
 }
 
 impl TerminalLauncher for PtyLauncher {
-    fn launch(&mut self, request: &LaunchRequest) -> Result<Box<dyn TerminalProcess>, LaunchError> {
+    fn launch(&mut self, request: LaunchRequest) -> Result<Box<dyn TerminalProcess>, LaunchError> {
         let pair = PtyPair::open(request.size()).map_err(LaunchError::Pty)?;
         self.spawn_count.fetch_add(1, Ordering::SeqCst);
-        let process = PtyProcess::spawn(pair, request, self.grace).map_err(LaunchError::Spawn)?;
+        let process = PtyProcess::spawn(pair, &request, self.grace).map_err(LaunchError::Spawn)?;
         Ok(Box::new(process))
     }
 }
@@ -279,6 +287,8 @@ pub struct PtyProcess {
     cleanup: Cleanup,
     /// 출력 정리까지 끝난 최종 결과.
     finished: Option<ExitReport>,
+    /// `terminate`가 실패했는지(drop에서 다시 기다리지 않음).
+    terminate_failed: bool,
 }
 
 impl PtyProcess {
@@ -338,6 +348,7 @@ impl PtyProcess {
             leader: Leader::Running,
             cleanup: Cleanup::default(),
             finished: None,
+            terminate_failed: false,
         })
     }
 
@@ -348,11 +359,23 @@ impl PtyProcess {
 
     /// 회수하지 않고 leader 종료 여부를 봅니다(`waitid(WNOWAIT)`).
     fn refresh_leader(&mut self) -> Result<(), TerminalIoError> {
-        if self.leader != Leader::Running {
+        if !self.unreaped() {
             return Ok(());
         }
-        if peek_exited(self.pid)? {
-            self.leader = Leader::Exited;
+        match peek_leader(self.pid)? {
+            LeaderPeek::Running => {}
+            LeaderPeek::Exited => self.leader = Leader::Exited,
+            LeaderPeek::ReapedElsewhere => {
+                // pid가 더 이상 예약되어 있지 않으므로 신호는 보내지 않고 수만 셉니다(모듈 문서).
+                let remaining = session_members(self.pid).map_or(0, |members| count(&members));
+                self.leader = Leader::Reaped {
+                    report: ExitReport {
+                        status: TerminalExitStatus::Unknown,
+                        remaining_processes: remaining,
+                    },
+                    drain_deadline: Instant::now() + DRAIN_TIMEOUT,
+                };
+            }
         }
         Ok(())
     }
@@ -402,13 +425,15 @@ impl PtyProcess {
 
     /// leader를 회수합니다(이미 끝난 zombie이거나 `SIGKILL` 뒤라 곧 돌아옵니다).
     fn reap(&mut self, remaining_processes: u32) -> Result<(), TerminalIoError> {
-        let status = self
-            .child
-            .wait()
-            .map_err(|err| TerminalIoError::from_io("waitpid", &err))?;
+        let status = match self.child.wait() {
+            Ok(status) => exit_status(status),
+            // 확인과 회수 사이에 다른 곳에서 회수했습니다(모듈 문서 "회수 전제").
+            Err(err) if err.raw_os_error() == Some(ECHILD) => TerminalExitStatus::Unknown,
+            Err(err) => return Err(TerminalIoError::from_io("waitpid", &err)),
+        };
         self.leader = Leader::Reaped {
             report: ExitReport {
-                status: exit_status(status),
+                status,
                 remaining_processes,
             },
             drain_deadline: Instant::now() + DRAIN_TIMEOUT,
@@ -458,8 +483,22 @@ impl PtyProcess {
     }
 }
 
-/// `waitid(P_PID, pid, WEXITED | WNOHANG | WNOWAIT)`: 끝났으면 `true`(회수하지 않음).
-fn peek_exited(pid: i32) -> Result<bool, TerminalIoError> {
+/// 회수하지 않고 본 leader 상태.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LeaderPeek {
+    /// 실행 중.
+    Running,
+    /// 끝났고 아직 회수 전(zombie).
+    Exited,
+    /// 이 모듈 밖에서 이미 회수함(`ECHILD`).
+    ReapedElsewhere,
+}
+
+/// `ECHILD`(macOS 값).
+const ECHILD: i32 = 10;
+
+/// `waitid(P_PID, pid, WEXITED | WNOHANG | WNOWAIT)`로 leader 상태를 봅니다(회수하지 않음).
+fn peek_leader(pid: i32) -> Result<LeaderPeek, TerminalIoError> {
     let id = u32::try_from(pid).map_err(|_| TerminalIoError {
         operation: "waitid",
         kind: io::ErrorKind::InvalidInput,
@@ -484,9 +523,16 @@ fn peek_exited(pid: i32) -> Result<bool, TerminalIoError> {
                     info.si_code,
                     sys::CLD_EXITED | sys::CLD_KILLED | sys::CLD_DUMPED
                 );
-            return Ok(exited);
+            return Ok(if exited {
+                LeaderPeek::Exited
+            } else {
+                LeaderPeek::Running
+            });
         }
         let err = io::Error::last_os_error();
+        if err.raw_os_error() == Some(ECHILD) {
+            return Ok(LeaderPeek::ReapedElsewhere);
+        }
         if err.kind() != io::ErrorKind::Interrupted {
             return Err(TerminalIoError::from_io("waitid", &err));
         }
@@ -588,6 +634,39 @@ impl TerminalProcess for PtyProcess {
     }
 
     fn terminate(&mut self) -> Result<ExitReport, TerminalIoError> {
+        let result = self.terminate_tree();
+        if result.is_err() {
+            self.terminate_failed = true;
+        }
+        result
+    }
+
+    fn write_input(&mut self, bytes: &[u8]) -> Result<(), TerminalIoError> {
+        self.master
+            .write_all(bytes)
+            .map_err(|err| TerminalIoError::from_io("write", &err))
+    }
+
+    fn output_reader(&self) -> Result<Box<dyn Read + Send>, TerminalIoError> {
+        let reader = self
+            .master
+            .try_clone()
+            .map_err(|err| TerminalIoError::from_io("dup master", &err))?;
+        Ok(Box::new(reader))
+    }
+
+    fn resize(&mut self, size: TerminalSize) -> Result<(), TerminalIoError> {
+        set_winsize(&self.master, size)
+    }
+
+    fn size(&self) -> Result<TerminalSize, TerminalIoError> {
+        get_winsize(&self.master)
+    }
+}
+
+impl PtyProcess {
+    /// 프로세스 tree를 종료합니다([`TerminalProcess::terminate`] 본문).
+    fn terminate_tree(&mut self) -> Result<ExitReport, TerminalIoError> {
         if let Some(report) = self.finished {
             return Ok(report);
         }
@@ -639,47 +718,39 @@ impl TerminalProcess for PtyProcess {
             }),
         }
     }
-
-    fn write_input(&mut self, bytes: &[u8]) -> Result<(), TerminalIoError> {
-        self.master
-            .write_all(bytes)
-            .map_err(|err| TerminalIoError::from_io("write", &err))
-    }
-
-    fn output_reader(&self) -> Result<Box<dyn Read + Send>, TerminalIoError> {
-        let reader = self
-            .master
-            .try_clone()
-            .map_err(|err| TerminalIoError::from_io("dup master", &err))?;
-        Ok(Box::new(reader))
-    }
-
-    fn resize(&mut self, size: TerminalSize) -> Result<(), TerminalIoError> {
-        set_winsize(&self.master, size)
-    }
-
-    fn size(&self) -> Result<TerminalSize, TerminalIoError> {
-        get_winsize(&self.master)
-    }
 }
 
 impl Drop for PtyProcess {
-    /// 정리되지 않은 세션은 drop할 때 프로세스 tree를 종료합니다(앱 종료 등).
+    /// 정리되지 않은 세션은 drop할 때 프로세스 tree를 종료합니다(앱 종료 등). 이미 `terminate`가
+    /// 실패한 handle은 마지막 `SIGKILL`만 보내고 기다리지 않습니다.
     fn drop(&mut self) {
-        if self.finished.is_none() {
-            let _ = self.terminate();
+        if self.finished.is_some() {
+            return;
         }
+        if self.terminate_failed {
+            let members = self.members().unwrap_or_default();
+            self.kill_all(&members);
+            return;
+        }
+        let _ = self.terminate();
     }
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::capability::{TerminalCapability, TerminalTrust};
     use crate::test_support::{pty_exclusive, pty_shared, OutputCollector, TempDir};
     use std::ffi::OsString;
     use std::path::{Path, PathBuf};
 
     pub(crate) const TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// 테스트 실행기용 token(신뢰된 가짜 프로젝트 창).
+    pub(crate) fn test_capability() -> TerminalCapability {
+        TerminalCapability::grant(crate::registry::tests::window(99), TerminalTrust::Trusted)
+            .unwrap()
+    }
 
     pub(crate) fn request_with_env(
         program: &str,
@@ -688,6 +759,7 @@ pub(crate) mod tests {
         env: Vec<(OsString, OsString)>,
     ) -> LaunchRequest {
         LaunchRequest::new(
+            test_capability(),
             PathBuf::from(program),
             args.iter().map(OsString::from).collect(),
             None,
@@ -706,7 +778,7 @@ pub(crate) mod tests {
         )
     }
 
-    fn launch(request: &LaunchRequest) -> Box<dyn TerminalProcess> {
+    fn launch(request: LaunchRequest) -> Box<dyn TerminalProcess> {
         PtyLauncher::with_grace(Duration::from_millis(500))
             .launch(request)
             .unwrap()
@@ -724,7 +796,7 @@ pub(crate) mod tests {
     }
 
     /// 실행해 끝날 때까지 기다리고 (종료 결과, 전체 출력)을 돌려줍니다.
-    fn run_to_end(request: &LaunchRequest) -> (ExitReport, String) {
+    fn run_to_end(request: LaunchRequest) -> (ExitReport, String) {
         let mut process = launch(request);
         let output = OutputCollector::start(process.output_reader().unwrap());
         let report = wait_exit(process.as_mut());
@@ -737,7 +809,7 @@ pub(crate) mod tests {
         let dir = TempDir::new();
         // 출력이 빠지지 않는지 여러 번 확인합니다(slave 보관·drain, 모듈 문서).
         for _ in 0..20 {
-            let (report, text) = run_to_end(&request(
+            let (report, text) = run_to_end(request(
                 "/bin/echo",
                 &["hello", "stellar terminal", "'quoted' $HOME"],
                 dir.path(),
@@ -756,7 +828,7 @@ pub(crate) mod tests {
             (OsString::from("PATH"), OsString::from("/usr/bin:/bin")),
             (OsString::from("STELLAR_TEST"), OsString::from("a b=c")),
         ];
-        let (report, text) = run_to_end(&request_with_env("/usr/bin/env", &[], dir.path(), env));
+        let (report, text) = run_to_end(request_with_env("/usr/bin/env", &[], dir.path(), env));
         assert_eq!(report.status, TerminalExitStatus::Exited(0));
         let mut lines: Vec<&str> = text
             .lines()
@@ -765,7 +837,7 @@ pub(crate) mod tests {
         lines.sort_unstable();
         assert_eq!(lines, ["PATH=/usr/bin:/bin", "STELLAR_TEST=a b=c"]);
 
-        let (_, text) = run_to_end(&request("/bin/pwd", &[], dir.path()));
+        let (_, text) = run_to_end(request("/bin/pwd", &[], dir.path()));
         assert_eq!(text, format!("{}\r\n", dir.path().display()));
     }
 
@@ -775,7 +847,7 @@ pub(crate) mod tests {
         let dir = TempDir::new();
         // `tty`는 stdin이 터미널이면 그 이름을 출력합니다. `/dev/tty`를 열 수 있으면 controlling
         // terminal이 있다는 뜻입니다.
-        let (report, text) = run_to_end(&request(
+        let (report, text) = run_to_end(request(
             "/bin/sh",
             &["-c", "/usr/bin/tty; exec 3</dev/tty && echo ctty-ok"],
             dir.path(),
@@ -789,7 +861,7 @@ pub(crate) mod tests {
     fn interactive_input_and_terminate() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&request("/bin/cat", &[], dir.path()));
+        let mut process = launch(request("/bin/cat", &[], dir.path()));
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         process.write_input(b"ping\n").unwrap();
         // tty echo와 cat 출력이 함께 옵니다.
@@ -819,7 +891,7 @@ pub(crate) mod tests {
         let dir = TempDir::new();
         let mut launcher = PtyLauncher::new();
         let err = launcher
-            .launch(&request("/nonexistent/stellar-shell", &[], dir.path()))
+            .launch(request("/nonexistent/stellar-shell", &[], dir.path()))
             .unwrap_err();
         assert!(
             matches!(err, LaunchError::Spawn(io) if io.kind == io::ErrorKind::NotFound),
@@ -835,6 +907,7 @@ pub(crate) mod tests {
         size: TerminalSize,
     ) -> LaunchRequest {
         LaunchRequest::new(
+            test_capability(),
             PathBuf::from(program),
             args.iter().map(OsString::from).collect(),
             None,
@@ -851,7 +924,7 @@ pub(crate) mod tests {
         for (rows, cols) in [(24, 80), (33, 101), (1, 1), (200, 500)] {
             let size = TerminalSize::new(rows, cols).unwrap();
             let (report, text) =
-                run_to_end(&request_sized("/bin/stty", &["size"], dir.path(), size));
+                run_to_end(request_sized("/bin/stty", &["size"], dir.path(), size));
             assert_eq!(report.status, TerminalExitStatus::Exited(0));
             assert_eq!(text, format!("{rows} {cols}\r\n"));
         }
@@ -861,7 +934,7 @@ pub(crate) mod tests {
     fn resize_fixture_columns_and_rows() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&request(
+        let mut process = launch(request(
             "/bin/sh",
             &["-c", "read line; /bin/stty size"],
             dir.path(),
@@ -882,7 +955,7 @@ pub(crate) mod tests {
     fn resize_delivers_sigwinch_to_foreground_job() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&request(
+        let mut process = launch(request(
             "/bin/sh",
             &[
                 "-c",
@@ -900,6 +973,83 @@ pub(crate) mod tests {
 
     extern "C" {
         fn isatty(fd: c_int) -> c_int;
+        fn waitpid(pid: c_int, status: *mut c_int, options: c_int) -> c_int;
+    }
+
+    /// 테스트가 직접 child를 회수합니다(`waitpid(pid, WNOHANG)` 반복). 회수하면 wait status,
+    /// 이미 다른 곳에서 회수했으면 `None`.
+    fn reap_from_test(pid: i32) -> Option<c_int> {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let mut status: c_int = 0;
+            // SAFETY: status는 호출 동안 살아 있는 int입니다.
+            let rc = unsafe { waitpid(pid, &mut status, sys::WNOHANG) };
+            if rc == pid {
+                return Some(status);
+            }
+            if rc < 0 {
+                assert_eq!(io::Error::last_os_error().raw_os_error(), Some(ECHILD));
+                return None;
+            }
+            assert!(Instant::now() < deadline, "child가 끝나지 않았습니다");
+            thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    /// 다른 코드가 leader를 회수해도(`ECHILD`) 세션은 `Unknown`으로 끝나고 출력은 EOF가 됩니다.
+    #[test]
+    fn leader_reaped_elsewhere_finishes_with_unknown_status() {
+        let _pty = pty_shared();
+        let dir = TempDir::new();
+        let mut process = launch(request("/bin/sh", &["-c", "read line; exit 5"], dir.path()));
+        let leader = i32::try_from(process.pid()).unwrap();
+        let output = OutputCollector::start(process.output_reader().unwrap());
+        process.write_input(b"\n").unwrap();
+        // 앱의 다른 코드가 waitpid로 회수한 상황.
+        let status = reap_from_test(leader).expect("테스트가 먼저 회수해야 합니다");
+        assert_eq!((status >> 8) & 0xff, 5);
+        let report = wait_exit(process.as_mut());
+        assert_eq!(
+            report,
+            ExitReport {
+                status: TerminalExitStatus::Unknown,
+                remaining_processes: 0
+            }
+        );
+        // 반복 호출·종료도 같은 결과이고 오류가 아닙니다.
+        assert_eq!(process.poll_exit().unwrap(), Some(report));
+        assert_eq!(process.terminate().unwrap(), report);
+        output.wait_eof(TIMEOUT);
+    }
+
+    /// `terminate`가 이미 실패한 handle은 drop에서 다시 기다리지 않고 `SIGKILL`만 보냅니다.
+    #[test]
+    fn drop_after_failed_terminate_does_not_wait_again() {
+        let _pty = pty_shared();
+        let dir = TempDir::new();
+        let pair = PtyPair::open(TerminalSize::DEFAULT).unwrap();
+        let mut process = PtyProcess::spawn(
+            pair,
+            &request("/bin/sleep", &["300"], dir.path()),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+        let leader = process.pid;
+        let mut guard = KillOnDrop(vec![leader]);
+        // 끝나지 않는 leader 때문에 terminate가 실패한 뒤의 상태를 만듭니다.
+        process.terminate_failed = true;
+        let started = Instant::now();
+        drop(process);
+        // 유예 시간(60초)도 KILL_WAIT도 기다리지 않습니다.
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "{:?}",
+            started.elapsed()
+        );
+        let status = reap_from_test(leader).expect("drop은 leader를 회수하지 않습니다");
+        // 회수한 pid는 재사용될 수 있으므로 guard가 신호를 보내지 않게 비웁니다.
+        guard.0.clear();
+        assert_eq!(status & 0x7f, sys::SIGKILL);
     }
 
     /// 세 갈래 프로세스 tree를 만드는 셸 스크립트 앞부분. 각 pid를 `pid:<n>` 줄로 출력합니다.
@@ -982,7 +1132,7 @@ pub(crate) mod tests {
     fn child_exit_cleans_up_whole_session() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&tree_request("read line; exit 0", dir.path()));
+        let mut process = launch(tree_request("read line; exit 0", dir.path()));
         let leader = i32::try_from(process.pid()).unwrap();
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         let pids = wait_tree_ready(&mut output);
@@ -1005,7 +1155,7 @@ pub(crate) mod tests {
     fn external_signal_to_leader_cleans_up_session() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&tree_request("while :; do /bin/sleep 1; done", dir.path()));
+        let mut process = launch(tree_request("while :; do /bin/sleep 1; done", dir.path()));
         let leader = i32::try_from(process.pid()).unwrap();
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         let pids = wait_tree_ready(&mut output);
@@ -1022,7 +1172,7 @@ pub(crate) mod tests {
     fn terminate_kills_other_groups_and_sighup_ignoring_jobs() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let mut process = launch(&tree_request("while :; do /bin/sleep 1; done", dir.path()));
+        let mut process = launch(tree_request("while :; do /bin/sleep 1; done", dir.path()));
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         let pids = wait_tree_ready(&mut output);
         let _guard = KillOnDrop(pids.clone());
@@ -1041,7 +1191,7 @@ pub(crate) mod tests {
     fn dropping_unfinished_process_terminates_tree() {
         let _pty = pty_shared();
         let dir = TempDir::new();
-        let process = launch(&tree_request("while :; do /bin/sleep 1; done", dir.path()));
+        let process = launch(tree_request("while :; do /bin/sleep 1; done", dir.path()));
         let leader = i32::try_from(process.pid()).unwrap();
         let mut output = OutputCollector::start(process.output_reader().unwrap());
         let pids = wait_tree_ready(&mut output);
@@ -1058,7 +1208,7 @@ pub(crate) mod tests {
         let _pty = pty_exclusive();
         let before = tty_fd_count();
         let dir = TempDir::new();
-        let mut process = launch(&request("/bin/sleep", &["300"], dir.path()));
+        let mut process = launch(request("/bin/sleep", &["300"], dir.path()));
         // master + 부모가 보관한 slave.
         assert_eq!(tty_fd_count(), before + 2);
         process.terminate().unwrap();

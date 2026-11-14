@@ -14,6 +14,9 @@
 //! | 읽을 수 없음(형식·버전·손상) | 봉인 [`SealReason::Unreadable`] — 새 reader가 읽을 수 있게 보존 |
 //! | 파일 이름과 창 id가 다름 | 봉인 [`SealReason::WindowMismatch`] |
 //!
+//! 실행 중 checkout·merge·rebase 등으로 기준점이 바뀌면 복원과 별개로 active journal을 봉인합니다
+//! ([`SealReason::BaseChanged`], XXV.1.4 `journal_base_change`).
+//!
 //! 봉인 파일: `sealed/<window>.<순번 6자리>.<사유>.stlhjnl`. 같은 디렉터리 안 rename이라 내용 bytes가 그대로
 //! 보존되고, 프로젝트 내부 정책에서도 guard `.gitignore`(`*`)가 하위 디렉터리를 함께 제외합니다.
 
@@ -25,6 +28,7 @@ use stellar_core_types::ids::StableId;
 use crate::grouping::HistoryGroupingPolicy;
 use crate::history::History;
 use crate::journal::{HistoryJournal, JournalAccess, JournalBase, JOURNAL_SCHEMA_VERSION};
+use crate::journal_base_change::BaseChangeKind;
 use crate::journal_store::{JournalStore, JournalStoreError, JOURNAL_EXTENSION};
 use crate::window::WindowHistory;
 
@@ -42,15 +46,25 @@ pub enum SealReason {
     Unreadable,
     /// 파일 이름과 journal 안 창 id가 다릅니다.
     WindowMismatch,
+    /// 실행 중 기준점이 바뀌었습니다(checkout·merge·rebase 등, XXV.1.4).
+    BaseChanged(BaseChangeKind),
 }
 
 impl SealReason {
     /// 모든 사유.
-    pub const ALL: [SealReason; 4] = [
+    pub const ALL: [SealReason; 12] = [
         SealReason::BaseMismatch,
         SealReason::ReadOnly,
         SealReason::Unreadable,
         SealReason::WindowMismatch,
+        SealReason::BaseChanged(BaseChangeKind::Checkout),
+        SealReason::BaseChanged(BaseChangeKind::Merge),
+        SealReason::BaseChanged(BaseChangeKind::Rebase),
+        SealReason::BaseChanged(BaseChangeKind::CherryPick),
+        SealReason::BaseChanged(BaseChangeKind::Revert),
+        SealReason::BaseChanged(BaseChangeKind::Reset),
+        SealReason::BaseChanged(BaseChangeKind::ApplyMailbox),
+        SealReason::BaseChanged(BaseChangeKind::Other),
     ];
 
     /// 파일 이름 token.
@@ -60,6 +74,7 @@ impl SealReason {
             SealReason::ReadOnly => "read-only",
             SealReason::Unreadable => "unreadable",
             SealReason::WindowMismatch => "window-mismatch",
+            SealReason::BaseChanged(kind) => kind.token(),
         }
     }
 
@@ -107,7 +122,7 @@ pub struct RestoredWindow {
     pub outcome: RestoreOutcome,
 }
 
-fn parse_sealed_name(name: &str) -> Option<(WindowSessionId, u32, SealReason)> {
+pub(crate) fn parse_sealed_name(name: &str) -> Option<(WindowSessionId, u32, SealReason)> {
     let stem = name.strip_suffix(&format!(".{JOURNAL_EXTENSION}"))?;
     let mut parts = stem.split('.');
     let window = parts.next()?.parse::<StableId>().ok()?;
@@ -129,8 +144,8 @@ impl JournalStore {
         self.dir().join(SEALED_DIR)
     }
 
-    /// 봉인된 journal 목록(창, 순번 순).
-    pub fn list_sealed(&self) -> Result<Vec<SealedJournal>, JournalStoreError> {
+    /// `sealed/` 안에서 봉인 이름 형식인 항목과 일반 파일인지 여부(symlink는 따라가지 않음).
+    fn scan_sealed(&self) -> Result<Vec<(SealedJournal, bool)>, JournalStoreError> {
         let entries = match std::fs::read_dir(self.sealed_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -143,20 +158,50 @@ impl JournalStore {
                 continue;
             };
             if let Some((window, index, reason)) = parse_sealed_name(&name) {
-                out.push(SealedJournal {
-                    path: entry.path(),
-                    window,
-                    index,
-                    reason,
-                });
+                let is_file = entry.file_type()?.is_file();
+                out.push((
+                    SealedJournal {
+                        path: entry.path(),
+                        window,
+                        index,
+                        reason,
+                    },
+                    is_file,
+                ));
             }
         }
+        Ok(out)
+    }
+
+    /// 봉인된 journal 목록(창, 순번 순). 이름이 형식과 같아도 일반 파일이 아니면(디렉터리·symlink) 봉인
+    /// session이 아니므로 제외합니다(retention도 세거나 지우지 않음).
+    pub fn list_sealed(&self) -> Result<Vec<SealedJournal>, JournalStoreError> {
+        let mut out: Vec<SealedJournal> = self
+            .scan_sealed()?
+            .into_iter()
+            .filter_map(|(sealed, is_file)| is_file.then_some(sealed))
+            .collect();
         out.sort_by_key(|s| (s.window, s.index));
         Ok(out)
     }
 
-    /// 창의 active journal을 봉인 session으로 옮깁니다. active journal이 없으면 `None`입니다.
+    /// 창의 active journal을 봉인 session으로 옮깁니다. active journal이 없으면 `None`입니다. 봉인한 뒤
+    /// 봉인 session 경계를 바로 적용합니다(방금 봉인한 session은 유지, XXV.1.5).
     pub fn seal(
+        &self,
+        window: WindowSessionId,
+        reason: SealReason,
+    ) -> Result<Option<SealedJournal>, JournalStoreError> {
+        let sealed = self.seal_unpruned(window, reason)?;
+        if let Some(sealed) = &sealed {
+            self.prune_after_seal(&[sealed.path.as_path()]);
+        }
+        Ok(sealed)
+    }
+
+    /// [`JournalStore::seal`]과 같지만 봉인 session 경계를 적용하지 않습니다. 한 호출에서 여러 창을 봉인하는
+    /// caller(XXV.1.4)는 끝에 한 번, 그 호출에서 봉인한 session을 모두 지키며 정리합니다.
+    pub(crate) fn seal_unpruned(
         &self,
         window: WindowSessionId,
         reason: SealReason,
@@ -167,11 +212,12 @@ impl JournalStore {
             return Ok(None);
         }
         std::fs::create_dir_all(self.sealed_dir())?;
+        // 순번은 봉인 이름 형식인 모든 항목(일반 파일이 아닌 것 포함)을 피해 정합니다(rename 대상 충돌 방지).
         let index = self
-            .list_sealed()?
+            .scan_sealed()?
             .iter()
-            .filter(|s| s.window == window)
-            .map(|s| s.index)
+            .filter(|(s, _)| s.window == window)
+            .map(|(s, _)| s.index)
             .max()
             .unwrap_or(0)
             .checked_add(1)
@@ -184,6 +230,12 @@ impl JournalStore {
             reason.token()
         ));
         std::fs::rename(&active, &path)?;
+        // retention 나이는 봉인 시점부터 셉니다(XXV.1.5). 내용은 바꾸지 않고 수정 시각만 갱신하며, 실패해도
+        // 봉인 자체는 끝났으므로 마지막 기록 시각 기준으로 남습니다(더 일찍 정리될 뿐 섞이지 않음).
+        let _ = std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_modified(std::time::SystemTime::now()));
         Ok(Some(SealedJournal {
             path,
             window,

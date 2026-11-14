@@ -2,7 +2,7 @@
 
 - 문서 종류: 규범(normative) 명세와 현재 구현 기록.
 - WBS: XXVIII.2.4
-- 기준 commit: `78a574a` 위의 구현. 형식은 [`stellar-format.md`](stellar-format.md)(이하 "형식 명세"),
+- 기준 commit: `78a574a` 위의 구현(§2·§4.6·§8의 YAML 항목은 `24728e3`에 맞춰 갱신). 형식은 [`stellar-format.md`](stellar-format.md)(이하 "형식 명세"),
   보안 한도는 [`stellar-format-security.md`](stellar-format-security.md)(이하 "보안 문서")에 있습니다.
 - 표기: 형식 명세 §0과 같습니다.
 - 이 문서의 정책은 이미 Accepted된 ADR(ADR-0004, ADR-0007, ADR-0008, ADR-0010, ADR-0011, ADR-0012)의
@@ -27,8 +27,7 @@
 | chunk kind code | envelope·pointer `kind` | 초기 6종 | `storage::chunk::kinds::INITIAL_KINDS` | 읽기에서 pointer kind와 envelope kind가 같아야 함. registry 해석은 열기에서 쓰지 않음(§4.3) |
 | 문서 ChunkId 유도 domain | 유도 입력 | `stellar/document-chunk-id/v1\0` | `project::document_io::serialize` | reader는 유도를 가정하지 않음 |
 | `stellar.yaml` 스키마 버전 | `schema_version` | 1 | `project::manifest::CURRENT_SCHEMA_VERSION` | 형식(`parse_u32`)만 검사, 값 비교 없음 |
-| `stellar.lock.yaml` 스키마 버전 | `schema_version` | 1 | `project::lock::CURRENT_LOCK_SCHEMA_VERSION` | 형식만 검사, 값 비교 없음 |
-| (미연결 모델) lock 스키마 버전 | `schema_version` | 1 | `dependencies::lock::LOCK_SCHEMA_VERSION` | 정확히 1, 아니면 `UnsupportedVersion`. 열기 경로에 연결되지 않음 |
+| `stellar.lock.yaml` 스키마 버전 | `schema_version` | 1 | `project::lock::CURRENT_LOCK_SCHEMA_VERSION`(= `dependencies::lock::LOCK_SCHEMA_VERSION`) | 정확히 1. 엄격 정수가 아니면 `InvalidValue`(`InvalidInteger`), 다른 값이면 `InvalidValue`(`UnsupportedVersion`)(ADR-0021) |
 | 복구 스냅샷 버전(앱 로컬) | 첫 `u32` | 1 | `project::recovery_payload::RECOVERY_PAYLOAD_VERSION` | 정확히 일치 |
 | 신뢰 목록 스키마 버전(앱 로컬) | YAML `schema_version` | 1 | `project::trust_store::TRUST_STORE_SCHEMA_VERSION` | 정확히 일치. 아니면 `Schema` 오류 |
 
@@ -39,7 +38,7 @@
 | chunk kind code | 형식 명세 §7 표 | ADR-0010, `storage::chunk::kinds` golden test |
 | tagged field tag(AssetRecord, SourceMetadata) | 형식 명세 §15 표 | `assets::record` |
 | 문서 ChunkId family | 1, 2, 3 | `project::document_io::serialize` |
-| 의미 모델 payload 안의 registry(NodeKind `u16`, `ColorSpace` tag, OrderKey 등) | XXVIII.1.3 범위 | `document::node_kind`, ADR-0003, ADR-0008 |
+| 의미 모델 payload 안의 registry(NodeKind `u16`, `ColorSpace` tag, OrderKey 등) | [`stellar-semantic-model.md`](stellar-semantic-model.md) §2 | `document::node_kind`, ADR-0003, ADR-0008 |
 
 `ErrorCode`, FFI `StellarStatus` 등 ABI 값은 파일 형식이 아니므로 이 문서의 범위 밖입니다(ADR-0007,
 ADR-0009).
@@ -144,12 +143,13 @@ ADR-0009).
 | data | 동작 |
 |---|---|
 | 정의되지 않은 키(어느 매핑이든) | `UnknownKey`. 프로젝트를 열지 못함(`ProbeError::ManifestSchema`) |
-| `schema_version`이 엄격 `u32` 아님(`01`, `+1`, `1.0`, `yes` 등) | `InvalidSchemaVersion` |
-| `schema_version` = 2 이상 | 받음(값 비교 없음) |
-| `stellar-dependencies` 형식의 키(`library_id`, `local_override`, 매핑 `version`) | `UnknownKey` |
+| `stellar.yaml` `schema_version`이 엄격 `u32` 아님(`01`, `+1`, `1.0`, `yes` 등) | `InvalidSchemaVersion` |
+| `stellar.yaml` `schema_version` = 2 이상 | 받음(값 비교 없음) |
+| `stellar.lock.yaml` `schema_version`이 1이 아님 | `InvalidValue`(`UnsupportedVersion`, 엄격 정수가 아니면 `InvalidInteger`) |
+| `library_id` 없는 이전 의존성 entry, 6필드 이전 lock entry | `MissingField`(형식 명세 §14.5, §14.6, ADR-0021) |
 
-따라서 YAML에 키를 하나라도 추가하면 기준 commit의 reader는 그 프로젝트를 열지 못합니다. YAML의 스키마
-버전 번호는 현재 호환성 판단에 쓰이지 않습니다.
+따라서 YAML에 키를 하나라도 추가하면 기준 commit의 reader는 그 프로젝트를 열지 못합니다. `stellar.yaml`의
+스키마 버전 번호는 현재 호환성 판단에 쓰이지 않고, `stellar.lock.yaml`은 1이 아니면 거부합니다.
 
 ### 4.7 앱 로컬 형식
 
@@ -216,8 +216,7 @@ ADR-0009).
 3. 과거 스키마 버전 지원 기간과, 오래된 migration step을 제거할 수 있는 조건.
 4. 형식 요소를 deprecated로 표시하는 방법(경고, 진단, 문서 표기).
 5. 앱 release 번호와 형식·스키마 버전의 대응, 공개 형식 버전 동결(XXVIII.3.1, XXVIII.3.3).
-6. `stellar.yaml`·`stellar.lock.yaml`의 `schema_version` 비교 규칙과, `stellar-dependencies`의 선언·lock
-   모델(형식 명세 §14.6)과의 통합.
+6. `stellar.yaml`의 `schema_version` 비교 규칙. 의존성 선언·lock 모델 통합은 ADR-0021이 정했습니다.
 7. 기술 아키텍처 §19 경로 이름과 구현 경로 중 어느 쪽으로 맞출지(ADR-0010).
 
 ## 9. 기술 아키텍처 §36과 현재 구현의 차이

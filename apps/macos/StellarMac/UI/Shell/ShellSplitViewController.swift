@@ -110,12 +110,14 @@ final class ShellSplitViewController: NSSplitViewController {
     override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(toggleInspector(_:)):
-            (item as? NSMenuItem)?.title = inspectorItem.isCollapsed ? "Show Inspector" : "Hide Inspector"
+            let title = inspectorItem.isCollapsed ? ShellFrameStrings.showInspector : ShellFrameStrings.hideInspector
+            if let menuItem = item as? NSMenuItem, menuItem.title != title { menuItem.title = title }
             return true
         case #selector(toggleAuxiliaryPanel(_:)):
             guard let auxiliaryItem = centerController.auxiliaryItem else { return false }
-            let title = centerController.auxiliaryTitle ?? ""
-            (item as? NSMenuItem)?.title = auxiliaryItem.isCollapsed ? "Show \(title)" : "Hide \(title)"
+            let name = centerController.auxiliaryTitle ?? ""
+            let title = auxiliaryItem.isCollapsed ? ShellFrameStrings.showPane(name) : ShellFrameStrings.hidePane(name)
+            if let menuItem = item as? NSMenuItem, menuItem.title != title { menuItem.title = title }
             return true
         default:
             return super.validateUserInterfaceItem(item)

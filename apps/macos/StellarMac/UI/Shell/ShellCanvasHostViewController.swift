@@ -13,7 +13,7 @@ final class ShellCanvasHostViewController: NSViewController, ShellContentSlot {
     let canvasView: CanvasView
 
     var paneViewController: NSViewController { self }
-    let paneTitle = "Canvas"
+    let paneTitle = ShellFrameStrings.canvas
 
     /// - Parameter runtimeHandle: drawable 변경을 전달할 코어 runtime handle. nil이면 전달하지 않습니다.
     init(runtimeHandle: UInt64?) {
@@ -28,10 +28,10 @@ final class ShellCanvasHostViewController: NSViewController, ShellContentSlot {
     }
 
     override func loadView() {
+        // 루트는 배치용 컨테이너라 접근성 요소로 만들지 않습니다. "Canvas" 이름은 캔버스 뷰 하나에만 두어
+        // VoiceOver가 같은 이름을 두 번(그룹·영역) 읽지 않게 합니다(가이드 8.3).
         let root = NSView()
-        root.setAccessibilityElement(true)
-        root.setAccessibilityRole(.group)
-        root.setAccessibilityLabel(paneTitle)
+        root.setAccessibilityElement(false)
 
         // 캔버스 상태(선택·도구) 노출은 XII.8.1 범위입니다. 여기서는 역할과 이름만 지정합니다.
         canvasView.setAccessibilityElement(true)

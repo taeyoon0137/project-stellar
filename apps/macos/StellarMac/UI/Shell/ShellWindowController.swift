@@ -8,7 +8,8 @@ import AppKit
 /// `NSWindowRestoration`이 맡습니다(가이드 2.6).
 ///
 /// 코어 연결 시 이 controller가 창의 `ProjectWindowSession` handle을 소유합니다(가이드 2.5, XII.2.2).
-/// 지금은 `ShellFrameDataSource`만 받습니다.
+/// 지금은 `ShellFrameDataSource`만 받습니다. 프로젝트 창에서는 data source(`ShellProjectFrameDataSource`)가 코어
+/// 프로젝트 session handle을 소유하고, 이 controller가 data source를 소유합니다.
 final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuItemValidation,
     NSToolbarItemValidation
 {
@@ -25,10 +26,18 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     /// 반영 횟수(검사용).
     private(set) var appliedSnapshotCount = 0
 
+    /// 창을 닫아도 되는지 묻는 hook(예: 활성 에이전트 세션 확인). nil이면 항상 닫습니다.
+    var shouldCloseHandler: (() -> Bool)?
+    /// 창이 닫힐 때 한 번 호출합니다(프로젝트 session 닫기, 시작 창 표시).
+    var willCloseHandler: (() -> Void)?
+    /// 창 복원 상태에 값을 더하는 hook(예: 프로젝트 경로). `NSWindowRestoration`이 다시 읽습니다(가이드 2.6).
+    var restorableStateEncoder: ((NSCoder) -> Void)?
+
     init(
         configuration: ShellWindowConfiguration = .standard,
         dataSource: any ShellFrameDataSource,
-        slots: ShellFrameSlots
+        slots: ShellFrameSlots,
+        toolbarItemProvider: ShellToolbarItemProviding? = nil
     ) {
         self.configuration = configuration
         self.dataSource = dataSource
@@ -53,7 +62,9 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         window.restorationClass = ShellWindowRestoration.self
 
         splitController = ShellSplitViewController(slots: slots, configuration: configuration)
-        toolbarController = ShellToolbarController(identifier: configuration.toolbarIdentifier, snapshot: initial)
+        toolbarController = ShellToolbarController(
+            identifier: configuration.toolbarIdentifier, snapshot: initial, itemProvider: toolbarItemProvider
+        )
         super.init(window: window)
 
         window.delegate = self
@@ -165,19 +176,46 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
 
     // MARK: - 명령(메뉴 막대·툴바 공용, 가이드 6.1 "툴바의 모든 명령은 메뉴 막대에도")
 
+    // 동작 메서드의 guard는 활성화 검사(`validate(_:)`)와 같은 조건을 씁니다. 메뉴·툴바 밖의
+    // `sendAction`이나 직접 호출도 ready가 아닌 창에서 명령을 보내지 않습니다.
+
     @objc func navigateBack(_ sender: Any?) {
-        guard snapshot.navigation.canGoBack else { return }
+        guard canNavigateBack else { return }
         dataSource.send(.navigateBack)
     }
 
     @objc func navigateForward(_ sender: Any?) {
-        guard snapshot.navigation.canGoForward else { return }
+        guard canNavigateForward else { return }
         dataSource.send(.navigateForward)
+    }
+
+    private var canNavigateBack: Bool {
+        snapshot.status == .ready && snapshot.navigation.canGoBack
+    }
+
+    private var canNavigateForward: Bool {
+        snapshot.status == .ready && snapshot.navigation.canGoForward
     }
 
     /// 툴바 프로젝트 검색 필드로 포커스를 옮깁니다(사용자 명령으로만, 가이드 8.2).
     @objc func focusProjectSearch(_ sender: Any?) {
+        guard toolbarController.isSearchUsable else { return }
         toolbarController.searchToolbarItem?.beginSearchInteraction()
+    }
+
+    /// 더 보기 메뉴 동작의 메뉴 막대 항목(`ShellFrameMenuItems.makeFrameActionItem`). sender의 명령 ID를 보냅니다.
+    @objc func performFrameAction(_ sender: Any?) {
+        guard let id = Self.frameActionID(from: sender), isFrameActionEnabled(id) else { return }
+        dataSource.send(.perform(id))
+    }
+
+    private static func frameActionID(from sender: Any?) -> ShellCommandID? {
+        guard let raw = (sender as? NSMenuItem)?.representedObject as? String else { return nil }
+        return ShellCommandID(raw)
+    }
+
+    private func isFrameActionEnabled(_ id: ShellCommandID) -> Bool {
+        snapshot.moreActions.contains { $0.id == id && $0.isEnabled }
     }
 
     // first responder가 창 자체일 때도 pane 명령이 split controller에 닿도록 창 delegate에서
@@ -195,6 +233,22 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
         splitController.toggleAuxiliaryPanel(sender)
     }
 
+    // MARK: - NSWindowDelegate
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        shouldCloseHandler?() ?? true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        let handler = willCloseHandler
+        willCloseHandler = nil
+        handler?()
+    }
+
+    func window(_ window: NSWindow, willEncodeRestorableState state: NSCoder) {
+        restorableStateEncoder?(state)
+    }
+
     // MARK: - 활성화 검사(숨기지 않고 비활성화, 가이드 8.1)
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
@@ -208,11 +262,14 @@ final class ShellWindowController: NSWindowController, NSWindowDelegate, NSMenuI
     private func validate(_ item: any NSValidatedUserInterfaceItem) -> Bool {
         switch item.action {
         case #selector(navigateBack(_:)):
-            return snapshot.status == .ready && snapshot.navigation.canGoBack
+            return canNavigateBack
         case #selector(navigateForward(_:)):
-            return snapshot.status == .ready && snapshot.navigation.canGoForward
+            return canNavigateForward
         case #selector(focusProjectSearch(_:)):
-            return snapshot.status == .ready && toolbarController.searchToolbarItem != nil
+            return toolbarController.isSearchUsable && toolbarController.searchToolbarItem != nil
+        case #selector(performFrameAction(_:)):
+            guard let id = Self.frameActionID(from: item) else { return false }
+            return isFrameActionEnabled(id)
         case #selector(toggleSidebar(_:)), #selector(toggleInspector(_:)), #selector(toggleAuxiliaryPanel(_:)):
             return splitController.validateUserInterfaceItem(item)
         default:

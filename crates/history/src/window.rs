@@ -68,6 +68,11 @@ impl WindowHistory {
         &self.history
     }
 
+    /// 이 창의 history(변경, journal 기준점 변경 XXV.1.4 전용).
+    pub(crate) fn history_mut(&mut self) -> &mut History {
+        &mut self.history
+    }
+
     /// 이 창의 view 상태(선택).
     pub fn view(&self) -> &WindowViewState {
         &self.view
@@ -258,6 +263,11 @@ impl WindowHistories {
     /// 전용이라 프로젝트 파일에 아무것도 기록하지 않습니다(§23.1). 열려 있지 않았으면 `false`.
     pub fn close(&mut self, window: WindowSessionId) -> bool {
         self.windows.remove(&window).is_some()
+    }
+
+    /// 열린 창 history를 모두 돌려줍니다(창 id 순, 변경 가능).
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut WindowHistory> {
+        self.windows.values_mut()
     }
 
     /// 열린 창 수.

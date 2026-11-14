@@ -62,7 +62,7 @@ final class ShellToolBarView: NSView {
 
         setAccessibilityElement(true)
         setAccessibilityRole(.toolbar)
-        setAccessibilityLabel("Tools")
+        setAccessibilityLabel(ShellFrameStrings.tools)
     }
 
     @available(*, unavailable)

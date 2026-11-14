@@ -6,7 +6,7 @@ import AppKit
 /// - 다중 선택은 창별 선택 상태와 같습니다(VII.3). 사이드바 선택 변경은 `.setSelection`으로 보내고,
 ///   캔버스 등 외부에서 바뀐 선택은 조상을 펼쳐 보이게 합니다.
 /// - 인라인 이름 변경, 표시·잠금 토글, 문맥 메뉴, 드래그 재정렬·재부모화(드롭 사전 검증 포함).
-/// - snapshot 반영: 구조 번호가 같으면 보이는 행만 갱신하고, 다르면 목록을 다시 읽습니다(아키텍처 §6.3).
+/// - snapshot 반영: 구조 번호가 같으면 이미 만들어진 행만 갱신하고, 다르면 목록을 다시 읽습니다(아키텍처 §6.3).
 @MainActor
 final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate,
     SidebarOutlineActionHandling, SidebarLayerCellDelegate {
@@ -37,7 +37,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
     var showsTogglesAlways = false {
         didSet {
             guard oldValue != showsTogglesAlways else { return }
-            forEachVisibleLayerCell { cell, _ in cell.showsTogglesAlways = showsTogglesAlways }
+            forEachAvailableLayerCell { cell, _ in cell.showsTogglesAlways = showsTogglesAlways }
         }
     }
 
@@ -99,7 +99,7 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         if viewChanged || old.generation == 0 || old.layers.structureRevision != new.layers.structureRevision {
             reloadStructure()
         } else {
-            refreshVisibleRows(previous: old.layers)
+            refreshAvailableRows(previous: old.layers)
         }
         syncSelection()
     }
@@ -145,21 +145,23 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
         }
     }
 
-    /// 구조가 같을 때: 화면에 보이는 행 가운데 값이 바뀐 행만 다시 채웁니다.
-    private func refreshVisibleRows(previous: SidebarLayerTree) {
-        forEachVisibleLayerCell { cell, id in
+    /// 구조가 같을 때: 이미 만들어진 행 가운데 값이 바뀐 행만 제자리에서 다시 채웁니다.
+    private func refreshAvailableRows(previous: SidebarLayerTree) {
+        forEachAvailableLayerCell { cell, id in
             guard let row = snapshot.layers.rows[id], previous.rows[id] != row else { return }
             configure(cell, row: row)
         }
     }
 
-    private func forEachVisibleLayerCell(_ body: (SidebarLayerCellView, SidebarStableID) -> Void) {
-        let range = outline.rows(in: outline.visibleRect)
-        guard range.length > 0 else { return }
-        for row in range.location..<(range.location + range.length) {
-            guard let item = outline.item(atRow: row) as? SidebarOutlineItem, let id = item.layerID,
-                  let cell = outline.view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarLayerCellView else {
-                continue
+    /// 목록이 만들어 둔 모든 레이어 행 셀을 돕니다.
+    ///
+    /// 보이는 범위(`visibleRect`)만 돌면 안 됩니다. NSTableView는 스크롤을 위해 보이는 범위 밖 행 뷰도 미리 만들어
+    /// 두고(responsive scrolling overdraw), 그 행이 화면에 들어와도 `viewFor`를 다시 부르지 않기 때문입니다.
+    private func forEachAvailableLayerCell(_ body: (SidebarLayerCellView, SidebarStableID) -> Void) {
+        outline.enumerateAvailableRowViews { rowView, row in
+            guard let id = (outline.item(atRow: row) as? SidebarOutlineItem)?.layerID,
+                  let cell = rowView.view(atColumn: 0) as? SidebarLayerCellView else {
+                return
             }
             body(cell, id)
         }
@@ -288,6 +290,8 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
     private func configure(_ cell: SidebarLayerCellView, row: SidebarLayerRow) {
         cell.configure(row: row)
         let id = row.id
+        // VoiceOver custom action. AppKit이 셀 view의 값을 행의 AXCell 동작으로 내보냅니다(`SidebarAccessibility`).
+        // 행 하나에만 적용하고 선택은 바꾸지 않습니다.
         cell.setAccessibilityCustomActions([
             NSAccessibilityCustomAction(name: SidebarStrings.rename) { [weak self] in
                 self?.beginRename(id) ?? false
@@ -458,6 +462,8 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
     }
 
     /// 대상에 대한 문맥 메뉴 항목을 채웁니다. 활성화 여부는 provider 사전 검증으로 정합니다.
+    ///
+    /// 문맥 메뉴에는 단축키 표시를 넣지 않습니다(HIG Context menus). 단축키는 메뉴 막대 항목(XII.6.5)이 보입니다.
     func fill(_ menu: NSMenu, targets: [SidebarStableID]) {
         menu.removeAllItems()
         menuTargets = targets
@@ -477,7 +483,6 @@ final class SidebarLayersController: NSObject, NSOutlineViewDataSource, NSOutlin
             if index > 0 { menu.addItem(.separator()) }
             for (action, title) in group {
                 let item = NSMenuItem(title: title, action: #selector(contextAction(_:)), keyEquivalent: "")
-                SidebarKeyboardShortcuts.apply(action, to: item)
                 item.target = self
                 item.tag = SidebarOutlineAction.allCases.firstIndex(of: action) ?? 0
                 item.isEnabled = canPerform(action, targets: targets)

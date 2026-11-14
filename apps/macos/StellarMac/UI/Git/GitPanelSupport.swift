@@ -106,6 +106,145 @@ struct GitPagedRowCache<Row> {
         }
         return startRow..<(startRow + rows.count)
     }
+
+    /// 코어가 거부한 요청의 요청 중 표시를 지워 다시 요청할 수 있게 합니다.
+    mutating func cancelRequest(generation: UInt64, rows: Range<Int>) {
+        guard generation == self.generation, !rows.isEmpty else { return }
+        inFlight.remove(rows.lowerBound / pageSize)
+    }
+}
+
+// MARK: - 부모별 자식 페이지 캐시
+
+/// 변경 계층용 페이지 캐시(XIV.13.1). 부모 노드마다 자식 순번을 페이지로 나누어 받습니다.
+///
+/// - 구조 번호가 바뀌면 모든 페이지를 버립니다(같은 순번이 다른 노드일 수 있음).
+/// - 구조가 같고 세대만 바뀌면 직전 페이지를 새 페이지가 올 때까지 stale 대체값으로 남겨 깜빡임을 막습니다.
+///   stale 행은 조작할 수 없습니다.
+/// - 메모리 상한은 모든 부모의 페이지를 합친 수이며, 넘으면 가장 오래 쓰지 않은 페이지부터 버립니다.
+struct GitChangeTreeCache {
+    enum Lookup {
+        case fresh(GitChangeRow)
+        case stale(GitChangeRow)
+        case missing
+    }
+
+    struct PageKey: Hashable {
+        var parent: GitChangeNodeID?
+        var page: Int
+    }
+
+    private struct Page {
+        var rows: [GitChangeRow]
+        var lastUse: UInt64
+    }
+
+    let pageSize: Int
+    let capacity: Int
+    private(set) var generation: UInt64 = 0
+    private(set) var structure: UInt64 = 0
+    /// 최상위(문서) 행 수.
+    private(set) var rootCount = 0
+    private var pages: [PageKey: Page] = [:]
+    private var stalePages: [PageKey: [GitChangeRow]] = [:]
+    private var inFlight: Set<PageKey> = []
+    private var clock: UInt64 = 0
+    /// 진단: 캐시 생성 이후 요청한 페이지 수 누계.
+    private(set) var requestCount = 0
+
+    init(pageSize: Int = GitPanelMetrics.pageSize, capacity: Int = GitPanelMetrics.pageCapacity) {
+        self.pageSize = max(1, pageSize)
+        self.capacity = max(1, capacity)
+    }
+
+    var cachedPageCount: Int { pages.count }
+
+    /// 구조가 바뀌었습니다. 모든 페이지와 요청 중 표시를 버립니다.
+    mutating func reset(generation: UInt64, structure: UInt64, rootCount: Int) {
+        self.generation = generation
+        self.structure = structure
+        self.rootCount = max(0, rootCount)
+        pages = [:]
+        stalePages = [:]
+        inFlight = []
+    }
+
+    /// 구조는 같고 값만 바뀌었습니다. 현재 페이지를 stale로 돌립니다.
+    mutating func advance(generation: UInt64) {
+        guard generation != self.generation else { return }
+        for (key, page) in pages { stalePages[key] = page.rows }
+        self.generation = generation
+        pages = [:]
+        inFlight = []
+    }
+
+    private func key(_ parent: GitChangeNodeID?, _ index: Int) -> (PageKey, Int)? {
+        guard index >= 0 else { return nil }
+        return (PageKey(parent: parent, page: index / pageSize), index % pageSize)
+    }
+
+    /// 행을 찾습니다. fresh 조회는 LRU 시각을 갱신합니다.
+    mutating func lookup(parent: GitChangeNodeID?, index: Int) -> Lookup {
+        guard let (key, offset) = key(parent, index) else { return .missing }
+        if var page = pages[key], offset < page.rows.count {
+            clock += 1
+            page.lastUse = clock
+            pages[key] = page
+            return .fresh(page.rows[offset])
+        }
+        if let stale = stalePages[key], offset < stale.count {
+            return .stale(stale[offset])
+        }
+        return .missing
+    }
+
+    /// LRU를 갱신하지 않는 fresh 조회.
+    func peek(parent: GitChangeNodeID?, index: Int) -> GitChangeRow? {
+        guard let (key, offset) = key(parent, index), let page = pages[key], offset < page.rows.count else { return nil }
+        return page.rows[offset]
+    }
+
+    /// fresh가 없으면 stale 값까지 보는 조회(LRU 갱신 없음).
+    func peekDisplayed(parent: GitChangeNodeID?, index: Int) -> GitChangeRow? {
+        if let fresh = peek(parent: parent, index: index) { return fresh }
+        guard let (key, offset) = key(parent, index), let stale = stalePages[key], offset < stale.count else {
+            return nil
+        }
+        return stale[offset]
+    }
+
+    /// 행이 속한 페이지를 아직 갖지도 요청하지도 않았다면 요청 범위를 반환하고 요청 중으로 표시합니다.
+    /// `childCount`는 그 부모의 자식 수입니다(페이지 끝을 자름).
+    mutating func rangeToRequest(parent: GitChangeNodeID?, index: Int, childCount: Int) -> Range<Int>? {
+        guard index >= 0, index < childCount, let (key, _) = key(parent, index) else { return nil }
+        guard pages[key] == nil, !inFlight.contains(key) else { return nil }
+        inFlight.insert(key)
+        requestCount += 1
+        let start = key.page * pageSize
+        return start..<min(start + pageSize, childCount)
+    }
+
+    /// 도착한 페이지를 저장합니다. 세대가 다르거나 경계가 맞지 않으면 버리고 nil을 반환합니다.
+    mutating func store(_ page: GitChangePage) -> Range<Int>? {
+        guard page.generation == generation, page.startIndex >= 0, page.startIndex % pageSize == 0 else { return nil }
+        let key = PageKey(parent: page.parent, page: page.startIndex / pageSize)
+        inFlight.remove(key)
+        clock += 1
+        pages[key] = Page(rows: page.rows, lastUse: clock)
+        stalePages[key] = nil
+        while pages.count > capacity {
+            let victim = pages.filter { $0.key != key }.min { $0.value.lastUse < $1.value.lastUse }?.key
+            guard let victim else { break }
+            pages[victim] = nil
+        }
+        return page.startIndex..<(page.startIndex + page.rows.count)
+    }
+
+    /// 코어가 거부한 요청의 요청 중 표시를 지워 다시 요청할 수 있게 합니다.
+    mutating func cancelRequest(generation: UInt64, parent: GitChangeNodeID?, children: Range<Int>) {
+        guard generation == self.generation, let (key, _) = key(parent, children.lowerBound) else { return }
+        inFlight.remove(key)
+    }
 }
 
 // MARK: - 세로 배치
@@ -364,11 +503,19 @@ final class GitBannerView: NSView {
     private var buttons: [NSButton] = []
     private var bottomToMessage: NSLayoutConstraint!
     private var bottomToButtons: NSLayoutConstraint!
+    /// 지정한 아이콘 색. 대비 높이기에서는 보조 label 색만 label 색으로 올립니다.
+    private var baseTint: NSColor
+
+    /// 대비 높이기 여부(가이드 8.4).
+    var increaseContrast = false {
+        didSet { if oldValue != increaseContrast { applyTint() } }
+    }
 
     init(symbol: String, symbolLabel: String, tint: NSColor) {
         iconView = GitControls.symbolView(symbol, label: symbolLabel, style: .callout)
-        iconView.contentTintColor = tint
+        baseTint = tint
         super.init(frame: .zero)
+        applyTint()
         translatesAutoresizingMaskIntoConstraints = false
 
         spinner.style = .spinning
@@ -408,7 +555,12 @@ final class GitBannerView: NSView {
     func setSymbol(_ symbol: String, label: String, tint: NSColor) {
         iconView.image = GitPanelSymbols.image(symbol, label: label)
         iconView.setAccessibilityLabel(label)
-        iconView.contentTintColor = tint
+        baseTint = tint
+        applyTint()
+    }
+
+    private func applyTint() {
+        iconView.contentTintColor = increaseContrast && baseTint == .secondaryLabelColor ? .labelColor : baseTint
     }
 
     /// 문구와 버튼을 바꿉니다. `busy`이면 아이콘 자리에 시스템 진행 표시를 보여 줍니다.
