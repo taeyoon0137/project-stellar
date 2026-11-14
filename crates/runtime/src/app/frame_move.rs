@@ -9,12 +9,14 @@ use stellar_commands::document::{
 use stellar_commands::id::{CommandId, CommandOrigin};
 use stellar_commands::property::{PropertyValue, SetProperty};
 use stellar_commands::transaction::CommandTransaction;
+use stellar_core_types::color::Color;
 use stellar_core_types::value::{Size2, Transform2D, Vec2};
 
 #[derive(Clone, Copy)]
 enum FrameEdit {
     Move(Vec2),
     Resize(Size2),
+    Background(Option<Color>),
 }
 
 impl AppRuntime {
@@ -28,18 +30,7 @@ impl AppRuntime {
         node: StableId,
         delta: Vec2,
     ) -> Result<RequestId, RequestError> {
-        self.submit(move |ctx, request| {
-            let window = trusted_canvas_window(ctx, session)?;
-            edit_selected(
-                window,
-                request,
-                view,
-                revision,
-                node,
-                FrameEdit::Move(delta),
-            )?;
-            Ok(RuntimeEvent::WindowViewChanged { request, session })
-        })
+        self.edit_canvas_frame(session, view, revision, node, FrameEdit::Move(delta))
     }
 
     /// 선택된 Free Frame의 고정 크기를 하나의 Undo 가능한 문서 편집으로 바꿉니다.
@@ -51,16 +42,32 @@ impl AppRuntime {
         node: StableId,
         size: Size2,
     ) -> Result<RequestId, RequestError> {
+        self.edit_canvas_frame(session, view, revision, node, FrameEdit::Resize(size))
+    }
+
+    /// 선택한 Free Frame의 단색 배경을 설정하거나 제거합니다.
+    pub fn set_canvas_frame_background(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        node: StableId,
+        color: Option<Color>,
+    ) -> Result<RequestId, RequestError> {
+        self.edit_canvas_frame(session, view, revision, node, FrameEdit::Background(color))
+    }
+
+    fn edit_canvas_frame(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        node: StableId,
+        edit: FrameEdit,
+    ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let window = trusted_canvas_window(ctx, session)?;
-            edit_selected(
-                window,
-                request,
-                view,
-                revision,
-                node,
-                FrameEdit::Resize(size),
-            )?;
+            edit_selected(window, request, view, revision, node, edit)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
@@ -125,6 +132,12 @@ fn edit_selected(
                 return Ok(());
             }
             (keys::SIZE, PropertyValue::Size(size))
+        }
+        FrameEdit::Background(color) => {
+            if target.background == color {
+                return Ok(());
+            }
+            (keys::BACKGROUND, PropertyValue::OptionalColor(color))
         }
     };
     let command = Command::SetProperty(SetProperty { node, key, value });
@@ -287,6 +300,15 @@ mod tests {
             revision,
             sid(11),
             FrameEdit::Resize(Size2::new(45.0, 70.0).unwrap())
+        )
+        .is_err());
+        assert!(edit_selected(
+            &mut session,
+            RequestId(3),
+            sid(3),
+            revision,
+            sid(11),
+            FrameEdit::Background(None)
         )
         .is_err());
         assert_eq!(session.revision(), revision);

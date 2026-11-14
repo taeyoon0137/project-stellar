@@ -35,7 +35,7 @@ final class CanvasView: NSView {
 
     var insertionOutline: CGPath? { didSet { needsDisplay = true } }
 
-    var selectedFrameDimensions: CanvasFrameDimensions? { frameScene.selectedDimensions }
+    var selectedInspectorFrame: CanvasInspectorFrame? { frameScene.selectedInspectorFrame }
 
     func frameHit(at point: NSPoint) -> CanvasFrameHit? { frameScene.hit(at: point) }
 

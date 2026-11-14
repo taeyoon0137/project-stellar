@@ -1,15 +1,16 @@
 //! 저장된 Free Frame scene과 같은 게시 snapshot의 카메라를 macOS 창으로 복사합니다.
 
-use stellar_core_types::color::Color;
+use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::value::Transform2D;
 use stellar_runtime::app::WindowSessionHandle;
 use stellar_runtime::canvas::CanvasFrame;
 
 use crate::{ffi_guard, registry, StellarStatus};
 
+/// C ABI의 선택적 비연관 RGBA. 색공간 tag 0은 색 없음입니다.
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
-struct StellarCanvasColor {
+pub struct StellarCanvasColor {
     space: u32,
     rgba: [f32; 4],
 }
@@ -20,6 +21,22 @@ impl From<Option<Color>> for StellarCanvasColor {
             space: u32::from(c.space().tag()),
             rgba: [c.r(), c.g(), c.b(), c.alpha()],
         })
+    }
+}
+
+impl StellarCanvasColor {
+    pub(crate) fn decode(self) -> Result<Option<Color>, StellarStatus> {
+        if self.space == 0 {
+            return Ok(None);
+        }
+        let space = u8::try_from(self.space)
+            .ok()
+            .and_then(ColorSpace::from_tag)
+            .ok_or(StellarStatus::InvalidArgument)?;
+        let [r, g, b, a] = self.rgba;
+        Color::new(space, r, g, b, a)
+            .map(Some)
+            .map_err(|_| StellarStatus::InvalidArgument)
     }
 }
 
@@ -144,4 +161,35 @@ pub unsafe extern "C" fn stellar_window_canvas(
         }
         StellarStatus::Ok
     })
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+
+    #[test]
+    fn background_preserves_none_and_wide_gamut_and_rejects_invalid_values() {
+        let p3 = Color::new(ColorSpace::DisplayP3, 1.25, -0.1, 0.5, 0.375).unwrap();
+        assert_eq!(
+            StellarCanvasColor::from(Some(p3)).decode().unwrap(),
+            Some(p3)
+        );
+        assert_eq!(StellarCanvasColor::default().decode().unwrap(), None);
+        for color in [
+            StellarCanvasColor {
+                space: 257,
+                rgba: [0.0; 4],
+            },
+            StellarCanvasColor {
+                space: 1,
+                rgba: [0.0, 0.0, 0.0, 2.0],
+            },
+            StellarCanvasColor {
+                space: 2,
+                rgba: [f32::NAN, 0.0, 0.0, 1.0],
+            },
+        ] {
+            assert_eq!(color.decode(), Err(StellarStatus::InvalidArgument));
+        }
+    }
 }

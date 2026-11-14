@@ -127,8 +127,52 @@ enum ShellFrameInsertCheck {
               session.info?.undo_depth == before.undo_depth + 2,
               action(.undo), sizeIs(78.5, 60, project), action(.undo), sizeIs(60, 60, project),
               action(.redo), sizeIs(78.5, 60, project), action(.redo), sizeIs(78.5, 68, project),
-              action(.saveNow), session.info?.generation == initial.generation + 1 else { return fail("Inspector 입력·Undo·Redo·저장") }
+              other.inspectorSource.snapshot.state == .noSelection else { return fail("Inspector 입력·Undo·Redo") }
 
+        let white = InspectorColor(space: .srgb, red: 1, green: 1, blue: 1, alpha: 1)
+        let p3 = InspectorColor(space: .displayP3, red: 0.75, green: 0.125, blue: 0.625, alpha: 0.375)
+        func centerPixel(_ canvas: CanvasView, in window: NSWindow) -> [Int]? {
+            guard let image = ShellVisibleFramesCheck.bitmap(canvas, in: window) else { return nil }
+            let point = viewPoint(70, 60, canvas: canvas)
+            let x = Int((point.x * CGFloat(image.pixelsWide) / canvas.bounds.width).rounded(.down))
+            let y = Int((point.y * CGFloat(image.pixelsHigh) / canvas.bounds.height).rounded(.down))
+            guard x >= 0, x < image.pixelsWide, y >= 0, y < image.pixelsHigh else { return nil }
+            var sample = [Int](repeating: 0, count: image.samplesPerPixel)
+            image.getPixel(&sample, atX: x, y: y)
+            return Array(sample.prefix(3))
+        }
+        func fillIs(_ expected: InspectorColor?, in owner: ShellProjectWindow) -> Bool {
+            awaitSidebar {
+                guard let selected = owner.canvasHost.canvasView.selectedInspectorFrame,
+                      let enabled = owner.inspectorSlot.inspector.control(identifier: "frame.background.enabled") as? NSSwitch,
+                      let well = owner.inspectorSlot.inspector.control(identifier: "frame.background.color") as? NSColorWell,
+                      selected.background == expected, enabled.state == (expected == nil ? .off : .on),
+                      well.isEnabled == (expected != nil && owner.gitSource.trusted && selected.editable)
+                else { return false }
+                return expected.map { InspectorColor(well.color) == $0 } ?? !well.isEnabled
+            }
+        }
+        guard fillIs(white, in: project),
+              let enabled = project.inspectorSlot.inspector.control(identifier: "frame.background.enabled") as? NSSwitch,
+              let well = project.inspectorSlot.inspector.control(identifier: "frame.background.color") as? NSColorWell,
+              let whitePixel = centerPixel(canvas, in: window), let preFill = session.info else { return fail("실제 Frame 배경 컨트롤") }
+        enabled.state = .off
+        guard enabled.sendAction(enabled.action, to: enabled.target), wait(), fillIs(nil, in: project),
+              action(.undo), fillIs(white, in: project), action(.redo), fillIs(nil, in: project)
+        else { return fail("배경 없음·Undo·Redo") }
+        enabled.state = .on
+        guard enabled.sendAction(enabled.action, to: enabled.target), wait(), fillIs(white, in: project)
+        else { return fail("채우기 없는 Frame에서 배경 추가") }
+        well.color = p3.nsColor
+        guard well.sendAction(well.action, to: well.target), fillIs(p3, in: project), wait() else {
+            return fail("Display P3 배경 입력: well=\(well.color) scene=\(String(describing: canvas.selectedInspectorFrame?.background)) depth=\(session.info?.undo_depth ?? 0)")
+        }
+        guard let painted = centerPixel(canvas, in: window), painted != whitePixel, painted[0] > painted[1],
+              painted[2] > painted[1], session.info?.undo_depth == preFill.undo_depth + 3,
+              action(.undo), fillIs(white, in: project), action(.redo), fillIs(p3, in: project),
+              action(.saveNow), session.info?.generation == initial.generation + 1 else {
+            return fail("Display P3·알파 편집·Undo·Redo·저장")
+        }
         window.close()
         guard wait() else { return fail("닫기") }
         app.openProject(atPath: path, origin: .application)
@@ -141,7 +185,8 @@ enum ShellFrameInsertCheck {
               shown.frameHit(at: viewPoint(99, 89, canvas: shown))?.id == child,
               shown.frameHit(at: viewPoint(117, 97, canvas: shown))?.id == child,
               shown.frameHit(at: viewPoint(120, 99, canvas: shown))?.id == root,
-              reopened.selectNodes([child]), wait(), sizeIs(78.5, 68, reopened) else { return fail("재열기 후 자식 위치·크기") }
+              reopened.selectNodes([child]), wait(), sizeIs(78.5, 68, reopened), fillIs(p3, in: reopened),
+              let reopenedWindow = reopened.window, centerPixel(shown, in: reopenedWindow) == painted else { return fail("재열기 후 자식 위치·크기") }
         reopened.gitSource.updateTrust(false)
         guard wait(), awaitSidebar({ field("width", reopened)?.isEnabled == false }),
               let restrictedSession = reopened.windowController.windowSession,
@@ -150,7 +195,10 @@ enum ShellFrameInsertCheck {
         let restrictedSource = reopened.inspectorSource
         restrictedSource.submit(.setValue(InspectorPropertyID("frame.size.width"), .number(12), phase: .commit),
                                 basedOn: restrictedSource.snapshot.generation)
-        guard wait(), restrictedSession.info?.revision == restricted.revision, sizeIs(78.5, 68, reopened)
+        restrictedSource.submit(.setValue(InspectorPropertyID("frame.background.enabled"), .bool(false), phase: .commit),
+                                basedOn: restrictedSource.snapshot.generation)
+        guard wait(), restrictedSession.info?.revision == restricted.revision, sizeIs(78.5, 68, reopened), fillIs(p3, in: reopened),
+              (reopened.inspectorSlot.inspector.control(identifier: "frame.background.color") as? NSColorWell)?.isEnabled == false
         else { return fail("읽기 전용 Inspector 크기 보존") }
         reopened.gitSource.updateTrust(true)
         guard wait(), awaitSidebar({ field("width", reopened)?.isEnabled == true }) else { return fail("신뢰 후 Inspector 복구") }
@@ -207,7 +255,7 @@ enum ShellFrameInsertCheck {
               other.sidebarSlot.sidebar.layersController.snapshot.selection.isEmpty else {
             return fail("Layers 선택 창 격리: undo=\(reopened.windowController.windowSession?.info?.undo_depth ?? 0)/\(beforeSelect.undo_depth + 1) top=\(layers.snapshot.layers.topLevelIDs.count) selectedRow=\(layers.outline.selectedRow) other=\(other.windowController.windowSession?.info?.selection_count ?? 0)")
         }
-        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, invalid input, undo/redo, trust and reopen; live Layers, nested disclosure, 64+1 pagination and two windows")
+        print("frame-insert ok: F, restricted, cancel, undo/redo and reopen; Inspector size, optional fill, P3/alpha, invalid input, undo/redo, trust and reopen; live Layers, nested disclosure, 64+1 pagination and two windows")
         return true
     }
 }
