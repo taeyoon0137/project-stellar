@@ -499,7 +499,7 @@ final class ShellProjectWindow {
         windowController.windowSession?.close()
         windowController.windowSession = windowSession
         dataSource.didOpen(session)
-        gitSource.attach(session)
+        gitSource.attach(session, window: windowSession)
         toolsModel.setProjectReady(true)
         refreshSessionCommands()
         window?.invalidateRestorableState()

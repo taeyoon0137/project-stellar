@@ -1,8 +1,9 @@
 //! 셸 경계용 앱 runtime: 프로젝트 열기·닫기, 문서 열기·닫기, 완료 event와 상태 snapshot.
 //!
 //! 네이티브 셸이 C ABI(`stellar-ffi`)를 거쳐 부르는 코어 쪽 진입점입니다. 모든 요청은 기다리지
-//! 않고 [`RequestId`]를 돌려주며, 실제 작업은 document thread(유일한 작성자, XII.1.1)에서
+//! 않고 [`RequestId`]를 돌려줍니다. 문서 요청은 document thread(유일한 작성자, XII.1.1)에서
 //! [`CommandPriority::Command`](crate::command_queue::CommandPriority::Command) job으로 실행됩니다.
+//! Git 이름 조회·Stage는 별도 worker에서 저장 파일과 실제 index를 읽고 같은 outbox로 응답합니다.
 //! 결과는 두 경로로만 셸에 돌아갑니다.
 //!
 //! - **완료 event**: 요청마다 정확히 하나의 [`RuntimeEvent`]를 outbox에 쌓습니다. 셸은 pull
@@ -100,6 +101,8 @@
 //! | `0x0108` | WindowViewChanged | request u64, session u64 |
 //! | `0x0109` | HistoryReplayed | request u64, session u64, redo u8, applied u8, revision u64 |
 //! | `0x010A` | WindowSessionSaved | request u64, session u64, generation u64, written u8 |
+//! | `0x010B` | ProjectTrust | request u64, project u64, trusted u8 |
+//! | `0x010C` | GitNames | request u64, session u64, rows u32, other_changes u8, staged u8 |
 //!
 //! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다.
 
@@ -119,6 +122,9 @@ use stellar_project::probe::{safe_probe, ProbeError, SafeProbeError};
 use stellar_project::root::{classify_project_open, OpenError, RootError};
 use stellar_project::trust::TrustStatus;
 use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
+
+mod git_names;
+pub use git_names::GitNameRow;
 
 use crate::app_command::AppCommand;
 use crate::command_queue::QueueCapacity;
@@ -158,6 +164,8 @@ pub mod event_kind {
     pub const WINDOW_SESSION_SAVED: u32 = 0x010A;
     /// 열린 프로젝트에서 확인한 OS 신뢰 등록 상태입니다.
     pub const PROJECT_TRUST: u32 = 0x010B;
+    /// 저장된 노드 이름의 Git 비교 목록이 준비됐거나 한 건을 Stage했습니다.
+    pub const GIT_NAMES: u32 = 0x010C;
 }
 
 // ---------------------------------------------------------------------------
@@ -240,11 +248,13 @@ pub enum RequestFailure {
     InvalidViewport,
     /// 프로젝트 신뢰 등록을 확인하거나 갱신하지 못했습니다.
     TrustUnavailable,
+    /// 저장된 이름의 Git 조회나 선택 Stage 실패.
+    GitNamesUnavailable,
 }
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 20] = [
+    pub const ALL: [RequestFailure; 21] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -265,6 +275,7 @@ impl RequestFailure {
         RequestFailure::HistoryUnavailable,
         RequestFailure::InvalidViewport,
         RequestFailure::TrustUnavailable,
+        RequestFailure::GitNamesUnavailable,
     ];
 
     /// C ABI 코드 값.
@@ -290,6 +301,7 @@ impl RequestFailure {
             RequestFailure::HistoryUnavailable => 23,
             RequestFailure::InvalidViewport => 24,
             RequestFailure::TrustUnavailable => 25,
+            RequestFailure::GitNamesUnavailable => 26,
         }
     }
 
@@ -325,6 +337,19 @@ pub enum RuntimeEvent {
         project: ProjectSessionId,
         /// 등록이 확인되었는지.
         trusted: bool,
+    },
+    /// 저장된 노드 이름 변경을 Git에서 읽은 결과. 행은 제한된 범위로 따로 조회합니다.
+    GitNames {
+        /// 요청 ID와 이번에 캐시된 행의 세대.
+        request: RequestId,
+        /// 열린 창.
+        session: WindowSessionHandle,
+        /// 표시할 이름 변경 행 수.
+        rows: u32,
+        /// 이름 외의 저장 의미 변경이 존재합니다.
+        other_changes: bool,
+        /// 이번 요청이 실제 Stage였는지.
+        staged: bool,
     },
     /// 프로젝트를 닫았습니다.
     ProjectClosed {
@@ -569,6 +594,7 @@ impl RuntimeEvent {
             RuntimeEvent::ProjectOpened { .. } => event_kind::PROJECT_OPENED,
             RuntimeEvent::ProjectClosed { .. } => event_kind::PROJECT_CLOSED,
             RuntimeEvent::ProjectTrust { .. } => event_kind::PROJECT_TRUST,
+            RuntimeEvent::GitNames { .. } => event_kind::GIT_NAMES,
             RuntimeEvent::DocumentOpened { .. } => event_kind::DOCUMENT_OPENED,
             RuntimeEvent::DocumentClosed { .. } => event_kind::DOCUMENT_CLOSED,
             RuntimeEvent::RequestFailed { .. } => event_kind::REQUEST_FAILED,
@@ -584,6 +610,7 @@ impl RuntimeEvent {
     pub fn request(&self) -> RequestId {
         match self {
             RuntimeEvent::ProjectOpened { request, .. }
+            | RuntimeEvent::GitNames { request, .. }
             | RuntimeEvent::ProjectTrust { request, .. }
             | RuntimeEvent::ProjectClosed { request, .. }
             | RuntimeEvent::DocumentOpened { request, .. }
@@ -655,6 +682,19 @@ impl RuntimeEvent {
                 w.id(*document_id);
                 w.u64(*generation);
             }
+            RuntimeEvent::GitNames {
+                request,
+                session,
+                rows,
+                other_changes,
+                staged,
+            } => {
+                w.u64(request.0);
+                w.u64(session.0);
+                w.u32(*rows);
+                w.u8(u8::from(*other_changes));
+                w.u8(u8::from(*staged));
+            }
             RuntimeEvent::ProjectTrust {
                 request,
                 project,
@@ -720,6 +760,13 @@ impl RuntimeEvent {
                 project_id: r.id()?,
                 name: r.text()?,
                 root: r.text()?,
+            },
+            event_kind::GIT_NAMES => RuntimeEvent::GitNames {
+                request: RequestId(r.u64()?),
+                session: WindowSessionHandle(r.u64()?),
+                rows: r.u32()?,
+                other_changes: r.bool()?,
+                staged: r.bool()?,
             },
             event_kind::PROJECT_TRUST => RuntimeEvent::ProjectTrust {
                 request: RequestId(r.u64()?),
@@ -804,6 +851,8 @@ pub struct ProjectSummary {
     pub name: String,
     /// 연 경로(절대·lexical).
     pub root: PathBuf,
+    /// 열 때 확인한 실제 target. symlink가 바뀐 요청을 거부할 때 사용합니다.
+    pub canonical_root: PathBuf,
     /// OS 사용자 신뢰 저장소에서 마지막으로 확인한 상태.
     pub trust: TrustStatus,
 }
@@ -1372,6 +1421,7 @@ fn build_state(ctx: &mut DocumentContext) -> RuntimeState {
             project_id: session.identity.project_id(),
             name: session.name.clone(),
             root: session.identity.root_path().to_path_buf(),
+            canonical_root: session.identity.canonical_target().to_owned(),
             trust: session.trust,
         })
         .collect();
@@ -1455,6 +1505,7 @@ pub enum EventPoll {
 /// UI thread와 document thread가 공유하는 outbox·snapshot.
 #[derive(Debug)]
 struct AppShared {
+    git_names: Mutex<git_names::WindowGit>,
     outbox: Mutex<VecDeque<RuntimeEvent>>,
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
     outstanding: AtomicUsize,
@@ -1503,6 +1554,11 @@ pub struct AppRuntime {
 
 impl Drop for AppRuntime {
     fn drop(&mut self) {
+        self.shared
+            .git_names
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .cancel_all();
         // shutdown·shutdown_timeout으로 이미 종료했으면 아무것도 하지 않습니다.
         let _ = self.document.stop_within(Some(self.drop_timeout));
     }
@@ -1529,6 +1585,7 @@ impl AppRuntime {
         Ok(AppRuntime {
             sender: document.sender(),
             shared: Arc::new(AppShared {
+                git_names: Mutex::default(),
                 outbox: Mutex::new(VecDeque::new()),
                 outstanding: AtomicUsize::new(0),
                 state: Mutex::new(Arc::new(RuntimeState::default())),
@@ -1540,14 +1597,7 @@ impl AppRuntime {
         })
     }
 
-    /// 요청 하나를 접수합니다. job은 document thread에서 상태를 바꾸고, 바뀌었으면 snapshot을
-    /// 게시한 뒤 완료 event를 outbox에 넣습니다.
-    pub(crate) fn submit<F>(&self, run: F) -> Result<RequestId, RequestError>
-    where
-        F: FnOnce(&mut DocumentContext, RequestId) -> Result<RuntimeEvent, Failure>
-            + Send
-            + 'static,
-    {
+    fn reserve_request(&self) -> Result<RequestId, RequestError> {
         // 상한 예약: 실패하면 접수하지 않습니다.
         let reserved =
             self.shared
@@ -1558,7 +1608,18 @@ impl AppRuntime {
         if reserved.is_err() {
             return Err(RequestError::QueueFull);
         }
-        let request = RequestId(self.next_request.fetch_add(1, Ordering::Relaxed));
+        Ok(RequestId(self.next_request.fetch_add(1, Ordering::Relaxed)))
+    }
+
+    /// 요청 하나를 접수합니다. job은 document thread에서 상태를 바꾸고, 바뀌었으면 snapshot을
+    /// 게시한 뒤 완료 event를 outbox에 넣습니다.
+    pub(crate) fn submit<F>(&self, run: F) -> Result<RequestId, RequestError>
+    where
+        F: FnOnce(&mut DocumentContext, RequestId) -> Result<RuntimeEvent, Failure>
+            + Send
+            + 'static,
+    {
+        let request = self.reserve_request()?;
         let shared = Arc::clone(&self.shared);
         let submitted = self.sender.submit(move |ctx: &mut DocumentContext| {
             let event = match run(ctx, request) {
@@ -1614,6 +1675,7 @@ impl AppRuntime {
         project: ProjectSessionId,
         decision: Option<bool>,
     ) -> Result<RequestId, RequestError> {
+        let shared = Arc::clone(&self.shared);
         self.submit(move |ctx, request| {
             let session = ctx
                 .app_sessions_mut()
@@ -1632,6 +1694,11 @@ impl AppRuntime {
             let mut store =
                 FileTrustStore::open(&dir).map_err(|error| unavailable(&error.to_string()))?;
             if decision == Some(false) {
+                shared
+                    .git_names
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .close_project_windows(session);
                 store
                     .revoke(identity)
                     .map_err(|error| unavailable(&error.to_string()))?;
@@ -1662,7 +1729,17 @@ impl AppRuntime {
 
     /// 프로젝트 session을 닫습니다. 그 아래 열린 문서도 닫습니다.
     pub fn close_project(&self, project: ProjectSessionId) -> Result<RequestId, RequestError> {
-        self.submit(move |ctx, request| close_project_on_thread(ctx, request, project))
+        let shared = Arc::clone(&self.shared);
+        self.submit(move |ctx, request| {
+            if let Some(session) = ctx.app_sessions().projects.get(&project) {
+                let mut git = shared
+                    .git_names
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                git.close_project_windows(session);
+            }
+            close_project_on_thread(ctx, request, project)
+        })
     }
 
     /// 프로젝트 session 아래에서 문서를 엽니다.
@@ -1693,7 +1770,15 @@ impl AppRuntime {
         &self,
         session: WindowSessionHandle,
     ) -> Result<RequestId, RequestError> {
-        self.submit(move |ctx, request| close_window_session_on_thread(ctx, request, session))
+        let shared = Arc::clone(&self.shared);
+        self.submit(move |ctx, request| {
+            shared
+                .git_names
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .close(session);
+            close_window_session_on_thread(ctx, request, session)
+        })
     }
 
     /// 창 session에서 작업 문서의 View 탭을 열고 active로 만듭니다(이미 열려 있으면 active만, XII.2.5).
@@ -1957,6 +2042,18 @@ mod tests {
                 generation: 20,
                 written: true,
             },
+            RuntimeEvent::ProjectTrust {
+                request: RequestId(21),
+                project: ProjectSessionId(4),
+                trusted: true,
+            },
+            RuntimeEvent::GitNames {
+                request: RequestId(22),
+                session: WindowSessionHandle(11),
+                rows: 1,
+                other_changes: true,
+                staged: false,
+            },
         ]
     }
 
@@ -2100,7 +2197,7 @@ mod tests {
         let codes: Vec<u32> = RequestFailure::ALL.iter().map(|f| f.code()).collect();
         assert_eq!(
             codes,
-            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24]
+            [1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 26]
         );
         let unique: BTreeSet<u32> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len());
