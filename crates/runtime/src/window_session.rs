@@ -85,6 +85,7 @@ use stellar_storage::generation::lazy::{
     ChunkReadRecorder, LazyGeneration, LazyLoadError, NoopRecorder,
 };
 use stellar_storage::generation::loader::{load_current_generation, LoadError, LoadedGeneration};
+use stellar_storage::hash::ContentHash;
 use stellar_storage::save::cancel::{run_save, CancelToken, SaveRunError};
 use stellar_storage::save::commit::SavedGenerationState;
 use stellar_storage::save::optimistic::{
@@ -133,6 +134,8 @@ pub struct SaveOutcome {
 /// Save Now 실패. loaded generation과 디스크는 저장 전 그대로입니다(commit 전 실패).
 #[derive(Debug)]
 pub enum WindowSessionSaveError {
+    /// 이미지 asset record 인코딩 실패.
+    ImageMetadata,
     /// 다른 writer가 잠금을 사용 중이거나 OS 사용자 데이터의 잠금을 열 수 없습니다.
     Lock(LockError),
     /// current pointer가 loaded generation과 다릅니다(다른 저장이 먼저 끝남). 아무것도 쓰지 않았습니다.
@@ -150,6 +153,9 @@ pub enum WindowSessionSaveError {
 impl fmt::Display for WindowSessionSaveError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            WindowSessionSaveError::ImageMetadata => {
+                f.write_str("이미지 에셋 메타데이터 인코딩 실패")
+            }
             WindowSessionSaveError::Lock(error) => write!(f, "{error}"),
             WindowSessionSaveError::Stale(error) => {
                 write!(f, "다른 저장이 먼저 끝나 저장하지 않았습니다: {error}")
@@ -185,6 +191,9 @@ pub struct ProjectWindowSession {
     pub(crate) document: Option<WindowDocument>,
     pub(crate) history: WindowHistory,
     pub(crate) loaded: Option<LoadedGeneration>,
+    pub(crate) asset_chunks: std::sync::Arc<std::collections::BTreeMap<StableId, ContentHash>>,
+    pub(crate) image_records:
+        std::sync::Arc<std::collections::BTreeMap<StableId, stellar_assets::record::AssetRecord>>,
 }
 
 /// 읽은 chunk id를 모읍니다.
@@ -261,12 +270,24 @@ impl ProjectWindowSession {
                 debug_assert_eq!(opened, Ok(true));
             }
         }
+        let asset_chunks = loaded
+            .manifest
+            .chunk_pointers
+            .iter()
+            .filter(|p| {
+                p.kind == stellar_storage::chunk::kinds::KIND_ASSET_METADATA
+                    && p.schema_version == 1
+            })
+            .map(|p| (p.chunk_id.stable_id(), p.content_hash))
+            .collect();
         Ok(ProjectWindowSession {
+            asset_chunks: std::sync::Arc::new(asset_chunks),
             identity,
             window,
             document,
             history,
             loaded: Some(loaded),
+            image_records: Default::default(),
         })
     }
 
@@ -278,6 +299,8 @@ impl ProjectWindowSession {
             document: None,
             history: WindowHistory::new(window),
             loaded: None,
+            asset_chunks: Default::default(),
+            image_records: Default::default(),
         }
     }
 
@@ -552,6 +575,43 @@ impl ProjectWindowSession {
             .map(|chunk| chunk.chunk_id)
             .collect();
         let mut states = serialized.to_dirty_states();
+        if !self.image_records.is_empty() {
+            let model = document.state.model();
+            let referenced: BTreeSet<_> = model
+                .columns()
+                .iter_live()
+                .filter_map(|handle| model.stable_id(handle))
+                .filter_map(|id| match model.payload(id) {
+                    Some(stellar_document::records::NodePayload::Image(image)) => {
+                        Some(image.asset.id())
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (&id, record) in self
+                .image_records
+                .iter()
+                .filter(|(id, _)| referenced.contains(id))
+            {
+                let chunk_id = ChunkId::from_stable_id(id);
+                if base.is_some_and(|g| {
+                    g.manifest
+                        .chunk_pointers
+                        .iter()
+                        .any(|p| p.chunk_id == chunk_id)
+                }) {
+                    continue;
+                }
+                states.push(LogicalChunkState::Dirty {
+                    chunk_id,
+                    kind: stellar_storage::chunk::kinds::KIND_ASSET_METADATA,
+                    schema_version: 1,
+                    payload: record
+                        .encode()
+                        .map_err(|_| WindowSessionSaveError::ImageMetadata)?,
+                });
+            }
+        }
         let mut roots = base.map_or_else(Vec::new, |base| base.manifest.root_document_ids.clone());
         if let Some(base) = base {
             // 작업 문서가 차지하지 않은 base chunk(다른 문서·에셋 등)는 그대로 이어 씁니다. 작업 문서가 로드할 때

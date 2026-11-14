@@ -3,7 +3,7 @@ import AppKit
 /// Rust에서 저장한 generation을 일반 프로젝트 창으로 열고, 실제 NSView의 bitmap과 picking을 확인합니다.
 @MainActor
 enum ShellVisibleFramesCheck {
-    static func bitmap(_ canvas: NSView, in window: NSWindow) -> NSBitmapImageRep? {
+    static func bitmap(_ canvas: NSView, in window: NSWindow, dirtyRect: CGRect? = nil) -> NSBitmapImageRep? {
         // 픽셀 참조는 현재 사용자 모니터 ICC의 색역/의도에 영향을 받지 않는 명시적 sRGB destination입니다.
         let scale = window.backingScaleFactor
         let width = Int(ceil(canvas.bounds.width * scale)), height = Int(ceil(canvas.bounds.height * scale))
@@ -11,7 +11,17 @@ enum ShellVisibleFramesCheck {
               let cg = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         cg.scaleBy(x: scale, y: scale)
-        canvas.displayIgnoringOpacity(canvas.bounds, in: NSGraphicsContext(cgContext: cg, flipped: false))
+        if let rect = dirtyRect {
+            cg.translateBy(x: 0, y: canvas.bounds.height)
+            cg.scaleBy(x: 1, y: -1)
+            cg.clip(to: rect)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
+            canvas.draw(rect)
+            NSGraphicsContext.restoreGraphicsState()
+        } else {
+            canvas.displayIgnoringOpacity(canvas.bounds, in: NSGraphicsContext(cgContext: cg, flipped: false))
+        }
         return cg.makeImage().map(NSBitmapImageRep.init(cgImage:))
     }
 

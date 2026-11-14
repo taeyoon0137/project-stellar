@@ -85,6 +85,11 @@ if let flag = CommandLine.arguments.firstIndex(of: "--document-font-check") {
     exit(MainActor.assumeIsolated { ShellDocumentFontCheck.run(fixture: fixture, font: font) } ? 0 : 1)
 }
 #endif
+if let flag = CommandLine.arguments.firstIndex(of: "--image-place-check") {
+    guard CommandLine.arguments.indices.contains(flag + 1),
+   let home = ProcessInfo.processInfo.environment["HOME"], CommandLine.arguments[flag + 1] == home else { exit(1) }
+    exit(MainActor.assumeIsolated { ShellImagePlacementCheck.run(directory: URL(fileURLWithPath: home, isDirectory: true)) } ? 0 : 1)
+}
 
 if let flag = CommandLine.arguments.firstIndex(of: "--frame-insert-check") {
     guard CommandLine.arguments.indices.contains(flag + 1), let home = ProcessInfo.processInfo.environment["HOME"],

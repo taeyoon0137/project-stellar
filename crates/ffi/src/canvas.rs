@@ -71,7 +71,8 @@ impl From<&CanvasFrame> for StellarCanvasFrame {
                 | (u32::from(frame.hit_target) << 1)
                 | (u32::from(frame.rectangle_shape) << 2)
                 | (u32::from(frame.instance_frame) << 3)
-                | (u32::from(frame.text_node) << 4),
+                | (u32::from(frame.text_node) << 4)
+                | (u32::from(frame.image_asset.is_some()) << 5),
             world: affine(frame.world),
             size: [size.width(), size.height()],
             radii: [tl, tr, br, bl],

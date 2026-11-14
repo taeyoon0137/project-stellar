@@ -340,7 +340,7 @@ final class ShellProjectFrameDataSource: ShellFrameDataSource {
 /// - 도구 선택은 코어로 보내지 않습니다. 다른 명령은 `commandHandler`(프로젝트 창)로 넘깁니다.
 final class ShellWindowToolsModelStub: ToolsMenuModel {
     /// ready 상태에서 항상 실행할 수 있는 명령(창 session 상태와 무관).
-    static let readyCommands: Set<ShellCommand> = Set(CanvasTool.allCases.map(\.command)).union([.closeProject])
+    static let readyCommands: Set<ShellCommand> = Set(CanvasTool.allCases.map(\.command)).subtracting([.selectImageTool]).union([.closeProject])
     /// ready가 아닐 때(열기 중·실패) 실행할 수 있는 명령.
     static let notReadyCommands: Set<ShellCommand> = [.closeProject]
 
@@ -348,6 +348,7 @@ final class ShellWindowToolsModelStub: ToolsMenuModel {
     let observers = ToolsMenuObservers()
     /// 도구 선택 외 명령을 받는 쪽.
     var commandHandler: ((ShellCommand) -> Void)?
+    var toolChanged: ((CanvasTool) -> Void)?
 
     init() {
         snapshot = ToolsMenuSnapshot(
@@ -374,6 +375,7 @@ final class ShellWindowToolsModelStub: ToolsMenuModel {
             var next = snapshot
             next.activeTool = tool
             publish(next)
+            toolChanged?(tool)
             return
         }
         commandHandler?(command)
@@ -451,6 +453,11 @@ final class ShellProjectWindow {
     let inspectorSlot: ShellInspectorAreaSlot
     let panelsSlot: ShellPanelTabsSlot
     let gitSource = ShellGitDataSource()
+    var choosePNG: (NSOpenPanel, NSWindow, @escaping (URL?) -> Void) -> Void = { panel, owner, selected in
+        panel.beginSheetModal(for: owner) { selected($0 == .OK ? panel.url : nil) }
+    }
+    var pickedPNG: PickedPNG?
+    var imagePickGeneration: UInt64 = 0
     var componentLibrary: ShellComponentLibrary?
     var recoveryPrompt: NSAlert?
     let sidebarSource = ShellSidebarSource()
@@ -504,10 +511,13 @@ final class ShellProjectWindow {
             ),
             toolbarItemProvider: toolsToolbar
         )
+        toolsModel.toolChanged = { [weak self] in self?.imageToolChanged($0) }
         gitSource.trustDidChange = { [weak self] trusted in
             if !trusted { self?.canvasTextEditing?.invalidate() }
             self?.dataSource.updateTrust(trusted)
             self?.sidebarSource.trusted = trusted
+            self?.canvasHost.canvasView.allowsImageContent = trusted
+            if !trusted { self?.pickedPNG = nil; self?.imagePickGeneration &+= 1 }
             self?.reloadComponentCanvas()
             self?.refreshSessionCommands()
             if !trusted {
@@ -662,7 +672,7 @@ final class ShellProjectWindow {
         }
         var commands = ShellWindowToolsModelStub.sessionCommands(info: info, view: view)
             .filter { coreCommandIDs.coreCommandID(for: $0) != nil }
-        if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .componentLibrary]) }
+        if gitSource.trusted, session != nil { commands.formUnion([.newComponent, .componentLibrary, .selectImageTool]) }
         if gitSource.trusted, selectedComponentFrame != nil { commands.insert(.componentFromSelection) }
         if gitSource.trusted, (displayedSelection?.selection_count ?? 0) > 0 { commands.insert(.delete) }
         if gitSource.trusted, displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy]) }

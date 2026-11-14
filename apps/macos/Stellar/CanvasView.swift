@@ -24,11 +24,20 @@ final class CanvasView: NSView {
         set { frameScene.typingLayer = newValue; needsDisplay = true }
     }
     func textHit(id: UUID? = nil) -> CanvasFrameHit? { frameScene.textHit(id: id) }
+    var allowsImageContent = false {
+        didSet {
+            guard oldValue != allowsImageContent else { return }
+            frameScene.png.reset()
+            frameScene.allowsImageContent = allowsImageContent
+            needsDisplay = true
+        }
+    }
     var frameSession: UInt64? { didSet { refreshFrames() } }
 
     func invalidateComponentFrames() { frameScene.clear(); refreshFrames() }
 
     func refreshFrames() {
+        frameScene.redrawImage = { [weak self] damage in self?.setNeedsDisplay(damage) }
         if let runtimeHandle, let frameSession, bounds.width > 0, bounds.height > 0 {
             frameScene.refresh(handle: runtimeHandle, session: frameSession, size: bounds.size)
         } else { frameScene.clear() }

@@ -84,6 +84,7 @@ pub(super) fn rectangle(
         rectangle_shape: true,
         instance_frame: false,
         text_node: false,
+        image_asset: None,
         id,
         parent,
         world,

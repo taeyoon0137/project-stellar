@@ -7,6 +7,7 @@ publish = false
 
 # 앱 프로세스 runtime(ADR-0013). 외부 의존성 없이 표준 라이브러리 thread·동기화만 사용합니다.
 [dependencies]
+stellar-assets = { path = "../assets" }
 stellar-core-types = { path = "../core-types" }
 stellar-document = { path = "../document" }
 # 창별 편집 session(XII.2.1): 문서 state·command 실행과 창별 history.
@@ -28,7 +29,6 @@ stellar-git-porcelain = { path = "../git-porcelain" }
 
 [dev-dependencies]
 stellar-text = { path = "../text", features = ["test-support"] }
-stellar-assets = { path = "../assets" }
 # 테스트만 문서 semantic snapshot(VI.10.4 test-support)을 씁니다.
 stellar-document = { path = "../document", features = ["test-support"] }
 stellar-ops = { path = "../ops", features = ["test-support"] }

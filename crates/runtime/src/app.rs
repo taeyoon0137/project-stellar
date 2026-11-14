@@ -132,6 +132,8 @@ mod frame_insert;
 mod frame_move;
 mod git_components;
 mod git_names;
+mod image_place;
+pub use image_place::ImagePlacement;
 mod instance_place;
 pub mod recovery;
 pub use instance_place::InstancePlacement;
@@ -979,6 +981,11 @@ pub struct WindowSessionSummary {
     pub revision: DocumentRevision,
     /// loaded generation 번호(저장한 적 없으면 0).
     pub generation: u64,
+    pub(crate) image_records:
+        Arc<std::collections::BTreeMap<StableId, stellar_assets::record::AssetRecord>>,
+    pub(crate) asset_chunks:
+        Arc<std::collections::BTreeMap<StableId, stellar_storage::hash::ContentHash>>,
+    pub(crate) image_generation: Option<stellar_storage::hash::ContentHash>,
     /// undo stack 깊이.
     pub undo_depth: u32,
     /// redo stack 깊이.
@@ -1444,6 +1451,9 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         tab_count: clamp(session.tabs().len()),
         active_view: session.tabs().active_view(),
         viewport: session.tabs().active_viewport(),
+        image_records: session.image_records.clone(),
+        asset_chunks: session.asset_chunks.clone(),
+        image_generation: session.loaded_generation().map(|g| g.manifest_hash),
         canvas: entry.canvas.current(session),
     }
 }
@@ -1636,6 +1646,7 @@ struct AppShared {
     creating: std::sync::atomic::AtomicBool,
     creating_component: std::sync::atomic::AtomicBool,
     importing_font: std::sync::atomic::AtomicBool,
+    importing_image: std::sync::atomic::AtomicBool,
     git_names: Mutex<git_names::WindowGit>,
     outbox: Mutex<VecDeque<RuntimeEvent>>,
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
@@ -1739,6 +1750,7 @@ impl AppRuntime {
                 creating: false.into(),
                 creating_component: false.into(),
                 importing_font: false.into(),
+                importing_image: false.into(),
                 git_names: Mutex::default(),
                 outbox: Mutex::new(VecDeque::new()),
                 outstanding: AtomicUsize::new(0),
