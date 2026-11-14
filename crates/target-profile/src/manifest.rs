@@ -264,6 +264,7 @@ fn validate(
 mod tests {
     use super::*;
     use crate::node::ValueError;
+    use crate::registry::ProfileRegistryVersion;
     use crate::spec::{
         AndroidApiLevel, AndroidProfile, ApplePlatform, AppleProfile, CapabilitySetVersion,
         DottedVersion, ProfileSpec, WebBaseline, WebProfile,
@@ -276,6 +277,7 @@ mod tests {
     fn apple(name: &str) -> TargetProfile {
         TargetProfile::new(
             id(name),
+            ProfileRegistryVersion::new(1).expect("v1"),
             ProfileSpec::Apple(AppleProfile {
                 platform: ApplePlatform::Ios,
                 minimum_os: DottedVersion::new(26, 0, 0),
@@ -286,6 +288,7 @@ mod tests {
     fn android(name: &str) -> TargetProfile {
         TargetProfile::new(
             id(name),
+            ProfileRegistryVersion::new(1).expect("v1"),
             ProfileSpec::Android(AndroidProfile {
                 api_level: AndroidApiLevel::new(35).expect("api"),
                 ui_system_version: DottedVersion::new(1, 7, 0),
@@ -296,6 +299,7 @@ mod tests {
     fn web(name: &str) -> TargetProfile {
         TargetProfile::new(
             id(name),
+            ProfileRegistryVersion::new(1).expect("v1"),
             ProfileSpec::Web(WebProfile {
                 baseline: WebBaseline::new(2024).expect("baseline"),
                 capability_set_version: CapabilitySetVersion::new(1).expect("set"),

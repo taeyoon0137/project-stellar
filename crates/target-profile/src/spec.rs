@@ -12,7 +12,9 @@
 //! | Web | `baseline` | [`WebBaseline`] Baseline 연도(2000~9999) | 예 |
 //! | Web | `capability_set_version` | [`CapabilitySetVersion`] 10진 정수(1 이상) | 예 |
 //!
-//! canonical 키 순서는 머리(`id`, `platform`, `profile_schema_version`) 다음 위 표의 종류별 순서입니다.
+//! 모든 종류는 profile registry pin `registry_version`([`ProfileRegistryVersion`], IX.10.4)도 필수로 가집니다.
+//!
+//! canonical 키 순서는 머리(`id`, `platform`, `profile_schema_version`), `registry_version`, 위 표의 종류별 순서입니다.
 //! version 텍스트는 정규화합니다(`26` → `26.0`, `17.4.0` → `17.4`).
 
 use std::fmt;
@@ -22,6 +24,7 @@ use crate::node::{
     SchemaError, ValueError,
 };
 use crate::profile::{ProfileHeader, ProfileSchemaVersion, TargetProfileId, TargetProfileKind};
+use crate::registry::{ProfileRegistryVersion, KEY_REGISTRY_VERSION};
 
 /// Apple 키: 대상 플랫폼.
 const KEY_APPLE_PLATFORM: &str = "apple_platform";
@@ -358,16 +361,23 @@ pub struct TargetProfile {
     pub id: TargetProfileId,
     /// entry 형식 버전.
     pub schema_version: ProfileSchemaVersion,
+    /// 프로젝트가 고정한 profile registry 버전(IX.10.4). 앱 업데이트로 바뀌지 않습니다.
+    pub registry_version: ProfileRegistryVersion,
     /// 종류별 필드(종류는 여기서 정해집니다).
     pub spec: ProfileSpec,
 }
 
 impl TargetProfile {
     /// 현재 schema version으로 만듭니다.
-    pub fn new(id: TargetProfileId, spec: ProfileSpec) -> TargetProfile {
+    pub fn new(
+        id: TargetProfileId,
+        registry_version: ProfileRegistryVersion,
+        spec: ProfileSpec,
+    ) -> TargetProfile {
         TargetProfile {
             id,
             schema_version: ProfileSchemaVersion::CURRENT,
+            registry_version,
             spec,
         }
     }
@@ -389,6 +399,10 @@ impl TargetProfile {
     /// canonical 매핑 노드.
     pub fn to_node(&self) -> ManifestNode {
         let mut pairs = self.header().to_pairs();
+        pairs.push((
+            KEY_REGISTRY_VERSION.to_string(),
+            ManifestNode::scalar(self.registry_version.get().to_string()),
+        ));
         pairs.extend(self.spec.to_pairs());
         ManifestNode::Mapping(pairs)
     }
@@ -399,12 +413,18 @@ impl TargetProfile {
         let header = ProfileHeader::read(node, path)?;
         let pairs = expect_mapping(node, path)?;
         let mut allowed: Vec<&str> = ProfileHeader::KEYS.to_vec();
+        allowed.push(KEY_REGISTRY_VERSION);
         allowed.extend(ProfileSpec::keys(header.kind));
         reject_unknown_keys(pairs, path, &allowed)?;
+        let pin_path = join(path, KEY_REGISTRY_VERSION);
+        let registry_version =
+            ProfileRegistryVersion::parse(required_scalar(node, path, KEY_REGISTRY_VERSION)?)
+                .map_err(|e| invalid(&pin_path, e))?;
         let spec = ProfileSpec::read(header.kind, node, path)?;
         Ok(TargetProfile {
             id: header.id,
             schema_version: header.schema_version,
+            registry_version,
             spec,
         })
     }
@@ -427,10 +447,15 @@ mod tests {
         )
     }
 
+    fn v1() -> ProfileRegistryVersion {
+        ProfileRegistryVersion::new(1).expect("v1")
+    }
+
     fn samples() -> [TargetProfile; 3] {
         [
             TargetProfile::new(
                 id("apple-desktop"),
+                v1(),
                 ProfileSpec::Apple(AppleProfile {
                     platform: ApplePlatform::MacOs,
                     minimum_os: DottedVersion::new(26, 0, 0),
@@ -438,6 +463,7 @@ mod tests {
             ),
             TargetProfile::new(
                 id("android-phone"),
+                v1(),
                 ProfileSpec::Android(AndroidProfile {
                     api_level: AndroidApiLevel::new(35).expect("api"),
                     ui_system_version: DottedVersion::new(1, 7, 0),
@@ -445,6 +471,7 @@ mod tests {
             ),
             TargetProfile::new(
                 id("web-modern"),
+                v1(),
                 ProfileSpec::Web(WebProfile {
                     baseline: WebBaseline::new(2024).expect("baseline"),
                     capability_set_version: CapabilitySetVersion::new(1).expect("set"),
@@ -462,6 +489,7 @@ mod tests {
                 ("id", "apple-desktop"),
                 ("platform", "apple"),
                 ("profile_schema_version", "1"),
+                ("registry_version", "1"),
                 ("apple_platform", "macos"),
                 ("minimum_os", "26.0"),
             ])
@@ -472,6 +500,7 @@ mod tests {
                 ("id", "android-phone"),
                 ("platform", "android"),
                 ("profile_schema_version", "1"),
+                ("registry_version", "1"),
                 ("api_level", "35"),
                 ("ui_system_version", "1.7"),
             ])
@@ -482,6 +511,7 @@ mod tests {
                 ("id", "web-modern"),
                 ("platform", "web"),
                 ("profile_schema_version", "1"),
+                ("registry_version", "1"),
                 ("baseline", "2024"),
                 ("capability_set_version", "1"),
             ])
@@ -501,6 +531,7 @@ mod tests {
                 ("id", "p1"),
                 ("platform", kind),
                 ("profile_schema_version", "1"),
+                ("registry_version", "3"),
             ]
         };
         let cases: [(&str, [(&str, &str); 2]); 3] = [
@@ -519,6 +550,37 @@ mod tests {
             full.extend(fields);
             assert!(
                 TargetProfile::from_node(&mapping(&full), "p").is_ok(),
+                "{kind}"
+            );
+            // registry pin은 모든 종류에서 필수이고 1 이상입니다.
+            let unpinned: Vec<_> = full
+                .iter()
+                .copied()
+                .filter(|(k, _)| *k != "registry_version")
+                .collect();
+            assert_eq!(
+                TargetProfile::from_node(&mapping(&unpinned), "p"),
+                Err(SchemaError::MissingField {
+                    path: "p.registry_version".to_string()
+                }),
+                "{kind}"
+            );
+            let zero: Vec<_> = full
+                .iter()
+                .map(|&(k, v)| {
+                    if k == "registry_version" {
+                        (k, "0")
+                    } else {
+                        (k, v)
+                    }
+                })
+                .collect();
+            assert_eq!(
+                TargetProfile::from_node(&mapping(&zero), "p"),
+                Err(SchemaError::InvalidValue {
+                    path: "p.registry_version".to_string(),
+                    error: ValueError::OutOfRange
+                }),
                 "{kind}"
             );
             // 종류별 필수 필드 하나씩 빼기.
@@ -558,6 +620,7 @@ mod tests {
                 ("id", "a"),
                 ("platform", "apple"),
                 ("profile_schema_version", "1"),
+                ("registry_version", "1"),
                 ("apple_platform", platform),
                 ("minimum_os", os),
             ])
@@ -597,6 +660,7 @@ mod tests {
                 ("id", "a"),
                 ("platform", "android"),
                 ("profile_schema_version", "1"),
+                ("registry_version", "1"),
                 ("api_level", api),
                 ("ui_system_version", "1.0"),
             ])
@@ -618,6 +682,7 @@ mod tests {
                 ("id", "a"),
                 ("platform", "web"),
                 ("profile_schema_version", "1"),
+                ("registry_version", "1"),
                 ("baseline", baseline),
                 ("capability_set_version", set),
             ])

@@ -15,3 +15,6 @@ pub mod spec;
 
 /// `stellar.yaml` 프로젝트 profile 목록과 기본 profile (IX.10.3).
 pub mod manifest;
+
+/// profile registry 버전과 프로젝트 pin (IX.10.4).
+pub mod registry;
