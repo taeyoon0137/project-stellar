@@ -1,0 +1,23 @@
+[package]
+name = "stellar-integration-tests"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+# 여러 crate를 잇는 종단 시나리오 테스트 전용 crate입니다. 제품 crate는 이 crate에 의존하지 않습니다.
+[dependencies]
+
+[dev-dependencies]
+stellar-core-types = { path = "../../crates/core-types" }
+stellar-document = { path = "../../crates/document", features = ["test-support"] }
+stellar-commands = { path = "../../crates/commands", features = ["test-support"] }
+stellar-history = { path = "../../crates/history" }
+stellar-storage = { path = "../../crates/storage" }
+stellar-project = { path = "../../crates/project" }
+stellar-git-porcelain = { path = "../../crates/git-porcelain" }
+stellar-semantic-diff = { path = "../../crates/semantic-diff" }
+stellar-semantic-merge = { path = "../../crates/semantic-merge" }
+
+[lints]
+workspace = true

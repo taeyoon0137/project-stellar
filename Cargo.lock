@@ -261,6 +261,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-integration-tests"
+version = "0.0.0"
+dependencies = [
+ "stellar-commands",
+ "stellar-core-types",
+ "stellar-document",
+ "stellar-git-porcelain",
+ "stellar-history",
+ "stellar-project",
+ "stellar-semantic-diff",
+ "stellar-semantic-merge",
+ "stellar-storage",
+]
+
+[[package]]
 name = "stellar-layout"
 version = "0.0.0"
 dependencies = [
