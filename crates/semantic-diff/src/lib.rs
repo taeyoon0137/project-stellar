@@ -31,3 +31,6 @@ pub mod codec;
 
 /// diff 적용 (XIV.3.9~XIV.3.10).
 pub mod apply;
+
+/// HEAD·Index·WorkingTree semantic status 분류 (XIV.4.1~).
+pub mod status;
