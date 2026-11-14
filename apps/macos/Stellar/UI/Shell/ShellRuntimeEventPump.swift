@@ -128,6 +128,12 @@ final class ShellRuntimeEventPump {
                                        node: hit.id, revision: hit.revision, delta: delta), completion)
     }
 
+    func renameLayer(session: UInt64, view: UUID, node: UUID, revision: UInt64, name: String,
+                     completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.renameLayer(handle: runtimeHandle, session: session, view: view,
+                                         node: node, revision: revision, name: name), completion)
+    }
+
     private func register(
         _ result: Result<UInt64, CoreRuntimeCallError>,
         _ completion: @escaping (CoreRuntimeEvent) -> Void

@@ -235,11 +235,11 @@ protocol SidebarDataProvider: AnyObject {
 
 ## 12. 기본 창 연결 범위와 남은 일
 
-Pages는 활성 Page와 View 이름을 표시합니다. Layers는 이 View의 실제 직계 자식을 위에 그린 순서로 보여 주며, 선택과 disclosure를 사용할 수 있습니다. 숨김·잠금과 종류도 원본의 값을 사용합니다. 제한 모드에서도 열려 있는 창 문서를 읽을 수 있습니다. 부모를 펼치거나 **Show More Layers**를 눌렀을 때만 그 부모의 다음 64행을 가져옵니다. 코어는 문서 스레드에서 현재 View·revision을 확인하고 형제 순서 인덱스에서 직접 다음 페이지를 읽습니다. 셸의 worker가 문자열과 행을 변환하며 창을 닫거나 View·revision이 바뀐 결과는 폐기합니다.
+Pages는 활성 Page와 View 이름을 표시합니다. Layers는 이 View의 실제 직계 자식을 위에 그린 순서로 보여 주며, 선택과 disclosure를 사용할 수 있습니다. 숨김·잠금과 종류도 원본의 값을 사용합니다. 제한 모드에서도 열려 있는 창 문서를 읽을 수 있습니다. 신뢰한 프로젝트에서 레이어 행을 선택하고 Return을 누르면 이름을 편집합니다. 자신이나 조상이 잠긴 행은 편집할 수 없으며, 이름 변경은 Undo 한 번으로 되돌릴 수 있습니다. 부모를 펼치거나 **Show More Layers**를 눌렀을 때만 그 부모의 다음 64행을 가져옵니다. 코어는 문서 스레드에서 현재 View·revision을 확인하고 형제 순서 인덱스에서 직접 다음 페이지를 읽습니다. 셸의 worker가 문자열과 행을 변환하며 창을 닫거나 View·revision이 바뀐 결과는 폐기합니다.
 
 | 항목 | 관련 WBS·문서 |
 |---|---|
-| 이름·표시·잠금 command | 계획 VII.2.5(SetProperty specialization) |
+| 표시·잠금 command | 계획 VII.2.5(SetProperty specialization) |
 | 이동·복제·삭제 command, 사전 검증 | 계획 VII.2.3, VII.2.8, VII.2.2, VI.2.3 |
 | 묶기·풀기 command(그룹 marker 생성·제거) | 전용 WBS 없음(계획 반영 필요, 그때까지 `group`·`ungroup` command는 잠정), Fragment 규칙은 아키텍처 §12.4 |
 | 다른 페이지·View 탐색과 이름 변경 | 계획 VI.1.3, XII.2.5 |

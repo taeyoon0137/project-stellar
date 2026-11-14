@@ -227,3 +227,5 @@ Undo 한 번은 node와 선택을 함께 되돌리고 Redo는 같은 ID를 복�
 ### 기본 창의 레이어 읽기
 
 `stellar_window_layer_page`는 셸 worker에서 창 handle·활성 View·표시 revision·부모·직전 자식 ID로 직계 자식 64개까지 읽습니다. 코어는 document thread에서 해당 창이 이미 연 문서를 조회합니다. cursor의 부모와 활성 View 소속을 확인하고 순서 인덱스에서 다음 형제부터 반환합니다. 반환값은 Page·View 이름, 원본 노드 종류·표시 이름·잠금·표시 상태, 자식 유무와 창 선택입니다. registry 잠금은 읽기 접수까지만 유지합니다. UI thread는 저장 폴더를 열거나 조회 완료를 기다리지 않습니다.
+
+레이어 이름 편집은 stellar_window_layer_rename에 창·View·표시 revision·노드 ID와 UTF-8 이름을 전달합니다. 코어가 프로젝트 신뢰, 표시 revision, View 소속 및 조상 잠금을 확인하고 기존 RenameNode를 창의 문서 transaction으로 실행합니다.

@@ -47,6 +47,22 @@ pub struct LayerPage {
 }
 
 impl AppRuntime {
+    /// 현재 표시한 레이어 이름을 한 번의 Undo 가능한 문서 명령으로 바꿉니다.
+    pub fn rename_layer(
+        &self,
+        session: WindowSessionHandle,
+        view: StableId,
+        revision: DocumentRevision,
+        node: StableId,
+        name: String,
+    ) -> Result<RequestId, RequestError> {
+        self.submit(move |ctx, request| {
+            let window = super::frame_move::trusted_canvas_window(ctx, session)?;
+            rename(window, request, view, revision, node, name)?;
+            Ok(RuntimeEvent::WindowViewChanged { request, session })
+        })
+    }
+
     /// 문서 스레드의 읽기만 접수합니다. UI는 이 ticket을 기다리지 않습니다.
     pub fn sidebar_page(
         &self,
@@ -61,6 +77,62 @@ impl AppRuntime {
             read_page(&entry.session, view, revision, parent, after)
         })
     }
+}
+
+fn rename(
+    window: &mut ProjectWindowSession,
+    request: RequestId,
+    view: StableId,
+    revision: DocumentRevision,
+    node: StableId,
+    name: String,
+) -> Result<(), Failure> {
+    use stellar_commands::{command::Command, id::CommandOrigin, transaction::CommandTransaction};
+    let stale = || {
+        Failure::new(
+            RequestFailure::UnknownView,
+            "뷰·레이어·편집 상태가 변경되었습니다",
+        )
+    };
+    if window.revision() != revision || window.tabs().active_view() != Some(view) {
+        return Err(stale());
+    }
+    let model = window.document().ok_or_else(stale)?.model();
+    let root = model
+        .definition()
+        .pages
+        .iter()
+        .flat_map(|p| &p.views)
+        .find(|v| v.id == view)
+        .ok_or_else(stale)?
+        .root_frame;
+    let columns = model.columns();
+    let original = columns
+        .get(model.runtime_id(node).ok_or_else(stale)?)
+        .ok_or_else(stale)?;
+    let unchanged = original.display_name == name;
+    let mut cursor = original;
+    loop {
+        if cursor.locked {
+            return Err(stale());
+        }
+        if cursor.stable_id == root {
+            break;
+        }
+        cursor = columns
+            .get(cursor.parent.ok_or_else(stale)?)
+            .ok_or_else(stale)?;
+    }
+    if unchanged {
+        return Ok(());
+    }
+    let tx = CommandTransaction::new(
+        super::frame_move::command_id(window.window(), request),
+        CommandOrigin::User,
+    )
+    .with_command(revision, Command::rename_node(node, name));
+    window.apply(&tx).map_err(view_failure)?;
+    Ok(())
 }
 
 fn read_page(
@@ -137,6 +209,46 @@ fn read_page(
 mod tests {
     use super::*;
     use crate::window_session::test_fixtures::{identity, saved_project, sid, window};
+
+    #[test]
+    fn rename_checks_revision_ownership_and_changes_one_history_entry() {
+        use crate::window_session::test_fixtures::{sample_document, saved_project_with};
+        let mut model = sample_document();
+        let mut locked = model.record(sid(12)).unwrap();
+        locked.locked = true;
+        locked.id = sid(30);
+        locked.parent = Some(sid(12));
+        model.insert_node(locked).unwrap();
+        let mut child = model.record(sid(11)).unwrap();
+        child.id = sid(31);
+        child.parent = Some(sid(30));
+        model.insert_node(child).unwrap();
+        let dir = saved_project_with("layer-rename", &[&model]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let rev = session.revision();
+        let change = |win: &mut ProjectWindowSession, revision, node, name: &str| {
+            rename(win, RequestId(5), sid(3), revision, sid(node), name.into())
+        };
+        for id in [20, 30, 31, 999] {
+            assert!(change(&mut session, rev, id, "거부").is_err());
+        }
+        assert!(change(&mut session, rev, 12, "n12").is_ok());
+        assert_eq!(session.revision(), rev);
+        assert!(change(&mut session, rev, 12, "버튼").is_ok());
+        assert!(change(&mut session, rev, 12, "이전 요청").is_err());
+        assert!(session.undo().unwrap());
+        let name = |win: &ProjectWindowSession| {
+            win.document()
+                .unwrap()
+                .model()
+                .record(sid(12))
+                .unwrap()
+                .display_name
+        };
+        assert_eq!(name(&session), "n12");
+        assert!(session.redo().unwrap());
+        assert_eq!(name(&session), "버튼");
+    }
 
     #[test]
     fn a_page_is_direct_front_to_back_and_belongs_to_the_displayed_view() {
