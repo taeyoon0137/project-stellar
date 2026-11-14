@@ -12,6 +12,7 @@
 //! 경계를 넘지 않고 정수 handle·고정 POD 구조체·버전형 바이트만 씁니다. `AppRuntime`(document
 //! thread)은 handle의 첫 프로젝트·문서 요청에서 시작합니다.
 
+mod git_names;
 /// 양 플랫폼 공통 입력 이벤트와 native timestamp 변환 (XII.3.1).
 pub mod input;
 /// macOS `NSEvent` → 공통 입력 이벤트 adapter (XII.3.2).
@@ -1349,6 +1350,7 @@ mod tests {
         for (name, kind) in [
             ("STELLAR_EVENT_PROJECT_OPENED", event_kind::PROJECT_OPENED),
             ("STELLAR_EVENT_PROJECT_TRUST", event_kind::PROJECT_TRUST),
+            ("STELLAR_EVENT_GIT_NAMES", event_kind::GIT_NAMES),
             ("STELLAR_EVENT_PROJECT_CLOSED", event_kind::PROJECT_CLOSED),
             ("STELLAR_EVENT_DOCUMENT_OPENED", event_kind::DOCUMENT_OPENED),
             ("STELLAR_EVENT_DOCUMENT_CLOSED", event_kind::DOCUMENT_CLOSED),
@@ -1410,6 +1412,7 @@ mod tests {
             ("HISTORY_UNAVAILABLE", RequestFailure::HistoryUnavailable),
             ("INVALID_VIEWPORT", RequestFailure::InvalidViewport),
             ("TRUST_UNAVAILABLE", RequestFailure::TrustUnavailable),
+            ("GIT_NAMES_UNAVAILABLE", RequestFailure::GitNamesUnavailable),
         ];
         assert_eq!(
             failures.len(),

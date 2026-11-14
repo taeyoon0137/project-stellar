@@ -98,6 +98,11 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.projectTrust(handle: runtimeHandle, project: project, decision: decision), completion)
     }
 
+    func gitNames(_ session: UInt64, selection: (UInt64, UInt32)?, completion: @escaping (CoreRuntimeEvent) -> Void)
+        -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.gitNames(handle: runtimeHandle, session: session, selection: selection), completion)
+    }
+
     private func register(
         _ result: Result<UInt64, CoreRuntimeCallError>,
         _ completion: @escaping (CoreRuntimeEvent) -> Void
