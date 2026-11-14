@@ -9,5 +9,8 @@ pub mod codec;
 /// 접근성 의미 node (IX.8.1).
 pub mod node;
 
+/// 시각 tree와 별도 parent/child 관계를 갖는 접근성 트리 (IX.8.2).
+pub mod tree;
+
 #[cfg(test)]
 pub(crate) mod test_support;
