@@ -8,6 +8,16 @@ final class InspectorViewController: NSViewController {
     let dataSource: InspectorDataSource
     /// Escape로 값 입력을 끝낸 뒤 포커스를 돌려줄 곳(캔버스). 창이 연결합니다.
     var focusCanvas: (() -> Void)?
+    /// 캔버스 드래그·크기 조절 중인지. 창이 연결합니다(UX.2.12).
+    var isCanvasGestureActive: (() -> Bool)?
+
+    /// 속성 패널 안 연속 조작(scrub·화살표·색 패널) 수.
+    private var panelGestures = 0
+    /// 제스처 중 미룬 구성 변경 snapshot.
+    private var deferredSnapshot: InspectorSnapshot?
+    private var deferTimer: Timer?
+    /// 아직 없는 섹션을 다음 구성에서 펼칠 것(텍스트 편집 시작 직후 Text 선택이 오기 전).
+    private var pendingReveal: InspectorSectionKind?
 
     private let scrollView = NSScrollView()
     private let content = InspectorFlippedView()
@@ -71,15 +81,49 @@ final class InspectorViewController: NSViewController {
         apply(dataSource.snapshot)
     }
 
-    /// snapshot을 반영합니다. 구성(섹션·행 이름·flag)이 같으면 값만 갱신합니다.
+    /// 제스처(캔버스 드래그·크기 조절, 패널 scrub·화살표·색 패널) 중인지.
+    private var gestureActive: Bool { panelGestures > 0 || isCanvasGestureActive?() == true }
+
+    /// snapshot을 반영합니다. 구성(섹션·행 이름·flag)이 같으면 값만 제자리에서 갱신합니다. 제스처 중에는 구성을
+    /// 고정하고(섹션 추가·삭제·스크롤 0) 같은 이름 행의 값만 바꾼 뒤, 제스처가 끝나면 미룬 구성을 반영합니다.
     func apply(_ snapshot: InspectorSnapshot) {
-        appliedSnapshot = snapshot
-        header.update(snapshot)
         if snapshot.structure == appliedStructure {
+            deferredSnapshot = nil
+            appliedSnapshot = snapshot
+            header.update(snapshot)
             for row in snapshot.rows { rowViews[row.name]?.update(row) }
             return
         }
+        if gestureActive {
+            deferredSnapshot = snapshot
+            for row in snapshot.rows where rowViews[row.name]?.row.structure == row.structure {
+                rowViews[row.name]?.update(row)
+            }
+            scheduleDeferredApply()
+            return
+        }
+        deferredSnapshot = nil
+        appliedSnapshot = snapshot
+        header.update(snapshot)
         rebuild(snapshot)
+    }
+
+    private func scheduleDeferredApply() {
+        guard deferTimer == nil else { return }
+        deferTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { timer.invalidate(); return }
+                guard !self.gestureActive else { return }
+                timer.invalidate()
+                self.deferTimer = nil
+                if let pending = self.deferredSnapshot { self.apply(pending) }
+            }
+        }
+    }
+
+    private func gesture(_ active: Bool) {
+        panelGestures = max(0, panelGestures + (active ? 1 : -1))
+        if !active, deferredSnapshot != nil { scheduleDeferredApply() }
     }
 
     /// 속성 이름(CSS longhand)으로 값 컨트롤을 찾습니다(키보드 포커스 이동·접근성).
@@ -122,6 +166,7 @@ final class InspectorViewController: NSViewController {
                 self?.dataSource.edit(name, input, phase: phase, completion: completion)
             }
             rowView.onEscape = { [weak self] in self?.focusCanvas?() }
+            rowView.onGesture = { [weak self] active in self?.gesture(active) }
             if row.flags.contains(.group) {
                 currentGroup = row.name
                 let name = row.name
@@ -134,6 +179,10 @@ final class InspectorViewController: NSViewController {
             }
             rowViews[row.name] = rowView
             section.add(rowView)
+        }
+        if let reveal = pendingReveal, let view = sectionViews[reveal] {
+            view.setCollapsed(false)
+            pendingReveal = nil
         }
     }
 
@@ -148,9 +197,14 @@ final class InspectorViewController: NSViewController {
         InspectorCollapseMemory.set(collapsed, for: classes)
     }
 
-    /// 섹션을 펼쳐 보이게 합니다(예: 텍스트 편집 시작 때 Typography).
+    /// 섹션을 펼쳐 보이게 합니다(예: 텍스트 편집 시작 때 Typography). 아직 없으면 다음 구성에서 펼칩니다.
     func reveal(_ section: InspectorSectionKind) {
-        sectionViews[section]?.setCollapsed(false)
+        if let view = sectionViews[section] {
+            view.setCollapsed(false)
+            pendingReveal = nil
+        } else {
+            pendingReveal = section
+        }
     }
 }
 

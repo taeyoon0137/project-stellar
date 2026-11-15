@@ -470,7 +470,10 @@ final class ShellProjectWindow {
     let dataSource: ShellProjectFrameDataSource
     let toolsModel: ShellWindowToolsModelStub
     let router: ShellCommandRouter
-    var canvasTextEditing: ShellCanvasTextEditing?
+    var canvasTextEditing: ShellCanvasTextEditing? {
+        // 텍스트 편집에 들어가면 속성 탭의 Typography 섹션을 펼칩니다(UX.2.12).
+        didSet { if canvasTextEditing != nil, oldValue == nil { inspectorSlot.inspector.reveal(.typography) } }
+    }
     let toolsToolbar: ToolsToolbarController
     let canvasHost: ShellCanvasHostViewController
     let sidebarSlot: ShellSidebarAreaSlot
@@ -573,6 +576,7 @@ final class ShellProjectWindow {
             guard let self else { return }
             self.window?.makeFirstResponder(self.canvasHost.canvasView)
         }
+        inspectorSlot.inspector.isCanvasGestureActive = { [weak self] in self?.frameDrag != nil }
         sidebarSource.editSelection = { [weak self] command, target, ids in
             _ = self?.editSelection(command, target: target, ids: ids)
         }
