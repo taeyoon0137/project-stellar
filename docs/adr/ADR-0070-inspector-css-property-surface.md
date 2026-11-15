@@ -72,11 +72,15 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
      항목에 합칩니다. 그 사이 Undo·선택·다른 편집은 막히지 않습니다. `left`·`top`은 같은 저장 key(이동 성분)라
      0.5초 안에 이어 바꾸면 이동 한 번으로 합쳐집니다. Escape는 입력 중인 텍스트만 버리며, 이미 적용한 화살표
      값은 Undo로 되돌립니다.
-5. **잠금(D8)**: 자신이나 조상이 잠긴 node는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다. 판정은
-   `stellar_commands::lock::NodeLock` 하나입니다. Layers의 표시·잠금 토글과 CLI 적용은 통합할 때 같은 함수로
-   맞춥니다(지금 Layers 이름 편집은 runtime `sidebar`의 자체 조상 검사를 씁니다). 이름·표시·
-   잠금 편집은 Layers와 같은 command(`rename_node`·`set_visibility`·`set_locked`, VII.2.5 `SetProperty`
-   specialization)입니다. 편집은 신뢰와 무관합니다(D1).
+5. **잠금(D8)**: 자신이나 조상이 잠긴 node는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다. 속성 패널의
+   판정은 `stellar_commands::lock::NodeLock`입니다. 편집 가능 판정은 세 곳에 더 따로 있습니다. 캔버스는 runtime
+   `editable_ancestry`, Layers의 이름·표시·잠금 토글과 삭제·붙여넣기는 runtime 검사(`sidebar`의 조상 검사 등),
+   `stellar apply`는 ops의 결과 비교(`stellar_ops::apply`의 `locked_change`)를 씁니다. 잠긴 node·잠긴 조상 아래
+   수정과 조상이 잠기지 않은 node의 `locked` 토글만 허용하는 D8 규칙은 같지만, root Frame·흐름 부모·숨긴 조상
+   처리는 서로 다릅니다. 판정을 하나로 모으는 일은 UX.3.11이고, user command validator 거부(XIX.4.3)도 그 판정을
+   씁니다(2026-11-15 교차 검토: 처음 문구 "판정은 `NodeLock` 하나"는 정리 통합의 공용 판정을 전제로 했으나, 그
+   커밋을 옮기지 않아 사실과 달랐습니다). 이름·표시·잠금 편집은 Layers와 같은 command(`rename_node`·`set_visibility`·
+   `set_locked`, VII.2.5 `SetProperty` specialization)입니다. 편집은 신뢰와 무관합니다(D1).
 6. **ABI 기준 하나**: 속성마다 C ABI 함수를 새로 두지 않습니다. 속성 패널의 선택 snapshot은
    `stellar_window_inspector`, 편집은 `stellar_window_edit_property` 하나가 기준입니다.
    - 이 lane에서 셸의 Frame 전용 경로(`CoreRuntime.resizeFrame`·`selectedFrameRadii`·`setFrameCorner`·
