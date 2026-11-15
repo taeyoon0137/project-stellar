@@ -90,8 +90,9 @@ Text 레이어 본문은 `replace-text`(`node`, Unicode scalar 정수 `start`와
 인스턴스는 `parent`의 마지막 자식이 되고, 위치 `(x, y)`는 부모 좌표계의 평행이동으로 저장됩니다.
 적용할 때 정의가 없거나 원본 hash가 다르면 `component-source-changed`(65)로 거부하고 아무것도 쓰지 않습니다.
 
-잠긴 node는 앱의 Layers·속성 패널과 같은 규칙으로 보호합니다(사용자 결정 D8). 판정은 요청을 시작할 때의 문서와
-적용 결과를 비교해 합니다.
+잠긴 node는 앱과 같은 D8 잠금 규칙(잠긴 node·잠긴 조상 아래 수정 거부, 해제는 `set-locked`)으로 보호합니다(사용자
+결정 D8). root Frame·흐름 부모·숨긴 조상 처리는 앱과 다를 수 있습니다(아래 마지막 항목). 판정은 요청을 시작할 때의
+문서와 적용 결과를 비교해 합니다.
 
 - 자신이나 조상이 잠긴 node의 값(이름·표시·크기·변환·Text 본문·modifier 등)을 바꾸거나, 지우거나, 다른 부모로
   옮기는 command를 거부합니다. 잠기지 않은 node를 지워도 그 아래에 잠긴 node가 있으면 거부합니다.
@@ -107,9 +108,13 @@ Text 레이어 본문은 `replace-text`(`node`, Unicode scalar 정수 `start`와
   그 명령의 원본 오류 `text-source-invalid`(65)로 보고합니다. `apply`의 잠금 거부를 다른 command 거부와 같은 1로
   두는 것은 아래 계획 의미 표(1 = 거부된 command)를 따른 것입니다. 두 명령의 오류 코드를 하나로 맞출지는 종료
   코드 표를 소유한 XXIV.1.2에서 정합니다.
-- 판정 구현은 아직 경로마다 따로 있습니다. `apply`는 `stellar_ops::apply`의 결과 비교, 앱 속성 패널은
-  `stellar_commands::lock::NodeLock`, 앱 Layers·삭제·붙여넣기는 runtime 검사를 씁니다. 의미는 같고, 하나로 합치는
-  일은 XIX.4.3에 남아 있습니다.
+- 판정 구현은 아직 네 곳에 따로 있습니다. `apply`는 `stellar_ops::apply`의 결과 비교(`locked_change`), 앱 속성
+  패널은 `stellar_commands::lock::NodeLock`, 캔버스는 runtime `editable_ancestry`, 앱 Layers·삭제·붙여넣기는 runtime
+  검사를 씁니다. 위 D8 규칙은 같지만 root Frame·흐름 부모·숨긴 조상 처리는 서로 다릅니다. 예를 들어 root Frame의
+  `locked` 토글은 `apply`와 속성 패널은 허용하고 Layers는 거부하므로, CLI로 잠근 root는 앱 Layers에서 풀 수
+  없습니다. 캔버스는 숨긴 조상이나 흐름 부모 아래 node의 이동도 거부하지만 `apply`는 거부하지 않습니다.
+  잠긴 자손을 가진 subtree의 복제(`duplicate-subtree`)는 앱의 ⌘D·Option 드래그와 같이 허용합니다(ADR-0070 결정 5).
+  판정을 하나로 모으는 일은 UX WBS UX.3.11이고, user command validator 거부(XIX.4.3)도 그 판정을 씁니다.
 
 ### `help`
 
