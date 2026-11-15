@@ -298,9 +298,11 @@ enum InputCheck {
             try key(.keyDown, kVK_ANSI_A, repeating: true, time: now + 4.1), "A repeat", state: keyDown, usage: 0x04,
             repeating: 1)
         try expectKey(try key(.keyUp, kVK_ANSI_A, time: now + 4.2), "A up", state: keyUp, usage: 0x04)
+        // Space는 캔버스가 임시 Hand(UX 명세 5.1)로 받아 공용 대기열에 넣지 않습니다. HID 변환(0x31 → 0x2C)은
+        // crates/ffi input_macos 테스트가 확인합니다.
         let usages: [(Int, UInt16)] = [
             (kVK_ANSI_Z, 0x1D), (kVK_ANSI_1, 0x1E), (kVK_ANSI_0, 0x27), (kVK_Return, 0x28), (kVK_Escape, 0x29),
-            (kVK_Delete, 0x2A), (kVK_Tab, 0x2B), (kVK_Space, 0x2C), (kVK_LeftArrow, 0x50), (kVK_RightArrow, 0x4F),
+            (kVK_Delete, 0x2A), (kVK_Tab, 0x2B), (kVK_LeftArrow, 0x50), (kVK_RightArrow, 0x4F),
             (kVK_DownArrow, 0x51), (kVK_UpArrow, 0x52), (kVK_F1, 0x3A), (kVK_F12, 0x45), (kVK_ForwardDelete, 0x4C),
             (kVK_Home, 0x4A), (kVK_End, 0x4D), (kVK_PageUp, 0x4B), (kVK_PageDown, 0x4E), (kVK_ANSI_Keypad0, 0x62),
             (kVK_ANSI_KeypadEnter, 0x58), (kVK_ISO_Section, 0x64), (kVK_JIS_Kana, 0x90), (kVK_JIS_Eisu, 0x91),
