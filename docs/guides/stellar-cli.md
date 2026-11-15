@@ -158,24 +158,23 @@ stdout JSON에는 입력 경로를 넣지 않습니다. 의존성의 `repository
 ## 신뢰된 프로젝트를 MCP로 읽기
 
 `stellar-mcp`는 앱이 닫혀 있어도 디스크에 저장된 프로젝트 구조, 문서 노드, 프로젝트 안의 opt-in 컴포넌트 원본을 읽을 수 있습니다.
-대상은 현재 OS 사용자의 기존 신뢰 등록에서 프로젝트 ID가 정확히 한 작업 폴더를 가리켜야 합니다.
-`stellar inspect`는 매니페스트의 ID를 읽습니다. 같은 ID로 등록된 작업 폴더가 여러 개이거나
-등록이 없으면 headless 서버는 종료 코드 77로 끝납니다.
+대상은 실행 인자로 준 프로젝트 루트(절대 경로) 하나이고, 그 폴더가 현재 OS 사용자의 신뢰 등록에 있어야 합니다.
+같은 프로젝트 ID의 작업 폴더(Git worktree 등)가 여러 개 신뢰돼 있어도 루트마다 따로 고를 수 있습니다.
+절대 경로가 아니면 종료 코드 64, 신뢰 등록이 없거나 매니페스트 ID가 등록과 다르면 77로 끝납니다.
 
 저장소에서 빌드할 때는 `cargo build -p stellar-cli -p stellar-mcp`로 두 실행 파일을 만듭니다.
-아래 명령에서 두 파일이 `PATH`에 없으면 각각 `target/debug/stellar`, `target/debug/stellar-mcp`를 사용합니다.
+아래 명령에서 파일이 `PATH`에 없으면 `target/debug/stellar-mcp`를 사용합니다.
 
 ```sh
-stellar inspect /path/to/project | jq -er '.result.project.id'
 stellar-mcp --connection-info
 ```
 
-외부 MCP 클라이언트의 stdio 서버 설정에서 `command`는 두 번째 명령이 출력한 실행 경로를 사용합니다.
-기본 `args: []`로 시작하면 프로젝트 리소스를 제공하지 않습니다. 첫 번째 명령에서 얻은 ID로
-인자를 채웁니다. 아래 배열은 검증에 사용한 프로젝트의 예입니다.
+외부 MCP 클라이언트의 stdio 서버 설정에서 `command`는 이 명령이 출력한 실행 경로를 사용합니다.
+기본 `args: []`로 시작하면 프로젝트 리소스를 제공하지 않습니다. 읽을 프로젝트의 절대 경로로
+인자를 채웁니다.
 
 ```json
-["--headless", "--project", "0195c530-3acd-7bc1-8414-c213f61cb965"]
+["--headless", "--project", "/path/to/project"]
 ```
 
 다음은 클라이언트가 같은 stdio 세션에 보내는 JSON-RPC 메시지입니다. 요청 4의 응답에서

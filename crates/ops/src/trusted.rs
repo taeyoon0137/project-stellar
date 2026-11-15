@@ -1,7 +1,7 @@
-//! 기존 OS 사용자 데이터의 신뢰 등록으로 고정한 읽기 전용 프로젝트.
-//! 프로젝트 경로를 입력받거나 신뢰를 부여하지 않습니다.
+//! 실행 인자로 고정한 프로젝트 루트를 기존 OS 사용자 데이터의 신뢰 등록으로 확인한 읽기 전용
+//! 프로젝트(ADR-0005 §3). 신뢰를 부여하거나 바꾸지 않습니다.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use stellar_project::identity::ProjectIdentity;
 pub use stellar_project::saved_project::head::ProjectHead;
@@ -15,13 +15,13 @@ use crate::snapshot::{open_snapshot, probe, ProjectProbe, ProjectSnapshot};
 /// 신뢰를 확인할 수 없거나 고정한 프로젝트를 열 수 없음. 경로·내용은 노출하지 않습니다.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrustedReadError {
-    /// 등록 없음, 모호한 ID, 철회, identity 변경 또는 저장소 읽기 실패.
+    /// 루트를 해석할 수 없음, 등록 없음, 철회, identity 변경 또는 저장소 읽기 실패.
     NotTrusted,
     /// 승인 프로젝트의 snapshot을 읽을 수 없음.
     Unavailable,
 }
 
-/// 신뢰 저장소에서 유일하게 선택한 프로젝트. 매 읽기 전에 신뢰와 identity를 재확인합니다.
+/// 루트로 고정하고 신뢰 등록을 확인한 프로젝트. 매 읽기 전에 신뢰와 identity를 재확인합니다.
 #[derive(Debug)]
 pub struct TrustedProject {
     identity: ProjectIdentity,
@@ -29,25 +29,30 @@ pub struct TrustedProject {
 }
 
 impl TrustedProject {
-    /// 기존 앱 데이터 위치에서 ID 하나를 선택합니다. 파일 생성·수정은 없습니다.
-    pub fn select(project_id: StableId) -> Result<Self, TrustedReadError> {
+    /// 절대 경로 `root`의 프로젝트를 기존 앱 데이터 위치의 신뢰 등록으로 확인합니다. 파일 생성·수정은
+    /// 없습니다.
+    ///
+    /// 등록은 실제 경로(canonical target)로 찾으므로, 같은 프로젝트 ID의 작업 폴더가 여러 개 신뢰돼
+    /// 있어도 루트마다 따로 고를 수 있습니다. 신뢰를 확인하기 전에는 프로젝트 파일을 읽지 않습니다.
+    pub fn select(root: &Path) -> Result<Self, TrustedReadError> {
         let data_dir = os_user_data_base()
             .filter(|base| base.is_absolute())
             .ok_or(TrustedReadError::NotTrusted)?
             .join(crate::lock::APP_DATA_DIR);
-        Self::select_in(project_id, data_dir)
+        Self::select_in(root, data_dir)
     }
 
-    pub(crate) fn select_in(
-        project_id: StableId,
-        data_dir: PathBuf,
-    ) -> Result<Self, TrustedReadError> {
+    pub(crate) fn select_in(root: &Path, data_dir: PathBuf) -> Result<Self, TrustedReadError> {
+        if !root.is_absolute() {
+            return Err(TrustedReadError::NotTrusted);
+        }
         let store = FileTrustStore::open(&data_dir).map_err(|_| TrustedReadError::NotTrusted)?;
-        let target = store
-            .unique_target(project_id)
+        let target = std::fs::canonicalize(root).map_err(|_| TrustedReadError::NotTrusted)?;
+        let project_id = store
+            .project_at(&target)
             .ok_or(TrustedReadError::NotTrusted)?;
         let identity =
-            ProjectIdentity::new(project_id, target).map_err(|_| TrustedReadError::NotTrusted)?;
+            ProjectIdentity::new(project_id, &target).map_err(|_| TrustedReadError::NotTrusted)?;
         if identity.canonical_target() != target || store.status(&identity) != TrustStatus::Trusted
         {
             return Err(TrustedReadError::NotTrusted);
@@ -71,8 +76,7 @@ impl TrustedProject {
         let store =
             FileTrustStore::open(&self.data_dir).map_err(|_| TrustedReadError::NotTrusted)?;
         let target = self.identity.canonical_target();
-        if store.unique_target(self.project_id()) != Some(target)
-            || store.status(&self.identity) != TrustStatus::Trusted
+        if store.status(&self.identity) != TrustStatus::Trusted
             || std::fs::canonicalize(target).ok().as_deref() != Some(target)
         {
             return Err(TrustedReadError::NotTrusted);

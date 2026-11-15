@@ -26,13 +26,13 @@ use stellar_mcp::log::Logger;
 use stellar_mcp::protocol::ProtocolConfig;
 use stellar_mcp::server;
 
-const USAGE: &str = "사용법: stellar-mcp [--attach [--instance <id>] | --headless --project <id> | --connection-info]\n\n\
+const USAGE: &str = "사용법: stellar-mcp [--attach [--instance <id>] | --headless --project <절대 경로> | --connection-info]\n\n\
     인자 없이 실행하면 stdin/stdout으로 MCP JSON-RPC 2.0 메시지(한 줄에 하나)를 처리합니다.\n\
     stdout에는 protocol 메시지만 쓰고, 로그와 이 도움말은 stderr에 씁니다.\n\
     stdin이 닫히거나 실행한 부모 프로세스가 끝나면 스스로 종료합니다.\n\n\
     --attach           실행 중 Stellar 앱을 인증하고 연결한 뒤 MCP 세션을 시작합니다.\n\
     \x20                  앱이 여러 개이면 --instance <id>(소문자 16진수 16자)로 고릅니다.\n\
-    --headless --project <id>  기존 신뢰 등록의 유일한 프로젝트 ID로 읽기 세션을 시작합니다.\n\
+    --headless --project <절대 경로>  신뢰한 프로젝트 루트 하나로 읽기 세션을 시작합니다.\n\
     --connection-info  MCP client 등록 정보(transport, command, args, env)를 JSON 한 줄로\n\
     \x20                  stdout에 씁니다. 다른 도구의 설정은 바꾸지 않습니다.\n";
 
@@ -42,8 +42,8 @@ enum Mode {
     Serve,
     /// 실행 중 앱에 연결한 MCP stdio 서버(XIX.1.7). 값은 지정 instance id 원문입니다.
     Attach(Option<String>),
-    /// 기존 신뢰 등록에서 ID 하나를 선택하는 읽기 전용 세션.
-    Headless(String),
+    /// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 세션(ADR-0005 §3).
+    Headless(std::path::PathBuf),
     /// client 등록 정보 출력(XIX.9.8).
     ConnectionInfo,
 }
@@ -59,7 +59,7 @@ fn parse_args(args: &[std::ffi::OsString]) -> Result<Option<Mode>, ()> {
         ["--help" | "-h"] => return Ok(None),
         [flag] if *flag == connection_info::FLAG => Mode::ConnectionInfo,
         ["--attach"] => Mode::Attach(None),
-        ["--headless", "--project", id] => Mode::Headless((*id).to_string()),
+        ["--headless", "--project", root] => Mode::Headless(std::path::PathBuf::from(root)),
         ["--attach", "--instance", id] => Mode::Attach(Some((*id).to_string())),
         _ => return Err(()),
     }))
@@ -221,7 +221,7 @@ fn run() -> Exit {
                 Ok(backend) => mcp_server = server::Server::headless(backend),
                 Err(status) => {
                     log.error(
-                        "읽기 프로젝트를 선택할 수 없습니다: 신뢰 등록과 프로젝트 ID를 확인하세요",
+                        "읽기 프로젝트를 선택할 수 없습니다: 절대 경로와 프로젝트 신뢰를 확인하세요",
                     );
                     return status;
                 }

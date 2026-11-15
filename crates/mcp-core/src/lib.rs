@@ -47,7 +47,7 @@ pub mod protocol;
 /// MCP stdio 서버 루프 (XIX.1.1).
 pub mod server;
 
-/// 신뢰 등록 ID로 선택하는 읽기 전용 backend (XIX.9.3).
+/// 실행 인자로 고정한 신뢰 프로젝트 루트의 읽기 전용 backend (XIX.9.3).
 pub mod headless;
 
 /// 테스트 fixture 전용 재노출. 제품 빌드에는 없습니다.

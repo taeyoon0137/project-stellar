@@ -40,12 +40,13 @@ struct CachedRead {
 }
 
 impl Headless {
-    /// 파일 경로가 아닌 기존 신뢰 등록 ID로 선택합니다. 승인·신뢰 상태를 쓰지 않습니다.
-    pub fn select(project: &str) -> Result<Self, crate::exit::Exit> {
-        let id = project
-            .parse::<StableId>()
-            .map_err(|_| crate::exit::USAGE)?;
-        let project = TrustedProject::select(id).map_err(|_| crate::exit::NOPERM)?;
+    /// 실행 인자로 받은 절대 프로젝트 루트 하나로 고정합니다(ADR-0005 §3). 절대 경로가 아니면
+    /// 사용법 오류, 신뢰 등록으로 확인할 수 없으면 권한 오류입니다. 승인·신뢰 상태를 쓰지 않습니다.
+    pub fn select(root: &std::path::Path) -> Result<Self, crate::exit::Exit> {
+        if !root.is_absolute() {
+            return Err(crate::exit::USAGE);
+        }
+        let project = TrustedProject::select(root).map_err(|_| crate::exit::NOPERM)?;
         Ok(Self::new(project))
     }
 
@@ -504,7 +505,7 @@ mod tests {
         }
 
         fn backend(&self) -> Headless {
-            Headless::new(select_trusted_project(project_id(), self.data.clone()).unwrap())
+            Headless::new(select_trusted_project(&self.project, self.data.clone()).unwrap())
         }
     }
 

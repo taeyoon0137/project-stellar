@@ -139,12 +139,12 @@ impl FileTrustStore {
         self.entries.keys().map(PathBuf::as_path).collect()
     }
 
-    /// ID가 신뢰 목록의 target 하나에만 등록돼 있으면 그 경로를 반환합니다.
-    /// 없거나 복사본 등으로 여러 target이 있으면 임의로 고르지 않습니다.
-    pub fn unique_target(&self, project_id: StableId) -> Option<&Path> {
-        let mut targets = self.entries.iter().filter(|(_, id)| **id == project_id);
-        let (target, _) = targets.next()?;
-        targets.next().is_none().then_some(target.as_path())
+    /// canonical target에 기록된 project id. 등록이 없으면 `None`입니다.
+    ///
+    /// 경로로 고정한 프로젝트의 등록을 찾을 때 씁니다. 같은 ID의 작업 폴더(worktree·복사본)가
+    /// 여러 개 등록돼 있어도 target마다 따로 찾습니다.
+    pub fn project_at(&self, canonical_target: &Path) -> Option<StableId> {
+        self.entries.get(canonical_target).copied()
     }
 
     /// identity의 신뢰 상태. canonical target과 project id가 모두 일치해야 `Trusted`입니다.
@@ -565,6 +565,31 @@ mod tests {
         let again = FileTrustStore::open(&fx.data).unwrap();
         assert_eq!(again.status(&id), TrustStatus::NotTrusted);
         assert!(again.trusted_targets().is_empty());
+    }
+
+    #[test]
+    fn project_at_finds_each_worktree_of_the_same_project_id() {
+        // 같은 ID의 작업 폴더가 둘 등록돼 있어도 target마다 따로 찾습니다.
+        let fx = fixture();
+        let worktree = fx.dir.path.join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let (main, other) = (identity(&fx.project), identity(&worktree));
+        let mut store = FileTrustStore::open(&fx.data).unwrap();
+        assert_eq!(store.project_at(main.canonical_target()), None);
+        store.grant(&main).unwrap();
+        store.grant(&other).unwrap();
+        for id in [&main, &other] {
+            assert_eq!(
+                store.project_at(id.canonical_target()),
+                Some(id.project_id())
+            );
+        }
+        store.revoke(&other).unwrap();
+        assert_eq!(store.project_at(other.canonical_target()), None);
+        assert_eq!(
+            store.project_at(main.canonical_target()),
+            Some(main.project_id())
+        );
     }
 
     #[test]

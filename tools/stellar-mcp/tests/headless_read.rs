@@ -93,8 +93,14 @@ impl Fixture {
         );
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
+    fn root(&self) -> &str {
+        self.project.to_str().unwrap()
+    }
     fn launch(&self) -> Client {
-        Client::new(self.command(&["--headless", "--project", PROJECT_ID_TEXT]))
+        self.launch_at(&self.project)
+    }
+    fn launch_at(&self, root: &std::path::Path) -> Client {
+        Client::new(self.command(&["--headless", "--project", root.to_str().unwrap()]))
     }
 }
 struct Client {
@@ -1036,7 +1042,7 @@ fn validation_reports_clean_and_unreadable_saved_documents_without_writes() {
 }
 
 #[test]
-fn missing_ambiguous_or_changed_authority_never_starts_a_read_session() {
+fn missing_or_changed_authority_never_starts_a_read_session() {
     let fx = Fixture::new();
     let denied = |args: &[&str], code| {
         let before = file_digest(&fx.temp.path);
@@ -1045,31 +1051,58 @@ fn missing_ambiguous_or_changed_authority_never_starts_a_read_session() {
         assert!(output.stdout.is_empty());
         assert_eq!(file_digest(&fx.temp.path), before);
     };
-    denied(&["--headless", "--project", PROJECT_ID_TEXT], 77);
-    denied(
-        &["--headless", "--project", fx.project.to_str().unwrap()],
-        64,
-    );
-    denied(
-        &["--headless", "--project", PROJECT_ID_TEXT, "--attach"],
-        64,
-    );
+    denied(&["--headless", "--project", fx.root()], 77);
+    // 실행 인자는 절대 프로젝트 루트입니다(ADR-0005 §3). 프로젝트 ID나 상대 경로로는 고르지 않습니다.
+    denied(&["--headless", "--project", PROJECT_ID_TEXT], 64);
+    denied(&["--headless", "--project", "project"], 64);
+    denied(&["--headless", "--project", fx.root(), "--attach"], 64);
     fx.grant();
-    denied(&["--headless", "--project", OTHER], 77);
+    // 신뢰하지 않은 다른 폴더와 없는 경로는 프로젝트 파일을 읽기 전에 거부합니다.
     let copy = fx.temp.path.join("copy");
     scaffold_project(&copy);
-    let copy_id = ProjectIdentity::new(project_id(), &copy).unwrap();
-    let mut store = FileTrustStore::open(&fx.data).unwrap();
-    store.grant(&copy_id).unwrap();
-    denied(&["--headless", "--project", PROJECT_ID_TEXT], 77);
-    store.revoke(&copy_id).unwrap();
+    denied(&["--headless", "--project", copy.to_str().unwrap()], 77);
+    let missing = fx.temp.path.join("missing");
+    denied(&["--headless", "--project", missing.to_str().unwrap()], 77);
     let manifest = fx.project.join("stellar.yaml");
     let old = std::fs::read_to_string(&manifest).unwrap();
     std::fs::write(&manifest, old.replace(PROJECT_ID_TEXT, OTHER)).unwrap();
-    denied(&["--headless", "--project", PROJECT_ID_TEXT], 77);
+    denied(&["--headless", "--project", fx.root()], 77);
     std::fs::write(&manifest, old).unwrap();
+    let store = FileTrustStore::open(&fx.data).unwrap();
     std::fs::write(store.file_path(), "invalid store").unwrap();
-    denied(&["--headless", "--project", PROJECT_ID_TEXT], 77);
+    denied(&["--headless", "--project", fx.root()], 77);
+}
+
+#[test]
+fn each_trusted_worktree_of_one_project_id_is_selected_by_its_root() {
+    // 같은 프로젝트 ID의 작업 폴더 두 개가 모두 신뢰돼 있어도 루트 인자마다 그 폴더만 읽습니다.
+    let fx = Fixture::new();
+    let main = large_document(3);
+    save_documents(&fx.project, &[&main]);
+    fx.grant();
+    let worktree = fx.temp.path.join("worktree");
+    scaffold_project(&worktree);
+    let other = random_valid_document(91);
+    assert_ne!(main.document_id(), other.document_id());
+    save_documents(&worktree, &[&other]);
+    FileTrustStore::open(&fx.data)
+        .unwrap()
+        .grant(&ProjectIdentity::new(project_id(), &worktree).unwrap())
+        .unwrap();
+    let before = file_digest(&fx.temp.path);
+    for (root, model) in [(&fx.project, &main), (&worktree, &other)] {
+        let mut client = fx.launch_at(root);
+        client.initialize();
+        let structure = content(&client.read(STRUCTURE), STRUCTURE);
+        let documents = array(structure.get("documents").unwrap());
+        assert_eq!(documents.len(), 1);
+        assert_eq!(
+            documents[0].get("id").map(text),
+            Some(model.document_id().to_string().as_str())
+        );
+        client.finish();
+    }
+    assert_eq!(file_digest(&fx.temp.path), before);
 }
 
 #[test]
@@ -1197,7 +1230,7 @@ fn release_page_rtt() {
             let index = (turn + index) % runs.len();
             let (label, binary, [first, next, repeated]) = &mut runs[index];
             let mut client = Client::new(
-                fx.command_with_binary(&binary, &["--headless", "--project", PROJECT_ID_TEXT]),
+                fx.command_with_binary(&binary, &["--headless", "--project", fx.root()]),
             );
             client.initialize_with_tools(*label == "after");
             // 구조 조회 없이 연결의 첫 resource read를 측정합니다.

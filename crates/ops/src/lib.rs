@@ -32,7 +32,7 @@ pub mod error;
 /// 앱 없이 연 읽기 전용 프로젝트 snapshot (XXIV.4.2).
 pub mod snapshot;
 
-/// 기존 신뢰 등록의 프로젝트 ID로 선택한 읽기 전용 snapshot.
+/// 루트로 고정하고 기존 신뢰 등록으로 확인한 읽기 전용 snapshot.
 pub mod trusted;
 
 /// 읽기 전용 조회: 프로젝트 구조, 문서 트리 page, node 속성, token·component (XXIV.4.3).
