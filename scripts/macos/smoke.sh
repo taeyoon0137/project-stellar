@@ -8,7 +8,7 @@
 #  - --text-input-check: 네이티브 UI 텍스트 컨트롤의 undo/IME(marked text) smoke
 #  - --input-check: mouse·trackpad·keyboard NSEvent → 공통 InputEvent 변환과 연속 move coalescing
 #  - --update-check: 업데이트 구성·채널 격리·appcast 서명·승인 gate(Sparkle, loopback fixture)
-#  - --<영역>-ui-check: UI 영역별 화면 밖 검사(shell-frame, tools-menus, sidebar, inspector, git-panel, agent-panel, welcome)
+#  - --<영역>-ui-check: UI 영역별 화면 밖 검사(shell-frame, tools-menus, sidebar, git-panel, agent-panel, welcome)
 #  - --shell-integration-check: 실제 앱 구성(메뉴, 시작 창, 코어로 프로젝트 열기, 프로젝트 창 영역·도구, 복원·닫기)
 #  - --project-open-check: Open Project 폴더 선택·코어 열기와 잘못된 폴더별 안내 대응(XII.6.2)
 #  - --window-session-check: 저장 프로젝트 fixture로 창 2개 open/close, 창 controller당 코어 창 session 하나(XII.2.2)

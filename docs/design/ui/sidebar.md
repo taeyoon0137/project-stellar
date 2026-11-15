@@ -231,7 +231,7 @@ protocol SidebarDataProvider: AnyObject {
 - 동작: 선택 command, 외부 선택 펼침, 페이지 행 선택 → active View 행 선택(재선택·접기·펼치기 포함), 페이지 목록 화살표·←·→ 키 이동(active 페이지 행을 지나 위아래로 이동, ←로 부모 페이지 행과 접기, →로 펼치기, 각 단계 command, active가 그대로인 snapshot에서 페이지 행 선택 유지), Return 이름 변경 확정·Escape 취소·무변경, 편집 중 snapshot 지연 반영, 토글(구조 유지 시 셀 재사용), 문맥 메뉴 활성화와 단축키 표시 없음, ⌘D·⌥⌘G·⇧⌥⌘G·⇧⌘H·Delete, 선택 없을 때 미동작, responder action 검증, 드롭 검증(자손 거부·Shape 위 재지정·컨테이너·최상위 끝)과 이동 반영, 필터·결과 없음·필터 해제와 펼침 복원, 빈 View, 로드 중·실패·다시 시도, 지연 자식 로드, 보이는 범위 밖에 만들어 둔 행의 값 변경·대비 높이기 반영, 변경 통지 병합.
 - 검사하지 않는 것: 실제 마우스 드래그 세션, 실제 마우스 클릭 이벤트(토글 hit test는 view 계층의 `hitTest`만 부름), VoiceOver 음성 출력, 시스템 접근성 설정을 실제로 켠 상태, 시스템 사이드바 크기 설정을 실제로 바꾼 상태, 화면 픽셀.
 
-`scripts/macos/smoke.sh`는 `--sidebar-ui-check`로 위 fixture를 검사하고, `--frame-insert-check`로 기본 창에서 실제 문서를 편집해 검사합니다. 후자는 F 생성, Undo·Redo, 저장·재열기, 중첩 행, 두 창의 격리, 형제 65개의 다음 페이지 버튼을 확인합니다.
+`scripts/macos/smoke.sh`는 `--sidebar-ui-check`로 위 fixture를 검사합니다. 기본 창에서 실제 문서를 편집하는 동작(F 생성, Undo·Redo, 저장·재열기, 중첩 행, 두 창의 격리, 형제 65개의 다음 페이지 버튼)은 앱 내장 검사를 지우고 앱을 직접 실행하는 행동 확인으로 봅니다(`docs/design/ui/inspector.md` 9장).
 
 ## 12. 기본 창 연결 범위와 남은 일
 
