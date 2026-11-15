@@ -360,6 +360,36 @@ enum CoreRuntime {
         return (Array(items.prefix(count)), revision)
     }
 
+    /// 하나뿐인 선택 node의 상자를 지금 local 좌표 `rect`로 바꿉니다(크기 핸들, ADR-0071).
+    static func canvasResize(handle: UInt64, session: UInt64, view: UUID, node: UUID,
+                             rect: CGRect) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: node.uuid) { nodeBytes in
+                stellar_window_canvas_resize(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                                             nodeBytes.bindMemory(to: UInt8.self).baseAddress, Float(rect.minX), Float(rect.minY),
+                                             Float(rect.width), Float(rect.height), &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
+    /// 하나뿐인 선택 Line의 끝점 하나를 local `point`로 옮깁니다(ADR-0071).
+    static func canvasLineEnd(handle: UInt64, session: UInt64, view: UUID, node: UUID, end: Bool,
+                              point: CGPoint) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: node.uuid) { nodeBytes in
+                stellar_window_canvas_line_end(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                                               nodeBytes.bindMemory(to: UInt8.self).baseAddress, end ? 1 : 0,
+                                               Float(point.x), Float(point.y), &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     /// 선택 전부를 `delta`만큼 옮깁니다(ADR-0071). anchor는 드래그를 시작한 행(키 이동은 nil)입니다.
     static func canvasMove(handle: UInt64, session: UInt64, view: UUID, anchor: UUID?, delta: CGVector,
                            flags: UInt32) -> Result<UInt64, CoreRuntimeCallError> {

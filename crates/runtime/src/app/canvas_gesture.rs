@@ -93,6 +93,8 @@ pub struct CanvasSelectionItem {
     pub radius: Option<RadiusHandles>,
     /// 가로·세로가 고정 크기인지(아니면 크기 라벨에 `fit-content`).
     pub fixed: [bool; 2],
+    /// Line의 시작·끝점(local). 끝점 핸들 자리입니다.
+    pub line: Option<[Vec2; 2]>,
 }
 
 /// 캔버스 제스처가 만드는 문서 편집. 한 요청이 history 항목 하나입니다(UX 명세 5.7).
@@ -108,6 +110,22 @@ pub enum CanvasEdit {
         parent_space: bool,
         /// Option 드래그: 복제본을 원본 바로 위에 만들어 옮기고 복제본을 선택합니다.
         duplicate: bool,
+    },
+    /// 하나뿐인 선택 node의 상자를 지금 local 좌표의 `rect`로 바꿉니다(크기 핸들). `width`·`height`는 고정 크기입니다.
+    Resize {
+        /// 대상(선택 전체와 같아야 함).
+        node: StableId,
+        /// 새 상자(지금 local 좌표, 크기 > 0).
+        rect: Rect,
+    },
+    /// 하나뿐인 선택 Line의 끝점 하나를 지금 local 좌표 `point`로 옮깁니다.
+    LineEnd {
+        /// 대상 Line.
+        node: StableId,
+        /// false면 시작점, true면 끝점.
+        end: bool,
+        /// 새 끝점(local).
+        point: Vec2,
     },
 }
 
@@ -205,7 +223,242 @@ fn apply_edit(
             parent_space,
             duplicate,
         ),
+        CanvasEdit::Resize { node, rect } => resize_node(window, request, view, node, rect),
+        CanvasEdit::LineEnd { node, end, point } => {
+            move_line_end(window, request, view, node, end, point)
+        }
     }
+}
+
+/// 하나뿐인 선택이 `node`이고 편집할 수 있는지 확인합니다.
+fn sole_editable(
+    window: &ProjectWindowSession,
+    view: StableId,
+    node: StableId,
+) -> Result<(&DocumentModel, NodePayload), Failure> {
+    if window.view().selection().ids() != [node] {
+        return Err(stale_view());
+    }
+    let model = window.document().ok_or_else(stale_view)?.model();
+    let payload = model.payload(node).ok_or_else(stale_view)?.clone();
+    let frame = matches!(payload, NodePayload::Frame(_));
+    editable_ancestry(model, view, node, !frame).ok_or_else(stale_view)?;
+    Ok((model, payload))
+}
+
+/// local 원점 이동을 transform에 반영합니다(`T ∘ translate(origin)`).
+fn shifted(transform: Transform2D, origin: Vec2) -> Option<Transform2D> {
+    let (a, b, c, d, x, y) = transform.components();
+    Transform2D::new(
+        a,
+        b,
+        c,
+        d,
+        x + a * origin.x() + c * origin.y(),
+        y + b * origin.x() + d * origin.y(),
+    )
+    .ok()
+}
+
+/// payload만 바꾸는 command(형제 순서·modifier는 그대로). 역 command도 같은 종류입니다.
+fn replace_payload(
+    model: &DocumentModel,
+    node: StableId,
+    payload: NodePayload,
+) -> Result<stellar_commands::command::Command, Failure> {
+    let mut record = model.record(node).ok_or_else(stale_view)?;
+    record.payload = payload;
+    Ok(stellar_commands::command::Command::RestoreNodeRecords(
+        stellar_commands::convert::RestoreNodeRecords {
+            records: vec![record],
+        },
+    ))
+}
+
+fn apply_commands(
+    window: &mut ProjectWindowSession,
+    request: RequestId,
+    commands: Vec<stellar_commands::command::Command>,
+) -> Result<(), Failure> {
+    use stellar_commands::id::CommandOrigin;
+    use stellar_commands::transaction::CommandTransaction;
+    if commands.is_empty() {
+        return Ok(());
+    }
+    let revision = window.revision();
+    let id = super::frame_move::command_id(window.window(), request);
+    let transaction = commands
+        .into_iter()
+        .fold(CommandTransaction::new(id, CommandOrigin::User), |tx, c| {
+            tx.with_command(revision, c)
+        });
+    window.apply(&transaction).map_err(view_failure)?;
+    Ok(())
+}
+
+/// 크기 핸들 한 번. Frame은 `width`·`height`(+원점이 바뀌면 `transform`), Shape·Image는 geometry와 Transform입니다.
+fn resize_node(
+    window: &mut ProjectWindowSession,
+    request: RequestId,
+    view: StableId,
+    node: StableId,
+    rect: Rect,
+) -> Result<(), Failure> {
+    use stellar_commands::command::Command;
+    use stellar_commands::document::frame::keys;
+    use stellar_commands::modifier_ops::{InsertModifier, SetModifierProperty};
+    use stellar_commands::property::{PropertyValue, SetProperty};
+    use stellar_core_types::order_key::OrderKey;
+    use stellar_core_types::value::Angle;
+    use stellar_document::modifier::{ModifierEntry, ModifierKind};
+    use stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX;
+    use stellar_document::shape::{EllipseParams, PolygonParams, RectangleParams};
+    let (model, payload) = sole_editable(window, view, node)?;
+    let size = rect.size();
+    if size.width() <= 0.0 || size.height() <= 0.0 {
+        return Err(stale_view());
+    }
+    let frame = matches!(payload, NodePayload::Frame(_));
+    let (modifier, transform) = resize_transform(model, node, frame).ok_or_else(stale_view)?;
+    let origin = rect.origin();
+    let mut commands = Vec::new();
+    let next = match payload {
+        NodePayload::Frame(current) => {
+            for command in SetProperty::frame_dimensions(node, size) {
+                let old = if command.key == keys::WIDTH {
+                    current.size.width()
+                } else {
+                    current.size.height()
+                };
+                if matches!(command.value, PropertyValue::NonNegative(v) if v.get() != old) {
+                    commands.push(Command::SetProperty(command));
+                }
+            }
+            if origin != Vec2::ZERO {
+                commands.push(Command::SetProperty(SetProperty {
+                    node,
+                    key: keys::TRANSFORM,
+                    value: PropertyValue::Transform(
+                        shifted(transform, origin).ok_or_else(stale_view)?,
+                    ),
+                }));
+            }
+            return apply_commands(window, request, commands);
+        }
+        NodePayload::Shape(ShapeGeometry::Rectangle(current)) => {
+            NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+                size,
+                corner_radius: current.corner_radius,
+            }))
+        }
+        // Ellipse·Polygon은 local bounds에 원점이 있어 transform을 바꾸지 않습니다.
+        NodePayload::Shape(ShapeGeometry::Ellipse(_)) => NodePayload::Shape(
+            ShapeGeometry::Ellipse(EllipseParams::new(rect).map_err(|_| stale_view())?),
+        ),
+        NodePayload::Shape(ShapeGeometry::Polygon(current)) => {
+            let rotation = Angle::new(current.rotation_degrees()).map_err(|_| stale_view())?;
+            NodePayload::Shape(ShapeGeometry::Polygon(
+                PolygonParams::new(rect, current.sides(), rotation, current.corner_radius())
+                    .map_err(|_| stale_view())?,
+            ))
+        }
+        NodePayload::Shape(ShapeGeometry::Line(current)) => {
+            // 끝점을 이전 상자에서 새 상자로 같은 비율로 옮깁니다(길이 0인 축은 그대로 평행 이동).
+            let min_x = current.start.x().min(current.end.x());
+            let min_y = current.start.y().min(current.end.y());
+            let old_w = (current.end.x() - current.start.x()).abs();
+            let old_h = (current.end.y() - current.start.y()).abs();
+            let map = |p: Vec2| {
+                let sx = if old_w > 0.0 {
+                    size.width() / old_w
+                } else {
+                    1.0
+                };
+                let sy = if old_h > 0.0 {
+                    size.height() / old_h
+                } else {
+                    1.0
+                };
+                Vec2::new(
+                    origin.x() + (p.x() - min_x) * sx,
+                    origin.y() + (p.y() - min_y) * sy,
+                )
+                .map_err(|_| stale_view())
+            };
+            let mut line = current;
+            line.start = map(current.start)?;
+            line.end = map(current.end)?;
+            NodePayload::Shape(ShapeGeometry::Line(line))
+        }
+        NodePayload::Image(mut image) => {
+            image.size = size;
+            NodePayload::Image(image)
+        }
+        _ => return Err(stale_view()),
+    };
+    let moves_origin = matches!(
+        next,
+        NodePayload::Shape(ShapeGeometry::Rectangle(_)) | NodePayload::Image(_)
+    );
+    if model.payload(node) != Some(&next) {
+        commands.push(replace_payload(model, node, next)?);
+    }
+    if moves_origin && origin != Vec2::ZERO {
+        let next = shifted(transform, origin).ok_or_else(stale_view)?;
+        commands.push(match modifier {
+            Some(modifier) => Command::SetModifierProperty(SetModifierProperty {
+                node,
+                modifier,
+                key: TRANSFORM_MATRIX,
+                value: PropertyValue::Transform(next),
+            }),
+            None => {
+                let stack = model.modifier_stack(node);
+                let order = OrderKey::between(
+                    None,
+                    stack.and_then(|s| s.entries().first()).map(|e| &e.order),
+                );
+                let id = super::frame_move::command_id(window.window(), request);
+                Command::InsertModifier(InsertModifier {
+                    node,
+                    entry: ModifierEntry {
+                        id: ModifierId::new(derived_id(id, node)),
+                        order,
+                        kind: ModifierKind::Transform,
+                        enabled: true,
+                        payload: ModifierPayload::Transform(next),
+                    },
+                })
+            }
+        });
+    }
+    apply_commands(window, request, commands)
+}
+
+/// Line 끝점 핸들 한 번.
+fn move_line_end(
+    window: &mut ProjectWindowSession,
+    request: RequestId,
+    view: StableId,
+    node: StableId,
+    end: bool,
+    point: Vec2,
+) -> Result<(), Failure> {
+    let (model, payload) = sole_editable(window, view, node)?;
+    let NodePayload::Shape(ShapeGeometry::Line(current)) = payload else {
+        return Err(stale_view());
+    };
+    let mut line = current;
+    if end {
+        line.end = point;
+    } else {
+        line.start = point;
+    }
+    if line == current {
+        return Ok(());
+    }
+    let command = replace_payload(model, node, NodePayload::Shape(ShapeGeometry::Line(line)))?;
+    apply_commands(window, request, vec![command])
 }
 
 /// 선택에서 다른 선택의 자손을 뺀 node(선택 순서).
@@ -701,6 +954,10 @@ pub(crate) fn selection_items(
             && !matches!(kind, CanvasNodeKind::Text | CanvasNodeKind::Instance)
             && resize_transform(model, id, frame).is_some();
         let fixed = kind != CanvasNodeKind::Text;
+        let line = match payload {
+            NodePayload::Shape(ShapeGeometry::Line(line)) => Some([line.start, line.end]),
+            _ => None,
+        };
         items.push(CanvasSelectionItem {
             id,
             kind,
@@ -711,6 +968,7 @@ pub(crate) fn selection_items(
             resizable,
             radius: radius.filter(|_| resizable),
             fixed: [fixed, fixed],
+            line,
         });
     }
     items.into()
@@ -1085,6 +1343,195 @@ mod tests {
             .select(Selection::new([sid(10)], Some(sid(10))))
             .unwrap();
         assert!(!drag(&mut session, 8, Some(10), (5., 0.), false, true));
+    }
+
+    /// shape_document에 root 아래 Ellipse 15, Line 16, Polygon 17(각 Transform 하나)을 더합니다.
+    fn all_shapes_document() -> DocumentModel {
+        use stellar_core_types::color::{Color, ColorSpace};
+        use stellar_core_types::order_key::OrderKey;
+        use stellar_core_types::value::Angle;
+        use stellar_document::modifier::{ModifierEntry, ModifierStack};
+        use stellar_document::shape::{EllipseParams, LineCap, LineParams, PolygonParams};
+        let mut model = shape_document();
+        let point = |x, y| Vec2::new(x, y).unwrap();
+        let bounds = Rect::new(Vec2::ZERO, Size2::new(40., 20.).unwrap());
+        let shapes = [
+            (
+                15,
+                ShapeGeometry::Ellipse(EllipseParams::new(bounds).unwrap()),
+            ),
+            (
+                16,
+                ShapeGeometry::Line(LineParams {
+                    start: Vec2::ZERO,
+                    end: point(30., 10.),
+                    cap: LineCap::Butt,
+                }),
+            ),
+            (
+                17,
+                ShapeGeometry::Polygon(
+                    PolygonParams::new(bounds, 6, Angle::new(0.).unwrap(), 3.).unwrap(),
+                ),
+            ),
+        ];
+        let gray = Color::new(ColorSpace::Srgb, 0.85, 0.85, 0.85, 1.).unwrap();
+        for (n, geometry) in shapes {
+            let mut record = model.record(sid(14)).unwrap();
+            record.id = sid(n);
+            record.order_key = model.next_child_order_key(sid(10));
+            record.display_name = format!("n{n}");
+            record.payload = NodePayload::Shape(geometry);
+            model.insert_node(record).unwrap();
+            let mut stack = ModifierStack::new(sid(n));
+            let paint = if n == 16 {
+                ModifierPayload::Stroke {
+                    color: gray,
+                    width: stellar_core_types::value::FiniteF32::ONE,
+                }
+            } else {
+                ModifierPayload::Fill { color: gray }
+            };
+            for (slot, payload) in [
+                ModifierPayload::Transform(Transform2D::new(1., 0., 0., 1., 20., 220.).unwrap()),
+                paint,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let order = OrderKey::between(stack.entries().last().map(|e| &e.order), None);
+                stack
+                    .insert(ModifierEntry {
+                        id: ModifierId::new(sid(n * 10 + slot as u64)),
+                        order,
+                        kind: payload.kind(),
+                        enabled: true,
+                        payload,
+                    })
+                    .unwrap();
+            }
+            model.set_modifier_stack(stack).unwrap();
+        }
+        model
+    }
+
+    fn edit(window: &mut ProjectWindowSession, request: u64, edit: CanvasEdit) -> bool {
+        let scene = CanvasCache::default().current(window, None, &mut Default::default()).unwrap();
+        apply_edit(window, &scene, RequestId(request), sid(3), edit).is_ok()
+    }
+
+    fn resize(node: u64, x: f32, y: f32, w: f32, h: f32) -> CanvasEdit {
+        CanvasEdit::Resize {
+            node: sid(node),
+            rect: Rect::new(Vec2::new(x, y).unwrap(), Size2::new(w, h).unwrap()),
+        }
+    }
+
+    fn shape(window: &ProjectWindowSession, node: u64) -> ShapeGeometry {
+        match window
+            .document()
+            .unwrap()
+            .model()
+            .payload(sid(node))
+            .unwrap()
+        {
+            NodePayload::Shape(shape) => *shape,
+            _ => panic!("Shape"),
+        }
+    }
+
+    #[test]
+    fn resize_handles_set_fixed_size_and_origin_for_each_node_kind_in_one_undo() {
+        let dir = saved_project_with("canvas-resize", &[&all_shapes_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let select = |session: &mut ProjectWindowSession, n: u64| {
+            session
+                .select(Selection::new([sid(n)], Some(sid(n))))
+                .unwrap();
+        };
+        // Frame: 왼쪽 위 핸들은 width·height와 원점을 함께 바꾸고 Undo 한 번입니다.
+        select(&mut session, 12);
+        let undo = session.history().history().len();
+        assert!(edit(&mut session, 1, resize(12, -10., -10., 60., 60.)));
+        assert_eq!(session.history().history().len(), undo + 1);
+        let NodePayload::Frame(frame) = session
+            .document()
+            .unwrap()
+            .model()
+            .payload(sid(12))
+            .unwrap()
+            .clone()
+        else {
+            panic!("Frame");
+        };
+        assert_eq!(frame.size, Size2::new(60., 60.).unwrap());
+        assert_eq!(frame.transform.components(), (1., 0., 0., 1., 190., 40.));
+        assert!(session.undo().unwrap());
+        assert_eq!(frame_transform(&session, 12), (1., 0., 0., 1., 200., 50.));
+        // Rectangle: 크기와 Transform 원점.
+        select(&mut session, 14);
+        assert!(edit(&mut session, 2, resize(14, -5., 0., 45., 30.)));
+        assert!(
+            matches!(shape(&session, 14), ShapeGeometry::Rectangle(r) if r.size == Size2::new(45., 30.).unwrap())
+        );
+        assert_eq!(shape_translation(&session, sid(14)), (295., 200.));
+        // Ellipse·Polygon: local bounds를 그대로 바꾸고 transform은 그대로입니다.
+        select(&mut session, 15);
+        assert!(edit(&mut session, 3, resize(15, 2., 3., 50., 25.)));
+        assert!(matches!(shape(&session, 15), ShapeGeometry::Ellipse(e)
+            if e.bounds == Rect::new(Vec2::new(2., 3.).unwrap(), Size2::new(50., 25.).unwrap())));
+        assert_eq!(shape_translation(&session, sid(15)), (20., 220.));
+        select(&mut session, 17);
+        assert!(edit(&mut session, 4, resize(17, 0., 0., 80., 40.)));
+        let ShapeGeometry::Polygon(polygon) = shape(&session, 17) else {
+            panic!("Polygon");
+        };
+        assert_eq!(
+            (
+                polygon.bounds().size(),
+                polygon.sides(),
+                polygon.corner_radius()
+            ),
+            (Size2::new(80., 40.).unwrap(), 6, 3.)
+        );
+        // Line: 상자 비율로 두 끝점을 옮기고, 끝점 핸들은 한 점만 옮깁니다.
+        select(&mut session, 16);
+        assert!(edit(&mut session, 5, resize(16, 0., 0., 60., 20.)));
+        assert!(
+            matches!(shape(&session, 16), ShapeGeometry::Line(l) if l.end == Vec2::new(60., 20.).unwrap())
+        );
+        let end = Vec2::new(-5., 40.).unwrap();
+        assert!(edit(
+            &mut session,
+            6,
+            CanvasEdit::LineEnd {
+                node: sid(16),
+                end: true,
+                point: end
+            }
+        ));
+        assert!(
+            matches!(shape(&session, 16), ShapeGeometry::Line(l) if l.start == Vec2::ZERO && l.end == end)
+        );
+        // 선택과 다른 node, 0 크기, Text가 아닌데도 선택이 여럿이면 거부합니다.
+        assert!(!edit(&mut session, 7, resize(14, 0., 0., 10., 10.)));
+        session
+            .select(Selection::new([sid(14), sid(15)], Some(sid(15))))
+            .unwrap();
+        assert!(!edit(&mut session, 8, resize(15, 0., 0., 10., 10.)));
+        select(&mut session, 15);
+        assert!(!edit(
+            &mut session,
+            9,
+            CanvasEdit::Resize {
+                node: sid(15),
+                rect: Rect::new(Vec2::ZERO, Size2::new(0., 10.).unwrap()),
+            }
+        ));
+        session.save_now().unwrap();
+        let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+        assert!(matches!(shape(&reopened, 16), ShapeGeometry::Line(l) if l.end == end));
+        assert_eq!(shape_translation(&reopened, sid(14)), (295., 200.));
     }
 
     #[test]

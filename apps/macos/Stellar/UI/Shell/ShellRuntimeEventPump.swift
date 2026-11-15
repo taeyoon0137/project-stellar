@@ -186,6 +186,17 @@ final class ShellRuntimeEventPump {
                                             flags: flags), completion)
     }
 
+    func canvasResize(session: UInt64, view: UUID, node: UUID, rect: CGRect,
+                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.canvasResize(handle: runtimeHandle, session: session, view: view, node: node, rect: rect), completion)
+    }
+
+    func canvasLineEnd(session: UInt64, view: UUID, node: UUID, end: Bool, point: CGPoint,
+                       completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.canvasLineEnd(handle: runtimeHandle, session: session, view: view, node: node, end: end,
+                                           point: point), completion)
+    }
+
     func canvasMove(session: UInt64, view: UUID, anchor: UUID?, delta: CGVector, flags: UInt32,
                     completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.canvasMove(handle: runtimeHandle, session: session, view: view, anchor: anchor,

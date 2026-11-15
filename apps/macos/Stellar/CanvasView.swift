@@ -61,6 +61,18 @@ final class CanvasView: NSView {
     var rootFrameID: UUID? { frameScene.rootID }
     /// 문서 → 화면 변환.
     var worldToView: CGAffineTransform { frameScene.worldToView }
+    /// 화면 점 아래의 선택 핸들.
+    func selectionHandle(at point: NSPoint) -> (box: CanvasSelectionBox, handle: CanvasHandle)? { frameScene.handle(at: point) }
+    /// 선택 상자의 local → 화면 변환.
+    func selectionPlacement(_ box: CanvasSelectionBox) -> CGAffineTransform { frameScene.selectionPlacement(box) }
+    /// 핸들 드래그 중 보여 줄 새 상자. nil이면 문서 값 그대로입니다.
+    var gesturePreview: CanvasGesturePreview? {
+        get { frameScene.gesturePreview }
+        set { frameScene.gesturePreview = newValue; needsDisplay = true }
+    }
+    /// 버튼 없이 움직일 때 보일 커서(핸들 위 등). nil이면 기본 커서입니다.
+    var hoverCursor: ((NSPoint) -> NSCursor?)?
+    private var showsHoverCursor = false
 
     var insertionOutline: CGPath? { didSet { needsDisplay = true } }
 
@@ -187,7 +199,18 @@ final class CanvasView: NSView {
     override func mouseDragged(with event: NSEvent) {
         if framePointerHandler?(event) != true { submitInput(event) }
     }
-    override func mouseMoved(with event: NSEvent) { submitInput(event) }
+    override func mouseMoved(with event: NSEvent) {
+        if !isSpaceHeld, let hoverCursor {
+            if let cursor = hoverCursor(CanvasInput.viewPoint(of: event, in: self)) {
+                cursor.set()
+                showsHoverCursor = true
+            } else if showsHoverCursor {
+                NSCursor.arrow.set()
+                showsHoverCursor = false
+            }
+        }
+        submitInput(event)
+    }
     override func rightMouseDown(with event: NSEvent) { submitInput(event) }
     override func rightMouseUp(with event: NSEvent) { submitInput(event) }
     override func rightMouseDragged(with event: NSEvent) { submitInput(event) }

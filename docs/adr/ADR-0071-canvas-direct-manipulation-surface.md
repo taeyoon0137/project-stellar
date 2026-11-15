@@ -74,6 +74,22 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
    옮긴 뒤 복제본을 선택합니다. 복제·이동·선택이 history 항목 하나입니다. root Frame은 복제하지 않습니다.
 5. 셸은 이 경로만 쓰고 `stellar_window_session_move_frame`(단일 Frame·Shape 이동)을 더는 부르지 않습니다.
 
+### UX.2.9 — 크기 핸들과 크기 라벨
+
+1. `stellar_window_canvas_resize(handle, session, view, node, x, y, width, height, out_request)`: 하나뿐인 선택 node의
+   상자를 지금 local 좌표의 새 상자로 바꿉니다(크기 > 0, Undo 한 번). 셸은 핸들을 끈 결과 상자만 보내고(Shift 비율
+   유지, Option 중심 기준은 셸의 입력 해석), 어떤 값을 바꿀지는 코어가 정합니다.
+   - Frame: `width`·`height` longhand와, 원점이 바뀌면 `transform`(`T ∘ translate(x, y)`).
+   - Rectangle·Image: geometry 크기와 Transform modifier 원점. Ellipse·Polygon: local bounds(변 수·회전·반경 유지).
+   - Line: 두 끝점을 이전 상자에서 새 상자로 같은 비율로 옮깁니다.
+   - geometry 변경은 기존 `RestoreNodeRecords`(같은 id 레코드 대체, 역 command도 같은 종류)로 기록합니다. Shape
+     geometry용 PropertyKey가 생기면(UX.2.1) 그 키의 `SetProperty`로 바꿀 수 있습니다.
+   - Text는 저장 형식에 고정 폭이 없어 크기 핸들이 없고(XII.10.33), 인스턴스는 정의 크기를 따라 없습니다.
+2. `stellar_window_canvas_line_end(handle, session, view, node, end, x, y, out_request)`: Line 끝점 핸들 하나를 옮깁니다.
+3. `StellarCanvasSelectionItem`에 `line[4]`(Line의 local 시작·끝점)를 더합니다. 셸은 단일 선택에 크기 핸들 8개(화면
+   상자가 24pt보다 작으면 모서리 4개) 또는 Line 끝점 2개를 그리고, 선택 아래에 `320 × 200`(고정 크기가 아닌 축은
+   `fit-content`) 라벨을 그립니다. 핸들·라벨은 캔버스 overlay라 렌더 결과에 들어가지 않습니다.
+
 ## Alternatives
 
 - 코어에 기본 색 표를 두고 셸이 덮어쓰기: D7("코어 하드코딩 없음")에 어긋나 채택하지 않았습니다.

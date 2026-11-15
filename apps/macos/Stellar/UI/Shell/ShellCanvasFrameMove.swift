@@ -26,6 +26,31 @@ extension ShellProjectWindow {
         }
     }
 
+    /// 핸들 위 커서. 크기 핸들은 그 가장자리·모서리 방향, Line 끝점은 십자입니다.
+    static func cursor(for handle: CanvasHandle) -> NSCursor {
+        switch handle {
+        case .resize(let index):
+            let positions: [NSCursor.FrameResizePosition] = [.topLeft, .topRight, .bottomRight, .bottomLeft,
+                                                              .top, .right, .bottom, .left]
+            return NSCursor.frameResize(position: positions[index], directions: .all)
+        case .lineEnd:
+            return .crosshair
+        }
+    }
+
+    /// 캔버스 편집 요청 하나를 보내고 끝나면 표시를 갱신합니다(ADR-0071).
+    @discardableResult
+    func submitCanvasEdit(
+        _ submit: (ShellRuntimeEventPump, UInt64, @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError>
+    ) -> Bool {
+        guard let project = dataSource.session, let session = windowController.windowSession,
+              !session.isClosing, !session.isClosed else { return false }
+        return session.track({ submit(project.pump, session.session, $0) }) { [weak self, weak session] _ in
+            guard let self, self.windowController.windowSession === session else { return }
+            self.refreshSessionCommands()
+        }
+    }
+
     /// 화살표 키의 이동량(부모 공간 px). Shift는 10px입니다. ⌘·Option·Control이 있으면 nil입니다.
     static func arrowNudge(_ event: NSEvent) -> CGVector? {
         guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else { return nil }
@@ -83,16 +108,27 @@ extension ShellProjectWindow {
         var zoomDrag: (start: NSPoint, session: UInt64, camera: StellarWindowViewInfo, bounds: CGRect)?
         // 빈 곳(root 배경 또는 모든 Frame 밖)에서 시작한 영역 선택. leaf는 클릭으로 끝날 때 고를 행입니다.
         var marquee: (start: NSPoint, leaf: UUID?, view: UUID, session: UInt64, size: NSSize, moved: Bool)?
+        // 선택 핸들 드래그. placement는 누른 시점의 local → 화면 변환입니다.
+        var handleDrag: (box: CanvasSelectionBox, handle: CanvasHandle, start: NSPoint, session: UInt64, view: UUID,
+                         size: NSSize, viewport: StellarWindowViewInfo, placement: CGAffineTransform)?
         // 진행 중인 캔버스 제스처 하나라도 있으면 true. 새 제스처 상태(크기 조절·영역 선택 등)도 여기에 더합니다.
         canvas.frameGestureActive = { [weak self] in
-            self?.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil
+            self?.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || handleDrag != nil
+        }
+        canvas.hoverCursor = { [weak self, weak canvas] point in
+            guard let self, let canvas, self.toolsModel.snapshot.activeTool == .move,
+                  let (_, handle) = canvas.selectionHandle(at: point) else { return nil }
+            return Self.cursor(for: handle)
         }
         canvas.cancelFrameGesture = { [weak self, weak canvas] in
-            guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || self.rejectedDraw
+            guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil || marquee != nil || handleDrag != nil
+                || self.rejectedDraw
             else { return false }
             handDrag = nil
             zoomDrag = nil
             marquee = nil
+            handleDrag = nil
+            canvas?.gesturePreview = nil
             self.frameDrag = nil
             if self.rejectedDraw {
                 self.rejectedDraw = false
@@ -199,6 +235,58 @@ extension ShellProjectWindow {
             if self.frameDrag?.tool.insertsBounds == true || (event.type == .leftMouseDown && self.toolsModel.snapshot.activeTool.insertsBounds) {
                 return self.handleFrameInsertion(event, point: point, canvas: canvas)
             }
+            if let drag = handleDrag, event.type == .leftMouseDragged || event.type == .leftMouseUp {
+                guard self.toolsModel.snapshot.activeTool == .move, canvas.bounds.size == drag.size,
+                      let session = self.windowController.windowSession, session.session == drag.session else {
+                    _ = canvas.cancelFrameGesture?()
+                    return true
+                }
+                let det = drag.placement.a * drag.placement.d - drag.placement.b * drag.placement.c
+                guard det.isFinite, det != 0 else { return true }
+                let local = point.applying(drag.placement.inverted())
+                guard local.x.isFinite, local.y.isFinite else { return true }
+                let modifiers = event.modifierFlags
+                var preview = CanvasGesturePreview(id: drag.box.id, rect: drag.box.rect,
+                                                   lineStart: drag.box.lineStart, lineEnd: drag.box.lineEnd)
+                switch drag.handle {
+                case .resize(let index):
+                    preview.rect = drag.box.rect.resized(handle: index, to: local, keepRatio: modifiers.contains(.shift),
+                                                         fromCenter: modifiers.contains(.option))
+                case .lineEnd(let end):
+                    guard let other = end ? drag.box.lineStart : drag.box.lineEnd else { return true }
+                    var target = local
+                    if modifiers.contains(.shift) {
+                        // Shift는 다른 끝점 기준 45° 단위입니다.
+                        let dx = local.x - other.x, dy = local.y - other.y
+                        let angle = (atan2(dy, dx) / (.pi / 4)).rounded() * (.pi / 4)
+                        let length = hypot(dx, dy)
+                        target = CGPoint(x: other.x + length * cos(angle), y: other.y + length * sin(angle))
+                    }
+                    if end { preview.lineEnd = target } else { preview.lineStart = target }
+                }
+                if event.type == .leftMouseDragged {
+                    if hypot(point.x - drag.start.x, point.y - drag.start.y) >= 1 { canvas.gesturePreview = preview }
+                    return true
+                }
+                _ = canvas.cancelFrameGesture?()
+                guard hypot(point.x - drag.start.x, point.y - drag.start.y) >= 1, let camera = session.viewInfo,
+                      camera.center_x == drag.viewport.center_x, camera.center_y == drag.viewport.center_y,
+                      camera.zoom == drag.viewport.zoom else { return true }
+                let node = drag.box.id, view = drag.view
+                switch drag.handle {
+                case .resize:
+                    // 크기 핸들 드래그 한 번이 Undo 한 번입니다. 어떤 longhand를 바꿀지는 코어가 정합니다.
+                    self.submitCanvasEdit { pump, session, done in
+                        pump.canvasResize(session: session, view: view, node: node, rect: preview.rect, completion: done)
+                    }
+                case .lineEnd(let end):
+                    guard let target = end ? preview.lineEnd : preview.lineStart else { return true }
+                    self.submitCanvasEdit { pump, session, done in
+                        pump.canvasLineEnd(session: session, view: view, node: node, end: end, point: target, completion: done)
+                    }
+                }
+                return true
+            }
             if var area = marquee, event.type == .leftMouseDragged || event.type == .leftMouseUp {
                 guard self.toolsModel.snapshot.activeTool == .move, canvas.bounds.size == area.size,
                       let session = self.windowController.windowSession, session.session == area.session else {
@@ -241,6 +329,11 @@ extension ShellProjectWindow {
                       viewport.has_view == 1 else { return false }
                 canvas.window?.makeFirstResponder(canvas)
                 let view = UUID(uuid: viewport.active_view)
+                if let (box, handle) = canvas.selectionHandle(at: point) {
+                    handleDrag = (box, handle, point, session.session, view, canvas.bounds.size, viewport,
+                                  canvas.selectionPlacement(box))
+                    return true
+                }
                 guard let hit = canvas.frameHit(at: point), hit.id != canvas.rootFrameID else {
                     marquee = (point, canvas.frameHit(at: point)?.id, view, session.session, canvas.bounds.size, false)
                     return true

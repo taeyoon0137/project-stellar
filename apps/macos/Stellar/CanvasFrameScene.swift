@@ -12,6 +12,9 @@ struct CanvasSelectionBox: Equatable {
     let rect: CGRect
     /// tl, tr, br, bl.
     let radii: [CGFloat]
+    /// Line의 local 시작·끝점.
+    let lineStart: CGPoint?
+    let lineEnd: CGPoint?
 
     init(_ item: StellarCanvasSelectionItem) {
         id = UUID(uuid: item.id)
@@ -23,9 +26,62 @@ struct CanvasSelectionBox: Equatable {
         rect = CGRect(x: CGFloat(item.rect.0), y: CGFloat(item.rect.1),
                       width: CGFloat(item.rect.2), height: CGFloat(item.rect.3))
         radii = [CGFloat(item.radii.0), CGFloat(item.radii.1), CGFloat(item.radii.2), CGFloat(item.radii.3)]
+        let isLine = item.kind == 4
+        lineStart = isLine ? CGPoint(x: CGFloat(item.line.0), y: CGFloat(item.line.1)) : nil
+        lineEnd = isLine ? CGPoint(x: CGFloat(item.line.2), y: CGFloat(item.line.3)) : nil
     }
 
     func has(_ flag: Int32) -> Bool { flags & UInt32(flag) != 0 }
+}
+
+/// 선택 위 핸들(UX 명세 5.4). 크기는 0 tl, 1 tr, 2 br, 3 bl, 4 top, 5 right, 6 bottom, 7 left입니다.
+enum CanvasHandle: Equatable {
+    case resize(Int)
+    /// false 시작점, true 끝점.
+    case lineEnd(Bool)
+}
+
+/// 핸들 드래그 중 보여 줄 새 상자. 문서는 놓을 때 한 번만 바꿉니다.
+struct CanvasGesturePreview {
+    let id: UUID
+    var rect: CGRect
+    var lineStart: CGPoint?
+    var lineEnd: CGPoint?
+}
+
+extension CGRect {
+    /// 크기 핸들 `handle`을 local 점 `point`로 끈 상자. Shift는 비율 유지, Option은 중심 기준입니다. 최소 1입니다.
+    func resized(handle: Int, to point: CGPoint, keepRatio: Bool, fromCenter: Bool) -> CGRect {
+        func axis(movesMin: Bool, movesMax: Bool, lo: CGFloat, hi: CGFloat, value: CGFloat)
+            -> (anchor: CGFloat, extent: CGFloat)? {
+            guard movesMin || movesMax else { return nil }
+            let anchor = fromCenter ? (lo + hi) / 2 : (movesMin ? hi : lo)
+            return (anchor, value - anchor)
+        }
+        let x = axis(movesMin: [0, 3, 7].contains(handle), movesMax: [1, 2, 5].contains(handle),
+                     lo: minX, hi: maxX, value: point.x)
+        let y = axis(movesMin: [0, 1, 4].contains(handle), movesMax: [2, 3, 6].contains(handle),
+                     lo: minY, hi: maxY, value: point.y)
+        let reference = CGSize(width: fromCenter ? width / 2 : width, height: fromCenter ? height / 2 : height)
+        var scale: CGFloat?
+        if keepRatio, reference.width > 0, reference.height > 0 {
+            scale = max(x.map { abs($0.extent) / reference.width } ?? 0, y.map { abs($0.extent) / reference.height } ?? 0)
+        }
+        func range(_ a: (anchor: CGFloat, extent: CGFloat)?, lo: CGFloat, hi: CGFloat, ref: CGFloat) -> (CGFloat, CGFloat) {
+            if let a {
+                var e = a.extent
+                if let scale { e = (e < 0 ? -1 : 1) * ref * scale }
+                let r = fromCenter ? (a.anchor - abs(e), a.anchor + abs(e)) : (min(a.anchor, a.anchor + e), max(a.anchor, a.anchor + e))
+                return (r.0, max(r.1, r.0 + 1))
+            }
+            guard let scale else { return (lo, hi) }
+            let mid = (lo + hi) / 2, half = max((hi - lo) * scale, 1) / 2
+            return (mid - half, mid + half)
+        }
+        let (x0, x1) = range(x, lo: minX, hi: maxX, ref: reference.width)
+        let (y0, y1) = range(y, lo: minY, hi: maxY, ref: reference.height)
+        return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
+    }
 }
 
 struct CanvasFrameHit {
@@ -209,6 +265,10 @@ final class CanvasFrameScene {
     private(set) var selection: [CanvasSelectionBox] = []
     /// 활성 View의 root Frame.
     private(set) var rootID: UUID?
+    /// 핸들 드래그 중의 새 상자(선택 외곽선·핸들·크기 라벨이 따라갑니다).
+    var gesturePreview: CanvasGesturePreview?
+    /// 이보다 작은 화면 상자에는 모서리 핸들만 둡니다.
+    private static let edgeHandleMinimum: CGFloat = 24
 
     private func previewing(_ index: Int) -> Bool { previewRanges.contains { $0.contains(index) } }
 
@@ -315,6 +375,108 @@ final class CanvasFrameScene {
         skipped = info.skipped
         worldToView = transform(info.camera)
         selection = CoreRuntime.canvasSelection(handle: handle, session: session)?.items.map(CanvasSelectionBox.init) ?? []
+    }
+
+    /// 선택 상자(핸들 드래그 중이면 새 상자)의 local 사각형.
+    private func displayedRect(_ box: CanvasSelectionBox) -> CGRect {
+        gesturePreview.flatMap { $0.id == box.id ? $0.rect : nil } ?? box.rect
+    }
+
+    /// 하나뿐인 선택의 핸들과 화면 위치. 크기를 바꿀 수 없는 node에는 없습니다.
+    func handles() -> [(handle: CanvasHandle, point: CGPoint)] {
+        guard selection.count == 1, let box = selection.first, box.has(STELLAR_CANVAS_ITEM_RESIZABLE) else { return [] }
+        let placement = selectionPlacement(box)
+        if let start = box.lineStart, let end = box.lineEnd {
+            let preview = gesturePreview?.id == box.id ? gesturePreview : nil
+            return [(.lineEnd(false), (preview?.lineStart ?? start).applying(placement)),
+                    (.lineEnd(true), (preview?.lineEnd ?? end).applying(placement))]
+        }
+        let r = displayedRect(box)
+        let corners = [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
+                       CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)].map { $0.applying(placement) }
+        var result = corners.enumerated().map { (CanvasHandle.resize($0.offset), $0.element) }
+        let screenWidth = hypot(corners[1].x - corners[0].x, corners[1].y - corners[0].y)
+        let screenHeight = hypot(corners[3].x - corners[0].x, corners[3].y - corners[0].y)
+        if screenWidth >= Self.edgeHandleMinimum && screenHeight >= Self.edgeHandleMinimum {
+            let edges = [CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
+                         CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)]
+            result += edges.enumerated().map { (CanvasHandle.resize($0.offset + 4), $0.element.applying(placement)) }
+        }
+        return result
+    }
+
+    /// 화면 점 아래의 핸들(6pt 이내).
+    func handle(at point: CGPoint) -> (box: CanvasSelectionBox, handle: CanvasHandle)? {
+        guard let box = selection.first else { return nil }
+        let hit = handles().min { hypot($0.point.x - point.x, $0.point.y - point.y) < hypot($1.point.x - point.x, $1.point.y - point.y) }
+        guard let hit, hypot(hit.point.x - point.x, hit.point.y - point.y) <= 6 else { return nil }
+        return (box, hit.handle)
+    }
+
+    private static func cssNumber(_ value: CGFloat) -> String {
+        let rounded = (value * 100).rounded() / 100
+        return rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%g", Double(rounded))
+    }
+
+    /// 외곽선, 핸들, 선택 아래 크기 라벨(`320 × 200`, 고정 크기가 아니면 `fit-content`).
+    private func drawSelection(in context: CGContext) {
+        guard !selection.isEmpty else { return }
+        context.saveGState()
+        let accent = NSColor.controlAccentColor.cgColor
+        context.setStrokeColor(accent)
+        context.setLineWidth(1.5)
+        var screen = CGRect.null
+        var world = CGRect.null
+        for box in selection {
+            var placement = selectionPlacement(box)
+            let rect = displayedRect(box)
+            let path: CGPath
+            if let start = box.lineStart, let end = box.lineEnd {
+                let preview = gesturePreview?.id == box.id ? gesturePreview : nil
+                let line = CGMutablePath()
+                line.move(to: (preview?.lineStart ?? start).applying(placement))
+                line.addLine(to: (preview?.lineEnd ?? end).applying(placement))
+                path = line
+            } else {
+                path = CGPath(rect: rect, transform: &placement)
+            }
+            context.addPath(path)
+            screen = screen.union(path.boundingBox)
+            world = world.union(rect.applying(box.world))
+        }
+        context.strokePath()
+        for (_, point) in handles() {
+            let square = CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7)
+            context.setFillColor(NSColor.white.cgColor)
+            context.fill(square)
+            context.setLineWidth(1)
+            context.stroke(square)
+        }
+        context.restoreGState()
+        let label: String
+        if selection.count == 1, let box = selection.first {
+            let size = displayedRect(box).size
+            let line = box.lineStart.flatMap { start in box.lineEnd.map { CGSize(width: abs($0.x - start.x), height: abs($0.y - start.y)) } }
+            let shown = line ?? size
+            let width = box.has(STELLAR_CANVAS_ITEM_FIXED_WIDTH) ? Self.cssNumber(shown.width) : "fit-content"
+            let height = box.has(STELLAR_CANVAS_ITEM_FIXED_HEIGHT) ? Self.cssNumber(shown.height) : "fit-content"
+            label = "\(width) × \(height)"
+        } else {
+            label = "\(Self.cssNumber(world.width)) × \(Self.cssNumber(world.height))"
+        }
+        guard !screen.isNull else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.white,
+        ]
+        let text = label as NSString
+        let size = text.size(withAttributes: attributes)
+        let pill = CGRect(x: screen.midX - size.width / 2 - 6, y: screen.maxY + 6, width: size.width + 12, height: size.height + 4)
+        NSGraphicsContext.saveGraphicsState()
+        NSColor.controlAccentColor.setFill()
+        NSBezierPath(roundedRect: pill, xRadius: 4, yRadius: 4).fill()
+        text.draw(at: CGPoint(x: pill.minX + 6, y: pill.minY + 2), withAttributes: attributes)
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     /// 선택 상자의 local → 화면 변환. 드래그 미리보기 중이면 같은 만큼 옮깁니다.
@@ -476,14 +638,6 @@ final class CanvasFrameScene {
         context.restoreGState()
         if let overlay = textEditOverlay { drawTextEdit(overlay, in: context) }
         // 선택 외곽선은 조상의 clip과 관계없이 scene 위에 표시합니다. 상자는 코어가 정합니다(ADR-0071).
-        context.saveGState()
-        context.setStrokeColor(NSColor.controlAccentColor.cgColor)
-        context.setLineWidth(1.5)
-        for box in selection {
-            var placement = selectionPlacement(box)
-            context.addPath(CGPath(rect: box.rect, transform: &placement))
-        }
-        context.strokePath()
-        context.restoreGState()
+        drawSelection(in: context)
     }
 }

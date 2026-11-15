@@ -330,6 +330,97 @@ pub unsafe extern "C" fn stellar_window_canvas_move(
     })
 }
 
+/// 하나뿐인 선택 node의 상자를 지금 local 좌표 `(x, y, width, height)`로 바꿉니다(크기 핸들, Undo 한 번).
+/// Frame은 `width`·`height`와 원점, Rectangle·Image는 크기와 Transform, Ellipse·Polygon은 local bounds,
+/// Line은 두 끝점을 같은 비율로 바꿉니다. 크기는 0보다 커야 합니다.
+///
+/// # Safety
+/// `view`·`node`는 16 byte를 읽을 수 있어야 하고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn stellar_window_canvas_resize(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    node: *const [u8; 16],
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    use stellar_core_types::value::{Rect, Size2};
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || node.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let (Ok(origin), Ok(size)) = (Vec2::new(x, y), Size2::new(width, height)) else {
+            return StellarStatus::InvalidArgument;
+        };
+        if size.is_empty() {
+            return StellarStatus::InvalidArgument;
+        }
+        let edit = CanvasEdit::Resize {
+            node: StableId::from_bytes(unsafe { *node }),
+            rect: Rect::new(origin, size),
+        };
+        submit_edit(
+            handle,
+            session,
+            StableId::from_bytes(unsafe { *view }),
+            edit,
+            out_request,
+        )
+    })
+}
+
+/// 하나뿐인 선택 Line의 끝점 하나(`end` 0 시작, 1 끝)를 local `(x, y)`로 옮깁니다(Undo 한 번).
+///
+/// # Safety
+/// `view`·`node`는 16 byte를 읽을 수 있어야 하고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn stellar_window_canvas_line_end(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    node: *const [u8; 16],
+    end: u32,
+    x: f32,
+    y: f32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || node.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(point) = Vec2::new(x, y) else {
+            return StellarStatus::InvalidArgument;
+        };
+        if end > 1 {
+            return StellarStatus::InvalidArgument;
+        }
+        let edit = CanvasEdit::LineEnd {
+            node: StableId::from_bytes(unsafe { *node }),
+            end: end == 1,
+            point,
+        };
+        submit_edit(
+            handle,
+            session,
+            StableId::from_bytes(unsafe { *view }),
+            edit,
+            out_request,
+        )
+    })
+}
+
 /// 선택 항목 flag.
 pub const ITEM_MOVABLE: u32 = 1;
 /// 크기 핸들 있음.
@@ -353,6 +444,7 @@ pub struct StellarCanvasSelectionItem {
     world: [f32; 6],
     rect: [f32; 4],
     radii: [f32; 4],
+    line: [f32; 4],
 }
 
 impl From<&CanvasSelectionItem> for StellarCanvasSelectionItem {
@@ -381,6 +473,9 @@ impl From<&CanvasSelectionItem> for StellarCanvasSelectionItem {
         let origin = item.rect.origin();
         let size = item.rect.size();
         let (tl, tr, br, bl) = item.radii.components();
+        let line = item
+            .line
+            .map_or([0.0; 4], |[s, e]| [s.x(), s.y(), e.x(), e.y()]);
         Self {
             id: item.id.to_bytes(),
             kind,
@@ -388,6 +483,7 @@ impl From<&CanvasSelectionItem> for StellarCanvasSelectionItem {
             world: [a, b, c, d, x, y],
             rect: [origin.x(), origin.y(), size.width(), size.height()],
             radii: [tl, tr, br, bl],
+            line,
         }
     }
 }
