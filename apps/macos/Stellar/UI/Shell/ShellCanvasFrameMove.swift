@@ -266,8 +266,9 @@ extension ShellProjectWindow {
                     }
                     if end { preview.lineEnd = target } else { preview.lineStart = target }
                 case .radius(let index):
-                    // 기본은 네 모서리, Option은 그 모서리 longhand 하나입니다(Polygon은 값 하나).
-                    let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local)
+                    // 기본은 네 모서리, Option은 그 모서리 longhand 하나입니다(Polygon은 값 하나). 미리보기도 확정과 같은
+                    // 반올림 값을 씁니다.
+                    let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local).rounded()
                     let single = index >= 0 && modifiers.contains(.option)
                     preview.radii = drag.box.radii.enumerated().map { !single || $0.offset == index ? value : $0.element }
                 }
@@ -292,11 +293,11 @@ extension ShellProjectWindow {
                         pump.canvasLineEnd(session: session, view: view, node: node, end: end, point: target, completion: done)
                     }
                 case .radius(let index):
-                    let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local)
+                    let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local).rounded()
                     let corner = index >= 0 && modifiers.contains(.option) ? index : nil
                     self.submitCanvasEdit { pump, session, done in
                         pump.canvasRadius(session: session, view: view, node: node, corner: corner,
-                                          radius: value.rounded(), completion: done)
+                                          radius: value, completion: done)
                     }
                 }
                 return true
