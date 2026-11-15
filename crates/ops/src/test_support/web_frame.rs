@@ -230,6 +230,11 @@ pub fn rectangle(case: &str) -> DocumentModel {
         "unsupported" | "hidden-unsupported" => {
             payloads.push(ModifierPayload::default_for(ModifierKind::Opacity))
         }
+        // 캔버스는 Fill 뒤 Stroke를 그리지만 웹 출력은 거부합니다.
+        "stroke" => payloads.push(ModifierPayload::Stroke {
+            color: color(ColorSpace::Srgb, [0.0, 0.0, 0.0, 1.0]),
+            width: crate::core_types::value::FiniteF32::new(2.0).unwrap(),
+        }),
         "singular" => {
             payloads[0] =
                 ModifierPayload::Transform(Transform2D::new(0., 0., 0., 1., 0., 0.).unwrap())

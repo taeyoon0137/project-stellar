@@ -5,9 +5,11 @@
 
 use std::fmt;
 
-use stellar_core_types::value::{Rect, Size2, Vec2};
+use stellar_core_types::color::Color;
+use stellar_core_types::value::{Rect, Size2, Transform2D, Vec2};
 
-use crate::frame::CornerRadius;
+use crate::frame::{Border, CornerRadius};
+use crate::modifier::{ModifierId, ModifierPayload, ModifierStack};
 use crate::path::PathCommand;
 
 /// Shape payload 오류.
@@ -637,6 +639,84 @@ pub fn evaluate_shape_path(geometry: &ShapeGeometry) -> Result<Vec<PathCommand>,
         ShapeGeometry::Line(params) => Ok(params.to_path()),
         ShapeGeometry::Polygon(params) => params.to_path(),
     }
+}
+
+/// 도형 modifier stack을 평가한 transform·fill·stroke입니다([`evaluate_shape_modifiers`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShapeModifierStyle {
+    /// 활성 Transform을 OrderKey 순서로 `identity.then(first).then(next)` 합성한 값(없으면 identity).
+    pub transform: Transform2D,
+    /// 마지막 활성 Transform의 id와 그 local 값. 부모 공간 이동 편집은 이 항목에 적용합니다.
+    pub last_transform: Option<(ModifierId, Transform2D)>,
+    /// 활성 단색 Fill.
+    pub fill: Option<Color>,
+    /// 활성 단색 Stroke(path 가운데 정렬 선).
+    pub stroke: Option<Border>,
+}
+
+/// [`evaluate_shape_modifiers`]가 평가하지 않는 modifier stack.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeModifierError {
+    /// Transform 합성 결과가 f32 유한 범위를 벗어납니다.
+    NonFiniteTransform,
+    /// 활성 modifier가 지원 순서(Transform 0개 이상 → Fill 최대 1개 → Stroke 최대 1개) 밖이거나 다른 종류입니다.
+    UnsupportedOrder,
+    /// Stroke 두께를 선으로 쓸 수 없습니다(음수·비유한).
+    InvalidStroke,
+}
+
+impl fmt::Display for ShapeModifierError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            ShapeModifierError::NonFiniteTransform => "도형 Transform 합성 결과가 비유한입니다",
+            ShapeModifierError::UnsupportedOrder => {
+                "도형 modifier는 활성 Transform 0개 이상 → Fill 최대 1개 → Stroke 최대 1개 순서만 평가합니다"
+            }
+            ShapeModifierError::InvalidStroke => "도형 Stroke 두께가 음수이거나 비유한입니다",
+        })
+    }
+}
+
+impl std::error::Error for ShapeModifierError {}
+
+/// 도형(Rectangle·Ellipse·Line·Polygon)의 modifier stack을 평가하는 **순수 함수**입니다.
+///
+/// 활성 항목만 OrderKey 순서로 읽고 비활성 항목은 건너뜁니다. 지원 순서는 Transform 0개 이상 → 단색 Fill 최대
+/// 1개 → 단색 Stroke 최대 1개입니다. Fill·Stroke 뒤 Transform, 두 번째 Fill·Stroke, Stroke 뒤 Fill, 그 밖의
+/// 종류(Opacity·Blur 등)는 [`ShapeModifierError::UnsupportedOrder`]입니다. 캔버스와 코드 내보내기가 같은 결과를
+/// 내도록 이 규칙은 여기 한 곳에만 둡니다. 출력 쪽에서 표현하지 못하는 항목(예: 웹 출력의 Stroke)은 호출자가
+/// 진단합니다.
+pub fn evaluate_shape_modifiers(
+    stack: Option<&ModifierStack>,
+) -> Result<ShapeModifierStyle, ShapeModifierError> {
+    let mut style = ShapeModifierStyle {
+        transform: Transform2D::identity(),
+        last_transform: None,
+        fill: None,
+        stroke: None,
+    };
+    for entry in stack.into_iter().flat_map(ModifierStack::active_entries) {
+        match entry.payload {
+            ModifierPayload::Transform(next) if style.fill.is_none() && style.stroke.is_none() => {
+                style.transform = style
+                    .transform
+                    .then(&next)
+                    .map_err(|_| ShapeModifierError::NonFiniteTransform)?;
+                style.last_transform = Some((entry.id, next));
+            }
+            ModifierPayload::Fill { color } if style.fill.is_none() && style.stroke.is_none() => {
+                style.fill = Some(color);
+            }
+            ModifierPayload::Stroke { color, width } if style.stroke.is_none() => {
+                style.stroke = Some(
+                    Border::new(color, width.get())
+                        .map_err(|_| ShapeModifierError::InvalidStroke)?,
+                );
+            }
+            _ => return Err(ShapeModifierError::UnsupportedOrder),
+        }
+    }
+    Ok(style)
 }
 
 // --- canonical binary 인코딩 (VI.10.2) ---
@@ -1394,5 +1474,89 @@ mod tests {
             }
         }
         assert!(decoded > 10_000, "디코딩된 조합 {decoded}");
+    }
+
+    fn modifier_stack(payloads: &[(ModifierPayload, bool)]) -> ModifierStack {
+        use stellar_core_types::ids::StableId;
+        let mut stack = ModifierStack::new(StableId::new_v7(1, 0, 1));
+        for (index, (payload, enabled)) in payloads.iter().enumerate() {
+            let id = ModifierId::new(StableId::new_v7(10 + index as u64, 0, 10 + index as u64));
+            stack.push_back(id, payload.kind()).unwrap();
+            stack.set_payload(id, payload.clone()).unwrap();
+            stack.set_enabled(id, *enabled).unwrap();
+        }
+        stack
+    }
+
+    #[test]
+    fn shape_modifiers_follow_transform_fill_stroke_order() {
+        use stellar_core_types::color::ColorSpace;
+        use stellar_core_types::value::FiniteF32;
+        let color = Color::new(ColorSpace::Srgb, 1.0, 0.5, 0.0, 1.0).unwrap();
+        let move_by = |x: f32| {
+            ModifierPayload::Transform(Transform2D::new(1.0, 0.0, 0.0, 1.0, x, 0.0).unwrap())
+        };
+        let fill = ModifierPayload::Fill { color };
+        let stroke = ModifierPayload::Stroke {
+            color,
+            width: FiniteF32::new(2.0).unwrap(),
+        };
+        let blur = ModifierPayload::default_for(crate::modifier::ModifierKind::Blur);
+
+        // stack 없음은 identity·무채움입니다.
+        let empty = evaluate_shape_modifiers(None).unwrap();
+        assert_eq!(empty.transform, Transform2D::identity());
+        assert_eq!(
+            (empty.fill, empty.stroke, empty.last_transform),
+            (None, None, None)
+        );
+
+        // Transform 둘은 순서대로 합성하고, 비활성 항목은 건너뜁니다.
+        let stack = modifier_stack(&[
+            (move_by(10.0), true),
+            (move_by(5.0), true),
+            (blur.clone(), false),
+            (fill.clone(), true),
+            (stroke.clone(), true),
+        ]);
+        let style = evaluate_shape_modifiers(Some(&stack)).unwrap();
+        assert_eq!(
+            style.transform,
+            Transform2D::new(1.0, 0.0, 0.0, 1.0, 15.0, 0.0).unwrap()
+        );
+        assert_eq!(
+            style.last_transform.map(|(_, t)| t),
+            Some(Transform2D::new(1.0, 0.0, 0.0, 1.0, 5.0, 0.0).unwrap())
+        );
+        assert_eq!(style.fill, Some(color));
+        assert_eq!(style.stroke, Some(Border::new(color, 2.0).unwrap()));
+
+        // 순서 밖과 다른 종류는 거부합니다.
+        for (name, payloads) in [
+            ("Fill 뒤 Transform", vec![fill.clone(), move_by(1.0)]),
+            ("Stroke 뒤 Transform", vec![stroke.clone(), move_by(1.0)]),
+            ("Stroke 뒤 Fill", vec![stroke.clone(), fill.clone()]),
+            ("두 번째 Fill", vec![fill.clone(), fill.clone()]),
+            ("두 번째 Stroke", vec![stroke.clone(), stroke.clone()]),
+            ("다른 종류", vec![blur.clone()]),
+        ] {
+            let stack =
+                modifier_stack(&payloads.into_iter().map(|p| (p, true)).collect::<Vec<_>>());
+            assert_eq!(
+                evaluate_shape_modifiers(Some(&stack)),
+                Err(ShapeModifierError::UnsupportedOrder),
+                "{name}"
+            );
+        }
+
+        // 합성이 f32 범위를 넘으면 비유한 오류입니다.
+        let scale = ModifierPayload::Transform(
+            Transform2D::new(f32::MAX, 0.0, 0.0, f32::MAX, 0.0, 0.0).unwrap(),
+        );
+        let stack = modifier_stack(&[(scale.clone(), true), (scale, true)]);
+        assert_eq!(
+            evaluate_shape_modifiers(Some(&stack)),
+            Err(ShapeModifierError::NonFiniteTransform)
+        );
     }
 }

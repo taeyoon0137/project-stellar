@@ -240,6 +240,7 @@ fn rectangle_saved_cli_preserves_geometry_modifier_order_and_read_only_scope() {
         "square",
         "after-fill",
         "double-fill",
+        "stroke",
         "unsupported",
         "hidden-unsupported",
         "singular",

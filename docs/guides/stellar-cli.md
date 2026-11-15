@@ -28,7 +28,7 @@
 - Cargo package와 library 이름은 `stellar-cli`이고, 실행 파일 이름만 `stellar`입니다
   (`tools/stellar-cli/Cargo.toml`의 `[[bin]] name = "stellar"`).
 - 현재 명령은 아래 표와 `stellar --help`에서 확인합니다. `export-web`은 지정 View의 고정 Free Frame·
-  Fragment의 HTML+CSS를 읽기 전용으로 만듭니다.
+  Fragment·Rectangle의 HTML+CSS를 읽기 전용으로 만듭니다.
   `apply`, `migrate`, `text-source`에는 쓰기 동작이 있습니다.
 - 앱 UI, GUI, 네트워크 없이 동작합니다. 내부 직접 의존은 `stellar-ops`이고 외부 crate 직접 의존은 없습니다.
 - 명령이 실행되면 stdout에는 결과 JSON 한 줄(schema `stellar-cli/result` v1)만, stderr에는 사람이
@@ -72,7 +72,7 @@ cargo run -q -p stellar-cli -- --help
 | `apply` | 없음 | `<경로> <입력 파일 또는 -> [--dry-run]` | transaction 검증·저장 또는 diff |
 | `component-source` | 없음 | `create <폴더> <이름> <id> <root-id>`, `check <폴더>`, `resize <파일> <원본 hash> <너비> <높이>`, `add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>` | 컴포넌트별 파일 생성·라이브러리 재조립·root Frame 크기 수정·중첩 Free Frame 추가. [컴포넌트 원본 v1·v2](../spec/component-source-v1.md) |
 | `text-source` | 없음 | `export <프로젝트> <새 파일>`, `check <파일>` | 단일 View 텍스트 원본 생성·읽기 전용 검사. [문법과 지원 범위](../spec/text-view-source-v1.md) |
-| `export-web` | 없음 | `<경로> <문서 id> <View id>` | 고정 Free Frame HTML+CSS·revision·진단 |
+| `export-web` | 없음 | `<경로> <문서 id> <View id>` | 고정 Free Frame·Rectangle HTML+CSS·revision·진단 |
 
 명령이 없거나(`stellar`만 실행) 알 수 없는 명령이면 사용법 오류(64)입니다.
 
@@ -259,9 +259,12 @@ jq -jer '.result.html' /tmp/view-result.json > /tmp/view.html
 저장된 문서의 선택 View를 CSS가 내장된 독립 HTML 문서로 출력합니다. 고정 크기 Free Frame·Fragment의
 크기·affine·색공간/RGBA·solid 테두리·개별 radius·clipping을 투영합니다. root 캔버스 이동은 생략하고
 자식은 부모 border를 보정한 좌표를 사용합니다. Fragment를 펼치며 숨김과 OrderKey paint 순서를 유지합니다.
+Rectangle Shape는 크기·개별 radius와, 활성 Transform 0개 이상 뒤 단색 Fill 최대 1개인 modifier를 같은 CSS로
+냅니다. 배치한 Free Frame 컴포넌트 인스턴스는 `design/components/`의 정의로 펼칩니다.
 미저장 active document나 앱의 활성 창은 읽지 않으므로 저장 후 문서 ID·View ID를 명시합니다.
 
-Text·layout 참조·modifier·Path clip·해석할 수 없는 record/profile·지원 숫자 범위 밖 입력은 node ID
+Text·layout 참조·Frame의 modifier·Rectangle의 그 밖의 modifier(Stroke 포함)·Ellipse·Line·Polygon·Path·
+Image·Path clip·해석할 수 없는 record/profile·지원 숫자 범위 밖 입력은 node ID
 진단과 종료 코드 1, `html: null`로 실패합니다. 색 선언은 보존하지만 부분 투명 색의 브라우저 합성은
 별도 경고를 냅니다. `result.format`은 `fixed-free-frame-html`입니다. 다른 출력·오류 계약은
 [명세](../spec/web-frame-export.md)에 있습니다. 일반 render/export와 전체 코드 생성 완료는 아닙니다.

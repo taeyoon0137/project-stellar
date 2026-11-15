@@ -15,9 +15,11 @@ use stellar_codegen::web::{
     frame::FrameStyle,
 };
 use stellar_document::frame::{Clipping, FramePayload};
-use stellar_document::modifier::{ModifierPayload, ModifierStack};
+use stellar_document::modifier::ModifierStack;
 use stellar_document::records::{NodePayload, NodeRecord};
-use stellar_document::shape::{RectangleParams, ShapeGeometry};
+use stellar_document::shape::{
+    evaluate_shape_modifiers, RectangleParams, ShapeGeometry, ShapeModifierError,
+};
 use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
 use stellar_storage::hash::ContentHash;
 use stellar_target_profile::capability::ElementKind;
@@ -614,31 +616,26 @@ impl ComponentFrames {
     }
 }
 
-// 로컬 main의 runtime::canvas::shape::rectangle_style과 같은 지원 부분집합.
+// modifier 평가 규칙은 캔버스와 공유하는 `evaluate_shape_modifiers` 한 곳에 있습니다. 웹 출력은 그 결과 중
+// Stroke(path 가운데 정렬 선)를 CSS border로 같게 낼 수 없어 거부합니다.
 // Shape는 컨테이너가 아니지만 기존 CSS 값 검증·formatter 입력을 재사용합니다.
 fn rectangle_frame(
     shape: &RectangleParams,
     stack: Option<&ModifierStack>,
 ) -> Result<FramePayload, &'static str> {
-    let mut transform = Transform2D::identity();
-    let mut background = None;
-    if let Some(stack) = stack {
-        for entry in stack.entries().iter().filter(|e| e.enabled) {
-            match entry.payload {
-                ModifierPayload::Transform(next) if background.is_none() => {
-                    transform = transform
-                        .then(&next)
-                        .map_err(|_| "Rectangle affine 합성이 비유한합니다")?;
-                }
-                ModifierPayload::Fill { color } if background.is_none() => background = Some(color),
-                _ => return Err("Rectangle은 활성 Transform 다음 단일 Fill만 지원합니다"),
-            }
+    let style = evaluate_shape_modifiers(stack).map_err(|error| match error {
+        ShapeModifierError::NonFiniteTransform => "Rectangle affine 합성이 비유한합니다",
+        ShapeModifierError::UnsupportedOrder | ShapeModifierError::InvalidStroke => {
+            "Rectangle은 활성 Transform 0개 이상 → Fill 최대 1개 → Stroke 최대 1개 순서만 평가합니다"
         }
+    })?;
+    if style.stroke.is_some() {
+        return Err("웹 출력은 Rectangle Stroke를 지원하지 않습니다");
     }
     Ok(FramePayload {
         size: shape.size,
-        transform,
-        background,
+        transform: style.transform,
+        background: style.fill,
         corner_radius: shape.corner_radius,
         clipping: Clipping::Disabled,
         ..FramePayload::default()

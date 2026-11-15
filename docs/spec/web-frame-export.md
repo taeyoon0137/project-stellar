@@ -101,10 +101,12 @@ CSS 근거: [border width 계산](https://www.w3.org/TR/css-backgrounds-3/#borde
 `corner_radius`는 geometry에서 읽고 CSS의 반경 겹침 정규화를 적용합니다. Shape는 border·자식 clip이
 없으며 Fill이 없으면 투명합니다. 이름에서 접근성 label을 만들지 않는 장식용 `div`입니다.
 
-로컬 main의 `runtime::canvas::shape::rectangle_style`과 동일하게 OrderKey 순서의 **활성 Transform
-0개 이상 → 활성 단색 Fill 최대 1개**만 허용합니다. Transform은 `identity.then(first).then(next)`로
-합성합니다. Fill 뒤 Transform, 두 번째 Fill, Stroke·Opacity·그 밖의 활성 modifier는 오류입니다.
-비활성 항목은 실제 renderer처럼 건너뜁니다. Frame의 modifier 거부 규칙은 그대로 유지합니다.
+modifier는 캔버스와 공유하는 평가 함수 `stellar_document::shape::evaluate_shape_modifiers` 한 곳의 규칙으로
+읽습니다. OrderKey 순서의 **활성 Transform 0개 이상 → 활성 단색 Fill 최대 1개 → 활성 단색 Stroke 최대
+1개**이고, Transform은 `identity.then(first).then(next)`로 합성합니다. Fill·Stroke 뒤 Transform, 두 번째
+Fill·Stroke, Stroke 뒤 Fill, Opacity·그 밖의 활성 modifier는 오류입니다. 비활성 항목은 건너뜁니다.
+웹 출력은 이 결과 중 Stroke(path 가운데 정렬 선)를 CSS border로 같게 낼 수 없으므로, 평가에 성공해도 Stroke가
+있으면 오류입니다. Frame의 modifier 거부 규칙은 그대로 유지합니다.
 색공간·straight RGBA·부분 투명 경고·부모 Frame border 보정·숨김·선택 View 범위·숫자 한계는
 기존 Frame과 같습니다. 실제 renderer처럼 누적 affine의 역변환이 없는 Rectangle은 거부합니다.
 
@@ -123,7 +125,7 @@ Rectangle은 node ID를 포함한 `browser-rectangle-curve` 경고를 반환합�
 |---|---|
 | 저장된 layout 참조(정의·해석 경로 없음) | `unsupported-layout` |
 | Text·Rectangle 이외 Shape·Path·Image | `unsupported-node` |
-| Frame modifier stack(비활성 항목도 포함), Rectangle의 미지원 활성 modifier·순서 | `unsupported-modifier` |
+| Frame modifier stack(비활성 항목도 포함), Rectangle의 미지원 활성 modifier·순서와 Stroke | `unsupported-modifier` |
 | 잘못된 컴포넌트 원본 집합 | `invalid-component-source` |
 | 미해결 정의, override·소유 자식, 배치할 수 없는 정의, 펼침 상한 초과 | `unsupported-component-instance` |
 | Path clipping | `unsupported-clip` |
