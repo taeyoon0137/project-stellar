@@ -421,6 +421,54 @@ pub unsafe extern "C" fn stellar_window_canvas_line_end(
     })
 }
 
+/// 하나뿐인 선택 node의 모서리 반경을 바꿉니다(반경 핸들, Undo 한 번). `corner`는 -1이면 네 모서리, 0–3이면
+/// tl·tr·br·bl 하나(Option)입니다. Frame·Rectangle은 `border-*-radius` longhand, Polygon은 값 하나입니다.
+///
+/// # Safety
+/// `view`·`node`는 16 byte를 읽을 수 있어야 하고 `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_canvas_radius(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    node: *const [u8; 16],
+    corner: i32,
+    radius: f32,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        if view.is_null() || node.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        let Ok(radius) = FiniteF32::new(radius) else {
+            return StellarStatus::InvalidArgument;
+        };
+        let corner = match corner {
+            -1 => None,
+            0..=3 => Some(corner as usize),
+            _ => return StellarStatus::InvalidArgument,
+        };
+        if radius.get() < 0.0 {
+            return StellarStatus::InvalidArgument;
+        }
+        let edit = CanvasEdit::Radius {
+            node: StableId::from_bytes(unsafe { *node }),
+            corner,
+            radius,
+        };
+        submit_edit(
+            handle,
+            session,
+            StableId::from_bytes(unsafe { *view }),
+            edit,
+            out_request,
+        )
+    })
+}
+
 /// 선택 항목 flag.
 pub const ITEM_MOVABLE: u32 = 1;
 /// 크기 핸들 있음.

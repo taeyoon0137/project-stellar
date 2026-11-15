@@ -90,6 +90,17 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
    상자가 24pt보다 작으면 모서리 4개) 또는 Line 끝점 2개를 그리고, 선택 아래에 `320 × 200`(고정 크기가 아닌 축은
    `fit-content`) 라벨을 그립니다. 핸들·라벨은 캔버스 overlay라 렌더 결과에 들어가지 않습니다.
 
+### UX.2.10 — 모서리 반경 핸들
+
+1. `stellar_window_canvas_radius(handle, session, view, node, corner, radius, out_request)`: 하나뿐인 선택 node의
+   반경을 바꿉니다(Undo 한 번). `corner`는 -1이면 네 모서리, 0–3이면 tl·tr·br·bl 하나(Option)입니다.
+   - Frame: `border-top-left-radius` 등 `border-*-radius` longhand를 바뀐 것만 `SetProperty`로 씁니다. 속성 탭과 같은 키입니다.
+   - Rectangle: geometry의 네 모서리 반경, Polygon: 값 하나(`corner`는 무시)를 `RestoreNodeRecords`로 씁니다.
+   - 반경은 유한한 0 이상 원본 값이며, 상자보다 큰 값은 평가할 때 줄어듭니다.
+2. 반경 핸들 표시 여부는 선택 항목 flag(`STELLAR_CANVAS_ITEM_RADIUS`, `…_RADIUS_PER_CORNER`)로 코어가 정합니다. 셸은 화면
+   상자가 40pt 이상일 때 모서리 안쪽(반경, 최소 12pt)에 핸들을 두고, 끄는 동안 `border-radius: 12px`처럼 CSS 이름으로
+   값을 보입니다.
+
 ## Alternatives
 
 - 코어에 기본 색 표를 두고 셸이 덮어쓰기: D7("코어 하드코딩 없음")에 어긋나 채택하지 않았습니다.

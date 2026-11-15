@@ -375,6 +375,21 @@ enum CoreRuntime {
         return .success(request)
     }
 
+    /// 하나뿐인 선택 node의 모서리 반경(corner nil이면 네 모서리, ADR-0071).
+    static func canvasRadius(handle: UInt64, session: UInt64, view: UUID, node: UUID, corner: Int?,
+                             radius: CGFloat) -> Result<UInt64, CoreRuntimeCallError> {
+        var request: UInt64 = 0
+        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
+            withUnsafeBytes(of: node.uuid) { nodeBytes in
+                stellar_window_canvas_radius(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                                             nodeBytes.bindMemory(to: UInt8.self).baseAddress, Int32(corner ?? -1),
+                                             Float(radius), &request)
+            }
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     /// 하나뿐인 선택 Line의 끝점 하나를 local `point`로 옮깁니다(ADR-0071).
     static func canvasLineEnd(handle: UInt64, session: UInt64, view: UUID, node: UUID, end: Bool,
                               point: CGPoint) -> Result<UInt64, CoreRuntimeCallError> {

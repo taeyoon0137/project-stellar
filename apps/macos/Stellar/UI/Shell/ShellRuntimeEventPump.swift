@@ -191,6 +191,12 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.canvasResize(handle: runtimeHandle, session: session, view: view, node: node, rect: rect), completion)
     }
 
+    func canvasRadius(session: UInt64, view: UUID, node: UUID, corner: Int?, radius: CGFloat,
+                      completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.canvasRadius(handle: runtimeHandle, session: session, view: view, node: node, corner: corner,
+                                          radius: radius), completion)
+    }
+
     func canvasLineEnd(session: UInt64, view: UUID, node: UUID, end: Bool, point: CGPoint,
                        completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.canvasLineEnd(handle: runtimeHandle, session: session, view: view, node: node, end: end,

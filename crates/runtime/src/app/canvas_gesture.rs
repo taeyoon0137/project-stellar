@@ -127,6 +127,15 @@ pub enum CanvasEdit {
         /// 새 끝점(local).
         point: Vec2,
     },
+    /// 하나뿐인 선택 node의 모서리 반경(반경 핸들). Frame·Rectangle은 `border-*-radius` longhand, Polygon은 값 하나입니다.
+    Radius {
+        /// 대상.
+        node: StableId,
+        /// 한 모서리만(0 tl, 1 tr, 2 br, 3 bl, Option). `None`이면 네 모서리 모두입니다.
+        corner: Option<usize>,
+        /// 원본 반경(px, ≥ 0). 상자보다 큰 값은 평가할 때 줄어듭니다.
+        radius: stellar_core_types::value::FiniteF32,
+    },
 }
 
 /// 창 entry와 지금 표시 목록(Text 조합 미리보기 포함, 저장본 그대로인 창끼리는 공유 목록)을 함께 얻습니다.
@@ -227,7 +236,94 @@ fn apply_edit(
         CanvasEdit::LineEnd { node, end, point } => {
             move_line_end(window, request, view, node, end, point)
         }
+        CanvasEdit::Radius {
+            node,
+            corner,
+            radius,
+        } => set_radius(window, request, view, node, corner, radius),
     }
+}
+
+/// 반경 핸들 한 번(Undo 한 번).
+fn set_radius(
+    window: &mut ProjectWindowSession,
+    request: RequestId,
+    view: StableId,
+    node: StableId,
+    corner: Option<usize>,
+    radius: stellar_core_types::value::FiniteF32,
+) -> Result<(), Failure> {
+    use stellar_commands::command::Command;
+    use stellar_commands::document::frame::keys;
+    use stellar_commands::property::{PropertyValue, SetProperty};
+    use stellar_core_types::value::Angle;
+    use stellar_document::shape::{PolygonParams, RectangleParams};
+    if radius.get() < 0.0 || corner.is_some_and(|c| c > 3) {
+        return Err(stale_view());
+    }
+    let (model, payload) = sole_editable(window, view, node)?;
+    let corners = |current: CornerRadius| {
+        let (tl, tr, br, bl) = current.components();
+        let mut values = [tl, tr, br, bl];
+        for (index, value) in values.iter_mut().enumerate() {
+            if corner.is_none_or(|c| c == index) {
+                *value = radius.get();
+            }
+        }
+        values
+    };
+    let commands = match payload {
+        NodePayload::Frame(frame) => {
+            let (tl, tr, br, bl) = frame.corner_radius.components();
+            let before = [tl, tr, br, bl];
+            corners(frame.corner_radius)
+                .into_iter()
+                .zip(keys::BORDER_RADIUS_LONGHANDS)
+                .zip(before)
+                .filter(|((next, _), old)| next != old)
+                .map(|((next, key), _)| {
+                    Command::SetProperty(SetProperty {
+                        node,
+                        key,
+                        value: PropertyValue::NonNegative(
+                            stellar_core_types::value::FiniteF32::new(next).expect("유한 반경"),
+                        ),
+                    })
+                })
+                .collect()
+        }
+        NodePayload::Shape(ShapeGeometry::Rectangle(rect)) => {
+            let [tl, tr, br, bl] = corners(rect.corner_radius);
+            let next = CornerRadius::new(tl, tr, br, bl).map_err(|_| stale_view())?;
+            if next == rect.corner_radius {
+                return Ok(());
+            }
+            vec![replace_payload(
+                model,
+                node,
+                NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+                    size: rect.size,
+                    corner_radius: next,
+                })),
+            )?]
+        }
+        NodePayload::Shape(ShapeGeometry::Polygon(polygon)) => {
+            if polygon.corner_radius() == radius.get() {
+                return Ok(());
+            }
+            let rotation = Angle::new(polygon.rotation_degrees()).map_err(|_| stale_view())?;
+            let next =
+                PolygonParams::new(polygon.bounds(), polygon.sides(), rotation, radius.get())
+                    .map_err(|_| stale_view())?;
+            vec![replace_payload(
+                model,
+                node,
+                NodePayload::Shape(ShapeGeometry::Polygon(next)),
+            )?]
+        }
+        _ => return Err(stale_view()),
+    };
+    apply_commands(window, request, commands)
 }
 
 /// 하나뿐인 선택이 `node`이고 편집할 수 있는지 확인합니다.
@@ -1532,6 +1628,63 @@ mod tests {
         let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
         assert!(matches!(shape(&reopened, 16), ShapeGeometry::Line(l) if l.end == end));
         assert_eq!(shape_translation(&reopened, sid(14)), (295., 200.));
+    }
+
+    fn radius(node: u64, corner: Option<usize>, value: f32) -> CanvasEdit {
+        CanvasEdit::Radius {
+            node: sid(node),
+            corner,
+            radius: stellar_core_types::value::FiniteF32::new(value).unwrap(),
+        }
+    }
+
+    #[test]
+    fn radius_handles_write_border_radius_longhands_and_polygon_radius_in_one_undo() {
+        let dir = saved_project_with("canvas-radius", &[&all_shapes_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let select = |session: &mut ProjectWindowSession, n: u64| {
+            session
+                .select(Selection::new([sid(n)], Some(sid(n))))
+                .unwrap();
+        };
+        let frame_radii = |session: &ProjectWindowSession| match session
+            .document()
+            .unwrap()
+            .model()
+            .payload(sid(12))
+        {
+            Some(NodePayload::Frame(frame)) => frame.corner_radius.components(),
+            _ => panic!("Frame"),
+        };
+        select(&mut session, 12);
+        let undo = session.history().history().len();
+        assert!(edit(&mut session, 1, radius(12, None, 8.)));
+        assert_eq!(frame_radii(&session), (8., 8., 8., 8.));
+        assert_eq!(session.history().history().len(), undo + 1);
+        // Option: 그 모서리 longhand 하나만 바꿉니다.
+        assert!(edit(&mut session, 2, radius(12, Some(1), 4.)));
+        assert_eq!(frame_radii(&session), (8., 4., 8., 8.));
+        assert!(session.undo().unwrap());
+        assert_eq!(frame_radii(&session), (8., 8., 8., 8.));
+        select(&mut session, 14);
+        assert!(edit(&mut session, 3, radius(14, Some(0), 6.)));
+        assert!(
+            matches!(shape(&session, 14), ShapeGeometry::Rectangle(r) if r.corner_radius.components() == (6., 0., 0., 0.))
+        );
+        select(&mut session, 17);
+        assert!(edit(&mut session, 4, radius(17, Some(2), 5.)));
+        assert!(
+            matches!(shape(&session, 17), ShapeGeometry::Polygon(p) if p.corner_radius() == 5. && p.sides() == 6)
+        );
+        // 반경이 없는 Ellipse, 선택과 다른 node는 거부합니다.
+        select(&mut session, 15);
+        assert!(!edit(&mut session, 5, radius(15, None, 3.)));
+        assert!(!edit(&mut session, 6, radius(14, None, 3.)));
+        session.save_now().unwrap();
+        let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+        assert!(
+            matches!(shape(&reopened, 14), ShapeGeometry::Rectangle(r) if r.corner_radius.components() == (6., 0., 0., 0.))
+        );
     }
 
     #[test]

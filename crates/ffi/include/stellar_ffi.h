@@ -474,6 +474,8 @@ StellarStatus stellar_window_canvas_move(uint64_t handle, uint64_t session, cons
 typedef struct StellarCanvasSelectionItem { uint8_t id[16]; uint32_t kind, flags; float world[6], rect[4], radii[4], line[4]; } StellarCanvasSelectionItem;
 /* 하나뿐인 선택 node의 상자를 지금 local 좌표 (x, y, w, h)로 바꿉니다(크기 핸들, Undo 한 번, 크기 > 0). */
 StellarStatus stellar_window_canvas_resize(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], float x, float y, float width, float height, uint64_t *out_request);
+/* 하나뿐인 선택 node의 모서리 반경(corner -1 네 모서리, 0–3 tl tr br bl 하나). Frame·Rectangle은 border-*-radius, Polygon은 값 하나. */
+StellarStatus stellar_window_canvas_radius(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], int32_t corner, float radius, uint64_t *out_request);
 /* 하나뿐인 선택 Line의 끝점 하나(end 0 시작, 1 끝)를 local (x, y)로 옮깁니다(Undo 한 번). */
 StellarStatus stellar_window_canvas_line_end(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint32_t end, float x, float y, uint64_t *out_request);
 /* 최신 게시 snapshot의 선택 상자. items=NULL이면 수만, 용량 부족은 BUFFER_TOO_SMALL과 필요한 수. */

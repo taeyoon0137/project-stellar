@@ -35,6 +35,8 @@ extension ShellProjectWindow {
             return NSCursor.frameResize(position: positions[index], directions: .all)
         case .lineEnd:
             return .crosshair
+        case .radius:
+            return .pointingHand
         }
     }
 
@@ -263,6 +265,15 @@ extension ShellProjectWindow {
                         target = CGPoint(x: other.x + length * cos(angle), y: other.y + length * sin(angle))
                     }
                     if end { preview.lineEnd = target } else { preview.lineStart = target }
+                case .radius(let index):
+                    // 기본은 네 모서리, Option은 그 모서리 longhand 하나입니다(Polygon은 값 하나).
+                    let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local)
+                    let single = index >= 0 && modifiers.contains(.option)
+                    preview.radii = drag.box.radii.enumerated().map { !single || $0.offset == index ? value : $0.element }
+                    let names = ["border-top-left-radius", "border-top-right-radius",
+                                 "border-bottom-right-radius", "border-bottom-left-radius"]
+                    let name = index < 0 ? "radius" : single ? names[index] : "border-radius"
+                    preview.label = "\(name): \(Int(value.rounded()))px"
                 }
                 if event.type == .leftMouseDragged {
                     if hypot(point.x - drag.start.x, point.y - drag.start.y) >= 1 { canvas.gesturePreview = preview }
@@ -283,6 +294,13 @@ extension ShellProjectWindow {
                     guard let target = end ? preview.lineEnd : preview.lineStart else { return true }
                     self.submitCanvasEdit { pump, session, done in
                         pump.canvasLineEnd(session: session, view: view, node: node, end: end, point: target, completion: done)
+                    }
+                case .radius(let index):
+                    let value = CanvasFrameScene.radius(handle: index, in: drag.box.rect, at: local)
+                    let corner = index >= 0 && modifiers.contains(.option) ? index : nil
+                    self.submitCanvasEdit { pump, session, done in
+                        pump.canvasRadius(session: session, view: view, node: node, corner: corner,
+                                          radius: value.rounded(), completion: done)
                     }
                 }
                 return true

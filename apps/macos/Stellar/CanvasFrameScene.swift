@@ -39,6 +39,8 @@ enum CanvasHandle: Equatable {
     case resize(Int)
     /// false 시작점, true 끝점.
     case lineEnd(Bool)
+    /// 반경 핸들. 0 tl, 1 tr, 2 br, 3 bl(모서리별), -1은 Polygon의 값 하나입니다.
+    case radius(Int)
 }
 
 /// 핸들 드래그 중 보여 줄 새 상자. 문서는 놓을 때 한 번만 바꿉니다.
@@ -47,6 +49,9 @@ struct CanvasGesturePreview {
     var rect: CGRect
     var lineStart: CGPoint?
     var lineEnd: CGPoint?
+    /// 반경 핸들 드래그 중의 반경(tl, tr, br, bl)과 라벨.
+    var radii: [CGFloat]?
+    var label: String?
 }
 
 extension CGRect {
@@ -269,6 +274,29 @@ final class CanvasFrameScene {
     var gesturePreview: CanvasGesturePreview?
     /// 이보다 작은 화면 상자에는 모서리 핸들만 둡니다.
     private static let edgeHandleMinimum: CGFloat = 24
+    /// 이보다 작은 화면 상자에는 반경 핸들을 두지 않습니다.
+    private static let radiusHandleMinimum: CGFloat = 40
+    /// 반경이 작아도 반경 핸들을 모서리에서 이만큼(화면 pt) 안쪽에 둡니다.
+    private static let radiusHandleInset: CGFloat = 12
+
+    /// 반경 핸들 `index`의 모서리와 안쪽 대각 방향(local).
+    static func radiusCorner(_ index: Int, in r: CGRect) -> (corner: CGPoint, inward: CGVector) {
+        switch index {
+        case 0: return (CGPoint(x: r.minX, y: r.minY), CGVector(dx: 1, dy: 1))
+        case 1: return (CGPoint(x: r.maxX, y: r.minY), CGVector(dx: -1, dy: 1))
+        case 2: return (CGPoint(x: r.maxX, y: r.maxY), CGVector(dx: -1, dy: -1))
+        default: return (CGPoint(x: r.minX, y: r.maxY), CGVector(dx: 1, dy: -1))
+        }
+    }
+
+    /// 반경 핸들을 local 점 `point`로 끈 반경(0 ... 짧은 변의 절반).
+    static func radius(handle index: Int, in r: CGRect, at point: CGPoint) -> CGFloat {
+        let limit = min(r.width, r.height) / 2
+        guard index >= 0 else { return min(max(point.y - r.minY, 0), limit) }
+        let (corner, inward) = radiusCorner(index, in: r)
+        let along = ((point.x - corner.x) * inward.dx + (point.y - corner.y) * inward.dy) / 2
+        return min(max(along, 0), limit)
+    }
 
     private func previewing(_ index: Int) -> Bool { previewRanges.contains { $0.contains(index) } }
 
@@ -402,6 +430,23 @@ final class CanvasFrameScene {
                          CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)]
             result += edges.enumerated().map { (CanvasHandle.resize($0.offset + 4), $0.element.applying(placement)) }
         }
+        if box.has(STELLAR_CANVAS_ITEM_RADIUS), screenWidth >= Self.radiusHandleMinimum, screenHeight >= Self.radiusHandleMinimum {
+            let scale = max(sqrt(abs(placement.a * placement.d - placement.b * placement.c)), .ulpOfOne)
+            let inset = Self.radiusHandleInset / scale
+            let limit = min(r.width, r.height) / 2
+            let radii = gesturePreview.flatMap { $0.id == box.id ? $0.radii : nil } ?? box.radii
+            if box.has(STELLAR_CANVAS_ITEM_RADIUS_PER_CORNER) {
+                for index in 0..<4 {
+                    let (corner, inward) = Self.radiusCorner(index, in: r)
+                    let offset = min(max(radii[index], inset), limit)
+                    let point = CGPoint(x: corner.x + inward.dx * offset, y: corner.y + inward.dy * offset)
+                    result.append((.radius(index), point.applying(placement)))
+                }
+            } else {
+                let offset = min(max(radii[0], inset), limit)
+                result.append((.radius(-1), CGPoint(x: r.midX, y: r.minY + offset).applying(placement)))
+            }
+        }
         return result
     }
 
@@ -445,16 +490,23 @@ final class CanvasFrameScene {
             world = world.union(rect.applying(box.world))
         }
         context.strokePath()
-        for (_, point) in handles() {
+        for (handle, point) in handles() {
             let square = CGRect(x: point.x - 3.5, y: point.y - 3.5, width: 7, height: 7)
             context.setFillColor(NSColor.white.cgColor)
-            context.fill(square)
             context.setLineWidth(1)
-            context.stroke(square)
+            if case .radius = handle {
+                context.fillEllipse(in: square)
+                context.strokeEllipse(in: square)
+            } else {
+                context.fill(square)
+                context.stroke(square)
+            }
         }
         context.restoreGState()
         let label: String
-        if selection.count == 1, let box = selection.first {
+        if let override = gesturePreview?.label {
+            label = override
+        } else if selection.count == 1, let box = selection.first {
             let size = displayedRect(box).size
             let line = box.lineStart.flatMap { start in box.lineEnd.map { CGSize(width: abs($0.x - start.x), height: abs($0.y - start.y)) } }
             let shown = line ?? size
