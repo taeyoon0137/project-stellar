@@ -14,13 +14,13 @@
 | QA1-02 | 터미널에서 `git -C <샘플 폴더> log --oneline` | 커밋 2개("New Stellar project initialized", "QA 샘플 문서와 에셋 추가"). Git identity가 없었으면 커밋 없음 |
 | QA1-03 | 사이드바 필터 필드 보기 | 실제 문서 필터는 **구현 대기**이며 입력이 비활성입니다. |
 
-## 2. 페이지·View 목록(사이드바 Pages)
+## 2. 페이지·View 고르기(사이드바 머리 줄)
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA1-10 | 샘플을 열고 Pages 구획 보기 | 현재 활성 페이지와 View 이름이 표시됩니다. 전체 페이지·View 목록 탐색은 **구현 대기**입니다. |
-| QA1-11 | Mobile View 클릭 | Mobile이 active View로 선택되고 Layers 구획과 캔버스가 Mobile 내용으로 바뀜. **구현 대기** |
-| QA1-12 | View 행에서 Return 또는 더블클릭 | 인라인 이름 변경 시작(편집 확인은 QA2). **구현 대기** |
+| QA1-10 | 샘플을 열고 사이드바 머리 줄 보기 | `Home › Desktop ▾`처럼 활성 Page와 View가 팝업 한 줄로 보입니다. 따로 차지하는 Pages 구획은 없습니다. |
+| QA1-11 | 팝업에서 Mobile View 고르기 | Mobile이 활성 View가 되고 Layers와 캔버스가 Mobile 내용으로 바뀝니다. |
+| QA1-12 | Page·View 이름 바꾸기 | **구현 대기**(UX.12). |
 
 ## 3. 레이어 트리(사이드바 Layers)
 
@@ -38,8 +38,8 @@
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
 | QA1-30 | 새 프로젝트와 샘플의 캔버스 비교 | 새 프로젝트의 흰 Frame, 지원되는 자유 배치 Frame의 단색·테두리·모서리·자식 클리핑을 확인합니다. 그림자 등 미지원 효과가 있는 레이어와 샘플의 연결되지 않은 이미지는 별도로 확인합니다. |
-| QA1-31 | Headline 텍스트 | 샘플에 사용 가능한 프로젝트 글꼴이 지정되어 있는지 확인합니다. 새 프로젝트의 한글 글꼴과 실제 제목 표시는 QA2-60에서 검사합니다. |
-| QA1-32 | Hero Image | 샘플의 Hero Image는 JPEG 파일을 참조하지 않으므로 그 이미지가 나타나지 않습니다. QA2-03에서 직접 배치한 PNG는 실제 파일의 픽셀로 표시됩니다. |
+| QA1-31 | Headline 텍스트 | 샘플에 사용 가능한 프로젝트 글꼴이 지정되어 있는지 확인합니다. 새 프로젝트의 기본 글꼴과 한글 제목 표시는 QA2-60에서 검사합니다. |
+| QA1-32 | Hero Image | 샘플의 Hero Image는 JPEG 파일을 참조하지 않으므로 그 이미지가 나타나지 않습니다. QA2-06에서 직접 배치한 PNG는 실제 파일의 픽셀로 표시됩니다. |
 | QA1-33 | 창 크기·화면 배율(다른 모니터로 옮기기) 바꾸기 | 흐려지거나 늘어나지 않고 다시 그려짐. **구현 대기**(XII.4.1) |
 | QA1-34 | 다크 모드 전환 | 앱 크롬만 바뀌고 문서 색은 그대로. **구현 대기**(XII.9.3) |
 
@@ -56,21 +56,21 @@
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA1-50 | 캔버스에서 Card 1 클릭 | 선택 표시와 핸들, 사이드바 Card 1 행 선택. **구현 대기**(XII.3.6, 선택 overlay XII.4.4, 창별 선택 XII.2.5) |
-| QA1-51 | 신뢰한 새 프로젝트에서 F로 추가한 자식 Frame 하나를 Layers에서 선택 | 캔버스 선택과 Inspector의 W/H가 같은 Frame을 가리킵니다. 전체 Appearance·Modifiers 편집은 **구현 대기**입니다. |
-| QA1-52 | Headline(Text) 선택 | Layer · Text · Character · Paragraph · Modifiers. **구현 대기** |
-| QA1-53 | Hero Image 선택 | Layer · Image(fit Cover) · Modifiers. 누락 에셋이면 진단 아이콘. **구현 대기** |
-| QA1-54 | Icon Group(Fragment) 선택 | Layer · Fragment 안내와 Convert to Frame. Modifier 섹션 없음. **구현 대기** |
-| QA1-55 | Divider, Hexagon, Star 선택 | 도형 섹션 제목이 Line·Polygon, path는 Path 섹션. Modifiers에 Divider는 Transform·Stroke(두께 1), Hexagon은 Transform·Fill·Stroke(두께 2). **구현 대기** |
-| QA1-56 | Card 1\~3 다중 선택(⌘-클릭) | 같은 값은 그대로, 다른 값은 혼합 표시. **구현 대기** |
-| QA1-57 | Footer (Locked) 선택 | 잠금 안내와 Unlock 버튼, 속성 필드는 비활성(이름·표시·잠금만 편집 가능). **구현 대기** |
-| QA1-58 | 새로 연 창에서 아무 레이어도 선택하지 않고 Inspector 보기 | No Selection을 표시합니다. 단일 Free Frame을 선택하면 W/H가 나타납니다. |
+| QA1-50 | 캔버스에서 Card 1 클릭 | 선택 상자와 크기 핸들이 보이고 사이드바 Card 1 행도 선택됩니다. |
+| QA1-51 | 새 프로젝트(제한 모드 그대로)에서 F로 추가한 자식 Frame 하나를 Layers에서 선택 | 캔버스 선택과 속성 탭이 같은 Frame을 가리킵니다. 행 레이블은 CSS 이름(`width`, `height`, `left`, `top`, `background-color`, `border`, `border-radius`, `overflow` 등)이고 값은 CSS 값(`320px`)입니다. |
+| QA1-52 | Headline(Text) 선택 | 속성 탭에 Text에 해당하는 섹션(크기·위치, `color` 등)만 보입니다. 글꼴 longhand(Typography 편집)는 **구현 대기**(IX.11.11, UX.8.5). |
+| QA1-53 | Hero Image 선택 | `width`·`height`·`object-fit` 행이 보입니다. 누락 에셋 진단 표시는 **구현 대기**. |
+| QA1-54 | Icon Group(Fragment) 선택 | Fragment에 해당하는 행만 보이고 빈 섹션은 없습니다. |
+| QA1-55 | Divider(Line), Hexagon(Polygon) 선택 | Divider는 `x1`·`y1`·`x2`·`y2`·`stroke`·`stroke-width`, Hexagon은 `width`·`height`·`polygon-sides`·`fill`·`stroke` 등 그 종류의 행이 보입니다. Path(Star)의 `fill`·`stroke` 행은 캔버스가 Path를 그리지 않아 두지 않습니다. |
+| QA1-56 | Card 1\~3 다중 선택(Shift-클릭) | 같은 값은 그대로, 다른 값은 "혼합"으로 비어 보입니다. |
+| QA1-57 | Footer (Locked) 선택 | 잠긴 레이어의 값 행은 바꿀 수 없고 `locked`(잠금 해제)만 바꿀 수 있습니다(D8). |
+| QA1-58 | 새로 연 창에서 아무 레이어도 선택하지 않고 속성 탭 보기 | 현재 `Page · View` 이름과 도구 키 안내만 보이고 편집 필드는 없습니다. |
 
 ## 7. Component
 
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
-| QA1-60 | Components 페이지의 버튼을 Component 정의로 보기, 인스턴스 선택 시 Component · Properties · Slots 섹션 | 샘플의 두 버튼은 일반 Frame입니다. 공유 정의와 인스턴스 표시를 보려면 QA2-78~80을 사용합니다. 인스펙터의 Properties·Slots 편집은 **구현 대기**입니다. |
+| QA1-60 | Components 페이지의 버튼을 Component 정의로 보기, 인스턴스 선택 시 Component · Properties · Slots 섹션 | 샘플의 두 버튼은 일반 Frame입니다. 공유 정의와 인스턴스 표시(제한 모드 포함)는 QA2-78에서 확인합니다. 인스펙터의 Properties·Slots 편집은 **구현 대기**입니다. |
 
 ## 8. 여러 창
 

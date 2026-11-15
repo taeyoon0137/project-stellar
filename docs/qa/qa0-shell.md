@@ -4,7 +4,7 @@
 
 - 실행: `./scripts/macos/qa.sh`(샘플 프로젝트 창), `./scripts/macos/qa.sh --no-build --welcome`(시작 창)
 - 기준 명세: [셸 프레임](../design/ui/shell_frame.md), [도구·메뉴](../design/ui/tools_menus.md), [시작 창](../design/ui/welcome.md), [macOS 셸 디자인 가이드](../design/macos-shell-design.md)
-- 열린 프로젝트 창에서 Layers, 선택한 Free Frame의 크기, 저장된 노드 이름의 Git 변경을 확인할 수 있습니다. 편집 절차는 [QA2](qa2-edit.md)에 있습니다.
+- 편집 절차는 [QA2](qa2-edit.md)에 있습니다. 편집·저장은 제한 모드(신뢰 전)에서도 됩니다. 신뢰는 Git hook·filter, 내장 터미널, MCP·에이전트, 외부 명령 같은 실행 계열에만 필요합니다(D1).
 
 ## 1. 시작 창
 
@@ -33,8 +33,8 @@
 | ID | 해 볼 것 | 보여야 하는 것 |
 |---|---|---|
 | QA0-13 | 샘플 프로젝트 창 보기 | 제목 "Stellar QA Sample", 부제목 "Restricted Mode". 왼쪽 사이드바, 가운데 캔버스, 오른쪽 인스펙터 3열 |
-| QA0-14 | 사이드바 보기 | Pages에는 활성 페이지와 View가, Layers에는 해당 View의 자식이 보입니다. 새 프로젝트는 자식 목록이 비어 있습니다. |
-| QA0-15 | 인스펙터 보기 | "No Selection"과 선택 방법 안내 |
+| QA0-14 | 사이드바 보기 | 머리 줄에 `Page › View ▾` 팝업 한 줄이 있고, 그 아래 Layers에 활성 View의 자식이 보입니다. 새 프로젝트는 자식이 없고 "F로 Frame, R로 사각형, T로 텍스트를 그립니다" 같은 키 안내 한 줄만 보입니다. |
+| QA0-15 | 아무것도 고르지 않고 인스펙터 보기 | 현재 `Page · View` 이름, "Select a layer to edit its CSS properties."와 도구 키 안내(V Move · F Frame · …). 편집 필드는 없음 |
 | QA0-16 | 새 프로젝트의 캔버스 보기 | 800 × 600의 흰 Frame이 사이드바·인스펙터 사이에 보입니다. |
 | QA0-17 | 사이드바 토글: 툴바 왼쪽 버튼, View ▸ Hide Sidebar, ⌃⌘S를 차례로 | 세 경로 모두 같은 사이드바를 접고 폄. 숨기면 캔버스가 그만큼 넓어짐. 메뉴 제목이 Show/Hide로 바뀜 |
 | QA0-18 | 인스펙터 토글: 툴바 오른쪽 버튼, View ▸ Hide Inspector, ⌥⌘I | QA0-17과 같은 동작(오른쪽) |
@@ -54,7 +54,7 @@
 | QA0-27 | 캔버스에서 ⌘R, Shift-R | 도구가 바뀌지 않음 |
 | QA0-28 | 사이드바 필터 필드에 글자 입력 중 R | 필드에 글자가 들어가고 도구는 바뀌지 않음 |
 | QA0-29 | 도구 위에 마우스를 올려 기다리기 | 도움말 태그(예: "Rectangle (R)", Image는 "Image (⇧⌘K)"). 막대 안은 Move · Frame · 도형 4종 · Text·Image · Hand·Zoom 그룹 사이가 구분선 없이 조금 더 벌어짐 |
-| QA0-30 | 신뢰한 프로젝트에서 F로 흰 Frame 안을 드래그 | 자식 Frame이 생기고 Layers 행이 선택됩니다. |
+| QA0-30 | 제한 모드 그대로(신뢰하지 않고) F로 흰 Frame 안을 드래그 | 자식 Frame이 생기고 Layers 행이 선택됩니다. 신뢰 sheet가 뜨지 않습니다. |
 
 ## 5. 상단 바(툴바)
 
@@ -73,13 +73,13 @@
 |---|---|---|
 | QA0-37 | 메뉴 막대 보기 | 순서: 앱 메뉴, File, Edit, View, Insert, Object, Window, Help. 앱 메뉴 이름은 "Stellar" |
 | QA0-38 | 편집 전후 메뉴 상태 확인 | New Project는 ⌘N으로 열립니다. 문서가 열리면 Save Now를 쓸 수 있고 Frame 생성 후 Undo, Undo 후 Redo가 활성화됩니다. |
-| QA0-39 | Settings…(⌘,) | 설정 창이 열림. 지금은 "Stellar Settings" 글자만 있는 placeholder(설정 창 전용 WBS 없음) |
+| QA0-39 | Settings…(⌘,) ▸ Canvas에서 Default Shape Fill과 Default Line Tool Color를 바꾼 뒤 R·L로 새로 그리기 | 설정 창에 Canvas 구획과 두 색 선택이 있음(처음 `#D9D9D9`, `#000000`). 바꾼 뒤 새 사각형은 바꾼 채우기, 새 선은 바꾼 선 색(1px)으로 생김. 이미 있는 도형과 프로젝트 파일의 설정은 바뀌지 않음(앱 설정에만 저장, D7) |
 | QA0-40 | File ▸ Show in Finder, File ▸ Trust Project… | Show in Finder는 QA0-33과 같음. 신뢰 항목은 제한 모드 창에서 Trust Project…, 신뢰한 창에서 Revoke Project Trust로 바뀌고 제목 문서 메뉴와 같은 동작. 신뢰 확인 중이거나 sheet가 떠 있으면 비활성 |
 | QA0-41 | ⌃⌘F, ⌘M, ⌘H | 전체 화면 전환, 최소화, 앱 가리기. ⌥⌘T(툴바 숨김)는 배정하지 않음 |
 | QA0-42 | 앱을 쓰는 중 ⌘Space, ⌘Tab, ⇧⌘5 | 시스템 단축키가 그대로 동작(앱이 가로채지 않음) |
 | QA0-43 | 사이드바 필터 필드에 입력 후 ⌘Z, ⇧⌘Z, ⌘A·⌘C·⌘V | 필드 입력이 되돌려지고 다시 적용됨(Edit 메뉴 제목 "Undo Typing"). 선택·복사·붙여넣기도 필드에 적용 |
 | QA0-44 | Help 메뉴 보기 | 시스템 메뉴 검색 필드만 있음. 도움말 콘텐츠가 생기기 전에는 Stellar Help 항목이 없음 |
-| QA0-45 | Undo·Redo·Save Now를 활성 창 세션에 연결 | **구현 대기**(XII.6.4). 메뉴 단축키의 코어 command ID 공유는 XII.6.5 |
+| QA0-45 | 두 프로젝트 창을 열고 한쪽에서 편집 뒤 Edit ▸ Undo·Redo, File ▸ Save Now | 활성 창의 편집만 되돌리고 저장합니다. Undo 제목에 편집 이름이 붙습니다. |
 
 ## 7. 다크 모드
 

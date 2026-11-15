@@ -12,7 +12,7 @@ macOS 앱을 직접 써 보며 화면과 동작을 확인하는 절차입니다.
 |---|---|---|---|
 | QA0 | [qa0-shell.md](qa0-shell.md) | 셸 체감: 시작 창, Open Project, 창 구성, 하단 도구 막대, 상단 바, 메뉴·단축키, 다크 모드, 창 크기, 접근성 기본 | 대부분 |
 | QA1 | [qa1-view.md](qa1-view.md) | 문서 보기: 페이지·View·레이어 목록, 캔버스 렌더, 이동·확대, 선택, 인스펙터 | 활성 페이지·View와 Layers, 고정 Frame·Rectangle 표시·탐색, 프로젝트 글꼴로 지정한 Text, 새로 배치한 PNG와 컴포넌트 |
-| QA2 | [qa2-edit.md](qa2-edit.md) | 편집: 만들기 도구, 이동·크기, Undo, 이름·순서, 텍스트, 저장 | Frame·Rectangle·텍스트·PNG 작성, 레이어 복사·붙여넣기, 컴포넌트 재사용, 저장·재열기와 강제 종료 복구 |
+| QA2 | [qa2-edit.md](qa2-edit.md) | 편집(제한 모드 그대로): 만들기 도구 10종, 이동·크기·반경 핸들, Undo, 이름·순서·숨김·잠금, 속성 탭 CSS 행, 텍스트, 저장·자동 저장·저장 실패 sheet | 도구 10종 생성·이동·Undo, 속성 탭 편집, Settings 기본색, 자동 저장과 실패·stale 표시, D6 닫기 sheet, 강제 종료 복구. Text 드래그·Image 드래그 크기는 아직 없음 |
 
 QA0부터 진행합니다. 앞 단계에서 막히는 문제(앱이 뜨지 않음, 프로젝트가 열리지 않음)가 있으면 다음 단계로 넘어가지 않고 먼저 알려 줍니다.
 
@@ -56,7 +56,7 @@ QA0부터 진행합니다. 앞 단계에서 막히는 문제(앱이 뜨지 않�
 
 - 도형·텍스트·이미지는 Transform·Fill modifier로 위치와 색을 가집니다. Divider 선은 Fill 없이 Stroke(두께 1), Hexagon은 Fill과 Stroke(두께 2)를 함께 가집니다. 인스펙터 Modifiers 섹션 확인용입니다.
 - 이미지 원본은 저장소의 README 히어로 이미지(`assets/docs/hero.jpg`)를 `assets/<prefix>/<hash>.jpg`로 복사한 것입니다.
-- 이 샘플의 “Components” 페이지에는 일반 Frame 버튼이 들어 있습니다. 샘플 생성기는 Hero Image 레이어와 복사한 JPEG를 연결하지 않습니다. 실제 공유 컴포넌트와 PNG의 저장·재열기는 QA2-03, QA2-78에서 직접 만든 항목으로 확인합니다.
+- 이 샘플의 “Components” 페이지에는 일반 Frame 버튼이 들어 있습니다. 샘플 생성기는 Hero Image 레이어와 복사한 JPEG를 연결하지 않습니다. 실제 공유 컴포넌트와 PNG의 저장·재열기는 QA2-06, QA2-78에서 직접 만든 항목으로 확인합니다.
 
 ## 4. 진행 방식
 
