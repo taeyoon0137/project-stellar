@@ -107,32 +107,11 @@ pub fn validate_snapshot_document(
 type DefinitionIds = std::collections::BTreeSet<StableId>;
 
 fn definition_ids(snapshot: &ProjectSnapshot) -> Result<DefinitionIds, String> {
+    // 정의의 원본은 design/components의 텍스트 원본 하나입니다(ADR-0059·ADR-0061). 기존
+    // component-library chunk는 정의 출처로 인정하지 않습니다.
     let (library, _) =
         crate::component_source::project_library(snapshot).map_err(|e| e.to_string())?;
-    let mut ids: DefinitionIds = library.iter().map(|e| e.definition().id).collect();
-    if let Some(generation) = snapshot.generation() {
-        for pointer in generation
-            .manifest()
-            .chunk_pointers
-            .iter()
-            .filter(|p| p.kind == stellar_storage::chunk::kinds::KIND_COMPONENT_LIBRARY)
-        {
-            let bytes = generation
-                .read_chunk_payload(
-                    pointer.chunk_id,
-                    &mut stellar_storage::generation::lazy::NoopRecorder,
-                )
-                .map_err(|e| e.to_string())?;
-            let legacy = stellar_document::component::definition::ComponentLibrary::decode(&bytes)
-                .map_err(|e| e.to_string())?;
-            for entry in legacy.iter() {
-                if !ids.insert(entry.definition().id) {
-                    return Err("중복 component definition ID".into());
-                }
-            }
-        }
-    }
-    Ok(ids)
+    Ok(library.iter().map(|e| e.definition().id).collect())
 }
 
 fn validate_with_definitions(
@@ -292,14 +271,14 @@ mod tests {
         save_documents(&dir.path, &[&model]);
         let open = open_snapshot(&dir.path).unwrap();
         let reopened = open.document_model(model.document_id()).unwrap();
+        // 인스턴스를 담은 subtree도 다른 문서 chunk와 같은 payload schema 1입니다.
         assert!(open
             .generation()
             .unwrap()
             .manifest()
             .chunk_pointers
             .iter()
-            .any(|p| p.schema_version
-                == stellar_project::document_io::INSTANCE_SUBTREE_SCHEMA_VERSION));
+            .all(|p| p.schema_version == 1));
         for node in &original {
             assert_eq!(reopened.record(node.id).as_ref(), Some(node));
         }

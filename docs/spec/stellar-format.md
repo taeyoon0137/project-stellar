@@ -430,8 +430,6 @@ document_manifest = definition:bytes ‖ count:u32 LE ‖ (view:raw16 ‖ view_t
   2. subtree payload의 root가 ViewTree 항목의 subtree root와 같음(`SubtreeRootMismatch`).
   3. 합친 레코드가 문서 불변식을 지킴(`DocumentModel::from_records`, 문서 validator).
 
-ComponentInstance(tag 7)를 담은 subtree writer는 해당 pointer의 `schema_version`을 2로 씁니다. 다른 subtree·ViewTree·DocumentManifest는 기존 버전 1과 같은 bytes입니다. 프로젝트 generation의 스키마나 기존 프로젝트 원본은 일괄 변경하지 않습니다. 인스턴스 참조와 override의 binary 레이아웃은 의미 모델 §2.3을 따릅니다.
-
 ## 10. generation manifest (`.starmanifest`)
 
 근거: `storage::generation::manifest`, `storage::generation::loader`, ADR-0010.

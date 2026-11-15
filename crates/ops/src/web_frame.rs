@@ -20,7 +20,7 @@ use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::shape::{
     evaluate_shape_modifiers, RectangleParams, ShapeGeometry, ShapeModifierError,
 };
-use stellar_storage::chunk::kinds::{KIND_DOCUMENT_MANIFEST, KIND_VIEW_TREE};
+use stellar_storage::chunk::kinds::KIND_DOCUMENT_MANIFEST;
 use stellar_storage::hash::ContentHash;
 use stellar_target_profile::capability::ElementKind;
 use stellar_target_profile::validate::ViewNode;
@@ -189,35 +189,17 @@ pub fn export_web_frame(
             );
         }
     }
-    let v2_subtree = stellar_project::document_io::INSTANCE_SUBTREE_SCHEMA_VERSION;
-    if !generation
-        .manifest()
-        .chunk_pointers
-        .iter()
-        .all(|p| match (p.kind, p.schema_version) {
-            (_, 1) | (KIND_DOCUMENT_MANIFEST, 2) => true,
-            (KIND_VIEW_TREE, schema) if schema == v2_subtree => generation
-                .read_chunk_payload(
-                    p.chunk_id,
-                    &mut stellar_storage::generation::lazy::NoopRecorder,
-                )
-                .ok()
-                .and_then(|bytes| {
-                    stellar_document::record_codec::SubtreeRecords::decode(&bytes).ok()
-                })
-                .is_some_and(|tree| {
-                    tree.nodes
-                        .iter()
-                        .any(|n| matches!(n.payload, NodePayload::ComponentInstance(_)))
-                }),
-            _ => false,
-        })
-    {
+    if !generation.manifest().chunk_pointers.iter().all(|p| {
+        matches!(
+            (p.kind, p.schema_version),
+            (_, 1) | (KIND_DOCUMENT_MANIFEST, 2)
+        )
+    }) {
         result.note(
             true,
             "unsupported-record-schema",
             root,
-            "문서 manifest 1·2, View/subtree 1과 실제 인스턴스를 담은 subtree 2를 지원합니다",
+            "문서 manifest 1·2와 View/subtree 1을 지원합니다",
         );
     }
     // 문서 전체를 매 node마다 훑지 않고 한 번만 OrderKey 순서를 구성합니다.

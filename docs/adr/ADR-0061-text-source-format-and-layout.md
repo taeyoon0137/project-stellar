@@ -98,6 +98,11 @@ Accepted (2026-11-15). 제품 책임자가 텍스트 원본 형식과 배치의 
 - 보호 경로 `crates/storage`의 `source_file`(제한 읽기, 조건부 원자 저장, 새 파일 게시, 캐시 chunk 갱신)은 이 ADR과
   ADR-0059를 근거로 씁니다. `write_new_resolved`는 프로젝트 내부로 해석한 컴포넌트 폴더에 새 파일만 게시하며, 앱의
   선택 생성 경로(D3에 따라 제거 예정)가 유일한 호출자입니다.
+- 보호 경로 제거 기록(2026-11-15 검토): 인스턴스를 담은 subtree에만 payload schema 2를 쓰던 표식과 그
+  검사(`INSTANCE_SUBTREE_SCHEMA_VERSION`, 문서 loader의 schema 검사)를 지우면서, 이를 위해 ADR 없이 추가했던
+  `crates/storage`의 `LazyGeneration::chunk_pointer` 접근자도 삭제했습니다. 인스턴스 subtree는 다른 문서 chunk와
+  같은 schema 1로 씁니다. 이 표식은 V.8 migration의 pointer 재기록과 의미가 겹쳤고 의미 정보를 더하지 않았습니다.
+  storage의 순변경은 없습니다.
 
 ## Performance
 

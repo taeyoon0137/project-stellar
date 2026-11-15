@@ -112,8 +112,8 @@ impl ChildIndex {
     }
 }
 
-/// 문서의 node 간 참조 index(VI.2.5): Frame clip 대상과 modifier 참조(VI.9.4, 비활성 포함).
-/// 간선은 참조를 가진 node → 대상 node입니다. NIL 참조는 제외합니다.
+/// 문서의 참조 index(VI.2.5): Frame clip 대상, modifier 참조(VI.9.4, 비활성 포함), 인스턴스가
+/// 참조하는 컴포넌트 정의. 간선은 참조를 가진 node → 대상입니다. NIL clip 참조는 제외합니다.
 #[cfg(test)]
 pub(crate) fn reference_index(model: &DocumentModel) -> ReferenceIndex {
     let mut index = ReferenceIndex::new();
@@ -124,6 +124,9 @@ pub(crate) fn reference_index(model: &DocumentModel) -> ReferenceIndex {
                     index.add_reference(id, target.id());
                 }
             }
+        }
+        if let Some(NodePayload::ComponentInstance(instance)) = model.payload(id) {
+            index.add_reference(id, instance.component().id());
         }
         if let Some(stack) = model.modifier_stack(id) {
             for entry in stack.entries() {

@@ -89,7 +89,6 @@ impl<'a> LazySource<'a> {
 
 impl ChunkSource for LazySource<'_> {
     fn read_chunk(&mut self, chunk: ChunkId) -> Result<Vec<u8>, ChunkSourceError> {
-        check_document_chunk_schema(self.lazy, chunk)?;
         self.lazy
             .read_chunk_payload(chunk, self.recorder)
             .map_err(|e| ChunkSourceError {
@@ -97,23 +96,6 @@ impl ChunkSource for LazySource<'_> {
                 message: e.to_string(),
             })
     }
-}
-
-fn check_document_chunk_schema(
-    lazy: &LazyGeneration,
-    chunk: ChunkId,
-) -> Result<(), ChunkSourceError> {
-    if let Some(pointer) = lazy.chunk_pointer(chunk) {
-        if !(super::DOCUMENT_CHUNK_SCHEMA_VERSION..=super::INSTANCE_SUBTREE_SCHEMA_VERSION)
-            .contains(&pointer.schema_version)
-        {
-            return Err(ChunkSourceError {
-                chunk,
-                message: format!("지원하지 않는 문서 chunk schema {}", pointer.schema_version),
-            });
-        }
-    }
-    Ok(())
 }
 
 /// 문서 로드 오류.
