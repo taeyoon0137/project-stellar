@@ -557,8 +557,6 @@ final class ShellAppCoordinator: NSObject {
 
     private func performFrameCommand(_ id: ShellCommandID, in projectWindow: ShellProjectWindow) {
         switch id {
-        case ShellProjectCommandID.documentFont:
-            projectWindow.chooseDocumentFont()
         case ShellProjectCommandID.revealInFinder:
             guard let root = projectWindow.dataSource.session?.rootPath else { return }
             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: root)])
@@ -823,7 +821,6 @@ enum ShellMainMenuInstaller {
             )
             reveal.image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil)
             file.addItem(.separator())
-            file.addItem(ShellFrameMenuItems.makeFrameActionItem(title: String(localized: "Document Font…"), id: ShellProjectCommandID.documentFont))
             file.addItem(reveal)
         }
     }

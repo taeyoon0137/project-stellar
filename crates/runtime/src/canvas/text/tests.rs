@@ -216,32 +216,72 @@ fn project_font_content_to_positioned_outlines_and_line_hits() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// 문서 style 표에 project 글꼴 하나와 그 face를 쓰는 기본 typography를 직접 등록합니다.
+pub(super) fn project_font_styles(
+    root: &std::path::Path,
+    [resource, asset]: [stellar_core_types::ids::StableId; 2],
+    size: u32,
+    fill: stellar_core_types::color::Color,
+) -> (
+    stellar_document::text_styles::DocumentTextStyles,
+    FontFaceRef,
+) {
+    use stellar_core_types::{
+        typed_value::TypographyValue,
+        typography::{Family, FontSize, Typography},
+    };
+    use stellar_document::text_styles::{DocumentFontAsset, DocumentTextStyles};
+    let file = root.join("source-font.ttf");
+    std::fs::write(&file, stellar_text::test_support::outline_test_font()).unwrap();
+    let policy =
+        AssetImportPolicy::from_config_str(include_str!("../../../../../config/asset-import.yaml"))
+            .unwrap();
+    let imported = import_project_font(
+        &AssetStore::new(root),
+        &policy,
+        AssetId::from_stable_id(asset),
+        &file,
+        FontLicenseInfo::default(),
+    )
+    .unwrap();
+    std::fs::remove_file(file).unwrap();
+    let reference = imported.font.face_ref(0).unwrap();
+    let mut styles = DocumentTextStyles::initial(resource);
+    styles.fonts.insert(
+        reference.file_hash(),
+        DocumentFontAsset {
+            font_record: imported.font.encode().unwrap(),
+            asset_record: imported.asset.record.encode().unwrap(),
+        },
+    );
+    styles.default_fill = Some(fill);
+    styles.typography.insert(
+        resource,
+        TypographyValue::from_record(&Typography {
+            families: vec![Family {
+                name: imported.font.faces()[0].family().unwrap().into(),
+                face: Some(reference.clone()),
+            }],
+            size: FontSize::Subpixels(size),
+            ..Default::default()
+        })
+        .unwrap(),
+    );
+    (styles, reference)
+}
+
 #[test]
 fn document_selection_projects_multiline_scalar_offsets_and_verifies_changed_registration() {
     use crate::window_session::test_fixtures::{sample_document, sid, TempDir};
     use stellar_core_types::color::{Color, ColorSpace};
-    use stellar_project::fonts::document::{import_default_font, DocumentFontSelection};
     let project = TempDir::new("document-font");
-    let data = TempDir::new("document-font-origin");
-    let file = data.path().join("chosen.ttf");
-    std::fs::write(&file, stellar_text::test_support::outline_test_font()).unwrap();
     let mut model = sample_document();
     let fill = Color::new(ColorSpace::DisplayP3, 0.25, 0.5, 1., 0.5).unwrap();
-    let mut input = DocumentFontSelection {
-        file,
-        index: 1,
-        size: 20 * 64,
-        fill,
-    };
-    let ids = [sid(401), sid(402)];
-    let current = &model.definition().text_styles;
-    assert!(import_default_font(project.path(), data.path(), current, ids, &input).is_err());
-    assert!(!project.path().join("assets").exists());
-    input.index = 0;
-    let imported = import_default_font(project.path(), data.path(), current, ids, &input).unwrap();
-    assert_eq!(imported.styles.fonts.len(), 1);
-    let hash = imported.reference.file_hash();
-    model.replace_text_styles(imported.styles);
+    let (styles, reference) =
+        project_font_styles(project.path(), [sid(401), sid(402)], 20 * 64, fill);
+    assert_eq!(styles.fonts.len(), 1);
+    let hash = reference.file_hash();
+    model.replace_text_styles(styles);
     let payload = TextPayload::new(
         UserText::new("A A\nA"),
         vec![Paragraph { style: 0 }; 2],
@@ -327,28 +367,12 @@ fn saved_layout_reuses_only_matching_content_modifiers_styles_and_visible_nodes(
         modifier::{ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack},
         records::{NodePayload, NodeRecord},
     };
-    use stellar_project::fonts::document::{import_default_font, DocumentFontSelection};
     let project = TempDir::new("saved-text-cache");
-    let data = TempDir::new("saved-text-cache-origin");
-    let file = data.path().join("chosen.ttf");
-    std::fs::write(&file, stellar_text::test_support::outline_test_font()).unwrap();
     let mut model = sample_document();
     let black = Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).unwrap();
     let red = Color::new(ColorSpace::Srgb, 1., 0., 0., 1.).unwrap();
-    let default = import_default_font(
-        project.path(),
-        data.path(),
-        &model.definition().text_styles,
-        [sid(801), sid(802)],
-        &DocumentFontSelection {
-            file,
-            index: 0,
-            size: 20 * 64,
-            fill: black,
-        },
-    )
-    .unwrap();
-    model.replace_text_styles(default.styles);
+    let (styles, _) = project_font_styles(project.path(), [sid(801), sid(802)], 20 * 64, black);
+    model.replace_text_styles(styles);
     let a = TextPayload::new(
         UserText::new("A\nA"),
         vec![Paragraph { style: 0 }; 2],

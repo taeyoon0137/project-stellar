@@ -126,7 +126,6 @@ use stellar_project::trust_store::{os_user_data_base, FileTrustStore};
 
 mod components;
 mod create;
-mod document_font;
 mod frame_insert;
 mod frame_move;
 mod image_place;
@@ -1630,7 +1629,6 @@ pub enum EventPoll {
 struct AppShared {
     creating: std::sync::atomic::AtomicBool,
     cloning: Mutex<Option<(RequestId, stellar_git_porcelain::cancel::GitCancelToken)>>,
-    importing_font: std::sync::atomic::AtomicBool,
     importing_image: std::sync::atomic::AtomicBool,
     outbox: Mutex<VecDeque<RuntimeEvent>>,
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
@@ -1745,7 +1743,6 @@ impl AppRuntime {
             shared: Arc::new(AppShared {
                 creating: false.into(),
                 cloning: Mutex::default(),
-                importing_font: false.into(),
                 importing_image: false.into(),
                 outbox: Mutex::new(VecDeque::new()),
                 outstanding: AtomicUsize::new(0),

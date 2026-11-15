@@ -87,7 +87,7 @@ final class ShellCanvasTextEditing {
                 }
                 guard let paint else {
                     if self.requiresFirstPaint {
-                        self.fail(String(localized: "This text could not be laid out. Check its styles and the font selected in File → Document Font…."))
+                        self.fail(String(localized: "This text could not be laid out with its styles and fonts."))
                     }
                     return
                 }

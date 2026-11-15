@@ -306,65 +306,6 @@ pub unsafe extern "C" fn stellar_window_text_rects(
     })
 }
 
-/// # Safety
-/// path는 path_len개의 UTF-8 byte입니다. out_request는 null 또는 유효한 u64 출력입니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_set_document_font(
-    handle: u64,
-    session: u64,
-    revision: u64,
-    path: *const u8,
-    path_len: usize,
-    face: u32,
-    size_subpixels: u32,
-    color: crate::canvas::StellarCanvasColor,
-    out_request: *mut u64,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if !out_request.is_null() {
-            unsafe {
-                *out_request = 0;
-            }
-        }
-        if path_len == 0
-            || path_len > 32768
-            || size_subpixels == 0
-            || size_subpixels > i32::MAX as u32
-        {
-            return StellarStatus::InvalidArgument;
-        }
-        let file = match unsafe { crate::decode_utf8_owned(path, path_len) } {
-            Ok(s) if !s.contains('\0') => std::path::PathBuf::from(s),
-            Ok(_) => return StellarStatus::InvalidArgument,
-            Err(e) => return e,
-        };
-        if !file.is_absolute() {
-            return StellarStatus::InvalidArgument;
-        }
-        let Ok(Some(color)) = color.decode() else {
-            return StellarStatus::InvalidArgument;
-        };
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let result = match rt.app() {
-            Ok(app) => app.set_document_font(
-                WindowSessionHandle(session),
-                stellar_core_types::revision::DocumentRevision(revision),
-                file,
-                face,
-                size_subpixels,
-                color,
-            ),
-            Err(e) => return e,
-        };
-        unsafe { rt.finish_request(result, out_request) }
-    })
-}
-
 /// 저장 장면의 중복 없는 outline 정의 또는 그 outline의 배치입니다.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]

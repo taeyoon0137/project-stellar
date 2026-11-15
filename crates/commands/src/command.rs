@@ -313,13 +313,6 @@ pub enum Command {
     DuplicateSubtree(DuplicateSubtree),
     /// Text node의 부분 문자열을 편집합니다.
     ReplaceText(crate::text_edit::ReplaceText),
-    /// 문서 ID 확인 후 Text style을 한 transaction으로 교체합니다.
-    SetDocumentTextStyles {
-        /// 대상 문서.
-        document: StableId,
-        /// 적용할 새 표.
-        styles: Box<stellar_document::text_styles::DocumentTextStyles>,
-    },
     /// 테스트 전용 fault-injection probe. 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe(TestProbe),
@@ -356,7 +349,6 @@ impl Command {
             Command::ConvertShapeToPath(_) => CommandKind::ConvertShapeToPath,
             Command::RestoreNodeRecords(_) => CommandKind::RestoreNodeRecords,
             Command::ReplaceText(_) => CommandKind::ReplaceText,
-            Command::SetDocumentTextStyles { .. } => CommandKind::SetDocumentTextStyles,
             Command::DuplicateSubtree(_) => CommandKind::DuplicateSubtree,
             #[cfg(test)]
             Command::TestProbe(_) => CommandKind::TestProbe,
@@ -378,29 +370,6 @@ impl Command {
             Command::ConvertShapeToPath(command) => command.validate(model),
             Command::RestoreNodeRecords(command) => command.validate(model),
             Command::ReplaceText(command) => command.validate(model),
-            Command::SetDocumentTextStyles { document, styles } => {
-                if model.document_id() != *document {
-                    return Err(CommandError::InvalidRequest {
-                        reason: "Text style 대상 문서 불일치",
-                    });
-                }
-                for id in styles.typography.keys() {
-                    if *id == StableId::NIL {
-                        return Err(CommandError::NilId);
-                    }
-                    if !model.definition().text_styles.typography.contains_key(id)
-                        && model.contains_persistent_id(*id)
-                    {
-                        return Err(CommandError::DuplicateId { id: *id });
-                    }
-                }
-                if styles.paragraphs.values().any(|p| p.validate().is_err()) {
-                    return Err(CommandError::InvalidRequest {
-                        reason: "유효하지 않은 문단 style",
-                    });
-                }
-                Ok(())
-            }
             Command::DuplicateSubtree(command) => command.validate(model),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.validate(model),
@@ -430,13 +399,6 @@ impl Command {
                 command.invert(model).map(Command::RestoreNodeRecords)
             }
             Command::ReplaceText(command) => command.invert(model).map(Command::RestoreNodeRecords),
-            Command::SetDocumentTextStyles { document, .. } => {
-                self.validate(model)?;
-                Ok(Command::SetDocumentTextStyles {
-                    document: *document,
-                    styles: Box::new(model.definition().text_styles.clone()),
-                })
-            }
             Command::DuplicateSubtree(command) => command.invert().map(Command::DeleteSubtree),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.invert(model).map(Command::TestProbe),
@@ -458,13 +420,6 @@ impl Command {
             Command::ConvertShapeToPath(command) => command.apply(ctx),
             Command::RestoreNodeRecords(command) => command.apply(ctx),
             Command::ReplaceText(command) => command.apply(ctx),
-            Command::SetDocumentTextStyles { styles, .. } => {
-                self.validate(ctx.model())?;
-                if &ctx.model().definition().text_styles != styles.as_ref() {
-                    ctx.set_text_styles((**styles).clone())?;
-                }
-                Ok(())
-            }
             Command::DuplicateSubtree(command) => command.apply(ctx),
             #[cfg(test)]
             Command::TestProbe(probe) => probe.apply(ctx),

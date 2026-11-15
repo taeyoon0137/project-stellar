@@ -2,16 +2,6 @@ import CoreGraphics
 import Foundation
 
 extension CoreRuntime {
-    static func setDocumentFont(handle: UInt64, session: UInt64, revision: UInt64, path: String, face: UInt32,
-                                size: UInt32, fill: StellarCanvasColor) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = Array(path.utf8).withUnsafeBufferPointer { bytes in
-            stellar_window_set_document_font(handle, session, revision, bytes.baseAddress, bytes.count, face, size, fill, &request)
-        }
-        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
-        return .success(request)
-    }
-
     static func insertText(handle: UInt64, session: UInt64, view: UUID, parent: UUID, revision: UInt64, origin: CGPoint,
                            text: String) -> Result<(request: UInt64, node: UUID), CoreRuntimeCallError> {
         var request: UInt64 = 0, created = UUID().uuid

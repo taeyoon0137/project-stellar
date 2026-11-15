@@ -39,8 +39,6 @@ pub enum CommandKind {
     DuplicateSubtree,
     /// Unicode scalar 범위의 Text 본문 교체.
     ReplaceText,
-    /// 문서 Text style 표 교체.
-    SetDocumentTextStyles,
     /// 테스트 전용 probe(fault injection). 프로덕션 빌드에는 없습니다.
     #[cfg(test)]
     TestProbe,
@@ -62,7 +60,6 @@ impl CommandKind {
         CommandKind::RestoreNodeRecords,
         CommandKind::DuplicateSubtree,
         CommandKind::ReplaceText,
-        CommandKind::SetDocumentTextStyles,
     ];
 
     /// 영구 예약 값(유효한 종류가 아님).
@@ -84,7 +81,6 @@ impl CommandKind {
             CommandKind::RestoreNodeRecords => 0x0032,
             CommandKind::DuplicateSubtree => 0x0040,
             CommandKind::ReplaceText => 0x0050,
-            CommandKind::SetDocumentTextStyles => 0x0051,
             #[cfg(test)]
             CommandKind::TestProbe => 0xFFF0,
         }
@@ -118,7 +114,6 @@ impl CommandKind {
             CommandKind::RestoreNodeRecords => "restore-node-records",
             CommandKind::DuplicateSubtree => "duplicate-subtree",
             CommandKind::ReplaceText => "replace-text",
-            CommandKind::SetDocumentTextStyles => "set-document-text-styles",
             #[cfg(test)]
             CommandKind::TestProbe => "test-probe",
         }
@@ -173,7 +168,6 @@ mod tests {
                 (0x0032, "restore-node-records"),
                 (0x0040, "duplicate-subtree"),
                 (0x0050, "replace-text"),
-                (0x0051, "set-document-text-styles"),
             ]
         );
     }

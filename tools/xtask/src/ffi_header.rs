@@ -408,7 +408,6 @@ typedef struct StellarCanvasTextPart { uint32_t op, index; float points[6]; } St
 StellarStatus stellar_window_text_parts(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, StellarCanvasTextPart *rows, size_t capacity, size_t *count, uint64_t *paint_token);
 StellarStatus stellar_window_text_hit(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, float x, float y, uint32_t *offset, uint32_t *upstream);
 StellarStatus stellar_window_text_rects(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, uint32_t start, uint32_t end, uint32_t upstream, float (*rects)[4], size_t capacity, size_t *count);
-StellarStatus stellar_window_set_document_font(uint64_t handle, uint64_t session, uint64_t revision, const uint8_t *path, size_t path_len, uint32_t face, uint32_t size_subpixels, StellarCanvasColor color, uint64_t *out_request);
 StellarStatus stellar_window_canvas(uint64_t handle, uint64_t session, float width, float height, StellarCanvasInfo *info, StellarCanvasFrame *rows, size_t capacity);
 
 /* Worker-only input preview. Elements and optional local caret xywh are borrowed only during sink(). */

@@ -162,12 +162,6 @@ final class ShellRuntimeEventPump {
                                          node: node, revision: revision, name: name), completion)
     }
 
-    func setDocumentFont(session: UInt64, revision: UInt64, path: String, face: UInt32, size: UInt32,
-                         fill: StellarCanvasColor, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
-        register(CoreRuntime.setDocumentFont(handle: runtimeHandle, session: session, revision: revision, path: path,
-                                             face: face, size: size, fill: fill), completion)
-    }
-
     func editFrame(_ frame: CanvasInspectorFrame, change: FrameInspectorEdit, completion: @escaping (CoreRuntimeEvent) -> Void)
         -> Result<UInt64, CoreRuntimeCallError> {
         var value = StellarFrameValue()

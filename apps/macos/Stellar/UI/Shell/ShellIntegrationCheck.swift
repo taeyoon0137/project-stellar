@@ -132,17 +132,10 @@ private final class ShellIntegrationCheckRunner {
         let auxiliary = items(withAction: #selector(ShellWindowController.toggleAuxiliaryPanel(_:)), in: menu)
         expect(auxiliary.count == 1 && auxiliary.first?.title == "Show Panels", "View 메뉴에 Show Panels 없음")
         for action in [#selector(ShellWindowController.navigateBack(_:)), #selector(ShellWindowController.navigateForward(_:)),
-                       #selector(ShellWindowController.focusProjectSearch(_:))]
+                       #selector(ShellWindowController.focusProjectSearch(_:)), #selector(ShellWindowController.performFrameAction(_:))]
         {
             let found = items(withAction: action, in: menu)
             expect(found.count == 1 && found.allSatisfy { $0.target == nil }, "셸 프레임 메뉴 항목 설치 불일치: \(action)")
-        }
-        let actions = items(withAction: #selector(ShellWindowController.performFrameAction(_:)), in: menu)
-        let file = ShellMainMenuInstaller.submenu(titled: "File", in: menu)
-        for id in [ShellProjectCommandID.revealInFinder, ShellProjectCommandID.documentFont] {
-            let matches = actions.filter { ($0.representedObject as? String) == id.rawValue }
-            expect(file != nil && matches.count == 1 && matches[0].menu === file && matches[0].target == nil,
-                   "File 메뉴의 활성 창 명령 설치 불일치: \(id.rawValue)")
         }
 
         // key equivalent는 한 명령에만 둡니다(⌘[·⌘]는 Object 메뉴 소유).

@@ -138,7 +138,6 @@ round_trip_property! {
     restore_node_records_round_trip => Registered::Command(CommandKind::RestoreNodeRecords), min 120;
     duplicate_subtree_round_trip => Registered::Command(CommandKind::DuplicateSubtree), min 80;
     replace_text_round_trip => Registered::Command(CommandKind::ReplaceText), min 60;
-    set_document_text_styles_round_trip => Registered::Command(CommandKind::SetDocumentTextStyles), min 60;
     set_selection_round_trip => Registered::Selection, min 120;
 }
 
