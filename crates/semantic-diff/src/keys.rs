@@ -56,6 +56,26 @@ pub const TEXT_OPAQUE_TYPOGRAPHY: PropertyKey = PropertyKey(0xE108);
 /// hash로 등록한 프로젝트 글꼴 record.
 pub const TEXT_FONT_ASSET: PropertyKey = PropertyKey(0xE109);
 
+// 문단·문자 style entry 안의 필드. 경로는 `[TEXT_PARAGRAPH_STYLE | TEXT_RUN_STYLE, 필드]` + index이고,
+// 같은 entry의 다른 필드는 따로 병합합니다.
+
+/// style의 typography resource 참조.
+pub const TEXT_STYLE_TYPOGRAPHY: PropertyKey = PropertyKey(0xE10A);
+/// 문단 정렬.
+pub const TEXT_STYLE_ALIGNMENT: PropertyKey = PropertyKey(0xE10B);
+/// 문단 줄바꿈 방식.
+pub const TEXT_STYLE_WRAPPING: PropertyKey = PropertyKey(0xE10C);
+/// 문단 줄 높이.
+pub const TEXT_STYLE_LINE_HEIGHT: PropertyKey = PropertyKey(0xE10D);
+/// 문자 채우기 색.
+pub const TEXT_STYLE_FILL: PropertyKey = PropertyKey(0xE10E);
+/// 문자 letter-spacing.
+pub const TEXT_STYLE_LETTER_SPACING: PropertyKey = PropertyKey(0xE10F);
+/// 문자 OpenType feature 목록.
+pub const TEXT_STYLE_FEATURES: PropertyKey = PropertyKey(0xE110);
+/// 문자 variation axis 목록.
+pub const TEXT_STYLE_VARIATIONS: PropertyKey = PropertyKey(0xE111);
+
 // --- 프로젝트 metadata (0xE2xx) ---
 
 /// 프로젝트 metadata 항목. 마지막 segment가 항목 이름(map key)입니다.
@@ -219,6 +239,14 @@ mod tests {
             ("document.text_run_style", TEXT_RUN_STYLE),
             ("document.text_opaque_typography", TEXT_OPAQUE_TYPOGRAPHY),
             ("document.text_font_asset", TEXT_FONT_ASSET),
+            ("text_style.typography", TEXT_STYLE_TYPOGRAPHY),
+            ("text_style.alignment", TEXT_STYLE_ALIGNMENT),
+            ("text_style.wrapping", TEXT_STYLE_WRAPPING),
+            ("text_style.line_height", TEXT_STYLE_LINE_HEIGHT),
+            ("text_style.fill", TEXT_STYLE_FILL),
+            ("text_style.letter_spacing", TEXT_STYLE_LETTER_SPACING),
+            ("text_style.features", TEXT_STYLE_FEATURES),
+            ("text_style.variations", TEXT_STYLE_VARIATIONS),
             ("view.root_frame", VIEW_ROOT_FRAME),
             ("project.metadata", PROJECT_METADATA),
             ("shape.kind", SHAPE_KIND),

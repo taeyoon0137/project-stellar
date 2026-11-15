@@ -289,20 +289,12 @@ normal line-height와 inline box별 CSS half-leading, normal letter-spacing과 �
   binding 안전값(VIII.8.3)과 새 literal도 이 값을 씁니다. 빈 bytes는 해석할 수 없는 값이라 기본값으로 쓰지 않습니다.
 - STTY v1 bytes는 `crates/core-types/src/typography.rs`의 golden 테스트로 고정합니다.
 
-### 문서 스타일 표와 이전 generation
+### 문서 Text style 표
 
-스타일 표가 있는 문서는 DocumentManifest pointer schema 2를 사용합니다. 문서 정의 뒤에
-`STTS` v1 표를 두고 기존 Text payload·ViewTree·subtree는 동일한 bytes로 유지합니다.
-문서의 기본 typography와 글자색, StableId별 typography resource, hash별 등록 project font 및
-asset record, 원래 u32 index별 문단/문자 스타일을 저장합니다. CSS typography longhand 일곱 개의
-PropertyKey는 순서대로 0x0501~0x0507입니다. 다른 longhand의 변경을 독립적으로 병합합니다.
-
-기존 v1 generation을 조회하면 원래 index와 빈 스타일 표를 그대로 제공합니다. 새 문서의 0번
-문단과 문자 스타일은 프로젝트 생성 시 만든 typography ID를 참조합니다. 기기 글꼴과 profile의
-medium 크기·색을 추정하지 않습니다. 스타일이 추가되는 첫 저장은 새 generation을 만들어
-current를 교체하고 이전 manifest 및 subtree를 보존합니다. 이 추가형 문서 표는 Frame·Text
-node payload schema를 바꾸지 않습니다. IX.11.21의 node schema 변경과 제품 open 시 지원
-matrix/migration registry는 별도 단계입니다. 지원하지 않는 DocumentManifest 버전은 거부합니다.
+- 문서 Text style 표의 저장 위치와 형식은 이 ADR의 결정이 아닙니다.
+- 사용자 결정 D2(2026-11-15)에 따라 style 표와 글꼴·이미지 asset 레코드는 텍스트 asset catalog 한 곳에 두고
+  문서는 참조만 합니다. 형식과 migration 경로(IX.11.21)는 텍스트 원본 ADR이 정합니다.
+- 현재 구현의 상태 기록은 ADR-0067 §4(Proposed)에 옮겼습니다.
 
 ## Performance
 

@@ -468,49 +468,29 @@ impl DocumentDefinition {
 }
 
 impl ProjectDocumentIndex {
-    /// canonical binary bytes로 인코딩합니다.
+    /// canonical binary bytes로 인코딩합니다. index는 문서 이름·페이지·View만 담습니다. Text style 표는
+    /// 각 문서 정의([`DocumentDefinition::encode`])가 저장합니다.
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
-        let styled = self.documents.iter().any(|d| !d.text_styles.is_empty());
-        if styled {
-            buf.extend(b"STDI\x02");
-        }
         buf.extend_from_slice(&(self.documents.len() as u32).to_le_bytes());
         for document in &self.documents {
-            if styled {
-                let bytes = document.encode();
-                buf.extend((bytes.len() as u32).to_le_bytes());
-                buf.extend(bytes);
-            } else {
-                document.encode_into(&mut buf);
-            }
+            document.encode_into(&mut buf);
         }
         buf
     }
 
     /// binary bytes에서 디코딩합니다. malformed 입력은 panic 없이 거부합니다.
     pub fn decode(bytes: &[u8]) -> Result<ProjectDocumentIndex, DefinitionError> {
-        let styled = bytes.starts_with(b"STDI\x02");
         let mut reader = Reader {
-            input: if styled { &bytes[5..] } else { bytes },
+            input: bytes,
             pos: 0,
         };
         let count = reader.take_u32()? as usize;
         let mut documents = Vec::with_capacity(count.min(1024));
         for _ in 0..count {
-            if styled {
-                let n = reader.take_u32()? as usize;
-                documents.push(DocumentDefinition::decode(reader.take(n)?)?);
-            } else {
-                documents.push(DocumentDefinition::decode_from(&mut reader)?);
-            }
+            documents.push(DocumentDefinition::decode_from(&mut reader)?);
         }
         reader.expect_end()?;
-        if styled && documents.iter().all(|d| d.text_styles.is_empty()) {
-            return Err(DefinitionError::Malformed {
-                reason: "빈 style index 중복 표현",
-            });
-        }
         Ok(ProjectDocumentIndex { documents })
     }
 }

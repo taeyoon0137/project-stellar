@@ -59,6 +59,24 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
 - `FontFaceRef`·`FontSource`·`FontFileHash`·`OpenTypeTag`의 형식 테스트는 정의가 있는 core-types로 옮깁니다.
   `stellar-text`에는 다른 테스트가 쓰는 값 helper만 남깁니다.
 
+### 4. 문서 Text style 표의 병합과 현재 저장 상태
+
+- 병합(결정): semantic snapshot은 문단·문자 style entry를 필드 단위로 투영합니다.
+  - 경로는 `[TEXT_PARAGRAPH_STYLE | TEXT_RUN_STYLE, 필드]` + 원래 u32 index입니다. entry 존재 표식은 필드 없는
+    경로의 `Bool(true)`입니다.
+  - 필드 key(snapshot 전용 대역, 저장하지 않음): typography `0xE10A`, alignment `0xE10B`, wrapping `0xE10C`,
+    line-height `0xE10D`, fill `0xE10E`, letter-spacing `0xE10F`, features `0xE110`, variations `0xE111`.
+  - 같은 entry의 다른 필드를 두 branch가 바꾸면 충돌 없이 합칩니다. 같은 필드를 다르게 바꾸면 충돌입니다.
+  - 이전에는 entry 전체를 bytes 하나로 투영해, 다른 필드를 고쳐도 충돌했습니다.
+- 삭제(결정): `ProjectDocumentIndex`의 `STDI` v2 encode·decode 분기는 쓰는 곳이 없어 삭제합니다. index는 문서
+  이름·페이지·View만 담고, Text style 표는 각 문서 정의가 저장합니다.
+- 현재 저장 상태(Proposed, 확정 아님): 아래는 Codex가 Accepted ADR-0024에 결정처럼 적었던 현행 구현입니다.
+  최종 위치와 형식은 D2에 따라 텍스트 원본 ADR이 정하며, 그때 이 항목을 대체합니다.
+  - style 표가 있는 문서는 DocumentManifest pointer schema 2를 쓰고, 문서 정의 뒤에 `STTS` v1 표를 둡니다.
+  - 표에는 기본 typography·글자색, StableId별 typography resource, hash별 project 글꼴과 asset record, 원래
+    u32 index별 문단·문자 style이 있습니다.
+  - 기존 v1 generation은 빈 style 표로 읽습니다.
+
 ## Alternatives
 
 - Document Font UI를 유지하고 face index 입력만 숨기기: 사용자가 정의하지 않은 UI이고, 라이선스 확인과 글꼴 asset
@@ -69,6 +87,7 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
 ## Consequences
 
 - 앱에서 문서 글꼴을 고르는 경로가 없어집니다. 문서 style 표에 이미 등록된 project 글꼴은 계속 표시합니다.
+- 문단·문자 style의 서로 다른 필드 편집이 Git 병합에서 충돌하지 않습니다.
 
 ## Compatibility
 
