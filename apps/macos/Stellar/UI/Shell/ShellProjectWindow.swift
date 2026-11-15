@@ -628,6 +628,7 @@ final class ShellProjectWindow {
         gitSource.trustCheckDidChange = { [weak self] checking in self?.dataSource.setTrustChecking(checking) }
         connectFrameInteractions()
         connectLayerFlags()
+        connectCanvasContextMenu()
         if let window = windowController.window {
             // 응답자 체인: content view → router → split controller → 창. 텍스트 편집 중에는 field editor가 먼저 받습니다.
             router.install(in: window)
@@ -745,6 +746,8 @@ final class ShellProjectWindow {
 
     var subtreePasteboard: NSPasteboard = .general
     private static let subtreePasteboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
+    /// 붙여 넣을 Stellar 노드가 클립보드에 있는지(캔버스 문맥 메뉴의 Paste).
+    var hasSubtreeOnPasteboard: Bool { subtreePasteboard.types?.contains(Self.subtreePasteboardType) == true }
     let clipboardQueue = DispatchQueue(label: "xyz.taeyoon.stellar.clipboard", qos: .userInitiated)
 
     /// 창 session 정보로 Undo·Redo·Save Now 활성 상태를 다시 계산합니다.

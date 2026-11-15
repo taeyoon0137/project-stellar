@@ -404,6 +404,11 @@ final class CanvasFrameScene {
         selection = CoreRuntime.canvasSelection(handle: handle, session: session)?.items.map(CanvasSelectionBox.init) ?? []
     }
 
+    /// 표시한 primary 선택. 활성 View root의 직계가 아니어도 같은 값입니다.
+    var primaryID: UUID? { primary == Self.emptyID ? nil : primary }
+    /// primary 선택이 활성 View의 root Frame인지.
+    var primaryIsRoot: Bool { primaryIndex.map { frames[$0].parent == nil } ?? false }
+
     /// 선택 상자(핸들 드래그 중이면 새 상자)의 local 사각형.
     private func displayedRect(_ box: CanvasSelectionBox) -> CGRect {
         gesturePreview.flatMap { $0.id == box.id ? $0.rect : nil } ?? box.rect

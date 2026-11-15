@@ -83,6 +83,14 @@ final class CanvasView: NSView {
     /// 캔버스 포인터 제스처(이동·생성·Hand·Zoom 드래그 등)가 진행 중인지. 창이 연결하고, 속성 패널은 이 값 하나로
     /// 제스처 중 섹션 구성을 고정합니다(UX.2.12). 새 제스처 상태는 이 질의에 함께 넣습니다.
     var frameGestureActive: (() -> Bool)?
+    /// 우클릭·Control-클릭의 문맥 메뉴(UX.3.2). true면 그 누름과 짝 이벤트를 코어 입력으로 보내지 않습니다.
+    var contextMenuHandler: ((NSEvent) -> Bool)?
+    private var swallowsLeftMouse = false
+    private var swallowsRightMouse = false
+
+    /// 현재 primary 선택 ID와, 그것이 활성 View의 root Frame인지(문맥 메뉴가 root에 거부되는 명령을 뺍니다).
+    var primarySelectionID: UUID? { frameScene.primaryID }
+    var primarySelectionIsRoot: Bool { frameScene.primaryIsRoot }
 
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if let window {
@@ -191,12 +199,16 @@ final class CanvasView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        swallowsLeftMouse = event.modifierFlags.contains(.control) && contextMenuHandler?(event) == true
+        if swallowsLeftMouse { return }
         if framePointerHandler?(event) != true { submitInput(event) }
     }
     override func mouseUp(with event: NSEvent) {
+        if swallowsLeftMouse { swallowsLeftMouse = false; return }
         if framePointerHandler?(event) != true { submitInput(event) }
     }
     override func mouseDragged(with event: NSEvent) {
+        if swallowsLeftMouse { return }
         if framePointerHandler?(event) != true { submitInput(event) }
     }
     override func mouseMoved(with event: NSEvent) {
@@ -211,9 +223,17 @@ final class CanvasView: NSView {
         }
         submitInput(event)
     }
-    override func rightMouseDown(with event: NSEvent) { submitInput(event) }
-    override func rightMouseUp(with event: NSEvent) { submitInput(event) }
-    override func rightMouseDragged(with event: NSEvent) { submitInput(event) }
+    override func rightMouseDown(with event: NSEvent) {
+        swallowsRightMouse = contextMenuHandler?(event) == true
+        if !swallowsRightMouse { submitInput(event) }
+    }
+    override func rightMouseUp(with event: NSEvent) {
+        if swallowsRightMouse { swallowsRightMouse = false; return }
+        submitInput(event)
+    }
+    override func rightMouseDragged(with event: NSEvent) {
+        if !swallowsRightMouse { submitInput(event) }
+    }
     override func otherMouseDown(with event: NSEvent) { submitInput(event) }
     override func otherMouseUp(with event: NSEvent) { submitInput(event) }
     override func otherMouseDragged(with event: NSEvent) { submitInput(event) }

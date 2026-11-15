@@ -26,8 +26,10 @@ extension ShellProjectWindow {
         }
         let flags = sidebarSource.selectionFlags
         var commands: Set<ShellCommand> = []
-        if flags?.canHide != false { commands.insert(.toggleVisibility) }
-        if flags?.canLock != false { commands.insert(.toggleLock) }
+        // View root는 레이어가 아니므로 표시·잠금을 바꾸지 않습니다(코어도 거부).
+        let rootOnly = target.selection_count == 1 && canvasHost.canvasView.primarySelectionIsRoot
+        if !rootOnly, flags?.canHide != false { commands.insert(.toggleVisibility) }
+        if !rootOnly, flags?.canLock != false { commands.insert(.toggleLock) }
         toolsModel.setSelectionState(commands: commands, hidden: flags?.anyHidden ?? false,
                                      locked: flags?.allLocked ?? false)
     }
