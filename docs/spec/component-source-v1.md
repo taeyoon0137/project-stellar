@@ -17,7 +17,7 @@ stellar component-source check design/components
 - Frame `payload`는 영속 속성 하나를 키 하나·한 줄로 이름 오름차순에 씁니다: `background`, `border`, `border-bottom-left-radius`, `border-bottom-right-radius`, `border-top-left-radius`, `border-top-right-radius`, `clipping`, `height`, `layout-mode`, `transform`, `width`. 길이와 반경은 논리 픽셀 f32, `transform`은 `a b c d tx ty`, `clipping`은 `disabled` 또는 `frame-bounds`, `background`는 `none` 또는 `srgb 1 0 0 1`처럼 색 공간과 비연관 RGBA, `border`는 `none` 또는 두께 뒤에 같은 색 표현, `layout-mode`는 `none`입니다. 따라서 공통 조상에서 서로 다른 속성을 바꾼 두 브랜치는, 바뀐 두 줄 사이에 바뀌지 않은 줄이 있으면 일반 `git merge`로 합쳐집니다. 예를 들어 폭과 높이, 왼쪽 위와 왼쪽 아래 모서리가 그렇습니다. 바로 이웃한 줄(예: 왼쪽 위와 오른쪽 위 모서리)은 Git 충돌로 남고 `stellar semantic-merge`가 두 속성을 따로 합칩니다. 같은 속성을 서로 다른 값으로 바꾸면 양쪽 모두 충돌입니다.
 - 이미 커밋된 v1(루트 하나)과 v2(`children` 포함)는 읽기 전용입니다. Frame은 `size: "너비 높이"`, `corner_radius: "좌상 우상 우하 좌하"`, 색·clipping mapping으로 기록되어 있습니다. 무변경 요청은 기존 bytes를 보존하고, 실제로 편집하면 v3로 다시 씁니다. 같은 번호를 재정의하기 전 작업 트리에서만 쓰인 v3 문법(`corner_radius` 한 줄)은 알 수 없는 키로 거부합니다.
 - `check`는 지정 폴더 바로 아래의 모든 `.stellar.yaml`을 제한 YAML로 검사하고, 이름과 접미사, 전체 component·Frame ID, tree 소유권이 일치하는 정의를 StableId 순으로 반환합니다. `node_count`에는 루트도 포함됩니다. 파일당 1 MiB, 폴더당 4,096개까지 허용합니다. 캐시, 중앙 색인이나 generation은 필요하지 않습니다.
-- `resize <파일> <source_hash> <너비> <높이>`는 root Frame의 크기를 논리 픽셀로 바꿉니다. `source_hash`는 `create` 또는 `check` 결과에서 얻습니다. 크기는 유한한 비음수 f32이며 결과 JSON에서는 최단 왕복 문자열입니다. 실제 변경은 해당 파일 하나를 결정론적으로 다시 씁니다. 무변경 요청은 주석과 서식을 포함한 기존 bytes를 보존합니다. 협조적 CLI writer는 원본 폴더 잠금을 공유하고, 외부 변경으로 hash가 다르면 종료 코드 75로 실패합니다.
+- `resize <파일> <source_hash> <너비> <높이>`는 root Frame의 크기를 논리 픽셀로 바꿉니다. `source_hash`는 `create` 또는 `check` 결과에서 얻습니다. 크기는 유한한 비음수 f32이며 결과 JSON에서는 최단 왕복 문자열입니다. 실제 변경은 해당 파일 하나를 결정론적으로 다시 씁니다. 무변경 요청은 주석과 서식을 포함한 기존 bytes를 보존합니다. 협조적 CLI writer는 원본 폴더 잠금을 공유하고, 외부 변경으로 hash가 다르면 종료 코드 75로 실패합니다. 대상 폴더가 Stellar 프로젝트 안에 있으면(조상 폴더에 `stellar.yaml`) `create`·`resize`·`set-fill`·`add-frame`은 그 프로젝트의 저장 잠금을 먼저 잡고, generation에 component-library chunk가 있으면 이중 원본이 되므로 종료 코드 69로 거부합니다. 프로젝트 manifest를 읽을 수 없으면 쓰지 않습니다.
 
 ```sh
 source_info=$(stellar component-source check design/components | jq -c '.result.components[0]')
@@ -39,7 +39,7 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 `set-fill <파일> <source_hash> display-p3 1.2 -0.1 0.5 0`처럼 색 공간과 비연관 RGBA를 지정하면 컴포넌트 루트의 Fill을 저장합니다. `srgb`와 `display-p3`를 지원합니다. RGB는 유한한 확장 범위 값을 허용하고 알파는 0~1입니다. `set-fill <파일> <source_hash> none`은 Fill을 제거합니다. 알파가 0인 색도 원래 색 공간과 RGB를 보존합니다. `resize`와 `set-fill`은 root가 잠겨 있으면 무변경 요청도 종료 코드 65로 거부하고 원본 bytes를 보존합니다. 원본 hash가 바뀌면 잠금 검사보다 먼저 종료 코드 75로 실패합니다.
 
-파일 하나를 직접 고칠 때도 `component.root`와 `root_node.id`는 같은 전체 ID여야 합니다. 이름을 수동으로 변경하면 같은 변경에서 파일명도 새 이름·기존 접미사로 맞춰야 합니다. `check`는 불일치 상태를 거부합니다. CLI는 파일명 변경이나 여러 파일의 원자 저장을 제공하지 않습니다.
+파일 하나를 직접 고칠 때도 `component.root`와 `root_node.id`는 같은 전체 ID여야 합니다. 이름을 수동으로 변경하면 같은 변경에서 파일명도 새 이름·기존 접미사로 맞춥니다. 이름 부분만 다르고 접미사가 정의 ID와 맞는 파일은 ID로 조립하고, `check`와 `query <프로젝트> components`가 `component-file-name-mismatch` 경고로 정규 파일명을 알려 줍니다. 접미사가 다르면 다른 정의의 파일일 수 있으므로 거부합니다. CLI는 파일명 변경이나 여러 파일의 원자 저장을 제공하지 않습니다.
 
 일반 캔버스 문서는 아직 generation과 chunk에 저장되며, 기존 바이너리 라이브러리 전체 변환과 다중 파일 복구는 후속 범위입니다. 등록된 Property·Slot·token·state machine, Frame 이외의 자식 종류, 외부 layout 참조, Path clip, 알 수 없는 필드나 버전을 만나면 쓰기를 거부합니다. [ADR-0059](../adr/ADR-0059-text-source-files-with-chunk-cache.md)
 

@@ -272,6 +272,7 @@ pub fn query(args: &[String]) -> Result<Success, CliError> {
     };
     let plan = query_plan(target, rest)?;
     let context = path.display().to_string();
+    let mut diagnostics = Vec::new();
     let snapshot =
         open_snapshot(path).map_err(|e| views::open_error(&e).with_context(context.clone()))?;
     let result = match plan {
@@ -334,6 +335,7 @@ pub fn query(args: &[String]) -> Result<Success, CliError> {
         QueryPlan::Components => {
             let set = stellar_ops::component_source::query(&snapshot)
                 .map_err(|err| crate::text_source::operation_error(&err).with_context(context))?;
+            diagnostics = crate::component_source::rename_diagnostics(&set.entries);
             JsonValue::object(vec![
                 ("revision", views::revision(set.revision)),
                 ("chunk_kind", JsonValue::string("component-library")),
@@ -357,6 +359,6 @@ pub fn query(args: &[String]) -> Result<Success, CliError> {
     };
     Ok(Success {
         result,
-        diagnostics: Vec::new(),
+        diagnostics,
     })
 }

@@ -74,8 +74,27 @@ pub(crate) fn component_json(info: ComponentInfo, include_file: bool) -> J {
     J::object(fields)
 }
 
+/// 파일명의 이름 부분이 정의 이름과 다른 원본의 경고. 정의는 ID로 조립했습니다.
+pub(crate) fn rename_diagnostics(entries: &[ComponentInfo]) -> Vec<crate::output::Diagnostic> {
+    entries
+        .iter()
+        .filter_map(|entry| {
+            let expected = entry.renamed_file()?;
+            Some(crate::output::Diagnostic {
+                severity: crate::output::Severity::Warning,
+                code: "component-file-name-mismatch",
+                message: format!(
+                    "컴포넌트 {}의 파일명이 이름과 다릅니다. 정의는 ID로 읽었습니다. 파일명을 {expected}로 바꾸세요",
+                    entry.id
+                ),
+            })
+        })
+        .collect()
+}
+
 pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
     const USAGE: &str = "component-source create <폴더> <이름> <id> <root-id> | check <폴더> | resize <파일> <원본 hash> <너비> <높이> | set-fill <파일> <원본 hash> <none 또는 색 공간과 RGBA> | add-frame <파일> <원본 hash> <parent-id> <새-id> <이름> <너비> <높이>";
+    let mut diagnostics = Vec::new();
     let result = match args {
         [op, dir, name, component, root] if op == "create" => {
             let source =
@@ -86,6 +105,7 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
         [op, dir] if op == "check" => {
             let components = component_source::check(Path::new(dir))
                 .map_err(|error| operation_error(&error).with_context(dir))?;
+            diagnostics = rename_diagnostics(&components);
             J::object(vec![(
                 "components",
                 J::Array(
@@ -131,6 +151,6 @@ pub(crate) fn run(args: &[String]) -> Result<Success, CliError> {
     };
     Ok(Success {
         result,
-        diagnostics: Vec::new(),
+        diagnostics,
     })
 }

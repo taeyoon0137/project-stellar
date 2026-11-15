@@ -128,6 +128,32 @@ pub struct ComponentInfo {
     pub hash: ContentHash,
 }
 
+impl ComponentInfo {
+    /// 파일명의 이름 부분이 정의 이름과 다르면 정규 파일명을 돌려줍니다. 정의는 ID로 조립됩니다.
+    pub fn renamed_file(&self) -> Option<String> {
+        let expected = component_source::source_filename(&self.name, self.id).ok()?;
+        (self.file.file_name() != Some(expected.as_ref())).then_some(expected)
+    }
+}
+
+/// 원본 폴더가 Stellar 프로젝트 안에 있으면(조상에 `stellar.yaml`) 그 프로젝트의 저장 잠금을 잡고
+/// component-library chunk가 없는지 다시 확인합니다(ADR-0061 결정 7). manifest를 읽을 수 없으면 쓰지
+/// 않습니다.
+fn project_guard(dir: &Path) -> Result<Option<SaveLock>, Error> {
+    let folder = dir.canonicalize().map_err(|e| Error::Io(e.kind()))?;
+    let Some(root) = folder.ancestors().find(|ancestor| {
+        ancestor
+            .join(stellar_project::root::MANIFEST_FILE)
+            .is_file()
+    }) else {
+        return Ok(None);
+    };
+    let probe = crate::snapshot::probe(root).map_err(Error::Open)?;
+    let project_id = stellar_project::identity::parse_project_id(&probe.manifest.project.id)
+        .ok_or_else(|| Error::Invalid("프로젝트 ID 형식이 잘못되었습니다".into()))?;
+    lock_source_project(root, project_id, None).map(Some)
+}
+
 fn lock(dir: &Path) -> Result<SaveLock, Error> {
     // 라이브러리 디렉터리 자체에 프로젝트 ID가 없으므로 canonical 디렉터리를 잠금 identity로 씁니다.
     SaveLock::try_acquire(
@@ -162,6 +188,7 @@ pub fn create(
     root: StableId,
 ) -> Result<ComponentInfo, Error> {
     let source = ComponentSource::new(id, name, root)?;
+    let _project = project_guard(dir)?;
     let _guard = lock(dir)?;
     let (file, hash) = component_source::create(dir, &source)?;
     Ok(info(&source, file, hash))
@@ -388,7 +415,9 @@ pub fn add_frame(
     Ok(info(&source, file.into(), hash))
 }
 
-fn lock_file(file: &Path, expected: &str) -> Result<(SaveLock, ContentHash), Error> {
+type FileGuard = (Option<SaveLock>, SaveLock);
+
+fn lock_file(file: &Path, expected: &str) -> Result<(FileGuard, ContentHash), Error> {
     let hash = expected
         .parse()
         .map_err(|_| Error::Invalid("원본 hash 형식".into()))?;
@@ -396,7 +425,8 @@ fn lock_file(file: &Path, expected: &str) -> Result<(SaveLock, ContentHash), Err
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    Ok((lock(dir)?, hash))
+    let project = project_guard(dir)?;
+    Ok(((project, lock(dir)?), hash))
 }
 
 #[cfg(test)]
@@ -552,10 +582,20 @@ mod tests {
         std::fs::create_dir(&folder).unwrap();
         std::fs::write(folder.join("README.md"), "unrelated").unwrap();
         assert!(query(&snapshot).unwrap().entries.is_empty());
+        // CLI 폴더 명령도 프로젝트 안에서는 저장 잠금과 chunk 검사를 거쳐 이중 원본을 만들지 않습니다.
+        assert!(matches!(
+            create(&folder, "Card".into(), id(2), id(3)),
+            Err(Error::Unsupported(_))
+        ));
+        assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 1);
         let source = ComponentSource::new(id(2), "Card".into(), id(3)).unwrap();
-        component_source::create(&folder, &source).unwrap();
+        let (file, hash) = component_source::create(&folder, &source).unwrap();
         let before = file_digest(root);
         assert!(matches!(query(&snapshot), Err(Error::Unsupported(_))));
+        assert!(matches!(
+            resize(&file, &hash.to_string(), Size2::new(4., 4.).unwrap()),
+            Err(Error::Unsupported(_))
+        ));
         assert_eq!(file_digest(root), before);
     }
 }

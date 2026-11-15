@@ -299,14 +299,7 @@ impl ComponentSource {
 
     /// 표시 이름과 전체 StableId의 SHA-256 앞 12자리(hex)로 만든 파일명.
     pub fn filename(&self) -> Result<String, TextSourceError> {
-        let name = self.definition.display_name();
-        validate_folder_name(name).map_err(invalid)?;
-        let digest = ContentHash::compute(&self.definition.id.to_bytes()).digest_hex();
-        let filename = format!("{name}-{}{EXT}", &digest[..12]);
-        if filename.len() > 255 {
-            return Err(invalid("UTF-8 파일명이 255 bytes를 넘습니다"));
-        }
-        Ok(filename)
+        source_filename(self.definition.display_name(), self.definition.id)
     }
 
     fn add_to(&self, library: &mut ComponentLibrary) -> Result<(), TextSourceError> {
@@ -403,14 +396,34 @@ fn read_source(path: &Path) -> Result<(ComponentSource, ContentHash), TextSource
     decode_named(path, &bytes)
 }
 
+/// 정의 이름과 전체 StableId로 만든 정규 파일명 `<이름>-<SHA-256 앞 12자리 hex>.stellar.yaml`.
+pub fn source_filename(name: &str, id: StableId) -> Result<String, TextSourceError> {
+    validate_folder_name(name).map_err(invalid)?;
+    let filename = format!("{name}{}", id_suffix(id));
+    if filename.len() > 255 {
+        return Err(invalid("UTF-8 파일명이 255 bytes를 넘습니다"));
+    }
+    Ok(filename)
+}
+
+fn id_suffix(id: StableId) -> String {
+    let digest = ContentHash::compute(&id.to_bytes()).digest_hex();
+    format!("-{}{EXT}", &digest[..12])
+}
+
+/// 파일 식별은 내용의 전체 StableId와 파일명 접미사로 합니다(ADR-0061 결정 5). 이름 부분만 다른
+/// 파일(예: 이름을 고치고 파일명을 아직 바꾸지 않은 경우)은 ID로 조립하고, 조회 계층이 진단을
+/// 돌려줍니다. 접미사가 다르면 다른 정의의 파일일 수 있으므로 거부합니다.
 fn decode_named(
     path: &Path,
     bytes: &[u8],
 ) -> Result<(ComponentSource, ContentHash), TextSourceError> {
     let source = ComponentSource::decode(std::str::from_utf8(bytes).map_err(invalid)?)?;
-    if path.file_name() != Some(source.filename()?.as_ref()) {
+    source.filename()?;
+    let name = path.file_name().and_then(|name| name.to_str());
+    if !name.is_some_and(|name| name.ends_with(&id_suffix(source.definition.id))) {
         return Err(invalid(
-            "파일명이 정의의 이름·StableId 접미사와 일치하지 않습니다",
+            "파일명의 StableId 접미사가 정의와 일치하지 않습니다",
         ));
     }
     Ok((source, ContentHash::compute(bytes)))

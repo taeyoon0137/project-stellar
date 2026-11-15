@@ -18,6 +18,12 @@ fn cli(work: &Path, home: &Path, args: &[&str], exit: i32) -> JsonValue {
     run(work, home, "component-source", args, exit)
 }
 fn run(work: &Path, home: &Path, command: &str, args: &[&str], exit: i32) -> JsonValue {
+    envelope(work, home, command, args, exit)
+        .get("result")
+        .unwrap()
+        .clone()
+}
+fn envelope(work: &Path, home: &Path, command: &str, args: &[&str], exit: i32) -> JsonValue {
     let out = Command::new(env!("CARGO_BIN_EXE_stellar"))
         .arg(command)
         .args(args)
@@ -32,12 +38,11 @@ fn run(work: &Path, home: &Path, command: &str, args: &[&str], exit: i32) -> Jso
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let envelope = parse(
+    parse(
         std::str::from_utf8(&out.stdout).unwrap().trim(),
         JsonLimits::default(),
     )
-    .unwrap();
-    envelope.get("result").unwrap().clone()
+    .unwrap()
 }
 fn git_output(repo: &Path, args: &[&str]) -> Output {
     Command::new("git")
@@ -571,6 +576,20 @@ fn duplicate_ids_stale_writes_and_unsupported_sources_preserve_files() {
     assert_eq!(fs::read(&wrong).unwrap(), good);
     let renamed_text = text.replace("  name: Card\n", "  name: Card Wide\n");
     assert_ne!(renamed_text, text);
+    // 이름만 고치고 파일명은 그대로인 원본: 접미사가 맞으면 ID로 조립하고 경고합니다.
+    fs::remove_file(&wrong).unwrap();
+    fs::write(&path, &renamed_text).unwrap();
+    let warned = envelope(&folder, &home, "component-source", &["check", "."], 0);
+    let listed = warned.get("result").unwrap().get("components").unwrap();
+    assert_eq!(value(&listed.as_array().unwrap()[0], "name"), "Card Wide");
+    let diagnostics = warned.get("diagnostics").unwrap().as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        value(&diagnostics[0], "code"),
+        "component-file-name-mismatch"
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), renamed_text);
+    fs::rename(&path, &wrong).unwrap();
     let new_name = path
         .file_name()
         .unwrap()
