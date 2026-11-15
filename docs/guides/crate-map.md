@@ -496,7 +496,8 @@ contract의 role·state·action 매핑(`control`), label 누락·잘못된 중�
 방향 정책(`crate_graph`), ADR 보호 경로 정책(`adr_policy`), 의존성 승인 검사(`dependencies`), 커밋
 제목 검사(`commit_message`), PR 본문 검사(`pr_body`), 버전 검사(`versions`), FFI 헤더 생성(`ffi_header`),
 chunk 크기 측정(`chunk_bench`), migration fixture runner(`migration_fixtures`), storage fixture 검사
-(`storage_fixtures`), workspace fmt·clippy·test·doctest 통합 검증(`check_core`), 명령 dispatch(`commands`),
+(`storage_fixtures`), 기준 커밋 대비 ADR 보호 경로·커밋 제목 검사와 workspace fmt·clippy·test·doctest 통합
+검증(`check_core`), 명령 dispatch(`commands`),
 계획서·작업 추적·보고서 검증(`plan`, `task_status`, `task_report`, `sync`), 제한 YAML(`yaml`)이 module로
 나뉩니다. 내부 도구라 `main.rs`에서
 `missing_docs`를 allow 하고, edition은 workspace 값을 상속하지 않고 직접 `"2021"`로 적습니다. 의존은
