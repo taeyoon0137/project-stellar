@@ -135,6 +135,24 @@ impl WindowHistory {
         Ok(changes)
     }
 
+    /// 새 node 삽입을 연속 입력 group의 첫 항목으로 기록하고 선택합니다. 이어지는 같은 key의 입력이 같은
+    /// 항목에 합쳐지므로 Undo 한 번이 삽입과 입력을 함께 되돌립니다(VII.4.3).
+    pub fn record_grouped_and_select<C: MonotonicClock>(
+        &mut self,
+        doc: &mut DocumentState,
+        transaction: &CommandTransaction,
+        key: GroupingKey,
+        selection: &SetSelection,
+        clock: &C,
+    ) -> Result<ChangeSet, HistoryError> {
+        let before = self.view.selection().clone();
+        let changes = self.history.record_grouped(doc, transaction, key, clock)?;
+        selection.apply(&mut self.view, doc.model(), self.selection_policy);
+        self.history
+            .note_selection(before, self.view.selection().clone());
+        Ok(changes)
+    }
+
     /// 선택 변경을 기록합니다(VII.4.6).
     pub fn record_selection(
         &mut self,

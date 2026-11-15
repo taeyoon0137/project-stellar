@@ -409,21 +409,18 @@ StellarStatus stellar_window_text_hit(uint64_t handle, uint64_t session, Stellar
 StellarStatus stellar_window_text_rects(uint64_t handle, uint64_t session, StellarCanvasTextQuery query, uint32_t start, uint32_t end, uint32_t upstream, float (*rects)[4], size_t capacity, size_t *count);
 StellarStatus stellar_window_canvas(uint64_t handle, uint64_t session, float width, float height, StellarCanvasInfo *info, StellarCanvasFrame *rows, size_t capacity);
 
-/* Worker-only input preview. Elements and optional local caret xywh are borrowed only during sink(). */
-typedef void (*StellarTextPaintSink)(void *context, StellarCanvasColor fill, const float *caret, const StellarCanvasTextElement *elements, size_t count);
-StellarStatus stellar_text_input_paint(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t target[16], uint64_t revision, uint32_t new_text, uint32_t start, uint32_t end, const uint8_t *value, size_t len, uint32_t caret, void *context, StellarTextPaintSink sink);
-
-/* Insert nonempty UTF-8 text at a parent Frame's local origin as one undoable edit. */
-StellarStatus stellar_window_insert_text(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, const uint8_t *text, size_t len, uint8_t out_node[16], uint64_t *out_request);
-
-/* Text composition. Begin and preview run on the window worker.
- * Begin uses document Unicode scalar offsets. Mark uses UTF-16 offsets within marked text.
- * One transient token per window. Commit reports its request result via the event queue. */
-StellarStatus stellar_text_begin(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint32_t start, uint32_t end, uint64_t *out_token);
-StellarStatus stellar_text_mark(uint64_t handle, uint64_t session, uint64_t token, const uint8_t *text, size_t len, uint32_t start, uint32_t count);
-StellarStatus stellar_text_preview(uint64_t handle, uint64_t session, uint64_t token, uint8_t *buf, size_t capacity, size_t *out_len);
+/* 캔버스 Text 편집(ADR-0067 §6). 조합 상태는 코어 창 session이 소유하고, 셸은 begin의 out_request(token)만 씁니다.
+ * begin·mark·commit·cancel·replace는 비동기 요청이며 완료는 event queue로 옵니다. 범위는 문서 Unicode scalar입니다.
+ * begin: new_text 0은 선택한 Text(target), 1은 부모 Frame(target)의 local (x, y)에 확정 때 만들 새 Text입니다.
+ * out_node는 조합 대상 node(새 Text는 확정 때 쓸 ID)입니다. commit은 본문이 같으면 history를 늘리지 않습니다.
+ * content는 셸 worker 전용입니다. buf가 NULL이면 out_len만, 모자라면 STELLAR_BUFFER_TOO_SMALL을 돌려줍니다. */
+StellarStatus stellar_text_begin(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t target[16], uint64_t revision, uint32_t new_text, float x, float y, uint32_t start, uint32_t end, uint8_t out_node[16], uint64_t *out_request);
+StellarStatus stellar_text_mark(uint64_t handle, uint64_t session, uint64_t token, const uint8_t *text, size_t len, uint64_t *out_request);
 StellarStatus stellar_text_commit(uint64_t handle, uint64_t session, uint64_t token, const uint8_t *text, size_t len, uint64_t *out_request);
-StellarStatus stellar_text_cancel(uint64_t handle, uint64_t session, uint64_t token);
+StellarStatus stellar_text_cancel(uint64_t handle, uint64_t session, uint64_t token, uint64_t *out_request);
+StellarStatus stellar_text_replace(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint32_t start, uint32_t end, const uint8_t *text, size_t len, uint64_t *out_request);
+StellarStatus stellar_text_content(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint8_t *buf, size_t capacity, size_t *out_len);
+
 /* 표시한 View·revision의 레이어 이름을 UTF-8로 바꿉니다. 코어가 View 소속과 조상 잠금을 확인하고 RenameNode 하나를
  * 창 history에 기록합니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED입니다. */
 StellarStatus stellar_window_layer_rename(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, const uint8_t *name, size_t name_len, uint64_t *out_request);

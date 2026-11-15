@@ -77,6 +77,41 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
     u32 index별 문단·문자 style이 있습니다.
   - 기존 v1 generation은 빈 style 표로 읽습니다.
 
+### 6. 캔버스 Text 편집 session
+
+- 조합 상태의 원본은 runtime 창 session의 조합 하나(`WindowEntry.text`)입니다.
+  - 셸의 `NSTextInputClient` adapter는 입력기에 즉시 답하려고 본문·선택·조합 범위의 사본을 둡니다. 조합 본문을
+    문서에 반영하거나 직접 그리지 않습니다.
+  - 조합 중 본문은 문서와 history에 넣지 않습니다. 같은 창의 canvas scene이 미리보기로 그립니다. scene의 글꼴 cache
+    하나만 쓰고, 입력 worker용 두 번째 글꼴 cache와 typing paint 경로는 두지 않습니다.
+  - 미리보기는 조합을 시작한 revision에서만 그립니다. scene은 (revision, View, 조합 token·갱신 순번)이 같으면 공유합니다.
+- 요청(모두 문서 Unicode scalar 범위, 완료는 event queue의 `WindowViewChanged` 또는 `RequestFailed`)
+  - `stellar_text_begin(view, target, revision, new_text, x, y, start, end, out_node, out_request)`: IME 조합을
+    시작합니다. out_request가 이후 요청의 token입니다.
+    - `new_text = 0`: target은 선택한 기존 Text입니다.
+    - `new_text = 1`: target은 자유 배치 부모 Frame이고 (x, y)는 부모 local 원점, 범위는 0..0입니다. 셸은 Text
+      도구로 위치를 고를 때 이 조합을 열어 빈 본문의 caret을 보여 줍니다.
+    - out_node는 조합 대상입니다. 새 Text는 확정 때 이 ID(UUIDv7, Transform modifier ID도 함께 미리 정함)로 만듭니다.
+  - `stellar_text_mark(token, text)`: 조합 본문을 바꿉니다. 조합 안의 선택은 셸이 caret 표시에만 쓰므로 받지 않습니다.
+  - `stellar_text_commit(token, text)`: 조합 범위를 확정 본문으로 바꾸고 조합을 끝냅니다.
+    - 기존 Text는 Text 범위 편집 하나입니다. 본문이 같으면 history를 늘리지 않고 같은 완료 event를 보냅니다.
+      셸은 revision이 그대로인지로 '변경 없음'을 구분합니다.
+    - 새 Text는 본문이 있을 때만 Text와 원점 Transform을 만들고 선택합니다. 빈 본문이면 아무것도 만들지 않습니다.
+  - `stellar_text_cancel(token)`: 그 조합만 버립니다. 늦은 취소는 더 새 조합에 영향을 주지 않습니다.
+  - `stellar_text_replace(view, node, revision, start, end, text)`: 조합 없는 입력(타이핑·삭제·붙여넣기) 한 번입니다.
+  - `stellar_text_content(view, node, revision, buf, capacity, out_len)`: 셸 worker 전용 본문 조회입니다. 조합 상태를
+    만들거나 바꾸지 않습니다.
+- Undo 묶음: 확정·대체는 `GroupingKey::TextInput`으로 기록합니다. 삽입은 caret이 범위 시작에서 본문 끝으로, 삭제는
+  범위 끝에서 시작으로 움직인다고 보고, caret이 이어지면 같은 항목에 합칩니다. 새 Text의 생성도 같은 group의 첫
+  항목이라 Undo 한 번이 생성과 이어진 입력을 함께 되돌립니다.
+- 편집 중 ⌘Z·⇧⌘Z는 adapter가 받아 조합을 먼저 확정하고 문서 history로 보냅니다. 끝나면 본문을 다시 읽습니다.
+- 포커스를 잃으면 조합을 먼저 확정합니다.
+- 편집 가능 여부는 문서 값(표시·잠금·활성 View 소속·선택)으로만 정합니다. 프로젝트 신뢰는 보지 않습니다(D1).
+- 새 Text를 만들 때 문서의 0번 문단 style이 해석되지 않으면(style 표가 없는 문서) 조합 시작을 거부합니다.
+- 삭제: `stellar_window_insert_text`(셸이 첫 입력을 따로 삽입하던 경로), `stellar_text_input_paint`와
+  `StellarTextPaintSink`, `stellar_text_preview`, runtime `TextPreviewCache`·`canvas_text_preview_input`,
+  FFI 창별 조합 slot. 조합 시작 직후 확정을 부르던 두 번 왕복과, 본문을 읽으려고 조합을 열던 경로도 없어집니다.
+
 ## Alternatives
 
 - Document Font UI를 유지하고 face index 입력만 숨기기: 사용자가 정의하지 않은 UI이고, 라이선스 확인과 글꼴 asset
@@ -86,12 +121,20 @@ Accepted (2026-11-15, Codex 작업 검토 묶음 B5)
 
 ## Consequences
 
+- 같은 Text의 연속 입력은 Undo 한 번입니다. 새 Text를 입력 없이 나오면 문서와 history가 바뀌지 않습니다.
+- 조합 갱신마다 document thread가 해당 창의 scene을 다시 만듭니다. 다른 Text의 layout은 저장 cache를 재사용합니다.
+
 - 앱에서 문서 글꼴을 고르는 경로가 없어집니다. 문서 style 표에 이미 등록된 project 글꼴은 계속 표시합니다.
 - 문단·문자 style의 서로 다른 필드 편집이 Git 병합에서 충돌하지 않습니다.
 
 ## Compatibility
 
-- FFI: `stellar_window_set_document_font`를 제거합니다. 같은 저장소의 셸 외에 소비자가 없습니다.
+- FFI: 같은 저장소의 셸 외에 소비자가 없습니다. 셸은 재생성한 헤더로 함께 바뀝니다.
+  - 제거: `stellar_window_set_document_font`, `stellar_window_text_paint`, `stellar_window_insert_text`,
+    `stellar_text_input_paint`, `stellar_text_preview`.
+  - 시그니처 변경: `stellar_text_begin`(새 Text 대상·out_node·요청 ID), `stellar_text_mark`(조합 안 선택 제거, 요청 ID),
+    `stellar_text_cancel`(요청 ID).
+  - 추가: `stellar_text_replace`, `stellar_text_content`.
 - command registry: 0x0051을 제거합니다. Codex 작업 중에만 쓰였고 배포된 journal이 없습니다.
 - 파일 포맷: STTY v1 bytes는 바꾸지 않습니다. axis가 있는 고정 face는 이제 거부합니다. Codex 작업 중에만
   만들 수 있었고 앱·CLI에는 그런 값을 만드는 경로가 없습니다.

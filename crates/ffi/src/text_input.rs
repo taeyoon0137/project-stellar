@@ -1,356 +1,93 @@
-//! 창별 native 입력기가 소유한 조합. 호출자는 시작/조회 작업을 worker에서 수행합니다.
-use crate::{decode_utf8_owned, ffi_guard, input, registry, StellarStatus};
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use stellar_core_types::{ids::StableId, revision::DocumentRevision};
-use stellar_runtime::{
-    app::{
-        text_input::{CanvasTextInput, TextRange},
-        WindowSessionHandle,
-    },
-    document_thread::SubmitError,
+//! 캔버스 Text 편집 ABI(ADR-0067 §6). 조합 상태는 runtime 창 session이 소유하고, 셸은 token만 들고 있습니다.
+//! 시작·조합·확정·취소·대체는 요청 ID를 돌려주는 비동기 요청이고, 본문 조회만 셸 worker에서 결과를 기다립니다.
+use crate::{decode_utf8_owned, ffi_guard, registry, StellarStatus};
+use stellar_core_types::{ids::StableId, revision::DocumentRevision, value::Vec2};
+use stellar_runtime::app::{
+    text_input::{TextRange, TextTarget},
+    AppRuntime, RequestError, RequestId, WindowSessionHandle,
 };
 
-struct WindowInput {
-    token: u64,
-    composition: Option<Arc<Mutex<CanvasTextInput>>>,
-}
-
-#[derive(Default)]
-pub(super) struct TextInputs {
-    next: u64,
-    preview_fonts: HashMap<u64, Arc<Mutex<stellar_runtime::app::text_input::TextPreviewCache>>>,
-    windows: HashMap<u64, WindowInput>,
-}
-
-impl TextInputs {
-    pub(super) fn close_window(&mut self, session: u64) {
-        self.close(session);
-        self.preview_fonts.remove(&session);
-    }
-
-    pub(super) fn close(&mut self, session: u64) {
-        self.windows.remove(&session);
-    }
-
-    fn reserve(&mut self, session: u64) -> Option<u64> {
-        let token = self.next.checked_add(1)?;
-        self.next = token;
-        self.windows.insert(
-            session,
-            WindowInput {
-                token,
-                composition: None,
-            },
-        );
-        Some(token)
-    }
-
-    fn active(&self, session: u64, token: u64) -> Option<&Arc<Mutex<CanvasTextInput>>> {
-        let current = self.windows.get(&session)?;
-        if current.token != token {
-            return None;
-        }
-        current.composition.as_ref()
-    }
-}
-
-/// 현재 View의 자유 배치 부모 Frame에 확정한 UTF-8 본문과 local 원점을 저장합니다.
-/// # Safety
-/// view, parent는 16바이트를 읽을 수 있고 text는 len바이트, out_node는 16 byte 출력, out_request는 정렬된 u64 출력이어야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_insert_text(
+fn with_app(
     handle: u64,
-    session: u64,
-    view: *const [u8; 16],
-    parent: *const [u8; 16],
-    revision: u64,
-    x: f32,
-    y: f32,
-    text: *const u8,
-    len: usize,
-    out_node: *mut [u8; 16],
     out_request: *mut u64,
+    run: impl FnOnce(&AppRuntime) -> Result<RequestId, RequestError>,
 ) -> StellarStatus {
-    ffi_guard(move || {
-        if out_node.is_null() || out_request.is_null() || view.is_null() || parent.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        unsafe {
-            out_node.write([0; 16]);
-            out_request.write(0)
-        };
-        let Ok(origin) = stellar_core_types::value::Vec2::new(x, y) else {
-            return StellarStatus::InvalidArgument;
-        };
-        if len == 0 {
-            return StellarStatus::InvalidArgument;
-        }
-        let content = match unsafe { decode_utf8_owned(text, len) } {
-            Ok(value) => value,
-            Err(status) => return status,
-        };
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let request = match rt.app() {
-            Ok(app) => app.insert_canvas_text(
-                WindowSessionHandle(session),
-                StableId::from_bytes(unsafe { *view }),
-                DocumentRevision(revision),
-                StableId::from_bytes(unsafe { *parent }),
-                origin,
-                content,
-            ),
-            Err(status) => return status,
-        };
-        let request = request.map(|(request, id)| {
-            unsafe {
-                out_node.write(id.to_bytes());
-            }
-            request
-        });
-        unsafe { rt.finish_request(request, out_request) }
-    })
+    let Ok(mut reg) = registry().lock() else {
+        return StellarStatus::Internal;
+    };
+    let Some(rt) = reg.live.get_mut(&handle) else {
+        return StellarStatus::InvalidHandle;
+    };
+    let result = match rt.app() {
+        Ok(app) => run(app),
+        Err(status) => return status,
+    };
+    unsafe { rt.finish_request(result, out_request) }
 }
 
-/// Input-worker projection. The callback borrows immutable geometry only during this call.
-type PreviewSink = unsafe extern "C" fn(
-    *mut std::ffi::c_void,
-    crate::canvas::StellarCanvasColor,
-    *const f32,
-    *const crate::canvas_text::StellarCanvasTextElement,
-    usize,
-);
-
+/// IME 조합을 시작합니다. new_text가 0이면 target은 선택한 Text이고 start..end는 문서 Unicode scalar 범위입니다.
+/// new_text가 1이면 target은 자유 배치 부모 Frame, (x, y)는 부모 local 원점이고 범위는 0..0이어야 합니다.
+/// out_request는 이후 조합 요청의 token입니다. out_node는 조합 대상(새 Text는 확정 때 만들 ID)입니다.
 /// # Safety
-/// view, target are 16 readable bytes, value is len UTF-8 bytes and sink must accept the borrowed arrays.
+/// view, target은 16 byte를 읽을 수 있고 out_node는 16 byte, out_request는 정렬된 u64 출력이어야 합니다.
 #[no_mangle]
-pub unsafe extern "C" fn stellar_text_input_paint(
+pub unsafe extern "C" fn stellar_text_begin(
     handle: u64,
     session: u64,
     view: *const [u8; 16],
     target: *const [u8; 16],
     revision: u64,
     new_text: u32,
+    x: f32,
+    y: f32,
     start: u32,
     end: u32,
-    value: *const u8,
-    len: usize,
-    caret: u32,
-    context: *mut std::ffi::c_void,
-    sink: Option<PreviewSink>,
+    out_node: *mut [u8; 16],
+    out_request: *mut u64,
 ) -> StellarStatus {
     ffi_guard(move || {
-        let Some(sink) = sink else {
-            return StellarStatus::NullPointer;
-        };
-        if view.is_null() || target.is_null() {
+        if view.is_null() || target.is_null() || out_node.is_null() || out_request.is_null() {
             return StellarStatus::NullPointer;
         }
-        if new_text > 1 {
-            return StellarStatus::InvalidArgument;
+        unsafe {
+            out_node.write([0; 16]);
+            out_request.write(0);
         }
         let Some(range) = TextRange::new(start, end) else {
             return StellarStatus::InvalidArgument;
         };
-        let text = match unsafe { decode_utf8_owned(value, len) } {
-            Ok(s) => s,
-            Err(code) => return code,
+        let target_id = StableId::from_bytes(unsafe { *target });
+        let target = match new_text {
+            0 => TextTarget::Node(target_id),
+            1 => match Vec2::new(x, y) {
+                Ok(origin) => TextTarget::New {
+                    parent: target_id,
+                    origin,
+                },
+                Err(_) => return StellarStatus::InvalidArgument,
+            },
+            _ => return StellarStatus::InvalidArgument,
         };
         let view = StableId::from_bytes(unsafe { *view });
-        let node = StableId::from_bytes(unsafe { *target });
-        let (ticket, cache) = {
-            let Ok(mut reg) = registry().lock() else {
-                return StellarStatus::Internal;
-            };
-            let Some(rt) = reg.live.get_mut(&handle) else {
-                return StellarStatus::InvalidHandle;
-            };
-            let Some(app) = &rt.app else {
-                return StellarStatus::InvalidHandle;
-            };
-            if app.state().window(WindowSessionHandle(session)).is_none() {
-                return StellarStatus::InvalidArgument;
-            }
-            let Ok(ticket) = app.canvas_text_preview_input(
+        with_app(handle, out_request, |app| {
+            app.begin_canvas_text(
                 WindowSessionHandle(session),
                 view,
                 DocumentRevision(revision),
-                node,
-                new_text == 1,
-            ) else {
-                return StellarStatus::InvalidArgument;
-            };
-            let cache = rt
-                .text_inputs
-                .preview_fonts
-                .entry(session)
-                .or_default()
-                .clone();
-            (ticket, cache)
-        };
-        let Ok(Some(input)) = ticket.wait() else {
-            return StellarStatus::InvalidArgument;
-        };
-        let prepared = {
-            let Ok(mut fonts) = cache.lock() else {
-                return StellarStatus::Internal;
-            };
-            fonts.layout(input, range, &text)
-        };
-        let Some(prepared) = prepared else {
-            return StellarStatus::NoError;
-        };
-        let mut count = 0;
-        let status = unsafe {
-            crate::canvas_text::write_text_paint(&prepared, std::ptr::null_mut(), 0, &mut count)
-        };
-        if status != StellarStatus::Ok {
-            return status;
-        }
-        let mut elements = vec![crate::canvas_text::StellarCanvasTextElement::default(); count];
-        let status = unsafe {
-            crate::canvas_text::write_text_paint(
-                &prepared,
-                elements.as_mut_ptr(),
-                elements.len(),
-                &mut count,
-            )
-        };
-        if status != StellarStatus::Ok {
-            return status;
-        }
-        let caret = prepared
-            .caret_rect(caret, false)
-            .or_else(|| prepared.caret_rect(caret, true));
-        let caret = caret.map(|r| {
-            [
-                r.origin().x(),
-                r.origin().y(),
-                r.size().width(),
-                r.size().height(),
-            ]
-        });
-        unsafe {
-            sink(
-                context,
-                Some(prepared.fill).into(),
-                caret.as_ref().map_or(std::ptr::null(), |r| r.as_ptr()),
-                elements.as_ptr(),
-                count,
-            );
-        }
-        StellarStatus::Ok
-    })
-}
-
-/// window worker에서 현재 선택한 Text의 조합을 시작합니다. range는 문서의 Unicode scalar 단위입니다.
-/// # Safety
-/// view와 node는 각각 16 byte를 읽을 수 있고 out_token은 정렬된 u64 출력을 허용해야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_text_begin(
-    handle: u64,
-    session: u64,
-    view: *const [u8; 16],
-    node: *const [u8; 16],
-    revision: u64,
-    start: u32,
-    end: u32,
-    out_token: *mut u64,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if out_token.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        unsafe { out_token.write(0) };
-        if view.is_null() || node.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        let Some(range) = TextRange::new(start, end) else {
-            return StellarStatus::InvalidArgument;
-        };
-        let (token, ticket) = {
-            let Ok(mut reg) = registry().lock() else {
-                return StellarStatus::Internal;
-            };
-            let Some(rt) = reg.live.get_mut(&handle) else {
-                return StellarStatus::InvalidHandle;
-            };
-            let Some(app) = rt.app.as_ref() else {
-                return StellarStatus::InvalidArgument;
-            };
-            if app.state().window(WindowSessionHandle(session)).is_none() {
-                return StellarStatus::InvalidArgument;
-            }
-            let view = StableId::from_bytes(unsafe { *view });
-            let node = StableId::from_bytes(unsafe { *node });
-            let ticket = match app.begin_canvas_text(
-                WindowSessionHandle(session),
-                view,
-                DocumentRevision(revision),
-                node,
+                target,
                 range,
-            ) {
-                Ok(ticket) => ticket,
-                Err(SubmitError::QueueFull { .. }) => return StellarStatus::QueueFull,
-                Err(SubmitError::Stopped) => return StellarStatus::Internal,
-            };
-            let Some(token) = rt.text_inputs.reserve(session) else {
-                return StellarStatus::Internal;
-            };
-            (token, ticket)
-        };
-        let result = ticket.wait();
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let Some(slot) = rt.text_inputs.windows.get_mut(&session) else {
-            return StellarStatus::InvalidArgument;
-        };
-        if slot.token != token {
-            return StellarStatus::InvalidArgument;
-        }
-        match result {
-            Ok(Some(edit)) => {
-                slot.composition = Some(Arc::new(Mutex::new(edit)));
-                unsafe { out_token.write(token) };
-                StellarStatus::Ok
-            }
-            result => {
-                rt.text_inputs.close(session);
-                if result.is_err() {
-                    StellarStatus::Internal
-                } else {
-                    StellarStatus::InvalidArgument
-                }
-            }
-        }
+            )
+            .map(|(request, node)| {
+                unsafe { out_node.write(node.to_bytes()) };
+                request
+            })
+        })
     })
 }
 
-fn active(
-    handle: u64,
-    session: u64,
-    token: u64,
-) -> Result<Arc<Mutex<CanvasTextInput>>, StellarStatus> {
-    let reg = registry().lock().map_err(|_| StellarStatus::Internal)?;
-    let rt = reg.live.get(&handle).ok_or(StellarStatus::InvalidHandle)?;
-    rt.text_inputs
-        .active(session, token)
-        .cloned()
-        .ok_or(StellarStatus::InvalidArgument)
-}
-
-/// native marked text와 그 안의 UTF-16 상대 선택을 갱신합니다.
+/// 조합 중 본문(UTF-8)을 바꿉니다. 문서와 history는 바뀌지 않고 canvas 미리보기만 바뀝니다.
 /// # Safety
-/// len>0이면 text는 len byte 읽을 수 있어야 합니다.
+/// len>0이면 text는 len byte를 읽을 수 있어야 하고 out_request는 정렬된 u64 출력이어야 합니다.
 #[no_mangle]
 pub unsafe extern "C" fn stellar_text_mark(
     handle: u64,
@@ -358,86 +95,26 @@ pub unsafe extern "C" fn stellar_text_mark(
     token: u64,
     text: *const u8,
     len: usize,
-    start: u32,
-    count: u32,
+    out_request: *mut u64,
 ) -> StellarStatus {
     ffi_guard(move || {
+        if out_request.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { out_request.write(0) };
         let value = match unsafe { decode_utf8_owned(text, len) } {
             Ok(s) => s,
             Err(status) => return status,
         };
-        let range = match input::TextRange::from_utf16(&value, start, count) {
-            Ok(r) => r,
-            Err(_) => return StellarStatus::InvalidArgument,
-        };
-        let Ok(scalar_start) = u32::try_from(value[..range.start() as usize].chars().count())
-        else {
-            return StellarStatus::InvalidArgument;
-        };
-        let Ok(scalar_end) = u32::try_from(value[..range.end() as usize].chars().count()) else {
-            return StellarStatus::InvalidArgument;
-        };
-        let edit = match active(handle, session, token) {
-            Ok(e) => e,
-            Err(s) => return s,
-        };
-        let Ok(mut edit) = edit.lock() else {
-            return StellarStatus::Internal;
-        };
-        if edit.set_marked(
-            value,
-            TextRange::new(scalar_start, scalar_end).expect("validated UTF-16 range"),
-        ) {
-            StellarStatus::Ok
-        } else {
-            StellarStatus::InvalidArgument
-        }
+        with_app(handle, out_request, |app| {
+            app.mark_canvas_text(WindowSessionHandle(session), token, value)
+        })
     })
 }
 
-/// 현재 조합을 포함하는 UTF-8 본문을 caller buffer로 조회합니다. null buffer는 길이만 반환합니다.
+/// 입력기가 확정한 본문을 조합 범위에 기록하고 조합을 끝냅니다. 본문이 같으면 history를 늘리지 않습니다.
 /// # Safety
-/// out_len은 usize 쓰기를 허용하고, buf는 null 또는 capacity byte를 쓸 수 있어야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_text_preview(
-    handle: u64,
-    session: u64,
-    token: u64,
-    buf: *mut u8,
-    capacity: usize,
-    out_len: *mut usize,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if out_len.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        unsafe { out_len.write(0) };
-        let edit = match active(handle, session, token) {
-            Ok(e) => e,
-            Err(s) => return s,
-        };
-        let Ok(edit) = edit.lock() else {
-            return StellarStatus::Internal;
-        };
-        let Ok(preview) = edit.preview() else {
-            return StellarStatus::InvalidArgument;
-        };
-        let text = preview.content().as_bytes();
-        unsafe { out_len.write(text.len()) };
-        if buf.is_null() {
-            return StellarStatus::Ok;
-        }
-        if capacity < text.len() {
-            return StellarStatus::BufferTooSmall;
-        }
-        unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), buf, text.len()) };
-        StellarStatus::Ok
-    })
-}
-
-/// 최종 입력을 비동기로 접수합니다. 재시도 가능한 큐 오류에는 조합을 유지합니다.
-/// # Safety
-/// len>0이면 text는 len byte 읽기 가능하며 out_request는 null 또는 정렬된 u64 쓰기가 가능해야 합니다.
+/// len>0이면 text는 len byte를 읽을 수 있어야 하고 out_request는 정렬된 u64 출력이어야 합니다.
 #[no_mangle]
 pub unsafe extern "C" fn stellar_text_commit(
     handle: u64,
@@ -448,54 +125,145 @@ pub unsafe extern "C" fn stellar_text_commit(
     out_request: *mut u64,
 ) -> StellarStatus {
     ffi_guard(move || {
-        if !out_request.is_null() {
-            unsafe { out_request.write(0) };
+        if out_request.is_null() {
+            return StellarStatus::NullPointer;
         }
+        unsafe { out_request.write(0) };
         let value = match unsafe { decode_utf8_owned(text, len) } {
             Ok(s) => s,
             Err(status) => return status,
         };
-        let edit = match active(handle, session, token) {
-            Ok(e) => e,
-            Err(s) => return s,
-        };
-        let Ok(edit) = edit.lock() else {
-            return StellarStatus::Internal;
-        };
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        if rt.text_inputs.active(session, token).is_none() {
-            return StellarStatus::InvalidArgument;
-        }
-        let Some(app) = rt.app.as_ref() else {
-            return StellarStatus::InvalidArgument;
-        };
-        let result = app.commit_canvas_text(&edit, value);
-        if result.is_ok() {
-            rt.text_inputs.close(session);
-        }
-        unsafe { rt.finish_request(result, out_request) }
+        with_app(handle, out_request, |app| {
+            app.commit_canvas_text(WindowSessionHandle(session), token, value)
+        })
     })
 }
 
-/// 지정한 조합만 버립니다. 늦은 취소는 더 최근 입력에 영향을 주지 않습니다.
+/// 지정한 조합만 버립니다. 이미 끝났거나 더 새 조합이 있으면 아무것도 바꾸지 않습니다.
+/// # Safety
+/// out_request는 정렬된 u64 출력이어야 합니다.
 #[no_mangle]
-pub extern "C" fn stellar_text_cancel(handle: u64, session: u64, token: u64) -> StellarStatus {
+pub unsafe extern "C" fn stellar_text_cancel(
+    handle: u64,
+    session: u64,
+    token: u64,
+    out_request: *mut u64,
+) -> StellarStatus {
     ffi_guard(move || {
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        if rt.text_inputs.active(session, token).is_none() {
-            return StellarStatus::InvalidArgument;
+        if out_request.is_null() {
+            return StellarStatus::NullPointer;
         }
-        rt.text_inputs.close(session);
+        unsafe { out_request.write(0) };
+        with_app(handle, out_request, |app| {
+            app.cancel_canvas_text(WindowSessionHandle(session), token)
+        })
+    })
+}
+
+/// 조합 없는 입력 한 번을 선택한 Text의 scalar 범위 편집으로 기록합니다.
+/// # Safety
+/// view, node는 16 byte를 읽을 수 있고, len>0이면 text는 len byte를 읽을 수 있어야 하며 out_request는 정렬된
+/// u64 출력이어야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_text_replace(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    node: *const [u8; 16],
+    revision: u64,
+    start: u32,
+    end: u32,
+    text: *const u8,
+    len: usize,
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if view.is_null() || node.is_null() || out_request.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { out_request.write(0) };
+        let Some(range) = TextRange::new(start, end) else {
+            return StellarStatus::InvalidArgument;
+        };
+        let value = match unsafe { decode_utf8_owned(text, len) } {
+            Ok(s) => s,
+            Err(status) => return status,
+        };
+        let view = StableId::from_bytes(unsafe { *view });
+        let node = StableId::from_bytes(unsafe { *node });
+        with_app(handle, out_request, |app| {
+            app.replace_canvas_text(
+                WindowSessionHandle(session),
+                view,
+                DocumentRevision(revision),
+                node,
+                range,
+                value,
+            )
+        })
+    })
+}
+
+/// 편집 가능한 Text의 저장된 UTF-8 본문을 씁니다. 셸 worker 전용입니다(document thread 결과를 기다림).
+/// out_len에는 항상 본문 길이를 씁니다. buf가 null이거나 capacity가 모자라면 복사하지 않고 각각 OK,
+/// BUFFER_TOO_SMALL을 돌려줍니다. revision·View가 다르거나 편집할 수 없으면 INVALID_ARGUMENT입니다.
+/// # Safety
+/// view, node는 16 byte를 읽을 수 있고 out_len은 usize 출력, buf는 null 또는 capacity byte 쓰기가 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_text_content(
+    handle: u64,
+    session: u64,
+    view: *const [u8; 16],
+    node: *const [u8; 16],
+    revision: u64,
+    buf: *mut u8,
+    capacity: usize,
+    out_len: *mut usize,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if view.is_null() || node.is_null() || out_len.is_null() {
+            return StellarStatus::NullPointer;
+        }
+        unsafe { out_len.write(0) };
+        let view = StableId::from_bytes(unsafe { *view });
+        let node = StableId::from_bytes(unsafe { *node });
+        let ticket = {
+            let Ok(reg) = registry().lock() else {
+                return StellarStatus::Internal;
+            };
+            let Some(rt) = reg.live.get(&handle) else {
+                return StellarStatus::InvalidHandle;
+            };
+            let Some(app) = rt.app.as_ref() else {
+                return StellarStatus::InvalidArgument;
+            };
+            match app.canvas_text_content(
+                WindowSessionHandle(session),
+                view,
+                DocumentRevision(revision),
+                node,
+            ) {
+                Ok(ticket) => ticket,
+                Err(stellar_runtime::document_thread::SubmitError::QueueFull { .. }) => {
+                    return StellarStatus::QueueFull
+                }
+                Err(stellar_runtime::document_thread::SubmitError::Stopped) => {
+                    return StellarStatus::Internal
+                }
+            }
+        };
+        let Ok(Some(text)) = ticket.wait() else {
+            return StellarStatus::InvalidArgument;
+        };
+        let bytes = text.as_bytes();
+        unsafe { out_len.write(bytes.len()) };
+        if buf.is_null() {
+            return StellarStatus::Ok;
+        }
+        if capacity < bytes.len() {
+            return StellarStatus::BufferTooSmall;
+        }
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, bytes.len()) };
         StellarStatus::Ok
     })
 }

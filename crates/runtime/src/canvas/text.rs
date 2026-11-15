@@ -224,5 +224,21 @@ pub(crate) mod document;
 pub(crate) mod saved;
 pub use document::DocumentText;
 
+/// 확정 전 IME 조합을 반영한 Text 한 개(ADR-0067 §6). 문서와 history에는 없습니다.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TextPreview {
+    /// (조합 token, 갱신 순번). 같은 값이면 게시한 scene을 다시 씁니다.
+    pub(crate) key: (u64, u64),
+    /// 조합 대상 node. 새 Text면 확정 때 만들 ID입니다.
+    pub(crate) node: stellar_core_types::ids::StableId,
+    /// 조합 중 본문을 넣은 payload.
+    pub(crate) payload: stellar_document::text::TextPayload,
+    /// 새 Text: 부모 Frame과 확정 때 기록할 modifier stack(원점 Transform).
+    pub(crate) new_in: Option<(
+        stellar_core_types::ids::StableId,
+        stellar_document::modifier::ModifierStack,
+    )>,
+}
+
 /// Native paint bridge에서 공통 outline을 순회합니다.
 pub use stellar_scene::geometry::PathCommand as CanvasPathCommand;

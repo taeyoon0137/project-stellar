@@ -109,7 +109,6 @@ struct Runtime {
     drawable: Option<Drawable>,
     /// 셸이 제출한 입력 이벤트(FIFO, 용량 [`INPUT_QUEUE_CAPACITY`], 연속 move/wheel 병합).
     input: InputQueue,
-    text_inputs: text_input::TextInputs,
     /// native 입력 시각 → 코어 단조 domain 변환기(검증을 통과한 첫 입력에서 기준점을 잡음).
     input_domain: Option<InputTimeDomain>,
     /// 프로젝트·문서 요청을 처리하는 앱 runtime(첫 요청에서 시작).
@@ -124,7 +123,6 @@ impl Runtime {
             events: VecDeque::new(),
             drawable: None,
             input: InputQueue::new(INPUT_QUEUE_CAPACITY),
-            text_inputs: text_input::TextInputs::default(),
             input_domain: None,
             app: None,
         }
@@ -1625,7 +1623,12 @@ mod tests {
             "stellar_window_session_insert_shape",
             "stellar_window_selection_target",
             "stellar_window_edit_selection",
-            "stellar_window_insert_text",
+            "stellar_text_begin",
+            "stellar_text_mark",
+            "stellar_text_commit",
+            "stellar_text_cancel",
+            "stellar_text_replace",
+            "stellar_text_content",
             "stellar_window_copy_selection",
             "stellar_window_paste_selection",
             "stellar_command_code",

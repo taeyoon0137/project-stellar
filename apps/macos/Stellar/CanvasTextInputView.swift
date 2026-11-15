@@ -1,14 +1,26 @@
 import AppKit
 
-/// 입력 서비스의 응답자입니다. 문서 글자와 caret 도형은 canvas의 공통 레이아웃이 제공합니다.
+/// 입력 서비스의 응답자(ADR-0067 §6). 입력기에 즉시 답하도록 본문·선택·조합 범위의 사본을 두고, 조합 시작·
+/// 갱신·확정·취소와 조합 없는 대체를 코어 편집 session에 넘깁니다. 글자·caret 위치는 코어 scene이 정합니다.
 @MainActor
 final class CanvasTextInputView: NSView, NSTextInputClient {
-    typealias Replacement = (NSRange, String, String) -> Void
     private(set) var buffer: CanvasTextBuffer
+    /// 조합 시작 직전 상태와 그 상태에서 조합이 대체하는 범위.
     private var beforeMark: CanvasTextBuffer?
-    private var originalRange: NSRange?
+    private var markRange: NSRange?
+    /// 조합 시작(확정 본문 기준 범위, 확정 본문).
+    var began: ((NSRange, String) -> Void)?
+    /// 조합 본문 갱신.
+    var marked: ((String) -> Void)?
+    /// 조합 범위를 확정 본문으로 바꿈.
+    var committed: ((String) -> Void)?
+    /// 조합 취소.
+    var cancelled: (() -> Void)?
+    /// 조합 없는 대체(범위, 새 본문, 대체 전 본문).
+    var replaced: ((NSRange, String, String) -> Void)?
     var changed: ((CanvasTextBuffer) -> Void)?
-    var confirmed: Replacement?
+    /// Undo(false)·Redo(true). 편집 중에도 문서 history로 보냅니다.
+    var history: ((Bool) -> Void)?
     var ended: (() -> Void)?
     var rectForRange: ((NSRange) -> CGRect?)?
     var indexAtPoint: ((CGPoint) -> Int?)?
@@ -32,13 +44,24 @@ final class CanvasTextInputView: NSView, NSTextInputClient {
         return removed
     }
 
+    /// 포커스를 잃으면 진행 중인 조합을 먼저 확정한 뒤 편집을 끝냅니다.
     func finish() {
         guard !finished else { return }
+        if hasMarkedText() {
+            unmarkText()
+            inputContext?.discardMarkedText()
+        }
         finished = true
-        if let original = beforeMark { buffer = original }
-        originalRange = nil
         beforeMark = nil
+        markRange = nil
         ended?()
+    }
+
+    /// Undo·Redo 뒤 코어가 돌려준 본문으로 사본을 바꿉니다. 조합 중에는 바꾸지 않습니다.
+    func reload(_ next: CanvasTextBuffer) {
+        guard beforeMark == nil else { return }
+        buffer = next
+        changed?(buffer)
     }
 
     func selectedRange() -> NSRange { buffer.selection }
@@ -70,10 +93,12 @@ final class CanvasTextInputView: NSView, NSTextInputClient {
 
     func setMarkedText(_ value: Any, selectedRange: NSRange, replacementRange: NSRange) {
         guard !finished, let text = plain(value) else { return }
-        if text.isEmpty, let previous = beforeMark {
+        if text.isEmpty {
+            guard let previous = beforeMark else { return }
             buffer = previous
             beforeMark = nil
-            originalRange = nil
+            markRange = nil
+            cancelled?()
             changed?(buffer)
             return
         }
@@ -82,31 +107,42 @@ final class CanvasTextInputView: NSView, NSTextInputClient {
         guard buffer.replace(text, replacement: range, markedSelection: selectedRange) else { return }
         if beforeMark == nil {
             beforeMark = previous
-            originalRange = range
+            markRange = range
+            began?(range, previous.contents)
         }
+        marked?(text)
         changed?(buffer)
     }
 
     func insertText(_ value: Any, replacementRange: NSRange) {
         guard !finished, let text = plain(value) else { return }
         let original = beforeMark ?? buffer
+        let composing = beforeMark != nil
         let range = buffer.target(replacementRange)
         guard buffer.replace(text, replacement: range, markedSelection: nil) else { return }
-        let target = originalRange ?? range
+        let target = markRange ?? range
         beforeMark = nil
-        originalRange = nil
-        if original.contents.utf8.elementsEqual(buffer.contents.utf8) {
-            changed?(buffer)
-            return
+        markRange = nil
+        if composing {
+            // 조합 범위를 그대로 바꾼 확정이면 조합을 확정합니다. 입력기가 다른 범위까지 바꿨으면 조합을 버리고
+            // 원래 본문에 대한 최소 대체를 보냅니다.
+            var trial = original
+            if trial.replace(text, replacement: target, markedSelection: nil),
+               trial.contents.utf8.elementsEqual(buffer.contents.utf8) {
+                committed?(text)
+            } else {
+                cancelled?()
+                let change = Self.replacement(from: original.contents, to: buffer.contents, preferred: target, inserted: text)
+                replaced?(change.0, change.1, original.contents)
+            }
+        } else if !original.contents.utf8.elementsEqual(buffer.contents.utf8) {
+            replaced?(range, text, original.contents)
         }
-        // 입력기가 기존 조합 범위 외부를 재변환하면 원래 문서에 대한 최소 대체를 구합니다.
-        let replacement = Self.replacement(from: original.contents, to: buffer.contents, preferred: target, inserted: text)
-        confirmed?(replacement.0, replacement.1, original.contents)
         changed?(buffer)
     }
 
     static func replacement(from source: String, to result: String, preferred: NSRange,
-                                    inserted: String) -> (NSRange, String) {
+                            inserted: String) -> (NSRange, String) {
         if var trial = CanvasTextBuffer(source, caret: 0),
            trial.replace(inserted, replacement: preferred, markedSelection: nil),
            trial.contents.utf8.elementsEqual(result.utf8) { return (preferred, inserted) }
@@ -130,6 +166,8 @@ final class CanvasTextInputView: NSView, NSTextInputClient {
             inputContext?.discardMarkedText()
         } else { window?.makeFirstResponder(superview) }
     }
+    @objc func undo(_ sender: Any?) { history?(false) }
+    @objc func redo(_ sender: Any?) { history?(true) }
     @objc override func insertNewline(_ sender: Any?) { insertText("\n", replacementRange: missing) }
     @objc override func deleteBackward(_ sender: Any?) {
         var r = buffer.selection

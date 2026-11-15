@@ -156,50 +156,6 @@ fn path_command(cmd: CanvasPathCommand, origin: Vec2) -> (u32, [f32; 6]) {
     }
 }
 
-pub(super) unsafe fn write_text_paint(
-    text: &DocumentText,
-    rows: *mut StellarCanvasTextElement,
-    capacity: usize,
-    count: *mut usize,
-) -> StellarStatus {
-    let len = text
-        .glyphs
-        .iter()
-        .try_fold(text.lines.len(), |n, (_, index)| {
-            n.checked_add(text.outlines[*index as usize].commands().len())?
-                .checked_add(1)
-        });
-    let Some(len) = len else {
-        return StellarStatus::Internal;
-    };
-    unsafe {
-        *count = len;
-    }
-    if rows.is_null() {
-        return StellarStatus::Ok;
-    }
-    if capacity < len {
-        return StellarStatus::BufferTooSmall;
-    }
-    let mut i = 0;
-    let mut put = |op, points| {
-        unsafe { rows.add(i).write(StellarCanvasTextElement { op, points }) };
-        i += 1;
-    };
-    for r in &text.lines {
-        let [x, y, w, h] = rect(*r);
-        put(5, [x, y, w, h, 0., 0.]);
-    }
-    for (origin, index) in &text.glyphs {
-        for cmd in text.outlines[*index as usize].commands() {
-            let (op, points) = path_command(*cmd, *origin);
-            put(op, points);
-        }
-        put(6, [0.; 6]);
-    }
-    StellarStatus::Ok
-}
-
 /// # Safety
 /// offset/upstream은 각각 유효한 출력입니다. offset은 문서 전체 Unicode scalar, upstream은 0/1입니다.
 #[no_mangle]

@@ -84,7 +84,7 @@ fn parse_tagged<V>(
     bytes: &[u8],
     value: impl Fn([u8; 4]) -> Option<V>,
 ) -> Option<Vec<(OpenTypeTag, V)>> {
-    if bytes.is_empty() || bytes.len() % 8 != 0 {
+    if bytes.is_empty() || !bytes.len().is_multiple_of(8) {
         return None;
     }
     bytes

@@ -193,7 +193,6 @@ final class CanvasFrameScene {
     func clear() {
         png.reset()
         frames.removeAll()
-        typingIndex = nil
         documentTexts.removeAll()
         viewID = nil
         session = nil
@@ -249,7 +248,6 @@ final class CanvasFrameScene {
                 projected.append(ProjectedFrame(row, index: index, text: text, shape: shape))
             }
             frames = projected
-            typingIndex = typingLayer.flatMap { layer in frames.firstIndex { $0.id == (layer.node ?? layer.parent) } }
             documentTexts = nextTexts
             for i in frames.indices.reversed() {
                 if let parent = frames[i].parent {
@@ -291,16 +289,13 @@ final class CanvasFrameScene {
         return nil
     }
 
-    struct TypingLayer {
-        let parent: UUID
-        let node: UUID?
-        let origin: CGPoint
-        let paint: CanvasTypingPaint
+    /// 편집 중인 Text의 caret과 선택 사각형(그 Text local 좌표). 글자는 코어 scene의 Text 행이 그립니다(ADR-0067 §6).
+    struct TextEditOverlay {
+        let node: UUID
+        let caret: CGRect?
+        let selection: [CGRect]
     }
-    var typingLayer: TypingLayer? { didSet {
-        typingIndex = typingLayer.flatMap { layer in frames.firstIndex { $0.id == (layer.node ?? layer.parent) } }
-    } }
-    private var typingIndex: Int?
+    var textEditOverlay: TextEditOverlay?
 
     func textHit(id: UUID? = nil) -> CanvasFrameHit? {
         guard let viewID else { return nil }
@@ -312,16 +307,22 @@ final class CanvasFrameScene {
                               parentToWorld: frame.parent.map { frames[$0].world } ?? .identity, worldToView: worldToView)
     }
 
-    private func drawNewText(_ layer: TypingLayer, parent: Int, in context: CGContext) {
+    private func drawTextEdit(_ overlay: TextEditOverlay, in context: CGContext) {
+        guard let frame = frames.first(where: { $0.id == overlay.node }) else { return }
         context.saveGState()
-        var ancestor: Int? = parent
-        while let i = ancestor {
-            if frames[i].clips { context.addPath(frames[i].worldPath); context.clip() }
-            ancestor = frames[i].parent
+        context.concatenate(worldToView)
+        context.concatenate(frame.world)
+        if !overlay.selection.isEmpty {
+            context.setFillColor(NSColor.selectedTextBackgroundColor.cgColor)
+            context.fill(overlay.selection)
         }
-        context.concatenate(frames[parent].world)
-        context.translateBy(x: layer.origin.x, y: layer.origin.y)
-        layer.paint.draw(in: context)
+        if var caret = overlay.caret {
+            // caret은 배율과 관계없이 화면 1pt 너비로 그립니다.
+            let unit = context.convertToUserSpace(CGSize(width: 1, height: 0))
+            caret.size.width = max(caret.width, hypot(unit.width, unit.height))
+            context.setFillColor(NSColor.textColor.cgColor)
+            context.fill(caret)
+        }
         context.restoreGState()
     }
 
@@ -342,7 +343,6 @@ final class CanvasFrameScene {
         context.saveGState()
         context.concatenate(worldToView)
         var clipEnds: [Int] = []
-        var endOfParent: (end: Int, parent: Int)?
         var index = 0
         while index < frames.count {
             let frame = frames[index]
@@ -350,18 +350,9 @@ final class CanvasFrameScene {
                 context.restoreGState()
                 clipEnds.removeLast()
             }
-            if let pending = endOfParent, pending.end < index, let typingLayer {
-                drawNewText(typingLayer, parent: pending.parent, in: context)
-                endOfParent = nil
-            }
-            if let layer = typingLayer, layer.node == nil, index == typingIndex {
-                endOfParent = (frame.lastDescendant, index)
-            }
             let frameQuery = previewRange?.contains(index) == true ? previewQuery : query
             let visible = frame.worldBounds.intersects(frameQuery)
-            let editing = typingLayer.flatMap { $0.node == frame.id ? $0.paint : nil }
-            let editingDescendant = typingIndex.map { index <= $0 && $0 <= frame.lastDescendant } ?? false
-            if !visible && !editingDescendant {
+            if !visible {
                 // 원래 subtree 전체가 화면 밖이어도 드래그 중인 자식이 들어올 수 있습니다.
                 let movingChild = previewRange.map { index < $0.lowerBound && $0.lowerBound <= frame.lastDescendant } ?? false
                 if frame.clips || (!movingChild && !frame.subtreeBounds.intersects(frameQuery)) {
@@ -374,12 +365,7 @@ final class CanvasFrameScene {
                 context.translateBy(x: previewOffset.dx, y: previewOffset.dy)
                 clipEnds.append(frame.lastDescendant)
             }
-            if let editing {
-                context.saveGState()
-                context.concatenate(frame.world)
-                editing.draw(in: context)
-                context.restoreGState()
-            } else if visible && (frame.isImage || frame.fill != nil || frame.border != nil) {
+            if visible && (frame.isImage || frame.fill != nil || frame.border != nil) {
                 context.saveGState()
                 context.concatenate(frame.world)
                 if frame.isImage, allowsImageContent, let recordSession = session, let handle = runtimeHandle {
@@ -432,8 +418,8 @@ final class CanvasFrameScene {
             index += 1
         }
         for _ in clipEnds { context.restoreGState() }
-        if let pending = endOfParent, let typingLayer { drawNewText(typingLayer, parent: pending.parent, in: context) }
         context.restoreGState()
+        if let overlay = textEditOverlay { drawTextEdit(overlay, in: context) }
         // 선택 외곽선은 조상의 clip과 관계없이 scene 위에 표시합니다.
         if let i = primaryIndex {
             let frame = frames[i]

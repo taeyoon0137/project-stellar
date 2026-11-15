@@ -120,6 +120,10 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
    없었습니다. ADR-0013이 XIV.5.5를 위해 이 직접 의존을 허용한 뒤, 새 프로젝트 생성은 아래 'XII.6.1 — 새 프로젝트
    생성'과 'Clone Project'에서 같은 요청·event 규칙으로 추가합니다(2026-11-15 정정).
 
+### 캔버스 Text 편집
+
+- 캔버스 Text 편집 ABI(`stellar_text_*`)와 저장 Text 그리기 ABI(`stellar_window_text_*`)는 ADR-0067이 정합니다.
+
 ### XII.6.1 — 새 프로젝트 생성
 
 시작 창의 New Project…가 부르는 코어 경계입니다(2026-11-15 검토에서 소급 기록).
@@ -259,9 +263,3 @@ Copy·Paste는 한 게시 snapshot에서 읽은 `StellarSelectionTarget`(ADR-002
 ## Migration
 
 - 새 ABI이므로 기존 데이터·코드 마이그레이션은 없습니다. 셸은 재생성한 `stellar_ffi.h`를 사용합니다.
-
-### 캔버스 Text 조합과 문서 편집
-
-- 창의 worker에서 `stellar_text_begin`으로 현재 선택한 Text, 활성 View, 문서 revision, 대체할 Unicode scalar 범위를 전달합니다. 같은 창의 새 입력은 새 토큰을 발급하고 이전 조합을 취소합니다.
-- `stellar_text_mark`는 marked text 안의 UTF-16 선택을 공통 좌표로 변환합니다. surrogate pair 중간은 기존 조합을 보존하며 거부합니다. `stellar_text_preview`는 호출자 버퍼에 미확정 본문을 씁니다. 문단과 run을 포함한 레이아웃용 preview는 runtime의 동일한 편집 세션에서 얻습니다.
-- `stellar_text_commit`은 View·선택·revision을 다시 확인해 단일 ReplaceText를 창 history에 기록합니다. 값이 같으면 history를 추가하지 않습니다. `stellar_text_cancel` 또는 창 닫기는 미확정 본문을 버립니다.

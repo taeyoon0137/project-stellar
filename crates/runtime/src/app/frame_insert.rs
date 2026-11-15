@@ -1,4 +1,4 @@
-//! 자유 배치 Frame에 새 Frame, Shape 또는 본문이 있는 Text를 삽입하고 선택합니다.
+//! 자유 배치 Frame에 새 Frame 또는 Shape를 삽입하고 선택합니다. Text 생성은 `text_input`의 첫 확정이 합니다.
 
 use super::frame_move::{canvas_window, command_id, editable_frame, fresh_ids};
 use super::*;
@@ -14,7 +14,6 @@ use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::shape::{
     EllipseParams, LineCap, LineParams, PolygonParams, RectangleParams, ShapeGeometry,
 };
-use stellar_document::text::{edit_text, TextPayload, TextRange};
 
 /// 새 도형의 채우기·선 스타일. 셸이 사용자 앱 설정에서 읽어 넘기며 core는 기본 색을 정하지 않습니다(사용자 결정 D7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,11 +32,6 @@ enum CanvasItem {
         origin: Vec2,
         geometry: ShapeGeometry,
         style: ShapeStyle,
-    },
-    Text {
-        id: StableId,
-        origin: Vec2,
-        content: String,
     },
 }
 
@@ -80,31 +74,6 @@ impl AppRuntime {
             parent,
             shape_from_points(kind, points, style),
         )
-    }
-
-    /// 부모의 local 원점에 기본 문단 스타일을 상속한 Text와 위치를 한 번에 기록합니다.
-    pub fn insert_canvas_text(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-        parent: StableId,
-        origin: Vec2,
-        content: String,
-    ) -> Result<(RequestId, StableId), RequestError> {
-        let [id] = stellar_project::new_ids::new_ids().map_err(|_| RequestError::Stopped)?;
-        self.insert_canvas_item(
-            session,
-            view,
-            revision,
-            parent,
-            Some(CanvasItem::Text {
-                id,
-                origin,
-                content,
-            }),
-        )
-        .map(|request| (request, id))
     }
 
     fn insert_canvas_item(
@@ -197,19 +166,11 @@ fn insert_item(
     let model = window.document().ok_or_else(invalid)?.model();
     editable_frame(model, view, parent).ok_or_else(invalid)?;
     let id = command_id(window.window(), request);
-    // 새 node와 modifier는 독립 UUIDv7을 씁니다. Text는 호출자에게 돌려준 ID를 그대로 씁니다.
-    let [fresh_node, first_modifier, second_modifier] = fresh_ids()?;
-    let node = if let CanvasItem::Text { id, .. } = &item {
-        *id
-    } else {
-        fresh_node
-    };
+    // 새 node와 modifier는 독립 UUIDv7을 씁니다.
+    let [node, first_modifier, second_modifier] = fresh_ids()?;
     let origin = match &item {
         CanvasItem::Frame(bounds) if !bounds.is_empty() => bounds.origin(),
         CanvasItem::Shape { origin, .. } => *origin,
-        CanvasItem::Text {
-            origin, content, ..
-        } if !content.is_empty() => *origin,
         _ => return Err(invalid()),
     };
     let transform =
@@ -247,20 +208,6 @@ fn insert_item(
                 name,
                 NodePayload::Shape(geometry),
                 [Some(ModifierPayload::Transform(transform)), Some(paint)],
-            )
-        }
-        CanvasItem::Text { content, .. } => {
-            let text = edit_text(
-                &TextPayload::empty(0),
-                TextRange::new(0, 0).expect("empty range"),
-                &content,
-                &[],
-            )
-            .map_err(|_| invalid())?;
-            (
-                "Text",
-                NodePayload::Text(text),
-                [Some(ModifierPayload::Transform(transform)), None],
             )
         }
     };
@@ -333,57 +280,6 @@ mod tests {
             parent,
             CanvasItem::Frame(bounds),
         )
-    }
-
-    #[test]
-    fn inserted_text_keeps_paragraphs_and_local_anchor_on_undo_redo_and_reopen() {
-        let project = saved_project("canvas-insert-text");
-        let mut session = ProjectWindowSession::load(identity(project.path()), window(1)).unwrap();
-        let origin = Vec2::new(-3.5, 42.).unwrap();
-        let revision = session.revision();
-        for content in ["", "한글🎨\n둘째 줄"] {
-            let result = insert_item(
-                &mut session,
-                RequestId(200),
-                sid(3),
-                revision,
-                sid(10),
-                CanvasItem::Text {
-                    id: sid(331),
-                    origin,
-                    content: content.into(),
-                },
-            );
-            if content.is_empty() {
-                assert!(result.is_err());
-                assert_eq!(session.revision(), revision);
-                continue;
-            }
-            let node = result.ok().expect("text insertion");
-            assert_eq!(session.view().selection().ids(), [node]);
-            session.undo().unwrap();
-            assert!(!session.document().unwrap().model().contains(node));
-            session.redo().unwrap();
-            session.save_now().unwrap();
-            let reopened = ProjectWindowSession::load(identity(project.path()), window(2)).unwrap();
-            let model = reopened.document().unwrap().model();
-            let Some(NodePayload::Text(text)) = model.payload(node) else {
-                panic!("Text node");
-            };
-            assert_eq!(text.content(), content);
-            assert_eq!(
-                text.paragraphs()
-                    .iter()
-                    .map(|p| p.style)
-                    .collect::<Vec<_>>(),
-                [0, 0]
-            );
-            let stack = model.modifier_stack(node).unwrap().entries();
-            assert_eq!(stack.len(), 1);
-            assert!(
-                matches!(stack[0].payload, ModifierPayload::Transform(t) if t.components() == (1., 0., 0., 1., -3.5, 42.))
-            );
-        }
     }
 
     #[test]

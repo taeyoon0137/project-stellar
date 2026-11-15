@@ -19,9 +19,9 @@ final class CanvasView: NSView {
     var scrollWheelHandler: ((NSEvent) -> Bool)?
 
     private let frameScene = CanvasFrameScene()
-    var typingLayer: CanvasFrameScene.TypingLayer? {
-        get { frameScene.typingLayer }
-        set { frameScene.typingLayer = newValue; needsDisplay = true }
+    var textEditOverlay: CanvasFrameScene.TextEditOverlay? {
+        get { frameScene.textEditOverlay }
+        set { frameScene.textEditOverlay = newValue; needsDisplay = true }
     }
     func textHit(id: UUID? = nil) -> CanvasFrameHit? { frameScene.textHit(id: id) }
     var allowsImageContent = false {

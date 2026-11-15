@@ -1013,6 +1013,8 @@ pub(crate) struct WindowEntry {
     pub(crate) project: ProjectSessionId,
     pub(crate) session: ProjectWindowSession,
     canvas: crate::canvas::CanvasCache,
+    /// 진행 중인 캔버스 Text 조합(ADR-0067 §6). 문서와 history에는 없습니다.
+    text: Option<text_input::TextComposition>,
     checkpoint: recovery::WindowCheckpoint,
     #[cfg(target_os = "macos")]
     component_watch: Option<(
@@ -1370,6 +1372,7 @@ fn open_window_session_on_thread(
             project,
             session,
             canvas: Default::default(),
+            text: None,
             checkpoint: recovery::WindowCheckpoint::new(recovery, handle),
             #[cfg(target_os = "macos")]
             component_watch: None,
@@ -1438,7 +1441,13 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         asset_chunks: session.asset_chunks.clone(),
         image_generation: session.loaded_generation().map(|g| g.manifest_hash),
         component_library: entry.canvas.library.clone(),
-        canvas: entry.canvas.current(session),
+        canvas: entry.canvas.current(
+            session,
+            entry
+                .text
+                .as_ref()
+                .and_then(|c| c.preview_at(session.revision())),
+        ),
     }
 }
 
@@ -2026,9 +2035,13 @@ impl AppRuntime {
                 .windows
                 .get_mut(&session)
                 .ok_or_else(|| unknown_window(session))?;
+            let preview = entry
+                .text
+                .as_ref()
+                .and_then(|c| c.preview_at(entry.session.revision()));
             let viewport = entry
                 .canvas
-                .current(&entry.session)
+                .current(&entry.session, preview)
                 .and_then(|scene| scene.root_viewport(width, height))
                 .ok_or_else(|| {
                     Failure::new(

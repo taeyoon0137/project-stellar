@@ -405,7 +405,14 @@ fn saved_layout_reuses_only_matching_content_modifiers_styles_and_visible_nodes(
             fonts.sync_registrations(table);
             saved.begin_view(table);
             let result = saved
-                .layout(&mut fonts, project.path(), model, id, payload)
+                .layout(
+                    &mut fonts,
+                    project.path(),
+                    model,
+                    id,
+                    payload,
+                    model.modifier_stack(id),
+                )
                 .unwrap();
             saved.end_view();
             result
@@ -447,4 +454,92 @@ fn saved_layout_reuses_only_matching_content_modifiers_styles_and_visible_nodes(
     assert!(!Arc::ptr_eq(&returned, &recolored));
     assert_ne!(returned.paint_token, recolored.paint_token);
     assert_eq!(returned, recolored);
+}
+
+#[test]
+fn composition_preview_uses_the_scene_font_cache_and_draws_new_text_last_in_parent() {
+    use crate::canvas::CanvasScene;
+    use crate::window_session::test_fixtures::{sample_document, sid, TempDir};
+    use stellar_core_types::{
+        color::{Color, ColorSpace},
+        order_key::OrderKey,
+        value::Transform2D,
+    };
+    use stellar_document::{
+        modifier::{ModifierEntry, ModifierId, ModifierKind, ModifierPayload, ModifierStack},
+        records::{NodePayload, NodeRecord},
+    };
+    let project = TempDir::new("text-preview");
+    let mut model = sample_document();
+    let black = Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).unwrap();
+    let (styles, _) = project_font_styles(project.path(), [sid(701), sid(702)], 20 * 64, black);
+    model.replace_text_styles(styles);
+    let text =
+        |s: &str| TextPayload::new(UserText::new(s), vec![Paragraph { style: 0 }], vec![]).unwrap();
+    let saved_id = sid(501);
+    model
+        .insert_node(NodeRecord {
+            id: saved_id,
+            parent: Some(sid(10)),
+            order_key: model.next_child_order_key(sid(10)),
+            visible: true,
+            locked: false,
+            display_name: "Text".into(),
+            payload: NodePayload::Text(text("A")),
+        })
+        .unwrap();
+    let mut fonts = document::FontCache::default();
+    let mut saved = saved::SavedTextLayouts::default();
+    let mut scene = |preview: Option<&TextPreview>| {
+        let table = &model.definition().text_styles;
+        fonts.sync_registrations(table);
+        saved.begin_view(table);
+        let scene = CanvasScene::with_library(
+            &model,
+            sid(10),
+            None,
+            Some((project.path(), &mut fonts, &mut saved)),
+            preview,
+        );
+        saved.end_view();
+        scene
+    };
+    let glyphs = |scene: &CanvasScene, id| {
+        let row = scene.frames.iter().position(|f| f.id == id).unwrap() as u32;
+        scene.text[&row].glyphs.len()
+    };
+    let stored = scene(None);
+    assert_eq!(glyphs(&stored, saved_id), 1);
+    // 기존 Text 조합: 저장 본문 대신 조합 본문을 같은 행에 그립니다.
+    let editing = TextPreview {
+        key: (1, 1),
+        node: saved_id,
+        payload: text("AAA"),
+        new_in: None,
+    };
+    assert_eq!(glyphs(&scene(Some(&editing)), saved_id), 3);
+    // 새 Text 조합: 문서에 없는 행을 부모의 마지막 자식 자리에 그리고, hit 대상으로 쓰지 않습니다.
+    let mut stack = ModifierStack::new(sid(777));
+    stack
+        .insert(ModifierEntry {
+            id: ModifierId::new(sid(778)),
+            order: OrderKey::between(None, None),
+            kind: ModifierKind::Transform,
+            enabled: true,
+            payload: ModifierPayload::Transform(Transform2D::new(1., 0., 0., 1., 5., 6.).unwrap()),
+        })
+        .unwrap();
+    let new = TextPreview {
+        key: (2, 1),
+        node: sid(777),
+        payload: text("AA"),
+        new_in: Some((sid(10), stack)),
+    };
+    let previewed = scene(Some(&new));
+    let last = previewed.frames.last().unwrap();
+    assert_eq!(last.id, sid(777));
+    assert!(last.text_node && !last.hit_target);
+    assert_eq!(glyphs(&previewed, sid(777)), 2);
+    assert_eq!(previewed.frames.len(), stored.frames.len() + 1);
+    assert!(!model.contains(sid(777)));
 }

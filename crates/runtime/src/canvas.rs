@@ -79,12 +79,15 @@ pub(crate) struct CanvasComponentLibrary {
     pub(crate) definitions: stellar_document::component::definition::ComponentLibrary,
 }
 
+/// 게시한 scene의 재사용 조건: 문서 revision, 활성 View, 진행 중 Text 조합(token, 갱신 순번).
+type SceneKey = (DocumentRevision, StableId, Option<(u64, u64)>);
+
 #[derive(Debug, Default)]
 pub(crate) struct CanvasCache {
     pub(crate) fonts: text::document::FontCache,
     saved_text: text::saved::SavedTextLayouts,
     library_request: u64,
-    latest: Option<(DocumentRevision, StableId, Arc<CanvasScene>)>,
+    latest: Option<(SceneKey, Arc<CanvasScene>)>,
     pub(crate) library: Option<Arc<CanvasComponentLibrary>>,
 }
 
@@ -104,11 +107,18 @@ impl CanvasCache {
         self.library = next;
     }
 
-    pub(crate) fn current(&mut self, session: &ProjectWindowSession) -> Option<Arc<CanvasScene>> {
+    /// `text`는 진행 중인 IME 조합의 미리보기입니다(ADR-0067 §6). 같은 revision·View·조합이면 scene을 공유합니다.
+    pub(crate) fn current(
+        &mut self,
+        session: &ProjectWindowSession,
+        text: Option<&text::TextPreview>,
+    ) -> Option<Arc<CanvasScene>> {
         let view = session.tabs().active_view()?;
         let state = session.document()?;
-        if let Some((revision, id, scene)) = &self.latest {
-            if *revision == state.revision() && *id == view {
+        let key = text.map(|t| t.key);
+        let scene_key = (state.revision(), view, key);
+        if let Some((previous, scene)) = &self.latest {
+            if *previous == scene_key {
                 return Some(scene.clone());
             }
         }
@@ -132,9 +142,10 @@ impl CanvasCache {
                 &mut self.fonts,
                 &mut self.saved_text,
             )),
+            text,
         ));
         self.saved_text.end_view();
-        self.latest = Some((state.revision(), view, scene.clone()));
+        self.latest = Some((scene_key, scene.clone()));
         Some(scene)
     }
 }
@@ -226,7 +237,76 @@ impl CanvasScene {
 
     #[cfg(test)]
     fn from_root(model: &DocumentModel, root: StableId) -> Self {
-        Self::with_library(model, root, None, None)
+        Self::with_library(model, root, None, None, None)
+    }
+
+    /// 저장된 Text 또는 조합 미리보기 Text 한 행을 layout해 추가합니다. 실패하면 skipped로 셉니다.
+    #[allow(clippy::too_many_arguments)]
+    fn push_text(
+        &mut self,
+        builder: &mut SceneBuilder,
+        parent_scope: &stellar_scene::builder::SceneScope,
+        parent: Option<u32>,
+        model: &DocumentModel,
+        id: StableId,
+        locked: bool,
+        payload: &stellar_document::text::TextPayload,
+        modifiers: Option<&stellar_document::modifier::ModifierStack>,
+        fonts: &mut Option<(
+            &std::path::Path,
+            &mut text::document::FontCache,
+            &mut text::saved::SavedTextLayouts,
+        )>,
+    ) {
+        let prepared = fonts.as_mut().and_then(|(root, faces, saved)| {
+            saved.layout(faces, root, model, id, payload, modifiers)
+        });
+        let row = prepared.and_then(|(text, size, transform)| {
+            let mut node = NodeInput::new(id, transform);
+            node.locked = locked;
+            let item = builder
+                .build_text(
+                    &mut parent_scope.clone(),
+                    &stellar_scene::builder::TextInput {
+                        node,
+                        layout: stellar_scene::node::TextLayoutKey::from_bytes(id.to_bytes()),
+                        size,
+                    },
+                )
+                .ok()?;
+            let world = item.world_transform();
+            world.inverse()?;
+            let rect =
+                stellar_core_types::value::Rect::new(stellar_core_types::value::Vec2::ZERO, size);
+            Aabb::from_rect(rect).transformed(&world)?;
+            Some((
+                CanvasFrame {
+                    rectangle_shape: false,
+                    path_shape: false,
+                    instance_frame: false,
+                    text_node: true,
+                    image_asset: None,
+                    id,
+                    parent,
+                    world,
+                    geometry: RectPrimitive {
+                        rect,
+                        radii: CornerRadii::ZERO,
+                    },
+                    background: Some(text.fill),
+                    border: None,
+                    clip_children: false,
+                    hit_target: item.hit().is_hit_target(),
+                },
+                text,
+            ))
+        });
+        if let Some((frame, text)) = row {
+            self.text.insert(self.frames.len() as u32, text);
+            self.frames.push(frame);
+        } else {
+            self.skipped += 1;
+        }
     }
 
     fn with_library(
@@ -238,11 +318,29 @@ impl CanvasScene {
             &mut text::document::FontCache,
             &mut text::saved::SavedTextLayouts,
         )>,
+        text: Option<&text::TextPreview>,
     ) -> Self {
         let mut result = Self::default();
         let mut builder = SceneBuilder::new();
+        let new_text =
+            text.and_then(|t| t.new_in.as_ref().map(|(parent, stack)| (t, *parent, stack)));
         let mut pending = vec![(root, builder.root_scope(), None)];
         while let Some((id, parent_scope, parent)) = pending.pop() {
+            if let Some((preview, _, stack)) = new_text.filter(|(t, _, _)| t.node == id) {
+                // 확정 전 새 Text는 문서에 없으므로 선택·hit 대상이 아닙니다.
+                result.push_text(
+                    &mut builder,
+                    &parent_scope,
+                    parent,
+                    model,
+                    id,
+                    true,
+                    &preview.payload,
+                    Some(stack),
+                    &mut fonts,
+                );
+                continue;
+            }
             let Some(fields) = model.runtime_id(id).and_then(|r| model.columns().get(r)) else {
                 continue;
             };
@@ -250,60 +348,21 @@ impl CanvasScene {
                 continue;
             }
             let payload = model.payload(id);
-            if let Some(NodePayload::Text(payload)) = payload {
-                let prepared = fonts
-                    .as_mut()
-                    .and_then(|(root, faces, saved)| saved.layout(faces, root, model, id, payload));
-                let row = prepared.and_then(|(text, size, transform)| {
-                    let mut node = NodeInput::new(id, transform);
-                    node.locked = fields.locked;
-                    let item = builder
-                        .build_text(
-                            &mut parent_scope.clone(),
-                            &stellar_scene::builder::TextInput {
-                                node,
-                                layout: stellar_scene::node::TextLayoutKey::from_bytes(
-                                    id.to_bytes(),
-                                ),
-                                size,
-                            },
-                        )
-                        .ok()?;
-                    let world = item.world_transform();
-                    world.inverse()?;
-                    let rect = stellar_core_types::value::Rect::new(
-                        stellar_core_types::value::Vec2::ZERO,
-                        size,
-                    );
-                    Aabb::from_rect(rect).transformed(&world)?;
-                    Some((
-                        CanvasFrame {
-                            rectangle_shape: false,
-                            path_shape: false,
-                            instance_frame: false,
-                            text_node: true,
-                            image_asset: None,
-                            id,
-                            parent,
-                            world,
-                            geometry: RectPrimitive {
-                                rect,
-                                radii: CornerRadii::ZERO,
-                            },
-                            background: Some(text.fill),
-                            border: None,
-                            clip_children: false,
-                            hit_target: item.hit().is_hit_target(),
-                        },
-                        text,
-                    ))
-                });
-                if let Some((frame, text)) = row {
-                    result.text.insert(result.frames.len() as u32, text);
-                    result.frames.push(frame);
-                } else {
-                    result.skipped += 1;
-                }
+            if let Some(NodePayload::Text(stored)) = payload {
+                let payload = text
+                    .filter(|t| t.node == id && t.new_in.is_none())
+                    .map_or(stored, |t| &t.payload);
+                result.push_text(
+                    &mut builder,
+                    &parent_scope,
+                    parent,
+                    model,
+                    id,
+                    fields.locked,
+                    payload,
+                    model.modifier_stack(id),
+                    &mut fonts,
+                );
                 continue;
             }
             if let Some(NodePayload::Shape(shape)) = payload {
@@ -402,6 +461,10 @@ impl CanvasScene {
                     continue;
                 }
             };
+            // 새 Text 미리보기는 부모의 마지막 자식 자리(가장 위)에 그립니다.
+            if let Some((preview, _, _)) = new_text.filter(|(_, p, _)| *p == id) {
+                pending.push((preview.node, scope.clone(), next_parent));
+            }
             pending.extend(
                 model
                     .children_in_order(id)
@@ -602,7 +665,7 @@ mod tests {
         let dir = saved_project_with("visible-frames", &[&model]);
         let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
         let mut cache = CanvasCache::default();
-        let scene = cache.current(&session).unwrap();
+        let scene = cache.current(&session, None).unwrap();
         assert_eq!(scene.skipped, 0);
         assert_eq!(
             scene.frames.iter().map(|r| r.id).collect::<Vec<_>>(),
@@ -614,9 +677,9 @@ mod tests {
             Vec2::new(70., 20.).unwrap()
         );
         session.pan(13., -22.).unwrap();
-        assert!(Arc::ptr_eq(&scene, &cache.current(&session).unwrap()));
+        assert!(Arc::ptr_eq(&scene, &cache.current(&session, None).unwrap()));
         session.open_view(sid(4)).unwrap();
-        assert_eq!(cache.current(&session).unwrap().frames[0].id, sid(20));
+        assert_eq!(cache.current(&session, None).unwrap().frames[0].id, sid(20));
         if let Some(app) = std::env::var_os("STELLAR_TEST_CANVAS_APP") {
             let status = std::process::Command::new(app)
                 .arg("--visible-frames-check")

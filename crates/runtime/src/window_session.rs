@@ -501,6 +501,40 @@ impl ProjectWindowSession {
             .map_err(WindowSessionEditError::History)
     }
 
+    /// 연속 입력 grouping으로 transaction을 기록합니다(Text 입력, VII.4.3).
+    pub(crate) fn apply_grouped<C: stellar_core_types::clock::MonotonicClock>(
+        &mut self,
+        transaction: &CommandTransaction,
+        key: stellar_history::entry::GroupingKey,
+        clock: &C,
+    ) -> Result<ChangeSet, WindowSessionEditError> {
+        let document = self
+            .document
+            .as_mut()
+            .ok_or(WindowSessionEditError::NoDocument)?;
+        self.history
+            .record_grouped(&mut document.state, transaction, key, clock)
+            .map_err(WindowSessionEditError::History)
+    }
+
+    /// 새 Text 삽입을 이어지는 입력과 같은 group의 첫 항목으로 기록하고 선택합니다.
+    pub(crate) fn insert_grouped_and_select<C: stellar_core_types::clock::MonotonicClock>(
+        &mut self,
+        transaction: &CommandTransaction,
+        key: stellar_history::entry::GroupingKey,
+        inserted: StableId,
+        clock: &C,
+    ) -> Result<ChangeSet, WindowSessionEditError> {
+        let document = self
+            .document
+            .as_mut()
+            .ok_or(WindowSessionEditError::NoDocument)?;
+        let selection = SetSelection::new(Selection::new([inserted], Some(inserted)));
+        self.history
+            .record_grouped_and_select(&mut document.state, transaction, key, &selection, clock)
+            .map_err(WindowSessionEditError::History)
+    }
+
     pub(crate) fn insert_and_select(
         &mut self,
         transaction: &CommandTransaction,

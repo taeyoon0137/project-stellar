@@ -43,6 +43,7 @@ impl SavedTextLayouts {
         self.entries.retain(|_, entry| entry.visited);
     }
 
+    /// `modifiers`는 문서의 stack 또는 확정 전 새 Text의 stack입니다.
     pub(crate) fn layout(
         &mut self,
         fonts: &mut FontCache,
@@ -50,8 +51,8 @@ impl SavedTextLayouts {
         model: &DocumentModel,
         id: StableId,
         payload: &TextPayload,
+        modifiers: Option<&ModifierStack>,
     ) -> Option<Projection> {
-        let modifiers = model.modifier_stack(id);
         if let Some(entry) = self.entries.get_mut(&id) {
             if &entry.payload == payload && entry.modifiers.as_ref() == modifiers {
                 entry.visited = true;
@@ -59,13 +60,25 @@ impl SavedTextLayouts {
             }
         }
         // 편집되지 않은 node는 완성한 projection만 보유합니다. 첫 변경부터 문단 cache를 유지합니다.
+        let table = &model.definition().text_styles;
         let (prepared, engine) = match self.entries.remove(&id) {
             Some(entry) => {
                 let mut engine = entry.engine.unwrap_or_default();
-                let prepared = fonts.layout_with(model, root, id, payload, &mut engine)?;
+                let prepared =
+                    fonts.layout_input(root, id, payload, table, modifiers, &mut engine)?;
                 (prepared, Some(engine))
             }
-            None => (fonts.layout(model, root, id, payload)?, None),
+            None => (
+                fonts.layout_input(
+                    root,
+                    id,
+                    payload,
+                    table,
+                    modifiers,
+                    &mut IncrementalTextLayout::new(),
+                )?,
+                None,
+            ),
         };
         let (text, size, transform) = prepared;
         let projection = (Arc::new(text), size, transform);

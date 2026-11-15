@@ -13,7 +13,6 @@ use stellar_core_types::{
     value::Transform2D,
 };
 use stellar_document::{
-    model::DocumentModel,
     modifier::{ModifierPayload, ModifierStack},
     text::{TextAlignment, TextPayload, WrappingMode},
     text_styles::{DocumentFontAsset, DocumentTextStyles},
@@ -217,23 +216,13 @@ impl FontCache {
         Some(())
     }
 
+    #[cfg(test)]
     pub(crate) fn layout(
         &mut self,
-        model: &DocumentModel,
+        model: &stellar_document::model::DocumentModel,
         root: &Path,
         id: StableId,
         payload: &TextPayload,
-    ) -> Option<(DocumentText, Size2, Transform2D)> {
-        self.layout_with(model, root, id, payload, &mut IncrementalTextLayout::new())
-    }
-
-    pub(super) fn layout_with(
-        &mut self,
-        model: &DocumentModel,
-        root: &Path,
-        id: StableId,
-        payload: &TextPayload,
-        engine: &mut IncrementalTextLayout,
     ) -> Option<(DocumentText, Size2, Transform2D)> {
         self.layout_input(
             root,
@@ -241,7 +230,7 @@ impl FontCache {
             payload,
             &model.definition().text_styles,
             model.modifier_stack(id),
-            engine,
+            &mut IncrementalTextLayout::new(),
         )
     }
 
