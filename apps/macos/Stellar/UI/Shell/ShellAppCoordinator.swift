@@ -34,6 +34,9 @@ final class ShellAppCoordinator: NSObject {
     private(set) var projectWindows: [ShellProjectWindow] = []
     private var quitReply: ((Bool) -> Void)?
     private var confirmingQuit = false
+    /// 보내지 않은 Text 입력을 다 보낸 뒤 retry로 다시 들어온 종료 요청이 앞에서 받은 에이전트 종료 확인을 이어 쓰는지.
+    /// retry 직전에만 켜고 다음 종료 판단에서 바로 지우므로, 그 뒤의 다른 ⌘Q에는 남지 않습니다.
+    private var agentQuitConfirmedForRetry = false
     private(set) var welcomeController: WelcomeWindowController?
     private(set) var settingsController: NSWindowController?
     /// 열기 요청을 보냈고 완료를 기다리는 폴더(같은 폴더 중복 요청 방지).
@@ -642,17 +645,25 @@ final class ShellAppCoordinator: NSObject {
 
     /// 각 창의 기존 close-save를 이용하되 모든 창이 저장될 때까지 실제 창은 하나도 닫지 않습니다.
     func prepareToTerminate(confirmAgent: () -> Bool, reply: @escaping (Bool) -> Void) -> NSApplication.TerminateReply {
+        let confirmedBeforeRetry = agentQuitConfirmedForRetry
+        agentQuitConfirmedForRetry = false
         guard quitReply == nil else { return .terminateLater }
         guard !confirmingQuit, !hasQuitBlocker else { return .terminateCancel }
-        if requiresConfirmationBeforeTerminating {
+        var agentConfirmed = confirmedBeforeRetry
+        if requiresConfirmationBeforeTerminating, !agentConfirmed {
             confirmingQuit = true
-            let confirmed = confirmAgent()
+            agentConfirmed = confirmAgent()
             confirmingQuit = false
-            guard confirmed else { return .terminateCancel }
+            guard agentConfirmed else { return .terminateCancel }
         }
-        // 아직 보내지 않은 Text 입력이 있으면 지금은 취소하고, 그 입력을 다 보낸 뒤 종료를 다시 시도합니다.
+        // 아직 보내지 않은 Text 입력이 있으면 지금은 취소하고, 그 입력을 다 보낸 뒤 종료를 다시 시도합니다. 다시 시도할
+        // 때는 이미 받은 에이전트 종료 확인을 다시 묻지 않습니다(창 닫기의 agentCloseConfirmed와 같은 규칙).
+        let confirmed = agentConfirmed
         guard !hasQuitBlocker,
-              projectWindows.allSatisfy({ $0.finishInputBeforeClosing(retry: { NSApp.terminate(nil) }) })
+              projectWindows.allSatisfy({ $0.finishInputBeforeClosing(retry: { [weak self] in
+                  self?.agentQuitConfirmedForRetry = confirmed
+                  NSApp.terminate(nil)
+              }) })
         else { return .terminateCancel }
         guard projectWindows.contains(where: { $0.needsSaveBeforeClosing }) else { return .terminateNow }
         quitReply = reply
