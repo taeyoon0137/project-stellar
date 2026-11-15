@@ -147,7 +147,7 @@ IX.11.6이 CSS longhand로 정의합니다. 그래서 이 장의 migration은 �
 |---|---|---|---|---|---|
 | `axis` + `direction` | `flex-direction: row \| row-reverse \| column \| column-reverse` | Forward | `row` | `Reverse`는 정방향 배치의 거울상이라 `*-reverse` + `flex-start`와 같습니다(`stack.rs` 배치 4단계) | `rename` |
 | `main_alignment` | `justify-content` | Start | `normal`(= `flex-start`) | Start/Center/End는 `flex-start`/`center`/`flex-end`입니다. 남는 공간이 음수일 때 Stellar는 SpaceBetween→Start, SpaceAround·SpaceEvenly→Center입니다. CSS Box Alignment는 `space-around`·`space-evenly`의 fallback을 `safe center`로 정해, 넘치면 시작 쪽에 놓일 수 있습니다. 기준 브라우저 결과를 IX.11.8 fixture로 확인한 뒤 같음 여부와 migration 분류를 확정합니다 | `rename`(확인 뒤 필요하면 `semantic`) |
-| `cross_alignment` | `align-items` | Start | `normal`(flex에서 `stretch`) | 기본값이 다릅니다. 영속 record 생략값은 CSS initial value를 쓰고, 새 Stack 생성 preset은 명시 값으로 저장합니다. stretch 대상도 다릅니다. 엔진은 `Stretch`에서 cross 축이 HugContent인 자식도 줄 cross 크기로 늘립니다(`stack.rs` `child_constraint`). CSS는 cross 크기가 `auto`인 item만 늘리고 그 밖의 item은 `flex-start`처럼 놓습니다. 그래서 stretch(`normal` 포함)는 cross 크기가 `auto`인 자식(4.3절 Fill)만 늘리고, HugContent(`fit-content`)·Fixed·Percentage 자식은 늘리지 않습니다. 생략값이 `normal`이 되면 이 차이가 기본 Stack의 모든 Hug 자식에 나타납니다 | `semantic`(IX.11.4) |
+| `cross_alignment` | `align-items` | Start | `normal`(flex에서 `stretch`) | 기본값이 다릅니다. 영속 record 생략값은 CSS initial value를 쓰고, 새 Stack을 만들 때의 기본값은 명시 값으로 저장합니다. stretch 대상도 다릅니다. 엔진은 `Stretch`에서 cross 축이 HugContent인 자식도 줄 cross 크기로 늘립니다(`stack.rs` `child_constraint`). CSS는 cross 크기가 `auto`인 item만 늘리고 그 밖의 item은 `flex-start`처럼 놓습니다. 그래서 stretch(`normal` 포함)는 cross 크기가 `auto`인 자식(4.3절 Fill)만 늘리고, HugContent(`fit-content`)·Fixed·Percentage 자식은 늘리지 않습니다. 생략값이 `normal`이 되면 이 차이가 기본 Stack의 모든 Hug 자식에 나타납니다 | `semantic`(IX.11.4) |
 | (없음) | `align-self` | — | `auto` | 자식별 cross 정렬 override를 추가합니다 | `semantic`(IX.11.4) |
 | `wrap` | `flex-wrap: nowrap \| wrap` | NoWrap | `nowrap` | `wrap-reverse`는 받지 않습니다(`subset`) | `rename` |
 | `line_alignment` | `align-content` | Start | `normal`(flex에서 `stretch`) | 기본값이 다릅니다 | `semantic`(IX.11.4) |
@@ -163,13 +163,15 @@ IX.11.6이 CSS longhand로 정의합니다. 그래서 이 장의 migration은 �
 | 숨긴 자식 | `display: none` | flow 제외 | — | 3장 | `none` |
 | zero-size 자식 | — | gap 참여 | gap 참여 | 같음 | `none` |
 
-### 4.3 sizing preset ↔ longhand
+### 4.3 엔진 `SizingMode` ↔ CSS longhand(엔진 내부 변환)
 
-`SizingMode`의 네 값은 저장 형식이 아니라 인스펙터 preset입니다. preset은 아래 longhand를 한 번에
-씁니다. 거꾸로 저장된 longhand가 표의 한 행과 정확히 같으면 인스펙터는 그 preset을 표시하고, 어느
-행과도 맞지 않으면 "Custom"을 표시합니다. [계획 IX.11.7]
+크기는 CSS 값(`320px`, `100%`, `fit-content`, `auto`)과 `flex-*`·`align-self` longhand를 그대로 입력·표시하고
+저장합니다. preset 계층, longhand에서 크기 방식을 거꾸로 판정하는 일, "Custom" 표시는 두지 않습니다(ADR-0074).
+`SizingMode`의 네 값은 지금 `crates/layout` 엔진 입력의 내부 표현이며, 화면·문서·CLI·MCP·저장 형식에 쓰지 않습니다.
+아래 표는 엔진 입력을 CSS 값으로 다시 모델링할 때(IX.11.4·IX.11.5, ADR-0074 결정 6) 기존 엔진 값을 같은 의미의
+longhand로 바꾸는 근거입니다.
 
-| preset | 부모 방식·축 | 쓰는 longhand(가로 축 예) |
+| 엔진 값(내부) | 부모 방식·축 | 같은 의미의 longhand(가로 축 예) |
 |---|---|---|
 | Fixed | 모든 방식 | `width: <length>`, Stack main 축이면 `flex: 0 0 auto`(`flex-grow: 0`, `flex-shrink: 0`, `flex-basis: auto`) |
 | Percentage | 모든 방식 | `width: <percentage>`, Stack main 축이면 `flex-grow: 0`, `flex-shrink: 0`, `flex-basis: auto` |
@@ -179,10 +181,10 @@ IX.11.6이 CSS longhand로 정의합니다. 그래서 이 장의 migration은 �
 | Fill | Grid·Overlay | `justify-self: stretch`, `width: auto` |
 | Fill | Free | `left`·`right`를 함께 지정, `width: auto` |
 
-- Fill이 `min-width: 0px`을 명시하는 것은 CSS flex item 자동 최소 크기(IX.11.23) 때문에 생기는 넘침을
-  막기 위해서입니다. 이 차이는 사용자에게 숨기지 않고 Custom 판정에 반영합니다.
-- 지금 엔진은 main 축 Fill과 다른 FlexItem 값을 함께 쓰면 오류입니다. 영속 형식에서는 preset이
-  longhand로 풀리므로 이 오류 조건은 사라지고 Custom이 됩니다.
+- 엔진 Fill을 `min-width: 0px`과 함께 바꾸는 것은 CSS flex item 자동 최소 크기(IX.11.23) 때문에 생기는 넘침을
+  막기 위해서입니다.
+- 지금 엔진은 main 축 Fill과 다른 FlexItem 값을 함께 쓰면 오류입니다. 엔진 입력이 CSS longhand가 되면 이
+  오류 조건은 사라집니다.
 - `width: fit-content`는 CSS 의미(`min(max-content, max(min-content, stretch))`)를 따릅니다. 지금
   HugContent 해석과 다른 경우는 IX.11.4·IX.11.5에서 corpus로 확인합니다.
 
@@ -214,7 +216,7 @@ IX.11.6이 CSS longhand로 정의합니다. 그래서 이 장의 migration은 �
 | start + end + definite 크기 | over-constrained 해석 | `subset` | Stellar는 오류로 거부합니다 [계획 X.2.2] | `none` |
 | start + end + 크기 auto | `left`+`right`, `width: auto` | `exact` | 4.3절 Free Fill | `rename` |
 | end anchor 없는 자식의 Hug 기여 | absolute 자식은 부모 크기에 기여하지 않음 | 다름 | CSS에 맞춥니다. 내용에 맞춰 커지는 묶음이 필요하면 Stack·Grid·Overlay를 씁니다 | `semantic`(IX.11.5) |
-| Overlay `horizontal`·`vertical` | `justify-items`·`align-items: normal \| stretch \| start \| center \| end` | 다름 | 지금 기본값은 Start이고 엔진 `OverlayAlignment`에는 Start·Center·End만 있습니다(`overlay.rs`). CSS initial value는 `normal`(grid item에서 stretch)입니다. IX.11.5가 `OverlayAlignment`에 stretch를 더하고 `normal`을 stretch로 해석합니다. stretch는 크기가 `auto`인 축만 영역 크기로 늘리고, 크기가 `auto`가 아닌 자식(Fixed·Percentage·HugContent의 `fit-content`)은 시작 쪽에 놓습니다(CSS `stretch`가 크기가 `auto`가 아닌 item에 `start`처럼 동작하는 것과 같음). Stack cross 정렬과 같게 영속 record 생략값은 CSS initial value, 새 Overlay 생성 preset은 명시 값으로 저장합니다 | `semantic`(IX.11.5) |
+| Overlay `horizontal`·`vertical` | `justify-items`·`align-items: normal \| stretch \| start \| center \| end` | 다름 | 지금 기본값은 Start이고 엔진 `OverlayAlignment`에는 Start·Center·End만 있습니다(`overlay.rs`). CSS initial value는 `normal`(grid item에서 stretch)입니다. IX.11.5가 `OverlayAlignment`에 stretch를 더하고 `normal`을 stretch로 해석합니다. stretch는 크기가 `auto`인 축만 영역 크기로 늘리고, 크기가 `auto`가 아닌 자식(Fixed·Percentage·HugContent의 `fit-content`)은 시작 쪽에 놓습니다(CSS `stretch`가 크기가 `auto`가 아닌 item에 `start`처럼 동작하는 것과 같음). Stack cross 정렬과 같게 영속 record 생략값은 CSS initial value, 새 Overlay를 만들 때의 기본값은 명시 값으로 저장합니다 | `semantic`(IX.11.5) |
 | Constraint Parent edge(Left·Right·Top·Bottom) | inset | `converted` | | `none` |
 | Constraint CenterX·CenterY | `left: calc(50% + <offset>)` + `translate: -50%` | `converted` | 결과 위치가 같습니다. 붙여넣기 parser는 길이·백분율 혼합 `calc()`를 받지 않으므로(2장) 복사→붙여넣기 왕복에서 건너뜀으로 보고합니다 [계획 IX.11.15] | `none` |
 | Constraint Sibling·Baseline | anchor positioning | `stellar-only` | Web profile capability가 없으면 `unsupported` 진단 | `none` |
@@ -519,7 +521,7 @@ CSS custom property 상속은 트리 아래로 값을 공급하는 메커니즘�
 | Layer | 이름, 표시, 잠금 | 모든 노드 |
 | Layout | `display`, `flex-*`, `justify-*`, `align-*`, `grid-template-*`, `grid-auto-*` | container Frame |
 | Position | `position`, `top`·`right`·`bottom`·`left`, 자식 배치(`align-self`, `grid-*-start`·`-end`), 부모 없는 Frame의 캔버스 배치 | 부모가 있는 노드(Fragment 제외)와 부모가 없는 Frame. 저장은 IX.11.6 item record입니다. Ellipse·Polygon `bounds` 원점은 shape local 좌표의 기하 offset으로, Transform modifier 이동 성분은 layout 뒤에 적용하는 시각 변형(9장)으로 그대로 두며 위치 longhand로 migration하지 않습니다. 새 위치 편집은 위치 longhand를 씁니다. 부모가 없는 Frame(View root Frame, ComponentDefinition root)의 위치 X·Y는 위치 longhand가 아니라 stellar-only 캔버스 배치 속성(5장, 4.6절)을 편집합니다 |
-| Size | `width`, `height`, `min-*`, `max-*`, `aspect-ratio`, sizing preset | Frame, Shape, Image, Text |
+| Size | `width`, `height`, `min-*`, `max-*`, `aspect-ratio` | Frame, Shape, Image, Text |
 | Spacing | `padding-*`, `row-gap`, `column-gap` | container Frame |
 | Overflow | `overflow`, `clip-path` | Frame |
 | Typography | font longhand, `line-height`, `letter-spacing`, `text-align`, `white-space`, `color` | Text |
@@ -536,12 +538,11 @@ CSS custom property 상속은 트리 아래로 값을 공급하는 메커니즘�
 - 노드 종류에 맞는 섹션만 보이고, 행은 코어가 받는 PropertyKey가 있는 longhand만 보입니다. 섹션 접힘 상태는
   노드 종류별로 기억합니다. 칠하기와 선(`fill`·`stroke`)은 modifier를 추가하는 단계 없이 늘 있는 행입니다.
   [UX 명세 6.2]
-- sizing은 preset(4.3절)으로 바꾸고, preset으로 표현되지 않으면 Custom으로 보여 줍니다. 화면에서 preset 선택지는
-  CSS 값 자체(`320px`, `fit-content`, `auto`, `100%`)로 보이고, 옆에 실제로 설정한 longhand를 흐리게 보여
-  줍니다(ADR-0024 결정 7). 4.3절의 Fixed·Percentage·HugContent·Fill은 코드 `SizingMode` 값 이름이며 화면
-  문구로 쓰지 않습니다. [UX 명세 6.4]
-- Flex 정렬은 `justify-content`와 `align-items`를 함께 바꾸는 3×3 위치 컨트롤로 편집할 수 있습니다.
-  분배(`space-*`)를 고르면 main 축 위치 선택은 비활성이 됩니다.
+- 크기는 CSS 값을 그대로 입력하거나 고릅니다(`320px`, `100%`, `fit-content`, `auto`). flex item은 `flex-grow`·
+  `flex-shrink`·`flex-basis`·`align-self`를 각각 한 행으로 편집합니다. 크기 방식 preset과 Custom 표시는 두지
+  않고, 선언값과 계산값이 다르면 계산값을 함께 보여 줍니다(ADR-0074). [UX 명세 6.4]
+- Flex·Grid 정렬은 `justify-content`·`align-items` 등 longhand마다 한 행에서 CSS 키워드를 고릅니다. 두 값을 함께
+  바꾸는 위치 격자 위젯은 두지 않습니다(ADR-0074).
 - 4변·4모서리 값은 묶어서(shorthand) 또는 풀어서(longhand) 편집합니다.
 - 수치 필드는 CSS 값 문법을 받습니다. 단위를 붙여 입력할 수 있고(`1.5turn` → `540deg`), 오류는 행
   진단으로 보여 줍니다(IX.11.14).
@@ -550,8 +551,7 @@ CSS custom property 상속은 트리 아래로 값을 공급하는 메커니즘�
   `border-radius`, `border`)으로 묶고, 펼치면 longhand 행이 됩니다. 값 필드 안의 작은 위치 글리프로 변·모서리를
   구분합니다. 툴팁에는 쉬운 설명("요소의 가로 크기"), longhand 이름, Target 진단을 둡니다. "CSS 이름으로 보기"
   같은 전환 토글은 두지 않습니다. [UX 명세 6.3]
-- 캔버스의 padding·gap 직접 조작 핸들은 같은 longhand를 편집합니다. 캔버스 상호작용 세부는 캔버스
-  편집 UX 문서가 정합니다.
+- padding·gap은 속성 탭의 CSS 값으로만 편집합니다. 캔버스 padding·gap 핸들은 두지 않습니다(ADR-0074).
 
 ## 13. Stellar 고유로 남는 것
 
@@ -629,7 +629,7 @@ CSS custom property 상속은 트리 아래로 값을 공급하는 메커니즘�
 | 합성 key의 longhand key 분할 | IX.11.22 |
 | registry CSS 매핑 metadata와 단위 계약 | IX.11.1, IX.11.2, IX.11.3 |
 | 레이아웃 의미 정렬(Flex, 자동 최소 크기, Grid·Free·Overlay) | IX.11.4, IX.11.23, IX.11.5 |
-| 영속 layout record와 sizing preset | IX.11.6, IX.11.7 |
+| 영속 layout record | IX.11.6 (IX.11.7 sizing preset은 ADR-0074로 폐기, 계획 개정은 UX.0.3) |
 | CSS 레이아웃 적합성 fixture | IX.11.8 |
 | 제품 문서 migration registry와 project 열기 연결 | IX.11.21 |
 | 의미가 다른 구현 속성 migration(Frame 위치·transform, border, Text) | IX.11.9, IX.11.10, IX.11.11, IX.11.12 |

@@ -757,7 +757,7 @@
 | `docs/design/ui/agent_panel.md`, `docs/design/ui/shell_frame.md` | 오른쪽 탭, 하단 보조 패널 삭제 | UX.0.2 |
 | `docs/design/ui/components.md`(신설) | 에셋 탭·정의 편집·인스턴스 명세(D4) | UX.9.1 |
 | `docs/design/property_model.md` | 15장 O9 결정 반영 | UX.0.2 |
-| `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md` | XII.10.1(10종)·XII.10.29(펜 도구 부분 삭제)가 기준선에 들어 있는지 확인, XIII.3.1(Synthetic Command), XIV.13.5(위치), XVI.11.8(코드·에이전트 탭 노출), XIV.2.8(커밋 직전 flush 후 상태 재검증, UX.5.5), UX 행 등록 | UX.0.3 |
+| `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md` | XII.10.1(10종)·XII.10.29(펜 도구 부분 삭제)가 기준선에 들어 있는지 확인, XIII.3.1(Synthetic Command), XIV.13.5(위치), XVI.11.8(코드·에이전트 탭 노출), XIV.2.8(커밋 직전 flush 후 상태 재검증, UX.5.5), ADR-0074에 따른 IX.11.7 삭제·IX.11.17과 XII.10.9 preset 문구·XII.10.22와 XII.10.25 삭제·XII.10.43 padding 핸들 scenario 삭제, UX 행 등록 | UX.0.3 |
 | `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md` | §24.3 "처음 여는 프로젝트는 제한 모드" 문구에 Stellar가 §25.1로 만든 폴더의 신뢰 등록 예외를 더함(U8, ADR-0073 결정 10). Clone·열기는 그대로 제한 모드 | UX.0.3 |
 
 삭제 커밋마다 사유를 남깁니다(11-15 사용자 추가 지시).

@@ -4,6 +4,9 @@
 
 Accepted (2026-11-14, 제품 소유자 방향 P3)
 
+결정 7의 `SizingMode` preset 문단과 Constraint 문단, Consequences의 preset 계층 문장은 ADR-0074(2026-11-15)가
+대체합니다. 크기·정렬·간격은 CSS 값으로만 편집하고 preset 계층을 두지 않습니다.
+
 ## Context
 
 제품 소유자는 2026-11-14에 다음 방향을 정했습니다.
@@ -107,11 +110,11 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
    - Stack은 `display: flex`, Grid는 `display: grid`, Overlay는 모든 자식이 같은 영역에 놓이는 단일
      영역 grid, Free는 `position: relative` 부모 안의 `position: absolute` 자식입니다. Free의
      containing block은 CSS처럼 padding box입니다.
-   - Constraint는 Stellar 확장입니다. 부모 edge 제약은 inset으로 표현하고, 형제·baseline 제약은 CSS
-     anchor positioning 계열 capability로 판정합니다.
-   - `SizingMode`(Fixed·Fill·HugContent·Percentage)는 영속 형식이 아니라 인스펙터 preset입니다.
-     저장은 `width`·`height`·`flex-*`·`align-self`·`min-*` 등 longhand로 합니다. preset과 longhand의
-     대응은 `docs/design/property_model.md` 4.3절입니다.
+   - (ADR-0074가 대체) 부모 기준 고정은 `position: absolute`와 inset으로만 표현하고 별도 Constraint
+     방식을 두지 않습니다. 형제·baseline 기준 배치는 CSS anchor positioning이 capability로 확정되기 전에는
+     범위 밖입니다.
+   - (ADR-0074가 대체) 크기는 `width`·`height`·`flex-*`·`align-self`·`min-*` 등 longhand의 CSS 값으로만
+     입력·저장합니다. 엔진 `SizingMode`는 내부 표현이고 preset 계층은 두지 않습니다.
    - `box-sizing`은 `border-box`로 고정하며 편집 속성이 아닙니다. border는 CSS처럼 레이아웃 공간을
      차지합니다(border box 안쪽이 padding box).
    - 기존 엔진 동작 중 CSS와 다른 것은 IX.11의 migration 행으로 CSS에 맞춥니다.
@@ -247,7 +250,8 @@ Accepted (2026-11-14, 제품 소유자 방향 P3)
   출력 bytes를 바꾸지 않습니다. 같은 값의 표기 규칙이 두 곳에 생기지 않게 formatter와 같은 Phase에서
   맞춥니다. 실제 HTML·CSS 출력은 로드맵 XXII.2가 합니다.
 - 인스펙터 섹션을 CSS 범주로 재구성해야 합니다.
-- CSS가 직접 표현하지 않는 디자인 도구 개념(채움, 내용 맞춤)은 preset 계층이 필요합니다.
+- (ADR-0074가 폐기) 채움·내용 맞춤 같은 크기 방식 개념과 그 preset 계층은 두지 않습니다. 크기는 CSS 값
+  그대로입니다.
 - CSS 명세가 바뀌면 추적해야 합니다. 이 부담은 Web Target Profile의 capability 버전 고정(IX.10.4)으로
   제한합니다.
 
