@@ -25,15 +25,10 @@ impl PageSource for ProjectComponents {
     }
     fn item(&self, index: usize) -> JsonValue {
         let entry = &self.entries[index];
-        let background =
-            entry
-                .background_source_value()
-                .map_or(JsonValue::Null, |(space, rgba)| {
-                    JsonValue::object(vec![
-                        ("space", JsonValue::string(space)),
-                        ("rgba", JsonValue::string(rgba)),
-                    ])
-                });
+        // 원본 YAML과 같은 한 줄 색 표현입니다. 채우기가 없으면 null입니다.
+        let background = entry.background.map_or(JsonValue::Null, |color| {
+            JsonValue::string(stellar_ops::component_source::color_source_value(color))
+        });
         JsonValue::object(vec![
             ("id", id(entry.id)),
             ("root", id(entry.root)),
@@ -48,11 +43,7 @@ impl PageSource for ProjectComponents {
 }
 
 pub(super) fn read(cached: &mut CachedRead, uri: &str) -> Result<JsonValue, RpcError> {
-    let (_, mut request) = paging::parse_page_query(uri).map_err(|e| invalid(e.to_string()))?;
-    // 고정 URI의 기존 소비자는 커서를 모르므로 한 응답에 들어가는 원본을 최대한 유지합니다.
-    if uri == "stellar://components" {
-        request.limit = Some(paging::MAX_PAGE_ITEMS);
-    }
+    let (_, request) = paging::parse_page_query(uri).map_err(|e| invalid(e.to_string()))?;
     let unavailable = || RpcError::new(-32000, "프로젝트의 컴포넌트 원본을 읽을 수 없습니다");
     // generation을 바꾸지 않는 외부 편집도 매 요청 확인합니다. 파일명이 바뀌거나
     // bytes가 달라진 경우에만 YAML을 다시 해석합니다.

@@ -8,8 +8,8 @@ use crate::text_source::TextSourceOperationError as Error;
 use stellar_document::component::definition::ComponentLibrary;
 use stellar_document::record_codec::decode_payload;
 use stellar_document::records::NodePayload;
-pub use stellar_project::document_io::component_source::ComponentRootEdit;
 use stellar_project::document_io::component_source::{self, ComponentFiles, ComponentSource};
+pub use stellar_project::document_io::component_source::{color_source_value, ComponentRootEdit};
 use stellar_storage::hash::ContentHash;
 
 /// 검증된 원본의 Frame 속성 값입니다. 수치와 색은 텍스트 원본의 정확한 표현을 유지합니다.
@@ -125,29 +125,6 @@ pub struct ComponentInfo {
     pub file: PathBuf,
     /// 다음 쓰기에 사용할 실제 bytes hash.
     pub hash: ContentHash,
-}
-
-impl ComponentInfo {
-    /// CLI와 MCP에서 YAML과 같은 색 공간 이름·비연관 RGBA를 반환합니다.
-    pub fn background_source_value(&self) -> Option<(&'static str, String)> {
-        use crate::core_types::color::ColorSpace;
-        self.background.map(|color| {
-            let space = match color.space() {
-                ColorSpace::Srgb => "srgb",
-                ColorSpace::DisplayP3 => "display-p3",
-            };
-            (
-                space,
-                format!(
-                    "{} {} {} {}",
-                    color.r(),
-                    color.g(),
-                    color.b(),
-                    color.alpha()
-                ),
-            )
-        })
-    }
 }
 
 fn lock(dir: &Path) -> Result<SaveLock, Error> {

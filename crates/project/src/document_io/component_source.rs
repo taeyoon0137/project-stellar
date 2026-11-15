@@ -26,6 +26,8 @@ use super::text_source::TextSourceError;
 use crate::folder_name::{collision_key, validate_folder_name};
 use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_checked, YamlValue};
 
+pub use super::text_codec::color_source_value;
+
 pub(crate) const EXT: &str = ".stellar.yaml";
 pub(crate) const MAX_COMPONENT_FILES: usize = 4096;
 pub(crate) const MAX_PROJECT_SOURCE_BYTES: u64 = 64 * 1024 * 1024;

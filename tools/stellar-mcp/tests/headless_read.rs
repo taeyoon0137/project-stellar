@@ -463,11 +463,15 @@ fn component_pages_cover_large_libraries_and_reject_a_changed_source_cursor() {
         let body = content(&client.read(&uri), &uri);
         assert_eq!(body.get("total"), Some(&J::int(2200)));
         if seen.is_empty() {
+            // 고정 URI도 다른 page resource와 같은 기본 개수를 씁니다.
             assert_eq!(
                 body.get("limit").and_then(J::as_i64),
-                Some(paging::MAX_PAGE_ITEMS as i64)
+                Some(paging::DEFAULT_PAGE_ITEMS as i64)
             );
-            assert!(array(body.get("entries").unwrap()).len() > paging::DEFAULT_PAGE_ITEMS);
+            assert_eq!(
+                array(body.get("entries").unwrap()).len(),
+                paging::DEFAULT_PAGE_ITEMS
+            );
         }
         assert_eq!(
             body.get("offset").and_then(J::as_i64),
@@ -592,8 +596,7 @@ payload:
     let background = array(filled.get("entries").unwrap())[0]
         .get("background")
         .unwrap();
-    assert_eq!(background.get("space").map(text), Some("display-p3"));
-    assert_eq!(background.get("rgba").map(text), Some("1.2 -0.1 0.5 0"));
+    assert_eq!(background, &J::string("display-p3 1.2 -0.1 0.5 0"));
     fx.git(&["restore", "--", "design/components"]);
     assert_eq!(checked(&mut client, 1, "160"), main);
     fx.git(&["switch", "-qc", "nested"]);

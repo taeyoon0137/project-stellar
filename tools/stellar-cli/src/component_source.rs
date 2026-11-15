@@ -52,11 +52,10 @@ fn fill(args: &[String]) -> Result<Option<Color>, CliError> {
 }
 
 pub(crate) fn component_json(info: ComponentInfo, include_file: bool) -> J {
-    let background = info
-        .background_source_value()
-        .map_or(J::Null, |(space, rgba)| {
-            J::object(vec![("space", J::string(space)), ("rgba", J::string(rgba))])
-        });
+    // 원본 YAML과 같은 한 줄 색 표현입니다. 채우기가 없으면 null입니다.
+    let background = info.background.map_or(J::Null, |color| {
+        J::string(component_source::color_source_value(color))
+    });
     let mut fields = vec![
         ("id", views::id(info.id)),
         ("root", views::id(info.root)),

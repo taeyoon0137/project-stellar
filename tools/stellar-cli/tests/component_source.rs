@@ -462,8 +462,7 @@ fn set_fill_matches_project_query_and_protects_root_source_on_failed_edits() {
         .collect();
     assert_eq!(changed, [file]);
     let owned = filled.get("background").unwrap();
-    assert_eq!(value(owned, "space"), "display-p3");
-    assert_eq!(value(owned, "rgba"), "1.2 -0.1 0.5 0");
+    assert_eq!(owned.as_str(), Some("display-p3 1.2 -0.1 0.5 0"));
     let query = run(&project, &home, "query", &[".", "components"], 0);
     assert_eq!(
         query.get("entries").unwrap().as_array().unwrap()[0].get("background"),

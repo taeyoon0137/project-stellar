@@ -61,7 +61,7 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 ## 프로젝트에서 조회
 
-프로젝트 루트 아래 `design/components/`에 원본을 두면 `stellar query . components`와 신뢰된 headless MCP의 `stellar://components`가 같은 라이브러리를 읽습니다. 다른 폴더의 원본은 기존 `component-source check <폴더>`로 조회할 수 있습니다. 각 항목은 전체 StableId, 이름, 루트 ID, 루트의 논리 픽셀 크기와 `background`(채우기가 없으면 JSON `null`, 색이 있으면 YAML과 같은 `space`와 `rgba` 문자열), 루트를 포함한 Frame 수, 원본 bytes의 `source_hash`를 담습니다. `source_hash`는 그대로 `resize`와 `add-frame`에 전달할 수 있습니다.
+프로젝트 루트 아래 `design/components/`에 원본을 두면 `stellar query . components`와 신뢰된 headless MCP의 `stellar://components`가 같은 라이브러리를 읽습니다. 다른 폴더의 원본은 기존 `component-source check <폴더>`로 조회할 수 있습니다. 각 항목은 전체 StableId, 이름, 루트 ID, 루트의 논리 픽셀 크기와 `background`(채우기가 없으면 JSON `null`, 색이 있으면 YAML과 같은 한 줄 색 문자열. 예: `"display-p3 1.2 -0.1 0.5 0"`), 루트를 포함한 Frame 수, 원본 bytes의 `source_hash`를 담습니다. `source_hash`는 그대로 `resize`와 `add-frame`에 전달할 수 있습니다.
 
 `revision`은 프로젝트의 바이너리 generation을 가리킵니다. Git checkout이나 미커밋 YAML 편집은 generation을 올리지 않으므로 같은 MCP 연결에서도 매 요청마다 파일을 다시 읽습니다. 독립된 파일별 버전은 각 항목의 `source_hash`를 사용합니다. 여러 파일을 동시에 편집할 때 단일 시점의 스냅샷을 보장하려면 다중 파일 journal이 필요합니다.
 
@@ -69,7 +69,7 @@ stellar component-source add-frame "$file" "$hash" "$group" "$leaf" Icon 24 24
 
 프로젝트 단위 조회는 프로젝트 내부에서 해석되는 원본만 읽습니다. 정의 폴더가 없거나 해당 확장자의 파일이 없으면 `entries`는 빈 배열이고 `chunk_count`는 generation의 `component-library` 포인터 수입니다. 바이너리 라이브러리와 YAML 원본이 함께 있으면 오류를 반환합니다. 한 요청에 읽는 전체 원본은 64 MiB까지이고, MCP 리소스는 기존 512 KiB 본문 상한을 적용합니다. 파일·캐시·generation을 작성하지 않습니다.
 
-MCP에서 `stellar://components`를 읽으면 StableId 순서의 첫 페이지를 받습니다. `entries`는 현재 페이지이고 `total`은 전체 개수입니다. `next_cursor`가 문자열이면 `stellar://components?cursor=<값>`으로 이어 읽고, `null`이면 마지막 페이지입니다. 고정 URI의 첫 요청은 기존 클라이언트를 위해 응답에 들어가는 만큼 최대 2,000개까지 반환합니다. 커서와 함께 `limit`을 생략하면 기본 500개이며, 명시할 수 있는 최댓값은 2,000개입니다. 모든 경우에 응답 바이트 상한을 적용합니다. 도중에 generation 또는 컴포넌트 파일 이름·내용이 바뀌면 이전 커서를 거부하므로 첫 페이지부터 다시 읽습니다.
+MCP에서 `stellar://components`를 읽으면 StableId 순서의 첫 페이지를 받습니다. `entries`는 현재 페이지이고 `total`은 전체 개수입니다. `next_cursor`가 문자열이면 `stellar://components?cursor=<값>`으로 이어 읽고, `null`이면 마지막 페이지입니다. `limit`을 생략하면 기본 500개이며, 명시할 수 있는 최댓값은 2,000개입니다. 모든 경우에 응답 바이트 상한을 적용합니다. 도중에 generation 또는 컴포넌트 파일 이름·내용이 바뀌면 이전 커서를 거부하므로 첫 페이지부터 다시 읽습니다.
 
 ## 두 작업 트리 비교
 
