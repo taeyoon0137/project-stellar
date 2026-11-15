@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use stellar_document::records::DocumentRecords;
 use stellar_project::document_io::serialize::serialize_records;
 use stellar_project::saved_project::SavedProject;
+use stellar_semantic_diff::diff::diff;
 use stellar_semantic_diff::records::document_records;
 use stellar_storage::chunk::envelope::ChunkEnvelope;
 use stellar_storage::chunk::path::ChunkObjectPath;
@@ -22,16 +23,13 @@ use stellar_storage::save::plan::build_save_plan;
 use crate::core_types::ids::StableId;
 use crate::diff::snapshot_of;
 
-pub use stellar_semantic_diff::change::SemanticChange;
-pub use stellar_semantic_diff::diff::{diff, SemanticDiff};
+pub use stellar_semantic_diff::diff::SemanticDiff;
 pub use stellar_semantic_diff::keys::DISPLAY_NAME;
-pub use stellar_semantic_diff::snapshot::ObjectKind;
 pub use stellar_semantic_diff::snapshot::SemanticSnapshot;
 pub use stellar_semantic_diff::stage::{
     build_stage_candidate, build_unstage_candidate, CandidateIndexSnapshot, ChangeId,
     SelectionOperation, StageError, StageSelectionRequest,
 };
-pub use stellar_semantic_diff::value::SemanticValue;
 
 /// 후보 직렬화 실패. 무손실 증명이 없는 입력은 성공으로 축소하지 않습니다.
 #[derive(Debug)]

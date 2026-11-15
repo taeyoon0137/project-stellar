@@ -75,7 +75,7 @@ MCP에서 `stellar://components`를 읽으면 StableId 순서의 첫 페이지�
 
 `stellar semantic-diff <base> <target>`은 같은 프로젝트의 두 Git 작업 트리에서 저장 문서와 `design/components/`의 공유 정의를 함께 비교합니다. 각 변경의 `object`는 전체 StableId이고, 공유 컴포넌트에 속한 변경은 `component`에 정의의 전체 ID, `document`에 `null`을 반환합니다. 이름과 파일명을 함께 바꾸면 같은 컴포넌트의 이름 변경 한 건입니다. Frame 크기는 속성 변경, Frame 생성·삭제는 해당 노드의 추가·삭제로 표시합니다. 주석·YAML 서식만 다르면 의미 변경은 없습니다.
 
-`diff-summary`와 두 작업 트리를 공통 base와 비교하는 `semantic-merge`도 이 정보를 사용합니다. 같은 Frame의 폭과 높이를 별개로 바꾸면 두 변경을 함께 반환하고, 한 축을 양쪽에서 서로 다른 값으로 바꾸면 해당 축의 속성 충돌을 반환합니다. 이 명령들은 비교할 때 작업 파일이나 Git index를 수정하지 않습니다. headless MCP의 `document.semantic_diff`도 고정 HEAD의 Git blob과 현재 프로젝트의 YAML을 같은 규칙으로 비교합니다. 커서는 기준 commit, 저장 generation, 현재 컴포넌트 원본 집합의 hash와 결합됩니다. HEAD 안의 컴포넌트 폴더나 파일이 symlink이면 비교를 거부합니다. 신뢰한 macOS 프로젝트의 Git 패널에서 **Components → 파일명 → Component source**의 체크박스로 추가되거나 수정된 원본 하나를 Stage/Unstage할 수 있습니다. Stage는 YAML 서식과 주석까지 현재 파일 그대로 Git index에 넣습니다. Unstage는 HEAD의 파일로 index를 되돌리며 새 파일이면 index에서 제거합니다. 작업 파일과 형제 파일의 staging 상태는 보존합니다. 표시한 뒤 HEAD나 선택한 index 항목이 달라지면 새로고침해야 합니다. 삭제 및 이름 변경은 이 체크박스에서 지원하지 않습니다.
+`diff-summary`와 두 작업 트리를 공통 base와 비교하는 `semantic-merge`도 이 정보를 사용합니다. 같은 Frame의 폭과 높이를 별개로 바꾸면 두 변경을 함께 반환하고, 한 축을 양쪽에서 서로 다른 값으로 바꾸면 해당 축의 속성 충돌을 반환합니다. 이 명령들은 비교할 때 작업 파일이나 Git index를 수정하지 않습니다. headless MCP의 `document.semantic_diff`도 고정 HEAD의 Git blob과 현재 프로젝트의 YAML을 같은 규칙으로 비교합니다. 커서는 기준 commit, 저장 generation, 현재 컴포넌트 원본 집합의 hash와 결합됩니다. HEAD 안의 컴포넌트 폴더나 파일이 symlink이면 비교를 거부합니다. 앱의 Stage/Unstage는 현재 저장 generation의 문서를 대상으로 합니다.
 
 headless MCP 세션은 검증한 고정 HEAD의 의미 객체를 재사용합니다. 파일 이름 집합과 저장 generation이 같고 한 파일의 bytes만 바뀌면 그 정의만 다시 투영하고 나머지 객체와의 ID 충돌을 검사합니다. 이름 변경, 파일 추가·삭제, 여러 파일 편집은 전체 검증을 수행합니다.
 

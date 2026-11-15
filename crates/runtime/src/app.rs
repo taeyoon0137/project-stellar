@@ -102,11 +102,11 @@
 //! | `0x0109` | HistoryReplayed | request u64, session u64, redo u8, applied u8, revision u64 |
 //! | `0x010A` | WindowSessionSaved | request u64, session u64, generation u64, written u8 |
 //! | `0x010B` | ProjectTrust | request u64, project u64, trusted u8 |
-//! | `0x010C` | GitNames | request u64, session u64, rows u32, other_changes u8, staged u8; unborn은 branch text + staged_files u32, branch/detached는 빈 text + kind u8(1/2) + 이름/OID text |
 //! | `0x010D` | ProjectCreated | request u64, git_state u32 |
 //! | `0x010E` | ComponentCreated | request u64, session u64, filename text |
 //!
-//! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다.
+//! `document_id`는 작업 문서가 없으면(저장한 적 없는 프로젝트) NIL(0 16바이트)입니다. `0x010C`는 삭제한
+//! event 코드라 다시 쓰지 않습니다(ADR-0028).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
@@ -130,8 +130,6 @@ mod create;
 mod document_font;
 mod frame_insert;
 mod frame_move;
-mod git_components;
-mod git_names;
 mod image_place;
 pub use image_place::ImagePlacement;
 mod node_delete;
@@ -142,8 +140,6 @@ pub mod recovery;
 pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
-pub use git_components::GitComponentRow;
-pub use git_names::{GitNameRow, SelectionOperation};
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
 pub use stellar_document::model::SiblingOrder;
 pub use stellar_document::shape::ShapeKind;
@@ -186,8 +182,6 @@ pub mod event_kind {
     pub const WINDOW_SESSION_SAVED: u32 = 0x010A;
     /// 열린 프로젝트에서 확인한 OS 신뢰 등록 상태입니다.
     pub const PROJECT_TRUST: u32 = 0x010B;
-    /// 저장된 노드 이름의 Git 비교 목록이 준비됐거나 한 건을 Stage했습니다.
-    pub const GIT_NAMES: u32 = 0x010C;
     /// 새 프로젝트 디스크 생성이 끝났습니다.
     pub const PROJECT_CREATED: u32 = 0x010D;
     /// 컴포넌트 파일 하나를 새로 기록했습니다.
@@ -231,7 +225,8 @@ pub struct WindowSessionHandle(
 // 실패 코드·event
 // ---------------------------------------------------------------------------
 
-/// 요청 실패 코드. 값은 C ABI에 노출되므로 바꾸지 않고 끝에 덧붙입니다.
+/// 요청 실패 코드. 값은 C ABI에 노출되므로 바꾸지 않고 끝에 덧붙입니다. 26은 삭제한 코드라 다시 쓰지
+/// 않습니다(ADR-0028).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RequestFailure {
     /// 열려 있지 않은 프로젝트 session.
@@ -274,8 +269,6 @@ pub enum RequestFailure {
     InvalidViewport,
     /// 프로젝트 신뢰 등록을 확인하거나 갱신하지 못했습니다.
     TrustUnavailable,
-    /// 저장된 이름의 Git 조회나 선택 Stage 실패.
-    GitNamesUnavailable,
     /// 새 프로젝트 생성 실패.
     ProjectCreateFailed,
     /// Git checkout·대상 폴더 공개 실패. Git 진단은 URL을 포함할 수 있어 전달하지 않습니다.
@@ -288,7 +281,7 @@ pub enum RequestFailure {
 
 impl RequestFailure {
     /// 전체 코드(값 순서).
-    pub const ALL: [RequestFailure; 25] = [
+    pub const ALL: [RequestFailure; 24] = [
         RequestFailure::UnknownProject,
         RequestFailure::UnknownDocument,
         RequestFailure::DocumentInOtherProject,
@@ -309,7 +302,6 @@ impl RequestFailure {
         RequestFailure::HistoryUnavailable,
         RequestFailure::InvalidViewport,
         RequestFailure::TrustUnavailable,
-        RequestFailure::GitNamesUnavailable,
         RequestFailure::ProjectCreateFailed,
         RequestFailure::ProjectCloneFailed,
         RequestFailure::CloneTargetExists,
@@ -339,7 +331,6 @@ impl RequestFailure {
             RequestFailure::HistoryUnavailable => 23,
             RequestFailure::InvalidViewport => 24,
             RequestFailure::TrustUnavailable => 25,
-            RequestFailure::GitNamesUnavailable => 26,
             RequestFailure::ProjectCreateFailed => 27,
             RequestFailure::ProjectCloneFailed => 28,
             RequestFailure::CloneTargetExists => 29,
@@ -353,22 +344,6 @@ impl RequestFailure {
             .into_iter()
             .find(|failure| failure.code() == code)
     }
-}
-
-/// Git 패널이 변경 행과 함께 관측한 HEAD.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GitPanelHead {
-    /// 첫 commit 전 브랜치와 실제 index 파일 수.
-    Unborn {
-        /// HEAD가 가리키는 로컬 브랜치 이름.
-        branch: String,
-        /// 첫 commit에 포함될 실제 index 항목 수.
-        staged_files: u32,
-    },
-    /// commit을 가리키는 로컬 브랜치 이름.
-    Branch(String),
-    /// 브랜치에서 분리된 전체 commit OID.
-    Detached(String),
 }
 
 /// 요청 완료 event. 요청마다 정확히 하나가 outbox에 쌓입니다.
@@ -411,21 +386,6 @@ pub enum RuntimeEvent {
         project: ProjectSessionId,
         /// 등록이 확인되었는지.
         trusted: bool,
-    },
-    /// 저장된 노드 이름 변경을 Git에서 읽은 결과. 행은 제한된 범위로 따로 조회합니다.
-    GitNames {
-        /// 요청 ID와 이번에 캐시된 행의 세대.
-        request: RequestId,
-        /// 열린 창.
-        session: WindowSessionHandle,
-        /// 표시할 이름 변경 행 수.
-        rows: u32,
-        /// 이름 외의 저장 의미 변경이 존재합니다.
-        other_changes: bool,
-        /// 이번 요청이 실제 Stage였는지.
-        staged: bool,
-        /// 과거 payload에는 HEAD가 없습니다.
-        head: Option<GitPanelHead>,
     },
     /// 프로젝트를 닫았습니다.
     ProjectClosed {
@@ -672,7 +632,6 @@ impl RuntimeEvent {
             RuntimeEvent::ProjectOpened { .. } => event_kind::PROJECT_OPENED,
             RuntimeEvent::ProjectClosed { .. } => event_kind::PROJECT_CLOSED,
             RuntimeEvent::ProjectTrust { .. } => event_kind::PROJECT_TRUST,
-            RuntimeEvent::GitNames { .. } => event_kind::GIT_NAMES,
             RuntimeEvent::DocumentOpened { .. } => event_kind::DOCUMENT_OPENED,
             RuntimeEvent::DocumentClosed { .. } => event_kind::DOCUMENT_CLOSED,
             RuntimeEvent::RequestFailed { .. } => event_kind::REQUEST_FAILED,
@@ -690,7 +649,6 @@ impl RuntimeEvent {
             RuntimeEvent::ProjectOpened { request, .. }
             | RuntimeEvent::ComponentCreated { request, .. }
             | RuntimeEvent::ProjectCreated { request, .. }
-            | RuntimeEvent::GitNames { request, .. }
             | RuntimeEvent::ProjectTrust { request, .. }
             | RuntimeEvent::ProjectClosed { request, .. }
             | RuntimeEvent::DocumentOpened { request, .. }
@@ -775,40 +733,6 @@ impl RuntimeEvent {
                 w.id(*document_id);
                 w.u64(*generation);
             }
-            RuntimeEvent::GitNames {
-                request,
-                session,
-                rows,
-                other_changes,
-                staged,
-                head,
-            } => {
-                w.u64(request.0);
-                w.u64(session.0);
-                w.u32(*rows);
-                w.u8(u8::from(*other_changes));
-                w.u8(u8::from(*staged));
-                match head {
-                    None => {}
-                    Some(GitPanelHead::Unborn {
-                        branch,
-                        staged_files,
-                    }) => {
-                        w.text(branch);
-                        w.u32(*staged_files);
-                    }
-                    Some(GitPanelHead::Branch(branch)) => {
-                        w.text("");
-                        w.u8(1);
-                        w.text(branch);
-                    }
-                    Some(GitPanelHead::Detached(commit)) => {
-                        w.text("");
-                        w.u8(2);
-                        w.text(commit);
-                    }
-                }
-            }
             RuntimeEvent::ProjectTrust {
                 request,
                 project,
@@ -883,30 +807,6 @@ impl RuntimeEvent {
                 project_id: r.id()?,
                 name: r.text()?,
                 root: r.text()?,
-            },
-            event_kind::GIT_NAMES => RuntimeEvent::GitNames {
-                request: RequestId(r.u64()?),
-                session: WindowSessionHandle(r.u64()?),
-                rows: r.u32()?,
-                other_changes: r.bool()?,
-                staged: r.bool()?,
-                head: if r.bytes.is_empty() {
-                    None
-                } else {
-                    let text = r.text()?;
-                    Some(if text.is_empty() {
-                        match r.u8()? {
-                            1 => GitPanelHead::Branch(r.text()?),
-                            2 => GitPanelHead::Detached(r.text()?),
-                            _ => return Err(EventDecodeError::Length),
-                        }
-                    } else {
-                        GitPanelHead::Unborn {
-                            branch: text,
-                            staged_files: r.u32()?,
-                        }
-                    })
-                },
             },
             event_kind::PROJECT_TRUST => RuntimeEvent::ProjectTrust {
                 request: RequestId(r.u64()?),
@@ -1731,7 +1631,6 @@ struct AppShared {
     creating_component: std::sync::atomic::AtomicBool,
     importing_font: std::sync::atomic::AtomicBool,
     importing_image: std::sync::atomic::AtomicBool,
-    git_names: Mutex<git_names::WindowGit>,
     outbox: Mutex<VecDeque<RuntimeEvent>>,
     /// 완료 event를 아직 꺼내지 않은 요청 수(실행 중 포함).
     outstanding: AtomicUsize,
@@ -1790,11 +1689,6 @@ impl Drop for AppRuntime {
         {
             token.cancel();
         }
-        self.shared
-            .git_names
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .cancel_all();
         // shutdown·shutdown_timeout으로 이미 종료했으면 아무것도 하지 않습니다.
         let _ = self.document.stop_within(Some(self.drop_timeout));
     }
@@ -1845,7 +1739,6 @@ impl AppRuntime {
                 creating_component: false.into(),
                 importing_font: false.into(),
                 importing_image: false.into(),
-                git_names: Mutex::default(),
                 outbox: Mutex::new(VecDeque::new()),
                 outstanding: AtomicUsize::new(0),
                 state: Mutex::new(Arc::new(RuntimeState::default())),
@@ -1929,7 +1822,6 @@ impl AppRuntime {
         project: ProjectSessionId,
         decision: Option<bool>,
     ) -> Result<RequestId, RequestError> {
-        let shared = Arc::clone(&self.shared);
         self.submit(move |ctx, request| {
             let session = ctx
                 .app_sessions_mut()
@@ -1948,11 +1840,6 @@ impl AppRuntime {
             let mut store =
                 FileTrustStore::open(&dir).map_err(|error| unavailable(&error.to_string()))?;
             if decision == Some(false) {
-                shared
-                    .git_names
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .close_project_windows(session);
                 store
                     .revoke(identity)
                     .map_err(|error| unavailable(&error.to_string()))?;
@@ -1998,17 +1885,7 @@ impl AppRuntime {
 
     /// 프로젝트 session을 닫습니다. 그 아래 열린 문서도 닫습니다.
     pub fn close_project(&self, project: ProjectSessionId) -> Result<RequestId, RequestError> {
-        let shared = Arc::clone(&self.shared);
-        self.submit(move |ctx, request| {
-            if let Some(session) = ctx.app_sessions().projects.get(&project) {
-                let mut git = shared
-                    .git_names
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                git.close_project_windows(session);
-            }
-            close_project_on_thread(ctx, request, project)
-        })
+        self.submit(move |ctx, request| close_project_on_thread(ctx, request, project))
     }
 
     /// 프로젝트 session 아래에서 문서를 엽니다.
@@ -2040,15 +1917,7 @@ impl AppRuntime {
         &self,
         session: WindowSessionHandle,
     ) -> Result<RequestId, RequestError> {
-        let shared = Arc::clone(&self.shared);
-        self.submit(move |ctx, request| {
-            shared
-                .git_names
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .close(session);
-            close_window_session_on_thread(ctx, request, session)
-        })
+        self.submit(move |ctx, request| close_window_session_on_thread(ctx, request, session))
     }
 
     /// 창 session에서 작업 문서의 View 탭을 열고 active로 만듭니다(이미 열려 있으면 active만, XII.2.5).
@@ -2374,43 +2243,6 @@ mod tests {
                 project: ProjectSessionId(4),
                 trusted: true,
             },
-            RuntimeEvent::GitNames {
-                request: RequestId(22),
-                session: WindowSessionHandle(11),
-                rows: 1,
-                other_changes: true,
-                staged: false,
-                head: None,
-            },
-            RuntimeEvent::GitNames {
-                request: RequestId(23),
-                session: WindowSessionHandle(11),
-                rows: 0,
-                other_changes: true,
-                staged: false,
-                head: Some(GitPanelHead::Unborn {
-                    branch: "main".into(),
-                    staged_files: 10,
-                }),
-            },
-            RuntimeEvent::GitNames {
-                request: RequestId(24),
-                session: WindowSessionHandle(11),
-                rows: 0,
-                other_changes: false,
-                staged: false,
-                head: Some(GitPanelHead::Branch("design/기준".into())),
-            },
-            RuntimeEvent::GitNames {
-                request: RequestId(25),
-                session: WindowSessionHandle(11),
-                rows: 0,
-                other_changes: false,
-                staged: false,
-                head: Some(GitPanelHead::Detached(
-                    "0123456789012345678901234567890123456789".into(),
-                )),
-            },
         ]
     }
 
@@ -2457,39 +2289,6 @@ mod tests {
             // 결정론: 같은 event는 같은 바이트입니다.
             assert_eq!(event.encode(), bytes);
         }
-    }
-
-    #[test]
-    fn git_names_decodes_previous_payloads_without_turning_truncated_counts_into_branches() {
-        let event = |head| RuntimeEvent::GitNames {
-            request: RequestId(1),
-            session: WindowSessionHandle(2),
-            rows: 0,
-            other_changes: false,
-            staged: false,
-            head,
-        };
-        let mut legacy = vec![1, 0, 0, 0];
-        legacy.extend_from_slice(&1u64.to_le_bytes());
-        legacy.extend_from_slice(&2u64.to_le_bytes());
-        legacy.extend_from_slice(&[0; 6]);
-        assert_eq!(
-            RuntimeEvent::decode(event_kind::GIT_NAMES, &legacy),
-            Ok(event(None))
-        );
-        legacy.extend_from_slice(b"\x04\0\0\0main\x01\0\0\0");
-        assert_eq!(
-            RuntimeEvent::decode(event_kind::GIT_NAMES, &legacy),
-            Ok(event(Some(GitPanelHead::Unborn {
-                branch: "main".into(),
-                staged_files: 1
-            })))
-        );
-        legacy.truncate(legacy.len() - 3);
-        assert_eq!(
-            RuntimeEvent::decode(event_kind::GIT_NAMES, &legacy),
-            Err(EventDecodeError::Length)
-        );
     }
 
     #[test]
@@ -2588,8 +2387,8 @@ mod tests {
         assert_eq!(
             codes,
             [
-                1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
-                28, 29, 30
+                1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 4, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28,
+                29, 30
             ]
         );
         let unique: BTreeSet<u32> = codes.iter().copied().collect();
@@ -2598,6 +2397,8 @@ mod tests {
             assert_eq!(RequestFailure::from_code(failure.code()), Some(failure));
         }
         assert_eq!(RequestFailure::from_code(0), None);
+        // 삭제한 Git 이름 Stage 실패 코드는 다시 쓰지 않습니다.
+        assert_eq!(RequestFailure::from_code(26), None);
     }
 
     #[test]

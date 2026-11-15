@@ -276,3 +276,20 @@ TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 
 이 계열에서 남는 창 ABI는 원본 감시(`stellar_window_component_watch_fd`), 캔버스 재읽기
 (`stellar_window_reload_component_canvas`), D3에 걸린 선택 생성(`stellar_window_component_from_selection`)입니다.
 앞의 두 ABI의 기록과 감시 구조 정리는 캔버스 렌더·입력·감시 묶음(B8)에서 합니다.
+
+## Git 패널 이름·컴포넌트 Stage ABI 제거 (2026-11-15 검토)
+
+창의 Git 패널에서 저장 노드 이름 한 속성(U055·U057)과 컴포넌트 원본 파일 하나(U115)를 Stage·Unstage하던 ABI는
+이 ADR에 기록되지 않은 채 `crates/ffi`를 넓혔습니다. 행을 표시 세대와 행 번호로 고르고, 이름 변경 64개 상한이
+있었습니다. 컴포넌트 경로는 격리 작업 트리와 `core.hooksPath=/dev/null`로 사용자 Git의 hook·filter를 우회했습니다.
+계획의 범용 Git 패널 API(XIV.13.1·XIV.13.2)와도 겹칩니다. 2026-11-15 검토에서 반려해 아래 ABI를 앱 연결과
+함께 삭제합니다.
+
+- `stellar_git_names_request`, `stellar_git_names_row`, `stellar_git_component_row`, `stellar_git_names_cancel`.
+- event `0x010C`(이름 목록과 HEAD 표시 payload)와 실패 코드 26. 두 값은 비워 두고 다시 쓰지 않습니다.
+- runtime의 창별 Git 행 캐시와 worker, 이 경로만 쓰던 helper(`WrittenCandidate::single_file`,
+  `list_working_tree_pathspec`, 공개 `git_component_library`)도 삭제했습니다.
+
+staging 코어(`prepare_stage_candidate`·`prepare_unstage_candidate`·`apply_stage_candidate`)와 프로젝트 신뢰
+요청 `stellar_project_trust`는 유지합니다. 앱 Git 패널은 신뢰 확인·승인·철회만 표시합니다. 변경 목록과
+Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID 기반 ABI로 다시 정합니다.

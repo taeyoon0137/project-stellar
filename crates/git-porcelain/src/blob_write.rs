@@ -37,14 +37,6 @@ pub struct WrittenCandidate {
 }
 
 impl WrittenCandidate {
-    /// 한 파일의 기대 mode/OID를 반영할 후보입니다. 게시 단계는 경로·충돌과 전체 기준 index를 검사합니다.
-    pub fn single_file(base: IndexSnapshot, change: WrittenFileDelta) -> Self {
-        Self {
-            base,
-            changes: vec![change],
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn for_test(base: IndexSnapshot, changes: Vec<WrittenFileDelta>) -> Self {
         Self { base, changes }

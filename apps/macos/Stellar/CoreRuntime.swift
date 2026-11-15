@@ -90,35 +90,6 @@ enum CoreRuntime {
         return .success(request)
     }
 
-    static func gitNames(handle: UInt64, session: UInt64, selection: (UInt64, UInt32)?, stage: Bool = true) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = stellar_git_names_request(handle, session, selection == nil ? 0 : (stage ? 1 : 2),
-                                              selection?.0 ?? 0, selection?.1 ?? 0, &request)
-        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
-        return .success(request)
-    }
-
-    static func cancelGitNames(handle: UInt64, session: UInt64, request: UInt64) {
-        _ = stellar_git_names_cancel(handle, session, request)
-    }
-
-    static func gitPanelRow(handle: UInt64, session: UInt64, generation: UInt64, row: UInt32) -> CoreGitChange? {
-        var length = 0
-        let nameStatus = stellar_git_names_row(handle, session, generation, row, nil, 0, &length)
-        let component = nameStatus == STELLAR_NO_ERROR
-        let read = component ? stellar_git_component_row : stellar_git_names_row
-        if component {
-            guard read(handle, session, generation, row, nil, 0, &length) == STELLAR_OK else { return nil }
-        } else if nameStatus != STELLAR_OK { return nil }
-        guard length > 0, length <= 45 + 3 * Int(STELLAR_EVENT_TEXT_MAX) else { return nil }
-        var bytes = [UInt8](repeating: 0, count: length)
-        let status = bytes.withUnsafeMutableBufferPointer {
-            read(handle, session, generation, row, $0.baseAddress, $0.count, &length)
-        }
-        guard status == STELLAR_OK, length == bytes.count else { return nil }
-        return component ? CoreRuntimeEvent.decodeComponentRow(bytes[...]) : CoreRuntimeEvent.decodeName(bytes[...])
-    }
-
     static func projectTrust(handle: UInt64, project: UInt64, decision: Bool?) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let action: UInt32 = decision.map { $0 ? 1 : 2 } ?? 0
@@ -474,29 +445,12 @@ struct CoreRuntimeCallError: Error, Equatable {
 }
 
 /// 코어 완료 event(`stellar_ffi.h` "프로젝트·문서 요청의 완료 event"). 요청마다 정확히 하나가 옵니다.
-struct CoreGitChange: Equatable {
-    let componentPath: String?
-    let document: UUID?
-    let node: UUID
-    let head: String
-    let index: String
-    let working: String
-    let staged: Bool
-    let unstaged: Bool
-}
-
-struct CoreGitPanelHead: Equatable {
-    let state: GitHeadState
-    let initialStagedFiles: UInt32?
-}
-
 enum CoreRuntimeEvent: Equatable {
     case componentCreated(request: UInt64, session: UInt64, filename: String)
     case projectCreated(request: UInt64, gitState: UInt32)
     case projectOpened(request: UInt64, project: UInt64, projectID: UUID, name: String, root: String)
     case projectClosed(request: UInt64, project: UInt64, closedDocuments: UInt32)
     case projectTrust(request: UInt64, project: UInt64, trusted: Bool)
-    case gitNames(request: UInt64, session: UInt64, rows: UInt32, other: Bool, applied: Bool, head: CoreGitPanelHead?)
     case documentOpened(request: UInt64, project: UInt64, document: UInt64, documentID: UUID, alreadyOpen: Bool)
     case documentClosed(request: UInt64, document: UInt64)
     case requestFailed(request: UInt64, failure: UInt32, message: String)
@@ -518,7 +472,7 @@ enum CoreRuntimeEvent: Equatable {
     var request: UInt64? {
         switch self {
         case .componentCreated(let request, _, _), .projectCreated(let request, _), .projectOpened(let request, _, _, _, _), .projectClosed(let request, _, _), .projectTrust(let request, _, _),
-             .gitNames(let request, _, _, _, _, _), .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
+             .documentOpened(let request, _, _, _, _), .documentClosed(let request, _),
              .requestFailed(let request, _, _), .windowSessionOpened(let request, _, _, _, _, _),
              .windowSessionClosed(let request, _), .windowViewChanged(let request, _),
              .historyReplayed(let request, _, _, _, _), .windowSessionSaved(let request, _, _, _):
@@ -552,27 +506,6 @@ enum CoreRuntimeEvent: Equatable {
                     }
                 }
             }
-        case UInt32(STELLAR_EVENT_GIT_NAMES):
-            guard let request = reader.u64(), let session = reader.u64(), let rows = reader.u32(),
-                  let other = reader.bool(), let applied = reader.bool() else { return .undecodable(kind: kind) }
-            var head: CoreGitPanelHead?
-            if !reader.isAtEnd {
-                guard let text = reader.text() else { return .undecodable(kind: kind) }
-                if text.isEmpty {
-                    let state: GitHeadState
-                    guard let tag = reader.u8(), let value = reader.text() else { return .undecodable(kind: kind) }
-                    switch tag {
-                    case 1: state = .branch(name: value)
-                    case 2: state = .detached(shortHash: String(value.prefix(7)))
-                    default: return .undecodable(kind: kind)
-                    }
-                    head = CoreGitPanelHead(state: state, initialStagedFiles: nil)
-                } else {
-                    guard let files = reader.u32() else { return .undecodable(kind: kind) }
-                    head = CoreGitPanelHead(state: .unborn(branch: text), initialStagedFiles: files)
-                }
-            }
-            event = .gitNames(request: request, session: session, rows: rows, other: other, applied: applied, head: head)
         case UInt32(STELLAR_EVENT_PROJECT_TRUST):
             event = reader.u64().flatMap { request in
                 reader.u64().flatMap { project in
@@ -670,23 +603,6 @@ enum CoreRuntimeEvent: Equatable {
     static let nilID = UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
 
     /// event payload 순차 reader(little-endian, 범위 밖이면 nil).
-    static func decodeName(_ bytes: ArraySlice<UInt8>) -> CoreGitChange? {
-        var reader = PayloadReader(bytes: bytes)
-        guard let document = reader.uuid(), let node = reader.uuid(), let staged = reader.bool(),
-              let head = reader.text(), let index = reader.text(), let working = reader.text(), reader.isAtEnd else { return nil }
-        return CoreGitChange(componentPath: nil, document: document, node: node, head: head, index: index, working: working,
-                             staged: staged, unstaged: index != working)
-    }
-
-    static func decodeComponentRow(_ bytes: ArraySlice<UInt8>) -> CoreGitChange? {
-        var reader = PayloadReader(bytes: bytes)
-        guard let id = reader.uuid(), let staged = reader.bool(), let unstaged = reader.bool(),
-              let path = reader.text(), let head = reader.text(), let index = reader.text(),
-              let working = reader.text(), reader.isAtEnd else { return nil }
-        return CoreGitChange(componentPath: path, document: nil, node: id, head: head, index: index,
-                             working: working, staged: staged, unstaged: unstaged)
-    }
-
     struct PayloadReader {
         let bytes: ArraySlice<UInt8>
         var offset: Int

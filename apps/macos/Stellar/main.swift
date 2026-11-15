@@ -100,10 +100,6 @@ if let flag = CommandLine.arguments.firstIndex(of: "--canvas-move-check") {
     exit(MainActor.assumeIsolated { ShellCanvasMoveCheck.run(fixture: fixture) } ? 0 : 1)
 }
 
-if CommandLine.arguments.contains("--git-stage-check") {
-    exit(ShellGitStageCheck.run() ? 0 : 1)
-}
-
 if CommandLine.arguments.contains("--project-trust-check") {
     exit(ShellProjectTrustCheck.run() ? 0 : 1)
 }

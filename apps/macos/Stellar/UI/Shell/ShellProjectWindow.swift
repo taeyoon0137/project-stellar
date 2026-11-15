@@ -643,7 +643,7 @@ final class ShellProjectWindow {
         windowController.windowSession?.close()
         windowController.windowSession = windowSession
         dataSource.didOpen(session)
-        gitSource.attach(session, window: windowSession)
+        gitSource.attach(session)
         toolsModel.setProjectReady(true)
         refreshSessionCommands()
         offerDocumentRecovery()

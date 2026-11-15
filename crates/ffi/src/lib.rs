@@ -15,7 +15,6 @@
 pub mod canvas;
 mod canvas_text;
 mod component_library;
-mod git_names;
 /// 양 플랫폼 공통 입력 이벤트와 native timestamp 변환 (XII.3.1).
 pub mod image;
 pub mod input;
@@ -1539,7 +1538,6 @@ mod tests {
         for (name, kind) in [
             ("STELLAR_EVENT_PROJECT_OPENED", event_kind::PROJECT_OPENED),
             ("STELLAR_EVENT_PROJECT_TRUST", event_kind::PROJECT_TRUST),
-            ("STELLAR_EVENT_GIT_NAMES", event_kind::GIT_NAMES),
             (
                 "STELLAR_EVENT_COMPONENT_CREATED",
                 event_kind::COMPONENT_CREATED,
@@ -1610,7 +1608,6 @@ mod tests {
             ("PROJECT_CLONE_FAILED", RequestFailure::ProjectCloneFailed),
             ("CLONE_TARGET_EXISTS", RequestFailure::CloneTargetExists),
             ("CLONE_CANCELLED", RequestFailure::CloneCancelled),
-            ("GIT_NAMES_UNAVAILABLE", RequestFailure::GitNamesUnavailable),
         ];
         assert_eq!(
             failures.len(),

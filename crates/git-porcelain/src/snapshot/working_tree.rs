@@ -103,15 +103,6 @@ pub fn list_working_tree_files(
     git: &GatedGitRunner,
     worktree_root: &Path,
 ) -> Result<WorkingTreeListing, GitOpError> {
-    list_working_tree_pathspec(git, worktree_root, ":/")
-}
-
-/// 지정한 Git pathspec에 해당하는 파일만 열거하고 해당 항목의 mode를 조회합니다.
-pub fn list_working_tree_pathspec(
-    git: &GatedGitRunner,
-    worktree_root: &Path,
-    pathspec: &str,
-) -> Result<WorkingTreeListing, GitOpError> {
     let output = run_ok(
         git,
         worktree_root,
@@ -123,7 +114,7 @@ pub fn list_working_tree_pathspec(
             "--exclude-standard",
             "--full-name",
             "--",
-            pathspec,
+            ":/",
         ]),
     )?;
     let records = split_nul_terminated(&output.stdout)
