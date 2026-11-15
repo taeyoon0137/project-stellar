@@ -7,12 +7,16 @@ import AppKit
 /// (`NSGlassEffectView`, 높이 36pt, 모서리 반경 18pt) 안에 도구 칸 38.5pt, 선택한 도구 뒤에
 /// 32.5×28pt 둥근 회색 선택 표시, 구분선 없음. 일반 `NSSegmentedControl`은 툴바 밖에서
 /// 구분선과 강조색 선택 표시를 그려 모양이 달라지므로 쓰지 않습니다.
+///
+/// 도구 그룹(선택 · 컨테이너 · 도형 · 내용 · 시점) 사이는 구분선 없이 간격으로만 나눕니다(UX 명세 5.1).
 final class ShellToolBarView: NSView {
     /// 툴바 도구 그룹과 같은 치수.
     enum Metrics {
         static let height: CGFloat = 36
         static let cellWidth: CGFloat = 38.5
         static let selectionSize = NSSize(width: 32.5, height: 28)
+        /// 도구 그룹 사이 간격.
+        static let groupSpacing: CGFloat = 10
         /// 캔버스 아래 가장자리와의 간격.
         static let bottomInset: CGFloat = 16
     }
@@ -48,7 +52,7 @@ final class ShellToolBarView: NSView {
 
         stack.orientation = .horizontal
         stack.spacing = 0
-        stack.distribution = .fillEqually
+        stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
         glass.contentView = stack
 
@@ -79,6 +83,9 @@ final class ShellToolBarView: NSView {
             button.target = self
             button.action = #selector(toolPressed(_:))
             button.isEnabled = isEnabled
+            if tool.startsGroup, let previous = stack.arrangedSubviews.last {
+                stack.setCustomSpacing(Metrics.groupSpacing, after: previous)
+            }
             stack.addArrangedSubview(button)
             NSLayoutConstraint.activate([
                 button.widthAnchor.constraint(equalToConstant: Metrics.cellWidth),
@@ -117,7 +124,7 @@ final class ShellToolButton: NSButton {
         image = NSImage(systemSymbolName: tool.symbolName, accessibilityDescription: tool.label)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(scale: .large))
         contentTintColor = .labelColor
-        toolTip = tool.label
+        toolTip = tool.helpTag ?? tool.label
         translatesAutoresizingMaskIntoConstraints = false
         setAccessibilityLabel(tool.label)
         setAccessibilityRole(.radioButton)

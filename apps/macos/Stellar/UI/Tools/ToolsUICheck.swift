@@ -164,7 +164,10 @@ enum ToolsUICheck {
         recorder.expect(resolve("r", 0x0F, [.control]) == nil, "⌃R이 도구로 해석됨")
         recorder.expect(resolve("r", 0x0F, repeat: true) == nil, "키 반복이 도구로 해석됨")
         recorder.expect(resolve("ㄱ", 0x0F) == .rectangle, "한글 입력 소스(ㄱ, R 위치) 해석 실패")
-        recorder.expect(resolve("p", 0x23) == nil && resolve("ㅔ", 0x23) == nil, "할당 없는 P가 도구로 해석됨")
+        recorder.expect(resolve("p", 0x23) == .polygon && resolve("ㅔ", 0x23) == .polygon, "P(한글 ㅔ 위치)가 Polygon으로 해석되지 않음")
+        let help = CanvasTool.shortcutHelp
+        recorder.expect(CanvasTool.allCases.compactMap(\.singleKey).allSatisfy { help.contains(String($0).uppercased()) },
+                        "캔버스 접근성 도움말이 단일 키 배정과 다름: \(help)")
         recorder.expect(resolve("1", 0x12) == nil, "숫자 키가 도구로 해석됨")
         recorder.expect(resolve("q", 0x0C) == nil, "할당 없는 Q가 도구로 해석됨")
 

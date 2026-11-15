@@ -21,14 +21,18 @@ struct ShellCommandID: RawRepresentable, Hashable, Sendable {
     }
 }
 
-/// 툴바 가운데 도구 영역의 도구 하나. 아이콘은 SF Symbol 이름으로만 받습니다(가이드 5.4).
+/// 하단 도구 막대의 도구 하나. 아이콘은 SF Symbol 이름으로만 받습니다(가이드 5.4).
 struct ShellToolDescriptor: Equatable, Sendable {
     /// 도구 선택 시 코어로 보낼 명령 ID.
     var id: ShellCommandID
-    /// 도구 이름. 접근성 레이블, 도움말 태그, overflow 메뉴 제목으로 씁니다(가이드 8.1, 8.3).
+    /// 도구 이름. 접근성 레이블과 overflow 메뉴 제목으로 씁니다(가이드 8.1, 8.3).
     var label: String
     /// SF Symbol 이름.
     var symbolName: String
+    /// 도움말 태그(예: "Rectangle (R)"). nil이면 `label`을 씁니다.
+    var helpTag: String? = nil
+    /// 이 도구 앞에 그룹 간격을 두는지(UX 명세 5.1).
+    var startsGroup: Bool = false
 }
 
 /// 제목 문서 메뉴, 빈 상태, 오류 복구 버튼이 실행하는 동작 하나.

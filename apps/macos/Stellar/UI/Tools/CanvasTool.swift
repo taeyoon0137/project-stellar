@@ -58,7 +58,7 @@ enum CanvasTool: String, CaseIterable {
         case .rectangle: return "r"
         case .ellipse: return "o"
         case .line: return "l"
-        case .polygon: return nil
+        case .polygon: return "p"
         case .text: return "t"
         case .image: return nil
         case .hand: return "h"
@@ -87,6 +87,22 @@ enum CanvasTool: String, CaseIterable {
         guard let key = singleKey else { return label }
         return "\(label) (\(String(key).uppercased()))"
     }
+
+    /// 도구 막대에서 이 도구 앞에 그룹 간격을 두는지. 그룹은 선택(Move) · 컨테이너(Frame) ·
+    /// 도형(Rectangle·Ellipse·Line·Polygon) · 내용(Text·Image) · 시점(Hand·Zoom)입니다(UX 명세 5.1).
+    var startsGroup: Bool {
+        switch self {
+        case .frame, .rectangle, .text, .hand: return true
+        case .move, .ellipse, .line, .polygon, .image, .zoom: return false
+        }
+    }
+
+    /// 캔버스 접근성 도움말: 단일 키 목록을 `singleKey`에서 만들어 실제 배정과 늘 같습니다.
+    static var shortcutHelp: String {
+        let keys = allCases.compactMap(\.singleKey).map { String($0).uppercased() }
+        let list = keys.dropLast().joined(separator: ", ") + (keys.count > 1 ? ", or " : "") + (keys.last ?? "")
+        return String(localized: "Press \(list) to choose a tool.", comment: "Accessibility help of the canvas; the argument lists tool keys")
+    }
 }
 
 /// 캔버스 단일 키 도구 단축키 해석기(디자인 가이드 8.2).
@@ -97,7 +113,7 @@ enum CanvasTool: String, CaseIterable {
 enum CanvasToolShortcut {
     /// 미국 ANSI 배열 가상 키 코드(Carbon `kVK_ANSI_*`와 같은 값) → 글자.
     private static let ansiKeyCodes: [UInt16: Character] = [
-        0x09: "v", 0x03: "f", 0x0F: "r", 0x1F: "o", 0x25: "l",
+        0x09: "v", 0x03: "f", 0x0F: "r", 0x1F: "o", 0x25: "l", 0x23: "p",
         0x11: "t", 0x04: "h", 0x06: "z",
     ]
 

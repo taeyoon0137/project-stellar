@@ -616,10 +616,8 @@ final class ShellProjectWindow {
             guard let session = self?.windowController.windowSession else { return false }
             return session.submitInput(event) { [weak self] in self?.canvasHost.canvasView.refreshFrames() }
         }
-        canvasHost.canvasView.setAccessibilityHelp(String(
-            localized: "Press V, F, R, O, L, P, T, H, or Z to choose a tool.",
-            comment: "Accessibility help of the canvas"
-        ))
+        // 키 목록은 `CanvasTool.singleKey`에서 만들어 실제 배정과 같습니다.
+        canvasHost.canvasView.setAccessibilityHelp(CanvasTool.shortcutHelp)
     }
 
     /// 창 도구 모델과 하단 도구 막대를 잇습니다. 도구 목록은 `CanvasTool` 전체, 선택 표시는 창 도구 모델의 현재
@@ -1080,6 +1078,7 @@ enum ShellCloseFailureChoice {
 extension CanvasTool {
     /// 하단 도구 막대에 보낼 셸 프레임 도구 항목. 명령 ID는 셸 명령 ID(예: `tool.move`)입니다.
     var shellToolDescriptor: ShellToolDescriptor {
-        ShellToolDescriptor(id: ShellCommandID(command.rawValue), label: label, symbolName: symbolName)
+        ShellToolDescriptor(id: ShellCommandID(command.rawValue), label: label, symbolName: symbolName,
+                            helpTag: helpTag, startsGroup: startsGroup)
     }
 }
