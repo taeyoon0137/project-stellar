@@ -229,7 +229,12 @@ fn v2_source_with_initial_typography_reopens_from_a_source_only_git_clone() {
     let dir = TempDir::new("v2-source-only-clone");
     git(
         &dir.path,
-        &["clone", "--no-local", source.path.to_str().unwrap(), "clone"],
+        &[
+            "clone",
+            "--no-local",
+            source.path.to_str().unwrap(),
+            "clone",
+        ],
     );
     let clone = dir.path.join("clone");
     let cloned = clone.join("view.stellar.yaml");
@@ -264,8 +269,7 @@ fn text_node_export_and_external_content_edit_preserve_payload() {
 
 #[test]
 fn invalid_text_fields_reject_check_without_overwriting() {
-    let (project, source_dir, path) =
-        exported("text-source-cli-invalid-text", text_document());
+    let (project, source_dir, path) = exported("text-source-cli-invalid-text", text_document());
     let project_before = file_digest(&project.path);
     let source = std::fs::read_to_string(&path).unwrap();
     let content_line = source

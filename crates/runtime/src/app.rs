@@ -134,11 +134,11 @@ mod git_components;
 mod git_names;
 mod image_place;
 pub use image_place::ImagePlacement;
-pub mod recovery;
 mod node_delete;
 mod node_duplicate;
 mod node_order;
 mod node_paste;
+pub mod recovery;
 pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
