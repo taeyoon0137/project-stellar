@@ -107,6 +107,12 @@ final class ShellWindowSessionHandle {
         return track({ pump.editSelection(target: target, action: action, ids: ids, completion: $0) }, completion: completion)
     }
 
+    /// 문맥 메뉴를 열기 전 선택을 코어에 맡깁니다(누른 노드나 그 조상이 선택에 있으면 유지).
+    func contextSelect(_ target: StellarSelectionTarget, node: UUID?, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
+        guard !isClosed, !isClosing, target.session == session else { return false }
+        return track({ pump.contextSelect(target: target, node: node, completion: $0) }, completion: completion)
+    }
+
     func pasteSubtree(_ data: Data, target: StellarSelectionTarget, completion: @escaping (CoreRuntimeEvent) -> Void) -> Bool {
         guard !isClosed, !isClosing, target.session == session else { return false }
         return track({ pump.pasteSubtree(target: target, data: data, completion: $0) }, completion: completion)
@@ -521,6 +527,8 @@ final class ShellProjectWindow {
     let sidebarSource = ShellSidebarSource()
     private var displayedSelection: StellarSelectionTarget?
     private var displayedOrderFlags: UInt32 = 0
+    /// 표시한 선택에 대한 코어 능력 mask(`STELLAR_SELECTION_CAN_*`). 메뉴 막대·문맥 메뉴 활성과 Hide·Lock 제목에 씁니다.
+    private(set) var displayedSelectionFlags: UInt32 = 0
     let inspectorSource = ShellInspectorSource()
     /// 창 도구 모델 → 하단 도구 막대(셸 프레임 snapshot 도구 목록) 구독.
     private var toolsObservation: ToolsMenuObservation?
@@ -574,6 +582,10 @@ final class ShellProjectWindow {
         toolsModel.toolChanged = { [weak self] tool in
             _ = self?.canvasHost.canvasView.cancelFrameGesture?()
             self?.imageToolChanged(tool)
+        }
+        windowController.didBecomeKeyHandler = { [weak self] in
+            // 다른 앱이 클립보드를 바꿨을 수 있어 Paste 활성을 다시 계산합니다.
+            self?.refreshSessionCommands()
         }
         gitSource.trustDidChange = { [weak self] trusted in
             self?.dataSource.updateTrust(trusted)
@@ -747,7 +759,7 @@ final class ShellProjectWindow {
 
     var subtreePasteboard: NSPasteboard = .general
     private static let subtreePasteboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")
-    /// 붙여 넣을 Stellar 노드가 클립보드에 있는지(캔버스 문맥 메뉴의 Paste).
+    /// 붙여 넣을 Stellar 노드가 클립보드에 있는지(메뉴 막대·문맥 메뉴의 Paste 활성).
     var hasSubtreeOnPasteboard: Bool { subtreePasteboard.types?.contains(Self.subtreePasteboardType) == true }
     let clipboardQueue = DispatchQueue(label: "xyz.taeyoon.stellar.clipboard", qos: .userInitiated)
 
@@ -762,6 +774,9 @@ final class ShellProjectWindow {
         if let target = displayedSelection, target.selection_count == 1, let handle = dataSource.session?.pump.runtimeHandle {
             displayedOrderFlags = CoreRuntime.layerOrderFlags(handle: handle, target: target)
         } else { displayedOrderFlags = 0 }
+        if let target = displayedSelection, let handle = dataSource.session?.pump.runtimeHandle {
+            displayedSelectionFlags = CoreRuntime.selectionFlags(handle: handle, target: target)
+        } else { displayedSelectionFlags = 0 }
         sidebarSource.refresh(runtime: dataSource.session?.pump.runtimeHandle, session: session, target: displayedSelection)
         if let drag = frameDrag,
            info?.revision != drag.hit.revision || view.map({ UUID(uuid: $0.active_view) }) != drag.hit.viewID ||
@@ -775,9 +790,15 @@ final class ShellProjectWindow {
         for command: ShellCommand in [.bringForward, .bringToFront, .sendBackward, .sendToBack] {
             if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
         }
-        if (displayedSelection?.selection_count ?? 0) > 0 { commands.insert(.delete) }
-        if displayedSelection?.selection_count == 1 { commands.formUnion([.duplicate, .copy, .cut]) }
-        if let target = displayedSelection, target.selection_count <= 1 { commands.insert(.paste) }
+        // 활성은 코어 능력 mask(View root·잠금 규칙 반영)로 정하고, Paste는 클립보드에 노드가 있을 때만 켭니다.
+        // Cut은 Copy 뒤 delete라 Copy가 되는 선택(삭제도 가능한 단일 선택)에서만 켭니다.
+        let selection = displayedSelectionFlags
+        if selection & UInt32(STELLAR_SELECTION_CAN_DELETE) != 0 { commands.insert(.delete) }
+        if selection & UInt32(STELLAR_SELECTION_CAN_DUPLICATE) != 0 { commands.insert(.duplicate) }
+        if selection & UInt32(STELLAR_SELECTION_CAN_COPY) != 0 { commands.formUnion([.copy, .cut]) }
+        if selection & UInt32(STELLAR_SELECTION_CAN_PASTE) != 0, hasSubtreeOnPasteboard {
+            commands.insert(.paste)
+        }
         toolsModel.setSessionState(commands: commands, zoomScale: view.flatMap { $0.has_view != 0 ? $0.zoom : nil })
         refreshLayerFlagCommands()
     }
@@ -814,6 +835,7 @@ final class ShellProjectWindow {
                     self.subtreePasteboard.clearContents()
                     self.subtreePasteboard.writeObjects([item])
                     if command == .cut { _ = self.editSelection(.delete, target: target, ids: nil) }
+                    self.refreshSessionCommands()
                 }
             }
             return true
@@ -1060,6 +1082,7 @@ final class ShellProjectWindow {
         gitSource.attach(nil)
         displayedSelection = nil
         displayedOrderFlags = 0
+        displayedSelectionFlags = 0
         sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()
         windowController.windowSession?.close()
@@ -1076,6 +1099,7 @@ final class ShellProjectWindow {
         gitSource.attach(nil)
         displayedSelection = nil
         displayedOrderFlags = 0
+        displayedSelectionFlags = 0
         sidebarSource.refresh(runtime: nil, session: nil, target: nil)
         cancelPendingClose()
         windowController.windowSession?.close()

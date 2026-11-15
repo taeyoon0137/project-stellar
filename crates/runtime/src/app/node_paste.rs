@@ -80,38 +80,7 @@ fn paste_into(
         .ok_or_else(invalid)?
         .root_frame;
     // 목적지는 현재 문서 상태의 선택에서 정합니다.
-    let parent = match window.view().selection().ids() {
-        [] => root,
-        [selected] => {
-            let payload = model.payload(*selected).ok_or_else(invalid)?;
-            if stellar_document::validate::can_have_children(payload.kind()) {
-                *selected
-            } else {
-                model
-                    .runtime_id(*selected)
-                    .and_then(|id| model.columns().parent(id))
-                    .and_then(|id| model.stable_id(id))
-                    .ok_or_else(invalid)?
-            }
-        }
-        _ => return Err(invalid()),
-    };
-    let target = model.payload(parent).ok_or_else(invalid)?;
-    if !stellar_document::validate::can_have_children(target.kind()) {
-        return Err(invalid());
-    }
-    let mut current = model.runtime_id(parent).ok_or_else(invalid)?;
-    let root = model.runtime_id(root).ok_or_else(invalid)?;
-    loop {
-        let fields = model.columns().get(current).ok_or_else(invalid)?;
-        if fields.locked {
-            return Err(invalid());
-        }
-        if current == root {
-            break;
-        }
-        current = fields.parent.ok_or_else(invalid)?;
-    }
+    let parent = paste_parent(model, root, window.view().selection().ids()).ok_or_else(invalid)?;
     let clipboard = ClipboardSubtree::decode(bytes).map_err(|_| invalid())?;
     let id = command_id(window.window(), request);
     let mut generator = fresh_generator()?;
@@ -137,6 +106,36 @@ fn paste_into(
         .insert_and_select(&transaction, inserted)
         .map_err(view_failure)?;
     Ok(inserted)
+}
+
+/// 붙여넣을 부모. 선택에서 정합니다(없으면 View root, 컨테이너 하나면 그 안, 아니면 그 부모).
+/// 부모는 자식을 가질 수 있고 그부터 root까지 잠기지 않아야 합니다. 메뉴 활성(선택 능력 mask)도 이 규칙을 씁니다.
+pub(super) fn paste_parent(
+    model: &stellar_document::model::DocumentModel,
+    root: StableId,
+    selected: &[StableId],
+) -> Option<StableId> {
+    // 선택이 없으면 root, 자식을 가질 수 있는 노드 하나면 그 노드, 아니면 그 부모입니다.
+    let parent = match selected {
+        [] => root,
+        [selected] => {
+            let payload = model.payload(*selected)?;
+            if stellar_document::validate::can_have_children(payload.kind()) {
+                *selected
+            } else {
+                model
+                    .runtime_id(*selected)
+                    .and_then(|id| model.columns().parent(id))
+                    .and_then(|id| model.stable_id(id))?
+            }
+        }
+        _ => return None,
+    };
+    let target = model.payload(parent)?;
+    if !stellar_document::validate::can_have_children(target.kind()) {
+        return None;
+    }
+    (!super::sidebar::path_locked(model, parent, root)?).then_some(parent)
 }
 
 #[cfg(test)]

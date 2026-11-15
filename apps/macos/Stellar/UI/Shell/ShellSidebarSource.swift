@@ -37,8 +37,6 @@ final class ShellSidebarSource: SidebarDataProvider {
     var select: (([UUID]) -> Void)?
     var rename: ((_ view: UUID, _ revision: UInt64, _ id: UUID, _ name: String) -> Void)?
     var setFlag: ((_ view: UUID, _ revision: UInt64, _ ids: [UUID], _ flag: ShellLayerFlag, _ value: Bool) -> Void)?
-    /// 게시할 때마다 부릅니다. 창은 선택 행의 표시·잠금 상태로 Hide·Lock 메뉴를 갱신합니다.
-    var selectionStateDidChange: (() -> Void)?
     /// 머리 줄 팝업에서 고른 View로 전환합니다.
     var openView: ((UUID) -> Void)?
     /// 창 작업 문서의 Page·View 목록과 그것을 읽은 창. 머리 줄 팝업이 씁니다.
@@ -125,40 +123,12 @@ final class ShellSidebarSource: SidebarDataProvider {
         snapshot.generation = version
         if structureChanged { snapshot.layers.structureRevision = version }
         snapshotDidChange?()
-        selectionStateDidChange?()
     }
 
-    /// `target`과 같은 게시 시점의 선택을 모두 읽었으면 그 ID들. 일부만 읽었거나 오래된 표시면 nil입니다.
-    func selectedIDs(matching target: StellarSelectionTarget) -> Set<UUID>? {
-        guard let display, display.target.matches(target), UInt64(selectedOrder.count) == target.selection_count
-        else { return nil }
-        return Set(selectedOrder.keys.map(\.uuid))
-    }
-
-    /// 표시한 선택의 행을 모두 읽었을 때 그 표시·잠금 상태. 일부만 읽었으면 nil이고, 최종 판정은 코어가 합니다.
-    var selectionFlags: (anyHidden: Bool, allLocked: Bool, canHide: Bool, canLock: Bool)? {
-        guard let display, display.target.selection_count > 0,
-              display.target.selection_count == UInt64(selectedOrder.count) else { return nil }
-        let rows = selectedOrder.keys.compactMap { snapshot.layers.rows[$0] }
-        guard rows.count == selectedOrder.count else { return nil }
-        return (rows.contains { !$0.isVisible }, rows.allSatisfy(\.isLocked),
-                canSetFlag(rows.map(\.id), blockedBySelf: true), canSetFlag(rows.map(\.id), blockedBySelf: false))
-    }
-
-    /// 잠금 규칙(D8)을 표시한 행으로 미리 확인합니다. 잠긴 조상 아래 행은 바꾸지 않고, 표시 변경은 행 자신의 잠금도
-    /// 막습니다. 최종 판정은 코어가 합니다.
-    private func canSetFlag(_ ids: [SidebarStableID], blockedBySelf: Bool) -> Bool {
+    /// 표시·잠금을 바꿀 수 있는 행들인지. 잠금 규칙(D8)은 코어가 행마다 계산한 값입니다.
+    private func canSetFlag(_ ids: [SidebarStableID], _ allowed: (SidebarLayerRow) -> Bool) -> Bool {
         guard display != nil, window?.isClosing == false, !ids.isEmpty, Set(ids).count == ids.count else { return false }
-        return ids.allSatisfy { id in
-            guard let row = snapshot.layers.rows[id], !(blockedBySelf && row.isLocked) else { return false }
-            var parent = row.parentID
-            while let current = parent {
-                guard let ancestor = snapshot.layers.rows[current] else { return false }
-                if ancestor.isLocked { return false }
-                parent = ancestor.parentID
-            }
-            return true
-        }
+        return ids.allSatisfy { snapshot.layers.rows[$0].map(allowed) == true }
     }
 
     func validate(_ command: SidebarCommand) -> SidebarCommandValidation {
@@ -171,9 +141,9 @@ final class ShellSidebarSource: SidebarDataProvider {
                 ? .allowed : .denied(.unsupported)
         case .reload: return display != nil ? .allowed : .denied(.unsupported)
         case .setVisible(let ids, _):
-            return canSetFlag(ids, blockedBySelf: true) ? .allowed : .denied(.unsupported)
+            return canSetFlag(ids, \.canHide) ? .allowed : .denied(.unsupported)
         case .setLocked(let ids, _):
-            return canSetFlag(ids, blockedBySelf: false) ? .allowed : .denied(.unsupported)
+            return canSetFlag(ids, \.canLock) ? .allowed : .denied(.unsupported)
         case .activateView(let id):
             return display != nil && window?.isClosing == false && id != snapshot.activeViewID
                 && snapshot.pages.contains { $0.views.contains { $0.id == id } } ? .allowed : .denied(.unknownNode)
@@ -212,9 +182,9 @@ final class ShellSidebarSource: SidebarDataProvider {
             reset()
             enqueue(Request(parent: nil, after: nil))
         case .setVisible(let ids, let value):
-            if let display { setFlag?(display.view, display.revision, ids.map(\.uuid), .visible, value) }
+            setFlag(ids, value: value, flag: .visible, selectionCommand: .toggleVisibility)
         case .setLocked(let ids, let value):
-            if let display { setFlag?(display.view, display.revision, ids.map(\.uuid), .locked, value) }
+            setFlag(ids, value: value, flag: .locked, selectionCommand: .toggleLock)
         case .activateView(let id):
             openView?(id.uuid)
         case .loadChildren(let id):
@@ -234,6 +204,16 @@ final class ShellSidebarSource: SidebarDataProvider {
                 select?(ids.map(\.uuid))
             }
         default: break
+        }
+    }
+
+    /// 대상이 창 선택 전체이면 메뉴 막대와 같은 선택 토글(코어가 방향을 정함)로, 아니면 그 행들에 값을 보냅니다.
+    private func setFlag(_ ids: [SidebarStableID], value: Bool, flag: ShellLayerFlag, selectionCommand: ShellCommand) {
+        guard let display else { return }
+        if matchesSelection(ids) {
+            editSelection?(selectionCommand, display.target, ids.map(\.uuid))
+        } else {
+            setFlag?(display.view, display.revision, ids.map(\.uuid), flag, value)
         }
     }
 

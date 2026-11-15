@@ -496,6 +496,65 @@ pub unsafe extern "C" fn stellar_window_layer_order_flags(
     .unwrap_or(0)
 }
 
+/// 주어진 선택 snapshot에 대한 코어 능력 mask(`STELLAR_SELECTION_CAN_*`, 토글 방향 `STELLAR_SELECTION_SHOWS`·
+/// `STELLAR_SELECTION_UNLOCKS`)를 읽습니다. 게시 시점이 다르면 0입니다. document thread를 기다리지 않습니다.
+/// # Safety
+/// `target`은 읽을 수 있는 구조체 하나를 가리켜야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_selection_flags(
+    handle: u64,
+    target: *const StellarSelectionTarget,
+) -> u32 {
+    std::panic::catch_unwind(|| {
+        let target = unsafe { target.as_ref() }?;
+        let reg = registry().lock().ok()?;
+        let state = reg.live.get(&handle)?.app.as_ref()?.state();
+        let window = state.window(WindowSessionHandle(target.session))?;
+        (window.active_view?.to_bytes() == target.view
+            && window.revision.0 == target.revision
+            && window.history_sequence == target.history_sequence
+            && u64::from(window.selection_len) == target.selection_count)
+            .then_some(window.selection_flags)
+    })
+    .ok()
+    .flatten()
+    .unwrap_or(0)
+}
+
+/// 문맥 메뉴를 열기 전 선택을 접수합니다. `node`(16바이트)나 그 조상이 이미 선택에 있으면 그대로 두고, 아니면 그 노드만
+/// 선택합니다. `node`가 null이면 선택을 비웁니다. 완료는 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다.
+/// # Safety
+/// `target`은 구조체 하나, `node`는 null 또는 16바이트를 읽을 수 있어야 하고, `out_request`는 null 또는 쓰기 가능해야 합니다.
+#[no_mangle]
+pub unsafe extern "C" fn stellar_window_context_select(
+    handle: u64,
+    target: *const StellarSelectionTarget,
+    node: *const [u8; 16],
+    out_request: *mut u64,
+) -> StellarStatus {
+    ffi_guard(move || {
+        if !out_request.is_null() {
+            unsafe { *out_request = 0 };
+        }
+        let Some(target) = (unsafe { target.as_ref() }) else {
+            return StellarStatus::NullPointer;
+        };
+        let node = (!node.is_null()).then(|| StableId::from_bytes(unsafe { *node }));
+        let target = target.runtime_target();
+        let Ok(mut reg) = registry().lock() else {
+            return StellarStatus::Internal;
+        };
+        let Some(rt) = reg.live.get_mut(&handle) else {
+            return StellarStatus::InvalidHandle;
+        };
+        let result = match rt.app() {
+            Ok(app) => app.context_select(target, node),
+            Err(status) => return status,
+        };
+        unsafe { rt.finish_request(result, out_request) }
+    })
+}
+
 /// 표시된 선택에 문서 명령을 접수합니다. Layers 요청은 대상 ID도 함께 고정합니다.
 /// # Safety
 /// `target`은 구조체 하나, `ids`는 null 또는 `count * 16`바이트를 읽을 수 있어야 합니다.

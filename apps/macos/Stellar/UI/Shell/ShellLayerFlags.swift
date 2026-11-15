@@ -1,8 +1,8 @@
 import Foundation
 
 // 레이어 표시·잠금(UX.3.4): 사이드바 행 토글과 메뉴 막대·문맥 메뉴의 Hide·Lock을 코어 `SetProperty`
-// (`node.visible`·`node.locked`)에 연결합니다. 값 해석과 잠금 규칙(D8)은 코어가 정하고, 셸은 표시한 행으로 미리
-// 비활성 여부와 메뉴 제목만 정합니다.
+// (`node.visible`·`node.locked`)에 연결합니다. 잠금 규칙(D8)·토글 방향·활성은 코어가 정하고(선택 능력 mask와 행 bit),
+// 셸은 그 값을 메뉴 활성과 제목에 옮기기만 합니다. 표시·잠금은 문서 편집이라 프로젝트 신뢰와 무관합니다(D1).
 extension ShellProjectWindow {
     func connectLayerFlags() {
         sidebarSource.setFlag = { [weak self] view, revision, ids, flag, value in
@@ -15,22 +15,15 @@ extension ShellProjectWindow {
                 self.refreshSessionCommands()
             }
         }
-        sidebarSource.selectionStateDidChange = { [weak self] in self?.refreshLayerFlagCommands() }
     }
 
-    /// 선택이 있으면 Hide·Lock을 켭니다. 사이드바가 선택 행을 모두 읽었으면 잠금 규칙과 제목을 그 값으로 정합니다.
+    /// 표시한 선택의 코어 능력 mask로 Hide·Lock 활성과 제목(Show·Unlock)을 정합니다.
     func refreshLayerFlagCommands() {
-        guard let target = windowController.windowSession?.selectionTarget, target.selection_count > 0 else {
-            toolsModel.setSelectionState(commands: [], hidden: false, locked: false)
-            return
-        }
-        let flags = sidebarSource.selectionFlags
+        let flags = displayedSelectionFlags
         var commands: Set<ShellCommand> = []
-        // View root는 레이어가 아니므로 표시·잠금을 바꾸지 않습니다(코어도 거부).
-        let rootOnly = target.selection_count == 1 && canvasHost.canvasView.primarySelectionIsRoot
-        if !rootOnly, flags?.canHide != false { commands.insert(.toggleVisibility) }
-        if !rootOnly, flags?.canLock != false { commands.insert(.toggleLock) }
-        toolsModel.setSelectionState(commands: commands, hidden: flags?.anyHidden ?? false,
-                                     locked: flags?.allLocked ?? false)
+        if flags & UInt32(STELLAR_SELECTION_CAN_HIDE) != 0 { commands.insert(.toggleVisibility) }
+        if flags & UInt32(STELLAR_SELECTION_CAN_LOCK) != 0 { commands.insert(.toggleLock) }
+        toolsModel.setSelectionState(commands: commands, hidden: flags & UInt32(STELLAR_SELECTION_SHOWS) != 0,
+                                     locked: flags & UInt32(STELLAR_SELECTION_UNLOCKS) != 0)
     }
 }

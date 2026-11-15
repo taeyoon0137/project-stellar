@@ -91,6 +91,28 @@ extension CoreRuntime {
         return .success(request)
     }
 
+    /// 같은 게시 시점의 선택에 대한 코어 능력 mask(`STELLAR_SELECTION_CAN_*`, `SHOWS`·`UNLOCKS`). 시점이 다르면 0입니다.
+    static func selectionFlags(handle: UInt64, target: StellarSelectionTarget) -> UInt32 {
+        var target = target
+        return stellar_window_selection_flags(handle, &target)
+    }
+
+    /// 문맥 메뉴를 열기 전 선택을 코어에 맡깁니다. 누른 노드(nil은 빈 곳)나 그 조상이 선택에 있으면 유지합니다.
+    static func contextSelect(handle: UInt64, target: StellarSelectionTarget, node: UUID?) -> Result<UInt64, CoreRuntimeCallError> {
+        var target = target
+        var request: UInt64 = 0
+        let status: StellarStatus
+        if let node {
+            status = withUnsafeBytes(of: node.uuid) { bytes in
+                stellar_window_context_select(handle, &target, bytes.bindMemory(to: UInt8.self).baseAddress, &request)
+            }
+        } else {
+            status = stellar_window_context_select(handle, &target, nil, &request)
+        }
+        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
+        return .success(request)
+    }
+
     static func layerOrderFlags(handle: UInt64, target: StellarSelectionTarget) -> UInt32 {
         var target = target
         return stellar_window_layer_order_flags(handle, &target)
@@ -153,7 +175,8 @@ extension CoreRuntime {
             let id = SidebarStableID(UUID(uuid: row.id))
             items.append(SidebarLayerRow(id: id, parentID: parent, kind: kind, shapeKind: SidebarShapeKind(rawValue: row.shape),
                 name: name(row.name_len), isVisible: row.flags & 1 != 0, isLocked: row.flags & 2 != 0,
-                hasChildren: row.flags & 4 != 0, isFilterMatch: true))
+                hasChildren: row.flags & 4 != 0, isFilterMatch: true, canHide: row.flags & 8 != 0,
+                canLock: row.flags & 16 != 0))
             if row.selection_order != 0 { selected[id] = row.selection_order }
         }
         return WindowLayerPage(historySequence: history, page: page, rows: items, selected: selected, primary: optionalID(info.primary),

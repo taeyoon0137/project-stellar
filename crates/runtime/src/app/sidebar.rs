@@ -1,7 +1,7 @@
 //! 창의 메모리 문서에서 활성 View의 직계 자식 한 페이지만 읽습니다.
 use super::*;
 use crate::document_thread::JobTicket;
-use stellar_document::records::NodePayload;
+use stellar_document::{model::DocumentModel, records::NodePayload};
 
 /// 한 번의 disclosure 또는 다음 페이지 요청에서 내보낼 형제 수.
 pub const PAGE_SIZE: usize = 64;
@@ -21,6 +21,10 @@ pub struct LayerRow {
     pub visible: bool,
     /// 노드 자체의 잠금 상태.
     pub locked: bool,
+    /// 표시를 바꿀 수 있는지(잠금 규칙 D8: 자신과 조상이 모두 잠기지 않음).
+    pub can_hide: bool,
+    /// 잠금을 바꿀 수 있는지(D8: 조상이 모두 잠기지 않음).
+    pub can_lock: bool,
     /// 직계 자식이 하나 이상인지 여부.
     pub has_children: bool,
     /// 선택한 순번(최초 선택이 0), 이 창에서 선택하지 않았으면 없음.
@@ -188,11 +192,74 @@ fn rename(
     Ok(())
 }
 
+/// 표시·잠금 변경을 거부한 이유.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum FlagDenied {
+    /// 대상이 없거나 중복이거나 활성 View 트리에 없습니다(오래된 표시).
+    Stale,
+    /// 잠금 규칙(D8)에 걸립니다.
+    Locked,
+}
+
+/// `node`부터 View root까지(둘 다 포함) 잠긴 노드가 있는지. `node`가 root 아래에 없으면 `None`입니다.
+pub(super) fn path_locked(model: &DocumentModel, node: StableId, root: StableId) -> Option<bool> {
+    let columns = model.columns();
+    let mut cursor = columns.get(model.runtime_id(node)?)?;
+    loop {
+        if cursor.locked {
+            return Some(true);
+        }
+        if cursor.stable_id == root {
+            return Some(false);
+        }
+        cursor = columns.get(cursor.parent?)?;
+    }
+}
+
+/// 표시 또는 잠금을 바꿀 대상과 각 대상의 지금 값(켜져 있으면 true).
+///
+/// 잠금 규칙(D8): 잠긴 조상 아래의 노드는 바꾸지 않고, 표시 변경은 노드 자신의 잠금도 막습니다.
+/// 잠금 해제는 그 노드의 잠금 명령으로만 합니다. 앱 메뉴 활성(선택 능력 mask)과 실행이 이 함수 하나를 씁니다.
+pub(super) fn flag_targets(
+    model: &DocumentModel,
+    root: StableId,
+    nodes: &[StableId],
+    flag: LayerFlag,
+) -> Result<Vec<(StableId, bool)>, FlagDenied> {
+    let columns = model.columns();
+    let mut seen = std::collections::HashSet::with_capacity(nodes.len());
+    let mut targets = Vec::with_capacity(nodes.len());
+    for &node in nodes {
+        if node == root || !seen.insert(node) {
+            return Err(FlagDenied::Stale);
+        }
+        let fields = model
+            .runtime_id(node)
+            .and_then(|id| columns.get(id))
+            .ok_or(FlagDenied::Stale)?;
+        let parent = fields
+            .parent
+            .and_then(|id| model.stable_id(id))
+            .ok_or(FlagDenied::Stale)?;
+        let inherited = path_locked(model, parent, root).ok_or(FlagDenied::Stale)?;
+        if inherited || (flag == LayerFlag::Visible && fields.locked) {
+            return Err(FlagDenied::Locked);
+        }
+        let on = match flag {
+            LayerFlag::Visible => fields.visible,
+            LayerFlag::Locked => fields.locked,
+        };
+        targets.push((node, on));
+    }
+    if targets.is_empty() {
+        return Err(FlagDenied::Stale);
+    }
+    Ok(targets)
+}
+
 /// 대상 노드들의 표시 또는 잠금을 한 transaction으로 바꿉니다. 바뀌는 값이 없으면 기록하지 않습니다.
 ///
 /// `value`가 없으면 대상이 모두 켜져 있을 때 모두 끄고, 아니면 모두 켭니다(선택 메뉴 명령).
-/// 잠금 규칙(D8): 잠긴 조상 아래의 노드는 바꾸지 않고, 표시 변경은 노드 자신의 잠금도 막습니다.
-/// 잠금 해제는 그 노드의 잠금 명령으로만 합니다.
 pub(super) fn set_flags(
     window: &mut ProjectWindowSession,
     request: RequestId,
@@ -209,60 +276,18 @@ pub(super) fn set_flags(
             "뷰·레이어·편집 상태가 변경되었습니다",
         )
     };
-    let locked = || {
-        Failure::new(
-            RequestFailure::UnknownView,
-            "잠긴 레이어는 바꿀 수 없습니다",
-        )
-    };
-    if nodes.is_empty()
-        || window.revision() != revision
-        || window.tabs().active_view() != Some(view)
-    {
+    if window.revision() != revision || window.tabs().active_view() != Some(view) {
         return Err(stale());
     }
     let model = window.document().ok_or_else(stale)?.model();
-    let root = model
-        .definition()
-        .pages
-        .iter()
-        .flat_map(|p| &p.views)
-        .find(|v| v.id == view)
-        .ok_or_else(stale)?
-        .root_frame;
-    let columns = model.columns();
-    let mut seen = std::collections::HashSet::with_capacity(nodes.len());
-    let mut targets = Vec::with_capacity(nodes.len());
-    for &node in nodes {
-        if node == root || !seen.insert(node) {
-            return Err(stale());
-        }
-        let fields = columns
-            .get(model.runtime_id(node).ok_or_else(stale)?)
-            .ok_or_else(stale)?;
-        if flag == LayerFlag::Visible && fields.locked {
-            return Err(locked());
-        }
-        let mut cursor = columns
-            .get(fields.parent.ok_or_else(stale)?)
-            .ok_or_else(stale)?;
-        loop {
-            if cursor.locked {
-                return Err(locked());
-            }
-            if cursor.stable_id == root {
-                break;
-            }
-            cursor = columns
-                .get(cursor.parent.ok_or_else(stale)?)
-                .ok_or_else(stale)?;
-        }
-        let on = match flag {
-            LayerFlag::Visible => fields.visible,
-            LayerFlag::Locked => fields.locked,
-        };
-        targets.push((node, on));
-    }
+    let root = view_root(model, view).ok_or_else(stale)?;
+    let targets = flag_targets(model, root, nodes, flag).map_err(|denied| match denied {
+        FlagDenied::Stale => stale(),
+        FlagDenied::Locked => Failure::new(
+            RequestFailure::UnknownView,
+            "잠긴 레이어는 바꿀 수 없습니다",
+        ),
+    })?;
     let value = value.unwrap_or_else(|| !targets.iter().all(|(_, on)| *on));
     let mut tx = CommandTransaction::new(
         super::frame_move::command_id(window.window(), request),
@@ -286,7 +311,18 @@ pub(super) fn set_flags(
     Ok(())
 }
 
-fn outline(model: &stellar_document::model::DocumentModel) -> Vec<OutlinePage> {
+/// 활성 View의 root Frame.
+pub(super) fn view_root(model: &DocumentModel, view: StableId) -> Option<StableId> {
+    model
+        .definition()
+        .pages
+        .iter()
+        .flat_map(|p| &p.views)
+        .find(|v| v.id == view)
+        .map(|v| v.root_frame)
+}
+
+fn outline(model: &DocumentModel) -> Vec<OutlinePage> {
     model
         .definition()
         .pages
@@ -326,6 +362,8 @@ fn read_page(
     while cursor != view.root_frame {
         cursor = ancestor(cursor)?;
     }
+    // 한 페이지의 행은 부모가 같으므로 조상 잠금을 한 번만 봅니다.
+    let parent_locked = path_locked(model, parent, view.root_frame)?;
     let mut ids = model.children_front_to_back(parent, after, PAGE_SIZE + 1)?;
     let more = ids.len() > PAGE_SIZE;
     ids.truncate(PAGE_SIZE);
@@ -364,6 +402,8 @@ fn read_page(
                 },
                 visible: fields.visible,
                 locked: fields.locked,
+                can_hide: !parent_locked && !fields.locked,
+                can_lock: !parent_locked,
                 has_children: model.columns().child_count(handle)? != 0,
                 selection_order: selection_order.get(&id).copied(),
             })

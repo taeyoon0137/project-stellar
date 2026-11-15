@@ -141,6 +141,8 @@ mod node_duplicate;
 mod node_order;
 mod node_paste;
 pub mod recovery;
+/// 표시한 선택의 코어 능력 mask와 문맥 메뉴 선택.
+pub mod selection_menu;
 pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
@@ -948,6 +950,8 @@ pub struct WindowSessionSummary {
     pub history_sequence: u64,
     /// 확정 단일 선택의 형제 이동 가능 방향(bit 0 앞, bit 1 뒤)과 흐름 부모(bit 2).
     pub order_flags: u32,
+    /// 확정 선택에 대한 편집 능력과 토글 방향([`selection_menu`]의 `CAN_*`·`HIDE_SHOWS`·`LOCK_UNLOCKS`).
+    pub selection_flags: u32,
     /// 표시 중인 primary 선택.
     pub primary_selection: Option<StableId>,
     /// 확정된 단일 선택의 Inspector 값. 문서에서 읽으며 viewport 가시성과 독립적입니다.
@@ -1031,6 +1035,7 @@ pub(crate) struct WindowEntry {
     gesture: canvas_gesture::CanvasGestureState,
     checkpoint: recovery::WindowCheckpoint,
     inspector: inspector::InspectorCache,
+    selection_caps: selection_menu::SelectionCapsCache,
 }
 
 #[derive(Debug)]
@@ -1389,6 +1394,7 @@ fn open_window_session_on_thread(
             checkpoint: recovery::WindowCheckpoint::new(recovery, handle),
             gesture: Default::default(),
             inspector: Default::default(),
+            selection_caps: Default::default(),
         },
     );
     if let Some(owner) = sessions.projects.get_mut(&project) {
@@ -1458,6 +1464,7 @@ fn window_summary(
         selection_len: clamp(session.view().selection().len()),
         history_sequence: session.history_sequence(),
         order_flags: node_order::capabilities(session),
+        selection_flags: entry.selection_caps.get(session),
         primary_selection: session.view().displayed_selection().primary(),
         selected,
         inspector,

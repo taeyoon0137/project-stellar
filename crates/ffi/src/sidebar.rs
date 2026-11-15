@@ -120,8 +120,11 @@ pub unsafe extern "C" fn stellar_window_layer_page(
             }
         }
         for (i, row) in page.rows.iter().enumerate() {
-            let flags =
-                u8::from(row.visible) | u8::from(row.locked) << 1 | u8::from(row.has_children) << 2;
+            let flags = u8::from(row.visible)
+                | u8::from(row.locked) << 1
+                | u8::from(row.has_children) << 2
+                | u8::from(row.can_hide) << 3
+                | u8::from(row.can_lock) << 4;
             unsafe {
                 rows.add(i).write(StellarLayerRow {
                     id: row.id.to_bytes(),

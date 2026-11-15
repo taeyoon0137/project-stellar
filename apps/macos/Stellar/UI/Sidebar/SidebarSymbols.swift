@@ -78,6 +78,12 @@ enum SidebarStrings {
     static let hide = String(localized: "Hide", comment: "레이어 숨기기 메뉴")
     static let lock = String(localized: "Lock", comment: "레이어 잠그기 메뉴")
     static let unlock = String(localized: "Unlock", comment: "레이어 잠금 해제 메뉴")
+    static let lockedLayerCannotHide = String(
+        localized: "Locked layers can’t be hidden.", comment: "잠긴 레이어의 비활성 표시 토글 도움말"
+    )
+    static let parentLayerLocked = String(
+        localized: "A parent layer is locked.", comment: "조상이 잠긴 레이어의 비활성 토글 도움말"
+    )
 
     // 상태 화면
     static let loading = String(localized: "Loading Layers…", comment: "레이어 로드 중")

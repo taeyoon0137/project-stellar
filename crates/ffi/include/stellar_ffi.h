@@ -377,6 +377,20 @@ typedef struct StellarSelectionTarget {
 #define STELLAR_ORDER_CAN_BACKWARD 2
 #define STELLAR_ORDER_FLOW_PARENT 4
 uint32_t stellar_window_layer_order_flags(uint64_t handle, const StellarSelectionTarget *target);
+/* 같은 게시 시점의 선택에 대한 코어 능력 mask(시점이 다르면 0). 메뉴 막대·캔버스·레이어 문맥 메뉴가 활성과 제목에 씁니다. */
+#define STELLAR_SELECTION_CAN_DELETE 1
+#define STELLAR_SELECTION_CAN_DUPLICATE 2
+#define STELLAR_SELECTION_CAN_COPY 4
+/* 지금 선택에서 정한 부모에 붙여 넣을 수 있음(클립보드 내용은 셸이 확인). */
+#define STELLAR_SELECTION_CAN_PASTE 8
+#define STELLAR_SELECTION_CAN_HIDE 16
+#define STELLAR_SELECTION_CAN_LOCK 32
+/* TOGGLE_VISIBILITY가 보이게 함(제목 Show), TOGGLE_LOCK이 잠금을 풂(제목 Unlock). */
+#define STELLAR_SELECTION_SHOWS 64
+#define STELLAR_SELECTION_UNLOCKS 128
+uint32_t stellar_window_selection_flags(uint64_t handle, const StellarSelectionTarget *target);
+/* 문맥 메뉴를 열기 전 선택: node(NULL은 빈 곳)나 그 조상(View root 제외)이 선택에 있으면 유지, 아니면 그 노드만 선택. */
+StellarStatus stellar_window_context_select(uint64_t handle, const StellarSelectionTarget *target, const uint8_t node[16], uint64_t *out_request);
 /* 활성 View가 없으면 STELLAR_NO_ERROR, 열려 있지 않은 창이면 STELLAR_INVALID_ARGUMENT입니다. */
 StellarStatus stellar_window_selection_target(uint64_t handle, uint64_t session, StellarSelectionTarget *out);
 /* NULL/0은 위 target의 선택 전체, ids가 있으면 순서와 무관하게 실제 선택 전체와 일치해야 합니다. */
@@ -487,7 +501,7 @@ StellarStatus stellar_window_canvas_line_end(uint64_t handle, uint64_t session, 
 StellarStatus stellar_window_canvas_selection(uint64_t handle, uint64_t session, StellarCanvasSelectionItem *items, size_t capacity, size_t *out_count, uint64_t *out_revision);
 
 /* 셸 worker 전용. 활성 View/revision의 직계 자식을 앞에서부터 조회합니다.
- * rows: STELLAR_LAYER_PAGE_SIZE개 caller buffer. 플래그 bit 0 표시, 1 잠금, 2 자식 있음.
+ * rows: STELLAR_LAYER_PAGE_SIZE개 caller buffer. 플래그 bit 0 표시, 1 잠금, 2 자식 있음, 3 표시 변경 가능, 4 잠금 변경 가능.
  * UTF-8 text는 페이지·View·행 이름 순서. BUFFER_TOO_SMALL은 info.text_len만큼 확보해 재호출합니다.
  * out_history(필수)에는 행의 선택 순서와 같은 시점의 창 history sequence를 씁니다. 읽지 못하면 0입니다. */
 StellarStatus stellar_window_layer_page(uint64_t handle, uint64_t session, const StellarLayerQuery *query, StellarLayerInfo *info, StellarLayerRow *rows, uint8_t *text, size_t capacity, uint64_t *out_history);

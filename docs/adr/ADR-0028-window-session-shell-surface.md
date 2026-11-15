@@ -358,6 +358,8 @@ Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모�
 - 표시·잠금은 문서 편집이므로 프로젝트 신뢰를 요구하지 않습니다(D1). `stellar_window_layer_set_flag`와
   `STELLAR_SELECTION_TOGGLE_*`는 신뢰하지 않은 프로젝트에서도 실행됩니다. 다른 선택 편집도 정리 통합(편집 경로
   신뢰 게이트 제거)으로 신뢰와 무관합니다.
+- 레이어 행 플래그(`StellarLayerRow.flags`)에 bit 3(표시 변경 가능)·bit 4(잠금 변경 가능)를 더합니다. 코어가 잠금
+  규칙으로 계산하며 셸은 행 토글 버튼의 활성에만 씁니다. 구조체 크기와 기존 bit 0–2는 그대로입니다.
 - `stellar_window_edit_selection`의 `STELLAR_SELECTION_TOGGLE_VISIBILITY`(7)·`STELLAR_SELECTION_TOGGLE_LOCK`(8)은
   메뉴 막대와 캔버스 문맥 메뉴의 Hide·Lock 명령입니다. 표시한 선택 전체가 켜져 있으면 끄고, 하나라도 꺼져
   있으면 모두 켭니다. 값은 실행 시점 문서에서 코어가 정하므로 셸이 선택 행을 모두 읽어 둘 필요가 없습니다.
@@ -365,6 +367,24 @@ Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모�
   잠금 해제는 그 노드의 잠금 변경으로만 합니다. 캔버스는 기존대로 숨긴 노드를 그리지 않고 잠긴 노드와 그 자손을
   hit 대상에서 뺍니다.
 - 기존 구조체·입력 encoding·저장 포맷은 바꾸지 않습니다. 거부는 `REQUEST_FAILED`(`UNKNOWN_VIEW`)로 옵니다.
+
+### 선택 능력 mask와 문맥 메뉴 선택 — UX.3.2·3.4
+
+- `stellar_window_selection_flags(handle, target)`는 `stellar_window_layer_order_flags`처럼 같은 게시 시점(창·
+  활성 View·revision·history sequence·선택 수가 모두 같음)의 선택에 대한 mask를 상태 snapshot에서 읽고, 시점이
+  다르면 0을 돌려줍니다. bit는 `STELLAR_SELECTION_CAN_DELETE`(1)·`CAN_DUPLICATE`(2)·`CAN_COPY`(4)·`CAN_PASTE`(8)·
+  `CAN_HIDE`(16)·`CAN_LOCK`(32)과 토글 방향 `STELLAR_SELECTION_SHOWS`(64, 표시 토글이 보이게 함)·
+  `STELLAR_SELECTION_UNLOCKS`(128, 잠금 토글이 풂)입니다. 실행 경로와 같은 규칙 함수(View root 제외, 자신·조상·
+  자손 잠금, 붙여넣을 부모)로 계산하므로 셸은 메뉴 막대·캔버스 문맥 메뉴·레이어 문맥 메뉴의 활성과 제목을 이
+  값 하나로 정합니다. 클립보드에 노드가 있는지는 셸이 확인합니다. 신뢰는 mask에 넣지 않습니다(D1).
+- 삭제 가능 여부는 선택 subtree를 훑으므로 창마다 마지막 (revision, 활성 View, 선택) 결과를 캐시하고, 셋 중
+  하나가 바뀔 때만 다시 계산합니다. 카메라 이동 같은 게시에는 다시 훑지 않습니다.
+- `stellar_window_context_select(handle, target, node, out_request)`는 캔버스 우클릭의 선택을 코어가 정합니다.
+  누른 노드나 그 조상(View root 제외)이 실행 시점의 전체 선택에 있으면 선택을 그대로 두고, 아니면 그 노드만
+  선택합니다. `node`가 null(빈 곳)이면 선택을 비웁니다. target 시점이 다르거나 노드가 활성 View에 없으면
+  `REQUEST_FAILED`(`UNKNOWN_VIEW`)입니다. 선택 변경은 기존 선택 history 규칙(같은 선택이면 기록 없음)을 따르고,
+  셸은 완료 event 뒤에 메뉴를 엽니다. 누를 노드는 셸 hit 결과이며, 클릭 선택 규칙(같은 깊이 선택)이 코어에
+  들어오면 그 규칙으로 고른 노드를 같은 진입점에 넘깁니다.
 
 ### 사이드바 머리 줄 Page › View — UX.3.5
 

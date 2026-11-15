@@ -1712,6 +1712,7 @@ mod tests {
             "stellar_window_session_select",
             "stellar_window_layer_rename",
             "stellar_window_layer_set_flag",
+            "stellar_window_context_select",
             "stellar_window_view_outline",
             "stellar_window_session_open_view",
             "stellar_window_session_set_frame_property",

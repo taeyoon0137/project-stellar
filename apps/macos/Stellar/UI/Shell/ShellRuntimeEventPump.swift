@@ -226,6 +226,11 @@ final class ShellRuntimeEventPump {
         register(CoreRuntime.openView(handle: runtimeHandle, session: session, view: view), completion)
     }
 
+    func contextSelect(target: StellarSelectionTarget, node: UUID?, completion: @escaping (CoreRuntimeEvent) -> Void)
+        -> Result<UInt64, CoreRuntimeCallError> {
+        register(CoreRuntime.contextSelect(handle: runtimeHandle, target: target, node: node), completion)
+    }
+
     func reloadComponentCanvas(_ session: UInt64, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {
         register(CoreRuntime.reloadComponentCanvas(handle: runtimeHandle, session: session), completion)
     }

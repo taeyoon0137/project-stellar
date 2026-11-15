@@ -88,10 +88,6 @@ final class CanvasView: NSView {
     private var swallowsLeftMouse = false
     private var swallowsRightMouse = false
 
-    /// 현재 primary 선택 ID와, 그것이 활성 View의 root Frame인지(문맥 메뉴가 root에 거부되는 명령을 뺍니다).
-    var primarySelectionID: UUID? { frameScene.primaryID }
-    var primarySelectionIsRoot: Bool { frameScene.primaryIsRoot }
-
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if let window {
             NotificationCenter.default.removeObserver(self, name: NSWindow.didResignKeyNotification, object: window)

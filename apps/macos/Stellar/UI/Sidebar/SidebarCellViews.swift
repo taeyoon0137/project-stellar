@@ -239,12 +239,16 @@ final class SidebarLayerCellView: SidebarNameCellView {
             label: visibilityLabel
         )
         SidebarAccessibility.setLabel(visibilityLabel, of: visibilityButton)
-        visibilityButton.toolTip = row.isVisible ? SidebarStrings.hide : SidebarStrings.show
+        // 비활성 토글의 도움말은 바꿀 수 없는 이유 한 가지를 말합니다(코어 잠금 규칙 bit).
+        visibilityButton.toolTip = !row.canLock ? SidebarStrings.parentLayerLocked
+            : !row.canHide ? SidebarStrings.lockedLayerCannotHide
+            : row.isVisible ? SidebarStrings.hide : SidebarStrings.show
 
         let lockLabel = row.isLocked ? SidebarStrings.unlockLayer(display) : SidebarStrings.lockLayer(display)
         lockButton.image = SidebarSymbols.image(row.isLocked ? SidebarSymbols.locked : SidebarSymbols.unlocked, label: lockLabel)
         SidebarAccessibility.setLabel(lockLabel, of: lockButton)
-        lockButton.toolTip = row.isLocked ? SidebarStrings.unlock : SidebarStrings.lock
+        lockButton.toolTip = !row.canLock ? SidebarStrings.parentLayerLocked
+            : row.isLocked ? SidebarStrings.unlock : SidebarStrings.lock
 
         // 행 레이블(AXCell 설명). custom action은 controller가 같은 셀에 둡니다.
         var parts = [display, kindName]

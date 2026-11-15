@@ -82,6 +82,10 @@ struct SidebarLayerRow: Equatable {
     /// 필터가 켜져 있을 때 이 행이 직접 일치했는지. 일치하지 않은 조상 행은 문맥으로만 보입니다.
     /// 필터가 꺼져 있으면 항상 `true`입니다.
     let isFilterMatch: Bool
+    /// 표시를 바꿀 수 있는지. 잠금 규칙(D8)은 코어가 계산하고 셸은 토글 활성에만 씁니다.
+    var canHide = true
+    /// 잠금을 바꿀 수 있는지(조상이 잠겼으면 false). 코어 값입니다.
+    var canLock = true
 }
 
 /// active View 하나의 레이어 트리(필터가 켜져 있으면 필터 결과 트리).
@@ -184,9 +188,9 @@ enum SidebarCommand: Equatable {
     case setSelection([SidebarStableID], primary: SidebarStableID?)
     /// 이름 변경(VII.2.5 RenameNode). 값이 같으면 셸이 보내지 않습니다.
     case renameNode(SidebarStableID, name: String)
-    /// 표시 여부(VII.2.5 SetVisibility).
+    /// 표시 여부(VII.2.5 SetVisibility). 대상이 창 선택 전체이면 실제 provider는 방향을 코어 토글에 맡깁니다.
     case setVisible([SidebarStableID], Bool)
-    /// 잠금(VII.2.5 SetLocked).
+    /// 잠금(VII.2.5 SetLocked). 방향 규칙은 `setVisible`과 같습니다.
     case setLocked([SidebarStableID], Bool)
     /// 복제(VII.2.8 DuplicateSubtree).
     case duplicate([SidebarStableID])
