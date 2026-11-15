@@ -972,19 +972,19 @@ enum InspectorUICheck {
         let sliceMedianGuard = 3.0
         let sliceGuard = 8.0
         for (name, values) in [("예열", prewarmSlices), ("미스 구성", missSlices), ("보강", refineSlices)] {
-            try UITimingCheck.require(percentile(values, 0.5) <= sliceMedianGuard,
+            try require(percentile(values, 0.5) <= sliceMedianGuard,
                         "\(name) slice 중앙값이 회귀 경계 3ms 초과: \(describeSlices(values))")
-            try UITimingCheck.require(percentile(values, 0.95) <= sliceGuard, "\(name) slice p95가 회귀 경계 8ms 초과: \(describeSlices(values))")
+            try require(percentile(values, 0.95) <= sliceGuard, "\(name) slice p95가 회귀 경계 8ms 초과: \(describeSlices(values))")
         }
         // 2ms 안이어야 하는 선택 경로: 단일 점유 상한이므로 p95로 판정합니다(가끔 느려지는 회귀도 잡음).
-        try UITimingCheck.require(percentile(updates, 0.95) <= budget, "값 변경(반영+배치+그리기) p95가 2ms 초과: \(describe(updates))")
-        try UITimingCheck.require(percentile(missToLoading, 0.95) <= budget,
+        try require(percentile(updates, 0.95) <= budget, "값 변경(반영+배치+그리기) p95가 2ms 초과: \(describe(updates))")
+        try require(percentile(missToLoading, 0.95) <= budget,
                     "캐시 미스 로딩 표시 p95가 2ms 초과: \(describe(missToLoading))")
-        try UITimingCheck.require(percentile(sameValueSwitch, 0.95) <= budget,
+        try require(percentile(sameValueSwitch, 0.95) <= budget,
                     "같은 값 예열 페이지 전환 p95가 2ms 초과: \(describe(sameValueSwitch))")
         let switchGuard = 25.0
-        try UITimingCheck.require(percentile(firstShow, 0.95) <= switchGuard, "예열 페이지 첫 표시 p95가 25ms 초과: \(describe(firstShow))")
-        try UITimingCheck.require(percentile(allValuesSwitch, 0.95) <= switchGuard,
+        try require(percentile(firstShow, 0.95) <= switchGuard, "예열 페이지 첫 표시 p95가 25ms 초과: \(describe(firstShow))")
+        try require(percentile(allValuesSwitch, 0.95) <= switchGuard,
                     "값이 모두 바뀌는 전환 p95가 25ms 초과: \(describe(allValuesSwitch))")
     }
 

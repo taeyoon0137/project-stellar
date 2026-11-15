@@ -545,7 +545,7 @@ enum GitPanelUICheck {
         try expectAccessibility(dark, "typical dark")
 
         // 프로세스 첫 상태 반영(첫 셀·글꼴·심볼 생성)이 들어 있어 느슨한 상한(한 프레임)만 둡니다. 값은 보고에 남깁니다.
-        try UITimingCheck.require(maxTurn(panel) < 1.0 / 60.0, "typical: 한 차례 점유가 한 프레임을 넘음 \(occupancy(panel))")
+        try expect(maxTurn(panel) < 1.0 / 60.0, "typical: 한 차례 점유가 한 프레임을 넘음 \(occupancy(panel))")
         report.append("typical outline/stage/deps/detail/space/arrows/reject/commit/restore/push/announce/contrast ok, rows \(outline.numberOfRows), \(occupancy(panel))")
     }
 
@@ -747,7 +747,7 @@ enum GitPanelUICheck {
 
         // 패널이 나눈 차례(드레인·UI 반영·상세·outline 다시 읽기·복원)가 각각 Debug 상한(계약 2ms의 두 배) 안이어야
         // 합니다. 값은 보고에 남깁니다.
-        try UITimingCheck.require(maxTurn(panel) < debugTurnLimit, "million: 한 차례 점유가 상한을 넘음 \(occupancy(panel))")
+        try expect(maxTurn(panel) < debugTurnLimit, "million: 한 차례 점유가 상한을 넘음 \(occupancy(panel))")
         // 사용자 펼침(검사가 expandItem을 직접 부름)은 차례 점유가 아니라 인터랙션입니다. 화면에 새로 보이는 행의 셀 생성과
         // AppKit 펼침 작업이 들어 있어 §6.3 인터랙션 10ms를 넘는 알려진 위험(명세 8장·11장)이므로 값만 보고합니다.
         let expandMs = String(format: "%.2f", harness.maxUserExpandSeconds * 1000)
@@ -1129,7 +1129,7 @@ enum GitPanelUICheck {
 
         // 화면에 보이는 창(배너 페이드 경로 실행)에서도 한 차례 점유가 Debug 상한 안이어야 합니다.
         try expect(panel.diagnostics.animatedUIUpdates > 0, "keyboard: 배너 페이드가 실행되지 않음 (visible=\(typical.window.isVisible), duration=\(panel.displayOptions.revealDuration))")
-        try UITimingCheck.require(maxTurn(panel) < debugTurnLimit, "keyboard: 보이는 창 한 차례 점유가 상한을 넘음 \(occupancy(panel))")
+        try expect(maxTurn(panel) < debugTurnLimit, "keyboard: 보이는 창 한 차례 점유가 상한을 넘음 \(occupancy(panel))")
         report.append("keyboard loop changes \(changesOrder.count)/conflicts \(conflictOrder.count)/restricted \(restrictedOrder.count) views, exits panel; ⌘Return scoped; visible window animated UI \(panel.diagnostics.animatedUIUpdates), \(occupancy(panel))")
     }
 }

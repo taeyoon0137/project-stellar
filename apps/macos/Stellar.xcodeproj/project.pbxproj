@@ -276,7 +276,6 @@
 					"*UICheck.swift",
 					InputCheck.swift,
 					TextInputCheck.swift,
-					UITimingCheck.swift,
 					CanvasWindowController.swift,
 					NativeFieldsPanel.swift,
 				);

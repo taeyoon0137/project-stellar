@@ -351,8 +351,6 @@ protocol InspectorDataSource: AnyObject {
 
 #### 측정
 
-`./scripts/macos/smoke.sh`는 기본 설정에서 아래 회귀 경계를 적용합니다. GitHub의 공유 CI-MAC Debug 실행은 각 시나리오의 표본과 초과 경고를 Actions 로그에 기록하고, 기능·레이아웃·접근성 오류 또는 표본 누락 시 실패합니다. 릴리스 성능 판정은 XVI.1의 REF-MAC에서 수행합니다.
-
 조건: Apple M3 Max, macOS 27.2, Stub 데이터, 폭 300pt, 화면에 내놓지 않은 창(통합 창처럼 인스펙터 뷰를 제약으로 담아 창이 Auto Layout 엔진을 가짐), `InspectorUICheck` 시간 검사(Release `-O`, Debug `-Onone` 모두 같은 범위). 시간은 반영 + 배치 + 그리기(`displayIfNeeded`) 합이고, 나눠 만들기는 slice마다 그 slice가 붙인 컨트롤의 그리기까지 넣었습니다. 측정은 다른 빌드가 함께 도는 기계에서 여러 차례 했고(load average 10\~16과 67\~111), 같은 검사도 실행마다 10\~40% 흔들렸습니다. "지금" 열은 이 측정들(구현 때, 리뷰 재측정, 리뷰 반영 재측정 Release·Debug 각 3회)을 모두 합친 범위입니다. "이전 구현"은 기준 커밋(24728e3) 소스를 같은 조건(제약 담은 창, 그리기 포함)으로 다시 잰 값이고, 따로 적은 것은 이전 검사 출력(그리기 제외)입니다.
 
 | 경우 | 이전 구현 | 지금 |
