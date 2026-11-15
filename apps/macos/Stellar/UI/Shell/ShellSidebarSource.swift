@@ -131,6 +131,13 @@ final class ShellSidebarSource: SidebarDataProvider {
         selectionStateDidChange?()
     }
 
+    /// `target`과 같은 게시 시점의 선택을 모두 읽었으면 그 ID들. 일부만 읽었거나 오래된 표시면 nil입니다.
+    func selectedIDs(matching target: StellarSelectionTarget) -> Set<UUID>? {
+        guard let display, display.target.matches(target), UInt64(selectedOrder.count) == target.selection_count
+        else { return nil }
+        return Set(selectedOrder.keys.map(\.uuid))
+    }
+
     /// 표시한 선택의 행을 모두 읽었을 때 그 표시·잠금 상태. 일부만 읽었으면 nil이고, 최종 판정은 코어가 합니다.
     var selectionFlags: (anyHidden: Bool, allLocked: Bool, canHide: Bool, canLock: Bool)? {
         guard let display, display.target.selection_count > 0,

@@ -22,9 +22,9 @@ extension ShellProjectWindow {
         let next: [UUID]?
         if let hit = canvas.frameHit(at: point) {
             guard info.revision == hit.revision, UUID(uuid: viewport.active_view) == hit.viewID else { return true }
-            let listed = sidebarSource.snapshot.selection
+            // 다중 선택은 레이어가 같은 게시 시점의 선택 행을 모두 읽었을 때만 압니다. 모르면 그 노드만 고릅니다.
             let selected = (info.selection_count == 1 && canvas.primarySelectionID == hit.id)
-                || (listed.count == Int(info.selection_count) && listed.contains(SidebarStableID(hit.id)))
+                || (session.selectionTarget.flatMap { sidebarSource.selectedIDs(matching: $0) }?.contains(hit.id) ?? false)
             next = selected ? nil : [hit.id]
         } else {
             next = info.selection_count > 0 ? [] : nil
@@ -40,7 +40,7 @@ extension ShellProjectWindow {
             // 완료 event 처리 중에 메뉴 추적을 시작하지 않습니다.
             DispatchQueue.main.async { [weak self, weak session] in
                 guard let self, let session, self.windowController.windowSession === session, !session.isClosing,
-                      self.canvasHost.canvasView.window?.isKeyWindow == true else { return }
+                      self.canvasHost.canvasView.window?.isVisible == true else { return }
                 let current = self.canvasHost.canvasView.primarySelectionID
                 guard expected.map({ current == $0 }) ?? (session.info?.selection_count == 0) else { return }
                 self.popUpCanvasContextMenu(at: point)
