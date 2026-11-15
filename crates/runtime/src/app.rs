@@ -885,6 +885,20 @@ pub struct ProjectSummary {
 }
 
 impl ProjectSummary {
+    /// 연 폴더가 같은 실제 target이고 매니페스트 ID가 그대로인지 확인합니다. 신뢰 상태는 보지 않습니다.
+    fn verify_location(&self) -> Result<(), String> {
+        let root = &self.canonical_root;
+        if self.root.canonicalize().ok().as_deref() != Some(root) {
+            return Err("열린 프로젝트 폴더가 바뀌었습니다".into());
+        }
+        let probe = safe_probe(root, TrustStatus::NotTrusted).map_err(|e| e.to_string())?;
+        if parse_project_id(&probe.manifest.project.id) != Some(self.project_id) {
+            return Err("열린 프로젝트 ID가 바뀌었습니다".into());
+        }
+        Ok(())
+    }
+
+    /// [`Self::verify_location`]에 더해 OS 사용자 신뢰 저장소가 이 프로젝트를 아직 신뢰하는지 확인합니다.
     fn verify_trust(&self) -> Result<(), String> {
         let root = &self.canonical_root;
         if self.root.canonicalize().ok().as_deref() != Some(root) {
@@ -899,11 +913,7 @@ impl ProjectSummary {
         if store.status(&identity) != TrustStatus::Trusted {
             return Err("프로젝트 신뢰가 필요합니다".into());
         }
-        let probe = safe_probe(root, TrustStatus::NotTrusted).map_err(|e| e.to_string())?;
-        if parse_project_id(&probe.manifest.project.id) != Some(self.project_id) {
-            return Err("열린 프로젝트 ID가 바뀌었습니다".into());
-        }
-        Ok(())
+        self.verify_location()
     }
 }
 

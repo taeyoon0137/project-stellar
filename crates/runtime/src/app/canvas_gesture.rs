@@ -1459,7 +1459,9 @@ mod tests {
         parent_space: bool,
         duplicate: bool,
     ) -> bool {
-        let scene = CanvasCache::default().current(window, None, &mut Default::default()).unwrap();
+        let scene = CanvasCache::default()
+            .current(window, None, &mut Default::default())
+            .unwrap();
         apply_edit(
             window,
             &scene,
@@ -1625,7 +1627,9 @@ mod tests {
     }
 
     fn edit(window: &mut ProjectWindowSession, request: u64, edit: CanvasEdit) -> bool {
-        let scene = CanvasCache::default().current(window, None, &mut Default::default()).unwrap();
+        let scene = CanvasCache::default()
+            .current(window, None, &mut Default::default())
+            .unwrap();
         apply_edit(window, &scene, RequestId(request), sid(3), edit).is_ok()
     }
 
@@ -2364,12 +2368,18 @@ mod tests {
         let mut state = CanvasGestureState::default();
         let scene = cache.current(&session, None, &mut shared);
         let first = state.selection_items(&session, scene.as_ref());
-        let again = state.selection_items(&session, cache.current(&session, None, &mut shared).as_ref());
+        let again = state.selection_items(
+            &session,
+            cache.current(&session, None, &mut shared).as_ref(),
+        );
         assert!(Arc::ptr_eq(&first, &again));
         session
             .select(Selection::new([sid(12)], Some(sid(12))))
             .unwrap();
-        let changed = state.selection_items(&session, cache.current(&session, None, &mut shared).as_ref());
+        let changed = state.selection_items(
+            &session,
+            cache.current(&session, None, &mut shared).as_ref(),
+        );
         assert_eq!(changed[0].id, sid(12));
         assert!(state.selection_items(&session, None).is_empty());
     }

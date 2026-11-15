@@ -76,6 +76,8 @@ pub struct CanvasScene {
 pub(crate) struct CanvasComponentLibrary {
     pub(crate) revision: stellar_ops::revision::ProjectRevision,
     pub(crate) source_hash: ContentHash,
+    /// 읽을 때 쓴 symlink 정책. 신뢰를 철회하면 외부 target을 읽은 결과를 버립니다.
+    pub(crate) access: stellar_ops::component_source::ExternalAccess,
     pub(crate) definitions: stellar_document::component::definition::ComponentLibrary,
 }
 
@@ -170,8 +172,9 @@ impl CanvasCache {
         self.replace_library(next)
     }
 
-    /// 신뢰 철회처럼 진행 중인 읽기와 무관하게 정의 집합을 비웁니다. 그 뒤 끝나는 읽기는 반영 시점의 신뢰를
-    /// 다시 확인합니다.
+    /// 신뢰 철회처럼 진행 중인 읽기와 무관하게 정의 집합을 비웁니다. 외부 target을 읽은 정의를 버리고, 셸이
+    /// 다시 요청한 읽기가 외부 target을 읽지 않는 정책으로 정의를 채웁니다. 그 사이 끝나는 읽기는 반영 시점의
+    /// 신뢰를 다시 확인합니다.
     pub(crate) fn clear_library(&mut self) -> bool {
         self.replace_library(None)
     }

@@ -24,11 +24,7 @@ pub(crate) fn wheel_pan_points(input: &InputEvent) -> Option<(f64, f64)> {
     let InputEventKind::Wheel(wheel) = input.kind() else {
         return None;
     };
-    let held = [
-        Modifiers::CONTROL,
-        Modifiers::ALT,
-        Modifiers::META,
-    ];
+    let held = [Modifiers::CONTROL, Modifiers::ALT, Modifiers::META];
     if held
         .iter()
         .any(|modifier| wheel.modifiers.contains(*modifier))

@@ -1,8 +1,9 @@
 import AppKit
 
 extension ShellProjectWindow {
-    /// 이 창의 컴포넌트 원본을 다시 읽습니다(신뢰 확인·변경과 복구 뒤). 신뢰된 프로젝트면 코어가 그 프로젝트의
-    /// 원본 감시(FSEvents 하나)를 시작하고, 이후 원본 변경은 요청 없는 event로 `componentSourcesDidChange`에 옵니다.
+    /// 이 창의 컴포넌트 원본을 다시 읽습니다(신뢰 확인·변경과 복구 뒤). 읽기는 신뢰와 무관하고, 신뢰 상태는 프로젝트 밖
+    /// symlink 내용을 읽을지만 정합니다. 코어가 그 프로젝트의 원본 감시(FSEvents 하나)를 시작하고, 이후 원본 변경은
+    /// 요청 없는 event로 `componentSourcesDidChange`에 옵니다.
     func reloadComponentCanvas() {
         guard let project = dataSource.session, let session = windowController.windowSession,
               !session.isClosing, !session.isClosed else { return }

@@ -667,14 +667,19 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - `stellar_window_reload_component_canvas(handle, session, out_request)`는 그 창 프로젝트의 `design/components/`
   원본을 문서 thread 밖 worker에서 읽고, document thread에서 창 표시 목록의 정의 집합만 바꿉니다. 문서·history·
   선택은 바꾸지 않습니다. 완료는 `WINDOW_VIEW_CHANGED`, 창이 닫혔으면 `REQUEST_FAILED`(`UNKNOWN_WINDOW_SESSION`)입니다.
-  읽기는 시작 순서를 가지며, 늦게 끝난 이전 읽기는 새 결과를 덮지 않습니다. 반영 시점에 프로젝트가 신뢰되지 않으면
-  정의를 비우고, 신뢰를 철회하면 진행 중인 읽기와 무관하게 비웁니다.
+  읽기는 시작 순서를 가지며, 늦게 끝난 이전 읽기는 새 결과를 덮지 않습니다.
+- 읽기와 감시는 프로젝트 신뢰와 무관합니다(사용자 결정 D1, ADR-0061 결정 8). 창 세션의 신뢰 상태는
+  `ExternalAccess::from_trust`로 symlink 정책만 정합니다. 신뢰하지 않은 프로젝트는 프로젝트 안 원본을 읽어 인스턴스를
+  그리고, 프로젝트 밖 target의 내용은 읽지 않습니다. 외부 target을 읽는 정책으로 시작한 읽기는 반영 시점에 신뢰가
+  철회됐으면 버리고, 신뢰를 철회하면 진행 중인 읽기와 무관하게 정의를 비웁니다. 셸은 신뢰 상태가 바뀔 때마다 다시
+  읽기를 요청하므로, 철회 뒤에는 외부 target을 읽지 않는 정책으로 정의가 다시 채워집니다. 이전 구현(2026-11-15 통합
+  시점)은 신뢰하지 않은 프로젝트의 읽기·감시를 통째로 막아, 제한 모드에서 배치한 인스턴스가 그려지지 않았습니다.
 - 표시 목록에서 컴포넌트 인스턴스는 override가 없는 경우에만 정의 Frame 트리를 펼친 행(flags bit3)으로 그립니다.
   override가 있거나 정의를 찾지 못한 인스턴스는 그리지 않고 `skipped`로 셉니다. override 표시가 필요해지면 캔버스
   투영을 문서의 `InstanceExpansion` 결과로 옮깁니다(후속).
-- **원본 감시**: 코어가 신뢰된 프로젝트 session마다 XIII.2 `FsEventsWatcher` 하나를 둡니다. 그 프로젝트 창의 첫
-  재읽기 요청에서 시작하고, 프로젝트가 닫히거나 신뢰를 잃거나 창이 모두 닫히면 끝납니다(감시 thread가 250ms마다
-  상태 snapshot을 확인). `design/components` 폴더 자체나 그 바로 아래 `*.stellar.yaml`의 변경, 또는 넘침을 보면
+- **원본 감시**: 코어가 프로젝트 session마다(신뢰와 무관) XIII.2 `FsEventsWatcher` 하나를 둡니다. 그 프로젝트 창의
+  첫 재읽기 요청에서 시작하고, 프로젝트가 닫히거나 창이 모두 닫히면 끝납니다(감시 thread가 250ms마다 상태
+  snapshot을 확인). `design/components` 폴더 자체나 그 바로 아래 `*.stellar.yaml`의 변경, 또는 넘침을 보면
   (`FileWatchEvent::affects_component_sources`) 그 프로젝트의 모든 창에 재읽기를 예약합니다. 앱·CLI·내장 터미널·Git
   checkout 중 무엇이 고쳤는지 구분하지 않으므로 창이 계속 key 창이어도 반영됩니다.
 - **요청 없는 event**: 감시가 예약한 재읽기로 정의가 실제로 바뀐 창에는 request 0인 `WINDOW_VIEW_CHANGED`를 보냅니다.

@@ -288,8 +288,9 @@ StellarStatus stellar_project_create(uint64_t handle, const uint8_t *path, size_
 StellarStatus stellar_project_clone(uint64_t handle, const uint8_t *url, size_t url_len, const uint8_t *target, size_t target_len, uint64_t *out_request);
 StellarStatus stellar_project_clone_cancel(uint64_t handle, uint64_t request);
 
-/* 창의 컴포넌트 원본을 worker에서 다시 읽고 완료 WINDOW_VIEW_CHANGED를 보냅니다. 신뢰된 프로젝트면 코어가
- * 그 프로젝트의 원본 감시를 시작하고, 이후 원본이 바뀌면 요청 없는 WINDOW_VIEW_CHANGED(request 0)를 보냅니다. */
+/* 창의 컴포넌트 원본을 worker에서 다시 읽고 완료 WINDOW_VIEW_CHANGED를 보냅니다. 신뢰와 무관하게 읽고(신뢰하지
+ * 않은 프로젝트는 프로젝트 밖 target 내용만 읽지 않음), 코어가 그 프로젝트의 원본 감시를 시작합니다. 이후 원본이
+ * 바뀌면 요청 없는 WINDOW_VIEW_CHANGED(request 0)를 보냅니다. */
 StellarStatus stellar_window_reload_component_canvas(uint64_t handle, uint64_t session, uint64_t *out_request);
 
 /* 속성 패널(UX.2.2, ADR-0070). 확정 선택의 CSS 속성 행을 게시 snapshot에서 읽습니다. 텍스트는 이름(단일 선택이면 레이어

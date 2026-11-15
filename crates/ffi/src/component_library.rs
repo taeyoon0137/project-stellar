@@ -1,6 +1,7 @@
 //! 컴포넌트 원본 캔버스 재읽기를 위한 네이티브 셸 API(ADR-0028).
 //!
-//! 원본 감시는 코어가 신뢰된 프로젝트 session마다 하나 두며 셸에 fd를 넘기지 않습니다. 감시가 예약한 재읽기
+//! 읽기와 감시는 신뢰와 무관합니다(신뢰하지 않은 프로젝트는 프로젝트 밖 target 내용만 읽지 않음, ADR-0061 결정 8).
+//! 원본 감시는 코어가 프로젝트 session마다 하나 두며 셸에 fd를 넘기지 않습니다. 감시가 예약한 재읽기
 //! 결과는 요청 없는 `WINDOW_VIEW_CHANGED`와 `stellar_runtime_event_ready_fd` 신호로 돌아옵니다.
 use crate::{ffi_guard, registry, StellarStatus};
 use stellar_runtime::app::WindowSessionHandle;
