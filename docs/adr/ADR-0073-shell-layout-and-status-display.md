@@ -140,7 +140,7 @@ Accepted (2026-11-15). 제품 책임자가 UX 명세(`docs/design/ux/stellar-ux-
 
 - 프로젝트 파일 포맷, 공개 API, FFI, 스키마를 바꾸지 않습니다. 셸 표시와 메뉴 구성만 바뀝니다.
 - 창 상태 기록: 보조 패널 split autosave(`StellarMainWindow.CenterSplit`)는 더 쓰지 않습니다. 남은 기록은 무시하며, 창 프레임과 3열 pane 폭·접힘 복원은 깨지지 않아야 합니다(UX.1.1 검증 기준).
-- 메뉴에서 빠지는 명령의 `ShellCommand`와 단축키는 기능 행이 들어올 때까지 다른 명령에 쓰지 않고 예약합니다(`docs/design/ui/tools_menus.md` 6.1).
+- 메뉴에서 빼는 명령은 `ShellCommand` case와 단축키도 함께 지웁니다. 기능 행이 그 명령을 다시 추가할 때 단축키를 `docs/design/ui/tools_menus.md` 6.1 표와 단축키 감사(`ShortcutPolicy`)에 함께 넣습니다. 그 명령들이 쓰던 HIG 표준 단축키(⌘F, ⌘G 등)는 감사의 표준 표가 계속 다른 의미로 쓰지 못하게 막습니다.
 
 ## Performance
 

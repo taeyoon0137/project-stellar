@@ -25,7 +25,7 @@
 
 | 파일 | 역할 |
 |---|---|
-| `ShellCommand.swift` | 명령 enum(70개). 제목, 범위(앱·창), 소유(셸·코어), 표준 action, 단축키, SF Symbol |
+| `ShellCommand.swift` | 명령 enum. 제목, 범위(앱·창), 소유(셸·코어), 표준 action, 단축키, SF Symbol |
 | `CanvasTool.swift` | 도구 enum(10개), `CanvasToolShortcut` 단일 키 해석기 |
 | `KeyShortcut.swift` | 단축키 값 타입, 표시 문자열, 물리 키 정규화 |
 | `ShortcutPolicy.swift` | HIG 표준·시스템 단축키 표와 충돌 감사 |
@@ -74,17 +74,18 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 - 도구는 위 순서로 캔버스 하단 가운데 도구 막대(`ShellToolBarView`)에 그립니다. 막대 안은 선택(Move) · 컨테이너(Frame) · 도형(Rectangle·Ellipse·Line·Polygon) · 내용(Text·Image) · 시점(Hand·Zoom) 그룹 사이를 간격으로만 나눕니다(UX.1.3). [UX 명세 5.1]
 - Polygon의 단일 키 P는 결정 U6입니다. 기준선 `02397601`의 `CanvasTool.singleKey`에는 아직 없고 UX.1.3에서 연결하며, 도움말·툴팁·메뉴의 키 표시를 `CanvasTool.singleKey`와 같게 맞춥니다. [결정 U6]
 
-줌 항목의 pull-down 메뉴: Zoom In, Zoom Out, 구분선, Actual Size, Zoom to Fit, Zoom to Selection. 이 메뉴에는 key equivalent를 넣지 않습니다. 단축키는 View 메뉴에만 둡니다(같은 단축키를 두 메뉴에 두지 않음).
+줌 항목의 pull-down 메뉴: Zoom In, Zoom Out, 구분선, Actual Size, Zoom to Fit. Zoom to Selection은 기준선 `02397601`에서 늘 비활성이라 UX.1.2에서 뺐고, 기능 행이 다시 추가합니다. 이 메뉴에는 key equivalent를 넣지 않습니다. 단축키는 View 메뉴에만 둡니다(같은 단축키를 두 메뉴에 두지 않음).
 
 ### 3.2 메뉴 막대
 
 순서는 앱(Stellar), File, Edit, View, 앱 고유 메뉴(Insert, Object, Git), Window, Help입니다. Format 메뉴는 서식 있는 텍스트 편집 명령이 아직 없으므로 두지 않습니다. 생기면 Edit와 View 사이에 넣습니다. [HIG The menu bar] [가이드 8.1] 앱 고유 메뉴는 Insert(만들기 도구), Object(순서·묶음·잠금 같은 객체 명령), Git으로 정했습니다(가이드 O8 닫음). [결정 U16]
 
-아래 목록은 명령의 자리입니다. 메뉴에는 기능이 연결된 명령만 넣습니다. 기능 행이 들어오기 전의 명령은 영구 비활성으로 진열하지 않고, 그 행이 메뉴 항목을 함께 추가합니다. [가이드 8.1] [UX 명세 2장 P1, 3.6]
+아래 목록은 UX.1.2 뒤의 메뉴 구성입니다. 메뉴에는 기능이 연결된 명령만 넣습니다. 기능 행이 들어오기 전의 명령은 영구 비활성으로 진열하지 않고, 그 행이 메뉴 항목을 함께 추가합니다. [가이드 8.1] [UX 명세 2장 P1, 3.6]
 
-- 기준선 `02397601`에서 영구 비활성인 항목(Cut, Select All, Find ▸, Show Rulers, Group·Ungroup·Frame Selection, Align ▸·Distribute ▸, Flip, Lock·Hide 등)은 UX.1.2에서 메뉴에서 뺍니다. 정확한 목록은 그 행에서 코드의 활성 명령 집합과 대조해 정합니다.
+- 기준선 `02397601`에서 늘 비활성이던 항목(Deselect All, Find ▸, Zoom to Selection, Show Rulers, Group·Ungroup·Frame Selection, Align ▸·Distribute ▸, Flip, Lock·Hide)은 UX.1.2에서 `ShellCommand` case·단축키와 함께 뺍니다. 기능 행이 그 명령을 다시 추가할 때 아래 목록, 6.1 표, 단축키 감사에 함께 넣습니다. 자리는 Deselect All·Find ▸가 Edit, Zoom to Selection·Show Rulers가 View, 나머지가 Object입니다.
+- Cut·Select All은 남깁니다. 텍스트 필드 편집 중에는 field editor가 처리해 그때 활성이고, 캔버스에서는 선택·편집 맥락이 없을 때만 비활성입니다.
 - Create Component from Selection…은 D3에 따라 당분간 두지 않습니다.
-- Help ▸ Stellar Help는 도움말 콘텐츠가 생기기 전에는 두지 않습니다.
+- Help ▸ Stellar Help는 도움말 콘텐츠가 생기기 전에는 두지 않습니다. Help 메뉴는 시스템 메뉴 검색 필드를 위해 항목 없이 남깁니다.
 - Git 메뉴(UX.5.8): 변경 보기, 커밋, Push, 다음 충돌로 이동, 상태 새로 고침, 프로젝트 신뢰…. 기능이 연결된 항목부터 보입니다.
 - View 메뉴에 더할 항목: 탭 전환(오른쪽 ⌥⌘1–3, 결정 U17), "변경 윤곽 늘 보기"(UX.6.4), "에이전트 출처 윤곽 보기"(UX.10.6), 스냅 토글(XII.10.17). 각 기능 행이 들어올 때 추가합니다.
 
@@ -92,21 +93,22 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 
 - **Stellar**: About Stellar | Settings… | Services ▸ | Hide Stellar, Hide Others, Show All | Quit Stellar
 - **File**: New Project…, Open Project…, Clone Project… | Close, Close Project | Save Now
-- **Edit**: Undo, Redo | Cut, Copy, Paste, Delete, Duplicate | Select All, Deselect All | Find ▸ (Find…, Find Next, Find Previous)
-- **View**: Show Toolbar, Customize Toolbar… | Show Sidebar, Show Inspector | Zoom In, Zoom Out, Actual Size, Zoom to Fit, Zoom to Selection | Move Tool, Hand Tool, Zoom Tool | Show Rulers | Enter Full Screen
+- **Edit**: Undo, Redo | Cut, Copy, Paste, Delete, Duplicate | Select All
+- **View**: Show Toolbar, Customize Toolbar… | Show Sidebar, Show Inspector | Zoom In, Zoom Out, Actual Size, Zoom to Fit | Move Tool, Hand Tool, Zoom Tool | Enter Full Screen
 - **Insert**: Frame | Rectangle, Ellipse, Line, Polygon | Text | Image
-- **Object**: Group, Ungroup, Frame Selection | Bring to Front, Bring Forward, Send Backward, Send to Back | Align ▸ (Align Left, Align Center, Align Right | Align Top, Align Middle, Align Bottom), Distribute ▸ (Distribute Horizontally, Distribute Vertically) | Flip Horizontal, Flip Vertical | Lock, Hide
+- **Object**: Bring to Front, Bring Forward, Send Backward, Send to Back
+- **Git**: (UX.5.8에서 추가) 변경 보기, 커밋, Push, 다음 충돌로 이동, 상태 새로 고침, 프로젝트 신뢰…
 - **Window**: Minimize, Minimize All(Option 동적 항목), Zoom | Bring All to Front (창 목록은 시스템이 덧붙임)
-- **Help**: Stellar Help
+- **Help**: (항목 없음, 시스템 메뉴 검색 필드만)
 
 규칙:
 
 - 모든 명령 항목은 `ShellCommand` 하나에 대응합니다. 항목 identifier는 `xyz.taeyoon.stellar.command.<rawValue>`이고, 하위 메뉴 컨테이너만 명령이 없습니다. [계획 XII.6.5]
-- 툴바의 모든 명령은 메뉴 막대에도 있습니다(도구 10개는 View·Insert, 줌 5개는 View). [HIG Toolbars] [가이드 6.1]
-- 추가 입력이 필요한 명령에만 말줄임표를 붙입니다(Settings…, New/Open/Clone Project…, Find…, Customize Toolbar…). 도구 선택은 체크 표시가 붙는 모드 전환이라 Image를 포함해 말줄임표를 붙이지 않습니다. [HIG The menu bar] [가이드 8.1]
+- 툴바의 모든 명령은 메뉴 막대에도 있습니다(도구 10개는 View·Insert, 줌 4개는 View). [HIG Toolbars] [가이드 6.1]
+- 추가 입력이 필요한 명령에만 말줄임표를 붙입니다(Settings…, New/Open/Clone Project…, Customize Toolbar…). 도구 선택은 체크 표시가 붙는 모드 전환이라 Image를 포함해 말줄임표를 붙이지 않습니다. [HIG The menu bar] [가이드 8.1]
 - 제목 형식: View 메뉴의 Move Tool·Hand Tool·Zoom Tool은 탐색 도구라 "Tool"을 붙이고, Insert 메뉴 항목은 만들 대상 이름(Frame, Rectangle, …)만 씁니다. 메뉴 이름이 이미 "삽입"을 말하므로 대상 이름이 더 짧고 명확합니다.
 - 메뉴에 있는 항목이 잠깐 쓸 수 없으면(선택 없음 등) 숨기지 않고 비활성화하고, 이유는 한 가지로 도움말에 적습니다. 기능이 없는 항목은 위 규칙대로 메뉴에 두지 않습니다. [HIG The menu bar] [가이드 8.1]
-- 표시·숨김 항목의 제목은 현재 상태를 반영합니다. Show/Hide Sidebar·Inspector·Toolbar와 Enter/Exit Full Screen은 AppKit이 바꾸고, Show/Hide Rulers, Lock/Unlock, Hide/Show는 `ShellCommandPresentation`이 snapshot으로 바꿉니다. [HIG The menu bar]
+- 표시·숨김 항목의 제목은 현재 상태를 반영합니다. Show/Hide Sidebar·Inspector·Toolbar와 Enter/Exit Full Screen은 AppKit이 바꿉니다. Show/Hide Rulers, Lock/Unlock, Hide/Show는 그 명령을 다시 추가하는 행이 `ShellCommandPresentation`과 snapshot 값을 함께 넣습니다. [HIG The menu bar]
 - 메뉴 아이콘: macOS 26은 표준 action 항목(undo:, copy:, performClose: 등)에 시스템 아이콘을 붙입니다. 셸 명령 항목에는 같은 의미의 SF Symbol을 붙이고, 구분선으로 나뉜 그룹에 아이콘이 없는 표준 항목(예: toggleInspector:, toggleToolbarShown:)이 섞이면 그 항목만 SF Symbol로 채웁니다. 시스템 아이콘은 바꾸지 않습니다. 결과적으로 모든 그룹이 아이콘을 모두 갖거나 모두 갖지 않습니다. [가이드 8.1] [HIG The menu bar]
 
 ## 4. 상태
@@ -117,7 +119,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 | 빈 상태(열린 프로젝트 창 없음) | 창 router가 응답자 체인에 없음 | 앱 수준 셸 명령(Settings…, New/Open/Clone Project…)은 앱 수준 router가 받아 활성. About·Hide·Quit·Help는 AppKit 표준 동작. 창 수준 명령은 받을 대상이 없어 AppKit이 비활성화 | 창이 없으므로 툴바 없음 |
 | 로딩(세션 준비 중) | 코어가 `enabledCommands`를 비우거나 줄여 보냄 | 숨기지 않고 비활성 | 도구 그룹·줌 항목 `isEnabled = false`, 마지막 배율 제목 유지 |
 | 오류(명령 거부·실패) | 명령 뒤 snapshot이 바뀌지 않거나 다른 값을 보고함 | 다음 snapshot 기준으로 다시 검증 | 도구 클릭으로 바뀐 선택을 snapshot의 도구로 되돌림. 오류 설명 alert는 해당 기능이 맡음 |
-| 텍스트 편집 중 | first responder가 `NSText`(field editor 포함) | 객체 명령(Duplicate, Deselect All, Object 메뉴 전체) 비활성. Cut·Copy·Paste·Delete·Select All은 field editor가, Undo·Redo는 창 undo manager가 처리("Undo Typing") | 변화 없음(도구·줌은 텍스트 편집과 무관) |
+| 텍스트 편집 중 | first responder가 `NSText`(field editor 포함) | 객체 명령(Duplicate, Object 메뉴 전체) 비활성. Cut·Copy·Paste·Delete·Select All은 field editor가, Undo·Redo는 창 undo manager가 처리("Undo Typing") | 변화 없음(도구·줌은 텍스트 편집과 무관) |
 | 오래된 snapshot | `generation`이 이미 반영한 값보다 작음 | 해당 없음(메뉴는 매번 최신 snapshot을 읽음) | 무시 |
 
 - 셸은 낙관적으로 상태를 바꾸지 않습니다. 단 도구 그룹 세그먼트는 클릭 순간 AppKit이 먼저 선택을 바꾸므로, 명령이 거부되면 snapshot의 도구로 되돌립니다. [아키텍처 §9.3]
@@ -140,7 +142,7 @@ Xcode 프로젝트는 file-system synchronized group(`PBXFileSystemSynchronizedR
 
 ### 5.2 줌
 
-- 툴바 줌 pull-down, View 메뉴, 단축키가 같은 줌 명령 5개를 씁니다.
+- 툴바 줌 pull-down, View 메뉴, 단축키가 같은 줌 명령 4개를 씁니다.
 - 줌 단계, 맞춤·선택 영역 맞춤 계산은 코어 camera가 정합니다. 셸은 snapshot의 `zoomScale`만 표시합니다. [계획 XII.4.3] [가이드 9]
 - Stub은 ×2 / ÷2(2%~25600%)와 맞춤 명령 시 100%만 흉내 냅니다.
 
@@ -162,7 +164,7 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 
 분류: **표준**은 HIG Keyboards 표준 단축키 표의 원래 의미, **AppKit**은 AppKit 기본 메인 메뉴 템플릿의 관례, **사용자 정의**는 HIG 사용자 정의 규칙에 맞춘 Stellar 지정입니다.
 
-표는 명령 자리 전체의 단축키 배정입니다. 3.2절 규칙으로 메뉴에서 빠진 명령의 단축키는 기능 행이 들어올 때까지 다른 명령에 쓰지 않고 예약해 둡니다. Git 메뉴와 탭 전환(⌥⌘1–3) 단축키는 해당 행(UX.5.8, UX.7.1·UX.10.3)이 이 표에 더합니다.
+표는 UX.1.2 뒤 메뉴에 있는 명령의 단축키 배정입니다. UX.1.2에서 뺀 명령은 `ShellCommand` case와 단축키도 함께 지웠고, 기능 행이 그 명령을 다시 추가할 때 단축키를 이 표와 단축키 감사(`ShortcutPolicy`)에 함께 넣습니다. ⌘F·⌘G·⌘{처럼 그 명령들이 쓰던 HIG 표준 단축키는 6.3절 규칙 3이 계속 다른 의미로 쓰지 못하게 막습니다. Git 메뉴와 탭 전환(⌥⌘1–3) 단축키는 해당 행(UX.5.8, UX.7.1·UX.10.3)이 이 표에 더합니다.
 
 | 메뉴 | 항목 | 단축키 | 명령 ID | 분류 |
 |---|---|---|---|---|
@@ -186,10 +188,6 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | Edit | Delete | — | `edit.delete` | — |
 | Edit | Duplicate | ⌘D | `edit.duplicate` | 사용자 정의 |
 | Edit | Select All | ⌘A | `edit.select_all` | 표준 |
-| Edit | Deselect All | ⇧⌘A | `edit.deselect_all` | 표준 |
-| Edit ▸ Find | Find… | ⌘F | `edit.find` | 표준 |
-| Edit ▸ Find | Find Next | ⌘G | `edit.find_next` | 표준 |
-| Edit ▸ Find | Find Previous | ⇧⌘G | `edit.find_previous` | 표준 |
 | View | Show/Hide Toolbar | ⌥⌘T | `view.toggle_toolbar` | 표준 |
 | View | Customize Toolbar… | — | `view.customize_toolbar` | — |
 | View | Show/Hide Sidebar | ⌃⌘S | `view.toggle_sidebar` | AppKit(예외, 6.3) |
@@ -198,11 +196,9 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | View | Zoom Out | ⌘- | `view.zoom_out` | 표준(선택 크기 줄이기) |
 | View | Actual Size | ⌘0 | `view.zoom_actual_size` | 사용자 정의 |
 | View | Zoom to Fit | ⌘9 | `view.zoom_to_fit` | 사용자 정의 |
-| View | Zoom to Selection | ⌘* | `view.zoom_to_selection` | 사용자 정의 |
 | View | Move Tool | 캔버스 V | `tool.move` | 단일 키(6.2) |
 | View | Hand Tool | 캔버스 H | `tool.hand` | 단일 키 |
 | View | Zoom Tool | 캔버스 Z | `tool.zoom` | 단일 키 |
-| View | Show/Hide Rulers | ⌘R | `view.toggle_rulers` | 사용자 정의(계획 XII.10.19, Stub에서 비활성) |
 | View | Enter/Exit Full Screen | ⌃⌘F | `view.toggle_full_screen` | 표준 |
 | Insert | Frame | 캔버스 F | `tool.frame` | 단일 키 |
 | Insert | Rectangle | 캔버스 R | `tool.rectangle` | 단일 키 |
@@ -211,28 +207,17 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | Insert | Polygon | 캔버스 P | `tool.polygon` | 단일 키(결정 U6, UX.1.3) |
 | Insert | Text | 캔버스 T | `tool.text` | 단일 키 |
 | Insert | Image | ⇧⌘K | `tool.image` | 사용자 정의 |
-| Object | Group | ⌥⌘G | `object.group` | 사용자 정의(예외, 6.3) |
-| Object | Ungroup | ⌥⇧⌘G | `object.ungroup` | 사용자 정의(예외, 6.3) |
-| Object | Frame Selection | — | `object.frame_selection` | — |
 | Object | Bring to Front | — | `object.bring_to_front` | — |
 | Object | Bring Forward | ⌘] | `object.bring_forward` | 사용자 정의 |
 | Object | Send Backward | ⌘[ | `object.send_backward` | 사용자 정의 |
 | Object | Send to Back | — | `object.send_to_back` | — |
-| Object ▸ Align | Align Left | ⌘{ | `object.align_left` | 표준(왼쪽 정렬) |
-| Object ▸ Align | Align Center | ⌘\| | `object.align_center` | 표준(가운데 정렬) |
-| Object ▸ Align | Align Right | ⌘} | `object.align_right` | 표준(오른쪽 정렬) |
-| Object ▸ Align | Align Top, Align Middle, Align Bottom | — | `object.align_top` 등 | — |
-| Object ▸ Distribute | Distribute Horizontally, Distribute Vertically | — | `object.distribute_*` | — |
-| Object | Flip Horizontal, Flip Vertical | — | `object.flip_*` | — |
-| Object | Lock/Unlock | — | `object.toggle_lock` | — |
-| Object | Hide/Show | — | `object.toggle_visibility` | — |
 | Window | Minimize | ⌘M | `window.minimize` | 표준 |
 | Window | Minimize All(Option 동적) | ⌥⌘M | `window.minimize_all` | 표준 |
 | Window | Zoom | — | `window.zoom` | — |
 | Window | Bring All to Front | — | `window.bring_all_to_front` | — |
-| Help | Stellar Help | ⌘? | `help.app_help` | 표준 |
 
-- 표기는 HIG 순서(Control, Option, Shift, Command)를 따르고, 두 글자 키의 윗글자는 Shift 없이 그 글자로 씁니다(⌘+, ⌘{, ⌘?, ⌘*). [HIG Keyboards]
+- 표기는 HIG 순서(Control, Option, Shift, Command)를 따르고, 두 글자 키의 윗글자는 Shift 없이 그 글자로 씁니다(예: ⌘+). [HIG Keyboards]
+- UX.1.2에서 뺀 명령의 기준선 `02397601` 배정(다시 추가할 때 참고): Deselect All ⇧⌘A, Find… ⌘F, Find Next ⌘G, Find Previous ⇧⌘G, Zoom to Selection ⌘*, Show Rulers ⌘R(계획 XII.10.19), Group ⌥⌘G, Ungroup ⌥⇧⌘G, Align Left ⌘{, Align Center ⌘|, Align Right ⌘}, Stellar Help ⌘?. Frame Selection, Align Top·Middle·Bottom, Distribute, Flip, Lock, Hide에는 단축키가 없었습니다.
 - Zoom In의 숨은 보조 항목(⌘=)은 `isHidden` + `allowsKeyEquivalentWhenHidden`이라 메뉴에 보이지 않고 Shift 없이 누른 경우도 받습니다.
 - Bring to Front·Send to Back에는 단축키를 두지 않습니다. 대괄호에 Option을 더하면 모든 키보드 배열에서 입력할 수 없는 문자에 수식키를 더하는 형태가 되기 때문입니다. [HIG Keyboards]
 
@@ -254,21 +239,21 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 
 ### 6.3 충돌 점검
 
-`ShortcutPolicy.audit()`가 모든 메뉴 단축키(숨은 보조 포함 42개)를 미국 ANSI 물리 키로 정규화한 뒤(예: ⌘+ → ⇧⌘=, ⌘{ → ⇧⌘[) 다음을 검사합니다. `ToolsUICheck`가 실행할 때마다 확인하며 현재 결과는 **문제 0건**입니다.
+`ShortcutPolicy.audit()`가 모든 메뉴 단축키(숨은 보조 포함)를 미국 ANSI 물리 키로 정규화한 뒤(예: ⌘+ → ⇧⌘=) 다음을 검사합니다. `ToolsUICheck`가 실행할 때마다 확인하며 현재 결과는 **문제 0건**입니다.
 
 1. 같은 물리 키 조합을 서로 다른 명령이 쓰지 않습니다.
 2. 시스템 전역 단축키를 쓰지 않습니다. HIG 표준 표의 시스템 항목(⌘Space, ⌘Tab, ⌘\`, ⌥⌘Esc, ⇧⌘3·4, ⌥⌘8, ⌥⌘-·=, ⌥⌘D, ⌃⌘D, ⇧⌘Q, ⌃⌥⌘,·. 등)과 표 밖 시스템 단축키(⇧⌘5, ⌃⌘Q)가 대상입니다.
-3. HIG 표준 단축키는 원래 의미의 명령에만 씁니다. Stellar가 쓰지 않는 표준 단축키는 비워 둡니다: ⌘B, ⌘I, ⌘U, ⌘T(Format 메뉴용), ⇧⌘C, ⌥⌘C, ⌃⌘C, ⌘E, ⌥⌘F, ⌘J, ⌘P, ⇧⌘P, ⇧⌘S, ⇧⌘V, ⌥⌘V, ⌥⇧⌘V, ⌃⌘V, ⌥⌘W, ⌘:, ⌘;, ⌘.
+3. HIG 표준 단축키는 원래 의미의 명령에만 씁니다. Stellar가 쓰지 않는 표준 단축키는 비워 둡니다: ⌘B, ⌘I, ⌘U, ⌘T(Format 메뉴용), ⇧⌘C, ⌥⌘C, ⌃⌘C, ⌘E, ⌥⌘F, ⌘J, ⌘P, ⇧⌘P, ⇧⌘S, ⇧⌘V, ⌥⌘V, ⌥⇧⌘V, ⌃⌘V, ⌥⌘W, ⌘:, ⌘;, ⌘. UX.1.2 뒤에는 ⇧⌘A(Deselect All), ⌘F·⌘G·⇧⌘G(Find), ⌘{·⌘|·⌘}(정렬), ⌘?(Help)도 비워 둔 목록에 들어갑니다.
 4. 사용자 정의 단축키는 Command를 포함하고 Control을 쓰지 않습니다(예외 아래).
-5. 관련 없는 기존 단축키에 Shift·Option·Control만 더한 파생 단축키를 만들지 않습니다. Undo/Redo, Select All/Deselect All, Find Next/Previous, Close/Close Project, Minimize/Minimize All, Hide/Hide Others, Group/Ungroup은 서로 관련된 묶음으로 봅니다.
+5. 관련 없는 기존 단축키에 Shift·Option·Control만 더한 파생 단축키를 만들지 않습니다. Undo/Redo, Close/Close Project, Minimize/Minimize All, Hide/Hide Others는 서로 관련된 묶음으로 봅니다. Select All/Deselect All, Find Next/Previous, Group/Ungroup은 그 명령을 다시 추가하는 행이 묶음에 더합니다.
 
 의도적 예외와 근거:
 
 | 명령 | 단축키 | 규칙 | 근거 |
 |---|---|---|---|
 | Show/Hide Sidebar | ⌃⌘S | 4(Control), 5(⌘S 파생) | AppKit 기본 메인 메뉴 템플릿의 Show Sidebar 관례. 가이드 2.3의 "표준 단축키" 경로 |
-| Group | ⌥⌘G | 5(⌘G Find Next 파생) | ⌘G는 표준 Find Next라 재사용하지 않음. 그룹은 자주 쓰는 명령이라 Option 변형을 씀. macOS 문서 편집 앱의 묶기 단축키 관례로 알려져 있으나 이 작업에서 직접 확인하지 못함 |
-| Ungroup | ⌥⇧⌘G | 5 | Group과 짝 |
+
+기준선 `02397601`에는 Group(⌥⌘G)·Ungroup(⌥⇧⌘G) 예외도 있었습니다(⌘G는 표준 Find Next라 재사용하지 않고 Option 변형을 씀). Group 명령을 다시 추가하는 행이 이 근거와 함께 예외를 다시 넣습니다.
 
 감사기 자체의 음성 검사: 표준 재사용(⌘B), 시스템 단축키(⌘Space), 충돌, Command 없음, Control 사용, 파생(⇧⌘B), 정규화 충돌(⌘+ 대 ⇧⌘=)을 일부러 넣으면 모두 문제로 보고하는지 `ToolsUICheck`가 확인합니다.
 
@@ -302,6 +287,8 @@ New/Open/Clone Project와 Settings는 창이 없어도 동작해야 하므로 `M
 | Flip H | `arrow.left.and.right.righttriangle.left.righttriangle.right` | Flip V | `arrow.up.and.down.righttriangle.up.righttriangle.down` |
 | 하위 메뉴 Find / Align / Distribute | `magnifyingglass` / `align.horizontal.left` / `distribute.horizontal.center` | | |
 
+위 표의 Deselect All, Find, Zoom to Selection, Rulers, Group·Ungroup, Frame Selection, Align, Distribute, Flip, Lock·Hide 줄은 UX.1.2 전 기준선 기록입니다. 그 명령을 다시 추가하는 행이 Symbol을 다시 확인합니다.
+
 표준 action 항목 중 macOS 27.2 실행에서 시스템 아이콘이 붙는 것으로 관찰한 항목(About, Hide, Hide Others, Show All, Quit, Undo, Redo, Cut, Copy, Paste, Delete, Select All, Close, Show Sidebar, Customize Toolbar, Minimize, Zoom, Bring All to Front, Help)은 시스템 아이콘을 그대로 씁니다. 같은 실행에서 Show Toolbar, Show Inspector, Enter Full Screen에는 시스템 아이콘이 없었고, 앞의 둘은 같은 그룹 규칙에 따라 위 표의 값으로 채웁니다(Enter Full Screen은 혼자인 그룹이라 아이콘 없음). 검사는 모든 Symbol 이름이 실행 OS에 있는지 확인합니다. 이미지 에셋은 쓰지 않습니다. [가이드 5.4]
 
 ## 9. 데이터·명령 경계(프로토콜)
@@ -314,9 +301,6 @@ struct ToolsMenuSnapshot: Equatable {
     var enabledCommands: Set<ShellCommand>
     var undoActionName: String?
     var redoActionName: String?
-    var rulersVisible: Bool
-    var selectionIsLocked: Bool
-    var selectionIsHidden: Bool
 }
 
 protocol ToolsMenuModel: AnyObject {
@@ -332,13 +316,13 @@ protocol ToolsMenuModel: AnyObject {
 - FFI 표현 제안: `enabledCommands`는 command ID 비트셋, `activeTool`은 작은 정수 tag, 이름 문자열은 UTF-8 `(ptr, len)`. 형식은 코어 command ID가 정해질 때 함께 정합니다.
 - 메뉴 검증은 `snapshot` 읽기와 제목 비교만 하므로 메인 스레드 예산 안입니다. 측정값은 10장에 있습니다. [아키텍처 §6.3]
 - `ShellCommandCoreIDs`: command ID는 코어가 정합니다. 앱 구성(UI/Shell)이 코어 소유 명령마다 공유 이름(`rawValue`, 예: `edit.undo`)으로 코어에 물어(`stellar_command_code`) 표를 만들고, 셸 전용 명령(창·메뉴·툴바·시스템 동작)과 코어가 아직 구현하지 않은 명령은 ID가 없습니다. UI/Tools는 FFI를 모르므로 조회 함수를 받기만 합니다. [계획 XII.6.5] [ADR-0028]
-- `ToolsMenuModelStub`: 코어 없이 영역을 띄우는 의도적 placeholder입니다. FFI를 호출하지 않고, 도구 전환·줌·Lock/Hide만 흉내 내며, 눈금자와 Redo를 비활성으로 둡니다. 이 제한은 검사가 확인합니다. [계획 1.2 규칙 6]
+- `ToolsMenuModelStub`: 코어 없이 영역을 띄우는 의도적 placeholder입니다. FFI를 호출하지 않고, 도구 전환·줌만 흉내 내며, Redo를 비활성으로 둡니다. 이 제한은 검사가 확인합니다. [계획 1.2 규칙 6]
 
 ## 10. 검사
 
 `ToolsUICheck.run()`(통합 시 `scripts/macos/smoke.sh`에 연결)은 Stub 데이터로 메뉴·router·툴바를 화면 밖에 만들고 다음을 확인합니다. 실패 항목은 표준 오류로 출력합니다.
 
-- 명령 70개: 제목, 말줄임표 규칙, SF Symbol 존재, identifier 왕복, 코어 ID Stub(셸 전용 nil, 코어 소유 고유·임시 접두사)
+- 모든 명령: 제목, 말줄임표 규칙, SF Symbol 존재, identifier 왕복, 코어 ID Stub(셸 전용 nil, 코어 소유 고유·임시 접두사)
 - 단축키 감사 0건, 감사기 음성 검사 7종
 - 단일 키 해석: 10개 도구, Caps Lock, 수식키·반복 거부, 한글 입력 소스(물리 키), `NSEvent` 경로
 - 메뉴: 최상위 순서, 모든 명령 항목의 `ShellCommand` 대응·action·target·key equivalent, 모든 명령이 메뉴에 정확히 한 번 보임, 동적 항목, 아이콘 그룹 균일, Services 연결
@@ -375,5 +359,5 @@ protocol ToolsMenuModel: AnyObject {
 |---|---|---|
 | 가이드 O8 앱 고유 메뉴 | Insert(만들기 도구), Object(순서·묶음·정렬·분배·뒤집기·잠금·숨김), Git | 확정(결정 U16). 기능이 연결된 항목만 보임(3.2절) |
 | 단일 키 배정 | 6.2절 표(Polygon P, Image 없음) | 확정(결정 U6). 코드 연결은 UX.1.3 |
-| 줌 단축키 | ⌘+/⌘-/⌘0/⌘9/⌘* | 제안, XII.6.5에서 정함 |
+| 줌 단축키 | ⌘+/⌘-/⌘0/⌘9(⌘*는 Zoom to Selection을 다시 추가할 때) | 제안, XII.6.5에서 정함 |
 | 도구 표현 | 상단 툴바가 아니라 캔버스 하단 가운데 도구 막대, 그룹 사이 간격 | 확정(2026-11-14 사용자 결정). 그룹 간격은 UX.1.3 |
