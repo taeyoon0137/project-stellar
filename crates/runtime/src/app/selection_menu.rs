@@ -1,16 +1,16 @@
 //! 표시한 선택에 대한 코어 능력 mask와 문맥 메뉴를 열 때의 선택(UX.3.2·3.4).
 //!
 //! 메뉴 막대·캔버스 문맥 메뉴·레이어 문맥 메뉴는 이 mask 하나로 활성과 제목(Show·Unlock)을 정합니다. 실행 경로와 같은
-//! 규칙 함수(`editable_selected_roots`, `flag_targets`, `paste_parent`)를 쓰므로 활성인 항목은 코어가 받습니다.
-use super::node_delete::{editable_selected_roots, SelectionEditTarget};
+//! 규칙 함수(`editable_selected_roots`, `unlocked_selected_roots`, `flag_targets`, `paste_parent`)를 쓰므로 활성인 항목은 코어가 받습니다.
+use super::node_delete::{editable_selected_roots, unlocked_selected_roots, SelectionEditTarget};
 use super::sidebar::{flag_targets, path_locked, view_root, LayerFlag};
 use super::*;
 
 /// 선택 subtree를 삭제할 수 있습니다(View root가 아니고, 자신·조상·자손이 잠기지 않음).
 pub const CAN_DELETE: u32 = 1;
-/// 단일 선택 subtree를 복제할 수 있습니다.
+/// 단일 선택 subtree를 복제할 수 있습니다(View root가 아니고 자신·조상이 잠기지 않음. 잠긴 자손은 막지 않음).
 pub const CAN_DUPLICATE: u32 = 2;
-/// 단일 선택 subtree를 클립보드로 복사할 수 있습니다.
+/// 단일 선택 subtree를 클립보드로 복사할 수 있습니다(복제와 같은 규칙).
 pub const CAN_COPY: u32 = 4;
 /// 지금 선택에서 정한 부모에 붙여 넣을 수 있습니다(클립보드 내용은 셸이 확인).
 pub const CAN_PASTE: u32 = 8;
@@ -64,8 +64,11 @@ fn capabilities(window: &ProjectWindowSession, view: StableId, revision: Documen
     if selected.is_empty() {
         return flags;
     }
-    if let Ok(roots) = editable_selected_roots(window, view, revision) {
+    if editable_selected_roots(window, view, revision).is_ok() {
         flags |= CAN_DELETE;
+    }
+    // 복제·복사는 원본을 바꾸지 않으므로 잠긴 자손을 막지 않습니다(ADR-0070 결정 5).
+    if let Ok(roots) = unlocked_selected_roots(window, view, revision) {
         if selected.len() == 1 && roots.len() == 1 {
             flags |= CAN_DUPLICATE | CAN_COPY;
         }
@@ -187,8 +190,12 @@ mod tests {
         );
         // 다중 선택은 복제·복사·붙여넣기를 받지 않고, 잠긴 자손(30)이 있는 12 때문에 삭제도 안 됩니다.
         assert_eq!(caps(&mut session, &[11, 12]), CAN_HIDE | CAN_LOCK);
-        // 잠긴 자손이 있는 부모는 삭제·복제·복사가 안 되지만 표시·잠금은 됩니다(자손 잠금은 부모 토글을 막지 않음).
-        assert_eq!(caps(&mut session, &[12]), CAN_PASTE | CAN_HIDE | CAN_LOCK);
+        // 잠긴 자손이 있는 부모는 삭제가 안 되지만 복제·복사와 표시·잠금은 됩니다(ADR-0070 결정 5: 복제·복사는
+        // 원본을 바꾸지 않아 Option 드래그·CLI duplicate-subtree와 같게 자손을 보지 않음. 자손 잠금은 부모 토글도 막지 않음).
+        assert_eq!(
+            caps(&mut session, &[12]),
+            CAN_DUPLICATE | CAN_COPY | CAN_PASTE | CAN_HIDE | CAN_LOCK
+        );
         // 잠긴 노드는 잠금 해제만 됩니다(제목 Unlock). 그 아래 노드는 아무것도 안 됩니다.
         assert_eq!(caps(&mut session, &[30]), CAN_LOCK | LOCK_UNLOCKS);
         assert_eq!(caps(&mut session, &[31]), 0);

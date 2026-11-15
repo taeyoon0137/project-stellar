@@ -835,11 +835,15 @@ final class ShellProjectWindow {
             if let flag = command.layerOrderFlag, displayedOrderFlags & flag != 0 { commands.insert(command) }
         }
         // 활성은 코어 능력 mask(View root·잠금 규칙 반영)로 정하고, Paste는 클립보드에 노드가 있을 때만 켭니다.
-        // Cut은 Copy 뒤 delete라 Copy가 되는 선택(삭제도 가능한 단일 선택)에서만 켭니다.
+        // Cut은 Copy 뒤 delete라 Copy와 Delete가 함께 되는 선택에서만 켭니다. 복사는 잠긴 자손을 막지 않지만
+        // 삭제는 막으므로(ADR-0070 결정 5) 두 mask를 모두 봅니다.
         let selection = displayedSelectionFlags
         if selection & UInt32(STELLAR_SELECTION_CAN_DELETE) != 0 { commands.insert(.delete) }
         if selection & UInt32(STELLAR_SELECTION_CAN_DUPLICATE) != 0 { commands.insert(.duplicate) }
-        if selection & UInt32(STELLAR_SELECTION_CAN_COPY) != 0 { commands.formUnion([.copy, .cut]) }
+        if selection & UInt32(STELLAR_SELECTION_CAN_COPY) != 0 { commands.insert(.copy) }
+        if selection & UInt32(STELLAR_SELECTION_CAN_COPY) != 0, selection & UInt32(STELLAR_SELECTION_CAN_DELETE) != 0 {
+            commands.insert(.cut)
+        }
         if selection & UInt32(STELLAR_SELECTION_CAN_PASTE) != 0, hasSubtreeOnPasteboard {
             commands.insert(.paste)
         }

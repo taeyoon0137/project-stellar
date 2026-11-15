@@ -81,6 +81,13 @@ ADR-0024는 디자인 속성의 이름·값 문법을 CSS longhand로 정하고(
    씁니다(2026-11-15 교차 검토: 처음 문구 "판정은 `NodeLock` 하나"는 정리 통합의 공용 판정을 전제로 했으나, 그
    커밋을 옮기지 않아 사실과 달랐습니다). 이름·표시·잠금 편집은 Layers와 같은 command(`rename_node`·`set_visibility`·
    `set_locked`, VII.2.5 `SetProperty` specialization)입니다. 편집은 신뢰와 무관합니다(D1).
+   복제·복사는 원본 subtree를 바꾸지 않으므로 선택 root와 그 조상(자신 포함)만 확인하고 잠긴 자손은 막지
+   않습니다. ⌘D·Copy(runtime `unlocked_selected_roots`), 캔버스 Option 드래그 복제(`editable_ancestry`),
+   `stellar apply`의 `duplicate-subtree`가 이 규칙으로 같습니다. 삭제·잘라내기는 잠긴 자손이 부모와 함께
+   사라지면 안 되므로 자손까지 봅니다(`editable_selected_roots`). 그래서 Cut은 Copy와 Delete 능력이 모두 있을
+   때만 켭니다(2026-11-15 최종 통합 검토: 처음에는 ⌘D·Copy만 잠긴 자손을 거부해 Option 드래그·CLI와 달랐습니다.
+   D8은 잠긴 node의 수정을 막는 규칙이라 복제 쪽을 맞췄습니다). 자기 자신이 잠긴 node의 복제는 앱이 거부하고
+   CLI는 허용하는 차이가 남아 있고, UX.3.11에서 함께 모읍니다.
 6. **ABI 기준 하나**: 속성마다 C ABI 함수를 새로 두지 않습니다. 속성 패널의 선택 snapshot은
    `stellar_window_inspector`, 편집은 `stellar_window_edit_property` 하나가 기준입니다.
    - 이 lane에서 셸의 Frame 전용 경로(`CoreRuntime.resizeFrame`·`selectedFrameRadii`·`setFrameCorner`·

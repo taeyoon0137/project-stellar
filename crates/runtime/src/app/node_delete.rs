@@ -140,8 +140,36 @@ fn delete_selected(
     Ok(())
 }
 
-/// 선택한 subtree와 조상의 편집 가능 여부를 document thread에서 확인합니다.
+/// 선택한 subtree와 조상의 편집 가능 여부를 document thread에서 확인합니다. 삭제·잘라내기용이라
+/// subtree 안에 잠긴 자손이 있어도 거부합니다(잠긴 자손이 부모와 함께 사라지면 안 됨).
 pub(super) fn editable_selected_roots(
+    window: &ProjectWindowSession,
+    view: StableId,
+    revision: DocumentRevision,
+) -> Result<Vec<StableId>, Failure> {
+    let roots = unlocked_selected_roots(window, view, revision)?;
+    let invalid = || {
+        Failure::new(
+            RequestFailure::UnknownView,
+            "편집할 선택·뷰·잠금 상태가 변경되었습니다",
+        )
+    };
+    let model = window.document().ok_or_else(invalid)?.model();
+    // A locked descendant must not disappear with an unlocked parent.
+    let mut pending = roots.clone();
+    while let Some(node) = pending.pop() {
+        if model.record(node).ok_or_else(invalid)?.locked {
+            return Err(invalid());
+        }
+        pending.extend(model.children_in_order(node));
+    }
+    Ok(roots)
+}
+
+/// 선택 root와 그 조상(자기 자신 포함)이 잠기지 않았는지만 확인합니다. 복제(⌘D)·복사용입니다.
+/// 원본 subtree를 바꾸지 않으므로 잠긴 자손은 막지 않습니다. 캔버스 Option 드래그 복제
+/// (`editable_ancestry`)와 CLI `duplicate-subtree`도 자손을 보지 않습니다(ADR-0070 결정 5, D8).
+pub(super) fn unlocked_selected_roots(
     window: &ProjectWindowSession,
     view: StableId,
     revision: DocumentRevision,
@@ -189,14 +217,6 @@ pub(super) fn editable_selected_roots(
         if !covered {
             roots.push(node);
         }
-    }
-    // A locked descendant must not disappear with an unlocked parent.
-    let mut pending = roots.clone();
-    while let Some(node) = pending.pop() {
-        if model.record(node).ok_or_else(invalid)?.locked {
-            return Err(invalid());
-        }
-        pending.extend(model.children_in_order(node));
     }
     Ok(roots)
 }

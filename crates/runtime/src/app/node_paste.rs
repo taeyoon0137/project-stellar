@@ -43,7 +43,7 @@ fn copy_from(
     view: StableId,
     revision: DocumentRevision,
 ) -> Option<Vec<u8>> {
-    let roots = super::node_delete::editable_selected_roots(window, view, revision).ok()?;
+    let roots = super::node_delete::unlocked_selected_roots(window, view, revision).ok()?;
     if roots.len() != 1 || window.view().selection().ids().len() != 1 {
         return None;
     }

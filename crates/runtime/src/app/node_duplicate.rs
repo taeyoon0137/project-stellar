@@ -1,6 +1,6 @@
 //! 단일 선택 subtree를 같은 부모 아래에 복제하고 한 history 항목으로 선택합니다.
 use super::frame_move::{command_id, FreshIds};
-use super::node_delete::editable_selected_roots;
+use super::node_delete::unlocked_selected_roots;
 use super::*;
 use stellar_commands::{
     command::Command, duplicate::DuplicateSubtree, id::CommandOrigin,
@@ -17,7 +17,7 @@ pub(super) fn duplicate_selected(
     if window.view().selection().ids().len() != 1 {
         return Err(invalid());
     }
-    let roots = editable_selected_roots(window, view, revision)?;
+    let roots = unlocked_selected_roots(window, view, revision)?;
     let source = roots[0];
     let model = window.document().ok_or_else(invalid)?.model();
     let parent = model
@@ -117,7 +117,6 @@ mod tests {
             (vec![11], None, 4),
             (vec![11], Some(10), 3),
             (vec![11], Some(11), 3),
-            (vec![11], Some(12), 3),
         ] {
             let mut model = sample_document();
             let mut child = model.remove_leaf(sid(12)).unwrap();
@@ -136,5 +135,27 @@ mod tests {
             assert_eq!(session.revision(), rev);
             assert!(!session.has_unsaved_changes());
         }
+    }
+
+    #[test]
+    fn duplicate_keeps_a_locked_descendant_locked_in_the_copy() {
+        // 복제는 원본을 바꾸지 않으므로 잠긴 자손이 있어도 됩니다(ADR-0070 결정 5, Option 드래그·CLI와 같음).
+        let mut model = sample_document();
+        let mut child = model.remove_leaf(sid(12)).unwrap();
+        child.parent = Some(sid(11));
+        model.insert_node(child).unwrap();
+        model.replace_flags(sid(12), true, true).unwrap();
+        let dir = saved_project_with("duplicate-locked-descendant", &[&model]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        session.select(Selection::new([sid(11)], None)).unwrap();
+        let rev = session.revision();
+        let copy = duplicate_selected(&mut session, RequestId(1), sid(3), rev)
+            .unwrap_or_else(|failure| panic!("{}", failure.message));
+        let model = session.document().unwrap().model();
+        let copied_child = model.children_in_order(copy)[0];
+        assert_ne!(copied_child, sid(12));
+        assert!(model.record(copied_child).unwrap().locked);
+        assert!(model.record(sid(12)).unwrap().locked);
+        assert!(!model.record(copy).unwrap().locked);
     }
 }
