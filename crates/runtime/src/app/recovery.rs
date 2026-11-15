@@ -21,7 +21,7 @@ use stellar_storage::hash::ContentHash;
 #[cfg(test)]
 mod tests;
 mod writer;
-pub(super) use writer::WindowCheckpoint;
+pub(super) use writer::{CheckpointConfig, RecoveryWorkers, WindowCheckpoint};
 
 /// 앱이 표시한 한 후보. action은 동일 bytes hash를 다시 검사합니다.
 #[derive(Debug, Clone)]

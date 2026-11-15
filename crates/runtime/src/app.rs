@@ -1350,7 +1350,7 @@ fn open_window_session_on_thread(
     ctx: &mut DocumentContext,
     request: RequestId,
     project: ProjectSessionId,
-    recovery_root: Option<PathBuf>,
+    recovery: Option<recovery::CheckpointConfig>,
 ) -> Result<RuntimeEvent, Failure> {
     let sessions = ctx.app_sessions_mut();
     let identity = sessions
@@ -1371,7 +1371,7 @@ fn open_window_session_on_thread(
             project,
             session,
             canvas: Default::default(),
-            checkpoint: recovery::WindowCheckpoint::new(recovery_root),
+            checkpoint: recovery::WindowCheckpoint::new(recovery, handle),
             #[cfg(target_os = "macos")]
             component_watch: None,
         },
@@ -1673,6 +1673,8 @@ pub struct AppRuntime {
     shared: Arc<AppShared>,
     next_request: AtomicU64,
     recovery_root: Option<PathBuf>,
+    /// 창별 복구 worker. drop이 남은 정리를 잠시 기다립니다.
+    recovery_workers: recovery::RecoveryWorkers,
     event_capacity: usize,
     /// drop이 document thread 종료를 기다리는 최대 시간.
     drop_timeout: Duration,
@@ -1692,6 +1694,9 @@ impl Drop for AppRuntime {
         }
         // shutdown·shutdown_timeout으로 이미 종료했으면 아무것도 하지 않습니다.
         let _ = self.document.stop_within(Some(self.drop_timeout));
+        // 닫은 창의 복구본 삭제(폐기·저장 뒤 정리)가 프로세스 종료 전에 끝나도록 잠시 기다립니다.
+        self.recovery_workers
+            .wait_idle(AppRuntime::RECOVERY_FLUSH_TIMEOUT);
     }
 }
 
@@ -1721,6 +1726,9 @@ impl AppRuntime {
     /// drop(셸 FFI destroy)이 document thread 종료를 기다리는 최대 시간.
     pub const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
+    /// drop이 document thread 종료 뒤 복구 worker의 남은 정리를 기다리는 최대 시간.
+    pub const RECOVERY_FLUSH_TIMEOUT: Duration = Duration::from_secs(1);
+
     /// 기본 설정으로 시작합니다(document thread 생성).
     pub fn start() -> Result<AppRuntime, DocumentThreadError> {
         AppRuntime::start_with(QueueCapacity::default(), AppRuntime::DEFAULT_EVENT_CAPACITY)
@@ -1745,6 +1753,7 @@ impl AppRuntime {
             }),
             next_request: AtomicU64::new(1),
             recovery_root: None,
+            recovery_workers: Default::default(),
             event_capacity: event_capacity.max(1),
             drop_timeout: AppRuntime::SHUTDOWN_TIMEOUT,
             document,
@@ -1901,8 +1910,17 @@ impl AppRuntime {
         &self,
         project: ProjectSessionId,
     ) -> Result<RequestId, RequestError> {
-        let root = self.recovery_root.clone();
-        self.submit(move |ctx, request| open_window_session_on_thread(ctx, request, project, root))
+        let recovery = self
+            .recovery_root
+            .clone()
+            .map(|root| recovery::CheckpointConfig {
+                root,
+                sender: self.sender.clone(),
+                workers: self.recovery_workers.clone(),
+            });
+        self.submit(move |ctx, request| {
+            open_window_session_on_thread(ctx, request, project, recovery)
+        })
     }
 
     /// 창 session을 닫습니다. 그 창의 문서 state·history·선택을 폐기합니다(저장하지 않음).
