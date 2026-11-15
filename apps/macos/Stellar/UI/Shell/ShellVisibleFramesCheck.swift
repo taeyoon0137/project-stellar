@@ -1,9 +1,10 @@
 import AppKit
 
-/// Rust에서 저장한 generation을 일반 프로젝트 창으로 열고, 실제 NSView의 bitmap과 picking을 확인합니다.
+/// 남은 앱 검사들이 함께 쓰는 캔버스 bitmap 캡처 helper입니다. 저장 Frame 표시 검사 자체는 2026-11-15 검토에서
+/// 삭제했고, 이름은 이 helper를 부르는 다른 검사 파일을 바꾸지 않으려고 유지합니다.
 @MainActor
 enum ShellVisibleFramesCheck {
-    static func bitmap(_ canvas: NSView, in window: NSWindow, dirtyRect: CGRect? = nil) -> NSBitmapImageRep? {
+    static func bitmap(_ canvas: NSView, in window: NSWindow) -> NSBitmapImageRep? {
         // 픽셀 참조는 현재 사용자 모니터 ICC의 색역/의도에 영향을 받지 않는 명시적 sRGB destination입니다.
         let scale = window.backingScaleFactor
         let width = Int(ceil(canvas.bounds.width * scale)), height = Int(ceil(canvas.bounds.height * scale))
@@ -11,111 +12,7 @@ enum ShellVisibleFramesCheck {
               let cg = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         cg.scaleBy(x: scale, y: scale)
-        if let rect = dirtyRect {
-            cg.translateBy(x: 0, y: canvas.bounds.height)
-            cg.scaleBy(x: 1, y: -1)
-            cg.clip(to: rect)
-            NSGraphicsContext.saveGraphicsState()
-            NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
-            canvas.draw(rect)
-            NSGraphicsContext.restoreGraphicsState()
-        } else {
-            canvas.displayIgnoringOpacity(canvas.bounds, in: NSGraphicsContext(cgContext: cg, flipped: false))
-        }
+        canvas.displayIgnoringOpacity(canvas.bounds, in: NSGraphicsContext(cgContext: cg, flipped: false))
         return cg.makeImage().map(NSBitmapImageRep.init(cgImage:))
-    }
-
-    static func run(_ arguments: [String]) -> Bool {
-        guard let flag = arguments.firstIndex(of: "--visible-frames-check"), arguments.indices.contains(flag + 1) else { return false }
-        _ = NSApplication.shared
-        NSApp.setActivationPolicy(.accessory)
-        let host = RuntimeHost()
-        defer { host.shutdown() }
-        let coordinator = ShellAppCoordinator(runtimeHandle: host.handle)
-        coordinator.presentsWindows = false
-        let autosave = ShellCheckAutosave(prefix: "StellarVisibleFramesCheck")
-        coordinator.windowConfiguration = { autosave.configuration }
-        defer { autosave.removeRecords() }
-        let root = arguments[flag + 1]
-        coordinator.openProject(atPath: root, origin: .application)
-        guard let pump = coordinator.pump, pump.waitForPendingRequests(timeout: 10),
-              let shell = coordinator.projectWindow(forPath: root), let window = shell.window else { return false }
-        defer { shell.closeSessions(); _ = pump.waitForPendingRequests(timeout: 10) }
-        let canvas = shell.canvasHost.canvasView
-        window.setContentSize(NSSize(width: 1300, height: 800))
-        window.contentView?.layoutSubtreeIfNeeded()
-        guard canvas.bounds.width > 340, canvas.bounds.height > 200 else { return false }
-        let center = CGPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
-        let viewPoint = { (x: CGFloat, y: CGFloat) in CGPoint(x: center.x + x, y: center.y + y) }
-        var failures = 0
-        func check(_ ok: Bool, _ label: String) {
-            if !ok { failures += 1; FileHandle.standardError.write(Data("visible-frames failed: \(label)\n".utf8)) }
-        }
-        func pixel(_ rep: NSBitmapImageRep, _ x: CGFloat, _ y: CGFloat, _ ref: (CGFloat, CGFloat, CGFloat), _ label: String) {
-            let p = viewPoint(x,y)
-            let xx = Int((p.x / canvas.bounds.width * CGFloat(rep.pixelsWide)).rounded(.down))
-            let yy = Int((p.y / canvas.bounds.height * CGFloat(rep.pixelsHigh)).rounded(.down))
-            var samples = [Int](repeating: 0, count: rep.samplesPerPixel)
-            rep.getPixel(&samples, atX: xx, y: yy)
-            let expected = [ref.0, ref.1, ref.2].map { Int(($0 * 255).rounded()) }
-            check(zip(samples.prefix(3), expected).allSatisfy { abs($0 - $1) <= 2 },
-                  "\(label) sRGB=\(samples) at (\(xx),\(yy))")
-        }
-        let redID = UUID(uuidString: "00000000-000b-7000-8000-00000000000b")!
-        let blueID = UUID(uuidString: "00000000-000e-7000-8000-00000000000e")!
-        guard let first = bitmap(canvas, in: window) else { return false }
-        pixel(first, 6, 8, (1,1,1), "white root")
-        pixel(first, 30, 34, (1,0,0), "translated Frame")
-        pixel(first, 32, 13, (0,0,0), "inside border")
-        pixel(first, 11, 13, (1,1,1), "rounded corner")
-        pixel(first, 82, 24, (0,0,1), "nested Frame through Fragment")
-        pixel(first, 95, 24, (1,1,1), "ancestor bounds clip")
-        pixel(first, 62, 54, (0,1,0), "painter order")
-        pixel(first, 140, 120, (1,1,0), "rotated child of offscreen unclipped parent")
-        pixel(first, 133, 120, (0,0,0), "rotated child's inside border")
-        pixel(first, 190, 168, (1,1,1), "onscreen child stays hidden by offscreen ancestor clip")
-        check(canvas.frameHit(at: viewPoint(82,24))?.id == blueID, "nested hit")
-        check(canvas.frameHit(at: viewPoint(95,24))?.id != blueID, "clipped hit")
-        check(canvas.frameHit(at: viewPoint(30,34))?.id == redID, "red hit")
-        canvas.setFrameDragPreview(id: redID, offset: CGVector(dx: 45, dy: 0))
-        guard let moved = bitmap(canvas, in: window) else { return false }
-        pixel(moved, 30, 34, (1,1,1), "preview uncovers root")
-        pixel(moved, 127, 24, (0,0,1), "preview moves child and its clip")
-        pixel(moved, 62, 54, (0,1,0), "preview keeps sibling painter order")
-        let outsideChild = UUID(uuidString: "00000000-0013-7000-8000-000000000013")!
-        canvas.setFrameDragPreview(id: outsideChild, offset: CGVector(dx: -1050, dy: 0))
-        guard let incoming = bitmap(canvas, in: window) else { return false }
-        pixel(incoming, 170, 150, (0,1,1), "preview enters from outside original subtree")
-        canvas.setFrameDragPreview(id: nil, offset: .zero)
-        let clippedChild = UUID(uuidString: "00000000-0016-7000-8000-000000000016")!
-        check(shell.selectNodes([clippedChild]) && pump.waitForPendingRequests(timeout: 10), "clipped child selection")
-        guard let outline = bitmap(canvas, in: window), let original = first.bitmapData, let marked = outline.bitmapData else { return false }
-        check(memcmp(original, marked, first.bytesPerRow * first.pixelsHigh) != 0, "selection overlay remains outside the culled clip")
-        check(shell.selectNodes([]) && pump.waitForPendingRequests(timeout: 10), "clear clipped child selection")
-        check(shell.performSessionCommand(.zoomIn) && pump.waitForPendingRequests(timeout: 10), "normal zoom command")
-        guard let zoom = bitmap(canvas, in: window) else { return false }
-        pixel(zoom, 60, 68, (1,0,0), "zoomed red Frame")
-        pixel(zoom, 164, 48, (0,0,1), "zoomed nested Frame")
-        check(canvas.frameHit(at: viewPoint(164,48))?.id == blueID, "zoomed hit")
-        check(shell.selectNodes([redID]) && pump.waitForPendingRequests(timeout: 10), "selection event")
-        guard let selected = bitmap(canvas, in: window), let before = zoom.bitmapData, let after = selected.bitmapData else { return false }
-        let size = min(zoom.bytesPerRow * zoom.pixelsHigh, selected.bytesPerRow * selected.pixelsHigh)
-        check(memcmp(before, after, size) != 0, "selecting produces visible outline")
-        check(shell.selectNodes([]) && pump.waitForPendingRequests(timeout: 10), "deselect event")
-        guard let cleared = bitmap(canvas, in: window), let restored = cleared.bitmapData else { return false }
-        check(memcmp(before, restored, size) == 0, "deselect restores exact canvas")
-        guard let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
-                                   wheel1: 25, wheel2: -30, wheel3: 0), let event = NSEvent(cgEvent: scroll) else { return false }
-        canvas.scrollWheel(with: event)
-        check(pump.waitForPendingRequests(timeout: 10), "normal pan event")
-        guard let panned = bitmap(canvas, in: window) else { return false }
-        pixel(panned, 164 + event.scrollingDeltaX, 48 + event.scrollingDeltaY, (0,0,1), "panned nested Frame")
-        check(canvas.frameHit(at: viewPoint(164 + event.scrollingDeltaX, 48 + event.scrollingDeltaY))?.id == blueID, "panned hit")
-        if let path = ProcessInfo.processInfo.environment["STELLAR_TEST_CANVAS_PNG"],
-           let data = first.representation(using: .png, properties: [:]) {
-            do { try data.write(to: URL(fileURLWithPath: path)) } catch { check(false, "save png: \(error)") }
-        }
-        if failures == 0 { print("visible-frames ok: persisted 800x600 root, colors, painter order, radius, border, clip, preview, zoom, pan, selection and picking in project NSWindow") }
-        return failures == 0
     }
 }

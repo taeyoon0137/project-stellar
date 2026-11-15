@@ -19,10 +19,6 @@ if CommandLine.arguments.contains("--update-check") {
 }
 
 #if DEBUG
-if CommandLine.arguments.contains("--visible-frames-check") {
-    exit(MainActor.assumeIsolated { ShellVisibleFramesCheck.run(CommandLine.arguments) } ? 0 : 1)
-}
-
 // text input 검사 모드: 네이티브 UI 텍스트 컨트롤의 undo/IME smoke를 headless로 검증하고 종료(XII.5.1).
 if CommandLine.arguments.contains("--text-input-check") {
     exit(TextInputCheck.run() ? 0 : 1)

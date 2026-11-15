@@ -436,10 +436,5 @@ final class CanvasFrameScene {
             context.strokePath()
             context.restoreGState()
         }
-        if skipped > 0 {
-            let message = String(localized: "This canvas displays fixed Free Frames. Some content is unavailable.")
-            (message as NSString).draw(at: CGPoint(x: 8, y: 8), withAttributes: [.foregroundColor: NSColor.labelColor,
-                                       .backgroundColor: NSColor.windowBackgroundColor, .font: NSFont.systemFont(ofSize: 12)])
-        }
     }
 }

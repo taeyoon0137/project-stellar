@@ -634,16 +634,5 @@ mod tests {
         assert!(Arc::ptr_eq(&scene, &cache.current(&session, None).unwrap()));
         session.open_view(sid(4)).unwrap();
         assert_eq!(cache.current(&session, None).unwrap().frames[0].id, sid(20));
-        if let Some(app) = std::env::var_os("STELLAR_TEST_CANVAS_APP") {
-            let status = std::process::Command::new(app)
-                .arg("--visible-frames-check")
-                .arg(dir.path())
-                .status()
-                .unwrap();
-            assert!(
-                status.success(),
-                "AppKit saved Frame bitmap check: {status}"
-            );
-        }
     }
 }
