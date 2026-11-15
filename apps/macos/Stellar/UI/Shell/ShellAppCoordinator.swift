@@ -650,7 +650,10 @@ final class ShellAppCoordinator: NSObject {
             confirmingQuit = false
             guard confirmed else { return .terminateCancel }
         }
-        guard !hasQuitBlocker, projectWindows.allSatisfy({ $0.finishInputBeforeClosing() }) else { return .terminateCancel }
+        // 아직 보내지 않은 Text 입력이 있으면 지금은 취소하고, 그 입력을 다 보낸 뒤 종료를 다시 시도합니다.
+        guard !hasQuitBlocker,
+              projectWindows.allSatisfy({ $0.finishInputBeforeClosing(retry: { NSApp.terminate(nil) }) })
+        else { return .terminateCancel }
         guard projectWindows.contains(where: { $0.needsSaveBeforeClosing }) else { return .terminateNow }
         quitReply = reply
         // AppKit의 terminateLater 처리가 끝난 후에만 reply를 전달합니다(동기 실패 포함).
@@ -664,7 +667,14 @@ final class ShellAppCoordinator: NSObject {
 
     private func saveNextWindowForQuit() {
         guard quitReply != nil else { return }
-        guard !hasQuitBlocker, projectWindows.allSatisfy({ $0.finishInputBeforeClosing() }) else { finishQuit(false); return }
+        guard !hasQuitBlocker else { finishQuit(false); return }
+        guard projectWindows.allSatisfy({
+            $0.finishInputBeforeClosing(retry: { [weak self] in self?.saveNextWindowForQuit() })
+        }) else {
+            // 보내지 않은 Text 입력을 다 보내면 retry가 이 단계를 다시 부릅니다. 조합 중이면 종료를 취소합니다.
+            if !projectWindows.contains(where: { $0.isWaitingForTextInput }) { finishQuit(false) }
+            return
+        }
         // 앞서 저장한 창에도 새 요청이 들어왔을 수 있으므로 마지막 회신 전 다시 확인합니다.
         guard let window = projectWindows.first(where: { $0.needsSaveBeforeClosing }) else {
             finishQuit(true)

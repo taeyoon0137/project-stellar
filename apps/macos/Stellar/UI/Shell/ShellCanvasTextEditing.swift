@@ -15,6 +15,14 @@ final class ShellCanvasTextEditing {
         case cancel
         case replace(start: UInt32, end: UInt32, text: String)
         case history(redo: Bool)
+
+        /// 문서를 바꾸는 요청(확정·조합 없는 입력·Undo)인지. 조합 시작·갱신·취소는 문서와 history를 바꾸지 않습니다.
+        var changesDocument: Bool {
+            switch self {
+            case .commit, .replace, .history: true
+            case .begin, .mark, .cancel: false
+            }
+        }
     }
 
     private weak var shell: ShellProjectWindow?
@@ -39,6 +47,14 @@ final class ShellCanvasTextEditing {
     private var invalid = false
     private(set) var focusEnded = false
     var onEnd: (() -> Void)?
+    /// 창 닫기·앱 종료가 기다리는 동안, 아직 보내지 않은 문서 변경 요청을 모두 보낸 뒤 한 번 부릅니다.
+    var onDocumentChangesSent: (() -> Void)?
+
+    /// 아직 코어로 보내지 않은 문서 변경 요청이 있는지. 이미 보낸 요청은 창 session의 진행 요청으로 세어 닫기 저장이
+    /// 완료를 기다립니다.
+    var hasUnsentDocumentChanges: Bool {
+        queue.dropFirst(running ? 1 : 0).contains { $0.changesDocument }
+    }
 
     init(shell: ShellProjectWindow, session: ShellWindowSessionHandle, pump: ShellRuntimeEventPump, view: UUID,
          parent: UUID, origin: CGPoint, anchor: CGPoint, node: UUID?, revision: UInt64, buffer: CanvasTextBuffer) {
@@ -180,7 +196,11 @@ final class ShellCanvasTextEditing {
         }
         running = true
         let accepted = session.track(submit) { [weak self] event in self?.didFinish(op, event: event, started: started) }
-        if !accepted { fail(String(localized: "The project is busy. Try again.")) }
+        if !accepted { fail(String(localized: "The project is busy. Try again.")); return }
+        if !hasUnsentDocumentChanges, let retry = onDocumentChangesSent {
+            onDocumentChangesSent = nil
+            DispatchQueue.main.async(execute: retry)
+        }
     }
 
     /// 조합이 시작되지 않았거나 이미 끝난 요청은 보내지 않습니다.
@@ -289,6 +309,16 @@ final class ShellCanvasTextEditing {
         stop()
     }
 
+    /// 창 닫기·앱 종료: 남은 요청이 문서를 바꾸지 않으므로 더 보내지 않고 편집을 끝냅니다. 이미 보낸 요청의 늦은
+    /// 완료는 버립니다(코어의 남은 조합은 창 session과 함께 닫힙니다).
+    func abandonForClosing() {
+        invalid = true
+        queue.removeAll()
+        onDocumentChangesSent = nil
+        stop()
+        if let shell, shell.canvasTextEditing === self { shell.canvasTextEditing = nil }
+    }
+
     func stop() {
         input.finish()
         if input.window?.firstResponder === input { input.window?.makeFirstResponder(input.superview) }
@@ -299,6 +329,7 @@ final class ShellCanvasTextEditing {
         guard !invalid else { return }
         invalid = true
         queue.removeAll()
+        onDocumentChangesSent = nil
         running = false
         stop()
         if let shell, shell.canvasTextEditing === self { shell.canvasTextEditing = nil }
