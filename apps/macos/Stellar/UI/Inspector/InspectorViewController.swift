@@ -184,6 +184,10 @@ final class InspectorViewController: NSViewController {
             view.setCollapsed(false)
             pendingReveal = nil
         }
+        // Tab은 표시 순서대로 다음 값 컨트롤로 갑니다(숨은·비활성 컨트롤은 AppKit이 건너뜀).
+        let controls = snapshot.rows.compactMap { rowViews[$0.name]?.keyControl }
+        for (current, next) in zip(controls, controls.dropFirst()) { current.nextKeyView = next }
+        controls.last?.nextKeyView = nil
     }
 
     /// 묶음 행을 펼치면 longhand 행이 보입니다(UX 명세 6.3).

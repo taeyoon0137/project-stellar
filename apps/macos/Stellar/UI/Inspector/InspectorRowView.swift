@@ -163,6 +163,13 @@ final class InspectorRowView: NSView, NSTextFieldDelegate {
         field.widthAnchor.constraint(greaterThanOrEqualToConstant: InspectorMetrics.minimumFieldWidth).isActive = true
     }
 
+    /// 키보드 포커스를 받는 값 컨트롤(Tab 순서).
+    var keyControl: NSView? {
+        if let checkbox { return checkbox }
+        if let popup { return popup }
+        return field
+    }
+
     /// 같은 구성의 새 값으로 제자리 갱신합니다. 사용자가 입력 중인 필드는 덮어쓰지 않습니다.
     func update(_ next: InspectorRowState) {
         let changed = next.value != row.value || next.flags != row.flags
