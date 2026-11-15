@@ -227,9 +227,10 @@ fn git_and_semantic_merge_of_two_clones_separate_frame_width_and_height() {
 
 #[test]
 fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
-    // v3는 네 모서리를 이름 오름차순(BL, BR, TL, TR)의 네 줄로 씁니다.
+    // v3는 네 모서리를 이름 오름차순(BL, BR, border-color, TL, TR)의 줄로 씁니다.
     // 사이에 바뀌지 않은 줄이 있는 두 모서리는 일반 git merge로 합쳐지고, 바로 이웃한 줄의
-    // 두 모서리는 Git 충돌로 남지만 semantic-merge가 속성 단위로 해결합니다.
+    // 두 모서리는 Git 충돌로 남습니다. 읽기 전용 semantic-merge는 이 경우를 속성 단위 병합으로 보고하지만
+    // 파일을 고치지 않습니다(자동 해결은 merge driver XXIV.2.1 이후).
     let fixture = TempDir::new("frame-corners");
     let base = fixture.path.join("base");
     let home = fixture.path.join("home");
@@ -242,10 +243,13 @@ fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
     let file = value(&card, "file");
     let original = fs::read_to_string(base.join(file)).unwrap();
     let corner = |name: &str, radius: &str| format!("    border-{name}-radius: \"{radius}\"\n");
-    let lines: Vec<_> = ["bottom-left", "bottom-right", "top-left", "top-right"]
-        .into_iter()
-        .map(|name| corner(name, "0"))
-        .collect();
+    let lines = [
+        corner("bottom-left", "0"),
+        corner("bottom-right", "0"),
+        "    border-color: none\n".into(),
+        corner("top-left", "0"),
+        corner("top-right", "0"),
+    ];
     assert!(original.contains(&lines.concat()), "{original}");
     assert!(!original.contains("corner_radius"));
     git(&base, &["init", "-q", "-b", "main"]);
@@ -321,7 +325,7 @@ fn frame_corners_merge_by_line_in_git_and_by_property_in_semantic_merge() {
     assert!(combined.contains(corner("top-left", "11").trim()));
     assert!(combined.contains(corner("bottom-left", "23").trim()));
 
-    // 인접(TL과 TR이 이웃한 줄): Git은 충돌로 남기고 semantic-merge는 두 속성을 합칩니다.
+    // 인접(TL과 TR이 이웃한 줄): Git은 충돌로 남기고, 읽기 전용 semantic-merge 보고는 두 속성을 합칩니다.
     change("ours", &[("top-left", "11")]);
     change("theirs", &[("top-right", "17")]);
     let merged = run(&fixture.path, &home, "semantic-merge", &args, 0);

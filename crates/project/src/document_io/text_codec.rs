@@ -99,22 +99,30 @@ pub(super) enum Grammar {
     Current,
 }
 
-/// 한 속성 한 줄 문법의 Frame 키. 파일의 줄 순서이며 이름 오름차순입니다.
-const FRAME_KEYS: [&str; 11] = [
+/// 한 속성 한 줄 문법의 Frame 키. 파일의 줄 순서입니다(ADR-0061 결정 2).
+///
+/// 모양(배경·테두리·모서리)과 크기 키는 이름 오름차순이고, `clipping`과 `transform`은 끝에 둡니다. Git은 바로 이웃한
+/// 두 줄을 서로 다른 브랜치가 바꾸면 충돌로 남기므로, 가장 자주 따로 바뀌는 이동(`transform`)이 크기(`width`)
+/// 줄과 이웃하지 않고 테두리 색과 두께 사이에도 모서리 줄이 오게 한 순서입니다.
+const FRAME_KEYS: [&str; 12] = [
     "background",
-    "border",
     "border-bottom-left-radius",
     "border-bottom-right-radius",
+    "border-color",
     "border-top-left-radius",
     "border-top-right-radius",
-    "clipping",
+    "border-width",
     "height",
     "layout-mode",
-    "transform",
     "width",
+    "clipping",
+    "transform",
 ];
 
-/// Frame의 모든 영속 속성을 각각 한 줄로 씁니다. 각 줄이 PropertyKey 하나의 병합 단위입니다.
+/// Frame의 모든 영속 속성을 각각 한 줄로 씁니다. 각 줄이 CSS longhand 하나의 병합 단위입니다.
+///
+/// 내부 모델의 묶음 key `border`(0x0105, 색과 두께)는 `border-color`·`border-width` 두 줄로 나눠 씁니다. 테두리가
+/// 없으면 두 줄이 모두 `none`입니다.
 pub(super) fn frame(payload: &FramePayload) -> YamlValue {
     let FramePayload {
         size,
@@ -134,25 +142,20 @@ pub(super) fn frame(payload: &FramePayload) -> YamlValue {
     };
     mapping([
         ("background", color_line(*background)),
-        (
-            "border",
-            optional(*border, |value| {
-                scalar(format!(
-                    "{} {}",
-                    value.thickness(),
-                    color_source_value(value.color)
-                ))
-            }),
-        ),
         ("border-bottom-left-radius", scalar(bl)),
         ("border-bottom-right-radius", scalar(br)),
+        ("border-color", color_line(border.map(|value| value.color))),
         ("border-top-left-radius", scalar(tl)),
         ("border-top-right-radius", scalar(tr)),
-        ("clipping", scalar(clipping)),
+        (
+            "border-width",
+            optional(*border, |value| scalar(value.thickness())),
+        ),
         ("height", scalar(size.height())),
         ("layout-mode", optional(*layout_mode, scalar)),
-        ("transform", floats(&[a, b, c, d, tx, ty])),
         ("width", scalar(size.width())),
+        ("clipping", scalar(clipping)),
+        ("transform", floats(&[a, b, c, d, tx, ty])),
     ])
 }
 
@@ -460,12 +463,17 @@ fn parse_clipping_line(value: &str) -> Result<Clipping, TextSourceError> {
     }
 }
 
-fn parse_border_line(value: &YamlValue) -> Result<Border, TextSourceError> {
-    let (thickness, color) = text(value)?
-        .split_once(' ')
-        .ok_or_else(|| invalid("border는 두께와 색이 필요합니다"))?;
-    let thickness = finite(&YamlValue::scalar(thickness))?;
-    Border::new(parse_color_line(&YamlValue::scalar(color))?, thickness).map_err(invalid)
+/// `border-color`·`border-width` 두 줄을 내부 묶음 Border 하나로 합칩니다. 한 줄만 `none`이면 거부합니다.
+fn parse_border_lines(value: &YamlValue) -> Result<Option<Border>, TextSourceError> {
+    let color = parse_optional(field(value, "border-color")?, parse_color_line)?;
+    let width = parse_optional(field(value, "border-width")?, finite)?;
+    match (color, width) {
+        (None, None) => Ok(None),
+        (Some(color), Some(width)) => Border::new(color, width).map(Some).map_err(invalid),
+        _ => Err(invalid(
+            "border-color와 border-width는 함께 none이거나 함께 값이어야 합니다",
+        )),
+    }
 }
 
 fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
@@ -477,7 +485,7 @@ fn parse_frame(value: &YamlValue) -> Result<FramePayload, TextSourceError> {
         transform: Transform2D::new(a, b, c, d, tx, ty).map_err(invalid)?,
         clipping: parse_clipping_line(text(field(value, "clipping")?)?)?,
         background: parse_optional(field(value, "background")?, parse_color_line)?,
-        border: parse_optional(field(value, "border")?, parse_border_line)?,
+        border: parse_border_lines(value)?,
         corner_radius: CornerRadius::new(
             length("border-top-left-radius")?,
             length("border-top-right-radius")?,
@@ -869,7 +877,8 @@ mod tests {
         // 영속 속성 하나 = 한 줄. 묶음 값이나 여러 줄 색 mapping이 없습니다.
         for line in [
             "      background: \"display-p3 -0.125 1.25 0.1 0.5\"\n",
-            "      border: \"0.3 display-p3 -0.125 1.25 0.1 0.5\"\n",
+            "      border-color: \"display-p3 -0.125 1.25 0.1 0.5\"\n",
+            "      border-width: \"0.3\"\n",
             "      border-bottom-left-radius: \"4\"\n",
             "      border-bottom-right-radius: \"3\"\n",
             "      border-top-left-radius: \"1\"\n",
@@ -879,9 +888,58 @@ mod tests {
         ] {
             assert!(first.contains(line), "{line}\n{first}");
         }
-        for bundled in ["size:", "corner_radius:", "space:", "rgba:", "kind: path"] {
+        for bundled in [
+            "size:",
+            "corner_radius:",
+            "space:",
+            "rgba:",
+            "kind: path",
+            "border:",
+        ] {
             assert!(!first.contains(bundled), "{bundled}");
         }
+        // 이동(transform)은 크기 줄과 이웃하지 않고, 테두리 색과 두께 사이에는 다른 줄이 있습니다.
+        let keys: Vec<&str> = first
+            .lines()
+            .skip_while(|line| *line != "    payload:")
+            .skip(1)
+            .take(FRAME_KEYS.len())
+            .map(|line| line.trim().split_once(':').unwrap().0)
+            .collect();
+        assert_eq!(keys, FRAME_KEYS);
+        let at = |key| FRAME_KEYS.iter().position(|k| *k == key).unwrap();
+        assert!(at("transform").abs_diff(at("width")) > 1);
+        assert!(at("transform").abs_diff(at("height")) > 1);
+        assert!(at("border-color").abs_diff(at("border-width")) > 1);
+    }
+
+    #[test]
+    fn border_lines_must_be_both_none_or_both_values() {
+        let source = encode(&model()).unwrap();
+        for half in [
+            source.replacen(
+                "border-color: \"display-p3 -0.125 1.25 0.1 0.5\"",
+                "border-color: none",
+                1,
+            ),
+            source.replacen("border-width: \"0.3\"", "border-width: none", 1),
+            source.replacen("border-width: \"0.3\"", "border: \"0.3\"", 1),
+        ] {
+            assert_ne!(half, source);
+            assert!(decode(&half).is_err(), "{half}");
+        }
+        let none = source
+            .replacen(
+                "border-color: \"display-p3 -0.125 1.25 0.1 0.5\"",
+                "border-color: none",
+                1,
+            )
+            .replacen("border-width: \"0.3\"", "border-width: none", 1);
+        let records = decode(&none).unwrap().to_records().unwrap();
+        assert!(records.nodes.iter().all(|node| match &node.payload {
+            NodePayload::Frame(frame) => frame.border.is_none(),
+            _ => true,
+        }));
     }
 
     #[test]

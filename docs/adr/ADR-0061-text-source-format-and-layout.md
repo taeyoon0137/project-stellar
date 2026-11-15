@@ -29,12 +29,15 @@ Accepted (2026-11-15). 제품 책임자가 텍스트 원본 형식과 배치의 
    다음을 지킵니다.
    - 여러 longhand를 한 줄에 묶지 않습니다. Frame은 `width`·`height`와 네 모서리
      `border-top-left-radius`·`border-top-right-radius`·`border-bottom-right-radius`·`border-bottom-left-radius`를
-     각각 한 줄로 씁니다(ADR-0024 결정 14의 PropertyKey와 같은 이름). 배치 평행이동은 `translate-x`·`translate-y`,
-     도형 좌표는 `origin-x`·`origin-y`와 `start-x`·`start-y`·`end-x`·`end-y`입니다.
-   - 값 하나를 여러 줄로 나누지 않습니다. 색은 `srgb 1 0 0 1`처럼 색 공간과 비연관 RGBA를 한 줄에 쓰고, Frame
-     `border`(아직 longhand로 나뉘지 않은 묶음 key 0x0105)는 두께와 색을, `clipping`은 방식과 Path 대상을 한 줄에
-     씁니다. `transform`은 CSS `transform` 행렬 하나이므로 여섯 성분을 한 줄에 씁니다.
-   - 키 순서는 형식마다 고정합니다. 숫자는 정확히 왕복하는 최단 f32 표현입니다.
+     각각 한 줄로 씁니다(ADR-0024 결정 14의 PropertyKey와 같은 이름). 내부 모델에서 아직 묶음 key인 Frame
+     `border`(0x0105, 색과 두께)도 파일에서는 CSS longhand `border-color`·`border-width` 두 줄로 나누고 codec이 내부
+     Border 하나와 매핑합니다. 두 줄은 함께 `none`(테두리 없음)이거나 함께 값입니다. 배치 평행이동은
+     `translate-x`·`translate-y`, 도형 좌표는 `origin-x`·`origin-y`와 `start-x`·`start-y`·`end-x`·`end-y`입니다.
+   - 값 하나를 여러 줄로 나누지 않습니다. 색은 `srgb 1 0 0 1`처럼 색 공간과 비연관 RGBA를 한 줄에 쓰고, `clipping`은
+     방식과 Path 대상을 한 줄에 씁니다. `transform`은 CSS `transform` 행렬 하나이므로 여섯 성분을 한 줄에 씁니다.
+   - 키 순서는 형식마다 고정합니다. Frame은 모양(배경·테두리·모서리)과 크기 키를 이름 오름차순으로 쓴 뒤
+     `clipping`·`transform`을 씁니다. 가장 자주 따로 바뀌는 이동(`transform`)이 폭·높이 줄과, 테두리 색이 두께 줄과
+     이웃하지 않게 한 순서입니다. 숫자는 정확히 왕복하는 최단 f32 표현입니다.
 3. **숨은 상수 표를 두지 않습니다.** 파일에 없는 값을 버전 번호나 앱 기본값에서 복원하지 않습니다. View 원본의 문서
    style 표는 `document_font` 블록에 기본 typography resource 하나의 CSS longhand 일곱 개, 기본 글자색, 문단 style 0,
    문자 style 0을 모두 명시합니다. 이 범위로 표현할 수 없는 표(다른 index, 추가 resource, face가 지정된 family,
@@ -43,7 +46,9 @@ Accepted (2026-11-15). 제품 책임자가 텍스트 원본 형식과 배치의 
    - 이미 커밋된 View v1과 컴포넌트 v1·v2는 읽기 전용입니다. 컴포넌트 v1·v2 파일을 편집하면 v3로 다시 씁니다. 무변경
      요청은 기존 bytes를 보존합니다.
    - 검토 전 미커밋 작업 트리에서만 쓰인 View v2(`initial_typography_id`)·v3(`document_font`와 `project_fonts`)와
-     컴포넌트 v3(`corner_radius` 한 줄)의 문법은 같은 번호를 재정의하므로 읽지 않고 거부합니다.
+     컴포넌트 v3(`corner_radius` 한 줄)의 문법은 같은 번호를 재정의하므로 읽지 않고 거부합니다. 같은 이유로 2026-11-15
+     검토 중 정리 브랜치에서만 쓰인 View v2·컴포넌트 v3의 묶음 `border` 한 줄과 이름순 `transform` 위치도 다시
+     정의했고, 그 파일은 알 수 없는 키 `border`로 거부합니다.
    - 도형·컴포넌트 인스턴스·배치는 View v2에서만 받습니다.
 5. **배치.**
    - 컴포넌트 정의는 프로젝트의 `design/components/`에 정의 하나 = 파일 하나로 둡니다. 파일명은
@@ -83,10 +88,15 @@ Accepted (2026-11-15). 제품 책임자가 텍스트 원본 형식과 배치의 
 ## Consequences
 
 - 장점
-  - 서로 다른 longhand를 고친 두 브랜치는 그 줄 사이에 바뀌지 않은 줄이 있으면 일반 `git merge`로 합쳐집니다. 바로
-    이웃한 줄의 변경은 Git이 충돌로 남기고 `stellar semantic-merge`가 속성 단위로 해결합니다.
+  - 서로 다른 longhand를 고친 두 브랜치는 그 줄 사이에 바뀌지 않은 줄이 있으면 일반 `git merge`로 합쳐집니다. 결정 2의
+    순서에서 이동과 폭·높이, 폭과 높이, 테두리 색과 두께, 비인접 모서리가 그렇습니다.
   - 같은 bytes의 원본은 언제나 같은 문서이고, 새 프로젝트를 export→check→export하면 같은 bytes가 나옵니다.
 - 단점
+  - 바로 이웃한 두 줄을 양쪽 브랜치가 바꾸면(예: 인접 모서리, 높이와 테두리 두께) Git이 텍스트 충돌로 남깁니다.
+    `stellar semantic-merge`는 세 작업 트리를 비교해 속성 단위 병합 결과를 보고하는 읽기 전용 명령이며 결과 파일을
+    쓰지 않고, merge driver도 등록하지 않았습니다. 그래서 지금은 사용자가 충돌을 직접 풀어야 하고, 충돌 마커가 남은
+    원본은 제한 loader가 읽지 않습니다. 자동 해결은 Git merge driver(XXIV.2.1) 이후입니다. 검토 계획 B2의 기준
+    '인접 모서리 충돌은 semantic-merge가 해결한다'는 충족되지 않았습니다.
   - 등록 글꼴이 있는 문서는 asset catalog 전까지 View 원본으로 내보낼 수 없습니다.
   - 미커밋 작업 트리에서 만든 View v2·v3, 컴포넌트 v3 파일은 열리지 않습니다. 공개 전이라 사용자 데이터 이전 부담은
     개발용 fixture에 한정됩니다.

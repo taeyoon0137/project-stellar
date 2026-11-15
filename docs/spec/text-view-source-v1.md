@@ -23,7 +23,7 @@ stellar text-source check ../exports/home-00000003.stellar.yaml
 
 ## 전체 예시
 
-아래는 root Frame과 자식 Fragment가 있는 완전한 입력입니다. 모든 표시 이름과 공통 노드 필드, Frame의 열한 속성을 포함합니다. 예시 ID는 서로 다른 UUIDv7입니다.
+아래는 root Frame과 자식 Fragment가 있는 완전한 입력입니다. 모든 표시 이름과 공통 노드 필드, Frame의 열두 속성을 포함합니다. 예시 ID는 서로 다른 UUIDv7입니다.
 
 ```yaml
 schema_version: "2"
@@ -49,16 +49,17 @@ nodes:
     kind: frame
     payload:
       background: "srgb 0.95 0.96 1 1"
-      border: "1.5 display-p3 0.2 0.3 0.5 1"
       border-bottom-left-radius: "12"
       border-bottom-right-radius: "12"
+      border-color: "display-p3 0.2 0.3 0.5 1"
       border-top-left-radius: "12"
       border-top-right-radius: "12"
-      clipping: frame-bounds
+      border-width: "1.5"
       height: "900"
       layout-mode: none
-      transform: "1 0 0 1 0 0"
       width: "1440"
+      clipping: frame-bounds
+      transform: "1 0 0 1 0 0"
   -
     id: "019a8180-0011-7000-8000-000000000011"
     parent: "019a8180-0010-7000-8000-000000000010"
@@ -72,16 +73,17 @@ nodes:
 
 ## 한 속성 한 줄
 
-영속 속성 하나는 키 하나이고 값은 한 줄입니다([ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md) 결정 2). Frame 키 이름은 PropertyKey의 CSS longhand 이름이고, 키는 이름 오름차순으로 씁니다. 그래서 공통 조상에서 서로 다른 속성을 바꾼 두 브랜치는 바뀐 두 줄 사이에 바뀌지 않은 줄이 있으면 일반 `git merge`로 합쳐집니다. 이웃한 줄의 변경은 Git 충돌로 남고 `stellar semantic-merge`가 속성 단위로 해결합니다.
+영속 속성 하나는 키 하나이고 값은 한 줄입니다([ADR-0061](../adr/ADR-0061-text-source-format-and-layout.md) 결정 2). Frame 키 이름은 CSS longhand 이름입니다. 키 순서는 고정이며, 모양(배경·테두리·모서리)과 크기 키를 이름 오름차순으로 쓴 뒤 `clipping`과 `transform`을 씁니다. 내부 묶음 key `border`(0x0105)는 `border-color`와 `border-width` 두 줄로 나눠 씁니다. 공통 조상에서 서로 다른 속성을 바꾼 두 브랜치는 바뀐 두 줄 사이에 바뀌지 않은 줄이 있으면 일반 `git merge`로 합쳐집니다. 이 순서에서는 이동(`transform`)과 폭·높이, 테두리 색과 두께 사이에 늘 다른 줄이 있습니다. 바로 이웃한 줄을 양쪽에서 바꾸면 Git 텍스트 충돌로 남고, 지금은 사용자가 직접 풉니다. `stellar semantic-merge`는 속성 단위 병합 결과를 보고하는 읽기 전용 명령이라 파일을 고치지 않으며, 자동 해결은 Git merge driver(XXIV.2.1) 이후입니다.
 
 | Frame 키 | 값 |
 |---|---|
 | `background` | `none` 또는 색 |
-| `border` | `none` 또는 두께(비음수 f32) 뒤에 색. 예: `1.5 display-p3 0.2 0.3 0.5 1` |
 | `border-bottom-left-radius`, `border-bottom-right-radius`, `border-top-left-radius`, `border-top-right-radius` | 비음수 유한 f32 |
-| `clipping` | `disabled`, `frame-bounds`, 또는 `path <StableId>` |
+| `border-color` | `none` 또는 색. `border-width`와 함께 `none`이거나 함께 값 |
+| `border-width` | `none` 또는 비음수 유한 f32. `border-color`와 함께 `none`이거나 함께 값 |
 | `height`, `width` | 비음수 유한 f32 |
 | `layout-mode` | 참조 `StableId` 또는 `none` |
+| `clipping` | `disabled`, `frame-bounds`, 또는 `path <StableId>` |
 | `transform` | `a b c d tx ty` 순서의 유한 f32 여섯 개(CSS `transform` 행렬 하나) |
 
 색은 `srgb 1 0 0 1`처럼 색 공간(`srgb` 또는 `display-p3`)과 비연관 알파 `r g b a`를 공백으로 구분해 한 줄에 씁니다. 알파는 `[0, 1]`, RGB는 확장 범위를 허용합니다.
@@ -153,7 +155,7 @@ document_font:
 | `kind` | `frame`, `fragment`, `rectangle`, `ellipse`, `line`, `polygon`, `text`, `component-instance` |
 | Fragment `payload` | 정확히 `none`; 별도 시각·layout 필드 없음 |
 
-숫자 여러 개를 담는 값(`transform`, `border`, 색)은 YAML sequence가 아닌 공백으로 구분한 scalar입니다. 지정된 숫자 개수가 다르거나 NaN·무한대이면 거부합니다. `none`은 없는 값을 나타내는 명시적 scalar이며 YAML null로 대체하지 않습니다. `display_name: none`처럼 문자열 필드에 쓴 `none`은 표시 이름 그대로입니다.
+숫자 여러 개를 담는 값(`transform`, 색)은 YAML sequence가 아닌 공백으로 구분한 scalar입니다. 지정된 숫자 개수가 다르거나 NaN·무한대이면 거부합니다. `none`은 없는 값을 나타내는 명시적 scalar이며 YAML null로 대체하지 않습니다. `display_name: none`처럼 문자열 필드에 쓴 `none`은 표시 이름 그대로입니다.
 
 ## Text 본문과 스타일 범위
 
