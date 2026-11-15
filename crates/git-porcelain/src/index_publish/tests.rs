@@ -860,7 +860,7 @@ fn receipt_rejects_external_content_and_flags_without_restoring_over_them() {
 }
 
 #[test]
-fn timeout_and_cancel_after_git_commit_issue_no_restore_receipt() {
+fn timeout_and_cancel_after_git_commit_roll_back_to_the_original_index() {
     use std::os::unix::fs::PermissionsExt;
     for action in ["timeout", "cancel"] {
         let fx = fixture("publish-after-commit-cancel");
@@ -870,13 +870,18 @@ fn timeout_and_cancel_after_git_commit_issue_no_restore_receipt() {
             &fx,
             vec![upsert(&fx, "selected", FileMode::REGULAR, b"candidate")],
         );
+        let original = read_index_snapshot(&fx.gated(), fx.work()).unwrap();
         let hooks = fx.root().join("hooks");
         std::fs::create_dir(&hooks).unwrap();
         let ready = fx.root().join("committed");
         let hook = hooks.join("post-index-change");
+        // 첫 적용의 commit 뒤에서만 멈춥니다. 되돌리는 update-index에서도 사용자 hook은 그대로 실행됩니다.
         std::fs::write(
             &hook,
-            format!("#!/bin/sh\n: > '{}'\nsleep 30\n", ready.display()),
+            format!(
+                "#!/bin/sh\n[ -e '{0}' ] && exit 0\n: > '{0}'\nsleep 30\n",
+                ready.display()
+            ),
         )
         .unwrap();
         std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -908,11 +913,11 @@ fn timeout_and_cancel_after_git_commit_issue_no_restore_receipt() {
             ready.exists(),
             "post-index-change hook did not run ({action}): {result:?}"
         );
-        let Err(PublishError::OutcomeUnknown {
+        let Err(PublishError::RolledBack {
             cause: Some(GitOpError::Gate(GatedRunError::Run(error))),
         }) = result
         else {
-            panic!("expected unconfirmed outcome: {result:?}")
+            panic!("expected rolled back outcome: {result:?}")
         };
         assert_eq!(
             error,
@@ -924,7 +929,7 @@ fn timeout_and_cancel_after_git_commit_issue_no_restore_receipt() {
         );
         assert_eq!(
             read_index_snapshot(&fx.gated(), fx.work()).unwrap(),
-            expected_index(&c).unwrap()
+            original
         );
         assert_eq!(
             std::fs::read(fx.work().join("selected")).unwrap(),

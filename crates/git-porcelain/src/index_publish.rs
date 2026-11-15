@@ -1,5 +1,6 @@
 //! Git 소유 index lock 아래 기준을 확인한 뒤 한 번의 index-info로 후보를 적용합니다.
-//! 직접 index/lock 쓰기·삭제·rename은 하지 않습니다. 미확정 결과를 자동 덮어쓰지 않습니다.
+//! 직접 index/lock 쓰기·삭제·rename은 하지 않습니다. 입력 승인 뒤 결과를 확인하지 못하면 index를 다시
+//! 읽어, 적용 결과와 같을 때만 잠금 안 CAS로 되돌립니다. 그 밖의 상태는 덮어쓰지 않고 진단합니다(XIV.6.4).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -46,7 +47,7 @@ pub fn publish_with_receipt(
     candidate: &WrittenCandidate,
     cancel: &GitCancelToken,
 ) -> Result<PublishedIndex, PublishError> {
-    let applied = publish_inner(git, worktree, candidate, cancel, None)?;
+    let applied = publish_forward(git, worktree, candidate, cancel)?;
     Ok(PublishedIndex {
         inverse: candidate.inverse(applied.snapshot),
         bytes: applied.bytes,
@@ -87,8 +88,15 @@ pub enum PublishError {
     Unsupported(&'static str),
     /// 읽기 전용 파일 확인 실패.
     Io(std::io::ErrorKind),
-    /// 입력 승인 이후 실패·취소·timeout·재조회 불일치. 타인의 index를 덮어쓰지 않습니다.
+    /// 입력 승인 이후 실패·취소·timeout·재조회 불일치로 결과를 확인하지 못했고, 다시 읽은 index가 적용 전도
+    /// 적용 결과도 아니거나 복원을 확정하지 못했습니다. 타인의 index를 덮어쓰지 않습니다.
     OutcomeUnknown {
+        /// 실패 명령. 명령 성공 뒤 provider 불일치이면 None.
+        cause: Option<GitOpError>,
+    },
+    /// 입력 승인 이후 결과를 확인하지 못했지만, 다시 읽은 index tree가 적용 전과 같거나 적용 결과와 같아
+    /// 잠금 안 CAS로 되돌렸습니다. index tree(mode·OID·path)는 시작 전과 같습니다.
+    RolledBack {
         /// 실패 명령. 명령 성공 뒤 provider 불일치이면 None.
         cause: Option<GitOpError>,
     },
@@ -109,6 +117,9 @@ impl std::fmt::Display for PublishError {
             Self::Io(kind) => write!(f, "index 읽기 실패: {kind:?}"),
             Self::OutcomeUnknown { .. } => {
                 f.write_str("index 적용 결과를 확정하지 못했습니다. 재조회가 필요합니다")
+            }
+            Self::RolledBack { .. } => {
+                f.write_str("index 적용 결과를 확인하지 못해 원래 index로 되돌렸습니다")
             }
         }
     }
@@ -384,7 +395,73 @@ pub fn publish_candidate(
     candidate: &WrittenCandidate,
     cancel: &GitCancelToken,
 ) -> Result<IndexSnapshot, PublishError> {
-    publish_inner(git, worktree, candidate, cancel, None).map(|r| r.snapshot)
+    publish_forward(git, worktree, candidate, cancel).map(|r| r.snapshot)
+}
+
+fn publish_forward(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    candidate: &WrittenCandidate,
+    cancel: &GitCancelToken,
+) -> Result<AppliedIndex, PublishError> {
+    match publish_inner(git, worktree, candidate, cancel, None) {
+        Err(PublishError::OutcomeUnknown { cause }) => {
+            Err(roll_back_unknown(git, worktree, candidate, cause))
+        }
+        result => result,
+    }
+}
+
+/// 입력 승인 뒤 결과를 확인하지 못한 적용을 되돌립니다. index를 안정적으로 다시 읽어 적용 전 tree면 그대로
+/// 두고, 적용 결과 tree면 그 bytes를 기준으로 기존 복원 경로(잠금 안 bytes 비교 뒤 inverse 적용)를 실행합니다.
+/// 둘 다 아니거나 복원을 확정하지 못하면 덮어쓰지 않고 `OutcomeUnknown`입니다.
+/// 사용자 취소 뒤에도 실행하는 보상 단계이므로 새 취소 token을 쓰고, 각 Git 명령은 runner timeout을 따릅니다.
+fn roll_back_unknown(
+    git: &GatedGitRunner,
+    worktree: &Path,
+    candidate: &WrittenCandidate,
+    cause: Option<GitOpError>,
+) -> PublishError {
+    let cancel = GitCancelToken::new();
+    let current = || -> Result<(PathBuf, Option<Vec<u8>>, IndexSnapshot), PublishError> {
+        let root = git_path(
+            git,
+            worktree,
+            &["rev-parse", "--path-format=absolute", "--show-toplevel"],
+            &cancel,
+        )?;
+        let index = git_path(
+            git,
+            &root,
+            &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            &cancel,
+        )?;
+        let bytes = index_bytes(&index)?;
+        let snapshot = read_index_snapshot_cancellable(git, &root, &cancel)?;
+        if index_bytes(&index)? != bytes {
+            return Err(PublishError::StaleBase);
+        }
+        Ok((root, bytes, snapshot))
+    };
+    let (Ok(expected), Ok((root, bytes, actual))) = (expected_index(candidate), current()) else {
+        return PublishError::OutcomeUnknown { cause };
+    };
+    if &actual == candidate.base_index() {
+        return PublishError::RolledBack { cause };
+    }
+    if actual != expected {
+        return PublishError::OutcomeUnknown { cause };
+    }
+    match publish_inner(
+        git,
+        &root,
+        &candidate.inverse(actual),
+        &cancel,
+        Some(&bytes),
+    ) {
+        Ok(_) => PublishError::RolledBack { cause },
+        Err(_) => PublishError::OutcomeUnknown { cause },
+    }
 }
 
 fn publish_inner(

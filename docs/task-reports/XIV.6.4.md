@@ -41,7 +41,7 @@
 - 성공 확인과 provider 읽기 전후 index bytes가 일치해야 복원 증표가 나옵니다. 증표는 복제·외부 생성이 불가능하고 해당 worktree에 묶입니다.
 - 복원은 같은 승인 경로로 inverse 여러 path를 전달합니다. 원래 snapshot·mode·삭제·D/F 전환과 unrelated flags/REUC가 유지됩니다.
 - 증표 이후 same-path·unrelated 내용·flags-only 변경은 StaleBase로 거부하고 외부 bytes를 그대로 둡니다. 실제 복원도 잠금 안에서 다시 bytes/snapshot을 검사합니다.
-- fixture 밖 hooks 디렉터리와 공식 Git config로 post-index-change 대기를 주입했습니다. Git commit 이후 취소/timeout은 실제 index가 반영됐어도 OutcomeUnknown이며 증표가 없습니다. 자동 역쓰기하지 않습니다.
+- fixture 밖 hooks 디렉터리와 공식 Git config로 post-index-change 대기를 주입했습니다. Git commit 이후 취소/timeout은 증표를 발급하지 않습니다. 2026-11-15 검토 결정(D5)에 따라 index를 다시 읽어 적용 결과와 같으면 그 bytes를 기준으로 잠금 안 CAS 복원을 실행하고 `RolledBack`을 반환합니다. 다시 읽은 index가 적용 전도 적용 결과도 아니면(commit 뒤 외부 writer) 덮어쓰지 않고 `OutcomeUnknown`입니다.
 - 조기 취소 뒤 남은 lock은 소유/정리 미확정 진단이며 직접 삭제하지 않습니다. 정상 준비 신호 이후 거부·취소의 정리를 검증했습니다.
 
 ## 성능
@@ -50,12 +50,12 @@
 
 ## 차이
 
-- 사용자 요구에 따라 무조건 과거 tree를 쓰는 복원을 사용하지 않습니다. 확인된 성공 증표와 현재 전체 index 표현이 같을 때만 복원하고, 경합·미확정 상태는 구조화된 오류로 남깁니다.
+- 무조건 과거 tree를 쓰는 복원을 사용하지 않습니다. 확인된 성공 증표, 또는 결과 미확정 뒤 다시 읽은 적용 결과의 전체 index 표현이 잠금 안에서 그대로일 때만 복원합니다. 그 밖의 경합은 구조화된 오류로 남깁니다.
 - 성공 뒤 복원은 Git tree/mode/flags/REUC 보존이며 변경 항목의 stat cache bytes까지 과거로 되돌리는 것은 아닙니다. cold start 복원은 빈 index 파일을 남길 수 있습니다.
 
 ## 남은 위험
 
-- 입력 승인 이후 결과 미확정, 조기 강제 종료의 잔류 lock, 권한 부족은 자동 삭제/복원하지 않습니다. 재조회와 사용자 진단이 필요합니다.
+- 결과 미확정 뒤 다시 읽은 index가 적용 결과와 다르거나 복원이 실패하면 자동 복원하지 않습니다. 조기 강제 종료의 잔류 lock과 권한 부족도 자동 삭제하지 않습니다. 재조회와 사용자 진단이 필요합니다.
 - Git lock 규약을 무시하는 직접 파일 교체나 강제 unlink는 지원 범위가 아닙니다. 지원 OS/버전/index 상태 제한은 XIV.6.2와 같습니다.
 - 제품 semantic 실패 처리는 XIV.6.5에서 이 증표를 사용해 연결합니다. UI/FFI·원격·release 작업은 실행하지 않았습니다.
 
