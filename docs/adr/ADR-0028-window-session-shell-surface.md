@@ -301,16 +301,35 @@ U125가 ADR 없이 넣은 복구 경로를 아키텍처 §22.3 범위(Restore·D
 
 ### 저장된 Frame의 이동
 
-기본 창의 이동 도구는 표시된 Frame을 드래그할 때 해당 창 scene에서 그 하위 트리를 임시 이동합니다.
-마우스를 놓으면 `stellar_window_session_move_frame`에 창 session, 클릭 시점의 View ID와 문서 revision,
-Frame ID, 부모 좌표계 이동량을 보냅니다. document thread는 현재 선택·View·revision·조상 잠금을
-확인한 뒤 Frame transform 속성 transaction 하나를 기록합니다. 기존 아핀의 회전·배율은 보존합니다.
+기본 창의 이동 도구는 표시된 node를 드래그할 때 해당 창 scene에서 그 하위 트리를 임시 이동합니다.
+마우스를 놓으면 선택 전체 이동(`stellar_window_canvas_move`, ADR-0071 UX.3.7)으로 보냅니다. 처음 기록한 단일
+Frame 이동 `stellar_window_session_move_frame`은 같은 이동의 중복 경로라 2026-11-15 검토에서 삭제했습니다.
 Escape·창 포커스 상실로 미리보기를 취소하면 문서 변경이 없습니다. 창의 Undo·Redo 및 Save Now가
-이 transaction을 처리합니다. 현재 표시 가능한 자유 배치 Frame 한 개 이동이 지원 범위입니다.
+이 transaction을 처리합니다.
+
+### 캔버스 직접 조작 함수(ADR-0071)
+
+모두 창 session handle을 받고, 요청형 함수의 완료는 `WINDOW_VIEW_CHANGED` 또는 `REQUEST_FAILED`입니다. 의미는 ADR-0071에
+있습니다.
+
+| 함수 | 역할 |
+|---|---|
+| `stellar_window_session_zoom_by` | 화면 점을 고정한 연속 줌(핀치, ⌘ 스크롤). 문서·history 불변 |
+| `stellar_window_canvas_pick` | 포인터 아래 행에서 선택. flag `STELLAR_PICK_TOGGLE`·`_DEEP`·`_ENTER`·`_PRESS`·`_RELEASE` |
+| `stellar_window_canvas_pick_area` | world 영역 선택. flag `STELLAR_AREA_CONTAIN`·`_ADD` |
+| `stellar_window_canvas_move` | 선택 전체 이동·Option 복제. flag `STELLAR_MOVE_DUPLICATE`·`_PARENT_SPACE` |
+| `stellar_window_canvas_resize` | 하나뿐인 선택의 크기 핸들(속성 탭과 같은 longhand `SetProperty`) |
+| `stellar_window_canvas_line_end` | Line 끝점 핸들(`x1`·`y1` 또는 `x2`·`y2`) |
+| `stellar_window_canvas_radius` | 반경 핸들(`border-*-radius`, Polygon 반경) |
+| `stellar_window_canvas_selection` | 최신 snapshot의 선택 상자 `StellarCanvasSelectionItem`과 flag `STELLAR_CANVAS_ITEM_*` |
+
+`stellar_window_session_insert_shape`는 끝에서 두 번째 인자로 `StellarShapeStyle`을 받습니다(ADR-0071 UX.1.5).
+헤더의 상수 값과 함수 선언은 `crates/ffi` 헤더 테스트가 Rust 상수와 대조합니다.
 
 호스트 검사 `scripts/macos/canvas-move-check.py`는 CLI로 부모 2배 변환과 자식 Frame의 위치를 저장하고,
-실제 기본 창에 합성 AppKit 입력을 보냅니다. 50% 배율에서의 이동량, 미리보기·Escape 원복 픽셀,
-다른 창 상태, Undo·Redo와 Save Now 뒤 재열기 좌표를 확인합니다.
+실제 기본 창에 합성 AppKit 입력을 보냅니다. 제한 모드 이동과 Undo(D1), 50% 배율에서의 이동량, 미리보기·Escape 원복
+픽셀, 다른 창 상태, Undo·Redo와 Save Now 뒤 재열기 좌표, 여러 node를 고른 채 끌기·Option 복제·클릭으로 하나 고르기를
+확인합니다.
 
 ### 자식 Free Frame 생성
 

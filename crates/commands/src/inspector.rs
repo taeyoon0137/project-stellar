@@ -492,6 +492,12 @@ fn node_view(model: &DocumentModel, id: StableId) -> Option<NodeView> {
     })
 }
 
+/// 위치(`left`·`top`, 캔버스 이동·크기 원점)를 고칠 Transform modifier: 켜진 modifier 앞부분 Transform 가운데
+/// 마지막 것입니다. 없으면 맨 앞에 새로 넣습니다. 속성 탭과 캔버스(ADR-0071)가 이 규칙 하나를 씁니다.
+pub fn position_modifier(model: &DocumentModel, id: StableId) -> Option<ModifierEntry> {
+    paint(model, id).last_transform
+}
+
 fn length_of(value: f32) -> CssValue {
     CssValue::Length(value)
 }

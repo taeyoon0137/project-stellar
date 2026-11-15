@@ -690,53 +690,6 @@ unsafe fn paste_selection_bytes(
     unsafe { rt.finish_request(result, out_request) }
 }
 
-/// 표시된 Frame을 부모 좌표계 delta만큼 이동하도록 요청합니다.
-///
-/// # Safety
-/// `view`와 `node`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_session_move_frame(
-    handle: u64,
-    session: u64,
-    view: *const [u8; 16],
-    node: *const [u8; 16],
-    revision: u64,
-    dx: f32,
-    dy: f32,
-    out_request: *mut u64,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if !out_request.is_null() {
-            unsafe { *out_request = 0 };
-        }
-        if view.is_null() || node.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        let Ok(delta) = stellar_core_types::value::Vec2::new(dx, dy) else {
-            return StellarStatus::InvalidArgument;
-        };
-        let view = StableId::from_bytes(unsafe { *view });
-        let node = StableId::from_bytes(unsafe { *node });
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let result = match rt.app() {
-            Ok(app) => app.move_canvas_frame(
-                WindowSessionHandle(session),
-                view,
-                stellar_core_types::revision::DocumentRevision(revision),
-                node,
-                delta,
-            ),
-            Err(status) => return status,
-        };
-        unsafe { rt.finish_request(result, out_request) }
-    })
-}
-
 /// Inspector가 Frame 속성 하나에 쓰는 값(고정 24 byte). 길이 key는 `length`, `BACKGROUND`는 `color`를 씁니다.
 #[repr(C)]
 #[derive(Default, Clone, Copy)]

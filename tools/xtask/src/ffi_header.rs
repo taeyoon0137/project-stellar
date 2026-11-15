@@ -401,8 +401,6 @@ StellarStatus stellar_window_canvas_png(uint64_t handle, uint64_t session, uint6
  * 실행 시점의 선택에서 정한 목적지에 넣습니다. 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED입니다. */
 StellarStatus stellar_window_copy_selection(uint64_t handle, const StellarSelectionTarget *target, uint8_t *bytes, size_t capacity, size_t *out_len);
 StellarStatus stellar_window_paste_selection(uint64_t handle, const StellarSelectionTarget *target, const uint8_t *bytes, size_t len, uint64_t *out_request);
-/* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
-StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float dx, float dy, uint64_t *out_request);
 /* 한 게시 snapshot의 선택과 단일 선택의 Inspector 값(고정 104 byte). core가 문서에서 읽습니다.
  * kind: NodeKind 저장 tag(단일 선택이 아니면 0), shape: ShapeKind tag(Shape가 아니면 0).
  * flags bit 0: width·height·radii(TL·TR·BR·BL)·background가 유효한 Frame, bit 1: Inspector 편집을 받을 수 있음.
@@ -467,6 +465,10 @@ StellarStatus stellar_window_layer_rename(uint64_t handle, uint64_t session, con
 #define STELLAR_PICK_TOGGLE 1
 #define STELLAR_PICK_DEEP 2
 #define STELLAR_PICK_ENTER 4
+/* 누름(PRESS): 고를 node가 이미 선택에 있으면 끌 수 있게 선택을 그대로 두고 변경을 미룹니다.
+ * 놓음(RELEASE, 움직이지 않음): 바로 앞 누름이 미룬 변경(하나로 줄이기, Shift 빼기)을 적용합니다. 둘 다 없으면 한 번에 정합니다. */
+#define STELLAR_PICK_PRESS 8
+#define STELLAR_PICK_RELEASE 16
 #define STELLAR_AREA_CONTAIN 1
 #define STELLAR_AREA_ADD 2
 /* leaf: 포인터 아래 가장 위 행의 node(NULL = 모든 Frame 밖). 완료는 WINDOW_VIEW_CHANGED 또는 REQUEST_FAILED. */

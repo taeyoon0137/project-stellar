@@ -1661,18 +1661,68 @@ mod tests {
                 command.code().to_string(),
             );
         }
+        for (name, value) in [
+            ("STELLAR_PICK_TOGGLE", crate::canvas_gesture::PICK_TOGGLE),
+            ("STELLAR_PICK_DEEP", crate::canvas_gesture::PICK_DEEP),
+            ("STELLAR_PICK_ENTER", crate::canvas_gesture::PICK_ENTER),
+            ("STELLAR_PICK_PRESS", crate::canvas_gesture::PICK_PRESS),
+            ("STELLAR_PICK_RELEASE", crate::canvas_gesture::PICK_RELEASE),
+            ("STELLAR_AREA_CONTAIN", crate::canvas_gesture::AREA_CONTAIN),
+            ("STELLAR_AREA_ADD", crate::canvas_gesture::AREA_ADD),
+            (
+                "STELLAR_MOVE_DUPLICATE",
+                crate::canvas_gesture::MOVE_DUPLICATE,
+            ),
+            (
+                "STELLAR_MOVE_PARENT_SPACE",
+                crate::canvas_gesture::MOVE_PARENT_SPACE,
+            ),
+            (
+                "STELLAR_CANVAS_ITEM_MOVABLE",
+                crate::canvas_gesture::ITEM_MOVABLE,
+            ),
+            (
+                "STELLAR_CANVAS_ITEM_RESIZABLE",
+                crate::canvas_gesture::ITEM_RESIZABLE,
+            ),
+            (
+                "STELLAR_CANVAS_ITEM_RADIUS",
+                crate::canvas_gesture::ITEM_RADIUS,
+            ),
+            (
+                "STELLAR_CANVAS_ITEM_RADIUS_PER_CORNER",
+                crate::canvas_gesture::ITEM_RADIUS_PER_CORNER,
+            ),
+            (
+                "STELLAR_CANVAS_ITEM_FIXED_WIDTH",
+                crate::canvas_gesture::ITEM_FIXED_WIDTH,
+            ),
+            (
+                "STELLAR_CANVAS_ITEM_FIXED_HEIGHT",
+                crate::canvas_gesture::ITEM_FIXED_HEIGHT,
+            ),
+        ] {
+            define(name, value.to_string());
+        }
         for function in [
             "stellar_window_session_open",
             "stellar_window_session_close",
             "stellar_window_session_info",
             "stellar_window_session_perform",
             "stellar_window_session_select",
-            "stellar_window_session_move_frame",
             "stellar_window_layer_rename",
             "stellar_window_session_set_frame_property",
             "stellar_window_selected_node",
             "stellar_window_session_insert_frame",
             "stellar_window_session_insert_shape",
+            "stellar_window_session_zoom_by",
+            "stellar_window_canvas_pick",
+            "stellar_window_canvas_pick_area",
+            "stellar_window_canvas_move",
+            "stellar_window_canvas_resize",
+            "stellar_window_canvas_line_end",
+            "stellar_window_canvas_radius",
+            "stellar_window_canvas_selection",
             "stellar_window_selection_target",
             "stellar_window_edit_selection",
             "stellar_text_begin",

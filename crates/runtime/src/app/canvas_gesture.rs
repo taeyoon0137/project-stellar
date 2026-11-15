@@ -1,19 +1,37 @@
 //! 캔버스 직접 조작(ADR-0071).
 //!
 //! 셸은 그린 행·화면 결과(포인터 아래 행, world delta, local 상자)만 보내고, 카메라·선택·편집의 의미와 command
-//! 구성은 여기서 정합니다. 카메라 조작은 문서·history를 바꾸지 않습니다.
+//! 구성은 여기서 정합니다. 카메라 조작은 문서·history를 바꾸지 않습니다. 크기·반경·끝점은 속성 탭(ADR-0070)과
+//! 같은 longhand key의 `SetProperty`로 씁니다.
 
 use super::frame_move::editable_ancestry;
 use super::*;
 use crate::canvas::CanvasScene;
+use std::sync::Arc;
+use stellar_commands::command::Command;
+use stellar_commands::property::{read_property, PropertyValue, SetProperty};
 use stellar_commands::selection::Selection;
-use stellar_core_types::value::{Rect, Transform2D, Vec2};
+use stellar_core_types::property::PropertyKey;
+use stellar_core_types::value::{FiniteF32, Rect, Transform2D, Vec2};
 use stellar_document::frame::CornerRadius;
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierId, ModifierPayload};
 use stellar_document::records::NodePayload;
 use stellar_document::shape::ShapeGeometry;
 use stellar_scene::bounds::Aabb;
+
+/// 클릭 선택의 단계(UX 명세 5.3·5.4).
+///
+/// 이미 고른 node를 누르면 끌어 옮길 수 있도록 선택을 그대로 두고, 움직이지 않고 놓았을 때만 바꿉니다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickPhase {
+    /// 한 번에 정합니다(빈 곳 클릭 등).
+    Click,
+    /// 누름. 고를 node가 이미 선택에 있으면 선택을 그대로 두고 바꿀 내용(하나로 줄이기, Shift 빼기)을 미룹니다.
+    Press,
+    /// 움직이지 않고 놓음. 같은 창의 바로 앞 누름이 미룬 변경을 적용합니다. 미룬 것이 없으면 그대로입니다.
+    Release,
+}
 
 /// 셸이 그린 행 위에서 고른 선택 의도(UX 명세 5.3).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -28,6 +46,8 @@ pub enum CanvasPick {
         deep: bool,
         /// 더블클릭: 선택한 node 안으로 한 단계 들어갑니다.
         enter: bool,
+        /// 누름·놓음 단계.
+        phase: PickPhase,
     },
     /// world 영역. root의 직계 자식 가운데 겹치는(contain이면 완전히 포함된) node를 고릅니다.
     Area {
@@ -85,13 +105,13 @@ pub struct CanvasSelectionItem {
     pub rect: Rect,
     /// 저장된 모서리 반경(Frame·Rectangle은 네 모서리, Polygon은 같은 값 넷).
     pub radii: CornerRadius,
-    /// 이동할 수 있는지(잠금·숨김·흐름 부모가 없음).
+    /// 이동할 수 있는지. 이동 command와 같은 판정(잠금·숨김·흐름 부모·modifier 구성)입니다.
     pub movable: bool,
     /// 크기 핸들로 `width`·`height`를 바꿀 수 있는지.
     pub resizable: bool,
     /// 반경 핸들이 있는지와 그 방식.
     pub radius: Option<RadiusHandles>,
-    /// 가로·세로가 고정 크기인지(아니면 크기 라벨에 `fit-content`).
+    /// 가로·세로가 고정 크기인지. 아니면 자동 크기(Text의 `width: max-content`, `height: auto`)입니다.
     pub fixed: [bool; 2],
     /// Line의 시작·끝점(local). 끝점 핸들 자리입니다.
     pub line: Option<[Vec2; 2]>,
@@ -134,7 +154,7 @@ pub enum CanvasEdit {
         /// 한 모서리만(0 tl, 1 tr, 2 br, 3 bl, Option). `None`이면 네 모서리 모두입니다.
         corner: Option<usize>,
         /// 원본 반경(px, ≥ 0). 상자보다 큰 값은 평가할 때 줄어듭니다.
-        radius: stellar_core_types::value::FiniteF32,
+        radius: FiniteF32,
     },
 }
 
@@ -157,6 +177,46 @@ fn window_scene(
     Ok((entry, scene))
 }
 
+/// 누를 때 미룬 선택 변경.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DeferredPick {
+    view: StableId,
+    target: StableId,
+    toggle: bool,
+}
+
+/// 창 하나의 캔버스 조작 상태(document thread 소유).
+#[derive(Debug, Default)]
+pub(crate) struct CanvasGestureState {
+    /// 바로 앞 누름이 미룬 선택 변경.
+    deferred: Option<DeferredPick>,
+    /// 마지막으로 계산한 선택 상자. scene과 선택이 같으면 다시 계산하지 않습니다(팬·줌 게시).
+    items: Option<(Arc<CanvasScene>, Selection, Arc<[CanvasSelectionItem]>)>,
+}
+
+impl CanvasGestureState {
+    /// 표시한 선택의 상자. scene과 선택이 바뀔 때만 다시 계산합니다.
+    pub(crate) fn selection_items(
+        &mut self,
+        session: &ProjectWindowSession,
+        scene: Option<&Arc<CanvasScene>>,
+    ) -> Arc<[CanvasSelectionItem]> {
+        let Some(scene) = scene else {
+            self.items = None;
+            return Arc::from([]);
+        };
+        let selection = session.view().selection();
+        if let Some((cached, shown, items)) = &self.items {
+            if Arc::ptr_eq(cached, scene) && shown == selection {
+                return items.clone();
+            }
+        }
+        let items = selection_items(session, Some(scene));
+        self.items = Some((scene.clone(), selection.clone(), items.clone()));
+        items
+    }
+}
+
 impl AppRuntime {
     /// 셸이 그린 행에서 고른 선택을 코어 규칙(직계 자식, Shift 넣고 빼기, ⌘ 깊은 선택, 영역)으로 정해 기록합니다.
     pub fn canvas_pick(
@@ -167,9 +227,11 @@ impl AppRuntime {
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let (entry, scene) = window_scene(ctx.app_sessions_mut(), session)?;
-            let window = &mut entry.session;
-            let selection = resolve_pick(window, scene.as_deref(), view, pick)?;
-            window.select(selection).map_err(view_failure)?;
+            let deferred = entry.gesture.deferred.take();
+            let (selection, next) =
+                resolve_pick(&entry.session, scene.as_deref(), view, pick, deferred)?;
+            entry.session.select(selection).map_err(view_failure)?;
+            entry.gesture.deferred = next;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
         })
     }
@@ -183,6 +245,7 @@ impl AppRuntime {
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
             let (entry, scene) = window_scene(ctx.app_sessions_mut(), session)?;
+            entry.gesture.deferred = None;
             let scene = scene.ok_or_else(stale_view)?;
             apply_edit(&mut entry.session, &scene, request, view, edit)?;
             Ok(RuntimeEvent::WindowViewChanged { request, session })
@@ -216,114 +279,105 @@ fn apply_edit(
     if window.tabs().active_view() != Some(view) {
         return Err(stale_view());
     }
-    match edit {
+    let commands = match edit {
         CanvasEdit::Move {
             anchor,
             delta,
             parent_space,
             duplicate,
-        } => move_selection(
-            window,
-            scene,
-            request,
-            view,
-            anchor,
-            delta,
-            parent_space,
-            duplicate,
-        ),
-        CanvasEdit::Resize { node, rect } => resize_node(window, request, view, node, rect),
+        } => {
+            return move_selection(
+                window,
+                scene,
+                request,
+                view,
+                anchor,
+                delta,
+                parent_space,
+                duplicate,
+            )
+        }
+        CanvasEdit::Resize { node, rect } => {
+            let id = super::frame_move::command_id(window.window(), request);
+            let (model, payload) = sole_editable(window, view, node)?;
+            resize_commands(model, node, &payload, rect, derived_id(id, node))?
+        }
         CanvasEdit::LineEnd { node, end, point } => {
-            move_line_end(window, request, view, node, end, point)
+            let (model, payload) = sole_editable(window, view, node)?;
+            line_end_commands(model, node, &payload, end, point)?
         }
         CanvasEdit::Radius {
             node,
             corner,
             radius,
-        } => set_radius(window, request, view, node, corner, radius),
-    }
+        } => {
+            let (model, payload) = sole_editable(window, view, node)?;
+            radius_commands(model, node, &payload, corner, radius)?
+        }
+    };
+    apply_commands(window, request, commands)
 }
 
-/// 반경 핸들 한 번(Undo 한 번).
-fn set_radius(
-    window: &mut ProjectWindowSession,
-    request: RequestId,
-    view: StableId,
+fn set_property(node: StableId, key: PropertyKey, value: PropertyValue) -> Command {
+    Command::SetProperty(SetProperty { node, key, value })
+}
+
+fn length(value: f32) -> Result<PropertyValue, Failure> {
+    FiniteF32::new(value)
+        .ok()
+        .filter(|v| v.get() >= 0.0)
+        .map(PropertyValue::NonNegative)
+        .ok_or_else(stale_view)
+}
+
+fn number(value: f32) -> Result<PropertyValue, Failure> {
+    FiniteF32::new(value)
+        .map(PropertyValue::Number)
+        .map_err(|_| stale_view())
+}
+
+/// 값이 바뀐 `(key, value)`만 `SetProperty`로 만듭니다(속성 탭과 같은 key).
+fn changed_properties(
+    model: &DocumentModel,
     node: StableId,
+    values: impl IntoIterator<Item = (PropertyKey, PropertyValue)>,
+) -> Result<Vec<Command>, Failure> {
+    let record = model.record(node).ok_or_else(stale_view)?;
+    Ok(values
+        .into_iter()
+        .filter(|(key, value)| read_property(&record, *key).as_ref() != Some(value))
+        .map(|(key, value)| set_property(node, key, value))
+        .collect())
+}
+
+/// 반경 핸들 한 번. Frame·Rectangle은 바뀐 `border-*-radius` longhand만, Polygon은 반경 key 하나입니다.
+fn radius_commands(
+    model: &DocumentModel,
+    node: StableId,
+    payload: &NodePayload,
     corner: Option<usize>,
-    radius: stellar_core_types::value::FiniteF32,
-) -> Result<(), Failure> {
-    use stellar_commands::command::Command;
+    radius: FiniteF32,
+) -> Result<Vec<Command>, Failure> {
     use stellar_commands::document::frame::keys;
-    use stellar_commands::property::{PropertyValue, SetProperty};
-    use stellar_core_types::value::Angle;
-    use stellar_document::shape::{PolygonParams, RectangleParams};
+    use stellar_document::payload_metadata::shape_keys;
     if radius.get() < 0.0 || corner.is_some_and(|c| c > 3) {
         return Err(stale_view());
     }
-    let (model, payload) = sole_editable(window, view, node)?;
-    let corners = |current: CornerRadius| {
-        let (tl, tr, br, bl) = current.components();
-        let mut values = [tl, tr, br, bl];
-        for (index, value) in values.iter_mut().enumerate() {
-            if corner.is_none_or(|c| c == index) {
-                *value = radius.get();
-            }
-        }
-        values
-    };
-    let commands = match payload {
-        NodePayload::Frame(frame) => {
-            let (tl, tr, br, bl) = frame.corner_radius.components();
-            let before = [tl, tr, br, bl];
-            corners(frame.corner_radius)
-                .into_iter()
-                .zip(keys::BORDER_RADIUS_LONGHANDS)
-                .zip(before)
-                .filter(|((next, _), old)| next != old)
-                .map(|((next, key), _)| {
-                    Command::SetProperty(SetProperty {
-                        node,
-                        key,
-                        value: PropertyValue::NonNegative(
-                            stellar_core_types::value::FiniteF32::new(next).expect("유한 반경"),
-                        ),
-                    })
-                })
-                .collect()
-        }
-        NodePayload::Shape(ShapeGeometry::Rectangle(rect)) => {
-            let [tl, tr, br, bl] = corners(rect.corner_radius);
-            let next = CornerRadius::new(tl, tr, br, bl).map_err(|_| stale_view())?;
-            if next == rect.corner_radius {
-                return Ok(());
-            }
-            vec![replace_payload(
-                model,
-                node,
-                NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
-                    size: rect.size,
-                    corner_radius: next,
-                })),
-            )?]
-        }
-        NodePayload::Shape(ShapeGeometry::Polygon(polygon)) => {
-            if polygon.corner_radius() == radius.get() {
-                return Ok(());
-            }
-            let rotation = Angle::new(polygon.rotation_degrees()).map_err(|_| stale_view())?;
-            let next =
-                PolygonParams::new(polygon.bounds(), polygon.sides(), rotation, radius.get())
-                    .map_err(|_| stale_view())?;
-            vec![replace_payload(
-                model,
-                node,
-                NodePayload::Shape(ShapeGeometry::Polygon(next)),
-            )?]
+    let value = PropertyValue::NonNegative(radius);
+    let longhands = match payload {
+        NodePayload::Frame(_) => keys::BORDER_RADIUS_LONGHANDS,
+        NodePayload::Shape(ShapeGeometry::Rectangle(_)) => shape_keys::BORDER_RADIUS_LONGHANDS,
+        NodePayload::Shape(ShapeGeometry::Polygon(_)) => {
+            return changed_properties(model, node, [(shape_keys::POLYGON_CORNER_RADIUS, value)])
         }
         _ => return Err(stale_view()),
     };
-    apply_commands(window, request, commands)
+    let chosen = longhands
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| corner.is_none_or(|c| c == *index))
+        .map(|(_, key)| (key, value.clone()));
+    changed_properties(model, node, chosen)
 }
 
 /// 하나뿐인 선택이 `node`이고 편집할 수 있는지 확인합니다.
@@ -356,25 +410,10 @@ fn shifted(transform: Transform2D, origin: Vec2) -> Option<Transform2D> {
     .ok()
 }
 
-/// payload만 바꾸는 command(형제 순서·modifier는 그대로). 역 command도 같은 종류입니다.
-fn replace_payload(
-    model: &DocumentModel,
-    node: StableId,
-    payload: NodePayload,
-) -> Result<stellar_commands::command::Command, Failure> {
-    let mut record = model.record(node).ok_or_else(stale_view)?;
-    record.payload = payload;
-    Ok(stellar_commands::command::Command::RestoreNodeRecords(
-        stellar_commands::convert::RestoreNodeRecords {
-            records: vec![record],
-        },
-    ))
-}
-
 fn apply_commands(
     window: &mut ProjectWindowSession,
     request: RequestId,
-    commands: Vec<stellar_commands::command::Command>,
+    commands: Vec<Command>,
 ) -> Result<(), Failure> {
     use stellar_commands::id::CommandOrigin;
     use stellar_commands::transaction::CommandTransaction;
@@ -392,169 +431,158 @@ fn apply_commands(
     Ok(())
 }
 
-/// 크기 핸들 한 번. Frame은 `width`·`height`(+원점이 바뀌면 `transform`), Shape·Image는 geometry와 Transform입니다.
-fn resize_node(
-    window: &mut ProjectWindowSession,
-    request: RequestId,
-    view: StableId,
+/// 크기 핸들 결과 상자 `rect`(지금 local 좌표)를 쓰는 command.
+///
+/// 크기는 속성 탭과 같은 `width`·`height`(Line은 `x1`·`y1`·`x2`·`y2`) longhand의 `SetProperty`입니다. 상자 원점이
+/// 바뀌면 Frame은 `transform`, Shape·Image는 위치 Transform modifier(없으면 맨 앞에 새로)를 바꿉니다.
+fn resize_commands(
+    model: &DocumentModel,
     node: StableId,
+    payload: &NodePayload,
     rect: Rect,
-) -> Result<(), Failure> {
-    use stellar_commands::command::Command;
+    new_modifier: StableId,
+) -> Result<Vec<Command>, Failure> {
     use stellar_commands::document::frame::keys;
-    use stellar_commands::modifier_ops::{InsertModifier, SetModifierProperty};
-    use stellar_commands::property::{PropertyValue, SetProperty};
-    use stellar_core_types::order_key::OrderKey;
-    use stellar_core_types::value::Angle;
-    use stellar_document::modifier::{ModifierEntry, ModifierKind};
-    use stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX;
-    use stellar_document::shape::{EllipseParams, PolygonParams, RectangleParams};
-    let (model, payload) = sole_editable(window, view, node)?;
+    use stellar_document::payload_metadata::{image_keys, shape_keys};
     let size = rect.size();
     if size.width() <= 0.0 || size.height() <= 0.0 {
         return Err(stale_view());
     }
-    let frame = matches!(payload, NodePayload::Frame(_));
-    let (modifier, transform) = resize_transform(model, node, frame).ok_or_else(stale_view)?;
     let origin = rect.origin();
-    let mut commands = Vec::new();
-    let next = match payload {
-        NodePayload::Frame(current) => {
-            for command in SetProperty::frame_dimensions(node, size) {
-                let old = if command.key == keys::WIDTH {
-                    current.size.width()
-                } else {
-                    current.size.height()
-                };
-                if matches!(command.value, PropertyValue::NonNegative(v) if v.get() != old) {
-                    commands.push(Command::SetProperty(command));
-                }
-            }
+    let sized = |width: PropertyKey, height: PropertyKey| -> Result<_, Failure> {
+        Ok([
+            (width, length(size.width())?),
+            (height, length(size.height())?),
+        ])
+    };
+    // (바꿀 longhand, 지금 local 상자의 원점)
+    let (values, old_origin) = match payload {
+        NodePayload::Frame(frame) => {
+            let mut commands = changed_properties(model, node, sized(keys::WIDTH, keys::HEIGHT)?)?;
             if origin != Vec2::ZERO {
-                commands.push(Command::SetProperty(SetProperty {
+                let next = shifted(frame.transform, origin).ok_or_else(stale_view)?;
+                commands.push(set_property(
                     node,
-                    key: keys::TRANSFORM,
-                    value: PropertyValue::Transform(
-                        shifted(transform, origin).ok_or_else(stale_view)?,
-                    ),
-                }));
+                    keys::TRANSFORM,
+                    PropertyValue::Transform(next),
+                ));
             }
-            return apply_commands(window, request, commands);
+            return Ok(commands);
         }
-        NodePayload::Shape(ShapeGeometry::Rectangle(current)) => {
-            NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
-                size,
-                corner_radius: current.corner_radius,
-            }))
-        }
-        // Ellipse·Polygon은 local bounds에 원점이 있어 transform을 바꾸지 않습니다.
-        NodePayload::Shape(ShapeGeometry::Ellipse(_)) => NodePayload::Shape(
-            ShapeGeometry::Ellipse(EllipseParams::new(rect).map_err(|_| stale_view())?),
-        ),
-        NodePayload::Shape(ShapeGeometry::Polygon(current)) => {
-            let rotation = Angle::new(current.rotation_degrees()).map_err(|_| stale_view())?;
-            NodePayload::Shape(ShapeGeometry::Polygon(
-                PolygonParams::new(rect, current.sides(), rotation, current.corner_radius())
-                    .map_err(|_| stale_view())?,
-            ))
-        }
-        NodePayload::Shape(ShapeGeometry::Line(current)) => {
+        NodePayload::Shape(ShapeGeometry::Line(line)) => {
             // 끝점을 이전 상자에서 새 상자로 같은 비율로 옮깁니다(길이 0인 축은 그대로 평행 이동).
-            let min_x = current.start.x().min(current.end.x());
-            let min_y = current.start.y().min(current.end.y());
-            let old_w = (current.end.x() - current.start.x()).abs();
-            let old_h = (current.end.y() - current.start.y()).abs();
-            let map = |p: Vec2| {
-                let sx = if old_w > 0.0 {
-                    size.width() / old_w
-                } else {
-                    1.0
-                };
-                let sy = if old_h > 0.0 {
-                    size.height() / old_h
-                } else {
-                    1.0
-                };
-                Vec2::new(
-                    origin.x() + (p.x() - min_x) * sx,
-                    origin.y() + (p.y() - min_y) * sy,
-                )
-                .map_err(|_| stale_view())
+            let min_x = line.start.x().min(line.end.x());
+            let min_y = line.start.y().min(line.end.y());
+            let old_w = (line.end.x() - line.start.x()).abs();
+            let old_h = (line.end.y() - line.start.y()).abs();
+            let sx = if old_w > 0.0 {
+                size.width() / old_w
+            } else {
+                1.0
             };
-            let mut line = current;
-            line.start = map(current.start)?;
-            line.end = map(current.end)?;
-            NodePayload::Shape(ShapeGeometry::Line(line))
+            let sy = if old_h > 0.0 {
+                size.height() / old_h
+            } else {
+                1.0
+            };
+            let x = |v: f32| number(origin.x() + (v - min_x) * sx);
+            let y = |v: f32| number(origin.y() + (v - min_y) * sy);
+            let values = [
+                (shape_keys::X1, x(line.start.x())?),
+                (shape_keys::Y1, y(line.start.y())?),
+                (shape_keys::X2, x(line.end.x())?),
+                (shape_keys::Y2, y(line.end.y())?),
+            ];
+            return changed_properties(model, node, values);
         }
-        NodePayload::Image(mut image) => {
-            image.size = size;
-            NodePayload::Image(image)
+        NodePayload::Shape(ShapeGeometry::Rectangle(_)) => {
+            (sized(shape_keys::WIDTH, shape_keys::HEIGHT)?, Vec2::ZERO)
         }
+        NodePayload::Shape(ShapeGeometry::Ellipse(ellipse)) => (
+            sized(shape_keys::WIDTH, shape_keys::HEIGHT)?,
+            ellipse.bounds.origin(),
+        ),
+        NodePayload::Shape(ShapeGeometry::Polygon(polygon)) => (
+            sized(shape_keys::WIDTH, shape_keys::HEIGHT)?,
+            polygon.bounds().origin(),
+        ),
+        NodePayload::Image(_) => (sized(image_keys::WIDTH, image_keys::HEIGHT)?, Vec2::ZERO),
         _ => return Err(stale_view()),
     };
-    let moves_origin = matches!(
-        next,
-        NodePayload::Shape(ShapeGeometry::Rectangle(_)) | NodePayload::Image(_)
-    );
-    if model.payload(node) != Some(&next) {
-        commands.push(replace_payload(model, node, next)?);
+    let mut commands = changed_properties(model, node, values)?;
+    let shift = Vec2::new(origin.x() - old_origin.x(), origin.y() - old_origin.y())
+        .map_err(|_| stale_view())?;
+    if shift != Vec2::ZERO {
+        let (modifier, transform) = resize_transform(model, node, false).ok_or_else(stale_view)?;
+        let next = shifted(transform, shift).ok_or_else(stale_view)?;
+        commands.push(transform_command(model, node, modifier, next, new_modifier));
     }
-    if moves_origin && origin != Vec2::ZERO {
-        let next = shifted(transform, origin).ok_or_else(stale_view)?;
-        commands.push(match modifier {
-            Some(modifier) => Command::SetModifierProperty(SetModifierProperty {
-                node,
-                modifier,
-                key: TRANSFORM_MATRIX,
-                value: PropertyValue::Transform(next),
-            }),
-            None => {
-                let stack = model.modifier_stack(node);
-                let order = OrderKey::between(
-                    None,
-                    stack.and_then(|s| s.entries().first()).map(|e| &e.order),
-                );
-                let id = super::frame_move::command_id(window.window(), request);
-                Command::InsertModifier(InsertModifier {
-                    node,
-                    entry: ModifierEntry {
-                        id: ModifierId::new(derived_id(id, node)),
-                        order,
-                        kind: ModifierKind::Transform,
-                        enabled: true,
-                        payload: ModifierPayload::Transform(next),
-                    },
-                })
-            }
-        });
-    }
-    apply_commands(window, request, commands)
+    Ok(commands)
 }
 
-/// Line 끝점 핸들 한 번.
-fn move_line_end(
-    window: &mut ProjectWindowSession,
-    request: RequestId,
-    view: StableId,
+/// 위치 Transform modifier를 `next`로 바꾸거나(없으면 맨 앞에 새로) 넣는 command.
+fn transform_command(
+    model: &DocumentModel,
     node: StableId,
+    modifier: Option<ModifierId>,
+    next: Transform2D,
+    new_modifier: StableId,
+) -> Command {
+    use stellar_commands::modifier_ops::{InsertModifier, SetModifierProperty};
+    use stellar_core_types::order_key::OrderKey;
+    use stellar_document::modifier::{ModifierEntry, ModifierKind};
+    use stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX;
+    match modifier {
+        Some(modifier) => Command::SetModifierProperty(SetModifierProperty {
+            node,
+            modifier,
+            key: TRANSFORM_MATRIX,
+            value: PropertyValue::Transform(next),
+        }),
+        None => {
+            let order = OrderKey::between(
+                None,
+                model
+                    .modifier_stack(node)
+                    .and_then(|s| s.entries().first())
+                    .map(|e| &e.order),
+            );
+            Command::InsertModifier(InsertModifier {
+                node,
+                entry: ModifierEntry {
+                    id: ModifierId::new(new_modifier),
+                    order,
+                    kind: ModifierKind::Transform,
+                    enabled: true,
+                    payload: ModifierPayload::Transform(next),
+                },
+            })
+        }
+    }
+}
+
+/// Line 끝점 핸들 한 번. 바뀐 `x1`·`y1`(시작) 또는 `x2`·`y2`(끝)만 씁니다.
+fn line_end_commands(
+    model: &DocumentModel,
+    node: StableId,
+    payload: &NodePayload,
     end: bool,
     point: Vec2,
-) -> Result<(), Failure> {
-    let (model, payload) = sole_editable(window, view, node)?;
-    let NodePayload::Shape(ShapeGeometry::Line(current)) = payload else {
+) -> Result<Vec<Command>, Failure> {
+    use stellar_document::payload_metadata::shape_keys;
+    if !matches!(payload, NodePayload::Shape(ShapeGeometry::Line(_))) {
         return Err(stale_view());
-    };
-    let mut line = current;
-    if end {
-        line.end = point;
+    }
+    let (x, y) = if end {
+        (shape_keys::X2, shape_keys::Y2)
     } else {
-        line.start = point;
-    }
-    if line == current {
-        return Ok(());
-    }
-    let command = replace_payload(model, node, NodePayload::Shape(ShapeGeometry::Line(line)))?;
-    apply_commands(window, request, vec![command])
+        (shape_keys::X1, shape_keys::Y1)
+    };
+    changed_properties(
+        model,
+        node,
+        [(x, number(point.x())?), (y, number(point.y())?)],
+    )
 }
 
 /// 선택에서 다른 선택의 자손을 뺀 node(선택 순서).
@@ -618,8 +646,19 @@ fn derived_id(command: stellar_commands::id::CommandId, node: StableId) -> Stabl
     StableId::from_bytes(raw)
 }
 
+/// `node`의 위치 Transform modifier와 그 값(속성 탭 `left`·`top`과 같은 규칙, ADR-0070).
+fn position_transform(model: &DocumentModel, node: StableId) -> Option<(ModifierId, Transform2D)> {
+    let entry = stellar_commands::inspector::position_modifier(model, node)?;
+    match entry.payload {
+        ModifierPayload::Transform(transform) => Some((entry.id, transform)),
+        _ => None,
+    }
+}
+
 /// `source`를 `delta`(부모 공간)만큼 옮기는 command를 `target`(복제본이면 remap 적용)에 대해 만듭니다.
-/// Frame은 `transform`, 그 밖의 node는 마지막 Transform modifier(없으면 맨 앞에 새로)를 바꿉니다.
+///
+/// Frame은 `transform`, 배치한 인스턴스는 배치가 기록한 Transform 하나, 그 밖의 node는 속성 탭 `left`·`top`과 같은
+/// 위치 Transform modifier(없으면 맨 앞에 새로)를 바꿉니다. 옮길 수 없는 node는 `Err`입니다.
 fn move_command(
     model: &DocumentModel,
     source: StableId,
@@ -627,14 +666,8 @@ fn move_command(
     delta: Vec2,
     remap: Option<&std::collections::BTreeMap<StableId, StableId>>,
     new_modifier: StableId,
-) -> Result<Option<stellar_commands::command::Command>, Failure> {
-    use stellar_commands::command::Command;
+) -> Result<Option<Command>, Failure> {
     use stellar_commands::document::frame::keys;
-    use stellar_commands::modifier_ops::{InsertModifier, SetModifierProperty};
-    use stellar_commands::property::{PropertyValue, SetProperty};
-    use stellar_core_types::order_key::OrderKey;
-    use stellar_document::modifier::{ModifierEntry, ModifierKind};
-    use stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX;
     let modifier_of = |id: ModifierId| -> Result<ModifierId, Failure> {
         match remap {
             None => Ok(id),
@@ -644,22 +677,22 @@ fn move_command(
                 .ok_or_else(stale_view),
         }
     };
-    let stack = model.modifier_stack(source);
-    let last = match model.payload(source).ok_or_else(stale_view)? {
+    let position = match model.payload(source).ok_or_else(stale_view)? {
         NodePayload::Frame(frame) => {
             let next = translated(frame.transform, delta).ok_or_else(stale_view)?;
             if next == frame.transform {
                 return Ok(None);
             }
-            return Ok(Some(Command::SetProperty(SetProperty {
-                node: target,
-                key: keys::TRANSFORM,
-                value: PropertyValue::Transform(next),
-            })));
+            return Ok(Some(set_property(
+                target,
+                keys::TRANSFORM,
+                PropertyValue::Transform(next),
+            )));
         }
         NodePayload::ComponentInstance(instance) => {
             // 배치가 기록한 이동 하나만 바꿉니다. 별도 변환·override에는 손대지 않습니다.
-            let [entry] = stack.ok_or_else(stale_view)?.entries() else {
+            let stack = model.modifier_stack(source).ok_or_else(stale_view)?;
+            let [entry] = stack.entries() else {
                 return Err(stale_view());
             };
             let ModifierPayload::Transform(matrix) = entry.payload else {
@@ -672,44 +705,50 @@ fn move_command(
             Some((entry.id, matrix))
         }
         NodePayload::Shape(_) | NodePayload::Text(_) | NodePayload::Image(_) => {
-            crate::canvas::shape::shape_style(stack)
-                .ok_or_else(stale_view)?
-                .last_transform
+            position_transform(model, source)
         }
         _ => return Err(stale_view()),
     };
-    Ok(Some(match last {
+    let (modifier, next) = match position {
         Some((modifier, current)) => {
             let next = translated(current, delta).ok_or_else(stale_view)?;
             if next == current {
                 return Ok(None);
             }
-            Command::SetModifierProperty(SetModifierProperty {
-                node: target,
-                modifier: modifier_of(modifier)?,
-                key: TRANSFORM_MATRIX,
-                value: PropertyValue::Transform(next),
-            })
+            (Some(modifier_of(modifier)?), next)
         }
-        None => {
-            let order = OrderKey::between(
-                None,
-                stack.and_then(|s| s.entries().first()).map(|e| &e.order),
-            );
-            Command::InsertModifier(InsertModifier {
-                node: target,
-                entry: ModifierEntry {
-                    id: ModifierId::new(new_modifier),
-                    order,
-                    kind: ModifierKind::Transform,
-                    enabled: true,
-                    payload: ModifierPayload::Transform(
-                        translated(Transform2D::identity(), delta).ok_or_else(stale_view)?,
-                    ),
-                },
-            })
+        None => (
+            None,
+            translated(Transform2D::identity(), delta).ok_or_else(stale_view)?,
+        ),
+    };
+    // 복제본의 새 modifier 자리는 원본 stack과 같습니다(DuplicateSubtree가 순서를 그대로 복사).
+    let command = transform_command(model, source, modifier, next, new_modifier);
+    Ok(Some(retarget(command, target)))
+}
+
+/// 원본 기준으로 만든 command의 대상 node를 `target`으로 바꿉니다.
+fn retarget(command: Command, target: StableId) -> Command {
+    match command {
+        Command::SetModifierProperty(mut set) => {
+            set.node = target;
+            Command::SetModifierProperty(set)
         }
-    }))
+        Command::InsertModifier(mut insert) => {
+            insert.node = target;
+            Command::InsertModifier(insert)
+        }
+        other => other,
+    }
+}
+
+/// 이동 command와 같은 판정으로 `node`를 옮길 수 있는지.
+fn can_move(model: &DocumentModel, view: StableId, node: StableId) -> bool {
+    let frame = matches!(model.payload(node), Some(NodePayload::Frame(_)));
+    editable_ancestry(model, view, node, !frame).is_some()
+        && Vec2::new(1.0, 0.0)
+            .ok()
+            .is_some_and(|probe| move_command(model, node, node, probe, None, node).is_ok())
 }
 
 /// 형제 순서에서 `node` 바로 위(다음 형제 앞) 자리.
@@ -742,7 +781,6 @@ fn move_selection(
     parent_space: bool,
     duplicate: bool,
 ) -> Result<(), Failure> {
-    use stellar_commands::command::Command;
     use stellar_commands::duplicate::DuplicateSubtree;
     use stellar_commands::id::CommandOrigin;
     use stellar_commands::transaction::CommandTransaction;
@@ -893,12 +931,29 @@ fn point_target(
     })
 }
 
+/// `target`을 뺀 선택. 주 선택이 빠지면 남은 마지막 node가 주 선택입니다.
+fn without(current: &Selection, target: StableId) -> Selection {
+    let rest: Vec<StableId> = current
+        .ids()
+        .iter()
+        .copied()
+        .filter(|&id| id != target)
+        .collect();
+    let primary = current
+        .primary()
+        .filter(|&p| p != target)
+        .or(rest.last().copied());
+    Selection::new(rest, primary)
+}
+
+/// 고른 선택과 다음 누름·놓음까지 미룰 변경.
 fn resolve_pick(
     window: &ProjectWindowSession,
     scene: Option<&CanvasScene>,
     view: StableId,
     pick: CanvasPick,
-) -> Result<Selection, Failure> {
+    deferred: Option<DeferredPick>,
+) -> Result<(Selection, Option<DeferredPick>), Failure> {
     if window.tabs().active_view() != Some(view) {
         return Err(stale_view());
     }
@@ -908,29 +963,48 @@ fn resolve_pick(
     let ids = current.ids();
     match pick {
         CanvasPick::Point {
+            phase: PickPhase::Release,
+            ..
+        } => {
+            // 누를 때 이미 선택에 있던 node를 끌지 않고 놓았습니다. 미룬 변경을 적용합니다.
+            let selection = match deferred.filter(|d| d.view == view) {
+                Some(d) if d.toggle => without(&current, d.target),
+                Some(d) if current.contains(d.target) => Selection::new([d.target], Some(d.target)),
+                _ => current,
+            };
+            Ok((selection, None))
+        }
+        CanvasPick::Point {
             leaf,
             toggle,
             deep,
             enter,
+            phase,
         } => {
             let target = leaf.and_then(|leaf| point_target(model, root, ids, leaf, deep, enter));
-            Ok(match (target, toggle) {
-                (None, false) => Selection::empty(),
-                (None, true) => current,
-                (Some(target), false) => Selection::new([target], Some(target)),
-                (Some(target), true) if current.contains(target) => {
-                    let rest: Vec<StableId> =
-                        ids.iter().copied().filter(|&id| id != target).collect();
-                    let primary = current
-                        .primary()
-                        .filter(|&p| p != target)
-                        .or(rest.last().copied());
-                    Selection::new(rest, primary)
-                }
-                (Some(target), true) => {
-                    Selection::new(ids.iter().copied().chain([target]), Some(target))
-                }
-            })
+            if let Some(target) =
+                target.filter(|&t| phase == PickPhase::Press && current.contains(t))
+            {
+                // 이미 고른 node를 누르면 여러 개를 함께 끌 수 있도록 선택을 그대로 둡니다.
+                let deferred = DeferredPick {
+                    view,
+                    target,
+                    toggle,
+                };
+                return Ok((current, Some(deferred)));
+            }
+            Ok((
+                match (target, toggle) {
+                    (None, false) => Selection::empty(),
+                    (None, true) => current,
+                    (Some(target), false) => Selection::new([target], Some(target)),
+                    (Some(target), true) if current.contains(target) => without(&current, target),
+                    (Some(target), true) => {
+                        Selection::new(ids.iter().copied().chain([target]), Some(target))
+                    }
+                },
+                None,
+            ))
         }
         CanvasPick::Area {
             from,
@@ -966,13 +1040,14 @@ fn resolve_pick(
                     })
                 })
                 .collect();
-            Ok(if add {
+            let selection = if add {
                 let primary = hits.last().copied().or(current.primary());
                 Selection::new(ids.iter().copied().chain(hits), primary)
             } else {
                 let primary = hits.last().copied();
                 Selection::new(hits, primary)
-            })
+            };
+            Ok((selection, None))
         }
     }
 }
@@ -996,18 +1071,22 @@ fn world_bounds(scene: &CanvasScene) -> std::collections::BTreeMap<StableId, Aab
 pub(crate) fn selection_items(
     session: &ProjectWindowSession,
     scene: Option<&CanvasScene>,
-) -> std::sync::Arc<[CanvasSelectionItem]> {
+) -> Arc<[CanvasSelectionItem]> {
     let (Some(scene), Some(document), Some(view)) =
         (scene, session.document(), session.tabs().active_view())
     else {
-        return std::sync::Arc::from([]);
+        return Arc::from([]);
     };
     let model = document.model();
     let ids = session.view().selection().ids();
+    if ids.is_empty() {
+        return Arc::from([]);
+    }
+    let rows = row_index(scene);
     let mut items = Vec::with_capacity(ids.len());
     for &id in ids {
         let (Some(row), Some(payload)) = (
-            scene.frames.iter().find(|row| row.id == id),
+            rows.get(&id).map(|&index| &scene.frames[index]),
             model.payload(id),
         ) else {
             continue;
@@ -1045,7 +1124,7 @@ pub(crate) fn selection_items(
             _ => continue,
         };
         let frame = kind == CanvasNodeKind::Frame;
-        let movable = editable_ancestry(model, view, id, !frame).is_some();
+        let movable = can_move(model, view, id);
         let resizable = movable
             && !matches!(kind, CanvasNodeKind::Text | CanvasNodeKind::Instance)
             && resize_transform(model, id, frame).is_some();
@@ -1070,7 +1149,8 @@ pub(crate) fn selection_items(
     items.into()
 }
 
-/// 크기를 바꿀 때 원점 이동을 기록할 변환. Frame은 자기 transform, 그 밖은 하나뿐인 Transform modifier(없으면 항등)입니다.
+/// 크기를 바꿀 때 원점 이동을 기록할 변환. Frame은 자기 transform, 그 밖은 위치 Transform modifier가 하나뿐인
+/// Transform일 때 그 값(없으면 항등)입니다. Transform이 여럿이면 어느 것을 바꿀지 모호해 크기 핸들이 없습니다.
 pub(super) fn resize_transform(
     model: &DocumentModel,
     node: StableId,
@@ -1083,7 +1163,7 @@ pub(super) fn resize_transform(
         return Some((None, payload.transform));
     }
     let stack = model.modifier_stack(node);
-    let style = crate::canvas::shape::shape_style(stack)?;
+    crate::canvas::shape::shape_style(stack)?;
     let transforms = stack.map_or(0, |stack| {
         stack
             .entries()
@@ -1091,7 +1171,7 @@ pub(super) fn resize_transform(
             .filter(|e| e.enabled && matches!(e.payload, ModifierPayload::Transform(_)))
             .count()
     });
-    match (transforms, style.last_transform) {
+    match (transforms, position_transform(model, node)) {
         (0, None) => Some((None, Transform2D::identity())),
         (1, Some((id, transform))) => Some((Some(id), transform)),
         _ => None,
@@ -1143,15 +1223,27 @@ mod tests {
         model
     }
 
+    /// runtime `canvas_pick`처럼 미룬 변경을 다음 요청에 넘기며 고릅니다.
+    fn pick_with(
+        window: &mut ProjectWindowSession,
+        view: u64,
+        pick: CanvasPick,
+        deferred: &mut Option<DeferredPick>,
+    ) -> Option<Vec<StableId>> {
+        let scene = CanvasCache::default().current(window, None, &mut Default::default());
+        let (selection, next) =
+            resolve_pick(window, scene.as_deref(), sid(view), pick, deferred.take()).ok()?;
+        window.select(selection).unwrap();
+        *deferred = next;
+        Some(window.view().selection().ids().to_vec())
+    }
+
     fn pick(
         window: &mut ProjectWindowSession,
         view: u64,
         pick: CanvasPick,
     ) -> Option<Vec<StableId>> {
-        let scene = CanvasCache::default().current(window, None, &mut Default::default());
-        let selection = resolve_pick(window, scene.as_deref(), sid(view), pick).ok()?;
-        window.select(selection).unwrap();
-        Some(window.view().selection().ids().to_vec())
+        pick_with(window, view, pick, &mut None)
     }
 
     fn point(leaf: Option<u64>, toggle: bool, deep: bool, enter: bool) -> CanvasPick {
@@ -1160,6 +1252,27 @@ mod tests {
             toggle,
             deep,
             enter,
+            phase: PickPhase::Click,
+        }
+    }
+
+    fn press(leaf: u64, toggle: bool) -> CanvasPick {
+        CanvasPick::Point {
+            leaf: Some(sid(leaf)),
+            toggle,
+            deep: false,
+            enter: false,
+            phase: PickPhase::Press,
+        }
+    }
+
+    fn release(leaf: u64, toggle: bool) -> CanvasPick {
+        CanvasPick::Point {
+            leaf: Some(sid(leaf)),
+            toggle,
+            deep: false,
+            enter: false,
+            phase: PickPhase::Release,
         }
     }
 
@@ -1571,12 +1684,12 @@ mod tests {
             matches!(shape(&session, 14), ShapeGeometry::Rectangle(r) if r.size == Size2::new(45., 30.).unwrap())
         );
         assert_eq!(shape_translation(&session, sid(14)), (295., 200.));
-        // Ellipse·Polygon: local bounds를 그대로 바꾸고 transform은 그대로입니다.
+        // Ellipse·Polygon: `width`·`height`만 바꾸고 원점 이동은 위치 Transform으로 옮깁니다(속성 탭과 같은 key).
         select(&mut session, 15);
         assert!(edit(&mut session, 3, resize(15, 2., 3., 50., 25.)));
         assert!(matches!(shape(&session, 15), ShapeGeometry::Ellipse(e)
-            if e.bounds == Rect::new(Vec2::new(2., 3.).unwrap(), Size2::new(50., 25.).unwrap())));
-        assert_eq!(shape_translation(&session, sid(15)), (20., 220.));
+            if e.bounds == Rect::new(Vec2::ZERO, Size2::new(50., 25.).unwrap())));
+        assert_eq!(shape_translation(&session, sid(15)), (22., 223.));
         select(&mut session, 17);
         assert!(edit(&mut session, 4, resize(17, 0., 0., 80., 40.)));
         let ShapeGeometry::Polygon(polygon) = shape(&session, 17) else {
@@ -1754,5 +1867,510 @@ mod tests {
             next_event(&app),
             RuntimeEvent::RequestFailed { .. }
         ));
+    }
+
+    #[test]
+    fn pressing_a_selected_node_keeps_area_and_shift_selections_for_drag_and_option_drag() {
+        let dir = saved_project_with("canvas-press-drag", &[&shape_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let ids = |v: &[u64]| v.iter().copied().map(sid).collect::<Vec<_>>();
+        let mut deferred = None;
+        // 영역 선택 다음 그 안의 행(11의 자식 13)을 눌러도 선택이 그대로이고, 끌면 둘 다 함께 움직입니다.
+        assert_eq!(
+            pick_with(
+                &mut session,
+                3,
+                area((0., 0.), (260., 120.), false, false),
+                &mut deferred
+            )
+            .unwrap(),
+            ids(&[11, 12])
+        );
+        assert_eq!(
+            pick_with(&mut session, 3, press(13, false), &mut deferred).unwrap(),
+            ids(&[11, 12])
+        );
+        let undo = session.history().history().len();
+        assert!(drag(&mut session, 1, Some(13), (10., 5.), false, false));
+        assert_eq!(frame_transform(&session, 11), (2., 0., 0., 2., 20., 15.));
+        assert_eq!(frame_transform(&session, 12), (1., 0., 0., 1., 210., 55.));
+        assert_eq!(session.history().history().len(), undo + 1);
+        assert!(session.undo().unwrap());
+        assert_eq!(frame_transform(&session, 12), (1., 0., 0., 1., 200., 50.));
+        // 움직이지 않고 놓으면 그때 하나로 줄입니다.
+        assert_eq!(
+            pick_with(&mut session, 3, press(12, false), &mut deferred).unwrap(),
+            ids(&[11, 12])
+        );
+        assert_eq!(
+            pick_with(&mut session, 3, release(12, false), &mut deferred).unwrap(),
+            ids(&[12])
+        );
+        // Shift로 더한 node는 누를 때 바로 들어가고, 놓아도 다시 빠지지 않습니다.
+        assert_eq!(
+            pick_with(&mut session, 3, press(14, true), &mut deferred).unwrap(),
+            ids(&[12, 14])
+        );
+        assert_eq!(
+            pick_with(&mut session, 3, release(14, true), &mut deferred).unwrap(),
+            ids(&[12, 14])
+        );
+        // Shift 선택 다음 Option 끌기는 고른 node 전부를 복제합니다.
+        assert_eq!(
+            pick_with(&mut session, 3, press(14, false), &mut deferred).unwrap(),
+            ids(&[12, 14])
+        );
+        let before = session
+            .document()
+            .unwrap()
+            .model()
+            .children_in_order(sid(10))
+            .len();
+        assert!(drag(&mut session, 2, Some(14), (0., 30.), false, true));
+        let copies = session.view().selection().ids().to_vec();
+        assert_eq!(copies.len(), 2);
+        assert!(!copies.contains(&sid(12)) && !copies.contains(&sid(14)));
+        assert_eq!(
+            session
+                .document()
+                .unwrap()
+                .model()
+                .children_in_order(sid(10))
+                .len(),
+            before + 2
+        );
+        assert!(session.undo().unwrap());
+        assert_eq!(session.view().selection().ids(), ids(&[12, 14]));
+        // Shift로 이미 고른 node를 누르면 끌 수 있게 그대로 두고, 끌지 않고 놓을 때 뺍니다.
+        assert_eq!(
+            pick_with(&mut session, 3, press(12, true), &mut deferred).unwrap(),
+            ids(&[12, 14])
+        );
+        assert_eq!(
+            pick_with(&mut session, 3, release(12, true), &mut deferred).unwrap(),
+            ids(&[14])
+        );
+        // 미룬 변경이 없으면 놓음은 선택을 바꾸지 않습니다.
+        assert_eq!(
+            pick_with(&mut session, 3, release(11, false), &mut deferred).unwrap(),
+            ids(&[14])
+        );
+    }
+
+    /// all_shapes_document에 root 아래 Text 18과 Image 19(각 Transform 하나)를 더합니다.
+    fn every_kind_document() -> DocumentModel {
+        use stellar_core_types::order_key::OrderKey;
+        use stellar_core_types::reference::AssetRef;
+        use stellar_document::image::ImagePayload;
+        use stellar_document::modifier::{ModifierEntry, ModifierStack};
+        use stellar_document::text::TextPayload;
+        let mut model = all_shapes_document();
+        for (n, payload) in [
+            (18, NodePayload::Text(TextPayload::empty(0))),
+            (
+                19,
+                NodePayload::Image(ImagePayload::new(
+                    AssetRef::new(sid(90)),
+                    Size2::new(30., 20.).unwrap(),
+                )),
+            ),
+        ] {
+            let mut record = model.record(sid(14)).unwrap();
+            record.id = sid(n);
+            record.order_key = model.next_child_order_key(sid(10));
+            record.display_name = format!("n{n}");
+            record.payload = payload;
+            model.insert_node(record).unwrap();
+            let mut stack = ModifierStack::new(sid(n));
+            let order = OrderKey::between(None, None);
+            stack
+                .insert(ModifierEntry {
+                    id: ModifierId::new(sid(n * 10)),
+                    order,
+                    kind: stellar_document::modifier::ModifierKind::Transform,
+                    enabled: true,
+                    payload: ModifierPayload::Transform(
+                        Transform2D::new(1., 0., 0., 1., 50., 60.).unwrap(),
+                    ),
+                })
+                .unwrap();
+            model.set_modifier_stack(stack).unwrap();
+        }
+        model
+    }
+
+    #[test]
+    fn every_node_kind_moves_with_its_position_transform_in_one_undo() {
+        let dir = saved_project_with("canvas-move-kinds", &[&every_kind_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        let kinds = [14, 15, 16, 17, 18, 19];
+        let before: Vec<_> = kinds
+            .iter()
+            .map(|&n| shape_translation(&session, sid(n)))
+            .collect();
+        session
+            .select(Selection::new(kinds.map(sid), Some(sid(19))))
+            .unwrap();
+        let undo = session.history().history().len();
+        // 화살표 이동(부모 공간 px): Rectangle·Ellipse·Line·Polygon·Text·Image가 모두 한 번에 움직입니다.
+        assert!(drag(&mut session, 1, None, (-10., 4.), true, false));
+        for (&n, &(x, y)) in kinds.iter().zip(&before) {
+            assert_eq!(
+                shape_translation(&session, sid(n)),
+                (x - 10., y + 4.),
+                "n{n}"
+            );
+        }
+        assert_eq!(session.history().history().len(), undo + 1);
+        assert!(session.undo().unwrap());
+        for (&n, &xy) in kinds.iter().zip(&before) {
+            assert_eq!(shape_translation(&session, sid(n)), xy, "n{n}");
+        }
+        assert!(session.redo().unwrap());
+        session.save_now().unwrap();
+        let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+        for (&n, &(x, y)) in kinds.iter().zip(&before) {
+            assert_eq!(
+                shape_translation(&reopened, sid(n)),
+                (x - 10., y + 4.),
+                "n{n}"
+            );
+        }
+    }
+
+    #[test]
+    fn image_resize_writes_size_longhands_and_origin_in_one_undo_and_persists() {
+        use stellar_document::payload_metadata::image_keys;
+        let dir = saved_project_with("canvas-resize-image", &[&every_kind_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        session
+            .select(Selection::new([sid(19)], Some(sid(19))))
+            .unwrap();
+        let undo = session.history().history().len();
+        assert!(edit(&mut session, 1, resize(19, -4., 0., 34., 25.)));
+        let image = |session: &ProjectWindowSession| match session
+            .document()
+            .unwrap()
+            .model()
+            .payload(sid(19))
+        {
+            Some(NodePayload::Image(image)) => image.size,
+            _ => panic!("Image"),
+        };
+        assert_eq!(image(&session), Size2::new(34., 25.).unwrap());
+        assert_eq!(shape_translation(&session, sid(19)), (46., 60.));
+        assert_eq!(session.history().history().len(), undo + 1);
+        assert!(session.undo().unwrap());
+        assert_eq!(image(&session), Size2::new(30., 20.).unwrap());
+        assert_eq!(shape_translation(&session, sid(19)), (50., 60.));
+        assert!(session.redo().unwrap());
+        session.save_now().unwrap();
+        let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+        assert_eq!(image(&reopened), Size2::new(34., 25.).unwrap());
+        let model = reopened.document().unwrap().model();
+        let record = model.record(sid(19)).unwrap();
+        assert_eq!(
+            read_property(&record, image_keys::WIDTH),
+            Some(PropertyValue::NonNegative(FiniteF32::new(34.).unwrap()))
+        );
+    }
+
+    #[test]
+    fn canvas_handles_and_the_property_tab_build_the_same_commands() {
+        use stellar_commands::css_value::CssValue;
+        use stellar_commands::inspector::{edit_commands, InspectorInput, InspectorProperty};
+        let model = every_kind_document();
+        let tab = |node: u64, property: InspectorProperty, value: f32| {
+            edit_commands(
+                &model,
+                &[sid(node)],
+                property,
+                &InspectorInput::Set(CssValue::Length(value)),
+                [0; 16],
+            )
+            .unwrap()
+        };
+        let payload = |node: u64| model.payload(sid(node)).unwrap().clone();
+        let box_of = |w: f32, h: f32| Rect::new(Vec2::ZERO, Size2::new(w, h).unwrap());
+        // Rectangle 오른쪽 핸들 = `width`, Image 아래 핸들 = `height`.
+        assert_eq!(
+            resize_commands(&model, sid(14), &payload(14), box_of(45., 30.), sid(99))
+                .ok()
+                .unwrap(),
+            tab(14, InspectorProperty::Width, 45.)
+        );
+        assert_eq!(
+            resize_commands(&model, sid(19), &payload(19), box_of(30., 44.), sid(99))
+                .ok()
+                .unwrap(),
+            tab(19, InspectorProperty::Height, 44.)
+        );
+        // Rectangle Option 반경 = 그 모서리 longhand, Polygon 반경 = 반경 key.
+        assert_eq!(
+            radius_commands(
+                &model,
+                sid(14),
+                &payload(14),
+                Some(2),
+                FiniteF32::new(6.).unwrap()
+            )
+            .ok()
+            .unwrap(),
+            tab(14, InspectorProperty::Corner(2), 6.)
+        );
+        assert_eq!(
+            radius_commands(
+                &model,
+                sid(17),
+                &payload(17),
+                None,
+                FiniteF32::new(9.).unwrap()
+            )
+            .ok()
+            .unwrap(),
+            tab(17, InspectorProperty::PolygonCornerRadius, 9.)
+        );
+        // Line 끝점 핸들 = `x2`(`y2`는 그대로라 빠짐).
+        assert_eq!(
+            line_end_commands(
+                &model,
+                sid(16),
+                &payload(16),
+                true,
+                Vec2::new(44., 10.).unwrap()
+            )
+            .ok()
+            .unwrap(),
+            tab(16, InspectorProperty::X2, 44.)
+        );
+    }
+
+    #[test]
+    fn placed_instance_moves_only_its_single_active_translation() {
+        use stellar_core_types::reference::ComponentRef;
+        use stellar_document::component::instance::ComponentInstancePayload;
+        use stellar_document::modifier::{ModifierKind, ModifierStack};
+        let mut model = sample_document();
+        let node = sid(30);
+        let mut record = model.record(sid(11)).unwrap();
+        record.id = node;
+        record.parent = Some(sid(11));
+        record.payload = NodePayload::ComponentInstance(ComponentInstancePayload::new(
+            ComponentRef::new(sid(90)),
+        ));
+        model.insert_node(record).unwrap();
+        let modifier = ModifierId::new(sid(31));
+        let mut placement = ModifierStack::new(node);
+        placement
+            .push_back(modifier, ModifierKind::Transform)
+            .unwrap();
+        placement
+            .set_payload(
+                modifier,
+                ModifierPayload::Transform(Transform2D::new(1., 0., 0., 1., 15., -3.).unwrap()),
+            )
+            .unwrap();
+        for case in [
+            "placed",
+            "no placement",
+            "disabled",
+            "scaled",
+            "additional",
+            "locked parent",
+        ] {
+            let (mut scene, _) = DocumentModel::from_records(model.to_records().unwrap()).unwrap();
+            let mut stack = placement.clone();
+            match case {
+                "disabled" => {
+                    stack.set_enabled(modifier, false).unwrap();
+                }
+                "scaled" => {
+                    stack
+                        .set_payload(
+                            modifier,
+                            ModifierPayload::Transform(
+                                Transform2D::new(2., 0., 0., 1., 15., -3.).unwrap(),
+                            ),
+                        )
+                        .unwrap();
+                }
+                "additional" => {
+                    stack
+                        .push_back(ModifierId::new(sid(32)), ModifierKind::Transform)
+                        .unwrap();
+                }
+                "locked parent" => {
+                    scene.replace_flags(sid(11), true, true).unwrap();
+                }
+                _ => {}
+            }
+            if case != "no placement" {
+                scene.set_modifier_stack(stack).unwrap();
+            }
+            let directory = saved_project_with("instance-move", &[&scene]);
+            let mut session =
+                ProjectWindowSession::load(identity(directory.path()), window(1)).unwrap();
+            session.select(Selection::new([node], None)).unwrap();
+            let revision = session.revision();
+            // 선택 상자의 이동 가능 표시는 실제 이동 판정과 같습니다.
+            let model = session.document().unwrap().model();
+            assert_eq!(can_move(model, sid(3), node), case == "placed", "{case}");
+            let moved = drag(&mut session, 1, None, (7., -4.), true, false);
+            if case != "placed" {
+                assert!(!moved, "{case}");
+                assert_eq!(session.revision(), revision);
+                assert_eq!(
+                    session.document().unwrap().model().to_records().unwrap(),
+                    scene.to_records().unwrap()
+                );
+                continue;
+            }
+            assert!(moved);
+            let mut expected = placement.clone();
+            expected
+                .set_payload(
+                    modifier,
+                    ModifierPayload::Transform(Transform2D::new(1., 0., 0., 1., 22., -7.).unwrap()),
+                )
+                .unwrap();
+            assert_eq!(
+                session.document().unwrap().model().modifier_stack(node),
+                Some(&expected)
+            );
+            assert!(session.undo().unwrap());
+            assert_eq!(
+                session.document().unwrap().model().to_records().unwrap(),
+                scene.to_records().unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn rectangle_move_edits_the_position_transform_and_keeps_other_modifiers() {
+        use stellar_document::modifier::{ModifierKind, ModifierStack};
+        use stellar_document::shape::RectangleParams;
+        let delta = Vec2::new(7.0, -3.0).unwrap();
+        let before = Transform2D::new(0.0, 2.0, -0.5, 0.0, -11.0, 8.0).unwrap();
+        for has_transform in [false, true] {
+            let mut model = sample_document();
+            let parent = sid(11);
+            let id = sid(30);
+            let order_key = model.next_child_order_key(parent);
+            let payload = NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+                size: Size2::new(40., 12.).unwrap(),
+                corner_radius: CornerRadius::ZERO,
+            }));
+            model
+                .insert_node(NodeRecord {
+                    id,
+                    parent: Some(parent),
+                    order_key,
+                    visible: true,
+                    locked: false,
+                    display_name: "Rectangle".into(),
+                    payload: payload.clone(),
+                })
+                .unwrap();
+            let mut stack = ModifierStack::new(id);
+            let first = ModifierId::new(sid(31));
+            let last = ModifierId::new(sid(32));
+            if has_transform {
+                stack.push_back(first, ModifierKind::Transform).unwrap();
+                stack
+                    .set_payload(
+                        first,
+                        ModifierPayload::Transform(
+                            Transform2D::new(2., 0., 0., 1., 3., 4.).unwrap(),
+                        ),
+                    )
+                    .unwrap();
+                stack.push_back(last, ModifierKind::Transform).unwrap();
+                stack
+                    .set_payload(last, ModifierPayload::Transform(before))
+                    .unwrap();
+            }
+            stack
+                .push_back(ModifierId::new(sid(33)), ModifierKind::Fill)
+                .unwrap();
+            let disabled = ModifierId::new(sid(34));
+            stack.push_back(disabled, ModifierKind::Transform).unwrap();
+            stack.set_enabled(disabled, false).unwrap();
+            model.set_modifier_stack(stack.clone()).unwrap();
+            let dir = saved_project_with("rectangle-move-stack", &[&model]);
+            let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+            session.select(Selection::new([id], None)).unwrap();
+            assert!(drag(&mut session, 11, None, (7., -3.), true, false));
+            let changed = session
+                .document()
+                .unwrap()
+                .model()
+                .modifier_stack(id)
+                .unwrap()
+                .clone();
+            let mut expected = stack.clone();
+            if has_transform {
+                // 앞부분 Transform 가운데 마지막 것(속성 탭 `left`·`top`과 같은 modifier)만 바뀝니다.
+                expected
+                    .set_payload(
+                        last,
+                        ModifierPayload::Transform(translated(before, delta).unwrap()),
+                    )
+                    .unwrap();
+            } else {
+                let inserted = &changed.entries()[0];
+                assert_eq!(
+                    inserted.payload,
+                    ModifierPayload::Transform(translated(Transform2D::identity(), delta).unwrap())
+                );
+                expected.insert(inserted.clone()).unwrap();
+            }
+            assert_eq!(changed, expected);
+            assert_eq!(session.view().selection().ids(), [id]);
+            assert!(session.undo().unwrap());
+            assert_eq!(
+                session.document().unwrap().model().modifier_stack(id),
+                Some(&stack)
+            );
+            assert!(session.redo().unwrap());
+            session.save_now().unwrap();
+            let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+            assert_eq!(
+                reopened.document().unwrap().model().payload(id),
+                Some(&payload)
+            );
+            assert_eq!(
+                reopened.document().unwrap().model().modifier_stack(id),
+                Some(&expected)
+            );
+            model.replace_flags(parent, true, true).unwrap();
+            let locked = saved_project_with("rectangle-move-locked", &[&model]);
+            let mut session =
+                ProjectWindowSession::load(identity(locked.path()), window(1)).unwrap();
+            session.select(Selection::new([id], None)).unwrap();
+            assert!(!drag(&mut session, 12, None, (7., -3.), true, false));
+            assert!(!session.has_unsaved_changes());
+        }
+    }
+
+    #[test]
+    fn selection_items_are_reused_until_the_scene_or_selection_changes() {
+        let dir = saved_project_with("canvas-selection-cache", &[&nested_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        session
+            .select(Selection::new([sid(11)], Some(sid(11))))
+            .unwrap();
+        let mut cache = CanvasCache::default();
+        let mut shared = Default::default();
+        let mut state = CanvasGestureState::default();
+        let scene = cache.current(&session, None, &mut shared);
+        let first = state.selection_items(&session, scene.as_ref());
+        let again = state.selection_items(&session, cache.current(&session, None, &mut shared).as_ref());
+        assert!(Arc::ptr_eq(&first, &again));
+        session
+            .select(Selection::new([sid(12)], Some(sid(12))))
+            .unwrap();
+        let changed = state.selection_items(&session, cache.current(&session, None, &mut shared).as_ref());
+        assert_eq!(changed[0].id, sid(12));
+        assert!(state.selection_items(&session, None).is_empty());
     }
 }

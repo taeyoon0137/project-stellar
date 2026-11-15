@@ -30,6 +30,9 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
    하나로 합쳤습니다.
 4. 앱 설정의 의미(닫힌 도형은 채우기, Line은 선 색 1px)는 셸이 정해 넘깁니다. 값은 사용자 앱 설정에만 있고
    프로젝트 파일에는 쓰지 않습니다.
+5. 열린 질문: UX 명세 흐름 2는 R로 만든 사각형에 "채우기와 선은 Settings 기본값"이라고 적어 닫힌 도형에도 1px 선을
+   뜻할 수 있고, D7은 "선 기본 색"만 정합니다. 닫힌 도형에 기본 선을 넣을지는 사용자 확인 전이며, 그동안은 위 4항대로
+   닫힌 도형은 채우기만 씁니다. 코어는 셸이 넘긴 값만 쓰므로 결정이 바뀌어도 셸 설정 해석만 고칩니다.
 
 ### UX.3.1 — 연속 줌
 
@@ -50,6 +53,11 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
    - 기본: 지금 선택과 같은 깊이(선택한 node의 부모가 leaf의 조상이면 그 부모의 자식)를 고르고, 없으면 root의
      직계 자식을 고릅니다. root 배경이면 root, 모든 Frame 밖이면 선택을 비웁니다.
    - ⌘는 leaf 자체, 더블클릭은 선택한 node 안의 자식, Shift는 넣고 빼기(빈 곳이면 그대로)입니다.
+   - 누름·놓음 단계(검토 수정): 셸은 node를 누를 때 `STELLAR_PICK_PRESS`, 움직이지 않고 놓을 때 `STELLAR_PICK_RELEASE`를
+     더합니다. 누름에서 고를 node가 이미 선택에 있으면 코어는 선택을 그대로 두고, 바꿀 내용(하나로 줄이기, Shift면
+     빼기)을 그 창 상태에 미룹니다. 놓음은 바로 앞 누름이 미룬 변경만 적용하고, 미룬 것이 없으면 그대로입니다. 끌어서
+     편집하거나 다른 선택 요청이 오면 미룬 변경은 버립니다. 그래서 영역·Shift로 고른 여러 node를 그중 하나로 끌거나
+     Option으로 복제할 수 있습니다. 두 flag를 함께 주면 `INVALID_ARGUMENT`입니다.
 2. `stellar_window_canvas_pick_area(handle, session, view, x0, y0, x1, y1, flags, out_request)`: world 영역으로 root의
    직계 자식 가운데 보이고 잠기지 않은 node를 고릅니다. 기본은 겹침, `STELLAR_AREA_CONTAIN`(Option)은 완전 포함,
    `STELLAR_AREA_ADD`(Shift)는 지금 선택에 더하기입니다. 경계는 코어가 평가한 캔버스 행의 world 상자입니다.
@@ -57,49 +65,76 @@ UX 명세 5장(캔버스 편집 모델)은 도구 10종의 생성, 선택, 이�
    `StellarCanvasSelectionItem`(id, kind, flags, world, local rect, radii)을 씁니다. flags는 이동·크기·반경 핸들
    가능 여부와 고정 크기 여부(`STELLAR_CANVAS_ITEM_*`)이며 코어가 잠금·숨김·흐름 부모·modifier 구성으로 정합니다.
    셸은 이 값으로 외곽선·핸들·크기 라벨만 그립니다. runtime `WindowSessionSummary`에 `canvas_selection`을 더합니다.
+   이동 가능 flag는 이동 command와 같은 판정(편집 범위 + 위치 Transform·인스턴스 배치 규칙)으로 정해, 미리보기로
+   움직였다가 놓으면 제자리로 돌아오는 node가 없습니다. 항목은 scene과 선택이 같으면 다시 계산하지 않습니다(팬·줌 게시).
 4. 선택은 기존과 같이 그 창 history의 선택 항목으로 기록하고 문서·저장 상태는 바꾸지 않습니다.
 
 ### UX.3.7 — 이동·복제·화살표
 
 1. `stellar_window_canvas_move(handle, session, view, anchor, dx, dy, flags, out_request)`: 지금 선택에서 다른 선택의
    자손을 뺀 node 전부를 한 transaction(Undo 한 번)으로 옮깁니다. Frame·Rectangle·Ellipse·Line·Polygon·Text·Image·
-   배치한 인스턴스가 대상입니다. Frame은 `transform`, 그 밖의 node는 마지막 Transform modifier(없으면 맨 앞에 새로)를
-   바꿉니다.
+   배치한 인스턴스가 대상입니다. Frame은 `transform`, 배치한 인스턴스는 배치가 기록한 Transform 하나, 그 밖의 node는
+   위치 Transform modifier(켜진 modifier 앞부분 Transform 가운데 마지막 것, 없으면 맨 앞에 새로)를 바꿉니다. 위치
+   modifier 규칙은 `stellar_commands::inspector::position_modifier` 하나이며 속성 탭 `left`·`top`(ADR-0070)도 같은
+   함수를 씁니다.
 2. 기본 단위는 world이며 코어가 각 node의 부모 행 world 선형부 역변환으로 부모 공간 이동량을 구합니다.
-   `STELLAR_MOVE_PARENT_SPACE`는 부모 공간 단위(화살표 1px, Shift+화살표 10px)입니다. 화살표 단위는 XII.10.2 ADR이
-   정해지면 그 값을 따릅니다.
+   `STELLAR_MOVE_PARENT_SPACE`는 부모 공간 단위(화살표 1px, Shift+화살표 10px)입니다. XII.10.2 ADR이 아직 없어
+   명세 5.4의 값을 셸이 임시로 씁니다. UX.3.7 기준 "화살표 단위가 XII.10.2 ADR과 같음"은 미충족이며, 그 ADR이 정해지면
+   단위를 코어 상수로 옮깁니다.
 3. `anchor`는 드래그를 시작한 행입니다. 지금 선택이 그 행을 덮지 않으면(Shift로 뺀 node를 끌면) 거부합니다. document
    thread가 요청을 차례로 처리하므로 누를 때 보낸 선택 요청이 먼저 적용됩니다.
 4. `STELLAR_MOVE_DUPLICATE`(Option 드래그)는 각 node의 복제본을 원본 바로 위(다음 형제 앞) 순서로 만들고 복제본을
    옮긴 뒤 복제본을 선택합니다. 복제·이동·선택이 history 항목 하나입니다. root Frame은 복제하지 않습니다.
-5. 셸은 이 경로만 쓰고 `stellar_window_session_move_frame`(단일 Frame·Shape 이동)을 더는 부르지 않습니다.
+5. 셸은 이 경로만 씁니다. 단일 Frame·Shape 이동 `stellar_window_session_move_frame`과 runtime `move_canvas_frame`·
+   `FrameEdit::Move` 분기는 같은 이동의 중복 경로라 삭제했습니다(검토 수정). 그 테스트(인스턴스 배치 이동, Rectangle
+   modifier 보존)는 이 경로의 테스트로 옮겼습니다.
 
 ### UX.2.9 — 크기 핸들과 크기 라벨
 
 1. `stellar_window_canvas_resize(handle, session, view, node, x, y, width, height, out_request)`: 하나뿐인 선택 node의
    상자를 지금 local 좌표의 새 상자로 바꿉니다(크기 > 0, Undo 한 번). 셸은 핸들을 끈 결과 상자만 보내고(Shift 비율
    유지, Option 중심 기준은 셸의 입력 해석), 어떤 값을 바꿀지는 코어가 정합니다.
-   - Frame: `width`·`height` longhand와, 원점이 바뀌면 `transform`(`T ∘ translate(x, y)`).
-   - Rectangle·Image: geometry 크기와 Transform modifier 원점. Ellipse·Polygon: local bounds(변 수·회전·반경 유지).
-   - Line: 두 끝점을 이전 상자에서 새 상자로 같은 비율로 옮깁니다.
-   - geometry 변경은 기존 `RestoreNodeRecords`(같은 id 레코드 대체, 역 command도 같은 종류)로 기록합니다. Shape
-     geometry용 PropertyKey가 생기면(UX.2.1) 그 키의 `SetProperty`로 바꿀 수 있습니다.
+   - 크기는 속성 탭(ADR-0070)과 같은 longhand key의 `SetProperty`로, 값이 바뀐 key만 씁니다. 같은 값을 캔버스와 속성
+     탭에서 고치면 같은 command가 됩니다.
+   - Frame: `width`·`height`와, 원점이 바뀌면 `transform`(`T ∘ translate(x, y)`).
+   - Rectangle·Ellipse·Polygon: shape `width`·`height`. Image: image `width`·`height`. 원점이 바뀌면 위치 Transform
+     modifier(하나뿐일 때, 없으면 맨 앞에 새로)를 옮기고, Ellipse·Polygon의 local bounds 원점과 변 수·회전·반경은 그대로
+     둡니다.
+   - Line: 두 끝점을 이전 상자에서 새 상자로 같은 비율로 옮겨 `x1`·`y1`·`x2`·`y2`로 씁니다.
+   - 처음 구현의 `RestoreNodeRecords`(레코드 통째 교체) 경로는 삭제했습니다. 역 command가 레코드 전체를 되돌려 그 사이에
+     바뀐 이름·잠금까지 덮어쓸 수 있었고, 속성 단위 의미 변경으로 잡히지 않았습니다.
    - Text는 저장 형식에 고정 폭이 없어 크기 핸들이 없고(XII.10.33), 인스턴스는 정의 크기를 따라 없습니다.
 2. `stellar_window_canvas_line_end(handle, session, view, node, end, x, y, out_request)`: Line 끝점 핸들 하나를 옮깁니다.
+   바뀐 `x1`·`y1`(시작) 또는 `x2`·`y2`(끝)만 `SetProperty`로 씁니다.
 3. `StellarCanvasSelectionItem`에 `line[4]`(Line의 local 시작·끝점)를 더합니다. 셸은 단일 선택에 크기 핸들 8개(화면
-   상자가 24pt보다 작으면 모서리 4개) 또는 Line 끝점 2개를 그리고, 선택 아래에 `320 × 200`(고정 크기가 아닌 축은
-   `fit-content`) 라벨을 그립니다. 핸들·라벨은 캔버스 overlay라 렌더 결과에 들어가지 않습니다.
+   상자가 24pt보다 작으면 모서리 4개) 또는 Line 끝점 2개를 그리고, 선택 아래에 `320 × 200` 라벨을 그립니다. 고정 크기가
+   아닌 축은 자동 폭 Text의 CSS 값(`width: max-content`, `height: auto`, canvas_editing.md)으로 `max-content × auto`처럼
+   보입니다. 핸들·라벨은 캔버스 overlay라 렌더 결과에 들어가지 않습니다.
 
 ### UX.2.10 — 모서리 반경 핸들
 
 1. `stellar_window_canvas_radius(handle, session, view, node, corner, radius, out_request)`: 하나뿐인 선택 node의
    반경을 바꿉니다(Undo 한 번). `corner`는 -1이면 네 모서리, 0–3이면 tl·tr·br·bl 하나(Option)입니다.
-   - Frame: `border-top-left-radius` 등 `border-*-radius` longhand를 바뀐 것만 `SetProperty`로 씁니다. 속성 탭과 같은 키입니다.
-   - Rectangle: geometry의 네 모서리 반경, Polygon: 값 하나(`corner`는 무시)를 `RestoreNodeRecords`로 씁니다.
+   - Frame·Rectangle: `border-top-left-radius` 등 `border-*-radius` longhand(Frame key, Rectangle은 shape key)를 바뀐
+     것만 `SetProperty`로 씁니다. Polygon: 반경 key 하나(`corner`는 무시)입니다. 모두 속성 탭과 같은 key입니다.
    - 반경은 유한한 0 이상 원본 값이며, 상자보다 큰 값은 평가할 때 줄어듭니다.
 2. 반경 핸들 표시 여부는 선택 항목 flag(`STELLAR_CANVAS_ITEM_RADIUS`, `…_RADIUS_PER_CORNER`)로 코어가 정합니다. 셸은 화면
-   상자가 40pt 이상일 때 모서리 안쪽(반경, 최소 12pt)에 핸들을 두고, 끄는 동안 `border-radius: 12px`처럼 CSS 이름으로
-   값을 보입니다.
+   상자가 40pt 이상일 때 모서리 안쪽(반경, 최소 12pt)에 핸들을 둡니다. 처음 구현이 끄는 동안 보이던 값 라벨
+   (`border-radius: 12px`, Polygon은 `radius:`)은 명세 5.4·흐름 2에 없는 UI라 삭제했습니다.
+
+### 검토 뒤 남은 범위
+
+- UX.1.5: 고정 폭 Text 드래그 생성(XII.10.33)은 아직 없습니다. Text 도구는 클릭 생성만 합니다.
+- UX.2.9: Text 크기 핸들(XII.10.33)과 다중 선택 경계 상자 핸들이 없습니다. 핸들을 끄는 동안 도형은 그대로이고 윤곽·
+  라벨만 따라갑니다(놓을 때 한 번 반영). 끄는 동안 코어 편집을 미리 적용하는 preview(`begin_pointer_gesture`)와
+  핸들 상자 해석(Shift 비율, Option 중심, 반경 값)의 코어 이전은 UX.3.8 스냅과 함께 합니다.
+- UX.3.6: 영역 선택은 root의 직계 자식만 봅니다. 안쪽 Frame 안에서 시작한 영역 선택은 아직 없습니다.
+- 편집 실패(잠긴 node가 섞인 선택의 화살표 등)는 조용히 무시되고, 이유를 도구 막대 위 한 줄 안내로 보이지 않습니다.
+- 생성(Frame·도형·Text)은 아직 프로젝트 신뢰를 요구합니다. D1 편집 게이트 제거와 함께 맞춥니다.
+
+### C ABI 표
+
+새 함수와 상수는 ADR-0028의 창 session 표면에도 기록합니다.
 
 ## Alternatives
 

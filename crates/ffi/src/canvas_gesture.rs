@@ -7,8 +7,8 @@ use stellar_core_types::ids::StableId;
 use stellar_core_types::revision::DocumentRevision;
 use stellar_core_types::value::{FiniteF32, Vec2};
 use stellar_runtime::app::{
-    CanvasEdit, CanvasNodeKind, CanvasPick, CanvasSelectionItem, RadiusHandles, ShapeKind,
-    ShapePaint, WindowSessionHandle,
+    CanvasEdit, CanvasNodeKind, CanvasPick, CanvasSelectionItem, PickPhase, RadiusHandles,
+    ShapeKind, ShapePaint, WindowSessionHandle,
 };
 
 use crate::canvas::StellarCanvasColor;
@@ -146,10 +146,34 @@ pub const PICK_TOGGLE: u32 = 1;
 pub const PICK_DEEP: u32 = 2;
 /// 클릭 선택 flag: 더블클릭(한 단계 들어가기).
 pub const PICK_ENTER: u32 = 4;
+/// 클릭 선택 flag: 누름. 고를 node가 이미 선택에 있으면 끌 수 있도록 선택을 그대로 두고 변경을 미룹니다.
+pub const PICK_PRESS: u32 = 8;
+/// 클릭 선택 flag: 움직이지 않고 놓음. 바로 앞 누름이 미룬 변경을 적용합니다.
+pub const PICK_RELEASE: u32 = 16;
 /// 영역 선택 flag: Option(완전히 포함된 것만).
 pub const AREA_CONTAIN: u32 = 1;
 /// 영역 선택 flag: Shift(지금 선택에 더하기).
 pub const AREA_ADD: u32 = 2;
+
+/// 클릭 flag를 선택 의도로 바꿉니다. 모르는 bit나 PRESS·RELEASE를 함께 주면 `None`입니다.
+fn point_pick(leaf: Option<StableId>, flags: u32) -> Option<CanvasPick> {
+    if flags & !(PICK_TOGGLE | PICK_DEEP | PICK_ENTER | PICK_PRESS | PICK_RELEASE) != 0 {
+        return None;
+    }
+    let phase = match (flags & PICK_PRESS != 0, flags & PICK_RELEASE != 0) {
+        (false, false) => PickPhase::Click,
+        (true, false) => PickPhase::Press,
+        (false, true) => PickPhase::Release,
+        (true, true) => return None,
+    };
+    Some(CanvasPick::Point {
+        leaf,
+        toggle: flags & PICK_TOGGLE != 0,
+        deep: flags & PICK_DEEP != 0,
+        enter: flags & PICK_ENTER != 0,
+        phase,
+    })
+}
 
 fn submit_pick(
     handle: u64,
@@ -172,7 +196,8 @@ fn submit_pick(
 }
 
 /// 포인터 아래 가장 위 행(`leaf`, null이면 모든 Frame 밖)에서 선택을 정해 그 창 history에 기록합니다(UX 명세 5.3).
-/// 무엇을 고를지(직계 자식, 넣고 빼기, 깊은 선택, 한 단계 들어가기)는 코어가 정합니다.
+/// 무엇을 고를지(직계 자식, 넣고 빼기, 깊은 선택, 한 단계 들어가기)는 코어가 정합니다. 누를 때 `PICK_PRESS`,
+/// 움직이지 않고 놓을 때 `PICK_RELEASE`를 보내면, 이미 고른 node를 눌러 여러 개를 함께 끌 수 있습니다.
 ///
 /// # Safety
 /// `view`는 16 byte, `leaf`는 null 또는 16 byte를 읽을 수 있어야 하고 `out_request`는 null 또는 쓰기 가능해야 합니다.
@@ -192,15 +217,11 @@ pub unsafe extern "C" fn stellar_window_canvas_pick(
         if view.is_null() {
             return StellarStatus::NullPointer;
         }
-        if flags & !(PICK_TOGGLE | PICK_DEEP | PICK_ENTER) != 0 {
+        let Some(pick) = point_pick(
+            (!leaf.is_null()).then(|| StableId::from_bytes(unsafe { *leaf })),
+            flags,
+        ) else {
             return StellarStatus::InvalidArgument;
-        }
-        let leaf = (!leaf.is_null()).then(|| StableId::from_bytes(unsafe { *leaf }));
-        let pick = CanvasPick::Point {
-            leaf,
-            toggle: flags & PICK_TOGGLE != 0,
-            deep: flags & PICK_DEEP != 0,
-            enter: flags & PICK_ENTER != 0,
         };
         submit_pick(
             handle,
@@ -331,8 +352,8 @@ pub unsafe extern "C" fn stellar_window_canvas_move(
 }
 
 /// 하나뿐인 선택 node의 상자를 지금 local 좌표 `(x, y, width, height)`로 바꿉니다(크기 핸들, Undo 한 번).
-/// Frame은 `width`·`height`와 원점, Rectangle·Image는 크기와 Transform, Ellipse·Polygon은 local bounds,
-/// Line은 두 끝점을 같은 비율로 바꿉니다. 크기는 0보다 커야 합니다.
+/// 속성 탭과 같은 `width`·`height` longhand(Line은 `x1`·`y1`·`x2`·`y2`)를 쓰고, 원점이 바뀌면 Frame은 `transform`,
+/// 그 밖은 위치 Transform modifier를 바꿉니다. 크기는 0보다 커야 합니다.
 ///
 /// # Safety
 /// `view`·`node`는 16 byte를 읽을 수 있어야 하고 `out_request`는 null 또는 쓰기 가능해야 합니다.
@@ -422,7 +443,7 @@ pub unsafe extern "C" fn stellar_window_canvas_line_end(
 }
 
 /// 하나뿐인 선택 node의 모서리 반경을 바꿉니다(반경 핸들, Undo 한 번). `corner`는 -1이면 네 모서리, 0–3이면
-/// tl·tr·br·bl 하나(Option)입니다. Frame·Rectangle은 `border-*-radius` longhand, Polygon은 값 하나입니다.
+/// tl·tr·br·bl 하나(Option)입니다. Frame·Rectangle은 `border-*-radius` longhand, Polygon은 반경 key 하나입니다.
 ///
 /// # Safety
 /// `view`·`node`는 16 byte를 읽을 수 있어야 하고 `out_request`는 null 또는 쓰기 가능해야 합니다.
@@ -477,9 +498,9 @@ pub const ITEM_RESIZABLE: u32 = 2;
 pub const ITEM_RADIUS: u32 = 4;
 /// 반경이 모서리별 longhand(없으면 값 하나).
 pub const ITEM_RADIUS_PER_CORNER: u32 = 8;
-/// 가로 고정 크기(없으면 `fit-content`).
+/// 가로 고정 크기(없으면 자동 폭, CSS `width: max-content`).
 pub const ITEM_FIXED_WIDTH: u32 = 16;
-/// 세로 고정 크기.
+/// 세로 고정 크기(없으면 CSS `height: auto`).
 pub const ITEM_FIXED_HEIGHT: u32 = 32;
 
 /// 표시한 선택 node 하나의 상자. kind: 1 Frame, 2 Rectangle, 3 Ellipse, 4 Line, 5 Polygon, 6 Text, 7 Image, 8 Instance.
@@ -601,6 +622,103 @@ mod tests {
         assert_eq!(std::mem::size_of::<StellarShapeStyle>(), 44);
         assert_eq!(std::mem::offset_of!(StellarShapeStyle, stroke), 20);
         assert_eq!(std::mem::offset_of!(StellarShapeStyle, stroke_width), 40);
+    }
+
+    #[test]
+    fn pick_flags_map_to_phases_and_reject_unknown_or_conflicting_bits() {
+        let leaf = Some(StableId::from_bytes([7; 16]));
+        let phase = |flags| match point_pick(leaf, flags) {
+            Some(CanvasPick::Point { phase, .. }) => Some(phase),
+            _ => None,
+        };
+        assert_eq!(phase(0), Some(PickPhase::Click));
+        assert_eq!(phase(PICK_PRESS | PICK_TOGGLE), Some(PickPhase::Press));
+        assert_eq!(phase(PICK_RELEASE | PICK_DEEP), Some(PickPhase::Release));
+        assert_eq!(phase(PICK_PRESS | PICK_RELEASE), None);
+        assert_eq!(phase(32), None);
+        assert!(matches!(
+            point_pick(leaf, PICK_TOGGLE | PICK_ENTER),
+            Some(CanvasPick::Point {
+                toggle: true,
+                deep: false,
+                enter: true,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn canvas_calls_check_pointers_and_arguments_before_reaching_a_runtime() {
+        let view = [1u8; 16];
+        let mut request = 9;
+        unsafe {
+            assert_eq!(
+                stellar_window_canvas_pick(
+                    0,
+                    0,
+                    std::ptr::null(),
+                    std::ptr::null(),
+                    0,
+                    &mut request
+                ),
+                StellarStatus::NullPointer
+            );
+            assert_eq!(request, 0);
+            assert_eq!(
+                stellar_window_canvas_pick(
+                    0,
+                    0,
+                    &view,
+                    std::ptr::null(),
+                    PICK_PRESS | PICK_RELEASE,
+                    &mut request
+                ),
+                StellarStatus::InvalidArgument
+            );
+            assert_eq!(
+                stellar_window_canvas_move(
+                    0,
+                    0,
+                    &view,
+                    std::ptr::null(),
+                    f32::NAN,
+                    0.,
+                    0,
+                    &mut request
+                ),
+                StellarStatus::InvalidArgument
+            );
+            assert_eq!(
+                stellar_window_canvas_resize(0, 0, &view, &view, 0., 0., 0., 4., &mut request),
+                StellarStatus::InvalidArgument
+            );
+            assert_eq!(
+                stellar_window_canvas_radius(0, 0, &view, &view, 4, 1., &mut request),
+                StellarStatus::InvalidArgument
+            );
+            assert_eq!(
+                stellar_window_canvas_line_end(0, 0, &view, &view, 2, 0., 0., &mut request),
+                StellarStatus::InvalidArgument
+            );
+            // 유효한 인자는 runtime handle 검사까지 갑니다.
+            assert_eq!(
+                stellar_window_canvas_pick(0, 0, &view, std::ptr::null(), PICK_PRESS, &mut request),
+                StellarStatus::InvalidHandle
+            );
+            let (mut count, mut revision) = (1, 1);
+            assert_eq!(
+                stellar_window_canvas_selection(
+                    0,
+                    0,
+                    std::ptr::null_mut(),
+                    0,
+                    &mut count,
+                    &mut revision
+                ),
+                StellarStatus::InvalidHandle
+            );
+            assert_eq!((count, revision), (0, 0));
+        }
     }
 
     #[test]

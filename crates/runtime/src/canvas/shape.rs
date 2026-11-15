@@ -11,7 +11,8 @@ use stellar_scene::geometry::{PathCommand, PathGeometry};
 use stellar_scene::stack::{Paint, StrokeCap};
 
 /// 캔버스가 평가하는 transform·fill·stroke. 규칙은 웹 출력과 같은 [`evaluate_shape_modifiers`] 한 곳에 있고,
-/// 캔버스는 평가하지 못하는 stack을 그리지 않습니다. 부모 공간 이동은 마지막 Transform에 적용합니다.
+/// 캔버스는 평가하지 못하는 stack을 그리지 않습니다. 이동은 앞부분 Transform 가운데 마지막 것에 적용합니다
+/// (`stellar_commands::inspector::position_modifier`, 속성 탭과 같은 규칙).
 pub(crate) fn shape_style(stack: Option<&ModifierStack>) -> Option<ShapeModifierStyle> {
     evaluate_shape_modifiers(stack).ok()
 }

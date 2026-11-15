@@ -146,7 +146,7 @@ pub mod sidebar;
 pub mod text_input;
 pub use frame_move::{FrameValue, SelectedFrame, SelectedNode};
 pub use canvas_gesture::{
-    CanvasEdit, CanvasNodeKind, CanvasPick, CanvasSelectionItem, RadiusHandles,
+    CanvasEdit, CanvasNodeKind, CanvasPick, CanvasSelectionItem, PickPhase, RadiusHandles,
 };
 pub use frame_insert::ShapePaint;
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
@@ -1028,6 +1028,7 @@ pub(crate) struct WindowEntry {
     canvas: crate::canvas::CanvasCache,
     /// 진행 중인 캔버스 Text 조합(ADR-0067 §6). 문서와 history에는 없습니다.
     text: Option<text_input::TextComposition>,
+    gesture: canvas_gesture::CanvasGestureState,
     checkpoint: recovery::WindowCheckpoint,
     inspector: inspector::InspectorCache,
 }
@@ -1386,6 +1387,7 @@ fn open_window_session_on_thread(
             canvas: crate::canvas::CanvasCache::new(fonts),
             text: None,
             checkpoint: recovery::WindowCheckpoint::new(recovery, handle),
+            gesture: Default::default(),
             inspector: Default::default(),
         },
     );
@@ -1443,7 +1445,7 @@ fn window_summary(
             .and_then(|c| c.preview_at(session.revision())),
         shared_scenes,
     );
-    let canvas_selection = canvas_gesture::selection_items(session, canvas.as_deref());
+    let canvas_selection = entry.gesture.selection_items(session, canvas.as_ref());
     WindowSessionSummary {
         session: handle,
         project: entry.project,
