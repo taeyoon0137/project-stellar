@@ -239,6 +239,15 @@ impl ValueBinding {
             .collect()
     }
 
+    /// source가 `target`을 참조하면 `true`. [`references`](Self::references)와 같은 판정(source AST의 모든 참조
+    /// node)이지만 집합을 만들지 않고(할당 없이) 찾는 즉시 멈춥니다. 많은 binding 중 한 대상을 읽는 것만 고를 때
+    /// 씁니다(토큰 삭제 inbound 검사).
+    pub fn refers_to(&self, target: &ReferenceTarget) -> bool {
+        self.source.nodes().iter().any(|node| {
+            matches!(node.payload(), stellar_expressions::ast::NodePayload::Reference(found) if found == target)
+        })
+    }
+
     /// source 표현식을 type 검사하고 결과를 target 타입에 둘 수 있는지 확인합니다. 성공하면 source 결과 타입입니다.
     pub fn validate_types(
         &self,
@@ -681,6 +690,14 @@ mod tests {
         }
         let first = &samples()[0];
         assert_eq!(first.references(), BTreeSet::from([token(1), scheme()]));
+        // 할당 없는 단일 대상 검사는 references()와 같은 판정입니다.
+        for binding in samples() {
+            let references = binding.references();
+            for target in [token(1), token(2), scheme()] {
+                assert_eq!(binding.refers_to(&target), references.contains(&target));
+            }
+        }
+        assert!(first.refers_to(&token(1)) && !first.refers_to(&token(2)));
     }
 
     fn fixed(byte: u8) -> StableId {
