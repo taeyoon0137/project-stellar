@@ -63,6 +63,9 @@ pub mod text;
 /// Image payload (VI.8).
 pub mod image;
 
+/// Shape·Image property metadata registry (UX.2.1).
+pub mod payload_metadata;
+
 /// Modifier stack (VI.9).
 pub mod modifier;
 

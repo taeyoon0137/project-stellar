@@ -221,6 +221,8 @@ fn property_value(
             BlendMode::Darken,
             BlendMode::Lighten,
         ])),
+        PropertyValueType::Number => PropertyValue::Number(finite(grid(rng, 20))),
+        PropertyValueType::Keyword => PropertyValue::Keyword(rng.below(3) as u8),
     }
 }
 

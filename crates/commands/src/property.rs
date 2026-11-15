@@ -6,6 +6,10 @@
 //! - 공통 node 필드(모든 종류): 표시 여부·잠금(`Bool`), 표시 이름(`Text`) — [`node_keys`].
 //!   부모·순서는 [`MoveNode`](crate::node_ops::MoveNode)로만 바꿉니다.
 //! - Frame payload: Frame registry(VI.3.5)의 7개 속성.
+//! - Shape·Image payload: `payload_metadata` registry(UX.2.1)의 longhand. Shape key는 도형 종류마다 정해집니다
+//!   (Rectangle만 `border-*-radius`, Line만 `x1`·`y1`·`x2`·`y2`). Text의 style longhand는 IX.11.11 뒤에 더합니다.
+//! - Shape·Image payload: `payload_metadata` registry(UX.2.1)의 longhand. key는 도형 종류마다 정해집니다
+//!   (예: Rectangle만 `border-*-radius`, Line만 `x1`·`y1`·`x2`·`y2`).
 //!
 //! 등록되지 않은 key는 [`CommandError::UnknownProperty`], 값 타입이 다르면
 //! [`CommandError::PropertyTypeMismatch`]로 거부합니다. 결과 change set의 무효화 class도 같은
@@ -25,14 +29,21 @@ use stellar_core_types::color::Color;
 use stellar_core_types::ids::StableId;
 use stellar_core_types::property::PropertyKey;
 use stellar_core_types::reference::NodeRef;
+use stellar_core_types::value::Rect;
 use stellar_core_types::value::{FiniteF32, Size2, Transform2D, Vec2};
 use stellar_document::frame::{keys as frame_keys, Border, Clipping, CornerRadius, FramePayload};
 use stellar_document::frame_metadata::{frame_property, FramePropertyType};
+use stellar_document::image::{FitMode, ImagePayload, SamplingMode};
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{BlendMode, BooleanOp};
 use stellar_document::modifier_metadata::InvalidationSet;
 use stellar_document::node_kind::NodeKind;
+use stellar_document::payload_metadata::{
+    image_property, shape_kind_keys, shape_property, PayloadPropertyMetadata, PayloadPropertyType,
+    IMAGE_PROPERTIES,
+};
 use stellar_document::records::{NodePayload, NodeRecord};
+use stellar_document::shape::{EllipseParams, LineCap, PolygonParams, ShapeGeometry, ShapeKind};
 
 use crate::change::{node_field_invalidation, node_keys};
 use crate::codec::{CommandCodecError, Reader, Writer};
@@ -77,6 +88,10 @@ pub enum PropertyValueType {
     UnitInterval,
     /// blend mode(modifier).
     BlendMode,
+    /// 부호 있는 finite 수(좌표·각도 deg·개수, UX.2.1).
+    Number,
+    /// keyword의 저장 tag(UX.2.1). 허용 tag는 key가 정합니다.
+    Keyword,
 }
 
 impl PropertyValueType {
@@ -100,6 +115,8 @@ impl PropertyValueType {
             PropertyValueType::Offset => "offset",
             PropertyValueType::UnitInterval => "unit-interval",
             PropertyValueType::BlendMode => "blend-mode",
+            PropertyValueType::Number => "number",
+            PropertyValueType::Keyword => "keyword",
         }
     }
 }
@@ -147,6 +164,10 @@ pub enum PropertyValue {
     UnitInterval(FiniteF32),
     /// blend mode.
     BlendMode(BlendMode),
+    /// 부호 있는 수.
+    Number(FiniteF32),
+    /// keyword 저장 tag.
+    Keyword(u8),
 }
 
 const TAG_BOOL: u8 = 1;
@@ -166,6 +187,8 @@ const TAG_COLOR: u8 = 14;
 const TAG_OFFSET: u8 = 15;
 const TAG_UNIT_INTERVAL: u8 = 16;
 const TAG_BLEND_MODE: u8 = 17;
+const TAG_NUMBER: u8 = 18;
+const TAG_KEYWORD: u8 = 19;
 
 /// boolean 연산 저장 tag(document `BooleanOp` repr과 같은 값).
 fn boolean_op_from_tag(tag: u8) -> Option<BooleanOp> {
@@ -214,6 +237,8 @@ impl PropertyValue {
             PropertyValue::Offset(_) => PropertyValueType::Offset,
             PropertyValue::UnitInterval(_) => PropertyValueType::UnitInterval,
             PropertyValue::BlendMode(_) => PropertyValueType::BlendMode,
+            PropertyValue::Number(_) => PropertyValueType::Number,
+            PropertyValue::Keyword(_) => PropertyValueType::Keyword,
         }
     }
 
@@ -312,6 +337,14 @@ impl PropertyValue {
                 out.u8(TAG_BLEND_MODE);
                 out.u8(*mode as u8);
             }
+            PropertyValue::Number(value) => {
+                out.u8(TAG_NUMBER);
+                out.f32(value.get());
+            }
+            PropertyValue::Keyword(tag) => {
+                out.u8(TAG_KEYWORD);
+                out.u8(*tag);
+            }
         }
     }
 
@@ -385,6 +418,8 @@ impl PropertyValue {
             TAG_BLEND_MODE => blend_mode_from_tag(input.u8()?)
                 .map(PropertyValue::BlendMode)
                 .ok_or(malformed("알 수 없는 blend mode")),
+            TAG_NUMBER => finite(input.f32()?).map(PropertyValue::Number),
+            TAG_KEYWORD => Ok(PropertyValue::Keyword(input.u8()?)),
             _ => Err(malformed("알 수 없는 속성 값 tag")),
         }
     }
@@ -447,6 +482,9 @@ fn frame_value_type(value_type: FramePropertyType) -> PropertyValueType {
 }
 
 /// `kind` node에서 `key`가 SetProperty로 설정 가능한 속성인지와 그 metadata.
+///
+/// Shape key는 도형 종류마다 다르므로 Shape에는 어느 한 도형 종류라도 가진 key를 돌려줍니다. 실제 편집
+/// 가능 여부는 payload를 받는 [`payload_property_info`]가 정합니다.
 pub fn node_property_info(kind: NodeKind, key: PropertyKey) -> Option<PropertyInfo> {
     match key {
         node_keys::VISIBLE | node_keys::LOCKED => Some(PropertyInfo {
@@ -461,20 +499,130 @@ pub fn node_property_info(kind: NodeKind, key: PropertyKey) -> Option<PropertyIn
             value_type: frame_value_type(metadata.value_type),
             invalidation: InvalidationSet::from(metadata.invalidation),
         }),
+        _ if kind == NodeKind::Shape => ShapeKind::ALL
+            .into_iter()
+            .find_map(|shape| shape_property(shape, key))
+            .map(payload_info),
+        _ if kind == NodeKind::Image => image_property(key).map(payload_info),
+        _ => None,
+    }
+}
+
+fn payload_info(metadata: &PayloadPropertyMetadata) -> PropertyInfo {
+    PropertyInfo {
+        value_type: match metadata.value_type {
+            PayloadPropertyType::Dimension => PropertyValueType::NonNegative,
+            PayloadPropertyType::Coordinate
+            | PayloadPropertyType::Angle
+            | PayloadPropertyType::Count => PropertyValueType::Number,
+            PayloadPropertyType::Keyword => PropertyValueType::Keyword,
+        },
+        invalidation: InvalidationSet::from(metadata.invalidation),
+    }
+}
+
+/// `payload`를 가진 node에서 `key`의 metadata(도형 종류까지 확인).
+pub fn payload_property_info(payload: &NodePayload, key: PropertyKey) -> Option<PropertyInfo> {
+    match payload {
+        NodePayload::Shape(shape) => match key {
+            node_keys::VISIBLE | node_keys::LOCKED | node_keys::DISPLAY_NAME => {
+                node_property_info(NodeKind::Shape, key)
+            }
+            _ => shape_property(shape.kind(), key).map(payload_info),
+        },
+        _ => node_property_info(payload.kind(), key),
+    }
+}
+
+/// `payload` node가 SetProperty로 받는 key 목록(공통 필드 + payload longhand, registry 순서).
+///
+/// 묶음 key(Frame `size`·`corner-radius`)는 longhand가 따로 있어 목록에 넣지 않습니다.
+pub fn node_property_keys(payload: &NodePayload) -> Vec<PropertyKey> {
+    let mut keys = vec![
+        node_keys::VISIBLE,
+        node_keys::LOCKED,
+        node_keys::DISPLAY_NAME,
+    ];
+    match payload {
+        NodePayload::Frame(_) => keys.extend(
+            stellar_document::frame_metadata::FRAME_PROPERTIES
+                .iter()
+                .map(|m| m.key)
+                .filter(|k| *k != frame_keys::SIZE && *k != frame_keys::CORNER_RADIUS),
+        ),
+        NodePayload::Shape(shape) => keys.extend_from_slice(shape_kind_keys(shape.kind())),
+        NodePayload::Image(_) => keys.extend(IMAGE_PROPERTIES.iter().map(|m| m.key)),
+        _ => {}
+    }
+    keys
+}
+
+fn number(value: f32) -> Option<PropertyValue> {
+    FiniteF32::new(value).ok().map(PropertyValue::Number)
+}
+
+fn length(value: f32) -> Option<PropertyValue> {
+    FiniteF32::new(value).ok().map(PropertyValue::NonNegative)
+}
+
+fn read_shape(shape: &ShapeGeometry, key: PropertyKey) -> Option<PropertyValue> {
+    use stellar_document::payload_metadata::shape_keys as k;
+    shape_property(shape.kind(), key)?;
+    match shape {
+        ShapeGeometry::Rectangle(rect) => match key {
+            k::WIDTH => length(rect.size.width()),
+            k::HEIGHT => length(rect.size.height()),
+            _ => {
+                let index = k::BORDER_RADIUS_LONGHANDS.iter().position(|c| *c == key)?;
+                let (tl, tr, br, bl) = rect.corner_radius.components();
+                length([tl, tr, br, bl][index])
+            }
+        },
+        ShapeGeometry::Ellipse(ellipse) => match key {
+            k::WIDTH => length(ellipse.bounds.size().width()),
+            _ => length(ellipse.bounds.size().height()),
+        },
+        ShapeGeometry::Line(line) => match key {
+            k::X1 => number(line.start.x()),
+            k::Y1 => number(line.start.y()),
+            k::X2 => number(line.end.x()),
+            k::Y2 => number(line.end.y()),
+            _ => Some(PropertyValue::Keyword(line.cap as u8)),
+        },
+        ShapeGeometry::Polygon(polygon) => match key {
+            k::WIDTH => length(polygon.bounds().size().width()),
+            k::HEIGHT => length(polygon.bounds().size().height()),
+            k::POLYGON_SIDES => number(polygon.sides() as f32),
+            k::POLYGON_ROTATION => number(polygon.rotation_degrees()),
+            _ => length(polygon.corner_radius()),
+        },
+    }
+}
+
+fn read_image(image: &ImagePayload, key: PropertyKey) -> Option<PropertyValue> {
+    use stellar_document::payload_metadata::image_keys as k;
+    match key {
+        k::WIDTH => length(image.size.width()),
+        k::HEIGHT => length(image.size.height()),
+        k::OBJECT_FIT => Some(PropertyValue::Keyword(image.fit as u8)),
+        k::IMAGE_RENDERING => Some(PropertyValue::Keyword(image.sampling as u8)),
         _ => None,
     }
 }
 
 /// 현재 값을 읽습니다(registry에 있는 key만).
-fn read_property(record: &NodeRecord, key: PropertyKey) -> Option<PropertyValue> {
+pub fn read_property(record: &NodeRecord, key: PropertyKey) -> Option<PropertyValue> {
     match key {
         node_keys::VISIBLE => return Some(PropertyValue::Bool(record.visible)),
         node_keys::LOCKED => return Some(PropertyValue::Bool(record.locked)),
         node_keys::DISPLAY_NAME => return Some(PropertyValue::Text(record.display_name.clone())),
         _ => {}
     }
-    let NodePayload::Frame(frame) = &record.payload else {
-        return None;
+    let frame = match &record.payload {
+        NodePayload::Frame(frame) => frame,
+        NodePayload::Shape(shape) => return read_shape(shape, key),
+        NodePayload::Image(image) => return read_image(image, key),
+        _ => return None,
     };
     Some(match key {
         frame_keys::SIZE => PropertyValue::Size(frame.size),
@@ -494,6 +642,128 @@ fn read_property(record: &NodeRecord, key: PropertyKey) -> Option<PropertyValue>
             PropertyValue::NonNegative(FiniteF32::new([tl, tr, br, bl][index]).ok()?)
         }
     })
+}
+
+/// Shape payload에 값을 씁니다. 값이 도형 제약(변 수 3..=1000 등)을 어기면 이유를 돌려줍니다.
+fn write_shape(
+    shape: &mut ShapeGeometry,
+    key: PropertyKey,
+    value: &PropertyValue,
+) -> Result<(), &'static str> {
+    use stellar_document::payload_metadata::shape_keys as k;
+    let invalid = "도형 값이 범위를 벗어났습니다";
+    let scalar = match value {
+        PropertyValue::NonNegative(v) | PropertyValue::Number(v) => v.get(),
+        PropertyValue::Keyword(tag) => f32::from(*tag),
+        _ => return Err(invalid),
+    };
+    let resized = |size: Size2| match key {
+        k::WIDTH => Size2::new(scalar, size.height()).map_err(|_| invalid),
+        _ => Size2::new(size.width(), scalar).map_err(|_| invalid),
+    };
+    match shape {
+        ShapeGeometry::Rectangle(rect) => match key {
+            k::WIDTH | k::HEIGHT => rect.size = resized(rect.size)?,
+            _ => {
+                let index = k::BORDER_RADIUS_LONGHANDS
+                    .iter()
+                    .position(|c| *c == key)
+                    .ok_or(invalid)?;
+                let (tl, tr, br, bl) = rect.corner_radius.components();
+                let mut radii = [tl, tr, br, bl];
+                radii[index] = scalar;
+                let [tl, tr, br, bl] = radii;
+                rect.corner_radius = CornerRadius::new(tl, tr, br, bl).map_err(|_| invalid)?;
+            }
+        },
+        ShapeGeometry::Ellipse(ellipse) => {
+            let bounds = Rect::new(ellipse.bounds.origin(), resized(ellipse.bounds.size())?);
+            *ellipse = EllipseParams::new(bounds).map_err(|_| invalid)?;
+        }
+        ShapeGeometry::Line(line) => {
+            let point = |p: Vec2, x: bool| {
+                if x {
+                    Vec2::new(scalar, p.y())
+                } else {
+                    Vec2::new(p.x(), scalar)
+                }
+                .map_err(|_| invalid)
+            };
+            match key {
+                k::X1 => line.start = point(line.start, true)?,
+                k::Y1 => line.start = point(line.start, false)?,
+                k::X2 => line.end = point(line.end, true)?,
+                k::Y2 => line.end = point(line.end, false)?,
+                _ => {
+                    line.cap = [LineCap::Butt, LineCap::Round, LineCap::Square]
+                        .into_iter()
+                        .find(|cap| f32::from(*cap as u8) == scalar)
+                        .ok_or(invalid)?
+                }
+            }
+        }
+        ShapeGeometry::Polygon(polygon) => {
+            let (mut bounds, mut sides, mut rotation, mut radius) = (
+                polygon.bounds(),
+                polygon.sides(),
+                polygon.rotation_degrees(),
+                polygon.corner_radius(),
+            );
+            match key {
+                k::WIDTH | k::HEIGHT => {
+                    bounds = Rect::new(bounds.origin(), resized(bounds.size())?)
+                }
+                k::POLYGON_SIDES => {
+                    if scalar.fract() != 0.0 || scalar < 3.0 {
+                        return Err("변 수는 3 이상의 정수입니다");
+                    }
+                    sides = scalar as u32;
+                }
+                k::POLYGON_ROTATION => rotation = scalar,
+                _ => radius = scalar,
+            }
+            let angle = stellar_core_types::value::Angle::new(rotation).map_err(|_| invalid)?;
+            *polygon = PolygonParams::new(bounds, sides, angle, radius).map_err(|_| invalid)?;
+        }
+    }
+    Ok(())
+}
+
+/// Image payload에 값을 씁니다.
+fn write_image(
+    image: &mut ImagePayload,
+    key: PropertyKey,
+    value: &PropertyValue,
+) -> Result<(), &'static str> {
+    use stellar_document::payload_metadata::image_keys as k;
+    let invalid = "이미지 값이 범위를 벗어났습니다";
+    match (key, value) {
+        (k::WIDTH, PropertyValue::NonNegative(v)) => {
+            image.size = Size2::new(v.get(), image.size.height()).map_err(|_| invalid)?
+        }
+        (k::HEIGHT, PropertyValue::NonNegative(v)) => {
+            image.size = Size2::new(image.size.width(), v.get()).map_err(|_| invalid)?
+        }
+        (k::OBJECT_FIT, PropertyValue::Keyword(tag)) => {
+            image.fit = [
+                FitMode::Fill,
+                FitMode::Contain,
+                FitMode::Cover,
+                FitMode::None,
+            ]
+            .into_iter()
+            .find(|fit| *fit as u8 == *tag)
+            .ok_or(invalid)?
+        }
+        (k::IMAGE_RENDERING, PropertyValue::Keyword(tag)) => {
+            image.sampling = [SamplingMode::Linear, SamplingMode::Nearest]
+                .into_iter()
+                .find(|mode| *mode as u8 == *tag)
+                .ok_or(invalid)?
+        }
+        _ => return Err(invalid),
+    }
+    Ok(())
 }
 
 /// Frame payload에 값을 씁니다. 타입이 맞지 않으면 `false`.
@@ -598,14 +868,13 @@ impl SetProperty {
     }
 
     fn info(&self, model: &DocumentModel) -> Result<PropertyInfo, CommandError> {
-        let kind = model
+        let payload = model
             .payload(self.node)
-            .map(NodePayload::kind)
             .ok_or(CommandError::UnknownNode { id: self.node })?;
         if self.key == node_keys::PARENT || self.key == node_keys::ORDER_KEY {
             return Err(CommandError::PropertyNotSettable { key: self.key });
         }
-        node_property_info(kind, self.key).ok_or(CommandError::UnknownProperty {
+        payload_property_info(payload, self.key).ok_or(CommandError::UnknownProperty {
             node: self.node,
             key: self.key,
         })
@@ -678,8 +947,17 @@ impl SetProperty {
             (node_keys::LOCKED, PropertyValue::Bool(v)) => record.locked = *v,
             (node_keys::DISPLAY_NAME, PropertyValue::Text(v)) => record.display_name = v.clone(),
             (key, value) => {
+                let invalid = |reason| CommandError::InvalidRequest { reason };
                 let written = match &mut record.payload {
                     NodePayload::Frame(frame) => write_frame(frame, key, value),
+                    NodePayload::Shape(shape) => {
+                        write_shape(shape, key, value).map_err(invalid)?;
+                        true
+                    }
+                    NodePayload::Image(image) => {
+                        write_image(image, key, value).map_err(invalid)?;
+                        true
+                    }
                     _ => false,
                 };
                 if !written {
@@ -828,6 +1106,8 @@ mod tests {
                 PropertyValue::UnitInterval(FiniteF32::new(0.5).unwrap())
             }
             PropertyValueType::BlendMode => PropertyValue::BlendMode(BlendMode::Screen),
+            PropertyValueType::Number => PropertyValue::Number(FiniteF32::new(-3.).unwrap()),
+            PropertyValueType::Keyword => PropertyValue::Keyword(1),
         }
     }
 
@@ -974,6 +1254,190 @@ mod tests {
         assert!(state.model().record(sid(20)).unwrap().locked);
     }
 
+    /// 7종 노드(Frame·Rectangle·Ellipse·Line·Polygon·Text·Image)를 root 아래에 둔 모델과 id.
+    pub(crate) fn seven_kind_model() -> (DocumentModel, [StableId; 7]) {
+        use stellar_core_types::reference::AssetRef;
+        use stellar_core_types::value::Angle;
+        use stellar_document::shape::{LineParams, RectangleParams};
+        let mut model = small_model();
+        let rect = |w, h| Rect::new(Vec2::ZERO, Size2::new(w, h).unwrap());
+        let payloads = [
+            NodePayload::Shape(ShapeGeometry::Rectangle(RectangleParams {
+                size: Size2::new(80., 40.).unwrap(),
+                corner_radius: CornerRadius::new(1., 2., 3., 4.).unwrap(),
+            })),
+            NodePayload::Shape(ShapeGeometry::Ellipse(
+                EllipseParams::new(rect(30., 20.)).unwrap(),
+            )),
+            NodePayload::Shape(ShapeGeometry::Line(LineParams {
+                start: Vec2::ZERO,
+                end: Vec2::new(40., -10.).unwrap(),
+                cap: LineCap::Butt,
+            })),
+            NodePayload::Shape(ShapeGeometry::Polygon(
+                PolygonParams::new(rect(50., 50.), 5, Angle::new(0.).unwrap(), 0.).unwrap(),
+            )),
+            NodePayload::Text(stellar_document::text::TextPayload::empty(0)),
+            NodePayload::Image(ImagePayload::new(
+                AssetRef::new(sid(90)),
+                Size2::new(64., 48.).unwrap(),
+            )),
+        ];
+        let mut ids = [sid(11); 7];
+        for (index, payload) in payloads.into_iter().enumerate() {
+            let mut record =
+                crate::command::test_fixtures::frame(30 + index as u64, Some(10), 0x30);
+            record.order_key =
+                stellar_core_types::order_key::OrderKey::from_bytes(vec![0x30 + index as u8])
+                    .unwrap();
+            record.payload = payload;
+            ids[index + 1] = record.id;
+            model.insert_node(record).unwrap();
+        }
+        (model, ids)
+    }
+
+    #[test]
+    fn node_property_keys_cover_seven_node_kinds_and_round_trip() {
+        // 검증 기준(UX.2.1): node_property_info가 7종 노드의 키를 반환, key 상위 byte 규칙.
+        use stellar_document::payload_metadata::{image_keys, shape_keys};
+        let (model, ids) = seven_kind_model();
+        let mut state = DocumentState::new(model);
+        let expected: [&[PropertyKey]; 7] = [
+            &[
+                frame_keys::WIDTH,
+                frame_keys::BACKGROUND,
+                frame_keys::BORDER_TOP_LEFT_RADIUS,
+            ],
+            &[shape_keys::WIDTH, shape_keys::BORDER_BOTTOM_LEFT_RADIUS],
+            &[shape_keys::HEIGHT],
+            &[shape_keys::X1, shape_keys::Y2, shape_keys::STROKE_LINECAP],
+            &[shape_keys::POLYGON_SIDES, shape_keys::POLYGON_ROTATION],
+            &[node_keys::DISPLAY_NAME],
+            &[image_keys::WIDTH, image_keys::OBJECT_FIT],
+        ];
+        let upper = [0x01, 0x03, 0x03, 0x03, 0x03, 0x05, 0x06];
+        for ((id, wanted), upper) in ids.into_iter().zip(expected).zip(upper) {
+            let record = state.model().record(id).unwrap();
+            let keys = node_property_keys(&record.payload);
+            for key in wanted {
+                assert!(keys.contains(key), "{:?} {key:?}", record.kind());
+            }
+            for key in &keys {
+                let info = payload_property_info(&record.payload, *key).unwrap();
+                assert_eq!(
+                    node_property_info(record.kind(), *key).map(|i| i.value_type),
+                    Some(info.value_type)
+                );
+                if key.0 > 0xFF {
+                    assert_eq!(key.0 >> 8, upper, "{key:?}");
+                }
+                // 현재 값을 다시 쓰면 같은 값, 역 command로 원래 상태.
+                let current = read_property(&record, *key).unwrap();
+                assert_eq!(current.value_type(), info.value_type, "{key:?}");
+            }
+        }
+        // Shape 편집과 Undo.
+        let before = model_snapshot_json(state.model()).unwrap();
+        let edits = [
+            (
+                ids[1],
+                shape_keys::WIDTH,
+                PropertyValue::NonNegative(FiniteF32::new(120.).unwrap()),
+            ),
+            (
+                ids[1],
+                shape_keys::BORDER_TOP_RIGHT_RADIUS,
+                PropertyValue::NonNegative(FiniteF32::new(9.).unwrap()),
+            ),
+            (
+                ids[2],
+                shape_keys::HEIGHT,
+                PropertyValue::NonNegative(FiniteF32::new(7.).unwrap()),
+            ),
+            (
+                ids[3],
+                shape_keys::X2,
+                PropertyValue::Number(FiniteF32::new(-5.).unwrap()),
+            ),
+            (
+                ids[3],
+                shape_keys::STROKE_LINECAP,
+                PropertyValue::Keyword(1),
+            ),
+            (
+                ids[4],
+                shape_keys::POLYGON_SIDES,
+                PropertyValue::Number(FiniteF32::new(8.).unwrap()),
+            ),
+            (
+                ids[4],
+                shape_keys::POLYGON_ROTATION,
+                PropertyValue::Number(FiniteF32::new(540.).unwrap()),
+            ),
+            (
+                ids[6],
+                image_keys::HEIGHT,
+                PropertyValue::NonNegative(FiniteF32::new(10.).unwrap()),
+            ),
+            (ids[6], image_keys::OBJECT_FIT, PropertyValue::Keyword(2)),
+        ];
+        let mut inverses = Vec::new();
+        for (node, key, value) in edits {
+            let request = CommandRequest::at(
+                &state,
+                Command::SetProperty(SetProperty {
+                    node,
+                    key,
+                    value: value.clone(),
+                }),
+            );
+            let outcome = state.execute(&request).unwrap();
+            assert_eq!(
+                read_property(&state.model().record(node).unwrap(), key),
+                Some(value)
+            );
+            inverses.push(outcome.inverse);
+        }
+        for inverse in inverses.into_iter().rev() {
+            let request = CommandRequest::at(&state, inverse);
+            state.execute(&request).unwrap();
+        }
+        assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
+        // 도형 종류에 없는 key·범위 밖 값은 거부합니다.
+        let run = |state: &mut DocumentState, node, key, value| {
+            let request = CommandRequest::at(
+                state,
+                Command::SetProperty(SetProperty { node, key, value }),
+            );
+            state.execute(&request).map(|_| ())
+        };
+        assert!(matches!(
+            run(
+                &mut state,
+                ids[2],
+                shape_keys::X1,
+                PropertyValue::Number(FiniteF32::new(1.).unwrap())
+            ),
+            Err(CommandError::UnknownProperty { .. })
+        ));
+        assert!(run(
+            &mut state,
+            ids[4],
+            shape_keys::POLYGON_SIDES,
+            PropertyValue::Number(FiniteF32::new(2.5).unwrap())
+        )
+        .is_err());
+        assert!(run(
+            &mut state,
+            ids[6],
+            image_keys::OBJECT_FIT,
+            PropertyValue::Keyword(9)
+        )
+        .is_err());
+        assert_eq!(model_snapshot_json(state.model()).unwrap(), before);
+    }
+
     #[test]
     fn set_property_codec_round_trips_every_value_type() {
         let types = [
@@ -994,6 +1458,8 @@ mod tests {
             PropertyValue::OptionalColor(None),
             PropertyValue::OptionalBorder(None),
             PropertyValue::OptionalLayoutRef(None),
+            PropertyValue::Number(FiniteF32::new(-2.5).unwrap()),
+            PropertyValue::Keyword(3),
         ]);
         for value in values {
             let command = set(11, frame_keys::SIZE, value);
