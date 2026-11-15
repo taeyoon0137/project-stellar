@@ -56,31 +56,23 @@ Web·Apple adapter는 접근성 entry의 자식 목록(`IrTree::accessibility_ch
 
 없습니다.
 
-## 정적 접근성 HTML 연결 (2026-11-14)
+## 고정 Free Frame HTML+CSS 연결 (2026-11-14, 2026-11-15 정정)
 
-- 저장된 프로젝트의 명시한 문서·View를 CLI로 내보내는 사용자 요청에 따라 `ops → codegen`,
-  `ops → accessibility`, `ops → target-profile` 간선을 허용합니다. CLI의 직접 의존은 ops로 유지하며,
-  document와 codegen 사이의 역방향 간선이나 새 외부 의존은 추가하지 않습니다.
+- 근거는 제품 소유자 방향 P4(ADR-0025, 디자인은 실제 코드로 변환됨)입니다. 전체 코드 생성(Phase XXII)의
+  입력 연결이 아직 없으므로, 저장된 지정 단일 View를 `stellar export-web <경로> <문서 id> <View id>`로 고정
+  Free Frame HTML+CSS에 투영하는 좁은 제품 경로만 둡니다. 지원 범위와 실패 계약은
+  [web-frame-export](../spec/web-frame-export.md)에 둡니다.
+- 이 경로를 위해 `ops → codegen`, `ops → accessibility`, `ops → target-profile` 간선을 허용합니다(ADR-0005
+  §8). CLI의 직접 의존은 ops로 유지하며, document와 codegen 사이의 역방향 간선이나 새 외부 의존은 추가하지
+  않습니다.
 - 현재 `DocumentModel`은 control 의미·상태·token·Variant를 복원하지 못하고, 저장된 target profile도
   codegen의 registry pin 형식과 연결되지 않았습니다. 없는 layout·capability를 만들어 `CodegenSources`를
-  채우지 않습니다. 기존 `CodegenIr`의 tree 부분을 `IrTree`로 분리하고 `build_accessibility_ir`는
-  구조·저장 텍스트·접근성 snapshot만 받습니다. 전체 adapter 입력 `CodegenIr`에는 여전히 target과
-  기존 `build_ir` 검증이 필요합니다. 기존 플랫폼 golden은 그대로 유지합니다.
-- `stellar export-accessibility <경로> <문서 id> <View id>`는 `ProjectSnapshot::document_model`과
-  `View.root_frame`만 사용합니다. Frame·Fragment·Text의 정적 의미를 기존 접근성 생성기와
-  `web::aria::map_accessibility`로 매핑하고 같은 정적 검사를 실행합니다. 이름을 role·label로 해석하지
-  않습니다. Shape·Path·Image는 의미·에셋 투영이 없어 오류로 거부합니다(숨김 node도 동일).
-- 성공 결과에는 HTML 조각·읽은 revision·범위 및 미지원 진단을 포함합니다. 다른 View를 내보내지 않으며
-  제외 사실을 알립니다. geometry·paint·스타일·modifier·profile·동적 의미는 명시적으로 진단합니다.
-  파일 출력 옵션은 없고 JSON의 `result.html`을 사용합니다. Git·프로젝트를 변경하지 않습니다.
-- 이는 정적 접근성 투영의 제품 경로이며 XXIV.1.4의 일반 render/export나 Phase XXII 전체 코드 생성
-  완료가 아닙니다. 저장 형식·FFI·초기 앱 메뉴에는 영향이 없습니다.
-
-## 고정 Free Frame HTML+CSS 연결 (2026-11-14)
-
-- 저장된 지정 단일 View를 일반 CLI로 브라우저에 출력하는 사용자 요청 범위에서
-  `stellar export-web <경로> <문서 id> <View id>`를 추가합니다. 지원 범위와 실패 계약은
-  [web-frame-export](../spec/web-frame-export.md)에 둡니다. 기존 접근성 명령은 유지합니다.
+  채우지 않습니다. 그래서 `CodegenIr`의 tree 부분을 `IrTree`로 분리하고, `build_accessibility_ir`는
+  구조·접근성 snapshot·저장 텍스트만 받습니다. 전체 adapter 입력 `CodegenIr`에는 여전히 target과 기존
+  `build_ir` 검증이 필요합니다.
+- 같은 날 함께 추가했던 정적 접근성 HTML 조각 명령(ops `accessibility_html`)은 2026-11-15에 삭제했습니다.
+  요청이 없었고 일반 render/export의 선행(Phase XX, XXIV.1.4)이 없으며, `export-web`과 같은 접근성 생성기·
+  Web mapper 경로를 한 번 더 둔 중복이었습니다.
 - 문서 해석은 ops가 맡고 구조는 기존 접근성 `IrTree`·Web mapper를 재사용합니다. 아직 없는 layout·
   capability를 만들어 전체 `CodegenSources`를 채우지 않습니다. `web::frame::FrameStyle`은 저장된
   core 값(크기·affine·색·테두리·반경)을 요소 하나의 CSS로 쓰는 좁은 출력 입력입니다. 새 범용 IR이나

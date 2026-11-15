@@ -2,10 +2,9 @@
 
 use std::path::Path;
 
-use stellar_ops::accessibility_html::HtmlError;
 use stellar_ops::core_types::ids::StableId;
 use stellar_ops::snapshot::open_snapshot;
-use stellar_ops::web_frame::export_web_frame;
+use stellar_ops::web_frame::{export_web_frame, HtmlError};
 
 use crate::exit::ExitStatus;
 use crate::json::JsonValue;

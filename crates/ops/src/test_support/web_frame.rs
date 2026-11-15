@@ -8,13 +8,18 @@ use stellar_document::modifier::{ModifierId, ModifierKind, ModifierStack};
 use stellar_document::records::{NodePayload, NodeRecord};
 use stellar_document::text::TextPayload;
 
-pub use super::accessibility::id;
 use crate::core_types::{
     color::{Color, ColorSpace},
+    ids::StableId,
     order_key::OrderKey,
     reference::NodeRef,
     value::{Size2, Transform2D},
 };
+
+/// 결정론 fixture id(문서 1, 페이지 2, View 3~6, root 10·20·30·40).
+pub fn id(n: u64) -> StableId {
+    StableId::new_v7(n, 0, n)
+}
 
 fn color(space: ColorSpace, rgba: [f32; 4]) -> Color {
     Color::new(space, rgba[0], rgba[1], rgba[2], rgba[3]).unwrap()

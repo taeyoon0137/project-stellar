@@ -138,7 +138,7 @@ Rectangle은 node ID를 포함한 `browser-rectangle-curve` 경고를 반환합�
 진단하고 보수적으로 실패합니다. node 의미·control·binding·token·Variant·Context·Motion을 빈 가상 데이터로
 채우지 않습니다. 현재 지원하는 Frame/Fragment/Rectangle 저장 레코드에는 그런 의미가 연결되지 않아 `fixed-free-frame-only`
 범위 경고를 항상 출력합니다. Text는 문자열만으로 글꼴·paragraph·run 스타일을 복구할 수 없어 거부합니다.
-반응형 layout·동작하는 control·Text UI는 후속 구현입니다. 기존 `export-accessibility`는 별도 명령으로 유지됩니다.
+반응형 layout·동작하는 control·Text UI는 후속 구현입니다.
 
 없는 프로젝트·저장 generation·문서·View는 66, 손상·미지원 generation schema는 65, 인자 오류는 64입니다.
 인자 오류는 기존 CLI 규칙대로 stdout에 JSON을 출력하지 않습니다.

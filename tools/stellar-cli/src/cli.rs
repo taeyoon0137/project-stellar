@@ -63,10 +63,6 @@ pub const COMMANDS: &[(&str, &str)] = &[
         "<경로>: CI 검사(lockfile·검증·migration 필요 여부)를 실행합니다(하나라도 실패하면 종료 코드 1)",
     ),
     (
-        "export-accessibility",
-        "<경로> <문서 id> <View id>: 지정 View의 정적 접근성 HTML 조각과 revision·진단을 JSON으로 출력합니다(전체 코드 내보내기 아님)",
-    ),
-    (
         "export-web",
         "<경로> <문서 id> <View id>: 고정 Free Frame·Fragment의 HTML+CSS와 revision·진단을 JSON으로 출력합니다(미지원 값은 실패)",
     ),
@@ -172,8 +168,6 @@ pub fn run(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
         ("inspect", commands::inspect(rest))
     } else if command == "query" {
         ("query", commands::query(rest))
-    } else if command == "export-accessibility" {
-        ("export-accessibility", crate::accessibility_html::run(rest))
     } else if command == "export-web" {
         ("export-web", crate::web_frame::run(rest))
     } else if command == "apply" {

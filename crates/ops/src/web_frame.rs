@@ -23,13 +23,54 @@ use stellar_storage::hash::ContentHash;
 use stellar_target_profile::capability::ElementKind;
 use stellar_target_profile::validate::ViewNode;
 
-use crate::accessibility_html::{HtmlDiagnostic, HtmlError};
 use crate::core_types::{
     ids::StableId,
     value::{FiniteF32, Transform2D, Vec2},
 };
+use crate::error::DocumentReadError;
 use crate::revision::ProjectRevision;
 use crate::snapshot::ProjectSnapshot;
+
+/// 정보 손실·미지원 데이터 또는 정적 검사 진단(결정론 순서).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HtmlDiagnostic {
+    /// 실패를 일으키는 진단인지.
+    pub error: bool,
+    /// 안정 분류.
+    pub code: &'static str,
+    /// 진단 문맥과 설명. 원본 텍스트·이름은 복사하지 않습니다.
+    pub message: String,
+}
+
+/// HTML을 만들기 전 입력을 읽거나 찾지 못했습니다.
+#[derive(Debug)]
+pub enum HtmlError {
+    /// 저장된 generation 없음.
+    Unsaved,
+    /// 이 도구가 해석하지 않는 generation 스키마.
+    UnsupportedSchema(u32),
+    /// 문서 로드 실패.
+    Document(DocumentReadError),
+    /// 그 문서에 요청 View가 없음.
+    UnknownView(StableId),
+}
+
+impl std::fmt::Display for HtmlError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unsaved => f.write_str("저장된 generation이 없습니다"),
+            Self::UnsupportedSchema(version) => write!(
+                f,
+                "generation schema {version}은 지원하지 않습니다(지원: {})",
+                crate::migrate::CURRENT_SCHEMA_VERSION
+            ),
+            Self::Document(e) => write!(f, "{e}"),
+            Self::UnknownView(id) => write!(f, "요청 문서에 View {id}가 없습니다"),
+        }
+    }
+}
+
+impl std::error::Error for HtmlError {}
 
 /// 읽은 범위와 결과. 오류가 하나라도 있으면 부분 HTML도 반환하지 않습니다.
 #[derive(Debug, Clone, PartialEq, Eq)]

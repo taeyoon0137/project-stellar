@@ -430,8 +430,8 @@ crate로 옮겼습니다. 허용 직접 의존은 core-types이지만 실제 man
 `crates/ops`는 저장 프로젝트의 조회·검증·변경을 제공하는 L1 library입니다. CLI와 MCP의
 headless 읽기 모드는 같은 snapshot과 문서 조회 코드를 사용합니다. CLI 진입점 `tools/stellar-cli`는
 `stellar` 실행 파일을 제공하며 앱을 실행하지 않고 동작합니다. 명령 예시는 [stellar 명령 사용 안내](stellar-cli.md)에
-있습니다. 예를 들어 `query tree`는 저장된 노드를 페이지로 읽고, `export-accessibility`는 지정 View를
-정적 HTML로 내보냅니다. `apply`는 변경 전 미리보기를 지원합니다.
+있습니다. 예를 들어 `query tree`는 저장된 노드를 페이지로 읽고, `export-web`은 지정 View의 고정 Frame을
+HTML+CSS로 내보냅니다. `apply`는 변경 전 미리보기를 지원합니다.
 실행 시 전체 명령과 사용법은 `stellar --help`에서 확인합니다.
 
 CLI는 결과 envelope를 stdout에, 사람이 읽는 진단을 stderr에 씁니다. 엄격한 JSON 구현은

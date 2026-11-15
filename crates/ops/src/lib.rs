@@ -68,9 +68,6 @@ pub mod summary;
 /// opt-in 단일 View 텍스트 원본 export·읽기 전용 검사 (ADR-0059).
 pub mod text_source;
 
-/// 저장된 View 하나의 정적 접근성 HTML 투영(전체 코드 내보내기가 아님).
-pub mod accessibility_html;
-
 /// 저장된 고정 Free Frame View 하나의 HTML+CSS 투영.
 pub mod web_frame;
 

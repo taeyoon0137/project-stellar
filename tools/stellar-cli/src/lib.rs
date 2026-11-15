@@ -39,9 +39,6 @@ pub mod output;
 /// `stellar-ops` 결과 → 결과 JSON 변환과 오류 분류 (XXIV.4.3).
 pub mod views;
 
-/// `export-accessibility`: 저장된 View 하나의 정적 접근성 HTML.
-pub mod accessibility_html;
-
 /// `export-web`: 저장된 고정 Free Frame View의 HTML+CSS.
 pub mod web_frame;
 

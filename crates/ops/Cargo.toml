@@ -22,7 +22,7 @@ stellar-storage = { path = "../storage" }
 stellar-semantic-diff = { path = "../semantic-diff" }
 # 3-way semantic merge 엔진 (XIV.10).
 stellar-semantic-merge = { path = "../semantic-merge" }
-# 저장 View의 정적 접근성 HTML 투영(ADR-0049 후속).
+# 저장 View의 고정 Free Frame HTML+CSS 투영(`export-web`, ADR-0049): 접근성 생성기·IR·Web mapper 재사용.
 stellar-codegen = { path = "../codegen" }
 stellar-accessibility = { path = "../accessibility" }
 stellar-target-profile = { path = "../target-profile" }
