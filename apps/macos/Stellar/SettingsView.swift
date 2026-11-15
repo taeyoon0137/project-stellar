@@ -1,10 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// 새 도형의 기본 채우기·선 색(사용자 결정 D7).
+/// 새 도형의 기본 채우기·선 색(사용자 결정 D7, 해석은 ADR-0071 UX.1.5 5항).
 ///
 /// 사용자 앱 설정(`UserDefaults`)에만 저장하고 프로젝트 파일에는 쓰지 않습니다. 새 Rectangle·Ellipse·Polygon은
-/// `fill`, Line은 `stroke`와 1px 두께를 씁니다. 셸이 생성 요청에 스타일을 넘기며 core는 기본 색을 정하지 않습니다.
+/// `fill`만, Line은 `stroke`와 1px 두께만 씁니다(닫힌 도형에 기본 선을 넣지 않음). 셸이 생성 요청에 스타일을 넘기며
+/// core는 기본 색을 정하지 않습니다.
 struct CanvasShapeDefaults: Equatable {
     static let fillKey = "canvas.defaultShapeFill"
     static let strokeKey = "canvas.defaultLineStroke"
@@ -56,10 +57,10 @@ struct CanvasShapeDefaults: Equatable {
     }
 }
 
-/// 앱 설정 화면(SwiftUI).
+/// 앱 설정 화면(SwiftUI, Settings ▸ Canvas).
 ///
 /// 캔버스는 AppKit view로 두고 설정 화면만 SwiftUI로 둡니다. 지금은 캔버스의 새 도형 기본 색만 있습니다.
-struct SettingsPlaceholderView: View {
+struct SettingsView: View {
     @State private var shapes = CanvasShapeDefaults.load()
 
     var body: some View {
@@ -67,7 +68,7 @@ struct SettingsPlaceholderView: View {
             Section(String(localized: "Canvas", comment: "Settings section")) {
                 ColorPicker(String(localized: "Default Shape Fill", comment: "Settings: fill of new rectangles, ellipses and polygons"),
                             selection: binding(\.fill), supportsOpacity: true)
-                ColorPicker(String(localized: "Default Line Color", comment: "Settings: stroke color of new lines"),
+                ColorPicker(String(localized: "Default Line Tool Color", comment: "Settings: stroke color of new lines drawn with the Line tool (1px)"),
                             selection: binding(\.stroke), supportsOpacity: true)
             }
         }

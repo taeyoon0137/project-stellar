@@ -197,7 +197,7 @@ final class ShellAppCoordinator: NSObject {
         if let settingsController {
             controller = settingsController
         } else {
-            let hosting = NSHostingController(rootView: SettingsPlaceholderView())
+            let hosting = NSHostingController(rootView: SettingsView())
             let window = NSWindow(contentViewController: hosting)
             window.title = String(localized: "Settings", comment: "Settings window title")
             window.styleMask = [.titled, .closable]
