@@ -179,7 +179,9 @@ design chunk만 읽고")을 고쳤습니다. 제한 모드 창이 컴포넌트 �
   사용자가 고르기 전에는 자동 overwrite·자동 discard·재오픈이 없습니다. 고르는 방법은 아래
   '창 수명·복구 정리'의 닫기 실패 선택 시트를 따릅니다.
   timeout/취소/실제 닫힘/session 교체 뒤 늦은 callback은 자동 닫기를 실행하지 않습니다.
-- 셸 응답 watchdog은 10초입니다. 이는 무기한 자동 닫기 대기를 막는 임시 correctness 상한이며
+- 셸 응답 watchdog(`closeReplyTimeout`)은 30초입니다. Save Now가 같은 프로젝트의 자동 저장 쓰기를 기다리는 settle
+  상한 `window_close_flush_timeout_ms`(10초)와 그 뒤 쓰기 시간보다 길어야 하므로 처음의 10초에서 늘렸습니다
+  (9f1f8efc, ADR-0072 §2). 두 값을 하나로 합치는 일은 XIII.1.6입니다. 이는 무기한 자동 닫기 대기를 막는 임시 correctness 상한이며
   `AutosavePolicy`의 성능 설정값이나 XIII.1.1의 벤치마크 확정값이 아닙니다. config 누락을 기본값으로
   대체하지 않으며 config와 성능 예산은 변경하지 않습니다. timeout은 Rust 작업 취소를 뜻하지 않습니다.
   이미 접수된 저장이 나중에 끝날 수 있으나, 그 응답으로 창을 닫지는 않습니다.
