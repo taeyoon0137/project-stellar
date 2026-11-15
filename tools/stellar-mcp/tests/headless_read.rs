@@ -593,6 +593,12 @@ payload:
     assert_ne!(colored, v1);
     fs::write(&path, colored).unwrap();
     let filled = checked(&mut client, 1, "160");
+    // generation은 그대로이고 YAML 원본 집합 hash만 바뀝니다.
+    assert_eq!(filled.get("revision"), main.get("revision"));
+    assert_ne!(
+        filled.get("component_source_hash"),
+        main.get("component_source_hash")
+    );
     let background = array(filled.get("entries").unwrap())[0]
         .get("background")
         .unwrap();

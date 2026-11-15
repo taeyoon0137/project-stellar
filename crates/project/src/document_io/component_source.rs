@@ -24,6 +24,7 @@ use super::text_codec::{
 };
 use super::text_source::TextSourceError;
 use crate::folder_name::{collision_key, validate_folder_name};
+use crate::path_resolver::ExternalAccess;
 use crate::yaml::{load_restricted, loader::MAX_INPUT_BYTES, write_canonical_checked, YamlValue};
 
 pub use super::text_codec::color_source_value;
@@ -425,12 +426,14 @@ pub fn create(
 }
 
 /// 고정한 프로젝트 폴더 안에서만 전체 원본을 검사하고 새 파일을 작성합니다.
+/// 기존 원본은 [`read_project_library`]와 같은 신뢰 기반 정책으로 읽습니다.
 pub fn create_in_project(
     root: &Path,
     dir: &Path,
     source: &ComponentSource,
+    access: ExternalAccess,
 ) -> Result<(PathBuf, ContentHash), TextSourceError> {
-    create_in_project_with_budget(root, dir, source, MAX_PROJECT_SOURCE_BYTES)
+    create_in_project_with_budget(root, dir, source, MAX_PROJECT_SOURCE_BYTES, access)
 }
 
 fn create_in_project_with_budget(
@@ -438,6 +441,7 @@ fn create_in_project_with_budget(
     dir: &Path,
     source: &ComponentSource,
     limit: u64,
+    access: ExternalAccess,
 ) -> Result<(PathBuf, ContentHash), TextSourceError> {
     let canonical = dir.canonicalize()?;
     if !canonical.starts_with(root)
@@ -446,7 +450,7 @@ fn create_in_project_with_budget(
     {
         return Err(invalid("프로젝트의 컴포넌트 원본 폴더가 바뀌었습니다"));
     }
-    let (library, files, remaining) = project_library(root, limit)?;
+    let (library, files, remaining) = project_library(root, limit, access)?;
     create_in(&canonical, source, library, files, Some((root, remaining)))
 }
 
@@ -599,26 +603,32 @@ pub fn read_library(dir: &Path) -> Result<(ComponentLibrary, ComponentFiles), Te
     assemble_library(dir, read_source)
 }
 
-/// 고정 프로젝트의 opt-in 텍스트 라이브러리. 폴더 부재는 빈 집합입니다. 명시적 폴더 편집과
-/// 달리 프로젝트 밖 경로는 열지 않으며, 한 요청의 전체 YAML 읽기를 64 MiB로 제한합니다.
+/// 고정 프로젝트의 opt-in 텍스트 라이브러리. 폴더 부재는 빈 집합입니다.
+///
+/// symlink 읽기는 신뢰 상태에서 얻은 `access` 하나로 정합니다(기술 아키텍처 §19.3, ADR-0061 결정 8).
+/// [`ExternalAccess::Allowed`]이면 프로젝트 안·밖 target을 모두 읽고, [`ExternalAccess::MetadataOnly`]이면
+/// 프로젝트 밖 target(폴더 또는 파일)의 내용을 읽지 않습니다. 한 요청의 전체 YAML 읽기는 64 MiB입니다.
 pub fn read_project_library(
     root: &Path,
+    access: ExternalAccess,
 ) -> Result<(ComponentLibrary, ComponentFiles), TextSourceError> {
-    let (library, files, _) = project_library(root, MAX_PROJECT_SOURCE_BYTES)?;
+    let (library, files, _) = project_library(root, MAX_PROJECT_SOURCE_BYTES, access)?;
     Ok((library, files))
 }
 
 fn project_library(
     root: &Path,
     limit: u64,
+    access: ExternalAccess,
 ) -> Result<(ComponentLibrary, ComponentFiles, u64), TextSourceError> {
-    let Some(paths) = project_source_paths(root)? else {
+    let Some(paths) = project_source_paths(root, access)? else {
         return Ok((ComponentLibrary::new(), BTreeMap::new(), limit));
     };
     let mut remaining = limit;
     // 읽기·예산 차감·조립은 정렬된 파일 순서대로 합니다. 앞 파일의 ID 충돌이 뒤 파일의 오류보다 먼저 보고됩니다.
-    let (library, files) = assemble(paths.files.into_iter().map(|path| {
-        let bytes = read_project_source(&paths.root, &path, &mut remaining)?;
+    let (library, files) = assemble(paths.files.iter().map(|path| {
+        let bytes = paths.read(path, &mut remaining)?;
+        let path = path.clone();
         let (source, hash) = decode_named(&path, &bytes)?;
         Ok((path, source, hash))
     }))?;
@@ -628,6 +638,7 @@ fn project_library(
 /// 실제 경계 안에서 bytes를 읽어 만든 원본 파일 목록. 읽기 요청 하나에만 유효합니다.
 pub struct ProjectSourceIndex {
     root: PathBuf,
+    access: ExternalAccess,
     paths: BTreeMap<std::ffi::OsString, (PathBuf, ContentHash)>,
     hash: ContentHash,
 }
@@ -654,7 +665,7 @@ impl ProjectSourceIndex {
             .get(name)
             .ok_or_else(|| invalid("관측한 컴포넌트 원본이 필요합니다"))?;
         let mut remaining = MAX_INPUT_BYTES as u64;
-        let bytes = read_project_source(&self.root, path, &mut remaining)?;
+        let bytes = read_project_source(&self.root, self.access, path, &mut remaining)?;
         let (source, hash) = decode_named(path, &bytes)?;
         if &hash != expected {
             return Err(TextSourceError::Changed);
@@ -666,27 +677,33 @@ impl ProjectSourceIndex {
 }
 
 /// 원본 전체의 바이트 상한을 확인하면서 개별 파일 hash도 보존합니다.
-pub fn project_source_index(root: &Path) -> Result<ProjectSourceIndex, TextSourceError> {
-    let Some(paths) = project_source_paths(root)? else {
+/// symlink 정책은 [`read_project_library`]와 같습니다.
+pub fn project_source_index(
+    root: &Path,
+    access: ExternalAccess,
+) -> Result<ProjectSourceIndex, TextSourceError> {
+    let Some(paths) = project_source_paths(root, access)? else {
         return Ok(ProjectSourceIndex {
             root: root.into(),
+            access,
             paths: BTreeMap::new(),
             hash: ContentHash::compute(&[]),
         });
     };
     let mut remaining = MAX_PROJECT_SOURCE_BYTES;
     let mut entries = BTreeMap::new();
-    for path in paths.files {
-        let bytes = read_project_source(&paths.root, &path, &mut remaining)?;
+    for path in &paths.files {
+        let bytes = paths.read(path, &mut remaining)?;
         let name = path
             .file_name()
             .ok_or_else(|| invalid("컴포넌트 파일 이름이 필요합니다"))?
             .to_owned();
-        entries.insert(name, (path, ContentHash::compute(&bytes)));
+        entries.insert(name, (path.clone(), ContentHash::compute(&bytes)));
     }
     let hash = source_set_hash(entries.values().cloned())?;
     Ok(ProjectSourceIndex {
         root: paths.root,
+        access,
         paths: entries,
         hash,
     })
@@ -713,20 +730,37 @@ pub fn source_set_hash(
 
 struct ProjectSourcePaths {
     root: PathBuf,
+    access: ExternalAccess,
     files: Vec<PathBuf>,
 }
 
-fn project_source_paths(root: &Path) -> Result<Option<ProjectSourcePaths>, TextSourceError> {
+impl ProjectSourcePaths {
+    fn read(&self, path: &Path, remaining: &mut u64) -> Result<Vec<u8>, TextSourceError> {
+        read_project_source(&self.root, self.access, path, remaining)
+    }
+}
+
+fn external_not_trusted() -> TextSourceError {
+    invalid("신뢰하지 않은 프로젝트는 프로젝트 밖 컴포넌트 원본의 내용을 읽지 않습니다")
+}
+
+fn project_source_paths(
+    root: &Path,
+    access: ExternalAccess,
+) -> Result<Option<ProjectSourcePaths>, TextSourceError> {
     use crate::path_resolver::{PathResolver, ResolveError, TargetKind, TargetLocation};
     let resolver = PathResolver::new(root)?;
     let folder = match resolver.resolve("design/components") {
-        Ok(target)
-            if target.location == TargetLocation::Internal
-                && target.kind == TargetKind::Directory =>
-        {
-            target
+        Ok(target) if target.kind != TargetKind::Directory => {
+            return Err(invalid("컴포넌트 원본 경로가 폴더가 아닙니다"))
         }
-        Ok(_) => return Err(invalid("프로젝트 안의 컴포넌트 폴더가 필요합니다")),
+        Ok(target)
+            if target.location == TargetLocation::External
+                && access == ExternalAccess::MetadataOnly =>
+        {
+            return Err(external_not_trusted())
+        }
+        Ok(target) => target,
         Err(ResolveError::Io {
             kind: std::io::ErrorKind::NotFound,
             ..
@@ -735,18 +769,20 @@ fn project_source_paths(root: &Path) -> Result<Option<ProjectSourcePaths>, TextS
     };
     Ok(Some(ProjectSourcePaths {
         root: resolver.canonical_root().to_owned(),
+        access,
         files: source_paths(&folder.target)?,
     }))
 }
 
 fn read_project_source(
     root: &Path,
+    access: ExternalAccess,
     path: &Path,
     remaining: &mut u64,
 ) -> Result<Vec<u8>, TextSourceError> {
     let target = path.canonicalize()?;
-    if !target.starts_with(root) {
-        return Err(invalid("프로젝트 밖의 컴포넌트 원본입니다"));
+    if !target.starts_with(root) && access == ExternalAccess::MetadataOnly {
+        return Err(external_not_trusted());
     }
     let bytes = source_file::read_resolved(&target, (*remaining).min(MAX_INPUT_BYTES as u64))?;
     *remaining -= bytes.len() as u64;
@@ -833,9 +869,10 @@ mod tests {
             length += bytes.len() as u64;
             files.push(path);
         }
-        let (_, index, remaining) = project_library(&root, length).unwrap();
+        let (_, index, remaining) =
+            project_library(&root, length, ExternalAccess::Allowed).unwrap();
         assert_eq!((index.len(), remaining), (40, 0));
-        let result = project_library(&root, length - 1);
+        let result = project_library(&root, length - 1, ExternalAccess::Allowed);
         assert!(
             matches!(result, Err(TextSourceError::Io(ref e)) if e.kind() == std::io::ErrorKind::FileTooLarge)
         );
@@ -847,7 +884,7 @@ mod tests {
         fs::write(&files[3], b"invalid").unwrap();
         fs::write(&files[4], vec![0; MAX_INPUT_BYTES + 1]).unwrap();
         assert_eq!(
-            project_library(&root, MAX_PROJECT_SOURCE_BYTES)
+            project_library(&root, MAX_PROJECT_SOURCE_BYTES, ExternalAccess::Allowed)
                 .unwrap_err()
                 .to_string(),
             collision
@@ -870,24 +907,25 @@ mod tests {
         };
         let first = make(10);
         let second = make(20);
-        let (file, hash) = create_in_project(&root, &dir, &first).unwrap();
+        let access = ExternalAccess::MetadataOnly;
+        let (file, hash) = create_in_project(&root, &dir, &first, access).unwrap();
         let first_len = std::fs::metadata(&file).unwrap().len();
         let exact = first_len + second.to_yaml().unwrap().len() as u64;
         let next = dir.join(second.filename().unwrap());
-        let result = create_in_project_with_budget(&root, &dir, &second, exact - 1);
+        let result = create_in_project_with_budget(&root, &dir, &second, exact - 1, access);
         assert!(
             matches!(result,Err(TextSourceError::Io(ref io)) if io.kind()==std::io::ErrorKind::FileTooLarge)
         );
         assert!(!next.exists());
         assert_eq!(open(&file).unwrap().1, hash);
-        assert_eq!(read_project_library(&root).unwrap().1.len(), 1);
+        assert_eq!(read_project_library(&root, access).unwrap().1.len(), 1);
         assert_eq!(
-            create_in_project_with_budget(&root, &dir, &second, exact)
+            create_in_project_with_budget(&root, &dir, &second, exact, access)
                 .unwrap()
                 .0,
             next
         );
-        assert_eq!(read_project_library(&root).unwrap().1.len(), 2);
+        assert_eq!(read_project_library(&root, access).unwrap().1.len(), 2);
     }
 
     #[test]
@@ -899,7 +937,8 @@ mod tests {
         let id = |n| StableId::new_v7(1, 0, n);
         let mut component = ComponentSource::new(id(1), "Card".into(), id(2)).unwrap();
         component.root.locked = true;
-        let (file, hash) = create_in_project(&root, &dir, &component).unwrap();
+        let (file, hash) =
+            create_in_project(&root, &dir, &component, ExternalAccess::MetadataOnly).unwrap();
         let original = std::fs::read(&file).unwrap();
         let NodePayload::Frame(frame) = &component.root.payload else {
             unreachable!()

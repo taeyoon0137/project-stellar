@@ -158,7 +158,8 @@ pub fn semantic_diff_projects(base: &Path, target: &Path) -> Result<ProjectDiff,
 
 /// YAML을 해석하지 않고 파일 이름·바이트의 집합을 관측합니다.
 pub fn working_components(snapshot: &ProjectSnapshot) -> Result<ProjectSourceIndex, CompareError> {
-    project_source_index(snapshot.root()).map_err(|error| CompareError::ComponentSource {
+    let access = crate::component_source::external_access(snapshot.project_id(), snapshot.root());
+    project_source_index(snapshot.root(), access).map_err(|error| CompareError::ComponentSource {
         side: "target",
         error: error.into(),
     })

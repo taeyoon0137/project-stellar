@@ -322,6 +322,10 @@ pub fn query(args: &[String]) -> Result<Success, CliError> {
                     JsonValue::string(detail.source_hash.to_string()),
                 ),
                 (
+                    "component_source_hash",
+                    JsonValue::string(detail.library_hash.to_string()),
+                ),
+                (
                     "nodes",
                     JsonValue::Array(detail.nodes.iter().map(JsonValue::from).collect()),
                 ),
@@ -334,6 +338,11 @@ pub fn query(args: &[String]) -> Result<Success, CliError> {
                 ("revision", views::revision(set.revision)),
                 ("chunk_kind", JsonValue::string("component-library")),
                 ("chunk_count", views::count(set.chunk_count)),
+                // revision은 generation만 가리킵니다. 커밋하지 않은 YAML 편집은 이 hash로 드러납니다.
+                (
+                    "component_source_hash",
+                    JsonValue::string(set.source_hash.to_string()),
+                ),
                 (
                     "entries",
                     JsonValue::Array(

@@ -10,6 +10,7 @@ use stellar_document::record_codec::decode_payload;
 use stellar_document::records::NodePayload;
 use stellar_project::document_io::component_source::{self, ComponentFiles, ComponentSource};
 pub use stellar_project::document_io::component_source::{color_source_value, ComponentRootEdit};
+pub use stellar_project::path_resolver::ExternalAccess;
 use stellar_storage::hash::ContentHash;
 
 /// 검증된 원본의 Frame 속성 값입니다. 수치와 색은 텍스트 원본의 정확한 표현을 유지합니다.
@@ -208,7 +209,8 @@ pub fn create_project_source(
             ));
         }
         let _folder = lock(&target)?;
-        let (file, hash) = component_source::create_in_project(root, &target, source)?;
+        let access = external_access(project_id, root);
+        let (file, hash) = component_source::create_in_project(root, &target, source, access)?;
         Ok(info(source, file, hash))
     })();
     if result.is_err() && created {
@@ -284,11 +286,39 @@ pub fn query(snapshot: &crate::snapshot::ProjectSnapshot) -> Result<ProjectCompo
     })
 }
 
-/// 검증된 프로젝트의 원본 정의와 파일별 hash를 함께 반환합니다.
+/// 프로젝트의 신뢰 상태에서 정한 외부 symlink 읽기 정책입니다(ADR-0061 결정 8). CLI와 headless
+/// MCP는 앱과 같은 OS 사용자 데이터의 신뢰 저장소를 읽고, 신뢰를 확인할 수 없으면 외부 target 내용을
+/// 읽지 않습니다. 저장소 파일을 만들거나 바꾸지 않습니다.
+pub fn external_access(project_id: StableId, root: &Path) -> ExternalAccess {
+    use stellar_project::{identity::ProjectIdentity, trust::TrustStatus, trust_store};
+    let status = trust_store::os_user_data_base()
+        .filter(|base| base.is_absolute())
+        .and_then(|base| {
+            trust_store::FileTrustStore::open(&base.join(crate::lock::APP_DATA_DIR)).ok()
+        })
+        .zip(ProjectIdentity::new(project_id, root).ok())
+        .map_or(TrustStatus::NotTrusted, |(store, identity)| {
+            store.status(&identity)
+        });
+    ExternalAccess::from_trust(status)
+}
+
+/// 검증된 프로젝트의 원본 정의와 파일별 hash를 함께 반환합니다. symlink 정책은 신뢰 저장소의 상태입니다.
 pub fn project_library(
     snapshot: &crate::snapshot::ProjectSnapshot,
 ) -> Result<(ComponentLibrary, ComponentFiles), Error> {
-    let (library, files) = component_source::read_project_library(snapshot.root())?;
+    project_library_with(
+        snapshot,
+        external_access(snapshot.project_id(), snapshot.root()),
+    )
+}
+
+/// 호출자가 이미 아는 신뢰 상태(예: 앱 창 세션)의 정책으로 원본을 읽습니다.
+pub fn project_library_with(
+    snapshot: &crate::snapshot::ProjectSnapshot,
+    access: ExternalAccess,
+) -> Result<(ComponentLibrary, ComponentFiles), Error> {
+    let (library, files) = component_source::read_project_library(snapshot.root(), access)?;
     if !files.is_empty() && crate::query::components(snapshot).chunk_count != 0 {
         return Err(Error::Unsupported(
             "component-library chunk와 텍스트 원본이 함께 있습니다".into(),
@@ -385,7 +415,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn project_query_reads_an_internal_alias_and_rejects_an_external_component() {
+    fn project_symlink_reads_follow_one_trust_based_policy() {
         use std::{fs, os::unix::fs::symlink};
         let dir = TempDir::new("component-query-links");
         let outside = TempDir::new("component-query-neighbor");
@@ -403,12 +433,45 @@ mod tests {
         let folder = root.join("design/components");
         symlink("../shared-library", &folder).unwrap();
         let snap = open_snapshot(root).unwrap();
+        let read = |access| project_library_with(&snap, access).map(|(_, files)| files);
+        // 프로젝트 안 별칭은 신뢰 여부와 무관하게 읽습니다.
+        for access in [ExternalAccess::Allowed, ExternalAccess::MetadataOnly] {
+            assert_eq!(read(access).unwrap()[&source.definition().id].1, hash);
+        }
+        // 이 임시 프로젝트는 신뢰 저장소에 없으므로 기본 조회는 미신뢰 정책입니다.
+        assert_eq!(
+            external_access(snap.project_id(), snap.root()),
+            ExternalAccess::MetadataOnly
+        );
         assert_eq!(query(&snap).unwrap().entries[0].hash, hash);
+
+        // 프로젝트 밖 파일 target: 신뢰하면 읽고(명시 폴더 check와 같은 결과), 아니면 내용을 읽지 않습니다.
         let external = outside.path.join(file.file_name().unwrap());
         fs::rename(&file, &external).unwrap();
         symlink(&external, &file).unwrap();
-        assert!(matches!(query(&snap), Err(Error::Invalid(_))));
+        assert_eq!(
+            read(ExternalAccess::Allowed).unwrap()[&source.definition().id].1,
+            hash
+        );
         assert_eq!(check(&folder).unwrap()[0].hash, hash);
+        assert!(matches!(
+            read(ExternalAccess::MetadataOnly),
+            Err(Error::Invalid(_))
+        ));
+        assert!(matches!(query(&snap), Err(Error::Invalid(_))));
+
+        // 프로젝트 밖 폴더 target도 같은 정책입니다.
+        fs::remove_file(&file).unwrap();
+        fs::rename(&external, &file).unwrap();
+        fs::remove_file(&folder).unwrap();
+        let outer = outside.path.join("library");
+        fs::rename(&dedicated, &outer).unwrap();
+        symlink(&outer, &folder).unwrap();
+        assert_eq!(read(ExternalAccess::Allowed).unwrap().len(), 1);
+        assert!(matches!(
+            read(ExternalAccess::MetadataOnly),
+            Err(Error::Invalid(_))
+        ));
     }
 
     #[cfg(unix)]

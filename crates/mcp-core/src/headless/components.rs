@@ -21,7 +21,14 @@ impl PageSource for ProjectComponents {
         "entries"
     }
     fn header(&self) -> Vec<(&'static str, JsonValue)> {
-        vec![("chunk_count", count(self.chunk_count))]
+        // revision은 generation만 가리키므로, 커밋하지 않은 YAML 편집은 원본 집합 hash로 드러냅니다.
+        vec![
+            ("chunk_count", count(self.chunk_count)),
+            (
+                "component_source_hash",
+                JsonValue::string(self.source_hash.to_string()),
+            ),
+        ]
     }
     fn item(&self, index: usize) -> JsonValue {
         let entry = &self.entries[index];
@@ -84,6 +91,10 @@ impl PageSource for stellar_ops::component_source::ComponentDetail {
             (
                 "source_hash",
                 JsonValue::string(self.source_hash.to_string()),
+            ),
+            (
+                "component_source_hash",
+                JsonValue::string(self.library_hash.to_string()),
             ),
         ]
     }

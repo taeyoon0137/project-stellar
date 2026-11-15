@@ -187,7 +187,12 @@ pub(super) fn rows(
     } else {
         index_files(git, root, &head.entries)?
     };
-    let (_, files) = read_project_library(root).map_err(|e| e.to_string())?;
+    // GatedGitRunner는 신뢰를 확인한 프로젝트에서만 만들어집니다.
+    let (_, files) = read_project_library(
+        root,
+        stellar_project::path_resolver::ExternalAccess::Allowed,
+    )
+    .map_err(|e| e.to_string())?;
     ensure_text_library(working, !files.is_empty())?;
     let saved = relative_files(files, Some(root))?;
     if committed.is_empty() && indexed.is_empty() && saved.is_empty() {

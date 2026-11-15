@@ -245,8 +245,12 @@ impl ProjectSummary {
                 return Some(Arc::clone(cached));
             }
         }
-        let (definitions, files) =
-            stellar_ops::component_source::project_library(&snapshot).ok()?;
+        // 창 세션의 신뢰 상태로 symlink 읽기 정책을 정합니다(ADR-0061 결정 8).
+        let (definitions, files) = stellar_ops::component_source::project_library_with(
+            &snapshot,
+            stellar_ops::component_source::ExternalAccess::from_trust(self.trust),
+        )
+        .ok()?;
         let source_hash =
             stellar_project::document_io::component_source::source_set_hash(files.into_values())
                 .ok()?;

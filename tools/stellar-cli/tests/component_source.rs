@@ -441,6 +441,7 @@ fn set_fill_matches_project_query_and_protects_root_source_on_failed_edits() {
     let file = value(&card, "file");
     let hash = value(&card, "source_hash");
     assert_eq!(card.get("background"), Some(&JsonValue::Null));
+    let unfilled = run(&project, &home, "query", &[".", "components"], 0);
     let before = file_digest(&project);
     let filled = edit(
         &[
@@ -467,6 +468,12 @@ fn set_fill_matches_project_query_and_protects_root_source_on_failed_edits() {
     assert_eq!(
         query.get("entries").unwrap().as_array().unwrap()[0].get("background"),
         Some(owned)
+    );
+    // generation revision은 그대로이고 원본 집합 hash만 바뀝니다.
+    assert_eq!(query.get("revision"), unfilled.get("revision"));
+    assert_ne!(
+        value(&query, "component_source_hash"),
+        value(&unfilled, "component_source_hash")
     );
     let path = project.join(file);
     let current = format!("# local comment\n{}", fs::read_to_string(&path).unwrap());
