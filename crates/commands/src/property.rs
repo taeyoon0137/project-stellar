@@ -8,8 +8,6 @@
 //! - Frame payload: Frame registry(VI.3.5)의 7개 속성.
 //! - Shape·Image payload: `payload_metadata` registry(UX.2.1)의 longhand. Shape key는 도형 종류마다 정해집니다
 //!   (Rectangle만 `border-*-radius`, Line만 `x1`·`y1`·`x2`·`y2`). Text의 style longhand는 IX.11.11 뒤에 더합니다.
-//! - Shape·Image payload: `payload_metadata` registry(UX.2.1)의 longhand. key는 도형 종류마다 정해집니다
-//!   (예: Rectangle만 `border-*-radius`, Line만 `x1`·`y1`·`x2`·`y2`).
 //!
 //! 등록되지 않은 key는 [`CommandError::UnknownProperty`], 값 타입이 다르면
 //! [`CommandError::PropertyTypeMismatch`]로 거부합니다. 결과 change set의 무효화 class도 같은

@@ -114,6 +114,8 @@ pub enum CssValue {
     Text(String),
     /// 테두리(두께 px, 색). 없음 = `None`.
     Border(Option<(f32, Color)>),
+    /// 두께나 색 하나만 적은 `border`(빠진 쪽은 편집 대상의 지금 테두리 값을 이어 씁니다).
+    BorderParts(Option<f32>, Option<Color>),
     /// 모서리 반경 TL, TR, BR, BL(px).
     Corners([f32; 4]),
 }
@@ -387,13 +389,11 @@ fn parse_border(text: &str) -> Result<CssValue, CssValueError> {
             part => color = Some(parse_color(part)?),
         }
     }
-    let black = Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).expect("black");
+    // 빠진 쪽의 기본값(두께·색)은 여기서 정하지 않습니다. 편집 대상의 지금 테두리 값을 이어 쓰거나 거부합니다(D7).
     match (width, color) {
         (None, None) => Err(CssValueError::invalid("두께나 색을 넣으세요")),
-        (width, color) => Ok(CssValue::Border(Some((
-            width.unwrap_or(1.0),
-            color.unwrap_or(black),
-        )))),
+        (Some(width), Some(color)) => Ok(CssValue::Border(Some((width, color)))),
+        (width, color) => Ok(CssValue::BorderParts(width, color)),
     }
 }
 
@@ -630,6 +630,12 @@ pub fn format(value: &CssValue, grammar: CssGrammar) -> String {
         CssValue::Border(Some((width, color))) => {
             format!("{} solid {}", format_length(*width), format_color(*color))
         }
+        CssValue::BorderParts(width, color) => {
+            let mut parts: Vec<String> = width.iter().map(|w| format_length(*w)).collect();
+            parts.push("solid".into());
+            parts.extend(color.iter().map(|c| format_color(*c)));
+            parts.join(" ")
+        }
         CssValue::Corners(corners) => format_corners(*corners),
     }
 }
@@ -735,7 +741,11 @@ mod tests {
         assert_eq!(ok(CssGrammar::Border, "none"), "none");
         assert_eq!(
             ok(CssGrammar::Border, "color(srgb 1 0 0 / 0.5)"),
-            "1px solid color(srgb 1 0 0 / 0.5)"
+            "solid color(srgb 1 0 0 / 0.5)"
+        );
+        assert_eq!(
+            parse(CssGrammar::Border, "3px solid").unwrap(),
+            CssValue::BorderParts(Some(3.0), None)
         );
         assert_eq!(
             code(CssGrammar::Border, "1px dashed red"),

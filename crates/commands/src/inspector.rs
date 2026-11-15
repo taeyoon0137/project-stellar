@@ -4,13 +4,18 @@
 //! 목록([`edit_commands`])을 만듭니다. 셸은 행 이름·값 텍스트를 표시하고 입력 텍스트(또는 수치 조절 delta)만
 //! 넘깁니다. 값 해석·정규화·node 종류별 저장 위치(payload longhand, Fill·Stroke modifier)는 여기서 정합니다.
 //!
-//! - 행은 저장 위치(PropertyKey)가 있는 속성만 냅니다. 묶음 행(`border-radius`)은 longhand 4개를 펼친 shorthand
-//!   이며 편집은 longhand 변경 집합 하나입니다(속성 모델 11장).
+//! - 행은 UX 명세 6.2절 표에 있고 저장 위치(PropertyKey)가 있는 속성만 냅니다. 묶음 행(`border-radius`)은
+//!   longhand 4개를 펼친 shorthand이며 편집은 longhand 변경 집합 하나입니다(속성 모델 11장).
 //! - 다중 선택은 모든 node에 있는 속성만 내고, 값이 다르면 `MIXED`입니다. 편집은 선택 전체를 한 transaction으로
 //!   바꿉니다(Undo 한 번).
-//! - 잠긴 node(자신 또는 조상)는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다(D8).
+//! - 잠긴 node(자신 또는 조상)는 `locked` 행 외에는 읽기 전용이고 편집을 거부합니다(D8, [`NodeLock`]).
+//! - 이름·표시·잠금 편집은 Layers와 같은 command(`rename_node`·`set_visibility`·`set_locked`)입니다.
 //! - `fill`·`stroke`는 늘 있는 행입니다. 칠하기가 없으면 `none`이고, 값을 넣으면 modifier를 렌더 순서
-//!   (Transform → Fill → Stroke)에 맞춰 넣고, `none`이면 뺍니다.
+//!   (Transform → Fill → Stroke)에 맞춰 넣고, `none`이면 뺍니다. 선이 없는 node에 `stroke` 색을 넣으면
+//!   `stroke-width`는 CSS 초기값 1px로 시작합니다. 색 기본값은 코어에 두지 않으므로(D7), 선이 없는 node의
+//!   `stroke-width`만 바꾸거나 색 없는 새 `border`를 넣는 입력은 거부합니다.
+//! - node마다 modifier stack을 한 번만 훑어 요약하고 속성 행은 그 요약에서 읽습니다(속성 수만큼 stack을 다시
+//!   훑거나 복제하지 않음).
 
 use stellar_core_types::color::{Color, ColorSpace};
 use stellar_core_types::ids::StableId;
@@ -28,6 +33,7 @@ use stellar_document::shape::ShapeGeometry;
 use crate::change::node_keys;
 use crate::command::Command;
 use crate::css_value::{format, parse, CssGrammar, CssValue, CssValueError};
+use crate::lock::NodeLock;
 use crate::modifier_ops::{InsertModifier, RemoveModifier, SetModifierProperty};
 use crate::property::{read_property, PropertyValue, SetProperty};
 
@@ -73,11 +79,11 @@ pub enum InspectorSection {
     FillStroke = 7,
     /// `border`·`border-radius`.
     Border = 8,
-    /// 종류별(Line 끝점, Polygon, Image).
+    /// 종류별(Line 끝점, Polygon 변 수, Image `object-fit`).
     Kind = 9,
 }
 
-/// 속성 패널이 다루는 속성.
+/// 속성 패널이 다루는 속성(UX 명세 6.2절 표에 있는 것만).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum InspectorProperty {
     /// 레이어 이름.
@@ -106,8 +112,6 @@ pub enum InspectorProperty {
     Stroke,
     /// `stroke-width`.
     StrokeWidth,
-    /// `stroke-linecap`(Line).
-    StrokeLinecap,
     /// `border`.
     Border,
     /// `border-radius` shorthand.
@@ -130,14 +134,12 @@ pub enum InspectorProperty {
     PolygonCornerRadius,
     /// Image `object-fit`.
     ObjectFit,
-    /// Image `image-rendering`.
-    ImageRendering,
 }
 
 use InspectorProperty as P;
 
 /// 표시 순서.
-const ORDER: [InspectorProperty; 29] = [
+const ORDER: [InspectorProperty; 27] = [
     P::Name,
     P::Visible,
     P::Locked,
@@ -151,7 +153,6 @@ const ORDER: [InspectorProperty; 29] = [
     P::Fill,
     P::Stroke,
     P::StrokeWidth,
-    P::StrokeLinecap,
     P::Border,
     P::BorderRadius,
     P::Corner(0),
@@ -166,12 +167,9 @@ const ORDER: [InspectorProperty; 29] = [
     P::PolygonRotation,
     P::PolygonCornerRadius,
     P::ObjectFit,
-    P::ImageRendering,
 ];
 
 const FIT: &[&str] = &["fill", "contain", "cover", "none"];
-const RENDERING: &[&str] = &["auto", "pixelated"];
-const LINECAP: &[&str] = &["butt", "round", "square"];
 const OVERFLOW: &[&str] = &["visible", "clip"];
 const CORNER_NAMES: [&str; 4] = [
     "border-top-left-radius",
@@ -179,6 +177,10 @@ const CORNER_NAMES: [&str; 4] = [
     "border-bottom-right-radius",
     "border-bottom-left-radius",
 ];
+
+/// 선이 없는 node에 `stroke` 색을 넣을 때의 두께: CSS `stroke-width` 초기값(1px)입니다. 사용자 기본 스타일이
+/// 아니라 CSS가 정한 값입니다(색 기본값은 셸 설정, D7).
+const STROKE_WIDTH_INITIAL: FiniteF32 = FiniteF32::ONE;
 
 const LENGTH: CssGrammar = CssGrammar::Length {
     non_negative: false,
@@ -211,7 +213,8 @@ pub enum NodeClass {
     Text = 5,
     /// Image.
     Image = 6,
-    /// Fragment·Path·컴포넌트 인스턴스(레이어 행만).
+    /// Fragment·Path·컴포넌트 인스턴스(레이어 행만). Path는 앱 캔버스가 아직 그리지 않고 만드는 도구도 없어
+    /// 칠하기·선 행을 두지 않습니다(바꿔도 보이지 않는 값이 됨).
     Other = 7,
 }
 
@@ -255,7 +258,6 @@ impl InspectorProperty {
             P::Fill => "fill",
             P::Stroke => "stroke",
             P::StrokeWidth => "stroke-width",
-            P::StrokeLinecap => "stroke-linecap",
             P::Border => "border",
             P::BorderRadius => "border-radius",
             P::Corner(index) => CORNER_NAMES[usize::from(index) & 3],
@@ -267,7 +269,6 @@ impl InspectorProperty {
             P::PolygonRotation => "polygon-rotation",
             P::PolygonCornerRadius => "polygon-corner-radius",
             P::ObjectFit => "object-fit",
-            P::ImageRendering => "image-rendering",
         }
     }
 
@@ -286,7 +287,7 @@ impl InspectorProperty {
             P::Overflow => S::Overflow,
             P::Color => S::Typography,
             P::BackgroundColor => S::Background,
-            P::Fill | P::Stroke | P::StrokeWidth | P::StrokeLinecap => S::FillStroke,
+            P::Fill | P::Stroke | P::StrokeWidth => S::FillStroke,
             P::Border | P::BorderRadius | P::Corner(_) => S::Border,
             _ => S::Kind,
         }
@@ -303,13 +304,11 @@ impl InspectorProperty {
             P::Overflow => CssGrammar::Keyword(OVERFLOW),
             P::Color => CssGrammar::Color { allow_none: false },
             P::BackgroundColor | P::Fill | P::Stroke => CssGrammar::Color { allow_none: true },
-            P::StrokeLinecap => CssGrammar::Keyword(LINECAP),
             P::Border => CssGrammar::Border,
             P::BorderRadius => CssGrammar::Corners,
             P::PolygonSides => CssGrammar::Count { min: 3, max: 1000 },
             P::PolygonRotation => CssGrammar::Angle,
             P::ObjectFit => CssGrammar::Keyword(FIT),
-            P::ImageRendering => CssGrammar::Keyword(RENDERING),
         }
     }
 
@@ -367,9 +366,9 @@ impl InspectorProperty {
             P::Color => class == C::Text,
             P::Fill => matches!(class, C::Rectangle | C::Ellipse | C::Polygon),
             P::Stroke | P::StrokeWidth => class.is_shape(),
-            P::StrokeLinecap | P::X1 | P::Y1 | P::X2 | P::Y2 => class == C::Line,
+            P::X1 | P::Y1 | P::X2 | P::Y2 => class == C::Line,
             P::PolygonSides | P::PolygonRotation | P::PolygonCornerRadius => class == C::Polygon,
-            P::ObjectFit | P::ImageRendering => class == C::Image,
+            P::ObjectFit => class == C::Image,
         }
     }
 
@@ -394,7 +393,6 @@ impl InspectorProperty {
             P::BackgroundColor => frame_keys::BACKGROUND,
             P::Stroke => modifier_keys::STROKE_COLOR,
             P::StrokeWidth => modifier_keys::STROKE_WIDTH,
-            P::StrokeLinecap => shape_keys::STROKE_LINECAP,
             P::Border => frame_keys::BORDER,
             P::BorderRadius => PropertyKey(0),
             P::Corner(i) if frame => frame_keys::BORDER_RADIUS_LONGHANDS[usize::from(i) & 3],
@@ -407,7 +405,6 @@ impl InspectorProperty {
             P::PolygonRotation => shape_keys::POLYGON_ROTATION,
             P::PolygonCornerRadius => shape_keys::POLYGON_CORNER_RADIUS,
             P::ObjectFit => image_keys::OBJECT_FIT,
-            P::ImageRendering => image_keys::IMAGE_RENDERING,
         }
     }
 }
@@ -432,75 +429,67 @@ pub struct InspectorSnapshot {
     pub count: u32,
     /// 선택에 있는 [`NodeClass`] bit 집합(`1 << class`).
     pub classes: u32,
-    /// 단일 선택이면 레이어 이름.
+    /// 단일 선택이면 레이어 이름, 선택이 없으면 현재 Page 요약(`Page · View`, runtime이 채움).
     pub display_name: String,
     /// 행(섹션·표시 순서).
     pub rows: Vec<InspectorRow>,
 }
 
+/// node의 활성 modifier 요약. stack을 한 번 훑어 만들고 모든 속성 행이 나눠 씁니다.
+struct Paint {
+    /// 앞쪽 연속 Transform modifier를 합성한 변환.
+    transform: Transform2D,
+    /// 앞쪽 연속 Transform modifier 중 마지막(이동 편집 대상).
+    last_transform: Option<ModifierEntry>,
+    /// 첫 활성 Fill.
+    fill: Option<ModifierEntry>,
+    /// 첫 활성 Stroke.
+    stroke: Option<ModifierEntry>,
+}
+
+fn paint(model: &DocumentModel, id: StableId) -> Paint {
+    let mut out = Paint {
+        transform: Transform2D::identity(),
+        last_transform: None,
+        fill: None,
+        stroke: None,
+    };
+    let Some(stack) = model.modifier_stack(id) else {
+        return out;
+    };
+    let mut leading = true;
+    for entry in stack.entries().iter().filter(|e| e.enabled) {
+        match (&entry.payload, leading) {
+            (ModifierPayload::Transform(next), true) => {
+                out.transform = out.transform.then(next).unwrap_or(out.transform);
+                out.last_transform = Some(entry.clone());
+            }
+            _ => leading = false,
+        }
+        match entry.kind {
+            ModifierKind::Fill if out.fill.is_none() => out.fill = Some(entry.clone()),
+            ModifierKind::Stroke if out.stroke.is_none() => out.stroke = Some(entry.clone()),
+            _ => {}
+        }
+    }
+    out
+}
+
 struct NodeView {
     record: NodeRecord,
     class: NodeClass,
-    /// 자신 또는 조상이 잠김.
-    locked: bool,
-    /// 조상이 잠김(자신 제외).
-    ancestor_locked: bool,
+    lock: NodeLock,
+    paint: Paint,
 }
 
 fn node_view(model: &DocumentModel, id: StableId) -> Option<NodeView> {
     let record = model.record(id)?;
-    let mut ancestor_locked = false;
-    let mut parent = record.parent;
-    let mut guard = 0;
-    while let Some(current) = parent {
-        let Some(ancestor) = model.record(current) else {
-            break;
-        };
-        ancestor_locked |= ancestor.locked;
-        parent = ancestor.parent;
-        guard += 1;
-        if guard > 4096 {
-            break;
-        }
-    }
     Some(NodeView {
         class: NodeClass::of(&record.payload),
-        locked: record.locked || ancestor_locked,
-        ancestor_locked,
+        lock: NodeLock::of(model, id)?,
+        paint: paint(model, id),
         record,
     })
-}
-
-fn enabled_entries(model: &DocumentModel, id: StableId) -> Vec<ModifierEntry> {
-    model
-        .modifier_stack(id)
-        .map(|stack| {
-            stack
-                .entries()
-                .iter()
-                .filter(|e| e.enabled)
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-fn first_paint(model: &DocumentModel, id: StableId, kind: ModifierKind) -> Option<ModifierEntry> {
-    enabled_entries(model, id)
-        .into_iter()
-        .find(|e| e.kind == kind)
-}
-
-/// Transform modifier 앞부분을 합성한 변환.
-fn modifier_transform(model: &DocumentModel, id: StableId) -> Transform2D {
-    let mut transform = Transform2D::identity();
-    for entry in enabled_entries(model, id) {
-        let ModifierPayload::Transform(next) = entry.payload else {
-            break;
-        };
-        transform = transform.then(&next).unwrap_or(transform);
-    }
-    transform
 }
 
 fn length_of(value: f32) -> CssValue {
@@ -531,8 +520,8 @@ fn text_default_color(model: &DocumentModel) -> Color {
 
 fn read(model: &DocumentModel, node: &NodeView, property: InspectorProperty) -> Option<CssValue> {
     let record = &node.record;
-    let id = record.id;
     let key = property.key(node.class);
+    let paint = &node.paint;
     Some(match property {
         P::Name => CssValue::Text(record.display_name.clone()),
         P::Visible => CssValue::Bool(record.visible),
@@ -540,7 +529,7 @@ fn read(model: &DocumentModel, node: &NodeView, property: InspectorProperty) -> 
         P::Left | P::Top => {
             let transform = match &record.payload {
                 NodePayload::Frame(frame) => frame.transform,
-                _ => modifier_transform(model, id),
+                _ => paint.transform,
             };
             let (_, _, _, _, x, y) = transform.components();
             length_of(if property == P::Left { x } else { y })
@@ -562,23 +551,19 @@ fn read(model: &DocumentModel, node: &NodeView, property: InspectorProperty) -> 
             }
             _ => return None,
         },
-        P::Color => CssValue::Color(Some(
-            match first_paint(model, id, ModifierKind::Fill).map(|e| e.payload) {
-                Some(ModifierPayload::Fill { color }) => color,
-                _ => text_default_color(model),
-            },
-        )),
-        P::Fill => CssValue::Color(
-            match first_paint(model, id, ModifierKind::Fill).map(|e| e.payload) {
-                Some(ModifierPayload::Fill { color }) => Some(color),
-                _ => None,
-            },
-        ),
+        P::Color => CssValue::Color(Some(match paint.fill.as_ref().map(|e| &e.payload) {
+            Some(ModifierPayload::Fill { color }) => *color,
+            _ => text_default_color(model),
+        })),
+        P::Fill => CssValue::Color(match paint.fill.as_ref().map(|e| &e.payload) {
+            Some(ModifierPayload::Fill { color }) => Some(*color),
+            _ => None,
+        }),
         P::Stroke | P::StrokeWidth => {
-            let stroke = first_paint(model, id, ModifierKind::Stroke).map(|e| e.payload);
+            let stroke = paint.stroke.as_ref().map(|e| &e.payload);
             match (property, stroke) {
                 (P::Stroke, Some(ModifierPayload::Stroke { color, .. })) => {
-                    CssValue::Color(Some(color))
+                    CssValue::Color(Some(*color))
                 }
                 (P::Stroke, _) => CssValue::Color(None),
                 (_, Some(ModifierPayload::Stroke { width, .. })) => length_of(width.get()),
@@ -594,14 +579,13 @@ fn read(model: &DocumentModel, node: &NodeView, property: InspectorProperty) -> 
         }
         P::PolygonSides => CssValue::Count(read_scalar(record, key)? as u32),
         P::PolygonRotation => CssValue::Angle(read_scalar(record, key)?),
-        P::StrokeLinecap | P::ObjectFit | P::ImageRendering => {
-            CssValue::Keyword(read_keyword(record, key)?)
-        }
+        P::ObjectFit => CssValue::Keyword(read_keyword(record, key)?),
         _ => length_of(read_scalar(record, key)?),
     })
 }
 
-/// 선택의 속성 행을 만듭니다. 문서에 없는 id는 건너뜁니다.
+/// 선택의 속성 행을 만듭니다. 문서에 없는 id는 건너뜁니다. 비용은 선택 node 수 × (modifier 수 + 조상 수 +
+/// 속성 수)입니다.
 pub fn inspector_rows(model: &DocumentModel, selection: &[StableId]) -> InspectorSnapshot {
     let nodes: Vec<NodeView> = selection
         .iter()
@@ -626,7 +610,8 @@ pub fn inspector_rows(model: &DocumentModel, selection: &[StableId]) -> Inspecto
     order.sort_by_key(|p| p.section());
     for property in order {
         let grammar = property.grammar();
-        let mut value: Option<String> = None;
+        // 값은 해석한 값끼리 비교하고 텍스트는 한 번만 만듭니다(정규 텍스트는 값과 1:1).
+        let mut value: Option<CssValue> = None;
         let mut mixed = false;
         let mut read_only = false;
         let mut readable = true;
@@ -635,17 +620,12 @@ pub fn inspector_rows(model: &DocumentModel, selection: &[StableId]) -> Inspecto
                 readable = false;
                 break;
             };
-            let text = format(&current, grammar);
             match &value {
-                None => value = Some(text),
-                Some(previous) if *previous != text => mixed = true,
+                None => value = Some(current),
+                Some(previous) if !mixed && *previous != current => mixed = true,
                 Some(_) => {}
             }
-            read_only |= if property == P::Locked {
-                node.ancestor_locked
-            } else {
-                node.locked
-            };
+            read_only |= node.lock.blocks(property.key(node.class));
         }
         if !readable {
             continue;
@@ -665,10 +645,9 @@ pub fn inspector_rows(model: &DocumentModel, selection: &[StableId]) -> Inspecto
             property,
             key: property.key(first.class),
             flags,
-            value: if mixed {
-                String::new()
-            } else {
-                value.unwrap_or_default()
+            value: match (&value, mixed) {
+                (Some(value), false) => format(value, grammar),
+                _ => String::new(),
             },
         });
     }
@@ -737,10 +716,7 @@ fn modifier_id(seed: [u8; 16], node: StableId, salt: u8) -> ModifierId {
 
 /// 렌더 순서(Transform* → Fill → Stroke)를 지키는 새 modifier 위치.
 fn paint_order(model: &DocumentModel, id: StableId, kind: ModifierKind) -> OrderKey {
-    let entries: Vec<ModifierEntry> = model
-        .modifier_stack(id)
-        .map(|s| s.entries().to_vec())
-        .unwrap_or_default();
+    let entries: &[ModifierEntry] = model.modifier_stack(id).map_or(&[], |s| s.entries());
     match kind {
         ModifierKind::Transform => OrderKey::between(None, entries.first().map(|e| &e.order)),
         ModifierKind::Fill => {
@@ -795,10 +771,6 @@ fn set_modifier(
     })
 }
 
-fn black() -> Color {
-    Color::new(ColorSpace::Srgb, 0., 0., 0., 1.).expect("black")
-}
-
 /// 한 node에 `value`를 쓰는 command(값이 같으면 빈 목록).
 fn node_commands(
     model: &DocumentModel,
@@ -813,12 +785,10 @@ fn node_commands(
     let mismatch = || reject("값이 이 속성의 문법과 맞지 않습니다");
     let mut out = Vec::new();
     match (property, value) {
-        (P::Name, CssValue::Text(name)) => {
-            out.push(set_property(id, key, PropertyValue::Text(name.clone())))
-        }
-        (P::Visible | P::Locked, CssValue::Bool(v)) => {
-            out.push(set_property(id, key, PropertyValue::Bool(*v)))
-        }
+        // 이름·표시·잠금은 Layers와 같은 command입니다(VII.2.5 specialization).
+        (P::Name, CssValue::Text(name)) => out.push(Command::rename_node(id, name.clone())),
+        (P::Visible, CssValue::Bool(v)) => out.push(Command::set_visibility(id, *v)),
+        (P::Locked, CssValue::Bool(v)) => out.push(Command::set_locked(id, *v)),
         (P::Left | P::Top, CssValue::Length(v)) => {
             let set = |t: Transform2D| {
                 let (a, b, c, d, x, y) = t.components();
@@ -836,31 +806,21 @@ fn node_commands(
                     PropertyValue::Transform(set(frame.transform)?),
                 ));
             } else {
-                let current = modifier_transform(model, id);
-                let (_, _, _, _, x, y) = current.components();
+                let (_, _, _, _, x, y) = node.paint.transform.components();
                 let (dx, dy) = if property == P::Left {
                     (*v - x, 0.)
                 } else {
                     (0., *v - y)
                 };
-                let last = enabled_entries(model, id)
-                    .into_iter()
-                    .take_while(|e| e.kind == ModifierKind::Transform)
-                    .last();
-                match last {
+                match &node.paint.last_transform {
                     Some(entry) => {
-                        let ModifierPayload::Transform(t) = entry.payload else {
+                        let ModifierPayload::Transform(t) = &entry.payload else {
                             unreachable!("Transform만 골랐습니다");
                         };
                         let (a, b, c, d, tx, ty) = t.components();
                         let next = Transform2D::new(a, b, c, d, tx + dx, ty + dy)
                             .map_err(|_| reject("위치가 유한하지 않습니다"))?;
-                        out.push(set_modifier(
-                            id,
-                            &entry,
-                            key,
-                            PropertyValue::Transform(next),
-                        ));
+                        out.push(set_modifier(id, entry, key, PropertyValue::Transform(next)));
                     }
                     None => {
                         let t = Transform2D::new(1., 0., 0., 1., dx, dy)
@@ -898,70 +858,78 @@ fn node_commands(
             };
             out.push(set_property(id, key, PropertyValue::OptionalBorder(border)));
         }
-        (P::Color | P::Fill, CssValue::Color(color)) => {
-            let existing = first_paint(model, id, ModifierKind::Fill);
-            match (color, existing) {
-                (Some(color), Some(entry)) => {
-                    out.push(set_modifier(id, &entry, key, PropertyValue::Color(*color)))
-                }
-                (Some(color), None) => out.push(insert(
-                    model,
-                    id,
-                    ModifierPayload::Fill { color: *color },
-                    seed,
-                    0x71,
-                )),
-                (None, Some(entry)) => out.push(Command::RemoveModifier(RemoveModifier {
-                    node: id,
-                    modifier: entry.id,
-                })),
-                (None, None) => {}
-            }
+        (P::Border, CssValue::BorderParts(width, color)) => {
+            // 빠진 쪽(두께 또는 색)은 지금 테두리 값을 이어 씁니다. 테두리가 없으면 색 기본값을 코어가 정하지
+            // 않으므로 거부합니다(D7).
+            let existing = match &node.record.payload {
+                NodePayload::Frame(frame) => frame.border,
+                _ => None,
+            };
+            let Some(existing) = existing else {
+                return Err(reject(
+                    "테두리가 없는 Frame에는 두께와 색을 함께 넣으세요(예: 1px solid #000000)",
+                ));
+            };
+            let next = Border::new(
+                color.unwrap_or(existing.color),
+                width.unwrap_or(existing.thickness()),
+            )
+            .map_err(|_| reject("테두리 두께가 잘못되었습니다"))?;
+            out.push(set_property(
+                id,
+                key,
+                PropertyValue::OptionalBorder(Some(next)),
+            ));
         }
-        (P::Stroke, CssValue::Color(color)) => {
-            let existing = first_paint(model, id, ModifierKind::Stroke);
-            match (color, existing) {
-                (Some(color), Some(entry)) => {
-                    out.push(set_modifier(id, &entry, key, PropertyValue::Color(*color)))
-                }
-                (Some(color), None) => out.push(insert(
-                    model,
-                    id,
-                    ModifierPayload::Stroke {
-                        color: *color,
-                        width: FiniteF32::ONE,
-                    },
-                    seed,
-                    0x81,
-                )),
-                (None, Some(entry)) => out.push(Command::RemoveModifier(RemoveModifier {
-                    node: id,
-                    modifier: entry.id,
-                })),
-                (None, None) => {}
+        (P::Color | P::Fill, CssValue::Color(color)) => match (color, &node.paint.fill) {
+            (Some(color), Some(entry)) => {
+                out.push(set_modifier(id, entry, key, PropertyValue::Color(*color)))
             }
-        }
-        (P::StrokeWidth, CssValue::Length(width)) => {
-            match first_paint(model, id, ModifierKind::Stroke) {
-                Some(entry) => out.push(set_modifier(
-                    id,
-                    &entry,
-                    key,
-                    PropertyValue::NonNegative(finite(*width)?),
-                )),
-                None if *width > 0. => out.push(insert(
-                    model,
-                    id,
-                    ModifierPayload::Stroke {
-                        color: black(),
-                        width: finite(*width)?,
-                    },
-                    seed,
-                    0x82,
-                )),
-                None => {}
+            (Some(color), None) => out.push(insert(
+                model,
+                id,
+                ModifierPayload::Fill { color: *color },
+                seed,
+                0x71,
+            )),
+            (None, Some(entry)) => out.push(Command::RemoveModifier(RemoveModifier {
+                node: id,
+                modifier: entry.id,
+            })),
+            (None, None) => {}
+        },
+        (P::Stroke, CssValue::Color(color)) => match (color, &node.paint.stroke) {
+            (Some(color), Some(entry)) => {
+                out.push(set_modifier(id, entry, key, PropertyValue::Color(*color)))
             }
-        }
+            (Some(color), None) => out.push(insert(
+                model,
+                id,
+                ModifierPayload::Stroke {
+                    color: *color,
+                    width: STROKE_WIDTH_INITIAL,
+                },
+                seed,
+                0x81,
+            )),
+            (None, Some(entry)) => out.push(Command::RemoveModifier(RemoveModifier {
+                node: id,
+                modifier: entry.id,
+            })),
+            (None, None) => {}
+        },
+        (P::StrokeWidth, CssValue::Length(width)) => match &node.paint.stroke {
+            Some(entry) => out.push(set_modifier(
+                id,
+                entry,
+                key,
+                PropertyValue::NonNegative(finite(*width)?),
+            )),
+            None if *width > 0. => {
+                return Err(reject("선이 없는 레이어입니다: 먼저 stroke 색을 넣으세요"))
+            }
+            None => {}
+        },
         (P::BorderRadius, CssValue::Corners(corners)) => {
             for (index, radius) in corners.iter().enumerate() {
                 let corner = P::Corner(index as u8);
@@ -991,7 +959,7 @@ fn node_commands(
             key,
             PropertyValue::Number(finite(*v as f32)?),
         )),
-        (P::StrokeLinecap | P::ObjectFit | P::ImageRendering, CssValue::Keyword(index)) => {
+        (P::ObjectFit, CssValue::Keyword(index)) => {
             let tag = u8::try_from(*index).map_err(|_| mismatch())?;
             out.push(set_property(id, key, PropertyValue::Keyword(tag)))
         }
@@ -1030,12 +998,7 @@ pub fn edit_commands(
                 property.name()
             )));
         }
-        let locked = if property == P::Locked {
-            node.ancestor_locked
-        } else {
-            node.locked
-        };
-        if locked {
+        if node.lock.blocks(property.key(node.class)) {
             return Err(reject("잠긴 레이어는 바꿀 수 없습니다"));
         }
         let value = match input {
@@ -1098,10 +1061,10 @@ mod tests {
             ],
             &["width", "fill", "stroke", "stroke-width", "border-radius"],
             &["width", "height", "fill"],
-            &["x1", "y2", "stroke", "stroke-linecap"],
+            &["x1", "y2", "stroke"],
             &["polygon-sides", "polygon-rotation", "fill"],
             &["color", "left", "top"],
-            &["width", "object-fit", "image-rendering"],
+            &["width", "object-fit"],
         ];
         for (id, wanted) in ids.iter().zip(expected) {
             let snapshot = inspector_rows(&model, &[*id]);
@@ -1125,6 +1088,13 @@ mod tests {
         }
         let frame = inspector_rows(&model, &[ids[0]]);
         assert!(names(&frame).iter().all(|n| *n != "fill"));
+        // 명세 6.2절 표에 없는 행(`stroke-linecap`, `image-rendering`)은 내지 않습니다.
+        for id in ids {
+            let rows = inspector_rows(&model, &[id]);
+            assert!(names(&rows)
+                .iter()
+                .all(|n| *n != "stroke-linecap" && *n != "image-rendering"));
+        }
         let rect = inspector_rows(&model, &[ids[1]]);
         assert_eq!(value(&rect, "border-radius").value, "1px 2px 3px 4px");
         assert_eq!(value(&rect, "fill").value, "none");
@@ -1281,5 +1251,69 @@ mod tests {
         // 종류에 없는 속성은 거부합니다.
         let fill = InspectorInput::Set(CssValue::Color(None));
         assert!(edit_commands(state.model(), &[ids[6]], P::Fill, &fill, [1; 16]).is_err());
+    }
+
+    #[test]
+    fn missing_stroke_and_border_parts_never_get_a_core_default_color() {
+        let (model, ids) = seven_kind_model();
+        let mut state = DocumentState::new(model);
+        let rect = [ids[1]];
+        // 선이 없으면 stroke-width만으로 선을 만들지 않습니다(색 기본값은 셸 설정, D7).
+        let width = InspectorInput::Set(parse_input(P::StrokeWidth, "3").unwrap());
+        assert!(edit_commands(state.model(), &rect, P::StrokeWidth, &width, [1; 16]).is_err());
+        assert!(edit_commands(
+            state.model(),
+            &rect,
+            P::StrokeWidth,
+            &InspectorInput::Adjust(1.),
+            [1; 16]
+        )
+        .is_err());
+        // 색을 넣으면 CSS 초기값 1px로 선이 생기고, 그 뒤 두께를 바꿀 수 있습니다.
+        for (property, text) in [(P::Stroke, "#3366ff"), (P::StrokeWidth, "3")] {
+            let input = InspectorInput::Set(parse_input(property, text).unwrap());
+            let commands = edit_commands(state.model(), &rect, property, &input, [2; 16]).unwrap();
+            apply(&mut state, commands);
+        }
+        let snapshot = inspector_rows(state.model(), &rect);
+        assert_eq!(value(&snapshot, "stroke").value, "#3366ff");
+        assert_eq!(value(&snapshot, "stroke-width").value, "3px");
+        // 테두리 없는 Frame에 두께만 넣으면 거부하고, 테두리가 있으면 빠진 쪽을 이어 씁니다.
+        let frame = [ids[0]];
+        let partial = InspectorInput::Set(parse_input(P::Border, "4px").unwrap());
+        assert!(edit_commands(state.model(), &frame, P::Border, &partial, [3; 16]).is_err());
+        let full = InspectorInput::Set(parse_input(P::Border, "2px solid #ff0000").unwrap());
+        let commands = edit_commands(state.model(), &frame, P::Border, &full, [3; 16]).unwrap();
+        apply(&mut state, commands);
+        let commands = edit_commands(state.model(), &frame, P::Border, &partial, [4; 16]).unwrap();
+        apply(&mut state, commands);
+        let recolor = InspectorInput::Set(parse_input(P::Border, "blue").unwrap());
+        let commands = edit_commands(state.model(), &frame, P::Border, &recolor, [5; 16]).unwrap();
+        apply(&mut state, commands);
+        assert_eq!(
+            value(&inspector_rows(state.model(), &frame), "border").value,
+            "4px solid #0000ff"
+        );
+    }
+
+    #[test]
+    fn node_lock_blocks_edits_but_lets_the_node_itself_be_unlocked() {
+        let (model, ids) = seven_kind_model();
+        let mut state = DocumentState::new(model);
+        let lock = InspectorInput::Set(CssValue::Bool(true));
+        let commands = edit_commands(state.model(), &[ids[0]], P::Locked, &lock, [1; 16]).unwrap();
+        apply(&mut state, commands);
+        let own = NodeLock::of(state.model(), ids[0]).unwrap();
+        assert_eq!(
+            own,
+            NodeLock {
+                own: true,
+                ancestor: false
+            }
+        );
+        assert!(own.blocks(node_keys::DISPLAY_NAME) && !own.blocks(node_keys::LOCKED));
+        let child = NodeLock::of(state.model(), sid(13)).unwrap();
+        assert!(child.ancestor && child.blocks(node_keys::LOCKED));
+        assert_eq!(NodeLock::of(state.model(), sid(999)), None);
     }
 }

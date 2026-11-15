@@ -56,6 +56,9 @@ pub mod css_value;
 /// 속성 패널 표면: 선택 행 snapshot과 CSS 값 편집 (UX.2.2).
 pub mod inspector;
 
+/// node 잠금 판정(D8): 속성 패널이 쓰고, Layers·CLI도 이 규칙으로 맞춥니다.
+pub mod lock;
+
 /// modifier stack command (VII.2.6).
 pub mod modifier_ops;
 
