@@ -15,6 +15,9 @@ use stellar_project::create::{
 /// 다른 새 프로젝트 생성이 끝나기 전에 들어온 생성 요청의 실패 문구.
 const CREATE_BUSY_MESSAGE: &str = "다른 새 프로젝트를 만드는 중입니다. 끝난 뒤 다시 시도하세요";
 
+/// 다른 복제가 끝나기 전에 들어온 복제 요청의 실패 문구.
+const CLONE_BUSY_MESSAGE: &str = "다른 프로젝트를 복제하는 중입니다. 끝난 뒤 다시 시도하세요";
+
 pub(super) fn project_git(
 ) -> Result<(GitRunner, stellar_git_porcelain::version::GitVersion), String> {
     let git = discover_git(&GitDiscoveryConfig::default()).ok_or("시스템 Git을 찾지 못했습니다")?;
@@ -86,17 +89,26 @@ impl AppRuntime {
         };
         let request = self.reserve_request()?;
         let token = GitCancelToken::new();
-        {
+        let busy = {
             let mut active = self
                 .shared
                 .cloning
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if active.is_some() {
-                self.shared.release_one();
-                return Err(RequestError::QueueFull);
+            let busy = active.is_some();
+            if !busy {
+                *active = Some((request, token.clone()));
             }
-            *active = Some((request, token.clone()));
+            busy
+        };
+        if busy {
+            // 생성과 같은 규칙: 한 번에 한 복제만 실행하고, 겹친 요청은 이유를 담은 실패 event로 끝냅니다.
+            self.shared.outbox().push_back(RuntimeEvent::RequestFailed {
+                request,
+                failure: RequestFailure::ProjectCloneFailed,
+                message: CLONE_BUSY_MESSAGE.into(),
+            });
+            return Ok(request);
         }
         let sender = self.sender.clone();
         let shared = Arc::clone(&self.shared);

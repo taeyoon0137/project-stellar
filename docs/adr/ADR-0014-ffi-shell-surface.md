@@ -118,7 +118,7 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
 9. **New/Clone Project는 이 절에 없습니다**: 처음 기록할 때는 crate 정책이 `stellar-runtime →
    stellar-git-porcelain`을 허용하지 않아 `create_project`·`clone_and_open`(IV.4.7·IV.6.4)에 runner를 넘길 수
    없었습니다. ADR-0013이 XIV.5.5를 위해 이 직접 의존을 허용한 뒤, 새 프로젝트 생성은 아래 'XII.6.1 — 새 프로젝트
-   생성'에서 같은 요청·event 규칙으로 추가합니다(2026-11-15 정정).
+   생성'과 'Clone Project'에서 같은 요청·event 규칙으로 추가합니다(2026-11-15 정정).
 
 ### XII.6.1 — 새 프로젝트 생성
 
@@ -139,6 +139,29 @@ XII.3.1이 정의한 공통 `InputEvent`(Rust)를 macOS 셸이 코어에 넘기�
 4. **동시 생성**: 한 runtime에서 생성은 한 번에 하나만 실행합니다. 앞 생성이 끝나기 전의 요청도 접수해 request id를
    돌려준 뒤 `REQUEST_FAILED` + `PROJECT_CREATE_FAILED`와 '다른 새 프로젝트를 만드는 중' 문구로 끝냅니다.
    `STELLAR_QUEUE_FULL`은 완료 event 상한(결정 7)에만 씁니다.
+
+### Clone Project — 복제 후 제한 모드 열기
+
+시작 창의 Clone…이 부르는 코어 경계입니다(2026-11-15 검토에서 소급 기록).
+
+1. **요청**: `stellar_project_clone(handle, url ptr+len, target ptr+len, *out_request)`. url과 target은 UTF-8이고 각각
+   `STELLAR_EVENT_TEXT_MAX`(4096) byte 이하입니다. target은 절대 경로이고, 마지막 요소는 `.`으로 시작하지 않는 유효한
+   폴더 이름이어야 합니다. url은 비어 있지 않고 공백·제어 문자가 없어야 합니다. 위반은 event 없이
+   `INVALID_ARGUMENT`·`INVALID_UTF8`·`NULL_POINTER`와 `out_request = 0`입니다.
+2. **실행 위치**: 전용 worker thread(`stellar-project-clone`)에서 시스템 Git으로 부모 폴더 아래 소유자 전용 임시
+   폴더에 clone한 뒤 최종 폴더로 옮깁니다(IV.6.2). 자격 증명은 시스템 Git의 credential helper·SSH agent에만 위임하고
+   Stellar는 저장하지 않습니다(XIV.9.6). 실패·취소 때는 임시 폴더를 지우므로 최종 폴더가 남지 않습니다.
+3. **열기**: clone이 끝나면 document thread에서 일반 `stellar_project_open`과 같은 제한 모드 검사로 엽니다(결정 4).
+   성공 완료 event는 `PROJECT_OPENED`입니다. 열기 검사가 실패하면 `REQUEST_FAILED`에 열기 실패 코드(10–17)를 씁니다.
+4. **실패 코드(끝에 덧붙임)**: `STELLAR_FAILURE_PROJECT_CLONE_FAILED`(28, 시스템 Git 없음·clone 실패·열기 접수 실패),
+   `STELLAR_FAILURE_CLONE_TARGET_EXISTS`(29, 최종 폴더가 이미 있음), `STELLAR_FAILURE_CLONE_CANCELLED`(30, 취소).
+   event 문구에는 원격 URL을 넣지 않습니다(민감값).
+5. **취소**: `stellar_project_clone_cancel(handle, request)`는 그 request가 진행 중인 clone일 때만 취소 신호를 보냅니다.
+   다른 request id나 이미 끝난 clone에는 아무것도 하지 않고 `OK`입니다. app runtime이 아직 시작되지 않았으면
+   `INVALID_ARGUMENT`, 없는 handle은 `INVALID_HANDLE`입니다. 취소된 clone도 완료 event 하나(`CLONE_CANCELLED`)로
+   끝납니다. runtime을 파괴하면 진행 중인 clone을 취소합니다.
+6. **동시 복제**: 한 runtime에서 clone은 한 번에 하나만 실행합니다. 겹친 요청은 접수한 뒤 `REQUEST_FAILED` +
+   `PROJECT_CLONE_FAILED`와 '다른 프로젝트를 복제하는 중' 문구로 끝냅니다(생성과 같은 규칙).
 
 ### 로컬 개발 — 선택 subtree Copy·Paste
 
