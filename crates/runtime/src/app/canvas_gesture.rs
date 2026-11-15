@@ -104,12 +104,18 @@ impl AppRuntime {
         pick: CanvasPick,
     ) -> Result<RequestId, RequestError> {
         self.submit(move |ctx, request| {
-            let entry = ctx
-                .app_sessions_mut()
+            let sessions = ctx.app_sessions_mut();
+            let entry = sessions
                 .windows
                 .get_mut(&session)
                 .ok_or_else(|| unknown_window(session))?;
-            let scene = entry.canvas.current(&entry.session);
+            let preview = entry
+                .text
+                .as_ref()
+                .and_then(|c| c.preview_at(entry.session.revision()));
+            let scene = entry
+                .canvas
+                .current(&entry.session, preview, &mut sessions.shared_scenes);
             let window = &mut entry.session;
             let selection = resolve_pick(window, scene.as_deref(), view, pick)?;
             window.select(selection).map_err(view_failure)?;
@@ -448,7 +454,7 @@ mod tests {
         view: u64,
         pick: CanvasPick,
     ) -> Option<Vec<StableId>> {
-        let scene = CanvasCache::default().current(window);
+        let scene = CanvasCache::default().current(window, None, &mut Default::default());
         let selection = resolve_pick(window, scene.as_deref(), sid(view), pick).ok()?;
         window.select(selection).unwrap();
         Some(window.view().selection().ids().to_vec())
@@ -566,7 +572,7 @@ mod tests {
         session
             .select(Selection::new([sid(13), sid(10)], Some(sid(13))))
             .unwrap();
-        let scene = CanvasCache::default().current(&session);
+        let scene = CanvasCache::default().current(&session, None, &mut Default::default());
         let items = selection_items(&session, scene.as_deref());
         assert_eq!(items.len(), 2);
         let child = &items[0];

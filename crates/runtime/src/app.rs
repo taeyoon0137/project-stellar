@@ -146,6 +146,7 @@ pub mod sidebar;
 pub mod text_input;
 pub use frame_move::{FrameValue, SelectedFrame, SelectedNode};
 pub use canvas_gesture::{CanvasNodeKind, CanvasPick, CanvasSelectionItem, RadiusHandles};
+pub use frame_insert::ShapePaint;
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
 pub use stellar_document::model::SiblingOrder;
 pub use stellar_document::shape::ShapeKind;
