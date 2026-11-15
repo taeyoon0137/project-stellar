@@ -2,7 +2,7 @@
 
 - 상태: 초안(2026-11-14). 코어 미연결, Stub 데이터로만 동작합니다. UX 명세 반영(2026-11-15)
 - 영역: 오른쪽 영역의 "에이전트" 탭. attached `stellar-mcp`(XIX.9.4)나 내장 세션 실행 경로(XXIX.2·XXIX.3)가 연결된 뒤에만 탭이 생기고, 그 전에는 탭이 없습니다. 탭을 넣기 전 계획 XVI.11.8 개정(UX.0.3)이 필요합니다. [가이드 6.5] [계획 XVI.11.8] [결정 U13]
-- 코드: `apps/macos/Stellar/UI/Agent/`
+- 코드: 없음. Stub 데이터로만 동작하던 이전 패널 코드(`apps/macos/Stellar/UI/Agent/`)와 그 UI 검사(`--agent-panel-ui-check`)는 UX.1.1에서 Agent 탭 연결을 지운 뒤 제품 어디에서도 쓰이지 않아 2026-11-15 삭제했습니다. 오른쪽 에이전트 탭은 실행 경로가 연결될 때 이 명세와 UX 명세 9장으로 새로 구현합니다(UX.10).
 - 상위 기준: [macOS 셸 디자인 가이드](../macos-shell-design.md), [UX 명세](../ux/stellar-ux-spec.md) 9장, 기술 아키텍처 명세, ADR-0005(Proposed), ADR-0009. `UX.n.m`은 [UX WBS 초안](../ux/ux-wbs-rows.md)의 행입니다.
 
 ## 0. 근거 표기
@@ -282,11 +282,11 @@ protocol AgentPanelSource: AnyObject {
 
 ## 14. 코어 연결·통합에 남은 일
 
-1. `AgentPanelSource`를 Rust 코어 FFI(pull 이벤트, 스냅샷)로 구현하고 Stub을 대체합니다. 버전형 메시지 형식과 세대 번호 규칙을 FFI 쪽에서 정합니다. [아키텍처 §8.2] [ADR-0009]
+1. 패널 data source를 Rust 코어 FFI(pull 이벤트, 스냅샷)로 구현합니다(이전 Stub 코드는 삭제됨). 버전형 메시지 형식과 세대 번호 규칙을 FFI 쪽에서 정합니다. [아키텍처 §8.2] [ADR-0009]
 2. 앱 이벤트 펌프에서 `pumpEvents()`를 부르는 시점(코어 이벤트 도착 신호)을 정합니다.
 3. 오른쪽 에이전트 탭에 패널을 붙입니다(UX.10.3). 실행 경로가 연결되기 전에는 탭을 만들지 않습니다. [가이드 6.5] [계획 XVI.11.8] [결정 U13]
 4. 메인 메뉴 항목(6장 action), 창 닫기·앱 종료 확인(`requiresConfirmationBeforeClosing`)을 연결합니다.
-5. `main.swift` 실행 인자(예: `--agent-panel-ui-check`)와 `scripts/macos/smoke.sh`에 `AgentPanelUICheck.run()`을 연결합니다.
+5. 패널을 다시 구현하면 영역 UI 검사(`--agent-panel-ui-check`)를 그 패널과 함께 `main.swift`·`scripts/macos/smoke.sh`에 둡니다. 쓰이지 않는 패널을 검사만으로 남기지 않습니다.
 6. OS 알림 게시(UserNotifications 권한 포함)를 `attentionHandler`에 연결합니다. 문구는 고정 문구만 씁니다.
 7. 렌더 프리뷰: 카드 안 이미지 표시 여부와 캔버스 transient preview 연동을 정합니다. [ADR-0005 결정 3 "live 미리보기", 결정 8 `render_preview`]
 8. 이전 세션의 에이전트 변경: 새 세션을 시작하면 대화 기록이 바뀌므로, 이전 세션 변경의 출처 표시·되돌리기는 문서 쪽(레이어 트리·캔버스) 표시와 함께 코어 기록으로 정합니다.

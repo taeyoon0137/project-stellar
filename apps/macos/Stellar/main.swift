@@ -36,7 +36,6 @@ let areaUIChecks: [(argument: String, run: () -> Bool)] = [
     ("--tools-menus-ui-check", ToolsUICheck.run),
     ("--sidebar-ui-check", SidebarUICheck.run),
     ("--git-panel-ui-check", GitPanelUICheck.run),
-    ("--agent-panel-ui-check", AgentPanelUICheck.run),
     ("--welcome-ui-check", WelcomeUICheck.run),
 ]
 for check in areaUIChecks where CommandLine.arguments.contains(check.argument) {

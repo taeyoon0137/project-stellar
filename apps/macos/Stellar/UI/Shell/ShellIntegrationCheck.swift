@@ -574,15 +574,16 @@ private final class ShellIntegrationCheckRunner {
         expect(projectWindow.canvasHost.canvasView.runtimeHandle == host.handle, "캔버스에 runtime handle이 없음")
         expect(split.sidebarItem.viewController is SidebarViewController, "사이드바 슬롯이 SidebarViewController가 아님")
         expect(split.inspectorItem.viewController is InspectorViewController, "인스펙터 슬롯이 InspectorViewController가 아님")
-        // 캔버스 아래 보조 패널(Git·Agent 탭)은 없습니다(UX 명세 3.2). 창 안 어디에도 Git·에이전트 패널이 없어야 합니다.
+        // 캔버스 아래 보조 패널(Git·Agent 탭)은 없습니다(UX 명세 3.2). 창 안 어디에도 Git 패널이 없어야 합니다(에이전트
+        // 패널 코드는 쓰이지 않아 지웠습니다).
         expect(split.splitViewItems.count == 3 && split.centerItem.viewController === split.contentContainer,
                "캔버스 아래에 보조 패널 분할이 남음")
         func containsPanel(_ view: NSView?) -> Bool {
             guard let view else { return false }
-            if view.nextResponder is GitPanelViewController || view.nextResponder is AgentPanelViewController { return true }
+            if view.nextResponder is GitPanelViewController { return true }
             return view.subviews.contains { containsPanel($0) }
         }
-        expect(!containsPanel(window.contentView), "창에 Git·에이전트 패널이 남음")
+        expect(!containsPanel(window.contentView), "창에 Git 패널이 남음")
         expect(split.sidebarItem.topAlignedAccessoryViewControllers.contains { $0 is SidebarFilterAccessoryViewController },
                "사이드바 필터 accessory 없음")
         expect(!projectWindow.requiresConfirmationBeforeClosing, "에이전트 세션이 없는데 닫기 확인이 필요함")
