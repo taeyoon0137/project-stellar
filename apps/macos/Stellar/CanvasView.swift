@@ -51,8 +51,6 @@ final class CanvasView: NSView {
 
     var insertionOutline: CGPath? { didSet { needsDisplay = true } }
 
-    var selectedInspectorFrame: CanvasInspectorFrame? { frameScene.selectedInspectorFrame }
-
     func frameHit(at point: NSPoint, onlyFrames: Bool = false) -> CanvasFrameHit? { frameScene.hit(at: point, onlyFrames: onlyFrames) }
 
     var framePointerHandler: ((NSEvent) -> Bool)?

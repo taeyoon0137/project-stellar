@@ -542,7 +542,8 @@ final class InspectorFieldController: NSObject, NSTextFieldDelegate {
             refresh()
             return
         }
-        // NumberFormatter 해석은 반올림하지 않으므로(예: 자릿수 0에서 "6.7" → 6.7) 표시 자릿수로 직접 맞춥니다.
+        // 지역화 Scanner는 문자열 전체가 숫자일 때만 받습니다(예: "28oops"는 거부). 해석 값은 표시 자릿수로
+        // 반올림되지 않으므로(예: 자릿수 0에서 "6.7" → 6.7) 표시 자릿수로 직접 맞춥니다.
         let model = spec.modelValue(fromDisplay: number)
         guard model.isFinite else {
             endGesture()

@@ -22,9 +22,10 @@ enum CoreRuntime {
 
     // MARK: - 프로젝트 session (XII.6.2)
 
-    static func selectedFrame(handle: UInt64, session: UInt64) -> StellarFrameSelection? {
-        var frame = StellarFrameSelection()
-        return stellar_window_selected_frame(handle, session, &frame) == STELLAR_OK ? frame : nil
+    /// 한 게시 snapshot의 선택과 단일 선택의 Inspector 값. core가 문서에서 읽습니다(document thread를 기다리지 않음).
+    static func selectedNode(handle: UInt64, session: UInt64) -> StellarSelectedNode? {
+        var node = StellarSelectedNode()
+        return stellar_window_selected_node(handle, session, &node) == STELLAR_OK ? node : nil
     }
 
     static func createProject(handle: UInt64, path: String) -> Result<UInt64, CoreRuntimeCallError> {
@@ -312,51 +313,14 @@ enum CoreRuntime {
         return .success(request)
     }
 
-    static func resizeFrame(handle: UInt64, session: UInt64, view: UUID, node: UUID,
-                          revision: UInt64, size: CGSize) -> Result<UInt64, CoreRuntimeCallError> {
+    /// 선택 Frame의 CSS longhand 하나(width·height·모서리·background)를 바꿉니다. 모든 key가 history sequence를 검사합니다.
+    static func setFrameProperty(handle: UInt64, session: UInt64, view: UUID, node: UUID, revision: UInt64,
+                                 historySequence: UInt64, key: UInt32, value: StellarFrameValue) -> Result<UInt64, CoreRuntimeCallError> {
         var request: UInt64 = 0
         let status = withUnsafeBytes(of: view.uuid) { viewBytes in
             withUnsafeBytes(of: node.uuid) { nodeBytes in
-                stellar_window_session_resize_frame(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
-                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, Float(size.width), Float(size.height), &request)
-            }
-        }
-        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
-        return .success(request)
-    }
-
-    static func selectedFrameRadii(handle: UInt64, session: UInt64, view: UUID,
-                                   node: UUID, revision: UInt64) -> (radii: [Float], historySequence: UInt64)? {
-        var target = StellarFrameSelection()
-        var sequence: UInt64 = 0
-        var values = [Float](repeating: 0, count: 4)
-        guard stellar_window_selected_frame_corners(handle, session, &target, &sequence, &values) == STELLAR_OK,
-              target.revision == revision, UUID(uuid: target.view) == view, UUID(uuid: target.node) == node
-        else { return nil }
-        return (values, sequence)
-    }
-
-    static func setFrameCorner(handle: UInt64, session: UInt64, view: UUID, node: UUID,
-                               revision: UInt64, historySequence: UInt64, key: UInt32, radius: Float) -> Result<UInt64, CoreRuntimeCallError> {
-        var request: UInt64 = 0
-        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
-            withUnsafeBytes(of: node.uuid) { nodeBytes in
-                stellar_window_session_set_frame_corner(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
-                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, historySequence, key, radius, &request)
-            }
-        }
-        guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }
-        return .success(request)
-    }
-
-    static func setFrameBackground(handle: UInt64, session: UInt64, view: UUID, node: UUID,
-                          revision: UInt64, background: InspectorColor?) -> Result<UInt64, CoreRuntimeCallError> {
-        let color = StellarCanvasColor(background)
-        var request: UInt64 = 0
-        let status = withUnsafeBytes(of: view.uuid) { viewBytes in
-            withUnsafeBytes(of: node.uuid) { nodeBytes in
-                stellar_window_session_set_frame_background(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
-                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, color, &request)
+                stellar_window_session_set_frame_property(handle, session, viewBytes.bindMemory(to: UInt8.self).baseAddress,
+                    nodeBytes.bindMemory(to: UInt8.self).baseAddress, revision, historySequence, key, value, &request)
             }
         }
         guard status == STELLAR_OK, request != 0 else { return .failure(CoreRuntimeCallError(status: status)) }

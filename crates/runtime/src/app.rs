@@ -139,6 +139,7 @@ pub mod recovery;
 pub mod sidebar;
 /// 캔버스의 미확정 입력과 한 번의 본문 확정.
 pub mod text_input;
+pub use frame_move::{FrameValue, SelectedFrame, SelectedNode};
 pub use node_delete::{SelectionEdit, SelectionEditTarget};
 pub use stellar_document::model::SiblingOrder;
 pub use stellar_document::shape::ShapeKind;
@@ -940,10 +941,8 @@ pub struct WindowSessionSummary {
     pub order_flags: u32,
     /// 표시 중인 primary 선택.
     pub primary_selection: Option<StableId>,
-    /// 현재 확정된 단일 선택이 Frame일 때 그 ID. viewport 가시성과 독립적입니다.
-    pub selected_frame: Option<StableId>,
-    /// 선택 Frame의 bounds 정규화 전 모서리 반경.
-    pub selected_frame_corners: Option<stellar_document::frame::CornerRadius>,
+    /// 확정된 단일 선택의 Inspector 값. 문서에서 읽으며 viewport 가시성과 독립적입니다.
+    pub selected: Option<SelectedNode>,
     /// 저장되지 않은 문서 변경이 있는지(선택·viewport 제외).
     pub has_unsaved_changes: bool,
     /// 열린 탭 수.
@@ -1411,14 +1410,11 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
     entry.checkpoint.observe(&entry.session);
     let session = &entry.session;
     let clamp = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    let (selected_frame, selected_frame_corners) = match session.view().selection().ids() {
-        [node] => match session.document().and_then(|d| d.model().payload(*node)) {
-            Some(stellar_document::records::NodePayload::Frame(frame)) => {
-                (Some(*node), Some(frame.corner_radius))
-            }
-            _ => (None, None),
-        },
-        _ => (None, None),
+    let selected = match session.view().selection().ids() {
+        [node] => session.document().and_then(|document| {
+            frame_move::selected_node(document.model(), session.tabs().active_view(), *node)
+        }),
+        _ => None,
     };
     WindowSessionSummary {
         session: handle,
@@ -1433,8 +1429,7 @@ fn window_summary(handle: WindowSessionHandle, entry: &mut WindowEntry) -> Windo
         history_sequence: session.history_sequence(),
         order_flags: node_order::capabilities(session),
         primary_selection: session.view().displayed_selection().primary(),
-        selected_frame,
-        selected_frame_corners,
+        selected,
         has_unsaved_changes: session.has_unsaved_changes(),
         tab_count: clamp(session.tabs().len()),
         active_view: session.tabs().active_view(),

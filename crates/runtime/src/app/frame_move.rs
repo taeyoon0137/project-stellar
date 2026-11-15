@@ -12,7 +12,8 @@ use stellar_commands::property::{PropertyValue, SetProperty};
 use stellar_commands::transaction::CommandTransaction;
 use stellar_core_types::color::Color;
 use stellar_core_types::order_key::OrderKey;
-use stellar_core_types::value::{Size2, Transform2D, Vec2};
+use stellar_core_types::property::PropertyKey;
+use stellar_core_types::value::{FiniteF32, Size2, Transform2D, Vec2};
 use stellar_document::model::DocumentModel;
 use stellar_document::modifier::{ModifierEntry, ModifierId, ModifierKind, ModifierPayload};
 use stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX;
@@ -20,13 +21,84 @@ use stellar_document::modifier_metadata::keys::TRANSFORM_MATRIX;
 #[derive(Clone, Copy)]
 enum FrameEdit {
     Move(Vec2),
-    Resize(Size2),
+    /// Inspector 속성 하나(선택 history sequence, CSS longhand key, 값).
+    Property(u64, PropertyKey, FrameValue),
+}
+
+/// Inspector가 Frame에 쓰는 값. 길이 key(width·height·모서리)는 `Length`, 배경은 `Background`입니다.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FrameValue {
+    /// 비음수 논리 픽셀 길이.
+    Length(FiniteF32),
+    /// 단색 배경. `None`은 배경 제거입니다.
     Background(Option<Color>),
-    Corner(
-        u64,
-        stellar_core_types::property::PropertyKey,
-        stellar_core_types::value::FiniteF32,
-    ),
+}
+
+impl FrameValue {
+    /// Inspector가 길이로 편집하는 Frame longhand(width·height·모서리 TL·TR·BR·BL).
+    pub const LENGTH_KEYS: [PropertyKey; 6] = [
+        keys::WIDTH,
+        keys::HEIGHT,
+        keys::BORDER_TOP_LEFT_RADIUS,
+        keys::BORDER_TOP_RIGHT_RADIUS,
+        keys::BORDER_BOTTOM_RIGHT_RADIUS,
+        keys::BORDER_BOTTOM_LEFT_RADIUS,
+    ];
+    /// Inspector가 색으로 편집하는 Frame 배경 key.
+    pub const BACKGROUND_KEY: PropertyKey = keys::BACKGROUND;
+}
+
+/// 확정된 단일 선택의 Inspector 값. core가 문서에서 읽습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedNode {
+    /// 선택 node.
+    pub node: StableId,
+    /// NodeKind 저장 tag.
+    pub kind: u16,
+    /// ShapeKind 저장 tag. Shape가 아니면 0.
+    pub shape: u8,
+    /// Frame이면 Inspector 값.
+    pub frame: Option<SelectedFrame>,
+}
+
+/// 선택 Frame의 문서 값과 편집 가능 여부. 편집 경로가 받는 조건(`editable_frame`)과 같습니다.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SelectedFrame {
+    /// 고정 크기.
+    pub size: Size2,
+    /// 단색 배경.
+    pub background: Option<Color>,
+    /// bounds 정규화 전 원본 모서리 반경.
+    pub corners: stellar_document::frame::CornerRadius,
+    /// 활성 View에서 Inspector 편집을 받을 수 있는지(표시·잠금·자유 배치·clip 조건).
+    pub editable: bool,
+}
+
+/// 단일 선택 node의 Inspector snapshot을 만듭니다. 조상 수에 비례합니다.
+pub(super) fn selected_node(
+    model: &DocumentModel,
+    view: Option<StableId>,
+    node: StableId,
+) -> Option<SelectedNode> {
+    let payload = model.payload(node)?;
+    let frame = match payload {
+        NodePayload::Frame(frame) => Some(SelectedFrame {
+            size: frame.size,
+            background: frame.background,
+            corners: frame.corner_radius,
+            editable: view.is_some_and(|view| editable_frame(model, view, node).is_some()),
+        }),
+        _ => None,
+    };
+    Some(SelectedNode {
+        node,
+        kind: payload.kind().as_u16(),
+        shape: match payload {
+            NodePayload::Shape(shape) => shape.kind().tag(),
+            _ => 0,
+        },
+        frame,
+    })
 }
 
 impl AppRuntime {
@@ -43,44 +115,21 @@ impl AppRuntime {
         self.edit_canvas_frame(session, view, revision, node, FrameEdit::Move(delta))
     }
 
-    /// 선택된 Free Frame의 고정 크기를 하나의 Undo 가능한 문서 편집으로 바꿉니다.
-    pub fn resize_canvas_frame(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-        node: StableId,
-        size: Size2,
-    ) -> Result<RequestId, RequestError> {
-        self.edit_canvas_frame(session, view, revision, node, FrameEdit::Resize(size))
-    }
-
-    /// 선택한 Free Frame의 단색 배경을 설정하거나 제거합니다.
-    pub fn set_canvas_frame_background(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-        node: StableId,
-        color: Option<Color>,
-    ) -> Result<RequestId, RequestError> {
-        self.edit_canvas_frame(session, view, revision, node, FrameEdit::Background(color))
-    }
-
-    /// 선택 Frame의 한 모서리만 원본 논리 픽셀 값으로 편집합니다.
-    pub fn set_canvas_frame_corner(
+    /// 선택 Frame의 Inspector 속성 하나(width·height·모서리 longhand·background)를 Undo 가능한 편집으로 바꿉니다.
+    /// 표시한 선택 대상의 history sequence·View·revision과 편집 가능 여부는 document thread에서 다시 확인합니다.
+    pub fn set_canvas_frame_property(
         &self,
         target: SelectionEditTarget,
         node: StableId,
-        key: stellar_core_types::property::PropertyKey,
-        radius: stellar_core_types::value::FiniteF32,
+        key: PropertyKey,
+        value: FrameValue,
     ) -> Result<RequestId, RequestError> {
         self.edit_canvas_frame(
             target.session,
             target.view,
             target.revision,
             node,
-            FrameEdit::Corner(target.history_sequence, key, radius),
+            FrameEdit::Property(target.history_sequence, key, value),
         )
     }
 
@@ -133,7 +182,7 @@ fn edit_selected(
     }
     let model = window.document().ok_or_else(stale)?.model();
     let command_id = command_id(window.window(), request);
-    let mut transaction = CommandTransaction::new(command_id, CommandOrigin::User);
+    let transaction = CommandTransaction::new(command_id, CommandOrigin::User);
     let command = match (edit, model.payload(node)) {
         (
             FrameEdit::Move(delta),
@@ -208,40 +257,41 @@ fn edit_selected(
                     }
                     (keys::TRANSFORM, PropertyValue::Transform(next))
                 }
-                FrameEdit::Resize(size) => {
-                    if size == target.size {
-                        return Ok(());
-                    }
-                    let [width, height] = SetProperty::frame_dimensions(node, size);
-                    if size.width() != target.size.width() {
-                        transaction =
-                            transaction.with_command(revision, Command::SetProperty(width));
-                    }
-                    if size.height() != target.size.height() {
-                        transaction =
-                            transaction.with_command(revision, Command::SetProperty(height));
-                    }
-                    return window.apply(&transaction).map(|_| ()).map_err(view_failure);
-                }
-                FrameEdit::Corner(sequence, key, radius) => {
+                FrameEdit::Property(sequence, key, value) => {
                     if window.history_sequence() != sequence {
                         return Err(stale());
                     }
-                    let Some(index) = keys::BORDER_RADIUS_LONGHANDS.iter().position(|&k| k == key)
-                    else {
-                        return Err(stale());
-                    };
                     let (tl, tr, br, bl) = target.corner_radius.components();
-                    if [tl, tr, br, bl][index] == radius.get() {
-                        return Ok(());
+                    let current = match (key, value) {
+                        (keys::BACKGROUND, FrameValue::Background(color)) => {
+                            if target.background == color {
+                                return Ok(());
+                            }
+                            None
+                        }
+                        (keys::WIDTH, FrameValue::Length(_)) => Some(target.size.width()),
+                        (keys::HEIGHT, FrameValue::Length(_)) => Some(target.size.height()),
+                        (_, FrameValue::Length(_)) => {
+                            let index = keys::BORDER_RADIUS_LONGHANDS
+                                .iter()
+                                .position(|&k| k == key)
+                                .ok_or_else(stale)?;
+                            Some([tl, tr, br, bl][index])
+                        }
+                        _ => return Err(stale()),
+                    };
+                    match value {
+                        FrameValue::Length(length) => {
+                            if length.get() < 0.0 {
+                                return Err(stale());
+                            }
+                            if current == Some(length.get()) {
+                                return Ok(());
+                            }
+                            (key, PropertyValue::NonNegative(length))
+                        }
+                        FrameValue::Background(color) => (key, PropertyValue::OptionalColor(color)),
                     }
-                    (key, PropertyValue::NonNegative(radius))
-                }
-                FrameEdit::Background(color) => {
-                    if target.background == color {
-                        return Ok(());
-                    }
-                    (keys::BACKGROUND, PropertyValue::OptionalColor(color))
                 }
             };
             Command::SetProperty(SetProperty { node, key, value })
@@ -671,13 +721,33 @@ mod tests {
             sid(3),
             revision,
             a,
-            FrameEdit::Corner(original_sequence, keys::BORDER_TOP_RIGHT_RADIUS, length),
+            FrameEdit::Property(
+                original_sequence,
+                keys::BORDER_TOP_RIGHT_RADIUS,
+                FrameValue::Length(length),
+            ),
         );
         assert!(
             stale.is_err(),
             "old edit after A -> B -> A: captured seq={original_sequence}, resulting rev={:?}",
             session.revision()
         );
+        // 크기·배경도 같은 history sequence 검사를 거칩니다.
+        for (key, value) in [
+            (keys::WIDTH, FrameValue::Length(length)),
+            (keys::HEIGHT, FrameValue::Length(length)),
+            (keys::BACKGROUND, FrameValue::Background(None)),
+        ] {
+            assert!(edit_selected(
+                &mut session,
+                RequestId(9),
+                sid(3),
+                revision,
+                a,
+                FrameEdit::Property(original_sequence, key, value),
+            )
+            .is_err());
+        }
         assert_eq!(session.revision(), revision);
         let current = session.history_sequence();
         assert!(edit_selected(
@@ -686,7 +756,11 @@ mod tests {
             sid(3),
             revision,
             a,
-            FrameEdit::Corner(current, keys::BORDER_TOP_RIGHT_RADIUS, length),
+            FrameEdit::Property(
+                current,
+                keys::BORDER_TOP_RIGHT_RADIUS,
+                FrameValue::Length(length),
+            ),
         )
         .is_ok());
         assert_eq!(session.revision().0, revision.0 + 1);
@@ -707,6 +781,7 @@ mod tests {
             (sid(4), sid(11), revision, key),
             (sid(3), sid(11), DocumentRevision(revision.0 + 1), key),
             (sid(3), sid(11), revision, keys::SIZE),
+            (sid(3), sid(11), revision, keys::TRANSFORM),
         ] {
             assert!(edit_selected(
                 &mut session,
@@ -714,11 +789,72 @@ mod tests {
                 view,
                 rev,
                 node,
-                FrameEdit::Corner(sequence, property, length)
+                FrameEdit::Property(sequence, property, FrameValue::Length(length))
             )
             .is_err());
             assert_eq!(session.revision(), revision);
         }
+        // 값 종류가 key와 맞지 않거나 길이가 음수이면 거부합니다.
+        for (key, value) in [
+            (keys::BACKGROUND, FrameValue::Length(length)),
+            (keys::WIDTH, FrameValue::Background(None)),
+            (
+                keys::WIDTH,
+                FrameValue::Length(FiniteF32::new(-1.0).unwrap()),
+            ),
+        ] {
+            assert!(edit_selected(
+                &mut session,
+                RequestId(2),
+                sid(3),
+                revision,
+                sid(11),
+                FrameEdit::Property(sequence, key, value)
+            )
+            .is_err());
+            assert_eq!(session.revision(), revision);
+        }
+    }
+
+    #[test]
+    fn selected_node_snapshot_reads_document_values_and_edit_conditions() {
+        let mut model = sample_document();
+        let Some(NodePayload::Frame(mut frame)) = model.payload(sid(11)).cloned() else {
+            unreachable!()
+        };
+        frame.size = Size2::new(31.0, 17.0).unwrap();
+        frame.background = None;
+        model
+            .set_payload(sid(11), NodePayload::Frame(frame))
+            .unwrap();
+        let selected = selected_node(&model, Some(sid(3)), sid(11)).unwrap();
+        assert_eq!(
+            (selected.node, selected.kind, selected.shape),
+            (sid(11), 1, 0)
+        );
+        let values = selected.frame.unwrap();
+        assert_eq!(values.size, Size2::new(31.0, 17.0).unwrap());
+        assert_eq!(values.background, None);
+        assert!(values.editable);
+        // 편집 경로가 거부하는 조건(다른 View, 활성 View 없음, 잠긴 조상)이면 편집 불가로 표시합니다.
+        for view in [Some(sid(4)), None] {
+            assert!(
+                !selected_node(&model, view, sid(11))
+                    .unwrap()
+                    .frame
+                    .unwrap()
+                    .editable
+            );
+        }
+        model.replace_flags(sid(10), true, true).unwrap();
+        assert!(
+            !selected_node(&model, Some(sid(3)), sid(11))
+                .unwrap()
+                .frame
+                .unwrap()
+                .editable
+        );
+        assert!(selected_node(&model, Some(sid(3)), sid(999)).is_none());
     }
 
     #[test]
@@ -746,7 +882,11 @@ mod tests {
             sid(3),
             revision,
             sid(11),
-            FrameEdit::Resize(Size2::new(45.0, 70.0).unwrap())
+            FrameEdit::Property(
+                expected_selection,
+                keys::WIDTH,
+                FrameValue::Length(FiniteF32::new(45.0).unwrap())
+            )
         )
         .is_err());
         assert!(edit_selected(
@@ -755,7 +895,11 @@ mod tests {
             sid(3),
             revision,
             sid(11),
-            FrameEdit::Background(None)
+            FrameEdit::Property(
+                expected_selection,
+                keys::BACKGROUND,
+                FrameValue::Background(None)
+            )
         )
         .is_err());
         assert!(edit_selected(
@@ -764,10 +908,10 @@ mod tests {
             sid(3),
             revision,
             sid(11),
-            FrameEdit::Corner(
+            FrameEdit::Property(
                 expected_selection,
                 keys::BORDER_TOP_LEFT_RADIUS,
-                stellar_core_types::value::FiniteF32::ZERO
+                FrameValue::Length(FiniteF32::ZERO)
             )
         )
         .is_err());
@@ -804,14 +948,20 @@ mod tests {
         assert!(
             matches!(next_event(&app), RuntimeEvent::WindowViewChanged { request, .. } if request == moved)
         );
-        let rev = app.state().window(session).unwrap().revision;
+        let state = app.state();
+        let window = state.window(session).unwrap();
+        let rev = window.revision;
         let resized = app
-            .resize_canvas_frame(
-                session,
-                sid(3),
-                rev,
+            .set_canvas_frame_property(
+                SelectionEditTarget {
+                    session,
+                    view: sid(3),
+                    revision: rev,
+                    history_sequence: window.history_sequence,
+                },
                 sid(11),
-                Size2::new(10.0, 15.0).unwrap(),
+                keys::WIDTH,
+                FrameValue::Length(FiniteF32::new(10.0).unwrap()),
             )
             .unwrap();
         assert!(

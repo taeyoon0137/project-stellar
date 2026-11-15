@@ -169,19 +169,19 @@ final class ShellRuntimeEventPump {
 
     func editFrame(_ frame: CanvasInspectorFrame, change: FrameInspectorEdit, completion: @escaping (CoreRuntimeEvent) -> Void)
         -> Result<UInt64, CoreRuntimeCallError> {
+        var value = StellarFrameValue()
+        let key: UInt32
         switch change {
-        case .size(let size):
-            return register(CoreRuntime.resizeFrame(handle: runtimeHandle, session: frame.session, view: frame.view,
-                                                     node: frame.node, revision: frame.revision, size: size), completion)
-        case let .corner(corner, radius):
-            return register(CoreRuntime.setFrameCorner(handle: runtimeHandle, session: frame.session, view: frame.view,
-                                                       node: frame.node, revision: frame.revision,
-                                                       historySequence: frame.historySequence, key: corner.rawValue,
-                                                       radius: radius), completion)
+        case let .length(property, length):
+            key = property
+            value.length = length
         case .background(let color):
-            return register(CoreRuntime.setFrameBackground(handle: runtimeHandle, session: frame.session, view: frame.view,
-                                                           node: frame.node, revision: frame.revision, background: color), completion)
+            key = InspectorPropertyCatalog.frameBackgroundKey
+            value.color = StellarCanvasColor(color)
         }
+        return register(CoreRuntime.setFrameProperty(handle: runtimeHandle, session: frame.session, view: frame.view,
+                                                     node: frame.node, revision: frame.revision,
+                                                     historySequence: frame.historySequence, key: key, value: value), completion)
     }
 
     func reloadComponentCanvas(_ session: UInt64, completion: @escaping (CoreRuntimeEvent) -> Void) -> Result<UInt64, CoreRuntimeCallError> {

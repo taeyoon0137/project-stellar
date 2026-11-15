@@ -239,11 +239,9 @@ Frame ABI와 같이 document thread가 표시 revision·편집 가능한 부모�
 
 ### Frame Inspector의 개별 모서리 반경
 
-창의 불변 snapshot은 단일 선택 Frame의 원본 반경 네 값을 보존합니다. 셸은
-`stellar_window_selected_frame_corners`가 함께 돌려준 View·node·revision과 화면 대상이 일치할 때
-TL·TR·BR·BL 입력을 표시합니다. 캔버스와 hit test에는 기존의 bounds 기준 정규화 반경을 사용합니다.
-`stellar_window_session_set_frame_corner`는 선택·현재 revision·View·잠금을 검증한 뒤
-조회 시점의 selection history sequence가 일치하는지 확인하고 해당 CSS longhand의 `SetProperty` 하나를 Undo 가능한 transaction에 기록합니다.
+이 절의 `stellar_window_selected_frame_corners`·`stellar_window_session_set_frame_corner`는 2026-11-15 검토에서
+아래 "Inspector 선택 snapshot과 Frame 속성 편집"의 두 ABI로 대체했습니다. 모서리 네 값을 원본 그대로 보존하고
+캔버스·hit test에는 bounds 기준 정규화 반경을 쓰는 규칙은 그대로입니다.
 
 ## 컴포넌트 라이브러리 창 계열 ABI 제거 (2026-11-15 검토)
 
@@ -398,3 +396,30 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - 삭제한 ABI: `stellar_window_component_from_selection`, 완료 event `STELLAR_EVENT_COMPONENT_CREATED`(0x010E,
   다른 event가 쓰지 않는 번호로 남깁니다), runtime `create_component_from_selection`과 진행 플래그.
   `stellar_project`의 `ComponentSource::from_selection`·`new_ids_vec` 정리는 텍스트 원본 묶음(B2)에서 합니다.
+
+### Inspector 선택 snapshot과 Frame 속성 편집
+
+- **값의 출처**: Inspector 값과 편집 가능 여부는 core가 문서에서 읽은 선택 snapshot 하나에서 나옵니다. 셸은 캔버스
+  투영(scene 행의 크기·색·pickable)이나 Git 데이터 소스에서 Inspector 값을 읽지 않습니다. runtime 창 요약의
+  `selected: Option<SelectedNode>`가 확정 단일 선택의 node·NodeKind tag·ShapeKind tag와, Frame이면 크기·배경·
+  원본 모서리 반경·`editable`을 담습니다. `editable`은 편집 경로가 받는 조건(활성 View 소속, 표시·잠금, 자유
+  배치 조상, path clip 없음)과 같은 함수로 계산합니다. 비용은 선택 node의 조상 수에 비례합니다.
+- **조회**: `stellar_window_selected_node(handle, session, out)`이 고정 104 byte `StellarSelectedNode`를 씁니다.
+  offset: `revision` 0, `history_sequence` 8, `selection_count` 16, `view` 24, `node` 40, `kind` u16 56, `shape` u8 58,
+  `flags` u8 59(bit 0 `STELLAR_SELECTED_FRAME`, bit 1 `STELLAR_SELECTED_EDITABLE`), `width` 60, `height` 64,
+  `radii[4]` 68(TL·TR·BR·BL), `background`(`StellarCanvasColor`, 색공간 0 = 없음) 84. 활성 View가 없으면 `NO_ERROR`와
+  0 값, 열려 있지 않은 창이면 `INVALID_ARGUMENT`입니다. 다중 선택은 `selection_count`만 채웁니다.
+- **편집**: `stellar_window_session_set_frame_property(handle, session, view, node, revision, history_sequence,
+  property_key, value, out_request)` 하나로 Inspector의 Frame 편집을 받습니다. key는 CSS longhand `WIDTH`(0x0108)·
+  `HEIGHT`(0x0109)·모서리 4개(0x010a–0x010d)·`BACKGROUND`(0x0104)이고, 값은 고정 24 byte `StellarFrameValue`
+  (`length` f32, `color` `StellarCanvasColor`)입니다. 길이 key는 유한한 비음수 `length`, `BACKGROUND`는 `color`를
+  씁니다(색공간 0 = 배경 제거). 다른 key·값은 `INVALID_ARGUMENT`입니다. document thread는 모든 key에서 표시한
+  View·revision·history sequence와 편집 가능 여부를 다시 확인하고 `SetProperty` 하나를 Undo 가능한 transaction으로
+  기록합니다. 값이 같으면 history를 늘리지 않습니다.
+- **셸 표시**: Frame이 아닌 선택과 다중 선택은 "선택 없음"이 아니라 선택 요약과 읽기 전용 안내로 보입니다.
+  Rectangle 등 도형의 Inspector 편집은 아직 연결하지 않았습니다.
+- **삭제한 ABI**: `stellar_window_selected_frame`·`stellar_window_selected_frame_corners`(`StellarFrameSelection`),
+  `stellar_window_session_resize_frame`, `_set_frame_background`, `_set_frame_corner`와 runtime의 같은 이름 래퍼.
+  속성마다 FFI가 늘어 형식이 달랐고 크기·배경은 history sequence를 검사하지 않았습니다. 셸이 배경 색을 캔버스의
+  CGColor에서 역산하던 경로도 지웠습니다.
+

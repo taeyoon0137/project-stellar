@@ -1,17 +1,5 @@
 import AppKit
 
-struct CanvasInspectorFrame: Equatable {
-    let session: UInt64
-    let view: UUID
-    let node: UUID
-    let revision: UInt64
-    let size: CGSize
-    let background: InspectorColor?
-    let radii: [Float]
-    let historySequence: UInt64
-    let editable: Bool
-}
-
 struct CanvasFrameHit {
     var textQuery: StellarCanvasTextQuery? = nil
     var isText: Bool { textQuery != nil }
@@ -282,24 +270,6 @@ final class CanvasFrameScene {
         }
         skipped = info.skipped
         worldToView = transform(info.camera)
-    }
-
-    var selectedInspectorFrame: CanvasInspectorFrame? {
-        guard let session, let viewID, let primaryIndex else { return nil }
-        let selected = frames[primaryIndex]
-        guard selected.isFrame, let handle = runtimeHandle,
-              let values = CoreRuntime.selectedFrameRadii(handle: handle, session: session, view: viewID,
-                                                         node: selected.id, revision: revision) else { return nil }
-        let background: InspectorColor?
-        if let fill = selected.fill, let rgba = fill.components, rgba.count == 4 {
-            let space: InspectorColor.Space = fill.colorSpace?.name == CGColorSpace.extendedDisplayP3 ? .displayP3 : .srgb
-            background = InspectorColor(space: space, red: rgba[0], green: rgba[1], blue: rgba[2], alpha: rgba[3])
-        } else {
-            background = nil
-        }
-        return CanvasInspectorFrame(session: session, view: viewID, node: selected.id, revision: revision,
-                                     size: selected.localBounds.size, background: background, radii: values.radii,
-                                     historySequence: values.historySequence, editable: selected.pickable)
     }
 
     func hit(at point: CGPoint, onlyFrames: Bool) -> CanvasFrameHit? {

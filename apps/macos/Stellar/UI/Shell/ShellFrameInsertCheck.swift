@@ -249,13 +249,13 @@ enum ShellFrameInsertCheck {
               canvas.frameHit(at: viewPoint(42, 32))?.id == child
         else { return fail("범위보다 큰 우상 원본 반경·캔버스 hit·Undo·Redo") }
 
-        guard let oldFrame = canvas.selectedInspectorFrame, let beforeReselect = session.info,
+        guard let oldFrame = project.inspectedFrame, let beforeReselect = session.info,
               project.selectNodes([root]), wait(), project.selectNodes([child]), wait(),
-              radiiAre([0, 128, 0, 0], project), let reselected = canvas.selectedInspectorFrame,
+              radiiAre([0, 128, 0, 0], project), let reselected = project.inspectedFrame,
               let afterReselect = session.info, reselected.revision == oldFrame.revision,
               reselected.historySequence != oldFrame.historySequence else { return fail("A→B→A 선택 준비") }
         var staleFailed = false
-        guard case .success = pump.editFrame(oldFrame, change: .corner(.topRight, 17), completion: {
+        guard case .success = pump.editFrame(oldFrame, change: .length(InspectorPropertyCatalog.FrameCorner.topRight.rawValue, 17), completion: {
             if case .requestFailed = $0 { staleFailed = true }
         }), wait(), staleFailed, radiiAre([0, 128, 0, 0], project),
               session.info?.revision == beforeReselect.revision, session.info?.undo_depth == afterReselect.undo_depth
@@ -275,7 +275,7 @@ enum ShellFrameInsertCheck {
         }
         func fillIs(_ expected: InspectorColor?, in owner: ShellProjectWindow) -> Bool {
             awaitSidebar {
-                guard let selected = owner.canvasHost.canvasView.selectedInspectorFrame,
+                guard let selected = owner.inspectedFrame,
                       let enabled = owner.inspectorSlot.inspector.control(identifier: "frame.background.enabled") as? NSSwitch,
                       let well = owner.inspectorSlot.inspector.control(identifier: "frame.background.color") as? NSColorWell,
                       selected.background == expected, enabled.state == (expected == nil ? .off : .on),
@@ -297,7 +297,7 @@ enum ShellFrameInsertCheck {
         else { return fail("채우기 없는 Frame에서 배경 추가") }
         well.color = p3.nsColor
         guard well.sendAction(well.action, to: well.target), fillIs(p3, in: project), wait() else {
-            return fail("Display P3 배경 입력: well=\(well.color) scene=\(String(describing: canvas.selectedInspectorFrame?.background)) depth=\(session.info?.undo_depth ?? 0)")
+            return fail("Display P3 배경 입력: well=\(well.color) scene=\(String(describing: project.inspectedFrame?.background)) depth=\(session.info?.undo_depth ?? 0)")
         }
         guard let painted = centerPixel(canvas, in: window), painted != whitePixel, painted[0] > painted[1],
               painted[2] > painted[1], session.info?.undo_depth == preFill.undo_depth + 3,

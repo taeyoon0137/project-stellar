@@ -298,10 +298,6 @@ int32_t stellar_window_component_watch_fd(uint64_t handle, uint64_t session);
 StellarStatus stellar_window_recovery_probe(uint64_t handle, uint64_t session, uint8_t *out, size_t capacity, size_t *out_len);
 StellarStatus stellar_window_recovery_apply(uint64_t handle, uint64_t session, const uint8_t *ticket, size_t ticket_len, const uint8_t *path, size_t path_len, uint64_t *request);
 
-typedef struct StellarFrameSelection { uint64_t revision; uint8_t view[16], node[16]; } StellarFrameSelection;
-StellarStatus stellar_window_selected_frame(uint64_t handle, uint64_t session, StellarFrameSelection *out);
-/* 한 snapshot의 선택과 bounds 정규화 이전 TL/TR/BR/BL 값. */
-StellarStatus stellar_window_selected_frame_corners(uint64_t handle, uint64_t session, StellarFrameSelection *out, uint64_t *history_sequence, float radii[4]);
 
 /* 프로젝트 session 닫기를 요청합니다(그 아래 문서도 닫음). */
 StellarStatus stellar_project_close(uint64_t handle, uint64_t project, uint64_t *out_request);
@@ -372,11 +368,25 @@ StellarStatus stellar_window_copy_selection(uint64_t handle, const StellarSelect
 StellarStatus stellar_window_paste_selection(uint64_t handle, const StellarSelectionTarget *target, const uint8_t *bytes, size_t len, uint64_t *out_request);
 /* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
 StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float dx, float dy, uint64_t *out_request);
-StellarStatus stellar_window_session_resize_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float width, float height, uint64_t *out_request);
-/* 선택한 Free Frame 배경. space가 0이면 제거합니다. */
-StellarStatus stellar_window_session_set_frame_background(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, StellarCanvasColor color, uint64_t *out_request);
-/* CSS 모서리 PropertyKey(0x010a–0x010d) 하나를 원본 반경으로 변경합니다. */
-StellarStatus stellar_window_session_set_frame_corner(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t history_sequence, uint32_t property_key, float radius, uint64_t *out_request);
+/* 한 게시 snapshot의 선택과 단일 선택의 Inspector 값(고정 104 byte). core가 문서에서 읽습니다.
+ * kind: NodeKind 저장 tag(단일 선택이 아니면 0), shape: ShapeKind tag(Shape가 아니면 0).
+ * flags bit 0: width·height·radii(TL·TR·BR·BL)·background가 유효한 Frame, bit 1: Inspector 편집을 받을 수 있음.
+ * 활성 View가 없으면 STELLAR_NO_ERROR와 0 값, 열려 있지 않은 창이면 STELLAR_INVALID_ARGUMENT입니다. */
+typedef struct StellarSelectedNode {
+    uint64_t revision, history_sequence, selection_count;
+    uint8_t view[16], node[16];
+    uint16_t kind; uint8_t shape, flags;
+    float width, height, radii[4];
+    StellarCanvasColor background;
+} StellarSelectedNode;
+#define STELLAR_SELECTED_FRAME 1
+#define STELLAR_SELECTED_EDITABLE 2
+StellarStatus stellar_window_selected_node(uint64_t handle, uint64_t session, StellarSelectedNode *out);
+/* Inspector가 Frame 속성 하나를 바꾸는 값. 길이 key는 length, BACKGROUND(0x0104)는 color(space 0 = 제거)를 씁니다. */
+typedef struct StellarFrameValue { float length; StellarCanvasColor color; } StellarFrameValue;
+/* 선택 Frame의 CSS longhand 하나: WIDTH 0x0108, HEIGHT 0x0109, 모서리 0x010a–0x010d, BACKGROUND 0x0104.
+ * 표시한 View·revision·history_sequence가 실행 시점과 같고 편집 가능한 Frame일 때만 한 Undo 항목으로 기록합니다. */
+StellarStatus stellar_window_session_set_frame_property(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, uint64_t history_sequence, uint32_t property_key, StellarFrameValue value, uint64_t *out_request);
 /* 표시한 부모 Frame의 local rect에 자식 Free Frame을 삽입하고 한 history entry로 선택합니다. */
 StellarStatus stellar_window_session_insert_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, float x, float y, float width, float height, uint64_t *out_request);
 /* 실제 Rectangle Shape와 단색 Fill/Transform modifier를 생성합니다. */

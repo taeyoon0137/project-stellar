@@ -47,54 +47,58 @@ pub struct StellarWindowViewInfo {
     pub active_view: [u8; 16],
 }
 
-/// 표시 중인 View의 단일 Frame 선택. viewport 밖에서 선택한 레이어도 포함합니다.
+/// 확정된 선택의 Inspector snapshot(고정 104 byte, C ABI). viewport 밖에서 선택한 레이어도 포함합니다.
+///
+/// 값과 편집 가능 여부는 core가 문서에서 읽습니다. 셸은 캔버스 투영에서 Inspector 값을 읽지 않습니다.
 #[repr(C)]
-#[derive(Default)]
-pub struct StellarFrameSelection {
+#[derive(Default, Clone, Copy)]
+pub struct StellarSelectedNode {
     /// 문서 revision.
     pub revision: u64,
+    /// 같은 snapshot의 창 history sequence. Inspector 편집 요청에 그대로 넘깁니다.
+    pub history_sequence: u64,
+    /// 선택한 node 수.
+    pub selection_count: u64,
     /// 활성 View ID.
     pub view: [u8; 16],
-    /// 선택 노드 ID.
+    /// 단일 선택 node ID(단일 선택이 아니면 0).
     pub node: [u8; 16],
+    /// 단일 선택의 NodeKind 저장 tag(단일 선택이 아니면 0).
+    pub kind: u16,
+    /// Shape이면 ShapeKind 저장 tag, 아니면 0.
+    pub shape: u8,
+    /// bit 0: 아래 Frame 값이 유효함, bit 1: Inspector 편집을 받을 수 있음.
+    pub flags: u8,
+    /// Frame 고정 너비.
+    pub width: f32,
+    /// Frame 고정 높이.
+    pub height: f32,
+    /// Frame 원본 모서리 반경 TL·TR·BR·BL.
+    pub radii: [f32; 4],
+    /// Frame 단색 배경(색공간 0 = 없음).
+    pub background: crate::canvas::StellarCanvasColor,
 }
 
-/// 하나의 게시된 snapshot에서 선택·뷰·revision을 읽습니다.
-/// # Safety
-/// out은 StellarFrameSelection을 쓸 수 있어야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_selected_frame(
-    handle: u64,
-    session: u64,
-    out: *mut StellarFrameSelection,
-) -> StellarStatus {
-    let mut radii = [0.; 4];
-    let mut sequence = 0;
-    unsafe {
-        stellar_window_selected_frame_corners(handle, session, out, &mut sequence, &mut radii)
-    }
-}
+/// `StellarSelectedNode.flags`: Frame 값이 유효함.
+pub const SELECTED_FRAME: u8 = 1;
+/// `StellarSelectedNode.flags`: Inspector 편집을 받을 수 있음.
+pub const SELECTED_EDITABLE: u8 = 2;
 
-/// 현재 선택의 view·node·revision과 원본 TL/TR/BR/BL 길이를 동일 snapshot으로 돌려줍니다.
+/// 한 게시 snapshot에서 활성 View·선택·revision·history와 단일 선택의 Inspector 값을 읽습니다.
+/// 활성 View가 없으면 `STELLAR_NO_ERROR`와 0 값, 열려 있지 않은 창이면 `STELLAR_INVALID_ARGUMENT`입니다.
 /// # Safety
-/// `out`, `history_sequence`, `radii`는 각각 해당 타입의 쓰기 가능한 버퍼여야 합니다.
+/// `out`은 `StellarSelectedNode` 하나를 쓸 수 있어야 합니다.
 #[no_mangle]
-pub unsafe extern "C" fn stellar_window_selected_frame_corners(
+pub unsafe extern "C" fn stellar_window_selected_node(
     handle: u64,
     session: u64,
-    out: *mut StellarFrameSelection,
-    history_sequence: *mut u64,
-    radii: *mut [f32; 4],
+    out: *mut StellarSelectedNode,
 ) -> StellarStatus {
     ffi_guard(move || {
-        if out.is_null() || history_sequence.is_null() || radii.is_null() {
+        if out.is_null() {
             return StellarStatus::NullPointer;
         }
-        unsafe {
-            *out = StellarFrameSelection::default();
-            *radii = [0.; 4];
-            *history_sequence = 0;
-        }
+        unsafe { out.write(StellarSelectedNode::default()) };
         let Ok(reg) = registry().lock() else {
             return StellarStatus::Internal;
         };
@@ -106,23 +110,32 @@ pub unsafe extern "C" fn stellar_window_selected_frame_corners(
             .as_ref()
             .and_then(|s| s.window(WindowSessionHandle(session)))
         else {
+            return StellarStatus::InvalidArgument;
+        };
+        let Some(view) = w.active_view else {
             return StellarStatus::NoError;
         };
-        let (Some(view), Some(node), Some(corners)) =
-            (w.active_view, w.selected_frame, w.selected_frame_corners)
-        else {
-            return StellarStatus::NoError;
+        let mut info = StellarSelectedNode {
+            revision: w.revision.0,
+            history_sequence: w.history_sequence,
+            selection_count: u64::from(w.selection_len),
+            view: view.to_bytes(),
+            ..StellarSelectedNode::default()
         };
-        let (tl, tr, br, bl) = corners.components();
-        unsafe {
-            *out = StellarFrameSelection {
-                revision: w.revision.0,
-                view: view.to_bytes(),
-                node: node.to_bytes(),
-            };
-            *radii = [tl, tr, br, bl];
-            *history_sequence = w.history_sequence;
+        if let Some(selected) = w.selected {
+            info.node = selected.node.to_bytes();
+            info.kind = selected.kind;
+            info.shape = selected.shape;
+            if let Some(frame) = selected.frame {
+                let (tl, tr, br, bl) = frame.corners.components();
+                info.flags = SELECTED_FRAME | if frame.editable { SELECTED_EDITABLE } else { 0 };
+                info.width = frame.size.width();
+                info.height = frame.size.height();
+                info.radii = [tl, tr, br, bl];
+                info.background = frame.background.into();
+            }
         }
+        unsafe { out.write(info) };
         StellarStatus::Ok
     })
 }
@@ -725,59 +738,25 @@ pub unsafe extern "C" fn stellar_window_session_move_frame(
     })
 }
 
-/// 선택한 고정 Free Frame의 크기 변경을 요청합니다.
-///
-/// # Safety
-/// `view`와 `node`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_session_resize_frame(
-    handle: u64,
-    session: u64,
-    view: *const [u8; 16],
-    node: *const [u8; 16],
-    revision: u64,
-    width: f32,
-    height: f32,
-    out_request: *mut u64,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if !out_request.is_null() {
-            unsafe { *out_request = 0 };
-        }
-        if view.is_null() || node.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        let Ok(size) = stellar_core_types::value::Size2::new(width, height) else {
-            return StellarStatus::InvalidArgument;
-        };
-        let view = StableId::from_bytes(unsafe { *view });
-        let node = StableId::from_bytes(unsafe { *node });
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let result = match rt.app() {
-            Ok(app) => app.resize_canvas_frame(
-                WindowSessionHandle(session),
-                view,
-                stellar_core_types::revision::DocumentRevision(revision),
-                node,
-                size,
-            ),
-            Err(status) => return status,
-        };
-        unsafe { rt.finish_request(result, out_request) }
-    })
+/// Inspector가 Frame 속성 하나에 쓰는 값(고정 24 byte). 길이 key는 `length`, `BACKGROUND`는 `color`를 씁니다.
+#[repr(C)]
+#[derive(Default, Clone, Copy)]
+pub struct StellarFrameValue {
+    /// width·height·모서리 longhand의 비음수 논리 픽셀 길이.
+    pub length: f32,
+    /// 배경 색(색공간 0 = 배경 제거).
+    pub color: crate::canvas::StellarCanvasColor,
 }
 
-/// 선택한 Frame의 모서리 반경 변경을 요청합니다.
+/// 선택 Frame의 Inspector 속성 하나를 바꿉니다. `property_key`는 CSS longhand
+/// `WIDTH`(0x0108)·`HEIGHT`(0x0109)·모서리 4개(0x010a–0x010d)·`BACKGROUND`(0x0104)입니다.
+/// 표시한 View·revision·`history_sequence`가 실행 시점과 다르거나 편집할 수 없는 Frame이면
+/// `REQUEST_FAILED`로 끝납니다.
 ///
 /// # Safety
 /// `view`와 `node`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
 #[no_mangle]
-pub unsafe extern "C" fn stellar_window_session_set_frame_corner(
+pub unsafe extern "C" fn stellar_window_session_set_frame_property(
     handle: u64,
     session: u64,
     view: *const [u8; 16],
@@ -785,9 +764,10 @@ pub unsafe extern "C" fn stellar_window_session_set_frame_corner(
     revision: u64,
     history_sequence: u64,
     property_key: u32,
-    radius: f32,
+    value: StellarFrameValue,
     out_request: *mut u64,
 ) -> StellarStatus {
+    use stellar_runtime::app::FrameValue;
     ffi_guard(move || {
         if !out_request.is_null() {
             unsafe { *out_request = 0 };
@@ -795,12 +775,20 @@ pub unsafe extern "C" fn stellar_window_session_set_frame_corner(
         if view.is_null() || node.is_null() {
             return StellarStatus::NullPointer;
         }
-        let Ok(radius) = stellar_core_types::value::FiniteF32::new(radius) else {
+        let key = stellar_core_types::property::PropertyKey(property_key);
+        let value = if key == FrameValue::BACKGROUND_KEY {
+            let Ok(color) = value.color.decode() else {
+                return StellarStatus::InvalidArgument;
+            };
+            FrameValue::Background(color)
+        } else if FrameValue::LENGTH_KEYS.contains(&key) {
+            match stellar_core_types::value::FiniteF32::new(value.length) {
+                Ok(length) if length.get() >= 0.0 => FrameValue::Length(length),
+                _ => return StellarStatus::InvalidArgument,
+            }
+        } else {
             return StellarStatus::InvalidArgument;
         };
-        if radius.get() < 0.0 {
-            return StellarStatus::InvalidArgument;
-        }
         let view = StableId::from_bytes(unsafe { *view });
         let node = StableId::from_bytes(unsafe { *node });
         let Ok(mut reg) = registry().lock() else {
@@ -810,7 +798,7 @@ pub unsafe extern "C" fn stellar_window_session_set_frame_corner(
             return StellarStatus::InvalidHandle;
         };
         let result = match rt.app() {
-            Ok(app) => app.set_canvas_frame_corner(
+            Ok(app) => app.set_canvas_frame_property(
                 SelectionEditTarget {
                     session: WindowSessionHandle(session),
                     view,
@@ -818,54 +806,8 @@ pub unsafe extern "C" fn stellar_window_session_set_frame_corner(
                     history_sequence,
                 },
                 node,
-                stellar_core_types::property::PropertyKey(property_key),
-                radius,
-            ),
-            Err(status) => return status,
-        };
-        unsafe { rt.finish_request(result, out_request) }
-    })
-}
-
-/// 선택한 Free Frame의 단색 배경을 변경합니다. 색공간 0은 배경 제거입니다.
-///
-/// # Safety
-/// `view`와 `node`는 각각 16 byte를 읽을 수 있고 `out_request`는 null 또는 쓰기 가능해야 합니다.
-#[no_mangle]
-pub unsafe extern "C" fn stellar_window_session_set_frame_background(
-    handle: u64,
-    session: u64,
-    view: *const [u8; 16],
-    node: *const [u8; 16],
-    revision: u64,
-    color: crate::canvas::StellarCanvasColor,
-    out_request: *mut u64,
-) -> StellarStatus {
-    ffi_guard(move || {
-        if !out_request.is_null() {
-            unsafe { *out_request = 0 };
-        }
-        if view.is_null() || node.is_null() {
-            return StellarStatus::NullPointer;
-        }
-        let Ok(color) = color.decode() else {
-            return StellarStatus::InvalidArgument;
-        };
-        let view = StableId::from_bytes(unsafe { *view });
-        let node = StableId::from_bytes(unsafe { *node });
-        let Ok(mut reg) = registry().lock() else {
-            return StellarStatus::Internal;
-        };
-        let Some(rt) = reg.live.get_mut(&handle) else {
-            return StellarStatus::InvalidHandle;
-        };
-        let result = match rt.app() {
-            Ok(app) => app.set_canvas_frame_background(
-                WindowSessionHandle(session),
-                view,
-                stellar_core_types::revision::DocumentRevision(revision),
-                node,
-                color,
+                key,
+                value,
             ),
             Err(status) => return status,
         };
@@ -1399,6 +1341,75 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn frame_property_and_selected_node_reject_invalid_input_before_submitting() {
+        let id = [0u8; 16];
+        let mut node = StellarSelectedNode::default();
+        assert_eq!(
+            unsafe { stellar_window_selected_node(0, 0, std::ptr::null_mut()) },
+            StellarStatus::NullPointer
+        );
+        assert_eq!(
+            unsafe { stellar_window_selected_node(0, 0, &mut node) },
+            StellarStatus::InvalidHandle
+        );
+        let length = |length| StellarFrameValue {
+            length,
+            ..StellarFrameValue::default()
+        };
+        for (view, key, value, expected) in [
+            (
+                std::ptr::null(),
+                0x0108,
+                length(1.0),
+                StellarStatus::NullPointer,
+            ),
+            (
+                &id as *const _,
+                0x0101,
+                length(1.0),
+                StellarStatus::InvalidArgument,
+            ),
+            (
+                &id as *const _,
+                0x0108,
+                length(-1.0),
+                StellarStatus::InvalidArgument,
+            ),
+            (
+                &id as *const _,
+                0x010a,
+                length(f32::NAN),
+                StellarStatus::InvalidArgument,
+            ),
+            (
+                &id as *const _,
+                0x0108,
+                length(1.0),
+                StellarStatus::InvalidHandle,
+            ),
+        ] {
+            let mut request = 99;
+            assert_eq!(
+                unsafe {
+                    stellar_window_session_set_frame_property(
+                        0,
+                        0,
+                        view,
+                        &id,
+                        0,
+                        0,
+                        key,
+                        value,
+                        &mut request,
+                    )
+                },
+                expected
+            );
+            assert_eq!(request, 0);
+        }
+    }
+
+    #[test]
     fn copy_selection_rejects_invalid_pointers_and_handle() {
         let target = StellarSelectionTarget::default();
         let mut len = 99;
@@ -1447,6 +1458,21 @@ pub(crate) mod tests {
         );
         assert_eq!(std::mem::size_of::<StellarSelectionTarget>(), 48);
         assert_eq!(std::mem::offset_of!(StellarSelectionTarget, view), 32);
+        assert_eq!(std::mem::size_of::<StellarSelectedNode>(), 104);
+        assert_eq!(std::mem::align_of::<StellarSelectedNode>(), 8);
+        assert_eq!(
+            std::mem::offset_of!(StellarSelectedNode, selection_count),
+            16
+        );
+        assert_eq!(std::mem::offset_of!(StellarSelectedNode, view), 24);
+        assert_eq!(std::mem::offset_of!(StellarSelectedNode, node), 40);
+        assert_eq!(std::mem::offset_of!(StellarSelectedNode, kind), 56);
+        assert_eq!(std::mem::offset_of!(StellarSelectedNode, flags), 59);
+        assert_eq!(std::mem::offset_of!(StellarSelectedNode, width), 60);
+        assert_eq!(std::mem::offset_of!(StellarSelectedNode, radii), 68);
+        assert_eq!(std::mem::offset_of!(StellarSelectedNode, background), 84);
+        assert_eq!(std::mem::size_of::<StellarFrameValue>(), 24);
+        assert_eq!(std::mem::offset_of!(StellarFrameValue, color), 4);
         assert_eq!(WINDOW_SESSION_INFO_VERSION, 2);
         assert_eq!(std::mem::size_of::<StellarWindowViewInfo>(), 56);
         assert_eq!(std::mem::offset_of!(StellarWindowViewInfo, center_x), 16);

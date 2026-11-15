@@ -666,11 +666,19 @@ final class ShellProjectWindow {
     /// 창 session 명령(Undo·Redo·Save Now)이 끝날 때마다 받은 완료 event(검사용).
     private(set) var lastSessionCommandEvent: CoreRuntimeEvent?
 
+    /// Inspector 값은 core가 문서에서 읽은 선택 snapshot 하나에서 가져옵니다(캔버스 투영을 보지 않음).
     private func refreshInspector() {
-        let selected = windowController.windowSession?.info?.selection_count == 1
-            ? canvasHost.canvasView.selectedInspectorFrame : nil
-        inspectorSource.refresh(selected)
+        guard let session = windowController.windowSession, !session.isClosed,
+              let handle = dataSource.session?.pump.runtimeHandle,
+              let info = CoreRuntime.selectedNode(handle: handle, session: session.session) else {
+            inspectorSource.refresh(nil)
+            return
+        }
+        inspectorSource.refresh(InspectorCoreSelection(info, session: session.session))
     }
+
+    /// Inspector에 표시한 선택 Frame의 core 값(검사용 조회).
+    var inspectedFrame: CanvasInspectorFrame? { inspectorSource.selection?.frame }
 
     var subtreePasteboard: NSPasteboard = .general
     private static let subtreePasteboardType = NSPasteboard.PasteboardType("xyz.taeyoon.stellar.node-subtree.v1")

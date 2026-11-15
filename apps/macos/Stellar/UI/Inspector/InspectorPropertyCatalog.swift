@@ -220,10 +220,13 @@ enum InspectorPropertyCatalog {
         ]),
     ])
 
+    /// Rust Frame `BACKGROUND` PropertyKey.
+    static let frameBackgroundKey: UInt32 = 0x0104
+
     static let frameBackgroundRow = InspectorRowTemplate(id: "background", label: "Background", fields: [
-        InspectorFieldTemplate("frame.background.enabled", coreKey: 0x0104, label: "Background",
+        InspectorFieldTemplate("frame.background.enabled", coreKey: frameBackgroundKey, label: "Background",
                                control: .toggle, bindable: false),
-        InspectorFieldTemplate("frame.background.color", coreKey: 0x0104, label: "Background Color",
+        InspectorFieldTemplate("frame.background.color", coreKey: frameBackgroundKey, label: "Background Color",
                                control: .color),
     ])
 

@@ -1462,6 +1462,14 @@ mod tests {
             EVENT_SCHEMA_VERSION.to_string(),
         );
         define("STELLAR_EVENT_TEXT_MAX", EVENT_TEXT_MAX.to_string());
+        define(
+            "STELLAR_SELECTED_FRAME",
+            crate::window_session::SELECTED_FRAME.to_string(),
+        );
+        define(
+            "STELLAR_SELECTED_EDITABLE",
+            crate::window_session::SELECTED_EDITABLE.to_string(),
+        );
         for (name, kind) in [
             ("STELLAR_EVENT_PROJECT_OPENED", event_kind::PROJECT_OPENED),
             ("STELLAR_EVENT_PROJECT_TRUST", event_kind::PROJECT_TRUST),
@@ -1611,10 +1619,8 @@ mod tests {
             "stellar_window_session_select",
             "stellar_window_session_move_frame",
             "stellar_window_layer_rename",
-            "stellar_window_session_resize_frame",
-            "stellar_window_session_set_frame_background",
-            "stellar_window_session_set_frame_corner",
-            "stellar_window_selected_frame_corners",
+            "stellar_window_session_set_frame_property",
+            "stellar_window_selected_node",
             "stellar_window_session_insert_frame",
             "stellar_window_session_insert_shape",
             "stellar_window_selection_target",

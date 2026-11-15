@@ -343,7 +343,7 @@ private final class ShellWindowCloseCheckRunner {
         while widthReply == nil && Date() < widthDeadline {
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
         }
-        expect(widthReply == true && first.canvasHost.canvasView.selectedInspectorFrame?.size.width == 147 &&
+        expect(widthReply == true && first.inspectedFrame?.size.width == 147 &&
             firstSession.info?.has_unsaved_changes == 0, "Return 없는 Inspector 값의 종료 저장 실패")
         let agent = first.panelsSlot.agentPanel
         _ = agent.view
