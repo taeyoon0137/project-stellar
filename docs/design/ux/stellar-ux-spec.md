@@ -623,7 +623,7 @@
 
 ### 8.4 커밋·identity
 
-- `ShellGitDataSource.swift` 260–261행의 고정값(`head: .unknown`, `remotes: []`, `identityConfigured: false`)을 실제 Git 설정으로 바꿉니다.
+- `ShellGitDataSource.swift`의 고정값(`head: .unknown`, `remotes: []`, `identityConfigured: false`)을 실제 Git 설정으로 바꿉니다.
 - identity가 없으면 메시지 칸 위에 이름·이메일 inline 줄이 나옵니다. "저장소 Git 설정에서 설정하라"는 alert는 없앱니다. 저장 범위는 U9.
 - 커밋을 누르면 flush → 상태 재검증 → 커밋 순서입니다. 미저장 편집이 있을 때 띄우던 "Save Now / Use Saved Version" 배너는 자동 flush로 대신합니다.
 - 성공하면 메시지 칸을 비우되 텍스트 Undo로 되살릴 수 있습니다.
@@ -730,7 +730,7 @@
 | `UI/Shell/ShellAreaSlots.swift` | `ShellPanelTabsSlot`(42행)의 Git·Agent 탭(56행) | 하단 보조 패널 삭제 | [결정 U1], 셸 가이드 2.4 | UX.1.1 |
 | `UI/Shell/ShellFrameMenuItems.swift`(22행), `ShellWindowController.swift`(238행), `ShellSplitViewController.swift`(106행) | 보조 패널 토글(View 메뉴) | 삭제 | 같음 | UX.1.1 |
 | `UI/Tools/MainMenuBuilder.swift` | Rulers(68행), Align(84행), Distribute(88행) 등 영구 비활성 약 26개 | 삭제. 기능 행이 들어올 때 다시 추가 | P1 | UX.1.2 |
-| `UI/Shell/ShellGitDataSource.swift` | `head: .unknown`, `remotes: []`, `identityConfigured: false`(260–261행) | 실제 값 | 8.4절 | UX.5.1 |
+| `UI/Shell/ShellGitDataSource.swift` | `head: .unknown`, `remotes: []`, `identityConfigured: false` | 실제 값 | 8.4절 | UX.5.1 |
 | `UI/Git/GitPanelViewController.swift` 외 `UI/Git/` | 하단 탭 안 세로 패널, 빈 Conflicts 탭, dependency NSAlert | 사이드바 변경 탭으로 재배치, 동반 변경은 inline | O4, `git_panel.md` | UX.5.2 |
 | `UI/Shell/ShellAppCoordinator.swift`, `UI/Agent/` | `DisconnectedAgentPanelSource`, 동작 없는 Agent 탭 | 실행 경로 전까지 탭 없음 | 9.1절 | UX.1.1 |
 | `UI/Shell/ShellComponentLibrary.swift`, `UI/Shell/ShellNewComponent.swift` | 별도 창, alert 연쇄 | 삭제 | D3·D4 | 정리 |
@@ -756,7 +756,7 @@
 | `docs/design/ui/agent_panel.md`, `docs/design/ui/shell_frame.md` | 오른쪽 탭, 하단 보조 패널 삭제 | UX.0.2 |
 | `docs/design/ui/components.md`(신설) | 에셋 탭·정의 편집·인스턴스 명세(D4) | UX.9.1 |
 | `docs/design/property_model.md` | 15장 O9 결정 반영 | UX.0.2 |
-| `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md` | XII.10.1(10종)·XII.10.29(펜 도구 부분 삭제)가 기준선에 들어 있는지 확인, XIII.3.1(Synthetic Command), XIV.13.5(위치), XVI.11.8(코드·에이전트 탭 노출), UX 행 등록 | UX.0.3 |
+| `docs/PROJECT_STELLAR_IMPLEMENTATION_PLAN.md` | XII.10.1(10종)·XII.10.29(펜 도구 부분 삭제)가 기준선에 들어 있는지 확인, XIII.3.1(Synthetic Command), XIV.13.5(위치), XVI.11.8(코드·에이전트 탭 노출), XIV.2.8(커밋 직전 flush 후 상태 재검증, UX.5.5), UX 행 등록 | UX.0.3 |
 | `docs/PROJECT_STELLAR_TECHNICAL_ARCHITECTURE.md` | §24.3 "처음 여는 프로젝트는 제한 모드" 문구에 Stellar가 §25.1로 만든 폴더의 신뢰 등록 예외를 더함(U8, ADR-0073 결정 10). Clone·열기는 그대로 제한 모드 | UX.0.3 |
 
 삭제 커밋마다 사유를 남깁니다(11-15 사용자 추가 지시).

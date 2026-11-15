@@ -13,14 +13,14 @@
 | 포함 | 근거 |
 |---|---|
 | Status, Semantic Diff(문서 → 객체 → 변경 묶음 목록과 변경 상세) | 아키텍처 §26.1, §26.2 |
-| Stage·Unstage("커밋에 포함" 체크박스, 단계는 아래) | 아키텍처 §26.3 |
+| 객체·속성 단위 Stage·Unstage(체크박스) | 아키텍처 §26.3 |
 | Commit(`NSTextView` 메시지) | 아키텍처 §11.2, 계획 XIV.8 |
 | Push(이미 등록된 remote, 강제 Push 없음) | 아키텍처 §25.3, 계획 XIV.9.5 |
 | Semantic Conflict 해결(항목별 Base·Ours·Theirs) | 아키텍처 §27.1, §27.2, 계획 XIV.12 |
 
 넣지 않은 것: Branch·Switch, Fetch·Pull, Merge·Rebase, Stash, Worktree 관리, Remote 관리, 강제 Push. 명령 enum(`GitPanelCommand`)에도 해당 case가 없습니다. merge·rebase continue와 commit 자동 실행도 하지 않습니다. 브랜치 계열을 당길지는 커밋 고리(UX.5) 뒤 다시 검토합니다. [아키텍처 §24.4, §27.2] [계획 XIV.12.5, XIV.13.7] [결정 U18]
 
-Stage는 단계적으로 엽니다. "커밋에 포함" 체크의 원본은 Git index이고, 터미널 `git status`와 늘 같아야 합니다. [아키텍처 §26.3] [UX 명세 2장 P7, 8.3]
+Stage는 단계적으로 엽니다. 1단계는 원본 단위로 먼저 열고, 2단계에서 위 표의 §24.4 범위(객체·속성 단위)를 채웁니다. 1단계는 아키텍처 초기 범위를 아직 다 채우지 않은 중간 단계이며, 이 단계화는 UX 명세 8.3의 결정입니다. "커밋에 포함" 체크의 원본은 Git index이고, 터미널 `git status`와 늘 같아야 합니다. [아키텍처 §24.4, §26.3] [UX 명세 2장 P7, 8.3]
 
 | 단계 | 여는 것 | 전제 |
 |---|---|---|
@@ -66,11 +66,11 @@ Stage는 단계적으로 엽니다. "커밋에 포함" 체크의 원본은 Git i
 | 로딩 | 첫 `.status` 이벤트 전 | 목록 자리에 시스템 진행 표시 + "Loading Git status…", 머리 줄 "Loading…" |
 | 빈 상태(변경 없음) | `availability == .ready`, 변경 행 0 | 아이콘 + "No Changes" + 설명 + "Refresh Status" 버튼 [가이드 7.1] |
 | conflict 없음 | conflict 행 0 | "No Conflicts" + 설명 + "Refresh Status" |
-| 제한 모드 | `.restricted` | 탭 전체가 설명 한 줄과 [프로젝트 신뢰…] 버튼(host 동작)으로 바뀜: "이 폴더에서 Git·hook·터미널·에이전트 실행이 꺼져 있습니다. 편집과 저장은 그대로 됩니다."(UX.5.7). Commit·Push·적용 비활성. 브랜치는 `.unknown`이면 "Source Control"로 표시 [아키텍처 §24.3] [가이드 6.4] [D1] [UX 명세 8.7] |
+| 제한 모드 | `.restricted` | 목표: 탭 전체가 설명 한 줄과 [프로젝트 신뢰…] 버튼(host 동작)으로 바뀜: "이 폴더에서 Git·hook·터미널·에이전트 실행이 꺼져 있습니다. 편집과 저장은 그대로 됩니다."(UX.5.7). 기준선: 목록 자리에 이유와 "Trust Project…" 버튼, Commit·Push·적용 비활성, 브랜치는 `.unknown`이면 "Source Control"로 표시 [아키텍처 §24.3] [가이드 6.4] [D1] [UX 명세 8.7] |
 | Git 없음 | `.gitMissing` | 이유와 "Show Git Installation Help…"(host 동작). 자동 설치 없음 [아키텍처 §24.1] |
 | 저장소 아님 | `.notRepository` | 이유만 표시(다음 동작은 프로젝트 흐름 WBS의 몫) |
 | semantic status 오류 | `semanticStatusError != nil` | 경고 배너 + "Refresh Status". raw 변경 행은 목록에 계속 표시 [계획 XIV.4.5] |
-| 저장 대기 편집 | `pendingAutosave` | 기준선: 배너 "Some edits aren't saved yet…" + "Save Now" / "Use Saved Version", 자동 저장하지 않음 [계획 XIV.2.8]. 목표: 배너 없이 커밋 직전에 대기 중인 자동 저장을 flush하고 상태를 다시 검증한 뒤 커밋(UX.5.5). 계획 XIV.2.8 문구와 맞추는 개정이 필요합니다 [UX 명세 8.4] |
+| 저장 대기 편집 | `pendingAutosave` | 기준선: 배너 "Some edits aren't saved yet…" + "Save Now" / "Use Saved Version", 자동 저장하지 않음 [계획 XIV.2.8]. 목표: 배너 없이 커밋 직전에 대기 중인 자동 저장을 flush하고 상태를 다시 검증한 뒤 커밋(UX.5.5). 계획 XIV.2.8 문구 개정은 UX.0.3에서 합니다 [UX 명세 8.4] |
 | 작업 진행 | `.operationProgress` 수신 ~ `.operationFinished` | 진행 배너(시스템 진행 표시 + 문구, 취소 가능하면 "Cancel"). 목록 조작과 Commit·Push·적용 비활성. Commit·Push·해결 적용·저장의 시작은 VoiceOver에 알림(보통 우선순위), 짧은 Stage·Unstage·새로고침은 알리지 않음 |
 | 실패 | `.operationFinished(.failed)` | 오류 배너(빨간 아이콘 + Git 결과 요약 + "Dismiss"). 아이콘 모양과 문구로도 전달 [가이드 4.2]. 같은 문구를 VoiceOver에 높은 우선순위로 알림 |
 | 사용자 동작 거부 | 사용자가 시작한 Commit·Push·해결 적용·필수 동반 변경 포함·저장 대기 선택(Save Now, Use Saved Version)의 `.commandRejected` | 실패와 같은 오류 배너에 "실행하지 않았다"는 문장과 이유 문장(다른 작업 진행 중, 그 사이 저장소가 바뀜, Git 사용 불가). 같은 문구를 VoiceOver에 높은 우선순위로 알림. 새 작업 결과가 오거나 "Dismiss"하면 사라짐. 미리 보여 준 값만 되돌리면 되는 거부(Stage 체크박스, 해결 선택, 페이지·상세 요청)와 취소 응답의 거부는 알리지 않음 |

@@ -270,14 +270,15 @@ Stellar macOS 셸이 운영체제 기본 구성요소 위에서 일관된 모습
 
 ### 6.4 Git 패널
 
-- 초기 범위는 Status·Semantic Diff, Stage·Unstage, Commit, Push, Semantic Conflict 해결뿐입니다. 강제 Push는 없고, Branch·Pull·Fetch·Merge·Rebase·Stash·Worktree·Remote 관리 UI는 초기 빌드에 넣지 않습니다. 브랜치 계열을 당길지는 커밋 고리 뒤 다시 검토합니다. [아키텍처 §24.4, §25.3] [계획 XIV.13.5, XIV.13.7] [결정 U18]
-- Stage("커밋에 포함" 체크)의 원본은 Git index이고 단계적으로 엽니다. 1단계는 원본(파일) 단위이고, View 원본이 generation인 동안 View는 묶음 하나로만 포함하며 그 사실을 행 보조 문구에 적습니다. 2단계는 텍스트 원본의 의미 Stage가 연결된 뒤 객체·속성 단위입니다. [아키텍처 §26.3] [UX 명세 8.3]
+- 초기 범위는 Status·Semantic Diff, 객체·속성 단위 Stage·Unstage, Commit, Push, Semantic Conflict 해결뿐입니다. 강제 Push는 없고, Branch·Pull·Fetch·Merge·Rebase·Stash·Worktree·Remote 관리 UI는 초기 빌드에 넣지 않습니다. 브랜치 계열을 당길지는 커밋 고리 뒤 다시 검토합니다. [아키텍처 §24.4, §25.3] [계획 XIV.13.5, XIV.13.7] [결정 U18]
+- Stage("커밋에 포함" 체크)의 원본은 Git index입니다. [아키텍처 §26.3]
+- 1단계는 원본(파일) 단위로 먼저 열고, 2단계에서 §24.4 범위(객체·속성 단위)를 채웁니다. 1단계에서는 View 원본이 generation인 동안 View를 묶음 하나로만 포함하고 그 사실을 행 보조 문구에 적습니다. 2단계는 텍스트 원본의 의미 Stage가 연결된 뒤입니다. 이 단계화는 UX 명세의 결정이고, 1단계는 아키텍처 초기 범위를 아직 다 채우지 않은 중간 단계입니다. [UX 명세 8.3]
 - 새 창 계층을 만들지 않고 왼쪽 사이드바의 "변경" 탭으로 둡니다(열린 결정 O4 닫음). 인스펙터 탭으로 두지 않는 이유는 2.3절의 동시 보기입니다. 핵심 동작(메시지·커밋·Push)은 탭 위쪽에 둡니다. [HIG Sidebars, HIG Windows] [계획 XIV.13.5] [결정 U1] [UX 명세 8.1]
 - Conflict 해결은 Base·Ours·Theirs와 결과를 같은 Conflict Graph로 보여 주고 캔버스와 Property 단위 선택을 지원합니다. 따라서 해결 화면은 캔버스 영역을 함께 씁니다. [아키텍처 §27.2]
 - 커밋 메시지는 `NSTextView`로 입력합니다. [아키텍처 §11.2]
 - 신뢰 전 제한 모드에서는 Git 동작이 비활성화되므로, 탭은 그 이유와 신뢰 부여 동작을 함께 보여 줍니다. 제한 모드가 막는 것은 Git·hook·터미널·에이전트 실행뿐이고 편집과 저장은 그대로 됩니다. [아키텍처 §24.3] [계획 XVI.7.2] [D1]
 - 필수 동반 변경은 행 아래 inline 확인 줄로 묻고 자동으로 포함하지 않습니다. alert·sheet는 쓰지 않습니다. [UX 명세 4장 흐름 4, 8.3]
-- 커밋 직전에 대기 중인 자동 저장을 flush한 뒤 상태를 다시 검증하고 커밋합니다. 지금의 "Save Now / Use Saved Version" 배너는 이 흐름으로 대신합니다. 계획 XIV.2.8("Git UI를 열기 전 flush 여부를 묻고 자동 저장하지 않음")과 맞추는 개정은 계획 개정 작업에서 합니다. [계획 XIV.2.8] [UX 명세 8.4]
+- 커밋 직전에 대기 중인 자동 저장을 flush한 뒤 상태를 다시 검증하고 커밋합니다. 지금의 "Save Now / Use Saved Version" 배너는 이 흐름으로 대신합니다. 계획 XIV.2.8("Git UI를 열기 전 flush 여부를 묻고 자동 저장하지 않음")은 계획 개정 행 UX.0.3에서 이 흐름(커밋 직전 flush 후 상태 재검증, UX.5.5)으로 고칩니다. 그 전까지는 XIV.2.8이 우선입니다. [계획 XIV.2.8] [UX 명세 8.4]
 - 변경 목록은 페이지 단위로 받고, stage·commit·push의 진행과 결과는 이벤트 큐로 받습니다. Git 작업은 메인 스레드에서 실행하지 않습니다. [아키텍처 §6.4] [계획 XIV.13.1, XIV.13.2]
 
 ### 6.5 에이전트 패널(오른쪽 에이전트 탭)
