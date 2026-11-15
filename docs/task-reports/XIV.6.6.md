@@ -28,7 +28,7 @@
 | `cargo xtask generate-ledger` | 0 — 원장 변경은 XIV.6.2~6.6의 5개 작업만 |
 | `cargo xtask validate-task-status` / `cargo xtask sync-plan --check` | 모두 0 |
 | `cargo xtask verify-task <ID>` — XIV.6.2, XIV.6.3, XIV.6.4, XIV.6.5, XIV.6.6 각각 | 모두 0 |
-| `cargo xtask validate-task-report <path>` — XIV.6.2-blocked 및 XIV.6.2~6.6 보고서 각각 | 모두 0 |
+| `cargo xtask validate-task-report <path>` — XIV.6.2~6.6 보고서 각각 | 모두 0 |
 
 ## 환경과 증거
 

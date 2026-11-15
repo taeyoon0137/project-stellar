@@ -13,7 +13,7 @@
 - `crates/git-porcelain/src/index_publish.rs`, `index_publish/ownership.rs`: 자식 FD 소유 증명, 잠금 안 snapshot/bytes/flags 검사, 단일 NUL index-info 적용, Index provider 재조회.
 - `index_publish/tests.rs`, `snapshot/index.rs`, `blob_write.rs`, `lib.rs`: 회귀 검증·취소 가능한 기존 provider·모듈 등록·테스트 생성자.
 - `crates/runtime/src/staging/tests.rs`: 기존 준비·직렬화·blob pipeline을 재사용한 실제 A/B 부분 stage 검증.
-- 아키텍처 §26, 구현 계획, 이 보고서와 기존 차단 보고서 요약. 새 dependency·실행기·UI/FFI 연결은 없습니다.
+- 아키텍처 §26, 구현 계획, 이 보고서. 새 dependency·실행기·UI/FFI 연결은 없습니다.
 
 ## 명령과 종료 코드
 
@@ -56,7 +56,7 @@ Cargo 명령은 모두 `CARGO_TARGET_DIR="$PWD/target/semantic-index-publish"`�
 
 - [Git update-index v2.54.0](https://github.com/git/git/blob/v2.54.0/builtin/update-index.c#L1047-L1055)은 lock 실패 뒤에도 index를 읽을 수 있습니다. 따라서 파일 존재가 아닌 실제 자식 FD 소유를 확인합니다. 수정·commit·잠금 정리는 Git만 수행합니다.
 - [Git lockfile API](https://git-scm.com/docs/api-lockfile)의 exclusive-create/rename 규약을 지키는 writer를 대상으로 합니다. 검증되지 않은 OS/버전/flags는 우회하지 않습니다.
-- 이전 장문 재현은 commit `39bf1612`에 남기고 차단 보고서를 핵심 관찰로 줄였습니다. 기존 부분 선택·직렬화는 재구현하지 않았습니다.
+- 초기 차단 당시의 재현은 commit `39bf1612`에 남아 있습니다. 해소된 차단 보고서는 2026-11-15 검토에서 삭제했습니다. 기존 부분 선택·직렬화는 재구현하지 않았습니다.
 
 ## 남은 위험
 
