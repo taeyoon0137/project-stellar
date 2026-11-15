@@ -90,6 +90,27 @@ Text 레이어 본문은 `replace-text`(`node`, Unicode scalar 정수 `start`와
 인스턴스는 `parent`의 마지막 자식이 되고, 위치 `(x, y)`는 부모 좌표계의 평행이동으로 저장됩니다.
 적용할 때 정의가 없거나 원본 hash가 다르면 `component-source-changed`(65)로 거부하고 아무것도 쓰지 않습니다.
 
+잠긴 node는 앱의 Layers·속성 패널과 같은 규칙으로 보호합니다(사용자 결정 D8). 판정은 요청을 시작할 때의 문서와
+적용 결과를 비교해 합니다.
+
+- 자신이나 조상이 잠긴 node의 값(이름·표시·크기·변환·Text 본문·modifier 등)을 바꾸거나, 지우거나, 다른 부모로
+  옮기는 command를 거부합니다. 잠기지 않은 node를 지워도 그 아래에 잠긴 node가 있으면 거부합니다.
+- 잠긴 node나 잠긴 조상 아래 node를 새 부모로 하는 삽입(`insert-component-instance`, canonical `insert-node`·
+  `duplicate-subtree` 등)과 이동(`move-node`)을 거부합니다.
+- `set-locked`로 `locked`만 바꾸는 것은 조상이 잠기지 않은 node에만 허용합니다. 잠긴 조상 아래 node는 잠그거나 풀
+  수 없습니다.
+- 같은 요청에서 잠금을 풀고 그 node를 함께 바꾸는 것도 거부합니다. 해제(`set-locked`, `locked: false`)를 별도
+  `apply`로 먼저 적용한 뒤 편집합니다.
+- 어느 command가 걸려도 transaction 전체를 `rejected-command`(1)로 거부하고 아무것도 쓰지 않습니다. `--dry-run`도
+  같은 판정을 합니다. 오류 message의 command 번호(`command #n`)는 잠금을 처음 어긴 command입니다.
+- `component-source`의 잠금 거부(`resize`·`set-fill`의 잠긴 root, `add-frame`의 잠긴 부모·조상)는 같은 규칙이지만
+  그 명령의 원본 오류 `text-source-invalid`(65)로 보고합니다. `apply`의 잠금 거부를 다른 command 거부와 같은 1로
+  두는 것은 아래 계획 의미 표(1 = 거부된 command)를 따른 것입니다. 두 명령의 오류 코드를 하나로 맞출지는 종료
+  코드 표를 소유한 XXIV.1.2에서 정합니다.
+- 판정 구현은 아직 경로마다 따로 있습니다. `apply`는 `stellar_ops::apply`의 결과 비교, 앱 속성 패널은
+  `stellar_commands::lock::NodeLock`, 앱 Layers·삭제·붙여넣기는 runtime 검사를 씁니다. 의미는 같고, 하나로 합치는
+  일은 XIX.4.3에 남아 있습니다.
+
 ### `help`
 
 - 도움말 텍스트를 stdout에 쓰고 0으로 끝납니다. 내용은 `tools/stellar-cli/tests/fixtures/help.txt`
