@@ -49,6 +49,8 @@ dependencies policy에 등록하고 `text` crate에 안전 wrapper를 구현합�
    `stellar-text`가 정수 산술(1/64 px subpixel, 레이아웃 `LayoutUnit`과 같은 격자)로 합니다. 각
    crate의 Unicode 데이터 버전(BiDi 16.0, 줄바꿈 15.0, grapheme 17.0)은 테스트로 고정해, 갱신이
    golden 변경과 함께 의도적으로만 일어나게 합니다.
+8. **glyph outline**: 캔버스 그리기용 unhinted 외곽선은 shaping과 같은 face instance에서
+   `harfrust::font`의 outline 그리기로 얻습니다(`stellar_text::outline`). 새 의존성을 추가하지 않습니다.
 
 ### 전이 의존성과 라이선스(2026-11-14 `cargo metadata` 기준, `harfrust` 0.15.0)
 
@@ -106,6 +108,9 @@ face당 한 번만 보관합니다. 세부 예산은 Phase X 레이아웃 benchm
 폰트 파일은 신뢰할 수 없는 입력입니다. `read-fonts`는 bounds-checked 파싱을 하고 `harfrust`는
 연산 budget으로 악성 폰트의 과도한 작업을 제한합니다. `stellar-text`는 잘못된 폰트를 오류로
 반환하고 panic하지 않으며(잘린·임의 bytes fixture), `unsafe` 코드가 없습니다.
+
+glyph outline도 같은 bounds-checked 파서를 씁니다. glyph 하나의 path 요소(65,536개)와 scratch
+메모리(4 MiB)에 상한을 두고, 넘으면 `TooComplex` 오류로 그 glyph를 그리지 않습니다.
 
 ## Migration
 

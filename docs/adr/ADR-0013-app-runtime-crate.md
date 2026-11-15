@@ -37,6 +37,10 @@ Render(불변 scene snapshot 읽기), Worker Pool로 나누고 "문서 모델에
      추가하지 않습니다. 이 동기식 준비 API는 새 thread·worker나 FFI·UI 경로를 만들지 않습니다.
      ADR-0059 전환 완료 전의 기존 generation 형식만 다루며, 문서 밖 chunk·opaque field를
      보존할 증거가 없으면 unsupported입니다. 외부 library와 lockfile은 index bytes를 유지합니다.
+   - canvas Text를 위해 `stellar-text` 직접 의존을 추가합니다(2026-11-14 추가, 2026-11-15 기록).
+     창 canvas scene이 저장 Text와 조합 미리보기의 layout·glyph outline·caret·hit를 공통 text 엔진
+     (Phase X)으로 계산합니다. text는 runtime·project에 의존하지 않습니다(역방향 없음). 글꼴 파일은
+     runtime의 loader thread가 읽고 document thread는 읽지 않습니다(ADR-0067 §5).
    - `stellar-ffi` → `stellar-core-types`, `stellar-runtime`. ffi는 runtime을 우회해
      document·project에 직접 의존하지 않습니다(단일 작성자 규칙을 셸 경계에서도 유지).
    - 역방향 금지: runtime은 ffi에 의존하지 않고, runtime 아래 crate는 runtime을 참조하지
