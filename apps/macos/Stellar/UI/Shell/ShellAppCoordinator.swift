@@ -52,7 +52,7 @@ final class ShellAppCoordinator: NSObject {
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: String(localized: "OK", comment: "Button"))
-        if let window {
+        if let window, window.isVisible {
             alert.beginSheetModal(for: window)
         } else {
             alert.runModal()

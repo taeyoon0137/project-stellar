@@ -496,7 +496,7 @@ final class ShellProjectWindow {
         return session.pendingCommandCount != 0 || session.info?.has_unsaved_changes != 0
     }
     /// 저장 응답을 기다리는 셸 watchdog. AutosavePolicy의 미확정 성능 수치를 대체하지 않습니다.
-    var closeReplyTimeout: TimeInterval = 10
+    private let closeReplyTimeout: TimeInterval = 10
     var frameDrag: CanvasFrameDrag?
     var isWaitingToClose: Bool { closeAttempt != nil }
 
