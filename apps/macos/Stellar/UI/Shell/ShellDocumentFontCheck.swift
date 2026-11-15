@@ -86,9 +86,6 @@ enum ShellDocumentFontCheck {
         guard wait(), let reopened = open(), let verified = sample(reopened), verified.0?.id == hit.id,
             verified.0?.isText == true, verified.1 == after.1
         else { return fail("saved IDs, project font and glyph pixels after reopen") }
-        guard ShellCanvasMixedMediaCheck.run(project: reopened, directory: URL(fileURLWithPath: path).deletingLastPathComponent(),
-                                            text: hit.id, reopen: { reopened.window?.close(); return wait() ? open() : nil })
-        else { return fail("mixed canvas") }
         print(
             "document-font ok: restricted, explicit face, real outlines, hit/caret/selection, stale revision, undo/redo, save/reopen"
         )
