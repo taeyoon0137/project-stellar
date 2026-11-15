@@ -576,7 +576,9 @@ final class ShellProjectWindow {
             guard let self else { return }
             self.window?.makeFirstResponder(self.canvasHost.canvasView)
         }
-        inspectorSlot.inspector.isCanvasGestureActive = { [weak self] in self?.frameDrag != nil }
+        inspectorSlot.inspector.isCanvasGestureActive = { [weak self] in
+            self?.canvasHost.canvasView.frameGestureActive?() == true
+        }
         sidebarSource.editSelection = { [weak self] command, target, ids in
             _ = self?.editSelection(command, target: target, ids: ids)
         }

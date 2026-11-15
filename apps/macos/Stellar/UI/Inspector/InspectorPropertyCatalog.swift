@@ -2,8 +2,9 @@ import Foundation
 
 /// 속성 패널 표시 문구(섹션 제목, 속성 설명). 어느 행이 있는지와 값은 코어가 정하고, 여기에는 표시 문구만 둡니다.
 enum InspectorPropertyCatalog {
-    /// 섹션 제목(속성 모델 12장 CSS 범주 이름).
-    static func title(_ section: InspectorSectionKind) -> String {
+    /// 섹션 제목(속성 모델 12장 CSS 범주 이름). 종류별 섹션은 선택한 노드 종류 이름입니다(UX 명세 6.2: Polygon 변 수,
+    /// Line 끝점, Image `object-fit`). 종류별 행은 선택한 노드가 모두 같은 종류일 때만 나옵니다.
+    static func title(_ section: InspectorSectionKind, classes: InspectorNodeClasses) -> String {
         switch section {
         case .layer: return String(localized: "Layer")
         case .position: return String(localized: "Position")
@@ -13,7 +14,7 @@ enum InspectorPropertyCatalog {
         case .background: return String(localized: "Background")
         case .fillStroke: return String(localized: "Fill & Stroke")
         case .border: return String(localized: "Border")
-        case .kind: return String(localized: "Shape")
+        case .kind: return InspectorSymbols.kindName(classes)
         }
     }
 
@@ -33,7 +34,6 @@ enum InspectorPropertyCatalog {
         case "fill": return String(localized: "Shape fill color. none removes the fill.")
         case "stroke": return String(localized: "Outline color. none removes the outline.")
         case "stroke-width": return String(localized: "Outline thickness.")
-        case "stroke-linecap": return String(localized: "Shape of the line ends.")
         case "border": return String(localized: "Border width, style, and color on all four sides.")
         case "border-radius": return String(localized: "Corner radius. One to four values: top-left, top-right, bottom-right, bottom-left.")
         case "border-top-left-radius": return String(localized: "Top-left corner radius.")
@@ -46,18 +46,17 @@ enum InspectorPropertyCatalog {
         case "polygon-rotation": return String(localized: "Rotation of the polygon’s points inside its box.")
         case "polygon-corner-radius": return String(localized: "Rounding of the polygon’s corners.")
         case "object-fit": return String(localized: "How the image fills its box.")
-        case "image-rendering": return String(localized: "Image scaling quality. pixelated keeps hard pixel edges.")
         default: return ""
         }
     }
 
-    /// 툴팁·접근성 도움말: 쉬운 설명, CSS longhand 이름, 저장 key, Stellar 전용 여부.
+    /// 툴팁·접근성 도움말: 쉬운 설명, CSS longhand 이름, 변환 진단(UX 명세 6.3). 진단은 코어 행 flag에서 옵니다.
     static func help(for row: InspectorRowState) -> String {
         var lines = [summary(row.name)].filter { !$0.isEmpty }
         if row.flags.contains(.group) {
             lines.append(String(localized: "Shorthand for the four border-*-radius longhands."))
         } else {
-            lines.append(row.name + (row.key != 0 ? String(format: "  (key 0x%04X)", row.key) : ""))
+            lines.append(row.name)
         }
         if row.flags.contains(.stellarOnly) {
             lines.append(String(localized: "Stellar only: not exported as CSS."))

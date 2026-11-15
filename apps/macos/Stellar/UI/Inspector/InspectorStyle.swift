@@ -8,8 +8,6 @@ enum InspectorMetrics {
     static let rowSpacing: CGFloat = 4
     /// 섹션 간격.
     static let sectionSpacing: CGFloat = 10
-    /// 행 레이블 열 너비. 가장 긴 CSS 이름(`border-bottom-right-radius`)이 320pt 패널에서 잘리지 않는 폭입니다.
-    static let labelColumnWidth: CGFloat = 150
     /// 값 필드 최소 너비.
     static let minimumFieldWidth: CGFloat = 60
     /// 컨트롤 크기.

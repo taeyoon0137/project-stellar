@@ -11,7 +11,8 @@ final class InspectorSectionView: NSView {
     private let rows = NSStackView()
     private(set) var isCollapsed: Bool
 
-    init(kind: InspectorSectionKind, collapsed: Bool) {
+    /// - Parameter title: 섹션 제목. 종류별 섹션은 선택한 노드 종류 이름입니다(`InspectorPropertyCatalog.title`).
+    init(kind: InspectorSectionKind, title titleText: String, collapsed: Bool) {
         self.kind = kind
         isCollapsed = collapsed
         super.init(frame: .zero)
@@ -21,7 +22,7 @@ final class InspectorSectionView: NSView {
         disclosure.title = ""
         disclosure.target = self
         disclosure.action = #selector(toggle)
-        let title = NSButton(title: InspectorPropertyCatalog.title(kind), target: self, action: #selector(toggleFromTitle))
+        let title = NSButton(title: titleText, target: self, action: #selector(toggleFromTitle))
         title.isBordered = false
         title.font = InspectorFonts.sectionTitle
         title.contentTintColor = .labelColor
@@ -44,7 +45,7 @@ final class InspectorSectionView: NSView {
             column.bottomAnchor.constraint(equalTo: bottomAnchor),
             rows.widthAnchor.constraint(equalTo: column.widthAnchor),
         ])
-        disclosure.setAccessibilityLabel(InspectorPropertyCatalog.title(kind))
+        disclosure.setAccessibilityLabel(titleText)
         applyCollapse()
     }
 

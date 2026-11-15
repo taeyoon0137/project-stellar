@@ -11,8 +11,8 @@ final class InspectorViewController: NSViewController {
     /// 캔버스 드래그·크기 조절 중인지. 창이 연결합니다(UX.2.12).
     var isCanvasGestureActive: (() -> Bool)?
 
-    /// 속성 패널 안 연속 조작(scrub·화살표·색 패널) 수.
-    private var panelGestures = 0
+    /// 지금 레이블 scrub 중인 행. 행마다 시작·끝을 한 번씩 알리므로 집합으로 둡니다(중복 시작이 쌓이지 않음).
+    private var panelGestures: Set<ObjectIdentifier> = []
     /// 제스처 중 미룬 구성 변경 snapshot.
     private var deferredSnapshot: InspectorSnapshot?
     private var deferTimer: Timer?
@@ -33,6 +33,9 @@ final class InspectorViewController: NSViewController {
     private var groupMembers: [String: [InspectorRowView]] = [:]
     private var appliedStructure: [String] = []
     private(set) var appliedSnapshot = InspectorSnapshot.empty
+    /// 지금 구성에서 가장 긴 레이블 몫(펼침 단추·들여쓰기 포함)과 마지막으로 맞춘 패널 폭.
+    private var longestLabel: CGFloat = 0
+    private var laidOutWidth: CGFloat = 0
 
     init(dataSource: InspectorDataSource) {
         self.dataSource = dataSource
@@ -85,8 +88,8 @@ final class InspectorViewController: NSViewController {
         apply(dataSource.snapshot)
     }
 
-    /// 제스처(캔버스 드래그·크기 조절, 패널 scrub·화살표·색 패널) 중인지.
-    private var gestureActive: Bool { panelGestures > 0 || isCanvasGestureActive?() == true }
+    /// 제스처(캔버스 드래그·크기 조절·영역 선택, 패널 레이블 scrub) 중인지.
+    private var gestureActive: Bool { !panelGestures.isEmpty || isCanvasGestureActive?() == true }
 
     /// snapshot을 반영합니다. 구성(섹션·행 이름·flag)이 같으면 값만 제자리에서 갱신합니다. 제스처 중에는 구성을
     /// 고정하고(섹션 추가·삭제·스크롤 0) 같은 이름 행의 값만 바꾼 뒤, 제스처가 끝나면 미룬 구성을 반영합니다.
@@ -125,9 +128,29 @@ final class InspectorViewController: NSViewController {
         }
     }
 
-    private func gesture(_ active: Bool) {
-        panelGestures = max(0, panelGestures + (active ? 1 : -1))
-        if !active, deferredSnapshot != nil { scheduleDeferredApply() }
+    private func gesture(_ row: InspectorRowView, active: Bool) {
+        if active {
+            panelGestures.insert(ObjectIdentifier(row))
+        } else {
+            panelGestures.remove(ObjectIdentifier(row))
+            if deferredSnapshot != nil { scheduleDeferredApply() }
+        }
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        // 패널 폭이 바뀌면 레이블 열을 다시 맞춥니다(구성을 만들 때 폭이 아직 0이었던 경우 포함).
+        let width = view.bounds.width
+        guard abs(width - laidOutWidth) > 0.5 else { return }
+        laidOutWidth = width
+        let labelWidth = currentLabelWidth()
+        for row in rowViews.values { row.setLabelWidth(labelWidth) }
+    }
+
+    /// 레이블 열 폭: 가장 긴 CSS 이름이 잘리지 않는 폭, 패널 안쪽 폭의 60% 상한.
+    private func currentLabelWidth() -> CGFloat {
+        let available = max(view.bounds.width - 2 * InspectorMetrics.panelInset, 0)
+        return min(max(longestLabel + 4, 70), max(available * 0.6, 70))
     }
 
     /// 속성 이름(CSS longhand)으로 값 컨트롤을 찾습니다(키보드 포커스 이동·접근성).
@@ -147,18 +170,20 @@ final class InspectorViewController: NSViewController {
         let classes = snapshot.classes
         let collapsed = InspectorCollapseMemory.collapsed(for: classes)
         groupMembers.removeAll()
-        // 레이블 열은 가장 긴 CSS 이름에 맞춥니다(잘리지 않게, 패널 폭의 60% 상한).
+        // 레이블 열은 가장 긴 CSS 이름에 맞춥니다(잘리지 않게, 패널 폭의 60% 상한). 폭이 바뀌면 viewDidLayout이
+        // 다시 맞춥니다.
         let attributes: [NSAttributedString.Key: Any] = [.font: InspectorFonts.label]
-        let longest = snapshot.rows.map {
+        longestLabel = snapshot.rows.map {
             ceil(($0.name as NSString).size(withAttributes: attributes).width) + ($0.flags.contains(.longhand) ? 12 : 0)
                 + ($0.flags.contains(.group) ? 18 : 0)
         }.max() ?? 0
-        let available = max(view.bounds.width - 2 * InspectorMetrics.panelInset, 260)
-        let labelWidth = min(max(longest + 4, 70), available * 0.6)
+        let labelWidth = currentLabelWidth()
         var currentGroup: String?
         for row in snapshot.rows {
             let section = sectionViews[row.section] ?? {
-                let view = InspectorSectionView(kind: row.section, collapsed: collapsed.contains(row.section))
+                let view = InspectorSectionView(kind: row.section,
+                                                title: InspectorPropertyCatalog.title(row.section, classes: classes),
+                                                collapsed: collapsed.contains(row.section))
                 view.onToggle = { [weak self] _, _ in self?.rememberCollapse(for: classes) }
                 sectionViews[row.section] = view
                 body.addArrangedSubview(view)
@@ -170,7 +195,10 @@ final class InspectorViewController: NSViewController {
                 self?.dataSource.edit(name, input, phase: phase, completion: completion)
             }
             rowView.onEscape = { [weak self] in self?.focusCanvas?() }
-            rowView.onGesture = { [weak self] active in self?.gesture(active) }
+            rowView.onGesture = { [weak self, weak rowView] active in
+                guard let self, let rowView else { return }
+                self.gesture(rowView, active: active)
+            }
             if row.flags.contains(.group) {
                 currentGroup = row.name
                 let name = row.name
@@ -263,9 +291,10 @@ final class InspectorHeaderView: NSView {
     func update(_ snapshot: InspectorSnapshot) {
         let single = InspectorNodeClasses.allSingle.first { snapshot.classes == $0 }
         if snapshot.count == 0 {
+            // 선택이 없으면 현재 Page 요약(코어가 준 `Page · View`)과 자주 쓰는 키만 보입니다(UX 명세 6.1).
             icon.image = NSImage(systemSymbolName: InspectorSymbols.noSelection, accessibilityDescription: nil)
-            title.stringValue = String(localized: "No Selection")
-            detail.stringValue = String(localized: "Select a layer on the canvas or in Layers to edit its CSS properties. V Move · F Frame · R Rectangle · O Ellipse · L Line · P Polygon · T Text")
+            title.stringValue = snapshot.displayName.isEmpty ? String(localized: "No Selection") : snapshot.displayName
+            detail.stringValue = String(localized: "Select a layer to edit its CSS properties.") + "\n" + Self.toolKeys
             detail.isHidden = false
         } else if snapshot.count == 1 {
             icon.image = NSImage(systemSymbolName: InspectorSymbols.node(single ?? .other), accessibilityDescription: nil)
@@ -276,9 +305,16 @@ final class InspectorHeaderView: NSView {
             icon.image = NSImage(systemSymbolName: single.map(InspectorSymbols.node) ?? InspectorSymbols.mixedSelection,
                                  accessibilityDescription: nil)
             title.stringValue = String(localized: "\(snapshot.count) Layers")
-            detail.stringValue = String(localized: "Mixed values apply to every selected layer.")
-            detail.isHidden = false
+            detail.stringValue = ""
+            detail.isHidden = true
         }
+    }
+
+    /// 도구 단축키 안내. 표시 키는 캔버스가 해석하는 키(`CanvasTool.singleKey`)에서 만듭니다.
+    static var toolKeys: String {
+        CanvasTool.allCases.compactMap { tool in
+            tool.singleKey.map { "\(String($0).uppercased()) \(tool.label)" }
+        }.joined(separator: " · ")
     }
 }
 

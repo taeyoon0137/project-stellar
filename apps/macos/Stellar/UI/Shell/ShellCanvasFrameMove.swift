@@ -16,6 +16,10 @@ extension ShellProjectWindow {
         let canvas = canvasHost.canvasView
         var handDrag: (point: NSPoint, session: UInt64, size: NSSize)?
         var zoomDrag: (start: NSPoint, session: UInt64, camera: StellarWindowViewInfo, bounds: CGRect)?
+        // 진행 중인 캔버스 제스처 하나라도 있으면 true. 새 제스처 상태(크기 조절·영역 선택 등)도 여기에 더합니다.
+        canvas.frameGestureActive = { [weak self] in
+            self?.frameDrag != nil || handDrag != nil || zoomDrag != nil
+        }
         canvas.cancelFrameGesture = { [weak self, weak canvas] in
             guard let self, self.frameDrag != nil || handDrag != nil || zoomDrag != nil else { return false }
             handDrag = nil
