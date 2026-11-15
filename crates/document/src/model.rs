@@ -377,6 +377,27 @@ impl DocumentModel {
         Ok(old.0)
     }
 
+    /// `node` 바로 위(다음으로 앞에 그리는 형제와의 사이)에 넣을 순서 키. 이웃 하나만 조회합니다.
+    ///
+    /// `node`가 `parent`의 직계 자식이 아니거나 바로 위 형제와 키가 같으면 `None`입니다.
+    pub fn order_key_above(&self, parent: StableId, node: StableId) -> Option<OrderKey> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        let children = self.children.get(&parent)?;
+        let fields = self.columns.get(self.runtime_id(node)?)?;
+        if self.stable_id(fields.parent?)? != parent {
+            return None;
+        }
+        let current = (fields.order_key, node);
+        let above = children
+            .range((Excluded(current.clone()), Unbounded))
+            .next()
+            .map(|pair| &pair.0);
+        if above.is_some_and(|key| *key <= current.0) {
+            return None;
+        }
+        Some(OrderKey::between(Some(&current.0), above))
+    }
+
     /// 마지막 직계 자식 뒤에 삽입할 순서 키. 전체 형제 목록을 복사하지 않습니다.
     pub fn next_child_order_key(&self, parent: StableId) -> OrderKey {
         let last = self

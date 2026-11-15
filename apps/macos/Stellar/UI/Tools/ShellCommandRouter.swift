@@ -55,7 +55,8 @@ final class ShellCommandRouter: NSResponder, NSMenuItemValidation {
         window?.firstResponder is NSText || window?.firstResponder is CanvasTextInputView
     }
 
-    /// 텍스트 편집 중 창 undo manager에 넘기는 표준 action.
+    /// 텍스트 편집 중 셸 명령으로 보내지 않고 응답자 체인에 맡기는 표준 action.
+    /// Copy·Paste·Delete는 field editor·캔버스 Text 입력이, Undo·Redo는 창 undo manager가 처리합니다.
     static let textEditingPassThroughActions: Set<Selector> = [
         #selector(ShellCommandRouter.copy(_:)),
         #selector(ShellCommandRouter.paste(_:)),
@@ -64,8 +65,8 @@ final class ShellCommandRouter: NSResponder, NSMenuItemValidation {
         #selector(ShellCommandRouter.redo(_:)),
     ]
 
-    /// 텍스트 편집 중에는 `undo:`·`redo:`에 응답하지 않는다고 알립니다. AppKit의 target 탐색(`sendAction`,
-    /// `tryToPerform`, 메뉴 검증)이 이 값을 보므로 체인이 창(undo manager)까지 이어집니다.
+    /// 텍스트 편집 중에는 위 action에 응답하지 않는다고 알립니다. AppKit의 target 탐색(`sendAction`,
+    /// `tryToPerform`, 메뉴 검증)이 이 값을 보므로 체인이 텍스트 입력과 창(undo manager)까지 이어집니다.
     override func responds(to aSelector: Selector!) -> Bool {
         if let aSelector, isTextEditing, Self.textEditingPassThroughActions.contains(aSelector) {
             return false

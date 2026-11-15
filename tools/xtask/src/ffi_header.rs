@@ -374,9 +374,6 @@ StellarStatus stellar_window_copy_selection(uint64_t handle, const StellarSelect
 StellarStatus stellar_window_paste_selection(uint64_t handle, const StellarSelectionTarget *target, const uint8_t *bytes, size_t len, uint64_t *out_request);
 StellarStatus stellar_window_session_copy_subtree(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint8_t *bytes, size_t capacity, size_t *out_len);
 StellarStatus stellar_window_session_paste_subtree(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t parent[16], uint64_t revision, const uint8_t *bytes, size_t len, uint64_t *out_request);
-/* 기존 호출자는 요청 접수 시점의 게시 선택을 사용합니다. */
-StellarStatus stellar_window_session_delete_selection(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint64_t *out_request);
-StellarStatus stellar_window_session_duplicate_selection(uint64_t handle, uint64_t session, const uint8_t view[16], uint64_t revision, uint64_t *out_request);
 /* 화면에 표시한 View·revision에서 선택한 Frame을 부모 좌표계의 delta만큼 이동합니다. */
 StellarStatus stellar_window_session_move_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float dx, float dy, uint64_t *out_request);
 StellarStatus stellar_window_session_resize_frame(uint64_t handle, uint64_t session, const uint8_t view[16], const uint8_t node[16], uint64_t revision, float width, float height, uint64_t *out_request);

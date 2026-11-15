@@ -32,11 +32,13 @@ pub(super) fn duplicate_selected(
         .ok()
         .and_then(|d| u64::try_from(d.as_nanos()).ok())
         .ok_or_else(invalid)?;
+    // 복제본은 원본 바로 위에 놓습니다. 흐름 컨테이너에서도 원본 다음 자리가 됩니다.
+    let order = model.order_key_above(parent, source).ok_or_else(invalid)?;
     let command = DuplicateSubtree::plan(
         model,
         source,
         parent,
-        model.next_child_order_key(parent),
+        order,
         &mut generator,
         &ManualClock::new(nanos),
     )
@@ -88,6 +90,34 @@ mod tests {
         assert_eq!(saved.payload(copied_child), model.payload(sid(12)));
         assert_eq!(saved.record(copy).unwrap().parent, Some(sid(10)));
         assert!(saved.contains(sid(11)) && saved.contains(sid(12)));
+    }
+
+    #[test]
+    fn duplicate_is_placed_directly_above_the_source_through_undo_and_reopen() {
+        // 형제 11(아래)·12(위) 사이에 복제본이 들어가야 흐름 컨테이너 순서도 원본 다음이 됩니다.
+        let dir = saved_project_with("duplicate-order", &[&sample_document()]);
+        let mut session = ProjectWindowSession::load(identity(dir.path()), window(1)).unwrap();
+        session.select(Selection::new([sid(11)], None)).unwrap();
+        let rev = session.revision();
+        let copy = duplicate_selected(&mut session, RequestId(1), sid(3), rev)
+            .unwrap_or_else(|failure| panic!("{}", failure.message));
+        let order = |session: &ProjectWindowSession| {
+            session
+                .document()
+                .unwrap()
+                .model()
+                .children_in_order(sid(10))
+        };
+        assert_eq!(order(&session), [sid(11), copy, sid(12)]);
+        assert!(session.undo().unwrap());
+        assert_eq!(order(&session), [sid(11), sid(12)]);
+        assert!(session.redo().unwrap());
+        assert_eq!(order(&session), [sid(11), copy, sid(12)]);
+        session
+            .save_with_lock_dir(|| Ok(dir.path().join("locks")))
+            .unwrap();
+        let reopened = ProjectWindowSession::load(identity(dir.path()), window(2)).unwrap();
+        assert_eq!(order(&reopened), [sid(11), copy, sid(12)]);
     }
 
     #[test]

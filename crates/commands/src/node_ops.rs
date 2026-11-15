@@ -1260,43 +1260,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "1천·1만·5만 형제에서 같은 부모 MoveNode 왕복 측정"]
-    fn measure_layer_reorder() {
-        for count in [1_000, 10_000, 50_000] {
-            let mut model = DocumentModel::new(crate::command::test_fixtures::definition());
-            model.insert_node(frame(10, None, 1)).unwrap();
-            for (i, key) in OrderKey::evenly_spaced(count).into_iter().enumerate() {
-                let mut record = frame(100 + i as u64, Some(10), 1);
-                record.order_key = key;
-                model.insert_node(record).unwrap();
-            }
-            let mut state = DocumentState::new(model);
-            let id = sid(100 + (count / 2) as u64);
-            let mut timings = Vec::new();
-            for _ in 0..15 {
-                let key = state.model().next_child_order_key(sid(10));
-                let start = std::time::Instant::now();
-                let undo = run(
-                    &mut state,
-                    Command::MoveNode(MoveNode {
-                        node: id,
-                        new_parent: sid(10),
-                        order_key: key,
-                    }),
-                )
-                .unwrap();
-                run(&mut state, undo).unwrap();
-                timings.push(start.elapsed().as_micros());
-            }
-            timings.sort_unstable();
-            println!(
-                "siblings={count} MoveNode+inverse p50_us={} p95_us={}",
-                timings[7], timings[14]
-            );
-        }
-    }
-
-    #[test]
     fn move_and_reorder_round_trip() {
         // 검증 기준(VII.2.3): move→undo, reorder fixture 통과.
         let mut state = DocumentState::new(small_model());

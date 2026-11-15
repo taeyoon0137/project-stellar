@@ -339,3 +339,29 @@ Stage·Unstage는 XIV.13.1·XIV.13.2에서 표시 행 번호가 아닌 변경 ID
 - 이동·생성 도구의 제스처(드래그 임계값, 수식키, 클릭 생성 크기)는 지금 셸이 해석해 결과 좌표만 위
   ABI로 보냅니다. canvas_editing 원칙 2("셸은 해석하지 않고 전달")와 다른 임시 구조입니다. hit test와 렌더를
   코어로 옮기는 후속(XI.8.2 → XII.4.1)에서 코어 도구 상태 기계로 옮깁니다.
+
+### 선택 편집과 레이어 순서
+
+- **대상**: `StellarSelectionTarget`(48 byte, align 8)은 한 게시 snapshot에서 읽은 `session`(u64, offset 0),
+  `revision`(u64, 8), `history_sequence`(u64, 16), `selection_count`(u64, 24), 활성 `view`(StableId 16 byte, 32)입니다.
+  `stellar_window_selection_target(handle, session, out)`이 채웁니다. 활성 View가 없으면 `NO_ERROR`와 0 값,
+  열려 있지 않은 창이면 `INVALID_ARGUMENT`입니다. 선택 삭제·복제·순서, Copy·Paste, PNG 배치가 이 대상을 씁니다.
+- **편집**: `stellar_window_edit_selection(handle, target, action, ids, count, out_request)`의 action은
+  1 Delete, 2 Duplicate, 3 Forward(바로 위 형제와 교체), 4 Backward, 5 Front, 6 Back입니다(`STELLAR_SELECTION_*`).
+  `ids`가 NULL이면 대상 선택 전체이고, 값이 있으면 `count == selection_count`여야 하며 순서와 무관하게 실행
+  시점의 선택 전체와 같아야 합니다(Layers 요청). 일부만 보인 페이지와 중복 ID는 거부합니다.
+- **검증 시점**: 접수는 기다리지 않습니다. document thread가 실행할 때 창의 `history_sequence`·활성 View·
+  revision이 대상과 같은지 확인합니다. 접수 뒤 선택이 바뀌었거나 같은 revision에서 다른 선택으로 갔다가
+  돌아온 경우도 sequence가 달라 거부합니다(`REQUEST_FAILED`, UnknownView). Undo·Redo가 원래 sequence를
+  복원하면 다시 받습니다.
+- **삭제·복제**: 삭제는 선택한 subtree root를 한 transaction으로 지우고, 잠긴 조상·자손이 있으면 전체를
+  거부합니다. 복제는 단일 선택 subtree를 같은 부모 아래 원본 바로 위(원본과 다음 형제의 순서 키 사이)에
+  넣고 복제본을 선택합니다. 흐름 컨테이너에서도 원본 다음 자리가 됩니다.
+- **레이어 순서**: `stellar_window_layer_order_flags(handle, target)`는 대상이 현재 게시 snapshot과 같고 단일
+  선택일 때 `STELLAR_ORDER_CAN_FORWARD`(1), `_CAN_BACKWARD`(2), `_FLOW_PARENT`(4)를 돌려주고, 아니면 0입니다.
+  셸은 이 값으로 Bring Forward·to Front·Send Backward·to Back 메뉴를 켜고, 흐름 부모이면 순서 변경 뒤
+  배치 순서도 바뀐다고 VoiceOver에 알립니다.
+- **삭제한 레거시 ABI**: 접수 시점의 게시 선택을 쓰던 `stellar_window_session_delete_selection`,
+  `stellar_window_session_duplicate_selection`과 runtime `delete_selected_nodes`·`duplicate_selected_node`는
+  셸 호출자가 없고 대상 ABI와 기능이 겹쳐 삭제했습니다. 경쟁 테스트는 `edit_selection`으로 옮겼습니다.
+- 단정 없이 시간을 출력만 하던 `measure_layer_reorder`(commands)를 삭제했습니다.

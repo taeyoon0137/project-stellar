@@ -324,7 +324,7 @@ enum ShellCommand: String, CaseIterable {
 
     /// 텍스트 컨트롤 편집 중에는 비활성화하는 캔버스 객체 명령.
     ///
-    /// Copy/Paste는 field editor가 먼저 받고, router 직접 전달도 객체 편집을 억제합니다.
+    /// Copy·Paste·Delete는 텍스트 입력이 먼저 받고, router에 직접 와도 캔버스 객체 편집으로 보내지 않습니다.
     var isSuppressedDuringTextEditing: Bool {
         switch self {
         case .copy, .paste, .delete, .duplicate, .deselectAll,

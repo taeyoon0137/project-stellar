@@ -45,40 +45,6 @@ impl SelectionEditTarget {
 }
 
 impl AppRuntime {
-    /// 신뢰한 창의 게시된 선택을 하나의 history 항목으로 삭제합니다.
-    pub fn delete_selected_nodes(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-    ) -> Result<RequestId, RequestError> {
-        self.edit_published_selection(session, view, revision, SelectionEdit::Delete)
-    }
-
-    /// 신뢰한 창의 게시된 단일 선택 subtree를 복제하고 복제본을 선택합니다.
-    pub fn duplicate_selected_node(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-    ) -> Result<RequestId, RequestError> {
-        self.edit_published_selection(session, view, revision, SelectionEdit::Duplicate)
-    }
-
-    fn edit_published_selection(
-        &self,
-        session: WindowSessionHandle,
-        view: StableId,
-        revision: DocumentRevision,
-        edit: SelectionEdit,
-    ) -> Result<RequestId, RequestError> {
-        // 기존 API도 접수와 실행 사이에 선택이 바뀌면 거부합니다.
-        let Some(target) = self.published_selection_target(session, view, revision) else {
-            return self.submit(move |_, _| Err(unknown_window(session)));
-        };
-        self.edit_selection(target, edit, None)
-    }
-
     pub(super) fn published_selection_target(
         &self,
         session: WindowSessionHandle,
@@ -384,15 +350,15 @@ mod tests {
         };
         changed(app.set_selection(session, vec![sid(11)]).unwrap());
         let first = take_target();
-        // worker를 막아 B 선택 → 기존 ABI 명령 순으로 넣습니다. 접수 시점의 게시 선택은 여전히 A입니다.
+        // worker를 막아 B 선택 → A에서 읽은 target의 편집 순으로 넣습니다. 실행 시점의 선택은 B입니다.
         let (release, wait) = mpsc::channel();
         let _blocked = app.sender.submit(move |_| wait.recv().unwrap()).unwrap();
         let next = app.set_selection(session, vec![sid(12)]).unwrap();
         let delete = app
-            .delete_selected_nodes(session, first.view, first.revision)
+            .edit_selection(first, SelectionEdit::Delete, None)
             .unwrap();
         let duplicate = app
-            .duplicate_selected_node(session, first.view, first.revision)
+            .edit_selection(first, SelectionEdit::Duplicate, Some(vec![sid(11)]))
             .unwrap();
         release.send(()).unwrap();
         changed(next);

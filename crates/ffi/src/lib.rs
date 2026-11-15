@@ -1696,8 +1696,6 @@ mod tests {
             "stellar_window_session_insert_shape",
             "stellar_window_selection_target",
             "stellar_window_edit_selection",
-            "stellar_window_session_delete_selection",
-            "stellar_window_session_duplicate_selection",
             "stellar_window_session_insert_rectangle",
             "stellar_window_insert_text",
             "stellar_window_session_paste_subtree",
