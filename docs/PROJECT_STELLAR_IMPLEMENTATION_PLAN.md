@@ -527,7 +527,7 @@ V.10.1~V.10.3은 단일 View 텍스트 원본이라는 한 제품 개선입니�
 |---|---|---|---|---|
 | V.10.1 | `[x]` | `crates/storage/src/{source_file,atomic_file,lib}.rs`에서 제한 handle 읽기·기대 hash 확인·단일 파일 원자 저장·권한 보존·파생 cache 교체를 제공합니다. 기존 정책을 유지하고 실패 시 원본을 보호합니다. | `[DEV-MAC]` 생성 충돌·stale hash·rename 전 fault·권한 보존·fsync 후 오류 의미 검사, storage 테스트와 전체 Rust 검증. | V.2.5 |
 | V.10.2 | `[x]` | `crates/project/src/document_io/{text_source,text_codec,mod}.rs`에서 단일 문서·페이지·View 및 Frame/Fragment 전체 속성·StableId의 제한 YAML 왕복과 선택적 chunk cache 재생성을 구현합니다. 미지원 의미를 거부하고 ADR-0059·문법·호환 절차를 갱신합니다. | `[DEV-MAC]` 실제 모델 편집→저장→재열기→Git diff, 미지원 필드·외부 변경 보존, 캐시 없음·손상·I/O 실패, 문서 예시 검증. | V.10.1, VI.10.3 |
-| V.10.3 | `[~]` | `crates/ops/src/{text_source,lib}.rs`와 `tools/stellar-cli/src/{text_source,cli,lib}.rs`에 명시적 export/check를 연결합니다. 기존 generation 전체 pointer 집합을 비교해 미지원 chunk를 거부합니다. 기본 열기·저장은 바꾸지 않습니다. | `[DEV-MAC]` 실제 CLI export→check→재export 거부, 기존 generation bytes 보존, unknown optional·미사용 chunk 거부, `cargo xtask check-core`. | V.10.2, XXIV.1.3 |
+| V.10.3 | `[!]` | `crates/ops/src/{text_source,lib}.rs`와 `tools/stellar-cli/src/{text_source,cli,lib}.rs`에 명시적 export/check를 연결합니다. 기존 generation 전체 pointer 집합을 비교해 미지원 chunk를 거부합니다. 기본 열기·저장은 바꾸지 않습니다. | `[DEV-MAC]` 실제 CLI export→check→재export 거부, 기존 generation bytes 보존, unknown optional·미사용 chunk 거부, `cargo xtask check-core`. | V.10.2, XXIV.1.3 |
 | V.10.4 | `[ ]` | 전체 영속 의미(모든 node·modifier·component·token·resource)를 텍스트화하고 문서·페이지·View·큰 Frame 파일 참조 및 이름/StableId 규칙을 완성합니다. 미지원 필드·레코드는 보존하거나 쓰기를 거부합니다. 기존 generation 변환은 전체 semantic snapshot이 같을 때만 성공합니다. | `[DEV-MAC]` 전체 golden 의미 왕복·미지원 입력 보존·독립 View 변경의 Git 병합; 공개 포맷 동결 전 검증. | V.10.3 |
 | V.10.5 | `[ ]` | 여러 의미 파일의 temp/fsync/rename 저장 journal과 앞/새 세대 한쪽 복구를 구현합니다. 삭제·rename·디스크 오류도 원본과 미저장 작업을 보호합니다. | `[DEV-MAC]` 단계별 종료·오류 fault matrix, 재열기에서 섞인 세대 0건. | V.10.4 |
 | V.10.6 | `[ ]` | 텍스트 원본을 파일 감시·외부 변경·명령 저장 및 재열기 경로에 연결합니다. 열린 뒤 외부 편집이나 git pull이 있으면 dirty 편집을 보존하고 재로드·병합합니다. | `[DEV-MAC]` CLI dry-run→저장→재열기→Git diff, clean/dirty 외부 변경 및 cache 무효화 통합 시나리오. | V.10.5, XIII.3.1 |
@@ -1255,7 +1255,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 | XII.4.1 | `[ ]` | macOS CanvasHost의 CAMetalLayer를 Metal backend에 연결하고 scale/size lifecycle을 전달합니다. | resize, display scale change 렌더 통과. | XI.8.2, XII.2.2 |
 | XII.4.2 | `[!]` | Windows CanvasHost HWND/SwapChainPanel 또는 선택된 native surface를 D3D12 backend에 연결합니다. | resize, DPI change 렌더 통과. | XI.9.2, XII.2.3 |
 | XII.4.3 | `[~]` | viewport pan/zoom matrix를 scene camera 입력으로 연결하고 document geometry는 변경하지 않습니다. | pan/zoom 후 save bytes 동일. | XII.2.5, XI.2.2 |
-| XII.4.4 | `[~]` | selection overlay와 handles를 transient scene layer로 렌더합니다. | project snapshot에 overlay node 없음. | XI.3.5, XII.4.3 |
+| XII.4.4 | `[!]` | selection overlay와 handles를 transient scene layer로 렌더합니다. | project snapshot에 overlay node 없음. | XI.3.5, XII.4.3 |
 
 ### XII.5 네이티브 UI 텍스트와 IME
 
@@ -1272,7 +1272,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XII.6.1 | `[~]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
+| XII.6.1 | `[!]` | New Project native command가 ProjectCreateRequest를 호출하고 폴더 선택+이름 입력 결과만 core에 전달합니다. 상세 UX는 구현하지 않습니다. | create integration test 통과. | IV.4.7, XII.2.2, XII.2.3 |
 | XII.6.2 | `[x]` | Open Project command가 folder를 선택하고 ProjectProbe 후 session을 엽니다. | invalid repo 안내 error mapping 통과. | IV.5.3 |
 | XII.6.3 | `[~]` | Clone Project command가 URL과 target folder를 받아 clone-open pipeline을 호출합니다. | local fixture remote clone 통과. | IV.6.4 |
 | XII.6.4 | `[~]` | Undo/Redo/Save Now command를 active WindowSession에 연결합니다. | 창별 history와 save 호출 fixture 통과. | VII.5.3, V.5.4 |
@@ -2042,9 +2042,9 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XIX.9.1 | `[~]` | `stellar-local-ipc`(`crates/local-ipc`), `stellar-agent-protocol`(`crates/agent-protocol`), `stellar-mcp-core` library(`crates/mcp-core`)를 crate graph 정책과 crate 의존 그래프 문서에 등록합니다. agent-protocol과 local-ipc는 core-types만, mcp-core는 ops·agent-protocol·local-ipc·diagnostics만 의존합니다. `tools/stellar-mcp` package(실행 이름 `stellar-mcp`)의 정책 허용 의존에 `stellar-mcp-core`를 추가하고, 이 실행 파일이 library 진입점만 갖도록 XIX.1.1~XIX.1.3 구현을 이 경계로 옮깁니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, tools 진입점에 protocol 로직 0. | XIX.1.3, XXIV.4.2, XXIX.1.1 |
+| XIX.9.1 | `[!]` | `stellar-local-ipc`(`crates/local-ipc`), `stellar-agent-protocol`(`crates/agent-protocol`), `stellar-mcp-core` library(`crates/mcp-core`)를 crate graph 정책과 crate 의존 그래프 문서에 등록합니다. agent-protocol과 local-ipc는 core-types만, mcp-core는 ops·agent-protocol·local-ipc·diagnostics만 의존합니다. `tools/stellar-mcp` package(실행 이름 `stellar-mcp`)의 정책 허용 의존에 `stellar-mcp-core`를 추가하고, 이 실행 파일이 library 진입점만 갖도록 XIX.1.1~XIX.1.3 구현을 이 경계로 옮깁니다. | `[DEV-MAC]` `cargo xtask validate-crate-graph` 통과, tools 진입점에 protocol 로직 0. | XIX.1.3, XXIV.4.2, XXIX.1.1 |
 | XIX.9.2 | `[ ]` | resource 목록(XIX.2.1)과 tool 목록(XIX.2.3)을 `stellar-agent-protocol`의 Rust 정의에서 생성합니다. CommandTransaction 입력 schema는 xtask가 VII.1.6 closed enum에서 생성해 `schemas/`에 두고 agent-protocol은 그 산출물만 포함합니다. tool 이름은 MCP 명세 규칙을 따르고 읽기·파괴 계열에 annotation을 붙입니다. Stellar 사용 안내는 MCP 명세에 따른 instructions로 제공합니다. `schemas/`는 보호 경로이므로 같은 변경에 ADR을 갱신합니다. | `[DEV-MAC]` catalog golden 일치, 생성 schema와 enum variant 일치, agent-protocol의 commands 의존 0. | XIX.9.1, XIX.2.1, XIX.2.3, XIX.5.1 |
-| XIX.9.3 | `[~]` | `stellar-mcp-core`에 headless 읽기 backend를 구현합니다(2026-11-14 제품 소유자 결정). 실행 인자로 고정한 프로젝트 루트 하나만 다루고 tool 인자로 다른 경로를 지정할 수 없습니다. XVI.7 trust store에서 trusted가 확인되지 않으면 모든 tool을 거부합니다. 노출하는 것은 `stellar-ops`의 읽기·검증·dry-run tool뿐이고 쓰기 tool은 tools/list에 넣지 않습니다. | `[DEV-MAC]` untrusted fixture 전 tool 거부, 다른 경로 요청 거부, headless tools/list의 쓰기 tool 0, 실행 전후 프로젝트 파일 hash 동일. | XIX.9.2, XXIV.4.3, XVI.7.2, XIX.3.3 |
+| XIX.9.3 | `[!]` | `stellar-mcp-core`에 headless 읽기 backend를 구현합니다(2026-11-14 제품 소유자 결정). 실행 인자로 고정한 프로젝트 루트 하나만 다루고 tool 인자로 다른 경로를 지정할 수 없습니다. XVI.7 trust store에서 trusted가 확인되지 않으면 모든 tool을 거부합니다. 노출하는 것은 `stellar-ops`의 읽기·검증·dry-run tool뿐이고 쓰기 tool은 tools/list에 넣지 않습니다. | `[DEV-MAC]` untrusted fixture 전 tool 거부, 다른 경로 요청 거부, headless tools/list의 쓰기 tool 0, 실행 전후 프로젝트 파일 hash 동일. | XIX.9.2, XXIV.4.3, XVI.7.2, XIX.3.3 |
 | XIX.9.4 | `[ ]` | attached backend를 구현합니다. backend 선택은 앱이 기록한 목록이 아니라 endpoint 실시간 검증(XIX.1.7) 결과로 하고 세션 시작 시 고정합니다. 결합 단위는 WindowSessionId입니다. 외부 클라이언트는 첫 연결 승인 화면에서 창을 고르고, 앱이 시작한 세션은 시작한 창에 묶습니다. 모든 쓰기는 앱의 lease·승인·DocumentThread 경로로 보냅니다. | `[DEV-MAC]` backend 선택 matrix(앱 없음, 검증 실패, 검증 성공) fixture, 다중 창에서 결합 창 외 history 변화 0. | XIX.9.3, XIX.1.7, XIX.1.8, XIX.5.4, XII.2.1 |
 | XIX.9.5 | `[ ]` | tool 결과 종류를 Stellar 승인·lease 모델(XIX.3, XIX.4, 아키텍처 31.3~31.5)의 판정으로 정의합니다(ADR-0005 §3 결과 종류). 결과 범주는 XIX.3·XIX.4 판정을 그대로 나타내도록 이 작업에서 정해 보고서에 기록하며, 거부 사유는 Stellar 판정에서만 옵니다. 응답이 없거나 세션이 끝나면 대기 요청은 거부로 닫습니다. 오래 걸리는 호출과 클라이언트 취소는 MCP 명세를 따르고, 대기 상한은 실측과 MCP 명세로 정해 보고서에 기록합니다. | `[DEV-MAC]` 결과 종류 golden, 대기 상한 초과 fixture에서 거부, 세션 종료 후 대기 요청 0. | XIX.9.4, XIX.4.1 |
 | XIX.9.6 | `[ ]` | 프로젝트에서 온 문자열을 tool 결과에 넣을 때 아키텍처 37.1 신뢰 경계에 따라 데이터로만 다루고 지시로 해석되지 않게 합니다(ADR-0005 §3). 표현 방식은 MCP 명세를 근거로 정해 보고서에 기록합니다. | `[DEV-MAC]` 지시 형태 문자열을 담은 프로젝트 fixture에서 프로젝트 문자열이 지시로 해석되지 않음(결과 golden 일치). | XIX.9.2 |
@@ -2179,7 +2179,7 @@ ADR-0025 결정 6에 따라 Component Context 기능(모델, validator, 해석, 
 
 | ID | 상태 | 구현 지시 | 검증·완료 기준 | 선행 |
 |---|---|---|---|---|
-| XXII.1.1 | `[~]` | resolved View를 CSS 기반 속성 record, layout, semantics, state, tokens, target capability가 포함된 `CodegenIR`로 변환합니다(ADR-0025 결정 4.1). CSS 문자열을 다시 parse하지 않고 타입 있는 속성 record(IX.11.6 layout record, IX.11.11 Typography record)를 그대로 쓰며, target capability는 IX.11.19 matrix에서 읽습니다. Context 선언·provision·소비는 XXII.1.6, 상태 머신과 `MotionSpec`은 XXII.1.5가 IR에 더하므로 이 행은 Phase XXX를 기다리지 않습니다. | semantic snapshot fixture, 같은 입력 IR bytes 동일. | G8, IX.10.8, IX.11.6, IX.11.11, IX.11.19 |
+| XXII.1.1 | `[!]` | resolved View를 CSS 기반 속성 record, layout, semantics, state, tokens, target capability가 포함된 `CodegenIR`로 변환합니다(ADR-0025 결정 4.1). CSS 문자열을 다시 parse하지 않고 타입 있는 속성 record(IX.11.6 layout record, IX.11.11 Typography record)를 그대로 쓰며, target capability는 IX.11.19 matrix에서 읽습니다. Context 선언·provision·소비는 XXII.1.6, 상태 머신과 `MotionSpec`은 XXII.1.5가 IR에 더하므로 이 행은 Phase XXX를 기다리지 않습니다. | semantic snapshot fixture, 같은 입력 IR bytes 동일. | G8, IX.10.8, IX.11.6, IX.11.11, IX.11.19 |
 | XXII.1.2 | `[ ]` | unsupported/approximated/native mapping diagnostic을 IR node별로 보존합니다. | diagnostic fixture. | XXII.1.1 |
 | XXII.1.3 | `[ ]` | CodegenIR은 one-way이며 generated source parser/import API를 만들지 않습니다. | API inventory에 import 없음. | XXII.1.1 |
 | XXII.1.4 | `[ ]` | IX.11.19 capability matrix와 IX.11.18 modifier stack 선형화 계획을 코드 생성용으로 확장합니다. 이 행이 더하는 것은 CSS 기반 속성 registry 항목에 대한 Apple·Android profile의 상태와 lowering 규칙뿐입니다. Context·`MotionSpec` 항목은 XXII.1.7이 더하므로 이 행은 Phase XXX를 기다리지 않습니다. Web의 CSS 속성 매핑과 modifier 선형화는 IX.11.18·IX.11.19 결과를 그대로 쓰고 다시 정의하지 않습니다. 비Web 항목 중 1:1이 아닌 것(modifier 적용 순서, 블렌드 합성 색공간 차이, 자유 배치·constraint, Stellar와 대상 플랫폼의 기본값 차이)은 lowering 규칙과 진단을 한 쌍으로 정의하고, IR lowering은 이 matrix만 참조합니다. 상태 어휘는 IX.10.5의 Native·Approximated·Unsupported·Deprecated이며 Apple·Android 상태는 CSS 매핑 상태에서 유도하지 않고 이 행의 lowering 규칙이 정합니다(ADR-0025 결정 1.3, 4.2). | Apple·Android profile의 모든 registry 항목에 상태·규칙이 있는지 완전성 검사, Web 항목 상태가 IX.11.19 matrix와 같음, 규칙별 입력·출력·진단 fixture 통과. | XXII.1.2, IX.11.6, IX.11.18, IX.11.19 |
